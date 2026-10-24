@@ -20,6 +20,7 @@ from app.agents.activity.review import (
     GUIDANCE,
     MIN_AVOIDED_LABEL,
     RejectReason,
+    common_doc_words,
     explain,
     review_candidates,
 )
@@ -682,3 +683,32 @@ class TestDocRelevance:
         """관찰 · 관심 근거는 활동과 다른 낱말로 적혀도 된다 — 문서 행만 본다."""
         pick = {"id": str(SAND), "note": "모래 놀이 기록"}
         assert review(candidate(content="종이컵 탑 쌓기", evidence=[pick])).rejections == ()
+
+    def test_맞지_않는_문서_인용은_떼고_아이_기록_근거로_나간다(self):
+        """인용 하나 때문에 후보를 다시 내게 하면 재호출만 는다 (#557 리뷰). 남은 근거가 아이
+        기록이라 개인화로 나가고, 뗀 문서 행은 근거에 남지 않는다."""
+        sand = {"id": str(SAND), "note": "모래 놀이 기록"}
+        result = review(candidate(content="모래 놀이터에서 퍼 담기", evidence=[sand, TOWER_PICK]))
+        assert result.rejections == ()
+        assert [c.ref.id for c in result.drafts[0].citations] == [SAND]
+
+    def test_맞는_문서가_남으면_그_문서만_단다(self):
+        wash = next(row for row in SEED_DOCS if row.title == "노래하며 손 씻기")
+        wash_pick = {"id": str(wash.id), "note": "예시를 참고했어요"}
+        result = review(
+            candidate(content="종이컵을 높이 쌓아 보기", evidence=[wash_pick, TOWER_PICK]),
+            docs={TOWER_DOC.id: TOWER_DOC, wash.id: wash},
+        )
+        assert result.rejections == ()
+        assert [c.ref.id for c in result.drafts[0].citations] == [TOWER_DOC.id]
+
+    def test_흔한_낱말은_행_수가_아니라_비율로_센다(self):
+        """행 수로 고정하면 시드가 늘수록 "종이컵" 같은 구체적인 낱말까지 흔한 말로 빠진다."""
+
+        def row(n: int, title: str) -> ActivityDocRow:
+            return replace(TOWER_DOC, id=UUID(int=1000 + n), title=title, body="", materials=())
+
+        cups = [row(n, "종이컵 굴리기") for n in range(5)]
+        blocks = [row(n, "블록 쌓기") for n in range(5, 200)]
+        assert "종이" in common_doc_words(cups + blocks[:75])  # 80행 — 5% 는 4행
+        assert "종이" not in common_doc_words(cups + blocks)  # 200행 — 5% 는 10행

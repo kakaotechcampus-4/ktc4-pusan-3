@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from datetime import date
 from enum import StrEnum
 from functools import cache
+from math import ceil
 from uuid import UUID
 
 from app.agents.activity.doc_seed import activity_doc_seed
@@ -254,12 +255,18 @@ def _check(
         resolved.append((pick, found))
 
     # 문서 행은 "이 활동의 근거" 다 — [예시]에 있기만 하면 통과시키면 손 씻기 문서가 종이컵 쌓기의
-    # 근거로 붙는다(운영 QA). 일반 추천은 근거가 문서 행뿐이라 여기서 막아야 한다 (루트 §2)
-    if any(
-        isinstance(found, ActivityDocRow) and not _doc_related(candidate, found)
-        for _, found in resolved
-    ):
+    # 근거로 붙는다(운영 QA). 맞지 않는 문서 행은 근거에서 뗀다. 남는 근거가 없으면 거절한다 —
+    # 일반 추천은 근거가 문서 행뿐이라 여기서 막아야 한다 (루트 §2). 아이 기록이나 맞는 문서 행이
+    # 남으면 후보는 그대로 나간다 — 인용 하나 때문에 후보를 다시 내게 하면 재호출만 늘어 failed 에
+    # 가까워진다 (#557 리뷰)
+    related = [
+        (pick, found)
+        for pick, found in resolved
+        if not isinstance(found, ActivityDocRow) or _doc_related(candidate, found)
+    ]
+    if resolved and not related:
         return RejectReason.UNRELATED_DOC, (), None
+    resolved = related
 
     place: str | None = None
     if candidate.place_name and candidate.place_name.strip():
@@ -348,8 +355,11 @@ _GENERIC_WORDS = frozenset(
         "내며",
     }
 )
-# 이만큼 넘는 문서 행에 나오는 낱말은 활동을 가르지 못한다 — "그림" · "놀이" (#557 리뷰)
-COMMON_DOC_WORD_ROWS = 4
+# 시드 행의 이 비율(최소 `COMMON_DOC_WORD_MIN_ROWS` 행) 이상에 나오는 낱말은 활동을 가르지
+# 못한다 — "그림" · "놀이" (#557 리뷰). 행 수로 고정하면 시드가 늘수록 "종이컵" 같은 구체적인
+# 낱말까지 흔한 말로 빠진다
+COMMON_DOC_WORD_SHARE = 0.05
+COMMON_DOC_WORD_MIN_ROWS = 4
 
 
 def _stems(text: str) -> set[str]:
@@ -367,11 +377,17 @@ def _doc_keys(doc: ActivityDocRow) -> set[str]:
     return materials | _stems(doc.title) | _stems(doc.body)
 
 
+def common_doc_words(rows: Sequence[ActivityDocRow]) -> frozenset[str]:
+    """문서 행 여럿(`COMMON_DOC_WORD_SHARE` 이상)에 나오는 낱말."""
+    counts = Counter(key for row in rows for key in _doc_keys(row))
+    least = max(COMMON_DOC_WORD_MIN_ROWS, ceil(len(rows) * COMMON_DOC_WORD_SHARE))
+    return frozenset(key for key, count in counts.items() if count >= least)
+
+
 @cache
 def _common_doc_words() -> frozenset[str]:
-    """시드 문서 행 여럿(`COMMON_DOC_WORD_ROWS` 이상)에 나오는 낱말. 시드가 DB 행의 정본이다."""
-    counts = Counter(key for entry in activity_doc_seed() for key in _doc_keys(entry.to_row()))
-    return frozenset(key for key, count in counts.items() if count >= COMMON_DOC_WORD_ROWS)
+    """시드로 센 흔한 낱말. 시드가 DB 행의 정본이다."""
+    return common_doc_words([entry.to_row() for entry in activity_doc_seed()])
 
 
 def _doc_related(candidate: ActivityCandidate, doc: ActivityDocRow) -> bool:
