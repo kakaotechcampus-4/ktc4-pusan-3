@@ -9,6 +9,8 @@ create / query / update 3종. 삭제는 update 에 status=deleted 로 온다 (so
 LLM은 표현까지만 제공하고, 계산과 기본값은 이쪽에서 해결
 """
 
+import re
+from decimal import Decimal, InvalidOperation
 from typing import Any, Callable
 
 from app.agents.common.datetime_rules import (
@@ -22,6 +24,7 @@ from app.agents.common.datetime_rules import (
 from app.agents.memory.context import AgentContext
 from app.agents.memory.result import ErrorCode, ToolResult, fail, ok
 from app.agents.memory.schemas.observation import (
+    SYMPTOM_ONLY,
     ObservationActivityCreate,
     ObservationActivityUpdate,
     ObservationEducationCreate,
@@ -34,6 +37,7 @@ from app.agents.memory.schemas.observation import (
     ObservationRoutineCreate,
     ObservationRoutineUpdate,
 )
+from app.agents.memory.store.ports import ObservationRow
 
 # create 인자 중 store가 따로 받는 것들. fields에 중복으로 넣지 않는다
 _CREATE_HANDLED = {"raw_text", "observed_on", "temporal_direction"}
@@ -68,7 +72,7 @@ async def _create(
     args: Any,
     *,
     domain: str,
-    resolve_observed_time: bool = False,
+    time_fields: tuple[str, ...] = (),
 ) -> ToolResult:
     resource = _resource(domain)
     fields = args.model_dump(exclude=_CREATE_HANDLED)
@@ -78,25 +82,63 @@ async def _create(
     except DateParseError as exc:
         return fail("create", resource, ErrorCode.DATE_UNPARSEABLE, _date_remedy(exc))
 
-    if resolve_observed_time:
+    for name in time_fields:
         # 표현을 그대로 저장하지 않는다. 확정 못 하면 모델이 비우고 다시 부르게 한다
         try:
-            moment = resolve_time(fields.pop("observed_time", None))
+            moment = resolve_time(fields.get(name))
         except DateParseError as exc:
             return fail("create", resource, ErrorCode.DATE_UNPARSEABLE, _time_remedy(exc))
         # 저장 경로에는 파이썬 값을 그대로 둔다. DB 타입 변환은 store 어댑터가 한다
-        fields["observed_time"] = combine(day, moment, context.timezone) if moment else None
+        fields[name] = combine(day, moment, context.timezone) if moment else None
 
-    row = await context.store.create_observation(
-        domain=domain,
-        child_id=context.child_id,
-        source_writer=context.source_writer,
-        raw_text=args.raw_text,
-        observed_on=day,
-        observed_range=build_observed_range(day),
-        fields=fields,
+    async def save(row_fields: dict[str, Any]) -> Any:
+        return await context.store.create_observation(
+            domain=domain,
+            child_id=context.child_id,
+            source_writer=context.source_writer,
+            raw_text=args.raw_text,
+            observed_on=day,
+            observed_range=build_observed_range(day),
+            fields=row_fields,
+        )
+
+    if domain != "health":
+        row = await save(fields)
+        return ok("create", resource, id=row.id, observed_on=day.isoformat())
+
+    symptom_fields, medicine_fields = _split_health(fields)
+    first = await save(symptom_fields or medicine_fields)
+    if symptom_fields is None or medicine_fields is None:
+        return ok("create", resource, id=first.id, observed_on=day.isoformat())
+    # 같은 말에서 함께 말한 증상만 잇는다. 모델이 고른 id 가 아니라 방금 만든 행이다
+    medicine = await save({**medicine_fields, "linked_symptom_id": first.id})
+    return ok(
+        "create", resource, id=first.id, medication_id=medicine.id, observed_on=day.isoformat()
     )
-    return ok("create", resource, id=row.id, observed_on=day.isoformat())
+
+
+def _split_health(
+    fields: dict[str, Any],
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """한 행 = 한 사건. (증상 행, 약 행) 으로 나눈다. 말하지 않은 쪽은 None.
+
+    약 행의 시각은 먹인 시각이라 같은 observed_time 칸을 쓴다. 증상 칸(체온 · 부위 등)은
+    증상 행에만 둔다 — 증상 없이 약만 오면 스키마가 그 칸들을 이미 막았다.
+    """
+    medicine_name = fields.pop("medication_given", None)
+    given_at = fields.pop("given_time", None)
+    symptom_fields = fields if fields["symptom"] else None
+    medicine_fields = (
+        {
+            "symptom": [],
+            "medication_given": medicine_name,
+            "observed_time": given_at,
+            "confidence_source": fields["confidence_source"],
+        }
+        if medicine_name is not None
+        else None
+    )
+    return symptom_fields, medicine_fields
 
 
 async def _query(context: AgentContext, args: ObservationQueryArgs, *, domain: str) -> ToolResult:
@@ -139,14 +181,22 @@ async def _update(
     args: Any,
     *,
     domain: str,
-    resolve_observed_time: bool = False,
+    time_fields: tuple[str, ...] = (),
+    check: Callable[[ObservationRow], str | None] | None = None,
 ) -> ToolResult:
+    """`check` 는 읽어 온 행을 보고 고칠 수 없는 이유를 돌려준다(없으면 None).
+
+    행은 여기서 한 번만 읽는다 — 검사와 수정이 같은 행을 본다.
+    """
     resource = _resource(domain)
     if args.status == "deleted":
         return await _delete(context, args, domain=domain)
     current = await context.store.get_observation(domain=domain, observation_id=args.observation_id)
     if current is None:
         return fail("update", resource, ErrorCode.TARGET_NOT_FOUND, _not_found(domain))
+    reason = check(current) if check is not None else None
+    if reason is not None:
+        return fail("update", resource, ErrorCode.INVALID_ARGS, reason)
 
     fields = args.model_dump(exclude=_UPDATE_HANDLED)
 
@@ -161,20 +211,20 @@ async def _update(
         # 날짜가 바뀌면 observed_range 도 같이 바꾼다. 어긋나면 조회와 감쇠가 다른 날을 본다
         fields["observed_range"] = build_observed_range(day)
 
-    if resolve_observed_time:
+    for name in time_fields:
         moment = None
-        if fields.get("observed_time") is not None:
+        if fields.get(name) is not None:
             try:
-                moment = resolve_time(fields["observed_time"])
+                moment = resolve_time(fields[name])
             except DateParseError as exc:
                 return fail("update", resource, ErrorCode.DATE_UNPARSEABLE, _time_remedy(exc))
-        recorded = current.fields.get("observed_time")
+        recorded = current.fields.get(name)
         if moment is None and args.observed_on is not None and recorded is not None:
             # 날짜만 바뀌어도 원래 시각을 새 날짜에 다시 얹는다.
             # 그냥 두면 observed_range 와 다른 날을 가리킨다
             moment = recorded.astimezone(context.timezone).time()
         # 날짜를 같이 바꿨으면 새 날짜에, 아니면 원래 관찰 일자에 시각을 얹는다
-        fields["observed_time"] = combine(day, moment, context.timezone) if moment else None
+        fields[name] = combine(day, moment, context.timezone) if moment else None
 
     # 안 바꿀 필드(None)는 store로 넘기지 않음 + 비우기는 clear로만 함
     fields = {key: value for key, value in fields.items() if value is not None}
@@ -255,16 +305,121 @@ async def update_observation_food(context: AgentContext, args: ObservationFoodUp
 
 
 # health
+# 시각 표현을 관찰 날짜에 얹어 확정하는 칸. given_time 은 약 행의 observed_time 이 된다
+_HEALTH_CREATE_TIMES = ("observed_time", "measured_at", "given_time")
+_HEALTH_UPDATE_TIMES = ("observed_time", "measured_at")
+# 약 행에 얹으면 안 되는 증상 칸. observed_time 은 약 행에선 먹인 시각이라 고칠 수 있다
+_SYMPTOM_FIELDS = tuple(name for name in SYMPTOM_ONLY if name != "observed_time")
+
+# 로그로 흘러가는 메시지라 약 이름을 싣지 않는다
+_MEDICINE_NOT_SAID = (
+    "medication_given 은 보호자가 말한 약 이름을 글자 그대로 넣는다. raw_text 도 말한 그대로다. "
+    "성분명이나 다른 이름으로 바꾸지 않는다. 보호자가 약 이름을 말하지 않았으면 무슨 약인지 묻는다."
+)
+# 증상과 약을 한 번에 저장한 두 행은 raw_text 가 같다. 조회 결과의 kind 로 가르게 한다 —
+# "새로 만든다" 만 말하면 증상 행을 고른 모델이 같은 투약을 한 번 더 만든다
+_MEDICINE_ON_SYMPTOM = (
+    "이 id 는 증상 기록(kind=symptom)이다. 먹인 약 기록을 고치려면 query_observation_health "
+    "결과에서 kind=medication 인 행의 id 로 고친다. 새로 먹인 약일 때만 "
+    "create_observation_health 의 medication_given 으로 새로 만든다."
+)
+_SYMPTOM_ON_MEDICINE = (
+    "이 id 는 먹인 약 기록(kind=medication)이다. 증상을 고치려면 query_observation_health "
+    "결과에서 kind=symptom 인 행의 id 로 고친다. 새로 본 증상일 때만 "
+    "create_observation_health 로 새로 만든다."
+)
+
+
+# 로그로 흘러가는 메시지라 숫자를 싣지 않는다
+_TEMPERATURE_NOT_SAID = (
+    "temperature 는 보호자가 말한 체온 숫자 그대로 넣는다. 말에 없는 숫자다 — 반올림하거나 "
+    "화씨를 섭씨로 바꾸지 않는다. 보호자가 섭씨 숫자를 말하지 않았으면 넣지 않고 "
+    "몇 도였는지 묻는다."
+)
+
+# 말에 적힌 체온 꼴 — 섭씨 단위가 붙은 숫자만 센다(#551 BE 리뷰). "38.5도" · "38도" · "38.5℃" ·
+# "38.5°C". 단위 없는 숫자는 날수 · 월령 · 분일 수 있다("생후 38일" 이 38.0 으로 통과했다).
+# "38도 5부" 는 38.5 하나다 — 38 은 아니다. °F 는 받지 않는다(화씨 숫자를 섭씨 칸에 넣지 않는다)
+_DEGREE = re.compile(r"(?<![\d.])(\d+(?:\.\d+)?)\s*(?:℃|°(?!\s*[Ff])|도(?!\s*\d\s*부))")
+_DEGREE_TENTH = re.compile(r"(?<![\d.])(\d+)\s*도\s*(\d)\s*부")
+
+
+def _sources(context: AgentContext, *quoted: str) -> list[str]:
+    """대조할 글들. 이번 run 의 발화(`context.utterance`)가 기준이다.
+
+    tool 인자의 raw_text 는 모델이 옮겨 적은 글이라 모델이 raw_text 와 값을 같이 바꿔 쓰면
+    그것만으로는 못 막는다. 발화를 모르는 호출(run 을 거치지 않은 tool 직접 호출)은 넘겨받은
+    원문만 본다.
+    """
+    return [*quoted] if context.utterance is None else [context.utterance, *quoted]
+
+
+def _said(name: str, context: AgentContext, *quoted: str) -> bool:
+    """약 이름이 보호자가 한 말 안에 글자 그대로 있나. 대조할 글이 없으면 거짓이다."""
+    sources = _sources(context, *quoted)
+    return bool(sources) and all(name in source for source in sources)
+
+
+def _temperature_said(value: Decimal, context: AgentContext, *quoted: str) -> bool:
+    """체온 숫자가 보호자가 한 말 안에 있나 — LLM 이 바꾼 숫자는 응급 안내까지 끌고 간다 (#551).
+
+    단위가 붙은 숫자만 값으로 견준다("38도" 와 38.0 은 같다). "38도 5부" 는 38.5 다. 대조할 글이
+    없으면 거짓이다.
+    """
+    sources = _sources(context, *quoted)
+    return bool(sources) and all(value in _temperatures(source) for source in sources)
+
+
+def _temperatures(text: str) -> set[Decimal]:
+    found: set[Decimal] = set()
+    for number in _DEGREE.findall(text):
+        try:
+            found.add(Decimal(number))
+        except InvalidOperation:  # pragma: no cover — 정규식이 숫자만 뽑는다
+            continue
+    found.update(Decimal(f"{whole}.{tenth}") for whole, tenth in _DEGREE_TENTH.findall(text))
+    return found
+
+
 async def create_observation_health(
     context: AgentContext, args: ObservationHealthCreate
 ) -> ToolResult:
-    return await _create(context, args, domain="health", resolve_observed_time=True)
+    if args.medication_given is not None and not _said(
+        args.medication_given, context, args.raw_text
+    ):
+        return fail("create", _resource("health"), ErrorCode.INVALID_ARGS, _MEDICINE_NOT_SAID)
+    if args.temperature is not None and not _temperature_said(
+        args.temperature, context, args.raw_text
+    ):
+        return fail("create", _resource("health"), ErrorCode.INVALID_ARGS, _TEMPERATURE_NOT_SAID)
+    return await _create(context, args, domain="health", time_fields=_HEALTH_CREATE_TIMES)
 
 
 async def update_observation_health(
     context: AgentContext, args: ObservationHealthUpdate
 ) -> ToolResult:
-    return await _update(context, args, domain="health", resolve_observed_time=True)
+    # 고친 값은 원래 raw_text 에 없다("타이레놀 말고 부루펜") — 이번 발화에 있어야 한다
+    if args.medication_given is not None and not _said(args.medication_given, context):
+        return fail("update", _resource("health"), ErrorCode.INVALID_ARGS, _MEDICINE_NOT_SAID)
+    if args.temperature is not None and not _temperature_said(args.temperature, context):
+        return fail("update", _resource("health"), ErrorCode.INVALID_ARGS, _TEMPERATURE_NOT_SAID)
+
+    def kind_check(current: ObservationRow) -> str | None:
+        # 한 행 = 한 사건. 증상 행과 약 행을 서로 바꾸면 DB CHECK 에 걸린다 — 그 전에 돌려준다.
+        # 약 행에 체온 · 정도 같은 증상 칸을 얹는 것도 같다 — 열 타임라인이 그 행을 두 번 낸다
+        if args.status is not None:
+            return None
+        is_medicine = current.fields.get("medication_given") is not None
+        symptom_fields = any(getattr(args, name) is not None for name in _SYMPTOM_FIELDS)
+        if args.medication_given is not None and not is_medicine:
+            return _MEDICINE_ON_SYMPTOM
+        if (args.symptom is not None or symptom_fields) and is_medicine:
+            return _SYMPTOM_ON_MEDICINE
+        return None
+
+    return await _update(
+        context, args, domain="health", time_fields=_HEALTH_UPDATE_TIMES, check=kind_check
+    )
 
 
 # education

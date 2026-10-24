@@ -41,6 +41,22 @@ checkup.oral_only:
 checkup.context_footer:
   kind: checkup_context
   template: "문진표는 보호자가 직접 작성해 주세요. 이 요약은 참고용이에요."
+# 검진 맥락 요약 줄 — 보호자가 남긴 기록을 항목별로 나열만 한다. 판정 · 비교 · 해석이 없다
+checkup.ctx_meals:
+  kind: checkup_context
+  template: "• 최근 식사 : {text}"
+checkup.ctx_meds:
+  kind: checkup_context
+  template: "• 먹고 있는 약 : {items}"
+checkup.ctx_illness:
+  kind: checkup_context
+  template: "• 최근 아팠던 기록 : {items}"
+checkup.ctx_safety:
+  kind: checkup_context
+  template: "• 알레르기 · 만성질환 : {items}"
+checkup.no_ghostwrite:
+  kind: checkup_context
+  template: "문진표는 대신 작성해 드릴 수 없어요. 들고 가실 기록을 정리했어요."
 
 # ── 복약 ──
 med.confirm:
@@ -106,6 +122,26 @@ dose.check_on_screen:
 fever.no_record:
   kind: fever_timeline
   template: "체온 기록이 없어요. 재실 때 남겨 두시면 정리해 드릴게요."
+# 열 타임라인 줄 — 체온 · 체크된 복약 회차 · 보호자가 기록한 먹인 약을 나열만 한다.
+# 체크된 회차(`last_dose` — 회차 예정 시각)와 먹인 약(`given_dose` — 보호자가 말한 시각)은 시각의 뜻이 달라 문구를 나눈다
+fever.line:
+  kind: fever_timeline
+  template: "{time} {temperature}℃{site}"
+fever.peak:
+  kind: fever_timeline
+  template: "가장 높았던 체온 {temperature}℃ ({time})"
+fever.low:
+  kind: fever_timeline
+  template: "가장 낮았던 체온 {temperature}℃ ({time})"
+fever.last_dose:
+  kind: fever_timeline
+  template: "마지막으로 체크된 복약 {title} ({time} 회차)"
+fever.next_dose:
+  kind: fever_timeline
+  template: "등록된 일정상 다음 예정 {time}"
+fever.given_dose:
+  kind: fever_timeline
+  template: "{time} {title} 먹였다고 기록하셨어요"
 emergency:
   kind: emergency
   template: "지금 바로 119에 연락하거나 가까운 응급실로 가세요."
@@ -171,7 +207,21 @@ blocked.consent:
   template: "건강 기록을 보려면 건강정보 동의가 필요해요."
 visit.no_record:
   kind: symptom_timeline
-  template: "최근 2주 동안 건강 기록이 없어요."
+  template: "최근 한 달 동안 건강 기록이 없어요."
+# 진료 준비 정리의 줄 — 코드가 기록 원문 · 등록값으로 그린다(모델은 줄을 고르기만 한다, #551).
+# 판정 · 해석 · 비율이 없다. 체크 안 된 회차는 "안 먹였다" 가 아니라 n/m 의 m 에만 들어간다
+visit.symptom:
+  kind: symptom_timeline
+  template: "{days} {symptom}{detail}"
+visit.given:
+  kind: symptom_timeline
+  template: "{time} {title} 먹였다고 기록하셨어요"
+visit.med_check:
+  kind: symptom_timeline
+  template: "{day} {title} 체크 {checked}/{planned}회"
+visit.meal:
+  kind: symptom_timeline
+  template: "{day} {text}"
 place.unavailable:
   kind: place_list
   template: "병원 정보를 불러오지 못했어요. 응급 시 119에 연락하세요."

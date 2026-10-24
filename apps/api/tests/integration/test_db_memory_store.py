@@ -7,10 +7,12 @@ child_a's observation id로 child_b의 store에서 get/update/delete하면 차�
 """
 
 from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
 from uuid import UUID
 
 import pytest
 from sqlalchemy import update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.common.datetime_rules import DateRange
@@ -594,3 +596,137 @@ class TestUpdatedAtRefresh:
         orm = await session.get(ObservationFood, UUID(obs_of_a), populate_existing=True)
         assert orm is not None
         assert orm.updated_at > past
+
+
+class TestHealthTemperatureAndMedication:
+    """observation_health 체온 세 칸 · 먹인 약 두 칸 (#551).
+
+    한 행 = 한 사건 — DB 가 마지막에 막는다.
+    CHECK 위반은 savepoint 안에서 넣는다. 밖에서 넣으면 테스트 트랜잭션이 통째로 죽는다.
+    """
+
+    @staticmethod
+    async def _create(store: DbMemoryStore, owner, child, **fields):
+        return await store.create_observation(
+            domain="health",
+            child_id=child.id,
+            source_writer=owner.id,
+            raw_text="열이 나서 해열제 먹였어",
+            observed_on=date(2026, 10, 1),
+            observed_range=DateRange(start=date(2026, 10, 1), end=date(2026, 10, 2)),
+            fields={"confidence_source": "parent_direct", **fields},
+        )
+
+    async def _rejected(self, session: AsyncSession, family: tuple, **fields) -> bool:
+        owner, child_a, _ = family
+        store = DbMemoryStore(session, child_id=child_a.id)
+        try:
+            async with session.begin_nested():
+                await self._create(store, owner, child_a, **fields)
+        except IntegrityError:
+            return True
+        return False
+
+    async def test_체온_세_칸_왕복(self, session: AsyncSession, family: tuple) -> None:
+        owner, child_a, _ = family
+        store = DbMemoryStore(session, child_id=child_a.id)
+        kst = timezone(timedelta(hours=9))
+        measured = datetime(2026, 10, 1, 23, 0, tzinfo=kst)
+        row = await self._create(
+            store,
+            owner,
+            child_a,
+            symptom=["발열"],
+            temperature=Decimal("38.5"),
+            measured_at=measured,
+            measure_site="armpit",
+        )
+        session.expunge_all()  # 세션에 남은 값이 아니라 DB 가 돌려준 값을 본다
+
+        found = await store.get_observation(domain="health", observation_id=row.id)
+
+        assert found is not None
+        assert found.fields["temperature"] == Decimal("38.5")
+        assert found.fields["measured_at"] == measured
+        assert found.fields["measure_site"] == "armpit"
+
+    async def test_범위_밖_체온은_DB_가_거절(self, session: AsyncSession, family: tuple) -> None:
+        assert await self._rejected(session, family, symptom=["발열"], temperature=Decimal("29.9"))
+        assert await self._rejected(session, family, symptom=["발열"], temperature=Decimal("45.1"))
+        assert not await self._rejected(
+            session, family, symptom=["발열"], temperature=Decimal("45.0")
+        )
+
+    async def test_정하지_않은_부위는_DB_가_거절(
+        self, session: AsyncSession, family: tuple
+    ) -> None:
+        assert await self._rejected(session, family, symptom=["발열"], measure_site="foot")
+
+    async def test_약_행은_증상이_비고_연결은_증상_행을_가리킨다(
+        self, session: AsyncSession, family: tuple
+    ) -> None:
+        owner, child_a, _ = family
+        store = DbMemoryStore(session, child_id=child_a.id)
+        symptom = await self._create(store, owner, child_a, symptom=["발열"])
+        # tool 은 store 가 돌려준 문자열 id 를 그대로 넘긴다 — UUID 로 바꾸는 건 store 다
+        medicine = await self._create(
+            store, owner, child_a, medication_given="해열제", linked_symptom_id=symptom.id
+        )
+        session.expunge_all()
+
+        found = await store.get_observation(domain="health", observation_id=medicine.id)
+
+        assert found is not None
+        assert found.fields["symptom"] == []  # 칸을 안 넘기면 기본값 '{}'
+        assert found.fields["medication_given"] == "해열제"
+        assert found.fields["linked_symptom_id"] == UUID(symptom.id)
+
+    async def test_한_행에_증상과_약이_같이_있으면_DB_가_거절(
+        self, session: AsyncSession, family: tuple
+    ) -> None:
+        assert await self._rejected(session, family, symptom=["발열"], medication_given="해열제")
+
+    async def test_증상도_약도_없는_행은_DB_가_아니라_스키마가_막는다(
+        self, session: AsyncSession, family: tuple
+    ) -> None:
+        # DB 에서 막으면 증상이 빈 옛 행이 그 CHECK 에 걸려 soft delete · Correction 이 실패한다.
+        # 새 행은 Memory 스키마(ObservationHealthCreate)가 막는다 — unit 의 test_observation_health
+        assert not await self._rejected(session, family)
+
+    async def test_약_행에_체온이_있으면_DB_가_거절(
+        self, session: AsyncSession, family: tuple
+    ) -> None:
+        # 열 타임라인이 그 행을 체온 줄과 먹인 약 줄로 두 번 낸다 (최종 리뷰 F2)
+        measured = datetime(2026, 10, 1, 23, 0, tzinfo=timezone(timedelta(hours=9)))
+        for extra in (
+            {"temperature": Decimal("38.5")},
+            {"measured_at": measured},
+            {"measure_site": "ear"},
+        ):
+            assert await self._rejected(session, family, medication_given="해열제", **extra), extra
+
+    async def test_수정으로_약_행에_체온을_넣어도_DB_가_거절(
+        self, session: AsyncSession, family: tuple
+    ) -> None:
+        owner, child_a, _ = family
+        store = DbMemoryStore(session, child_id=child_a.id)
+        medicine = await self._create(store, owner, child_a, medication_given="해열제")
+
+        with pytest.raises(IntegrityError):
+            async with session.begin_nested():
+                await store.update_observation(
+                    domain="health",
+                    observation_id=medicine.id,
+                    fields={"temperature": Decimal("38.5")},
+                )
+
+    async def test_증상_행에_연결이_있으면_DB_가_거절(
+        self, session: AsyncSession, family: tuple
+    ) -> None:
+        owner, child_a, _ = family
+        store = DbMemoryStore(session, child_id=child_a.id)
+        first = await self._create(store, owner, child_a, symptom=["발열"])
+
+        assert await self._rejected(
+            session, family, symptom=["기침"], linked_symptom_id=UUID(first.id)
+        )

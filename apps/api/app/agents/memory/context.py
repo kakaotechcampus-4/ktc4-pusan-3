@@ -22,6 +22,9 @@ class AgentContext:
     store: MemoryStore
     # 일정 초안 버퍼(frozen이어도 안의 내용을 tool이 채움)
     drafts: DraftBook = field(default_factory=DraftBook)
+    # 이번 run 에서 보호자가 실제로 한 말. run() 이 채운다 — 만드는 쪽은 넘기지 않는다.
+    # tool 인자의 raw_text 는 모델이 옮겨 적은 글이라 "말한 그대로" 의 기준이 못 된다 (#551)
+    utterance: str | None = None
 
     @property
     def today(self) -> date:

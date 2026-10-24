@@ -9,12 +9,14 @@ LLM이 만들면 안 되는 값(child_id, 월령, 동의)과 날짜 계산의 �
 
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, tzinfo
+from typing import Literal
 from uuid import UUID
 
 from app.agents.common.age import life_stage
 from app.agents.common.datetime_rules import today_of
 from app.agents.common.gate import Gate, SafetyState
 from app.agents.common.readout import Readout
+from app.agents.common.refs import Ref
 from app.agents.common.result import DomainPending
 from app.agents.health.schemas.task import HealthTaskType
 from app.agents.health.store.ports import HealthPorts, HealthSafetyEntry, SafetyLookupError
@@ -24,6 +26,19 @@ from app.core.medication_draft import MedicationDraft
 SAFETY_TASKS: frozenset[HealthTaskType] = frozenset(
     {HealthTaskType.VISIT_SUMMARY, HealthTaskType.SCHEDULE_CHECK, HealthTaskType.CARE_HANDOFF}
 )
+
+
+VisitSection = Literal["symptom", "given", "medication", "meal"]
+
+
+@dataclass(frozen=True)
+class VisitLine:
+    """진료 준비 정리의 한 줄. 글은 코드가 기록 원문 · 등록값에서 그린다 — 모델이 쓰지 않는다."""
+
+    section: VisitSection
+    day: date  # 정렬 기준 — 증상은 에피소드 첫날, 그 밖은 그 기록의 날
+    body: str = field(repr=False)  # 원문이 들어 있다. 로그에 싣지 않는다
+    refs: tuple[Ref, ...]
 
 
 @dataclass
@@ -48,6 +63,14 @@ class HealthRunState:
     changed: dict[str, tuple[str, ...]] = field(default_factory=dict)
     confirms: dict[str, Readout] = field(default_factory=dict)
     readouts: list[Readout] = field(default_factory=list)
+    # 진료 준비 줄. 짧은 key("s1" · "g1" · "f1" · "c1") → 코드가 기록에서 그린 줄 (#551).
+    # 출력 tool 이 여기 있는 줄을 전부 묶는다 — 모델은 줄을 고르지도 보지도 않는다
+    visit_lines: dict[str, VisitLine] = field(default_factory=dict, repr=False)
+    # (구획, 기록 정체) → key. 같은 기록을 다시 읽어도 같은 줄이다
+    visit_keys: dict[tuple[str, object], str] = field(default_factory=dict, repr=False)
+    # 모델이 증상 조회에 쓴 기간 중 가장 긴 것("14d" 꼴). 복약 체크가 같은 기간을 본다.
+    # None 이면 모델이 증상 조회를 부르지 않았다 — 출력 tool 이 기본 기간으로 대신 읽는다
+    visit_period: str | None = None
     question: str | None = None
     pending: DomainPending | None = None  # 되묻고 멈춘 자리. question 과 같이 채워진다
 

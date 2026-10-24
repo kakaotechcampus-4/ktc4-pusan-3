@@ -21,7 +21,7 @@ import json
 import logging
 from collections import Counter
 from collections.abc import Collection, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
 from pydantic import ValidationError
@@ -165,6 +165,12 @@ _ALREADY_DONE = (
     "같은 작업을 이미 했다. 다시 부르지 않는다. "
     "같은 날 같은 대상은 한 건으로 합치고, 내용을 더할 거면 update로 고친다."
 )
+# 로그로 흘러가는 메시지라 증상 · 약 이름을 싣지 않는다
+_HALF_DONE = (
+    "이 증상이나 이 먹인 약 중 하나는 이미 저장했다. 이미 저장한 쪽은 빼고 남은 쪽만 넣어 "
+    "create_observation_health 를 다시 부른다. 증상이 이미 저장됐으면 symptom 과 증상 칸을 비우고 "
+    "medication_given · given_time 만, 약이 이미 저장됐으면 medication_given · given_time 을 뺀다."
+)
 
 
 @dataclass(frozen=True)
@@ -244,6 +250,7 @@ async def run(
         )
     elif task is not None and task.raw_text != raw_text:
         raise ValueError("task.raw_text와 raw_text가 다르다")
+    context = replace(context, utterance=_utterance(raw_text, continuation))
 
     shown = await _reread(continuation.found, context) if continuation is not None else []
     llm = client or LLMClient(role="memory")
@@ -418,6 +425,18 @@ async def run(
         ended_by="max_steps",
         drafts=context.drafts.all(),
     )
+
+
+def _utterance(raw_text: str, continuation: PendingMemoryContext | None) -> str:
+    """보호자가 실제로 한 말만 잇는다. tool 이 "말한 그대로" 를 대조하는 기준이다 (#551).
+
+    이어받기는 앞 조각과 보호자 답들, 이번 답이다. transcript 는 (질문, 답) 순으로 쌓이고
+    질문은 모델이 쓴 글이라 뺀다 — "타이레놀이었어요?" "응" 으로 약 이름이 생기지 않게.
+    """
+    if continuation is None:
+        return raw_text
+    answers = continuation.transcript[1::2]
+    return "\n".join((continuation.hint_text, *answers, raw_text))
 
 
 def _user_message(raw_text: str, task: MemoryTask | None) -> str:
@@ -739,13 +758,17 @@ async def _execute(
         ):
             return _failed(name, arguments, ErrorCode.TARGET_REQUIRED, _LOOKUP_FIRST)
 
-    key = _dedup_key(name, arguments)
-    if key is not None and key in succeeded:
+    keys = _dedup_keys(name, arguments)
+    done = [key in succeeded for key in keys]
+    if keys and all(done):
         return _failed(name, arguments, ErrorCode.INVALID_ARGS, _ALREADY_DONE)
+    if any(done):
+        # health 의 증상 · 약 중 한쪽만 이미 저장했다. 통째로 다시 저장하면 그쪽이 두 행이 된다
+        return _failed(name, arguments, ErrorCode.INVALID_ARGS, _HALF_DONE)
 
     result = await execute_tool(name, arguments, context, allowed=allowed)
-    if key is not None and result.success:
-        succeeded.add(key)  # 실패한 호출은 고쳐서 다시 부를 수 있어야 한다
+    if result.success:
+        succeeded.update(keys)  # 실패한 호출은 고쳐서 다시 부를 수 있어야 한다
     return ToolCallRecord(name=name, arguments=arguments, result=result.to_payload())
 
 
@@ -832,20 +855,48 @@ def _parse_arguments(raw: str | None) -> dict[str, Any] | None:
     return parsed if isinstance(parsed, dict) else None
 
 
-def _dedup_key(name: str, arguments: dict[str, Any]) -> tuple[str, str] | None:
-    """같은 run에서 두 번 하면 안 되는 작업인지 가른다.
+# 건강 관찰에서 같은 증상 · 같은 날이어도 다른 사건을 가르는 칸 — 증상 행에 들어가는 칸만
+_SYMPTOM_REPEATS = ("temperature", "measured_at", "observed_time")
+
+
+def _dedup_keys(name: str, arguments: dict[str, Any]) -> tuple[tuple[str, str], ...]:
+    """같은 run에서 두 번 하면 안 되는 작업인지 가른다. 비어 있으면 반복해도 되는 호출이다.
 
     관찰 저장은 인자가 아니라 대상으로 센다. 인자 전체로 비교하면 raw_text를 한 글자만
     다르게 준 두 호출이 다 통과해 같은 관찰이 두 행으로 남는다.
+
+    health 는 호출 한 번이 증상 행과 약 행을 만들 수 있어서 둘을 따로 센다 (#551). 하나로 세면
+    "발열 38.5" 뒤에 같은 인자 + 해열제로 다시 부른 호출이 통과해 증상 행이 두 번 남는다.
     """
     if not name.startswith(MUTATING_PREFIXES):
-        return None  # 분리·조회는 반복 호출해도 상태 안 바뀜
+        return ()  # 분리·조회는 반복 호출해도 상태 안 바뀜
+    if name == "create_observation_health":
+        return _health_keys(name, arguments)
     if name.startswith("create_observation_"):
         target = arguments.get("subject") or arguments.get("symptom") or arguments.get("raw_text")
-        return name, json.dumps(
-            [target, arguments.get("observed_on")], sort_keys=True, ensure_ascii=False
-        )
-    return name, json.dumps(arguments, sort_keys=True, ensure_ascii=False)
+        return ((name, _dumps([target, arguments.get("observed_on")])),)
+    return ((name, json.dumps(arguments, sort_keys=True, ensure_ascii=False)),)
+
+
+def _health_keys(name: str, arguments: dict[str, Any]) -> tuple[tuple[str, str], ...]:
+    """(증상 몫, 약 몫) 중 인자에 있는 것. 둘 다 없으면 원문으로 센다(스키마가 거절한다).
+
+    체온 · 먹인 약은 한 말에서 여러 번 나온다("8시에 38.2도, 9시에 39.1도") — 값이나 시각이
+    다르면 다른 관찰이다. 막으면 모델이 첫 체온을 update 로 덮어쓴다.
+    """
+    day = arguments.get("observed_on")
+    keys: list[tuple[str, str]] = []
+    if arguments.get("symptom"):
+        symptom = [arguments["symptom"], day, *(arguments.get(f) for f in _SYMPTOM_REPEATS)]
+        keys.append((f"{name}:symptom", _dumps(symptom)))
+    if arguments.get("medication_given") is not None:
+        medicine = [arguments["medication_given"], day, arguments.get("given_time")]
+        keys.append((f"{name}:medication", _dumps(medicine)))
+    return tuple(keys) or ((name, _dumps([arguments.get("raw_text"), day])),)
+
+
+def _dumps(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, ensure_ascii=False, default=str)
 
 
 def _failed(name: str, arguments: dict[str, Any], code: str, message: str) -> ToolCallRecord:

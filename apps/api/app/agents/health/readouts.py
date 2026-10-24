@@ -23,6 +23,11 @@ CHECKUP_ORAL = "checkup.oral"  # 일반검진 기간 안의 구강검진
 CHECKUP_ORAL_ONLY = "checkup.oral_only"  # 일반검진 기간이 아닌데 구강검진 기간일 때
 CHECKUP_AGED_OUT = "checkup.aged_out"  # 72개월 이상
 CHECKUP_CONTEXT_FOOTER = "checkup.context_footer"
+CHECKUP_CTX_MEALS = "checkup.ctx_meals"
+CHECKUP_CTX_MEDS = "checkup.ctx_meds"
+CHECKUP_CTX_ILLNESS = "checkup.ctx_illness"
+CHECKUP_CTX_SAFETY = "checkup.ctx_safety"
+CHECKUP_NO_GHOSTWRITE = "checkup.no_ghostwrite"  # 문진표 대필 요청 — 요약은 그대로 낸다
 
 # 복약
 MED_CONFIRM = "med.confirm"
@@ -45,6 +50,12 @@ DOSE_CHECK_ON_SCREEN = "dose.check_on_screen"
 
 # 열 · 응급
 FEVER_NO_RECORD = "fever.no_record"
+FEVER_LINE = "fever.line"  # {site} 는 " (귀)" 꼴이거나 빈 문자열
+FEVER_PEAK = "fever.peak"
+FEVER_LOW = "fever.low"
+FEVER_LAST_DOSE = "fever.last_dose"  # 시각은 회차 예정 시각 — 체크를 누른 시각이 아니다
+FEVER_NEXT_DOSE = "fever.next_dose"  # 등록된 회차 행에서만
+FEVER_GIVEN_DOSE = "fever.given_dose"  # 시각은 보호자가 말한 시각 — last_dose 와 뜻이 다르다
 EMERGENCY = "emergency"
 
 # 전달 서류
@@ -69,6 +80,10 @@ PRESCRIPTION_NOT_FOUND = "prescription.not_found"
 # 닫힘 · 기록 없음 · 조회 실패
 BLOCKED_CONSENT = "blocked.consent"  # 건강정보 동의 없음 — 전 라벨
 VISIT_NO_RECORD = "visit.no_record"
+VISIT_SYMPTOM = "visit.symptom"
+VISIT_GIVEN = "visit.given"
+VISIT_MED_CHECK = "visit.med_check"
+VISIT_MEAL = "visit.meal"
 PLACE_UNAVAILABLE = "place.unavailable"
 SAFETY_UNAVAILABLE = "safety.unavailable"
 
