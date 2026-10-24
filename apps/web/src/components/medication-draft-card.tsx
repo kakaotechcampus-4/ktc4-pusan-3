@@ -225,9 +225,13 @@ export function MedicationDraftCard({
               {MISSING_REASON[field]}
             </p>
           ))}
+          {/* 🚨 등록과 수정은 일어나는 일이 다르다 — 수정은 새 코스가 아니라 남은 회차를 바꾼 시각으로 다시 만든다.
+              지난 회차와 체크한 회차는 서버가 그대로 둔다 (`docs/medication/medication-tables-v1.md` §5). */}
           {canSubmit ? (
             <p className="text-body-sm">
-              누르면 복약 일정이 등록되고 날마다 먹일 회차가 생겨요. 함께 보는 보호자에게도 보여요.
+              {draft.op === "update"
+                ? "누르면 아직 오지 않은 회차가 바뀐 내용으로 다시 만들어져요. 먹인 기록은 그대로 남아요. 함께 보는 보호자에게도 보여요."
+                : "누르면 복약 일정이 등록되고 날마다 먹일 회차가 생겨요. 함께 보는 보호자에게도 보여요."}
             </p>
           ) : null}
         </div>
