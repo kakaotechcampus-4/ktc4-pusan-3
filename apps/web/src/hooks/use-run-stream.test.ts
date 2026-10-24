@@ -404,9 +404,9 @@ describe("복약 초안 프레임 (#537)", () => {
     missing: ["starts_on", "ends_on"],
   };
 
-  it("🚨 이름이 잠정이라 두 후보를 다 받고, 일정 초안과 다른 칸에 쌓는다", () => {
+  it("`medication_draft` 프레임은 일정 초안과 다른 칸에 이어 붙는다 (#563 리뷰 · 이름 하나)", () => {
     const state = fold([
-      { type: "medication_drafts", data: { drafts: [draft] } },
+      { type: "medication_draft", data: { drafts: [draft] } },
       { type: "medication_draft", data: { drafts: [{ ...draft, draft_id: "d2" }] } },
       DONE,
     ]);
