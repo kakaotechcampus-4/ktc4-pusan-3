@@ -10,10 +10,14 @@
 증상 · 질환 사전은 `hazard_terms.yaml` 의 terms 와 같은 모양이고 매칭은
 `app/rules/term_match.py` 다. (질환 × 증상) 안내는 `medical_reviewed: true` 인 행만 로드한다 —
 검수 전 행도 모양은 검사하고 결과에서 뺀다.
+
+3개월 미만 발열 응급 기준(`infant_fever.yaml`)은 검수 전이어도 로드한다 — 끄면 응급 안내가 사라진다.
+검수 상태는 결과에 같이 싣는다(`InfantFeverRule.medical_reviewed`).
 """
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from functools import cache
 from typing import Any, Literal
 
@@ -283,3 +287,68 @@ def parse_condition_guidance(data: Mapping[str, Any]) -> Mapping[tuple[str, str]
                 license=raw["license"],
             )
     return rows
+
+
+_INFANT_FEVER_FILE = "infant_fever.yaml"
+_INFANT_FEVER_KEYS = frozenset(
+    {
+        "below_month",
+        "fever_temperature",
+        "medical_reviewed",
+        "reviewed_by",
+        "reviewed_at",
+        "sources",
+    }
+)
+_SOURCE_KEYS = frozenset({"title", "publisher", "url", "note"})
+_SOURCE_REQUIRED = ("title", "publisher", "url")
+
+
+@dataclass(frozen=True)
+class InfantFeverRule:
+    """생후 `below_month` 개월 미만 + `fever_temperature` ℃ 이상(또는 fever 코드) → 응급 안내."""
+
+    below_month: int
+    fever_temperature: Decimal
+    medical_reviewed: bool  # 검수 전이어도 규칙은 켠다 — 상태를 알 수 있게 싣기만 한다
+
+
+@cache
+def infant_fever_rule() -> InfantFeverRule:
+    return parse_infant_fever_rule(load_reference(_INFANT_FEVER_FILE))
+
+
+def parse_infant_fever_rule(data: Mapping[str, Any]) -> InfantFeverRule:
+    """값이 빠지거나 엉뚱하면 `ValueError` — 기본값으로 채우면 응급 안내가 조용히 바뀐다."""
+    if extra := set(data) - _META_KEYS - _INFANT_FEVER_KEYS:
+        raise ValueError(f"{_INFANT_FEVER_FILE} 에 정해지지 않은 키가 있다: {sorted(extra)}")
+    month = data.get("below_month")
+    if isinstance(month, bool) or not isinstance(month, int) or not 1 <= month <= 12:
+        raise ValueError(f"{_INFANT_FEVER_FILE} 의 below_month 는 1~12 정수여야 한다: {month!r}")
+    try:
+        temperature: Decimal | None = Decimal(str(data.get("fever_temperature")))
+    except InvalidOperation:
+        temperature = None
+    if temperature is None or not temperature.is_finite() or not 37 <= temperature <= 40:
+        raise ValueError(
+            f"{_INFANT_FEVER_FILE} 의 fever_temperature 는 37.0~40.0 이어야 한다: "
+            f"{data.get('fever_temperature')!r}"
+        )
+    reviewed = data.get("medical_reviewed")
+    if not isinstance(reviewed, bool):
+        raise ValueError(f"{_INFANT_FEVER_FILE} 의 medical_reviewed 는 true · false 여야 한다")
+    if reviewed and not str(data.get("reviewed_by") or "").strip():
+        raise ValueError(f"{_INFANT_FEVER_FILE} 은 검수했다고 적었는데 reviewed_by 가 없다")
+    sources = data.get("sources") or []
+    if not sources:
+        raise ValueError(f"{_INFANT_FEVER_FILE} 에 출처(sources)가 없다")
+    for source in sources:
+        if extra := set(source) - _SOURCE_KEYS:
+            raise ValueError(
+                f"{_INFANT_FEVER_FILE} 출처에 정해지지 않은 칸이 있다: {sorted(extra)}"
+            )
+        if missing := [key for key in _SOURCE_REQUIRED if not str(source.get(key) or "").strip()]:
+            raise ValueError(f"{_INFANT_FEVER_FILE} 출처에 빈 칸이 있다: {missing}")
+    return InfantFeverRule(
+        below_month=month, fever_temperature=temperature, medical_reviewed=reviewed
+    )

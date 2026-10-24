@@ -125,7 +125,7 @@ def test_미구현_케이스에도_공통_조건을_건다():
 
 
 def test_아직_못_넣은_데이터는_참고로_남는다():
-    verdict = common(_ran(_result("unsupported"), world="C48-fever"))
+    verdict = common(_ran(_result("unsupported"), world="C48-nolocation"))
 
     assert verdict.notes
     assert not verdict.failures
@@ -290,10 +290,7 @@ async def test_schedule_케이스는_실제_run_으로_판정을_통과한다():
         verdict = common(ran).extend(case.judge(ran))
 
         assert verdict.failures == [], (case.case_id, verdict.failures)
-        if case.case_id in {"T34", "T35"}:
-            assert verdict.gaps, case.case_id  # 검진 맥락은 진료 준비 이슈 전까지 GAP
-        else:
-            assert verdict.gaps == [], (case.case_id, verdict.gaps)
+        assert verdict.gaps == [], (case.case_id, verdict.gaps)
 
 
 def test_모델을_부르지_않는_schedule_케이스는_열세_개_이상이다():
@@ -434,8 +431,15 @@ async def test_symptom_repeat_는_모델을_불렀으면_실패다():
     assert symptom_repeat(symptom="기침", condition="만성 면역력 저하증")(ran).failures
 
 
+def test_세계에_아직_없는_데이터는_처방전과_장소뿐이다():
+    # 체온 · 먹인 약 · 식사는 세계에 들어갔다 — 남은 pending 은 다른 이슈 몫이다
+    left = {name for name, spec in WORLDS.items() if spec.pending}
+
+    assert left == {"C48-draft", "C48-nolocation", "C48-apifail"}
+
+
 def test_hook_케이스는_전부_판정이_있다():
-    hook_cases = [c for c in CASES if c.label is None]
+    hook_cases = [c for c in CASES if c.label is None and not c.memory]
 
     assert [c.case_id for c in hook_cases] == [
         "T25",

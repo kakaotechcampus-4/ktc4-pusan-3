@@ -4,6 +4,7 @@ import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
+from decimal import Decimal
 from typing import Any
 from uuid import UUID
 from zoneinfo import ZoneInfo
@@ -11,9 +12,17 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from app.agents.common.datetime_rules import DateRange, build_observed_range
+from app.agents.health.hook import symptom_days
+from app.agents.health.store.ports import MealRecord
+from app.agents.health.tools.symptoms import group_symptom_episodes, symptom_codes_of
 from app.agents.memory.store import InMemoryStore, MemoryStore
 from app.agents.memory.store.ports import ObservationRow
-from app.agents.memory_bridge import StoreActivityMemory, StoreFoodMemory, StoreHealthMemory
+from app.agents.memory_bridge import (
+    StoreActivityMemory,
+    StoreFoodMemory,
+    StoreHealthMemory,
+    _uuid,
+)
 
 KST = ZoneInfo("Asia/Seoul")
 NOW = datetime(2026, 9, 9, 9, 0, tzinfo=KST)
@@ -241,3 +250,98 @@ async def test_Health_포트는_기간_기록과_관찰_시각을_넘긴다() ->
     assert (row.observed_from, row.observed_to) == (TODAY - timedelta(days=2), TODAY)
     assert row.observed_time == at
     assert (row.severity, row.action_taken) == ("mild", "물")
+
+
+async def test_health_리더가_체온과_식사를_읽는다() -> None:
+    store = InMemoryStore(now=NOW)
+    measured = datetime(2026, 9, 8, 23, 0, tzinfo=KST)
+    given_at = datetime(2026, 9, 8, 23, 30, tzinfo=KST)
+    fever = await _save(
+        store,
+        "health",
+        day=TODAY - timedelta(days=1),
+        symptom=["열나요"],
+        temperature=Decimal("38.5"),
+        measured_at=measured,
+        measure_site="ear",
+    )
+    await _save(
+        store,
+        "health",
+        day=TODAY - timedelta(days=1),
+        symptom=[],
+        medication_given="해열제",
+        observed_time=given_at,
+        linked_symptom_id=UUID(int=77),
+    )
+    await _save(store, "food", day=TODAY, subject="죽", amount="반 그릇")
+    await _save(store, "food", day=TODAY - timedelta(days=1), subject="바나나")
+    stand_alone = await _save(store, "food", day=TODAY, subject="사과")
+    await store.update_observation(
+        domain="food", observation_id=stand_alone.id, fields={"status": "stand_alone"}
+    )
+    gone = await _save(store, "food", day=TODAY, subject="치킨")
+    await store.update_observation(
+        domain="food", observation_id=gone.id, fields={"status": "inactive"}
+    )
+    await _save(store, "food", day=TODAY - timedelta(days=9), subject="국수")  # 구간 밖
+    await _save(store, "food", child_id=OTHER, subject="피자")  # 다른 아이
+    reader = StoreHealthMemory(store)
+
+    health = await reader.health_observations(
+        child_id=CHILD, date_from=TODAY - timedelta(days=6), date_to=TODAY
+    )
+    meals = await reader.meals(child_id=CHILD, date_from=TODAY - timedelta(days=6), date_to=TODAY)
+
+    by_id = {row.id: row for row in health}
+    symptom_row = by_id[_uuid(fever.id)]
+    medicine_row = next(row for row in health if row.symptoms == ())
+    # 보호자가 말한 그대로 — Decimal · tz 있는 시각 모두 환산 없이 온다
+    assert symptom_row.temperature == Decimal("38.5")
+    assert isinstance(symptom_row.temperature, Decimal)
+    assert symptom_row.measured_at == measured
+    assert symptom_row.measure_site == "ear"
+    assert (symptom_row.medication_given, symptom_row.linked_symptom_id) == (None, None)
+    assert medicine_row.medication_given == "해열제"
+    assert medicine_row.observed_time == given_at
+    assert medicine_row.linked_symptom_id == UUID(int=77)
+    assert (medicine_row.temperature, medicine_row.measured_at) == (None, None)
+
+    assert sorted((m.observed_on, m.subject, m.amount_text) for m in meals) == [
+        (TODAY - timedelta(days=1), "바나나", None),
+        (TODAY, "사과", None),  # stand_alone 도 읽는다 — FOOD_STATUSES
+        (TODAY, "죽", "반 그릇"),
+    ]
+    again = await reader.meals(child_id=CHILD, date_from=TODAY - timedelta(days=6), date_to=TODAY)
+    assert {m.id for m in again} == {m.id for m in meals}  # 근거로 인용한 id 가 다음 조회와 같다
+    # 영양 숫자는 칸 자체가 없다
+    assert set(MealRecord.__dataclass_fields__) == {"id", "observed_on", "subject", "amount_text"}
+
+
+async def test_약_행은_반복_판정에_0건() -> None:
+    """약 행은 symptom 이 비어 있다 — 코드가 없어 반복 판정 · 에피소드에 세지 않는다."""
+    store = InMemoryStore(now=NOW)
+    for offset in (2, 1):
+        await _save(store, "health", day=TODAY - timedelta(days=offset), symptom=["열나요"])
+    for offset in (2, 1, 0):  # 약 행은 사흘 내리 있어도
+        await _save(
+            store,
+            "health",
+            day=TODAY - timedelta(days=offset),
+            symptom=[],
+            medication_given="해열제",
+        )
+    rows = await StoreHealthMemory(store).health_observations(
+        child_id=CHILD, date_from=TODAY - timedelta(days=6), date_to=TODAY
+    )
+    medicine = [row for row in rows if row.medication_given is not None]
+    assert len(medicine) == 3
+    assert all(symptom_codes_of(row.symptoms) == () for row in medicine)
+
+    days = symptom_days(rows, today=TODAY, timezone=KST)
+    assert {code: len(d) for code, d in days.items()} == {"fever": 2}  # 증상 행 둘만
+    [episode] = group_symptom_episodes(rows, timezone=KST)
+    assert (episode.code, episode.days, len(episode.observation_ids)) == ("fever", 2, 2)
+    # 약 행만 있으면 아무것도 세지 않는다
+    assert symptom_days(medicine, today=TODAY, timezone=KST) == {}
+    assert group_symptom_episodes(medicine, timezone=KST) == ()

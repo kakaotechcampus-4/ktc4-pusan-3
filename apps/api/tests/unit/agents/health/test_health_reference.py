@@ -5,6 +5,7 @@
 """
 
 import copy
+from decimal import Decimal
 
 import pytest
 
@@ -14,9 +15,11 @@ from app.agents.health.reference import (
     checkup_table,
     condition_codes,
     condition_guidance,
+    infant_fever_rule,
     parse_checkup_table,
     parse_code_book,
     parse_condition_guidance,
+    parse_infant_fever_rule,
     parse_vaccine_table,
     symptom_codes,
     vaccine_table,
@@ -396,3 +399,54 @@ def test_운영_안내_문구는_출처_원문의_말이다():
     assert "지속적인 천식치료로 폐기능을 정상으로 유지하는 것이 좋다" in (
         rows[("asthma", "cough")].text
     )
+
+
+# ── 3개월 미만 발열 응급 기준 (#551) ───────────────────────────────
+# 값과 출처 후보 · 검수 상태는 infant_fever.yaml 한 곳이다. 검수 전이어도 규칙은 켠다 — 끄면
+# 3개월 미만 발열에 응급 안내가 사라진다. 그래서 값이 비거나 엉뚱하면 기본값 대신 실패한다
+
+
+def _infant(**over) -> dict:
+    data = {
+        "below_month": 3,
+        "fever_temperature": 38.0,
+        "medical_reviewed": False,
+        "reviewed_by": None,
+        "reviewed_at": None,
+        "sources": [{"title": "테스트 출처", "publisher": "테스트 기관", "url": "https://x.org"}],
+    }
+    return {**data, **over}
+
+
+def test_응급_기준은_검수_전이어도_로드한다():
+    rule = infant_fever_rule()
+
+    assert (rule.below_month, rule.fever_temperature) == (3, Decimal("38.0"))
+    assert rule.medical_reviewed is False
+
+
+def test_응급_기준의_검수_상태를_그대로_싣는다():
+    rule = parse_infant_fever_rule(_infant(medical_reviewed=True, reviewed_by="reviewer"))
+
+    assert rule.medical_reviewed is True
+
+
+@pytest.mark.parametrize(
+    ("over", "message"),
+    [
+        ({"below_month": None}, "below_month"),
+        ({"below_month": 0}, "below_month"),
+        ({"below_month": True}, "below_month"),
+        ({"fever_temperature": None}, "fever_temperature"),
+        ({"fever_temperature": 41.5}, "fever_temperature"),
+        ({"medical_reviewed": "no"}, "medical_reviewed"),
+        ({"medical_reviewed": True}, "reviewed_by"),
+        ({"sources": []}, "출처"),
+        ({"sources": [{"title": "x", "publisher": "", "url": "https://x.org"}]}, "빈 칸"),
+        ({"sources": [{"title": "x", "publisher": "y", "url": "u", "memo": "z"}]}, "정해지지"),
+        ({"threshold_by_site": {}}, "정해지지"),
+    ],
+)
+def test_응급_기준이_엉뚱하면_실패한다(over, message):
+    with pytest.raises(ValueError, match=message):
+        parse_infant_fever_rule(_infant(**over))

@@ -19,6 +19,7 @@ from app.agents.health.store.ports import (
     HealthObservation,
     HealthPorts,
     HealthSafetyEntry,
+    MealRecord,
     MedicationCourse,
     MedicationDose,
     SafetyLookupError,
@@ -59,8 +60,11 @@ class InMemoryHealthSafety:
 
 
 class InMemoryHealthMemory:
-    def __init__(self, observations: Sequence[HealthObservation] = ()) -> None:
+    def __init__(
+        self, observations: Sequence[HealthObservation] = (), meals: Sequence[MealRecord] = ()
+    ) -> None:
         self._observations = list(observations)
+        self._meals = list(meals)
         self.calls = 0  # 동의가 없으면 아예 읽지 않는지 테스트가 본다
         self.requested: list[tuple[date, date]] = []  # 요청한 구간
 
@@ -75,6 +79,10 @@ class InMemoryHealthMemory:
             for row in self._observations
             if row.observed_to >= date_from and row.observed_from <= date_to
         ]
+
+    async def meals(self, *, child_id: UUID, date_from: date, date_to: date) -> list[MealRecord]:
+        self.calls += 1
+        return [row for row in self._meals if date_from <= row.observed_on <= date_to]
 
 
 class InMemoryChildBasic:
@@ -135,7 +143,7 @@ class InMemoryMedicationStore:
             return "missing"
         if course.status == "stopped":
             return "already"
-        self._courses[schedule_id] = replace(course, status="stopped")
+        self._courses[schedule_id] = replace(course, status="stopped", stopped_at=stopped_at)
         self.stopped[schedule_id] = stopped_at
         self.writes.append((schedule_id, stopped_at))
         return "stopped"
@@ -156,6 +164,7 @@ def course_with_doses(
     checked: Collection[tuple[date, time]] | Mapping[tuple[date, time], datetime] = (),
     course_id: UUID | None = None,
     symptom_codes: Sequence[str] = (),
+    stopped_at: datetime | None = None,
 ) -> tuple[MedicationCourse, list[MedicationDose]]:
     """코스와 그 회차 행. 기간 × 패턴만큼 행을 만든다 — 백엔드 제출이 만들 모양과 같다.
 
@@ -175,6 +184,7 @@ def course_with_doses(
         note=note,
         pattern=tuple(pattern),
         symptom_codes=tuple(symptom_codes),
+        stopped_at=stopped_at,
     )
     if isinstance(checked, Mapping):
         checked_at = dict(checked)

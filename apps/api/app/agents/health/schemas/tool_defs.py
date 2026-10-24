@@ -12,8 +12,26 @@ from app.agents.health.schemas.medication import (
     StopMedicationArgs,
     UpdateMedicationArgs,
 )
+from app.agents.health.schemas.records import ComposeTimelineArgs, SearchHealthArgs
 
 TOOL_DEFINITIONS: list[ToolDefinition] = [
+    ToolDefinition(
+        name="search_health_observations",
+        description=(
+            "진료 준비를 정리할 때 먼저 한 번 부른다. 보호자가 말한 기간(없으면 14d)과, 특정 "
+            "증상만 원하면 그 증상 말을 넣는다. 그 범위의 증상 · 먹인 약 기록을 정리에 담고 "
+            "줄 수만 돌려준다."
+        ),
+        args=SearchHealthArgs,
+    ),
+    ToolDefinition(
+        name="compose_symptom_timeline",
+        description=(
+            "진료 준비의 마지막에 한 번 부른다. 인자가 없다. 조회한 증상 · 먹인 약과 "
+            "최근 3일 식사 · 복약 체크 · 알레르기 · 만성질환을 코드가 날짜순으로 정리한다."
+        ),
+        args=ComposeTimelineArgs,
+    ),
     ToolDefinition(
         name="search_medication_schedules",
         description=(

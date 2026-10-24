@@ -23,12 +23,7 @@ from tests.unit.agents.health.support import context, gate
 
 # Health_Tool_명세.md §1 의 "모델 tool" · "코드 tool" 칸
 SPEC_MODEL = {
-    "visit_summary": {
-        "search_health_observations",
-        "search_recent_meals",
-        "search_medication_schedules",
-        "compose_symptom_timeline",
-    },
+    "visit_summary": {"search_health_observations", "compose_symptom_timeline"},
     "schedule_check": set(),
     "place_lookup": set(),
     "medication": {
@@ -41,6 +36,8 @@ SPEC_MODEL = {
 }
 SPEC_CODE = {
     "visit_summary": {
+        "collect_meals",
+        "collect_medication_checks",
         "load_health_safety",
         "normalize_symptom_term",
         "group_symptom_episodes",
@@ -109,7 +106,12 @@ def test_안전_조회_실패로는_닫지_않는다(label):
 
 
 @pytest.mark.parametrize(
-    "label", [label for label in HealthTaskType if label is not HealthTaskType.MEDICATION]
+    "label",
+    [
+        label
+        for label in HealthTaskType
+        if label not in (HealthTaskType.MEDICATION, HealthTaskType.VISIT_SUMMARY)
+    ],
 )
 def test_열리는_tool_은_구현된_것뿐이다(label):
     # 구현된 라벨이어도 핸들러가 있는 tool 만 열린다 — schedule_check 는 모델 tool 이 없다
@@ -125,11 +127,12 @@ def test_복약_라벨은_핸들러가_있는_모델_tool_만_이름순으로_�
     )
 
 
-def test_구현된_라벨은_schedule_check_medication_care_handoff_이다():
+def test_구현된_라벨은_schedule_check_medication_care_handoff_visit_summary_이다():
     assert IMPLEMENTED_TASKS == {
         HealthTaskType.SCHEDULE_CHECK,
         HealthTaskType.MEDICATION,
         HealthTaskType.CARE_HANDOFF,
+        HealthTaskType.VISIT_SUMMARY,
     }
 
 
@@ -138,7 +141,27 @@ def test_정의와_핸들러가_같다():
 
 
 def test_스펙은_핸들러가_있는_tool_만_싣는다():
-    assert specs_for(["compose_symptom_timeline", "search_recent_meals"]) == []
+    # build_fever_timeline 은 코드 tool 이라 정의 · 핸들러가 없다
+    specs = specs_for(["build_fever_timeline", "search_health_observations"])
+
+    assert [spec["function"]["name"] for spec in specs] == ["search_health_observations"]
+
+
+def test_진료_준비_식사_복약은_모델_tool_이_아니다():
+    # 모델에게 고르게 했더니 라이브 eval 에서 건너뛰었다 — 코드가 늘 읽는다 (#551 리뷰)
+    for name in ("search_recent_meals", "search_medication_checks"):
+        assert name not in MODEL_TOOLS[HealthTaskType.VISIT_SUMMARY]
+        assert name not in TOOL_HANDLERS
+    assert "search_health_observations" in TOOL_HANDLERS
+
+
+def test_진료_준비_라벨은_증상_조회와_출력_하나만_이름순으로_연다():
+    # 코드 tool(build_fever_timeline · collect_* 등)은 모델에 열리지 않는다. 약 이름 · 용량을
+    # 모델에게 보여 주는 search_medication_schedules 도 열지 않는다 (#551)
+    assert tools_for(HealthTaskType.VISIT_SUMMARY, gate(48)) == (
+        "compose_symptom_timeline",
+        "search_health_observations",
+    )
 
 
 async def test_없는_tool_은_거절():

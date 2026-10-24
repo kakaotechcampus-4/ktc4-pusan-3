@@ -50,6 +50,7 @@ from app.agents.food.store import (
     in_memory_ports,
 )
 from app.agents.memory.agent import MAX_QUESTIONS, MAX_STEPS
+from app.agents.memory.agent import run as run_memory
 from app.agents.memory.context import AgentContext
 from app.agents.memory.schemas.task import PendingMemoryContext, WorkType
 from app.agents.memory.store import InMemoryStore
@@ -2828,6 +2829,31 @@ async def test_leftover_여도_질문에_대한_답은_저장하고_done_으로_
     assert result.failed is None
     assert _order(events)[-1] == "Done"
     assert not _of(events, Failed)
+
+
+async def test_증상과_먹인_약을_한_번에_저장하면_Saved_에_두_행이_다_실린다(
+    memory_context: AgentContext,
+) -> None:
+    # #551 — tool 호출 한 번이 두 행을 만든다. id 하나만 실으면 04 화면에서 약 행이 빠진다
+    fever_and_medicine = {
+        "raw_text": "열이 끓길래 바로 해열제 먹였어",
+        "observed_on": "오늘",
+        "symptom": ["발열"],
+        "medication_given": "해열제",
+    }
+    memory = await run_memory(
+        fever_and_medicine["raw_text"],
+        memory_context,
+        client=FakeLLM(
+            _tools(_call("m1", "create_observation_health", fever_and_medicine)),
+            _reply("기록했어요."),
+        ),
+    )
+
+    rows = await memory_context.store.query_observations(domain="health", child_id=CHILD)
+    refs = pipeline._saved_refs(memory)
+    assert [(ref.kind, ref.id) for ref in refs] == [("observation_health", row.id) for row in rows]
+    assert len(refs) == 2
 
 
 async def test_이어받기는_앞_run_에서_저장한_관찰을_다시_저장하지_않는다(

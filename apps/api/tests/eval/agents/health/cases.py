@@ -5,16 +5,20 @@
 `test_health_eval_cases.py` 가 깨진다.
 
 판정은 완성된 경로만 쓴다 — 동의 철회(`consent_closed`) · `schedule_check` · 증상 반복 hook ·
-`medication` · `care_handoff`. 나머지는 `pending` 이라 라벨이 구현되기 전에는 GAP, 구현된 뒤에는
-판정을 쓰라고 실패한다.
+`medication` · `care_handoff` · `visit_summary`. 나머지는 `pending` 이라 라벨이 구현되기 전에는 GAP,
+구현된 뒤에는 판정을 쓰라고 실패한다.
 
 되묻고 멈추는 케이스는 `followups` 로 다음 턴 입력을 이어 돈다 — 앞 턴 결과의 `pending` 을 다음 턴
 컨텍스트에 넣고 now 를 2분 뒤로 둔다(연결 이슈의 `reply_to` 를 흉내 낸다). 이어받는 턴은 모델 0회다.
-검진 맥락 요약(T34 · T35)은 `schedule_check` 안의 `unsupported` 라 `pending(partial=True)` 다.
+검진 맥락 요약(T34 · T35)은 `schedule_check` 의 context 분기라 `checkup_context` 로 판정한다.
+
+`memory=True` 케이스는 Health 가 아니라 **Memory 저장**을 본다(T21 먹인 약 행) — 먹인 약 칸은 이
+이슈가 Memory 에 만든 것이라 같은 표에 둔다. 문서에 없는 변형 입력은 `text` 에 둔다.
 """
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import time
 from pathlib import Path
 
 from app.agents.health.schemas.task import HealthTaskType
@@ -23,9 +27,11 @@ from tests.eval.agents.health.judges import (
     Ran,
     Verdict,
     check_on_screen,
+    checkup_context,
     consent_closed,
     dose_status,
     emergency_card,
+    fever_timeline,
     handoff_notice,
     med_create,
     med_no_advice,
@@ -33,10 +39,13 @@ from tests.eval.agents.health.judges import (
     med_stop_which,
     med_timing,
     med_update,
+    memory_given,
     no_active_med,
     pending,
     schedule_check,
     symptom_repeat,
+    visit_no_record,
+    visit_timeline,
 )
 
 HEALTH_DOCS = Path(__file__).resolve().parents[6] / "docs" / "agents" / "health"
@@ -49,15 +58,31 @@ H = HealthTaskType.CARE_HANDOFF
 
 
 @dataclass(frozen=True)
+class MemorySeed:
+    """Memory 저장 케이스가 돌기 전에 저장소에 넣어 두는 건강 기록 한 건 (오늘 · 지어낸 말)."""
+
+    raw_text: str
+    symptom: tuple[str, ...]
+
+
+# T21-memory 앞에 둔 열 기록 — 따로 말한 "해열제 먹였어" 가 이 행에 이어지면 안 된다. 빈 저장소면
+# 이을 대상이 없어 "따로 말한 약은 연결 안 됨" 이 공허하게 통과한다
+PRIOR_FEVER = MemorySeed(raw_text="새벽에 열이 났어", symptom=("발열",))
+
+
+@dataclass(frozen=True)
 class Case:
     case_id: str  # "T13" · "T24-noconsent"
     input_id: str  # "T13"
-    label: HealthTaskType | None  # None = hook 케이스
+    label: HealthTaskType | None  # None = hook 케이스 · Memory 저장 케이스
     world: str
     expect: str  # test_expected_health.md 의 "기대" 한 줄
     judge: Callable[[Ran], Verdict]
     night: bool = False
     followups: tuple[str, ...] = ()  # 되묻기에 답하는 다음 턴 입력 — 앞 턴의 pending 을 이어받는다
+    memory: bool = False  # Health 가 아니라 Memory 저장을 돌린다 (T21 먹인 약)
+    text: str | None = None  # 문서에 없는 변형 입력. None 이면 문서의 [Txx] 입력
+    memory_seed: tuple[MemorySeed, ...] = ()  # Memory 저장 케이스가 돌기 전에 저장소에 둔 기록
 
 
 def doc_inputs() -> dict[str, str]:
@@ -112,6 +137,28 @@ def _case(
         judge=judge or pending(label.value if label else "hook"),
         night=night,
         followups=followups,
+    )
+
+
+def _memory(
+    case_id: str,
+    expect: str,
+    judge: Callable[[Ran], Verdict],
+    *,
+    text: str | None = None,
+    seed: tuple[MemorySeed, ...] = (),
+) -> Case:
+    """Memory 저장 케이스 — 해열제는 C48 에 등록되지 않았다(항생제만)."""
+    return Case(
+        case_id=case_id,
+        input_id=case_id.split("-")[0],
+        label=None,
+        world="C48",
+        expect=expect,
+        judge=judge,
+        memory=True,
+        text=text,
+        memory_seed=seed,
     )
 
 
@@ -248,12 +295,30 @@ CASES: list[Case] = [
         "용량 판단 없음 · 초안 없음 · 쓰기 0 · med.no_change 안내로 끝 (상담 안내는 Supervisor 몫)",
         judge=med_no_advice(),
     ),
+    # 복약 라벨로 오면 지금은 약 이름을 보지 않고 체크 안내다(#544). 등록 여부로 Memory 와
+    # 가르는 것은 연결 이슈 몫이라 이 판정은 그대로 둔다 — 갈림을 판정하지 않는다
     _case(
         "T21",
         M,
         "C48",
-        "해열제가 등록 복약이면 쓰기 0 · 복약 화면 체크 안내 (아니면 관찰 — Memory)",
+        "복약 라벨로 오면 쓰기 0 · 모델 0회 · dose.check_on_screen "
+        "(등록 여부로 Memory 와 가르는 것은 연결 이슈)",
         judge=check_on_screen(),
+    ),
+    _memory(
+        "T21-memory",
+        "Memory — 등록 안 된 해열제: observation_health 약 행 1건(medication_given='해열제' · "
+        "symptom 빈 배열 · 먹인 시각 오늘 03:00 · 연결 없음) · 증상 행 0건 "
+        "(앞서 저장된 열 기록이 있어도 잇지 않는다)",
+        memory_given(linked=False, given_at=time(3, 0)),
+        seed=(PRIOR_FEVER,),
+    ),
+    _memory(
+        "T21-linked",
+        "Memory — 증상 행 1건(발열) + 약 행 1건(medication_given='해열제') · "
+        "약 행의 linked_symptom_id = 그 증상 행",
+        memory_given(linked=True),
+        text="열이 끓길래 바로 해열제 먹였어",
     ),
     _closed("T01-noconsent", M, "초안 0장"),
     # ── 전달 서류 ──
@@ -285,17 +350,50 @@ CASES: list[Case] = [
         "T22",
         V,
         "C48-fever",
-        "fever_timeline — 최고·최저 체온과 시각 · 마지막 복약(원문) · 등록 일정상 다음 예정",
+        "fever_timeline · 모델 0회 — 48시간 체온 4줄(시간순 · 부위) · 먹인 약은 같은 말의 체온 줄 "
+        "바로 아래 · 최고·최저와 시각 · 코스마다 마지막으로 체크된 회차(예정 시각) · 등록 회차상 "
+        "다음 예정 · 체크 안 된 회차 · 계열 · 경과 해석 0건",
+        judge=fever_timeline(),
     ),
-    _case("T22-notemp", V, "C48", "fever.no_record"),
-    _case("T22-C2", V, "C2", "응급 안내 먼저 (3개월 미만 발열)"),
-    _case("T23", V, "C48", '에피소드 단위 요약 ("9/18–9/20 발열 3일")'),
-    _case("T24", V, "C48", "symptom_timeline · 줄마다 ref · 증상 14일 · 식사 3일 · 복약 원문"),
+    _case("T22-notemp", V, "C48", "fever.no_record 한 줄 · 모델 0회", judge=fever_timeline()),
+    _case(
+        "T22-C2",
+        V,
+        "C2",
+        "emergency 가 맨 앞 (3개월 미만 발열) → 이어서 열 타임라인 · 모델 0회",
+        judge=fever_timeline(emergency_first=True),
+    ),
+    _case(
+        "T23",
+        V,
+        "C48",
+        "symptom_timeline · 모델 1회 · 에피소드 단위 요약 · 해석 0건",
+        judge=visit_timeline(),
+    ),
+    _case(
+        "T24",
+        V,
+        "C48",
+        "symptom_timeline · 모델 1회 · 모델은 기간 · 증상만 정하고 줄은 코드가 다 넣는다 · "
+        "모델 입력에 원문 · 약 이름 · 용량 0건 · 근거가 전부 조회한 기록 · 식사 3일 · 복약은 "
+        "등록 원문 + 날짜별 체크 n/m회 · 해석 · '안 먹였' · 비율 0건 · 알레르기 줄은 코드",
+        judge=visit_timeline(),
+    ),
     _closed("T24-noconsent", V),
     _case(
-        "T24-safetyfail", V, "C48-safetyfail", "visit_summary는 진행 + safety.unavailable 경고 줄"
+        "T24-safetyfail",
+        V,
+        "C48-safetyfail",
+        "visit_summary는 진행 + 맨 위 safety.unavailable 경고 줄 · 알레르기 줄 없음",
+        judge=visit_timeline(),
     ),
-    _case("T24-norecord", V, "C48-norecord", "visit.no_record · 모델 호출 안 함"),
+    _case(
+        "T24-norecord",
+        V,
+        "C48-norecord",
+        "visit.no_record(30일 · 복약 코스 없음) · 모델 호출 안 함",
+        judge=visit_no_record(),
+    ),
     # ── hook — `check_symptom_repetition` 을 직접 부른다 (pipeline 연결은 다른 이슈) ──
     _case(
         "T25",
@@ -390,14 +488,14 @@ CASES: list[Case] = [
         S,
         "C48",
         "checkup_context · 식사 경향·복약·최근 증상·알레르기·만성질환 · 고정 footer",
-        judge=pending("검진 맥락 요약", partial=True),
+        judge=checkup_context(),
     ),
     _case(
         "T35",
         S,
         "C48",
         "대필 거절 + 요약 제공",
-        judge=pending("검진 맥락 요약", partial=True),
+        judge=checkup_context(ghostwrite=True),
     ),
     # ── 병원 찾기 ──
     _case("T41", P, "C48", "평일 주간 → 소아청소년과 거리순 ≤5"),

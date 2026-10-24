@@ -27,7 +27,7 @@ from uuid import NAMESPACE_URL, UUID, uuid5
 from app.agents.activity.store.ports import ActivityObservation
 from app.agents.common.evidence import AffinityRow
 from app.agents.food.store.ports import FoodObservation
-from app.agents.health.store.ports import HealthObservation
+from app.agents.health.store.ports import HealthObservation, MealRecord
 from app.agents.memory.store.ports import MemoryStore, ObservationRow
 
 # 검색에 남는 status. stand_alone 은 Correction once_only("이번만 그랬어요") 라
@@ -68,6 +68,13 @@ def _uuid(row_id: str) -> UUID:
         return UUID(row_id)
     except ValueError:
         return uuid5(NAMESPACE_URL, f"inmemory:{row_id}")
+
+
+def _optional_uuid(value: UUID | str | None) -> UUID | None:
+    """DB store 는 UUID, InMemory 는 tool 이 넘긴 문자열 id 일 수 있다."""
+    if value is None:
+        return None
+    return value if isinstance(value, UUID) else _uuid(value)
 
 
 async def _rows(
@@ -178,6 +185,31 @@ class StoreHealthMemory(_StoreReader):
                     symptoms=tuple(row.fields.get("symptom") or ()),
                     severity=row.fields.get("severity"),
                     action_taken=row.fields.get("action_taken"),
+                    temperature=row.fields.get("temperature"),
+                    measured_at=row.fields.get("measured_at"),
+                    measure_site=row.fields.get("measure_site"),
+                    medication_given=row.fields.get("medication_given"),
+                    linked_symptom_id=_optional_uuid(row.fields.get("linked_symptom_id")),
                 )
             )
         return found
+
+    async def meals(self, *, child_id: UUID, date_from: date, date_to: date) -> list[MealRecord]:
+        """최근 식사. Food 와 같은 상태(`FOOD_STATUSES`)만 읽는다 — 영양 숫자는 없다."""
+        rows = await _rows(
+            self._open,
+            "food",
+            child_id=child_id,
+            date_from=date_from,
+            date_to=date_to,
+            statuses=FOOD_STATUSES,
+        )
+        return [
+            MealRecord(
+                id=_uuid(row.id),
+                observed_on=row.observed_on,
+                subject=row.fields["subject"],
+                amount_text=row.fields.get("amount"),
+            )
+            for row in rows
+        ]

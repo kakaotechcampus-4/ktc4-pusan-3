@@ -246,7 +246,8 @@ DB 권한도 같이 간다 — Agent role 에 `health_safety` write 는 계속 �
 
 | tool | 방향 | 비고 |
 | --- | --- | --- |
-| `search_medication_schedules` | 읽기 | `status='active'` 기본. 코스 + dose 를 함께 돌려준다 |
+| `search_medication_schedules` | 읽기 | `status='active'` 기본. 코스 + dose 를 함께 돌려준다. `medication` · `visit_summary` 라벨이 연다 |
+| `search_medication_checks` | 읽기 | `visit_summary` 만 연다. 끝났거나 멈춘 코스도 기간이 겹치면 포함해 날짜 · 코스별 체크 수(`checked`/`planned`)를 돌려준다 |
 | `create_medication_schedule` | 초안 | DB 를 건드리지 않고 **초안 payload** 를 만든다. `notice_times`(실제 알림 시각) 필수 |
 | `update_medication_schedule` | 초안 | 기간·용량·시점 변경. 기존 코스를 건드리지 않고 `op="update"` 초안을 만든다. 바뀐 `notice_times` 필수 |
 | `stop_medication_schedule` | 쓰기 | `status='stopped'` (soft delete). dose·복용 기록 보존 |
