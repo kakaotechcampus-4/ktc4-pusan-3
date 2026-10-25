@@ -312,7 +312,7 @@ components:
 
 ## Typography
 
-**Body Font:** 학교안심 날개 R (폴백 Pretendard Variable → system-ui) · 자체 호스팅 92개 동적 서브셋 · SIL OFL 1.1 · 원본에 비어 있던 한글은 자모 조합으로 채우고, 판정에서 떨어진 글자는 Pretendard 로 보낸다
+**Body Font:** 학교안심 날개 R (폴백 Pretendard Variable → system-ui) · 자체 호스팅 92개 동적 서브셋 · SIL OFL 1.1 · 원본에 비어 있던 한글은 자모 조합으로 채우고, 판정에서 떨어진 글자는 Pretendard 로 보낸다 · 어느 화면이든 받는 서브셋 8개는 HTML 을 읽자마자 미리 받는다 (늦게 붙으면 줄바꿈이 바뀌어 화면이 밀린다)
 **Document Font:** Pretendard Variable (`font-doc`) — 이용약관 · 개인정보 처리방침 · 동의 전문 전용
 **Display Font:** 별도로 두지 않는다. 손글씨가 그 자리를 겸한다
 
