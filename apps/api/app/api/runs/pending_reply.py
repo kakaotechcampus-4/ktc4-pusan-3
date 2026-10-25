@@ -83,16 +83,6 @@ def get(
     return entry.context
 
 
-def consume(
-    *, run_id: str, parent_id: uuid.UUID, child_id: uuid.UUID, now: float | None = None
-) -> PendingMemoryContext | None:
-    """한 번만 쓴다. 같은 질문에 두 번 답하면 관찰이 두 행이 된다."""
-    context = get(run_id=run_id, parent_id=parent_id, child_id=child_id, now=now)
-    if context is not None:
-        del _pending[run_id]
-    return context
-
-
 def claim(
     *, run_id: str, parent_id: uuid.UUID, child_id: uuid.UUID, now: float | None = None
 ) -> PendingMemoryContext | None:
