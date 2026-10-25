@@ -403,7 +403,11 @@ function AffinityDetail({ affinity }: { affinity: Affinity }) {
 function MetaRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex items-start gap-3">
-      <dt className="text-label text-ink-subtle w-20 shrink-0">{label}</dt>
+      {/* 라벨의 줄 높이를 값(`text-body-sm`)의 줄 높이에 맞춘다. 글자가 작은 라벨이 위로 뜨지 않고,
+          값이 여러 줄이어도 라벨은 첫 줄에 붙는다 (`items-center` 면 가운데로 내려간다). */}
+      <dt className="text-label text-ink-subtle w-20 shrink-0 leading-[calc(var(--text-body-sm)*var(--text-body-sm--line-height))]">
+        {label}
+      </dt>
       <dd className="text-body-sm text-ink flex min-w-0 flex-1 items-center">{children}</dd>
     </div>
   );
