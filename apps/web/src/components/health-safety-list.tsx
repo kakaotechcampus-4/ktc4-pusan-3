@@ -20,6 +20,7 @@ import {
   SEVERITY_LABEL,
   isSeverityFor,
   reactionsProblem,
+  severityFieldHint,
   severityFieldLabel,
   severityOptions,
   splitReactions,
@@ -482,6 +483,7 @@ export function HealthSafetySheet({
           <>
             <Select
               label="종류"
+              shape="field"
               value={type}
               options={TYPE_OPTIONS}
               onChange={(next) => {
@@ -509,6 +511,8 @@ export function HealthSafetySheet({
             심각도는 추측하면 안 되는 값이다 (NF-03). 선택지는 종류를 따라간다 (`lib/health-safety.ts`). */}
         <Select
           label={severityFieldLabel(type)}
+          shape="field"
+          hint={severityFieldHint(type)}
           value={severity}
           options={severityOptions(type)}
           onChange={setSeverity}

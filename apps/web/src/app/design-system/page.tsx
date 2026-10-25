@@ -51,6 +51,7 @@ import {
   type EventDraft,
   type EventDraftFields,
 } from "@/lib/api/types";
+import { severityFieldHint, severityOptions } from "@/lib/health-safety";
 import { contrastRatio, meetsAA, parseColor } from "./contrast";
 import { SettingsGroup, SettingsInfoRow, SettingsLinkRow } from "@/components/settings-row";
 
@@ -516,6 +517,7 @@ function ComponentSection() {
   const [dsReportKind, setDsReportKind] = useState("ai_content");
   const [selectDomain, setSelectDomain] = useState("all");
   const [selectState, setSelectState] = useState("confirmed");
+  const [selectField, setSelectField] = useState("unknown");
   const [dsTime, setDsTime] = useState("");
   const [dsTimeRead, setDsTimeRead] = useState("10:23");
   const [chip, setChip] = useState("공룡");
@@ -788,6 +790,19 @@ function ComponentSection() {
           onChange={setSelectState}
         />
       </div>
+      <p className="text-caption text-ink-subtle">
+        폼 칸에 설 때는 shape=&quot;field&quot; 다 — input · date-field 와 같은 모양 · 높이 · 라벨
+        (label / ink-muted). 라벨만으로 모자라면 hint 가 라벨 아래 짧은 설명으로 선다 (좁은 폭에서는
+        줄이 바뀐다). 🚨 툴팁으로 대신하지 않는다 — 웹뷰에는 호버가 없다.
+      </p>
+      <Select
+        label="검사 등급"
+        shape="field"
+        hint={severityFieldHint("allergy")}
+        value={selectField}
+        options={severityOptions("allergy")}
+        onChange={setSelectField}
+      />
 
       <SubTitle>시각 고르기</SubTitle>
       <p className="text-caption text-ink-subtle">
