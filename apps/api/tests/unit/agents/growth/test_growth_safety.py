@@ -309,11 +309,24 @@ class TestDefaultRules:
         assert [e.label for e in rules.registered_names(text, entries)] == [label]
 
     @pytest.mark.parametrize(
-        ("label", "text"), [("사과", "친구에게 사과하는 말 연습"), ("쌀", "한글 미음 써 보기")]
+        ("label", "text"),
+        [
+            ("사과", "친구에게 사과하는 말 연습"),
+            ("쌀", "한글 미음 써 보기"),
+            ("은행", "은행놀이로 동전 세기"),
+        ],
     )
     def test_문장에서_다른_뜻인_별칭은_막지_않는다(self, rules, label, text):
-        """Activity 와 같은 문장용 guard · 제외 별칭이다 (#556 리뷰)."""
+        """Activity 와 같은 문장용 guard · 제외 별칭이다 (#556 리뷰). 글자 그대로 대조하는
+        이름("은행")도 같다."""
         assert rules.registered_names(text, [SafetyEntry("allergy", label, "active")]) == ()
+
+    @pytest.mark.parametrize(
+        ("label", "text"), [("대구", "대구로 전 부쳐 보기"), ("사과", "사과하고 배 깎아 보기")]
+    )
+    def test_조사가_붙은_꼴은_guard_로_덮지_않는다(self, rules, label, text):
+        """ "대구로" · "사과하고" 는 그 식품 문장에도 나온다 (#556 2차 리뷰)."""
+        assert rules.registered_names(text, [SafetyEntry("allergy", label, "active")])
 
     @pytest.mark.parametrize(
         ("label", "text"),

@@ -65,7 +65,8 @@ def safety_terms(entries: Sequence[SafetyEntry]) -> SafetyTerms:
     - 사전에 없는 조각(키위 · 꽃가루)은 그 글자 그대로 대조한다. 허용 목록의 한 글자(쌀)는 그
       guard 와 함께 대조한다 — "쌀쌀한 날씨" 는 걸리지 않는다.
     - 대조에 쓰는 이름은 `SINGLE_CHAR_NAMES` · `EXCLUDED_ALIASES` 로 거른다. 19종 밖 식품
-      (`allergy_book()` 의 별칭 표)은 `for_sentences` 로 문장용 guard 를 더한다. 문장에서 다른 뜻이
+      (`allergy_book()` 의 별칭 표)과 글자 그대로 대조하는 이름은 `for_sentences` 로 문장용 guard 를
+      더한다("은행" 으로 등록해도 "은행놀이" 는 통과). 문장에서 다른 뜻이
       더 흔한 별칭(오리)은 content 에서만 빼고 materials 에서는 막는다 — "오리처럼 걷기" 는
       통과하고, 준비물에 "오리" 를 적은 활동은 막힌다.
     """
@@ -83,21 +84,17 @@ def safety_terms(entries: Sequence[SafetyEntry]) -> SafetyTerms:
     for entry in entries:
         named, rest = read_label(entry.label, book)
         coded = [canonical.get(str(code)) for code in sorted(named.codes)]
-        literal = [
-            _for_activity(Term(key=word, aliases=(word,), guards=SINGLE_CHAR_NAMES.get(word, ())))
-            for word in rest
-        ]
+        # 별칭 표의 식품과 적은 글자 그대로의 이름 — 둘 다 문장용 guard 를 쓴다. "은행" 처럼
+        # 묶음 별칭에만 있는 이름은 글자 그대로 오는데, 빠지면 "은행놀이" 가 막힌다 (#556 2차 리뷰)
+        literal = tuple(Term(key=word, aliases=(word,)) for word in rest)
+        foods = (*named.terms, *literal)
         if entry.kind == "allergy":
             for term in literal:
-                add(registered, term)
+                add(registered, _for_activity(for_sentences(term)))
         if entry.status == "active":
-            for term in (*coded, *(_for_activity(for_sentences(t)) for t in named.terms), *literal):
+            for term in (*coded, *(_for_activity(for_sentences(t)) for t in foods)):
                 add(blocking, term)
-            for term in (
-                *coded,
-                *(_for_activity(for_sentences(t, items=True)) for t in named.terms),
-                *literal,
-            ):
+            for term in (*coded, *(_for_activity(for_sentences(t, items=True)) for t in foods)):
                 add(blocking_items, term)
     return SafetyTerms(
         blocking=tuple(blocking),

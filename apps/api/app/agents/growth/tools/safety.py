@@ -183,13 +183,14 @@ def load_safety_rules() -> SafetyRules:
         named, rest = read_label(entry.label, book)
         coded = tuple(kept[key] for code in sorted(named.codes) if (key := str(code)) in kept)
         literal = tuple(
-            Term(key=word, aliases=(word,), guards=SINGLE_CHAR_NAMES.get(word, ()))
+            for_sentences(Term(key=word, aliases=(word,)))
             for word in rest
             if len(word) >= 2 or word in SINGLE_CHAR_NAMES
         )
-        # 19종 밖 식품(별칭 표)은 문장용 guard 를 더하고 다른 뜻이 흔한 별칭(오리)을 뺀다
+        # 19종 밖 식품(별칭 표)과 글자 그대로의 이름은 문장용 guard 를 더하고 다른 뜻이 흔한
+        # 별칭(오리)을 뺀다 — "은행" 으로 등록해도 "은행놀이" 는 통과한다 (#556 2차 리뷰)
         sentence = tuple(for_sentences(term) for term in named.terms)
-        return (*coded, *_registered_aliases_only(sentence), *literal)
+        return (*coded, *_registered_aliases_only(sentence), *(t for t in literal if t.aliases))
 
     def scan_food(text: str) -> tuple[str, ...]:
         return match_terms(text, food_terms)
