@@ -924,6 +924,18 @@ export const confirmedEvent: CalendarEvent = {
   items: [
     { item_id: "i_1", item_name: "수건", is_prepared: false, prepared_at: null },
     { item_id: "i_2", item_name: "수영복", is_prepared: true, prepared_at: hoursFromNow(-20) },
+    // 준비물이 여럿이고 이름이 길 때의 배치를 보려고 둔다 (#568 — 두 열 그리드).
+    { item_id: "i_3", item_name: "물안경", is_prepared: false, prepared_at: null },
+    { item_id: "i_4", item_name: "여벌옷", is_prepared: false, prepared_at: null },
+    { item_id: "i_5", item_name: "모자", is_prepared: false, prepared_at: null },
+    { item_id: "i_6", item_name: "선크림", is_prepared: false, prepared_at: null },
+    { item_id: "i_7", item_name: "물통", is_prepared: false, prepared_at: null },
+    {
+      item_id: "i_8",
+      item_name: "갈아입을 속옷과 양말 한 켤레",
+      is_prepared: false,
+      prepared_at: null,
+    },
   ],
   reminders: [],
 };

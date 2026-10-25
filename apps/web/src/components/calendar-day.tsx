@@ -239,9 +239,10 @@ function EventCard({
       </p>
 
       {event.items.length > 0 ? (
-        <div className="mt-3">
+        // 준비물은 카드 폭이 넉넉하면 두 열로 선다 — 기준과 이유는 docs/web/screen-rules-v1.md §5.
+        <div className="@container mt-3">
           <p className="text-label text-ink-muted">준비물</p>
-          <ul className="mt-1">
+          <ul className="mt-1 grid grid-cols-1 gap-x-3 @2xs:grid-cols-2">
             {event.items.map((item) => (
               <li key={item.item_id}>
                 <PreparedCheckbox childId={childId} date={date} item={item} />
