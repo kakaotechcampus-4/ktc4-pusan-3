@@ -110,7 +110,7 @@ test("고치기 시트의 검사 등급에도 설명이 붙는다", async ({ pag
     .click();
   const sheet = page.getByRole("dialog", { name: "옮겨 적은 것 고치기" });
   await expect(sheet.getByRole("combobox", { name: "검사 등급" })).toHaveAccessibleDescription(
-    "검사지에 적힌 Class 를 그대로 골라요. 몇 등급이든 식단 추천에서는 똑같이 빼요.",
+    "알레르기 혈액검사 결과를 0부터 6까지 나눈 등급이에요. 검사를 안 했거나 잘 모르면 모르겠어요를 골라 주세요. 몇 등급이든 식단 추천에서는 똑같이 빼요.",
   );
 });
 

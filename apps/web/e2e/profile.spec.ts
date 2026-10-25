@@ -107,7 +107,8 @@ test.describe("알레르기 직접 등록은 승인 게이트 ㉡ (§2 안전)",
       page,
     }) => {
       const sheet = await openAddSheet(page);
-      const hint = "검사지에 적힌 Class 를 그대로 골라요. 몇 등급이든 식단 추천에서는 똑같이 빼요.";
+      const hint =
+        "알레르기 혈액검사 결과를 0부터 6까지 나눈 등급이에요. 검사를 안 했거나 잘 모르면 모르겠어요를 골라 주세요. 몇 등급이든 식단 추천에서는 똑같이 빼요.";
       await expect(sheet.getByText(hint)).toBeVisible();
       await expect(sheet.getByRole("combobox", { name: "검사 등급" })).toHaveAccessibleDescription(
         hint,
