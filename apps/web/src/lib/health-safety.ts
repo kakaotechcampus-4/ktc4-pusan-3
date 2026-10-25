@@ -42,17 +42,20 @@ export function severityFieldLabel(type: string): string {
 }
 
 /**
- * 심각도 칸 아래 설명. 알레르기만 있다 — `Class` 는 검사지를 처음 보면 무엇인지 모른다.
+ * 심각도 칸 아래 설명. 알레르기만 있다 — 검사지 없이 아는 대로 적는 보호자도 많아서, `Class` 가
+ * 무엇인지와 모르면 무엇을 고르는지를 말한다.
  *
  * 🚨 **Class 를 반응의 심한 정도처럼 말하지 않는다.** Class 는 혈액 속 특이 IgE 수치의 구간이라
  *    낮아도 심한 반응이 날 수 있다. "클수록 심해요" · "0~1 은 괜찮아요" 는 의료 판단으로 읽히고
  *    사실과도 다르다 (CLAUDE.md §1 안 만드는 것).
- * 🚨 **뒷문장은 Food Agent 의 규칙이다** — 등급과 상관없이(`class_0` 이어도) 거른다
+ * 🚨 **"모르겠어요" 를 고르라고 말한다.** 검사를 안 했으면 등급을 짐작해 고르지 않게 한다 —
+ *    심각도는 추측하면 안 되는 값이다 (위 머리말 · NF-03).
+ * 🚨 **마지막 문장은 Food Agent 의 규칙이다** — 등급과 상관없이(`class_0` 이어도) 거른다
  *    (`apps/api/app/agents/food/store/ports.py`). 그 규칙이 바뀌면 이 문장도 바꾼다.
  */
 export function severityFieldHint(type: string): string | undefined {
   return type === "allergy"
-    ? "검사지에 적힌 Class 를 그대로 골라요. 몇 등급이든 식단 추천에서는 똑같이 빼요."
+    ? "알레르기 혈액검사 결과를 0부터 6까지 나눈 등급이에요. 검사를 안 했거나 잘 모르면 모르겠어요를 골라 주세요. 몇 등급이든 식단 추천에서는 똑같이 빼요."
     : undefined;
 }
 
