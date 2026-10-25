@@ -8,8 +8,8 @@ import { useState } from "react";
 import { AuthGate } from "@/components/auth-gate";
 import { ScreenTransition } from "@/components/route-transition";
 import { ChildNav } from "@/components/child-nav";
-import { GrowthChart } from "@/components/growth-chart";
-import { GrowthLogList } from "@/components/growth-log-list";
+import { GrowthChart, GrowthChartSkeleton } from "@/components/growth-chart";
+import { GrowthLogList, GrowthLogListSkeleton } from "@/components/growth-log-list";
 import { GrowthSheet } from "@/components/growth-sheet";
 import { Button } from "@/components/ui/button";
 import { CardFailed } from "@/components/ui/card";
@@ -19,7 +19,6 @@ import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
 import { IconButton } from "@/components/ui/icon-button";
 import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
-import { SkeletonBlock } from "@/components/ui/skeleton";
 import { phaseOf, Swap } from "@/components/ui/swap";
 import { useChildId } from "@/hooks/use-child-id";
 import { useSheetTarget } from "@/hooks/use-sheet-target";
@@ -126,7 +125,18 @@ function GrowthDetailScreen() {
       {/* 스켈레톤 → 내용은 같은 자리의 교체다 (디자인 시스템 §8). */}
       <Swap id={phaseOf(growth)}>
         {growth.isPending ? (
-          <SkeletonBlock label="측정 기록을 불러오는 중" />
+          // 🚨 불러온 뒤와 같은 두 구역으로 기다린다 — 세 줄짜리 블록이 그래프 두 장으로 바뀌면
+          //    화면 전체가 한 번에 자라서, 받은 순간 무엇이 어디 있는지 다시 찾아야 한다.
+          <>
+            <section className="flex flex-col gap-3">
+              <h2 className="text-label text-brand">변화</h2>
+              <GrowthChartSkeleton />
+            </section>
+            <section className="flex flex-col gap-3">
+              <h2 className="text-label text-brand">기록</h2>
+              <GrowthLogListSkeleton rows={2} />
+            </section>
+          </>
         ) : growth.isError ? (
           /* 🚨 실패를 빨강으로 칠하지 않는다 (디자인 시스템 §3). */
           <CardFailed>

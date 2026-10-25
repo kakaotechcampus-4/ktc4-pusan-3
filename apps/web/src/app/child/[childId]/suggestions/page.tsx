@@ -11,14 +11,13 @@ import { ScreenTransition } from "@/components/route-transition";
 import { ConsentRequiredCard } from "@/components/consent-required-card";
 import { domainLabel } from "@/components/domain-chip";
 import { GeneralSuggestionCard } from "@/components/general-suggestion-card";
-import { SuggestionList } from "@/components/suggestion-list";
+import { SuggestionList, SuggestionListSkeleton } from "@/components/suggestion-list";
 import { Banner } from "@/components/ui/banner";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
 import { Chip, ChipRow } from "@/components/ui/chip";
 import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
-import { SkeletonBlock } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { phaseOf, Swap } from "@/components/ui/swap";
 import { useChildId } from "@/hooks/use-child-id";
@@ -271,6 +270,9 @@ function SuggestionsScreen() {
         {/* 🚨 looked_at 앞에 가운뎃점을 하나 더 붙이지 않는다 — 이미 점으로 나뉜 메타
             스트립이고, 띄운 가운뎃점은 줄당 하나까지다 (문서 §4). */}
         {/* 서버가 아직 무엇을 봤는지 내지 않으면 비어 온다 — 빈 줄을 그리지 않는다 (#249). */}
+        {/* ⚠️ 받는 동안 이 줄의 자리를 잡지 않는다. 지금 서버는 늘 빈 값을 보내서(`routers/suggestions.py`),
+            자리를 잡으면 받는 순간 회색 줄 하나가 생겼다 사라진다. 서버가 채우기 시작하면 그때 잡는다
+            (디자인 시스템 §7 "빈 상태 · 스켈레톤"). */}
         {data?.looked_at ? (
           <p className="text-body-sm text-ink-muted mt-2">{data.looked_at}</p>
         ) : null}
@@ -320,9 +322,7 @@ function SuggestionsScreen() {
             </p>
           </Card>
         ) : suggestions.isPending ? (
-          <Card>
-            <SkeletonBlock label="제안을 준비하는 중" />
-          </Card>
+          <SuggestionListSkeleton tabs={agents.length > 1} />
         ) : consentBlocked ? (
           <ConsentRequiredCard
             childId={childId}

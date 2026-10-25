@@ -30,7 +30,8 @@
 - 지금 있는 것 (`components/ui/`) — `Screen`(최대 폭·좌우 여백·**상하 여백+safe area**) · `PageTitle` ·
   `Button`(§7 6변형) · `TextInput` · `TextArea` · `DateField` · `TimeField` · `Checkbox` · `Chip`/`ChipRow` ·
   `EvidenceChip`/`CountChip`/`EvidenceRow` · `Card`(`accent`)/`CardFailed` · `Banner` · `Spinner` ·
-  `IconButton`/`IconButtonLink` · `IconTile` · `ProgressSteps` · `EmptyState` · `Skeleton` ·
+  `IconButton`/`IconButtonLink`/`IconButtonPlaceholder`(받는 동안 버튼 자리) · `IconTile` · `ProgressSteps` · `EmptyState`/`EmptyStateSkeleton` ·
+  `Skeleton`/`SkeletonText`/`SkeletonTile`/`SkeletonGroup`(🚨 받은 내용과 같은 상자 · 디자인 시스템 §7 "빈 상태 · 스켈레톤") ·
   `BottomSheet` · `Tabs`/`PanelTabs`(🚨 주소가 바뀌면 앞, **패널만 바뀌면** 뒤 · 디자인 시스템 §7) · `Toast` · `ButtonLink` ·
   `Select` · `ChoiceField`(반드시 하나 · 🚨 선택지가 둘이면 `Select` 를 쓰지 않는다 · 넷 이상이거나 문장이 길면 `direction="vertical"` · 디자인 시스템 §7) ·
   `PhotoCard`/`PhotoSlotButton` · `Swap`(같은 자리의 교체 페이드 · `phaseOf`) · `Named`(화면 전환의 이름 쌍)
@@ -47,6 +48,10 @@
   `GrowthChart` · `HealthSafetyList`/`HealthSafetySheet` · `SafetyScanReview`/`SafetyScanRowSheet` ·
   `PhotoReview`/`PhotoEntrySheet` · `PhotoSourceSheet`
   (시트 안의 사진 종류 줄 · 최근 사진 줄 · 촬영/앨범 줄은 그 파일의 내부 조각이다)
+- 받는 동안의 모양은 **그 컴포넌트 옆에 `…Skeleton` 으로** 둔다 — `SettingsRowSkeleton` · `ChildIdentityCardSkeleton` ·
+  `GrowthLatestCardSkeleton`/`GrowthLogListSkeleton` · `GrowthChartSkeleton` · `HealthSafetyListSkeleton` · `ObservationListSkeleton` ·
+  `AffinityListSkeleton` · `SuggestionFeedbackListSkeleton` · `SuggestionListSkeleton` · `CalendarDayPanelSkeleton` · `ConsentChecklistSkeleton`.
+  🚨 진짜 컴포넌트의 여백 · 줄을 바꾸면 옆의 스켈레톤도 같은 PR 에서 바꾼다 (`e2e/layout-shift.spec.ts` 는 아래가 통째로 밀리는 큰 어긋남만 잡는다 · 모양은 받는 중 화면을 직접 보고 맞춘다 · [`mock-and-tests-v1.md`](mock-and-tests-v1.md) §3-1)
 
 - 🚨 **화면 위 · 아래 고정 바는 `Screen` 의 `topBar` · `bottomBar` · `nav` 로 넘긴다.** `topBar` 는 위 safe area + 여백을 대신 받는다 (04 대화의 머리 — 대화가 자라도 돌아가는 화살표가 밀려나지 않게). 화면이 직접 `sticky` 를 붙이면
   아래 여백을 0 으로 되돌려야 하는데, 그게 상하 여백을 두 번 죽인 바로 그 조작이다.

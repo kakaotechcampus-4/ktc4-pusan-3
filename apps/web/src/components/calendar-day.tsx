@@ -20,6 +20,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
 import { IconButton } from "@/components/ui/icon-button";
 import { IconTile } from "@/components/ui/icon-tile";
+import { SkeletonGroup, SkeletonText, SkeletonTile } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { TextArea } from "@/components/ui/text-area";
 import { useToast } from "@/components/ui/toast";
@@ -188,6 +189,29 @@ function Section({
       </div>
       {children}
     </section>
+  );
+}
+
+/**
+ * 받는 동안의 하루 패널. 어느 날이든 서는 **일기 구역**(제목 + 줄 하나)과 같은 상자 · 같은 줄 높이다
+ * (CLS · `components/ui/skeleton.tsx`). 기록 · 일정 · 사진은 날마다 있고 없고가 달라 자리를 잡지 않는다 —
+ * 맨 아래에 붙는 것들이라 늦게 서도 위의 것을 밀지 않는다.
+ * 🚨 `Section` · `PANEL_ROW` 의 여백을 바꾸면 여기도 같이 바꾼다.
+ */
+export function CalendarDayPanelSkeleton() {
+  return (
+    <SkeletonGroup label="이날을 불러오는 중" className="flex flex-col gap-5">
+      <div className="flex flex-col gap-2">
+        <div className="min-h-touch flex items-center">
+          {/* 구역 이름은 값이 아니라서 그대로 그린다 — 어느 날이든 이 구역은 선다. */}
+          <p className="text-section text-ink">이날의 일기</p>
+        </div>
+        <div className="min-h-touch rounded-field bg-surface border-line flex items-center gap-3 border px-4 py-3.5">
+          <SkeletonTile />
+          <SkeletonText width="1/3" className="flex-1" />
+        </div>
+      </div>
+    </SkeletonGroup>
   );
 }
 
