@@ -108,8 +108,9 @@ def agent_job(
       done 앞에 들어가야 화면이 note 를 받은 직후 보낸 답도 맥락을 찾는다.
     - 실패한 추천 맥락(RetryContext) · 0개 기록(EmptyResult)은 05 보관함(`suggestion_retry`)에
       넣는다 — PendingReply 처럼 화면 결과보다 먼저 온다.
-    - 이어받기 run 이 done 없이 끝나면(실패 · 시간 초과 · 예외) 창구가 꺼낸 맥락을 reply_to 로
-      되돌려 둔다. failed 는 "저장 없음" 이라 같은 답으로 다시 시도할 수 있어야 한다.
+    - 이어받기 run 이 끝나면 창구가 "사용 중" 으로 둔 reply_to 맥락을 정리한다(#564). done 이거나
+      저장이 확정됐으면 지우고, 아니면(실패 · 시간 초과 · 예외) 표시만 푼다. failed 는 "저장 없음"
+      이라 같은 답으로 다시 시도할 수 있어야 한다.
     - RUN_DEADLINE_SECONDS 를 넘기면 끊고 failed(timeout) 으로 끝낸다.
       끊는 순간 진행 중인 모델 호출도 취소된다.
     - `on_event` 는 이벤트를 번역한 뒤에 하나씩 받는다. 대화 기록(`chat_record`)이
@@ -216,20 +217,13 @@ def agent_job(
                     channel.publish(sse.failed_event("timeout", raw_text))
             finally:
                 # 예외로 죽으면 failed 는 _guarded 가 이 뒤에 붙인다
-                not_done = channel.ended_with != "done"
-                should_restore = (
-                    continuation is not None
-                    and reply_to is not None
-                    and not_done
-                    and not channel.committed
-                )
-                if should_restore:
-                    pending_reply.put(
-                        run_id=reply_to,
-                        parent_id=parent_id,
-                        child_id=child_id,
-                        context=continuation,
-                    )
+                # 창구가 "사용 중" 으로 둔 맥락을 정리한다 (#564). 저장 없이 끝났으면 표시만 풀어
+                # 같은 질문에 다시 답할 수 있게 한다 — 15분은 처음 넣은 시각 그대로 센다.
+                if continuation is not None and reply_to is not None:
+                    if channel.ended_with == "done" or channel.committed:
+                        pending_reply.drop(reply_to)
+                    else:
+                        pending_reply.release(reply_to)
 
     return job
 
