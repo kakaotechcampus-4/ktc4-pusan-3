@@ -379,3 +379,34 @@ def test_생략을_끄면_순수_요청형도_Memory_를_부른다(monkeypatch: 
     # 되돌리는 경로. Supervisor 가 기록을 요청으로 잘못 잘라도 Memory 가 원문을 한 번 더 본다
     monkeypatch.setattr(routing_module, "SKIP_MEMORY_FOR_PURE_REQUEST", False)
     assert _route_case("RC07").memory_task is not None
+
+
+def test_섭취_확인과_식단_추천은_FoodTask_2개고_상한에_안_걸린다() -> None:
+    raw = "땅콩버터 먹여도 돼? 안 되면 다른 간식 추천해줘."
+    output = _output(
+        {
+            "text": "땅콩버터 먹여도 돼?",
+            "kind": "request",
+            "agent": "food",
+            "food_task": "food_check",
+        },
+        {
+            "text": "안 되면 다른 간식 추천해줘",
+            "kind": "request",
+            "agent": "food",
+            "food_task": "meal_recommendation",
+        },
+    )
+    routing = route(raw, SupervisorResult(output=output), run_id=RUN_ID)
+
+    assert [task.task_type for task in routing.domain_tasks] == [
+        FoodTaskType.FOOD_CHECK,
+        FoodTaskType.MEAL_RECOMMENDATION,
+    ]
+    assert AGENT_LIMIT not in [guidance.code for guidance in routing.guidance]
+
+
+def test_FC_케이스의_정답_출력이_섭취_확인으로_간다() -> None:
+    routing = _route_case("FC01")
+    assert [(t.agent, t.task_type) for t in routing.domain_tasks] == [("food", "food_check")]
+    assert routing.domain_tasks[0].request_texts == ("땅콩소스 먹여도 될까?",)
