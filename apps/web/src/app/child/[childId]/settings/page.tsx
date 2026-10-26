@@ -12,7 +12,7 @@ import { ConsentSection, LegalDocumentSection } from "@/components/consent-secti
 import { ParentSection } from "@/components/parent-section";
 import { SettingsGroup, SettingsLinkRow } from "@/components/settings-row";
 import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
-import { IconButton, IconButtonLink } from "@/components/ui/icon-button";
+import { IconButton, IconButtonLink, IconButtonPlaceholder } from "@/components/ui/icon-button";
 import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
 import { useChildId } from "@/hooks/use-child-id";
@@ -128,6 +128,9 @@ function SettingsScreen() {
             >
               <Plus aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
             </IconButton>
+          ) : me.isPending ? (
+            // 받는 동안 자리만 잡는다 — owner 면 버튼이 들어오며 머리줄이 커져 아래가 밀린다.
+            <IconButtonPlaceholder className="-my-1" />
           ) : null
         }
       >

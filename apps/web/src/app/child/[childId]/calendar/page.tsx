@@ -6,14 +6,14 @@ import { Suspense, useMemo, useState } from "react";
 
 import { AuthGate } from "@/components/auth-gate";
 import { ScreenTransition } from "@/components/route-transition";
-import { CalendarDayPanel } from "@/components/calendar-day";
+import { CalendarDayPanel, CalendarDayPanelSkeleton } from "@/components/calendar-day";
 import { ChildNav } from "@/components/child-nav";
 import { ConsentRequiredCard } from "@/components/consent-required-card";
 import { MemoryDetailSheet, type MemoryTarget } from "@/components/memory-detail-sheet";
 import { MonthGrid } from "@/components/month-grid";
 import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
-import { SkeletonBlock } from "@/components/ui/skeleton";
+import { SkeletonText } from "@/components/ui/skeleton";
 import { phaseOf, Swap } from "@/components/ui/swap";
 import { useChildId } from "@/hooks/use-child-id";
 import {
@@ -124,13 +124,16 @@ function CalendarScreen() {
               더 크게 하고 있어서, 남겨 두면 한 화면이 같은 사실을 두 번 말한다. */}
           {daySummary(summary) ? (
             <p className="text-body-sm text-ink-muted mt-1">{daySummary(summary)}</p>
+          ) : monthQuery.isPending ? (
+            // 달을 받는 동안 줄 자리를 잡는다 — 받은 뒤에 서면 아래 하루 패널이 한 줄만큼 밀린다.
+            <SkeletonText size="body-sm" width="1/3" className="mt-1" />
           ) : null}
         </div>
 
         {/* 다른 날을 고르면 이 자리의 하루가 갈아 끼워진다 (디자인 시스템 §8 "교체"). 날짜가 같으면
             다시 받아도 그대로다. */}
         <Swap id={`${date}:${phaseOf(dayQuery)}`}>
-          {dayQuery.isPending ? <SkeletonBlock label="이날을 불러오는 중" /> : null}
+          {dayQuery.isPending ? <CalendarDayPanelSkeleton /> : null}
 
           {dayQuery.isError ? (
             <LoadFailed what="이날을" childId={childId} error={dayQuery.error} />

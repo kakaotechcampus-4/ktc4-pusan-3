@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 
 import { DomainChip, domainPress } from "@/components/domain-chip";
+import { SkeletonText } from "@/components/ui/skeleton";
 import type { Agent, PromptKey } from "@/lib/api/types";
 import { cn } from "@/lib/cn";
 
@@ -45,6 +46,7 @@ export function AgentPrompts<T extends AgentPrompt>({
   disabled,
   layout,
   lead,
+  pending = false,
 }: {
   items: T[];
   onPick: (prompt: T) => void;
@@ -55,9 +57,15 @@ export function AgentPrompts<T extends AgentPrompt>({
    * 🚨 모양은 `PROMPT_PILL` 로 맞춘다.
    */
   lead?: ReactNode;
+  /**
+   * 제안을 받는 중 (03 홈). 🚨 **줄 자리를 비워 두지 않는다** — 받은 뒤에 줄이 생기면 채팅바가 한 줄만큼
+   * 위로 자라서, 그 순간 입력창 위의 화면이 통째로 가려진다. 알약 모양 두 개로 자리를 잡는다 (`scroller` 만).
+   */
+  pending?: boolean;
 }) {
   const shown = items.slice(0, MAX_PROMPTS);
-  if (shown.length === 0 && !(layout === "scroller" && lead)) return null;
+  const waiting = pending && layout === "scroller";
+  if (shown.length === 0 && !(layout === "scroller" && lead) && !waiting) return null;
 
   if (layout === "list") {
     return (
@@ -80,6 +88,7 @@ export function AgentPrompts<T extends AgentPrompt>({
     //    제스처로 넘어간다. 제안을 밀다가 화면이 뒤로 가면 안 된다.
     <ul className="-mx-3 flex gap-2 overflow-x-auto overscroll-x-contain px-3 min-[380px]:-mx-4 min-[380px]:px-4">
       {lead ? <li className="shrink-0">{lead}</li> : null}
+      {waiting ? <PromptPillSkeletons /> : null}
       {shown.map((prompt) => (
         <li key={prompt.agent} className="shrink-0">
           <PromptButton prompt={prompt} onPick={onPick} disabled={disabled} />
@@ -116,5 +125,20 @@ function PromptButton<T extends AgentPrompt>({
       <DomainChip agent={prompt.agent} />
       <span className="text-body-sm text-ink-muted min-w-0">{prompt.text}</span>
     </button>
+  );
+}
+
+/** 받는 동안의 알약 두 개. `PromptButton` 과 같은 테두리 · 높이 · 칩 자리다. */
+function PromptPillSkeletons() {
+  return (
+    <li role="status" aria-label="제안을 불러오는 중" className="flex shrink-0 gap-2">
+      {[0, 1].map((i) => (
+        <span key={i} aria-hidden className={cn(PROMPT_PILL, "w-64")}>
+          {/* 도메인 칩 자리 (`DomainChip` · 28px 알약) */}
+          <span className="bg-line animate-skeleton min-h-chip w-14 shrink-0 rounded-full" />
+          <SkeletonText size="body-sm" width="full" className="flex-1" />
+        </span>
+      ))}
+    </li>
   );
 }

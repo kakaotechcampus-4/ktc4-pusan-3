@@ -2,8 +2,10 @@
 
 import { DomainMeta } from "@/components/domain-chip";
 import { Chip, ChipRow } from "@/components/ui/chip";
+import { SkeletonText } from "@/components/ui/skeleton";
 import type { ReceivedSuggestion, SuggestionFeedback } from "@/lib/api/types";
 import { SUGGESTION_FEEDBACKS } from "@/lib/api/types";
+import { cn } from "@/lib/cn";
 
 /**
  * 07 제안 피드백 — 받은 제안이 실제로 어땠는지.
@@ -76,6 +78,30 @@ export function SuggestionFeedbackList({
           </li>
         );
       })}
+    </ul>
+  );
+}
+
+/**
+ * 받는 동안의 목록. 진짜 줄과 **같은 상자 · 같은 줄 높이**다 (CLS · `components/ui/skeleton.tsx`) —
+ * 영역 · 제안 문장 · 피드백 칩 셋. 칩은 진짜 칩처럼 누르는 줄 높이(`min-h-touch`)를 갖고 같은 폭에서 접힌다.
+ */
+export function SuggestionFeedbackListSkeleton({ rows = 2 }: { rows?: number }) {
+  return (
+    <ul aria-hidden className="flex flex-col gap-3">
+      {Array.from({ length: rows }, (_, i) => (
+        <li key={i} className="rounded-card bg-surface border-line flex flex-col gap-2 border p-4">
+          <SkeletonText size="caption" width="1/4" />
+          <SkeletonText width="3/4" />
+          <ChipRow>
+            {["w-28", "w-32", "w-20"].map((width) => (
+              <span key={width} className="min-h-touch flex items-center py-2">
+                <span className={cn("bg-line animate-skeleton min-h-chip rounded-full", width)} />
+              </span>
+            ))}
+          </ChipRow>
+        </li>
+      ))}
     </ul>
   );
 }

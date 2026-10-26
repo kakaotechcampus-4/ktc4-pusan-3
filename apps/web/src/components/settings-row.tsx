@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 
 import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
 import { IconTile } from "@/components/ui/icon-tile";
+import { SkeletonText, SkeletonTile } from "@/components/ui/skeleton";
 import { cn } from "@/lib/cn";
 
 /**
@@ -165,6 +166,30 @@ export function SettingsInfoRow({
         note={note}
         trailing={action}
       />
+    </li>
+  );
+}
+
+/**
+ * 불러오는 동안의 줄. 진짜 줄(`SettingsInfoRow` · `RowBody`)과 **같은 상자 · 같은 줄 높이**다 —
+ * 데이터가 오는 순간 줄 높이가 바뀌면 아래 구역이 전부 밀린다 (CLS · `components/ui/skeleton.tsx`).
+ * `status` · `note` 는 진짜 줄이 그 줄을 다는지에 맞춰 켠다.
+ */
+export function SettingsRowSkeleton({
+  status = true,
+  note = false,
+}: {
+  status?: boolean;
+  note?: boolean;
+}) {
+  return (
+    <li className="flex items-center gap-3 p-4">
+      <SkeletonTile />
+      <span className="min-w-0 flex-1">
+        <SkeletonText width="1/3" />
+        {status ? <SkeletonText size="body-sm" width="1/2" className="mt-0.5" /> : null}
+        {note ? <SkeletonText size="caption" width="2/3" className="mt-1" /> : null}
+      </span>
     </li>
   );
 }

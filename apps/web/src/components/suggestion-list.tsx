@@ -6,6 +6,7 @@ import { domainBar, domainField, domainLabel } from "@/components/domain-chip";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DOMAIN_ICON } from "@/components/ui/icon";
 import { IconTile } from "@/components/ui/icon-tile";
+import { SkeletonGroup, SkeletonText, SkeletonTile } from "@/components/ui/skeleton";
 import { PanelTabs } from "@/components/ui/tabs";
 import type { Agent, Evidence, Suggestion, SuggestionGroup } from "@/lib/api/types";
 import { cn } from "@/lib/cn";
@@ -385,5 +386,53 @@ function EvidenceList({ evidence }: { evidence: Evidence[] }) {
         ))}
       </ul>
     </div>
+  );
+}
+
+/**
+ * 받는 동안의 목록 (제안은 Agent 가 만들어서 몇 초가 걸린다). 받은 뒤의 **탭 · 묶음 머리줄 · 후보 카드**와
+ * 같은 상자로 기다린다 (CLS · `components/ui/skeleton.tsx`). 세 줄짜리 블록이던 때는 아래 "홈으로" 가
+ * 받는 순간 화면 밖으로 튕겨 나갔다. 후보 카드는 근거 목록 길이가 제안마다 달라 대표 모양(이유 두 줄 ·
+ * 근거 하나)으로 잡는다. 🚨 진짜 카드의 여백을 바꾸면 여기도 같이 바꾼다.
+ */
+export function SuggestionListSkeleton({ tabs }: { tabs: boolean }) {
+  return (
+    <SkeletonGroup label="제안을 준비하는 중" className="flex flex-col gap-4">
+      {tabs ? (
+        <div className="border-line flex border-b">
+          {[0, 1].map((i) => (
+            <div key={i} className="min-h-touch flex flex-1 items-center justify-center px-2">
+              <SkeletonText size="label" width="1/2" className="w-full text-center" />
+            </div>
+          ))}
+        </div>
+      ) : null}
+      <div className="flex flex-col gap-2">
+        <div className="flex items-center gap-3">
+          <SkeletonTile />
+          <SkeletonText size="display" width="2/3" className="min-w-0 flex-1" />
+        </div>
+        <ul className="flex flex-col gap-3">
+          {/* 셋이다 — 한 묶음의 후보는 최대 셋이고, 그만큼 잡아 둬야 아래 "홈으로" 가 처음부터 화면 밖에 선다. */}
+          {[0, 1, 2].map((i) => (
+            <li key={i} className="rounded-card bg-surface border-line flex overflow-hidden border">
+              <span className="bg-line w-1.5 shrink-0" />
+              <div className="min-w-0 flex-1 px-4 py-4">
+                <SkeletonText size="title" width="3/4" />
+                <div className="pl-8">
+                  <SkeletonText size="body-sm" className="mt-4" />
+                  <SkeletonText size="body-sm" width="2/3" />
+                  <div className="border-line mt-3 border-t pt-3">
+                    <SkeletonText size="label" width="1/4" />
+                    <SkeletonText size="body-sm" width="1/3" className="mt-2" />
+                    <SkeletonText size="caption" width="1/2" className="mt-0.5" />
+                  </div>
+                </div>
+              </div>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </SkeletonGroup>
   );
 }

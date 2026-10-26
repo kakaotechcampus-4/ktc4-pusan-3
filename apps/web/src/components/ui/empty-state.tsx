@@ -3,6 +3,8 @@ import type { ReactNode } from "react";
 
 import { cn } from "@/lib/cn";
 
+import { SkeletonGroup, SkeletonText } from "./skeleton";
+
 import { ICON_STROKE } from "./icon";
 
 /**
@@ -52,5 +54,34 @@ export function EmptyState({
       </p>
       {action ? <div className="mt-4 w-full">{action}</div> : null}
     </div>
+  );
+}
+
+/**
+ * 받는 동안, **빈 상태가 올 것이 거의 확실한 자리**에 쓴다 (02 아이 정보의 알레르기 — 막 만든 아이다).
+ * `EmptyState` 와 같은 상자 · 같은 줄 높이라 빈 상태가 오면 그 자리에 글자가 들어온다.
+ * 🚨 건수를 지어내지 않는다 — 건수 줄도 자리만 잡는다. 아이콘 자리는 비워 둔다(장식이 아니라 뜻이 없는 빈칸이다).
+ */
+export function EmptyStateSkeleton({
+  label = "불러오는 중",
+  descriptionLines = 1,
+}: {
+  label?: string;
+  /** 진짜 설명이 그 폭에서 몇 줄로 흐르는지. */
+  descriptionLines?: 1 | 2;
+}) {
+  return (
+    <SkeletonGroup
+      label={label}
+      className="bg-surface-muted rounded-card flex flex-col items-center px-4 py-8 text-center"
+    >
+      <span aria-hidden className="block" style={{ height: EMPTY_ICON_PX }} />
+      <SkeletonText size="section" width="1/2" className="mt-3 w-full" />
+      <SkeletonText size="body-sm" width="3/4" className="mt-1 w-full" />
+      {descriptionLines === 2 ? (
+        <SkeletonText size="body-sm" width="1/2" className="w-full" />
+      ) : null}
+      <SkeletonText size="caption" width="1/4" className="mt-3 w-full" />
+    </SkeletonGroup>
   );
 }
