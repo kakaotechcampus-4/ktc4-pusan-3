@@ -355,3 +355,41 @@ test("준비물 체크는 아이 경로로 키 없이 나가고, 다시 받은 �
   // 되돌릴 수 있는 체크라 게이트 표식이 없다 (§2 실행).
   await expectNoGate(page);
 });
+
+/* ── 준비물 배치 (#568) ─────────────────────────────────────────────────── */
+
+/**
+ * 준비물은 카드 폭이 넉넉하면 두 열, 좁으면 한 열이다 (`docs/web/screen-rules-v1.md` §5).
+ * 목의 일정에는 준비물이 8개 있고 하나는 이름이 길다 — 어느 폭에서도 가로로 넘치면 안 된다.
+ */
+for (const { width, columns } of [
+  { width: 360, columns: 2 },
+  { width: 320, columns: 1 },
+]) {
+  test.describe(`${width} 폭`, () => {
+    test.use({ viewport: { width, height: 844 } });
+
+    test(`준비물이 ${columns}열로 서고 가로로 넘치지 않는다 (#568)`, async ({ page }) => {
+      await page.goto(`${CALENDAR}?date=${browserDaysAgo(-2)}`);
+
+      const row = (name: string) =>
+        page.locator("label").filter({ has: page.getByRole("checkbox", { name }) });
+      const first = await row("수건").boundingBox();
+      const second = await row("수영복").boundingBox();
+      if (!first || !second) throw new Error("준비물 줄이 화면에 없다");
+
+      if (columns === 2) {
+        // 두 번째 준비물이 첫 번째 옆에 선다.
+        expect(second.y).toBeCloseTo(first.y, 0);
+        expect(second.x).toBeGreaterThan(first.x + first.width / 2);
+      } else {
+        expect(second.x).toBeCloseTo(first.x, 0);
+        expect(second.y).toBeGreaterThan(first.y);
+      }
+
+      expect(
+        await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth),
+      ).toBe(0);
+    });
+  });
+}
