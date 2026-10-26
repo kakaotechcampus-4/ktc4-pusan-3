@@ -415,9 +415,13 @@ def allergen_states(
     return states
 
 
-def _stems(word: str) -> list[str]:
-    """낱말 끝의 조사를 뗀 이름들. 받침이 맞는 조사마다 하나씩, 꼬리말("알레르기")도 뗀다."""
-    stems: list[str] = []
+def split_particle(word: str) -> list[tuple[str, str]]:
+    """낱말 끝의 조사를 뗀 (앞말, 조사) 들. 받침이 맞는 조사만, `_PARTICLES` 순서대로.
+
+    꼬리말("알레르기")은 떼지 않는다. 이름 사전(`_stems`)과 Food 의 질문 글 읽기가 같은 조사 표를
+    쓰게 하려고 밖에 연다 — 조사를 고칠 때 한 곳만 고친다.
+    """
+    pairs: list[tuple[str, str]] = []
     for particle, need in _PARTICLES:
         if not word.endswith(particle) or len(word) <= len(particle):
             continue
@@ -430,8 +434,17 @@ def _stems(word: str) -> list[str]:
             or (need == "V" and final == 0)
             or (need == "VL" and final in (0, _RIEUL))
         )
+        if fits:
+            pairs.append((stem, particle))
+    return pairs
+
+
+def _stems(word: str) -> list[str]:
+    """낱말 끝의 조사를 뗀 이름들. 받침이 맞는 조사마다 하나씩, 꼬리말("알레르기")도 뗀다."""
+    stems: list[str] = []
+    for stem, _ in split_particle(word):
         stem = _strip_suffixes(stem)
-        if fits and stem and stem not in stems:
+        if stem and stem not in stems:
             stems.append(stem)
     return stems
 
