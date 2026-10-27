@@ -319,10 +319,10 @@ async def test_state_and_domain_filters_apply_to_total_not_only_to_the_items(
     db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
 ):
     headers, _ = bearer
-    for d in range(3):
-        await _linked(session, cid, f"확정{d}", days_ago=d)
-    candidate = await _linked(session, cid, "후보", days_ago=5)
-    candidate.state = ProfileState.CANDIDATE
+    for d in range(3):  # 서버 기본 상태가 candidate 라서 확정은 명시해야 한다
+        confirmed = await _linked(session, cid, f"확정{d}", days_ago=d)
+        confirmed.state = ProfileState.CONFIRMED
+    await _linked(session, cid, "후보", days_ago=5)
     await session.flush()
     url = f"/api/v1/children/{cid}/affinities"
 

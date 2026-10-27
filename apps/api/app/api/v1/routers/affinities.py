@@ -19,6 +19,7 @@ from app.api.deps.child import AccessibleChild
 from app.api.deps.db import SessionDep
 from app.api.errors import ErrorEnvelope
 from app.api.quota import today_kst
+from app.api.v1.list_query import ListQueryDep
 from app.api.v1.schemas.affinities import AffinitiesResponse, AffinityOut
 from app.api.v1.schemas.common import Ref
 from app.domains.memory.observation.repository import (
@@ -26,7 +27,7 @@ from app.domains.memory.observation.repository import (
     list_active_refs_by_affinity,
 )
 from app.domains.memory.profile.models import MemoryDomain, ProfileAffinity, ProfileState
-from app.domains.memory.profile.repository import list_affinities
+from app.domains.memory.profile.repository import page_affinities
 from app.rules.affinity_reason import is_stale, state_reason
 
 router = APIRouter()
@@ -47,33 +48,54 @@ _AGENT_BY_MEMORY_DOMAIN = {
 
 @router.get(
     "/children/{cid}/affinities",
-    responses={403: {"model": ErrorEnvelope}},
+    responses={status: {"model": ErrorEnvelope} for status in (400, 403)},
 )
 async def get_affinities(
     child: AccessibleChild,
     session: SessionDep,
+    query: ListQueryDep,
     domain: Literal["food", "activity", "growth", "health"] | None = None,
     state: Literal["confirmed", "candidate"] | None = None,
 ) -> AffinitiesResponse:
-    """기억 목록. state 를 주지 않으면 archived 를 뺀 전부. 마지막 관찰이 최근인 것이 앞."""
+    """기억 목록을 `page` · `size` 쪽으로 나눠서. 마지막 관찰이 최근인 것이 앞.
+
+    state 를 주지 않으면 archived 를 뺀 전부. `date_from` · `date_to` 는 마지막 관찰 날짜
+    기준(양 끝 포함), `q` 는 이름의 부분 일치(띄어쓰기 무시)다.
+    `total` · `page` · `total_pages` 는 `affinities` 기준이고, `safety` 는 쪽으로 나누지 않는다.
+    """
     memory_domain = _MEMORY_DOMAIN_BY_AGENT[domain] if domain else None
     if domain and memory_domain is None:
-        return AffinitiesResponse(affinities=[])
+        return AffinitiesResponse(
+            affinities=[], total=0, page=query.page, size=query.size, total_pages=0
+        )
 
-    rows = await list_affinities(
+    page = await page_affinities(
         session,
         child_id=child.child_id,
         domain=memory_domain,
         state=ProfileState(state) if state else None,
+        date_from=query.date_from,
+        date_to=query.date_to,
+        q=query.q,
+        limit=query.size,
+        offset=query.offset,
     )
     refs = await list_active_refs_by_affinity(
-        session, child_id=child.child_id, affinity_ids=[row.id for row in rows]
+        session, child_id=child.child_id, affinity_ids=[row.id for row in page.items]
     )
     today = today_kst()
-    # 묶인 기록이 모두 교정되면 기억은 후보로 남지만 근거가 없다. 근거 없는 것을 성향으로
-    # 보여주지 않는다 (루트 CLAUDE.md §2). 상태는 바꾸지 않고 목록에서만 뺀다.
-    affinities = [affinity_out(row, refs[row.id], today=today) for row in rows if refs.get(row.id)]
-    return AffinitiesResponse(affinities=affinities)
+    # 묶인 active 기록이 없는 기억은 쿼리(EXISTS)에서 이미 빠졌다. 두 쿼리 사이에 기록이 교정되는
+    # 드문 경우에만 refs 가 비는데, 그때는 카드를 그리지 않는다 (근거 없는 성향을 보여주지 않는다).
+    affinities = [
+        affinity_out(row, refs[row.id], today=today) for row in page.items if refs.get(row.id)
+    ]
+    return AffinitiesResponse(
+        affinities=affinities,
+        total=page.total,
+        page=query.page,
+        size=query.size,
+        total_pages=query.total_pages(page.total),
+    )
 
 
 def affinity_out(
