@@ -8,6 +8,7 @@ import { BottomSheet } from "@/components/ui/bottom-sheet";
 import { Button } from "@/components/ui/button";
 import { DateField } from "@/components/ui/date-field";
 import { IconTile } from "@/components/ui/icon-tile";
+import { SkeletonGroup, SkeletonText, SkeletonTile } from "@/components/ui/skeleton";
 import { ChoiceField } from "@/components/ui/choice-field";
 import { Spinner } from "@/components/ui/spinner";
 import { TextInput } from "@/components/ui/text-input";
@@ -50,6 +51,36 @@ function IdentityRow({ term, value }: { term: string; value: ReactNode }) {
       <dt className="text-label text-ink-muted shrink-0">{term}</dt>
       <dd className="text-body-sm text-ink text-right">{value}</dd>
     </div>
+  );
+}
+
+/**
+ * 받는 동안의 카드. `ChildIdentityCard` 와 **같은 상자 · 같은 줄 높이**다 (CLS · `components/ui/skeleton.tsx`).
+ * 🚨 진짜 카드의 여백이나 줄을 바꾸면 여기도 같이 바꾼다.
+ */
+export function ChildIdentityCardSkeleton() {
+  return (
+    <SkeletonGroup
+      label="아이 정보를 불러오는 중"
+      className="rounded-card border-line bg-surface flex flex-col border"
+    >
+      <div className="flex items-center gap-3 px-4 py-4">
+        <SkeletonTile />
+        <div className="min-w-0 flex-1">
+          <SkeletonText size="title" width="1/4" />
+          <SkeletonText size="body-sm" width="1/4" className="mt-0.5" />
+        </div>
+      </div>
+      <div className="border-line divide-line flex flex-col divide-y border-t">
+        {["생일", "성별"].map((term) => (
+          <div key={term} className="flex items-start justify-between gap-4 px-4 py-3">
+            {/* 항목 이름은 값이 아니라서 그대로 그린다 — 받는 동안에도 무엇이 올지 읽힌다. */}
+            <span className="text-label text-ink-muted shrink-0">{term}</span>
+            <SkeletonText size="body-sm" width="1/3" className="flex-1 text-right" />
+          </div>
+        ))}
+      </div>
+    </SkeletonGroup>
   );
 }
 

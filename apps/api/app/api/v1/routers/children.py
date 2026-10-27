@@ -44,6 +44,7 @@ from app.api.v1.schemas.children import (
     UpdateGrowthLogRequest,
 )
 from app.core.config import settings
+from app.domains.chat.repository import find_turn_date
 from app.domains.child.models import Child, ChildGrowthLog, ParentChildRelation
 from app.domains.child.repository import (
     create_child,
@@ -443,10 +444,12 @@ async def create_input(
     """접수만 한다 — 채널을 열고 러너를 뒤에서 띄우고 바로 202. Agent 를 기다리지 않는다.
 
     순서: (아이 접근 확인 — 의존성) → 키 확인 → 재생 → 동의 읽기 → 맥락 확인 → 한도 →
-    맥락 꺼내기 → 채널 열기 → 키 기억 → 러너 시작.
+    맥락 찜하기 → 채널 열기 → 키 기억 → 러너 시작.
     키를 러너보다 먼저 적어 두면 같은 키가 몇 ms 뒤에 또 와도 새 run이 아니라
     재생으로 흡수된다 (idempotency.py). 이어받기 맥락은 재생 뒤에 본다. 같은 키 재생은 이미 꺼낸
-    맥락으로 돈 run을 돌려받아야 하고, 400 을 받으면 안 된다. 꺼내는 건 한도를 통과한 뒤다.
+    맥락으로 돈 run을 돌려받아야 하고, 400 을 받으면 안 된다. 찜하는 건 한도를 통과한 뒤다.
+    재생할 run 이 failed 로 끝났으면 재생하지 않고 새 run 으로 받는다. 채널이 이미 지워졌으면
+    대화 기록으로 끝났는지 알린다 (#538).
     """
     if not idempotency_key:
         raise ApiError(
@@ -461,7 +464,23 @@ async def create_input(
     }
     replayed = idempotency.recall(**scope)
     if replayed is not None:
-        return CreateInputResponse(run_id=replayed)
+        previous = registry.get(replayed)
+        if previous is None:
+            # 채널은 닫힌 지 5분 뒤 지워지고 키는 24시간 남는다. 끝난 run 은 대화 기록이 남아
+            # 있으니 화면이 SSE(404) 대신 지난 대화로 결과를 그리게 알린다 (#538).
+            # 없으면 저장됐는지 모르는 run 이다(재시작 · 기록 실패) — 키를 놓지 않고 그대로 재생한다
+            day = await find_turn_date(
+                session, parent_id=parent.parent_id, child_id=child.child_id, run_id=replayed
+            )
+            if day is not None:
+                return CreateInputResponse(run_id=replayed, finished=True, conversation_date=day)
+            return CreateInputResponse(run_id=replayed)
+        if previous.ended_with != "failed":
+            return CreateInputResponse(run_id=replayed)
+        # failed 는 "저장 없음" 이라 러너가 키를 놓는데, 거기서 Redis 오류로 실패하면 키가 남는다.
+        # 여기서 다시 놓고 새 run 으로 받는다. 지난 실패를 재생하면 다시 보내도 같은 실패뿐이다
+        # (#538)
+        idempotency.forget_run(replayed)
 
     # 아이 건강정보 동의의 현재 값을 입력 한 번에 한 번 읽어 Agent 까지 값으로 넘긴다 (#372).
     # 🚨 읽기에 실패하면 False 로 바꾸지 않고 예외로 끝낸다 — "동의 안 함" 으로 넘기면 Agent 가
@@ -509,13 +528,22 @@ async def create_input(
         # get 과 여기 사이에 await 가 없어서 같은 reply_to 로 온 다른 요청이 끼어들지 못한다.
         # 🚨 이 사이에 await 를 넣지 말 것 — tests/unit/api/test_create_input_consent.py 의
         #    "같은 되묻기에 거의 동시에 두 번 답하면 하나만 받는다" 가 막는다.
-        # 한 번만 쓴다. 같은 질문에 두 번 답하면 관찰이 두 행이 된다
-        pending_reply.consume(
+        # 지우지 않고 "사용 중" 으로 둔다. 같은 질문에 두 번 답하면 관찰이 두 행이 된다.
+        # 러너가 끝나며 지우거나 표시를 푼다 (#564)
+        pending_reply.claim(
             run_id=body.reply_to, parent_id=parent.parent_id, child_id=child.child_id
         )
 
     channel = registry.open_run(parent_id=parent.parent_id)
-    idempotency.remember(**scope, replay=channel.run_id)
+    try:
+        idempotency.remember(**scope, replay=channel.run_id)
+    except Exception:
+        # 러너가 안 떠서 이 채널은 아무도 닫지 않는다. 닫아야 지울 예약이 걸린다 (#536 리뷰)
+        channel.close()
+        # 표시를 풀어 줄 러너도 없다. 풀지 않으면 15분 동안 그 질문에 답할 수 없다 (#564)
+        if body.reply_to is not None:
+            pending_reply.release(body.reply_to)
+        raise
     # 대화 기록(#228). 접수한 시각으로 날짜를 정한다 — run 이 끝나 행을 쓰는 시각이 아니다
     record = chat_record.TurnRecorder(
         parent_id=parent.parent_id,

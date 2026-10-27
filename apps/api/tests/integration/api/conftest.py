@@ -6,7 +6,10 @@ from datetime import UTC, date, datetime, timedelta
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agents.entrypoint import PendingMemoryContext
+from app.agents.memory.schemas.task import WorkType
 from app.api.deps.auth import hash_token
+from app.api.runs import pending_reply, suggestion_retry
 from app.domains.child.models import Child, ParentChild, ParentChildRelation
 from app.domains.identity.models import Parent
 from app.domains.identity.repository import create_access, create_session
@@ -103,3 +106,39 @@ async def cid(session: AsyncSession, bearer: Bearer) -> uuid.UUID:
     """bearer 보호자에게 연결된 아이 하나 — 아이 주소를 부르는 테스트가 쓴다."""
     _, parent_id = bearer
     return await link_child(session, parent_id=parent_id)
+
+
+@pytest.fixture
+def clean_in_memory_stores():
+    """`stash_in_memory` 를 쓰는 테스트가 받는다.
+
+    보관함은 프로세스 메모리라 비우지 않으면 다음 테스트로 샌다.
+    """
+    pending_reply.clear()
+    suggestion_retry.clear()
+    yield
+    pending_reply.clear()
+    suggestion_retry.clear()
+
+
+def stash_in_memory(*, parent_id: uuid.UUID, child_id: uuid.UUID) -> str:
+    """메모리 보관함 둘(되묻기 · 05 다시 시도)에 그 보호자 · 아이의 항목을 하나씩 넣는다.
+
+    돌려준 run_id 로 `in_memory` 가 남아 있는지 본다 (#561).
+    🚨 `clean_in_memory_stores` 와 같이 쓴다.
+    """
+    run_id = uuid.uuid4().hex
+    owner = {"parent_id": parent_id, "child_id": child_id}
+    context = PendingMemoryContext("synthetic", "synthetic question", WorkType.OBSERVE)
+    pending_reply.put(run_id=run_id, context=context, **owner)
+    suggestion_retry.put_empty(run_id=run_id, agent="food", message="synthetic", **owner)
+    return run_id
+
+
+def in_memory(run_id: str, *, parent_id: uuid.UUID, child_id: uuid.UUID) -> tuple[bool, bool]:
+    """(되묻기 보관함에 있나, 05 다시 시도 보관함에 있나)."""
+    owner = {"run_id": run_id, "parent_id": parent_id, "child_id": child_id}
+    return (
+        pending_reply.get(**owner) is not None,
+        suggestion_retry.empty_message(agent="food", **owner) is not None,
+    )

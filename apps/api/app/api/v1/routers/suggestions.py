@@ -502,6 +502,7 @@ async def create_suggestions(
                 **agent_ports.safety_readers(),
                 **agent_ports.growth_book_ports(),
                 growth_log=agent_ports.growth_log_reader(),
+                affinity_reader=agent_ports.affinity_reader(),
             )
             settled = {o.agent for o in run.outcomes}
     finally:
@@ -821,7 +822,8 @@ async def answer_question(
     "/children/{cid}/suggestions",
     summary="지난 추천 목록",
     description=(
-        "개인화 추천만 커서 페이징으로 반환. 필터 없으면 draft 제외 (07 화면용). evidence 포함."
+        "개인화 · 일반 추천을 함께 커서 페이징으로 반환하고 kind 로 구분한다. "
+        "필터 없으면 draft 제외 (07 화면용). evidence 는 개인화만 채워진다."
     ),
     status_code=200,
 )
@@ -845,7 +847,6 @@ async def list_suggestions(
         session,
         child_id=child.child_id,
         status=status_enum,
-        kind=SuggestionKind.PERSONALIZED,
         cursor=cursor,
         limit=limit,
     )

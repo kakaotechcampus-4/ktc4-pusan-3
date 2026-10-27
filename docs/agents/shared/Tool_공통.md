@@ -84,7 +84,7 @@ def rank_evidence(affinities, observations, *, today, strength_threshold=0.5)
 | 역질의 | `candidate` + polarity NULL → `needs_observation` 후보로 반환 (1개만 사용) |
 | 감쇠 | **여기서 하지 않는다.** Curator 가 `strength` 를 내리거나 `archived` 로 바꿔 이미 반영한다. 6개월 넘은 아이 기록만 남은 후보는 `build()` 가 일반 추천으로 돌린다(§5-3) |
 
-> 🟡 **`profile_affinity` 는 Agent 가 만들지 않는다.** 관찰을 승격해 이 행을 만드는 것도, 오래된 관심을 내리는 것도 Curator(백엔드 배치)의 일이다. Agent 는 이미 만들어진 행을 **읽기만** 한다 — 유예일을 Agent 가 다시 세면 값이 두 벌이 되고 한쪽만 갱신된다. NF-08(6개월)은 감쇠와 별개로 `build()` 가 한 번 더 막는다 — `archived` 는 새 관찰이 연결될 때만 갱신된다(§5-3 · #329).
+> 🟡 **`profile_affinity` 는 Agent 가 만들지 않는다.** 관찰을 승격해 이 행을 만드는 것도, 오래된 관심을 내리는 것도 Curator(백엔드 배치)의 일이다. Agent 는 이미 만들어진 행을 **읽기만** 한다. NF-08(6개월)은 감쇠와 별개로 `build()` 가 한 번 더 막는다 — `archived` 는 새 관찰이 연결될 때만 갱신된다(§5-3 · #329) — 그래서 기억 다리(`memory_bridge`)가 같은 공식의 시간 조건(`rules/profile.archived_by_time`, 21일)을 그 run 의 날 기준으로 한 번 더 적용해 넘긴다. 값은 rules 한 곳이고 Agent 는 계속 읽기만 한다.
 >
 > 🔴 **기피(−1)는 제외 필터가 아니라 근거다.** "브로콜리를 싫어해서"도 추천을 고르는 이유다. `rank_evidence`는 제거 목록을 반환하지 않는다.
 > 후보에서 지우는 것은 **안전뿐** — 알레르기(`health_safety`) · 연령 금지식품 · `hazard_term`. 이건 `rank_evidence`가 아니라 Agent별 안전 필터의 일이다.

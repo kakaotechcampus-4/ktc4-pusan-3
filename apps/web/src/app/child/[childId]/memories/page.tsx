@@ -5,21 +5,24 @@ import { Notebook, Sprout, ThumbsUp } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useState, type ReactNode } from "react";
 
-import { AffinityList } from "@/components/affinity-list";
+import { AffinityList, AffinityListSkeleton } from "@/components/affinity-list";
 import { AuthGate } from "@/components/auth-gate";
 import { ChildNav } from "@/components/child-nav";
 import { ConsentRequiredCard } from "@/components/consent-required-card";
 import { CORRECTED_OBSERVATION } from "@/components/correction-buttons";
 import { domainLabel } from "@/components/domain-chip";
 import { MemoryDetailSheet, type MemoryTarget } from "@/components/memory-detail-sheet";
-import { ObservationList } from "@/components/observation-list";
-import { SuggestionFeedbackList } from "@/components/suggestion-feedback-list";
+import { ObservationList, ObservationListSkeleton } from "@/components/observation-list";
+import {
+  SuggestionFeedbackList,
+  SuggestionFeedbackListSkeleton,
+} from "@/components/suggestion-feedback-list";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
 import { Select } from "@/components/ui/select";
-import { SkeletonBlock } from "@/components/ui/skeleton";
+import { SkeletonGroup, SkeletonText } from "@/components/ui/skeleton";
 import { phaseOf, Swap } from "@/components/ui/swap";
 import { Tabs, type TabItem } from "@/components/ui/tabs";
 import { useChildId } from "@/hooks/use-child-id";
@@ -33,8 +36,9 @@ import {
   type Agent,
   type Observation,
   type ObservationsResponse,
-  type Suggestion,
+  type ReceivedSuggestion,
   type SuggestionFeedback,
+  type SuggestionFeedbackRequest,
   type SuggestionFeedbackResponse,
   type SuggestionListResponse,
 } from "@/lib/api";
@@ -334,7 +338,14 @@ function ObservationsTab({
       </FilterRow>
 
       <Swap id={phaseOf(observations)}>
-        {observations.isPending ? <SkeletonBlock label="기록을 불러오는 중" /> : null}
+        {observations.isPending ? (
+          // 🚨 받은 뒤와 같은 모양(건수 줄 + 기록 줄)으로 기다린다 — 세 줄짜리 블록이 카드 목록으로
+          //    바뀌면 받은 순간 화면 전체가 다시 그려진 것처럼 보인다.
+          <SkeletonGroup label="기록을 불러오는 중" className="flex flex-col gap-3">
+            <SkeletonText size="caption" width="1/4" />
+            <ObservationListSkeleton />
+          </SkeletonGroup>
+        ) : null}
 
         {/* 다음 장만 실패한 것은 여기가 아니다 — 받아 둔 목록을 지우지 않고 버튼 옆에서 말한다. */}
         {observations.isError && !observations.isFetchNextPageError ? (
@@ -437,7 +448,12 @@ function ProfileTab({
       </FilterRow>
 
       <Swap id={phaseOf(affinities)}>
-        {affinities.isPending ? <SkeletonBlock label="기억을 불러오는 중" /> : null}
+        {affinities.isPending ? (
+          <SkeletonGroup label="기억을 불러오는 중" className="flex flex-col gap-3">
+            <SkeletonText size="caption" width="1/4" />
+            <AffinityListSkeleton />
+          </SkeletonGroup>
+        ) : null}
 
         {affinities.isError ? (
           <LoadFailed what="기억을" childId={childId} error={affinities.error} />
@@ -483,8 +499,7 @@ function FeedbackTab({ childId }: { childId: string }) {
   const [pendingId, setPendingId] = useState<string | null>(null);
 
   /**
-   * 받은 개인화 제안 목록 (#284). 일반 추천은 채택하는 흐름이 없어서 평가 대상이 아니고,
-   * 서버가 `kind = 'personalized'` 로 걸러 준다.
+   * 받은 제안 목록 (#284) — 개인화와 채택한 일반 추천(#509)이 같이 온다.
    * ⚠️ 첫 장(20건)만 그린다 — `next_cursor` 로 더 보기는 아직 없다 (#316 하지 않는 것).
    */
   const received = useQuery({
@@ -497,12 +512,12 @@ function FeedbackTab({ childId }: { childId: string }) {
       suggestion,
       feedback,
     }: {
-      suggestion: Suggestion;
+      suggestion: ReceivedSuggestion;
       feedback: SuggestionFeedback;
     }) =>
       api.patch<SuggestionFeedbackResponse>(
         `/children/${childId}/suggestions/${suggestion.id}/feedback`,
-        { feedback },
+        { feedback } satisfies SuggestionFeedbackRequest,
       ),
     onMutate: ({ suggestion }) => setPendingId(suggestion.id),
     onSettled: () => setPendingId(null),
@@ -524,7 +539,11 @@ function FeedbackTab({ childId }: { childId: string }) {
       </p>
 
       <Swap id={phaseOf(received)}>
-        {received.isPending ? <SkeletonBlock label="받은 제안을 불러오는 중" /> : null}
+        {received.isPending ? (
+          <SkeletonGroup label="받은 제안을 불러오는 중">
+            <SuggestionFeedbackListSkeleton />
+          </SkeletonGroup>
+        ) : null}
 
         {received.isError ? (
           <LoadFailed what="받은 제안을" childId={childId} error={received.error} />

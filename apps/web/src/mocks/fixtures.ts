@@ -17,6 +17,7 @@ import type {
   EventDraft,
   Evidence,
   GeneralSuggestion,
+  ReceivedSuggestion,
   GrowthLog,
   HealthSafety,
   HomeResponse,
@@ -588,6 +589,8 @@ export const suggestionAllergens: Record<string, string[]> = {
   s_4: [],
   s_5: ["땅콩"],
   s_6: [],
+  // 일반 추천도 사전검사가 걸린다 (#509) — 실서버는 `kind` 를 가리지 않고 `suggestion_id` 를 단다
+  g_2: ["참깨"],
 };
 
 /**
@@ -767,7 +770,7 @@ export const runEventDrafts: EventDraft[] = [
  * 🚨 `suggestion_ids` 가 **여러 개**다. 제출하면 그 제안들이 전부 이 일정에 연결된다 (#206) —
  *    단수로 두면 묶인 나머지는 일정이 됐다는 사실이 안 남는다.
  */
-export function mealDraft(items: Suggestion[]): EventDraft {
+export function mealDraft(items: Array<Suggestion | GeneralSuggestion>): EventDraft {
   return {
     // 🚨 **요청마다 새 id 다** (#241 · 서버는 `uuid4`). 제안에서 지어내면 같은 제안으로 다시 만든
     //    초안이 우연히 같은 장으로 합쳐져서, 실서버에서만 두 장이 서는 것을 목이 가린다.
@@ -789,7 +792,7 @@ export function mealDraft(items: Suggestion[]): EventDraft {
   };
 }
 
-export function suggestionDraft(suggestion: Suggestion): EventDraft {
+export function suggestionDraft(suggestion: Suggestion | GeneralSuggestion): EventDraft {
   return {
     draft_id: crypto.randomUUID(), // 🚨 요청마다 새 id 다 (위 `mealDraft` 와 같은 이유)
     op: "create",
@@ -888,9 +891,20 @@ export const manyObservations: Observation[] = [
 ];
 
 /** 07 피드백 탭이 평가할 제안 목록 (`GET /children/{cid}/suggestions` · #284). */
-export const receivedSuggestions: Suggestion[] = [
+export const receivedSuggestions: ReceivedSuggestion[] = [
   { ...suggestions[0], id: "s_past_1", status: "approved", feedback: "child_liked" },
   { ...suggestions[1], id: "s_past_2", status: "rejected", feedback: null },
+  // 05 에서 채택한 일반 추천 (#509). 🚨 실서버 모양이라 `basis` · 문서 근거가 없다 (`ReceivedGeneralSuggestion`)
+  {
+    id: "g_past_1",
+    child_id: CHILD_ID,
+    agent: generalSuggestions[0].agent,
+    kind: "general",
+    content: generalSuggestions[0].content,
+    status: "approved",
+    expires_at: generalSuggestions[0].expires_at,
+    feedback: null,
+  },
 ];
 
 /* ── 09 캘린더 ───────────────────────────────────────────────────────── */
@@ -910,6 +924,18 @@ export const confirmedEvent: CalendarEvent = {
   items: [
     { item_id: "i_1", item_name: "수건", is_prepared: false, prepared_at: null },
     { item_id: "i_2", item_name: "수영복", is_prepared: true, prepared_at: hoursFromNow(-20) },
+    // 준비물이 여럿이고 이름이 길 때의 배치를 보려고 둔다 (#568 — 두 열 그리드).
+    { item_id: "i_3", item_name: "물안경", is_prepared: false, prepared_at: null },
+    { item_id: "i_4", item_name: "여벌옷", is_prepared: false, prepared_at: null },
+    { item_id: "i_5", item_name: "모자", is_prepared: false, prepared_at: null },
+    { item_id: "i_6", item_name: "선크림", is_prepared: false, prepared_at: null },
+    { item_id: "i_7", item_name: "물통", is_prepared: false, prepared_at: null },
+    {
+      item_id: "i_8",
+      item_name: "갈아입을 속옷과 양말 한 켤레",
+      is_prepared: false,
+      prepared_at: null,
+    },
   ],
   reminders: [],
 };

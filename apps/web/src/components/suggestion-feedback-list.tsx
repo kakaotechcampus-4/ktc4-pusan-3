@@ -2,8 +2,10 @@
 
 import { DomainMeta } from "@/components/domain-chip";
 import { Chip, ChipRow } from "@/components/ui/chip";
-import type { Suggestion, SuggestionFeedback } from "@/lib/api/types";
+import { SkeletonText } from "@/components/ui/skeleton";
+import type { ReceivedSuggestion, SuggestionFeedback } from "@/lib/api/types";
 import { SUGGESTION_FEEDBACKS } from "@/lib/api/types";
+import { cn } from "@/lib/cn";
 
 /**
  * 07 제안 피드백 — 받은 제안이 실제로 어땠는지.
@@ -14,6 +16,12 @@ import { SUGGESTION_FEEDBACKS } from "@/lib/api/types";
  *
  * 🚨 **도메인 색을 쓰지 않는다.** 07 전체가 그렇다 (`DomainMeta` 주석) — 제안 목록은 네 Agent
  *    것이 다 섞여 내려올 수 있어서, 여기서 칩을 쓰면 한 화면 도메인 색 2개 상한을 깬다.
+ *
+ * 🚨 **채택한 일반 추천도 여기서 평가한다** (#509). 줄에 "또래 기준 일반 추천" 을 **글자로** 적는다 —
+ *    우리 아이 기준 제안인 척하지 않는 것이 이 라벨의 일이다 (CLAUDE.md §2). 색 · 점선으로 가르지 않는다.
+ * ⚠️ 05 처럼 컴포넌트를 나누지 않는다. 05 에서 나눈 이유는 **근거를 그리는 자리**라서다 — 한 컴포넌트에
+ *    플래그를 넣으면 근거 0건이 개인화로 그려질 길이 생긴다. 이 목록은 근거를 그리지 않고, 일반 추천
+ *    타입(`ReceivedGeneralSuggestion`)에는 근거 필드가 아예 없다.
  */
 const FEEDBACK_LABEL: Record<SuggestionFeedback, string> = {
   child_liked: "아이가 좋아했어요",
@@ -33,10 +41,10 @@ export function SuggestionFeedbackList({
   pendingId,
   onSelect,
 }: {
-  suggestions: Suggestion[];
+  suggestions: ReceivedSuggestion[];
   /** 보내는 중인 제안. 🚨 목록 전체가 아니라 그 줄만 잠근다. */
   pendingId: string | null;
-  onSelect: (suggestion: Suggestion, feedback: SuggestionFeedback) => void;
+  onSelect: (suggestion: ReceivedSuggestion, feedback: SuggestionFeedback) => void;
 }) {
   return (
     <ul className="flex flex-col gap-3">
@@ -48,8 +56,9 @@ export function SuggestionFeedbackList({
             key={suggestion.id}
             className="rounded-card bg-surface border-line flex flex-col gap-2 border p-4"
           >
-            <span className="text-caption text-ink-subtle flex items-center">
+            <span className="text-caption text-ink-subtle flex flex-wrap items-center gap-x-2">
               <DomainMeta agent={suggestion.agent} />
+              {suggestion.kind === "general" ? <span>또래 기준 일반 추천</span> : null}
             </span>
             <p className="text-body text-ink">{suggestion.content}</p>
 
@@ -69,6 +78,30 @@ export function SuggestionFeedbackList({
           </li>
         );
       })}
+    </ul>
+  );
+}
+
+/**
+ * 받는 동안의 목록. 진짜 줄과 **같은 상자 · 같은 줄 높이**다 (CLS · `components/ui/skeleton.tsx`) —
+ * 영역 · 제안 문장 · 피드백 칩 셋. 칩은 진짜 칩처럼 누르는 줄 높이(`min-h-touch`)를 갖고 같은 폭에서 접힌다.
+ */
+export function SuggestionFeedbackListSkeleton({ rows = 2 }: { rows?: number }) {
+  return (
+    <ul aria-hidden className="flex flex-col gap-3">
+      {Array.from({ length: rows }, (_, i) => (
+        <li key={i} className="rounded-card bg-surface border-line flex flex-col gap-2 border p-4">
+          <SkeletonText size="caption" width="1/4" />
+          <SkeletonText width="3/4" />
+          <ChipRow>
+            {["w-28", "w-32", "w-20"].map((width) => (
+              <span key={width} className="min-h-touch flex items-center py-2">
+                <span className={cn("bg-line animate-skeleton min-h-chip rounded-full", width)} />
+              </span>
+            ))}
+          </ChipRow>
+        </li>
+      ))}
     </ul>
   );
 }

@@ -96,6 +96,15 @@ function isReplayable(status: number): boolean {
  */
 export function withIdempotency<Params extends PathParams, RequestBody extends DefaultBodyType>(
   resolver: HttpResponseResolver<Params, RequestBody, DefaultBodyType>,
+  {
+    replay = (body) => body,
+  }: {
+    /**
+     * 재생할 본문을 바꾼다. 🚨 **한 줄 입력만 쓴다** — 서버가 재생할 run 의 채널 상태에 따라 응답을 나눈다
+     * (`finished` · #538). 다른 경로는 처음 응답을 그대로 재생한다.
+     */
+    replay?: (body: string) => string;
+  } = {},
 ): HttpResponseResolver<Params, RequestBody, DefaultBodyType> {
   return async (info) => {
     const key = info.request.headers.get("Idempotency-Key");
@@ -121,7 +130,7 @@ export function withIdempotency<Params extends PathParams, RequestBody extends D
         );
       }
       // 처음 응답을 그대로. 핸들러는 실행되지 않는다 — 그게 "중복 실행 방지" 다.
-      return new HttpResponse(stored.body, {
+      return new HttpResponse(replay(stored.body), {
         status: stored.status,
         headers: stored.headers,
       });

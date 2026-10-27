@@ -33,6 +33,7 @@ from app.agents.entrypoint import (
 from app.agents.memory.schemas.task import WorkType
 from app.api import agent_ports, idempotency
 from app.api.runs import pending_reply, registry, runner, suggestion_retry
+from app.domains.memory.profile.agent_reader import DbAffinityReader
 from app.domains.safety.agent_reader import DbSafetyReader
 
 PARENT = uuid.UUID(int=1)
@@ -158,6 +159,23 @@ async def test_agent_job_인증키가_있을_때만_도서_어댑터를_넘긴�
         assert "growth_books" not in seen and "growth_issued_books" not in seen
 
 
+async def test_agent_job_관심_어댑터를_넘긴다(monkeypatch):
+    """안 넘기면 기억 화면에 보이는 관심이 추천 근거에서 조용히 빠진다."""
+    seen: dict = {}
+
+    async def fake_handle_input(**kwargs):
+        seen.update(kwargs)
+        kwargs["emit"](Done(kwargs["run_id"], 1))
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+
+    job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    assert isinstance(seen["affinity_reader"], DbAffinityReader)
+
+
 async def test_agent_job_stops_a_run_past_the_deadline(monkeypatch):
     """안전망 — 모델이 멈춘 run 을 끊는다. 서버가 안 끊으면 ping 이 화면의 20초 타이머를 계속
     되살려서 진행 화면이 몇 분씩 돈다.
@@ -279,6 +297,30 @@ async def test_부분_결과는_done_으로_끝나고_키를_놓지_않는다(mo
     assert idempotency.recall(**scope) == channel.run_id
 
 
+async def test_키_놓기가_터져도_채널은_닫힌다(monkeypatch):
+    """🚨 failed 에는 원문이 실려 있다. 닫혀야 지울 예약이 걸린다 (registry.EXPIRE_AFTER_SECONDS).
+
+    forget_run 은 Redis 를 부르고 예외를 삼키지 않는다. 닫기가 그 뒤에 있으면 Redis 가 잠깐
+    끊긴 것만으로 원문이 서버를 다시 켤 때까지 남는다 (#536 리뷰).
+    """
+
+    def broken_forget_run(run_id: str) -> None:
+        raise ConnectionError("Redis 끊김")
+
+    monkeypatch.setattr(idempotency, "forget_run", broken_forget_run)
+    channel = registry.open_run(parent_id=PARENT)
+
+    async def boom(ch: registry.RunChannel) -> None:
+        raise RuntimeError("모델 오류")
+
+    task = runner.start(channel, boom, raw_text=RAW_TEXT)
+    with pytest.raises(ConnectionError):
+        await asyncio.wait_for(task, timeout=1)
+
+    assert names(channel) == ["failed"]
+    assert channel.closed
+
+
 async def test_start_runs_job_attaches_task_and_closes_channel():
     channel = registry.open_run(parent_id=PARENT)
 
@@ -383,7 +425,7 @@ async def test_되묻기로_끝난_run_의_맥락은_채널이_아니라_store_�
     await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
 
     assert names(channel) == ["note", "done"]
-    stored = pending_reply.consume(run_id=channel.run_id, parent_id=PARENT, child_id=CHILD)
+    stored = pending_reply.get(run_id=channel.run_id, parent_id=PARENT, child_id=CHILD)
     assert stored == _PENDING
     pending_reply.clear()
 
@@ -501,10 +543,23 @@ async def test_동의_값을_안_받은_job_은_동의_없음으로_바꿔_넘�
     assert seen["child_health_granted"] is None
 
 
-async def test_이어받기_run_이_실패하면_맥락을_되돌려_둔다(monkeypatch):
-    # 창구가 맥락을 꺼낸 뒤 Agent 가 실패하면 "다시 시도" 가 400 을 받는다.
-    # 되돌려 둬야 같은 답으로 재시도가 된다
+def _claim_prev() -> float:
+    """창구처럼 앞 질문의 맥락을 넣고 "사용 중" 으로 둔다. 넣은 시각을 돌려준다."""
     pending_reply.clear()
+    pending_reply.put(run_id="r-prev", parent_id=PARENT, child_id=CHILD, context=_PENDING)
+    pending_reply.claim(run_id="r-prev", parent_id=PARENT, child_id=CHILD)
+    return pending_reply._pending["r-prev"].stored_at
+
+
+def _released() -> bool:
+    """표시만 풀렸다 — 같은 질문에 다시 답할 수 있다."""
+    return pending_reply.get(run_id="r-prev", parent_id=PARENT, child_id=CHILD) == _PENDING
+
+
+async def test_이어받기_run_이_실패하면_표시만_풀고_처음_시각을_둔다(monkeypatch):
+    # 표시를 풀지 않으면 "다시 시도" 가 400 을 받는다. 지웠다 다시 넣으면 실패할 때마다
+    # 15분이 새로 시작된다 (#564)
+    stored_at = _claim_prev()
 
     async def fake_handle_input(**kwargs):
         kwargs["emit"](Failed("llm_unavailable", "3일 전부터"))
@@ -521,12 +576,13 @@ async def test_이어받기_run_이_실패하면_맥락을_되돌려_둔다(monk
     )
     await asyncio.wait_for(runner.start(channel, job, raw_text="3일 전부터"), timeout=1)
 
-    assert pending_reply.consume(run_id="r-prev", parent_id=PARENT, child_id=CHILD) == _PENDING
+    assert _released()
+    assert pending_reply._pending["r-prev"].stored_at == stored_at
     pending_reply.clear()
 
 
-async def test_이어받기_run_이_끝나면_맥락을_되돌리지_않는다(monkeypatch):
-    pending_reply.clear()
+async def test_이어받기_run_이_끝나면_맥락을_지운다(monkeypatch):
+    _claim_prev()
 
     async def fake_handle_input(**kwargs):
         kwargs["emit"](Done(kwargs["run_id"], 1))
@@ -543,7 +599,7 @@ async def test_이어받기_run_이_끝나면_맥락을_되돌리지_않는다(m
     )
     await asyncio.wait_for(runner.start(channel, job, raw_text="3일 전부터"), timeout=1)
 
-    assert pending_reply.consume(run_id="r-prev", parent_id=PARENT, child_id=CHILD) is None
+    assert "r-prev" not in pending_reply._pending
 
 
 async def test_commit_후_예외가_나도_키를_풀지_않는다(monkeypatch):
@@ -573,11 +629,11 @@ async def test_commit_후_예외가_나도_키를_풀지_않는다(monkeypatch):
     assert channel.closed
 
 
-async def test_이어받기_commit_후_예외가_나도_맥락을_복구하지_않는다(monkeypatch):
-    """이어받기 run 에서 commit 뒤 터지면 맥락을 되돌리지 않는다.
-    이미 답이 저장됐으니 맥락을 복구하면 같은 답을 다시 보내게 된다.
+async def test_이어받기_commit_후_예외가_나도_맥락을_지운다(monkeypatch):
+    """이어받기 run 에서 commit 뒤 터져도 표시를 풀지 않고 지운다.
+    이미 답이 저장됐으니 다시 답할 수 있게 두면 같은 답이 두 번 저장된다.
     """
-    pending_reply.clear()
+    _claim_prev()
 
     async def fake_handle_input(**kwargs):
         kwargs["store"].wrote = True
@@ -598,13 +654,13 @@ async def test_이어받기_commit_후_예외가_나도_맥락을_복구하지_�
 
     # commit 됐으므로 done 으로 끝남
     assert channel.ended_with == "done"
-    # 맥락이 복구되지 않음 — 이미 저장됐으니 다시 보낼 필요 없음
-    assert pending_reply.consume(run_id="r-prev", parent_id=PARENT, child_id=CHILD) is None
+    # 이미 저장됐으니 다시 답할 일이 없다
+    assert "r-prev" not in pending_reply._pending
     pending_reply.clear()
 
 
-async def test_이어받기_run_이_예외로_죽어도_맥락을_되돌려_둔다(monkeypatch):
-    pending_reply.clear()
+async def test_이어받기_run_이_예외로_죽어도_표시를_푼다(monkeypatch):
+    _claim_prev()
 
     async def fake_handle_input(**kwargs):
         raise RuntimeError("boom")
@@ -622,7 +678,7 @@ async def test_이어받기_run_이_예외로_죽어도_맥락을_되돌려_둔�
     await asyncio.wait_for(runner.start(channel, job, raw_text="3일 전부터"), timeout=1)
 
     assert channel.ended_with == "failed"
-    assert pending_reply.consume(run_id="r-prev", parent_id=PARENT, child_id=CHILD) == _PENDING
+    assert _released()
     pending_reply.clear()
 
 
@@ -669,9 +725,9 @@ async def test_commit_전_timeout은_failed로_끝나고_키가_풀린다(monkey
     assert channel.closed
 
 
-async def test_이어받기_timeout이_commit_뒤에_걸려도_done_이고_맥락_복구_안_함(monkeypatch):
-    """이어받기 run에서 commit 후 timeout → done + 맥락 복구 안 함."""
-    pending_reply.clear()
+async def test_이어받기_timeout이_commit_뒤에_걸려도_done_이고_맥락을_지운다(monkeypatch):
+    """이어받기 run에서 commit 후 timeout → done + 맥락 지움."""
+    _claim_prev()
 
     async def fake_handle_input(**kwargs):
         kwargs["store"].wrote = True
@@ -692,13 +748,12 @@ async def test_이어받기_timeout이_commit_뒤에_걸려도_done_이고_맥�
     await asyncio.wait_for(runner.start(channel, job, raw_text="3일 전부터"), timeout=2)
 
     assert channel.ended_with == "done"
-    assert pending_reply.consume(run_id="r-prev", parent_id=PARENT, child_id=CHILD) is None
-    pending_reply.clear()
+    assert "r-prev" not in pending_reply._pending
 
 
-async def test_이어받기_timeout이_commit_전에_걸리면_failed_이고_맥락_복구(monkeypatch):
-    """이어받기 run에서 commit 전 timeout → failed + 맥락 복구."""
-    pending_reply.clear()
+async def test_이어받기_timeout이_commit_전에_걸리면_failed_이고_표시를_푼다(monkeypatch):
+    """이어받기 run에서 commit 전 timeout → failed + 표시만 풂."""
+    _claim_prev()
 
     async def fake_handle_input(**kwargs):
         await asyncio.sleep(999)  # commit 전에 timeout
@@ -717,7 +772,7 @@ async def test_이어받기_timeout이_commit_전에_걸리면_failed_이고_맥
     await asyncio.wait_for(runner.start(channel, job, raw_text="3일 전부터"), timeout=2)
 
     assert channel.ended_with == "failed"
-    assert pending_reply.consume(run_id="r-prev", parent_id=PARENT, child_id=CHILD) == _PENDING
+    assert _released()
     pending_reply.clear()
 
 

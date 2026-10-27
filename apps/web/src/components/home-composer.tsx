@@ -45,6 +45,7 @@ export function HomeComposer({
   busyLabel = "보내는 중이에요",
   sentLine = false,
   lead,
+  promptsPending = false,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -77,6 +78,8 @@ export function HomeComposer({
   sentLine?: boolean;
   /** 제안 줄 맨 앞에 서는 문 하나 — 03 의 "오늘 대화 이어보기" (`AgentPrompts` 의 `lead`). */
   lead?: ReactNode;
+  /** 제안을 아직 받는 중. 줄 자리를 알약 모양으로 잡아 둔다 (`AgentPrompts` 의 `pending`). */
+  promptsPending?: boolean;
 }) {
   const canSubmit = value.trim().length > 0 && !pending && !locked;
 
@@ -119,6 +122,7 @@ export function HomeComposer({
         disabled={locked}
         layout="scroller"
         lead={lead}
+        pending={promptsPending}
       />
 
       {/* 알약 하나 안에 버튼·입력·보내기가 다 들어간다. 입력만 테두리를 갖지 않는 이유(§7 bare). */}

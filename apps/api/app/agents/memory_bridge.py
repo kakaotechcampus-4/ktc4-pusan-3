@@ -16,12 +16,16 @@ Agent 패키지는 서로 import 하지 않는다. Memory store 와 Food · Acti
 Growth 포트를 둘 다 아는 곳은 pipeline · entrypoint 층이라 여기 둔다.
 Curator 는 이 다리를 쓰지 않고 DbCuratorStore 를 직접 쓴다 (domains/memory/curator/trigger.py).
 
-profile_affinity 는 Memory store 에 없다. affinities() 는 빈 목록이다.
+profile_affinity 는 Memory store 에 없어 따로 받은 어댑터(`affinities=`, 운영은
+`DbAffinityReader`)로 읽는다. 마지막 관찰 뒤 21일이 지난 관심은 그날(`today=`) 기준
+archived 로 넘긴다. 어댑터를 안 넘기면(테스트 · eval) 빈 목록이다 — 러너 · 05 는 늘 넘긴다.
 """
 
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from dataclasses import replace
 from datetime import date
+from typing import Protocol
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from app.agents.activity.store.ports import ActivityObservation
@@ -34,6 +38,7 @@ from app.agents.growth.store.ports import (
     RoutineObservation,
 )
 from app.agents.memory.store.ports import MemoryStore, ObservationRow
+from app.rules.profile import archived_by_time
 
 # 검색에 남는 status. stand_alone 은 Correction once_only("이번만 그랬어요") 라
 # Curator 집계에서만 빠진다 (data_model §observation). inactive · deleted 는 읽지 않는다
@@ -60,11 +65,50 @@ def same_store(store: MemoryStore) -> StoreOpener:
     return opener
 
 
+class AffinityReader(Protocol):
+    """`profile_affinity` 를 읽는 어댑터.
+
+    운영에서는 `domains/memory/profile/agent_reader.DbAffinityReader`.
+    """
+
+    async def affinities(self, *, child_id: UUID, domains: Sequence[str]) -> list[AffinityRow]: ...
+
+
 class _StoreReader:
-    def __init__(self, store: MemoryStore | None = None, *, opener: StoreOpener | None = None):
+    def __init__(
+        self,
+        store: MemoryStore | None = None,
+        *,
+        opener: StoreOpener | None = None,
+        affinities: AffinityReader | None = None,
+        today: date | None = None,
+    ):
         if (store is None) == (opener is None):
             raise TypeError("store 와 opener 중 하나만 넘긴다")
+        if affinities is not None and today is None:
+            raise TypeError(
+                "관심 어댑터를 넘기면 기준일(today)도 넘긴다 — 오래된 관심을 그날 기준으로 거른다"
+            )
         self._open: StoreOpener = opener or same_store(store)  # type: ignore[arg-type]
+        self._affinity_reader = affinities
+        self._today = today
+
+    async def _affinity_rows(self, child_id: UUID, domains: Sequence[str]) -> list[AffinityRow]:
+        """어댑터가 없으면 빈 목록. 있으면 읽은 관심에 그날 기준 시간 경과 archived 를 적용한다.
+
+        Curator 는 관찰이 붙을 때만 상태를 다시 계산한다. 같은 공식의 시간 조건만 그날 기준으로
+        다시 적용하고, 근거에서 빼는 일은 소비처가 한다.
+        """
+        if self._affinity_reader is None or self._today is None:
+            return []
+        rows = await self._affinity_reader.affinities(child_id=child_id, domains=domains)
+        return [
+            replace(row, state="archived")
+            if row.state != "archived"
+            and archived_by_time(last_observed_on=row.last_observed_on, today=self._today)
+            else row
+            for row in rows
+        ]
 
 
 def _uuid(row_id: str) -> UUID:
@@ -96,7 +140,7 @@ class StoreFoodMemory(_StoreReader):
     """`FoodMemoryReader` 구현. `observation_food`를 Memory store 에서 읽는다."""
 
     async def affinities(self, *, child_id: UUID) -> list[AffinityRow]:
-        return []
+        return await self._affinity_rows(child_id, ("food",))
 
     async def observations(
         self, *, child_id: UUID, date_from: date, date_to: date
@@ -129,7 +173,7 @@ class StoreActivityMemory(_StoreReader):
     """`ActivityMemoryReader` 구현. `observation_activity`를 Memory store 에서 읽는다."""
 
     async def affinities(self, *, child_id: UUID) -> list[AffinityRow]:
-        return []
+        return await self._affinity_rows(child_id, ("activity",))
 
     async def observations(
         self, *, child_id: UUID, date_from: date, date_to: date

@@ -10,6 +10,7 @@ import type { ScanRow } from "@/components/safety-scan-fields";
 import {
   HEALTH_SAFETY_LIMITS,
   reactionsProblem,
+  severityFieldHint,
   severityFieldLabel,
   severityOptions,
   splitReactions,
@@ -148,6 +149,8 @@ function RowForm({
           옮기는 칸이라, 못 읽었으면 비워 두는 편이 지어내는 것보다 낫다. */}
       <Select
         label={severityFieldLabel("allergy")}
+        shape="field"
+        hint={severityFieldHint("allergy")}
         value={severity}
         options={severityOptions("allergy")}
         onChange={setSeverity}

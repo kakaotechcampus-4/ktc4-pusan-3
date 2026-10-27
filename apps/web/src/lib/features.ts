@@ -14,7 +14,7 @@ const MOCK_SERVER =
   process.env.NODE_ENV === "development" && process.env.NEXT_PUBLIC_API_MOCKING === "enabled";
 
 export const PENDING_SERVER_FEATURES = {
-  /** 08 사진으로 적기 — `POST /children/{cid}/photos`. 홈 · 04 대화 · 09 하루 패널의 진입점. */
+  /** 08 사진으로 적기 — `POST /children/{cid}/photos`. 홈 · 04 대화의 진입점. */
   photoEntry: MOCK_SERVER,
   /** 11-2 알레르기 검사지에서 가져오기 — `POST /children/{cid}/health-safety/scan`. 11 프로필 안전 정보 추가 시트의 진입점. */
   safetyScan: MOCK_SERVER,

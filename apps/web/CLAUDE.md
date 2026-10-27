@@ -23,7 +23,7 @@ Owner: 고태영 (프론트 리드)
 | `components/` · `components/ui/` · `globals.css` · 아이콘 · 서체 · 10 설정 하위 화면(고객센터 · 탈퇴 · 문제 알리기) | [`components-v1.md`](../../docs/web/components-v1.md) |
 | `lib/auth/` · `stores/session.ts` · `/auth/*` · 01 · 02 · 동의(`lib/consent.ts`) | [`auth-consent-v1.md`](../../docs/web/auth-consent-v1.md) |
 | `lib/api/` · 뮤테이션 · 에러 코드 처리 · `error.tsx` · `AppErrorBoundary` | [`api-client-v1.md`](../../docs/web/api-client-v1.md) |
-| `mocks/` · `*.test.ts` · `e2e/` | [`mock-and-tests-v1.md`](../../docs/web/mock-and-tests-v1.md) |
+| `mocks/` · `*.test.ts` · `e2e/` · `contract/` | [`mock-and-tests-v1.md`](../../docs/web/mock-and-tests-v1.md) |
 | `package.json` 의 버전 · `eslint.config.mjs` · `ci-web.yml` · `Dockerfile` · 배포 | [`toolchain-deploy-v1.md`](../../docs/web/toolchain-deploy-v1.md) |
 
 🚨 **같은 규칙이 이 파일의 요약과 `docs/web/` 원문 두 곳에 있으면 원문이 정본이다.** 규칙을 바꾸면 같은 PR 에서 둘 다 고친다.
@@ -100,7 +100,7 @@ Owner: 고태영 (프론트 리드)
 | 05 제안 후보 (고르기 → **채택** → 일정 만들기) | `/child/[childId]/suggestions?agents=food,activity&run=…` (03 홈 버튼에서 오면 `run` 대신 `prompt=…`) |
 | 06 승인 | 05 위의 바텀시트 (라우트 없음) |
 | 07 기억 | `/child/[childId]/memories?tab=observations\|profile\|feedback` |
-| 08 사진으로 적기 | `/child/[childId]/photos?date=YYYY-MM-DD` (날짜는 09 에서 들어왔을 때만) |
+| 08 사진으로 적기 | `/child/[childId]/photos?date=YYYY-MM-DD` (날짜를 싣는 화면은 지금 없다 · #503) |
 | 09 캘린더 | `/child/[childId]/calendar?date=YYYY-MM-DD` |
 | 10 설정 | `/child/[childId]/settings` |
 | 10 설정 › 고객센터 (읽는 화면) | `/child/[childId]/settings/help` |
@@ -203,6 +203,7 @@ const mutation = useMutation({
 
 - 🚨 **`mutationFn` 안에서 `newIdempotencyKey()` 를 부르지 않는다.** 재시도마다 새 키가 나가면 중복 방지가 무의미해진다 (타입이 못 잡는다)
 - 🚨 **`rotate()` 를 실패 경로에서도, 끝을 확인하지 못한 경로에서도 부르지 않는다.** 재시도는 같은 키다
+  (예외: 한 줄 입력의 run 이 SSE `failed` 로 끝나면 새 키다 — 서버가 "저장 없음" 을 보장한다 · [`api-client-v1.md`](../../docs/web/api-client-v1.md) §2)
 - 🚨 **사용자가 고쳐 쓸 수 있는 본문은 `current(text)` 로 본문을 넘긴다** — 키가 본문을 따라 바뀌어야 "같은 키 · 다른 본문" 422 에 안 갇힌다
 - `422 idempotency_key_reuse` 가 화면에 도달하면 **버그다.**
 
@@ -249,7 +250,7 @@ run 상태는 서버 상태도 클라이언트 상태도 아니다 (구독형). 
 최상위 §2 가 프론트에 떨어지는 지점만 추렸다. 어기면 서비스가 성립하지 않는다.
 
 - 🚨 **일반 추천과 개인화 추천을 한 컴포넌트로 그리지 않는다.** 일반 추천에는 "또래 기준 일반 추천" 을 **화면에 명시**하고 쌓인 기록 건수를 그대로 보여준다. 되물을 때 질문은 **1개**.
-  🚨 **둘이 한 화면에 같이 서지 않는다** — 일반 추천은 개인화 **대신** 나간다. 05 는 일반 추천이 위, 되묻는 질문이 아래다.
+  ⚠️ **둘이 한 화면에 같이 선다** — 같은 Agent 안에서도 후보마다 아이 기록 근거로 `kind` 가 갈린다 (#512 리뷰). 그래도 컴포넌트는 나누고, 고르기 · 채택 · 묶음 안내만 05 가 합친다. 05 는 일반 추천이 위, 되묻는 질문이 아래다.
 - 🚨 **"근거 없음" 상태를 만들지 않는다.** `evidence` 가 빈 suggestion 은 서버가 버리고 `scarcity` 로 내린다. 그 상태를 화면에 그리면 버그를 UI 로 덮는 것이다.
 - 🚨 **`is_stale` 인 근거를 단독으로 보여주지 않는다** (6개월 · NF-08).
 - 🚨 **"기록했어요" 는 서버 저장이 끝난 뒤에만 말한다.** 특히 알레르기다 — 보호자의 선택(이 제안을 막는다)과
@@ -324,6 +325,7 @@ run 상태는 서버 상태도 클라이언트 상태도 아니다 (구독형). 
 ```bash
 pnpm test          # vitest run — 목 계약 · lib · 스토어 · 게이트 정적 검사
 pnpm test:e2e      # Playwright — 목 서버로 띄운 화면에서 화면 규칙 (make web-e2e)
+pnpm test:contract # 웹 API 타입 ↔ 서버 OpenAPI (make web-contract 가 서버 계약 덤프부터 돈다)
 ```
 
 무엇을 거는지와 규칙 원문은 [`mock-and-tests-v1.md`](../../docs/web/mock-and-tests-v1.md) §2 다.

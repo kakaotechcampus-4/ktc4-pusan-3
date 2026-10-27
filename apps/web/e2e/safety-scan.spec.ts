@@ -100,6 +100,20 @@ test("원문을 못 읽은 줄은 고치기에서 보고 확인하면 그때 승
   await expect(page.getByText("확인하지 않은 1건은 등록하지 않아요.")).toBeVisible();
 });
 
+// 직접 적기 시트와 같은 설명이다 — 두 시트가 같은 칸을 다르게 말하지 않는다 (#570).
+test("고치기 시트의 검사 등급에도 설명이 붙는다", async ({ page }) => {
+  await openScan(page);
+  await page
+    .getByRole("checkbox", { name: /^달걀흰자/ })
+    .locator("xpath=ancestor::div[contains(@class,'rounded-card')][1]")
+    .getByRole("button", { name: "고치기" })
+    .click();
+  const sheet = page.getByRole("dialog", { name: "옮겨 적은 것 고치기" });
+  await expect(sheet.getByRole("combobox", { name: "검사 등급" })).toHaveAccessibleDescription(
+    "알레르기 혈액검사 결과를 0부터 6까지 나눈 등급이에요. 검사를 안 했거나 잘 모르면 모르겠어요를 골라 주세요. 몇 등급이든 식단 추천에서는 똑같이 빼요.",
+  );
+});
+
 test("승인하면 고른 줄마다 서로 다른 Idempotency-Key 로 등록하고, 다른 쓰기 경로는 없다", async ({
   page,
 }) => {

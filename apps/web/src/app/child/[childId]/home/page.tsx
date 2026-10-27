@@ -30,7 +30,7 @@ import { IconTile } from "@/components/ui/icon-tile";
 import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
 import { phaseOf, Swap } from "@/components/ui/swap";
-import { SkeletonBlock } from "@/components/ui/skeleton";
+import { SkeletonGroup, SkeletonText, SkeletonTile } from "@/components/ui/skeleton";
 import { useTodayChat } from "@/hooks/use-chat-history";
 import { useChildId } from "@/hooks/use-child-id";
 import { hasOpenQuestion, isBusy, sendLine, useConversation } from "@/stores/conversation";
@@ -146,6 +146,7 @@ function HomeScreen() {
               locked={leaving !== null}
               busyLabel={leaving !== null ? "보내는 중이에요" : "답을 기다리는 중이에요"}
               sentLine={leaving !== null}
+              promptsPending={home.isPending}
               lead={
                 // 🚨 **오늘 대화가 있을 때만 선다** — 빈 대화로 가는 문을 세우지 않는다. 앱을 다시 켜면 대화
                 //    스토어가 비어 있어서 서버에 남은 오늘 대화도 본다 (#228).
@@ -171,6 +172,9 @@ function HomeScreen() {
               <p className="text-body-sm text-ink-subtle mt-2">
                 지금까지 함께 쌓은 기록 {home.data.observation_count}건
               </p>
+            ) : home.isPending ? (
+              // 받는 동안 줄 자리를 잡는다 — 받은 뒤에 줄이 생기면 아래 카드가 한 줄만큼 밀린다.
+              <SkeletonText size="body-sm" width="1/2" className="mt-2" />
             ) : null}
           </div>
           {/* 설정은 자주 가는 곳이 아니라 아래 네비에 칸을 주지 않는다 — 제목 옆 아이콘 하나다. */}
@@ -185,9 +189,7 @@ function HomeScreen() {
         {/* 스켈레톤 → 내용은 같은 자리의 교체다 (디자인 시스템 §8). */}
         <Swap id={phaseOf(home)}>
           {home.isPending ? (
-            <Card>
-              <SkeletonBlock label="홈을 불러오는 중" />
-            </Card>
+            <HomeBodySkeleton />
           ) : consentBlocked ? (
             // 🚨 403 consent_required 를 일반 실패로 그리면 "다시 시도" 만 누르게 된다 — 다시 시도해도
             //    같은 403 이다. 무엇이 막혔는지 말해야 한다 (§3 에러).
@@ -302,6 +304,45 @@ function HomeBody({ data }: { data: HomeResponse }) {
           </Card>
         </Section>
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * 받는 동안의 본문. `HomeBody` 의 **가장 흔한 모양**(건수 카드 + "오늘" 한 장)과 같은 상자 · 같은 줄 높이다
+ * (CLS · `components/ui/skeleton.tsx`). 🚨 `Counts` · `TodayRow` 의 여백을 바꾸면 여기도 같이 바꾼다.
+ * 구역 이름은 받은 내용에 따라 서고 안 서서 글자로 쓰지 않고 자리만 잡는다.
+ */
+function HomeBodySkeleton() {
+  return (
+    <SkeletonGroup label="홈을 불러오는 중" className="flex flex-col gap-6">
+      <Card className="flex items-stretch gap-4">
+        <CountSkeleton />
+        <span aria-hidden className="bg-line w-px self-stretch" />
+        <CountSkeleton />
+      </Card>
+      <section>
+        <SkeletonText size="label" width="1/4" />
+        <div className="mt-2">
+          <Card className="flex flex-col gap-3">
+            {[0, 1].map((i) => (
+              <div key={i} className="flex items-center gap-3">
+                <SkeletonTile />
+                <SkeletonText size="body-sm" width="2/3" className="min-w-0 flex-1" />
+              </div>
+            ))}
+          </Card>
+        </div>
+      </section>
+    </SkeletonGroup>
+  );
+}
+
+function CountSkeleton() {
+  return (
+    <div className="flex-1">
+      <SkeletonText size="display" width="short" />
+      <SkeletonText size="caption" width="1/2" className="mt-1" />
     </div>
   );
 }

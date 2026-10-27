@@ -6,7 +6,7 @@ import { useState } from "react";
 
 import { STATE_LABEL } from "@/components/affinity-list";
 import { CORRECTED_OBSERVATION, CorrectionButtons } from "@/components/correction-buttons";
-import { DomainMeta, observationAgent } from "@/components/domain-chip";
+import { DomainMeta, ObservationMeta } from "@/components/domain-chip";
 import { BottomSheet } from "@/components/ui/bottom-sheet";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -290,7 +290,7 @@ function ObservationDetail({
 
       <dl className="flex flex-col gap-2">
         <MetaRow label="분류">
-          <DomainMeta agent={observationAgent(observation.kind)} />
+          <ObservationMeta kind={observation.kind} />
         </MetaRow>
         {observation.observed_label ? (
           <MetaRow label="언제">{observation.observed_label}</MetaRow>
@@ -303,9 +303,9 @@ function ObservationDetail({
           <HealthFields fields={observation.domain_fields} />
         ) : observation.affinity ? (
           // 🚨 고친 기록도 서버가 `affinity` 를 그대로 싣는다 — 고치기는 `status` 만 바꾸고 연결은
-          //    남긴다. 다만 그 기억의 기록 수에는 `active` 만 들어가서, 고친 기록에 "묶인 기억" 이라고
+          //    남긴다. 다만 그 기억의 기록 수에는 `active` 만 들어가서, 고친 기록에 "관련된 기억" 이라고
           //    쓰면 여전히 센다고 읽힌다. 사실은 버리지 않고 라벨로 말한다 (목록은 칩을 아예 뺀다).
-          <MetaRow label={currentStatus === "active" ? "묶인 기억" : "세지 않는 기억"}>
+          <MetaRow label={currentStatus === "active" ? "관련된 기억" : "세지 않는 기억"}>
             {observation.affinity.merge_key}
           </MetaRow>
         ) : null}
@@ -403,7 +403,11 @@ function AffinityDetail({ affinity }: { affinity: Affinity }) {
 function MetaRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex items-start gap-3">
-      <dt className="text-label text-ink-subtle w-20 shrink-0">{label}</dt>
+      {/* 라벨의 줄 높이를 값(`text-body-sm`)의 줄 높이에 맞춘다. 글자가 작은 라벨이 위로 뜨지 않고,
+          값이 여러 줄이어도 라벨은 첫 줄에 붙는다 (`items-center` 면 가운데로 내려간다). */}
+      <dt className="text-label text-ink-subtle w-20 shrink-0 leading-[calc(var(--text-body-sm)*var(--text-body-sm--line-height))]">
+        {label}
+      </dt>
       <dd className="text-body-sm text-ink flex min-w-0 flex-1 items-center">{children}</dd>
     </div>
   );

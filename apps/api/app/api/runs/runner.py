@@ -110,8 +110,9 @@ def agent_job(
       done 앞에 들어가야 화면이 note 를 받은 직후 보낸 답도 맥락을 찾는다.
     - 실패한 추천 맥락(RetryContext) · 0개 기록(EmptyResult)은 05 보관함(`suggestion_retry`)에
       넣는다 — PendingReply 처럼 화면 결과보다 먼저 온다.
-    - 이어받기 run 이 done 없이 끝나면(실패 · 시간 초과 · 예외) 창구가 꺼낸 맥락을 reply_to 로
-      되돌려 둔다. failed 는 "저장 없음" 이라 같은 답으로 다시 시도할 수 있어야 한다.
+    - 이어받기 run 이 끝나면 창구가 "사용 중" 으로 둔 reply_to 맥락을 정리한다(#564). done 이거나
+      저장이 확정됐으면 지우고, 아니면(실패 · 시간 초과 · 예외) 표시만 푼다. failed 는 "저장 없음"
+      이라 같은 답으로 다시 시도할 수 있어야 한다.
     - RUN_DEADLINE_SECONDS 를 넘기면 끊고 failed(timeout) 으로 끝낸다.
       끊는 순간 진행 중인 모델 호출도 취소된다.
     - `on_event` 는 이벤트를 번역한 뒤에 하나씩 받는다. 대화 기록(`chat_record`)이
@@ -205,6 +206,7 @@ def agent_job(
                         **agent_ports.safety_readers(),
                         **agent_ports.growth_book_ports(),
                         growth_log=agent_ports.growth_log_reader(),
+                        affinity_reader=agent_ports.affinity_reader(),
                     )
             except TimeoutError:
                 log.warning(
@@ -220,20 +222,13 @@ def agent_job(
                     channel.publish(sse.failed_event("timeout", raw_text))
             finally:
                 # 예외로 죽으면 failed 는 _guarded 가 이 뒤에 붙인다
-                not_done = channel.ended_with != "done"
-                should_restore = (
-                    continuation is not None
-                    and reply_to is not None
-                    and not_done
-                    and not channel.committed
-                )
-                if should_restore:
-                    pending_reply.put(
-                        run_id=reply_to,
-                        parent_id=parent_id,
-                        child_id=child_id,
-                        context=continuation,
-                    )
+                # 창구가 "사용 중" 으로 둔 맥락을 정리한다 (#564). 저장 없이 끝났으면 표시만 풀어
+                # 같은 질문에 다시 답할 수 있게 한다 — 15분은 처음 넣은 시각 그대로 센다.
+                if continuation is not None and reply_to is not None:
+                    if channel.ended_with == "done" or channel.committed:
+                        pending_reply.drop(reply_to)
+                    else:
+                        pending_reply.release(reply_to)
 
     return job
 
@@ -335,13 +330,15 @@ async def _guarded(
                 channel.publish(done)
             else:
                 channel.publish(sse.failed_event("internal_error", raw_text))
+        # 🚨 닫기가 키 놓기보다 먼저다. forget_run 은 Redis 를 부르고 예외를 삼키지 않는다 —
+        #    거기서 터지면 close 가 안 불려 원문이 실린 failed 채널이 지워지지 않는다 (#536 리뷰).
+        channel.close()
         # 실패로 끝난 run 만 키를 놓아준다 — 같은 키로 "다시 시도" 하면 새 run 이 떠야 한다.
         # 🚨 done 으로 끝난 run 은 저장이 끝났다. 뒤에서 터졌어도 놓으면 재시도가 두 번 저장한다.
         # 🚨 publish 와 여기 사이에 await 가 없어야 한다. 화면이 failed 를 받자마자 재시도해도
-        #    키가 이미 지워져 있다.
+        #    키가 이미 지워져 있다. close 도 sync 라 사이에 끼워도 된다.
         if channel.ended_with == "failed":
             idempotency.forget_run(channel.run_id)
-        channel.close()
     # 닫은 뒤에 부른다 — 화면은 끝 신호까지 다 받았고, 여기서 무엇이 늦어져도 기다리지 않는다
     if on_end is not None:
         await on_end(channel)

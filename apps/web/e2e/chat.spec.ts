@@ -285,6 +285,102 @@ test.describe("저장한 뒤 끊긴 run 은 실패가 아니다 (#271)", () => {
   });
 });
 
+test.describe("결과를 못 받은 줄을 채널이 지워진 뒤 다시 보낸다 (#538)", () => {
+  test.describe("replay_finished — 서버는 끝냈고 대화 기록이 있다", () => {
+    test.use({ scenario: "replay_finished" });
+
+    test("SSE 를 다시 열지 않고 저장된 결과가 그 줄에 서며, 다시 보내는 길이 없다", async ({
+      page,
+    }) => {
+      const calls = recordApi(page);
+      await sendFromHome(page, "지어낸 한 줄");
+      const reply = turn(page, "지어낸 한 줄");
+      await expect(reply.getByText("저장됐는지 확인하지 못했어요")).toBeVisible();
+
+      await reply.getByRole("button", { name: "다시 시도" }).click();
+      await expect(
+        reply.getByText("앞서 처리된 결과예요. 같은 말을 다시 보내지 않아도 돼요."),
+      ).toBeVisible();
+      await expect(reply.getByText("기록 2건 저장됨")).toBeVisible();
+      await expect(reply.getByText("저장됐는지 확인하지 못했어요")).toHaveCount(0);
+      // 🚨 새 키로 다시 보내면 두 번 저장된다 — 이미 저장된 결과에 다시 보내는 길을 세우지 않는다.
+      await expect(reply.getByRole("button", { name: "다시 시도" })).toHaveCount(0);
+      await expect(reply.getByRole("button", { name: "고쳐 쓰기" })).toHaveCount(0);
+
+      // 같은 키로 한 번 더 보냈고, SSE 는 처음 한 번뿐이다(지워진 채널은 404 다).
+      const posts = writes(calls, "POST", /\/inputs$/);
+      expect(posts).toHaveLength(2);
+      expect(posts[1].idempotencyKey).toBe(posts[0].idempotencyKey);
+      expect(calls.filter((c) => c.method === "GET" && c.path.startsWith("/runs/"))).toHaveLength(
+        1,
+      );
+    });
+
+    test("다시 보내지 않아도 서버에 그 턴이 오면 결과 미확인 카드가 저장된 결과로 바뀐다", async ({
+      page,
+    }) => {
+      await sendFromHome(page, "지어낸 한 줄");
+      await expect(
+        turn(page, "지어낸 한 줄").getByText("저장됐는지 확인하지 못했어요"),
+      ).toBeVisible();
+
+      // 다음 한 줄이 끝나면 오늘 대화를 다시 받는다 — 그때 앞 줄의 턴이 서버에 있다.
+      await page.getByRole("textbox", { name: "오늘 있었던 일" }).fill("다른 한 줄");
+      await page.getByRole("button", { name: "이 이야기 남기기" }).click();
+
+      const first = turn(page, "지어낸 한 줄");
+      await expect(first.getByText("기록 2건 저장됨")).toBeVisible();
+      await expect(first.getByText("저장됐는지 확인하지 못했어요")).toHaveCount(0);
+      // 같은 말풍선이 두 번 서지 않는다.
+      await expect(page.getByText("지어낸 한 줄", { exact: true })).toHaveCount(1);
+    });
+  });
+
+  test.describe("replay_unknown — 채널도 대화 기록도 없다", () => {
+    test.use({ scenario: "replay_unknown" });
+
+    test("또 결과 미확인이고, 기록 탭에서 확인하라고 말한다", async ({ page }) => {
+      await sendFromHome(page, "지어낸 한 줄");
+      const reply = turn(page, "지어낸 한 줄");
+      await expect(reply.getByText("저장됐는지 확인하지 못했어요")).toBeVisible();
+      await expect(reply.getByRole("link", { name: "기록 확인하기" })).toHaveCount(0);
+
+      await reply.getByRole("button", { name: "다시 시도" }).click();
+      await expect(
+        reply.getByText("다시 보내도 결과를 받지 못했어요.", { exact: false }),
+      ).toBeVisible();
+      await expect(reply.getByRole("link", { name: "기록 확인하기" })).toHaveAttribute(
+        "href",
+        `/child/${CHILD}/memories`,
+      );
+      // 저장 여부를 모른다 — "저장했어요" 도 "저장하지 않았어요" 도 말하지 않는다.
+      await expect(reply.getByText("저장하지 않았어요", { exact: false })).toHaveCount(0);
+      await expect(reply.getByText("이렇게 저장했어요")).toHaveCount(0);
+    });
+
+    test("고쳐 쓰기로 꺼내 그대로 다시 보내도 같은 안내가 서고, 같은 카드가 두 번 서지 않는다", async ({
+      page,
+    }) => {
+      await sendFromHome(page, "지어낸 한 줄");
+      const first = turn(page, "지어낸 한 줄");
+      await expect(first.getByText("저장됐는지 확인하지 못했어요")).toBeVisible();
+
+      await first.getByRole("button", { name: "고쳐 쓰기" }).click();
+      const input = page.getByRole("textbox", { name: "오늘 있었던 일" });
+      await expect(input).toHaveValue("지어낸 한 줄");
+      await page.getByRole("button", { name: "이 이야기 남기기" }).click();
+
+      await expect(
+        page.getByText("다시 보내도 결과를 받지 못했어요.", { exact: false }),
+      ).toBeVisible();
+      await expect(page.getByRole("link", { name: "기록 확인하기" })).toHaveCount(1);
+      // 같은 키 · 같은 run 이라 앞 줄은 뒤 줄이 대신한다.
+      await expect(page.getByText("지어낸 한 줄", { exact: true })).toHaveCount(1);
+      await expect(page.getByText("저장됐는지 확인하지 못했어요")).toHaveCount(1);
+    });
+  });
+});
+
 test.describe("건강 기록의 시각은 시각으로 그린다 (#485)", () => {
   test("서버가 보낸 ISO 시각을 그대로 찍지 않는다", async ({ page }) => {
     await sendFromHome(page, "계란볶음밥 먹었어");
@@ -388,3 +484,19 @@ function storedText(page: Page): Promise<string> {
       .join("\n"),
   );
 }
+
+test.describe("기록 줄은 Agent 가 아니라 기록 종류로 선다 (#501)", () => {
+  // 목은 `양치` 가 든 한 줄에 생활습관 · 교육 기록 2건을 저장한다 (`mocks/handlers/runs.ts` 의 GROWTH_WORDS).
+  test("성장 Agent 의 두 기록이 '성장' 이 아니라 '생활습관' 과 '교육' 으로 선다", async ({
+    page,
+  }) => {
+    await sendFromHome(page, "오늘 혼자 양치했어");
+    const reply = turn(page, "오늘 혼자 양치했어");
+
+    await expect(reply.getByText("기록 2건 저장됨")).toBeVisible();
+    // 기록 줄 머리는 이름과 "· 언제" 가 한 덩어리라 머리글자로 찾는다.
+    await expect(reply.getByText(/^생활습관/)).toBeVisible();
+    await expect(reply.getByText(/^교육/)).toBeVisible();
+    await expect(reply.getByText(/^성장/)).toHaveCount(0);
+  });
+});

@@ -7,12 +7,13 @@
 
 - 프로세스 메모리다. 재시작하면 사라지고 05 는 "이어서 할 수 없다" 로 간다 — 맥락 없이 다시
   만들지 않는다. 워커가 둘이면 나뉜다 (`--workers 1` 전제 · #134).
-- 실패 맥락에는 원문 조각(request_texts)이 있다. 로그를 남기지 않고, 넣을 때마다 만료분을 치운다
-  (pending_reply.py 와 같다).
+- 실패 맥락에는 원문 조각(request_texts)이 있다. 로그를 남기지 않고, 넣을 때 지울 때를 예약한다
+  (pending_reply.py 와 같다 · #561).
 - 꺼낼 때 "사용 중" 표시만 한다(#246 되묻기 보관함과 같은 방식). 다시 만들기가 성공하면 지우고,
   실패하면 표시만 푼다. 15분은 처음 넣은 시각부터 센다 — 다시 넣어도 갱신하지 않는다.
 """
 
+import asyncio
 import time
 import uuid
 from dataclasses import dataclass, replace
@@ -64,6 +65,32 @@ def _owned(
     return entry
 
 
+def _keep(key: tuple[str, str], entry: _Entry, moment: float) -> None:
+    """넣고, 그 항목의 보관 기간이 끝날 때 지우는 예약을 건다.
+
+    실패 맥락을 다시 넣으면 처음 시각을 이어받아서 남은 시간만 기다린다.
+    """
+    _entries[key] = entry
+    asyncio.get_running_loop().call_later(entry.stored_at + entry.ttl() - moment, _expire, key)
+
+
+def _expire(key: tuple[str, str]) -> None:
+    """예약한 때가 되면 그 칸의 **지금 항목**이 만료됐는지 보고 지운다.
+
+    🚨 같은 칸에 다시 넣을 수 있다(실패 맥락 → 0개 · 닫힘 기록). 앞 예약이 돌 때 새 항목이
+       들어 있으면 남은 시간만큼 다시 예약하고 지우지 않는다. 예약이 조금 일찍 돈 경우(시계
+       해상도)도 같은 길이다.
+    """
+    entry = _entries.get(key)
+    if entry is None:
+        return
+    left = entry.stored_at + entry.ttl() - time.monotonic()
+    if left > 0:
+        asyncio.get_running_loop().call_later(left, _expire, key)
+        return
+    del _entries[key]
+
+
 def put_failed(
     *,
     run_id: str,
@@ -74,11 +101,10 @@ def put_failed(
     now: float | None = None,
 ) -> None:
     moment = _now(now)
-    sweep(now=moment)
     key = (run_id, agent)
     kept = _owned(key, parent_id, child_id, moment)
     stored_at = kept.stored_at if kept is not None and kept.task is not None else moment
-    _entries[key] = _Entry(parent_id, child_id, stored_at, task=task)
+    _keep(key, _Entry(parent_id, child_id, stored_at, task=task), moment)
 
 
 def put_empty(
@@ -91,8 +117,7 @@ def put_empty(
     now: float | None = None,
 ) -> None:
     moment = _now(now)
-    sweep(now=moment)
-    _entries[(run_id, agent)] = _Entry(parent_id, child_id, moment, message=message)
+    _keep((run_id, agent), _Entry(parent_id, child_id, moment, message=message), moment)
 
 
 def put_guard(
@@ -106,8 +131,7 @@ def put_guard(
     now: float | None = None,
 ) -> None:
     moment = _now(now)
-    sweep(now=moment)
-    _entries[(run_id, agent)] = _Entry(parent_id, child_id, moment, guard=(code, message))
+    _keep((run_id, agent), _Entry(parent_id, child_id, moment, guard=(code, message)), moment)
 
 
 def guard_of(
@@ -151,13 +175,19 @@ def drop(*, run_id: str, agent: str) -> None:
     _entries.pop((run_id, agent), None)
 
 
-def sweep(*, now: float | None = None) -> int:
-    """만료된 것을 치우고 개수를 돌려준다. 지울 것을 먼저 모으고 나서 지운다."""
-    moment = _now(now)
-    expired = [key for key, e in _entries.items() if moment - e.stored_at > e.ttl()]
-    for key in expired:
-        del _entries[key]
-    return len(expired)
+def forget_parent(*, parent_id: uuid.UUID, child_id: uuid.UUID | None = None) -> None:
+    """그 보호자의 것을 바로 지운다 — 탈퇴 · 연결 끊기 (#561). child_id 를 주면 그 아이 것만."""
+    for key, entry in list(_entries.items()):
+        if entry.parent_id == parent_id and child_id in (None, entry.child_id):
+            del _entries[key]
+
+
+def forget_child(child_id: uuid.UUID) -> None:
+    """그 아이의 것을 보호자와 상관없이 바로 지운다 — 등록 보호자의 탈퇴로 아이가 지워질 때
+    (#561)."""
+    for key, entry in list(_entries.items()):
+        if entry.child_id == child_id:
+            del _entries[key]
 
 
 def clear() -> None:

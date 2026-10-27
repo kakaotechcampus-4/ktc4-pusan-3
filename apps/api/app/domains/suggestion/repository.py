@@ -104,14 +104,11 @@ async def list_suggestions(
     *,
     child_id: uuid.UUID,
     status: SuggestionStatus | None = None,
-    kind: SuggestionKind | None = None,
     cursor: str | None = None,
     limit: int = 20,
 ) -> tuple[list[Suggestion], str | None]:
     """커서 페이징으로 추천 목록을 반환한다. (items, next_cursor)."""
     stmt = select(Suggestion).where(Suggestion.child_id == child_id)
-    if kind is not None:
-        stmt = stmt.where(Suggestion.kind == SuggestionKind(kind))
     if status is not None:
         stmt = stmt.where(Suggestion.status == SuggestionStatus(status))
     else:

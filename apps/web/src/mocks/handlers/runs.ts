@@ -1,18 +1,20 @@
 import { http, HttpResponse } from "msw";
 
 import type { AgentReadout, AgentResultEvent } from "@/lib/api/sse";
-import type { Agent, Observation } from "@/lib/api/types";
+import type { Agent, CreateInputResponse, Observation } from "@/lib/api/types";
 
 import {
+  educationObservation,
   generalSuggestions,
   healthObservation,
   observations,
+  routineObservation,
   runEventDrafts,
   suggestions,
 } from "../fixtures";
 import { currentScenario } from "../scenario";
 import { apiError, networkDelay, url } from "./helpers";
-import { recordingTurn } from "./chat";
+import { hideTurn, recordedDayOf, recordingTurn, revealTurns } from "./chat";
 import { pendingReplies } from "./pending-replies";
 import { forgetRun, withIdempotency } from "./idempotency";
 import { isPhotoRun, photoRunScript } from "./photos";
@@ -54,6 +56,12 @@ const askedAgain = new Set<string>();
 /** `send_failed` 에서 이미 한 번 끊어 본 Idempotency-Key. 🚨 키마다 한 번만 끊는다 — 다시 시도가 닿아야 한다. */
 const droppedSends = new Set<string>();
 
+/**
+ * 채널이 지워진 run (#538). 서버는 닫힌 채널을 5분 뒤 지운다 — `replay_finished` · `replay_unknown` 은 그 5분이
+ * 지난 것으로 친다. 이 run 의 SSE 는 404 이고, 같은 키 재생은 대화 기록이 있는지로 응답이 갈린다 (`replayInput`).
+ */
+const expiredRuns = new Set<string>();
+
 /** 테스트가 "답이 어느 run 을 가리키는가" 를 확인하는 자리. */
 export function submittedInput(runId: string): SubmittedInput | undefined {
   return inputByRun.get(runId);
@@ -66,6 +74,36 @@ export function resetSubmittedInputs(): void {
   failedOnce.clear();
   askedAgain.clear();
   droppedSends.clear();
+  expiredRuns.clear();
+}
+
+/**
+ * 같은 키 재생의 응답 (#538 · 서버 `routers/children.py` `create_input`). 채널이 남아 있으면 처음 응답 그대로다.
+ * 채널이 지워졌으면 대화 기록이 있을 때만 끝났다고 알린다 — 없으면 저장됐는지 서버도 모르는 run 이라 run_id 만 준다.
+ * ⚠️ 서버의 "채널이 남아 있고 `failed`" 갈래(새 run)는 흉내 내지 않는다 — 목은 `failed` 에서 키를 늘 놓는다(`forgetRun`).
+ */
+function replayInput(body: string): string {
+  revealTurns();
+  const { run_id } = JSON.parse(body) as CreateInputResponse;
+  if (!expiredRuns.has(run_id)) return body;
+  const day = recordedDayOf(run_id);
+  const replay: CreateInputResponse = {
+    run_id,
+    finished: day !== null,
+    conversation_date: day,
+  };
+  return JSON.stringify(replay);
+}
+
+/**
+ * 서버는 끝까지 처리했는데 화면은 끝을 못 받은 스트림 — `done` 프레임 앞에서 끊는다. 앞단(`recordingTurn`)은 `done` 을
+ * 이미 보고 대화를 남긴 뒤다.
+ */
+async function* cutBeforeDone(script: AsyncGenerator<Uint8Array>): AsyncGenerator<Uint8Array> {
+  for await (const chunk of script) {
+    if (new TextDecoder().decode(chunk).startsWith("event: done\n")) return;
+    yield chunk;
+  }
 }
 
 /**
@@ -404,6 +442,13 @@ const RECORD_WORDS = ["했대", "했어", "놀았", "먹었", "좋아해", "싫�
 
 type Intent = "record" | "event" | "both";
 
+/**
+ * 성장 Agent 가 읽는 두 테이블(교육 · 생활습관)의 기록이 04 에 서는 갈래 (#501). 기록 줄은 Agent 가
+ * 아니라 기록 종류로 그리는데, 아래 기본 갈래는 식사 · 건강만 저장해서 둘을 볼 길이 없었다.
+ * 🚨 건수는 기본 갈래와 같은 2건이다 — 의도(`intentOf`)도 그대로라 낱말 하나로 기록 종류만 바뀐다.
+ */
+const GROWTH_WORDS = ["양치"];
+
 function intentOf(text: string): Intent {
   const hasEvent = EVENT_WORDS.some((word) => text.includes(word));
   const hasRecord = RECORD_WORDS.some((word) => text.includes(word));
@@ -560,7 +605,9 @@ async function* runScript(runId: string): AsyncGenerator<Uint8Array> {
    *    "아이에 관한 기록은 찾지 못했어요" 를 그리고 아래에 초안을 세운다.
    */
   if (intent !== "event") {
-    const saved: Observation[] = [observations[0], healthObservation];
+    const saved: Observation[] = GROWTH_WORDS.some((word) => rawText.includes(word))
+      ? [routineObservation, educationObservation]
+      : [observations[0], healthObservation];
     yield frame("saved", { observations: saved });
     await sleep(400);
 
@@ -639,44 +686,55 @@ export const runHandlers = [
   // 🚨 키가 없으면 400 이다 — 같은 한 줄이 관찰 N건씩 두 번 저장되는 것을 막는 지점.
   http.post(
     url("/children/:cid/inputs"),
-    withIdempotency(async ({ request, params }) => {
-      await networkDelay();
-      const childId = String(params.cid);
-      const body = (await request.json()) as { text: string; reply_to?: string };
+    withIdempotency(
+      async ({ request, params }) => {
+        await networkDelay();
+        // 앞 run 의 대화는 그새 다 쓰였다 (`chat.ts` 의 `hiddenRuns`).
+        revealTurns();
+        const childId = String(params.cid);
+        const body = (await request.json()) as { text: string; reply_to?: string };
 
-      // 🚨 한도보다 **먼저 확인만** 한다 — 잘못된 `reply_to` 가 하루 횟수를 쓰면 안 된다.
-      //    꺼내는(지우는) 것은 한도를 통과한 뒤다. 한도에 걸린 답이 맥락까지 잃으면 안 되기
-      //    때문이다 (#175 리뷰에서 서버에도 이 순서를 요청했다).
-      // `reply_unavailable` 은 방금 물었어도 못 찾는다 — 15분 만료 · 서버 재시작을 흉내 낸다.
-      if (
-        body.reply_to !== undefined &&
-        (currentScenario() === "reply_unavailable" || pendingReplies.get(body.reply_to) !== childId)
-      ) {
-        return replyUnavailable();
-      }
+        // 🚨 한도보다 **먼저 확인만** 한다 — 잘못된 `reply_to` 가 하루 횟수를 쓰면 안 된다.
+        //    꺼내는(지우는) 것은 한도를 통과한 뒤다. 한도에 걸린 답이 맥락까지 잃으면 안 되기
+        //    때문이다 (#175 리뷰에서 서버에도 이 순서를 요청했다).
+        // `reply_unavailable` 은 방금 물었어도 못 찾는다 — 15분 만료 · 서버 재시작을 흉내 낸다.
+        if (
+          body.reply_to !== undefined &&
+          (currentScenario() === "reply_unavailable" ||
+            pendingReplies.get(body.reply_to) !== childId)
+        ) {
+          return replyUnavailable();
+        }
 
-      /**
-       * 🚨 **재시도해도 계속 429 다** (#147). 래퍼가 4xx 를 저장하지 않아서(`isReplayable`)
-       *    같은 키로 다시 보내면 이 핸들러가 다시 돌고 또 429 가 나간다 — 실제 서버와 같다.
-       *    화면이 "다시 시도" 버튼을 세우면 안 되는 이유가 여기서 눈으로 확인된다.
-       */
-      if (currentScenario() === "daily_limit") {
-        return apiError(
-          429,
-          "daily_input_limit",
-          "오늘은 더 적을 수 없어요. 내일 다시 적어 주세요.",
-        );
-      }
+        /**
+         * 🚨 **재시도해도 계속 429 다** (#147). 래퍼가 4xx 를 저장하지 않아서(`isReplayable`)
+         *    같은 키로 다시 보내면 이 핸들러가 다시 돌고 또 429 가 나간다 — 실제 서버와 같다.
+         *    화면이 "다시 시도" 버튼을 세우면 안 되는 이유가 여기서 눈으로 확인된다.
+         */
+        if (currentScenario() === "daily_limit") {
+          return apiError(
+            429,
+            "daily_input_limit",
+            "오늘은 더 적을 수 없어요. 내일 다시 적어 주세요.",
+          );
+        }
 
-      if (body.reply_to !== undefined) pendingReplies.delete(body.reply_to);
+        if (body.reply_to !== undefined) pendingReplies.delete(body.reply_to);
 
-      const runId = `r_${Date.now()}`;
-      // 🚨 `reply_to` 는 그대로 받아 둔다 — 이어받기 run 을 가르는 값이고 (#175),
-      //    테스트가 "화면이 원문 대신 이 값을 보냈는가" 를 확인하는 자리다.
-      inputByRun.set(runId, { childId, text: body.text, replyTo: body.reply_to });
-      // 즉시 202 로 run_id 만 준다. 결과는 전부 SSE 로 흐른다.
-      return HttpResponse.json({ run_id: runId }, { status: 202 });
-    }),
+        const runId = `r_${Date.now()}`;
+        // 🚨 `reply_to` 는 그대로 받아 둔다 — 이어받기 run 을 가르는 값이고 (#175),
+        //    테스트가 "화면이 원문 대신 이 값을 보냈는가" 를 확인하는 자리다.
+        inputByRun.set(runId, { childId, text: body.text, replyTo: body.reply_to });
+        // 즉시 202 로 run_id 를 준다. 결과는 전부 SSE 로 흐른다. 끝났다는 표시는 같은 키 재생에서만 선다.
+        const accepted: CreateInputResponse = {
+          run_id: runId,
+          finished: false,
+          conversation_date: null,
+        };
+        return HttpResponse.json(accepted, { status: 202 });
+      },
+      { replay: replayInput },
+    ),
   ),
 
   /**
@@ -687,10 +745,24 @@ export const runHandlers = [
    */
   http.get(url("/runs/:runId/events"), ({ params }) => {
     const runId = String(params.runId);
+    // 서버와 같은 글자다 (`routers/runs.py`). 🚨 화면은 이 응답을 연결 실패로 받는다(`lib/api/sse.ts`).
+    if (expiredRuns.has(runId)) {
+      return apiError(404, "not_found", "진행 중인 처리를 찾을 수 없어요");
+    }
+    const scenario = currentScenario();
+    const expiring = scenario === "replay_finished" || scenario === "replay_unknown";
+    if (expiring && !isPhotoRun(runId)) hideTurn(runId);
     // 🚨 입력 run 만 대화로 남긴다 — 사진 run 은 대화 턴이 아니다 (서버도 입력 창구에서만 붙인다).
+    // `replay_unknown` 은 대화 기록을 남기지 못한 run 이다 — 서버 재시작 · 기록 저장 실패 (#538).
+    const recording =
+      scenario === "replay_unknown"
+        ? runScript(runId)
+        : recordingTurn(runId, inputByRun.get(runId), runScript(runId));
     const script = isPhotoRun(runId)
       ? photoRunScript(runId)
-      : recordingTurn(runId, inputByRun.get(runId), runScript(runId));
+      : expiring
+        ? cutBeforeDone(recording)
+        : recording;
 
     const stream = new ReadableStream<Uint8Array>({
       async start(controller) {
@@ -699,6 +771,8 @@ export const runHandlers = [
             controller.enqueue(chunk);
           }
         } finally {
+          // 닫힌 뒤 5분이 지난 것으로 친다 — 다시 보내면 채널이 없다.
+          if (expiring && !isPhotoRun(runId)) expiredRuns.add(runId);
           controller.close();
         }
       },

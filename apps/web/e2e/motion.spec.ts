@@ -173,7 +173,7 @@ test.describe("바텀시트 — 모든 시트가 같은 움직임으로 열리�
         .find(
           (button) =>
             !button.closest("dialog") &&
-            button.textContent?.startsWith("저녁에 계란말이를 또 찾았어요"),
+            button.textContent?.includes("저녁에 계란말이를 또 찾았어요"),
         )!
         .click();
     });

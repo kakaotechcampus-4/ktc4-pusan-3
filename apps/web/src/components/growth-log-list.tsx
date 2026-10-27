@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
 import { IconButton } from "@/components/ui/icon-button";
 import { IconTile } from "@/components/ui/icon-tile";
+import { SkeletonGroup, SkeletonText, SkeletonTile } from "@/components/ui/skeleton";
 import { cn } from "@/lib/cn";
 import { formatDay } from "@/lib/format";
 import { useFlip, useReveal } from "@/lib/motion";
@@ -22,9 +23,11 @@ import { FORWARD } from "@/lib/view-transition";
  *    이고, 증감은 이 제품이 하지 않기로 한 **발달 평가**로 읽힌다 (최상위 CLAUDE.md §2 ·
  *    스펙 아웃). 여기 있는 것은 "언제 무엇을 쟀다" 는 사실 목록뿐이다.
  *
- * 🚨 **줄 문법은 07 기록 줄(`ObservationList`)과 같다** — 왼쪽 타일, 본문 한 줄, 그 아래
+ * 🚨 **줄 문법은 07 기록 줄(`ObservationList`)에서 왔다** — 왼쪽 타일, 본문 한 줄, 그 아래
  *    메타 한 줄. 같은 앱 안에서 "쌓인 것을 훑는 목록" 은 한 가지 모양이어야 한다.
- *    다른 것은 본문이 부모가 적은 말이 아니라 **잰 값**이라는 것 하나다.
+ *    ⚠️ #524 에서 07 만 바뀌어 지금은 갈린다 — 07 은 제목이 `body` 600 이고 그 아래 원문 줄과
+ *    칩이 있으며 줄 안에 가운뎃점을 쓰지 않는다. 여기는 본문이 **잰 값**(`body` 400)이고 메타가
+ *    ` · ` 를 쓴다. 한쪽을 고칠 때 다른 쪽을 같이 맞출지 먼저 본다.
  *
  * 🚨 **타일은 뉴트럴이다.** 도메인 색을 쓰지 않는다 — 도메인 색은 "어느 Agent 결과인가"
  *    (넓혀도 "어느 영역인가") 인데 측정은 Agent 도 영역도 아니다. 브랜드색도 쓰지 않는다
@@ -266,5 +269,47 @@ export function GrowthLatestCard({ log, href }: { log: GrowthLog; href: string }
         className="text-ink-subtle mt-1.5 shrink-0"
       />
     </Link>
+  );
+}
+
+/**
+ * 받는 동안의 줄 하나. `GrowthLogRow` · `GrowthLatestCard` 와 **같은 여백 · 같은 줄 높이**다
+ * (CLS · `components/ui/skeleton.tsx`). 🚨 진짜 줄의 여백을 바꾸면 여기도 같이 바꾼다.
+ */
+function GrowthRowSkeleton() {
+  return (
+    <div className="flex items-start gap-3 px-4 py-3.5">
+      <SkeletonTile />
+      <div className="flex min-w-0 flex-1 flex-col gap-1">
+        <SkeletonText width="2/3" />
+        <SkeletonText size="caption" width="1/3" />
+      </div>
+    </div>
+  );
+}
+
+/** 11 프로필 "키 · 몸무게" 구역이 받는 동안. */
+export function GrowthLatestCardSkeleton() {
+  return (
+    <SkeletonGroup
+      label="측정 기록을 불러오는 중"
+      className="rounded-card border-line bg-surface border"
+    >
+      <GrowthRowSkeleton />
+    </SkeletonGroup>
+  );
+}
+
+/** 11-1 기록 목록이 받는 동안. 줄 수는 진짜 목록이 화면에 세우는 만큼만 — 더 그리면 그만큼 줄어든다. */
+export function GrowthLogListSkeleton({ rows = 3 }: { rows?: number }) {
+  return (
+    <SkeletonGroup
+      label="측정 기록을 불러오는 중"
+      className="border-line divide-line rounded-card bg-surface divide-y overflow-hidden border"
+    >
+      {Array.from({ length: rows }, (_, i) => (
+        <GrowthRowSkeleton key={i} />
+      ))}
+    </SkeletonGroup>
   );
 }

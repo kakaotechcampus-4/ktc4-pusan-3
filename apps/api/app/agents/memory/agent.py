@@ -20,7 +20,7 @@ task 없이 부르면 전체 tool 을 열고 끊지 않는다 — Supervisor 없
 import json
 import logging
 from collections import Counter
-from collections.abc import Collection
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -41,6 +41,7 @@ from app.agents.memory.schemas.reply import (
     ReplyOutput,
 )
 from app.agents.memory.schemas.task import (
+    FoundRef,
     MemoryHint,
     MemoryTask,
     PendingMemoryContext,
@@ -57,6 +58,9 @@ MAX_COMPLETION_TOKENS = 1400
 # 재질문 상한. 한 조각에 처음 질문까지 포함해 이만큼 물었으면 이어받기 run 이 또 물어도 되묻기
 # 맥락을 만들지 않고 끝낸다(`ask_limit_reached`).
 MAX_QUESTIONS = 4
+
+# 되묻기 맥락에 남기는 조회 결과 행 수의 상한. 넘으면 하나도 남기지 않는다
+MAX_FOUND = 40
 
 # 조기 종료: 모든 힌트에 대해 성공한 쓰기가 run 전체에서 그 수 이상이면 요약 호출 없이 끝냄
 EARLY_STOP = True
@@ -129,6 +133,11 @@ _UNCLEAR_QUESTION = (
     "이 발화는 아이 기록인지 알 수 없다고 판정됐다. 묻지 않고, 아이 기록인지 알 수 없어 "
     "저장하지 않았다고 한 줄로 알린다(kind=message). 아이 얘기였다면 아이를 주어로 다시 말해 "
     "달라고 짧게 덧붙인다."
+)
+
+# 이어받기 때 앞서 조회로 찾은 행을 다시 읽어 보여 주는 칸의 머리
+_FOUND_HEADER = (
+    "[앞서 조회해서 찾은 기록 — 보호자가 이 기록을 말한 것이면 다시 조회하지 않고 이 id 를 쓴다]"
 )
 
 _BAD_JSON = "arguments가 올바른 JSON이 아니다. 스키마에 맞는 JSON으로 다시 만든다."
@@ -236,6 +245,7 @@ async def run(
     elif task is not None and task.raw_text != raw_text:
         raise ValueError("task.raw_text와 raw_text가 다르다")
 
+    shown = await _reread(continuation.found, context) if continuation is not None else []
     llm = client or LLMClient(role="memory")
     allowed = tools_for(task) if task is not None else None
     tools = specs_for(allowed) if allowed is not None else TOOL_SPECS
@@ -244,7 +254,7 @@ async def run(
         {
             "role": "user",
             "content": (
-                _continuation_message(raw_text, continuation)
+                _continuation_message(raw_text, continuation, shown)
                 if continuation is not None
                 else _user_message(raw_text, task)
             ),
@@ -363,7 +373,9 @@ async def run(
         # 조회를 했는지는 이전 응답까지만 본다. 같은 응답의 조회는 모델이 결과를 못 본 것이다
         prior = list(calls)
         for call in tool_calls:  # 한 응답에 여러 개가 와도 전부, 온 순서대로 실행한다
-            record = await _execute(call, context, succeeded, allowed, task=task, prior=prior)
+            record = await _execute(
+                call, context, succeeded, allowed, task=task, prior=prior, shown=shown
+            )
             calls.append(record)
             step_records.append(record)
             messages.append(
@@ -497,7 +509,37 @@ def _squash(text: str) -> str:
     return " ".join(text.split())
 
 
-def _continuation_message(answer: str, pending: PendingMemoryContext) -> str:
+_OBSERVATION_RESOURCES = frozenset(
+    f"observation_{domain}" for domain in ("food", "health", "education", "activity", "routine")
+)
+
+
+async def _reread(
+    found: tuple[FoundRef, ...], context: AgentContext
+) -> list[tuple[FoundRef, dict[str, Any]]]:
+    """맥락에 남은 id를 store로 다시 읽는다. 그새 지워졌거나 이 아이 것이 아니면 빠진다."""
+    shown: list[tuple[FoundRef, dict[str, Any]]] = []
+    for ref in found:
+        if ref.resource in _OBSERVATION_RESOURCES:
+            observation = await context.store.get_observation(
+                domain=ref.resource.removeprefix("observation_"), observation_id=ref.id
+            )
+            if observation is not None:
+                shown.append((ref, observation.to_summary()))
+        elif ref.resource == "event":
+            event = await context.store.get_event(event_id=ref.id)
+            if event is not None:
+                # query_event 결과와 같은 모양으로 준비물까지 싣는다
+                items = await context.store.list_event_items(event_id=ref.id)
+                shown.append((ref, event.to_summary(items=items)))
+    return shown
+
+
+def _continuation_message(
+    answer: str,
+    pending: PendingMemoryContext,
+    shown: Sequence[tuple[FoundRef, dict[str, Any]]] = (),
+) -> str:
     """미완료 조각 · 이전 질문 · 새 답을 역할을 갈라 넣는다. 원문 전체는 넣지 않는다."""
     rounds = ""
     if pending.transcript:
@@ -510,9 +552,16 @@ def _continuation_message(answer: str, pending: PendingMemoryContext) -> str:
         note = f"\n{_WHOLE_FRAGMENT}"
     else:
         note = ""
+    found = ""
+    if shown:
+        lines = "\n".join(
+            f"- {ref.resource} {json.dumps(summary, ensure_ascii=False)}" for ref, summary in shown
+        )
+        found = f"{_FOUND_HEADER}\n{lines}\n\n"
     return (
         f"{_CONTINUATION_HEADER}{rounds}\n\n"
         f"[아직 저장하지 못한 조각]\n{pending.hint_text}{note}\n\n"
+        f"{found}"
         f"[직전에 물은 것]\n{pending.question}\n\n"
         f"[보호자의 답]\n{answer}"
     )
@@ -584,6 +633,7 @@ def _pending(
     calls = calls or []
     if reply.kind != "question":
         return None
+    found = _found(calls, continuation.found if continuation is not None else ())
     if continuation is not None:
         # 저장한 조각을 남기면 다음 답에서 한 번 더 저장된다.
         # 이어받기는 조기 종료하지 않아서 저장한 뒤에 묻는 경우가 생긴다
@@ -596,6 +646,7 @@ def _pending(
             transcript=(*continuation.transcript, continuation.question, answer),
             whole=continuation.whole,
             unclear=continuation.unclear,
+            found=found,
         )
     if task is None:
         return None
@@ -612,6 +663,7 @@ def _pending(
             work=WorkType.OBSERVE,
             whole=True,
             unclear=task.unclear_only,
+            found=found,
         )
     open_hints = _open_hints(task, calls)
     if len(task.hints) == 1:
@@ -619,7 +671,7 @@ def _pending(
             return None
         hint = open_hints[0]
         return PendingMemoryContext(
-            hint_text=hint.text, question=reply.text, work=WorkType(hint.work)
+            hint_text=hint.text, question=reply.text, work=WorkType(hint.work), found=found
         )
 
     chosen = next((hint for hint in open_hints if hint.text == named), None)
@@ -627,8 +679,33 @@ def _pending(
         logger.info("pending_hint 가 후보에 없다 hints=%d", len(task.hints))
         return None
     return PendingMemoryContext(
-        hint_text=chosen.text, question=reply.text, work=WorkType(chosen.work)
+        hint_text=chosen.text, question=reply.text, work=WorkType(chosen.work), found=found
     )
+
+
+def _found(calls: list[ToolCallRecord], carried: tuple[FoundRef, ...] = ()) -> tuple[FoundRef, ...]:
+    """되묻기 전에 조회로 찾은 행. 이번 run 에서 행이 나온 마지막 조회의 결과다.
+
+    질문은 마지막 조회를 보고 나온다. 앞선 넓은 조회까지 남기면 질문과 무관한 행이 같이 보인다.
+    이번 run에 행이 나온 조회가 없으면 앞 맥락의 것을 그대로 넘긴다.
+    id는 tool 결과에서 코드가 옮긴다. 실패한 조회는 data가 없어 들어오지 않는다.
+    MAX_FOUND를 넘으면 하나도 남기지 않는다.
+    """
+    refs = list(carried)
+    for call in reversed(calls):
+        if not call.success:
+            continue
+        data = call.result.get("data") or {}
+        if call.name.startswith("query_observation_"):
+            resource, rows = call.name.removeprefix("query_"), data.get("records") or []
+        elif call.name == "query_event":
+            resource, rows = "event", data.get("events") or []
+        else:
+            continue
+        if rows:
+            refs = list(dict.fromkeys(FoundRef(resource, str(row["id"])) for row in rows))
+            break
+    return tuple(refs) if len(refs) <= MAX_FOUND else ()
 
 
 async def _execute(
@@ -639,6 +716,7 @@ async def _execute(
     *,
     task: MemoryTask | None = None,
     prior: list[ToolCallRecord] | None = None,
+    shown: Sequence[tuple[FoundRef, dict[str, Any]]] = (),
 ) -> ToolCallRecord:
     name = call.function.name
     arguments = _parse_arguments(call.function.arguments)
@@ -652,7 +730,13 @@ async def _execute(
         if _in_unclear(arguments, task):
             message = _NOT_CHILD_RECORD_ALONE if task.unclear_only else _NOT_CHILD_RECORD_MIXED
             return _failed(name, arguments, ErrorCode.NOT_CHILD_RECORD, message)
-        if _skipped_lookup(str(arguments.get("raw_text", "")), task, prior or []):
+        if _skipped_lookup(
+            str(arguments.get("raw_text", "")),
+            task,
+            prior or [],
+            # 같은 종류의 관찰을 보여 줬을 때만 조회한 것으로 본다
+            looked_up=name.removeprefix("create_") in {ref.resource for ref, _ in shown},
+        ):
             return _failed(name, arguments, ErrorCode.TARGET_REQUIRED, _LOOKUP_FIRST)
 
     key = _dedup_key(name, arguments)
@@ -714,13 +798,18 @@ def _refused(calls: list[ToolCallRecord], code: str) -> bool:
     return any(call.result.get("error", {}).get("code") == code for call in calls)
 
 
-def _skipped_lookup(raw_text: str, task: MemoryTask, prior: list[ToolCallRecord]) -> bool:
+def _skipped_lookup(
+    raw_text: str, task: MemoryTask, prior: list[ToolCallRecord], *, looked_up: bool = False
+) -> bool:
     """고쳐 말하는 조각(lookup_edit)으로 관찰을 새로 만들면서 저장된 기록을 찾아본 적이 없는가.
 
     수정인지는 Supervisor 라벨을 따른다. 찾아본 뒤에 만드는 것은 막지 않는다 — 바뀌기 전 기록이
     없으면 바뀐 값만 새로 저장하는 게 맞다. prior 는 이전 응답까지의 호출이다.
     원문이 관찰(observe) 조각에도 들어가면 그 조각의 기록으로 보고 막지 않는다.
+    looked_up 은 이어받기에서 앞서 찾은 기록을 보여 준 경우로, 조회한 것으로 본다.
     """
+    if looked_up:
+        return False
     edits = [_letters(hint.text) for hint in task.hints if hint.work == WorkType.LOOKUP_EDIT]
     if not edits:
         return False

@@ -17,10 +17,10 @@ import { AgentPrompts } from "@/components/agent-prompts";
 import { CORRECTED_OBSERVATION } from "@/components/correction-buttons";
 import { CorrectedMark } from "@/components/observation-list";
 import { RewriteButton } from "@/components/rewrite-button";
-import { domainLabel, observationAgent } from "@/components/domain-chip";
+import { domainLabel, ObservationIcon, observationLabel } from "@/components/domain-chip";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
-import { DOMAIN_ICON, DomainIcon } from "@/components/ui/icon";
+import { DOMAIN_ICON } from "@/components/ui/icon";
 import { IconTile } from "@/components/ui/icon-tile";
 import { ProgressSteps } from "@/components/ui/progress-steps";
 import {
@@ -80,6 +80,7 @@ export function RunReply({
   onPickOffer,
   archived = false,
   deleted = NO_REFS,
+  checkRecords = false,
 }: {
   /** 안내의 목적지를 아이 경로 아래에 붙이는 데 쓴다 (`GUIDANCE_DESTINATION`). */
   childId: string;
@@ -114,6 +115,11 @@ export function RunReply({
   archived?: boolean;
   /** 지난 턴에서 저장했지만 보호자가 지운 기록. 내용 없이 "이 기록은 지웠어요" 한 줄씩 선다. */
   deleted?: readonly StoredRef[];
+  /**
+   * 결과 미확인을 다시 보냈는데 서버가 같은 run 을 돌려주고 또 결과 미확인으로 끝났다 (#538 · `ChatTurn.replayed`).
+   * 서버도 저장됐는지 모르는 run 일 수 있어서, 기록 화면에서 확인하라고 말한다.
+   */
+  checkRecords?: boolean;
 }) {
   if (run.status === "idle" || run.status === "streaming") {
     // 단계 문구는 서버가 보낸 `step.label` 을 그대로 쓴다.
@@ -136,11 +142,31 @@ export function RunReply({
       <div className="flex flex-col gap-3">
         <CardFailed>
           <p className="text-body text-ink">저장됐는지 확인하지 못했어요</p>
-          <p className="mt-1">
-            연결이 끊겨서 결과를 받지 못했어요. 다시 시도하면 같은 한 줄로 확인해요. 이미 저장됐다면
-            두 번 저장되지 않아요.
-          </p>
+          {/* 🚨 같은 키 재생인데 채널도 대화 기록도 없는 run 이면 다시 시도도 같은 답이다 (#538). 서버도 저장 여부를
+              모르니 "저장했어요" 도 "저장하지 않았어요" 도 말하지 않고, 확인할 곳을 알려 준다. 키는 그대로라
+              다시 보내도 두 번 저장되지 않는다 — 연결만 끊긴 경우도 있어서 다시 시도는 남긴다. */}
+          {checkRecords ? (
+            <p className="mt-1">
+              다시 보내도 결과를 받지 못했어요. 저장됐다면 기록 탭에 남아 있으니 먼저 확인해 주세요.
+              같은 한 줄로 다시 보내도 두 번 저장되지 않아요.
+            </p>
+          ) : (
+            <p className="mt-1">
+              연결이 끊겨서 결과를 받지 못했어요. 다시 시도하면 같은 한 줄로 확인해요. 이미
+              저장됐다면 두 번 저장되지 않아요.
+            </p>
+          )}
           <RetryActions onRetry={onRetry} onRewrite={onRewrite} rewriteBlocked={rewriteBlocked} />
+          {checkRecords ? (
+            <ButtonLink
+              href={`/child/${childId}/memories`}
+              variant="tertiary"
+              size="compact"
+              className="mt-2"
+            >
+              기록 확인하기
+            </ButtonLink>
+          ) : null}
         </CardFailed>
 
         {run.observations.length > 0 ? (
@@ -862,7 +888,6 @@ const NO_REFS: readonly StoredRef[] = [];
  * 색만으로 가르지 않는다 — 무엇으로 고쳤는지가 글자로 선다.
  */
 function ObservationRow({ observation }: { observation: Observation }) {
-  const agent = observationAgent(observation.kind);
   const wrong = observation.status === "inactive";
   const detail = isHealthObservation(observation)
     ? [
@@ -881,8 +906,8 @@ function ObservationRow({ observation }: { observation: Observation }) {
           "어느 Agent 의 결과인가" 신호라(05 제안) 저장된 관찰에 쓰면 그 뜻이 흐려진다.
           모양은 아이콘이, 뜻은 라벨이 진다. */}
       <div className="text-label text-ink-muted flex flex-wrap items-center gap-1.5">
-        <DomainIcon agent={agent} className="text-ink-subtle" />
-        {domainLabel(agent)}
+        <ObservationIcon kind={observation.kind} className="text-ink-subtle" />
+        {observationLabel(observation.kind)}
         {observation.observed_label ? (
           <span className="text-caption text-ink-subtle">· {observation.observed_label}</span>
         ) : null}

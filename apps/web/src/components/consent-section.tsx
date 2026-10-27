@@ -8,7 +8,7 @@ import { SettingsGroup, SettingsInfoRow } from "@/components/settings-row";
 import { BottomSheet } from "@/components/ui/bottom-sheet";
 import { Button } from "@/components/ui/button";
 import { CardFailed } from "@/components/ui/card";
-import { SkeletonBlock } from "@/components/ui/skeleton";
+import { SkeletonBlock, SkeletonText } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { usePolicies } from "@/hooks/use-policies";
 import {
@@ -338,18 +338,24 @@ export function LegalDocumentSection() {
             ) : (
               /* 🚨 **못 여는 링크를 그리지 않는다.** 정본을 못 받았을 때 누르면 아무 일도
                  안 일어나는 밑줄이 서는 대신, 왜 못 여는지를 아래 줄이 말한다. */
-              <span className="text-body text-ink-subtle block py-2">{doc.label}</span>
+              <span className="text-body text-ink-subtle min-h-touch block py-2">{doc.label}</span>
             )}
 
             {/* 어느 판인지. 🚨 문서마다 다르다 — 약관은 저마다 버전을 갖는다 (#168).
                 처리방침은 고정 주소라 판을 화면이 모른다 — 서버가 가장 최신 판을 연다. */}
-            <p id={`${doc.id}-version`} className="text-caption text-ink-subtle pb-2">
-              {doc.href
-                ? "가장 최신의 처리방침이 열려요."
-                : policy
-                  ? `${policy.version} 판이에요.`
-                  : "지금은 열 수 없어요. 잠시 뒤에 다시 열어 주세요."}
-            </p>
+            {/* 🚨 **받는 중에 "열 수 없어요" 를 말하지 않는다.** 아직 모르는 것이지 못 받은 것이 아니다 —
+                판이 들어올 자리만 잡아 둔다 (같은 줄 높이라 받아도 줄이 안 움직인다). */}
+            {!doc.href && policies.isPending ? (
+              <SkeletonText size="caption" width="1/4" className="pb-2" />
+            ) : (
+              <p id={`${doc.id}-version`} className="text-caption text-ink-subtle pb-2">
+                {doc.href
+                  ? "가장 최신의 처리방침이 열려요."
+                  : policy
+                    ? `${policy.version} 판이에요.`
+                    : "지금은 열 수 없어요. 잠시 뒤에 다시 열어 주세요."}
+              </p>
+            )}
           </li>
         );
       })}

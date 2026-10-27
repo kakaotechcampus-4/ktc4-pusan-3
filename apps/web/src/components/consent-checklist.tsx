@@ -2,6 +2,7 @@
 
 import { Card } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import { SkeletonGroup, SkeletonText } from "@/components/ui/skeleton";
 import {
   isConsentChecked,
   policyHref,
@@ -99,5 +100,31 @@ export function ConsentChecklist({
         );
       })}
     </div>
+  );
+}
+
+/**
+ * 약관을 받는 동안의 목록. `ConsentChecklist` 카드와 **같은 상자 · 같은 줄 높이**다 — 체크 줄(이름 + 설명) ·
+ * 법적 근거 · "전문 보기" 를 잡는다 (CLS · `components/ui/skeleton.tsx`). 스피너 한 줄로 기다리던 때는 약관이
+ * 오는 순간 카드 두 장이 자라 아래 "시작하기" 가 밀렸다. 🚨 진짜 카드의 여백을 바꾸면 여기도 같이 바꾼다.
+ */
+export function ConsentChecklistSkeleton({ count = 2 }: { count?: number }) {
+  return (
+    <SkeletonGroup label="동의 항목을 불러오는 중" className="flex flex-col gap-3">
+      {Array.from({ length: count }, (_, i) => (
+        <Card key={i}>
+          <div className="min-h-touch flex items-start gap-3 py-2">
+            {/* 🚨 빈 체크 칸처럼 그리지 않는다 — 법적 동의 앞에 누를 수 없는 체크 칸이 서는 셈이다. 채운 자리만 잡는다. */}
+            <span className="bg-line animate-skeleton mt-0.5 size-5 shrink-0 rounded-full" />
+            <span className="flex flex-1 flex-col gap-1">
+              <SkeletonText width="2/3" />
+              <SkeletonText size="caption" width="full" />
+            </span>
+          </div>
+          <SkeletonText size="caption" width="1/2" className="mt-1 pl-8" />
+          <SkeletonText size="body-sm" width="1/4" className="mt-1 -mb-2 py-3 pl-8" />
+        </Card>
+      ))}
+    </SkeletonGroup>
   );
 }

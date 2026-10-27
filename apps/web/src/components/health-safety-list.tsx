@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
 import { IconButton } from "@/components/ui/icon-button";
 import { IconTile } from "@/components/ui/icon-tile";
+import { SkeletonGroup, SkeletonText, SkeletonTile } from "@/components/ui/skeleton";
 import { Select } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import { TextInput } from "@/components/ui/text-input";
@@ -20,6 +21,7 @@ import {
   SEVERITY_LABEL,
   isSeverityFor,
   reactionsProblem,
+  severityFieldHint,
   severityFieldLabel,
   severityOptions,
   splitReactions,
@@ -482,6 +484,7 @@ export function HealthSafetySheet({
           <>
             <Select
               label="종류"
+              shape="field"
               value={type}
               options={TYPE_OPTIONS}
               onChange={(next) => {
@@ -509,6 +512,8 @@ export function HealthSafetySheet({
             심각도는 추측하면 안 되는 값이다 (NF-03). 선택지는 종류를 따라간다 (`lib/health-safety.ts`). */}
         <Select
           label={severityFieldLabel(type)}
+          shape="field"
+          hint={severityFieldHint(type)}
           value={severity}
           options={severityOptions(type)}
           onChange={setSeverity}
@@ -536,5 +541,27 @@ export function HealthSafetySheet({
         />
       </div>
     </BottomSheet>
+  );
+}
+
+/**
+ * 받는 동안의 목록. 진짜 줄(`HealthSafetyRow`)과 **같은 여백 · 같은 줄 높이**다 — 이름 · 종류 · 확인한 사람
+ * 세 줄을 잡는다 (증상 · 메모는 있을 때만 서서 뺐다). 🚨 진짜 줄의 여백을 바꾸면 여기도 같이 바꾼다.
+ */
+export function HealthSafetyListSkeleton() {
+  return (
+    <SkeletonGroup
+      label="안전 정보를 불러오는 중"
+      className="border-line rounded-card bg-surface overflow-hidden border"
+    >
+      <div className="flex items-start gap-3 px-4 py-3.5">
+        <SkeletonTile />
+        <div className="flex min-w-0 flex-1 flex-col gap-1">
+          <SkeletonText width="1/3" />
+          <SkeletonText size="caption" width="1/3" />
+          <SkeletonText size="caption" width="1/2" />
+        </div>
+      </div>
+    </SkeletonGroup>
   );
 }

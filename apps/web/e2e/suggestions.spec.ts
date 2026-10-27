@@ -50,7 +50,8 @@ test.describe("개인화 추천 (default)", () => {
       }
     }
 
-    // 일반 추천의 표시가 개인화 화면에 섞이지 않는다 — 둘은 한 화면에 같이 서지 않는다.
+    // 기본 시나리오는 개인화만 온다 — 일반 추천이 없으면 "또래 기준" 표시도 되묻는 질문도 서지 않는다.
+    // (같은 Agent 에 둘이 섞이는 경우는 아래 `suggest_mixed` 가 건다.)
     await expect(page.getByText("또래 기준 일반 추천")).toHaveCount(0);
     await expect(page.getByText("질문은 한 개까지만 드려요.")).toHaveCount(0);
   });
@@ -138,12 +139,44 @@ test.describe("근거가 부족하면 일반 추천 (§2 기억)", () => {
       await expect(page.getByText("요즘 실내와 야외 중 어디를 더 찾나요?")).toHaveCount(1);
       await expect(page.getByText("질문은 한 개까지만 드려요.")).toBeVisible();
 
-      // 🚨 "우리 아이 맞춤" 인 척하지 않는다 — 개인화 화면의 부품이 하나도 없다.
+      // 🚨 "우리 아이 맞춤" 인 척하지 않는다 — 아이 기록 근거도, 개인화 묶음 탭도 없다.
+      //    고르는 칸은 있다 (#509) — 고르는 것은 개인화의 부품이 아니다.
       await expect(page.getByText(/^사용한 기록/)).toHaveCount(0);
-      await expect(page.getByRole("checkbox")).toHaveCount(0);
       await expect(page.getByRole("tablist")).toHaveCount(0);
-      await expect(page.getByText("이렇게 준비할게요")).toHaveCount(0);
       await expectNoGate(page);
+    });
+
+    test("일반 추천도 골라서 채택하고 일정으로 만든다 (#509)", async ({ page }) => {
+      const calls = recordApi(page);
+      await page.goto(SUGGESTIONS);
+      const card = page.locator("li").filter({ hasText: "또래 기준 일반 추천" });
+      const checkbox = card.getByRole("checkbox", { name: /블록 쌓기처럼/ });
+
+      // 🚨 다음 행동은 고를 것보다 아래다.
+      const summary = page.getByText("이렇게 준비할게요");
+      expect((await card.boundingBox())!.y).toBeLessThan((await summary.boundingBox())!.y);
+
+      await card.getByText("블록 쌓기처럼 손을 많이 쓰는 놀이를 15분쯤 해 보세요").click();
+      await expect(checkbox).toBeChecked();
+      // 🚨 골라도 점선은 남는다 — 고른다고 우리 아이 기준 추천이 되는 것이 아니다.
+      expect(await card.evaluate((el) => getComputedStyle(el).borderTopStyle)).toBe("dashed");
+
+      // 채택은 게이트가 아니다 — 표식도 키도 없다.
+      await expectNoGate(page);
+      await page.getByRole("button", { name: "이 1가지로 할게요" }).click();
+      await expect(page.getByText("이렇게 하기로 했어요")).toBeVisible();
+      const approve = writes(calls, "POST", /\/suggestions\/approve$/);
+      expect(approve).toHaveLength(1);
+      expect(approve[0].body).toMatchObject({ suggestion_ids: ["g_1"] });
+      expect(approve[0].idempotencyKey).toBeUndefined();
+
+      // 초안 만들기는 아무것도 쓰지 않는다. 캘린더에 쓰는 것은 승인 시트의 제출 하나다 (게이트 ㉠).
+      await page.getByRole("button", { name: "일정으로 만들기" }).click();
+      await expect(page.getByRole("dialog", { name: "캘린더에 넣을까요" })).toBeVisible();
+      const drafts = writes(calls, "POST", /\/suggestions\/event-drafts$/);
+      expect(drafts).toHaveLength(1);
+      expect(drafts[0].body).toMatchObject({ suggestion_ids: ["g_1"] });
+      expect(writes(calls, "POST", /\/events$/)).toEqual([]);
     });
 
     test("일반 추천이 위, 되묻는 질문이 아래다", async ({ page }) => {
@@ -202,6 +235,67 @@ test.describe("근거가 부족하면 일반 추천 (§2 기억)", () => {
       await expect(page.getByText("질문은 한 개까지만 드려요.")).toHaveCount(1);
       await expect(page.getByText(/^사용한 기록/)).toHaveCount(0);
     });
+
+    test("일반 추천도 알레르기 확인이 채택보다 먼저다 (#509 · 게이트 ㉡)", async ({ page }) => {
+      const calls = recordApi(page);
+      await page.goto(SUGGESTIONS);
+      await page.getByText("국물 없이 집어 먹는 반찬을 한 가지 곁들여 보세요").click();
+      await page.getByRole("button", { name: "이 1가지로 할게요" }).click();
+
+      const sheet = page.getByRole("dialog");
+      await expect(sheet.getByText("처음 보는 재료가 있어요")).toBeVisible();
+      await expect(sheet.getByText("참깨")).toBeVisible();
+      expect(writes(calls, "POST", /\/suggestions\/approve$/)).toEqual([]);
+    });
+  });
+});
+
+test.describe("개인화와 일반이 같은 Agent 에 섞여 오면 (#512 리뷰)", () => {
+  test.use({ scenario: "suggest_mixed" });
+
+  test("묶음 안내는 개인화와 일반을 합쳐 세고 한 번만 선다", async ({ page }) => {
+    await page.goto(SUGGESTIONS);
+    const notice = page.getByText(/일정 하나로 묶여요/);
+
+    await page.getByText("계란말이에 시금치를 조금 섞어 보세요").click();
+    // 하나만 고르면 묶일 것이 없다
+    await expect(notice).toHaveCount(0);
+
+    // 🚨 서버는 kind 가 아니라 Agent 로 묶는다 — 개인화 1 + 일반 1 도 초안 한 장이다
+    await page.getByText("국물 없이 집어 먹는 반찬을 한 가지 곁들여 보세요").click();
+    await expect(notice).toHaveCount(1);
+    await expect(notice).toHaveText("식사에서 고른 2가지는 일정 하나로 묶여요.");
+
+    await page.getByText("두부를 부쳐서 한 조각 곁들여 보세요").click();
+    await expect(notice).toHaveText("식사에서 고른 3가지는 일정 하나로 묶여요.");
+  });
+
+  test("묶음 건수 줄은 개인화만 셌다는 것을 글자로 말한다", async ({ page }) => {
+    await page.goto(SUGGESTIONS);
+    // 아래 일반 카드까지 식사 후보는 넷이다 — "3가지 중에서" 만 쓰면 숫자가 어긋난다
+    await expect(page.getByText("우리 아이 기준 식사 3가지 중에서")).toBeVisible();
+    await expect(page.getByText("식사 · 3가지 중에서")).toHaveCount(0);
+  });
+
+  test("질문 카드는 위의 개인화까지 또래 기준이라고 부르지 않는다", async ({ page }) => {
+    await page.goto(SUGGESTIONS);
+    // 둘 다 선다 — 근거가 붙은 개인화와 라벨이 붙은 일반
+    await expect(page.getByText(/^사용한 기록/).first()).toBeVisible();
+    await expect(page.locator("li").filter({ hasText: "또래 기준 일반 추천" })).toHaveCount(1);
+
+    await expect(page.getByText("위 추천은 또래 기준이에요", { exact: false })).toHaveCount(0);
+    // 🚨 제목도 "다음엔 우리 아이 기준으로" 가 아니다 — 위에 우리 아이 기준 추천이 이미 서 있다
+    await expect(
+      page.getByRole("heading", { name: "다음엔 우리 아이 기준으로 골라 드릴게요" }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByRole("heading", { name: "기록이 더 쌓이면 모두 우리 아이 기준으로 골라 드릴게요" }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("또래 기준이라고 적힌 추천은 우리 아이 기록 대신 또래 기준으로 골랐어요", {
+        exact: false,
+      }),
+    ).toBeVisible();
   });
 });
 
@@ -415,6 +509,66 @@ test.describe("채택과 초안 만들기는 게이트가 아니다 · 승인 �
     expect(submitted).toHaveLength(1);
     expect(submitted[0].idempotencyKey).toBeTruthy();
     expect(submitted[0].body).toMatchObject({ suggestion_ids: ["s_4"] });
+  });
+
+  test("🚨 전에 넣지 않고 떠난 제안 초안은 시트에 서지 않고, 제안 초안은 보관함에 두지 않는다 (#539)", async ({
+    page,
+  }) => {
+    const leftover = (draftId: string, title: string, suggestionIds?: string[]) => ({
+      draft_id: draftId,
+      op: "create",
+      event_id: null,
+      event: {
+        title,
+        starts_at: null,
+        ends_at: null,
+        all_day: true,
+        event_type: "episodic",
+        category: "etc",
+      },
+      before: null,
+      items: [],
+      ...(suggestionIds ? { suggestion_ids: suggestionIds } : {}),
+    });
+    await page.goto(SUGGESTIONS);
+    // 지난번 05 에서 만들고 넣지 않은 제안 초안 + 04 에서 넣지 않은 초안. 보관함은 새로고침에도 남는다.
+    await page.evaluate(
+      ({ child, drafts }) =>
+        sessionStorage.setItem(
+          "icatch.event-drafts",
+          JSON.stringify({ state: { byChild: { [child]: drafts } }, version: 0 }),
+        ),
+      {
+        child: CHILD,
+        drafts: [
+          { origin: "suggestion", draft: leftover("old-suggestion", "지난번 제안", ["s_old"]) },
+          { origin: "input", draft: leftover("old-input", "한 줄 입력 초안") },
+        ],
+      },
+    );
+    await page.reload();
+
+    await page.getByRole("tab", { name: "놀이 3가지" }).click();
+    await page.getByText("주말에 실내 물놀이장은 어떨까요").click();
+    await page.getByRole("button", { name: "이 1가지로 할게요" }).click();
+    await page.getByRole("button", { name: "일정으로 만들기" }).click();
+
+    const sheet = page.getByRole("dialog", { name: "캘린더에 넣을까요" });
+    await expect(sheet.getByRole("textbox", { name: "제목" })).toHaveValue(
+      "주말에 실내 물놀이장은 어떨까요",
+    );
+    // 한 장뿐이라 넘기는 줄이 서지 않는다 — 지난 초안이 섞이면 "2건 중 1번째" 가 선다.
+    await expect(sheet.getByText(/건 중/)).toHaveCount(0);
+
+    // 🚨 제안 초안은 보관함에 두지 않는다 — 남은 것은 지우고, 이번 것도 얹지 않는다. 04 초안은 그대로다.
+    const kept = await page.evaluate((child) => {
+      const raw = sessionStorage.getItem("icatch.event-drafts");
+      const state = raw ? JSON.parse(raw).state : { byChild: {} };
+      return (state.byChild[child] ?? []).map(
+        (d: { origin: string; draft: { draft_id: string } }) => [d.origin, d.draft.draft_id],
+      );
+    }, CHILD);
+    expect(kept).toEqual([["input", "old-input"]]);
   });
 });
 
