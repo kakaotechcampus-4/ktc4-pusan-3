@@ -30,6 +30,7 @@ from uuid import UUID
 
 from app.agents.common.readout import Readout
 from app.agents.common.refs import Ref
+from app.agents.health.context import HealthContext
 from app.agents.health.readouts import (
     FEVER_GIVEN_DOSE,
     FEVER_LAST_DOSE,
@@ -41,6 +42,8 @@ from app.agents.health.readouts import (
     READOUTS,
 )
 from app.agents.health.reference import infant_fever_rule
+from app.agents.health.result import ToolResult, ok
+from app.agents.health.schemas.records import ShowFeverTimelineArgs
 from app.agents.health.store.ports import HealthObservation, MedicationCourse, MedicationDose
 from app.agents.health.tools.symptoms import observation_days, symptom_codes_of
 from app.agents.health.when import dose_moment, md, md_time
@@ -131,6 +134,60 @@ def build_fever_timeline(
     lines.extend(_last_doses(courses, doses, start.astimezone(timezone).date(), now, timezone))
     lines.extend(_next_dose(courses, doses, now, timezone))
     return tuple(lines)
+
+
+async def fever_readouts(
+    context: HealthContext, observations: Sequence[HealthObservation]
+) -> list[Readout]:
+    """최근 48시간의 열 타임라인. 코스는 그 구간과 겹치는 것(어제 끝난 것 포함), 회차는 앞날까지.
+
+    열 표현 표에 걸린 질문(라벨)과 표에 안 걸린 열 질문의 출구(`show_fever_timeline`)가 같이 쓴다.
+    """
+    first_day = _window_first_day(context)
+    medication = context.ports.medication
+    courses = await medication.courses_overlapping(
+        child_id=context.child_id, date_from=first_day, date_to=context.today
+    )
+    # 다음 예정은 오늘 이후 회차 행에서 나온다 — 코스 마지막 날까지 읽는다
+    last_day = max([context.today, *(course.ends_on for course in courses)])
+    doses = (
+        await medication.doses(
+            schedule_ids=[course.id for course in courses], date_from=first_day, date_to=last_day
+        )
+        if courses
+        else []
+    )
+    return list(
+        build_fever_timeline(
+            observations, courses, doses, now=context.now, timezone=context.timezone
+        )
+    )
+
+
+async def show_fever_timeline(context: HealthContext, args: ShowFeverTimelineArgs) -> ToolResult:
+    """읽기 전용 출력 tool — 표에 안 걸린 열 질문("열나는데 언제부터였지")의 출구.
+
+    진료 준비 정리 대신 열 타임라인만 낸다. 건강 기록은 라벨이 이미 읽은 것이 있으면 그것을 쓰고
+    다시 읽지 않는다. 응급 안내는 라벨이 맨 앞에 먼저 넣어 두므로 순서를 다루지 않는다. 모델에게
+    돌아가는 것은 줄 수뿐이다 — 체온 · 약 이름은 외부 모델로 보내지 않는다.
+    """
+    state = context.state
+    if state.visit_observations is None:
+        # 라벨이 기록을 보관하기 전에 불렸다 — "기록 없음" 으로 읽히지 않게 48시간 창을 직접 읽는다
+        state.visit_observations = tuple(
+            await context.ports.memory.health_observations(
+                child_id=context.child_id,
+                date_from=_window_first_day(context),
+                date_to=context.today,
+            )
+        )
+    lines = state.add_once(await fever_readouts(context, state.visit_observations))
+    return ok("query", "show_fever_timeline", lines=lines)
+
+
+def _window_first_day(context: HealthContext) -> date:
+    """48시간 창의 첫 날 — 아이 타임존의 달력 날짜."""
+    return (context.now - WINDOW).astimezone(context.timezone).date()
 
 
 def infant_fever(

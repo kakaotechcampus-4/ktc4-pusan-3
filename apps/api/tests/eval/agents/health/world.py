@@ -41,6 +41,21 @@ NIGHT = DAY.replace(hour=23)
 
 _PEANUT = HealthSafetyEntry("allergy", "땅콩", "active")
 _ASTHMA = HealthSafetyEntry("chronic_disease", "천식", "active")
+# 보호자가 설정 화면에서 적은 반응 · 대처 원문. 대처에는 줄바꿈이 있다 — 응급 카드는 줄 단위라
+# 그 줄바꿈이 한 칸을 두 줄로 깨면 안 된다
+_PEANUT_DETAIL = HealthSafetyEntry(
+    "allergy",
+    "땅콩",
+    "active",
+    reactions=("두드러기", "입술 부음"),
+    management="에피펜 놓고 119",
+)
+_ASTHMA_DETAIL = HealthSafetyEntry(
+    "chronic_disease",
+    "천식",
+    "active",
+    management="흡입기 하루 두 번\n증상이 심하면 병원",
+)
 
 CourseFactory = Callable[[date], tuple[MedicationCourse, list[MedicationDose]]]
 
@@ -59,6 +74,25 @@ def antibiotic(today: date) -> tuple[MedicationCourse, list[MedicationDose]]:
         dosage="5ml",
         checked={(yesterday, time(8, 30)), (yesterday, time(12, 30)), (yesterday, time(19, 30))}
         | {(today, time(8, 30))},
+    )
+
+
+def antibiotic_noted(today: date) -> tuple[MedicationCourse, list[MedicationDose]]:
+    """항생제 — `antibiotic` 에 보호자가 카드에서 적는 칸(보관 · 이유 · 특이사항)을 더한 코스.
+
+    특이사항에 줄바꿈이 있다 — 투약의뢰서는 줄 단위라 그 줄바꿈이 서식을 깨면 안 된다.
+    """
+    yesterday = today - timedelta(days=1)
+    return course_with_doses(
+        "항생제",
+        (DoseSlot.of("breakfast", 30), DoseSlot.of("lunch", 30), DoseSlot.of("dinner", 30)),
+        yesterday,
+        today + timedelta(days=1),
+        dosage="5ml",
+        storage="fridge",
+        indication_text="콧물이 나서",
+        note="흔들어서\n냉장 보관",
+        checked={(yesterday, time(8, 30)), (today, time(8, 30))},
     )
 
 
@@ -196,6 +230,12 @@ WORLDS: dict[str, WorldSpec] = {
     "C48-nomed": WorldSpec(),
     # T19 응급 카드 — C48 에 알레르기 · 만성질환을 더했다. 카드는 등록된 값을 옮기는 게 전부다
     "C48-card": WorldSpec(safety=(_PEANUT, _ASTHMA), courses=(antibiotic,)),
+    # 카드의 알레르기 · 만성질환 이름 뒤에 등록한 반응 · 대처 원문이 붙는다(줄바꿈은 공백 하나)
+    "C48-card-detail": WorldSpec(safety=(_PEANUT_DETAIL, _ASTHMA_DETAIL), courses=(antibiotic,)),
+    # 투약의뢰서의 보관 · 이유 · 특이사항(줄바꿈이 든 원문)
+    "C48-notice-detail": WorldSpec(courses=(antibiotic_noted,)),
+    # 같은 이름 · 같은 체크 수의 코스 둘 — 체크 현황이 한 장으로 합쳐지면 안 된다
+    "C48-2same": WorldSpec(courses=(antibiotic, antibiotic)),
     # 항생제는 C48 의 코스 그대로다(3일치 회차 · 어제 3회 · 오늘 08:30 체크)
     "C48-fever": WorldSpec(
         observations=(*_FEVER_READINGS, _GIVEN_LINKED), courses=(antibiotic, fever_reducer)
@@ -220,6 +260,8 @@ WORLDS: dict[str, WorldSpec] = {
     "C48-allergyonly": WorldSpec(safety=(_PEANUT,), observations=_COUGH_THREE_DAYS),
     **{f"C{months}": WorldSpec(months=months) for months in (20, 23, 24, 35, 36, 71, 72)},
     "C2": WorldSpec(months=2, observations=(_INFANT_READING,)),
+    # 건강정보 동의가 없는 2개월 아이 — 열 기록이 있어도 읽지 않는다
+    "C2-noconsent": WorldSpec(months=2, consent=False, observations=(_INFANT_READING,)),
 }
 
 

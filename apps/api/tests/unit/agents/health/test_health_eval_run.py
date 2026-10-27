@@ -14,6 +14,8 @@ from dataclasses import replace
 import pytest
 
 from app.agents.common.readout import Readout
+from app.agents.common.refs import Ref
+from app.agents.health.readouts import READOUTS
 from app.agents.health.schemas.task import HealthTaskType
 from tests.eval.agents.health.cases import CASES
 from tests.eval.agents.health.judges import (
@@ -26,7 +28,7 @@ from tests.eval.agents.health.judges import (
     med_stop,
 )
 from tests.eval.agents.health.runner import run_case
-from tests.unit.agents.health.support import FakeLLM, call
+from tests.unit.agents.health.support import FakeLLM, call, calls
 
 LABELS = {HealthTaskType.MEDICATION, HealthTaskType.CARE_HANDOFF}
 BY_ID = {case.case_id: case for case in CASES}
@@ -65,8 +67,19 @@ SCRIPTS = {
     "T14-2med": call("stop_medication_schedule", {}),
     "T14-2med-unclear": call("stop_medication_schedule", {}),
     "T15": call("stop_medication_schedule", {}),
-    # 바꿀 값을 말하지 않았다 — 같은 값의 수정 카드를 내지 않으니 모델은 결과 없이 끝난다
-    "T16": call("update_medication_schedule", {}),
+    # 바꿀 값을 말하지 않고 용량만 물었다 — 모델은 처방한 곳에 확인하라는 출구를 고른다
+    "T16": call("defer_dose_question", {}),
+    # 표(QUERY_WORDS)에 안 걸린 현황 질문 — 모델이 읽기 전용 현황 출구를 고른다
+    "T10-count": call("show_dose_status", {}),
+    # 현황 질문과 새 약 등록이 섞인 말 — 모델이 한 응답에 출구와 등록을 같이 부른다. 출구는 거절되고
+    # 등록 초안만 나가야 한다(쓰기 요청이 출구에 가려지지 않는다)
+    "T10-mixed": calls(
+        ("show_dose_status", {}),
+        (
+            "create_medication_schedule",
+            {"title_span": "해열제", "timing_spans": ["하루 세 번 식후"], "period_span": "5일"},
+        ),
+    ),
 }
 
 JUDGED = [
@@ -189,6 +202,46 @@ async def test_먹였어에_다른_문구가_나가면_실패다():
     wrong = replace(ran.result, readouts=(Readout(kind="notice", body="먹인 걸로 기록했어요"),))
 
     assert check_on_screen()(replace(ran, result=wrong)).failures
+
+
+async def test_먹였어에_코스_ref_가_없으면_실패다():
+    # 문구는 맞아도 화면이 열 코스가 없다
+    ran = await run_case(BY_ID["T07"], client=llm_for("T07"))
+    bare = replace(ran.result, readouts=(READOUTS.render("dose.check_on_screen"),))
+
+    assert check_on_screen()(ran).failures == []
+    assert check_on_screen()(replace(ran, result=bare)).failures
+
+
+async def test_먹였어에_진행_중이_아닌_코스_ref_가_있으면_실패다():
+    from uuid import UUID
+
+    ran = await run_case(BY_ID["T07"], client=llm_for("T07"))
+    [readout] = ran.result.readouts
+    other = replace(
+        readout, source_refs=(*readout.source_refs, Ref("medication_schedule", UUID(int=9)))
+    )
+
+    assert check_on_screen()(replace(ran, result=replace(ran.result, readouts=(other,)))).failures
+
+
+async def test_표에_안_걸린_현황_질문은_모델_한_번이고_같은_사실을_낸다():
+    # 라이브에서만 모델이 새 출구를 고르는지 보이므로, 판정이 모델 1회를 기대할 수 있어야 한다
+    ran = await run_case(BY_ID["T10-count"], client=llm_for("T10-count"))
+    base = await run_case(BY_ID["T10"], client=llm_for("T10"))
+
+    assert ran.result.model_calls == 1
+    assert [r.body for r in ran.result.readouts] == [r.body for r in base.result.readouts]
+    assert dose_status(model_calls=1)(ran).failures == []
+
+
+async def test_dose_status_는_모델_횟수가_다르면_실패다():
+    once = await run_case(BY_ID["T10-count"], client=llm_for("T10-count"))
+    zero = await run_case(BY_ID["T10"], client=llm_for("T10"))
+
+    assert dose_status()(zero).failures == []
+    assert dose_status()(once).failures  # 기본은 모델 0회를 기대한다
+    assert dose_status(model_calls=1)(zero).failures
 
 
 async def test_dose_status_가_허가_문구를_내면_실패다():

@@ -3,20 +3,25 @@
 단위는 날이다. 같은 날 여러 번은 1일이고, 기간 기록은 그 날들을 다 센다. 에피소드로 세지 않는다.
 """
 
-from datetime import datetime, timedelta
+from dataclasses import replace
+from datetime import date, datetime, timedelta
+from decimal import Decimal
+from uuid import UUID
 
 import pytest
 
 from app.agents.health.hook import (
     REPEAT_MIN_DAYS,
     REPEAT_WINDOW_DAYS,
+    check_infant_fever,
     check_symptom_repetition,
     symptom_days,
 )
-from app.agents.health.readouts import READOUTS, SYMPTOM_REPEAT
+from app.agents.health.readouts import EMERGENCY, READOUTS, SYMPTOM_REPEAT
 from app.agents.health.store.inmemory import InMemoryHealthMemory
+from app.agents.health.store.ports import HealthObservation
 
-from .support import KST, TODAY, context, observation
+from .support import KST, NOW, TODAY, birth_for, context, observation
 
 DAY = timedelta(days=1)
 
@@ -139,3 +144,81 @@ async def test_반복이_선_증상마다_안내가_나간다():
     readouts = await check_symptom_repetition(ctx)
 
     assert [r.body.split("'")[1] for r in readouts] == ["발열", "기침"]
+
+
+def _reading(temperature: str, *, hours_ago: int = 1) -> HealthObservation:
+    at = NOW - timedelta(hours=hours_ago)
+    day = at.astimezone(KST).date()
+    return HealthObservation(
+        id=UUID(int=5001),
+        observed_from=day,
+        observed_to=day,
+        observed_time=at,
+        symptoms=(),
+        temperature=Decimal(temperature),
+        measured_at=at,
+    )
+
+
+class _NoBirth:
+    """생일을 못 읽는 프로필 — 읽으면 늘 LookupError 다."""
+
+    async def birth_date(self, *, child_id: UUID) -> date:
+        raise LookupError("생일을 읽지 못했다")
+
+
+class TestInfantFever:
+    """3개월 미만 발열은 기록만 해도 응급 안내가 나간다 — 진료 준비를 묻지 않아도."""
+
+    async def test_2개월_38_3도면_응급_안내_한_건(self):
+        memory = InMemoryHealthMemory([_reading("38.3")])
+        ctx = context(birth_for(2), memory=memory)
+
+        assert await check_infant_fever(ctx) == (READOUTS.render(EMERGENCY),)
+
+    @pytest.mark.parametrize(("months", "temperature"), [(4, "38.3"), (2, "37.5")])
+    async def test_기준_밖이면_없다(self, months, temperature):
+        memory = InMemoryHealthMemory([_reading(temperature)])
+        ctx = context(birth_for(months), memory=memory)
+
+        assert await check_infant_fever(ctx) == ()
+
+    async def test_3개월_이상이면_기록을_읽지_않는다(self):
+        memory = InMemoryHealthMemory([_reading("38.3")])
+
+        await check_infant_fever(context(birth_for(4), memory=memory))
+
+        assert memory.calls == 0
+
+    async def test_동의가_없으면_읽지_않는다(self):
+        memory = InMemoryHealthMemory([_reading("38.3")])
+        ctx = context(birth_for(2), consent=False, memory=memory)
+
+        assert await check_infant_fever(ctx) == ()
+        assert memory.calls == 0
+
+    async def test_48시간_창만_저장소에_요청한다(self):
+        memory = InMemoryHealthMemory([_reading("38.3")])
+
+        await check_infant_fever(context(birth_for(2), memory=memory))
+
+        assert memory.requested == [(TODAY - 2 * DAY, TODAY)]
+
+    async def test_모델을_부르지_않고_쓰지_않는다(self):
+        # 결과는 코드 문구뿐이다 — 모델이 쓴 글이 아니다
+        ctx = context(birth_for(2), memory=InMemoryHealthMemory([_reading("38.3")]))
+
+        [readout] = await check_infant_fever(ctx)
+
+        assert readout.authored_by == "code" and readout.kind == "emergency"
+
+    async def test_생일을_못_읽으면_지어내지_않고_올린다(self):
+        # 지어낸 생일로 열면 생후 2개월이 유아로 계산돼 응급 기준이 빠진다
+        memory = InMemoryHealthMemory([_reading("38.3")])
+        ctx = context(birth_for(2), memory=memory)
+        ctx = replace(ctx, ports=replace(ctx.ports, profile=_NoBirth()))
+
+        with pytest.raises(LookupError):
+            await check_infant_fever(ctx)
+
+        assert memory.calls == 0

@@ -31,8 +31,9 @@ DocKind = Literal["food_doc", "growth_doc", "activity_doc"]
 # 값은 `rules/menu_evidence.MENU_EVIDENCE_KIND` 와 같다
 MenuKind = Literal["recipe_catalog"]
 
-# 복약 코스 행 — Health 진료 준비의 복약 체크 줄만 단다(#551). Health 는 추천을 내지 않아
-# `suggestion_evidence` 로 가지 않고 `Readout.source_refs` 에만 실린다. 개인화 근거로 세지 않는다
+# 복약 코스 행 — Health 의 진료 준비 복약 체크 줄 · 열 타임라인 · 체크 현황(`dose.status`) ·
+# "먹였어" 체크 안내가 단다. Health 는 추천을 내지 않아 `suggestion_evidence` 로 가지 않고
+# `Readout.source_refs` 에만 실린다. 개인화 근거로 세지 않는다
 MedicationKind = Literal["medication_schedule"]
 
 SourceKind = ChildRecordKind | DocKind | MenuKind | MedicationKind

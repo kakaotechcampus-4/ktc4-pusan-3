@@ -101,6 +101,9 @@ def _memory_done() -> LLMResponse:
 def llm_for(case_id: str):
     if case_id in MEMORY_SCRIPTS:
         return FakeLLM(call("create_observation_health", MEMORY_SCRIPTS[case_id]), _memory_done())
+    if case_id == "T22-model":
+        # 열 표현 표에 안 걸린 열 질문 — 모델이 정리 대신 열 타임라인 출구를 고른다
+        return FakeLLM(call("show_fever_timeline", {}))
     case = BY_ID[case_id]
     if case.judge.__qualname__.startswith("visit_timeline."):
         return ComposingLLM()
@@ -191,6 +194,7 @@ def test_진료_준비_케이스는_전부_판정이_있다():
         "T22",
         "T22-notemp",
         "T22-C2",
+        "T22-model",
         "T23",
         "T24",
         "T24-noconsent",
@@ -227,6 +231,31 @@ async def test_열_타임라인과_기록_없음은_모델을_부르지_않는�
         await run_case(BY_ID[case_id], client=llm)
 
         assert llm.seen == [], case_id
+
+
+async def test_표에_안_걸린_열_질문은_모델_한_번이고_T22_와_같은_줄이다():
+    ran = await _ran("T22-model")
+    base = await _ran("T22")
+
+    assert ran.result.model_calls == 1
+    assert [(r.kind, r.body) for r in ran.result.readouts] == [
+        (r.kind, r.body) for r in base.result.readouts
+    ]
+    assert fever_timeline(model_calls=1)(ran).failures == []
+    assert fever_timeline()(ran).failures  # 기본은 모델 0회를 기대한다
+
+
+async def test_열_질문에_정리가_섞이면_실패다():
+    ran = await _ran("T22-model")
+    mixed = replace(
+        ran.result,
+        readouts=(
+            *ran.result.readouts,
+            Readout(kind="symptom_timeline", body="정리", authored_by="model"),
+        ),
+    )
+
+    assert fever_timeline(model_calls=1)(replace(ran, result=mixed)).failures
 
 
 async def test_정리는_모델_한_번이다():

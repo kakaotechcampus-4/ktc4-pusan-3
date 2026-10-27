@@ -8,11 +8,17 @@ tool 뿐이다. tool 을 만드는 이슈가 정의와 핸들러를 같이 더�
 from app.agents.common.tool_schema import ToolDefinition
 from app.agents.health.schemas.medication import (
     CreateMedicationArgs,
+    DeferDoseQuestionArgs,
     SearchMedicationArgs,
+    ShowDoseStatusArgs,
     StopMedicationArgs,
     UpdateMedicationArgs,
 )
-from app.agents.health.schemas.records import ComposeTimelineArgs, SearchHealthArgs
+from app.agents.health.schemas.records import (
+    ComposeTimelineArgs,
+    SearchHealthArgs,
+    ShowFeverTimelineArgs,
+)
 
 TOOL_DEFINITIONS: list[ToolDefinition] = [
     ToolDefinition(
@@ -31,6 +37,17 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
             "최근 3일 식사 · 복약 체크 · 알레르기 · 만성질환을 코드가 날짜순으로 정리한다."
         ),
         args=ComposeTimelineArgs,
+    ),
+    ToolDefinition(
+        name="show_fever_timeline",
+        description=(
+            "열이 언제부터였는지 · 몇 도였는지만 물을 때 정리 대신 한 번 부른다. 인자가 없다. "
+            "최근 48시간 체온 · 체크된 복약 · 먹인 약을 코드가 시간순으로 낸다. '요즘' · '최근' · "
+            "'지난주' 처럼 며칠 넘는 기간을 물었으면 부르지 않고 정리한다. "
+            "다른 출력 tool 과 같은 응답에서 부르지 않는다 — 정리까지 요청했으면 "
+            "compose_symptom_timeline 만 부른다."
+        ),
+        args=ShowFeverTimelineArgs,
     ),
     ToolDefinition(
         name="search_medication_schedules",
@@ -64,5 +81,25 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
             "돼). 바로 멈추지 않고 보호자에게 한 번 확인한다. 약 이름을 말하지 않았으면 비운다."
         ),
         args=StopMedicationArgs,
+    ),
+    ToolDefinition(
+        name="show_dose_status",
+        description=(
+            "등록된 약을 오늘 몇 번 체크했는지 · 마지막으로 언제 먹였는지 · 다음은 언제인지 물을 "
+            "때 마지막에 한 번 부른다. 인자가 없다. 체크된 회차 사실만 코드가 낸다. "
+            "다른 출력 tool 과 같은 응답에서 부르지 않는다 — 새 약 · 수정 · 중단 요청이 "
+            "같이 있으면 그 tool 만 부른다."
+        ),
+        args=ShowDoseStatusArgs,
+    ),
+    ToolDefinition(
+        name="defer_dose_question",
+        description=(
+            "용량 · 간격을 바꿔도 되는지(늘려도 · 줄여도) 묻기만 하고 바꿀 값을 말하지 않았을 "
+            "때 마지막에 한 번 부른다. 인자가 없다. 코드가 처방한 곳에 확인하라는 안내를 낸다. "
+            "다른 출력 tool 과 같은 응답에서 부르지 않는다 — 새 약 · 수정 · 중단 요청이 "
+            "같이 있으면 그 tool 만 부른다."
+        ),
+        args=DeferDoseQuestionArgs,
     ),
 ]

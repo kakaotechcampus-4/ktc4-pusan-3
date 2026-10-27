@@ -439,7 +439,9 @@ def test_세계에_아직_없는_데이터는_처방전과_장소뿐이다():
 
 
 def test_hook_케이스는_전부_판정이_있다():
-    hook_cases = [c for c in CASES if c.label is None and not c.memory]
+    hook_cases = [
+        c for c in CASES if c.label is None and not c.memory and c.hook == "symptom_repeat"
+    ]
 
     assert [c.case_id for c in hook_cases] == [
         "T25",
@@ -464,10 +466,17 @@ def _no_advice_ran(result: DomainAgentResult) -> Ran:
     )
 
 
-def test_med_no_advice_바꿀_게_없다는_안내로_끝나면_통과다():
-    ran = _no_advice_ran(_result("completed", READOUTS.render("med.no_change").body))
+def test_med_no_advice_처방한_곳에_확인하라는_안내로_끝나면_통과다():
+    ran = _no_advice_ran(_result("completed", READOUTS.render("med.ask_prescriber").body))
 
     assert med_no_advice()(ran).failures == []
+
+
+def test_med_no_advice_이름만_넣은_수정_안내로_끝나면_잡는다():
+    # 용량 질문의 출구는 처방한 곳 안내다 — 바꿀 게 없다는 수정 안내는 돌려 말한 길이다
+    ran = _no_advice_ran(_result("completed", READOUTS.render("med.no_change").body))
+
+    assert any("med.ask_prescriber" in failure for failure in med_no_advice()(ran).failures)
 
 
 def test_med_no_advice_실패로_끝나면_잡는다():
@@ -482,7 +491,7 @@ def test_med_no_advice_되묻기가_나가면_잡는다():
     ran = _no_advice_ran(
         _result(
             "completed",
-            READOUTS.render("med.no_change").body,
+            READOUTS.render("med.ask_prescriber").body,
             pending=pending_ask,
             needs_observation=("?",),
         )
@@ -494,4 +503,4 @@ def test_med_no_advice_되묻기가_나가면_잡는다():
 def test_med_no_advice_안내_없이_끝나면_잡는다():
     ran = _no_advice_ran(_result("completed", READOUTS.render("dose.check_on_screen").body))
 
-    assert any("med.no_change" in failure for failure in med_no_advice()(ran).failures)
+    assert any("med.ask_prescriber" in failure for failure in med_no_advice()(ran).failures)

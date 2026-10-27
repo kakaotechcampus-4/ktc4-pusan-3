@@ -41,5 +41,9 @@ class SearchHealthArgs(ToolArgs):
     ]
 
 
+class ShowFeverTimelineArgs(ToolArgs):
+    """인자가 없다 — 열 타임라인의 줄 · 구간은 코드가 정한다."""
+
+
 class ComposeTimelineArgs(ToolArgs):
     """인자가 없다 — 정리에 들어갈 줄은 코드가 정한다."""

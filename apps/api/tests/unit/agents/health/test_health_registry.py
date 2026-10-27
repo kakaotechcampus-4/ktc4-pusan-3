@@ -23,7 +23,11 @@ from tests.unit.agents.health.support import context, gate
 
 # Health_Tool_명세.md §1 의 "모델 tool" · "코드 tool" 칸
 SPEC_MODEL = {
-    "visit_summary": {"search_health_observations", "compose_symptom_timeline"},
+    "visit_summary": {
+        "search_health_observations",
+        "compose_symptom_timeline",
+        "show_fever_timeline",
+    },
     "schedule_check": set(),
     "place_lookup": set(),
     "medication": {
@@ -31,6 +35,8 @@ SPEC_MODEL = {
         "create_medication_schedule",
         "update_medication_schedule",
         "stop_medication_schedule",
+        "show_dose_status",
+        "defer_dose_question",
     },
     "care_handoff": set(),
 }
@@ -83,12 +89,21 @@ def test_모델을_부르는_라벨은_출력_tool_이_있는_라벨이다():
     assert MODEL_TASKS == {HealthTaskType.VISIT_SUMMARY, HealthTaskType.MEDICATION}
 
 
-def test_hook_은_두_tool_이다():
-    assert HOOK_TOOLS == {"check_symptom_repetition", "lookup_condition_guidance"}
+def test_hook_은_세_tool_이다():
+    assert HOOK_TOOLS == {
+        "check_symptom_repetition",
+        "lookup_condition_guidance",
+        "check_infant_fever",
+    }
 
 
 def test_구현된_hook_은_hook_tool_안에_있다():
     assert set(HOOK_HANDLERS) <= HOOK_TOOLS
+
+
+def test_응급_hook_은_아직_등록하지_않는다():
+    # 등록은 pipeline 이 hook 을 부르는 연결과 같이 한다 — 등록하면 eval 이 hook 호출을 요구한다
+    assert "check_infant_fever" not in HOOK_HANDLERS
 
 
 @pytest.mark.parametrize("label", list(HealthTaskType))
@@ -121,10 +136,17 @@ def test_열리는_tool_은_구현된_것뿐이다(label):
 def test_복약_라벨은_핸들러가_있는_모델_tool_만_이름순으로_연다():
     assert tools_for(HealthTaskType.MEDICATION, gate(48)) == (
         "create_medication_schedule",
+        "defer_dose_question",
         "search_medication_schedules",
+        "show_dose_status",
         "stop_medication_schedule",
         "update_medication_schedule",
     )
+
+
+def test_복약의_읽기_전용_출구는_출력_tool_이다():
+    # 둘 다 인자가 없고 부르면 라벨이 끝난다 — 모델이 이어서 다른 말을 덧붙이지 않는다
+    assert {"show_dose_status", "defer_dose_question"} <= OUTPUT_TOOLS[HealthTaskType.MEDICATION]
 
 
 def test_구현된_라벨은_schedule_check_medication_care_handoff_visit_summary_이다():
@@ -155,13 +177,42 @@ def test_진료_준비_식사_복약은_모델_tool_이_아니다():
     assert "search_health_observations" in TOOL_HANDLERS
 
 
-def test_진료_준비_라벨은_증상_조회와_출력_하나만_이름순으로_연다():
-    # 코드 tool(build_fever_timeline · collect_* 등)은 모델에 열리지 않는다. 약 이름 · 용량을
+def test_진료_준비_라벨은_증상_조회와_출력_둘만_이름순으로_연다():
+    # 코드 tool(build_fever_timeline · collect_* 등)은 모델에 직접 열리지 않는다 — 열 경과만 묻는
+    # 말은 인자 없는 출구(show_fever_timeline)가 그 코드 tool 을 부른다. 약 이름 · 용량을
     # 모델에게 보여 주는 search_medication_schedules 도 열지 않는다 (#551)
     assert tools_for(HealthTaskType.VISIT_SUMMARY, gate(48)) == (
         "compose_symptom_timeline",
         "search_health_observations",
+        "show_fever_timeline",
     )
+
+
+def test_열_경과_출구는_출력_tool_이다():
+    assert "show_fever_timeline" in OUTPUT_TOOLS[HealthTaskType.VISIT_SUMMARY]
+
+
+@pytest.mark.parametrize("name", ["show_dose_status", "defer_dose_question", "show_fever_timeline"])
+def test_읽기_전용_출구는_다른_출력_tool_과_같이_부르지_말라고_안내한다(name):
+    # 한 스텝에서 출력 tool 이 하나라도 통과하면 loop 가 끝난다. 항상 성공하는 읽기 전용 출구를
+    # 같은 응답에서 부르면, 인자 오류로 실패한 쓰기 출력 tool 은 고칠 기회 없이 요청이 사라진다
+    description = next(d.description for d in TOOL_DEFINITIONS if d.name == name)
+
+    assert "다른 출력 tool 과 같은 응답에서 부르지 않는다" in description
+
+
+def test_열_타임라인_출구_설명은_긴_기간이면_정리하라고_안내한다():
+    # 열 타임라인은 최근 48시간이다 — "요즘" · "최근" 처럼 며칠 넘는 기간은 정리가 맞다
+    description = next(d.description for d in TOOL_DEFINITIONS if d.name == "show_fever_timeline")
+
+    assert "요즘" in description and "정리" in description
+
+
+def test_용량_질문_출구_설명은_표가_받는_말을_넣지_않는다():
+    # "더 먹여도" · "또 먹여도" 는 표가 먼저 받아 dose.status 로 간다 — 두 길이 어긋나면 안 된다
+    description = next(d.description for d in TOOL_DEFINITIONS if d.name == "defer_dose_question")
+
+    assert "더 먹여도" not in description
 
 
 async def test_없는_tool_은_거절():

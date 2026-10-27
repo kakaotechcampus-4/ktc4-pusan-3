@@ -7,6 +7,7 @@ LLM이 만들면 안 되는 값(child_id, 월령, 동의)과 날짜 계산의 �
 `ports.profile.birth_date`에서 `LifeStage`를 계산해 `Gate`로 넘긴다.
 """
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, tzinfo
 from typing import Literal
@@ -19,7 +20,12 @@ from app.agents.common.readout import Readout
 from app.agents.common.refs import Ref
 from app.agents.common.result import DomainPending
 from app.agents.health.schemas.task import HealthTaskType
-from app.agents.health.store.ports import HealthPorts, HealthSafetyEntry, SafetyLookupError
+from app.agents.health.store.ports import (
+    HealthObservation,
+    HealthPorts,
+    HealthSafetyEntry,
+    SafetyLookupError,
+)
 from app.core.medication_draft import MedicationDraft
 
 # health_safety 를 쓰는 라벨. 그 밖의 라벨은 동의가 있어도 읽지 않는다
@@ -71,8 +77,24 @@ class HealthRunState:
     # 모델이 증상 조회에 쓴 기간 중 가장 긴 것("14d" 꼴). 복약 체크가 같은 기간을 본다.
     # None 이면 모델이 증상 조회를 부르지 않았다 — 출력 tool 이 기본 기간으로 대신 읽는다
     visit_period: str | None = None
+    # 진료 준비 라벨이 한 번 읽은 최근 30일 건강 기록. 열 타임라인 출구가 다시 읽지 않고 쓴다.
+    # None 은 아직 읽지 않았다는 뜻이다 — "읽었는데 0건" 인 빈 튜플과 다르다
+    visit_observations: tuple[HealthObservation, ...] | None = field(default=None, repr=False)
     question: str | None = None
     pending: DomainPending | None = None  # 되묻고 멈춘 자리. question 과 같이 채워진다
+
+    def add_once(self, readouts: Iterable[Readout]) -> int:
+        """출력 tool 이 낸 readout 을 더한다. 이미 같은 것이 있으면 건너뛰고, 더한 개수를 돌려준다.
+
+        모델이 같은 출구를 한 응답에 두 번 불러도 화면에는 한 벌만 나간다. 다시 부르면 앞의 것을
+        교체하는 `compose_symptom_timeline` 과 같은 이유다.
+        """
+        added = 0
+        for readout in readouts:
+            if readout not in self.readouts:
+                self.readouts.append(readout)
+                added += 1
+        return added
 
 
 @dataclass(frozen=True)

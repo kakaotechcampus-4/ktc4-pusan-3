@@ -16,8 +16,9 @@
 
 열 표현 표(`FEVER_WORDS`)는 `medication` 의 조회 표현 표처럼 짧게 둔다. 못 걸리는 말은 정리로
 간다 — 열 질문이 정리에 섞여 나가는 쪽이 정리 요청이 열 타임라인으로 새는 쪽보다 낫다. 같은 이유로
-정리 표현(`SUMMARY_WORDS`)이 같이 있으면 열 표현이 있어도 정리다. 알려진 틈: "열나는데 언제부터였지"
-처럼 표에 없는 말은 정리로 간다(모델 1회).
+정리 표현(`SUMMARY_WORDS`)이 같이 있으면 열 표현이 있어도 정리다. 표에 없는 열 질문("열나는데
+언제부터였지")은 ④의 loop 로 가고, 모델이 정리 대신 인자 없는 출구 `show_fever_timeline` 을 고른다
+— ②와 같은 열 타임라인이다(모델 1회).
 
 저장하지 않는다. 안전 조회 실패는 닫지 않는다 — 정리 맨 위에 경고 줄이 붙는다(출력 tool 몫).
 열 타임라인 · 기록 없음 안내에는 알레르기 줄이 없어서 경고도 붙이지 않는다.
@@ -29,7 +30,6 @@ from datetime import date, timedelta
 from typing import Any
 
 from app.agents.common.llm_client import LLMClient
-from app.agents.common.readout import Readout
 from app.agents.common.result import AgentStatus, DomainAgentResult
 from app.agents.common.schemas.task import DomainTask
 from app.agents.common.tool_loop import run_tool_loop
@@ -39,9 +39,10 @@ from app.agents.health.envelope import result
 from app.agents.health.prompt import build_system_prompt
 from app.agents.health.readouts import EMERGENCY, READOUTS, VISIT_NO_RECORD
 from app.agents.health.registry import OUTPUT_TOOLS, execute_tool, specs_for, tools_for
+from app.agents.health.result import ErrorCode, fail
 from app.agents.health.schemas.task import HealthTaskType
-from app.agents.health.store.ports import HealthObservation
-from app.agents.health.tools.fever import WINDOW, build_fever_timeline, infant_fever
+from app.agents.health.tools.exits import blocked_exit
+from app.agents.health.tools.fever import fever_readouts, infant_fever
 from app.agents.health.wording import squash
 
 logger = logging.getLogger(__name__)
@@ -58,8 +59,23 @@ RECORD_DAYS = 30
 # 열 질문 표현. 걸리면 모델을 부르지 않고 체온 · 체크된 복약 · 먹인 약을 나열만 한다.
 # 공백을 없애고 견준다 — "열 언제" 와 "열언제" 를 같은 말로 본다
 FEVER_WORDS: tuple[str, ...] = ("열 언제", "열이 언제", "몇 도", "체온")
-# 정리를 원한다는 표현. 열 표현과 같이 있으면 정리로 간다
-SUMMARY_WORDS: tuple[str, ...] = ("정리", "요약", "한눈에")
+# 정리를 원한다는 표현. 열 표현과 같이 있으면 정리로 간다. "진료" 가 든 말("진료 때 보여줄 거")도
+# 정리 쪽으로 읽는다 — 열 질문이 정리에 섞이는 쪽이 정리 요청이 열 타임라인으로 새는 쪽보다 낫다
+SUMMARY_WORDS: tuple[str, ...] = ("정리", "요약", "한눈에", "진료")
+# 열 타임라인(최근 48시간)보다 긴 기간을 묻는 표현. 표에 안 걸린 열 질문 중 이런 말이 있으면
+# 열 타임라인 출구 대신 정리로 간다 — 48시간 앞의 열 기록이 빠지고, 체온 숫자가 없으면
+# "체온 기록이 없어요" 만 나간다
+LONG_PERIOD_WORDS: tuple[str, ...] = (
+    "요즘",
+    "최근",
+    "지난주",
+    "이번 주",
+    "지난달",
+    "이번 달",
+    "며칠",
+    "일주일",
+    "한 달",
+)
 
 
 def is_fever_question(texts: Sequence[str]) -> bool:
@@ -68,10 +84,26 @@ def is_fever_question(texts: Sequence[str]) -> bool:
     열 말과 정리 말이 같이 있으면("열이 언제부터인지랑 기침도 정리해줘") 정리로 간다 — 열 질문
     하나로 읽으면 같이 달라고 한 증상 · 식사가 말없이 빠진다. 그래서 "체온 정리해줘" 도 정리다.
     """
-    squashed = "".join(squash(text) for text in texts)
-    if any(squash(word) in squashed for word in SUMMARY_WORDS):
+    if has_summary_words(texts):
         return False
+    squashed = "".join(squash(text) for text in texts)
     return any(squash(word) in squashed for word in FEVER_WORDS)
+
+
+def has_long_period_words(texts: Sequence[str]) -> bool:
+    """열 타임라인(최근 48시간)보다 긴 기간을 묻는 표현이 있으면 참. 열 타임라인 출구를 막는다.
+
+    열 표현 표(`FEVER_WORDS`)가 받는 말은 이 검사를 거치지 않는다 — 표는 지금처럼 열 타임라인으로
+    간다. 이 검사는 표에 안 걸려 모델이 출구를 고를 수 있는 말에만 걸린다.
+    """
+    squashed = "".join(squash(text) for text in texts)
+    return any(squash(word) in squashed for word in LONG_PERIOD_WORDS)
+
+
+def has_summary_words(texts: Sequence[str]) -> bool:
+    """정리 표현이 있으면 참. 표 라우팅과 열 타임라인 출구의 거절이 같은 표를 쓴다."""
+    squashed = "".join(squash(text) for text in texts)
+    return any(squash(word) in squashed for word in SUMMARY_WORDS)
 
 
 async def run_visit_summary(
@@ -87,6 +119,8 @@ async def run_visit_summary(
         date_from=_first_day(context),
         date_to=context.today,
     )
+    # 표에 안 걸린 열 질문의 출구(`show_fever_timeline`)가 다시 읽지 않고 같은 기록을 쓴다
+    context.state.visit_observations = tuple(observations)
 
     # ① 응급 안내는 무엇보다 먼저다. 이후 경로가 무엇이든 맨 앞에 남는다
     infant = infant_fever(
@@ -98,7 +132,7 @@ async def run_visit_summary(
     # ② 열 질문은 모델 없이 나열만 한다
     if is_fever_question(task.request_texts):
         try:
-            context.state.readouts += await _fever_readouts(context, observations)
+            context.state.readouts += await fever_readouts(context, observations)
         except Exception as exc:
             if not infant:
                 raise
@@ -136,6 +170,22 @@ async def _summarize(
     ]
 
     async def execute(name: str, arguments: dict[str, Any]) -> ToolResult:
+        # 읽기 전용 출구가 같은 응답의 정리를 가리지 않게 한다
+        blocked = blocked_exit(name, messages, output_tools=OUTPUT_TOOLS[TASK])
+        if blocked is not None:
+            return blocked
+        if name == "show_fever_timeline" and (
+            has_summary_words(task.request_texts) or has_long_period_words(task.request_texts)
+        ):
+            # 정리를 달라는 말이 섞였는데 열 타임라인으로 가면 식사 · 복약 체크 · 알레르기 줄이
+            # 말없이 빠진다. 열 타임라인은 최근 48시간뿐이라 며칠 넘는 기간을 물은 말도 정리가 맞다
+            return fail(
+                None,
+                name,
+                ErrorCode.EXIT_REJECTED,
+                "정리를 요청했거나 열 타임라인(최근 48시간)보다 긴 기간을 물은 말이라 "
+                "열 타임라인만 낼 수 없다. compose_symptom_timeline 으로 정리한다.",
+            )
         return await execute_tool(name, arguments, context, allowed=allowed)
 
     loop = await run_tool_loop(
@@ -156,31 +206,6 @@ async def _summarize(
         )
         return _finish(context, status="failed", model_calls=1)
     return _finish(context, model_calls=1)
-
-
-async def _fever_readouts(
-    context: HealthContext, observations: Sequence[HealthObservation]
-) -> list[Readout]:
-    """최근 48시간의 열 타임라인. 코스는 그 구간과 겹치는 것(어제 끝난 것 포함), 회차는 앞날까지."""
-    first_day = (context.now - WINDOW).astimezone(context.timezone).date()
-    medication = context.ports.medication
-    courses = await medication.courses_overlapping(
-        child_id=context.child_id, date_from=first_day, date_to=context.today
-    )
-    # 다음 예정은 오늘 이후 회차 행에서 나온다 — 코스 마지막 날까지 읽는다
-    last_day = max([context.today, *(course.ends_on for course in courses)])
-    doses = (
-        await medication.doses(
-            schedule_ids=[course.id for course in courses], date_from=first_day, date_to=last_day
-        )
-        if courses
-        else []
-    )
-    return list(
-        build_fever_timeline(
-            observations, courses, doses, now=context.now, timezone=context.timezone
-        )
-    )
 
 
 def _emergency_only(context: HealthContext, exc: Exception) -> DomainAgentResult:

@@ -7,17 +7,28 @@
 
 단위는 날이다(아이 타임존 달력 날짜) — 같은 날 여러 번은 1일, 사흘 내리면 3일, 기간 기록은 그 날들을
 다 센다. 에피소드로 세지 않는다. 저장이 검색보다 먼저여야 해서(루트 §4) 방금 저장한 기록도 읽힌다.
+
+`check_infant_fever` 도 라벨이 아니다. 3개월 미만 아이의 발열은 "열이 38.3도야" 처럼 기록만 해도
+안내가 나가야 하는데, 진료 준비 라벨 안에만 있으면 그 라벨로 오지 않는 기록형 입력에는 나가지
+않는다. 판정(`infant_fever`)과 기준(`reference/infant_fever.yaml`)은 진료 준비와 같은 것을 쓴다.
 """
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, timedelta, tzinfo
 
+from app.agents.common.age import life_stage
 from app.agents.common.readout import Readout
 from app.agents.health.context import HealthContext
-from app.agents.health.readouts import READOUTS, SYMPTOM_REPEAT, SYMPTOM_REPEAT_CONDITION
+from app.agents.health.readouts import (
+    EMERGENCY,
+    READOUTS,
+    SYMPTOM_REPEAT,
+    SYMPTOM_REPEAT_CONDITION,
+)
 from app.agents.health.reference import Guidance, condition_codes, condition_guidance, symptom_codes
 from app.agents.health.store.ports import HealthObservation, HealthSafetyEntry, SafetyLookupError
+from app.agents.health.tools.fever import INFANT_FEVER_BELOW_MONTH, WINDOW, infant_fever
 from app.agents.health.tools.symptoms import observation_days, symptom_codes_of
 from app.rules.term_match import match_terms
 
@@ -120,6 +131,29 @@ async def check_symptom_repetition(
         readouts.append(READOUTS.render(SYMPTOM_REPEAT_CONDITION, condition=condition, **values))
         readouts.extend(_card(row) for row in match.guidances)
     return tuple(readouts)
+
+
+async def check_infant_fever(context: HealthContext) -> tuple[Readout, ...]:
+    """3개월 미만 + 최근 48시간 안 발열이면 응급 안내 한 건. 동의가 없으면 읽지도 않는다.
+
+    월령이 기준 이상이면 건강 기록을 읽지 않는다. 생일을 못 읽으면 예외를 그대로 올린다 — 지어낸
+    생일로 열면 생후 2개월 아이가 유아로 계산돼 응급 기준이 빠진다.
+    """
+    ports = context.ports
+    if not await ports.consent.child_health_granted(child_id=context.child_id):
+        return ()
+    birth_date = await ports.profile.birth_date(child_id=context.child_id)
+    months = life_stage(birth_date, context.today).months
+    if months >= INFANT_FEVER_BELOW_MONTH:
+        return ()
+    observations = await ports.memory.health_observations(
+        child_id=context.child_id,
+        date_from=(context.now - WINDOW).astimezone(context.timezone).date(),
+        date_to=context.today,
+    )
+    if infant_fever(observations, months=months, now=context.now, timezone=context.timezone):
+        return (READOUTS.render(EMERGENCY),)
+    return ()
 
 
 def _card(row: Guidance) -> Readout:

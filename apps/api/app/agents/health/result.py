@@ -22,6 +22,8 @@ class ErrorCode(CommonErrorCode):
     """Health 만의 실패 코드. 값은 덮어쓰지 않고 더한다."""
 
     NO_CHANGE = "NO_CHANGE"  # 수정인데 지금 값과 같다 → 카드를 띄우지 않는다
+    # 읽기 전용 출구를 부를 수 없는 자리다 — 같은 응답에 다른 출력 tool 이 있거나 정리 요청이다
+    EXIT_REJECTED = "EXIT_REJECTED"
 
 
 def ok(operation: Operation, resource: str, **data: Any) -> ToolResult:
