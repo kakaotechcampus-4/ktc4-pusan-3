@@ -389,3 +389,37 @@ async def test_other_childs_list_is_forbidden_whatever_the_query(
     )
 
     assert resp.status_code == 403
+
+
+async def test_filters_combine_with_paging_and_total_is_after_every_filter(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    """domain · 날짜 · q · page 를 한꺼번에 걸어도 total 은 모든 필터를 건 뒤의 건수다."""
+    headers, _ = bearer
+    for d, key in ((1, "브로콜리 볶음"), (2, "브로콜리 국"), (3, "브로콜리 무침")):
+        await _linked(session, cid, key, days_ago=d)
+    await _linked(session, cid, "브로콜리 옛날", days_ago=20)  # 날짜 밖
+    await _linked(session, cid, "사과", days_ago=1)  # 검색어 밖
+    other_domain = await _linked(session, cid, "브로콜리 놀이", days_ago=1)
+    other_domain.domain = MemoryDomain.ACTIVITY  # 분류 밖
+    await session.flush()
+    today = today_kst()
+
+    body = (
+        await db_client.get(
+            f"/api/v1/children/{cid}/affinities",
+            params={
+                "domain": "food",
+                "q": "브로콜리",
+                "date_from": (today - timedelta(days=5)).isoformat(),
+                "date_to": today.isoformat(),
+                "page": 2,
+                "size": 2,
+            },
+            headers=headers,
+        )
+    ).json()
+
+    assert (body["total"], body["total_pages"], body["page"]) == (3, 2, 2)
+    assert [a["merge_key"] for a in body["affinities"]] == ["브로콜리 무침"]
+    assert body["safety"] == []
