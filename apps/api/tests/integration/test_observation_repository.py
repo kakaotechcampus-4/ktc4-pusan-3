@@ -638,6 +638,11 @@ async def test_page_orders_by_observed_to_not_observed_from_and_overlaps_multi_d
     until_first = await page_observations(session, child_id=child.id, date_to=date(2026, 9, 1))
 
     assert [row.id for row in ordered.items] == [long_one.id, short_one.id]
+    # 쪽을 작게 자르면 먼저 뽑히는 행이 드러난다 — 안쪽 정렬이 observed_from 이면 뒤집힌다
+    first = await page_observations(session, child_id=child.id, limit=1)
+    second = await page_observations(session, child_id=child.id, limit=1, offset=1)
+    assert [row.id for row in first.items] == [long_one.id]
+    assert [row.id for row in second.items] == [short_one.id]
     assert [row.id for row in from_fifth.items] == [long_one.id]
     assert [row.id for row in until_first.items] == [long_one.id]
 
