@@ -10,7 +10,7 @@
 import json
 from dataclasses import replace
 from datetime import datetime, time, timedelta
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -34,6 +34,7 @@ from app.agents.health.store.inmemory import (
 )
 from app.agents.health.store.ports import DoseSlot
 from tests.unit.agents.health.support import (
+    CHILD,
     KST,
     NOW,
     TODAY,
@@ -356,6 +357,21 @@ class TestResumeStop:
         )
         assert len(kept) == 9 and [r.checked_at for r in kept if r.checked_at] == [CHECKED]
 
+    async def test_중단은_이_run_의_아이_id_로_쓴다(self, monkeypatch):
+        ctx, store, first = await self._asked(antibiotic())
+        seen: list[UUID] = []
+        original = store.stop_course
+
+        async def spy(*, child_id, schedule_id, stopped_at):
+            seen.append(child_id)
+            return await original(child_id=child_id, schedule_id=schedule_id, stopped_at=stopped_at)
+
+        monkeypatch.setattr(store, "stop_course", spy)
+
+        await run(med("응"), next_turn(ctx, first), client=FakeLLM())
+
+        assert seen == [CHILD]
+
     @pytest.mark.parametrize("answer", ["아니 그냥 둬", "글쎄"])
     async def test_아니요도_애매해도_그대로(self, answer):
         ctx, store, first = await self._asked(antibiotic())
@@ -372,7 +388,9 @@ class TestResumeStop:
         course, rows = antibiotic()
         ctx, store, first = await self._asked((course, rows))
         # 묻고 답하는 사이에 다른 경로로 이미 멈췄다
-        await store.stop_course(schedule_id=course.id, stopped_at=NOW - timedelta(hours=1))
+        await store.stop_course(
+            child_id=CHILD, schedule_id=course.id, stopped_at=NOW - timedelta(hours=1)
+        )
 
         result = await run(med("응"), next_turn(ctx, first), client=FakeLLM())
 
@@ -455,7 +473,7 @@ class TestResumeWhich:
             for c in await store.active_courses(child_id=ctx.child_id, today=TODAY)
             if c.title == "시럽"
         ]
-        await store.stop_course(schedule_id=syrup_course.id, stopped_at=NOW)
+        await store.stop_course(child_id=CHILD, schedule_id=syrup_course.id, stopped_at=NOW)
 
         result = await run(med("시럽"), next_turn(ctx, first), client=FakeLLM())
 

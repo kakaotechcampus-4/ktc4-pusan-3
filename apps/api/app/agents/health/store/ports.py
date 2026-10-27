@@ -135,9 +135,9 @@ class MedicationCourse:
     # 이 값을 싣는다 — 제출 API 는 받은 값을 그대로 저장해서, 다시 계산하면 옛 코스의 값이 덮인다
     symptom_codes: tuple[str, ...] = ()
     # 보호자가 멈춘 시각. status == "stopped" 일 때만 뜻이 있다 — DB 어댑터가 `medication_schedule.
-    # updated_at` 에서 채운다(`MedicationWriter.stop_course` 가 그 칸에 중단 시각을 쓴다. 어댑터는
-    # 복약 연결 이슈 몫). 멈춘 코스도 앞으로의 회차 행은 남아 있어서(soft delete) 이 시각 뒤 회차는
-    # 계획이 아니다. None 이면 모른다 — 모르는 값으로 회차를 지우지 않는다
+    # updated_at` 에서 채운다(`MedicationWriter.stop_course` 가 그 칸에 중단 시각을 쓴다).
+    # 멈춘 코스도 앞으로의 회차 행은 남아 있어서(soft delete) 이 시각 뒤 회차는 계획이 아니다.
+    # None 이면 모른다 — 모르는 값으로 회차를 지우지 않는다
     stopped_at: datetime | None = None
 
 
@@ -166,7 +166,11 @@ class MedicationReader(Protocol):
     async def courses_overlapping(
         self, *, child_id: UUID, date_from: date, date_to: date
     ) -> list[MedicationCourse]:
-        """status 와 상관없이 기간이 [date_from, date_to] 와 겹치는 코스 — 끝났거나 멈춘 것도."""
+        """status 와 상관없이 기간이 [date_from, date_to] 와 겹치는 코스 — 끝났거나 멈춘 것도.
+
+        `pattern` 은 `date_to` 이후 회차에서 모은다. 이 메서드는 오늘을 받지 않아서 호출부가
+        `date_to` 로 오늘을 넘기는 것을 전제로 한다.
+        """
         ...
 
     async def doses(
@@ -178,9 +182,12 @@ class MedicationReader(Protocol):
 
 class MedicationWriter(Protocol):
     async def stop_course(
-        self, *, schedule_id: UUID, stopped_at: datetime
+        self, *, child_id: UUID, schedule_id: UUID, stopped_at: datetime
     ) -> Literal["stopped", "already", "missing"]:
-        """status='stopped' · updated_at=stopped_at. 이미 멈춘 코스는 시각을 안 바꾸고 "already"."""
+        """status='stopped' · updated_at=stopped_at. 이미 멈춘 코스는 시각을 안 바꾸고 "already".
+
+        다른 아이의 코스는 `missing` 이다 — 그런 코스가 있다는 것도 알리지 않는다.
+        """
         ...
 
 
@@ -192,6 +199,52 @@ class ChildBasic:
 
 class ChildBasicReader(Protocol):
     async def basic(self, *, child_id: UUID) -> ChildBasic: ...
+
+
+class UnwiredHealthSafety:
+    """`health_safety` 어댑터가 붙기 전의 자리. 읽으면 늘 `SafetyLookupError` 다.
+
+    `build_gate` 가 `safety_ok=False` 로 닫는다 — 빈 목록으로 열리면 "알레르기 없는 아이" 가 된다.
+    """
+
+    async def health_safety(self, *, child_id: UUID) -> list[HealthSafetyEntry]:
+        raise SafetyLookupError("health_safety 어댑터가 연결되지 않았다")
+
+
+class UnwiredMedication:
+    """복약 어댑터가 붙기 전의 자리. 읽어도 쓰려 해도 늘 `LookupError` 다.
+
+    빈 저장소로 열리면 복용 중인 약이 "없음" 으로 읽혀 응급 카드와 진료 준비가 비어 나간다.
+    """
+
+    async def active_courses(self, *, child_id: UUID, today: date) -> list[MedicationCourse]:
+        raise _unwired("복약")
+
+    async def courses_overlapping(
+        self, *, child_id: UUID, date_from: date, date_to: date
+    ) -> list[MedicationCourse]:
+        raise _unwired("복약")
+
+    async def doses(
+        self, *, schedule_ids: Sequence[UUID], date_from: date, date_to: date
+    ) -> list[MedicationDose]:
+        raise _unwired("복약")
+
+    async def stop_course(
+        self, *, child_id: UUID, schedule_id: UUID, stopped_at: datetime
+    ) -> Literal["stopped", "already", "missing"]:
+        raise _unwired("복약")
+
+
+class UnwiredChildBasic:
+    """아이 별명 · 생일 어댑터가 붙기 전의 자리. 읽으면 늘 `LookupError` 다."""
+
+    async def basic(self, *, child_id: UUID) -> ChildBasic:
+        raise _unwired("아이 기본 정보")
+
+
+def _unwired(name: str) -> LookupError:
+    return LookupError(f"{name} 어댑터가 연결되지 않았다")
 
 
 @dataclass(frozen=True)
