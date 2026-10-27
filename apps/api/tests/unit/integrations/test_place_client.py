@@ -21,9 +21,10 @@ import pytest
 
 from app.core.place_raw import RawPlaceRow
 from app.integrations.place.client import (
+    LIBRARY_MAX_PAGES,
     LIBRARY_URL,
-    MAX_PAGES,
     PAGE_ROWS,
+    PARK_MAX_PAGES,
     PARK_URL,
     PlaceApiError,
     PlaceStdClient,
@@ -66,6 +67,7 @@ def park(no: str, **over: str) -> dict[str, str]:
         "latitude": "35.1000",
         "longitude": "129.0000",
         "parkAr": "1500",
+        "amsmtFclty": "그네, 미끄럼틀",
         "institutionNm": "시험시청",
         "phoneNumber": "000-0000-0000",
         "referenceDate": "2026-06-30",
@@ -154,17 +156,51 @@ async def test_받은_행_수가_totalCount_와_다르면_실패한다() -> None
         await build_client(handler).parks()
 
 
-async def test_쪽수가_상한을_넘으면_받지_않는다() -> None:
+@pytest.mark.parametrize(
+    ("fetch", "max_pages"), [("parks", PARK_MAX_PAGES), ("libraries", LIBRARY_MAX_PAGES)]
+)
+async def test_쪽수가_소스의_상한을_넘으면_받지_않는다(fetch: str, max_pages: int) -> None:
     calls = 0
 
     def handler(request: httpx.Request) -> httpx.Response:
         nonlocal calls
         calls += 1
-        return ok(page_of([park("11110-00001")], total=PAGE_ROWS * MAX_PAGES + 1))
+        return ok(page_of([park("11110-00001")], total=PAGE_ROWS * max_pages + 1))
 
     with pytest.raises(PlaceApiError, match="상한"):
-        await build_client(handler).parks()
+        await getattr(build_client(handler), fetch)()
     assert calls == 1
+
+
+def _pages_of(total: int):
+    """`total` 행을 쪽마다 나눠 주는 handler 와 부른 쪽 번호."""
+    pages: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        page = int(query(request)["pageNo"][0])
+        pages.append(page)
+        start = (page - 1) * PAGE_ROWS
+        count = max(0, min(PAGE_ROWS, total - start))
+        items = [park(f"11110-{start + k:05d}") for k in range(count)]
+        return ok(page_of(items, total=total, page=page))
+
+    return handler, pages
+
+
+@pytest.mark.parametrize(("max_pages", "allowed"), [(2, False), (3, True)])
+async def test_쪽수_상한은_부르는_쪽이_소스마다_정한다(max_pages: int, allowed: bool) -> None:
+    # 쪽수가 많은 소스(어린이놀이시설 약 86쪽)는 공원 · 도서관보다 큰 상한을 둔다
+    handler, pages = _pages_of(PAGE_ROWS * 2 + 1)  # 3쪽
+    client = build_client(handler)
+
+    if allowed:
+        rows = await client._all(PARK_URL, what="시험", max_pages=max_pages)
+        assert len(rows) == PAGE_ROWS * 2 + 1
+        assert pages == [1, 2, 3]
+    else:
+        with pytest.raises(PlaceApiError, match="상한"):
+            await client._all(PARK_URL, what="시험", max_pages=max_pages)
+        assert pages == [1]
 
 
 @pytest.mark.parametrize(
@@ -201,6 +237,8 @@ async def test_공원은_화이트리스트_칸만_옮긴다() -> None:
         reference_date="2026-06-30",
         manage_no="11110-00001",
         address="시험시 시험동 1",
+        amusement="그네, 미끄럼틀",
+        area="1500",
     )
 
 
@@ -220,7 +258,8 @@ async def test_도서관은_번호_칸이_없다() -> None:
 
 
 def test_원문_행에는_전화번호_관리기관_칸이_없다() -> None:
-    # 주소는 관리번호가 겹친 공원을 가리는 데만 쓰고 표에는 싣지 않는다(place_values 테스트)
+    # 주소는 관리번호가 겹친 공원을 가리는 데만, 유희시설은 놀이터 여부를 정하는 데만 쓰고 표에는
+    # 싣지 않는다(place_values 테스트)
     fields = set(RawPlaceRow.__dataclass_fields__)
 
     assert fields == {
@@ -231,15 +270,20 @@ def test_원문_행에는_전화번호_관리기관_칸이_없다() -> None:
         "reference_date",
         "manage_no",
         "address",
+        "amusement",
+        "area",
     }
 
 
 async def test_빈_칸은_None_이다() -> None:
-    sparse = park("11110-00001", latitude="", longitude="  ", referenceDate="")
+    sparse = park(
+        "11110-00001", latitude="", longitude="  ", referenceDate="", amsmtFclty="", parkAr=" "
+    )
 
     [row] = await build_client(lambda request: ok(page_of([sparse], total=1))).parks()
 
     assert (row.latitude, row.longitude, row.reference_date) == (None, None, None)
+    assert (row.amusement, row.area) == (None, None)
 
 
 # ── ③ 실패 ────────────────────────────────────────────────────────────

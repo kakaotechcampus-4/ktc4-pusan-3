@@ -6,8 +6,9 @@
 
 - 🚨 전국 목록을 통째로 받을 뿐이다. 보호자 좌표는 이 모듈에 들어오지 않는다 — 반경 질의를 밖에
   맡기지 않으려고 적재한다 (Activity D9).
-- 🚨 화이트리스트 — 이름 · 종류 · 좌표 · 데이터기준일자 · 관리번호만 옮긴다. 전화번호(phoneNumber) ·
-  관리기관(institutionNm · insttNm) · 주소(rdnmadr · lnmadr) 칸은 응답에 있어도 옮기지 않는다.
+- 🚨 화이트리스트 — 이름 · 종류 · 좌표 · 데이터기준일자 · 관리번호 · 면적을 옮긴다. 공원 주소
+  (lnmadr · rdnmadr)와 유희시설(amsmtFclty)도 옮기지만 적재가 판정(중복 공원 · 놀이터 여부)에만
+  쓰고 싣지 않는다. 전화번호(phoneNumber) · 관리기관(institutionNm · insttNm) 칸은 옮기지 않는다.
 
 실제 응답으로 확인한 것 (2026-10-27)
   - 모양은 `{"header": {...}, "body": {"items": {"item": [...]}, "totalCount": ...}}` 이다.
@@ -35,8 +36,11 @@ LIBRARY_URL = "https://api.data.go.kr/openapi/tn_pubr_public_lbrry_api"
 
 # 한 쪽에 담는 행 수. 1,000 까지 받는다(실측). 공원이 19쪽이다
 PAGE_ROWS = 1000
-# 쪽수 상한. 넘으면 표준데이터가 크게 바뀐 것이라 받지 않고 실패로 올린다
-MAX_PAGES = 60
+# 쪽수 상한 — 소스마다 따로 건다. 넘으면 표준데이터가 크게 바뀐 것이라 받지 않고 실패로 올린다.
+# 지금은 공원 19쪽 · 도서관 4쪽이다(2026-10-27). 쪽수가 많은 소스(어린이놀이시설은 약 86쪽)는
+# 자기 상한을 둔다
+PARK_MAX_PAGES = 60
+LIBRARY_MAX_PAGES = 60
 # 배치라서 넉넉히 기다린다. 실측은 쪽마다 0.5초 안팎이다
 BATCH_HTTP_TIMEOUT_S = 60.0
 
@@ -67,7 +71,7 @@ class PlaceStdClient:
     http: httpx.AsyncClient
 
     async def parks(self) -> tuple[RawPlaceRow, ...]:
-        rows = await self._all(PARK_URL, what="공원")
+        rows = await self._all(PARK_URL, what="공원", max_pages=PARK_MAX_PAGES)
         return tuple(
             RawPlaceRow(
                 name=_text(raw.get("parkNm")),
@@ -77,12 +81,14 @@ class PlaceStdClient:
                 reference_date=_text(raw.get("referenceDate")),
                 manage_no=_text(raw.get("manageNo")),
                 address=_text(raw.get("lnmadr")) or _text(raw.get("rdnmadr")),
+                amusement=_text(raw.get("amsmtFclty")),
+                area=_text(raw.get("parkAr")),
             )
             for raw in rows
         )
 
     async def libraries(self) -> tuple[RawPlaceRow, ...]:
-        rows = await self._all(LIBRARY_URL, what="도서관")
+        rows = await self._all(LIBRARY_URL, what="도서관", max_pages=LIBRARY_MAX_PAGES)
         return tuple(
             RawPlaceRow(
                 name=_text(raw.get("lbrryNm")),
@@ -94,13 +100,16 @@ class PlaceStdClient:
             for raw in rows
         )
 
-    async def _all(self, url: str, *, what: str) -> list[dict[str, Any]]:
+    async def _all(self, url: str, *, what: str, max_pages: int) -> list[dict[str, Any]]:
         """쪽마다 차례로 받는다. 한 쪽이라도 실패하거나 받은 행 수가 `totalCount` 와 다르면 전체를
-        실패로 올린다 — 일부만 받은 채로 적재하면 빠진 곳이 "문 닫은 곳" 으로 지워진다."""
+        실패로 올린다 — 일부만 받은 채로 적재하면 빠진 곳이 "문 닫은 곳" 으로 지워진다.
+
+        쪽수가 `max_pages` 를 넘으면 첫 쪽만 받고 실패한다. 상한은 소스마다 부르는 쪽이 정한다.
+        """
         first = await self._page(url, 1, what=what)
         total = _total(first, what=what)
         pages = math.ceil(total / PAGE_ROWS)
-        if pages > MAX_PAGES:
+        if pages > max_pages:
             raise PlaceApiError(f"{what} 쪽수가 상한을 넘는다 ({pages})")
         items = _items(first, what=what)
         for number in range(2, pages + 1):

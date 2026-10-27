@@ -27,3 +27,8 @@ class RawPlaceRow:
     # 공원 지번주소(없으면 도로명). 관리번호가 겹친 행이 같은 공원인지 가리는 데만 쓰고
     # 싣지 않는다 — place 표에 주소 칸이 없다. 도서관은 None 이다
     address: str | None = None
+    # 공원 유희시설(amsmtFclty) 원문. 놀이터가 있는지(`has_playground`)를 정하는 데만 쓰고 싣지
+    # 않는다. 도서관은 None 이다
+    amusement: str | None = None
+    # 공원면적(parkAr, ㎡) 원문. 적재가 숫자로 읽어 `area_m2` 로 싣는다. 도서관은 None 이다
+    area: str | None = None

@@ -28,17 +28,27 @@ from app.agents.activity.weather import WeatherBrief
 CHILD = UUID(int=1)
 NOW = datetime(2026, 10, 2, 10, tzinfo=UTC)
 LOCATION = CoarseLocation(lat=35.18, lon=129.08)
+# 공공데이터 기준일. 포트는 싣지만 모델에는 주지 않는다
+DATA_DATE = date(2026, 6, 30)
 
 
 def park(name: str, distance_m: int) -> PlaceRow:
     return PlaceRow(
-        name=name, category=PlaceCategory.PARK, distance_m=distance_m, source="city_park"
+        name=name,
+        category=PlaceCategory.PARK,
+        distance_m=distance_m,
+        source="city_park",
+        data_date=DATA_DATE,
     )
 
 
 def library(name: str, distance_m: int) -> PlaceRow:
     return PlaceRow(
-        name=name, category=PlaceCategory.LIBRARY, distance_m=distance_m, source="library"
+        name=name,
+        category=PlaceCategory.LIBRARY,
+        distance_m=distance_m,
+        source="library",
+        data_date=DATA_DATE,
     )
 
 
@@ -88,6 +98,16 @@ class TestNearest:
         )
         assert result.data["places"] == [{"name": "○○어린이공원", "category": "park"}]
 
+    async def test_데이터기준일자는_모델에_주지_않는다(self):
+        """기준일은 화면의 "공공데이터 기준 YYYY-MM" 용이다. 모델이 보는 결과는 이름 · 종류다."""
+        ctx = await context([park("○○어린이공원", 800), library("○○도서관", 900)])
+        result = await search_nearby_places(ctx, args(PlaceCategory.PARK))
+        for place in result.data["places"]:
+            assert set(place) == {"name", "category"}
+        assert "2026-06-30" not in str(result.data)
+        # run state 에는 남는다 — 화면이 쓸 수 있게
+        assert ctx.state.seen_places["○○어린이공원"].data_date == DATA_DATE
+
     async def test_돌려준_장소만_run_state_에_남는다(self):
         """출력 검증이 place_name 을 이 표와 대조한다. 안 돌려준 곳은 남기지 않는다."""
         rows = [park(f"공원{i}", 100 * (i + 1)) for i in range(PLACE_TOP_K + 2)]
@@ -105,7 +125,9 @@ class TestBadWeather:
     @pytest.mark.parametrize("category", sorted(INDOOR_CATEGORIES))
     async def test_바깥_활동이_어려운_날은_실내_종류를_찾는다(self, category):
         rows = [
-            PlaceRow(name="실내", category=category, distance_m=500, source="library"),
+            PlaceRow(
+                name="실내", category=category, distance_m=500, source="library", data_date=None
+            ),
         ]
         result = await search_nearby_places(await context(rows, outdoor_ok=False), args(category))
         assert names(result) == ["실내"]

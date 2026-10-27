@@ -8,6 +8,9 @@ agents 가 정한 계약이라 여기서 import 한다 — `domains/safety/agent
   남기지 않는다. DB 오류 글에는 쿼리 인자(좌표)가 실릴 수 있어서, 실패하면 종류 이름만 남기고
   원래 예외를 끊는다(`from None`).
 - 반경은 `PLACE_MAX_RADIUS_M` 로 자르고 가까운 순 `PLACE_TOP_K` 곳까지만 돌려준다.
+- 놀이터(`PLAYGROUND`)로 찾으면 놀이터가 있는 공원도 온다. 그 행의 종류는 표에 실린 그대로
+  (`park`)다.
+- 데이터기준일자를 `PlaceRow` 에 싣는다. 모델에는 가지 않는다 — tool 결과는 이름 · 종류뿐이다.
 - 🚨 읽기에 실패하면 `UpstreamUnavailable` 이다 — tool 이 UPSTREAM_ERROR 로 바꾸고 모델은 장소가
   필요 없는 활동만 낸다. 빈 목록으로 대신하지 않는다 — 근처에 없는 것과 못 읽은 것은 다르다.
 - 호출마다 짧은 세션을 연다. run 세션을 도메인 task 들이 같이 타지 않게 (#257).
@@ -67,6 +70,7 @@ class DbPlaceSource:
                 category=PlaceCategory(row.category),
                 distance_m=round(row.distance_m),
                 source=row.source,  # type: ignore[arg-type] — CHECK 가 값 범위를 막는다
+                data_date=row.data_date,
             )
             for row in found
         ]

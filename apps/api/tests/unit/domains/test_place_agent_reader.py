@@ -3,15 +3,18 @@
 - 상자(`bounding_box`)가 반경 원을 다 덮는다 — 모자라면 가까운 장소가 SQL 에서 먼저 빠진다
 - 반경 · 곳 수 상한을 포트 계약 값으로 건다
 - 🚨 실패하면 UpstreamUnavailable 이고 문구 · 로그 · 원인 예외에 보호자 좌표가 없다
-- 표의 닫힌 값(source · category CHECK)이 Activity 포트의 값과 같다
+- 표의 닫힌 값(source · category CHECK)이 Activity 포트의 값과 같고, 마이그레이션의 글자와도 같다
 
 실제 SQL 은 tests/integration/test_place_repository.py 가 본다.
 """
 
+import importlib.util
 import logging
 import math
 import typing
 from contextlib import asynccontextmanager
+from datetime import date
+from pathlib import Path
 
 import pytest
 from sqlalchemy.exc import OperationalError
@@ -19,6 +22,7 @@ from sqlalchemy.exc import OperationalError
 from app.agents.activity.schemas.common import PlaceCategory
 from app.agents.activity.store.ports import (
     PLACE_MAX_RADIUS_M,
+    PLACE_SOURCES,
     PLACE_TOP_K,
     CoarseLocation,
     PlaceRow,
@@ -114,10 +118,18 @@ async def test_상한보다_좁은_반경은_그대로_쓴다(monkeypatch, opene
     assert calls[0]["radius_m"] == 3_000
 
 
-async def test_거리는_미터_정수로_옮긴다(monkeypatch, opener):
+async def test_거리는_미터_정수로_데이터기준일자는_그대로_옮긴다(monkeypatch, opener):
     _capture(
         monkeypatch,
-        [NearbyPlace(name="시험공원", category="park", source="city_park", distance_m=1234.6)],
+        [
+            NearbyPlace(
+                name="시험공원",
+                category="park",
+                source="city_park",
+                data_date=date(2026, 6, 30),
+                distance_m=1234.6,
+            )
+        ],
     )
 
     rows = await DbPlaceSource(opener).nearby(
@@ -125,8 +137,37 @@ async def test_거리는_미터_정수로_옮긴다(monkeypatch, opener):
     )
 
     assert rows == [
-        PlaceRow(name="시험공원", category=PlaceCategory.PARK, distance_m=1235, source="city_park")
+        PlaceRow(
+            name="시험공원",
+            category=PlaceCategory.PARK,
+            distance_m=1235,
+            source="city_park",
+            data_date=date(2026, 6, 30),
+        )
     ]
+
+
+async def test_놀이터로_찾은_공원은_종류가_park_그대로다(monkeypatch, opener):
+    # 놀이터로 찾으면 놀이터가 있는 공원도 온다(SQL). 종류는 표에 실린 값을 옮긴다
+    calls = _capture(
+        monkeypatch,
+        [
+            NearbyPlace(
+                name="시험어린이공원",
+                category="park",
+                source="city_park",
+                data_date=None,
+                distance_m=300.0,
+            )
+        ],
+    )
+
+    [row] = await DbPlaceSource(opener).nearby(
+        location=LOCATION, category=PlaceCategory.PLAYGROUND, radius_m=PLACE_MAX_RADIUS_M
+    )
+
+    assert calls[0]["category"] == "playground"
+    assert row.category is PlaceCategory.PARK
 
 
 @pytest.mark.parametrize("radius_m", [0, -1])
@@ -201,4 +242,23 @@ def test_category_CHECK_는_PlaceCategory_와_같다():
 def test_source_CHECK_는_PlaceRow_source_와_같다():
     allowed = set(typing.get_args(typing.get_type_hints(PlaceRow)["source"]))
 
+    assert set(PLACE_SOURCES) == allowed
     assert _quoted(SOURCE_CHECK) == allowed
+
+
+def _migration():
+    path = Path(__file__).resolve().parents[3] / "alembic" / "versions"
+    [file] = path.glob("5bdc0aad2e70_*.py")
+    spec = importlib.util.spec_from_file_location("place_migration", file)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_마이그레이션의_source_CHECK_는_PLACE_SOURCES_와_같다():
+    # 마이그레이션은 앱 코드를 import 하지 않고 글자를 박아 둔다. 포트에 소스를 더하고
+    # 마이그레이션을 안 고치면 적재가 CHECK 에 걸린다
+    migration = _migration()
+
+    assert migration.SOURCE == SOURCE_CHECK
+    assert migration.CATEGORY == CATEGORY_CHECK

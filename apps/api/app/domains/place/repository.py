@@ -11,6 +11,7 @@
 import math
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -20,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domains.place.models import Place
 
-# 한 문장에 싣는 행 수. 칸이 10개라 PostgreSQL 인자 상한(32,767)에 걸리지 않는 크기다
+# 한 문장에 싣는 행 수. 칸이 12개라 PostgreSQL 인자 상한(32,767)에 걸리지 않는 크기다
 CHUNK = 1000
 # 평균 지구 반지름. 상자(`bounding_box`)와 거리(`nearby_places.sql`)가 같은 값을 쓴다
 EARTH_RADIUS_M = 6_371_008.8
@@ -33,6 +34,8 @@ _UPDATED = (
     "lng",
     "sigungu_code",
     "data_date",
+    "has_playground",
+    "area_m2",
     "source_version",
     "synced_at",
 )
@@ -45,6 +48,7 @@ class NearbyPlace:
     name: str
     category: str
     source: str
+    data_date: date | None
     distance_m: float
 
 
@@ -123,7 +127,11 @@ async def nearby(
     )
     return [
         NearbyPlace(
-            name=row.name, category=row.category, source=row.source, distance_m=row.distance_m
+            name=row.name,
+            category=row.category,
+            source=row.source,
+            data_date=row.data_date,
+            distance_m=row.distance_m,
         )
         for row in result
     ]

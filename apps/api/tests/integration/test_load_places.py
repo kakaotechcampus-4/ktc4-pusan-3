@@ -22,14 +22,24 @@ from scripts.load_places import Drop, run
 NOW = datetime(2026, 10, 27, tzinfo=UTC)
 
 
-def park(k: int, *, name: str | None = None, date_text: str = "2026-06-30") -> RawPlaceRow:
+def park(
+    k: int,
+    *,
+    name: str | None = None,
+    date_text: str = "2026-06-30",
+    kind: str = "어린이공원",
+    amusement: str | None = None,
+    area: str | None = "1500",
+) -> RawPlaceRow:
     return RawPlaceRow(
         name=name or f"시험공원{k}",
-        kind="어린이공원",
+        kind=kind,
         latitude=f"{35.10 + k / 1000:.4f}",
         longitude="129.0000",
         reference_date=date_text,
         manage_no=f"11110-{k:05d}",
+        amusement=amusement,
+        area=area,
     )
 
 
@@ -104,8 +114,29 @@ async def test_공원_도서관을_한_번에_싣는다(session, load):
     assert stored.sigungu_code == "11110"
     assert stored.data_date == date(2026, 6, 30)
     assert stored.source_version == "tn_pubr_public_cty_park_info_api"
+    assert (stored.has_playground, stored.area_m2) == (True, 1500.0)
     lib = await session.scalar(select(Place).where(Place.source == "library"))
     assert (lib.category, lib.sigungu_code) == ("library", None)
+    assert (lib.has_playground, lib.area_m2) == (False, None)
+
+
+async def test_놀이터_여부와_면적을_계산해_싣는다(session, load):
+    await load(
+        parks=[
+            park(1, kind="근린공원", amusement="그네", area="12500.5"),
+            park(2, kind="근린공원", amusement="해당없음", area="0"),
+        ]
+    )
+
+    rows = (
+        await session.execute(
+            select(Place.source_id, Place.has_playground, Place.area_m2).order_by(Place.source_id)
+        )
+    ).all()
+    assert [tuple(row) for row in rows] == [
+        ("11110-00001", True, 12500.5),
+        ("11110-00002", False, None),
+    ]
 
 
 async def test_다시_돌려도_행이_늘지_않는다(session, load):

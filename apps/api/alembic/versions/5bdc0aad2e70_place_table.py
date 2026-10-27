@@ -4,12 +4,15 @@
 없다. 스키마만 맡는다 — 행은 scripts/load_places.py 가 수동으로 싣는다(CSV 를 커밋하지 않는다).
 
 - 화이트리스트를 칸으로 강제한다. 전화번호 · 관리기관 · 주소 칸이 없다.
+- has_playground 는 놀이터가 있는 곳(공원은 어린이공원이거나 유희시설 칸이 찬 곳), area_m2 는 공원
+  면적이다. 둘 다 적재가 원문에서 계산해 싣는다 — 유희시설 원문은 싣지 않는다.
 - 기본 키 (source, source_id) 가 곧 UNIQUE 이고 적재가 여기에 upsert 한다. 장소 행은 근거가 아니라
   다른 표가 가리키지 않아서 대리 키를 두지 않는다. 그 밖의 인덱스는 없다 — 반경 검색이 인덱스 없이
   실측 5~6ms 라, 실제 데이터로 EXPLAIN 을 본 뒤 단다.
 
 CHECK 로 막는 것
-  - source 는 Activity 포트의 세 값 · category 는 PlaceCategory 다섯 값
+  - source 는 Activity 포트의 세 값(PLACE_SOURCES — 이 글자와 같은지 테스트가 대조한다) ·
+    category 는 PlaceCategory 다섯 값
   - sigungu_code 는 비었거나 숫자 5자리
   - 좌표는 한국 상자 안(적재 스크립트가 거르는 상자와 같다) — 위경도가 뒤바뀐 행을 막는다
 
@@ -49,6 +52,8 @@ def upgrade() -> None:
         sa.Column("lng", sa.Double(), nullable=False),
         sa.Column("sigungu_code", sa.String(5), nullable=True),
         sa.Column("data_date", sa.Date(), nullable=True),
+        sa.Column("has_playground", sa.Boolean(), nullable=False),
+        sa.Column("area_m2", sa.Double(), nullable=True),
         sa.Column("source_version", sa.String(32), nullable=True),
         sa.Column("synced_at", sa.DateTime(timezone=True), nullable=False),
         sa.PrimaryKeyConstraint("source", "source_id"),

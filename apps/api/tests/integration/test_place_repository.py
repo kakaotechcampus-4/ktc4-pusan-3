@@ -58,6 +58,8 @@ def values(
         "lng": lng,
         "sigungu_code": None,
         "data_date": date(2026, 6, 30),
+        "has_playground": False,
+        "area_m2": None,
         "source_version": "test",
         "synced_at": NOW,
     } | over
@@ -184,6 +186,7 @@ async def test_가까운_순으로_반경_안만_준다(session, opener):
 
     assert [row.name for row in rows] == ["시험장소near", "시험장소mid", "시험장소edge"]
     assert [row.source for row in rows] == ["city_park"] * 3
+    assert [row.data_date for row in rows] == [date(2026, 6, 30)] * 3
     # 거리는 서버가 계산한 정수 미터다. 같은 반지름의 구면 공식이라 몇 미터 안에서 맞는다
     for row, expected in zip(rows, [300, 5_000, PLACE_MAX_RADIUS_M - 300], strict=True):
         assert isinstance(row.distance_m, int)
@@ -235,6 +238,48 @@ async def test_고른_종류만_준다(session, opener):
     assert [(row.name, row.category) for row in parks] == [("시험장소park", PlaceCategory.PARK)]
     assert [(row.name, row.source) for row in libraries] == [("시험장소lib", "library")]
     assert playgrounds == []  # 근처에 없는 것은 실패가 아니다
+
+
+async def test_놀이터로_찾으면_놀이터가_있는_공원도_온다(session, opener):
+    await _seed(
+        session,
+        [
+            values("kid", distance_m=300, has_playground=True),
+            values("plain", distance_m=200),  # 놀이터 없는 공원
+            values("lib", source="library", category="library", distance_m=100),
+            values(
+                "pg",
+                source="kids_play_facility",
+                category="playground",
+                distance_m=500,
+                has_playground=True,
+            ),
+        ],
+    )
+
+    playgrounds = await DbPlaceSource(opener).nearby(
+        location=CENTER, category=PlaceCategory.PLAYGROUND, radius_m=PLACE_MAX_RADIUS_M
+    )
+    parks = await DbPlaceSource(opener).nearby(
+        location=CENTER, category=PlaceCategory.PARK, radius_m=PLACE_MAX_RADIUS_M
+    )
+
+    # 놀이터가 있는 공원은 종류가 park 그대로 온다. 놀이터 자체(playground)도 온다
+    assert [(row.name, row.category) for row in playgrounds] == [
+        ("시험장소kid", PlaceCategory.PARK),
+        ("시험장소pg", PlaceCategory.PLAYGROUND),
+    ]
+    # 공원으로 찾을 때는 놀이터 여부와 상관없다
+    assert [row.name for row in parks] == ["시험장소plain", "시험장소kid"]
+
+
+async def test_면적은_비워도_된다(session):
+    await repository.upsert_places(
+        session, rows=[values("1", area_m2=1500.5), values("2", area_m2=None)]
+    )
+
+    areas = dict((await session.execute(select(Place.source_id, Place.area_m2))).all())
+    assert areas == {"1": 1500.5, "2": None}
 
 
 async def test_같은_거리면_이름_순이다(session, opener):

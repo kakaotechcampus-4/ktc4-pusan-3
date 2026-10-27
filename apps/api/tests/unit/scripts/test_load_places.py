@@ -20,8 +20,10 @@ from scripts.load_places import (
     Loaded,
     build_parser,
     clean,
+    has_playground,
     in_korea,
     library_source_id,
+    parse_area,
     parse_coord,
     parse_data_date,
     place_values,
@@ -153,6 +155,8 @@ def test_공원_행을_적재_행으로_옮긴다():
     assert record.sigungu_code == "11110"
     assert (record.lat, record.lng) == (35.1, 129.0)
     assert record.data_date == date(2026, 6, 30)
+    assert record.has_playground is True  # 어린이공원
+    assert record.area_m2 is None  # 면적 칸이 없다
 
 
 def test_도서관은_시군구_코드를_비운다():
@@ -161,6 +165,60 @@ def test_도서관은_시군구_코드를_비운다():
     assert record.category is PlaceCategory.LIBRARY
     assert record.source_id == "시험도서관|35.2000|129.1000"
     assert record.sigungu_code is None
+    assert (record.has_playground, record.area_m2) == (False, None)
+
+
+# ── 놀이터 여부 · 면적 ────────────────────────────────────────────────
+@pytest.mark.parametrize(
+    ("kind", "amusement", "expected"),
+    [
+        ("어린이공원", None, True),
+        (" 어린이공원 ", "", True),
+        ("근린공원", "그네, 미끄럼틀", True),  # 유희시설이 있는 공원
+        ("소공원", "놀이터", True),
+        ("근린공원", None, False),
+        ("근린공원", "   ", False),
+        ("근린공원", "해당없음", False),  # 실측 12행 — 빈 칸이다
+        ("근린공원", "해당 없음", False),
+        (None, None, False),
+    ],
+)
+def test_놀이터는_어린이공원이거나_유희시설이_있는_공원이다(kind, amusement, expected):
+    assert has_playground(kind, amusement) is expected
+
+
+def test_공원_행에_놀이터_여부와_면적을_싣는다():
+    rows = [
+        park("11110-00001", kind="근린공원", amusement="그네", area="12500.5"),
+        park("11110-00002", kind="근린공원", amusement=None, area="800"),
+    ]
+
+    records = clean("city_park", rows).records
+
+    assert [(r.has_playground, r.area_m2) for r in records] == [(True, 12500.5), (False, 800.0)]
+
+
+def test_도서관은_놀이터_칸을_보지_않는다():
+    [record] = clean("library", [library(kind="어린이도서관", amusement="놀이방")]).records
+
+    assert record.has_playground is False
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("1500", 1500.0),
+        (" 2345.67 ", 2345.67),
+        ("0", None),  # 넓이를 모른다(실측 13행)
+        ("-5", None),
+        ("", None),
+        (None, None),
+        ("약 1500", None),
+        ("nan", None),
+    ],
+)
+def test_면적을_읽는다(text, expected):
+    assert parse_area(text) == expected
 
 
 @pytest.mark.parametrize(
@@ -271,10 +329,14 @@ def test_이름만_바뀐_같은_자리는_중복이다():
     assert [record.name for record in clean("city_park", rows).records] == ["신안어린이공원"]
 
 
-def test_주소는_싣지_않는다():
-    [record] = clean("city_park", [park(address="시험시 가동 1")]).records
+def test_주소와_유희시설_원문은_싣지_않는다():
+    [record] = clean("city_park", [park(address="시험시 가동 1", amusement="그네")]).records
 
-    assert "address" not in place_values(record, now=NOW)
+    values = place_values(record, now=NOW)
+
+    assert "address" not in values
+    assert "그네" not in values.values()
+    assert values["has_playground"] is True
 
 
 def test_같은_번호는_데이터기준일자가_가장_새로운_행만_남긴다():
@@ -338,6 +400,8 @@ def test_적재_값에는_화이트리스트_칸만_있다():
         "lng",
         "sigungu_code",
         "data_date",
+        "has_playground",
+        "area_m2",
         "source_version",
         "synced_at",
     }

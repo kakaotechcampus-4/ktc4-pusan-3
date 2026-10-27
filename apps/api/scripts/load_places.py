@@ -63,6 +63,12 @@ LIBRARY_KINDS = frozenset({"공공도서관", "작은도서관", "어린이도�
 # 공원 종류(parkSe) 중 아이와 놀러 갈 곳이 아닌 것. 2026-10-27 실측 묘지공원 39행
 PARK_EXCLUDED_KINDS = frozenset({"묘지공원"})
 
+# 놀이터가 있는 공원(`has_playground`) — 어린이공원이거나 유희시설(amsmtFclty) 칸이 찬 곳. 놀이터로
+# 찾으면 이 공원들이 온다. 2026-10-27 실측 18,343행 중 어린이공원 9,259 · 유희시설이 찬 행 5,943.
+# 유희시설의 "해당없음"(12행)은 빈 칸이다
+PLAYGROUND_PARK_KIND = "어린이공원"
+_NO_AMUSEMENT = frozenset({"해당없음"})
+
 # 관리번호가 겹친 공원을 같은 곳으로 보는 기준 (2026-10-27 실측, 아래 `clean`).
 # - 이름이 같거나 한쪽이 다른 쪽을 품고("수랑" · "수랑어린이공원") 300m 안
 # - 지번(동 · 번지)이 같고 1km 안 — 광주처럼 시도 이름 · 공원 이름이 함께 바뀐 경우
@@ -103,6 +109,8 @@ class PlaceRecord:
     lng: float
     sigungu_code: str | None
     data_date: date | None
+    has_playground: bool = False
+    area_m2: float | None = None
     # 관리번호가 겹친 공원을 가릴 때만 쓴다. 싣지 않는다 — `place_values` 에 없고 표에 주소 칸이
     # 없다
     address: str | None = field(default=None, compare=False, repr=False)
@@ -150,6 +158,25 @@ def parse_data_date(text: str | None) -> date | None:
         return None
 
 
+def parse_area(text: str | None) -> float | None:
+    """공원면적(㎡). 못 읽었거나 0 이하이면 None 이다 — 0 은 넓이를 모르는 것이다(실측 13행)."""
+    if text is None:
+        return None
+    try:
+        value = float(text)
+    except ValueError:
+        return None
+    return value if math.isfinite(value) and value > 0 else None
+
+
+def has_playground(kind: str | None, amusement: str | None) -> bool:
+    """공원에 놀이터가 있나 — 어린이공원이거나 유희시설 칸이 찼다. 유희시설 원문은 싣지 않는다."""
+    if (kind or "").strip() == PLAYGROUND_PARK_KIND:
+        return True
+    text = re.sub(r"\s", "", amusement or "")
+    return bool(text) and text not in _NO_AMUSEMENT
+
+
 def sigungu_code(manage_no: str | None) -> str | None:
     """공원 관리번호 앞 5자리(시군구 코드). 모양이 "숫자5자리-" 가 아니면 None 이다."""
     if manage_no is None:
@@ -186,9 +213,11 @@ def _record(source: LoadedSource, raw: RawPlaceRow) -> PlaceRecord | Drop:
         if not source_id:
             return Drop.NO_ID
         sigungu = sigungu_code(source_id)
+        playground, area = has_playground(kind, raw.amusement), parse_area(raw.area)
     else:
         # 도서관은 시군구 이름만 오고 코드가 없다. 이름 → 코드 대응은 후속이다
         source_id, sigungu = library_source_id(name, lat, lng), None
+        playground, area = False, None
     return PlaceRecord(
         source=source,
         source_id=source_id,
@@ -198,6 +227,8 @@ def _record(source: LoadedSource, raw: RawPlaceRow) -> PlaceRecord | Drop:
         lng=lng,
         sigungu_code=sigungu,
         data_date=parse_data_date(raw.reference_date),
+        has_playground=playground,
+        area_m2=area,
         address=raw.address,
     )
 
@@ -320,6 +351,8 @@ def place_values(record: PlaceRecord, *, now: datetime) -> dict[str, Any]:
         "lng": record.lng,
         "sigungu_code": record.sigungu_code,
         "data_date": record.data_date,
+        "has_playground": record.has_playground,
+        "area_m2": record.area_m2,
         "source_version": SOURCE_VERSION[record.source],
         "synced_at": now,
     }
