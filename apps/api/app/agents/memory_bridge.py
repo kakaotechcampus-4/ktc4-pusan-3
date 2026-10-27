@@ -202,14 +202,14 @@ class StoreActivityMemory(_StoreReader):
 class StoreGrowthMemory(_StoreReader):
     """`GrowthMemoryReader` 구현. 교육 · 루틴 · 놀이 관찰을 Memory store 에서 읽는다.
 
-    놀이 관찰은 Growth 가 근거로 **읽기만** 한다 — 쓰지 않는다. profile_affinity 는 Memory store 에
-    없어 빈 목록이다(Food · Activity 와 같다).
+    놀이 관찰은 Growth가 근거로 읽기만 한다 — 쓰지 않는다. 관심은 Food · Activity 와 같은
+    어댑터로 읽고, 어느 도메인을 읽을지는 호출부(교육 · 놀이 조회 tool)가 정한다.
     """
 
     async def affinities(
         self, *, child_id: UUID, domains: tuple[AffinityDomain, ...]
     ) -> list[AffinityRow]:
-        return []
+        return await self._affinity_rows(child_id, domains)
 
     async def education(
         self, *, child_id: UUID, date_from: date, date_to: date

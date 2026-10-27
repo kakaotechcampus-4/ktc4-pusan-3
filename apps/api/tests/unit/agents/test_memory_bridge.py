@@ -308,6 +308,28 @@ async def test_Growth_포트는_교육_루틴_놀이_관찰을_읽는다() -> No
     assert await reader.affinities(child_id=CHILD, domains=("education",)) == []
 
 
+async def test_Growth_는_물은_도메인_그대로_읽는다() -> None:
+    reader = _Affinities(_affinity("공룡", days_ago=3))
+    memory = StoreGrowthMemory(InMemoryStore(now=NOW), affinities=reader, today=TODAY)
+
+    await memory.affinities(child_id=CHILD, domains=("education", "activity"))
+    await memory.affinities(child_id=CHILD, domains=("activity",))
+
+    assert reader.calls == [("education", "activity"), ("activity",)]
+
+
+async def test_Growth_도_마지막_관찰_뒤_21일이_지난_관심은_archived_로_읽는다() -> None:
+    reader = _Affinities(_affinity("숫자", days_ago=21), _affinity("공룡", days_ago=22))
+    memory = StoreGrowthMemory(InMemoryStore(now=NOW), affinities=reader, today=TODAY)
+
+    rows = await memory.affinities(child_id=CHILD, domains=("education", "activity"))
+
+    assert [(r.merge_key, r.state) for r in rows] == [
+        ("숫자", "confirmed"),
+        ("공룡", "archived"),
+    ]
+
+
 async def test_Growth_포트는_이번만_그랬어요로_고친_루틴을_읽지_않는다() -> None:
     store = InMemoryStore(now=NOW)
     row = await _save(store, "routine", subject="양치", routine_category="self_care", polarity=0)

@@ -625,9 +625,9 @@ def _domain_contexts(
             safety=growth_safety or GrowthUnwiredSafety(),
             growth_log=growth_log or InMemoryGrowthLog(),
             memory=(
-                StoreGrowthMemory(store)
+                StoreGrowthMemory(store, affinities=affinity_reader, today=today)
                 if domain_store is None
-                else StoreGrowthMemory(opener=domain_store)
+                else StoreGrowthMemory(opener=domain_store, affinities=affinity_reader, today=today)
             ),
             docs=InMemoryGrowthDocs.from_seed(),
             books=books,

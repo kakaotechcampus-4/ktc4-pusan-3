@@ -37,7 +37,7 @@ from app.agents.food.store import FoodPorts, MenuCatalogRow
 from app.agents.food.tools.records import search_food_memory
 from app.agents.memory.schemas.task import WorkType
 from app.agents.memory.store import InMemoryStore
-from app.agents.memory_bridge import StoreActivityMemory
+from app.agents.memory_bridge import StoreActivityMemory, same_store
 from app.agents.suggestion_save import InMemorySuggestions
 from app.agents.supervisor import routing
 from tests.unit.agents.food.support import ScriptedLLM, food_task
@@ -875,6 +875,32 @@ async def test_관심_어댑터를_넘기면_Food_기억은_food_관심만_돌�
     assert [(r["kind"], r["label"], r["tier"]) for r in result.data["records"]] == [
         ("profile_affinity", "딸기", 1)
     ]
+
+
+async def test_Growth_기억은_교육_놀이_관심을_읽는다(monkeypatch: pytest.MonkeyPatch) -> None:
+    reader = _Affinities(
+        ("education", _liked(11, "숫자", days_ago=3)),
+        ("activity", _liked(9, "공룡", days_ago=3)),
+        ("food", _liked(10, "딸기", days_ago=3)),
+    )
+    growth = (await _activity_of(monkeypatch, affinity_reader=reader))["contexts"]["growth"]
+
+    rows = await growth.ports.memory.affinities(child_id=CHILD, domains=("education", "activity"))
+
+    assert sorted(r.merge_key for r in rows) == ["공룡", "숫자"]
+
+
+async def test_Growth_기억도_21일_넘게_관찰이_없는_관심은_archived_로_읽는다(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reader = _Affinities(("education", _liked(11, "숫자", days_ago=22)))
+    store = same_store(InMemoryStore(now=datetime.now(entrypoint.KST)))  # opener 갈래
+    seen = await _activity_of(monkeypatch, domain_store=store, affinity_reader=reader)
+    growth = seen["contexts"]["growth"]
+
+    rows = await growth.ports.memory.affinities(child_id=CHILD, domains=("education",))
+
+    assert [r.state for r in rows] == ["archived"]
 
 
 async def test_05_다시_만들기는_입력_run_의_날을_기준일로_읽는다(
