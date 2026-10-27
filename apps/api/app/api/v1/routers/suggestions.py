@@ -491,6 +491,7 @@ async def create_suggestions(
                 domain_store=agent_ports.domain_store_opener(child.child_id),
                 **agent_ports.food_stores(),
                 **agent_ports.safety_readers(),
+                affinity_reader=agent_ports.affinity_reader(),
             )
             settled = {o.agent for o in run.outcomes}
     finally:
