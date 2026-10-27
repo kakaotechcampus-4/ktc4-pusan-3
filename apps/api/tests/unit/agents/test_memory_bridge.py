@@ -20,6 +20,7 @@ from app.agents.memory.store.ports import ObservationRow
 from app.agents.memory_bridge import (
     StoreActivityMemory,
     StoreFoodMemory,
+    StoreGrowthMemory,
     StoreHealthMemory,
     _uuid,
 )
@@ -206,6 +207,54 @@ def test_store_와_opener_는_하나만_받는다() -> None:
         StoreFoodMemory(store, opener=opener)
     with pytest.raises(TypeError):
         StoreActivityMemory()
+
+
+async def test_Growth_포트는_교육_루틴_놀이_관찰을_읽는다() -> None:
+    store = InMemoryStore(now=NOW)
+    await _save(
+        store,
+        "education",
+        subject="숫자",
+        topic="계단 숫자 세기",
+        polarity=1,
+        engagement_level="high",
+    )
+    await _save(
+        store,
+        "routine",
+        subject="양치",
+        routine_category="self_care",
+        polarity=0,
+        assistance_level="full_assist",
+        completion_status=None,
+        trigger=None,
+    )
+    await _save(store, "activity", subject="블록", activity="블록 쌓기", polarity=1)
+    reader = StoreGrowthMemory(store)
+
+    (education,) = await reader.education(child_id=CHILD, date_from=TODAY, date_to=TODAY)
+    (routine,) = await reader.routine(child_id=CHILD, date_from=TODAY, date_to=TODAY)
+    (activity,) = await reader.activities(child_id=CHILD, date_from=TODAY, date_to=TODAY)
+
+    assert (education.subject, education.topic, education.engagement_level) == (
+        "숫자",
+        "계단 숫자 세기",
+        "high",
+    )
+    assert (routine.routine_category, routine.assistance_level) == ("self_care", "full_assist")
+    assert (activity.subject, activity.activity) == ("블록", "블록 쌓기")
+    assert await reader.affinities(child_id=CHILD, domains=("education",)) == []
+
+
+async def test_Growth_포트는_이번만_그랬어요로_고친_루틴을_읽지_않는다() -> None:
+    store = InMemoryStore(now=NOW)
+    row = await _save(store, "routine", subject="양치", routine_category="self_care", polarity=0)
+    await store.update_observation(
+        domain="routine", observation_id=row.id, fields={"status": "stand_alone"}
+    )
+    reader = StoreGrowthMemory(store)
+
+    assert await reader.routine(child_id=CHILD, date_from=TODAY, date_to=TODAY) == []
 
 
 async def test_Health_포트는_날짜_범위의_health_관찰을_읽고_status_를_거른다() -> None:

@@ -35,7 +35,12 @@ MenuKind = Literal["recipe_catalog"]
 # `suggestion_evidence` 로 가지 않고 `Readout.source_refs` 에만 실린다. 개인화 근거로 세지 않는다
 MedicationKind = Literal["medication_schedule"]
 
-SourceKind = ChildRecordKind | DocKind | MenuKind | MedicationKind
+# 책 행 — Growth 일반 도서 추천만 쓴다. 고른 책 자체(도서관 정보나루 서지 행)라 문서 행이 없어도
+# 일반 추천에 근거가 붙는다 — Food 메뉴와 같은 방식이다(#442). 아이 기록이 아니라 개인화 근거로
+# 세지 않는다. 값은 `rules/book_evidence.BOOK_EVIDENCE_KIND` 와 같다
+BookKind = Literal["book_catalog"]
+
+SourceKind = ChildRecordKind | DocKind | MenuKind | MedicationKind | BookKind
 
 _CHILD_RECORD_KINDS: frozenset[str] = frozenset(
     (

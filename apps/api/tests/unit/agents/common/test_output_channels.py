@@ -825,3 +825,49 @@ class TestGeneralBasis:
                 general_reason="또래 아이들이 많이 하는 놀이예요.",
                 today=TODAY,
             )
+
+
+def _book(note: str = "도서관 정보나루 검색 결과에 있는 책이에요.") -> EvidenceCitation:
+    return EvidenceCitation(ref=Ref(kind="book_catalog", id=uuid4()), note=note, label="책1")
+
+
+class TestBookBasis:
+    """Growth 일반 도서 추천의 근거는 고른 책 자체다 — Food 메뉴(#442)처럼 `general_basis` 로만
+    붙는다."""
+
+    def test_도서_근거_종류는_규칙_모듈과_같고_문서_행이_아니다(self):
+        from app.rules.book_evidence import BOOK_EVIDENCE_KIND
+
+        assert get_args(refs.BookKind) == (BOOK_EVIDENCE_KIND,)
+        assert BOOK_EVIDENCE_KIND not in get_args(DocKind)  # 문서 행 = 검수된 시드 전제를 지킨다
+
+    def test_도서_근거는_개인화_근거로_세지_않는다(self):
+        assert _book().ref.is_child_record is False
+
+    def test_기록이_없으면_책_근거만으로_일반_추천이다(self):
+        book = _book()
+        draft = build(
+            agent="growth",
+            content="책1(가)",
+            reason="모델이 쓴 이유",
+            general_reason="일반 문구",
+            general_basis=(book,),
+            today=TODAY,
+        )
+
+        assert draft.kind == "general" and draft.reason == "일반 문구"
+        assert draft.citations == (book,)
+
+    def test_개인화면_책_근거를_버린다(self):
+        draft = build(
+            agent="growth",
+            content="책1(가)",
+            reason="공룡 그림을 오래 봐서요",
+            citations=(citation(kind="observation_education"),),
+            general_reason="일반 문구",
+            general_basis=(_book(),),
+            today=TODAY,
+        )
+
+        assert draft.kind == "personalized"
+        assert [c.ref.kind for c in draft.citations] == ["observation_education"]
