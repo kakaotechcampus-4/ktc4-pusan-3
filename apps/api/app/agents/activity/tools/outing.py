@@ -17,7 +17,12 @@ from app.agents.activity.schemas.outing import (
     LookupWeatherArgs,
     SearchNearbyPlacesArgs,
 )
-from app.agents.activity.store.ports import ScheduleBlock, UpstreamUnavailable
+from app.agents.activity.store.ports import (
+    PLACE_MAX_RADIUS_M,
+    PLACE_TOP_K,
+    ScheduleBlock,
+    UpstreamUnavailable,
+)
 from app.agents.activity.weather import (
     WEATHER_NOT_ASKED,
     WEATHER_UNCHECKED,
@@ -33,12 +38,6 @@ from app.rules.holidays import holidays_known, is_public_holiday
 from app.rules.sun import sun_times
 
 logger = logging.getLogger(__name__)
-
-# 장소 검색은 넓게 찾고 가까운 순으로 몇 곳만 준다. 둘 다 모델 인자가 아니라 코드 상수이고
-# 잠정값이다 — eval 로 조정한다. 반경을 좁게 자르면 군 지역에서 0곳이 돼 외출 요청에
-# 장소가 빠진다. 20km 도 위경도 bounding box + haversine 으로 끝난다 (D9)
-PLACE_MAX_RADIUS_M = 20_000
-PLACE_TOP_K = 5
 
 # 위치가 없을 때 일몰을 계산하는 고정 기준점(대전 부근, 국토 가운데). 보호자 위치가 아니다
 SUNSET_REFERENCE = (36.35, 127.38)

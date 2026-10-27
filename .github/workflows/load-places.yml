@@ -1,0 +1,87 @@
+name: 장소 적재
+
+# 운영 DB 에 장소(place)를 싣는다 — 공원 · 도서관 표준데이터 (#516, Activity D9).
+# 손으로만 돌린다 — place 마이그레이션이 "배포" 로 반영된 뒤, 그리고 표준데이터가 갱신됐을 때.
+# 배포된 api 이미지 안의 scripts/load_places 를 쓴다(이미지를 새로 굽지 않는다).
+#   dry-run  받고 세기만 하고 쓰지 않는다. 먼저 이걸로 건수(받음 · 남김 · 버린 사유 · 지울 행)를 본다
+#   load     실제로 싣는다. 한 트랜잭션이라 실패하면 이전 적재본이 그대로 남는다
+# 소스 하나라도 0건이거나 지금 실린 행의 절반이 안 되면 스크립트가 아무것도 쓰지 않고 실패한다.
+# 출력은 건수뿐이다(키 · 장소 이름 · 좌표 없음).
+# 🚨 "배포" 워크플로가 돌거나 대기 중이면 끝난 뒤에 실행한다. 배포와 concurrency 그룹을 같이 쓰지 않는다 —
+#    GitHub 는 그룹마다 대기 run 을 하나만 둬서, 같이 쓰면 대기 중인 배포가 조용히 취소된다. 배포가
+#    컨테이너를 내리는 중에 겹치면 적재는 실패로 끝나고 아무것도 쓰지 않는다(한 트랜잭션).
+# 서버 준비: apps/api/.env 의 DATA_GO_KR_SERVICE_KEY 로 두 표준데이터 API 활용신청이 돼 있어야 한다
+# (Encoding · Decoding 키 어느 쪽이든 된다 — 클라이언트가 한 번 푼다).
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "dry-run 은 쓰지 않고 센다 · load 는 실제로 싣는다"
+        type: choice
+        options:
+          - dry-run
+          - load
+        default: dry-run
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  load:
+    if: github.ref == 'refs/heads/develop'
+    # job 단위라서 if 로 건너뛴 run 은 그룹에 들어가지 않는다. 적재끼리만 한 번에 하나
+    concurrency:
+      group: place-load
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/ktc-github-deploy
+          aws-region: ap-northeast-2
+
+      - name: EC2 에 적재 명령 전송
+        id: ssm
+        env:
+          TARGET: ${{ inputs.mode == 'load' && 'deploy-load-places' || 'deploy-load-places-dry' }}
+        run: |
+          COMMAND_ID=$(aws ssm send-command \
+            --instance-ids "${{ vars.EC2_INSTANCE_ID }}" \
+            --document-name "AWS-RunShellScript" \
+            --timeout-seconds 900 \
+            --parameters commands="[
+              \"set -e\",
+              \"export HOME=/root\",
+              \"cd /home/ubuntu/ktc4-pusan-3\",
+              \"git rev-parse --short HEAD\",
+              \"make $TARGET\"
+            ]" \
+            --query "Command.CommandId" \
+            --output text)
+          echo "command_id=$COMMAND_ID" >> "$GITHUB_OUTPUT"
+
+      - name: 결과 확인
+        run: |
+          # 공원 19쪽 + 도서관 4쪽(쪽마다 0.5초 안팎, 2026-10-27 실측) — 보통 2분 안이다. 10초 간격 최대 15분
+          STATUS=Pending
+          for i in $(seq 1 90); do
+            STATUS=$(aws ssm get-command-invocation \
+              --command-id "${{ steps.ssm.outputs.command_id }}" \
+              --instance-id "${{ vars.EC2_INSTANCE_ID }}" \
+              --query "Status" --output text 2>/dev/null || echo "Pending")
+            echo "[$i/90] Status: $STATUS"
+            case "$STATUS" in
+              Success|Failed|TimedOut|Cancelled) break ;;
+            esac
+            sleep 10
+          done
+          # 적재 건수 · 배포된 커밋을 그대로 보여준다(스크립트는 건수만 찍는다)
+          aws ssm get-command-invocation \
+            --command-id "${{ steps.ssm.outputs.command_id }}" \
+            --instance-id "${{ vars.EC2_INSTANCE_ID }}" \
+            --query '{Output:StandardOutputContent,Error:StandardErrorContent}' \
+            --output text
+          [ "$STATUS" = "Success" ]

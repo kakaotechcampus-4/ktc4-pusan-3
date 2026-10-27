@@ -17,6 +17,7 @@ from app.domains.food import models as food  # noqa: F401
 from app.domains.identity import models as identity  # noqa: F401
 from app.domains.memory.observation import models as observation  # noqa: F401
 from app.domains.memory.profile import models as profile  # noqa: F401
+from app.domains.place import models as place  # noqa: F401
 from app.domains.policy import models as policy  # noqa: F401
 from app.domains.report import models as report  # noqa: F401
 from app.domains.safety import models as safety  # noqa: F401

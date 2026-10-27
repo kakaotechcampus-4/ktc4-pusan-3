@@ -170,6 +170,15 @@ class Advisories:
     severe: bool  # 강풍 · 호우 · 대설 · 태풍 · 폭풍해일 중 하나라도 발효 중
 
 
+# 장소 검색은 넓게 찾고 가까운 순으로 몇 곳만 준다. 둘 다 모델 인자가 아니라 코드 상수이고
+# 잠정값이다 — eval 로 조정한다. 반경을 좁게 자르면 군 지역에서 0곳이 돼 외출 요청에
+# 장소가 빠진다. 20km 도 위경도 bounding box + haversine 으로 끝난다 (D9).
+# tool(`tools/outing.py`)과 place 어댑터(`domains/place/agent_reader.py`)가 같은 값을 써서
+# 계약에 둔다
+PLACE_MAX_RADIUS_M = 20_000
+PLACE_TOP_K = 5
+
+
 @dataclass(frozen=True)
 class PlaceRow:
     """장소 한 곳. 화이트리스트 필드만 — 전화번호 · 관리기관 · 가격 · 평점은 싣지 않는다.
@@ -273,6 +282,8 @@ class PlaceSource(Protocol):
         """적재한 place 테이블에서 찾는다. 외부 API 를 부르지 않는다 (D9).
 
         🚨 검색 조건은 category 하나다. 모델이 만든 문자열을 받지 않는다 (D8).
+        반경은 `PLACE_MAX_RADIUS_M` 를 넘지 않고, 가까운 순 `PLACE_TOP_K` 곳까지만 온다.
+        읽기에 실패하면 UpstreamUnavailable. 빈 목록을 대신 돌려주지 않는다.
         """
         ...
 
