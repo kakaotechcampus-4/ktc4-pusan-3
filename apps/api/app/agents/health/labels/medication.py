@@ -246,7 +246,7 @@ async def _resume_stop(
         context.state.readouts.append(READOUTS.render(NOTICE_NO_ACTIVE_MED))  # 끝났거나 멈췄다
         return
     outcome = await context.ports.medication_writer.stop_course(
-        schedule_id=schedule_id, stopped_at=context.now
+        child_id=context.child_id, schedule_id=schedule_id, stopped_at=context.now
     )
     if outcome == "missing":  # 그 사이 코스가 사라졌다
         context.state.readouts.append(READOUTS.render(NOTICE_NO_ACTIVE_MED))

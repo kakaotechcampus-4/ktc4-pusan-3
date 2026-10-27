@@ -36,17 +36,33 @@ class SuggestionOut(BaseModel):
     id: str
     child_id: str
     agent: str
-    kind: str
+    kind: Literal["personalized", "general"] = Field(
+        description=(
+            "개인화(아이 기록 근거) · 일반(또래 기준) 구분. 07 목록은 둘을 함께 돌려준다 (#532)"
+        )
+    )
     content: str
     reason: str | None = Field(
         default=None,
-        description="현재 문자열. Agent 연결(#323) 시 {why_this, why_now} 객체로 변경 예정",
+        description=(
+            "현재 문자열. Agent 연결(#323) 시 {why_this, why_now} 객체로 변경 예정. "
+            "일반 추천이면 05 의 basis 와 같은 문구"
+        ),
     )
     status: str
     expires_at: str
     feedback: str | None
-    source_refs: list[Ref] = []
-    evidence: list[EvidenceOut] = []
+    source_refs: list[Ref] = Field(
+        default=[],
+        description="evidence 의 ref 만 모은 것. evidence 와 같이 비는 조건이 같다",
+    )
+    evidence: list[EvidenceOut] = Field(
+        default=[],
+        description=(
+            "아이 기록 근거만 싣는다. 일반 추천이면 늘 빈 배열이고, "
+            "채택 응답은 근거를 읽지 않아 개인화도 빈 배열이다"
+        ),
+    )
 
 
 # ── 채택 ──────────────────────────────────────────────────────────────────
@@ -82,13 +98,14 @@ class DocEvidenceOut(BaseModel):
     """일반 추천의 근거인 문서 행. CC BY 행은 출처 표시가 조건이라 기관 · 제목을 같이 싣는다.
 
     Food 일반 추천은 고른 메뉴(레시피 카탈로그 행)도 이 모양으로 싣는다(#442) — `title` 은 메뉴
-    이름, 출처는 그 레시피를 받아 온 공개 데이터다.
+    이름, 출처는 그 레시피를 받아 온 공개 데이터다. Growth 일반 도서 추천도 고른
+    책(`book_catalog`)을 싣는다 — `title` 은 그 추천의 "제목(저자)", 출처는 도서관 정보나루다.
     """
 
     ref: Ref = Field(
         description=(
-            "kind 는 food_doc · activity_doc · growth_doc, "
-            "또는 recipe_catalog(Food 일반 추천의 메뉴 근거)"
+            "kind 는 food_doc · activity_doc · growth_doc, 또는 recipe_catalog(Food 일반 추천의 "
+            "메뉴 근거) · book_catalog(Growth 일반 도서 추천의 책 근거)"
         )
     )
     title: str
@@ -101,7 +118,8 @@ class DocEvidenceOut(BaseModel):
 class GeneralSuggestionOut(BaseModel):
     """또래 기준 일반 추천. 아이 기록이 아니라 문서 행을 근거로 단다 (루트 §2).
 
-    Food 는 고른 메뉴(레시피 카탈로그 행)만으로도 된다(#442).
+    Food 는 고른 메뉴(레시피 카탈로그 행)만으로도 된다(#442). Growth 도서는 고른 책(정보나루
+    서지 행)이 근거다.
     """
 
     id: str

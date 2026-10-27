@@ -17,6 +17,7 @@ from app.agents.common.evidence import (
     AffinityRow,
     ObservationRow,
     RankedEvidence,
+    overstates,
     pick_followup,
     rank_evidence,
     top_refs,
@@ -197,3 +198,18 @@ class TestUnseen:
 
     def test_대문자로_적은_UUID_도_같은_id_다(self):
         assert unseen([str(UUID(int=1)).upper()], self.SEEN) == ()
+
+
+class TestOverstates:
+    """한 번의 관찰을 성향처럼 말하는 표현 (루트 §2). Activity · Growth 출력 검증이 같이 쓴다."""
+
+    @pytest.mark.parametrize(
+        "note",
+        ["어제도 블록을 쌓았어요", "늘 블록을 쌓아요", "또 쌓았어요", "항상 쌓아요", "블록 좋아해"],
+    )
+    def test_반복_성향_표현을_찾는다(self, note):
+        assert overstates(note) is True
+
+    @pytest.mark.parametrize("note", ["오늘 블록을 쌓았어요", "블록을 늘어놓으며 셌어요"])
+    def test_같은_글자가_든_낱말은_걸리지_않는다(self, note):
+        assert overstates(note) is False

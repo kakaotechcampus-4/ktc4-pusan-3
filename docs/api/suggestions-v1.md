@@ -38,9 +38,9 @@
 | 칸 | 규칙 |
 | --- | --- |
 | `groups` | 결과를 낸 Agent 마다 하나(0개 포함). 실패한 Agent 는 없다 — 화면이 실패 카드를 그린다. `notice` 는 보이는 개수로 다시 만든다(알레르기 · 근거로 빠진 것이 있으면 Agent 의 안내와 다르다) |
-| `guards` | `blocked` → `safety_unknown`, `unsupported` → `unsupported`, 아직 없는 Agent → `not_ready` |
+| `guards` | `blocked` → `safety_unknown`(Growth 는 안전 문구일 때만, 월령 · 동의 · 포트 · 문서 행 없음으로 닫히면 `closed`), `unsupported` → `unsupported`, 아직 없는 Agent · Growth 처음 요청 → `not_ready` |
 | `suggestions` | 개인화. 보이는 아이 기록 근거가 0행이면 뺀다(지운 기록은 근거로 다시 보여 주지 않는다) |
-| `general` | 일반 추천. 근거는 문서 행이고 출처 기관 · 출처 제목을 싣는다. 문서 근거 0행인 일반 추천은 Agent 와 저장이 둘 다 거절한다 |
+| `general` | 일반 추천. 근거는 문서 행이고 출처 기관 · 출처 제목을 싣는다. Growth 도서는 고른 책(`book_catalog`)이 근거고 출처는 국립중앙도서관 · 도서관 정보나루, 제목은 그 추천의 "제목(저자)" 다. 문서 근거 0행인 일반 추천은 Agent 와 저장이 둘 다 거절한다 |
 | `scarcity` | 일반 추천이 있을 때만. `count` 는 그 도메인의 남아 있는 관찰 수, `question` 은 Agent 가 되물을 때만(답하는 길은 #246) |
 | `groups[].cautions` | 식품 아닌 알레르기 확인 문구. `health_safety` 에서 코드로 다시 만든다(Activity 와 같은 함수) — 재생해도 같다. 동의가 없으면 `[]` |
 | `general[].record_count` | 그 Agent 도메인에 남아 있는 관찰 수. 04 `agent_result.record_count` 와 같은 표(`agent_ports.RECORD_KINDS`) |
@@ -71,3 +71,29 @@ Agent 를 실제로 새로 돌릴 때만 `/inputs` 와 같은 하루 한도에�
   일반 추천 대신 0개 안내가 나간다. 문서 검수가 끝나야 이 경로가 실제로 열린다.
 - 러너와 05 가 같은 안전 어댑터(`agent_ports.safety_readers()`)를 Food · Activity 에 넘긴다(#460). 안전 조회에
   실패하면 그 Agent 는 `blocked` 로 닫히고 05 는 guard 만 낸다.
+
+## 7. 채택 이후의 일반 추천 (#512 · #532)
+
+05 의 일반 추천도 개인화와 같은 길로 채택 · 일정 · 평가된다.
+
+- 채택(`/suggestions/approve`) · 초안(`/suggestions/event-drafts`) · 제출(`/events`) · 평가(`/feedback`)는
+  `kind` 를 보지 않는다. food 를 초안 한 장("저녁 식사")으로 묶는 것도 `kind` 가 아니라 agent 기준이라
+  개인화 + 일반을 같이 고르면 한 장에 묶인다. 테스트가 이 동작을 고정한다 — `kind` 검사를 넣으면 깨진다.
+- 07 목록(`GET /children/{cid}/suggestions`)은 둘을 함께 돌려주고 `kind` 로 구분한다. 일반 추천의
+  `evidence` · `source_refs` 는 늘 빈 배열이고 `reason` 은 05 의 `basis` 와 같은 문구다.
+- 채택 · 목록 · 평가 응답은 일반 추천도 `SuggestionOut` 모양이다. 05 의 `GeneralSuggestionOut` 처럼
+  `record_count` · 문서 근거를 싣지 않는다 — `record_count` 는 05 응답 때 세는 값이고 저장하지 않아서,
+  나중에 다시 세면 그 추천이 지금 기록에서 나온 것처럼 읽힌다. 그래서 07 의 일반 추천 줄은 라벨만 둔다.
+- 품질 지표 "개인화인데 근거 0행" 은 이 목록이 아니라 저장 시점(`_checked_citations`) · eval 에서 막는다.
+
+### 일반 추천에 남긴 평가
+
+지금 `feedback` 을 읽는 곳은 없다. 선호 신호로 쓰는 기능을 붙일 때 이 규칙을 따른다.
+
+1. 저장은 `kind` 와 상관없이 한다.
+2. 쓸 때는 `kind` 로 나눠 세고, 일반 추천에 남긴 평가는 개인화 근거로 쓰지 않는다 — 아이 기록에서 나온
+   추천이 아니다 (루트 §2 "일반 추천과 개인화 추천은 타입으로 구분한다").
+3. 평가를 관찰(Observation)로 바꿔 저장하지 않는다. 기억이 되는 길은 기록 → Curator 반복 집계 하나다
+   (루트 §2 "한 번의 관찰을 성향으로 확정하지 않는다").
+
+화면 문구 "피드백은 다음 제안의 무게만 바꿔요" 는 신호를 붙이는 PR 에서 개인화 · 일반을 같이 맞춘다.

@@ -25,14 +25,14 @@ import {
 } from "@/stores/event-draft";
 
 /**
- * 일정 초안 묶음 — **04 대화(찾은 일정 시트)와 08 사진이 같이 쓴다.**
+ * 일정 초안 묶음 — **04 대화(찾은 일정 시트) · 05 승인 시트 · 08 사진이 같이 쓴다.**
  *
  * 🚨 **제출은 건별이다** (9/21 회의). 카드마다 자기 버튼·자기 키·자기 결과를 갖는다.
  *    한 요청으로 묶지 않으므로 3장 중 1장이 실패해도 나머지 2장은 이미 들어가 있다 (NF-06).
  *
  * 🚨 **초안은 서버에 없다.** 들어온 묶음을 세션 스토리지에 넣고(`stores/event-draft.ts`),
  *    그 스토어가 같은 `event_id` 를 최신 한 장으로 줄인다 — 낡은 초안이 뒤 결과를 지우는 것을
- *    막는 1차 방어다 (#122).
+ *    막는 1차 방어다 (#122). 🚨 05 승인 시트는 예외다 — 넣지도 되읽지도 않는다 (`transient` · #539).
  *
  * 🚨 **넣은 초안은 스토어에서 뺀다.** 안 빼면 다음에 이 화면을 열 때 이미 캘린더에 있는 일정이
  *    "아직 저장되지 않았어요" 로 다시 뜬다. 다만 **화면에서는 그 자리에 남겨** 무엇이 들어갔는지
@@ -67,6 +67,7 @@ export function EventDraftList({
   blockedDraftIds,
   lockReason,
   draftIds,
+  transient = false,
 }: {
   childId: string;
   incoming: EventDraft[];
@@ -95,8 +96,15 @@ export function EventDraftList({
    * 넘긴다 — 얹는 것은 대화 스토어가 도착할 때 한 번 했다 (`stores/conversation.ts` 의 `seedDrafts`).
    */
   draftIds?: string[];
+  /**
+   * 이 묶음을 **보관함에 두지 않는다** (05 승인 시트 · #539). 되읽지도 얹지도 않고, 열 때 같은 경로의
+   * 남은 초안을 지운다. 05 는 시트를 열 때마다 서버에서 초안을 새로 받으므로 둘 이유가 없다 —
+   * 이유는 `stores/event-draft.ts` 머리말. 🚨 되읽지 않으므로 `draftIds` 와 같이 쓰지 않는다.
+   */
+  transient?: boolean;
 }) {
   const addDrafts = useEventDraftStore((s) => s.addDrafts);
+  const dropDrafts = useEventDraftStore((s) => s.dropDrafts);
   const stored = useEventDraftStore((s) => s.byChild[childId] ?? NO_DRAFTS);
 
   /**
@@ -108,9 +116,12 @@ export function EventDraftList({
    *    그러면 04 의 초안이 08 화면에 다른 문구를 달고 섰다.
    */
   const [rows, setRows] = useState<StoredDraft[]>(() =>
-    stored.filter(
-      (d) => d.origin === origin && (draftIds === undefined || draftIds.includes(d.draft.draft_id)),
-    ),
+    transient
+      ? []
+      : stored.filter(
+          (d) =>
+            d.origin === origin && (draftIds === undefined || draftIds.includes(d.draft.draft_id)),
+        ),
   );
 
   /**
@@ -120,10 +131,14 @@ export function EventDraftList({
   const seen = useRef(new Set<string>());
 
   useEffect(() => {
+    if (transient) dropDrafts(childId, origin);
+  }, [transient, childId, origin, dropDrafts]);
+
+  useEffect(() => {
     const fresh = incoming.filter((d) => !seen.current.has(d.draft_id));
     if (fresh.length === 0) return;
     for (const d of fresh) seen.current.add(d.draft_id);
-    addDrafts(childId, origin, fresh);
+    if (!transient) addDrafts(childId, origin, fresh);
     // 🚨 **스토어와 같은 규칙으로 합친다.** `draft_id` 만 거르면 같은 `event_id` 의 낡은 장이
     //    화면에 남아 자기 제출 버튼을 갖고, 그걸 나중에 누르면 새 장의 준비물이 지워진다.
     setRows((prev) =>
@@ -132,7 +147,7 @@ export function EventDraftList({
         fresh.map((draft) => ({ origin, draft })),
       ),
     );
-  }, [incoming, childId, origin, addDrafts]);
+  }, [incoming, childId, origin, transient, addDrafts]);
 
   /** 지금 보고 있는 장. 🚨 목록이 줄어들면 범위를 넘을 수 있어 그릴 때 한 번 더 조인다. */
   const [page, setPage] = useState(0);

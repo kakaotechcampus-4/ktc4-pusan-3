@@ -97,7 +97,8 @@ class InMemoryMedicationStore:
     """복약 읽기와 중단 쓰기를 한 객체가 한다. 아이 하나 몫이라 `child_id` 는 보지 않는다.
 
     `.writes` 가 쓰기를 센다 — 묻는 run · 초안 · "먹였어" 뒤에 0 인지 테스트가 본다.
-    DB 어댑터(연결 이슈)가 같은 테스트를 통과해야 한다.
+    DB 어댑터가 같은 계약 시나리오(tests/unit/agents/health/medication_store_contract.py)를
+    통과해야 한다 — 다르면 이 저장소를 DB 에 맞춘다.
     """
 
     def __init__(
@@ -136,7 +137,7 @@ class InMemoryMedicationStore:
         return sorted(rows, key=lambda row: (row.dose_date, row.scheduled_time))
 
     async def stop_course(
-        self, *, schedule_id: UUID, stopped_at: datetime
+        self, *, child_id: UUID, schedule_id: UUID, stopped_at: datetime
     ) -> Literal["stopped", "already", "missing"]:
         course = self._courses.get(schedule_id)
         if course is None:

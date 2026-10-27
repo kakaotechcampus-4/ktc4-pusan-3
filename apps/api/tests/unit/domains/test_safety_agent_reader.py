@@ -14,9 +14,10 @@ from sqlalchemy.exc import OperationalError
 from app.agents.activity.store import ports as activity_ports
 from app.agents.common.ports import SafetyLookupError
 from app.agents.food.store import ports as food_ports
+from app.agents.growth.store import ports as growth_ports
 from app.agents.health.store import ports as health_ports
 from app.domains.safety import agent_reader
-from app.domains.safety.agent_reader import ACTIVITY_KINDS, DbSafetyReader
+from app.domains.safety.agent_reader import ACTIVITY_KINDS, GROWTH_KINDS, DbSafetyReader
 from app.domains.safety.models import SafetyKind, SafetySeverity, SafetyStatus
 
 CHILD = uuid.UUID(int=1)
@@ -66,6 +67,10 @@ class TestLiterals:
             status.value for status in SafetyStatus
         }
 
+    def test_Growth_포트는_읽는_kind_와_같고_status_는_전부다(self):
+        assert set(get_args(growth_ports.SafetyKind)) == {kind.value for kind in GROWTH_KINDS}
+        assert set(get_args(growth_ports.SafetyStatus)) == {status.value for status in SafetyStatus}
+
 
 class TestFood:
     async def test_active_목록을_그대로_세_칸만_옮긴다(self, monkeypatch):
@@ -104,6 +109,28 @@ class TestActivity:
         assert seen == {"child_id": CHILD, "kinds": (SafetyKind.ALLERGY, SafetyKind.ENVIRONMENTAL)}
         assert entries == [
             activity_ports.SafetyEntry(kind="environmental", label="꽃가루", status="retracted")
+        ]
+
+
+class TestGrowth:
+    async def test_allergy_environmental_만_status_와_상관없이_묻는다(self, monkeypatch):
+        seen: dict = {}
+
+        async def fake(session, *, child_id, kinds):
+            seen.update(child_id=child_id, kinds=kinds)
+            return [
+                row(SafetyKind.ALLERGY, "꽃가루"),
+                row(SafetyKind.ENVIRONMENTAL, "고소공포", SafetyStatus.RETRACTED),
+            ]
+
+        monkeypatch.setattr(agent_reader, "list_safety_of_kinds", fake)
+
+        entries = await reader().growth_safety(child_id=CHILD)
+
+        assert seen == {"child_id": CHILD, "kinds": (SafetyKind.ALLERGY, SafetyKind.ENVIRONMENTAL)}
+        assert entries == [
+            growth_ports.SafetyEntry(kind="allergy", label="꽃가루", status="active"),
+            growth_ports.SafetyEntry(kind="environmental", label="고소공포", status="retracted"),
         ]
 
 
@@ -151,7 +178,7 @@ class TestHealth:
 
 
 class TestFailure:
-    @pytest.mark.parametrize("method", ["food_safety", "activity_safety"])
+    @pytest.mark.parametrize("method", ["food_safety", "activity_safety", "growth_safety"])
     async def test_DB_를_못_읽으면_빈_목록이_아니라_SafetyLookupError(self, method, caplog):
         """빈 목록이면 Agent 가 알레르기 없는 아이로 열린다."""
         down = OperationalError("SELECT ...", {}, Exception("password=secret host=db"))
@@ -160,7 +187,7 @@ class TestFailure:
             await getattr(reader(fail=down), method)(child_id=CHILD)
         assert "secret" not in caplog.text  # 원문 문구는 남기지 않는다
 
-    @pytest.mark.parametrize("method", ["food_safety", "activity_safety"])
+    @pytest.mark.parametrize("method", ["food_safety", "activity_safety", "growth_safety"])
     async def test_연결이_안_돼도_SafetyLookupError(self, method):
         with pytest.raises(SafetyLookupError):
             await getattr(reader(fail=ConnectionRefusedError()), method)(child_id=CHILD)
@@ -188,5 +215,6 @@ async def test_부를_때마다_세션을_새로_연다(monkeypatch):
 
     await safety.food_safety(child_id=CHILD)
     await safety.activity_safety(child_id=CHILD)
+    await safety.growth_safety(child_id=CHILD)
 
-    assert len(opened) == 2 and opened[0] is not opened[1]
+    assert len(opened) == 3 and len({id(session) for session in opened}) == 3

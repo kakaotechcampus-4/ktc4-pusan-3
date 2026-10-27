@@ -78,6 +78,12 @@ export const qk = {
    * 대화 화면에서 받아 둔 지난 날을 전부 다시 받는다. `chat` 아래라 대화 무효화에 같이 걸린다.
    */
   chatToday: (childId: string) => [...qk.chat(childId), "today"] as const,
+  /**
+   * 그날 한 장 — 결과를 못 받은 줄을 다시 보냈더니 서버가 이미 끝난 run 이라고 한 경우, 그 줄이 저장된 결과를
+   * 찾아 그린다 (#538 · `ChatThread` 의 `RecordedReply`). 🚨 대화 목록(`chatList`)에 기대지 않는다 — 되묻기 답이면
+   * 그 턴이 목록에 아직 받지 않은 지난 날에 붙어 있을 수 있다.
+   */
+  chatDay: (childId: string, date: string) => [...qk.chat(childId), "day", date] as const,
   corrections: (childId: string, ref?: { kind: string; id: string }) =>
     [...qk.child(childId), "corrections", ref ?? null] as const,
 } as const;

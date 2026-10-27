@@ -391,7 +391,7 @@ class TestCollectMedicationChecks:
         store = InMemoryMedicationStore([course], doses)
         at = datetime(2026, 9, 27, 9, 0, tzinfo=KST)
 
-        await store.stop_course(schedule_id=course.id, stopped_at=at)
+        await store.stop_course(child_id=CHILD, schedule_id=course.id, stopped_at=at)
         [seen] = await store.courses_overlapping(
             child_id=CHILD, date_from=TODAY - 5 * DAY, date_to=TODAY
         )

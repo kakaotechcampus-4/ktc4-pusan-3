@@ -1,4 +1,4 @@
-"""health_safety → Food · Activity · Health 안전 포트 어댑터를 실제 DB 로 (#405)."""
+"""health_safety → Food · Activity · Growth · Health 안전 포트 어댑터를 실제 DB 로 (#405)."""
 
 from contextlib import asynccontextmanager
 from datetime import date
@@ -81,6 +81,15 @@ async def test_Activity_는_allergy_environmental_만_status_는_전부(session,
     ]
 
 
+async def test_Growth_도_allergy_environmental_만_status_는_전부(session, safety_rows):
+    entries = await reader(session).growth_safety(child_id=safety_rows.id)
+
+    assert sorted((e.kind, e.label, e.status) for e in entries) == [
+        ("allergy", "우유", "active"),
+        ("environmental", "꽃가루", "retracted"),
+    ]
+
+
 async def test_Health_는_active_만_kind_전부(session, safety_rows):
     entries = await reader(session).health_safety(child_id=safety_rows.id)
 
@@ -94,6 +103,7 @@ async def test_Health_는_active_만_kind_전부(session, safety_rows):
 async def test_다른_아이의_행은_넘기지_않는다(session, safety_rows):
     food = await reader(session).food_safety(child_id=safety_rows.id)
     activity = await reader(session).activity_safety(child_id=safety_rows.id)
+    growth = await reader(session).growth_safety(child_id=safety_rows.id)
     health = await reader(session).health_safety(child_id=safety_rows.id)
 
-    assert "땅콩" not in {e.label for e in (*food, *activity, *health)}
+    assert "땅콩" not in {e.label for e in (*food, *activity, *growth, *health)}

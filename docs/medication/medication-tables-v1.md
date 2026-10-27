@@ -8,7 +8,7 @@
 근거: `apps/api/app/domains/medication/models.py` · `alembic/versions/c6e2a8d41f93_add_medication_tables.py` ·
 `tests/integration/test_medication_tables.py` · `tests/integration/test_medication_migration.py`
 
-**이 문서에 없는 것** — 초안 제출 API, 회차 체크 API, SSE 번역, 되묻기 맥락, DB 어댑터, 알림 발송, `prescription_draft`.
+**이 문서에 없는 것** — 초안 제출 API, 회차 체크 API, SSE 번역, 되묻기 맥락, 알림 발송, `prescription_draft`.
 
 ---
 
@@ -56,7 +56,7 @@
 '복용 중' 으로 찍힌다.** 그래서 끝남은 상태로 두지 않고, 읽을 때 계산한다.
 
 - **진행 중 = `status = 'active' AND starts_on <= 오늘 <= ends_on`.** 이 조건은 `app/domains/medication/models.py` 의 `in_progress(today)` 한 곳에만 둔다.
-  DB 어댑터(응급 카드 · 투약의뢰서 · `get_next_dose`)와 BE 조회 API 가 같이 쓴다. 두 곳에 따로 쓰면 하나만 고쳐지는 날이 온다.
+  DB 어댑터(`app/domains/medication/agent_reader.py` — 응급 카드 · 투약의뢰서 · `get_next_dose`)와 BE 조회 API 가 같이 쓴다. 두 곳에 따로 쓰면 하나만 고쳐지는 날이 온다.
 - `today` 는 인자로 받는다. DB 의 `CURRENT_DATE` 는 세션 타임존(UTC)이라 KST 자정 ~ 09시 사이에 하루 어긋난다.
 - `ends_on == 오늘` 은 진행 중이다(그날 회차가 남아 있다).
 - `starts_on` 이 내일 이후인 코스는 진행 중이 아니다 — 응급 카드 '복용 중인 약' 에 시작 전인 약이 실리지 않게. #544 의 in-memory `active_courses` 와 같은 정의다.

@@ -42,13 +42,18 @@ export function resetSubmittedEvents(): void {
 }
 
 /**
+ * 고를 수 있는 제안 — 개인화와 일반 둘 다다 (#509). 실서버의 채택 · 초안 · 제출은 `kind` 를 보지 않는다.
+ */
+const pickable = [...suggestions, ...generalSuggestions];
+
+/**
  * 초안 만들기와 제출이 함께 거는 검사. 🚨 **실서버(#241)와 같은 순서 · 같은 코드 · 같은 문구다** —
  *    없는 제안 404 → 채택 안 된 제안 422. 화면은 이 경로의 `message` 를 그대로 띄운다.
  * 🚨 **모르는 id 를 조용히 걸러 내지 않는다.** 화면에 없는 제안이 섞였다는 뜻이라 버그다.
  */
 function refuseUnapproved(ids: string[]) {
   for (const id of ids) {
-    if (!suggestions.some((s) => s.id === id)) {
+    if (!pickable.some((s) => s.id === id)) {
       return apiError(404, "not_found", "제안을 찾을 수 없어요");
     }
     if (!approvedSuggestions.has(id)) {
@@ -56,6 +61,37 @@ function refuseUnapproved(ids: string[]) {
     }
   }
   return null;
+}
+
+/**
+ * 🚨 **이미 알레르기가 등록된(`active`) 항목이 든 제안은 목록에서 뺀다** (문서 §3-8 ①). 개인화 · 일반 공통이다 —
+ *    실서버도 `kind` 를 가리지 않고 `check.blocked` 면 뺀다.
+ */
+function notBlocked(item: { id: string }): boolean {
+  return !(suggestionAllergens[item.id] ?? []).some((a) => allergyStatus(a) === "active");
+}
+
+/**
+ * 알레르기 사전검사. 🚨 **규칙이 만든다** — 모델은 관여하지 않는다 (최상위 §3).
+ *
+ * 🚨 **기준은 제안의 `allergens` 다** (#233 · 문서 §3-8). `agent` 와 무관해서 놀이 제안의
+ *    간식도 걸린다. `health_safety` 에 행이 없는 항목만 묻는다 — `retracted` 는 묻지 않고,
+ *    `active` 는 `notBlocked` 에서 제안째 빠졌다. 개인화 · 일반 공통이다 (#509).
+ * 🚨 **어느 제안 것인지 `suggestion_id` 로 말한다.** 안 실으면 화면은 재료 하나로 고른 것
+ *    전부를 막는다 — 알레르기에서 덜 막는 쪽으로 기울 수 없기 때문이다 (`Precheck` 의 ⚠️).
+ * 🚨 **채택할 때 묻는다.** 초안을 만든 뒤가 아니다 — 일정을 안 만들면 영영 안 묻게 된다.
+ */
+function prechecksFor(items: Array<{ id: string }>): Precheck[] {
+  return items.flatMap((s) =>
+    (suggestionAllergens[s.id] ?? [])
+      .filter((a) => allergyStatus(a) === null)
+      .map((a) => ({
+        code: "unknown_ingredient" as const,
+        item: a,
+        note: "알레르기 기록에 없음",
+        suggestion_id: s.id,
+      })),
+  );
 }
 
 /** 05 제안 · 06 승인. */
@@ -96,7 +132,11 @@ export const suggestionHandlers = [
     //    결과를 낸 Agent 는 묶음이 온다 — 일반 추천만 있어도 그 Agent 의 묶음이 있다.
     //    ⚠️ 답하는 길(#246) 전이라 `options` 는 비어 온다 — 서버와 같은 모양이다.
     if (scenario === "scarcity" || scenario === "empty") {
-      const general = scenario === "empty" ? generalSuggestions : [generalSuggestions[0]];
+      // 🚨 등록된 알레르기(`active`)가 든 일반 추천은 빼고 내보낸다 (`notBlocked`). 사전검사만 거르면
+      //    확인 시트에서 "있어요" 로 등록한 재료가 다음 화면에서 다시 서고, 이번에는 묻지도 않고 채택된다.
+      const general = (scenario === "empty" ? generalSuggestions : [generalSuggestions[0]]).filter(
+        notBlocked,
+      );
       const generalAgents = new Set(general.map((g) => g.agent));
       return HttpResponse.json({
         suggestions: [],
@@ -110,7 +150,9 @@ export const suggestionHandlers = [
           cautions: [],
         })),
         // 카드의 기록 수는 그 Agent 도메인 수다 (#433 리뷰 ⑥) — 질문 카드의 scarcity.count 와 같은 값을 싣는다
-        general: general.map((g) => ({ ...g, record_count: scenario === "empty" ? 0 : 1 })),
+        general: withStatus(
+          general.map((g) => ({ ...g, record_count: scenario === "empty" ? 0 : 1 })),
+        ),
         looked_at: "",
         guards: [],
         scarcity: {
@@ -121,7 +163,8 @@ export const suggestionHandlers = [
             options: [],
           },
         },
-        prechecks: [],
+        // 🚨 일반 추천도 고르고 채택하므로 알레르기 사전검사가 걸린다 (#509 · 게이트 ㉡)
+        prechecks: prechecksFor(general),
       });
     }
 
@@ -195,31 +238,40 @@ export const suggestionHandlers = [
     }
 
     // partial 이면 실패한 Agent 의 제안은 빠진 채로 온다 — 묶음 머리말도 같이 빠진다.
-    // 🚨 **이미 알레르기가 등록된 항목이 든 제안은 목록에서 뺀다** (`active` · 문서 §3-8 ①).
-    //    추천이 나간 뒤 보호자가 확인 시트에서 "있어요" 를 저장한 경우가 여기 걸린다.
+    // 🚨 추천이 나간 뒤 보호자가 확인 시트에서 "있어요" 를 저장한 제안은 여기서 빠진다 (`notBlocked`).
     const alive = (
       scenario === "partial" ? suggestions.filter((s) => s.agent === "food") : suggestions
-    ).filter((s) => !(suggestionAllergens[s.id] ?? []).some((a) => allergyStatus(a) === "active"));
+    ).filter(notBlocked);
+    const prechecks = prechecksFor(alive);
+
     /**
-     * 알레르기 사전검사. 🚨 **규칙이 만든다** — 모델은 관여하지 않는다 (최상위 §3).
-     *
-     * 🚨 **기준은 제안의 `allergens` 다** (#233 · 문서 §3-8). `agent` 와 무관해서 놀이 제안의
-     *    간식도 걸린다. `health_safety` 에 행이 없는 항목만 묻는다 — `retracted` 는 묻지 않고,
-     *    `active` 는 위에서 제안째 빠졌다.
-     * 🚨 **어느 제안 것인지 `suggestion_id` 로 말한다.** 안 실으면 화면은 재료 하나로 고른 것
-     *    전부를 막는다 — 알레르기에서 덜 막는 쪽으로 기울 수 없기 때문이다 (`Precheck` 의 ⚠️).
-     * 🚨 **채택할 때 묻는다.** 초안을 만든 뒤가 아니다 — 일정을 안 만들면 영영 안 묻게 된다.
+     * 🚨 **같은 Agent 안에서 개인화와 일반이 섞여 온다** (#512 리뷰). Agent 가 후보마다 아이 기록 근거로
+     *    `kind` 를 정해서(서버 `build()`), 식사 개인화 셋과 식사 일반 하나가 한 응답에 실린다. 일반 추천이
+     *    있으니 `scarcity` 도 붙는다. 놀이는 0개 안내다.
+     *    서버는 식사면 `kind` 상관없이 초안 한 장으로 묶는다 — 화면의 묶음 안내도 둘을 합쳐 세야 한다.
      */
-    const prechecks: Precheck[] = alive.flatMap((s) =>
-      (suggestionAllergens[s.id] ?? [])
-        .filter((a) => allergyStatus(a) === null)
-        .map((a) => ({
-          code: "unknown_ingredient",
-          item: a,
-          note: "알레르기 기록에 없음",
-          suggestion_id: s.id,
-        })),
-    );
+    if (scenario === "suggest_mixed") {
+      const food = alive.filter((s) => s.agent === "food");
+      const general = generalSuggestions.filter((g) => g.agent === "food").filter(notBlocked);
+      return HttpResponse.json({
+        suggestions: withStatus(food),
+        groups: (asked.agents ?? ["food"]).map((agent) =>
+          agent === "food"
+            ? suggestionGroups[0]
+            : {
+                agent,
+                merges_into_one: false,
+                notice: { code: "empty", message: "조건에 맞는 추천이 없어요." },
+                cautions: [],
+              },
+        ),
+        general: withStatus(general.map((g) => ({ ...g, record_count: 3 }))),
+        looked_at: "",
+        guards: [],
+        scarcity: { count: 3, question: null },
+        prechecks: prechecksFor([...food, ...general]),
+      });
+    }
     if (scenario === "precheck_unknown_code") {
       // 🚨 이름은 지어낸 것이다 — 화면이 **아는 code 가 아니라는 것**만 뜻이 있다.
       //    재료가 없는 물놀이 제안에 붙여서, 알레르기 질문이 섞이지 않게 한다.
@@ -293,7 +345,7 @@ export const suggestionHandlers = [
     const ids = [...new Set(body.suggestion_ids ?? [])];
     if (ids.length === 0) return apiError(400, "validation_failed", "제안을 선택해 주세요");
 
-    const picked = suggestions.filter((s) => ids.includes(s.id));
+    const picked = pickable.filter((s) => ids.includes(s.id));
     if (picked.length !== ids.length) {
       return apiError(404, "not_found", "제안을 찾을 수 없어요");
     }
@@ -304,7 +356,16 @@ export const suggestionHandlers = [
 
     const response: ApproveSuggestionsResponse = {
       // 🚨 바뀐 행을 그대로 돌려준다 — 화면이 `status` 를 지어내지 않는다.
-      suggestions: picked.map((s) => ({ ...s, status: "approved" as const })),
+      // 🚨 **계약 모양으로 줄인다** (`docs/api/suggestions-v1.md` §7 · #554). 실서버 채택 응답은 근거를 읽지
+      //    않아 개인화도 `evidence: []` 이고, 일반 추천에 `basis` · `record_count` 가 없다. 목이 행을 통째로
+      //    돌려주면 실서버에 없는 필드가 목에서만 차 있게 된다 — 화면이 기대는 공통 필드만 싣는다.
+      suggestions: picked.map((s) => ({
+        id: s.id,
+        child_id: s.child_id,
+        agent: s.agent,
+        content: s.content,
+        status: "approved" as const,
+      })),
     };
     return HttpResponse.json(response, { status: 200 });
   }),
@@ -329,7 +390,7 @@ export const suggestionHandlers = [
     const refused = refuseUnapproved(ids);
     if (refused) return refused;
 
-    const pool = [...suggestions, staleSuggestion];
+    const pool = [...pickable, staleSuggestion];
     const chosen = ids
       .map((id) => pool.find((s) => s.id === id))
       .filter((s): s is (typeof pool)[number] => s !== undefined);

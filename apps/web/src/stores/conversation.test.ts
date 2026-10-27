@@ -5,6 +5,7 @@ import { ApiError, NetworkError, isApiError } from "@/lib/api/errors";
 import { initialRunState } from "@/hooks/use-run-stream";
 import { api } from "@/lib/api/client";
 import { newIdempotencyKey } from "@/lib/api/idempotency";
+import { toSeoulDateKey } from "@/lib/format";
 import { submittedInput } from "@/mocks/handlers/runs";
 import { setScenario, type Scenario } from "@/mocks/scenario";
 import { useDraftStore } from "@/stores/draft";
@@ -235,23 +236,26 @@ describe("되묻기에 대화 안에서 답한다", () => {
 });
 
 describe("실패는 보낸 말풍선 아래에서 다시 시도 · 고쳐 쓰기", () => {
-  it("🚨 이어받기 run 이 실패하면 다시 시도가 같은 키 · 같은 `reply_to` 로 나가 저장된다", async () => {
+  it("🚨 이어받기 run 이 실패하면 다시 시도가 같은 `reply_to` 로 나가 저장된다 · 키는 새것이다 (#538)", async () => {
     scenario("reply_failed");
     const asked = send("어제부터 기침해");
     await settled(asked);
 
     const reply = send("사흘 전부터", true);
+    const sentKey = turn(reply).key;
     const failed = await settled(reply);
     expect(failed.run.status).toBe("failed");
     expect(canRetry(failed)).toBe(true);
     // 🚨 실패에서 질문을 닫지 않는다 (#175) — 서버가 맥락을 되돌려 뒀다.
     expect(turn(asked).question).toBe("open");
 
-    const key = failed.key;
+    const failedRun = runIdOf(reply);
     retryTurn(CHILD, reply);
     const retried = await settled(reply);
 
-    expect(retried.key).toBe(key);
+    // `failed` 는 서버가 "저장 없음" 을 보장한 끝이라 새 키로 다시 보낸다 — 새 run 이 뜬다.
+    expect(retried.key).not.toBe(sentKey);
+    expect(runIdOf(reply)).not.toBe(failedRun);
     expect(submittedInput(runIdOf(reply))?.replyTo).toBe(runIdOf(asked));
     expect(retried.run.observations.length).toBeGreaterThan(0);
     expect(turn(asked).question).toBe("answered");
@@ -330,6 +334,82 @@ describe("실패는 보낸 말풍선 아래에서 다시 시도 · 고쳐 쓰기
     },
     TWO_RUNS,
   );
+});
+
+describe("결과를 못 받은 줄을 채널이 지워진 뒤 다시 보낸다 (#538)", () => {
+  it("🚨 failed 로 끝난 줄은 키를 새로 받는다 — 다시 시도도, 같은 문장을 다시 보낸 줄도 새 키다", async () => {
+    scenario("failed");
+    const id = send("지어낸 한 줄");
+    const sentKey = turn(id).key;
+    const failed = await settled(id);
+    expect(failed.run.status).toBe("failed");
+    expect(failed.key).not.toBe(sentKey);
+
+    // 고쳐 쓰지 않고 그대로 다시 보내도 서버가 붙든 키(놓다가 실패했을 수 있다)가 아니다.
+    rewriteTurn(CHILD, id);
+    const again = send(useDraftStore.getState().byChild[CHILD] ?? "");
+    expect(turn(again).key).not.toBe(sentKey);
+    expect(turn(again).key).toBe(failed.key);
+    await settled(again);
+  });
+
+  it(
+    "서버가 이미 끝났다고 하면 SSE 를 열지 않고 그날을 남긴다 · 다시 시도는 없고 키는 놓는다",
+    async () => {
+      scenario("replay_finished");
+      const id = send("지어낸 한 줄");
+      const lost = await settled(id);
+      expect(lost.run.status).toBe("unconfirmed");
+      const runId = runIdOf(id);
+
+      retryTurn(CHILD, id);
+      await until(() => turn(id).recordedOn !== null);
+
+      const recorded = turn(id);
+      expect(runIdOf(id)).toBe(runId);
+      expect(recorded.recordedOn).toBe(toSeoulDateKey(new Date()));
+      expect(canRetry(recorded)).toBe(false);
+      expect(isBusy(conversation())).toBe(false);
+
+      // 끝을 받은 것과 같다 — 같은 문장은 이제 새 동작이라 새 키다.
+      scenario("default");
+      const fresh = send("지어낸 한 줄");
+      expect(turn(fresh).key).not.toBe(lost.key);
+      await settled(fresh);
+    },
+    TWO_RUNS,
+  );
+
+  it("채널도 대화 기록도 없으면 같은 run 이 또 결과 미확인이다 · 같은 키를 붙들고 그 사실을 남긴다", async () => {
+    scenario("replay_unknown");
+    const id = send("지어낸 한 줄");
+    const lost = await settled(id);
+    expect(lost.replayed).toBe(false);
+    const runId = runIdOf(id);
+
+    retryTurn(CHILD, id);
+    const again = await settled(id);
+    expect(runIdOf(id)).toBe(runId);
+    expect(again.run.status).toBe("unconfirmed");
+    expect(again.replayed).toBe(true);
+    expect(again.recordedOn).toBeNull();
+    expect(again.key).toBe(lost.key);
+    expect(canRetry(again)).toBe(true);
+  });
+
+  it("다시 시도 대신 고쳐 쓰기로 꺼내 그대로 다시 보낸 줄도 같은 run 을 받은 것으로 친다", async () => {
+    scenario("replay_unknown");
+    const first = send("지어낸 한 줄");
+    const lost = await settled(first);
+
+    rewriteTurn(CHILD, first);
+    const again = send(useDraftStore.getState().byChild[CHILD] ?? "");
+    expect(turn(again).key).toBe(lost.key);
+    const replayed = await settled(again);
+    expect(runIdOf(again)).toBe(runIdOf(first));
+    expect(replayed.run.status).toBe("unconfirmed");
+    expect(replayed.replayed).toBe(true);
+  });
 });
 
 describe("🚨 원문은 입력창에 옮겼을 때만 말풍선을 떠난다 (#231 리뷰)", () => {
@@ -450,6 +530,8 @@ describe("다시 시도는 응답을 못 받은 경우의 것이다 (#231 리뷰
       run: initialRunState,
       question: null,
       handedBack: false,
+      recordedOn: null,
+      replayed: false,
     };
   }
 
