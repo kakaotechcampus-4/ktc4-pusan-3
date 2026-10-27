@@ -423,3 +423,33 @@ async def test_filters_combine_with_paging_and_total_is_after_every_filter(
     assert (body["total"], body["total_pages"], body["page"]) == (3, 2, 2)
     assert [a["merge_key"] for a in body["affinities"]] == ["브로콜리 무침"]
     assert body["safety"] == []
+
+
+@pytest.mark.parametrize(
+    ("page", "expected"),
+    [
+        (10_000, 200),  # 상한 그대로는 허용 — size 100 이어도 offset 은 100만 행이다
+        (10_001, 400),
+        (10**20, 400),  # DB 정수 범위를 넘는 값이 500 으로 새면 안 된다
+    ],
+)
+async def test_page_has_an_upper_bound_of_10000_and_beyond_it_is_a_bad_request(
+    db_client: AsyncClient, bearer: Bearer, cid: uuid.UUID, page: int, expected: int
+):
+    headers, _ = bearer
+
+    resp = await db_client.get(
+        f"/api/v1/children/{cid}/affinities", params={"page": page, "size": 100}, headers=headers
+    )
+
+    assert resp.status_code == expected
+    if expected == 400:
+        assert resp.json()["error"]["code"] == "validation_failed"
+
+
+def test_swagger_page_documents_the_upper_bound_of_10000():
+    """FE 가 쪽 번호 UI 의 끝을 알 수 있게 문서에 maximum 이 있다."""
+    params = app.openapi()["paths"]["/api/v1/children/{cid}/affinities"]["get"]["parameters"]
+    page = next(p for p in params if p["name"] == "page")
+
+    assert page["schema"]["maximum"] == 10_000
