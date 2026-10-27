@@ -1,0 +1,165 @@
+"""한 run 에서 화면으로 가는 되묻기는 하나다 — 진짜 Food · Growth 로 본다 (#452 리뷰).
+
+진짜 Supervisor 라우팅 · 파이프라인 · Food Agent · Growth Agent 를 쓰고, 가짜는 LLM 응답과
+in-memory 저장소뿐이다. 입력 "저녁 뭐 먹일까 양치 혼자 하는 법 알려줘" 가
+food:meal_recommendation + growth:routine_coaching 으로 나뉜다.
+
+- Food: 극성을 모르는 관심 후보 하나("브로콜리", #576 기억 다리로 읽음) → 추천 3개 + 되묻기
+- Growth: 양치 루틴 기록 0건 → 추천 없이 되묻기만
+
+규칙 자체(먼저 끝난 결과가 자리를 갖는다 · 질문을 잃은 결과의 카드)는 `test_pipeline.py` 의 가짜
+러너 테스트가 순서를 바꿔 가며 본다. 여기는 두 Agent 를 처음 같이 돌린 그 장면이 화면 이벤트에서
+질문 하나로 나오는지만 본다.
+"""
+
+from collections.abc import Sequence
+from datetime import timedelta
+from typing import Any
+from uuid import UUID
+
+from app.agents.common.evidence import AffinityRow
+from app.agents.food.context import FoodContext
+from app.agents.food.store import (
+    InMemoryFoodDocs,
+    InMemoryProfile,
+    InMemoryRecipeCatalog,
+    InMemorySafety,
+    in_memory_ports,
+)
+from app.agents.memory.context import AgentContext
+from app.agents.memory.store import InMemoryStore
+from app.agents.memory_bridge import StoreFoodMemory
+from app.agents.pipeline import AgentResult, handle_input
+from app.agents.suggestion_save import InMemorySuggestions
+from app.api.runs.translate import to_sse
+from tests.unit.agents.food.support import (
+    BIRTH_DATE,
+    MEAL_DOC,
+    ScriptedLLM,
+    menu_row,
+    propose,
+)
+from tests.unit.agents.food.support import CHILD as FOOD_CHILD
+from tests.unit.agents.food.support import KST as FOOD_KST
+from tests.unit.agents.food.support import NOW as FOOD_NOW
+from tests.unit.agents.growth.support import birth_for, fixture_docs
+from tests.unit.agents.growth.support import context as growth_context
+from tests.unit.agents.growth.test_growth_agent import FakeLLM as GrowthLLM
+from tests.unit.agents.growth.test_growth_agent import call as growth_call
+from tests.unit.agents.supervisor.test_pipeline import (
+    RUN_ID,
+    FakeLLM,
+    _call,
+    _no_commit,
+    _of,
+    _tools,
+    memory_context,  # noqa: F401 — 픽스처
+)
+
+TEXT_FOOD = "저녁 뭐 먹일까"
+TEXT_GROWTH = "양치 혼자 하는 법 알려줘"
+FOOD_QUESTION = "브로콜리은(는) 좋아하는 편인가요?"
+
+
+class _Affinities:
+    """`DbAffinityReader` 자리 — 극성을 모르는 food candidate 하나 (3일 전 관찰)."""
+
+    async def affinities(self, *, child_id: UUID, domains: Sequence[str]) -> list[AffinityRow]:
+        if "food" not in domains:
+            return []
+        return [
+            AffinityRow(
+                id=UUID(int=77),
+                merge_key="브로콜리",
+                state="candidate",
+                polarity=None,
+                strength=0.6,
+                last_observed_on=FOOD_NOW.date() - timedelta(days=3),
+            )
+        ]
+
+
+def _food_context() -> FoodContext:
+    memory = StoreFoodMemory(
+        InMemoryStore(now=FOOD_NOW), affinities=_Affinities(), today=FOOD_NOW.date()
+    )
+    rows = tuple(
+        menu_row(name, source="mafra_recipe", ingredients=ingredients)
+        for name, ingredients in (
+            ("두부조림", ("두부", "간장")),
+            ("시금치나물", ("시금치", "참기름")),
+            ("미역국", ("미역", "참기름")),
+        )
+    )
+    ports = in_memory_ports(
+        profile=InMemoryProfile({FOOD_CHILD: BIRTH_DATE}),
+        safety=InMemorySafety([]),
+        recipes=InMemoryRecipeCatalog(rows),
+        docs=InMemoryFoodDocs([MEAL_DOC]),
+        memory=memory,
+    )
+    return FoodContext(
+        child_id=FOOD_CHILD, run_id=RUN_ID, now=FOOD_NOW, timezone=FOOD_KST, ports=ports
+    )
+
+
+def _supervisor() -> FakeLLM:
+    output = {
+        "segments": [
+            {
+                "text": TEXT_FOOD,
+                "kind": "request",
+                "agent": "food",
+                "food_task": "meal_recommendation",
+            },
+            {
+                "text": TEXT_GROWTH,
+                "kind": "request",
+                "agent": "growth",
+                "growth_task": "routine_coaching",
+            },
+        ]
+    }
+    return FakeLLM(_tools(_call("s1", "route", output)))
+
+
+async def test_Food_와_Growth_가_둘_다_되물어도_화면의_질문은_하나다(
+    memory_context: AgentContext,  # noqa: F811
+) -> None:
+    events: list[Any] = []
+
+    await handle_input(
+        f"{TEXT_FOOD} {TEXT_GROWTH}",
+        memory_context,
+        {
+            "food": _food_context(),
+            "growth": growth_context(birth_for(30), docs=fixture_docs()),
+        },
+        run_id=RUN_ID,
+        supervisor_client=_supervisor(),
+        memory_client=FakeLLM(),
+        domain_clients={
+            "food": ScriptedLLM(propose("두부조림", "시금치나물", "미역국")),
+            "growth": GrowthLLM(
+                growth_call(
+                    "propose_routine_plan",
+                    {"category": "self_care", "subject": "양치", "items": []},
+                )
+            ),
+        },
+        emit=events.append,
+        commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
+    )
+
+    # 두 Agent 가 같은 틱에 끝나면 task 순서가 앞선 Food 가 자리를 갖는다
+    cards = [
+        data
+        for sse in (to_sse(e) for e in events)
+        if sse and sse[0] == "agent_result"
+        for data in [sse[1]]
+    ]
+    asked = [(card["agent"], card["question"]) for card in cards if card["question"]]
+    assert asked == [("food", FOOD_QUESTION)]
+    # 질문이 전부였던 Growth 는 질문을 잃어 카드가 없다 — 라벨만 남는 빈 카드를 그리지 않는다
+    assert [result.agent for result in _of(events, AgentResult)] == ["food"]
