@@ -1,14 +1,13 @@
 """관찰 목록 · 상세 API — #259.
 
 저장 함수(필터 · 커서 · 삭제 표시)는 `tests/integration/test_observation_repository.py` 가 건다.
-여기는 API 가 더하는 것만 본다: 분류 → 표 매핑, 건강 제외, 응답 조립, 커서 문자열.
+여기는 API 가 더하는 것만 본다: 분류 → 표 매핑, 건강 제외, 응답 조립, 쪽(page · size) · 날짜 · 검색.
 """
 
-import base64
-import json
 import uuid
 from datetime import UTC, date, datetime, timedelta
 
+import pytest
 from httpx import AsyncClient
 from sqlalchemy import update
 from sqlalchemy.dialects.postgresql import Range
@@ -44,7 +43,12 @@ _FIELDS = {
 
 
 async def _observe(
-    session: AsyncSession, child_id: uuid.UUID, writer: uuid.UUID, domain: str, days_ago: int = 0
+    session: AsyncSession,
+    child_id: uuid.UUID,
+    writer: uuid.UUID,
+    domain: str,
+    days_ago: int = 0,
+    raw_text: str | None = None,
 ):
     day = today_kst() - timedelta(days=days_ago)
     return await create_observation(
@@ -52,7 +56,7 @@ async def _observe(
         domain=domain,
         child_id=child_id,
         source_writer=writer,
-        raw_text=f"{domain} 원문",
+        raw_text=raw_text or f"{domain} 원문",
         observed_range=Range(day, day + timedelta(days=1), bounds="[)"),
         fields={"confidence_source": ConfidenceSource.PARENT_DIRECT, **_FIELDS[domain]},
     )
@@ -90,7 +94,7 @@ async def test_list_maps_agent_to_tables_and_hides_health(
         "observation_education",
         "observation_routine",
     }
-    assert health == {"items": [], "next_cursor": None, "total": 0}
+    assert health == {"items": [], "total": 0, "page": 1, "size": 20, "total_pages": 0}
     assert everything["total"] == 4
     assert "observation_health" not in {i["kind"] for i in everything["items"]}
 
@@ -125,23 +129,162 @@ async def test_list_keeps_corrected_observations_but_not_deleted_ones(
     assert only["total"] == 1
 
 
-async def test_cursor_pages_through_without_gaps(
+async def test_pages_through_newest_first_without_gaps_and_reports_total_pages(
     db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
 ):
     headers, parent_id = bearer
-    ids = {str((await _observe(session, cid, parent_id, "food", days_ago=d)).id) for d in range(3)}
+    created = [
+        str((await _observe(session, cid, parent_id, "food", days_ago=d)).id) for d in range(5)
+    ]  # days_ago 0 이 가장 최근 — 응답은 이 순서(최신순)여야 한다
     url = f"/api/v1/children/{cid}/observations"
 
-    seen: list[str] = []
-    params: dict[str, str | int] = {"limit": 2}
-    while True:
-        page = (await db_client.get(url, params=params, headers=headers)).json()
-        seen += [i["id"] for i in page["items"]]
-        if page["next_cursor"] is None:
-            break
-        params["cursor"] = page["next_cursor"]
+    pages = [
+        (await db_client.get(url, params={"page": p, "size": 2}, headers=headers)).json()
+        for p in (1, 2, 3, 4)
+    ]
 
-    assert sorted(seen) == sorted(ids) and len(seen) == 3
+    assert [[i["id"] for i in page["items"]] for page in pages] == [
+        created[0:2],
+        created[2:4],
+        created[4:5],
+        [],  # 범위를 넘은 쪽은 오류가 아니라 빈 목록
+    ]
+    assert {(page["total"], page["size"], page["total_pages"]) for page in pages} == {(5, 2, 3)}
+    assert [page["page"] for page in pages] == [1, 2, 3, 4]
+
+
+async def test_list_has_no_cursor_anymore(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    headers, parent_id = bearer
+    await _observe(session, cid, parent_id, "food")
+
+    body = (await db_client.get(f"/api/v1/children/{cid}/observations", headers=headers)).json()
+
+    assert set(body) == {"items", "total", "page", "size", "total_pages"}
+
+
+async def test_date_range_keeps_overlapping_records_and_includes_both_boundaries(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    headers, parent_id = bearer
+    for d in range(5):
+        await _observe(session, cid, parent_id, "food", days_ago=d)
+    today = today_kst()
+    url = f"/api/v1/children/{cid}/observations"
+
+    window = (
+        await db_client.get(
+            url,
+            params={
+                "date_from": (today - timedelta(days=3)).isoformat(),
+                "date_to": (today - timedelta(days=1)).isoformat(),
+            },
+            headers=headers,
+        )
+    ).json()
+    one_day = (
+        await db_client.get(
+            url,
+            params={"date_from": today.isoformat(), "date_to": today.isoformat()},
+            headers=headers,
+        )
+    ).json()
+
+    assert window["total"] == 3 and len(window["items"]) == 3
+    assert one_day["total"] == 1
+
+
+async def test_q_filters_by_raw_text_and_total_counts_only_matches(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    headers, parent_id = bearer
+    hit = await _observe(session, cid, parent_id, "food", 0, raw_text="점심에 브로콜리를 먹음")
+    await _observe(session, cid, parent_id, "food", 1, raw_text="사과를 먹음")
+    await _observe(session, cid, parent_id, "activity", 2, raw_text="브로콜리 그림 그리기")
+    url = f"/api/v1/children/{cid}/observations"
+
+    found = (await db_client.get(url, params={"q": "브로콜리"}, headers=headers)).json()
+    food_only = (
+        await db_client.get(url, params={"q": "브로콜리", "domain": "food"}, headers=headers)
+    ).json()
+    paged = (
+        await db_client.get(url, params={"q": "브로콜리", "size": 1, "page": 2}, headers=headers)
+    ).json()
+
+    assert found["total"] == 2
+    assert [i["id"] for i in food_only["items"]] == [str(hit.id)] and food_only["total"] == 1
+    assert (paged["total"], paged["total_pages"], len(paged["items"])) == (2, 2, 1)
+
+
+async def test_blank_q_means_no_search_and_wildcards_are_plain_characters(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    headers, parent_id = bearer
+    await _observe(session, cid, parent_id, "food", 0, raw_text="주스 100% 먹음")
+    await _observe(session, cid, parent_id, "food", 1, raw_text="사과를 먹음")
+    url = f"/api/v1/children/{cid}/observations"
+
+    blank = (await db_client.get(url, params={"q": "   "}, headers=headers)).json()
+    percent = (await db_client.get(url, params={"q": "%"}, headers=headers)).json()
+
+    assert blank["total"] == 2
+    assert percent["total"] == 1
+
+
+async def test_filters_combine_with_paging_and_total_is_after_every_filter(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    headers, parent_id = bearer
+    for d in range(4):
+        await _observe(session, cid, parent_id, "food", d, raw_text="브로콜리")
+    await _observe(session, cid, parent_id, "activity", 0, raw_text="브로콜리")
+    await _observe(session, cid, parent_id, "food", 9, raw_text="브로콜리")  # 날짜 밖
+    today = today_kst()
+
+    body = (
+        await db_client.get(
+            f"/api/v1/children/{cid}/observations",
+            params={
+                "domain": "food",
+                "q": "브로콜리",
+                "date_from": (today - timedelta(days=5)).isoformat(),
+                "date_to": today.isoformat(),
+                "status": "active",
+                "page": 2,
+                "size": 3,
+            },
+            headers=headers,
+        )
+    ).json()
+
+    assert (body["total"], body["total_pages"], len(body["items"])) == (4, 2, 1)
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"page": 0},
+        {"size": 0},
+        {"size": 101},
+        {"q": "가" * 101},
+        {"date_from": "2026-13-01"},
+        {"date_to": "어제"},
+        {"date_from": "2026-10-31", "date_to": "2026-10-01"},
+    ],
+)
+async def test_invalid_query_is_bad_request_not_unprocessable(
+    db_client: AsyncClient, bearer: Bearer, cid: uuid.UUID, params: dict[str, str | int]
+):
+    """쿼리 검증 실패는 422 가 아니라 400 validation_failed 다 (errors.py — 경로 값만 422)."""
+    headers, _ = bearer
+
+    resp = await db_client.get(
+        f"/api/v1/children/{cid}/observations", params=params, headers=headers
+    )
+
+    assert resp.status_code == 400
+    assert resp.json()["error"]["code"] == "validation_failed"
 
 
 async def test_detail_carries_affinity_writer_usage_and_corrections(
@@ -209,15 +352,3 @@ async def test_health_detail_is_not_found(
         f"/api/v1/children/{cid}/observations/observation_health/{record.id}", headers=headers
     )
     assert resp.status_code == 404
-
-
-async def test_malformed_cursor_is_bad_request(
-    db_client: AsyncClient, bearer: Bearer, cid: uuid.UUID
-):
-    """형이 틀린 칸(숫자 id)도 500 이 아니라 400 이다."""
-    headers, _ = bearer
-    wrong_type = base64.urlsafe_b64encode(json.dumps(["2026-10-01", "food", 1]).encode()).decode()
-    resp = await db_client.get(
-        f"/api/v1/children/{cid}/observations", params={"cursor": wrong_type}, headers=headers
-    )
-    assert resp.status_code == 400

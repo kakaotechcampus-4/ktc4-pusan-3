@@ -564,3 +564,186 @@ async def test_page_cursor_does_not_skip_same_day_different_domain_records(sessi
         cursor = page.next_cursor
     assert len(set(seen)) == 3
     assert cursor is None
+
+
+# ── #584: offset 페이징 · q 검색 ─────────────────────────────────────────────
+
+
+async def test_page_offset_pages_in_newest_first_order_without_gaps(session, family):
+    """offset 은 앞에서 건너뛸 건수다. 정렬은 cursor 와 같고 total 은 페이지와 무관하다."""
+    writer, child, _ = family
+    created = [
+        await add_observation(
+            session, writer, child, ObservationDomain.FOOD, date(2026, 9, day), f"음식{day}"
+        )
+        for day in range(1, 6)
+    ]
+    newest_first = [row.id for row in reversed(created)]
+
+    pages = [
+        await page_observations(session, child_id=child.id, limit=2, offset=offset)
+        for offset in (0, 2, 4)
+    ]
+
+    assert [[row.id for row in page.items] for page in pages] == [
+        newest_first[0:2],
+        newest_first[2:4],
+        newest_first[4:5],
+    ]
+    assert {page.total for page in pages} == {5}
+
+
+async def test_page_offset_does_not_skip_same_day_different_domain_records(session, family):
+    """같은 날짜 · 다른 도메인 3건을 offset 으로 한 건씩 순회해도 3건이 모두 나온다."""
+    writer, child, _ = family
+    for domain, label in (
+        (ObservationDomain.FOOD, "사과"),
+        (ObservationDomain.HEALTH, "콧물"),
+        (ObservationDomain.ROUTINE, "양치"),
+    ):
+        await add_observation(session, writer, child, domain, date(2026, 9, 1), label)
+
+    seen = []
+    for offset in range(3):
+        page = await page_observations(session, child_id=child.id, limit=1, offset=offset)
+        seen.extend(row.id for row in page.items)
+
+    assert len(set(seen)) == 3
+
+
+async def test_page_offset_past_the_end_is_an_empty_page_with_the_same_total(session, family):
+    writer, child, _ = family
+    await add_observation(session, writer, child, ObservationDomain.FOOD, date(2026, 9, 1), "사과")
+
+    page = await page_observations(session, child_id=child.id, limit=10, offset=10)
+
+    assert page.items == []
+    assert page.total == 1
+
+
+async def test_page_offset_rejects_negative_and_cursor_together(session, family):
+    """offset 은 0 이상이고, cursor 와 같이 줄 수 없다 — 어느 쪽을 따를지 모호해진다."""
+    writer, child, _ = family
+    await add_observation(session, writer, child, ObservationDomain.FOOD, date(2026, 9, 1), "사과")
+    await add_observation(session, writer, child, ObservationDomain.FOOD, date(2026, 9, 2), "배")
+    first = await page_observations(session, child_id=child.id, limit=1)
+
+    with pytest.raises(ValueError):
+        await page_observations(session, child_id=child.id, offset=-1)
+    with pytest.raises(ValueError):
+        await page_observations(session, child_id=child.id, cursor=first.next_cursor, offset=1)
+
+
+async def test_page_defaults_keep_the_cursor_walk_unchanged(session, family):
+    """q · offset 을 안 주는 호출(캘린더)은 이전과 같다 — cursor 로 끝까지 돌면 전부 나온다."""
+    writer, child, _ = family
+    for day in range(1, 5):
+        await add_observation(
+            session, writer, child, ObservationDomain.FOOD, date(2026, 9, day), f"음식{day}"
+        )
+
+    seen, cursor = [], None
+    while True:
+        page = await page_observations(session, child_id=child.id, cursor=cursor, limit=3)
+        seen.extend(row.id for row in page.items)
+        if page.next_cursor is None:
+            break
+        cursor = page.next_cursor
+
+    assert len(seen) == len(set(seen)) == 4
+
+
+async def _observe_text(session, writer, child, day, *, raw_text, subject):
+    return await create_observation(
+        session,
+        domain="food",
+        child_id=child.id,
+        source_writer=writer.id,
+        raw_text=raw_text,
+        observed_range=observed(day),
+        fields={"confidence_source": ConfidenceSource.PARENT_DIRECT, "subject": subject},
+    )
+
+
+async def test_page_q_matches_raw_text_or_subject_ignoring_case(session, family):
+    writer, child, _ = family
+    by_text = await _observe_text(
+        session, writer, child, date(2026, 9, 1), raw_text="오늘 점심에 브로콜리", subject="채소"
+    )
+    by_subject = await _observe_text(
+        session, writer, child, date(2026, 9, 2), raw_text="오늘 간식", subject="Broccoli"
+    )
+    await _observe_text(session, writer, child, date(2026, 9, 3), raw_text="사과", subject="과일")
+
+    korean = await page_observations(session, child_id=child.id, q="브로콜리")
+    english = await page_observations(session, child_id=child.id, q="broc")
+    nothing = await page_observations(session, child_id=child.id, q="없는말")
+
+    assert [row.id for row in korean.items] == [by_text.id]
+    assert [row.id for row in english.items] == [by_subject.id]
+    assert (nothing.items, nothing.total) == ([], 0)
+
+
+@pytest.mark.parametrize(
+    ("q", "expected_text"),
+    [
+        ("%", "주스 100% 먹음"),
+        ("_", "a_b 메모"),
+        ("\\", "경로 c:\\x"),
+    ],
+)
+async def test_page_q_treats_like_wildcards_as_plain_characters(session, family, q, expected_text):
+    """% · _ · \\ 는 와일드카드가 아니라 글자 그대로다 — q=% 가 전체 매칭이 되면 안 된다."""
+    writer, child, _ = family
+    for index, text in enumerate(("주스 100% 먹음", "a_b 메모", "ab 메모", "경로 c:\\x", "사과")):
+        await _observe_text(
+            session, writer, child, date(2026, 9, 1 + index), raw_text=text, subject=f"과목{index}"
+        )
+
+    page = await page_observations(session, child_id=child.id, q=q)
+
+    assert [row.raw_text for row in page.items] == [expected_text]
+    assert page.total == 1
+
+
+async def test_page_q_total_counts_only_matches_and_combines_with_other_filters(session, family):
+    writer, child, other_child = family
+    hit_old = await _observe_text(
+        session, writer, child, date(2026, 8, 1), raw_text="브로콜리 8월", subject="가"
+    )
+    hit_new = await _observe_text(
+        session, writer, child, date(2026, 9, 10), raw_text="브로콜리 9월", subject="나"
+    )
+    await _observe_text(session, writer, child, date(2026, 9, 11), raw_text="사과", subject="다")
+    await _observe_text(
+        session, writer, other_child, date(2026, 9, 10), raw_text="브로콜리 다른 아이", subject="라"
+    )
+
+    everything = await page_observations(session, child_id=child.id, q="브로콜리", limit=1)
+    september = await page_observations(
+        session,
+        child_id=child.id,
+        q="브로콜리",
+        domains=["food"],
+        date_from=date(2026, 9, 1),
+        date_to=date(2026, 9, 30),
+    )
+
+    assert everything.total == 2
+    assert [row.id for row in everything.items] == [hit_new.id]
+    assert [row.id for row in september.items] == [hit_new.id]
+    assert hit_old.id not in {row.id for row in september.items}
+
+
+async def test_page_q_does_not_break_the_health_branch_that_has_no_subject(session, family):
+    """observation_health 에는 subject 칸이 없다. q 를 줘도 안 깨지고 raw_text 로 맞는다."""
+    writer, child, _ = family
+    health = await add_observation(
+        session, writer, child, ObservationDomain.HEALTH, date(2026, 9, 1), "콧물"
+    )
+    await add_observation(session, writer, child, ObservationDomain.FOOD, date(2026, 9, 2), "사과")
+
+    page = await page_observations(session, child_id=child.id, q="콧물")
+
+    assert [row.id for row in page.items] == [health.id]
+    assert page.total == 1
