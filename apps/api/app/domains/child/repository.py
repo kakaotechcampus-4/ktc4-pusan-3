@@ -71,6 +71,11 @@ async def has_child_link(session: AsyncSession, *, parent_id: uuid.UUID) -> bool
     return bool(await session.scalar(select(exists().where(ParentChild.parent_id == parent_id))))
 
 
+async def find_child(session: AsyncSession, *, child_id: uuid.UUID) -> Child | None:
+    """접근 권한을 보지 않는 단순 조회. 이미 확인을 거친 run 이 별명 · 생일을 읽을 때 쓴다."""
+    return await session.get(Child, child_id, populate_existing=True)
+
+
 async def find_accessible_child(
     session: AsyncSession, *, child_id: uuid.UUID, parent_id: uuid.UUID
 ) -> Child | None:
