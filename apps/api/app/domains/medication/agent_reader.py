@@ -13,8 +13,8 @@ Agent 는 DB 에 직접 닿지 않는다. 러너가 이 어댑터를 만들어 e
   다른 아이의 코스는 읽히지도 멈춰지지도 않는다 — 멈추려 하면 `missing` 이다.
 - 중단 시각은 시간대가 붙은 값만 받는다. 시간대 없는 값은 asyncpg 가 프로세스 TZ 로 해석해서 같은
   시각이 환경마다 다르게 저장된다.
-- `MedicationCourse.pattern` 은 기준일 이후 회차 행에서 모은다(`pattern_of`). 수정으로 앞으로의
-  시각이 바뀐 코스가 지난 회차의 옛 시각으로 나오지 않게 하려는 것이다.
+- `MedicationCourse.pattern` 은 기준일 다음 날부터 첫 날의 회차 행에서 읽는다(`pattern_of`).
+  수정으로 앞으로의 시각이 바뀐 코스가 지난 회차의 옛 시각으로 나오지 않게 하려는 것이다.
 - 호출마다 짧은 세션을 연다. run 세션을 도메인 task 들이 같이 타지 않게.
 """
 
@@ -37,24 +37,30 @@ SessionOpener = Callable[[], AbstractAsyncContextManager[AsyncSession]]
 
 
 def pattern_of(rows: Sequence[tables.MedicationDose], *, basis: date) -> tuple[DoseSlot, ...]:
-    """기준일 이후 회차 행에서 시각이 겹치지 않게 모은 하루 시각 패턴. 예정 시각 순이다.
+    """하루 시각 패턴. 기준일 **다음 날부터** 첫 날의 회차 행에서 읽고, 예정 시각 순이다.
 
-    기준일 이후 행이 없으면(다 지났다) 가장 늦은 날의 행에서 모은다. 행이 없으면 빈 튜플이다.
+    기준일(오늘)은 건너뛴다 — 오늘 고친 코스는 지난 회차(옛 시각)가 남고 남은 회차만 새 시각이라
+    오늘 행을 섞으면 칸이 늘어난다. 다음 날이 없으면(오늘 끝나거나 이미 끝났다) 마지막 날의 행에서
+    읽는다. 행이 없으면 빈 튜플이다.
     """
-    later = [row for row in rows if row.dose_date >= basis]
-    if not later and rows:
-        last_day = max(row.dose_date for row in rows)
-        later = [row for row in rows if row.dose_date == last_day]
+    if not rows:
+        return ()
+    later = [row.dose_date for row in rows if row.dose_date > basis]
+    day = min(later) if later else max(row.dose_date for row in rows)
     slots: dict[time, DoseSlot] = {}
-    for row in sorted(later, key=lambda row: row.dose_date):
+    for row in rows:
+        if row.dose_date != day:
+            continue
         scheduled = _scheduled_time(row)
-        if scheduled not in slots:
-            slots[scheduled] = DoseSlot(
+        slots.setdefault(
+            scheduled,
+            DoseSlot(
                 timing_anchor=row.timing_anchor.value,
                 offset_minutes=row.offset_minutes,
                 fixed_time=row.fixed_time,
                 scheduled_time=scheduled,
-            )
+            ),
+        )
     return tuple(slots[at] for at in sorted(slots))
 
 

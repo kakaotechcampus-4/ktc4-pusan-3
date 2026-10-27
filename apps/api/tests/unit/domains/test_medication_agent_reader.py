@@ -56,6 +56,17 @@ def test_pattern_은_기준일_이후_회차에서_모은다():
     assert pattern_of(rows, basis=DAY) == (DoseSlot.of("breakfast", 60),)
 
 
+def test_오늘_수정한_코스는_오늘의_지난_회차를_패턴에_섞지_않는다():
+    # 08:45 에 아침 +30 → +60 으로 고쳤다. 지난 08:30 은 남고 오늘 09:00 부터 새 시각이다
+    rows = [
+        dose(DAY, "breakfast", 30),
+        dose(DAY, "breakfast", 60),
+        dose(date(2026, 9, 29), "breakfast", 60),
+    ]
+
+    assert pattern_of(rows, basis=DAY) == (DoseSlot.of("breakfast", 60),)
+
+
 def test_pattern_은_시각_순이고_겹치는_시각은_한_번만():
     rows = [
         dose(DAY, "dinner", 30),

@@ -62,6 +62,7 @@ from app.agents.health.store.ports import (
     HealthSafetyReader,
     MedicationReader,
     MedicationWriter,
+    UnwiredBirthDate,
     UnwiredChildBasic,
     UnwiredHealthSafety,
     UnwiredMedication,
@@ -656,7 +657,12 @@ def _domain_contexts(
         now=now,
         timezone=KST,
         ports=HealthPorts(
-            profile=activity_child or HealthProfile({child_id: resolved_birth_date}),
+            # 생일이 없으면 지어낸 생일로 열지 않는다 — Health 는 나이로 응급을 가른다
+            profile=(
+                UnwiredBirthDate()
+                if birth_date is None
+                else activity_child or HealthProfile({child_id: birth_date})
+            ),
             consent=activity_child or HealthConsent({child_id: False}),
             safety=health_safety or UnwiredHealthSafety(),
             memory=(

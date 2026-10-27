@@ -128,7 +128,8 @@ class MedicationCourse:
     ends_on: date  # 필수 — 무기한 코스는 없다
     status: Literal["active", "stopped"]  # 끝남은 status 가 아니라 ends_on 으로 본다
     note: str | None  # 투약의뢰서 특이사항(보호자 입력)
-    # 오늘 이후 회차 행에서 시각이 겹치지 않게 모은 것(남은 회차가 없으면 마지막 날의 행에서).
+    # 내일부터 첫 날의 회차 시각(내일 이후 회차가 없으면 마지막 날의 회차). 오늘은 고친 코스의 지난
+    # 회차(옛 시각)가 남아 있을 수 있어 건너뛴다.
     # 수정 초안의 before · 서식의 투약 시각에 쓴다. 어댑터는 이 규칙으로 회차 행에서 만든다
     pattern: tuple[DoseSlot, ...]
     # 저장된 값(`medication_schedule.symptom_codes`). 수정 초안은 사전으로 다시 계산하지 않고
@@ -168,8 +169,8 @@ class MedicationReader(Protocol):
     ) -> list[MedicationCourse]:
         """status 와 상관없이 기간이 [date_from, date_to] 와 겹치는 코스 — 끝났거나 멈춘 것도.
 
-        `pattern` 은 `date_to` 이후 회차에서 모은다. 이 메서드는 오늘을 받지 않아서 호출부가
-        `date_to` 로 오늘을 넘기는 것을 전제로 한다.
+        `pattern` 은 `date_to` 다음 날부터 첫 날의 회차에서 읽는다. 이 메서드는 오늘을 받지
+        않아서 호출부가 `date_to` 로 오늘을 넘기는 것을 전제로 한다.
         """
         ...
 
@@ -209,6 +210,17 @@ class UnwiredHealthSafety:
 
     async def health_safety(self, *, child_id: UUID) -> list[HealthSafetyEntry]:
         raise SafetyLookupError("health_safety 어댑터가 연결되지 않았다")
+
+
+class UnwiredBirthDate:
+    """생일을 못 받은 호출의 자리. 읽으면 늘 `LookupError` 다.
+
+    Health 는 나이로 응급을 가른다(3개월 미만 발열). Food 처럼 지어낸 생일로 열면 생후 2개월 아이가
+    유아로 계산돼 응급 기준이 빠진다.
+    """
+
+    async def birth_date(self, *, child_id: UUID) -> date:
+        raise _unwired("생일")
 
 
 class UnwiredMedication:

@@ -61,8 +61,9 @@ async def stop_schedule(
 ) -> Literal["stopped", "already", "missing"]:
     """`active` 코스를 `stopped` 로 바꾸고 `updated_at` 에 중단 시각을 쓴다.
 
-    `Timestamps.onupdate` 는 ORM flush 때만 채워지므로 시각을 직접 쓴다. 다른 아이의 코스는 있는지도
-    알리지 않고 `missing` 이다. 이미 멈춘 코스는 아무것도 바꾸지 않는다.
+    `updated_at` 이 곧 중단 시각이라 run 의 now 로 직접 쓴다. 비워 두면 `onupdate` 가 DB 의 now() 로
+    채워서 run 의 시각과 어긋난다. 같은 이유로 멈춘 코스에 다른 UPDATE 를 내면 중단 시각이 밀린다.
+    다른 아이의 코스는 있는지도 알리지 않고 `missing` 이다. 이미 멈춘 코스는 아무것도 바꾸지 않는다.
     """
     stopped = await session.scalar(
         update(MedicationSchedule)

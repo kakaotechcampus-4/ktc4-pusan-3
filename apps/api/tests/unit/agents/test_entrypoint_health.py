@@ -87,3 +87,12 @@ async def test_Health_어댑터를_안_넘기면_읽을_때_실패한다() -> No
         )
     with pytest.raises(LookupError):
         await ports.child.basic(child_id=CHILD)
+
+
+@pytest.mark.parametrize("granted", [True, False, None])
+async def test_생일을_못_받으면_지어낸_생일로_열지_않는다(granted) -> None:
+    # Food 는 생일이 없으면 만 2세로 열지만, Health 는 3개월 미만 발열처럼 나이로 응급을 가른다
+    ports = _health(birth_date=None, child_health_granted=granted).ports
+
+    with pytest.raises(LookupError):
+        await ports.profile.birth_date(child_id=CHILD)

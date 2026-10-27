@@ -1,7 +1,7 @@
 """child → Health 응급 카드가 읽는 아이 별명 · 생일 어댑터를 실제 DB 로."""
 
 from contextlib import asynccontextmanager
-from datetime import date
+from datetime import UTC, date, datetime
 from uuid import UUID
 
 import pytest
@@ -30,3 +30,12 @@ async def test_별명과_생일을_읽는다(session):
 async def test_없는_아이는_LookupError(session):
     with pytest.raises(LookupError):
         await reader(session).basic(child_id=UUID(int=404))
+
+
+async def test_삭제된_아이는_LookupError(session):
+    child = await new_child(session, "별이")
+    child.deleted_at = datetime(2026, 9, 28, tzinfo=UTC)
+    await session.flush()
+
+    with pytest.raises(LookupError):
+        await reader(session).basic(child_id=child.id)
