@@ -58,7 +58,7 @@ from app.agents.health.tools.drafts import (
     finish_update,
     update_for,
 )
-from app.agents.health.tools.exits import blocked_exit
+from app.agents.health.tools.exits import blocked_exit, log_rejected_exit
 from app.agents.health.tools.spans import normalize_spaces
 from app.agents.health.tools.timing import (
     anchors_named,
@@ -176,6 +176,7 @@ async def _converse(
         # 읽기 전용 출구가 같은 응답의 쓰기 요청을 가리지 않게 한다
         blocked = blocked_exit(name, messages, output_tools=OUTPUT_TOOLS[TASK])
         if blocked is not None:
+            log_rejected_exit(context.run_id, name, "same_response")
             return blocked
         return await execute_tool(name, arguments, context, allowed=allowed)
 

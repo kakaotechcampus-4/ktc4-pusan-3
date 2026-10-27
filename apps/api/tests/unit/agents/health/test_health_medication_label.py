@@ -866,6 +866,29 @@ class TestReadOnlyOutputs:
         assert len(llm.seen) == 2 and result.model_calls == 1
         assert "dose_status" not in {r.kind for r in result.readouts}
 
+    async def test_출구를_거절하면_횟수를_셀_수_있게_로그를_남기되_원문은_싣지_않는다(self, caplog):
+        # 라이브에서 거절이 얼마나 일어나는지 보려는 로그다 — tool 이름 · 이유 · run id 만 남긴다
+        ctx, _ = world()
+        text = "몇 번 먹였지? 그리고 항생제 하루 세 번 식후"
+        llm = FakeLLM(
+            calls(
+                ("show_dose_status", {}),
+                (
+                    "create_medication_schedule",
+                    {"title_span": "항생제", "timing_spans": ["하루 세 번 식후"]},
+                ),
+            )
+        )
+
+        with caplog.at_level("INFO", logger="app.agents.health"):
+            await run(med(text), ctx, client=llm)
+
+        [record] = [r for r in caplog.records if "출구를 거절" in r.getMessage()]
+        message = record.getMessage()
+        assert "tool=show_dose_status" in message and "reason=same_response" in message
+        assert "run_id=run-1" in message
+        assert "항생제" not in message and text not in message
+
     async def test_같은_이름_코스_둘도_출구에서_두_장이다(self):
         ctx, _ = world(antibiotic(), antibiotic())
         llm = FakeLLM(call("show_dose_status", {}))

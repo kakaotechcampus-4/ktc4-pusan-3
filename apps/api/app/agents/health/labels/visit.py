@@ -41,7 +41,7 @@ from app.agents.health.readouts import EMERGENCY, READOUTS, VISIT_NO_RECORD
 from app.agents.health.registry import OUTPUT_TOOLS, execute_tool, specs_for, tools_for
 from app.agents.health.result import ErrorCode, fail
 from app.agents.health.schemas.task import HealthTaskType
-from app.agents.health.tools.exits import blocked_exit
+from app.agents.health.tools.exits import blocked_exit, log_rejected_exit
 from app.agents.health.tools.fever import fever_readouts, infant_fever
 from app.agents.health.wording import squash
 
@@ -59,9 +59,9 @@ RECORD_DAYS = 30
 # 열 질문 표현. 걸리면 모델을 부르지 않고 체온 · 체크된 복약 · 먹인 약을 나열만 한다.
 # 공백을 없애고 견준다 — "열 언제" 와 "열언제" 를 같은 말로 본다
 FEVER_WORDS: tuple[str, ...] = ("열 언제", "열이 언제", "몇 도", "체온")
-# 정리를 원한다는 표현. 열 표현과 같이 있으면 정리로 간다. "진료" 가 든 말("진료 때 보여줄 거")도
-# 정리 쪽으로 읽는다 — 열 질문이 정리에 섞이는 쪽이 정리 요청이 열 타임라인으로 새는 쪽보다 낫다
-SUMMARY_WORDS: tuple[str, ...] = ("정리", "요약", "한눈에", "진료")
+# 정리를 원한다는 표현. 열 표현과 같이 있으면 정리로 간다. "진료" 는 넣지 않는다 — "열 언제부터였지,
+# 진료 갈 때 말하게" 가 정리로 가면 몇 도였는지가 빠진다(정리는 체온 칸을 싣지 않는다)
+SUMMARY_WORDS: tuple[str, ...] = ("정리", "요약", "한눈에")
 # 열 타임라인(최근 48시간)보다 긴 기간을 묻는 표현. 표에 안 걸린 열 질문 중 이런 말이 있으면
 # 열 타임라인 출구 대신 정리로 간다 — 48시간 앞의 열 기록이 빠지고, 체온 숫자가 없으면
 # "체온 기록이 없어요" 만 나간다
@@ -173,12 +173,14 @@ async def _summarize(
         # 읽기 전용 출구가 같은 응답의 정리를 가리지 않게 한다
         blocked = blocked_exit(name, messages, output_tools=OUTPUT_TOOLS[TASK])
         if blocked is not None:
+            log_rejected_exit(context.run_id, name, "same_response")
             return blocked
         if name == "show_fever_timeline" and (
             has_summary_words(task.request_texts) or has_long_period_words(task.request_texts)
         ):
             # 정리를 달라는 말이 섞였는데 열 타임라인으로 가면 식사 · 복약 체크 · 알레르기 줄이
             # 말없이 빠진다. 열 타임라인은 최근 48시간뿐이라 며칠 넘는 기간을 물은 말도 정리가 맞다
+            log_rejected_exit(context.run_id, name, "summary_or_long_period")
             return fail(
                 None,
                 name,

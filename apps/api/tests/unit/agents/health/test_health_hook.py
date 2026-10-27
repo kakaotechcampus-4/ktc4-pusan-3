@@ -190,6 +190,14 @@ class TestInfantFever:
 
         assert memory.calls == 0
 
+    async def test_정확히_3개월이면_안내도_없고_기록도_읽지_않는다(self):
+        # 경계는 hook 이 먼저 가른다 — 뒤의 infant_fever 가 같은 조건을 한 번 더 보더라도,
+        # 3개월이 된 날부터는 건강 기록을 읽지 않아야 한다
+        memory = InMemoryHealthMemory([_reading("38.3")])
+
+        assert await check_infant_fever(context(birth_for(3), memory=memory)) == ()
+        assert memory.calls == 0
+
     async def test_동의가_없으면_읽지_않는다(self):
         memory = InMemoryHealthMemory([_reading("38.3")])
         ctx = context(birth_for(2), consent=False, memory=memory)

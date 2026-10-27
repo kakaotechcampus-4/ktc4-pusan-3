@@ -7,12 +7,22 @@
 없이 사라지고 보호자는 묻지도 않은 안내를 받는다. 프롬프트에 "같이 부르지 않는다" 고 적어 두는
 것만으로는 막히지 않아서, 같은 응답에 다른 출력 tool 이 있으면 출구를 거절한다. 거절된 출구는
 통과하지 않으니 쓰기 요청이 실패해도 다음 왕복에서 고쳐 낼 수 있다. 출구끼리는 같이 불러도 된다.
+
+이 거절은 공통 loop 의 종료 규칙을 Health 안에서 우회하는 것이다. 공통 loop 가 "그 스텝의 출력
+tool 이 전부 통과해야 끝" 으로 바뀌면 같은 응답 거절(`blocked_exit`)은 필요 없어지니 그때 지운다.
+Food 의 `keep_daycare_meal` 도 같은 모양이라 그쪽은 공통 loop 에서 같이 풀린다.
 """
 
+import logging
 from collections.abc import Collection, Mapping, Sequence
-from typing import Any
+from typing import Any, Literal
 
 from app.agents.health.result import ErrorCode, ToolResult, fail
+
+logger = logging.getLogger(__name__)
+
+# 거절한 이유 — 같은 응답에 다른 출력 tool 이 있었다 · 정리나 긴 기간을 물은 말이다(열 출구만)
+RejectReason = Literal["same_response", "summary_or_long_period"]
 
 READ_ONLY_EXITS: frozenset[str] = frozenset(
     {"show_dose_status", "defer_dose_question", "show_fever_timeline"}
@@ -29,6 +39,16 @@ def same_response_calls(messages: Sequence[Mapping[str, Any]]) -> tuple[str, ...
         if message.get("role") == "assistant":
             return tuple(call["function"]["name"] for call in message.get("tool_calls") or ())
     return ()
+
+
+def log_rejected_exit(run_id: str, name: str, reason: RejectReason) -> None:
+    """출구를 거절했다는 사실만 남긴다 — 라이브에서 얼마나 일어나는지 세려는 로그다.
+
+    run id · tool 이름 · 이유뿐이고 요청 원문이나 약 이름은 싣지 않는다.
+    """
+    logger.info(
+        "Health 읽기 전용 출구를 거절했다 run_id=%s tool=%s reason=%s", run_id, name, reason
+    )
 
 
 def blocked_exit(

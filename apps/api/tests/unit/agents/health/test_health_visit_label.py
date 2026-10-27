@@ -214,6 +214,34 @@ def test_열_표현_표에_걸린다(text):
     assert is_fever_question([text])
 
 
+async def test_진료_말이_든_열_질문도_열_타임라인으로_간다():
+    # "진료" 를 정리 표현으로 보면 이 말이 정리로 가서 몇 도였는지가 빠진다 — 정리는 체온 칸을
+    # 싣지 않는다. 의사에게 말할 열 경과라면 체온이 남아야 한다
+    text = "열 언제부터였지, 진료 갈 때 말하게"
+    assert is_fever_question([text])
+
+    result = await run(visit(text), world(READING), client=FakeLLM())
+
+    assert result.model_calls == 0
+    assert any("38.5℃ (귀)" in r.body for r in result.readouts if r.kind == "fever_timeline")
+
+
+async def test_열_출구를_거절하면_이유를_로그에_남긴다(caplog):
+    llm = FakeLLM(
+        call("show_fever_timeline", {}),
+        call("search_health_observations", {}),
+        call("compose_symptom_timeline", {}),
+    )
+
+    with caplog.at_level("INFO", logger="app.agents.health"):
+        await run(visit("요즘 열 얼마나 났지?"), world(COUGH), client=llm)
+
+    [record] = [r for r in caplog.records if "출구를 거절" in r.getMessage()]
+    assert "tool=show_fever_timeline" in record.getMessage()
+    assert "reason=summary_or_long_period" in record.getMessage()
+    assert "요즘" not in record.getMessage()
+
+
 @pytest.mark.parametrize("text", ["증상 정리해줘", "진료 준비해줘", "기침 언제부터 했어?"])
 def test_열_표현이_아니면_걸리지_않는다(text):
     assert not is_fever_question([text])
