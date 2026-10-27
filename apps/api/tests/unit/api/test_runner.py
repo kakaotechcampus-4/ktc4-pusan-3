@@ -33,6 +33,8 @@ from app.agents.entrypoint import (
 from app.agents.memory.schemas.task import WorkType
 from app.api import agent_ports, idempotency
 from app.api.runs import pending_reply, registry, runner, suggestion_retry
+from app.domains.child.agent_reader import DbChildBasicReader
+from app.domains.medication.agent_reader import DbMedicationStore
 from app.domains.safety.agent_reader import DbSafetyReader
 
 PARENT = uuid.UUID(int=1)
@@ -129,6 +131,26 @@ async def test_agent_job_안전_어댑터를_Food_Activity_Growth_에_넘긴다(
     assert isinstance(seen["food_safety"], DbSafetyReader)
     assert seen["activity_safety"] is seen["food_safety"]
     assert seen["growth_safety"] is seen["food_safety"]
+
+
+async def test_agent_job_Health_포트를_진입점에_넘긴다(monkeypatch):
+    """복약 어댑터는 읽기와 중단 쓰기가 한 객체다. 안 넘기면 Health 는 읽을 때 실패로 닫힌다."""
+    seen: dict = {}
+
+    async def fake_handle_input(**kwargs):
+        seen.update(kwargs)
+        kwargs["emit"](Done(kwargs["run_id"], 1))
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+
+    job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    assert isinstance(seen["health_safety"], DbSafetyReader)
+    assert isinstance(seen["health_medication"], DbMedicationStore)
+    assert seen["health_medication_writer"] is seen["health_medication"]
+    assert isinstance(seen["health_child"], DbChildBasicReader)
 
 
 @pytest.mark.parametrize("key", ["test-auth-key", ""])

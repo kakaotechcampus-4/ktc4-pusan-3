@@ -88,8 +88,9 @@ async def test_컨텍스트를_만들어_pipeline_에_넘긴다(monkeypatch: pyt
     assert memory.now == food.now  # 기준일이 두 Agent 사이에서 갈리지 않게
     assert memory.timezone is food.timezone is entrypoint.KST
     assert memory.now.tzinfo is entrypoint.KST
-    # 구현된 Agent 마다 context 가 있어야 pipeline 이 찾는다
-    assert set(seen["contexts"]) == routing.IMPLEMENTED_AGENTS
+    # 구현된 Agent 마다 context 가 있어야 pipeline 이 찾는다. Health 는 배선만 되어 있고 라우팅이
+    # 아직 부르지 않아서 구현 목록 밖이다
+    assert set(seen["contexts"]) == routing.IMPLEMENTED_AGENTS | {"health"}
 
 
 def test_이벤트_타입이_전부_밖으로_나간다() -> None:

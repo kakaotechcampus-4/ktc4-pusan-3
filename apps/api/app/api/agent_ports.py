@@ -130,3 +130,22 @@ def growth_book_ports() -> dict[str, object]:
         "growth_books": Data4LibraryBooks(auth_key=key, cache=get_redis()),
         "growth_issued_books": DbIssuedBooks(background_session),
     }
+
+
+def health_ports() -> dict[str, object]:
+    """Health 가 읽는 안전 · 복약 · 아이 기본 정보 어댑터 — 러너가 넘긴다.
+
+    복약 어댑터는 읽기와 확인받은 중단 쓰기를 한 객체가 하고, 호출마다 짧은 세션을 연다. 만들 때는
+    세션을 열지 않는다. 05(`suggest`)는 Health 를 돌리지 않아 `safety_readers()` 에 섞지 않는다.
+    """
+    from app.domains.child.agent_reader import DbChildBasicReader
+    from app.domains.medication.agent_reader import DbMedicationStore
+    from app.domains.safety.agent_reader import DbSafetyReader
+
+    medication = DbMedicationStore(background_session)
+    return {
+        "health_safety": DbSafetyReader(background_session),
+        "health_medication": medication,
+        "health_medication_writer": medication,
+        "health_child": DbChildBasicReader(background_session),
+    }
