@@ -1,6 +1,7 @@
 "use client";
 
 import { Check, ChevronDown, ChevronUp } from "lucide-react";
+import type { ReactNode } from "react";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 
 import { cn } from "@/lib/cn";
@@ -49,7 +50,7 @@ import { ICON_SIZE, ICON_STROKE } from "./icon";
  *
  * ⚠️ **`shape` 는 이 상자가 어디에 서는가다.** 기본값 `pill` 은 §7 "고르기 상자" 사양
  *    (`full` · `min-h-touch`) 그대로고, `field` 는 **폼 칸**이라 `input`·`date-field` 와 같은
- *    모양·높이(`rounded-field` · `min-h-field`)를 쓴다. 한 폼 안에서 한 칸만 알약이고 8px 낮으면
+ *    모양·높이(`rounded-field` · `min-h-field`)와 라벨(`label`/`ink-muted`)을 쓴다. 한 폼 안에서 한 칸만 알약이고 8px 낮으면
  *    그 칸이 입력이 아니라 필터로 읽힌다 (문서 §7 "`min-h-field` 다" 와 같은 이유).
  *
  * 🚨 **사유(`error`)는 상자에 붙인다** (`TextInput` 과 같은 처리 · 문서 §7 입력).
@@ -57,6 +58,10 @@ import { ICON_SIZE, ICON_STROKE } from "./icon";
  *    `aria-invalid` 와 `aria-describedby` 를 함께 건다 — 색(`danger` 테두리)만으로는
  *    단독 신호가 되고, 안 고른 것을 "고르지 않음" 으로 넘길 수 있는 칸에서는 그게 곧
  *    **빈 값이 조용히 저장되는 길**이다.
+ *
+ * ⚠️ **설명(`hint`)은 라벨 아래, 상자 위다** (`TextInput` 과 같은 자리 · 문서 §7 입력).
+ *    🚨 툴팁으로 대신하지 않는다 — 화면 대부분이 웹뷰라 호버가 없고, `title` 도 터치에서는
+ *    뜨지 않는다. 상자에 `aria-describedby` 로 이어서 스크린리더가 값과 함께 읽는다.
  */
 export function Select<T extends string>({
   label,
@@ -64,6 +69,7 @@ export function Select<T extends string>({
   options,
   onChange,
   error,
+  hint,
   labelHidden = false,
   placeholder,
   shape = "pill",
@@ -75,6 +81,8 @@ export function Select<T extends string>({
   onChange: (value: T) => void;
   /** 고르지 않았거나 잘못 고른 이유. 🚨 상자 밖 문단으로 대신하지 않는다 (위 머리말). */
   error?: string | null;
+  /** 라벨 아래 설명. 무엇을 고르는 칸인지 라벨만으로 모자랄 때 쓴다 (위 머리말). */
+  hint?: ReactNode;
   /** 라벨을 `sr-only` 로 옮긴다. 🚨 지우는 것이 아니다 (위 머리말). */
   labelHidden?: boolean;
   /** 아직 안 골랐을 때의 문구. 🚨 없으면 첫 항목이 골라진 것처럼 보인다 (위 머리말). */
@@ -86,6 +94,7 @@ export function Select<T extends string>({
   const listId = `${id}-list`;
   const labelId = `${id}-label`;
   const errorId = `${id}-error`;
+  const hintId = `${id}-hint`;
 
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -144,10 +153,32 @@ export function Select<T extends string>({
   }
 
   return (
-    <div ref={rootRef} className="relative flex min-w-0 flex-1 flex-col gap-1">
-      <span id={labelId} className={labelHidden ? "sr-only" : "text-caption text-ink-subtle"}>
+    <div
+      ref={rootRef}
+      className={cn(
+        "relative flex min-w-0 flex-1 flex-col",
+        shape === "field" ? "gap-1.5" : "gap-1",
+      )}
+    >
+      {/* 🚨 폼 칸의 라벨은 `input`·`date-field` 와 같은 `label`/`ink-muted` 다 (위 머리말 `shape`).
+          필터 라벨(`caption`/`ink-subtle`)을 그대로 두면 아래 설명과 같은 글자가 돼서 두 줄짜리 라벨로 읽힌다. */}
+      <span
+        id={labelId}
+        className={
+          labelHidden
+            ? "sr-only"
+            : shape === "field"
+              ? "text-label text-ink-muted"
+              : "text-caption text-ink-subtle"
+        }
+      >
         {label}
       </span>
+      {hint ? (
+        <p id={hintId} className="text-caption text-ink-subtle">
+          {hint}
+        </p>
+      ) : null}
 
       <button
         ref={triggerRef}
@@ -160,7 +191,7 @@ export function Select<T extends string>({
         aria-controls={open ? listId : undefined}
         aria-labelledby={`${labelId} ${id}-value`}
         aria-invalid={error ? true : undefined}
-        aria-describedby={error ? errorId : undefined}
+        aria-describedby={cn(hint ? hintId : null, error ? errorId : null) || undefined}
         onClick={() => setOpen((prev) => !prev)}
         onKeyDown={(event) => {
           if (event.key === "ArrowDown" || event.key === "ArrowUp") {
