@@ -43,8 +43,12 @@ _TOOLS = """
 - 새로 먹이기 시작하는 약 → create_medication_schedule
 - 이미 등록된 약의 시각 · 양 · 기간 바꾸기 → update_medication_schedule (title_span 은 바꿀 약 이름)
 - 약을 끊기 · 그만 먹이기 → stop_medication_schedule (약 이름을 말하지 않았으면 비운다)
-- 용량 · 시각을 바꿔도 되는지 묻기만 하고 바꿀 값을 말하지 않았으면 update_medication_schedule 을
-  title_span 만 넣어 부른다. 바뀌는 게 없어서 코드가 안내만 내고, 되는지 안 되는지는 말하지 않는다.
+- 오늘 몇 번 먹였는지 · 마지막으로 언제 먹였는지처럼 체크 현황만 물으면 show_dose_status 를 인자
+  없이 부른다.
+- 용량 · 간격을 바꿔도 되는지(늘려도 · 줄여도) 묻기만 하고 바꿀 값을 말하지 않았으면
+  defer_dose_question 을 인자 없이 부른다. 되는지 안 되는지는 말하지 않는다.
+- show_dose_status · defer_dose_question 은 create · update · stop 과
+  같은 응답에서 부르지 않는다. 새 약 · 수정 · 중단 요청이 같이 있으면 그 tool 만 부른다.
 - 등록된 약이 무엇인지 알아야 할 때만 search_medication_schedules 를 먼저 부른다.
 - 이 요청은 저장되지 않는다. 보호자가 확인 카드에서 눌러야 등록되고, 중단은 코드가 한 번 더 묻는다.
 """.strip()
@@ -54,7 +58,8 @@ _VISIT_ROLE = """
 너는 보호자가 진료 볼 때 보여 줄 최근 건강 기록 정리를 요청받았다. 요청에서 기간과 증상 범위만 정해
 search_health_observations 를 부르고, 이어서 compose_symptom_timeline 을 **한 번** 부른다.
 정리할 줄 · 식사 · 복약 체크 · 문장은 코드가 기록에서 만든다 — 너는 줄을 고르거나 문장을
-쓰지 않는다.
+쓰지 않는다. 정리가 아니라 열이 언제부터였는지 · 몇 도였는지만 물었으면 정리하지 않고
+show_fever_timeline 을 한 번 부른다.
 """.strip()
 
 _VISIT_DONT = """
@@ -70,6 +75,10 @@ _VISIT_TOOLS = """
 - 기록이 없다는 결과가 와도 compose_symptom_timeline 을 부른다 — 식사 · 복약은 코드가 따로 읽는다.
 - compose_symptom_timeline 은 인자 없이 한 번 부른다. 알레르기 · 만성질환 줄도 코드가 붙인다.
   이 정리는 저장되지 않는다.
+- 열 경과만 물으면(최근 이틀 안) 정리하지 않고 show_fever_timeline 을 인자 없이 한 번 부른다.
+  요즘 · 최근 · 지난주처럼 며칠 넘는 기간을 물었으면 그 tool 을 쓰지 않고 정리한다.
+  search_health_observations 는 부르지 않는다. 정리까지 요청했으면 compose_symptom_timeline 만
+  부르고, show_fever_timeline 은 다른 출력 tool 과 같은 응답에서 부르지 않는다.
 """.strip()
 
 _SECTIONS: dict[HealthTaskType, tuple[str, ...]] = {

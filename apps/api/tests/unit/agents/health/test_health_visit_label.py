@@ -21,6 +21,7 @@ from app.agents.health.agent import run
 from app.agents.health.labels.visit import FEVER_WORDS, is_fever_question
 from app.agents.health.prompt import build_system_prompt
 from app.agents.health.readouts import READOUTS
+from app.agents.health.registry import execute_tool
 from app.agents.health.schemas.task import HealthTaskType
 from app.agents.health.store.inmemory import (
     InMemoryHealthMemory,
@@ -35,6 +36,7 @@ from tests.unit.agents.health.support import (
     FakeLLM,
     birth_for,
     call,
+    calls,
     context,
     gate,
     task,
@@ -212,6 +214,34 @@ def test_열_표현_표에_걸린다(text):
     assert is_fever_question([text])
 
 
+async def test_진료_말이_든_열_질문도_열_타임라인으로_간다():
+    # "진료" 를 정리 표현으로 보면 이 말이 정리로 가서 몇 도였는지가 빠진다 — 정리는 체온 칸을
+    # 싣지 않는다. 의사에게 말할 열 경과라면 체온이 남아야 한다
+    text = "열 언제부터였지, 진료 갈 때 말하게"
+    assert is_fever_question([text])
+
+    result = await run(visit(text), world(READING), client=FakeLLM())
+
+    assert result.model_calls == 0
+    assert any("38.5℃ (귀)" in r.body for r in result.readouts if r.kind == "fever_timeline")
+
+
+async def test_열_출구를_거절하면_이유를_로그에_남긴다(caplog):
+    llm = FakeLLM(
+        call("show_fever_timeline", {}),
+        call("search_health_observations", {}),
+        call("compose_symptom_timeline", {}),
+    )
+
+    with caplog.at_level("INFO", logger="app.agents.health"):
+        await run(visit("요즘 열 얼마나 났지?"), world(COUGH), client=llm)
+
+    [record] = [r for r in caplog.records if "출구를 거절" in r.getMessage()]
+    assert "tool=show_fever_timeline" in record.getMessage()
+    assert "reason=summary_or_long_period" in record.getMessage()
+    assert "요즘" not in record.getMessage()
+
+
 @pytest.mark.parametrize("text", ["증상 정리해줘", "진료 준비해줘", "기침 언제부터 했어?"])
 def test_열_표현이_아니면_걸리지_않는다(text):
     assert not is_fever_question([text])
@@ -286,6 +316,144 @@ async def test_3개월_이상이면_응급_안내가_없다():
     result = await run(visit("열 언제부터였지"), world(READING), client=FakeLLM())
 
     assert READOUTS.render("emergency") not in result.readouts
+
+
+async def test_표에_없는_열_질문은_모델이_열_타임라인을_고른다():
+    # "열나는데 언제부터였지" 는 열 표현 표에 안 걸려 모델로 가지만
+    # 정리 대신 열 타임라인 출구를 고른다
+    assert not is_fever_question(["열나는데 언제부터였지"])
+    table = await run(visit("열 언제부터였지"), world(READING), client=FakeLLM())
+    llm = FakeLLM(call("show_fever_timeline", {}))
+
+    result = await run(visit("열나는데 언제부터였지"), world(READING), client=llm)
+
+    assert result.status == "completed" and result.model_calls == 1
+    assert "symptom_timeline" not in {r.kind for r in result.readouts}
+    assert result.readouts == table.readouts  # 표가 받았을 때와 같은 줄이다
+
+
+async def test_모델이_고른_열_타임라인도_응급_안내가_먼저():
+    young = birth_for(2)
+    llm = FakeLLM(call("show_fever_timeline", {}))
+
+    result = await run(visit("열나는데 언제부터였지"), world(READING, birth=young), client=llm)
+
+    assert result.readouts[0] == READOUTS.render("emergency")
+    assert {r.kind for r in result.readouts[1:]} == {"fever_timeline"}
+
+
+async def test_열_타임라인_tool_은_건강_기록을_다시_읽지_않는다():
+    ctx = world(READING)
+    llm = FakeLLM(call("show_fever_timeline", {}))
+
+    result = await run(visit("열나는데 언제부터였지"), ctx, client=llm)
+
+    assert {r.kind for r in result.readouts} == {"fever_timeline"}
+    assert ctx.ports.memory.calls == 1  # 라벨이 읽은 30일 기록을 그대로 쓴다
+
+
+async def test_열_타임라인을_두_번_불러도_한_벌이다():
+    once = await run(
+        visit("열나는데 언제부터였지"),
+        world(READING),
+        client=FakeLLM(call("show_fever_timeline", {})),
+    )
+    twice = await run(
+        visit("열나는데 언제부터였지"),
+        world(READING),
+        client=FakeLLM(calls(("show_fever_timeline", {}), ("show_fever_timeline", {}))),
+    )
+
+    assert {r.kind for r in once.readouts} == {"fever_timeline"}
+    assert twice.readouts == once.readouts
+
+
+async def test_정리_말이_섞인_요청은_열_타임라인_출구를_막는다():
+    # 정리 요청이 열 타임라인으로 새면 식사 · 복약 체크 · 알레르기 줄이 말없이 빠진다
+    text = "지난주 열 났던 거 포함해서 진료 때 보여줄 거 만들어줘"
+    llm = FakeLLM(
+        call("show_fever_timeline", {}),
+        call("search_health_observations", {}),
+        call("compose_symptom_timeline", {}),
+    )
+
+    result = await run(visit(text), world(READING), client=llm)
+
+    assert result.status == "completed" and result.model_calls == 1
+    assert [r.kind for r in result.readouts] == ["symptom_timeline"]
+    assert len(llm.seen) == 3
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "요즘 열 얼마나 났지?",
+        "최근에 열 몇 번 났더라",
+        "이번 주에 열이 얼마나 났어",
+        "지난주 열 어땠지",
+    ],
+)
+async def test_긴_기간을_묻는_말은_열_타임라인_출구를_막는다(text):
+    # 열 타임라인은 최근 48시간뿐이다 — 며칠 넘는 기간을 묻는 말에 내면 그 앞의 열 기록은 빠지고
+    # 체온 숫자가 없으면 "체온 기록이 없어요" 만 나갈 수 있다. 정리가 며칠 치 기록을 담는다
+    assert not is_fever_question(
+        [text]
+    )  # 표는 이 말을 받지 않는다 — 모델이 출구를 고를 수 있는 말이다
+    llm = FakeLLM(
+        call("show_fever_timeline", {}),
+        call("search_health_observations", {}),
+        call("compose_symptom_timeline", {}),
+    )
+
+    result = await run(visit(text), world(COUGH), client=llm)
+
+    assert result.status == "completed" and result.model_calls == 1
+    assert [r.kind for r in result.readouts] == ["symptom_timeline"]
+    assert len(llm.seen) == 3
+
+
+async def test_짧은_열_경과_질문은_출구를_막지_않는다():
+    # 막는 것은 긴 기간 · 정리 표현뿐이다 — T22 의 "열나는데 언제부터였지" 는 그대로 출구로 간다
+    llm = FakeLLM(call("show_fever_timeline", {}))
+
+    result = await run(visit("열나는데 언제부터였지"), world(READING), client=llm)
+
+    assert {r.kind for r in result.readouts} == {"fever_timeline"}
+    assert len(llm.seen) == 1
+
+
+async def test_출구가_같은_응답의_정리를_가리지_않는다():
+    llm = FakeLLM(
+        calls(
+            ("show_fever_timeline", {}),
+            ("search_health_observations", {}),
+            ("compose_symptom_timeline", {}),
+        )
+    )
+
+    result = await run(visit("열나는데 언제부터였고 기침도 정리해줘"), world(READING), client=llm)
+
+    assert [r.kind for r in result.readouts] == ["symptom_timeline"]
+
+
+async def test_열_타임라인_tool_은_라벨_밖에서도_기록을_읽는다():
+    # 라벨이 기록을 보관하기 전이어도 "기록 없음" 으로 읽히면 안 된다
+    # 못 읽은 것과 없는 것은 다르다
+    ctx = world(READING)
+
+    outcome = await execute_tool("show_fever_timeline", {}, ctx, allowed=("show_fever_timeline",))
+
+    assert outcome.success is True
+    assert {r.kind for r in ctx.state.readouts} == {"fever_timeline"}
+    assert READOUTS.render("fever.no_record") not in ctx.state.readouts
+    assert ctx.ports.memory.calls == 1
+
+
+async def test_프롬프트가_열_경과만_묻는_말의_길을_알려_준다():
+    prompt = build_system_prompt(world(), HealthTaskType.VISIT_SUMMARY)
+
+    assert "show_fever_timeline" in prompt
+    assert "같은 응답에서 부르지 않는다" in prompt  # 정리까지 요청했으면 정리 tool 만 부른다
 
 
 async def test_발열_기록이_없으면_응급_안내가_없다():
@@ -425,11 +593,13 @@ class TestRegistered:
         assert HealthTaskType.VISIT_SUMMARY in registry.IMPLEMENTED_TASKS
         assert set(agent._LABEL_RUNNERS) == registry.IMPLEMENTED_TASKS
 
-    def test_모델에는_증상_조회와_출력_하나만_열린다(self):
-        # 식사 · 복약 체크는 코드가 늘 읽는다 — 모델에게 고르게 하지 않는다 (#551 리뷰)
+    def test_모델에는_증상_조회와_출력_둘만_열린다(self):
+        # 식사 · 복약 체크는 코드가 늘 읽는다 — 모델에게 고르게 하지 않는다.
+        # 열 경과만 묻는 말의 출구(show_fever_timeline)는 인자가 없는 읽기 전용 출력이다
         assert registry.tools_for(HealthTaskType.VISIT_SUMMARY, gate(48)) == (
             "compose_symptom_timeline",
             "search_health_observations",
+            "show_fever_timeline",
         )
 
 

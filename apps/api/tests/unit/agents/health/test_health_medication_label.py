@@ -26,6 +26,8 @@ from app.agents.health.labels.medication import (
 )
 from app.agents.health.prompt import build_system_prompt
 from app.agents.health.readouts import READOUTS
+from app.agents.health.registry import execute_tool
+from app.agents.health.result import ErrorCode
 from app.agents.health.schemas.task import HealthTaskType
 from app.agents.health.store.inmemory import (
     InMemoryHealthSafety,
@@ -183,7 +185,9 @@ class TestModelPath:
 
         assert sorted(seen_tools) == [
             "create_medication_schedule",
+            "defer_dose_question",
             "search_medication_schedules",
+            "show_dose_status",
             "stop_medication_schedule",
             "update_medication_schedule",
         ]
@@ -776,12 +780,150 @@ class TestNothingToChange:
         assert result.status == "completed" and result.medication_drafts == ()
         assert [r.body for r in result.readouts] == [READOUTS.render("med.no_change").body]
 
-    async def test_프롬프트가_바꿀_게_없는_말의_길을_알려_준다(self):
+    async def test_프롬프트가_용량_질문을_처방한_곳_안내로_보낸다(self):
         ctx, _ = world()
 
         prompt = build_system_prompt(ctx, HealthTaskType.MEDICATION)
 
-        assert "title_span 만" in prompt and "용량" in prompt
+        assert "defer_dose_question" in prompt and "show_dose_status" in prompt
+        assert "title_span 만" not in prompt  # 이름만 넣은 수정으로 돌려 말하지 않는다
+        # "더 먹여도" 는 표가 먼저 받아 dose.status 로 간다 — 출구 안내에 넣으면 두 길이 어긋난다
+        assert "더 먹여도" not in prompt
+
+    async def test_프롬프트가_읽기_전용_출구를_쓰기_출력과_같이_부르지_말라고_한다(self):
+        # 새 약 등록 · 수정 · 중단이 같이 온 말이면 그 쓰기 출력 tool 만 부른다
+        ctx, _ = world()
+
+        prompt = build_system_prompt(ctx, HealthTaskType.MEDICATION)
+
+        assert "같은 응답에서 부르지 않는다" in prompt
+
+
+class TestReadOnlyOutputs:
+    """표에 안 걸린 현황 · 용량 질문은 모델이 읽기 전용 출구를 고른다 — 내용은 코드가 낸다."""
+
+    async def test_오늘_몇_번_먹였지는_모델이_현황을_고른다(self):
+        ctx, store = world(antibiotic(checked={(TODAY, time(8, 30))}))
+        llm = FakeLLM(call("show_dose_status", {}))
+
+        result = await run(med("오늘 몇 번 먹였지?"), ctx, client=llm)
+
+        assert result.status == "completed" and result.model_calls == 1
+        assert [r.kind for r in result.readouts] == ["dose_status"]
+        assert [r.title for r in result.readouts] == ["항생제"]
+        assert "오늘 체크 1/3회" in result.readouts[0].body
+        assert result.medication_drafts == () and result.needs_observation == ()
+        assert result.pending is None and store.writes == []
+
+    async def test_양_늘려도_돼는_처방한_곳_안내(self):
+        ctx, store = world(antibiotic())
+        llm = FakeLLM(call("defer_dose_question", {}))
+
+        result = await run(med("항생제 양 늘려도 돼?"), ctx, client=llm)
+
+        assert result.status == "completed" and result.model_calls == 1
+        assert [r.body for r in result.readouts] == [READOUTS.render("med.ask_prescriber").body]
+        assert result.readouts[0].authored_by == "code"
+        assert result.medication_drafts == () and result.needs_observation == ()
+        assert result.pending is None and store.writes == []
+
+    async def test_복약이_없으면_현황_대신_없음(self):
+        ctx, _ = world()
+        llm = FakeLLM(call("show_dose_status", {}))
+
+        result = await run(med("오늘 몇 번 먹였지?"), ctx, client=llm)
+
+        assert [r.body for r in result.readouts] == [READOUTS.render("notice.no_active_med").body]
+
+    async def test_현황을_두_번_불러도_한_벌이다(self):
+        ctx, _ = world(antibiotic())
+        llm = FakeLLM(calls(("show_dose_status", {}), ("show_dose_status", {})))
+
+        result = await run(med("오늘 몇 번 먹였지?"), ctx, client=llm)
+
+        assert len(result.readouts) == 1
+
+    async def test_두_출구를_같이_불러도_각각_한_번이다(self):
+        ctx, _ = world(antibiotic())
+        llm = FakeLLM(calls(("show_dose_status", {}), ("defer_dose_question", {})))
+
+        result = await run(med("몇 번 먹였고 양 늘려도 돼?"), ctx, client=llm)
+
+        assert sorted(r.kind for r in result.readouts) == ["dose_status", "medication_notice"]
+
+    async def test_현황_tool_결과가_모델에게_가져가는_것은_개수뿐이다(self):
+        # 약 이름 · 용량은 외부 모델로 보내지 않는다
+        ctx, _ = world(antibiotic(dosage="5ml"))
+
+        outcome = await execute_tool("show_dose_status", {}, ctx, allowed=("show_dose_status",))
+
+        assert outcome.success is True
+        assert outcome.data == {"shown": 1}
+        assert "항생제" not in str(outcome.to_payload()) and "5ml" not in str(outcome.to_payload())
+
+    async def test_출구가_같은_응답의_틀린_쓰기_요청을_가리지_않는다(self):
+        # 출구가 통과하면 loop 가 끝나 틀린 등록 요청이 고쳐 볼 기회 없이 사라진다 — 출구를 거절한다
+        ctx, _ = world()
+        llm = FakeLLM(
+            calls(
+                ("show_dose_status", {}),
+                (
+                    "create_medication_schedule",
+                    {"title_span": "아목시실린", "timing_spans": ["하루 세 번 식후"]},
+                ),
+            ),
+            call(
+                "create_medication_schedule",
+                {"title_span": "항생제", "timing_spans": ["하루 세 번 식후"]},
+            ),
+        )
+
+        result = await run(med("몇 번 먹였지? 그리고 항생제 하루 세 번 식후"), ctx, client=llm)
+
+        assert result.status == "completed" and len(result.medication_drafts) == 1
+        assert len(llm.seen) == 2 and result.model_calls == 1
+        assert "dose_status" not in {r.kind for r in result.readouts}
+
+    async def test_출구를_거절하면_횟수를_셀_수_있게_로그를_남기되_원문은_싣지_않는다(self, caplog):
+        # 라이브에서 거절이 얼마나 일어나는지 보려는 로그다 — tool 이름 · 이유 · run id 만 남긴다
+        ctx, _ = world()
+        text = "몇 번 먹였지? 그리고 항생제 하루 세 번 식후"
+        llm = FakeLLM(
+            calls(
+                ("show_dose_status", {}),
+                (
+                    "create_medication_schedule",
+                    {"title_span": "항생제", "timing_spans": ["하루 세 번 식후"]},
+                ),
+            )
+        )
+
+        with caplog.at_level("INFO", logger="app.agents.health"):
+            await run(med(text), ctx, client=llm)
+
+        [record] = [r for r in caplog.records if "출구를 거절" in r.getMessage()]
+        message = record.getMessage()
+        assert "tool=show_dose_status" in message and "reason=same_response" in message
+        assert "run_id=run-1" in message
+        assert "항생제" not in message and text not in message
+
+    async def test_같은_이름_코스_둘도_출구에서_두_장이다(self):
+        ctx, _ = world(antibiotic(), antibiotic())
+        llm = FakeLLM(call("show_dose_status", {}))
+
+        result = await run(med("오늘 몇 번 먹였지?"), ctx, client=llm)
+
+        assert [r.kind for r in result.readouts] == ["dose_status", "dose_status"]
+
+    async def test_인자를_넘기면_거절한다(self):
+        ctx, _ = world(antibiotic())
+
+        outcome = await execute_tool(
+            "defer_dose_question", {"title_span": "항생제"}, ctx, allowed=("defer_dose_question",)
+        )
+
+        assert outcome.success is False
+        assert outcome.error is not None and outcome.error["code"] == ErrorCode.INVALID_ARGS
 
 
 class TestStopCueWords:

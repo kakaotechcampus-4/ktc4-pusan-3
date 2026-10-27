@@ -11,7 +11,7 @@
 import json
 import re
 from collections.abc import Callable, Iterable
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import date, datetime, time, timedelta, tzinfo
 from types import EllipsisType
 from uuid import UUID
@@ -758,12 +758,13 @@ def med_stop_which(*, then: str) -> Callable[[Ran], Verdict]:
 
 
 def med_no_advice() -> Callable[[Ran], Verdict]:
-    """용량을 늘려도 되는지 묻는 말 — 초안도 쓰기도 없고, 바꿀 게 없다는 안내로 끝난다.
+    """용량을 늘려도 되는지 묻는 말 — 초안도 쓰기도 없고, 처방한 곳에 확인하라는 안내로 끝난다.
 
-    용량 판단 문구는 공통 금지어가 본다. 안내(`med.no_change`)가 없으면 모델이 다른 길로 샌 것이고,
-    completed 가 아니면 바꿀 값이 없다는 호출이 실패로 돌아가 모델이 같은 호출을 되풀이한 것이다.
+    용량 판단 문구는 공통 금지어가 본다. 안내(`med.ask_prescriber`)가 없으면 모델이 다른 길로
+    샌 것이고(이름만 넣은 수정으로 돌려 말한 `med.no_change` 도 여기 든다), completed 가 아니면
+    출구 호출이 실패로 돌아가 모델이 같은 호출을 되풀이한 것이다.
     """
-    notice = READOUTS.render("med.no_change").body
+    notice = READOUTS.render("med.ask_prescriber").body
 
     def judge(ran: Ran) -> Verdict:
         verdict = Verdict()
@@ -778,7 +779,7 @@ def med_no_advice() -> Callable[[Ran], Verdict]:
                 if turn.result.pending is not None or turn.result.needs_observation:
                     verdict.failures.append(f"{number}번째 턴 — 용량 문의에 되묻기가 나갔다")
                 if notice not in [readout.body for readout in turn.result.readouts]:
-                    verdict.failures.append(f"{number}번째 턴 — med.no_change 안내가 없다")
+                    verdict.failures.append(f"{number}번째 턴 — med.ask_prescriber 안내가 없다")
             if turn.result.medication_drafts:
                 verdict.failures.append(f"{number}번째 턴 — 용량 문의에 초안이 나갔다")
             if turn.writes:
@@ -790,8 +791,11 @@ def med_no_advice() -> Callable[[Ran], Verdict]:
     return judge
 
 
-def _facts(ran: Ran) -> tuple[DomainAgentResult | None, Verdict]:
-    """모델 없이 사실만 내는 경로의 공통 조건 — completed · 모델 0회 · 초안 · 되묻기 · 쓰기 0."""
+def _facts(ran: Ran, *, model_calls: int = 0) -> tuple[DomainAgentResult | None, Verdict]:
+    """사실만 내는 경로의 공통 조건 — completed · 모델 `model_calls`회 · 초안 · 되묻기 · 쓰기 0.
+
+    기본은 0회다. 표에 안 걸린 질문이 모델을 한 번 거쳐 읽기 전용 출구로 나가는 경로만 1 을 준다.
+    """
     verdict = Verdict()
     result = ran.result
     if result is None:
@@ -799,8 +803,8 @@ def _facts(ran: Ran) -> tuple[DomainAgentResult | None, Verdict]:
         return None, verdict
     if result.status != "completed":
         verdict.failures.append(f"status 가 {result.status} 다 (completed 여야 한다)")
-    if result.model_calls != 0:
-        verdict.failures.append(f"모델을 {result.model_calls}회 불렀다 (0회여야 한다)")
+    if result.model_calls != model_calls:
+        verdict.failures.append(f"모델을 {result.model_calls}회 불렀다 ({model_calls}회여야 한다)")
     if result.medication_drafts or result.pending is not None or result.needs_observation:
         verdict.failures.append("초안이나 되묻기가 나갔다 (사실만 나간다)")
     if ran.world.medication.writes:
@@ -809,12 +813,29 @@ def _facts(ran: Ran) -> tuple[DomainAgentResult | None, Verdict]:
 
 
 def check_on_screen() -> Callable[[Ran], Verdict]:
-    """ "먹였어" · "못 먹였어" — 모델 0회 · 쓰기 0 · 복약 화면에서 체크하라는 안내만."""
+    """ "먹였어" · "못 먹였어" — 모델 0회 · 쓰기 0 · 복약 화면에서 체크하라는 안내만.
+
+    안내에는 세계의 진행 중 코스가 ref 로 다 붙는다 — 화면이 그 코스를 가리킬 수 있게 하는 값이고,
+    체크할 수 없는 끝났거나 멈춘 코스는 없다.
+    """
 
     def judge(ran: Ran) -> Verdict:
         result, verdict = _facts(ran)
-        if result is not None and result.readouts != (READOUTS.render(DOSE_CHECK_ON_SCREEN),):
+        if result is None:
+            return verdict
+        want = READOUTS.render(DOSE_CHECK_ON_SCREEN)
+        if len(result.readouts) != 1 or replace(result.readouts[0], source_refs=()) != want:
             verdict.failures.append("dose.check_on_screen 문구가 글자 그대로 나가지 않았다")
+            return verdict
+        today = ran.world.today
+        running = {
+            ("medication_schedule", course.id)
+            for course in ran.world.courses
+            if course.status == "active" and course.starts_on <= today <= course.ends_on
+        }
+        refs = {(ref.kind, ref.id) for ref in result.readouts[0].source_refs}
+        if refs != running:
+            verdict.failures.append("안내의 코스 ref 가 세계의 진행 중 코스와 다르다")
         return verdict
 
     return judge
@@ -832,11 +853,15 @@ def no_active_med() -> Callable[[Ran], Verdict]:
     return judge
 
 
-def dose_status() -> Callable[[Ran], Verdict]:
-    """다음 약 언제 · 또 먹여도 돼 — 체크된 회차 기준 사실만. 허가 문구도 "안 먹였다" 도 없다."""
+def dose_status(*, model_calls: int = 0) -> Callable[[Ran], Verdict]:
+    """다음 약 언제 · 또 먹여도 돼 — 체크된 회차 기준 사실만. 허가 문구도 "안 먹였다" 도 없다.
+
+    표에 안 걸린 현황 질문("오늘 몇 번 먹였지?")은 모델이 읽기 전용 출구를 골라 같은 사실을 낸다 —
+    그 경로는 `model_calls=1` 이다.
+    """
 
     def judge(ran: Ran) -> Verdict:
-        result, verdict = _facts(ran)
+        result, verdict = _facts(ran, model_calls=model_calls)
         if result is None:
             return verdict
         # C48: 어제는 세 회차 모두 · 오늘은 08:30 만 체크했고 지금은 14:00 이다
@@ -854,8 +879,14 @@ def dose_status() -> Callable[[Ran], Verdict]:
     return judge
 
 
-def handoff_notice() -> Callable[[Ran], Verdict]:
-    """투약의뢰서 — 고정 서식 · 모델 0회 · 끝에 늘 서명 문구."""
+def handoff_notice(
+    *, storage: str = "-", indication: str = "-", note: str = "-"
+) -> Callable[[Ran], Verdict]:
+    """투약의뢰서 — 고정 서식 · 모델 0회 · 끝에 늘 서명 문구.
+
+    보관 · 복용 이유 · 특이사항은 보호자가 카드에서 적는 칸이라 기본은 빈 칸(`-`)이다. 적은 세계는
+    기대 문자열을 넘긴다 — 특이사항의 줄바꿈은 공백 하나로 나와서 서식이 줄 단위로 남아야 한다.
+    """
 
     def judge(ran: Ran) -> Verdict:
         result, verdict = _facts(ran)
@@ -865,17 +896,124 @@ def handoff_notice() -> Callable[[Ran], Verdict]:
             verdict.failures.append("med_notice_form 한 장이 아니다")
             return verdict
         lines = result.readouts[0].body.split("\n")
+        course = ran.world.courses[0]
         want = [
             f"[투약 의뢰서]  {ran.world.today.isoformat()}",
+            f"• 아이 : {ran.world.spec.nickname}",
             "• 약 종류 : 항생제 (5ml)",
             "• 투약 시각 : 08:30 · 12:30 · 19:30",
-            "• 보관 : -",
-            "• 복용 이유 : -",
-            "• 특이사항 : -",
+            f"• 투약 기간 : {course.starts_on.isoformat()} ~ {course.ends_on.isoformat()}",
+            f"• 보관 : {storage}",
+            f"• 복용 이유 : {indication}",
+            f"• 특이사항 : {note}",
             READOUTS.render(NOTICE_SIGNATURE).body,
         ]
         if lines != want:
             verdict.failures.append(f"서식이 고정 문구가 아니다: {lines}")
+        return verdict
+
+    return judge
+
+
+def emergency_card_detail() -> Callable[[Ran], Verdict]:
+    """응급 카드 — 알레르기 · 만성질환 이름 뒤에 보호자가 등록한 반응 · 대처 원문이 붙는다.
+
+    세계(`C48-card-detail`)의 땅콩에는 반응 둘 · 대처, 천식에는 줄바꿈이 든 대처가 있다. 카드는
+    줄 단위라서 대처의 줄바꿈은 공백 하나로 나와야 하고(줄 수가 늘면 칸이 깨진 것이다), 판단 ·
+    연락처 문구는 없다.
+    """
+
+    want = [
+        "• 알레르기 : 땅콩 (반응: 두드러기 · 입술 부음 / 대처: 에피펜 놓고 119)",
+        "• 만성질환 : 천식 (대처: 흡입기 하루 두 번 증상이 심하면 병원)",
+    ]
+
+    def judge(ran: Ran) -> Verdict:
+        result, verdict = _facts(ran)
+        if result is None:
+            return verdict
+        if len(result.readouts) != 1 or result.readouts[0].kind != "emergency_card":
+            verdict.failures.append("emergency_card 한 장이 아니다")
+            return verdict
+        lines = result.readouts[0].body.split("\n")
+        for line in want:
+            if line not in lines:
+                verdict.failures.append(
+                    f"등록한 반응 · 대처가 이름 뒤에 그대로 붙지 않았다: {line!r}"
+                )
+        # 머리 · 아이 · 알레르기 · 만성질환 · 복용 중인 약 — 줄바꿈이 새면 줄이 늘어난다
+        if len(lines) != 5:
+            verdict.failures.append(
+                f"카드가 5줄이 아니다({len(lines)}줄) — 원문의 줄바꿈이 샜다: {lines}"
+            )
+        for phrase in ("연락처", "전화", "위험", "주의", "조심", "심각"):
+            if phrase in result.readouts[0].body:
+                verdict.failures.append(f"카드에 '{phrase}' 가 있다")
+        return verdict
+
+    return judge
+
+
+def dose_status_per_course() -> Callable[[Ran], Verdict]:
+    """같은 이름 · 같은 체크 수의 진행 중 코스 둘 — 체크 현황이 코스마다 한 장, 다른 ref 로 난다."""
+
+    def judge(ran: Ran) -> Verdict:
+        result, verdict = _facts(ran)
+        if result is None:
+            return verdict
+        want = "마지막 체크 08:30 회차 · 다음 예정 19:30 · 오늘 체크 1/3회"
+        if [r.kind for r in result.readouts] != ["dose_status"] * len(ran.world.courses):
+            verdict.failures.append(
+                f"dose_status 가 코스 수({len(ran.world.courses)})만큼 아니다: "
+                f"{[r.kind for r in result.readouts]}"
+            )
+            return verdict
+        for number, readout in enumerate(result.readouts, start=1):
+            if readout.body != want:
+                verdict.failures.append(
+                    f"{number}번째 dose.status 가 {readout.body!r} 다 ({want!r})"
+                )
+        refs = [{(ref.kind, ref.id) for ref in r.source_refs} for r in result.readouts]
+        running = {("medication_schedule", course.id) for course in ran.world.courses}
+        if any(len(each) != 1 for each in refs) or set().union(*refs) != running:
+            verdict.failures.append(
+                "코스마다 하나씩 그 코스의 ref(medication_schedule)가 달리지 않았다"
+            )
+        return verdict
+
+    return judge
+
+
+def infant_fever_hook(*, alert: bool, reads: bool = True) -> Callable[[Ran], Verdict]:
+    """3개월 미만 발열 hook — 기록만 해도 응급 안내 한 건. 모델 0회 · 쓰기 0 · 추천 · 초안 0.
+
+    `alert=False` 면 아무것도 내지 않는다. `reads=False` 는 건강 기록을 읽으면 안 되는 세계다
+    (3개월 이상 · 건강정보 동의 없음) — 읽기 횟수가 0 이어야 한다.
+    """
+
+    def judge(ran: Ran) -> Verdict:
+        verdict = Verdict()
+        result = ran.result
+        if result is None:
+            verdict.failures.append("hook 결과가 없다")
+            return verdict
+        want = (READOUTS.render(EMERGENCY),) if alert else ()
+        if result.readouts != want:
+            verdict.failures.append(
+                f"응급 안내가 {'한 건이어야 한다' if alert else '없어야 한다'}: "
+                f"{[r.kind for r in result.readouts]}"
+            )
+        if result.status != "completed" or result.model_calls != 0:
+            verdict.failures.append(
+                f"status={result.status} 모델 {result.model_calls}회 (hook 은 0회)"
+            )
+        if result.medication_drafts or result.event_requests or result.suggestions:
+            verdict.failures.append("hook 이 추천 · 초안 · 일정 요청을 냈다 (아무것도 쓰지 않는다)")
+        if ran.world.medication.writes:
+            verdict.failures.append("hook 이 썼다 (0건이어야 한다)")
+        read_calls = ran.world.context.ports.memory.calls
+        if not reads and read_calls != 0:
+            verdict.failures.append(f"읽으면 안 되는 세계에서 건강 기록을 {read_calls}회 읽었다")
         return verdict
 
     return judge
@@ -1012,8 +1150,13 @@ def visit_no_record() -> Callable[[Ran], Verdict]:
     return judge
 
 
-def fever_timeline(*, emergency_first: bool = False) -> Callable[[Ran], Verdict]:
+def fever_timeline(
+    *, emergency_first: bool = False, model_calls: int = 0
+) -> Callable[[Ran], Verdict]:
     """열 타임라인 판정 — 모델 0회 · 줄마다 ref · 나열만.
+
+    열 표현 표에 안 걸린 열 질문은 모델이 정리 대신 열 타임라인 출구를 골라 같은 줄을 낸다 —
+    그 경로는 `model_calls=1` 이고, 정리(`symptom_timeline`)가 섞이면 "열 타임라인이 아닌 줄" 이다.
 
     최근 48시간의 세계 기록에서 기대를 센다. 세계의 체온 기록은 전부 잰 시각이 있다.
       - 체온 줄은 기록마다 한 줄, 숫자는 말한 그대로, 시간순. 최고 · 최저와 그 시각
@@ -1027,7 +1170,7 @@ def fever_timeline(*, emergency_first: bool = False) -> Callable[[Ran], Verdict]
     """
 
     def judge(ran: Ran) -> Verdict:
-        result, verdict = _facts(ran)
+        result, verdict = _facts(ran, model_calls=model_calls)
         if result is None:
             return verdict
         readouts = list(result.readouts)

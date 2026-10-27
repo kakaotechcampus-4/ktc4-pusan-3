@@ -27,7 +27,7 @@ from app.agents.common.datetime_rules import build_observed_range
 from app.agents.common.schemas.task import DomainTask
 from app.agents.health import agent as health_agent
 from app.agents.health.envelope import result as hook_result
-from app.agents.health.hook import check_symptom_repetition
+from app.agents.health.hook import check_infant_fever, check_symptom_repetition
 from app.agents.memory import agent as memory_agent
 from app.agents.memory.context import AgentContext
 from app.agents.memory.store import InMemoryStore
@@ -73,7 +73,10 @@ async def run_case(case: Case, *, client: Any | None) -> Ran:
     if case.label is None:
         # hook 케이스 — 라벨이 아니라 Memory 저장 직후 pipeline 이 부르는 함수를 직접 부른다.
         # pipeline 연결은 다른 이슈라 여기서는 결과를 봉투에 싸기만 한다
-        readouts = await check_symptom_repetition(world.context, guidance=EVAL_GUIDANCE)
+        if case.hook == "infant_fever":
+            readouts = await check_infant_fever(world.context)
+        else:
+            readouts = await check_symptom_repetition(world.context, guidance=EVAL_GUIDANCE)
         result = hook_result(None, "completed", readouts=readouts)
     else:
         context = world.context

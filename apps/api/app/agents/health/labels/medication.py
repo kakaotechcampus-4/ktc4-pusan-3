@@ -4,7 +4,7 @@
   ① 이어받은 되묻기 맥락(`context.pending`)이 있으면 kind 별로 이어 간다 — **전부 모델 0회**
   ② 조회 표현("다음 약 언제") → 체크된 회차 기준 사실만 (`dose.status`) — 모델 0회
   ③ 복용 표현("먹였어" · "못 먹였어") → 아무것도 쓰지 않고 복약 화면 체크 안내 — 모델 0회
-  ④ 그 밖에는 tool loop — 새 약 · 바꾸기 · 끊기. 모델 1회
+  ④ 그 밖에는 tool loop — 새 약 · 바꾸기 · 끊기 · 표에 안 걸린 체크 현황 · 용량 질문. 모델 1회
 
 Agent 가 쓰는 것은 한 번 물어 보호자가 확인한 **중단 하나**뿐이다. 생성 · 수정은 초안까지만이고
 (보호자가 카드에서 제출해야 백엔드가 쓴다), 복용 체크는 보호자가 화면에서 한다.
@@ -58,6 +58,7 @@ from app.agents.health.tools.drafts import (
     finish_update,
     update_for,
 )
+from app.agents.health.tools.exits import blocked_exit, log_rejected_exit
 from app.agents.health.tools.spans import normalize_spaces
 from app.agents.health.tools.timing import (
     anchors_named,
@@ -172,6 +173,11 @@ async def _converse(
     ]
 
     async def execute(name: str, arguments: dict[str, Any]) -> ToolResult:
+        # 읽기 전용 출구가 같은 응답의 쓰기 요청을 가리지 않게 한다
+        blocked = blocked_exit(name, messages, output_tools=OUTPUT_TOOLS[TASK])
+        if blocked is not None:
+            log_rejected_exit(context.run_id, name, "same_response")
+            return blocked
         return await execute_tool(name, arguments, context, allowed=allowed)
 
     loop = await run_tool_loop(

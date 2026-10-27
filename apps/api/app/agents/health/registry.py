@@ -11,13 +11,17 @@ task별 모델 tool (코드 tool 은 모델에 노출하지 않는다 — 노출
 
 - visit_summary   search_health_observations(기간 · 증상 하나를 정한다) ·
                   compose_symptom_timeline(출력, 인자 없음). 모델은 줄을 고르지 않는다 — 식사 ·
-                  복약 체크는 코드 tool 이 늘 넣는다(#551 리뷰). 조회 결과는 줄 수뿐이다
+                  복약 체크는 코드 tool 이 늘 넣는다(모델에게 고르게 하면 건너뛴다). 조회 결과는
+                  줄 수뿐이다.
+                  show_fever_timeline(출력, 인자 없음)은 열 표현 표에 안 걸린 열 질문의 출구다
 - medication      search_medication_schedules · create / update / stop_medication_schedule
-                  (생성 · 수정 · 중단이 출력. 복용 체크는 tool 이 아니라 보호자 화면이다)
+                  (생성 · 수정 · 중단이 출력) · show_dose_status · defer_dose_question(인자 없는
+                  읽기 전용 출력 — 표에 안 걸린 현황 · 용량 질문의 출구). 복용 체크는 tool 이
+                  아니라 보호자 화면이다
 - schedule_check · place_lookup · care_handoff   모델을 부르지 않는다
 
-hook(`check_symptom_repetition` · `lookup_condition_guidance`)은 Memory 가 `observation_health` 를
-저장한 직후 pipeline 이 부른다. 라벨이 아니라 `HOOK_TOOLS` 에 따로 둔다.
+hook(`check_symptom_repetition` · `lookup_condition_guidance` · `check_infant_fever`)은 Memory 가
+`observation_health` 를 저장한 직후 pipeline 이 부른다. 라벨이 아니라 `HOOK_TOOLS` 에 따로 둔다.
 
 닫힘은 하나다 — 건강정보 동의가 없으면 **전 라벨**이 `blocked.consent` 로 닫힌다. 다루는 값이 전부
 민감정보라 예외를 두지 않는다. 안전 조회 실패(`safety_ok=False`)로는 닫지 않는다 — 진료 준비는
@@ -37,12 +41,17 @@ from app.agents.health.readouts import BLOCKED_CONSENT
 from app.agents.health.result import ErrorCode, ToolResult, fail
 from app.agents.health.schemas.task import HealthTaskType
 from app.agents.health.schemas.tool_defs import TOOL_DEFINITIONS
-from app.agents.health.tools.doses import search_medication_schedules
+from app.agents.health.tools.doses import (
+    defer_dose_question,
+    search_medication_schedules,
+    show_dose_status,
+)
 from app.agents.health.tools.drafts import (
     create_medication_schedule,
     stop_medication_schedule,
     update_medication_schedule,
 )
+from app.agents.health.tools.fever import show_fever_timeline
 from app.agents.health.tools.records import (
     search_health_observations,
 )
@@ -56,6 +65,7 @@ MODEL_TOOLS: dict[HealthTaskType, frozenset[str]] = {
         {
             "search_health_observations",
             "compose_symptom_timeline",
+            "show_fever_timeline",
         }
     ),
     HealthTaskType.SCHEDULE_CHECK: frozenset(),
@@ -66,6 +76,8 @@ MODEL_TOOLS: dict[HealthTaskType, frozenset[str]] = {
             "create_medication_schedule",
             "update_medication_schedule",
             "stop_medication_schedule",
+            "show_dose_status",
+            "defer_dose_question",
         }
     ),
     HealthTaskType.CARE_HANDOFF: frozenset(),
@@ -113,19 +125,23 @@ CODE_TOOLS: dict[HealthTaskType, frozenset[str]] = {
 }
 
 # 라벨이 아니라 Memory 저장 직후 pipeline 이 부른다
-HOOK_TOOLS: frozenset[str] = frozenset({"check_symptom_repetition", "lookup_condition_guidance"})
+HOOK_TOOLS: frozenset[str] = frozenset(
+    {"check_symptom_repetition", "lookup_condition_guidance", "check_infant_fever"}
+)
 # 구현된 hook 함수. 키는 `HOOK_TOOLS` 안의 이름이다. 비어 있으면 eval 의 hook 케이스가 GAP 으로
 # 남고, 하나라도 있는데 eval 이 아직 부르지 않으면 실패한다 (tests/eval/agents/health/judges.py)
 HOOK_HANDLERS: dict[str, Callable[..., Awaitable[Any]]] = {}
 
 # 모델이 마지막에 부르는 출력 tool. 이게 없는 라벨은 모델을 부르지 않는다
 OUTPUT_TOOLS: dict[HealthTaskType, frozenset[str]] = {
-    HealthTaskType.VISIT_SUMMARY: frozenset({"compose_symptom_timeline"}),
+    HealthTaskType.VISIT_SUMMARY: frozenset({"compose_symptom_timeline", "show_fever_timeline"}),
     HealthTaskType.MEDICATION: frozenset(
         {
             "create_medication_schedule",
             "update_medication_schedule",
             "stop_medication_schedule",
+            "show_dose_status",
+            "defer_dose_question",
         }
     ),
 }
@@ -145,9 +161,12 @@ TOOL_HANDLERS: dict[str, ToolHandler] = {
     "search_health_observations": search_health_observations,
     "search_medication_schedules": search_medication_schedules,
     "compose_symptom_timeline": compose_symptom_timeline,
+    "show_fever_timeline": show_fever_timeline,
     "create_medication_schedule": create_medication_schedule,
     "update_medication_schedule": update_medication_schedule,
     "stop_medication_schedule": stop_medication_schedule,
+    "show_dose_status": show_dose_status,
+    "defer_dose_question": defer_dose_question,
 }
 _DEFINITIONS: dict[str, ToolDefinition] = {d.name: d for d in TOOL_DEFINITIONS}
 _SPECS_BY_NAME: dict[str, dict[str, Any]] = {

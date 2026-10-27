@@ -13,6 +13,7 @@ from datetime import datetime, time, timedelta
 
 import pytest
 
+from app.agents.common.refs import Ref
 from app.agents.health.readouts import READOUTS
 from app.agents.health.schemas.medication import SearchMedicationArgs
 from app.agents.health.store.inmemory import InMemoryMedicationStore, course_with_doses
@@ -109,7 +110,25 @@ class TestCheckOnScreen:
         readout = await check_on_screen(ctx)
 
         assert readout.body == READOUTS.render("notice.no_active_med").body
+        assert readout.source_refs == ()
         assert store.writes == []
+
+    async def test_체크_안내에_진행_중_코스_ref_만_단다(self):
+        # ref 는 화면이 가리킬 코스다 — 체크할 수 없는 코스를 싣으면 안 된다
+        running = [antibiotic(), antibiotic()]
+        ended = course_with_doses(
+            "시럽", PATTERN, TODAY - timedelta(days=5), TODAY - timedelta(days=1)
+        )
+        stopped = course_with_doses(
+            "연고", PATTERN, TODAY - timedelta(days=1), TODAY + timedelta(days=1), status="stopped"
+        )
+        ctx, _ = world(*running, ended, stopped)
+
+        readout = await check_on_screen(ctx)
+
+        assert readout.body == READOUTS.render("dose.check_on_screen").body
+        assert {ref.id for ref in readout.source_refs} == {course.id for course, _ in running}
+        assert all(ref.kind == "medication_schedule" for ref in readout.source_refs)
 
     async def test_끝난_복약만_있어도_없음(self):
         ended = course_with_doses(
@@ -191,8 +210,21 @@ class TestGetNextDose:
 
         assert await get_next_dose(ctx) == ()
 
+    async def test_dose_status_는_코스마다_ref_를_달아_서로_구별된다(self):
+        # 같은 이름 · 같은 횟수의 코스 둘이 같은 값의 readout 으로 합쳐지지 않는다
+        first, second = antibiotic(), antibiotic()
+        ctx, _ = world(first, second)
+
+        readouts = await dose_status_readouts(ctx)
+
+        assert [r.source_refs for r in readouts] == [
+            (Ref("medication_schedule", course.id),) for course, _ in (first, second)
+        ]
+        assert readouts[0] != readouts[1]
+
     async def test_DoseStatus_에_허가_필드가_없다(self):
         assert {f.name for f in fields(DoseStatus)} == {
+            "schedule_id",
             "title",
             "last_checked",
             "next_scheduled",

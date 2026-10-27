@@ -15,6 +15,14 @@ _COPY = "요청 원문에 있는 말을 그대로 복사한다. 고치거나 풀
 _SPAN_MAX = 100
 
 
+class ShowDoseStatusArgs(ToolArgs):
+    """인자가 없다 — 체크 현황은 코드가 등록된 코스의 회차 행에서 읽는다."""
+
+
+class DeferDoseQuestionArgs(ToolArgs):
+    """인자가 없다 — 용량 · 간격은 판단하지 않고 처방한 곳에 확인하도록 안내만 한다."""
+
+
 class CreateMedicationArgs(ToolArgs):
     title_span: Annotated[
         str | None,

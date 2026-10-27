@@ -110,6 +110,10 @@ med.period_unclear:
 med.one_at_a_time:
   kind: medication_notice
   template: "약은 한 번에 하나씩 확인해요. 나머지는 이어서 말씀해 주세요."
+# 용량 · 간격을 바꿔도 되는지 묻기만 했다 — 판단하지 않고 처방한 곳에 확인하도록 안내한다
+med.ask_prescriber:
+  kind: medication_notice
+  template: "용량 · 간격은 처방한 병원이나 약국에 확인해 주세요."
 dose.status:
   kind: dose_status
   template: "마지막 체크 {last} 회차 · 다음 예정 {next} · 오늘 체크 {checked}/{planned}회"
@@ -155,12 +159,18 @@ notice.signature:
 notice.header:
   kind: med_notice_form
   template: "[투약 의뢰서]  {date}"
+notice.line_child:
+  kind: med_notice_form
+  template: "• 아이 : {nickname}"
 notice.line_title:
   kind: med_notice_form
   template: "• 약 종류 : {title} ({dosage})"
 notice.line_time:
   kind: med_notice_form
   template: "• 투약 시각 : {times}"
+notice.line_period:
+  kind: med_notice_form
+  template: "• 투약 기간 : {starts_on} ~ {ends_on}"
 notice.line_storage:
   kind: med_notice_form
   template: "• 보관 : {storage}"
@@ -182,6 +192,13 @@ card.allergy:
 card.chronic:
   kind: emergency_card
   template: "• 만성질환 : {items}"
+# 알레르기 · 만성질환 이름 뒤에 붙는 조각 — 보호자가 등록한 반응 · 대처 원문을 그대로 옮긴다
+card.reactions:
+  kind: emergency_card
+  template: "반응: {items}"
+card.management:
+  kind: emergency_card
+  template: "대처: {text}"
 card.meds:
   kind: emergency_card
   template: "• 복용 중인 약 : {items}"

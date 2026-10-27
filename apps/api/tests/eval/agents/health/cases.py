@@ -30,9 +30,12 @@ from tests.eval.agents.health.judges import (
     checkup_context,
     consent_closed,
     dose_status,
+    dose_status_per_course,
     emergency_card,
+    emergency_card_detail,
     fever_timeline,
     handoff_notice,
+    infant_fever_hook,
     med_create,
     med_no_advice,
     med_stop,
@@ -83,6 +86,8 @@ class Case:
     memory: bool = False  # Health 가 아니라 Memory 저장을 돌린다 (T21 먹인 약)
     text: str | None = None  # 문서에 없는 변형 입력. None 이면 문서의 [Txx] 입력
     memory_seed: tuple[MemorySeed, ...] = ()  # Memory 저장 케이스가 돌기 전에 저장소에 둔 기록
+    # hook 케이스(label 이 None)가 부르는 hook. "symptom_repeat" · "infant_fever"
+    hook: str = "symptom_repeat"
 
 
 def doc_inputs() -> dict[str, str]:
@@ -127,6 +132,8 @@ def _case(
     judge: Callable[[Ran], Verdict] | None = None,
     night: bool = False,
     followups: tuple[str, ...] = (),
+    text: str | None = None,
+    hook: str = "symptom_repeat",
 ) -> Case:
     return Case(
         case_id=case_id,
@@ -137,6 +144,8 @@ def _case(
         judge=judge or pending(label.value if label else "hook"),
         night=night,
         followups=followups,
+        text=text,
+        hook=hook,
     )
 
 
@@ -231,7 +240,32 @@ CASES: list[Case] = [
         "dose.status (마지막 체크 08:30 회차 · 다음 예정 19:30 · 오늘 체크 1/3회) · 모델 0회",
         judge=dose_status(),
     ),
+    _case(
+        "T10-count",
+        M,
+        "C48",
+        "표(QUERY_WORDS)에 안 걸린 현황 질문 — dose.status 가 T10 과 같은 값 · 모델 1회 · "
+        "초안 · 되묻기 · 쓰기 0",
+        judge=dose_status(model_calls=1),
+        text="오늘 몇 번 먹였지?",
+    ),
+    _case(
+        "T10-2same",
+        M,
+        "C48-2same",
+        "같은 이름 · 같은 체크 수의 코스 둘 — dose.status 가 코스마다 한 장 · 코스마다 다른 ref · "
+        "모델 0회",
+        judge=dose_status_per_course(),
+    ),
     _case("T11", M, "C48", "dose.status만 · 허가 문구 없음 · can_take 없음", judge=dose_status()),
+    _case(
+        "T11-more",
+        M,
+        "C48",
+        "'더 먹여도 돼?' 는 표가 먼저 받는다 — dose.status 만 · 허가 문구 없음 · 모델 0회",
+        judge=dose_status(),
+        text="항생제 더 먹여도 돼?",
+    ),
     _case(
         "T12",
         M,
@@ -292,8 +326,20 @@ CASES: list[Case] = [
         "T16",
         M,
         "C48",
-        "용량 판단 없음 · 초안 없음 · 쓰기 0 · med.no_change 안내로 끝 (상담 안내는 Supervisor 몫)",
+        "용량 판단 없음 · 초안 없음 · 쓰기 0 · med.ask_prescriber(처방한 곳에 확인) 안내로 끝 · "
+        "모델 1회",
         judge=med_no_advice(),
+    ),
+    _case(
+        "T10-mixed",
+        M,
+        "C48",
+        "현황 질문과 새 약 등록이 한 말에 섞였다 — 쓰기 요청이 읽기 전용 출구에 가려지지 않는다: "
+        "해열제 초안 1장(notice_times 08:30 · 12:30 · 19:30 · 기간 오늘 포함 5일) · 쓰기 0 · "
+        "모델 1회",
+        judge=med_create(("08:30", "12:30", "19:30"), title="해열제", ends_in_days=4),
+        text="해열제 새로 먹이기 시작했어. 하루 세 번 식후 5일 먹일 거야. "
+        "그리고 오늘 항생제 몇 번 체크했지?",
     ),
     # 복약 라벨로 오면 지금은 약 이름을 보지 않고 체크 안내다(#544). 등록 여부로 Memory 와
     # 가르는 것은 연결 이슈 몫이라 이 판정은 그대로 둔다 — 갈림을 판정하지 않는다
@@ -332,6 +378,30 @@ CASES: list[Case] = [
     _case("T18-nomed", H, "C48-nomed", "notice.no_active_med", judge=no_active_med()),
     _closed("T18-noconsent", H),
     _case(
+        "T18-allergy",
+        H,
+        "C48",
+        "서식 이름('투약의뢰서')을 콕 집으면 알레르기 말이 있어도 투약의뢰서",
+        judge=handoff_notice(),
+        text="알레르기 약 투약의뢰서 써줘",
+    ),
+    _case(
+        "T18-daycare",
+        H,
+        "C48",
+        "'어린이집에 약 보낼 거 써줘' 는 서식 이름이 없어도 투약의뢰서",
+        judge=handoff_notice(),
+        text="어린이집에 약 보낼 거 써줘",
+    ),
+    _case(
+        "T18-notelines",
+        H,
+        "C48-notice-detail",
+        "투약의뢰서 — 아이 별명 · 투약 기간 · 보관 · 복용 이유 · 특이사항(원문의 줄바꿈은 "
+        "공백 하나로 나와 서식이 줄 단위로 남는다)",
+        judge=handoff_notice(storage="냉장", indication="콧물이 나서", note="흔들어서 냉장 보관"),
+    ),
+    _case(
         "T19",
         H,
         "C48-card",
@@ -344,6 +414,31 @@ CASES: list[Case] = [
         "C48-safetyfail",
         "응급 카드의 알레르기 · 만성질환 칸을 비우고 조회 실패를 명시",
         judge=emergency_card(safety_ok=False),
+    ),
+    _case(
+        "T19-allergy-med",
+        H,
+        "C48-card",
+        "알레르기 · 투약을 같이 말하면 투약 말이 있어도 응급 카드 "
+        "(투약의뢰서에는 알레르기 칸이 없다)",
+        judge=emergency_card(),
+        text="아이 맡길 때 알레르기랑 투약 중인 약 정리해줘",
+    ),
+    _case(
+        "T19-sitter",
+        H,
+        "C48-card",
+        "시터에게 줄 카드 — '카드' · '시터' 가 있으면 투약 말이 있어도 응급 카드",
+        judge=emergency_card(),
+        text="시터한테 줄 카드에 투약 중인 약 넣어줘",
+    ),
+    _case(
+        "T19-detail",
+        H,
+        "C48-card-detail",
+        "응급 카드 — 알레르기 · 만성질환 이름 뒤에 등록한 반응 · 대처 원문"
+        "(줄바꿈은 공백 하나) · 5줄",
+        judge=emergency_card_detail(),
     ),
     # ── 열 · 증상 · 진료 준비 ──
     _case(
@@ -362,6 +457,24 @@ CASES: list[Case] = [
         "C2",
         "emergency 가 맨 앞 (3개월 미만 발열) → 이어서 열 타임라인 · 모델 0회",
         judge=fever_timeline(emergency_first=True),
+    ),
+    _case(
+        "T22-model",
+        V,
+        "C48-fever",
+        "열 표현 표에 안 걸린 열 질문 — fever_timeline (T22 와 같은 줄) · symptom_timeline 없음 · "
+        "모델 1회",
+        judge=fever_timeline(model_calls=1),
+        text="열나는데 언제부터였지",
+    ),
+    _case(
+        "T22-mix",
+        V,
+        "C48",
+        "열 말이 든 정리 요청('진료 때 보여줄 거') — 열 타임라인으로 새지 않고 "
+        "symptom_timeline 한 장 · 모델 1회 · 식사 · 복약 체크 · 알레르기 줄은 코드",
+        judge=visit_timeline(),
+        text="지난주 열 났던 거 포함해서 진료 때 보여줄 거 만들어줘",
     ),
     _case(
         "T23",
@@ -394,7 +507,36 @@ CASES: list[Case] = [
         "visit.no_record(30일 · 복약 코스 없음) · 모델 호출 안 함",
         judge=visit_no_record(),
     ),
-    # ── hook — `check_symptom_repetition` 을 직접 부른다 (pipeline 연결은 다른 이슈) ──
+    # ── hook — Memory 저장 직후 pipeline 이 부를 함수를 직접 부른다 (pipeline 연결은 다른 이슈) ──
+    # `check_infant_fever` — "열이 38.2도야" 처럼 기록만 해도 3개월 미만이면 응급 안내가 나간다
+    _case(
+        "T25-infant",
+        None,
+        "C2",
+        "2개월 · 오늘 아침 38.2℃ 기록 → emergency 한 건(글자 그대로) · 모델 0회 · 쓰기 0",
+        judge=infant_fever_hook(alert=True),
+        hook="infant_fever",
+        text="열이 38.2도야",
+    ),
+    _case(
+        "T25-toddler",
+        None,
+        "C48",
+        "48개월은 열 기록이 있어도 응급 안내 없음 · 건강 기록을 읽지도 않는다",
+        judge=infant_fever_hook(alert=False, reads=False),
+        hook="infant_fever",
+        text="열이 38.2도야",
+    ),
+    _case(
+        "T25-infant-noconsent",
+        None,
+        "C2-noconsent",
+        "건강정보 동의 없는 2개월 — 응급 안내 없음 · 건강 기록을 읽지 않는다",
+        judge=infant_fever_hook(alert=False, reads=False),
+        hook="infant_fever",
+        text="열이 38.2도야",
+    ),
+    # `check_symptom_repetition`
     _case(
         "T25",
         None,

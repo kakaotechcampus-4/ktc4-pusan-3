@@ -14,17 +14,24 @@ Agent 는 체크를 읽기만 한다.
 
 from dataclasses import dataclass, replace
 from datetime import date, datetime
+from uuid import UUID
 
 from app.agents.common.readout import Readout
+from app.agents.common.refs import Ref
 from app.agents.health.context import HealthContext
 from app.agents.health.readouts import (
     DOSE_CHECK_ON_SCREEN,
     DOSE_STATUS,
+    MED_ASK_PRESCRIBER,
     NOTICE_NO_ACTIVE_MED,
     READOUTS,
 )
 from app.agents.health.result import ToolResult, ok
-from app.agents.health.schemas.medication import SearchMedicationArgs
+from app.agents.health.schemas.medication import (
+    DeferDoseQuestionArgs,
+    SearchMedicationArgs,
+    ShowDoseStatusArgs,
+)
 from app.agents.health.store.ports import MedicationCourse, MedicationDose
 
 # "먹였어" 로 읽는 표현. 걸리면 모델을 부르지 않고 체크 안내만 낸다
@@ -37,6 +44,7 @@ _NONE = "-"
 class DoseStatus:
     """진행 중 코스 하나의 체크 현황. 허가 · 간격 같은 판단 필드를 두지 않는다."""
 
+    schedule_id: UUID  # 어느 코스의 현황인가 — 같은 이름의 코스 둘이 같은 값으로 합쳐지지 않게
     title: str
     last_checked: datetime | None  # 체크된 회차 중 가장 늦은 것의 예정 시각. checked_at 이 아니다
     next_scheduled: datetime | None  # 지금 이후 가장 이른 회차
@@ -75,6 +83,7 @@ async def dose_status_readouts(context: HealthContext) -> list[Readout]:
                 planned=status.planned_today,
             ),
             title=status.title,
+            source_refs=(Ref("medication_schedule", status.schedule_id),),
         )
         for status in statuses
     ]
@@ -83,11 +92,41 @@ async def dose_status_readouts(context: HealthContext) -> list[Readout]:
 async def check_on_screen(context: HealthContext) -> Readout:
     """ "먹였어" 의 답. 쓰기 0 — 복약 화면에서 체크해 달라고만 안내한다.
 
-    진행 중 복약이 없으면 체크할 회차도 없으니 없다는 안내를 낸다.
+    진행 중 복약이 없으면 체크할 회차도 없으니 없다는 안내를 낸다. 안내에는 진행 중 코스의 ref 가
+    붙는다 — 화면이 그 코스를 가리킬 수 있게 하는 값이고, 체크할 수 없는 끝났거나 멈춘 코스는
+    싣지 않는다. 어느 코스 얘기인지 가리는 것은 이 함수가 아니다(약 이름을 보지 않는다).
+    다만 run 결과를 화면으로 옮기는 쪽이 아직 readout 의 ref 를 내보내지 않아서, 화면이 이 값을
+    읽는 것은 그 길이 열린 뒤다.
     """
-    if not await _active(context):
+    courses = await _active(context)
+    if not courses:
         return READOUTS.render(NOTICE_NO_ACTIVE_MED)
-    return READOUTS.render(DOSE_CHECK_ON_SCREEN)
+    return replace(
+        READOUTS.render(DOSE_CHECK_ON_SCREEN),
+        source_refs=tuple(Ref("medication_schedule", course.id) for course in courses),
+    )
+
+
+async def show_dose_status(context: HealthContext, args: ShowDoseStatusArgs) -> ToolResult:
+    """읽기 전용 출력 tool — 표에 안 걸린 현황 질문("오늘 몇 번 먹였지?")의 출구.
+
+    내용은 `dose_status_readouts` 가 낸다(모델이 쓰지 않는다). 모델에게 돌아가는 것은 더한
+    readout 개수뿐이다 — 약 이름 · 용량은 외부 모델로 보내지 않는다.
+    """
+    return ok(
+        "query",
+        "show_dose_status",
+        shown=context.state.add_once(await dose_status_readouts(context)),
+    )
+
+
+async def defer_dose_question(context: HealthContext, args: DeferDoseQuestionArgs) -> ToolResult:
+    """읽기 전용 출력 tool — 용량 · 간격을 바꿔도 되는지 묻기만 한 말의 출구.
+
+    아무것도 읽지 않는다. 되는지 안 되는지는 판단하지 않고 처방한 곳에 확인하도록만 안내한다.
+    """
+    context.state.add_once([READOUTS.render(MED_ASK_PRESCRIBER)])
+    return ok("query", "defer_dose_question")
 
 
 async def search_medication_schedules(
@@ -119,6 +158,7 @@ def _status(
     upcoming = [_moment(context, row) for row in rows if _moment(context, row) > context.now]
     today_rows = [row for row in rows if row.dose_date == context.today]
     return DoseStatus(
+        schedule_id=course.id,
         title=course.title,
         last_checked=max(checked, default=None),
         next_scheduled=min(upcoming, default=None),
