@@ -1,6 +1,9 @@
+import { X } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { cn } from "@/lib/cn";
+
+import { ICON_SIZE, ICON_STROKE } from "./icon";
 
 /**
  * 디자인 시스템 §7 `chip-choice` — 눌러서 고르는 칩.
@@ -46,6 +49,39 @@ export function Chip({
         )}
       >
         {children}
+      </span>
+    </button>
+  );
+}
+
+/**
+ * 걸려 있는 조건 하나 — 누르면 그 조건을 푼다 (#584 · 07 목록의 필터).
+ *
+ * 고른 칩(`Chip` 의 `selected`)과 **같은 모양**이다. 고른 것이 목록 위에 그대로 남아 있다는 뜻이라,
+ * 다른 색 · 다른 모양을 만들면 "고른 것" 과 "걸린 것" 이 다른 물건으로 읽힌다. 뒤의 × 아이콘이
+ * 누르면 풀린다는 것을 말한다.
+ * 🚨 **이름이 무엇을 푸는지 말한다** (`removeLabel` · "식사 조건 풀기"). 보이는 글자만 두면
+ *    스크린리더가 "식사, 버튼" 이라고 읽어서, 누르면 무엇이 되는지 모른다.
+ */
+export function RemovableChip({
+  removeLabel,
+  onRemove,
+  children,
+}: {
+  removeLabel: string;
+  onRemove: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={removeLabel}
+      onClick={onRemove}
+      className="min-h-touch flex items-center py-2"
+    >
+      <span className="text-label ease-standard min-h-chip bg-brand-soft border-brand text-brand-ink active:bg-surface-muted flex items-center gap-1 rounded-full border py-0.5 pr-1.5 pl-2.5 text-left transition-colors duration-120">
+        {children}
+        <X aria-hidden size={ICON_SIZE.sm} strokeWidth={ICON_STROKE} className="shrink-0" />
       </span>
     </button>
   );
