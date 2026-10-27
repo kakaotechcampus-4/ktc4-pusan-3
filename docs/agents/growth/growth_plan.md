@@ -87,14 +87,16 @@ DoD: upgrade/downgrade 왕복 · agent role로 `growth_doc` INSERT 시도 → �
 
 `next_step_of` 사슬은 양치·배변 등 고시 문구로 받칠 수 있는 6종부터(GT-4). 옷 입기는 고시에 문구가 없어 뺐다.
 
+> **진행(#511)** — 예절 · 습관은 전략 행이 있으면 열린다 — 예절은 행동 이름, 습관은 trigger 의 상황 태그(`reference/growth_triggers.yaml`)로 코드가 고르고, 맞는 행이 없으면 `doc.no_row`. 리듬 안내는 아이 · 날짜로 돌려 고른다. 행은 표준보육과정 고시 본문에서 새로 써 넣었다(예절 22 · 리듬 10 · 습관 20, `reviewed_by: admin` 임시 검수 — 실제 검수는 별도 이슈). 새 자립 사슬(옷 입기 · 신발 · 빨래 바구니 · 등원 준비)은 고시로 단계를 받칠 수 없어 0행이다. `book_guide` · `measure_guide` 는 쓰지 않는다(읽는 코드 · 출처가 없고, 일반 도서 추천의 근거는 도서 API 행으로 정하는 쪽이다). 행 수는 `growth_doc.yaml` 이 정본이다.
+
 ### 4-2. 도서
 
 | # | 작업 | DoD |
 | --- | --- | --- |
 | 3-1 | 정보나루 인증키 + **서버 IP 등록** | 한도 500 → 30,000/일 |
-| 3-2 | 어댑터 + 계약 테스트 | 실제 응답 샘플 → dataclass |
-| 3-3 | 연령 산출식 (`age_min/max_month`) | 아동 도서(부가기호 7)로 좁히고 `form` 의 월령 범위로 — 처음 값은 own_table §7 GT-3 |
-| 3-4 | `form` 분류 (보드북/그림책/지식책) | 불명이면 `unknown` → **영아기 제외** |
+| 3-2 | 어댑터 + 계약 테스트 | 실제 응답 샘플 → dataclass ✅ (#506) |
+| 3-3 | 연령 산출식 (`age_min/max_month`) | 아동 도서(부가기호 7)로 좁히고 `form` 의 월령 범위로 — 처음 값은 own_table §7 GT-3 ✅ (#506) |
+| 3-4 | `form` 분류 (보드북/그림책/지식책) | 불명이면 `unknown` → **영아기 제외** ✅ (#506) |
 | 3-5 | 사서추천도서 월 1회 배치 | `pick_weight` 반영 |
 | 3-6 | 주제어(`subjects`) 색인 | 관심사 매칭 |
 
@@ -135,12 +137,16 @@ DoD: mock `run()` · Activity 패키지 import 0건(리뷰로 확인 — import-
 | 5-5 | 평가 표현 필터 | 출력 사후 · 걸리면 후보 **삭제**(수정 아님) |
 | 5-6 | `hazard` 사후 스캔 | 활동 후보의 `materials`·문장 · 0–17개월은 경고도 **차단**(Activity 와 같다, #282 PM 리뷰) |
 | 5-7 | 음식 용어 스캔 | 교육 · 루틴 후보 · `allergen_terms.yaml` + `food_choking` · 아이 · 월령 무관 · 한 글자 별칭 안 씀 · Activity 제외 별칭 공유 (#264 · #261 전엔 포트 주입) |
-| 5-8 | 교육 알레르기 대조 | 동의 시 `allergy` · `environmental` active 행 · 보호자 표기로 대조(대응표 없음) · `allergy` 중 식품 사전에 없는 이름이 있으면 확인 문구(`caution.non_food_allergy`, `environmental` 제외) · 조회 실패 → `blocked.safety`(모델 0) · 동의 없으면 읽지 않음 |
+| 5-8 | 교육 알레르기 대조 | 동의 시 `allergy` · `environmental` active 행 · 보호자 표기로 대조 · 식품 아닌 알레르기(꽃가루 · 라텍스 · 동물털)는 대응표(`reference/allergy_related_terms.yaml`) 낱말이 든 후보 · [예시]를 뺀다(`allergy_related`, PM 확인) · 확인 문구 없음 · 조회 실패 → `blocked.safety`(모델 0) · 동의 없으면 읽지 않음 |
 | 5-9 | 루틴 닫힘 | 의료 처치 용어 → `closed.medical_routine` · 증상처럼 보이는 습관 → `closed.symptom_habit` · 요청 문장 · 관찰 `subject` 에 걸리면 모델 0 |
 
 ---
 
 ## 7. S6 — 모델 tool · 프롬프트
+
+> **진행(#443)** — 교육 · 루틴 완료(조회 4 + 출력 2 · `run()` 공통 루프 · 재호출 1회). 도서(`search_books` · `propose_books`)와 `lookup_notice` 는 운영 포트 · `book_guide` 행이 생긴 뒤. 예절 · 습관 전략은 행(P1)이 생길 때까지 `doc.no_row` 로 닫는다.
+
+> **진행(#506)** — 도서 열림: `search_books` · `propose_books` 정의 · 핸들러 · `[도서]` 구획 · 검색 실패는 `closed.book_api` · 재호출은 고른 책을 다시 안 낸다(key "제목(저자)") · 정보나루 어댑터 + Redis 검색어 캐시 · 이미 낸 책 DB 어댑터 · 일반 도서 추천은 고른 책을 근거로(`book_catalog`). `book_guide` 행은 필요 없다. `lookup_notice` 는 그대로 공지 포트 뒤.
 
 조회 6 (`search_education_memory` · `search_routine_memory` · `search_activity_memory` · `search_affinity` · `lookup_notice` · `search_books`) + 출력 3 (`propose_learning_activity` · `propose_routine_plan` · `propose_books`).
 
@@ -170,6 +176,12 @@ DoD: 성장폭 readout에 **측정일 2개**가 항상 있음 · 닫힘 문구�
 
 ## 9. S8 — 파이프라인 통합
 
+> **진행(#446)** — 공통 연결 완료: Supervisor `growth_task`(빠지면 `learning_suggestion`) · run 당 Growth 추천 하나(`task_limit` 안내) · pipeline 등록 · entrypoint `GrowthContext`(안전은 `UnwiredSafety`, 도서 · 공지 포트 없음) · `StoreGrowthMemory` · 성장 기록 DB 어댑터 · 05 처음 요청은 `not_ready`. 운영에서 열리는 것은 성장 추이 · 루틴이다. 교육은 `growth_safety` 어댑터 뒤, 도서는 포트 · 일반 추천 근거 결정 뒤.
+
+> **진행(#504)** — 교육 열림: 러너 · 05 가 `growth_safety`(`DbSafetyReader`, allergy · environmental · status 전부)를 넘긴다 · 식품 아닌 알레르기(꽃가루 · 라텍스 · 동물털)는 확인 문구 대신 대응표(`reference/allergy_related_terms.yaml`)의 낱말이 든 후보와 [예시] 행을 뺀다(PM 확인) · [예시]도 달 수 있는 아이 기록도 없으면 `doc.no_row`(모델 0회) · note 의 성향 표현은 티어 1 근거에만 · 한 번 낸 후보 안의 같은 제목은 거절. 경고가 붙는 교육 후보는 #402 전까지 뺀다. 도서는 포트 · 일반 추천 근거 결정 뒤.
+
+> **진행(#531)** — Supervisor 다듬기 · 운영 설정: 도서는 다른 Growth 추천에 자리를 내준다(`YIELDING_LABELS`) · 신체 성장 경계 예시 세 줄 · 라우팅 eval GR01~GR28(합격선 90% · 0건 규칙 셋) · 도서 검색어를 교육 · 관심 · 놀이 · 생활 기록의 점수 순으로(`search_book_interests`) · run 하나에 관측 한 줄 · 배포 체크리스트와 스모크(§11-6).
+
 - `IMPLEMENTED_AGENTS`에 `growth` · **라벨 4개** 라우팅
 - Supervisor 경계 예시 투입: activity↔growth 4줄 · 신체 성장 3줄("잘 크고 있어?"까지 전부 `growth_review`) · 의료 처치 · 증상 같은 습관("약 먹기 싫어해" · "눈을 자꾸 깜빡여")도 `routine_coaching` 으로 와서 코드가 닫는다
 - `growth_review`·닫힘 경로는 `model_calls=0`으로 집계
@@ -197,12 +209,14 @@ DoD: "오늘 블록 쌓는 거 배웠대" → **Memory만**(Growth 미호출) ·
 | 계약 테스트 | 도서 API 응답 샘플 |
 | 골든 | 라벨 4개 × 단계 3개 = 12 스냅샷 |
 
+> **진행(#526)** — gating · wording · evidence 단위 회귀와 `tests/eval/agents/growth/`(세계 · 케이스 · 리포트)가 생겼다. 골든 9종은 라벨 3 × 단계 3(도서는 도서 eval). 모델 없는 케이스는 키 없이 기본 eval 에서 돈다.
+
 ---
 
 ## 11. S10 — 라이브 테스트
 
 ### 11-1. 드라이런
-`suggestion` INSERT를 끄고 실제 데이터로 20건. 확인: 문서 행 조회 적중률 · 도서 연령 필터 정확도 · 평가 표현 0건 · p95.
+`suggestion` INSERT를 끄고 실제 데이터로 20건. 확인: 문서 행 조회 적중률 · 도서 연령 필터 정확도 · 평가 표현 0건 · p95. 라이브 하네스(`test_growth_live.py` · `TEST_REPEAT`)와 `report.py` 가 문서 행 적중률 · 평가 표현 · p95 를 낸다. 실제 데이터 드라이런은 관측 로그(§11-5) 뒤.
 
 ### 11-2. 내부 도그푸딩 (1~2주)
 
@@ -214,22 +228,59 @@ DoD: "오늘 블록 쌓는 거 배웠대" → **Memory만**(Growth 미호출) ·
 | 문서 행 적중(일반 템플릿으로 안 내려간 비율) | ≥ 0.7 |
 | 성장폭 readout 측정일 누락 | 0건 |
 | 판정 요청에 판정 표현 노출 | 0건 ("잘 크고 있어?" → 추이 + 검진 안내) |
-| p95 응답 | < 10초 |
+| p95 응답 | < 15초 |
 
 ### 11-3. 롤아웃 게이트
 
 | 게이트 | 조건 |
 | --- | --- |
-| G1 | 평가 표현 0 · 골든 12종 통과 |
+| G1 | 평가 표현 0 · 골든 9종 통과(라벨 3 × 단계 3 — 도서 3종은 도서 eval) |
 | G2 | 영아(0–11개월) 계정에서 교육 활동 → Activity 안내로 정상 전환 |
 | G3 | 습관 교정 요청이 36개월 경계 양쪽에서 올바르게 갈림 |
 | G4 | Curator 미구현 상태(affinity 0행)에서 일반 추천 정상 |
 
 ### 11-4. 롤백
-`IMPLEMENTED_AGENTS`에서 제거. 라벨 4개가 Supervisor에서 빠지면 해당 발화는 Activity 또는 Memory로 흡수됩니다.
+`IMPLEMENTED_AGENTS` 에서 `growth` 를 빼고 배포한다 (운영 담당). 라벨 4개가 Supervisor 에서 빠지면 해당 발화는 Activity 또는 Memory 로 흡수됩니다.
+
+- 환경변수 스위치는 두지 않았다. #446 이 develop 에 들어가는 순간 Growth 가 열리고, 켜는 시점을 서버 설정에 맡기지 않는다 (core `Settings` 가 `extra=forbid` 라 `.env` 키를 늘리면 `.env.example` 도 같이 고쳐야 한다)
+- 이 표는 pipeline `_RUNNERS` · `RECOMMENDING_TASKS` · entrypoint context 와 키가 같아야 해서, 빼려면 그 세 곳과 키 같음 테스트(`test_구현된_agent_마다_실행_함수가_있다` · `test_entrypoint`)도 같이 고친다
+- 이미 저장된 Growth 추천은 두고 24시간 만료에 맡긴다 — 앱을 거치지 않고 DB 로 상태를 바꾸지 않는다
+- 재배포는 진행 중 run · 되묻기 맥락 · 05 다시 시도 보관함 · 그날 하루 한도 수도 비운다(전부 프로세스 메모리, `--workers 1`)
 
 ### 11-5. 관측
 `{run_id, child_id, stage, task_type, model_calls, evidence_mode, doc_hit, closed_reason, latency_ms}` — 관심사·책 제목 원문은 남기지 않습니다.
+
+구현 — `growth/agent.py` 의 `_observe` 가 run 하나에 INFO 한 줄 `growth run …` 을 남긴다. 위 아홉 칸에 `status`(20초에 끊기면 `cancelled`) · `asked`(되묻기로 끝남)를 더했다. `doc_hit` 은 모델에게 넘긴 `growth_doc` 행 수(교육 [예시] + 루틴 다음 단계)다. 결과 · ms · timeout 은 pipeline 의 `도메인 task …` 줄에 있고 `run_id` 로 잇는다. `status=cancelled model_calls=2`(재호출 중 끊김)가 나오면 Activity · Food 와 같이 "재호출 전 남은 예산 보기" 를 후속으로 연다.
+
+    journalctl CONTAINER_NAME=ktc4-api --since "1 hour ago" | grep -E "growth run|도메인 task"
+
+### 11-6. 운영 켜기 — 배포 체크리스트 · 스모크
+
+**배포 전 (서버 `apps/api/.env`, 운영 담당)**
+
+| # | 확인 | 어떻게 |
+| --- | --- | --- |
+| 1 | `GROWTH_API_KEY` · `GROWTH_BASE_URL` · `GROWTH_MODEL` · `GROWTH_REASONING_EFFORT` 를 `ACTIVITY_*` 와 같은 값으로(비어 있으면 같이 비운다 → `MEMORY_*`) | Growth 는 Activity 와 같은 tool 루프(`tool_choice=required`)다. 엘리스 밖 회사 주소면 처리방침 "외부로 보내는 곳" 부터 고친다(`core/agent_config.py` 머리말) |
+| 2 | 읽은 키 이름 확인 — 값은 찍히지 않는다 | `docker compose -f deploy/docker/docker-compose.deploy.yml --env-file deploy/docker/.env run --rm api uv run --no-sync python -c "from app.agents.common.config import get_agent_settings as g; s = g(); print(s.profile('growth').keys, s.profile('activity').keys)"` → 두 dict 의 키 이름이 같다. `AgentConfigError` 면 MODEL · BASE_URL 중 하나만 채운 것 |
+| 3 | 이미지에 참조 파일 | `.dockerignore` 는 `.env*` · `tests/` 만 뺀다. 같은 `run --rm api uv run --no-sync python -c "from collections import Counter; from app.agents.growth.doc_seed import growth_doc_seed as s; print(Counter(e.meta.status for e in s()))"` → `approved` 수가 `growth_doc.yaml` 검수 결과와 같다 |
+| 4 | 마이그레이션 | Growth 는 새 revision 이 없다(`child_growth_log` · `suggestion` 은 develop 에 있다). 배포 workflow 의 `make deploy-migrate` 그대로 |
+| 5 | 헬스체크 | compose 의 `/health` 200. `age_gates.yaml` · `growth.readout.yaml` · `growth_closures.yaml` 은 import · 첫 run 에 읽어서 빠지면 api 가 안 뜨거나 모든 run 이 실패한다 — 5 가 통과하면 3 의 파일도 있다 |
+
+**배포 뒤 스모크 (테스트 계정 — 실제 아이 정보 금지)**
+
+준비: 팀 테스트 계정에 아이 하나(별명 "테스트", 생일은 30개월 전, 건강정보 동의 켬). 07 성장 기록에 키 · 몸무게 두 건을 날짜를 달리해 직접 넣는다. 하루 한도(`INPUT_DAILY_LIMIT=5`)가 보호자당이라 아래 다섯 줄이 딱 한도다 — 다시 하려면 다음 날이나 두 번째 테스트 계정.
+
+| # | 입력 | 정상 | 로그(`growth run`) |
+| --- | --- | --- | --- |
+| S1 | 잘 크고 있어? | Growth 블록 — 측정일 두 개 + 검진 안내. 판정 · 비교 문구 없음 | `task_type=growth_review status=completed model_calls=0` |
+| S2 | 오늘 양치는 아빠가 도와줘서 했어. 혼자 하게 하려면 어떻게 해? | 기록 저장 + 루틴 추천(근거가 이 run 의 양치 기록, "후보 보기" 로 연 05 가 같은 카드) 또는 "요즘 어느 정도까지 혼자 하나요?" 되묻기 한 줄 — 둘 다 정상. `partial` · 실패 카드면 키 설정부터 본다(모델을 처음 부르는 경로다) | `routine_coaching status=completed model_calls=1` · `evidence_mode=personalized` 또는 `asked=True` |
+| S3 | 숫자 놀이 뭐 해 볼까? | 교육 추천 카드(기록이 없으면 일반 추천 · 출처 카드) | `learning_suggestion status=completed` · `doc_hit` 1 이상 |
+| S4 | 공룡 책이랑 숫자 놀이 추천해줘 | 숫자 놀이(교육)만 돌고 "한 번에 한 가지씩" 안내. 도서 닫힘 안내는 없다 | `learning_suggestion` 한 줄뿐 |
+| S5 | 오늘 블록 쌓는 거 배웠대 | 기록 저장만 · Growth 블록 없음 | 줄 없음 |
+
+- 끝나고 `journalctl CONTAINER_NAME=ktc4-api --since "30 min ago" | grep "growth run"` → 네 줄(S1 ~ S4). 줄에 입력 문장이 없다
+- 그동안 Discord 에 ERROR 알림이 없다
+- 하나라도 정상이 아니면 §11-4 로 끄고 원인을 본다
 
 ---
 
@@ -248,4 +299,4 @@ DoD: "오늘 블록 쌓는 거 배웠대" → **Memory만**(Growth 미호출) ·
 
 ## 13. 열린 항목
 
-G-3 · G-7 · 루틴 닫힘 "약" 한 글자 별칭의 오탐 측정(목록 자체는 10-09 확정, [`Growth_Agent_명세.md`](Growth_Agent_명세.md) §9) · GT-1~5 · GT-7 ([`growth_agent_own_table.md`](growth_agent_own_table.md) §7) · `growth_doc` 원문 확보 · `notice`
+G-3 · G-7 · GT-1~5 · GT-7 ([`growth_agent_own_table.md`](growth_agent_own_table.md) §7) · `growth_doc` 원문 확보 · `notice`

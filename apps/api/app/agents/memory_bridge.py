@@ -12,8 +12,8 @@ store 종류는 모른다 — MemoryStore Protocol 로만 읽는다.
    주고(#257), Memory 는 도메인 단계 전에 commit 되므로 따로 연 세션에서도 방금 저장한
    관찰이 보인다.
 
-Agent 패키지는 서로 import 하지 않는다. Memory store 와 Food · Activity
-포트를 둘 다 아는 곳은 pipeline · entrypoint 층이라 여기 둔다.
+Agent 패키지는 서로 import 하지 않는다. Memory store 와 Food · Activity ·
+Growth 포트를 둘 다 아는 곳은 pipeline · entrypoint 층이라 여기 둔다.
 Curator 는 이 다리를 쓰지 않고 DbCuratorStore 를 직접 쓴다 (domains/memory/curator/trigger.py).
 
 profile_affinity 는 Memory store 에 없다. affinities() 는 빈 목록이다.
@@ -21,12 +21,19 @@ profile_affinity 는 Memory store 에 없다. affinities() 는 빈 목록이다.
 
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
-from datetime import date
+from datetime import date, timedelta
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from app.agents.activity.store.ports import ActivityObservation
 from app.agents.common.evidence import AffinityRow
 from app.agents.food.store.ports import FoodObservation
+from app.agents.growth.store.ports import ActivityObservation as GrowthActivityObservation
+from app.agents.growth.store.ports import (
+    AffinityDomain,
+    EducationObservation,
+    RoutineObservation,
+)
+from app.agents.health.store.ports import HealthObservation, MealRecord
 from app.agents.memory.store.ports import MemoryStore, ObservationRow
 
 # 검색에 남는 status. stand_alone 은 Correction once_only("이번만 그랬어요") 라
@@ -35,6 +42,13 @@ FOOD_STATUSES = frozenset({"active", "stand_alone"})
 # Activity는 active만 읽는다. Activity 포트(ActivityObservation 주석)와 activity-agent-v1
 #   A-10 이 stand_alone을 근거에서 뺀다 — "이번만 그랬어요" 로 고친 기록이 근거로 돌아오지 않게
 ACTIVITY_STATUSES = frozenset({"active"})
+# Health 는 Food 와 같다 — stand_alone("이번만 그랬어요")도 그날 있었던 증상이라 날 수에 센다.
+# 정정으로 내린 기록(wrong → inactive)과 삭제는 읽지 않는다
+HEALTH_STATUSES = frozenset({"active", "stand_alone"})
+
+# Growth 도 active 만 읽는다 — "이번만 그랬어요" 로 고친 기록으로 루틴 수준을 잡지 않는다
+#   (growth/store/ports.py RoutineObservation 주석)
+GROWTH_STATUSES = frozenset({"active"})
 
 
 # 호출 한 번에 쓸 store 를 여는 함수. 러너가 짧은 DB 세션으로 만든다
@@ -64,6 +78,13 @@ def _uuid(row_id: str) -> UUID:
         return UUID(row_id)
     except ValueError:
         return uuid5(NAMESPACE_URL, f"inmemory:{row_id}")
+
+
+def _optional_uuid(value: UUID | str | None) -> UUID | None:
+    """DB store 는 UUID, InMemory 는 tool 이 넘긴 문자열 id 일 수 있다."""
+    if value is None:
+        return None
+    return value if isinstance(value, UUID) else _uuid(value)
 
 
 async def _rows(
@@ -141,6 +162,150 @@ class StoreActivityMemory(_StoreReader):
                 subject=row.fields["subject"],
                 activity=row.fields["activity"],
                 polarity=int(row.fields.get("polarity") or 0),
+            )
+            for row in rows
+        ]
+
+
+class StoreGrowthMemory(_StoreReader):
+    """`GrowthMemoryReader` 구현. 교육 · 루틴 · 놀이 관찰을 Memory store 에서 읽는다.
+
+    놀이 관찰은 Growth 가 근거로 **읽기만** 한다 — 쓰지 않는다. profile_affinity 는 Memory store 에
+    없어 빈 목록이다(Food · Activity 와 같다).
+    """
+
+    async def affinities(
+        self, *, child_id: UUID, domains: tuple[AffinityDomain, ...]
+    ) -> list[AffinityRow]:
+        return []
+
+    async def education(
+        self, *, child_id: UUID, date_from: date, date_to: date
+    ) -> list[EducationObservation]:
+        rows = await _rows(
+            self._open,
+            "education",
+            child_id=child_id,
+            date_from=date_from,
+            date_to=date_to,
+            statuses=GROWTH_STATUSES,
+        )
+        return [
+            EducationObservation(
+                id=_uuid(row.id),
+                child_id=child_id,
+                observed_on=row.observed_on,
+                subject=row.fields["subject"],
+                topic=row.fields["topic"],
+                polarity=int(row.fields.get("polarity") or 0),
+                engagement_level=row.fields.get("engagement_level"),
+            )
+            for row in rows
+        ]
+
+    async def routine(
+        self, *, child_id: UUID, date_from: date, date_to: date
+    ) -> list[RoutineObservation]:
+        rows = await _rows(
+            self._open,
+            "routine",
+            child_id=child_id,
+            date_from=date_from,
+            date_to=date_to,
+            statuses=GROWTH_STATUSES,
+        )
+        return [
+            RoutineObservation(
+                id=_uuid(row.id),
+                child_id=child_id,
+                observed_on=row.observed_on,
+                subject=row.fields["subject"],
+                routine_category=row.fields["routine_category"],
+                polarity=int(row.fields.get("polarity") or 0),
+                assistance_level=row.fields.get("assistance_level"),
+                completion_status=row.fields.get("completion_status"),
+                trigger=row.fields.get("trigger"),
+            )
+            for row in rows
+        ]
+
+    async def activities(
+        self, *, child_id: UUID, date_from: date, date_to: date
+    ) -> list[GrowthActivityObservation]:
+        rows = await _rows(
+            self._open,
+            "activity",
+            child_id=child_id,
+            date_from=date_from,
+            date_to=date_to,
+            statuses=GROWTH_STATUSES,
+        )
+        return [
+            GrowthActivityObservation(
+                id=_uuid(row.id),
+                child_id=child_id,
+                observed_on=row.observed_on,
+                subject=row.fields["subject"],
+                activity=row.fields["activity"],
+                polarity=int(row.fields.get("polarity") or 0),
+            )
+            for row in rows
+        ]
+
+
+class StoreHealthMemory(_StoreReader):
+    """`HealthMemoryReader` 구현. `observation_health` 를 Memory store 에서 읽는다."""
+
+    async def health_observations(
+        self, *, child_id: UUID, date_from: date, date_to: date
+    ) -> list[HealthObservation]:
+        rows = await _rows(
+            self._open,
+            "health",
+            child_id=child_id,
+            date_from=date_from,
+            date_to=date_to,
+            statuses=HEALTH_STATUSES,
+        )
+        found: list[HealthObservation] = []
+        for row in rows:
+            observed_range = row.fields.get("observed_range")
+            # [start, end) 반닫힘 — 포함하는 마지막 날은 end 의 전날이다
+            last = observed_range.end - timedelta(days=1) if observed_range else row.observed_on
+            found.append(
+                HealthObservation(
+                    id=_uuid(row.id),
+                    observed_from=row.observed_on,
+                    observed_to=max(last, row.observed_on),
+                    observed_time=row.fields.get("observed_time"),
+                    symptoms=tuple(row.fields.get("symptom") or ()),
+                    severity=row.fields.get("severity"),
+                    action_taken=row.fields.get("action_taken"),
+                    temperature=row.fields.get("temperature"),
+                    measured_at=row.fields.get("measured_at"),
+                    measure_site=row.fields.get("measure_site"),
+                    medication_given=row.fields.get("medication_given"),
+                    linked_symptom_id=_optional_uuid(row.fields.get("linked_symptom_id")),
+                )
+            )
+        return found
+
+    async def meals(self, *, child_id: UUID, date_from: date, date_to: date) -> list[MealRecord]:
+        """최근 식사. Food 와 같은 상태(`FOOD_STATUSES`)만 읽는다 — 영양 숫자는 없다."""
+        rows = await _rows(
+            self._open,
+            "food",
+            child_id=child_id,
+            date_from=date_from,
+            date_to=date_to,
+            statuses=FOOD_STATUSES,
+        )
+        return [
+            MealRecord(
+                id=_uuid(row.id),
+                observed_on=row.observed_on,
+                subject=row.fields["subject"],
+                amount_text=row.fields.get("amount"),
             )
             for row in rows
         ]

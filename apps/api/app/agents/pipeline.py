@@ -32,6 +32,8 @@ from app.agents.common.suggestion import (
 )
 from app.agents.food.agent import run as run_food
 from app.agents.food.registry import WRITING_TASKS as FOOD_WRITING_TASKS
+from app.agents.growth.agent import run as run_growth
+from app.agents.growth.schemas.task import RECOMMENDING_LABELS as GROWTH_RECOMMENDING
 from app.agents.memory.agent import MemoryAgentResult
 from app.agents.memory.agent import run as run_memory
 from app.agents.memory.bundles import MUTATING_PREFIXES, WRITES_FOR
@@ -125,6 +127,7 @@ PartialReason = Literal["timeout_20s", "agent_error"]
 _RUNNERS: dict[str, DomainRunner] = {
     DomainAgentName.FOOD.value: run_food,
     DomainAgentName.ACTIVITY.value: run_activity,
+    DomainAgentName.GROWTH.value: run_growth,
 }
 
 # 같은 run의 다른 task가 읽는 행을 쓰는 라벨. 각 Agent registry가 정한다.
@@ -138,6 +141,8 @@ _WRITING_TASKS: dict[str, frozenset[str]] = {
 RECOMMENDING_TASKS: dict[str, frozenset[str | None]] = {
     DomainAgentName.FOOD.value: frozenset({"meal_recommendation"}),
     DomainAgentName.ACTIVITY.value: frozenset({None}),
+    # growth_review 는 추천이 아니다 — 05 화면이 없다
+    DomainAgentName.GROWTH.value: frozenset(GROWTH_RECOMMENDING),
 }
 
 
@@ -1093,11 +1098,17 @@ def _memory_wrote(memory: MemoryAgentResult | None) -> bool:
 
 
 def _saved_refs(memory: MemoryAgentResult) -> tuple[Ref, ...]:
-    """성공한 관찰 저장 결과만 반환"""
+    """성공한 관찰 저장 결과만 반환.
+
+    health 는 호출 한 번이 증상 행과 약 행 두 개를 만들 수 있다 — 약 행은 `medication_id` 로 온다
+    (#551). 빼면 04 화면의 "저장됨" 에서 약 행이 빠진다.
+    """
     return tuple(
-        Ref(kind=call.result["resource"], id=call.result["data"]["id"])
+        Ref(kind=call.result["resource"], id=row_id)
         for call in memory.calls
         if call.success and call.name.startswith("create_observation_")
+        for row_id in (call.result["data"]["id"], call.result["data"].get("medication_id"))
+        if row_id is not None
     )
 
 

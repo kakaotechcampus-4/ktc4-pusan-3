@@ -33,6 +33,8 @@ from app.agents.entrypoint import (
 from app.agents.memory.schemas.task import WorkType
 from app.api import agent_ports, idempotency
 from app.api.runs import pending_reply, registry, runner, suggestion_retry
+from app.domains.child.agent_reader import DbChildBasicReader
+from app.domains.medication.agent_reader import DbMedicationStore
 from app.domains.safety.agent_reader import DbSafetyReader
 
 PARENT = uuid.UUID(int=1)
@@ -78,6 +80,10 @@ async def test_agent_job_calls_the_agents_entrypoint_and_relays_its_events(monke
     assert seen["parent_id"] == PARENT  # 보호자 발화가 아이 것으로 저장되지 않게 (§2)
     assert seen["raw_text"] == RAW_TEXT
     assert seen["run_id"] == channel.run_id  # 202 로 준 run_id 가 done 까지 같은 값
+    # 안 넘기면 성장 추이가 "측정 0건" 으로 읽힌다
+    from app.domains.child.agent_reader import DbGrowthLogReader
+
+    assert isinstance(seen["growth_log"], DbGrowthLogReader)
     assert names(channel) == ["step", "done"]
     assert channel.closed
 
@@ -107,9 +113,9 @@ async def test_agent_job_좌표와_날씨_어댑터를_진입점에_그대로_�
     assert seen["activity_weather"] is weather
 
 
-async def test_agent_job_안전_어댑터를_Food_와_Activity_에_넘긴다(monkeypatch):
-    """#460 — 넘기지 않으면 둘 다 blocked.safety 로 닫힌다. 같은 어댑터 하나를 둘이 다른
-    메서드로 읽는다."""
+async def test_agent_job_안전_어댑터를_Food_Activity_Growth_에_넘긴다(monkeypatch):
+    """#460 — 넘기지 않으면 Food · Activity 와 Growth 교육이 blocked.safety 로 닫힌다. 같은
+    어댑터 하나를 셋이 다른 메서드로 읽는다."""
     seen: dict = {}
 
     async def fake_handle_input(**kwargs):
@@ -124,6 +130,54 @@ async def test_agent_job_안전_어댑터를_Food_와_Activity_에_넘긴다(mon
 
     assert isinstance(seen["food_safety"], DbSafetyReader)
     assert seen["activity_safety"] is seen["food_safety"]
+    assert seen["growth_safety"] is seen["food_safety"]
+
+
+async def test_agent_job_Health_포트를_진입점에_넘긴다(monkeypatch):
+    """복약 어댑터는 읽기와 중단 쓰기가 한 객체다. 안 넘기면 Health 는 읽을 때 실패로 닫힌다."""
+    seen: dict = {}
+
+    async def fake_handle_input(**kwargs):
+        seen.update(kwargs)
+        kwargs["emit"](Done(kwargs["run_id"], 1))
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+
+    job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    assert isinstance(seen["health_safety"], DbSafetyReader)
+    assert isinstance(seen["health_medication"], DbMedicationStore)
+    assert seen["health_medication_writer"] is seen["health_medication"]
+    assert isinstance(seen["health_child"], DbChildBasicReader)
+
+
+@pytest.mark.parametrize("key", ["test-auth-key", ""])
+async def test_agent_job_인증키가_있을_때만_도서_어댑터를_넘긴다(monkeypatch, key):
+    """키가 없으면 둘 다 넘기지 않는다 — 도서는 closed.book_api 로 닫힌다."""
+    from app.core.config import settings
+    from app.domains.suggestion.agent_reader import DbIssuedBooks
+    from app.integrations.data4library.client import Data4LibraryBooks
+
+    monkeypatch.setattr(settings, "DATA4LIBRARY_AUTH_KEY", key)
+    seen: dict = {}
+
+    async def fake_handle_input(**kwargs):
+        seen.update(kwargs)
+        kwargs["emit"](Done(kwargs["run_id"], 1))
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+
+    job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    if key:
+        assert isinstance(seen["growth_books"], Data4LibraryBooks)
+        assert isinstance(seen["growth_issued_books"], DbIssuedBooks)
+    else:
+        assert "growth_books" not in seen and "growth_issued_books" not in seen
 
 
 async def test_agent_job_stops_a_run_past_the_deadline(monkeypatch):

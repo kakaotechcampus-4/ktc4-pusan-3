@@ -15,6 +15,7 @@ import { IconTile } from "@/components/ui/icon-tile";
 import { SkeletonText, SkeletonTile } from "@/components/ui/skeleton";
 import { isHealthObservation, type Observation } from "@/lib/api/types";
 import { cn } from "@/lib/cn";
+import { healthTitle } from "@/lib/health-observation";
 
 /**
  * 07 관찰 목록 — **줄**이다. 카드가 아니다.
@@ -40,7 +41,8 @@ import { cn } from "@/lib/cn";
  *    알약 모양이면 "이번만 그랬어요" 가 기억 이름처럼 읽혔다 — 모양이 달라야 다른 것으로 읽힌다.
  *    라벨만 두지 않고 "…로 고친 기록" 까지 쓰는 것도 같은 이유다.
  *
- * 🚨 **줄을 끌고 가는 것은 그 기록이 무엇에 관한 것인지(`subject` · health 는 `symptom`)다**
+ * 🚨 줄을 끌고 가는 것은 그 기록이 무엇에 관한 것인지(`subject` · health 는 `symptom`, 먹인 약 행은
+ *    약 이름 · #551)다
  *    (#524). 부모가 적은 말(`raw_text`)은 그 아래 한 단계 약하게 선다. 한 발화는 관찰 여러 건으로
  *    나뉘어 저장되는데(최상위 CLAUDE.md §4 ②), 원문이 제목이던 때는 같은 문장이 줄마다 같은
  *    무게로 반복돼서 "같은 말이 세 번 저장됐다" 로 읽혔다.
@@ -164,13 +166,12 @@ function ObservationRow({ observation, onOpen }: { observation: Observation; onO
 /**
  * 줄의 제목 — 이 기록이 무엇에 관한 것인가. 04 대화 결과의 기록 줄(`run-result.tsx`)과 같은 필드를
  * 쓴다 (04 는 health 에 `observed_time` 까지 붙이고, 07 은 시각을 상세에만 둔다).
- * health 는 `subject` 키가 없어 증상이 그 자리를 받는다. 증상이 없으면 `null` 이고, 줄은 원문을 제목으로 쓴다.
+ * health 는 `subject` 키가 없어 증상이 그 자리를 받는다. 먹인 약 행은 약 이름이 받는다 — 증상과 같은 말에서
+ * 저장된 약 행은 원문이 같아서, 원문을 제목으로 쓰면 같은 줄이 두 번 보인다 (#551). 둘 다 없으면 `null` 이고,
+ * 줄은 원문을 제목으로 쓴다.
  */
 function observationTitle(observation: Observation): string | null {
-  if (isHealthObservation(observation)) {
-    const symptoms = observation.domain_fields.symptom;
-    return symptoms && symptoms.length > 0 ? symptoms.join(", ") : null;
-  }
+  if (isHealthObservation(observation)) return healthTitle(observation.domain_fields);
   return observation.subject || null;
 }
 

@@ -204,6 +204,26 @@ async def test_health_관찰_시각은_한국_시간으로_싣는다(monkeypatch
     assert saved["domain_fields"]["observed_time"] == nine_pm.isoformat()  # …T21:00:00+09:00
 
 
+async def test_health_체온은_숫자로_싣는다(monkeypatch, bearer, cid):
+    """#551 — DB 는 numeric(3,1) 을 Decimal 로 돌려주고, JSON 으로 바꾸면 "38.5" 글자가 된다.
+    화면이 숫자로 그리도록 숫자로 싣는다. 먹인 약 두 칸도 domain_fields 에 같이 실린다.
+    """
+    _, parent_id = bearer
+    _pipeline(
+        monkeypatch,
+        {**HEALTH, "fields": {**HEALTH["fields"], "symptom": ["발열"], "temperature": 38.5}},
+    )
+
+    channel = await _run(cid, parent_id)
+
+    [saved] = _saved(channel)
+    assert saved["domain_fields"]["temperature"] == 38.5
+    assert isinstance(saved["domain_fields"]["temperature"], float)
+    assert {"measured_at", "measure_site", "medication_given", "linked_symptom_id"} <= (
+        saved["domain_fields"].keys()
+    )
+
+
 async def test_이어받기_run_도_saved_를_보낸다(monkeypatch, bearer, cid):
     """완료 기준 3 — 되묻기에 답한 run 도 같은 commit → Saved 길을 탄다."""
     _, parent_id = bearer

@@ -67,7 +67,16 @@ DOMAINS = ("food", "health", "education", "activity", "routine")
 # 비울 수 있는 필드 목록(CLEARABLE)은 store_plan D3 의 표 그대로다.
 CLEARABLE: dict[str, set[str]] = {
     "food": {"action", "amount", "reaction"},
-    "health": {"severity", "body_part", "suspected_trigger", "action_taken", "observed_time"},
+    "health": {
+        "severity",
+        "body_part",
+        "suspected_trigger",
+        "action_taken",
+        "observed_time",
+        "temperature",
+        "measured_at",
+        "measure_site",
+    },
     "education": {"session_type", "duration_min", "engagement_level"},
     "activity": {"location", "companions", "duration_min", "engagement_level"},
     "routine": {"context", "assistance_level", "completion_status", "trigger"},
@@ -76,12 +85,17 @@ CLEARABLE: dict[str, set[str]] = {
 _FULL_ARGS: dict[str, dict[str, Any]] = {
     "food": {"subject": "김밥", "action": "먹었다", "amount": "반 그릇", "reaction": "좋아함"},
     "health": {
+        # 체온은 원문에 있는 숫자만 저장된다 (#551)
+        "raw_text": "이마가 뜨거워서 오전 8시에 재 보니 38.5도",
         "symptom": ["발열"],
         "severity": "mild",
         "body_part": "이마",
         "suspected_trigger": "우유 먹은 뒤",
         "action_taken": "해열제",
         "observed_time": "오전 8시",
+        "temperature": 38.5,
+        "measured_at": "오전 8시",
+        "measure_site": "ear",
     },
     "education": {
         "subject": "한글 자모",
