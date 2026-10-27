@@ -47,8 +47,12 @@ import-linter 로 CI 에서 강제할 예정이다(#79 API CI 와 함께). 설�
   | `domains/memory/curator/trigger.py` | `agents.curator.embedding.embed_step` · `.judge`(Protocol) · `.linker.link_observations`(실행) |
   | `domains/safety/agent_reader.py` | `agents.common.ports`(`SafetyLookupError`) · `agents.food.store.ports` · `agents.activity.store.ports` · `agents.growth.store.ports`(`SafetyEntry`) · `agents.health.store.ports`(`HealthSafetyEntry`) |
   | `domains/food/agent_reader.py` | `agents.food.store.ports`(`MenuCatalogRow` · `RECIPE_SOURCES`) |
-  | `domains/child/agent_reader.py` | `agents.growth.store.ports`(`GrowthMeasurement`) |
+  | `domains/child/agent_reader.py` | `agents.growth.store.ports`(`GrowthMeasurement`) · `agents.health.store.ports`(`ChildBasic`) |
+  | `domains/medication/agent_reader.py` | `agents.health.store.ports`(`MedicationCourse` · `MedicationDose` · `DoseSlot`) |
 
+  - Agent 가 직접 쓰는 것은 `DbMedicationStore.stop_course`(보호자가 확인한 복약 중단 UPDATE) 하나뿐이다.
+    복약 어댑터에 다른 쓰기 메서드를 두지 않는다 — 명세의 "Agent role 은 중단 UPDATE 만" 을 DB 역할
+    분리 없이 어댑터 모양으로 대신하는 것이다.
   - `trigger.py` 만 타입이 아니라 agents 의 함수를 부른다. Curator 판정 흐름은 agents 몫이고 세션 ·
     트랜잭션 · advisory lock 은 domains 몫이라 여기서 만난다. 실행을 api 로 옮기려면 api 가
     entrypoint 밖의 agents 를 import 해야 해서 지금은 이 자리에 둔다.
