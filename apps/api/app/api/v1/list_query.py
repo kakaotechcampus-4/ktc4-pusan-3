@@ -14,6 +14,11 @@ from fastapi import Depends, Query
 
 from app.api.errors import ApiError
 
+# 🚨 상한이 없으면 터무니없이 큰 page 가 offset 을 DB 정수 범위 밖으로 밀어 500 이 된다
+#    (size=100 에서 page=10^17 부터 재현). size 최대 100 을 곱해도 100만 행이라
+#    정상 사용은 닿지 않는다.
+MAX_PAGE = 10_000
+
 
 @dataclass(frozen=True)
 class ListQuery:
@@ -32,7 +37,7 @@ class ListQuery:
 
 
 def list_query(
-    page: Annotated[int, Query(ge=1, description="쪽 번호 (1부터)")] = 1,
+    page: Annotated[int, Query(ge=1, le=MAX_PAGE, description="쪽 번호 (1부터, 최대 10,000)")] = 1,
     size: Annotated[int, Query(ge=1, le=100, description="한 쪽에 보여줄 개수")] = 20,
     date_from: Annotated[date | None, Query(description="이 날짜 이후 (포함)")] = None,
     date_to: Annotated[date | None, Query(description="이 날짜 이전 (포함)")] = None,
