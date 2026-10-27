@@ -593,22 +593,69 @@ async def test_page_offset_pages_in_newest_first_order_without_gaps(session, fam
     assert {page.total for page in pages} == {5}
 
 
-async def test_page_offset_does_not_skip_same_day_different_domain_records(session, family):
-    """같은 날짜 · 다른 도메인 3건을 offset 으로 한 건씩 순회해도 3건이 모두 나온다."""
+async def test_page_offset_keeps_same_day_ties_in_kind_then_id_descending_order(session, family):
+    """같은 날짜는 (kind DESC, id DESC) 로 순서가 고정된다 — 한 건씩 넘겨도 중복 · 누락이 없다."""
     writer, child, _ = family
-    for domain, label in (
-        (ObservationDomain.FOOD, "사과"),
-        (ObservationDomain.HEALTH, "콧물"),
-        (ObservationDomain.ROUTINE, "양치"),
-    ):
-        await add_observation(session, writer, child, domain, date(2026, 9, 1), label)
+    day = date(2026, 9, 1)
+    food_a = await add_observation(session, writer, child, ObservationDomain.FOOD, day, "사과")
+    food_b = await add_observation(session, writer, child, ObservationDomain.FOOD, day, "배")
+    health = await add_observation(session, writer, child, ObservationDomain.HEALTH, day, "콧물")
+    routine = await add_observation(session, writer, child, ObservationDomain.ROUTINE, day, "양치")
+    expected = [
+        routine.id,
+        health.id,
+        *sorted([food_a.id, food_b.id], reverse=True),
+    ]
 
     seen = []
-    for offset in range(3):
+    for offset in range(4):
         page = await page_observations(session, child_id=child.id, limit=1, offset=offset)
         seen.extend(row.id for row in page.items)
 
-    assert len(set(seen)) == 3
+    assert seen == expected
+
+
+async def test_page_orders_by_observed_to_not_observed_from_and_overlaps_multi_day_ranges(
+    session, family
+):
+    """기간이 긴 기록은 끝 날짜(observed_to) 기준으로 앞에 오고, 날짜 필터는 겹치면 포함한다."""
+    writer, child, _ = family
+    long_one = await create_observation(
+        session,
+        domain="food",
+        child_id=child.id,
+        source_writer=writer.id,
+        raw_text="9/1~9/5",
+        observed_range=observed(date(2026, 9, 1), days=5),
+        fields=required_fields(ObservationDomain.FOOD, "긴 기록"),
+    )
+    short_one = await add_observation(
+        session, writer, child, ObservationDomain.FOOD, date(2026, 9, 3), "짧은 기록"
+    )
+
+    ordered = await page_observations(session, child_id=child.id)
+    from_fifth = await page_observations(session, child_id=child.id, date_from=date(2026, 9, 5))
+    until_first = await page_observations(session, child_id=child.id, date_to=date(2026, 9, 1))
+
+    assert [row.id for row in ordered.items] == [long_one.id, short_one.id]
+    assert [row.id for row in from_fifth.items] == [long_one.id]
+    assert [row.id for row in until_first.items] == [long_one.id]
+
+
+async def test_page_date_from_alone_and_date_to_alone_each_filter(session, family):
+    writer, child, _ = family
+    old = await add_observation(
+        session, writer, child, ObservationDomain.FOOD, date(2026, 9, 1), "옛날"
+    )
+    new = await add_observation(
+        session, writer, child, ObservationDomain.FOOD, date(2026, 9, 20), "최근"
+    )
+
+    after = await page_observations(session, child_id=child.id, date_from=date(2026, 9, 10))
+    before = await page_observations(session, child_id=child.id, date_to=date(2026, 9, 10))
+
+    assert [row.id for row in after.items] == [new.id]
+    assert [row.id for row in before.items] == [old.id]
 
 
 async def test_page_offset_past_the_end_is_an_empty_page_with_the_same_total(session, family):
@@ -747,3 +794,77 @@ async def test_page_q_does_not_break_the_health_branch_that_has_no_subject(sessi
 
     assert [row.id for row in page.items] == [health.id]
     assert page.total == 1
+
+
+async def test_page_q_does_not_leak_through_subject_only_matches(session, family):
+    """raw_text OR subject 가 다른 조건을 우회하면 안 된다 — subject 로만 맞는 행으로 확인한다."""
+    writer, child, other_child = family
+    mine = await _observe_text(
+        session, writer, child, date(2026, 9, 10), raw_text="무관", subject="브로콜리"
+    )
+    await _observe_text(
+        session, writer, other_child, date(2026, 9, 10), raw_text="무관", subject="브로콜리"
+    )
+    corrected = await _observe_text(
+        session, writer, child, date(2026, 9, 10), raw_text="무관", subject="브로콜리"
+    )
+    await set_observation_status(
+        session,
+        domain="food",
+        child_id=child.id,
+        observation_id=corrected.id,
+        status=ObservationStatus.STAND_ALONE,
+    )
+    await _observe_text(
+        session, writer, child, date(2026, 1, 1), raw_text="무관", subject="브로콜리"
+    )
+
+    page = await page_observations(
+        session, child_id=child.id, q="브로콜리", date_from=date(2026, 9, 1)
+    )
+
+    assert [row.id for row in page.items] == [mine.id]
+    assert page.total == 1
+
+
+async def test_page_q_does_not_ignore_whitespace_for_observations(session, family):
+    """공백 무시 검색은 기억만이다 — 기록은 문장이라 단어 경계를 넘어 걸리면 오탐이 된다."""
+    writer, child, _ = family
+    await _observe_text(
+        session, writer, child, date(2026, 9, 1), raw_text="계란 반찬", subject="가"
+    )
+    await _observe_text(session, writer, child, date(2026, 9, 2), raw_text="a b", subject="나")
+
+    glued = await page_observations(session, child_id=child.id, q="계란반찬")
+    glued_ascii = await page_observations(session, child_id=child.id, q="ab")
+
+    assert (glued.total, glued_ascii.total) == (0, 0)
+
+
+@pytest.mark.parametrize(
+    "domain",
+    [
+        ObservationDomain.FOOD,
+        ObservationDomain.EDUCATION,
+        ObservationDomain.ACTIVITY,
+        ObservationDomain.ROUTINE,
+    ],
+)
+async def test_page_q_reads_subject_from_every_visible_table(session, family, domain):
+    """subject 칸이 표마다 다르게 올라가거나 NULL 로 채워지면 그 표만 검색에서 빠진다."""
+    writer, child, _ = family
+    hit = await create_observation(
+        session,
+        domain=domain,
+        child_id=child.id,
+        source_writer=writer.id,
+        raw_text="무관한 원문",
+        observed_range=observed(date(2026, 9, 1)),
+        fields={
+            **required_fields(domain, "찾는이름"),
+        },
+    )
+
+    page = await page_observations(session, child_id=child.id, q="찾는이름")
+
+    assert [row.id for row in page.items] == [hit.id]

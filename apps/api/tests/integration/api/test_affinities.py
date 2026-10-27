@@ -19,7 +19,7 @@ from app.domains.memory.observation.models import (
     ObservationFood,
     ObservationStatus,
 )
-from app.domains.memory.profile.models import MemoryDomain, ProfileAffinity
+from app.domains.memory.profile.models import MemoryDomain, ProfileAffinity, ProfileState
 from app.main import app
 from tests.integration.api.conftest import Bearer, issue_bearer, link_child
 
@@ -283,3 +283,109 @@ def test_swagger_says_total_counts_affinities_only():
         assert props[name].get("description"), f"{name} 에 설명이 없다"
     assert "affinities" in props["total"]["description"]
     assert "safety" in props["total"]["description"]
+
+
+@pytest.mark.parametrize(
+    ("created", "params", "expected_total_pages"),
+    [
+        (0, {}, 0),
+        (4, {"size": 2}, 2),  # 딱 나누어떨어진다
+        (4, {"size": 4}, 1),
+        (4, {"size": 100}, 1),
+        (5, {"size": 2}, 3),
+    ],
+)
+async def test_total_pages_is_ceil_of_total_over_size_and_zero_when_empty(
+    db_client: AsyncClient,
+    session: AsyncSession,
+    bearer: Bearer,
+    cid: uuid.UUID,
+    created: int,
+    params: dict[str, int],
+    expected_total_pages: int,
+):
+    headers, _ = bearer
+    for d in range(created):
+        await _linked(session, cid, f"음식{d}", days_ago=d)
+
+    body = (
+        await db_client.get(f"/api/v1/children/{cid}/affinities", params=params, headers=headers)
+    ).json()
+
+    assert (body["total"], body["total_pages"]) == (created, expected_total_pages)
+
+
+async def test_state_and_domain_filters_apply_to_total_not_only_to_the_items(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    headers, _ = bearer
+    for d in range(3):
+        await _linked(session, cid, f"확정{d}", days_ago=d)
+    candidate = await _linked(session, cid, "후보", days_ago=5)
+    candidate.state = ProfileState.CANDIDATE
+    await session.flush()
+    url = f"/api/v1/children/{cid}/affinities"
+
+    only_candidate = (
+        await db_client.get(url, params={"state": "candidate", "size": 1}, headers=headers)
+    ).json()
+    only_food = (
+        await db_client.get(url, params={"domain": "food", "size": 1}, headers=headers)
+    ).json()
+
+    assert (only_candidate["total"], only_candidate["total_pages"]) == (1, 1)
+    assert (only_food["total"], only_food["total_pages"]) == (4, 4)
+
+
+async def test_q_allows_exactly_100_characters(
+    db_client: AsyncClient, bearer: Bearer, cid: uuid.UUID
+):
+    headers, _ = bearer
+
+    resp = await db_client.get(
+        f"/api/v1/children/{cid}/affinities", params={"q": "가" * 100}, headers=headers
+    )
+
+    assert resp.status_code == 200
+
+
+async def test_health_domain_echoes_page_and_size_and_still_validates(
+    db_client: AsyncClient, bearer: Bearer, cid: uuid.UUID
+):
+    headers, _ = bearer
+    url = f"/api/v1/children/{cid}/affinities"
+
+    empty = (
+        await db_client.get(url, params={"domain": "health", "page": 3, "size": 5}, headers=headers)
+    ).json()
+    invalid = await db_client.get(
+        url,
+        params={"domain": "health", "date_from": "2026-10-31", "date_to": "2026-10-01"},
+        headers=headers,
+    )
+
+    assert empty == {
+        "affinities": [],
+        "safety": [],
+        "total": 0,
+        "page": 3,
+        "size": 5,
+        "total_pages": 0,
+    }
+    assert invalid.status_code == 400
+
+
+async def test_other_childs_list_is_forbidden_whatever_the_query(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer
+):
+    headers, _ = bearer
+    _, stranger = await issue_bearer(session, token="stranger")
+    other_cid = await link_child(session, parent_id=stranger)
+
+    resp = await db_client.get(
+        f"/api/v1/children/{other_cid}/affinities",
+        params={"page": 1, "size": 5, "q": "사과", "date_from": "2026-01-01"},
+        headers=headers,
+    )
+
+    assert resp.status_code == 403

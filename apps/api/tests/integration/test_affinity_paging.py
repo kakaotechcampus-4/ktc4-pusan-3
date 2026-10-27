@@ -17,11 +17,13 @@ from app.domains.child.models import Child
 from app.domains.identity.models import Parent
 from app.domains.memory.observation.models import (
     ConfidenceSource,
+    ObservationActivity,
+    ObservationEducation,
     ObservationFood,
     ObservationStatus,
 )
 from app.domains.memory.profile.models import MemoryDomain, ProfileAffinity, ProfileState
-from app.domains.memory.profile.repository import page_affinities
+from app.domains.memory.profile.repository import list_affinities, page_affinities
 
 
 @pytest.fixture
@@ -45,9 +47,12 @@ async def add_affinity(
     *,
     domain: MemoryDomain = MemoryDomain.FOOD,
     state: ProfileState = ProfileState.CONFIRMED,
-    linked: ObservationStatus | None = ObservationStatus.ACTIVE,
+    linked: tuple[ObservationStatus, ...] = (ObservationStatus.ACTIVE,),
 ) -> ProfileAffinity:
-    """기억 1건. linked 는 묶어 둘 관찰의 상태 — None 이면 묶인 관찰이 없다."""
+    """기억 1건. linked 는 묶어 둘 관찰들의 상태 — 빈 튜플이면 묶인 관찰이 없다.
+
+    관찰은 기억의 도메인에 맞는 표에 묶는다 (food · activity · education).
+    """
     affinity = ProfileAffinity(
         child_id=child.id,
         merge_key=key,
@@ -57,21 +62,26 @@ async def add_affinity(
     )
     session.add(affinity)
     await session.flush()
-    if linked is not None:
-        session.add(
-            ObservationFood(
-                child_id=child.id,
-                raw_text="원문",
-                subject=key,
-                confidence_source=ConfidenceSource.PARENT_DIRECT,
-                observed_range=Range(
-                    last_observed_on, last_observed_on + timedelta(days=1), bounds="[)"
-                ),
-                affinity_id=affinity.id,
-                status=linked,
-            )
-        )
-        await session.flush()
+    common = {
+        "child_id": child.id,
+        "raw_text": "원문",
+        "subject": key,
+        "confidence_source": ConfidenceSource.PARENT_DIRECT,
+        "observed_range": Range(
+            last_observed_on, last_observed_on + timedelta(days=1), bounds="[)"
+        ),
+        "affinity_id": affinity.id,
+    }
+    for status in linked:
+        match domain:
+            case MemoryDomain.FOOD:
+                row = ObservationFood(**common, status=status)
+            case MemoryDomain.ACTIVITY:
+                row = ObservationActivity(**common, activity=key, status=status)
+            case MemoryDomain.EDUCATION:
+                row = ObservationEducation(**common, topic=key, status=status)
+        session.add(row)
+    await session.flush()
     return affinity
 
 
@@ -113,12 +123,12 @@ async def test_page_excludes_affinities_without_active_observations_from_items_a
     """묶인 기록이 없거나 모두 교정된(stand_alone · inactive) 기억은 어느 쪽에도 안 나온다."""
     child, _ = children
     shown = await add_affinity(session, child, "계란 반찬", date(2026, 9, 5))
-    await add_affinity(session, child, "묶인 기록 없음", date(2026, 9, 4), linked=None)
+    await add_affinity(session, child, "묶인 기록 없음", date(2026, 9, 4), linked=())
     await add_affinity(
-        session, child, "이번만", date(2026, 9, 3), linked=ObservationStatus.STAND_ALONE
+        session, child, "이번만", date(2026, 9, 3), linked=(ObservationStatus.STAND_ALONE,)
     )
     await add_affinity(
-        session, child, "잘못됨", date(2026, 9, 2), linked=ObservationStatus.INACTIVE
+        session, child, "잘못됨", date(2026, 9, 2), linked=(ObservationStatus.INACTIVE,)
     )
 
     first = await page_affinities(session, child_id=child.id, limit=1, offset=0)
@@ -147,6 +157,8 @@ async def test_page_hides_archived_by_default_and_filters_state_and_domain(sessi
     assert ids(default) == [confirmed.id, candidate.id, activity.id]
     assert ids(only_candidate) == [candidate.id]
     assert ids(only_activity) == [activity.id]
+    # total 도 같은 필터를 건 건수다 — items 쿼리에만 필터를 걸면 total 만 부푼다
+    assert (default.total, only_candidate.total, only_activity.total) == (3, 1, 1)
 
 
 async def test_page_filters_last_observed_on_inclusively(session, children):
@@ -213,3 +225,88 @@ async def test_page_rejects_invalid_arguments(session, children, kwargs):
     child, _ = children
     with pytest.raises(ValueError):
         await page_affinities(session, child_id=child.id, **kwargs)
+
+
+async def test_page_counts_an_affinity_once_however_many_observations_are_linked(session, children):
+    """관찰이 여러 건 묶여도 기억은 한 번만 센다 — JOIN 으로 세면 total 이 부풀고 항목이 겹친다."""
+    child, _ = children
+    many = await add_affinity(
+        session,
+        child,
+        "여러 번",
+        date(2026, 9, 5),
+        linked=(ObservationStatus.ACTIVE,) * 3,
+    )
+    # active 가 하나라도 있으면 보인다 — 다른 상태가 섞여 있다고 빠지면 안 된다
+    mixed = await add_affinity(
+        session,
+        child,
+        "섞임",
+        date(2026, 9, 4),
+        linked=(ObservationStatus.ACTIVE, ObservationStatus.INACTIVE),
+    )
+
+    first = await page_affinities(session, child_id=child.id, limit=1, offset=0)
+    second = await page_affinities(session, child_id=child.id, limit=1, offset=1)
+    third = await page_affinities(session, child_id=child.id, limit=1, offset=2)
+
+    assert (ids(first), ids(second), third.items) == ([many.id], [mixed.id], [])
+    assert first.total == second.total == third.total == 2
+
+
+@pytest.mark.parametrize(
+    "domain", [MemoryDomain.FOOD, MemoryDomain.ACTIVITY, MemoryDomain.EDUCATION]
+)
+async def test_page_finds_the_active_observation_in_the_table_of_its_own_domain(
+    session, children, domain
+):
+    """근거 확인이 한 표(food)만 보면 activity · education 기억이 통째로 사라진다."""
+    child, _ = children
+    hit = await add_affinity(session, child, "블록", date(2026, 9, 1), domain=domain)
+
+    page = await page_affinities(session, child_id=child.id)
+
+    assert (ids(page), page.total) == ([hit.id], 1)
+
+
+async def test_page_breaks_last_observed_on_ties_by_id_descending(session, children):
+    child, _ = children
+    same_day = [await add_affinity(session, child, f"음식{n}", date(2026, 9, 1)) for n in range(3)]
+    expected = sorted((row.id for row in same_day), reverse=True)
+
+    first = await page_affinities(session, child_id=child.id, limit=2, offset=0)
+    second = await page_affinities(session, child_id=child.id, limit=2, offset=2)
+
+    assert ids(first) + ids(second) == expected
+
+
+async def test_page_date_from_alone_and_date_to_alone_each_filter(session, children):
+    child, _ = children
+    old = await add_affinity(session, child, "옛날", date(2026, 9, 1))
+    new = await add_affinity(session, child, "최근", date(2026, 9, 20))
+
+    after = await page_affinities(session, child_id=child.id, date_from=date(2026, 9, 10))
+    before = await page_affinities(session, child_id=child.id, date_to=date(2026, 9, 10))
+
+    assert ids(after) == [new.id] and ids(before) == [old.id]
+
+
+async def test_page_q_ignores_case(session, children):
+    child, _ = children
+    hit = await add_affinity(session, child, "Broccoli 좋아함", date(2026, 9, 1))
+
+    page = await page_affinities(session, child_id=child.id, q="broc")
+
+    assert ids(page) == [hit.id]
+
+
+async def test_list_affinities_stays_unpaged_and_keeps_unlinked_affinities(session, children):
+    """홈이 쓰는 list_affinities 는 그대로다 — 기본 개수 제한이 없고 묶인 기록 없는 기억도 준다."""
+    child, _ = children
+    for n in range(21):
+        await add_affinity(session, child, f"음식{n}", date(2026, 9, 1))
+    await add_affinity(session, child, "묶인 기록 없음", date(2026, 9, 1), linked=())
+
+    rows = await list_affinities(session, child_id=child.id)
+
+    assert len(rows) == 22

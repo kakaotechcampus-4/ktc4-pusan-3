@@ -31,6 +31,7 @@ from app.domains.suggestion.models import (
     SuggestionEvidence,
     SuggestionKind,
 )
+from app.main import app
 from tests.integration.api.conftest import Bearer, issue_bearer, link_child
 
 _FIELDS = {
@@ -352,3 +353,108 @@ async def test_health_detail_is_not_found(
         f"/api/v1/children/{cid}/observations/observation_health/{record.id}", headers=headers
     )
     assert resp.status_code == 404
+
+
+@pytest.mark.parametrize(
+    ("created", "params", "expected_total_pages"),
+    [
+        (0, {}, 0),
+        (4, {"size": 2}, 2),  # 딱 나누어떨어진다
+        (4, {"size": 4}, 1),
+        (4, {"size": 100}, 1),
+        (5, {"size": 2}, 3),
+    ],
+)
+async def test_total_pages_is_ceil_of_total_over_size_and_zero_when_empty(
+    db_client: AsyncClient,
+    session: AsyncSession,
+    bearer: Bearer,
+    cid: uuid.UUID,
+    created: int,
+    params: dict[str, int],
+    expected_total_pages: int,
+):
+    headers, parent_id = bearer
+    for d in range(created):
+        await _observe(session, cid, parent_id, "food", days_ago=d)
+
+    body = (
+        await db_client.get(f"/api/v1/children/{cid}/observations", params=params, headers=headers)
+    ).json()
+
+    assert (body["total"], body["total_pages"]) == (created, expected_total_pages)
+
+
+async def test_q_without_a_match_has_zero_total_pages(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    headers, parent_id = bearer
+    await _observe(session, cid, parent_id, "food", raw_text="사과")
+
+    body = (
+        await db_client.get(
+            f"/api/v1/children/{cid}/observations", params={"q": "없는말"}, headers=headers
+        )
+    ).json()
+
+    assert (body["items"], body["total"], body["total_pages"]) == ([], 0, 0)
+
+
+async def test_q_allows_exactly_100_characters_and_trims_the_edges(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    headers, parent_id = bearer
+    await _observe(session, cid, parent_id, "food", raw_text="점심에 브로콜리를 먹음")
+    await _observe(session, cid, parent_id, "food", days_ago=1, raw_text="사과를 먹음")
+    url = f"/api/v1/children/{cid}/observations"
+
+    longest = await db_client.get(url, params={"q": "가" * 100}, headers=headers)
+    padded = (await db_client.get(url, params={"q": " 브로콜리 "}, headers=headers)).json()
+
+    assert longest.status_code == 200
+    assert padded["total"] == 1  # 가장자리 공백이 검색어에 남으면 "% 브로콜리 %" 라 안 걸린다
+
+
+async def test_health_domain_echoes_page_and_size_and_still_validates(
+    db_client: AsyncClient, bearer: Bearer, cid: uuid.UUID
+):
+    """건강은 빈 목록이지만 고정 응답이 아니다 — 요청한 page · size 를 되돌리고 검증도 한다."""
+    headers, _ = bearer
+    url = f"/api/v1/children/{cid}/observations"
+
+    empty = (
+        await db_client.get(url, params={"domain": "health", "page": 3, "size": 5}, headers=headers)
+    ).json()
+    invalid = await db_client.get(
+        url,
+        params={"domain": "health", "date_from": "2026-10-31", "date_to": "2026-10-01"},
+        headers=headers,
+    )
+
+    assert empty == {"items": [], "total": 0, "page": 3, "size": 5, "total_pages": 0}
+    assert invalid.status_code == 400
+
+
+async def test_other_childs_list_is_forbidden_whatever_the_query(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer
+):
+    headers, _ = bearer
+    _, stranger = await issue_bearer(session, token="stranger")
+    other_cid = await link_child(session, parent_id=stranger)
+
+    resp = await db_client.get(
+        f"/api/v1/children/{other_cid}/observations",
+        params={"page": 1, "size": 5, "q": "사과", "date_from": "2026-01-01"},
+        headers=headers,
+    )
+
+    assert resp.status_code == 403
+
+
+def test_swagger_lists_the_new_params_and_no_cursor():
+    """과도기 코드를 남기지 않는다 — cursor · limit 이 문서에 남아 있으면 계약이 둘이 된다."""
+    params = app.openapi()["paths"]["/api/v1/children/{cid}/observations"]["get"]["parameters"]
+    names = {p["name"] for p in params}
+
+    assert {"page", "size", "q", "date_from", "date_to", "domain", "status"} <= names
+    assert names.isdisjoint({"cursor", "limit"})
