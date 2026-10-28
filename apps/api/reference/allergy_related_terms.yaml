@@ -18,7 +18,7 @@ fetched_at: 2026-10-18
 entries:
   - label: 꽃가루
     aliases: [꽃가루, 화분증, 화분, 잔디, pollen]
-    blocks: [꽃, 풀밭, 풀잎, 들풀, 풀숲, 나뭇잎, 잎, 산책, 바깥, 화분, 숲, 공원, 텃밭, 씨앗]
+    blocks: [꽃, 풀밭, 풀잎, 들풀, 풀숲, 나뭇잎, 잎, 산책, 바깥, 화분, 숲, 공원, 텃밭, 씨앗, 잔디]
     guards: [꽃게]
   - label: 라텍스
     aliases: [라텍스, 고무, latex]

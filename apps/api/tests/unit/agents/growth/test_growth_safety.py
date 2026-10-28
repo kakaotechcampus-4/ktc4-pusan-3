@@ -463,6 +463,14 @@ class TestAllergyRelated:
         )
         assert verdict == SafetyVerdict(allowed=False, removed_by="allergy_related")
 
+    def test_꽃가루로_등록한_아이에게_잔디_활동을_막는다(self, rules):
+        # 잔디는 꽃가루의 별칭이라("잔디" 로 적으면 꽃가루로 읽는다) 막을 낱말에도 있어야 한다
+        # (#452 리뷰). 없으면 "꽃가루" 로 등록한 아이에게만 잔디 놀이가 통과한다
+        verdict = check_learning_candidate(
+            ("잔디밭에서 공 굴리기", "공을 굴린다"), months=30, entries=[POLLEN], rules=rules
+        )
+        assert verdict == SafetyVerdict(allowed=False, removed_by="allergy_related")
+
     def test_준비물_칸도_본다(self, rules):
         # "풍선" 은 위험 용어 경고도 걸리지만, 표가 위험 용어보다 먼저 본다
         verdict = check_learning_candidate(
