@@ -1,4 +1,6 @@
+import { requireOptionalNativeModule } from "expo";
 import Constants from "expo-constants";
+import type { ExpoSpeechRecognitionModule } from "expo-speech-recognition";
 import { StatusBar } from "expo-status-bar";
 import * as WebBrowser from "expo-web-browser";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -16,7 +18,7 @@ import {
   View,
 } from "react-native";
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
-import { WebView, type WebViewNavigation } from "react-native-webview";
+import { WebView, type WebViewMessageEvent, type WebViewNavigation } from "react-native-webview";
 
 import { CookieFlush } from "./modules/cookie-flush";
 import { WEB_URL, isInternalUrl, isRootUrl } from "./src/config";
@@ -30,6 +32,15 @@ import { EXIT_HINT, decideBack } from "./src/native/back-press";
 import { flushOnBackground } from "./src/native/cookie-flush";
 import { isWebUrl } from "./src/native/in-app-browser";
 import { SAFE_AREA_SCRIPT, safeAreaScript, shellInsets } from "./src/native/safe-area";
+import {
+  SPEECH_LANG,
+  type SpeechEvent,
+  canListenOnDevice,
+  parseWebRequest,
+  speechBridgeScript,
+  speechErrorReason,
+  speechEventScript,
+} from "./src/native/speech";
 
 /**
  * 🚨 **디자인 값의 원본은 `apps/web/src/app/globals.css` 다** (최상위 CLAUDE.md §6).
@@ -43,6 +54,28 @@ const INK_MUTED = "#6b6b63"; // --color-ink-muted
 
 /** 웹 쪽에서 네이티브임을 알아볼 수 있게 붙인다 (예: 웹뷰에서만 다른 UI). */
 const USER_AGENT_SUFFIX = `IcatchApp/${Constants.expoConfig?.version ?? "0.0.0"}`;
+
+/**
+ * 기기 안 음성인식 (`expo-speech-recognition` · #595). Expo Go 에는 없어서 `null` 이다.
+ * 🚨 패키지 본체를 import 하지 않는다 — 본체는 `requireNativeModule` 이라 모듈이 없으면 셸이 뜨지 않는다.
+ */
+const SpeechRecognizer = requireOptionalNativeModule<typeof ExpoSpeechRecognitionModule>(
+  "ExpoSpeechRecognition",
+);
+
+/** 이 휴대폰에서 말로 적기를 켤 수 있는가 — 기기 안 인식이 보장될 때만 (`src/native/speech.ts` 머리말). */
+const SPEECH_AVAILABLE = (() => {
+  if (!SpeechRecognizer) return false;
+  try {
+    return canListenOnDevice({
+      os: Platform.OS,
+      apiLevel: typeof Platform.Version === "number" ? Platform.Version : 0,
+      onDevice: SpeechRecognizer.supportsOnDeviceRecognition(),
+    });
+  } catch {
+    return false;
+  }
+})();
 
 function Shell() {
   const webViewRef = useRef<WebView>(null);
@@ -185,6 +218,117 @@ function Shell() {
     return () => subscription.remove();
   }, []);
 
+  /**
+   * 인식기가 지금 듣고 있는가 — `start()` 를 부른 뒤 `end` 가 올 때까지.
+   * 🚨 이게 참일 때만 `abort()` 한다. 라이브러리의 `abort()` 는 상태를 보지 않고 늘 웹에 `end` 를 보내서, 첫 탭의
+   *    권한 창(Android 는 이것도 `background` 다)에서 부르면 웹은 꺼진 줄 아는데 허용 뒤 셸은 듣기 시작한다.
+   */
+  const listeningRef = useRef(false);
+  /**
+   * 권한을 확인하는 동안 웹이 "그만" 을 보냈는가. 그때 인식기는 아직 없어서 `stop()` 이 아무 일도 안 하고
+   * `end` 도 오지 않는다 — 확인이 끝난 뒤 시작하면 웹은 꺼진 줄 아는데 셸은 듣는다.
+   */
+  const stopRequestedRef = useRef(false);
+
+  /** 말로 적기의 진행을 웹에 알린다 (`src/native/speech.ts`). */
+  const sendSpeech = useCallback((event: SpeechEvent) => {
+    webViewRef.current?.injectJavaScript(speechEventScript(event));
+  }, []);
+
+  /**
+   * 듣기 시작 — 권한은 **처음 누를 때** 묻는다. 앱을 켤 때 묻지 않는다: 왜 필요한지 모르는 채로 뜬 창은
+   * 거절당하고, Android 는 두 번 거절하면 다시 묻지 못한다.
+   *
+   * 🚨 `requiresOnDeviceRecognition` 을 빼지 않는다. 빼면 음성이 인식 서버로 간다 (#595).
+   */
+  const startListening = useCallback(async () => {
+    const recognizer = SpeechRecognizer;
+    if (!recognizer || !SPEECH_AVAILABLE) {
+      sendSpeech({ type: "error", reason: "unsupported" });
+      return;
+    }
+    stopRequestedRef.current = false;
+    try {
+      const permission = await recognizer.requestPermissionsAsync();
+      if (!permission.granted) {
+        sendSpeech({ type: "error", reason: "denied" });
+        return;
+      }
+      if (stopRequestedRef.current) {
+        sendSpeech({ type: "end" });
+        return;
+      }
+      listeningRef.current = true;
+      recognizer.start({
+        lang: SPEECH_LANG,
+        interimResults: true,
+        continuous: true,
+        requiresOnDeviceRecognition: true,
+      });
+    } catch {
+      listeningRef.current = false;
+      sendSpeech({ type: "error", reason: "failed" });
+    }
+  }, [sendSpeech]);
+
+  const onMessage = useCallback(
+    (event: WebViewMessageEvent) => {
+      const request = parseWebRequest(event.nativeEvent.data, event.nativeEvent.url, isInternalUrl);
+      if (!request) return;
+      if (request.action === "start") {
+        void startListening();
+        return;
+      }
+      stopRequestedRef.current = true;
+      SpeechRecognizer?.stop();
+    },
+    [startListening],
+  );
+
+  /**
+   * 인식기 이벤트 → 웹. 결과는 첫 후보의 글자만 넘긴다 — 웹이 신뢰도나 다른 후보를 쓸 데가 없다.
+   *
+   * 한국어 모델이 없으면(`language-not-supported`) 받기를 걸고 "준비하는 중" 이라고 알린다. 받는 것은
+   * 인식 모델이고 음성이 아니다. 받기를 못 걸면 이 휴대폰에서는 못 쓰는 것이다.
+   */
+  useEffect(() => {
+    const recognizer = SpeechRecognizer;
+    if (!recognizer || !SPEECH_AVAILABLE) return;
+    const subscriptions = [
+      recognizer.addListener("start", () => sendSpeech({ type: "start" })),
+      recognizer.addListener("result", (event) => {
+        const text = event.results[0]?.transcript ?? "";
+        sendSpeech({ type: "result", text, final: event.isFinal });
+      }),
+      recognizer.addListener("error", (event) => {
+        if (event.error === "language-not-supported") {
+          recognizer
+            .androidTriggerOfflineModelDownload({ locale: SPEECH_LANG })
+            .then(() => sendSpeech({ type: "error", reason: "preparing" }))
+            .catch(() => sendSpeech({ type: "error", reason: "unsupported" }));
+          return;
+        }
+        const reason = speechErrorReason(event.error);
+        if (reason) sendSpeech({ type: "error", reason });
+      }),
+      recognizer.addListener("end", () => {
+        listeningRef.current = false;
+        sendSpeech({ type: "end" });
+      }),
+    ];
+    return () => subscriptions.forEach((subscription) => subscription.remove());
+  }, [sendSpeech]);
+
+  // 🚨 화면을 떠나면 마이크를 끈다. 보호자가 안 보는 동안 듣고 있으면 안 된다.
+  useEffect(() => {
+    const recognizer = SpeechRecognizer;
+    if (!recognizer || !SPEECH_AVAILABLE) return;
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "background" && listeningRef.current) recognizer.abort();
+    });
+    return () => subscription.remove();
+  }, []);
+
   // 회전·시스템 바·키보드 변화로 값이 바뀌면 다시 넘긴다. 첫 값은 주입 스크립트가 이미 들고 간다.
   useEffect(() => {
     webViewRef.current?.injectJavaScript(safeAreaScript(webInsets));
@@ -240,10 +384,14 @@ function Shell() {
               void openExternal(request.url);
               return false;
             }}
-            // 페이지가 뜨기 전에 상태바·제스처바가 먹는 자리를 꽂는다 (`src/native/safe-area.ts`).
-            // 🚨 웹에서 오는 메시지(`onMessage`)는 받지 않는다. 웹이 셸에 부탁할 것이 없다 —
-            //    최근 사진 창구는 사진 권한과 함께 뺐다 (#408 · CLAUDE.md §3).
-            injectedJavaScriptBeforeContentLoaded={SAFE_AREA_SCRIPT + safeAreaScript(webInsets)}
+            // 페이지가 뜨기 전에 상태바·제스처바가 먹는 자리와 말로 적기 창구를 꽂는다
+            // (`src/native/safe-area.ts` · `src/native/speech.ts`).
+            injectedJavaScriptBeforeContentLoaded={
+              SAFE_AREA_SCRIPT + safeAreaScript(webInsets) + speechBridgeScript(SPEECH_AVAILABLE)
+            }
+            // 🚨 웹의 부탁은 말로 적기 시작 · 멈춤뿐이다. 보낸 쪽 주소와 모양을 검사한 것만 받는다
+            //    (`parseWebRequest` · CLAUDE.md §4).
+            onMessage={onMessage}
             // 08 사진 분석 — <input type="file"> 이 동작하려면 필요하다.
             allowFileAccess
             allowsInlineMediaPlayback

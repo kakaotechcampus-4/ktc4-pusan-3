@@ -9,7 +9,7 @@ Owner: 고태영 (프론트 리드)
 
 ## 1. 이 앱이 하는 일 / 안 하는 일
 
-**한다** — 웹뷰로 `apps/web` 을 띄운다 · Android 물리 뒤로가기 → 웹뷰 히스토리 (하단 네비 네 칸에서는 두 번 눌러 종료) · 외부 링크를 in-app 브라우저로 앱 위에 · **로그인 시작 URL 을 인앱 인증 세션으로 열고 복귀를 웹에 싣는다** · 연결 실패 화면과 재시도 · safe area **값을 재서 웹에 넘긴다** · 백그라운드로 갈 때 웹뷰 쿠키를 디스크에 쓴다(값은 모른다).
+**한다** — 웹뷰로 `apps/web` 을 띄운다 · Android 물리 뒤로가기 → 웹뷰 히스토리 (하단 네비 네 칸에서는 두 번 눌러 종료) · 외부 링크를 in-app 브라우저로 앱 위에 · **로그인 시작 URL 을 인앱 인증 세션으로 열고 복귀를 웹에 싣는다** · 연결 실패 화면과 재시도 · safe area **값을 재서 웹에 넘긴다** · 백그라운드로 갈 때 웹뷰 쿠키를 디스크에 쓴다(값은 모른다) · **채팅바의 말로 적기를 기기 안 음성인식으로 돌리고 글자만 웹에 넘긴다**(#595).
 
 **안 한다** — 화면을 그리지 않는다. API 를 부르지 않는다. 토큰을 들고 있지 않다. 상태를 관리하지 않는다.
 
@@ -29,6 +29,7 @@ Owner: 고태영 (프론트 리드)
 | react-native-safe-area-context | 5.7.0 | |
 | expo-dev-client | 57.0.20 | 개발 빌드 런처 — Expo Go 로는 로그인 복귀(`icatch://`)를 못 받는다 (아래) |
 | expo-web-browser | 57.0.3 | 카카오 로그인 인증 세션 (Android = Custom Tabs, iOS = `ASWebAuthenticationSession`) · 외부 링크 in-app 브라우저 |
+| expo-speech-recognition | 57.1.1 | 말로 적기의 기기 안 음성인식 (#595). Expo 가 고르는 묶음 밖이라 메이저를 SDK 에 맞춰 고정했다 (57.x = SDK 57) |
 | TypeScript | 6.0.3 | |
 
 ### ⚠️ 네이티브 패키지는 npm 최신 ≠ 맞는 버전
@@ -58,14 +59,38 @@ src/native/auth-session.ts   로그인 시작 URL 판정 · 복귀 URL → /auth
 src/native/in-app-browser.ts 외부 링크를 in-app 브라우저로 열지 OS 에 맡길지 판정
 src/native/internal-url.ts   웹뷰 안에 둘 주소인지 판정 — 출처 + API 경로(`/api/…`) 제외
 src/native/cookie-flush.ts   백그라운드로 갈 때 쿠키 flush 판단 (#469)
+src/native/speech.ts         말로 적기 — 웹 부탁 검사 · 기기 안 인식 조건 · 오류 → 이유 · 웹에 넣는 창구와 이벤트 (#595)
 modules/cookie-flush/        로컬 Expo 모듈 (Android 만) — `CookieManager.flush()` 하나. 🚨 `android/` 가 생성물이 아니라 소스다
 app.json                     Expo 설정 (name · scheme · bundle id · 막는 권한)
 eas.json                     EAS 빌드 프로필 (배포 웹 주소 · versionCode 관리)
 ```
 
+### 🚨 마이크 권한은 말로 적기 하나에만 쓴다 (#595)
+
+Android 앱이 요청하는 권한은 `INTERNET` · `RECORD_AUDIO` 둘이다 (릴리스 매니페스트 기준 · `expo-speech-recognition` 플러그인이 더한다).
+마이크는 채팅바의 말로 적기에만 쓰고, 권한은 **처음 누를 때** 묻는다.
+
+- 🚨 **음성은 휴대폰 밖으로 나가지 않는다.** 음성을 서비스 밖으로 보내는 것은 정한 적이 없다 (개인정보 처리방침의
+  국외 이전 표에 음성인식 업체가 없다 · 외부 전달 범위 자체가 최상위 CLAUDE.md §10 의 미정이다).
+  `requiresOnDeviceRecognition: true` 로만 돌리고, 셸은 **글자만** 웹에 넘긴다. 이 옵션이 기기 안을
+  **보장하는 곳은 Android 13+ 뿐**이라 거기서만 켠다 (`canListenOnDevice` · 근거는 `src/native/speech.ts` 머리말).
+  Android 12 이하는 오프라인 힌트뿐이고, iOS 는 기기 안이 안 되면 그 옵션을 조용히 빼고 서버로 돈다.
+  🚨 **기기 안이 안 되면 서버 인식으로 넘어가지 않는다.** 웹이 버튼을 끄고 이유를 말한다.
+- 🚨 **`abort()` 는 듣고 있을 때만 부른다** (`listeningRef`). 라이브러리의 `abort()` 는 늘 웹에 `end` 를 보내는데, 첫 탭의
+  권한 창도 Android 에서는 `background` 라서 거기서 부르면 웹은 꺼진 줄 알고 셸은 허용 뒤 듣기 시작한다.
+- 한국어 모델이 없으면 `androidTriggerOfflineModelDownload` 로 받기를 걸고 "내려받고 있어요" 라고 알린다. 받는 것은 인식 모델이다.
+- 🚨 **라이브러리가 인식 결과를 logcat(`Log.d`)에 찍는 세 줄을 패치로 뺐다** (`patches/expo-speech-recognition@57.1.1.patch`
+  · `pnpm-workspace.yaml` 의 `patchedDependencies`). 릴리스 빌드에서도 남아서 아이 얘기 원문이 USB 디버깅 · 버그 리포트에
+  들어갔다. 지금은 글자 대신 건수만 찍는다 (최상위 CLAUDE.md §2 개인정보).
+  🚨 **이 패키지를 올리면 패치를 다시 만든다** — 패치가 버전에 묶여 있어서 올린 버전에는 걸리지 않는다. 올린 버전의
+  `ExpoSpeechService.kt` 에서 `results` · `transcriptions` 를 찍는 `log(...)` 를 다시 찾는다. ⚠️ Mobile CI 는 Kotlin 을
+  컴파일하지 않으니 `./gradlew :expo-speech-recognition:compileReleaseKotlin` 으로 직접 확인한다.
+- ⚠️ **iOS 는 꺼져 있다.** 켜려면 기기에서 한국어 기기 안 인식이 서버로 새지 않는지부터 확인한다. 문구(`app.json` 플러그인 옵션)는 넣어 두었다.
+- 매니페스트의 `<queries>` 에 `com.google.android.googlequicksearchbox` 가 붙는다 (플러그인 기본값). 권한이 아니라 패키지 조회 허용이다.
+
 ### 🚨 사진 권한을 받지 않는다 (#408)
 
-Android 앱이 요청하는 권한은 `INTERNET` 하나다 (릴리스 매니페스트 기준). 사진을 고르는 길은 웹의
+사진 권한은 받지 않는다. 사진을 고르는 길은 웹의
 `<input type="file">` 이 여는 시스템 선택기와 카메라 인텐트라 Android 에서는 권한이 필요 없다.
 
 ⚠️ **iOS 는 확인 전이다.** WKWebView 의 촬영과 앨범은 Info.plist 의 `NSCameraUsageDescription` ·
@@ -111,11 +136,14 @@ pnpm android          # = expo run:android — prebuild + gradle + 설치까지 
   ⚠️ **좁은 틈이 하나 남는다.** refresh 응답이 백그라운드 전환보다 늦게 오면(켜자마자 최근 앱 화면으로 간 경우, 왕복 수백 ms) flush 는 옛 쿠키를 쓰고 새 쿠키는 메모리에만 남는다. 그 상태로 스와이프 종료하고 30초 뒤 다시 켜면 서버가 세션을 지운다. 같은 증상을 보면 여기부터 의심한다.
   ⚠️ Mobile CI 는 Kotlin 을 컴파일하지 않는다. `modules/` 를 고치면 `./gradlew assembleDebug` 로 직접 빌드해 본다.
 - **`cacheEnabled={false}`** 는 SSE(`/runs/{rid}/events`) 때문이다. 켜면 진행 이벤트가 버퍼링돼서 04 오버레이가 멈춘 것처럼 보인다.
-- 🚨 **웹에서 오는 메시지(`onMessage`)를 받지 않는다.** 지금 웹이 셸에 부탁할 것이 없다. 창구가 다시 생기면
-  보낸 쪽 주소(`event.nativeEvent.url`)를 먼저 보고, 모양을 검사한 값으로만 네이티브를 부른다 —
-  모양이 어긋난 메시지 하나로 셸이 죽으면 안 된다.
+- 🚨 **웹에서 오는 메시지(`onMessage`)는 `parseWebRequest` 를 통과한 것만 받는다** (#595). 지금 웹의 부탁은
+  말로 적기 시작 · 멈춤 둘이다. 보낸 쪽 주소(`event.nativeEvent.url`)를 먼저 보고, 모양을 검사한 값으로만
+  네이티브를 부른다 — 모양이 어긋난 메시지 하나로 셸이 죽으면 안 된다. 부탁을 더하면(#593 위치 등) 같은 함수에
+  `kind` 를 더하고 테스트를 단다.
+  셸 → 웹은 `injectJavaScript` 로 `icatch:speech` 이벤트를 쏜다. 글자는 `JSON.stringify` 로만 싣는다.
 - 🚨 **권한을 늘리지 않는다** (§3 "사진 권한을 받지 않는다"). 네이티브 기능이 필요해지면 그 권한이 스토어 심사에
-  무엇을 요구하는지부터 본다.
+  무엇을 요구하는지부터 본다. ⚠️ 마이크(`RECORD_AUDIO`)를 더한 첫 배포 전에 Play Console 의 권한 선언과
+  데이터 보안 항목에 걸리는지 확인한다 (§3 마이크 · #595).
 - 🚨 **safe area 는 셸이 재고, 칠하는 것은 페이지다.** 웹뷰는 화면 끝까지 덮고(`edges={["left","right"]}`),
   상태바·제스처바 크기는 `--shell-inset-top` / `--shell-inset-bottom` 으로 넘긴다
   (`src/native/safe-area.ts` → 웹의 `pt-safe-*`/`pb-safe-*`).
@@ -148,7 +176,7 @@ pnpm start           # Expo 개발 서버 (Expo Go / 개발 빌드)
 pnpm android         # Android 로 열기
 pnpm ios             # iOS 로 열기 (macOS 필요)
 pnpm typecheck       # tsc --noEmit (앱 + 테스트 두 벌)
-pnpm test            # Node 내장 러너 — 로그인 · 외부 링크 · 웹뷰 안 주소 · 뒤로가기 · safe area · 쿠키 flush 판정 (src/native/*.test.ts)
+pnpm test            # Node 내장 러너 — 로그인 · 외부 링크 · 웹뷰 안 주소 · 뒤로가기 · safe area · 쿠키 flush · 말로 적기 판정 (src/native/*.test.ts)
 pnpm deps:check      # expo install --check — SDK 와 어긋난 패키지 버전 확인
 pnpm doctor          # expo-doctor 전체 점검
 ```
