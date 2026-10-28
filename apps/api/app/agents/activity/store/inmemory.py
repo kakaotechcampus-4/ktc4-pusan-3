@@ -230,7 +230,8 @@ def unwired_ports(
       `in_memory_ports(safety=...)` 로 명시한다.
     - 일정은 빈 표다(일정 포트 연결 전). 비는 시간을 묻는 tool 은 "일정 없음" 으로 읽는다.
     - 문서 행은 `reference/activity_doc.yaml` 의 `approved` 행이다. 테이블은 아직 없다.
-    - 장소는 None 이다 — 장소 어댑터 전이라 장소 조회가 닫힌다.
+    - 장소는 None 이다 — 장소 조회가 닫힌다. 어댑터(`domains/place/agent_reader.py`)는 있지만
+      위치 기능이 열리기 전이라(#451 · #166) 붙이지 않았다.
     """
     return ActivityPorts(
         profile=profile,

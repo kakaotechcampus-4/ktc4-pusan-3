@@ -5,7 +5,7 @@
         web-install web-dev web-build web-start web-test web-e2e web-lint web-fmt web-fmt-check \
         web-typecheck web-check web-contract web-image web-up web-down web-logs \
         api-image api-up api-down api-logs deploy-up deploy-down deploy-migrate \
-        deploy-load-food-dry deploy-load-food
+        deploy-load-food-dry deploy-load-food deploy-load-places-dry deploy-load-places
 
 # 로컬 개발 DB 와 배포는 compose 파일이 다르다. .env 는 한 곳(deploy/docker/.env)을 같이 쓴다.
 COMPOSE_DEV    := docker compose -f deploy/docker/docker-compose.yml --env-file deploy/docker/.env
@@ -66,6 +66,8 @@ help:
 	@echo "  make deploy-migrate 배포 DB 마이그레이션 (api 컨테이너 안에서 alembic upgrade heads)"
 	@echo "  make deploy-load-food-dry  배포 DB 에 Food 카탈로그를 받고 세기만 (쓰지 않음)"
 	@echo "  make deploy-load-food      배포 DB 에 Food 카탈로그 적재 (영양DB + 레시피, 한 트랜잭션)"
+	@echo "  make deploy-load-places-dry  배포 DB 에 장소(공원 · 도서관 · 놀이시설)를 받고 세기만 (쓰지 않음)"
+	@echo "  make deploy-load-places      배포 DB 에 장소 적재 (덮고 없어진 곳은 지움, 한 트랜잭션)"
 	@echo ""
 	@echo "  install/dev/test/lint/fmt/db-* 는 apps/api 안에서 uv 로 실행됩니다."
 	@echo "  web-* 는 apps/web 안에서 pnpm 으로 실행됩니다 (배포 4개는 docker)."
@@ -217,3 +219,11 @@ deploy-load-food-dry:
 
 deploy-load-food:
 	$(COMPOSE_DEPLOY) run --rm api uv run --no-sync python -m scripts.load_food_catalog --all
+
+# 장소 적재 (#516). 공원 · 도서관 표준데이터와 어린이놀이시설(화이트리스트)을 place 로 싣는다.
+# 출력은 건수뿐이다.
+deploy-load-places-dry:
+	$(COMPOSE_DEPLOY) run --rm api uv run --no-sync python -m scripts.load_places --all --dry-run
+
+deploy-load-places:
+	$(COMPOSE_DEPLOY) run --rm api uv run --no-sync python -m scripts.load_places --all

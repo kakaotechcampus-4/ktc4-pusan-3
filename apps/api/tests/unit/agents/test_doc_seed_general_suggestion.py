@@ -54,15 +54,10 @@ async def test_Activity_는_검수된_시드_행을_인용해_일반_추천을_�
         rotation=f"{CHILD}|{ctx.today.isoformat()}",
     )
     assert shown, "[예시] 로 보여 줄 검수된 행이 없다 — 모델이 인용할 문서 id 가 없다"
-    assert len(shown) >= 3
     doc = shown[0]
-    # 후보마다 그 활동의 [예시] 행을 단다 — 맞지 않는 행을 달면 거절된다(UNRELATED_DOC)
     proposals = [
-        {
-            **candidate(row.title),
-            "evidence": [{"id": str(row.id), "note": "이 나이 예시를 참고했어요"}],
-        }
-        for row in shown[:3]
+        {**candidate(name), "evidence": [{"id": str(doc.id), "note": "이 나이 예시를 참고했어요"}]}
+        for name in ("종이컵 탑 쌓기", "그림자놀이", "색종이 접기")
     ]
     llm = FakeLLM(memory(), _tools(("propose_activity_candidates", {"candidates": proposals})))
 

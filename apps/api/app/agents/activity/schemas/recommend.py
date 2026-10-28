@@ -77,7 +77,10 @@ class ActivityCandidate(ToolArgs):
         list[EvidencePick],
         Field(
             default_factory=list,
-            description="근거로 쓴 기록. search_activity_memory 결과에 있던 것만. 없으면 비운다",
+            description=(
+                "근거로 쓴 id. search_activity_memory 결과나 [예시]에 있던 것만. "
+                "기억 근거가 없으면 가장 가까운 [예시] id 를 단다"
+            ),
         ),
     ]
 
