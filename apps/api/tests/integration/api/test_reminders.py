@@ -4,12 +4,15 @@
 """
 
 import asyncio
+import uuid
 from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy import delete, func, select
-from sqlalchemy.ext.asyncio import async_sessionmaker
+from httpx import AsyncClient
+from sqlalchemy import delete, func, select, update
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.api import idempotency
 from app.domains.child.models import Child
 from app.domains.child.parents import unlink_parent
 from app.domains.identity.models import Parent
@@ -17,9 +20,130 @@ from app.domains.schedule.models import EventCategory, EventCreatedBy, EventType
 from app.domains.schedule.repository import create_event, put_reminder
 from app.infra.db.session import engine
 from app.rules.reminder import ReminderLead
-from tests.integration.api.conftest import link_child
+from tests.integration.api.conftest import Bearer, issue_bearer, link_child
 
 START = datetime(2099, 3, 10, 2, tzinfo=UTC)
+TIMED = {
+    "title": "병원",
+    "starts_at": "2099-03-10T11:00:00+09:00",
+    "ends_at": None,
+    "all_day": False,
+    "event_type": "episodic",
+    "category": "health",
+}
+DAY = "2099-03-10"
+
+
+@pytest.fixture
+async def member(session: AsyncSession, cid: uuid.UUID) -> Bearer:
+    """같은 아이를 함께 보는 두 번째 보호자."""
+    member = await issue_bearer(session, token="test-token-member")
+    await link_child(session, parent_id=member[1], child_id=cid)
+    return member
+
+
+async def _submit(client: AsyncClient, cid: uuid.UUID, headers: dict, **extra) -> dict:
+    idempotency.clear()
+    resp = await client.post(
+        f"/api/v1/children/{cid}/events",
+        json={"event": TIMED, "items": [], **extra},
+        headers={**headers, "Idempotency-Key": uuid.uuid4().hex},
+    )
+    assert resp.status_code == 201, resp.text
+    return resp.json()["event"]
+
+
+async def _patch(client: AsyncClient, cid: uuid.UUID, eid: str, headers: dict, body: dict):
+    idempotency.clear()
+    return await client.patch(
+        f"/api/v1/children/{cid}/events/{eid}",
+        json={"items": [], **body},
+        headers={**headers, "Idempotency-Key": uuid.uuid4().hex},
+    )
+
+
+async def _my_reminder(client: AsyncClient, cid: uuid.UUID, headers: dict) -> dict | None:
+    resp = await client.get(f"/api/v1/children/{cid}/calendar/{DAY}", headers=headers)
+    [event] = resp.json()["events"]
+    return event["reminder"]
+
+
+async def test_reminder_rings_only_for_whoever_set_it(
+    db_client: AsyncClient, bearer: Bearer, member: Bearer, cid: uuid.UUID
+):
+    """제출한 보호자에게만 걸리고, 다른 보호자는 각자 건다. 서로의 알림은 보이지 않는다."""
+    owner_headers, _ = bearer
+    member_headers, _ = member
+    event = await _submit(db_client, cid, owner_headers, reminder={"lead": "1h"})
+    assert event["reminder"] == {"lead": "1h"}
+    assert await _my_reminder(db_client, cid, member_headers) is None
+
+    url = f"/api/v1/children/{cid}/events/{event['id']}/reminder"
+    resp = await db_client.put(url, json={"lead": "10m"}, headers=member_headers)
+    assert resp.json() == {"reminder": {"lead": "10m"}}
+    assert await _my_reminder(db_client, cid, owner_headers) == {"lead": "1h"}
+
+    assert (await db_client.delete(url, headers=member_headers)).status_code == 204
+    assert await _my_reminder(db_client, cid, member_headers) is None
+    assert await _my_reminder(db_client, cid, owner_headers) == {"lead": "1h"}
+
+
+@pytest.mark.parametrize(
+    ("event", "lead"),
+    [
+        (TIMED, "day_of_9am"),  # 종일 일정의 값
+        ({**TIMED, "starts_at": "2026-01-01T11:00:00+09:00"}, "1h"),  # 이미 지난 시각
+    ],
+)
+async def test_unfit_reminder_is_refused_with_the_event(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID, event, lead
+):
+    """알림이 맞지 않으면 일정도 넣지 않는다 — 한 번에 제출한 것이다."""
+    headers, _ = bearer
+    idempotency.clear()
+    resp = await db_client.post(
+        f"/api/v1/children/{cid}/events",
+        json={"event": event, "items": [], "reminder": {"lead": lead}},
+        headers={**headers, "Idempotency-Key": uuid.uuid4().hex},
+    )
+    assert resp.status_code == 422
+    assert resp.json()["error"]["code"] == "invalid_reminder"
+    assert await session.scalar(select(func.count()).select_from(Reminder)) == 0
+
+
+async def test_editing_the_event_moves_or_drops_reminders(
+    db_client: AsyncClient,
+    session: AsyncSession,
+    bearer: Bearer,
+    member: Bearer,
+    cid: uuid.UUID,
+):
+    owner_headers, _ = bearer
+    member_headers, _ = member
+    event = await _submit(db_client, cid, owner_headers, reminder={"lead": "1h"})
+    eid = event["id"]
+    url = f"/api/v1/children/{cid}/events/{eid}/reminder"
+    await db_client.put(url, json={"lead": "10m"}, headers=member_headers)
+    await session.execute(update(Reminder).values(sent_at=START))
+
+    # 시작을 옮기면 알림은 그대로 따라가고, 새 시각에 다시 울린다. 칸을 빼면 손대지 않는다.
+    moved = {**TIMED, "starts_at": "2099-03-10T15:00:00+09:00"}
+    resp = await _patch(db_client, cid, eid, owner_headers, {"event": moved})
+    assert resp.json()["event"]["reminder"] == {"lead": "1h"}
+    rows = (await session.scalars(select(Reminder).execution_options(populate_existing=True))).all()
+    assert len(rows) == 2 and all(r.sent_at is None for r in rows)
+
+    # 종일로 바꾸면 두 보호자의 알림이 모두 지워진다. 고친 사람은 같은 요청으로 새로 건다.
+    all_day = {**moved, "starts_at": "2099-03-10T00:00:00+09:00", "all_day": True}
+    resp = await _patch(
+        db_client, cid, eid, owner_headers, {"event": all_day, "reminder": {"lead": "1d_9am"}}
+    )
+    assert resp.json()["event"]["reminder"] == {"lead": "1d_9am"}
+    assert await _my_reminder(db_client, cid, member_headers) is None
+
+    # null 이면 지운다
+    resp = await _patch(db_client, cid, eid, owner_headers, {"event": all_day, "reminder": None})
+    assert resp.json()["event"]["reminder"] is None
 
 
 # 연결 끊기와 겹칠 때 (#427). 두 요청이 실제로 겹쳐야 해서 한 트랜잭션 안의 `session` 으로는

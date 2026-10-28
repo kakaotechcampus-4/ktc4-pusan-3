@@ -23,6 +23,7 @@ from app.api.deps.child import AccessibleChild
 from app.api.deps.db import SessionDep
 from app.api.errors import ApiError, ErrorEnvelope, constraint_name
 from app.api.runs import suggestion_retry
+from app.api.v1.reminder_check import check_reminder, reminder_out
 from app.api.v1.schemas.common import Ref
 from app.api.v1.schemas.suggestions import (
     AnswerRequest,
@@ -291,6 +292,11 @@ async def submit_event(
     if replayed is not None and isinstance(replayed, dict):
         return JSONResponse(status_code=201, content=replayed)
 
+    if body.reminder is not None:
+        check_reminder(
+            body.reminder.lead, starts_at=body.event.starts_at, all_day=body.event.all_day
+        )
+
     # suggestion_ids 검증 (중복 제거)
     suggestion_ids = list(dict.fromkeys(body.suggestion_ids)) if body.suggestion_ids else []
     if suggestion_ids:
@@ -336,6 +342,19 @@ async def submit_event(
             session, suggestion_ids=suggestion_ids, event_id=event.id
         )
 
+    # 알림은 제출한 보호자에게만 건다 — 다른 보호자는 캘린더에서 각자 건다 (#594)
+    reminder = None
+    if body.reminder is not None:
+        reminder = await schedule_repo.put_reminder(
+            session,
+            child_id=child.child_id,
+            event_id=event.id,
+            parent_id=parent.parent_id,
+            lead=body.reminder.lead,
+        )
+        if reminder is None:  # 확인한 뒤 연결이 끊겼다 (#427) — 일정도 넣지 않는다
+            raise ApiError(403, "child_access_denied", "이 아이에 접근할 수 없어요")
+
     try:
         await session.commit()
     except IntegrityError as exc:
@@ -365,6 +384,7 @@ async def submit_event(
                 )
                 for ei in items
             ],
+            reminder=reminder_out(reminder),
         )
     )
 
@@ -898,6 +918,12 @@ async def update_event(
     if replayed is not None and isinstance(replayed, dict):
         return JSONResponse(status_code=200, content=replayed)
 
+    touch_reminder = "reminder" in body.model_fields_set
+    if touch_reminder and body.reminder is not None:
+        check_reminder(
+            body.reminder.lead, starts_at=body.event.starts_at, all_day=body.event.all_day
+        )
+
     event = await schedule_repo.update_event(
         session,
         child_id=child.child_id,
@@ -922,6 +948,24 @@ async def update_event(
     except ValueError:
         raise ApiError(400, "validation_failed", "유효하지 않은 item_id예요")
 
+    if touch_reminder and body.reminder is None:
+        await schedule_repo.delete_reminder(
+            session, child_id=child.child_id, event_id=eid, parent_id=parent.parent_id
+        )
+    elif touch_reminder:
+        put = await schedule_repo.put_reminder(
+            session,
+            child_id=child.child_id,
+            event_id=eid,
+            parent_id=parent.parent_id,
+            lead=body.reminder.lead,
+        )
+        if put is None:  # 확인한 뒤 연결이 끊겼다 (#427)
+            raise ApiError(403, "child_access_denied", "이 아이에 접근할 수 없어요")
+    mine = (
+        await schedule_repo.list_my_reminders(session, parent_id=parent.parent_id, event_ids=[eid])
+    ).get(eid)
+
     await session.commit()
 
     response_data = SubmitEventResponse(
@@ -945,6 +989,7 @@ async def update_event(
                 )
                 for ei in items
             ],
+            reminder=reminder_out(mine),
         )
     )
 
