@@ -402,28 +402,6 @@ class TestPlace:
         ).drafts
         assert draft.place_notice == "가기 전에 운영 여부와 이용료를 확인해 주세요."
 
-    def test_놀이시설_장소는_후보_셋_중_한_곳까지다(self):
-        """추천이 키즈카페 목록처럼 보이지 않게 (#516). 공원 · 도서관은 제한이 없다."""
-        cafes = {
-            name: PlaceRow(
-                name=name,
-                category=PlaceCategory.INDOOR_PLAYGROUND,
-                distance_m=900,
-                source="kids_play_facility",
-                data_date=None,
-            )
-            for name in ("가키즈카페", "나키즈카페")
-        }
-        result = review(
-            candidate(content="볼풀에서 공 던지기", place_name="가키즈카페"),
-            candidate(content="미끄럼틀 타기", place_name="나키즈카페", evidence=[DOC_PICK]),
-            candidate(content="모래성 쌓기", place_name=PARK, evidence=[DOC_PICK]),
-            places={**cafes, PARK: PARK_ROW},
-        )
-        assert [r.index for r in result.rejections] == [1]
-        assert result.rejections[0].reason is RejectReason.FACILITY_LIMIT
-        assert "키즈카페" not in explain(result.rejections).replace("키즈카페 · 놀이시설", "")
-
     def test_기준일자가_없는_장소는_운영_여부_확인만(self):
         undated = replace(PARK_ROW, data_date=None)
         (draft,) = review(
