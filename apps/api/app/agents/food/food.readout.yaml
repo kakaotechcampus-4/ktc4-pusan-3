@@ -119,7 +119,7 @@ check.age_block:
   template: "{food}{은는} {when} 먹이지 않는 음식이에요."
 check.choking:
   kind: check
-  template: "{food}{은는} {when} 통째로 먹으면 목에 걸릴 수 있어서, 먹는 동안 곁에서 지켜봐 주세요."
+  template: "{food}{은는} {when} 목에 걸릴 수 있어서, 먹는 동안 곁에서 지켜봐 주세요."
 check.not_found:
   kind: check
   template: "{food} 이름으로는 등록해 두신 {labels}{와과} 겹치는 걸 찾지 못했어요."

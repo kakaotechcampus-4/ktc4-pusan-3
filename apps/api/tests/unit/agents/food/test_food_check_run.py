@@ -380,12 +380,15 @@ async def test_조사가_붙어도_생우유_연령_규칙을_말한다(text) ->
     assert bodies(result) == ["우유는 12개월 전에는 먹이지 않는 음식이에요.", NONE_REGISTERED]
 
 
-@pytest.mark.parametrize(("food", "topic"), [("포도", "포도는"), ("땅콩", "땅콩은")])
+# 땅콩버터는 통째가 아니라 끈적여서 걸린다 — 문구에 "통째로" 를 넣지 않는 이유다(#575)
+@pytest.mark.parametrize(
+    ("food", "topic"), [("포도", "포도는"), ("땅콩", "땅콩은"), ("땅콩버터", "땅콩버터는")]
+)
 async def test_섭취_확인_답에는_질식_주의_한_줄을_넣는다(food, topic) -> None:
     result = await ask(f"{food} 먹여도 돼?", BIRTH_30, [])
 
     assert bodies(result) == [
-        f"{topic} 48개월 전에는 통째로 먹으면 목에 걸릴 수 있어서, 먹는 동안 곁에서 지켜봐 주세요.",
+        f"{topic} 48개월 전에는 목에 걸릴 수 있어서, 먹는 동안 곁에서 지켜봐 주세요.",
         NONE_REGISTERED,
     ]
 

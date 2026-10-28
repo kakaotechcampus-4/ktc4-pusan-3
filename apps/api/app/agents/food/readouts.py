@@ -43,7 +43,8 @@ CHECK_BLOCKED_SAFETY = "check.blocked_safety"  # 안전 조회 실패 — 답하
 CHECK_CONFLICT = "check.conflict"
 CHECK_PEANUT_IN_NUTS = "check.peanut_in_nuts"  # 땅콩과 견과류가 한 묶음으로 막힌다는 설명
 CHECK_AGE_BLOCK = "check.age_block"
-# 질식 주의 — 섭취 확인 답에만 낸다(#575 PM 결정). 추천 목록 · 급식에는 내지 않는다(10-13)
+# 질식 주의 — 섭취 확인 답에만 낸다(#575 PM 결정). 추천 목록 · 급식에는 내지 않는다(10-13).
+# 문구에 "통째로" 를 넣지 않는다 — 땅콩버터는 통째가 아니라 끈적여서 걸린다
 CHECK_CHOKING = "check.choking"
 CHECK_NOT_FOUND = "check.not_found"
 CHECK_UNKNOWN_FOOD = "check.unknown_food"  # 음식 이름을 알아보지 못했다 — 연령 · 등록 대조 못 함

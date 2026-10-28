@@ -447,7 +447,7 @@ Health 는 다르다 — 거기는 건강 그 자체라 동의 없이 전 라벨
 | `check.conflict` | {food}{은는} 등록해 두신 {label}{와과} 겹쳐요. |
 | `check.peanut_in_nuts` | 땅콩은 콩과 식물이지만 견과류와 함께 막고 있어요. |
 | `check.age_block` | {food}{은는} {when} 먹이지 않는 음식이에요. |
-| `check.choking` | {food}{은는} {when} 통째로 먹으면 목에 걸릴 수 있어서, 먹는 동안 곁에서 지켜봐 주세요. |
+| `check.choking` | {food}{은는} {when} 목에 걸릴 수 있어서, 먹는 동안 곁에서 지켜봐 주세요. |
 | `check.not_found` | {food} 이름으로는 등록해 두신 {labels}{와과} 겹치는 걸 찾지 못했어요. |
 | `check.unknown_food` | 음식 이름을 알아보지 못해서 연령 기준과 등록해 두신 {labels}{와과} 겹치는지는 확인하지 못했어요. |
 | `check.unknown_food_plain` | 음식 이름을 알아보지 못해서 연령 기준에 걸리는지는 확인하지 못했어요. |
