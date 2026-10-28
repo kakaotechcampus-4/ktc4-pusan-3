@@ -9,17 +9,22 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { isInternalUrlOf } from "./internal-url.ts";
 import {
   canListenOnDevice,
   parseWebRequest,
+  permissionReason,
   speechBridgeScript,
   speechErrorReason,
   speechEventScript,
+  volumeLevel,
 } from "./speech.ts";
 
 const ORIGIN = "https://icatch.ai.kr";
-const isInternal = (url: string) => url.startsWith(`${ORIGIN}/`);
-const PAGE = `${ORIGIN}/child/c_1/home`;
+/** 셸이 쓰는 것과 같은 판정 (`config.ts` 의 `isInternalUrl`). */
+const isInternal = (url: string) => isInternalUrlOf(url, ORIGIN);
+/** 🚨 Android 웹뷰는 보낸 쪽을 경로 없이 출처만 넘긴다 (`RNCWebView` 의 `sourceOrigin`). */
+const PAGE = ORIGIN;
 
 test("우리 페이지가 보낸 시작 · 멈춤만 받는다", () => {
   assert.deepEqual(parseWebRequest('{"kind":"speech","action":"start"}', PAGE, isInternal), {
@@ -32,11 +37,30 @@ test("우리 페이지가 보낸 시작 · 멈춤만 받는다", () => {
   });
 });
 
-test("남의 페이지가 보낸 것은 모양이 맞아도 버린다", () => {
-  assert.equal(
-    parseWebRequest('{"kind":"speech","action":"start"}', "https://evil.example/", isInternal),
-    null,
+test("경로까지 붙은 주소로 와도 우리 출처면 받는다", () => {
+  assert.deepEqual(
+    parseWebRequest('{"kind":"speech","action":"start"}', `${ORIGIN}/child/c_1/home`, isInternal),
+    { kind: "speech", action: "start" },
   );
+});
+
+test("남의 페이지가 보낸 것은 모양이 맞아도 버린다", () => {
+  for (const sender of [
+    "https://evil.example",
+    "https://icatch.ai.kr.evil.example",
+    "https://sub.icatch.ai.kr",
+    "http://icatch.ai.kr",
+    "https://icatch.ai.kr:8443",
+    "about:blank",
+    "data:text/html,x",
+    "",
+  ]) {
+    assert.equal(
+      parseWebRequest('{"kind":"speech","action":"start"}', sender, isInternal),
+      null,
+      sender,
+    );
+  }
 });
 
 test("모양이 어긋나면 던지지 않고 버린다", () => {
@@ -63,6 +87,21 @@ test("기기 안 인식이 보장되는 Android 13+ 에서만 켠다", () => {
   assert.equal(canListenOnDevice({ os: "android", apiLevel: 35, onDevice: false }), false);
   // iOS 는 기기 안이 안 되면 조용히 서버로 돈다 — 확인 전까지 끈다.
   assert.equal(canListenOnDevice({ os: "ios", apiLevel: 0, onDevice: true }), false);
+});
+
+test("권한은 다시 물을 수 있으면 declined, 없으면 denied 다", () => {
+  assert.equal(permissionReason({ granted: true, canAskAgain: true }), null);
+  assert.equal(permissionReason({ granted: false, canAskAgain: true }), "declined");
+  assert.equal(permissionReason({ granted: false, canAskAgain: false }), "denied");
+});
+
+test("소리 크기는 0~1 로 자르고 소수 둘째 자리까지만 넘긴다", () => {
+  assert.equal(volumeLevel(-2), 0);
+  assert.equal(volumeLevel(0), 0);
+  assert.equal(volumeLevel(3.456), 0.35);
+  assert.equal(volumeLevel(10), 1);
+  assert.equal(volumeLevel(14), 1);
+  assert.equal(volumeLevel(Number.NaN), 0);
 });
 
 test("오류 코드는 웹이 아는 이유로 바꾼다", () => {
