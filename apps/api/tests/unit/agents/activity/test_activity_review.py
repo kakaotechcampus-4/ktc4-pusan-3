@@ -18,6 +18,7 @@ from app.agents.activity.review import (
     GENERAL_REASON,
     GUIDANCE,
     MIN_AVOIDED_LABEL,
+    REQUESTED_REASON,
     RejectReason,
     explain,
     review_candidates,
@@ -117,6 +118,7 @@ def review(
     safety=(),
     outdoor=None,
     docs=DOCS,
+    requested=False,
 ):
     return review_candidates(
         candidates,
@@ -128,6 +130,7 @@ def review(
         outdoor=outdoor,
         docs=docs,
         today=TODAY,
+        requested=requested,
     )
 
 
@@ -198,6 +201,40 @@ class TestEvidence:
         """지어낸 근거로 개인화인 척하지 못한다."""
         result = review(candidate(evidence=[{"id": raw, "note": "모래놀이를 했어요"}]))
         assert reason_of(result) is RejectReason.UNKNOWN_EVIDENCE
+
+
+class TestRequested:
+    """보호자가 놀이를 정해 물었으면("물놀이 뭐 하지?") 그 요청에 맞춰 만든다. 아이 기록이 없으면
+    일반 추천이고, 문서 행 근거가 없어도 된다 — 기준이 이번 요청이다."""
+
+    def test_기록이_없으면_문서_근거_없이_일반_추천이고_요청_문구를_단다(self):
+        result = review(candidate(content="욕조에서 컵으로 물 옮기기", evidence=[]), requested=True)
+        (draft,) = result.drafts
+        assert draft.kind == "general"
+        assert draft.reason == REQUESTED_REASON
+        assert draft.citations == ()
+
+    def test_예시를_참고했으면_그_문서도_근거로_남는다(self):
+        (draft,) = review(candidate(evidence=[DOC_PICK]), requested=True).drafts
+        assert draft.kind == "general"
+        assert draft.reason == REQUESTED_REASON
+        assert [c.ref.id for c in draft.citations] == [TOWER_DOC.id]
+
+    def test_기록이_있으면_요청이어도_개인화다(self):
+        (draft,) = review(candidate(), requested=True).drafts
+        assert draft.kind == "personalized"
+
+    def test_막연한_요청은_지금처럼_문서_근거가_있어야_한다(self):
+        assert reason_of(review(candidate(evidence=[]), requested=False)) is RejectReason.BUILD
+
+    def test_요청_기반도_안전_필터는_그대로다(self):
+        result = review(
+            candidate(content="밀가루 반죽 주무르기", materials=["밀가루"], evidence=[]),
+            requested=True,
+            safety=[SafetyEntry(kind="allergy", label="밀", status="active")],
+        )
+        assert result.drafts == ()
+        assert len(result.removed) == 1
 
 
 class TestDocEvidence:

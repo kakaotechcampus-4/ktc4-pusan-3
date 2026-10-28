@@ -50,6 +50,9 @@ class SuggestionDraft:
     allergens: tuple[str, ...] = ()
     # 일정으로 만들 때 준비물 하나씩
     items: tuple[str, ...] = ()
+    # 보호자가 정한 요청에 맞춘 일반 추천이다 — 문서 행 근거가 없을 수 있다(`build` 의 requested).
+    # 저장할 때 서버가 이 값으로 "문서 근거 없는 일반 추천" 을 받아 준다
+    requested: bool = False
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -60,6 +63,7 @@ class SuggestionDraft:
             "citations": [item.to_payload() for item in self.citations],
             "allergens": list(self.allergens),
             "items": list(self.items),
+            "requested": self.requested,
         }
 
 
@@ -73,6 +77,7 @@ def build(
     general_basis: tuple[EvidenceCitation, ...] = (),
     allergens: tuple[str, ...] = (),
     items: tuple[str, ...] = (),
+    requested: bool = False,
     today: date,
 ) -> SuggestionDraft:
     """6개월이 안 지난 아이 기록 근거의 행 수로 `kind` 를 정하고 값을 검증한다.
@@ -83,6 +88,11 @@ def build(
     `general_basis` 는 일반 추천일 때만 붙는 근거다(개인화면 버린다). 모델이 아니라 코드가 만든다.
     Food 는 고른 메뉴(레시피 카탈로그 행)를 넘겨서, 문서 행이 없어도 메뉴를 근거로 일반 추천을
     낸다(#442). 넘기지 않는 Agent(Activity · Growth)는 지금처럼 문서 행이 있어야 한다.
+
+    `requested` 는 보호자가 이번 요청에서 놀이 · 음식을 정해 물었다는 뜻이다("물놀이 뭐 하지?").
+    아이 기록 근거가 없으면 그 요청에 맞춰 만든 일반 추천이라, 문서 행 근거가 없어도 된다 —
+    기준이 이번 요청이다. 문구(`general_reason`)가 그렇게 밝힌다. 막연한 요청("뭐 하고 놀까?")은
+    지금처럼 문서 행이 있어야 한다. 아이 기록이 있으면 요청과 상관없이 개인화다.
 
     6개월 넘은 아이 기록은 단독 근거가 아니다(루트 §2 · NF-08). 그것만 남으면 일반 추천이고
     그 인용은 뺀다 — 일반 추천에 아이 기록 근거가 붙으면 개인화로 집계된다. 최근 기록과 같이
@@ -104,9 +114,9 @@ def build(
                 f"{agent}: 아이 기록 근거가 0행인데 일반 추천 문구(general_reason)가 없다"
             )
         basis = (*(item for item in citations if not item.ref.is_child_record), *general_basis)
-        if not basis:
+        if not basis and not requested:
             # 일반 추천은 문서 행(Food 는 메뉴 행도)이 근거다 (루트 §2). 아이 기록도 문서도 메뉴도
-            # 없으면 무엇을 기준으로 골랐는지 보호자에게 보여 줄 것이 없다
+            # 없고 보호자가 정한 요청도 없으면 무엇을 기준으로 골랐는지 보여 줄 것이 없다
             raise SuggestionRejected(f"{agent}: 일반 추천인데 문서 행 근거가 없다")
         return SuggestionDraft(
             agent=agent,
@@ -116,6 +126,7 @@ def build(
             citations=basis,
             allergens=allergens,
             items=items,
+            requested=requested,
         )
 
     if not reason.strip():

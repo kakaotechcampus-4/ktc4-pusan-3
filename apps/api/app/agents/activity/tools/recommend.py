@@ -56,6 +56,8 @@ async def propose_activity_candidates(
     )
     review = review_candidates(
         args.candidates,
+        # 보호자가 놀이를 정해 물었으면 그 요청에 맞춘 일반 추천이다 — [예시] 근거가 없어도 된다
+        requested=bool(args.requested_play and args.requested_play.strip()),
         months=gate.stage.months,
         seen=context.state.seen_evidence,
         docs=context.state.seen_docs,
