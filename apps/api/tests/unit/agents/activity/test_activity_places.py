@@ -194,12 +194,9 @@ class TestFailure:
             await search_nearby_places(no_location, args(PlaceCategory.PARK))
 
 
-def test_실내_종류는_정해진_셋이다():
-    assert INDOOR_CATEGORIES == {
-        PlaceCategory.LIBRARY,
-        PlaceCategory.INDOOR_PLAYGROUND,
-        PlaceCategory.EXPERIENCE_CENTER,
-    }
+def test_실내_종류는_도서관과_실내_놀이터다():
+    # 체험관은 싣는 데이터가 없어 빼 두었다 — 넣으면 모델이 매번 빈 검색을 한다
+    assert INDOOR_CATEGORIES == {PlaceCategory.LIBRARY, PlaceCategory.INDOOR_PLAYGROUND}
 
 
 class TestOutdoorOn:

@@ -145,7 +145,7 @@ async def test_list_suggestions_empty(db_client: AsyncClient, bearer: Bearer, ci
     assert resp.status_code == 200
     data = resp.json()
     assert data["items"] == []
-    assert data["next_cursor"] is None
+    assert (data["total"], data["total_pages"]) == (0, 0)
 
 
 async def test_list_suggestions_with_evidence(
@@ -238,38 +238,6 @@ async def test_list_suggestions_status_filter(
         assert item["status"] == "draft"
     for item in resp_approved.json()["items"]:
         assert item["status"] == "approved"
-
-
-async def test_list_suggestions_cursor_pagination(
-    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
-):
-    """커서 페이징이 동작한다."""
-    for _ in range(5):
-        await _make_suggestion(session, child_id=cid, status=SuggestionStatus.APPROVED)
-    headers, _ = bearer
-
-    resp1 = await db_client.get(
-        f"/api/v1/children/{cid}/suggestions?limit=3",
-        headers=headers,
-    )
-    assert resp1.status_code == 200
-    data1 = resp1.json()
-    assert len(data1["items"]) == 3
-    assert data1["next_cursor"] is not None
-
-    resp2 = await db_client.get(
-        f"/api/v1/children/{cid}/suggestions?limit=3&cursor={data1['next_cursor']}",
-        headers=headers,
-    )
-    assert resp2.status_code == 200
-    data2 = resp2.json()
-    assert len(data2["items"]) == 2
-    assert data2["next_cursor"] is None
-
-    # 중복 없음
-    ids1 = {i["id"] for i in data1["items"]}
-    ids2 = {i["id"] for i in data2["items"]}
-    assert ids1.isdisjoint(ids2)
 
 
 async def test_list_suggestions_other_child_forbidden(

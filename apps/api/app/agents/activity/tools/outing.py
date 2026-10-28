@@ -42,10 +42,10 @@ logger = logging.getLogger(__name__)
 # 위치가 없을 때 일몰을 계산하는 고정 기준점(대전 부근, 국토 가운데). 보호자 위치가 아니다
 SUNSET_REFERENCE = (36.35, 127.38)
 
-# 바깥 활동이 어려운 날(outdoor_ok=False)에도 찾을 수 있는 종류
-INDOOR_CATEGORIES = frozenset(
-    {PlaceCategory.LIBRARY, PlaceCategory.INDOOR_PLAYGROUND, PlaceCategory.EXPERIENCE_CENTER}
-)
+# 바깥 활동이 어려운 날(outdoor_ok=False)에도 찾을 수 있는 종류. 체험관(experience_center)은 싣는
+# 데이터가 아직 없어 넣지 않는다 — 넣으면 모델이 매번 빈 검색을 한다(#600 리뷰).
+# 데이터를 실을 때 더한다
+INDOOR_CATEGORIES = frozenset({PlaceCategory.LIBRARY, PlaceCategory.INDOOR_PLAYGROUND})
 
 # 비는 시간을 계산하는 하루의 범위. 아이가 밖에서 놀 수 있는 시간대로 둔 잠정값이다 — eval 로
 # 조정한다. 오늘이면 지금 시각부터 센다

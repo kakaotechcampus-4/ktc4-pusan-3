@@ -33,6 +33,8 @@ export const SCENARIOS = {
   policy_bumped: "가입 동의 — 제출 직전에 약관이 새 판으로 (400 policy_version_invalid)",
   stale: "6개월 지난 근거 — is_stale 인 기억만 남은 상태 (NF-08)",
   observations_many: "07 기록 25건 — 한 쪽 20건을 넘겨 쪽 넘기기가 서는 상태 (#584)",
+  suggestions_many:
+    "07 제안 피드백 22건 — 피드백 전이 21건이라 2쪽, 2쪽의 한 줄을 평가하면 1쪽으로 옮겨지는 상태 (#592)",
   photo_unreadable: "08 사진 — 읽어낼 게 없는 사진 (failed · 저장된 것 없음)",
   // 🚨 **화면에는 아무 차이도 안 난다.** 08 은 시트에서 고른 lane 을 그대로 쓰고 서버 추측을
   //    보여주지 않는다 — 이 시나리오는 "추측이 선언을 덮지 않는다" 를 거는 **계약 테스트용**이다.

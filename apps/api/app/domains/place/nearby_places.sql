@@ -3,7 +3,6 @@
 -- 인덱스 없이 실측 5~6ms 라 아직 두지 않았다 — 실제 데이터로 EXPLAIN 을 본 뒤 단다.
 -- 같은 거리면 이름 · source_id 순이다. 결과가 매번 같아야 run 을 다시 돌려도 같은 곳이 나온다.
 -- 놀이터(playground)로 찾으면 놀이터가 있는 공원(has_playground)도 온다. 그 행의 category 는 park 다.
--- 찾는 출처(source)는 호출부가 정한다 — 실어 두었지만 아직 추천에 내지 않는 출처가 있다.
 WITH origin AS (
     SELECT
         CAST(:lat AS double precision) AS lat,
@@ -24,7 +23,6 @@ WITH origin AS (
     FROM place AS p
     CROSS JOIN origin AS o
     WHERE (p.category = o.category OR (o.category = 'playground' AND p.has_playground))
-      AND p.source = ANY(:sources)
       AND p.lat BETWEEN CAST(:lat_min AS double precision) AND CAST(:lat_max AS double precision)
       AND p.lng BETWEEN CAST(:lng_min AS double precision) AND CAST(:lng_max AS double precision)
 )
