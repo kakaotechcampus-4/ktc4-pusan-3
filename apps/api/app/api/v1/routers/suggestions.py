@@ -950,16 +950,15 @@ async def update_event(
                 session, parent_id=parent.parent_id, event_ids=[eid]
             )
         ).get(eid)
-        # 화면은 일정 폼 전체를 보내서, 제목만 고쳐도 지금 알림 값이 같이 온다. 값 · 시작 · 종류가
-        # 그대로면 검사도 저장도 하지 않는다 — 이미 울린 알림을 검사하면 제목 수정까지 422 가 되고,
-        # 저장하면 "울렸음" 이 지워져 한 번 더 울린다 (#603 리뷰)
-        unchanged = (
-            mine_before is not None
-            and mine_before.lead == body.reminder.lead
-            and before.starts_at == body.event.starts_at
-            and before.all_day == body.event.all_day
-        )
-        if unchanged:
+        # 화면은 일정 폼 전체를 보내서, 일정만 고쳐도 지금 알림 값이 같이 온다. 저장된 값과 같으면
+        # 알림은 안 건드린 것으로 보고 검사도 저장도 하지 않는다 (#603 리뷰)
+        #   - 시작 · 종류가 그대로면: 이미 울린 알림을 검사하면 제목 수정까지 422 가 되고,
+        #     저장하면 "울렸음" 이 지워져 한 번 더 울린다.
+        #   - 종류만 바뀌면: 옛 종류의 값이라 검사에 걸린다. `update_event` 가 날 수를 지켜 옮긴다.
+        #   - 같은 종류에서 시작만 바뀌면 검사한다 — 그 값의 울릴 시각이 지났으면 다시 고르게 한다.
+        same_lead = mine_before is not None and mine_before.lead == body.reminder.lead
+        kind_changed = before.all_day != body.event.all_day
+        if same_lead and (kind_changed or before.starts_at == body.event.starts_at):
             touch_reminder = False
         else:
             check_reminder(
