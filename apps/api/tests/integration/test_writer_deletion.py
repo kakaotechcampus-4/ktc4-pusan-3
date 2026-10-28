@@ -1,5 +1,6 @@
 """Shared records outlive their writer, but not their child (Issue #47, PR A)."""
 
+import uuid
 from datetime import date, datetime, timezone
 
 import pytest
@@ -11,6 +12,7 @@ from app.domains.chat.models import ChatTurn
 from app.domains.child.models import Child, ChildGrowthLog
 from app.domains.consent.models import Consent, ConsentAction, ConsentScope
 from app.domains.identity.models import Parent
+from app.domains.identity.repository import create_session
 from app.domains.memory.observation.models import (
     ConfidenceSource,
     ObservationActivity,
@@ -210,18 +212,32 @@ async def test_reminder_deleted_with_parent(session, family):
     ).all() == []
 
 
+async def _login(session, parent_id) -> uuid.UUID:
+    """기기는 로그인에 묶인다 (#594). 해시는 아무 값이나 — 이 테스트들은 인증을 보지 않는다."""
+    far = datetime(2099, 1, 1, tzinfo=timezone.utc)
+    return await create_session(
+        session,
+        parent_id=parent_id,
+        refresh_hash=uuid.uuid4().bytes * 2,
+        refresh_expires_at=far,
+        absolute_expires_at=far,
+    )
+
+
 async def test_push_device_deleted_with_parent(session, family):
     """push_device 도 개인 데이터라 소유 보호자가 지워지면 같이 지워진다."""
     owner, writer, _ = family
     last_seen = datetime(2026, 9, 1, tzinfo=timezone.utc)
     device = PushDevice(
         parent_id=writer.id,
+        session_id=await _login(session, writer.id),
         device_token="synthetic-device-token-writer",
-        platform=PushPlatform.IOS,
+        platform=PushPlatform.WEB,
         last_seen_at=last_seen,
     )
     other = PushDevice(
         parent_id=owner.id,
+        session_id=await _login(session, owner.id),
         device_token="synthetic-device-token-owner",
         platform=PushPlatform.ANDROID,
         last_seen_at=last_seen,
@@ -237,26 +253,29 @@ async def test_push_device_deleted_with_parent(session, family):
 
 
 async def test_push_device_token_must_be_unique(session, family):
-    """upsert-by-device 설계의 전제 — 같은 토큰 두 번째 삽입은 DB 가 막는다."""
+    """같은 토큰 두 번째 삽입은 DB 가 막는다 — 기기 등록이 앞 로그인의 행을 지우고 넣는 전제."""
     owner, writer, _ = family
     last_seen = datetime(2026, 9, 1, tzinfo=timezone.utc)
     session.add(
         PushDevice(
             parent_id=writer.id,
+            session_id=await _login(session, writer.id),
             device_token="shared-token",
-            platform=PushPlatform.IOS,
+            platform=PushPlatform.WEB,
             last_seen_at=last_seen,
         )
     )
     await session.flush()
+    owner_login = await _login(session, owner.id)
 
     with pytest.raises(IntegrityError):
         async with session.begin_nested():
             session.add(
                 PushDevice(
                     parent_id=owner.id,
+                    session_id=owner_login,
                     device_token="shared-token",
-                    platform=PushPlatform.IOS,
+                    platform=PushPlatform.WEB,
                     last_seen_at=last_seen,
                 )
             )
