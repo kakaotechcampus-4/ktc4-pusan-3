@@ -283,19 +283,20 @@ async def test_요청한_놀이를_따라간다(llm):
 
 
 @pytest.mark.parametrize(
-    ("case", "ask", "word"),
+    ("case", "ask"),
     [
-        ("paint_request", "물감 놀이 하고 싶대", "물감"),
-        ("cookie_request", "아이랑 쿠키 만들기 하고 싶어", "쿠키"),
+        ("paint_request", "물감 놀이 하고 싶대"),
+        ("cookie_request", "아이랑 쿠키 만들기 하고 싶어"),
+        ("bread_request", "빵 만들기 체험 하고 싶어"),
     ],
 )
-async def test_놀이를_정해_물으면_그_놀이로_낸다(llm, case, ask, word):
-    """요청 기반 일반 추천이 요청을 따르는지 (#597 리뷰). 코드는 후보가 요청에 맞는지 보지
-    않는다 — "전래놀이" 에 "무궁화꽃이 피었습니다" 처럼 맞는 후보도 낱말이 안 겹쳐서다. 소재가
-    분명한 요청만 여기서 낱말로 건다. 그래도 "색을 섞어 새 색 만들기" 처럼 물감 놀이인데 낱말이
-    빠지는 후보가 있어서 셋 중 둘까지만 본다."""
+async def test_놀이를_정해_물으면_요청_기반으로_낸다(llm, case, ask):
+    """기록이 없는 아이가 놀이를 정해 물으면 셋 다 요청 기반 일반 추천이다 (#597).
+
+    후보가 요청에 맞는지는 여기서 판정하지 않는다 — 결과 파일을 사람이 읽는다. 낱말로 보면
+    "색을 두 가지씩 섞어 새 색 만들기"(물감) · 빵 이름만 쓴 후보처럼 맞는 후보를 틀렸다고 본다.
+    """
     out = await play(llm, case, ask, months=40)
     drafts = out.result.suggestions
     assert len(drafts) == 3
     assert all(d.kind == "general" and d.requested for d in drafts)
-    assert sum(word in d.content for d in drafts) >= 2, [d.content for d in drafts]
