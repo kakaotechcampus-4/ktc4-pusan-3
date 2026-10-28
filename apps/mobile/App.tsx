@@ -37,9 +37,11 @@ import {
   type SpeechEvent,
   canListenOnDevice,
   parseWebRequest,
+  permissionReason,
   speechBridgeScript,
   speechErrorReason,
   speechEventScript,
+  volumeLevel,
 } from "./src/native/speech";
 
 /**
@@ -230,9 +232,23 @@ function Shell() {
    */
   const stopRequestedRef = useRef(false);
 
-  /** 말로 적기의 진행을 웹에 알린다 (`src/native/speech.ts`). */
+  /**
+   * 말로 적기의 진행을 웹에 알린다 (`src/native/speech.ts`).
+   * 🚨 지금 떠 있는 문서가 우리 주소일 때만 보낸다 — 들은 글자를 남의 문서에 넣지 않는다.
+   */
   const sendSpeech = useCallback((event: SpeechEvent) => {
+    if (!isInternalUrl(urlRef.current)) return;
     webViewRef.current?.injectJavaScript(speechEventScript(event));
+  }, []);
+
+  /**
+   * 듣기를 끊는다 — 문서가 새로 열리거나, 연결 실패 화면으로 가거나, 웹뷰가 죽을 때.
+   * 🚨 웹의 정리(언마운트)는 React 가 컴포넌트를 내릴 때만 돈다. 새로고침 · 하드 이동처럼 문서가 통째로 바뀌면
+   *    웹은 `stop` 을 못 보낼 수 있어서 셸이 끊는다. 권한을 확인하는 중이면 확인 뒤에 시작하지 않게 한다.
+   */
+  const abortListening = useCallback(() => {
+    stopRequestedRef.current = true;
+    if (listeningRef.current) SpeechRecognizer?.abort();
   }, []);
 
   /**
@@ -249,9 +265,13 @@ function Shell() {
     }
     stopRequestedRef.current = false;
     try {
+      // 시스템 창이 뜰 때만 웹이 이유를 먼저 말한다 — Android 권한 창에는 우리 문장이 나오지 않는다.
+      const current = await recognizer.getPermissionsAsync();
+      if (!current.granted && current.canAskAgain) sendSpeech({ type: "asking" });
       const permission = await recognizer.requestPermissionsAsync();
-      if (!permission.granted) {
-        sendSpeech({ type: "error", reason: "denied" });
+      const refused = permissionReason(permission);
+      if (refused) {
+        sendSpeech({ type: "error", reason: refused });
         return;
       }
       if (stopRequestedRef.current) {
@@ -264,6 +284,8 @@ function Shell() {
         interimResults: true,
         continuous: true,
         requiresOnDeviceRecognition: true,
+        // 웹의 음량 막대. 막대 다섯 개에 0.1초보다 촘촘할 이유가 없다.
+        volumeChangeEventOptions: { enabled: true, intervalMillis: 100 },
       });
     } catch {
       listeningRef.current = false;
@@ -296,6 +318,9 @@ function Shell() {
     if (!recognizer || !SPEECH_AVAILABLE) return;
     const subscriptions = [
       recognizer.addListener("start", () => sendSpeech({ type: "start" })),
+      recognizer.addListener("volumechange", (event) =>
+        sendSpeech({ type: "volume", level: volumeLevel(event.value) }),
+      ),
       recognizer.addListener("result", (event) => {
         const text = event.results[0]?.transcript ?? "";
         sendSpeech({ type: "result", text, final: event.isFinal });
@@ -358,13 +383,25 @@ function Shell() {
             source={{ uri: WEB_URL }}
             applicationNameForUserAgent={USER_AGENT_SUFFIX}
             onNavigationStateChange={onNavigationStateChange}
+            // 문서가 새로 열리면 듣기를 끊는다 (`abortListening`). 웹의 주소 이동(`pushState`)은 여기로 오지 않는다.
+            onLoadStart={abortListening}
             onLoadEnd={() => setLoading(false)}
             onError={() => {
+              abortListening();
               setLoading(false);
               setFailed(true);
             }}
             onHttpError={({ nativeEvent }) => {
-              if (nativeEvent.statusCode >= 500) setFailed(true);
+              if (nativeEvent.statusCode < 500) return;
+              abortListening();
+              setFailed(true);
+            }}
+            // 🚨 웹뷰 렌더 프로세스가 죽으면 마이크를 끊고 연결 실패 화면으로 간다. 이 처리가 없으면 앱이 같이 죽고,
+            //    죽은 웹뷰는 다시 쓸 수 없어서 "다시 시도" 가 새 웹뷰를 띄운다 (`failed` 가 웹뷰를 내린다).
+            onRenderProcessGone={() => {
+              abortListening();
+              setLoading(false);
+              setFailed(true);
             }}
             // 🚨 `target="_blank"` 를 **이 웹뷰의 이동으로 만든다.** 안드로이드 기본값(true)이면
             //    새 창을 띄울 곳이 없어 링크가 **아무 일도 하지 않는다** — 동의 화면의 "전문 보기"

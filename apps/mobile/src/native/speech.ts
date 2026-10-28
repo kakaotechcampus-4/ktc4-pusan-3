@@ -80,12 +80,17 @@ export function canListenOnDevice({
 }
 
 /**
- * 웹에 알리는 것. 웹은 이 넷만 안다.
+ * 웹에 알리는 것. 웹은 이 여섯만 안다.
  *
+ * - `asking` — 곧 시스템 권한 창이 뜬다. 웹이 왜 마이크가 필요한지 한 줄로 먼저 말한다. Android 권한 창에는
+ *   우리 문장이 나오지 않는다 (`app.json` 의 문구는 iOS 전용이다 · 정보통신망법 제22조의2 선택 접근권한 고지)
+ * - `volume` — 들리는 소리의 크기 0~1. 웹의 음량 막대가 쓴다
  * - `result` 의 `final` 이 거짓이면 아직 말하는 중이다 — 웹은 같은 자리의 글자를 바꿔 끼운다.
  */
 export type SpeechEvent =
+  | { type: "asking" }
   | { type: "start" }
+  | { type: "volume"; level: number }
   | { type: "result"; text: string; final: boolean }
   | { type: "end" }
   | { type: "error"; reason: SpeechErrorReason };
@@ -93,13 +98,44 @@ export type SpeechEvent =
 /**
  * 웹이 안내를 고르는 이유. 인식기의 오류 코드를 그대로 넘기지 않는다 — 웹이 Android 를 알 필요가 없다.
  *
- * - `denied` — 마이크 권한을 받지 못했다. 설정에서 켜야 한다
+ * - `declined` — 이번에 거절했다. 다시 누르면 권한 창이 한 번 더 뜬다
+ * - `denied` — 마이크 권한을 받지 못했고 다시 물을 수 없다. 설정에서 켜야 한다
  * - `unsupported` — 이 휴대폰은 기기 안 인식을 못 한다
  * - `preparing` — 한국어 모델이 없어서 받기 시작했다. 받은 뒤 다시 누르면 된다
  * - `no-speech` — 아무 말도 듣지 못했다
  * - `failed` — 그 밖
  */
-export type SpeechErrorReason = "denied" | "unsupported" | "preparing" | "no-speech" | "failed";
+export type SpeechErrorReason =
+  | "declined"
+  | "denied"
+  | "unsupported"
+  | "preparing"
+  | "no-speech"
+  | "failed";
+
+/**
+ * 권한 응답 → 웹에 넘길 이유. 받았으면 `null`.
+ *
+ * Android 는 처음 거절한 뒤에는 다시 물을 수 있고(`canAskAgain`), 두 번 거절하면 설정에서만 켤 수 있다.
+ * 두 경우에 같은 말("설정에서 켜 주세요")을 하면 다시 누르기만 하면 될 보호자를 설정 화면으로 보낸다.
+ */
+export function permissionReason(response: {
+  granted: boolean;
+  canAskAgain: boolean;
+}): SpeechErrorReason | null {
+  if (response.granted) return null;
+  return response.canAskAgain ? "declined" : "denied";
+}
+
+/**
+ * 인식기의 소리 크기(`volumechange` 의 -2~10 · 0 아래는 들리지 않는 것) → 웹에 넘길 0~1.
+ * 소수 둘째 자리에서 자른다 — 0.1초마다 가는 값이라 짧을수록 좋고, 막대 다섯 개에 그 이상은 보이지 않는다.
+ */
+export function volumeLevel(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  const level = Math.min(Math.max(value / 10, 0), 1);
+  return Math.round(level * 100) / 100;
+}
 
 /**
  * 인식기 오류 코드 → 웹에 넘길 이유. `null` 이면 웹에 알리지 않는다.

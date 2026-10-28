@@ -76,15 +76,29 @@ Android 앱이 요청하는 권한은 `INTERNET` · `RECORD_AUDIO` 둘이다 (�
   **보장하는 곳은 Android 13+ 뿐**이라 거기서만 켠다 (`canListenOnDevice` · 근거는 `src/native/speech.ts` 머리말).
   Android 12 이하는 오프라인 힌트뿐이고, iOS 는 기기 안이 안 되면 그 옵션을 조용히 빼고 서버로 돈다.
   🚨 **기기 안이 안 되면 서버 인식으로 넘어가지 않는다.** 웹이 버튼을 끄고 이유를 말한다.
+- 🚨 **문서가 바뀌거나 웹뷰가 죽으면 듣기를 끊는다** (`abortListening` · #602 리뷰). 새 문서 로딩(`onLoadStart`),
+  연결 실패 화면(`onError` · 5xx), 렌더 프로세스 종료(`onRenderProcessGone`)다. 웹의 정리는 React 가 컴포넌트를 내릴 때만
+  돌아서 새로고침 · 하드 이동에서는 `stop` 이 안 올 수 있다(웹은 `pagehide` 에서도 보낸다). 셸 → 웹 이벤트는 지금 떠 있는
+  문서가 우리 주소일 때만 보낸다.
+  ⚠️ `onRenderProcessGone` 이 생기면서 렌더 프로세스가 죽어도 앱이 같이 죽지 않고 연결 실패 화면으로 간다. 죽은 웹뷰는
+  다시 쓸 수 없어서 "다시 시도" 가 새 웹뷰를 띄운다.
+- 🚨 **Android 권한 창에는 `app.json` 의 문구가 나오지 않는다** (플러그인이 iOS Info.plist 에만 넣는다). 그래서 창을
+  띄우기 직전(`getPermissionsAsync` 가 아직 아니고 다시 물을 수 있을 때)에 웹에 `asking` 을 보내고, 웹이 채팅바 위에
+  이유를 한 줄로 말한다 (정보통신망법 제22조의2 선택 접근권한 고지). 거절은 다시 물을 수 있으면 `declined`, 아니면
+  `denied` 로 나눠 보낸다 — 다시 누르면 될 보호자를 설정 화면으로 보내지 않는다.
 - 🚨 **`abort()` 는 듣고 있을 때만 부른다** (`listeningRef`). 라이브러리의 `abort()` 는 늘 웹에 `end` 를 보내는데, 첫 탭의
   권한 창도 Android 에서는 `background` 라서 거기서 부르면 웹은 꺼진 줄 알고 셸은 허용 뒤 듣기 시작한다.
 - 한국어 모델이 없으면 `androidTriggerOfflineModelDownload` 로 받기를 걸고 "내려받고 있어요" 라고 알린다. 받는 것은 인식 모델이다.
 - 🚨 **라이브러리가 인식 결과를 logcat(`Log.d`)에 찍는 세 줄을 패치로 뺐다** (`patches/expo-speech-recognition@57.1.1.patch`
   · `pnpm-workspace.yaml` 의 `patchedDependencies`). 릴리스 빌드에서도 남아서 아이 얘기 원문이 USB 디버깅 · 버그 리포트에
   들어갔다. 지금은 글자 대신 건수만 찍는다 (최상위 CLAUDE.md §2 개인정보).
-  🚨 **이 패키지를 올리면 패치를 다시 만든다** — 패치가 버전에 묶여 있어서 올린 버전에는 걸리지 않는다. 올린 버전의
-  `ExpoSpeechService.kt` 에서 `results` · `transcriptions` 를 찍는 `log(...)` 를 다시 찾는다. ⚠️ Mobile CI 는 Kotlin 을
-  컴파일하지 않으니 `./gradlew :expo-speech-recognition:compileReleaseKotlin` 으로 직접 확인한다.
+  🚨 **이 패키지를 올리면 패치를 다시 만든다** — 패치가 버전에 묶여 있어서, 버전을 바꾸면 pnpm 이
+  `ERR_PNPM_UNUSED_PATCH` 로 멈춘다. 🚨 그걸 풀려고 `patchedDependencies` 줄만 지우지 않는다 — Mobile CI 의
+  "Speech log patch" 단계가 설치된 `ExpoSpeechService.kt` 에서 `$resultsList` · `$nonEmptyStrings` 를 `.size` 없이
+  찍는 줄을 찾으면 실패한다. 올린 버전에서 `results` · `transcriptions` 를 찍는 `log(...)` 를 다시 찾아 `pnpm patch`
+  로 새로 만든다. ⚠️ Mobile CI 는 Kotlin 을 컴파일하지 않으니 `./gradlew :expo-speech-recognition:compileReleaseKotlin`
+  으로 직접 확인하고, 릴리스 빌드에서 한 번 말해 본 뒤 `adb logcat -s ExpoSpeechService` 에 `results: 1` 처럼 건수만
+  찍히는지 본다.
 - ⚠️ **iOS 는 꺼져 있다.** 켜려면 기기에서 한국어 기기 안 인식이 서버로 새지 않는지부터 확인한다. 문구(`app.json` 플러그인 옵션)는 넣어 두었다.
 - 매니페스트의 `<queries>` 에 `com.google.android.googlequicksearchbox` 가 붙는다 (플러그인 기본값). 권한이 아니라 패키지 조회 허용이다.
 
@@ -181,7 +195,7 @@ pnpm deps:check      # expo install --check — SDK 와 어긋난 패키지 버�
 pnpm doctor          # expo-doctor 전체 점검
 ```
 
-PR 에서는 [`.github/workflows/ci-mobile.yml`](../../.github/workflows/ci-mobile.yml) 이 `typecheck` · `test` 를 다시 돈다 (`apps/mobile/**` 를 바꾼 PR 만).
+PR 에서는 [`.github/workflows/ci-mobile.yml`](../../.github/workflows/ci-mobile.yml) 이 `typecheck` · `test` 와 말로 적기 로그 패치 검사를 다시 돈다 (`apps/mobile/**` 를 바꾼 PR 만).
 네이티브 빌드는 CI 가 하지 않는다 — 개발 빌드는 기기에서 확인한다.
 
 **최초 세팅** — `cp .env.example .env.local`.
