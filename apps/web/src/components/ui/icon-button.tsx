@@ -18,8 +18,9 @@ import { cn } from "@/lib/cn";
 export type IconButtonTone = "ghost" | "brand";
 
 const TONE: Record<IconButtonTone, string> = {
+  // 켜고 끄는 버튼(`aria-pressed`)이 켜져 있으면 눌린 모양 그대로 둔다 — 채팅바의 말로 적기가 듣는 동안.
   ghost:
-    "text-ink-muted hover:bg-brand-soft hover:text-brand-ink active:bg-brand-soft active:text-brand-ink disabled:bg-transparent disabled:text-ink-subtle",
+    "text-ink-muted hover:bg-brand-soft hover:text-brand-ink active:bg-brand-soft active:text-brand-ink aria-pressed:bg-brand-soft aria-pressed:text-brand-ink disabled:bg-transparent disabled:text-ink-subtle",
   // 🚨 비활성 배경이 `surface-muted` 가 아니라 `surface` 다. 이 버튼이 앉는 채팅바가
   //    `surface-muted` 라, 같은 색이면 **버튼이 통째로 사라진다** (실제로 안 보였다).
   brand:

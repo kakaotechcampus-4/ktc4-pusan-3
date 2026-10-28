@@ -583,6 +583,9 @@ function ComponentSection() {
         <IconButton label="말로 적기" disabled>
           <Mic aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
         </IconButton>
+        <IconButton label="말로 적기 (켜진 상태)" aria-pressed>
+          <Mic aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
+        </IconButton>
         <IconButton label="보내기" tone="brand">
           <ArrowUp aria-hidden size={ICON_SIZE.md} strokeWidth={2} />
         </IconButton>

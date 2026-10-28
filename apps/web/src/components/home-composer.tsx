@@ -8,6 +8,7 @@ import { IconButton } from "@/components/ui/icon-button";
 import { Named } from "@/components/ui/named";
 import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
 import { TextArea } from "@/components/ui/text-area";
+import { useVoiceInput } from "@/hooks/use-voice-input";
 import type { HomeResponse } from "@/lib/api/types";
 import { PENDING_SERVER_FEATURES } from "@/lib/features";
 import { VIEW_TRANSITION } from "@/lib/view-transition";
@@ -22,10 +23,11 @@ import { VIEW_TRANSITION } from "@/lib/view-transition";
  *    올린 뒤 읽어낸 것을 보호자가 확인해야 저장되는데(승인 전 저장 금지), 그 확인은 채팅바 위에
  *    들어갈 크기가 아니다.
  *
- * 🚨 **마이크는 여전히 비활성이다.** 음성의 **외부 전달 범위가 아직 안 정해졌다** (CLAUDE.md §10).
- *    브라우저 음성인식은 기기 안에서 끝나지 않고 음성이 벤더 서버로 나간다 — 미정을 기본값으로
- *    채우지 않는다. 눌리는 것처럼 보이는데 아무 일도 안 일어나는 버튼 대신 **비활성 + 이유**를
- *    남긴다 (00 로그인의 `ready:false` 와 같은 처리).
+ * 🚨 **마이크는 앱의 기기 안 음성인식으로만 켠다** (#595 · `lib/native/speech.ts`). 음성을 서비스 밖으로
+ *    보내는 것은 정한 적이 없다 — 브라우저 음성인식은 음성을 벤더 서버로 보내서 쓰지 않는다 (#598).
+ *    브라우저와 기기 안 인식을 못 하는 휴대폰에서는 눌리는 것처럼 보이는데 아무 일도 안 일어나는 버튼 대신
+ *    **비활성 + 이유**를 남긴다 (00 로그인의 `ready:false` 와 같은 처리). 들은 말은 입력창에 넣기만 하고
+ *    보내기는 보호자가 누른다.
  *
  * 🚨 **제안 줄은 서버가 고른 것만 그린다** (`agent_prompts` · 시각대 규칙 F-15). 프론트가
  *    무엇을 물을지 고르지 않고, Agent 가 최대 2개라 도메인 색도 자연히 2개를 안 넘는다 (문서 §3).
@@ -82,6 +84,13 @@ export function HomeComposer({
   promptsPending?: boolean;
 }) {
   const canSubmit = value.trim().length > 0 && !pending && !locked;
+  const voice = useVoiceInput({ value, onChange });
+
+  // 보내면 듣기를 버린다 — 그 뒤에 오는 글자가 비운 입력창을 다시 채우면 안 된다 (`useVoiceInput`).
+  const submit = () => {
+    voice.cancel();
+    onSubmit();
+  };
 
   const input = (
     <TextArea
@@ -104,9 +113,11 @@ export function HomeComposer({
         if (e.nativeEvent.isComposing || e.keyCode === 229) return;
         e.preventDefault();
         // 보낼 수 없을 때(빈 입력 · 답을 기다리는 중)도 줄바꿈으로 새지 않게 막기만 한다.
-        if (canSubmit) onSubmit();
+        if (canSubmit) submit();
       }}
       disabled={locked}
+      // 듣는 동안 고친 글은 다음에 들은 말이 덮는다 (`useVoiceInput`).
+      readOnly={voice.listening}
     />
   );
 
@@ -125,37 +136,66 @@ export function HomeComposer({
         pending={promptsPending}
       />
 
-      {/* 알약 하나 안에 버튼·입력·보내기가 다 들어간다. 입력만 테두리를 갖지 않는 이유(§7 bare). */}
-      <Named name={VIEW_TRANSITION.chatBar}>
-        <div className="bg-surface-muted flex items-end gap-1 rounded-full p-1">
-          {/* 🚨 마이크처럼 비활성으로 세우지 않고 숨긴다 — 이유를 말할 수 있는 미정(음성 방침)이 아니라
+      {/* 듣는 중이라는 것과 못 들은 이유를 알약 바로 위에 둔다. 🚨 실패를 빨강으로 칠하지 않는다 (디자인 시스템 §2).
+          🚨 리전은 빈 채로 늘 세워 둔다 — 글자와 함께 생기면 스크린리더가 첫 안내를 안 읽는다 (디자인 시스템 §10).
+             `hidden` 으로 숨기지 않는 것도 같은 이유다(숨기면 트리에서 빠진다). 위 `gap` 밖의 묶음에 넣어서
+             비어 있을 때는 높이도 간격도 0 이고, 글자가 있을 때만 알약과 띄운다. */}
+      <div>
+        <p role="status" className="text-body-sm text-ink-muted px-3 [&:not(:empty)]:pb-2">
+          {voice.listening ? "듣고 있어요. 다 말했으면 마이크를 다시 눌러 주세요." : voice.notice}
+        </p>
+
+        {/* 알약 하나 안에 버튼·입력·보내기가 다 들어간다. 입력만 테두리를 갖지 않는 이유(§7 bare). */}
+        <Named name={VIEW_TRANSITION.chatBar}>
+          <div className="bg-surface-muted flex items-end gap-1 rounded-full p-1">
+            {/* 🚨 마이크처럼 비활성으로 세우지 않고 숨긴다 — 이유를 말할 수 있는 미정(음성 방침)이 아니라
               서버에 아직 없는 기능이라, 보호자에게 남길 설명이 없다 (`lib/features.ts` · #409). */}
-          {PENDING_SERVER_FEATURES.photoEntry ? (
-            <IconButton label="사진으로 적기" onClick={onPickPhoto} disabled={locked}>
-              <Camera aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
-            </IconButton>
-          ) : null}
-          <IconButton label="말로 적기 (음성 처리 방침을 정하는 중이에요)" disabled>
-            <Mic aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
-          </IconButton>
+            {PENDING_SERVER_FEATURES.photoEntry ? (
+              <IconButton label="사진으로 적기" onClick={onPickPhoto} disabled={locked}>
+                <Camera aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
+              </IconButton>
+            ) : null}
+            {voice.support === "ready" ? (
+              // 이름은 그대로 두고 켜짐은 `aria-pressed` 가 말한다 — 이름까지 바꾸면 "그만 듣기, 눌림" 처럼 겹쳐 읽힌다.
+              <IconButton
+                label="말로 적기"
+                aria-pressed={voice.listening}
+                onClick={voice.toggle}
+                disabled={locked}
+              >
+                <Mic aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
+              </IconButton>
+            ) : (
+              <IconButton
+                label={
+                  voice.support === "none"
+                    ? "말로 적기 (앱에서 쓸 수 있어요)"
+                    : "말로 적기 (이 휴대폰에서는 쓸 수 없어요)"
+                }
+                disabled
+              >
+                <Mic aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
+              </IconButton>
+            )}
 
-          <div className="min-w-0 flex-1">
-            {sentLine ? <Named name={VIEW_TRANSITION.sentLine}>{input}</Named> : input}
-          </div>
+            <div className="min-w-0 flex-1">
+              {sentLine ? <Named name={VIEW_TRANSITION.sentLine}>{input}</Named> : input}
+            </div>
 
-          {/* 🚨 여기에 Spinner 를 넣지 않는다. prefers-reduced-motion 에서는 스피너가 숨는데(문서 §8)
+            {/* 🚨 여기에 Spinner 를 넣지 않는다. prefers-reduced-motion 에서는 스피너가 숨는데(문서 §8)
             글자가 없는 버튼이라 빈 원만 남는다 — 기다리는 중이라는 것은 비활성 상태와 이름이 말한다. */}
-          <IconButton
-            label={pending ? busyLabel : "이 이야기 남기기"}
-            tone="brand"
-            aria-busy={pending}
-            disabled={!canSubmit}
-            onClick={onSubmit}
-          >
-            <ArrowUp aria-hidden size={ICON_SIZE.md} strokeWidth={2} />
-          </IconButton>
-        </div>
-      </Named>
+            <IconButton
+              label={pending ? busyLabel : "이 이야기 남기기"}
+              tone="brand"
+              aria-busy={pending}
+              disabled={!canSubmit}
+              onClick={submit}
+            >
+              <ArrowUp aria-hidden size={ICON_SIZE.md} strokeWidth={2} />
+            </IconButton>
+          </div>
+        </Named>
+      </div>
     </div>
   );
 }
