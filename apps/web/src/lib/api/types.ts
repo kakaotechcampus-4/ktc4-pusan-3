@@ -1012,12 +1012,22 @@ export type ReceivedSuggestion = Suggestion | ReceivedGeneralSuggestion;
  * 개인화와 **채택한 일반 추천**이 같이 온다 (#509). 🚨 둘은 `kind` 로 갈린다 — 일반 추천은
  *    아이 기록 근거가 없어서 개인화로 집계되면 안 된다 (CLAUDE.md §2).
  * 기본 목록은 `draft` 를 뺀다 — 05 에서 고르지 않은 일반 추천은 여기 오지 않는다.
- * 계약은 `docs/api/suggestions-v1.md` §7 (#545).
- * 커서 페이징이다 (`?cursor=&limit=`, 기본 20건). `next_cursor` 가 `null` 이면 마지막 장이다.
+ * 계약은 `docs/api/suggestions-v1.md` §7 (#545 · #592).
+ * 기록 · 기억 목록과 같은 번호 쪽이다 (`?page=&size=`, 기본 20건). `total` 은 `rated` 를 건 **뒤의** 건수다.
  */
-export interface SuggestionListResponse {
+export interface SuggestionListResponse extends NumberedPage {
   items: ReceivedSuggestion[];
-  next_cursor: string | null;
+}
+
+/**
+ * `GET /children/{cid}/suggestions` 의 쿼리 (#592).
+ * 🚨 **`rated` 는 세 갈래다** — 안 보내면 전부, `false` 면 피드백을 아직 안 남긴 것, `true` 면 남긴 것.
+ *    07 피드백 탭은 늘 둘 중 하나를 보낸다 (피드백 전 · 피드백 완료).
+ */
+export interface SuggestionListQuery {
+  rated?: boolean;
+  /** 1부터. 서버 상한은 10,000 이다. */
+  page?: number;
 }
 
 /* ── 08 사진으로 적기 ────────────────────────────────────────────────── */

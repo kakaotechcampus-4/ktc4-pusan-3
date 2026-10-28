@@ -43,6 +43,8 @@ NEXT_PUBLIC_API_MOCKING=enabled
 | `policy_bumped` | 가입 동의 — **제출 직전에 약관이 새 판으로** (400 `policy_version_invalid`). 바뀐 항목만 체크가 풀리고 다시 확인받아야 한다 |
 | `auth_unready` | `GET /auth/kakao/status` 가 `ready: false` — 로그인 버튼 비활성 |
 | `stale` | 6개월 지난 근거만 — `is_stale` (NF-08) |
+| `observations_many` | 07 기록 25건 — 한 쪽 20건을 넘겨 쪽 넘기기가 선다 (#584) |
+| `suggestions_many` | 07 제안 피드백 22건 — 피드백 전 21건이라 2쪽, 2쪽의 한 줄을 평가하면 1쪽으로 옮겨진다 (#592) |
 | `guidance` | 04 안내 — 알레르기를 대신 저장하지 않음 (저장 0건 · 직접 입력 안내) |
 | `guidance_mixed` | 04 섞인 한 줄 — 앞은 저장하고 뒤는 안내. **둘 다 한 화면에** |
 | `unavailable` | 04 준비 중 Agent — **저장과 한 화면에** 선다 (NF-06 과 같은 규칙) |

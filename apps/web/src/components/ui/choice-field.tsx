@@ -48,6 +48,7 @@ import { cn } from "@/lib/cn";
  */
 export function ChoiceField<T extends string>({
   label,
+  labelHidden = false,
   value,
   options,
   onChange,
@@ -56,6 +57,12 @@ export function ChoiceField<T extends string>({
   disabled = false,
 }: {
   label: string;
+  /**
+   * legend 를 `sr-only` 로 옮긴다. 🚨 지우는 것이 아니다 — 보조기술은 그대로 "보기, 피드백 전, 2 중 1" 로 읽는다.
+   * 선택지 이름만으로 무엇을 고르는지 보이는 **목록 위의 보기 전환**에서만 쓴다 (07 제안 피드백 · #592).
+   * 폼 안의 칸은 legend 를 보인다 — 같은 시트의 다른 칸들과 라벨 줄을 맞춰야 한다.
+   */
+  labelHidden?: boolean;
   /** 🚨 **비어 있을 수 없다.** 그 사정이 있는 칸이면 이 컴포넌트가 아니라 `Select` 다. */
   value: T;
   options: ReadonlyArray<{ value: T; label: string }>;
@@ -77,7 +84,7 @@ export function ChoiceField<T extends string>({
     /* 🚨 `<fieldset>` + `<legend>` 이라 그룹 이름이 각 선택지에 저절로 붙는다 —
        스크린리더가 "성별, 남자아이, 라디오 버튼, 2 중 1" 로 읽는다. */
     <fieldset className="flex min-w-0 flex-col gap-1" disabled={disabled}>
-      <legend className="text-caption text-ink-subtle">{label}</legend>
+      <legend className={labelHidden ? "sr-only" : "text-caption text-ink-subtle"}>{label}</legend>
       {hint ? (
         <p id={hintId} className="text-caption text-ink-subtle">
           {hint}
@@ -87,7 +94,7 @@ export function ChoiceField<T extends string>({
       {/* 🚨 칸을 똑같이 나눈다(`flex-1` + `basis-0`). 글자 길이에 따라 칸 너비가 달라지면
           한쪽이 기본값처럼 보인다 — 여기서는 어느 쪽도 기본이 아니다. 세로는 칸이 모두 한 줄을
           꽉 채워서 이 문제가 없다. */}
-      <div className={cn("mt-1 flex gap-2", vertical && "flex-col")}>
+      <div className={cn("flex gap-2", !labelHidden && "mt-1", vertical && "flex-col")}>
         {options.map((option) => {
           const selected = option.value === value;
 

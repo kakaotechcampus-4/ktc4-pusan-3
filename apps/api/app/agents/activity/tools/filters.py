@@ -12,9 +12,10 @@ from app.agents.activity.schemas.recommend import ActivityCandidate
 from app.agents.activity.store.ports import SafetyEntry
 from app.agents.common.allergy import (
     SINGLE_CHAR_NAMES,
+    allergy_book,
+    for_sentences,
     non_food_allergies,
     read_label,
-    shared_book,
 )
 from app.agents.common.reference import allergen_terms, hazard_terms
 from app.rules.allergen import ALLERGEN_NAMES
@@ -38,7 +39,8 @@ HEALTH_SAFETY = "health_safety"
 class SafetyTerms:
     """이번 run 의 health_safety 행으로 만든 대조표. 후보마다 다시 만들지 않는다."""
 
-    blocking: tuple[Term, ...]  # status='active' 행 — 걸리면 차단
+    blocking: tuple[Term, ...]  # status='active' 행 — 걸리면 차단. content 대조용
+    blocking_items: tuple[Term, ...]  # 같은 행의 materials 대조용 — 다른 뜻 별칭도 막는다
     allergens: tuple[Term, ...]  # 놀이에 든 알레르기 항목 표시용 — 상태 무관, key 가 정식 명칭
 
 
@@ -62,12 +64,17 @@ def safety_terms(entries: Sequence[SafetyEntry]) -> SafetyTerms:
       도 걸린다.
     - 사전에 없는 조각(키위 · 꽃가루)은 그 글자 그대로 대조한다. 허용 목록의 한 글자(쌀)는 그
       guard 와 함께 대조한다 — "쌀쌀한 날씨" 는 걸리지 않는다.
-    - 대조에 쓰는 이름은 `SINGLE_CHAR_NAMES` · `EXCLUDED_ALIASES` 로 거른다.
+    - 대조에 쓰는 이름은 `SINGLE_CHAR_NAMES` · `EXCLUDED_ALIASES` 로 거른다. 19종 밖 식품
+      (`allergy_book()` 의 별칭 표)과 글자 그대로 대조하는 이름은 `for_sentences` 로 문장용 guard 를
+      더한다("은행" 으로 등록해도 "은행놀이" 는 통과). 문장에서 다른 뜻이
+      더 흔한 별칭(오리)은 content 에서만 빼고 materials 에서는 막는다 — "오리처럼 걷기" 는
+      통과하고, 준비물에 "오리" 를 적은 활동은 막힌다.
     """
     canonical = _canonical_allergens()
-    book = shared_book()
+    book = allergy_book()
 
     blocking: list[Term] = []
+    blocking_items: list[Term] = []
     registered: list[Term] = []
 
     def add(found: list[Term], term: Term | None) -> None:
@@ -76,19 +83,24 @@ def safety_terms(entries: Sequence[SafetyEntry]) -> SafetyTerms:
 
     for entry in entries:
         named, rest = read_label(entry.label, book)
-        terms = [canonical.get(str(code)) for code in sorted(named.codes)]
-        terms += [_for_activity(term) for term in named.terms]
-        literal = [
-            _for_activity(Term(key=word, aliases=(word,), guards=SINGLE_CHAR_NAMES.get(word, ())))
-            for word in rest
-        ]
+        coded = [canonical.get(str(code)) for code in sorted(named.codes)]
+        # 별칭 표의 식품과 적은 글자 그대로의 이름 — 둘 다 문장용 guard 를 쓴다. "은행" 처럼
+        # 묶음 별칭에만 있는 이름은 글자 그대로 오는데, 빠지면 "은행놀이" 가 막힌다 (#556 2차 리뷰)
+        literal = tuple(Term(key=word, aliases=(word,)) for word in rest)
+        foods = (*named.terms, *literal)
         if entry.kind == "allergy":
             for term in literal:
-                add(registered, term)
+                add(registered, _for_activity(for_sentences(term)))
         if entry.status == "active":
-            for term in (*terms, *literal):
+            for term in (*coded, *(_for_activity(for_sentences(t)) for t in foods)):
                 add(blocking, term)
-    return SafetyTerms(blocking=tuple(blocking), allergens=(*canonical.values(), *registered))
+            for term in (*coded, *(_for_activity(for_sentences(t, items=True)) for t in foods)):
+                add(blocking_items, term)
+    return SafetyTerms(
+        blocking=tuple(blocking),
+        blocking_items=tuple(blocking_items),
+        allergens=(*canonical.values(), *registered),
+    )
 
 
 def check_candidate(
@@ -99,6 +111,8 @@ def check_candidate(
     - `content` 와 `materials` 의 각 항목을 **따로** 대조한다(`match_fields`). 이어 붙이면
       `["작은", "블록 담는 통"]` 이 "작은블록담는통" 이 되어 없는 위험을 만든다 (3-5). 한 항목
       안에서도 별칭은 문장부호를, guard 는 띄어쓰기를 넘지 않는다.
+    - 알레르기 이름은 띄어쓰기도 넘지 않는다(`cross_spaces=False`) — "장난감 자동차" 가 감자로,
+      "중 하나" 가 새우(중하)로 걸린다. 위험 용어는 넘는다 — "물 놀이" 도 물놀이다.
     - 위험 용어는 걸린 축의 월령으로 차단/경고를 정한다(`HazardAxis.level_at`). 18개월 미만은
       경고도 차단이다 — 승격은 Growth 와 같이 쓰는 그 공용 판정이 한다 (D6 규칙 ②).
     - 걸린 후보는 고치지 않는다. 차단이면 통째로 뺀다 — "물놀이터" 를 "얕은 물놀이터" 로 고쳐
@@ -121,11 +135,13 @@ def check_candidate(
             blocked = True
         elif axis.warning_text and axis.warning_text not in warnings:
             warnings.append(axis.warning_text)
-    if match_fields(texts, terms.blocking):
+    if match_fields((candidate.content,), terms.blocking, cross_spaces=False) or match_fields(
+        candidate.materials, terms.blocking_items, cross_spaces=False
+    ):
         blocked = True
         hits.append(HEALTH_SAFETY)
 
-    allergens = tuple(dict.fromkeys(match_fields(texts, terms.allergens)))
+    allergens = tuple(dict.fromkeys(match_fields(texts, terms.allergens, cross_spaces=False)))
     return SafetyCheck(
         blocked=blocked,
         hits=tuple(hits),
@@ -163,7 +179,7 @@ def allergy_cautions(entries: Sequence[SafetyEntry]) -> tuple[str, ...]:
     """
     return tuple(
         READOUTS.render(CAUTION_NON_FOOD_ALLERGY, label=label).body
-        for label in non_food_allergies(entries, shared_book())
+        for label in non_food_allergies(entries, allergy_book())
     )
 
 

@@ -24,7 +24,7 @@ Activity는 쓰기 포트가 없다 — 기록은 Memory가, 추천 저장은 �
 
 from dataclasses import dataclass, field
 from datetime import date, datetime
-from typing import Literal, Protocol
+from typing import Literal, Protocol, get_args
 from uuid import UUID
 
 from app.agents.activity.schemas.common import (
@@ -170,17 +170,35 @@ class Advisories:
     severe: bool  # 강풍 · 호우 · 대설 · 태풍 · 폭풍해일 중 하나라도 발효 중
 
 
+# 장소 검색은 넓게 찾고 가까운 순으로 몇 곳만 준다. 둘 다 모델 인자가 아니라 코드 상수이고
+# 잠정값이다 — eval 로 조정한다. 반경을 좁게 자르면 군 지역에서 0곳이 돼 외출 요청에
+# 장소가 빠진다. 20km 도 위경도 bounding box + haversine 으로 끝난다 (D9).
+# tool(`tools/outing.py`)과 place 어댑터(`domains/place/agent_reader.py`)가 같은 값을 써서
+# 계약에 둔다
+PLACE_MAX_RADIUS_M = 20_000
+PLACE_TOP_K = 5
+
+# 장소 소스. place 표의 source CHECK 가 이 값으로 만들어진다(`domains/place/models.py`) — 값을
+# 바꾸면 마이그레이션의 CHECK 도 같이 고친다(테스트가 둘을 대조한다)
+PlaceSourceName = Literal["city_park", "kids_play_facility", "library"]
+PLACE_SOURCES: tuple[str, ...] = get_args(PlaceSourceName)
+
+
 @dataclass(frozen=True)
 class PlaceRow:
     """장소 한 곳. 화이트리스트 필드만 — 전화번호 · 관리기관 · 가격 · 평점은 싣지 않는다.
 
     `distance_m` 은 적재한 행의 위경도와 `CoarseLocation` 사이를 서버가 계산한 값이다.
+    `category` 는 표에 실린 종류다 — 놀이터(`PLAYGROUND`)로 찾았어도 놀이터가 있는 공원은 `park` 다.
     """
 
     name: str
     category: PlaceCategory
     distance_m: int
-    source: Literal["city_park", "kids_play_facility", "library"]
+    source: PlaceSourceName
+    # 데이터기준일자 — 화면의 "공공데이터 기준 YYYY-MM" 용이다 (D9). 🚨 모델에는 주지 않는다 —
+    # tool 결과는 이름 · 종류뿐이다(`tools/outing.py`)
+    data_date: date | None
 
 
 class SafetyReader(Protocol):
@@ -273,6 +291,9 @@ class PlaceSource(Protocol):
         """적재한 place 테이블에서 찾는다. 외부 API 를 부르지 않는다 (D9).
 
         🚨 검색 조건은 category 하나다. 모델이 만든 문자열을 받지 않는다 (D8).
+        반경은 `PLACE_MAX_RADIUS_M` 를 넘지 않고, 가까운 순 `PLACE_TOP_K` 곳까지만 온다.
+        `PLAYGROUND` 는 놀이터가 있는 공원(어린이공원 · 유희시설이 있는 공원)도 함께 찾는다.
+        읽기에 실패하면 UpstreamUnavailable. 빈 목록을 대신 돌려주지 않는다.
         """
         ...
 

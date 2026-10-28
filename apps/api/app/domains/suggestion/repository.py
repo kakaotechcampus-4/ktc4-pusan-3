@@ -1,7 +1,5 @@
 """제안 표시·피드백과 관찰 상세의 근거 역조회."""
 
-import base64
-import json
 import uuid
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta
@@ -88,51 +86,44 @@ async def find_suggestion(
     )
 
 
-def encode_cursor(created_at: datetime, suggestion_id: uuid.UUID) -> str:
-    payload = {"c": created_at.isoformat(), "id": str(suggestion_id)}
-    return base64.urlsafe_b64encode(json.dumps(payload).encode()).decode()
-
-
-def decode_cursor(cursor: str) -> tuple[datetime, uuid.UUID]:
-    payload = json.loads(base64.urlsafe_b64decode(cursor))
-    return datetime.fromisoformat(payload["c"]), uuid.UUID(payload["id"])
-
-
 async def list_suggestions(
     session: AsyncSession,
     *,
     child_id: uuid.UUID,
     status: SuggestionStatus | None = None,
-    cursor: str | None = None,
+    rated: bool | None = None,
+    offset: int = 0,
     limit: int = 20,
-) -> tuple[list[Suggestion], str | None]:
-    """커서 페이징으로 추천 목록을 반환한다. (items, next_cursor)."""
-    stmt = select(Suggestion).where(Suggestion.child_id == child_id)
+) -> tuple[list[Suggestion], int]:
+    """최신순으로 `offset` 부터 `limit` 건과, 필터를 건 뒤의 전체 건수(total)를 돌려준다.
+
+    `rated` — None 이면 거르지 않고, True 면 피드백을 남긴 것(`feedback IS NOT NULL`)만,
+    False 면 아직 안 남긴 것(`feedback IS NULL`)만. 피드백은 approved · rejected 에만 저장되니
+    draft 는 늘 미평가다 — 기본 목록의 draft 제외가 `rated=False` 에서도 그대로 걸린다.
+    """
+    conditions = [Suggestion.child_id == child_id]
     if status is not None:
-        stmt = stmt.where(Suggestion.status == SuggestionStatus(status))
+        conditions.append(Suggestion.status == SuggestionStatus(status))
     else:
         # 기본 목록에서 draft 제외 — 07 화면은 approved/rejected 만 쓴다
-        stmt = stmt.where(Suggestion.status != SuggestionStatus.DRAFT)
+        conditions.append(Suggestion.status != SuggestionStatus.DRAFT)
     # draft 조회 시 만료된 것은 제외 (lazy expiration)
     if status == SuggestionStatus.DRAFT:
-        stmt = stmt.where(Suggestion.expires_at > func.now())
-    if cursor is not None:
-        cur_created, cur_id = decode_cursor(cursor)
-        stmt = stmt.where(
-            (Suggestion.created_at < cur_created)
-            | ((Suggestion.created_at == cur_created) & (Suggestion.id < cur_id))
+        conditions.append(Suggestion.expires_at > func.now())
+    if rated is not None:
+        conditions.append(
+            Suggestion.feedback.is_not(None) if rated else Suggestion.feedback.is_(None)
         )
-    stmt = stmt.order_by(Suggestion.created_at.desc(), Suggestion.id.desc()).limit(limit + 1)
-    rows = list((await session.scalars(stmt)).all())
-
-    if len(rows) > limit:
-        rows = rows[:limit]
-        last = rows[-1]
-        next_cursor = encode_cursor(last.created_at, last.id)
-    else:
-        next_cursor = None
-
-    return rows, next_cursor
+    total = await session.scalar(select(func.count()).select_from(Suggestion).where(*conditions))
+    stmt = (
+        select(Suggestion)
+        .where(*conditions)
+        # created_at 이 같은 행(한 트랜잭션에서 만든 것)도 쪽을 넘나들며 안 흔들리게 id 로 끊는다
+        .order_by(Suggestion.created_at.desc(), Suggestion.id.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    return list((await session.scalars(stmt)).all()), total or 0
 
 
 async def set_feedback(
@@ -312,8 +303,14 @@ async def _checked_citations(
     if menus and (payload["agent"] != "food" or kind is not SuggestionKind.GENERAL):
         # 메뉴 근거는 Food 일반 추천만 단다(#442). 개인화는 아이 기록이 근거다
         raise SuggestionEvidenceError("메뉴 근거는 Food 일반 추천에만 단다")
-    if kind is SuggestionKind.GENERAL and not any(
-        item["source_kind"] in _DOC_KINDS | _MENU_KINDS for item in citations
+    # 보호자가 놀이를 정해 물은 Activity 일반 추천(`requested`)은 그 요청이 기준이라 문서 행이
+    # 없어도 된다 — "물놀이 뭐 하지?" 에 시드에 없는 놀이를 낼 수 있게 (루트 §2). Food 는 후보가
+    # 레시피북에서만 나와야 해서 면제하지 않는다 (#597 리뷰)
+    requested = payload.get("requested", False) and payload["agent"] == "activity"
+    if (
+        kind is SuggestionKind.GENERAL
+        and not requested
+        and not any(item["source_kind"] in _DOC_KINDS | _MENU_KINDS for item in citations)
     ):
         raise SuggestionEvidenceError("일반 추천인데 문서 행 근거가 없다")
     if menus:

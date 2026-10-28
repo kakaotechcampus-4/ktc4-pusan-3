@@ -37,18 +37,16 @@ BUSAN = CoarseLocation(lat=35.18, lon=129.08)
 KST = ZoneInfo("Asia/Seoul")
 RAINY = RawForecast(sky="4", pcp="20.0mm", pop="90")
 
-# 일반 추천은 문서 행이 근거다 (루트 §2). 기록 없는 아이의 후보가 이 행을 인용하게 둔다.
-# 제목이 흔한 말뿐이고 준비물이 없어 어느 후보에 달아도 "맞지 않는 문서" 로 거절되지 않는다 —
-# 문서와 활동이 맞는지는 test_activity_review.py 의 TestDocRelevance 가 본다
+# 일반 추천은 문서 행이 근거다 (루트 §2). 기록 없는 아이의 후보가 이 행을 인용하게 둔다
 DEFAULT_DOC = ActivityDocRow(
     id=UUID(int=20),
     doc_key="act-test-default",
-    title="함께 놀이",
-    body="함께 놀이",
+    title="블록 쌓기",
+    body="블록을 쌓고 무너뜨린다",
     min_month=0,
     max_month=72,
     setting=ActivitySetting.INDOOR,
-    materials=(),
+    materials=("블록",),
     caregiver_role=CaregiverRole.TOGETHER,
     physical_intensity=Intensity.LOW,
     involves_food=False,
@@ -446,7 +444,21 @@ class TestDocEvidence:
         first = result.suggestions[0]
         assert first.kind == "general"
         assert [(c.ref.kind, c.ref.id) for c in first.citations] == [("activity_doc", row.id)]
-        assert f"id {row.id}" in llm.seen[0][0]["content"]  # 프롬프트 [예시]에 id 가 실린다
+        system = llm.seen[0][0]["content"]
+        # 프롬프트 [예시]에는 짧은 id 만 실린다 — UUID 를 베끼다 두 행의 id 를 이어 붙인다
+        assert "id 예1 · " in system and str(row.id) not in system
+
+
+async def test_예시의_짧은_id_를_run_state_에_남긴다():
+    """출력 tool 이 이 표로 문서 행 id 로 되돌린다. 프롬프트에 실린 순서 그대로다."""
+    ctx = context()
+    llm = FakeLLM(propose("종이컵 탑 쌓기", "그림자놀이", "색종이 접기"))
+    await run(task(), ctx, client=llm)
+    system = llm.seen[0][0]["content"]
+    assert ctx.state.example_ids  # 빈 표면 아래 비교가 아무것도 안 본다
+    assert set(ctx.state.example_ids.values()) == set(ctx.state.seen_docs)
+    for short_id, doc_id in ctx.state.example_ids.items():
+        assert f"id {short_id} · {ctx.state.seen_docs[doc_id].title}" in system
 
 
 class TestPrompt:

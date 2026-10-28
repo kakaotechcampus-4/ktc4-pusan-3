@@ -33,14 +33,15 @@ from typing import Literal
 
 from app.agents.common.allergy import (
     SINGLE_CHAR_NAMES,
+    allergy_book,
+    for_sentences,
     non_food_allergies,
     read_label,
-    shared_book,
 )
 from app.agents.common.reference import HazardTerms, allergen_terms, hazard_terms
 from app.agents.growth.readouts import CAUTION_NON_FOOD_ALLERGY, READOUTS
 from app.agents.growth.store.ports import SafetyEntry
-from app.rules.term_match import Term, match_terms, normalize
+from app.rules.term_match import Term, match_fields, match_terms, normalize
 
 HazardLevel = Literal["block", "warn"]
 RemovedBy = Literal["food_term", "allergy_name", "hazard_block"]
@@ -143,7 +144,7 @@ def allergy_cautions(entries: Sequence[SafetyEntry]) -> tuple[str, ...]:
     """
     return tuple(
         READOUTS.render(CAUTION_NON_FOOD_ALLERGY, label=label).body
-        for label in non_food_allergies(entries, shared_book())
+        for label in non_food_allergies(entries, allergy_book())
     )
 
 
@@ -161,7 +162,7 @@ def load_safety_rules() -> SafetyRules:
         hazards = hazard_terms()
         raw_allergens = allergen_terms()
         # 보호자가 적은 이름을 읽는 사전. 확인 문구(`allergy_cautions`)도 이 사전으로 고른다
-        book = shared_book()
+        book = allergy_book()
     except Exception as exc:
         raise SafetyRulesUnavailable("안전 사전을 읽지 못했다") from exc
 
@@ -182,11 +183,14 @@ def load_safety_rules() -> SafetyRules:
         named, rest = read_label(entry.label, book)
         coded = tuple(kept[key] for code in sorted(named.codes) if (key := str(code)) in kept)
         literal = tuple(
-            Term(key=word, aliases=(word,), guards=SINGLE_CHAR_NAMES.get(word, ()))
+            for_sentences(Term(key=word, aliases=(word,)))
             for word in rest
             if len(word) >= 2 or word in SINGLE_CHAR_NAMES
         )
-        return (*coded, *_registered_aliases_only(named.terms), *literal)
+        # 19종 밖 식품(별칭 표)과 글자 그대로의 이름은 문장용 guard 를 더하고 다른 뜻이 흔한
+        # 별칭(오리)을 뺀다 — "은행" 으로 등록해도 "은행놀이" 는 통과한다 (#556 2차 리뷰)
+        sentence = tuple(for_sentences(term) for term in named.terms)
+        return (*coded, *_registered_aliases_only(sentence), *(t for t in literal if t.aliases))
 
     def scan_food(text: str) -> tuple[str, ...]:
         return match_terms(text, food_terms)
@@ -208,7 +212,13 @@ def load_safety_rules() -> SafetyRules:
         return tuple(hits)
 
     def scan_registered(text: str, entries: Sequence[SafetyEntry]) -> tuple[SafetyEntry, ...]:
-        return tuple(entry for entry in entries if match_terms(text, registered_terms(entry)))
+        # 이름은 띄어쓰기를 넘지 않는다 — 넘으면 "다물고 기다린다" 가 물고기로 걸린다.
+        # 판정은 Activity 와 같다(`match_fields(cross_spaces=False)`)
+        return tuple(
+            entry
+            for entry in entries
+            if match_fields((text,), registered_terms(entry), cross_spaces=False)
+        )
 
     return SafetyRules(
         food_terms=scan_food,
