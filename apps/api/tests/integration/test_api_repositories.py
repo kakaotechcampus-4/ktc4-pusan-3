@@ -148,6 +148,7 @@ async def test_schedule_event_and_item_are_child_scoped(session, family):
             ends_at=None,
             all_day=False,
             category=EventCategory.ACTIVITY,
+            now=start,
         )
         is None
     )
@@ -161,6 +162,7 @@ async def test_schedule_event_and_item_are_child_scoped(session, family):
         ends_at=None,
         all_day=False,
         category=EventCategory.ACTIVITY,
+        now=start,
     )
     assert updated.title == "물놀이 준비"
     assert (

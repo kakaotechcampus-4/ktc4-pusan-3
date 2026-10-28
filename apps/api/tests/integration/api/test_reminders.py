@@ -5,7 +5,7 @@
 
 import asyncio
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from httpx import AsyncClient
@@ -119,7 +119,7 @@ async def test_unfit_reminder_is_refused_with_the_event(
     assert await session.scalar(select(func.count()).select_from(Reminder)) == 0
 
 
-async def test_editing_the_event_moves_or_drops_reminders(
+async def test_editing_the_event_moves_or_converts_reminders(
     db_client: AsyncClient,
     session: AsyncSession,
     bearer: Bearer,
@@ -141,17 +141,79 @@ async def test_editing_the_event_moves_or_drops_reminders(
     rows = (await session.scalars(select(Reminder).execution_options(populate_existing=True))).all()
     assert len(rows) == 2 and all(r.sent_at is None for r in rows)
 
-    # 종일로 바꾸면 두 보호자의 알림이 모두 지워진다. 고친 사람은 같은 요청으로 새로 건다.
+    # 종일로 바꾸면 지우지 않고 날 수를 지켜 옮긴다(10m → 당일 9시).
+    # 고친 사람이 같은 요청에 보낸 값이 이긴다.
     all_day = {**moved, "starts_at": "2099-03-10T00:00:00+09:00", "all_day": True}
     resp = await _patch(
         db_client, cid, eid, owner_headers, {"event": all_day, "reminder": {"lead": "1d_9am"}}
     )
     assert resp.json()["event"]["reminder"] == {"lead": "1d_9am"}
-    assert await _my_reminder(db_client, cid, member_headers) is None
+    assert await _my_reminder(db_client, cid, member_headers) == {"lead": "day_of_9am"}
 
     # null 이면 지운다
     resp = await _patch(db_client, cid, eid, owner_headers, {"event": all_day, "reminder": None})
     assert resp.json()["event"]["reminder"] is None
+
+
+async def test_editing_into_the_past_never_rings_again(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    """이미 지난 시각으로 옮기면 — 같은 종류면 "울렸음" 을 그대로 두고, 종류가 바뀌면 그 알림을
+    지운다."""
+    headers, _ = bearer
+    eid = (await _submit(db_client, cid, headers, reminder={"lead": "1h"}))["id"]
+    await session.execute(update(Reminder).values(sent_at=START))
+
+    past = {**TIMED, "starts_at": "2026-01-01T11:00:00+09:00"}
+    assert (await _patch(db_client, cid, eid, headers, {"event": past})).status_code == 200
+    row = await session.scalar(select(Reminder).execution_options(populate_existing=True))
+    assert row.sent_at == START  # 비우면 발송 배치가 곧바로 한 번 더 울린다
+
+    past_all_day = {**past, "starts_at": "2026-01-01T00:00:00+09:00", "all_day": True}
+    assert (await _patch(db_client, cid, eid, headers, {"event": past_all_day})).status_code == 200
+    assert await session.scalar(select(func.count()).select_from(Reminder)) == 0
+
+
+async def test_resending_the_same_reminder_with_the_form_does_not_block_the_edit(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    """제목만 고치며 폼이 지금 알림 값을 같이 보내면, 이미 울린 알림이어도 422 가 아니다
+    (#603 리뷰).
+
+    검사도 저장도 하지 않는다 — 저장하면 "울렸음" 이 지워져 한 번 더 울린다.
+    """
+    headers, parent_id = bearer
+    starts_at = datetime.now(UTC).replace(microsecond=0) + timedelta(minutes=30)
+    event = await create_event(
+        session,
+        child_id=cid,
+        title="병원",
+        event_type=EventType.EPISODIC,
+        starts_at=starts_at,
+        ends_at=None,
+        all_day=False,
+        category=EventCategory.HEALTH,
+        created_by=EventCreatedBy.CAREGIVER,
+    )
+    await put_reminder(
+        session, child_id=cid, event_id=event.id, parent_id=parent_id, lead=ReminderLead.HOURS_1
+    )
+    await session.execute(update(Reminder).values(sent_at=START))  # 30분 전에 울렸다
+    form = {**TIMED, "title": "소아과", "starts_at": starts_at.isoformat()}
+
+    resp = await _patch(
+        db_client, cid, str(event.id), headers, {"event": form, "reminder": {"lead": "1h"}}
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["event"]["title"] == "소아과"
+    row = await session.scalar(select(Reminder).execution_options(populate_existing=True))
+    assert row.sent_at == START
+
+    # 없는 일정이면 값이 맞지 않아도 404 가 먼저다
+    resp = await _patch(
+        db_client, cid, str(uuid.uuid4()), headers, {"event": TIMED, "reminder": {"lead": "1d_9am"}}
+    )
+    assert resp.status_code == 404
 
 
 # 다른 요청과 겹칠 때 (#427). 두 요청이 실제로 겹쳐야 해서 한 트랜잭션 안의 `session` 으로는
@@ -242,6 +304,7 @@ async def test_switching_to_all_day_in_flight_refuses_a_timed_reminder(
             ends_at=None,
             all_day=True,
             category=EventCategory.HEALTH,
+            now=datetime.now(UTC),
         )
         putting = asyncio.create_task(
             client.put(
