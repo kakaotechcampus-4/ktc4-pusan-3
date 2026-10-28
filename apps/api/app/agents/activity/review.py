@@ -89,7 +89,8 @@ GUIDANCE: dict[RejectReason, str] = {
         " lookup_weather 로 바깥 활동이 되는 날을 찾아 day 를 고친다."
     ),
     RejectReason.BUILD: (
-        "아이 기록을 인용하지 않으면 [예시] 문서 행 id 를 하나 이상 인용한다. "
+        "아이 기록을 인용하지 않으면 [예시] 문서 행 id 를 하나 이상 인용한다 "
+        "(보호자가 이번 요청에서 직접 말한 놀이일 때만 requested_play 로 면제된다). "
         "싫어하는 것을 근거로 썼으면 무엇을 피했는지 reason 에 쓴다."
     ),
 }

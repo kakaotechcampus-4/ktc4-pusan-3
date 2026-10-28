@@ -169,6 +169,19 @@ class TestSuggestionBuild:
         assert draft.requested is True
         assert draft.to_payload()["requested"] is True
 
+    def test_요청_기반_면제는_Activity_만이다(self):
+        """Food 는 레시피북 밖 메뉴가 나가면 안 된다 — requested 로 근거를 면제하지 않는다."""
+        with pytest.raises(SuggestionRejected, match="문서 행 근거가 없다"):
+            build(
+                agent="food",
+                content="책에 없는 메뉴",
+                reason="이유",
+                citations=(),
+                general_reason="요청하신 메뉴에 맞춰 골랐어요.",
+                requested=True,
+                today=TODAY,
+            )
+
     def test_요청_기반이어도_아이_기록이_있으면_개인화다(self):
         """같은 요청도 기록이 쌓이면 개인화로 나간다 — 요청 기반은 종류가 아니다."""
         draft = build(

@@ -6,7 +6,7 @@ from datetime import timedelta
 from app.agents.activity.context import ActivityContext
 from app.agents.activity.result import ToolResult, fail, ok
 from app.agents.activity.review import error_code, explain, review_candidates
-from app.agents.activity.rules import DUPLICATE_WINDOW_DAYS
+from app.agents.activity.rules import DUPLICATE_WINDOW_DAYS, said_in_request
 from app.agents.activity.schemas.recommend import ProposeActivityCandidatesArgs
 from app.agents.activity.tools.filters import allergy_cautions, safety_terms
 from app.agents.activity.tools.outing import outdoor_on
@@ -56,8 +56,9 @@ async def propose_activity_candidates(
     )
     review = review_candidates(
         args.candidates,
-        # 보호자가 놀이를 정해 물었으면 그 요청에 맞춘 일반 추천이다 — [예시] 근거가 없어도 된다
-        requested=bool(args.requested_play and args.requested_play.strip()),
+        # 보호자가 놀이를 정해 물었으면 그 요청에 맞춘 일반 추천이다 — [예시] 근거가 없어도 된다.
+        # 모델이 적은 놀이가 보호자 말에 없으면 막연한 요청과 같다 (#597 리뷰)
+        requested=said_in_request(args.requested_play, context.state.request_texts),
         months=gate.stage.months,
         seen=context.state.seen_evidence,
         docs=context.state.seen_docs,

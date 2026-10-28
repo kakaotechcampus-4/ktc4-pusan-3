@@ -114,6 +114,9 @@ def build(
                 f"{agent}: 아이 기록 근거가 0행인데 일반 추천 문구(general_reason)가 없다"
             )
         basis = (*(item for item in citations if not item.ref.is_child_record), *general_basis)
+        # 요청 기반으로 문서 근거를 면제하는 것은 Activity 뿐이다. Food 는 후보가 레시피북에서만
+        # 나와야 해서, 면제하면 책에 없는 메뉴가 나간다 (#597 리뷰)
+        requested = requested and agent == "activity"
         if not basis and not requested:
             # 일반 추천은 문서 행(Food 는 메뉴 행도)이 근거다 (루트 §2). 아이 기록도 문서도 메뉴도
             # 없고 보호자가 정한 요청도 없으면 무엇을 기준으로 골랐는지 보여 줄 것이 없다

@@ -23,7 +23,12 @@ from app.agents.activity.review import (
     explain,
     review_candidates,
 )
-from app.agents.activity.rules import is_recent_duplicate, normalize_activity, overstates
+from app.agents.activity.rules import (
+    is_recent_duplicate,
+    normalize_activity,
+    overstates,
+    said_in_request,
+)
 from app.agents.activity.schemas.common import (
     ActivitySetting,
     CaregiverRole,
@@ -665,3 +670,33 @@ class TestOutputTool:
         ctx.state.safety_entries = None
         with pytest.raises(RuntimeError):
             await propose_activity_candidates(ctx, self.args(candidate(), candidate(), candidate()))
+
+
+class TestSaidInRequest:
+    """requested_play 는 보호자가 이번 요청에서 한 말에 있어야 한다 (#597 리뷰)."""
+
+    @pytest.mark.parametrize(
+        ("play", "said"),
+        [
+            ("물놀이", "물놀이 뭐 하지?"),
+            ("티니핑", "티니핑으로 놀고 싶대"),
+            ("공놀이", "공 굴리기 놀이"),  # "놀이" 를 떼면 "공" — 낱말이 같다
+            ("전래놀이", "전래놀이 해보고 싶어"),
+            ("쿠키 만들기", "아이랑 쿠키 만들기 하고 싶어"),
+        ],
+    )
+    def test_보호자_말에_있으면_요청이다(self, play, said):
+        assert said_in_request(play, [said]) is True
+
+    @pytest.mark.parametrize(
+        ("play", "said"),
+        [
+            ("블록놀이", "오늘 뭐 하고 놀까?"),  # 막연한 요청에 모델이 지어 넣은 놀이
+            ("놀이", "놀이 추천해줘"),  # "놀이" 만으로는 정한 게 아니다
+            ("공", "공룡 그림책 읽고 할 놀이"),  # 한 글자는 낱말이 같아야 한다
+            (None, "물놀이 뭐 하지?"),
+            ("", "물놀이 뭐 하지?"),
+        ],
+    )
+    def test_보호자_말에_없으면_요청이_아니다(self, play, said):
+        assert said_in_request(play, [said]) is False
