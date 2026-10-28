@@ -18,6 +18,7 @@ import {
   submitInput,
   photoFormData,
   submitOnboarding,
+  updateEventDraft,
   updateHealthSafety,
   uploadPhoto,
 } from "@/lib/api/operations";
@@ -82,6 +83,7 @@ import type {
   EventDraft,
   EventItem,
   EventItemUpdateResponse,
+  ReminderResponse,
   SubmitEventBody,
   SuggestionsRequest,
   SuggestionsResponse,
@@ -2135,6 +2137,142 @@ describe("㉕ 준비물 체크 — 서버 #335 와 같은 계약 (#367)", () => 
     const failure = await patchItem("i_missing", true).catch((error: unknown) => error);
     expect(isApiError(failure, "not_found")).toBe(true);
     expect((failure as ApiError).status).toBe(404);
+  });
+});
+
+describe("㉘ 일정 알림 — 서버 #603 과 같은 계약 (#609)", () => {
+  /** 오늘에서 며칠 뒤 서울 기준 그 시각. 🚨 지난 시각이면 알림이 422 라서 늘 앞날로 만든다. */
+  function laterOn(days: number, time = "10:00"): string {
+    return `${daysAgo(-days)}T${time}:00+09:00`;
+  }
+
+  function eventBody(over: Partial<SubmitEventBody> & { allDay?: boolean } = {}): SubmitEventBody {
+    const { allDay = false, ...rest } = over;
+    return {
+      event: {
+        title: "지어낸 일정",
+        starts_at: allDay ? laterOn(10, "00:00") : laterOn(10),
+        ends_at: null,
+        all_day: allDay,
+        event_type: "episodic",
+        category: "activity",
+      },
+      items: [],
+      ...rest,
+    };
+  }
+
+  async function myReminderOnDay() {
+    const eventDay = await findEventDay();
+    const day = await api.get<CalendarDayResponse>(`/children/c1/calendar/${eventDay.date}`);
+    return day.events[0];
+  }
+
+  it("제출에 실은 알림이 응답에 그대로 선다 — 안 실으면 null", async () => {
+    const withReminder = await submitEventDraft(
+      "c1",
+      eventBody({ reminder: { lead: "1h" } }),
+      newIdempotencyKey(),
+    );
+    const without = await submitEventDraft("c1", eventBody(), newIdempotencyKey());
+
+    expect(withReminder.event.reminder).toEqual({ lead: "1h" });
+    expect(without.event.reminder).toBeNull();
+  });
+
+  it("🚨 종류가 맞지 않거나 지난 알림은 422 이고 일정도 넣지 않는다", async () => {
+    const wrongKind = await submitEventDraft(
+      "c1",
+      eventBody({ allDay: true, reminder: { lead: "1h" } }),
+      newIdempotencyKey(),
+    ).catch((error: unknown) => error);
+    // 시작 이틀 전 알림인데 시작이 내일이다.
+    const past = await submitEventDraft(
+      "c1",
+      {
+        ...eventBody({ reminder: { lead: "2d" } }),
+        event: { ...eventBody().event, starts_at: laterOn(1) },
+      },
+      newIdempotencyKey(),
+    ).catch((error: unknown) => error);
+
+    expect(isApiError(wrongKind, "invalid_reminder")).toBe(true);
+    expect((wrongKind as ApiError).status).toBe(422);
+    expect(isApiError(past, "invalid_reminder")).toBe(true);
+  });
+
+  it("🚨 422 뒤에 알림만 바꿔 다시 보내도 같은 키에 갇히지 않는다", async () => {
+    // 저장되지 않은 실패는 재생하지 않는다 — 고친 본문으로 다시 누르는 길이 열려 있어야 한다.
+    const key = newIdempotencyKey();
+    await expect(
+      submitEventDraft("c1", eventBody({ allDay: true, reminder: { lead: "1h" } }), key),
+    ).rejects.toSatisfy((error) => isApiError(error, "invalid_reminder"));
+
+    const fixed = await submitEventDraft(
+      "c1",
+      eventBody({ allDay: true, reminder: { lead: "day_of_9am" } }),
+      key,
+    );
+    expect(fixed.event.reminder).toEqual({ lead: "day_of_9am" });
+  });
+
+  it("09 에서 건 내 알림이 하루 보기에 남고, 지우면 null 이다", async () => {
+    expect((await myReminderOnDay())?.reminder).toBeNull();
+    const event = await myReminderOnDay();
+
+    const put = await api.put<ReminderResponse>(`/children/c1/events/${event?.id}/reminder`, {
+      lead: "30m",
+    });
+    expect(put.reminder).toEqual({ lead: "30m" });
+    expect((await myReminderOnDay())?.reminder).toEqual({ lead: "30m" });
+
+    await api.delete<void>(`/children/c1/events/${event?.id}/reminder`);
+    expect((await myReminderOnDay())?.reminder).toBeNull();
+    // 🚨 없어도 204 다 — 두 번 눌러도 결과가 같다.
+    await expect(
+      api.delete<void>(`/children/c1/events/${event?.id}/reminder`),
+    ).resolves.not.toThrow();
+  });
+
+  it("🚨 수정은 서버처럼 알림을 따라가게 한다 — 시작만 옮기면 남기고, 종류가 바뀌어 지나면 지운다", async () => {
+    // 목의 저장된 일정(e_3)은 이틀 뒤 오전 10시 · 시간 있는 일정이다. 고친 일정을 들고 있지 않아서
+    // 수정은 늘 그 원본에서 출발한다.
+    const event = await myReminderOnDay();
+    const reminderPath = `/children/c1/events/${event?.id}/reminder`;
+    const patch = async (starts_at: string, all_day: boolean, title = event?.title ?? "") => {
+      const res = await updateEventDraft(
+        "c1",
+        event?.id ?? "",
+        { event: { ...eventBody().event, title, starts_at, all_day }, items: [] },
+        newIdempotencyKey(),
+      );
+      return res.event.reminder;
+    };
+
+    await api.put<ReminderResponse>(reminderPath, { lead: "1d" });
+    // 시작도 종류도 그대로 — 제목만 고치면 건드리지 않는다.
+    expect(await patch(event?.starts_at ?? "", false, "제목만 고침")).toEqual({ lead: "1d" });
+    // 시작만 세 시간 뒤로 당겨 하루 전 알림이 지났다 — 값은 그대로 남는다.
+    const soon = new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString();
+    expect(await patch(soon, false)).toEqual({ lead: "1d" });
+    // 종일로 바꾸면 날 수를 지켜 옮긴다.
+    expect(await patch(laterOn(5, "00:00"), true)).toEqual({ lead: "1d_9am" });
+
+    // 종일로 바꿨는데 옮긴 값(어제 오전 9시)이 이미 지났으면 그 알림만 지운다.
+    await api.put<ReminderResponse>(reminderPath, { lead: "1d" });
+    expect(await patch(`${daysAgo(0)}T00:00:00+09:00`, true)).toBeNull();
+  });
+
+  it("PUT 은 없는 일정이면 404, 목록 밖 값이면 400, 종류가 맞지 않으면 422 다", async () => {
+    const event = await myReminderOnDay();
+    const put = (eid: string, lead: string) =>
+      api
+        .put<ReminderResponse>(`/children/c1/events/${eid}/reminder`, { lead })
+        .catch((error: unknown) => error);
+
+    expect(isApiError(await put("e_missing", "1h"), "not_found")).toBe(true);
+    expect(isApiError(await put(event?.id ?? "", "3h"), "validation_failed")).toBe(true);
+    expect(isApiError(await put(event?.id ?? "", "day_of_9am"), "invalid_reminder")).toBe(true);
   });
 });
 
