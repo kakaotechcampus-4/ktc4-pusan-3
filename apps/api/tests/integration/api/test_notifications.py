@@ -8,6 +8,7 @@ from httpx import AsyncClient
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.core.config import settings
 from app.domains.identity.models import AuthSession, Parent
 from app.domains.identity.repository import delete_session
 from app.domains.identity.withdraw import withdraw_parent
@@ -32,6 +33,11 @@ DEVICE = "/api/v1/me/push-device"
 SETTINGS = "/api/v1/me/notification-settings"
 
 
+@pytest.fixture(autouse=True)
+def _accept_devices(monkeypatch):
+    monkeypatch.setattr(settings, "PUSH_DEVICE_ACCEPT", True)
+
+
 async def _devices(session: AsyncSession) -> list[tuple]:
     rows = await session.execute(
         select(PushDevice.parent_id, PushDevice.device_token)
@@ -52,6 +58,17 @@ async def test_device_lives_as_long_as_the_login(
     assert await _devices(session) == [(parent_id, "fcm-b")]
 
     assert (await db_client.post("/api/v1/auth/logout", headers=headers)).status_code == 204
+    assert await _devices(session) == []
+
+
+async def test_devices_are_not_kept_until_the_server_accepts_them(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, monkeypatch
+):
+    """처리방침 새 판 전에는 기기 토큰을 저장하지 않는다. 화면은 바꿀 것이 없게 204 다 (#605 PM)."""
+    monkeypatch.setattr(settings, "PUSH_DEVICE_ACCEPT", False)
+    headers, _ = bearer
+    resp = await db_client.put(DEVICE, json={"token": "fcm-a", "platform": "web"}, headers=headers)
+    assert resp.status_code == 204
     assert await _devices(session) == []
 
 
