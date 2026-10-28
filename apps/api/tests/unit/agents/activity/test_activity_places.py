@@ -52,13 +52,15 @@ def library(name: str, distance_m: int) -> PlaceRow:
     )
 
 
-async def context(rows=(), *, outdoor_ok=True, fail=False) -> ActivityContext:
+async def context(rows=(), *, outdoor_ok=True, fail=False, places=None) -> ActivityContext:
     ctx = ActivityContext(
         child_id=CHILD,
         run_id="run-1",
         now=NOW,
         timezone=UTC,
-        ports=in_memory_ports(CHILD, date(2025, 1, 1), places=InMemoryPlaces(rows, fail=fail)),
+        ports=in_memory_ports(
+            CHILD, date(2025, 1, 1), places=places or InMemoryPlaces(rows, fail=fail)
+        ),
         location=LOCATION,
     )
     ctx.state.gate = await build_gate(ctx, outdoor_ok=outdoor_ok)
@@ -148,6 +150,27 @@ class TestBadWeather:
             ctx.state.weather[day] = WeatherBrief(outdoor_ok=True)
         result = await search_nearby_places(ctx, args(PlaceCategory.PARK, DayLabel.THIS_WEEKEND))
         assert names(result) == ["○○어린이공원"]
+
+
+class TestCategoryArg:
+    async def test_tool_인자는_글자로_와도_포트에는_enum_으로_넘긴다(self):
+        """ToolArgs 가 use_enum_values 라 모델 인자를 검증하면 category 가 글자다(#583 리뷰)."""
+        seen: list[object] = []
+
+        class SpyPlaces(InMemoryPlaces):
+            async def nearby(self, *, location, category, radius_m):
+                seen.append(category)
+                return await super().nearby(location=location, category=category, radius_m=radius_m)
+
+        ctx = await context(places=SpyPlaces([park("○○어린이공원", 300)]))
+        validated = SearchNearbyPlacesArgs.model_validate({"day": "today", "category": "park"})
+        assert type(validated.category) is str
+
+        result = await search_nearby_places(ctx, validated)
+
+        assert names(result) == ["○○어린이공원"]
+        assert seen == [PlaceCategory.PARK]
+        assert type(seen[0]) is PlaceCategory
 
 
 class TestFailure:

@@ -2,7 +2,7 @@
 
 - 표가 막는 값(source · category · 시군구 코드 · 한국 상자)
 - 다시 실어도 행이 늘지 않는다 · 이번 받기에 없는 행만 지운다
-- 반경 검색 — 가까운 순 · 반경 밖 제외 · TOP_K · 종류
+- 반경 검색 — 가까운 순 · 반경 밖 제외 · TOP_K · 종류 · 거리 절대값 · tool 경로
 
 장소 이름 · 좌표는 지어낸 값이다. 기준점에서 방위 · 거리로 계산한 점에 둔다.
 """
@@ -10,13 +10,19 @@
 import math
 from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime
+from uuid import UUID
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 
-from app.agents.activity.schemas.common import PlaceCategory
+from app.agents.activity.context import ActivityContext, build_gate
+from app.agents.activity.schemas.common import DayLabel, PlaceCategory
+from app.agents.activity.schemas.outing import SearchNearbyPlacesArgs
+from app.agents.activity.store.inmemory import in_memory_ports
 from app.agents.activity.store.ports import PLACE_MAX_RADIUS_M, PLACE_TOP_K, CoarseLocation
+from app.agents.activity.tools.outing import days_of, search_nearby_places
+from app.agents.activity.weather import WeatherBrief
 from app.domains.place import repository
 from app.domains.place.agent_reader import DbPlaceSource
 from app.domains.place.models import Place
@@ -72,6 +78,18 @@ def opener(session):
         yield session
 
     return same
+
+
+@pytest.fixture(autouse=True)
+async def _empty_place(session):
+    """개발 DB 에 적재본이 있어도 빈 표에서 시작한다(#583 리뷰 — "절반 미만 거부" 에 걸렸다).
+
+    TRUNCATE 도 테스트의 바깥 트랜잭션 안이라 conftest 의 마지막 롤백이 되돌린다 — 적재본은
+    지워지지 않는다. 바로 commit 해서 savepoint 를 닫는다 — 테스트 안의 rollback(적재 거절)이
+    TRUNCATE 까지 되감지 않게.
+    """
+    await session.execute(text("TRUNCATE place"))
+    await session.commit()
 
 
 async def _count(session, source: str | None = None) -> int:
@@ -271,6 +289,41 @@ async def test_놀이터로_찾으면_놀이터가_있는_공원도_온다(sessi
     ]
     # 공원으로 찾을 때는 놀이터 여부와 상관없다
     assert [row.name for row in parks] == ["시험장소plain", "시험장소kid"]
+
+
+async def test_거리_절대값이_맞다_서울시청에서_부산시청까지(session):
+    # 같은 식으로 잰 값이 325,099m 다(#583 리뷰). 실제 거리(약 325km)와 1km 안에서 맞는다.
+    # 어댑터는 반경을 20km 로 자르므로 저장소를 바로 부른다
+    await repository.upsert_places(session, rows=[values("busan", lat=35.1798, lng=129.0750)])
+
+    [row] = await repository.nearby(
+        session, lat=37.5663, lng=126.9779, category="park", radius_m=400_000, limit=5
+    )
+
+    assert abs(row.distance_m - 325_099) <= 1_000
+
+
+async def test_tool_경로로_불러도_DB_에서_찾는다(session, opener):
+    """모델 인자 검증 → tool → DB 어댑터. 인자의 종류가 글자로 온다(use_enum_values, #583 리뷰)."""
+    await _seed(session, [values("near", distance_m=400), values("far", distance_m=900)])
+    child = UUID(int=1)
+    ctx = ActivityContext(
+        child_id=child,
+        run_id="run-1",
+        now=NOW,
+        timezone=UTC,
+        ports=in_memory_ports(child, date(2025, 1, 1), places=DbPlaceSource(opener)),
+        location=CENTER,
+    )
+    ctx.state.gate = await build_gate(ctx, outdoor_ok=True)
+    for day in days_of(DayLabel.TODAY, ctx.today):
+        ctx.state.weather[day] = WeatherBrief(outdoor_ok=True)
+    args = SearchNearbyPlacesArgs.model_validate({"day": "today", "category": "park"})
+
+    result = await search_nearby_places(ctx, args)
+
+    assert result.success is True
+    assert [place["name"] for place in result.data["places"]] == ["시험장소near", "시험장소far"]
 
 
 async def test_면적은_비워도_된다(session):

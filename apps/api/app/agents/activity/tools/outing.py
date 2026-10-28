@@ -225,7 +225,9 @@ async def search_nearby_places(
     if gate is None or location is None:
         raise RuntimeError("Gate · 위치 없이 장소 조회가 불렸다 — registry 가 열지 않았어야 한다")
 
-    if args.category not in INDOOR_CATEGORIES and not await outdoor_on(context, args.day):
+    # ToolArgs 는 use_enum_values 라 args.category 가 글자("park")로 온다. 포트에는 enum 으로 넘긴다
+    category = PlaceCategory(args.category)
+    if category not in INDOOR_CATEGORIES and not await outdoor_on(context, args.day):
         indoor = " · ".join(sorted(INDOOR_CATEGORIES))
         return fail(
             "query",
@@ -236,7 +238,7 @@ async def search_nearby_places(
 
     try:
         rows = await context.ports.places.nearby(
-            location=location, category=args.category, radius_m=PLACE_MAX_RADIUS_M
+            location=location, category=category, radius_m=PLACE_MAX_RADIUS_M
         )
     except UpstreamUnavailable:
         return fail(

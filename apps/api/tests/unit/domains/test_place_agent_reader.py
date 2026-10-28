@@ -13,13 +13,17 @@ import logging
 import math
 import typing
 from contextlib import asynccontextmanager
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
+from uuid import UUID
 
 import pytest
 from sqlalchemy.exc import OperationalError
 
-from app.agents.activity.schemas.common import PlaceCategory
+from app.agents.activity.context import ActivityContext, build_gate
+from app.agents.activity.schemas.common import DayLabel, PlaceCategory
+from app.agents.activity.schemas.outing import SearchNearbyPlacesArgs
+from app.agents.activity.store.inmemory import in_memory_ports
 from app.agents.activity.store.ports import (
     PLACE_MAX_RADIUS_M,
     PLACE_SOURCES,
@@ -28,6 +32,8 @@ from app.agents.activity.store.ports import (
     PlaceRow,
     UpstreamUnavailable,
 )
+from app.agents.activity.tools.outing import days_of, search_nearby_places
+from app.agents.activity.weather import WeatherBrief
 from app.domains.place import repository
 from app.domains.place.agent_reader import DbPlaceSource
 from app.domains.place.models import CATEGORY_CHECK, SOURCE_CHECK
@@ -145,6 +151,64 @@ async def test_거리는_미터_정수로_데이터기준일자는_그대로_옮
             data_date=date(2026, 6, 30),
         )
     ]
+
+
+@pytest.mark.parametrize("category", ["park", "playground", PlaceCategory.LIBRARY])
+async def test_종류는_글자로_와도_받는다(monkeypatch, opener, category):
+    # ToolArgs 가 use_enum_values 라 tool 인자는 글자다. 글자에 .value 를 부르면 AttributeError 로
+    # Activity 전체가 실패했다(#583 리뷰)
+    calls = _capture(monkeypatch)
+
+    await DbPlaceSource(opener).nearby(
+        location=LOCATION, category=category, radius_m=PLACE_MAX_RADIUS_M
+    )
+
+    assert calls[0]["category"] == PlaceCategory(category).value
+
+
+async def test_닫힌_값_밖의_종류는_DB_를_열기_전에_거절한다(monkeypatch, opener):
+    calls = _capture(monkeypatch)
+
+    with pytest.raises(ValueError):
+        await DbPlaceSource(opener).nearby(
+            location=LOCATION, category="cafe", radius_m=PLACE_MAX_RADIUS_M
+        )
+    assert calls == []
+
+
+async def test_tool_경로로_불러도_DB_어댑터가_찾는다(monkeypatch, opener):
+    """모델 인자 검증 → tool → 어댑터. 단위 테스트가 enum 만 넘겨서 놓친 경로다(#583 리뷰)."""
+    calls = _capture(
+        monkeypatch,
+        [
+            NearbyPlace(
+                name="시험공원",
+                category="park",
+                source="city_park",
+                data_date=None,
+                distance_m=420.0,
+            )
+        ],
+    )
+    child = UUID(int=1)
+    ctx = ActivityContext(
+        child_id=child,
+        run_id="run-1",
+        now=datetime(2026, 10, 2, 10, tzinfo=UTC),
+        timezone=UTC,
+        ports=in_memory_ports(child, date(2025, 1, 1), places=DbPlaceSource(opener)),
+        location=LOCATION,
+    )
+    ctx.state.gate = await build_gate(ctx, outdoor_ok=True)
+    for day in days_of(DayLabel.TODAY, ctx.today):
+        ctx.state.weather[day] = WeatherBrief(outdoor_ok=True)
+    args = SearchNearbyPlacesArgs.model_validate({"day": "today", "category": "park"})
+
+    result = await search_nearby_places(ctx, args)
+
+    assert result.success is True
+    assert result.data["places"] == [{"name": "시험공원", "category": "park"}]
+    assert calls[0]["category"] == "park"
 
 
 async def test_놀이터로_찾은_공원은_종류가_park_그대로다(monkeypatch, opener):

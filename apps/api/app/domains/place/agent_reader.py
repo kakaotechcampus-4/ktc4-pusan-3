@@ -47,8 +47,11 @@ class DbPlaceSource:
         self._open = open_session
 
     async def nearby(
-        self, *, location: CoarseLocation, category: PlaceCategory, radius_m: int
+        self, *, location: CoarseLocation, category: PlaceCategory | str, radius_m: int
     ) -> list[PlaceRow]:
+        # 글자("park")로 와도 받는다 — ToolArgs 가 use_enum_values 라 tool 인자는 글자다(#583 리뷰).
+        # 닫힌 값 밖이면 ValueError 다
+        category = PlaceCategory(category)
         if radius_m <= 0:
             raise ValueError("반경은 0 보다 커야 한다")
         try:

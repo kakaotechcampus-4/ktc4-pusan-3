@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 
 from app.core.place_raw import RawPlaceRow
 from app.domains.place import repository
@@ -71,6 +71,18 @@ def opener(session):
         yield session
 
     return same
+
+
+@pytest.fixture(autouse=True)
+async def _empty_place(session):
+    """개발 DB 에 적재본이 있어도 빈 표에서 시작한다(#583 리뷰 — "절반 미만 거부" 에 걸렸다).
+
+    TRUNCATE 도 테스트의 바깥 트랜잭션 안이라 conftest 의 마지막 롤백이 되돌린다 — 적재본은
+    지워지지 않는다. 바로 commit 해서 savepoint 를 닫는다 — 테스트 안의 rollback(적재 거절)이
+    TRUNCATE 까지 되감지 않게.
+    """
+    await session.execute(text("TRUNCATE place"))
+    await session.commit()
 
 
 @pytest.fixture

@@ -4,6 +4,7 @@
 tests/integration/test_load_places.py 가 본다.
 """
 
+import math
 from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime
 
@@ -12,14 +13,20 @@ import pytest
 from app.agents.activity.schemas.common import PlaceCategory
 from app.core.place_raw import RawPlaceRow
 from app.domains.place.models import KOREA_BOX_CHECK
+from app.domains.place.repository import EARTH_RADIUS_M
 from scripts.load_places import (
     KOREA_LAT,
     KOREA_LNG,
     LIBRARY_KINDS,
+    SAME_ADDRESS_M,
+    SAME_NAME_M,
+    SAME_SPOT_M,
     Drop,
     Loaded,
+    PlaceRecord,
     build_parser,
     clean,
+    distance_m,
     has_playground,
     in_korea,
     library_source_id,
@@ -28,6 +35,7 @@ from scripts.load_places import (
     parse_data_date,
     place_values,
     run,
+    same_park,
     sigungu_code,
     summary,
 )
@@ -327,6 +335,55 @@ def test_이름만_바뀐_같은_자리는_중복이다():
     ]
 
     assert [record.name for record in clean("city_park", rows).records] == ["신안어린이공원"]
+
+
+# ── same_park 경계값 — 기준을 바꾸면 여기서 걸린다 (#583 리뷰) ────────────
+def _site(name: str, meters: float = 0.0, address: str | None = None) -> PlaceRecord:
+    """기준점(35.1, 129.0)에서 정북으로 `meters` 만큼 간 공원 행."""
+    return PlaceRecord(
+        source="city_park",
+        source_id="11110-00001",
+        name=name,
+        category=PlaceCategory.PARK,
+        lat=35.1 + math.degrees(meters / EARTH_RADIUS_M),
+        lng=129.0,
+        sigungu_code="11110",
+        data_date=None,
+        address=address,
+    )
+
+
+def test_경계값_점은_정확한_거리에_놓인다():
+    origin, there = _site("가"), _site("가", 299)
+    assert distance_m(origin.lat, origin.lng, there.lat, there.lng) == pytest.approx(299, abs=0.01)
+
+
+@pytest.mark.parametrize(("meters", "same"), [(SAME_NAME_M - 1, True), (SAME_NAME_M + 1, False)])
+def test_같은_이름은_300m_안까지_같은_공원이다(meters, same):
+    # "수랑" 과 "수랑어린이공원" — 종류 말을 떼면 이름이 같다. 주소는 서로 다르다
+    a = _site("수랑", address="시험시 가동 1")
+    b = _site("수랑어린이공원", meters, address="시험시 나동 2")
+
+    assert same_park(a, b) is same
+
+
+@pytest.mark.parametrize(
+    ("meters", "same"), [(SAME_ADDRESS_M - 1, True), (SAME_ADDRESS_M + 1, False)]
+)
+def test_같은_지번은_1km_안까지_같은_공원이다(meters, same):
+    # 이름이 달라 이름 기준에 걸리지 않는다 — 시도 이름이 바뀌어도 동 · 번지가 같다
+    a = _site("가람공원", address="옛시 남구 시험동 878")
+    b = _site("나래어린이공원", meters, address="새시 남구 시험동 878")
+
+    assert same_park(a, b) is same
+
+
+@pytest.mark.parametrize(("meters", "same"), [(SAME_SPOT_M - 1, True), (SAME_SPOT_M + 1, False)])
+def test_이름도_지번도_다르면_50m_안까지만_같은_공원이다(meters, same):
+    a = _site("가람공원", address="시험시 가동 1")
+    b = _site("나래어린이공원", meters, address="시험시 나동 2")
+
+    assert same_park(a, b) is same
 
 
 def test_주소와_유희시설_원문은_싣지_않는다():
