@@ -20,7 +20,12 @@ from typing import Any
 
 from app.agents.activity.context import ActivityContext, build_gate
 from app.agents.activity.gating import checks_weather
-from app.agents.activity.prompt import build_system_prompt, recall_message, request_message
+from app.agents.activity.prompt import (
+    build_system_prompt,
+    example_ids,
+    recall_message,
+    request_message,
+)
 from app.agents.activity.readouts import CAUTION_NON_FOOD_ALLERGY, READOUTS
 from app.agents.activity.registry import closed_readout_key, execute_tool, specs_for, tools_for
 from app.agents.activity.result import ToolResult
@@ -86,6 +91,7 @@ async def run(
     )
     # 프롬프트에 실은 행만 근거로 달 수 있다. 재호출도 같은 system 프롬프트라 그대로 쓴다
     context.state.seen_docs = {row.id: row for row in examples}
+    context.state.example_ids = example_ids(examples)
     context.state.request_texts = tuple(task.request_texts)
     system = build_system_prompt(context, examples, weather=weather)
     llm = client or LLMClient(role="activity")

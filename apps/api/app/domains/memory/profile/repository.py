@@ -1,9 +1,10 @@
 """관찰에서 파생된 성향의 API 조회·라벨 수정·상태 전이 집계."""
 
 import uuid
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 
-from sqlalchemy import func, select, update
+from sqlalchemy import exists, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domains.correction.models import Correction, CorrectionTargetKind, CorrectionVerdict
@@ -14,6 +15,7 @@ from app.domains.memory.observation.models import (
     ObservationStatus,
 )
 from app.domains.memory.profile.models import MemoryDomain, ProfileAffinity, ProfileState
+from app.domains.memory.search import contains_pattern
 from app.rules.profile import (
     PROFILE_LIMIT_PER_DOMAIN,
     PROMOTION_WINDOW_DAYS,
@@ -45,6 +47,89 @@ async def list_affinities(
         stmt = stmt.where(ProfileAffinity.state != ProfileState.ARCHIVED)
     stmt = stmt.order_by(ProfileAffinity.last_observed_on.desc(), ProfileAffinity.id.desc())
     return list((await session.scalars(stmt)).all())
+
+
+@dataclass(frozen=True)
+class AffinityPage:
+    items: list[ProfileAffinity]
+    total: int
+
+
+def _has_active_observation():
+    """묶인 active 관찰이 하나라도 있는 기억. 근거 없는 성향은 보여주지 않는다 (루트 CLAUDE.md §2).
+
+    `list_active_refs_by_affinity` 가 세는 것과 같은 기준이다 — 세 표 · 같은 아이 · active.
+    기억 한 건에 관찰이 여러 건 묶여도 한 번만 센다 (JOIN 이 아니라 EXISTS).
+    """
+    return or_(
+        *(
+            exists().where(
+                model.affinity_id == ProfileAffinity.id,
+                model.child_id == ProfileAffinity.child_id,
+                model.status == ObservationStatus.ACTIVE,
+            )
+            for model in _PROMOTABLE_BY_DOMAIN.values()
+        )
+    )
+
+
+async def page_affinities(
+    session: AsyncSession,
+    *,
+    child_id: uuid.UUID,
+    domain: MemoryDomain | None = None,
+    state: ProfileState | None = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    q: str | None = None,
+    limit: int = 20,
+    offset: int = 0,
+) -> AffinityPage:
+    """기억 목록 한 쪽 + 같은 필터의 전체 건수. 마지막 관찰이 최근인 것이 앞.
+
+    `list_affinities` 와 달리 묶인 active 관찰이 없는 기억은 목록 · total 어디에도 없다 —
+    쿼리 뒤에서 걸러내면 쪽마다 개수가 달라지고 total 이 부풀기 때문이다.
+    `date_from` · `date_to` 는 `last_observed_on` 이 범위 안인 기억이다(양 끝 포함).
+    `q` 는 이름(`merge_key`) 부분 일치다. 띄어쓰기와 대소문자는 무시한다 — "계란반찬" 으로
+    "계란 반찬" 이 찾아진다 (Curator 가 이름을 비교하는 규칙과 같다).
+    """
+    if not 1 <= limit <= 100:
+        raise ValueError("limit은 1~100이어야 한다")
+    if offset < 0:
+        raise ValueError("offset은 0 이상이어야 한다")
+    if date_from is not None and date_to is not None and date_from > date_to:
+        raise ValueError("date_from은 date_to보다 늦을 수 없다")
+
+    conditions = [ProfileAffinity.child_id == child_id, _has_active_observation()]
+    if domain is not None:
+        conditions.append(ProfileAffinity.domain == MemoryDomain(domain))
+    if state is not None:
+        conditions.append(ProfileAffinity.state == ProfileState(state))
+    else:
+        conditions.append(ProfileAffinity.state != ProfileState.ARCHIVED)
+    if date_from is not None:
+        conditions.append(ProfileAffinity.last_observed_on >= date_from)
+    if date_to is not None:
+        conditions.append(ProfileAffinity.last_observed_on <= date_to)
+    squashed = "".join((q or "").split())
+    if squashed:
+        conditions.append(
+            func.regexp_replace(ProfileAffinity.merge_key, r"\s", "", "g").ilike(
+                contains_pattern(squashed), escape="\\"
+            )
+        )
+
+    total = await session.scalar(
+        select(func.count()).select_from(ProfileAffinity).where(*conditions)
+    )
+    items = await session.scalars(
+        select(ProfileAffinity)
+        .where(*conditions)
+        .order_by(ProfileAffinity.last_observed_on.desc(), ProfileAffinity.id.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    return AffinityPage(items=list(items.all()), total=total or 0)
 
 
 async def find_affinity(

@@ -28,12 +28,13 @@
 - `components/ui/` — 토큰만 아는 primitive. 도메인 타입(`Suggestion` 등)을 import 하지 않는다
 - `components/` — 도메인을 아는 조합
 - 지금 있는 것 (`components/ui/`) — `Screen`(최대 폭·좌우 여백·**상하 여백+safe area**) · `PageTitle` ·
-  `Button`(§7 6변형) · `TextInput` · `TextArea` · `DateField` · `TimeField` · `Checkbox` · `Chip`/`ChipRow` ·
+  `Button`(§7 6변형) · `TextInput`(검색칸은 `leading` · `trailing` · `labelHidden` · 🚨 브라우저 search × 숨김) · `TextArea` · `DateField` · `DateRangeField`(기간 한 칸 · 범위 달력 · 한 날이면 그날 하루) · `TimeField` · `Checkbox` · `Chip`/`ChipRow` · `RemovableChip`(걸린 조건 · 누르면 풀린다) ·
   `EvidenceChip`/`CountChip`/`EvidenceRow` · `Card`(`accent`)/`CardFailed` · `Banner` · `Spinner` ·
   `IconButton`/`IconButtonLink`/`IconButtonPlaceholder`(받는 동안 버튼 자리) · `IconTile` · `ProgressSteps` · `EmptyState`/`EmptyStateSkeleton` ·
   `Skeleton`/`SkeletonText`/`SkeletonTile`/`SkeletonGroup`(🚨 받은 내용과 같은 상자 · 디자인 시스템 §7 "빈 상태 · 스켈레톤") ·
   `BottomSheet` · `Tabs`/`PanelTabs`(🚨 주소가 바뀌면 앞, **패널만 바뀌면** 뒤 · 디자인 시스템 §7) · `Toast` · `ButtonLink` ·
-  `Select` · `ChoiceField`(반드시 하나 · 🚨 선택지가 둘이면 `Select` 를 쓰지 않는다 · 넷 이상이거나 문장이 길면 `direction="vertical"` · 디자인 시스템 §7) ·
+  `Select` · `ChoiceField`(반드시 하나 · 🚨 선택지가 둘이면 `Select` 를 쓰지 않는다 · 넷 이상이거나 문장이 길면 `direction="vertical"` · 목록 위의 보기 전환만 `labelHidden` · 디자인 시스템 §7) ·
+  `Pagination`(번호 쪽 목록의 아래 한 줄 · 화살표 둘 + 번호 다섯 개의 창 · 디자인 시스템 §7 "쪽 넘기기") ·
   `PhotoCard`/`PhotoSlotButton` · `Swap`(같은 자리의 교체 페이드 · `phaseOf`) · `Named`(화면 전환의 이름 쌍)
 - 움직임 (`lib/motion.ts`) — `useEnterMotion`(데이터가 바꾸는 교체 · 단계 넘김) · `useMotionCue`(누른 것만) ·
   `useReveal`(펼침) · `useFlip`(자리 옮김) · `playEnter`. 화면 전환은 `components/route-transition.tsx` 의 `ScreenTransition` 과

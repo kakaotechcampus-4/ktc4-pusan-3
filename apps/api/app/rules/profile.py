@@ -73,6 +73,14 @@ _VALID_PROFILE_VERDICTS = frozenset(VERDICT_DECAY)
 # ---------------------------------------------------------------------------
 
 
+def archived_by_time(*, last_observed_on: date, today: date) -> bool:
+    """상태 공식 1번 — 마지막 관찰 뒤 `ARCHIVED_WINDOW_DAYS` 가 지났는가.
+
+    Curator 가 다시 계산할 때와 기억 다리가 그날 기준으로 읽을 때 같이 쓴다.
+    """
+    return (today - last_observed_on).days > ARCHIVED_WINDOW_DAYS
+
+
 def compute_profile_status(
     *,
     obs_count: int,
@@ -90,8 +98,7 @@ def compute_profile_status(
        (obs_count >= PROMOTION_THRESHOLD_WITH_G + wrong_count 그리고 has_signal)  →  confirmed
     3. 그 외  →  candidate
     """
-    days_since = (today - last_observed_on).days
-    if days_since > ARCHIVED_WINDOW_DAYS:
+    if archived_by_time(last_observed_on=last_observed_on, today=today):
         return "archived"
 
     if obs_count >= PROMOTION_THRESHOLD + wrong_count:

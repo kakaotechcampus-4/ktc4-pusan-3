@@ -44,6 +44,8 @@ class ActivityRunState:
     # 프롬프트 [예시]에 실은 문서 행. run() 이 모델을 부르기 전에 채운다. 일반 추천은 이 행을
     # 근거로 단다 — 아이 기록이 아니라 개인화로 세지 않는다 (루트 §2)
     seen_docs: dict[UUID, ActivityDocRow] = field(default_factory=dict)
+    # [예시]의 짧은 id(예1 …) → 문서 행 id. 프롬프트에는 짧은 id 만 싣는다 (`prompt.example_ids`)
+    example_ids: dict[str, UUID] = field(default_factory=dict)
     # 이번 run 의 보호자 요청 글. 출력 tool 이 requested_play 가 이 안에 있는지 본다 (#597 리뷰)
     request_texts: tuple[str, ...] = ()
     gate: Gate | None = None

@@ -114,6 +114,20 @@ def test_match_fields_alias_spans_spaces_inside_a_field() -> None:
     assert match_fields(("pine-nut salad",), (pine,)) == ("19",)
 
 
+def test_match_fields_alias_stays_in_one_word_without_cross_spaces() -> None:
+    # 놀이 · 교육 문장 — 띄어 쓴 두 낱말에 걸친 글자는 그 식품이 아니다
+    potato = Term(key="감자", aliases=("감자",))
+    pine = Term(key="19", aliases=("pine nut",))
+
+    assert match_fields(("장난감 자동차",), (potato,)) == ("감자",)
+    assert match_fields(("장난감 자동차",), (potato,), cross_spaces=False) == ()
+    assert match_fields(("감자 도장 찍기",), (potato,), cross_spaces=False) == ("감자",)
+    assert match_fields(("달 걀 찜",), TERMS, cross_spaces=False) == ()
+    # 별칭 자체에 띄어쓰기가 있으면 그 자리는 넘는다
+    assert match_fields(("pine nut cookie",), (pine,), cross_spaces=False) == ("19",)
+    assert TermMatcher((potato,), cross_spaces=False).match(prepare_fields(("감 자",))) == ()
+
+
 def test_match_fields_alias_does_not_span_punctuation_inside_a_field() -> None:
     # 문장부호는 재료를 가르는 자리다 — "소스 : 시금치" 에 "스시" 가 있는 게 아니다
     raw_fish = Term(key="날음식", aliases=("스시",))

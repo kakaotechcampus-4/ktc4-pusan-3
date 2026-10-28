@@ -86,6 +86,7 @@ import type {
   SuggestionsRequest,
   SuggestionsResponse,
   SuggestionFeedbackResponse,
+  SuggestionListQuery,
   SuggestionListResponse,
 } from "@/lib/api/types";
 
@@ -1338,52 +1339,105 @@ describe("⑧ 관찰과 프로필은 다른 엔드포인트다", () => {
       query: { domain: "health" },
     });
 
-    expect(page).toEqual({ items: [], next_cursor: null, total: 0 });
+    expect(page).toEqual({ items: [], total: 0, page: 1, size: 20, total_pages: 0 });
   });
 
-  it("next_cursor 를 그대로 돌려주면 빠지거나 겹치는 기록 없이 끝까지 넘어간다", async () => {
+  it("1쪽부터 total_pages 까지 넘기면 빠지거나 겹치는 기록 없이 끝까지 간다 (#584)", async () => {
     const whole = await api.get<ObservationsResponse>("/children/c1/observations");
 
+    const first = await api.get<ObservationsResponse>("/children/c1/observations", {
+      query: { size: 2 },
+    });
+    expect(first.total_pages).toBe(Math.ceil(whole.total / 2));
+
     const seen: string[] = [];
-    let cursor: string | null = null;
-    do {
-      const page: ObservationsResponse = await api.get<ObservationsResponse>(
-        "/children/c1/observations",
-        { query: { limit: 2, cursor } },
-      );
-      expect(page.total).toBe(whole.total);
-      seen.push(...page.items.map((item) => `${item.kind}:${item.id}`));
-      cursor = page.next_cursor;
-    } while (cursor !== null);
+    for (let page = 1; page <= first.total_pages; page += 1) {
+      const body = await api.get<ObservationsResponse>("/children/c1/observations", {
+        query: { size: 2, page },
+      });
+      expect(body).toMatchObject({ total: whole.total, page, size: 2 });
+      seen.push(...body.items.map((item) => `${item.kind}:${item.id}`));
+    }
 
     expect(seen).toEqual(whole.items.map((item) => `${item.kind}:${item.id}`));
   });
 
-  it("기본 한 장은 20건이고, 넘치면 next_cursor 가 온다", async () => {
+  it("기본 한 쪽은 20건이고, 마지막 쪽을 넘긴 쪽은 오류가 아니라 빈 목록이다", async () => {
     setScenario("observations_many");
     try {
       const first = await api.get<ObservationsResponse>("/children/c1/observations");
+      expect(first).toMatchObject({ total: 25, page: 1, size: 20, total_pages: 2 });
       expect(first.items).toHaveLength(20);
-      expect(first.total).toBe(25);
-      expect(first.next_cursor).not.toBeNull();
 
       const second = await api.get<ObservationsResponse>("/children/c1/observations", {
-        query: { cursor: first.next_cursor },
+        query: { page: 2 },
       });
       expect(second.items).toHaveLength(5);
-      expect(second.next_cursor).toBeNull();
+
+      const beyond = await api.get<ObservationsResponse>("/children/c1/observations", {
+        query: { page: 3 },
+      });
+      expect(beyond).toMatchObject({ items: [], total: 25, page: 3, total_pages: 2 });
     } finally {
       setScenario("default");
     }
   });
 
-  it("깨진 커서는 400 validation_failed 다", async () => {
-    const failure = await api
-      .get<ObservationsResponse>("/children/c1/observations", { query: { cursor: "깨진값" } })
-      .catch((error: unknown) => error);
+  // 🚨 서버는 쿼리 검증 실패를 422 가 아니라 400 으로 돌려준다 (422 는 경로 값이 틀렸을 때다 · #584).
+  it.each([
+    ["0쪽", { page: 0 }],
+    ["상한을 넘는 쪽", { page: 10_001 }],
+    ["100건을 넘는 size", { size: 101 }],
+    ["100자를 넘는 검색어", { q: "가".repeat(101) }],
+    ["없는 형식의 날짜", { date_from: "2026/10/01" }],
+    ["시작이 끝보다 늦은 기간", { date_from: "2026-10-31", date_to: "2026-10-01" }],
+  ])("%s 는 400 validation_failed 다", async (_, query) => {
+    for (const path of ["/children/c1/observations", "/children/c1/affinities"]) {
+      const failure = await api.get(path, { query }).catch((error: unknown) => error);
 
-    expect(isApiError(failure, "validation_failed")).toBe(true);
-    expect((failure as ApiError).status).toBe(400);
+      expect(isApiError(failure, "validation_failed"), path).toBe(true);
+      expect((failure as ApiError).status, path).toBe(400);
+    }
+  });
+
+  it("기간은 관찰 기간이 그 범위와 겹치는 기록만 내려주고, 양 끝 날짜를 포함한다", async () => {
+    const whole = await api.get<ObservationsResponse>("/children/c1/observations");
+    const day = whole.items[1].observed_to;
+
+    const body = await api.get<ObservationsResponse>("/children/c1/observations", {
+      query: { date_from: day, date_to: day },
+    });
+
+    expect(body.items.length).toBeGreaterThan(0);
+    expect(body.items.map((item) => item.id)).toContain(whole.items[1].id);
+    expect(body.items.every((item) => item.observed_from <= day && item.observed_to >= day)).toBe(
+      true,
+    );
+    expect(body.total).toBe(body.items.length);
+  });
+
+  it("검색은 원문이나 주제의 부분 일치이고, total 도 그 건수다", async () => {
+    const body = await api.get<ObservationsResponse>("/children/c1/observations", {
+      query: { q: "계란말이" },
+    });
+
+    expect(body.items.length).toBeGreaterThan(0);
+    expect(
+      body.items.every(
+        (item) =>
+          item.raw_text.includes("계란말이") || ("subject" in item && item.subject === "계란말이"),
+      ),
+    ).toBe(true);
+    expect(body.total).toBe(body.items.length);
+  });
+
+  it("검색어의 % 와 _ 는 글자 그대로다 — 전체가 걸리지 않는다", async () => {
+    for (const q of ["%", "_"]) {
+      const body = await api.get<ObservationsResponse>("/children/c1/observations", {
+        query: { q },
+      });
+      expect(body.total, q).toBe(0);
+    }
   });
 
   it("프로필은 affinities 한 배열이고 safety 가 따로 온다", async () => {
@@ -1392,6 +1446,42 @@ describe("⑧ 관찰과 프로필은 다른 엔드포인트다", () => {
     expect(Array.isArray(body.affinities)).toBe(true);
     // 🚨 기억이 비어도 안전 정보는 비지 않는다 — 감쇠가 없다 (계약서 §07).
     expect(body.safety.length).toBeGreaterThan(0);
+  });
+
+  // 🚨 쪽 네 칸은 `affinities` 기준이다 — `safety` 는 세지도 나누지도 않는다 (#584).
+  it("기억의 쪽은 affinities 만 센다 — safety 는 쪽으로 나누지 않는다", async () => {
+    const whole = await api.get<AffinitiesResponse>("/children/c1/affinities");
+    expect(whole).toMatchObject({ total: whole.affinities.length, page: 1, size: 20 });
+
+    const first = await api.get<AffinitiesResponse>("/children/c1/affinities", {
+      query: { size: 1 },
+    });
+    expect(first.affinities).toHaveLength(1);
+    expect(first.total_pages).toBe(whole.affinities.length);
+    expect(first.safety).toEqual(whole.safety);
+  });
+
+  it("기억 이름 검색은 띄어쓰기를 무시한다", async () => {
+    for (const q of ["계란반찬", "계란 반찬", "란 반"]) {
+      const body = await api.get<AffinitiesResponse>("/children/c1/affinities", {
+        query: { q },
+      });
+      expect(
+        body.affinities.map((a) => a.merge_key),
+        q,
+      ).toEqual(["계란 반찬"]);
+    }
+  });
+
+  it("기억의 기간은 마지막 기록 날짜로 거른다", async () => {
+    const whole = await api.get<AffinitiesResponse>("/children/c1/affinities");
+    const [latest, older] = whole.affinities;
+
+    const body = await api.get<AffinitiesResponse>("/children/c1/affinities", {
+      query: { date_from: older.last_observed_on, date_to: older.last_observed_on },
+    });
+    expect(body.affinities.map((a) => a.id)).toEqual([older.id]);
+    expect(body.affinities.map((a) => a.id)).not.toContain(latest.id);
   });
 
   // 목록에서는 빠졌지만 캘린더와 run 결과에는 아직 선다 — 그 화면들이 같은 시트를 연다.
@@ -1632,6 +1722,79 @@ describe("⑩ 피드백은 기억을 바꾸지 않는다", () => {
 });
 
 /* ── 09 캘린더 ───────────────────────────────────────────────────────── */
+
+describe("⑩-1 제안 목록은 rated 로 두 보기를 가르고 번호 쪽으로 준다 (#592)", () => {
+  const list = (query: SuggestionListQuery = {}) =>
+    api.get<SuggestionListResponse>("/children/c1/suggestions", { query: { ...query } });
+
+  it("rated 를 안 보내면 전부, false 면 피드백 전만, true 면 피드백 완료만 — total 은 그 보기의 건수다", async () => {
+    const all = await list();
+    const unrated = await list({ rated: false });
+    const rated = await list({ rated: true });
+
+    expect(all.total).toBe(unrated.total + rated.total);
+    expect(unrated.items.every((s) => s.feedback === null)).toBe(true);
+    expect(rated.items.every((s) => s.feedback !== null)).toBe(true);
+    expect(unrated).toMatchObject({ page: 1, size: 20, total_pages: 1 });
+  });
+
+  it("🚨 피드백 전에서 평가하면 그 제안이 빠지고 피드백 완료로 옮겨 간다", async () => {
+    const before = await list({ rated: false });
+    const target = before.items[0]!;
+
+    await api.patch(`/children/c1/suggestions/${target.id}/feedback`, { feedback: "not_acted" });
+
+    const after = await list({ rated: false });
+    expect(after.total).toBe(before.total - 1);
+    expect(after.items.map((s) => s.id)).not.toContain(target.id);
+    const done = await list({ rated: true });
+    expect(done.items.find((s) => s.id === target.id)?.feedback).toBe("not_acted");
+  });
+
+  it("다시 고르면 덮어쓴다 — 피드백 완료의 건수와 자리는 그대로다", async () => {
+    const before = await list({ rated: true });
+    const target = before.items[0]!;
+
+    await api.patch(`/children/c1/suggestions/${target.id}/feedback`, {
+      feedback: "child_disliked",
+    });
+
+    const after = await list({ rated: true });
+    expect(after.total).toBe(before.total);
+    expect(after.items.map((s) => s.id)).toEqual(before.items.map((s) => s.id));
+    expect(after.items[0]?.feedback).toBe("child_disliked");
+  });
+
+  it("쪽은 rated 를 건 뒤에 자르고, 마지막 쪽의 마지막 줄을 평가하면 그 쪽은 빈 목록이 된다", async () => {
+    setScenario("suggestions_many");
+    try {
+      const first = await list({ rated: false });
+      expect(first).toMatchObject({ total: 21, page: 1, size: 20, total_pages: 2 });
+      expect(first.items).toHaveLength(20);
+
+      const second = await list({ rated: false, page: 2 });
+      expect(second.items).toHaveLength(1);
+
+      await api.patch(`/children/c1/suggestions/${second.items[0]!.id}/feedback`, {
+        feedback: "child_liked",
+      });
+
+      // 🚨 오류가 아니라 빈 목록이다 — 화면이 `total_pages` 로 쪽을 다시 맞춘다.
+      const emptied = await list({ rated: false, page: 2 });
+      expect(emptied).toMatchObject({ items: [], total: 20, page: 2, total_pages: 1 });
+    } finally {
+      setScenario("default");
+    }
+  });
+
+  it("rated 가 true · false 가 아니면 400 validation_failed 다 (422 아님)", async () => {
+    const error = await api
+      .get("/children/c1/suggestions", { query: { rated: "maybe" } })
+      .catch((e: unknown) => e);
+    expect(isApiError(error, "validation_failed")).toBe(true);
+    expect((error as ApiError).status).toBe(400);
+  });
+});
 
 describe("⑪ 일기는 관찰이 아니다", () => {
   it("일기를 써도 관찰이 늘지 않는다", async () => {
