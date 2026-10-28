@@ -4,17 +4,14 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
-import { EventDraftCard, type DraftSubmitState } from "@/components/event-draft-card";
+import {
+  EventDraftCard,
+  type DraftSubmitFinal,
+  type DraftSubmitState,
+} from "@/components/event-draft-card";
 import { Button } from "@/components/ui/button";
 import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
-import {
-  qk,
-  submitEventDraft,
-  updateEventDraft,
-  type EventDraft,
-  type EventDraftFields,
-  type EventDraftItem,
-} from "@/lib/api";
+import { qk, submitEventDraft, updateEventDraft, type EventDraft } from "@/lib/api";
 import { useIdempotencyKey } from "@/lib/api/use-idempotency-key";
 import {
   mergeDrafts,
@@ -253,21 +250,23 @@ function DraftRow({
   const [submitted, setSubmitted] = useState(false);
 
   const submit = useMutation({
-    mutationFn: (body: { event: EventDraftFields; items: EventDraftItem[] }) => {
+    mutationFn: (body: DraftSubmitFinal) => {
       /**
        * 🚨 **`op` 에 따라 엔드포인트가 갈린다** (9/21 회의): create 는 `POST`, update 는 `PATCH`.
        *    🚨 **둘 다 같은 키를 쓴다** — PATCH 도 `item_id: null` 인 새 준비물 때문에 멱등이 아니다
        *    (`operations.ts` 의 주석).
        */
       if (draft.op === "update" && draft.event_id) {
-        return updateEventDraft(childId, draft.event_id, body, submitKey.current());
+        // 🚨 수정은 `reminder` 를 싣지 않는다 (`event-draft-card.tsx` 머리말).
+        const update = { event: body.event, items: body.items };
+        return updateEventDraft(childId, draft.event_id, update, submitKey.current());
       }
-      return submitEventDraft(
-        childId,
-        // 🚨 묶인 초안은 여러 제안에서 온다 — 전부 이 일정에 연결돼야 한다 (#206).
-        { ...body, ...(draft.suggestion_ids ? { suggestion_ids: draft.suggestion_ids } : {}) },
-        submitKey.current(),
-      );
+      // 🚨 묶인 초안은 여러 제안에서 온다 — 전부 이 일정에 연결돼야 한다 (#206).
+      const create = {
+        ...body,
+        ...(draft.suggestion_ids ? { suggestion_ids: draft.suggestion_ids } : {}),
+      };
+      return submitEventDraft(childId, create, submitKey.current());
     },
     onSuccess: async () => {
       // 🚨 성공한 뒤에만 다음 키로 넘어간다. 실패 뒤 다시 누르는 것은 재시도라 같은 키여야 한다.

@@ -14,6 +14,7 @@ import Link from "next/link";
 import { useEffect, useId, useRef, useState } from "react";
 
 import { ObservationList } from "@/components/observation-list";
+import { ReminderField } from "@/components/reminder-field";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -24,7 +25,7 @@ import { SkeletonGroup, SkeletonText, SkeletonTile } from "@/components/ui/skele
 import { Spinner } from "@/components/ui/spinner";
 import { TextArea } from "@/components/ui/text-area";
 import { useToast } from "@/components/ui/toast";
-import { api, DIARY_CONTENT_MAX_LENGTH, qk } from "@/lib/api";
+import { api, DIARY_CONTENT_MAX_LENGTH, isApiError, qk } from "@/lib/api";
 import { createSerialQueue } from "@/lib/serial-queue";
 import type {
   CalendarDayResponse,
@@ -35,10 +36,13 @@ import type {
   EventItemUpdateResponse,
   MyDiary,
   Observation,
+  ReminderRequest,
+  ReminderResponse,
   SharedPhoto,
 } from "@/lib/api/types";
 import { formatEventTime } from "@/lib/format";
 import { useReveal } from "@/lib/motion";
+import { NO_REMINDER, reminderOptions, type ReminderChoice } from "@/lib/reminder";
 import { FORWARD } from "@/lib/view-transition";
 
 /**
@@ -262,6 +266,8 @@ function EventCard({
         {formatEventTime(event.starts_at, event.all_day)}
       </p>
 
+      <MyReminder childId={childId} date={date} event={event} />
+
       {event.items.length > 0 ? (
         // 준비물은 카드 폭이 넉넉하면 두 열로 선다 — 기준과 이유는 docs/web/screen-rules-v1.md §5.
         <div className="@container mt-3">
@@ -275,6 +281,94 @@ function EventCard({
           </ul>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * 이 일정의 **내** 알림 (#609). 함께 보는 다른 보호자가 알림을 거는 유일한 자리다 — 일정을 만든
+ * 보호자는 제출할 때 걸고, 나머지는 여기서 각자 건다. 응답에는 내 알림만 와서 남의 것은 안 보인다.
+ *
+ * 🚨 **승인 게이트가 아니다.** 일정 쓰기가 아니라 개인 설정이고 다시 고르면 그만이라, 준비물 체크와
+ *    같이 낙관적으로 바꾸고 요청만 줄을 세운다 (`PreparedCheckbox`). 고르면 바로 저장한다 — 저장 버튼을
+ *    따로 두면 고르기만 하고 떠난 보호자가 걸린 줄 안다.
+ * 🚨 **지난 일정에는 세우지 않는다.** 고를 값이 "없음" 하나뿐이면 칸이 아무 일도 하지 않는다.
+ *    이미 걸린 알림이 있으면 지났어도 그 값을 보여 준다 (지울 수 있어야 한다).
+ */
+function MyReminder({
+  childId,
+  date,
+  event,
+}: {
+  childId: string;
+  date: string;
+  event: CalendarEvent;
+}) {
+  const queryClient = useQueryClient();
+  const toast = useToast();
+  const key = qk.calendarDay(childId, date);
+  const path = `/children/${childId}/events/${event.id}/reminder`;
+  const [queue] = useState(createSerialQueue);
+  const value: ReminderChoice = event.reminder?.lead ?? NO_REMINDER;
+
+  const save = useMutation({
+    mutationFn: (choice: ReminderChoice) =>
+      queue.run<unknown>(() =>
+        choice === NO_REMINDER
+          ? api.delete<void>(path)
+          : api.put<ReminderResponse>(path, { lead: choice } satisfies ReminderRequest),
+      ),
+    onMutate: async (choice) => {
+      await queryClient.cancelQueries({ queryKey: key });
+      const previous = queryClient.getQueryData<CalendarDayResponse>(key);
+      queryClient.setQueryData<CalendarDayResponse>(key, (current) =>
+        current
+          ? {
+              ...current,
+              events: current.events.map((each) =>
+                each.id === event.id
+                  ? { ...each, reminder: choice === NO_REMINDER ? null : { lead: choice } }
+                  : each,
+              ),
+            }
+          : current,
+      );
+      return { previous };
+    },
+    // 🚨 되돌리기만 하면 조용하다 — 고른 값이 칸에서 되돌아가 사라져서, 왜 그런지 말할 자리가 칸에
+    //    남지 않는다. 그래서 토스트가 받는다 (`PreparedCheckbox` 와 같다).
+    // 🚨 `invalid_reminder` 는 지난 시각만이 아니다. 다른 보호자가 그사이 일정을 종일로 바꾸면 종류가
+    //    맞지 않아도 같은 코드라, 이유를 하나로 단정하지 않는다. 다시 받은 목록은 맞게 바뀐다.
+    onError: (error, _choice, context) => {
+      if (queue.pending === 0 && context?.previous) queryClient.setQueryData(key, context.previous);
+      toast.show(
+        isApiError(error, "invalid_reminder")
+          ? "그 알림은 지금 걸 수 없어요. 다른 알림을 골라주세요."
+          : "알림을 저장하지 못했어요. 잠시 뒤에 다시 골라주세요.",
+      );
+    },
+    onSettled: () => {
+      if (queue.pending === 0) void queryClient.invalidateQueries({ queryKey: key });
+    },
+  });
+
+  const options = reminderOptions({
+    startsAt: event.starts_at,
+    allDay: event.all_day,
+    keep: value,
+  });
+  if (options.length === 1 && value === NO_REMINDER) return null;
+
+  return (
+    <div className="mt-3">
+      <ReminderField
+        startsAt={event.starts_at}
+        allDay={event.all_day}
+        value={value}
+        onChange={(choice) => {
+          if (choice !== value) save.mutate(choice);
+        }}
+      />
     </div>
   );
 }
