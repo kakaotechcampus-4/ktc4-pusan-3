@@ -20,6 +20,7 @@ from app.domains.memory.observation.models import (
     ObservationRoutine,
     ObservationStatus,
 )
+from app.domains.memory.search import contains_pattern
 
 
 class ObservationDomain(enum.StrEnum):
@@ -228,18 +229,28 @@ async def page_observations(
     statuses: Collection[ObservationStatus] | None = None,
     affinity_id: uuid.UUID | None = None,
     cursor: ObservationCursor | None = None,
+    q: str | None = None,
+    offset: int = 0,
     limit: int = 20,
 ) -> ObservationPage:
-    """5종 병합 목록: 기간 overlap, 상태/성향 필터, 역순 커서.
+    """5종 병합 목록: 기간 overlap, 상태/성향 필터, 검색, 역순 커서 또는 offset.
 
     domains 를 주면 그 표들만 합친다. growth Agent 처럼 한 분류가 두 표(education ·
     routine)를 읽는 경우가 있어 하나가 아니라 목록으로 받는다. 빈 목록은 받지 않는다 —
     "아무 표도 안 본다" 와 "전부 본다(None)" 가 섞이면 호출자 실수가 전체 조회로 새어 나간다.
     statuses 를 주면 status 대신 그 상태들을 합쳐서 본다. deleted 는 목록 필터로 열지 않는다.
     보호자에게 보이지 않는 상태다.
+
+    q 는 raw_text · subject 부분 일치(대소문자 무시)다. `%` · `_` · `\\` 는 글자 그대로 본다.
+    offset 은 앞에서 건너뛸 건수다 — 번호 쪽(page)을 쓰는 목록 API 가 준다. cursor 와 같이 줄 수
+    없다(어느 쪽을 따를지 모호하다). 캘린더처럼 cursor 로 끝까지 도는 호출은 offset 을 안 준다.
     """
     if not 1 <= limit <= 100:
         raise ValueError("limit은 1~100이어야 한다")
+    if offset < 0:
+        raise ValueError("offset은 0 이상이어야 한다")
+    if cursor is not None and offset:
+        raise ValueError("cursor 와 offset 은 같이 줄 수 없다")
     if date_from is not None and date_to is not None and date_from > date_to:
         raise ValueError("date_from은 date_to보다 늦을 수 없다")
     if domains is not None and not domains:
@@ -269,6 +280,8 @@ async def page_observations(
                 "cursor_upper": cursor.observed_to_exclusive if cursor else None,
                 "cursor_kind": f"observation_{cursor.domain.value}" if cursor else None,
                 "cursor_id": cursor.id if cursor else None,
+                "q_pattern": contains_pattern(q),
+                "offset": offset,
                 "fetch_limit": limit + 1,
             },
         )

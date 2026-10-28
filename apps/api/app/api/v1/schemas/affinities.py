@@ -38,6 +38,17 @@ class AffinityOut(BaseModel):
 
 class AffinitiesResponse(BaseModel):
     affinities: list[AffinityOut]
+    total: int = Field(
+        description=(
+            "필터 · 날짜 · 검색을 건 뒤 `affinities` 의 전체 건수. 쪽과 무관하다. "
+            "같은 응답의 `safety` 는 세지 않는다 — `safety` 는 쪽으로 나누지 않는다"
+        )
+    )
+    page: int = Field(description="요청한 쪽 번호 (1부터). `affinities` 를 나눈 쪽이다")
+    size: int = Field(description="요청한 한 쪽 개수. `affinities` 에만 적용한다")
+    total_pages: int = Field(
+        description="`affinities` 의 전체 쪽 수 — ceil(total / size). 0건이면 0"
+    )
     safety: list[dict[str, Any]] = Field(
         default_factory=list,
         description="알레르기 · 건강 정보. 첫 배포 범위 밖이라 늘 빈 배열이다 (#259)",

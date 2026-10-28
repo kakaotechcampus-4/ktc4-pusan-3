@@ -9,19 +9,16 @@
 🚨 `growth` 는 표 이름이 아니다. education · routine 두 표를 읽는다 (루트 CLAUDE.md §5).
 """
 
-import base64
-import binascii
-import json
 import uuid
-from datetime import date
-from typing import Annotated, Literal
+from typing import Literal
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter
 
 from app.api.deps.child import AccessibleChild
 from app.api.deps.db import SessionDep
 from app.api.errors import ApiError, ErrorEnvelope
 from app.api.quota import today_kst
+from app.api.v1.list_query import ListQueryDep
 from app.api.v1.observation_outs import to_observation_outs
 from app.api.v1.schemas.observations import (
     CorrectionOut,
@@ -33,7 +30,6 @@ from app.domains.correction.models import CorrectionTargetKind
 from app.domains.correction.repository import list_corrections
 from app.domains.memory.observation.models import ObservationStatus
 from app.domains.memory.observation.repository import (
-    ObservationCursor,
     ObservationDomain,
     find_observation,
     page_observations,
@@ -73,32 +69,40 @@ VISIBLE_DOMAINS = (
 async def list_observations(
     child: AccessibleChild,
     session: SessionDep,
+    query: ListQueryDep,
     domain: AgentFilter | None = None,
     status: StatusFilter | None = None,
-    cursor: str | None = None,
-    limit: Annotated[int, Query(ge=1, le=100)] = 20,
 ) -> ObservationsResponse:
-    """deleted 가 아닌 관찰을 `observed_to` 최신순으로. 필터를 건 건수가 `total` 이다.
+    """deleted 가 아닌 관찰을 `observed_to` 최신순으로, `page` · `size` 쪽으로 나눠서.
 
+    `date_from` · `date_to` 는 관찰 기간이 그 범위와 **겹치면** 포함한다(양 끝 날짜 포함).
+    `q` 는 원문(`raw_text`)과 주제(`subject`)의 부분 일치다. 필터를 건 건수가 `total` 이다.
     status 를 주면 그 상태만, 주지 않으면 세 상태 모두다.
     """
     domains = _DOMAINS_BY_AGENT[domain] if domain else VISIBLE_DOMAINS
     if not domains:
-        return ObservationsResponse(items=[], next_cursor=None, total=0)
+        return ObservationsResponse(
+            items=[], total=0, page=query.page, size=query.size, total_pages=0
+        )
 
     page = await page_observations(
         session,
         child_id=child.child_id,
         domains=domains,
         statuses=(ObservationStatus(status),) if status else LISTED_STATUSES,
-        cursor=_decode_cursor(cursor) if cursor else None,
-        limit=limit,
+        date_from=query.date_from,
+        date_to=query.date_to,
+        q=query.q,
+        offset=query.offset,
+        limit=query.size,
     )
     items = await to_observation_outs(session, page.items, today=today_kst())
     return ObservationsResponse(
         items=items,
-        next_cursor=_encode_cursor(page.next_cursor) if page.next_cursor else None,
         total=page.total,
+        page=query.page,
+        size=query.size,
+        total_pages=query.total_pages(page.total),
     )
 
 
@@ -154,33 +158,3 @@ def _visible_domain(kind: str) -> ObservationDomain | None:
     except ValueError:
         return None
     return domain if domain in VISIBLE_DOMAINS else None
-
-
-def _encode_cursor(cursor: ObservationCursor) -> str:
-    raw = json.dumps(
-        [cursor.observed_to_exclusive.isoformat(), cursor.domain.value, str(cursor.id)]
-    )
-    return base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
-
-
-def _decode_cursor(value: str) -> ObservationCursor:
-    """깨진 커서는 400. 화면이 받은 값을 그대로 돌려주는 한 일어나지 않는다.
-
-    세 칸이 문자열인지 먼저 본다 — `uuid.UUID(1)` 은 ValueError 가 아니라 AttributeError 를
-    던져서, 형만 틀린 커서가 500 으로 새어 나갔다 (#259 리뷰).
-    """
-    try:
-        padded = value + "=" * (-len(value) % 4)
-        parts = json.loads(base64.urlsafe_b64decode(padded))
-        if not (
-            isinstance(parts, list) and len(parts) == 3 and all(isinstance(p, str) for p in parts)
-        ):
-            raise ValueError("커서는 문자열 세 칸이다")
-        upper, domain, oid = parts
-        return ObservationCursor(
-            observed_to_exclusive=date.fromisoformat(upper),
-            domain=ObservationDomain(domain),
-            id=uuid.UUID(oid),
-        )
-    except (binascii.Error, ValueError, TypeError) as exc:
-        raise ApiError(400, "validation_failed", "목록 위치가 올바르지 않아요") from exc
