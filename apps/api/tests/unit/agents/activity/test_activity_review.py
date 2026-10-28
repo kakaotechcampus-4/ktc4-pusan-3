@@ -490,7 +490,11 @@ class TestOutputTool:
     async def test_장소_조회가_돌려준_곳을_붙여서_담는다(self):
         ctx = await self.context()
         ctx.state.seen_places[PARK] = PlaceRow(
-            name=PARK, category=PlaceCategory.PARK, distance_m=800, source="city_park"
+            name=PARK,
+            category=PlaceCategory.PARK,
+            distance_m=800,
+            source="city_park",
+            data_date=None,
         )
         await propose_activity_candidates(
             ctx,
