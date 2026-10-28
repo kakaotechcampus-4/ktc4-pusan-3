@@ -478,10 +478,14 @@
 | id | uuid | PK, UUIDv7 |
 | event_id | uuid | FK → `event.id`, NOT NULL, ON DELETE CASCADE, index |
 | parent_id | uuid | FK → `parent.id`, NOT NULL, ON DELETE CASCADE, index |
-| remind_at | timestamptz | NOT NULL |
+| lead | enum | NOT NULL. 얼마나 먼저 울릴지. 시간 있는 일정 `at_start | 5m | 10m | 15m | 30m | 1h | 2h | 1d | 2d | 1w`, 종일 일정 `day_of_9am | 1d_9am | 2d_9am | 1w_9am` (KST 오전 9시) |
 | sent_at | timestamptz | nullable, 실제 발송 시점 |
+- UNIQUE: `(event_id, parent_id)` — 보호자 한 명은 한 일정에 알림 1개 (#594).
 
-`parent_id`로 같은 Event를 보는 보호자마다 독립적인 알림을 소유한다.
+`parent_id`로 같은 Event를 보는 보호자마다 독립적인 알림을 소유한다. 일정을 만든 보호자는 제출할 때 함께 걸고, 다른 보호자는 캘린더에서 각자 건다.
+울릴 시각은 저장하지 않는다 — 보낼 때 `event.starts_at`에서 계산한다(`app/rules/reminder.py`). 그래서 일정을 고치면:
+- 시작이 바뀌면 `sent_at`을 비운다. 알림은 새 시작을 따라 다시 울린다.
+- 종일 여부가 바뀌면 그 일정의 알림을 모두 지운다 (두 목록이 서로 맞지 않는다).
 
 ### push_device (푸시 수신 기기)
 
