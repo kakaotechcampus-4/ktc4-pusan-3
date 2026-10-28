@@ -4,7 +4,8 @@
 """
 
 import uuid
-from datetime import date, datetime
+from dataclasses import dataclass
+from datetime import date, datetime, timedelta
 
 from sqlalchemy import case, delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -22,7 +23,7 @@ from app.domains.schedule.models import (
     Reminder,
     SharedPhoto,
 )
-from app.rules.reminder import ReminderLead
+from app.rules.reminder import ReminderLead, fits, remind_at, starts_window
 
 
 async def list_events(
@@ -341,6 +342,63 @@ async def list_my_reminders(
         return {}
     stmt = select(Reminder).where(Reminder.parent_id == parent_id, Reminder.event_id.in_(event_ids))
     return {row.event_id: row for row in await session.scalars(stmt)}
+
+
+@dataclass(frozen=True)
+class DueReminder:
+    """지금 울릴 알림 1건. 발송(`workers/reminder_dispatch`)이 문구와 받는 사람을 고른다."""
+
+    reminder_id: uuid.UUID
+    parent_id: uuid.UUID
+    child_id: uuid.UUID
+    event_id: uuid.UUID
+    lead: ReminderLead
+    starts_at: datetime
+    all_day: bool
+
+
+async def claim_due_reminders(
+    session: AsyncSession, *, now: datetime, stale_after: timedelta
+) -> list[DueReminder]:
+    """울릴 시각이 (now - stale_after, now] 인 알림을 맡고 `sent_at` 을 찍는다. 커밋은 부르는 쪽이.
+
+    - 보내기 **전에** 찍는다. 보내다 죽으면 그 알림은 다시 보내지 않는다 — 같은 알림이 두 번
+      울리는 것보다 한 번 빠지는 쪽을 고른다.
+    - `stale_after` 보다 오래 지난 알림은 맡지 않는다. 서버가 멈췄다 살아났거나, 일정을 고쳐 울릴
+      시각이 이미 지난 경우 뒤늦게 울리지 않는다. 그 행은 `sent_at` 이 빈 채로 남는다.
+    - `SKIP LOCKED` — 배치가 겹쳐 돌아도 같은 알림을 둘이 맡지 않고, 일정 수정이 쥔 알림은 다음
+      차례로 미룬다(기다리지 않는다).
+    """
+    earliest, latest = starts_window(now - stale_after, now)
+    rows = await session.execute(
+        select(
+            Reminder.id,
+            Reminder.parent_id,
+            Event.child_id,
+            Event.id,
+            Reminder.lead,
+            Event.starts_at,
+            Event.all_day,
+        )
+        .join(Event, Event.id == Reminder.event_id)
+        .where(Reminder.sent_at.is_(None), Event.starts_at.between(earliest, latest))
+        .with_for_update(of=Reminder, skip_locked=True)
+    )
+    due = []
+    for row in (DueReminder(*r) for r in rows):
+        # 종류가 맞지 않는 값은 저장 길이 막는다. 그래도 남아 있으면 계산할 수 없으니 건너뛴다
+        if not fits(row.lead, all_day=row.all_day):
+            continue
+        rings = remind_at(row.lead, starts_at=row.starts_at, all_day=row.all_day)
+        if now - stale_after < rings <= now:
+            due.append(row)
+    if due:
+        await session.execute(
+            update(Reminder)
+            .where(Reminder.id.in_([r.reminder_id for r in due]))
+            .values(sent_at=now)
+        )
+    return due
 
 
 async def lock_link(session: AsyncSession, *, child_id: uuid.UUID, parent_id: uuid.UUID) -> bool:
