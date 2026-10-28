@@ -30,12 +30,12 @@ from app.domains.schedule.models import Event, EventCategory, EventCreatedBy, Ev
 from app.domains.schedule.repository import (
     create_event,
     create_event_item,
-    create_reminder,
     delete_event,
     find_event,
     list_event_items,
     list_events,
     put_diary,
+    put_reminder,
     set_event_item_prepared,
     update_event,
 )
@@ -164,7 +164,7 @@ async def test_schedule_event_and_item_are_child_scoped(session, family):
     )
     assert updated.title == "물놀이 준비"
     assert (
-        await create_reminder(
+        await put_reminder(
             session,
             child_id=child.id,
             event_id=event.id,
@@ -174,7 +174,7 @@ async def test_schedule_event_and_item_are_child_scoped(session, family):
         is None
     )
     assert (
-        await create_reminder(
+        await put_reminder(
             session,
             child_id=child.id,
             event_id=event.id,
