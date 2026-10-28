@@ -45,14 +45,25 @@ def test_every_lead_belongs_to_exactly_one_kind():
         assert fits(lead, all_day=True) != fits(lead, all_day=False), lead
 
 
-def test_starts_window_never_misses_a_reminder_that_rings_in_range():
-    # 발송은 이 범위의 일정만 꺼낸다. 범위 밖으로 빠지는 알림은 영영 울리지 않는다.
-    now = datetime(2026, 10, 28, 12, 0, tzinfo=KST)
-    earliest, latest = starts_window(now - timedelta(minutes=10), now)
-    for lead in ReminderLead:
-        all_day = fits(lead, all_day=True)
-        for hours in range(-24 * 10, 24 * 10):
-            start = now + timedelta(hours=hours, minutes=7)
-            rings = remind_at(lead, starts_at=start, all_day=all_day)
-            if now - timedelta(minutes=10) <= rings <= now:
-                assert earliest <= start <= latest, (lead, start)
+@pytest.mark.parametrize("lead", list(ReminderLead))
+def test_starts_window_covers_every_start_that_rings_in_range(lead):
+    """발송은 이 범위의 일정만 꺼낸다. 범위 밖으로 빠지는 알림은 영영 울리지 않는다.
+
+    값마다 범위의 양 끝에 울리는 일정을 직접 만든다. 종일 일정은 그날 어느 시각이 시작으로 저장돼도
+    같은 오전 9시에 울리므로, 그날 00:00 과 23:59:59 둘 다 본다.
+    """
+    remind_from = datetime(2026, 10, 28, 8, 50, tzinfo=KST)
+    remind_until = datetime(2026, 10, 28, 9, 0, tzinfo=KST)
+    earliest, latest = starts_window(remind_from, remind_until)
+    if fits(lead, all_day=False):
+        lead_time = remind_until - remind_at(lead, starts_at=remind_until, all_day=False)
+        starts = [remind_from + lead_time, remind_until + lead_time]
+    else:
+        days = (remind_until - remind_at(lead, starts_at=remind_until, all_day=True)).days
+        day = datetime(2026, 10, 28, tzinfo=KST) + timedelta(days=days)
+        starts = [day, day + timedelta(days=1, seconds=-1)]
+    for start in starts:
+        rings = remind_at(lead, starts_at=start, all_day=not fits(lead, all_day=False))
+        # 만든 사례가 정말 범위 안에서 울리는지부터 — 아니면 아래 검사가 아무것도 증명하지 않는다
+        assert remind_from <= rings <= remind_until, (lead, start)
+        assert earliest <= start <= latest, (lead, start)
