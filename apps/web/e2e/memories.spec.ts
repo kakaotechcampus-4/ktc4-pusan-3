@@ -258,11 +258,20 @@ test.describe("07 기록 탭은 서버(#266)가 주는 대로 그린다 (#269)",
       await expect(pager.getByRole("button", { name: "다음 쪽" })).toBeDisabled();
     });
 
-    test("쪽 고르기 상자로 바로 가고, 조건을 바꾸면 1쪽으로 돌아간다", async ({ page }) => {
+    test("쪽 번호로 바로 가고, 조건을 바꾸면 1쪽으로 돌아간다", async ({ page }) => {
       await page.goto(MEMORIES);
-      await page.getByRole("combobox", { name: "쪽 고르기" }).click();
-      await page.getByRole("option", { name: "2쪽" }).click();
+      const pager = page.getByRole("navigation", { name: "기록 쪽 넘기기" });
+      // 🚨 지금 쪽은 색만이 아니라 aria-current 로도 말한다.
+      await expect(pager.getByRole("button", { name: "1쪽" })).toHaveAttribute(
+        "aria-current",
+        "page",
+      );
+      await pager.getByRole("button", { name: "2쪽" }).click();
       await expect(rowsOf(page)).toHaveCount(5);
+      await expect(pager.getByRole("button", { name: "2쪽" })).toHaveAttribute(
+        "aria-current",
+        "page",
+      );
 
       // 25건이 모두 고치지 않은 기록이라 바꾼 뒤에도 2쪽이 있다 — 쪽이 남으면 5줄과 page=2 가 남는다.
       // (쪽이 하나로 줄어드는 조건을 고르면 마지막 쪽 옮기기가 1쪽으로 데려가서 이 규칙을 못 본다.)
@@ -270,7 +279,10 @@ test.describe("07 기록 탭은 서버(#266)가 주는 대로 그린다 (#269)",
       await expect(page).toHaveURL(/[?&]status=active/);
       await expect(page).not.toHaveURL(/[?&]page=/);
       await expect(rowsOf(page)).toHaveCount(20);
-      await expect(page.getByRole("combobox", { name: "쪽 고르기" })).toContainText("1쪽");
+      await expect(pager.getByRole("button", { name: "1쪽" })).toHaveAttribute(
+        "aria-current",
+        "page",
+      );
     });
 
     test("마지막 쪽을 넘긴 주소는 빈 목록이 아니라 마지막 쪽을 세운다", async ({ page }) => {
