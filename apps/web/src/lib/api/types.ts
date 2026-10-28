@@ -870,19 +870,48 @@ export interface UpdateHealthSafetyResponse {
  *    "한 번의 관찰을 성향으로 확정하지 않는다"(CLAUDE.md §2)가 화면에서 사라진다.
  */
 
-/** `GET /children/{cid}/observations`. `Page<T>` 와 달리 `total` 이 함께 온다. */
-export interface ObservationsResponse {
-  items: Observation[];
-  next_cursor: string | null;
+/**
+ * 번호 쪽 목록이 같이 싣는 네 칸 (#584). 기록과 기억 목록이 같은 모양이다.
+ *
+ * 🚨 **`page` 가 `total_pages` 보다 크면 오류가 아니라 빈 목록이다.** 고치기로 건수가 줄어 마지막
+ *    쪽이 사라질 수 있어서, 화면은 받은 `total_pages` 로 다시 맞춘다.
+ */
+export interface NumberedPage {
   /** 필터를 걸기 전 전체가 아니라 **그 필터의** 건수다. 화면에 그대로 보여준다. */
   total: number;
+  /** 요청한 쪽 번호 (1부터). */
+  page: number;
+  size: number;
+  /** `ceil(total / size)`. 0건이면 0 이다. */
+  total_pages: number;
+}
+
+/** `GET /children/{cid}/observations` — `observed_to` 최신순, 번호 쪽으로 나눈다 (#584). */
+export interface ObservationsResponse extends NumberedPage {
+  items: Observation[];
+}
+
+/**
+ * 기록과 기억 목록이 같이 받는 쿼리 (#584). 🚨 **서버가 검증한다** — 범위 밖 `page`·`size`, 100자를
+ * 넘는 `q`, `date_from > date_to` 는 400 `validation_failed` 다. 화면은 그런 값을 만들지 않는다.
+ */
+export interface ListQuery {
+  /** 1부터. 서버 상한은 10,000 이다. */
+  page?: number;
+  /** 1~100. 화면은 보내지 않고 서버 기본(20)을 쓴다. */
+  size?: number;
+  /** `YYYY-MM-DD`, 그날 포함. 🚨 기록은 관찰 기간이 겹치면, 기억은 마지막 기록 날짜가 범위 안이면 든다. */
+  date_from?: string;
+  date_to?: string;
+  /** 부분 일치. 기록은 원문 · 주제, 기억은 이름(띄어쓰기 무시)에서 찾는다. 100자까지. */
+  q?: string;
 }
 
 /**
  * 관찰 목록 필터. `?domain=` 생략 시 건강을 뺀 4개 테이블을 observed_to DESC 로 병합한다.
  * 🚨 `growth` 는 education 과 routine 두 테이블이다. `health` 는 첫 배포 범위 밖이라 늘 빈 목록이다 (#259).
  */
-export interface ObservationFilters {
+export interface ObservationFilters extends ListQuery {
   domain?: Agent;
   /** 고른 상태만 (#266). 주지 않으면 deleted 를 뺀 세 상태 모두다. `total` 도 이 기준으로 센다. */
   status?: ObservationBase["status"];
@@ -902,9 +931,11 @@ export interface ObservationDetailResponse {
 /**
  * `GET /children/{cid}/affinities` — 관심·선호는 **한 배열**로 내려온다.
  * 좋아함/싫어함은 별도 배열이 아니라 `polarity` 로 구분한다.
+ *
+ * 🚨 **쪽 네 칸(`NumberedPage`)은 `affinities` 기준이다** (#584). `safety` 는 쪽으로 나누지 않고 세지도 않는다.
  */
-export interface AffinitiesResponse {
-  /** 기본 `state != 'archived'`. */
+export interface AffinitiesResponse extends NumberedPage {
+  /** 기본 `state != 'archived'`. 마지막 기록이 최근인 것이 앞이다. */
   affinities: Affinity[];
   /** 지워지지 않은 전부. 🚨 감쇠가 없다 — 보호자만 지울 수 있다. */
   safety: HealthSafety[];

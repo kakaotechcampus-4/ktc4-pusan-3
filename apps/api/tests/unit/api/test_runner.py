@@ -33,6 +33,7 @@ from app.agents.entrypoint import (
 from app.agents.memory.schemas.task import WorkType
 from app.api import agent_ports, idempotency
 from app.api.runs import pending_reply, registry, runner, suggestion_retry
+from app.domains.memory.profile.agent_reader import DbAffinityReader
 from app.domains.place.agent_reader import DbPlaceSource
 from app.domains.safety.agent_reader import DbSafetyReader
 
@@ -127,6 +128,23 @@ async def test_agent_job_안전_어댑터를_Food_와_Activity_에_넘긴다(mon
 
     assert isinstance(seen["food_safety"], DbSafetyReader)
     assert seen["activity_safety"] is seen["food_safety"]
+
+
+async def test_agent_job_관심_어댑터를_넘긴다(monkeypatch):
+    """안 넘기면 기억 화면에 보이는 관심이 추천 근거에서 조용히 빠진다."""
+    seen: dict = {}
+
+    async def fake_handle_input(**kwargs):
+        seen.update(kwargs)
+        kwargs["emit"](Done(kwargs["run_id"], 1))
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+
+    job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    assert isinstance(seen["affinity_reader"], DbAffinityReader)
 
 
 async def test_agent_job_stops_a_run_past_the_deadline(monkeypatch):

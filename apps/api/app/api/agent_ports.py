@@ -105,3 +105,13 @@ def safety_readers() -> dict[str, object]:
 
     reader = DbSafetyReader(background_session)
     return {"food_safety": reader, "activity_safety": reader}
+
+
+def affinity_reader() -> entrypoint.AffinityReader:
+    """도메인 Agent 기억 포트가 읽는 `profile_affinity` 어댑터 — 러너와 05 가 같이 쓴다.
+
+    안 넘기면 기억 화면에 보이는 관심이 추천 근거에서 빠진다. 호출마다 짧은 세션을 연다 (#257).
+    """
+    from app.domains.memory.profile.agent_reader import DbAffinityReader
+
+    return DbAffinityReader(background_session)

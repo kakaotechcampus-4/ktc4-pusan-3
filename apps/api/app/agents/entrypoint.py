@@ -21,6 +21,7 @@ from app.agents.activity.store.ports import CoarseLocation, PlaceSource, Weather
 from app.agents.activity.store.ports import SafetyReader as ActivitySafetyReader
 from app.agents.common.allergy import allergen_states, shared_book
 from app.agents.common.child_values import ChildValues
+from app.agents.common.datetime_rules import today_of
 from app.agents.common.readout import Readout
 from app.agents.common.reference_docs import doc_row_id
 from app.agents.common.schemas.task import DomainTask
@@ -45,7 +46,12 @@ from app.agents.memory.context import AgentContext
 from app.agents.memory.drafts import EventDraft
 from app.agents.memory.schemas.task import PendingMemoryContext
 from app.agents.memory.store import InMemoryStore, MemoryStore
-from app.agents.memory_bridge import StoreActivityMemory, StoreFoodMemory, StoreOpener
+from app.agents.memory_bridge import (
+    AffinityReader,
+    StoreActivityMemory,
+    StoreFoodMemory,
+    StoreOpener,
+)
 from app.agents.pipeline import (
     RECOMMENDING_TASKS,
     AgentResult,
@@ -84,6 +90,7 @@ from app.agents.supervisor.routing import Guidance
 __all__ = [
     "MAX_SUGGESTIONS",
     "SUGGESTION_AGENTS",
+    "AffinityReader",
     "AgentResult",
     "AllergenCheck",
     "CoarseLocation",
@@ -197,6 +204,7 @@ async def handle_input(
     food_suggestions: SuggestionHistoryReader | None = None,
     food_safety: FoodSafetyReader | None = None,
     activity_safety: ActivitySafetyReader | None = None,
+    affinity_reader: AffinityReader | None = None,
 ) -> PipelineResult:
     """입력 한 줄을 처리한다. 진행 상황은 emit 으로 나간다.
 
@@ -239,6 +247,9 @@ async def handle_input(
     - food_safety · activity_safety 는 api 가 넘긴 `health_safety` 어댑터다(`DbSafetyReader`,
       #405 · #460). 같은 객체여도 Food 는 `food_safety`, Activity 는 `activity_safety` 로 읽는다 —
       읽는 행이 다르다. 안 넘기면(테스트 · eval) `UnwiredSafety` 라 동의와 상관없이 닫힌다.
+    - affinity_reader 는 api 가 넘긴 `profile_affinity` 어댑터다(`DbAffinityReader`). 기억 포트가 그
+      run 의 기준일과 함께 받아, 마지막 관찰 뒤 21일이 지난 관심은 archived 로 읽는다. 안 넘기면
+      (테스트 · eval) 관심이 없는 아이로 읽는다.
     """
     now = datetime.now(KST)
     # 안 넘기면 run 하나가 store 하나를 쓴다. 앞선 run에 저장한 관찰은 다음 run에서
@@ -270,6 +281,7 @@ async def handle_input(
         food_suggestions=food_suggestions,
         food_safety=food_safety,
         activity_safety=activity_safety,
+        affinity_reader=affinity_reader,
     )
 
     return await _handle_input(
@@ -323,6 +335,7 @@ async def suggest(
     food_suggestions: SuggestionHistoryReader | None = None,
     food_safety: FoodSafetyReader | None = None,
     activity_safety: ActivitySafetyReader | None = None,
+    affinity_reader: AffinityReader | None = None,
 ) -> SuggestRun:
     """05 추천 요청 하나 (#249). 진행 이벤트는 없다 — 응답 하나로 끝난다.
 
@@ -353,6 +366,7 @@ async def suggest(
         food_suggestions=food_suggestions,
         food_safety=food_safety,
         activity_safety=activity_safety,
+        affinity_reader=affinity_reader,
     )
     domain_tasks = tuple(
         DomainTask(request_id, task.agent, task.task_type, task.request_texts) for task in tasks
@@ -459,6 +473,7 @@ def _domain_contexts(
     food_suggestions: SuggestionHistoryReader | None = None,
     food_safety: FoodSafetyReader | None = None,
     activity_safety: ActivitySafetyReader | None = None,
+    affinity_reader: AffinityReader | None = None,
 ) -> tuple[dict[str, DomainContext], RunWrites]:
     """Food · Activity 컨텍스트. 입력 run 과 05 가 같은 값으로 연다 — 포트가 두 벌이 되지 않게."""
     # Food 포트는 생일 · 동의만 값으로 연결됐다 (#372). API 가 run 마다 한 번 읽어 넘긴 값을 감싼
@@ -468,8 +483,13 @@ def _domain_contexts(
     # UnwiredSafety 라 동의와 상관없이 blocked.safety 로 닫힌다 — "알레르기 0행" 으로 열리면
     # 알레르기가 있는 아이에게도 거르지 않은 안내가 나간다.
     resolved_birth_date = birth_date or (now.date() - _FALLBACK_BIRTH_OFFSET)
+    # 관심(profile_affinity)은 Memory store 에 없어 어댑터를 따로 받는다. 시간 경과 archived 는
+    # 컨텍스트 today 와 같은 날 기준이다
+    today = today_of(now, KST)
     memory_port = (
-        StoreFoodMemory(store) if domain_store is None else StoreFoodMemory(opener=domain_store)
+        StoreFoodMemory(store, affinities=affinity_reader, today=today)
+        if domain_store is None
+        else StoreFoodMemory(opener=domain_store, affinities=affinity_reader, today=today)
     )
     # Food 가 읽는 공용 데이터 · 추천 이력은 api 가 넘긴 어댑터만 바꿔 끼운다(#383 방식). 문서 행은
     # Activity 처럼 yaml 의 검수된 행이다 — 일반 추천의 근거라 비면 일반 추천을 못 낸다
@@ -526,9 +546,11 @@ def _domain_contexts(
             profile=activity_child or ActivityProfile({child_id: resolved_birth_date}),
             consent=activity_child or ActivityConsent({child_id: True}),
             memory=(
-                StoreActivityMemory(store)
+                StoreActivityMemory(store, affinities=affinity_reader, today=today)
                 if domain_store is None
-                else StoreActivityMemory(opener=domain_store)
+                else StoreActivityMemory(
+                    opener=domain_store, affinities=affinity_reader, today=today
+                )
             ),
             weather=activity_weather,
             places=activity_places,

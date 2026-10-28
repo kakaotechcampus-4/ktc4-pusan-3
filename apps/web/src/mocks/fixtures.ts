@@ -873,7 +873,7 @@ export const allObservations: Observation[] = [
 ].sort((a, b) => (a.observed_to < b.observed_to ? 1 : -1));
 
 /**
- * `observations_many` 시나리오의 07 기록 — 한 장(20건)을 넘겨야 "더 보기" 가 선다.
+ * `observations_many` 시나리오의 07 기록 — 한 쪽(20건)을 넘겨야 쪽 넘기기가 선다 (#584).
  * 기본 기록 뒤에 1주 전부터 하루씩 거슬러 간 놀이 기록을 붙인다.
  */
 export const manyObservations: Observation[] = [

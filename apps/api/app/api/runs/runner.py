@@ -204,6 +204,7 @@ def agent_job(
                         domain_store=agent_ports.domain_store_opener(child_id),
                         **agent_ports.food_stores(),
                         **agent_ports.safety_readers(),
+                        affinity_reader=agent_ports.affinity_reader(),
                     )
             except TimeoutError:
                 log.warning(
