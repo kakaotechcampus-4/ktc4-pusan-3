@@ -23,6 +23,7 @@ from app.api.deps.child import AccessibleChild
 from app.api.deps.db import SessionDep
 from app.api.errors import ApiError, ErrorEnvelope, constraint_name
 from app.api.runs import suggestion_retry
+from app.api.v1.list_query import PageQueryDep
 from app.api.v1.reminder_check import check_reminder, reminder_out
 from app.api.v1.schemas.common import Ref
 from app.api.v1.schemas.suggestions import (
@@ -799,33 +800,35 @@ async def answer_question(
     "/children/{cid}/suggestions",
     summary="지난 추천 목록",
     description=(
-        "개인화 · 일반 추천을 함께 커서 페이징으로 반환하고 kind 로 구분한다. "
-        "필터 없으면 draft 제외 (07 화면용). evidence 는 개인화만 채워진다."
+        "개인화 · 일반 추천을 함께 `page` · `size` 쪽으로 나눠 반환하고 kind 로 구분한다. "
+        "필터 없으면 draft 제외 (07 화면용). evidence 는 개인화만 채워진다. "
+        "`rated=false` 는 피드백을 아직 안 남긴 것, `rated=true` 는 남긴 것만. "
+        "`total` 은 필터를 건 뒤의 전체 건수다."
     ),
     status_code=200,
+    responses={status: {"model": ErrorEnvelope} for status in (400, 403)},
 )
 async def list_suggestions(
     child: AccessibleChild,
     session: SessionDep,
+    query: PageQueryDep,
     status: str | None = Query(default=None),
-    cursor: str | None = Query(default=None),
-    limit: int = Query(default=20, ge=1, le=100),
+    rated: bool | None = Query(
+        default=None,
+        description="안 보내면 전부, false 면 피드백 미평가만, true 면 피드백을 남긴 것만",
+    ),
 ) -> SuggestionListResponse:
     try:
         status_enum = SuggestionStatus(status) if status else None
     except ValueError:
         raise ApiError(400, "validation_failed", "유효하지 않은 status 값이에요")
-    if cursor is not None:
-        try:
-            suggestion_repo.decode_cursor(cursor)
-        except (ValueError, KeyError, TypeError):
-            raise ApiError(400, "validation_failed", "유효하지 않은 cursor 값이에요")
-    rows, next_cursor = await suggestion_repo.list_suggestions(
+    rows, total = await suggestion_repo.list_suggestions(
         session,
         child_id=child.child_id,
         status=status_enum,
-        cursor=cursor,
-        limit=limit,
+        rated=rated,
+        offset=query.offset,
+        limit=query.size,
     )
     evidence_map = await suggestion_repo.list_evidence_batch(
         session, suggestion_ids=[s.id for s in rows]
@@ -838,7 +841,10 @@ async def list_suggestions(
     )
     return SuggestionListResponse(
         items=[_suggestion_out(s, views.get(s.id, ())) for s in rows],
-        next_cursor=next_cursor,
+        total=total,
+        page=query.page,
+        size=query.size,
+        total_pages=query.total_pages(total),
     )
 
 
