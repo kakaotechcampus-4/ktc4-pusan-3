@@ -603,10 +603,11 @@ export const suggestionGroups: SuggestionGroup[] = [
 ];
 
 /**
- * 근거가 부족할 때 개인화 **대신** 나가는 또래 기준 추천 (CLAUDE.md §2).
+ * 근거가 부족할 때 개인화 **대신** 나가는 또래 기준 일반 추천 (CLAUDE.md §2).
  *
  * 🚨 `evidence` 는 **아이 기록이 아니라 문서 행**이다 (`DocEvidence`) — 일반 추천은 아이 기록 근거 0행이
- *    정상이고, 그래서 개인화와 **타입이 다르다.** 문서 근거가 없는 일반 추천은 서버가 내지 않는다.
+ *    정상이고, 그래서 개인화와 **타입이 다르다.** 막연한 요청의 일반 추천은 문서 행을 단다.
+ *    요청에 맞춘 일반 추천은 아래 `requestedGeneralSuggestion` 이다.
  * 🚨 `basis` 는 서버가 만든 문구다. 목에서도 프론트가 "또래 기준" 을 지어내지 않게 여기 둔다.
  */
 export const generalSuggestions: GeneralSuggestion[] = [
@@ -653,6 +654,26 @@ export const generalSuggestions: GeneralSuggestion[] = [
     ],
   },
 ];
+
+/**
+ * 보호자가 놀이를 정해 물었을 때의 일반 추천 (#597). 기록이 없으면 그 요청에 맞춰 고른다.
+ *
+ * 🚨 **`evidence` 가 비어 있다.** 요청이 기준이라 문서 행을 달지 않는다 — 출처 줄 없이 `basis` 만 서야 한다.
+ * 🚨 `kind` 는 그대로 `general` 이다. 요청 기반인지 가르는 칸이 응답에 없어서, 화면은 라벨에
+ *    "또래 기준" 을 붙이지 않고 `basis` 로만 말한다. `basis` 는 서버의 `REQUESTED_REASON` 과 같은 문구다.
+ */
+export const requestedGeneralSuggestion: GeneralSuggestion = {
+  id: "g_3",
+  child_id: CHILD_ID,
+  agent: "activity",
+  kind: "general",
+  content: "큰 종이를 바닥에 깔고 손바닥에 물감을 묻혀 찍어 보세요",
+  basis: "쌓인 놀이 기록이 아직 적어서, 요청하신 놀이에 맞춰 골랐어요.",
+  status: "draft",
+  expires_at: hoursFromNow(24),
+  record_count: 0,
+  evidence: [],
+};
 
 /**
  * stale 시나리오 — 근거가 전부 6개월을 넘겼다.

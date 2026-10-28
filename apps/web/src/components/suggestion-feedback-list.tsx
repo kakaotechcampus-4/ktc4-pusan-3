@@ -26,7 +26,7 @@ import { cn } from "@/lib/cn";
  *    - 모양은 **카드**(`card` 14 · 간격 12)다. 줄 전체가 누르는 버튼인 기록 · 기억과 달리 안에 고르는
  *      칩이 서서, 줄을 버튼으로 만들 수 없다 — 그래서 끝의 `>` 도 없다
  *
- * 🚨 **채택한 일반 추천도 여기서 평가한다** (#509). 줄에 "또래 기준 일반 추천" 을 **글자로** 적는다 —
+ * 🚨 **채택한 일반 추천도 여기서 평가한다** (#509). 줄에 "일반 추천" 을 **글자로** 적는다 —
  *    우리 아이 기준 제안인 척하지 않는 것이 이 라벨의 일이다 (CLAUDE.md §2). 색 · 점선으로 가르지 않는다.
  * ⚠️ 05 처럼 컴포넌트를 나누지 않는다. 05 에서 나눈 이유는 **근거를 그리는 자리**라서다 — 한 컴포넌트에
  *    플래그를 넣으면 근거 0건이 개인화로 그려질 길이 생긴다. 이 목록은 근거를 그리지 않고, 일반 추천
@@ -75,7 +75,7 @@ export function SuggestionFeedbackList({
               <p className="text-body text-ink font-semibold">{suggestion.content}</p>
               <span className="text-caption text-ink-subtle flex flex-wrap gap-x-2">
                 <span>{domainLabel(suggestion.agent)}</span>
-                {suggestion.kind === "general" ? <span>또래 기준 일반 추천</span> : null}
+                {suggestion.kind === "general" ? <span>일반 추천</span> : null}
               </span>
 
               {/* 칩 줄은 가로 gap 만 준다 — 세로 여백은 칩이 터치 타깃을 채우려고 이미 갖고 있다. */}

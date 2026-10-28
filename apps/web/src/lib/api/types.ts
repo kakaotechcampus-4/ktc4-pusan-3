@@ -295,15 +295,16 @@ export interface Suggestion {
 }
 
 /**
- * 또래 기준 일반 추천. 근거 Memory 가 부족한 후보는 개인화 **대신** 이것으로 나간다 (CLAUDE.md §2).
+ * 일반 추천. 근거 Memory 가 부족한 후보는 개인화 **대신** 이것으로 나간다 (CLAUDE.md §2).
  * ⚠️ 후보마다 정해지므로 한 응답에 `suggestions` 와 같이 실릴 수 있다 (#512 리뷰).
  *
  * 🚨 **`Suggestion` 과 별도 타입이고 응답에서도 별도 필드다.** 같은 배열에 플래그로 섞으면
  *    언젠가 근거 0건인 것이 개인화로 그려진다 (디자인 시스템 §7). 여기에는 `evidence` ·
  *    `source_refs` 필드가 **아예 없어서**, 개인화 목록(`SuggestionList`)에 넘기면 타입이 막는다.
  *
- * 🚨 **`basis` 는 서버 문구다.** "또래 기준" 이라는 말을 프론트가 지어내지 않는다 —
- *    무엇을 기준으로 골랐는지는 만든 쪽만 안다.
+ * 🚨 **`basis` 는 서버 문구다.** 무엇을 기준으로 골랐는지는 만든 쪽만 안다 — 막연한 요청이면
+ *    또래 기준이고, 보호자가 놀이를 정해 물었으면 그 요청에 맞춘 것이다 (#597). 응답에는 둘을 가르는
+ *    칸이 없어서 화면은 라벨에 "또래 기준" 을 붙이지 않고 이 문구를 그대로 보인다.
  */
 export interface GeneralSuggestion {
   id: string;
@@ -311,7 +312,7 @@ export interface GeneralSuggestion {
   agent: Agent;
   kind: "general";
   content: string;
-  /** "36개월 또래가 자주 찾는 놀이예요" 처럼 무엇을 기준으로 골랐는지. 서버가 만든다. */
+  /** "36개월 또래가 자주 찾는 놀이예요" · "요청하신 놀이에 맞춰 골랐어요" 처럼 무엇을 기준으로 골랐는지. 서버가 만든다. */
   basis: string;
   status: SuggestionStatus;
   /** 생성 +24h. 개인화 추천과 같다. */
@@ -319,8 +320,10 @@ export interface GeneralSuggestion {
   /** 그 Agent 도메인에 쌓인 기록 수 (04 `record_count` 와 같은 표). 🚨 카드의 "기록 N건" 은 이 값이다 — 0 도 그린다. */
   record_count: number;
   /**
-   * 🚨 **문서 행 근거다** (#249 · 최상위 §2 "일반은 문서 행을 근거로 단다"). 비어 오지 않는다 —
-   *    문서 근거가 없는 일반 추천은 서버가 만들지도 내보내지도 않는다.
+   * 🚨 **문서 행 근거다** (#249 · 최상위 §2 "일반은 문서 행을 근거로 단다").
+   * ⚠️ **비어 올 수 있다** (#597). 보호자가 놀이를 정해 물은 Activity 일반 추천은 그 요청이 기준이라
+   *    문서 행이 없어도 된다. 화면은 출처 줄 없이 `basis` 만 그린다 — 근거 0건을 개인화로 그릴 길은
+   *    여전히 없다 (`Suggestion` 과 타입이 다르다).
    *    아이 기록 근거(`Suggestion.evidence`)와 필드 이름까지 같지만 **다른 타입**이다.
    */
   evidence: DocEvidence[];
@@ -564,7 +567,7 @@ export interface SuggestionsResponse {
    */
   groups?: SuggestionGroup[] | null;
   /**
-   * 또래 기준 일반 추천. `scarcity` 가 있을 때만 채워진다. 근거가 부족한 후보가 개인화 **대신**
+   * 일반 추천. `scarcity` 가 있을 때만 채워진다. 근거가 부족한 후보가 개인화 **대신**
    * 나간 것이고, 후보마다 정해져서 `suggestions` 와 같이 채워질 수 있다 (#512 리뷰).
    * 서버 DTO 에서 optional 이라 `null` 이 올 수 있다.
    */
@@ -1003,7 +1006,7 @@ export interface ReceivedGeneralSuggestion extends Pick<
   kind: "general";
 }
 
-/** 07 피드백 목록 한 줄. 🚨 **`kind` 로 가른다** — 일반 추천은 "또래 기준 일반 추천" 을 화면에 적는다. */
+/** 07 피드백 목록 한 줄. 🚨 **`kind` 로 가른다** — 일반 추천은 "일반 추천" 을 화면에 적는다. */
 export type ReceivedSuggestion = Suggestion | ReceivedGeneralSuggestion;
 
 /**
