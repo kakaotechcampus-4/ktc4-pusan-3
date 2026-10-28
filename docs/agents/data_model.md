@@ -478,7 +478,7 @@
 | id | uuid | PK, UUIDv7 |
 | event_id | uuid | FK → `event.id`, NOT NULL, ON DELETE CASCADE, index |
 | parent_id | uuid | FK → `parent.id`, NOT NULL, ON DELETE CASCADE, index |
-| lead | enum | NOT NULL. 얼마나 먼저 울릴지. 시간 있는 일정 `at_start | 5m | 10m | 15m | 30m | 1h | 2h | 1d | 2d | 1w`, 종일 일정 `day_of_9am | 1d_9am | 2d_9am | 1w_9am` (KST 오전 9시) |
+| lead | enum | NOT NULL. 얼마나 먼저 울릴지. 시간 있는 일정 `at_start` / `5m` / `10m` / `15m` / `30m` / `1h` / `2h` / `1d` / `2d` / `1w`, 종일 일정 `day_of_9am` / `1d_9am` / `2d_9am` / `1w_9am` (KST 오전 9시) |
 | sent_at | timestamptz | nullable, 실제 발송 시점 |
 - UNIQUE: `(event_id, parent_id)` — 보호자 한 명은 한 일정에 알림 1개 (#594).
 
