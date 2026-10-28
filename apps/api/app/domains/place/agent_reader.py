@@ -17,7 +17,7 @@ agents 가 정한 계약이라 여기서 import 한다 — `domains/safety/agent
 - 러너가 입력 run 마다 붙인다(`agent_ports.place_source`). 좌표가 없는 run 에서는 장소 조회 tool 이
   닫혀 있어 부르지 않는다.
 - 어린이놀이시설(키즈카페 · 육아종합지원센터)도 찾는다. 민간 키즈카페는 영업장이라 추천 쪽이
-  조건을 건다 — 확인 문구(이용료) · 후보 셋 중 한 곳까지(`activity/review.py`, #516).
+  이용료 확인 문구를 붙인다(`activity/review.place_notice`, #516).
 """
 
 import logging
