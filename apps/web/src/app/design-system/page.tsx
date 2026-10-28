@@ -6,10 +6,12 @@ import {
   Camera,
   Mic,
   NotebookPen,
+  Search,
   ShieldCheck,
   Sprout,
   UserRound,
   Utensils,
+  X,
 } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 
@@ -27,8 +29,15 @@ import { Button, type ButtonVariant } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ChoiceField } from "@/components/ui/choice-field";
-import { Chip, ChipRow, CountChip, EvidenceChip, EvidenceRow } from "@/components/ui/chip";
-import { DateField } from "@/components/ui/date-field";
+import {
+  Chip,
+  ChipRow,
+  CountChip,
+  EvidenceChip,
+  EvidenceRow,
+  RemovableChip,
+} from "@/components/ui/chip";
+import { DateField, DateRangeField } from "@/components/ui/date-field";
 import { EmptyState } from "@/components/ui/empty-state";
 import { IconButton } from "@/components/ui/icon-button";
 import { IconTile } from "@/components/ui/icon-tile";
@@ -36,6 +45,7 @@ import { useToast } from "@/components/ui/toast";
 import { DomainIcon, ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
 import { ProgressSteps } from "@/components/ui/progress-steps";
 import { PageTitle } from "@/components/ui/page-title";
+import { Pagination } from "@/components/ui/pagination";
 import { Screen } from "@/components/ui/screen";
 import { Select } from "@/components/ui/select";
 import { SkeletonBlock } from "@/components/ui/skeleton";
@@ -51,6 +61,7 @@ import {
   type EventDraft,
   type EventDraftFields,
 } from "@/lib/api/types";
+import { severityFieldHint, severityOptions } from "@/lib/health-safety";
 import { contrastRatio, meetsAA, parseColor } from "./contrast";
 import { SettingsGroup, SettingsInfoRow, SettingsLinkRow } from "@/components/settings-row";
 
@@ -516,10 +527,15 @@ function ComponentSection() {
   const [dsReportKind, setDsReportKind] = useState("ai_content");
   const [selectDomain, setSelectDomain] = useState("all");
   const [selectState, setSelectState] = useState("confirmed");
+  const [dsPage, setDsPage] = useState(3);
+  const [selectField, setSelectField] = useState("unknown");
   const [dsTime, setDsTime] = useState("");
   const [dsTimeRead, setDsTimeRead] = useState("10:23");
   const [chip, setChip] = useState("공룡");
   const [date, setDate] = useState("");
+  const [range, setRange] = useState({ from: "", to: "" });
+  const [query, setQuery] = useState("계란");
+  const [conditions, setConditions] = useState(["식사", "확인됨"]);
   const [checked, setChecked] = useState(true);
   const [text, setText] = useState("");
   const [area, setArea] = useState("");
@@ -628,11 +644,41 @@ function ComponentSection() {
         onChange={(e) => setText(e.target.value)}
       />
       <TextInput label="에러 상태" value="" onChange={() => {}} error="사유를 한 줄로 쓴다." />
+      <p className="text-caption text-ink-subtle">
+        검색칸(07)은 앞 돋보기와 뒤 지우기 아이콘 버튼을 얹는다. 🚨 type=search 의 브라우저 × 는
+        숨긴다 — OS 마다 생김새가 달라 토큰으로 못 맞춘다. 라벨은 sr-only 다.
+      </p>
+      <TextInput
+        type="search"
+        label="찾기"
+        labelHidden
+        placeholder="적어 주신 말에서 찾기"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        leading={<Search aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />}
+        trailing={
+          query ? (
+            <IconButton label="검색어 지우기" onClick={() => setQuery("")}>
+              <X aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
+            </IconButton>
+          ) : null
+        }
+      />
       <DateField
         label="날짜"
         hint="달력은 바텀시트로 연다 — 좁은 폭에서 팝오버는 화면을 벗어난다."
         value={date}
         onChange={setDate}
+        fromDate={new Date(new Date().getFullYear() - 20, 0, 1)}
+        toDate={new Date()}
+      />
+      <DateRangeField
+        label="기간"
+        hint="한 칸에서 범위를 고른다. 한 날만 누르면 그날 하루다."
+        placeholder="전체 기간"
+        from={range.from}
+        to={range.to}
+        onChange={setRange}
         fromDate={new Date(new Date().getFullYear() - 20, 0, 1)}
         toDate={new Date()}
       />
@@ -660,6 +706,21 @@ function ComponentSection() {
         <Chip selected={false} disabled onClick={() => {}}>
           비활성
         </Chip>
+      </ChipRow>
+      <p className="text-caption text-ink-subtle">
+        걸린 조건(07 필터)은 고른 칩과 같은 모양에 × 가 붙는다. 누르면 그 조건만 풀린다 — 이름이
+        &quot;식사 조건 풀기&quot; 처럼 무엇을 푸는지 말한다.
+      </p>
+      <ChipRow>
+        {conditions.map((c) => (
+          <RemovableChip
+            key={c}
+            removeLabel={`${c} 조건 풀기`}
+            onRemove={() => setConditions(conditions.filter((x) => x !== c))}
+          >
+            {c}
+          </RemovableChip>
+        ))}
       </ChipRow>
       <p className="text-caption text-ink-subtle">
         도메인 칩 · 근거 칩 · 건수. 🚨 한 화면에 도메인 색은 2개까지다 — 여기는 네 색을 나란히
@@ -788,6 +849,28 @@ function ComponentSection() {
           onChange={setSelectState}
         />
       </div>
+      <p className="text-caption text-ink-subtle">
+        폼 칸에 설 때는 shape=&quot;field&quot; 다 — input · date-field 와 같은 모양 · 높이 · 라벨
+        (label / ink-muted). 라벨만으로 모자라면 hint 가 라벨 아래 짧은 설명으로 선다 (좁은 폭에서는
+        줄이 바뀐다). 🚨 툴팁으로 대신하지 않는다 — 웹뷰에는 호버가 없다.
+      </p>
+      <Select
+        label="검사 등급"
+        shape="field"
+        hint={severityFieldHint("allergy")}
+        value={selectField}
+        options={severityOptions("allergy")}
+        onChange={setSelectField}
+      />
+
+      <SubTitle>쪽 넘기기</SubTitle>
+      <p className="text-caption text-ink-subtle">
+        번호 쪽 목록(07 기록 · 기억)의 아래 한 줄이다. 지금 쪽을 가운데 둔 번호 다섯 개가 따라
+        움직이고, 처음과 끝에서는 창이 그 끝에 붙는다. 🚨 번호는 다섯까지 — 화살표와 합쳐 일곱 칸 ×
+        44px 이 360px 폭의 한계다. 🚨 지금 쪽은 채운 원 + 굵기 + aria-current. 🚨 끝에 닿은 화살표는
+        숨기지 않고 끈다. 🚨 쪽이 하나면 그리지 않는다. 먼 시점으로 가는 일은 기간 필터가 맡는다.
+      </p>
+      <Pagination label="쪽 넘기기 예시" page={dsPage} totalPages={12} onChange={setDsPage} />
 
       <SubTitle>시각 고르기</SubTitle>
       <p className="text-caption text-ink-subtle">

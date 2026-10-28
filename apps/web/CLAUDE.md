@@ -23,7 +23,7 @@ Owner: 고태영 (프론트 리드)
 | `components/` · `components/ui/` · `globals.css` · 아이콘 · 서체 · 10 설정 하위 화면(고객센터 · 탈퇴 · 문제 알리기) | [`components-v1.md`](../../docs/web/components-v1.md) |
 | `lib/auth/` · `stores/session.ts` · `/auth/*` · 01 · 02 · 동의(`lib/consent.ts`) | [`auth-consent-v1.md`](../../docs/web/auth-consent-v1.md) |
 | `lib/api/` · 뮤테이션 · 에러 코드 처리 · `error.tsx` · `AppErrorBoundary` | [`api-client-v1.md`](../../docs/web/api-client-v1.md) |
-| `mocks/` · `*.test.ts` · `e2e/` | [`mock-and-tests-v1.md`](../../docs/web/mock-and-tests-v1.md) |
+| `mocks/` · `*.test.ts` · `e2e/` · `contract/` | [`mock-and-tests-v1.md`](../../docs/web/mock-and-tests-v1.md) |
 | `package.json` 의 버전 · `eslint.config.mjs` · `ci-web.yml` · `Dockerfile` · 배포 | [`toolchain-deploy-v1.md`](../../docs/web/toolchain-deploy-v1.md) |
 
 🚨 **같은 규칙이 이 파일의 요약과 `docs/web/` 원문 두 곳에 있으면 원문이 정본이다.** 규칙을 바꾸면 같은 PR 에서 둘 다 고친다.
@@ -203,6 +203,7 @@ const mutation = useMutation({
 
 - 🚨 **`mutationFn` 안에서 `newIdempotencyKey()` 를 부르지 않는다.** 재시도마다 새 키가 나가면 중복 방지가 무의미해진다 (타입이 못 잡는다)
 - 🚨 **`rotate()` 를 실패 경로에서도, 끝을 확인하지 못한 경로에서도 부르지 않는다.** 재시도는 같은 키다
+  (예외: 한 줄 입력의 run 이 SSE `failed` 로 끝나면 새 키다 — 서버가 "저장 없음" 을 보장한다 · [`api-client-v1.md`](../../docs/web/api-client-v1.md) §2)
 - 🚨 **사용자가 고쳐 쓸 수 있는 본문은 `current(text)` 로 본문을 넘긴다** — 키가 본문을 따라 바뀌어야 "같은 키 · 다른 본문" 422 에 안 갇힌다
 - `422 idempotency_key_reuse` 가 화면에 도달하면 **버그다.**
 
@@ -324,6 +325,7 @@ run 상태는 서버 상태도 클라이언트 상태도 아니다 (구독형). 
 ```bash
 pnpm test          # vitest run — 목 계약 · lib · 스토어 · 게이트 정적 검사
 pnpm test:e2e      # Playwright — 목 서버로 띄운 화면에서 화면 규칙 (make web-e2e)
+pnpm test:contract # 웹 API 타입 ↔ 서버 OpenAPI (make web-contract 가 서버 계약 덤프부터 돈다)
 ```
 
 무엇을 거는지와 규칙 원문은 [`mock-and-tests-v1.md`](../../docs/web/mock-and-tests-v1.md) §2 다.

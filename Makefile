@@ -3,7 +3,7 @@
         db-migrate db-rollback db-current db-history db-heads db-check db-revision \
         db-merge db-reset db-psql \
         web-install web-dev web-build web-start web-test web-e2e web-lint web-fmt web-fmt-check \
-        web-typecheck web-check web-image web-up web-down web-logs \
+        web-typecheck web-check web-contract web-image web-up web-down web-logs \
         api-image api-up api-down api-logs deploy-up deploy-down deploy-migrate \
         deploy-load-food-dry deploy-load-food
 
@@ -33,6 +33,7 @@ help:
 	@echo "  make web-fmt        코드 포맷팅 (prettier)"
 	@echo "  make web-fmt-check  포맷 검사만 (고치지 않는다 — CI 가 보는 것)"
 	@echo "  make web-check      format + typecheck + lint + test — PR 올리기 전 (CI 와 같은 검사, build 만 빠짐)"
+	@echo "  make web-contract   웹 API 타입 ↔ 서버 계약(OpenAPI) 비교 — lib/api 나 서버 스키마를 바꿨을 때 (apps/api 의 uv 필요)"
 	@echo ""
 	@echo "── 로컬 개발 DB (deploy/docker) ──"
 	@echo "  make db-up        로컬 Postgres+pgvector+Redis 기동 (최초 1회 deploy/docker/.env 필요)"
@@ -121,6 +122,12 @@ web-fmt-check:
 
 # CI(.github/workflows/ci-web.yml)와 같은 검사. 거기에 build 하나가 더 붙는다.
 web-check: web-fmt-check web-typecheck web-lint web-test
+
+# 웹 API 타입이 서버 계약(OpenAPI)과 맞는지 (#559 · ci-contract.yml). 서버 계약을 덤프한 뒤 비교한다.
+# apps/api 의 .env 가 없어도 돈다 — 스크립트가 필수 설정을 더미로 채운다. DB 에는 붙지 않는다.
+web-contract:
+	cd apps/api && uv run python -m scripts.dump_openapi ../web/.openapi.json
+	cd apps/web && pnpm test:contract
 
 db-up:
 	$(COMPOSE_DEV) up -d

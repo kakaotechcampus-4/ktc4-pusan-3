@@ -73,8 +73,10 @@ class ObservationHealthOut(_ObservationBaseOut):
 
 class ObservationsResponse(BaseModel):
     items: list[ObservationOut]
-    next_cursor: str | None
-    total: int = Field(description="필터를 건 뒤의 건수")
+    total: int = Field(description="필터 · 날짜 · 검색을 건 뒤의 전체 건수. 쪽과 무관하다")
+    page: int = Field(description="요청한 쪽 번호 (1부터)")
+    size: int = Field(description="요청한 한 쪽 개수")
+    total_pages: int = Field(description="전체 쪽 수 — ceil(total / size). 0건이면 0")
 
 
 class UsedInOut(BaseModel):

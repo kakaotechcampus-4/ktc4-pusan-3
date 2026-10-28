@@ -13,12 +13,14 @@ from uuid import UUID
 import pytest
 
 from app.agents.activity.context import ActivityContext, build_gate
+from app.agents.activity.doc_seed import activity_doc_seed
 from app.agents.activity.result import ErrorCode
 from app.agents.activity.review import (
     GENERAL_REASON,
     GUIDANCE,
     MIN_AVOIDED_LABEL,
     RejectReason,
+    common_doc_words,
     explain,
     review_candidates,
 )
@@ -103,9 +105,26 @@ TOWER_DOC = ActivityDocRow(
     physical_intensity=Intensity.LOW,
     involves_food=False,
 )
-DOCS = {TOWER_DOC.id: TOWER_DOC}  # 이번 run 의 프롬프트 [예시]에 실은 행
+# 제목이 흔한 말뿐이고 준비물이 없어 어느 후보에 달아도 맞는 문서로 본다 — 다른 축을 보는 테스트용
+GENERIC_DOC = ActivityDocRow(
+    id=UUID(int=22),
+    doc_key="act-test-generic",
+    title="함께 놀이",
+    body="함께 놀이",
+    min_month=0,
+    max_month=72,
+    setting=ActivitySetting.INDOOR,
+    materials=(),
+    caregiver_role=CaregiverRole.TOGETHER,
+    physical_intensity=Intensity.LOW,
+    involves_food=False,
+)
+DOCS = {TOWER_DOC.id: TOWER_DOC, GENERIC_DOC.id: GENERIC_DOC}  # 이번 run 의 [예시]에 실은 행
 # 일반 추천은 문서 행이 근거다 (루트 §2). 기록 없이 내는 후보는 이 인용을 단다
-DOC_PICK = {"id": str(TOWER_DOC.id), "note": "종이컵 탑 쌓기 예시를 참고했어요"}
+DOC_PICK = {"id": str(GENERIC_DOC.id), "note": "이 나이 예시를 참고했어요"}
+TOWER_PICK = {"id": str(TOWER_DOC.id), "note": "종이컵 탑 쌓기 예시를 참고했어요"}
+# 관련도는 실제 시드 행으로 본다 — 흔한 낱말을 시드에서 센다
+SEED_DOCS = tuple(entry.to_row() for entry in activity_doc_seed())
 
 
 def review(
@@ -628,3 +647,68 @@ class TestOutputTool:
         ctx.state.safety_entries = None
         with pytest.raises(RuntimeError):
             await propose_activity_candidates(ctx, self.args(candidate(), candidate(), candidate()))
+
+
+class TestDocRelevance:
+    """[예시] 문서 행은 그 활동의 근거여야 한다 — 손 씻기 문서가 종이컵 쌓기에 붙었다 (운영 QA)."""
+
+    def test_문서의_준비물이나_제목이_후보에_나오면_통과(self):
+        result = review(candidate(content="종이컵을 높이 쌓아 보기", evidence=[TOWER_PICK]))
+        assert result.rejections == ()
+        assert result.drafts[0].citations[0].ref.kind == "activity_doc"
+
+    @pytest.mark.parametrize(
+        ("doc_title", "content", "related"),
+        [
+            # 시드 행 기준 (#557 리뷰). 흔한 낱말("그림" · "놀이")만 겹치면 다른 활동이다
+            ("그림책 다음 장 맞혀 보기", "손전등으로 손 그림자 만들기", False),
+            ("가게 놀이로 주고받기", "모래 놀이터에서 퍼 담기", False),
+            # 본문 낱말까지 본다 — 제목에는 없는 "곰처럼" 이 본문에 있다
+            ("동물 흉내 내며 걷기", "곰처럼 네 발로 걸어 보기", True),
+            ("노래하며 손 씻기", "종이컵을 쌓아 올린 뒤 무너뜨리고 다시 쌓기", False),
+        ],
+    )
+    def test_시드_행으로_본_관련도(self, doc_title, content, related):
+        doc = next(row for row in SEED_DOCS if row.title == doc_title)
+        pick = {"id": str(doc.id), "note": "예시를 참고했어요"}
+        result = review(candidate(content=content, evidence=[pick]), docs={doc.id: doc})
+        assert (result.rejections == ()) is related
+
+    def test_아무것도_안_겹치는_문서를_달면_거절(self):
+        result = review(candidate(content="비누로 손 씻기 노래 부르기", evidence=[TOWER_PICK]))
+        assert [r.reason for r in result.rejections] == [RejectReason.UNRELATED_DOC]
+        assert "맞지 않는다" in explain(result.rejections)
+
+    def test_아이_기록_근거는_보지_않는다(self):
+        """관찰 · 관심 근거는 활동과 다른 낱말로 적혀도 된다 — 문서 행만 본다."""
+        pick = {"id": str(SAND), "note": "모래 놀이 기록"}
+        assert review(candidate(content="종이컵 탑 쌓기", evidence=[pick])).rejections == ()
+
+    def test_맞지_않는_문서_인용은_떼고_아이_기록_근거로_나간다(self):
+        """인용 하나 때문에 후보를 다시 내게 하면 재호출만 는다 (#557 리뷰). 남은 근거가 아이
+        기록이라 개인화로 나가고, 뗀 문서 행은 근거에 남지 않는다."""
+        sand = {"id": str(SAND), "note": "모래 놀이 기록"}
+        result = review(candidate(content="모래 놀이터에서 퍼 담기", evidence=[sand, TOWER_PICK]))
+        assert result.rejections == ()
+        assert [c.ref.id for c in result.drafts[0].citations] == [SAND]
+
+    def test_맞는_문서가_남으면_그_문서만_단다(self):
+        wash = next(row for row in SEED_DOCS if row.title == "노래하며 손 씻기")
+        wash_pick = {"id": str(wash.id), "note": "예시를 참고했어요"}
+        result = review(
+            candidate(content="종이컵을 높이 쌓아 보기", evidence=[wash_pick, TOWER_PICK]),
+            docs={TOWER_DOC.id: TOWER_DOC, wash.id: wash},
+        )
+        assert result.rejections == ()
+        assert [c.ref.id for c in result.drafts[0].citations] == [TOWER_DOC.id]
+
+    def test_흔한_낱말은_행_수가_아니라_비율로_센다(self):
+        """행 수로 고정하면 시드가 늘수록 "종이컵" 같은 구체적인 낱말까지 흔한 말로 빠진다."""
+
+        def row(n: int, title: str) -> ActivityDocRow:
+            return replace(TOWER_DOC, id=UUID(int=1000 + n), title=title, body="", materials=())
+
+        cups = [row(n, "종이컵 굴리기") for n in range(5)]
+        blocks = [row(n, "블록 쌓기") for n in range(5, 200)]
+        assert "종이" in common_doc_words(cups + blocks[:75])  # 80행 — 5% 는 4행
+        assert "종이" not in common_doc_words(cups + blocks)  # 200행 — 5% 는 10행

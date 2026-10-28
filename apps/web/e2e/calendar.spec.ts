@@ -259,6 +259,33 @@ test("고치다가 내용을 다 비우면 저장이 꺼지고, 편집 중에는
   expect(writes(calls)).toEqual([]);
 });
 
+test("일기는 1000자까지 적고, 앞뒤 공백까지 원문 그대로 센다 (#549)", async ({ page }) => {
+  const calls = recordApi(page);
+  // 목의 이틀 전은 기록이 있고 일기가 없는 날이다.
+  await page.goto(`${CALENDAR}?date=${browserDaysAgo(2)}`);
+
+  await page.getByRole("button", { name: "일기 쓰기" }).click();
+  const editor = page.getByRole("textbox", { name: "이날의 일기" });
+  await expect(page.getByText(/0\/1000$/)).toBeVisible();
+
+  // 🚨 신고와 달리 앞뒤 공백을 떼지 않고 센다 — 일기는 원문 그대로 저장한다.
+  const typed = "  모래 놀이를 했다.\n";
+  await editor.fill(typed);
+  await expect(page.getByText(new RegExp(`${typed.length}/1000$`))).toBeVisible();
+
+  // 1000자에 닿으면 더 적히지 않는다 — 서버가 400 으로 거절하는 글을 만들 수 없다.
+  const full = "가".repeat(1000);
+  await editor.fill(full);
+  await editor.press("End");
+  await page.keyboard.type("나");
+  await expect(editor).toHaveValue(full);
+  await expect(page.getByText(/1000\/1000$/)).toBeVisible();
+
+  await page.getByRole("button", { name: "일기 저장" }).click();
+  await expect(page.getByRole("button", { name: "일기 고치기" })).toBeFocused();
+  expect(writes(calls, "PUT").map((call) => call.body)).toEqual([{ content: full }]);
+});
+
 test("일기 지우기 확인 패널은 승인 게이트가 아니다 — 게이트 표식이 없다 (§2 실행 · #364)", async ({
   page,
 }) => {
@@ -328,3 +355,41 @@ test("준비물 체크는 아이 경로로 키 없이 나가고, 다시 받은 �
   // 되돌릴 수 있는 체크라 게이트 표식이 없다 (§2 실행).
   await expectNoGate(page);
 });
+
+/* ── 준비물 배치 (#568) ─────────────────────────────────────────────────── */
+
+/**
+ * 준비물은 카드 폭이 넉넉하면 두 열, 좁으면 한 열이다 (`docs/web/screen-rules-v1.md` §5).
+ * 목의 일정에는 준비물이 8개 있고 하나는 이름이 길다 — 어느 폭에서도 가로로 넘치면 안 된다.
+ */
+for (const { width, columns } of [
+  { width: 360, columns: 2 },
+  { width: 320, columns: 1 },
+]) {
+  test.describe(`${width} 폭`, () => {
+    test.use({ viewport: { width, height: 844 } });
+
+    test(`준비물이 ${columns}열로 서고 가로로 넘치지 않는다 (#568)`, async ({ page }) => {
+      await page.goto(`${CALENDAR}?date=${browserDaysAgo(-2)}`);
+
+      const row = (name: string) =>
+        page.locator("label").filter({ has: page.getByRole("checkbox", { name }) });
+      const first = await row("수건").boundingBox();
+      const second = await row("수영복").boundingBox();
+      if (!first || !second) throw new Error("준비물 줄이 화면에 없다");
+
+      if (columns === 2) {
+        // 두 번째 준비물이 첫 번째 옆에 선다.
+        expect(second.y).toBeCloseTo(first.y, 0);
+        expect(second.x).toBeGreaterThan(first.x + first.width / 2);
+      } else {
+        expect(second.x).toBeCloseTo(first.x, 0);
+        expect(second.y).toBeGreaterThan(first.y);
+      }
+
+      expect(
+        await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth),
+      ).toBe(0);
+    });
+  });
+}

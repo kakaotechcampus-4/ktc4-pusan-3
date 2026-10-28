@@ -5,6 +5,7 @@ import { ChevronRight } from "lucide-react";
 import { domainField, domainLabel } from "@/components/domain-chip";
 import { DOMAIN_ICON, ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
 import { IconTile } from "@/components/ui/icon-tile";
+import { SkeletonText, SkeletonTile } from "@/components/ui/skeleton";
 import type { Affinity, AffinityState } from "@/lib/api/types";
 import { cn } from "@/lib/cn";
 
@@ -138,5 +139,32 @@ function AffinityCard({ affinity, onOpen }: { affinity: Affinity; onOpen: () => 
         className={cn("mt-1.5 shrink-0", stale ? "text-ink-muted" : "text-ink-subtle")}
       />
     </button>
+  );
+}
+
+/**
+ * 받는 동안의 목록. `AffinityCard` 와 **같은 상자 · 같은 줄 높이**다 (CLS · `components/ui/skeleton.tsx`) —
+ * 이름 · 상태 칩 줄 · 설명 한 줄을 잡는다. 🚨 진짜 카드의 여백을 바꾸면 여기도 같이 바꾼다.
+ */
+export function AffinityListSkeleton({ rows = 2 }: { rows?: number }) {
+  return (
+    <ul aria-hidden className="flex flex-col gap-3">
+      {Array.from({ length: rows }, (_, i) => (
+        <li
+          key={i}
+          className="rounded-card bg-surface border-line flex items-start gap-3 border p-4"
+        >
+          <SkeletonTile />
+          <span className="flex min-w-0 flex-1 flex-col gap-1.5">
+            <SkeletonText size="title" width="1/3" />
+            <span className="flex items-center gap-1.5">
+              <span className="bg-line animate-skeleton min-h-chip w-14 shrink-0 rounded-full" />
+              <SkeletonText size="caption" width="1/3" className="flex-1" />
+            </span>
+            <SkeletonText size="body-sm" width="1/2" />
+          </span>
+        </li>
+      ))}
+    </ul>
   );
 }

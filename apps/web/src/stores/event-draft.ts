@@ -26,6 +26,8 @@ import type { EventDraft } from "@/lib/api/types";
  *    🚨 **예외는 제안에서 온 초안이다.** 같은 제안이 걸린 초안은 같은 장이다 — 제안 하나는 일정
  *    하나에만 연결되고(#206), 서버는 두 번째 제출을 `409 already_confirmed` 로 막는다. 초안 id 는
  *    요청마다 새로 나오므로(#241) 이 규칙이 없으면 "일정으로 만들기" 를 다시 누를 때마다 한 장씩 는다.
+ *    ⚠️ **지금은 움직이지 않는다.** 제안 초안은 이 스토어에 두지 않고(아래 · #539), 한 시트의 묶음은
+ *    서버가 이미 중복을 거른 것이다. `transient` 를 걷어내면 이 규칙이 다시 1차 방어가 된다.
  *
  * ## 🚨 왜 이 스토어만 `persist` 를 쓰나
  *
@@ -36,6 +38,13 @@ import type { EventDraft } from "@/lib/api/types";
  *   보고 고칠 값이다. 아이에 대한 원문은 여전히 `draft.ts` 가 메모리에만 들고 있다.
  * - `sessionStorage` 라 **탭을 닫으면 사라진다** (`localStorage` 금지 — 세션 토큰과 같은 규칙).
  * - 없으면 새로고침 한 번에 Agent 가 만든 초안이 통째로 날아가고, 되받을 경로가 서버에 없다.
+ *
+ * 🚨 **그래서 05 제안 초안은 여기 두지 않는다** (#539). 제안 초안은 "일정으로 만들기" 를 다시 누르면
+ *    서버가 언제든 새로 만들어 준다 — 위 이유가 맞지 않는다. 두면 다음 시트가 되읽어, 전에 넣지 않고
+ *    떠난 초안이 "고른 제안으로 만들었어요" 아래 **첫 장으로** 서고 그 장도 제출된다(그 제안은
+ *    채택돼 있어 서버가 막지 않는다).
+ *    `dropDrafts` 는 이 규칙 전에 얹힌 제안 초안을 치우는 일이다 — 그 값이 남은 탭이 있는 동안만 필요하다
+ *    (웹뷰 앱은 탭이 오래 산다).
  *
  * 🚨 그래도 **로그아웃에서 비운다** (`stores/session.ts` 의 `clearAll()`). 다음 사람에게
  *    남의 아이 일정을 넘기지 않는다.
@@ -55,6 +64,11 @@ interface EventDraftState {
 
   /** run 이 내보낸 묶음을 얹는다. 같은 `event_id` 가 있으면 **새 것으로 갈아 끼운다.** */
   addDrafts: (childId: string, origin: DraftOrigin, drafts: EventDraft[]) => void;
+  /**
+   * 한 경로의 초안을 **전부 뗀다.** 다른 경로의 초안은 그대로 둔다.
+   * 🚨 05 승인 시트가 열 때 부른다 (#539) — 제안 초안을 여기 두지 않기로 하기 전에 얹힌 것을 지운다.
+   */
+  dropDrafts: (childId: string, origin: DraftOrigin) => void;
   /** 제출했거나 보호자가 닫은 한 장을 뗀다. */
   removeDraft: (childId: string, draftId: string) => void;
   /** 로그아웃에서 부른다. */
@@ -107,6 +121,18 @@ export const useEventDraftStore = create<EventDraftState>()(
             ),
           },
         })),
+
+      dropDrafts: (childId, origin) =>
+        set((s) => {
+          const current = s.byChild[childId];
+          if (!current?.some((d) => d.origin === origin)) return s;
+          return {
+            byChild: {
+              ...s.byChild,
+              [childId]: current.filter((d) => d.origin !== origin),
+            },
+          };
+        }),
 
       removeDraft: (childId, draftId) =>
         set((s) => {

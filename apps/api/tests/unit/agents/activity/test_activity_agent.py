@@ -37,16 +37,18 @@ BUSAN = CoarseLocation(lat=35.18, lon=129.08)
 KST = ZoneInfo("Asia/Seoul")
 RAINY = RawForecast(sky="4", pcp="20.0mm", pop="90")
 
-# 일반 추천은 문서 행이 근거다 (루트 §2). 기록 없는 아이의 후보가 이 행을 인용하게 둔다
+# 일반 추천은 문서 행이 근거다 (루트 §2). 기록 없는 아이의 후보가 이 행을 인용하게 둔다.
+# 제목이 흔한 말뿐이고 준비물이 없어 어느 후보에 달아도 "맞지 않는 문서" 로 거절되지 않는다 —
+# 문서와 활동이 맞는지는 test_activity_review.py 의 TestDocRelevance 가 본다
 DEFAULT_DOC = ActivityDocRow(
     id=UUID(int=20),
     doc_key="act-test-default",
-    title="블록 쌓기",
-    body="블록을 쌓고 무너뜨린다",
+    title="함께 놀이",
+    body="함께 놀이",
     min_month=0,
     max_month=72,
     setting=ActivitySetting.INDOOR,
-    materials=("블록",),
+    materials=(),
     caregiver_role=CaregiverRole.TOGETHER,
     physical_intensity=Intensity.LOW,
     involves_food=False,

@@ -19,3 +19,6 @@ src/app/hakgyoansim.css
 
 # impeccable(디자인 도구)의 로컬 캐시. git 은 무시하지만(루트 .gitignore) prettier 는 읽는다.
 .impeccable/
+
+# 서버 계약 덤프 (make web-contract). 생성물이고 커밋하지 않는다.
+.openapi.json

@@ -1,13 +1,13 @@
 WITH observations AS (
-    SELECT 'observation_food' AS kind, id, child_id, status, observed_range, affinity_id FROM observation_food
+    SELECT 'observation_food' AS kind, id, child_id, status, observed_range, affinity_id, raw_text, subject FROM observation_food
     UNION ALL
-    SELECT 'observation_health', id, child_id, status, observed_range, NULL::uuid FROM observation_health
+    SELECT 'observation_health', id, child_id, status, observed_range, NULL::uuid, raw_text, NULL::text FROM observation_health
     UNION ALL
-    SELECT 'observation_education', id, child_id, status, observed_range, affinity_id FROM observation_education
+    SELECT 'observation_education', id, child_id, status, observed_range, affinity_id, raw_text, subject FROM observation_education
     UNION ALL
-    SELECT 'observation_activity', id, child_id, status, observed_range, affinity_id FROM observation_activity
+    SELECT 'observation_activity', id, child_id, status, observed_range, affinity_id, raw_text, subject FROM observation_activity
     UNION ALL
-    SELECT 'observation_routine', id, child_id, status, observed_range, NULL::uuid FROM observation_routine
+    SELECT 'observation_routine', id, child_id, status, observed_range, NULL::uuid, raw_text, subject FROM observation_routine
 ), filtered AS (
     SELECT kind, id, observed_range
     FROM observations AS o
@@ -17,6 +17,9 @@ WITH observations AS (
       AND (CAST(:date_from AS date) IS NULL OR observed_range && daterange(CAST(:date_from AS date), NULL, '[)'))
       AND (CAST(:date_to_exclusive AS date) IS NULL OR observed_range && daterange(NULL, CAST(:date_to_exclusive AS date), '[)'))
       AND (CAST(:affinity_id AS uuid) IS NULL OR affinity_id = CAST(:affinity_id AS uuid))
+      AND (CAST(:q_pattern AS text) IS NULL
+           OR raw_text ILIKE CAST(:q_pattern AS text) ESCAPE '\'
+           OR subject ILIKE CAST(:q_pattern AS text) ESCAPE '\')
 )
 SELECT totals.total, page.kind, page.id, page.observed_to_exclusive
 FROM (SELECT count(*) AS total FROM filtered) AS totals
@@ -28,6 +31,6 @@ LEFT JOIN LATERAL (
            CAST(:cursor_upper AS date), CAST(:cursor_kind AS text), CAST(:cursor_id AS uuid)
        )
     ORDER BY upper(observed_range) DESC, kind DESC, id DESC
-    LIMIT :fetch_limit
+    LIMIT :fetch_limit OFFSET :offset
 ) AS page ON true
 ORDER BY page.observed_to_exclusive DESC, page.kind DESC, page.id DESC

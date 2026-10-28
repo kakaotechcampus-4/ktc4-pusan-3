@@ -80,24 +80,54 @@ const KINDS_BY_AGENT: Record<Agent, readonly ObservationKind[]> = {
 };
 const VISIBLE_KINDS: readonly ObservationKind[] = Object.values(KINDS_BY_AGENT).flat();
 
-/** 서버의 기본 장 크기. 화면은 `limit` 을 보내지 않는다. */
-const OBSERVATION_PAGE_SIZE = 20;
+/** 서버의 기본 쪽 크기. 화면은 `size` 를 보내지 않는다. */
+const PAGE_SIZE = 20;
+/** 서버(`api/v1/list_query.py`)의 `page` 상한. 넘으면 400 이다. */
+const MAX_PAGE = 10_000;
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
- * 🚨 **화면에게 커서는 불투명한 문자열이다.** 서버는 `(observed_to, kind, id)` 를 base64 로 싸고,
- *    목은 위치(offset)를 싼다. 화면이 받은 값을 그대로 돌려주기만 하면 둘 다 맞게 돈다.
+ * 두 목록이 같이 받는 쿼리 (#584) — 서버 `list_query` 와 같은 검증이다.
+ * 🚨 서버는 쿼리 검증 실패를 422 가 아니라 **400** 으로 돌려준다 (422 는 경로 값이 틀렸을 때다).
  */
-function encodeCursor(offset: number): string {
-  return btoa(JSON.stringify({ offset }));
+function readListQuery(
+  params: URLSearchParams,
+):
+  | { page: number; size: number; from: string | null; to: string | null; q: string | null }
+  | Response {
+  const page = Number(params.get("page") ?? 1);
+  const size = Number(params.get("size") ?? PAGE_SIZE);
+  const from = params.get("date_from");
+  const to = params.get("date_to");
+  const q = params.get("q");
+
+  if (!Number.isInteger(page) || page < 1 || page > MAX_PAGE) {
+    return apiError(400, "validation_failed", "쪽 번호가 올바르지 않아요");
+  }
+  if (!Number.isInteger(size) || size < 1 || size > 100) {
+    return apiError(400, "validation_failed", "size 는 1~100 이에요");
+  }
+  if ((from !== null && !ISO_DATE.test(from)) || (to !== null && !ISO_DATE.test(to))) {
+    return apiError(400, "validation_failed", "날짜 형식이 올바르지 않아요");
+  }
+  if (from !== null && to !== null && from > to) {
+    return apiError(400, "validation_failed", "시작 날짜가 끝 날짜보다 늦을 수 없어요");
+  }
+  if (q !== null && q.length > 100) {
+    return apiError(400, "validation_failed", "검색어는 100자까지예요");
+  }
+  return { page, size, from, to, q: q?.trim() || null };
 }
 
-function decodeCursor(cursor: string): number | null {
-  try {
-    const { offset } = JSON.parse(atob(cursor)) as { offset?: unknown };
-    return typeof offset === "number" && Number.isInteger(offset) && offset >= 0 ? offset : null;
-  } catch {
-    return null;
-  }
+/** 한 쪽을 잘라 네 칸과 함께. 범위를 넘은 쪽은 오류가 아니라 빈 목록이다 (서버와 같다). */
+function slicePage<T>(rows: T[], page: number, size: number) {
+  return {
+    items: rows.slice((page - 1) * size, page * size),
+    total: rows.length,
+    page,
+    size,
+    total_pages: Math.ceil(rows.length / size),
+  };
 }
 
 export function resetMemoryState(): void {
@@ -184,14 +214,8 @@ export const memoryHandlers = [
     const params = new URL(request.url).searchParams;
     const domain = params.get("domain");
     const status = params.get("status");
-    const limit = Number(params.get("limit") ?? OBSERVATION_PAGE_SIZE);
-    const cursor = params.get("cursor");
-
-    if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
-      return apiError(400, "validation_failed", "limit 은 1~100 이에요");
-    }
-    const offset = cursor === null ? 0 : decodeCursor(cursor);
-    if (offset === null) return apiError(400, "validation_failed", "목록 위치가 올바르지 않아요");
+    const query = readListQuery(params);
+    if (query instanceof Response) return query;
 
     const kinds = domain === null ? VISIBLE_KINDS : KINDS_BY_AGENT[domain as Agent];
     if (!kinds) return apiError(400, "validation_failed", "모르는 분류예요");
@@ -200,13 +224,21 @@ export const memoryHandlers = [
     if (status !== null && !["active", "stand_alone", "inactive"].includes(status)) {
       return apiError(400, "validation_failed", "모르는 상태예요");
     }
-    const items = scenarioObservations().filter(
-      (o) => kinds.includes(o.kind) && (status === null || o.status === status),
+    const needle = query.q?.toLowerCase();
+    const rows = scenarioObservations().filter(
+      (o) =>
+        kinds.includes(o.kind) &&
+        (status === null || o.status === status) &&
+        // 서버처럼 관찰 기간이 범위와 **겹치면** 든다 — 양 끝 날짜 포함.
+        (query.from === null || o.observed_to >= query.from) &&
+        (query.to === null || o.observed_from <= query.to) &&
+        // 원문과 주제의 부분 일치. 기록은 띄어쓰기를 그대로 비교한다 (기억과 다르다).
+        (needle === undefined ||
+          o.raw_text.toLowerCase().includes(needle) ||
+          ("subject" in o && o.subject.toLowerCase().includes(needle))),
     );
 
-    const page = items.slice(offset, offset + limit);
-    const next = offset + limit < items.length ? encodeCursor(offset + limit) : null;
-    const body: ObservationsResponse = { items: page, next_cursor: next, total: items.length };
+    const body: ObservationsResponse = slicePage(rows, query.page, query.size);
     return HttpResponse.json(body);
   }),
 
@@ -244,17 +276,33 @@ export const memoryHandlers = [
     const params = new URL(request.url).searchParams;
     const domain = params.get("domain");
     const state = params.get("state");
+    const query = readListQuery(params);
+    if (query instanceof Response) return query;
 
     // 서버 기본값: `archived` 와 묶인 active 기록이 없는 기억은 빠진다 (#268).
+    // 🚨 쪽으로 자르기 **전에** 거른다 — 자른 뒤에 거르면 쪽마다 개수가 다르고 total 이 부푼다 (#584).
     let affinities = scenarioAffinities().filter((a) => a.observation_count > 0);
     if (domain) affinities = affinities.filter((a) => a.domain === domain);
     affinities = state
       ? affinities.filter((a) => a.state === state)
       : affinities.filter((a) => a.state !== "archived");
+    // 날짜는 마지막 기록 날짜 기준이다 (기록의 "기간이 겹치면" 과 다르다).
+    const { from, to } = query;
+    if (from !== null) affinities = affinities.filter((a) => a.last_observed_on >= from);
+    if (to !== null) affinities = affinities.filter((a) => a.last_observed_on <= to);
+    // 이름 검색은 띄어쓰기를 무시한다 — "계란반찬" 으로 "계란 반찬" 이 찾아진다 (서버와 같다).
+    const needle = query.q?.replace(/\s/g, "").toLowerCase();
+    if (needle) {
+      affinities = affinities.filter((a) =>
+        a.merge_key.replace(/\s/g, "").toLowerCase().includes(needle),
+      );
+    }
 
+    const { items, ...page } = slicePage(affinities, query.page, query.size);
     const body: AffinitiesResponse = {
-      affinities,
-      // 🚨 안전 정보는 감쇠가 없다 — 기억이 비어도 여기는 비지 않는다.
+      affinities: items,
+      ...page,
+      // 🚨 안전 정보는 감쇠가 없다 — 기억이 비어도 여기는 비지 않는다. 쪽으로 나누지도 않는다.
       safety: healthSafety,
     };
     return HttpResponse.json(body);
@@ -341,7 +389,6 @@ export const memoryHandlers = [
 
   /**
    * 07 피드백 탭이 평가할 제안 목록 (#284). 개인화와 채택한 일반 추천(#509)이 같이 온다.
-   * ⚠️ 실서버는 아직 개인화(`kind = 'personalized'`)만 내린다 — 목이 먼저 싣고 백엔드에 요청한다.
    * 목은 한 장으로 끝난다(`next_cursor: null`).
    */
   http.get(url("/children/:cid/suggestions"), async () => {

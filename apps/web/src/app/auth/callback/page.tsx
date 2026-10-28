@@ -12,6 +12,7 @@ import {
   isApiError,
   isSignupPending,
   qk,
+  type AuthExchangeRequest,
   type AuthExchangeResponse,
   type Me,
 } from "@/lib/api";
@@ -139,11 +140,12 @@ function AuthCallbackScreen() {
     async function exchange(oneTimeCode: string) {
       const provider = readProvider();
       try {
-        const res = await api.post<AuthExchangeResponse>(`/auth/${provider}`, {
+        const body: AuthExchangeRequest = {
           code: oneTimeCode,
           // bind 는 여기서 지우지 않는다 — 신규 가입이 /signup 에서 같은 값을 쓴다.
           bind: readBind(),
-        });
+        };
+        const res = await api.post<AuthExchangeResponse>(`/auth/${provider}`, body);
 
         // 🚨 token 유무가 아니라 status 필드 유무로 분기한다.
         if (isSignupPending(res)) {

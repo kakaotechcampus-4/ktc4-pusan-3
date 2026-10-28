@@ -33,6 +33,11 @@ class Withdrawn:
 
     커밋하면 auth_identity 와 함께 지워져서 미리 읽어 둔다.
     """
+    child_ids: tuple[uuid.UUID, ...]
+    """함께 지운 아이 — 등록 보호자일 때만 있다.
+
+    커밋 뒤 메모리 보관함에서 그 아이 것을 지운다 (#561).
+    """
 
 
 async def withdraw_parent(
@@ -65,7 +70,8 @@ async def withdraw_parent(
         )
     )
     owned = select(Child.id).where(Child.owner_parent_id == parent_id).with_for_update()
-    for child_id in (await session.scalars(owned)).all():
+    child_ids = tuple((await session.scalars(owned)).all())
+    for child_id in child_ids:
         await purge_child(session, child_id=child_id, now=now)
     await purge_parent(session, parent_id=parent_id, now=now)
-    return Withdrawn(kakao_user_id=kakao_user_id)
+    return Withdrawn(kakao_user_id=kakao_user_id, child_ids=child_ids)

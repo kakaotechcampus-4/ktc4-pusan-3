@@ -80,6 +80,27 @@ export default function ChatPage() {
  */
 const LOAD_MORE_THRESHOLD_PX = 120;
 
+/**
+ * 머리 아래 이만큼까지 올라온 날을 "보고 있는 날" 로 친다. 날짜 머리줄이 바 바로 아래, 곧 날 구역을 맨 위로
+ * 올렸을 때 서는 자리(`ChatThread` 의 `scroll-mt-24`)에 오면 그날로 친다. 머리 높이와 그 자리 사이를 덮는 값이라
+ * `scroll-mt-*` 를 바꾸면 이것도 같이 본다.
+ */
+const DAY_LINE_SLACK_PX = 48;
+
+/**
+ * `line`(화면 위에서부터의 거리) 위로 올라간 날 중 가장 늦은 날. 아직 아무 날도 올라가지 않았으면 첫 날이고,
+ * 그려진 날이 없으면 `null` 이다. 날짜는 `ChatThread` 가 단 그대로 읽는다 — 여기서 계산하지 않는다.
+ */
+function dayUnder(line: number): string | null {
+  const sections = document.querySelectorAll<HTMLElement>("[data-chat-day]");
+  let found: string | null = sections[0]?.dataset.chatDay ?? null;
+  for (const section of sections) {
+    if (section.getBoundingClientRect().top > line) break;
+    found = section.dataset.chatDay ?? found;
+  }
+  return found;
+}
+
 function ChatScreen() {
   const childId = useChildId();
   const router = useRouter();
@@ -116,11 +137,30 @@ function ChatScreen() {
   const me = useQuery({ queryKey: qk.me(), queryFn: () => api.get<Me>("/me") });
   const nickname = me.data?.children.find((c) => c.child_id === childId)?.nickname;
   /**
-   * 머리에 세우는 날. 🚨 **마지막 한 줄의 날이다** — 앱을 켜 둔 채 자정을 넘기면 "오늘" 과 화면에 있는
-   * 대화의 날이 다르다. 대화가 없을 때만 오늘(한국 시간)이다. 🚨 `today` 도 자정을 따라 바뀐다.
+   * 머리에 세우는 날. 🚨 **지금 머리 바로 아래에 걸린 날이다** (`docs/web/chat-run-v1.md` §1 · #541) — 위로 올려
+   * 전날을 붙이거나 캘린더에서 지난 날부터 열면 한 화면에 여러 날이 있어서, 마지막 한 줄의 날로 고정하면 보고 있는
+   * 대화와 머리의 날짜가 어긋난다. 아직 재지 못했으면 그날부터 연 날, 아니면 마지막 한 줄의 날이다. 대화가 없을
+   * 때만 오늘(한국 시간)이다.
    */
   const today = useSeoulToday();
-  const shownDay = liveTurns.at(-1)?.day ?? history.turns.at(-1)?.day ?? today;
+  const topBarRef = useRef<HTMLElement>(null);
+  const [seenDay, setSeenDay] = useState<string | null>(null);
+  const shownDay = seenDay ?? target ?? liveTurns.at(-1)?.day ?? history.turns.at(-1)?.day ?? today;
+  useEffect(() => {
+    const measure = () => {
+      const line = (topBarRef.current?.getBoundingClientRect().bottom ?? 0) + DAY_LINE_SLACK_PX;
+      setSeenDay(dayUnder(line));
+    };
+    // 붙은 줄이 그려지고 그날 자리로 내린 뒤에 잰다.
+    const frame = requestAnimationFrame(measure);
+    window.addEventListener("scroll", measure, { passive: true });
+    window.addEventListener("resize", measure);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener("scroll", measure);
+      window.removeEventListener("resize", measure);
+    };
+  }, [history.turns, liveTurns]);
 
   // 🚨 `useState` 가 아니다 — 홈과 같은 입력창이다. 네비로 다녀와도 쓰던 글이 살아 있다.
   const [text, setText] = useDraftText(childId);
@@ -265,7 +305,7 @@ function ChatScreen() {
           // 🚨 **머리를 붙여 둔다.** 대화는 아래로 자라서, 돌아가는 화살표가 본문에 있으면 몇 번만 주고받아도
           //    화면 밖으로 밀린다 — 흐름 화면이라 네비가 없어서 나가는 길이 그것 하나다.
           // 🚨 줄 전체를 `-ml-3` 로 민다 (44px 원 안의 아이콘이 왼쪽 기준선에 맞게 · 10 › 고객센터와 같다).
-          <header className="-ml-3 flex items-center gap-1">
+          <header ref={topBarRef} className="-ml-3 flex items-center gap-1">
             {/* 캘린더에서 왔으면 그날의 캘린더로 돌아간다 — 홈으로 보내면 보던 날을 다시 골라야 한다. */}
             {target ? (
               <IconButtonLink
@@ -281,10 +321,11 @@ function ChatScreen() {
               </IconButtonLink>
             )}
             <div className="min-w-0">
-              {/* 자정을 넘겨 켜 둔 앱에서 어제 대화를 "오늘" 이라고 부르지 않는다. */}
-              <PageTitle>{shownDay === today ? "오늘 대화" : "대화"}</PageTitle>
-              {/* 누구의 어느 날 대화인지. 🚨 날짜 머리줄은 날이 둘 이상일 때만 본문에 선다
-                (`ChatThread`) — 하루뿐이면 이 줄이 그 말을 한다. */}
+              {/* 🚨 제목에 "오늘" 을 붙이지 않는다 (#541) — 캘린더에서 지난 날을 보러 와도, 위로 올려 전날을
+                보고 있어도 같은 제목이다. 어느 날인지는 아래 줄이 말한다. */}
+              <PageTitle>대화</PageTitle>
+              {/* 누구의 어느 날 대화인지 — 스크롤을 따라 바뀐다 (`shownDay`). 🚨 날짜 머리줄은 날이 둘 이상일
+                때만 본문에 선다 (`ChatThread`) — 하루뿐이면 이 줄이 그 말을 한다. */}
               <p className="text-caption text-ink-subtle">
                 {nickname ? `${nickname} · ${formatDay(shownDay)}` : formatDay(shownDay)}
               </p>

@@ -19,6 +19,7 @@ import type {
   ApproveSuggestionsResponse,
   CreateEventDraftsRequest,
   CreateEventDraftsResponse,
+  CreateInputResponse,
   HealthSafety,
   OnboardingRequest,
   OnboardingResponse,
@@ -52,12 +53,15 @@ export interface InputRequest {
   reply_to?: string;
 }
 
-/** 202 로 run_id 만 온다. 결과는 전부 SSE 로 흐른다 (streamRunEvents). */
+/**
+ * 202 로 run_id 가 온다. 결과는 SSE 로 흐른다 (streamRunEvents).
+ * 🚨 `finished` 가 참이면 SSE 를 열지 않는다 — 채널이 이미 지워진 끝난 run 이다 (`CreateInputResponse`).
+ */
 export function submitInput(
   childId: string,
   body: InputRequest,
   idempotencyKey: IdempotencyKey,
-): Promise<{ run_id: string }> {
+): Promise<CreateInputResponse> {
   return api.post(idempotentPath.input(childId), body, { idempotencyKey });
 }
 
@@ -69,11 +73,6 @@ export function submitInput(
  *    두 번 해서 이름이 겹쳤다 (TS2308). 그때 **나중에 온 이 파일 쪽이 조용히 이겼고**,
  *    화면은 계약서를 적어 둔 정의가 아니라 이쪽 정의로 타입이 잡혀 있었다.
  *    이 파일이 하는 일은 "키를 필수 인자로 받는 호출 지점" 하나다 — 타입의 집이 아니다.
- *
- * ⚠️ 두 벌이 완전히 같지는 않았다. 이쪽 `safety` 원소에는 `notes` 가 있고 `severity` 가
- *    `string | null` 이었다. 정본(`OnboardingSafetyInput`)에는 `notes` 가 없다.
- *    **서버가 `safety[].notes` 를 받는지가 확인되면 `types.ts` 를 고친다** — 화면은
- *    보호자가 적은 라벨만 올리고 심각도·반응·메모를 추측하지 않으므로(NF-03) 지금은 정본이 맞다.
  */
 
 /** 전부 선택이지만 빈 본문은 400 이다 — 아무것도 안 적었으면 부르지 않는다. */

@@ -33,9 +33,26 @@ const recorded: StoredTurn[] = [];
 /** `chat_history` 의 열린 질문을 되묻기 맥락에 한 번 넣었는가. 답하면 맥락이 빠지는데, 다시 넣으면 또 열린다. */
 let seededOpenQuestion = false;
 
+/**
+ * 남겼지만 아직 지난 대화에 내지 않는 run (#538 · `replay_finished`). 서버는 채널을 닫은 **뒤에** 대화를 쓴다 — 화면이
+ * 끝을 못 받고 오늘 대화를 다시 받는 그 순간에는 아직 없을 수 있다. 목은 다음 입력이 올 때까지 숨긴다(`revealTurns`).
+ * 안 숨기면 결과 미확인 카드가 서자마자 저장된 결과로 바뀌어서, 그 카드에서 다시 보내는 길을 볼 수 없다.
+ */
+const hiddenRuns = new Set<string>();
+
 export function resetChatState(): void {
   recorded.length = 0;
   seededOpenQuestion = false;
+  hiddenRuns.clear();
+}
+
+export function hideTurn(runId: string): void {
+  hiddenRuns.add(runId);
+}
+
+/** 다음 입력이 왔다 — 그새 서버가 대화를 다 썼다. */
+export function revealTurns(): void {
+  hiddenRuns.clear();
 }
 
 const CURSOR_SEPARATOR = "~";
@@ -131,6 +148,14 @@ export async function* recordingTurn(
     }
     yield chunk;
   }
+}
+
+/**
+ * 이 목이 대화로 남긴 run 의 날짜. 없으면 `null` — 서버의 `find_turn_date` 와 같은 자리다 (#538).
+ * 같은 키 재생에서 채널이 지워진 run 이 끝났는지를 이걸로 가른다 (`runs.ts` 의 `replayInput`).
+ */
+export function recordedDayOf(runId: string): string | null {
+  return recorded.find((t) => t.turn.run_id === runId)?.day ?? null;
 }
 
 /* ── chat_history 시나리오의 지난 대화 ─────────────────────────────────── */
@@ -334,7 +359,10 @@ function turnsOf(childId: string): StoredTurn[] {
         scenario === "chat_history_past"
         ? historyTurns(childId).filter((t) => t.day !== daysAgo(0))
         : [];
-  return [...base, ...recorded.filter((t) => t.childId === childId)];
+  return [
+    ...base,
+    ...recorded.filter((t) => t.childId === childId && !hiddenRuns.has(t.turn.run_id)),
+  ];
 }
 
 /** 09 하루 보기의 `chat_count`. 🚨 같은 표에서 센다 — 어긋나면 "대화 2개" 를 눌렀는데 1개가 나온다. */

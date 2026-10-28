@@ -11,6 +11,7 @@ import {
   YAxis,
 } from "recharts";
 
+import { Skeleton, SkeletonGroup } from "@/components/ui/skeleton";
 import { axisDayFormatter, formatDay, parseISODate } from "@/lib/format";
 import type { GrowthLog } from "@/lib/api/types";
 
@@ -266,5 +267,22 @@ function GrowthTooltip({
       </p>
       <p className="text-caption text-ink-subtle">{formatDay(point.measured_on)}</p>
     </div>
+  );
+}
+
+/**
+ * 받는 동안의 두 장. `GrowthMeasureChart` 와 **같은 상자 · 같은 그림 높이**다 (CLS · `components/ui/skeleton.tsx`).
+ * 제목은 값이 아니라서 그대로 그린다. 🚨 그림 높이(`h-40`)를 바꾸면 여기도 같이 바꾼다.
+ */
+export function GrowthChartSkeleton() {
+  return (
+    <SkeletonGroup label="변화 그래프를 불러오는 중" className="flex flex-col gap-4">
+      {["키 · cm", "몸무게 · kg"].map((caption) => (
+        <div key={caption} className="rounded-card border-line bg-surface border p-4">
+          <p className="text-label text-ink-muted">{caption}</p>
+          <Skeleton className="mt-3 h-40 w-full" />
+        </div>
+      ))}
+    </SkeletonGroup>
   );
 }
