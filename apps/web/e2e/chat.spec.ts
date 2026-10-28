@@ -197,7 +197,7 @@ test.describe("도메인 Agent 결과는 답 묶음 안의 블록이다 (#227)",
   test.describe("agent_suggestions — 추천이 든 결과", () => {
     test.use({ scenario: "agent_suggestions" });
 
-    test("후보 수 · 이유 · 또래 기준 표시가 서고, 후보 보기는 그 run 의 05 로 간다", async ({
+    test("후보 수 · 이유 · 일반 추천 표시가 서고, 후보 보기는 그 run 의 05 로 간다", async ({
       page,
     }) => {
       await sendFromHome(page, "저녁이랑 놀이 추천해줘");
@@ -205,8 +205,9 @@ test.describe("도메인 Agent 결과는 답 묶음 안의 블록이다 (#227)",
 
       await expect(reply.getByText("후보 3개")).toBeVisible();
       await expect(reply.getByText("아이 기록 4건을 보고 골랐어요.")).toBeVisible();
-      // 🚨 일반 묶음은 또래 기준임과 쌓인 기록 수를 그대로 적는다 (최상위 §2)
-      await expect(reply.getByText("또래 기준 일반 추천 · 쌓인 기록 1건")).toBeVisible();
+      // 🚨 일반 묶음은 일반 추천임과 쌓인 기록 수를 그대로 적는다 (최상위 §2).
+      //    "또래 기준" 은 붙이지 않는다 — 요청에 맞춰 고른 일반 추천도 있다 (#597)
+      await expect(reply.getByText("일반 추천 · 쌓인 기록 1건", { exact: true })).toBeVisible();
       // 🚨 개수 안내는 "후보 N개" 가 대신하고, 날씨 안내는 그대로 선다
       await expect(reply.getByText("조건에 맞는 추천을 1개 준비했어요.")).toHaveCount(0);
       await expect(
