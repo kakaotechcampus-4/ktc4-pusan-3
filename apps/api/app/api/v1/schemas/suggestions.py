@@ -226,7 +226,10 @@ class AnswerResponse(BaseModel):
 
 class SuggestionListResponse(BaseModel):
     items: list[SuggestionOut]
-    next_cursor: str | None = None
+    total: int = Field(description="status · rated 필터를 건 뒤의 전체 건수. 쪽과 무관하다")
+    page: int = Field(description="요청한 쪽 번호 (1부터)")
+    size: int = Field(description="요청한 한 쪽 개수")
+    total_pages: int = Field(description="전체 쪽 수 — ceil(total / size). 0건이면 0")
 
 
 # ── 추천 평가 (I — #284) ─────────────────────────────────────────────────

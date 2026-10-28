@@ -14,6 +14,7 @@
 import pytest
 
 from app.agents.common.allergy import allergy_related_table, related_blocks
+from app.agents.common.reference import allergen_groups, food_safety_terms
 from app.agents.growth.doc_seed import growth_doc_seed
 from app.agents.growth.store.ports import SafetyEntry
 from app.agents.growth.tools.safety import (
@@ -25,6 +26,7 @@ from app.agents.growth.tools.safety import (
     check_routine_candidate,
     load_safety_rules,
 )
+from app.rules.allergen import ALLERGEN_NAMES
 from app.rules.term_match import Term, match_fields
 
 
@@ -301,6 +303,40 @@ class TestDefaultRules:
         entries = [SafetyEntry("allergy", label, "active")]
         assert [e.label for e in rules.registered_names(text, entries)] == [label]
 
+    @pytest.mark.parametrize(
+        ("label", "text"),
+        [
+            ("사과", "친구에게 사과하는 말 연습"),
+            ("쌀", "한글 미음 써 보기"),
+            ("은행", "은행놀이로 동전 세기"),
+        ],
+    )
+    def test_문장에서_다른_뜻인_별칭은_막지_않는다(self, rules, label, text):
+        """Activity 와 같은 문장용 guard · 제외 별칭이다 (#556 리뷰). 글자 그대로 대조하는
+        이름("은행")도 같다."""
+        assert rules.registered_names(text, [SafetyEntry("allergy", label, "active")]) == ()
+
+    @pytest.mark.parametrize(
+        ("label", "text"),
+        [
+            ("대구", "대구로 전 부쳐 보기"),
+            ("사과", "사과하고 배 깎아 보기"),
+            ("은행", "은행나무 열매 줍기"),  # 은행나무 열매가 은행이다 (#556 3차 리뷰)
+        ],
+    )
+    def test_조사가_붙은_꼴은_guard_로_덮지_않는다(self, rules, label, text):
+        """ "대구로" · "사과하고" 는 그 식품 문장에도 나온다 (#556 2차 리뷰)."""
+        assert rules.registered_names(text, [SafetyEntry("allergy", label, "active")])
+
+    @pytest.mark.parametrize(
+        ("label", "text"),
+        [("키위", "참다래 그림 그리기"), ("버섯류", "표고버섯 관찰하기")],
+    )
+    def test_19종_밖_식품은_다른_이름도_막는다(self, rules, label, text):
+        """Activity 와 같은 공용 사전(`allergy_book`)을 쓴다 (#437)."""
+        entries = [SafetyEntry("allergy", label, "active")]
+        assert [e.label for e in rules.registered_names(text, entries)] == [label]
+
     def test_띄어_쓴_이름은_낱말로도_대조한다(self, rules):
         """ "고양이 털" 로 등록한 아이에게 고양이 쓰다듬기가 나가면 안 된다 — 칸 전체만 보면
         놓친다."""
@@ -361,6 +397,45 @@ class TestDefaultRules:
         다른 뜻인 자리("쌀쌀한" · "깨끗이" · "쑥쑥")는 `SINGLE_CHAR_NAMES` 의 guard 가 덮는다."""
         entries = [SafetyEntry("allergy", label, "active")]
         assert bool(rules.registered_names(text, entries)) is blocked
+
+    @pytest.mark.parametrize(
+        ("label", "text"),
+        [
+            ("참깨", "머리 어깨 무릎 짚기"),
+            ("생선", "어른이 입을 다물고 기다린다"),
+            ("육류", "손대지 않고 기다린다"),
+        ],
+    )
+    def test_이름은_띄어쓰기를_넘어_찾지_않는다(self, rules, label, text):
+        """Activity 와 같은 판정이다 — "다물고 기다린다" 의 "물고 기" 는 물고기가 아니다."""
+        assert rules.registered_names(text, [SafetyEntry("allergy", label, "active")]) == ()
+
+    def test_시드_문장은_어느_식품_알레르기로도_막히지_않는다(self, rules):
+        """별칭이 늘 때마다 교육 문장 오탐이 조용히 생길 수 있다 (#556 리뷰 — 회귀 테스트).
+
+        교육 · 루틴 시드는 음식을 다루지 않는다(음식 용어 스캔이 뺀다). 제목 · 본문 · 준비물이
+        식품 이름으로 막히면 별칭이나 guard 가 문장의 다른 뜻을 덮지 못한 것이다.
+        """
+        food = food_safety_terms()
+        labels = dict.fromkeys(
+            [
+                *ALLERGEN_NAMES.values(),
+                *(group.label for group in allergen_groups()),
+                *(term.key for term in food.extras),
+                *food.group_foods,
+            ]
+        )
+        rows = [entry.to_row() for entry in growth_doc_seed()]
+        found = [
+            (label, row.doc_key)
+            for label in labels
+            for row in rows
+            if any(
+                rules.registered_names(text, [SafetyEntry("allergy", label, "active")])
+                for text in (row.title, row.body, *row.materials)
+            )
+        ]
+        assert found == []
 
     def test_사전에_없는_한_글자는_글자_그대로_대조하지_않는다(self, rules):
         """강아지 알레르기를 "개" 로 적어도 "블록 3개" 를 막지 않는다 — Activity 와 같다 (#305 ·
@@ -427,13 +502,13 @@ class TestRulesUnavailable:
             load_safety_rules()
 
     def test_이름_사전을_못_읽어도_같다(self, monkeypatch):
-        """확인 문구를 고르는 이름 사전(`shared_book`)도 게이트에서 먼저 읽는다 — 못 읽으면 문구
-        없이 넘기지 않는다."""
+        """보호자가 적은 이름을 읽는 사전(`allergy_book`)도 게이트에서 먼저 읽는다 — 못 읽으면 이름
+        대조 없이 넘기지 않는다."""
 
         def broken():
             raise ValueError("allergen_groups.yaml 깨짐")
 
-        monkeypatch.setattr("app.agents.growth.tools.safety.shared_book", broken)
+        monkeypatch.setattr("app.agents.growth.tools.safety.allergy_book", broken)
         with pytest.raises(SafetyRulesUnavailable):
             load_safety_rules()
 

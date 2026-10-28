@@ -35,10 +35,11 @@ from typing import Literal
 
 from app.agents.common.allergy import (
     SINGLE_CHAR_NAMES,
+    allergy_book,
     allergy_related_table,
+    for_sentences,
     read_label,
     related_blocks,
-    shared_book,
 )
 from app.agents.common.reference import HazardTerms, allergen_terms, hazard_terms
 from app.agents.growth.store.ports import SafetyEntry
@@ -166,8 +167,8 @@ def load_safety_rules() -> SafetyRules:
     try:  # 어떤 실패든 "사전을 못 읽음" 하나로 올린다
         hazards = hazard_terms()
         raw_allergens = allergen_terms()
-        # 보호자가 적은 이름을 읽는 사전
-        book = shared_book()
+        # 보호자가 적은 이름을 읽는 사전 — 19종 밖 식품 별칭까지 (#556)
+        book = allergy_book()
         related = allergy_related_table()
     except Exception as exc:
         raise SafetyRulesUnavailable("안전 사전을 읽지 못했다") from exc
@@ -189,11 +190,14 @@ def load_safety_rules() -> SafetyRules:
         named, rest = read_label(entry.label, book)
         coded = tuple(kept[key] for code in sorted(named.codes) if (key := str(code)) in kept)
         literal = tuple(
-            Term(key=word, aliases=(word,), guards=SINGLE_CHAR_NAMES.get(word, ()))
+            for_sentences(Term(key=word, aliases=(word,)))
             for word in rest
             if len(word) >= 2 or word in SINGLE_CHAR_NAMES
         )
-        return (*coded, *_registered_aliases_only(named.terms), *literal)
+        # 19종 밖 식품(별칭 표)과 글자 그대로의 이름은 문장용 guard 를 더하고 다른 뜻이 흔한
+        # 별칭(오리)을 뺀다 — "은행" 으로 등록해도 "은행놀이" 는 통과한다 (#556 2차 리뷰)
+        sentence = tuple(for_sentences(term) for term in named.terms)
+        return (*coded, *_registered_aliases_only(sentence), *(t for t in literal if t.aliases))
 
     def scan_food(text: str) -> tuple[str, ...]:
         return match_fields((text,), food_terms)
@@ -215,7 +219,13 @@ def load_safety_rules() -> SafetyRules:
         return tuple(hits)
 
     def scan_registered(text: str, entries: Sequence[SafetyEntry]) -> tuple[SafetyEntry, ...]:
-        return tuple(entry for entry in entries if match_fields((text,), registered_terms(entry)))
+        # 이름은 띄어쓰기를 넘지 않는다 — 넘으면 "다물고 기다린다" 가 물고기로 걸린다.
+        # 판정은 Activity 와 같다(`match_fields(cross_spaces=False)`)
+        return tuple(
+            entry
+            for entry in entries
+            if match_fields((text,), registered_terms(entry), cross_spaces=False)
+        )
 
     def scan_related(entries: Sequence[SafetyEntry]) -> tuple[Term, ...]:
         # allergy 만 본다 — environmental(고소공포)은 대상이 아니다

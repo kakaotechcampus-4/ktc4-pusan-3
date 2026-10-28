@@ -88,6 +88,42 @@ Agent 를 실제로 새로 돌릴 때만 `/inputs` 와 같은 하루 한도에�
   나중에 다시 세면 그 추천이 지금 기록에서 나온 것처럼 읽힌다. 그래서 07 의 일반 추천 줄은 라벨만 둔다.
 - 품질 지표 "개인화인데 근거 0행" 은 이 목록이 아니라 저장 시점(`_checked_citations`) · eval 에서 막는다.
 
+### 07 목록의 쪽 나누기와 `rated` 필터 (#592)
+
+`GET /children/{cid}/suggestions` 는 기록 · 기억 목록(#584)과 같은 번호 쪽이다. 커서(`cursor` · `limit` ·
+`next_cursor`)는 없다.
+
+| 쿼리 | 기본 | 뜻 |
+| --- | --- | --- |
+| `page` | 1 | 쪽 번호 (1~10,000) |
+| `size` | 20 | 한 쪽 개수 (1~100) |
+| `status` | — | `draft` · `approved` · `rejected` · `expired`. 없으면 `draft` 를 뺀다 |
+| `rated` | — | 안 보내면 전부, `false` 면 피드백을 아직 안 남긴 것만(`feedback IS NULL`), `true` 면 남긴 것만 |
+
+- 응답은 `{items, total, page, size, total_pages}` 다. `total` 은 `status` · `rated` 를 건 **뒤의** 건수다.
+  범위를 넘는 `page` 는 오류가 아니라 빈 목록이다.
+- `rated` 를 안 보내면 응답은 쪽 나누기만 빼고 전과 같다. 평가한 제안도 `feedback` 값과 함께 나온다.
+- 피드백은 `approved` · `rejected` 에만 저장되므로 `draft` 는 늘 미평가다. `rated=false` 여도 기본 목록의
+  `draft` 제외는 그대로 걸린다. `status=draft&rated=true` 는 늘 빈 목록이다.
+- 정렬은 `created_at DESC, id DESC` 다. 한 트랜잭션에서 만든 행은 `created_at` 이 같아서 `id` 로 끊어야
+  쪽을 넘나들며 빠지거나 겹치지 않는다.
+- 평가(`PATCH .../feedback`)는 이미 평가한 제안에도 다시 걸린다 — 덮어쓴다. `rated=true` 목록에서 다시 고를 수 있다.
+- 값이 boolean 이 아닌 `rated`, 범위 밖 `page` · `size` 는 400 `validation_failed` 다 (422 아님).
+- `expired` 행은 평가를 받을 수 없지만(`PATCH` 는 `approved` · `rejected` 만) 기본 목록에는 들어 있어서
+  `rated=false` 에 나오고 `rated=true` 에는 나오지 않는다. 지금은 앱이 `expired` 를 DB 에 쓰지 않아(만료는
+  `expires_at` 으로만 계산한다) 이런 행이 없다. 쓰게 되면 `rated=false` 에서 뺄지 다시 정한다 (테스트 R11).
+- 옛 `cursor` · `limit` 은 선언하지 않은 쿼리라 오류 없이 무시된다. 첫 쪽(size 20)이 나온다.
+
+**쪽을 쓰는 쪽(FE)이 알아 둘 것** — 서버는 요청마다 DB 의 현재 상태로 새로 계산하므로 처음 받은 응답을 들고
+있을 필요가 없다. 필요한 값은 지금 보는 `page` 하나뿐이다.
+
+1. `rated=false` 를 보다가 평가하면 그 제안이 목록에서 빠져 뒤의 항목이 한 칸씩 앞으로 당겨진다.
+   평가(`PATCH`)가 성공하면 **현재 쪽을 다시 받는다.** 안 받고 다음 쪽으로 가면 앞으로 당겨진 항목 하나가
+   어느 쪽에도 안 보인다 (중복은 없고 누락만 생긴다).
+2. 평가로 건수가 줄면 `page` 가 `total_pages` 보다 커질 수 있다(3쪽의 마지막 하나를 평가한 경우).
+   그때는 오류가 아니라 빈 목록이므로 응답의 `total_pages` 로 쪽을 다시 맞춘다.
+   `rated=true` 에서 다시 고르는 것은 건수 · 순서가 바뀌지 않아 해당 없다.
+
 ### 일반 추천에 남긴 평가
 
 지금 `feedback` 을 읽는 곳은 없다. 선호 신호로 쓰는 기능을 붙일 때 이 규칙을 따른다.
