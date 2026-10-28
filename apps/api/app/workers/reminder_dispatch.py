@@ -44,7 +44,8 @@ log = logging.getLogger("app.workers.reminder_dispatch")
 STALE_AFTER = timedelta(minutes=10)
 """울릴 시각이 이보다 오래 지난 알림은 보내지 않는다.
 
-배치가 멈췄다 살아났을 때 밀린 알림이 한꺼번에 울리지 않게 한다."""
+배치가 멈췄다 살아났을 때 밀린 알림이 한꺼번에 울리지 않게 한다. 푸시의 TTL 도 이 값이다 —
+기기가 꺼져 있다가 늦게 켜져도 이보다 늦게 도착하지 않는다."""
 
 _KST = ZoneInfo("Asia/Seoul")
 
@@ -78,6 +79,7 @@ def reminder_message(reminder: DueReminder) -> Message:
             "event_id": str(reminder.event_id),
             "date": reminder.starts_at.astimezone(_KST).date().isoformat(),
         },
+        ttl=STALE_AFTER,
     )
 
 

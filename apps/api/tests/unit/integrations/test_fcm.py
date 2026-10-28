@@ -2,6 +2,7 @@
 
 import json
 import logging
+from datetime import timedelta
 from urllib.parse import parse_qs
 
 import httpx
@@ -13,7 +14,12 @@ from google.auth import jwt
 from app.integrations.fcm import TOKEN_URL, FcmClient, Message, SendResult
 
 DEVICE_TOKEN = "synthetic-device-token"
-MESSAGE = Message(title="일정 알림", body="1시간 뒤 일정이 있어요", data={"event_id": "e1"})
+MESSAGE = Message(
+    title="일정 알림",
+    body="1시간 뒤 일정이 있어요",
+    data={"event_id": "e1"},
+    ttl=timedelta(minutes=10),
+)
 
 
 @pytest.fixture(scope="module")
@@ -71,6 +77,9 @@ async def test_sends_one_message_and_reuses_the_access_token(service_account):
         "token": DEVICE_TOKEN,
         "notification": {"title": MESSAGE.title, "body": MESSAGE.body},
         "data": MESSAGE.data,
+        # 꺼진 기기에 며칠 뒤 "1시간 뒤" 가 도착하지 않게 — 안드로이드 · 웹 각자의 자리에 단다
+        "android": {"ttl": "600s"},
+        "webpush": {"headers": {"TTL": "600"}},
     }
 
 

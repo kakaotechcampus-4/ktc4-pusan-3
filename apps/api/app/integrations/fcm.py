@@ -15,6 +15,7 @@ import logging
 import re
 import time
 from dataclasses import dataclass
+from datetime import timedelta
 from enum import StrEnum
 from pathlib import Path
 
@@ -46,6 +47,9 @@ class Message:
     body: str
     data: dict[str, str]
     """화면이 알림을 눌렀을 때 쓸 값. FCM 은 문자열 값만 받는다."""
+    ttl: timedelta
+    """기기가 꺼져 있을 때 FCM 이 들고 있을 시간. 지나면 버린다 — 없으면 FCM 기본값(최대 4주)이라
+    "5분 뒤에" 같은 문구가 며칠 뒤에 도착한다."""
 
 
 class FcmConfigError(Exception):
@@ -82,6 +86,7 @@ class FcmClient:
 
     async def send(self, device_token: str, message: Message) -> SendResult:
         """기기 하나에 한 건. 실패해도 예외를 던지지 않는다 — 결과만 돌려준다."""
+        ttl = int(message.ttl.total_seconds())
         try:
             access = await self._access_token()
             response = await self._http.post(
@@ -92,6 +97,8 @@ class FcmClient:
                         "token": device_token,
                         "notification": {"title": message.title, "body": message.body},
                         "data": message.data,
+                        "android": {"ttl": f"{ttl}s"},
+                        "webpush": {"headers": {"TTL": str(ttl)}},
                     }
                 },
             )
