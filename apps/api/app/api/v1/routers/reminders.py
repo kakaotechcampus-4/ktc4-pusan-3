@@ -21,7 +21,7 @@ from app.api.deps.db import SessionDep
 from app.api.errors import ApiError, ErrorEnvelope
 from app.api.v1.reminder_check import check_reminder
 from app.api.v1.schemas.reminders import ReminderIn, ReminderOut, ReminderResponse
-from app.domains.schedule.repository import delete_reminder, find_event, put_reminder
+from app.domains.schedule.repository import delete_reminder, find_event, lock_link, put_reminder
 
 router = APIRouter()
 
@@ -37,8 +37,14 @@ async def put_my_reminder(
     eid: uuid.UUID,
     body: ReminderIn,
 ) -> ReminderResponse:
-    """이 일정에 내 알림을 건다. 이미 있으면 바꾼다."""
-    event = await find_event(session, child_id=child.child_id, event_id=eid)
+    """이 일정에 내 알림을 건다. 이미 있으면 바꾼다.
+
+    연결 → 일정 순으로 잠그고 검사한다. 같은 일정을 종일로 바꾸는 수정이 겹치면 그 커밋을 기다렸다가
+    바뀐 일정으로 본다 — 잠그지 않으면 종일 일정에 시간 있는 일정의 알림이 저장된다.
+    """
+    if not await lock_link(session, child_id=child.child_id, parent_id=parent.parent_id):
+        raise ApiError(403, "child_access_denied", "이 아이에 접근할 수 없어요")  # #427
+    event = await find_event(session, child_id=child.child_id, event_id=eid, lock=True)
     if event is None:
         raise ApiError(404, "not_found", "일정을 찾을 수 없어요")
     check_reminder(body.lead, starts_at=event.starts_at, all_day=event.all_day)
@@ -49,7 +55,7 @@ async def put_my_reminder(
         parent_id=parent.parent_id,
         lead=body.lead,
     )
-    if row is None:  # 확인한 뒤 연결이 끊겼거나 일정이 지워졌다 (#427)
+    if row is None:  # 위에서 연결 · 일정을 잡아 두어 오지 않는다. 저장 함수의 계약대로 막아만 둔다
         raise ApiError(403, "child_access_denied", "이 아이에 접근할 수 없어요")
     out = ReminderResponse(reminder=ReminderOut(lead=row.lead))
     await session.commit()

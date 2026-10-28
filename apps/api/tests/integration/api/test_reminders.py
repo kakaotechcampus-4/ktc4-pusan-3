@@ -16,11 +16,12 @@ from app.api import idempotency
 from app.domains.child.models import Child
 from app.domains.child.parents import unlink_parent
 from app.domains.identity.models import Parent
+from app.domains.schedule import repository as schedule_repo
 from app.domains.schedule.models import EventCategory, EventCreatedBy, EventType, Reminder
 from app.domains.schedule.repository import create_event, put_reminder
 from app.infra.db.session import engine
 from app.rules.reminder import ReminderLead
-from tests.integration.api.conftest import Bearer, issue_bearer, link_child
+from tests.integration.api.conftest import Bearer, issue_bearer, link_child, seed_login
 
 START = datetime(2099, 3, 10, 2, tzinfo=UTC)
 TIMED = {
@@ -146,18 +147,26 @@ async def test_editing_the_event_moves_or_drops_reminders(
     assert resp.json()["event"]["reminder"] is None
 
 
-# 연결 끊기와 겹칠 때 (#427). 두 요청이 실제로 겹쳐야 해서 한 트랜잭션 안의 `session` 으로는
+# 다른 요청과 겹칠 때 (#427). 두 요청이 실제로 겹쳐야 해서 한 트랜잭션 안의 `session` 으로는
 # 재현할 수 없다. 커밋하는 세션을 따로 열고, 끝나면 만든 보호자 · 아이를 지운다 (나머지는 CASCADE).
+# API 를 부를 때는 `db_client` 가 아니라 `client` 다 — 핸들러도 자기 세션으로 커밋해야 겹친다.
+
+OWNER_TOKEN, MEMBER_TOKEN = "test-token-race-owner", "test-token-race-member"
 
 
 @pytest.fixture
 async def committed_event():
-    """(세션 공장, 아이 id, 함께 보는 보호자 id, 일정 id) — 실제로 커밋된 값."""
+    """(세션 공장, 아이 id, 함께 보는 보호자 id, 일정 id) — 실제로 커밋된 값.
+
+    두 보호자는 `OWNER_TOKEN` · `MEMBER_TOKEN` 으로 로그인돼 있다.
+    """
     factory = async_sessionmaker(engine, expire_on_commit=False)
     async with factory() as setup:
         owner, member = Parent(), Parent()
         setup.add_all([owner, member])
         await setup.flush()
+        await seed_login(setup, parent_id=owner.id, token=OWNER_TOKEN)
+        await seed_login(setup, parent_id=member.id, token=MEMBER_TOKEN)
         child_id = await link_child(setup, parent_id=owner.id)
         await link_child(setup, parent_id=member.id, child_id=child_id)
         event = await create_event(
@@ -202,6 +211,101 @@ async def test_unlink_in_flight_leaves_no_reminder_of_the_unlinked_parent(commit
         await unlinker.commit()
 
     assert await asyncio.wait_for(writing, timeout=5) is None
+    async with factory() as check:
+        left = await check.scalar(
+            select(func.count()).select_from(Reminder).where(Reminder.parent_id == member)
+        )
+    assert left == 0
+
+
+async def test_switching_to_all_day_in_flight_refuses_a_timed_reminder(
+    client: AsyncClient, committed_event
+):
+    """종일로 바꾸는 수정이 커밋하기 전에 시간 있는 일정 값으로 알림을 걸면, 바뀐 일정으로 본다."""
+    factory, child_id, member, event_id = committed_event
+
+    async with factory() as editor:
+        await schedule_repo.update_event(
+            editor,
+            child_id=child_id,
+            event_id=event_id,
+            title="병원",
+            event_type=EventType.EPISODIC,
+            starts_at=START,
+            ends_at=None,
+            all_day=True,
+            category=EventCategory.HEALTH,
+        )
+        putting = asyncio.create_task(
+            client.put(
+                f"/api/v1/children/{child_id}/events/{event_id}/reminder",
+                json={"lead": "1h"},
+                headers={"Authorization": f"Bearer {MEMBER_TOKEN}"},
+            )
+        )
+        await asyncio.sleep(0.3)  # 알림 저장이 일정 행 잠금에서 기다리게 둔다
+        await editor.commit()
+
+    resp = await asyncio.wait_for(putting, timeout=5)
+    assert resp.status_code == 422
+    assert resp.json()["error"]["code"] == "invalid_reminder"
+    async with factory() as check:
+        left = await check.scalar(
+            select(func.count()).select_from(Reminder).where(Reminder.event_id == event_id)
+        )
+    assert left == 0
+
+
+async def test_editing_while_being_unlinked_does_not_deadlock(
+    client: AsyncClient, committed_event, monkeypatch
+):
+    """수정이 알림을 고친 뒤 연결 끊기가 들어와도 서로 기다리다 실패하지 않는다.
+
+    끊기는 연결 → 알림 순으로 지운다. 수정이 알림을 먼저 잡고 연결을 나중에 잡으면 교착이 된다.
+    """
+    factory, child_id, member, event_id = committed_event
+    async with factory() as setup:
+        await put_reminder(
+            setup, child_id=child_id, event_id=event_id, parent_id=member, lead=ReminderLead.HOURS_1
+        )
+        await setup.commit()
+
+    # 수정이 일정 · 알림을 고친 직후(준비물 교체)에 멈춰 세우고, 그 사이에 끊기를 넣는다
+    reached, release = asyncio.Event(), asyncio.Event()
+    replace_items = schedule_repo.replace_event_items
+
+    async def paused(*args, **kwargs):
+        reached.set()
+        await release.wait()
+        return await replace_items(*args, **kwargs)
+
+    monkeypatch.setattr(schedule_repo, "replace_event_items", paused)
+    idempotency.clear()
+    patching = asyncio.create_task(
+        client.patch(
+            f"/api/v1/children/{child_id}/events/{event_id}",
+            json={
+                "event": {**TIMED, "starts_at": "2099-03-10T15:00:00+09:00"},
+                "items": [],
+                "reminder": {"lead": "10m"},
+            },
+            headers={"Authorization": f"Bearer {MEMBER_TOKEN}", "Idempotency-Key": "race"},
+        )
+    )
+    await asyncio.wait_for(reached.wait(), timeout=5)
+
+    async def unlink():
+        async with factory() as unlinker:
+            assert await unlink_parent(unlinker, child_id=child_id, parent_id=member)
+            await unlinker.commit()
+
+    unlinking = asyncio.create_task(unlink())
+    await asyncio.sleep(0.3)  # 끊기가 수정이 쥔 행에서 기다리게 둔다
+    release.set()
+
+    resp = await asyncio.wait_for(patching, timeout=5)
+    assert resp.status_code == 200, resp.text
+    await asyncio.wait_for(unlinking, timeout=5)
     async with factory() as check:
         left = await check.scalar(
             select(func.count()).select_from(Reminder).where(Reminder.parent_id == member)

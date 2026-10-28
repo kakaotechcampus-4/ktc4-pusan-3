@@ -924,6 +924,12 @@ async def update_event(
             body.reminder.lead, starts_at=body.event.starts_at, all_day=body.event.all_day
         )
 
+    # 연결부터 잡는다 — 수정이 알림 행을 잡은 뒤에 알림을 걸며 연결을 잠그면, 연결 → 알림 순으로
+    # 지우는 끊기(`unlink_parent`)와 교착이 된다. 끊긴 뒤면 일정도 고치지 않는다 (#427)
+    if not await schedule_repo.lock_link(
+        session, child_id=child.child_id, parent_id=parent.parent_id
+    ):
+        raise ApiError(403, "child_access_denied", "이 아이에 접근할 수 없어요")
     event = await schedule_repo.update_event(
         session,
         child_id=child.child_id,
