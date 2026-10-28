@@ -86,6 +86,7 @@ import type {
   SuggestionsRequest,
   SuggestionsResponse,
   SuggestionFeedbackResponse,
+  SuggestionListQuery,
   SuggestionListResponse,
 } from "@/lib/api/types";
 
@@ -1721,6 +1722,79 @@ describe("⑩ 피드백은 기억을 바꾸지 않는다", () => {
 });
 
 /* ── 09 캘린더 ───────────────────────────────────────────────────────── */
+
+describe("⑩-1 제안 목록은 rated 로 두 보기를 가르고 번호 쪽으로 준다 (#592)", () => {
+  const list = (query: SuggestionListQuery = {}) =>
+    api.get<SuggestionListResponse>("/children/c1/suggestions", { query: { ...query } });
+
+  it("rated 를 안 보내면 전부, false 면 피드백 전만, true 면 피드백 완료만 — total 은 그 보기의 건수다", async () => {
+    const all = await list();
+    const unrated = await list({ rated: false });
+    const rated = await list({ rated: true });
+
+    expect(all.total).toBe(unrated.total + rated.total);
+    expect(unrated.items.every((s) => s.feedback === null)).toBe(true);
+    expect(rated.items.every((s) => s.feedback !== null)).toBe(true);
+    expect(unrated).toMatchObject({ page: 1, size: 20, total_pages: 1 });
+  });
+
+  it("🚨 피드백 전에서 평가하면 그 제안이 빠지고 피드백 완료로 옮겨 간다", async () => {
+    const before = await list({ rated: false });
+    const target = before.items[0]!;
+
+    await api.patch(`/children/c1/suggestions/${target.id}/feedback`, { feedback: "not_acted" });
+
+    const after = await list({ rated: false });
+    expect(after.total).toBe(before.total - 1);
+    expect(after.items.map((s) => s.id)).not.toContain(target.id);
+    const done = await list({ rated: true });
+    expect(done.items.find((s) => s.id === target.id)?.feedback).toBe("not_acted");
+  });
+
+  it("다시 고르면 덮어쓴다 — 피드백 완료의 건수와 자리는 그대로다", async () => {
+    const before = await list({ rated: true });
+    const target = before.items[0]!;
+
+    await api.patch(`/children/c1/suggestions/${target.id}/feedback`, {
+      feedback: "child_disliked",
+    });
+
+    const after = await list({ rated: true });
+    expect(after.total).toBe(before.total);
+    expect(after.items.map((s) => s.id)).toEqual(before.items.map((s) => s.id));
+    expect(after.items[0]?.feedback).toBe("child_disliked");
+  });
+
+  it("쪽은 rated 를 건 뒤에 자르고, 마지막 쪽의 마지막 줄을 평가하면 그 쪽은 빈 목록이 된다", async () => {
+    setScenario("suggestions_many");
+    try {
+      const first = await list({ rated: false });
+      expect(first).toMatchObject({ total: 21, page: 1, size: 20, total_pages: 2 });
+      expect(first.items).toHaveLength(20);
+
+      const second = await list({ rated: false, page: 2 });
+      expect(second.items).toHaveLength(1);
+
+      await api.patch(`/children/c1/suggestions/${second.items[0]!.id}/feedback`, {
+        feedback: "child_liked",
+      });
+
+      // 🚨 오류가 아니라 빈 목록이다 — 화면이 `total_pages` 로 쪽을 다시 맞춘다.
+      const emptied = await list({ rated: false, page: 2 });
+      expect(emptied).toMatchObject({ items: [], total: 20, page: 2, total_pages: 1 });
+    } finally {
+      setScenario("default");
+    }
+  });
+
+  it("rated 가 true · false 가 아니면 400 validation_failed 다 (422 아님)", async () => {
+    const error = await api
+      .get("/children/c1/suggestions", { query: { rated: "maybe" } })
+      .catch((e: unknown) => e);
+    expect(isApiError(error, "validation_failed")).toBe(true);
+    expect((error as ApiError).status).toBe(400);
+  });
+});
 
 describe("⑪ 일기는 관찰이 아니다", () => {
   it("일기를 써도 관찰이 늘지 않는다", async () => {
