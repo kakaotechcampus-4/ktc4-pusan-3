@@ -20,6 +20,7 @@ from app.domains.memory.observation.models import (
     ObservationRoutine,
     RoutineCategory,
 )
+from app.domains.notification.models import PushDevice, PushPlatform
 from app.domains.policy.models import PolicyVersion
 from app.domains.safety.models import HealthSafety, SafetyKind
 from app.domains.schedule.models import (
@@ -28,8 +29,6 @@ from app.domains.schedule.models import (
     EventCategory,
     EventCreatedBy,
     EventType,
-    PushDevice,
-    PushPlatform,
     Reminder,
     SharedPhoto,
 )
