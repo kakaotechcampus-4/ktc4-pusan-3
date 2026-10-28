@@ -151,7 +151,7 @@
 │   │   ├── CLAUDE.md         스택·버전 · API 클라이언트 관례 · 화면 규칙 — 고태영
 │   │   ├── package.json      pnpm · 버전 고정 (^ 없음)
 │   │   ├── pnpm-lock.yaml    ⚠️ 반드시 커밋
-│   │   ├── .env.example      NEXT_PUBLIC_API_BASE_URL 템플릿
+│   │   ├── .env.example      NEXT_PUBLIC_API_BASE_URL · 웹 푸시 Firebase 값 템플릿 (값은 넣지 않는다)
 │   │   ├── Dockerfile        배포 이미지 (standalone 3단계). 🚨 API 주소는 빌드 인자다 — 런타임에 못 바꾼다
 │   │   ├── .dockerignore     빌드 컨텍스트 제외 목록. `.env*` 를 여기서 막는다
 │   │   ├── e2e/              Playwright 화면 규칙 테스트 (`make web-e2e`) — §2 가 화면에서 지켜지는지를 목 서버로 건다
@@ -298,6 +298,9 @@
 🚨 **이 저장소는 public 이다.** 1단계에서 학생 API 토큰 8건이 실제로 유출됐고, 노트북·`docs/*.md` 본문에서도 나왔다.
 
 - `.env` 는 커밋하지 않는다. 프론트 번들에 API 키를 넣지 않는다.
+  - 예외는 **Firebase 웹 설정값**(`NEXT_PUBLIC_FIREBASE_*`) 하나다 (#609). 웹 푸시 토큰을 받는 데 쓰는 공개 식별자라
+    번들에 들어가야 동작한다. 그래도 **값은 저장소에 쓰지 않는다** (`.env.local` · `deploy/docker/.env`).
+    서버의 FCM 서비스 계정 키는 비밀이고 프론트에 오지 않는다 ([`docs/web/web-push-v1.md`](docs/web/web-push-v1.md))
 - `/api/v1` 엔드포인트는 기본적으로 Bearer 인증을 요구한다. 로그인 자체를 시작·완료하기
   위한 아래 5개, 쿠키로 access 를 다시 받는 `POST /auth/refresh`, 가입 전 동의 화면이 약관을 읽는
   `GET /policies` · `GET /policies/{scope}/{version}`, 개인정보 처리방침 정본 `GET /privacy-policy` ·
