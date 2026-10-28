@@ -57,7 +57,10 @@ describe("appendSpoken", () => {
 });
 
 describe("isSpeechEvent", () => {
-  it("약속한 넷만 통과한다", () => {
+  it("약속한 여섯만 통과한다", () => {
+    expect(isSpeechEvent({ type: "asking" })).toBe(true);
+    expect(isSpeechEvent({ type: "volume", level: 0.4 })).toBe(true);
+    expect(isSpeechEvent({ type: "error", reason: "declined" })).toBe(true);
     expect(isSpeechEvent({ type: "start" })).toBe(true);
     expect(isSpeechEvent({ type: "end" })).toBe(true);
     expect(isSpeechEvent({ type: "result", text: "가", final: false })).toBe(true);
@@ -71,6 +74,10 @@ describe("isSpeechEvent", () => {
     expect(isSpeechEvent({ type: "result", text: "가" })).toBe(false);
     expect(isSpeechEvent({ type: "error", reason: "network" })).toBe(false);
     expect(isSpeechEvent({ type: "record" })).toBe(false);
+    // 음량은 0~1 이다 — 셸이 자른 값만 막대가 쓴다.
+    expect(isSpeechEvent({ type: "volume" })).toBe(false);
+    expect(isSpeechEvent({ type: "volume", level: 1.5 })).toBe(false);
+    expect(isSpeechEvent({ type: "volume", level: "0.4" })).toBe(false);
   });
 });
 
