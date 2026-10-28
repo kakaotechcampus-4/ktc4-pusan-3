@@ -50,6 +50,7 @@ from app.domains.suggestion.repository import (
     list_suggestions_using_observation,
     set_feedback,
 )
+from app.rules.reminder import ReminderLead
 
 
 @pytest.fixture
@@ -168,7 +169,7 @@ async def test_schedule_event_and_item_are_child_scoped(session, family):
             child_id=child.id,
             event_id=event.id,
             parent_id=stranger.id,
-            remind_at=start,
+            lead=ReminderLead.HOURS_1,
         )
         is None
     )
@@ -178,7 +179,7 @@ async def test_schedule_event_and_item_are_child_scoped(session, family):
             child_id=child.id,
             event_id=event.id,
             parent_id=owner.id,
-            remind_at=start,
+            lead=ReminderLead.HOURS_1,
         )
         is not None
     )

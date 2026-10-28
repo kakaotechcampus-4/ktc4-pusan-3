@@ -22,6 +22,7 @@ from app.domains.schedule.models import (
     Reminder,
     SharedPhoto,
 )
+from app.rules.reminder import ReminderLead
 
 
 async def list_events(
@@ -261,7 +262,7 @@ async def create_reminder(
     child_id: uuid.UUID,
     event_id: uuid.UUID,
     parent_id: uuid.UUID,
-    remind_at: datetime,
+    lead: ReminderLead,
 ) -> Reminder | None:
     if await find_event(session, child_id=child_id, event_id=event_id) is None:
         return None
@@ -274,7 +275,7 @@ async def create_reminder(
         is None
     ):
         return None
-    row = Reminder(event_id=event_id, parent_id=parent_id, remind_at=remind_at)
+    row = Reminder(event_id=event_id, parent_id=parent_id, lead=lead)
     session.add(row)
     await session.flush()
     return row

@@ -24,6 +24,7 @@ from app.domains.schedule.models import (
     SharedPhoto,
 )
 from app.domains.schedule.repository import create_event, create_reminder, put_diary
+from app.rules.reminder import ReminderLead
 from tests.integration.api.conftest import (
     Bearer,
     in_memory,
@@ -58,7 +59,9 @@ async def _personal_records(session: AsyncSession, cid: uuid.UUID, pid: uuid.UUI
         created_by=EventCreatedBy.CAREGIVER,
     )
     await put_diary(session, child_id=cid, parent_id=pid, day=DAY, content="일기")
-    await create_reminder(session, child_id=cid, event_id=event.id, parent_id=pid, remind_at=AT)
+    await create_reminder(
+        session, child_id=cid, event_id=event.id, parent_id=pid, lead=ReminderLead.HOURS_1
+    )
     session.add(
         ChatTurn(
             parent_id=pid,
