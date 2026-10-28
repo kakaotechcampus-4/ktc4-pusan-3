@@ -156,6 +156,7 @@ class PlaceStdClient:
                 manage_no=_text(raw.get("pfctSn")),
                 indoor=_text(raw.get("idrodrCd")),
                 operating=_text(raw.get("operYnCd")),
+                safety_excluded=(_text(raw.get("exfcYn")) or "").upper() == "Y",
                 region_code=_text(raw.get("rgnCd")),
             )
             for raw in rows

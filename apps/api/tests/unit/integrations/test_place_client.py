@@ -318,6 +318,7 @@ def test_원문_행에는_전화번호_관리기관_칸이_없다() -> None:
         "indoor",
         "operating",
         "region_code",
+        "safety_excluded",
     }
 
 
@@ -438,8 +439,17 @@ async def test_놀이시설은_화이트리스트_칸만_옮긴다() -> None:
         indoor="O002",
         operating="B001",
         region_code="1111010100",
+        safety_excluded=False,
     )
     assert row.address is None  # 주소는 옮기지 않는다
+
+
+async def test_안전관리_대상_제외_표시를_옮긴다() -> None:
+    handler = kids_handler({"A013": [facility("8", exfcYn="Y")]})
+
+    [row] = await build_client(handler).kids_facilities(place_codes=["A013"])
+
+    assert row.safety_excluded is True
 
 
 async def test_설치장소_필터가_안_먹으면_실패한다() -> None:

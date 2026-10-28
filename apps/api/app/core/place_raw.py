@@ -38,3 +38,5 @@ class RawPlaceRow:
     indoor: str | None = None
     operating: str | None = None
     region_code: str | None = None
+    # 어린이놀이시설 안전관리 대상 제외(exfcYn == "Y"). 적재가 이런 시설을 뺀다
+    safety_excluded: bool = False

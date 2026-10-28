@@ -76,8 +76,8 @@ _NO_AMUSEMENT = frozenset({"해당없음"})
 # - 주택단지 · 어린이집 · 유치원 · 학교 · 학원 · 아동복지시설 · 대규모점포 · 식품접객업소 ·
 #   종교시설 · 의료기관은 보호자가 아이와 그냥 들어갈 곳이 아니다
 # - 도시공원(A003)은 공원 소스가 놀이터 여부(`has_playground`)로 이미 싣는다
-KIDS_CAFE = "A013"  # 놀이제공영업소 — 실내외와 상관없이 실내 놀이터다
-CHILDCARE_CENTER = "A092"  # 육아종합지원센터 — 실내면 실내 놀이터, 실외면 놀이터
+KIDS_CAFE = "A013"  # 놀이제공영업소(키즈카페)
+CHILDCARE_CENTER = "A092"  # 육아종합지원센터 — 둘 다 실내면 실내 놀이터, 실외면 놀이터
 KIDS_PLACE_CODES = frozenset({KIDS_CAFE, CHILDCARE_CENTER})
 KIDS_INDOOR = "O001"  # 실내외 코드(idrodrCd). O002 는 실외
 KIDS_OUTDOOR = "O002"
@@ -204,14 +204,17 @@ def has_playground(kind: str | None, amusement: str | None) -> bool:
 
 
 def kids_category(place_code: str, indoor: str | None) -> PlaceCategory | None:
-    """어린이놀이시설의 종류. 화이트리스트 밖이거나 실내외를 모르면 None — 싣지 않는다."""
-    if place_code == KIDS_CAFE:
+    """어린이놀이시설의 종류. 화이트리스트 밖이거나 실내외를 모르면 None — 싣지 않는다.
+
+    키즈카페도 실내외 코드를 따른다. 실외로 적힌 키즈카페(실측 111곳)를 실내 놀이터로 실으면
+    비 오는 날 실내만 찾을 때 바깥 시설이 나간다.
+    """
+    if place_code not in KIDS_PLACE_CODES:
+        return None
+    if indoor == KIDS_INDOOR:
         return PlaceCategory.INDOOR_PLAYGROUND
-    if place_code == CHILDCARE_CENTER:
-        if indoor == KIDS_INDOOR:
-            return PlaceCategory.INDOOR_PLAYGROUND
-        if indoor == KIDS_OUTDOOR:
-            return PlaceCategory.PLAYGROUND
+    if indoor == KIDS_OUTDOOR:
+        return PlaceCategory.PLAYGROUND
     return None
 
 
@@ -256,7 +259,9 @@ def _record(source: LoadedSource, raw: RawPlaceRow) -> PlaceRecord | Drop:
         kids = kids_category(kind, (raw.indoor or "").strip())
         if kids is None:
             return Drop.KIND_EXCLUDED
-        if (raw.operating or "").strip() != KIDS_OPERATING:
+        if (raw.operating or "").strip() != KIDS_OPERATING or raw.safety_excluded:
+            # 안전관리 대상에서 빠진 시설(exfcYn=Y, 실측 화이트리스트 중 6곳)도 뺀다 — 운영으로
+            # 적혀 있어도 점검을 받지 않는 곳을 아이 놀이터로 권하지 않는다
             return Drop.NOT_OPERATING
         if generic_name(name):
             return Drop.GENERIC_NAME

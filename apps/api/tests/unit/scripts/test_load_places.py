@@ -491,7 +491,7 @@ def test_적재_값에는_화이트리스트_칸만_있다():
     ("code", "indoor", "expected"),
     [
         ("A013", "O001", PlaceCategory.INDOOR_PLAYGROUND),  # 키즈카페
-        ("A013", "O002", PlaceCategory.INDOOR_PLAYGROUND),  # 실외 칸이어도 키즈카페는 실내 놀이터
+        ("A013", "O002", PlaceCategory.PLAYGROUND),  # 실외로 적힌 키즈카페는 실내로 싣지 않는다
         ("A092", "O001", PlaceCategory.INDOOR_PLAYGROUND),  # 육아종합지원센터 실내
         ("A092", "O002", PlaceCategory.PLAYGROUND),  # 육아종합지원센터 실외
         ("A092", "", None),  # 실내외를 모르면 고를 수 없다
@@ -502,6 +502,14 @@ def test_적재_값에는_화이트리스트_칸만_있다():
 )
 def test_놀이시설의_종류는_설치장소와_실내외로_정한다(code, indoor, expected):
     assert kids_category(code, indoor) == expected
+
+
+def test_안전관리_대상에서_빠진_놀이시설은_싣지_않는다():
+    """운영으로 적혀 있어도 점검을 받지 않는 곳은 아이 놀이터로 권하지 않는다(exfcYn=Y)."""
+    result = clean("kids_play_facility", [kids(safety_excluded=True)])
+
+    assert result.records == ()
+    assert result.dropped == {Drop.NOT_OPERATING: 1}
 
 
 def test_놀이시설_행을_적재_행으로_옮긴다():
