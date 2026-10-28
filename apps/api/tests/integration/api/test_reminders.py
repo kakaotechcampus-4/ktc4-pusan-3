@@ -209,6 +209,14 @@ async def test_resending_the_same_reminder_with_the_form_does_not_block_the_edit
     row = await session.scalar(select(Reminder).execution_options(populate_existing=True))
     assert row.sent_at == START
 
+    # 종류를 바꾸면서 폼이 지금 값을 그대로 보내도 막지 않는다 — 안 건드린 것으로 보고 옮긴다
+    to_all_day = {**form, "starts_at": "2099-03-10T00:00:00+09:00", "all_day": True}
+    resp = await _patch(
+        db_client, cid, str(event.id), headers, {"event": to_all_day, "reminder": {"lead": "1h"}}
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["event"]["reminder"] == {"lead": "day_of_9am"}
+
     # 없는 일정이면 값이 맞지 않아도 404 가 먼저다
     resp = await _patch(
         db_client, cid, str(uuid.uuid4()), headers, {"event": TIMED, "reminder": {"lead": "1d_9am"}}

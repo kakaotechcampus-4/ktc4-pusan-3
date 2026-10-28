@@ -270,8 +270,9 @@ class UpdateEventRequest(BaseModel):
     reminder: ReminderIn | None = Field(
         default=None,
         description=(
-            "요청한 보호자 본인의 알림. 칸을 빼면 그대로 두고, null 이면 지운다. "
-            "종일 여부를 바꾸면 이 일정에 걸린 알림은 모두 지워진다 — 새 알림은 이 칸으로 다시 건다"
+            "요청한 보호자 본인의 알림. 칸을 빼거나 저장된 값과 같으면 그대로 두고, null 이면 "
+            "지운다. 종일 여부를 바꾸면 이 일정에 걸린 알림은 날 수를 지켜 가까운 값으로 옮겨진다"
+            "(시간 있는 일정의 1h → 종일의 day_of_9am 등). 옮긴 값의 울릴 시각이 지났으면 지워진다"
         ),
     )
 
