@@ -67,11 +67,17 @@ async def read_my_notification_settings(
     return NotificationSettings(**vars(switches))
 
 
-@router.put("/me/notification-settings", responses={422: {"model": ErrorEnvelope}})
+@router.put(
+    "/me/notification-settings",
+    responses={status: {"model": ErrorEnvelope} for status in (401, 422)},
+)
 async def put_my_notification_settings(
     auth: CurrentParent, session: SessionDep, body: NotificationSettings
 ) -> NotificationSettings:
     """두 스위치를 함께 보낸다. 내 모든 기기에 적용된다."""
-    await put_switches(session, parent_id=auth.parent_id, switches=Switches(**body.model_dump()))
+    if not await put_switches(
+        session, parent_id=auth.parent_id, switches=Switches(**body.model_dump())
+    ):  # 확인한 뒤 탈퇴했다 — 인증 실패와 같게 본다
+        raise ApiError(401, "unauthenticated", "다시 로그인해 주세요")
     await session.commit()
     return body

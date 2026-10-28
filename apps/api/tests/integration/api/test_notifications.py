@@ -1,18 +1,26 @@
 """푸시 기기 등록 · 알림 켜고 끄기 — #594."""
 
 import asyncio
+from datetime import UTC, datetime
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.domains.identity.models import Parent
 from app.domains.identity.repository import delete_session
-from app.domains.notification.models import PushDevice
-from app.domains.notification.repository import DEFAULT_SETTING
+from app.domains.identity.withdraw import withdraw_parent
+from app.domains.notification.models import NotificationSetting, PushDevice, PushPlatform
+from app.domains.notification.repository import DEFAULT_SETTING, register_device
 from app.infra.db.session import engine
-from tests.integration.api.conftest import Bearer, issue_bearer, seed_login
+from tests.integration.api.conftest import (
+    Bearer,
+    backend_pid,
+    issue_bearer,
+    seed_login,
+    wait_for_lock_wait,
+)
 
 DEVICE = "/api/v1/me/push-device"
 SETTINGS = "/api/v1/me/notification-settings"
@@ -102,7 +110,7 @@ async def test_logout_in_flight_leaves_no_device(client: AsyncClient, committed_
         putting = asyncio.create_task(
             client.put(DEVICE, json={"token": "fcm-race", "platform": "web"}, headers=headers)
         )
-        await asyncio.sleep(0.3)  # 등록이 로그인 행 잠금에서 기다리게 둔다
+        await wait_for_lock_wait(blocker=await backend_pid(logout))  # 등록이 로그인 행에서 기다린다
         await logout.commit()
 
     assert (await asyncio.wait_for(putting, timeout=5)).status_code == 401
@@ -110,13 +118,56 @@ async def test_logout_in_flight_leaves_no_device(client: AsyncClient, committed_
         assert await _devices(check) == []
 
 
-async def test_two_accounts_registering_one_device_at_once(client: AsyncClient, committed_logins):
-    """같은 기기의 두 계정이 한꺼번에 등록해도 오류 없이 한 계정에만 남는다."""
-    factory, logins = committed_logins
-    body = {"token": "fcm-race", "platform": "android"}
-    responses = await asyncio.gather(
-        *(client.put(DEVICE, json=body, headers=headers) for headers, _, _ in logins)
-    )
-    assert [r.status_code for r in responses] == [204, 204]
+async def test_next_account_registers_while_the_previous_one_is_in_flight(
+    client: AsyncClient, committed_logins
+):
+    """같은 기기에서 앞 계정의 등록이 커밋하기 전에 다음 계정이 등록해도, 오류 없이 다음 계정에만
+    남는다."""
+    factory, [(_, first, first_login), (second_headers, second, _)] = committed_logins
+    async with factory() as earlier:
+        await register_device(
+            earlier,
+            parent_id=first,
+            session_id=first_login,
+            device_token="fcm-race",
+            platform=PushPlatform.ANDROID,
+        )
+        putting = asyncio.create_task(
+            client.put(
+                DEVICE, json={"token": "fcm-race", "platform": "android"}, headers=second_headers
+            )
+        )
+        await wait_for_lock_wait(blocker=await backend_pid(earlier))  # 나중 등록이 기다린다
+        await earlier.commit()
+
+    assert (await asyncio.wait_for(putting, timeout=5)).status_code == 204
     async with factory() as check:
-        assert len(await _devices(check)) == 1
+        assert await _devices(check) == [(second, "fcm-race")]
+
+
+async def test_withdraw_in_flight_refuses_the_switches(client: AsyncClient, committed_logins):
+    """탈퇴가 커밋하기 전에 스위치 저장이 들어오면, 저장은 401 이고 설정이 남지 않는다."""
+    factory, [(headers, parent_id, _), _] = committed_logins
+    async with factory() as withdraw:
+        assert await withdraw_parent(withdraw, parent_id=parent_id, now=datetime.now(UTC))
+        putting = asyncio.create_task(
+            client.put(
+                SETTINGS,
+                json={"schedule_enabled": False, "medication_enabled": False},
+                headers=headers,
+            )
+        )
+        await wait_for_lock_wait(
+            blocker=await backend_pid(withdraw)
+        )  # 저장이 보호자 행에서 기다린다
+        await withdraw.commit()
+
+    resp = await asyncio.wait_for(putting, timeout=5)
+    assert resp.status_code == 401, resp.text
+    async with factory() as check:
+        left = await check.scalar(
+            select(func.count())
+            .select_from(NotificationSetting)
+            .where(NotificationSetting.parent_id == parent_id)
+        )
+    assert left == 0

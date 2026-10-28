@@ -49,12 +49,12 @@ async def register_device(
     🚨 같은 토큰은 한 번에 하나만 등록한다(advisory lock). 두 계정이 동시에 "다른 로그인의 행
        지우기"를 지나면 둘 다 넣으려다 토큰 유니크에 걸린다. 나중 것이 기다렸다가 앞 것을 지운다.
     """
-    key_share = {"read": True, "key_share": True}
-    await session.execute(
-        select(Parent.id).where(Parent.id == parent_id).with_for_update(**key_share)
-    )
+    if not await _lock_parent(session, parent_id=parent_id):
+        return False
     alive = await session.scalar(
-        select(AuthSession.id).where(AuthSession.id == session_id).with_for_update(**key_share)
+        select(AuthSession.id)
+        .where(AuthSession.id == session_id)
+        .with_for_update(read=True, key_share=True)
     )
     if alive is None:
         return False
@@ -103,7 +103,14 @@ async def get_switches(session: AsyncSession, *, parent_id: uuid.UUID) -> Switch
     return Switches(row.schedule_enabled, row.medication_enabled)
 
 
-async def put_switches(session: AsyncSession, *, parent_id: uuid.UUID, switches: Switches) -> None:
+async def put_switches(session: AsyncSession, *, parent_id: uuid.UUID, switches: Switches) -> bool:
+    """보호자가 그사이 탈퇴했으면 쓰지 않고 False.
+
+    🚨 보호자 행을 FOR KEY SHARE 로 잡은 뒤 쓴다. 인증 확인은 잠그지 않아서, 그 뒤에 탈퇴가
+       커밋하면 없는 보호자를 가리키는 행을 넣다 FK 오류(500)가 난다.
+    """
+    if not await _lock_parent(session, parent_id=parent_id):
+        return False
     values = {
         "schedule_enabled": switches.schedule_enabled,
         "medication_enabled": switches.medication_enabled,
@@ -117,3 +124,15 @@ async def put_switches(session: AsyncSession, *, parent_id: uuid.UUID, switches:
         )
     )
     await session.execute(stmt)
+    return True
+
+
+async def _lock_parent(session: AsyncSession, *, parent_id: uuid.UUID) -> bool:
+    """보호자 행을 FOR KEY SHARE 로 잡고 아직 있는지 돌려준다.
+
+    탈퇴(`withdraw_parent`)가 먼저 잡는 행이라 다른 행보다 먼저 잡는다.
+    """
+    locked = await session.scalar(
+        select(Parent.id).where(Parent.id == parent_id).with_for_update(read=True, key_share=True)
+    )
+    return locked is not None
