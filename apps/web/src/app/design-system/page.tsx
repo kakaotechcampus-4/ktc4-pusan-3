@@ -865,12 +865,12 @@ function ComponentSection() {
 
       <SubTitle>쪽 넘기기</SubTitle>
       <p className="text-caption text-ink-subtle">
-        번호 쪽 목록(07 기록 · 기억)의 아래 한 줄이다. 아이콘 버튼 둘과 고르기 상자 하나로 만들어 새
-        치수가 없다. 🚨 번호 버튼을 늘어놓지 않는다 — 터치 타깃 44px 이라 좁은 폭에서는 가운데 쪽을
-        화살표로만 가게 된다. 고르기 상자는 어느 쪽이든 한 번에 간다. 🚨 끝에 닿은 화살표는 숨기지
-        않고 끈다(가운데가 밀리지 않게). 🚨 쪽이 하나면 그리지 않는다.
+        번호 쪽 목록(07 기록 · 기억)의 아래 한 줄이다. 지금 쪽을 가운데 둔 번호 다섯 개가 따라
+        움직이고, 처음과 끝에서는 창이 그 끝에 붙는다. 🚨 번호는 다섯까지 — 화살표와 합쳐 일곱 칸 ×
+        44px 이 360px 폭의 한계다. 🚨 지금 쪽은 채운 원 + 굵기 + aria-current. 🚨 끝에 닿은 화살표는
+        숨기지 않고 끈다. 🚨 쪽이 하나면 그리지 않는다. 먼 시점으로 가는 일은 기간 필터가 맡는다.
       </p>
-      <Pagination label="쪽 넘기기 예시" page={dsPage} totalPages={5} onChange={setDsPage} />
+      <Pagination label="쪽 넘기기 예시" page={dsPage} totalPages={12} onChange={setDsPage} />
 
       <SubTitle>시각 고르기</SubTitle>
       <p className="text-caption text-ink-subtle">
