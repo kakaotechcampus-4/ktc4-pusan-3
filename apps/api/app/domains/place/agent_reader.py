@@ -16,13 +16,12 @@ agents 가 정한 계약이라 여기서 import 한다 — `domains/safety/agent
 - 호출마다 짧은 세션을 연다. run 세션을 도메인 task 들이 같이 타지 않게 (#257).
 - 러너가 입력 run 마다 붙인다(`agent_ports.place_source`). 좌표가 없는 run 에서는 장소 조회 tool 이
   닫혀 있어 부르지 않는다.
-- 🚨 어린이놀이시설(`kids_play_facility` — 키즈카페 · 육아종합지원센터)은 실어 두지만 아직 찾지
-  않는다(`SEARCHED_SOURCES`). 화면에 낼 조건(확인 문구 · 단독으로 내지 않기)을 PM 이 정하기
-  전이다(#516). 정해지면 그 조건을 코드로 건 뒤에 이 목록에 더한다.
+- 어린이놀이시설(키즈카페 · 육아종합지원센터)도 찾는다. 민간 키즈카페는 영업장이라 추천 쪽이
+  조건을 건다 — 확인 문구(이용료) · 후보 셋 중 한 곳까지(`activity/review.py`, #516).
 """
 
 import logging
-from collections.abc import Callable, Collection
+from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
 
 from sqlalchemy.exc import SQLAlchemyError
@@ -43,18 +42,12 @@ log = logging.getLogger(__name__)
 # 호출마다 새 세션을 여는 함수. 러너가 `background_session` 으로 만든다
 SessionOpener = Callable[[], AbstractAsyncContextManager[AsyncSession]]
 
-# 추천에 내는 출처. 어린이놀이시설은 키즈카페 조건이 정해지기 전이라 뺀다 (#516)
-SEARCHED_SOURCES: tuple[str, ...] = ("city_park", "library")
-
 
 class DbPlaceSource:
     """`PlaceSource`. 장소 행은 근거가 아니다 — 날씨처럼 필터 조건이다 (D9)."""
 
-    def __init__(
-        self, open_session: SessionOpener, *, sources: Collection[str] = SEARCHED_SOURCES
-    ) -> None:
+    def __init__(self, open_session: SessionOpener) -> None:
         self._open = open_session
-        self._sources = tuple(sources)
 
     async def nearby(
         self, *, location: CoarseLocation, category: PlaceCategory | str, radius_m: int
@@ -73,7 +66,6 @@ class DbPlaceSource:
                     category=category.value,
                     radius_m=min(radius_m, PLACE_MAX_RADIUS_M),
                     limit=PLACE_TOP_K,
-                    sources=self._sources,
                 )
         except (SQLAlchemyError, OSError) as error:
             log.warning("place 읽기 실패 error=%s", type(error).__name__)

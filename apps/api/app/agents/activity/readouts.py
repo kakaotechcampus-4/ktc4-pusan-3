@@ -11,5 +11,6 @@ CAUTION_NON_FOOD_ALLERGY = "caution.non_food_allergy"
 # 장소가 붙은 추천의 확인 문구 — 기준일자가 있는 출처 · 없는 출처 (#516)
 PLACE_NOTICE = "place.notice"
 PLACE_NOTICE_UNDATED = "place.notice_undated"
+PLACE_NOTICE_FACILITY = "place.notice_facility"
 
 READOUTS = ReadoutCatalog.from_yaml(Path(__file__).with_name("activity.readout.yaml"))

@@ -3,7 +3,8 @@
   1. 안전 필터       위험 용어(월령별 차단 · 경고) · health_safety(active). 걸린 후보는 거절이
                      아니라 풀에서 뺀다(`removed`) — 모델에게 사유를 돌려주지 않는다 (§5-2)
   2. 평가 표현       content · reason · note
-  3. Activity 검증   근거 id · 장소 이름 · 바깥 활동이 어려운 날의 야외 후보 · 기피 대상 ·
+  3. Activity 검증   근거 id · 장소 이름 · 키즈카페 · 놀이시설 장소 한 곳까지 ·
+                     바깥 활동이 어려운 날의 야외 후보 · 기피 대상 ·
                      note 반복 표현 · 최근 중복 · 0–17개월 보호자 동반
   4. build()         6개월이 안 지난 아이 기록 근거 수로 kind 를 정한다. 모델이 고르지 않는다.
                      장소 이름은 코드가 content 앞에 붙이고, 확인 문구(place_notice)를 칸으로
@@ -22,7 +23,12 @@ from datetime import date
 from enum import StrEnum
 from uuid import UUID
 
-from app.agents.activity.readouts import PLACE_NOTICE, PLACE_NOTICE_UNDATED, READOUTS
+from app.agents.activity.readouts import (
+    PLACE_NOTICE,
+    PLACE_NOTICE_FACILITY,
+    PLACE_NOTICE_UNDATED,
+    READOUTS,
+)
 from app.agents.activity.result import ErrorCode
 from app.agents.activity.rules import is_recent_duplicate, normalize_activity, overstates
 from app.agents.activity.schemas.common import (
@@ -48,6 +54,9 @@ TOGETHER_ONLY_BELOW_MONTH = age_gates().together_only_below_month
 # "공원" · "공룡" 이 들어간 후보까지 거절하면 과차단이다. 기피는 근거로는 계속 남는다.
 MIN_AVOIDED_LABEL = 2
 
+# 어린이놀이시설(키즈카페 · 육아종합지원센터) 장소의 출처. 확인 문구 · 한 곳 제한을 건다 (#516)
+FACILITY_SOURCE = "kids_play_facility"
+
 # 아이 기록 근거가 0행이면 build() 가 reason 을 이 문구로 덮어쓴다 (kind="general").
 # 화면이 일반 추천임을 표시하고 쌓인 기록 건수를 함께 보여준다 (루트 §2).
 GENERAL_REASON = "쌓인 놀이 기록이 아직 적어서, 이 나이 아이들에게 많이 권하는 놀이로 골랐어요."
@@ -66,6 +75,7 @@ class RejectReason(StrEnum):
     CAREGIVER_ROLE = "caregiver_role"
     UNKNOWN_PLACE = "unknown_place"
     OUTDOOR_CLOSED = "outdoor_closed"
+    FACILITY_LIMIT = "facility_limit"
     BUILD = "build_rejected"
 
 
@@ -83,6 +93,10 @@ GUIDANCE: dict[RejectReason, str] = {
     RejectReason.CAREGIVER_ROLE: "이 월령은 보호자가 같이 하는 활동(together)만 낸다.",
     RejectReason.UNKNOWN_PLACE: (
         "place_name 에는 search_nearby_places 결과에 있던 이름만 쓴다. 없으면 비운다."
+    ),
+    RejectReason.FACILITY_LIMIT: (
+        "키즈카페 · 놀이시설 장소는 후보 하나에만 단다. 다른 후보는 장소 없이 내거나 "
+        "공원 · 도서관으로 바꾼다."
     ),
     RejectReason.OUTDOOR_CLOSED: (
         "그날(day)은 바깥 활동이 어려운 날이다. setting 이 indoor 나 either 인 활동으로 바꾸거나,"
@@ -161,6 +175,8 @@ def review_candidates(
         key: row for row in (places or {}).values() if (key := normalize_activity(row.name))
     }
     drafts: list[SuggestionDraft] = []
+    # 키즈카페 · 놀이시설 장소를 단 후보가 이미 통과했는가 — 셋 중 한 곳까지다 (#516)
+    facility_used = False
     warnings: list[tuple[str, ...]] = []
     outdoor_drafts: set[tuple[str, DayLabel]] = set()
     rejections: list[Rejection] = []
@@ -181,6 +197,10 @@ def review_candidates(
             recent=recent_activities,
             outdoor=outdoor,
         )
+        facility = place is not None and place.source == FACILITY_SOURCE
+        if reason is None and facility and facility_used:
+            # 추천이 키즈카페 목록처럼 보이지 않게 한 곳까지만 — 민간 키즈카페는 영업장이다 (#516)
+            reason = RejectReason.FACILITY_LIMIT
         if reason is None:
             try:
                 drafts.append(
@@ -189,6 +209,7 @@ def review_candidates(
             except SuggestionRejected:
                 reason = RejectReason.BUILD
             else:
+                facility_used = facility_used or facility
                 warnings.append(check.warnings)
                 if candidate.setting == ActivitySetting.OUTDOOR:
                     outdoor_drafts.add((normalize_activity(drafts[-1].content), candidate.day))
@@ -309,8 +330,11 @@ def _build(
 def place_notice(place: PlaceRow) -> str:
     """장소가 붙은 추천의 확인 문구 (#516). 모델이 아니라 코드 문구다.
 
-    공공데이터 기준일자가 있으면 그 달을 앞에 둔다. 없는 출처(어린이놀이시설)는 운영 여부 확인만.
+    공공데이터 기준일자가 있으면 그 달을 앞에 둔다. 어린이놀이시설은 이용료도 확인해 달라고 한다 —
+    민간 키즈카페는 영업장이고, 공공 시설도 이용료 · 예약이 있는 곳이 많다.
     """
+    if place.source == FACILITY_SOURCE:
+        return READOUTS.render(PLACE_NOTICE_FACILITY).body
     if place.data_date is None:
         return READOUTS.render(PLACE_NOTICE_UNDATED).body
     return READOUTS.render(
