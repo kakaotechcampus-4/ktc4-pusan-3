@@ -322,7 +322,12 @@ class TestDefaultRules:
         assert rules.registered_names(text, [SafetyEntry("allergy", label, "active")]) == ()
 
     @pytest.mark.parametrize(
-        ("label", "text"), [("대구", "대구로 전 부쳐 보기"), ("사과", "사과하고 배 깎아 보기")]
+        ("label", "text"),
+        [
+            ("대구", "대구로 전 부쳐 보기"),
+            ("사과", "사과하고 배 깎아 보기"),
+            ("은행", "은행나무 열매 줍기"),  # 은행나무 열매가 은행이다 (#556 3차 리뷰)
+        ],
     )
     def test_조사가_붙은_꼴은_guard_로_덮지_않는다(self, rules, label, text):
         """ "대구로" · "사과하고" 는 그 식품 문장에도 나온다 (#556 2차 리뷰)."""
