@@ -2314,6 +2314,28 @@ describe("㉙ 10 설정 알림 스위치 — 서버 #605 와 같은 계약 (#609
   });
 });
 
+describe("㉚ 푸시 기기 등록 — 서버 #605 와 같은 계약 (#609)", () => {
+  const path = "/me/push-device";
+  const put = (body: unknown) => api.put<void>(path, body).catch((error: unknown) => error);
+
+  it("토큰과 기기 종류를 맡기면 204 이고, 지우기는 없어도 204 다", async () => {
+    await expect(put({ token: "fcm-token", platform: "web" })).resolves.toBeUndefined();
+    await expect(api.delete<void>(path)).resolves.toBeUndefined();
+    await expect(api.delete<void>(path)).resolves.toBeUndefined();
+  });
+
+  it("🚨 공백뿐인 토큰, 목록 밖 기기 종류, 다른 칸은 400 이다", async () => {
+    const blank = await put({ token: "   ", platform: "web" });
+    const platform = await put({ token: "fcm-token", platform: "desktop" });
+    const extra = await put({ token: "fcm-token", platform: "web", enabled: true });
+
+    for (const failure of [blank, platform, extra]) {
+      expect(isApiError(failure, "validation_failed")).toBe(true);
+      expect((failure as ApiError).status).toBe(400);
+    }
+  });
+});
+
 describe("⑧ 10 설정 — 동의 · 함께 보는 보호자", () => {
   /** 계정 동의(`location`)는 `child_id` 없이 보낸다 — 화면도 `policy.target` 으로 가른다. */
   async function setLocation(action: "granted" | "withdrawn") {
