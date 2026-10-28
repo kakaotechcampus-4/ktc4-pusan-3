@@ -91,6 +91,10 @@
 
 - [event/event-draft-flow-v1.md](event/event-draft-flow-v1.md) — 승인 전 `event` 행을 두지 않기로 하면서 생긴 초안 계약 · `op`(create/update) 두 모양 · `items` 는 최종 목록(빠진 `item_id` 는 삭제) · `before` 는 원본 전체이고 `changed` 는 뺌 · `draft_id` 는 화면 전용 키 · `is_prepared` 는 초안이 읽지 않음
 
+## 알림 (notification)
+
+- [notification/reminder-v1.md](notification/reminder-v1.md) — **일정 알림.** 일정마다 보호자 개인 알림 1개(고정 목록 · 종일은 KST 오전 9시) · 울릴 시각이 아니라 `lead` 를 저장하고 보낼 때 계산 · 기기는 로그인에 묶여 로그아웃 · 만료 때 함께 지워짐 · 스위치 2개(보호자 단위, 행 없으면 코드 기본값) · 1분 배치가 보내기 전에 `sent_at` 을 찍음(두 번 울리느니 한 번 빠짐) · 10분 넘게 지난 알림은 안 보냄 · 문구에 일정 제목 없음 · 🔶 문구 · 토큰 동의 · 기본값은 PM 결정 대기 (#594)
+
 ## 급식표 (meal-plan)
 
 - [meal-plan/meal-plan-pipeline-v1.md](meal-plan/meal-plan-pipeline-v1.md) — 입력 3종(사진 · 엑셀 · 한글)이 모이는 `MealPlanJSON` 과 `MealPlanReader` 확정 · `source` 필드로 검수 필요 여부 구분 · `meal_type` 5종 · `allergen_codes` 는 JSON 에 없음(규칙이 뽑음) · 저장 기준은 미정(우선 아이 기준) · 못 읽은 칸은 그 칸만 비움
