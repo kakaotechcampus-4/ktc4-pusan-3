@@ -1,6 +1,7 @@
 "use client";
 
 import { Check, ChevronDown, ChevronUp } from "lucide-react";
+import type { ReactNode } from "react";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 
 import { cn } from "@/lib/cn";
@@ -49,7 +50,7 @@ import { ICON_SIZE, ICON_STROKE } from "./icon";
  *
  * ⚠️ **`shape` 는 이 상자가 어디에 서는가다.** 기본값 `pill` 은 §7 "고르기 상자" 사양
  *    (`full` · `min-h-touch`) 그대로고, `field` 는 **폼 칸**이라 `input`·`date-field` 와 같은
- *    모양·높이(`rounded-field` · `min-h-field`)를 쓴다. 한 폼 안에서 한 칸만 알약이고 8px 낮으면
+ *    모양·높이(`rounded-field` · `min-h-field`)와 라벨(`label`/`ink-muted`)을 쓴다. 한 폼 안에서 한 칸만 알약이고 8px 낮으면
  *    그 칸이 입력이 아니라 필터로 읽힌다 (문서 §7 "`min-h-field` 다" 와 같은 이유).
  *
  * 🚨 **사유(`error`)는 상자에 붙인다** (`TextInput` 과 같은 처리 · 문서 §7 입력).
@@ -57,6 +58,10 @@ import { ICON_SIZE, ICON_STROKE } from "./icon";
  *    `aria-invalid` 와 `aria-describedby` 를 함께 건다 — 색(`danger` 테두리)만으로는
  *    단독 신호가 되고, 안 고른 것을 "고르지 않음" 으로 넘길 수 있는 칸에서는 그게 곧
  *    **빈 값이 조용히 저장되는 길**이다.
+ *
+ * ⚠️ **설명(`hint`)은 라벨 아래, 상자 위다** (`TextInput` 과 같은 자리 · 문서 §7 입력).
+ *    🚨 툴팁으로 대신하지 않는다 — 화면 대부분이 웹뷰라 호버가 없고, `title` 도 터치에서는
+ *    뜨지 않는다. 상자에 `aria-describedby` 로 이어서 스크린리더가 값과 함께 읽는다.
  */
 export function Select<T extends string>({
   label,
@@ -64,6 +69,7 @@ export function Select<T extends string>({
   options,
   onChange,
   error,
+  hint,
   labelHidden = false,
   placeholder,
   shape = "pill",
@@ -75,6 +81,8 @@ export function Select<T extends string>({
   onChange: (value: T) => void;
   /** 고르지 않았거나 잘못 고른 이유. 🚨 상자 밖 문단으로 대신하지 않는다 (위 머리말). */
   error?: string | null;
+  /** 라벨 아래 설명. 무엇을 고르는 칸인지 라벨만으로 모자랄 때 쓴다 (위 머리말). */
+  hint?: ReactNode;
   /** 라벨을 `sr-only` 로 옮긴다. 🚨 지우는 것이 아니다 (위 머리말). */
   labelHidden?: boolean;
   /** 아직 안 골랐을 때의 문구. 🚨 없으면 첫 항목이 골라진 것처럼 보인다 (위 머리말). */
@@ -86,11 +94,14 @@ export function Select<T extends string>({
   const listId = `${id}-list`;
   const labelId = `${id}-label`;
   const errorId = `${id}-error`;
+  const hintId = `${id}-hint`;
 
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
+  /** 목록과 그 아래 투명 여백을 담은 판. 스크롤로 보이게 할 대상이다 (아래 열 때 효과). */
+  const floatRef = useRef<HTMLDivElement>(null);
   const revealRef = useReveal<HTMLUListElement>(open);
 
   const index = options.findIndex((option) => option.value === value);
@@ -122,10 +133,13 @@ export function Select<T extends string>({
    * 🚨 **목록을 먼저 보이게 하고, 포커스는 `preventScroll` 로 준다.** 포커스가 스크롤을 맡으면
    *    브라우저는 **그 항목 하나**만 보이게 움직여서, 첫 항목이 골라져 있으면 그 아래가 본문 바닥에
    *    잘린 채로 남는다 (#306). `block: "nearest"` 라 이미 다 보이면 아무것도 움직이지 않는다.
+   * 🚨 **목록이 아니라 그 아래 여백까지 든 판(`floatRef`)을 보이게 한다.** 스크롤 면의 아래 안쪽 여백은
+   *    `absolute` 목록 뒤에는 붙지 않아서, 시트 맨 아래 상자를 열면 끝까지 밀어도 목록 바닥이 푸터 경계선에
+   *    딱 붙어 둥근 모서리와 아래 테두리가 잘렸다 (#584). 판의 투명한 아래 여백이 스크롤 범위를 그만큼 늘린다.
    */
   useEffect(() => {
     if (!open) return;
-    listRef.current?.scrollIntoView({ block: "nearest" });
+    floatRef.current?.scrollIntoView({ block: "nearest" });
     const items = listRef.current?.querySelectorAll<HTMLLIElement>('[role="option"]');
     items?.[selectedIndex]?.focus({ preventScroll: true });
   }, [open, selectedIndex]);
@@ -144,10 +158,32 @@ export function Select<T extends string>({
   }
 
   return (
-    <div ref={rootRef} className="relative flex min-w-0 flex-1 flex-col gap-1">
-      <span id={labelId} className={labelHidden ? "sr-only" : "text-caption text-ink-subtle"}>
+    <div
+      ref={rootRef}
+      className={cn(
+        "relative flex min-w-0 flex-1 flex-col",
+        shape === "field" ? "gap-1.5" : "gap-1",
+      )}
+    >
+      {/* 🚨 폼 칸의 라벨은 `input`·`date-field` 와 같은 `label`/`ink-muted` 다 (위 머리말 `shape`).
+          필터 라벨(`caption`/`ink-subtle`)을 그대로 두면 아래 설명과 같은 글자가 돼서 두 줄짜리 라벨로 읽힌다. */}
+      <span
+        id={labelId}
+        className={
+          labelHidden
+            ? "sr-only"
+            : shape === "field"
+              ? "text-label text-ink-muted"
+              : "text-caption text-ink-subtle"
+        }
+      >
         {label}
       </span>
+      {hint ? (
+        <p id={hintId} className="text-caption text-ink-subtle">
+          {hint}
+        </p>
+      ) : null}
 
       <button
         ref={triggerRef}
@@ -160,7 +196,7 @@ export function Select<T extends string>({
         aria-controls={open ? listId : undefined}
         aria-labelledby={`${labelId} ${id}-value`}
         aria-invalid={error ? true : undefined}
-        aria-describedby={error ? errorId : undefined}
+        aria-describedby={cn(hint ? hintId : null, error ? errorId : null) || undefined}
         onClick={() => setOpen((prev) => !prev)}
         onKeyDown={(event) => {
           if (event.key === "ArrowDown" || event.key === "ArrowUp") {
@@ -210,90 +246,97 @@ export function Select<T extends string>({
       ) : null}
 
       {open ? (
-        <ul
-          ref={(node) => {
-            listRef.current = node;
-            revealRef.current = node;
-          }}
-          id={listId}
-          role="listbox"
-          aria-labelledby={labelId}
-          // 🚨 그림자 대신 `line-strong` 1px 이 떠 있는 면을 만든다 (문서 §6).
-          // 🚨 **안쪽 여백을 두지 않는다.** 위아래에 `py-*` 를 주면 고른 항목의 색 면이 테두리에
-          //    못 닿아서, 첫 항목이 골라졌을 때 색 띠가 상자 안에 떠 있는 것처럼 보인다.
-          //    항목이 곧 줄이므로 줄이 상자를 꽉 채우고, 모서리는 `overflow-hidden` 이 깎는다.
-          className="border-line-strong bg-surface rounded-card absolute top-full right-0 left-0 z-30 mt-1 max-h-64 overflow-hidden overflow-y-auto overscroll-contain border"
-          onKeyDown={(event) => {
-            const items = Array.from(
-              listRef.current?.querySelectorAll<HTMLLIElement>('[role="option"]') ?? [],
-            );
-            const index = items.indexOf(document.activeElement as HTMLLIElement);
-
-            if (event.key === "Escape") {
-              event.preventDefault();
-              close();
-            } else if (event.key === "ArrowDown") {
-              event.preventDefault();
-              moveFocus(index, 1);
-            } else if (event.key === "ArrowUp") {
-              event.preventDefault();
-              moveFocus(index, -1);
-            } else if (event.key === "Home") {
-              event.preventDefault();
-              focusEdge("first");
-            } else if (event.key === "End") {
-              event.preventDefault();
-              focusEdge("last");
-            } else if (event.key === "Tab") {
-              // 🚨 Tab 은 막지 않는다 — 목록을 닫고 원래 순서대로 다음 요소에 간다.
-              close(false);
-            }
-          }}
+        // 🚨 판은 **누르는 것을 통과시킨다**(`pointer-events-none`) — 아래 여백은 스크롤 범위를 늘리려는 것뿐이라,
+        //    그 띠가 밑의 칸을 가리면 그 자리를 눌러도 아무 일이 없다. 목록만 다시 받는다.
+        <div
+          ref={floatRef}
+          className="pointer-events-none absolute top-full right-0 left-0 z-30 pt-1 pb-4"
         >
-          {options.map((option) => {
-            const selected = option.value === value;
+          <ul
+            ref={(node) => {
+              listRef.current = node;
+              revealRef.current = node;
+            }}
+            id={listId}
+            role="listbox"
+            aria-labelledby={labelId}
+            // 🚨 그림자 대신 `line-strong` 1px 이 떠 있는 면을 만든다 (문서 §6).
+            // 🚨 **안쪽 여백을 두지 않는다.** 위아래에 `py-*` 를 주면 고른 항목의 색 면이 테두리에
+            //    못 닿아서, 첫 항목이 골라졌을 때 색 띠가 상자 안에 떠 있는 것처럼 보인다.
+            //    항목이 곧 줄이므로 줄이 상자를 꽉 채우고, 모서리는 `overflow-hidden` 이 깎는다.
+            className="border-line-strong bg-surface rounded-card pointer-events-auto max-h-64 overflow-hidden overflow-y-auto overscroll-contain border"
+            onKeyDown={(event) => {
+              const items = Array.from(
+                listRef.current?.querySelectorAll<HTMLLIElement>('[role="option"]') ?? [],
+              );
+              const index = items.indexOf(document.activeElement as HTMLLIElement);
 
-            return (
-              <li
-                key={option.value}
-                role="option"
-                aria-selected={selected}
-                tabIndex={-1}
-                onClick={() => {
-                  onChange(option.value);
-                  close();
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") {
-                    event.preventDefault();
+              if (event.key === "Escape") {
+                event.preventDefault();
+                close();
+              } else if (event.key === "ArrowDown") {
+                event.preventDefault();
+                moveFocus(index, 1);
+              } else if (event.key === "ArrowUp") {
+                event.preventDefault();
+                moveFocus(index, -1);
+              } else if (event.key === "Home") {
+                event.preventDefault();
+                focusEdge("first");
+              } else if (event.key === "End") {
+                event.preventDefault();
+                focusEdge("last");
+              } else if (event.key === "Tab") {
+                // 🚨 Tab 은 막지 않는다 — 목록을 닫고 원래 순서대로 다음 요소에 간다.
+                close(false);
+              }
+            }}
+          >
+            {options.map((option) => {
+              const selected = option.value === value;
+
+              return (
+                <li
+                  key={option.value}
+                  role="option"
+                  aria-selected={selected}
+                  tabIndex={-1}
+                  onClick={() => {
                     onChange(option.value);
                     close();
-                  }
-                }}
-                className={cn(
-                  "text-body-sm ease-standard min-h-touch flex cursor-pointer items-center gap-2 px-3.5 py-2 transition-colors duration-120",
-                  "focus-visible:-outline-offset-2",
-                  // 🚨 고른 항목을 **색 하나로** 말하지 않는다 — 체크 아이콘이 같이 선다 (문서 §3).
-                  // 🚨 `brand-soft` 배경 위 글자는 `brand-ink` 다 — `brand` 가 아니다.
-                  //    이름이 곧 용도라 "대비만 맞으면 된다" 로 고르면 안 된다 (문서 §2 · §5).
-                  selected
-                    ? "bg-brand-soft text-brand-ink"
-                    : "text-ink hover:bg-surface-muted active:bg-surface-muted",
-                )}
-              >
-                <span className="min-w-0 flex-1 truncate">{option.label}</span>
-                {selected ? (
-                  <Check
-                    aria-hidden
-                    size={ICON_SIZE.sm}
-                    strokeWidth={ICON_STROKE}
-                    className="shrink-0"
-                  />
-                ) : null}
-              </li>
-            );
-          })}
-        </ul>
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      onChange(option.value);
+                      close();
+                    }
+                  }}
+                  className={cn(
+                    "text-body-sm ease-standard min-h-touch flex cursor-pointer items-center gap-2 px-3.5 py-2 transition-colors duration-120",
+                    "focus-visible:-outline-offset-2",
+                    // 🚨 고른 항목을 **색 하나로** 말하지 않는다 — 체크 아이콘이 같이 선다 (문서 §3).
+                    // 🚨 `brand-soft` 배경 위 글자는 `brand-ink` 다 — `brand` 가 아니다.
+                    //    이름이 곧 용도라 "대비만 맞으면 된다" 로 고르면 안 된다 (문서 §2 · §5).
+                    selected
+                      ? "bg-brand-soft text-brand-ink"
+                      : "text-ink hover:bg-surface-muted active:bg-surface-muted",
+                  )}
+                >
+                  <span className="min-w-0 flex-1 truncate">{option.label}</span>
+                  {selected ? (
+                    <Check
+                      aria-hidden
+                      size={ICON_SIZE.sm}
+                      strokeWidth={ICON_STROKE}
+                      className="shrink-0"
+                    />
+                  ) : null}
+                </li>
+              );
+            })}
+          </ul>
+        </div>
       ) : null}
     </div>
   );

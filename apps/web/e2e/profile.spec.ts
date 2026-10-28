@@ -101,6 +101,28 @@ test.describe("알레르기 직접 등록은 승인 게이트 ㉡ (§2 안전)",
       });
     });
 
+    // Class 는 검사지를 처음 보면 무엇인지 모른다. 툴팁이 아니라 늘 보이는 한 줄이다 —
+    // 웹뷰에는 호버가 없다 (#570).
+    test("알레르기 검사 등급에는 설명이 붙고, 상자가 그 설명을 읽는다 — 지병으로 바꾸면 빠진다", async ({
+      page,
+    }) => {
+      const sheet = await openAddSheet(page);
+      const hint =
+        "알레르기 혈액검사 결과를 0부터 6까지 나눈 등급이에요. 검사를 안 했거나 잘 모르면 모르겠어요를 골라 주세요. 몇 등급이든 식단 추천에서는 똑같이 빼요.";
+      await expect(sheet.getByText(hint)).toBeVisible();
+      await expect(sheet.getByRole("combobox", { name: "검사 등급" })).toHaveAccessibleDescription(
+        hint,
+      );
+
+      await sheet.getByRole("combobox", { name: "종류" }).click();
+      await page.getByRole("option", { name: "지병 · 만성질환" }).click();
+      await expect(sheet.getByText(hint)).toHaveCount(0);
+      // 설명이 없는 상자는 `aria-describedby` 를 비우지 않고 아예 걸지 않는다.
+      await expect(sheet.getByRole("combobox", { name: "얼마나 심한가요" })).not.toHaveAttribute(
+        "aria-describedby",
+      );
+    });
+
     test("지병으로 바꾸면 선택지가 바뀌고, 앞서 고른 Class 는 남지 않는다", async ({ page }) => {
       const sheet = await openAddSheet(page);
       await sheet.getByRole("combobox", { name: "검사 등급" }).click();

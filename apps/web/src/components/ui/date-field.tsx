@@ -8,14 +8,14 @@ import {
   Calendar as CalendarIcon,
 } from "lucide-react";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
-import { DayPicker } from "react-day-picker";
+import { DayPicker, type DateRange } from "react-day-picker";
 import { ko } from "react-day-picker/locale";
 
 import { BottomSheet } from "@/components/ui/bottom-sheet";
 import { Button } from "@/components/ui/button";
 import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
 import { cn } from "@/lib/cn";
-import { formatDateWithYear, toISODate } from "@/lib/format";
+import { formatDateRange, formatDateWithYear, parseISODate, toISODate } from "@/lib/format";
 import { useEnterMotion } from "@/lib/motion";
 
 /**
@@ -155,8 +155,7 @@ export function DateField({
             시작해야 하는데, 살려 두면 지난번에 넘겨 둔 달과 펼쳐 둔 연도 그리드가 그대로 남는다. */}
         {open ? (
           <Calendar
-            selected={draft}
-            onSelect={setDraft}
+            selection={{ mode: "single", selected: draft, onSelect: setDraft }}
             fromDate={fromDate}
             toDate={toDate}
             /**
@@ -173,20 +172,158 @@ export function DateField({
   );
 }
 
+/* ── 기간 ─────────────────────────────────────────────────────────────── */
+
+/**
+ * 기간 입력 — 시작일과 끝일을 **한 칸**에서 받는다 (#584 · 07 필터). 트리거는 `DateField` 와 같고,
+ * 시트의 달력이 범위를 고른다.
+ *
+ * 🚨 **누르는 순서가 곧 규칙이다 — 라이브러리의 범위 규칙을 쓰지 않는다.** 첫 누름이 새 기간을 그날
+ *    하루로 시작하고(`anchor`), 다음 누름이 끝을 정한다. 그다음 누름은 다시 새 기간이다.
+ *    라이브러리는 다 찬 기간에서 시작 뒤의 날을 누르면 **끝만** 옮겨서, 걸린 기간(10월 1~5일)에서 11월
+ *    10일 · 20일을 차례로 눌러도 10월 1일 ~ 11월 20일이 됐다 — 설명대로 "차례로" 누른 사람이 원하지 않은
+ *    기간을 고른다 (#584 리뷰). 시트를 다시 열면 `anchor` 가 비어 있어서 첫 누름이 새 기간이다.
+ * 🚨 **한 날만 누르면 그날 하루다.** 첫 누름이 이미 그날 ~ 그날이라 그대로 "고르기" 를 누르면 하루 기간이다.
+ *    한쪽 끝만 열린 기간("그날부터")은 만들지 않는다. 고른 칸에 반쪽짜리 값이 남지 않게.
+ * 🚨 **거꾸로 된 기간은 생기지 않는다.** 시작보다 앞의 날을 끝으로 누르면 그날이 시작이 된다.
+ * 🚨 **기간을 계산해서 만들지 않는다** — "최근 한 달" 같은 단추를 두지 않는다 (apps/web/CLAUDE.md §4).
+ *    달력의 범위 제한(`fromDate` · `toDate`)은 허용된 입력 제약이다.
+ */
+export function DateRangeField({
+  label,
+  hint,
+  from,
+  to,
+  onChange,
+  fromDate,
+  toDate,
+  placeholder = "기간을 골라주세요",
+}: {
+  label: string;
+  hint?: string;
+  /** `YYYY-MM-DD` 또는 빈 문자열. 둘은 함께 차거나 함께 빈다. */
+  from: string;
+  to: string;
+  onChange: (range: { from: string; to: string }) => void;
+  fromDate: Date;
+  toDate: Date;
+  placeholder?: string;
+}) {
+  const id = useId();
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState<DateRange | undefined>(undefined);
+  /** 시작만 누르고 끝을 기다리는 날. 비어 있으면 다음 누름이 새 기간을 시작한다. */
+  const [anchor, setAnchor] = useState<Date | null>(null);
+
+  /** 누른 날(`day`)만 본다 — 라이브러리가 계산해 준 범위는 버린다 (위 머리말). 날짜를 비교만 한다. */
+  function pick(day: Date) {
+    if (anchor === null) {
+      setDraft({ from: day, to: day });
+      setAnchor(day);
+      return;
+    }
+    setDraft(day < anchor ? { from: day, to: anchor } : { from: anchor, to: day });
+    setAnchor(null);
+  }
+
+  const start = from ? (parseISODate(from) ?? undefined) : undefined;
+  const end = to ? (parseISODate(to) ?? undefined) : undefined;
+  const hintId = hint ? `${id}-hint` : undefined;
+  const text = from && to ? formatDateRange(from, to) : "";
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <span id={`${id}-label`} className="text-label text-ink-muted">
+        {label}
+      </span>
+      {hint ? (
+        <p id={hintId} className="text-caption text-ink-subtle">
+          {hint}
+        </p>
+      ) : null}
+
+      <button
+        type="button"
+        aria-labelledby={`${id}-label ${id}-value`}
+        aria-describedby={hintId}
+        onClick={() => {
+          setDraft(start ? { from: start, to: end ?? start } : undefined);
+          setAnchor(null);
+          setOpen(true);
+        }}
+        className="rounded-field bg-surface ease-standard min-h-field border-line-strong hover:border-ink-subtle flex w-full items-center justify-between gap-2 border px-3.5 py-2 text-left transition-colors duration-120"
+      >
+        <span id={`${id}-value`} className={cn("text-body", text ? "text-ink" : "text-ink-subtle")}>
+          {text || placeholder}
+        </span>
+        <CalendarIcon
+          aria-hidden
+          size={ICON_SIZE.md}
+          strokeWidth={ICON_STROKE}
+          className="text-ink-subtle shrink-0"
+        />
+      </button>
+
+      <BottomSheet
+        open={open}
+        onClose={() => setOpen(false)}
+        title={label}
+        description="시작일과 끝일을 차례로 눌러주세요. 한 날만 누르면 그날 하루예요."
+        footer={
+          <div className="flex gap-2">
+            <Button variant="secondary" className="flex-1" onClick={() => setOpen(false)}>
+              취소
+            </Button>
+            <Button
+              className="flex-1"
+              disabled={!draft?.from}
+              onClick={() => {
+                if (draft?.from) {
+                  onChange({ from: toISODate(draft.from), to: toISODate(draft.to ?? draft.from) });
+                }
+                setOpen(false);
+              }}
+            >
+              고르기
+            </Button>
+          </div>
+        }
+      >
+        {open ? (
+          <Calendar
+            selection={{ mode: "range", selected: draft, onPick: pick }}
+            fromDate={fromDate}
+            toDate={toDate}
+            initialMonth={draft?.from ?? new Date()}
+          />
+        ) : null}
+      </BottomSheet>
+    </div>
+  );
+}
+
 /* ── 달력 ─────────────────────────────────────────────────────────────── */
+
+/** 날짜 하나(`DateField`)와 기간(`DateRangeField`)이 같은 달력을 쓴다 — 머리줄 · 연도/달 그리드는 한 벌이다. */
+type CalendarSelection =
+  | { mode: "single"; selected: Date | undefined; onSelect: (date: Date | undefined) => void }
+  | {
+      mode: "range";
+      selected: DateRange | undefined;
+      /** 누른 날 하나. 범위는 부르는 쪽이 정한다 (`DateRangeField` 의 `pick`). */
+      onPick: (day: Date) => void;
+    };
 
 /** 시트 본문에 서는 면. 날짜 · 연도 · 달 셋이 같은 자리를 번갈아 쓴다. */
 type CalendarView = "days" | "years" | "months";
 
 function Calendar({
-  selected,
-  onSelect,
+  selection,
   fromDate,
   toDate,
   initialMonth,
 }: {
-  selected: Date | undefined;
-  onSelect: (date: Date | undefined) => void;
+  selection: CalendarSelection;
   fromDate: Date;
   toDate: Date;
   initialMonth: Date;
@@ -306,12 +443,28 @@ function Calendar({
               captionRef.current?.focus();
             }}
           />
+        ) : selection.mode === "range" ? (
+          <DayPicker
+            mode="range"
+            locale={ko}
+            selected={selection.selected}
+            // 두 번째 인자가 누른 날이다. 첫 인자(라이브러리가 계산한 범위)는 쓰지 않는다.
+            onSelect={(_, day) => selection.onPick(day)}
+            month={month}
+            onMonthChange={goToMonth}
+            startMonth={fromDate}
+            endMonth={toDate}
+            disabled={{ before: fromDate, after: toDate }}
+            hideNavigation
+            captionLayout="label"
+            classNames={RANGE_CLASSES}
+          />
         ) : (
           <DayPicker
             mode="single"
             locale={ko}
-            selected={selected}
-            onSelect={onSelect}
+            selected={selection.selected}
+            onSelect={selection.onSelect}
             month={month}
             onMonthChange={goToMonth}
             startMonth={fromDate}
@@ -539,6 +692,19 @@ const CALENDAR_CLASSES = {
   outside: "[&_button]:text-ink-subtle",
   disabled: "[&_button]:text-ink-subtle [&_button]:opacity-40 [&_button]:hover:bg-transparent",
   hidden: "invisible",
+} as const;
+
+/**
+ * 기간 달력. 양 끝은 날짜 하나를 고른 것과 같은 `brand` 채움이고, 그 사이는 `brand-soft` 다.
+ * 🚨 `selected` 를 비운다 — 범위 모드는 사이의 날에도 `selected` 를 붙이는데, `cn()` 이 tailwind-merge 가
+ *    아니라 `selected` 의 `bg-brand` 와 사이의 `bg-brand-soft` 가 같이 붙으면 생성 CSS 순서가 이긴다.
+ */
+const RANGE_CLASSES = {
+  ...CALENDAR_CLASSES,
+  selected: "",
+  range_start: CALENDAR_CLASSES.selected,
+  range_end: CALENDAR_CLASSES.selected,
+  range_middle: "[&_button]:bg-brand-soft [&_button]:text-brand-ink",
 } as const;
 
 /* ── 날짜 셈 ──────────────────────────────────────────────────────────── */
