@@ -42,6 +42,13 @@ class SuggestionOut(BaseModel):
         )
     )
     content: str
+    place_notice: str | None = Field(
+        default=None,
+        description=(
+            "장소가 붙은 추천에만 오는 확인 문구 한 문장(공공데이터 기준일 · 운영 여부 확인). "
+            "서버 코드 문구다. 근거가 아니어서 evidence 에 들어가지 않는다. 장소가 없으면 null"
+        ),
+    )
     reason: str | None = Field(
         default=None,
         description=(
@@ -125,6 +132,13 @@ class GeneralSuggestionOut(BaseModel):
     agent: str
     kind: Literal["general"] = "general"
     content: str
+    place_notice: str | None = Field(
+        default=None,
+        description=(
+            "장소가 붙은 추천에만 오는 확인 문구 한 문장(공공데이터 기준일 · 운영 여부 확인). "
+            "서버 코드 문구다. 근거가 아니어서 evidence 에 들어가지 않는다. 장소가 없으면 null"
+        ),
+    )
     basis: str = Field(description="코드 템플릿 문구. 모델이 쓴 문장이 아니다")
     status: str
     expires_at: str
