@@ -28,7 +28,7 @@ router = APIRouter()
     "/me/push-device",
     status_code=204,
     response_class=Response,
-    responses={status: {"model": ErrorEnvelope} for status in (401, 422)},
+    responses={status: {"model": ErrorEnvelope} for status in (400, 401)},
 )
 async def put_my_push_device(
     auth: CurrentParent, session: SessionDep, body: PushDeviceIn
@@ -69,7 +69,7 @@ async def read_my_notification_settings(
 
 @router.put(
     "/me/notification-settings",
-    responses={status: {"model": ErrorEnvelope} for status in (401, 422)},
+    responses={status: {"model": ErrorEnvelope} for status in (400, 401)},
 )
 async def put_my_notification_settings(
     auth: CurrentParent, session: SessionDep, body: NotificationSettings

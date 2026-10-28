@@ -5,15 +5,21 @@ from datetime import UTC, datetime
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.domains.identity.models import Parent
+from app.domains.identity.models import AuthSession, Parent
 from app.domains.identity.repository import delete_session
 from app.domains.identity.withdraw import withdraw_parent
 from app.domains.notification.models import NotificationSetting, PushDevice, PushPlatform
-from app.domains.notification.repository import DEFAULT_SETTING, register_device
+from app.domains.notification.repository import (
+    DEFAULT_SETTING,
+    Switches,
+    put_switches,
+    register_device,
+)
 from app.infra.db.session import engine
+from app.workers.auth_cleanup import purge_expired_auth_rows
 from tests.integration.api.conftest import (
     Bearer,
     backend_pid,
@@ -47,6 +53,51 @@ async def test_device_lives_as_long_as_the_login(
 
     assert (await db_client.post("/api/v1/auth/logout", headers=headers)).status_code == 204
     assert await _devices(session) == []
+
+
+async def test_blank_token_is_refused(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer
+):
+    headers, _ = bearer
+    resp = await db_client.put(DEVICE, json={"token": "  ", "platform": "web"}, headers=headers)
+    assert resp.status_code == 400
+    assert await _devices(session) == []
+
+
+async def test_device_and_switches_go_with_the_login_and_the_account(
+    session: AsyncSession, bearer: Bearer
+):
+    """기기는 로그인이, 스위치는 계정이 지워질 때 함께 지워진다 — 이 PR 의 핵심 결정이 외래 키
+    CASCADE 하나에 기대고 있어서, 누가 그 키를 바꾸면 여기서 걸린다 (#605 리뷰)."""
+    _, parent_id = bearer
+    expired = await seed_login(session, parent_id=parent_id, token="test-token-expired")
+    live = await seed_login(session, parent_id=parent_id, token="test-token-live")
+    for login, token in ((expired, "fcm-expired"), (live, "fcm-live")):
+        await register_device(
+            session,
+            parent_id=parent_id,
+            session_id=login,
+            device_token=token,
+            platform=PushPlatform.WEB,
+        )
+    await put_switches(
+        session,
+        parent_id=parent_id,
+        switches=Switches(schedule_enabled=False, medication_enabled=True),
+    )
+    await session.execute(
+        update(AuthSession)
+        .where(AuthSession.id == expired)
+        .values(refresh_expires_at=datetime.now(UTC))
+    )
+
+    await purge_expired_auth_rows(session, now=datetime.now(UTC))
+    assert await _devices(session) == [(parent_id, "fcm-live")]
+
+    assert await withdraw_parent(session, parent_id=parent_id, now=datetime.now(UTC))
+    assert await _devices(session) == []
+    left = await session.scalar(select(func.count()).select_from(NotificationSetting))
+    assert left == 0
 
 
 async def test_same_device_moves_to_the_account_that_logged_in_last(
