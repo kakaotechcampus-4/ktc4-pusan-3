@@ -444,7 +444,21 @@ class TestDocEvidence:
         first = result.suggestions[0]
         assert first.kind == "general"
         assert [(c.ref.kind, c.ref.id) for c in first.citations] == [("activity_doc", row.id)]
-        assert f"id {row.id}" in llm.seen[0][0]["content"]  # 프롬프트 [예시]에 id 가 실린다
+        system = llm.seen[0][0]["content"]
+        # 프롬프트 [예시]에는 짧은 id 만 실린다 — UUID 를 베끼다 두 행의 id 를 이어 붙인다
+        assert "id 예1 · " in system and str(row.id) not in system
+
+
+async def test_예시의_짧은_id_를_run_state_에_남긴다():
+    """출력 tool 이 이 표로 문서 행 id 로 되돌린다. 프롬프트에 실린 순서 그대로다."""
+    ctx = context()
+    llm = FakeLLM(propose("종이컵 탑 쌓기", "그림자놀이", "색종이 접기"))
+    await run(task(), ctx, client=llm)
+    system = llm.seen[0][0]["content"]
+    assert ctx.state.example_ids  # 빈 표면 아래 비교가 아무것도 안 본다
+    assert set(ctx.state.example_ids.values()) == set(ctx.state.seen_docs)
+    for short_id, doc_id in ctx.state.example_ids.items():
+        assert f"id {short_id} · {ctx.state.seen_docs[doc_id].title}" in system
 
 
 class TestPrompt:

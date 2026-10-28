@@ -48,8 +48,14 @@ export const qk = {
     agents: readonly string[],
     promptKey: string | null = null,
   ) => [...qk.child(childId), "suggestions", runId, [...agents].join(","), promptKey] as const,
-  /** 07 피드백 탭이 평가할 제안 목록. ⚠️ 엔드포인트가 계약서 협의 대상이다 (types.ts). */
-  suggestionList: (childId: string) => [...qk.child(childId), "suggestion-list"] as const,
+  /**
+   * 07 피드백 탭이 평가할 제안 목록 **전부** (보기 · 쪽마다 키가 따로라 무효화는 이 접두어로 한다).
+   * 🚨 평가하면 두 보기가 함께 바뀐다 — 피드백 전에서 빠지고 피드백 완료에 들어간다.
+   */
+  suggestionLists: (childId: string) => [...qk.child(childId), "suggestion-list"] as const,
+  /** 07 피드백 탭의 한 쪽. 보기(`rated`)와 쪽 번호가 키에 든다. */
+  suggestionList: (childId: string, filters: Record<string, unknown>) =>
+    [...qk.suggestionLists(childId), filters] as const,
   /** 09 월 조회. `month` 는 `YYYY-MM` — 달을 넘기면 다른 키라 이전 달이 캐시에 남는다. */
   calendar: (childId: string, month: string) => [...qk.calendarMonths(childId), month] as const,
   /**

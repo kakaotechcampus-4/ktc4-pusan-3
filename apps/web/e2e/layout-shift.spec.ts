@@ -101,7 +101,7 @@ const SCREENS: Array<{ name: string; path: string; ready: string; scenario?: Sce
   {
     name: "07 제안 피드백",
     path: `/child/${CHILD}/memories?tab=feedback`,
-    ready: "계란말이에 시금치를 조금 섞어 보세요",
+    ready: "두부를 부쳐서 한 조각 곁들여 보세요",
   },
   { name: "09 캘린더", path: `/child/${CHILD}/calendar`, ready: "이날의 일기 쓰기" },
   { name: "10 설정", path: `/child/${CHILD}/settings`, ready: "함께 보고 있어요" },

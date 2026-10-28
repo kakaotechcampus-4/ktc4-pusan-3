@@ -83,7 +83,7 @@ class RejectReason(StrEnum):
 GUIDANCE: dict[RejectReason, str] = {
     RejectReason.EVALUATIVE: "또래 비교나 발달 판정 표현을 쓰지 않는다.",
     RejectReason.UNKNOWN_EVIDENCE: (
-        "evidence 에는 search_activity_memory 결과나 [예시]에 있던 id 만 쓴다."
+        "evidence 에는 search_activity_memory 결과의 id 나 [예시]의 id(예1 같은)만 그대로 쓴다."
     ),
     RejectReason.AVOIDED: "싫어한다고 나온 활동은 다시 내지 않는다. 다른 활동으로 바꾼다.",
     RejectReason.OVERSTATED_NOTE: (

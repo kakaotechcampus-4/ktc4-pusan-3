@@ -20,6 +20,7 @@ import {
   allObservations,
   healthSafety,
   manyObservations,
+  manyReceivedSuggestions,
   receivedSuggestions,
   staleAffinities,
 } from "../fixtures";
@@ -87,19 +88,12 @@ const MAX_PAGE = 10_000;
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
- * 두 목록이 같이 받는 쿼리 (#584) — 서버 `list_query` 와 같은 검증이다.
+ * 쪽만 받는 쿼리 — 서버 `list_query.page_query` 와 같은 검증이다. 제안 목록(#592)은 이것만 받는다.
  * 🚨 서버는 쿼리 검증 실패를 422 가 아니라 **400** 으로 돌려준다 (422 는 경로 값이 틀렸을 때다).
  */
-function readListQuery(
-  params: URLSearchParams,
-):
-  | { page: number; size: number; from: string | null; to: string | null; q: string | null }
-  | Response {
+function readPageQuery(params: URLSearchParams): { page: number; size: number } | Response {
   const page = Number(params.get("page") ?? 1);
   const size = Number(params.get("size") ?? PAGE_SIZE);
-  const from = params.get("date_from");
-  const to = params.get("date_to");
-  const q = params.get("q");
 
   if (!Number.isInteger(page) || page < 1 || page > MAX_PAGE) {
     return apiError(400, "validation_failed", "쪽 번호가 올바르지 않아요");
@@ -107,6 +101,22 @@ function readListQuery(
   if (!Number.isInteger(size) || size < 1 || size > 100) {
     return apiError(400, "validation_failed", "size 는 1~100 이에요");
   }
+  return { page, size };
+}
+
+/** 기록 · 기억 목록이 같이 받는 쿼리 (#584) — 서버 `list_query` 와 같은 검증이다. 쪽은 위와 같다. */
+function readListQuery(
+  params: URLSearchParams,
+):
+  | { page: number; size: number; from: string | null; to: string | null; q: string | null }
+  | Response {
+  const paging = readPageQuery(params);
+  if (paging instanceof Response) return paging;
+  const { page, size } = paging;
+  const from = params.get("date_from");
+  const to = params.get("date_to");
+  const q = params.get("q");
+
   if ((from !== null && !ISO_DATE.test(from)) || (to !== null && !ISO_DATE.test(to))) {
     return apiError(400, "validation_failed", "날짜 형식이 올바르지 않아요");
   }
@@ -389,18 +399,35 @@ export const memoryHandlers = [
 
   /**
    * 07 피드백 탭이 평가할 제안 목록 (#284). 개인화와 채택한 일반 추천(#509)이 같이 온다.
-   * 목은 한 장으로 끝난다(`next_cursor: null`).
+   * 🚨 **`rated` 를 건 뒤에 쪽을 자른다** (#592) — 서버와 같다. 평가하면 피드백 전에서 빠지고
+   *    뒤의 줄이 한 칸씩 당겨진다. `true` · `false` 가 아닌 값은 400 이다.
    */
-  http.get(url("/children/:cid/suggestions"), async () => {
+  http.get(url("/children/:cid/suggestions"), async ({ request }) => {
     await networkDelay();
-    const items =
-      currentScenario() === "empty"
+    const params = new URL(request.url).searchParams;
+    const paging = readPageQuery(params);
+    if (paging instanceof Response) return paging;
+    const ratedParam = params.get("rated");
+    if (ratedParam !== null && ratedParam !== "true" && ratedParam !== "false") {
+      return apiError(400, "validation_failed", "rated 는 true 나 false 예요");
+    }
+
+    const scenario = currentScenario();
+    const rows = (
+      scenario === "empty"
         ? []
-        : receivedSuggestions.map((suggestion) => ({
-            ...suggestion,
-            feedback: feedbackBySuggestion.get(suggestion.id) ?? suggestion.feedback,
-          }));
-    const body: SuggestionListResponse = { items, next_cursor: null };
+        : scenario === "suggestions_many"
+          ? manyReceivedSuggestions
+          : receivedSuggestions
+    )
+      .map((suggestion) => ({
+        ...suggestion,
+        feedback: feedbackBySuggestion.get(suggestion.id) ?? suggestion.feedback,
+      }))
+      .filter((suggestion) =>
+        ratedParam === null ? true : (suggestion.feedback !== null) === (ratedParam === "true"),
+      );
+    const body: SuggestionListResponse = slicePage(rows, paging.page, paging.size);
     return HttpResponse.json(body);
   }),
 
@@ -409,7 +436,7 @@ export const memoryHandlers = [
     const { feedback } = (await request.json()) as { feedback: SuggestionFeedback };
     const sid = String(params.sid);
 
-    const suggestion = receivedSuggestions.find((s) => s.id === sid);
+    const suggestion = manyReceivedSuggestions.find((s) => s.id === sid);
     if (!suggestion) return apiError(404, "not_found", "그 제안을 찾지 못했어요");
 
     feedbackBySuggestion.set(sid, feedback);
