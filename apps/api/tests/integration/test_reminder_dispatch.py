@@ -25,12 +25,15 @@ KST = ZoneInfo("Asia/Seoul")
 
 
 class FakeFcm:
-    def __init__(self, results: dict[str, SendResult] | None = None):
+    def __init__(self, results: dict[str, SendResult] | None = None, on_send=None):
         self.sent: list[tuple[str, Message]] = []
         self._results = results or {}
+        self._on_send = on_send
 
     async def send(self, device_token: str, message: Message) -> SendResult:
         self.sent.append((device_token, message))
+        if self._on_send is not None:
+            await self._on_send(device_token)
         return self._results.get(device_token, SendResult.SENT)
 
 
@@ -149,6 +152,37 @@ async def test_unregistered_device_is_forgotten(session: AsyncSession):
         .execution_options(populate_existing=True)
     )
     assert list(tokens) == ["fcm-live"]
+
+
+async def test_device_logged_out_during_the_run_is_not_sent_to(session: AsyncSession):
+    """기기 목록을 읽은 뒤 그 기기가 로그아웃하면 보내지 않는다 — 공용 기기에서 계정을 바꾼 경우다.
+
+    보내기 직전에 기기 · 토큰 · 로그인을 다시 본다. 처음 읽은 목록을 끝까지 쓰면 이미 다른 사람이
+    쓰는 기기에 앞 보호자의 알림(아이 · 일정 id)이 간다.
+    """
+    parent, first_login = await _parent_with_device(session, "fcm-1")
+    second_login = await seed_login(session, parent_id=parent, token="login-fcm-2")
+    session.add(
+        PushDevice(
+            parent_id=parent,
+            session_id=second_login,
+            device_token="fcm-2",
+            platform=PushPlatform.WEB,
+        )
+    )
+    child_id = await link_child(session, parent_id=parent)
+    event_id = await _event(session, child_id, NOW + timedelta(hours=1))
+    await _remind(session, child_id, event_id, parent)
+
+    async def log_out_the_other(token: str) -> None:
+        other = second_login if token == "fcm-1" else first_login
+        await session.execute(delete(AuthSession).where(AuthSession.id == other))
+
+    fcm = FakeFcm(on_send=log_out_the_other)
+    result = await run_dispatch(session, now=NOW, fcm=fcm)
+
+    assert len(fcm.sent) == 1
+    assert (result.delivered, result.dropped) == (1, 1)
 
 
 # 배치가 겹쳐 돌 때. 한 트랜잭션 안의 `session` 으로는 겹칠 수 없어 커밋하는 세션을 따로 연다.

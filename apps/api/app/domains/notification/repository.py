@@ -4,7 +4,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import delete, func, select, text
+from sqlalchemy import Select, delete, func, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -150,23 +150,53 @@ async def schedule_push_targets(
     """
     if not parent_ids:
         return {}
-    enabled = func.coalesce(NotificationSetting.schedule_enabled, DEFAULT_SETTING.schedule_enabled)
     stmt = (
-        select(PushDevice.parent_id, PushDevice.id, PushDevice.device_token)
-        .join(AuthSession, AuthSession.id == PushDevice.session_id)
-        .outerjoin(NotificationSetting, NotificationSetting.parent_id == PushDevice.parent_id)
-        .where(
-            PushDevice.parent_id.in_(parent_ids),
-            AuthSession.refresh_expires_at > now,
-            AuthSession.absolute_expires_at > now,
-            enabled.is_(True),
-        )
+        _schedule_targets(now)
+        .where(PushDevice.parent_id.in_(parent_ids))
         .order_by(PushDevice.parent_id, PushDevice.id)
     )
     targets: dict[uuid.UUID, list[tuple[uuid.UUID, str]]] = {}
     for parent_id, device_id, token in await session.execute(stmt):
         targets.setdefault(parent_id, []).append((device_id, token))
     return targets
+
+
+async def still_schedule_target(
+    session: AsyncSession,
+    *,
+    parent_id: uuid.UUID,
+    device_id: uuid.UUID,
+    device_token: str,
+    now: datetime,
+) -> bool:
+    """보내기 바로 직전에 다시 본다 — 그 기기가 아직 그 보호자의 것이고, 토큰이 같고, 로그인이
+    살아 있고, 일정 알림이 켜져 있나.
+
+    `schedule_push_targets` 로 읽은 목록을 끝까지 쓰면, 배치가 보내는 사이 로그아웃하고 다른
+    계정으로 로그인한 공용 기기에 앞 보호자의 알림(아이 · 일정 id)이 간다. 이 확인과 발송 사이의
+    짧은 틈은 남는다 — 보내는 동안 행을 잡으면 로그아웃이 FCM 응답을 기다리게 돼서 잡지 않는다.
+    """
+    stmt = _schedule_targets(now).where(
+        PushDevice.id == device_id,
+        PushDevice.parent_id == parent_id,
+        PushDevice.device_token == device_token,
+    )
+    return (await session.execute(stmt)).first() is not None
+
+
+def _schedule_targets(now: datetime) -> Select:
+    """일정 알림을 받을 수 있는 기기 — 로그인이 살아 있고 그 보호자의 일정 알림이 켜져 있다."""
+    enabled = func.coalesce(NotificationSetting.schedule_enabled, DEFAULT_SETTING.schedule_enabled)
+    return (
+        select(PushDevice.parent_id, PushDevice.id, PushDevice.device_token)
+        .join(AuthSession, AuthSession.id == PushDevice.session_id)
+        .outerjoin(NotificationSetting, NotificationSetting.parent_id == PushDevice.parent_id)
+        .where(
+            AuthSession.refresh_expires_at > now,
+            AuthSession.absolute_expires_at > now,
+            enabled.is_(True),
+        )
+    )
 
 
 async def forget_devices(session: AsyncSession, *, devices: list[tuple[uuid.UUID, str]]) -> None:

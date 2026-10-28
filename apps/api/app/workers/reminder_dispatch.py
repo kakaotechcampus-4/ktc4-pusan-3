@@ -3,6 +3,7 @@
 한 번 돌 때 하는 일:
   1. 울릴 시각이 지난 10분 안인 알림을 맡아 `sent_at` 을 찍고 커밋한다 (`claim_due_reminders`).
   2. 그 알림을 건 보호자의 기기 중 일정 알림을 켰고 로그인이 살아 있는 것에 FCM 으로 보낸다.
+     기기마다 보내기 직전에 한 번 더 본다 — 그사이 로그아웃한 공용 기기로 가지 않게.
   3. FCM 이 더는 유효하지 않다고 한 기기를 지운다.
 
 🚨 알림은 그 알림을 건 보호자 본인에게만 간다 — 다른 보호자는 각자 건다 (reminder 는 개인 것).
@@ -25,7 +26,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.alerts import configure_alerts
 from app.core.config import settings
 from app.core.logging_config import configure_logging
-from app.domains.notification.repository import forget_devices, schedule_push_targets
+from app.domains.notification.repository import (
+    forget_devices,
+    schedule_push_targets,
+    still_schedule_target,
+)
 from app.domains.schedule.repository import DueReminder, claim_due_reminders
 from app.infra.db.session import async_session_factory, engine
 from app.integrations import discord
@@ -84,6 +89,8 @@ class DispatchResult:
     """기기 한 대 이상에 보낸 알림."""
     no_device: int
     """받을 기기가 없었던 알림 — 스위치를 껐거나, 기기가 없거나, 로그인이 만료됐다."""
+    dropped: int
+    """보내기 직전에 다시 보니 빠진 기기 — 그사이 로그아웃 · 계정 변경 · 스위치 끄기."""
     forgotten: int
     """FCM 이 유효하지 않다고 해서 지운 기기."""
     failed: int
@@ -97,12 +104,12 @@ async def run_dispatch(session: AsyncSession, *, now: datetime, fcm: FcmClient) 
     #    FCM 응답을 기다린다
     await session.commit()
     if not due:
-        return DispatchResult(0, 0, 0, 0, 0)
+        return DispatchResult(0, 0, 0, 0, 0, 0)
 
     targets = await schedule_push_targets(
         session, parent_ids=list({r.parent_id for r in due}), now=now
     )
-    delivered = no_device = failed = 0
+    delivered = no_device = dropped = failed = 0
     gone: list[tuple] = []
     for reminder in due:
         devices = targets.get(reminder.parent_id, [])
@@ -112,6 +119,15 @@ async def run_dispatch(session: AsyncSession, *, now: datetime, fcm: FcmClient) 
         message = reminder_message(reminder)
         sent_any = False
         for device_id, token in devices:
+            if not await still_schedule_target(
+                session,
+                parent_id=reminder.parent_id,
+                device_id=device_id,
+                device_token=token,
+                now=now,
+            ):
+                dropped += 1
+                continue
             result = await fcm.send(token, message)
             if result is SendResult.SENT:
                 sent_any = True
@@ -122,9 +138,10 @@ async def run_dispatch(session: AsyncSession, *, now: datetime, fcm: FcmClient) 
         delivered += sent_any
     await forget_devices(session, devices=gone)
     await session.commit()
-    result = DispatchResult(len(due), delivered, no_device, len(gone), failed)
+    result = DispatchResult(len(due), delivered, no_device, dropped, len(gone), failed)
     log.info(
-        "일정 알림 발송: 맡음 %d · 보냄 %d · 받을 기기 없음 %d · 지운 기기 %d · 실패 %d",
+        "일정 알림 발송: 맡음 %d · 보냄 %d · 받을 기기 없음 %d · 직전에 빠진 기기 %d"
+        " · 지운 기기 %d · 실패 %d",
         *vars(result).values(),
     )
     return result
