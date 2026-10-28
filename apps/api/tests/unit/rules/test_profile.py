@@ -19,8 +19,22 @@ from app.rules.profile import (
     WRONG_COUNT_WINDOW_DAYS,
     apply_correction,
     apply_transition,
+    archived_by_time,
     compute_profile_status,
 )
+
+# -- 시간 경과 archived --
+
+
+class TestArchivedByTime:
+    def test_마지막_관찰_뒤_21일까지는_archived_가_아니다(self):
+        today = date(2026, 10, 1)
+        assert archived_by_time(last_observed_on=today - timedelta(days=21), today=today) is False
+
+    def test_22일이면_archived_다(self):
+        today = date(2026, 10, 1)
+        assert archived_by_time(last_observed_on=today - timedelta(days=22), today=today) is True
+
 
 # -- 상수 검증 --
 
