@@ -312,9 +312,13 @@ async def _checked_citations(
     if menus and (payload["agent"] != "food" or kind is not SuggestionKind.GENERAL):
         # 메뉴 근거는 Food 일반 추천만 단다(#442). 개인화는 아이 기록이 근거다
         raise SuggestionEvidenceError("메뉴 근거는 Food 일반 추천에만 단다")
-    if kind is SuggestionKind.GENERAL and not any(
-        item["source_kind"] in _DOC_KINDS | _MENU_KINDS for item in citations
+    if (
+        kind is SuggestionKind.GENERAL
+        and not payload.get("requested", False)
+        and not any(item["source_kind"] in _DOC_KINDS | _MENU_KINDS for item in citations)
     ):
+        # 보호자가 놀이를 정해 물은 일반 추천(`requested`)은 그 요청이 기준이라 문서 행이 없어도
+        # 된다 — "물놀이 뭐 하지?" 에 시드에 없는 놀이를 낼 수 있게 (루트 §2)
         raise SuggestionEvidenceError("일반 추천인데 문서 행 근거가 없다")
     if menus:
         # 실제 후보 풀(검수된 레시피)의 메뉴여야 근거다 — 아니면 근거 0행과 같다
