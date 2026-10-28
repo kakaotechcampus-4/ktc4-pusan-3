@@ -378,6 +378,19 @@ export interface Reminder {
 }
 
 /**
+ * `PUT /children/{cid}/events/{eid}/reminder` — 이 일정에 **내** 알림을 걸거나 바꾼다 (#594 · #609).
+ * 함께 보는 다른 보호자가 각자 거는 길이다. 지우기는 같은 주소의 `DELETE` (없어도 204).
+ * 🚨 승인 게이트가 아니다 (개인 설정). 최종 상태를 보내는 요청이라 Idempotency-Key 가 없다.
+ */
+export interface ReminderRequest {
+  lead: ReminderLead;
+}
+
+export interface ReminderResponse {
+  reminder: Reminder;
+}
+
+/**
  * 🚨 **`status` 가 없다** (#118). `event` 테이블에는 보호자가 제출한 행만 들어가서
  *    `draft` 와 `confirmed` 를 가를 일이 없다. 초안은 `EventDraft` 로 따로 오고 행이 아니다.
  */
@@ -730,6 +743,11 @@ export interface SubmitEventBody {
    * ⚠️ 키 이름과 모양이 미정이다 (§6 · #122 에서 "제안 경로 PR 에서 정한다" 로 남은 자리).
    */
   suggestion_ids?: string[];
+  /**
+   * 제출한 보호자 본인의 알림 (#594). 다른 보호자에게는 걸리지 않는다. 빼거나 `null` 이면 알림 없음.
+   * 🚨 수정(`PATCH`)에는 싣지 않는다 — 칸이 없으면 서버가 걸린 알림을 그대로 둔다 (`updateEventDraft`).
+   */
+  reminder?: Reminder | null;
 }
 
 /* ── 06 승인 ─────────────────────────────────────────────────────────── */

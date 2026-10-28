@@ -16,7 +16,6 @@ export const API_ERROR_CODES = [
   "consent_required", // 403 필수 동의 미동의·철회 — 저장 시도 전에 막힌다
   "not_found", // 404
   "owner_required", // 409
-  "already_sent", // 409 reminder 발송 완료
   "already_confirmed", // 409 승인 게이트 중복
   "already_exists", // 409 health_safety 등록 — active 끼리 (아이, 종류, 앞뒤 공백 뗀 이름)이 겹침 (#369). 🚨 실패가 아니라 "이미 기록에 있다" 다
   "already_corrected", // 409 `POST /corrections` 가 active 가 아닌 기록을 받음 (#277) — 값이 틀린 400 과 다르다
@@ -46,6 +45,9 @@ export const API_ERROR_CODES = [
   //    (`docs/api/auth-kakao-v1.md` §3-5).
   "policy_version_invalid",
   "validation_failed", // 400 바디 · 422 경로 값 (서버 `app/api/errors.py` · 명세 §8-1)
+  // 422 일정 알림이 그 일정 종류에 맞지 않거나 울릴 시각이 이미 지났다 (#594). 제출 · 수정이면
+  // 일정도 저장되지 않았다. 🚨 같은 값으로 다시 시도할 수 없다 — 알림을 다시 골라야 한다.
+  "invalid_reminder",
   "llm_unavailable", // 503 — 🚨 기본값으로 대체하지 않는다
 ] as const;
 
