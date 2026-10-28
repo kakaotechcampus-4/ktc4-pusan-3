@@ -21,8 +21,8 @@ class RawPlaceRow:
     latitude: str | None
     longitude: str | None
     reference_date: str | None  # 데이터기준일자(referenceDate) — "2026-06-30"
-    # 공원 관리번호(manageNo) — "시군구코드5자리-일련번호5자리" 모양이다. 도서관 표준데이터에는
-    # 번호 칸이 없어 None 이다
+    # 소스 안의 번호. 공원은 관리번호(manageNo) — "시군구코드5자리-일련번호5자리" 모양이고,
+    # 어린이놀이시설은 시설 번호(pfctSn)다. 도서관 표준데이터에는 번호 칸이 없어 None 이다
     manage_no: str | None = None
     # 공원 지번주소(없으면 도로명). 관리번호가 겹친 행이 같은 공원인지 가리는 데만 쓰고
     # 싣지 않는다 — place 표에 주소 칸이 없다. 도서관은 None 이다
@@ -32,3 +32,9 @@ class RawPlaceRow:
     amusement: str | None = None
     # 공원면적(parkAr, ㎡) 원문. 적재가 숫자로 읽어 `area_m2` 로 싣는다. 도서관은 None 이다
     area: str | None = None
+    # 어린이놀이시설만 — 실내외 코드(idrodrCd: O001 실내 · O002 실외), 운영 코드(operYnCd: B001
+    # 운영 · B003 이용금지), 법정동 코드 10자리(rgnCd). `kind` 에는 설치장소 코드(instlPlaceCd)가
+    # 온다
+    indoor: str | None = None
+    operating: str | None = None
+    region_code: str | None = None

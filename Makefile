@@ -66,7 +66,7 @@ help:
 	@echo "  make deploy-migrate 배포 DB 마이그레이션 (api 컨테이너 안에서 alembic upgrade heads)"
 	@echo "  make deploy-load-food-dry  배포 DB 에 Food 카탈로그를 받고 세기만 (쓰지 않음)"
 	@echo "  make deploy-load-food      배포 DB 에 Food 카탈로그 적재 (영양DB + 레시피, 한 트랜잭션)"
-	@echo "  make deploy-load-places-dry  배포 DB 에 장소(공원 · 도서관)를 받고 세기만 (쓰지 않음)"
+	@echo "  make deploy-load-places-dry  배포 DB 에 장소(공원 · 도서관 · 놀이시설)를 받고 세기만 (쓰지 않음)"
 	@echo "  make deploy-load-places      배포 DB 에 장소 적재 (덮고 없어진 곳은 지움, 한 트랜잭션)"
 	@echo ""
 	@echo "  install/dev/test/lint/fmt/db-* 는 apps/api 안에서 uv 로 실행됩니다."
@@ -220,7 +220,8 @@ deploy-load-food-dry:
 deploy-load-food:
 	$(COMPOSE_DEPLOY) run --rm api uv run --no-sync python -m scripts.load_food_catalog --all
 
-# 장소 적재 (#516). 공원 · 도서관 표준데이터를 place 로 싣는다. 출력은 건수뿐이다.
+# 장소 적재 (#516). 공원 · 도서관 표준데이터와 어린이놀이시설(화이트리스트)을 place 로 싣는다.
+# 출력은 건수뿐이다.
 deploy-load-places-dry:
 	$(COMPOSE_DEPLOY) run --rm api uv run --no-sync python -m scripts.load_places --all --dry-run
 

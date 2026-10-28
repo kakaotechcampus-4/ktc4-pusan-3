@@ -43,6 +43,20 @@ def park(
     )
 
 
+def kids(k: int, *, code: str = "A013", indoor: str = "O001") -> RawPlaceRow:
+    return RawPlaceRow(
+        name=f"시험놀이시설{k}",
+        kind=code,
+        latitude=f"{35.30 + k / 1000:.4f}",
+        longitude="129.2000",
+        reference_date=None,
+        manage_no=f"{100000 + k}",
+        indoor=indoor,
+        operating="B001",
+        region_code="1111010100",
+    )
+
+
 def library(k: int, *, name: str | None = None) -> RawPlaceRow:
     return RawPlaceRow(
         name=name or f"시험도서관{k}",
@@ -87,12 +101,14 @@ async def _empty_place(session):
 
 @pytest.fixture
 def load(opener):
-    async def go(*, parks=None, libraries=None, dry_run=False):
+    async def go(*, parks=None, libraries=None, kids=None, dry_run=False):
         return await run(
             parks=parks is not None,
             libraries=libraries is not None,
+            kids=kids is not None,
             fetch_parks=fetching(*parks) if parks is not None else _never,
             fetch_libraries=fetching(*libraries) if libraries is not None else _never,
+            fetch_kids=fetching(*kids) if kids is not None else _never,
             open_session=opener,
             now=NOW,
             dry_run=dry_run,
@@ -149,6 +165,36 @@ async def test_놀이터_여부와_면적을_계산해_싣는다(session, load):
         ("11110-00001", True, 12500.5),
         ("11110-00002", False, None),
     ]
+
+
+async def test_놀이시설은_설치장소와_실내외로_종류를_정해_싣는다(session, load):
+    loaded = await load(
+        kids=[kids(1), kids(2, code="A092", indoor="O002"), kids(3, code="A092", indoor="O001")]
+    )
+
+    assert (loaded[0].source, loaded[0].kept) == ("kids_play_facility", 3)
+    rows = (
+        await session.execute(
+            select(Place.source_id, Place.category, Place.sigungu_code, Place.has_playground)
+            .where(Place.source == "kids_play_facility")
+            .order_by(Place.source_id)
+        )
+    ).all()
+    assert [tuple(row) for row in rows] == [
+        ("100001", "indoor_playground", "11110", False),
+        ("100002", "playground", "11110", False),
+        ("100003", "indoor_playground", "11110", False),
+    ]
+
+
+async def test_놀이시설도_절반_미만이면_싣지_않는다(session, load):
+    await load(kids=[kids(k) for k in range(1, 6)], parks=[park(1)])
+
+    with pytest.raises(RuntimeError, match="절반"):
+        await load(kids=[kids(1), kids(2)], parks=[park(1), park(2)])
+
+    assert await _count(session, "kids_play_facility") == 5
+    assert await _count(session, "city_park") == 1  # 다른 소스도 쓰지 않았다
 
 
 async def test_다시_돌려도_행이_늘지_않는다(session, load):

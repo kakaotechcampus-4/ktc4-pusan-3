@@ -1,8 +1,9 @@
-"""장소 적재 (#516) — 공원 · 도서관 표준데이터 → place.
+"""장소 적재 (#516) — 공원 · 도서관 표준데이터 · 행안부 어린이놀이시설 → place.
 
-    uv run python -m scripts.load_places --all            # 공원 · 도서관
+    uv run python -m scripts.load_places --all            # 공원 · 도서관 · 어린이놀이시설
     uv run python -m scripts.load_places --parks
     uv run python -m scripts.load_places --libraries
+    uv run python -m scripts.load_places --kids           # 어린이놀이시설 중 화이트리스트만
     uv run python -m scripts.load_places --all --dry-run  # 받고 세기만 하고 쓰지 않는다
 
 - 받기를 먼저 다 끝내고 쓴다. 외부 API 를 기다리는 동안 DB 트랜잭션을 쥐지 않는다.
@@ -37,10 +38,10 @@ from app.agents.activity.schemas.common import PlaceCategory
 from app.core.place_raw import RawPlaceRow
 from app.domains.place import repository
 
-# 이 스크립트가 싣는 소스. 어린이놀이시설(`kids_play_facility`)은 어느 설치장소를 공공으로 볼지
-# PM 결정 뒤에 붙인다 (#516)
-LoadedSource = Literal["city_park", "library"]
+# 이 스크립트가 싣는 소스 — Activity 포트의 세 값(`PLACE_SOURCES`) 전부다
+LoadedSource = Literal["city_park", "library", "kids_play_facility"]
 
+# 종류가 소스로 정해지는 것. 어린이놀이시설은 설치장소 · 실내외로 정한다(`kids_category`)
 SOURCE_CATEGORY: dict[LoadedSource, PlaceCategory] = {
     "city_park": PlaceCategory.PARK,
     "library": PlaceCategory.LIBRARY,
@@ -49,6 +50,7 @@ SOURCE_CATEGORY: dict[LoadedSource, PlaceCategory] = {
 SOURCE_VERSION: dict[LoadedSource, str] = {
     "city_park": "tn_pubr_public_cty_park_info_api",
     "library": "tn_pubr_public_lbrry_api",
+    "kids_play_facility": "pfc3_getPfctInfo3",
 }
 
 # 한국 상자. `domains/place/models.py` KOREA_BOX_CHECK 와 같다 — 바꾸면 둘 다(+ 마이그레이션) 고친다
@@ -68,6 +70,28 @@ PARK_EXCLUDED_KINDS = frozenset({"묘지공원"})
 # 유희시설의 "해당없음"(12행)은 빈 칸이다
 PLAYGROUND_PARK_KIND = "어린이공원"
 _NO_AMUSEMENT = frozenset({"해당없음"})
+
+# 어린이놀이시설 중 싣는 설치장소(instlPlaceCd). 2026-10-28 실측 85,388행 중
+# 놀이제공영업소(키즈카페) 1,907 · 육아종합지원센터 142. 나머지는 싣지 않는다.
+# - 주택단지 · 어린이집 · 유치원 · 학교 · 학원 · 아동복지시설 · 대규모점포 · 식품접객업소 ·
+#   종교시설 · 의료기관은 보호자가 아이와 그냥 들어갈 곳이 아니다
+# - 도시공원(A003)은 공원 소스가 놀이터 여부(`has_playground`)로 이미 싣는다
+KIDS_CAFE = "A013"  # 놀이제공영업소 — 실내외와 상관없이 실내 놀이터다
+CHILDCARE_CENTER = "A092"  # 육아종합지원센터 — 실내면 실내 놀이터, 실외면 놀이터
+KIDS_PLACE_CODES = frozenset({KIDS_CAFE, CHILDCARE_CENTER})
+KIDS_INDOOR = "O001"  # 실내외 코드(idrodrCd). O002 는 실외
+KIDS_OUTDOOR = "O002"
+KIDS_OPERATING = "B001"  # 운영 코드(operYnCd). B003 은 이용금지(실측 화이트리스트 중 6행)
+# 이름이 일반 명사뿐인 시설("놀이터1" · "어린이놀이터 2호") — 보호자에게 어디인지 말해 주지 못한다.
+# 실측 전체 38행이 걸리고 화이트리스트(키즈카페 · 육아종합지원센터)에서는 0행이다. 업소 이름이 붙은
+# "OO키즈카페" 는 걸리지 않는다
+_GENERIC_NAME = re.compile(
+    r"(어린이|영유아|유아|아동|실내|실외|야외)*"
+    r"(놀이터|놀이시설|놀이방|놀이실|놀이공간|조합놀이대|놀이대|키즈카페)"
+    r"[0-9]*(호|번|동)?[0-9]*"
+)
+# 법정동 코드 10자리(시도 2 · 시군구 3 · 읍면동 3 · 리 2). 앞 5자리가 시군구 코드다
+_REGION_CODE = re.compile(r"[0-9]{10}")
 
 # 관리번호가 겹친 공원을 같은 곳으로 보는 기준 (2026-10-27 실측, 아래 `clean`).
 # - 이름이 같거나 한쪽이 다른 쪽을 품고("수랑" · "수랑어린이공원") 300m 안
@@ -96,6 +120,8 @@ class Drop(StrEnum):
     NO_COORDS = "좌표 없음"
     OUTSIDE_KOREA = "한국 밖"
     KIND_EXCLUDED = "제외 종류"
+    NOT_OPERATING = "운영 안 함"
+    GENERIC_NAME = "이름이 일반 명사뿐"
     DUPLICATE = "중복"
 
 
@@ -177,6 +203,29 @@ def has_playground(kind: str | None, amusement: str | None) -> bool:
     return bool(text) and text not in _NO_AMUSEMENT
 
 
+def kids_category(place_code: str, indoor: str | None) -> PlaceCategory | None:
+    """어린이놀이시설의 종류. 화이트리스트 밖이거나 실내외를 모르면 None — 싣지 않는다."""
+    if place_code == KIDS_CAFE:
+        return PlaceCategory.INDOOR_PLAYGROUND
+    if place_code == CHILDCARE_CENTER:
+        if indoor == KIDS_INDOOR:
+            return PlaceCategory.INDOOR_PLAYGROUND
+        if indoor == KIDS_OUTDOOR:
+            return PlaceCategory.PLAYGROUND
+    return None
+
+
+def generic_name(name: str) -> bool:
+    """이름이 "놀이터1" 처럼 일반 명사와 번호뿐인가. 공백 · 문장부호는 빼고 본다."""
+    return _GENERIC_NAME.fullmatch(re.sub(r"[\s()\[\]·\-_.,#]", "", name)) is not None
+
+
+def region_sigungu(region_code: str | None) -> str | None:
+    """법정동 코드 10자리의 앞 5자리(시군구 코드). 모양이 다르면 None 이다."""
+    code = (region_code or "").strip()
+    return code[:5] if _REGION_CODE.fullmatch(code) else None
+
+
 def sigungu_code(manage_no: str | None) -> str | None:
     """공원 관리번호 앞 5자리(시군구 코드). 모양이 "숫자5자리-" 가 아니면 None 이다."""
     if manage_no is None:
@@ -203,6 +252,17 @@ def _record(source: LoadedSource, raw: RawPlaceRow) -> PlaceRecord | Drop:
         return Drop.KIND_EXCLUDED
     if source == "city_park" and kind in PARK_EXCLUDED_KINDS:
         return Drop.KIND_EXCLUDED
+    if source == "kids_play_facility":
+        kids = kids_category(kind, (raw.indoor or "").strip())
+        if kids is None:
+            return Drop.KIND_EXCLUDED
+        if (raw.operating or "").strip() != KIDS_OPERATING:
+            return Drop.NOT_OPERATING
+        if generic_name(name):
+            return Drop.GENERIC_NAME
+        category = kids
+    else:
+        category = SOURCE_CATEGORY[source]
     lat, lng = parse_coord(raw.latitude), parse_coord(raw.longitude)
     if lat is None or lng is None:
         return Drop.NO_COORDS
@@ -214,6 +274,12 @@ def _record(source: LoadedSource, raw: RawPlaceRow) -> PlaceRecord | Drop:
             return Drop.NO_ID
         sigungu = sigungu_code(source_id)
         playground, area = has_playground(kind, raw.amusement), parse_area(raw.area)
+    elif source == "kids_play_facility":
+        source_id = (raw.manage_no or "").strip()
+        if not source_id:
+            return Drop.NO_ID
+        # 놀이시설은 그 자체가 놀이터라 놀이터 여부 칸은 공원용이다. 면적 칸도 없다
+        sigungu, playground, area = region_sigungu(raw.region_code), False, None
     else:
         # 도서관은 시군구 이름만 오고 코드가 없다. 이름 → 코드 대응은 후속이다
         source_id, sigungu = library_source_id(name, lat, lng), None
@@ -222,7 +288,7 @@ def _record(source: LoadedSource, raw: RawPlaceRow) -> PlaceRecord | Drop:
         source=source,
         source_id=source_id,
         name=name,
-        category=SOURCE_CATEGORY[source],
+        category=category,
         lat=lat,
         lng=lng,
         sigungu_code=sigungu,
@@ -362,8 +428,10 @@ async def run(
     *,
     parks: bool,
     libraries: bool,
+    kids: bool,
     fetch_parks: Callable[[], Awaitable[Sequence[RawPlaceRow]]],
     fetch_libraries: Callable[[], Awaitable[Sequence[RawPlaceRow]]],
+    fetch_kids: Callable[[], Awaitable[Sequence[RawPlaceRow]]],
     open_session: Callable[[], AbstractAsyncContextManager[AsyncSession]],
     now: datetime,
     dry_run: bool = False,
@@ -373,6 +441,8 @@ async def run(
         fetched.append(("city_park", await fetch_parks()))
     if libraries:
         fetched.append(("library", await fetch_libraries()))
+    if kids:
+        fetched.append(("kids_play_facility", await fetch_kids()))
     cleaned = [(source, clean(source, rows)) for source, rows in fetched]
     # 쓰기 전에 막는다. 건수만 말한다
     for source, result in cleaned:
@@ -441,21 +511,34 @@ async def _fetch_libraries() -> Sequence[RawPlaceRow]:
         return await client.libraries()
 
 
+async def _fetch_kids() -> Sequence[RawPlaceRow]:
+    from app.core.config import settings
+    from app.integrations.place.client import PlaceStdClient, place_batch_http
+
+    async with place_batch_http() as http:
+        client = PlaceStdClient(service_key=settings.DATA_GO_KR_SERVICE_KEY, http=http)
+        # 서버에서 설치장소 코드로 거른다 — 전체 86쪽 대신 세 쪽이다
+        return await client.kids_facilities(place_codes=sorted(KIDS_PLACE_CODES))
+
+
 def build_parser() -> argparse.ArgumentParser:
     # 모듈 docstring 을 그대로 쓰지 않는다 — `—` · 이모지는 Windows 콘솔(cp949)에서 못 찍어
     # `--help` 가 UnicodeEncodeError 로 죽는다
     parser = argparse.ArgumentParser(
-        description="장소 적재 (#516). 공원 · 도서관 표준데이터를 place 로 싣는다. 받기를 다 끝낸 "
-        "뒤 한 트랜잭션으로 덮고, 이번 받기에 없는 행은 지운다.",
+        description="장소 적재 (#516). 공원 · 도서관 표준데이터와 어린이놀이시설을 place 로 "
+        "싣는다. 받기를 다 끝낸 뒤 한 트랜잭션으로 덮고, 이번 받기에 없는 행은 지운다.",
         epilog=(
             "예) uv run python -m scripts.load_places --all --dry-run\n"
-            "    (--parks 나 --libraries 만 따로 돌릴 수도 있다)"
+            "    (--parks · --libraries · --kids 만 따로 돌릴 수도 있다)"
         ),
         formatter_class=argparse.RawTextHelpFormatter,
     )
     parser.add_argument("--parks", action="store_true", help="전국도시공원정보표준데이터")
     parser.add_argument("--libraries", action="store_true", help="전국도서관표준데이터")
-    parser.add_argument("--all", action="store_true", help="둘 다")
+    parser.add_argument(
+        "--kids", action="store_true", help="어린이놀이시설(키즈카페 · 육아종합지원센터만)"
+    )
+    parser.add_argument("--all", action="store_true", help="셋 다")
     parser.add_argument("--dry-run", action="store_true", help="받고 세기만 하고 쓰지 않는다")
     return parser
 
@@ -481,8 +564,8 @@ def summary(loaded: Sequence[Loaded], *, dry_run: bool) -> str:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    if not (args.parks or args.libraries or args.all):
-        parser.error("--parks · --libraries · --all 중 하나를 고른다")
+    if not (args.parks or args.libraries or args.kids or args.all):
+        parser.error("--parks · --libraries · --kids · --all 중 하나를 고른다")
 
     from app.infra.db.session import async_session_factory
 
@@ -490,8 +573,10 @@ def main(argv: list[str] | None = None) -> int:
         run(
             parks=args.parks or args.all,
             libraries=args.libraries or args.all,
+            kids=args.kids or args.all,
             fetch_parks=_fetch_parks,
             fetch_libraries=_fetch_libraries,
+            fetch_kids=_fetch_kids,
             open_session=async_session_factory,
             now=datetime.now(UTC),
             dry_run=args.dry_run,

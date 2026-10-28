@@ -24,7 +24,7 @@ from app.infra.db.base import Base
 
 # 마이그레이션과 같은 글자다. 값을 바꾸면 둘 다 고친다
 # source 는 Activity 포트의 세 값(`PLACE_SOURCES`)이다 — 마이그레이션의 글자와 같은지 테스트가
-# 대조한다. 어린이놀이시설은 아직 싣지 않는다 — 어느 설치장소를 공공으로 볼지 PM 결정 뒤 (#516)
+# 대조한다. 어린이놀이시설은 키즈카페 · 육아종합지원센터만 싣는다(`scripts/load_places.py`)
 SOURCE_CHECK = "source IN ({})".format(", ".join(f"'{source}'" for source in PLACE_SOURCES))
 # Activity `PlaceCategory` 의 다섯 값이다 — 모델이 고르는 닫힌 enum 과 같다
 CATEGORY_CHECK = (

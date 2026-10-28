@@ -21,6 +21,8 @@ import pytest
 
 from app.core.place_raw import RawPlaceRow
 from app.integrations.place.client import (
+    KIDS_MAX_PAGES,
+    KIDS_URL,
     LIBRARY_MAX_PAGES,
     LIBRARY_URL,
     PAGE_ROWS,
@@ -92,6 +94,47 @@ def library(name: str, **over: str) -> dict[str, str]:
         "insttCode": "0000000",
         "insttNm": "시험시",
     } | over
+
+
+def facility(sn: str, code: str = "A013", **over: str) -> dict[str, str | None]:
+    """행안부 어린이놀이시설 한 행 — 실제 응답의 칸 이름 · 타입을 따랐고 값은 지어냈다."""
+    return {
+        "pfctSn": sn,
+        "pfctNm": f"시험놀이시설{sn}",
+        "zip": "00000",
+        "lotnoAddr": None,
+        "ronaAddr": "시험시 시험로 3",
+        "instlYmd": "20200101",
+        "instlPlaceCd": code,
+        "instlPlaceCdNm": "놀이제공영업소",
+        "prvtPblcYnCd": "C001",
+        "operYnCd": "B001",
+        "operYnCdNm": "운영",
+        "idrodrCd": "O001",
+        "idrodrCdNm": "실내",
+        "rgnCd": "1111010100",
+        "rgnCdNm": "시험시 시험구 시험동",
+        "latCrtsVl": "35.3000",
+        "lotCrtsVl": "129.2000",
+        "exfcYn": "N",
+    } | over
+
+
+def kids_handler(rows_by_code: dict[str, list[dict]], seen: list[httpx.Request] | None = None):
+    """설치장소 코드로 거르고 1,000행씩 나눠 주는 서버. 응답은 `response` 로 감싸 온다."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if seen is not None:
+            seen.append(request)
+        q = query(request)
+        rows = rows_by_code.get(q["instlPlaceCd"][0], [])
+        page = int(q["pageIndex"][0])
+        items = rows[(page - 1) * PAGE_ROWS : page * PAGE_ROWS]
+        body = {"items": items, "pageIndex": page, "recordCountPerPage": PAGE_ROWS}
+        body |= {"totalCnt": len(rows), "totalPageCnt": -(-len(rows) // PAGE_ROWS)}
+        return ok({"response": {"header": {"resultCode": "00", "resultMsg": "OK"}, "body": body}})
+
+    return handler
 
 
 def query(request: httpx.Request) -> dict[str, list[str]]:
@@ -272,6 +315,9 @@ def test_원문_행에는_전화번호_관리기관_칸이_없다() -> None:
         "address",
         "amusement",
         "area",
+        "indoor",
+        "operating",
+        "region_code",
     }
 
 
@@ -344,6 +390,95 @@ async def test_키가_비면_부르지_않는다() -> None:
     with pytest.raises(PlaceApiError, match="인증키"):
         await build_client(handler, key="  ").parks()
     assert calls == 0
+
+
+# ── 어린이놀이시설 — 설치장소 코드로 서버에서 거른다 ────────────────────
+async def test_놀이시설은_설치장소_코드마다_걸러_받는다() -> None:
+    seen: list[httpx.Request] = []
+    handler = kids_handler(
+        {"A013": [facility("1"), facility("2")], "A092": [facility("3", "A092")]}, seen
+    )
+
+    rows = await build_client(handler).kids_facilities(place_codes=["A013", "A092"])
+
+    assert [row.manage_no for row in rows] == ["1", "2", "3"]
+    for request in seen:
+        assert str(request.url).startswith(KIDS_URL)
+        q = query(request)
+        assert q["serviceKey"] == [KEY]
+        assert q["returnType"] == ["json"]
+        assert q["recordCountPerPage"] == [str(PAGE_ROWS)]
+    assert [query(request)["instlPlaceCd"] for request in seen] == [["A013"], ["A092"]]
+
+
+async def test_놀이시설은_쪽을_넘겨_받는다() -> None:
+    seen: list[httpx.Request] = []
+    rows = [facility(str(k)) for k in range(PAGE_ROWS + 5)]
+
+    found = await build_client(kids_handler({"A013": rows}, seen)).kids_facilities(
+        place_codes=["A013"]
+    )
+
+    assert len(found) == PAGE_ROWS + 5
+    assert [query(request)["pageIndex"] for request in seen] == [["1"], ["2"]]
+
+
+async def test_놀이시설은_화이트리스트_칸만_옮긴다() -> None:
+    handler = kids_handler({"A092": [facility("7", "A092", idrodrCd="O002")]})
+
+    [row] = await build_client(handler).kids_facilities(place_codes=["A092"])
+
+    assert row == RawPlaceRow(
+        name="시험놀이시설7",
+        kind="A092",
+        latitude="35.3000",
+        longitude="129.2000",
+        reference_date=None,  # 데이터기준일자 칸이 없다
+        manage_no="7",
+        indoor="O002",
+        operating="B001",
+        region_code="1111010100",
+    )
+    assert row.address is None  # 주소는 옮기지 않는다
+
+
+async def test_설치장소_필터가_안_먹으면_실패한다() -> None:
+    # 서버가 필터를 무시하고 다른 설치장소를 섞어 주면 주택단지 놀이터까지 실린다
+    handler = kids_handler({"A013": [facility("1"), facility("2", "A010")]})
+
+    with pytest.raises(PlaceApiError, match="필터"):
+        await build_client(handler).kids_facilities(place_codes=["A013"])
+
+
+async def test_놀이시설_쪽수가_상한을_넘으면_받지_않는다() -> None:
+    # 필터가 안 먹어 전체(86쪽)가 오는 경우도 여기서 걸린다
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        body = {"items": [facility("1")], "totalCnt": PAGE_ROWS * KIDS_MAX_PAGES + 1}
+        return ok({"response": {"header": {"resultCode": "00"}, "body": body}})
+
+    with pytest.raises(PlaceApiError, match="상한"):
+        await build_client(handler).kids_facilities(place_codes=["A013"])
+    assert calls == 1
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"header": {"resultCode": "00"}, "body": {"items": [], "totalCnt": 0}},  # 감싸지 않았다
+        {"response": {"header": {"resultCode": "03", "resultMsg": "SECRET-BODY"}}},
+        {"response": {"header": {"resultCode": "00"}, "body": "SECRET-BODY"}},
+        ["SECRET-BODY"],
+    ],
+)
+async def test_놀이시설_응답_모양이_다르면_실패하고_키를_싣지_않는다(payload) -> None:
+    with pytest.raises(PlaceApiError) as caught:
+        await build_client(lambda request: ok(payload)).kids_facilities(place_codes=["A013"])
+
+    _no_secret(caught.value)
 
 
 # ── ④ 키 인코딩 ───────────────────────────────────────────────────────

@@ -27,13 +27,16 @@ from scripts.load_places import (
     build_parser,
     clean,
     distance_m,
+    generic_name,
     has_playground,
     in_korea,
+    kids_category,
     library_source_id,
     parse_area,
     parse_coord,
     parse_data_date,
     place_values,
+    region_sigungu,
     run,
     same_park,
     sigungu_code,
@@ -51,6 +54,22 @@ def park(no: str | None = "11110-00001", **over) -> RawPlaceRow:
         "longitude": "129.0000",
         "reference_date": "2026-06-30",
         "manage_no": no,
+    }
+    return RawPlaceRow(**values | over)
+
+
+def kids(no: str | None = "100001", **over) -> RawPlaceRow:
+    """어린이놀이시설 한 행 — 운영 중인 실내 키즈카페."""
+    values = {
+        "name": "시험키즈카페",
+        "kind": "A013",
+        "latitude": "35.3000",
+        "longitude": "129.2000",
+        "reference_date": None,
+        "manage_no": no,
+        "indoor": "O001",
+        "operating": "B001",
+        "region_code": "1111010100",
     }
     return RawPlaceRow(**values | over)
 
@@ -467,6 +486,96 @@ def test_적재_값에는_화이트리스트_칸만_있다():
     assert values["synced_at"] == NOW
 
 
+# ── 어린이놀이시설 — 키즈카페 · 육아종합지원센터만 ──────────────────────
+@pytest.mark.parametrize(
+    ("code", "indoor", "expected"),
+    [
+        ("A013", "O001", PlaceCategory.INDOOR_PLAYGROUND),  # 키즈카페
+        ("A013", "O002", PlaceCategory.INDOOR_PLAYGROUND),  # 실외 칸이어도 키즈카페는 실내 놀이터
+        ("A092", "O001", PlaceCategory.INDOOR_PLAYGROUND),  # 육아종합지원센터 실내
+        ("A092", "O002", PlaceCategory.PLAYGROUND),  # 육아종합지원센터 실외
+        ("A092", "", None),  # 실내외를 모르면 고를 수 없다
+        ("A003", "O002", None),  # 도시공원 — 공원 소스가 놀이터 여부로 싣는다
+        ("A010", "O002", None),  # 주택단지
+        ("A006", "O001", None),  # 어린이집
+    ],
+)
+def test_놀이시설의_종류는_설치장소와_실내외로_정한다(code, indoor, expected):
+    assert kids_category(code, indoor) == expected
+
+
+def test_놀이시설_행을_적재_행으로_옮긴다():
+    [record] = clean("kids_play_facility", [kids()]).records
+
+    assert record.source == "kids_play_facility"
+    assert record.source_id == "100001"
+    assert record.category is PlaceCategory.INDOOR_PLAYGROUND
+    assert record.sigungu_code == "11110"  # 법정동 코드 앞 5자리
+    assert record.data_date is None  # 데이터기준일자 칸이 없다
+    assert (record.has_playground, record.area_m2) == (False, None)
+    assert place_values(record, now=NOW)["source_version"] == "pfc3_getPfctInfo3"
+
+
+@pytest.mark.parametrize(
+    ("raw", "reason"),
+    [
+        (kids(kind="A010"), Drop.KIND_EXCLUDED),  # 주택단지
+        (kids(kind="A092", indoor=None), Drop.KIND_EXCLUDED),
+        (kids(operating="B003"), Drop.NOT_OPERATING),  # 이용금지
+        (kids(operating=None), Drop.NOT_OPERATING),
+        (kids(name="어린이놀이터 2호"), Drop.GENERIC_NAME),
+        (kids(latitude=None), Drop.NO_COORDS),
+        (kids(latitude="129.2", longitude="35.3"), Drop.OUTSIDE_KOREA),
+        (kids(no=None), Drop.NO_ID),
+    ],
+)
+def test_놀이시설에서_버리는_행(raw, reason):
+    result = clean("kids_play_facility", [raw])
+
+    assert result.records == ()
+    assert result.dropped == {reason: 1}
+
+
+def test_같은_번호의_놀이시설은_하나만_남는다():
+    result = clean("kids_play_facility", [kids(name="먼저"), kids(name="나중")])
+
+    assert [record.name for record in result.records] == ["먼저"]
+    assert result.dropped == {Drop.DUPLICATE: 1}
+
+
+@pytest.mark.parametrize(
+    ("name", "generic"),
+    [
+        ("놀이터1", True),
+        ("어린이놀이터 2호", True),
+        ("실내 놀이시설", True),
+        ("유아놀이방", True),
+        ("키즈카페", True),
+        ("시험키즈카페", False),  # 업소 이름이 있다
+        ("시험시육아종합지원센터 놀이실", False),
+        ("○○아파트 놀이터", False),
+    ],
+)
+def test_이름이_일반_명사뿐인지_본다(name, generic):
+    assert generic_name(name) is generic
+
+
+@pytest.mark.parametrize(
+    ("code", "expected"),
+    [
+        ("1111010100", "11110"),
+        (" 2626010800 ", "26260"),
+        ("11110", None),  # 시군구 코드만 — 법정동 코드 모양이 아니다
+        ("111101010", None),
+        ("11110A0100", None),
+        ("", None),
+        (None, None),
+    ],
+)
+def test_법정동_코드_앞_5자리가_시군구_코드다(code, expected):
+    assert region_sigungu(code) == expected
+
+
 # ── run(): 쓰기 전에 막는 것 ──────────────────────────────────────────
 def _never_open():
     @asynccontextmanager
@@ -479,6 +588,10 @@ def _never_open():
 
 async def _rows(*rows: RawPlaceRow):
     return list(rows)
+
+
+async def _never_fetch():
+    raise AssertionError("고르지 않은 소스는 받지 않는다")
 
 
 @pytest.mark.parametrize(
@@ -496,8 +609,10 @@ async def test_남은_행이_0건이면_DB_를_열지_않는다(rows):
         await run(
             parks=True,
             libraries=True,
+            kids=False,
             fetch_parks=fetch,
             fetch_libraries=lambda: _rows(library()),
+            fetch_kids=_never_fetch,
             open_session=_never_open(),
             now=NOW,
         )
@@ -511,8 +626,10 @@ async def test_받다가_실패하면_DB_를_열지_않는다():
         await run(
             parks=True,
             libraries=True,
+            kids=False,
             fetch_parks=lambda: _rows(park()),
             fetch_libraries=broken,
+            fetch_kids=_never_fetch,
             open_session=_never_open(),
             now=NOW,
         )
@@ -526,11 +643,33 @@ async def test_고르지_않은_소스는_받지_않는다():
         await run(
             parks=True,
             libraries=False,
+            kids=False,
             fetch_parks=lambda: _rows(),
             fetch_libraries=never,
+            fetch_kids=never,
             open_session=_never_open(),
             now=NOW,
         )
+
+
+async def test_놀이시설이_0건이면_DB_를_열지_않는다():
+    with pytest.raises(RuntimeError, match="kids_play_facility"):
+        await run(
+            parks=False,
+            libraries=False,
+            kids=True,
+            fetch_parks=_never_fetch,
+            fetch_libraries=_never_fetch,
+            fetch_kids=lambda: _rows(kids(operating="B003")),
+            open_session=_never_open(),
+            now=NOW,
+        )
+
+
+def test_kids_는_all_에_들어_있다():
+    args = build_parser().parse_args(["--all"])
+    assert args.all and not args.kids  # main 이 --all 을 셋 다로 읽는다
+    assert build_parser().parse_args(["--kids"]).kids
 
 
 # ── 출력 ──────────────────────────────────────────────────────────────
