@@ -9,7 +9,7 @@ lead 는 NOT NULL 로 바로 더한다 — reminder 에는 아직 쓰기 경로�
 ADD COLUMN 이 실패한다(옮길 값이 없다). downgrade 도 같은 이유로 행이 있으면 실패한다.
 
 Revision ID: db405527cc82
-Revises: 091b165cedea
+Revises: 5bdc0aad2e70
 Create Date: 2026-10-28
 """
 
@@ -21,7 +21,7 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision: str = "db405527cc82"
-down_revision: Union[str, Sequence[str], None] = "091b165cedea"
+down_revision: Union[str, Sequence[str], None] = "5bdc0aad2e70"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
