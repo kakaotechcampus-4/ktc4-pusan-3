@@ -9,6 +9,7 @@ import { AuthGate } from "@/components/auth-gate";
 import { ScreenTransition } from "@/components/route-transition";
 import { ChildNav } from "@/components/child-nav";
 import { ConsentSection, LegalDocumentSection } from "@/components/consent-section";
+import { NotificationSection } from "@/components/notification-section";
 import { ParentSection } from "@/components/parent-section";
 import { SettingsGroup, SettingsLinkRow } from "@/components/settings-row";
 import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
@@ -31,8 +32,9 @@ import { BACK, FORWARD } from "@/lib/view-transition";
  * 🚨 **맨 위에 현황 요약을 두지 않는다.** 한동안 `card-accent` 한 장에 모아 뒀는데, 그 값들이
  *    바로 아래 구역들이 이미 말하는 것이라 **같은 사실을 두 번** 적는 꼴이었다.
  *
- * 🚨 **위에서 아래로 "손대는 것 → 읽는 것 → 나가는 것" 이다.** 지금 켜고 끌 수 있는 동의가
- *    위에 서고, 읽기만 하는 약관 목록이 그 아래, 계정(로그아웃·탈퇴)이 마지막이다.
+ * 🚨 **위에서 아래로 "손대는 것 → 읽는 것 → 나가는 것" 이다.** 함께 보는 보호자, 알림, 지금 켜고
+ *    끌 수 있는 동의가 위에 서고, 읽기만 하는 약관 목록이 그 아래, 계정(로그아웃·탈퇴)이 마지막이다.
+ *    알림(#609)은 날마다 손대는 쪽이라 동의보다 위다.
  *    손댈 수 없는 넷이 손댈 수 있는 하나보다 위에서 자리를 먹지 않게 한다.
  *
  * 🚨 **아이 정보를 여기서 다루지 않는다.** 이름·생일·알레르기는 11 아이 프로필이 소유하고,
@@ -111,8 +113,8 @@ function SettingsScreen() {
         {/* 아래 "동의" 구역과 같은 값으로 고른다 — 없는 구역을 안내하지 않는다 */}
         <p className="text-body-sm text-ink-muted mt-2">
           {hasOptionalConsent
-            ? "함께 보는 사람과 동의를 여기서 관리해요."
-            : "함께 보는 사람과 계정을 여기서 관리해요."}
+            ? "함께 보는 사람과 알림, 동의를 여기서 관리해요."
+            : "함께 보는 사람과 알림, 계정을 여기서 관리해요."}
         </p>
       </header>
 
@@ -140,6 +142,10 @@ function SettingsScreen() {
           inviteOpen={inviteOpen}
           onInviteOpenChange={setInviteOpen}
         />
+      </Section>
+
+      <Section title="알림" description="내 계정에만 적용돼요. 함께 보는 보호자는 각자 정해요.">
+        <NotificationSection />
       </Section>
 
       {hasOptionalConsent ? (

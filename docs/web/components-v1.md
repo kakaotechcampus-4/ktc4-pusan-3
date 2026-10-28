@@ -44,7 +44,7 @@
   `AuthGate`/`SessionChecking`/`SessionUnreachable` · `ChildScope` · `ObservationList` · `AffinityList` · `CorrectionButtons` · `MemoryDetailSheet` ·
   `SuggestionFeedbackList` · `MonthGrid`/`DayMarkLegend` · `CalendarDayPanel` ·
   `SettingsGroup`/`SettingsLinkRow`/`SettingsInfoRow` · `StartBackLink`(01 · 초대 → 00-1) · `ConsentSection`/`LegalDocumentSection` ·
-  `ParentSection` · `AccountSection` ·
+  `ParentSection` · `AccountSection` · `NotificationSection`(10 설정의 일정 알림 켜고 끄기 · 동의 줄과 같은 모양 · 복약 줄은 발송이 붙을 때까지 없다 · #609) ·
   `ChildIdentityCard`/`ChildIdentitySheet` · `GrowthLogList`/`GrowthLatestCard` · `GrowthSheet` ·
   `GrowthChart` · `HealthSafetyList`/`HealthSafetySheet` · `SafetyScanReview`/`SafetyScanRowSheet` ·
   `PhotoReview`/`PhotoEntrySheet` · `PhotoSourceSheet` ·

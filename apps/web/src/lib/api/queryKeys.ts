@@ -15,6 +15,8 @@ export const qk = {
 
   me: () => ["me"] as const,
   consents: (childId?: string) => ["consents", childId ?? null] as const,
+  /** GET /me/notification-settings — 보호자 단위라 아이 스코프 밖이다 (#609). */
+  notificationSettings: () => ["notification-settings"] as const,
 
   child: (childId: string) => ["child", childId] as const,
 

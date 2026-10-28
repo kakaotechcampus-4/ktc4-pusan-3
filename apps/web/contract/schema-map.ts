@@ -49,6 +49,7 @@ export const SCHEMA_MAP: Record<string, MapValue> = {
   ConsentOut: "ConsentResponse.consent",
   ConsentHistoryEntry: "ConsentHistoryEntry",
   ConsentsResponse: "ConsentsResponse",
+  NotificationSettings: "NotificationSettings",
 
   /* ── 아이 · 보호자 · 초대 ── */
   CreateChildRequest: "CreateChildRequest",
@@ -239,5 +240,4 @@ export const NOT_MAPPED: Record<string, string> = {
   AnswerResponse: "05 가 되묻기 답의 응답 본문을 읽지 않는다",
   PushDeviceIn: "웹 미사용 — FE 후속 #594 (PUT /me/push-device — 푸시 토큰 등록)",
   PushPlatform: "웹 미사용 — FE 후속 #594 (PushDeviceIn.platform)",
-  NotificationSettings: "웹 미사용 — FE 후속 #594 (설정 탭 일정 · 복약 알림 스위치)",
 };
