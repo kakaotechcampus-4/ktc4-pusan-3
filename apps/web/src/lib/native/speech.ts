@@ -37,23 +37,37 @@ declare global {
   }
 }
 
-/** 웹이 안내를 고르는 이유. 셸이 인식기 오류 코드를 이 다섯으로 줄여 보낸다. */
-export type SpeechErrorReason = "denied" | "unsupported" | "preparing" | "no-speech" | "failed";
+/**
+ * 웹이 안내를 고르는 이유. 셸이 인식기 오류 코드와 권한 응답을 이 여섯으로 줄여 보낸다.
+ * `declined` 는 다시 누르면 권한 창이 한 번 더 뜨고, `denied` 는 설정에서만 켤 수 있다.
+ */
+export type SpeechErrorReason =
+  "declined" | "denied" | "unsupported" | "preparing" | "no-speech" | "failed";
 
 /**
  * 셸이 알리는 것.
  *
+ * - `asking` — 곧 시스템 권한 창이 뜬다. 왜 마이크가 필요한지 먼저 말한다 (`SPEECH_ASKING`).
+ *   Android 권한 창에는 우리 문장이 나오지 않는다 (정보통신망법 제22조의2 선택 접근권한 고지).
+ * - `volume` — 들리는 소리의 크기 0~1. 음량 막대가 쓴다.
  * - `result` 의 `final` 이 거짓이면 아직 말하는 중이다 — 같은 자리의 글자를 바꿔 끼운다.
  *   참이면 그 구간이 끝났다 — 다음 구간은 그 뒤에 붙는다.
  */
 export type SpeechEvent =
+  | { type: "asking" }
   | { type: "start" }
+  | { type: "volume"; level: number }
   | { type: "result"; text: string; final: boolean }
   | { type: "end" }
   | { type: "error"; reason: SpeechErrorReason };
 
+/** 권한 창이 뜨기 직전에 하는 말. 🚨 음성이 밖으로 나가지 않는다는 것까지 말한다 — 그게 이 권한의 조건이다. */
+export const SPEECH_ASKING =
+  "말한 내용을 휴대폰 안에서 글자로 바꾸려고 마이크를 써요. 음성은 휴대폰 밖으로 보내지 않아요.";
+
 /** 이유마다 보호자에게 하는 말. 🚨 화면 글자라 기호 · 줄표를 쓰지 않는다 (apps/web/CLAUDE.md §5). */
 export const SPEECH_NOTICE: Record<SpeechErrorReason, string> = {
+  declined: "마이크를 허용해야 말로 적기를 쓸 수 있어요. 다시 누르면 한 번 더 물어요.",
   denied: "마이크 권한이 꺼져 있어요. 휴대폰 설정에서 아이캐치의 마이크를 켜 주세요.",
   unsupported: "이 휴대폰에서는 말로 적기를 쓸 수 없어요. 글로 적어 주세요.",
   preparing: "한국어 음성 인식을 휴대폰에 내려받고 있어요. 조금 뒤에 다시 눌러 주세요.",
@@ -81,6 +95,7 @@ export function readSpeechSupport(): SpeechSupport {
 }
 
 const ERROR_REASONS: readonly string[] = [
+  "declined",
   "denied",
   "unsupported",
   "preparing",
@@ -93,9 +108,12 @@ export function isSpeechEvent(value: unknown): value is SpeechEvent {
   if (typeof value !== "object" || value === null) return false;
   const event = value as Record<string, unknown>;
   switch (event.type) {
+    case "asking":
     case "start":
     case "end":
       return true;
+    case "volume":
+      return typeof event.level === "number" && event.level >= 0 && event.level <= 1;
     case "result":
       return typeof event.text === "string" && typeof event.final === "boolean";
     case "error":

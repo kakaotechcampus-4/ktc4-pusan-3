@@ -1,16 +1,18 @@
 "use client";
 
-import { ArrowUp, Camera, Mic } from "lucide-react";
-import type { ReactNode } from "react";
+import { ArrowUp, Camera, Check, Mic, X } from "lucide-react";
+import { type ReactNode, useEffect, useRef } from "react";
 
 import { AgentPrompts } from "@/components/agent-prompts";
 import { IconButton } from "@/components/ui/icon-button";
 import { Named } from "@/components/ui/named";
 import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
 import { TextArea } from "@/components/ui/text-area";
+import { VoiceLevelMeter } from "@/components/voice-level-meter";
 import { useVoiceInput } from "@/hooks/use-voice-input";
 import type { HomeResponse } from "@/lib/api/types";
 import { PENDING_SERVER_FEATURES } from "@/lib/features";
+import { SPEECH_ASKING } from "@/lib/native/speech";
 import { VIEW_TRANSITION } from "@/lib/view-transition";
 
 /**
@@ -86,7 +88,17 @@ export function HomeComposer({
   const canSubmit = value.trim().length > 0 && !pending && !locked;
   const voice = useVoiceInput({ value, onChange });
 
-  // 보내면 듣기를 버린다 — 그 뒤에 오는 글자가 비운 입력창을 다시 채우면 안 된다 (`useVoiceInput`).
+  // 듣는 동안 마이크 버튼이 사라진다 — 포커스를 "다 말했어요" 로 옮겼다가, 끝나면 마이크로 돌려준다.
+  const micRef = useRef<HTMLButtonElement>(null);
+  const finishRef = useRef<HTMLButtonElement>(null);
+  const wasListening = useRef(false);
+  useEffect(() => {
+    if (voice.listening === wasListening.current) return;
+    wasListening.current = voice.listening;
+    (voice.listening ? finishRef : micRef).current?.focus();
+  }, [voice.listening]);
+
+  // 보내면 지난 안내를 지운다. 듣는 동안은 보내기가 비켜 있어 여기 오지 않지만, 듣기도 막아 둔다 (`useVoiceInput`).
   const submit = () => {
     voice.cancel();
     onSubmit();
@@ -100,7 +112,7 @@ export function HomeComposer({
       maxHeightPx={104}
       /* 🚨 한 줄에 들어가는 길이여야 한다. 버튼 3개가 132px 을 가져가서 입력에 남는 폭이
          206px 뿐이고, 이보다 길면 빈 입력창이 두 줄로 선다. 전체 문구는 위의 라벨이 진다. */
-      placeholder="말하듯 적어주세요"
+      placeholder={voice.listening ? "듣고 있어요" : "말하듯 적어주세요"}
       value={value}
       onChange={(e) => onChange(e.target.value)}
       // 모바일 키보드의 Enter 자리에 "보내기" 가 뜬다 — 아래 Enter 동작과 같은 말을 한다.
@@ -112,8 +124,9 @@ export function HomeComposer({
         if (e.key !== "Enter" || e.shiftKey) return;
         if (e.nativeEvent.isComposing || e.keyCode === 229) return;
         e.preventDefault();
-        // 보낼 수 없을 때(빈 입력 · 답을 기다리는 중)도 줄바꿈으로 새지 않게 막기만 한다.
-        if (canSubmit) submit();
+        // 보낼 수 없을 때(빈 입력 · 답을 기다리는 중 · 듣는 중)도 줄바꿈으로 새지 않게 막기만 한다.
+        // 듣는 동안은 보내기 버튼이 비켜 있다 — Enter 도 같은 말을 한다.
+        if (canSubmit && !voice.listening) submit();
       }}
       disabled={locked}
       // 듣는 동안 고친 글은 다음에 들은 말이 덮는다 (`useVoiceInput`).
@@ -142,57 +155,77 @@ export function HomeComposer({
              비어 있을 때는 높이도 간격도 0 이고, 글자가 있을 때만 알약과 띄운다. */}
       <div>
         <p role="status" className="text-body-sm text-ink-muted px-3 [&:not(:empty)]:pb-2">
-          {voice.listening ? "듣고 있어요. 다 말했으면 마이크를 다시 눌러 주세요." : voice.notice}
+          {voice.asking
+            ? SPEECH_ASKING
+            : voice.listening
+              ? "듣고 있어요. 말하면 입력창에 바로 적혀요."
+              : voice.notice}
         </p>
 
         {/* 알약 하나 안에 버튼·입력·보내기가 다 들어간다. 입력만 테두리를 갖지 않는 이유(§7 bare). */}
         <Named name={VIEW_TRANSITION.chatBar}>
           <div className="bg-surface-muted flex items-end gap-1 rounded-full p-1">
-            {/* 🚨 마이크처럼 비활성으로 세우지 않고 숨긴다 — 이유를 말할 수 있는 미정(음성 방침)이 아니라
-              서버에 아직 없는 기능이라, 보호자에게 남길 설명이 없다 (`lib/features.ts` · #409). */}
-            {PENDING_SERVER_FEATURES.photoEntry ? (
-              <IconButton label="사진으로 적기" onClick={onPickPhoto} disabled={locked}>
-                <Camera aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
-              </IconButton>
-            ) : null}
-            {voice.support === "ready" ? (
-              // 이름은 그대로 두고 켜짐은 `aria-pressed` 가 말한다 — 이름까지 바꾸면 "그만 듣기, 눌림" 처럼 겹쳐 읽힌다.
-              <IconButton
-                label="말로 적기"
-                aria-pressed={voice.listening}
-                onClick={voice.toggle}
-                disabled={locked}
-              >
-                <Mic aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
-              </IconButton>
+            {voice.listening ? (
+              // 듣는 동안: [입력] [음량 막대] [들은 말 지우기] [다 말했어요]. 사진과 보내기는 비킨다 — 들을 때 할 일은
+              // 끝내는 것뿐이고, 보내기가 남아 있으면 다 듣기 전에 보내는 길이 열린다.
+              <>
+                <div className="min-w-0 flex-1">{input}</div>
+                <VoiceLevelMeter />
+                <IconButton label="들은 말 지우기" onClick={voice.discard}>
+                  <X aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
+                </IconButton>
+                <IconButton ref={finishRef} label="다 말했어요" tone="brand" onClick={voice.finish}>
+                  <Check aria-hidden size={ICON_SIZE.md} strokeWidth={2} />
+                </IconButton>
+              </>
             ) : (
-              <IconButton
-                label={
-                  voice.support === "none"
-                    ? "말로 적기 (앱에서 쓸 수 있어요)"
-                    : "말로 적기 (이 휴대폰에서는 쓸 수 없어요)"
-                }
-                disabled
-              >
-                <Mic aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
-              </IconButton>
+              <>
+                {/* 🚨 마이크처럼 비활성으로 세우지 않고 숨긴다 — 이유를 말할 수 있는 미정(음성 방침)이 아니라
+                    서버에 아직 없는 기능이라, 보호자에게 남길 설명이 없다 (`lib/features.ts` · #409). */}
+                {PENDING_SERVER_FEATURES.photoEntry ? (
+                  <IconButton label="사진으로 적기" onClick={onPickPhoto} disabled={locked}>
+                    <Camera aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
+                  </IconButton>
+                ) : null}
+                {voice.support === "ready" ? (
+                  <IconButton
+                    ref={micRef}
+                    label="말로 적기"
+                    onClick={voice.start}
+                    disabled={locked}
+                  >
+                    <Mic aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
+                  </IconButton>
+                ) : (
+                  <IconButton
+                    label={
+                      voice.support === "none"
+                        ? "말로 적기 (앱에서 쓸 수 있어요)"
+                        : "말로 적기 (이 휴대폰에서는 쓸 수 없어요)"
+                    }
+                    disabled
+                  >
+                    <Mic aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
+                  </IconButton>
+                )}
+
+                <div className="min-w-0 flex-1">
+                  {sentLine ? <Named name={VIEW_TRANSITION.sentLine}>{input}</Named> : input}
+                </div>
+
+                {/* 🚨 여기에 Spinner 를 넣지 않는다. prefers-reduced-motion 에서는 스피너가 숨는데(문서 §8)
+                    글자가 없는 버튼이라 빈 원만 남는다 — 기다리는 중이라는 것은 비활성 상태와 이름이 말한다. */}
+                <IconButton
+                  label={pending ? busyLabel : "이 이야기 남기기"}
+                  tone="brand"
+                  aria-busy={pending}
+                  disabled={!canSubmit}
+                  onClick={submit}
+                >
+                  <ArrowUp aria-hidden size={ICON_SIZE.md} strokeWidth={2} />
+                </IconButton>
+              </>
             )}
-
-            <div className="min-w-0 flex-1">
-              {sentLine ? <Named name={VIEW_TRANSITION.sentLine}>{input}</Named> : input}
-            </div>
-
-            {/* 🚨 여기에 Spinner 를 넣지 않는다. prefers-reduced-motion 에서는 스피너가 숨는데(문서 §8)
-            글자가 없는 버튼이라 빈 원만 남는다 — 기다리는 중이라는 것은 비활성 상태와 이름이 말한다. */}
-            <IconButton
-              label={pending ? busyLabel : "이 이야기 남기기"}
-              tone="brand"
-              aria-busy={pending}
-              disabled={!canSubmit}
-              onClick={submit}
-            >
-              <ArrowUp aria-hidden size={ICON_SIZE.md} strokeWidth={2} />
-            </IconButton>
           </div>
         </Named>
       </div>
