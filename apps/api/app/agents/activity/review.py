@@ -16,16 +16,12 @@
 사유는 코드로만 남긴다 — 활동명 · 근거 문장을 싣지 않는다 (로그로 흘러간다).
 """
 
-from collections import Counter
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import date
 from enum import StrEnum
-from functools import cache
-from math import ceil
 from uuid import UUID
 
-from app.agents.activity.doc_seed import activity_doc_seed
 from app.agents.activity.readouts import PLACE_NOTICE, PLACE_NOTICE_UNDATED, READOUTS
 from app.agents.activity.result import ErrorCode
 from app.agents.activity.rules import is_recent_duplicate, normalize_activity, overstates
@@ -43,7 +39,6 @@ from app.agents.common.reference import age_gates
 from app.agents.common.refs import EvidenceCitation, Ref
 from app.agents.common.suggestion import SuggestionDraft, SuggestionRejected, build
 from app.rules.evaluative import find_evaluative
-from app.rules.term_match import normalize, split_words
 
 # 이 월령 미만은 보호자가 같이 하는 활동만 낸다 (3-3). 밴드 경계와 따로 둔다 —
 # 로그 편의로 밴드를 옮길 때 안전 경계가 같이 끌려가지 않게. 값은 `reference/age_gates.yaml` (#372).
@@ -71,7 +66,6 @@ class RejectReason(StrEnum):
     CAREGIVER_ROLE = "caregiver_role"
     UNKNOWN_PLACE = "unknown_place"
     OUTDOOR_CLOSED = "outdoor_closed"
-    UNRELATED_DOC = "unrelated_doc"
     BUILD = "build_rejected"
 
 
@@ -93,10 +87,6 @@ GUIDANCE: dict[RejectReason, str] = {
     RejectReason.OUTDOOR_CLOSED: (
         "그날(day)은 바깥 활동이 어려운 날이다. setting 이 indoor 나 either 인 활동으로 바꾸거나,"
         " lookup_weather 로 바깥 활동이 되는 날을 찾아 day 를 고친다."
-    ),
-    RejectReason.UNRELATED_DOC: (
-        "근거로 단 [예시] 문서 행이 그 활동과 맞지 않는다. 활동에 맞는 [예시] 행을 근거로 달거나,"
-        " [예시]에 있는 활동으로 바꾼다."
     ),
     RejectReason.BUILD: (
         "아이 기록을 인용하지 않으면 [예시] 문서 행 id 를 하나 이상 인용한다. "
@@ -258,20 +248,6 @@ def _check(
             return RejectReason.UNKNOWN_EVIDENCE, (), None
         resolved.append((pick, found))
 
-    # 문서 행은 "이 활동의 근거" 다 — [예시]에 있기만 하면 통과시키면 손 씻기 문서가 종이컵 쌓기의
-    # 근거로 붙는다(운영 QA). 맞지 않는 문서 행은 근거에서 뗀다. 남는 근거가 없으면 거절한다 —
-    # 일반 추천은 근거가 문서 행뿐이라 여기서 막아야 한다 (루트 §2). 아이 기록이나 맞는 문서 행이
-    # 남으면 후보는 그대로 나간다 — 인용 하나 때문에 후보를 다시 내게 하면 재호출만 늘어 failed 에
-    # 가까워진다 (#557 리뷰)
-    related = [
-        (pick, found)
-        for pick, found in resolved
-        if not isinstance(found, ActivityDocRow) or _doc_related(candidate, found)
-    ]
-    if resolved and not related:
-        return RejectReason.UNRELATED_DOC, (), None
-    resolved = related
-
     place: PlaceRow | None = None
     if candidate.place_name and candidate.place_name.strip():
         place = places.get(normalize_activity(candidate.place_name))
@@ -347,95 +323,6 @@ def _with_place(content: str, place: str | None) -> str:
     if place is None or normalize_activity(place) in normalize_activity(content):
         return content
     return f"{place}에서 {content}"
-
-
-# 문서에서 활동을 가르지 못하는 낱말 — 어느 놀이 문장에나 나온다
-_GENERIC_WORDS = frozenset(
-    {
-        "보기",
-        "하기",
-        "놀이",
-        "만들기",
-        "함께",
-        "같이",
-        "다음",
-        "따라",
-        "놀기",
-        "하며",
-        "보며",
-        "주기",
-        "보고",
-        "한다",
-        "하고",
-        "본다",
-        "다시",
-        "하나",
-        "있는",
-        "같은",
-        "내며",
-    }
-)
-# 시드 행의 이 비율(최소 `COMMON_DOC_WORD_MIN_ROWS` 행) 이상에 나오는 낱말은 활동을 가르지
-# 못한다 — "그림" · "놀이" (#557 리뷰). 행 수로 고정하면 시드가 늘수록 "종이컵" 같은 구체적인
-# 낱말까지 흔한 말로 빠진다
-COMMON_DOC_WORD_SHARE = 0.05
-COMMON_DOC_WORD_MIN_ROWS = 4
-
-
-def _stems(text: str) -> set[str]:
-    """두 글자 이상 낱말. 세 글자 이상은 앞 두 글자 — 모델이 "쌓기" 를 "쌓아" 로 쓴다."""
-    return {
-        word if len(word) == 2 else word[:2]
-        for word in split_words(text)
-        if len(word) >= 2 and word not in _GENERIC_WORDS
-    }
-
-
-def _doc_keys(doc: ActivityDocRow) -> set[str]:
-    """문서 행의 준비물(그대로) · 제목 · 본문 낱말."""
-    materials = {key for item in doc.materials if len(key := normalize(item)) >= 2}
-    return materials | _stems(doc.title) | _stems(doc.body)
-
-
-def common_doc_words(rows: Sequence[ActivityDocRow]) -> frozenset[str]:
-    """문서 행 여럿(`COMMON_DOC_WORD_SHARE` 이상)에 나오는 낱말."""
-    counts = Counter(key for row in rows for key in _doc_keys(row))
-    least = max(COMMON_DOC_WORD_MIN_ROWS, ceil(len(rows) * COMMON_DOC_WORD_SHARE))
-    return frozenset(key for key, count in counts.items() if count >= least)
-
-
-@cache
-def _common_doc_words() -> frozenset[str]:
-    """시드로 센 흔한 낱말. 시드가 DB 행의 정본이다."""
-    return common_doc_words([entry.to_row() for entry in activity_doc_seed()])
-
-
-def _doc_related(candidate: ActivityCandidate, doc: ActivityDocRow) -> bool:
-    """후보가 그 문서 행의 활동인가 — 문서를 가르는 낱말이 후보에 하나라도 나오는가.
-
-    - 문서의 준비물 · 제목 · 본문 낱말에서 여러 행에 흔한 낱말("그림" · "놀이")을 뺀 것으로 본다.
-      제목만 보면 "곰처럼 네 발로 걸어 보기" 가 "동물 흉내 내며 걷기" 와 안 겹치고(본문에는 "곰처럼"
-      이 있다), 흔한 낱말까지 보면 "그림책 다음 장 맞혀 보기" 가 "손 그림자" 와 겹친다 (#557 리뷰).
-    - 가르는 낱말이 하나도 없는 문서(전부 흔한 말)는 흔한 낱말로 본다. 흔한 낱말이라도 제목 낱말
-      둘이 같이 나오면 같은 활동이다. 낱말이 아예 없으면 막지 않는다.
-    - 완전한 의미 대조가 아니라, 손 씻기 문서를 종이컵 쌓기에 다는 것처럼 아무것도 안 겹치는
-      인용을 막는 하한이다.
-    """
-    keys = _doc_keys(doc)
-    if not keys:
-        return True
-    texts = [normalize(candidate.content), *(normalize(item) for item in candidate.materials)]
-
-    def found(key: str) -> bool:
-        return any(key in text for text in texts)
-
-    informative = keys - _common_doc_words()
-    if any(found(key) for key in informative or keys):
-        return True
-    # 제목이 흔한 낱말뿐인 행("노래에 맞춰 손 흔들기")은 흔한 낱말 둘이 같이 나오면 같은 활동이다.
-    # 제목 낱말이 하나뿐이면("상자로 집 만들기" 의 상자) 그 하나다
-    title = _stems(doc.title)
-    return bool(title) and sum(found(key) for key in title) >= min(2, len(title))
 
 
 def _lookup(seen: Seen, docs: Docs, raw_id: str) -> RankedEvidence | ActivityDocRow | None:

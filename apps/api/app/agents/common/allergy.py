@@ -6,8 +6,8 @@ health_safety.label 은 자유 입력이다. 고르는 목록이 없고, 검사�
 
 이 모듈은 이름을 조각으로 나눠 이름 사전에서 찾는다. 정확히 같은 이름이 있으면 그것을 쓰고,
 없으면 조각 안에서 사전의 이름을 찾는다(guard 를 지킨다). 사전은 호출하는 Agent 가 만든다 —
-공용 이름 사전(allergen_terms.yaml)에 Food 는 자기 음식 어휘를 더하고, 더할 것이 없으면
-`shared_book()` 을 쓴다.
+공용 이름 사전(allergen_terms.yaml)에 Food 는 자기 음식 어휘를 더하고, Activity · Growth 는
+19종 밖 식품 별칭만 더한 `allergy_book()` 을 쓴다.
 
 식품 사전에 없는 알레르기 이름(꽃가루 · 라텍스)에 붙이는 확인 문구도 여기서 고른다
 (`non_food_allergies`). 문구 자체는 Agent 마다 자기 `*.readout.yaml` 에 둔다.
@@ -23,7 +23,7 @@ from functools import cache
 from types import MappingProxyType
 from typing import Literal, Protocol
 
-from app.agents.common.reference import allergen_groups, allergen_terms
+from app.agents.common.reference import allergen_groups, allergen_terms, food_safety_terms
 from app.rules.term_match import Term, TermMatcher, normalize, prepare_fields, split_words
 
 
@@ -58,7 +58,20 @@ SINGLE_CHAR_NAMES: Mapping[str, tuple[str, ...]] = MappingProxyType(
     {
         "잣": (),
         "콩": (),
-        "깨": ("깨끗", "깨우", "깨워", "깨면", "깨진", "깨지", "깨져", "으깨"),
+        "깨": (
+            "깨끗",
+            "깨우",
+            "깨워",
+            "깨면",
+            "깨진",
+            "깨지",
+            "깨져",
+            "으깨",
+            "깨어",
+            "깨물",
+            "깨뜨",
+            "어깨",
+        ),
         "쑥": ("쑥쑥",),
         "쌀": ("쌀쌀", "좁쌀", "보리쌀"),
         "팥": (),
@@ -123,6 +136,82 @@ def shared_name_rules(group_foods: Mapping[str, Term] | None = None) -> list[Nam
 def shared_book() -> LabelBook:
     """공용 이름 사전만으로 만든 사전. 음식 어휘를 따로 더하지 않는 쪽이 쓴다."""
     return make_book(shared_name_rules())
+
+
+@cache
+def allergy_book() -> LabelBook:
+    """Activity · Growth 가 보호자의 알레르기 이름을 읽는 사전 (#437).
+
+    공용 이름 사전에 **19종 밖 알레르기 식품**(키위 · 귀리 · 녹두 · 버섯 …)의 별칭을 더한다.
+    `shared_book()` 만 쓰면 "키위" 로 등록한 아이의 "참다래" 놀이가 막히지 않고, 사전에 없는 식품을
+    꽃가루처럼 "식품 아닌 알레르기" 로 봐서 결과마다 확인 문구가 붙는다 (QA 16 — 버섯류).
+    별칭 표는 `food_safety_terms.yaml` 의 `extra_allergens` · `group_foods` 로 공용 로더가 읽는다 —
+    food 패키지를 import 하지 않는다. Food 의 음식 이름 어휘(빵 · 라면)는 더하지 않는다 — 놀이 문장
+    검사까지 넓어진다(allergen_terms.yaml 머리말).
+
+    사전의 Term 은 별칭 표 그대로다(메뉴용 guard). 놀이 · 교육 문장에 대조할 때는 호출부가
+    `for_sentences` 로 바꿔 쓴다.
+    """
+    food = food_safety_terms()
+    rules = shared_name_rules(food.group_foods)
+    for term in food.extras:
+        rules.extend((name, Restriction(terms=(term,)), term.guards) for name in term.aliases)
+    return make_book(rules)
+
+
+# 놀이 · 교육 문장에서 다른 뜻으로 더 자주 나오는 19종 밖 식품 별칭 (#556 리뷰). 그 이름으로 등록한
+# 아이도 문장에는 이 별칭으로 대조하지 않는다 — 고기 알레르기의 오리 · 염소 · 사슴은 동물 놀이로,
+# 생태(명태)는 "생태 관찰" 로, 미음(쌀죽)은 한글 자음으로, 동부(콩)는 방향으로 나온다.
+# 같은 식품의 다른 별칭(오리고기 · 명태 · 현미)은 그대로 막는다. 준비물 칸("오리" · "미음")은
+# 그 식품이라 이 별칭으로도 막는다(`for_sentences(items=True)`). 메뉴를 보는 Food 는 쓰지 않는다.
+SENTENCE_EXCLUDED_ALIASES = frozenset(
+    {"오리", "칠면조", "사슴", "염소", "흑염소", "생태", "미음", "동부"}
+)
+
+# 놀이 · 교육 문장에서 그 별칭이 다른 뜻으로 나오는 자리 — 메뉴용 guard 에 더한다 (#556 리뷰).
+# guard 는 띄어쓰기를 넘지 않아서 붙여 쓴 자리만 덮는다("사과하기" · "도미노"). 띄어 쓴 다른 뜻
+# ("대구 여행" · "은행 놀이")은 막힌다 — 그 별칭을 빼면 "대구 살 바르기" 같은 음식 활동이 빠져서
+# 더 막는 쪽을 둔다. "사과 그리기" 도 그대로 막는다 — 그 식품을 다루는 활동이다.
+# 조사가 붙은 꼴은 넣지 않는다 — "대구로 전 부치기" · "은행에 꿀 바르기" · "사과하고 배 깎기"
+# 처럼 그 식품 문장에도 똑같이 나온다(#556 2차 리뷰). 다른 뜻으로만 쓰이는 낱말 · 활용형만 둔다.
+SENTENCE_GUARDS: Mapping[str, tuple[str, ...]] = MappingProxyType(
+    {
+        "사과": ("사과하기", "사과하는", "사과하면", "사과하자", "사과해", "사과했", "사과드"),
+        "대구": ("대구광역시", "대구시"),
+        # 은행나무는 덮지 않는다 — 그 열매가 은행이다 (#556 3차 리뷰)
+        "은행": ("은행놀이", "은행원", "은행잎"),
+        "카카오": ("카카오톡", "카카오맵", "카카오프렌즈"),
+        "오렌지": ("오렌지색",),
+        "조기": ("조기교육", "조기축구"),
+        "방어": ("방어하기", "방어하는", "방어해", "방어막"),
+        "도미": ("도미노",),
+    }
+)
+
+
+def for_sentences(term: Term, *, items: bool = False) -> Term:
+    """`allergy_book()` 의 Term 을 놀이 · 교육 문장 대조용으로 (#437 · #556 리뷰).
+
+    별칭 표의 guard 는 메뉴 이름용이라 문장의 다른 뜻을 덮지 못한다 — "친구에게 사과하기" ·
+    "대구 여행" · "잠 깨우기" 가 걸린다. 다른 뜻이 나오는 자리를 guard 로 더하고(`SENTENCE_GUARDS` ·
+    한 글자는 `SINGLE_CHAR_NAMES`), 문장에서 다른 뜻이 더 흔한 별칭은 뺀다
+    (`SENTENCE_EXCLUDED_ALIASES`). `items=True` 면 준비물 칸이라 별칭을 빼지 않는다 — 준비물로 적은
+    "오리" 는 그 식품이다. 별칭이 다 빠지면 aliases 가 빈 Term — 호출부가 대조하지 않는다.
+    대조는 띄어쓰기를 넘지 않게 한다(`match_fields(cross_spaces=False)`).
+    """
+    aliases = tuple(
+        a for a in term.aliases if items or normalize(a) not in SENTENCE_EXCLUDED_ALIASES
+    )
+    extra = [
+        guard
+        for alias in aliases
+        for guard in (
+            *SENTENCE_GUARDS.get(normalize(alias), ()),
+            *SINGLE_CHAR_NAMES.get(normalize(alias), ()),
+        )
+        if guard not in term.guards
+    ]
+    return Term(key=term.key, aliases=aliases, guards=(*term.guards, *dict.fromkeys(extra)))
 
 
 # 한 칸에 여러 이름을 적은 경우("우유, 땅콩" · "우유(유제품)")를 나눈다.
@@ -368,7 +457,8 @@ def non_food_allergies(rows: Iterable[SafetyRow], book: LabelBook) -> tuple[str,
     `allergy` 이고 active인 행 중 이름에 식품 사전이 못 찾은 조각이 있는 것이다. 꽃가루 · 라텍스 ·
     동물털처럼 식품이 아닌 알레르기는 뺄 활동을 코드가 못 정한다 — 이름을 물건 · 장소로 넓히는
     대응표(꽃가루 → 공원)는 판단을 담게 된다. 그래서 적은 이름을 되돌려 보여 주고 확인하게 할
-    뿐이다. 19종 밖 식품(쑥 · 키위)도 사전에 없어서 들어간다. 식품 알레르기는 이름 대조가 뺀다.
+    뿐이다. 19종 밖 식품도 별칭 표(`extra_allergens`)에 있으면 `allergy_book()` 이 식품으로
+    읽어 빠지고(키위 · 버섯), 표에 없는 것(쑥)만 들어간다. 식품 알레르기는 이름 대조가 뺀다.
 
     `environmental`은 고소공포 같은 것이라(data_model.md) 알레르기 문구가 맞지 않아 넣지 않는다.
     `health_safety.category`가 빠진 뒤로는 환경 알레르기만 고를 칸이 없어서 사전으로 가른다.

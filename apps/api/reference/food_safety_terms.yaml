@@ -281,6 +281,11 @@ extra_allergens:
   - label: 초콜릿
     aliases: [초콜릿, 초콜렛, 쵸콜릿, 초코, 쵸코, 코코아, 카카오, chocolate, cocoa, cacao]
     guards: []
+  # 버섯 이름은 "○○버섯" 이 많아 "버섯" 이 글자로 덮는다. 버섯이 안 붙는 이름만 따로 둔다.
+  # 팽이 · 송이는 "팽이 돌리기" · "포도송이" 와 겹쳐 붙은 이름(팽이버섯 · 송이버섯)만 쓴다 (QA 16)
+  - label: 버섯
+    aliases: [버섯, 버섯류, 표고, 느타리, 양송이, 새송이, 팽이버섯, 송이버섯, mushroom]
+    guards: []
 
 # 묶음 이름(allergen_terms.yaml groups)의 19종 밖 식품. 그 묶음으로 등록한 아이에게 글자로 막는다.
 group_foods:
