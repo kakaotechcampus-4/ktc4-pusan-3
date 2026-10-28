@@ -1842,6 +1842,23 @@ export interface ConsentsResponse {
 
 /* ── 10 설정 ─────────────────────────────────────────────────────────── */
 
+/** 푸시를 받는 기기의 종류 (#605). ⚠️ `ios` 는 서버에 남아 있지만 쓰지 않는다 — iOS 는 하지 않는다. */
+export type PushPlatform = "web" | "android" | "ios";
+
+/**
+ * `PUT /me/push-device` — 이 로그인의 기기로 FCM 토큰을 맡긴다 (#605 · #609). 204.
+ *
+ * 🚨 **기기는 로그인 1건에 묶인다.** 로그아웃 · 세션 만료 · 탈퇴 때 서버가 함께 지운다. 그래서 앱을 켤 때 ·
+ *    로그인 직후 · 토큰이 바뀔 때마다 다시 부른다 (`lib/push/web-push.ts`). 로그아웃 때 따로 지우지 않는다.
+ * 🚨 토큰은 본문으로만 보낸다 — 주소에 실으면 접근 로그에 남는다. 웹 코드는 웹 저장소에도 두지 않는다
+ *    (Firebase SDK 가 IndexedDB 에 두는 것은 `docs/web/web-push-v1.md` "토큰이 남는 곳").
+ *    키가 없다 — 같은 토큰을 여러 번 보내도 결과가 같다.
+ */
+export interface PushDeviceRequest {
+  token: string;
+  platform: PushPlatform;
+}
+
 /**
  * `GET` / `PUT /me/notification-settings` — 10 설정의 알림 스위치 (#594 · #609).
  *

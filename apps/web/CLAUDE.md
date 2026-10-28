@@ -25,6 +25,7 @@ Owner: 고태영 (프론트 리드)
 | `lib/api/` · 뮤테이션 · 에러 코드 처리 · `error.tsx` · `AppErrorBoundary` | [`api-client-v1.md`](../../docs/web/api-client-v1.md) |
 | `mocks/` · `*.test.ts` · `e2e/` · `contract/` | [`mock-and-tests-v1.md`](../../docs/web/mock-and-tests-v1.md) |
 | `package.json` 의 버전 · `eslint.config.mjs` · `ci-web.yml` · `Dockerfile` · 배포 | [`toolchain-deploy-v1.md`](../../docs/web/toolchain-deploy-v1.md) |
+| 웹 푸시 — `lib/push/` · `public/push-sw.js` · `WebPushBridge` · `ReminderField` 의 권한 묻기 · `NEXT_PUBLIC_FIREBASE_*` | [`web-push-v1.md`](../../docs/web/web-push-v1.md) |
 
 🚨 **같은 규칙이 이 파일의 요약과 `docs/web/` 원문 두 곳에 있으면 원문이 정본이다.** 규칙을 바꾸면 같은 PR 에서 둘 다 고친다.
 
@@ -75,7 +76,8 @@ Owner: 고태영 (프론트 리드)
   사진** — 의료 기록이다) · `stores/conversation.ts`(**그날 대화** — 보낸 원문 · run 결과 · 되물은
   질문이 그대로 들어 있다) 도 같다. 넷 다 로그아웃에서 `clearAll()` 로 놓는다 (`stores/session.ts`).
   대화 스토어는 로그아웃에서 **도는 스트림도 끊는다**
-- `public/mockServiceWorker.js` 는 msw 가 생성한 파일이다. 손으로 고치지 않고 lint·prettier 대상에서 빼 뒀다
+- `public/mockServiceWorker.js` 는 msw 가 생성한 파일이다. 손으로 고치지 않고 lint·prettier 대상에서 빼 뒀다.
+  같은 자리의 `public/push-sw.js`(웹 푸시 · #609)는 **손으로 쓴 파일**이라 lint·prettier 대상이다
 
 화면을 붙일 때 요청 · 응답 모양은 **Swagger(`/docs`)** 를 기준으로 잡는다. [`docs/api/api-interface-v1.html`](../../docs/api/api-interface-v1.html) 은 갱신하지 않는 초안이라, 그 **화면 → 호출** 표는 어느 화면이 무엇을 부르는지 훑는 용도로만 본다.
 

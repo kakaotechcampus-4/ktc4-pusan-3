@@ -50,6 +50,8 @@ export const SCHEMA_MAP: Record<string, MapValue> = {
   ConsentHistoryEntry: "ConsentHistoryEntry",
   ConsentsResponse: "ConsentsResponse",
   NotificationSettings: "NotificationSettings",
+  PushDeviceIn: "PushDeviceRequest",
+  PushPlatform: "PushPlatform",
 
   /* ── 아이 · 보호자 · 초대 ── */
   CreateChildRequest: "CreateChildRequest",
@@ -238,6 +240,4 @@ export const NOT_MAPPED: Record<string, string> = {
     "웹이 아직 위치를 보내지 않는다. 위치 동의를 묻지 않고 있다 (lib/consent.ts 의 NOT_ASKED_YET)",
   LinkedAffinityOut: "웹이 ObservationOut.affinity 를 읽지 않는다",
   AnswerResponse: "05 가 되묻기 답의 응답 본문을 읽지 않는다",
-  PushDeviceIn: "웹 미사용 — FE 후속 #594 (PUT /me/push-device — 푸시 토큰 등록)",
-  PushPlatform: "웹 미사용 — FE 후속 #594 (PushDeviceIn.platform)",
 };

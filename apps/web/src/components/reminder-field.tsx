@@ -1,6 +1,7 @@
 "use client";
 
 import { Select } from "@/components/ui/select";
+import { askWebPush, shouldAskWebPush } from "@/lib/push/web-push";
 import { reminderOptions, type ReminderChoice } from "@/lib/reminder";
 
 /**
@@ -11,6 +12,9 @@ import { reminderOptions, type ReminderChoice } from "@/lib/reminder";
  * 🚨 **이미 지난 값은 목록에서 빠진다** (`lib/reminder.ts`). 고른 값만은 지났어도 남는다 —
  *    그 값을 막는 말은 이 칸이 아니라 부르는 쪽이 한다 (초안 카드는 버튼 위 한 곳).
  * 🚨 **"없음" 이 기본값이다** (#594). 알림은 보호자가 고를 때만 생긴다.
+ * 🚨 **브라우저 알림 권한은 여기서 처음 묻는다** (#609). 알림을 고르는 순간이 무엇에 쓰는지 보이는
+ *    때라서다 — 앱을 열자마자 묻지 않는다. 고르는 것은 권한과 상관없이 그대로 저장된다.
+ *    앱 셸 · 설정값이 없는 환경 · 이미 답한 브라우저에서는 묻지 않는다 (`lib/push/web-push.ts`).
  */
 export function ReminderField({
   startsAt,
@@ -39,7 +43,11 @@ export function ReminderField({
       hint={hint}
       value={value}
       options={reminderOptions({ startsAt, allDay, keep: value })}
-      onChange={onChange}
+      onChange={(next) => {
+        // 🚨 클릭 핸들러 안에서 바로 묻는다 — 사용자가 누른 직후에만 권한 창이 뜬다.
+        if (shouldAskWebPush(next)) askWebPush().catch(() => {});
+        onChange(next);
+      }}
     />
   );
 }

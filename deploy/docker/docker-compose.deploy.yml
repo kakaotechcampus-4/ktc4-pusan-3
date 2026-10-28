@@ -126,6 +126,12 @@ services:
         # 🚨 이 값은 빌드 시점에 번들에 박힌다. 바꾸면 컨테이너 재시작이 아니라 재빌드다
         #    (apps/web/Dockerfile 머리말).
         NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL}
+        # 웹 푸시 (#609). 비어 있으면 웹 푸시가 꺼진 이미지가 된다 (deploy/docker/.env.example).
+        NEXT_PUBLIC_FIREBASE_API_KEY: ${NEXT_PUBLIC_FIREBASE_API_KEY:-}
+        NEXT_PUBLIC_FIREBASE_PROJECT_ID: ${NEXT_PUBLIC_FIREBASE_PROJECT_ID:-}
+        NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: ${NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID:-}
+        NEXT_PUBLIC_FIREBASE_APP_ID: ${NEXT_PUBLIC_FIREBASE_APP_ID:-}
+        NEXT_PUBLIC_FIREBASE_VAPID_KEY: ${NEXT_PUBLIC_FIREBASE_VAPID_KEY:-}
     image: ktc4-web:${WEB_IMAGE_TAG:-local}
     container_name: ktc4-web
     restart: unless-stopped
