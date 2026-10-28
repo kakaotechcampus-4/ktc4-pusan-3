@@ -88,7 +88,7 @@ async def test_견과류_등록_아이의_땅콩소스는_겹친다고_답하고
 
     assert (result.agent, result.task_type, result.status) == ("food", "food_check", "completed")
     assert bodies(result) == [
-        "땅콩소스은(는) 등록해 두신 견과류 알레르기와(과) 겹쳐요.",
+        "땅콩소스는 등록해 두신 견과류 알레르기와 겹쳐요.",
         PEANUT_NOTE,
     ]
     assert all(readout.authored_by == "code" for readout in result.readouts)
@@ -98,7 +98,7 @@ async def test_호두만_등록했으면_땅콩소스는_못_찾았다고_하고
     result = await ask("땅콩소스 먹여도 될까?", BIRTH_50, WALNUT)
 
     assert bodies(result) == [
-        "땅콩소스 이름으로는 등록해 두신 호두 알레르기와(과) 겹치는 걸 찾지 못했어요.",
+        "땅콩소스 이름으로는 등록해 두신 호두 알레르기와 겹치는 걸 찾지 못했어요.",
         CAVEAT,
     ]
 
@@ -107,7 +107,7 @@ async def test_땅콩_등록_아이의_견과류도_겹치고_묶음_설명이_�
     result = await ask("견과류 먹여도 돼?", BIRTH_50, PEANUT)
 
     assert bodies(result) == [
-        "견과류은(는) 등록해 두신 땅콩 알레르기와(과) 겹쳐요.",
+        "견과류는 등록해 두신 땅콩 알레르기와 겹쳐요.",
         PEANUT_NOTE,
     ]
 
@@ -115,11 +115,11 @@ async def test_땅콩_등록_아이의_견과류도_겹치고_묶음_설명이_�
 async def test_양쪽_다_땅콩_이름이_아니면_묶음_설명이_없다() -> None:
     result = await ask("견과류 먹여도 돼?", BIRTH_50, NUT)
 
-    assert bodies(result) == ["견과류은(는) 등록해 두신 견과류 알레르기와(과) 겹쳐요."]
+    assert bodies(result) == ["견과류는 등록해 두신 견과류 알레르기와 겹쳐요."]
 
 
 UNKNOWN_FOOD = (
-    "음식 이름을 알아보지 못해서 연령 기준과 등록해 두신 땅콩 알레르기와(과) 겹치는지는 "
+    "음식 이름을 알아보지 못해서 연령 기준과 등록해 두신 땅콩 알레르기와 겹치는지는 "
     "확인하지 못했어요."
 )
 UNKNOWN_PLAIN = "음식 이름을 알아보지 못해서 연령 기준에 걸리는지는 확인하지 못했어요."
@@ -149,7 +149,7 @@ async def test_사전_낱말의_조각이_아니라_말한_음식으로_못_찾�
     result = await ask(text, BIRTH_50, PEANUT)
 
     assert bodies(result) == [
-        f"{food} 이름으로는 등록해 두신 땅콩 알레르기와(과) 겹치는 걸 찾지 못했어요.",
+        f"{food} 이름으로는 등록해 두신 땅콩 알레르기와 겹치는 걸 찾지 못했어요.",
         CAVEAT,
     ]
 
@@ -181,20 +181,20 @@ async def test_동의가_없으면_음식을_못_알아봐도_알레르기를_�
 async def test_동의가_없어도_연령_규칙은_답하고_알레르기는_안_봤다고_한다() -> None:
     result = await ask("꿀 넣은 이유식 먹여도 돼?", BIRTH_8, [], consent=False)
 
-    assert bodies(result) == ["꿀은(는) 12개월 전에는 먹이지 않는 음식이에요.", NO_CONSENT]
+    assert bodies(result) == ["꿀은 12개월 전에는 먹이지 않는 음식이에요.", NO_CONSENT]
 
 
 async def test_등록_0행이면_못_찾음이_아니라_등록이_없다고_한다() -> None:
-    result = await ask("땅콩 먹여도 돼?", BIRTH_30, [])
+    result = await ask("땅콩 먹여도 돼?", BIRTH_50, [])
 
-    assert bodies(result) == [NONE_REGISTERED]  # 질식 주의 문구는 어디에도 없다
+    assert bodies(result) == [NONE_REGISTERED]  # 48개월이 지나 질식 주의 줄도 없다
 
 
 async def test_수유기도_닫지_않고_답한다() -> None:
     result = await ask("꿀 먹여도 돼?", BIRTH_2, [])
 
     assert result.status == "completed"
-    assert bodies(result) == ["꿀은(는) 12개월 전에는 먹이지 않는 음식이에요.", NONE_REGISTERED]
+    assert bodies(result) == ["꿀은 12개월 전에는 먹이지 않는 음식이에요.", NONE_REGISTERED]
 
 
 async def test_가리키는_말만_있으면_무슨_음식인지_하나만_묻는다() -> None:
@@ -240,14 +240,14 @@ async def test_겹친_음식에는_못_찾음을_같이_말하지_않는다() ->
     shrimp = [SafetyEntry(kind="allergy", label="새우", status="active")]
     result = await ask("새우볶음밥 먹여도 돼?", BIRTH_50, shrimp)
 
-    assert bodies(result) == ["새우볶음밥은(는) 등록해 두신 새우 알레르기와(과) 겹쳐요."]
+    assert bodies(result) == ["새우볶음밥은 등록해 두신 새우 알레르기와 겹쳐요."]
 
 
 async def test_한_어절의_못_찾음은_한_번만_말한다() -> None:
     result = await ask("치킨마요덮밥 먹여도 돼?", BIRTH_50, PEANUT)
 
     assert bodies(result) == [
-        "치킨마요덮밥 이름으로는 등록해 두신 땅콩 알레르기와(과) 겹치는 걸 찾지 못했어요.",
+        "치킨마요덮밥 이름으로는 등록해 두신 땅콩 알레르기와 겹치는 걸 찾지 못했어요.",
         CAVEAT,
     ]
 
@@ -258,9 +258,9 @@ async def test_한_어절의_못_찾음은_한_번만_말한다() -> None:
         (
             "아이스크림 먹여도 돼?",
             "우유",
-            "아이스크림은(는) 등록해 두신 우유 알레르기와(과) 겹쳐요.",
+            "아이스크림은 등록해 두신 우유 알레르기와 겹쳐요.",
         ),
-        ("계란말이 먹여도 돼?", "달걀", "계란말이은(는) 등록해 두신 달걀 알레르기와(과) 겹쳐요."),
+        ("계란말이 먹여도 돼?", "달걀", "계란말이는 등록해 두신 달걀 알레르기와 겹쳐요."),
     ],
 )
 async def test_겹침은_사전_낱말이_아니라_보호자가_쓴_음식으로_말한다(text, label, expected) -> None:
@@ -273,7 +273,7 @@ async def test_겹침은_사전_낱말이_아니라_보호자가_쓴_음식으�
 async def test_합성어의_연령_금지는_어절마다_한_번_가장_긴_기준으로(birth) -> None:
     result = await ask("꿀떡 먹여도 돼?", birth, [])
 
-    assert bodies(result) == ["꿀떡은(는) 48개월 전에는 먹이지 않는 음식이에요.", NONE_REGISTERED]
+    assert bodies(result) == ["꿀떡은 48개월 전에는 먹이지 않는 음식이에요.", NONE_REGISTERED]
 
 
 # ── /code-review 6 — 음식을 못 알아봤으면 등록 · 동의와 상관없이 그렇다고 말한다 ───────────
@@ -293,7 +293,7 @@ async def test_못_찾음에는_음식과_관련된_등록만_싣는다() -> Non
     result = await ask("카레 먹여도 돼?", BIRTH_50, mixed)
 
     assert bodies(result) == [
-        "카레 이름으로는 등록해 두신 우유 알레르기와(과) 겹치는 걸 찾지 못했어요.",
+        "카레 이름으로는 등록해 두신 우유 알레르기와 겹치는 걸 찾지 못했어요.",
         CAVEAT,
     ]
 
@@ -303,3 +303,107 @@ async def test_음식과_관련된_등록이_없으면_등록이_없다고_한�
     result = await ask("카레 먹여도 돼?", BIRTH_50, asthma)
 
     assert bodies(result) == [NONE_REGISTERED]
+
+
+# ── #575 리뷰 (PM) — 이름에 든 알레르기 음식은 메뉴 필터와 같은 답을 낸다 ───────────────
+BIRTH_10 = date(2025, 12, 2)  # NOW 기준 10개월 — infant_weaning
+
+
+def allergy(label: str) -> list[SafetyEntry]:
+    return [SafetyEntry(kind="allergy", label=label, status="active")]
+
+
+@pytest.mark.parametrize(
+    ("food", "label", "expected"),
+    [
+        ("흰우유", "우유", "흰우유는 등록해 두신 우유 알레르기와 겹쳐요."),
+        ("딸기우유", "우유", "딸기우유는 등록해 두신 우유 알레르기와 겹쳐요."),
+        ("바나나우유", "우유", "바나나우유는 등록해 두신 우유 알레르기와 겹쳐요."),
+        ("밀크초콜릿", "우유", "밀크초콜릿은 등록해 두신 우유 알레르기와 겹쳐요."),
+        ("호두과자", "밀", "호두과자는 등록해 두신 밀 알레르기와 겹쳐요."),
+        ("에그타르트", "달걀", "에그타르트는 등록해 두신 달걀 알레르기와 겹쳐요."),
+        ("굴국밥", "조개류", "굴국밥은 등록해 두신 조개류 알레르기와 겹쳐요."),
+        ("돼지불고기", "돼지고기", "돼지불고기는 등록해 두신 돼지고기 알레르기와 겹쳐요."),
+    ],
+)
+async def test_이름에_든_알레르기_음식은_겹친다고_답한다(food, label, expected) -> None:
+    result = await ask(f"{food} 먹여도 돼?", BIRTH_50, allergy(label))
+
+    assert bodies(result) == [expected]
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["전복죽 먹여도 돼?", "전복죽은 먹여도 돼?", "우리 애 전복죽 좀 먹여도 돼?"],
+)
+async def test_사전_낱말이_하나도_없어도_메뉴_필터가_막는_음식은_겹친다고_답한다(text) -> None:
+    result = await ask(text, BIRTH_50, allergy("조개류"))
+
+    assert bodies(result) == ["전복죽은 등록해 두신 조개류 알레르기와 겹쳐요."]
+
+
+async def test_낱말을_못_찾은_음식도_다른_음식과_같이_물으면_답한다() -> None:
+    result = await ask("전복죽이랑 사과 먹여도 돼?", BIRTH_50, allergy("조개류"))
+
+    assert bodies(result) == [
+        "전복죽은 등록해 두신 조개류 알레르기와 겹쳐요.",
+        "사과 이름으로는 등록해 두신 조개류 알레르기와 겹치는 걸 찾지 못했어요.",
+        CAVEAT,
+    ]
+
+
+async def test_먹이는_말_앞의_부사는_음식으로_보지_않는다() -> None:
+    result = await ask("이거 어떻게 먹여도 돼?", BIRTH_50, allergy("게"))
+
+    assert result.readouts == ()
+    assert result.needs_observation == (
+        "어떤 음식인지 알려 주시면 등록된 알레르기와 겹치는지 볼게요.",
+    )
+
+
+async def test_빼빼로는_빼_달라는_말이_아니다() -> None:
+    result = await ask("땅콩빼빼로랑 우유 먹여도 돼?", BIRTH_50, allergy("땅콩"))
+
+    assert bodies(result) == [
+        "땅콩빼빼로는 등록해 두신 땅콩 알레르기와 겹쳐요.",
+        "우유 이름으로는 등록해 두신 땅콩 알레르기와 겹치는 걸 찾지 못했어요.",
+        CAVEAT,
+    ]
+
+
+@pytest.mark.parametrize(
+    "text", ["우유를 먹여도 돼?", "우유는 먹여도 돼?", "우유도 먹여도 돼?", "우유가 먹고 싶대"]
+)
+async def test_조사가_붙어도_생우유_연령_규칙을_말한다(text) -> None:
+    result = await ask(text, BIRTH_10, [])
+
+    assert bodies(result) == ["우유는 12개월 전에는 먹이지 않는 음식이에요.", NONE_REGISTERED]
+
+
+@pytest.mark.parametrize(("food", "topic"), [("포도", "포도는"), ("땅콩", "땅콩은")])
+async def test_섭취_확인_답에는_질식_주의_한_줄을_넣는다(food, topic) -> None:
+    result = await ask(f"{food} 먹여도 돼?", BIRTH_30, [])
+
+    assert bodies(result) == [
+        f"{topic} 48개월 전에는 통째로 먹으면 목에 걸릴 수 있어서, 먹는 동안 곁에서 지켜봐 주세요.",
+        NONE_REGISTERED,
+    ]
+
+
+async def test_질식_주의는_48개월이_지나면_말하지_않는다() -> None:
+    result = await ask("포도 먹여도 돼?", BIRTH_50, [])
+
+    assert bodies(result) == [NONE_REGISTERED]
+
+
+async def test_받침을_모르는_이름은_조사를_괄호로_둔다() -> None:
+    result = await ask("peanut 먹여도 돼?", BIRTH_50, NUT)
+
+    assert bodies(result)[0] == "peanut은(는) 등록해 두신 견과류 알레르기와 겹쳐요."
+
+
+async def test_질환_이름에는_받침에_맞는_조사를_붙인다() -> None:
+    lactose = [SafetyEntry(kind="chronic_disease", label="유당불내증", status="active")]
+    result = await ask("카레 먹여도 돼?", BIRTH_50, lactose)
+
+    assert bodies(result)[0] == "카레 이름으로는 등록해 두신 유당불내증과 겹치는 걸 찾지 못했어요."

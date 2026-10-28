@@ -319,3 +319,90 @@ def test_허용한_낱말은_막힌_음식으로_세지_않는다():
 )
 def test_등록_이름은_적은_그대로_쓴다(registered, text):
     assert label_text(registered) == text
+
+
+# ── #575 리뷰 (PM) — 판정을 고치면 요청 안내 · 추천 이유 검사도 같이 고쳐진다 ─────────────
+@pytest.mark.parametrize(
+    ("registered", "text", "stage", "months", "expected"),
+    [
+        (
+            [entry("우유")],
+            "흰우유랑 먹을 간식 추천해줘",
+            "preschool",
+            50,
+            "요청하신 흰우유에는 등록해 두신 알레르기와 겹치는 것이 있어서 그런 메뉴는 빼고 "
+            "골랐어요.",
+        ),
+        (
+            [],
+            "우유를 넣은 이유식 추천해줘",
+            "infant_weaning",
+            10,
+            "요청하신 우유는 12개월 전에는 먹이지 않아서 빼고 골랐어요.",
+        ),
+    ],
+)
+def test_합성어_조사가_붙은_요청에도_안내를_붙인다(registered, text, stage, months, expected):
+    notices = request_notices([text], registered, stage=stage, months=months)
+    assert [n.body for n in notices] == [expected]
+
+
+def test_추천_이유의_합성어에_든_알레르기_음식도_막는다():
+    assert mentions_blocked_food(
+        "흰우유와 함께 먹기 좋아요", [entry("우유")], stage="preschool", months=50
+    )
+
+
+@pytest.mark.parametrize(
+    ("reason", "stage", "months"),
+    [
+        ("꿀처럼 달콤한 고구마라 잘 먹어요", "infant_weaning", 10),
+        ("떡처럼 쫀득하지 않아 먹기 편해요", "toddler", 30),
+        ("꿀같이 달콤한 고구마예요", "infant_weaning", 10),
+    ],
+)
+def test_연령_금지_음식에_빗댄_말은_막힌_음식이_아니다(reason, stage, months):
+    assert mentions_blocked_food(reason, [], stage=stage, months=months) is False
+
+
+def test_알레르기_음식에_빗댄_말은_그래도_막는다():
+    # 등록한 알레르기 이름은 빗댄 말이어도 화면에 나간다
+    assert mentions_blocked_food(
+        "땅콩처럼 고소한 맛이에요", [entry("땅콩")], stage="preschool", months=50
+    )
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["땅콩빼빼로 먹여도 돼?", "땅콩 빼빼로 먹여도 돼?"],
+)
+def test_빼빼로는_빼_달라는_말이_아니다(text):
+    verdicts = check_foods(text, [entry("땅콩")], stage="preschool", months=50)
+    assert any(v.conflicts for v in verdicts)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "땅콩 빼 주세요 간식 추천해줘",
+        "땅콩 빼서 간식 추천해줘",
+        "땅콩빼고 간식 추천해줘",
+        "땅콩 뺀 간식 추천해줘",
+    ],
+)
+def test_빼_달라는_말은_어미가_달라도_요청한_음식이_아니다(text):
+    assert request_notices([text], [entry("땅콩")], stage="preschool", months=50) == ()
+
+
+@pytest.mark.parametrize(
+    ("registered", "text"),
+    [
+        ([entry("게")], "이거 어떻게 먹여도 돼?"),
+        ([entry("참깨")], "바나나 으깨서 먹여도 돼?"),
+        ([entry("밀")], "잘 밀어서 먹여도 돼?"),
+        ([entry("새우")], "많이 먹게 해도 돼?"),
+    ],
+)
+def test_먹이는_말_앞의_일상어는_메뉴_필터로_다시_보지_않는다(registered, text):
+    verdicts = check_foods(text, registered, stage="preschool", months=50)
+    assert not any(v.blocked for v in verdicts)

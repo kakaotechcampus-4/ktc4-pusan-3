@@ -646,7 +646,7 @@ async def test_12개월_전_꿀_요청은_빼고_골랐다고_안내한다() -> 
         client=llm,
     )
 
-    assert result.readouts[0].body == "요청하신 꿀은(는) 12개월 전에는 먹이지 않아서 빼고 골랐어요."
+    assert result.readouts[0].body == "요청하신 꿀은 12개월 전에는 먹이지 않아서 빼고 골랐어요."
 
 
 async def test_풀이_비어도_요청_안내가_붙는다() -> None:

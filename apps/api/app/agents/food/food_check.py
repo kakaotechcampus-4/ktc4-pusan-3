@@ -4,12 +4,20 @@
 글에 알레르기 음식이 있을 때의 안내, 추천 이유(reason)에 막힌 음식이 들어갔는지 보는 사후 검사.
 모델을 부르지 않는다 — 음식 낱말도 사전으로 찾는다.
 
-- 낱말을 보호자가 등록한 이름의 사전(`read_label`)으로 펼쳐서 등록 알레르기와 대조한다. "견과류"
-  를 등록했으면 땅콩 · 호두 · 잣이 겹치고, 땅콩을 등록했으면 "견과류" 를 물을 때 겹친다. 메뉴를
-  거르는 `filter_food_safety` 에 이름만 넣으면 이 펼치기가 없어서 "견과류" 가 통과한다.
-- 연령 규칙은 낱말마다 본다. 낱말이 든 어절을 `filter_food_safety` 에 넣어 guard("땅콩소스" 는
-  갈아 만든 것이라 질식 주의가 아니다)를 지키되, 그 낱말에 해당하는 규칙만 받는다 — "꿀떡" 의
-  꿀이 떡의 48개월 규칙을 물려받지 않게.
+- 겹침은 두 길로 보고 합친다. ① 낱말을 보호자가 등록한 이름의 사전(`read_label`)으로 펼쳐서
+  등록 알레르기와 대조한다. "견과류" 를 등록했으면 땅콩 · 호두 · 잣이 겹치고, 땅콩을 등록했으면
+  "견과류" 를 물을 때 겹친다. 메뉴를 거르는 `filter_food_safety` 에 이름만 넣으면 이 펼치기가 없어서
+  "견과류" 가 통과한다. ② 낱말이 든 어절(조사를 뗀 것)을 메뉴 행처럼 `filter_food_safety` 에 등록
+  행과 같이 건다. 낱말 찾기는 더 긴 낱말 안에 든 낱말을 빼고 헷갈리는 낱말은 합성어 안에서 안
+  잡아서, ①만 보면 흰우유의 우유 · 호두과자의 과자 · 에그타르트의 에그 · 굴국밥의 굴을 놓친다
+  (#575 리뷰). 제품마다 다른 성분으로만 막힌 것(`needs_check`)은 겹침으로 보지 않는다 — 재료
+  확인 안내가 그 몫이다.
+- 연령 규칙은 낱말마다 본다. 낱말이 든 어절(조사를 뗀 것 — "우유를" 은 생우유 규칙이 못 본다)을
+  `filter_food_safety` 에 넣어 guard("땅콩소스" 는 갈아 만든 것이라 질식 주의가 아니다)를 지키되,
+  그 낱말에 해당하는 규칙만 받는다 — "꿀떡" 의 꿀이 떡의 48개월 규칙을 물려받지 않게.
+- 사전 낱말이 하나도 없는 음식(전복죽)은 먹이는 말 바로 앞의 어절을 같은 메뉴 필터에 건다.
+  일상어("어떻게" 의 게)가 걸리지 않게 그 자리 · 부사 · 어미로 거르고, 막힐 때만 판정으로 남긴다 —
+  안 막히면 지금처럼 알아보지 못했다고 말한다.
 - 글에서 음식 낱말을 찾을 때는 문장에 맞게 거른다. 메뉴 이름을 거르는 사전을 그대로 쓰면 "어떻게"
   의 "게", "오늘 밤" 의 "밤", "배탈" 의 "배", "새싹반" 의 "새싹" 이 음식으로 잡혀 엉뚱한 "겹쳐요"
   가 나오고 추천 이유가 거절된다. 그래서 두 가지로 막는다 — 헷갈리는 낱말(`AMBIGUOUS_ALIASES`)은
@@ -21,7 +29,11 @@
 - 🚨 못 찾았다는 것은 괜찮다는 뜻이 아니다. 사전에 없는 음식(마라탕)과 여러 재료가 든 음식
   (치킨의 튀김옷)은 낱말이 안 잡히거나 재료를 모른다. 낱말을 하나도 못 찾으면 확인하지 못했다고
   말하고, 찾았어도 재료 확인 안내를 늘 붙인다.
-- 질식 주의(`caution`)는 판정만 한다. 화면에 문구를 내지 않는다(10-13 결정).
+- 질식 주의(`caution`)는 섭취 확인 답에만 한 줄 낸다(#575 PM 결정) — 보호자가 그 음식을 콕 집어
+  묻는 곳이라, 말하지 않으면 "알레르기만 못 봤고 나머지는 괜찮다" 로 읽힌다. 추천 목록 · 급식 ·
+  요청 안내에는 내지 않는다(10-13 결정 그대로).
+- 문구의 조사는 받침에 맞춘다("땅콩소스는 · 견과류 알레르기와"). 한글로 끝나지 않으면 받침을
+  몰라 "은(는)" 처럼 괄호로 둔다.
 """
 
 import re
@@ -42,6 +54,7 @@ from app.agents.common.reference import (
 from app.agents.food.readouts import (
     CHECK_AGE_BLOCK,
     CHECK_ASK_FOOD,
+    CHECK_CHOKING,
     CHECK_CONFLICT,
     CHECK_INGREDIENTS_CAVEAT,
     CHECK_NO_CONSENT,
@@ -119,8 +132,29 @@ _TIME_BEFORE = frozenset(
         "늦은", "깊은", "이른", "새벽",
     }
 )  # fmt: skip
-# 이 말이 음식 뒤에 오면 그 음식은 빼 달라는 것이거나 알레르기를 말하는 것이다
-_EXCLUDING = ("빼", "말고", "없", "제외", "대신", "알레르기", "알러지", "피해", "피하")
+# 이 말이 음식 뒤에 오면 그 음식은 빼 달라는 것이거나 알레르기를 말하는 것이다. "빼" 는 어미까지
+# 본다 — "땅콩빼빼로" 의 빼빼로는 빼 달라는 말이 아니다. "빼" 한 글자만 따로 쓴 것
+# ("땅콩 빼 주세요")도 빼 달라는 말이다(`_excluding`)
+_EXCLUDING = (
+    "빼고", "빼서", "빼면", "빼줘", "빼주", "빼달", "빼야", "빼는", "뺀", "뺄",
+    "말고", "없", "제외", "대신", "알레르기", "알러지", "피해", "피하",
+)  # fmt: skip
+# 이 말이 음식 바로 뒤에 붙으면 빗댄 말이다("꿀처럼 달콤한") — 추천 이유에서 연령 규칙으로는
+# 막지 않는다
+_LIKENING = ("처럼", "같이", "같은", "만큼")
+# 사전 낱말이 없는 어절을 메뉴 필터로 다시 볼 때 — 먹이는 말 앞에 와도 음식이 아닌 말. 부사 ·
+# 의문사 · 때를 가리키는 말이다("이거 어떻게 먹여도 돼?" 의 "어떻게" 는 게 알레르기와 겹치지 않는다)
+_NOT_FOOD = frozenset(
+    {
+        "좀", "조금", "많이", "같이", "한번", "한", "또", "더", "다", "잘", "혹시", "그냥", "자주",
+        "계속", "바로", "먼저", "이제", "지금", "아직", "벌써", "어떻게", "얼마나", "얼만큼",
+        "언제", "왜", "몇", "어떤", "무슨", "아무거나", "아무",
+    }
+)  # fmt: skip
+# 이 어미로 끝나는 어절은 음식이 아니다 — "으깨서" · "밀어서" · "먹게" · "어떻게"
+_VERB_ENDINGS = ("서", "고", "게", "히", "니까", "는데", "도록", "려고", "지만")
+# 앞 어절과 음식을 잇는 조사 — "전복죽이랑 사과 먹여도 돼?" 의 전복죽도 먹이는 음식이다
+_JOINING = frozenset({"랑", "이랑", "하고", "와", "과", "나", "이나", "에다"})
 _PUNCT = "?!.,~…\"'()"
 # 받침과 상관없이 붙는 보조사 — 문구의 어절에서만 뗀다("붕어빵도" → "붕어빵"). 음식 낱말을 찾는
 # 데는 쓰지 않는다 — "포도" · "만두" 처럼 이 글자로 끝나거나 시작하는 음식이 있다
@@ -178,11 +212,11 @@ def check_foods(
     """
     book = food_book()
     registered = _registered(tuple(e for e in entries if e.status not in INACTIVE_STATUSES))
-    rules = _age_rules()
     tokens = _tokens(text)
 
     verdicts: list[FoodVerdict] = []
-    for word in _words(text, registered.scan):
+    words = _words(text, registered.scan)
+    for word in words:
         if not every_mention and not _mentioned(tokens, word):
             continue
         asked = book.names.get(word)
@@ -192,22 +226,49 @@ def check_foods(
             *(alias for term in (asked.terms if asked else ()) for alias in term.aliases),
         )
         prepared = prepare_fields(aliases)
+        phrase = _phrase_of(text, word)
         conflicts = tuple(
-            Conflict(entry, frozenset(codes & registered_codes))
+            Conflict(entry, frozenset(codes & registered_codes) | (menu or frozenset()))
             for entry, registered_codes, matcher in registered.rows
-            if codes & registered_codes or matcher.match(prepared)
+            if (menu := _menu_conflict(phrase, entry, stage, months)) is not None
+            or codes & registered_codes
+            or matcher.match(prepared)
         )
+        verdicts.append(_with_age(word, phrase, conflicts, stage, months))
 
-        hits, cautions = _age_hits(_token_of(text, word), stage, months)
-        fitting = [rules[key] for key in hits if key in rules and _rule_fits(rules[key], word)]
-        age_block = next((rule for rule in fitting if rule.action == "block"), None)
-        caution = None
-        if not conflicts and age_block is None:
-            caution = next(
-                (key for key in cautions if key in rules and _rule_fits(rules[key], word)), None
-            )
-        verdicts.append(FoodVerdict(word, conflicts, age_block, caution))
-    return tuple(verdicts)
+    for phrase in _unnamed_foods(tokens, words):
+        word = normalize(phrase)
+        if not every_mention and not _mentioned(tokens, word):
+            continue
+        conflicts = tuple(
+            Conflict(entry, menu)
+            for entry, _, _ in registered.rows
+            if (menu := _menu_conflict(phrase, entry, stage, months)) is not None
+        )
+        verdict = _with_age(word, phrase, conflicts, stage, months)
+        if verdict.blocked:
+            verdicts.append(verdict)
+
+    dense = normalize(text)
+    return tuple(
+        sorted(verdicts, key=lambda v: dense.find(v.word) if v.word in dense else len(dense))
+    )
+
+
+def _with_age(
+    word: str, phrase: str, conflicts: tuple[Conflict, ...], stage: Stage, months: int
+) -> FoodVerdict:
+    """겹침에 연령 판정을 더한다 — 그 낱말에 해당하는 규칙만. 막히면 주의는 남기지 않는다."""
+    rules = _age_rules()
+    hits, cautions = _age_hits(phrase, stage, months)
+    fitting = [rules[key] for key in hits if key in rules and _rule_fits(rules[key], word)]
+    age_block = next((rule for rule in fitting if rule.action == "block"), None)
+    caution = None
+    if not conflicts and age_block is None:
+        caution = next(
+            (key for key in cautions if key in rules and _rule_fits(rules[key], word)), None
+        )
+    return FoodVerdict(word, conflicts, age_block, caution)
 
 
 def mentions_blocked_food(
@@ -223,12 +284,23 @@ def mentions_blocked_food(
 
     `allow` 는 말해도 되는 음식이다 — 기피 근거를 인용한 추천 이유는 피한 음식을 적어야 한다
     (`build()` 의 기피 근거 규칙). 그 음식이 알레르기여도 이유에 쓰는 것은 막지 않는다.
+
+    빗댄 말("꿀처럼 달콤한" · "떡처럼 쫀득하지 않아")은 연령 규칙으로는 막지 않는다 — 먹이라는
+    말이 아니다. 등록한 알레르기와 겹치는 이름은 빗댄 말이어도 막는다. 화면에 그 이름이 나간다.
     """
     allowed = [name for name in map(normalize, allow) if name]
+    tokens = _tokens(text)
     return any(
-        v.blocked and not any(name in v.word or v.word in name for name in allowed)
+        (v.conflicts or (v.age_block is not None and not _likened(tokens, v.word)))
+        and not any(name in v.word or v.word in name for name in allowed)
         for v in check_foods(text, entries, stage=stage, months=months, every_mention=True)
     )
+
+
+def _likened(tokens: Sequence[str], word: str) -> bool:
+    """낱말이 나온 어절마다 바로 뒤에 "처럼" · "같이" 가 붙었는가."""
+    rests = [name[name.find(word) + len(word) :] for name in map(normalize, tokens) if word in name]
+    return bool(rests) and all(rest.startswith(_LIKENING) for rest in rests)
 
 
 @dataclass(frozen=True)
@@ -388,13 +460,17 @@ def _mentioned(tokens: Sequence[str], word: str) -> bool:
         after = tokens[index + 1] if index + 1 < len(tokens) else ""
         later = tokens[index + 2] if index + 2 < len(tokens) else ""
         excluded = (
-            name[at + len(word) :].lstrip("은는을를이가도").startswith(_EXCLUDING)
-            or after.startswith(_EXCLUDING)
+            _excluding(name[at + len(word) :].lstrip("은는을를이가도"))
+            or _excluding(after)
             or (after == "안" and later.startswith(("들어", "넣")))
         )
         if not excluded:
             return True
     return not seen
+
+
+def _excluding(rest: str) -> bool:
+    return rest == "빼" or rest.startswith(_EXCLUDING)
 
 
 @cache
@@ -406,16 +482,95 @@ def _age_rules() -> Mapping[str, AgeRule]:
 def _age_hits(token: str, stage: Stage, months: int) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """어절 하나를 메뉴 이름으로 둔 연령 판정 — (막는 규칙 key, 주의 규칙 key).
     어절 guard 를 지킨다."""
-    row = MenuCatalogRow(
-        menu_key=token,
-        display_name=token,
+    verdict = filter_food_safety([_menu_row(token)], (), stage, months=months)
+    return tuple(verdict.hits.get(token, ())), tuple(verdict.cautions.get(token, ()))
+
+
+@lru_cache(maxsize=4096)
+def _menu_conflict(
+    phrase: str, entry: SafetyEntry, stage: Stage, months: int
+) -> frozenset[int] | None:
+    """어절을 메뉴 행처럼 두고 등록 한 행으로 거른 결과 — 막으면 겹친 19종 코드(글자로만 막았으면
+    빈 집합), 안 막으면 None. 메뉴를 거르는 필터와 같은 답을 내려고 쓴다.
+
+    연령 규칙이 건 것은 겹침이 아니다. 제품마다 다른 성분으로만 막힌 것(`needs_check` — 카레의
+    밀)도 겹침으로 말하지 않는다. 그 몫은 재료 확인 안내다.
+    """
+    verdict = filter_food_safety([_menu_row(phrase)], [entry], stage, months=months)
+    if verdict.needs_check:
+        return None
+    age = set(_age_hits(phrase, stage, months)[0])
+    hits = [hit for hit in verdict.hits.get(phrase, ()) if hit not in age]
+    if not hits:
+        return None
+    return frozenset(int(hit) for hit in hits if hit.isdigit())
+
+
+def _menu_row(name: str) -> MenuCatalogRow:
+    return MenuCatalogRow(
+        menu_key=name,
+        display_name=name,
         source="manual",
         resolved=True,
         synced_at=_EPOCH,
-        ingredients=(token,),
+        ingredients=(name,),
     )
-    verdict = filter_food_safety([row], (), stage, months=months)
-    return tuple(verdict.hits.get(token, ())), tuple(verdict.cautions.get(token, ()))
+
+
+def _unnamed_foods(tokens: Sequence[str], words: Sequence[str]) -> list[str]:
+    """사전 낱말이 하나도 없는데 먹이는 음식 자리에 온 어절(조사를 뗀 것) — "전복죽 먹여도 돼?".
+
+    먹이는 말 바로 앞 어절과, 그 앞에 "랑 · 하고 · 와" 로 이어진 어절이다. 부사 · 의문사 ·
+    가리키는 말 · 어미로 끝나는 어절("으깨서" · "어떻게")은 뺀다. 한 글자는 보지 않는다.
+    """
+    found: list[str] = []
+    for index, token in enumerate(tokens):
+        if not index or not token.startswith(_FEEDING):
+            continue
+        at = index - 1
+        while at >= 0 and tokens[at] in _NOT_FOOD:
+            at -= 1
+        joined = False
+        while at >= 0:
+            stem = _stem(tokens[at])
+            # 바로 앞 어절은 조사를 떼기 전에 어미를 본다 — "안심하고 먹여도" 의 하고는 어미다
+            ending = stem if joined else tokens[at]
+            if _could_be_food(tokens[at], stem, ending, words) and stem not in found:
+                found.append(stem)
+            if at == 0 or not _joins(tokens[at - 1]):
+                break
+            at -= 1
+            joined = True
+    return found
+
+
+def _could_be_food(token: str, stem: str, ending: str, words: Sequence[str]) -> bool:
+    name = normalize(stem)
+    return (
+        len(name) > 1
+        and token not in _NOT_FOOD
+        and token not in _TIME_BEFORE
+        and not token.startswith(_POINTING)
+        and not token.startswith(_FEEDING)
+        and stem not in _GENERIC_FOODS
+        and not ending.endswith(_VERB_ENDINGS)
+        and not any(word in normalize(token) for word in words)
+    )
+
+
+def _joins(token: str) -> bool:
+    return any(particle in _JOINING for _, particle in split_particle(token))
+
+
+def _stem(token: str) -> str:
+    """어절에서 조사를 뗀 것 — `_phrase_of` 와 같은 순서. 조사 "이" 는 떼지 않는다."""
+    for tail in _AUXILIARY:
+        if token.endswith(tail) and len(token) > len(tail) + 1:
+            return token[: -len(tail)]
+    for stem, particle in split_particle(token):
+        if particle != "이":
+            return stem
+    return token
 
 
 def _rule_fits(rule: AgeRule, word: str) -> bool:
@@ -462,6 +617,25 @@ def label_text(entry: SafetyEntry) -> str:
     return f"{name} 알레르기" if entry.kind == "allergy" else name
 
 
+def _topic(word: str) -> str:
+    """받침에 맞는 "은" · "는". 한글로 끝나지 않으면 받침을 몰라 "은(는)" 이다."""
+    final = _has_final(word)
+    return "은(는)" if final is None else ("은" if final else "는")
+
+
+def _joined(word: str) -> str:
+    """받침에 맞는 "과" · "와". 한글로 끝나지 않으면 받침을 몰라 "와(과)" 다."""
+    final = _has_final(word)
+    return "와(과)" if final is None else ("과" if final else "와")
+
+
+def _has_final(word: str) -> bool | None:
+    last = word.strip()[-1:]
+    if not "가" <= last <= "힣":
+        return None
+    return (ord(last) - ord("가")) % 28 > 0
+
+
 def when_text(rule: AgeRule) -> str:
     """연령 규칙이 막는 때 — 월령 기준이 없는 규칙(날음식 · 카페인 · 술)은 모든 아이다."""
     return f"{rule.below_month}개월 전에는" if rule.below_month is not None else "아이에게는"
@@ -493,16 +667,32 @@ def answer_food_check(
             label = label_text(conflict.entry)
             if (phrase, label) not in said:
                 said.add((phrase, label))
-                readouts.append(READOUTS.render(CHECK_CONFLICT, food=phrase, label=label))
+                readouts.append(
+                    READOUTS.render(
+                        CHECK_CONFLICT,
+                        food=phrase,
+                        은는=_topic(phrase),
+                        label=label,
+                        와과=_joined(label),
+                    )
+                )
     for phrase, rule in _strictest_age_blocks(text, verdicts).items():
-        readouts.append(READOUTS.render(CHECK_AGE_BLOCK, food=phrase, when=when_text(rule)))
+        readouts.append(
+            READOUTS.render(CHECK_AGE_BLOCK, food=phrase, 은는=_topic(phrase), when=when_text(rule))
+        )
     if any(_peanut_in_nuts(verdict) for verdict in verdicts):
         readouts.append(READOUTS.render(CHECK_PEANUT_IN_NUTS))
+    for phrase, rule in _cautions(text, verdicts).items():
+        readouts.append(
+            READOUTS.render(CHECK_CHOKING, food=phrase, 은는=_topic(phrase), when=when_text(rule))
+        )
 
     if not verdicts:
         # 음식 이름을 알아보지 못했다 — 겹치지 않는다고 말하면 확인한 것처럼 읽힌다
         if consent and food_entries:
-            readouts.append(READOUTS.render(CHECK_UNKNOWN_FOOD, labels=labels))
+            readouts.append(
+                READOUTS.render(CHECK_UNKNOWN_FOOD, labels=labels, 와과=_joined(labels))
+            )
         else:
             readouts.append(READOUTS.render(CHECK_UNKNOWN_FOOD_PLAIN))
     if not consent:
@@ -517,7 +707,9 @@ def answer_food_check(
             if phrase not in blocked
         )
         for phrase in unblocked:
-            readouts.append(READOUTS.render(CHECK_NOT_FOUND, food=phrase, labels=labels))
+            readouts.append(
+                READOUTS.render(CHECK_NOT_FOUND, food=phrase, labels=labels, 와과=_joined(labels))
+            )
         if unblocked:
             readouts.append(READOUTS.render(CHECK_INGREDIENTS_CAVEAT))
     return tuple(readouts), None
@@ -551,7 +743,12 @@ def request_notices(
             if phrase not in said:
                 said.add(phrase)
                 notices.append(
-                    READOUTS.render(MEAL_REQUEST_AGE_BLOCK, food=phrase, when=when_text(rule))
+                    READOUTS.render(
+                        MEAL_REQUEST_AGE_BLOCK,
+                        food=phrase,
+                        은는=_topic(phrase),
+                        when=when_text(rule),
+                    )
                 )
     return tuple(notices)
 
@@ -568,6 +765,18 @@ def _strictest_age_blocks(text: str, verdicts: Sequence[FoodVerdict]) -> dict[st
         if held is None or _lasts(verdict.age_block) > _lasts(held):
             strictest[phrase] = verdict.age_block
     return strictest
+
+
+def _cautions(text: str, verdicts: Sequence[FoodVerdict]) -> dict[str, AgeRule]:
+    """어절마다 주의 규칙 하나 — 섭취 확인 답에만 쓴다. 같은 어절이 막혔으면 말하지 않는다."""
+    rules = _age_rules()
+    blocked = {_phrase_of(text, v.word) for v in verdicts if v.blocked}
+    found: dict[str, AgeRule] = {}
+    for verdict in verdicts:
+        phrase = _phrase_of(text, verdict.word)
+        if verdict.caution is not None and phrase not in blocked:
+            found.setdefault(phrase, rules[verdict.caution])
+    return found
 
 
 def _lasts(rule: AgeRule) -> float:
