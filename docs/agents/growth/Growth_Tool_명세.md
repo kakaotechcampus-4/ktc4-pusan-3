@@ -197,8 +197,9 @@
 | `ask.habit_trigger` | {subject}은(는) 주로 어떤 상황에서 하나요? |
 | `ask.habit_current` | 요즘도 {subject} 하나요? |
 | `ask.routine_current` | {subject}은(는) 요즘 어느 정도까지 혼자 하나요? |
+| `ask.need_level` | 지금 어느 정도 하는지 알아야 다음 단계를 고를 수 있어요. |
 | `rhythm.no_row` | 아직 이 시기 리듬 안내를 준비하지 못했어요. |
-| `doc.no_row` | 이 시기에 맞는 자료가 아직 없어서 또래 기준으로 알려드려요. |
+| `doc.no_row` | 이 시기에 맞는 자료가 아직 없어서 준비하지 못했어요. |
 | `next_step.chain_end` | 이건 이미 혼자 잘 하고 있어요. 다음 단계는 준비되면 알려드릴게요. |
 
 `rhythm_info` 본문은 상수가 아니라 `growth_doc`의 `rhythm_info` 행에서 온다 — 월령마다 다르기 때문이다. 행이 없을 때만 `rhythm.no_row`로 떨어진다.

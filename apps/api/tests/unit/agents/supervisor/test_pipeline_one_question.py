@@ -161,5 +161,7 @@ async def test_Food_와_Growth_가_둘_다_되물어도_화면의_질문은_하�
     ]
     asked = [(card["agent"], card["question"]) for card in cards if card["question"]]
     assert asked == [("food", FOOD_QUESTION)]
-    # 질문이 전부였던 Growth 는 질문을 잃어 카드가 없다 — 라벨만 남는 빈 카드를 그리지 않는다
-    assert [result.agent for result in _of(events, AgentResult)] == ["food"]
+    # Growth 는 질문을 잃어도 안내 한 줄이 있어 카드가 선다 — 양치 요청에 화면 반응이 남는다
+    growth = next(result for result in _of(events, AgentResult) if result.agent == "growth")
+    assert growth.question is None
+    assert [readout.code for readout in growth.readouts] == ["empty"]

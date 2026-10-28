@@ -33,5 +33,7 @@ NEXT_STEP_CHAIN_END = "next_step.chain_end"
 ASK_HABIT_TRIGGER = "ask.habit_trigger"
 ASK_HABIT_CURRENT = "ask.habit_current"
 ASK_ROUTINE_CURRENT = "ask.routine_current"
+# 되묻기와 같이 나가는 0개 안내 (code="empty")
+ASK_NEED_LEVEL = "ask.need_level"
 
 READOUTS = ReadoutCatalog.from_yaml(Path(__file__).with_name("growth.readout.yaml"))
