@@ -23,6 +23,7 @@ from app.api.deps.child import AccessibleChild
 from app.api.deps.db import SessionDep
 from app.api.errors import ApiError, ErrorEnvelope, constraint_name
 from app.api.runs import suggestion_retry
+from app.api.v1.list_query import PageQueryDep
 from app.api.v1.reminder_check import check_reminder, reminder_out
 from app.api.v1.schemas.common import Ref
 from app.api.v1.schemas.suggestions import (
@@ -312,6 +313,13 @@ async def submit_event(
         if await suggestion_repo.is_any_linked(session, suggestion_ids=suggestion_ids):
             raise ApiError(409, "already_confirmed", "이미 캘린더에 넣은 제안이에요")
 
+    # 알림을 함께 걸면 연결부터 잡는다 — 일정을 넣으면 아이 행에 외래 키 잠금이 걸리는데, 그 뒤에
+    # 보호자 → 아이 순으로 잠그면 같은 순서로 잡는 탈퇴(`withdraw_parent`)와 엇갈린다 (#603 리뷰)
+    if body.reminder is not None and not await schedule_repo.lock_link(
+        session, child_id=child.child_id, parent_id=parent.parent_id
+    ):
+        raise ApiError(403, "child_access_denied", "이 아이에 접근할 수 없어요")
+
     # Event INSERT
     created_by = EventCreatedBy.AGENT if suggestion_ids else EventCreatedBy.CAREGIVER
 
@@ -352,7 +360,7 @@ async def submit_event(
             parent_id=parent.parent_id,
             lead=body.reminder.lead,
         )
-        if reminder is None:  # 확인한 뒤 연결이 끊겼다 (#427) — 일정도 넣지 않는다
+        if reminder is None:  # 위에서 연결을 잡아 두어 오지 않는다. 계약대로 막아만 둔다
             raise ApiError(403, "child_access_denied", "이 아이에 접근할 수 없어요")
 
     try:
@@ -799,33 +807,35 @@ async def answer_question(
     "/children/{cid}/suggestions",
     summary="지난 추천 목록",
     description=(
-        "개인화 · 일반 추천을 함께 커서 페이징으로 반환하고 kind 로 구분한다. "
-        "필터 없으면 draft 제외 (07 화면용). evidence 는 개인화만 채워진다."
+        "개인화 · 일반 추천을 함께 `page` · `size` 쪽으로 나눠 반환하고 kind 로 구분한다. "
+        "필터 없으면 draft 제외 (07 화면용). evidence 는 개인화만 채워진다. "
+        "`rated=false` 는 피드백을 아직 안 남긴 것, `rated=true` 는 남긴 것만. "
+        "`total` 은 필터를 건 뒤의 전체 건수다."
     ),
     status_code=200,
+    responses={status: {"model": ErrorEnvelope} for status in (400, 403)},
 )
 async def list_suggestions(
     child: AccessibleChild,
     session: SessionDep,
+    query: PageQueryDep,
     status: str | None = Query(default=None),
-    cursor: str | None = Query(default=None),
-    limit: int = Query(default=20, ge=1, le=100),
+    rated: bool | None = Query(
+        default=None,
+        description="안 보내면 전부, false 면 피드백 미평가만, true 면 피드백을 남긴 것만",
+    ),
 ) -> SuggestionListResponse:
     try:
         status_enum = SuggestionStatus(status) if status else None
     except ValueError:
         raise ApiError(400, "validation_failed", "유효하지 않은 status 값이에요")
-    if cursor is not None:
-        try:
-            suggestion_repo.decode_cursor(cursor)
-        except (ValueError, KeyError, TypeError):
-            raise ApiError(400, "validation_failed", "유효하지 않은 cursor 값이에요")
-    rows, next_cursor = await suggestion_repo.list_suggestions(
+    rows, total = await suggestion_repo.list_suggestions(
         session,
         child_id=child.child_id,
         status=status_enum,
-        cursor=cursor,
-        limit=limit,
+        rated=rated,
+        offset=query.offset,
+        limit=query.size,
     )
     evidence_map = await suggestion_repo.list_evidence_batch(
         session, suggestion_ids=[s.id for s in rows]
@@ -838,7 +848,10 @@ async def list_suggestions(
     )
     return SuggestionListResponse(
         items=[_suggestion_out(s, views.get(s.id, ())) for s in rows],
-        next_cursor=next_cursor,
+        total=total,
+        page=query.page,
+        size=query.size,
+        total_pages=query.total_pages(total),
     )
 
 
@@ -918,18 +931,41 @@ async def update_event(
     if replayed is not None and isinstance(replayed, dict):
         return JSONResponse(status_code=200, content=replayed)
 
-    touch_reminder = "reminder" in body.model_fields_set
-    if touch_reminder and body.reminder is not None:
-        check_reminder(
-            body.reminder.lead, starts_at=body.event.starts_at, all_day=body.event.all_day
-        )
-
     # 연결부터 잡는다 — 수정이 알림 행을 잡은 뒤에 알림을 걸며 연결을 잠그면, 연결 → 알림 순으로
     # 지우는 끊기(`unlink_parent`)와 교착이 된다. 끊긴 뒤면 일정도 고치지 않는다 (#427)
     if not await schedule_repo.lock_link(
         session, child_id=child.child_id, parent_id=parent.parent_id
     ):
         raise ApiError(403, "child_access_denied", "이 아이에 접근할 수 없어요")
+    before = await schedule_repo.find_event(
+        session, child_id=child.child_id, event_id=eid, lock="update"
+    )
+    if before is None:
+        raise ApiError(404, "not_found", "일정을 찾을 수 없어요")
+
+    touch_reminder = "reminder" in body.model_fields_set
+    if touch_reminder and body.reminder is not None:
+        mine_before = (
+            await schedule_repo.list_my_reminders(
+                session, parent_id=parent.parent_id, event_ids=[eid]
+            )
+        ).get(eid)
+        # 화면은 일정 폼 전체를 보내서, 제목만 고쳐도 지금 알림 값이 같이 온다. 값 · 시작 · 종류가
+        # 그대로면 검사도 저장도 하지 않는다 — 이미 울린 알림을 검사하면 제목 수정까지 422 가 되고,
+        # 저장하면 "울렸음" 이 지워져 한 번 더 울린다 (#603 리뷰)
+        unchanged = (
+            mine_before is not None
+            and mine_before.lead == body.reminder.lead
+            and before.starts_at == body.event.starts_at
+            and before.all_day == body.event.all_day
+        )
+        if unchanged:
+            touch_reminder = False
+        else:
+            check_reminder(
+                body.reminder.lead, starts_at=body.event.starts_at, all_day=body.event.all_day
+            )
+
     event = await schedule_repo.update_event(
         session,
         child_id=child.child_id,
@@ -940,8 +976,9 @@ async def update_event(
         ends_at=body.event.ends_at,
         all_day=body.event.all_day,
         category=EventCategory(body.event.category),
+        now=datetime.now(timezone.utc),
     )
-    if event is None:
+    if event is None:  # 위에서 잡아 두어 오지 않는다
         raise ApiError(404, "not_found", "일정을 찾을 수 없어요")
 
     try:

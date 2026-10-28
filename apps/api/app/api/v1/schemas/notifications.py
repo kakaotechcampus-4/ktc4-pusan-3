@@ -1,6 +1,8 @@
 """푸시 기기 등록 · 알림 켜고 끄기 요청 · 응답 (#594)."""
 
-from pydantic import BaseModel, ConfigDict, Field
+from typing import Annotated
+
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from app.domains.notification.models import PushPlatform
 
@@ -8,10 +10,11 @@ from app.domains.notification.models import PushPlatform
 class PushDeviceIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    token: str = Field(
-        min_length=1,
-        max_length=4096,
-        description="FCM 등록 토큰 원문. 웹은 Firebase JS SDK `getToken`, 앱은 셸이 넘겨준 값",
+    # 앞뒤 공백을 자른 뒤 길이를 본다 — 공백만 있는 값이 토큰으로 저장되지 않게 (#605 리뷰)
+    token: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=4096)
+    ] = Field(
+        description="FCM 등록 토큰 원문. 웹은 Firebase JS SDK `getToken`, 앱은 셸이 넘겨준 값"
     )
     platform: PushPlatform
 

@@ -60,10 +60,38 @@ _ALL_DAY: dict[ReminderLead, int] = {
     ReminderLead.WEEKS_1_9AM: 7,
 }
 
+# 일정 종류가 바뀔 때 알림을 지우지 않고 날 수를 지켜 가까운 값으로 옮긴다 (#603 PM 결정).
+# 예방접종 · 병원 일정은 알림이 안 오는 쪽이 조금 다른 시각에 오는 것보다 훨씬 나쁘다.
+_TO_ALL_DAY: dict[ReminderLead, ReminderLead] = {
+    ReminderLead.AT_START: ReminderLead.DAY_OF_9AM,
+    ReminderLead.MINUTES_5: ReminderLead.DAY_OF_9AM,
+    ReminderLead.MINUTES_10: ReminderLead.DAY_OF_9AM,
+    ReminderLead.MINUTES_15: ReminderLead.DAY_OF_9AM,
+    ReminderLead.MINUTES_30: ReminderLead.DAY_OF_9AM,
+    ReminderLead.HOURS_1: ReminderLead.DAY_OF_9AM,
+    ReminderLead.HOURS_2: ReminderLead.DAY_OF_9AM,
+    ReminderLead.DAYS_1: ReminderLead.DAYS_1_9AM,
+    ReminderLead.DAYS_2: ReminderLead.DAYS_2_9AM,
+    ReminderLead.WEEKS_1: ReminderLead.WEEKS_1_9AM,
+}
+_TO_TIMED: dict[ReminderLead, ReminderLead] = {
+    ReminderLead.DAY_OF_9AM: ReminderLead.AT_START,
+    ReminderLead.DAYS_1_9AM: ReminderLead.DAYS_1,
+    ReminderLead.DAYS_2_9AM: ReminderLead.DAYS_2,
+    ReminderLead.WEEKS_1_9AM: ReminderLead.WEEKS_1,
+}
+
 
 def fits(lead: ReminderLead, *, all_day: bool) -> bool:
     """이 알림 값을 그 종류의 일정에 걸 수 있는가."""
     return lead in (_ALL_DAY if all_day else _TIMED)
+
+
+def for_kind(lead: ReminderLead, *, all_day: bool) -> ReminderLead:
+    """그 종류의 일정에 맞는 값. 이미 맞으면 그대로, 아니면 날 수를 지켜 가까운 값으로 옮긴다."""
+    if fits(lead, all_day=all_day):
+        return lead
+    return (_TO_ALL_DAY if all_day else _TO_TIMED)[lead]
 
 
 def remind_at(lead: ReminderLead, *, starts_at: datetime, all_day: bool) -> datetime:

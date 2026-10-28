@@ -907,6 +907,23 @@ export const receivedSuggestions: ReceivedSuggestion[] = [
   },
 ];
 
+/**
+ * `suggestions_many` 시나리오의 07 피드백 목록 (#592). 기본 셋(피드백 전 2건) 뒤에 피드백을 안 남긴
+ * 놀이 제안 19건을 붙인다 — 피드백 전은 21건이라 2쪽이 서고, 2쪽의 한 줄을 평가하면 20건이 되어
+ * 1쪽으로 옮겨진다.
+ */
+export const manyReceivedSuggestions: ReceivedSuggestion[] = [
+  ...receivedSuggestions,
+  ...Array.from({ length: 19 }, (_, i): ReceivedSuggestion => ({
+    ...suggestions[1],
+    id: `s_past_m${i + 1}`,
+    agent: "activity",
+    content: `블록으로 탑을 함께 쌓아 보세요 (${i + 1})`,
+    status: "approved",
+    feedback: null,
+  })),
+];
+
 /* ── 09 캘린더 ───────────────────────────────────────────────────────── */
 
 /** 🚨 캘린더에 서는 일정은 전부 승인이 끝난 것이다. 초안은 `event` 행이 아니라 여기 오지 않는다 (#118). */

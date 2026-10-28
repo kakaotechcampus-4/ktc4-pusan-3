@@ -6,6 +6,7 @@
 import uuid
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
+from typing import Literal
 
 from sqlalchemy import case, delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -23,7 +24,7 @@ from app.domains.schedule.models import (
     Reminder,
     SharedPhoto,
 )
-from app.rules.reminder import ReminderLead, fits, remind_at, starts_window
+from app.rules.reminder import ReminderLead, fits, for_kind, remind_at, starts_window
 
 
 async def list_events(
@@ -52,15 +53,22 @@ async def list_events(
 
 
 async def find_event(
-    session: AsyncSession, *, child_id: uuid.UUID, event_id: uuid.UUID, lock: bool = False
+    session: AsyncSession,
+    *,
+    child_id: uuid.UUID,
+    event_id: uuid.UUID,
+    lock: Literal["share", "update"] | None = None,
 ) -> Event | None:
-    """lock 이면 FOR SHARE 로 읽는다 — 커밋 전까지 일정 수정(`update_event`)이 기다린다.
+    """lock 이면 그 일정 행을 잡고 읽는다. 다른 쪽이 먼저 잡고 있으면 그 커밋을 기다렸다가
+    바뀐 값을 읽는다.
 
-    수정이 먼저 잡고 있으면 그 커밋을 기다렸다가 바뀐 값을 읽는다.
+    - "share"(FOR SHARE) — 읽고 검사만 하는 쪽(알림 걸기). 일정 수정(`update_event`)이 기다린다.
+    - "update"(FOR UPDATE) — 읽은 뒤 일정을 고칠 쪽(PATCH). 🚨 고칠 쪽이 SHARE 로 읽으면 PATCH
+      두 건이 둘 다 SHARE 를 쥔 채 UPDATE 로 올리려다 서로 기다린다.
     """
     stmt = select(Event).where(Event.child_id == child_id, Event.id == event_id)
-    if lock:
-        stmt = stmt.with_for_update(read=True).execution_options(populate_existing=True)
+    if lock is not None:
+        stmt = stmt.with_for_update(read=lock == "share").execution_options(populate_existing=True)
     return await session.scalar(stmt)
 
 
@@ -107,13 +115,11 @@ async def update_event(
     ends_at: datetime | None,
     all_day: bool,
     category: EventCategory,
+    now: datetime,
 ) -> Event | None:
     """일정 수정은 시간 구간을 한 묶음으로 받아 일부 시간만 어긋나지 않게 한다.
 
-    걸린 알림(#594)도 여기서 맞춘다 — 일정을 고치는 길이 이 함수 하나다.
-      - 종일 ↔ 시간 있는 일정이 바뀌면 지운다. 두 종류의 알림 목록이 서로 맞지 않는다.
-      - 시작이 바뀌면 울렸던 기록을 지운다. 알림은 새 시작을 따라 다시 울린다 — 새 시각이 이미
-        한참 지났으면 발송 쪽이 보내지 않는다.
+    걸린 알림(#594)도 여기서 맞춘다 — 일정을 고치는 길이 이 함수 하나다 (`_follow_event`).
     🚨 같은 요청에서 알림을 걸 거라면 이 함수보다 먼저 `lock_link` 를 부른다. 여기서 알림 행을
        잡은 뒤에 연결을 잠그면, 연결 → 알림 순으로 지우는 끊기(`unlink_parent`)와 교착이 된다.
     """
@@ -126,11 +132,14 @@ async def update_event(
     ).one_or_none()
     if before is None:
         return None
-    if before.all_day != all_day:
-        await session.execute(delete(Reminder).where(Reminder.event_id == event_id))
-    elif before.starts_at != starts_at:
-        await session.execute(
-            update(Reminder).where(Reminder.event_id == event_id).values(sent_at=None)
+    if before.all_day != all_day or before.starts_at != starts_at:
+        await _follow_event(
+            session,
+            event_id=event_id,
+            starts_at=starts_at,
+            all_day=all_day,
+            kind_changed=before.all_day != all_day,
+            now=now,
         )
     stmt = (
         update(Event)
@@ -144,8 +153,45 @@ async def update_event(
             category=EventCategory(category),
         )
         .returning(Event)
+        # 부르는 쪽이 이 일정을 먼저 읽었으면 그 객체에 새 값을 덮는다 — 아니면 응답이
+        # 고치기 전 값이다
+        .execution_options(populate_existing=True)
     )
     return await session.scalar(stmt)
+
+
+async def _follow_event(
+    session: AsyncSession,
+    *,
+    event_id: uuid.UUID,
+    starts_at: datetime,
+    all_day: bool,
+    kind_changed: bool,
+    now: datetime,
+) -> None:
+    """일정의 시작 · 종류가 바뀔 때 모든 보호자의 알림을 따라가게 한다.
+
+    - 종일 ↔ 시간 있는 일정이 바뀌면 날 수를 지켜 가까운 값으로 옮긴다(`for_kind`, #603 PM 결정).
+      옮긴 값의 울릴 시각이 이미 지났으면 그 알림만 지운다.
+    - 시작만 바뀌면 값은 그대로다.
+    - 새 울릴 시각이 아직 오지 않은 알림만 "울렸음"(`sent_at`)을 비워 다시 울린다. 이미 지난
+      시각으로 옮긴 알림은 비우지 않는다 — 비우면 이미 울린 알림이 발송 배치에서 곧바로 한 번 더
+      울린다.
+    알림 행을 잡고 읽는다(FOR UPDATE). 발송 배치가 그사이 맡아 `sent_at` 을 찍는 것과 엇갈리지 않게.
+    """
+    rows = await session.scalars(
+        select(Reminder)
+        .where(Reminder.event_id == event_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    for row in rows.all():
+        lead = for_kind(row.lead, all_day=all_day)
+        if remind_at(lead, starts_at=starts_at, all_day=all_day) > now:
+            row.lead, row.sent_at = lead, None
+        elif kind_changed:
+            await session.delete(row)
+    await session.flush()
 
 
 async def delete_event(session: AsyncSession, *, child_id: uuid.UUID, event_id: uuid.UUID) -> bool:
@@ -299,13 +345,13 @@ async def put_reminder(
     일정 종류에 맞는 lead 인지 · 이미 지난 시각인지는 부르는 쪽이 `app/rules/reminder.py` 로 본다.
     🚨 일기(`put_diary`)와 같은 이유로 연결을 잠근 뒤 확인한다 (#427) — 끊기와 동시에 오면
        끊긴 보호자에게 알림이 남는다.
-    🚨 저장된 일정을 읽어 lead 를 검사했다면, 부르는 쪽이 `lock_link` → `find_event(lock=True)`
+    🚨 저장된 일정을 읽어 lead 를 검사했다면, 부르는 쪽이 `lock_link` → `find_event(lock=...)`
        순으로 먼저 잡고 검사한다. 잠그지 않고 읽은 값으로 검사하면 그사이 종일로 바뀐 일정에
        시간 있는 일정의 lead 가 저장된다. 여기서 다시 잡는 것은 이미 쥔 잠금이라 기다리지 않는다.
     """
     if not await lock_link(session, child_id=child_id, parent_id=parent_id):
         return None
-    if await find_event(session, child_id=child_id, event_id=event_id, lock=True) is None:
+    if await find_event(session, child_id=child_id, event_id=event_id, lock="share") is None:
         return None
     stmt = (
         pg_insert(Reminder)
