@@ -6,7 +6,8 @@
   3. Activity 검증   근거 id · 장소 이름 · 바깥 활동이 어려운 날의 야외 후보 · 기피 대상 ·
                      note 반복 표현 · 최근 중복 · 0–17개월 보호자 동반
   4. build()         6개월이 안 지난 아이 기록 근거 수로 kind 를 정한다. 모델이 고르지 않는다.
-                     장소 이름은 코드가 content 앞에 붙인다. allergens · items 도 코드가 채운다
+                     장소 이름은 코드가 content 앞에 붙이고, 확인 문구(place_notice)를 칸으로
+                     싣는다. allergens · items 도 코드가 채운다
   5. check_count()   최대 3개 — 호출부(출력 tool)가 부른다
 
 순서가 결과를 바꾼다. 안전에 걸린 후보가 뒤 검사를 타면 엉뚱한 사유가 나간다.
@@ -17,7 +18,7 @@
 
 from collections import Counter
 from collections.abc import Collection, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from enum import StrEnum
 from functools import cache
@@ -25,6 +26,7 @@ from math import ceil
 from uuid import UUID
 
 from app.agents.activity.doc_seed import activity_doc_seed
+from app.agents.activity.readouts import PLACE_NOTICE, PLACE_NOTICE_UNDATED, READOUTS
 from app.agents.activity.result import ErrorCode
 from app.agents.activity.rules import is_recent_duplicate, normalize_activity, overstates
 from app.agents.activity.schemas.common import (
@@ -34,7 +36,7 @@ from app.agents.activity.schemas.common import (
     EvidencePick,
 )
 from app.agents.activity.schemas.recommend import ActivityCandidate
-from app.agents.activity.store.ports import ActivityDocRow
+from app.agents.activity.store.ports import ActivityDocRow, PlaceRow
 from app.agents.activity.tools.filters import SafetyTerms, check_candidate
 from app.agents.common.evidence import RankedEvidence, cite
 from app.agents.common.reference import age_gates
@@ -137,7 +139,7 @@ def review_candidates(
     seen: Seen,
     recent_activities: Collection[str],
     safety: SafetyTerms,
-    places: Collection[str] = (),
+    places: Mapping[str, PlaceRow] | None = None,
     outdoor: Mapping[DayLabel, bool] | None = None,
     docs: Docs | None = None,
     today: date,
@@ -149,7 +151,7 @@ def review_candidates(
 
     `seen` 은 이번 run 에서 search_activity_memory 가 돌려준 근거다. 기피 대상 거절도 이 표를
     쓴다 — 모델이 인용하지 않은 기피 근거여도 조회됐으면 막는다.
-    `places` 는 이번 run 에서 search_nearby_places 가 돌려준 장소 이름이다.
+    `places` 는 이번 run 에서 search_nearby_places 가 돌려준 장소다(이름 → 행).
     `outdoor` 는 후보의 날(`day`)마다 바깥 활동을 할 수 있는지다 (`outing.outdoor_on`). 출력 tool 이
     후보에 나온 날을 전부 채운다. None 이면 날씨로 거르지 않는다(날씨와 무관한 검사의 테스트용).
     `docs` 는 이번 run 의 프롬프트 [예시]에 실은 문서 행이다. 인용하면 `activity_doc` 근거가
@@ -165,7 +167,9 @@ def review_candidates(
         and len(subject := normalize_activity(ranked.subject)) >= MIN_AVOIDED_LABEL
     )
     # 띄어쓰기만 다르게 써도 같은 곳으로 본다. 붙일 때는 조회 결과의 이름을 그대로 쓴다
-    known_places = {key: name for name in places if (key := normalize_activity(name))}
+    known_places = {
+        key: row for row in (places or {}).values() if (key := normalize_activity(row.name))
+    }
     drafts: list[SuggestionDraft] = []
     warnings: list[tuple[str, ...]] = []
     outdoor_drafts: set[tuple[str, DayLabel]] = set()
@@ -233,11 +237,11 @@ def _check(
     months: int,
     seen: Seen,
     docs: Docs,
-    places: Mapping[str, str],
+    places: Mapping[str, PlaceRow],
     avoided: tuple[str, ...],
     recent: Collection[str],
     outdoor: Mapping[DayLabel, bool] | None,
-) -> tuple[RejectReason | None, tuple[EvidenceCitation, ...], str | None]:
+) -> tuple[RejectReason | None, tuple[EvidenceCitation, ...], PlaceRow | None]:
     # 1. 안전 필터는 호출부(review_candidates)가 먼저 돌렸다
 
     # 2. 평가 표현
@@ -268,7 +272,7 @@ def _check(
         return RejectReason.UNRELATED_DOC, (), None
     resolved = related
 
-    place: str | None = None
+    place: PlaceRow | None = None
     if candidate.place_name and candidate.place_name.strip():
         place = places.get(normalize_activity(candidate.place_name))
         if place is None:
@@ -301,7 +305,7 @@ def _check(
 def _build(
     candidate: ActivityCandidate,
     citations: tuple[EvidenceCitation, ...],
-    place: str | None,
+    place: PlaceRow | None,
     *,
     allergens: tuple[str, ...],
     today: date,
@@ -309,10 +313,11 @@ def _build(
     """allergens 는 안전 필터가 찾은 알레르기 항목 정식 명칭, items 는 후보의 재료다 (#232).
 
     allergens 는 상태(없음/모름)를 담지 않는다 — 승인할 때 서버가 health_safety 를 다시 읽는다.
+    장소가 붙으면 확인 문구를 칸으로 싣는다 — 문장에 섞으면 화면이 따로 세울 수 없다 (#516).
     """
-    return build(
+    draft = build(
         agent="activity",
-        content=_with_place(candidate.content, place),
+        content=_with_place(candidate.content, place.name if place else None),
         reason=candidate.reason.strip(),
         citations=citations,
         general_reason=GENERAL_REASON,
@@ -320,6 +325,21 @@ def _build(
         items=tuple(candidate.materials),
         today=today,
     )
+    if place is None:
+        return draft
+    return replace(draft, place_notice=place_notice(place))
+
+
+def place_notice(place: PlaceRow) -> str:
+    """장소가 붙은 추천의 확인 문구 (#516). 모델이 아니라 코드 문구다.
+
+    공공데이터 기준일자가 있으면 그 달을 앞에 둔다. 없는 출처(어린이놀이시설)는 운영 여부 확인만.
+    """
+    if place.data_date is None:
+        return READOUTS.render(PLACE_NOTICE_UNDATED).body
+    return READOUTS.render(
+        PLACE_NOTICE, year=place.data_date.year, month=place.data_date.month
+    ).body
 
 
 def _with_place(content: str, place: str | None) -> str:

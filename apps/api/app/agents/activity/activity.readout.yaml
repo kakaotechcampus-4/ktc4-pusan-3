@@ -12,6 +12,16 @@ caution.non_food_allergy:
   kind: notice
   template: 등록된 알레르기({label})가 있어요. 장소랑 재료를 한 번 확인해 주세요.
 
+# ── 장소 안내 (#516). 장소 이름이 붙은 추천에만 `place_notice` 칸으로 싣는다 ──
+# 문장(content)에 섞지 않는다 — 화면이 제안 문장 아래 한 줄로 세운다. 적재한 뒤 문을 닫았을 수 있어
+# 운영 여부는 늘 확인해 달라고 한다. 기준일자는 공공데이터의 데이터기준일자다
+place.notice:
+  kind: notice
+  template: 공공데이터 기준 {year}년 {month}월이에요. 가기 전에 운영 여부를 확인해 주세요.
+place.notice_undated:
+  kind: notice
+  template: 가기 전에 운영 여부를 확인해 주세요.
+
 # ── 날씨 안내 (weather.py 의 화면 문구 키). 날씨 판정이 붙이고 추천과 함께 화면에 나간다 ──
 # 무엇을 확인 못 했는지는 야외를 막아도 알린다 (D8)
 weather.unchecked:

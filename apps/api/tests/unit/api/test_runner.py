@@ -33,6 +33,7 @@ from app.agents.entrypoint import (
 from app.agents.memory.schemas.task import WorkType
 from app.api import agent_ports, idempotency
 from app.api.runs import pending_reply, registry, runner, suggestion_retry
+from app.domains.place.agent_reader import DbPlaceSource
 from app.domains.safety.agent_reader import DbSafetyReader
 
 PARENT = uuid.UUID(int=1)
@@ -105,6 +106,8 @@ async def test_agent_job_좌표와_날씨_어댑터를_진입점에_그대로_�
 
     assert seen["location"] is location
     assert seen["activity_weather"] is weather
+    # 장소는 적재한 place 표를 읽는 어댑터다. 좌표가 없는 run 에서는 tool 이 닫혀 부르지 않는다
+    assert isinstance(seen["activity_places"], DbPlaceSource)
 
 
 async def test_agent_job_안전_어댑터를_Food_와_Activity_에_넘긴다(monkeypatch):

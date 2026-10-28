@@ -17,7 +17,7 @@ from app.agents import entrypoint, pipeline
 from app.agents.activity.context import build_gate as build_activity_gate
 from app.agents.activity.registry import closed_readout_key as activity_closed_key
 from app.agents.activity.schemas.task import ActivityTaskType
-from app.agents.activity.store.inmemory import InMemoryWeather
+from app.agents.activity.store.inmemory import InMemoryPlaces, InMemoryWeather
 from app.agents.common.age import life_stage
 from app.agents.common.datetime_rules import build_observed_range
 from app.agents.common.llm_client import LLMConfigError
@@ -648,6 +648,20 @@ async def test_좌표와_날씨_어댑터를_넘기면_Activity_가_받는다(
 
     assert activity.ports.weather is weather
     assert (activity.location.lat, activity.location.lon) == (35.18, 129.08)  # 한 번 더 자른다
+
+
+async def test_장소_어댑터를_넘기면_Activity_가_받는다(monkeypatch: pytest.MonkeyPatch) -> None:
+    places = InMemoryPlaces()
+    seen = await _activity_of(
+        monkeypatch,
+        location=entrypoint.CoarseLocation(lat=35.18, lon=129.08),
+        activity_places=places,
+    )
+    activity = seen["contexts"]["activity"]
+
+    assert activity.ports.places is places
+    gate = await build_activity_gate(activity, outdoor_ok=True)
+    assert gate.data.places is True and gate.has_location is True
 
 
 async def test_좌표를_안_넘기면_Activity_는_실내_전용이다(monkeypatch: pytest.MonkeyPatch) -> None:

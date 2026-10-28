@@ -40,7 +40,9 @@ _UPDATED = (
     "synced_at",
 )
 
-_NEARBY_SQL = text(Path(__file__).with_name("nearby_places.sql").read_text(encoding="utf-8"))
+_NEARBY_SQL = text(
+    Path(__file__).with_name("nearby_places.sql").read_text(encoding="utf-8")
+).bindparams(bindparam("sources", type_=ARRAY(Text)))
 
 
 @dataclass(frozen=True)
@@ -107,8 +109,9 @@ async def nearby(
     category: str,
     radius_m: float,
     limit: int,
+    sources: Collection[str],
 ) -> list[NearbyPlace]:
-    """`radius_m` 안의 `category` 장소를 가까운 순 `limit` 곳."""
+    """`radius_m` 안의 `category` 장소를 가까운 순 `limit` 곳. `sources` 출처의 행만 본다."""
     lat_min, lat_max, lng_min, lng_max = bounding_box(lat, lng, radius_m)
     result = await session.execute(
         _NEARBY_SQL,
@@ -123,6 +126,7 @@ async def nearby(
             "radius_m": float(radius_m),
             "earth_radius_m": EARTH_RADIUS_M,
             "limit": limit,
+            "sources": sorted(sources),
         },
     )
     return [

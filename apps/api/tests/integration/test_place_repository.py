@@ -2,7 +2,7 @@
 
 - 표가 막는 값(source · category · 시군구 코드 · 한국 상자)
 - 다시 실어도 행이 늘지 않는다 · 이번 받기에 없는 행만 지운다
-- 반경 검색 — 가까운 순 · 반경 밖 제외 · TOP_K · 종류 · 거리 절대값 · tool 경로
+- 반경 검색 — 가까운 순 · 반경 밖 제외 · TOP_K · 종류 · 출처 · 거리 절대값 · tool 경로
 
 장소 이름 · 좌표는 지어낸 값이다. 기준점에서 방위 · 거리로 계산한 점에 둔다.
 """
@@ -20,7 +20,12 @@ from app.agents.activity.context import ActivityContext, build_gate
 from app.agents.activity.schemas.common import DayLabel, PlaceCategory
 from app.agents.activity.schemas.outing import SearchNearbyPlacesArgs
 from app.agents.activity.store.inmemory import in_memory_ports
-from app.agents.activity.store.ports import PLACE_MAX_RADIUS_M, PLACE_TOP_K, CoarseLocation
+from app.agents.activity.store.ports import (
+    PLACE_MAX_RADIUS_M,
+    PLACE_SOURCES,
+    PLACE_TOP_K,
+    CoarseLocation,
+)
 from app.agents.activity.tools.outing import days_of, search_nearby_places
 from app.agents.activity.weather import WeatherBrief
 from app.domains.place import repository
@@ -275,7 +280,8 @@ async def test_놀이터로_찾으면_놀이터가_있는_공원도_온다(sessi
         ],
     )
 
-    playgrounds = await DbPlaceSource(opener).nearby(
+    # 어린이놀이시설까지 찾게 연다 — 기본값은 아직 찾지 않는다(아래 테스트)
+    playgrounds = await DbPlaceSource(opener, sources=PLACE_SOURCES).nearby(
         location=CENTER, category=PlaceCategory.PLAYGROUND, radius_m=PLACE_MAX_RADIUS_M
     )
     parks = await DbPlaceSource(opener).nearby(
@@ -291,13 +297,51 @@ async def test_놀이터로_찾으면_놀이터가_있는_공원도_온다(sessi
     assert [row.name for row in parks] == ["시험장소plain", "시험장소kid"]
 
 
+async def test_어린이놀이시설은_실려_있어도_기본으로는_찾지_않는다(session, opener):
+    # 키즈카페 조건을 PM 이 정하기 전이다 (#516). 놀이터로 찾으면 놀이터 있는 공원만 온다
+    await _seed(
+        session,
+        [
+            values("kid", distance_m=300, has_playground=True),
+            values(
+                "cafe",
+                source="kids_play_facility",
+                category="indoor_playground",
+                distance_m=100,
+            ),
+            values(
+                "pg",
+                source="kids_play_facility",
+                category="playground",
+                distance_m=200,
+            ),
+        ],
+    )
+
+    indoor = await DbPlaceSource(opener).nearby(
+        location=CENTER, category=PlaceCategory.INDOOR_PLAYGROUND, radius_m=PLACE_MAX_RADIUS_M
+    )
+    playgrounds = await DbPlaceSource(opener).nearby(
+        location=CENTER, category=PlaceCategory.PLAYGROUND, radius_m=PLACE_MAX_RADIUS_M
+    )
+
+    assert indoor == []
+    assert [row.name for row in playgrounds] == ["시험장소kid"]
+
+
 async def test_거리_절대값이_맞다_서울시청에서_부산시청까지(session):
     # 같은 식으로 잰 값이 325,099m 다(#583 리뷰). 실제 거리(약 325km)와 1km 안에서 맞는다.
     # 어댑터는 반경을 20km 로 자르므로 저장소를 바로 부른다
     await repository.upsert_places(session, rows=[values("busan", lat=35.1798, lng=129.0750)])
 
     [row] = await repository.nearby(
-        session, lat=37.5663, lng=126.9779, category="park", radius_m=400_000, limit=5
+        session,
+        lat=37.5663,
+        lng=126.9779,
+        category="park",
+        radius_m=400_000,
+        limit=5,
+        sources=("city_park",),
     )
 
     assert abs(row.distance_m - 325_099) <= 1_000

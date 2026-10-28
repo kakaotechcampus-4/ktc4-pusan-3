@@ -90,6 +90,13 @@ def candidate(**kwargs) -> ActivityCandidate:
 
 
 PARK = "사직어린이공원"  # 이번 run 에 장소 조회가 돌려준 곳
+PARK_ROW = PlaceRow(
+    name=PARK,
+    category=PlaceCategory.PARK,
+    distance_m=800,
+    source="city_park",
+    data_date=date(2026, 6, 30),
+)
 
 
 TOWER_DOC = ActivityDocRow(
@@ -132,7 +139,7 @@ def review(
     months=40,
     seen=SEEN,
     recent=(),
-    places=(PARK,),
+    places=None,
     safety=(),
     outdoor=None,
     docs=DOCS,
@@ -142,7 +149,7 @@ def review(
         months=months,
         seen=seen,
         recent_activities=recent,
-        places=places,
+        places={PARK: PARK_ROW} if places is None else places,
         safety=safety_terms(safety),
         outdoor=outdoor,
         docs=docs,
@@ -369,7 +376,7 @@ class TestPlace:
         (draft,) = review(candidate(content="모래성 쌓기", place_name=PARK)).drafts
         assert draft.content == "사직어린이공원에서 모래성 쌓기"
 
-    @pytest.mark.parametrize("places", [(PARK,), ()])
+    @pytest.mark.parametrize("places", [{PARK: PARK_ROW}, {}])
     def test_조회_결과에_없는_장소는_거절(self, places):
         """장소를 조회하지 않았거나 결과에 없는 이름이면 지어낸 것으로 본다."""
         result = review(candidate(place_name="해운대 키즈파크"), places=places)
@@ -389,6 +396,23 @@ class TestPlace:
     def test_장소가_없으면_문장을_그대로_둔다(self, place_name):
         (draft,) = review(candidate(place_name=place_name)).drafts
         assert draft.content == "큰 블록으로 탑 쌓기"
+        assert draft.place_notice is None
+
+    def test_장소가_붙으면_기준일과_확인_문구를_칸으로_싣는다(self):
+        """문장에 섞지 않는다 — 화면이 제안 문장 아래 한 줄로 세운다 (#516)."""
+        (draft,) = review(candidate(content="모래성 쌓기", place_name=PARK)).drafts
+        assert draft.content == "사직어린이공원에서 모래성 쌓기"
+        assert draft.place_notice == (
+            "공공데이터 기준 2026년 6월이에요. 가기 전에 운영 여부를 확인해 주세요."
+        )
+        assert draft.to_payload()["place_notice"] == draft.place_notice
+
+    def test_기준일자가_없는_장소는_운영_여부_확인만(self):
+        undated = replace(PARK_ROW, data_date=None)
+        (draft,) = review(
+            candidate(content="모래성 쌓기", place_name=PARK), places={PARK: undated}
+        ).drafts
+        assert draft.place_notice == "가기 전에 운영 여부를 확인해 주세요."
 
 
 class TestSafety:
@@ -508,13 +532,7 @@ class TestOutputTool:
 
     async def test_장소_조회가_돌려준_곳을_붙여서_담는다(self):
         ctx = await self.context()
-        ctx.state.seen_places[PARK] = PlaceRow(
-            name=PARK,
-            category=PlaceCategory.PARK,
-            distance_m=800,
-            source="city_park",
-            data_date=None,
-        )
+        ctx.state.seen_places[PARK] = PARK_ROW
         await propose_activity_candidates(
             ctx,
             self.args(
@@ -524,6 +542,8 @@ class TestOutputTool:
             ),
         )
         assert ctx.state.suggestions[1].content == "사직어린이공원에서 모래성 쌓기"
+        assert ctx.state.suggestions[1].place_notice is not None
+        assert ctx.state.suggestions[0].place_notice is None
 
     async def test_하나라도_걸리면_사유를_돌려주고_아무것도_담지_않는다(self):
         ctx = await self.context()

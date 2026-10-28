@@ -2,6 +2,7 @@
 
 - 상자(`bounding_box`)가 반경 원을 다 덮는다 — 모자라면 가까운 장소가 SQL 에서 먼저 빠진다
 - 반경 · 곳 수 상한을 포트 계약 값으로 건다
+- 🚨 어린이놀이시설은 실어 두지만 키즈카페 조건이 정해지기 전이라 찾지 않는다 (#516)
 - 🚨 실패하면 UpstreamUnavailable 이고 문구 · 로그 · 원인 예외에 보호자 좌표가 없다
 - 표의 닫힌 값(source · category CHECK)이 Activity 포트의 값과 같고, 마이그레이션의 글자와도 같다
 
@@ -35,7 +36,7 @@ from app.agents.activity.store.ports import (
 from app.agents.activity.tools.outing import days_of, search_nearby_places
 from app.agents.activity.weather import WeatherBrief
 from app.domains.place import repository
-from app.domains.place.agent_reader import DbPlaceSource
+from app.domains.place.agent_reader import SEARCHED_SOURCES, DbPlaceSource
 from app.domains.place.models import CATEGORY_CHECK, SOURCE_CHECK
 from app.domains.place.repository import EARTH_RADIUS_M, NearbyPlace, bounding_box
 
@@ -112,6 +113,31 @@ async def test_반경은_상한으로_자르고_곳_수는_TOP_K_로_건다(monk
     assert call["limit"] == PLACE_TOP_K
     assert call["category"] == "park"
     assert (call["lat"], call["lng"]) == (35.18, 129.08)
+
+
+async def test_어린이놀이시설은_아직_찾지_않는다(monkeypatch, opener):
+    # 키즈카페를 화면에 낼 조건(확인 문구 · 단독으로 안 내기)을 PM 이 정하기 전이다 (#516)
+    calls = _capture(monkeypatch)
+
+    await DbPlaceSource(opener).nearby(
+        location=LOCATION, category=PlaceCategory.INDOOR_PLAYGROUND, radius_m=1_000
+    )
+
+    [call] = calls
+    assert set(call["sources"]) == {"city_park", "library"}
+    assert "kids_play_facility" not in SEARCHED_SOURCES
+    assert set(SEARCHED_SOURCES) <= set(PLACE_SOURCES)
+
+
+async def test_찾을_출처를_넘기면_그것만_본다(monkeypatch, opener):
+    calls = _capture(monkeypatch)
+
+    await DbPlaceSource(opener, sources=PLACE_SOURCES).nearby(
+        location=LOCATION, category=PlaceCategory.PLAYGROUND, radius_m=1_000
+    )
+
+    [call] = calls
+    assert set(call["sources"]) == set(PLACE_SOURCES)
 
 
 async def test_상한보다_좁은_반경은_그대로_쓴다(monkeypatch, opener):
