@@ -13,7 +13,11 @@ import { resetPhotoRuns } from "@/mocks/handlers/photos";
 import { resetPolicyState } from "@/mocks/handlers/policies";
 import { resetReportState } from "@/mocks/handlers/reports";
 import { resetSubmittedInputs } from "@/mocks/handlers/runs";
-import { resetConsentState, resetParentState } from "@/mocks/handlers/settings";
+import {
+  resetConsentState,
+  resetNotificationSettings,
+  resetParentState,
+} from "@/mocks/handlers/settings";
 import { resetSubmittedEvents } from "@/mocks/handlers/suggestions";
 import { resetDiaries } from "@/mocks/fixtures";
 import { server } from "@/mocks/server";
@@ -42,6 +46,7 @@ afterEach(() => {
   resetConsentState();
   resetPolicyState();
   resetParentState();
+  resetNotificationSettings();
   resetInviteState();
   resetMembership();
   resetAuthState();
