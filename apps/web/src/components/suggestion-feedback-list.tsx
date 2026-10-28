@@ -47,12 +47,12 @@ function currentFeedback(value: unknown): SuggestionFeedback | null {
 
 export function SuggestionFeedbackList({
   suggestions,
-  pendingId,
+  pendingIds,
   onSelect,
 }: {
   suggestions: ReceivedSuggestion[];
-  /** 보내는 중인 제안. 🚨 목록 전체가 아니라 그 줄만 잠근다. */
-  pendingId: string | null;
+  /** 보내는 중인 제안들. 🚨 목록 전체가 아니라 그 줄만 잠근다. */
+  pendingIds: ReadonlySet<string>;
   onSelect: (suggestion: ReceivedSuggestion, feedback: SuggestionFeedback) => void;
 }) {
   return (
@@ -84,7 +84,7 @@ export function SuggestionFeedbackList({
                   <Chip
                     key={feedback}
                     selected={selected === feedback}
-                    disabled={pendingId === suggestion.id}
+                    disabled={pendingIds.has(suggestion.id)}
                     onClick={() => onSelect(suggestion, feedback)}
                   >
                     {FEEDBACK_LABEL[feedback]}
