@@ -21,7 +21,14 @@ from app.domains.schedule.models import EventCategory, EventCreatedBy, EventType
 from app.domains.schedule.repository import create_event, put_reminder
 from app.infra.db.session import engine
 from app.rules.reminder import ReminderLead
-from tests.integration.api.conftest import Bearer, issue_bearer, link_child, seed_login
+from tests.integration.api.conftest import (
+    Bearer,
+    backend_pid,
+    issue_bearer,
+    link_child,
+    seed_login,
+    wait_for_lock_wait,
+)
 
 START = datetime(2099, 3, 10, 2, tzinfo=UTC)
 TIMED = {
@@ -207,7 +214,7 @@ async def test_unlink_in_flight_leaves_no_reminder_of_the_unlinked_parent(commit
     async with factory() as unlinker:
         assert await unlink_parent(unlinker, child_id=child_id, parent_id=member)
         writing = asyncio.create_task(write_reminder())
-        await asyncio.sleep(0.3)  # 저장이 연결 행 잠금에서 기다리게 둔다
+        await wait_for_lock_wait(blocker=await backend_pid(unlinker))  # 저장이 연결 행에서 기다린다
         await unlinker.commit()
 
     assert await asyncio.wait_for(writing, timeout=5) is None
@@ -243,7 +250,7 @@ async def test_switching_to_all_day_in_flight_refuses_a_timed_reminder(
                 headers={"Authorization": f"Bearer {MEMBER_TOKEN}"},
             )
         )
-        await asyncio.sleep(0.3)  # 알림 저장이 일정 행 잠금에서 기다리게 둔다
+        await wait_for_lock_wait(blocker=await backend_pid(editor))  # 저장이 일정 행에서 기다린다
         await editor.commit()
 
     resp = await asyncio.wait_for(putting, timeout=5)
@@ -294,18 +301,20 @@ async def test_editing_while_being_unlinked_does_not_deadlock(
     )
     await asyncio.wait_for(reached.wait(), timeout=5)
 
-    async def unlink():
-        async with factory() as unlinker:
+    async with factory() as unlinker:
+        unlinker_pid = await backend_pid(unlinker)
+
+        async def unlink():
             assert await unlink_parent(unlinker, child_id=child_id, parent_id=member)
             await unlinker.commit()
 
-    unlinking = asyncio.create_task(unlink())
-    await asyncio.sleep(0.3)  # 끊기가 수정이 쥔 행에서 기다리게 둔다
-    release.set()
+        unlinking = asyncio.create_task(unlink())
+        await wait_for_lock_wait(waiter=unlinker_pid)  # 끊기가 수정이 쥔 행에서 기다린다
+        release.set()
 
-    resp = await asyncio.wait_for(patching, timeout=5)
+        resp = await asyncio.wait_for(patching, timeout=5)
+        await asyncio.wait_for(unlinking, timeout=5)
     assert resp.status_code == 200, resp.text
-    await asyncio.wait_for(unlinking, timeout=5)
     async with factory() as check:
         left = await check.scalar(
             select(func.count()).select_from(Reminder).where(Reminder.parent_id == member)
