@@ -1309,6 +1309,42 @@ async def test_질문만_낸_결과가_질문을_잃으면_빈_카드를_내지_
     assert result.partial is None
 
 
+async def test_질문_자리를_쥔_결과가_저장에_실패하면_다음_결과가_자리를_갖는다(
+    monkeypatch: pytest.MonkeyPatch,
+    memory_context: AgentContext,
+    food_context: FoodContext,
+    events: list[Any],
+) -> None:
+    # #452 리뷰 — 저장 전에 자리를 잡으면 카드가 안 나간 Food 가 자리를 쥔 채로 남아, 뒤에 끝난
+    # 질문만 낸 결과까지 버려져 화면에 카드가 하나도 없다
+    monkeypatch.setattr(routing_module, "IMPLEMENTED_AGENTS", frozenset({"food", "activity"}))
+    monkeypatch.setitem(
+        pipeline._RUNNERS,
+        "food",
+        _runner("food", suggestions=(_draft("a"),), needs_observation=(_FOOD_QUESTION,)),
+    )
+    monkeypatch.setitem(
+        pipeline._RUNNERS,
+        "activity",
+        _runner("activity", delay=0.05, needs_observation=(_ACTIVITY_QUESTION,)),
+    )
+
+    result = await _handle(
+        "RC16",
+        memory_llm=_pool_memory(),
+        memory_context=memory_context,
+        food_context=food_context,
+        events=events,
+        contexts=_FAKE_CONTEXTS,
+        save_suggestions=_Saver(events, fail=RuntimeError("db")),
+    )
+
+    assert [(card.agent, card.question) for card in _of(events, AgentResult)] == [
+        ("activity", _ACTIVITY_QUESTION)
+    ]
+    assert result.partial is not None and result.partial.failed == ("food",)
+
+
 async def test_질문을_하나만_내면_그대로_나간다(
     monkeypatch: pytest.MonkeyPatch,
     memory_context: AgentContext,

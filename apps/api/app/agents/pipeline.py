@@ -582,6 +582,15 @@ async def handle_input(
             send(_routed(outcome))  # 로그 · 지표용
             if _failed(outcome):
                 return True  # 실패는 Partial.failed 로만 알린다 — _run_domain 이 센다
+            ids: tuple[str, ...] = ()
+            if outcome.suggestions:
+                stored = await _save(outcome, save_suggestions, run_id=run_id)
+                if stored is None:
+                    return False  # 그 Agent 카드는 내지 않는다 — _run_domain 이 실패로 센다
+                ids = stored
+                saved.extend(ids)
+            # 질문 자리는 카드가 나갈 것이 확정된 뒤에 잡는다 — 저장에 실패해 카드가 없는 결과가
+            # 자리를 쥐면 뒤에 끝난 결과의 질문까지 버려진다 (#452 리뷰)
             asks = question_slot.take(outcome)
             if not asks and _only_a_question(outcome):
                 # 질문이 전부였던 결과가 질문을 잃었다. 라벨만 남는 카드는 내지 않는다(실패 아님)
@@ -591,13 +600,6 @@ async def handle_input(
                     _label(outcome.agent, outcome.task_type),
                 )
                 return True
-            ids: tuple[str, ...] = ()
-            if outcome.suggestions:
-                stored = await _save(outcome, save_suggestions, run_id=run_id)
-                if stored is None:
-                    return False  # 그 Agent 카드는 내지 않는다 — _run_domain 이 실패로 센다
-                ids = stored
-                saved.extend(ids)
             message = (
                 _empty_notice(outcome) if _recommends(outcome.agent, outcome.task_type) else None
             )
