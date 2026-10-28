@@ -69,9 +69,11 @@ async def observation(session, child, writer) -> uuid.UUID:
     return row.id
 
 
-def payload(*, kind="general", citations=(), content="계란말이") -> dict:
-    return {
-        "agent": "food",
+def payload(
+    *, kind="general", citations=(), content="계란말이", requested=None, agent="food"
+) -> dict:
+    item = {
+        "agent": agent,
         "kind": kind,
         "content": content,
         "reason": "이유",
@@ -79,6 +81,9 @@ def payload(*, kind="general", citations=(), content="계란말이") -> dict:
         "allergens": ["난류"],
         "items": ["계란"],
     }
+    if requested is not None:
+        item["requested"] = requested
+    return item
 
 
 def cited(kind: str, source_id: uuid.UUID, note: str = "다 먹었다") -> dict:
@@ -262,6 +267,55 @@ async def test_근거가_어긋난_묶음은_한_행도_쓰지_않는다(session
         )
 
     assert await counts(session, child.id) == (0, 0), why
+
+
+async def test_보호자가_정한_요청에_맞춘_일반_추천은_문서_근거_없이도_쓴다(session, kids):
+    """ "물놀이 뭐 하지?" 처럼 놀이를 정해 물었으면 그 요청이 기준이다 (루트 §2)."""
+    _, child, _ = kids
+    [suggestion_id] = await save_agent_suggestions(
+        session,
+        child_id=child.id,
+        run_id=RUN,
+        payloads=[payload(kind="general", requested=True, agent="activity")],
+        now=NOW,
+    )
+    assert suggestion_id
+    assert await counts(session, child.id) == (1, 0)
+
+
+async def test_요청_기반_면제는_Activity_만이다(session, kids):
+    """Food 는 레시피북 밖 메뉴가 나가면 안 된다 — requested 가 와도 문서 근거를 본다."""
+    _, child, _ = kids
+    with pytest.raises(SuggestionEvidenceError, match="문서 행 근거가 없다"):
+        await save_agent_suggestions(
+            session,
+            child_id=child.id,
+            run_id=RUN,
+            payloads=[payload(kind="general", requested=True, agent="food")],
+            now=NOW,
+        )
+    assert await counts(session, child.id) == (0, 0)
+
+
+async def test_요청_기반이어도_아이_기록_근거가_있으면_일반이_아니다(session, kids):
+    """요청 기반은 종류가 아니다 — 기록을 인용했으면 개인화로 내야 한다."""
+    owner, child, _ = kids
+    obs = await observation(session, child, owner)
+    with pytest.raises(SuggestionEvidenceError, match="아이 기록 근거가 있다"):
+        await save_agent_suggestions(
+            session,
+            child_id=child.id,
+            run_id=RUN,
+            payloads=[
+                payload(
+                    kind="general",
+                    requested=True,
+                    agent="activity",
+                    citations=[cited("observation_food", obs)],
+                )
+            ],
+            now=NOW,
+        )
 
 
 async def test_일반_추천인데_문서_근거가_없으면_한_행도_쓰지_않는다(session, kids):
