@@ -127,7 +127,9 @@ class FcmClient:
             TOKEN_URL,
             data={
                 "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
-                "assertion": assertion,
+                # 🚨 jwt.encode 는 bytes 를 돌려준다. 그대로 넣으면 httpx 가 "b'eyJ…'" 로
+                #    보내 교환이 실패한다
+                "assertion": assertion.decode("ascii"),
             },
         )
         if not response.is_success:

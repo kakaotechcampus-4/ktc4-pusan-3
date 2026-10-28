@@ -2,11 +2,13 @@
 
 import json
 import logging
+from urllib.parse import parse_qs
 
 import httpx
 import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
+from google.auth import jwt
 
 from app.integrations.fcm import TOKEN_URL, FcmClient, Message, SendResult
 
@@ -56,6 +58,13 @@ async def test_sends_one_message_and_reuses_the_access_token(service_account):
     token_calls = [c for c in calls if str(c.url) == TOKEN_URL]
     sends = [c for c in calls if str(c.url) != TOKEN_URL]
     assert len(token_calls) == 1  # 끝나기 전까지 다시 받지 않는다
+    form = parse_qs(token_calls[0].content.decode())
+    assert form["grant_type"] == ["urn:ietf:params:oauth:grant-type:jwt-bearer"]
+    # 🚨 서명된 JWT 그 자체여야 한다 — bytes 를 그대로 넣으면 "b'eyJ…'" 로 나가 교환이 실패한다
+    claims = jwt.decode(form["assertion"][0], verify=False)
+    assert claims["iss"] == service_account["client_email"]
+    assert claims["aud"] == TOKEN_URL
+    assert claims["scope"] == "https://www.googleapis.com/auth/firebase.messaging"
     assert sends[0].url.path == "/v1/projects/synthetic-project/messages:send"
     assert sends[0].headers["Authorization"] == "Bearer synthetic-access"
     assert json.loads(sends[0].content)["message"] == {
