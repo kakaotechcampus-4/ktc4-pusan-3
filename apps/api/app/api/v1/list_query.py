@@ -20,6 +20,32 @@ from app.api.errors import ApiError
 MAX_PAGE = 10_000
 
 
+_Page = Annotated[int, Query(ge=1, le=MAX_PAGE, description="쪽 번호 (1부터, 최대 10,000)")]
+_Size = Annotated[int, Query(ge=1, le=100, description="한 쪽에 보여줄 개수")]
+
+
+@dataclass(frozen=True)
+class PageQuery:
+    """날짜 · 검색어 없이 쪽만 받는 목록(추천 · #592)이 쓴다."""
+
+    page: int
+    size: int
+
+    @property
+    def offset(self) -> int:
+        return (self.page - 1) * self.size
+
+    def total_pages(self, total: int) -> int:
+        return math.ceil(total / self.size)
+
+
+def page_query(page: _Page = 1, size: _Size = 20) -> PageQuery:
+    return PageQuery(page=page, size=size)
+
+
+PageQueryDep = Annotated[PageQuery, Depends(page_query)]
+
+
 @dataclass(frozen=True)
 class ListQuery:
     page: int
@@ -37,8 +63,8 @@ class ListQuery:
 
 
 def list_query(
-    page: Annotated[int, Query(ge=1, le=MAX_PAGE, description="쪽 번호 (1부터, 최대 10,000)")] = 1,
-    size: Annotated[int, Query(ge=1, le=100, description="한 쪽에 보여줄 개수")] = 20,
+    page: _Page = 1,
+    size: _Size = 20,
     date_from: Annotated[date | None, Query(description="이 날짜 이후 (포함)")] = None,
     date_to: Annotated[date | None, Query(description="이 날짜 이전 (포함)")] = None,
     q: Annotated[
