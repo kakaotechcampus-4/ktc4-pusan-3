@@ -20,6 +20,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { BottomSheet } from "@/components/ui/bottom-sheet";
 import { ChipRow, RemovableChip } from "@/components/ui/chip";
+import { ChoiceField } from "@/components/ui/choice-field";
 import { DateRangeField } from "@/components/ui/date-field";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
@@ -49,6 +50,7 @@ import {
   type SuggestionFeedback,
   type SuggestionFeedbackRequest,
   type SuggestionFeedbackResponse,
+  type SuggestionListQuery,
   type SuggestionListResponse,
 } from "@/lib/api";
 import { EARLIEST_BIRTH_DATE } from "@/lib/date-bounds";
@@ -147,6 +149,25 @@ const STATE_OPTIONS = [
 ] as const;
 
 /**
+ * 제안 피드백 탭의 두 보기 (#592). 서버 `?rated=` 의 `false` · `true` 다.
+ *
+ * 🚨 **처음 열면 피드백 전이다** — 이 탭을 여는 일이 평가하는 것이라서다. 주소에는 피드백 완료일 때만
+ *    `?view=rated` 가 남는다. 평가하면 그 줄은 피드백 전에서 빠지고 피드백 완료로 옮겨 간다.
+ * 🚨 **"전체" 보기를 두지 않는다.** 둘을 한 목록에 다시 섞으면 평가한 줄이 사라지지 않던 처음 문제로 돌아간다.
+ */
+const FEEDBACK_VIEWS = ["unrated", "rated"] as const;
+type FeedbackView = (typeof FEEDBACK_VIEWS)[number];
+
+function isFeedbackView(value: string | null): value is FeedbackView {
+  return value !== null && (FEEDBACK_VIEWS as readonly string[]).includes(value);
+}
+
+const FEEDBACK_VIEW_OPTIONS = [
+  { value: "unrated", label: "피드백 전" },
+  { value: "rated", label: "피드백 완료" },
+] as const;
+
+/**
  * 기록과 기억 목록이 같이 받는 검색어 · 기간 · 쪽 (#584). 필터처럼 주소에 남는다.
  *
  * 🚨 **주소의 값을 그대로 믿지 않는다.** 서버는 100자 넘는 검색어, 없는 날짜, 시작이 끝보다 늦은
@@ -213,6 +234,7 @@ interface FilterChange {
   q?: string | null;
   from?: string | null;
   to?: string | null;
+  view?: FeedbackView;
   page?: number;
 }
 
@@ -245,6 +267,8 @@ function MemoriesScreen() {
    */
   const stateParam = searchParams.get("state");
   const state: AffinityFilterState = isFilterState(stateParam) ? stateParam : "all";
+  const viewParam = searchParams.get("view");
+  const view: FeedbackView = isFeedbackView(viewParam) ? viewParam : "unrated";
   const list = readListParams(searchParams);
 
   const [target, setTarget] = useState<MemoryTarget | null>(null);
@@ -273,11 +297,13 @@ function MemoriesScreen() {
     const nextQ = next.q === undefined ? list.q : next.q;
     const nextFrom = next.from === undefined ? list.from : next.from;
     const nextTo = next.to === undefined ? list.to : next.to;
+    const nextView = next.view ?? view;
     const nextPage = next.page ?? 1;
 
     if (nextDomain) params.set("domain", nextDomain);
     if (tab === "observations" && nextStatus !== "all") params.set("status", nextStatus);
     if (tab === "profile" && nextState !== "all") params.set("state", nextState);
+    if (tab === "feedback" && nextView !== "unrated") params.set("view", nextView);
     if (nextQ) params.set("q", nextQ);
     if (nextFrom) params.set("from", nextFrom);
     if (nextTo) params.set("to", nextTo);
@@ -322,7 +348,9 @@ function MemoriesScreen() {
           />
         ) : null}
 
-        {tab === "feedback" ? <FeedbackTab childId={childId} /> : null}
+        {tab === "feedback" ? (
+          <FeedbackTab childId={childId} view={view} page={list.page} onFilter={setFilter} />
+        ) : null}
       </Swap>
 
       <MemoryDetailSheet childId={childId} target={target} onClose={() => setTarget(null)} />
@@ -895,18 +923,44 @@ function ProfileTab({
 
 /* ── 제안 피드백 ─────────────────────────────────────────────────────── */
 
-function FeedbackTab({ childId }: { childId: string }) {
+function FeedbackTab({
+  childId,
+  view,
+  page,
+  onFilter,
+}: {
+  childId: string;
+  view: FeedbackView;
+  /** 1부터. 기록 · 기억과 같은 `?page=` 다 — 검색어 · 기간은 이 탭에 없어서 읽지 않는다. */
+  page: number;
+  onFilter: (next: FilterChange) => void;
+}) {
   const queryClient = useQueryClient();
-  const [pendingId, setPendingId] = useState<string | null>(null);
+  /** 보내는 중인 제안 **전부**. 한 칸이면 A 를 다시 받는 동안 B 를 누를 때 A 의 잠금이 풀린다. */
+  const [pendingIds, setPendingIds] = useState<ReadonlySet<string>>(() => new Set());
+  const top = useRef<HTMLParagraphElement>(null);
 
   /**
    * 받은 제안 목록 (#284) — 개인화와 채택한 일반 추천(#509)이 같이 온다.
-   * ⚠️ 첫 장(20건)만 그린다 — `next_cursor` 로 더 보기는 아직 없다 (#316 하지 않는 것).
+   * 🚨 **두 보기는 서버가 가른다** (`?rated=` · #592). 받은 쪽에서 프론트가 거르면 쪽마다 줄 수가
+   *    들쭉날쭉해지고 `total` 이 그 보기의 건수가 아니게 된다. 기록 탭과 같은 이유로 한 쪽씩 받는다.
+   * 🚨 **받아 둔 목록은 쪽을 넘길 때만 둔다.** 보기를 바꾸면 스켈레톤으로 기다린다 — 다른 보기의 줄이
+   *    남아 있으면 그 사이 그 줄의 칩이 눌리고, 비어 있던 목록이면 새 보기의 빈 문구가 사실과 반대로
+   *    선다(피드백 전을 다 평가하고 피드백 완료로 오면 "아직 남긴 피드백이 없어요").
    */
+  const query: SuggestionListQuery = { rated: view === "rated", page };
   const received = useQuery({
-    queryKey: qk.suggestionList(childId),
-    queryFn: () => api.get<SuggestionListResponse>(`/children/${childId}/suggestions`),
+    queryKey: qk.suggestionList(childId, { ...query }),
+    queryFn: () =>
+      api.get<SuggestionListResponse>(`/children/${childId}/suggestions`, { query: { ...query } }),
+    placeholderData: (previous, previousQuery) =>
+      (previousQuery?.queryKey.at(-1) as SuggestionListQuery | undefined)?.rated === query.rated
+        ? previous
+        : undefined,
   });
+  const outOfRange = useLastPageClamp(received.data, received.isPlaceholderData, (next) =>
+    onFilter({ page: next }),
+  );
 
   const sendFeedback = useMutation({
     mutationFn: ({
@@ -920,51 +974,101 @@ function FeedbackTab({ childId }: { childId: string }) {
         `/children/${childId}/suggestions/${suggestion.id}/feedback`,
         { feedback } satisfies SuggestionFeedbackRequest,
       ),
-    onMutate: ({ suggestion }) => setPendingId(suggestion.id),
-    onSettled: () => setPendingId(null),
+    onMutate: ({ suggestion }) => setPendingIds((ids) => new Set(ids).add(suggestion.id)),
+    onSettled: (_data, _error, { suggestion }) =>
+      setPendingIds((ids) => {
+        const next = new Set(ids);
+        next.delete(suggestion.id);
+        return next;
+      }),
     onSuccess: () => {
       // 🚨 기억은 안 바뀐다(`memory_changed: false`). 제안 목록만 다시 읽는다 —
       //    아이 스코프를 통째로 무효화하면 관찰·프로필까지 다시 부르게 되고,
       //    그건 이 동작이 실제로 하는 일보다 넓다.
-      void queryClient.invalidateQueries({ queryKey: qk.suggestionList(childId) });
+      // 🚨 **두 보기를 다 무효화한다.** 피드백 전에서 평가한 줄은 빠지고 뒤 줄이 당겨지므로 지금 쪽을
+      //    다시 받아야 한다 (안 받고 다음 쪽으로 가면 당겨진 한 줄이 어느 쪽에도 안 보인다 ·
+      //    `docs/api/suggestions-v1.md` §7). 피드백 완료에도 그 줄이 새로 들어간다.
+      //    마지막 쪽의 마지막 줄이었으면 `useLastPageClamp` 가 앞 쪽으로 옮긴다.
+      // 🚨 **다시 받기를 기다린다**(promise 를 돌려준다). 안 기다리면 응답과 새 목록 사이에 그 줄이
+      //    평가 전 모습으로 풀려서 다시 눌린다 — 그 줄의 잠금(`pendingIds`)이 목록이 바뀐 뒤에 풀려야 한다.
+      return queryClient.invalidateQueries({ queryKey: qk.suggestionLists(childId) });
     },
   });
 
   return (
     <section className="flex flex-col gap-3">
+      {/* 🚨 legend 는 숨긴다 — 기록 · 기억 탭의 검색 줄과 같은 자리 · 같은 높이(`min-h-field`)에
+          서게 하려는 것이다. 선택지 이름이 무엇을 고르는지 말한다. */}
+      <ChoiceField
+        label="보기"
+        labelHidden
+        value={view}
+        options={FEEDBACK_VIEW_OPTIONS}
+        onChange={(next) => onFilter({ view: next })}
+      />
+
       {/* 🚨 계약서 §08 의 `memory_changed: false` 와 같은 말이다. 피드백과 교정을 헷갈리면
-          부모가 "안 좋아했어요" 를 눌러 기억이 지워진 줄 안다. */}
+          부모가 "안 좋아했어요" 를 눌러 기억이 지워진 줄 안다. 화면에서 부르는 이름은 기록 · 기억이다.
+          ⚠️ 두 줄 안에 둔다 — 기록 · 기억 탭은 조작 줄 바로 아래가 건수 줄이라, 여기서 길어지면 이 탭만
+          목록이 한참 아래서 시작한다. 평가한 줄이 피드백 완료로 옮겨 가는 것은 건수가 줄어드는 것으로 보인다. */}
       <p className="text-body-sm text-ink-muted">
-        피드백은 다음 제안의 무게만 바꿔요. 기억은 그대로 둬요. 기억을 고치려면 관찰이나 프로필
-        탭에서 고쳐주세요.
+        피드백은 다음 제안에만 반영되고 기억은 그대로 둬요. 기억을 고치려면 기록이나 기억 탭에서
+        고쳐주세요.
       </p>
 
-      <Swap id={phaseOf(received)}>
-        {received.isPending ? (
-          <SkeletonGroup label="받은 제안을 불러오는 중">
+      <Swap id={phaseOf({ isPending: received.isPending || outOfRange, data: received.data })}>
+        {received.isPending || outOfRange ? (
+          <SkeletonGroup label="받은 제안을 불러오는 중" className="flex flex-col gap-3">
+            <SkeletonText size="caption" width="1/4" />
             <SuggestionFeedbackListSkeleton />
           </SkeletonGroup>
         ) : null}
 
-        {received.isError ? (
+        {received.isError && !received.data ? (
           <LoadFailed what="받은 제안을" childId={childId} error={received.error} />
         ) : null}
 
-        {received.data ? (
+        {received.data && !outOfRange ? (
           received.data.items.length === 0 ? (
-            <EmptyState
-              icon={ThumbsUp}
-              title="아직 받은 제안이 없어요"
-              description="제안을 한 번 받으면 여기서 어땠는지 알려줄 수 있어요."
-              count={0}
-              countLabel="받은 제안"
-            />
+            view === "unrated" ? (
+              // 🚨 "아직 받은 제안이 없어요" 라고 하지 않는다 — 다 평가해서 비었을 수도 있다.
+              <EmptyState
+                icon={ThumbsUp}
+                title="피드백을 기다리는 제안이 없어요"
+                description="제안을 받아 고르면 여기서 어땠는지 알려줄 수 있어요. 남긴 피드백은 피드백 완료에 있어요."
+                count={0}
+                countLabel="피드백 전 제안"
+              />
+            ) : (
+              <EmptyState
+                icon={ThumbsUp}
+                title="아직 남긴 피드백이 없어요"
+                description="피드백 전에서 제안이 어땠는지 알려주면 여기에 모여요."
+                count={0}
+                countLabel="피드백 완료 제안"
+              />
+            )
           ) : (
-            <SuggestionFeedbackList
-              suggestions={received.data.items}
-              pendingId={pendingId}
-              onSelect={(suggestion, feedback) => sendFeedback.mutate({ suggestion, feedback })}
-            />
+            <div className="flex flex-col gap-3" aria-busy={received.isPlaceholderData}>
+              {/* 🚨 건수는 이 쪽의 줄 수가 아니라 그 보기의 `total` 이다 (기록 · 기억과 같다). */}
+              <p ref={top} className="text-caption text-ink-subtle scroll-mt-4">
+                제안 {received.data.total}건
+              </p>
+              <SuggestionFeedbackList
+                suggestions={received.data.items}
+                pendingIds={pendingIds}
+                onSelect={(suggestion, feedback) => sendFeedback.mutate({ suggestion, feedback })}
+              />
+              <Pagination
+                label="제안 쪽 넘기기"
+                page={page}
+                totalPages={received.data.total_pages}
+                onChange={(next) => {
+                  onFilter({ page: next });
+                  top.current?.scrollIntoView({ block: "start" });
+                }}
+              />
+            </div>
           )
         ) : null}
       </Swap>

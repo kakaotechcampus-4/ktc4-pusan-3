@@ -11,6 +11,12 @@ import { CHILD, expect, expectNoGate, test } from "./fixtures";
 
 const MEMORIES = `/child/${CHILD}/memories`;
 
+/** 피드백 탭의 보기 전환. 숨은 라디오 위를 라벨이 덮고 있어 사람이 누르는 자리(글자)를 누른다 (`ChoiceField`). */
+async function chooseView(page: Page, label: "피드백 전" | "피드백 완료") {
+  await page.getByText(label, { exact: true }).click();
+  await expect(page.getByRole("radio", { name: label })).toBeChecked();
+}
+
 /**
  * 필터 시트를 열어 고르고 적용한다 (#584). 분류 · 상태 · 기간은 목록 위가 아니라 시트 안에 있다.
  * `choices` 는 [상자 이름, 고를 항목] 이다.
@@ -458,17 +464,87 @@ test.describe("검색과 필터 (#584)", () => {
 test.describe("피드백 탭의 일반 추천 (#509)", () => {
   test("채택한 일반 추천은 또래 기준이라고 적고, 개인화처럼 평가할 수 있다", async ({ page }) => {
     await page.goto(`${MEMORIES}?tab=feedback`);
-    const row = page
-      .locator("li")
-      .filter({ hasText: "블록 쌓기처럼 손을 많이 쓰는 놀이를 15분쯤 해 보세요" });
+    const general = "블록 쌓기처럼 손을 많이 쓰는 놀이를 15분쯤 해 보세요";
+    const row = page.locator("li").filter({ hasText: general });
     await expect(row).toContainText("또래 기준 일반 추천");
     // 🚨 개인화 줄에는 그 라벨이 없다 — 우리 아이 기준 제안을 일반 추천으로 부르지 않는다.
     await expect(page.locator("li").filter({ hasText: "또래 기준 일반 추천" })).toHaveCount(1);
 
-    const liked = row.getByRole("button", { name: "아이가 좋아했어요" });
-    await liked.click();
-    await expect(liked).toHaveAttribute("aria-pressed", "true");
+    await row.getByRole("button", { name: "아이가 좋아했어요" }).click();
+    await expect(row).toHaveCount(0);
+
+    // 평가는 피드백 완료에 남는다 — 일반 추천 라벨도 그대로다.
+    await chooseView(page, "피드백 완료");
+    const done = page.locator("li").filter({ hasText: general });
+    await expect(done).toContainText("또래 기준 일반 추천");
+    await expect(done.getByRole("button", { name: "아이가 좋아했어요" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
     await expectNoGate(page);
+  });
+});
+
+test.describe("피드백 탭의 두 보기 (#592)", () => {
+  const PENDING = "두부를 부쳐서 한 조각 곁들여 보세요";
+  const RATED = "계란말이에 시금치를 조금 섞어 보세요";
+
+  test("처음 열면 피드백 전이고, 평가한 제안은 보이지 않는다", async ({ page }) => {
+    await page.goto(`${MEMORIES}?tab=feedback`);
+    await expect(page.getByRole("radio", { name: "피드백 전" })).toBeChecked();
+    await expect(page.getByText(PENDING)).toBeVisible();
+    await expect(page.getByText("제안 2건")).toBeVisible();
+    await expect(page.getByText(RATED)).toHaveCount(0);
+  });
+
+  test("피드백 완료로 바꾸면 주소에 남고, 남긴 피드백이 켜진 채로 선다", async ({ page }) => {
+    await page.goto(`${MEMORIES}?tab=feedback`);
+    await chooseView(page, "피드백 완료");
+
+    await expect(page).toHaveURL(/[?&]view=rated/);
+    const row = page.locator("li").filter({ hasText: RATED });
+    await expect(row.getByRole("button", { name: "아이가 좋아했어요" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await expect(page.getByText(PENDING)).toHaveCount(0);
+
+    // 다시 고르면 덮어쓰고, 줄은 그 보기에 남는다.
+    await row.getByRole("button", { name: "안 해봤어요" }).click();
+    await expect(row.getByRole("button", { name: "안 해봤어요" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await expect(page.getByText("제안 1건")).toBeVisible();
+  });
+
+  test("🚨 피드백 전이 비어도 받은 제안이 없다고 하지 않는다", async ({ page }) => {
+    await page.goto(`${MEMORIES}?tab=feedback`);
+    for (const text of [PENDING, "블록 쌓기처럼 손을 많이 쓰는 놀이를 15분쯤 해 보세요"]) {
+      const row = page.locator("li").filter({ hasText: text });
+      await row.getByRole("button", { name: "안 해봤어요" }).click();
+      await expect(row).toHaveCount(0);
+    }
+    await expect(page.getByText("피드백을 기다리는 제안이 없어요")).toBeVisible();
+    await expect(page.getByText(/받은 제안이 없어요/)).toHaveCount(0);
+  });
+
+  test.describe("한 쪽(20건)을 넘으면", () => {
+    test.use({ scenario: "suggestions_many" });
+
+    test("🚨 마지막 쪽의 마지막 줄을 평가하면 빈 쪽이 아니라 앞 쪽으로 옮긴다", async ({
+      page,
+    }) => {
+      await page.goto(`${MEMORIES}?tab=feedback&page=2`);
+      await expect(page.getByText("제안 21건")).toBeVisible();
+      const last = page.locator("li").filter({ hasText: "블록으로 탑을 함께 쌓아 보세요 (19)" });
+      await last.getByRole("button", { name: "아이가 좋아했어요" }).click();
+
+      await expect(page).not.toHaveURL(/[?&]page=/);
+      await expect(page.getByText("제안 20건")).toBeVisible();
+      await expect(page.getByText("피드백을 기다리는 제안이 없어요")).toHaveCount(0);
+      await expect(page.getByRole("navigation", { name: "제안 쪽 넘기기" })).toHaveCount(0);
+    });
   });
 });
 
@@ -477,7 +553,7 @@ test("07 세 탭 어디에도 승인 게이트 표식이 없다", async ({ page 
   for (const [tab, loaded] of [
     ["", "기록 6건"],
     ["?tab=profile", "기억 2건"],
-    ["?tab=feedback", "계란말이에 시금치를 조금 섞어 보세요"],
+    ["?tab=feedback", "두부를 부쳐서 한 조각 곁들여 보세요"],
   ]) {
     await page.goto(`${MEMORIES}${tab}`);
     await expect(page.getByText(loaded).first()).toBeVisible();
