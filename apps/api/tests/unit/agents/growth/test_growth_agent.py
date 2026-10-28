@@ -283,7 +283,8 @@ class TestRoutine:
         # 안내(`empty_notice`)도 이 문장이다
         (notice,) = result.readouts
         assert (notice.code, notice.authored_by) == ("empty", "code")
-        assert notice.body == "지금 어느 정도 하는지 알아야 다음 단계를 고를 수 있어요."
+        # 습관(상황 · 지금도 하는지)을 물을 때도 붙어서 "다음 단계" 라고 하지 않는다
+        assert notice.body == "지금 어떤지 알아야 맞는 방법을 고를 수 있어요."
 
     async def test_고른_단계로_개인화_추천_하나와_개수_안내다(self):
         obs = RoutineObservation(

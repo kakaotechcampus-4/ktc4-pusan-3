@@ -197,7 +197,7 @@
 | `ask.habit_trigger` | {subject}은(는) 주로 어떤 상황에서 하나요? |
 | `ask.habit_current` | 요즘도 {subject} 하나요? |
 | `ask.routine_current` | {subject}은(는) 요즘 어느 정도까지 혼자 하나요? |
-| `ask.need_level` | 지금 어느 정도 하는지 알아야 다음 단계를 고를 수 있어요. |
+| `ask.need_level` | 지금 어떤지 알아야 맞는 방법을 고를 수 있어요. |
 | `rhythm.no_row` | 아직 이 시기 리듬 안내를 준비하지 못했어요. |
 | `doc.no_row` | 이 시기에 맞는 자료가 아직 없어서 준비하지 못했어요. |
 | `next_step.chain_end` | 이건 이미 혼자 잘 하고 있어요. 다음 단계는 준비되면 알려드릴게요. |
