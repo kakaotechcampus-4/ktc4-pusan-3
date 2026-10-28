@@ -69,9 +69,11 @@ async def observation(session, child, writer) -> uuid.UUID:
     return row.id
 
 
-def payload(*, kind="general", citations=(), content="계란말이", requested=None) -> dict:
+def payload(
+    *, kind="general", citations=(), content="계란말이", requested=None, agent="food"
+) -> dict:
     item = {
-        "agent": "food",
+        "agent": agent,
         "kind": kind,
         "content": content,
         "reason": "이유",
@@ -274,11 +276,25 @@ async def test_보호자가_정한_요청에_맞춘_일반_추천은_문서_근�
         session,
         child_id=child.id,
         run_id=RUN,
-        payloads=[payload(kind="general", requested=True)],
+        payloads=[payload(kind="general", requested=True, agent="activity")],
         now=NOW,
     )
     assert suggestion_id
     assert await counts(session, child.id) == (1, 0)
+
+
+async def test_요청_기반_면제는_Activity_만이다(session, kids):
+    """Food 는 레시피북 밖 메뉴가 나가면 안 된다 — requested 가 와도 문서 근거를 본다."""
+    _, child, _ = kids
+    with pytest.raises(SuggestionEvidenceError, match="문서 행 근거가 없다"):
+        await save_agent_suggestions(
+            session,
+            child_id=child.id,
+            run_id=RUN,
+            payloads=[payload(kind="general", requested=True, agent="food")],
+            now=NOW,
+        )
+    assert await counts(session, child.id) == (0, 0)
 
 
 async def test_요청_기반이어도_아이_기록_근거가_있으면_일반이_아니다(session, kids):
@@ -291,7 +307,12 @@ async def test_요청_기반이어도_아이_기록_근거가_있으면_일반�
             child_id=child.id,
             run_id=RUN,
             payloads=[
-                payload(kind="general", requested=True, citations=[cited("observation_food", obs)])
+                payload(
+                    kind="general",
+                    requested=True,
+                    agent="activity",
+                    citations=[cited("observation_food", obs)],
+                )
             ],
             now=NOW,
         )
