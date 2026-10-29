@@ -47,7 +47,7 @@
   `ParentSection` · `AccountSection` ·
   `ChildIdentityCard`/`ChildIdentitySheet` · `GrowthLogList`/`GrowthLatestCard` · `GrowthSheet` ·
   `GrowthChart` · `HealthSafetyList`/`HealthSafetySheet` · `SafetyScanReview`/`SafetyScanRowSheet` ·
-  `PhotoReview`/`PhotoEntrySheet` · `PhotoSourceSheet`
+  `PhotoReview`/`PhotoEntrySheet` · `PhotoSourceSheet` · `ScreenTour`/`TourHelpButton`(화면 투어 · [`screen-tour-v1.md`](screen-tour-v1.md))
   (시트 안의 사진 종류 줄 · 최근 사진 줄 · 촬영/앨범 줄은 그 파일의 내부 조각이다)
 - 받는 동안의 모양은 **그 컴포넌트 옆에 `…Skeleton` 으로** 둔다 — `SettingsRowSkeleton` · `ChildIdentityCardSkeleton` ·
   `GrowthLatestCardSkeleton`/`GrowthLogListSkeleton` · `GrowthChartSkeleton` · `HealthSafetyListSkeleton` · `ObservationListSkeleton` ·
