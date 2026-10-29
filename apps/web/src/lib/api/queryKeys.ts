@@ -14,6 +14,11 @@ export const qk = {
   policies: () => ["policies"] as const,
 
   me: () => ["me"] as const,
+  /**
+   * 화면 투어를 본 기록 (#632 · `lib/tour/seen.ts`). 🚨 아이 스코프가 아니라 **계정** 단위다 —
+   * 아이를 바꿔도 이미 본 설명을 다시 띄우지 않는다. 그래서 `qk.child` 밖에 둔다.
+   */
+  tours: (parentId: string) => ["tours", parentId] as const,
   consents: (childId?: string) => ["consents", childId ?? null] as const,
 
   child: (childId: string) => ["child", childId] as const,
