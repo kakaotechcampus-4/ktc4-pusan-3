@@ -14,7 +14,7 @@ export type MeasurementRead = number | null | "invalid" | "too_precise" | "out_o
 export type MeasurementKind = "height" | "weight";
 
 /**
- * 칸마다 받는 범위 (#627). 백엔드 `Measurement` 도 이 값으로 맞춘다.
+ * 칸마다 받는 범위 (#627). 백엔드 `Measurement` 도 이 값으로 맞춘다 (#628).
  *
  * 🚨 **평가가 아니라 오타 막기다** (최상위 §2). 실제 아이가 있을 수 있는 값은 넉넉히 감싸고
  *    (이른둥이부터 서비스 상한 나이인 20세까지), **단위 착각만** 잡는다 — 키를 m 나 mm 로,
