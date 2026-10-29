@@ -177,3 +177,37 @@ async def stop_schedule(
         )
     )
     return "already" if exists is not None else "missing"
+
+
+async def find_dose(
+    session: AsyncSession, *, child_id: uuid.UUID, dose_id: uuid.UUID
+) -> MedicationDose | None:
+    """그 아이의 진행 중(`active`) 코스에 속한 회차. 다른 아이 · 멈춘 코스의 회차는 `None` 이다.
+
+    다른 아이의 회차는 있는지도 알리지 않는다. 멈춘 코스의 회차는 체크 · 해제할 수 없다.
+    """
+    stmt = (
+        select(MedicationDose)
+        .join(MedicationSchedule, MedicationSchedule.id == MedicationDose.schedule_id)
+        .where(
+            MedicationDose.id == dose_id,
+            MedicationSchedule.child_id == child_id,
+            MedicationSchedule.status == MedicationStatus.ACTIVE,
+        )
+        .execution_options(populate_existing=True)
+    )
+    return await session.scalar(stmt)
+
+
+async def write_dose_check(
+    session: AsyncSession, *, dose_id: uuid.UUID, checked_at: datetime | None
+) -> None:
+    """체크 시각을 쓴다. `None` 이면 비운다(해제).
+
+    체크는 **아직 비어 있을 때만** 쓴다 — 이미 체크된 회차에 또 체크해도 처음 시각이 남는다.
+    조건을 UPDATE 에 걸어서 동시에 온 두 요청도 먼저 쓴 쪽이 이긴다.
+    """
+    stmt = update(MedicationDose).where(MedicationDose.id == dose_id)
+    if checked_at is not None:
+        stmt = stmt.where(MedicationDose.checked_at.is_(None))
+    await session.execute(stmt.values(checked_at=checked_at))

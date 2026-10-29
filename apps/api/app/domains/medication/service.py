@@ -9,7 +9,7 @@ HTTP 를 모른다. 틀린 입력은 `CourseInvalid`, 이미 있는 코스는 `C
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import date, time
+from datetime import date, datetime, time
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -27,9 +27,11 @@ from app.domains.medication.models import (
 from app.domains.medication.repository import (
     NewDose,
     add_course,
+    find_dose,
     has_active_duplicate,
     list_courses,
     list_doses,
+    write_dose_check,
 )
 from app.rules.medication_course import course_field_errors, dose_dates
 
@@ -175,3 +177,35 @@ async def list_in_progress(
     """그 아이의 진행 중인 코스. 멈춘 · 끝난 · 시작 전 코스는 싣지 않는다 (알려진 한계)."""
     courses = await list_courses(session, child_id=child_id, where=in_progress(today))
     return await course_views(session, courses, today=today)
+
+
+class DoseNotFound(Exception):
+    """그 아이의 진행 중인 코스에 그런 회차가 없다 (없는 회차 · 남의 아이 · 멈춘 코스)."""
+
+
+class DoseNotDue(Exception):
+    """아직 오지 않은 날의 회차다. 체크도 해제도 못 한다."""
+
+
+async def set_dose_checked(
+    session: AsyncSession,
+    *,
+    child_id: uuid.UUID,
+    dose_id: uuid.UUID,
+    checked: bool,
+    today: date,
+    now: datetime,
+) -> MedicationDose:
+    """회차를 체크하거나 해제한다. `today` 는 KST 오늘, `now` 는 체크 시각이다.
+
+    되돌릴 수 있어서 승인 게이트가 아니다. 같은 상태를 두 번 보내도 결과가 같고, 이미 체크된
+    회차에 또 체크하면 처음 시각이 남는다. 찾지 못함 → 아직 오지 않음 순서로 검사한다.
+    """
+    dose = await find_dose(session, child_id=child_id, dose_id=dose_id)
+    if dose is None:
+        raise DoseNotFound
+    if dose.dose_date > today:
+        raise DoseNotDue
+    await write_dose_check(session, dose_id=dose.id, checked_at=now if checked else None)
+    await session.refresh(dose)
+    return dose
