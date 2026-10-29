@@ -373,9 +373,9 @@ RC_CASES: tuple[RoutingCase, ...] = (
     ),
     RoutingCase(
         "RC29",
-        "식탁에 둔 세정제를 혀로 핥았는데 웃더라",
-        (G("식탁에 둔 세정제를 혀로 핥았는데 웃더라", GuardReason.HAZARD),),
-        watch="규칙이 못 잡는 동사(혀로 핥았는데) — Supervisor 가 받는다",
+        "식탁에 둔 세정제를 혀에 대 보더니 웃더라",
+        (G("식탁에 둔 세정제를 혀에 대 보더니 웃더라", GuardReason.HAZARD),),
+        watch="규칙이 못 잡는 말(혀에 대 보더니) — Supervisor 가 받는다",
     ),
     RoutingCase(
         "RC30",
