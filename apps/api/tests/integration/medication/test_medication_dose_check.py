@@ -10,8 +10,6 @@ from datetime import UTC, date, datetime, time, timedelta
 import pytest
 from sqlalchemy import select
 
-from app.domains.child.models import Child
-from app.domains.identity.models import Parent
 from app.domains.medication.models import (
     MedicationCreatedBy,
     MedicationDose,
@@ -24,17 +22,6 @@ from app.domains.medication.service import DoseNotDue, DoseNotFound, set_dose_ch
 TODAY = date(2026, 10, 27)
 NOW = datetime(2026, 10, 27, 0, 40, tzinfo=UTC)  # 한국 시간 09:40
 LATER = NOW + timedelta(hours=3)
-
-
-@pytest.fixture
-async def child(session):
-    owner = Parent()
-    session.add(owner)
-    await session.flush()
-    child = Child(owner_parent_id=owner.id, nickname="test", birth_date=date(2023, 1, 1))
-    session.add(child)
-    await session.flush()
-    return child
 
 
 async def make_dose(session, child, *, days_from_today=0, anchor=TimingAnchor.BREAKFAST):
@@ -190,13 +177,8 @@ async def test_없는_회차는_찾지_못한다(session, child):
         await check(session, child, ghost)
 
 
-async def test_다른_아이의_회차는_찾지_못하고_값을_바꾸지_않는다(session, child):
-    other = Child(
-        owner_parent_id=child.owner_parent_id, nickname="other", birth_date=date(2022, 1, 1)
-    )
-    session.add(other)
-    await session.flush()
-    _, dose = await make_dose(session, other)
+async def test_다른_아이의_회차는_찾지_못하고_값을_바꾸지_않는다(session, child, other_child):
+    _, dose = await make_dose(session, other_child)
 
     with pytest.raises(DoseNotFound):
         await check(session, child, dose)
@@ -219,13 +201,8 @@ async def test_멈춘_코스의_회차는_체크도_해제도_찾지_못한다(s
     assert await stored(session, dose.id) == NOW  # 멈춘 뒤에도 복용 기록은 그대로 남는다
 
 
-async def test_찾지_못함이_아직_오지_않음보다_먼저다(session, child):
-    other = Child(
-        owner_parent_id=child.owner_parent_id, nickname="other", birth_date=date(2022, 1, 1)
-    )
-    session.add(other)
-    await session.flush()
-    _, dose = await make_dose(session, other, days_from_today=3)
+async def test_찾지_못함이_아직_오지_않음보다_먼저다(session, child, other_child):
+    _, dose = await make_dose(session, other_child, days_from_today=3)
 
     with pytest.raises(DoseNotFound):  # 남의 아이 회차는 날짜가 미래여도 422 가 아니라 404 다
         await check(session, child, dose)
