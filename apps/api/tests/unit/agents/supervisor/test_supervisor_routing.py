@@ -89,6 +89,36 @@ def test_RC13_수정_요청이_있으면_수정_묶음을_연다() -> None:
     assert routing.memory_task.open_lookup_edit is True
 
 
+def test_RC28_위험_물질은_안내만_내고_Memory_를_부르지_않는다() -> None:
+    routing = _route_case("RC28")
+
+    assert [guidance.code for guidance in routing.guidance] == ["hazard"]
+    assert routing.guidance[0].deeplink is None
+    assert routing.memory_task is None
+    assert routing.domain_tasks == ()
+
+
+def test_RC30_위험_물질과_같이_온_기록_요청은_버린다() -> None:
+    # 아이 상태 확인이 먼저다 — 섞어 처리하면 '좋아했다' 가 다른 조각으로 기록될 수 있다
+    routing = _route_case("RC30")
+
+    assert [guidance.code for guidance in routing.guidance] == ["hazard"]
+    assert routing.memory_task is None
+    assert routing.domain_tasks == ()
+    assert routing.unavailable_agents == ()
+
+
+def test_위험_물질_조각과_기록_조각이_섞여도_기록하지_않는다() -> None:
+    output = _output(
+        {"text": "소주를 마셨는데", "kind": "guarded", "guard": "hazard"},
+        {"text": "좋아했어", "kind": "record", "work": "observe"},
+    )
+    routing = route("소주를 마셨는데 좋아했어", SupervisorResult(output=output), run_id=RUN_ID)
+
+    assert routing.memory_task is None
+    assert [guidance.code for guidance in routing.guidance] == ["hazard"]
+
+
 def test_RC10_알레르기_등록은_안내하고_증상_기록은_살린다() -> None:
     routing = _route_case("RC10")
 

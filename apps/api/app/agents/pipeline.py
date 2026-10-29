@@ -37,14 +37,16 @@ from app.agents.memory.agent import run as run_memory
 from app.agents.memory.bundles import MUTATING_PREFIXES, WRITES_FOR
 from app.agents.memory.context import AgentContext
 from app.agents.memory.drafts import EventDraft
+from app.agents.memory.result import ErrorCode
 from app.agents.memory.schemas.reply import ReplyKind
 from app.agents.memory.schemas.task import MemoryTask, PendingMemoryContext, WorkType
 from app.agents.run_writes import RunWrites
 from app.agents.suggestion_save import SaveSuggestions, SuggestionBatch
 from app.agents.supervisor.agent import SupervisorResult
 from app.agents.supervisor.agent import run as run_supervisor
-from app.agents.supervisor.routing import Guidance, Routing, route
+from app.agents.supervisor.routing import HAZARD_GUIDANCE, Guidance, Routing, route
 from app.agents.supervisor.schemas import DomainAgentName, normalize
+from app.rules.hazard import find_hazards
 
 logger = logging.getLogger(__name__)
 
@@ -448,7 +450,10 @@ async def handle_input(
     """
     started = time.perf_counter()
     send = emit or _ignore
-    _safety_precheck(raw_text)
+    hazards = _safety_precheck(raw_text)
+    if hazards:
+        # 이어받기 답에 나와도 같다 — 되묻던 조각보다 아이 상태 확인이 먼저다
+        return _stop_for_hazard(hazards, run_id=run_id, send=send, started=started)
 
     if continuation is not None:
         return await _handle_continuation(
@@ -518,11 +523,19 @@ async def handle_input(
             unwritten = _unwritten(routing.memory_task, memory)
             if unwritten is not None:
                 send(unwritten)
+            if memory.refused(ErrorCode.HAZARD) and HAZARD_GUIDANCE not in routing.guidance:
+                # 사전검사 · Supervisor 가 놓치고 저장 게이트가 막은 경우. 같은 안내를 낸다
+                send(HAZARD_GUIDANCE)
 
     # 위임이 어긋났으면 Supervisor에게 이유를 주고 한 번만 다시 나눈다.
     # Memory는 다시 돌리지 않는다.
     rerouted: Rerouted | None = None
-    bounced = _bounced_hints(routing.memory_task, memory) if failed is None else ()
+    # 저장 게이트가 위험 물질로 거절한 run 은 다시 나누지 않는다. 그 조각은 "적지 않은 기록" 이
+    # 아니라 막은 것이다 — 다시 물으면 안내가 두 번 나가거나 요청으로 바뀌어 Agent 가 돈다
+    hazard_refused = memory is not None and memory.refused(ErrorCode.HAZARD)
+    bounced = (
+        _bounced_hints(routing.memory_task, memory) if failed is None and not hazard_refused else ()
+    )
     # 도메인 Agent로 간 조각이 있으면 다시 나누지 않는다. 요청이 통째로 사라진 경우만 본다.
     stranded = not routing.domain_tasks and not routing.unavailable_agents
     # 되묻고 있는 조각은 위임이 어긋난 게 아니라 답을 기다리는 것이다. 다시 나누면 Supervisor
@@ -1049,11 +1062,36 @@ def _ignore(event: Event) -> None:
     """emit 콜백이 없을 때 이벤트를 무시한다."""
 
 
-def _safety_precheck(raw_text: str) -> None:
-    """안전 사전검사를 위한 자리.
+def _safety_precheck(raw_text: str) -> tuple[str, ...]:
+    """안전 사전검사. 걸린 위험 종류(`app/rules/hazard.py`), 없으면 빈 튜플.
 
-    실제 규칙은 app/rules/에 추가한다.
+    Supervisor 보다 먼저 돈다 — Supervisor 가 실패해 Memory 단독으로 가는 run 에서도 막힌다.
     """
+    return find_hazards(raw_text)
+
+
+def _stop_for_hazard(
+    hazards: tuple[str, ...], *, run_id: str, send: Emit, started: float
+) -> PipelineResult:
+    """위험 물질 섭취가 나온 입력은 저장 · Curator · 추천 없이 안내 한 건으로 끝낸다 (#626).
+
+    모델을 부르지 않는다. 같은 입력의 다른 기록 · 요청도 처리하지 않는다 — 아이 상태 확인이
+    먼저고, 섞어 처리하면 "좋아했다" 가 다른 조각으로 기록될 수 있다.
+    """
+    routing = Routing(intent_type="record", memory_task=None, guidance=(HAZARD_GUIDANCE,))
+    send(HAZARD_GUIDANCE)
+    send(Done(run_id, 0))
+    result = PipelineResult(
+        run_id=run_id,
+        supervisor=SupervisorResult(output=None),  # 부르지 않았다 — 이어받기 run 과 같다
+        routing=routing,
+        memory=None,
+        latency_ms=_ms_since(started),
+    )
+    # 원문 없이 걸린 종류만
+    logger.info("hazard precheck run_id=%s kinds=%s", run_id, list(hazards))
+    _log(result)
+    return result
 
 
 def _ms_since(started: float) -> int:

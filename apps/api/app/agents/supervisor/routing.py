@@ -25,6 +25,7 @@
 
   - 안내 문구
       guarded / out_of_scope 조각에는 코드에 정의된 고정 문구를 사용한다.
+      guarded/hazard 가 하나라도 있으면 그 안내만 내고 Memory · 도메인 Agent 를 부르지 않는다.
 
   - 강등(fallback)
       Supervisor 처리에 실패하면 Memory만 호출한다.
@@ -80,6 +81,18 @@ class Guidance:
     deeplink: str | None = None
 
 
+# 위험 물질을 먹거나 마셨다는 입력 (#626). 규칙 사전검사(pipeline)와 Supervisor 의 hazard 라벨이
+# 같은 안내를 낸다. 갈 곳이 없는 안내라 deeplink 가 없다.
+# 규칙은 아빠가 마신 얘기에도 걸릴 수 있어서 "아이가 그랬다면" 으로 시작한다
+HAZARD_GUIDANCE = Guidance(
+    code=GuardReason.HAZARD.value,
+    message=(
+        "아이가 먹으면 안 되는 것을 먹거나 마셨다면 지금 아이 상태부터 살펴봐 주세요. "
+        "평소와 다르거나 걱정되면 바로 병원이나 119에 연락해 주세요. "
+        "이 내용은 식사·취향 기록으로 남기지 않았어요."
+    ),
+)
+
 # guard · out_of_scope 별 문구
 _GUIDANCE: dict[str, Guidance] = {
     GuardReason.SAFETY_RECORD.value: Guidance(
@@ -96,7 +109,9 @@ _GUIDANCE: dict[str, Guidance] = {
         code=SegmentKind.OUT_OF_SCOPE.value,
         message="구매·예약·연락처럼 대신 해 드려야 하는 일은 도와드릴 수 없어요.",
     ),
+    GuardReason.HAZARD.value: HAZARD_GUIDANCE,
 }
+
 
 # 한 번에 부를 수 있는 도메인 Agent 상한을 넘겨 빠진 요청이 있을 때 알리는 용도
 # TODO: 사용자에게 제공될 답변 점검
@@ -110,7 +125,8 @@ _AGENT_LIMIT = Guidance(
 @dataclass(frozen=True)
 class Routing:
     intent_type: IntentType
-    memory_task: MemoryTask | None  # None은 SKIP_MEMORY_FOR_PURE_REQUEST가 켜졌을 때만
+    # None은 SKIP_MEMORY_FOR_PURE_REQUEST가 켜졌거나 위험 물질 안내로 멈췄을 때만
+    memory_task: MemoryTask | None
     domain_tasks: tuple[DomainTask, ...] = ()  # 구현된 agent 몫만
     unavailable_agents: tuple[str, ...] = ()  # 이동하려 했지만 아직 없는 agent
     dropped_agents: tuple[str, ...] = ()  # 호출 상한을 넘어 제외된 agent
@@ -129,6 +145,13 @@ def route(raw_text: str, result: SupervisorResult, *, run_id: str) -> Routing:
         return routing
 
     segments = result.output.segments
+    if any(s.kind == SegmentKind.GUARDED and s.guard == GuardReason.HAZARD for s in segments):
+        # 위험 물질 섭취가 나온 입력은 아무것도 저장 · 추천하지 않는다 — 규칙 사전검사와 같다.
+        # 같이 나온 기록 · 요청도 버린다. 아이 상태 확인이 먼저고, 섞어 처리하면 "좋아했다" 가
+        # 다른 조각으로 기록될 수 있다
+        routing = Routing(intent_type="record", memory_task=None, guidance=(HAZARD_GUIDANCE,))
+        _log(routing, None)
+        return routing
     records = [s for s in segments if s.kind == SegmentKind.RECORD]
     requests = [s for s in segments if s.kind == SegmentKind.REQUEST]
 
