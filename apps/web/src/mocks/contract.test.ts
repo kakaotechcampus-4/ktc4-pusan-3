@@ -3126,9 +3126,12 @@ describe("⑬ 측정 기록은 승인 게이트가 아니다", () => {
   });
 
   it.each([
-    ["300 을 넘는 키", { height_cm: 300.1 }, "height_cm"],
-    ["반올림해 0 이 되는 몸무게", { weight_kg: 0.04 }, "weight_kg"],
-  ])("%s 는 400 이다 — 서버 `Measurement` 와 같은 범위", async (_, value, field) => {
+    ["220 을 넘는 키", { height_cm: 220.1 }, "height_cm"],
+    ["m 로 적은 키", { height_cm: 1.04 }, "height_cm"],
+    ["150 을 넘는 몸무게", { weight_kg: 300 }, "weight_kg"],
+    ["0.3 보다 가벼운 몸무게", { weight_kg: 0.04 }, "weight_kg"],
+    // ⚠️ 서버는 아직 두 칸 모두 0 < x ≤ 300 이다. 칸별 범위는 BE 후속 이슈에서 맞춘다 (#627).
+  ])("%s 는 400 이다 — 칸별 범위 (#627, 서버보다 앞서 있다)", async (_, value, field) => {
     const caught = await api
       .post("/children/c1/growth", { measured_on: "2026-09-12", ...value })
       .catch((e) => e);
