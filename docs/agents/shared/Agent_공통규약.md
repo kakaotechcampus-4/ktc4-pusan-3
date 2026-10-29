@@ -165,7 +165,7 @@ class DomainAgentResult:
 
 ```
 티어 1  confirmed  · polarity ∈ {+1, −1} · archived 제외
-티어 2  candidate  · polarity ∈ {+1, −1} · strength ≥ 임계
+티어 2  candidate  · polarity ∈ {+1, −1} · strength ≥ 임계 · 묶인 active 관찰 2건 이상 (#626)
 티어 3  최근 14일 관찰 (polarity 무관)        (도메인이 허용할 때만)
 ── 전부 0행 ──  kind="general" · 응답에 scarcity 동봉
 ```

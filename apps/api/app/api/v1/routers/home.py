@@ -34,6 +34,7 @@ from app.domains.memory.profile.repository import list_affinities
 from app.domains.schedule.repository import list_events
 from app.rules.affinity_reason import is_stale, state_reason
 from app.rules.home_prompts import agent_prompts
+from app.rules.profile import CANDIDATE_MIN_OBSERVATIONS
 
 router = APIRouter()
 
@@ -96,14 +97,19 @@ async def _highlight(session: SessionDep, *, child_id, today) -> HighlightOut | 
     """확인된 기억 중 마지막 기록이 가장 최근인 것. 없으면 후보에서 같은 기준으로.
 
     6개월 낡은 기억(NF-08)과 묶인 active 기록이 없는 기억은 고르지 않는다 — 기억 목록과 같은 기준.
+    후보는 묶인 기록이 `CANDIDATE_MIN_OBSERVATIONS` 이상일 때만 — 추천 근거(티어 2)와 같은 기준이다.
+    관찰 한 건으로 생긴 후보가 "요즘 ~를 좋아해요" 로 뜨지 않게 한다 (#626).
     """
     rows = await list_affinities(session, child_id=child_id)  # 마지막 기록이 최근인 것이 앞
     refs = await list_active_refs_by_affinity(
         session, child_id=child_id, affinity_ids=[r.id for r in rows]
     )
     usable = [r for r in rows if refs.get(r.id) and not is_stale(r.last_observed_on, today=today)]
-    for state in (ProfileState.CONFIRMED, ProfileState.CANDIDATE):
-        picked = next((r for r in usable if r.state == state), None)
+    for state, least in (
+        (ProfileState.CONFIRMED, 1),
+        (ProfileState.CANDIDATE, CANDIDATE_MIN_OBSERVATIONS),
+    ):
+        picked = next((r for r in usable if r.state == state and len(refs[r.id]) >= least), None)
         if picked:
             return _highlight_out(picked, count=len(refs[picked.id]), today=today)
     return None

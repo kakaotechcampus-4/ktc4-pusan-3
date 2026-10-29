@@ -329,16 +329,22 @@ async def list_active_refs_by_affinity(
     *,
     child_id: uuid.UUID,
     affinity_ids: Collection[uuid.UUID],
+    domains: Collection[ObservationDomain | str] | None = None,
 ) -> dict[uuid.UUID, list[tuple[ObservationDomain, uuid.UUID]]]:
     """기억마다 묶인 active 관찰의 (도메인, id). 최근 관찰이 앞이다.
 
     기억 카드의 "지금까지 N번" 과 근거 목록이 쓴다. 집계에서 빠지는 stand_alone · inactive 는
     세지 않는다 — Curator 가 세는 것과 같은 기준이어야 카드 숫자가 상태와 어긋나지 않는다.
+    `domains` 를 주면 그 관찰 표만 본다 — 기억은 자기 도메인의 관찰만 묶이므로 결과는 같고
+    조회만 준다. 없으면 세 표를 다 본다.
     """
     refs: dict[uuid.UUID, list[tuple[date, ObservationDomain, uuid.UUID]]] = {}
     if not affinity_ids:
         return {}
+    wanted = None if domains is None else {ObservationDomain(domain) for domain in domains}
     for domain in _PROMOTABLE_DOMAINS:
+        if wanted is not None and domain not in wanted:
+            continue
         model = _MODEL_BY_DOMAIN[domain]
         rows = await session.execute(
             select(model.affinity_id, model.id, func.upper(model.observed_range)).where(

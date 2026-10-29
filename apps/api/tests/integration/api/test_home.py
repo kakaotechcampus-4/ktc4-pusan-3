@@ -151,3 +151,19 @@ async def test_highlight_prefers_confirmed_and_is_null_without_memory(
     assert highlight["text"] == "계란 반찬"
     assert highlight["ref"] == {"kind": "profile_affinity", "id": str(older.id)}
     assert highlight["state_reason"] == "아직 한 번 기록됐어요. 마지막은 3일 전이에요"
+
+
+async def test_highlight_skips_a_candidate_with_a_single_observation(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    # 관찰 한 건으로 생긴 후보는 "요즘 ~" 으로 띄우지 않는다 — 추천 근거(티어 2)와 같은 기준 (#626)
+    headers, _ = bearer
+    url = f"/api/v1/children/{cid}/home"
+    today = today_kst()
+    once = await _affinity(session, cid, "당근", ProfileState.CANDIDATE, today)
+    await _food(session, cid, today, once.id)
+    assert (await db_client.get(url, headers=headers)).json()["highlight"] is None
+
+    await _food(session, cid, today, once.id)
+    highlight = (await db_client.get(url, headers=headers)).json()["highlight"]
+    assert highlight["ref"] == {"kind": "profile_affinity", "id": str(once.id)}

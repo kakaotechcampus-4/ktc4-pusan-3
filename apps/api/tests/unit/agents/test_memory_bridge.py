@@ -154,6 +154,7 @@ def _affinity(key: str, *, days_ago: int, state: str = "confirmed") -> AffinityR
         polarity=1,
         strength=0.9,
         last_observed_on=TODAY - timedelta(days=days_ago),
+        observations=3,
     )
 
 

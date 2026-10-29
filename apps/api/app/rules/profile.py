@@ -34,6 +34,11 @@ PROMOTION_THRESHOLD_WITH_G: int = 2
 """G 가 있으면 confirmed 로 올라가는 데 필요한 최소 O (W=0 기준)."""
 
 STRENGTH_DEFAULT: float = 0.5
+
+CANDIDATE_MIN_OBSERVATIONS: int = 2
+"""candidate 가 추천 근거(티어 2) · 홈 하이라이트가 되는 데 필요한 묶인 active 관찰 수 (#626).
+새 candidate 의 strength 가 STRENGTH_DEFAULT 라 근거 임계와 같아서, 관찰 한 건이 바로 근거가 됐다.
+한 번의 관찰을 성향으로 쓰지 않는다 (루트 §2 기억)."""
 STRENGTH_MIN: float = 0.0
 STRENGTH_MAX: float = 1.0
 

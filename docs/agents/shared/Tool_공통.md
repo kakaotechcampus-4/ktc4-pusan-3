@@ -79,7 +79,7 @@ def rank_evidence(affinities, observations, *, today, strength_threshold=0.5)
 | 티어 | 조건 |
 | --- | --- |
 | 1 | `confirmed` · polarity ∈ {+1, −1} · 비archived |
-| 2 | `candidate` · polarity ∈ {+1, −1} · strength ≥ 임계 |
+| 2 | `candidate` · polarity ∈ {+1, −1} · strength ≥ 임계 · 묶인 active 관찰 2건 이상 (#626) |
 | 3 | 최근 14일 관찰 (polarity 무관) |
 | 역질의 | `candidate` + polarity NULL → `needs_observation` 후보로 반환 (1개만 사용) |
 | 감쇠 | **여기서 하지 않는다.** Curator 가 `strength` 를 내리거나 `archived` 로 바꿔 이미 반영한다. 6개월 넘은 아이 기록만 남은 후보는 `build()` 가 일반 추천으로 돌린다(§5-3) |
