@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, time
 from zoneinfo import ZoneInfo
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.medication_draft import OFFSET_MAX, OFFSET_MIN, scheduled_time_of
@@ -101,6 +102,27 @@ def _doses_are_valid(patterns: Sequence[DosePattern]) -> bool:
     return len(times) == len(patterns)
 
 
+COURSE_LOCK_NS = 2
+"""pg_advisory_xact_lock(int4, int4) 의 첫 번째 인자.
+1 은 Curator 가 쓴다 (memory/curator/trigger.py)."""
+
+
+def course_lock_key(child_id: uuid.UUID) -> int:
+    return child_id.int % (2**31)
+
+
+async def _lock_child_courses(session: AsyncSession, child_id: uuid.UUID) -> None:
+    """같은 아이의 코스 등록 · 수정을 한 줄로 세운다. 트랜잭션이 끝나면 풀린다.
+
+    중복 검사와 INSERT 사이에 다른 요청이 끼면 같은 코스가 둘 생긴다 — 코드의 검사만으로는 두
+    트랜잭션이 서로의 commit 전 쓰기를 못 본다. 아이별이라 다른 아이의 요청은 기다리지 않는다.
+    """
+    await session.execute(
+        text("SELECT pg_advisory_xact_lock(:ns, :key)"),
+        {"ns": COURSE_LOCK_NS, "key": course_lock_key(child_id)},
+    )
+
+
 def _validate(data: CourseFields, *, today: date) -> None:
     """칸 → 기간 전체가 과거인지 순으로 본다. 틀리면 `CourseInvalid`."""
     fields = course_field_errors(
@@ -129,6 +151,7 @@ async def create_course(
     검사 순서는 칸 → 기간 전체가 과거인지 → 중복이다. 칸이 틀렸으면 중복은 묻지 않는다.
     """
     _validate(data, today=today)
+    await _lock_child_courses(session, child_id)  # 틀린 요청은 잠금 없이 위에서 걸러진다
     if await has_active_duplicate(
         session,
         child_id=child_id,
