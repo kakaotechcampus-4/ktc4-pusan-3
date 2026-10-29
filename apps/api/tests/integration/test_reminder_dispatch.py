@@ -74,7 +74,7 @@ async def _remind(session, child_id, event_id, parent_id, lead=ReminderLead.HOUR
 
 
 async def test_due_reminder_rings_once_for_whoever_set_it(session: AsyncSession):
-    """그 알림을 건 보호자의 기기에만, 한 번만 간다. 문구에 일정 제목은 없다."""
+    """그 알림을 건 보호자의 기기에만, 한 번만 간다. 문구에 일정 제목이 실린다 (#605 PM)."""
     owner, _ = await _parent_with_device(session, "fcm-owner")
     member, _ = await _parent_with_device(session, "fcm-member")
     child_id = await link_child(session, parent_id=owner)
@@ -88,8 +88,7 @@ async def test_due_reminder_rings_once_for_whoever_set_it(session: AsyncSession)
     assert (result.claimed, result.delivered) == (1, 1)
     [(token, message)] = fcm.sent
     assert token == "fcm-owner"
-    assert message.body == "1시간 뒤에 일정이 있어요"
-    assert "병원" not in message.title + message.body
+    assert (message.title, message.body) == ("일정 알림", "1시간 뒤: 병원")
     assert message.data == {
         "type": "schedule_reminder",
         "child_id": str(child_id),

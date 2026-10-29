@@ -401,6 +401,8 @@ class DueReminder:
     lead: ReminderLead
     starts_at: datetime
     all_day: bool
+    title: str
+    """알림 문구에 싣는다 (#605 PM). 🚨 로그에 남기지 않는다."""
 
 
 async def claim_due_reminders(
@@ -425,6 +427,7 @@ async def claim_due_reminders(
             Reminder.lead,
             Event.starts_at,
             Event.all_day,
+            Event.title,
         )
         .join(Event, Event.id == Reminder.event_id)
         .where(Reminder.sent_at.is_(None), Event.starts_at.between(earliest, latest))

@@ -8,8 +8,9 @@
 
 🚨 알림은 그 알림을 건 보호자 본인에게만 간다 — 다른 보호자는 각자 건다 (reminder 는 개인 것).
 🚨 로그에는 건수만 남긴다. 기기 토큰 · 문구 · 아이 · 일정 정보를 남기지 않는다.
-🚨 문구에 일정 제목을 넣지 않는다 — 푸시는 Google(FCM)을 거쳐 잠금 화면에 뜬다. 넣을지는 PM 확인
-   대기 중이다(#605). 정해지면 `reminder_message` 만 고친다.
+🚨 문구에 일정 제목을 싣는다 — 알림만 보고 무슨 일정인지 알게 (10-29 PM 결정, #605). 푸시는
+   Google(FCM)을 거쳐 잠금 화면에 뜨고, 처리방침의 Google 전달 항목에 알림 배달을 적는다(#166).
+   복약 알림은 약 이름을 싣지 않는다(#577) — 약 이름은 늘 건강 정보라 일정 제목과 다르게 둔다.
 
   서버 cron 한 줄과 확인 방법은 apps/api/README.md "일정 알림 발송".
   로컬 한 번: cd apps/api && uv run python -m app.workers.reminder_dispatch
@@ -52,29 +53,30 @@ _KST = ZoneInfo("Asia/Seoul")
 TITLE = "일정 알림"
 ANDROID_CHANNEL = "schedule"
 """앱 셸이 만들어 둔 "일정 알림" 채널 id. 앱과 같은 값이어야 한다."""
-_BODY: dict[ReminderLead, str] = {
-    ReminderLead.AT_START: "지금 시작하는 일정이 있어요",
-    ReminderLead.MINUTES_5: "5분 뒤에 일정이 있어요",
-    ReminderLead.MINUTES_10: "10분 뒤에 일정이 있어요",
-    ReminderLead.MINUTES_15: "15분 뒤에 일정이 있어요",
-    ReminderLead.MINUTES_30: "30분 뒤에 일정이 있어요",
-    ReminderLead.HOURS_1: "1시간 뒤에 일정이 있어요",
-    ReminderLead.HOURS_2: "2시간 뒤에 일정이 있어요",
-    ReminderLead.DAYS_1: "하루 뒤에 일정이 있어요",
-    ReminderLead.DAYS_2: "이틀 뒤에 일정이 있어요",
-    ReminderLead.WEEKS_1: "일주일 뒤에 일정이 있어요",
-    ReminderLead.DAY_OF_9AM: "오늘 일정이 있어요",
-    ReminderLead.DAYS_1_9AM: "내일 일정이 있어요",
-    ReminderLead.DAYS_2_9AM: "모레 일정이 있어요",
-    ReminderLead.WEEKS_1_9AM: "일주일 뒤에 일정이 있어요",
+_WHEN: dict[ReminderLead, str] = {
+    ReminderLead.AT_START: "지금",
+    ReminderLead.MINUTES_5: "5분 뒤",
+    ReminderLead.MINUTES_10: "10분 뒤",
+    ReminderLead.MINUTES_15: "15분 뒤",
+    ReminderLead.MINUTES_30: "30분 뒤",
+    ReminderLead.HOURS_1: "1시간 뒤",
+    ReminderLead.HOURS_2: "2시간 뒤",
+    ReminderLead.DAYS_1: "하루 뒤",
+    ReminderLead.DAYS_2: "이틀 뒤",
+    ReminderLead.WEEKS_1: "일주일 뒤",
+    ReminderLead.DAY_OF_9AM: "오늘",
+    ReminderLead.DAYS_1_9AM: "내일",
+    ReminderLead.DAYS_2_9AM: "모레",
+    ReminderLead.WEEKS_1_9AM: "일주일 뒤",
 }
+"""본문 앞머리 — "10분 뒤: 소아과 예방접종" 처럼 일정 제목 앞에 붙는다."""
 
 
 def reminder_message(reminder: DueReminder) -> Message:
     """알림 1건의 푸시. 화면은 data 로 그 아이의 그날 캘린더를 연다."""
     return Message(
         title=TITLE,
-        body=_BODY[reminder.lead],
+        body=f"{_WHEN[reminder.lead]}: {reminder.title}",
         data={
             "type": "schedule_reminder",
             "child_id": str(reminder.child_id),
