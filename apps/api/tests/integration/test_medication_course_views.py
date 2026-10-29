@@ -227,6 +227,28 @@ async def test_알림_시각은_중복_없이_오름차순_HHMM(session, child):
     assert view.notice_times == ["08:30", "19:30"]
 
 
+async def test_알림_시각은_가장_마지막_날의_패턴이다_옛_패턴의_지난_회차는_섞이지_않는다(
+    session, child
+):
+    # 수정하면 이미 지난 날의 회차는 옛 패턴으로 남는다 — 하루에 울릴 시각은 지금 패턴이어야 한다
+    old = [fx for fx in meals(day(-1), day(-1), (TimingAnchor.DINNER,))]
+    new = meals(day(0), day(2), (TimingAnchor.LUNCH,))
+    await seed(session, child, starts=-1, ends=2, doses=old + new)
+
+    (view,) = await list_in_progress(session, child_id=child.id, today=TODAY)
+
+    assert view.notice_times == ["12:30"]
+    assert len(view.doses) == 2  # 어제 저녁 · 오늘 점심 — 회차 기록은 옛 패턴도 그대로 보인다
+
+
+async def test_회차가_하나도_없는_코스의_알림_시각은_빈_목록(session, child):
+    await seed(session, child, starts=0, ends=0, doses=[])
+
+    (view,) = await list_in_progress(session, child_id=child.id, today=TODAY)
+
+    assert view.notice_times == []
+
+
 # ── 5. 코스 목록을 직접 넘길 때 ──────────────────────────────────────────
 
 
