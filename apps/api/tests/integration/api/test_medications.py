@@ -476,6 +476,19 @@ async def test_사전에_없는_증상_코드는_400(db_client, session, bearer,
     assert await nothing_saved(session)
 
 
+@pytest.mark.parametrize("codes", [[""], ["  "], ["fever", "fever"]])
+async def test_빈_코드나_겹친_코드는_400_이고_칸_이름이_온다(
+    db_client, session, bearer, consented, codes
+):
+    payload = body(schedule={"symptom_codes": codes})
+
+    response = await post(db_client, bearer[0], consented, payload)
+
+    assert response.status_code == 400
+    assert "schedule.symptom_codes" in response.json()["error"]["detail"]["fields"]
+    assert await nothing_saved(session)
+
+
 async def test_사전_안의_증상_코드는_저장된다(db_client, session, bearer, consented):
     code = sorted(symptom_code_set())[0]
 
