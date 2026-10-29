@@ -50,6 +50,10 @@ class Message:
     ttl: timedelta
     """기기가 꺼져 있을 때 FCM 이 들고 있을 시간. 지나면 버린다 — 없으면 FCM 기본값(최대 4주)이라
     "5분 뒤에" 같은 문구가 며칠 뒤에 도착한다."""
+    android_channel: str
+    """안드로이드 알림 채널 id — 앱이 만들어 둔 채널. 앱을 보고 있을 때 온 알림은 FCM 이 아니라
+    앱(expo-notifications)이 이 값으로 띄운다. 없으면 영문 기본 채널("Miscellaneous")에 떠서,
+    보호자가 이 채널을 꺼도 앱을 보는 동안에는 계속 뜬다 (#610 리뷰)."""
 
 
 class FcmConfigError(Exception):
@@ -97,7 +101,10 @@ class FcmClient:
                         "token": device_token,
                         "notification": {"title": message.title, "body": message.body},
                         "data": message.data,
-                        "android": {"ttl": f"{ttl}s"},
+                        "android": {
+                            "ttl": f"{ttl}s",
+                            "notification": {"channel_id": message.android_channel},
+                        },
                         "webpush": {"headers": {"TTL": str(ttl)}},
                     }
                 },

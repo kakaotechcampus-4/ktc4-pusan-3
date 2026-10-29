@@ -97,6 +97,7 @@ async def test_due_reminder_rings_once_for_whoever_set_it(session: AsyncSession)
         "date": (NOW + timedelta(hours=1)).astimezone(KST).date().isoformat(),
     }
     assert message.ttl == STALE_AFTER  # 꺼진 기기에 늦게 도착하는 것도 맡는 범위와 같게
+    assert message.android_channel == "schedule"  # 앱 셸이 만든 채널 id 와 같아야 한다
 
     assert (await run_dispatch(session, now=NOW + timedelta(minutes=1), fcm=fcm)).claimed == 0
     assert len(fcm.sent) == 1

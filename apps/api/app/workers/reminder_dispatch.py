@@ -50,6 +50,8 @@ STALE_AFTER = timedelta(minutes=10)
 _KST = ZoneInfo("Asia/Seoul")
 
 TITLE = "일정 알림"
+ANDROID_CHANNEL = "schedule"
+"""앱 셸이 만들어 둔 "일정 알림" 채널 id. 앱과 같은 값이어야 한다."""
 _BODY: dict[ReminderLead, str] = {
     ReminderLead.AT_START: "지금 시작하는 일정이 있어요",
     ReminderLead.MINUTES_5: "5분 뒤에 일정이 있어요",
@@ -80,6 +82,7 @@ def reminder_message(reminder: DueReminder) -> Message:
             "date": reminder.starts_at.astimezone(_KST).date().isoformat(),
         },
         ttl=STALE_AFTER,
+        android_channel=ANDROID_CHANNEL,
     )
 
 

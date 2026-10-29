@@ -19,6 +19,7 @@ MESSAGE = Message(
     body="1시간 뒤 일정이 있어요",
     data={"event_id": "e1"},
     ttl=timedelta(minutes=10),
+    android_channel="schedule",
 )
 
 
@@ -78,7 +79,8 @@ async def test_sends_one_message_and_reuses_the_access_token(service_account):
         "notification": {"title": MESSAGE.title, "body": MESSAGE.body},
         "data": MESSAGE.data,
         # 꺼진 기기에 며칠 뒤 "1시간 뒤" 가 도착하지 않게 — 안드로이드 · 웹 각자의 자리에 단다
-        "android": {"ttl": "600s"},
+        # 채널은 앱을 보고 있을 때 앱이 띄우는 알림도 "일정 알림" 채널로 가게
+        "android": {"ttl": "600s", "notification": {"channel_id": "schedule"}},
         "webpush": {"headers": {"TTL": "600"}},
     }
 
