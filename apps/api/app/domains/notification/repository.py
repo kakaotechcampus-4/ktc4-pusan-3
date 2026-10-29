@@ -23,8 +23,9 @@ class Switches:
 DEFAULT_SETTING = Switches(schedule_enabled=True, medication_enabled=True)
 """스위치를 한 번도 만지지 않은 보호자의 값.
 
-🚨 잠정값이다 — 기본값은 PM 결정 대기 중이다 (#594). 정해지면 이 줄만 고친다. 행에 박지 않아서
-   만진 적 없는 보호자 모두에게 바로 적용된다 (`NotificationSetting` docstring).
+둘 다 켜짐 — 알림은 일정마다 직접 고르고 권한도 그때 허용하니, 설정 탭은 한 번에 끄는 곳이다.
+기본이 꺼짐이면 고르고 허용까지 했는데 울리지 않는다 (10-29 PM 결정, #605).
+행에 박지 않아서 바꾸면 만진 적 없는 보호자 모두에게 바로 적용된다 (`NotificationSetting` docstring).
 """
 
 
