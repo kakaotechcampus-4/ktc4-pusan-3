@@ -216,3 +216,20 @@ class SubmitMedicationResponse(BaseModel):
     """201 — 등록한 코스."""
 
     course: MedicationCourseOut = Field(description="등록된 코스")
+
+
+class MedicationsResponse(BaseModel):
+    """200 — 진행 중인 코스. 멈춘 · 끝난 · 시작 전 코스는 싣지 않는다."""
+
+    today: date = Field(
+        description=(
+            "서버의 오늘 `YYYY-MM-DD`(한국 날짜). 화면은 오늘을 따로 구하지 않고 이 값을 쓴다 — "
+            "'지금까지 온 날' 의 기준이다"
+        )
+    )
+    courses: list[MedicationCourseOut] = Field(
+        description=(
+            "진행 중인 코스 — `active` 이고 시작일 ≤ 오늘 ≤ 끝일. 시작일 순, 같으면 만든 순. "
+            "없으면 빈 목록이다"
+        )
+    )

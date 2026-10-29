@@ -20,19 +20,21 @@ from app.api.errors import ApiError, ErrorEnvelope
 from app.api.v1.schemas.medications import (
     MedicationCourseOut,
     MedicationDoseOut,
+    MedicationsResponse,
     SubmitMedicationRequest,
     SubmitMedicationResponse,
 )
 from app.domains.consent.models import ConsentAction, ConsentScope
 from app.domains.consent.repository import latest_action
-from app.domains.medication.models import MedicationSchedule
-from app.domains.medication.repository import list_doses
 from app.domains.medication.service import (
     CourseAlreadyExists,
     CourseInput,
     CourseInvalid,
+    CourseView,
     DosePattern,
+    course_views,
     create_course,
+    list_in_progress,
 )
 
 router = APIRouter()
@@ -45,15 +47,15 @@ def kst_today() -> date:
     return datetime.now(KST).date()
 
 
-async def _course_out(session, course: MedicationSchedule, today: date) -> MedicationCourseOut:
-    doses = await list_doses(session, schedule_ids=[course.id])
+def _course_out(view: CourseView) -> MedicationCourseOut:
+    course = view.course
     return MedicationCourseOut(
         id=course.id,
         title=course.title,
         dosage=course.dosage,
         starts_on=course.starts_on,
         ends_on=course.ends_on,
-        notice_times=sorted({f"{d.scheduled_time:%H:%M}" for d in doses}),
+        notice_times=view.notice_times,
         doses=[
             MedicationDoseOut(
                 id=d.id,
@@ -62,10 +64,40 @@ async def _course_out(session, course: MedicationSchedule, today: date) -> Medic
                 checked_at=d.checked_at,
                 checkable=True,  # 오늘까지의 회차만 싣는다 — 싣는 것은 모두 지금 체크할 수 있다
             )
-            for d in doses
-            if d.dose_date <= today
+            for d in view.doses
         ],
     )
+
+
+@router.get(
+    "/children/{cid}/medications",
+    summary="진행 중인 복약 코스 조회",
+    response_model=MedicationsResponse,
+    responses={
+        403: {
+            "model": ErrorEnvelope,
+            "description": "`child_access_denied` — 내 아이가 아니다",
+        },
+    },
+)
+async def read_medications(child: AccessibleChild, session: SessionDep) -> MedicationsResponse:
+    """그 아이의 **진행 중인 복약 코스**와 코스마다 **오늘까지의 회차**를 돌려준다.
+
+    - `today` 는 서버의 한국 날짜다. 화면은 오늘을 따로 구하지 않고 이 값을 쓴다.
+    - 진행 중 = `active` 이고 시작일 ≤ 오늘 ≤ 끝일. **멈춘 · 이미 끝난 · 아직 시작 전인 코스는 싣지
+      않는다**(알려진 한계: 내일부터 먹는 약은 시작일 전까지 목록에 안 보인다).
+    - 코스는 시작일 순, 같으면 만든 순이다.
+    - 코스마다 `notice_times`(하루에 울릴 시각, 오름차순)와 **오늘까지**의 회차를 (날짜, 시각)
+      순으로 싣는다. 아직 오지 않은 날의 회차는 싣지 않는다. 긴 코스는 회차가 많다
+      (90일 × 하루 3번 = 270).
+    - 읽기라 `Idempotency-Key` 가 필요 없고, 건강정보 동의도 확인하지 않는다
+      (동의 확인은 쓰기에서만).
+
+    오류: 403 `child_access_denied`.
+    """
+    today = kst_today()
+    views = await list_in_progress(session, child_id=child.child_id, today=today)
+    return MedicationsResponse(today=today, courses=[_course_out(v) for v in views])
 
 
 @router.post(
@@ -198,9 +230,8 @@ async def register_medication(
     except CourseAlreadyExists as exc:
         raise ApiError(409, "already_exists", "이미 등록된 복약이에요") from exc
 
-    response = SubmitMedicationResponse(
-        course=await _course_out(session, course, today)
-    ).model_dump(mode="json")
+    (view,) = await course_views(session, [course], today=today)
+    response = SubmitMedicationResponse(course=_course_out(view)).model_dump(mode="json")
     await session.commit()
     idempotency.remember(**scope, replay=response)
     return JSONResponse(status_code=201, content=response)
