@@ -15,6 +15,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.medication_draft import OFFSET_MAX, OFFSET_MIN, scheduled_time_of
+from app.core.symptom_codes import symptom_code_set
 from app.domains.medication.models import (
     MedicationCreatedBy,
     MedicationDose,
@@ -73,6 +74,16 @@ class CourseInput:
     note: str | None = None
 
 
+def _unknown_symptom_codes(codes: Sequence[str], known: Sequence[str] = ()) -> list[str]:
+    """사전에 없는 코드. `known` 은 이미 저장돼 있어 사전에서 빠졌어도 통과시키는 코드다.
+
+    화면은 증상 코드를 고치지 않고 초안 값을 그대로 되돌려 보낸다. 사전에서 빠진 옛 코드를 거르면
+    보호자가 그 코스를 계속 고치지 못한다 (core/symptom_codes.py).
+    """
+    allowed = symptom_code_set() | set(known)
+    return [code for code in codes if code not in allowed]
+
+
 def _doses_are_valid(patterns: Sequence[DosePattern]) -> bool:
     """`DoseDraft` 와 같은 규칙 — fixed 조합, offset 범위, 같은 알림 시각 금지."""
     times: set[time] = set()
@@ -126,6 +137,8 @@ async def create_course(
     )
     if "doses" not in fields and not _doses_are_valid(data.doses):
         fields.append("doses")
+    if _unknown_symptom_codes(data.symptom_codes):
+        fields.append("schedule.symptom_codes")
     if fields:
         raise CourseInvalid(fields)
     # provisional — 기간 전체가 과거인 코스를 거절할지는 미정이다 (#563)
