@@ -12,5 +12,5 @@
     "allowImportingTsExtensions": true,
     "noEmit": true
   },
-  "include": ["src/**/*.test.ts", "src/native/*.ts"]
+  "include": ["src/**/*.test.ts", "src/native/*.ts", "app.config.ts"]
 }
