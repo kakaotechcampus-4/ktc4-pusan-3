@@ -270,7 +270,7 @@ KST = ZoneInfo("Asia/Seoul")
 
 
 class CourseNotFound(Exception):
-    """그 아이의 진행 중인 코스가 아니다 (없는 코스 · 남의 아이 · 멈춘 코스)."""
+    """그 아이의 진행 중인 코스가 아니다 (없는 코스 · 남의 아이 · 멈춘 코스 · 끝난 코스)."""
 
 
 async def revise_course(
@@ -290,13 +290,17 @@ async def revise_course(
     밖에 남게 되면 거절한다. 검사 순서는 대상 → 칸 → 체크한 회차 → 중복이다.
     """
     course = await find_course(session, child_id=child_id, course_id=course_id)
-    if course is None or course.status != MedicationStatus.ACTIVE:
+    # 끝난 코스는 조회가 싣지 않는다 — 수정도 못 한다. 회차가 모두 지났고, 400 으로 내면 고치지 않은
+    # `ends_on` 이 틀렸다고 나온다
+    if course is None or course.status != MedicationStatus.ACTIVE or course.ends_on < today:
         raise CourseNotFound
     _validate(data, today=today)
     if await has_checked_outside(
         session, schedule_id=course.id, starts_on=data.starts_on, ends_on=data.ends_on
     ):
         raise CourseInvalid(["schedule.starts_on", "schedule.ends_on"])
+    # 등록과 같은 잠금 — 중복 검사와 저장 사이를 막는다
+    await _lock_child_courses(session, child_id)
     if await has_active_duplicate(
         session,
         child_id=child_id,

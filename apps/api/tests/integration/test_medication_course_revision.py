@@ -15,7 +15,7 @@ provisional — #563 에서 정하지 못한 것: 다른 진행 코스와 같아
 from datetime import UTC, date, datetime, time, timedelta
 
 import pytest
-from sqlalchemy import update
+from sqlalchemy import text, update
 
 from app.domains.child.models import Child
 from app.domains.identity.models import Parent
@@ -30,11 +30,13 @@ from app.domains.medication.models import (
 )
 from app.domains.medication.repository import NewDose, add_course, list_doses, stop_schedule
 from app.domains.medication.service import (
+    COURSE_LOCK_NS,
     CourseAlreadyExists,
     CourseFields,
     CourseInvalid,
     CourseNotFound,
     DosePattern,
+    course_lock_key,
     revise_course,
 )
 
@@ -389,13 +391,42 @@ async def test_틀린_칸이_있으면_거절하고_아무것도_바꾸지_않�
     assert course.title == "약"
 
 
-async def test_기간_전체가_과거면_거절한다_provisional(session, child):
-    course = await seed(session, child, daily(9, -5, -3), starts=-5, ends=-3)
+async def test_새_기간_전체가_과거면_거절한다_provisional(session, child):
+    course = await seed(session, child, daily(9, -1, 1), starts=-1, ends=1)
 
     with pytest.raises(CourseInvalid) as raised:
-        await revise(session, child, course, patterns=[pat(9)], ends=-1, starts=-5)
+        await revise(session, child, course, patterns=[pat(9)], starts=-5, ends=-3)
 
     assert raised.value.fields == ["schedule.ends_on"]
+
+
+async def test_이미_끝난_코스는_찾지_못한다(session, child):
+    # 조회는 끝난 코스를 싣지 않는다 — 수정도 진행 중인 코스만 다룬다. 400 으로 내면 고치지 않은
+    # `ends_on` 이 틀렸다고 나온다
+    course = await seed(session, child, daily(9, -5, -1), starts=-5, ends=-1)
+    before = await rows(session, course)
+
+    with pytest.raises(CourseNotFound):
+        await revise(session, child, course, patterns=[pat(9)], title="바꿈")
+
+    assert await rows(session, course) == before
+    assert course.title == "약"
+
+
+async def test_끝일이_오늘인_코스는_아직_고칠_수_있다(session, child):
+    course = await seed(session, child, daily(9, -1, 0), starts=-1, ends=0)
+
+    saved = await revise(session, child, course, patterns=[pat(20)], title="바꿈")
+
+    assert saved.title == "바꿈"
+
+
+async def test_시작_전인_코스도_고칠_수_있다(session, child):
+    course = await seed(session, child, daily(9, 1, 2), starts=1, ends=2)
+
+    saved = await revise(session, child, course, patterns=[pat(20)], title="바꿈")
+
+    assert saved.title == "바꿈"
 
 
 # ── 7. 중복 ──────────────────────────────────────────────────────────────
@@ -485,3 +516,39 @@ async def test_서비스는_commit_하지_않아_롤백하면_원래대로_돌�
 
     reloaded = await list_doses(session, schedule_ids=[course_id])
     assert [(d.dose_date, d.scheduled_time, d.checked_at is not None) for d in reloaded] == before
+
+
+# ── 9. 동시 요청 — 아이별 잠금 ───────────────────────────────────────────
+
+
+async def held_locks(session, child_id) -> int:
+    return await session.scalar(
+        text(
+            "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND pid = pg_backend_pid() "
+            "AND classid = :ns AND objid::bigint = :key AND objsubid = 2"
+        ),
+        {"ns": COURSE_LOCK_NS, "key": course_lock_key(child_id)},
+    )
+
+
+async def test_수정은_그_아이의_잠금을_잡는다(session, child):
+    course = await seed(session, child, daily(9, 1, 2), starts=1, ends=2)
+
+    await revise(session, child, course, patterns=[pat(20)])
+
+    assert await held_locks(session, child.id) == 1
+
+
+async def test_칸이_틀리거나_코스를_못_찾는_수정은_잠금을_잡지_않는다(session, child):
+    import uuid
+
+    course = await seed(session, child, daily(9, 1, 2), starts=1, ends=2)
+    with pytest.raises(CourseInvalid):
+        await revise(session, child, course, patterns=[], title="바꿈")
+    data = CourseFields(title="약", starts_on=day(1), ends_on=day(2), doses=[pat(9)])
+    with pytest.raises(CourseNotFound):
+        await revise_course(
+            session, child_id=child.id, course_id=uuid.uuid4(), data=data, today=TODAY, now=NOW
+        )
+
+    assert await held_locks(session, child.id) == 0

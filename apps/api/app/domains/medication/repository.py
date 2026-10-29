@@ -197,6 +197,10 @@ async def find_dose(
     """그 아이의 진행 중(`active`) 코스에 속한 회차. 다른 아이 · 멈춘 코스의 회차는 `None` 이다.
 
     다른 아이의 회차는 있는지도 알리지 않는다. 멈춘 코스의 회차는 체크 · 해제할 수 없다.
+
+    회차 행을 잠그고 읽는다 — 체크하는 동안 수정이 그 회차를 지우면(미체크 미래 회차) 읽은 뒤
+    쓸 행이 사라진다. 잠그면 수정의 DELETE 가 기다렸다가, 체크된 회차는 건너뛴다
+    (`checked_at IS NULL`). 반대로 수정이 먼저 지웠다면 여기서 기다렸다가 `None` 을 받는다.
     """
     stmt = (
         select(MedicationDose)
@@ -206,6 +210,7 @@ async def find_dose(
             MedicationSchedule.child_id == child_id,
             MedicationSchedule.status == MedicationStatus.ACTIVE,
         )
+        .with_for_update(of=MedicationDose)
         .execution_options(populate_existing=True)
     )
     return await session.scalar(stmt)

@@ -8,19 +8,29 @@ commit 하고**, 끝나면 만든 보호자 · 아이를 지운다 (코스 · �
 """
 
 import asyncio
-from datetime import date
+from datetime import UTC, date, datetime, time
 
 import pytest
 from sqlalchemy import delete, func, select
 
 from app.domains.child.models import Child
 from app.domains.identity.models import Parent
-from app.domains.medication.models import MedicationSchedule, MedicationSource, TimingAnchor
+from app.domains.medication.models import (
+    MedicationCreatedBy,
+    MedicationSchedule,
+    MedicationSource,
+    TimingAnchor,
+)
+from app.domains.medication.repository import NewDose, add_course, list_doses
 from app.domains.medication.service import (
     CourseAlreadyExists,
+    CourseFields,
     CourseInput,
+    DoseNotFound,
     DosePattern,
     create_course,
+    revise_course,
+    set_dose_checked,
 )
 from app.infra.db.session import async_session_factory
 
@@ -120,3 +130,154 @@ async def test_다른_아이의_등록은_서로_기다리지_않는다(make_chi
         await s2.commit()
 
     assert await saved_courses(first) == await saved_courses(second) == 1
+
+
+# ── 체크 · 수정이 같은 회차를 두고 겹칠 때 ─────────────────────────────
+
+NOW = datetime(2026, 10, 27, 0, 40, tzinfo=UTC)  # 한국 시간 09:40
+
+
+async def seed_evening_dose(child_id) -> tuple:
+    """오늘 19:30 미체크 회차 하나를 가진 코스 — commit 까지 한다."""
+    async with async_session_factory() as s:
+        course = await add_course(
+            s,
+            child_id=child_id,
+            title="약",
+            starts_on=TODAY,
+            ends_on=TODAY,
+            source=MedicationSource.UTTERANCE,
+            created_by=MedicationCreatedBy.CAREGIVER,
+            doses=[NewDose(TODAY, TimingAnchor.FIXED, 0, time(19, 30))],
+        )
+        await s.commit()
+        (dose,) = await list_doses(s, schedule_ids=[course.id])
+        return course.id, dose.id
+
+
+async def dose_rows(course_id) -> list[tuple[time, bool]]:
+    async with async_session_factory() as s:
+        doses = await list_doses(s, schedule_ids=[course_id])
+        return [(d.scheduled_time, d.checked_at is not None) for d in doses]
+
+
+def to_evening_20() -> CourseFields:
+    return CourseFields(
+        title="약",
+        starts_on=TODAY,
+        ends_on=TODAY,
+        doses=[DosePattern(TimingAnchor.FIXED, 0, time(20, 0))],
+    )
+
+
+async def test_체크하는_동안_수정이_그_회차를_지우면_체크는_찾지_못함이다(make_child):
+    child_id = await make_child()
+    course_id, dose_id = await seed_evening_dose(child_id)
+    s1, s2 = async_session_factory(), async_session_factory()
+    try:
+        # 수정이 19:30 회차를 지운다 — 아직 commit 전
+        await revise_course(
+            s1, child_id=child_id, course_id=course_id, data=to_evening_20(), today=TODAY, now=NOW
+        )
+
+        async def check() -> str:
+            try:
+                await set_dose_checked(
+                    s2, child_id=child_id, dose_id=dose_id, checked=True, today=TODAY, now=NOW
+                )
+                await s2.commit()
+                return "체크됨"
+            except DoseNotFound:
+                await s2.rollback()
+                return "찾지 못함"
+
+        task = asyncio.create_task(check())
+        await asyncio.sleep(0.4)  # 체크가 지워지는 회차를 잡고 기다릴 틈
+        await s1.commit()
+        outcome = await asyncio.wait_for(task, timeout=5)
+    finally:
+        await s1.close()
+        await s2.close()
+
+    assert outcome == "찾지 못함"  # 500 이 아니다
+    assert await dose_rows(course_id) == [(time(20, 0), False)]
+
+
+async def test_체크가_먼저_회차를_잡았으면_수정은_그_회차를_지우지_않는다(make_child):
+    child_id = await make_child()
+    course_id, dose_id = await seed_evening_dose(child_id)
+    s1, s2 = async_session_factory(), async_session_factory()
+    try:
+        await set_dose_checked(
+            s1, child_id=child_id, dose_id=dose_id, checked=True, today=TODAY, now=NOW
+        )  # 아직 commit 전
+
+        task = asyncio.create_task(
+            revise_course(
+                s2,
+                child_id=child_id,
+                course_id=course_id,
+                data=to_evening_20(),
+                today=TODAY,
+                now=NOW,
+            )
+        )
+        await asyncio.sleep(0.4)  # 수정이 체크한 회차 앞에서 기다릴 틈
+        await s1.commit()
+        await asyncio.wait_for(task, timeout=5)
+        await s2.commit()
+    finally:
+        await s1.close()
+        await s2.close()
+
+    # 체크한 19:30 은 기록으로 남고, 새 패턴 20:00 만 더해진다
+    assert await dose_rows(course_id) == [(time(19, 30), True), (time(20, 0), False)]
+
+
+async def test_두_코스를_동시에_같은_이름_기간으로_수정하면_하나만_된다(make_child):
+    child_id = await make_child()
+    ids = []
+    for title in ("가", "나"):
+        async with async_session_factory() as s:
+            data = course_input()
+            course = await create_course(
+                s,
+                child_id=child_id,
+                data=CourseInput(
+                    title=title,
+                    starts_on=data.starts_on,
+                    ends_on=data.ends_on,
+                    source=data.source,
+                    doses=data.doses,
+                ),
+                today=TODAY,
+            )
+            await s.commit()
+            ids.append(course.id)
+
+    async def rename(course_id) -> str:
+        async with async_session_factory() as s:
+            try:
+                await revise_course(
+                    s,
+                    child_id=child_id,
+                    course_id=course_id,
+                    data=CourseFields(
+                        title="같은 이름",
+                        starts_on=TODAY,
+                        ends_on=TODAY,
+                        doses=[DosePattern(TimingAnchor.FIXED, 0, time(20, 0))],
+                    ),
+                    today=TODAY,
+                    now=NOW,
+                )
+            except CourseAlreadyExists:
+                await s.rollback()
+                return "중복"
+            await asyncio.sleep(0.3)
+            await s.commit()
+            return "수정"
+
+    results = await asyncio.gather(rename(ids[0]), rename(ids[1]))
+
+    assert sorted(results) == ["수정", "중복"]
