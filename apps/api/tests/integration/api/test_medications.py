@@ -1382,3 +1382,65 @@ def test_수정_엔드포인트와_요청의_모든_칸에_설명이_있다():
         assert schema.get("description", "").strip(), f"{name} 에 설명이 없다"
         missing = [f for f, prop in schema["properties"].items() if not _has_description(prop)]
         assert missing == [], f"{name} 설명이 없는 칸: {missing}"
+
+
+# ── 12. 시계 · 끝난 코스 (수정) ──────────────────────────────────────────
+
+
+async def test_수정은_요청_도중_자정을_넘어도_이미_지난_날의_회차를_지우지_않는다(
+    db_client, session, bearer, consented, monkeypatch
+):
+    course = await seed_course(session, consented, starts=-1, ends=1)  # 오늘 = 10/27
+    # 요청이 자정을 넘는 순간 — 두 시계가 다른 날을 가리킨다: kst_today() 는 10/27,
+    # utc_now() 는 한국 시간 10/28 00:00:00.5
+    monkeypatch.setattr(medications_router, "kst_today", lambda: TODAY)
+    monkeypatch.setattr(
+        medications_router, "utc_now", lambda: datetime(2026, 10, 27, 15, 0, 0, 500000, tzinfo=UTC)
+    )
+
+    response = await patch(db_client, bearer[0], consented, course.id, revise_body())
+
+    assert response.status_code == 200
+    kept = [
+        d.scheduled_time.strftime("%H:%M")
+        for d in await list_doses(session, schedule_ids=[course.id])
+        if d.dose_date == TODAY
+    ]
+    assert kept == ["08:30", "12:30", "19:30"]  # 10/27 은 이미 지났다 — 하나도 지우지 않는다
+
+
+async def test_끝난_코스를_수정하면_404(db_client, session, bearer, consented):
+    course = await seed_course(
+        session, consented, starts=-3, ends=-1
+    )  # 어제 끝났고 status 는 active
+    payload = revise_body(
+        schedule={
+            "starts_on": (TODAY - timedelta(days=3)).isoformat(),
+            "ends_on": (TODAY - timedelta(days=1)).isoformat(),
+            "title": "아목시실린 수정",
+        }
+    )
+
+    response = await patch(db_client, bearer[0], consented, course.id, payload)
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "not_found"
+    await session.refresh(course)
+    assert course.title == "아목시실린"
+
+
+async def test_체크는_요청_도중_자정을_넘으면_새_날의_회차를_오늘로_본다(
+    db_client, session, bearer, consented, monkeypatch
+):
+    # 두 시계가 다른 날을 가리키는 순간 — kst_today() 는 10/27,
+    # utc_now() 는 한국 시간 10/28 00:00:00.5. 시계를 한 번만 읽으므로 "오늘" 은 10/28 이고
+    # 10/28 의 회차는 체크할 수 있다
+    _, dose = await dose_of(session, consented, days=1)  # TODAY(10/27) 의 다음 날 = 10/28
+    monkeypatch.setattr(medications_router, "kst_today", lambda: TODAY)
+    monkeypatch.setattr(
+        medications_router, "utc_now", lambda: datetime(2026, 10, 27, 15, 0, 0, 500000, tzinfo=UTC)
+    )
+
+    response = await put_check(db_client, bearer[0], consented, dose.id, {"checked": True})
+
+    assert response.status_code == 200

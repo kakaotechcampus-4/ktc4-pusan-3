@@ -61,6 +61,16 @@ def utc_now() -> datetime:
     return datetime.now(UTC)
 
 
+def _clock() -> tuple[datetime, date]:
+    """(지금, 한국 오늘) — **시계를 한 번만 읽는다.**
+
+    `utc_now()` 와 `kst_today()` 를 따로 부르면 자정을 넘는 순간 둘이 다른 날을 가리킨다. 수정은
+    "오늘 이후의 미체크 회차" 를 지우므로, 어긋나면 이미 지난 날의 회차를 지울 수 있다.
+    """
+    now = utc_now()
+    return now, now.astimezone(KST).date()
+
+
 def _course_out(view: CourseView) -> MedicationCourseOut:
     course = view.course
     return MedicationCourseOut(
@@ -315,14 +325,15 @@ async def check_dose(
             "건강 정보 동의가 필요해요",
             {"scopes": [ConsentScope.CHILD_HEALTH.value]},
         )
+    now, today = _clock()
     try:
         dose = await set_dose_checked(
             session,
             child_id=child.child_id,
             dose_id=did,
             checked=body.checked,
-            today=kst_today(),
-            now=utc_now(),
+            today=today,
+            now=now,
         )
     except DoseNotFound as exc:
         raise ApiError(404, "not_found", "그 복약 회차를 찾지 못했어요") from exc
@@ -366,7 +377,7 @@ async def check_dose(
             "model": ErrorEnvelope,
             "description": (
                 "`not_found` — 그 아이의 진행 중인 코스가 아니다. 없는 코스 · 남의 아이 코스 · "
-                "**멈춘 코스**가 모두 같은 404 다"
+                "**멈춘 코스** · **이미 끝난 코스**(마지막 날이 지남)가 모두 같은 404 다"
             ),
         },
         409: {
@@ -405,7 +416,7 @@ async def revise_medication(
       (날짜, 시각)도 다시 만들지 않는다.
     - **체크한 회차가 새 기간 밖에 남게 되면 400** 이다 — 복용 기록을 잃지 않게 막는다.
     - 응답의 `notice_times` 는 **새 패턴**(마지막 날의 시각)이고, `doses` 는 오늘까지의 회차다.
-    - 출처(`source`)·상태·작성자는 바꾸지 않는다. 멈춘 코스는 고칠 수 없다(404).
+    - 출처(`source`)·상태·작성자는 바꾸지 않는다. 멈춘 코스와 이미 끝난 코스는 고칠 수 없다(404).
 
     오류 (순서대로): 403 `child_access_denied` → 400 `validation_failed`(본문 형식) →
     400 `idempotency_key_required` → (같은 키면 처음 응답 재생) → 403 `consent_required` →
@@ -435,7 +446,7 @@ async def revise_medication(
             {"scopes": [ConsentScope.CHILD_HEALTH.value]},
         )
 
-    today = kst_today()
+    now, today = _clock()
     try:
         course = await revise_course(
             session,
@@ -456,7 +467,7 @@ async def revise_medication(
                 note=body.schedule.note,
             ),
             today=today,
-            now=utc_now(),
+            now=now,
         )
     except CourseNotFound as exc:
         raise ApiError(404, "not_found", "그 복약을 찾지 못했어요") from exc
