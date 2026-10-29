@@ -54,6 +54,7 @@ export function GeneralSuggestionCard({
     // 🚨 고르면 **테두리 색만** `brand` 가 된다 (개인화 줄과 같은 "골랐음"). 점선은 남긴다 —
     //    고른다고 우리 아이 기준 추천이 되는 것이 아니다. 색만으로 말하지 않는다 — 체크 표식이 함께 선다.
     <li
+      data-tour="general"
       className={cn(
         "rounded-card bg-canvas ease-standard border border-dashed p-4 transition-colors duration-120",
         selected ? "border-brand" : "border-line-strong",

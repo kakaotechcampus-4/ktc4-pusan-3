@@ -21,6 +21,7 @@ import { HomeComposer } from "@/components/home-composer";
 import { PhotoSourceSheet } from "@/components/photo-source-sheet";
 import { PROMPT_PILL } from "@/components/agent-prompts";
 import { ScreenTransition } from "@/components/route-transition";
+import { ScreenTour, TourHelpButton } from "@/components/screen-tour";
 import { Button } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -38,6 +39,7 @@ import { useDraftStore, useDraftText } from "@/stores/draft";
 import { usePhotoDraftStore } from "@/stores/photo-draft";
 import { api, isApiError, qk, type HomeResponse, type Me } from "@/lib/api";
 import { cn } from "@/lib/cn";
+import { homeEmptyTour, homeTour } from "@/lib/tour/screens/home";
 import { FORWARD } from "@/lib/view-transition";
 
 /**
@@ -118,6 +120,11 @@ function HomeScreen() {
   }
 
   const consentBlocked = isApiError(home.error, "consent_required") ? home.error : null;
+  /**
+   * 🚨 기록이 없는 홈과 있는 홈은 다른 투어다 (`lib/tour/screens/home.ts`). 받기 전에는 기록 있는 쪽으로
+   *    두지만 `ready` 가 꺼져 있어 뜨지 않는다.
+   */
+  const tour = home.data?.observation_count === 0 ? homeEmptyTour : homeTour;
 
   /**
    * 🚨 **버튼의 `prompt_key` 를 그대로 넘긴다** (#286). 빼면 "저녁" 버튼을 눌러도 Agent 는
@@ -178,6 +185,7 @@ function HomeScreen() {
             ) : null}
           </div>
           {/* 설정은 자주 가는 곳이 아니라 아래 네비에 칸을 주지 않는다 — 제목 옆 아이콘 하나다. */}
+          <TourHelpButton tour={tour} />
           <IconButton
             label="설정"
             onClick={() => router.push(`/child/${childId}/settings`, FORWARD)}
@@ -217,6 +225,9 @@ function HomeScreen() {
 
         {/* 🚨 고른 파일을 여기서 올리지 않는다. 08 이 업로드·스트림·저장을 통째로 소유하고,
           홈은 파일 하나를 스토어에 놓고 넘긴다 — 두 화면이 같은 흐름을 두 벌 갖지 않게. */}
+        {/* 막 보내고 대화로 넘어가는 순간에는 띄우지 않는다 (`leaving`). */}
+        <ScreenTour tour={tour} ready={home.isSuccess && leaving === null} />
+
         <PhotoSourceSheet
           open={photoSheetOpen}
           onClose={() => setPhotoSheetOpen(false)}
@@ -241,6 +252,7 @@ function HomeScreen() {
 function ChatEntryLink({ href, asking }: { href: string; asking: boolean }) {
   return (
     <Link
+      data-tour="chat-entry"
       href={href}
       {...FORWARD}
       className={cn(
@@ -264,6 +276,7 @@ function HomeBody({ data }: { data: HomeResponse }) {
   if (data.highlight === null && data.observation_count === 0) {
     return (
       <EmptyState
+        data-tour="empty"
         icon={NotebookPen}
         title="아래에 한 줄 적으면 여기에 쌓여요"
         description="기록이 없으면 제안도 만들지 않아요. 지어내지 않으려고요."
@@ -277,7 +290,7 @@ function HomeBody({ data }: { data: HomeResponse }) {
       <Counts week={data.week_count} upcoming={data.upcoming_count} />
 
       {data.today.length > 0 ? (
-        <Section label="오늘">
+        <Section label="오늘" tour="today">
           <Card className="flex flex-col gap-3">
             {data.today.map((item) =>
               item.kind === "meal" ? (
@@ -291,7 +304,7 @@ function HomeBody({ data }: { data: HomeResponse }) {
       ) : null}
 
       {data.highlight ? (
-        <Section label="눈여겨볼 것">
+        <Section label="눈여겨볼 것" tour="highlight">
           <Card tone="accent">
             <div className="flex items-start gap-3">
               <IconTile icon={Repeat} />
@@ -348,9 +361,18 @@ function CountSkeleton() {
 }
 
 /** 섹션 제목. 🚨 브랜드색 라벨이라 화면에 초록이 규칙적으로 들어온다 (문서 §2-2 "canvas 위 브랜드 텍스트"). */
-function Section({ label, children }: { label: string; children: ReactNode }) {
+function Section({
+  label,
+  tour,
+  children,
+}: {
+  label: string;
+  /** 화면 투어가 비추는 자리 (`lib/tour/screens/home.ts`). */
+  tour?: string;
+  children: ReactNode;
+}) {
   return (
-    <section>
+    <section data-tour={tour}>
       <h2 className="text-label text-brand">{label}</h2>
       <div className="mt-2">{children}</div>
     </section>

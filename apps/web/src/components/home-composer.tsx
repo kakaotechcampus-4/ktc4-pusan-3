@@ -127,11 +127,19 @@ export function HomeComposer({
 
       {/* 알약 하나 안에 버튼·입력·보내기가 다 들어간다. 입력만 테두리를 갖지 않는 이유(§7 bare). */}
       <Named name={VIEW_TRANSITION.chatBar}>
-        <div className="bg-surface-muted flex items-end gap-1 rounded-full p-1">
+        <div
+          data-tour="composer"
+          className="bg-surface-muted flex items-end gap-1 rounded-full p-1"
+        >
           {/* 🚨 마이크처럼 비활성으로 세우지 않고 숨긴다 — 이유를 말할 수 있는 미정(음성 방침)이 아니라
               서버에 아직 없는 기능이라, 보호자에게 남길 설명이 없다 (`lib/features.ts` · #409). */}
           {PENDING_SERVER_FEATURES.photoEntry ? (
-            <IconButton label="사진으로 적기" onClick={onPickPhoto} disabled={locked}>
+            <IconButton
+              label="사진으로 적기"
+              onClick={onPickPhoto}
+              disabled={locked}
+              data-tour="photo"
+            >
               <Camera aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
             </IconButton>
           ) : null}
