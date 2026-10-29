@@ -202,6 +202,9 @@ OpenAPI(`app.openapi()` · Swagger 와 같은 것)와 칸 단위로 맞춘다 (#
 - `@playwright/test` 를 올리면 `/web-smoke` 의 `playwright-core` 와 크로미움도 같은 버전을 쓴다
   (스킬이 이 패키지를 먼저 찾는다)
 - `layout-shift.spec.ts` 는 규칙이 아니라 **화면이 뜰 때 밀리지 않는가**(CLS)를 건다 — 재는 법과 한계는 아래 §3
+- **셸이 꽂는 창구는 목이 아니라 `addInitScript` 로 심는다** (`voice-input.spec.ts` · #595). 말로 적기는 API 가 아니라
+  `window.icatch.speech` 라 MSW 가 가로챌 대상이 없다. 창구는 부탁(시작 · 멈춤)을 적기만 하고, 결과는 테스트가 셸 대신
+  `icatch:speech` 이벤트로 쏜다. ⚠️ 채팅바의 status 줄을 찾을 때 `getByRole("status")` 만 쓰지 않는다 — 토스트 자리도 status 다
 
 ### 규칙
 

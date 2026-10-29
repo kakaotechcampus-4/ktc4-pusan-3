@@ -40,7 +40,7 @@
   `useReveal`(펼침) · `useFlip`(자리 옮김) · `playEnter`. 화면 전환은 `components/route-transition.tsx` 의 `ScreenTransition` 과
   `lib/view-transition.ts` 의 `FORWARD` · `BACK`. 쓰는 자리와 규칙은 디자인 시스템 §8
 - 도메인을 아는 조합 (`components/`) — `DomainChip`/`DomainMeta`/`ObservationMeta` · `AgentPrompts` · `ChildNav` · `SuggestionList` ·
-  `HomeComposer` · `GeneralSuggestionCard` · `ChatThread` · `RunReply` · `SafetyCheckSheet`(게이트 ㉡) · `ApprovalSheet`(게이트 ㉠) · `ConsentRequiredCard` ·
+  `HomeComposer`/`VoiceLevelMeter`(말로 적기 듣는 동안의 음량 막대 · 셸 `volume` 이벤트를 직접 구독) · `GeneralSuggestionCard` · `ChatThread` · `RunReply` · `SafetyCheckSheet`(게이트 ㉡) · `ApprovalSheet`(게이트 ㉠) · `ConsentRequiredCard` ·
   `AuthGate`/`SessionChecking`/`SessionUnreachable` · `WebPushBridge`(그리는 것 없음 · 로그인이 살아나면 기기 등록, 알림을 누르면 그 화면으로 · #609) · `ChildScope` · `ObservationList` · `AffinityList` · `CorrectionButtons` · `MemoryDetailSheet` ·
   `SuggestionFeedbackList` · `MonthGrid`/`DayMarkLegend` · `CalendarDayPanel` ·
   `SettingsGroup`/`SettingsLinkRow`/`SettingsInfoRow` · `StartBackLink`(01 · 초대 → 00-1) · `ConsentSection`/`LegalDocumentSection` ·
