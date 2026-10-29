@@ -16,13 +16,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.medication_draft import OFFSET_MAX, OFFSET_MIN, scheduled_time_of
 from app.domains.medication.models import (
     MedicationCreatedBy,
+    MedicationDose,
     MedicationForm,
     MedicationSchedule,
     MedicationSource,
     MedicationStorage,
     TimingAnchor,
+    in_progress,
 )
-from app.domains.medication.repository import NewDose, add_course, has_active_duplicate
+from app.domains.medication.repository import (
+    NewDose,
+    add_course,
+    has_active_duplicate,
+    list_courses,
+    list_doses,
+)
 from app.rules.medication_course import course_field_errors, dose_dates
 
 
@@ -128,3 +136,42 @@ async def create_course(
             for p in data.doses
         ],
     )
+
+
+@dataclass(frozen=True)
+class CourseView:
+    """화면에 내보낼 코스 한 건 — 알림 시각과 **오늘까지**의 회차를 같이 든다."""
+
+    course: MedicationSchedule
+    notice_times: list[str]  # 하루에 울릴 시각 "HH:MM" 오름차순, 중복 없음
+    doses: list[MedicationDose]  # 오늘까지의 회차, (날짜, 시각) 순
+
+
+async def course_views(
+    session: AsyncSession, courses: Sequence[MedicationSchedule], *, today: date
+) -> list[CourseView]:
+    """코스마다 알림 시각과 오늘까지의 회차를 붙인다. 코스 순서를 그대로 지킨다.
+
+    회차는 한 번에 읽는다. 알림 시각은 아직 오지 않은 날의 회차까지 보고 정하므로 날짜를 자르지 않고
+    읽은 뒤 오늘까지만 남긴다 — 내일부터 먹는 코스도 알림 시각은 안다.
+    """
+    rows = await list_doses(session, schedule_ids=[c.id for c in courses])
+    by_course: dict[uuid.UUID, list[MedicationDose]] = {c.id: [] for c in courses}
+    for dose in rows:
+        by_course[dose.schedule_id].append(dose)
+    return [
+        CourseView(
+            course=c,
+            notice_times=sorted({f"{d.scheduled_time:%H:%M}" for d in by_course[c.id]}),
+            doses=[d for d in by_course[c.id] if d.dose_date <= today],
+        )
+        for c in courses
+    ]
+
+
+async def list_in_progress(
+    session: AsyncSession, *, child_id: uuid.UUID, today: date
+) -> list[CourseView]:
+    """그 아이의 진행 중인 코스. 멈춘 · 끝난 · 시작 전 코스는 싣지 않는다 (알려진 한계)."""
+    courses = await list_courses(session, child_id=child_id, where=in_progress(today))
+    return await course_views(session, courses, today=today)
