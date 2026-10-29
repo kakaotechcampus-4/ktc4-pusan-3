@@ -259,14 +259,18 @@ function EventCard({
   date: string;
   event: CalendarEvent;
 }) {
+  /** 일정 제목 — 이 카드 안 알림 칸의 접근용 이름 앞에 붙는다 (`MyReminder`). */
+  const titleId = useId();
   return (
     <div className="rounded-card bg-surface border-line border p-4">
-      <p className="text-body text-ink">{event.title}</p>
+      <p id={titleId} className="text-body text-ink">
+        {event.title}
+      </p>
       <p className="text-caption text-ink-subtle mt-1">
         {formatEventTime(event.starts_at, event.all_day)}
       </p>
 
-      <MyReminder childId={childId} date={date} event={event} />
+      <MyReminder childId={childId} date={date} event={event} titleId={titleId} />
 
       {event.items.length > 0 ? (
         // 준비물은 카드 폭이 넉넉하면 두 열로 선다 — 기준과 이유는 docs/web/screen-rules-v1.md §5.
@@ -299,10 +303,16 @@ function MyReminder({
   childId,
   date,
   event,
+  titleId,
 }: {
   childId: string;
   date: string;
   event: CalendarEvent;
+  /**
+   * 일정 제목 요소의 id. 🚨 하루에 일정이 여럿이면 칸 이름이 전부 "알림" 이라 스크린리더로는 어느 일정의 칸인지
+   *    모른다(#611 리뷰) — 접근용 이름만 "물놀이 알림 …" 으로 만든다. 보이는 글자는 "알림" 그대로다.
+   */
+  titleId: string;
 }) {
   const queryClient = useQueryClient();
   const toast = useToast();
@@ -364,6 +374,7 @@ function MyReminder({
       <ReminderField
         startsAt={event.starts_at}
         allDay={event.all_day}
+        contextLabelId={titleId}
         value={value}
         onChange={(choice) => {
           if (choice !== value) save.mutate(choice);

@@ -33,7 +33,7 @@
   `IconButton`/`IconButtonLink`/`IconButtonPlaceholder`(받는 동안 버튼 자리) · `IconTile` · `ProgressSteps` · `EmptyState`/`EmptyStateSkeleton` ·
   `Skeleton`/`SkeletonText`/`SkeletonTile`/`SkeletonGroup`(🚨 받은 내용과 같은 상자 · 디자인 시스템 §7 "빈 상태 · 스켈레톤") ·
   `BottomSheet` · `Tabs`/`PanelTabs`(🚨 주소가 바뀌면 앞, **패널만 바뀌면** 뒤 · 디자인 시스템 §7) · `Toast` · `ButtonLink` ·
-  `Select` · `ChoiceField`(반드시 하나 · 🚨 선택지가 둘이면 `Select` 를 쓰지 않는다 · 넷 이상이거나 문장이 길면 `direction="vertical"` · 목록 위의 보기 전환만 `labelHidden` · 디자인 시스템 §7) ·
+  `Select`(같은 라벨의 칸이 한 화면에 여럿이면 `contextLabelId` 로 무엇의 칸인지 접근용 이름 앞에 붙인다 · #611) · `ChoiceField`(반드시 하나 · 🚨 선택지가 둘이면 `Select` 를 쓰지 않는다 · 넷 이상이거나 문장이 길면 `direction="vertical"` · 목록 위의 보기 전환만 `labelHidden` · 디자인 시스템 §7) ·
   `Pagination`(번호 쪽 목록의 아래 한 줄 · 화살표 둘 + 번호 다섯 개의 창 · 디자인 시스템 §7 "쪽 넘기기") ·
   `PhotoCard`/`PhotoSlotButton` · `Swap`(같은 자리의 교체 페이드 · `phaseOf`) · `Named`(화면 전환의 이름 쌍)
 - 움직임 (`lib/motion.ts`) — `useEnterMotion`(데이터가 바꾸는 교체 · 단계 넘김) · `useMotionCue`(누른 것만) ·
