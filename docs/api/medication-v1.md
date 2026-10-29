@@ -70,7 +70,7 @@
 | `schedule.note` | 문자열 · `null` | 1000자 이하 |
 | `schedule.storage` | `"room"` · `"fridge"` · `null` | |
 | `schedule.med_form` | `"liquid"` · `"powder"` · `"tablet"` · `"ointment"` · `"drops"` · `null` | |
-| `schedule.symptom_codes` | 문자열 배열 | 화면이 고치지 않고 초안 값을 그대로 보낸다. 사전에 없는 코드 · 빈 코드 · 겹친 코드는 400 |
+| `schedule.symptom_codes` | 문자열 배열 | 화면이 고치지 않고 초안 값을 그대로 보낸다. 겹친 코드는 400(본문 형식), **사전에 없는 코드는 400(내용)** — 빈 코드도 사전에 없다. **수정은 이미 저장돼 있는 코드를 사전에서 빠졌어도 통과시키고 새로 들어온 코드만 거른다** (`core/symptom_codes.py`) |
 | `schedule.starts_on` · `ends_on` | `YYYY-MM-DD`, 필수 | 끝 < 시작이면 400, **기간은 최대 90일**(끝 − 시작 + 1), 무기한 없음. 시작이 과거여도 되지만 지난 날짜의 회차는 만들지 않는다 |
 | `doses[]` | 1~24개 | 같은 알림 시각이 둘이면 400 (anchor 가 달라도 계산한 시각이 같으면 같은 시각) |
 | `doses[].timing_anchor` | `fixed` · `wake_up` · `breakfast` · `lunch` · `dinner` · `bedtime` | 기준 시각은 07:30 · 08:00 · 12:00 · 19:00 · 20:30 |
@@ -102,8 +102,8 @@
 | "하루 세 번 식후" 3일 | **201** `{ course }`, 회차 9행, `course.doses` 는 오늘까지 |
 | 같은 키로 다시 | 201, 처음 응답 그대로 (행이 늘지 않음) |
 | 키 없음 | 400 `idempotency_key_required` |
-| 본문 형식 오류 (모르는 칸 · 잘못된 enum · 날짜 · 사전에 없는 증상 코드) | 400 `validation_failed` + `error.detail.fields` (예: `["schedule.starts_on"]`) |
-| 내용 오류 (빈 약 이름 · 길이 초과 · 기간 90일 초과 · `doses` 0개 또는 25개 이상 · 같은 알림 시각 · `fixed` 조합 위반 · offset 범위 밖) | 400 `validation_failed` + `fields` (예: `["schedule.title"]` · `["doses"]` · `["schedule.starts_on","schedule.ends_on"]`) |
+| 본문 형식 오류 (모르는 칸 · 잘못된 enum · 날짜 · 겹친 증상 코드) | 400 `validation_failed` + `error.detail.fields` (예: `["schedule.starts_on"]`) |
+| 내용 오류 (빈 약 이름 · 길이 초과 · 기간 90일 초과 · `doses` 0개 또는 25개 이상 · 같은 알림 시각 · `fixed` 조합 위반 · offset 범위 밖 · 사전에 없는 증상 코드) | 400 `validation_failed` + `fields` (예: `["schedule.title"]` · `["doses"]` · `["schedule.starts_on","schedule.ends_on"]`) |
 | 기간 전체가 이미 지남 (`잠정`) | 400 `validation_failed`, `fields: ["schedule.ends_on"]` |
 | 같은 아이 · 이름 · 기간의 진행 중인 코스가 있음 (`잠정`) | 409 `already_exists`. 멈춘 코스는 세지 않는다 |
 | 동의 없음 | 403 `consent_required`, `detail.scopes: ["child_health"]` |
@@ -127,10 +127,12 @@ flowchart TD
 | 정상 | **200** `{ course }` — `notice_times` 는 새 패턴 |
 | 같은 키로 다시 | 200, 처음 응답 그대로 |
 | 없는 코스 · 남의 아이 코스 · **멈춘 코스** · **이미 끝난 코스**(마지막 날이 지남) | **404** `not_found` |
-| 체크한 회차가 **새 기간 밖**에 남게 되는 수정 | 400 `validation_failed`, `fields: ["schedule.starts_on","schedule.ends_on"]` |
+| 수정 뒤에도 남는 회차(**체크했거나 이미 지난 것**)가 **새 기간 밖**이 되는 수정 | 400 `validation_failed`, `fields: ["schedule.starts_on","schedule.ends_on"]` |
 | 이 수정으로 다른 진행 코스와 이름 · 기간이 같아짐 (`잠정`) | 409 `already_exists`. 자기 자신 · 멈춘 코스와는 같아도 된다 |
 | `source` 를 보냄 | 400 `validation_failed` |
 | 그 밖의 400 · 403 | 등록과 같음 (길이 · 기간 상한도 같다) |
+
+**불변식: 어느 회차든 `dose_date ∈ [starts_on, ends_on]` 이다** ([`medication-tables-v1.md`](../medication/medication-tables-v1.md) §5). 체크한 회차와 이미 지난 회차는 지우지 않으므로, 시작일을 그 뒤로 늦추는 수정은 400 이다 (끝일을 줄이는 것은 아직 안 온 회차만 지우니 된다).
 
 다시 만들 때 **지금 이전의 시각은 만들지 않는다**. 등록은 오늘 회차를 통째로 만든다(방금 먹인 약을 등록하는 경우가 흔해서) — 둘이 다르다.
 
@@ -218,6 +220,7 @@ flowchart TD
 
 | | mock | 서버 |
 | --- | --- | --- |
+| 시작일을 늦추는 수정 | 지난 회차를 그대로 둠 | **400** — 지난 회차가 기간 밖에 남기 때문 |
 | 수정 시 오늘 회차 | 오늘 미체크 회차를 전부 다시 만듦 | **예정 시각이 지금 이후인 것만** (지난 시각의 새 회차를 만들지 않음) |
 | 400 `detail.fields` | `["title"]` | `["schedule.title"]` |
 | 약 이름 | `trim()` 해서 저장 | 받은 그대로 저장 (공백만이면 400) |
