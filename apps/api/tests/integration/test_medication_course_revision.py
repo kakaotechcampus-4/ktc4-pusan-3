@@ -278,12 +278,95 @@ async def test_끝일을_줄이면_새_끝일_뒤의_미체크_회차가_사라�
     assert [d for d, _, _ in await rows(session, course)] == [day(1), day(2)]
 
 
-async def test_시작일을_오늘로_당겨도_이미_지난_미체크_회차는_남는다(session, child):
+async def test_시작일을_늦춰_이미_지난_회차가_기간_밖이_되면_거절한다(session, child):
+    # 불변식 dose_date ∈ [starts_on, ends_on] (medication-tables-v1.md §5). 체크하지 않은 지난
+    # 회차도 지우지 않으므로(복용 기록이다) 기간을 그 뒤로 옮기는 수정을 거절한다
     course = await seed(session, child, daily(9, -2, 1), starts=-2, ends=1)
+    before = await rows(session, course)
 
-    await revise(session, child, course, patterns=[pat(9)], starts=0)
+    with pytest.raises(CourseInvalid) as raised:
+        await revise(session, child, course, patterns=[pat(9)], starts=0)
 
-    assert [d for d, _, _ in await rows(session, course)][:2] == [day(-2), day(-1)]
+    assert raised.value.fields == ["schedule.starts_on", "schedule.ends_on"]
+    assert await rows(session, course) == before
+    assert course.starts_on == day(-2)
+
+
+async def test_오늘_이미_지난_시각의_회차가_기간_밖이_되는_수정도_거절한다(session, child):
+    course = await seed(session, child, [fx(0, 9, 0), fx(0, 19, 0)], starts=0, ends=0)  # 지금 09:40
+
+    with pytest.raises(CourseInvalid):
+        await revise(
+            session, child, course, patterns=[pat(9)], starts=1, ends=2
+        )  # 09:00 이 밖이 된다
+
+
+async def test_정각의_회차도_이미_지난_것이라_기간_밖이_되면_거절한다(session, child):
+    # 지금이 09:40 이면 09:40 회차는 지난 것으로 본다 (지울 때와 같은 경계)
+    course = await seed(session, child, [fx(0, 9, 40), fx(0, 19, 0)], starts=0, ends=0)
+
+    with pytest.raises(CourseInvalid):
+        await revise(session, child, course, patterns=[pat(20)], starts=1, ends=2)
+
+
+async def test_바로_다음_분의_회차는_아직_안_온_것이라_기간_밖이어도_허용한다(session, child):
+    course = await seed(session, child, [fx(0, 9, 41), fx(0, 19, 0)], starts=0, ends=0)
+
+    saved = await revise(session, child, course, patterns=[pat(20)], starts=1, ends=2)
+
+    assert saved.starts_on == day(
+        1
+    )  # 09:41 · 19:00 은 아직 안 왔으니 지워지고 새 기간에 다시 생긴다
+
+
+async def test_다른_코스의_지난_회차는_이_수정을_막지_않는다(session, child):
+    other = await seed(session, child, daily(9, -3, -1), starts=-3, ends=-1, title="다른 약")
+    mine = await seed(session, child, daily(9, 1, 2), starts=1, ends=2, title="수정할 약")
+
+    saved = await revise(session, child, mine, patterns=[pat(20)], starts=1, ends=3)
+
+    assert saved.ends_on == day(3)
+    assert len(await rows(session, other)) == 3  # 다른 코스는 그대로다
+
+
+async def test_아직_안_온_회차만_기간_밖이_되면_지우고_허용한다(session, child):
+    course = await seed(session, child, [fx(0, 9, 0), fx(0, 19, 0), fx(1, 19, 0)], starts=0, ends=1)
+
+    saved = await revise(session, child, course, patterns=[pat(20)], starts=0, ends=0)
+
+    assert saved.ends_on == day(0)
+    assert [d for d, _, _ in await rows(session, course)] == [
+        day(0),
+        day(0),
+    ]  # 내일 회차는 사라졌다
+
+
+async def test_시작일을_앞으로_당겨도_지난_날짜_회차는_만들지_않는다(session, child):
+    course = await seed(session, child, daily(9, 0, 1), starts=0, ends=1)
+
+    saved = await revise(session, child, course, patterns=[pat(9)], starts=-3, ends=1)
+
+    assert saved.starts_on == day(-3)
+    assert min(d for d, _, _ in await rows(session, course)) == day(
+        0
+    )  # 그제 · 어제 · 그끄저께는 없다
+
+
+@pytest.mark.parametrize("starts", [-4, -2, -1, 0, 1, 2])
+@pytest.mark.parametrize("ends", [0, 1, 2, 4])
+async def test_수정에_성공하면_모든_회차가_새_기간_안에_있다_불변식(session, child, starts, ends):
+    if ends < starts:
+        pytest.skip("끝이 시작보다 빠른 조합")
+    # 그제~모레 회차, 어제 회차는 체크됨 — 어떤 기간으로 바꿔도 불변식이 지켜지거나 거절돼야 한다
+    course = await seed(session, child, daily(9, -2, 2), starts=-2, ends=2)
+    await check(session, course, -1, 9)
+
+    try:
+        await revise(session, child, course, patterns=[pat(20)], starts=starts, ends=ends)
+    except CourseInvalid:
+        return  # 거절은 불변식을 지킨 것이다
+
+    assert all(day(starts) <= d <= day(ends) for d, _, _ in await rows(session, course))
 
 
 async def test_체크한_회차가_새_기간_밖에_남으면_거절하고_아무것도_바꾸지_않는다(session, child):
@@ -313,12 +396,14 @@ async def test_체크한_회차가_새_끝일_뒤에_있어도_거절한다(sess
 
 
 async def test_체크한_회차가_새_기간_안이면_허용한다(session, child):
-    course = await seed(session, child, daily(9, -2, 2))
+    # 회차는 어제부터 있다 (그제는 코스 기간 밖이라 만들어진 적이 없다)
+    course = await seed(session, child, daily(9, -1, 2), starts=-2, ends=2)
     await check(session, course, -1, 9)
 
     saved = await revise(session, child, course, patterns=[pat(9)], starts=-1, ends=2)
 
     assert saved.starts_on == day(-1)
+    assert (day(-1), time(9), True) in await rows(session, course)
 
 
 # ── 5. 대상 ──────────────────────────────────────────────────────────────
@@ -552,3 +637,53 @@ async def test_칸이_틀리거나_코스를_못_찾는_수정은_잠금을_잡�
         )
 
     assert await held_locks(session, child.id) == 0
+
+
+# ── 10. 증상 코드 ────────────────────────────────────────────────────────
+
+RETIRED = "retired_code_from_old_dictionary"  # 사전에서 빠진 옛 코드
+
+
+async def test_저장된_옛_증상_코드는_사전에서_빠졌어도_그대로_보내면_수정된다(session, child):
+    # core/symptom_codes.py — 화면은 코드를 고치지 않고 되돌려 보낸다. 거르면 그 코스를 못 고친다
+    course = await seed(session, child, daily(9, 1, 2), starts=1, ends=2, symptom_codes=[RETIRED])
+
+    saved = await revise(
+        session, child, course, patterns=[pat(20)], symptom_codes=[RETIRED], title="바꿈"
+    )
+
+    assert saved.title == "바꿈"
+    assert saved.symptom_codes == [RETIRED]
+
+
+async def test_수정에서_새로_들어온_사전_밖_코드는_거절한다(session, child):
+    course = await seed(session, child, daily(9, 1, 2), starts=1, ends=2, symptom_codes=[RETIRED])
+
+    with pytest.raises(CourseInvalid) as raised:
+        await revise(
+            session, child, course, patterns=[pat(20)], symptom_codes=[RETIRED, "brand_new"]
+        )
+
+    assert raised.value.fields == ["schedule.symptom_codes"]
+    assert course.symptom_codes == [RETIRED]
+
+
+async def test_저장돼_있지_않은_옛_코드는_수정에서도_거절한다(session, child):
+    course = await seed(session, child, daily(9, 1, 2), starts=1, ends=2)  # 코드 없음
+
+    with pytest.raises(CourseInvalid) as raised:
+        await revise(session, child, course, patterns=[pat(20)], symptom_codes=[RETIRED])
+
+    assert raised.value.fields == ["schedule.symptom_codes"]
+
+
+async def test_수정에서_옛_코드를_지우거나_사전_안의_코드로_바꿀_수_있다(session, child):
+    from app.core.symptom_codes import symptom_code_set
+
+    good = sorted(symptom_code_set())[0]
+    course = await seed(session, child, daily(9, 1, 2), starts=1, ends=2, symptom_codes=[RETIRED])
+
+    cleared = await revise(session, child, course, patterns=[pat(20)], symptom_codes=[])
+    assert cleared.symptom_codes == []
+    replaced = await revise(session, child, course, patterns=[pat(20)], symptom_codes=[good])
+    assert replaced.symptom_codes == [good]
