@@ -11,7 +11,7 @@ provisional — #563 에서 기준을 정하지 못한 것: 오늘 이미 지난
 from datetime import UTC, date, datetime, time, timedelta
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 
 from app.domains.child.models import Child
 from app.domains.identity.models import Parent
@@ -26,10 +26,12 @@ from app.domains.medication.models import (
 )
 from app.domains.medication.repository import list_doses, stop_schedule
 from app.domains.medication.service import (
+    COURSE_LOCK_NS,
     CourseAlreadyExists,
     CourseInput,
     CourseInvalid,
     DosePattern,
+    course_lock_key,
     create_course,
 )
 
@@ -300,3 +302,48 @@ async def test_저장이_성공해도_commit_은_부른_쪽이_해서_롤백하�
     await session.rollback()
 
     assert await nothing_saved(session)
+
+
+# ── 7. 동시 요청 — 아이별 잠금 ───────────────────────────────────────────
+
+
+async def held_locks(session, child_id) -> int:
+    """이 트랜잭션이 그 아이의 복약 잠금을 쥐고 있는 개수."""
+    return await session.scalar(
+        text(
+            "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND pid = pg_backend_pid() "
+            "AND classid = :ns AND objid::bigint = :key AND objsubid = 2"
+        ),
+        {"ns": COURSE_LOCK_NS, "key": course_lock_key(child_id)},
+    )
+
+
+async def test_등록은_그_아이의_잠금을_잡아_동시에_온_같은_코스를_직렬화한다(session, child):
+    assert await held_locks(session, child.id) == 0
+
+    await create(session, child)
+
+    assert await held_locks(session, child.id) == 1  # commit 이나 롤백 때 풀린다
+
+
+async def test_중복으로_거절된_요청도_검사하는_동안_잠금을_쥔다(session, child):
+    await create(session, child)
+
+    with pytest.raises(CourseAlreadyExists):
+        await create(session, child)
+
+    assert await held_locks(session, child.id) == 1
+
+
+async def test_칸이_틀린_요청은_잠금을_잡지_않는다(session, child):
+    with pytest.raises(CourseInvalid):
+        await create(session, child, title=" ")
+
+    assert await held_locks(session, child.id) == 0
+
+
+def test_잠금_키는_int4_범위이고_다른_기능의_잠금과_이름공간이_다르다():
+    import uuid
+
+    assert 0 <= course_lock_key(uuid.uuid4()) < 2**31
+    assert COURSE_LOCK_NS == 2  # 1 은 Curator 가 쓴다 (domains/memory/curator/trigger.py)
