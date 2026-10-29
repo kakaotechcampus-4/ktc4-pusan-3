@@ -7,7 +7,7 @@ CHECK 위반도 ORM 으로 넣는다 — 이 표의 CHECK 가 막는 값(offset 
 SQLAlchemy 가 먼저 거절하지 않는다.
 """
 
-from datetime import date, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 
 import pytest
 from sqlalchemy import func, select, true
@@ -23,7 +23,14 @@ from app.domains.medication.models import (
     MedicationStatus,
     TimingAnchor,
 )
-from app.domains.medication.repository import NewDose, add_course, list_courses, list_doses
+from app.domains.medication.repository import (
+    NewDose,
+    add_course,
+    has_active_duplicate,
+    list_courses,
+    list_doses,
+    stop_schedule,
+)
 
 STARTS = date(2026, 10, 27)
 ENDS = date(2026, 10, 29)
@@ -260,3 +267,77 @@ async def test_회차가_0개여도_코스는_저장된다_provisional(session, 
 
     assert await list_doses(session, schedule_ids=[course.id]) == []
     assert await count(session, MedicationSchedule) == 1
+
+
+# ── 6. 중복 코스 (#563 합의: 같은 아이 · 같은 약 이름 · 같은 기간) ────────────
+
+
+async def is_duplicate(session, child, **over) -> bool:
+    values = {
+        "child_id": child.id,
+        "title": "아목시실린",
+        "starts_on": STARTS,
+        "ends_on": ENDS,
+    }
+    return await has_active_duplicate(session, **values | over)
+
+
+async def test_같은_아이_같은_약_같은_기간이면_중복이다(session, child):
+    await add(session, child)
+
+    assert await is_duplicate(session, child) is True
+
+
+async def test_코스가_없으면_중복이_아니다(session, child):
+    assert await is_duplicate(session, child) is False
+
+
+async def test_약_이름이_다르면_중복이_아니다(session, child):
+    await add(session, child)
+
+    assert await is_duplicate(session, child, title="타이레놀") is False
+
+
+@pytest.mark.parametrize("title", ["아목시실린 ", " 아목시실린", "아목시실린  "])
+async def test_공백만_다른_이름도_다른_약으로_본다_provisional(session, child, title):
+    # 정규화할지는 미정이다 — 받은 그대로 저장하니 비교도 받은 그대로 한다
+    await add(session, child)
+
+    assert await is_duplicate(session, child, title=title) is False
+
+
+@pytest.mark.parametrize(
+    "over",
+    [
+        {"starts_on": STARTS + timedelta(days=1)},
+        {"starts_on": STARTS - timedelta(days=1)},
+        {"ends_on": ENDS + timedelta(days=1)},
+        {"ends_on": ENDS - timedelta(days=1)},
+    ],
+)
+async def test_기간이_하루라도_다르면_중복이_아니다_provisional(session, child, over):
+    # 기간이 겹치기만 하는 코스는 중복으로 보지 않는다
+    await add(session, child)
+
+    assert await is_duplicate(session, child, **over) is False
+
+
+async def test_다른_아이의_같은_코스는_중복이_아니다(session, child):
+    other = Child(
+        owner_parent_id=child.owner_parent_id, nickname="other", birth_date=date(2022, 1, 1)
+    )
+    session.add(other)
+    await session.flush()
+    await add(session, child)
+
+    assert await is_duplicate(session, other) is False
+
+
+async def test_멈춘_코스는_중복이_아니다_다시_같은_기간으로_등록할_수_있다(session, child):
+    course = await add(session, child)
+    stopped = await stop_schedule(
+        session, child_id=child.id, schedule_id=course.id, stopped_at=datetime.now(UTC)
+    )
+    assert stopped == "stopped"
+
+    assert await is_duplicate(session, child) is False
