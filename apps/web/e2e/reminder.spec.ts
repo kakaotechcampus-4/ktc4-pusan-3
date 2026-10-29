@@ -123,6 +123,8 @@ test("09 하루 패널에서 내 알림을 고르면 키 없이 저장되고, �
 
   const reminder = page.getByRole("combobox", { name: "알림" });
   await expect(reminder).toHaveText(/없음/);
+  // 🚨 하루에 일정이 여럿이면 칸 이름이 전부 "알림" 이다 — 접근용 이름은 일정 제목으로 시작한다 (#611 리뷰).
+  await expect(page.getByRole("combobox", { name: /^물놀이 알림/ })).toBeVisible();
 
   const reread = page.waitForResponse(
     (res) =>
