@@ -24,6 +24,27 @@ async function seenTours(page: Page): Promise<string[]> {
   return raw ? (JSON.parse(raw) as string[]) : [];
 }
 
+/** 지금 단계와 전체 단계 수 (`2 / 5`). */
+async function stepOf(page: Page): Promise<[number, number]> {
+  const text = await tour(page)
+    .getByText(/^\d+ \/ \d+$/)
+    .innerText();
+  const [now, total] = text.split("/").map((n) => Number(n.trim()));
+  return [now!, total!];
+}
+
+/**
+ * "다음" 을 누르고 **단계 번호가 실제로 바뀔 때까지** 기다린다.
+ * 🚨 누르자마자 다시 누르지 않는다 — 말풍선은 `--motion-swap` 뒤에 바뀌는데, 그 순간 같은 자리의 버튼이
+ *    마지막 단계의 "다 봤어요" 로 바뀐다. 느린 CI 에서는 "다음" 을 찾은 뒤 누르기 직전에 글자가 바뀌어
+ *    투어를 닫아 버렸다 (#634 CI).
+ */
+async function next(page: Page) {
+  const [now, total] = await stepOf(page);
+  await tour(page).getByRole("button", { name: "다음" }).click();
+  await expect(tour(page).getByText(`${now + 1} / ${total}`, { exact: true })).toBeVisible();
+}
+
 /**
  * 다시 들어온 화면에서 투어가 안 뜨는지. 🚨 바로 단언하지 않는다 — 자동 투어는 받은 내용이 그려질 때까지
  * 최대 1.5초 기다렸다 뜬다 (`components/screen-tour.tsx` 의 `AUTO_WAIT_MS`). 그 창이 지난 뒤에 본다.
@@ -40,12 +61,8 @@ test("처음 들어온 홈에서 저절로 뜨고, 마지막에 ? 로 다시 보
   await expect(tour(page)).toBeVisible();
   await expect(tour(page).getByRole("heading")).toHaveText("여기에 한 줄 적어 주세요");
   // 목 홈에는 대화 이어보기 문이 없다 — 비출 것이 없는 단계는 빠지고 분모도 같이 준다.
-  const count = await tour(page)
-    .getByText(/^\d+ \/ \d+$/)
-    .innerText();
-  const total = Number(count.split("/")[1]);
-
-  for (let i = 1; i < total; i++) await tour(page).getByRole("button", { name: "다음" }).click();
+  const [, total] = await stepOf(page);
+  for (let i = 1; i < total; i++) await next(page);
   await expect(tour(page).getByRole("heading")).toHaveText("다시 보고 싶을 때");
   // 마지막 단계에는 그만 볼 남은 것이 없다 — "다 봤어요" 가 같은 일을 한다.
   await expect(tour(page).getByRole("button", { name: "그만 볼래요" })).toHaveCount(0);
@@ -68,11 +85,8 @@ test("그만 봐도 본 것이고, ? 로 다시 열면 ? 안내 단계 없이 �
   await page.getByRole("button", { name: "이 화면 설명 보기" }).click();
   await expect(tour(page).getByRole("heading")).toHaveText("여기에 한 줄 적어 주세요");
 
-  const count = await tour(page)
-    .getByText(/^\d+ \/ \d+$/)
-    .innerText();
-  const total = Number(count.split("/")[1]);
-  for (let i = 1; i < total; i++) await tour(page).getByRole("button", { name: "다음" }).click();
+  const [, total] = await stepOf(page);
+  for (let i = 1; i < total; i++) await next(page);
   await expect(tour(page).getByRole("heading")).not.toHaveText("다시 보고 싶을 때");
   await expect(tour(page).getByRole("button", { name: "다 봤어요" })).toBeVisible();
 });
@@ -114,8 +128,9 @@ test.describe("기록이 없는 홈", () => {
 
     await expect(tour(page).getByRole("heading")).toHaveText("여기에 한 줄 적어 주세요");
     const headings: string[] = [];
-    while ((await tour(page).getByRole("button", { name: "다음" }).count()) > 0) {
-      await tour(page).getByRole("button", { name: "다음" }).click();
+    const [, total] = await stepOf(page);
+    for (let i = 1; i < total; i++) {
+      await next(page);
       headings.push(await tour(page).getByRole("heading").innerText());
     }
     expect(headings).toContain("아직 기록이 없어요");
