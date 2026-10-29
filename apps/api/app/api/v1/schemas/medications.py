@@ -17,7 +17,6 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator
 
 from app.core.medication_draft import ClockTime
-from app.core.symptom_codes import validate_symptom_codes
 from app.domains.medication.models import (
     MedicationForm,
     MedicationSource,
@@ -86,8 +85,8 @@ class MedicationScheduleIn(BaseModel):
         default_factory=list,
         description=(
             "복약 이유를 증상 사전(`reference/symptom_codes.yaml`)으로 맞춘 코드. 화면은 고치지 "
-            "않고 "
-            "초안의 값을 그대로 보낸다. 사전에 없는 코드 · 빈 코드 · 겹친 코드는 400"
+            "않고 초안의 값을 그대로 보낸다. 겹친 코드는 400(본문 형식), **사전에 없는 코드(빈 "
+            "코드 포함)는 400(내용)** 이다"
         ),
     )
     starts_on: date = Field(
@@ -109,11 +108,9 @@ class MedicationScheduleIn(BaseModel):
     @field_validator("symptom_codes")
     @classmethod
     def _check_codes(cls, codes: list[str]) -> list[str]:
-        if any(not code.strip() for code in codes):
-            raise ValueError("증상 코드는 비어 있을 수 없다")
         if len(set(codes)) != len(codes):
             raise ValueError("증상 코드가 겹친다")
-        return validate_symptom_codes(codes)
+        return codes
 
 
 class MedicationDoseIn(BaseModel):

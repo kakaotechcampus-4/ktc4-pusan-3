@@ -16,6 +16,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.medication_draft import OFFSET_MAX, OFFSET_MIN, scheduled_time_of
+from app.core.symptom_codes import symptom_code_set
 from app.domains.medication.models import (
     MedicationCreatedBy,
     MedicationDose,
@@ -36,7 +37,7 @@ from app.domains.medication.repository import (
     find_course,
     find_dose,
     has_active_duplicate,
-    has_checked_outside,
+    has_kept_outside,
     list_courses,
     list_doses,
     write_dose_check,
@@ -88,6 +89,16 @@ class CourseInput(CourseFields):
     source: MedicationSource
 
 
+def _unknown_symptom_codes(codes: Sequence[str], known: Sequence[str] = ()) -> list[str]:
+    """사전에 없는 코드. `known` 은 이미 저장돼 있어 사전에서 빠졌어도 통과시키는 코드다.
+
+    화면은 증상 코드를 고치지 않고 초안 값을 그대로 되돌려 보낸다. 사전에서 빠진 옛 코드를 거르면
+    보호자가 그 코스를 계속 고치지 못한다 (core/symptom_codes.py).
+    """
+    allowed = symptom_code_set() | set(known)
+    return [code for code in codes if code not in allowed]
+
+
 def _doses_are_valid(patterns: Sequence[DosePattern]) -> bool:
     """`DoseDraft` 와 같은 규칙 — fixed 조합, offset 범위, 같은 알림 시각 금지."""
     times: set[time] = set()
@@ -123,8 +134,11 @@ async def _lock_child_courses(session: AsyncSession, child_id: uuid.UUID) -> Non
     )
 
 
-def _validate(data: CourseFields, *, today: date) -> None:
-    """칸 → 기간 전체가 과거인지 순으로 본다. 틀리면 `CourseInvalid`."""
+def _validate(data: CourseFields, *, today: date, known_codes: Sequence[str] = ()) -> None:
+    """칸 → 기간 전체가 과거인지 순으로 본다. 틀리면 `CourseInvalid`.
+
+    `known_codes` 는 수정할 때 이미 저장돼 있는 증상 코드 — 사전에서 빠졌어도 통과시킨다.
+    """
     fields = course_field_errors(
         title=data.title,
         dosage=data.dosage,
@@ -136,6 +150,8 @@ def _validate(data: CourseFields, *, today: date) -> None:
     )
     if "doses" not in fields and not _doses_are_valid(data.doses):
         fields.append("doses")
+    if _unknown_symptom_codes(data.symptom_codes, known_codes):
+        fields.append("schedule.symptom_codes")
     if fields:
         raise CourseInvalid(fields)
     # provisional — 기간 전체가 과거인 코스를 거절할지는 미정이다 (#563)
@@ -286,17 +302,24 @@ async def revise_course(
 
     복용 기록은 지우지 않는다. 체크한 회차와 이미 지난 회차는 그대로 두고, 미체크이면서 예정 시각이
     지금 이후인 회차만 지운 뒤 새 패턴으로 다시 만든다(id 가 바뀐다). 다시 만들 때 지금 이전의
-    시각은 만들지 않는다 — 등록이 오늘 회차를 통째로 만드는 것과 다르다. 체크한 회차가 새 기간
-    밖에 남게 되면 거절한다. 검사 순서는 대상 → 칸 → 체크한 회차 → 중복이다.
+    시각은 만들지 않는다 — 등록이 오늘 회차를 통째로 만드는 것과 다르다. 수정 뒤에도 남는
+    회차(체크했거나 이미 지난 것)가 새 기간 밖이 되면 거절한다 — `dose_date` 가 기간 안이라는
+    불변식이다. 검사 순서는 대상 → 칸 → 남는 회차 → 중복이다.
     """
     course = await find_course(session, child_id=child_id, course_id=course_id)
     # 끝난 코스는 조회가 싣지 않는다 — 수정도 못 한다. 회차가 모두 지났고, 400 으로 내면 고치지 않은
     # `ends_on` 이 틀렸다고 나온다
     if course is None or course.status != MedicationStatus.ACTIVE or course.ends_on < today:
         raise CourseNotFound
-    _validate(data, today=today)
-    if await has_checked_outside(
-        session, schedule_id=course.id, starts_on=data.starts_on, ends_on=data.ends_on
+    _validate(data, today=today, known_codes=course.symptom_codes)
+    now_time = now.astimezone(KST).time()
+    if await has_kept_outside(
+        session,
+        schedule_id=course.id,
+        starts_on=data.starts_on,
+        ends_on=data.ends_on,
+        today=today,
+        now_time=now_time,
     ):
         raise CourseInvalid(["schedule.starts_on", "schedule.ends_on"])
     # 등록과 같은 잠금 — 중복 검사와 저장 사이를 막는다
@@ -321,7 +344,6 @@ async def revise_course(
     course.starts_on = data.starts_on
     course.ends_on = data.ends_on
 
-    now_time = now.astimezone(KST).time()
     await delete_future_unchecked(session, schedule_id=course.id, today=today, now_time=now_time)
     kept = await existing_dose_keys(session, schedule_id=course.id)
     fresh: list[NewDose] = []

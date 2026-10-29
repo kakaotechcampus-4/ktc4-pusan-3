@@ -329,3 +329,39 @@ def test_잠금_키는_int4_범위이고_다른_기능의_잠금과_이름공간
 
     assert 0 <= course_lock_key(uuid.uuid4()) < 2**31
     assert COURSE_LOCK_NS == 2  # 1 은 Curator 가 쓴다 (domains/memory/curator/trigger.py)
+
+
+# ── 8. 증상 코드 사전 ────────────────────────────────────────────────────
+
+
+async def test_사전에_있는_증상_코드는_저장된다(session, child):
+    from app.core.symptom_codes import symptom_code_set
+
+    code = sorted(symptom_code_set())[0]
+
+    saved = await create(session, child, symptom_codes=[code])
+
+    assert saved.symptom_codes == [code]
+
+
+async def test_사전에_없는_증상_코드는_칸_이름으로_거절하고_저장하지_않는다(session, child):
+    assert await invalid_fields(session, child, symptom_codes=["not_in_dictionary"]) == [
+        "schedule.symptom_codes"
+    ]
+    assert await nothing_saved(session)
+
+
+async def test_사전_밖_코드가_하나라도_섞이면_거절한다(session, child):
+    from app.core.symptom_codes import symptom_code_set
+
+    good = sorted(symptom_code_set())[0]
+
+    fields = await invalid_fields(session, child, symptom_codes=[good, "not_in_dictionary"])
+
+    assert fields == ["schedule.symptom_codes"]
+
+
+async def test_증상_코드_오류는_다른_칸_오류와_함께_모아_낸다(session, child):
+    fields = await invalid_fields(session, child, title=" ", symptom_codes=["not_in_dictionary"])
+
+    assert fields == ["schedule.title", "schedule.symptom_codes"]

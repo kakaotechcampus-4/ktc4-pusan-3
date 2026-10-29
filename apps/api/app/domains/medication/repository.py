@@ -247,17 +247,28 @@ async def find_course(
     return await session.scalar(stmt)
 
 
-async def has_checked_outside(
-    session: AsyncSession, *, schedule_id: uuid.UUID, starts_on: date, ends_on: date
+async def has_kept_outside(
+    session: AsyncSession,
+    *,
+    schedule_id: uuid.UUID,
+    starts_on: date,
+    ends_on: date,
+    today: date,
+    now_time: time,
 ) -> bool:
-    """체크한 회차가 [starts_on, ends_on] 밖에 있는가 — 있으면 그 기간으로 못 바꾼다."""
-    stmt = select(
-        exists().where(
-            MedicationDose.schedule_id == schedule_id,
-            MedicationDose.checked_at.is_not(None),
-            or_(MedicationDose.dose_date < starts_on, MedicationDose.dose_date > ends_on),
-        )
+    """수정 뒤에도 남는 회차가 [starts_on, ends_on] 밖에 있는가 — 있으면 그 기간으로 못 바꾼다.
+
+    남는 회차 = 체크한 회차 + 이미 지난 회차(체크하지 않았어도 지우지 않는다 — 복용 기록이다).
+    그대로 두면 `dose_date ∈ [starts_on, ends_on]` 불변식(medication-tables-v1.md §5)이 깨진다.
+    아직 안 온 미체크 회차는 수정이 어차피 지우므로 세지 않는다.
+    """
+    kept = or_(
+        MedicationDose.checked_at.is_not(None),
+        MedicationDose.dose_date < today,
+        and_(MedicationDose.dose_date == today, MedicationDose.scheduled_time <= now_time),
     )
+    outside = or_(MedicationDose.dose_date < starts_on, MedicationDose.dose_date > ends_on)
+    stmt = select(exists().where(MedicationDose.schedule_id == schedule_id, kept, outside))
     return bool(await session.scalar(stmt))
 
 

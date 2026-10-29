@@ -388,3 +388,28 @@ async def test_끝난_코스를_수정하면_404(db_client, session, bearer, con
     assert response.json()["error"]["code"] == "not_found"
     await session.refresh(course)
     assert course.title == "아목시실린"
+
+
+async def test_수정은_저장된_옛_증상_코드를_그대로_보내면_통과한다(
+    db_client, session, bearer, consented
+):
+    course = await seed_course(session, consented, starts=-1, ends=1)
+    course.symptom_codes = [
+        "retired_code_from_old_dictionary"
+    ]  # 사전에서 빠진 옛 코드가 저장돼 있다
+    await session.flush()
+    payload = revise_body(schedule={"symptom_codes": ["retired_code_from_old_dictionary"]})
+
+    response = await patch(db_client, bearer[0], consented, course.id, payload)
+
+    assert response.status_code == 200
+
+
+async def test_수정에서_새_사전_밖_코드는_400(db_client, session, bearer, consented):
+    course = await seed_course(session, consented, starts=-1, ends=1)
+    payload = revise_body(schedule={"symptom_codes": ["not_in_dictionary"]})
+
+    response = await patch(db_client, bearer[0], consented, course.id, payload)
+
+    assert response.status_code == 400
+    assert response.json()["error"]["detail"] == {"fields": ["schedule.symptom_codes"]}
