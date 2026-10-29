@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, time
 from typing import Literal
 
-from sqlalchemy import ColumnElement, select, update
+from sqlalchemy import ColumnElement, and_, delete, exists, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domains.medication.models import (
@@ -78,9 +78,17 @@ async def add_course(
     )
     session.add(course)
     await session.flush()
+    await add_doses(session, schedule_id=course.id, doses=doses)
+    return course
+
+
+async def add_doses(
+    session: AsyncSession, *, schedule_id: uuid.UUID, doses: Sequence[NewDose]
+) -> None:
+    """코스에 회차 행을 더한다 (flush 까지). 같은 날 같은 알림 시각이 있으면 `IntegrityError`."""
     session.add_all(
         MedicationDose(
-            schedule_id=course.id,
+            schedule_id=schedule_id,
             dose_date=d.dose_date,
             timing_anchor=d.timing_anchor,
             offset_minutes=d.offset_minutes,
@@ -89,29 +97,33 @@ async def add_course(
         for d in doses
     )
     await session.flush()
-    return course
 
 
 async def has_active_duplicate(
-    session: AsyncSession, *, child_id: uuid.UUID, title: str, starts_on: date, ends_on: date
+    session: AsyncSession,
+    *,
+    child_id: uuid.UUID,
+    title: str,
+    starts_on: date,
+    ends_on: date,
+    exclude_id: uuid.UUID | None = None,
 ) -> bool:
     """같은 아이 · 같은 약 이름 · 같은 기간의 `active` 코스가 있는가. 멈춘 코스는 세지 않는다.
 
     약 이름은 받은 그대로 비교한다 (공백 · 대소문자 정규화 없음). 기간은 겹치기만 해서는 안 되고
     시작일과 끝일이 모두 같아야 한다. 동시에 온 두 요청은 이 검사만으로는 막지 못한다.
+    `exclude_id` 는 수정할 때 자기 자신을 빼는 데 쓴다.
     """
-    found = await session.scalar(
-        select(MedicationSchedule.id)
-        .where(
-            MedicationSchedule.child_id == child_id,
-            MedicationSchedule.title == title,
-            MedicationSchedule.starts_on == starts_on,
-            MedicationSchedule.ends_on == ends_on,
-            MedicationSchedule.status == MedicationStatus.ACTIVE,
-        )
-        .limit(1)
+    stmt = select(MedicationSchedule.id).where(
+        MedicationSchedule.child_id == child_id,
+        MedicationSchedule.title == title,
+        MedicationSchedule.starts_on == starts_on,
+        MedicationSchedule.ends_on == ends_on,
+        MedicationSchedule.status == MedicationStatus.ACTIVE,
     )
-    return found is not None
+    if exclude_id is not None:
+        stmt = stmt.where(MedicationSchedule.id != exclude_id)
+    return await session.scalar(stmt.limit(1)) is not None
 
 
 async def list_courses(
@@ -211,3 +223,66 @@ async def write_dose_check(
     if checked_at is not None:
         stmt = stmt.where(MedicationDose.checked_at.is_(None))
     await session.execute(stmt.values(checked_at=checked_at))
+
+
+async def find_course(
+    session: AsyncSession, *, child_id: uuid.UUID, course_id: uuid.UUID
+) -> MedicationSchedule | None:
+    """그 아이의 코스를 잠그고 읽는다 (상태는 보지 않는다 — 멈춘 코스인지는 부르는 쪽이 본다).
+
+    다른 아이의 코스는 있는지도 알리지 않고 `None` 이다. 수정 중에 다른 요청이 같은 코스의 회차를
+    지우고 만드는 일이 겹치지 않도록 행을 잠근다.
+    """
+    stmt = (
+        select(MedicationSchedule)
+        .where(MedicationSchedule.id == course_id, MedicationSchedule.child_id == child_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    return await session.scalar(stmt)
+
+
+async def has_checked_outside(
+    session: AsyncSession, *, schedule_id: uuid.UUID, starts_on: date, ends_on: date
+) -> bool:
+    """체크한 회차가 [starts_on, ends_on] 밖에 있는가 — 있으면 그 기간으로 못 바꾼다."""
+    stmt = select(
+        exists().where(
+            MedicationDose.schedule_id == schedule_id,
+            MedicationDose.checked_at.is_not(None),
+            or_(MedicationDose.dose_date < starts_on, MedicationDose.dose_date > ends_on),
+        )
+    )
+    return bool(await session.scalar(stmt))
+
+
+async def delete_future_unchecked(
+    session: AsyncSession, *, schedule_id: uuid.UUID, today: date, now_time: time
+) -> None:
+    """미체크이면서 예정 시각이 **지금 이후**인 회차를 지운다.
+
+    체크한 회차와 이미 지난 회차는 지우지 않는다 — 복용 기록이다. 오늘은 `now_time` 보다 늦은
+    시각만 지운다(정각은 지난 것으로 본다).
+    """
+    await session.execute(
+        delete(MedicationDose).where(
+            MedicationDose.schedule_id == schedule_id,
+            MedicationDose.checked_at.is_(None),
+            or_(
+                MedicationDose.dose_date > today,
+                and_(MedicationDose.dose_date == today, MedicationDose.scheduled_time > now_time),
+            ),
+        )
+    )
+
+
+async def existing_dose_keys(
+    session: AsyncSession, *, schedule_id: uuid.UUID
+) -> set[tuple[date, time]]:
+    """코스에 이미 있는 (날짜, 알림 시각). 같은 키를 또 넣으면 UNIQUE 에 걸린다."""
+    rows = await session.execute(
+        select(MedicationDose.dose_date, MedicationDose.scheduled_time).where(
+            MedicationDose.schedule_id == schedule_id
+        )
+    )
+    return {(row.dose_date, row.scheduled_time) for row in rows}
