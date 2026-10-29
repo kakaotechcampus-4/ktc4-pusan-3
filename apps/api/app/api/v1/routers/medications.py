@@ -5,8 +5,9 @@
 🚨 이 라우터는 HTTP 만 안다. 칸 검증 · 중복 · 회차 펼치기는 `domains/medication/service.py` 가 한다.
 """
 
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from typing import Annotated
+from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Header, Request
@@ -18,6 +19,7 @@ from app.api.deps.child import AccessibleChild
 from app.api.deps.db import SessionDep
 from app.api.errors import ApiError, ErrorEnvelope
 from app.api.v1.schemas.medications import (
+    CheckDoseRequest,
     MedicationCourseOut,
     MedicationDoseOut,
     MedicationsResponse,
@@ -31,10 +33,13 @@ from app.domains.medication.service import (
     CourseInput,
     CourseInvalid,
     CourseView,
+    DoseNotDue,
+    DoseNotFound,
     DosePattern,
     course_views,
     create_course,
     list_in_progress,
+    set_dose_checked,
 )
 
 router = APIRouter()
@@ -45,6 +50,11 @@ KST = ZoneInfo("Asia/Seoul")
 def kst_today() -> date:
     """서버의 한국 날짜. 화면은 오늘을 따로 구하지 않는다. 테스트가 이 함수를 바꿔 끼운다."""
     return datetime.now(KST).date()
+
+
+def utc_now() -> datetime:
+    """체크 시각으로 기록하는 지금. 테스트가 이 함수를 바꿔 끼운다."""
+    return datetime.now(UTC)
 
 
 def _course_out(view: CourseView) -> MedicationCourseOut:
@@ -235,3 +245,91 @@ async def register_medication(
     await session.commit()
     idempotency.remember(**scope, replay=response)
     return JSONResponse(status_code=201, content=response)
+
+
+@router.put(
+    "/children/{cid}/medication-doses/{did}/check",
+    summary="복약 회차 체크 · 해제",
+    response_model=MedicationDoseOut,
+    responses={
+        400: {
+            "model": ErrorEnvelope,
+            "description": (
+                "`validation_failed` — `checked` 가 없거나 boolean 이 아니거나 모르는 칸이 있다. "
+                "`error.detail.fields` 에 칸 이름이 온다"
+            ),
+        },
+        403: {
+            "model": ErrorEnvelope,
+            "description": (
+                "`child_access_denied` — 내 아이가 아니다. 또는 `consent_required` — 아이의 "
+                "건강정보 "
+                "동의(`child_health`)가 없다"
+            ),
+        },
+        404: {
+            "model": ErrorEnvelope,
+            "description": (
+                "`not_found` — 그 아이의 진행 중인 코스에 그런 회차가 없다. 없는 회차 · 남의 아이 "
+                "회차 · 멈춘 코스의 회차가 모두 같은 404 다"
+            ),
+        },
+        422: {
+            "model": ErrorEnvelope,
+            "description": (
+                "`dose_not_due` — 아직 오지 않은 날(내일 이후)의 회차다. 체크도 해제도 못 한다"
+            ),
+        },
+    },
+)
+async def check_dose(
+    child: AccessibleChild,
+    did: UUID,
+    body: CheckDoseRequest,
+    session: SessionDep,
+) -> MedicationDoseOut:
+    """회차 1번을 체크(먹였다)하거나 해제한다. **체크한 칸이 곧 복용 기록이다.**
+
+    - **승인 게이트가 아니다.** 해제로 되돌릴 수 있어서 `Idempotency-Key` 를 받지 않는다.
+    - **같은 상태를 두 번 보내도 결과가 같다.** 이미 체크된 회차에 `true` 를 또 보내도 체크 시각은
+      **처음 시각 그대로**다. 해제(`false`) 뒤 다시 체크하면 새 시각이 된다. 체크하지 않은 회차를
+      해제해도 오류가 아니다.
+    - **아직 오지 않은 날의 회차는 서버가 막는다**(422 `dose_not_due`). 화면이 날짜를 계산하지 않고
+      조회 응답의 `checkable` 과 이 응답으로 판단한다. 오늘과 지난 날의 회차는 체크할 수 있다.
+    - 그 아이의 **진행 중인 코스**의 회차만 다룬다. 멈춘 코스의 회차는 체크도 해제도 못 하고
+      (이미 남은 복용 기록은 그대로 남는다), 없는 회차 · 남의 아이 회차와 같은 404 다.
+    - 쓰기라 아이의 **건강정보 동의**를 확인한다.
+
+    오류 (순서대로): 403 `child_access_denied` → 400 `validation_failed`(본문) →
+    403 `consent_required` → 404 `not_found` → 422 `dose_not_due`. 앞에서 걸리면 저장하지 않는다.
+    """
+    granted = await latest_action(session, scope=ConsentScope.CHILD_HEALTH, child_id=child.child_id)
+    if granted is not ConsentAction.GRANTED:
+        raise ApiError(
+            403,
+            "consent_required",
+            "건강 정보 동의가 필요해요",
+            {"scopes": [ConsentScope.CHILD_HEALTH.value]},
+        )
+    try:
+        dose = await set_dose_checked(
+            session,
+            child_id=child.child_id,
+            dose_id=did,
+            checked=body.checked,
+            today=kst_today(),
+            now=utc_now(),
+        )
+    except DoseNotFound as exc:
+        raise ApiError(404, "not_found", "그 복약 회차를 찾지 못했어요") from exc
+    except DoseNotDue as exc:
+        raise ApiError(422, "dose_not_due", "아직 오지 않은 날의 회차예요") from exc
+    response = MedicationDoseOut(
+        id=dose.id,
+        dose_date=dose.dose_date,
+        scheduled_time=dose.scheduled_time,
+        checked_at=dose.checked_at,
+        checkable=True,  # 오늘까지의 회차만 여기까지 온다 — 아직 안 온 날은 위에서 막혔다
+    )
+    await session.commit()
+    return response

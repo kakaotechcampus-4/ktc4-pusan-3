@@ -14,7 +14,7 @@ from datetime import date, datetime
 from typing import Annotated
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator
 
 from app.core.medication_draft import ClockTime
 from app.core.symptom_codes import validate_symptom_codes
@@ -231,5 +231,19 @@ class MedicationsResponse(BaseModel):
         description=(
             "진행 중인 코스 — `active` 이고 시작일 ≤ 오늘 ≤ 끝일. 시작일 순, 같으면 만든 순. "
             "없으면 빈 목록이다"
+        )
+    )
+
+
+class CheckDoseRequest(BaseModel):
+    """회차 체크 · 해제. 같은 상태를 두 번 보내도 결과가 같다."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    checked: StrictBool = Field(
+        description=(
+            "`true` 면 체크(먹였다), `false` 면 해제(되돌린다). boolean 만 받는다 — 문자열 · "
+            "숫자 · "
+            "null · 누락은 400. 이미 체크된 회차에 `true` 를 또 보내도 **처음 체크 시각이 남는다**"
         )
     )
