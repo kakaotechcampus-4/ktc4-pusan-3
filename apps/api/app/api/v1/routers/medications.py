@@ -23,6 +23,7 @@ from app.api.v1.schemas.medications import (
     MedicationCourseOut,
     MedicationDoseOut,
     MedicationsResponse,
+    ReviseMedicationRequest,
     SubmitMedicationRequest,
     SubmitMedicationResponse,
 )
@@ -30,8 +31,10 @@ from app.domains.consent.models import ConsentAction, ConsentScope
 from app.domains.consent.repository import latest_action
 from app.domains.medication.service import (
     CourseAlreadyExists,
+    CourseFields,
     CourseInput,
     CourseInvalid,
+    CourseNotFound,
     CourseView,
     DoseNotDue,
     DoseNotFound,
@@ -39,6 +42,7 @@ from app.domains.medication.service import (
     course_views,
     create_course,
     list_in_progress,
+    revise_course,
     set_dose_checked,
 )
 
@@ -333,3 +337,138 @@ async def check_dose(
     )
     await session.commit()
     return response
+
+
+@router.patch(
+    "/children/{cid}/medications/{sid}",
+    summary="복약 코스 수정 (승인 게이트 ㉡)",
+    response_model=SubmitMedicationResponse,
+    responses={
+        400: {
+            "model": ErrorEnvelope,
+            "description": (
+                "`validation_failed` — 본문 형식이 틀렸거나(`source` 를 보낸 경우 포함) 내용이 "
+                "틀렸다(등록과 같은 규칙). **체크한 회차가 새 기간 밖에 남게 되는 수정**도 이 "
+                "코드이고 "
+                '`fields` 는 `["schedule.starts_on", "schedule.ends_on"]` 이다. '
+                "또는 `idempotency_key_required` — `Idempotency-Key` 헤더가 없다"
+            ),
+        },
+        403: {
+            "model": ErrorEnvelope,
+            "description": (
+                "`child_access_denied` — 내 아이가 아니다. 또는 `consent_required` — 아이의 "
+                "건강정보 "
+                "동의(`child_health`)가 없다"
+            ),
+        },
+        404: {
+            "model": ErrorEnvelope,
+            "description": (
+                "`not_found` — 그 아이의 진행 중인 코스가 아니다. 없는 코스 · 남의 아이 코스 · "
+                "**멈춘 코스**가 모두 같은 404 다"
+            ),
+        },
+        409: {
+            "model": ErrorEnvelope,
+            "description": (
+                "`already_exists` — 이 수정으로 같은 아이의 다른 진행 중인 코스와 약 이름 · "
+                "시작일 · "
+                "끝일이 모두 같아진다. 자기 자신 · 멈춘 코스와는 같아도 된다"
+            ),
+        },
+    },
+)
+async def revise_medication(
+    child: AccessibleChild,
+    sid: UUID,
+    body: ReviseMedicationRequest,
+    parent: CurrentParent,
+    session: SessionDep,
+    request: Request,
+    idempotency_key: Annotated[
+        str | None,
+        Header(
+            description=(
+                "**필수.** 요청 1건을 가리키는 키(화면이 만든다). 같은 키로 다시 보내면 회차를 또 "
+                "지우고 만들지 않고 처음 응답(200)을 그대로 돌려준다"
+            ),
+        ),
+    ] = None,
+) -> JSONResponse:
+    """보호자가 확인한 **최종 상태 전체**로 진행 중인 코스를 고친다. 복용 기록은 지우지 않는다.
+
+    - **체크한 회차와 이미 지난 회차는 그대로 둔다.** 새 패턴에서 빠져도 기록으로 남는다.
+    - **미체크이면서 예정 시각이 지금 이후인 회차만** 지우고 새 패턴으로 다시 만든다. 다시 만든
+      회차는 `id` 가 바뀌므로 화면은 응답의 `course` 로 갱신한다.
+    - 다시 만들 때 **지금 이전의 시각은 만들지 않는다**(등록은 오늘 회차를 통째로 만든다). 이미 있는
+      (날짜, 시각)도 다시 만들지 않는다.
+    - **체크한 회차가 새 기간 밖에 남게 되면 400** 이다 — 복용 기록을 잃지 않게 막는다.
+    - 응답의 `notice_times` 는 **새 패턴**(마지막 날의 시각)이고, `doses` 는 오늘까지의 회차다.
+    - 출처(`source`)·상태·작성자는 바꾸지 않는다. 멈춘 코스는 고칠 수 없다(404).
+
+    오류 (순서대로): 403 `child_access_denied` → 400 `validation_failed`(본문 형식) →
+    400 `idempotency_key_required` → (같은 키면 처음 응답 재생) → 403 `consent_required` →
+    404 `not_found` → 400 `validation_failed`(내용 · 체크한 회차) → 409 `already_exists`.
+    앞에서 걸리면 아무것도 바꾸지 않는다.
+    """
+    if not idempotency_key:
+        raise ApiError(
+            400, "idempotency_key_required", "요청을 처리할 수 없어요. 다시 시도해 주세요"
+        )
+    scope = {
+        "parent_id": parent.parent_id,
+        "method": request.method,
+        "path": request.url.path,
+        "key": idempotency_key,
+    }
+    replayed = idempotency.recall(**scope)
+    if isinstance(replayed, dict):
+        return JSONResponse(status_code=200, content=replayed)
+
+    granted = await latest_action(session, scope=ConsentScope.CHILD_HEALTH, child_id=child.child_id)
+    if granted is not ConsentAction.GRANTED:
+        raise ApiError(
+            403,
+            "consent_required",
+            "건강 정보 동의가 필요해요",
+            {"scopes": [ConsentScope.CHILD_HEALTH.value]},
+        )
+
+    today = kst_today()
+    try:
+        course = await revise_course(
+            session,
+            child_id=child.child_id,
+            course_id=sid,
+            data=CourseFields(
+                title=body.schedule.title,
+                starts_on=body.schedule.starts_on,
+                ends_on=body.schedule.ends_on,
+                doses=[
+                    DosePattern(d.timing_anchor, d.offset_minutes, d.fixed_time) for d in body.doses
+                ],
+                dosage=body.schedule.dosage,
+                indication_text=body.schedule.indication_text,
+                symptom_codes=body.schedule.symptom_codes,
+                storage=body.schedule.storage,
+                med_form=body.schedule.med_form,
+                note=body.schedule.note,
+            ),
+            today=today,
+            now=utc_now(),
+        )
+    except CourseNotFound as exc:
+        raise ApiError(404, "not_found", "그 복약을 찾지 못했어요") from exc
+    except CourseInvalid as exc:
+        raise ApiError(
+            400, "validation_failed", "입력한 복약 정보를 확인해 주세요", {"fields": exc.fields}
+        ) from exc
+    except CourseAlreadyExists as exc:
+        raise ApiError(409, "already_exists", "이미 등록된 복약이에요") from exc
+
+    (view,) = await course_views(session, [course], today=today)
+    response = SubmitMedicationResponse(course=_course_out(view)).model_dump(mode="json")
+    await session.commit()
+    idempotency.remember(**scope, replay=response)
+    return JSONResponse(status_code=200, content=response)
