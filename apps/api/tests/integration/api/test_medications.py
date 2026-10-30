@@ -1441,6 +1441,44 @@ async def test_체크한_회차가_새_기간_밖이_되면_400(db_client, sessi
     }
 
 
+@pytest.mark.parametrize("value", ["21:00Z", "21:00+09:00", "21:00-05:00"])
+async def test_수정에서도_시간대가_붙은_시각은_400(db_client, session, bearer, consented, value):
+    course = await seed_course(session, consented, starts=-1, ends=1)
+    before = len(await list_doses(session, schedule_ids=[course.id]))
+
+    response = await patch(
+        db_client,
+        bearer[0],
+        consented,
+        course.id,
+        revise_body(doses=[{**FIXED_AT, "fixed_time": value}]),
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["detail"] == {"fields": ["doses.0.fixed_time"]}
+    assert len(await list_doses(session, schedule_ids=[course.id])) == before
+
+
+@pytest.mark.parametrize("field", ["title", "dosage", "indication_text", "note"])
+async def test_수정에서도_NUL_이_든_값은_500이_아니라_400(
+    db_client, session, bearer, consented, field
+):
+    course = await seed_course(session, consented, starts=-1, ends=1)
+
+    response = await patch(
+        db_client,
+        bearer[0],
+        consented,
+        course.id,
+        revise_body(schedule={field: "약\x00이름"}),
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["detail"] == {"fields": [f"schedule.{field}"]}
+    await session.refresh(course)
+    assert course.title == "아목시실린"
+
+
 async def test_다른_진행_코스와_같아지는_수정은_409_provisional(
     db_client, session, bearer, consented
 ):
@@ -1504,6 +1542,15 @@ def test_수정_엔드포인트와_요청의_모든_칸에_설명이_있다():
         assert schema.get("description", "").strip(), f"{name} 에 설명이 없다"
         missing = [f for f, prop in schema["properties"].items() if not _has_description(prop)]
         assert missing == [], f"{name} 설명이 없는 칸: {missing}"
+
+
+def test_수정의_설명은_체크했거나_이미_지난_회차가_기간_밖이_되면_400이라고_적는다():
+    # 체크 안 한 어제 회차만 있어도 시작일을 오늘로 늦추면 400 이다 — 적지 않으면 FE 가 모른다
+    operation = app.openapi()["paths"]["/api/v1/children/{cid}/medications/{sid}"]["patch"]
+    texts = [operation["description"], operation["responses"]["400"]["description"]]
+
+    assert all("체크했거나 이미 지난 회차" in text for text in texts)
+    assert all("체크한 회차가" not in text for text in texts)
 
 
 # ── 12. 시계 · 끝난 코스 (수정) ──────────────────────────────────────────
