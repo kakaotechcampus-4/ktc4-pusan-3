@@ -1,6 +1,6 @@
 """분기 확인 케이스와 채점.
 
-- RC01~RC47  복합 발화. Supervisor 가 조각을 어떻게 나누고 어디로 보내는지 본다
+- RC01~RC48  복합 발화. Supervisor 가 조각을 어떻게 나누고 어디로 보내는지 본다
 - T01~T30    라이브 eval 입력의 정답 Supervisor 출력. Step 7 이 Memory 힌트로 쓰고,
              Supervisor 채점에서는 "쉬운 30개" 대조군이 된다
 - score_split()  Step 5(Supervisor 단독)와 Step 9(끝까지)가 같은 기준으로 잰다
@@ -491,6 +491,12 @@ RC_CASES: tuple[RoutingCase, ...] = (
         "마약김밥 맛있게 먹었어",
         (R("마약김밥 맛있게 먹었어", OBSERVE),),
         watch="이름에 '마약' 이 든 음식",
+    ),
+    RoutingCase(
+        "RC48",
+        "아침에 죽을 두 술 먹고 말았어",
+        (R("아침에 죽을 두 술 먹고 말았어", OBSERVE),),
+        watch="숟가락을 세는 '술' — 규칙이 술로 읽지 않는가 (#633 리뷰)",
     ),
 )
 
