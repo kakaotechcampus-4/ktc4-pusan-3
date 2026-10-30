@@ -131,6 +131,8 @@ _GUIDANCE: dict[str, Guidance] = {
     GuardReason.HAZARD.value: HAZARD_GUIDANCE,
 }
 
+# Supervisor 가 놓친 알레르기 · 만성질환 언급에 pipeline 이 같은 안내를 낸다 (#639)
+SAFETY_GUIDANCE = _GUIDANCE[GuardReason.SAFETY_RECORD.value]
 
 # 한 번에 부를 수 있는 도메인 Agent 상한을 넘겨 빠진 요청이 있을 때 알리는 용도
 # TODO: 사용자에게 제공될 답변 점검

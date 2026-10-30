@@ -129,6 +129,22 @@ def test_RC10_알레르기_등록은_안내하고_증상_기록은_살린다() -
     assert routing.domain_tasks == ()
 
 
+@pytest.mark.parametrize("case_id", ["RC55", "RC56", "RC57", "RC58", "RC59"])
+def test_알레르기_만성질환을_알리는_말은_저장_없이_안내만_남긴다(case_id: str) -> None:
+    routing = _route_case(case_id)
+
+    assert routing.memory_task is None
+    assert [(g.code, g.deeplink) for g in routing.guidance] == [("safety_record", "profile")]
+
+
+def test_RC61_증상은_기록으로_두고_알레르기_언급만_안내한다() -> None:
+    routing = _route_case("RC61")
+
+    assert routing.memory_task is not None
+    assert [hint.work for hint in routing.memory_task.hints] == [WorkType.OBSERVE]
+    assert [guidance.code for guidance in routing.guidance] == ["safety_record"]
+
+
 def test_RC11_진단_문의는_안내만() -> None:
     routing = _route_case("RC11")
     assert [guidance.code for guidance in routing.guidance] == ["diagnosis"]

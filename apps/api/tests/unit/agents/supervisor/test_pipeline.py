@@ -76,7 +76,7 @@ from app.agents.suggestion_save import InMemorySuggestions, SuggestionBatch
 from app.agents.supervisor import routing as routing_module
 from app.agents.supervisor.routing import Guidance
 from app.rules.age import Stage
-from tests.eval.agents.routing_cases import CASES_BY_ID, answer_output
+from tests.eval.agents.routing_cases import CASES_BY_ID, R, RoutingCase, answer_output
 from tests.unit.agents.food.support import MEAL_DOC
 
 KST = ZoneInfo("Asia/Seoul")
@@ -944,6 +944,139 @@ async def test_먹인_약은_사전검사에_걸리지_않고_그대로_기록�
     assert len(await memory_context.store.query_observations(domain="health", child_id=CHILD)) == 1
     assert not _of(events, Guidance)
     assert result.failed is None
+
+
+# #639 — 안내가 어느 길로 끝나도 11 아이 프로필로 가는 카드가 이어진다
+_POLLEN = {
+    "raw_text": CASES_BY_ID["RC55"].text,
+    "observed_on": "오늘",
+    "symptom": ["꽃가루 알레르기"],
+}
+
+
+def _all_record(case_id: str) -> FakeLLM:
+    """Supervisor 가 안내를 놓치고 전부 기록으로 본 경우. 다시 부르면 응답이 없어 실패한다."""
+    text = CASES_BY_ID[case_id].text
+    missed = RoutingCase(case_id, text, (R(text, WorkType.OBSERVE),))
+    return FakeLLM(_route_reply(answer_output(missed).model_dump(mode="json", exclude_none=True)))
+
+
+async def test_RC55_알레르기를_알리는_말은_Memory_없이_안내만_낸다(
+    memory_context: AgentContext, food_context: FoodContext, events: list[Any]
+) -> None:
+    memory_llm = FakeLLM()
+    result = await _handle(
+        "RC55",
+        memory_llm=memory_llm,
+        memory_context=memory_context,
+        food_context=food_context,
+        events=events,
+    )
+
+    assert memory_llm.calls == 0
+    assert [(g.code, g.deeplink) for g in _of(events, Guidance)] == [("safety_record", "profile")]
+    assert result.failed is None
+
+
+async def test_Supervisor_가_놓쳐_저장_게이트가_막아도_같은_안내가_나간다(
+    memory_context: AgentContext, food_context: FoodContext, events: list[Any]
+) -> None:
+    supervisor_llm = _all_record("RC55")
+    result = await _handle(
+        "RC55",
+        memory_llm=FakeLLM(
+            _tools(_call("a", "create_observation_health", _POLLEN)),
+            _reply("기록하지 않았어요."),
+        ),
+        memory_context=memory_context,
+        food_context=food_context,
+        events=events,
+        supervisor_llm=supervisor_llm,
+    )
+
+    assert [(g.code, g.deeplink) for g in _of(events, Guidance)] == [("safety_record", "profile")]
+    assert [g.code for g in result.routing.guidance] == ["safety_record"]
+    assert await memory_context.store.query_observations(domain="health", child_id=CHILD) == []
+    assert supervisor_llm.calls == 1  # 막은 조각을 다시 나누지 않는다
+    assert result.rerouted is None
+
+
+async def test_Supervisor_가_놓치고_Memory_가_말로만_안내해도_같은_안내가_나간다(
+    memory_context: AgentContext, food_context: FoodContext, events: list[Any]
+) -> None:
+    # 라이브 — "땅콩 알레르기 있어" 는 tool 없이 "직접 입력해 주세요" 로 끝나 저장 게이트를 안 탄다
+    supervisor_llm = _all_record("RC56")
+    await _handle(
+        "RC56",
+        memory_llm=FakeLLM(_reply("알레르기 정보는 직접 등록해 주세요.")),
+        memory_context=memory_context,
+        food_context=food_context,
+        events=events,
+        supervisor_llm=supervisor_llm,
+    )
+
+    assert [(g.code, g.deeplink) for g in _of(events, Guidance)] == [("safety_record", "profile")]
+    assert supervisor_llm.calls == 1
+
+
+async def test_병명이_든_조각을_저장했으면_안내를_더하지_않는다(
+    memory_context: AgentContext, food_context: FoodContext, events: list[Any]
+) -> None:
+    # "아토피 크림 발라 줬어" 는 한 일을 말한 기록이다
+    text = CASES_BY_ID["RC62"].text
+    await _handle(
+        "RC62",
+        memory_llm=FakeLLM(
+            _tools(
+                _call(
+                    "a",
+                    "create_observation_health",
+                    {
+                        "raw_text": text,
+                        "observed_on": "오늘",
+                        "symptom": ["크림 바름"],
+                        "action_taken": "아토피 크림 바름",
+                    },
+                )
+            ),
+            _reply("기록했어요."),
+        ),
+        memory_context=memory_context,
+        food_context=food_context,
+        events=events,
+    )
+
+    assert _of(events, Guidance) == []
+    rows = await memory_context.store.query_observations(domain="health", child_id=CHILD)
+    assert [row.fields["action_taken"] for row in rows] == ["아토피 크림 바름"]
+
+
+async def test_이어받기_답이_저장_게이트에_막혀도_같은_안내가_나간다(
+    memory_context: AgentContext, food_context: FoodContext, events: list[Any]
+) -> None:
+    await handle_input(
+        "천식이래",
+        memory_context,
+        {"food": food_context},
+        run_id=RUN_ID,
+        supervisor_client=FakeLLM(),
+        memory_client=FakeLLM(
+            _tools(
+                _call(
+                    "a",
+                    "create_observation_health",
+                    {"raw_text": "요즘 기침해", "observed_on": "오늘", "symptom": ["천식"]},
+                )
+            ),
+            _cont_answer({"text": "기록하지 않았어요.", "kind": "message"}),
+        ),
+        emit=events.append,
+        continuation=_COUGH_PENDING,
+        commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
+    )
+
+    assert [(g.code, g.deeplink) for g in _of(events, Guidance)] == [("safety_record", "profile")]
 
 
 # ── 불일치 기록 ─────────────────────────────────────────────────

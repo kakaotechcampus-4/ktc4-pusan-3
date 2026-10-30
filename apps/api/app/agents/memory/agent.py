@@ -15,6 +15,7 @@ task 를 넘기면(Supervisor 경로) 다섯 가지가 더 붙는다.
   - [unclear] Supervisor 가 unclear 로 본 조각은 관찰로 저장하지 않는다 (_in_unclear)
   - [고쳐 말하기] lookup_edit 조각은 조회 결과를 본 뒤에만 새로 저장한다 (_skipped_lookup)
 task 가 없어도 위험 물질 이름이 대상인 식사 · 놀이 · 배움 · 생활 관찰은 저장하지 않는다 (_hazard).
+task 가 없어도 알레르기 · 만성질환 이름은 건강 관찰로 저장하지 않는다 (_safety_named).
 task 없이 부르면 전체 tool 을 열고 끊지 않는다 — Supervisor 없이 Memory 만 재는 경로다.
 """
 
@@ -50,6 +51,7 @@ from app.agents.memory.schemas.task import (
     WorkType,
 )
 from app.rules.hazard import FOOD_NAME_TERMS, PLAY_NAME_TERMS, hazard_names
+from app.rules.safety_term import mentions_safety
 from app.rules.term_match import Term
 
 logger = logging.getLogger(__name__)
@@ -126,6 +128,15 @@ _NOT_CHILD_RECORD_MIXED = (
 _HAZARD = (
     "음식이 아닌 위험한 것이라 관찰로 저장하지 않는다. 다시 부르지 않는다. "
     "다른 이름 · 다른 종류의 관찰로 바꿔 저장하지 않는다. 기록하지 않았다고 한 줄로만 알린다."
+)
+
+# 알레르기 · 만성질환은 보호자가 프로필에 직접 입력한다 (루트 §2 · #639).
+# Supervisor 가 안내로 돌리지 못한 것의 마지막 자리다. 안내 카드는 pipeline 이 따로 낸다
+_SAFETY_RECORD = (
+    "알레르기 · 만성질환이 있다는 사실은 저장하지 않는다. 그 이름을 다른 표현이나 다른 종류의 "
+    "관찰로 옮겨 저장하지 않는다. 발화에 증상이 따로 있으면 병명을 뺀 증상만 저장하고, "
+    "아이에게 해 준 일이 있으면 건강 관찰의 symptom 에 병명 없이 그 일을, action_taken 에 "
+    "발화 그대로 적는다. 둘 다 없으면 저장하지 않았다고 한 줄로만 알린다."
 )
 
 # 고쳐 말하는 조각(lookup_edit)인데 조회 없이 새로 저장. "할머니 말고 할아버지랑 산책했어" 처럼
@@ -241,7 +252,7 @@ class MemoryAgentResult:
         return any(persisted_write(call) for call in self.calls)
 
     def refused(self, code: str) -> bool:
-        """이 코드로 거절된 호출이 있는가. pipeline 이 저장 게이트 거절(`HAZARD`)을 본다."""
+        """이 코드로 거절된 호출이 있는가. pipeline 이 저장 게이트 거절을 본다."""
         return _refused(self.calls, code)
 
 
@@ -774,6 +785,8 @@ async def _execute(
         return _failed(name, {}, ErrorCode.INVALID_ARGS, _BAD_JSON)
     if _hazard(name, arguments):
         return _failed(name, arguments, ErrorCode.HAZARD, _HAZARD)
+    if _safety_named(name, arguments):
+        return _failed(name, arguments, ErrorCode.SAFETY_RECORD, _SAFETY_RECORD)
     if task is not None and task.unclear_only and name.startswith("update_observation_"):
         # 아이 기록이 아닌 말로 이미 저장된 아이 기록을 고치지 않는다
         return _failed(name, arguments, ErrorCode.NOT_CHILD_RECORD, _NOT_CHILD_RECORD_ALONE)
@@ -840,6 +853,13 @@ def _hazard(name: str, arguments: dict[str, Any]) -> bool:
             names = [str(arguments[f]) for f in fields if arguments.get(f)]
             return bool(names) and bool(hazard_names(names, terms))
     return False
+
+
+def _safety_named(name: str, arguments: dict[str, Any]) -> bool:
+    """건강 관찰 create · update 의 증상이 알레르기 · 만성질환 이름인가. 원문은 보지 않는다."""
+    if name not in ("create_observation_health", "update_observation_health"):
+        return False
+    return any(mentions_safety(str(symptom)) for symptom in arguments.get("symptom") or ())
 
 
 def _in_unclear(arguments: dict[str, Any], task: MemoryTask) -> bool:

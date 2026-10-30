@@ -15,7 +15,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime
 from typing import Any, Literal, Protocol, Self
 from uuid import UUID
@@ -44,9 +44,17 @@ from app.agents.run_writes import RunWrites
 from app.agents.suggestion_save import SaveSuggestions, SuggestionBatch
 from app.agents.supervisor.agent import SupervisorResult
 from app.agents.supervisor.agent import run as run_supervisor
-from app.agents.supervisor.routing import HAZARD_GUIDANCE, Guidance, Routing, has_hazard, route
+from app.agents.supervisor.routing import (
+    HAZARD_GUIDANCE,
+    SAFETY_GUIDANCE,
+    Guidance,
+    Routing,
+    has_hazard,
+    route,
+)
 from app.agents.supervisor.schemas import DomainAgentName, normalize
 from app.rules.hazard import find_hazards
+from app.rules.safety_term import mentions_safety
 
 logger = logging.getLogger(__name__)
 
@@ -528,6 +536,13 @@ async def handle_input(
                 # 사전검사 · Supervisor 가 놓치고 저장 게이트가 막은 경우. 같은 안내를 낸다
                 send(HAZARD_GUIDANCE)
 
+    # Supervisor 가 놓친 알레르기 · 만성질환 언급도 같은 안내로 잇는다. "적지 않은 기록" 이 아니라
+    # 막은 것이라 다시 나누지 않는다 — 다시 물으면 Supervisor 호출만 하나 더 쓴다
+    safety_missed = failed is None and _safety_missed(routing.memory_task, memory)
+    if safety_missed and SAFETY_GUIDANCE not in routing.guidance:
+        routing = replace(routing, guidance=(*routing.guidance, SAFETY_GUIDANCE))
+        send(SAFETY_GUIDANCE)
+
     # 위임이 어긋났으면 Supervisor에게 이유를 주고 한 번만 다시 나눈다.
     # Memory는 다시 돌리지 않는다.
     rerouted: Rerouted | None = None
@@ -535,7 +550,9 @@ async def handle_input(
     # 아니라 막은 것이다 — 다시 물으면 안내가 두 번 나가거나 요청으로 바뀌어 Agent 가 돈다
     hazard_refused = memory is not None and memory.refused(ErrorCode.HAZARD)
     bounced = (
-        _bounced_hints(routing.memory_task, memory) if failed is None and not hazard_refused else ()
+        _bounced_hints(routing.memory_task, memory)
+        if failed is None and not hazard_refused and not safety_missed
+        else ()
     )
     # 도메인 Agent로 간 조각이 있으면 다시 나누지 않는다. 요청이 통째로 사라진 경우만 본다.
     stranded = not routing.domain_tasks and not routing.unavailable_agents
@@ -852,6 +869,8 @@ async def _handle_continuation(
             send(note)
         if memory.pending is not None:
             send(PendingReply(run_id, memory.pending))
+        if memory.refused(ErrorCode.SAFETY_RECORD):
+            send(SAFETY_GUIDANCE)
 
     # 쓴 것도 한 말도 없으면 실패 처리
     if failed is None and not _did_anything(memory, [], _NO_ROUTING):
@@ -1271,6 +1290,19 @@ def _unwritten(task: MemoryTask | None, memory: MemoryAgentResult) -> Unwritten 
         *(event.hints, event.tools, event.note),
     )
     return event
+
+
+def _safety_missed(task: MemoryTask | None, memory: MemoryAgentResult | None) -> bool:
+    """Supervisor 가 안내로 돌리지 못한 알레르기 · 만성질환 언급이 있었는가.
+
+    저장 게이트가 막았거나, 그 조각을 저장하지 않고 말로만 끝낸 run 이다. 그 조각을 저장했으면
+    ("아토피 크림 발라 줬어") 한 일을 말한 기록이라 안내하지 않는다.
+    """
+    if memory is None:
+        return False
+    return memory.refused(ErrorCode.SAFETY_RECORD) or any(
+        mentions_safety(hint) for hint in _bounced_hints(task, memory)
+    )
 
 
 def _bounced_hints(task: MemoryTask | None, memory: MemoryAgentResult | None) -> tuple[str, ...]:

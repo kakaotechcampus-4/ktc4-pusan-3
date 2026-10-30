@@ -3,7 +3,8 @@
 - RC01~RC27  복합 발화. Supervisor 가 조각을 어떻게 나누고 어디로 보내는지 본다
 - RC28~RC47  위험 물질(guarded/hazard)과 약 · 오탐 대조 (#626)
 - RC48~RC54  키 · 몸무게 기록(guarded/growth_record)과 성장 질문(request/growth) 대조 (#625)
-- RC55       숟가락을 세는 '술' 대조 (#633 리뷰)
+- RC55~RC62  알레르기 · 만성질환을 알리는 말(guarded/safety_record)과 한 일 · 증상 대조 (#639)
+- RC63       숟가락을 세는 '술' 대조 (#633 리뷰)
 - T01~T30    라이브 eval 입력의 정답 Supervisor 출력. Step 7 이 Memory 힌트로 쓰고,
              Supervisor 채점에서는 "쉬운 30개" 대조군이 된다
 - score_split()  Step 5(Supervisor 단독)와 Step 9(끝까지)가 같은 기준으로 잰다
@@ -545,9 +546,61 @@ RC_CASES: tuple[RoutingCase, ...] = (
         (Q("10cm 컸는데 많이 큰 거야?", GROWTH),),
         watch="대조군 — 값이 들어 있어도 묻는 말이면 growth_review 요청",
     ),
-    # ── RC55 — 위험 물질 오탐 대조 (#633 리뷰) ──
+    # #639 — 등록해 달라는 말이 없어도 알레르기 · 만성질환은 저장하지 않고 안내한다
     RoutingCase(
         "RC55",
+        "우리 아기에게 꽃가루 알레르기가 있는 것 같아",
+        (G("우리 아기에게 꽃가루 알레르기가 있는 것 같아", GuardReason.SAFETY_RECORD),),
+        watch="추측으로 말해도 record 가 아니라 안내",
+    ),
+    RoutingCase(
+        "RC56",
+        "우리 애 땅콩 알레르기 있어",
+        (G("우리 애 땅콩 알레르기 있어", GuardReason.SAFETY_RECORD),),
+        watch="등록해 달라는 말 없이 단정",
+    ),
+    RoutingCase(
+        "RC57",
+        "우유 알레르기가 있나 봐",
+        (G("우유 알레르기가 있나 봐", GuardReason.SAFETY_RECORD),),
+        watch="~나 봐",
+    ),
+    RoutingCase(
+        "RC58",
+        "아토피가 있는 것 같아",
+        (G("아토피가 있는 것 같아", GuardReason.SAFETY_RECORD),),
+        watch="만성질환도 같다",
+    ),
+    RoutingCase(
+        "RC59",
+        "천식이 있대",
+        (G("천식이 있대", GuardReason.SAFETY_RECORD),),
+        watch="전해 들은 말도 같다",
+    ),
+    RoutingCase(
+        "RC60",
+        "꽃가루 날리면 재채기해",
+        (R("꽃가루 날리면 재채기해", OBSERVE),),
+        watch="대조군 — 병명 없이 증상을 말하면 record",
+    ),
+    RoutingCase(
+        "RC61",
+        "오늘 우유 마시고 입 주변이 빨개졌어. 우유 알레르기가 있는 것 같아.",
+        (
+            R("오늘 우유 마시고 입 주변이 빨개졌어", OBSERVE),
+            G("우유 알레르기가 있는 것 같아", GuardReason.SAFETY_RECORD),
+        ),
+        watch="안내 때문에 같이 온 증상 기록이 사라지지 않나",
+    ),
+    RoutingCase(
+        "RC62",
+        "아토피 크림 발라 줬어",
+        (R("아토피 크림 발라 줬어", OBSERVE),),
+        watch="대조군 — 병명이 들어 있어도 한 일을 말하면 record",
+    ),
+    # ── RC63 — 위험 물질 오탐 대조 (#633 리뷰) ──
+    RoutingCase(
+        "RC63",
         "아침에 죽을 두 술 먹고 말았어",
         (R("아침에 죽을 두 술 먹고 말았어", OBSERVE),),
         watch="숟가락을 세는 '술' — 규칙이 술로 읽지 않는가 (#633 리뷰)",

@@ -33,6 +33,7 @@ class ErrorCode(CommonErrorCode):
     OUT_OF_SCOPE = "OUT_OF_SCOPE"  # 범위 밖이라고 안내
     NOT_CHILD_RECORD = "NOT_CHILD_RECORD"  # 아이 기록인지 원문에 없음. 저장하지 않고 묻거나 알림
     HAZARD = "HAZARD"  # 음식이 아닌 위험 물질. 저장하지 않고 상태 확인 안내 (#626)
+    SAFETY_RECORD = "SAFETY_RECORD"  # 알레르기 · 만성질환 이름. 저장하지 않고 안내는 pipeline 이
 
 
 def ok(operation: Operation, resource: str, **data: Any) -> ToolResult:
