@@ -27,7 +27,11 @@ export interface SpeechBridge {
   available: boolean;
   /** 듣기 시작. 권한은 이때 묻는다. 결과는 `SPEECH_EVENT` 로 온다. */
   start(): void;
-  /** 그만 듣기. 말하던 구간의 마지막 글자가 `final` 로 한 번 더 오고 `end` 가 온다. */
+  /**
+   * 그만 듣기. 끝은 `end` 로 온다. 그 앞에 말하던 구간이 `final` 로 한 번 더 오기도 하고 안 오기도 한다 —
+   * Google 의 기기 안 인식기는 `final` 대신 오류로 끝낸다(셸이 그 오류를 넘기지 않는다). 그래서 웹은 `final` 이
+   * 아닌 글자도 입력창에 바로 쓴다.
+   */
   stop(): void;
 }
 
