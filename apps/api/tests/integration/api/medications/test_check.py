@@ -155,15 +155,37 @@ async def test_다른_아이의_회차는_404(db_client, session, bearer, consen
     assert response.status_code == 404  # 내 아이 주소로 남의 회차를 불러도 있는지 알리지 않는다
 
 
-async def test_멈춘_코스의_회차는_404(db_client, session, bearer, consented):
-    course, dose = await dose_of(session, consented)
+async def test_멈춘_뒤에_예정된_회차는_404(db_client, session, bearer, consented):
+    course, dose = await dose_of(session, consented)  # 오늘 08:30 (한국)
     await stop_schedule(
-        session, child_id=consented, schedule_id=course.id, stopped_at=datetime.now(UTC)
+        session,
+        child_id=consented,
+        schedule_id=course.id,
+        stopped_at=datetime(
+            2026, 10, 26, 20, 0, tzinfo=UTC
+        ),  # 한국 05:00 에 멈췄다 — 08:30 은 멈춘 뒤
     )
 
     response = await put_check(db_client, bearer[0], consented, dose.id, {"checked": True})
 
     assert response.status_code == 404
+
+
+async def test_멈춘_코스의_멈추기_전_회차는_체크된다(db_client, session, bearer, consented):
+    course, dose = await dose_of(session, consented)  # 오늘 08:30 (한국)
+    await stop_schedule(
+        session,
+        child_id=consented,
+        schedule_id=course.id,
+        stopped_at=datetime(
+            2026, 10, 27, 6, 0, tzinfo=UTC
+        ),  # 한국 15:00 에 멈췄다 — 08:30 은 멈추기 전
+    )
+
+    response = await put_check(db_client, bearer[0], consented, dose.id, {"checked": True})
+
+    assert response.status_code == 200
+    assert datetime.fromisoformat(response.json()["checked_at"]) == NOW
 
 
 async def test_끝난_코스의_회차는_조회에_안_보여도_체크된다(db_client, session, bearer, consented):
