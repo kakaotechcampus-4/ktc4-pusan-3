@@ -205,7 +205,7 @@ class CourseView:
     """화면에 내보낼 코스 한 건 — 알림 시각과 **오늘까지**의 회차를 같이 든다."""
 
     course: MedicationSchedule
-    notice_times: list[str]  # 하루에 울릴 시각 "HH:MM" 오름차순 — 마지막 날의 패턴
+    notice_times: list[str]  # 하루에 울릴 시각 "HH:MM" 오름차순 — `pattern_day` 가 정한 날의 패턴
     doses: list[MedicationDose]  # 오늘까지의 회차, (날짜, 시각) 순
 
 
@@ -224,7 +224,7 @@ async def course_views(
     """코스마다 알림 시각과 오늘까지의 회차를 붙인다. 코스 순서를 그대로 지킨다.
 
     회차는 한 번에 읽는다. 알림 시각은 아직 오지 않은 날의 회차까지 보고 정하므로 날짜를 자르지 않고
-    읽은 뒤 오늘까지만 남긴다 — 내일부터 먹는 코스도 알림 시각은 안다(마지막 날의 패턴).
+    읽은 뒤 오늘까지만 남긴다 — 내일부터 먹는 코스도 알림 시각은 안다(`pattern_day` 의 패턴).
     """
     rows = await list_doses(session, schedule_ids=[c.id for c in courses])
     by_course: dict[uuid.UUID, list[MedicationDose]] = {c.id: [] for c in courses}
