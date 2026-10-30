@@ -219,6 +219,30 @@ async def test_멈춘_코스의_회차는_체크도_해제도_찾지_못한다(s
     assert await stored(session, dose.id) == NOW  # 멈춘 뒤에도 복용 기록은 그대로 남는다
 
 
+async def test_마지막_날이_지난_코스의_회차도_체크하고_해제할_수_있다(session, child):
+    # `find_dose` 는 status 만 보고 날짜는 안 본다 — 조회는 끝난 코스를 싣지 않지만, 마지막 날
+    # 밤에 열어 둔 화면이 자정을 넘어 체크해도 저장된다. 끝난 코스를 목록에 보여 주게 되면
+    # 그대로 쓸 수 있다
+    yesterday = TODAY - timedelta(days=1)
+    course = await add_course(
+        session,
+        child_id=child.id,
+        title="약",
+        starts_on=TODAY - timedelta(days=3),
+        ends_on=yesterday,  # 어제 끝났다
+        source=MedicationSource.UTTERANCE,
+        created_by=MedicationCreatedBy.CAREGIVER,
+        doses=[NewDose(yesterday, TimingAnchor.DINNER, 30, None)],
+    )
+    (dose,) = await list_doses(session, schedule_ids=[course.id])
+
+    checked_at = (await check(session, child, dose)).checked_at  # 같은 객체라 바로 읽는다
+    cleared_at = (await check(session, child, dose, checked=False)).checked_at
+
+    assert checked_at == NOW
+    assert cleared_at is None
+
+
 async def test_찾지_못함이_아직_오지_않음보다_먼저다(session, child):
     other = Child(
         owner_parent_id=child.owner_parent_id, nickname="other", birth_date=date(2022, 1, 1)
