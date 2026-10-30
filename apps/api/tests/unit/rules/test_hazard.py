@@ -5,8 +5,10 @@
 
 import pytest
 
+from app.agents.supervisor.schemas import GuardReason
 from app.rules.hazard import FOOD_NAME_TERMS, PLAY_NAME_TERMS, find_hazards, hazard_names
 from app.rules.term_match import Term, match_spans, normalize
+from tests.eval.agents.routing_cases import ALL_CASES
 
 
 @pytest.mark.parametrize(
@@ -67,11 +69,24 @@ def test_위험_물질을_먹거나_마셨다는_말을_건다(text, expected) -
         "엄마는 와인 마시고 아이는 주스 마셨어",
         "아빠가 맥주를 마셨어",
         "동전 먹었어",  # 물건은 삼키다 · 입에 넣다만 본다 — 놓친 것은 Supervisor 가 받는다
+        # 먹인 약은 위험 물질이 아니다 — 투약 기록은 그대로 저장된다 (#626 PM 리뷰)
+        "열나길래 약먹였어",
+        "자기 전에 감기약 시럽 먹였어",
+        "해열제 5ml 먹였어",
         "",
     ],
 )
 def test_위험_물질이_아닌_말은_걸지_않는다(text) -> None:
     assert find_hazards(text) == ()
+
+
+_PASSING = [case for case in ALL_CASES if all(s.guard != GuardReason.HAZARD for s in case.spans)]
+
+
+@pytest.mark.parametrize("case", _PASSING, ids=[case.case_id for case in _PASSING])
+def test_위험_물질_구간이_없는_eval_케이스는_규칙에_걸리지_않는다(case) -> None:
+    # 오탐 대조군(RC31 · RC38~47)과 평범한 입력 전체 — 걸리면 Supervisor · Memory 를 못 탄다
+    assert find_hazards(case.text) == ()
 
 
 @pytest.mark.parametrize(
@@ -85,6 +100,7 @@ def test_위험_물질이_아닌_말은_걸지_않는다(text) -> None:
         (["마약 김밥"], ()),  # 띄어 써도 guard 가 덮는다
         (["맛술 불고기"], ()),
         (["사케동"], ()),
+        (["무알콜 맥주"], ()),
         (["딸기", "우유"], ()),
     ],
 )

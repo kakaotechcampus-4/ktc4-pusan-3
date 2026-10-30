@@ -921,6 +921,31 @@ async def test_Supervisor_의_hazard_라벨이면_Memory_를_부르지_않는다
     assert result.domain == () and result.failed is None
 
 
+# ── 먹인 약 (#626 PM 리뷰) ──────────────────────────────────────
+async def test_먹인_약은_사전검사에_걸리지_않고_그대로_기록된다(
+    memory_context: AgentContext, food_context: FoodContext, events: list[Any]
+) -> None:
+    # 위험 물질 규칙은 마약 · 술 · 담배 · 화학제품 · 삼킨 물건만 본다. 약은 막지 않는다
+    text = "열나길래 해열제 먹였어"
+    output = {"segments": [{"text": text, "kind": "record", "work": "observe"}]}
+    health = {"raw_text": text, "observed_on": "오늘", "symptom": ["발열"]}
+    supervisor_llm = FakeLLM(_tools(_call("s1", "route", output)))
+    memory_llm = FakeLLM(_tools(_call("a", "create_observation_health", health)))
+    result = await _handle_text(
+        text,
+        memory_llm=memory_llm,
+        supervisor_llm=supervisor_llm,
+        memory_context=memory_context,
+        food_context=food_context,
+        events=events,
+    )
+
+    assert supervisor_llm.calls == 1
+    assert len(await memory_context.store.query_observations(domain="health", child_id=CHILD)) == 1
+    assert not _of(events, Guidance)
+    assert result.failed is None
+
+
 # ── 불일치 기록 ─────────────────────────────────────────────────
 async def test_Supervisor_가_짚지_않은_기록을_Memory_가_하면_남긴다(
     memory_context: AgentContext, food_context: FoodContext, events: list[Any]
