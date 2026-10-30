@@ -83,12 +83,13 @@ class Guidance:
 
 # 위험 물질을 먹거나 마셨다는 입력 (#626). 규칙 사전검사(pipeline)와 Supervisor 의 hazard 라벨이
 # 같은 안내를 낸다. 갈 곳이 없는 안내라 deeplink 가 없다.
-# 규칙은 아빠가 마신 얘기에도 걸릴 수 있어서 "아이가 그랬다면" 으로 시작한다
+# 규칙은 "아이가 그랬다면" 으로 시작.
+# 삼킨 것의 증상은 늦게 나올 수 있어 "걱정되면" 같은 기다릴 여지를 두지 않고 119 하나만
 HAZARD_GUIDANCE = Guidance(
     code=GuardReason.HAZARD.value,
     message=(
-        "아이가 먹으면 안 되는 것을 먹거나 마셨다면 지금 아이 상태부터 살펴봐 주세요. "
-        "평소와 다르거나 걱정되면 바로 병원이나 119에 연락해 주세요. "
+        "아이가 먹으면 안 되는 것을 먹거나 마셨다면, 지금 괜찮아 보여도 바로 119에 전화해 주세요. "
+        "응급처치와 가까운 병원을 안내받을 수 있어요. "
         "이 내용은 식사·취향 기록으로 남기지 않았어요."
     ),
 )
@@ -101,9 +102,11 @@ _GUIDANCE: dict[str, Guidance] = {
         # 앱에서 deeplink를 열면 알레르기 등록 화면으로 이동하도록
         deeplink="settings/health-safety",
     ),
+    # 기록을 남겼는지는 적지 않는다 — 묻기만 한 말("해열제 몇 ml 먹여?")은 남길 기록이 없다.
+    # 함께 온 증상을 저장했으면 Memory가 따로 알린다
     GuardReason.DIAGNOSIS.value: Guidance(
         code=GuardReason.DIAGNOSIS.value,
-        message="진단이나 결핍 판정, 영양제·치료식 추천은 도와드릴 수 없어요. 기록은 남겨 둘게요.",
+        message="진단이나 결핍 판정, 약·영양제·치료식 추천은 도와드릴 수 없어요.",
     ),
     SegmentKind.OUT_OF_SCOPE.value: Guidance(
         code=SegmentKind.OUT_OF_SCOPE.value,
