@@ -10,6 +10,8 @@
             부르지 않는다.
   급식 갱신  모델이 조회 · 갱신 tool 을 불러 급식 행을 고친다. 화면 문구는 tool 이 정한다.
   영양소 분석 열려 있어도 모델을 부르지 않는다 — 판정의 식품군 출현을 코드 문장 틀로 낸다(N-17).
+  섭취 확인  정해진 음식을 먹여도 되는지 묻는 말. 모델을 부르지 않고 등록 알레르기 · 연령 규칙으로
+            코드가 답한다(`food_check`). "겹치는 걸 못 찾음" 이 "괜찮다" 는 아니다.
 
 저장은 하지 않는다. 결과의 suggestions 를 pipeline 이 저장한다 (공통규약 §3).
 """
@@ -21,11 +23,13 @@ from typing import Any
 
 from app.agents.common.evidence import pick_followup
 from app.agents.common.llm_client import LLMClient
+from app.agents.common.readout import Readout
 from app.agents.common.result import AgentStatus, DomainAgentResult
 from app.agents.common.schemas.task import DomainTask
 from app.agents.common.suggestion import MAX_SUGGESTIONS, count_notice, merge_drafts
 from app.agents.common.tool_loop import run_tool_loop
 from app.agents.food.context import FoodContext, MealPick, build_gate, require_safety
+from app.agents.food.food_check import answer_food_check, request_notices
 from app.agents.food.meal_pool import PoolItem, build_pool, remember_sample, sample_pool
 from app.agents.food.prompt import (
     build_system_prompt,
@@ -88,6 +92,8 @@ async def run(
         )
 
     if answers_by_code(task_type):
+        if task_type == FoodTaskType.FOOD_CHECK:
+            return _check_foods_result(context)
         # 영양소 분석 1차 출력 — 모델을 부르지 않는다. 구간은 판정해 두되 문장은 식품군 출현만 쓴다
         return DomainAgentResult(
             agent=AGENT,
@@ -100,6 +106,26 @@ async def run(
     if task_type == FoodTaskType.MEAL_RECOMMENDATION:
         return await _recommend(task, context, llm)
     return await _update_daycare(task, context, llm)
+
+
+def _check_foods_result(context: FoodContext) -> DomainAgentResult:
+    """섭취 확인 — 모델 없이 등록 알레르기 · 연령 규칙으로 코드가 답한다. 저장하지 않는다."""
+    gate = context.state.gate
+    assert gate is not None  # run() 이 build_gate 를 먼저 부른다
+    readouts, question = answer_food_check(
+        context.state.utterance,
+        require_safety(context),
+        consent=gate.consent_child_health,
+        stage=gate.stage.stage,
+        months=gate.stage.months,
+    )
+    return DomainAgentResult(
+        agent=AGENT,
+        task_type=FoodTaskType.FOOD_CHECK.value,
+        status="completed",
+        readouts=readouts,
+        needs_observation=(question,) if question else (),
+    )
 
 
 def _closed_status(key: str) -> AgentStatus:
@@ -141,11 +167,18 @@ async def _recommend(task: DomainTask, context: FoodContext, llm: LLMClient) -> 
     gate = context.state.gate
     assert gate is not None  # run() 이 build_gate 를 먼저 부른다
     task_type = FoodTaskType.MEAL_RECOMMENDATION
+    # 요청 글에 알레르기 · 연령 금지 음식이 있으면 빼고 골랐다고 코드가 안내한다. 풀이 비어도 붙는다
+    notices = request_notices(
+        task.request_texts,
+        require_safety(context),
+        stage=gate.stage.stage,
+        months=gate.stage.months,
+    )
 
     pool = await build_pool(context)
     if not pool:
         # 안전 · 연령 · 최근 추천으로 다 빠졌다. 모델 없이 추천 없는 안내만 낸다 — 실패가 아니다
-        return _recommendation(task_type, (), context, model_calls=0, followup=())
+        return _recommendation(task_type, (), context, model_calls=0, followup=(), notices=notices)
 
     sample = sample_pool(pool, seed=f"{context.run_id}:sample")
     remember_sample(context, sample)
@@ -180,7 +213,12 @@ async def _recommend(task: DomainTask, context: FoodContext, llm: LLMClient) -> 
                 return _failed(task_type, model_calls=2)
 
     return _recommendation(
-        task_type, picks, context, model_calls=model_calls, followup=await _followup(context)
+        task_type,
+        picks,
+        context,
+        model_calls=model_calls,
+        followup=await _followup(context),
+        notices=notices,
     )
 
 
@@ -191,6 +229,7 @@ def _recommendation(
     *,
     model_calls: int,
     followup: tuple[str, ...],
+    notices: tuple[Readout, ...] = (),
 ) -> DomainAgentResult:
     drafts = tuple(pick.draft for pick in picks)
     # 개수 안내는 합친 결과로 센다 — 재호출 때 출력 tool 이 본 것은 재호출분뿐이다
@@ -200,7 +239,7 @@ def _recommendation(
         task_type=task_type.value,
         status="completed",
         suggestions=drafts,
-        readouts=(notice,) if notice else (),
+        readouts=(*notices, notice) if notice else notices,
         # 추천을 못 냈으면 되묻지 않는다. 되묻기는 한 번에 하나다(`pick_followup`)
         needs_observation=followup if drafts else (),
         model_calls=model_calls,

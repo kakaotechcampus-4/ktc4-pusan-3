@@ -31,6 +31,7 @@ INPUT_PATH = Path(__file__).with_name("test_input.txt")
 
 REC = FoodTaskType.MEAL_RECOMMENDATION
 NUT = FoodTaskType.NUTRIENT_ANALYSIS
+CHECK = FoodTaskType.FOOD_CHECK
 
 
 @dataclass(frozen=True)
@@ -416,7 +417,81 @@ RC_CASES: tuple[RoutingCase, ...] = (
     ),
 )
 
-ALL_CASES: tuple[RoutingCase, ...] = RC_CASES + T_CASES
+# ── FC01~FC09 — 정해진 음식을 먹여도 되는지 묻는 말(food_check)과 그 경계 ────────
+FC_CASES: tuple[RoutingCase, ...] = (
+    RoutingCase(
+        "FC01",
+        "땅콩소스 먹여도 될까?",
+        (Q("땅콩소스 먹여도 될까?", FOOD, CHECK),),
+        watch="섭취 확인 — 사용자 예시",
+    ),
+    RoutingCase(
+        "FC02",
+        "견과류 들어간 메뉴 추천해줘.",
+        (Q("견과류 들어간 메뉴 추천해줘", FOOD, REC),),
+        watch="알레르기 음식이 든 추천 요청은 추천이다",
+    ),
+    RoutingCase(
+        "FC03",
+        "꿀 넣은 이유식 먹여도 돼?",
+        (Q("꿀 넣은 이유식 먹여도 돼?", FOOD, CHECK),),
+        stage="infant_weaning",
+        watch="T29 — 12개월 전 꿀",
+    ),
+    RoutingCase(
+        "FC04",
+        "이거 먹여도 돼?",
+        (Q("이거 먹여도 돼?", FOOD, CHECK),),
+        watch="음식 이름이 없다 — Food 가 무슨 음식인지 되묻는다",
+    ),
+    RoutingCase(
+        "FC05",
+        "땅콩버터 먹여도 돼? 안 되면 다른 간식 추천해줘.",
+        (
+            Q("땅콩버터 먹여도 돼?", FOOD, CHECK),
+            Q("안 되면 다른 간식 추천해줘", FOOD, REC),
+        ),
+        watch="둘로 나눈다 — 둘 다 Food 라 Agent 상한에 안 걸린다",
+    ),
+    RoutingCase(
+        "FC06",
+        "해열제 더 먹여도 돼?",
+        (G("해열제 더 먹여도 돼?", GuardReason.DIAGNOSIS),),
+        watch="약은 food 가 아니다",
+    ),
+    RoutingCase(
+        "FC07",
+        "새우깡 먹어도 괜찮아?",
+        (Q("새우깡 먹어도 괜찮아?", FOOD, CHECK),),
+        watch="프롬프트 예시에 없는 말투",
+    ),
+    RoutingCase(
+        "FC08",
+        "요즘 매일 볶음밥만 먹는데 괜찮아?",
+        (
+            R("요즘 매일 볶음밥만 먹는데", OBSERVE, strict=False),
+            Q("괜찮아?", FOOD, NUT),
+        ),
+        watch='식습관을 묻는 "괜찮아?" 는 영양 분석이다',
+    ),
+    RoutingCase(
+        "FC09",
+        "우유 알레르기 있는데 치즈 먹여도 돼?",
+        (
+            G("우유 알레르기 있는데", GuardReason.SAFETY_RECORD, strict=False),
+            Q("치즈 먹여도 돼?", FOOD, CHECK),
+        ),
+        watch="알레르기를 말하면서 섭취를 묻는다 — 등록은 안내, 질문은 섭취 확인",
+    ),
+    RoutingCase(
+        "FC10",
+        "지금 또 먹여도 돼?",
+        (Q("지금 또 먹여도 돼?", DomainAgentName.HEALTH),),
+        watch="무엇을 먹일지 없이 시점만 묻는 말 — 약 이야기라 health (Health T11)",
+    ),
+)
+
+ALL_CASES: tuple[RoutingCase, ...] = RC_CASES + T_CASES + FC_CASES
 CASES_BY_ID: dict[str, RoutingCase] = {case.case_id: case for case in ALL_CASES}
 
 

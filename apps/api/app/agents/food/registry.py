@@ -13,6 +13,9 @@
   라벨: daycare_meal — 단계로 닫지 않음
     급식 행 있음  lookup·update·delete·keep
     급식 행 없음  닫힘
+  라벨: food_check — 단계로 닫지 않음 (0–3개월의 꿀 질문도 답한다)
+    열린 tool 없음 — 코드가 등록 알레르기 · 연령 규칙으로 답한다 (모델 0회, `answers_by_code`)
+    안전 조회 실패만 `check.blocked_safety` 로 닫힌다
 
 - 🚨 열린 tool 중에 스텁(NotImplementedError)이 있으면 안 된다. tool 이 아직 스텁인 task 는
   `NOT_READY` 에 문구 키를 적어 닫고(`closed_readout_key`), `tools_for` 의 분기는 그대로 둔다 —
@@ -38,6 +41,7 @@ from pydantic import BaseModel, ValidationError
 from app.agents.common.gate import Gate
 from app.agents.common.tool_schema import ToolDefinition, build_tool_specs
 from app.agents.food.context import FoodContext
+from app.agents.food.readouts import CHECK_BLOCKED_SAFETY
 from app.agents.food.result import ErrorCode, ToolResult, fail
 from app.agents.food.schemas.common import FoodTaskType
 from app.agents.food.schemas.tool_defs import TOOL_DEFINITIONS
@@ -143,6 +147,9 @@ def closed_readout_key(task: FoodTaskType, gate: Gate) -> str | None:
         if not gate.data.daycare_meal:
             return "closed.no_daycare"
         return NOT_READY.get(task)
+    if task == FoodTaskType.FOOD_CHECK:
+        # 알레르기를 읽지 못하면 "겹치지 않아요" 도 "겹쳐요" 도 말할 수 없다. 단계는 보지 않는다
+        return None if gate.safety_ok else CHECK_BLOCKED_SAFETY
     raise AssertionError(f"모르는 FoodTaskType: {task}")  # pragma: no cover
 
 
@@ -163,23 +170,25 @@ def tools_for(task: FoodTaskType, gate: Gate) -> tuple[str, ...]:
             opened = set(_TODDLER_MEAL_BASE)
             if gate.data.daycare_meal:
                 opened.add("lookup_daycare_menu")
-    else:  # NUTRIENT_ANALYSIS — infant_* 는 위에서 이미 닫혔다
-        # 1차 출력은 모델을 부르지 않는다 — 코드가 식품군 출현 문장을 낸다(N-17). 열린 tool 이 없을
-        # 뿐 닫힘(`closed_readout_key`)과 다르다 — 이 task 는 `run()` 이 코드로 끝까지 간다
+    else:  # NUTRIENT_ANALYSIS · FOOD_CHECK — 영양소 분석의 infant_* 는 위에서 이미 닫혔다
+        # 영양소 분석 1차 출력은 모델을 부르지 않는다 — 코드가 식품군 출현 문장을 낸다(N-17).
+        # 섭취 확인도 코드가 답한다. 열린 tool 이 없을 뿐 닫힘(`closed_readout_key`)과 다르다 —
+        # 이 task 들은 `run()` 이 코드로 끝까지 간다
         opened: set[str] = set()
 
     return tuple(d.name for d in TOOL_DEFINITIONS if d.name in opened)
 
 
 def answers_by_code(task: FoodTaskType) -> bool:
-    """모델을 부르지 않고 코드가 결과를 내는 task. 영양소 분석 1차 출력이다(N-17)."""
-    return task == FoodTaskType.NUTRIENT_ANALYSIS
+    """모델을 부르지 않고 코드가 결과를 내는 task. 영양소 분석 1차 출력(N-17)과 섭취 확인이다."""
+    return task in (FoodTaskType.NUTRIENT_ANALYSIS, FoodTaskType.FOOD_CHECK)
 
 
 # task 마다 결과를 내는 tool. run_tool_loop 이 이 안에서 끝낸다(output_accepted).
 _OUTPUT_TOOLS: dict[FoodTaskType, frozenset[str]] = {
     FoodTaskType.MEAL_RECOMMENDATION: frozenset({"propose_meal_candidates"}),
     FoodTaskType.NUTRIENT_ANALYSIS: frozenset({"report_nutrient_analysis"}),
+    FoodTaskType.FOOD_CHECK: frozenset(),  # 출력 tool 이 없다 — 코드가 답한다
     # 급식 갱신은 tool 을 꼭 부른다(required). 쓰지 않고 끝내는 keep 이 없으면 묻는 말도 쓰기로 간다
     FoodTaskType.DAYCARE_MEAL: frozenset(
         {"update_daycare_meal", "delete_daycare_meal", "keep_daycare_meal"}
