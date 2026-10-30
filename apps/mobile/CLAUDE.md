@@ -62,7 +62,7 @@ src/native/internal-url.ts   웹뷰 안에 둘 주소인지 판정 — 출처 + 
 src/native/cookie-flush.ts   백그라운드로 갈 때 쿠키 flush 판단 (#469)
 src/native/speech.ts         말로 적기 — 웹 부탁 검사(`parseWebRequest` · 알림 부탁도 여기서) · 기기 안 인식 조건 · 오류 → 이유 · 웹에 넣는 창구와 이벤트 (#595)
 src/native/push.ts           일정 알림 — 알림 data → 화면 주소 · 권한 창을 띄울지 · 웹에 넣는 창구와 이벤트 (#609)
-app.config.ts                app.json 위에 빌드 때만 정해지는 것 — `google-services.json` 경로 (#609). Node 에서 돌아서 tsconfig.test.json 이 본다
+app.config.ts                app.json 위에 빌드 때만 정해지는 것 — `google-services.json` 경로 (#609) · FCM auto-init 끄기(매니페스트). Node 에서 돌아서 tsconfig.test.json 이 본다
 modules/cookie-flush/        로컬 Expo 모듈 (Android 만) — `CookieManager.flush()` 하나. 🚨 `android/` 가 생성물이 아니라 소스다
 app.json                     Expo 설정 (name · scheme · bundle id · 막는 권한)
 eas.json                     EAS 빌드 프로필 (배포 웹 주소 · versionCode 관리)
@@ -127,6 +127,11 @@ eas.json                     EAS 빌드 프로필 (배포 웹 주소 · versionC
   알림을 눌러도 화면이 안 옮겨졌다(#609 리뷰). 연결 실패 · 웹뷰 종료 때만 내린다 (`onDocumentGone`).
   처리한 누름은 `clearLastNotificationResponse` 로 지운다 — 뒤로가기 종료 뒤 다시 켜면 지난 알림의 날짜로 열렸다
 - 🚨 **`google-services.json` 이 없는 빌드는 창구를 꺼서 낸다** (`PUSH_AVAILABLE`). 켜 두면 웹이 권한 창을 띄우고, 허용한 뒤에야 토큰 받기가 실패한다
+- 🚨 **FCM 자동 등록(auto-init)을 끈다** (`app.config.ts` 가 매니페스트에 `firebase_messaging_auto_init_enabled = false` · #618 리뷰).
+  Firebase 는 기본으로 켜져 있어서 `google-services.json` 이 든 빌드는 앱을 켜자마자 FCM 에 기기를 등록한다 — 알림 권한이 없어도
+  토큰이 생겼다(에뮬레이터 확인). 끄면 토큰은 셸이 허용받은 뒤 `getDevicePushTokenAsync`(= `getToken()` · auto-init 을 보지 않는다)를
+  부를 때만 생긴다. 🚨 **`setAutoInitEnabled(true)` 를 부르거나 이 줄을 빼지 않는다.**
+  확인은 디버그 빌드를 새로 깔고 권한 없이 켠 뒤 `adb shell run-as kr.ai.icatch ls shared_prefs` 에 `com.google.android.gms.appid.xml`(토큰 저장소)이 없는지 본다
 - 🚨 **채널 id `schedule` 은 세 곳이 같아야 한다** — `src/native/push.ts` 의 `PUSH_CHANNEL_ID`, `app.json` 플러그인 `defaultChannel`
   (FCM 이 앱 밖에서 띄우는 알림), 서버 `reminder_dispatch.py` 의 `ANDROID_CHANNEL`(앱을 보고 있을 때 온 알림 · #610).
   앞의 둘은 `push.test.ts` 가 묶는다. 서버 값이 어긋나면 앱을 보는 중 받은 알림이 영문 기본 채널("Miscellaneous")로 간다 (실기기 확인)
@@ -145,7 +150,9 @@ eas.json                     EAS 빌드 프로필 (배포 웹 주소 · versionC
 - 🚨 **패키지를 import 하지 않고 모듈이 있을 때만 불러온다** (`App.tsx` 의 `Notifications`). 하위 모듈이 전부 `requireNativeModule` 이라,
   이 패키지를 넣기 전에 만든 개발 빌드에서 import 하면 셸이 뜨지 않는다
 - ⚠️ **알림 아이콘이 없다.** `assets/android-icon-monochrome.png` 는 Expo 템플릿의 기본 그림이라 쓰지 않았다(런처의 테마 아이콘에도 이 그림이 쓰이고 있다). 아이콘을 정하면 플러그인 `icon` 에 넣는다
-- ⚠️ **스토어에 올리기 전에** 개인정보 처리방침 제10장 ③("알림 권한을 요청하지 않습니다")을 고친 새 판이 먼저 나가야 하고, Play Console 데이터 보안에 기기 ID(FCM 토큰) 수집을 적는다 (#609 · 말로 적기의 마이크 문구와 한 판으로)
+- ⚠️ **알림을 켜기 전에** 개인정보 처리방침 제10장 ③("알림 권한을 요청하지 않습니다")을 고친 새 판이 먼저 나가야 하고 (#166 · 말로 적기의 마이크 문구와 한 판으로),
+  Play Console 데이터 보안에 기기 ID(FCM 토큰) 수집은 **웹 Firebase 값을 넣는 날** 적는다 (#618 리뷰). auto-init 을 꺼서 그 전까지는 이 빌드를 올려도 기기를 등록하지 않는다.
+  순서는 [`docs/web/web-push-v1.md`](../../docs/web/web-push-v1.md) "켜는 순서"
 - ⚠️ **iOS 는 하지 않는다** (#594). `Notifications` 가 Android 에서만 불린다
 
 ### 🚨 사진 권한을 받지 않는다 (#408)

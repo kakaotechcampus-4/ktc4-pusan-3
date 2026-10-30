@@ -27,7 +27,8 @@
 
 1. 기기 토큰이 실린 **처리방침 새 판**을 게시한다
 2. 서버 `PUSH_DEVICE_ACCEPT=true` — 이때부터 기기를 저장한다
-3. 웹 Firebase 값을 넣고 **이미지를 다시 굽는다** — 이때부터 보호자에게 권한을 묻고 토큰을 넘긴다
+3. 웹 Firebase 값을 넣고 **이미지를 다시 굽는다** — 이때부터 보호자에게 권한을 묻고 토큰을 넘긴다.
+   같은 날 Play Console 데이터 보안에 기기 ID(FCM 토큰)를 적는다. 앱은 그 전까지 FCM 에 기기를 등록하지 않는다 (아래 "앱" 표의 "자동 등록")
 
 🚨 **3을 2보다 먼저 하지 않는다.** 서버가 받지 않는 동안에도 권한 창은 뜨고 등록 요청은 204 로 끝나서, 허용한 보호자에게
 알림이 오지 않는다. 화면은 앱을 켤 때마다 다시 등록하므로 순서가 엇갈려도 다음 실행부터는 들어가지만, 그 사이 알림은 빠진다.
@@ -51,6 +52,7 @@
 | 권한 묻기 | 웹과 같이 알림을 고를 때. 셸은 **허용 전이고 OS 가 다시 물을 수 있을 때** 창을 띄운다(`shouldAskPermission` · `canAskAgain`) — 많아야 두 번 | Android 13+ 는 한 번도 묻지 않았어도 `"denied"` 로 와서 `"undetermined"` 로는 가를 수 없다(실기기 확인). 두 번 거절하면 OS 가 막는다. 한 번 거절한 보호자도 다시 켤 길이 있다 — 브라우저(한 번 거절하면 끝)와 다른 점이다 |
 | 알림 띄우기 | OS(FCM)가 띄운다. 앱을 보고 있을 때도 띄운다(`setNotificationHandler`). 채널은 `schedule`("일정 알림") | 웹과 같은 이유(토스트 규칙). FCM 이 앱 밖에서 띄우는 알림은 `defaultChannel` 로, 앱을 보고 있을 때 온 알림은 서버가 싣는 `android.notification.channel_id: "schedule"`(#610)로 같은 채널을 쓴다. 🚨 채널 id 를 바꾸면 서버 `ANDROID_CHANNEL` 도 같이 바꾼다 — 없으면 영문 기본 채널로 간다(실기기 확인) |
 | 창구 켜기 | 셸은 `google-services.json` 이 들어간 빌드에서만 창구를 켠다(`available`) | 설정 없이 켜 두면 권한 창을 띄운 뒤에야 토큰 받기가 실패한다 |
+| 자동 등록 | **끈다** (매니페스트 `firebase_messaging_auto_init_enabled = false` · `app.config.ts` · #618 리뷰). 토큰은 셸이 권한을 허용받은 뒤 `getToken()` 을 부를 때만 생긴다 | Firebase 는 auto-init 이 기본으로 켜져 있어서, `google-services.json` 이 든 빌드는 웹 값이 비어 있어도 앱을 켜자마자 FCM 에 기기를 등록했다(에뮬레이터에서 새로 깔고 권한 없이 켜서 확인). 알림을 안 쓰는 보호자까지 Google 에 등록되고, 그 토큰이 셸의 토큰 교체 알림으로 웹에 넘어가 허용 없이 서버에 등록될 수 있었다. 끄면 위 "켜는 순서" 3번 전까지 기기 ID 를 받지 않는다 |
 | 누르면 | 셸이 data 로 주소를 만들어(`pushOpenPath`) 웹에 `open` 으로 넘긴다. 앱이 알림으로 열렸으면 웹이 `ready` 를 보낼 때까지 들고 있다. 웹은 받은 주소를 `lib/push/open-path.ts` 모양으로 다시 본다 | 그 순간에는 웹이 아직 안 떠 있다. data 는 모양을 본 값만 쓴다 — 워커 · 셸 · 웹이 같은 모양을 따로 들고 있어 셋을 같이 고친다 |
 | `google-services.json` | 저장소에 두지 않는다. EAS 는 파일 환경변수 `GOOGLE_SERVICES_JSON`, 로컬은 `apps/mobile/google-services.json`(`.gitignore`). 없으면 알림만 꺼진 빌드 (`app.config.ts`) | 저장소가 public 이다 |
 
