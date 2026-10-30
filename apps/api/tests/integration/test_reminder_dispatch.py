@@ -13,11 +13,16 @@ from app.domains.identity.models import AuthSession, Parent
 from app.domains.notification.models import PushDevice, PushPlatform
 from app.domains.notification.repository import Switches, put_switches
 from app.domains.schedule.models import EventCategory, EventCreatedBy, EventType, Reminder
-from app.domains.schedule.repository import claim_due_reminders, create_event, put_reminder
+from app.domains.schedule.repository import (
+    DueReminder,
+    claim_due_reminders,
+    create_event,
+    put_reminder,
+)
 from app.infra.db.session import engine
 from app.integrations.fcm import Message, SendResult
 from app.rules.reminder import ReminderLead
-from app.workers.reminder_dispatch import STALE_AFTER, run_dispatch
+from app.workers.reminder_dispatch import STALE_AFTER, reminder_message, run_dispatch
 from tests.integration.api.conftest import link_child, seed_login
 
 NOW = datetime.now(UTC).replace(microsecond=0)
@@ -100,6 +105,22 @@ async def test_due_reminder_rings_once_for_whoever_set_it(session: AsyncSession)
 
     assert (await run_dispatch(session, now=NOW + timedelta(minutes=1), fcm=fcm)).claimed == 0
     assert len(fcm.sent) == 1
+
+
+@pytest.mark.parametrize("title", ["", "   "])
+def test_blank_title_rings_with_when_only(title: str):
+    """제목이 비면 "1시간 뒤: " 로 끝나지 않고 시점만 싣는다 (#610 리뷰)."""
+    reminder = DueReminder(
+        reminder_id=uuid.uuid4(),
+        parent_id=uuid.uuid4(),
+        child_id=uuid.uuid4(),
+        event_id=uuid.uuid4(),
+        lead=ReminderLead.HOURS_1,
+        starts_at=NOW,
+        all_day=False,
+        title=title,
+    )
+    assert reminder_message(reminder).body == "1시간 뒤"
 
 
 async def test_reminders_that_must_not_ring_now(session: AsyncSession):

@@ -74,9 +74,12 @@ _WHEN: dict[ReminderLead, str] = {
 
 def reminder_message(reminder: DueReminder) -> Message:
     """알림 1건의 푸시. 화면은 data 로 그 아이의 그날 캘린더를 연다."""
+    when = _WHEN[reminder.lead]
+    # 제목 검사가 서버에 아직 없어 빈 제목 일정이 있다 — "1시간 뒤: " 로 끝나지 않게 시점만 싣는다
+    title = reminder.title.strip()
     return Message(
         title=TITLE,
-        body=f"{_WHEN[reminder.lead]}: {reminder.title}",
+        body=f"{when}: {title}" if title else when,
         data={
             "type": "schedule_reminder",
             "child_id": str(reminder.child_id),
