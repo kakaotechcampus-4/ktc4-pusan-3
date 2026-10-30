@@ -15,38 +15,51 @@ import { CHILD, expect, recordApi, test, writes, type ApiCall } from "./fixtures
 
 type Permission = "granted" | "declined" | "denied";
 
-/** 셸 흉내. `permission` 은 권한 창에서 고를 답이다. 셸에 온 부탁은 `__locationSent` 에 쌓는다. */
-async function installShell(page: Page, permission: Permission) {
-  await page.addInitScript((answer) => {
-    const sent: string[] = [];
-    let state = "prompt";
-    const reply = (detail: unknown) =>
-      setTimeout(() => window.dispatchEvent(new CustomEvent("icatch:location", { detail })));
-    (window as unknown as { __locationSent: string[] }).__locationSent = sent;
-    (window as unknown as { icatch: unknown }).icatch = {
-      location: {
-        available: true,
-        check: () => {
-          sent.push("check");
-          reply({ type: "permission", action: "check", status: state });
+/**
+ * 셸 흉내. `permission` 은 권한 창에서 고를 답이다. 셸에 온 부탁은 `__locationSent` 에 쌓는다.
+ * `readFails` 면 허용했어도 좌표를 못 읽는다 (위치 서비스 꺼짐 같은 경우).
+ */
+async function installShell(page: Page, permission: Permission, readFails = false) {
+  await page.addInitScript(
+    ([answer, fails]) => {
+      const sent: string[] = [];
+      let state = "prompt";
+      const reply = (detail: unknown) =>
+        setTimeout(() => window.dispatchEvent(new CustomEvent("icatch:location", { detail })));
+      (window as unknown as { __locationSent: string[] }).__locationSent = sent;
+      (window as unknown as { icatch: unknown }).icatch = {
+        location: {
+          available: true,
+          check: () => {
+            sent.push("check");
+            reply({ type: "permission", action: "check", status: state });
+          },
+          ask: () => {
+            sent.push("ask");
+            state = answer;
+            reply({ type: "permission", action: "ask", status: state });
+          },
+          read: () => {
+            sent.push("read");
+            reply(
+              state !== "granted"
+                ? { type: "unavailable", reason: "not-granted" }
+                : fails
+                  ? { type: "unavailable", reason: "failed" }
+                  : { type: "position", lat: 35.123456, lon: 129.987654 },
+            );
+          },
+          openSettings: () => sent.push("settings"),
         },
-        ask: () => {
-          sent.push("ask");
-          state = answer;
-          reply({ type: "permission", action: "ask", status: state });
-        },
-        read: () => {
-          sent.push("read");
-          reply(
-            state === "granted"
-              ? { type: "position", lat: 35.123456, lon: 129.987654 }
-              : { type: "unavailable", reason: "not-granted" },
-          );
-        },
-        openSettings: () => sent.push("settings"),
-      },
-    };
-  }, permission);
+      };
+    },
+    [permission, readFails] as const,
+  );
+}
+
+/** 셸이 받은 `check` 수. 안내가 권한을 확인했다는 신호다 — "서지 않는다" 는 이 수가 늘어난 뒤에 센다. */
+async function checkCount(page: Page) {
+  return (await shellRequests(page)).filter((action) => action === "check").length;
 }
 
 function shellRequests(page: Page) {
@@ -137,4 +150,77 @@ test("🚨 동의를 철회하면 다음 한 줄부터 싣지 않는다", async 
 
   const body = await sendLine(page, calls, true);
   expect(body).not.toHaveProperty("location");
+});
+
+/**
+ * 놀이 추천 아래 "위치 권한이 꺼져 있어서" 안내 (#638 리뷰). 목의 `agent_suggestions` 는 결과에 놀이 블록이 있다.
+ * 🚨 위치 동의를 한 보호자에게만, 아무것도 안 누르면 하루에 한 번까지만 선다.
+ */
+test.describe("놀이 추천 아래 위치 안내", () => {
+  test.use({ scenario: "agent_suggestions" });
+
+  const NOTE = "위치 권한이 꺼져 있어서 근처 장소 없이 준비했어요.";
+
+  async function sendFromChat(page: Page, text: string) {
+    await page.getByRole("textbox", { name: "오늘 있었던 일" }).fill(text);
+    await page.getByRole("button", { name: "이 이야기 남기기" }).click();
+    await expect(
+      page.getByRole("listitem").filter({ hasText: text }).getByText("후보 보기").first(),
+    ).toBeVisible();
+  }
+
+  test("동의했는데 권한을 거절했으면 결과 아래에 서고, 위치 안 쓸래요는 동의를 철회한다", async ({
+    page,
+  }) => {
+    await installShell(page, "declined");
+    const calls = recordApi(page);
+
+    await grantLocationConsent(page);
+    await sendLine(page, calls, true);
+    await expect(page.getByText(NOTE)).toBeVisible();
+    await expect(page.getByRole("button", { name: "위치 권한 허용하기" })).toBeVisible();
+
+    await page.getByRole("button", { name: "위치 안 쓸래요" }).click();
+    await expect(
+      page.getByText("위치를 쓰지 않을게요. 설정에서 언제든 다시 켤 수 있어요."),
+    ).toBeVisible();
+    expect(writes(calls, "POST", /\/consents$/).at(-1)?.body).toMatchObject({
+      scope: "location",
+      action: "withdrawn",
+    });
+  });
+
+  test("🚨 아무것도 안 누르면 그날은 한 번만 선다", async ({ page }) => {
+    await installShell(page, "declined");
+    const calls = recordApi(page);
+
+    await grantLocationConsent(page);
+    await sendLine(page, calls, true);
+    await expect(page.getByText(NOTE)).toBeVisible();
+
+    // 🚨 두 번째 줄의 안내가 권한을 확인한 뒤에 센다. 바로 세면 안내가 서기 전이라 늘 통과한다.
+    const before = await checkCount(page);
+    await sendFromChat(page, "주말에 놀 거리 찾아줘");
+    await expect.poll(() => checkCount(page)).toBeGreaterThan(before);
+    await expect(page.getByText(NOTE)).toHaveCount(1);
+  });
+
+  test("허용은 했는데 좌표를 못 읽어 빠졌으면 서지 않는다 — 꺼져 있다는 말이 거짓이 된다", async ({
+    page,
+  }) => {
+    await installShell(page, "granted", true);
+    const calls = recordApi(page);
+
+    await grantLocationConsent(page);
+    const before = await checkCount(page);
+    const body = await sendLine(page, calls, true);
+    expect(body).not.toHaveProperty("location");
+    await expect.poll(() => checkCount(page)).toBeGreaterThan(before);
+    // 안내 자체가 없어야 한다 — 경고 문장도, 눌러서 풀렸을 때의 문장도.
+    await expect(page.getByText(NOTE)).toHaveCount(0);
+    await expect(page.getByText("위치를 허용했어요", { exact: false })).toHaveCount(0);
+  });
+
+  // ⚠️ 동의를 안 한 보호자는 줄이 `withoutLocation` 이 아니라 안내 자체가 그려지지 않는다 — 기다릴 신호가 없어
+  //    e2e 로는 "없다" 를 증명할 수 없다. `conversation.test.ts` 의 `withoutLocation` 이 동의 없음을 건다.
 });

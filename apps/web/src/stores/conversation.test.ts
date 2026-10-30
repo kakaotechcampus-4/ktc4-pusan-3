@@ -530,6 +530,7 @@ describe("다시 시도는 응답을 못 받은 경우의 것이다 (#231 리뷰
       run: initialRunState,
       question: null,
       shareLocation: false,
+      withoutLocation: false,
       handedBack: false,
       recordedOn: null,
       replayed: false,
@@ -608,7 +609,7 @@ describe("지난 턴의 질문에 답한다 (#228 · reply_open)", () => {
 
 describe("🚨 흐린 위치는 동의가 있을 때만 싣고, 다시 시도는 처음 값 그대로다 (#593)", () => {
   /** 셸 흉내. `position` 을 바꾸면 다음 `read` 의 답이 바뀐다. */
-  let position = { lat: 35.123_456, lon: 129.987_654 };
+  let position: { lat: number; lon: number } | null = { lat: 35.123_456, lon: 129.987_654 };
   let reads = 0;
 
   beforeEach(() => {
@@ -623,7 +624,11 @@ describe("🚨 흐린 위치는 동의가 있을 때만 싣고, 다시 시도는
         read() {
           reads += 1;
           window.dispatchEvent(
-            new CustomEvent("icatch:location", { detail: { type: "position", ...position } }),
+            new CustomEvent("icatch:location", {
+              detail: position
+                ? { type: "position", ...position }
+                : { type: "unavailable", reason: "not-granted" },
+            }),
           );
         },
         openSettings() {},
@@ -669,6 +674,26 @@ describe("🚨 흐린 위치는 동의가 있을 때만 싣고, 다시 시도는
       expect(reads).toBe(1);
     },
     TWO_RUNS,
+  );
+
+  it(
+    "동의는 있는데 위치 없이 나간 줄만 표시한다 — 놀이 추천 아래 안내가 이 값으로 선다 (#638 리뷰)",
+    async () => {
+      position = null;
+      const without = sendSharing("지어낸 한 줄", true);
+      await settled(without);
+      expect(turn(without).withoutLocation).toBe(true);
+
+      position = { lat: 35.123_456, lon: 129.987_654 };
+      const withLocation = sendSharing("다른 한 줄", true);
+      await settled(withLocation);
+      expect(turn(withLocation).withoutLocation).toBe(false);
+
+      const noConsent = sendSharing("또 한 줄", false);
+      await settled(noConsent);
+      expect(turn(noConsent).withoutLocation).toBe(false);
+    },
+    TWO_RUNS * 2,
   );
 
   it("말풍선의 본문에는 위치가 남지 않는다", async () => {
