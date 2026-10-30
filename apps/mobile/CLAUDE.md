@@ -88,6 +88,8 @@ Android 앱이 요청하는 권한은 `INTERNET` · `RECORD_AUDIO` 둘이다 (�
   `denied` 로 나눠 보낸다 — 다시 누르면 될 보호자를 설정 화면으로 보내지 않는다.
 - 🚨 **`abort()` 는 듣고 있을 때만 부른다** (`listeningRef`). 라이브러리의 `abort()` 는 늘 웹에 `end` 를 보내는데, 첫 탭의
   권한 창도 Android 에서는 `background` 라서 거기서 부르면 웹은 꺼진 줄 알고 셸은 허용 뒤 듣기 시작한다.
+- 🚨 **웹의 "그만" 으로 `stop()` 한 뒤의 오류는 웹에 넘기지 않는다** (`speechErrorReason` 의 `stopping`). Google 의 기기 안
+  인식기는 `stop()` 에 늘 `client`(`ERROR_CLIENT`)를 내서, 완료를 누를 때마다 "시작하지 못했어요" 가 떴다 (Android 17 실기기).
 - 한국어 모델이 없으면 `androidTriggerOfflineModelDownload` 로 받기를 걸고 "내려받고 있어요" 라고 알린다. 받는 것은 인식 모델이다.
 - 🚨 **라이브러리가 인식 결과를 logcat(`Log.d`)에 찍는 세 줄을 패치로 뺐다** (`patches/expo-speech-recognition@57.1.1.patch`
   · `pnpm-workspace.yaml` 의 `patchedDependencies`). 릴리스 빌드에서도 남아서 아이 얘기 원문이 USB 디버깅 · 버그 리포트에

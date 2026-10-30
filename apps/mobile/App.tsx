@@ -229,6 +229,8 @@ function Shell() {
   /**
    * 권한을 확인하는 동안 웹이 "그만" 을 보냈는가. 그때 인식기는 아직 없어서 `stop()` 이 아무 일도 안 하고
    * `end` 도 오지 않는다 — 확인이 끝난 뒤 시작하면 웹은 꺼진 줄 아는데 셸은 듣는다.
+   * 이 값이 참이면 인식기 오류도 웹에 알리지 않는다 (`speechErrorReason` 의 `stopping`). 🚨 `startListening` 에서만
+   * 거짓으로 되돌린다 — `start()` 뒤에 되돌리면 완료를 누를 때마다 "시작하지 못했어요" 가 다시 뜬다.
    */
   const stopRequestedRef = useRef(false);
 
@@ -333,7 +335,7 @@ function Shell() {
             .catch(() => sendSpeech({ type: "error", reason: "unsupported" }));
           return;
         }
-        const reason = speechErrorReason(event.error);
+        const reason = speechErrorReason(event.error, stopRequestedRef.current);
         if (reason) sendSpeech({ type: "error", reason });
       }),
       recognizer.addListener("end", () => {

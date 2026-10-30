@@ -143,8 +143,13 @@ export function volumeLevel(value: number): number {
  * - `aborted` 는 셸이 스스로 멈춘 것이다 (백그라운드 · 웹의 "그만"). 이어서 오는 `end` 로 충분하다.
  * - `language-not-supported` 는 여기서 정하지 않는다. 셸이 모델 받기를 걸어 보고 그 결과로
  *   `preparing` 이나 `unsupported` 를 고른다.
+ * - `stopping` — 웹의 "그만" 으로 셸이 `stop()` 을 부른 뒤다. 그 뒤의 오류는 코드와 상관없이 알리지 않는다.
+ *   (`language-not-supported` 는 셸이 이 함수보다 먼저 따로 다뤄서 그만 뒤에도 모델 받기를 건다.)
+ *   🚨 Google 의 기기 안 인식기는 `stop()` 에 늘 `client`(`ERROR_CLIENT`)를 낸다 (SM-S942N · Android 17 실기기).
+ *   알리면 보호자가 완료를 누를 때마다 "시작하지 못했어요" 가 뜬다. 들은 글자는 이미 입력창에 있다.
  */
-export function speechErrorReason(code: string): SpeechErrorReason | null {
+export function speechErrorReason(code: string, stopping = false): SpeechErrorReason | null {
+  if (stopping) return null;
   switch (code) {
     case "aborted":
     case "language-not-supported":
