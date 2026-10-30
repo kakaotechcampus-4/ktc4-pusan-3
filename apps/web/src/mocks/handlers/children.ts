@@ -184,7 +184,6 @@ export const childrenHandlers = [
         .filter(([name, value]) => {
           if (!ONBOARDING_FIELDS.has(name)) return false;
           if (value === null) return true;
-          // ⚠️ 칸별 범위는 서버보다 앞서 있다 (#627 · 서버는 #628 · `profile.ts` 의 `rejectGrowthBody` 주석).
           return (
             (name === "height_cm" || name === "weight_kg") &&
             (typeof value !== "number" ||

@@ -38,12 +38,8 @@ export function resetProfileState(): void {
 }
 
 /**
- * 키 · 몸무게의 칸별 범위(`lib/measurement.ts` · #627)와 서버 `_check_measured_on`
+ * 서버 `HeightCm` · `WeightKg` 의 칸별 범위(`lib/measurement.ts` · #628)와 `_check_measured_on`
  * (아이 생일부터 오늘까지) 를 흉내 낸다. 걸리면 서버와 같은 400 응답, 없으면 `null`.
- *
- * ⚠️ **범위는 지금 서버보다 앞서 있다.** 서버 `Measurement` 는 아직 두 칸 모두 `0 < x ≤ 300` 이고,
- *    #627 이 정한 칸별 범위는 #628 에서 맞춘다. 화면이 먼저 막아서 화면으로는 이 차이에
- *    닿지 않는다. 서버가 맞춘 뒤 이 줄을 지운다.
  */
 function rejectGrowthBody(body: {
   measured_on?: string;

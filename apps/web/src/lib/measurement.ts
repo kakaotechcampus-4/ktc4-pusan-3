@@ -14,7 +14,8 @@ export type MeasurementRead = number | null | "invalid" | "too_precise" | "out_o
 export type MeasurementKind = "height" | "weight";
 
 /**
- * 칸마다 받는 범위 (#627). 백엔드 `Measurement` 도 이 값으로 맞춘다 (#628).
+ * 칸마다 받는 범위 (#627). 서버 `HeightCm` · `WeightKg` 와 같은 값이다
+ * (`apps/api/app/api/v1/schemas/children.py` · #628). 바꾸면 양쪽을 같이 바꾼다.
  *
  * 🚨 **평가가 아니라 오타 막기다** (최상위 §2). 실제 아이가 있을 수 있는 값은 넉넉히 감싸고
  *    (이른둥이부터 서비스 상한 나이인 20세까지), **단위 착각만** 잡는다 — 키를 m 나 mm 로,
@@ -45,9 +46,9 @@ export function parseMeasurement(kind: MeasurementKind, value: string): Measurem
   if (!isMeasurementInRange(kind, parsed)) return "out_of_range";
 
   /**
-   * 🚨 **소수 둘째 자리부터는 받지 않는다.** 서버가 소수 한 자리로 반올림해 저장해서
-   *    `104.25` 를 적으면 `104.3` 이 남는다 — 적은 값과 보이는 값이 말없이 달라진다.
-   *    끝의 0(`104.20`)은 같은 값이라 센다.
+   * 🚨 **소수 둘째 자리부터는 받지 않는다.** 서버도 반올림하지 않고 400 으로 받는다 (#628) —
+   *    반올림해 저장하면 적은 값과 보이는 값이 말없이 달라진다. 범위와 같은 이유로 화면이 먼저
+   *    막아 그 칸에 이유를 붙인다. 끝의 0(`104.20`)은 같은 값이라 센다 (서버도 받는다).
    */
   const decimals = (trimmed.split(".")[1] ?? "").replace(/0+$/, "");
   if (decimals.length > 1) return "too_precise";
