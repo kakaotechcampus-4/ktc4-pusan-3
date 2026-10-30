@@ -15,6 +15,7 @@
 "먹었어" 는 락스와 다른 마디다. 걸지 않는 것
     - 부정 · 금지 · 조건: "안 마셨어" · "마시면 안 돼" · "먹지 마"
     - 어른이 주어인 마디: "엄마는 와인 마시고 아이는 주스 마셨어" 의 앞 마디
+    - 어른을 꾸미는 동사: "소주 마시는 아빠 옆에서 보리차 마셨어"
     - 숟가락을 세는 "술": "밥 두 술 먹었어"
 돌려 말한 것("어른 음료를 한 모금")은 여기서 못 잡는다. Supervisor 의 `hazard` 라벨이 받는다 —
 되묻기 답으로 와도 같다 (pipeline `_handle_continuation`).
@@ -61,6 +62,8 @@ _ADULTS = (
 _ADULT_SELF = ("내가", "나는", "나도", "저는", "제가")
 _SUBJECT_PARTICLES = ("은", "는", "이", "가", "께서", "도")
 _CHILDREN = ("아이", "애", "우리애", "딸", "아들", "아기")
+# 뒤 낱말을 꾸미는 동사의 끝 — "마시는" · "마시던" · "먹은" · "마신" · "피운" · "삼킨" · "맛본"
+_MODIFIER_ENDINGS = ("는", "던", "은", "신", "운", "킨", "본")
 
 _DRUG = Term(
     "drug",
@@ -133,6 +136,17 @@ _ALCOHOL = Term(
         "네술",
         "몇술",
         "반술",
+        "첫술",
+        "다섯술",
+        "여섯술",
+        "일곱술",
+        "여덟술",
+        "아홉술",
+        "열술",
+        "서너술",
+        "여러술",
+        "두어술",
+        "댓술",  # 네댓 · 너댓
     ),
 )
 _TOBACCO = Term("tobacco", ("담배", "담뱃", "꽁초", "니코틴"))
@@ -274,9 +288,12 @@ def _clause_hazards(words: list[str]) -> set[str]:
     def word_at(position: int) -> int:
         return bisect_right(starts, position) - 1
 
+    def child_did(span: _Span) -> bool:
+        return not _not_done(joined, span) and not _modifies_adult(words, word_at(span[1]))
+
     found = {key for key, _, _ in match_spans(joined, (_DRUG,))}
-    intake = [span for span in match_spans(joined, (_INTAKE,)) if not _not_done(joined, span)]
-    swallow = [span for span in match_spans(joined, (_SWALLOW,)) if not _not_done(joined, span)]
+    intake = [span for span in match_spans(joined, (_INTAKE,)) if child_did(span)]
+    swallow = [span for span in match_spans(joined, (_SWALLOW,)) if child_did(span)]
     for terms, verbs in ((_WITH_INTAKE, intake), ((_OBJECT,), swallow)):
         for key, start, end in match_spans(joined, terms):
             name_word = word_at(start)
@@ -294,6 +311,16 @@ def _not_done(joined: str, span: _Span) -> bool:
     """동사가 부정 · 조건 · 금지로 쓰였는가."""
     _, start, end = span
     return joined[max(0, start - 1) : start] in _NEGATIONS or joined[end:].startswith(_NOT_DONE)
+
+
+def _modifies_adult(words: list[str], verb_word: int) -> bool:
+    """동사가 바로 뒤 어른을 꾸미는가. "소주 마시는 아빠" 는 아빠가 마신 것이다."""
+    following = words[verb_word + 1 : verb_word + 2]
+    return (
+        bool(following)
+        and words[verb_word].endswith(_MODIFIER_ENDINGS)
+        and following[0].startswith(_ADULTS)
+    )
 
 
 def _adult_subject(before: list[str]) -> bool:
