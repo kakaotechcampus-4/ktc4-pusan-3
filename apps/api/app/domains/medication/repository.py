@@ -262,6 +262,18 @@ async def find_course(
     return await session.scalar(stmt)
 
 
+async def lock_doses(session: AsyncSession, *, schedule_id: uuid.UUID) -> None:
+    """그 코스의 회차 행을 모두 잠근다. 수정이 남는 회차를 검사하기 전에 부른다.
+
+    체크(`find_dose`)는 회차 행만 잠그고 코스 행은 잡지 않아서, 수정이 쥔 코스 잠금으로는 막지
+    못한다. 검사와 삭제 사이에 체크가 commit 되면 지울 회차였던 것이 체크돼 삭제를 피하고 새 기간
+    밖에 남는다. 잠금 순서는 코스에서 회차로 한 방향뿐이라 서로 기다리지 않는다.
+    """
+    await session.execute(
+        select(MedicationDose.id).where(MedicationDose.schedule_id == schedule_id).with_for_update()
+    )
+
+
 async def has_kept_outside(
     session: AsyncSession,
     *,

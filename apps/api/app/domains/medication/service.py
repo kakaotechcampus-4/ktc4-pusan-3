@@ -40,6 +40,7 @@ from app.domains.medication.repository import (
     has_kept_outside,
     list_courses,
     list_doses,
+    lock_doses,
     write_dose_check,
 )
 from app.rules.medication_course import course_field_errors, dose_dates
@@ -316,6 +317,8 @@ async def revise_course(
         raise CourseNotFound
     _validate(data, today=today, known_codes=course.symptom_codes)
     now_time = now.astimezone(KST).time()
+    # 체크가 검사와 삭제 사이에 끼어들지 못하게 회차를 먼저 잠근다
+    await lock_doses(session, schedule_id=course.id)
     if await has_kept_outside(
         session,
         schedule_id=course.id,
