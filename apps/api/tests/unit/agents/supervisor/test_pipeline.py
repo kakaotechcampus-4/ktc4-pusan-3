@@ -772,7 +772,7 @@ async def test_RC10_알레르기_등록은_안내하고_증상은_저장한다(
 
     guidance = _of(events, Guidance)[0]
     assert guidance.code == "safety_record"
-    assert guidance.deeplink == "settings/health-safety"
+    assert guidance.deeplink == "profile"
     rows = await memory_context.store.query_observations(domain="health", child_id=CHILD)
     assert len(rows) == 1
     assert result.failed is None

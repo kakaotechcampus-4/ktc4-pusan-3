@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 class SegmentKind(StrEnum):
     RECORD = "record"  # Memory 몫(저장·조회·수정·삭제 전부)
     REQUEST = "request"  # 도메인 Agent 요청
-    GUARDED = "guarded"  # 알레르기 등록 / 진단 문의 → 정해진 안내
+    GUARDED = "guarded"  # 알레르기 등록 / 진단 문의 / 키·몸무게 기록 → 정해진 안내
     OUT_OF_SCOPE = "out_of_scope"  # 구매·예약·기관 연락·대신 발송
     UNCLEAR = "unclear"  # 무엇을 하라는지 알 수 없음
 
@@ -41,6 +41,7 @@ class DomainAgentName(StrEnum):
 class GuardReason(StrEnum):
     SAFETY_RECORD = "safety_record"  # 알레르기·만성질환 등록·수정은 보호자 직접 입력
     DIAGNOSIS = "diagnosis"  # 진단·결핍 판정·치료식·약·영양제 추천은 하지 않음
+    GROWTH_RECORD = "growth_record"  # 키·몸무게는 채팅으로 저장하지 않고 성장 기록 화면으로 (#625)
 
 
 class _Strict(BaseModel):
@@ -124,7 +125,8 @@ class Segment(_Strict):
         Field(
             description=(
                 "record(저장·조회·수정·삭제) / request(도메인 Agent 요청) / "
-                "guarded(알레르기 등록·진단 문의) / out_of_scope(구매·예약·대신 발송) / unclear"
+                "guarded(알레르기 등록·진단 문의·키 몸무게 기록) / "
+                "out_of_scope(구매·예약·대신 발송) / unclear"
             )
         ),
     ]
@@ -157,7 +159,7 @@ class Segment(_Strict):
         GuardReason | None,
         Field(
             default=None,
-            description="kind=guarded 면 반드시 하나. safety_record / diagnosis",
+            description="kind=guarded 면 반드시 하나. safety_record / diagnosis / growth_record",
         ),
     ]
 
