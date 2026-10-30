@@ -77,10 +77,19 @@ hydrate 직후 그릴 것과 **같은 것**을 둔다. 다른 것을 끼우면 �
   ⚠️ 하단 네비 네 칸에서는 셸이 히스토리로 가지 않고 두 번 눌러 종료한다 (#462). 그래서 이 이유는 **하위 화면**(설정 · 11-1 등)에서 아이를 바꾼 경우에만 남는다 — URL 을 고른 첫째 이유(위)는 그대로다
 - 쿼리 키가 이미 `qk.child(cid)` 스코프라 URL 파라미터와 1:1 이다
 
-⚠️ 계약서의 `deeplink` 는 `settings/consent` 처럼 **아이를 안 담은 상대 경로**다.
-🚨 **그 값을 주소로 쓰지 않는다.** 서버가 준 문자열이라 지금 없는 경로(`settings/consents`)가 오기도 하고,
-외부 주소가 오면 화면이 앱 밖으로 나간다. 가는 곳은 10 설정 한 곳(`/child/{childId}/settings`)이고,
-딥링크는 **어느 구역인지 힌트**로만 쓴다 (`ConsentRequiredCard`).
+⚠️ 계약서의 `deeplink` 는 **아이를 안 담은 상대 경로**다. 서버가 내는 값은 `profile` · `profile/growth` · `settings`
+셋뿐이고 정본은 [`apps/api/app/core/deeplinks.py`](../../apps/api/app/core/deeplinks.py) 다 (#625 — 허용 목록 테스트가 웹 경로와 맞는지 본다).
+
+| 어디서 | code | deeplink | 웹이 보내는 곳 |
+| --- | --- | --- | --- |
+| 04 안내 (`guidance`) | `safety_record` | `profile` | 11 아이 프로필 |
+| 04 안내 (`guidance`) | `growth_record` | `profile/growth` | 11-1 키 · 몸무게 |
+| 05 `guards` | `safety_unknown` | `profile` | 11 아이 프로필 |
+| 403 `consent_required` (건강정보) | — | `settings` | 10 설정 |
+
+🚨 **그 값을 주소로 쓰지 않는다.** 서버가 준 문자열이라 없는 경로(예전 `settings/health-safety` · 목의 `settings/consents`)가
+오기도 했고, 외부 주소가 오면 화면이 앱 밖으로 나간다. 가는 곳은 화면의 code 별 표가 정하고(`run-result.tsx` 의 `GUIDANCE_KIND` ·
+05 배너 · `ConsentRequiredCard`), 딥링크는 **어느 구역인지 힌트**로만 쓴다. 새 안내가 생기면 서버 표와 화면 표를 같이 고친다.
 
 클라이언트 컴포넌트에서는 `useChildId()`, 서버 컴포넌트에서는 `params` 를 그대로 쓴다.
 **스토어를 읽어 화면을 그리지 않는다.**

@@ -342,11 +342,12 @@ def test_정답_구간이_원문에_있다() -> None:
     assert check_cases() == []
 
 
-def test_food_유형은_세_가지다() -> None:
+def test_food_유형은_네_가지다() -> None:
     assert {member.value for member in FoodTaskType} == {
         "meal_recommendation",
         "nutrient_analysis",
         "daycare_meal",
+        "food_check",
     }
 
 
@@ -358,10 +359,28 @@ def test_kind_와_guard_값() -> None:
         "out_of_scope",
         "unclear",
     }
-    assert {member.value for member in GuardReason} == {"safety_record", "diagnosis", "hazard"}
+    assert {member.value for member in GuardReason} == {
+        "safety_record",
+        "diagnosis",
+        "growth_record",
+        "hazard",
+    }
 
 
 def test_segment_는_enum_이_아니라_값을_담는다() -> None:
     # use_enum_values — routing 과 JSONL 이 문자열로 다룬다
     segment = Segment.model_validate({"text": "x", "kind": "record", "work": "observe"})
     assert segment.kind == "record" and segment.work == "observe"
+
+
+def test_food_check_조각을_받고_route_스펙에도_있다() -> None:
+    segment = Segment.model_validate(
+        {
+            "text": "땅콩소스 먹여도 될까?",
+            "kind": "request",
+            "agent": "food",
+            "food_task": "food_check",
+        }
+    )
+    assert segment.food_task == "food_check"
+    assert "food_check" in json.dumps(ROUTE_TOOL_SPEC, ensure_ascii=False)

@@ -1,6 +1,9 @@
 """분기 확인 케이스와 채점.
 
-- RC01~RC48  복합 발화. Supervisor 가 조각을 어떻게 나누고 어디로 보내는지 본다
+- RC01~RC27  복합 발화. Supervisor 가 조각을 어떻게 나누고 어디로 보내는지 본다
+- RC28~RC47  위험 물질(guarded/hazard)과 약 · 오탐 대조 (#626)
+- RC48~RC54  키 · 몸무게 기록(guarded/growth_record)과 성장 질문(request/growth) 대조 (#625)
+- RC55       숟가락을 세는 '술' 대조 (#633 리뷰)
 - T01~T30    라이브 eval 입력의 정답 Supervisor 출력. Step 7 이 Memory 힌트로 쓰고,
              Supervisor 채점에서는 "쉬운 30개" 대조군이 된다
 - score_split()  Step 5(Supervisor 단독)와 Step 9(끝까지)가 같은 기준으로 잰다
@@ -30,6 +33,7 @@ INPUT_PATH = Path(__file__).with_name("test_input.txt")
 
 REC = FoodTaskType.MEAL_RECOMMENDATION
 NUT = FoodTaskType.NUTRIENT_ANALYSIS
+CHECK = FoodTaskType.FOOD_CHECK
 
 
 @dataclass(frozen=True)
@@ -492,15 +496,139 @@ RC_CASES: tuple[RoutingCase, ...] = (
         (R("마약김밥 맛있게 먹었어", OBSERVE),),
         watch="이름에 '마약' 이 든 음식",
     ),
+    # ── RC48~RC54 — 키 · 몸무게는 채팅으로 저장하지 않는다 (#625) ──
     RoutingCase(
         "RC48",
+        "오늘 키 재 보니 105cm 였어.",
+        (G("오늘 키 재 보니 105cm 였어", GuardReason.GROWTH_RECORD),),
+        watch="잰 값은 record 가 아니라 성장 기록 안내",
+    ),
+    RoutingCase(
+        "RC49",
+        "몸무게는 1톤",
+        (G("몸무게는 1톤", GuardReason.GROWTH_RECORD),),
+        watch="멘토 리뷰 — 값이 터무니없어도 같은 안내. '기록했다' 답이 나가면 안 된다",
+    ),
+    RoutingCase(
+        "RC50",
+        "오늘 몸무게 재 보니 16kg 이더라. 저녁엔 뭐 먹일까?",
+        (
+            G("오늘 몸무게 재 보니 16kg 이더라", GuardReason.GROWTH_RECORD),
+            Q("저녁엔 뭐 먹일까?", FOOD, REC),
+        ),
+        watch="안내 + 요청",
+    ),
+    RoutingCase(
+        "RC51",
+        "점심에 카레 먹었어. 키는 110cm 됐어.",
+        (
+            R("점심에 카레 먹었어", OBSERVE),
+            G("키는 110cm 됐어", GuardReason.GROWTH_RECORD),
+        ),
+        watch="안내 때문에 같이 온 기록이 사라지지 않나",
+    ),
+    RoutingCase(
+        "RC52",
+        "얼마나 컸어?",
+        (Q("얼마나 컸어?", GROWTH),),
+        watch="대조군 — 성장 추이를 묻는 말은 growth_review 요청 그대로",
+    ),
+    RoutingCase(
+        "RC53",
+        "잘 크고 있어?",
+        (Q("잘 크고 있어?", GROWTH),),
+        watch="대조군 — 판정을 묻는 말도 growth_review 요청 (판정은 안 한다)",
+    ),
+    RoutingCase(
+        "RC54",
+        "10cm 컸는데 많이 큰 거야?",
+        (Q("10cm 컸는데 많이 큰 거야?", GROWTH),),
+        watch="대조군 — 값이 들어 있어도 묻는 말이면 growth_review 요청",
+    ),
+    # ── RC55 — 위험 물질 오탐 대조 (#633 리뷰) ──
+    RoutingCase(
+        "RC55",
         "아침에 죽을 두 술 먹고 말았어",
         (R("아침에 죽을 두 술 먹고 말았어", OBSERVE),),
         watch="숟가락을 세는 '술' — 규칙이 술로 읽지 않는가 (#633 리뷰)",
     ),
 )
 
-ALL_CASES: tuple[RoutingCase, ...] = RC_CASES + T_CASES
+# ── FC01~FC09 — 정해진 음식을 먹여도 되는지 묻는 말(food_check)과 그 경계 ────────
+FC_CASES: tuple[RoutingCase, ...] = (
+    RoutingCase(
+        "FC01",
+        "땅콩소스 먹여도 될까?",
+        (Q("땅콩소스 먹여도 될까?", FOOD, CHECK),),
+        watch="섭취 확인 — 사용자 예시",
+    ),
+    RoutingCase(
+        "FC02",
+        "견과류 들어간 메뉴 추천해줘.",
+        (Q("견과류 들어간 메뉴 추천해줘", FOOD, REC),),
+        watch="알레르기 음식이 든 추천 요청은 추천이다",
+    ),
+    RoutingCase(
+        "FC03",
+        "꿀 넣은 이유식 먹여도 돼?",
+        (Q("꿀 넣은 이유식 먹여도 돼?", FOOD, CHECK),),
+        stage="infant_weaning",
+        watch="T29 — 12개월 전 꿀",
+    ),
+    RoutingCase(
+        "FC04",
+        "이거 먹여도 돼?",
+        (Q("이거 먹여도 돼?", FOOD, CHECK),),
+        watch="음식 이름이 없다 — Food 가 무슨 음식인지 되묻는다",
+    ),
+    RoutingCase(
+        "FC05",
+        "땅콩버터 먹여도 돼? 안 되면 다른 간식 추천해줘.",
+        (
+            Q("땅콩버터 먹여도 돼?", FOOD, CHECK),
+            Q("안 되면 다른 간식 추천해줘", FOOD, REC),
+        ),
+        watch="둘로 나눈다 — 둘 다 Food 라 Agent 상한에 안 걸린다",
+    ),
+    RoutingCase(
+        "FC06",
+        "해열제 더 먹여도 돼?",
+        (G("해열제 더 먹여도 돼?", GuardReason.DIAGNOSIS),),
+        watch="약은 food 가 아니다",
+    ),
+    RoutingCase(
+        "FC07",
+        "새우깡 먹어도 괜찮아?",
+        (Q("새우깡 먹어도 괜찮아?", FOOD, CHECK),),
+        watch="프롬프트 예시에 없는 말투",
+    ),
+    RoutingCase(
+        "FC08",
+        "요즘 매일 볶음밥만 먹는데 괜찮아?",
+        (
+            R("요즘 매일 볶음밥만 먹는데", OBSERVE, strict=False),
+            Q("괜찮아?", FOOD, NUT),
+        ),
+        watch='식습관을 묻는 "괜찮아?" 는 영양 분석이다',
+    ),
+    RoutingCase(
+        "FC09",
+        "우유 알레르기 있는데 치즈 먹여도 돼?",
+        (
+            G("우유 알레르기 있는데", GuardReason.SAFETY_RECORD, strict=False),
+            Q("치즈 먹여도 돼?", FOOD, CHECK),
+        ),
+        watch="알레르기를 말하면서 섭취를 묻는다 — 등록은 안내, 질문은 섭취 확인",
+    ),
+    RoutingCase(
+        "FC10",
+        "지금 또 먹여도 돼?",
+        (Q("지금 또 먹여도 돼?", DomainAgentName.HEALTH),),
+        watch="무엇을 먹일지 없이 시점만 묻는 말 — 약 이야기라 health (Health T11)",
+    ),
+)
+
+ALL_CASES: tuple[RoutingCase, ...] = RC_CASES + T_CASES + FC_CASES
 CASES_BY_ID: dict[str, RoutingCase] = {case.case_id: case for case in ALL_CASES}
 
 

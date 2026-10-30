@@ -30,14 +30,14 @@
 
 | Agent | 라벨 | 왜 묶음이 갈리나 |
 | --- | --- | --- |
-| Food | `meal_recommendation` · `nutrient_analysis` · `daycare_meal` | 묶음 5 vs 7, `health_safety` 사전 확인 여부. `daycare_meal`만 쓰기를 갖는다 |
+| Food | `meal_recommendation` · `nutrient_analysis` · `daycare_meal` · `food_check` | 묶음 5 vs 7, `health_safety` 사전 확인 여부. `daycare_meal`만 쓰기를 갖는다. `food_check`(정해진 음식을 먹여도 되는지)는 열린 tool 없이 코드가 등록 알레르기 · 연령 규칙으로 답한다(모델 0회) |
 | Activity | 없음 (놀이 추천 하나) | 실내/야외는 날씨·시간 조회 **결과**로 갈린다 — 런타임 판단이지 라벨이 아니다 |
 | Growth | `learning_suggestion` · `routine_coaching` · `book_suggestion` · `growth_review` | `growth_doc` 조회 · 도서 API · 차분(모델 0회)이 서로 겹치지 않는다 |
 | Health | `visit_summary` · `schedule_check` · `place_lookup` · `medication` · `care_handoff` | tool 집합이 서로 겹치지 않고, `medication`만 쓰기를 갖는다. `care_handoff`는 모델 0회 |
 
 라벨은 **Tool 묶음이 갈릴 때만** 만든다.
 
-> **라벨이 10개다.** 이전 판이 스스로 "라벨을 늘릴 때마다 오분류가 는다"고 적어 뒀는데 그 사이 다섯 배가 됐다.
+> **라벨이 13개다.** 이전 판이 스스로 "라벨을 늘릴 때마다 오분류가 는다"고 적어 뒀는데 그 사이 다섯 배가 됐다.
 > 프롬프트를 쓸 때 **라벨별 경계 예시를 한 번에 뽑아 검토**해야 한다.
 
 ---
@@ -79,7 +79,7 @@
 
 ### 3-4. Food ↔ Health (알레르기)
 
-겹치지 않는다. Food는 확정된 `health_safety`를 **코드 필터**로 쓸 뿐이고, **둘 다 `health_safety`에 쓰지 않는다.** 알레르기 후보 감지는 v1에서 뺐다 — 등록은 보호자가 앱에서 직접 하는 것 하나뿐이다.
+겹치지 않는다. Food는 확정된 `health_safety`를 **코드 필터**로 쓸 뿐이고, **둘 다 `health_safety`에 쓰지 않는다.** 알레르기 후보 감지는 v1에서 뺐다 — 등록은 보호자가 앱에서 직접 하는 것 하나뿐이다. 섭취 확인(`food_check`)도 `health_safety` 를 읽기만 하고, 판정 · 문구는 코드다 — 약 · 영양제를 먹여도 되는지는 Food 가 아니라 `guarded/diagnosis` 다.
 
 ---
 
@@ -97,8 +97,21 @@
 "잘 크고 있어?"                   → growth / growth_review  (판정 없이 추이 + 검진 안내)
 "10cm 컸는데 많이 큰 거야?"        → growth / growth_review  (같음)
 
+[키 · 몸무게 기록 — 채팅으로 저장하지 않는다 (#625)]
+"오늘 키 재 보니 105cm 였어"       → guarded / growth_record  (11-1 성장 기록 안내, deeplink profile/growth)
+"몸무게는 1톤"                    → guarded / growth_record  (값이 터무니없어도 같다)
+"점심에 카레 먹었어. 키는 110cm 됐어" → record / observe "점심에 카레 먹었어" + guarded / growth_record
+
 [health / medication]
 "하루 세 번 항생제 먹여야 해"       → health / medication  (Memory 아님)
+
+[food — 섭취 확인 ↔ 추천]
+"땅콩소스 먹여도 될까?"             → food / food_check
+"견과류 들어간 메뉴 추천해줘"        → food / meal_recommendation  (알레르기 음식이 들어도 추천 요청)
+"땅콩버터 먹여도 돼? 안 되면 간식 추천해줘" → food / food_check + food / meal_recommendation
+"뭐 먹여도 돼?"                    → food / meal_recommendation  (음식이 정해지지 않음)
+"해열제 더 먹여도 돼?"              → guarded / diagnosis  (약은 food 가 아님)
+"지금 또 먹여도 돼?"                → health  (음식 없이 시점만 — 약 이야기)
 
 [record ↔ unclear (#484)]
 "딸기 맛있다" · "나 딸기 좋아해"     → unclear (보호자 자신의 감상 · 얘기)
@@ -114,3 +127,7 @@
 ```
 
 애매하면 **판정·확인이 붙는 쪽**으로 보낸다.
+
+**키 · 몸무게는 묻는 말이면 growth, 값을 알리는 말이면 guarded 다.** `child_growth_log` 는 보호자가 잰 날짜와
+단위를 화면에서 넣는 기록이라(루트 §2) 채팅 쓰기 경로가 없다. 예전에는 record 로 가서 Memory 가 저장할 곳 없이
+"기록했어요" 라고 답했다(멘토 리뷰). 같이 온 기록 · 요청은 다른 guarded 와 같이 잘라서 보낸다.

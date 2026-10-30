@@ -112,6 +112,22 @@ test.describe("성공과 실패 · 안내를 한 화면에 (§2 실행 NF-06)", 
     });
   });
 
+  test.describe("guidance_growth — 키·몸무게는 채팅으로 저장하지 않는다 (#625)", () => {
+    test.use({ scenario: "guidance_growth" });
+
+    test("저장 0건이라고 말하고, 직접 입력하는 곳은 11-1 성장 기록이다", async ({ page }) => {
+      await sendFromHome(page, "몸무게는 1톤");
+      const reply = turn(page, "몸무게는 1톤");
+      await expect(reply.getByRole("heading", { name: "적어주신 말을 확인했어요" })).toBeVisible();
+      await expect(reply.getByText("키·몸무게", { exact: true })).toBeVisible();
+      await expect(reply.getByRole("link", { name: "직접 입력하러 가기" })).toHaveAttribute(
+        "href",
+        `/child/${CHILD}/profile/growth`,
+      );
+      await expect(reply.getByText("이렇게 저장했어요")).toHaveCount(0);
+    });
+  });
+
   test.describe("guidance_mixed — 한 줄에 저장과 안내가 섞였다", () => {
     test.use({ scenario: "guidance_mixed" });
 

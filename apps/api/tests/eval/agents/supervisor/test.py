@@ -60,6 +60,7 @@ from app.rules.age import Stage
 from tests.eval.agents.food.world import build_world
 from tests.eval.agents.routing_cases import (
     CASES_BY_ID,
+    FC_CASES,
     RC_CASES,
     T_CASES,
     R,
@@ -128,7 +129,7 @@ RESULT_PATH = Path(
 INPUT_PRICE = float(os.getenv("LLM_INPUT_PRICE_PER_M", "0"))
 OUTPUT_PRICE = float(os.getenv("LLM_OUTPUT_PRICE_PER_M", "0"))
 
-_CASES = (*RC_CASES, *T_CASES)
+_CASES = (*RC_CASES, *T_CASES, *FC_CASES)
 
 
 async def _no_commit() -> None:

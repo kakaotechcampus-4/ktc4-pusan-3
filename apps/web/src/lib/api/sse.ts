@@ -102,10 +102,12 @@ export interface GuidanceEvent {
     | "diagnosis"
     /** 구매·예약 대행은 하지 않는다. */
     | "out_of_scope"
+    /** 키·몸무게는 채팅으로 저장하지 않는다 — 잰 날짜와 함께 11-1 에서 넣는다 (#625). */
+    | "growth_record"
     | (string & {});
   message: string;
   /**
-   * ⚠️ 계약서의 `deeplink` 와 같이 **아이를 안 담은 상대 경로**다 (`settings/health-safety`).
+   * ⚠️ 계약서의 `deeplink` 와 같이 **아이를 안 담은 상대 경로**다 (`profile` · `profile/growth`).
    * 🚨 주소로 쓰지 않는다 — 어느 구역인지 **힌트**로만 쓴다 (apps/web/CLAUDE.md §3).
    *    서버가 키는 늘 실어 보내고 값이 없으면 `null` 이다 (`apps/api/app/api/runs/translate.py`).
    */

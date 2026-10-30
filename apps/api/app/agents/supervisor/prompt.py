@@ -50,9 +50,15 @@ _RECORD = """
 _REQUEST = """
 [request — 도메인 Agent 요청]
 - agent 는 food · activity(놀이·여가) · growth(학습·발달) · health 중 하나다.
-- food로 보내는 건 세 가지다.
+- food로 보내는 건 네 가지다.
   meal_recommendation  뭘 먹일까 · 메뉴 · 간식 · 도시락 · 이유식 · 뭘 챙겨 먹이면 좋을까
   nutrient_analysis    영양이 괜찮은지 · 영양소 · 골고루 먹었는지 · 과잉/부족
+  food_check           정해진 음식을 먹여도 되는지 묻는 말 — "○○ 먹여도 돼?" · "○○ 먹어도 괜찮아?" ·
+                       "이거 먹여도 돼?". 음식이 정해져 있지 않으면("뭐 먹여도 돼?")
+                       meal_recommendation 이다.
+                       약 · 영양제는 food 가 아니라 guarded/diagnosis 다.
+                       무엇을 먹일지 없이 시점 · 횟수만 묻는 말("지금 또 먹여도 돼?")은
+                       약 이야기라 health 다
   daycare_meal         어린이집·유치원 급식이 실제로 바뀌었다는 말 — 대체식 · 결석.
                        기관 신호(어린이집·유치원·급식)가 있으면 이쪽, 없으면 record다.
                        "다음 주 월요일 어린이집 간식은 요거트 말고 바나나로 바꿔줘" 처럼
@@ -62,12 +68,15 @@ _REQUEST = """
 
 _GUARDED = """
 [guarded — 대신 정해진 안내가 나간다]
-- 아래 셋에 꼭 맞을 때만 guarded 다. 약 · 병원 · 열 같은 낱말이 나왔다고 guarded 로 보내지 않는다.
+- 아래 넷에 꼭 맞을 때만 guarded 다. 약 · 병원 · 열 같은 낱말이 나왔다고 guarded 로 보내지 않는다.
 - safety_record  알레르기·만성질환을 등록·수정해 달라는 요청. 보호자가 직접 입력해야 한다.
 - diagnosis      진단 · 영양 결핍 판정 · 치료식 추천, 어떤 약 · 영양제를 얼마나 · 언제 먹일지
                  묻는 말. 이미 일어난 일은 diagnosis 가 아니다. 보호자가 먹인 약은 record/observe,
                  먹으면 안 되는 약을 먹었거나 한꺼번에 많이 먹은 일은 hazard 다.
                  약을 싫어하는 아이를 어떻게 먹일지처럼 먹이는 습관을 묻는 말은 request/growth 다.
+- growth_record  키 · 몸무게를 쟀다거나 얼마라는 말, 적어 달라는 말. 채팅으로는 저장하지 않는다.
+                 값이 터무니없어도 이쪽이다. 키 · 몸무게 값은 record 로 다시 보내지 않는다.
+                 얼마나 컸는지 · 잘 크고 있는지 묻는 말은 값이 들어 있어도 request/growth 다.
 - hazard         아이가 음식이 아닌 위험한 것(마약류 · 술 · 담배 · 세제 · 농약 · 약품 ·
                  삼킨 물건)을 먹거나 마시거나 삼켰다는 말. 돌려 말해도("어른 음료를 한 모금")
                  이쪽이다. 좋아했다는 말이 붙어도 record 로 나누지 않고 문장 전체를 hazard 로 둔다.
@@ -105,6 +114,13 @@ _EXAMPLES = """
   → record/observe "요즘 밥을 잘 안 먹는데" + request/food/nutrient_analysis "영양은 괜찮을까?"
 - "간식이랑 주말 나들이 추천해줘."
   → request/food/meal_recommendation "간식 추천해줘" + request/activity "주말 나들이 추천해줘"
+- "땅콩소스 먹여도 될까?" → request/food/food_check
+- "견과류 들어간 메뉴 추천해줘." → request/food/meal_recommendation
+- "땅콩버터 먹여도 돼? 안 되면 다른 간식 추천해줘."
+  → request/food/food_check "땅콩버터 먹여도 돼?"
+  + request/food/meal_recommendation "안 되면 다른 간식 추천해줘"
+- "해열제 더 먹여도 돼?" → guarded/diagnosis
+- "지금 또 먹여도 돼?" → request/health
 - "숫자 공부는 어떻게 시켜야 할까?" → request/growth
 - "어린이집에서 계란말이 엄청 많이 먹었대" → request/food/daycare_meal
 - "오늘 급식 대신 두유 받았대" → request/food/daycare_meal
@@ -117,6 +133,10 @@ _EXAMPLES = """
 - "기침약은 하루에 몇 번 먹여?" → guarded/diagnosis
 - "기침약을 혼자 꺼내서 반 통 마셨어" → guarded/hazard 문장 전체 (정해진 양을 넘긴 약)
 - "아빠 맥주를 몰래 마셨는데 맛있대" → guarded/hazard 문장 전체
+- "어제 몸무게 쟀더니 17kg 나왔어" → guarded/growth_record
+- "낮잠 두 시간 잤어. 키 100cm 적어 줘."
+  → record/observe "낮잠 두 시간 잤어" + guarded/growth_record "키 100cm 적어 줘"
+- "작년보다 키가 얼마나 컸어?" → request/growth (성장 추이를 묻는 말)
 - "이 반찬 좀 주문해줘." → out_of_scope
 - "새 블록 세트 하나 주문해줘." → out_of_scope (블록이라도 activity 가 아니다)
 """.strip()
