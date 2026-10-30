@@ -6,6 +6,7 @@
 """
 
 from datetime import UTC, date, datetime, time, timedelta
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import select
@@ -24,6 +25,12 @@ from app.domains.medication.service import DoseNotDue, DoseNotFound, set_dose_ch
 TODAY = date(2026, 10, 27)
 NOW = datetime(2026, 10, 27, 0, 40, tzinfo=UTC)  # 한국 시간 09:40
 LATER = NOW + timedelta(hours=3)
+KST = ZoneInfo("Asia/Seoul")
+
+
+def kst(hour: int, minute: int = 0, *, second: int = 0) -> datetime:
+    """오늘(TODAY)의 한국 시간 시각 — 코스가 멈춘 시각으로 쓴다."""
+    return datetime.combine(TODAY, time(hour, minute, second), tzinfo=KST)
 
 
 @pytest.fixture
@@ -204,19 +211,79 @@ async def test_다른_아이의_회차는_찾지_못하고_값을_바꾸지_않�
     assert await stored(session, dose.id) is None
 
 
-async def test_멈춘_코스의_회차는_체크도_해제도_찾지_못한다(session, child):
-    course, dose = await make_dose(session, child)
+async def stop(session, child, course, at: datetime) -> None:
+    await stop_schedule(session, child_id=child.id, schedule_id=course.id, stopped_at=at)
+
+
+async def test_멈춘_뒤에_예정된_회차는_체크도_해제도_찾지_못한다(session, child):
+    course, dose = await make_dose(session, child, anchor=TimingAnchor.DINNER)  # 오늘 19:30
     await check(session, child, dose)
-    await stop_schedule(
-        session, child_id=child.id, schedule_id=course.id, stopped_at=datetime.now(UTC)
-    )
+    await stop(session, child, course, kst(15))  # 15:00 에 멈췄다 — 19:30 은 멈춘 뒤다
 
     with pytest.raises(DoseNotFound):
         await check(session, child, dose, checked=False)
     with pytest.raises(DoseNotFound):
         await check(session, child, dose, now=LATER)
 
-    assert await stored(session, dose.id) == NOW  # 멈춘 뒤에도 복용 기록은 그대로 남는다
+    assert await stored(session, dose.id) == NOW  # 멈춘 뒤에도 이미 남은 복용 기록은 그대로 남는다
+
+
+# ── 멈춘 코스의 멈추기 전 회차 — Agent 가 멈춘 시각 이전 회차를 n/m 에 세므로 체크도 되게 맞춘다 ──
+
+
+async def test_멈춘_코스의_멈추기_전_회차는_체크하고_해제할_수_있다(session, child):
+    course, dose = await make_dose(session, child)  # 오늘 08:30
+    await stop(session, child, course, kst(15))  # 15:00 에 멈췄다 — 08:30 은 멈추기 전이다
+
+    checked_at = (await check(session, child, dose)).checked_at
+    cleared_at = (await check(session, child, dose, checked=False)).checked_at
+
+    assert checked_at == NOW
+    assert cleared_at is None
+
+
+async def test_멈춘_시각_정각의_회차는_멈추기_전으로_본다(session, child):
+    course, dose = await make_dose(session, child)  # 오늘 08:30
+    await stop(session, child, course, kst(8, 30))  # Agent 의 `<=` 와 같은 경계다
+
+    assert (await check(session, child, dose)).checked_at == NOW
+
+
+async def test_멈춘_시각_바로_다음_분의_회차는_찾지_못한다(session, child):
+    course, dose = await make_dose(session, child)  # 오늘 08:30
+    await stop(session, child, course, kst(8, 29, second=59))
+
+    with pytest.raises(DoseNotFound):
+        await check(session, child, dose)
+
+
+async def test_멈춘_코스의_멈추기_전_회차도_다른_아이는_찾지_못한다(session, child):
+    other = Child(
+        owner_parent_id=child.owner_parent_id, nickname="other", birth_date=date(2022, 1, 1)
+    )
+    session.add(other)
+    await session.flush()
+    course, dose = await make_dose(session, child)
+    await stop(session, child, course, kst(15))
+
+    with pytest.raises(DoseNotFound):
+        await check(session, other, dose)
+
+    assert await stored(session, dose.id) is None
+
+
+async def test_멈추기_전_회차를_체크해도_코스의_멈춘_시각은_바뀌지_않는다(session, child):
+    # 멈춘 시각은 코스의 updated_at 이다 — 체크가 코스 행을 건드리면 시각이 밀려 규칙이 어긋난다
+    course, dose = await make_dose(session, child)
+    await stop(session, child, course, kst(15))
+    await session.refresh(course)
+    stopped_at = course.updated_at
+
+    await check(session, child, dose)
+    await check(session, child, dose, checked=False)
+    await session.refresh(course)
+
+    assert course.updated_at == stopped_at
 
 
 async def test_마지막_날이_지난_코스의_회차도_체크하고_해제할_수_있다(session, child):

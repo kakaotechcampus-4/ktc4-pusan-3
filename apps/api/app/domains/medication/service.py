@@ -251,7 +251,10 @@ async def list_in_progress(
 
 
 class DoseNotFound(Exception):
-    """그 아이의 멈추지 않은 코스에 그런 회차가 없다 (없는 회차 · 남의 아이 · 멈춘 코스)."""
+    """체크할 수 있는 그런 회차가 없다.
+
+    없는 회차 · 남의 아이 · 멈춘 코스에서 멈춘 뒤에 예정된 회차가 모두 여기에 든다.
+    """
 
 
 class DoseNotDue(Exception):
