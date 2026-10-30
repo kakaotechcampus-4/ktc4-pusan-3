@@ -234,6 +234,19 @@ Asia/Seoul 이면 `0 4 * * *` 로 `crontab -e`:
 넣은 뒤 같은 명령을 한 번 손으로 돌려 `만료된 로그인 행 정리: session N건 …` 줄이 찍히면 된다.
 로컬에서는 개발 DB 를 상대로 `uv run python -m app.workers.cleanup`.
 
+### 일정 알림 발송 (1분마다)
+
+서버의 cron 이 1분마다 [`app/workers/reminder_dispatch.py`](app/workers/reminder_dispatch.py) 를 api 컨테이너
+안에서 돌린다 — 울릴 시각이 지난 10분 안인 일정 알림을 FCM 으로 보낸다. 겹쳐 돌아도 같은 알림을 두 번 보내지
+않는다. 결정 · FCM 키 준비는 [`docs/notification/reminder-v1.md`](../../docs/notification/reminder-v1.md).
+
+```
+* * * * * docker exec ktc4-api uv run --no-sync python -m app.workers.reminder_dispatch >> /var/tmp/ktc4-reminder.log 2>&1
+```
+
+보낼 알림이 있었던 회차에만 `일정 알림 발송: 맡음 N · 보냄 N …` 한 줄이 찍힌다(건수만). `FCM_SERVICE_ACCOUNT_FILE` 이
+비어 있으면 매번 경고 한 줄만 남기고 아무것도 맡지 않는다.
+
 ---
 
 ## 디렉토리 구조
