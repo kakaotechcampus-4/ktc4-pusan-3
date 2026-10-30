@@ -10,7 +10,7 @@
 내용 검증은 서비스(`domains/medication/service.py`)가 하고 틀린 칸 이름으로 400 을 낸다.
 """
 
-from datetime import date, datetime
+from datetime import date, datetime, time
 from typing import Annotated
 from uuid import UUID
 
@@ -46,6 +46,10 @@ _REQUEST_EXAMPLE = {
 
 HHMM = Annotated[ClockTime, Field(examples=["08:30"])]
 
+NO_NUL = r"^[^\x00]*$"
+"""NUL(`\\u0000`)을 막는 패턴. Postgres text 칸이 NUL 을 받지 못해 500 이 난다.
+일기 · 신고와 같은 이유다."""
+
 
 class MedicationScheduleIn(BaseModel):
     """복약 코스의 내용 — 약 **1종**의 복용 계획. 약이 3종이면 코스 3건이다."""
@@ -53,26 +57,38 @@ class MedicationScheduleIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     title: str = Field(
+        pattern=NO_NUL,
         description=(
-            "약 이름. 1~200자(한글 1자 = 1), 공백만이면 400. **받은 그대로 저장한다** — 앞뒤 "
-            "공백을 "
-            "서버가 떼지 않는다. 같은 아이 · 같은 이름 · 같은 기간의 진행 중인 코스가 있으면 409"
+            "약 이름. 1~200자(한글 1자 = 1), 공백만이면 400, NUL(`\\u0000`)이 있으면 400. "
+            "**받은 그대로 저장한다** — 앞뒤 공백을 서버가 떼지 않는다. 같은 아이 · 같은 이름 · "
+            "같은 기간의 진행 중인 코스가 있으면 409"
         ),
         examples=["아목시실린"],
     )
     dosage: str | None = Field(
         default=None,
-        description="1회 용량 — '5ml' · '1정'. 200자 이하. 빈 문자열은 null 로 저장한다",
+        pattern=NO_NUL,
+        description=(
+            "1회 용량 — '5ml' · '1정'. 200자 이하, NUL 이 있으면 400. 빈 문자열은 null 로 저장한다"
+        ),
         examples=["5ml"],
     )
     indication_text: str | None = Field(
         default=None,
-        description="복약 이유 — 보호자가 말한 문장. 500자 이하. 빈 문자열은 null 로 저장한다",
+        pattern=NO_NUL,
+        description=(
+            "복약 이유 — 보호자가 말한 문장. 500자 이하, NUL 이 있으면 400. "
+            "빈 문자열은 null 로 저장한다"
+        ),
         examples=["중이염"],
     )
     note: str | None = Field(
         default=None,
-        description="보호자 특이사항(투약의뢰서 칸). 1000자 이하. 빈 문자열은 null 로 저장한다",
+        pattern=NO_NUL,
+        description=(
+            "보호자 특이사항(투약의뢰서 칸). 1000자 이하, NUL 이 있으면 400. "
+            "빈 문자열은 null 로 저장한다"
+        ),
     )
     storage: MedicationStorage | None = Field(
         default=None, description="보관 방법. room(실온) · fridge(냉장). 모르면 null"
@@ -141,10 +157,19 @@ class MedicationDoseIn(BaseModel):
     fixed_time: HHMM | None = Field(
         default=None,
         description=(
-            "`fixed` 일 때만 쓰는 직접 시각 `HH:MM`(분 단위, 초는 400). `fixed` 가 아니면 null. "
-            "`fixed` 인데 비면 400(`doses`)"
+            "`fixed` 일 때만 쓰는 직접 시각 `HH:MM`(한국 시간, 분 단위). 초나 시간대(`Z` · "
+            "`+09:00`)가 붙으면 400. `fixed` 가 아니면 null. `fixed` 인데 비면 400(`doses`)"
         ),
     )
+
+    @field_validator("fixed_time")
+    @classmethod
+    def _no_timezone(cls, value: time | None) -> time | None:
+        # 시간대를 조용히 버리면 `21:00Z` 가 한국 06:00 이 아니라 21:00 으로 저장되고, 시간대만 다른
+        # 같은 시각이 중복 검사를 지나 UNIQUE 위반(500)이 된다. 시각은 한국 시간 HH:MM 하나다
+        if value is not None and value.tzinfo is not None:
+            raise ValueError("시각에는 시간대를 붙일 수 없다 — 한국 시간 HH:MM")
+        return value
 
 
 class SubmitMedicationRequest(BaseModel):
