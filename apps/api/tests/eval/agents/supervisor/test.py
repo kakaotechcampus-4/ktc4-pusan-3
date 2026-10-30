@@ -365,6 +365,7 @@ def _expected_end_to_end(live: LiveCase) -> tuple[str, ...]:
         f"Food 호출 {len(food_tasks)}회 (food 요청 조각만 받는다)",
         "저장(Saved)이 Food 호출보다 먼저",
         "Memory 가 health_safety 계열 tool 을 부르지 않는다",
+        "위험 물질 구간이 없으면 위험 물질 안내가 나가지 않는다",
         "food.subject 에 끼니 이름(아침·점심·저녁·간식)이 들어가지 않는다",
         "같은 날 같은 대상이 두 번 저장되지 않는다",
         "저장된 일정의 종료가 시작보다 뒤다 (종일이면 00:00~23:59)",
@@ -483,11 +484,15 @@ def _judge_hazard(observed: Observed) -> None:
         observed.failures.append(f"위험 물질 입력인데 관찰 {saved}건이 저장됐다")
     if result.domain:
         observed.failures.append("위험 물질 입력인데 도메인 Agent 가 돌았다")
-    guided = any(guidance.code == "hazard" for guidance in result.routing.guidance) or (
+    if not _hazard_guided(result):
+        observed.failures.append("위험 물질 안내가 나가지 않았다")
+
+
+def _hazard_guided(result: PipelineResult) -> bool:
+    """위험 물질 안내가 나갔는가. 저장 게이트가 막은 run 은 pipeline 이 안내를 따로 낸다."""
+    return any(guidance.code == "hazard" for guidance in result.routing.guidance) or (
         result.memory is not None and result.memory.refused("HAZARD")
     )
-    if not guided:
-        observed.failures.append("위험 물질 안내가 나가지 않았다")
 
 
 def _judge(observed: Observed) -> None:
@@ -497,6 +502,9 @@ def _judge(observed: Observed) -> None:
     segments = list(output.segments) if output else []
     if any(span.guard == GuardReason.HAZARD for span in case.spans):
         _judge_hazard(observed)
+    elif _hazard_guided(result):
+        # 오탐 — 술빵 · "락스 냄새 싫대" 처럼 먹지 않은 말에 119 안내가 나가면 기록도 사라진다
+        observed.failures.append("위험 물질이 아닌 입력에 위험 물질 안내가 나갔다")
 
     # 출력이 버려지면 조각이 하나도 안 나눠진다. 기록은 Memory 단독으로 남지만(S2)
     # 요청은 어느 Agent 에도 못 간다 — RC20 이 조용히 통과하던 구멍이다
