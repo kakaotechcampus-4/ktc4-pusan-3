@@ -1,24 +1,19 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { FileText, MapPin, ShieldCheck, UserRound, type LucideIcon } from "lucide-react";
-import { useState } from "react";
+import { useCallback, useState } from "react";
 
+import { LocationPermissionNote } from "@/components/location-permission-note";
 import { SettingsGroup, SettingsInfoRow } from "@/components/settings-row";
 import { BottomSheet } from "@/components/ui/bottom-sheet";
 import { Button } from "@/components/ui/button";
 import { CardFailed } from "@/components/ui/card";
 import { SkeletonBlock, SkeletonText } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
+import { useConsents } from "@/hooks/use-consents";
 import { usePolicies } from "@/hooks/use-policies";
-import {
-  api,
-  isApiError,
-  qk,
-  type ConsentRequest,
-  type ConsentResponse,
-  type ConsentsResponse,
-} from "@/lib/api";
+import { api, isApiError, qk, type ConsentRequest, type ConsentResponse } from "@/lib/api";
 import {
   askedChoices,
   consentChoices,
@@ -28,6 +23,7 @@ import {
   type LegalDocument,
 } from "@/lib/consent";
 import { formatDay } from "@/lib/format";
+import { askDeviceLocation, nextPermission, type DeviceLocationPermission } from "@/lib/location";
 
 /**
  * 10 설정 — 동의 관리.
@@ -94,13 +90,23 @@ export function ConsentSection({ childId }: { childId: string }) {
    *    "조용히 되돌아간 실패" 자리이고(문서 §7), 성공은 화면이 이미 말하고 있다.
    */
   const [announcement, setAnnouncement] = useState("");
+  /**
+   * 휴대폰의 위치 권한 (#593). 위치 동의가 켜져 있을 때만 본다 (`LocationPermissionNote`).
+   * 🚨 동의를 **켠 직후에 권한 창을 띄운다** — 가입 화면에서 켠 것과 같다. 켜 놓고 권한이 없으면 위치가 실리지 않는다.
+   */
+  const [locationPermission, setLocationPermission] = useState<DeviceLocationPermission | null>(
+    null,
+  );
+  const updateLocationPermission = useCallback(
+    (next: DeviceLocationPermission) => setLocationPermission((prev) => nextPermission(prev, next)),
+    [],
+  );
+  /** 권한 창이 떠 있는 동안은 안내를 내린다 — 창 뒤에서 "허용하기" 버튼이 먼저 서지 않게. */
+  const [askingLocation, setAskingLocation] = useState(false);
 
   const policies = usePolicies();
 
-  const consents = useQuery({
-    queryKey: qk.consents(childId),
-    queryFn: () => api.get<ConsentsResponse>("/consents", { query: { child_id: childId } }),
-  });
+  const consents = useConsents(childId);
 
   const change = useMutation({
     mutationFn: ({ choice: { policy }, next }: Pending) => {
@@ -123,6 +129,13 @@ export function ConsentSection({ childId }: { childId: string }) {
         `${consentName(variables.choice)} 동의를 ${variables.next === "granted" ? "받았어요" : "철회했어요"}.`,
       );
       void queryClient.invalidateQueries({ queryKey: qk.consents(childId) });
+      // 🚨 서버가 동의를 기록한 **뒤에** 묻는다. 기록이 실패했는데 휴대폰 권한만 받아 두지 않는다.
+      if (variables.choice.policy.scope === "location" && variables.next === "granted") {
+        setAskingLocation(true);
+        void askDeviceLocation()
+          .then(updateLocationPermission)
+          .finally(() => setAskingLocation(false));
+      }
     },
     /**
      * 🚨 약관이 바뀌었으면 **바꾸지 않고 다시 받아 온다.** 화면이 보여준 글과 서버가 기록할
@@ -209,6 +222,13 @@ export function ConsentSection({ childId }: { childId: string }) {
           })}
         </SettingsGroup>
       </div>
+
+      {effective.location === true ? (
+        <LocationPermissionNote
+          status={askingLocation ? null : locationPermission}
+          onStatus={updateLocationPermission}
+        />
+      ) : null}
 
       {/* 켜고 끄기 확정 */}
       <BottomSheet

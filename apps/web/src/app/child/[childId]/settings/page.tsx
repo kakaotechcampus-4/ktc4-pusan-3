@@ -79,14 +79,18 @@ function SettingsScreen() {
    */
   const me = useQuery({ queryKey: qk.me(), queryFn: () => api.get<Me>("/me") });
   /**
-   * 🚨 **켜고 끌 선택 동의가 없으면 "동의" 구역을 세우지 않는다.** 지금은 유일한 선택 동의(위치)를
-   *    묻지 않는다 (`askedChoices` · #221). 빈 구역에 "지금 켜고 끌 수 있는 것이에요" 를 달면
-   *    아무것도 없는 목록을 설명하는 화면이 된다. 위치를 다시 물으면 저절로 돌아온다.
+   * 🚨 **켜고 끌 선택 동의가 없으면 "동의" 구역을 세우지 않는다.** 서버가 내주는 선택 동의를 화면이
+   *    묻지 않는 동안(`askedChoices` · `NOT_ASKED_YET`) 빈 구역에 "지금 켜고 끌 수 있는 것이에요" 를 달면
+   *    아무것도 없는 목록을 설명하는 화면이 된다. 지금은 위치(#593)가 서서 구역이 있다.
    */
   const policies = usePolicies();
-  const hasOptionalConsent = askedChoices(consentChoices(policies.data)).some(
-    ({ policy }) => !policy.required,
-  );
+  /**
+   * 🚨 **약관을 받는 동안에도 구역을 세워 둔다** (그 안은 `ConsentSection` 의 스켈레톤). 받은 뒤에야 세우면 아래 고객센터 ·
+   *    약관 구역이 한 번 밀려난다 (`layout-shift.spec.ts` · #593 에서 위치 동의가 다시 서며 드러났다).
+   */
+  const hasOptionalConsent =
+    policies.isPending ||
+    askedChoices(consentChoices(policies.data)).some(({ policy }) => !policy.required);
   const role = me.data?.children.find((child) => child.child_id === childId)?.role;
   const inviteNote =
     role === "owner"

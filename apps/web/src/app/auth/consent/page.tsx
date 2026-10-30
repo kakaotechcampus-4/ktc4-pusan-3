@@ -30,6 +30,7 @@ import {
   toggleConsent,
   type ConsentChecked,
 } from "@/lib/consent";
+import { askDeviceLocation } from "@/lib/location";
 import { useSessionStore } from "@/stores/session";
 
 /**
@@ -115,6 +116,10 @@ export default function AuthConsentPage() {
       };
       const session = await api.post<AuthSession>(`/auth/${readProvider()}/signup`, body);
       signIn(session.token, session.expires_in);
+
+      // 위치 동의를 골랐으면 휴대폰 권한 창을 띄운다 (#593). 🚨 계정과 동의가 기록된 **뒤에** 묻는다.
+      // 기다리지 않는다 — 결과와 상관없이 다음 화면으로 간다. 거절했으면 10 설정이 다시 묻는 길을 보여 준다.
+      if (body.consents.some((consent) => consent.scope === "location")) void askDeviceLocation();
 
       // 대기표와 bind 는 여기까지가 마지막 쓰임이다.
       clearConsentCode();

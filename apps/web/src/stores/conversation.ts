@@ -12,9 +12,10 @@ import { isApiError } from "@/lib/api/errors";
 import { newIdempotencyKey, type IdempotencyKey } from "@/lib/api/idempotency";
 import { submitInput, type InputRequest } from "@/lib/api/operations";
 import { isDraftEvent, type EventDraftsEvent } from "@/lib/api/sse";
-import type { CreateInputResponse } from "@/lib/api/types";
+import type { CreateInputResponse, InputLocation } from "@/lib/api/types";
 import { refreshAfterRun, refreshTodayChat } from "@/lib/chat-history";
 import { toSeoulDateKey } from "@/lib/format";
+import { readCoarseLocation } from "@/lib/location";
 import { getQueryClient } from "@/lib/query-client";
 import { useDraftStore } from "@/stores/draft";
 import { useEventDraftStore } from "@/stores/event-draft";
@@ -95,8 +96,13 @@ export interface ChatTurn {
    * 결과도 이 날에 붙는다. 답은 **질문이 나온 날**을 물려받는다 (#226).
    */
   day: string;
-  /** 보낸 본문 그대로. 🚨 다시 시도는 이 값을 그대로 보낸다 — 그때의 입력창이 아니다. */
+  /**
+   * 보낸 본문 그대로. 🚨 다시 시도는 이 값을 그대로 보낸다 — 그때의 입력창이 아니다.
+   * 🚨 **위치는 여기 없다** (#593). 보내기 직전에 붙이고 키에 묶는다 (`sentLocations`).
+   */
   body: InputRequest;
+  /** 보낸 순간에 위치 동의가 켜져 있었는가 (#593). 이 키로 처음 보낼 때만 본다 (`locationFor`). */
+  shareLocation: boolean;
   /** 이 한 줄이 답한 질문. 400 때 무엇을 물었는지 말풍선 아래에 다시 보여준다. */
   answering: ChatQuestion | null;
   /**
@@ -145,6 +151,7 @@ export const useConversationStore = create<ConversationState>()((set) => ({
     for (const unsubscribe of streams.values()) unsubscribe();
     streams.clear();
     keyBooks.clear();
+    sentLocations.clear();
     seededDrafts.clear();
     set({ byChild: {} });
   },
@@ -166,6 +173,16 @@ const streams = new Map<string, () => void>();
  *    횟수를 두 번으로 센다 (최상위 §2 "한 번의 관찰을 성향으로 확정하지 않는다").
  */
 const keyBooks = new Map<string, Map<string, IdempotencyKey>>();
+
+/**
+ * 키 → 그 키로 보낸 흐린 위치 (`null` = 위치 없이 보냈다) (#593).
+ *
+ * 🚨 **같은 키는 같은 본문이어야 한다** (`422 idempotency_key_reuse`). 위치는 보낼 때마다 다시 읽으면 달라질 수 있어서
+ *    `keyPayload` 에 넣지 않고, 키가 처음 나갈 때 읽은 값을 여기 붙든다. 다시 시도 · 같은 문장을 다시 적어 같은 키가
+ *    나간 줄은 그 값을 그대로 싣는다 — 그 사이 동의를 껐어도 같다(서버가 동의를 읽어 버린다 · #380).
+ * 🚨 **메모리에만 산다.** 키를 놓을 때(`releaseKey`) · 로그아웃(`clearAll`) 때 지운다. 웹 저장소에 두지 않는다.
+ */
+const sentLocations = new Map<IdempotencyKey, InputLocation | null>();
 
 /** 일정 초안을 `stores/event-draft.ts` 에 얹은 적이 있는 `draft_id`. 아래 `seedDrafts` 참고. */
 const seededDrafts = new Set<string>();
@@ -190,7 +207,25 @@ function keyFor(childId: string, payload: string): IdempotencyKey {
 
 /** 이 본문은 끝났다 — 다음에 같은 문장을 보내면 새 동작이라 새 키다. */
 function releaseKey(childId: string, payload: string): void {
-  keyBooks.get(childId)?.delete(payload);
+  const book = keyBooks.get(childId);
+  const key = book?.get(payload);
+  if (key) sentLocations.delete(key);
+  book?.delete(payload);
+}
+
+/**
+ * 이 키로 보낼 위치. 이미 보낸 키면 그때의 값이고, 처음이면 동의가 켜져 있을 때만 휴대폰에서 읽는다.
+ * 🚨 읽는 동안 묻지 않는다 (`readCoarseLocation`). 못 읽으면 위치 없이 보낸다.
+ */
+async function locationFor(turn: ChatTurn): Promise<InputLocation | null> {
+  const fixed = sentLocations.get(turn.key);
+  if (fixed !== undefined) return fixed;
+  const location = turn.shareLocation ? await readCoarseLocation().catch(() => null) : null;
+  // 기다리는 사이 다른 줄이 같은 키로 먼저 정했으면 그 값을 따른다.
+  const settled = sentLocations.get(turn.key);
+  if (settled !== undefined) return settled;
+  sentLocations.set(turn.key, location);
+  return location;
 }
 
 let turnSeq = 0;
@@ -283,7 +318,16 @@ export function keyPayload(body: InputRequest): string {
 export function sendLine(
   childId: string,
   text: string,
-  { asReply, source }: { asReply: boolean; source: InputRequest["source"] },
+  {
+    asReply,
+    source,
+    shareLocation = false,
+  }: {
+    asReply: boolean;
+    source: InputRequest["source"];
+    /** 위치 동의가 지금 켜져 있는가 (`useLocationConsent`). 🚨 모르면 `false` — 위치를 싣지 않는다 (#593). */
+    shareLocation?: boolean;
+  },
 ): string | null {
   const conversation = conversationOf(useConversationStore.getState(), childId);
   const trimmed = text.trim();
@@ -310,6 +354,7 @@ export function sendLine(
     // 🚨 늘 새 키가 아니다 — 같은 본문이면 같은 키라야 응답만 잃은 한 줄을 고쳐 쓰지 않고 그대로
     //    다시 보냈을 때 두 번 저장되지 않는다 (`keyBooks`).
     key: keyFor(childId, keyPayload(body)),
+    shareLocation,
     send: { status: "sending" },
     run: initialRunState,
     question: null,
@@ -418,7 +463,14 @@ async function submit(childId: string, turnId: string): Promise<void> {
 
   let accepted: CreateInputResponse;
   try {
-    accepted = await submitInput(childId, turn.body, turn.key);
+    const location = await locationFor(turn);
+    // 로그아웃으로 대화가 비워졌으면 보내지 않는다.
+    if (!findTurn(childId, turnId)) return;
+    accepted = await submitInput(
+      childId,
+      location ? { ...turn.body, location } : turn.body,
+      turn.key,
+    );
   } catch (error) {
     // 로그아웃으로 대화가 비워졌으면 쓸 자리가 없다.
     if (!findTurn(childId, turnId)) return;

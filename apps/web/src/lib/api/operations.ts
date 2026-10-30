@@ -27,6 +27,7 @@ import type {
   PhotoCommitResponse,
   PhotoLane,
   SubmitEventBody,
+  InputLocation,
   SubmitEventResponse,
   UpdateHealthSafetyRequest,
   UpdateHealthSafetyResponse,
@@ -51,6 +52,11 @@ export interface InputRequest {
    * ⚠️ #175 머지 전 서버는 **모르는 필드라 무시한다** — 먼저 보내도 깨지지 않는다.
    */
   reply_to?: string;
+  /**
+   * 흐린 위치 (#593 · `CreateInputRequest.location`). 🚨 **보내기 직전에 붙인다** — 말풍선의 본문(`ChatTurn.body`)
+   * 에는 없다. 다시 시도가 같은 좌표로 나가도록 키마다 붙든다 (`stores/conversation.ts` 의 `sentLocations`).
+   */
+  location?: InputLocation;
 }
 
 /**

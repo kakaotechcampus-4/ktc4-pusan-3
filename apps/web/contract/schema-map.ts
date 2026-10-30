@@ -97,6 +97,7 @@ export const SCHEMA_MAP: Record<string, MapValue> = {
   AgentPromptOut: "HomeResponse.agent_prompts[]",
   TodayEventOut: "HomeResponse.today[]<kind=event>",
   CreateInputRequest: "CreateInputRequest",
+  InputLocation: "InputLocation",
   CreateInputResponse: "CreateInputResponse",
   ChatDayResponse: "ChatDayResponse",
   ChatTurnOut: "ChatTurnOut",
@@ -236,8 +237,6 @@ export const NOT_MAPPED: Record<string, string> = {
   HTTPValidationError:
     "FastAPI 가 자동으로 붙이는 422 모양. 서버는 실제로 ErrorEnvelope 로 바꿔 보낸다 (app/api/errors.py · #438)",
   ValidationError: "HTTPValidationError 안쪽",
-  InputLocation:
-    "웹이 아직 위치를 보내지 않는다. 위치 동의를 묻지 않고 있다 (lib/consent.ts 의 NOT_ASKED_YET)",
   LinkedAffinityOut: "웹이 ObservationOut.affinity 를 읽지 않는다",
   AnswerResponse: "05 가 되묻기 답의 응답 본문을 읽지 않는다",
 };
