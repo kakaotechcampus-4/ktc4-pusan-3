@@ -381,6 +381,78 @@ async def test_본문_형식_오류가_키_누락보다_먼저_걸린다(db_clie
     assert response.json()["error"]["code"] == "validation_failed"
 
 
+# ── 4-2. DB 가 받지 못하는 값 — 요청 모델이 400 으로 막는다 ──────────────
+
+FIXED_AT = {"timing_anchor": "fixed", "offset_minutes": 0}
+
+
+@pytest.mark.parametrize("value", ["21:00Z", "21:00+09:00", "21:00-05:00"])
+async def test_시간대가_붙은_시각은_400(db_client, session, bearer, consented, value):
+    # 시간대를 버리고 21:00 으로 저장하면 `21:00Z` 가 한국 06:00 이 아니라 21:00 이 된다
+    payload = body(doses=[{**FIXED_AT, "fixed_time": value}])
+
+    response = await post(db_client, bearer[0], consented, payload)
+
+    assert response.status_code == 400
+    assert response.json()["error"]["detail"] == {"fields": ["doses.0.fixed_time"]}
+    assert await nothing_saved(session)
+
+
+async def test_같은_시각을_시간대만_달리_보내도_500이_아니라_400(
+    db_client, session, bearer, consented
+):
+    # 시간대가 다르면 서로 다른 시각으로 보여 중복 검사를 지나지만
+    # DB 에는 둘 다 21:00 이라 UNIQUE 위반이다
+    doses = [{**FIXED_AT, "fixed_time": "21:00"}, {**FIXED_AT, "fixed_time": "21:00Z"}]
+
+    response = await post(db_client, bearer[0], consented, body(doses=doses))
+
+    assert response.status_code == 400
+    assert response.json()["error"]["detail"] == {"fields": ["doses.1.fixed_time"]}
+    assert await nothing_saved(session)
+
+
+async def test_시간대_없는_시각은_그대로_저장된다(db_client, bearer, consented):
+    payload = body(doses=[{**FIXED_AT, "fixed_time": "21:00"}])
+
+    response = await post(db_client, bearer[0], consented, payload)
+
+    assert response.status_code == 201
+    assert response.json()["course"]["notice_times"] == ["21:00"]
+
+
+@pytest.mark.parametrize("field", ["title", "dosage", "indication_text", "note"])
+async def test_NUL_이_든_값은_500이_아니라_400(db_client, session, bearer, consented, field):
+    # Postgres text 칸이 NUL 을 받지 못해 500 이 나고 ERROR 로그가 남는다 (일기 · 신고와 같은 이유)
+    payload = body(schedule={field: "약\x00이름"})
+
+    response = await post(db_client, bearer[0], consented, payload)
+
+    assert response.status_code == 400
+    assert response.json()["error"]["detail"] == {"fields": [f"schedule.{field}"]}
+    assert await nothing_saved(session)
+
+
+async def test_증상_코드에_NUL_이_들어도_500이_아니라_400(db_client, session, bearer, consented):
+    # 증상 코드는 사전 검사에서 걸러져 DB 에 닿지 않는다 — 같은 NUL 문제가 이 칸으로는 새지 않는다
+    payload = body(schedule={"symptom_codes": ["fever\x00"]})
+
+    response = await post(db_client, bearer[0], consented, payload)
+
+    assert response.status_code == 400
+    assert response.json()["error"]["detail"] == {"fields": ["schedule.symptom_codes"]}
+    assert await nothing_saved(session)
+
+
+async def test_탭과_줄바꿈은_막지_않고_그대로_저장한다(db_client, session, bearer, consented):
+    payload = body(schedule={"note": "식후\n30분\t복용"})
+
+    response = await post(db_client, bearer[0], consented, payload)
+
+    assert response.status_code == 201
+    assert (await session.scalar(select(MedicationSchedule))).note == "식후\n30분\t복용"
+
+
 # ── 5. 키 · 동의 ─────────────────────────────────────────────────────────
 
 
