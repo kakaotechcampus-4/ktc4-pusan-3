@@ -57,6 +57,7 @@ from tests.eval.agents.routing_cases import (
     FC_CASES,
     RC_CASES,
     T_CASES,
+    UNCLEAR_CASES,
     R,
     RoutingCase,
     SplitScore,
@@ -122,7 +123,12 @@ RESULT_PATH = Path(
 INPUT_PRICE = float(os.getenv("LLM_INPUT_PRICE_PER_M", "0"))
 OUTPUT_PRICE = float(os.getenv("LLM_OUTPUT_PRICE_PER_M", "0"))
 
-_CASES = (*RC_CASES, *T_CASES, *FC_CASES)
+_CASES = (*RC_CASES, *T_CASES, *FC_CASES, *UNCLEAR_CASES)
+
+# 저장 없이 끝난 run 이 저장한 것처럼 답하면 안 된다. "남기지 않았어요" 는 걸리지 않는다
+_SAVE_CLAIM = re.compile(r"기록했|저장했|남겼")
+# 앞으로의 계획. unclear 로 가면 일정으로 등록할지 묻지 못한다 (D8 · #624)
+_PLANS = ("T18", "T58")
 
 
 async def _no_commit() -> None:
@@ -232,6 +238,8 @@ _E2E_CASES: tuple[LiveCase, ...] = (
     LiveCase(CASES_BY_ID["T14"], CASES_BY_ID["T14"].stage, "T14"),
     *(LiveCase(case, case.stage, case.case_id) for case in _SCHEDULE_CASES),
     *(LiveCase(case, case.stage, case.case_id) for case in _CLEAR_CASES),
+    *(LiveCase(case, case.stage, case.case_id) for case in UNCLEAR_CASES),
+    LiveCase(CASES_BY_ID["T18"], CASES_BY_ID["T18"].stage, "T18"),
 )
 
 Seed = Callable[[AgentContext], Awaitable[None]]
@@ -377,6 +385,14 @@ def _expected_end_to_end(live: LiveCase) -> tuple[str, ...]:
         expected.append("증상 기록은 1건 그대로, 관찰 시각만 비워지고 나머지 필드는 남는다")
     if case.case_id == "CL02":
         expected.append("일정은 1건 그대로, 끝만 비워지고 시작은 남는다")
+    if case.rows is not None:
+        expected.append(f"관찰이 {case.rows}건 남는다 (후보는 관찰에서만 나온다)")
+    if case.rows == 0:
+        expected.append("저장한 것처럼 답하지 않는다")
+    if case.not_in:
+        expected.append(f"{' · '.join(case.not_in)} 관찰이 없다 (말의 내용을 저장하지 않는다)")
+    if case.case_id in _PLANS:
+        expected.append("계획을 저장하지 않고 일정으로 등록할지 묻는다")
     return tuple(expected)
 
 
@@ -538,6 +554,7 @@ def _judge(observed: Observed) -> None:
             observed.failures.append("보호자 얘기가 아이 관찰로 저장됐다")
 
     _judge_clear(observed)
+    _judge_rows(observed)
 
     if case.case_id == "RC62" and not observed.observations["health"]:  # #639
         observed.failures.append("해 준 일이 건강 기록에 없다")
@@ -556,6 +573,24 @@ def _judge(observed: Observed) -> None:
         observed.failures.append(f"관찰 구간 {len(observed.missing)}개가 저장에 없다")
 
     _report(observed)
+
+
+def _judge_rows(observed: Observed) -> None:
+    """아이가 한 일이 아닌 말은 남지 않고, 대조군은 그대로 남는가 (#624)."""
+    case = observed.live.case
+    if case.rows is not None and len(observed.rows) != case.rows:
+        observed.failures.append(f"관찰이 {case.rows}건이 아니다 ({len(observed.rows)}건)")
+    if case.rows == 0 and not observed.rows:
+        memory = observed.result.memory
+        if memory is not None and _SAVE_CLAIM.search(memory.final_message or ""):
+            observed.failures.append("저장 없이 저장한 것처럼 답했다")
+    leaked = [domain for domain in case.not_in if observed.observations[domain]]
+    if leaked:
+        observed.failures.append(f"말의 내용이 기록으로 샜다 ({leaked})")
+    if case.case_id in _PLANS:
+        memory = observed.result.memory
+        if memory is None or memory.pending is None:
+            observed.failures.append("계획을 일정으로 등록할지 묻지 않았다")
 
 
 def _judge_clear(observed: Observed) -> None:
@@ -899,6 +934,7 @@ def _format_summary(records: list[dict[str, Any]]) -> str:
         f"  food 유형            {ratio(total('food_task_ok'), total('food_spans'))}"
         f"   · 추천→분석 {total('rec_to_analysis')} · 분석→추천 {total('analysis_to_rec')}",
         f"  GUARDED             {ratio(total('guarded_found'), total('guarded_spans'))}",
+        f"  UNCLEAR             {ratio(total('unclear_found'), total('unclear_spans'))}",
         f"  부분 문자열 위반      {not_substring}/{len(records)}"
         f"   · 강등 {sum(1 for r in records if r['degraded'])}회"
         f" · 재분기 {sum(1 for r in records if r['rerouted'])}회",
@@ -943,6 +979,7 @@ def _shaky(records: list[dict[str, Any]]) -> list[str]:
                 score["work_ok"],
                 score["agent_ok"],
                 score["food_task_ok"],
+                score["unclear_found"],
                 record["food"],
                 record["failed"],
             ],

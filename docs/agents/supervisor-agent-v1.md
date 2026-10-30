@@ -118,9 +118,14 @@
 "해열제 더 먹여도 돼?"              → guarded / diagnosis  (약은 food 가 아님)
 "지금 또 먹여도 돼?"                → health  (음식 없이 시점만 — 약 이야기)
 
-[record ↔ unclear (#484)]
+[record ↔ unclear (#484 · #624)]
 "딸기 맛있다" · "나 딸기 좋아해"     → unclear (보호자 자신의 감상 · 얘기)
 "딸기 맛있대" · "맛있어하더라"      → record / observe (아이 반응을 전함)
+"밤놀이는 일본어로 요아소비"        → unclear (설명 · 정의 · 번역 · 가정 · 농담은 일어난 일이 아니다)
+아이가 "암호화 안 했다고 말해"라고 했어 → unclear (아이가 전한 지시 · 역할놀이 대사)
+"공룡 책 읽어 달래"                → record / observe (아이의 경험 · 좋고 싫음 · 바람)
+"소꿉놀이하면서 '밥 먹어' 했어"     → record / observe 문장 전체 (논 사실. 대사는 Memory 가 저장하지 않는다)
+"일본어 노래 따라 불렀어"           → record / observe (실제로 한 일)
 
 [정정 (#483)]
 "~를 ~로 바꿔줘" · "A말고 B"       → record / lookup_edit 문장 전체

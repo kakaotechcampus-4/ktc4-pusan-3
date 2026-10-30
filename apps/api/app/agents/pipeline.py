@@ -1262,7 +1262,8 @@ def _reroute_feedback(bounced: tuple[str, ...]) -> str:
         "[다시 나누기] 아래 조각을 record 로 보냈는데 Memory 가 기록하지 않았다.\n"
         f"{listed}\n"
         "기록할 사실이 아니라 요청이면 request로 바꾸고 담당 agent와 food 유형을 정한다. "
-        "기록이 맞으면 record로 두고, 발화 전체를 다시 나눠 route를 부른다."
+        "기록이 맞으면 record로 두고, 둘 다 아니면 unclear로 바꾼다. "
+        "발화 전체를 다시 나눠 route를 부른다."
     )
 
 

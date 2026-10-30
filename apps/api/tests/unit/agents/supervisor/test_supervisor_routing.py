@@ -20,8 +20,15 @@ from app.agents.supervisor.routing import (
     covers_only_requests,
     route,
 )
-from app.agents.supervisor.schemas import SupervisorOutput
-from tests.eval.agents.routing_cases import CASES_BY_ID, answer_output, covered_by
+from app.agents.supervisor.schemas import SegmentKind, SupervisorOutput
+from tests.eval.agents.routing_cases import (
+    CASES_BY_ID,
+    UNCLEAR_CASES,
+    RoutingCase,
+    answer_output,
+    covered_by,
+    score_split,
+)
 
 RUN_ID = "run-1"
 
@@ -390,6 +397,32 @@ def test_기록_조각과_섞이면_unclear_only_가_아니다() -> None:
 def test_기록_조각만_있으면_수정_묶음은_닫혀_있다() -> None:
     task = _route_case("T01").memory_task
     assert task is not None and task.unclear == () and task.open_lookup_edit is False
+
+
+_NOT_DONE = [
+    case for case in UNCLEAR_CASES if all(span.kind == SegmentKind.UNCLEAR for span in case.spans)
+]
+
+
+@pytest.mark.parametrize("case", _NOT_DONE, ids=[case.case_id for case in _NOT_DONE])
+def test_아이가_한_일이_아닌_말을_unclear_로_나누면_관찰을_전부_막는다(case: RoutingCase) -> None:
+    # 정답 조각이 원문을 다 덮어야 코드 거절(unclear_only)이 켜진다 (#624)
+    task = _route_case(case.case_id).memory_task
+
+    assert task is not None
+    assert task.unclear_only is True
+    assert task.hints == ()
+
+
+def test_unclear_구간은_unclear_조각이_덮어야_찾은_것이다() -> None:
+    case = CASES_BY_ID["T35"]
+    wrong = _output({"text": "밤놀이는 일본어로 요아소비", "kind": "record", "work": "observe"})
+
+    found = score_split(case, answer_output(case))
+    missed = score_split(case, wrong)
+
+    assert (found.unclear_found, found.unclear_spans, found.missed) == (1, 1, [])
+    assert (missed.unclear_found, missed.unclear_spans, missed.missed) == (0, 1, ["unclear"])
 
 
 # ── Memory 생략 판정 ────────────────────────────────────────────

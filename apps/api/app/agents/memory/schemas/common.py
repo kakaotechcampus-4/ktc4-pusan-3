@@ -186,7 +186,7 @@ class ObservationCreateArgs(ToolArgs):
         Field(
             default=ConfidenceSource.PARENT_DIRECT,
             description=(
-                "보호자가 직접 관찰했거나 아이의 발언이면 parent_direct, "
+                "보호자가 직접 관찰했거나 아이가 자기 경험·좋고 싫음을 말한 것이면 parent_direct, "
                 "전해 들었으면 parent_hearsay, 기관 공지면 institution_notice, "
                 "확신이 약하면 parent_hedged"
             ),
