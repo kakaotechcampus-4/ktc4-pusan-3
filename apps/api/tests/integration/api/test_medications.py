@@ -20,7 +20,7 @@ import uuid
 from datetime import UTC, date, datetime, timedelta
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 
 from app.api import idempotency
 from app.api.v1.routers import medications as medications_router
@@ -1119,3 +1119,522 @@ def test_체크_엔드포인트와_요청_응답의_모든_칸에_설명이_있�
         assert schema.get("description", "").strip(), f"{name} 에 설명이 없다"
         missing = [f for f, prop in schema["properties"].items() if not _has_description(prop)]
         assert missing == [], f"{name} 설명이 없는 칸: {missing}"
+
+
+# ── 11. 수정 PATCH /children/{cid}/medications/{sid} ─────────────────────
+
+REVISE_SCHEMAS = ["ReviseMedicationRequest"]
+
+
+def course_url(child_id, course_id) -> str:
+    return f"/api/v1/children/{child_id}/medications/{course_id}"
+
+
+def revise_body(*, schedule: dict | None = None, **over) -> dict:
+    """수정 본문 — 등록 본문에서 `source` 만 뺀 것. 기본은 점심 식후만 먹는 패턴으로 바꾼다."""
+    base = body(
+        schedule={
+            "starts_on": (TODAY - timedelta(days=1)).isoformat(),
+            "ends_on": (TODAY + timedelta(days=1)).isoformat(),
+        }
+        | (schedule or {}),
+        doses=[MEALS[1]],
+    )
+    del base["source"]
+    return base | over
+
+
+async def patch(db_client, headers, child_id, course_id, payload, key: str = "revise-key-1"):
+    return await db_client.patch(
+        course_url(child_id, course_id), json=payload, headers=with_key(headers, key)
+    )
+
+
+async def test_수정하면_200_과_고친_코스를_돌려준다(db_client, session, bearer, consented):
+    course = await seed_course(session, consented, starts=-1, ends=1)
+
+    response = await patch(
+        db_client,
+        bearer[0],
+        consented,
+        course.id,
+        revise_body(schedule={"title": "타이레놀", "dosage": "3ml"}),
+    )
+
+    assert response.status_code == 200
+    data = response.json()["course"]
+    assert data["id"] == str(course.id)
+    assert (data["title"], data["dosage"]) == ("타이레놀", "3ml")
+    assert set(data) == {"id", "title", "dosage", "starts_on", "ends_on", "notice_times", "doses"}
+
+
+async def test_수정한_값이_모두_저장된다(db_client, session, bearer, consented):
+    course = await seed_course(session, consented, starts=-1, ends=1)
+    code = sorted(symptom_code_set())[0]
+    schedule = {
+        "title": "  타이레놀 ",
+        "dosage": "3ml",
+        "indication_text": "열",
+        "note": "식후",
+        "storage": "fridge",
+        "med_form": "drops",
+        "symptom_codes": [code],
+        "ends_on": (TODAY + timedelta(days=2)).isoformat(),
+    }
+
+    response = await patch(
+        db_client, bearer[0], consented, course.id, revise_body(schedule=schedule)
+    )
+
+    assert response.status_code == 200
+    await session.refresh(course)
+    assert course.title == "  타이레놀 "  # 받은 그대로
+    assert (course.dosage, course.indication_text, course.note) == ("3ml", "열", "식후")
+    assert (course.storage, course.med_form) == ("fridge", "drops")
+    assert course.symptom_codes == [code]
+    assert course.ends_on == TODAY + timedelta(days=2)
+    assert (course.source, course.created_by) == ("utterance", "caregiver")  # 출처는 그대로다
+
+
+async def test_수정_뒤_알림_시각은_현재_패턴이고_회차_기록은_옛_것도_남는다(
+    db_client, session, bearer, consented
+):
+    course = await seed_course(session, consented, starts=-1, ends=1)  # 아침 · 점심 · 저녁
+
+    data = (await patch(db_client, bearer[0], consented, course.id, revise_body())).json()["course"]
+
+    assert data["notice_times"] == ["12:30"]  # 점심만 먹는 패턴
+    shown = [(d["dose_date"], d["scheduled_time"]) for d in data["doses"]]
+    assert shown == [
+        ((TODAY - timedelta(days=1)).isoformat(), "08:30"),  # 어제는 옛 패턴 그대로
+        ((TODAY - timedelta(days=1)).isoformat(), "12:30"),
+        ((TODAY - timedelta(days=1)).isoformat(), "19:30"),
+        (TODAY.isoformat(), "08:30"),  # 오늘 지난 시각은 남고
+        (TODAY.isoformat(), "12:30"),  # 지금 이후인 시각은 새 패턴으로 다시 만들어졌다
+    ]
+
+
+async def test_수정은_서버의_지금_이전_시각을_다시_만들지_않는다(
+    db_client, session, bearer, consented
+):
+    course = await seed_course(session, consented, starts=-1, ends=1)
+    past_today = {
+        "timing_anchor": "fixed",
+        "offset_minutes": 0,
+        "fixed_time": "09:20",
+    }  # 지금은 09:40
+    future_today = {"timing_anchor": "fixed", "offset_minutes": 0, "fixed_time": "09:41"}
+
+    response = await patch(
+        db_client,
+        bearer[0],
+        consented,
+        course.id,
+        revise_body(doses=[past_today, future_today]),
+    )
+
+    today_times = [
+        d["scheduled_time"]
+        for d in response.json()["course"]["doses"]
+        if d["dose_date"] == TODAY.isoformat()
+    ]
+    assert "09:20" not in today_times  # 이미 지난 시각은 만들지 않는다
+    assert "09:41" in today_times  # 곧 올 시각은 만든다
+
+
+async def test_체크한_회차는_수정_뒤에도_응답과_조회에_남는다(
+    db_client, session, bearer, consented
+):
+    course = await seed_course(session, consented, starts=-1, ends=1)
+    doses = await list_doses(session, schedule_ids=[course.id])
+    dinner_today = next(d for d in doses if d.dose_date == TODAY and d.scheduled_time.hour == 19)
+    await put_check(db_client, bearer[0], consented, dinner_today.id, {"checked": True})
+
+    response = await patch(db_client, bearer[0], consented, course.id, revise_body())
+
+    ids = {d["id"] for d in response.json()["course"]["doses"]}
+    assert str(dinner_today.id) in ids  # 새 패턴에 저녁이 없어도 기록은 남는다
+    listed = (await get_courses(db_client, bearer[0], consented)).json()["courses"][0]
+    assert str(dinner_today.id) in {d["id"] for d in listed["doses"]}
+
+
+async def test_수정은_키가_없으면_400(db_client, session, bearer, consented):
+    course = await seed_course(session, consented)
+
+    response = await db_client.patch(
+        course_url(consented, course.id), json=revise_body(), headers=bearer[0]
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "idempotency_key_required"
+
+
+async def test_수정을_같은_키로_다시_보내면_처음_응답을_재생한다(
+    db_client, session, bearer, consented
+):
+    course = await seed_course(session, consented, starts=-1, ends=1)
+    first = await patch(db_client, bearer[0], consented, course.id, revise_body())
+    # 그 사이 다른 방법으로 코스가 바뀌어도 같은 키는 처음 응답을 돌려준다
+    await session.execute(
+        update(MedicationSchedule).where(MedicationSchedule.id == course.id).values(title="바뀜")
+    )
+
+    again = await patch(db_client, bearer[0], consented, course.id, revise_body())
+
+    assert again.status_code == 200
+    assert again.json() == first.json()
+
+
+@pytest.mark.parametrize(
+    ("payload", "field"),
+    [
+        (lambda: {**revise_body(), "source": "utterance"}, "source"),
+        (lambda: {**revise_body(), "draft_id": "x"}, "draft_id"),
+        (lambda: {**revise_body(), "before": None}, "before"),
+        (lambda: {"doses": [MEALS[0]]}, "schedule"),
+        (lambda: {k: v for k, v in revise_body().items() if k != "doses"}, "doses"),
+        (lambda: revise_body(schedule={"scheduled_time": "08:30"}), "schedule.scheduled_time"),
+        (
+            lambda: revise_body(doses=[{**MEALS[0], "scheduled_time": "08:30"}]),
+            "doses.0.scheduled_time",
+        ),
+        (lambda: revise_body(schedule={"ends_on": "20261301"}), "schedule.ends_on"),
+        (
+            lambda: revise_body(schedule={"symptom_codes": ["not_in_dictionary"]}),
+            "schedule.symptom_codes",
+        ),
+    ],
+)
+async def test_수정_본문이_틀리면_400_이고_칸_이름이_온다(
+    db_client, session, bearer, consented, payload, field
+):
+    course = await seed_course(session, consented)
+
+    response = await patch(db_client, bearer[0], consented, course.id, payload())
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "validation_failed"
+    assert field in response.json()["error"]["detail"]["fields"]
+
+
+async def test_수정_본문_오류가_키_누락보다_먼저_걸린다(db_client, session, bearer, consented):
+    course = await seed_course(session, consented)
+
+    response = await db_client.patch(
+        course_url(consented, course.id), json={"doses": []}, headers=bearer[0]
+    )
+
+    assert response.json()["error"]["code"] == "validation_failed"
+
+
+async def test_수정은_남의_아이_주소면_403_이고_인증이_없으면_401(
+    db_client, session, bearer, consented
+):
+    _, other_parent = await issue_bearer(session, token="test-token-other")
+    other_child = await link_child(session, parent_id=other_parent)
+    course = await seed_course(session, other_child)
+
+    denied = await patch(db_client, bearer[0], other_child, course.id, revise_body())
+    anonymous = await db_client.patch(
+        course_url(consented, course.id), json=revise_body(), headers={"Idempotency-Key": "k"}
+    )
+
+    assert denied.status_code == 403
+    assert denied.json()["error"]["code"] == "child_access_denied"
+    assert anonymous.status_code == 401
+
+
+@pytest.mark.parametrize("which", ["cid", "sid"])
+async def test_수정의_경로_id_형식이_틀리면_422(db_client, bearer, consented, which):
+    url = (
+        f"/api/v1/children/not-a-uuid/medications/{uuid.uuid4()}"
+        if which == "cid"
+        else f"/api/v1/children/{consented}/medications/not-a-uuid"
+    )
+
+    response = await db_client.patch(url, json=revise_body(), headers=with_key(bearer[0]))
+
+    assert response.status_code == 422
+
+
+async def test_수정은_동의가_없으면_403_이고_바꾸지_않는다(db_client, session, bearer, cid):
+    course = await seed_course(session, cid)
+
+    response = await patch(db_client, bearer[0], cid, course.id, revise_body())
+
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "consent_required"
+    await session.refresh(course)
+    assert course.title == "아목시실린"
+
+
+async def test_없는_코스는_404_not_found(db_client, bearer, consented):
+    response = await patch(db_client, bearer[0], consented, uuid.uuid4(), revise_body())
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "not_found"
+
+
+async def test_남의_아이_코스는_404(db_client, session, bearer, consented):
+    _, other_parent = await issue_bearer(session, token="test-token-other")
+    other_child = await link_child(session, parent_id=other_parent)
+    course = await seed_course(session, other_child)
+
+    response = await patch(db_client, bearer[0], consented, course.id, revise_body())
+
+    assert response.status_code == 404  # 내 아이 주소로 남의 코스를 불러도 있는지 알리지 않는다
+
+
+async def test_멈춘_코스는_404(db_client, session, bearer, consented):
+    course = await seed_course(session, consented)
+    await stop_schedule(
+        session, child_id=consented, schedule_id=course.id, stopped_at=datetime.now(UTC)
+    )
+
+    response = await patch(db_client, bearer[0], consented, course.id, revise_body())
+
+    assert response.status_code == 404
+
+
+@pytest.mark.parametrize(
+    ("over", "fields"),
+    [
+        ({"schedule": {"title": " "}}, ["schedule.title"]),
+        ({"doses": []}, ["doses"]),
+        ({"doses": [MEALS[0], MEALS[0]]}, ["doses"]),
+        (
+            {"schedule": {"ends_on": (TODAY + timedelta(days=200)).isoformat()}},
+            ["schedule.starts_on", "schedule.ends_on"],
+        ),
+    ],
+)
+async def test_수정_내용이_틀리면_400_이고_바꾸지_않는다(
+    db_client, session, bearer, consented, over, fields
+):
+    course = await seed_course(session, consented, starts=-1, ends=1)
+    before = len(await list_doses(session, schedule_ids=[course.id]))
+
+    response = await patch(db_client, bearer[0], consented, course.id, revise_body(**over))
+
+    assert response.status_code == 400
+    assert response.json()["error"]["detail"] == {"fields": fields}
+    assert len(await list_doses(session, schedule_ids=[course.id])) == before
+
+
+async def test_체크한_회차가_새_기간_밖이_되면_400(db_client, session, bearer, consented):
+    course = await seed_course(session, consented, starts=-1, ends=1)
+    doses = await list_doses(session, schedule_ids=[course.id])
+    yesterday = next(d for d in doses if d.dose_date == TODAY - timedelta(days=1))
+    await put_check(db_client, bearer[0], consented, yesterday.id, {"checked": True})
+
+    response = await patch(
+        db_client,
+        bearer[0],
+        consented,
+        course.id,
+        revise_body(schedule={"starts_on": TODAY.isoformat()}),  # 체크한 어제가 밖이 된다
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["detail"] == {
+        "fields": ["schedule.starts_on", "schedule.ends_on"]
+    }
+
+
+@pytest.mark.parametrize("value", ["21:00Z", "21:00+09:00", "21:00-05:00"])
+async def test_수정에서도_시간대가_붙은_시각은_400(db_client, session, bearer, consented, value):
+    course = await seed_course(session, consented, starts=-1, ends=1)
+    before = len(await list_doses(session, schedule_ids=[course.id]))
+
+    response = await patch(
+        db_client,
+        bearer[0],
+        consented,
+        course.id,
+        revise_body(doses=[{**FIXED_AT, "fixed_time": value}]),
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["detail"] == {"fields": ["doses.0.fixed_time"]}
+    assert len(await list_doses(session, schedule_ids=[course.id])) == before
+
+
+@pytest.mark.parametrize("field", ["title", "dosage", "indication_text", "note"])
+async def test_수정에서도_NUL_이_든_값은_500이_아니라_400(
+    db_client, session, bearer, consented, field
+):
+    course = await seed_course(session, consented, starts=-1, ends=1)
+
+    response = await patch(
+        db_client,
+        bearer[0],
+        consented,
+        course.id,
+        revise_body(schedule={field: "약\x00이름"}),
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["detail"] == {"fields": [f"schedule.{field}"]}
+    await session.refresh(course)
+    assert course.title == "아목시실린"
+
+
+async def test_다른_진행_코스와_같아지는_수정은_409_provisional(
+    db_client, session, bearer, consented
+):
+    await seed_course(session, consented, title="아목시실린", starts=-1, ends=1)
+    other = await seed_course(session, consented, title="타이레놀", starts=-1, ends=1)
+
+    response = await patch(
+        db_client, bearer[0], consented, other.id, revise_body()
+    )  # 이름이 같아진다
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "already_exists"
+
+
+async def test_수정은_동의_없음이_코스_없음보다_먼저_걸린다(db_client, bearer, cid):
+    response = await patch(db_client, bearer[0], cid, uuid.uuid4(), revise_body())
+
+    assert response.status_code == 403  # 동의 없는 아이: 없는 코스여도 403 이다
+
+
+async def test_수정은_코스_없음이_내용_오류보다_먼저_걸린다(db_client, bearer, consented):
+    response = await patch(db_client, bearer[0], consented, uuid.uuid4(), revise_body(doses=[]))
+
+    assert response.status_code == 404
+
+
+async def test_수정은_내용_오류가_중복보다_먼저_걸린다(db_client, session, bearer, consented):
+    await seed_course(session, consented, title="아목시실린", starts=-1, ends=1)
+    other = await seed_course(session, consented, title="타이레놀", starts=-1, ends=1)
+
+    response = await patch(db_client, bearer[0], consented, other.id, revise_body(doses=[]))
+
+    assert response.status_code == 400
+
+
+async def test_수정을_보낸_뒤에는_저장이_확정돼_롤백해도_남는다(
+    db_client, session, bearer, consented
+):
+    course = await seed_course(session, consented, starts=-1, ends=1)
+    course_id = course.id
+    await patch(
+        db_client, bearer[0], consented, course_id, revise_body(schedule={"title": "타이레놀"})
+    )
+
+    await session.rollback()
+
+    row = await session.scalar(select(MedicationSchedule).where(MedicationSchedule.id == course_id))
+    assert row.title == "타이레놀"
+
+
+def test_수정_엔드포인트와_요청의_모든_칸에_설명이_있다():
+    spec = app.openapi()
+    operation = spec["paths"]["/api/v1/children/{cid}/medications/{sid}"]["patch"]
+
+    assert operation["summary"].strip()
+    assert len(operation["description"].strip()) > 50
+    assert {"200", "400", "403", "404", "409"} <= set(operation["responses"])
+    assert "idempotency-key" in {p["name"].lower() for p in operation["parameters"]}
+    for name in REVISE_SCHEMAS:
+        schema = spec["components"]["schemas"][name]
+        assert schema.get("description", "").strip(), f"{name} 에 설명이 없다"
+        missing = [f for f, prop in schema["properties"].items() if not _has_description(prop)]
+        assert missing == [], f"{name} 설명이 없는 칸: {missing}"
+
+
+def test_수정의_설명은_체크했거나_이미_지난_회차가_기간_밖이_되면_400이라고_적는다():
+    # 체크 안 한 어제 회차만 있어도 시작일을 오늘로 늦추면 400 이다 — 적지 않으면 FE 가 모른다
+    operation = app.openapi()["paths"]["/api/v1/children/{cid}/medications/{sid}"]["patch"]
+    texts = [operation["description"], operation["responses"]["400"]["description"]]
+
+    assert all("체크했거나 이미 지난 회차" in text for text in texts)
+    assert all("체크한 회차가" not in text for text in texts)
+
+
+# ── 12. 시계 · 끝난 코스 (수정) ──────────────────────────────────────────
+
+
+async def test_수정은_요청_도중_자정을_넘어도_이미_지난_날의_회차를_지우지_않는다(
+    db_client, session, bearer, consented, monkeypatch
+):
+    course = await seed_course(session, consented, starts=-1, ends=1)  # 오늘 = 10/27
+    # 요청이 자정을 넘는 순간 — 두 시계가 다른 날을 가리킨다: kst_today() 는 10/27,
+    # utc_now() 는 한국 시간 10/28 00:00:00.5
+    monkeypatch.setattr(medications_router, "kst_today", lambda: TODAY)
+    monkeypatch.setattr(
+        medications_router, "utc_now", lambda: datetime(2026, 10, 27, 15, 0, 0, 500000, tzinfo=UTC)
+    )
+
+    response = await patch(db_client, bearer[0], consented, course.id, revise_body())
+
+    assert response.status_code == 200
+    kept = [
+        d.scheduled_time.strftime("%H:%M")
+        for d in await list_doses(session, schedule_ids=[course.id])
+        if d.dose_date == TODAY
+    ]
+    assert kept == ["08:30", "12:30", "19:30"]  # 10/27 은 이미 지났다 — 하나도 지우지 않는다
+
+
+async def test_끝난_코스를_수정하면_404(db_client, session, bearer, consented):
+    course = await seed_course(
+        session, consented, starts=-3, ends=-1
+    )  # 어제 끝났고 status 는 active
+    payload = revise_body(
+        schedule={
+            "starts_on": (TODAY - timedelta(days=3)).isoformat(),
+            "ends_on": (TODAY - timedelta(days=1)).isoformat(),
+            "title": "아목시실린 수정",
+        }
+    )
+
+    response = await patch(db_client, bearer[0], consented, course.id, payload)
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "not_found"
+    await session.refresh(course)
+    assert course.title == "아목시실린"
+
+
+async def test_체크는_요청_도중_자정을_넘으면_새_날의_회차를_오늘로_본다(
+    db_client, session, bearer, consented, monkeypatch
+):
+    # 두 시계가 다른 날을 가리키는 순간 — kst_today() 는 10/27,
+    # utc_now() 는 한국 시간 10/28 00:00:00.5. 시계를 한 번만 읽으므로 "오늘" 은 10/28 이고
+    # 10/28 의 회차는 체크할 수 있다
+    _, dose = await dose_of(session, consented, days=1)  # TODAY(10/27) 의 다음 날 = 10/28
+    monkeypatch.setattr(medications_router, "kst_today", lambda: TODAY)
+    monkeypatch.setattr(
+        medications_router, "utc_now", lambda: datetime(2026, 10, 27, 15, 0, 0, 500000, tzinfo=UTC)
+    )
+
+    response = await put_check(db_client, bearer[0], consented, dose.id, {"checked": True})
+
+    assert response.status_code == 200
+
+
+async def test_수정은_저장된_옛_증상_코드를_그대로_보내면_통과한다(
+    db_client, session, bearer, consented
+):
+    course = await seed_course(session, consented, starts=-1, ends=1)
+    course.symptom_codes = [
+        "retired_code_from_old_dictionary"
+    ]  # 사전에서 빠진 옛 코드가 저장돼 있다
+    await session.flush()
+    payload = revise_body(schedule={"symptom_codes": ["retired_code_from_old_dictionary"]})
+
+    response = await patch(db_client, bearer[0], consented, course.id, payload)
+
+    assert response.status_code == 200
+
+
+async def test_수정에서_새_사전_밖_코드는_400(db_client, session, bearer, consented):
+    course = await seed_course(session, consented, starts=-1, ends=1)
+    payload = revise_body(schedule={"symptom_codes": ["not_in_dictionary"]})
+
+    response = await patch(db_client, bearer[0], consented, course.id, payload)
+
+    assert response.status_code == 400
+    assert response.json()["error"]["detail"] == {"fields": ["schedule.symptom_codes"]}

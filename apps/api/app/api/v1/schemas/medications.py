@@ -269,3 +269,22 @@ class CheckDoseRequest(BaseModel):
             "null · 누락은 400. 이미 체크된 회차에 `true` 를 또 보내도 **처음 체크 시각이 남는다**"
         )
     )
+
+
+class ReviseMedicationRequest(BaseModel):
+    """승인 게이트 ㉡ — 보호자가 확인한 코스의 **최종 상태 전체**.
+
+    등록 요청에서 `source` 만 뺀 것이다. 바꾸지 않은 칸도 지금 값 그대로 다시 보낸다
+    (부분 수정이 아니다). 출처(`source`)는 등록할 때 정해져서 바꿀 수 없고, 보내면 400 이다.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    schedule: MedicationScheduleIn = Field(description="코스의 새 내용과 기간")
+    doses: list[MedicationDoseIn] = Field(
+        description=(
+            "새 하루 시각 패턴. 등록과 같은 규칙이다 — **1~24개**, 같은 알림 시각이 둘이면 400. "
+            "서버는 **체크한 회차와 이미 지난 회차를 그대로 두고**, 미체크이면서 예정 시각이 지금 "
+            "이후인 회차만 지우고 이 패턴으로 다시 만든다(그 회차의 `id` 가 바뀐다)"
+        )
+    )

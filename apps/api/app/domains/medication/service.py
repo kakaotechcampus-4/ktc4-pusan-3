@@ -10,6 +10,7 @@ import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, time
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,6 +23,7 @@ from app.domains.medication.models import (
     MedicationForm,
     MedicationSchedule,
     MedicationSource,
+    MedicationStatus,
     MedicationStorage,
     TimingAnchor,
     in_progress,
@@ -29,13 +31,19 @@ from app.domains.medication.models import (
 from app.domains.medication.repository import (
     NewDose,
     add_course,
+    add_doses,
+    delete_future_unchecked,
+    existing_dose_keys,
+    find_course,
     find_dose,
     has_active_duplicate,
+    has_kept_outside,
     list_courses,
     list_doses,
+    lock_doses,
     write_dose_check,
 )
-from app.rules.medication_course import course_field_errors, dose_dates
+from app.rules.medication_course import course_field_errors, dose_dates, pattern_day
 
 
 class CourseInvalid(Exception):
@@ -59,12 +67,13 @@ class DosePattern:
     fixed_time: time | None
 
 
-@dataclass(frozen=True)
-class CourseInput:
+@dataclass(frozen=True, kw_only=True)
+class CourseFields:
+    """코스의 내용과 기간, 하루 시각 패턴. 등록 · 수정이 같이 쓴다."""
+
     title: str
     starts_on: date
     ends_on: date
-    source: MedicationSource
     doses: Sequence[DosePattern]
     dosage: str | None = None
     indication_text: str | None = None
@@ -72,6 +81,13 @@ class CourseInput:
     storage: MedicationStorage | None = None
     med_form: MedicationForm | None = None
     note: str | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
+class CourseInput(CourseFields):
+    """등록 입력. 출처는 등록 때만 정해진다 — 수정은 `CourseFields` 만 받는다."""
+
+    source: MedicationSource
 
 
 def _unknown_symptom_codes(codes: Sequence[str], known: Sequence[str] = ()) -> list[str]:
@@ -119,12 +135,10 @@ async def _lock_child_courses(session: AsyncSession, child_id: uuid.UUID) -> Non
     )
 
 
-async def create_course(
-    session: AsyncSession, *, child_id: uuid.UUID, data: CourseInput, today: date
-) -> MedicationSchedule:
-    """코스 1행과 회차 행을 저장한다. `today` 는 KST 오늘이다.
+def _validate(data: CourseFields, *, today: date, known_codes: Sequence[str] = ()) -> None:
+    """칸 → 기간 전체가 과거인지 순으로 본다. 틀리면 `CourseInvalid`.
 
-    검사 순서는 칸 → 기간 전체가 과거인지 → 중복이다. 칸이 틀렸으면 중복은 묻지 않는다.
+    `known_codes` 는 수정할 때 이미 저장돼 있는 증상 코드 — 사전에서 빠졌어도 통과시킨다.
     """
     fields = course_field_errors(
         title=data.title,
@@ -137,13 +151,23 @@ async def create_course(
     )
     if "doses" not in fields and not _doses_are_valid(data.doses):
         fields.append("doses")
-    if _unknown_symptom_codes(data.symptom_codes):
+    if _unknown_symptom_codes(data.symptom_codes, known_codes):
         fields.append("schedule.symptom_codes")
     if fields:
         raise CourseInvalid(fields)
     # provisional — 기간 전체가 과거인 코스를 거절할지는 미정이다 (#563)
     if data.ends_on < today:
         raise CourseInvalid(["schedule.ends_on"])
+
+
+async def create_course(
+    session: AsyncSession, *, child_id: uuid.UUID, data: CourseInput, today: date
+) -> MedicationSchedule:
+    """코스 1행과 회차 행을 저장한다. `today` 는 KST 오늘이다.
+
+    검사 순서는 칸 → 기간 전체가 과거인지 → 중복이다. 칸이 틀렸으면 중복은 묻지 않는다.
+    """
+    _validate(data, today=today)
     await _lock_child_courses(session, child_id)  # 틀린 요청은 잠금 없이 위에서 걸러진다
     if await has_active_duplicate(
         session,
@@ -181,8 +205,17 @@ class CourseView:
     """화면에 내보낼 코스 한 건 — 알림 시각과 **오늘까지**의 회차를 같이 든다."""
 
     course: MedicationSchedule
-    notice_times: list[str]  # 하루에 울릴 시각 "HH:MM" 오름차순, 중복 없음
+    notice_times: list[str]  # 하루에 울릴 시각 "HH:MM" 오름차순 — `pattern_day` 가 정한 날의 패턴
     doses: list[MedicationDose]  # 오늘까지의 회차, (날짜, 시각) 순
+
+
+def _notice_times(doses: Sequence[MedicationDose], *, today: date) -> list[str]:
+    """하루에 울릴 시각 — 읽을 날은 `pattern_day` 가 정한다 (Agent 의 `pattern` 과 같은 규칙).
+
+    수정하면 이미 지난 날의 회차는 옛 패턴으로 남는다. 모든 회차에서 모으면 옛 시각이 섞인다.
+    """
+    day = pattern_day((d.dose_date for d in doses), today=today)
+    return sorted({f"{d.scheduled_time:%H:%M}" for d in doses if d.dose_date == day})
 
 
 async def course_views(
@@ -191,7 +224,7 @@ async def course_views(
     """코스마다 알림 시각과 오늘까지의 회차를 붙인다. 코스 순서를 그대로 지킨다.
 
     회차는 한 번에 읽는다. 알림 시각은 아직 오지 않은 날의 회차까지 보고 정하므로 날짜를 자르지 않고
-    읽은 뒤 오늘까지만 남긴다 — 내일부터 먹는 코스도 알림 시각은 안다.
+    읽은 뒤 오늘까지만 남긴다 — 내일부터 먹는 코스도 알림 시각은 안다(`pattern_day` 의 패턴).
     """
     rows = await list_doses(session, schedule_ids=[c.id for c in courses])
     by_course: dict[uuid.UUID, list[MedicationDose]] = {c.id: [] for c in courses}
@@ -200,7 +233,7 @@ async def course_views(
     return [
         CourseView(
             course=c,
-            notice_times=sorted({f"{d.scheduled_time:%H:%M}" for d in by_course[c.id]}),
+            notice_times=_notice_times(by_course[c.id], today=today),
             doses=[d for d in by_course[c.id] if d.dose_date <= today],
         )
         for c in courses
@@ -248,3 +281,80 @@ async def set_dose_checked(
     await write_dose_check(session, dose_id=dose.id, checked_at=now if checked else None)
     await session.refresh(dose)
     return dose
+
+
+KST = ZoneInfo("Asia/Seoul")
+
+
+class CourseNotFound(Exception):
+    """그 아이의 진행 중인 코스가 아니다 (없는 코스 · 남의 아이 · 멈춘 코스 · 끝난 코스)."""
+
+
+async def revise_course(
+    session: AsyncSession,
+    *,
+    child_id: uuid.UUID,
+    course_id: uuid.UUID,
+    data: CourseFields,
+    today: date,
+    now: datetime,
+) -> MedicationSchedule:
+    """코스를 보호자가 확인한 최종 상태로 고친다. `today` 는 KST 오늘, `now` 는 지금이다.
+
+    복용 기록은 지우지 않는다. 체크한 회차와 이미 지난 회차는 그대로 두고, 미체크이면서 예정 시각이
+    지금 이후인 회차만 지운 뒤 새 패턴으로 다시 만든다(id 가 바뀐다). 다시 만들 때 지금 이전의
+    시각은 만들지 않는다 — 등록이 오늘 회차를 통째로 만드는 것과 다르다. 수정 뒤에도 남는
+    회차(체크했거나 이미 지난 것)가 새 기간 밖이 되면 거절한다 — `dose_date` 가 기간 안이라는
+    불변식이다. 검사 순서는 대상 → 칸 → 남는 회차 → 중복이다.
+    """
+    course = await find_course(session, child_id=child_id, course_id=course_id)
+    # 끝난 코스는 조회가 싣지 않는다 — 수정도 못 한다. 회차가 모두 지났고, 400 으로 내면 고치지 않은
+    # `ends_on` 이 틀렸다고 나온다
+    if course is None or course.status != MedicationStatus.ACTIVE or course.ends_on < today:
+        raise CourseNotFound
+    _validate(data, today=today, known_codes=course.symptom_codes)
+    now_time = now.astimezone(KST).time()
+    # 체크가 검사와 삭제 사이에 끼어들지 못하게 회차를 먼저 잠근다
+    await lock_doses(session, schedule_id=course.id)
+    if await has_kept_outside(
+        session,
+        schedule_id=course.id,
+        starts_on=data.starts_on,
+        ends_on=data.ends_on,
+        today=today,
+        now_time=now_time,
+    ):
+        raise CourseInvalid(["schedule.starts_on", "schedule.ends_on"])
+    # 등록과 같은 잠금 — 중복 검사와 저장 사이를 막는다
+    await _lock_child_courses(session, child_id)
+    if await has_active_duplicate(
+        session,
+        child_id=child_id,
+        title=data.title,
+        starts_on=data.starts_on,
+        ends_on=data.ends_on,
+        exclude_id=course.id,
+    ):
+        raise CourseAlreadyExists
+
+    course.title = data.title
+    course.dosage = data.dosage or None  # 빈 문자열은 null 로
+    course.indication_text = data.indication_text or None
+    course.note = data.note or None
+    course.symptom_codes = list(data.symptom_codes)
+    course.storage = data.storage
+    course.med_form = data.med_form
+    course.starts_on = data.starts_on
+    course.ends_on = data.ends_on
+
+    await delete_future_unchecked(session, schedule_id=course.id, today=today, now_time=now_time)
+    kept = await existing_dose_keys(session, schedule_id=course.id)
+    fresh: list[NewDose] = []
+    for day in dose_dates(data.starts_on, data.ends_on, today=today):
+        for p in data.doses:
+            when = scheduled_time_of(p.timing_anchor, p.offset_minutes, p.fixed_time)
+            if (day, when) > (today, now_time) and (day, when) not in kept:
+                fresh.append(NewDose(day, p.timing_anchor, p.offset_minutes, p.fixed_time))
+    await add_doses(session, schedule_id=course.id, doses=fresh)
+    await session.flush()
+    return course

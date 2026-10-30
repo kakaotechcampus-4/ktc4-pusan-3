@@ -14,13 +14,14 @@ from sqlalchemy import update
 
 from app.domains.child.models import Child
 from app.domains.identity.models import Parent
+from app.domains.medication.agent_reader import pattern_of
 from app.domains.medication.models import (
     MedicationCreatedBy,
     MedicationDose,
     MedicationSource,
     TimingAnchor,
 )
-from app.domains.medication.repository import NewDose, add_course, stop_schedule
+from app.domains.medication.repository import NewDose, add_course, list_doses, stop_schedule
 from app.domains.medication.service import course_views, list_in_progress
 
 TODAY = date(2026, 10, 27)
@@ -227,6 +228,28 @@ async def test_알림_시각은_중복_없이_오름차순_HHMM(session, child):
     assert view.notice_times == ["08:30", "19:30"]
 
 
+async def test_알림_시각은_가장_마지막_날의_패턴이다_옛_패턴의_지난_회차는_섞이지_않는다(
+    session, child
+):
+    # 수정하면 이미 지난 날의 회차는 옛 패턴으로 남는다 — 하루에 울릴 시각은 지금 패턴이어야 한다
+    old = [fx for fx in meals(day(-1), day(-1), (TimingAnchor.DINNER,))]
+    new = meals(day(0), day(2), (TimingAnchor.LUNCH,))
+    await seed(session, child, starts=-1, ends=2, doses=old + new)
+
+    (view,) = await list_in_progress(session, child_id=child.id, today=TODAY)
+
+    assert view.notice_times == ["12:30"]
+    assert len(view.doses) == 2  # 어제 저녁 · 오늘 점심 — 회차 기록은 옛 패턴도 그대로 보인다
+
+
+async def test_회차가_하나도_없는_코스의_알림_시각은_빈_목록(session, child):
+    await seed(session, child, starts=0, ends=0, doses=[])
+
+    (view,) = await list_in_progress(session, child_id=child.id, today=TODAY)
+
+    assert view.notice_times == []
+
+
 # ── 5. 코스 목록을 직접 넘길 때 ──────────────────────────────────────────
 
 
@@ -241,3 +264,53 @@ async def test_course_views_는_넘긴_코스_순서를_그대로_지킨다(sess
 
 async def test_course_views_는_빈_목록이면_조회하지_않고_빈_목록(session):
     assert await course_views(session, [], today=TODAY) == []
+
+
+def fixed(offset: int, *at: tuple[int, int]) -> list[NewDose]:
+    return [NewDose(day(offset), TimingAnchor.FIXED, 0, time(h, m)) for h, m in at]
+
+
+OLD = ((8, 30), (12, 30), (19, 30))
+
+
+@pytest.mark.parametrize(
+    ("doses", "expected"),
+    [
+        pytest.param(  # 어제 · 오늘 · 내일 — 오늘 09:40 에 09:00 · 20:00 으로 고친 뒤
+            fixed(-1, *OLD) + fixed(0, (8, 30), (20, 0)) + fixed(1, (9, 0), (20, 0)),
+            ["09:00", "20:00"],
+            id="수정한_코스는_오늘_다음_날의_새_시각",
+        ),
+        pytest.param(  # 마지막 날이 오늘이라 다음 날이 없다 — 옛 시각이 섞인다 (알려진 경계)
+            fixed(-1, *OLD) + fixed(0, (8, 30), (20, 0)),
+            ["08:30", "20:00"],
+            id="마지막_날이_오늘이면_오늘_행을_읽는다",
+        ),
+        pytest.param(fixed(2, (9, 0)) + fixed(3, (9, 0)), ["09:00"], id="시작_전_코스"),
+        pytest.param(
+            fixed(-1, *OLD) + fixed(0, *OLD) + fixed(1, *OLD),
+            ["08:30", "12:30", "19:30"],
+            id="고치지_않은_코스",
+        ),
+    ],
+)
+async def test_화면의_알림_시각과_Agent_패턴은_같은_날을_읽어_같다(session, child, doses, expected):
+    first = min(d.dose_date for d in doses)
+    last = max(d.dose_date for d in doses)
+    course = await add_course(
+        session,
+        child_id=child.id,
+        title="약",
+        starts_on=first,
+        ends_on=last,
+        source=MedicationSource.UTTERANCE,
+        created_by=MedicationCreatedBy.CAREGIVER,
+        doses=doses,
+    )
+
+    (view,) = await course_views(session, [course], today=TODAY)
+    rows = await list_doses(session, schedule_ids=[course.id])
+    agent = [f"{slot.scheduled_time:%H:%M}" for slot in pattern_of(rows, basis=TODAY)]
+
+    assert view.notice_times == expected
+    assert agent == expected
