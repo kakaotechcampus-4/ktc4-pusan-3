@@ -182,9 +182,11 @@ async def stop_schedule(
 async def find_dose(
     session: AsyncSession, *, child_id: uuid.UUID, dose_id: uuid.UUID
 ) -> MedicationDose | None:
-    """그 아이의 진행 중(`active`) 코스에 속한 회차. 다른 아이 · 멈춘 코스의 회차는 `None` 이다.
+    """그 아이의 멈추지 않은(`active`) 코스에 속한 회차. 다른 아이 · 멈춘 코스의 회차는 `None` 이다.
 
     다른 아이의 회차는 있는지도 알리지 않는다. 멈춘 코스의 회차는 체크 · 해제할 수 없다.
+    날짜는 보지 않는다 — 마지막 날이 지난 코스의 회차도 체크 · 해제된다. 조회가 그 코스를 싣지
+    않아도 id 를 아는 화면(마지막 날 밤에 열어 둔 화면)은 자정을 넘어서도 쓸 수 있다.
     """
     stmt = (
         select(MedicationDose)

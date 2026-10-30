@@ -992,6 +992,21 @@ async def test_다른_아이의_회차는_404(db_client, session, bearer, consen
     assert response.status_code == 404  # 내 아이 주소로 남의 회차를 불러도 있는지 알리지 않는다
 
 
+async def test_끝난_코스의_회차는_조회에_안_보여도_체크된다(db_client, session, bearer, consented):
+    course = await seed_course(
+        session, consented, starts=-3, ends=-1
+    )  # 어제 끝났고 status 는 active
+    doses = await list_doses(session, schedule_ids=[course.id])
+    last_night = next(d for d in doses if d.dose_date == TODAY - timedelta(days=1))
+
+    listed = (await get_courses(db_client, bearer[0], consented)).json()["courses"]
+    response = await put_check(db_client, bearer[0], consented, last_night.id, {"checked": True})
+
+    assert listed == []  # 조회는 끝난 코스를 싣지 않는다
+    assert response.status_code == 200  # 그래도 id 를 아는 화면은 체크할 수 있다
+    assert datetime.fromisoformat(response.json()["checked_at"]) == NOW
+
+
 async def test_멈춘_코스의_회차는_404(db_client, session, bearer, consented):
     course, dose = await dose_of(session, consented)
     await stop_schedule(
