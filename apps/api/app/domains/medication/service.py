@@ -9,7 +9,7 @@ HTTP 를 모른다. 틀린 입력은 `CourseInvalid`, 이미 있는 코스는 `C
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import date, time
+from datetime import date, datetime, time
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,13 +18,23 @@ from app.core.medication_draft import OFFSET_MAX, OFFSET_MIN, scheduled_time_of
 from app.core.symptom_codes import symptom_code_set
 from app.domains.medication.models import (
     MedicationCreatedBy,
+    MedicationDose,
     MedicationForm,
     MedicationSchedule,
     MedicationSource,
     MedicationStorage,
     TimingAnchor,
+    in_progress,
 )
-from app.domains.medication.repository import NewDose, add_course, has_active_duplicate
+from app.domains.medication.repository import (
+    NewDose,
+    add_course,
+    find_dose,
+    has_active_duplicate,
+    list_courses,
+    list_doses,
+    write_dose_check,
+)
 from app.rules.medication_course import course_field_errors, dose_dates
 
 
@@ -164,3 +174,77 @@ async def create_course(
             for p in data.doses
         ],
     )
+
+
+@dataclass(frozen=True)
+class CourseView:
+    """화면에 내보낼 코스 한 건 — 알림 시각과 **오늘까지**의 회차를 같이 든다."""
+
+    course: MedicationSchedule
+    notice_times: list[str]  # 하루에 울릴 시각 "HH:MM" 오름차순, 중복 없음
+    doses: list[MedicationDose]  # 오늘까지의 회차, (날짜, 시각) 순
+
+
+async def course_views(
+    session: AsyncSession, courses: Sequence[MedicationSchedule], *, today: date
+) -> list[CourseView]:
+    """코스마다 알림 시각과 오늘까지의 회차를 붙인다. 코스 순서를 그대로 지킨다.
+
+    회차는 한 번에 읽는다. 알림 시각은 아직 오지 않은 날의 회차까지 보고 정하므로 날짜를 자르지 않고
+    읽은 뒤 오늘까지만 남긴다 — 내일부터 먹는 코스도 알림 시각은 안다.
+    """
+    rows = await list_doses(session, schedule_ids=[c.id for c in courses])
+    by_course: dict[uuid.UUID, list[MedicationDose]] = {c.id: [] for c in courses}
+    for dose in rows:
+        by_course[dose.schedule_id].append(dose)
+    return [
+        CourseView(
+            course=c,
+            notice_times=sorted({f"{d.scheduled_time:%H:%M}" for d in by_course[c.id]}),
+            doses=[d for d in by_course[c.id] if d.dose_date <= today],
+        )
+        for c in courses
+    ]
+
+
+async def list_in_progress(
+    session: AsyncSession, *, child_id: uuid.UUID, today: date
+) -> list[CourseView]:
+    """그 아이의 진행 중인 코스. 멈춘 · 끝난 · 시작 전 코스는 싣지 않는다 (알려진 한계)."""
+    courses = await list_courses(session, child_id=child_id, where=in_progress(today))
+    return await course_views(session, courses, today=today)
+
+
+class DoseNotFound(Exception):
+    """체크할 수 있는 그런 회차가 없다.
+
+    없는 회차 · 남의 아이 · 멈춘 코스에서 멈춘 뒤에 예정된 회차가 모두 여기에 든다.
+    """
+
+
+class DoseNotDue(Exception):
+    """아직 오지 않은 날의 회차다. 체크도 해제도 못 한다."""
+
+
+async def set_dose_checked(
+    session: AsyncSession,
+    *,
+    child_id: uuid.UUID,
+    dose_id: uuid.UUID,
+    checked: bool,
+    today: date,
+    now: datetime,
+) -> MedicationDose:
+    """회차를 체크하거나 해제한다. `today` 는 KST 오늘, `now` 는 체크 시각이다.
+
+    되돌릴 수 있어서 승인 게이트가 아니다. 같은 상태를 두 번 보내도 결과가 같고, 이미 체크된
+    회차에 또 체크하면 처음 시각이 남는다. 찾지 못함 → 아직 오지 않음 순서로 검사한다.
+    """
+    dose = await find_dose(session, child_id=child_id, dose_id=dose_id)
+    if dose is None:
+        raise DoseNotFound
+    if dose.dose_date > today:
+        raise DoseNotDue
+    await write_dose_check(session, dose_id=dose.id, checked_at=now if checked else None)
+    await session.refresh(dose)
+    return dose

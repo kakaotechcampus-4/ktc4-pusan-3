@@ -27,8 +27,14 @@ from app.api.v1.routers import medications as medications_router
 from app.core.symptom_codes import symptom_code_set
 from app.domains.consent.models import ConsentAction, ConsentScope
 from app.domains.consent.repository import record_consent
-from app.domains.medication.models import MedicationDose, MedicationSchedule
-from app.domains.medication.repository import stop_schedule
+from app.domains.medication.models import (
+    MedicationCreatedBy,
+    MedicationDose,
+    MedicationSchedule,
+    MedicationSource,
+    TimingAnchor,
+)
+from app.domains.medication.repository import NewDose, add_course, list_doses, stop_schedule
 from app.domains.policy.repository import find_active_versions
 from app.main import app
 
@@ -81,9 +87,14 @@ def _clean_keys():
     idempotency.clear()
 
 
+NOW = datetime(2026, 10, 27, 0, 40, tzinfo=UTC)  # 한국 시간 09:40 — TODAY 와 같은 날이다
+LATER = NOW + timedelta(hours=3)
+
+
 @pytest.fixture(autouse=True)
 def _today(monkeypatch):
     monkeypatch.setattr(medications_router, "kst_today", lambda: TODAY)
+    monkeypatch.setattr(medications_router, "utc_now", lambda: NOW)
 
 
 async def grant_child_health(session, *, child_id, parent_id) -> None:
@@ -678,3 +689,433 @@ def test_요청과_응답의_모든_칸에_설명이_있다(name):
         field for field, prop in schemas[name]["properties"].items() if not _has_description(prop)
     ]
     assert missing == [], f"{name} 설명이 없는 칸: {missing}"
+
+
+# ── 9. 조회 GET /children/{cid}/medications ──────────────────────────────
+
+LIST_RESPONSE_SCHEMAS = ["MedicationsResponse"]
+
+
+async def seed_course(session, child_id, *, title="아목시실린", starts=-1, ends=1):
+    """repository 로 직접 넣는다 — 서비스는 지난 날짜의 회차를 만들지 않는다."""
+    days = (ends - starts) + 1
+    return await add_course(
+        session,
+        child_id=child_id,
+        title=title,
+        starts_on=TODAY + timedelta(days=starts),
+        ends_on=TODAY + timedelta(days=ends),
+        source=MedicationSource.UTTERANCE,
+        created_by=MedicationCreatedBy.CAREGIVER,
+        doses=[
+            NewDose(TODAY + timedelta(days=starts + n), anchor, 30, None)
+            for n in range(days)
+            for anchor in (TimingAnchor.BREAKFAST, TimingAnchor.LUNCH, TimingAnchor.DINNER)
+        ],
+    )
+
+
+async def get_courses(db_client, headers, child_id, **kwargs):
+    return await db_client.get(medications_url(child_id), headers=headers, **kwargs)
+
+
+async def test_조회는_서버의_오늘과_진행_중인_코스를_돌려준다(db_client, session, bearer, cid):
+    await seed_course(session, cid, title="진행", starts=-1, ends=1)
+    await seed_course(session, cid, title="어제 끝남", starts=-4, ends=-1)
+
+    response = await get_courses(db_client, bearer[0], cid)
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["today"] == TODAY.isoformat()
+    assert [c["title"] for c in data["courses"]] == ["진행"]
+
+
+async def test_조회의_코스는_알림_시각과_오늘까지의_회차를_싣는다(db_client, session, bearer, cid):
+    await seed_course(session, cid, starts=-1, ends=1)
+
+    (course,) = (await get_courses(db_client, bearer[0], cid)).json()["courses"]
+
+    assert course["notice_times"] == ["08:30", "12:30", "19:30"]
+    assert [(d["dose_date"], d["scheduled_time"]) for d in course["doses"]] == [
+        (day.isoformat(), time)
+        for day in (TODAY - timedelta(days=1), TODAY)
+        for time in ("08:30", "12:30", "19:30")
+    ]
+    assert all(d["checkable"] is True for d in course["doses"])
+
+
+async def test_조회는_코스를_시작일_순으로_돌려주고_id_가_저장된_코스와_같다(
+    db_client, session, bearer, cid
+):
+    late = await seed_course(session, cid, title="늦게 시작", starts=0, ends=2)
+    early = await seed_course(session, cid, title="먼저 시작", starts=-3, ends=2)
+
+    courses = (await get_courses(db_client, bearer[0], cid)).json()["courses"]
+
+    assert [(c["id"], c["title"]) for c in courses] == [
+        (str(early.id), "먼저 시작"),
+        (str(late.id), "늦게 시작"),
+    ]
+
+
+async def test_조회는_코스마다_자기_회차만_싣는다(db_client, session, bearer, cid):
+    first = await seed_course(session, cid, title="첫째", starts=-1, ends=0)
+    second = await seed_course(session, cid, title="둘째", starts=0, ends=0)
+
+    courses = {c["id"]: c for c in (await get_courses(db_client, bearer[0], cid)).json()["courses"]}
+
+    assert len(courses[str(first.id)]["doses"]) == 6  # 어제 · 오늘 × 3
+    assert len(courses[str(second.id)]["doses"]) == 3  # 오늘 × 3
+
+
+async def test_조회는_코스가_없으면_빈_목록(db_client, bearer, cid):
+    response = await get_courses(db_client, bearer[0], cid)
+
+    assert response.status_code == 200
+    assert response.json() == {"today": TODAY.isoformat(), "courses": []}
+
+
+async def test_조회는_동의가_없어도_200(db_client, session, bearer, cid):
+    await seed_course(session, cid)
+
+    response = await get_courses(db_client, bearer[0], cid)  # `cid` 는 동의 없는 아이
+
+    assert response.status_code == 200
+    assert len(response.json()["courses"]) == 1
+
+
+async def test_조회는_키를_받지_않는다(db_client, bearer, cid):
+    # 읽기라 Idempotency-Key 가 없어도 400 이 아니다
+    assert (await get_courses(db_client, bearer[0], cid)).status_code == 200
+
+
+async def test_조회는_다른_아이의_코스를_싣지_않는다(db_client, session, bearer, cid):
+    other_headers, other_parent = await issue_bearer(session, token="test-token-other")
+    other_child = await link_child(session, parent_id=other_parent)
+    await seed_course(session, other_child, title="남의 약")
+
+    mine = await get_courses(db_client, bearer[0], cid)
+
+    assert mine.json()["courses"] == []
+
+
+async def test_조회는_남의_아이면_403_이고_인증이_없으면_401(db_client, session, bearer, cid):
+    _, other_parent = await issue_bearer(session, token="test-token-other")
+    other_child = await link_child(session, parent_id=other_parent)
+
+    assert (await get_courses(db_client, bearer[0], other_child)).status_code == 403
+    assert (await db_client.get(medications_url(cid))).status_code == 401
+
+
+async def test_조회의_경로_아이_id_형식이_틀리면_422(db_client, bearer):
+    response = await db_client.get("/api/v1/children/not-a-uuid/medications", headers=bearer[0])
+
+    assert response.status_code == 422
+
+
+async def test_조회_응답은_계약의_칸만_싣는다(db_client, session, bearer, cid):
+    await seed_course(session, cid)
+
+    data = (await get_courses(db_client, bearer[0], cid)).json()
+
+    assert set(data) == {"today", "courses"}
+    assert set(data["courses"][0]) == {
+        "id",
+        "title",
+        "dosage",
+        "starts_on",
+        "ends_on",
+        "notice_times",
+        "doses",
+    }
+
+
+def test_조회_엔드포인트와_응답의_모든_칸에_설명이_있다():
+    spec = app.openapi()
+    operation = spec["paths"]["/api/v1/children/{cid}/medications"]["get"]
+
+    assert operation["summary"].strip()
+    assert len(operation["description"].strip()) > 50
+    assert {"200", "403"} <= set(operation["responses"])
+    for name in LIST_RESPONSE_SCHEMAS:
+        schema = spec["components"]["schemas"][name]
+        assert schema.get("description", "").strip(), f"{name} 에 설명이 없다"
+        missing = [f for f, prop in schema["properties"].items() if not _has_description(prop)]
+        assert missing == [], f"{name} 설명이 없는 칸: {missing}"
+
+
+# ── 10. 회차 체크 PUT /children/{cid}/medication-doses/{did}/check ────────
+
+CHECK_REQUEST_SCHEMAS = ["CheckDoseRequest"]
+
+
+def check_url(child_id, dose_id) -> str:
+    return f"/api/v1/children/{child_id}/medication-doses/{dose_id}/check"
+
+
+async def put_check(db_client, headers, child_id, dose_id, payload):
+    return await db_client.put(check_url(child_id, dose_id), json=payload, headers=headers)
+
+
+async def dose_of(session, child_id, *, days=0, **kwargs):
+    """오늘(days=0) 또는 그 날짜의 아침 회차 하나."""
+    course = await seed_course(session, child_id, starts=min(days, 0), ends=max(days, 0), **kwargs)
+    doses = await list_doses(session, schedule_ids=[course.id])
+    target = TODAY + timedelta(days=days)
+    return course, next(d for d in doses if d.dose_date == target and d.scheduled_time.hour == 8)
+
+
+async def test_체크하면_200_과_회차를_돌려준다(db_client, session, bearer, consented):
+    _, dose = await dose_of(session, consented)
+
+    response = await put_check(db_client, bearer[0], consented, dose.id, {"checked": True})
+
+    assert response.status_code == 200
+    data = response.json()
+    assert set(data) == {"id", "dose_date", "scheduled_time", "checked_at", "checkable"}
+    assert data["id"] == str(dose.id)
+    assert (data["dose_date"], data["scheduled_time"]) == (TODAY.isoformat(), "08:30")
+    assert datetime.fromisoformat(data["checked_at"]) == NOW
+    assert data["checkable"] is True
+
+
+async def test_해제하면_체크_시각이_null(db_client, session, bearer, consented):
+    _, dose = await dose_of(session, consented)
+    await put_check(db_client, bearer[0], consented, dose.id, {"checked": True})
+
+    response = await put_check(db_client, bearer[0], consented, dose.id, {"checked": False})
+
+    assert response.status_code == 200
+    assert response.json()["checked_at"] is None
+
+
+async def test_같은_상태를_두_번_보내도_같고_처음_체크_시각이_남는다(
+    db_client, session, bearer, consented, monkeypatch
+):
+    _, dose = await dose_of(session, consented)
+    first = await put_check(db_client, bearer[0], consented, dose.id, {"checked": True})
+    monkeypatch.setattr(medications_router, "utc_now", lambda: LATER)
+
+    again = await put_check(db_client, bearer[0], consented, dose.id, {"checked": True})
+
+    assert again.status_code == 200
+    assert again.json() == first.json()  # LATER 가 아니라 처음 시각이다
+
+
+async def test_체크는_Idempotency_Key_없이_된다(db_client, session, bearer, consented):
+    _, dose = await dose_of(session, consented)
+
+    response = await db_client.put(
+        check_url(consented, dose.id), json={"checked": True}, headers=bearer[0]
+    )
+
+    assert response.status_code == 200
+
+
+async def test_체크한_뒤_조회에도_체크_시각이_보인다(db_client, session, bearer, consented):
+    course, dose = await dose_of(session, consented)
+    await put_check(db_client, bearer[0], consented, dose.id, {"checked": True})
+
+    (listed,) = (await get_courses(db_client, bearer[0], consented)).json()["courses"]
+
+    checked = {d["id"]: d["checked_at"] for d in listed["doses"]}
+    assert datetime.fromisoformat(checked[str(dose.id)]) == NOW
+    assert sorted(v is None for v in checked.values()).count(False) == 1  # 나머지는 미체크
+
+
+async def test_응답을_보낸_뒤에는_체크가_확정돼_롤백해도_남는다(
+    db_client, session, bearer, consented
+):
+    _, dose = await dose_of(session, consented)
+    dose_id = dose.id
+    await put_check(db_client, bearer[0], consented, dose_id, {"checked": True})
+
+    await session.rollback()
+
+    row = await session.scalar(select(MedicationDose).where(MedicationDose.id == dose_id))
+    assert row.checked_at == NOW
+
+
+@pytest.mark.parametrize(
+    ("payload", "field"),
+    [
+        ({}, "checked"),
+        ({"checked": None}, "checked"),
+        ({"checked": "yes"}, "checked"),
+        ({"checked": "true"}, "checked"),
+        ({"checked": 1}, "checked"),
+        ({"checked": True, "note": "x"}, "note"),
+    ],
+)
+async def test_본문이_틀리면_400_이고_칸_이름이_온다(
+    db_client, session, bearer, consented, payload, field
+):
+    _, dose = await dose_of(session, consented)
+
+    response = await put_check(db_client, bearer[0], consented, dose.id, payload)
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "validation_failed"
+    assert field in response.json()["error"]["detail"]["fields"]
+
+
+async def test_아직_오지_않은_날의_회차는_422_dose_not_due(db_client, session, bearer, consented):
+    _, dose = await dose_of(session, consented, days=1)
+
+    response = await put_check(db_client, bearer[0], consented, dose.id, {"checked": True})
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "dose_not_due"
+    row = await session.scalar(
+        select(MedicationDose.checked_at)
+        .where(MedicationDose.id == dose.id)
+        .execution_options(populate_existing=True)
+    )
+    assert row is None
+
+
+async def test_없는_회차는_404_not_found(db_client, bearer, consented):
+    response = await put_check(db_client, bearer[0], consented, uuid.uuid4(), {"checked": True})
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "not_found"
+
+
+async def test_다른_아이의_회차는_404(db_client, session, bearer, consented):
+    _, other_parent = await issue_bearer(session, token="test-token-other")
+    other_child = await link_child(session, parent_id=other_parent)
+    _, dose = await dose_of(session, other_child)
+
+    response = await put_check(db_client, bearer[0], consented, dose.id, {"checked": True})
+
+    assert response.status_code == 404  # 내 아이 주소로 남의 회차를 불러도 있는지 알리지 않는다
+
+
+async def test_끝난_코스의_회차는_조회에_안_보여도_체크된다(db_client, session, bearer, consented):
+    course = await seed_course(
+        session, consented, starts=-3, ends=-1
+    )  # 어제 끝났고 status 는 active
+    doses = await list_doses(session, schedule_ids=[course.id])
+    last_night = next(d for d in doses if d.dose_date == TODAY - timedelta(days=1))
+
+    listed = (await get_courses(db_client, bearer[0], consented)).json()["courses"]
+    response = await put_check(db_client, bearer[0], consented, last_night.id, {"checked": True})
+
+    assert listed == []  # 조회는 끝난 코스를 싣지 않는다
+    assert response.status_code == 200  # 그래도 id 를 아는 화면은 체크할 수 있다
+    assert datetime.fromisoformat(response.json()["checked_at"]) == NOW
+
+
+async def test_멈춘_뒤에_예정된_회차는_404(db_client, session, bearer, consented):
+    course, dose = await dose_of(session, consented)  # 오늘 08:30 (한국)
+    await stop_schedule(
+        session,
+        child_id=consented,
+        schedule_id=course.id,
+        stopped_at=datetime(
+            2026, 10, 26, 20, 0, tzinfo=UTC
+        ),  # 한국 05:00 에 멈췄다 — 08:30 은 멈춘 뒤
+    )
+
+    response = await put_check(db_client, bearer[0], consented, dose.id, {"checked": True})
+
+    assert response.status_code == 404
+
+
+async def test_멈춘_코스의_멈추기_전_회차는_체크된다(db_client, session, bearer, consented):
+    course, dose = await dose_of(session, consented)  # 오늘 08:30 (한국)
+    await stop_schedule(
+        session,
+        child_id=consented,
+        schedule_id=course.id,
+        stopped_at=datetime(
+            2026, 10, 27, 6, 0, tzinfo=UTC
+        ),  # 한국 15:00 에 멈췄다 — 08:30 은 멈추기 전
+    )
+
+    response = await put_check(db_client, bearer[0], consented, dose.id, {"checked": True})
+
+    assert response.status_code == 200
+    assert datetime.fromisoformat(response.json()["checked_at"]) == NOW
+
+
+async def test_남의_아이_주소면_403_이고_인증이_없으면_401(db_client, session, bearer, consented):
+    _, other_parent = await issue_bearer(session, token="test-token-other")
+    other_child = await link_child(session, parent_id=other_parent)
+    _, dose = await dose_of(session, other_child)
+
+    denied = await put_check(db_client, bearer[0], other_child, dose.id, {"checked": True})
+    anonymous = await db_client.put(check_url(consented, dose.id), json={"checked": True})
+
+    assert denied.status_code == 403
+    assert denied.json()["error"]["code"] == "child_access_denied"
+    assert anonymous.status_code == 401
+
+
+@pytest.mark.parametrize("which", ["cid", "did"])
+async def test_경로_id_형식이_틀리면_422(db_client, bearer, consented, which):
+    url = (
+        f"/api/v1/children/not-a-uuid/medication-doses/{uuid.uuid4()}/check"
+        if which == "cid"
+        else f"/api/v1/children/{consented}/medication-doses/not-a-uuid/check"
+    )
+
+    response = await db_client.put(url, json={"checked": True}, headers=bearer[0])
+
+    assert response.status_code == 422
+
+
+async def test_동의가_없으면_403_consent_required_이고_체크하지_않는다(
+    db_client, session, bearer, cid
+):
+    _, dose = await dose_of(session, cid)
+
+    response = await put_check(db_client, bearer[0], cid, dose.id, {"checked": True})
+
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "consent_required"
+    row = await session.scalar(
+        select(MedicationDose.checked_at)
+        .where(MedicationDose.id == dose.id)
+        .execution_options(populate_existing=True)
+    )
+    assert row is None
+
+
+async def test_본문_오류가_동의_없음보다_먼저_걸린다(db_client, session, bearer, cid):
+    _, dose = await dose_of(session, cid)
+
+    response = await put_check(db_client, bearer[0], cid, dose.id, {"checked": "yes"})
+
+    assert response.status_code == 400
+
+
+async def test_동의_없음이_회차_없음보다_먼저_걸린다(db_client, bearer, cid):
+    response = await put_check(db_client, bearer[0], cid, uuid.uuid4(), {"checked": True})
+
+    assert response.status_code == 403
+
+
+async def test_회차_없음이_아직_오지_않음보다_먼저_걸린다(db_client, session, bearer, consented):
+    _, other_parent = await issue_bearer(session, token="test-token-other")
+    other_child = await link_child(session, parent_id=other_parent)
+    _, dose = await dose_of(session, other_child, days=2)
+
+    response = await put_check(db_client, bearer[0], consented, dose.id, {"checked": True})
+
+    assert response.status_code == 404
+
+
+def test_체크_엔드포인트와_요청_응답의_모든_칸에_설명이_있다():
+    spec = app.openapi()
+    operation = spec["paths"]["/api/v1/children/{cid}/medication-doses/{did}/check"]["put"]
+
+    assert operation["summary"].strip()
+    assert len(operation["description"].strip()) > 50
+    assert {"200", "400", "403", "404", "422"} <= set(operation["responses"])
+    for name in CHECK_REQUEST_SCHEMAS:
+        schema = spec["components"]["schemas"][name]
+        assert schema.get("description", "").strip(), f"{name} 에 설명이 없다"
+        missing = [f for f, prop in schema["properties"].items() if not _has_description(prop)]
+        assert missing == [], f"{name} 설명이 없는 칸: {missing}"
