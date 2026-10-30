@@ -98,3 +98,12 @@ def test_수정_엔드포인트와_요청의_모든_칸에_설명이_있다():
         assert schema.get("description", "").strip(), f"{name} 에 설명이 없다"
         missing = [f for f, prop in schema["properties"].items() if not _has_description(prop)]
         assert missing == [], f"{name} 설명이 없는 칸: {missing}"
+
+
+def test_수정의_설명은_체크했거나_이미_지난_회차가_기간_밖이_되면_400이라고_적는다():
+    # 체크 안 한 어제 회차만 있어도 시작일을 오늘로 늦추면 400 이다 — 적지 않으면 FE 가 모른다
+    operation = app.openapi()["paths"]["/api/v1/children/{cid}/medications/{sid}"]["patch"]
+    texts = [operation["description"], operation["responses"]["400"]["description"]]
+
+    assert all("체크했거나 이미 지난 회차" in text for text in texts)
+    assert all("체크한 회차가" not in text for text in texts)

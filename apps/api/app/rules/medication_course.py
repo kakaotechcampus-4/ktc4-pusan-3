@@ -1,5 +1,6 @@
 """복약 코스의 기간 규칙. 표준 라이브러리만 쓴다 — 날짜 계산은 모델에게 묻지 않는다."""
 
+from collections.abc import Iterable
 from datetime import date, timedelta
 
 # 코스는 처방 1건에 가깝다. 올리는 것은 쉽고 줄이는 것은 저장된 데이터와 부딪힌다
@@ -57,3 +58,18 @@ def dose_dates(starts_on: date, ends_on: date, *, today: date) -> list[date]:
     span_days(starts_on, ends_on)  # 뒤바뀐 기간은 여기서 막힌다
     first = max(starts_on, today)
     return [first + timedelta(days=n) for n in range((ends_on - first).days + 1)]
+
+
+def pattern_day(days: Iterable[date], *, today: date) -> date | None:
+    """하루 시각 패턴(`notice_times` · Agent 의 `pattern`)을 읽을 날. 회차가 없으면 None.
+
+    오늘 **다음 날부터** 첫 날이다. 수정은 앞으로의 날을 새 패턴으로 다시 만들지만 지난 날과 오늘의
+    이미 지난 회차는 옛 시각으로 남아서, 거기서 읽으면 바뀐 시각이 아닌 옛 시각이 나온다. 다음 날이
+    없으면(오늘 끝나거나 이미 끝났다) 마지막 날이다 — 마지막 날이 오늘이고 일부 회차가 이미 지났으면
+    옛 시각이 섞일 수 있다. 화면과 Agent 가 같은 날을 읽도록 둘이 이 함수를 쓴다.
+    """
+    unique = set(days)
+    if not unique:
+        return None
+    later = [day for day in unique if day > today]
+    return min(later) if later else max(unique)

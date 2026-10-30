@@ -17,6 +17,7 @@ from app.domains.medication.repository import list_doses, stop_schedule
 
 from ..conftest import issue_bearer, link_child
 from .helpers import (
+    FIXED_AT,
     MEALS,
     TODAY,
     course_url,
@@ -318,6 +319,44 @@ async def test_체크한_회차가_새_기간_밖이_되면_400(db_client, sessi
     assert response.json()["error"]["detail"] == {
         "fields": ["schedule.starts_on", "schedule.ends_on"]
     }
+
+
+@pytest.mark.parametrize("value", ["21:00Z", "21:00+09:00", "21:00-05:00"])
+async def test_수정에서도_시간대가_붙은_시각은_400(db_client, session, bearer, consented, value):
+    course = await seed_course(session, consented, starts=-1, ends=1)
+    before = len(await list_doses(session, schedule_ids=[course.id]))
+
+    response = await patch(
+        db_client,
+        bearer[0],
+        consented,
+        course.id,
+        revise_body(doses=[{**FIXED_AT, "fixed_time": value}]),
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["detail"] == {"fields": ["doses.0.fixed_time"]}
+    assert len(await list_doses(session, schedule_ids=[course.id])) == before
+
+
+@pytest.mark.parametrize("field", ["title", "dosage", "indication_text", "note"])
+async def test_수정에서도_NUL_이_든_값은_500이_아니라_400(
+    db_client, session, bearer, consented, field
+):
+    course = await seed_course(session, consented, starts=-1, ends=1)
+
+    response = await patch(
+        db_client,
+        bearer[0],
+        consented,
+        course.id,
+        revise_body(schedule={field: "약\x00이름"}),
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["detail"] == {"fields": [f"schedule.{field}"]}
+    await session.refresh(course)
+    assert course.title == "아목시실린"
 
 
 async def test_다른_진행_코스와_같아지는_수정은_409_provisional(

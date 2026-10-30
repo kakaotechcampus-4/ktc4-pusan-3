@@ -8,13 +8,14 @@ commit 하고**, 끝나면 만든 보호자 · 아이를 지운다 (코스 · �
 """
 
 import asyncio
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime, time, timedelta
 
 import pytest
 from sqlalchemy import delete, func, select
 
 from app.domains.child.models import Child
 from app.domains.identity.models import Parent
+from app.domains.medication import service
 from app.domains.medication.models import (
     MedicationCreatedBy,
     MedicationSchedule,
@@ -232,6 +233,66 @@ async def test_체크가_먼저_회차를_잡았으면_수정은_그_회차를_�
 
     # 체크한 19:30 은 기록으로 남고, 새 패턴 20:00 만 더해진다
     assert await dose_rows(course_id) == [(time(19, 30), True), (time(20, 0), False)]
+
+
+async def test_수정이_남는_회차를_검사하는_사이에_체크가_끼어들_수_없다(make_child, monkeypatch):
+    """오늘 코스를 내일 시작으로 고치는 도중에 오늘 회차를 체크해도, 기간 밖에 기록이 남지 않는다.
+
+    검사(`has_kept_outside`)는 그 회차가 곧 지워질 것이라 통과시킨다. 검사와 삭제 사이에 체크가
+    commit 되면 삭제가 그 회차를 건너뛰어 새 기간 밖에 체크한 회차가 남는다.
+    """
+    child_id = await make_child()
+    course_id, dose_id = await seed_evening_dose(child_id)
+    tomorrow = TODAY + timedelta(days=1)
+    to_tomorrow = CourseFields(
+        title="약",
+        starts_on=tomorrow,
+        ends_on=tomorrow + timedelta(days=1),
+        doses=[DosePattern(TimingAnchor.FIXED, 0, time(20, 0))],
+    )
+    real = service.has_kept_outside
+    in_gap = asyncio.Event()
+
+    async def slow(*args, **kwargs):
+        outside = await real(*args, **kwargs)
+        in_gap.set()
+        await asyncio.sleep(0.5)  # 검사와 삭제 사이의 틈
+        return outside
+
+    monkeypatch.setattr(service, "has_kept_outside", slow)
+    s1, s2 = async_session_factory(), async_session_factory()
+
+    async def revise() -> None:
+        await revise_course(
+            s1, child_id=child_id, course_id=course_id, data=to_tomorrow, today=TODAY, now=NOW
+        )
+        await s1.commit()
+
+    async def check() -> str:
+        await in_gap.wait()
+        try:
+            await set_dose_checked(
+                s2, child_id=child_id, dose_id=dose_id, checked=True, today=TODAY, now=NOW
+            )
+            await s2.commit()
+            return "체크됨"
+        except DoseNotFound:
+            await s2.rollback()
+            return "찾지 못함"
+
+    try:
+        _, outcome = await asyncio.wait_for(asyncio.gather(revise(), check()), timeout=10)
+    finally:
+        await s1.close()
+        await s2.close()
+
+    assert outcome == "찾지 못함"  # 수정이 끝난 뒤에야 체크가 지나가고, 그 회차는 이미 없다
+    async with async_session_factory() as s:
+        doses = await list_doses(s, schedule_ids=[course_id])
+    assert [(d.dose_date, d.checked_at is not None) for d in doses] == [
+        (tomorrow, False),
+        (tomorrow + timedelta(days=1), False),
+    ]
 
 
 async def test_두_코스를_동시에_같은_이름_기간으로_수정하면_하나만_된다(make_child):

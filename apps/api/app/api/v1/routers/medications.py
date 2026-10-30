@@ -364,8 +364,8 @@ async def check_dose(
             "model": ErrorEnvelope,
             "description": (
                 "`validation_failed` — 본문 형식이 틀렸거나(`source` 를 보낸 경우 포함) 내용이 "
-                "틀렸다(등록과 같은 규칙). **체크한 회차가 새 기간 밖에 남게 되는 수정**도 이 "
-                "코드이고 "
+                "틀렸다(등록과 같은 규칙). **체크했거나 이미 지난 회차가 새 기간 밖에 남게 되는 "
+                "수정**도 이 코드이고 "
                 '`fields` 는 `["schedule.starts_on", "schedule.ends_on"]` 이다. '
                 "또는 `idempotency_key_required` — `Idempotency-Key` 헤더가 없다"
             ),
@@ -419,13 +419,15 @@ async def revise_medication(
       회차는 `id` 가 바뀌므로 화면은 응답의 `course` 로 갱신한다.
     - 다시 만들 때 **지금 이전의 시각은 만들지 않는다**(등록은 오늘 회차를 통째로 만든다). 이미 있는
       (날짜, 시각)도 다시 만들지 않는다.
-    - **체크한 회차가 새 기간 밖에 남게 되면 400** 이다 — 복용 기록을 잃지 않게 막는다.
-    - 응답의 `notice_times` 는 **새 패턴**(마지막 날의 시각)이고, `doses` 는 오늘까지의 회차다.
+    - **체크했거나 이미 지난 회차가 새 기간 밖에 남게 되면 400** 이다 — 복용 기록을 잃지 않게
+      막는다. 체크하지 않았어도 이미 지난 회차면 같다(어제~내일 코스의 시작일을 오늘로 늦추는 수정).
+    - 응답의 `notice_times` 는 **새 패턴**(오늘 다음 날부터 첫 날의 시각)이고, `doses` 는 오늘까지의
+      회차다. 코스가 오늘 끝나고 오늘 회차 일부가 이미 지났으면 지난 옛 시각이 섞일 수 있다.
     - 출처(`source`)·상태·작성자는 바꾸지 않는다. 멈춘 코스와 이미 끝난 코스는 고칠 수 없다(404).
 
     오류 (순서대로): 403 `child_access_denied` → 400 `validation_failed`(본문 형식) →
     400 `idempotency_key_required` → (같은 키면 처음 응답 재생) → 403 `consent_required` →
-    404 `not_found` → 400 `validation_failed`(내용 · 체크한 회차) → 409 `already_exists`.
+    404 `not_found` → 400 `validation_failed`(내용 · 남는 회차) → 409 `already_exists`.
     앞에서 걸리면 아무것도 바꾸지 않는다.
     """
     if not idempotency_key:

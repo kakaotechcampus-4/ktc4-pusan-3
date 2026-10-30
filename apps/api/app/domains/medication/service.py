@@ -40,9 +40,10 @@ from app.domains.medication.repository import (
     has_kept_outside,
     list_courses,
     list_doses,
+    lock_doses,
     write_dose_check,
 )
-from app.rules.medication_course import course_field_errors, dose_dates
+from app.rules.medication_course import course_field_errors, dose_dates, pattern_day
 
 
 class CourseInvalid(Exception):
@@ -208,16 +209,13 @@ class CourseView:
     doses: list[MedicationDose]  # 오늘까지의 회차, (날짜, 시각) 순
 
 
-def _notice_times(doses: Sequence[MedicationDose]) -> list[str]:
-    """하루에 울릴 시각 — **가장 마지막 날**의 회차 시각이다.
+def _notice_times(doses: Sequence[MedicationDose], *, today: date) -> list[str]:
+    """하루에 울릴 시각 — 읽을 날은 `pattern_day` 가 정한다 (Agent 의 `pattern` 과 같은 규칙).
 
-    수정하면 이미 지난 날의 회차는 옛 패턴으로 남는다. 모든 회차에서 모으면 옛 시각이 섞이므로,
-    언제나 새 패턴으로 다시 만들어지는 마지막 날을 본다. `doses` 는 (날짜, 시각) 순이다.
+    수정하면 이미 지난 날의 회차는 옛 패턴으로 남는다. 모든 회차에서 모으면 옛 시각이 섞인다.
     """
-    if not doses:
-        return []
-    last = doses[-1].dose_date
-    return [f"{d.scheduled_time:%H:%M}" for d in doses if d.dose_date == last]
+    day = pattern_day((d.dose_date for d in doses), today=today)
+    return sorted({f"{d.scheduled_time:%H:%M}" for d in doses if d.dose_date == day})
 
 
 async def course_views(
@@ -235,7 +233,7 @@ async def course_views(
     return [
         CourseView(
             course=c,
-            notice_times=_notice_times(by_course[c.id]),
+            notice_times=_notice_times(by_course[c.id], today=today),
             doses=[d for d in by_course[c.id] if d.dose_date <= today],
         )
         for c in courses
@@ -316,6 +314,8 @@ async def revise_course(
         raise CourseNotFound
     _validate(data, today=today, known_codes=course.symptom_codes)
     now_time = now.astimezone(KST).time()
+    # 체크가 검사와 삭제 사이에 끼어들지 못하게 회차를 먼저 잠근다
+    await lock_doses(session, schedule_id=course.id)
     if await has_kept_outside(
         session,
         schedule_id=course.id,

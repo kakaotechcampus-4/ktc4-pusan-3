@@ -20,6 +20,7 @@ from app.domains.medication.repository import NewDose, add_course, list_doses
 from app.domains.policy.repository import find_active_versions
 
 TODAY = date(2026, 10, 27)
+FIXED_AT = {"timing_anchor": "fixed", "offset_minutes": 0}  # 시각만 바꿔 쓰는 dose 의 뼈대
 
 
 STARTS = TODAY + timedelta(days=1)  # 내일부터

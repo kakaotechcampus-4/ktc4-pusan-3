@@ -2,7 +2,7 @@ from datetime import date, timedelta
 
 import pytest
 
-from app.rules.medication_course import MAX_SPAN_DAYS, dose_dates, span_days
+from app.rules.medication_course import MAX_SPAN_DAYS, dose_dates, pattern_day, span_days
 
 TODAY = date(2026, 10, 27)
 
@@ -87,3 +87,38 @@ def test_expansion_crosses_leap_day() -> None:
 def test_dose_dates_rejects_reversed_period() -> None:
     with pytest.raises(ValueError):
         dose_dates(date(2026, 10, 29), date(2026, 10, 27), today=TODAY)
+
+
+# ── 하루 시각 패턴을 읽을 날 ───────────────────────────────────────────
+
+
+def days(*offsets: int) -> list[date]:
+    return [TODAY + timedelta(days=n) for n in offsets]
+
+
+@pytest.mark.parametrize(
+    ("offsets", "expected"),
+    [
+        ((-2, -1, 0, 1, 2), 1),  # 오늘 다음 날부터 첫 날 — 오늘과 지난 날의 옛 시각을 건너뛴다
+        ((0, 1, 2), 1),
+        ((1, 2, 3), 1),  # 아직 시작 전인 코스
+        ((-2, -1, 0), 0),  # 오늘 끝난다 — 마지막 날이 오늘이다
+        ((-3, -2, -1), -1),  # 이미 끝났다 — 마지막 날
+        ((0,), 0),  # 하루짜리 코스가 오늘이다
+        ((-1,), -1),
+        ((5,), 5),
+    ],
+)
+def test_pattern_day_is_first_day_after_today_else_last_day(
+    offsets: tuple[int, ...], expected: int
+) -> None:
+    assert pattern_day(days(*offsets), today=TODAY) == TODAY + timedelta(days=expected)
+
+
+def test_pattern_day_ignores_order_and_duplicates() -> None:
+    # 회차는 날마다 여러 줄이라 같은 날짜가 거듭 온다
+    assert pattern_day(days(2, 0, 2, 1, 1, -1), today=TODAY) == TODAY + timedelta(days=1)
+
+
+def test_pattern_day_of_no_days_is_none() -> None:
+    assert pattern_day([], today=TODAY) is None

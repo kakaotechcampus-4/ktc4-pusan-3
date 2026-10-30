@@ -31,6 +31,7 @@ from app.agents.health.store.ports import DoseSlot, MedicationCourse, Medication
 from app.domains.medication import models as tables
 from app.domains.medication import repository
 from app.domains.medication.models import MedicationSchedule, MedicationStatus, in_progress
+from app.rules.medication_course import pattern_day
 
 # 호출마다 새 세션을 여는 함수. 러너가 `background_session` 으로 만든다
 SessionOpener = Callable[[], AbstractAsyncContextManager[AsyncSession]]
@@ -45,8 +46,7 @@ def pattern_of(rows: Sequence[tables.MedicationDose], *, basis: date) -> tuple[D
     """
     if not rows:
         return ()
-    later = [row.dose_date for row in rows if row.dose_date > basis]
-    day = min(later) if later else max(row.dose_date for row in rows)
+    day = pattern_day((row.dose_date for row in rows), today=basis)
     slots: dict[time, DoseSlot] = {}
     for row in rows:
         if row.dose_date != day:

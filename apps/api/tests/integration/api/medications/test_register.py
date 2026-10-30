@@ -30,6 +30,7 @@ from app.domains.medication.repository import stop_schedule
 from ..conftest import issue_bearer, link_child
 from .helpers import (
     ENDS,
+    FIXED_AT,
     MEALS,
     STARTS,
     TODAY,
@@ -259,9 +260,6 @@ async def test_본문_형식_오류가_키_누락보다_먼저_걸린다(db_clie
     )
 
     assert response.json()["error"]["code"] == "validation_failed"
-
-
-FIXED_AT = {"timing_anchor": "fixed", "offset_minutes": 0}
 
 
 @pytest.mark.parametrize("value", ["21:00Z", "21:00+09:00", "21:00-05:00"])

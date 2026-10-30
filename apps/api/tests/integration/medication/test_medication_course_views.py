@@ -9,15 +9,17 @@
 
 from datetime import UTC, date, datetime, time, timedelta
 
+import pytest
 from sqlalchemy import update
 
+from app.domains.medication.agent_reader import pattern_of
 from app.domains.medication.models import (
     MedicationCreatedBy,
     MedicationDose,
     MedicationSource,
     TimingAnchor,
 )
-from app.domains.medication.repository import NewDose, add_course, stop_schedule
+from app.domains.medication.repository import NewDose, add_course, list_doses, stop_schedule
 from app.domains.medication.service import course_views, list_in_progress
 
 TODAY = date(2026, 10, 27)
@@ -244,3 +246,53 @@ async def test_course_views_는_넘긴_코스_순서를_그대로_지킨다(sess
 
 async def test_course_views_는_빈_목록이면_조회하지_않고_빈_목록(session):
     assert await course_views(session, [], today=TODAY) == []
+
+
+def fixed(offset: int, *at: tuple[int, int]) -> list[NewDose]:
+    return [NewDose(day(offset), TimingAnchor.FIXED, 0, time(h, m)) for h, m in at]
+
+
+OLD = ((8, 30), (12, 30), (19, 30))
+
+
+@pytest.mark.parametrize(
+    ("doses", "expected"),
+    [
+        pytest.param(  # 어제 · 오늘 · 내일 — 오늘 09:40 에 09:00 · 20:00 으로 고친 뒤
+            fixed(-1, *OLD) + fixed(0, (8, 30), (20, 0)) + fixed(1, (9, 0), (20, 0)),
+            ["09:00", "20:00"],
+            id="수정한_코스는_오늘_다음_날의_새_시각",
+        ),
+        pytest.param(  # 마지막 날이 오늘이라 다음 날이 없다 — 옛 시각이 섞인다 (알려진 경계)
+            fixed(-1, *OLD) + fixed(0, (8, 30), (20, 0)),
+            ["08:30", "20:00"],
+            id="마지막_날이_오늘이면_오늘_행을_읽는다",
+        ),
+        pytest.param(fixed(2, (9, 0)) + fixed(3, (9, 0)), ["09:00"], id="시작_전_코스"),
+        pytest.param(
+            fixed(-1, *OLD) + fixed(0, *OLD) + fixed(1, *OLD),
+            ["08:30", "12:30", "19:30"],
+            id="고치지_않은_코스",
+        ),
+    ],
+)
+async def test_화면의_알림_시각과_Agent_패턴은_같은_날을_읽어_같다(session, child, doses, expected):
+    first = min(d.dose_date for d in doses)
+    last = max(d.dose_date for d in doses)
+    course = await add_course(
+        session,
+        child_id=child.id,
+        title="약",
+        starts_on=first,
+        ends_on=last,
+        source=MedicationSource.UTTERANCE,
+        created_by=MedicationCreatedBy.CAREGIVER,
+        doses=doses,
+    )
+
+    (view,) = await course_views(session, [course], today=TODAY)
+    rows = await list_doses(session, schedule_ids=[course.id])
+    agent = [f"{slot.scheduled_time:%H:%M}" for slot in pattern_of(rows, basis=TODAY)]
+
+    assert view.notice_times == expected
+    assert agent == expected
