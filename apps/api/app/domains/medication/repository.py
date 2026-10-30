@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, time
 from typing import Literal
 
-from sqlalchemy import ColumnElement, select, update
+from sqlalchemy import ColumnElement, and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domains.medication.models import (
@@ -179,14 +179,27 @@ async def stop_schedule(
     return "already" if exists is not None else "missing"
 
 
+# 멈춘 코스에서 멈추기 전에 예정된 회차 (`dose_date` + `scheduled_time` 은 한국 시간이다)
+_before_stop = and_(
+    MedicationSchedule.status == MedicationStatus.STOPPED,
+    func.timezone("Asia/Seoul", MedicationDose.dose_date + MedicationDose.scheduled_time)
+    <= MedicationSchedule.updated_at,
+)
+
+
 async def find_dose(
     session: AsyncSession, *, child_id: uuid.UUID, dose_id: uuid.UUID
 ) -> MedicationDose | None:
-    """그 아이의 멈추지 않은(`active`) 코스에 속한 회차. 다른 아이 · 멈춘 코스의 회차는 `None` 이다.
+    """그 아이의 코스에 속한 회차. 다른 아이 · 멈춘 코스에서 멈춘 뒤에 예정된 회차는 `None` 이다.
 
-    다른 아이의 회차는 있는지도 알리지 않는다. 멈춘 코스의 회차는 체크 · 해제할 수 없다.
-    날짜는 보지 않는다 — 마지막 날이 지난 코스의 회차도 체크 · 해제된다. 조회가 그 코스를 싣지
-    않아도 id 를 아는 화면(마지막 날 밤에 열어 둔 화면)은 자정을 넘어서도 쓸 수 있다.
+    멈추지 않은(`active`) 코스의 회차는 모두 찾는다. 날짜는 보지 않는다 — 마지막 날이 지난 코스의
+    회차도 체크 · 해제된다. 조회가 그 코스를 싣지 않아도 id 를 아는 화면(마지막 날 밤에 열어 둔
+    화면)은 자정을 넘어서도 쓸 수 있다.
+
+    멈춘 코스는 **멈추기 전에 예정된 회차**만 찾는다. 멈춘 시각은 코스의 `updated_at` 이고 회차의
+    예정 시각은 한국 시간 `dose_date` + `scheduled_time` 이다. 정각은 멈추기 전으로 본다 — Agent
+    진료 준비의 `_planned` 와 같은 경계라서, 거기서 "계획된 회차"로 세는 회차는 체크도 된다.
+    다른 아이의 회차는 있는지도 알리지 않는다.
     """
     stmt = (
         select(MedicationDose)
@@ -194,7 +207,7 @@ async def find_dose(
         .where(
             MedicationDose.id == dose_id,
             MedicationSchedule.child_id == child_id,
-            MedicationSchedule.status == MedicationStatus.ACTIVE,
+            or_(MedicationSchedule.status == MedicationStatus.ACTIVE, _before_stop),
         )
         .execution_options(populate_existing=True)
     )
