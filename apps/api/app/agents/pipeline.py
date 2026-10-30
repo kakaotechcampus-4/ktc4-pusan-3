@@ -869,6 +869,9 @@ async def _handle_continuation(
             send(note)
         if memory.pending is not None:
             send(PendingReply(run_id, memory.pending))
+        if memory.refused(ErrorCode.HAZARD):
+            # Supervisor 가 놓치고 저장 게이트가 막은 경우 일반 run과 같은 안내
+            send(HAZARD_GUIDANCE)
         if memory.refused(ErrorCode.SAFETY_RECORD):
             send(SAFETY_GUIDANCE)
 

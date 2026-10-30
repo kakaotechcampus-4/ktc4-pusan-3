@@ -2922,6 +2922,32 @@ async def test_이어받기에서_supervisor_가_죽어도_memory_가_기록한�
     assert len(await memory_context.store.query_observations(domain="health", child_id=CHILD)) == 1
 
 
+async def test_이어받기에서_supervisor_가_놓쳐_저장_게이트가_막아도_같은_안내가_나간다(
+    memory_context: AgentContext, food_context: FoodContext, events: list[Any]
+) -> None:
+    # 일반 run 과 같다. Memory 의 "기록하지 않았어요" 한 줄로 끝나면 119 안내가 빠진다
+    memory = FakeLLM(
+        _tools(_call("m1", "create_observation_food", _SOJU)),
+        _cont_answer({"text": "기록하지 않았어요.", "kind": "message"}),
+    )
+
+    await handle_input(
+        "소주가 맛있대",
+        memory_context,
+        {"food": food_context},
+        run_id=RUN_ID,
+        supervisor_client=FakeLLM(LLMUnavailableError("down")),
+        memory_client=memory,
+        emit=events.append,
+        continuation=_LUNCH_PENDING,
+        commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
+    )
+
+    assert [guidance.code for guidance in _of(events, Guidance)] == ["hazard"]
+    assert await memory_context.store.query_observations(domain="food", child_id=CHILD) == []
+
+
 async def test_이어받기에서_memory_가_실패하면_failed_로_끝난다(
     memory_context: AgentContext, food_context: FoodContext, events: list[Any]
 ) -> None:
