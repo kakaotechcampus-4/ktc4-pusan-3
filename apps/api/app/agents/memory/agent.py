@@ -164,7 +164,8 @@ _UNSAVED_REPLY = (
 )
 # 처음 run 도 저장 없이 "기록했어요" 로 끝낸 적이 있다 — 저장할 곳이 없는 채팅의
 # 키 · 몸무게에 (#625 멘토 리뷰). 처음 run 은 알림 안내 · 조회 답처럼 저장 없이 말로 끝나는 게
-# 정상이라 이어받기처럼 전부 다시 확인하지 않고, 저장했다 · 하겠다는 말로 끝났을 때만 확인한다
+# 정상이라 이어받기처럼 전부 다시 확인하지 않고, 저장했다 · 하겠다는 말로 끝났을 때만 확인한다.
+# 조회 · 수정 조각만 맡은 run 은 보지 않는다 (_lookup_only)
 _SAVED_CLAIM = re.compile(
     r"(기록|저장)\s?(했어|했습|할게|하겠|해\s?(뒀|두었|놨|놓았|둘게|놓을게|드렸|드릴게))"
 )
@@ -347,7 +348,7 @@ async def run(
                 )
                 # 실패한 쓰기도 저장이 아니다
                 unsaved = replied.kind == "message" and not _wrote(calls)
-                claimed = unsaved and _claims_saved(replied.text)
+                claimed = unsaved and not _lookup_only(task) and _claims_saved(replied.text)
                 if (recording and unsaved or continuation is None and claimed) and not rechecked:
                     # 저장 없이 말로 끝냈다. 저장한 척했을 수 있어 한 번 확인한다
                     rechecked = True
@@ -464,6 +465,19 @@ def _claims_saved(text: str) -> bool:
     지난 기록을 알려 주는 "기록했던" · 묻는 "기록할까요" 는 아니다.
     """
     return bool(_SAVED_CLAIM.search(text))
+
+
+def _lookup_only(task: MemoryTask | None) -> bool:
+    """조회 · 수정 조각만 맡은 run 인가.
+
+    여기서 "기록했어요" 는 지난 기록을 알려 주는 말이다. 다시 물어도 같은 답이 나와
+    맞는 조회 답이 _UNSAVED_FALLBACK 으로 바뀌었다. 일정 · 관찰 조각이 섞이면 그대로 본다.
+    """
+    return (
+        task is not None
+        and bool(task.hints)
+        and all(hint.work is WorkType.LOOKUP_EDIT for hint in task.hints)
+    )
 
 
 def _asked(continuation: PendingMemoryContext) -> int:

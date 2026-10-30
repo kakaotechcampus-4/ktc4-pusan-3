@@ -856,6 +856,44 @@ async def test_다시_확인해도_저장했다고_말하면_저장_안_했다�
     assert result.final_message == _UNSAVED_FALLBACK
 
 
+async def test_조회만_맡은_처음_run_은_기록했다고_답해도_다시_확인하지_않는다(
+    context: AgentContext,
+) -> None:
+    # "어제 뭐 먹었다고 기록했지?" 에 "기록했어요" 로 답한 적이 있다(라이브 15번 중 2번).
+    # 지난 기록을 알리는 말이라 다시 물어도 같은 답이 나와 맞는 조회 답이 대체 문구로 바뀌었다
+    said = "어제 사과를 먹었다고 기록했어요."
+    llm = FakeLLM(
+        _tools(_call("q1", "query_observation_food", {"date_from": "어제"})),
+        _answer({"text": said, "kind": "message"}),
+    )
+
+    text = "어제 뭐 먹었다고 기록했지?"
+    task = _task(("어제 뭐 먹었다고 기록했지", "lookup_edit"), raw=text)
+
+    result = await run(text, context, client=llm, task=task)
+
+    assert len(llm.seen) == 2
+    assert result.final_message == said
+
+
+async def test_조회에_일정이_섞이면_저장했다는_말을_다시_확인한다(
+    context: AgentContext,
+) -> None:
+    # 일정을 찾고 준비물은 안 넣은 채 "기록해 둘게요" 로 끝나면 지켜지지 않는 말이다
+    llm = FakeLLM(
+        _tools(_call("q1", "query_event", {})),
+        _answer({"text": "물통 챙길 거 기록해 둘게요.", "kind": "message"}),
+        _answer({"text": "어느 일정에 넣을까요?", "kind": "message"}),
+    )
+
+    task = _task(("어제 기록 보여줘", "lookup_edit"), ("운동회에 물통도 챙겨야 해", "schedule"))
+
+    await run(task.raw_text, context, client=llm, task=task)
+
+    assert len(llm.seen) == 3
+    assert "아무것도 저장하지 않았고" in llm.seen[2][-1]["content"]
+
+
 @pytest.mark.parametrize(
     "text",
     [
