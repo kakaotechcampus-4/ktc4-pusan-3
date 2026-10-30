@@ -135,6 +135,14 @@ def test_RC11_진단_문의는_안내만() -> None:
     assert routing.intent_type == "record"
 
 
+def test_RC37_약_용량_문의는_어디서_확인할지_안내한다() -> None:
+    # 거절로만 끝나면 보호자가 다음에 어디로 가야 할지 모른다 (#633 리뷰)
+    routing = _route_case("RC37")
+
+    assert [guidance.code for guidance in routing.guidance] == ["diagnosis"]
+    assert "약사" in routing.guidance[0].message
+
+
 def test_RC12_범위_밖_요청도_안내한다() -> None:
     routing = _route_case("RC12")
     assert [guidance.code for guidance in routing.guidance] == ["out_of_scope"]

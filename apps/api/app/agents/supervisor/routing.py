@@ -103,10 +103,14 @@ _GUIDANCE: dict[str, Guidance] = {
         deeplink="settings/health-safety",
     ),
     # 기록을 남겼는지는 적지 않는다 — 묻기만 한 말("해열제 몇 ml 먹여?")은 남길 기록이 없다.
-    # 함께 온 증상을 저장했으면 Memory가 따로 알린다
+    # 함께 온 증상을 저장했으면 Memory가 따로 알린다.
+    # 진단 문의와 약 문의가 한 라벨이라 어디서 확인하면 되는지를 둘 다 적는다 (#633 리뷰)
     GuardReason.DIAGNOSIS.value: Guidance(
         code=GuardReason.DIAGNOSIS.value,
-        message="진단이나 결핍 판정, 약·영양제·치료식 추천은 도와드릴 수 없어요.",
+        message=(
+            "진단이나 결핍 판정, 약·영양제·치료식 추천은 도와드릴 수 없어요. "
+            "약 용량은 약 설명서나 약사에게, 아이 상태는 병원에서 확인해 주세요."
+        ),
     ),
     SegmentKind.OUT_OF_SCOPE.value: Guidance(
         code=SegmentKind.OUT_OF_SCOPE.value,
