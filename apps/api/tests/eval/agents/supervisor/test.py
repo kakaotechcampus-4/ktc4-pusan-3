@@ -539,6 +539,9 @@ def _judge(observed: Observed) -> None:
 
     _judge_clear(observed)
 
+    if case.case_id == "RC62" and not observed.observations["health"]:  # #639
+        observed.failures.append("해 준 일이 건강 기록에 없다")
+
     # fail-open — Supervisor 가 어떻게 나눴든 관찰은 저장에 남아야 한다 (S2)
     saved_texts = [row.raw_text for row in observed.rows]
     observed.missing = [

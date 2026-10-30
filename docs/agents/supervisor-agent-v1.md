@@ -105,6 +105,11 @@
 [health / medication]
 "하루 세 번 항생제 먹여야 해"       → health / medication  (Memory 아님)
 
+[알레르기·만성질환 (#639) — 등록 요청이 아니어도 저장하지 않고 안내]
+"땅콩 알레르기 있어" · "꽃가루 알레르기가 있는 것 같아" · "천식이 있대" → guarded / safety_record
+"꽃가루 날리면 재채기해"            → record / observe (병명 없는 증상)
+"아토피 크림 발라 줬어"             → record / observe (한 일)
+
 [food — 섭취 확인 ↔ 추천]
 "땅콩소스 먹여도 될까?"             → food / food_check
 "견과류 들어간 메뉴 추천해줘"        → food / meal_recommendation  (알레르기 음식이 들어도 추천 요청)

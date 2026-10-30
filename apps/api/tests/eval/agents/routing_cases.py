@@ -415,6 +415,58 @@ RC_CASES: tuple[RoutingCase, ...] = (
         (Q("10cm 컸는데 많이 큰 거야?", GROWTH),),
         watch="대조군 — 값이 들어 있어도 묻는 말이면 growth_review 요청",
     ),
+    # #639 — 등록해 달라는 말이 없어도 알레르기 · 만성질환은 저장하지 않고 안내한다
+    RoutingCase(
+        "RC55",
+        "우리 아기에게 꽃가루 알레르기가 있는 것 같아",
+        (G("우리 아기에게 꽃가루 알레르기가 있는 것 같아", GuardReason.SAFETY_RECORD),),
+        watch="추측으로 말해도 record 가 아니라 안내",
+    ),
+    RoutingCase(
+        "RC56",
+        "우리 애 땅콩 알레르기 있어",
+        (G("우리 애 땅콩 알레르기 있어", GuardReason.SAFETY_RECORD),),
+        watch="등록해 달라는 말 없이 단정",
+    ),
+    RoutingCase(
+        "RC57",
+        "우유 알레르기가 있나 봐",
+        (G("우유 알레르기가 있나 봐", GuardReason.SAFETY_RECORD),),
+        watch="~나 봐",
+    ),
+    RoutingCase(
+        "RC58",
+        "아토피가 있는 것 같아",
+        (G("아토피가 있는 것 같아", GuardReason.SAFETY_RECORD),),
+        watch="만성질환도 같다",
+    ),
+    RoutingCase(
+        "RC59",
+        "천식이 있대",
+        (G("천식이 있대", GuardReason.SAFETY_RECORD),),
+        watch="전해 들은 말도 같다",
+    ),
+    RoutingCase(
+        "RC60",
+        "꽃가루 날리면 재채기해",
+        (R("꽃가루 날리면 재채기해", OBSERVE),),
+        watch="대조군 — 병명 없이 증상을 말하면 record",
+    ),
+    RoutingCase(
+        "RC61",
+        "오늘 우유 마시고 입 주변이 빨개졌어. 우유 알레르기가 있는 것 같아.",
+        (
+            R("오늘 우유 마시고 입 주변이 빨개졌어", OBSERVE),
+            G("우유 알레르기가 있는 것 같아", GuardReason.SAFETY_RECORD),
+        ),
+        watch="안내 때문에 같이 온 증상 기록이 사라지지 않나",
+    ),
+    RoutingCase(
+        "RC62",
+        "아토피 크림 발라 줬어",
+        (R("아토피 크림 발라 줬어", OBSERVE),),
+        watch="대조군 — 병명이 들어 있어도 한 일을 말하면 record",
+    ),
 )
 
 # ── FC01~FC09 — 정해진 음식을 먹여도 되는지 묻는 말(food_check)과 그 경계 ────────
