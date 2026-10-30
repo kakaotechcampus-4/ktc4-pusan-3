@@ -60,7 +60,7 @@ describe("parseMeasurement", () => {
     expect(parseMeasurement(kind, value)).toBe("out_of_range");
   });
 
-  // 🚨 서버가 소수 한 자리로 반올림해 저장한다 — 104.25 를 보내면 104.3 이 남는다.
+  // 🚨 서버도 소수 둘째 자리를 400 으로 받는다 (#628). 화면이 먼저 막아 칸에 이유를 붙인다.
   it.each([
     ["height", "104.25"],
     ["weight", "17.15"],
