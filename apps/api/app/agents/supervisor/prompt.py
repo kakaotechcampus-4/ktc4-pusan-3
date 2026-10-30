@@ -70,6 +70,9 @@ _GUARDED = """
 [guarded — 대신 정해진 안내가 나간다]
 - safety_record  알레르기·만성질환을 등록·수정해 달라는 요청. 보호자가 직접 입력해야 한다.
 - diagnosis      진단 · 영양 결핍 판정 · 치료식 · 약 · 영양제 문의.
+- growth_record  키 · 몸무게를 쟀다거나 얼마라는 말, 적어 달라는 말. 채팅으로는 저장하지 않는다.
+                 값이 터무니없어도 이쪽이다. 키 · 몸무게 값은 record 로 다시 보내지 않는다.
+                 얼마나 컸는지 · 잘 크고 있는지 묻는 말은 값이 들어 있어도 request/growth 다.
 - 증상이나 관찰을 말한 부분은 잘라서 record 로 따로 보낸다. 안내 때문에 기록이 사라지면 안 된다.
 """.strip()
 
@@ -115,6 +118,10 @@ _EXAMPLES = """
 - "땅콩 알레르기 등록해줘." → guarded/safety_record
 - "어제부터 기침하는데 무슨 병일까?"
   → record/observe "어제부터 기침하는데" + guarded/diagnosis "무슨 병일까?"
+- "어제 몸무게 쟀더니 17kg 나왔어" → guarded/growth_record
+- "낮잠 두 시간 잤어. 키 100cm 적어 줘."
+  → record/observe "낮잠 두 시간 잤어" + guarded/growth_record "키 100cm 적어 줘"
+- "작년보다 키가 얼마나 컸어?" → request/growth (성장 추이를 묻는 말)
 - "이 반찬 좀 주문해줘." → out_of_scope
 - "새 블록 세트 하나 주문해줘." → out_of_scope (블록이라도 activity 가 아니다)
 """.strip()

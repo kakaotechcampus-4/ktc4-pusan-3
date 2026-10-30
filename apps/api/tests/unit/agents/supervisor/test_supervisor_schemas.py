@@ -359,7 +359,11 @@ def test_kind_와_guard_값() -> None:
         "out_of_scope",
         "unclear",
     }
-    assert {member.value for member in GuardReason} == {"safety_record", "diagnosis"}
+    assert {member.value for member in GuardReason} == {
+        "safety_record",
+        "diagnosis",
+        "growth_record",
+    }
 
 
 def test_segment_는_enum_이_아니라_값을_담는다() -> None:

@@ -1,6 +1,7 @@
 """분기 확인 케이스와 채점.
 
 - RC01~RC27  복합 발화. Supervisor 가 조각을 어떻게 나누고 어디로 보내는지 본다
+- RC48~RC54  키 · 몸무게 기록(guarded/growth_record)과 성장 질문(request/growth) 대조 (#625)
 - T01~T30    라이브 eval 입력의 정답 Supervisor 출력. Step 7 이 Memory 힌트로 쓰고,
              Supervisor 채점에서는 "쉬운 30개" 대조군이 된다
 - score_split()  Step 5(Supervisor 단독)와 Step 9(끝까지)가 같은 기준으로 잰다
@@ -364,6 +365,55 @@ RC_CASES: tuple[RoutingCase, ...] = (
             Q("골고루 먹게 뭘 해 주면 좋을까?", FOOD, REC),
         ),
         watch="routine + food 기록을 Memory 가 가르는지 (Step 9)",
+    ),
+    # ── RC48~RC54 — 키 · 몸무게는 채팅으로 저장하지 않는다 (#625) ──
+    RoutingCase(
+        "RC48",
+        "오늘 키 재 보니 105cm 였어.",
+        (G("오늘 키 재 보니 105cm 였어", GuardReason.GROWTH_RECORD),),
+        watch="잰 값은 record 가 아니라 성장 기록 안내",
+    ),
+    RoutingCase(
+        "RC49",
+        "몸무게는 1톤",
+        (G("몸무게는 1톤", GuardReason.GROWTH_RECORD),),
+        watch="멘토 리뷰 — 값이 터무니없어도 같은 안내. '기록했다' 답이 나가면 안 된다",
+    ),
+    RoutingCase(
+        "RC50",
+        "오늘 몸무게 재 보니 16kg 이더라. 저녁엔 뭐 먹일까?",
+        (
+            G("오늘 몸무게 재 보니 16kg 이더라", GuardReason.GROWTH_RECORD),
+            Q("저녁엔 뭐 먹일까?", FOOD, REC),
+        ),
+        watch="안내 + 요청",
+    ),
+    RoutingCase(
+        "RC51",
+        "점심에 카레 먹었어. 키는 110cm 됐어.",
+        (
+            R("점심에 카레 먹었어", OBSERVE),
+            G("키는 110cm 됐어", GuardReason.GROWTH_RECORD),
+        ),
+        watch="안내 때문에 같이 온 기록이 사라지지 않나",
+    ),
+    RoutingCase(
+        "RC52",
+        "얼마나 컸어?",
+        (Q("얼마나 컸어?", GROWTH),),
+        watch="대조군 — 성장 추이를 묻는 말은 growth_review 요청 그대로",
+    ),
+    RoutingCase(
+        "RC53",
+        "잘 크고 있어?",
+        (Q("잘 크고 있어?", GROWTH),),
+        watch="대조군 — 판정을 묻는 말도 growth_review 요청 (판정은 안 한다)",
+    ),
+    RoutingCase(
+        "RC54",
+        "10cm 컸는데 많이 큰 거야?",
+        (Q("10cm 컸는데 많이 큰 거야?", GROWTH),),
+        watch="대조군 — 값이 들어 있어도 묻는 말이면 growth_review 요청",
     ),
 )
 

@@ -93,7 +93,7 @@ def test_RC10_알레르기_등록은_안내하고_증상_기록은_살린다() -
     routing = _route_case("RC10")
 
     assert [guidance.code for guidance in routing.guidance] == ["safety_record"]
-    assert routing.guidance[0].deeplink == "settings/health-safety"
+    assert routing.guidance[0].deeplink == "profile"
     assert routing.memory_task is not None
     assert [hint.work for hint in routing.memory_task.hints] == [WorkType.OBSERVE]
     assert routing.domain_tasks == ()
@@ -108,6 +108,45 @@ def test_RC11_진단_문의는_안내만() -> None:
 def test_RC12_범위_밖_요청도_안내한다() -> None:
     routing = _route_case("RC12")
     assert [guidance.code for guidance in routing.guidance] == ["out_of_scope"]
+
+
+@pytest.mark.parametrize("case_id", ["RC48", "RC49"])
+def test_키_몸무게만_말하면_Memory_없이_성장_기록_안내만(case_id: str) -> None:
+    # 채팅으로는 child_growth_log 에 쓰지 않는다.
+    # Memory 가 받으면 관찰로 저장하거나 "기록했어요" 라고 한다
+    routing = _route_case(case_id)
+
+    assert routing.memory_task is None
+    assert routing.domain_tasks == ()
+    assert [(g.code, g.deeplink) for g in routing.guidance] == [("growth_record", "profile/growth")]
+
+
+def test_RC50_키_몸무게_안내와_식사_요청이_같이_나간다() -> None:
+    routing = _route_case("RC50")
+
+    assert routing.memory_task is None
+    assert [task.agent for task in routing.domain_tasks] == ["food"]
+    assert [g.code for g in routing.guidance] == ["growth_record"]
+
+
+def test_RC51_키_몸무게_안내_때문에_같이_온_기록이_사라지지_않는다() -> None:
+    routing = _route_case("RC51")
+
+    assert routing.memory_task is not None
+    assert [hint.text for hint in routing.memory_task.hints] == ["점심에 카레 먹었어"]
+    assert [g.code for g in routing.guidance] == ["growth_record"]
+
+
+@pytest.mark.parametrize("case_id", ["RC52", "RC53", "RC54"])
+def test_성장_추이를_묻는_말은_안내가_아니라_growth_요청이다(case_id: str) -> None:
+    routing = _route_case(case_id)
+
+    assert routing.guidance == ()
+    assert routing.intent_type == "request"
+    assert "growth" in (
+        *routing.unavailable_agents,
+        *(task.agent for task in routing.domain_tasks),
+    )
 
 
 def test_RC19_일정_조회는_기록형이고_Food_를_부르지_않는다() -> None:

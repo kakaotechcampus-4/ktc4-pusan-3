@@ -97,6 +97,11 @@
 "잘 크고 있어?"                   → growth / growth_review  (판정 없이 추이 + 검진 안내)
 "10cm 컸는데 많이 큰 거야?"        → growth / growth_review  (같음)
 
+[키 · 몸무게 기록 — 채팅으로 저장하지 않는다 (#625)]
+"오늘 키 재 보니 105cm 였어"       → guarded / growth_record  (11-1 성장 기록 안내, deeplink profile/growth)
+"몸무게는 1톤"                    → guarded / growth_record  (값이 터무니없어도 같다)
+"점심에 카레 먹었어. 키는 110cm 됐어" → record / observe "점심에 카레 먹었어" + guarded / growth_record
+
 [health / medication]
 "하루 세 번 항생제 먹여야 해"       → health / medication  (Memory 아님)
 
@@ -122,3 +127,7 @@
 ```
 
 애매하면 **판정·확인이 붙는 쪽**으로 보낸다.
+
+**키 · 몸무게는 묻는 말이면 growth, 값을 알리는 말이면 guarded 다.** `child_growth_log` 는 보호자가 잰 날짜와
+단위를 화면에서 넣는 기록이라(루트 §2) 채팅 쓰기 경로가 없다. 예전에는 record 로 가서 Memory 가 저장할 곳 없이
+"기록했어요" 라고 답했다(멘토 리뷰). 같이 온 기록 · 요청은 다른 guarded 와 같이 잘라서 보낸다.

@@ -51,6 +51,7 @@ from app.agents.supervisor.schemas import (
     align_segment,
     normalize,
 )
+from app.core import deeplinks
 
 logger = logging.getLogger(__name__)
 
@@ -80,13 +81,24 @@ class Guidance:
     deeplink: str | None = None
 
 
-# guard · out_of_scope 별 문구
+# guard · out_of_scope 별 문구. 서버가 입력 run 으로 내는 딥링크는 여기가 정본이고,
+# 값은 core/deeplinks.py 의 웹 경로만 쓴다 (#625)
 _GUIDANCE: dict[str, Guidance] = {
     GuardReason.SAFETY_RECORD.value: Guidance(
         code=GuardReason.SAFETY_RECORD.value,
         message="알레르기·건강 정보는 직접 입력해 주세요. 대신 등록해 드릴 수 없어요.",
-        # 앱에서 deeplink를 열면 알레르기 등록 화면으로 이동하도록
-        deeplink="settings/health-safety",
+        # 알레르기 · 건강 정보를 넣는 곳은 10 설정이 아니라 11 아이 프로필이다
+        deeplink=deeplinks.PROFILE,
+    ),
+    # 채팅의 키 · 몸무게는 child_growth_log 에 쓰지 않는다 — 잰 날짜와 단위를 화면에서 받는다.
+    # 값이 이상해도("1톤") 같은 안내다. 평가 · 또래 비교 표현은 넣지 않는다 (루트 §2)
+    GuardReason.GROWTH_RECORD.value: Guidance(
+        code=GuardReason.GROWTH_RECORD.value,
+        message=(
+            "키·몸무게는 성장 기록에서 잰 날짜와 함께 직접 입력해 주세요. "
+            "채팅으로는 저장하지 않아요."
+        ),
+        deeplink=deeplinks.PROFILE_GROWTH,
     ),
     GuardReason.DIAGNOSIS.value: Guidance(
         code=GuardReason.DIAGNOSIS.value,

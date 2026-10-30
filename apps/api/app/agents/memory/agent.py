@@ -19,6 +19,7 @@ task 없이 부르면 전체 tool 을 열고 끊지 않는다 — Supervisor 없
 
 import json
 import logging
+import re
 from collections import Counter
 from collections.abc import Collection, Sequence
 from dataclasses import dataclass, field
@@ -161,6 +162,15 @@ _UNSAVED_REPLY = (
     "이번에는 아무것도 저장하지 않았고, 이 말을 보내면 처리가 끝나 나중에 기록할 수도 없다. "
     "저장했다거나 기록하겠다는 말은 넣지 않는다. 필요한 값이 없으면 그 값을 묻는다."
 )
+# 처음 run 도 저장 없이 "기록했어요" 로 끝낸 적이 있다 — 저장할 곳이 없는 채팅의
+# 키 · 몸무게에 (#625 멘토 리뷰). 처음 run 은 알림 안내 · 조회 답처럼 저장 없이 말로 끝나는 게
+# 정상이라 이어받기처럼 전부 다시 확인하지 않고, 저장했다 · 하겠다는 말로 끝났을 때만 확인한다.
+# 조회 · 수정 조각만 맡은 run 은 보지 않는다 (_lookup_only)
+_SAVED_CLAIM = re.compile(
+    r"(기록|저장)\s?(했어|했습|할게|하겠|해\s?(뒀|두었|놨|놓았|둘게|놓을게|드렸|드릴게))"
+)
+# 다시 확인해도 저장한 척하면 그 말 대신 내보낸다. 지켜지지 않을 말을 보호자에게 보내지 않는다
+_UNSAVED_FALLBACK = "이번에는 아무것도 저장하지 않았어요."
 _ALREADY_DONE = (
     "같은 작업을 이미 했다. 다시 부르지 않는다. "
     "같은 날 같은 대상은 한 건으로 합치고, 내용을 더할 거면 update로 고친다."
@@ -336,14 +346,17 @@ async def run(
                     and continuation.work is not WorkType.LOOKUP_EDIT
                     and not continuation.unclear
                 )
-                if recording and replied.kind == "message" and not _wrote(calls):
-                    if not rechecked:
-                        # 저장 없이 말로 끝냈다. 저장한 척했을 수 있어 한 번 확인한다.
-                        # 실패한 쓰기도 저장이 아니다
-                        rechecked = True
-                        messages.append({"role": "assistant", "content": content})
-                        messages.append({"role": "user", "content": _UNSAVED_REPLY})
-                        continue
+                # 실패한 쓰기도 저장이 아니다
+                unsaved = replied.kind == "message" and not _wrote(calls)
+                claimed = unsaved and not _lookup_only(task) and _claims_saved(replied.text)
+                if (recording and unsaved or continuation is None and claimed) and not rechecked:
+                    # 저장 없이 말로 끝냈다. 저장한 척했을 수 있어 한 번 확인한다
+                    rechecked = True
+                    messages.append({"role": "assistant", "content": content})
+                    messages.append({"role": "user", "content": _UNSAVED_REPLY})
+                    continue
+                if rechecked and claimed:
+                    replied = MemoryReply(text=_UNSAVED_FALLBACK, kind="message")
                 return MemoryAgentResult(
                     reply=replied,
                     completed=True,
@@ -444,6 +457,27 @@ def _written_texts(calls: list[ToolCallRecord]) -> list[str]:
 def _wrote(calls: list[ToolCallRecord]) -> bool:
     """이번 run 에서 성공한 쓰기가 하나라도 있는지. 일정 초안도 센다."""
     return any(call.success and call.name.startswith(MUTATING_PREFIXES) for call in calls)
+
+
+def _claims_saved(text: str) -> bool:
+    """저장했다 · 하겠다고 끝내는 말인가.
+
+    지난 기록을 알려 주는 "기록했던" · 묻는 "기록할까요" 는 아니다.
+    """
+    return bool(_SAVED_CLAIM.search(text))
+
+
+def _lookup_only(task: MemoryTask | None) -> bool:
+    """조회 · 수정 조각만 맡은 run 인가.
+
+    여기서 "기록했어요" 는 지난 기록을 알려 주는 말이다. 다시 물어도 같은 답이 나와
+    맞는 조회 답이 _UNSAVED_FALLBACK 으로 바뀌었다. 일정 · 관찰 조각이 섞이면 그대로 본다.
+    """
+    return (
+        task is not None
+        and bool(task.hints)
+        and all(hint.work is WorkType.LOOKUP_EDIT for hint in task.hints)
+    )
 
 
 def _asked(continuation: PendingMemoryContext) -> int:
