@@ -137,6 +137,14 @@ class Routing:
     degraded: bool = False  # Supervisor 실패 -> Memory 단독
 
 
+def has_hazard(result: SupervisorResult) -> bool:
+    """`guarded/hazard` 조각이 하나라도 있는가. Supervisor 가 실패했으면 False."""
+    return result.output is not None and any(
+        s.kind == SegmentKind.GUARDED and s.guard == GuardReason.HAZARD
+        for s in result.output.segments
+    )
+
+
 def route(raw_text: str, result: SupervisorResult, *, run_id: str) -> Routing:
     """Supervisor 결과에서 이번 입력의 작업을 만든다."""
     if result.output is None:
@@ -148,7 +156,7 @@ def route(raw_text: str, result: SupervisorResult, *, run_id: str) -> Routing:
         return routing
 
     segments = result.output.segments
-    if any(s.kind == SegmentKind.GUARDED and s.guard == GuardReason.HAZARD for s in segments):
+    if has_hazard(result):
         # 위험 물질 섭취가 나온 입력은 아무것도 저장 · 추천하지 않는다 — 규칙 사전검사와 같다.
         # 같이 나온 기록 · 요청도 버린다. 아이 상태 확인이 먼저고, 섞어 처리하면 "좋아했다" 가
         # 다른 조각으로 기록될 수 있다

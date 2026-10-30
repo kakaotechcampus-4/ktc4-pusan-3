@@ -44,7 +44,7 @@ from app.agents.run_writes import RunWrites
 from app.agents.suggestion_save import SaveSuggestions, SuggestionBatch
 from app.agents.supervisor.agent import SupervisorResult
 from app.agents.supervisor.agent import run as run_supervisor
-from app.agents.supervisor.routing import HAZARD_GUIDANCE, Guidance, Routing, route
+from app.agents.supervisor.routing import HAZARD_GUIDANCE, Guidance, Routing, has_hazard, route
 from app.agents.supervisor.schemas import DomainAgentName, normalize
 from app.rules.hazard import find_hazards
 
@@ -461,6 +461,7 @@ async def handle_input(
             memory_context,
             run_id=run_id,
             continuation=continuation,
+            supervisor_client=supervisor_client,
             memory_client=memory_client,
             send=send,
             started=started,
@@ -791,18 +792,36 @@ async def _handle_continuation(
     *,
     run_id: str,
     continuation: PendingMemoryContext,
+    supervisor_client: LLMClient | None,
     memory_client: LLMClient | None,
     send: Emit,
     started: float,
     commit: Commit,
     curator_trigger: CuratorTrigger | None = None,
 ) -> PipelineResult:
-    """이전 run의 되묻기를 이어받는다. Supervisor와 도메인 Agent를 타지 않는다."""
+    """이전 run의 되묻기를 이어받는다. 도메인 Agent를 타지 않는다.
+
+    Supervisor 는 위험 물질만 본다. 규칙이 못 잡게 돌려 말한 답("어른 음료를 한 모금")이 일반
+    입력에서는 막히고 되묻기 답으로는 저장되던 길을 닫는다 (#633 리뷰). 되묻던 조각을 앞에 붙여
+    보낸다 — "뭘 몰래 마셨어" 에 "아빠 맥주" 로 답해도 한 말처럼 읽힌다. 다른 라벨은 버린다 —
+    답은 그 질문의 답이라 다시 나누지 않는다. Supervisor 가 실패하면 일반 run 의 강등처럼
+    Memory 로 넘어가고 저장 게이트가 남는다.
+    """
     send(Step(1, 1, "이어서 적은 내용을 살펴보고 있어요"))
+    supervisor_started = time.perf_counter()
+    supervisor = await run_supervisor(
+        f"{continuation.hint_text}\n{answer}", client=supervisor_client
+    )
+    supervisor_ms = _ms_since(supervisor_started)
+    if has_hazard(supervisor):
+        return _stop_for_hazard(
+            (), run_id=run_id, send=send, started=started, supervisor=supervisor
+        )
+
     memory: MemoryAgentResult | None = None
     failed: Failed | None = None
     committed = False
-    model_calls = 0
+    model_calls = supervisor.model_calls
     memory_ms: int | None = None
     record_started = time.perf_counter()
     try:
@@ -813,7 +832,7 @@ async def _handle_continuation(
         memory_ms = _ms_since(record_started)
         failed = Failed("llm_unavailable", answer)
     else:
-        model_calls = 1
+        model_calls += 1
     if memory is not None and not memory.completed:
         memory_ms = _ms_since(record_started)
         # 반복 상한 — 일반 run과 같이 commit 하지 않고 failed로 끝냄
@@ -843,14 +862,14 @@ async def _handle_continuation(
 
     result = PipelineResult(
         run_id=run_id,
-        supervisor=SupervisorResult(output=None),
+        supervisor=supervisor,
         routing=_NO_ROUTING,
         memory=memory,
         failed=failed,
         committed=committed,
         model_calls=model_calls,
         latency_ms=_ms_since(started),
-        times=StageTimes(memory_ms=memory_ms),
+        times=StageTimes(supervisor_ms=supervisor_ms, memory_ms=memory_ms),
     )
     _log(result)
     return result
@@ -1071,25 +1090,38 @@ def _safety_precheck(raw_text: str) -> tuple[str, ...]:
 
 
 def _stop_for_hazard(
-    hazards: tuple[str, ...], *, run_id: str, send: Emit, started: float
+    hazards: tuple[str, ...],
+    *,
+    run_id: str,
+    send: Emit,
+    started: float,
+    supervisor: SupervisorResult | None = None,
 ) -> PipelineResult:
     """위험 물질 섭취가 나온 입력은 저장 · Curator · 추천 없이 안내 한 건으로 끝낸다 (#626).
 
-    모델을 부르지 않는다. 같은 입력의 다른 기록 · 요청도 처리하지 않는다 — 아이 상태 확인이
-    먼저고, 섞어 처리하면 "좋아했다" 가 다른 조각으로 기록될 수 있다.
+    규칙이 걸면 모델을 부르지 않는다. 이어받기에서 Supervisor 가 걸었으면 그 결과를 넘긴다.
+    같은 입력의 다른 기록 · 요청도 처리하지 않는다 — 아이 상태 확인이 먼저고, 섞어 처리하면
+    "좋아했다" 가 다른 조각으로 기록될 수 있다.
     """
+    model_calls = 0 if supervisor is None else supervisor.model_calls
     routing = Routing(intent_type="record", memory_task=None, guidance=(HAZARD_GUIDANCE,))
     send(HAZARD_GUIDANCE)
-    send(Done(run_id, 0))
+    send(Done(run_id, model_calls))
     result = PipelineResult(
         run_id=run_id,
-        supervisor=SupervisorResult(output=None),  # 부르지 않았다 — 이어받기 run 과 같다
+        supervisor=supervisor or SupervisorResult(output=None),
         routing=routing,
         memory=None,
+        model_calls=model_calls,
         latency_ms=_ms_since(started),
     )
-    # 원문 없이 걸린 종류만
-    logger.info("hazard precheck run_id=%s kinds=%s", run_id, list(hazards))
+    # 원문 없이 걸린 종류만. Supervisor 가 건 이어받기는 종류가 없다
+    logger.info(
+        "hazard stop run_id=%s by=%s kinds=%s",
+        run_id,
+        "precheck" if supervisor is None else "continuation",
+        list(hazards),
+    )
     _log(result)
     return result
 
