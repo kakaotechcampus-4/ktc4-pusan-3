@@ -13,7 +13,7 @@ api 가 만들어(`agent_ports.affinity_reader()`) 러너와 05 가 entrypoint �
 - 시간 경과 archived 는 여기서 판정하지 않는다. 기억 다리가 그 run 의 기준일로 맞춘다.
   티어 · 6개월 낡음도 거르지 않는다 — `rank_evidence` · `build()` 가 판정한다.
 - 호출마다 짧은 세션을 연다 (#257). 읽기 실패는 그대로 올린다 — 관찰 읽기와 같다.
-- merge_key · 상태 · 극성 · 세기 · 마지막 관찰일 · 묶인 active 관찰 수만 옮긴다.
+- merge_key · 상태 · 극성 · 세기 · 마지막 관찰일 · 묶인 active 관찰이 있는 날 수만 옮긴다.
   embedding 은 싣지 않는다.
 """
 
@@ -24,7 +24,7 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.common.evidence import AffinityRow
-from app.domains.memory.observation.repository import list_active_refs_by_affinity
+from app.domains.memory.observation.repository import count_active_days_by_affinity
 from app.domains.memory.profile.models import MemoryDomain
 from app.domains.memory.profile.repository import list_affinities
 
@@ -44,7 +44,7 @@ class DbAffinityReader:
         async with self._open() as session:
             for domain in wanted:
                 rows += await list_affinities(session, child_id=child_id, domain=domain)
-            refs = await list_active_refs_by_affinity(
+            days = await count_active_days_by_affinity(
                 session,
                 child_id=child_id,
                 affinity_ids=[row.id for row in rows],
@@ -58,10 +58,10 @@ class DbAffinityReader:
                 polarity=row.polarity,
                 strength=row.strength,
                 last_observed_on=row.last_observed_on,
-                observations=len(refs.get(row.id, ())),
+                observed_days=days[row.id],
             )
             for row in rows
             # 묶인 active 관찰이 없는 기억은 싣지 않는다 — 기억 화면(`page_affinities`)과 같은 기준.
             # 관찰을 전부 "잘못된 기록" 으로 고쳐도 candidate 로 남아 근거가 됐다 (#626)
-            if refs.get(row.id)
+            if days.get(row.id)
         ]

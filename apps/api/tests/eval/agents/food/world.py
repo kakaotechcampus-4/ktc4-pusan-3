@@ -273,7 +273,7 @@ def _affinity(
         polarity=polarity,
         strength=strength,
         last_observed_on=today - timedelta(days=2),
-        observations=3,
+        observed_days=3,
     )
 
 

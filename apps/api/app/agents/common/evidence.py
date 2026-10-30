@@ -6,7 +6,8 @@
 모델에게 보이지 않는 코드 tool 이다 (docs/agents/shared/Tool_공통.md §4).
 
     티어 1  confirmed  · polarity ∈ {+1, −1} · archived 제외
-    티어 2  candidate  · polarity ∈ {+1, −1} · strength ≥ 임계 · 묶인 active 관찰 2건 이상
+    티어 2  candidate  · polarity ∈ {+1, −1} · strength ≥ 임계 · 묶인 active 관찰이 2일 이상
+            (같은 날 여러 건은 하루 — 승격 O 와 같다)
     티어 3  최근 14일 관찰 (polarity 무관)
     ── 전부 0행 ──  호출부가 kind="general"
 
@@ -29,7 +30,7 @@ from typing import Literal
 from uuid import UUID
 
 from app.agents.common.refs import ChildRecordKind, EvidenceCitation, Ref
-from app.rules.profile import CANDIDATE_MIN_OBSERVATIONS
+from app.rules.profile import CANDIDATE_MIN_DAYS
 
 AffinityState = Literal["candidate", "confirmed", "archived"]
 
@@ -56,9 +57,9 @@ class AffinityRow:
     polarity: int | None  # -1 기피 · +1 선호 · None 은 아직 모름
     strength: float
     last_observed_on: date
-    # 묶인 active 관찰 수 — 기억 카드의 "지금까지 N번" 과 같은 기준. 기본값을 두지 않는다 —
-    # 포트가 빠뜨리면 관찰 한 건짜리 candidate 가 조용히 근거가 된다
-    observations: int
+    # 묶인 active 관찰이 있는 서로 다른 날 수 — 승격 O 처럼 같은 날 여러 건은 하루다.
+    # 기본값을 두지 않는다 — 포트가 빠뜨리면 관찰 한 건짜리 candidate 가 조용히 근거가 된다
+    observed_days: int
 
 
 @dataclass(frozen=True)
@@ -117,8 +118,8 @@ def rank_evidence(
             continue
         if row.state == "confirmed":
             tier: Literal[1, 2, 3] = 1
-        elif row.strength >= strength_threshold and row.observations >= CANDIDATE_MIN_OBSERVATIONS:
-            # 관찰 한 건으로 생긴 candidate 는 근거가 아니다 (#626) — 티어 3 이 그 관찰을 본다
+        elif row.strength >= strength_threshold and row.observed_days >= CANDIDATE_MIN_DAYS:
+            # 하루치 관찰로 생긴 candidate 는 근거가 아니다 (#626) — 티어 3 이 그 관찰을 본다
             tier = 2
         else:
             continue

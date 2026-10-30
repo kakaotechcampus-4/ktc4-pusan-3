@@ -28,7 +28,7 @@ TODAY = date(2026, 9, 22)
 
 
 def affinity(
-    *, state="confirmed", polarity=1, strength=0.8, days_ago=3, label="당근", observations=3
+    *, state="confirmed", polarity=1, strength=0.8, days_ago=3, label="당근", observed_days=3
 ):
     return AffinityRow(
         id=uuid4(),
@@ -37,7 +37,7 @@ def affinity(
         polarity=polarity,
         strength=strength,
         last_observed_on=TODAY - timedelta(days=days_ago),
-        observations=observations,
+        observed_days=observed_days,
     )
 
 
@@ -63,13 +63,13 @@ class TestTiers:
         assert rank([affinity(state="candidate", strength=0.6)])[0].tier == 2
         assert rank([affinity(state="candidate", strength=0.4)]) == ()
 
-    def test_관찰_한_건짜리_candidate_는_근거가_아니다(self):
-        # 새 candidate 의 strength 는 기본값 0.5 라 임계와 같다 — 건수가 막는다 (#626)
-        assert rank([affinity(state="candidate", strength=0.5, observations=1)]) == ()
-        assert rank([affinity(state="candidate", strength=0.5, observations=2)])[0].tier == 2
+    def test_하루치_관찰로_생긴_candidate_는_근거가_아니다(self):
+        # 새 candidate 의 strength 는 기본값 0.5 라 임계와 같다 — 날 수가 막는다 (#626)
+        assert rank([affinity(state="candidate", strength=0.5, observed_days=1)]) == ()
+        assert rank([affinity(state="candidate", strength=0.5, observed_days=2)])[0].tier == 2
 
-    def test_confirmed_는_관찰_건수와_상관없이_티어1(self):
-        assert rank([affinity(observations=1)])[0].tier == 1
+    def test_confirmed_는_관찰_날_수와_상관없이_티어1(self):
+        assert rank([affinity(observed_days=1)])[0].tier == 1
 
     def test_archived_는_빠진다(self):
         assert rank([affinity(state="archived")]) == ()

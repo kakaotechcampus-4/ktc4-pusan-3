@@ -50,7 +50,7 @@ _OBSERVATION = {
 }
 
 
-async def _link(session, row: ProfileAffinity, status=ObservationStatus.ACTIVE) -> None:
+async def _link(session, row: ProfileAffinity, status=ObservationStatus.ACTIVE, day=DAY) -> None:
     """기억에 관찰 한 건을 묶는다."""
     model, fields = _OBSERVATION[row.domain]
     session.add(
@@ -59,7 +59,7 @@ async def _link(session, row: ProfileAffinity, status=ObservationStatus.ACTIVE) 
             raw_text="원문",
             subject=row.merge_key,
             confidence_source=ConfidenceSource.PARENT_DIRECT,
-            observed_range=Range(DAY, DAY + timedelta(days=1), bounds="[)"),
+            observed_range=Range(day, day + timedelta(days=1), bounds="[)"),
             affinity_id=row.id,
             status=status,
             **fields,
@@ -72,7 +72,7 @@ async def _link(session, row: ProfileAffinity, status=ObservationStatus.ACTIVE) 
 async def child(session, kids):
     mine, other = kids
 
-    async def add(child_id, domain, key, state, polarity=1, observations=1):
+    async def add(child_id, domain, key, state, polarity=1, days=1):
         row = ProfileAffinity(
             child_id=child_id,
             merge_key=key,
@@ -84,18 +84,18 @@ async def child(session, kids):
         )
         session.add(row)
         await session.flush()
-        for _ in range(observations):
-            await _link(session, row)
+        for back in range(days):  # 하루에 한 건씩
+            await _link(session, row, day=DAY - timedelta(days=back))
         return row
 
-    await add(mine.id, MemoryDomain.ACTIVITY, "공룡", ProfileState.CONFIRMED, observations=3)
+    await add(mine.id, MemoryDomain.ACTIVITY, "공룡", ProfileState.CONFIRMED, days=3)
     await add(mine.id, MemoryDomain.ACTIVITY, "블록", ProfileState.CANDIDATE, polarity=None)
     await add(mine.id, MemoryDomain.ACTIVITY, "퍼즐", ProfileState.ARCHIVED)
     await add(mine.id, MemoryDomain.EDUCATION, "숫자", ProfileState.CONFIRMED)
     await add(mine.id, MemoryDomain.FOOD, "딸기", ProfileState.CONFIRMED)
     await add(other.id, MemoryDomain.ACTIVITY, "기차", ProfileState.CONFIRMED)
     # 관찰을 전부 "잘못된 기록" 으로 고친 기억 — 묶인 active 관찰이 없다
-    wrong = await add(mine.id, MemoryDomain.FOOD, "소주", ProfileState.CANDIDATE, observations=0)
+    wrong = await add(mine.id, MemoryDomain.FOOD, "소주", ProfileState.CANDIDATE, days=0)
     await _link(session, wrong, status=ObservationStatus.INACTIVE)
     return mine
 
@@ -129,9 +129,20 @@ async def test_AffinityRow_로_옮기고_극성_없는_candidate_도_싣는다(s
     assert (found["블록"].state, found["블록"].polarity) == ("candidate", None)
 
 
-async def test_묶인_active_관찰_수를_싣는다(session, child):
+async def test_묶인_active_관찰이_있는_날_수를_싣는다(session, child):
     rows = await reader(session).affinities(child_id=child.id, domains=("activity",))
-    assert {r.merge_key: r.observations for r in rows} == {"공룡": 3, "블록": 1}
+    assert {r.merge_key: r.observed_days for r in rows} == {"공룡": 3, "블록": 1}
+
+
+async def test_같은_날_관찰_여러_건은_하루로_센다(session, child):
+    # 승격 O 와 같은 기준 — 입력 한 번에 관찰이 두 건 생겨도 티어 2 근거가 되지 않는다 (#633 리뷰)
+    rows = await reader(session).affinities(child_id=child.id, domains=("activity",))
+    block = next(r for r in rows if r.merge_key == "블록")
+    row = await session.get(ProfileAffinity, block.id)
+    await _link(session, row)  # 같은 DAY 에 한 건 더
+
+    rows = await reader(session).affinities(child_id=child.id, domains=("activity",))
+    assert next(r for r in rows if r.merge_key == "블록").observed_days == 1
 
 
 async def test_묶인_active_관찰이_없는_기억은_싣지_않는다(session, child):

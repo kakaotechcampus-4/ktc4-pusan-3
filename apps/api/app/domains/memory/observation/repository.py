@@ -361,6 +361,44 @@ async def list_active_refs_by_affinity(
     }
 
 
+async def count_active_days_by_affinity(
+    session: AsyncSession,
+    *,
+    child_id: uuid.UUID,
+    affinity_ids: Collection[uuid.UUID],
+    domains: Collection[ObservationDomain | str] | None = None,
+) -> dict[uuid.UUID, int]:
+    """기억마다 묶인 active 관찰의 서로 다른 시작일 수. 묶인 active 관찰이 없는 기억은 없다.
+
+    후보가 추천 근거 · 홈 하이라이트가 되는지 이 값으로 본다(`CANDIDATE_MIN_DAYS`). 승격 O
+    (`count_active_in_window`)처럼 같은 날 관찰 여러 건은 하루다 — 입력 한 번에 Memory 가 관찰을
+    여러 건 만들어도 근거가 되지 않는다 (#633 리뷰). 승격과 달리 윈도우는 없다. 오래된 기억은
+    archived · 6개월 낡음이 따로 거른다.
+    `domains` 는 `list_active_refs_by_affinity` 와 같다. 기억에는 자기 도메인 관찰만 묶여서 표끼리
+    더해도 날이 겹치지 않는다.
+    """
+    days: dict[uuid.UUID, int] = {}
+    if not affinity_ids:
+        return {}
+    wanted = None if domains is None else {ObservationDomain(domain) for domain in domains}
+    for domain in _PROMOTABLE_DOMAINS:
+        if wanted is not None and domain not in wanted:
+            continue
+        model = _MODEL_BY_DOMAIN[domain]
+        rows = await session.execute(
+            select(model.affinity_id, func.count(func.distinct(func.lower(model.observed_range))))
+            .where(
+                model.child_id == child_id,
+                model.affinity_id.in_(affinity_ids),
+                model.status == ObservationStatus.ACTIVE,
+            )
+            .group_by(model.affinity_id)
+        )
+        for affinity_id, count in rows:
+            days[affinity_id] = days.get(affinity_id, 0) + count
+    return days
+
+
 def _to_record(domain: ObservationDomain, row: Any) -> ObservationRecord:
     fields = {
         column.key: getattr(row, column.key)
