@@ -182,6 +182,21 @@ async def test_범위_양_끝과_끝의_0_은_그대로_저장된다(
 # ── PATCH ──────────────────────────────────────────────────────────
 
 
+async def test_범위_밖으로_이미_저장된_줄도_다른_칸은_고칠_수_있다(db_client, session, bearer, cid):
+    # 범위(#628) 전에 저장된 값은 그대로 둔다. 범위 검사는 보낸 칸에만 걸린다 —
+    # 응답 모델이나 DB 모델에 범위를 넣으면 이 줄을 아예 못 고치게 된다
+    headers, parent_1 = bearer
+    log = await add_log(session, cid, parent_1, date(2026, 10, 1), height=1.0, weight=15.4)
+
+    response = await db_client.patch(
+        growth_url(cid, log.id), json={"weight_kg": 15.6}, headers=headers
+    )
+
+    assert response.status_code == 200
+    body = response.json()["log"]
+    assert (body["height_cm"], body["weight_kg"]) == (1.0, 15.6)
+
+
 async def test_키를_null_로_보내면_키만_비운다(db_client, session, bearer, cid):
     headers, parent_1 = bearer
     log = await add_log(session, cid, parent_1, date(2026, 10, 1), height=99.1, weight=15.4)
