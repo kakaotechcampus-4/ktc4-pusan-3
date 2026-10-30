@@ -134,7 +134,15 @@ const NOTE_QUESTION = "언제부터 그랬는지 알려주시겠어요?";
 const SAFETY_GUIDANCE = {
   code: "safety_record",
   message: "알레르기·건강 정보는 직접 입력해 주세요. 대신 등록해 드릴 수 없어요.",
-  deeplink: "settings/health-safety",
+  deeplink: "profile",
+} as const;
+
+/** 채팅의 키 · 몸무게 (#625). 서버 `supervisor/routing.py` 의 `growth_record` 와 같은 값이다. */
+const GROWTH_GUIDANCE = {
+  code: "growth_record",
+  message:
+    "키·몸무게는 성장 기록에서 잰 날짜와 함께 직접 입력해 주세요. 채팅으로는 저장하지 않아요.",
+  deeplink: "profile/growth",
 } as const;
 
 /** 이어받기 run 이 저장한 뒤 Memory 가 하는 말. 🚨 질문이 아니다 — 이어받은 답은 또 묻지 않는다. */
@@ -512,8 +520,8 @@ async function* runScript(runId: string): AsyncGenerator<Uint8Array> {
    *    화면이 이때 "아이에 관한 기록은 찾지 못했어요" 를 띄우면 **안내와 같은 자리에서 서로 다른
    *    이유**를 대게 된다 (`components/run-result.tsx` 의 `noticedWhy`).
    */
-  if (scenario === "guidance") {
-    yield frame("guidance", SAFETY_GUIDANCE);
+  if (scenario === "guidance" || scenario === "guidance_growth") {
+    yield frame("guidance", scenario === "guidance" ? SAFETY_GUIDANCE : GROWTH_GUIDANCE);
     await sleep(300);
     yield frame("done", { run_id: runId, model_calls: 1 });
     return;

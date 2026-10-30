@@ -17,7 +17,7 @@ export function apiError(
 export function consentRequired(scope: string) {
   return apiError(403, "consent_required", "먼저 동의가 필요해요", {
     scopes: [scope],
-    deeplink: "settings/consents",
+    deeplink: "settings",
   });
 }
 
