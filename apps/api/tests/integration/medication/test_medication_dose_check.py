@@ -11,8 +11,6 @@ from zoneinfo import ZoneInfo
 import pytest
 from sqlalchemy import select
 
-from app.domains.child.models import Child
-from app.domains.identity.models import Parent
 from app.domains.medication.models import (
     MedicationCreatedBy,
     MedicationDose,
@@ -31,17 +29,6 @@ KST = ZoneInfo("Asia/Seoul")
 def kst(hour: int, minute: int = 0, *, second: int = 0) -> datetime:
     """오늘(TODAY)의 한국 시간 시각 — 코스가 멈춘 시각으로 쓴다."""
     return datetime.combine(TODAY, time(hour, minute, second), tzinfo=KST)
-
-
-@pytest.fixture
-async def child(session):
-    owner = Parent()
-    session.add(owner)
-    await session.flush()
-    child = Child(owner_parent_id=owner.id, nickname="test", birth_date=date(2023, 1, 1))
-    session.add(child)
-    await session.flush()
-    return child
 
 
 async def make_dose(session, child, *, days_from_today=0, anchor=TimingAnchor.BREAKFAST):
@@ -197,13 +184,8 @@ async def test_없는_회차는_찾지_못한다(session, child):
         await check(session, child, ghost)
 
 
-async def test_다른_아이의_회차는_찾지_못하고_값을_바꾸지_않는다(session, child):
-    other = Child(
-        owner_parent_id=child.owner_parent_id, nickname="other", birth_date=date(2022, 1, 1)
-    )
-    session.add(other)
-    await session.flush()
-    _, dose = await make_dose(session, other)
+async def test_다른_아이의_회차는_찾지_못하고_값을_바꾸지_않는다(session, child, other_child):
+    _, dose = await make_dose(session, other_child)
 
     with pytest.raises(DoseNotFound):
         await check(session, child, dose)
@@ -257,17 +239,12 @@ async def test_멈춘_시각_바로_다음_분의_회차는_찾지_못한다(ses
         await check(session, child, dose)
 
 
-async def test_멈춘_코스의_멈추기_전_회차도_다른_아이는_찾지_못한다(session, child):
-    other = Child(
-        owner_parent_id=child.owner_parent_id, nickname="other", birth_date=date(2022, 1, 1)
-    )
-    session.add(other)
-    await session.flush()
+async def test_멈춘_코스의_멈추기_전_회차도_다른_아이는_찾지_못한다(session, child, other_child):
     course, dose = await make_dose(session, child)
     await stop(session, child, course, kst(15))
 
     with pytest.raises(DoseNotFound):
-        await check(session, other, dose)
+        await check(session, other_child, dose)
 
     assert await stored(session, dose.id) is None
 
@@ -310,13 +287,8 @@ async def test_마지막_날이_지난_코스의_회차도_체크하고_해제�
     assert cleared_at is None
 
 
-async def test_찾지_못함이_아직_오지_않음보다_먼저다(session, child):
-    other = Child(
-        owner_parent_id=child.owner_parent_id, nickname="other", birth_date=date(2022, 1, 1)
-    )
-    session.add(other)
-    await session.flush()
-    _, dose = await make_dose(session, other, days_from_today=3)
+async def test_찾지_못함이_아직_오지_않음보다_먼저다(session, child, other_child):
+    _, dose = await make_dose(session, other_child, days_from_today=3)
 
     with pytest.raises(DoseNotFound):  # 남의 아이 회차는 날짜가 미래여도 422 가 아니라 404 다
         await check(session, child, dose)
