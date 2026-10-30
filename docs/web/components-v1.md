@@ -43,7 +43,7 @@
   `HomeComposer`/`VoiceLevelMeter`(말로 적기 듣는 동안의 음량 막대 · 셸 `volume` 이벤트를 직접 구독) · `GeneralSuggestionCard` · `ChatThread` · `RunReply` · `SafetyCheckSheet`(게이트 ㉡) · `ApprovalSheet`(게이트 ㉠) · `ConsentRequiredCard` ·
   `AuthGate`/`SessionChecking`/`SessionUnreachable` · `WebPushBridge`(그리는 것 없음 · 로그인이 살아나면 기기 등록, 앱이면 셸이 넘긴 토큰 등록, 알림을 누르면 그 화면으로 · #609) · `ChildScope` · `ObservationList` · `AffinityList` · `CorrectionButtons` · `MemoryDetailSheet` ·
   `SuggestionFeedbackList` · `MonthGrid`/`DayMarkLegend` · `CalendarDayPanel` ·
-  `SettingsGroup`/`SettingsLinkRow`/`SettingsInfoRow` · `StartBackLink`(01 · 초대 → 00-1) · `ConsentSection`/`LegalDocumentSection` · `LocationPermissionNote`(10 설정 · 위치 동의는 켜졌는데 휴대폰이 허용 안 했을 때만 · #593) ·
+  `SettingsGroup`/`SettingsLinkRow`/`SettingsInfoRow` · `StartBackLink`(01 · 초대 → 00-1) · `ConsentSection`/`LegalDocumentSection` · `LocationPermissionNote`(10 설정 · 위치 동의는 켜졌는데 휴대폰이 허용 안 했을 때만 · #593) · `LocationOffNote`(04 놀이 추천 아래 · 같은 어긋남 · 하루 한 번 · #638 리뷰) ·
   `ParentSection` · `AccountSection` · `NotificationSection`(10 설정의 일정 알림 켜고 끄기 · 동의 줄과 같은 모양 · 복약 줄은 발송이 붙을 때까지 없다 · #609) ·
   `ChildIdentityCard`/`ChildIdentitySheet` · `GrowthLogList`/`GrowthLatestCard` · `GrowthSheet` ·
   `GrowthChart` · `HealthSafetyList`/`HealthSafetySheet` · `SafetyScanReview`/`SafetyScanRowSheet` ·

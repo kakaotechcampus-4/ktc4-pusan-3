@@ -138,7 +138,9 @@ run 상태는 **서버 상태도 클라이언트 상태도 아니다.** 구독�
     본문에 필드를 더하면 `keyPayload` 에도 같이 더한다.
     ⚠️ **예외는 보낼 때 읽는 값이다 — 위치(`location` · #593).** 보낼 때마다 다시 읽으면 달라져서 `keyPayload` 에 넣으면
     다시 시도마다 같은 키에 다른 본문이 나간다. 그래서 키에서 빼고, 키가 처음 나갈 때 읽은 값을 그 키에 붙든다
-    (`sentLocations` · [`auth-consent-v1.md`](auth-consent-v1.md) "위치"). `failed` 뒤 새 키(`forgetFailedKey`)는 새로 읽는다
+    (`sentLocations` · [`auth-consent-v1.md`](auth-consent-v1.md) "위치"). `failed` 뒤 새 키(`forgetFailedKey`)는 새로 읽는다.
+    위치 동의는 켜져 있는데 위치 없이 나간 줄은 `ChatTurn.withoutLocation` 이고, 그 줄의 놀이 추천 아래에 `LocationOffNote` 가
+    선다(지금 줄만, 지난 턴은 아니다 · `auth-consent-v1.md` "위치")
 - 🚨 **`agent_result` 는 도메인 Agent 결과 한 건 = 답 묶음 안의 블록 하나다** (#227 · 서버 #276).
   도착한 순서대로 붙이고 재정렬하지 않는다. 같은 Agent 가 두 번 올 수 있고(task 둘) 묶지 않는다.
   보일 것이 없는 결과(쓰는 task)는 블록을 세우지 않는다 (`visibleAgentResults`).

@@ -6,12 +6,14 @@ import { useMemo } from "react";
 import { Named } from "@/components/ui/named";
 import { Swap } from "@/components/ui/swap";
 import { ConsentRequiredCard } from "@/components/consent-required-card";
+import { LocationOffNote } from "@/components/location-off-note";
 import { RewriteButton } from "@/components/rewrite-button";
 import { RunReply } from "@/components/run-result";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
 import { initialRunState } from "@/hooks/use-run-stream";
 import { api, isApiError, qk, type Agent, type ChatDayResponse } from "@/lib/api";
+import { visibleAgentResults } from "@/lib/agent-result";
 import { pastTurnsOf, type PastTurn } from "@/lib/chat-history";
 import { formatDay } from "@/lib/format";
 import { VIEW_TRANSITION } from "@/lib/view-transition";
@@ -462,32 +464,43 @@ function TurnReply({
   //    — 다시 시도가 실패해도 "여기까지 받은 기록" 이 남는다 (`stores/conversation.ts` 의 `submit`).
   const run = turn.send.status === "sending" ? SENDING : turn.run;
   const running = run.status === "idle" || run.status === "streaming";
+  /**
+   * 위치 동의는 켜져 있는데 위치 없이 나간 줄에서 놀이 추천이 나왔다 (#593 · #638 리뷰). 권한 상태와 하루 한 번은
+   * 안내가 스스로 본다 (`LocationOffNote`). 🚨 지난 턴에는 세우지 않는다 — 그때 위치가 빠졌는지 모른다.
+   */
+  const locationOff =
+    !running &&
+    turn.withoutLocation &&
+    visibleAgentResults(run.agentResults).some((result) => result.agent === "activity");
 
   return (
-    // 진행 표시 → 결과는 같은 자리의 교체다 (디자인 시스템 §8). 🚨 **말풍선이 붙는 것에는 움직임이 없다** —
-    //    이건 이미 서 있던 진행 카드가 결과로 바뀌는 순간뿐이다 (§8 "하지 않는 것").
-    <Swap id={running ? "progress" : "result"}>
-      <RunReply
-        childId={childId}
-        runId={runId}
-        run={run}
-        question={turn.question}
-        answeringNow={runId !== null && answering?.runId === runId}
-        remainingDrafts={remainingDrafts}
-        draftsReplaced={draftsReplaced}
-        // 이어받기 run 이 또 물은 질문이다 — "한 가지만 더" 를 두 번 말하지 않는다.
-        followUp={turn.answering !== null}
-        onRetry={canRetry(turn) ? () => retryTurn(childId, turn.id) : undefined}
-        checkRecords={turn.replayed}
-        onRewrite={turn.handedBack ? undefined : () => rewriteTurn(childId, turn.id)}
-        rewriteBlocked={rewriteBlocked}
-        onAnswer={() => {
-          if (runId) answerQuestion(childId, runId);
-        }}
-        onOpenDrafts={onOpenDrafts}
-        onPickOffer={onPickOffer}
-      />
-    </Swap>
+    <>
+      {/* 진행 표시 → 결과는 같은 자리의 교체다 (디자인 시스템 §8). 🚨 **말풍선이 붙는 것에는 움직임이 없다** —
+          이건 이미 서 있던 진행 카드가 결과로 바뀌는 순간뿐이다 (§8 "하지 않는 것"). */}
+      <Swap id={running ? "progress" : "result"}>
+        <RunReply
+          childId={childId}
+          runId={runId}
+          run={run}
+          question={turn.question}
+          answeringNow={runId !== null && answering?.runId === runId}
+          remainingDrafts={remainingDrafts}
+          draftsReplaced={draftsReplaced}
+          // 이어받기 run 이 또 물은 질문이다 — "한 가지만 더" 를 두 번 말하지 않는다.
+          followUp={turn.answering !== null}
+          onRetry={canRetry(turn) ? () => retryTurn(childId, turn.id) : undefined}
+          checkRecords={turn.replayed}
+          onRewrite={turn.handedBack ? undefined : () => rewriteTurn(childId, turn.id)}
+          rewriteBlocked={rewriteBlocked}
+          onAnswer={() => {
+            if (runId) answerQuestion(childId, runId);
+          }}
+          onOpenDrafts={onOpenDrafts}
+          onPickOffer={onPickOffer}
+        />
+      </Swap>
+      {locationOff ? <LocationOffNote childId={childId} turnId={turn.id} /> : null}
+    </>
   );
 }
 

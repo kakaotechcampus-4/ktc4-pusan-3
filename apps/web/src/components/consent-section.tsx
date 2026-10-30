@@ -13,10 +13,11 @@ import { SkeletonBlock, SkeletonText } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { useConsents } from "@/hooks/use-consents";
 import { usePolicies } from "@/hooks/use-policies";
-import { api, isApiError, qk, type ConsentRequest, type ConsentResponse } from "@/lib/api";
+import { api, isApiError, qk, type ConsentResponse } from "@/lib/api";
 import {
   askedChoices,
   consentChoices,
+  consentRequestBody,
   LEGAL_DOCUMENTS,
   policyHref,
   type ConsentChoice,
@@ -109,18 +110,9 @@ export function ConsentSection({ childId }: { childId: string }) {
   const consents = useConsents(childId);
 
   const change = useMutation({
-    mutationFn: ({ choice: { policy }, next }: Pending) => {
-      const body: ConsentRequest = {
-        scope: policy.scope,
-        action: next,
-        // 🚨 지금 화면이 보여준 약관의 버전이다 — 상수가 아니다 (#90).
-        policy_version: policy.version,
-        // 아이 스코프는 보호자임을 확인한 표시를 함께 보낸다 (계약서 §04).
-        // 🚨 **어느 쪽인지는 서버가 말한다** (`target` · #190). scope 이름으로 가르지 않는다.
-        ...(policy.target === "child" ? { child_id: childId, guardian_attested: true } : {}),
-      };
-      return api.post<ConsentResponse>("/consents", body);
-    },
+    // 🚨 버전은 지금 화면이 보여준 약관의 것이고, 아이 스코프만 법정대리인 확인을 싣는다 (`consentRequestBody`).
+    mutationFn: ({ choice: { policy }, next }: Pending) =>
+      api.post<ConsentResponse>("/consents", consentRequestBody(policy, next, childId)),
     // 🚨 낙관적 업데이트를 쓰지 않는다. 서버가 확정하기 전에 켜진 것처럼 그리면
     //    동의 상태를 화면이 먼저 바꾸는 셈이 된다 (apps/web/CLAUDE.md §3).
     onSuccess: (_data, variables) => {

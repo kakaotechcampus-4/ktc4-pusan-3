@@ -16,7 +16,7 @@
  */
 
 import { API_BASE_URL } from "@/lib/env";
-import type { Policy } from "@/lib/api/types";
+import type { ConsentRequest, Policy } from "@/lib/api/types";
 
 export const CONSENT_SCOPES = [
   "service_terms",
@@ -242,6 +242,25 @@ export function consentPayload(
   return choices
     .filter(({ policy }) => isConsentChecked(policy, checked))
     .map(({ policy }) => ({ scope: policy.scope, policy_version: policy.version }));
+}
+
+/**
+ * 10 설정과 04 대화(위치 안 쓸래요 · #638 리뷰)가 같이 쓰는 `POST /consents` 본문.
+ *
+ * 🚨 버전은 지금 화면이 받은 약관의 것이다 — 상수가 아니다 (#90).
+ * 🚨 **어느 쪽인지는 서버가 말한다** (`target` · #190). 아이 스코프만 `child_id` 와 법정대리인 확인을 싣는다 (계약서 §04).
+ */
+export function consentRequestBody(
+  policy: Policy,
+  action: "granted" | "withdrawn",
+  childId: string,
+): ConsentRequest {
+  return {
+    scope: policy.scope,
+    action,
+    policy_version: policy.version,
+    ...(policy.target === "child" ? { child_id: childId, guardian_attested: true } : {}),
+  };
 }
 
 /**

@@ -103,6 +103,11 @@ export interface ChatTurn {
   body: InputRequest;
   /** 보낸 순간에 위치 동의가 켜져 있었는가 (#593). 이 키로 처음 보낼 때만 본다 (`locationFor`). */
   shareLocation: boolean;
+  /**
+   * 위치 동의는 켜져 있었는데 위치 없이 나갔는가 (#593 · #638 리뷰). 휴대폰이 허용하지 않았거나 못 읽은 경우다.
+   * 놀이 추천 아래 "위치 권한이 꺼져 있어서" 안내가 이 값으로 선다 (`LocationOffNote`). 좌표 자체는 들고 있지 않다.
+   */
+  withoutLocation: boolean;
   /** 이 한 줄이 답한 질문. 400 때 무엇을 물었는지 말풍선 아래에 다시 보여준다. */
   answering: ChatQuestion | null;
   /**
@@ -355,6 +360,7 @@ export function sendLine(
     //    다시 보냈을 때 두 번 저장되지 않는다 (`keyBooks`).
     key: keyFor(childId, keyPayload(body)),
     shareLocation,
+    withoutLocation: false,
     send: { status: "sending" },
     run: initialRunState,
     question: null,
@@ -466,6 +472,10 @@ async function submit(childId: string, turnId: string): Promise<void> {
     const location = await locationFor(turn);
     // 로그아웃으로 대화가 비워졌으면 보내지 않는다.
     if (!findTurn(childId, turnId)) return;
+    const withoutLocation = turn.shareLocation && location === null;
+    if (withoutLocation !== turn.withoutLocation) {
+      updateTurn(childId, turnId, (t) => ({ ...t, withoutLocation }));
+    }
     accepted = await submitInput(
       childId,
       location ? { ...turn.body, location } : turn.body,
