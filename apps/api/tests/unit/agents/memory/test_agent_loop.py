@@ -856,6 +856,102 @@ async def test_다시_확인해도_저장했다고_말하면_저장_안_했다�
     assert result.final_message == _UNSAVED_FALLBACK
 
 
+# ── 알레르기 · 만성질환 (#639) — 건강 관찰로 저장하지 않는다 ─────────
+def _health(*symptom: str) -> dict[str, Any]:
+    return {"raw_text": "꽃가루 알레르기가 있는 것 같아", "observed_on": "오늘", "symptom": symptom}
+
+
+async def _health_rows(context: AgentContext) -> list[Any]:
+    return await context.store.query_observations(domain="health", child_id=context.child_id)
+
+
+@pytest.mark.parametrize(
+    "task", [None, _task(("꽃가루", "observe"), raw="꽃가루")], ids=["강등", "조각"]
+)
+@pytest.mark.parametrize("name", ["꽃가루 알레르기", "우유 알러지", "아토피", "천식"])
+async def test_알레르기_만성질환은_건강_관찰로_저장하지_않는다(
+    context: AgentContext, name: str, task: MemoryTask | None
+) -> None:
+    llm = FakeLLM(
+        _tools(_call("c1", "create_observation_health", _health(name))),
+        _answer({"text": "기록하지 않았어요.", "kind": "message"}),
+    )
+
+    result = await run("꽃가루", context, client=llm, task=task)
+
+    assert result.calls[0].result["error"]["code"] == ErrorCode.SAFETY_RECORD
+    assert result.refused(ErrorCode.SAFETY_RECORD)
+    assert await _health_rows(context) == []
+
+
+async def test_병명을_빼고_증상만_다시_부르면_저장한다(context: AgentContext) -> None:
+    llm = FakeLLM(
+        _tools(
+            _call("c1", "create_observation_health", _health("입 주변 빨개짐", "우유 알레르기"))
+        ),
+        _tools(_call("c2", "create_observation_health", _health("입 주변 빨개짐"))),
+        _answer({"text": "입 주변이 빨개진 것을 기록했어요.", "kind": "message"}),
+    )
+
+    result = await run("우유 마시고 빨개졌어", context, client=llm)
+
+    assert result.refused(ErrorCode.SAFETY_RECORD)
+    rows = await _health_rows(context)
+    assert [row.fields["symptom"] for row in rows] == [["입 주변 빨개짐"]]
+
+
+async def test_알레르기로_고쳐_쓰는_것도_막는다(context: AgentContext) -> None:
+    llm = FakeLLM(
+        _tools(_call("c1", "create_observation_health", _health("기침"))),
+        _tools(
+            _call(
+                "u1",
+                "update_observation_health",
+                {"id": "00000000-0000-0000-0000-000000000000", "symptom": ["천식"]},
+            )
+        ),
+        _answer({"text": "고치지 않았어요.", "kind": "message"}),
+    )
+
+    result = await run("기침은 천식이야", context, client=llm)
+
+    assert result.calls[1].result["error"]["code"] == ErrorCode.SAFETY_RECORD
+    rows = await _health_rows(context)
+    assert [row.fields["symptom"] for row in rows] == [["기침"]]
+
+
+async def test_해_준_일에_병명이_있어도_건강_관찰로_저장한다(context: AgentContext) -> None:
+    # 증상칸만 본다. "아토피 크림 발라 줬어" 는 있다는 사실이 아니라 아이에게 해 준 일이다
+    llm = FakeLLM(
+        _tools(
+            _call(
+                "c1",
+                "create_observation_health",
+                {**_health("크림 바름"), "action_taken": "아토피 크림 바름"},
+            )
+        ),
+        _answer({"text": "크림 바른 것을 기록했어요.", "kind": "message"}),
+    )
+
+    result = await run("아토피 크림 발라 줬어", context, client=llm)
+
+    assert not result.refused(ErrorCode.SAFETY_RECORD)
+    rows = await _health_rows(context)
+    assert [row.fields["action_taken"] for row in rows] == ["아토피 크림 바름"]
+
+
+async def test_증상은_그대로_저장한다(context: AgentContext) -> None:
+    llm = FakeLLM(
+        _tools(_call("c1", "create_observation_health", _health("재채기"))),
+        _answer({"text": "재채기를 기록했어요.", "kind": "message"}),
+    )
+
+    result = await run("재채기해", context, client=llm)
+
+    assert not result.refused(ErrorCode.SAFETY_RECORD)
+    assert len(await _health_rows(context)) == 1
+
+
 async def test_조회만_맡은_처음_run_은_기록했다고_답해도_다시_확인하지_않는다(
     context: AgentContext,
 ) -> None:

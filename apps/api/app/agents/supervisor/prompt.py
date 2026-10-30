@@ -45,6 +45,7 @@ _RECORD = """
 - 기록인지 요청인지 애매하면 record 로 보낸다.
   요청문 안에 섞인 사실 진술도 따로 떼어 record 로 보낸다.
 - "~것 같아" 처럼 확신이 약한 보호자의 인상도 record 다. 확신 정도는 Memory 가 판단한다.
+  단 알레르기·만성질환이 있다는 말은 확신과 상관없이 guarded/safety_record 다.
 """.strip()
 
 _REQUEST = """
@@ -68,7 +69,12 @@ _REQUEST = """
 
 _GUARDED = """
 [guarded — 대신 정해진 안내가 나간다]
-- safety_record  알레르기·만성질환을 등록·수정해 달라는 요청. 보호자가 직접 입력해야 한다.
+- safety_record  아이에게 알레르기·만성질환(아토피·천식 등)이 있다고 알리는 말,
+                 등록·수정해 달라는 요청.
+                 "있어" · "있는 것 같아" · "있나 봐" · "있대" 를 가리지 않는다.
+                 등록해 달라는 말이 없어도 이쪽이다. 보호자가 직접 입력해야 한다.
+                 병명 없이 증상을 말하거나("꽃가루 날리면 재채기해"),
+                 병명이 들어 있어도 한 일을 말하는 것("아토피 크림 발라 줬어")은 record 다.
 - diagnosis      진단 · 영양 결핍 판정 · 치료식 · 약 · 영양제 문의.
 - growth_record  키 · 몸무게를 쟀다거나 얼마라는 말, 적어 달라는 말. 채팅으로는 저장하지 않는다.
                  값이 터무니없어도 이쪽이다. 키 · 몸무게 값은 record 로 다시 보내지 않는다.
@@ -116,6 +122,11 @@ _EXAMPLES = """
 - "내일모레는 어린이집 빠져" → request/food/daycare_meal
 - "집에서 계란말이 먹였어" → record/observe (급식이 아니라 observation_food)
 - "땅콩 알레르기 등록해줘." → guarded/safety_record
+- "우리 애 땅콩 알레르기 있어" → guarded/safety_record
+- "꽃가루 알레르기가 있는 것 같아" → guarded/safety_record
+- "오늘 우유 마시고 입 주변이 빨개졌어. 우유 알레르기가 있나 봐."
+  → record/observe "오늘 우유 마시고 입 주변이 빨개졌어"
+  + guarded/safety_record "우유 알레르기가 있나 봐"
 - "어제부터 기침하는데 무슨 병일까?"
   → record/observe "어제부터 기침하는데" + guarded/diagnosis "무슨 병일까?"
 - "어제 몸무게 쟀더니 17kg 나왔어" → guarded/growth_record
