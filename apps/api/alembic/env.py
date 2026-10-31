@@ -7,14 +7,14 @@ from sqlalchemy import create_engine, pool
 # 목록은 app/infra/db/registry.py 한 곳에만 둔다. 운영 앱도 같은 모듈을 쓴다.
 from app.infra.db import registry  # noqa: F401
 from app.infra.db.base import Base
-from app.infra.db.url import build_url
+from app.infra.db.url import build_url_from_env
 
 config = context.config
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-ALEMBIC_URL = build_url("postgresql+psycopg")
+ALEMBIC_URL = build_url_from_env("postgresql+psycopg")
 
 target_metadata = Base.metadata
 
