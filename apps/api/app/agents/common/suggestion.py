@@ -50,6 +50,8 @@ class SuggestionDraft:
     allergens: tuple[str, ...] = ()
     # 일정으로 만들 때 준비물 하나씩
     items: tuple[str, ...] = ()
+    # 장소가 붙은 추천의 확인 문구(공공데이터 기준일 · 운영 여부). 코드 문구 · 근거 아님 (#516)
+    place_notice: str | None = None
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -60,6 +62,7 @@ class SuggestionDraft:
             "citations": [item.to_payload() for item in self.citations],
             "allergens": list(self.allergens),
             "items": list(self.items),
+            "place_notice": self.place_notice,
         }
 
 

@@ -57,8 +57,8 @@ class Place(Base):
     lng: Mapped[float] = mapped_column(Double, nullable=False)
     # 시군구 코드 5자리. 공원은 관리번호 앞 5자리, 도서관은 아직 없다(시군구 이름만 온다)
     sigungu_code: Mapped[str | None] = mapped_column(String(5))
-    # 데이터기준일자 — 화면의 "공공데이터 기준 YYYY-MM" (D9). 갱신이 느려 "지금 열려 있어요" 는
-    # 쓸 수 없다
+    # 데이터기준일자 — 확인 문구 "공공데이터 기준 2026년 6월이에요" 의 달 (D9 · #516). 갱신이 느려
+    # "지금 열려 있어요" 는 쓸 수 없다
     data_date: Mapped[date | None] = mapped_column(Date)
     # 놀이터가 있는 곳. 공원은 어린이공원이거나 유희시설 칸이 찬 곳이다 — 놀이터(`playground`)로
     # 찾으면 이 공원들도 온다(`nearby_places.sql`). category 는 `park` 그대로다. 도서관은 false

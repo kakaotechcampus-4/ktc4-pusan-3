@@ -18,7 +18,7 @@ from app.agents.activity.context import build_gate as build_activity_gate
 from app.agents.activity.registry import closed_readout_key as activity_closed_key
 from app.agents.activity.schemas.memory import SearchActivityMemoryArgs
 from app.agents.activity.schemas.task import ActivityTaskType
-from app.agents.activity.store.inmemory import InMemoryWeather
+from app.agents.activity.store.inmemory import InMemoryPlaces, InMemoryWeather
 from app.agents.activity.tools.memory import search_activity_memory
 from app.agents.common.age import life_stage
 from app.agents.common.datetime_rules import build_observed_range
@@ -637,7 +637,7 @@ async def test_Activity_는_Food_와_같은_생일_기준일_store_를_쓴다(
     assert await activity.ports.profile.birth_date(child_id=CHILD) == birth_date
     assert activity.now == food.now and activity.timezone is food.timezone
     assert isinstance(activity.ports.memory, StoreActivityMemory)
-    assert activity.ports.places is None  # 장소 어댑터 전이라 장소 조회가 닫힌다
+    assert activity.ports.places is None  # 장소 어댑터를 넘기지 않으면 장소 조회가 닫힌다
 
 
 async def test_좌표와_날씨_어댑터를_넘기면_Activity_가_받는다(
@@ -653,6 +653,20 @@ async def test_좌표와_날씨_어댑터를_넘기면_Activity_가_받는다(
 
     assert activity.ports.weather is weather
     assert (activity.location.lat, activity.location.lon) == (35.18, 129.08)  # 한 번 더 자른다
+
+
+async def test_장소_어댑터를_넘기면_Activity_가_받는다(monkeypatch: pytest.MonkeyPatch) -> None:
+    places = InMemoryPlaces()
+    seen = await _activity_of(
+        monkeypatch,
+        location=entrypoint.CoarseLocation(lat=35.18, lon=129.08),
+        activity_places=places,
+    )
+    activity = seen["contexts"]["activity"]
+
+    assert activity.ports.places is places
+    gate = await build_activity_gate(activity, outdoor_ok=True)
+    assert gate.data.places is True and gate.has_location is True
 
 
 async def test_좌표를_안_넘기면_Activity_는_실내_전용이다(monkeypatch: pytest.MonkeyPatch) -> None:

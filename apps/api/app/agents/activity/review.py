@@ -6,7 +6,8 @@
   3. Activity 검증   근거 id · 장소 이름 · 바깥 활동이 어려운 날의 야외 후보 · 기피 대상 ·
                      note 반복 표현 · 최근 중복 · 0–17개월 보호자 동반
   4. build()         6개월이 안 지난 아이 기록 근거 수로 kind 를 정한다. 모델이 고르지 않는다.
-                     장소 이름은 코드가 content 앞에 붙인다. allergens · items 도 코드가 채운다
+                     장소 이름은 코드가 content 앞에 붙이고, 확인 문구(place_notice)를 칸으로
+                     싣는다. allergens · items 도 코드가 채운다
   5. check_count()   최대 3개 — 호출부(출력 tool)가 부른다
 
 순서가 결과를 바꾼다. 안전에 걸린 후보가 뒤 검사를 타면 엉뚱한 사유가 나간다.
@@ -16,11 +17,17 @@
 """
 
 from collections.abc import Collection, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from enum import StrEnum
 from uuid import UUID
 
+from app.agents.activity.readouts import (
+    PLACE_NOTICE,
+    PLACE_NOTICE_FACILITY,
+    PLACE_NOTICE_UNDATED,
+    READOUTS,
+)
 from app.agents.activity.result import ErrorCode
 from app.agents.activity.rules import is_recent_duplicate, normalize_activity, overstates
 from app.agents.activity.schemas.common import (
@@ -30,8 +37,9 @@ from app.agents.activity.schemas.common import (
     EvidencePick,
 )
 from app.agents.activity.schemas.recommend import ActivityCandidate
-from app.agents.activity.store.ports import ActivityDocRow
+from app.agents.activity.store.ports import ActivityDocRow, PlaceRow, PlaceSourceName
 from app.agents.activity.tools.filters import SafetyTerms, check_candidate
+from app.agents.activity.tools.outing import INDOOR_CATEGORIES
 from app.agents.common.evidence import RankedEvidence, cite
 from app.agents.common.reference import age_gates
 from app.agents.common.refs import EvidenceCitation, Ref
@@ -45,6 +53,9 @@ TOGETHER_ONLY_BELOW_MONTH = age_gates().together_only_below_month
 # 기피 대상(`subject`)이 이 길이보다 짧으면 기피 대상 거절에 쓰지 않는다. "공" 을 싫어한다고
 # "공원" · "공룡" 이 들어간 후보까지 거절하면 과차단이다. 기피는 근거로는 계속 남는다.
 MIN_AVOIDED_LABEL = 2
+
+# 어린이놀이시설(키즈카페 · 육아종합지원센터) 장소의 출처. 이용료 확인 문구를 붙인다 (#516)
+FACILITY_SOURCE: PlaceSourceName = "kids_play_facility"
 
 # 아이 기록 근거가 0행이면 build() 가 reason 을 이 문구로 덮어쓴다 (kind="general").
 # 화면이 일반 추천임을 표시하고 쌓인 기록 건수를 함께 보여준다 (루트 §2).
@@ -83,8 +94,8 @@ GUIDANCE: dict[RejectReason, str] = {
         "place_name 에는 search_nearby_places 결과에 있던 이름만 쓴다. 없으면 비운다."
     ),
     RejectReason.OUTDOOR_CLOSED: (
-        "그날(day)은 바깥 활동이 어려운 날이다. setting 이 indoor 나 either 인 활동으로 바꾸거나,"
-        " lookup_weather 로 바깥 활동이 되는 날을 찾아 day 를 고친다."
+        "그날(day)은 바깥 활동이 어려운 날이다. 공원 · 놀이터를 붙이지 않은 indoor 나 either"
+        " 활동으로 바꾸거나, lookup_weather 로 바깥 활동이 되는 날을 찾아 day 를 고친다."
     ),
     RejectReason.BUILD: (
         "아이 기록을 인용하지 않으면 [예시] 문서 행 id 를 하나 이상 인용한다. "
@@ -115,7 +126,7 @@ class Review:
     removed: tuple[Removal, ...] = ()
     # drafts 와 같은 순서로 짝지은 위험 용어 경고 문구 (상수). 경고가 없으면 빈 튜플
     warnings: tuple[tuple[str, ...], ...] = ()
-    # 통과한 바깥 활동(setting=outdoor)의 (정규화한 content, 날). 날씨 안내를 결과에 실제로 나간
+    # 통과한 바깥 활동(`_outdoors`)의 (정규화한 content, 날). 날씨 안내를 결과에 실제로 나간
     # 바깥 활동의 날로 고르는 데 쓴다 — 오늘 해가 졌어도 내일 공원은 나간다 (#515 리뷰)
     outdoor: frozenset[tuple[str, DayLabel]] = frozenset()
 
@@ -127,7 +138,7 @@ def review_candidates(
     seen: Seen,
     recent_activities: Collection[str],
     safety: SafetyTerms,
-    places: Collection[str] = (),
+    places: Mapping[str, PlaceRow] | None = None,
     outdoor: Mapping[DayLabel, bool] | None = None,
     docs: Docs | None = None,
     today: date,
@@ -139,7 +150,7 @@ def review_candidates(
 
     `seen` 은 이번 run 에서 search_activity_memory 가 돌려준 근거다. 기피 대상 거절도 이 표를
     쓴다 — 모델이 인용하지 않은 기피 근거여도 조회됐으면 막는다.
-    `places` 는 이번 run 에서 search_nearby_places 가 돌려준 장소 이름이다.
+    `places` 는 이번 run 에서 search_nearby_places 가 돌려준 장소다(이름 → 행).
     `outdoor` 는 후보의 날(`day`)마다 바깥 활동을 할 수 있는지다 (`outing.outdoor_on`). 출력 tool 이
     후보에 나온 날을 전부 채운다. None 이면 날씨로 거르지 않는다(날씨와 무관한 검사의 테스트용).
     `docs` 는 이번 run 의 프롬프트 [예시]에 실은 문서 행이다. 인용하면 `activity_doc` 근거가
@@ -155,7 +166,9 @@ def review_candidates(
         and len(subject := normalize_activity(ranked.subject)) >= MIN_AVOIDED_LABEL
     )
     # 띄어쓰기만 다르게 써도 같은 곳으로 본다. 붙일 때는 조회 결과의 이름을 그대로 쓴다
-    known_places = {key: name for name in places if (key := normalize_activity(name))}
+    known_places = {
+        key: row for row in (places or {}).values() if (key := normalize_activity(row.name))
+    }
     drafts: list[SuggestionDraft] = []
     warnings: list[tuple[str, ...]] = []
     outdoor_drafts: set[tuple[str, DayLabel]] = set()
@@ -186,7 +199,7 @@ def review_candidates(
                 reason = RejectReason.BUILD
             else:
                 warnings.append(check.warnings)
-                if candidate.setting == ActivitySetting.OUTDOOR:
+                if _outdoors(candidate, place):
                     outdoor_drafts.add((normalize_activity(drafts[-1].content), candidate.day))
         if reason is not None:
             rejections.append(Rejection(index=index, reason=reason))
@@ -223,11 +236,11 @@ def _check(
     months: int,
     seen: Seen,
     docs: Docs,
-    places: Mapping[str, str],
+    places: Mapping[str, PlaceRow],
     avoided: tuple[str, ...],
     recent: Collection[str],
     outdoor: Mapping[DayLabel, bool] | None,
-) -> tuple[RejectReason | None, tuple[EvidenceCitation, ...], str | None]:
+) -> tuple[RejectReason | None, tuple[EvidenceCitation, ...], PlaceRow | None]:
     # 1. 안전 필터는 호출부(review_candidates)가 먼저 돌렸다
 
     # 2. 평가 표현
@@ -244,17 +257,17 @@ def _check(
             return RejectReason.UNKNOWN_EVIDENCE, (), None
         resolved.append((pick, found))
 
-    place: str | None = None
+    place: PlaceRow | None = None
     if candidate.place_name and candidate.place_name.strip():
         place = places.get(normalize_activity(candidate.place_name))
         if place is None:
             return RejectReason.UNKNOWN_PLACE, (), None
 
-    # 그날 날씨 판정이 야외를 막았다(D8 · #377). either 는 실내에서도 되니 통과한다.
-    # 표에 없는 날은 판정하지 않은 날이라 막는다 — 맑다고 가정하지 않는다
+    # 그날 날씨 판정이 야외를 막았다(D8 · #377). 표에 없는 날은 판정하지 않은 날이라 막는다 —
+    # 맑다고 가정하지 않는다
     if (
         outdoor is not None
-        and candidate.setting == ActivitySetting.OUTDOOR
+        and _outdoors(candidate, place)
         and not outdoor.get(candidate.day, False)
     ):
         return RejectReason.OUTDOOR_CLOSED, (), None
@@ -274,10 +287,22 @@ def _check(
     return None, citations, place
 
 
+def _outdoors(candidate: ActivityCandidate, place: PlaceRow | None) -> bool:
+    """바깥에서 하는 후보인가. either 는 실내에서도 되니 바깥이 아니다.
+
+    붙은 장소가 실내 종류가 아니면(공원 · 실외 놀이터) setting 과 상관없이 바깥이다. 장소 조회는
+    그 조회의 `day` 로만 바깥 종류를 막아서, 오늘로 찾은 공원을 비 오는 내일 either 활동에 붙이면
+    여기서 막아야 한다 (#600 리뷰).
+    """
+    if candidate.setting == ActivitySetting.OUTDOOR:
+        return True
+    return place is not None and place.category not in INDOOR_CATEGORIES
+
+
 def _build(
     candidate: ActivityCandidate,
     citations: tuple[EvidenceCitation, ...],
-    place: str | None,
+    place: PlaceRow | None,
     *,
     allergens: tuple[str, ...],
     today: date,
@@ -285,10 +310,11 @@ def _build(
     """allergens 는 안전 필터가 찾은 알레르기 항목 정식 명칭, items 는 후보의 재료다 (#232).
 
     allergens 는 상태(없음/모름)를 담지 않는다 — 승인할 때 서버가 health_safety 를 다시 읽는다.
+    장소가 붙으면 확인 문구를 칸으로 싣는다 — 문장에 섞으면 화면이 따로 세울 수 없다 (#516).
     """
-    return build(
+    draft = build(
         agent="activity",
-        content=_with_place(candidate.content, place),
+        content=_with_place(candidate.content, place.name if place else None),
         reason=candidate.reason.strip(),
         citations=citations,
         general_reason=GENERAL_REASON,
@@ -296,6 +322,24 @@ def _build(
         items=tuple(candidate.materials),
         today=today,
     )
+    if place is None:
+        return draft
+    return replace(draft, place_notice=place_notice(place))
+
+
+def place_notice(place: PlaceRow) -> str:
+    """장소가 붙은 추천의 확인 문구 (#516). 모델이 아니라 코드 문구다.
+
+    공공데이터 기준일자가 있으면 그 달을 앞에 둔다. 어린이놀이시설은 이용료도 확인해 달라고 한다 —
+    민간 키즈카페는 영업장이고, 공공 시설도 이용료 · 예약이 있는 곳이 많다.
+    """
+    if place.source == FACILITY_SOURCE:
+        return READOUTS.render(PLACE_NOTICE_FACILITY).body
+    if place.data_date is None:
+        return READOUTS.render(PLACE_NOTICE_UNDATED).body
+    return READOUTS.render(
+        PLACE_NOTICE, year=place.data_date.year, month=place.data_date.month
+    ).body
 
 
 def _with_place(content: str, place: str | None) -> str:

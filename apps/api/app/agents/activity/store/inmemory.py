@@ -20,6 +20,7 @@ from app.agents.activity.store.ports import (
     CoarseLocation,
     ConsentReader,
     PlaceRow,
+    PlaceSource,
     RawAdvisories,
     RawAir,
     RawForecast,
@@ -221,6 +222,7 @@ def unwired_ports(
     consent: ConsentReader,
     memory: ActivityMemoryReader,
     weather: WeatherSource | None = None,
+    places: PlaceSource | None = None,
     safety: SafetyReader | None = None,
 ) -> ActivityPorts:
     """실제 포트가 아직 안 붙은 run 의 기본값 (entrypoint 가 쓴다). 안전 조회가 실패한다.
@@ -230,8 +232,8 @@ def unwired_ports(
       `in_memory_ports(safety=...)` 로 명시한다.
     - 일정은 빈 표다(일정 포트 연결 전). 비는 시간을 묻는 tool 은 "일정 없음" 으로 읽는다.
     - 문서 행은 `reference/activity_doc.yaml` 의 `approved` 행이다. 테이블은 아직 없다.
-    - 장소는 None 이다 — 장소 조회가 닫힌다. 어댑터(`domains/place/agent_reader.py`)는 있지만
-      위치 기능이 열리기 전이라(#451 · #166) 붙이지 않았다.
+    - 장소는 api 가 넘긴 `place` 표 어댑터다(`domains/place/agent_reader.py`). 안 넘어오면 None 이라
+      장소 조회가 닫힌다. 좌표가 없는 run 도 닫힌다(`Gate.has_location`).
     """
     return ActivityPorts(
         profile=profile,
@@ -241,4 +243,5 @@ def unwired_ports(
         schedule=InMemorySchedule(),
         docs=InMemoryActivityDocs.from_seed(),
         weather=weather,
+        places=places,
     )

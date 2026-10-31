@@ -17,7 +17,7 @@ from app.agents.activity.context import ActivityContext
 from app.agents.activity.store.inmemory import InMemoryConsent as ActivityConsent
 from app.agents.activity.store.inmemory import InMemoryProfile as ActivityProfile
 from app.agents.activity.store.inmemory import unwired_ports as activity_unwired_ports
-from app.agents.activity.store.ports import CoarseLocation, WeatherSource
+from app.agents.activity.store.ports import CoarseLocation, PlaceSource, WeatherSource
 from app.agents.activity.store.ports import SafetyReader as ActivitySafetyReader
 from app.agents.common.allergy import allergen_states, shared_book
 from app.agents.common.child_values import ChildValues
@@ -116,6 +116,7 @@ __all__ = [
     "PendingMemoryContext",
     "PendingReply",
     "PipelineResult",
+    "PlaceSource",
     "Readout",
     "Ref",
     "Rerouted",
@@ -189,6 +190,7 @@ async def handle_input(
     child_health_granted: bool | None = None,
     location: CoarseLocation | None = None,
     activity_weather: WeatherSource | None = None,
+    activity_places: PlaceSource | None = None,
     emit: Emit | None = None,
     store: MemoryStore | None = None,
     continuation: PendingMemoryContext | None = None,
@@ -217,6 +219,8 @@ async def handle_input(
       실내 전용이다.
     - activity_weather 는 api 가 서버 시작 때 만든 날씨 어댑터다. agents 는 integrations 를
       import 하지 않아서 api 가 넘긴다. None 이면 날씨를 묻지 않고 실내 전용이다.
+    - activity_places 는 api 가 넘긴 장소 어댑터(적재한 `place` 표)다. None 이거나 좌표가 없으면
+      장소 조회가 닫혀 장소가 필요 없는 활동만 나간다.
     - store를 넘기면 그것에 쓴다.
     - agents 는 infra 에 직접 닿지 않는다. store · commit · curator_trigger 처럼 DB 에 닿는 것은
       전부 api(러너)가 만들어 넘긴다.
@@ -270,6 +274,7 @@ async def handle_input(
         child_health_granted=child_health_granted,
         location=location,
         activity_weather=activity_weather,
+        activity_places=activity_places,
         domain_store=domain_store,
         food_catalog=food_catalog,
         food_recipes=food_recipes,
@@ -462,6 +467,7 @@ def _domain_contexts(
     location: CoarseLocation | None,
     activity_weather: WeatherSource | None,
     domain_store: StoreOpener | None,
+    activity_places: PlaceSource | None = None,
     food_catalog: MenuCatalogStore | None = None,
     food_recipes: RecipeCatalogStore | None = None,
     food_suggestions: SuggestionHistoryReader | None = None,
@@ -547,6 +553,7 @@ def _domain_contexts(
                 )
             ),
             weather=activity_weather,
+            places=activity_places,
             safety=activity_safety,
         ),
         location=location,

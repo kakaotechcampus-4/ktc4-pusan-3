@@ -14,7 +14,10 @@ agents 가 정한 계약이라 여기서 import 한다 — `domains/safety/agent
 - 🚨 읽기에 실패하면 `UpstreamUnavailable` 이다 — tool 이 UPSTREAM_ERROR 로 바꾸고 모델은 장소가
   필요 없는 활동만 낸다. 빈 목록으로 대신하지 않는다 — 근처에 없는 것과 못 읽은 것은 다르다.
 - 호출마다 짧은 세션을 연다. run 세션을 도메인 task 들이 같이 타지 않게 (#257).
-- 아직 러너에 붙이지 않았다 — 위치 기능이 열리기 전이다(#451 · #166). `places=None` 그대로다.
+- 러너가 입력 run 마다 붙인다(`agent_ports.place_source`). 좌표가 없는 run 에서는 장소 조회 tool 이
+  닫혀 있어 부르지 않는다.
+- 어린이놀이시설(키즈카페 · 육아종합지원센터)도 찾는다. 민간 키즈카페는 영업장이라 추천 쪽이
+  이용료 확인 문구를 붙인다(`activity/review.place_notice`, #516).
 """
 
 import logging
