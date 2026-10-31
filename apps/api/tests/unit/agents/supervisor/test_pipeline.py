@@ -778,6 +778,174 @@ async def test_RC10_알레르기_등록은_안내하고_증상은_저장한다(
     assert result.failed is None
 
 
+# ── 위험 물질 (#626) ────────────────────────────────────────────
+_SOJU = {"raw_text": "소주가 맛있대", "observed_on": "오늘", "subject": "소주", "polarity": 1}
+
+
+async def _handle_text(
+    text: str,
+    *,
+    memory_llm: FakeLLM,
+    supervisor_llm: FakeLLM,
+    memory_context: AgentContext,
+    food_context: FoodContext,
+    events: list[Any],
+) -> pipeline.PipelineResult:
+    return await handle_input(
+        text,
+        memory_context,
+        {"food": food_context},
+        run_id=RUN_ID,
+        supervisor_client=supervisor_llm,
+        memory_client=memory_llm,
+        domain_clients={"food": _default_food_llm()},
+        emit=events.append,
+        commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
+    )
+
+
+async def test_RC28_위험_물질은_사전검사가_막고_모델을_부르지_않는다(
+    memory_context: AgentContext, food_context: FoodContext, events: list[Any]
+) -> None:
+    supervisor_llm = _supervisor_llm("RC28")
+    memory_llm = FakeLLM(_tools(_call("a", "create_observation_food", _SOJU)))
+    result = await _handle(
+        "RC28",
+        memory_llm=memory_llm,
+        memory_context=memory_context,
+        food_context=food_context,
+        events=events,
+        supervisor_llm=supervisor_llm,
+    )
+
+    assert supervisor_llm.calls == 0 and memory_llm.calls == 0
+    assert _order(events) == ["Guidance", "Done"]
+    assert _of(events, Guidance)[0].code == "hazard"
+    assert await memory_context.store.query_observations(domain="food", child_id=CHILD) == []
+    assert result.failed is None and result.model_calls == 0
+
+
+async def test_Supervisor_가_죽어도_위험_물질_관찰은_저장_게이트가_막는다(
+    memory_context: AgentContext, food_context: FoodContext, events: list[Any]
+) -> None:
+    # 섭취 동사가 없어 사전검사를 지나고, Supervisor 가 죽어 Memory 단독으로 간 run
+    memory_llm = FakeLLM(
+        _tools(_call("a", "create_observation_food", _SOJU)), _reply("기록하지 않았어요.")
+    )
+    result = await _handle_text(
+        "소주가 맛있대",
+        memory_llm=memory_llm,
+        supervisor_llm=FakeLLM(LLMUnavailableError("망")),
+        memory_context=memory_context,
+        food_context=food_context,
+        events=events,
+    )
+
+    assert result.routing.degraded is True
+    assert await memory_context.store.query_observations(domain="food", child_id=CHILD) == []
+    assert not _of(events, Saved)
+    assert [guidance.code for guidance in _of(events, Guidance)] == ["hazard"]
+
+
+async def test_저장_게이트가_막은_조각은_다시_나누지_않는다(
+    memory_context: AgentContext, food_context: FoodContext, events: list[Any]
+) -> None:
+    # Supervisor 가 record 로 보낸 조각을 게이트가 막았다 — "적지 않은 기록" 으로 세면 다시 나눠서
+    # 안내가 두 번 나가거나 요청으로 바뀌어 Food 가 돈다 (#626 리뷰)
+    text = "소주가 맛있대"
+    output = {"segments": [{"text": text, "kind": "record", "work": "observe"}]}
+    supervisor_llm = FakeLLM(_tools(_call("s1", "route", output)))
+    memory_llm = FakeLLM(
+        _tools(_call("a", "create_observation_food", _SOJU)), _reply("기록하지 않았어요.")
+    )
+    result = await _handle_text(
+        text,
+        memory_llm=memory_llm,
+        supervisor_llm=supervisor_llm,
+        memory_context=memory_context,
+        food_context=food_context,
+        events=events,
+    )
+
+    assert supervisor_llm.calls == 1
+    assert result.rerouted is None
+    assert [guidance.code for guidance in _of(events, Guidance)] == ["hazard"]
+
+
+async def test_식사에서_막힌_위험_물질을_생활_기록으로_바꿔_저장하지_못한다(
+    memory_context: AgentContext, food_context: FoodContext, events: list[Any]
+) -> None:
+    routine = {
+        "raw_text": "소주가 맛있대",
+        "observed_on": "오늘",
+        "subject": "소주 마시기",
+        "routine_category": "habit",
+    }
+    memory_llm = FakeLLM(
+        _tools(_call("a", "create_observation_food", _SOJU)),
+        _tools(_call("b", "create_observation_routine", routine)),
+        _reply("기록하지 않았어요."),
+    )
+    await _handle_text(
+        "소주가 맛있대",
+        memory_llm=memory_llm,
+        supervisor_llm=FakeLLM(LLMUnavailableError("망")),
+        memory_context=memory_context,
+        food_context=food_context,
+        events=events,
+    )
+
+    assert await memory_context.store.query_observations(domain="routine", child_id=CHILD) == []
+    assert not _of(events, Saved)
+
+
+async def test_Supervisor_의_hazard_라벨이면_Memory_를_부르지_않는다(
+    memory_context: AgentContext, food_context: FoodContext, events: list[Any]
+) -> None:
+    # 규칙 사전검사가 못 잡게 돌려 말한 입력
+    text = "어른 음료를 몰래 마셨는데 좋아했어"
+    output = {"segments": [{"text": text, "kind": "guarded", "guard": "hazard"}]}
+    memory_llm = FakeLLM()
+    result = await _handle_text(
+        text,
+        memory_llm=memory_llm,
+        supervisor_llm=FakeLLM(_tools(_call("s1", "route", output))),
+        memory_context=memory_context,
+        food_context=food_context,
+        events=events,
+    )
+
+    assert memory_llm.calls == 0
+    assert [guidance.code for guidance in _of(events, Guidance)] == ["hazard"]
+    assert result.domain == () and result.failed is None
+
+
+# ── 먹인 약 (#626 PM 리뷰) ──────────────────────────────────────
+async def test_먹인_약은_사전검사에_걸리지_않고_그대로_기록된다(
+    memory_context: AgentContext, food_context: FoodContext, events: list[Any]
+) -> None:
+    # 위험 물질 규칙은 마약 · 술 · 담배 · 화학제품 · 삼킨 물건만 본다. 약은 막지 않는다
+    text = "열나길래 해열제 먹였어"
+    output = {"segments": [{"text": text, "kind": "record", "work": "observe"}]}
+    health = {"raw_text": text, "observed_on": "오늘", "symptom": ["발열"]}
+    supervisor_llm = FakeLLM(_tools(_call("s1", "route", output)))
+    memory_llm = FakeLLM(_tools(_call("a", "create_observation_health", health)))
+    result = await _handle_text(
+        text,
+        memory_llm=memory_llm,
+        supervisor_llm=supervisor_llm,
+        memory_context=memory_context,
+        food_context=food_context,
+        events=events,
+    )
+
+    assert supervisor_llm.calls == 1
+    assert len(await memory_context.store.query_observations(domain="health", child_id=CHILD)) == 1
+    assert not _of(events, Guidance)
+    assert result.failed is None
+
+
 # #639 — 안내가 어느 길로 끝나도 11 아이 프로필로 가는 카드가 이어진다
 _POLLEN = {
     "raw_text": CASES_BY_ID["RC55"].text,
@@ -1066,7 +1234,7 @@ async def test_Memory_를_건너뛴_run_은_기록_단계_시간이_없다(
     assert result.times.readers_ms is not None
 
 
-async def test_이어받기는_기록_단계_시간만_남긴다(
+async def test_이어받기는_위험_물질_확인과_기록_단계_시간만_남긴다(
     memory_context: AgentContext, food_context: FoodContext, events: list[Any]
 ) -> None:
     memory = FakeLLM(
@@ -1087,8 +1255,11 @@ async def test_이어받기는_기록_단계_시간만_남긴다(
         save_suggestions=InMemorySuggestions(),
     )
 
-    assert result.times.memory_ms is not None
-    assert result.times == pipeline.StageTimes(memory_ms=result.times.memory_ms)
+    times = result.times
+    assert times.supervisor_ms is not None and times.memory_ms is not None
+    assert times == pipeline.StageTimes(
+        supervisor_ms=times.supervisor_ms, memory_ms=times.memory_ms
+    )
 
 
 async def test_시작도_못_하고_끊긴_task_는_ms_가_없다(
@@ -2647,10 +2818,21 @@ def _cont_answer(reply: dict[str, Any]) -> LLMResponse:
     return _answer({"leftover": False, **reply})
 
 
-async def test_이어받기는_supervisor_와_food_를_타지_않는다(
+async def test_이어받기는_supervisor_를_위험_물질_확인에만_쓰고_food_를_타지_않는다(
     memory_context: AgentContext, food_context: FoodContext, events: list[Any]
 ) -> None:
-    supervisor = FakeLLM()  # 부르면 안 된다
+    # request 로 나눠도 다시 나누지 않는다 — 답은 그 질문의 답이다
+    output = {
+        "segments": [
+            {
+                "text": "3일 전부터",
+                "kind": "request",
+                "agent": "food",
+                "food_task": "meal_recommendation",
+            }
+        ]
+    }
+    supervisor = FakeLLM(_tools(_call("s1", "route", output)))
     memory = FakeLLM(
         _tools(
             _call("m1", "create_observation_health", _RASH),
@@ -2671,14 +2853,99 @@ async def test_이어받기는_supervisor_와_food_를_타지_않는다(
         save_suggestions=InMemorySuggestions(),
     )
 
-    assert supervisor.calls == 0
+    assert supervisor.calls == 1 and result.supervisor.output is not None
+    # 되묻던 조각을 앞에 붙여 묻는다 — 짧은 답만으로는 무엇을 먹었는지 안 보인다
+    assert supervisor.seen[0][-1]["content"] == "요즘 기침해\n3일 전부터"
     assert result.domain == ()
-    assert result.model_calls == 1
+    assert result.model_calls == 2
     done = next(event for event in events if isinstance(event, Done))
-    assert done.model_calls == 1
+    assert done.model_calls == 2
     assert not any(isinstance(event, DomainRouted) for event in events)
     rows = await memory_context.store.query_observations(domain="health", child_id=CHILD)
     assert len(rows) == 1
+
+
+async def test_이어받기_답이_돌려_말한_위험_물질이면_저장하지_않고_안내한다(
+    memory_context: AgentContext, food_context: FoodContext, events: list[Any]
+) -> None:
+    # 규칙이 못 잡는 말. 일반 입력에서는 Supervisor 가 막는데 되묻기 답으로는 식사 기록이 됐다
+    # (#633 리뷰)
+    answer = "어른 음료를 몰래 한 모금 마셨어"
+    output = {"segments": [{"text": answer, "kind": "guarded", "guard": "hazard"}]}
+    drink = {"raw_text": answer, "observed_on": "오늘", "subject": "어른 음료", "polarity": 0}
+    memory = FakeLLM(_tools(_call("m1", "create_observation_food", drink)))  # 부르면 안 된다
+
+    result = await handle_input(
+        answer,
+        memory_context,
+        {"food": food_context},
+        run_id=RUN_ID,
+        supervisor_client=FakeLLM(_tools(_call("s1", "route", output))),
+        memory_client=memory,
+        emit=events.append,
+        continuation=_LUNCH_PENDING,
+        commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
+    )
+
+    assert memory.calls == 0
+    assert _order(events) == ["Step", "Guidance", "Done"]
+    assert [guidance.code for guidance in _of(events, Guidance)] == ["hazard"]
+    assert await memory_context.store.query_observations(domain="food", child_id=CHILD) == []
+    assert result.memory is None and result.failed is None
+    assert result.model_calls == 1
+
+
+async def test_이어받기에서_supervisor_가_죽어도_memory_가_기록한다(
+    memory_context: AgentContext, food_context: FoodContext, events: list[Any]
+) -> None:
+    # 일반 run 의 강등과 같다. 위험 물질 이름은 저장 게이트가 받는다
+    memory = FakeLLM(
+        _tools(_call("m1", "create_observation_health", _RASH)),
+        _cont_answer({"text": "기록해 둘게요.", "kind": "message"}),
+    )
+
+    result = await handle_input(
+        "3일 전부터",
+        memory_context,
+        {"food": food_context},
+        run_id=RUN_ID,
+        supervisor_client=FakeLLM(LLMUnavailableError("down")),
+        memory_client=memory,
+        emit=events.append,
+        continuation=_COUGH_PENDING,
+        commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
+    )
+
+    assert result.failed is None
+    assert len(await memory_context.store.query_observations(domain="health", child_id=CHILD)) == 1
+
+
+async def test_이어받기에서_supervisor_가_놓쳐_저장_게이트가_막아도_같은_안내가_나간다(
+    memory_context: AgentContext, food_context: FoodContext, events: list[Any]
+) -> None:
+    # 일반 run 과 같다. Memory 의 "기록하지 않았어요" 한 줄로 끝나면 119 안내가 빠진다
+    memory = FakeLLM(
+        _tools(_call("m1", "create_observation_food", _SOJU)),
+        _cont_answer({"text": "기록하지 않았어요.", "kind": "message"}),
+    )
+
+    await handle_input(
+        "소주가 맛있대",
+        memory_context,
+        {"food": food_context},
+        run_id=RUN_ID,
+        supervisor_client=FakeLLM(LLMUnavailableError("down")),
+        memory_client=memory,
+        emit=events.append,
+        continuation=_LUNCH_PENDING,
+        commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
+    )
+
+    assert [guidance.code for guidance in _of(events, Guidance)] == ["hazard"]
+    assert await memory_context.store.query_observations(domain="food", child_id=CHILD) == []
 
 
 async def test_이어받기에서_memory_가_실패하면_failed_로_끝난다(
@@ -3006,7 +3273,7 @@ async def test_이어받기는_앞_run_에서_저장한_관찰을_다시_저장�
     food = await memory_context.store.query_observations(domain="food", child_id=CHILD)
     assert len(activity) == 1  # 2 면 실패다 — 이미 저장한 조각이 다시 저장된 것
     assert len(food) == 1
-    assert after.model_calls == 1
+    assert after.model_calls == 2  # 위험 물질 확인(Supervisor) + Memory
 
 
 async def test_이어받기에서_아무것도_못_하면_failed_로_끝난다(

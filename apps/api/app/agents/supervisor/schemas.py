@@ -42,6 +42,9 @@ class GuardReason(StrEnum):
     SAFETY_RECORD = "safety_record"  # 알레르기·만성질환을 알리는 말 · 등록 요청. 보호자 직접 입력
     DIAGNOSIS = "diagnosis"  # 진단·결핍 판정·치료식·약·영양제 추천은 하지 않음
     GROWTH_RECORD = "growth_record"  # 키·몸무게는 채팅으로 저장하지 않고 성장 기록 화면으로 (#625)
+    HAZARD = (
+        "hazard"  # 음식이 아닌 위험 물질을 먹거나 마셨다는 말. 기록하지 않고 상태 확인 안내 (#626)
+    )
 
 
 class _Strict(BaseModel):
@@ -125,7 +128,7 @@ class Segment(_Strict):
         Field(
             description=(
                 "record(저장·조회·수정·삭제) / request(도메인 Agent 요청) / "
-                "guarded(알레르기·만성질환·진단 문의·키 몸무게 기록) / "
+                "guarded(알레르기·만성질환·진단 문의·키 몸무게 기록·위험 물질 섭취) / "
                 "out_of_scope(구매·예약·대신 발송) / unclear"
             )
         ),
@@ -160,7 +163,9 @@ class Segment(_Strict):
         GuardReason | None,
         Field(
             default=None,
-            description="kind=guarded 면 반드시 하나. safety_record / diagnosis / growth_record",
+            description=(
+                "kind=guarded 면 반드시 하나. safety_record / diagnosis / growth_record / hazard"
+            ),
         ),
     ]
 
