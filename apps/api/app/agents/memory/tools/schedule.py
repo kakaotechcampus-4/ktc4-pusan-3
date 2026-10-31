@@ -21,9 +21,11 @@ created_by / child_id 는 규칙이 채운다.
 
 import logging
 from dataclasses import replace
+from datetime import date
 from typing import Any
 
 from app.agents.common.datetime_rules import (
+    DateNeedsAsking,
     DateParseError,
     EventWhen,
     MissingEndTime,
@@ -71,8 +73,45 @@ _ITEM_GONE_AFTER_CHECK = (
 )
 
 
+# 기준 일정 날짜가 여럿일 때 되물으며 보여 줄 후보 수
+_SHOWN_ANCHOR_DAYS = 3
+
+
 def _date_remedy(exc: DateParseError) -> str:
+    if isinstance(exc, DateNeedsAsking):
+        return str(exc)  # 다른 표현으로 고쳐 부르면 날짜를 지어낸다. 메시지대로 묻는다
     return f"{exc} 오늘·모레·금요일 같은 원문 표현이나 YYYY-MM-DD 로 넣는다."
+
+
+async def anchor_day(context: AgentContext, title: str) -> date:
+    """기준 일정의 날짜 — "소풍 이틀 전에 열났어" 의 소풍이 언제인가.
+
+    모델은 일정 이름만 넘기고 날짜는 등록된 일정에서 찾는다. 하나로 정해지지 않으면 고르지 않고
+    되묻는다(DateNeedsAsking). 관찰은 저장 전에 사람이 확인하지 않아, 잘못 고른 일정은 틀린
+    날짜로 그대로 남는다.
+    """
+    name = title.strip()
+    if not name:
+        # 저장소는 빈 제목을 "조건 없음" 으로 읽는다. 그대로 찾으면 아무 일정이나 기준이 된다
+        raise DateParseError(
+            "anchor_event 가 비어 있다. 기준 일정이 없으면 anchor_event 를 빼고 다시 부른다."
+        )
+    rows = await context.store.query_events(child_id=context.child_id, title_query=name)
+    if not rows:
+        raise DateNeedsAsking(
+            f"'{name}' 일정이 등록돼 있지 않아 기준 날짜를 모른다. "
+            f"{name}이 언제인지 보호자에게 묻는다."
+        )
+    if len(rows) > 1:
+        # 같은 날 두 건이라 날짜가 같아도 고르지 않는다 — 어느 일정을 말했는지는 보호자만 안다
+        shown = ", ".join(
+            row.starts_at.astimezone(context.timezone).date().isoformat()
+            for row in rows[:_SHOWN_ANCHOR_DAYS]
+        )
+        raise DateNeedsAsking(
+            f"'{name}' 일정이 여러 건이다({shown}). 어느 {name}인지 보호자에게 묻는다."
+        )
+    return rows[0].starts_at.astimezone(context.timezone).date()
 
 
 def _new_items(names: list[str]) -> tuple[DraftItem, ...]:

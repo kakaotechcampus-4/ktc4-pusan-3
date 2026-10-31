@@ -92,7 +92,24 @@ class EventCategory(StrEnum):
 # 날짜·시각은 원문 표현으로 받고 실제 계산은 common/datetime_rules.py에서 수행
 DateExpr = Annotated[
     str,
-    Field(description="원문의 날짜 표현. 예: 오늘, 모레, 금요일, 다음 주 목요일, 2023년 5월 3일"),
+    Field(
+        description=(
+            "원문의 날짜 표현. 예: 오늘, 이틀 전, 일주일 전, 모레, 금요일, 다음 주 목요일, "
+            "2023년 5월 3일"
+        )
+    ),
+]
+
+AnchorEvent = Annotated[
+    str | None,
+    Field(
+        default=None,
+        description=(
+            "날짜가 오늘이 아니라 어떤 일정을 기준으로 한 말이면 그 일정 이름. "
+            "'소풍 이틀 전에 열났어' → '소풍' (날짜 표현은 '이틀 전'). "
+            "'이틀 전에 열났어' 처럼 오늘 기준이면 비운다"
+        ),
+    ),
 ]
 
 TimeExpr = Annotated[
@@ -180,6 +197,7 @@ class ObservationCreateArgs(ToolArgs):
 
     raw_text: RawText
     observed_on: DateExpr
+    anchor_event: AnchorEvent
     temporal_direction: Direction
     confidence_source: Annotated[
         ConfidenceSource,
