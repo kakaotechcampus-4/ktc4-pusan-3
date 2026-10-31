@@ -5,6 +5,7 @@
 - RC48~RC54  키 · 몸무게 기록(guarded/growth_record)과 성장 질문(request/growth) 대조 (#625)
 - RC55~RC62  알레르기 · 만성질환을 알리는 말(guarded/safety_record)과 한 일 · 증상 대조 (#639)
 - RC63       숟가락을 세는 '술' 대조 (#633 리뷰)
+- GR01~GR28  Growth 경계. Supervisor 단독 합격선(supervisor/test.py test_growth_routing)과 0건 규칙
 - T01~T30    라이브 eval 입력의 정답 Supervisor 출력. Step 7 이 Memory 힌트로 쓰고,
              Supervisor 채점에서는 "쉬운 30개" 대조군이 된다
 - T35~T69    아이가 한 일이 아닌 말(unclear)과 그대로 기록되는 말 대조 (#624 · #484 · #642)
@@ -16,10 +17,11 @@ strict=False 인 구간은 기대값이 아직 안 정해진 것이다 — 보�
 
 import re
 from collections.abc import Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 
 from app.agents.food.schemas.common import FoodTaskType
+from app.agents.growth.schemas.task import GrowthTaskType
 from app.agents.memory.schemas.task import WorkType
 from app.agents.supervisor.schemas import (
     DomainAgentName,
@@ -36,6 +38,10 @@ INPUT_PATH = Path(__file__).with_name("test_input.txt")
 REC = FoodTaskType.MEAL_RECOMMENDATION
 NUT = FoodTaskType.NUTRIENT_ANALYSIS
 CHECK = FoodTaskType.FOOD_CHECK
+LEARN = GrowthTaskType.LEARNING_SUGGESTION
+ROUTINE = GrowthTaskType.ROUTINE_COACHING
+BOOK = GrowthTaskType.BOOK_SUGGESTION
+REVIEW = GrowthTaskType.GROWTH_REVIEW
 
 
 @dataclass(frozen=True)
@@ -47,6 +53,7 @@ class Span:
     work: WorkType | None = None
     agent: DomainAgentName | None = None
     food_task: FoodTaskType | None = None
+    growth_task: GrowthTaskType | None = None
     guard: GuardReason | None = None
     strict: bool = True  # False = 보고만 한다
 
@@ -64,6 +71,17 @@ def Q(
 ) -> Span:
     return Span(
         text=text, kind=SegmentKind.REQUEST, agent=agent, food_task=food_task, strict=strict
+    )
+
+
+def QG(text: str, growth_task: GrowthTaskType, *, strict: bool = True) -> Span:
+    """Growth 요청 구간. 라벨이 Tool 묶음을 가르는 Agent 라 유형까지 적는다."""
+    return Span(
+        text=text,
+        kind=SegmentKind.REQUEST,
+        agent=DomainAgentName.GROWTH,
+        growth_task=growth_task,
+        strict=strict,
     )
 
 
@@ -304,7 +322,7 @@ RC_CASES: tuple[RoutingCase, ...] = (
         (
             Q("저녁 메뉴도", FOOD, REC),
             Q("주말 놀이도", ACTIVITY),
-            Q("한글 공부 방법도", GROWTH),
+            QG("한글 공부 방법도", LEARN),
         ),
         watch="요청 agent 3개가 실제로 나오나 (열린 결정 12)",
     ),
@@ -538,19 +556,19 @@ RC_CASES: tuple[RoutingCase, ...] = (
     RoutingCase(
         "RC52",
         "얼마나 컸어?",
-        (Q("얼마나 컸어?", GROWTH),),
+        (QG("얼마나 컸어?", REVIEW),),
         watch="대조군 — 성장 추이를 묻는 말은 growth_review 요청 그대로",
     ),
     RoutingCase(
         "RC53",
         "잘 크고 있어?",
-        (Q("잘 크고 있어?", GROWTH),),
+        (QG("잘 크고 있어?", REVIEW),),
         watch="대조군 — 판정을 묻는 말도 growth_review 요청 (판정은 안 한다)",
     ),
     RoutingCase(
         "RC54",
         "10cm 컸는데 많이 큰 거야?",
-        (Q("10cm 컸는데 많이 큰 거야?", GROWTH),),
+        (QG("10cm 컸는데 많이 큰 거야?", REVIEW),),
         watch="대조군 — 값이 들어 있어도 묻는 말이면 growth_review 요청",
     ),
     # #639 — 등록해 달라는 말이 없어도 알레르기 · 만성질환은 저장하지 않고 안내한다
@@ -613,6 +631,211 @@ RC_CASES: tuple[RoutingCase, ...] = (
         watch="숟가락을 세는 '술' — 규칙이 술로 읽지 않는가 (#633 리뷰)",
     ),
 )
+
+# ── GR01~GR28 — Growth 경계 ─────────────────────────────────────
+# supervisor-agent-v1 §4 의 경계 예시(프롬프트에 있는 문장)와 프롬프트에 없는 변형을 같이 둔다.
+# 🚨 watch 가 "변형" 인 문장은 프롬프트에 옮기지 않는다 — 옮기면 일반화가 아니라 외운 것을 잰다.
+# "농구 좋아하는데" 같은 앞부분은 관찰로 떼도 요청에 붙여도 맞다 — 보고만 한다(strict=False).
+GR_CASES: tuple[RoutingCase, ...] = (
+    RoutingCase(
+        "GR01",
+        "농구 좋아하는데 뭐 하고 놀까",
+        (R("농구 좋아하는데", OBSERVE, strict=False), Q("뭐 하고 놀까", ACTIVITY)),
+        watch="경계 예시 — 놀이는 activity",
+    ),
+    RoutingCase(
+        "GR02",
+        "농구 좋아하는데 관련된 책 있어?",
+        (R("농구 좋아하는데", OBSERVE, strict=False), QG("관련된 책 있어?", BOOK)),
+        watch="경계 예시 — 책은 growth/book",
+    ),
+    RoutingCase(
+        "GR03",
+        "밥 먹을 때 혼자 하게 하고 싶은데",
+        (QG("밥 먹을 때 혼자 하게 하고 싶은데", ROUTINE),),
+        watch="경계 예시 — 식사 자립은 food 가 아니라 routine",
+    ),
+    RoutingCase(
+        "GR04",
+        "오늘 블록 쌓는 거 배웠대",
+        (R("오늘 블록 쌓는 거 배웠대", OBSERVE),),
+        watch="경계 예시 — '배웠대' 는 관찰. Growth 를 부르지 않는다 (0건 규칙)",
+    ),
+    RoutingCase(
+        "GR05",
+        "공룡 좋아하는데 주말에 어디 가서 놀면 좋을까?",
+        (
+            R("공룡 좋아하는데", OBSERVE, strict=False),
+            Q("주말에 어디 가서 놀면 좋을까?", ACTIVITY),
+        ),
+        watch="변형 — 관심사 + 나들이는 activity",
+    ),
+    RoutingCase(
+        "GR06",
+        "농구 규칙 가르쳐주고 싶은데",
+        (QG("농구 규칙 가르쳐주고 싶은데", LEARN),),
+        watch="변형 — '가르치다' 는 학습 신호 (Growth_Agent_명세 §2)",
+    ),
+    RoutingCase(
+        "GR07",
+        "혼자 신발 신게 하려면 어떻게 해?",
+        (QG("혼자 신발 신게 하려면 어떻게 해?", ROUTINE),),
+        watch="변형 — 자립",
+    ),
+    RoutingCase(
+        "GR08",
+        "어린이집에서 가위질 처음 배웠대",
+        (R("어린이집에서 가위질 처음 배웠대", OBSERVE),),
+        watch="변형 — '배웠대' 는 관찰 (0건 규칙). 어린이집이 있어도 daycare_meal 이 아니다",
+    ),
+    RoutingCase(
+        "GR09",
+        "자기 전에 읽어 줄 그림책 추천해줘",
+        (QG("자기 전에 읽어 줄 그림책 추천해줘", BOOK),),
+        watch="변형 — '자기 전' 이 있어도 잠 리듬(routine)이 아니라 책",
+    ),
+    RoutingCase(
+        "GR10",
+        "숫자 세기 놀이 뭐 없을까?",
+        (QG("숫자 세기 놀이 뭐 없을까?", LEARN),),
+        watch="변형 — '놀이' 가 있어도 숫자는 학습 (Growth_Agent_명세 §2)",
+    ),
+    RoutingCase(
+        "GR11",
+        "밥 먹을 때 자꾸 돌아다니는데 앉아서 먹게 하려면 어떻게 해?",
+        (
+            R("밥 먹을 때 자꾸 돌아다니는데", OBSERVE, strict=False),
+            QG("앉아서 먹게 하려면 어떻게 해?", ROUTINE),
+        ),
+        watch="변형 — 어떻게 먹나는 routine, 무엇을 먹나는 food (supervisor-agent-v1 §3-3)",
+    ),
+    RoutingCase(
+        "GR12",
+        "얼마나 컸어?",
+        (QG("얼마나 컸어?", REVIEW),),
+        watch="경계 예시 — 신체 성장 (0건 규칙)",
+    ),
+    RoutingCase(
+        "GR13",
+        "잘 크고 있어?",
+        (QG("잘 크고 있어?", REVIEW),),
+        watch="경계 예시 — 판정 질문도 Health 가 아니라 growth_review (0건 규칙)",
+    ),
+    RoutingCase(
+        "GR14",
+        "10cm 컸는데 많이 큰 거야?",
+        (R("10cm 컸는데", OBSERVE, strict=False), QG("많이 큰 거야?", REVIEW)),
+        watch="경계 예시 — 판정 질문은 guarded/diagnosis 가 아니다 (0건 규칙)",
+    ),
+    RoutingCase(
+        "GR15",
+        "지난번 쟀을 때보다 몸무게 늘었어?",
+        (QG("지난번 쟀을 때보다 몸무게 늘었어?", REVIEW),),
+        watch="변형 — 몸무게",
+    ),
+    RoutingCase(
+        "GR16",
+        "키가 작은 편인 것 같은데 괜찮은 거야?",
+        (R("키가 작은 편인 것 같은데", OBSERVE, strict=False), QG("괜찮은 거야?", REVIEW)),
+        watch="변형 — 걱정 섞인 판정 질문. guarded 로 가면 진단 안내가 나간다",
+    ),
+    RoutingCase(
+        "GR17",
+        "약 먹기 싫어해. 어떻게 먹이지?",
+        (QG("약 먹기 싫어해. 어떻게 먹이지?", ROUTINE),),
+        watch="경계 예시와 가까움 — 통째로 routine 이어야 Growth 가 코드로 닫는다 (0건 규칙)",
+    ),
+    RoutingCase(
+        "GR18",
+        "눈을 자꾸 깜빡이는데 어떻게 고쳐?",
+        (QG("눈을 자꾸 깜빡이는데 어떻게 고쳐?", ROUTINE),),
+        watch="경계 예시와 가까움 — 진단 안내가 아니라 Growth 닫힘 (0건 규칙)",
+    ),
+    RoutingCase(
+        "GR19",
+        "손톱을 자꾸 물어뜯는데 어떻게 하면 좋을까?",
+        (
+            R("손톱을 자꾸 물어뜯는데", OBSERVE, strict=False),
+            QG("어떻게 하면 좋을까?", ROUTINE),
+        ),
+        watch="변형 — 습관 고치기 (Growth_Agent_명세 §2)",
+    ),
+    RoutingCase(
+        "GR20",
+        "오늘 처음으로 혼자 양치했어. 이제 세수도 혼자 하게 하고 싶은데 어떻게 해?",
+        (
+            R("오늘 처음으로 혼자 양치했어", OBSERVE),
+            QG("이제 세수도 혼자 하게 하고 싶은데 어떻게 해?", ROUTINE),
+        ),
+        watch="혼합형 — 기록 + 루틴",
+    ),
+    RoutingCase(
+        "GR21",
+        "요즘 숫자 세는 걸 좋아하더라. 집에서 해 볼 만한 숫자 놀이 있을까?",
+        (
+            R("요즘 숫자 세는 걸 좋아하더라", OBSERVE),
+            QG("집에서 해 볼 만한 숫자 놀이 있을까?", LEARN),
+        ),
+        watch="혼합형 — 관심 관찰 + 교육",
+    ),
+    RoutingCase(
+        "GR22",
+        "오늘 놀이터에서 미끄럼틀 탔어. 그리고 잘 크고 있는지 궁금해",
+        (
+            R("오늘 놀이터에서 미끄럼틀 탔어", OBSERVE),
+            QG("잘 크고 있는지 궁금해", REVIEW),
+        ),
+        watch="혼합형 — 놀이 기록 + 성장 추이",
+    ),
+    RoutingCase(
+        "GR23",
+        "주말 나들이랑 한글 공부 방법 추천해줘",
+        (Q("주말 나들이", ACTIVITY), QG("한글 공부 방법 추천해줘", LEARN)),
+        watch="두 Agent — activity + growth",
+    ),
+    RoutingCase(
+        "GR24",
+        "공룡 책이랑 양치 혼자 하는 법 알려줘",
+        (QG("공룡 책", BOOK), QG("양치 혼자 하는 법 알려줘", ROUTINE)),
+        watch="Growth 추천 둘 — 라벨은 둘 다 맞아야 하고, routing 이 도서를 양보시킨다",
+    ),
+    # 끝까지 라이브(growth/test_growth_supervisor_e2e.py)에서 "숫자 놀이 뭐 없어?" 가
+    # 놀이로 가는 것을 찾았다.
+    # "놀이" 라는 낱말만 보고 activity 로 가는 경계 — 학습 낱말이 있으면 growth, 없으면 activity
+    RoutingCase(
+        "GR25",
+        "숫자 놀이 뭐 없어?",
+        (QG("숫자 놀이 뭐 없어?", LEARN),),
+        watch="변형 — test_expected T04 의 말투. '놀이' 가 있어도 숫자는 학습",
+    ),
+    RoutingCase(
+        "GR26",
+        "한글 놀이로 글자 익히게 하고 싶은데",
+        (QG("한글 놀이로 글자 익히게 하고 싶은데", LEARN),),
+        watch="변형 — 한글 · 글자는 학습 신호",
+    ),
+    RoutingCase(
+        "GR27",
+        "블록으로 뭐 하고 놀까?",
+        (Q("블록으로 뭐 하고 놀까?", ACTIVITY),),
+        watch="반대 경계 — 학습 낱말이 없는 놀이는 activity 그대로",
+    ),
+    RoutingCase(
+        "GR28",
+        "집에서 할 만한 몸 놀이 추천해줘",
+        (Q("집에서 할 만한 몸 놀이 추천해줘", ACTIVITY),),
+        watch="반대 경계 — 학습 낱말이 없는 놀이는 activity 그대로",
+    ),
+)
+
+# 0건이어야 하는 오분류 — 비율과 섞지 않는다. 하나라도 나오면 합격선과 상관없이 프롬프트를 고친다
+#   GR_ALWAYS_GROWTH    신체 성장은 판정을 물어도 growth_review (Health · guarded 아님)
+#   GR_NEVER_REQUEST    "배웠대" 는 관찰이다 — 요청을 만들지 않는다(Growth 미호출)
+#   GR_TERM_IN_REQUEST  Growth 는 요청 문장으로 의료 처치 · 증상을 닫는다(tools/closures.py) —
+#                       그 낱말이 Growth 로 간 조각에 있어야 모델 0회로 닫힌다
+GR_ALWAYS_GROWTH: tuple[str, ...] = ("GR12", "GR13", "GR14")
+GR_NEVER_REQUEST: tuple[str, ...] = ("GR04", "GR08")
+GR_TERM_IN_REQUEST: dict[str, str] = {"GR17": "약", "GR18": "깜빡"}
 
 # ── FC01~FC09 — 정해진 음식을 먹여도 되는지 묻는 말(food_check)과 그 경계 ────────
 FC_CASES: tuple[RoutingCase, ...] = (
@@ -860,7 +1083,7 @@ UNCLEAR_CASES: tuple[RoutingCase, ...] = (
     ),
 )
 
-ALL_CASES: tuple[RoutingCase, ...] = RC_CASES + T_CASES + FC_CASES + UNCLEAR_CASES
+ALL_CASES: tuple[RoutingCase, ...] = RC_CASES + T_CASES + GR_CASES + FC_CASES + UNCLEAR_CASES
 CASES_BY_ID: dict[str, RoutingCase] = {case.case_id: case for case in ALL_CASES}
 
 
@@ -877,6 +1100,7 @@ def answer_output(case: RoutingCase) -> SupervisorOutput:
             "work": span.work,
             "agent": span.agent,
             "food_task": span.food_task,
+            "growth_task": span.growth_task,
             "guard": span.guard,
         }
         segments.append({key: value for key, value in fields.items() if value is not None})
@@ -914,6 +1138,8 @@ class SplitScore:
     food_task_ok: int = 0
     rec_to_analysis: int = 0  # 추천 요청이 분석으로 갔다 (안전하지만 원하는 게 안 나온다)
     analysis_to_rec: int = 0  # 분석 요청이 추천으로 갔다 (사전 확인이 붙는다 — 안전)
+    growth_spans: int = 0
+    growth_task_ok: int = 0
     guarded_spans: int = 0
     guarded_found: int = 0
     unclear_spans: int = 0
@@ -1005,6 +1231,11 @@ def score_split(case: RoutingCase, output: SupervisorOutput | None) -> SplitScor
                     score.rec_to_analysis += 1
                 elif span.food_task == FoodTaskType.NUTRIENT_ANALYSIS and REC in tasks:
                     score.analysis_to_rec += 1
+            if span.growth_task is not None:
+                score.growth_spans += 1
+                labels = {s.growth_task for s in requests if s.agent == DomainAgentName.GROWTH}  # type: ignore[attr-defined]
+                if span.growth_task in labels:
+                    score.growth_task_ok += 1
 
         elif span.kind == SegmentKind.GUARDED:
             score.guarded_spans += 1
@@ -1055,6 +1286,8 @@ def format_segments(output: SupervisorOutput | None) -> str:
         label = segment.work or segment.agent or segment.guard or ""
         if segment.food_task:
             label = f"{label}·{segment.food_task}"
+        if segment.growth_task:
+            label = f"{label}·{segment.growth_task}"
         parts.append(f"[{index}] {segment.kind}/{label} {segment.text!r}")
     return " ".join(parts)
 
@@ -1066,6 +1299,8 @@ def format_spans(case: RoutingCase) -> str:
         label = span.work or span.agent or span.guard or ""
         if span.food_task:
             label = f"{label}·{span.food_task}"
+        if span.growth_task:
+            label = f"{label}·{span.growth_task}"
         head = f"[{index}] {span.kind}/{label}" if label else f"[{index}] {span.kind}"
         parts.append(f"{head} {span.text!r}{'' if span.strict else ' (보고만)'}")
     return " ".join(parts)
@@ -1075,9 +1310,65 @@ def format_score(score: SplitScore) -> str:
     return (
         f"조각 {score.segments} · RECORD {score.record_found}/{score.record_spans}"
         f" (work {score.work_ok}) · REQUEST {score.request_found}/{score.request_spans}"
-        f" (agent {score.agent_ok} · food 유형 {score.food_task_ok}/{score.food_spans})"
+        f" (agent {score.agent_ok} · food 유형 {score.food_task_ok}/{score.food_spans}"
+        f" · growth 유형 {score.growth_task_ok}/{score.growth_spans})"
         f" · GUARDED {score.guarded_found}/{score.guarded_spans}"
         f" · UNCLEAR {score.unclear_found}/{score.unclear_spans}"
         f" · RECORD→REQUEST {score.record_to_request}"
         + (f" · 놓친 구간 {score.missed}" if score.missed else "")
     )
+
+
+_COUNTED = tuple(item.name for item in fields(SplitScore) if item.name not in ("case_id", "missed"))
+
+
+def sum_scores(scores: Iterable[SplitScore]) -> SplitScore:
+    """케이스 점수를 칸마다 더한다. Growth 합격선과 보정 전후 비교(split 합계)가 쓴다."""
+    total = SplitScore(case_id="합계")
+    for score in scores:
+        for name in _COUNTED:
+            setattr(total, name, getattr(total, name) + getattr(score, name))
+        total.missed.extend(f"{score.case_id}:{label}" for label in score.missed)
+    return total
+
+
+def rate(found: int, spans: int) -> float:
+    """맞힌 비율. 구간이 없으면 1.0 — 해당 없는 칸이 합격선을 떨어뜨리지 않게."""
+    return found / spans if spans else 1.0
+
+
+def growth_violations(case_id: str, output: SupervisorOutput | None) -> list[str]:
+    """0건 규칙 위반(GR_ALWAYS_GROWTH · GR_NEVER_REQUEST · GR_TERM_IN_REQUEST).
+
+    출력이 없으면(검증 실패) 보지 않는다 — 호출부가 따로 센다. 줄에는 케이스 번호와 라벨만 싣는다.
+    닫힘 낱말은 Growth 로 간 조각이나 같은 입력의 기록 조각에 있으면 된다 — 기록 조각은
+    `DomainTask.record_texts` 로 Growth 닫힘 판정에 같이 간다.
+    """
+    if output is None:
+        return []
+    found: list[str] = []
+    growth = [
+        s
+        for s in output.segments
+        if s.kind == SegmentKind.REQUEST and s.agent == DomainAgentName.GROWTH
+    ]
+    if case_id in GR_ALWAYS_GROWTH:
+        if not any(s.growth_task == GrowthTaskType.GROWTH_REVIEW for s in growth):
+            found.append(f"{case_id}: growth_review 가 없다")
+        found.extend(
+            f"{case_id}: {s.kind}/{s.agent or s.guard}"
+            for s in output.segments
+            if s.kind == SegmentKind.GUARDED
+            or (s.kind == SegmentKind.REQUEST and s.agent != DomainAgentName.GROWTH)
+        )
+    if case_id in GR_NEVER_REQUEST:
+        found.extend(
+            f"{case_id}: request/{s.agent}"
+            for s in output.segments
+            if s.kind == SegmentKind.REQUEST
+        )
+    term = GR_TERM_IN_REQUEST.get(case_id)
+    carried = [*growth, *(s for s in output.segments if s.kind == SegmentKind.RECORD)]
+    if term is not None and not any(term in s.text for s in carried):
+        found.append(f"{case_id}: Growth 로 가는 조각에 닫힘 낱말이 없다")
+    return found

@@ -5,15 +5,18 @@
 남는지까지 본다. 모델만 정해 둔 응답을 내는 가짜다. 아이 · 관심 이름은 전부 가짜다.
 
 mock 프로필 (기준일 2026-10-14)
-    첫째 (30개월)   놀이 공룡 — 3일 전 confirmed        → 근거로 나간다
+    첫째 (30개월)   놀이 공룡 — 3일 전 confirmed        → Activity 근거로 나간다
                     놀이 블록 — 22일 전 confirmed       → 21일을 넘어 근거에서 빠진다
                     놀이 퍼즐 — archived                → 읽지 않는다
-                    식사 딸기 — 3일 전 confirmed        → Activity 근거가 아니다
+                    식사 딸기 — 3일 전 confirmed        → Activity · Growth 근거가 아니다
+                    교육 숫자 — 3일 전 confirmed        → Growth 교육 근거로 나간다
+                    교육 색깔 — 22일 전 confirmed       → 21일을 넘어 근거에서 빠진다
     다른 아이       놀이 기차 — 3일 전 confirmed        → 읽지 않는다
 """
 
 import json
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from datetime import date, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
@@ -28,6 +31,9 @@ from app.agents.activity.agent import run
 from app.agents.activity.context import ActivityContext
 from app.agents.common.llm_client import LLMResponse
 from app.agents.common.schemas.task import DomainTask
+from app.agents.growth.agent import run as run_growth
+from app.agents.growth.context import GrowthContext
+from app.agents.growth.store.inmemory import InMemoryGrowthDocs
 from app.agents.memory.store import InMemoryStore
 from app.domains.child.models import ParentChildRelation
 from app.domains.child.repository import create_child
@@ -35,6 +41,7 @@ from app.domains.identity.models import Parent
 from app.domains.memory.observation.models import (
     ConfidenceSource,
     ObservationActivity,
+    ObservationEducation,
     ObservationFood,
 )
 from app.domains.memory.profile.agent_reader import DbAffinityReader
@@ -134,7 +141,7 @@ async def make_child(session, nickname: str):
 
 @pytest.fixture
 async def profile(session):
-    """mock 프로필 — 아이 둘과 관심 여섯 줄. 관심 id 는 근거 대조에 쓴다."""
+    """mock 프로필 — 아이 둘과 관심 일곱 줄. 관심 id 는 근거 대조에 쓴다."""
     mine = await make_child(session, "첫째")
     other = await make_child(session, "다른 아이")
     made: dict[str, ProfileAffinity] = {}
@@ -156,15 +163,17 @@ async def profile(session):
     add(mine, MemoryDomain.ACTIVITY, "블록", ProfileState.CONFIRMED, days_ago=22)
     add(mine, MemoryDomain.ACTIVITY, "퍼즐", ProfileState.ARCHIVED, days_ago=3)
     add(mine, MemoryDomain.FOOD, "딸기", ProfileState.CONFIRMED, days_ago=3)
+    add(mine, MemoryDomain.EDUCATION, "숫자", ProfileState.CONFIRMED, days_ago=3)
+    add(mine, MemoryDomain.EDUCATION, "색깔", ProfileState.CONFIRMED, days_ago=22)
     add(other, MemoryDomain.ACTIVITY, "기차", ProfileState.CONFIRMED, days_ago=3)
     await session.flush()
     # 묶인 active 관찰이 없는 관심은 어댑터가 싣지 않는다 (#626) — 관심마다 마지막 관찰 한 건을 둔다
     for row in made.values():
-        model, fields = (
-            (ObservationFood, {})
-            if row.domain == MemoryDomain.FOOD
-            else (ObservationActivity, {"activity": row.merge_key})
-        )
+        model, fields = {
+            MemoryDomain.FOOD: (ObservationFood, {}),
+            MemoryDomain.ACTIVITY: (ObservationActivity, {"activity": row.merge_key}),
+            MemoryDomain.EDUCATION: (ObservationEducation, {"topic": row.merge_key}),
+        }[row.domain]
         day = row.last_observed_on
         session.add(
             model(
@@ -294,3 +303,138 @@ async def test_관심_어댑터를_안_넘기면_같은_아이도_기억이_비�
     shown = tool_output(llm, 1)
     assert "NO_RECORDS" in shown
     assert "공룡" not in shown
+
+
+# ── Growth 교육 — [예시] 문서 행이 빈 월령 ──────────────────────────────────────
+LEARNINGS = ("숫자 세기 놀이", "숫자 카드 맞추기", "계단 숫자 세기")
+
+
+def growth_of(profile, opener, *, with_affinity: bool = True) -> GrowthContext:
+    """러너 · 05 와 같은 배선. 문서 행만 비운다 — 관심이 없으면 교육이 모델 전에 닫히는 월령이다."""
+    contexts, _ = entrypoint._domain_contexts(
+        child_id=profile.child.id,
+        run_id="run-1",
+        now=NOW,
+        store=InMemoryStore(now=NOW),
+        birth_date=BIRTH,
+        child_health_granted=True,
+        location=None,
+        activity_weather=None,
+        domain_store=None,
+        growth_safety=DbSafetyReader(opener),
+        affinity_reader=DbAffinityReader(opener) if with_affinity else None,
+    )
+    wired = contexts["growth"]
+    return GrowthContext(
+        child_id=wired.child_id,
+        run_id=wired.run_id,
+        now=wired.now,
+        timezone=wired.timezone,
+        ports=replace(wired.ports, docs=InMemoryGrowthDocs()),
+    )
+
+
+def growth_task() -> DomainTask:
+    return DomainTask(
+        run_id="run-1",
+        agent="growth",
+        task_type="learning_suggestion",
+        request_texts=("요즘 뭘 가르쳐 주면 좋을까",),
+    )
+
+
+def propose_learning(evidence: list[dict[str, str]]) -> LLMResponse:
+    return tools(
+        (
+            "propose_learning_activity",
+            {
+                "items": [
+                    {
+                        "title": title,
+                        "steps": ["하나씩 같이 세어 본다"],
+                        "materials": [],
+                        "evidence": evidence,
+                        "reason": "숫자에 관심이 있어서 골랐어요",
+                    }
+                    for title in LEARNINGS
+                ]
+            },
+        )
+    )
+
+
+async def test_예시_문서가_비어도_교육_관심_하나로_Growth_가_근거를_뽑아온다(
+    session, opener, profile
+):
+    llm = FakeLLM(
+        tools(("search_education_memory", {})),
+        propose_learning(cite(profile, "숫자")),
+    )
+
+    result = await run_growth(growth_task(), growth_of(profile, opener), client=llm)
+
+    assert result.status == "completed"
+    shown = tool_output(llm, 1)
+    assert "숫자" in shown
+    assert str(profile.rows["숫자"].id) in shown
+    # content 는 제목 뒤에 하는 순서까지 붙는다 — 첫 줄이 제목이다
+    assert [d.content.splitlines()[0] for d in result.suggestions] == list(LEARNINGS)
+    assert {draft.kind for draft in result.suggestions} == {"personalized"}
+
+
+async def test_Growth_교육은_낡은_다른_도메인_다른_아이_관심을_보지_못한다(
+    session, opener, profile
+):
+    llm = FakeLLM(
+        tools(("search_education_memory", {})),
+        propose_learning(cite(profile, "숫자")),
+    )
+
+    await run_growth(growth_task(), growth_of(profile, opener), client=llm)
+
+    shown = tool_output(llm, 1)
+    assert "색깔" not in shown  # 마지막 관찰이 22일 전 — 그날 기준 archived
+    assert "딸기" not in shown  # 다른 도메인(food)
+    assert "기차" not in shown  # 다른 아이
+
+
+async def test_Growth_가_근거로_단_관심은_저장하면_suggestion_evidence_에_남는다(
+    session, opener, profile
+):
+    llm = FakeLLM(
+        tools(("search_education_memory", {})),
+        propose_learning(cite(profile, "숫자")),
+    )
+    result = await run_growth(growth_task(), growth_of(profile, opener), client=llm)
+
+    ids = await save_agent_suggestions(
+        session,
+        child_id=profile.child.id,
+        run_id="run-1",
+        payloads=[draft.to_payload() for draft in result.suggestions],
+        now=NOW,
+    )
+    evidence = (
+        await session.scalars(
+            select(SuggestionEvidence).where(SuggestionEvidence.suggestion_id.in_(ids))
+        )
+    ).all()
+
+    assert {row.suggestion_id for row in evidence} == set(ids)  # 근거 0행인 추천이 없다
+    assert {(row.source_kind, row.source_id) for row in evidence} == {
+        ("profile_affinity", profile.rows["숫자"].id)
+    }
+
+
+async def test_관심_어댑터를_안_넘기면_예시가_빈_월령의_교육은_모델_전에_닫힌다(
+    session, opener, profile
+):
+    """대조군 — #587 이전 동작. 기억 화면에는 보이는 관심이 있어도 `doc.no_row` 로 닫힌다."""
+    llm = FakeLLM()
+
+    result = await run_growth(
+        growth_task(), growth_of(profile, opener, with_affinity=False), client=llm
+    )
+
+    assert (result.status, result.model_calls) == ("blocked", 0)
+    assert llm.seen == []

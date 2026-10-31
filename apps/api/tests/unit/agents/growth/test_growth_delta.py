@@ -357,6 +357,16 @@ class TestJudgement:
 
 
 class TestSameDay:
+    def test_같은_날_기록은_받은_순서가_아니라_적은_순서로_계산한다(self):
+        # #452 리뷰 — DB 어댑터는 measured_on desc, id desc 로 준다(id 는 uuidv7 이라 적은 순서).
+        # 같은 날 다시 잰 값이 마지막이어야 "3.0cm 늘었어요" 다
+        first = measurement(1, date(2026, 10, 1), "90.0", None)
+        typo = measurement(2, date(2026, 10, 27), "95.0", None)
+        fixed = measurement(3, date(2026, 10, 27), "93.0", None)
+        db_order = [fixed, typo, first]
+        assert body(db_order) == body([first, typo, fixed])
+        assert "키 3.0cm 늘었어요" in body(db_order)
+
     def test_같은_날_두_번_잰_기록은_입력_순서대로_따로_적는다(self):
         rows = [
             measurement(1, date(2026, 9, 1), "104.0", None),

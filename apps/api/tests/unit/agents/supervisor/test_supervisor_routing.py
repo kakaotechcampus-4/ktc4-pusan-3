@@ -17,17 +17,24 @@ from app.agents.supervisor.routing import (
     AGENT_LIMIT,
     MAX_DOMAIN_AGENTS,
     SKIP_MEMORY_FOR_PURE_REQUEST,
+    TASK_LIMIT,
     covers_only_requests,
     route,
 )
 from app.agents.supervisor.schemas import SegmentKind, SupervisorOutput
 from tests.eval.agents.routing_cases import (
     CASES_BY_ID,
+    GR_ALWAYS_GROWTH,
+    GR_CASES,
+    GR_NEVER_REQUEST,
     UNCLEAR_CASES,
     RoutingCase,
+    SplitScore,
     answer_output,
     covered_by,
+    growth_violations,
     score_split,
+    sum_scores,
 )
 
 RUN_ID = "run-1"
@@ -577,6 +584,219 @@ def test_생략을_끄면_순수_요청형도_Memory_를_부른다(monkeypatch: 
     # 되돌리는 경로. Supervisor 가 기록을 요청으로 잘못 잘라도 Memory 가 원문을 한 번 더 본다
     monkeypatch.setattr(routing_module, "SKIP_MEMORY_FOR_PURE_REQUEST", False)
     assert _route_case("RC07").memory_task is not None
+
+
+def test_growth_조각은_라벨을_task_type_으로_넘긴다() -> None:
+    raw = "잘 크고 있어?"
+    output = _output(
+        {"text": raw, "kind": "request", "agent": "growth", "growth_task": "growth_review"}
+    )
+    routing = route(raw, SupervisorResult(output=output), run_id=RUN_ID)
+    (task,) = routing.domain_tasks
+    assert (task.agent, task.task_type) == ("growth", "growth_review")
+
+
+def _growth(text: str, label: str) -> dict[str, Any]:
+    return {"text": text, "kind": "request", "agent": "growth", "growth_task": label}
+
+
+def test_혼합형의_기록_조각을_도메인_task_에도_싣는다() -> None:
+    """요청 조각만으로는 무엇을 묻는지 모른다 — Growth 닫힘 판정이 같은 입력의 기록 조각을 본다."""
+    raw = "약 먹기 싫어해. 어떻게 하지?"
+    output = _output(
+        {"text": "약 먹기 싫어해", "kind": "record", "work": "observe"},
+        _growth("어떻게 하지?", "routine_coaching"),
+    )
+    routing = route(raw, SupervisorResult(output=output), run_id=RUN_ID)
+    (task,) = routing.domain_tasks
+    assert task.request_texts == ("어떻게 하지?",)
+    assert task.record_texts == ("약 먹기 싫어해",)
+
+
+def test_기록_조각이_없으면_빈_튜플이다() -> None:
+    raw = "양치 혼자 하게 하고 싶어"
+    routing = route(
+        raw,
+        SupervisorResult(output=_output(_growth(raw, "routine_coaching"))),
+        run_id=RUN_ID,
+    )
+    assert routing.domain_tasks[0].record_texts == ()
+
+
+def test_한_run_에_Growth_추천은_처음_것_하나만_돈다() -> None:
+    raw = "숫자 놀이랑 양치 혼자 하는 법 알려줘"
+    output = _output(
+        _growth("숫자 놀이 알려줘", "learning_suggestion"),
+        _growth("양치 혼자 하는 법 알려줘", "routine_coaching"),
+    )
+    routing = route(raw, SupervisorResult(output=output), run_id=RUN_ID)
+
+    assert [(t.agent, t.task_type) for t in routing.domain_tasks] == [
+        ("growth", "learning_suggestion")
+    ]
+    assert TASK_LIMIT in [guidance.code for guidance in routing.guidance]
+
+
+def test_성장_추이는_추천과_같이_돈다() -> None:
+    raw = "잘 크고 있어? 숫자 놀이도 추천해줘"
+    output = _output(
+        _growth("잘 크고 있어?", "growth_review"),
+        _growth("숫자 놀이도 추천해줘", "learning_suggestion"),
+    )
+    routing = route(raw, SupervisorResult(output=output), run_id=RUN_ID)
+
+    assert [t.task_type for t in routing.domain_tasks] == ["growth_review", "learning_suggestion"]
+    assert TASK_LIMIT not in [guidance.code for guidance in routing.guidance]
+
+
+def test_같은_Growth_라벨_조각_둘은_한_task_로_묶인다() -> None:
+    raw = "한글 공부랑 숫자 공부 추천해줘"
+    output = _output(
+        _growth("한글 공부 추천해줘", "learning_suggestion"),
+        _growth("숫자 공부 추천해줘", "learning_suggestion"),
+    )
+    routing = route(raw, SupervisorResult(output=output), run_id=RUN_ID)
+
+    (task,) = routing.domain_tasks
+    assert task.request_texts == ("한글 공부 추천해줘", "숫자 공부 추천해줘")
+    assert TASK_LIMIT not in [guidance.code for guidance in routing.guidance]
+
+
+def test_도서는_다른_Growth_추천이_같이_오면_자리를_내준다() -> None:
+    # 도서는 운영에서 늘 닫혀서(closed.book_api), 앞에 온다고 열리는 요청까지 빼면 남는 것이 없다
+    raw = "공룡 책이랑 양치 혼자 하는 법 알려줘"
+    output = _output(
+        _growth("공룡 책 알려줘", "book_suggestion"),
+        _growth("양치 혼자 하는 법 알려줘", "routine_coaching"),
+    )
+    routing = route(raw, SupervisorResult(output=output), run_id=RUN_ID)
+
+    assert [(t.agent, t.task_type) for t in routing.domain_tasks] == [
+        ("growth", "routine_coaching")
+    ]
+    assert TASK_LIMIT in [guidance.code for guidance in routing.guidance]
+
+
+def test_도서만_있으면_도서가_돈다() -> None:
+    raw = "공룡 책이랑 동물 책 추천해줘"
+    output = _output(
+        _growth("공룡 책 추천해줘", "book_suggestion"),
+        _growth("동물 책 추천해줘", "book_suggestion"),
+    )
+    routing = route(raw, SupervisorResult(output=output), run_id=RUN_ID)
+
+    (task,) = routing.domain_tasks
+    assert (task.task_type, task.request_texts) == (
+        "book_suggestion",
+        ("공룡 책 추천해줘", "동물 책 추천해줘"),
+    )
+    assert TASK_LIMIT not in [guidance.code for guidance in routing.guidance]
+
+
+def test_도서가_양보해도_성장_추이는_같이_돈다() -> None:
+    raw = "잘 크고 있어? 공룡 책이랑 양치 혼자 하는 법도 알려줘"
+    output = _output(
+        _growth("잘 크고 있어?", "growth_review"),
+        _growth("공룡 책 알려줘", "book_suggestion"),
+        _growth("양치 혼자 하는 법도 알려줘", "routine_coaching"),
+    )
+    routing = route(raw, SupervisorResult(output=output), run_id=RUN_ID)
+
+    assert [t.task_type for t in routing.domain_tasks] == ["growth_review", "routine_coaching"]
+    assert TASK_LIMIT in [guidance.code for guidance in routing.guidance]
+
+
+# ── GR01~GR24 — Growth 경계 (정답 출력이 routing 을 지나는 길) ────────
+@pytest.mark.parametrize("case", GR_CASES, ids=[case.case_id for case in GR_CASES])
+def test_GR_정답_출력은_적어_둔_라벨_밖으로_안_가고_0건_규칙을_지킨다(case) -> None:
+    """정답 표의 오타 · 0건 규칙 검사기의 오판을 라이브 전에 잡는다."""
+    wanted = {
+        (str(span.agent), str(span.growth_task) if span.growth_task else None)
+        for span in case.spans
+        if span.kind == SegmentKind.REQUEST
+    }
+    routing = _route_case(case.case_id)
+
+    assert {(t.agent, t.task_type) for t in routing.domain_tasks} <= wanted
+    assert growth_violations(case.case_id, answer_output(case)) == []
+
+
+def test_GR_배웠대_는_도메인_Agent_를_부르지_않는다() -> None:
+    for case_id in GR_NEVER_REQUEST:
+        routing = _route_case(case_id)
+        assert routing.domain_tasks == ()
+        assert routing.memory_task is not None
+
+
+def test_GR_신체_성장은_growth_review_하나로_간다() -> None:
+    for case_id in GR_ALWAYS_GROWTH:
+        tasks = [(t.agent, t.task_type) for t in _route_case(case_id).domain_tasks]
+        assert tasks == [("growth", "growth_review")]
+
+
+def test_GR23_놀이와_교육은_두_Agent_로_간다() -> None:
+    routing = _route_case("GR23")
+    assert [(t.agent, t.task_type) for t in routing.domain_tasks] == [
+        ("activity", None),
+        ("growth", "learning_suggestion"),
+    ]
+
+
+def test_GR24_도서와_루틴이면_루틴이_돈다() -> None:
+    routing = _route_case("GR24")
+    assert [(t.agent, t.task_type) for t in routing.domain_tasks] == [
+        ("growth", "routine_coaching")
+    ]
+    assert TASK_LIMIT in [guidance.code for guidance in routing.guidance]
+
+
+def test_신체_성장이_guarded_로_가면_0건_규칙_위반이다() -> None:
+    bad = _output({"text": "잘 크고 있어?", "kind": "guarded", "guard": "diagnosis"})
+    assert growth_violations("GR13", bad)
+
+
+def test_배웠대_가_요청이_되면_0건_규칙_위반이다() -> None:
+    bad = _output(_growth("오늘 블록 쌓는 거 배웠대", "learning_suggestion"))
+    assert growth_violations("GR04", bad)
+
+
+def test_약_을_기록으로_떼도_Growth_가_같이_보므로_위반이_아니다() -> None:
+    # 기록 조각은 DomainTask.record_texts 로 Growth 닫힘 판정에 같이 간다
+    split = _output(
+        {"text": "약 먹기 싫어해", "kind": "record", "work": "observe"},
+        _growth("어떻게 먹이지?", "routine_coaching"),
+    )
+    assert growth_violations("GR17", split) == []
+
+
+def test_약_이_Growth_로도_기록으로도_안_가면_0건_규칙_위반이다() -> None:
+    # 낱말이 안내 조각으로 빠지면 Growth 는 "어떻게 먹이지?" 만 받아 닫지 못하고 모델로 간다
+    bad = _output(
+        {"text": "약 먹기 싫어해", "kind": "out_of_scope"},
+        _growth("어떻게 먹이지?", "routine_coaching"),
+    )
+    assert growth_violations("GR17", bad)
+
+
+def test_점수_합계는_칸마다_더하고_놓친_구간에_케이스를_붙인다() -> None:
+    first = SplitScore(case_id="GR01", request_spans=1, agent_ok=1)
+    second = SplitScore(case_id="GR02", request_spans=1, growth_spans=1, missed=["request/growth"])
+    total = sum_scores([first, second])
+
+    assert (total.request_spans, total.agent_ok, total.growth_spans) == (2, 1, 1)
+    assert total.missed == ["GR02:request/growth"]
+
+
+def test_별도_설정_없이_Growth_요청은_준비_중이_아니라_도메인_task_로_간다() -> None:
+    # 환경변수 스위치가 없다 — #446 이 들어가면 Growth 가 바로 열린다
+    assert "growth" in routing_module.IMPLEMENTED_AGENTS
+    raw = "잘 크고 있어?"
+    routing = route(
+        raw, SupervisorResult(output=_output(_growth(raw, "growth_review"))), run_id=RUN_ID
+    )
+
+    assert [(t.agent, t.task_type) for t in routing.domain_tasks] == [("growth", "growth_review")]
+    assert routing.unavailable_agents == ()
 
 
 def test_섭취_확인과_식단_추천은_FoodTask_2개고_상한에_안_걸린다() -> None:

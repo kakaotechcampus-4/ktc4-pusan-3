@@ -43,18 +43,22 @@ delta.checkup_hint:
   template: "성장 평가는 영유아 건강검진에서 확인해 보세요."
 
 # ── 안전 · 근거 안내 ──
-caution.non_food_allergy:
-  kind: notice
-  template: "등록된 알레르기({label})가 있어요. 장소랑 재료를 한 번 확인해 주세요."
 doc.no_row:
   kind: notice
-  template: "이 시기에 맞는 자료가 아직 없어서 또래 기준으로 알려드려요."
+  template: "이 시기에 맞는 자료가 아직 없어서 준비하지 못했어요."
 rhythm.no_row:
   kind: rhythm_info
   template: "아직 이 시기 리듬 안내를 준비하지 못했어요."
 next_step.chain_end:
   kind: notice
   template: "이건 이미 혼자 잘 하고 있어요. 다음 단계는 준비되면 알려드릴게요."
+
+# 루틴 되묻기에 같이 싣는 0개 안내(code="empty"). 질문 자리를 다른 Agent 가 가져가도 카드에 이 한
+# 줄이 남는다 — 05 묶음 안내도 이 문장이다. 자립 · 예절(어느 정도까지 혼자 하나요)과 습관(어떤
+# 상황에서 · 요즘도 하나요) 되묻기에 다 붙어서 "다음 단계" 라고 하지 않는다
+ask.need_level:
+  kind: notice
+  template: "지금 어떤지 알아야 맞는 방법을 고를 수 있어요."
 
 # ── 되묻기 — needs_observation 에 한 줄로 실린다 ──
 ask.habit_trigger:

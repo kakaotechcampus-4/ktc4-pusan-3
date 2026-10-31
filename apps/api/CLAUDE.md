@@ -45,8 +45,9 @@ import-linter 로 CI 에서 강제할 예정이다(#79 API CI 와 함께). 설�
   | `domains/memory/curator/db_store.py` | `agents.curator.embedding.ports` |
   | `domains/memory/curator/recompute.py` | `agents.curator.embedding.linker`(`LinkResult` 타입) |
   | `domains/memory/curator/trigger.py` | `agents.curator.embedding.embed_step` · `.judge`(Protocol) · `.linker.link_observations`(실행) |
-  | `domains/safety/agent_reader.py` | `agents.common.ports`(`SafetyLookupError`) · `agents.food.store.ports` · `agents.activity.store.ports`(`SafetyEntry`) |
+  | `domains/safety/agent_reader.py` | `agents.common.ports`(`SafetyLookupError`) · `agents.food.store.ports` · `agents.activity.store.ports` · `agents.growth.store.ports`(`SafetyEntry`) |
   | `domains/food/agent_reader.py` | `agents.food.store.ports`(`MenuCatalogRow` · `RECIPE_SOURCES`) |
+  | `domains/child/agent_reader.py` | `agents.growth.store.ports`(`GrowthMeasurement`) |
   | `domains/memory/profile/agent_reader.py` | `agents.common.evidence`(`AffinityRow`) |
   | `domains/place/agent_reader.py` | `agents.activity.store.ports`(`PlaceRow` · `CoarseLocation` · `UpstreamUnavailable` · `PLACE_MAX_RADIUS_M` · `PLACE_TOP_K`) · `agents.activity.schemas.common`(`PlaceCategory`) |
   | `domains/place/models.py` | `agents.activity.store.ports`(`PLACE_SOURCES` — source CHECK 를 포트와 같은 값으로 만든다) |

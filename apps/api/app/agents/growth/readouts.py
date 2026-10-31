@@ -25,7 +25,6 @@ DELTA_POSTURE_HINT = "delta.posture_hint"
 DELTA_CHECKUP_HINT = "delta.checkup_hint"
 
 # 안전 · 근거 안내
-CAUTION_NON_FOOD_ALLERGY = "caution.non_food_allergy"  # 식품 사전에 없는 알레르기 (꽃가루 · 라텍스)
 DOC_NO_ROW = "doc.no_row"
 RHYTHM_NO_ROW = "rhythm.no_row"
 NEXT_STEP_CHAIN_END = "next_step.chain_end"
@@ -34,5 +33,7 @@ NEXT_STEP_CHAIN_END = "next_step.chain_end"
 ASK_HABIT_TRIGGER = "ask.habit_trigger"
 ASK_HABIT_CURRENT = "ask.habit_current"
 ASK_ROUTINE_CURRENT = "ask.routine_current"
+# 되묻기와 같이 나가는 0개 안내 (code="empty")
+ASK_NEED_LEVEL = "ask.need_level"
 
 READOUTS = ReadoutCatalog.from_yaml(Path(__file__).with_name("growth.readout.yaml"))

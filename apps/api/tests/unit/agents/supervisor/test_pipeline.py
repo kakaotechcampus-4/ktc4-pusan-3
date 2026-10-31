@@ -1566,6 +1566,163 @@ async def test_추천은_저장이_끝난_뒤에_id_를_싣고_나간다(
     assert result.partial is None
 
 
+# ── run 하나에 되묻기는 하나다 (루트 §2 · #452 리뷰) ──────────────────────────────────
+# Agent 하나는 질문을 하나만 내지만(`DomainAgentResult`) 둘이 같은 run 에서 각자 물을 수 있다.
+# 카드는 끝나는 대로 나가서(K-11) 먼저 끝난 결과가 질문 자리를 갖는다
+_NOTE = Readout(kind="notice", body="조건에 맞는 추천을 2개 준비했어요.", authored_by="code")
+_FOOD_QUESTION = "브로콜리은(는) 좋아하는 편인가요?"
+_ACTIVITY_QUESTION = "실내 놀이와 바깥 놀이 중 어느 쪽을 더 좋아하나요?"
+
+
+async def _ask_twice(
+    monkeypatch: pytest.MonkeyPatch,
+    memory_context: AgentContext,
+    food_context: FoodContext,
+    events: list[Any],
+    *,
+    food: Any,
+    activity: Any,
+) -> pipeline.PipelineResult:
+    monkeypatch.setattr(routing_module, "IMPLEMENTED_AGENTS", frozenset({"food", "activity"}))
+    monkeypatch.setitem(pipeline._RUNNERS, "food", food)
+    monkeypatch.setitem(pipeline._RUNNERS, "activity", activity)
+    return await _handle(
+        "RC16",
+        memory_llm=_pool_memory(),
+        memory_context=memory_context,
+        food_context=food_context,
+        events=events,
+        contexts=_FAKE_CONTEXTS,
+        save_suggestions=_Saver(events),
+    )
+
+
+async def test_두_Agent_가_같이_되물으면_먼저_끝난_결과의_질문만_나간다(
+    monkeypatch: pytest.MonkeyPatch,
+    memory_context: AgentContext,
+    food_context: FoodContext,
+    events: list[Any],
+) -> None:
+    await _ask_twice(
+        monkeypatch,
+        memory_context,
+        food_context,
+        events,
+        food=_runner("food", delay=0.05, readouts=(_NOTE,), needs_observation=(_FOOD_QUESTION,)),
+        activity=_runner("activity", readouts=(_NOTE,), needs_observation=(_ACTIVITY_QUESTION,)),
+    )
+
+    cards = _of(events, AgentResult)
+    # 질문을 잃은 결과도 readout 이 있어서 카드는 그대로 나간다
+    assert [(card.agent, card.question) for card in cards] == [
+        ("activity", _ACTIVITY_QUESTION),
+        ("food", None),
+    ]
+
+
+async def test_질문을_잃은_결과의_추천은_저장되고_카드에_실린다(
+    monkeypatch: pytest.MonkeyPatch,
+    memory_context: AgentContext,
+    food_context: FoodContext,
+    events: list[Any],
+) -> None:
+    drafts = (_draft("계란말이"), _draft("두부조림"))
+    result = await _ask_twice(
+        monkeypatch,
+        memory_context,
+        food_context,
+        events,
+        food=_runner("food", delay=0.05, suggestions=drafts, needs_observation=(_FOOD_QUESTION,)),
+        activity=_runner("activity", needs_observation=(_ACTIVITY_QUESTION,), readouts=(_NOTE,)),
+    )
+
+    food = next(card for card in _of(events, AgentResult) if card.agent == "food")
+    assert (food.suggestion_ids, food.question) == (("s0", "s1"), None)
+    assert result.partial is None
+
+
+async def test_질문만_낸_결과가_질문을_잃으면_빈_카드를_내지_않는다(
+    monkeypatch: pytest.MonkeyPatch,
+    memory_context: AgentContext,
+    food_context: FoodContext,
+    events: list[Any],
+) -> None:
+    # 추천도 readout 도 없이 질문만 낸 Agent 의 카드는 질문이 전부다. 잃으면 라벨만 남는다
+    result = await _ask_twice(
+        monkeypatch,
+        memory_context,
+        food_context,
+        events,
+        food=_runner("food", readouts=(_NOTE,), needs_observation=(_FOOD_QUESTION,)),
+        activity=_runner("activity", delay=0.05, needs_observation=(_ACTIVITY_QUESTION,)),
+    )
+
+    assert [(card.agent, card.question) for card in _of(events, AgentResult)] == [
+        ("food", _FOOD_QUESTION)
+    ]
+    # 실패가 아니다 — 일을 했고 결과도 있다. 부분 실패로 세지 않는다
+    assert [routed.agent for routed in _of(events, DomainRouted)] == ["food", "activity"]
+    assert [item.agent for item in result.domain] == ["food", "activity"]
+    assert result.partial is None
+
+
+async def test_질문_자리를_쥔_결과가_저장에_실패하면_다음_결과가_자리를_갖는다(
+    monkeypatch: pytest.MonkeyPatch,
+    memory_context: AgentContext,
+    food_context: FoodContext,
+    events: list[Any],
+) -> None:
+    # #452 리뷰 — 저장 전에 자리를 잡으면 카드가 안 나간 Food 가 자리를 쥔 채로 남아, 뒤에 끝난
+    # 질문만 낸 결과까지 버려져 화면에 카드가 하나도 없다
+    monkeypatch.setattr(routing_module, "IMPLEMENTED_AGENTS", frozenset({"food", "activity"}))
+    monkeypatch.setitem(
+        pipeline._RUNNERS,
+        "food",
+        _runner("food", suggestions=(_draft("a"),), needs_observation=(_FOOD_QUESTION,)),
+    )
+    monkeypatch.setitem(
+        pipeline._RUNNERS,
+        "activity",
+        _runner("activity", delay=0.05, needs_observation=(_ACTIVITY_QUESTION,)),
+    )
+
+    result = await _handle(
+        "RC16",
+        memory_llm=_pool_memory(),
+        memory_context=memory_context,
+        food_context=food_context,
+        events=events,
+        contexts=_FAKE_CONTEXTS,
+        save_suggestions=_Saver(events, fail=RuntimeError("db")),
+    )
+
+    assert [(card.agent, card.question) for card in _of(events, AgentResult)] == [
+        ("activity", _ACTIVITY_QUESTION)
+    ]
+    assert result.partial is not None and result.partial.failed == ("food",)
+
+
+async def test_질문을_하나만_내면_그대로_나간다(
+    monkeypatch: pytest.MonkeyPatch,
+    memory_context: AgentContext,
+    food_context: FoodContext,
+    events: list[Any],
+) -> None:
+    await _ask_twice(
+        monkeypatch,
+        memory_context,
+        food_context,
+        events,
+        food=_runner("food", readouts=(_NOTE,), needs_observation=(_FOOD_QUESTION,)),
+        activity=_runner("activity", readouts=(_NOTE,)),
+    )
+
+    assert [(card.agent, card.question) for card in _of(events, AgentResult)] == [
+        ("food", _FOOD_QUESTION),
+        ("activity", None),
+    ]
+
+
 def _personal(content: str) -> SuggestionDraft:
     """아이 기록 근거 1건이 달린 개인화 추천."""
     cited = EvidenceCitation(

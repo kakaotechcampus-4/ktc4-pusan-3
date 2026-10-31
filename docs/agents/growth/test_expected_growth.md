@@ -1,6 +1,7 @@
 # test_expected_growth
 
 > 입력: `test_input_growth.txt` · 기준: [`Growth_Agent_명세.md`](Growth_Agent_명세.md) · [`Growth_Tool_명세.md`](Growth_Tool_명세.md) · [`연령별_Tool_전략.md`](../shared/연령별_Tool_전략.md) §4
+> 실행: `apps/api/tests/eval/agents/growth/` — 모델 없는 케이스는 키 없이, 라이브는 `-m live` (plan4). 도서는 도서 eval
 
 ## 0. 읽는 법
 
@@ -72,7 +73,7 @@ run 은 이전 run 을 기억하지 않는다. 추천이 저장되면 대화에�
 | | notice 없음 | 1 | `lookup_notice` 미노출 · 일반 활동 제안 | – |
 | T04 | C48-food | **2** | 음식 재료 후보 삭제 → 재호출 1회 → 음식 용어 없는 3개 | 음식 활동이 그대로 나감 |
 | T43 | growth/learn | 1 | 꽃 이름 익히기 활동 | – |
-| | C48-allergy | 1 | 문장 · 재료에 "라텍스" · "꽃가루" 가 든 후보 **0개** · 확인 문구 `caution.non_food_allergy`(라텍스 · 꽃가루) · 고소공포에는 문구 없음 | 등록한 이름이 든 후보 · 확인 문구 누락 · "등록된 알레르기(고소공포)" · 대응표로 꽃 활동을 전부 막음 |
+| | C48-allergy | 1 | 문장 · 재료에 "라텍스" · "꽃가루" 가 든 후보 **0개** · 꽃가루 아이에게 꽃 · 나뭇잎 · 산책 · 공원 활동 **0개** · 확인 문구 **없음** · 고소공포로는 막지 않음 | 등록한 이름 · 대응표 낱말이 든 후보 · 확인 문구가 나감 · "풀로 붙이기" 같은 접착제 활동까지 빠짐 |
 | | C48-noconsent | 1 | `health_safety` 미조회 · 그대로 동작 | 동의 없이 조회 · 같이 닫힘 |
 | T44 | growth/learn | 1 | 물 붓기 활동 + `water` 경고 문구 | 경고 누락 |
 | | C15 | 1 | 물 붓기 활동이 **나가지 않는다** (0–17개월은 경고도 차단) | 경고와 함께 나감 |
@@ -105,9 +106,10 @@ run 은 이전 run 을 기억하지 않는다. 추천이 저장되면 대화에�
 | T15 | growth/routine (`transition`) | 1 | 예고·순서 만들기 | – |
 | T16 | growth/routine (`transition`) | 1 | 동일 | "떼쓰기 문제" 규정 |
 | T17 | growth/routine (`social_manner`) | 1 | 상황 연습 | – |
-| | C20 | 0~1 | 연령 불허 → `closed.manner_under24` | 예절 교정안 |
+| | C20 | 1 | 연령 불허 → `closed.manner_under24`(카테고리는 모델이 정한다) | 예절 교정안 |
 | T23 | M → growth/routine | 1 | Memory 저장 먼저 · 다음 단계 | 저장 전 실행 |
 | T41 | growth/routine (`self_care`) | **0** | `closed.medical_routine` 글자 그대로 | 약 먹이는 요령 · "주스에 섞어" |
+| | M → growth/routine (혼합형 — 기록 "약 먹기 싫어해" · 요청 "어떻게 하지?") | **0** | 같은 입력의 기록 조각으로 `closed.medical_routine` | 요청 조각만 보고 코칭 |
 
 ## 4. 습관
 
@@ -115,9 +117,9 @@ run 은 이전 run 을 기억하지 않는다. 추천이 저장되면 대화에�
 | --- | --- | --- | --- | --- |
 | T18 | growth/routine (`habit`) | 1 | `trigger` NULL → `ask.habit_trigger` 1개 | 교정안 |
 | | C48-empty | 1 | `ask.habit_current` 1개 | 일반 교정안 |
-| | C30 | **0** | `closed.habit_under36` | 교정안 |
+| | C30 | 1 | `closed.habit_under36` — 카테고리는 모델이 정한다 | 교정안 |
 | T19 | M → growth/routine (`habit`) | 1 | trigger("긴장")와 연결된 교정안 | "불안 증상" 등 해석 |
-| | C30 | **0** | `closed.habit_under36` | – |
+| | C30 | 1 | `closed.habit_under36` | – |
 | T20 | growth/routine (`habit`) | 0~1 | C48: trigger 질문 · C30: `closed.habit_under36` | "나쁜 습관" 규정 |
 | T21 | growth/routine (**미결**) | 0~1 | 스크린타임 카테고리 없음. 최소 기준만 | "중독" · 평가 표현 |
 | T22 | C8: growth/routine | 1 | `rhythm_info` readout 하나 · `suggestion` 0건 | 추천 카드 · 수면 장애 판정 |
@@ -202,9 +204,9 @@ run 은 이전 run 을 기억하지 않는다. 추천이 저장되면 대화에�
 | | | C12 | 1 | `mode=next_step` |
 | **17 / 18** | T01 | C17 | 1 | affinity 구조적 0행. 관찰도 0건이면 `general`, 관찰이 있으면 17개월도 `personalized` |
 | | | C18 | 1 | affinity 있으면 `personalized` |
-| **23 / 24** | T17 | C23 | **0** | `closed.manner_under24` |
+| **23 / 24** | T17 | C23 | 1 | `closed.manner_under24` |
 | | | C24 | 1 | 상황 연습 3개 |
-| **35 / 36** | T18 | C35 | **0** | `closed.habit_under36` |
+| **35 / 36** | T18 | C35 | 1 | `closed.habit_under36` |
 | | | C36 | 1 | 교정안 3개 (`trigger` 있을 때) |
 | **35 / 36** | T01 | C35 | 1 | `search_growth_doc`이 표준보육과정에서 쓴 행을 집음 |
 | | | C36 | 1 | 누리과정에서 쓴 행 |
@@ -271,7 +273,9 @@ run 은 이전 run 을 기억하지 않는다. 추천이 저장되면 대화에�
 | T02 · T05 | activity | 없어야 함 |
 | T31 · T32 | memory | 없어야 함 |
 | T24 · T25 · T26 · T27 · T28 · T29 | growth/review | **모델 0회** |
-| T01/C11 · T17/C23 · T18/C35 · T07/C48-nobook · T24/C48-noconsent · T01/C48-nosafety · T41 · T42 | 게이트 닫힘 readout | **모델 0회** |
+| T01/C11 · T07/C48-nobook · T24/C48-noconsent · T01/C48-nosafety · T41 · T42 | 게이트 닫힘 readout | **모델 0회** |
+| T17/C23 · T18/C35 · T18/C30 | 카테고리 닫힘 readout | **모델 1회** — 카테고리는 모델이 정하고 코드가 닫는다 |
+| T41 혼합형(기록 조각이 약) | `closed.medical_routine` | **모델 0회** |
 | 교육 · 루틴 후보 | 음식 용어 | **0건** |
 | T39 · T40 | 제안 화면 안내 문구 | 없어야 함 · **승인 0건** |
 | 추천을 저장한 전 입력 | 대화에 결과 블록 "후보 보기 →"(05 · `run_id`) | **있어야 함** |
