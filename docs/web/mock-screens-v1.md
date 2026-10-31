@@ -10,6 +10,7 @@
 | 목 시나리오 | `localStorage` | **안 사라진다** — 직접 지우거나 `?scenario=default` |
 | 목의 refresh 쿠키 표식 (`icatch.mock.refresh`) | `localStorage` | **안 사라진다** — 로그아웃 · 탈퇴가 지운다. 실서버의 HttpOnly 쿠키 대신이다 (#465) |
 | 마지막에 본 아이 (`icatch.active-child`) | `localStorage` | 로그아웃하면 비워진다 |
+| 화면 투어 "봤음" (`icatch.tour.seen.<보호자 id>` · 목은 `p1`) | `localStorage` | **안 사라진다** — 설정 › 고객센터의 화면 설명 다시 보기가 지운다 (#632) |
 
 🚨 **로그인 토큰은 저장소에 없다** — 메모리에만 있고, 켤 때 목의 refresh 가 다시 준다. 그래서 탭을 닫거나 새로고침해도 로그인이 이어진다.
 
@@ -22,6 +23,7 @@ sessionStorage.clear();
 localStorage.removeItem("icatch.mock.refresh");
 localStorage.removeItem("icatch.active-child");
 localStorage.removeItem("icatch.mock.scenario");
+localStorage.removeItem("icatch.tour.seen.p1");
 location.replace("/");
 ```
 

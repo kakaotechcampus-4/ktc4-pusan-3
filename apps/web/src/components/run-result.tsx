@@ -315,7 +315,7 @@ export function RunReply({
           </CardFailed>
         )
       ) : (
-        <section>
+        <section data-tour="saved">
           <h3 className="text-label text-brand">기록 {savedCount}건 저장됨</h3>
           {/* 🚨 관찰마다 카드를 한 장씩 주면 흰 상자가 줄줄이 서서 무엇이 한 덩어리인지 사라진다.
               한 장 안에 가는 선으로 나눈다 — 03 홈의 "오늘" 카드와 같은 방식이다. */}
@@ -337,7 +337,7 @@ export function RunReply({
       )}
 
       {run.promoted.length > 0 ? (
-        <section className="flex flex-col gap-2">
+        <section data-tour="promoted" className="flex flex-col gap-2">
           <h3 className="text-label text-brand">기억이 자랐어요</h3>
           {run.promoted.map((change) => (
             <Card key={change.ref.id}>
@@ -575,7 +575,7 @@ function DraftsCard({
   onOpen: () => void;
 }) {
   return (
-    <section>
+    <section data-tour="drafts">
       <h3 className="text-label text-brand">일정으로 만들까요?</h3>
       <Card className="mt-2">
         <div className="flex items-start gap-3">
@@ -851,7 +851,7 @@ function NoteCard({
   }
 
   return (
-    <Card>
+    <Card data-tour="question">
       <div className="flex items-start gap-3">
         <IconTile icon={MessageCircleQuestion} />
         <div className="min-w-0">
