@@ -824,6 +824,7 @@ def _liked(n: int, key: str, *, days_ago: int) -> AffinityRow:
         polarity=1,
         strength=0.9,
         last_observed_on=today - timedelta(days=days_ago),
+        observed_days=3,
     )
 
 
