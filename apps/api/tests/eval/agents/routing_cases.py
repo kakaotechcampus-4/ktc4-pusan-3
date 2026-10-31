@@ -4,7 +4,7 @@
 - RC48~RC54  키 · 몸무게 기록(guarded/growth_record)과 성장 질문(request/growth) 대조 (#625)
 - T01~T30    라이브 eval 입력의 정답 Supervisor 출력. Step 7 이 Memory 힌트로 쓰고,
              Supervisor 채점에서는 "쉬운 30개" 대조군이 된다
-- T35~T58    아이가 한 일이 아닌 말(unclear)과 그대로 기록되는 말 대조 (#624 · #484)
+- T35~T65    아이가 한 일이 아닌 말(unclear)과 그대로 기록되는 말 대조 (#624 · #484)
 - score_split()  Step 5(Supervisor 단독)와 Step 9(끝까지)가 같은 기준으로 잰다
 
 정답은 조각 단위가 아니라 구간(Span) 단위로 적는다.
@@ -551,7 +551,7 @@ FC_CASES: tuple[RoutingCase, ...] = (
 )
 
 
-# ── T35~T58 — 아이가 한 일이 아닌 말과 그대로 기록되는 말 (#624 · #484) ─────────
+# ── T35~T65 — 아이가 한 일이 아닌 말과 그대로 기록되는 말 (#624 · #484) ─────────
 # 입력은 test_input.txt 에 있어 test_memory.py 도 같은 문장을 쓴다.
 # 후보(profile_affinity)는 관찰에서만 나오므로 rows=0 이면 후보도 0건이다
 def _unclear_case(
@@ -606,15 +606,14 @@ UNCLEAR_CASES: tuple[RoutingCase, ...] = (
     _unclear_case("T46", (R("일본어 노래 따라 불렀어", OBSERVE),), "대조군 — 실제로 한 일", rows=1),
     _unclear_case(
         "T47",
-        # 대사를 떼어 unclear 로 둬도 맞아서 놀이 사실이 든 앞부분만 정답으로 적는다
-        (R("소꿉놀이하면서", OBSERVE),),
+        (R("소꿉놀이하면서 '밥 먹어' 했어", OBSERVE),),
         "대조군 — 역할놀이는 놀이 사실만. '밥 먹어' 가 식사가 되면 안 된다",
         rows=1,
         not_in=("food",),
     ),
     _unclear_case(
         "T48",
-        (R("의사 놀이하면서", OBSERVE),),
+        (R("의사 놀이하면서 '주사 맞아야 해요' 했어", OBSERVE),),
         "대조군 — 역할놀이는 놀이 사실만. '주사' 가 증상이 되면 안 된다",
         rows=1,
         not_in=("health",),
@@ -646,6 +645,52 @@ UNCLEAR_CASES: tuple[RoutingCase, ...] = (
         (R("다음 달부터 수영을 배우려고 해", OBSERVE, strict=False),),
         "대조군 — 계획은 가정이 아니다. 일정으로 등록할지 묻는다 (D8)",
         rows=0,
+    ),
+    _unclear_case(
+        "T59",
+        (R('아이가 "선생님한테 배 아프다고 말해"라고 했어', OBSERVE),),
+        "대조군 — 전하라는 말 속의 아이 증상은 기록",
+        rows=1,
+        not_in=("food", "education", "activity", "routine"),
+    ),
+    _unclear_case(
+        "T60",
+        (R('아이가 "내일 소풍 간대"라고 했어', SCHEDULE),),
+        "대조군 — 아이가 전한 일정은 일정 경로로 간다 (test.py 의 _RELAYED_EVENTS)",
+        rows=None,
+    ),
+    _unclear_case(
+        "T61",
+        (R('오늘 처음으로 "엄마"라고 했어', OBSERVE),),
+        "대조군 — 말이 곧 사건 (첫 말)",
+        rows=1,
+    ),
+    _unclear_case(
+        "T62",
+        (R('아이가 동생한테 "미안해"라고 했어', OBSERVE),),
+        "대조군 — 말이 곧 사건 (사과)",
+        rows=1,
+    ),
+    _unclear_case(
+        "T63",
+        (R('아이가 "사랑해"라고 했어', OBSERVE),),
+        "대조군 — 말이 곧 사건 (애정 표현)",
+        rows=1,
+    ),
+    _unclear_case(
+        "T64",
+        # 먹은 기록이 아니라 fail-open 을 걸지 않는다. 영양 합계에 들어가면 안 된다
+        (R("아이스크림 먹고 싶대", OBSERVE, strict=False),),
+        "대조군 — 먹고 싶다는 바람은 음식 기록이 아니다",
+        rows=None,
+        not_in=("food",),
+    ),
+    _unclear_case(
+        "T65",
+        # 날짜를 되물어도 맞아서 fail-open 을 걸지 않는다 (test.py 의 _IMPRESSIONS)
+        (R("요즘 말이 늘은 것 같아", OBSERVE, strict=False),),
+        "대조군 — 보호자 인상은 거절하지 않고 저장하거나 되묻는다",
+        rows=None,
     ),
 )
 

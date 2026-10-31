@@ -732,6 +732,35 @@ async def test_Food_로_간_조각이_있으면_다시_나누지_않는다(
     assert not _of(events, Rerouted)
 
 
+async def test_적지_않은_조각을_unclear_로_다시_나누면_도메인_Agent_를_부르지_않는다(
+    memory_context: AgentContext, food_context: FoodContext, events: list[Any]
+) -> None:
+    # 일어나지 않은 일이 요청으로 바뀌지 않게 다시 나눌 때도 unclear 를 고를 수 있다 (#624)
+    text = "자전거를 배우면 좋아할 텐데"
+    first = {"segments": [{"text": text, "kind": "record", "work": "observe"}]}
+    second = {"segments": [{"text": text, "kind": "unclear"}]}
+    supervisor_llm = FakeLLM(_route_reply(first), _route_reply(second))
+    memory_llm = FakeLLM(_reply("아이가 한 일이 아니라서 남기지 않았어요."))
+
+    result = await handle_input(
+        text,
+        memory_context,
+        {"food": food_context},
+        run_id=RUN_ID,
+        supervisor_client=supervisor_llm,
+        memory_client=memory_llm,
+        emit=events.append,
+        commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
+    )
+
+    assert "unclear" in supervisor_llm.seen[1][-1]["content"]
+    assert result.rerouted is not None and result.rerouted.domain_tasks == ()
+    assert result.domain == ()
+    assert result.failed is None
+    assert await memory_context.store.query_observations(domain="food", child_id=CHILD) == []
+
+
 async def test_다시_나누기가_실패하면_처음_나눈_대로_간다(
     memory_context: AgentContext, food_context: FoodContext, events: list[Any]
 ) -> None:
