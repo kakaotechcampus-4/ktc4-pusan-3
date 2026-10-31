@@ -7,6 +7,7 @@ import {
   Hourglass,
   Info,
   MessageCircleQuestion,
+  Ruler,
   ShieldCheck,
   Sprout,
   Stethoscope,
@@ -314,7 +315,7 @@ export function RunReply({
           </CardFailed>
         )
       ) : (
-        <section>
+        <section data-tour="saved">
           <h3 className="text-label text-brand">기록 {savedCount}건 저장됨</h3>
           {/* 🚨 관찰마다 카드를 한 장씩 주면 흰 상자가 줄줄이 서서 무엇이 한 덩어리인지 사라진다.
               한 장 안에 가는 선으로 나눈다 — 03 홈의 "오늘" 카드와 같은 방식이다. */}
@@ -336,7 +337,7 @@ export function RunReply({
       )}
 
       {run.promoted.length > 0 ? (
-        <section className="flex flex-col gap-2">
+        <section data-tour="promoted" className="flex flex-col gap-2">
           <h3 className="text-label text-brand">기억이 자랐어요</h3>
           {run.promoted.map((change) => (
             <Card key={change.ref.id}>
@@ -574,7 +575,7 @@ function DraftsCard({
   onOpen: () => void;
 }) {
   return (
-    <section>
+    <section data-tour="drafts">
       <h3 className="text-label text-brand">일정으로 만들까요?</h3>
       <Card className="mt-2">
         <div className="flex items-start gap-3">
@@ -691,10 +692,10 @@ function resultTitle({
  *    지금 없는 경로가 오기도 하고, 외부 주소가 오면 화면이 앱 밖으로 나간다. 딥링크는
  *    **어느 구역인지 힌트**로만 쓰고, 실제로 가는 곳은 이 표가 정한다.
  *
- * ⚠️ **서버 힌트와 실제 자리가 다르다.** `safety_record` 의 딥링크는 `settings/health-safety`
- *    인데, 알레르기·건강 기록을 직접 넣는 구역(`components/safety-section.tsx`)은 10 설정이
- *    아니라 **11 아이 프로필**에 있다. 힌트를 그대로 썼으면 아무것도 없는 화면으로 보냈을 것이다.
- *    👉 이름을 맞출지는 `apps/api` Owner 협의 대상이다 (최상위 §8 · #141).
+ * ⚠️ **`to.path` 는 서버 딥링크와 같은 값이다** (#625 — 서버 정본은 `apps/api/app/core/deeplinks.py`).
+ *    예전 서버 힌트 `settings/health-safety` 는 없는 경로였다 — 알레르기·건강 기록을 넣는 구역
+ *    (`components/safety-section.tsx`)은 10 설정이 아니라 **11 아이 프로필**에 있다. 지금은 서버도
+ *    `profile` 을 보낸다. 그래도 주소는 이 표가 정한다 — 새 code 가 생기면 서버 표와 여기를 같이 고친다.
  *
  * 🚨 `to` 가 없는 안내에는 **버튼을 세우지 않는다** — 진단·구매 대행은 갈 곳이 없는 안내고,
  *    없는 길을 만들어 주는 것보다 말만 하고 마는 쪽이 맞다.
@@ -707,6 +708,12 @@ const GUIDANCE_KIND: Record<
     label: "안전 정보",
     icon: ShieldCheck,
     to: { path: "profile", label: "직접 입력하러 가기" },
+  },
+  // 채팅의 키 · 몸무게는 저장하지 않는다 — 잰 날짜와 함께 11-1 에서 넣는다 (#625)
+  growth_record: {
+    label: "키·몸무게",
+    icon: Ruler,
+    to: { path: "profile/growth", label: "직접 입력하러 가기" },
   },
   diagnosis: { label: "진단·처방", icon: Stethoscope },
   out_of_scope: { label: "서비스 범위", icon: Hand },
@@ -844,7 +851,7 @@ function NoteCard({
   }
 
   return (
-    <Card>
+    <Card data-tour="question">
       <div className="flex items-start gap-3">
         <IconTile icon={MessageCircleQuestion} />
         <div className="min-w-0">

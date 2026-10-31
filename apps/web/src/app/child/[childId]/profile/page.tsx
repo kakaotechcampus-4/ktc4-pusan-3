@@ -15,6 +15,7 @@ import { ChildNav } from "@/components/child-nav";
 import { GrowthLatestCard, GrowthLatestCardSkeleton } from "@/components/growth-log-list";
 import { GrowthSheet } from "@/components/growth-sheet";
 import { SafetySection } from "@/components/safety-section";
+import { ScreenTour, TourHelpButton } from "@/components/screen-tour";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
@@ -24,6 +25,7 @@ import { useChildId } from "@/hooks/use-child-id";
 import { useSheetTarget } from "@/hooks/use-sheet-target";
 import { EARLIEST_BIRTH_DATE } from "@/lib/date-bounds";
 import { api, qk, type ChildProfile, type GrowthLog, type GrowthLogsResponse } from "@/lib/api";
+import { profileTour } from "@/lib/tour/screens/profile";
 
 export default function ChildProfilePage() {
   return (
@@ -53,11 +55,14 @@ function ChildProfileScreen() {
       {/* 🚨 **머리에 아이 이름·나이를 다시 세우지 않는다.** 바로 아래 "기본 정보" 구역의
           별명 입력과 생일 입력이 같은 값을 들고 있어서, 머리에 또 쓰면 한 화면에서 같은 사실이
           두 번 선다. 제목은 화면을 가리키고, 아이가 누구인지는 그 구역이 진다. */}
-      <header>
-        <PageTitle>아이 프로필</PageTitle>
-        <p className="text-body-sm text-ink-muted mt-2">
-          기본 정보와 키·몸무게, 알레르기를 여기서 관리해요.
-        </p>
+      <header className="flex items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <PageTitle>아이 프로필</PageTitle>
+          <p className="text-body-sm text-ink-muted mt-2">
+            기본 정보와 키·몸무게, 알레르기를 여기서 관리해요.
+          </p>
+        </div>
+        <TourHelpButton tour={profileTour} />
       </header>
 
       <IdentitySection childId={childId} query={profile} />
@@ -65,6 +70,8 @@ function ChildProfileScreen() {
       <GrowthSection childId={childId} query={growth} />
 
       <SafetySection childId={childId} />
+
+      <ScreenTour tour={profileTour} ready={profile.isSuccess && growth.isSuccess} />
     </Screen>
   );
 }
@@ -85,6 +92,7 @@ function IdentitySection({
 
   return (
     <Section
+      data-tour="identity"
       title="기본 정보"
       // 🚨 **설명 줄을 두지 않는다.** "아이를 부르는 말과 생일이에요" 는 바로 아래 카드가
       //    별명 · 생일 · 성별을 글자로 다 보여주는 것을 한 번 더 말할 뿐이었다 —
@@ -165,6 +173,7 @@ function GrowthSection({
 
   return (
     <Section
+      data-tour="growth"
       title="키 · 몸무게"
       description="가장 최근에 잰 것만 보여줘요. 눌러서 지난 기록과 변화를 볼 수 있어요."
       // 🚨 불러오기 전에는 숫자 대신 자리만(`"pending"`), 0 건이면 넘기지 않는다 — 앞은 "아직 모름" 이라

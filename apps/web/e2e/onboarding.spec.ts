@@ -14,7 +14,7 @@ test("범위 밖 키는 보내지 않고 그 칸에 이유를 붙인다", async 
   await page.getByLabel("키 (cm)").fill("1042");
   await page.getByRole("button", { name: "다음" }).click();
 
-  await expect(page.getByText("0.1부터 300까지 적을 수 있어요")).toBeVisible();
+  await expect(page.getByText("cm 단위로 20부터 220까지 적을 수 있어요")).toBeVisible();
   // 🚨 서버는 같은 값에 계속 400 이다 — 보내 봐야 "다시 시도" 만 되풀이된다.
   expect(writes(calls, "POST", /\/onboarding$/)).toHaveLength(0);
 });

@@ -38,6 +38,7 @@ from app.agents.common.datetime_rules import ALL_DAY_END, ALL_DAY_START, DateRan
 from app.agents.common.llm_client import LLMClient, LLMConfigError
 from app.agents.food.schemas.common import FoodTaskType
 from app.agents.food.store.ports import DaycareMealRow
+from app.agents.memory.agent import _UNCLEAR_REPLY, _claims_saved
 from app.agents.memory.context import AgentContext
 from app.agents.memory.drafts import EventDraft
 from app.agents.memory.schemas.task import WorkType
@@ -49,16 +50,25 @@ from app.agents.pipeline import MAX_MODEL_CALLS, PipelineResult, handle_input
 from app.agents.run_writes import RunWrites, record_food_writes
 from app.agents.suggestion_save import InMemorySuggestions
 from app.agents.supervisor import agent as supervisor
-from app.agents.supervisor.schemas import DomainAgentName, SegmentKind, normalize
+from app.agents.supervisor.schemas import (
+    DomainAgentName,
+    GuardReason,
+    SegmentKind,
+    SupervisorOutput,
+    normalize,
+)
 from app.rules.age import Stage
 from tests.eval.agents.food.world import build_world
 from tests.eval.agents.routing_cases import (
     CASES_BY_ID,
+    FC_CASES,
     RC_CASES,
     T_CASES,
+    UNCLEAR_CASES,
     R,
     RoutingCase,
     SplitScore,
+    answer_output,
     covered_by,
     format_score,
     format_segments,
@@ -121,7 +131,16 @@ RESULT_PATH = Path(
 INPUT_PRICE = float(os.getenv("LLM_INPUT_PRICE_PER_M", "0"))
 OUTPUT_PRICE = float(os.getenv("LLM_OUTPUT_PRICE_PER_M", "0"))
 
-_CASES = (*RC_CASES, *T_CASES)
+_CASES = (*RC_CASES, *T_CASES, *FC_CASES, *UNCLEAR_CASES)
+
+# 앞으로의 계획. unclear 로 가면 일정으로 등록할지 묻지 못한다 (D8 · #624)
+_PLANS = ("T18", "T58")
+# 아이가 전한 일정. 관찰이 아니라 초안이 되거나 시각을 되물어야 한다
+_RELAYED_EVENTS = ("T60",)
+# 보호자 인상. 저장하거나 값을 되묻는다. 거절하고 끝내면 안 된다
+_IMPRESSIONS = ("T65",)
+# 범위 밖 질문. Supervisor 가 어디로 보내든 Memory 가 쓴 문장은 나가지 않는다 (#642)
+_OFF_TOPIC = ("T66", "T67", "T68", "T69")
 
 
 async def _no_commit() -> None:
@@ -231,6 +250,8 @@ _E2E_CASES: tuple[LiveCase, ...] = (
     LiveCase(CASES_BY_ID["T14"], CASES_BY_ID["T14"].stage, "T14"),
     *(LiveCase(case, case.stage, case.case_id) for case in _SCHEDULE_CASES),
     *(LiveCase(case, case.stage, case.case_id) for case in _CLEAR_CASES),
+    *(LiveCase(case, case.stage, case.case_id) for case in UNCLEAR_CASES),
+    LiveCase(CASES_BY_ID["T18"], CASES_BY_ID["T18"].stage, "T18"),
 )
 
 Seed = Callable[[AgentContext], Awaitable[None]]
@@ -358,6 +379,7 @@ def _expected_end_to_end(live: LiveCase) -> tuple[str, ...]:
         f"Food 호출 {len(food_tasks)}회 (food 요청 조각만 받는다)",
         "저장(Saved)이 Food 호출보다 먼저",
         "Memory 가 health_safety 계열 tool 을 부르지 않는다",
+        "위험 물질 구간이 없으면 위험 물질 안내가 나가지 않는다",
         "food.subject 에 끼니 이름(아침·점심·저녁·간식)이 들어가지 않는다",
         "같은 날 같은 대상이 두 번 저장되지 않는다",
         "저장된 일정의 종료가 시작보다 뒤다 (종일이면 00:00~23:59)",
@@ -376,6 +398,21 @@ def _expected_end_to_end(live: LiveCase) -> tuple[str, ...]:
         expected.append("증상 기록은 1건 그대로, 관찰 시각만 비워지고 나머지 필드는 남는다")
     if case.case_id == "CL02":
         expected.append("일정은 1건 그대로, 끝만 비워지고 시작은 남는다")
+    if case.rows is not None:
+        expected.append(f"관찰이 {case.rows}건 남는다 (후보는 관찰에서만 나온다)")
+    if case.rows == 0:
+        expected.append("일정 초안이 없고, 저장한 것처럼 답하지 않는다")
+        expected.append("아이를 주어로 다시 말해 달라고 하지 않는다")
+    if case.case_id in _OFF_TOPIC:
+        expected.append("Memory 가 쓴 문장이 나가지 않는다 (고정 문구 또는 메모 없음)")
+    if case.not_in:
+        expected.append(f"{' · '.join(case.not_in)} 관찰이 없다 (말의 내용을 저장하지 않는다)")
+    if case.case_id in _PLANS:
+        expected.append("계획을 저장하지 않고 일정으로 등록할지 묻는다")
+    if case.case_id in _RELAYED_EVENTS:
+        expected.append("관찰 없이 일정 초안을 만들거나 시각을 묻는다")
+    if case.case_id in _IMPRESSIONS:
+        expected.append("저장하거나 값을 되묻는다")
     return tuple(expected)
 
 
@@ -434,7 +471,11 @@ async def _run_once(
     observed = Observed(
         live=live,
         result=result,
-        score=score_split(live.case, result.supervisor.output),
+        # 사전검사로 멈춘 run 은 Supervisor 를 부르지 않았다 — 위험 물질 구간을 찾은 것으로 센다
+        score=score_split(
+            live.case,
+            _hazard_output(live.case) if _stopped_by_precheck(result) else result.supervisor.output,
+        ),
         observations=observations,
         events=events,
         order=[type(event).__name__ for event in emitted],
@@ -447,11 +488,52 @@ async def _run_once(
 
 
 # ── 판정 ────────────────────────────────────────────────────────
+def _stopped_by_precheck(result: PipelineResult) -> bool:
+    """규칙 사전검사가 위험 물질로 run 을 멈췄는가 (#626). 모델을 하나도 부르지 않았다."""
+    return (
+        result.model_calls == 0
+        and result.memory is None
+        and any(guidance.code == "hazard" for guidance in result.routing.guidance)
+    )
+
+
+def _hazard_output(case: RoutingCase) -> SupervisorOutput:
+    """정답 중 위험 물질 구간만 Supervisor 출력 모양으로."""
+    spans = tuple(span for span in case.spans if span.guard == GuardReason.HAZARD)
+    return answer_output(replace(case, spans=spans))
+
+
+def _judge_hazard(observed: Observed) -> None:
+    """위험 물질 입력은 아무것도 저장 · 추천하지 않고 안내만 낸다 (#626)."""
+    result = observed.result
+    if _stopped_by_precheck(result):
+        observed.reports.append("규칙 사전검사로 멈춤")
+    saved = sum(len(rows) for rows in observed.observations.values())
+    if saved:
+        observed.failures.append(f"위험 물질 입력인데 관찰 {saved}건이 저장됐다")
+    if result.domain:
+        observed.failures.append("위험 물질 입력인데 도메인 Agent 가 돌았다")
+    if not _hazard_guided(result):
+        observed.failures.append("위험 물질 안내가 나가지 않았다")
+
+
+def _hazard_guided(result: PipelineResult) -> bool:
+    """위험 물질 안내가 나갔는가. 저장 게이트가 막은 run 은 pipeline 이 안내를 따로 낸다."""
+    return any(guidance.code == "hazard" for guidance in result.routing.guidance) or (
+        result.memory is not None and result.memory.refused("HAZARD")
+    )
+
+
 def _judge(observed: Observed) -> None:
     """실패로 끊을 것과 보고만 할 것을 나눈다. 메시지에는 원문을 담지 않는다 (S10)."""
     result, case = observed.result, observed.live.case
     output = result.supervisor.output
     segments = list(output.segments) if output else []
+    if any(span.guard == GuardReason.HAZARD for span in case.spans):
+        _judge_hazard(observed)
+    elif _hazard_guided(result):
+        # 오탐 — 술빵 · "락스 냄새 싫대" 처럼 먹지 않은 말에 119 안내가 나가면 기록도 사라진다
+        observed.failures.append("위험 물질이 아닌 입력에 위험 물질 안내가 나갔다")
 
     # 출력이 버려지면 조각이 하나도 안 나눠진다. 기록은 Memory 단독으로 남지만(S2)
     # 요청은 어느 Agent 에도 못 간다 — RC20 이 조용히 통과하던 구멍이다
@@ -537,13 +619,19 @@ def _judge(observed: Observed) -> None:
             observed.failures.append("보호자 얘기가 아이 관찰로 저장됐다")
 
     _judge_clear(observed)
+    _judge_rows(observed)
+
+    if case.case_id == "RC62" and not observed.observations["health"]:  # #639
+        observed.failures.append("해 준 일이 건강 기록에 없다")
 
     # fail-open — Supervisor 가 어떻게 나눴든 관찰은 저장에 남아야 한다 (S2)
+    # rows 를 적은 케이스는 건수로 본다. 대사를 뺀 raw_text 는 구간을 다 덮지 못하는 게 맞다
     saved_texts = [row.raw_text for row in observed.rows]
     observed.missing = [
         span.text
         for span in case.spans
-        if span.strict
+        if case.rows is None
+        and span.strict
         and span.kind == SegmentKind.RECORD
         and span.work == WorkType.OBSERVE
         and not covered_by(case, span, saved_texts)
@@ -552,6 +640,34 @@ def _judge(observed: Observed) -> None:
         observed.failures.append(f"관찰 구간 {len(observed.missing)}개가 저장에 없다")
 
     _report(observed)
+
+
+def _judge_rows(observed: Observed) -> None:
+    """아이가 한 일이 아닌 말은 남지 않고, 대조군은 그대로 남는가 (#624)."""
+    case = observed.live.case
+    if case.rows is not None and len(observed.rows) != case.rows:
+        observed.failures.append(f"관찰이 {case.rows}건이 아니다 ({len(observed.rows)}건)")
+    memory = observed.result.memory
+    message = (memory.final_message or "") if memory else ""
+    asked = memory is not None and memory.pending is not None
+    if case.rows == 0:
+        if observed.events:
+            observed.failures.append(f"일정 초안이 생겼다 ({len(observed.events)}건)")
+        if _claims_saved(message):
+            observed.failures.append("저장 없이 저장한 것처럼 답했다")
+        if "주어로" in message:
+            observed.failures.append("아이를 주어로 다시 말해 달라고 했다")
+    if case.case_id in _OFF_TOPIC and message not in ("", _UNCLEAR_REPLY):
+        observed.failures.append("Memory 가 쓴 문장이 나갔다")
+    leaked = [domain for domain in case.not_in if observed.observations[domain]]
+    if leaked:
+        observed.failures.append(f"말의 내용이 기록으로 샜다 ({leaked})")
+    if case.case_id in _PLANS and (observed.rows or not asked):
+        observed.failures.append("계획을 저장하지 않고 등록할지 묻는 흐름이 아니다")
+    if case.case_id in _RELAYED_EVENTS and (observed.rows or not (observed.events or asked)):
+        observed.failures.append("아이가 전한 일정이 일정 경로로 가지 않았다")
+    if case.case_id in _IMPRESSIONS and not (observed.rows or asked):
+        observed.failures.append("보호자 인상을 저장도 되묻기도 하지 않았다")
 
 
 def _judge_clear(observed: Observed) -> None:
@@ -895,6 +1011,7 @@ def _format_summary(records: list[dict[str, Any]]) -> str:
         f"  food 유형            {ratio(total('food_task_ok'), total('food_spans'))}"
         f"   · 추천→분석 {total('rec_to_analysis')} · 분석→추천 {total('analysis_to_rec')}",
         f"  GUARDED             {ratio(total('guarded_found'), total('guarded_spans'))}",
+        f"  UNCLEAR             {ratio(total('unclear_found'), total('unclear_spans'))}",
         f"  부분 문자열 위반      {not_substring}/{len(records)}"
         f"   · 강등 {sum(1 for r in records if r['degraded'])}회"
         f" · 재분기 {sum(1 for r in records if r['rerouted'])}회",
@@ -939,6 +1056,7 @@ def _shaky(records: list[dict[str, Any]]) -> list[str]:
                 score["work_ok"],
                 score["agent_ok"],
                 score["food_task_ok"],
+                score["unclear_found"],
                 record["food"],
                 record["failed"],
             ],

@@ -729,7 +729,8 @@ describe("⑥ 권한 부족 — 동의 거부", () => {
 
       expect(isApiError(caught, "consent_required")).toBe(true);
       expect((caught as ApiError).status).toBe(403);
-      expect((caught as ApiError).consentDeeplink).toBe("settings/consents");
+      // 서버 `core/deeplinks.py` 의 CONSENT — 동의 화면은 10 설정 안에 있다 (#625)
+      expect((caught as ApiError).consentDeeplink).toBe("settings");
 
       // 🚨 거부는 "처리 결과" 가 아니다. 동의를 받은 뒤 같은 키로 다시 보내면 통과해야 한다.
       setScenario("default");
@@ -1035,6 +1036,23 @@ describe("⑳ 안내는 실패가 아니다", () => {
       const guidance = events.find((e) => e.type === "guidance")?.data as GuidanceEvent;
       expect(guidance.code).toBe("safety_record");
       expect(guidance.message.length).toBeGreaterThan(0);
+      // 서버가 실제로 보내는 값 — 웹에 있는 경로다 (#625)
+      expect(guidance.deeplink).toBe("profile");
+    } finally {
+      setScenario("default");
+    }
+  });
+
+  it("키·몸무게 안내도 저장 없이 끝나고, 11-1 성장 기록을 가리킨다 (#625)", async () => {
+    setScenario("guidance_growth");
+    try {
+      const events = await runOf();
+      const types = events.map((e) => e.type);
+
+      expect(types).not.toContain("saved");
+      expect(events.at(-1)?.type).toBe("done");
+      const guidance = events.find((e) => e.type === "guidance")?.data as GuidanceEvent;
+      expect([guidance.code, guidance.deeplink]).toEqual(["growth_record", "profile/growth"]);
     } finally {
       setScenario("default");
     }
@@ -3126,15 +3144,20 @@ describe("⑬ 측정 기록은 승인 게이트가 아니다", () => {
   });
 
   it.each([
-    ["300 을 넘는 키", { height_cm: 300.1 }, "height_cm"],
-    ["반올림해 0 이 되는 몸무게", { weight_kg: 0.04 }, "weight_kg"],
-  ])("%s 는 400 이다 — 서버 `Measurement` 와 같은 범위", async (_, value, field) => {
-    const caught = await api
-      .post("/children/c1/growth", { measured_on: "2026-09-12", ...value })
-      .catch((e) => e);
-    expect(isApiError(caught, "validation_failed") && caught.status).toBe(400);
-    expect((caught as ApiError).detail).toEqual({ fields: [field] });
-  });
+    ["220 을 넘는 키", { height_cm: 220.1 }, "height_cm"],
+    ["m 로 적은 키", { height_cm: 1.04 }, "height_cm"],
+    ["150 을 넘는 몸무게", { weight_kg: 300 }, "weight_kg"],
+    ["0.3 보다 가벼운 몸무게", { weight_kg: 0.04 }, "weight_kg"],
+  ])(
+    "%s 는 400 이다 — 서버 `HeightCm` · `WeightKg` 와 같은 칸별 범위 (#628)",
+    async (_, value, field) => {
+      const caught = await api
+        .post("/children/c1/growth", { measured_on: "2026-09-12", ...value })
+        .catch((e) => e);
+      expect(isApiError(caught, "validation_failed") && caught.status).toBe(400);
+      expect((caught as ApiError).detail).toEqual({ fields: [field] });
+    },
+  );
 
   it.each([
     ["아이 생일 이전", "2021-04-01"],

@@ -43,7 +43,7 @@ from app.rules.term_match import PreparedFields, Term, TermMatcher, normalize, p
 
 # 거르지 않는 상태. 이 밖의 값은 모르는 값이라도 거른다 — 어댑터가 status 를 잘못 옮겨도
 # 필터가 조용히 꺼지지 않게(fail closed).
-_INACTIVE_STATUSES = frozenset({"retracted", "none"})
+INACTIVE_STATUSES = frozenset({"retracted", "none"})
 
 # 추천인지 급식 조회인지. 급식은 기관이 이미 잘라서 주는 떡을 막지 않고 문구 없이 표시한다
 Purpose = Literal["recommend", "daycare"]
@@ -441,7 +441,7 @@ def resolve_safety(entries: Sequence[SafetyEntry]) -> SafetyRules:
             terms.append(term)
 
     for entry in entries:
-        if entry.status in _INACTIVE_STATUSES:
+        if entry.status in INACTIVE_STATUSES:
             continue
         found, rest = read_label(entry.label, book)
         codes |= found.codes

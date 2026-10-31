@@ -8,6 +8,7 @@ import { Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { AuthGate } from "@/components/auth-gate";
 import { ChatThread, chatDayAnchor } from "@/components/chat-thread";
 import { ScreenTransition } from "@/components/route-transition";
+import { ScreenTour, TourHelpButton } from "@/components/screen-tour";
 import { EventDraftList } from "@/components/event-draft-list";
 import { HomeComposer } from "@/components/home-composer";
 import { PhotoSourceSheet } from "@/components/photo-source-sheet";
@@ -26,6 +27,7 @@ import { useChildId } from "@/hooks/use-child-id";
 import { api, qk, type Agent, type Me } from "@/lib/api";
 import { useSeoulToday } from "@/hooks/use-seoul-today";
 import { formatDay, parseISODate } from "@/lib/format";
+import { chatTour } from "@/lib/tour/screens/chat";
 import { BACK, FORWARD } from "@/lib/view-transition";
 import {
   isBusy,
@@ -320,16 +322,17 @@ function ChatScreen() {
                 <ArrowLeft aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
               </IconButtonLink>
             )}
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               {/* 🚨 제목에 "오늘" 을 붙이지 않는다 (#541) — 캘린더에서 지난 날을 보러 와도, 위로 올려 전날을
                 보고 있어도 같은 제목이다. 어느 날인지는 아래 줄이 말한다. */}
               <PageTitle>대화</PageTitle>
               {/* 누구의 어느 날 대화인지 — 스크롤을 따라 바뀐다 (`shownDay`). 🚨 날짜 머리줄은 날이 둘 이상일
                 때만 본문에 선다 (`ChatThread`) — 하루뿐이면 이 줄이 그 말을 한다. */}
-              <p className="text-caption text-ink-subtle">
+              <p data-tour="day" className="text-caption text-ink-subtle w-fit">
                 {nickname ? `${nickname} · ${formatDay(shownDay)}` : formatDay(shownDay)}
               </p>
             </div>
+            <TourHelpButton tour={chatTour} />
           </header>
         }
         bottomBar={
@@ -467,6 +470,9 @@ function ChatScreen() {
             router.push(`/child/${childId}/photos`, FORWARD);
           }}
         />
+
+        {/* 🚨 결과가 다 온 뒤에만 뜬다 — 진행 카드가 도는 동안 덮으면 결과가 서는 순간을 가린다. */}
+        <ScreenTour tour={chatTour} ready={!busy && !nothingYet && data !== undefined} />
       </Screen>
     </ScreenTransition>
   );

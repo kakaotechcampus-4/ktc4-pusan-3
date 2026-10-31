@@ -32,6 +32,7 @@ import { Select } from "@/components/ui/select";
 import { SkeletonGroup, SkeletonText } from "@/components/ui/skeleton";
 import { phaseOf, Swap } from "@/components/ui/swap";
 import { Tabs, type TabItem } from "@/components/ui/tabs";
+import { ScreenTour, TourHelpButton } from "@/components/screen-tour";
 import { TextInput } from "@/components/ui/text-input";
 import { useChildId } from "@/hooks/use-child-id";
 import {
@@ -55,6 +56,7 @@ import {
 } from "@/lib/api";
 import { EARLIEST_BIRTH_DATE } from "@/lib/date-bounds";
 import { formatDateRange, parseISODate, toISODate } from "@/lib/format";
+import { memoriesTour } from "@/lib/tour/screens/memories";
 
 /**
  * 07 기억 — 관찰 · 프로필 · 제안 피드백.
@@ -272,6 +274,7 @@ function MemoriesScreen() {
   const list = readListParams(searchParams);
 
   const [target, setTarget] = useState<MemoryTarget | null>(null);
+  const [hasRecords, setHasRecords] = useState(false);
 
   const base = `/child/${childId}/memories`;
   const tabs: TabItem[] = [
@@ -315,14 +318,19 @@ function MemoriesScreen() {
 
   return (
     <Screen className="gap-5" nav={<ChildNav active="memories" />}>
-      <header>
-        <PageTitle>기록과 기억</PageTitle>
-        <p className="text-body-sm text-ink-muted mt-2">
-          적어주신 말이 기록으로 쌓이고, 같은 것이 반복되면 기억이 돼요.
-        </p>
+      <header className="flex items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <PageTitle>기록과 기억</PageTitle>
+          <p className="text-body-sm text-ink-muted mt-2">
+            적어주신 말이 기록으로 쌓이고, 같은 것이 반복되면 기억이 돼요.
+          </p>
+        </div>
+        <TourHelpButton tour={memoriesTour} />
       </header>
 
-      <Tabs items={tabs} active={tab} label="기억 보기" />
+      <div data-tour="tabs">
+        <Tabs items={tabs} active={tab} label="기억 보기" />
+      </div>
 
       {/* 탭을 바꾸면 그 자리의 내용이 갈아 끼워진다 (디자인 시스템 §8 "교체"). 탭 표식은 색으로만 바뀐다. */}
       <Swap id={tab}>
@@ -334,6 +342,7 @@ function MemoriesScreen() {
             list={list}
             onFilter={setFilter}
             onOpen={(observation) => setTarget({ type: "observation", observation })}
+            onHasRecords={setHasRecords}
           />
         ) : null}
 
@@ -354,6 +363,9 @@ function MemoriesScreen() {
       </Swap>
 
       <MemoryDetailSheet childId={childId} target={target} onClose={() => setTarget(null)} />
+
+      {/* 🚨 기록이 1건 이상일 때만 저절로 뜬다 — 빈 목록을 설명하게 된다. 기록 탭에서만 센다. */}
+      <ScreenTour tour={memoriesTour} ready={tab === "observations" && hasRecords} />
     </Screen>
   );
 }
@@ -412,7 +424,7 @@ function SearchField({
   }
 
   return (
-    <form role="search" onSubmit={submit} className="min-w-0 flex-1">
+    <form role="search" data-tour="search" onSubmit={submit} className="min-w-0 flex-1">
       <TextInput
         ref={input}
         type="search"
@@ -496,6 +508,7 @@ function FilterSheet({
       <Button
         variant="secondary"
         className="shrink-0 self-stretch"
+        data-tour="filter"
         aria-haspopup="dialog"
         onClick={() => {
           setDraft(value);
@@ -671,6 +684,7 @@ function ObservationsTab({
   list,
   onFilter,
   onOpen,
+  onHasRecords,
 }: {
   childId: string;
   domain: ListDomain | null;
@@ -678,6 +692,8 @@ function ObservationsTab({
   list: ListParams;
   onFilter: (next: FilterChange) => void;
   onOpen: (observation: Observation) => void;
+  /** 목록을 받았고 한 건이라도 있는지 — 화면 투어가 뜰 때를 정한다. */
+  onHasRecords: (has: boolean) => void;
 }) {
   const router = useRouter();
   const filters = { domain, status, ...list };
@@ -710,6 +726,8 @@ function ObservationsTab({
     if (label) conditions.splice(1, 0, { key: "status", label, clear: { status: "all" } });
   }
   const filtered = conditions.length > 0 || list.q !== null;
+  const hasRecords = (observations.data?.items.length ?? 0) > 0 && !outOfRange;
+  useEffect(() => onHasRecords(hasRecords), [hasRecords, onHasRecords]);
 
   return (
     <section className="flex flex-col gap-3">

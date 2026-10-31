@@ -94,7 +94,12 @@ export function ChatThread({
           <ol className="flex flex-col gap-6">
             {entries.map((entry) =>
               entry.kind === "past" ? (
-                <li key={`past:${entry.turn.runId}`} className="flex flex-col gap-3">
+                // 화면 투어는 가장 최근 턴 하나 안에서만 짚는다 (`lib/tour/screens/chat.ts` 의 `within`).
+                <li
+                  key={`past:${entry.turn.runId}`}
+                  data-tour="turn"
+                  className="flex flex-col gap-3"
+                >
                   <PastTurnItem
                     childId={childId}
                     turn={entry.turn}
@@ -272,7 +277,7 @@ function LiveTurnItem({
   onPickOffer: (agents: Agent[]) => void;
 }) {
   return (
-    <li className="flex flex-col gap-3">
+    <li data-tour="turn" className="flex flex-col gap-3">
       <SentBubble text={turn.body.text} answer={turn.answering !== null} named={named} />
       {turn.send.status === "error" ? (
         <SendFailure childId={childId} turn={turn} error={turn.send.error} />
@@ -422,7 +427,7 @@ function groupByDay(entries: Entry[]): Array<[string, Entry[]]> {
 function SentBubble({ text, answer, named }: { text: string; answer: boolean; named: boolean }) {
   const bubble = (
     // 흰 글자 6.2:1 (§2-2 `brand` 행) — 캡션도 같은 흰색이다. 흐리게 낮추면 4.5:1 아래로 내려간다.
-    <div className="bg-brand rounded-card max-w-[85%] px-4 py-3 text-white">
+    <div data-tour="bubble" className="bg-brand rounded-card max-w-[85%] px-4 py-3 text-white">
       {answer ? <p className="text-caption mb-1">질문에 대한 답</p> : null}
       <p className="text-body break-words whitespace-pre-wrap">{text}</p>
     </div>

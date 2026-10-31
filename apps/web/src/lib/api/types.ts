@@ -474,7 +474,7 @@ export interface Guard {
   blocked_agents: Agent[];
   message: string;
   /**
-   * 아이를 안 담은 상대 경로다 (`settings/health-safety`). 지금 아이 경로 아래에 붙여 쓴다.
+   * 아이를 안 담은 상대 경로다 (`safety_unknown` 이면 `profile`). 지금 아이 경로 아래에 붙여 쓴다.
    * 서버는 칸을 늘 싣고, 보낼 곳이 없으면 `null` 이다.
    */
   deeplink: string | null;
@@ -1698,7 +1698,8 @@ export interface DevScreeningResponse {
  * 전부 선택이지만 **하나는 있어야 한다** — 빈 본문은 400 이다 (서버 PR #353). 화면은 아무것도
  * 안 적으면 보내지 않고, "건너뛰기" 는 요청 없이 홈으로 간다.
  *
- * 🚨 **키 · 몸무게는 서버가 소수 한 자리로 반올림해 저장한다.** 범위는 `lib/measurement.ts`.
+ * 🚨 **키 · 몸무게는 칸별 범위 밖이거나 소수 둘째 자리부터 적으면 400 이다** (#628).
+ *    범위는 `lib/measurement.ts`.
  *
  * ⚠️ **계약서 §05 의 본문과 달라졌다** (확정 전). 01 등록 화면을 "꼭 필요한 것" 만 남기고
  *    **고를 수 있는 것을 전부 이 화면으로 미루면서** 바뀌었다 —

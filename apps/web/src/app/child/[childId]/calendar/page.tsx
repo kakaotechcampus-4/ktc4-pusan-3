@@ -25,6 +25,8 @@ import {
   type CalendarMonthResponse,
 } from "@/lib/api";
 import { formatDay, parseISODate, toISODate, toMonthKey } from "@/lib/format";
+import { ScreenTour, TourHelpButton } from "@/components/screen-tour";
+import { calendarTour } from "@/lib/tour/screens/calendar";
 
 /**
  * 09 캘린더.
@@ -93,14 +95,17 @@ function CalendarScreen() {
 
   return (
     <Screen className="gap-6" nav={<ChildNav active="calendar" />}>
-      <header>
-        <PageTitle>캘린더</PageTitle>
-        <p className="text-body-sm text-ink-muted mt-2">
-          승인한 일정과 그날 남긴 기록이 날짜별로 모여요.
-        </p>
+      <header className="flex items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <PageTitle>캘린더</PageTitle>
+          <p className="text-body-sm text-ink-muted mt-2">
+            승인한 일정과 그날 남긴 기록이 날짜별로 모여요.
+          </p>
+        </div>
+        <TourHelpButton tour={calendarTour} />
       </header>
 
-      <section className="flex flex-col gap-3">
+      <section data-tour="grid" className="flex flex-col gap-3">
         {/* 🚨 보고 있는 달을 따로 들지 않는다. `month` 는 고른 날이 속한 달이고, 달을 넘기면
             그 달의 첫날이 골라진다 — 상태를 둘로 두면 뒤로가기로 날짜만 되돌아왔을 때
             **다른 달을 보면서 이 달의 하루를 여는** 어긋난 화면이 생긴다. 정본은 URL 하나다. */}
@@ -154,6 +159,8 @@ function CalendarScreen() {
       </section>
 
       <MemoryDetailSheet childId={childId} target={target} onClose={() => setTarget(null)} />
+
+      <ScreenTour tour={calendarTour} ready={monthQuery.isSuccess && dayQuery.isSuccess} />
     </Screen>
   );
 }

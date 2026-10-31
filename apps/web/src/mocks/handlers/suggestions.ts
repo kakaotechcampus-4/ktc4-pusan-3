@@ -230,7 +230,7 @@ export const suggestionHandlers = [
             code: "safety_unknown",
             blocked_agents: ["food"],
             message: "알레르기 정보가 없어 식사 제안을 안전하게 걸러낼 수 없어요",
-            deeplink: "settings/health-safety",
+            deeplink: "profile",
           },
         ],
         scarcity: null,
