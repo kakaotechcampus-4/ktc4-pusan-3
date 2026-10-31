@@ -443,10 +443,13 @@ class TestSafety:
         result = review(candidate(content="밀가루 점토 놀이", evidence=[]), safety=[entry])
         assert result.removed[0].hits == ("health_safety",)
 
-    def test_경고_문구는_초안과_같은_순서로_짝짓는다(self):
+    def test_경고_문구는_그_초안에_싣는다(self):
+        """추천 하나에 붙는 문구라 결과 안내(readouts)가 아니라 초안 칸이다 (#402)."""
         result = review(candidate(), candidate(content="구슬 꿰기", evidence=[DOC_PICK]), months=40)
         small_parts = hazard_terms().axes["small_parts"].warning_text
-        assert result.warnings == ((), (small_parts,))
+        assert [draft.warnings for draft in result.drafts] == [(), (small_parts,)]
+        assert result.drafts[1].to_payload()["warnings"] == [small_parts]
+        assert result.drafts[0].to_payload()["warnings"] == []
 
     def test_allergens_와_items_를_코드가_채운다(self):
         """#232 — 승인 때 알레르기 안내와 일정 준비물에 쓴다. 모델이 고르지 않는다."""
