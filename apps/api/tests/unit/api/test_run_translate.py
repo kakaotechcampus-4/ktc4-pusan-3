@@ -150,7 +150,7 @@ def test_guidance_goes_out_as_guidance():
     guidance = Guidance(
         code="safety_record",
         message="알레르기·건강 정보는 직접 입력해 주세요. 대신 등록해 드릴 수 없어요.",
-        deeplink="settings/health-safety",
+        deeplink="profile",
     )
 
     assert translate.to_sse(guidance) == (
@@ -158,7 +158,7 @@ def test_guidance_goes_out_as_guidance():
         {
             "code": "safety_record",
             "message": "알레르기·건강 정보는 직접 입력해 주세요. 대신 등록해 드릴 수 없어요.",
-            "deeplink": "settings/health-safety",
+            "deeplink": "profile",
         },
     )
 

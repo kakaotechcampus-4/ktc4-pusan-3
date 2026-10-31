@@ -5,7 +5,7 @@ import { ApiError, NetworkError, isApiError } from "@/lib/api/errors";
 import { initialRunState } from "@/hooks/use-run-stream";
 import { api } from "@/lib/api/client";
 import { newIdempotencyKey } from "@/lib/api/idempotency";
-import { toSeoulDateKey } from "@/lib/format";
+import { recordedDayOf } from "@/mocks/handlers/chat";
 import { submittedInput } from "@/mocks/handlers/runs";
 import { setScenario, type Scenario } from "@/mocks/scenario";
 import { useDraftStore } from "@/stores/draft";
@@ -367,7 +367,8 @@ describe("결과를 못 받은 줄을 채널이 지워진 뒤 다시 보낸다 (
 
       const recorded = turn(id);
       expect(runIdOf(id)).toBe(runId);
-      expect(recorded.recordedOn).toBe(toSeoulDateKey(new Date()));
+      // 서버가 알려 준 그날이다. 서울 날짜로 다시 만들면 머신 시간대로 날짜를 만드는 목과 KST 새벽 UTC CI 에서 하루 어긋난다 (#630).
+      expect(recorded.recordedOn).toBe(recordedDayOf(runId));
       expect(canRetry(recorded)).toBe(false);
       expect(isBusy(conversation())).toBe(false);
 

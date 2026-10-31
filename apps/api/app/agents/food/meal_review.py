@@ -4,8 +4,10 @@
   2. 사후 안전 필터  카탈로그 행으로 `filter_food_safety` 를 다시 건다. 걸린 후보는 거절이 아니라
                      풀에서 뺀다(`removed`) — 모델에게 사유를 돌려주지 않는다 (§5-2)
   3. reason 문장     수치 · 진단 · 처방 · 몸 상태 · 또래 비교를 막는다(`nutrient_wording`)
-  4. 근거 대조       이번 run 에서 조회하지 않은 근거 id 를 인용하면 후보를 거절한다
-  5. build()         6개월이 안 지난 아이 기록 근거 수로 `kind` 를 정한다.
+  4. 음식 언급       reason 이 등록 알레르기와 겹치거나 연령 규칙이 막는 음식을 말하면 거절한다
+                     (`check_foods`). 후보는 안전한데 이유에 "견과류가 들어가" 라고 쓰는 것을 막는다
+  5. 근거 대조       이번 run 에서 조회하지 않은 근거 id 를 인용하면 후보를 거절한다
+  6. build()         6개월이 안 지난 아이 기록 근거 수로 `kind` 를 정한다.
                      이름 · 재료는 카탈로그 행에서 온다. 일반 추천이면 고른 메뉴(레시피 카탈로그
                      행) 자체가 근거로 붙는다 — 문서 행이 없는 월령에도 근거 0행이 되지 않게(#442)
 
@@ -13,7 +15,7 @@
 사유는 코드로만 남긴다 — 메뉴 이름 · 근거 문장을 싣지 않는다(로그로 흘러간다).
 """
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
 from enum import StrEnum
@@ -23,6 +25,7 @@ from app.agents.common.evidence import RankedEvidence, cite, unseen
 from app.agents.common.refs import EvidenceCitation, Ref
 from app.agents.common.suggestion import SuggestionRejected, build
 from app.agents.food.context import MealPick
+from app.agents.food.food_check import mentions_blocked_food
 from app.agents.food.nutrient_wording import wording_problem
 from app.agents.food.readouts import GENERAL_REASON_TODDLER, GENERAL_REASON_WEANING, READOUTS
 from app.agents.food.result import ErrorCode
@@ -51,6 +54,7 @@ class RejectReason(StrEnum):
     UNKNOWN_MENU = "unknown_menu"
     DUPLICATE_MENU = "duplicate_menu"
     WORDING = "wording"
+    FOOD_MENTION = "food_mention"
     UNKNOWN_EVIDENCE = "unknown_evidence"
     BUILD = "build_rejected"
 
@@ -62,6 +66,12 @@ GUIDANCE: dict[RejectReason, str] = {
     RejectReason.WORDING: (
         "reason 에 수치 · 진단 · 처방 · 몸 상태 · 또래 비교를 쓰지 않는다. "
         "이 아이의 기록에서 고른 이유와 지금인 이유만 쓴다."
+    ),
+    # 막힌 음식 이름도 알레르기 이름도 싣지 않는다 — 사유가 로그와 모델 입력으로 흘러간다
+    RejectReason.FOOD_MENTION: (
+        "reason 에는 고른 메뉴와 아이 기록에서 고른 이유만 쓴다. "
+        "보호자가 요청에 쓴 알레르기 · 피할 음식 이름과 '알레르기를 고려해' 같은 말, "
+        "후보 목록에 없는 음식 이름은 쓰지 않는다."
     ),
     RejectReason.UNKNOWN_EVIDENCE: (
         "evidence 에는 search_food_memory · guide_weaning_stage 결과나 [예시] 에 있던 id 만 쓴다."
@@ -102,6 +112,10 @@ def review_candidates(
     `entries` 는 `build_gate` 가 run state 에 담은 health_safety 행이다 — 여기서 다시 읽지 않는다.
     `today` 는 `build()` 의 6개월 판정 기준일이다.
     """
+
+    def mentions_blocked(reason: str, allow: Sequence[str]) -> bool:
+        return mentions_blocked_food(reason, entries, stage=stage, months=months, allow=allow)
+
     rejections: list[Rejection] = []
     chosen: list[tuple[int, MealCandidate, MenuCatalogRow]] = []
     taken: set[str] = set()
@@ -128,7 +142,7 @@ def review_candidates(
     for index, candidate, row in chosen:
         if row.menu_key not in passed:
             continue
-        reason = _check(candidate, seen=seen, docs=docs)
+        reason = _check(candidate, seen=seen, docs=docs, mentions_blocked=mentions_blocked)
         if isinstance(reason, RejectReason):
             rejections.append(Rejection(index, reason))
             continue
@@ -172,13 +186,20 @@ def explain(rejections: Sequence[Rejection]) -> str:
 
 
 def _check(
-    candidate: MealCandidate, *, seen: Seen, docs: Docs
+    candidate: MealCandidate,
+    *,
+    seen: Seen,
+    docs: Docs,
+    mentions_blocked: Callable[[str, Sequence[str]], bool],
 ) -> tuple[EvidenceCitation, ...] | RejectReason:
-    """reason 문장 → 근거 대조 → 인용 만들기. 걸리면 사유를, 아니면 인용을 돌려준다."""
+    """reason 문장 → 음식 언급 → 근거 대조 → 인용 만들기. 걸리면 사유를, 아니면 인용을 돌려준다."""
     # "먹은 식사가 주어" 요구는 영양소 분석 요약에만 맞는 규칙이다 — 추천 이유에는 걸지 않는다
     problem = wording_problem(candidate.reason)
     if problem is not None and problem != "no_meal_subject":
         return RejectReason.WORDING
+
+    if mentions_blocked(candidate.reason, _avoided(candidate, seen)):
+        return RejectReason.FOOD_MENTION
 
     known: set[UUID] = {*seen, *docs}
     if unseen((pick.id for pick in candidate.evidence), known):
@@ -187,6 +208,21 @@ def _check(
     # 인용의 종류는 모델이 쓴 값이 아니라 조회 결과에서 채운다. 6개월 판정은 build() 가 한다
     found = [(pick, _lookup(seen, docs, pick)) for pick in candidate.evidence]
     return tuple(_cite(item, note=pick.note) for pick, item in found)
+
+
+def _avoided(candidate: MealCandidate, seen: Seen) -> tuple[str, ...]:
+    """후보가 인용한 기피 근거의 대상. 기피를 인용하면 `build()` 가 이유에 피한 것을 쓰라고
+    요구하므로, 그 음식은 막힌 음식이어도 이유에 써도 된다. 조회하지 않은 id 는 다음 검사가
+    거른다."""
+    avoided: list[str] = []
+    for pick in candidate.evidence:
+        try:
+            item = seen.get(UUID(pick.id))
+        except ValueError:
+            continue
+        if item is not None and item.is_avoidance:
+            avoided.append(item.label)
+    return tuple(avoided)
 
 
 def _lookup(seen: Seen, docs: Docs, pick: EvidenceRef) -> RankedEvidence | FoodDocRow:

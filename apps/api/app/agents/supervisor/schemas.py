@@ -24,9 +24,9 @@ logger = logging.getLogger(__name__)
 class SegmentKind(StrEnum):
     RECORD = "record"  # Memory 몫(저장·조회·수정·삭제 전부)
     REQUEST = "request"  # 도메인 Agent 요청
-    GUARDED = "guarded"  # 알레르기 등록 / 진단 문의 → 정해진 안내
+    GUARDED = "guarded"  # 알레르기·만성질환 / 진단 문의 / 키·몸무게 기록 → 정해진 안내
     OUT_OF_SCOPE = "out_of_scope"  # 구매·예약·기관 연락·대신 발송
-    UNCLEAR = "unclear"  # 무엇을 하라는지 알 수 없음
+    UNCLEAR = "unclear"  # 무엇을 하라는지 알 수 없음 · 아이가 실제로 한 일이 아님
 
 
 class DomainAgentName(StrEnum):
@@ -39,8 +39,12 @@ class DomainAgentName(StrEnum):
 
 
 class GuardReason(StrEnum):
-    SAFETY_RECORD = "safety_record"  # 알레르기·만성질환 등록·수정은 보호자 직접 입력
+    SAFETY_RECORD = "safety_record"  # 알레르기·만성질환을 알리는 말 · 등록 요청. 보호자 직접 입력
     DIAGNOSIS = "diagnosis"  # 진단·결핍 판정·치료식·약·영양제 추천은 하지 않음
+    GROWTH_RECORD = "growth_record"  # 키·몸무게는 채팅으로 저장하지 않고 성장 기록 화면으로 (#625)
+    HAZARD = (
+        "hazard"  # 음식이 아닌 위험 물질을 먹거나 마셨다는 말. 기록하지 않고 상태 확인 안내 (#626)
+    )
 
 
 class _Strict(BaseModel):
@@ -124,7 +128,9 @@ class Segment(_Strict):
         Field(
             description=(
                 "record(저장·조회·수정·삭제) / request(도메인 Agent 요청) / "
-                "guarded(알레르기 등록·진단 문의) / out_of_scope(구매·예약·대신 발송) / unclear"
+                "guarded(알레르기·만성질환·진단 문의·키 몸무게 기록·위험 물질 섭취) / "
+                "out_of_scope(구매·예약·대신 발송) / "
+                "unclear(알 수 없는 말 · 아이가 실제로 한 일이 아닌 말)"
             )
         ),
     ]
@@ -149,6 +155,7 @@ class Segment(_Strict):
             description=(
                 "agent=food 면 반드시 하나. meal_recommendation(뭘 먹일까·메뉴·간식) / "
                 "nutrient_analysis(영양 괜찮은지·영양소·과잉/부족) / "
+                "food_check(정해진 음식을 먹여도 되는지) / "
                 "daycare_meal(기관 급식이 실제로 바뀌었다는 말 — 대체식·결식)"
             ),
         ),
@@ -157,7 +164,9 @@ class Segment(_Strict):
         GuardReason | None,
         Field(
             default=None,
-            description="kind=guarded 면 반드시 하나. safety_record / diagnosis",
+            description=(
+                "kind=guarded 면 반드시 하나. safety_record / diagnosis / growth_record / hazard"
+            ),
         ),
     ]
 
