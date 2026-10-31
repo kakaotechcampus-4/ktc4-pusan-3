@@ -6,7 +6,8 @@ Activity 처럼 구획 상수를 이어 붙인다. tool 이 못 막는 것을 �
 구획 (고정 → 동적)
   고정  [역할] → [하지 않는 것] → 라벨 구획([교육 활동] | [생활 루틴] | [도서]) → [근거] → [출력]
   동적  [예시](교육 · 루틴만) → [월령] → 현재 시각
-- 아이 이름 · 건강정보 · 코드 문구(`authored_by="code"`)를 싣지 않는다.
+- 아이 이름 · 등록한 건강정보(`health_safety`) · 코드 문구(`authored_by="code"`)를 싣지 않는다.
+  같은 입력의 기록 조각은 보호자가 쓴 글 그대로 user 메시지에 간다(`request_message`).
 """
 
 from collections.abc import Sequence
@@ -14,6 +15,9 @@ from collections.abc import Sequence
 from app.agents.growth.context import GrowthContext
 from app.agents.growth.schemas.task import GrowthTaskType
 from app.agents.growth.tools.docs import DocHit
+
+# 같은 입력의 기록 조각을 요청과 가르는 머리말
+RECORD_HEADER = "[보호자가 같이 한 말]"
 
 _ROLE = """
 [역할]
@@ -37,6 +41,8 @@ _LEARNING = """
 - 후보 3개를 낸다. 모자라게 내지 않는다.
 - 단계(steps)는 1~4줄. 쓰는 물건(materials)을 빠짐없이 적는다 — 거르는 건 코드가 한다.
 - 관심사가 있으면 활동에 잇는다. 예시는 결을 보여주는 것이다. 그대로 베끼지 않는다.
+- 요청이나 [보호자가 같이 한 말]에 주제(국어 · 숫자 같은 낱말)가 있으면 search_education_memory 의
+  keywords 에 그 낱말을 넣는다.
 """.strip()
 
 _ROUTINE = """
@@ -46,7 +52,8 @@ _ROUTINE = """
 - 예절 · 습관이면 next_steps 는 코드가 고른 연습 · 대응 방법이다. 같은 방식으로 하나씩 옮긴다.
 - next_steps 가 없거나 기록이 없으면 items 를 비우고 category · subject 만 낸다.
   코드가 알맞은 안내나 질문을 낸다.
-- subject 는 보호자가 물은 행동 이름이다. next_steps 에 그 행동이 없으면 items 를 비운다.
+- subject 는 보호자가 물은 행동 이름이다. 요청에 행동이 없으면 [보호자가 같이 한 말]에서 찾는다.
+  next_steps 에 그 행동이 없으면 items 를 비운다.
 """.strip()
 
 _BOOK = """
@@ -80,6 +87,7 @@ _EVIDENCE = """
 [근거]
 - evidence 에는 조회 결과나 [예시]에 있던 id 만 쓴다. 지어내지 않는다. 근거마다 note 를 짧게 쓴다 —
   원문을 옮기지 않는다.
+- 근거 id 는 한 글자도 바꾸지 않고 그대로 복사한다. 옮겨 적다 한 글자라도 틀리면 그 후보는 거절된다.
 - 기억 근거가 없는 교육 활동은 가장 가까운 [예시] id 를 단다.
 - 생활 루틴은 그 루틴 기록을 근거로 단다.
 - 싫어한 기록을 근거로 달면 무엇을 피했는지 reason 에 쓴다. 그 기록의 subject(행동 이름)를
@@ -110,9 +118,18 @@ def build_system_prompt(
     return "\n\n".join([_ROLE, _DONT, label, _EVIDENCE, _OUTPUT, *dynamic])
 
 
-def request_message(request_texts: Sequence[str]) -> str:
+def request_message(request_texts: Sequence[str], record_texts: Sequence[str] = ()) -> str:
+    """user 메시지. 같은 입력의 기록 조각은 요청 다음에 따로 싣는다 — 요청과 섞이지 않게.
+
+    "아이가 국어 공부를 어려워하는데 어떻게 도와줘야 좋을까?" 는 요청 조각만으로는 무엇을
+    묻는지 모른다. 기록 조각이 없으면 요청만 간다.
+    """
     texts = [text for text in request_texts if text.strip()]
-    return "\n".join(texts) if texts else "아이와 해 볼 것을 추천해 줘."
+    message = "\n".join(texts) if texts else "아이와 해 볼 것을 추천해 줘."
+    records = [text for text in record_texts if text.strip()]
+    if not records:
+        return message
+    return f"{message}\n\n{RECORD_HEADER}\n" + "\n".join(records)
 
 
 def recall_message(

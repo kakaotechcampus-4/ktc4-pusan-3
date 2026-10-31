@@ -632,3 +632,107 @@ class TestStrategyPlan:
         item = strategy_item(REST, "긴장할 때 손톱을 물었어요", "쉬는 시간을 늘려요")
         result = await propose_routine_plan(ctx, plan("habit", "손톱 물어뜯기", [item]))
         assert not result.success and result.error["code"] == "CANDIDATE_REJECTED"
+
+
+async def handwash_ctx(
+    *, recorded: tuple[str, ...], request: tuple[str, ...], record: tuple[str, ...] = ()
+):
+    """손 씻기 기록이 있는 아이. 같은 run 에서 저장한 행동과 요청 · 기록 조각은 인자로 넣는다."""
+    ctx = await routine_ctx(observations=[routine_obs(1, "손 씻기", "full_assist")])
+    ctx.state.recorded_subjects = recorded
+    ctx.state.said_texts = (*request, *record)
+    return ctx
+
+
+def handwash_plan(ctx):
+    (picked,) = ctx.state.steps.values()
+    item = {
+        "step_id": str(picked.step.row.id),
+        "next_step": "비누 거품을 같이 내 봐요",
+        "how": "어른 손을 아이 손 위에 얹어요",
+        "evidence": [{"id": str(UUID(int=701)), "note": "어제 손 씻기를 어른이 다 해 줬어요"}],
+        "reason": "지금은 어른이 다 해 주고 있어서 한 칸만 올려요",
+    }
+    return plan("self_care", "손 씻기", [item])
+
+
+class TestRecordedBehavior:
+    """쪼개진 요청 — 같은 run 에서 보호자가 말한 행동이 요청 행동이다(모델이 적은 행동이 아니다)."""
+
+    async def test_기록한_행동과_다른_행동의_단계는_내지_않는다(self):
+        ctx = await handwash_ctx(recorded=("밥 먹기",), request=("어떻게 하면 좋을까?",))
+        result = await propose_routine_plan(ctx, handwash_plan(ctx))
+        assert result.success
+        assert ctx.state.suggestions == ()
+        assert "밥 먹기" in ctx.state.question and "손 씻기" not in ctx.state.question
+
+    async def test_요청에_다른_행동이_있으면_모델이_적은_행동을_믿는다(self):
+        ctx = await handwash_ctx(recorded=("양치",), request=("손 씻기는 어떻게 가르쳐?",))
+        await propose_routine_plan(ctx, handwash_plan(ctx))
+        assert len(ctx.state.suggestions) == 1
+
+    @pytest.mark.parametrize("request_text", ["손은 어떻게 씻겨?", "손을 혼자 씻게 하려면?"])
+    async def test_조사가_붙은_말로_물어도_모델이_적은_행동을_믿는다(self, request_text):
+        ctx = await handwash_ctx(recorded=("양치",), request=(request_text,))
+        await propose_routine_plan(ctx, handwash_plan(ctx))
+        assert len(ctx.state.suggestions) == 1
+
+    async def test_같이_한_기록_조각에_그_행동이_있어도_모델이_적은_행동을_믿는다(self):
+        ctx = await handwash_ctx(
+            recorded=("양치",), request=("어떻게 하지?",), record=("손을 안 씻으려고 해",)
+        )
+        await propose_routine_plan(ctx, handwash_plan(ctx))
+        assert len(ctx.state.suggestions) == 1
+
+    async def test_기록한_행동이_없으면_지금처럼_고른다(self):
+        ctx = await handwash_ctx(recorded=(), request=("어떻게 하면 좋을까?",))
+        await propose_routine_plan(ctx, handwash_plan(ctx))
+        assert len(ctx.state.suggestions) == 1
+
+
+def _miscopied(raw: str) -> str:
+    """모델이 id 를 옮겨 적다 한 글자를 잘못 적은 모양."""
+    return raw[:-1] + ("0" if raw[-1] != "0" else "1")
+
+
+class TestUsableIds:
+    """모르는 근거 id 를 내면 쓸 수 있는 id 를 알려 준다 — 같은 틀린 id 로 되풀이하지 않게."""
+
+    async def test_교육은_조회_결과와_예시의_id_를_알려_준다(self):
+        ctx = await memory_ctx()
+        pick = {**doc_pick(ctx), "id": _miscopied(doc_pick(ctx)["id"])}
+        result = await propose_learning_activity(ctx, cited(ctx, pick))
+        assert not result.success and result.error["code"] == "EVIDENCE_REQUIRED"
+        message = result.error["message"]
+        assert str(EDU.id) in message
+        assert all(str(doc_id) in message for doc_id in ctx.state.seen_docs)
+
+    async def test_틀린_id_는_알려_주는_목록에_없다(self):
+        ctx = await learning_ctx()
+        wrong = _miscopied(doc_pick(ctx)["id"])
+        result = await propose_learning_activity(
+            ctx, cited(ctx, {"id": wrong, "note": "이 나이 예시를 참고했어요"})
+        )
+        assert wrong not in result.error["message"].split("쓸 수 있는 id:")[1]
+
+    async def test_근거_id_가_아닌_이유로_거절하면_id_를_싣지_않는다(self):
+        ctx = await memory_ctx()
+        result = await propose_learning_activity(
+            ctx, cited(ctx, {"id": str(EDU.id), "note": "늘 숫자를 세요"})
+        )
+        assert not result.success and "tier 1" in result.error["message"]
+        assert "쓸 수 있는 id" not in result.error["message"]
+
+    async def test_루틴은_조회한_관찰의_id_만_알려_준다(self):
+        ctx = await routine_ctx(observations=[routine_obs(1, "양치", "full_assist")])
+        (picked,) = ctx.state.steps.values()
+        item = {
+            "step_id": str(picked.step.row.id),
+            "next_step": "칫솔을 같이 쥐고 닦아 봐요",
+            "how": "어른 손을 아이 손 위에 얹어요",
+            "evidence": [{"id": str(UUID(int=999)), "note": "어제 양치 기록"}],
+            "reason": "지금은 어른이 다 닦아 주고 있어서 한 칸만 올려요",
+        }
+        result = await propose_routine_plan(ctx, plan("self_care", "양치", [item]))
+        assert result.error["code"] == "EVIDENCE_REQUIRED"
+        assert str(UUID(int=701)) in result.error["message"]

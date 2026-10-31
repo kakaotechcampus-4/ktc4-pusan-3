@@ -56,6 +56,7 @@ from app.agents.growth.tools.routine import (
     pick_next_step,
 )
 from app.agents.growth.tools.triggers import trigger_tags
+from app.rules.growth_topic import expand_keywords
 from app.rules.staleness import is_stale
 from app.rules.term_match import normalize
 
@@ -97,8 +98,11 @@ def _related(a: str, b: str) -> bool:
 def _matching(
     ranked: Sequence[RankedEvidence], keywords: Sequence[str]
 ) -> tuple[RankedEvidence, ...]:
-    """keywords 중 하나라도 맞는 근거. 비면 전부다. 줄 세운 뒤에 거르므로 순서는 같다."""
-    wanted = [key for key in map(normalize, keywords) if key]
+    """keywords 중 하나라도 맞는 근거. 비면 전부다. 줄 세운 뒤에 거르므로 순서는 같다.
+
+    같은 영역의 낱말(`rules/growth_topic`)도 맞는다 — 요청은 "국어" 인데 기록은 "글 읽기" 다.
+    """
+    wanted = [key for key in map(normalize, expand_keywords(keywords)) if key]
     if not wanted:
         return tuple(ranked)
     return tuple(

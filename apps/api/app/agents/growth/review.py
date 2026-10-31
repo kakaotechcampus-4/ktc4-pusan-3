@@ -298,9 +298,16 @@ def error_code(rejections: Sequence[Rejection]) -> str:
     return ErrorCode.CANDIDATE_REJECTED
 
 
-def explain(rejections: Sequence[Rejection]) -> str:
-    """모델이 읽는 거절 설명. 후보 번호(1부터)와 고칠 방향만 싣는다."""
-    return " / ".join(f"{r.index + 1}번 후보: {GUIDANCE[r.reason]}" for r in rejections)
+def explain(rejections: Sequence[Rejection], usable: Sequence[UUID] = ()) -> str:
+    """모델이 읽는 거절 설명. 후보 번호(1부터)와 고칠 방향만 싣는다.
+
+    모르는 근거 id 때문에 거절했으면 `usable`(조회 결과 · [예시]의 id)을 한 번 덧붙인다. 알려 주지
+    않으면 모델이 옮겨 적다 한 글자 틀린 id 로 같은 후보를 되풀이해 왕복 상한까지 간다.
+    """
+    text = " / ".join(f"{r.index + 1}번 후보: {GUIDANCE[r.reason]}" for r in rejections)
+    if usable and any(r.reason is RejectReason.UNKNOWN_EVIDENCE for r in rejections):
+        text += " 쓸 수 있는 id: " + ", ".join(str(key) for key in usable)
+    return text
 
 
 def _evaluative(texts: Sequence[str], evidence: Sequence[EvidencePick]) -> bool:

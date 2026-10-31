@@ -63,6 +63,7 @@ from app.agents.growth.tools.closures import closure_key
 from app.agents.growth.tools.delta import asks_judgement, compute_growth_delta
 from app.agents.growth.tools.docs import DocHit, search_growth_doc
 from app.agents.growth.tools.memory import has_citable_memory
+from app.rules.growth_topic import request_topic
 from app.rules.term_match import normalize
 
 logger = logging.getLogger(__name__)
@@ -100,6 +101,9 @@ async def _run(
     task_type = task_type_of(task)
     gate = await build_gate(context, task_type)
     context.state.gate = gate
+    context.state.topic = request_topic(task.request_texts, task.record_texts)
+    context.state.said_texts = (*task.request_texts, *task.record_texts)
+    context.state.recorded_subjects = task.recorded_subjects
 
     key = closed_readout_key(task_type, gate)
     if key is None and task_type is GrowthTaskType.ROUTINE_COACHING:
@@ -133,6 +137,8 @@ async def _run(
             context.ports.docs,
             task_type=task_type,
             months=gate.stage.months,
+            # 요청 주제의 영역 행에서 고른다. 주제가 없으면 영역으로 거르지 않는다
+            areas=context.state.topic,
             # 같은 날 같은 아이는 같은 [예시] — 재호출도 같은 프롬프트다. 날이 바뀌면 바뀐다
             rotation=f"{context.child_id}|{context.today.isoformat()}",
             # 식품 아닌 알레르기의 대응표 낱말이 든 행은 싣지 않는다
@@ -149,7 +155,7 @@ async def _run(
     llm = client or LLMClient(role="growth")
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": build_system_prompt(context, task_type, examples)},
-        {"role": "user", "content": request_message(task.request_texts)},
+        {"role": "user", "content": request_message(task.request_texts, task.record_texts)},
     ]
     output = OUTPUT_TOOL[task_type]
     context.state.model_calls = 1
