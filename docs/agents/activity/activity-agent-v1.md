@@ -521,6 +521,7 @@ async def run(task, context, *, client=None):
                         ─ 0–17개월은 caregiver_role = together 만
                         ─ evidence id ⊂ rank_evidence 상위 10
                         ─ 후보의 날(day)이 바깥 활동이 어려운 날이면 setting=outdoor → 거절 (either 는 통과)
+                          · 실내 종류가 아닌 장소(공원 · 놀이터)가 붙으면 setting 과 상관없이 바깥으로 본다
                         ─ place_name ⊂ 이번 run 의 search_nearby_places 결과 → 아니면 거절
                           통과하면 코드가 content 앞에 붙인다 ("○○어린이공원에서 …")
 4. build()              근거 행 수로 kind · general 이면 reason 을 템플릿으로 덮어씀

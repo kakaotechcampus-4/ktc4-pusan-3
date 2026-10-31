@@ -37,8 +37,9 @@ from app.agents.activity.schemas.common import (
     EvidencePick,
 )
 from app.agents.activity.schemas.recommend import ActivityCandidate
-from app.agents.activity.store.ports import ActivityDocRow, PlaceRow
+from app.agents.activity.store.ports import ActivityDocRow, PlaceRow, PlaceSourceName
 from app.agents.activity.tools.filters import SafetyTerms, check_candidate
+from app.agents.activity.tools.outing import INDOOR_CATEGORIES
 from app.agents.common.evidence import RankedEvidence, cite
 from app.agents.common.reference import age_gates
 from app.agents.common.refs import EvidenceCitation, Ref
@@ -54,7 +55,7 @@ TOGETHER_ONLY_BELOW_MONTH = age_gates().together_only_below_month
 MIN_AVOIDED_LABEL = 2
 
 # 어린이놀이시설(키즈카페 · 육아종합지원센터) 장소의 출처. 이용료 확인 문구를 붙인다 (#516)
-FACILITY_SOURCE = "kids_play_facility"
+FACILITY_SOURCE: PlaceSourceName = "kids_play_facility"
 
 # 아이 기록 근거가 0행이면 build() 가 reason 을 이 문구로 덮어쓴다 (kind="general").
 # 화면이 일반 추천임을 표시하고 쌓인 기록 건수를 함께 보여준다 (루트 §2).
@@ -93,8 +94,8 @@ GUIDANCE: dict[RejectReason, str] = {
         "place_name 에는 search_nearby_places 결과에 있던 이름만 쓴다. 없으면 비운다."
     ),
     RejectReason.OUTDOOR_CLOSED: (
-        "그날(day)은 바깥 활동이 어려운 날이다. setting 이 indoor 나 either 인 활동으로 바꾸거나,"
-        " lookup_weather 로 바깥 활동이 되는 날을 찾아 day 를 고친다."
+        "그날(day)은 바깥 활동이 어려운 날이다. 공원 · 놀이터를 붙이지 않은 indoor 나 either"
+        " 활동으로 바꾸거나, lookup_weather 로 바깥 활동이 되는 날을 찾아 day 를 고친다."
     ),
     RejectReason.BUILD: (
         "아이 기록을 인용하지 않으면 [예시] 문서 행 id 를 하나 이상 인용한다. "
@@ -125,7 +126,7 @@ class Review:
     removed: tuple[Removal, ...] = ()
     # drafts 와 같은 순서로 짝지은 위험 용어 경고 문구 (상수). 경고가 없으면 빈 튜플
     warnings: tuple[tuple[str, ...], ...] = ()
-    # 통과한 바깥 활동(setting=outdoor)의 (정규화한 content, 날). 날씨 안내를 결과에 실제로 나간
+    # 통과한 바깥 활동(`_outdoors`)의 (정규화한 content, 날). 날씨 안내를 결과에 실제로 나간
     # 바깥 활동의 날로 고르는 데 쓴다 — 오늘 해가 졌어도 내일 공원은 나간다 (#515 리뷰)
     outdoor: frozenset[tuple[str, DayLabel]] = frozenset()
 
@@ -198,7 +199,7 @@ def review_candidates(
                 reason = RejectReason.BUILD
             else:
                 warnings.append(check.warnings)
-                if candidate.setting == ActivitySetting.OUTDOOR:
+                if _outdoors(candidate, place):
                     outdoor_drafts.add((normalize_activity(drafts[-1].content), candidate.day))
         if reason is not None:
             rejections.append(Rejection(index=index, reason=reason))
@@ -262,11 +263,11 @@ def _check(
         if place is None:
             return RejectReason.UNKNOWN_PLACE, (), None
 
-    # 그날 날씨 판정이 야외를 막았다(D8 · #377). either 는 실내에서도 되니 통과한다.
-    # 표에 없는 날은 판정하지 않은 날이라 막는다 — 맑다고 가정하지 않는다
+    # 그날 날씨 판정이 야외를 막았다(D8 · #377). 표에 없는 날은 판정하지 않은 날이라 막는다 —
+    # 맑다고 가정하지 않는다
     if (
         outdoor is not None
-        and candidate.setting == ActivitySetting.OUTDOOR
+        and _outdoors(candidate, place)
         and not outdoor.get(candidate.day, False)
     ):
         return RejectReason.OUTDOOR_CLOSED, (), None
@@ -284,6 +285,18 @@ def _check(
 
     citations = tuple(_cite(found, note=pick.note) for pick, found in resolved)
     return None, citations, place
+
+
+def _outdoors(candidate: ActivityCandidate, place: PlaceRow | None) -> bool:
+    """바깥에서 하는 후보인가. either 는 실내에서도 되니 바깥이 아니다.
+
+    붙은 장소가 실내 종류가 아니면(공원 · 실외 놀이터) setting 과 상관없이 바깥이다. 장소 조회는
+    그 조회의 `day` 로만 바깥 종류를 막아서, 오늘로 찾은 공원을 비 오는 내일 either 활동에 붙이면
+    여기서 막아야 한다 (#600 리뷰).
+    """
+    if candidate.setting == ActivitySetting.OUTDOOR:
+        return True
+    return place is not None and place.category not in INDOOR_CATEGORIES
 
 
 def _build(

@@ -250,7 +250,8 @@ async def search_nearby_places(
 
     nearest = sorted(rows, key=lambda row: row.distance_m)[:PLACE_TOP_K]
     for row in nearest:
-        context.state.seen_places[row.name] = row
+        # 이름이 같은 곳(체인 키즈카페 등)은 먼저 본 가까운 곳을 남긴다
+        context.state.seen_places.setdefault(row.name, row)
     return ok(
         "query",
         _PLACES,

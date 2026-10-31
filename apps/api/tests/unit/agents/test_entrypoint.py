@@ -637,7 +637,7 @@ async def test_Activity_는_Food_와_같은_생일_기준일_store_를_쓴다(
     assert await activity.ports.profile.birth_date(child_id=CHILD) == birth_date
     assert activity.now == food.now and activity.timezone is food.timezone
     assert isinstance(activity.ports.memory, StoreActivityMemory)
-    assert activity.ports.places is None  # 장소 어댑터 전이라 장소 조회가 닫힌다
+    assert activity.ports.places is None  # 장소 어댑터를 넘기지 않으면 장소 조회가 닫힌다
 
 
 async def test_좌표와_날씨_어댑터를_넘기면_Activity_가_받는다(
