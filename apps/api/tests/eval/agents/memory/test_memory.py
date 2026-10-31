@@ -955,7 +955,8 @@ def _task_for(case: EvalCase) -> MemoryTask:
     # 파이프라인은 순수 요청형에서 Memory 를 건너뛴다(SKIP_MEMORY_FOR_PURE_REQUEST).
     # 여기서는 그래도 Memory 를 돌린다 — 불렸을 때 무엇을 하는지가 이 eval 이 재는 것이고,
     # T19("알레르기 등록해줘")처럼 저장하면 안 되는 케이스가 회귀 감시 대상이다.
-    # 힌트는 어차피 비어 있어서 건너뛰기 전과 같은 입력이 된다
+    # 힌트는 어차피 비어 있어서 건너뛰기 전과 같은 입력이 된다. 단 unclear 가 요청 · 안내와 섞여
+    # 건너뛰는 입력(#642)은 unclear 정보가 빠진다 — 이 eval 에 그런 케이스는 없다
     return routing.memory_task or MemoryTask(raw_text=case.text)
 
 

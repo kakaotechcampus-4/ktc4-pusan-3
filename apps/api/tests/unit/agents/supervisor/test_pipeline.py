@@ -49,7 +49,7 @@ from app.agents.food.store import (
     MenuCatalogRow,
     in_memory_ports,
 )
-from app.agents.memory.agent import MAX_QUESTIONS, MAX_STEPS
+from app.agents.memory.agent import _UNCLEAR_REPLY, MAX_QUESTIONS, MAX_STEPS
 from app.agents.memory.context import AgentContext
 from app.agents.memory.schemas.task import PendingMemoryContext, WorkType
 from app.agents.memory.store import InMemoryStore
@@ -759,6 +759,30 @@ async def test_적지_않은_조각을_unclear_로_다시_나누면_도메인_Ag
     assert result.domain == ()
     assert result.failed is None
     assert await memory_context.store.query_observations(domain="food", child_id=CHILD) == []
+
+
+async def test_unclear_뿐인_입력의_모델_답변은_화면에_나가지_않는다(
+    memory_context: AgentContext, food_context: FoodContext, events: list[Any]
+) -> None:
+    text = "공룡에 대해 알려줘"
+    supervisor_llm = FakeLLM(_route_reply({"segments": [{"text": text, "kind": "unclear"}]}))
+    memory_llm = FakeLLM(_reply("공룡은 아주 오래전 살았던 파충류예요."))
+
+    await handle_input(
+        text,
+        memory_context,
+        {"food": food_context},
+        run_id=RUN_ID,
+        supervisor_client=supervisor_llm,
+        memory_client=memory_llm,
+        emit=events.append,
+        commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
+    )
+
+    assert [(note.text, note.kind) for note in _of(events, MemoryNote)] == [
+        (_UNCLEAR_REPLY, "message")
+    ]
 
 
 async def test_다시_나누기가_실패하면_처음_나눈_대로_간다(

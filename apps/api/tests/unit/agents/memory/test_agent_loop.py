@@ -17,9 +17,11 @@ from app.agents.common.datetime_rules import DateRange
 from app.agents.common.llm_client import LLMResponse
 from app.agents.memory.agent import (
     _FOUND_HEADER,
+    _UNCLEAR_REPLY,
     _UNSAVED_FALLBACK,
     MAX_FOUND,
     MAX_QUESTIONS,
+    MemoryReply,
     _claims_saved,
     run,
 )
@@ -1172,13 +1174,73 @@ _BLOCK = {
     "activity": "블록놀이",
 }
 _UNCLEAR_ONLY = MemoryTask(raw_text="딸기 맛있다.", unclear=("딸기 맛있다",), unclear_only=True)
-_UNCLEAR_PENDING = PendingMemoryContext(
-    "딸기 맛있다.", "아이가 딸기를 맛있다고 했나요?", WorkType.OBSERVE, whole=True, unclear=True
-)
 
 
 async def _foods(context: AgentContext) -> list[Any]:
     return await context.store.query_observations(domain="food", child_id=context.child_id)
+
+
+_GENERAL = "공룡은 아주 오래전 살았던 파충류예요."
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        _answer({"text": _GENERAL, "kind": "message"}),
+        _answer({"text": "아이의 음식 취향으로 기록할까요?", "kind": "question"}),
+        _reply(_GENERAL),
+        _answer({"text": "", "kind": "message"}),
+    ],
+    ids=["일반_답변", "되묻기", "평문", "빈_답"],
+)
+async def test_unclear_만_있으면_모델_말_대신_고정_문구를_낸다(
+    context: AgentContext, response: LLMResponse
+) -> None:
+    llm = FakeLLM(response)
+
+    result = await run(_UNCLEAR_ONLY.raw_text, context, client=llm, task=_UNCLEAR_ONLY)
+
+    assert result.reply == MemoryReply(_UNCLEAR_REPLY, "message")
+    assert result.pending is None
+    assert len(llm.seen) == 1  # 재확인 · 빈 턴 재질문을 타지 않는다
+
+
+async def test_unclear_만_있으면_조회하고_답해도_고정_문구를_낸다(context: AgentContext) -> None:
+    llm = FakeLLM(
+        _tools(_call("q1", "query_observation_food", {"date_from": "오늘"})),
+        _answer({"text": _GENERAL, "kind": "message"}),
+    )
+
+    result = await run(_UNCLEAR_ONLY.raw_text, context, client=llm, task=_UNCLEAR_ONLY)
+
+    assert result.reply == MemoryReply(_UNCLEAR_REPLY, "message")
+
+
+async def test_unclear_만_있으면_저장을_거절당한_뒤_모델을_다시_부르지_않는다(
+    context: AgentContext,
+) -> None:
+    # 거절 뒤 모델이 쓸 알림은 어차피 버려진다 — 한 번 더 불러 비용만 쓰지 않는다 (#642)
+    llm = FakeLLM(_tools(_call("c1", "create_observation_food", _STRAWBERRY)))
+
+    result = await run(_UNCLEAR_ONLY.raw_text, context, client=llm, task=_UNCLEAR_ONLY)
+
+    assert len(llm.seen) == 1
+    assert result.calls[0].result["error"]["code"] == ErrorCode.NOT_CHILD_RECORD
+    assert result.reply == MemoryReply(_UNCLEAR_REPLY, "message")
+    assert result.steps == 1
+
+
+async def test_unclear_만_있어도_일정_초안을_만들면_모델_말을_낸다(context: AgentContext) -> None:
+    event = {"title": "운동회", "starts_on": "모레", "starts_time": "오전 9시"}
+    said = "운동회 일정을 만들었어요. 승인하면 캘린더에 들어가요."
+    llm = FakeLLM(
+        _tools(_call("c1", "create_event", event)),
+        _answer({"text": said, "kind": "message"}),
+    )
+
+    result = await run(_UNCLEAR_ONLY.raw_text, context, client=llm, task=_UNCLEAR_ONLY)
+
+    assert result.final_message == said
 
 
 async def test_unclear_조각만_있으면_관찰_저장을_거절하고_이유를_돌려준다(
@@ -1197,21 +1259,10 @@ async def test_unclear_조각만_있으면_관찰_저장을_거절하고_이유�
     # 묻지 않는다: 물으면 "아니" 라는 답에도 저장한 적이 있다
     assert "묻지 않고" in result.calls[0].result["error"]["message"]
     assert result.pending is None
+    assert result.reply == MemoryReply(_UNCLEAR_REPLY, "message")
     assert await _foods(context) == []
     names = {spec["function"]["name"] for spec in llm.seen_tools[0]}
     assert "create_observation_food" in names  # 묶음은 그대로라 캐시도 그대로
-
-
-async def test_다시_확인해도_물으면_unclear_맥락을_남긴다(context: AgentContext) -> None:
-    # 안전망 — 다시 확인한 뒤에도 물으면 이어받기가 "아니" 를 받을 수 있게 맥락을 남긴다
-    ask = _answer({"text": "아이가 딸기를 맛있다고 했나요?", "kind": "question"})
-    llm = FakeLLM(ask, ask)
-
-    result = await run(_UNCLEAR_ONLY.raw_text, context, client=llm, task=_UNCLEAR_ONLY)
-
-    assert result.pending is not None
-    assert result.pending.hint_text == "딸기 맛있다"  # 원문이 아니라 unclear 조각
-    assert result.pending.unclear is True
 
 
 async def test_기록과_섞이면_unclear_조각만_거절하고_기록은_저장한다(context: AgentContext) -> None:
@@ -1247,34 +1298,6 @@ async def test_원문을_길게_적어도_기록_조각과_겹치면_막지_않�
     result = await run(task.raw_text, context, client=llm, task=task)
 
     assert result.calls[0].success is True
-
-
-async def test_unclear_맥락을_이어받으면_저장할_수_있다(context: AgentContext) -> None:
-    llm = FakeLLM(
-        _tools(_call("c1", "create_observation_food", _STRAWBERRY)),
-        _answer({"text": "딸기를 기록했어요.", "kind": "message", "leftover": False}),
-    )
-
-    result = await run("응 애가 그랬어", context, client=llm, continuation=_UNCLEAR_PENDING)
-
-    assert result.calls[0].success is True
-    assert len(await _foods(context)) == 1
-
-
-async def test_unclear_맥락의_이어받기는_아니라는_답을_받을_수_있게_안내한다(
-    context: AgentContext,
-) -> None:
-    no = {"text": "아이 기록이 아니라서 남기지 않았어요.", "kind": "message", "leftover": False}
-    llm = FakeLLM(_answer(no))
-
-    result = await run("아니", context, client=llm, continuation=_UNCLEAR_PENDING)
-
-    user = llm.seen[0][1]["content"]
-    assert "아이 얘기라고 답했을 때만" in user
-    assert "나누지 못한 원문 전체다" not in user
-    # 저장 없이 끝난 게 정상이라 재확인을 부르지 않는다. 재확인이 같은 질문을 다시 부를 수 있다
-    assert len(llm.seen) == 1
-    assert result.pending is None
 
 
 # ── 고쳐 말하기 (#483) — lookup_edit 조각은 찾아보고 나서 만든다 ─────────
@@ -1411,23 +1434,6 @@ async def test_관찰_조각에도_들어가는_원문은_조회를_강제하지
     result = await run(task.raw_text, context, client=llm, task=task)
 
     assert result.calls[0].success is True
-
-
-async def test_unclear_만_있는_입력의_되묻기는_한_번_다시_확인한다(context: AgentContext) -> None:
-    # "나 딸기 좋아해" 에 tool 없이 "아이 취향으로 기록할까요?" 라고 물었다 — 보호자 얘기를 아이에게
-    # 옮기는 질문이라 다시 확인하게 하고, 알림으로 바뀌면 되묻기 맥락을 남기지 않는다
-    task = MemoryTask(raw_text="나 딸기 좋아해.", unclear=("나 딸기 좋아해",), unclear_only=True)
-    llm = FakeLLM(
-        _answer({"text": "아이의 음식 취향으로 기록할까요?", "kind": "question"}),
-        _answer({"text": "아이 기록이 아니라서 저장하지 않았어요.", "kind": "message"}),
-    )
-
-    result = await run(task.raw_text, context, client=llm, task=task)
-
-    assert len(llm.seen) == 2
-    assert "보호자에게 보이지 않는 확인" in llm.seen[1][-1]["content"]
-    assert result.reply is not None and result.reply.kind == "message"
-    assert result.pending is None
 
 
 # ── 찾은 기록 이어받기 (#529) ───────────────────────────────────
