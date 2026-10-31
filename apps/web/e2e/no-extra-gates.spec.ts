@@ -1,4 +1,5 @@
 import { CHILD, EVALUATIVE, expect, expectNoGate, test, visibleText } from "./fixtures";
+import { browserDaysAgo } from "./time-zone";
 
 /**
  * 승인 게이트는 **딱 2곳**이다 — ㉠ 캘린더 쓰기 ㉡ 건강·알레르기 기록 확정 (최상위 CLAUDE.md §2 실행).
@@ -16,7 +17,9 @@ test("03 홈", async ({ page }) => {
 });
 
 test("09 캘린더 — 일정이 있는 날을 열어도", async ({ page }) => {
-  await page.goto(`/child/${CHILD}/calendar`);
+  // 목의 일정은 모레 하나다 (`confirmedEvent`). 오늘로 열면 월말 이틀은 그 일정이 다음 달이라 이 달에
+  // "일정 있음" 이 없다 — 일정이 있는 날로 연다 (#630).
+  await page.goto(`/child/${CHILD}/calendar?date=${browserDaysAgo(-2)}`);
   await page
     .getByRole("button", { name: /일정 있음/ })
     .first()

@@ -75,6 +75,7 @@ class _Affinities:
                 polarity=None,
                 strength=0.6,
                 last_observed_on=FOOD_NOW.date() - timedelta(days=3),
+                observed_days=3,
             )
         ]
 

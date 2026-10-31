@@ -480,7 +480,7 @@ export interface Guard {
   blocked_agents: Agent[];
   message: string;
   /**
-   * 아이를 안 담은 상대 경로다 (`settings/health-safety`). 지금 아이 경로 아래에 붙여 쓴다.
+   * 아이를 안 담은 상대 경로다 (`safety_unknown` 이면 `profile`). 지금 아이 경로 아래에 붙여 쓴다.
    * 서버는 칸을 늘 싣고, 보낼 곳이 없으면 `null` 이다.
    */
   deeplink: string | null;

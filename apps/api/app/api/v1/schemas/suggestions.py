@@ -169,7 +169,14 @@ class GuardOut(BaseModel):
     code: str
     blocked_agents: list[AgentValue]
     message: str
-    deeplink: str | None = None
+    deeplink: str | None = Field(
+        default=None,
+        description=(
+            "풀러 갈 곳 — 아이 id 를 안 담은 웹 상대 경로. "
+            "safety_unknown 이면 profile(11 아이 프로필), "
+            "갈 곳이 없는 guard(not_ready · unsupported)는 null"
+        ),
+    )
 
 
 class ScarcityQuestionOut(BaseModel):

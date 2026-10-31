@@ -59,7 +59,7 @@ import-linter 로 CI 에서 강제할 예정이다(#79 API CI 와 함께). 설�
 ### `app/agents/`
 - **허용**: domains, rules, providers, core
   — core 는 역할별 LLM 설정(`core/agent_config.py`), 일정 초안 payload 계약(`core/event_draft.py`),
-    날씨 원문 계약(`core/weather_raw.py`)을 쓴다
+    날씨 원문 계약(`core/weather_raw.py`), 화면 딥링크 값(`core/deeplinks.py` — api 의 05 guard · 동의 오류와 같이 쓴다)을 쓴다
 - **금지**: fastapi, infra 직접 접근
 - ⚠️ **내부 구조는 이시하(AI Owner)가 정한다.** 이 문서는 경계만 정하고 하위 폴더를
   미리 만들지 않았다 (`CLAUDE.md` §8 "기능 내부 기술 결정 → 해당 기능 Owner").
@@ -72,7 +72,10 @@ import-linter 로 CI 에서 강제할 예정이다(#79 API CI 와 함께). 설�
 - 그 계층의 이름·형태는 AI Owner 가 정한다.
 
 ### `app/api/`
-- **허용**: domains, core, agents 진입점, integrations
+- **허용**: domains, core, rules, agents 진입점, integrations
+  — rules 는 순수 함수 · 정책 상수라 화면에 내는 판정을 Agent 와 같은 값으로 맞출 때 쓴다
+    (기억 문구 `affinity_reason` · 홈 질문 `home_prompts` · 후보 기준 `profile.CANDIDATE_MIN_DAYS`).
+    판정을 라우터에 새로 쓰지 않고 rules 의 것을 부른다
 - **금지**: agents 내부 구현 직접 import
 - **agents 진입점은 `app/agents/entrypoint.py` 하나다.** `handle_input` 과 그 입출력·이벤트 타입을
   여기서 내보낸다. `pipeline` 이나 `memory`·`food` 하위 모듈을 직접 import 하지 않는다.

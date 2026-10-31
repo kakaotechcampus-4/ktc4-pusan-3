@@ -38,6 +38,7 @@ from app.agents.common.result import DomainAgentResult
 from app.agents.common.schemas.task import DomainTask
 from app.agents.food import agent as food_agent
 from app.agents.food.agent import run
+from app.agents.food.food_check import mentions_blocked_food
 from app.agents.food.meal_dates import resolve_meal_date
 from app.agents.food.meal_pool import PoolItem
 from app.agents.food.meal_review import GENERAL_REASON
@@ -129,7 +130,7 @@ class Ran:
 class Case:
     case_id: str
     text: str
-    task: str  # meal_recommendation | daycare_meal
+    task: str  # meal_recommendation | daycare_meal | food_check
     world: str
     expect: str
     judge: Callable[["Ran"], Verdict]
@@ -329,6 +330,45 @@ def j_t25(ran: Ran) -> Verdict:
         verdict.failures.append("딸기가 든 후보가 없다")
     if re.search(r"좋아하는 아이", "\n".join(d.reason for d in ran.result.suggestions)):
         verdict.failures.append("한 번의 말로 성향을 확정하는 표현")
+    return verdict
+
+
+def j_t49(ran: Ran) -> Verdict:
+    """견과류 알레르기 아이의 "견과류 들어간 메뉴 추천해줘" — 안내 한 줄, 후보 · reason 도 깨끗."""
+    verdict = merged(common(ran))
+    result, world = ran.result, ran.world
+    if (result.status, len(result.suggestions)) != ("completed", 3):
+        verdict.failures.append(
+            f"status={result.status} 추천 {len(result.suggestions)}개 (3개여야 한다)"
+        )
+    expected = READOUTS.render("meal.request_conflict", food="견과류", what="알레르기").body
+    if [readout.body for readout in result.readouts] != [expected]:
+        verdict.failures.append(f"요청 안내가 {expected!r} 하나여야 한다")
+    life = life_stage(world.birth, world.today)
+    for draft in result.suggestions:
+        if mentions_blocked_food(
+            draft.reason, _active_entries(world), stage=life.stage, months=life.months
+        ):
+            verdict.failures.append(f"reason 에 막힌 음식이 있다 ({draft.content})")
+    return verdict
+
+
+def j_t50(ran: Ran) -> Verdict:
+    """ "땅콩소스 먹여도 될까?" — 모델 0회, 견과류 알레르기와 겹친다는 답 + 땅콩 묶음 설명."""
+    verdict = merged(common(ran))
+    result = ran.result
+    if (result.status, result.model_calls) != ("completed", 0):
+        verdict.failures.append(
+            f"status={result.status} 모델 {result.model_calls}회 (completed · 0회)"
+        )
+    expected = [
+        READOUTS.render("check.conflict", food="땅콩소스", label="견과류 알레르기").body,
+        READOUTS.get("check.peanut_in_nuts").template,
+    ]
+    if [readout.body for readout in result.readouts] != expected:
+        verdict.failures.append(f"답이 기대와 다르다 {[r.body for r in result.readouts]}")
+    if result.suggestions:
+        verdict.failures.append("섭취 확인에 추천이 있다")
     return verdict
 
 
@@ -796,6 +836,22 @@ CASES: tuple[Case, ...] = (
         "C48",
         "딸기 후보 · 확정 표현 없음",
         j_t25,
+    ),
+    Case(
+        "T49/C48-nut",
+        "견과류 들어간 메뉴 추천해줘.",
+        M,
+        "C48-nut",
+        "견과류 후보 0 · 요청 안내 한 줄 · reason 에 막힌 음식 없음",
+        j_t49,
+    ),
+    Case(
+        "T50/C48-nut",
+        "땅콩소스 먹여도 될까?",
+        "food_check",
+        "C48-nut",
+        "모델 0회 · 견과류 알레르기와 겹침 + 땅콩 묶음 설명",
+        j_t50,
     ),
     Case("T27/C48-prev", "다른 메뉴로 추천해줘.", M, "C48-prev", "직전 3개와 겹침 0", j_prev),
     Case(

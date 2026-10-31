@@ -96,6 +96,7 @@ NUMBERS = AffinityRow(
     polarity=1,
     strength=0.9,
     last_observed_on=TODAY - timedelta(days=3),
+    observed_days=3,
 )
 
 
@@ -433,6 +434,7 @@ class TestRoutine:
             polarity=1,
             strength=0.9,
             last_observed_on=TODAY,
+            observed_days=3,
         )
         ctx = context(
             birth_for(30),

@@ -45,14 +45,21 @@ _RECORD = """
 - 기록인지 요청인지 애매하면 record 로 보낸다.
   요청문 안에 섞인 사실 진술도 따로 떼어 record 로 보낸다.
 - "~것 같아" 처럼 확신이 약한 보호자의 인상도 record 다. 확신 정도는 Memory 가 판단한다.
+  단 알레르기·만성질환이 있다는 말은 확신과 상관없이 guarded/safety_record 다.
 """.strip()
 
 _REQUEST = """
 [request — 도메인 Agent 요청]
 - agent 는 food · activity(놀이·여가) · growth(학습·발달) · health 중 하나다.
-- food로 보내는 건 세 가지다.
+- food로 보내는 건 네 가지다.
   meal_recommendation  뭘 먹일까 · 메뉴 · 간식 · 도시락 · 이유식 · 뭘 챙겨 먹이면 좋을까
   nutrient_analysis    영양이 괜찮은지 · 영양소 · 골고루 먹었는지 · 과잉/부족
+  food_check           정해진 음식을 먹여도 되는지 묻는 말 — "○○ 먹여도 돼?" · "○○ 먹어도 괜찮아?" ·
+                       "이거 먹여도 돼?". 음식이 정해져 있지 않으면("뭐 먹여도 돼?")
+                       meal_recommendation 이다.
+                       약 · 영양제는 food 가 아니라 guarded/diagnosis 다.
+                       무엇을 먹일지 없이 시점 · 횟수만 묻는 말("지금 또 먹여도 돼?")은
+                       약 이야기라 health 다
   daycare_meal         어린이집·유치원 급식이 실제로 바뀌었다는 말 — 대체식 · 결석.
                        기관 신호(어린이집·유치원·급식)가 있으면 이쪽, 없으면 record다.
                        "다음 주 월요일 어린이집 간식은 요거트 말고 바나나로 바꿔줘" 처럼
@@ -71,21 +78,56 @@ _REQUEST = """
 
 _GUARDED = """
 [guarded — 대신 정해진 안내가 나간다]
-- safety_record  알레르기·만성질환을 등록·수정해 달라는 요청. 보호자가 직접 입력해야 한다.
-- diagnosis      진단 · 영양 결핍 판정 · 치료식 · 약 · 영양제 문의.
+- 아래 넷에 꼭 맞을 때만 guarded 다. 약 · 병원 · 열 같은 낱말이 나왔다고 guarded 로 보내지 않는다.
+- safety_record  아이에게 알레르기·만성질환(아토피·천식 등)이 있다고 알리는 말,
+                 등록·수정해 달라는 요청.
+                 "있어" · "있는 것 같아" · "있나 봐" · "있대" 를 가리지 않는다.
+                 등록해 달라는 말이 없어도 이쪽이다. 보호자가 직접 입력해야 한다.
+                 병명 없이 증상을 말하거나("꽃가루 날리면 재채기해"),
+                 병명이 들어 있어도 한 일을 말하는 것("아토피 크림 발라 줬어")은 record 다.
+- diagnosis      진단 · 영양 결핍 판정 · 치료식 추천, 어떤 약 · 영양제를 얼마나 · 언제 먹일지
+                 묻는 말. 이미 일어난 일은 diagnosis 가 아니다. 보호자가 먹인 약은 record/observe,
+                 먹으면 안 되는 약을 먹었거나 한꺼번에 많이 먹은 일은 hazard 다.
+                 약을 싫어하는 아이를 어떻게 먹일지처럼 먹이는 습관을 묻는 말은
+                 request/growth/routine_coaching 이다.
+- growth_record  키 · 몸무게를 쟀다거나 얼마라는 말, 적어 달라는 말. 채팅으로는 저장하지 않는다.
+                 값이 터무니없어도 이쪽이다. 키 · 몸무게 값은 record 로 다시 보내지 않는다.
+                 얼마나 컸는지 · 잘 크고 있는지 묻는 말은 값이 들어 있어도
+                 request/growth/growth_review 다.
+- hazard         아이가 음식이 아닌 위험한 것(마약류 · 술 · 담배 · 세제 · 농약 · 약품 ·
+                 삼킨 물건)을 먹거나 마시거나 삼켰다는 말. 돌려 말해도("어른 음료를 한 모금")
+                 이쪽이다. 좋아했다는 말이 붙어도 record 로 나누지 않고 문장 전체를 hazard 로 둔다.
+                 약품은 아이 약이 아닌 약이나 정해진 양을 넘긴 약이다. 보호자가 먹인 약은 record 다.
+                 무알콜 음료와 이름 · 양념에만 술이 든 음식(술빵 · 맛술 넣은 요리)은
+                 술이 아니라 record 다.
 - 증상이나 관찰을 말한 부분은 잘라서 record 로 따로 보낸다. 안내 때문에 기록이 사라지면 안 된다.
+  hazard 는 예외다 — 그 문장은 기록하지 않는다.
 """.strip()
 
 _ELSE = """
 [out_of_scope · unclear]
-- out_of_scope  구매·예약·결제·기관 연락·대신 보내기.
-- unclear       무엇을 하라는지 알 수 없는 조각.
+- out_of_scope  보호자가 우리에게 시키는 구매·예약·결제·기관 연락·대신 보내기.
+- unclear       무엇을 하라는지 알 수 없거나, 아이가 실제로 한 일·겪은 일이 아닌 조각.
 - 보호자 자신의 얘기("나 오늘 너무 피곤해")는 아이 기록이 아니다.
   record 로 보내지 말고 unclear 로 둔다.
 - 누가 겪은 일인지 드러나지 않는 감상·평가("딸기 맛있다", "날씨 좋다")는
   말하는 보호자 자신의 감상이다. unclear 로 둔다.
-  아이가 주어로 드러나거나("우리 애 딸기 좋아해") 아이의 반응·말을 전하는 꼴
-  ("맛있어했어", "맛있어하더라", "맛있대", "맛있었대", "좋아하는 것 같아")이면 record 다.
+  아이가 주어로 드러나거나("우리 애 딸기 좋아해") 아이의 반응을 전하는 꼴
+  ("맛있어했어", "맛있어하더라", "좋아하는 것 같아")이면 record 다.
+- 설명·정의·번역·가정·농담은 일어난 일이 아니다. 아이가 주어여도 unclear 다.
+  "숨바꼭질은 숨어서 찾는 놀이야", "자전거를 배우면 좋아할 텐데",
+  "커서 우주비행사 되겠다 ㅋㅋ".
+  보호자가 정한 계획·예정("이번 주말부터 자전거를 가르치려고 해")은 가정이 아니라 record 다.
+- 아이가 한 말이 자기 경험·몸 상태·좋고 싫음·바람이면 record 다
+  ("맛있대", "맛있었대", "싫대", "넘어졌대", "공룡 책 읽어 달래").
+  말한 것 자체가 사건이어도 record 다. 첫 말·인사·사과·애정 표현이 여기다.
+  아이가 전해 준 일정·준비물은 보호자가 말한 일정과 같이 record/schedule 이다.
+- 아이가 남에게 전하라고 시킨 말과 역할놀이 대사는 말 속 내용이 일어난 일이 아니다. unclear 다.
+  단 전하라는 말에 든 아이 자신의 증상·몸 상태는 놓치면 안 되는 사실이라 record 다.
+  "전해", "말해" 가 있어도 보호자가 시킨 일이 아니라서 out_of_scope 가 아니다.
+- 무슨 놀이인지 드러난 역할놀이는 대사가 섞여도 나누지 않고 문장 전체를 record/observe 로 둔다.
+  대사는 Memory 가 저장하지 않는다.
+- 외국어·지식이 나와도 아이가 실제로 배우거나 해 본 일은 record 다.
 """.strip()
 
 _EXAMPLES = """
@@ -103,6 +145,13 @@ _EXAMPLES = """
   → record/observe "요즘 밥을 잘 안 먹는데" + request/food/nutrient_analysis "영양은 괜찮을까?"
 - "간식이랑 주말 나들이 추천해줘."
   → request/food/meal_recommendation "간식 추천해줘" + request/activity "주말 나들이 추천해줘"
+- "땅콩소스 먹여도 될까?" → request/food/food_check
+- "견과류 들어간 메뉴 추천해줘." → request/food/meal_recommendation
+- "땅콩버터 먹여도 돼? 안 되면 다른 간식 추천해줘."
+  → request/food/food_check "땅콩버터 먹여도 돼?"
+  + request/food/meal_recommendation "안 되면 다른 간식 추천해줘"
+- "해열제 더 먹여도 돼?" → guarded/diagnosis
+- "지금 또 먹여도 돼?" → request/health
 - "숫자 공부는 어떻게 시켜야 할까?" → request/growth/learning_suggestion
 - "농구 좋아하는데 뭐 하고 놀까" → request/activity
 - "농구 좋아하는데 관련된 책 있어?" → request/growth/book_suggestion
@@ -121,17 +170,40 @@ _EXAMPLES = """
 - "내일모레는 어린이집 빠져" → request/food/daycare_meal
 - "집에서 계란말이 먹였어" → record/observe (급식이 아니라 observation_food)
 - "땅콩 알레르기 등록해줘." → guarded/safety_record
+- "우리 애 땅콩 알레르기 있어" → guarded/safety_record
+- "꽃가루 알레르기가 있는 것 같아" → guarded/safety_record
+- "오늘 우유 마시고 입 주변이 빨개졌어. 우유 알레르기가 있나 봐."
+  → record/observe "오늘 우유 마시고 입 주변이 빨개졌어"
+  + guarded/safety_record "우유 알레르기가 있나 봐"
 - "어제부터 기침하는데 무슨 병일까?"
   → record/observe "어제부터 기침하는데" + guarded/diagnosis "무슨 병일까?"
+- "기침해서 기침약 먹였어" → record/observe 문장 전체 (먹인 약은 기록)
+- "기침약은 하루에 몇 번 먹여?" → guarded/diagnosis
+- "기침약을 혼자 꺼내서 반 통 마셨어" → guarded/hazard 문장 전체 (정해진 양을 넘긴 약)
+- "아빠 맥주를 몰래 마셨는데 맛있대" → guarded/hazard 문장 전체
+- "어제 몸무게 쟀더니 17kg 나왔어" → guarded/growth_record
+- "낮잠 두 시간 잤어. 키 100cm 적어 줘."
+  → record/observe "낮잠 두 시간 잤어" + guarded/growth_record "키 100cm 적어 줘"
+- "작년보다 키가 얼마나 컸어?" → request/growth/growth_review (성장 추이를 묻는 말)
 - "이 반찬 좀 주문해줘." → out_of_scope
 - "새 블록 세트 하나 주문해줘." → out_of_scope (블록이라도 activity 가 아니다)
+- "밤놀이는 일본어로 요아소비" → unclear (번역)
+- 아이가 "암호화 안 했다고 말해"라고 했어 → unclear (아이가 전한 지시)
+- 아이가 "오늘 친구랑 그네 탔어"라고 했어 → record/observe (자기 경험)
+- 아이가 "엄마한테 머리 아프다고 전해"라고 했어 → record/observe (아이의 증상)
+- 처음으로 "아빠"라고 불렀어 → record/observe (말이 곧 사건)
+- 친구한테 "고마워"라고 했어 → record/observe (말이 곧 사건)
+- 아이가 "금요일에 체험학습 간대"라고 했어 → record/schedule (아이가 전한 일정)
+- "공룡 책 읽어 달래" → record/observe (아이의 바람. 요청이 아니다)
+- "소꿉놀이하면서 '밥 먹어' 했어" → record/observe 문장 전체 (논 사실)
+- "일본어 노래 따라 불렀어" → record/observe (실제로 한 일)
 """.strip()
 
 _RETRY = """
 [다시 나눌 때]
 - "[다시 나누기]" 메시지가 오면 앞서 record 로 보낸 조각 중 기록되지 않은 것이 적혀 있다.
 - 그 조각이 답을 구하는 물음이면 request 로 바꾸고 agent 를 정한다.
-  기록할 사실이 맞으면 record 로 둔다.
+  기록할 사실이 맞으면 record 로 둔다. 둘 다 아니면 unclear 로 바꾼다.
 - 나머지 조각은 처음 나눌 때와 같은 기준으로 나눈다. route 는 발화 전체를 다시 담아 한 번 부른다.
 """.strip()
 

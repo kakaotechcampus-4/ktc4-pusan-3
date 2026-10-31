@@ -55,6 +55,7 @@ from app.api.v1.schemas.suggestions import (
     SuggestionsResponse,
     UpdateEventRequest,
 )
+from app.core import deeplinks
 from app.core.config import settings
 from app.domains.consent.repository import child_health_granted
 from app.domains.food import repository as food_repo
@@ -84,6 +85,9 @@ _GUARD_CODES = {"blocked": "safety_unknown", "unsupported": "unsupported"}
 # 안전이 아닌 이유로 닫힌 Growth(closed.* · doc.no_row). 화면은 `safety_unknown` 일 때만 알레르기
 # 등록 안내를 그린다 — 다른 이유에 그 코드를 쓰면 알레르기 안내가 잘못 뜬다
 _CLOSED_CODE = "closed"
+# guard 별 딥링크 — 알레르기를 몰라 막힌 것만 갈 곳이 있다. 04 safety_record 안내와 같은 곳이다.
+# 준비 중 · 지원하지 않는 주제는 어디서 무엇을 넣어도 풀리지 않아 null (#625)
+_GUARD_DEEPLINKS = {"safety_unknown": deeplinks.PROFILE}
 _NOT_READY = "아직 준비 중인 주제예요."
 _UNKNOWN_NOTE = "알레르기 기록에 없음"
 
@@ -413,11 +417,7 @@ async def create_suggestions(
         entrypoint.SUGGESTION_AGENTS if body.run_id is not None else entrypoint.FIRST_REQUEST_AGENTS
     )
     ready = [a for a in agents if a in startable]
-    guards = [
-        GuardOut(code="not_ready", blocked_agents=[a], message=_NOT_READY)
-        for a in agents
-        if a not in startable
-    ]
+    guards = [_guard_out("not_ready", a, _NOT_READY) for a in agents if a not in startable]
 
     # 판단 순서 (#249) — run_id 가 없으면 전부 처음 요청이다
     run_id = body.run_id
@@ -455,7 +455,7 @@ async def create_suggestions(
                 if recorded is not None:
                     # 다시 만들었더니 닫혔던 Agent — 같은 guard 를 다시 낸다 (#433 리뷰 ⑧)
                     code, message = recorded
-                    guards.append(GuardOut(code=code, blocked_agents=[a], message=message))
+                    guards.append(_guard_out(code, a, message))
                     continue
                 task = suggestion_retry.claim(run_id=run_id, agent=a, **owner)
                 if task == suggestion_retry.BUSY:
@@ -557,7 +557,7 @@ async def _suggestions_response(
     for agent, o in outcomes.items():
         code = _guard_code(o)
         if code is not None:
-            guards.append(GuardOut(code=code, blocked_agents=[agent], message=_guard_message(o)))
+            guards.append(_guard_out(code, agent, _guard_message(o)))
 
     # 이번에 보일 추천 행 — 재생 행 + 방금 저장한 행. 묶음 순서는 요청한 Agent 순서다
     fresh_ids = [_uuid.UUID(i) for o in run.outcomes for i in o.suggestion_ids]
@@ -721,6 +721,13 @@ def _guard_code(outcome: entrypoint.SuggestOutcome) -> str | None:
         if not any(r.kind == "blocked" for r in outcome.readouts):
             return _CLOSED_CODE
     return code
+
+
+def _guard_out(code: str, agent: str, message: str) -> GuardOut:
+    """막힌 Agent 하나의 guard. 다시 만든 뒤 재생하는 guard 도 같은 딥링크를 싣는다."""
+    return GuardOut(
+        code=code, blocked_agents=[agent], message=message, deeplink=_GUARD_DEEPLINKS.get(code)
+    )
 
 
 def _guard_message(outcome: entrypoint.SuggestOutcome) -> str:

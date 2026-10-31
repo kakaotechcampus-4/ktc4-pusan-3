@@ -297,6 +297,7 @@ def _affinities(
                 polarity=1,
                 strength=0.9,
                 last_observed_on=TODAY - timedelta(days=5),
+                observed_days=3,
             ),
         )
         for n, (domain, key) in enumerate(pairs, start=1)

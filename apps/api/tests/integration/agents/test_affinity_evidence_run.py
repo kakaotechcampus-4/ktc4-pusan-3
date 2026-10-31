@@ -24,6 +24,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import Range
 
 from app.agents import entrypoint
 from app.agents.activity.agent import run
@@ -37,6 +38,12 @@ from app.agents.memory.store import InMemoryStore
 from app.domains.child.models import ParentChildRelation
 from app.domains.child.repository import create_child
 from app.domains.identity.models import Parent
+from app.domains.memory.observation.models import (
+    ConfidenceSource,
+    ObservationActivity,
+    ObservationEducation,
+    ObservationFood,
+)
 from app.domains.memory.profile.agent_reader import DbAffinityReader
 from app.domains.memory.profile.models import MemoryDomain, ProfileAffinity, ProfileState
 from app.domains.safety.agent_reader import DbSafetyReader
@@ -159,6 +166,26 @@ async def profile(session):
     add(mine, MemoryDomain.EDUCATION, "숫자", ProfileState.CONFIRMED, days_ago=3)
     add(mine, MemoryDomain.EDUCATION, "색깔", ProfileState.CONFIRMED, days_ago=22)
     add(other, MemoryDomain.ACTIVITY, "기차", ProfileState.CONFIRMED, days_ago=3)
+    await session.flush()
+    # 묶인 active 관찰이 없는 관심은 어댑터가 싣지 않는다 (#626) — 관심마다 마지막 관찰 한 건을 둔다
+    for row in made.values():
+        model, fields = {
+            MemoryDomain.FOOD: (ObservationFood, {}),
+            MemoryDomain.ACTIVITY: (ObservationActivity, {"activity": row.merge_key}),
+            MemoryDomain.EDUCATION: (ObservationEducation, {"topic": row.merge_key}),
+        }[row.domain]
+        day = row.last_observed_on
+        session.add(
+            model(
+                child_id=row.child_id,
+                raw_text="원문",
+                subject=row.merge_key,
+                confidence_source=ConfidenceSource.PARENT_DIRECT,
+                observed_range=Range(day, day + timedelta(days=1), bounds="[)"),
+                affinity_id=row.id,
+                **fields,
+            )
+        )
     await session.flush()
     return SimpleNamespace(child=mine, other=other, rows=made)
 
