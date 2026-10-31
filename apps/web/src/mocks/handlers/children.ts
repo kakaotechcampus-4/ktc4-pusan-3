@@ -186,7 +186,8 @@ export const childrenHandlers = [
           if (value === null) return true;
           return (
             (name === "height_cm" || name === "weight_kg") &&
-            (typeof value !== "number" || !isMeasurementInRange(value))
+            (typeof value !== "number" ||
+              !isMeasurementInRange(name === "height_cm" ? "height" : "weight", value))
           );
         })
         .map(([name]) => name);

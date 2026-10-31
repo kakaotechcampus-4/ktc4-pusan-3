@@ -5,8 +5,9 @@
 이 tool 이 그 기록을 한 번에 읽어 **코드가 정한 점수**로 줄 세운다. 어떤 낱말로 어떻게 검색할지
 (두 주제를 엮을지, 책이 모자라면 다음 낱말로 다시 찾을지)는 점수를 본 모델이 정한다.
 
-점수 = Σ 출처 가중치 × 최근성 × 극성 계수. 같은 낱말(서로 포함하는 두 글자 이상 낱말은 한 주제)의
-기록은 점수를 더한다.
+점수 = Σ 출처 가중치 × 최근성 × 극성 계수. 같은 낱말의 기록은 점수를 더한다 — 묶음은 짧은 낱말부터
+만들고, 새 기록은 묶음의 첫 낱말을 포함할 때(두 글자 이상)만 그 묶음에 든다. "공룡 블록" 은 공룡에
+들지만 "블록" 을 공룡으로 끌고 오지 않는다.
 
     출처 가중치   확정 관심 3.0 · 쌓이는 관심 2.0 · 교육 기록 1.5 · 놀이 기록 1.0 · 생활 기록 1.0
     최근성       관찰은 1 / (1 + 경과일 / 7), 관심은 마지막 관찰일 기준 1 / (1 + 경과일 / 30)
@@ -136,6 +137,11 @@ def _related(a: str, b: str) -> bool:
     return len(short) >= MIN_MERGE_LENGTH and short in long
 
 
+def _by_score(group: list[_Scored]) -> list[_Scored]:
+    """묶음의 기록을 점수 기여가 큰 순서로. 묶음은 낱말 길이 순으로 쌓여서 다시 세운다."""
+    return sorted(group, key=lambda m: (-m.value, normalize(m.item.subject)))
+
+
 def score_themes(ranked: Sequence[RankedEvidence], *, today: date) -> tuple[Theme, ...]:
     """근거를 주제로 묶고 점수 순으로 `MAX_THEMES` 개까지."""
     scored: list[_Scored] = []
@@ -144,14 +150,16 @@ def score_themes(ranked: Sequence[RankedEvidence], *, today: date) -> tuple[Them
         value = _score(item, source, today)
         if value is not None and normalize(item.subject):
             scored.append(_Scored(item, source, value))
-    # 점수 큰 기록부터 주제를 만든다 — 같은 입력이면 늘 같은 묶음이 나온다
-    scored.sort(key=lambda s: (-s.value, normalize(s.item.subject)))
+    # 짧은 낱말부터 묶음을 만들고, 새 기록은 묶음의 첫 낱말하고만 비교한다. 묶음 안의 아무 낱말과
+    # 비교하면 "공룡 블록" 이 다리가 돼 "블록" 이 공룡 묶음에 붙고, 점수 순으로 첫 낱말을 정하면
+    # "공룡 블록" 이 첫 낱말일 때 같은 일이 생긴다. 같은 입력이면 늘 같은 묶음이 나온다
+    scored.sort(key=lambda s: (len(normalize(s.item.subject)), -s.value, normalize(s.item.subject)))
 
     groups: list[list[_Scored]] = []
     for entry in scored:
         key = normalize(entry.item.subject)
         for group in groups:
-            if any(_related(key, normalize(member.item.subject)) for member in group):
+            if _related(key, normalize(group[0].item.subject)):
                 group.append(entry)
                 break
         else:
@@ -167,7 +175,7 @@ def score_themes(ranked: Sequence[RankedEvidence], *, today: date) -> tuple[Them
                 SOURCE_LABEL[source]
                 for source in sorted({m.source for m in group}, key=lambda s: -SOURCE_WEIGHT[s])
             ),
-            evidence=tuple(m.item for m in group[:MAX_EVIDENCE_PER_THEME]),
+            evidence=tuple(m.item for m in _by_score(group)[:MAX_EVIDENCE_PER_THEME]),
         )
         for group in groups
     ]

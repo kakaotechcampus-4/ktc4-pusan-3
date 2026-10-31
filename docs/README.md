@@ -106,6 +106,7 @@
 - [web/kakao-login-v1.md](web/kakao-login-v1.md) — 로그인은 API 호출이 아니라 페이지 이동 · 셸은 인앱 인증 세션만 열고 토큰을 안 만짐 · 복귀는 `/auth/callback` 웹앱 공통 · 에러 문구는 프론트가 만듦 · 세션은 access 15분 메모리 + refresh HttpOnly 쿠키 (#465)
 - [web/mock-screens-v1.md](web/mock-screens-v1.md) — 목 서버 화면 확인 조회표 · 시나리오별 주소 · 저장소 둘(sessionStorage/localStorage) 초기화 스니펫 · 목의 refresh 표식
 - [web/event-draft-ui-v1.md](web/event-draft-ui-v1.md) — 초안이 생기는 시점 3곳(한 줄 입력 · 제안 · 사진)과 경로별 흐름 · 그릇은 셋 카드는 한 벌 · 초안 만들기는 게이트가 아니고 **제출만 게이트 ㉠**(`/events/{eid}/confirm` 에서 옮겨옴) · 건별 제출 · 못 읽은 일자를 화면이 안 채움 · 초안은 세션 스토리지에만 · 🔶 `photo-runs/{rid}/commit` 이 게이트인지는 미결
+- [web/screen-tour-v1.md](web/screen-tour-v1.md) — 화면 투어(#632) · 어느 화면에 자동으로 뜨나 · "봤음" 은 서버 별도 테이블(지금은 기기 저장) · 그만 봐도 본 것 · 비출 것이 없으면 단계를 뺀다 · 비춘 요소도 눌리지 않는다 · 화면이 바뀌면 같은 PR 에서 단계를 맞춘다
 - [web/screen-rules-v1.md](web/screen-rules-v1.md) — 04 · 11-1 · 11-2 가 시트가 아니라 라우트인 이유(웹뷰 뒤로가기) · `childId` 정본은 URL · 05 채택과 일정 만들기 분리 · 알레르기 확인이 채택보다 먼저 · 07 기록/기억 이름 · 교정 · 필터 · 08 은 게이트가 아님 · 사진 시트 두 단계 · 09 표식은 모양
 - [web/chat-run-v1.md](web/chat-run-v1.md) — 04 는 라우트 · 보내는 순간 넘어감 · 대화는 하루 하나 · `EventSource` 금지 · `partial` · `interrupted` · `guidance` 는 실패 아님 · `unconfirmed` 분리 · 되묻기는 `reply_to` · 키는 말풍선에
 - [web/components-v1.md](web/components-v1.md) — 컴포넌트 목록 · `Screen` 고정 바 · 네비는 가는 곳에만 · `IconButtonLink` · `ButtonLink` · 직접 만든 `Select` · 외부 UI 라이브러리 예외 셋 · 토큰 · 높이 · 서체 두 벌 · 호버 변형

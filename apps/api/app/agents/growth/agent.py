@@ -23,6 +23,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Callable, Collection
+from dataclasses import replace
 from typing import Any
 
 from app.agents.common.llm_client import LLMClient
@@ -40,7 +41,13 @@ from app.agents.common.tool_loop import run_tool_loop
 from app.agents.growth.context import GrowthContext, GrowthRunState, build_gate
 from app.agents.growth.gating import routine_mode
 from app.agents.growth.prompt import build_system_prompt, recall_message, request_message
-from app.agents.growth.readouts import CLOSED_BOOK_API, DOC_NO_ROW, READOUTS, RHYTHM_NO_ROW
+from app.agents.growth.readouts import (
+    ASK_NEED_LEVEL,
+    CLOSED_BOOK_API,
+    DOC_NO_ROW,
+    READOUTS,
+    RHYTHM_NO_ROW,
+)
 from app.agents.growth.registry import (
     OUTPUT_TOOL,
     closed_readout_key,
@@ -256,7 +263,12 @@ def _ended(task_type: GrowthTaskType, context: GrowthContext) -> DomainAgentResu
     """출력 tool 이 추천 없이 끝냈다 — 코드 문구(닫힘 · 단계 없음)나 되묻기 한 줄. 모델 1회."""
     state = context.state
     if state.question is not None:
-        return _result(task_type, "completed", question=state.question, model_calls=1)
+        # 질문만 내면 run 의 질문 자리를 다른 Agent 가 가졌을 때 카드가 빈다. 0개 안내 한 줄을 같이
+        # 실어 카드가 혼자 서게 한다 — 05 묶음 안내(`empty_notice`)도 이 문장이 된다 (#452 리뷰)
+        notice = replace(READOUTS.render(ASK_NEED_LEVEL), code="empty")
+        return _result(
+            task_type, "completed", readouts=(notice,), question=state.question, model_calls=1
+        )
     assert state.closing is not None
     state.closed_reason = state.closing
     return _result(task_type, "blocked", readouts=(READOUTS.render(state.closing),), model_calls=1)

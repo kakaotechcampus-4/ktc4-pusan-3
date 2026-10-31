@@ -38,6 +38,7 @@ def affinity(n: int, key: str, *, state="confirmed", days_ago=5, strength=0.9, p
         polarity=polarity,
         strength=strength,
         last_observed_on=TODAY - timedelta(days=days_ago),
+        observed_days=3,
     )
 
 
@@ -145,6 +146,28 @@ class TestMerge:
             education=[education(1, "물"), education(2, "물감")],
         )
         assert sorted(keywords(result)) == ["물", "물감"]
+
+    async def test_합친_낱말이_다리가_돼도_다른_두_주제는_따로_나온다(self):
+        _, result = await interests(
+            activities=[
+                activity(1, "공룡"),
+                activity(2, "공룡", days_ago=2),
+                activity(3, "공룡 블록"),
+                activity(4, "블록", days_ago=3),
+                activity(5, "블록", days_ago=4),
+            ],
+        )
+        assert sorted(keywords(result)) == ["공룡", "블록"]
+
+    async def test_합친_낱말이_가장_센_확정_관심이어도_두_주제로_나뉜다(self):
+        # 점수 순으로 첫 낱말을 정하면 "공룡 블록" 이 첫 낱말이 되어 공룡 · 블록이 다시 붙는다
+        _, result = await interests(
+            affinities=[("activity", affinity(1, "공룡 블록"))],
+            activities=[activity(1, "공룡", days_ago=3), activity(2, "블록", days_ago=3)],
+        )
+        assert sorted(keywords(result)) == ["공룡", "블록"]
+        dino = next(t for t in result.data["themes"] if t["keyword"] == "공룡")
+        assert dino["evidence"][0]["kind"] == "profile_affinity"  # 근거는 점수 기여가 큰 순서
 
 
 class TestSearchTerm:

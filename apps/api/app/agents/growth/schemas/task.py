@@ -21,9 +21,9 @@ class GrowthTaskType(StrEnum):
 RECOMMENDING_LABELS: frozenset[str] = frozenset(
     {"learning_suggestion", "routine_coaching", "book_suggestion"}
 )
-# run 당 추천 하나를 고를 때 다른 추천 라벨에 자리를 내주는 라벨(routing). 도서는 도서 포트 · 모델
-# 경로가 붙기 전에는 늘 닫혀서(closed.book_api), 앞에 오면 같이 온 열리는 요청까지 빠진다.
-# 도서만 왔으면 도서가 돈다. 도서가 열리면 이 표를 비울지 그때 정한다
+# run 당 추천 하나를 고를 때 다른 추천 라벨에 자리를 내주는 라벨(routing). 도서는 인증키가 없거나
+# 정보나루가 실패하면 닫히고(closed.book_api), 열려도 외부 호출에 하루 한도가 있다 — 앞에 와서
+# 같이 온 교육 · 루틴 요청을 빼면 닫힘 안내만 남을 수 있다. 도서만 왔으면 도서가 돈다
 YIELDING_LABELS: frozenset[str] = frozenset({"book_suggestion"})
 
 

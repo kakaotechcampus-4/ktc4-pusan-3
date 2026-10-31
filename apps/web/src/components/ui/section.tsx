@@ -8,6 +8,7 @@ import { CardFailed } from "@/components/ui/card";
 import { CountChip } from "@/components/ui/chip";
 import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
 import { IconButton } from "@/components/ui/icon-button";
+import { SkeletonText } from "@/components/ui/skeleton";
 
 /**
  * 화면 안의 **구역**. 11 아이 프로필이 원본이고 02 아이 정보도 같은 것을 쓴다.
@@ -44,6 +45,7 @@ export function Section({
   count,
   action,
   children,
+  "data-tour": tour,
 }: {
   title: string;
   /**
@@ -51,8 +53,11 @@ export function Section({
    * 뜻이 서는데 문장을 하나 더 깔면 그건 설명이 아니라 빈 줄이다 ("기본 정보" 가 그렇다).
    */
   description?: string;
-  /** 쌓인 건수. 아직 안 불러왔거나 0 이면 넘기지 않는다 (위 주석). */
-  count?: number;
+  /**
+   * 쌓인 건수. 0 이면 넘기지 않는다 (위 주석). 🚨 **아직 안 불러왔으면 `"pending"`** — 숫자 대신
+   * 건수가 들어올 자리를 잡아 둔다. 건수 칩은 라벨보다 키가 커서(28 · 18) 받은 뒤에 생기면 머리줄이 움직인다.
+   */
+  count?: number | "pending";
   /**
    * 이 구역에 **더하는** 행동. 🚨 **목록 아래 전체 폭 버튼으로 두지 않는다** — `secondary` 는
    * `surface` 바탕에 테두리라 목록 상자와 실루엣이 같고, 목록 바로 밑에 붙으면 둥근 사각형이
@@ -61,9 +66,11 @@ export function Section({
    */
   action?: ReactNode;
   children: ReactNode;
+  /** 화면 투어가 비추는 자리 (`components/screen-tour.tsx`). */
+  "data-tour"?: string;
 }) {
   return (
-    <section className="flex flex-col gap-3">
+    <section data-tour={tour} className="flex flex-col gap-3">
       <div>
         {/* 🚨 라벨 · 건수 · 행동이 한 줄이다. 건수를 라벨 아래로 내리지 않는다 —
             설명 줄과 같은 높이가 되면 "몇 건인지" 가 설명의 일부로 읽힌다.
@@ -75,7 +82,13 @@ export function Section({
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-baseline gap-2">
             <h2 className="text-label text-brand">{title}</h2>
-            {count !== undefined ? <CountChip>{count}건</CountChip> : null}
+            {count === "pending" ? (
+              <CountChip>
+                <SkeletonText size="caption" width="short" />
+              </CountChip>
+            ) : count !== undefined ? (
+              <CountChip>{count}건</CountChip>
+            ) : null}
           </div>
           {action}
         </div>
@@ -101,14 +114,26 @@ export function SectionAction({
   label,
   icon: Icon = Plus,
   onClick,
+  disabled,
+  "data-tour": tour,
 }: {
   label: string;
   /** 기본은 더하기다. 고치는 구역만 연필을 넘긴다 — 뜻이 다르면 모양도 달라야 한다. */
   icon?: LucideIcon;
   onClick: () => void;
+  /** 고칠 대상을 아직 받는 중일 때. 버튼이 뒤늦게 서면 머리줄이 커져서 자리는 지키고 누르지만 못 하게 한다. */
+  disabled?: boolean;
+  /** 화면 투어가 비추는 자리 (`components/screen-tour.tsx`). */
+  "data-tour"?: string;
 }) {
   return (
-    <IconButton label={label} onClick={onClick} className="-my-1">
+    <IconButton
+      label={label}
+      onClick={onClick}
+      disabled={disabled}
+      className="-my-1"
+      data-tour={tour}
+    >
       <Icon aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
     </IconButton>
   );

@@ -6,21 +6,26 @@ import { useState } from "react";
 
 import { AuthGate } from "@/components/auth-gate";
 import { ScreenTransition } from "@/components/route-transition";
-import { ChildIdentityCard, ChildIdentitySheet } from "@/components/child-identity";
+import {
+  ChildIdentityCard,
+  ChildIdentityCardSkeleton,
+  ChildIdentitySheet,
+} from "@/components/child-identity";
 import { ChildNav } from "@/components/child-nav";
-import { GrowthLatestCard } from "@/components/growth-log-list";
+import { GrowthLatestCard, GrowthLatestCardSkeleton } from "@/components/growth-log-list";
 import { GrowthSheet } from "@/components/growth-sheet";
 import { SafetySection } from "@/components/safety-section";
+import { ScreenTour, TourHelpButton } from "@/components/screen-tour";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
 import { Section, SectionAction, SectionError } from "@/components/ui/section";
-import { SkeletonBlock } from "@/components/ui/skeleton";
 import { phaseOf, Swap } from "@/components/ui/swap";
 import { useChildId } from "@/hooks/use-child-id";
 import { useSheetTarget } from "@/hooks/use-sheet-target";
 import { EARLIEST_BIRTH_DATE } from "@/lib/date-bounds";
 import { api, qk, type ChildProfile, type GrowthLog, type GrowthLogsResponse } from "@/lib/api";
+import { profileTour } from "@/lib/tour/screens/profile";
 
 export default function ChildProfilePage() {
   return (
@@ -50,11 +55,14 @@ function ChildProfileScreen() {
       {/* 🚨 **머리에 아이 이름·나이를 다시 세우지 않는다.** 바로 아래 "기본 정보" 구역의
           별명 입력과 생일 입력이 같은 값을 들고 있어서, 머리에 또 쓰면 한 화면에서 같은 사실이
           두 번 선다. 제목은 화면을 가리키고, 아이가 누구인지는 그 구역이 진다. */}
-      <header>
-        <PageTitle>아이 프로필</PageTitle>
-        <p className="text-body-sm text-ink-muted mt-2">
-          기본 정보와 키·몸무게, 알레르기를 여기서 관리해요.
-        </p>
+      <header className="flex items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <PageTitle>아이 프로필</PageTitle>
+          <p className="text-body-sm text-ink-muted mt-2">
+            기본 정보와 키·몸무게, 알레르기를 여기서 관리해요.
+          </p>
+        </div>
+        <TourHelpButton tour={profileTour} />
       </header>
 
       <IdentitySection childId={childId} query={profile} />
@@ -62,6 +70,8 @@ function ChildProfileScreen() {
       <GrowthSection childId={childId} query={growth} />
 
       <SafetySection childId={childId} />
+
+      <ScreenTour tour={profileTour} ready={profile.isSuccess && growth.isSuccess} />
     </Screen>
   );
 }
@@ -82,18 +92,21 @@ function IdentitySection({
 
   return (
     <Section
+      data-tour="identity"
       title="기본 정보"
       // 🚨 **설명 줄을 두지 않는다.** "아이를 부르는 말과 생일이에요" 는 바로 아래 카드가
       //    별명 · 생일 · 성별을 글자로 다 보여주는 것을 한 번 더 말할 뿐이었다 —
       //    같은 화면에서 같은 사실이 두 번 서는 자리다 (머리의 아이 이름을 뺀 것과 같은 이유).
       // 🚨 고치는 것은 드문 일이라 **행동으로** 둔다 — 입력칸을 늘 펼쳐 두지 않는다
       //    (`ChildIdentityCard` 머리말). 다른 두 구역과 같은 머리줄 문법이다.
+      // 🚨 받는 동안에도 자리는 지킨다 (누르지만 못 한다) — 받은 뒤에 서면 머리줄이 커져 아래가 밀린다 (CLS).
       action={
-        query.data ? (
+        query.data || query.isPending ? (
           <SectionAction
             label="기본 정보 고치기"
             icon={Pencil}
             onClick={() => editing.show(true)}
+            disabled={!query.data}
           />
         ) : undefined
       }
@@ -101,7 +114,7 @@ function IdentitySection({
       {/* 스켈레톤 → 내용은 같은 자리의 교체다 (디자인 시스템 §8). */}
       <Swap id={phaseOf(query)}>
         {query.isPending ? (
-          <SkeletonBlock label="아이 정보를 불러오는 중" />
+          <ChildIdentityCardSkeleton />
         ) : query.isError ? (
           <SectionError what="아이 정보를 불러오지 못했어요" onRetry={() => void query.refetch()} />
         ) : (
@@ -160,11 +173,12 @@ function GrowthSection({
 
   return (
     <Section
+      data-tour="growth"
       title="키 · 몸무게"
       description="가장 최근에 잰 것만 보여줘요. 눌러서 지난 기록과 변화를 볼 수 있어요."
-      // 🚨 불러오기 전과 0 건일 때는 넘기지 않는다 — 앞은 "아직 모름" 이라 0 을 그리면
-      //    거짓말이고, 뒤는 바로 아래 `EmptyState` 가 같은 숫자를 이미 말한다.
-      count={logs.length > 0 ? logs.length : undefined}
+      // 🚨 불러오기 전에는 숫자 대신 자리만(`"pending"`), 0 건이면 넘기지 않는다 — 앞은 "아직 모름" 이라
+      //    0 을 그리면 거짓말이고, 뒤는 바로 아래 `EmptyState` 가 같은 숫자를 이미 말한다.
+      count={query.isPending ? "pending" : logs.length > 0 ? logs.length : undefined}
       action={
         // 🚨 승인 게이트가 아니다 — 잘못 적으면 그 줄을 지우면 된다 (최상위 §2).
         <SectionAction label="키·몸무게 새로 적기" onClick={() => setAdding(true)} />
@@ -172,7 +186,7 @@ function GrowthSection({
     >
       <Swap id={phaseOf(query)}>
         {query.isPending ? (
-          <SkeletonBlock label="측정 기록을 불러오는 중" />
+          <GrowthLatestCardSkeleton />
         ) : query.isError ? (
           <SectionError what="측정 기록을 불러오지 못했어요" onRetry={() => void query.refetch()} />
         ) : latest === null ? (

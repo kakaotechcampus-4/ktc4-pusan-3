@@ -6,13 +6,15 @@
 모델에게 보이지 않는 코드 tool 이다 (docs/agents/shared/Tool_공통.md §4).
 
     티어 1  confirmed  · polarity ∈ {+1, −1} · archived 제외
-    티어 2  candidate  · polarity ∈ {+1, −1} · strength ≥ 임계
+    티어 2  candidate  · polarity ∈ {+1, −1} · strength ≥ 임계 · 묶인 active 관찰이 2일 이상
+            (같은 날 여러 건은 하루 — 승격 O 와 같다)
     티어 3  최근 14일 관찰 (polarity 무관)
     ── 전부 0행 ──  호출부가 kind="general"
 
 **감쇠는 여기서 하지 않는다.** `profile_affinity` 는 Curator(백엔드 배치)가 관찰을 승격해
 만들고, 오래된 관심은 Curator 가 `strength` 를 내리거나 `archived` 로 바꿔 이미 반영한다.
 Agent 는 그 결과를 읽기만 한다 — 유예일을 여기서 다시 세면 값이 두 벌이 되고 한쪽만 갱신된다.
+시간 경과 archived 는 기억 다리가 그날 기준으로 맞춰 넘긴다.
 
 기피(−1)는 제외 필터가 아니라 근거다. "브로콜리를 싫어해서 이렇게 골랐어요"가 되어야 한다.
 후보에서 지우는 것은 안전 필터의 일이고 이 함수는 순위만 매긴다.
@@ -29,6 +31,7 @@ from typing import Literal
 from uuid import UUID
 
 from app.agents.common.refs import ChildRecordKind, EvidenceCitation, Ref
+from app.rules.profile import CANDIDATE_MIN_DAYS
 
 AffinityState = Literal["candidate", "confirmed", "archived"]
 
@@ -77,6 +80,9 @@ class AffinityRow:
     polarity: int | None  # -1 기피 · +1 선호 · None 은 아직 모름
     strength: float
     last_observed_on: date
+    # 묶인 active 관찰이 있는 서로 다른 날 수 — 승격 O 처럼 같은 날 여러 건은 하루다.
+    # 기본값을 두지 않는다 — 포트가 빠뜨리면 관찰 한 건짜리 candidate 가 조용히 근거가 된다
+    observed_days: int
 
 
 @dataclass(frozen=True)
@@ -135,7 +141,8 @@ def rank_evidence(
             continue
         if row.state == "confirmed":
             tier: Literal[1, 2, 3] = 1
-        elif row.strength >= strength_threshold:
+        elif row.strength >= strength_threshold and row.observed_days >= CANDIDATE_MIN_DAYS:
+            # 하루치 관찰로 생긴 candidate 는 근거가 아니다 (#626) — 티어 3 이 그 관찰을 본다
             tier = 2
         else:
             continue

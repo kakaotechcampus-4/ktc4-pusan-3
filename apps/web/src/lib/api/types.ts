@@ -92,7 +92,6 @@ interface ObservationBase {
   observed_label?: string;
   /** 적은 보호자. 서버는 별명이 없거나 탈퇴해 행이 없으면 `null` 로 보낸다. */
   source_writer?: { parent_id: string; nickname: string } | null;
-  source_notice_id?: string | null;
   created_at?: string;
 }
 
@@ -498,8 +497,11 @@ export interface Guard {
   code: "safety_unknown" | (string & {});
   blocked_agents: Agent[];
   message: string;
-  /** 아이를 안 담은 상대 경로다 (`settings/health-safety`). 지금 아이 경로 아래에 붙여 쓴다. */
-  deeplink?: string;
+  /**
+   * 아이를 안 담은 상대 경로다 (`safety_unknown` 이면 `profile`). 지금 아이 경로 아래에 붙여 쓴다.
+   * 서버는 칸을 늘 싣고, 보낼 곳이 없으면 `null` 이다.
+   */
+  deeplink: string | null;
 }
 
 /**
@@ -680,8 +682,12 @@ export interface EventDraft {
   /** 🚨 `create` 는 언제나 `null` 이다. */
   event_id: string | null;
   event: EventDraftFields;
-  /** 🚨 `create` 는 `null`. `update` 면 준비물까지 포함한 원본 전체다. */
-  before: EventDraftBefore | null;
+  /**
+   * 🚨 `create` 는 `null`. `update` 면 준비물까지 포함한 원본 전체다.
+   * 🚨 **키가 아예 없을 수 있다** — `POST /suggestions/event-drafts` 는 create 초안만 내서 이 칸을 싣지 않는다.
+   *    `=== null` 로 가르지 말고 값이 있는지로 가른다 (`event-draft-card.tsx`).
+   */
+  before?: EventDraftBefore | null;
   /**
    * 🚨 **제출 시점의 최종 목록이다.** 항목별 op 가 없어서, 배열에서 빠진 `item_id` 가
    *    삭제를 표현하는 유일한 방법이다 (#122 확정).
@@ -888,19 +894,48 @@ export interface UpdateHealthSafetyResponse {
  *    "한 번의 관찰을 성향으로 확정하지 않는다"(CLAUDE.md §2)가 화면에서 사라진다.
  */
 
-/** `GET /children/{cid}/observations`. `Page<T>` 와 달리 `total` 이 함께 온다. */
-export interface ObservationsResponse {
-  items: Observation[];
-  next_cursor: string | null;
+/**
+ * 번호 쪽 목록이 같이 싣는 네 칸 (#584). 기록과 기억 목록이 같은 모양이다.
+ *
+ * 🚨 **`page` 가 `total_pages` 보다 크면 오류가 아니라 빈 목록이다.** 고치기로 건수가 줄어 마지막
+ *    쪽이 사라질 수 있어서, 화면은 받은 `total_pages` 로 다시 맞춘다.
+ */
+export interface NumberedPage {
   /** 필터를 걸기 전 전체가 아니라 **그 필터의** 건수다. 화면에 그대로 보여준다. */
   total: number;
+  /** 요청한 쪽 번호 (1부터). */
+  page: number;
+  size: number;
+  /** `ceil(total / size)`. 0건이면 0 이다. */
+  total_pages: number;
+}
+
+/** `GET /children/{cid}/observations` — `observed_to` 최신순, 번호 쪽으로 나눈다 (#584). */
+export interface ObservationsResponse extends NumberedPage {
+  items: Observation[];
+}
+
+/**
+ * 기록과 기억 목록이 같이 받는 쿼리 (#584). 🚨 **서버가 검증한다** — 범위 밖 `page`·`size`, 100자를
+ * 넘는 `q`, `date_from > date_to` 는 400 `validation_failed` 다. 화면은 그런 값을 만들지 않는다.
+ */
+export interface ListQuery {
+  /** 1부터. 서버 상한은 10,000 이다. */
+  page?: number;
+  /** 1~100. 화면은 보내지 않고 서버 기본(20)을 쓴다. */
+  size?: number;
+  /** `YYYY-MM-DD`, 그날 포함. 🚨 기록은 관찰 기간이 겹치면, 기억은 마지막 기록 날짜가 범위 안이면 든다. */
+  date_from?: string;
+  date_to?: string;
+  /** 부분 일치. 기록은 원문 · 주제, 기억은 이름(띄어쓰기 무시)에서 찾는다. 100자까지. */
+  q?: string;
 }
 
 /**
  * 관찰 목록 필터. `?domain=` 생략 시 건강을 뺀 4개 테이블을 observed_to DESC 로 병합한다.
  * 🚨 `growth` 는 education 과 routine 두 테이블이다. `health` 는 첫 배포 범위 밖이라 늘 빈 목록이다 (#259).
  */
-export interface ObservationFilters {
+export interface ObservationFilters extends ListQuery {
   domain?: Agent;
   /** 고른 상태만 (#266). 주지 않으면 deleted 를 뺀 세 상태 모두다. `total` 도 이 기준으로 센다. */
   status?: ObservationBase["status"];
@@ -920,9 +955,11 @@ export interface ObservationDetailResponse {
 /**
  * `GET /children/{cid}/affinities` — 관심·선호는 **한 배열**로 내려온다.
  * 좋아함/싫어함은 별도 배열이 아니라 `polarity` 로 구분한다.
+ *
+ * 🚨 **쪽 네 칸(`NumberedPage`)은 `affinities` 기준이다** (#584). `safety` 는 쪽으로 나누지 않고 세지도 않는다.
  */
-export interface AffinitiesResponse {
-  /** 기본 `state != 'archived'`. */
+export interface AffinitiesResponse extends NumberedPage {
+  /** 기본 `state != 'archived'`. 마지막 기록이 최근인 것이 앞이다. */
   affinities: Affinity[];
   /** 지워지지 않은 전부. 🚨 감쇠가 없다 — 보호자만 지울 수 있다. */
   safety: HealthSafety[];
@@ -957,6 +994,10 @@ export interface CorrectionResponse {
 /** `PATCH /children/{cid}/suggestions/{sid}/feedback`. 🚨 교정(`CorrectionVerdict`)과 다른 축이다. */
 export const SUGGESTION_FEEDBACKS = ["child_liked", "child_disliked", "not_acted"] as const;
 export type SuggestionFeedback = (typeof SUGGESTION_FEEDBACKS)[number];
+
+export interface SuggestionFeedbackRequest {
+  feedback: SuggestionFeedback;
+}
 
 /**
  * 🚨 `memory_changed` 는 **항상 false** 다 (계약서 §08). 피드백은 제안 가중치만 바꾸고
@@ -995,12 +1036,22 @@ export type ReceivedSuggestion = Suggestion | ReceivedGeneralSuggestion;
  * 개인화와 **채택한 일반 추천**이 같이 온다 (#509). 🚨 둘은 `kind` 로 갈린다 — 일반 추천은
  *    아이 기록 근거가 없어서 개인화로 집계되면 안 된다 (CLAUDE.md §2).
  * 기본 목록은 `draft` 를 뺀다 — 05 에서 고르지 않은 일반 추천은 여기 오지 않는다.
- * 계약은 `docs/api/suggestions-v1.md` §7 (#545).
- * 커서 페이징이다 (`?cursor=&limit=`, 기본 20건). `next_cursor` 가 `null` 이면 마지막 장이다.
+ * 계약은 `docs/api/suggestions-v1.md` §7 (#545 · #592).
+ * 기록 · 기억 목록과 같은 번호 쪽이다 (`?page=&size=`, 기본 20건). `total` 은 `rated` 를 건 **뒤의** 건수다.
  */
-export interface SuggestionListResponse {
+export interface SuggestionListResponse extends NumberedPage {
   items: ReceivedSuggestion[];
-  next_cursor: string | null;
+}
+
+/**
+ * `GET /children/{cid}/suggestions` 의 쿼리 (#592).
+ * 🚨 **`rated` 는 세 갈래다** — 안 보내면 전부, `false` 면 피드백을 아직 안 남긴 것, `true` 면 남긴 것.
+ *    07 피드백 탭은 늘 둘 중 하나를 보낸다 (피드백 전 · 피드백 완료).
+ */
+export interface SuggestionListQuery {
+  rated?: boolean;
+  /** 1부터. 서버 상한은 10,000 이다. */
+  page?: number;
 }
 
 /* ── 08 사진으로 적기 ────────────────────────────────────────────────── */
@@ -1278,6 +1329,11 @@ export interface DiaryRequest {
 export const DIARY_CONTENT_MAX_LENGTH = 1000;
 
 /** `PATCH /children/{cid}/event-items/{iid}` — 준비물 체크. 되돌릴 수 있어서 낙관적 업데이트를 써도 된다. */
+export interface EventItemUpdateRequest {
+  is_prepared: boolean;
+}
+
+/** `PATCH /children/{cid}/event-items/{iid}` 의 응답 — 체크를 바꾼 뒤의 준비물 한 줄. */
 export interface EventItemUpdateResponse {
   item: EventItem;
 }
@@ -1402,6 +1458,13 @@ export interface AuthRefreshResponse {
 export interface AuthSignupPending {
   status: "consent_required";
   consent_code: string;
+}
+
+/** `POST /auth/{provider}` — 로그인 복귀 뒤 일회용 코드를 세션으로 바꾼다. */
+export interface AuthExchangeRequest {
+  code: string;
+  /** 이 탭이 로그인을 시작했다는 표식 (`lib/auth/oauth-bind.ts`). */
+  bind: string;
 }
 
 export type AuthExchangeResponse = AuthSession | AuthSignupPending;
@@ -1656,30 +1719,23 @@ export interface DevScreeningResponse {
 }
 
 /**
- * 🚨 "잘 모르겠어요"(`unknown`) 는 "없음"(`none`) 이 아니다.
- *    unknown 이면 서버가 health_safety 에 아무것도 쓰지 않고, 이후 Food Agent 는
- *    guards.safety_unknown 으로 **실행 자체가 막힌다** (CLAUDE.md §2 — 조회 실패 시 실행 금지).
- */
-export type SafetyStatus = "none" | "has" | "unknown";
-
-/** 🚨 보호자가 직접 입력한 값만 들어간다. LLM 이 추론한 알레르기는 저장하지 않는다 (NF-03). */
-export interface OnboardingSafetyInput {
-  type: string;
-  label: string;
-  severity?: string;
-  reactions?: string[];
-}
-
-/**
  * 전부 선택이지만 **하나는 있어야 한다** — 빈 본문은 400 이다 (서버 PR #353). 화면은 아무것도
  * 안 적으면 보내지 않고, "건너뛰기" 는 요청 없이 홈으로 간다.
  *
- * 🚨 **키 · 몸무게는 서버가 소수 한 자리로 반올림해 저장한다.** 범위는 `lib/measurement.ts`.
+ * 🚨 **키 · 몸무게는 칸별 범위 밖이거나 소수 둘째 자리부터 적으면 400 이다** (#628).
+ *    범위는 `lib/measurement.ts`.
  *
  * ⚠️ **계약서 §05 의 본문과 달라졌다** (확정 전). 01 등록 화면을 "꼭 필요한 것" 만 남기고
  *    **고를 수 있는 것을 전부 이 화면으로 미루면서** 바뀌었다 —
  *    - 들어온 것: `relation`(01 에서 이동) · `gender` · `height_cm` · `weight_kg`
- *    - 빠진 것: `interests` · `dev_answers`
+ *    - 빠진 것: `interests` · `dev_answers` · `safety` · `safety_status` · `one_line`
+ *
+ * 🚨 **빠진 칸을 보내면 400 이다** — 서버가 모르는 칸을 받지 않는다(`extra="forbid"`). 한동안 계약서
+ *    초안에 남아 있다는 이유로 타입에만 두었는데, 서버는 처음부터 받지 않았다 (#559 에서 걷어냄).
+ *    - 알레르기는 승인 게이트 ㉡(`POST /children/{cid}/health-safety`) 하나로만 간다. 02 의 알레르기
+ *      구역이 11 과 같은 컴포넌트다 (`components/safety-section.tsx`) — 쓰기 경로를 둘로 두지 않는다 (NF-03).
+ *      그래서 "확인했고 없다" 와 "아직 모른다" 를 물을 자리가 지금 없다. 어디서 받을지는 팀 결정이다.
+ *    - 한 줄은 03 홈 입력으로 받는다. 온보딩에서 또 받으면 같은 것을 두 번 묻는다.
  *
  * 🚨 **`interests` 를 뺀 자리를 다른 것으로 채우지 않았다.** 관심사는 03 홈의 한 줄에서
  *    관찰로 쌓이는 값이고(그게 이 제품의 방식이다), 가입 첫날 칩으로 고른 여덟 개는
@@ -1700,23 +1756,6 @@ export interface OnboardingRequest {
    */
   height_cm?: number;
   weight_kg?: number;
-  /**
-   * ⚠️ **화면에서 보내지 않는다.** 02 의 알레르기 구역이 11 아이 프로필과 같은 것이 되면서
-   * (`components/safety-section.tsx`) 등록이 **승인 게이트 ㉡**(`POST /children/{cid}/health-safety`)
-   * 로만 간다 — 알레르기의 쓰기 경로를 둘로 두지 않는다 (NF-03).
-   *
-   * 🚨 **그래서 `safety_status` 를 물을 자리가 지금 없다.** 목록이 0건인 것만으로는
-   *    "확인했고 없다"(`none`)와 "아직 모른다"(`unknown`)를 가를 수 없는데, 계약서 §05 는
-   *    후자를 `guards.safety_unknown` 으로 받아 Food Agent 실행 자체를 막는다 (최상위 §2).
-   *    **어디서 그 선언을 받을지는 팀 결정이다** — 계약서에 남아 있어 타입만 유지한다.
-   */
-  safety_status?: SafetyStatus;
-  safety?: OnboardingSafetyInput[];
-  /**
-   * ⚠️ 화면에서 보내지 않는다. 온보딩에서 한 줄을 또 받으면 03 홈의 입력과 같은 것을
-   * 두 번 묻는 셈이라 뺐다 — 계약서에는 남아 있어서 타입만 유지한다.
-   */
-  one_line?: string;
 }
 
 /**

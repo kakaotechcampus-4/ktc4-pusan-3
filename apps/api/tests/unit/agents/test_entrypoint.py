@@ -5,9 +5,9 @@ pipeline 을 가짜로 바꿔 끼우므로 LLM 호출은 없다.
 
 import calendar
 import inspect
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, get_args
 from uuid import UUID
 
@@ -16,10 +16,13 @@ import pytest
 from app.agents import entrypoint, pipeline
 from app.agents.activity.context import build_gate as build_activity_gate
 from app.agents.activity.registry import closed_readout_key as activity_closed_key
+from app.agents.activity.schemas.memory import SearchActivityMemoryArgs
 from app.agents.activity.schemas.task import ActivityTaskType
 from app.agents.activity.store.inmemory import InMemoryWeather
+from app.agents.activity.tools.memory import search_activity_memory
 from app.agents.common.age import life_stage
 from app.agents.common.datetime_rules import build_observed_range
+from app.agents.common.evidence import AffinityRow
 from app.agents.common.llm_client import LLMConfigError
 from app.agents.common.ports import SafetyLookupError
 from app.agents.curator.embedding import embedder as embedder_module
@@ -29,10 +32,12 @@ from app.agents.food.context import build_gate
 from app.agents.food.readouts import READOUTS
 from app.agents.food.registry import closed_readout_key, tools_for
 from app.agents.food.schemas.common import FoodTaskType
+from app.agents.food.schemas.records import SearchFoodMemoryArgs
 from app.agents.food.store import FoodPorts, MenuCatalogRow
+from app.agents.food.tools.records import search_food_memory
 from app.agents.memory.schemas.task import WorkType
 from app.agents.memory.store import InMemoryStore
-from app.agents.memory_bridge import StoreActivityMemory
+from app.agents.memory_bridge import StoreActivityMemory, same_store
 from app.agents.suggestion_save import InMemorySuggestions
 from app.agents.supervisor import routing
 from tests.unit.agents.food.support import ScriptedLLM, food_task
@@ -804,6 +809,176 @@ async def test_안전_어댑터를_handle_input_과_suggest_가_둘_다_받는�
     )
 
     assert seen == [(reader, reader, reader)] * 2
+
+
+# ── 관심 어댑터 (#572) ─────────────────────────────────────────────
+class _Affinities:
+    """`DbAffinityReader` 자리. (도메인, 행) 중 물은 도메인 것만 돌려준다."""
+
+    def __init__(self, *rows: tuple[str, AffinityRow]) -> None:
+        self.rows = rows
+
+    async def affinities(self, *, child_id: UUID, domains: Sequence[str]) -> list[AffinityRow]:
+        return [row for domain, row in self.rows if domain in domains]
+
+
+def _liked(n: int, key: str, *, days_ago: int) -> AffinityRow:
+    today = datetime.now(entrypoint.KST).date()
+    return AffinityRow(
+        id=UUID(int=n),
+        merge_key=key,
+        state="confirmed",
+        polarity=1,
+        strength=0.9,
+        last_observed_on=today - timedelta(days=days_ago),
+        observed_days=3,
+    )
+
+
+async def _activity_memory(monkeypatch: pytest.MonkeyPatch, reader: _Affinities) -> Any:
+    seen = await _activity_of(monkeypatch, birth_date=_months_ago(30), affinity_reader=reader)
+    activity = seen["contexts"]["activity"]
+    activity.state.gate = await build_activity_gate(activity, outdoor_ok=False)
+    return await search_activity_memory(activity, SearchActivityMemoryArgs())
+
+
+async def test_관심_어댑터를_넘기면_관찰이_없어도_Activity_기억이_티어_1_근거를_돌려준다(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reader = _Affinities(
+        ("activity", _liked(9, "공룡", days_ago=3)), ("food", _liked(10, "딸기", days_ago=3))
+    )
+
+    result = await _activity_memory(monkeypatch, reader)
+
+    assert [(r["label"], r["tier"]) for r in result.data["records"]] == [("공룡", 1)]
+
+
+async def test_21일_넘게_관찰이_없는_관심은_근거로_나가지_않는다(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reader = _Affinities(("activity", _liked(9, "공룡", days_ago=22)))
+
+    result = await _activity_memory(monkeypatch, reader)
+
+    assert not result.success  # NO_RECORDS → 일반 추천
+
+
+async def test_관심_어댑터를_넘기면_Food_기억은_food_관심만_돌려준다(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reader = _Affinities(
+        ("activity", _liked(9, "공룡", days_ago=3)), ("food", _liked(10, "딸기", days_ago=3))
+    )
+    food = (await _activity_of(monkeypatch, affinity_reader=reader))["contexts"]["food"]
+
+    result = await search_food_memory(food, SearchFoodMemoryArgs())
+
+    assert [(r["kind"], r["label"], r["tier"]) for r in result.data["records"]] == [
+        ("profile_affinity", "딸기", 1)
+    ]
+
+
+async def test_Growth_기억은_교육_놀이_관심을_읽는다(monkeypatch: pytest.MonkeyPatch) -> None:
+    reader = _Affinities(
+        ("education", _liked(11, "숫자", days_ago=3)),
+        ("activity", _liked(9, "공룡", days_ago=3)),
+        ("food", _liked(10, "딸기", days_ago=3)),
+    )
+    growth = (await _activity_of(monkeypatch, affinity_reader=reader))["contexts"]["growth"]
+
+    rows = await growth.ports.memory.affinities(child_id=CHILD, domains=("education", "activity"))
+
+    assert sorted(r.merge_key for r in rows) == ["공룡", "숫자"]
+
+
+async def test_Growth_기억도_21일_넘게_관찰이_없는_관심은_archived_로_읽는다(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reader = _Affinities(("education", _liked(11, "숫자", days_ago=22)))
+    store = same_store(InMemoryStore(now=datetime.now(entrypoint.KST)))  # opener 갈래
+    seen = await _activity_of(monkeypatch, domain_store=store, affinity_reader=reader)
+    growth = seen["contexts"]["growth"]
+
+    rows = await growth.ports.memory.affinities(child_id=CHILD, domains=("education",))
+
+    assert [r.state for r in rows] == ["archived"]
+
+
+async def test_05_다시_만들기는_입력_run_의_날을_기준일로_읽는다(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sent_at = datetime.now(entrypoint.KST) - timedelta(days=22)
+    reader = _Affinities(("activity", _liked(9, "공룡", days_ago=25)))  # 그 run 기준 3일
+    contexts: list[Any] = []
+    original = entrypoint._domain_contexts
+
+    def spy(**kwargs: Any) -> Any:
+        made = original(**kwargs)
+        contexts.append(made[0])
+        return made
+
+    async def fake_run(*args: Any, **kwargs: Any) -> Any:
+        return pipeline.SuggestRun(outcomes=(), failed=())
+
+    monkeypatch.setattr(entrypoint, "_domain_contexts", spy)
+    monkeypatch.setattr(pipeline, "run_suggestions", fake_run)
+
+    await entrypoint.suggest(
+        child_id=CHILD,
+        tasks=[],
+        request_id="q",
+        save_run_id=None,
+        sent_at=sent_at,
+        save_suggestions=InMemorySuggestions(),
+        affinity_reader=reader,
+    )
+    rows = await contexts[0]["activity"].ports.memory.affinities(child_id=CHILD)
+
+    assert [r.state for r in rows] == ["confirmed"]
+
+
+async def test_관심_어댑터를_handle_input_과_suggest_가_둘_다_받는다(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: list[Any] = []
+    original = entrypoint._domain_contexts
+
+    def spy(**kwargs: Any) -> Any:
+        seen.append(kwargs["affinity_reader"])
+        return original(**kwargs)
+
+    async def fake_run(*args: Any, **kwargs: Any) -> Any:
+        return pipeline.SuggestRun(outcomes=(), failed=())
+
+    async def fake_handle(*args: Any, **kwargs: Any) -> str:
+        return "RESULT"
+
+    monkeypatch.setattr(entrypoint, "_domain_contexts", spy)
+    monkeypatch.setattr(pipeline, "run_suggestions", fake_run)
+    monkeypatch.setattr(entrypoint, "_handle_input", fake_handle)
+    reader = _Affinities()
+
+    await entrypoint.handle_input(
+        child_id=CHILD,
+        parent_id=PARENT,
+        raw_text="저녁 추천해줘",
+        run_id="r",
+        commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
+        affinity_reader=reader,
+    )
+    await entrypoint.suggest(
+        child_id=CHILD,
+        tasks=[],
+        request_id="q",
+        save_run_id=None,
+        sent_at=None,
+        save_suggestions=InMemorySuggestions(),
+        affinity_reader=reader,
+    )
+
+    assert seen == [reader, reader]
 
 
 # ── Food 카탈로그 · 추천 이력 어댑터와 문서 시드 (#442) ──────────────────────

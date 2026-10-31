@@ -28,25 +28,31 @@
 - `components/ui/` — 토큰만 아는 primitive. 도메인 타입(`Suggestion` 등)을 import 하지 않는다
 - `components/` — 도메인을 아는 조합
 - 지금 있는 것 (`components/ui/`) — `Screen`(최대 폭·좌우 여백·**상하 여백+safe area**) · `PageTitle` ·
-  `Button`(§7 6변형) · `TextInput` · `TextArea` · `DateField` · `TimeField` · `Checkbox` · `Chip`/`ChipRow` ·
+  `Button`(§7 6변형) · `TextInput`(검색칸은 `leading` · `trailing` · `labelHidden` · 🚨 브라우저 search × 숨김) · `TextArea` · `DateField` · `DateRangeField`(기간 한 칸 · 범위 달력 · 한 날이면 그날 하루) · `TimeField` · `Checkbox` · `Chip`/`ChipRow` · `RemovableChip`(걸린 조건 · 누르면 풀린다) ·
   `EvidenceChip`/`CountChip`/`EvidenceRow` · `Card`(`accent`)/`CardFailed` · `Banner` · `Spinner` ·
-  `IconButton`/`IconButtonLink` · `IconTile` · `ProgressSteps` · `EmptyState` · `Skeleton` ·
+  `IconButton`/`IconButtonLink`/`IconButtonPlaceholder`(받는 동안 버튼 자리) · `IconTile` · `ProgressSteps` · `EmptyState`/`EmptyStateSkeleton` ·
+  `Skeleton`/`SkeletonText`/`SkeletonTile`/`SkeletonGroup`(🚨 받은 내용과 같은 상자 · 디자인 시스템 §7 "빈 상태 · 스켈레톤") ·
   `BottomSheet` · `Tabs`/`PanelTabs`(🚨 주소가 바뀌면 앞, **패널만 바뀌면** 뒤 · 디자인 시스템 §7) · `Toast` · `ButtonLink` ·
-  `Select` · `ChoiceField`(반드시 하나 · 🚨 선택지가 둘이면 `Select` 를 쓰지 않는다 · 넷 이상이거나 문장이 길면 `direction="vertical"` · 디자인 시스템 §7) ·
+  `Select` · `ChoiceField`(반드시 하나 · 🚨 선택지가 둘이면 `Select` 를 쓰지 않는다 · 넷 이상이거나 문장이 길면 `direction="vertical"` · 목록 위의 보기 전환만 `labelHidden` · 디자인 시스템 §7) ·
+  `Pagination`(번호 쪽 목록의 아래 한 줄 · 화살표 둘 + 번호 다섯 개의 창 · 디자인 시스템 §7 "쪽 넘기기") ·
   `PhotoCard`/`PhotoSlotButton` · `Swap`(같은 자리의 교체 페이드 · `phaseOf`) · `Named`(화면 전환의 이름 쌍)
 - 움직임 (`lib/motion.ts`) — `useEnterMotion`(데이터가 바꾸는 교체 · 단계 넘김) · `useMotionCue`(누른 것만) ·
   `useReveal`(펼침) · `useFlip`(자리 옮김) · `playEnter`. 화면 전환은 `components/route-transition.tsx` 의 `ScreenTransition` 과
   `lib/view-transition.ts` 의 `FORWARD` · `BACK`. 쓰는 자리와 규칙은 디자인 시스템 §8
 - 도메인을 아는 조합 (`components/`) — `DomainChip`/`DomainMeta`/`ObservationMeta` · `AgentPrompts` · `ChildNav` · `SuggestionList` ·
-  `HomeComposer` · `GeneralSuggestionCard` · `ChatThread` · `RunReply` · `SafetyCheckSheet`(게이트 ㉡) · `ApprovalSheet`(게이트 ㉠) · `ConsentRequiredCard` ·
+  `HomeComposer`/`VoiceLevelMeter`(말로 적기 듣는 동안의 음량 막대 · 셸 `volume` 이벤트를 직접 구독) · `GeneralSuggestionCard` · `ChatThread` · `RunReply` · `SafetyCheckSheet`(게이트 ㉡) · `ApprovalSheet`(게이트 ㉠) · `ConsentRequiredCard` ·
   `AuthGate`/`SessionChecking`/`SessionUnreachable` · `ChildScope` · `ObservationList` · `AffinityList` · `CorrectionButtons` · `MemoryDetailSheet` ·
   `SuggestionFeedbackList` · `MonthGrid`/`DayMarkLegend` · `CalendarDayPanel` ·
   `SettingsGroup`/`SettingsLinkRow`/`SettingsInfoRow` · `StartBackLink`(01 · 초대 → 00-1) · `ConsentSection`/`LegalDocumentSection` ·
   `ParentSection` · `AccountSection` ·
   `ChildIdentityCard`/`ChildIdentitySheet` · `GrowthLogList`/`GrowthLatestCard` · `GrowthSheet` ·
   `GrowthChart` · `HealthSafetyList`/`HealthSafetySheet` · `SafetyScanReview`/`SafetyScanRowSheet` ·
-  `PhotoReview`/`PhotoEntrySheet` · `PhotoSourceSheet`
+  `PhotoReview`/`PhotoEntrySheet` · `PhotoSourceSheet` · `ScreenTour`/`TourHelpButton`(화면 투어 · [`screen-tour-v1.md`](screen-tour-v1.md))
   (시트 안의 사진 종류 줄 · 최근 사진 줄 · 촬영/앨범 줄은 그 파일의 내부 조각이다)
+- 받는 동안의 모양은 **그 컴포넌트 옆에 `…Skeleton` 으로** 둔다 — `SettingsRowSkeleton` · `ChildIdentityCardSkeleton` ·
+  `GrowthLatestCardSkeleton`/`GrowthLogListSkeleton` · `GrowthChartSkeleton` · `HealthSafetyListSkeleton` · `ObservationListSkeleton` ·
+  `AffinityListSkeleton` · `SuggestionFeedbackListSkeleton` · `SuggestionListSkeleton` · `CalendarDayPanelSkeleton` · `ConsentChecklistSkeleton`.
+  🚨 진짜 컴포넌트의 여백 · 줄을 바꾸면 옆의 스켈레톤도 같은 PR 에서 바꾼다 (`e2e/layout-shift.spec.ts` 는 아래가 통째로 밀리는 큰 어긋남만 잡는다 · 모양은 받는 중 화면을 직접 보고 맞춘다 · [`mock-and-tests-v1.md`](mock-and-tests-v1.md) §3-1)
 
 - 🚨 **화면 위 · 아래 고정 바는 `Screen` 의 `topBar` · `bottomBar` · `nav` 로 넘긴다.** `topBar` 는 위 safe area + 여백을 대신 받는다 (04 대화의 머리 — 대화가 자라도 돌아가는 화살표가 밀려나지 않게). 화면이 직접 `sticky` 를 붙이면
   아래 여백을 0 으로 되돌려야 하는데, 그게 상하 여백을 두 번 죽인 바로 그 조작이다.
@@ -191,6 +197,8 @@ Next 16 기본 `optimizePackageImports` 목록에 있어서 배럴 임포트를 
     만들어 굽는다 — 선언한 네 굵기가 전부 실물이고 브라우저 합성은 없다.
     ⚠️ 그래도 **굵기 하나에 신호를 걸지 말 것.** 손글씨는 굵기 대비가 약해서 13px 에서 500 과 600 의 차이는
     활성/비활성을 혼자 나르지 못한다 — 색·크기와 함께 건다.
+  - 🚨 **어느 화면이든 받는 손글씨 서브셋은 `app/layout.tsx` 가 미리 받는다** (`PRELOADED_FONT_SUBSETS`). 늦게 붙으면
+    줄바꿈이 바뀌어 화면이 밀린다(CLS). 파티션을 다시 뽑으면 이 번호도 다시 고른다 — 고르는 기준은 디자인 시스템 §4
   - 근거와 실측치는 [디자인 시스템 §4](../../docs/web/design-system-v1.md) 에 있다.
 - 🚨 **`cursor` 는 `globals.css` 가 한 번에 건다.** Tailwind 4 preflight 는 버튼에 `cursor` 를 주지 않아서(v3 와 달라진 점) 전부 기본 화살표였다. 컴포넌트마다 붙이면 빠뜨린다 — 실제로 칩만 `not-allowed` 였다.
 - **상호작용 상태는 primitive 안에 있다** (디자인 시스템 §8 표). 화면에서 `hover:`·`active:` 를 따로 붙이지 않는다.

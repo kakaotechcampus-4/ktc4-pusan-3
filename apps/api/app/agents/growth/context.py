@@ -55,6 +55,8 @@ class GrowthRunState:
     # book_suggestion. 이번 run 에서 search_books 를 한 번이라도 불렀는가 — 0권 제출은 검색한 뒤에만
     # 받는다. 찾아보지도 않고 "추천이 없어요" 를 내지 않게
     book_searched: bool = False
+    # book_suggestion. 이번 run 에서 정보나루로 보낸 검색어 수 — `MAX_RUN_KEYWORDS` 까지
+    book_keywords: int = 0
     # 재호출 전에 이미 통과했거나 빠진 책(정규화한 "제목(저자)"). 재호출은 이 책을 다시 낼 수 없다
     done_books: frozenset[str] = frozenset()
 

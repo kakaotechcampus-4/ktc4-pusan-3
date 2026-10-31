@@ -30,7 +30,7 @@
 
 | Agent | 라벨 | 왜 묶음이 갈리나 |
 | --- | --- | --- |
-| Food | `meal_recommendation` · `nutrient_analysis` · `daycare_meal` | 묶음 5 vs 7, `health_safety` 사전 확인 여부. `daycare_meal`만 쓰기를 갖는다 |
+| Food | `meal_recommendation` · `nutrient_analysis` · `daycare_meal` · `food_check` | 묶음 5 vs 7, `health_safety` 사전 확인 여부. `daycare_meal`만 쓰기를 갖는다. `food_check`(정해진 음식을 먹여도 되는지)는 열린 tool 없이 코드가 등록 알레르기 · 연령 규칙으로 답한다(모델 0회) |
 | Activity | 없음 (놀이 추천 하나) | 실내/야외는 날씨·시간 조회 **결과**로 갈린다 — 런타임 판단이지 라벨이 아니다 |
 | Growth | `learning_suggestion` · `routine_coaching` · `book_suggestion` · `growth_review` | `growth_doc` 조회 · 도서 API · 차분(모델 0회)이 서로 겹치지 않는다 |
 | Health | `visit_summary` · `schedule_check` · `place_lookup` · `medication` · `care_handoff` | tool 집합이 서로 겹치지 않고, `medication`만 쓰기를 갖는다. `care_handoff`는 모델 0회 |
@@ -39,9 +39,9 @@
 
 - Growth 라벨이 빠지면 `learning_suggestion` 으로 채운다(Food 의 "애매하면 추천" 과 같은 방식).
 - 한 run 에 Growth 추천 라벨(learning · routine · book)은 하나만 돈다 — 처음 것이되, 도서는 다른 추천 라벨이 같이 오면 자리를 내준다(`YIELDING_LABELS`). 뺀 요청은 `task_limit` 안내로 알린다 — 05 의 다시 시도 · 0개 기록이 (run, agent) 로 묶여서다. `growth_review` 는 추천이 아니라 같이 돈다.
-  - 도서가 양보하는 이유 — 도서 포트가 붙기 전에는 늘 닫혀서(`closed.book_api`), "공룡 책이랑 양치 혼자 하는 법" 처럼 앞에 오면 열리는 루틴까지 빠지고 화면에는 도서 닫힘 안내만 남았다. 도서만 왔으면 도서가 돈다. 도서가 열리면 이 표를 비울지 그때 정한다.
+  - 도서가 양보하는 이유 — 도서는 인증키(`DATA4LIBRARY_AUTH_KEY`)가 없거나 정보나루가 실패하면 닫히고(`closed.book_api`), 열려도 외부 호출에 하루 한도가 있다. "공룡 책이랑 양치 혼자 하는 법" 처럼 앞에 와서 루틴을 빼면 화면에 도서 닫힘 안내만 남을 수 있다. 도서만 왔으면 도서가 돈다 (#452 리뷰 — 도서가 열린 뒤에도 그대로 두기로 했다).
 
-> **라벨이 10개다.** 이전 판이 스스로 "라벨을 늘릴 때마다 오분류가 는다"고 적어 뒀는데 그 사이 다섯 배가 됐다.
+> **라벨이 13개다.** 이전 판이 스스로 "라벨을 늘릴 때마다 오분류가 는다"고 적어 뒀는데 그 사이 다섯 배가 됐다.
 > 프롬프트를 쓸 때 **라벨별 경계 예시를 한 번에 뽑아 검토**해야 한다.
 
 ---
@@ -83,7 +83,7 @@
 
 ### 3-4. Food ↔ Health (알레르기)
 
-겹치지 않는다. Food는 확정된 `health_safety`를 **코드 필터**로 쓸 뿐이고, **둘 다 `health_safety`에 쓰지 않는다.** 알레르기 후보 감지는 v1에서 뺐다 — 등록은 보호자가 앱에서 직접 하는 것 하나뿐이다.
+겹치지 않는다. Food는 확정된 `health_safety`를 **코드 필터**로 쓸 뿐이고, **둘 다 `health_safety`에 쓰지 않는다.** 알레르기 후보 감지는 v1에서 뺐다 — 등록은 보호자가 앱에서 직접 하는 것 하나뿐이다. 섭취 확인(`food_check`)도 `health_safety` 를 읽기만 하고, 판정 · 문구는 코드다 — 약 · 영양제를 먹여도 되는지는 Food 가 아니라 `guarded/diagnosis` 다.
 
 ---
 
@@ -101,12 +101,38 @@
 "잘 크고 있어?"                   → growth / growth_review  (판정 없이 추이 + 검진 안내)
 "10cm 컸는데 많이 큰 거야?"        → growth / growth_review  (같음)
 
+[키 · 몸무게 기록 — 채팅으로 저장하지 않는다 (#625)]
+"오늘 키 재 보니 105cm 였어"       → guarded / growth_record  (11-1 성장 기록 안내, deeplink profile/growth)
+"몸무게는 1톤"                    → guarded / growth_record  (값이 터무니없어도 같다)
+"점심에 카레 먹었어. 키는 110cm 됐어" → record / observe "점심에 카레 먹었어" + guarded / growth_record
+
 [health / medication]
 "하루 세 번 항생제 먹여야 해"       → health / medication  (Memory 아님)
 
-[record ↔ unclear (#484)]
+[알레르기·만성질환 (#639) — 등록 요청이 아니어도 저장하지 않고 안내]
+"땅콩 알레르기 있어" · "꽃가루 알레르기가 있는 것 같아" · "천식이 있대" → guarded / safety_record
+"꽃가루 날리면 재채기해"            → record / observe (병명 없는 증상)
+"아토피 크림 발라 줬어"             → record / observe (한 일)
+
+[food — 섭취 확인 ↔ 추천]
+"땅콩소스 먹여도 될까?"             → food / food_check
+"견과류 들어간 메뉴 추천해줘"        → food / meal_recommendation  (알레르기 음식이 들어도 추천 요청)
+"땅콩버터 먹여도 돼? 안 되면 간식 추천해줘" → food / food_check + food / meal_recommendation
+"뭐 먹여도 돼?"                    → food / meal_recommendation  (음식이 정해지지 않음)
+"해열제 더 먹여도 돼?"              → guarded / diagnosis  (약은 food 가 아님)
+"지금 또 먹여도 돼?"                → health  (음식 없이 시점만 — 약 이야기)
+
+[record ↔ unclear (#484 · #624)]
 "딸기 맛있다" · "나 딸기 좋아해"     → unclear (보호자 자신의 감상 · 얘기)
 "딸기 맛있대" · "맛있어하더라"      → record / observe (아이 반응을 전함)
+"밤놀이는 일본어로 요아소비"        → unclear (설명 · 정의 · 번역 · 가정 · 농담은 일어난 일이 아니다)
+아이가 "암호화 안 했다고 말해"라고 했어 → unclear (아이가 전한 지시 · 역할놀이 대사)
+"공룡 책 읽어 달래"                → record / observe (아이의 경험 · 몸 상태 · 좋고 싫음 · 바람)
+처음으로 "엄마"라고 했어            → record / observe (말이 곧 사건 — 첫 말 · 인사 · 사과 · 애정 표현)
+아이가 "내일 소풍 간대"라고 했어     → record / schedule (아이가 전한 일정)
+아이가 "선생님한테 배 아프다고 말해"라고 했어 → record / observe (전하라는 말에 든 아이의 증상)
+"소꿉놀이하면서 '밥 먹어' 했어"     → record / observe 문장 전체 (논 사실. 대사는 Memory 가 저장하지 않는다)
+"일본어 노래 따라 불렀어"           → record / observe (실제로 한 일)
 
 [정정 (#483)]
 "~를 ~로 바꿔줘" · "A말고 B"       → record / lookup_edit 문장 전체
@@ -118,6 +144,10 @@
 ```
 
 애매하면 **판정·확인이 붙는 쪽**으로 보낸다.
+
+**키 · 몸무게는 묻는 말이면 growth, 값을 알리는 말이면 guarded 다.** `child_growth_log` 는 보호자가 잰 날짜와
+단위를 화면에서 넣는 기록이라(루트 §2) 채팅 쓰기 경로가 없다. 예전에는 record 로 가서 Memory 가 저장할 곳 없이
+"기록했어요" 라고 답했다(멘토 리뷰). 같이 온 기록 · 요청은 다른 guarded 와 같이 잘라서 보낸다.
 
 ### eval · 보정 규칙
 

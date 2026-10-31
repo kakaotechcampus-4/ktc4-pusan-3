@@ -19,6 +19,10 @@
 - `fetch` 를 직접 부르지 않는다. **`src/lib/api` 의 `api.get/post/...` 만** 쓴다 — Bearer 토큰·에러 봉투·Idempotency 처리가 거기 한 곳에 있다.
   - 예외는 `lib/report-render-error.ts` 의 `sendClientError` 하나다. 오류 화면에서 보내는 보고라 `keepalive` 가 필요하고, 401 처리기를 타면 안 된다 (오류 화면이 로그인 화면으로 튕긴다). 토큰 · 주소는 `authHeaders` · `buildUrl` 을 그대로 쓴다. ⚠️ 갱신(refresh)도 타지 않는다 — access 가 15분이라(#465) 오래 쉬다 처음 난 렌더 오류의 보고는 401 로 사라질 수 있다. 보고 하나 때문에 오류 화면에서 세션을 건드리지 않으려고 둔 한계다. (`lib/server-error-alert.ts` 의 `fetch` 는 우리 API 가 아니라 Next 서버가 Discord 웹훅을 부르는 것이라 이 규칙의 대상이 아니다.)
 - 토큰은 `useSessionStore.signIn()` 이 `setAuthToken()` 으로 클라이언트에 밀어 넣는다. 컴포넌트에서 헤더를 직접 만들지 않는다.
+- 🚨 **`lib/api/types.ts` 는 손으로 적은 계약 사본이다.** 바꾸면 `make web-contract` 로 서버 OpenAPI 와 맞춘다 (#559).
+  목과 화면은 이 타입을 따르므로, 타입이 서버와 어긋나면 목 계약 테스트와 e2e 가 **같이 틀린 채로 통과한다** (#554).
+  요청 본문도 호출부에 바로 적지 말고 이름 있는 타입을 둔다 — 대응표(`contract/schema-map.ts`)가 짝을 지을 수 있어야 비교된다.
+  의도된 차이는 대응표에 이유를 적는다. 규칙 원문은 [`mock-and-tests-v1.md`](mock-and-tests-v1.md) §2
 
 ## 2. 🚨 되돌릴 수 없는 5곳 — `api.post` 로 직접 부르지 않는다
 

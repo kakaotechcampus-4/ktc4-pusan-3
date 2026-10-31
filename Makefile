@@ -3,9 +3,9 @@
         db-migrate db-rollback db-current db-history db-heads db-check db-revision \
         db-merge db-reset db-psql \
         web-install web-dev web-build web-start web-test web-e2e web-lint web-fmt web-fmt-check \
-        web-typecheck web-check web-image web-up web-down web-logs \
+        web-typecheck web-check web-contract web-image web-up web-down web-logs \
         api-image api-up api-down api-logs deploy-up deploy-down deploy-migrate \
-        deploy-load-food-dry deploy-load-food
+        deploy-load-food-dry deploy-load-food deploy-load-places-dry deploy-load-places
 
 # 로컬 개발 DB 와 배포는 compose 파일이 다르다. .env 는 한 곳(deploy/docker/.env)을 같이 쓴다.
 COMPOSE_DEV    := docker compose -f deploy/docker/docker-compose.yml --env-file deploy/docker/.env
@@ -33,6 +33,7 @@ help:
 	@echo "  make web-fmt        코드 포맷팅 (prettier)"
 	@echo "  make web-fmt-check  포맷 검사만 (고치지 않는다 — CI 가 보는 것)"
 	@echo "  make web-check      format + typecheck + lint + test — PR 올리기 전 (CI 와 같은 검사, build 만 빠짐)"
+	@echo "  make web-contract   웹 API 타입 ↔ 서버 계약(OpenAPI) 비교 — lib/api 나 서버 스키마를 바꿨을 때 (apps/api 의 uv 필요)"
 	@echo ""
 	@echo "── 로컬 개발 DB (deploy/docker) ──"
 	@echo "  make db-up        로컬 Postgres+pgvector+Redis 기동 (최초 1회 deploy/docker/.env 필요)"
@@ -65,6 +66,8 @@ help:
 	@echo "  make deploy-migrate 배포 DB 마이그레이션 (api 컨테이너 안에서 alembic upgrade heads)"
 	@echo "  make deploy-load-food-dry  배포 DB 에 Food 카탈로그를 받고 세기만 (쓰지 않음)"
 	@echo "  make deploy-load-food      배포 DB 에 Food 카탈로그 적재 (영양DB + 레시피, 한 트랜잭션)"
+	@echo "  make deploy-load-places-dry  배포 DB 에 장소(공원 · 도서관 · 놀이시설)를 받고 세기만 (쓰지 않음)"
+	@echo "  make deploy-load-places      배포 DB 에 장소 적재 (덮고 없어진 곳은 지움, 한 트랜잭션)"
 	@echo ""
 	@echo "  install/dev/test/lint/fmt/db-* 는 apps/api 안에서 uv 로 실행됩니다."
 	@echo "  web-* 는 apps/web 안에서 pnpm 으로 실행됩니다 (배포 4개는 docker)."
@@ -121,6 +124,12 @@ web-fmt-check:
 
 # CI(.github/workflows/ci-web.yml)와 같은 검사. 거기에 build 하나가 더 붙는다.
 web-check: web-fmt-check web-typecheck web-lint web-test
+
+# 웹 API 타입이 서버 계약(OpenAPI)과 맞는지 (#559 · ci-contract.yml). 서버 계약을 덤프한 뒤 비교한다.
+# apps/api 의 .env 가 없어도 돈다 — 스크립트가 필수 설정을 더미로 채운다. DB 에는 붙지 않는다.
+web-contract:
+	cd apps/api && uv run python -m scripts.dump_openapi ../web/.openapi.json
+	cd apps/web && pnpm test:contract
 
 db-up:
 	$(COMPOSE_DEV) up -d
@@ -210,3 +219,11 @@ deploy-load-food-dry:
 
 deploy-load-food:
 	$(COMPOSE_DEPLOY) run --rm api uv run --no-sync python -m scripts.load_food_catalog --all
+
+# 장소 적재 (#516). 공원 · 도서관 표준데이터와 어린이놀이시설(화이트리스트)을 place 로 싣는다.
+# 출력은 건수뿐이다.
+deploy-load-places-dry:
+	$(COMPOSE_DEPLOY) run --rm api uv run --no-sync python -m scripts.load_places --all --dry-run
+
+deploy-load-places:
+	$(COMPOSE_DEPLOY) run --rm api uv run --no-sync python -m scripts.load_places --all

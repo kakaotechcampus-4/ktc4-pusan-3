@@ -6,14 +6,14 @@ import { Suspense, useMemo, useState } from "react";
 
 import { AuthGate } from "@/components/auth-gate";
 import { ScreenTransition } from "@/components/route-transition";
-import { CalendarDayPanel } from "@/components/calendar-day";
+import { CalendarDayPanel, CalendarDayPanelSkeleton } from "@/components/calendar-day";
 import { ChildNav } from "@/components/child-nav";
 import { ConsentRequiredCard } from "@/components/consent-required-card";
 import { MemoryDetailSheet, type MemoryTarget } from "@/components/memory-detail-sheet";
 import { MonthGrid } from "@/components/month-grid";
 import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
-import { SkeletonBlock } from "@/components/ui/skeleton";
+import { SkeletonText } from "@/components/ui/skeleton";
 import { phaseOf, Swap } from "@/components/ui/swap";
 import { useChildId } from "@/hooks/use-child-id";
 import {
@@ -25,6 +25,8 @@ import {
   type CalendarMonthResponse,
 } from "@/lib/api";
 import { formatDay, parseISODate, toISODate, toMonthKey } from "@/lib/format";
+import { ScreenTour, TourHelpButton } from "@/components/screen-tour";
+import { calendarTour } from "@/lib/tour/screens/calendar";
 
 /**
  * 09 캘린더.
@@ -93,14 +95,17 @@ function CalendarScreen() {
 
   return (
     <Screen className="gap-6" nav={<ChildNav active="calendar" />}>
-      <header>
-        <PageTitle>캘린더</PageTitle>
-        <p className="text-body-sm text-ink-muted mt-2">
-          승인한 일정과 그날 남긴 기록이 날짜별로 모여요.
-        </p>
+      <header className="flex items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <PageTitle>캘린더</PageTitle>
+          <p className="text-body-sm text-ink-muted mt-2">
+            승인한 일정과 그날 남긴 기록이 날짜별로 모여요.
+          </p>
+        </div>
+        <TourHelpButton tour={calendarTour} />
       </header>
 
-      <section className="flex flex-col gap-3">
+      <section data-tour="grid" className="flex flex-col gap-3">
         {/* 🚨 보고 있는 달을 따로 들지 않는다. `month` 는 고른 날이 속한 달이고, 달을 넘기면
             그 달의 첫날이 골라진다 — 상태를 둘로 두면 뒤로가기로 날짜만 되돌아왔을 때
             **다른 달을 보면서 이 달의 하루를 여는** 어긋난 화면이 생긴다. 정본은 URL 하나다. */}
@@ -124,13 +129,16 @@ function CalendarScreen() {
               더 크게 하고 있어서, 남겨 두면 한 화면이 같은 사실을 두 번 말한다. */}
           {daySummary(summary) ? (
             <p className="text-body-sm text-ink-muted mt-1">{daySummary(summary)}</p>
+          ) : monthQuery.isPending ? (
+            // 달을 받는 동안 줄 자리를 잡는다 — 받은 뒤에 서면 아래 하루 패널이 한 줄만큼 밀린다.
+            <SkeletonText size="body-sm" width="1/3" className="mt-1" />
           ) : null}
         </div>
 
         {/* 다른 날을 고르면 이 자리의 하루가 갈아 끼워진다 (디자인 시스템 §8 "교체"). 날짜가 같으면
             다시 받아도 그대로다. */}
         <Swap id={`${date}:${phaseOf(dayQuery)}`}>
-          {dayQuery.isPending ? <SkeletonBlock label="이날을 불러오는 중" /> : null}
+          {dayQuery.isPending ? <CalendarDayPanelSkeleton /> : null}
 
           {dayQuery.isError ? (
             <LoadFailed what="이날을" childId={childId} error={dayQuery.error} />
@@ -151,6 +159,8 @@ function CalendarScreen() {
       </section>
 
       <MemoryDetailSheet childId={childId} target={target} onClose={() => setTarget(null)} />
+
+      <ScreenTour tour={calendarTour} ready={monthQuery.isSuccess && dayQuery.isSuccess} />
     </Screen>
   );
 }

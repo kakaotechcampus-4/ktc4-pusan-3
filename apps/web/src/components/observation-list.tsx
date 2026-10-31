@@ -12,6 +12,7 @@ import {
 } from "@/components/domain-chip";
 import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
 import { IconTile } from "@/components/ui/icon-tile";
+import { SkeletonText, SkeletonTile } from "@/components/ui/skeleton";
 import { isHealthObservation, type Observation } from "@/lib/api/types";
 import { cn } from "@/lib/cn";
 import { healthTitle } from "@/lib/health-observation";
@@ -90,8 +91,9 @@ export function ObservationList({
 }) {
   return (
     <ul className="flex flex-col gap-2">
-      {observations.map((observation) => (
-        <li key={`${observation.kind}:${observation.id}`}>
+      {observations.map((observation, i) => (
+        // 화면 투어는 첫 줄을 비춘다 (07 · 09 · `lib/tour/screens/`).
+        <li key={`${observation.kind}:${observation.id}`} data-tour={i === 0 ? "row" : undefined}>
           <ObservationRow observation={observation} onOpen={() => onOpen(observation)} />
         </li>
       ))}
@@ -221,4 +223,29 @@ function ObservationLink({ observation }: { observation: Observation }) {
   if (isHealthObservation(observation) || !observation.affinity) return null;
   // "기억" 한 단어로는 이 기록이 그 기억에 세어졌다는 관계가 안 읽힌다 (#524).
   return <LinkChip label="관련된 기억" value={observation.affinity.merge_key} />;
+}
+
+/**
+ * 받는 동안의 목록. `ObservationRow` 와 **같은 상자 · 같은 줄 높이**다 (CLS · `components/ui/skeleton.tsx`) —
+ * 제목 · 원문 · 종류와 날짜 세 줄을 잡는다 (관련 기억 칩은 이어진 기억이 있을 때만 서서 뺐다).
+ * 🚨 진짜 줄의 여백을 바꾸면 여기도 같이 바꾼다. 건수 줄은 화면 쪽이 잡는다.
+ */
+export function ObservationListSkeleton({ rows = 3 }: { rows?: number }) {
+  return (
+    <ul aria-hidden className="flex flex-col gap-2">
+      {Array.from({ length: rows }, (_, i) => (
+        <li
+          key={i}
+          className="min-h-touch rounded-field bg-surface border-line flex items-start gap-3 border px-4 py-3.5"
+        >
+          <SkeletonTile />
+          <span className="flex min-w-0 flex-1 flex-col gap-1.5">
+            <SkeletonText width="1/3" />
+            <SkeletonText size="body-sm" width="3/4" />
+            <SkeletonText size="caption" width="1/4" />
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
 }

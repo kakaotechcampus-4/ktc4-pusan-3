@@ -198,6 +198,8 @@ class TestLearningWithoutExamples:
         assert (result.status, result.model_calls) == ("blocked", 0)
         assert result.readouts == (READOUTS.render("doc.no_row"),)
         assert llm.seen == []
+        # 추천 없이 닫히는 자리라 "알려드려요" 라고 하지 않는다 (#452 리뷰)
+        assert result.readouts[0].body == "이 시기에 맞는 자료가 아직 없어서 준비하지 못했어요."
 
     async def test_시드에_교육_행이_없는_72개월_이상도_모델_없이_닫는다(self):
         ctx = context(birth_for(80), docs=InMemoryGrowthDocs.from_seed())
@@ -218,6 +220,7 @@ class TestLearningWithoutExamples:
             polarity=1,
             strength=0.9,
             last_observed_on=TODAY - timedelta(days=200),
+            observed_days=3,
         )
         ctx = empty_docs_ctx(memory=InMemoryGrowthMemory(affinities=[("education", old)]))
         llm = FakeLLM()
@@ -277,6 +280,12 @@ class TestRoutine:
         result = await run(task("routine_coaching", "양치 혼자 하게"), docs_ctx(), client=llm)
         assert result.status == "completed" and result.model_calls == 1
         assert result.needs_observation == ("양치은(는) 요즘 어느 정도까지 혼자 하나요?",)
+        # #452 리뷰 — 질문 자리를 못 받아도 카드가 혼자 서는 안내 한 줄. 0개 안내라 05 묶음
+        # 안내(`empty_notice`)도 이 문장이다
+        (notice,) = result.readouts
+        assert (notice.code, notice.authored_by) == ("empty", "code")
+        # 습관(상황 · 지금도 하는지)을 물을 때도 붙어서 "다음 단계" 라고 하지 않는다
+        assert notice.body == "지금 어떤지 알아야 맞는 방법을 고를 수 있어요."
 
     async def test_고른_단계로_개인화_추천_하나와_개수_안내다(self):
         obs = RoutineObservation(

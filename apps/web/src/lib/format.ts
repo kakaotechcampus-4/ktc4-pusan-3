@@ -119,6 +119,18 @@ export function formatDateWithYear(iso: string): string {
 }
 
 /**
+ * 기간 한 줄 (07 필터 · #584). 같은 날이면 하루, 같은 해면 끝일의 연도를 뺀다
+ * ("2026년 10월 1일부터 10월 31일까지"). 🚨 날짜를 더하고 빼지 않는다 — 두 `YYYY-MM-DD` 의 연도를 글자로 비교만 한다.
+ * 🚨 **`~` 로 잇지 않는다** — 화면 글자에 기호를 쓰지 않는 규칙(디자인 시스템 §4)이고, 스크린리더가 "물결" 로
+ *    읽거나 건너뛰어 "부터 · 까지" 라는 뜻이 사라진다. 조건 칩의 이름("… 조건 풀기")에도 이 글자가 그대로 간다.
+ */
+export function formatDateRange(from: string, to: string): string {
+  if (from === to) return formatDateWithYear(from);
+  const tail = from.slice(0, 4) === to.slice(0, 4) ? formatMonthDay(to) : formatDateWithYear(to);
+  return `${formatDateWithYear(from)}부터 ${tail}까지`;
+}
+
+/**
  * 날짜 하나를 요일 없이 ("9월 12일"). `YYYY-MM-DD` 와 밀리초 타임스탬프를 모두 받는다.
  * 🚨 상대 표현("3일 전")을 만들지 않는다 — 그건 `measured_label` 이고 서버가 만든다.
  */

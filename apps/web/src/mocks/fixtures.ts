@@ -873,7 +873,7 @@ export const allObservations: Observation[] = [
 ].sort((a, b) => (a.observed_to < b.observed_to ? 1 : -1));
 
 /**
- * `observations_many` 시나리오의 07 기록 — 한 장(20건)을 넘겨야 "더 보기" 가 선다.
+ * `observations_many` 시나리오의 07 기록 — 한 쪽(20건)을 넘겨야 쪽 넘기기가 선다 (#584).
  * 기본 기록 뒤에 1주 전부터 하루씩 거슬러 간 놀이 기록을 붙인다.
  */
 export const manyObservations: Observation[] = [
@@ -907,6 +907,23 @@ export const receivedSuggestions: ReceivedSuggestion[] = [
   },
 ];
 
+/**
+ * `suggestions_many` 시나리오의 07 피드백 목록 (#592). 기본 셋(피드백 전 2건) 뒤에 피드백을 안 남긴
+ * 놀이 제안 19건을 붙인다 — 피드백 전은 21건이라 2쪽이 서고, 2쪽의 한 줄을 평가하면 20건이 되어
+ * 1쪽으로 옮겨진다.
+ */
+export const manyReceivedSuggestions: ReceivedSuggestion[] = [
+  ...receivedSuggestions,
+  ...Array.from({ length: 19 }, (_, i): ReceivedSuggestion => ({
+    ...suggestions[1],
+    id: `s_past_m${i + 1}`,
+    agent: "activity",
+    content: `블록으로 탑을 함께 쌓아 보세요 (${i + 1})`,
+    status: "approved",
+    feedback: null,
+  })),
+];
+
 /* ── 09 캘린더 ───────────────────────────────────────────────────────── */
 
 /** 🚨 캘린더에 서는 일정은 전부 승인이 끝난 것이다. 초안은 `event` 행이 아니라 여기 오지 않는다 (#118). */
@@ -924,6 +941,18 @@ export const confirmedEvent: CalendarEvent = {
   items: [
     { item_id: "i_1", item_name: "수건", is_prepared: false, prepared_at: null },
     { item_id: "i_2", item_name: "수영복", is_prepared: true, prepared_at: hoursFromNow(-20) },
+    // 준비물이 여럿이고 이름이 길 때의 배치를 보려고 둔다 (#568 — 두 열 그리드).
+    { item_id: "i_3", item_name: "물안경", is_prepared: false, prepared_at: null },
+    { item_id: "i_4", item_name: "여벌옷", is_prepared: false, prepared_at: null },
+    { item_id: "i_5", item_name: "모자", is_prepared: false, prepared_at: null },
+    { item_id: "i_6", item_name: "선크림", is_prepared: false, prepared_at: null },
+    { item_id: "i_7", item_name: "물통", is_prepared: false, prepared_at: null },
+    {
+      item_id: "i_8",
+      item_name: "갈아입을 속옷과 양말 한 켤레",
+      is_prepared: false,
+      prepared_at: null,
+    },
   ],
   reminders: [],
 };

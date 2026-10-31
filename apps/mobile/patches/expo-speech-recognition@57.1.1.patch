@@ -1,0 +1,31 @@
+diff --git a/android/src/main/java/expo/modules/speechrecognition/ExpoSpeechService.kt b/android/src/main/java/expo/modules/speechrecognition/ExpoSpeechService.kt
+index 4a0604ab8ffd5112ec0bb770be56b3bc62dfcc80..a5d83487bec59ec66d217fecc32ff5bab3f182bd 100644
+--- a/android/src/main/java/expo/modules/speechrecognition/ExpoSpeechService.kt
++++ b/android/src/main/java/expo/modules/speechrecognition/ExpoSpeechService.kt
+@@ -633,7 +633,7 @@ class ExpoSpeechService(
+                 ),
+             )
+         }
+-        log("onResults(), results: $resultsList")
++        log("onResults(), results: ${resultsList.size}")
+ 
+         teardownAndEnd()
+     }
+@@ -643,7 +643,7 @@ class ExpoSpeechService(
+         // Avoid sending result event if there was an empty result, or the first result is an empty string
+         val nonEmptyStrings = partialResultsList.filter { it["transcript"]?.toString()?.isNotEmpty() ?: false }
+ 
+-        log("onPartialResults(), results: $nonEmptyStrings")
++        log("onPartialResults(), results: ${nonEmptyStrings.size}")
+         if (nonEmptyStrings.isNotEmpty()) {
+             sendEvent("result", mapOf("results" to nonEmptyStrings, "isFinal" to false))
+         }
+@@ -685,7 +685,7 @@ class ExpoSpeechService(
+                 ),
+             )
+         }
+-        log("onSegmentResults(), transcriptions: $resultsList")
++        log("onSegmentResults(), transcriptions: ${resultsList.size}")
+ 
+         // If the user opted to stop
+         if (recognitionState == RecognitionState.STOPPING) {

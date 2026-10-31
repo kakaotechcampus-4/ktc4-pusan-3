@@ -154,7 +154,7 @@ class DomainAgentResult:
 
 - `status`와 근거 모드(`personalized`/`general`)는 **직교한다.** 날씨 조회는 실패했지만 개인화 근거는 있는 run이 `degraded` + `personalized`다.
 - `Readout.authored_by="code"`면 코드가 만든 문자열이 **그대로** 화면에 간다. 모델 입력에도 넣지 않는다.
-- **되묻기는 한 번에 하나.** 후보가 여럿이면 순위가 가장 높은 하나만 낸다.
+- **되묻기는 한 번에 하나.** 후보가 여럿이면 순위가 가장 높은 하나만 낸다. Agent 하나만이 아니라 **run 하나에도 하나다**(루트 §2) — 한 run 에서 두 Agent 가 되물으면 파이프라인(`_QuestionSlot`)이 먼저 끝난 결과의 질문만 `agent_result` 로 보낸다. 카드는 끝나는 대로 나가서 질문을 다른 카드가 끝나기를 기다려 붙이지 않는다(NF-06). 질문을 잃은 결과도 추천 · readout 이 있으면 카드는 그대로 나가고, 질문이 전부였던 결과는 라벨만 남는 카드를 내지 않는다(실패로 세지 않는다). 05 는 여기를 지나지 않고 응답을 만들 때 `agents` 순서로 일반 추천 묶음의 질문 하나를 고른다.
 - **초안은 저장하지 않는다.** `medication_drafts`는 Memory의 `event` 초안과 같다 — run 단위 버퍼에 모였다가 JSON payload로 한 번에 나가고, run이 끝나면 사라진다. 비어 있는 NOT NULL 칸 목록(`missing`)을 함께 실어 화면이 제출을 막는다. **만들자마자 행을 쓰는 `suggestion`과 혼동하지 말 것** — 복약은 행이 있다는 것 자체가 승인의 증거다.
 - suggestion은 **저장(commit)이 끝난 뒤에** 화면이 추천 카드로 전환된다. 카드의 승인 · 거절 · 피드백이 저장된 행의 id로 동작하고, 개인화 추천은 `suggestion_evidence`가 함께 저장돼 있어야 해서다(루트 §2). 보여 주면서 동시에 저장을 요청하지 않는다. 저장에 실패하면 그 Agent 카드는 내보내지 않고 `partial`로 둔다. 카드 화면은 그 run의 응답을 그대로 쓴다(묶음 키 없음). 별도의 suggestion 목록 화면은 `expires_at > now()`인 suggestion 전부를 보여준다.
 - **추천이 0개여도 실패가 아니다.** 안전 조건을 통과한 후보가 하나도 없으면 그 Agent 는 `status="completed"` · 추천 0개 · 안내(`suggestion.empty` — 0개 문구가 따로 있는 Agent 는 그 문구, Food 는 `pool.empty`)로 끝나고, 화면은 그 Agent 묶음을 추천 없이 안내만 그린다 — 다시 시도를 띄우지 않는다. 1~2개면 안내(`suggestion.partial`)가 추천과 같이 나간다 ([Tool_공통.md](Tool_공통.md) §5-2). 반대로 모델이 출력 tool 없이 끝났거나(`no_tool_call`) 왕복 상한(`max_steps`)에 걸린 것은 0개가 아니라 **실패**다 — `status="failed"` 로 내고 화면은 다시 시도를 띄운다 (#320 PM 리뷰). 다만 Food 영양소 분석은 예외다 — 판정 · 식품군 안내가 코드가 계산한 값이라 `failed` 대신 코드 문장 틀(`nutrient.band.*`)을 `status="ok"` 로 낸다(`authored_by="code"`, 경고 로그로 센다 — Food_Tool_명세 §2 · §4, #357 리뷰).
@@ -165,7 +165,7 @@ class DomainAgentResult:
 
 ```
 티어 1  confirmed  · polarity ∈ {+1, −1} · archived 제외
-티어 2  candidate  · polarity ∈ {+1, −1} · strength ≥ 임계
+티어 2  candidate  · polarity ∈ {+1, −1} · strength ≥ 임계 · 묶인 active 관찰이 서로 다른 날 2일 이상 (#626)
 티어 3  최근 14일 관찰 (polarity 무관)        (도메인이 허용할 때만)
 ── 전부 0행 ──  kind="general" · 응답에 scarcity 동봉
 ```

@@ -169,7 +169,14 @@ class GuardOut(BaseModel):
     code: str
     blocked_agents: list[AgentValue]
     message: str
-    deeplink: str | None = None
+    deeplink: str | None = Field(
+        default=None,
+        description=(
+            "풀러 갈 곳 — 아이 id 를 안 담은 웹 상대 경로. "
+            "safety_unknown 이면 profile(11 아이 프로필), "
+            "갈 곳이 없는 guard(not_ready · unsupported)는 null"
+        ),
+    )
 
 
 class ScarcityQuestionOut(BaseModel):
@@ -226,7 +233,10 @@ class AnswerResponse(BaseModel):
 
 class SuggestionListResponse(BaseModel):
     items: list[SuggestionOut]
-    next_cursor: str | None = None
+    total: int = Field(description="status · rated 필터를 건 뒤의 전체 건수. 쪽과 무관하다")
+    page: int = Field(description="요청한 쪽 번호 (1부터)")
+    size: int = Field(description="요청한 한 쪽 개수")
+    total_pages: int = Field(description="전체 쪽 수 — ceil(total / size). 0건이면 0")
 
 
 # ── 추천 평가 (I — #284) ─────────────────────────────────────────────────

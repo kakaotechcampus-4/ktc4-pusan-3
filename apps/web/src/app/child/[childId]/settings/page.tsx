@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, Flag, LifeBuoy, Plus } from "lucide-react";
+import { ArrowLeft, CircleHelp, Flag, LifeBuoy, Plus } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
 import { AccountSection } from "@/components/account-section";
@@ -10,15 +10,19 @@ import { ScreenTransition } from "@/components/route-transition";
 import { ChildNav } from "@/components/child-nav";
 import { ConsentSection, LegalDocumentSection } from "@/components/consent-section";
 import { ParentSection } from "@/components/parent-section";
-import { SettingsGroup, SettingsLinkRow } from "@/components/settings-row";
+import { ScreenTour, TourHelpButton } from "@/components/screen-tour";
+import { SettingsGroup, SettingsInfoRow, SettingsLinkRow } from "@/components/settings-row";
+import { Button } from "@/components/ui/button";
 import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
-import { IconButton, IconButtonLink } from "@/components/ui/icon-button";
+import { IconButton, IconButtonLink, IconButtonPlaceholder } from "@/components/ui/icon-button";
 import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
 import { useChildId } from "@/hooks/use-child-id";
 import { usePolicies } from "@/hooks/use-policies";
 import { api, qk, type Me } from "@/lib/api";
 import { askedChoices, consentChoices } from "@/lib/consent";
+import { settingsTour } from "@/lib/tour/screens/settings";
+import { useResetTours } from "@/lib/tour/seen";
 import { BACK, FORWARD } from "@/lib/view-transition";
 
 /**
@@ -106,7 +110,8 @@ function SettingsScreen() {
           <IconButtonLink href={`/child/${childId}/home`} label="홈으로 돌아가기" {...BACK}>
             <ArrowLeft aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
           </IconButtonLink>
-          <PageTitle>설정</PageTitle>
+          <PageTitle className="min-w-0 flex-1">설정</PageTitle>
+          <TourHelpButton tour={settingsTour} />
         </div>
         {/* 아래 "동의" 구역과 같은 값으로 고른다 — 없는 구역을 안내하지 않는다 */}
         <p className="text-body-sm text-ink-muted mt-2">
@@ -117,6 +122,7 @@ function SettingsScreen() {
       </header>
 
       <Section
+        tour="parents"
         title="함께 보는 보호자"
         description={`같은 아이를 함께 보는 사람이에요.${inviteNote}`}
         action={
@@ -128,6 +134,9 @@ function SettingsScreen() {
             >
               <Plus aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
             </IconButton>
+          ) : me.isPending ? (
+            // 받는 동안 자리만 잡는다 — owner 면 버튼이 들어오며 머리줄이 커져 아래가 밀린다.
+            <IconButtonPlaceholder className="-my-1" />
           ) : null
         }
       >
@@ -141,6 +150,7 @@ function SettingsScreen() {
 
       {hasOptionalConsent ? (
         <Section
+          tour="consents"
           title="동의"
           description="지금 켜고 끌 수 있는 것이에요. 바꾸기 전에 무엇이 달라지는지 먼저 보여드리고, 이름을 누르면 전문을 볼 수 있어요."
         >
@@ -149,6 +159,7 @@ function SettingsScreen() {
       ) : null}
 
       <Section
+        tour="support"
         title="고객센터"
         description="자주 묻는 것과 이 서비스의 기본 정보, 그리고 문제를 알리는 곳이에요."
       >
@@ -170,6 +181,7 @@ function SettingsScreen() {
             status="AI 답 · 공동 기록 · 앱 오류"
             {...FORWARD}
           />
+          <TourResetRow />
         </SettingsGroup>
       </Section>
 
@@ -187,6 +199,9 @@ function SettingsScreen() {
       <Section title="계정" description="로그인에 쓰는 정보와 나가는 길이에요.">
         <AccountSection childId={childId} />
       </Section>
+
+      {/* 🚨 곁가지 화면이라 저절로 뜨지 않는다 (`settingsTour.auto`). ? 로만 연다. */}
+      <ScreenTour tour={settingsTour} ready />
     </Screen>
   );
 }
@@ -196,19 +211,56 @@ function SettingsScreen() {
  * `secondary` 의 실루엣이 목록 상자와 같아서 둥근 사각형이 연달아 서고, 구역이 넷이라
  * 그것만으로 화면이 상자의 나열이 된다.
  */
+/**
+ * 고객센터의 "화면 설명 다시 보기" (#632 · `docs/web/screen-tour-v1.md` §1). 각 화면의 ? 는 그 화면만
+ * 다시 보여 주고, 이 줄은 모든 화면의 처음 설명을 다시 켠다 — 지금 바로 띄우지 않고 다음에 들어갈 때 뜬다.
+ * 🚨 되돌릴 수 있는 일이라 확인 단계를 두지 않는다.
+ */
+function TourResetRow() {
+  const tours = useResetTours();
+  return (
+    <SettingsInfoRow
+      data-tour="replay"
+      icon={CircleHelp}
+      title="화면 설명 다시 보기"
+      status={
+        <span role="status">
+          {tours.done
+            ? "다시 켰어요. 각 화면에 들어가면 다시 보여 드려요."
+            : "처음 들어왔을 때 보던 설명을 모든 화면에서 다시 켜요."}
+        </span>
+      }
+      action={
+        <Button
+          variant="tertiary"
+          size="compact"
+          className="shrink-0"
+          disabled={!tours.ready || tours.done}
+          onClick={tours.reset}
+        >
+          다시 켜기
+        </Button>
+      }
+    />
+  );
+}
+
 function Section({
   title,
   description,
   action,
+  tour,
   children,
 }: {
   title: string;
   description: string;
   action?: ReactNode;
+  /** 화면 투어가 비추는 자리 (`lib/tour/screens/settings.ts`). */
+  tour?: string;
   children: ReactNode;
 }) {
   return (
-    <section className="flex flex-col gap-3">
+    <section data-tour={tour} className="flex flex-col gap-3">
       <div>
         {/* 🚨 `items-center` 다. 버튼이 있는 줄에서 `items-baseline` 을 쓰면 버튼 상자가
             글자 기준선에 매달려 라벨보다 아래로 처진다. */}

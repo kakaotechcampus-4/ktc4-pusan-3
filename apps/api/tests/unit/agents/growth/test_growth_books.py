@@ -438,6 +438,22 @@ class TestSearchTool:
         # 낸 판이 아닌 판의 ISBN 을 알아도 propose 가 같은 책으로 거른다 — seen 에는 남는다
         assert set(ctx.state.seen_books) == {isbn(1), isbn(2), isbn(3)}
 
+    async def test_검색어는_run_하나에_상한까지만_정보나루로_간다(self):
+        # #452 리뷰 — 상한이 호출 하나에만 걸리면 모델이 여러 번 불러 한 run 에 18번 나갔다
+        recording = RecordingBooks([book(1, "picture")])
+        ctx = context(birth_for(30), books=recording, issued_books=InMemoryIssuedBooks())
+        ctx.state.gate = await build_gate(ctx, BOOK)
+
+        for words in (["공룡", "기차", "자동차"], ["바다", "우주"], ["곤충", "꽃"]):
+            last = await search_books_tool(ctx, SearchBooksArgs(keywords=words))
+
+        sent = [word for keywords, _limit in recording.calls for word in keywords]
+        assert sent == ["공룡", "기차", "자동차", "바다", "우주", "곤충"]  # 남은 자리만큼만
+        blocked = await search_books_tool(ctx, SearchBooksArgs(keywords=["물고기"]))
+        assert last.success and blocked.error["code"] == "SEARCH_LIMIT"
+        assert "물고기" not in blocked.error["message"]
+        assert len(recording.calls) == 3
+
     async def test_맞는_책이_없으면_NO_RECORDS_로_다른_낱말이나_빈_제출을_알린다(self):
         ctx = await ready(8, [book(1, "picture")])
         result = await search_books_tool(ctx, SearchBooksArgs(keywords=["공룡"]))

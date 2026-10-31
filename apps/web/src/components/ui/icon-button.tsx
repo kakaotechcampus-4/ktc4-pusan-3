@@ -102,3 +102,12 @@ export function IconButtonLink({
     </Link>
   );
 }
+
+/**
+ * 아직 그릴지 모르는 `IconButton` 의 자리. 머리줄의 행동(초대 · 고치기)은 데이터가 와야 그릴지가 정해지는데,
+ * 그때 줄 높이가 18 → 36 으로 커지면 아래가 전부 밀린다 (CLS). 받는 동안만 같은 크기의 빈 자리를 둔다.
+ * 🚨 누를 수 없는 버튼을 그리지 않는다 — 보이지 않는 빈 자리다.
+ */
+export function IconButtonPlaceholder({ className }: { className?: string }) {
+  return <span aria-hidden className={cn("h-touch aspect-square shrink-0", className)} />;
+}

@@ -155,6 +155,7 @@
 │   │   ├── Dockerfile        배포 이미지 (standalone 3단계). 🚨 API 주소는 빌드 인자다 — 런타임에 못 바꾼다
 │   │   ├── .dockerignore     빌드 컨텍스트 제외 목록. `.env*` 를 여기서 막는다
 │   │   ├── e2e/              Playwright 화면 규칙 테스트 (`make web-e2e`) — §2 가 화면에서 지켜지는지를 목 서버로 건다
+│   │   ├── contract/         웹 API 타입 ↔ 서버 OpenAPI 비교 (`make web-contract`) — 서버 스키마는 전부 대응표에 있어야 한다
 │   │   └── src/
 │   │       ├── app/          App Router — layout · providers · globals.css
 │   │       ├── lib/env.ts    환경변수 검증 (zod) — 없으면 부팅 실패
@@ -168,8 +169,9 @@
 │   │   ├── modules/          로컬 Expo 모듈 — `cookie-flush`(Android 웹뷰 쿠키를 디스크에 쓴다 · #469). 그 안의 `android/` 는 생성물이 아니라 소스다
 │   │   └── src/
 │   │       ├── config.ts     EXPO_PUBLIC_WEB_URL — 이 앱이 아는 유일한 주소
-│   │       └── native/       웹이 못 하는 것만 — safe area 크기 · 로그인 인증 세션 · 외부 링크 · 쿠키 flush 시점.
-│   │                         🚨 Android 권한은 INTERNET 하나다. 사진 권한은 스토어 심사 때문에 뺐다 (#408)
+│   │       └── native/       웹이 못 하는 것만 — safe area 크기 · 로그인 인증 세션 · 외부 링크 · 쿠키 flush 시점 · 기기 안 음성인식.
+│   │                         🚨 Android 권한은 INTERNET · RECORD_AUDIO 둘이다. 마이크는 말로 적기(#595), 음성은 휴대폰 밖으로 안 나간다.
+│   │                         사진 권한은 스토어 심사 때문에 뺐다 (#408)
 │   └── api/                  백엔드 + AI **한 서비스** (Python/FastAPI · uv)
 │       ├── CLAUDE.md         스택·레이어 경계 — 김명성 · 이시하 공동
 │       ├── README.md         사전 준비 · 실행 · 자주 쓰는 명령 · 트러블슈팅

@@ -10,6 +10,7 @@
 | 목 시나리오 | `localStorage` | **안 사라진다** — 직접 지우거나 `?scenario=default` |
 | 목의 refresh 쿠키 표식 (`icatch.mock.refresh`) | `localStorage` | **안 사라진다** — 로그아웃 · 탈퇴가 지운다. 실서버의 HttpOnly 쿠키 대신이다 (#465) |
 | 마지막에 본 아이 (`icatch.active-child`) | `localStorage` | 로그아웃하면 비워진다 |
+| 화면 투어 "봤음" (`icatch.tour.seen.<보호자 id>` · 목은 `p1`) | `localStorage` | **안 사라진다** — 설정 › 고객센터의 화면 설명 다시 보기가 지운다 (#632) |
 
 🚨 **로그인 토큰은 저장소에 없다** — 메모리에만 있고, 켤 때 목의 refresh 가 다시 준다. 그래서 탭을 닫거나 새로고침해도 로그인이 이어진다.
 
@@ -22,6 +23,7 @@ sessionStorage.clear();
 localStorage.removeItem("icatch.mock.refresh");
 localStorage.removeItem("icatch.active-child");
 localStorage.removeItem("icatch.mock.scenario");
+localStorage.removeItem("icatch.tour.seen.p1");
 location.replace("/");
 ```
 
@@ -103,6 +105,8 @@ location.replace("/");
 | 06 · 잠긴 이유가 여럿 | 날짜(+ 시각)가 안 끝나면 버튼 위에 **막는 줄이 다 선다** — 하나씩 말하면 채운 뒤에야 다음 관문을 알게 된다. ⚠️ 재료 확인은 여기 없다(채택할 때 끝난다) |
 | 05 · 재료 확인은 `food` 만 | `activity` 제안(물놀이장)만 고르면 확인 시트가 **안 뜨고 바로 채택된다** — 사전검사는 서버가 붙인다 |
 | 07 기록 · 기억 | `/child/c1/memories` (`?tab=profile` · `?tab=feedback` · `?domain=food`) |
+| 07 · 쪽 넘기기 · 검색 · 기간 | `/child/c1/memories?scenario=observations_many` (25건 · 2쪽) · `?q=계란말이` · `?tab=profile&q=계란반찬`(기억은 띄어쓰기 무시) · `?from=2020-01-01&to=2020-01-31`(조건의 빈 상태 · 기간 칩을 누르면 풀린다) · 필터 단추 → 시트 → 기간 칸(범위 달력). 🚨 화면 주소는 `from` · `to` 다 — API 쿼리 이름(`date_from` · `date_to`)과 다르다 (#584) |
+| 07 · 제안 피드백 두 보기 | `/child/c1/memories?tab=feedback` (피드백 전 2건) · `?tab=feedback&view=rated` (피드백 완료 1건) · 피드백 전에서 칩을 누르면 그 줄이 빠지고 피드백 완료로 옮겨 간다. `?tab=feedback&scenario=suggestions_many` (피드백 전 21건 · 2쪽) → 2쪽의 한 줄을 평가하면 1쪽으로 옮겨진다 (#592) |
 | 08 사진으로 적기 | 03 홈의 카메라 버튼 → 시트에서 **어떤 사진인지 고르고** → 최근 사진·촬영·앨범. ⚠️ 목을 켰을 때만 버튼이 선다 — 실서버에 엔드포인트가 없다 (#409) |
 | 08 · 알림장으로 읽기 | 시트에서 "알림장·식단표" 를 고른다 (아무 이미지 파일이나 넣으면 된다) |
 | 08 · 아이 활동 사진으로 읽기 | 시트에서 "아이 활동 사진" 을 고른다 — 태그가 **하나도 안 골라진** 채로 시작한다 |

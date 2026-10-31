@@ -8,8 +8,8 @@ import { useState } from "react";
 import { AuthGate } from "@/components/auth-gate";
 import { ScreenTransition } from "@/components/route-transition";
 import { ChildNav } from "@/components/child-nav";
-import { GrowthChart } from "@/components/growth-chart";
-import { GrowthLogList } from "@/components/growth-log-list";
+import { GrowthChart, GrowthChartSkeleton } from "@/components/growth-chart";
+import { GrowthLogList, GrowthLogListSkeleton } from "@/components/growth-log-list";
 import { GrowthSheet } from "@/components/growth-sheet";
 import { Button } from "@/components/ui/button";
 import { CardFailed } from "@/components/ui/card";
@@ -19,12 +19,13 @@ import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
 import { IconButton } from "@/components/ui/icon-button";
 import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
-import { SkeletonBlock } from "@/components/ui/skeleton";
 import { phaseOf, Swap } from "@/components/ui/swap";
 import { useChildId } from "@/hooks/use-child-id";
 import { useSheetTarget } from "@/hooks/use-sheet-target";
 import { api, qk, type GrowthLog, type GrowthLogsResponse } from "@/lib/api";
 import { BACK } from "@/lib/view-transition";
+import { ScreenTour, TourHelpButton } from "@/components/screen-tour";
+import { growthTour } from "@/lib/tour/screens/growth";
 
 /**
  * 11-1 키 · 몸무게 상세 — 이 아이 안에서 어떻게 움직였고, 언제 무엇을 쟀는지.
@@ -107,13 +108,16 @@ function GrowthDetailScreen() {
             </div>
             {/* 🚨 승인 게이트가 아니다 — 잘못 적으면 그 줄을 지우면 된다 (최상위 §2).
                 프로필 구역 머리줄과 **같은 아이콘 버튼**이다. */}
-            <IconButton
-              label="키·몸무게 새로 적기"
-              onClick={() => setAdding(true)}
-              className="-my-1"
-            >
-              <Plus aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
-            </IconButton>
+            <div className="-my-1 flex items-center">
+              <TourHelpButton tour={growthTour} />
+              <IconButton
+                label="키·몸무게 새로 적기"
+                onClick={() => setAdding(true)}
+                data-tour="add"
+              >
+                <Plus aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
+              </IconButton>
+            </div>
           </div>
           {/* 🚨 **또래·백분위를 안 본다는 것을 화면이 직접 말한다.** 그래프가 있는 화면에서
               이 문장이 빠지면, 부모는 이 선이 어딘가의 기준과 견준 결과라고 읽는다. */}
@@ -126,7 +130,18 @@ function GrowthDetailScreen() {
       {/* 스켈레톤 → 내용은 같은 자리의 교체다 (디자인 시스템 §8). */}
       <Swap id={phaseOf(growth)}>
         {growth.isPending ? (
-          <SkeletonBlock label="측정 기록을 불러오는 중" />
+          // 🚨 불러온 뒤와 같은 두 구역으로 기다린다 — 세 줄짜리 블록이 그래프 두 장으로 바뀌면
+          //    화면 전체가 한 번에 자라서, 받은 순간 무엇이 어디 있는지 다시 찾아야 한다.
+          <>
+            <section className="flex flex-col gap-3">
+              <h2 className="text-label text-brand">변화</h2>
+              <GrowthChartSkeleton />
+            </section>
+            <section className="flex flex-col gap-3">
+              <h2 className="text-label text-brand">기록</h2>
+              <GrowthLogListSkeleton rows={2} />
+            </section>
+          </>
         ) : growth.isError ? (
           /* 🚨 실패를 빨강으로 칠하지 않는다 (디자인 시스템 §3). */
           <CardFailed>
@@ -151,12 +166,12 @@ function GrowthDetailScreen() {
           />
         ) : (
           <>
-            <section className="flex flex-col gap-3">
+            <section data-tour="chart" className="flex flex-col gap-3">
               <h2 className="text-label text-brand">변화</h2>
               <GrowthChart logs={logs} />
             </section>
 
-            <section className="flex flex-col gap-3">
+            <section data-tour="list" className="flex flex-col gap-3">
               <h2 className="text-label text-brand">기록</h2>
               {/* 🚨 **목록이 화면을 밀지 않게 목록 안에서 스크롤한다.** 잰 기록은 해가 갈수록
                 쌓이기만 하는데, 다 펼치면 그래프가 화면 위로 사라지고 "새로 적기" 는 스크롤
@@ -180,6 +195,8 @@ function GrowthDetailScreen() {
       </Swap>
 
       <GrowthSheet open={adding} onClose={() => setAdding(false)} childId={childId} />
+
+      <ScreenTour tour={growthTour} ready={growth.isSuccess} />
 
       {/* 🚨 열 때마다 시트를 새로 만든다 (`key`) — 폼이 `useState` 로 값을 들고 있어서
           같은 인스턴스를 재사용하면 앞 줄의 값이 남는다 (11 프로필의 다른 시트들과 같다).

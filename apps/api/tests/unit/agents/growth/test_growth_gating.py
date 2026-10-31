@@ -103,7 +103,8 @@ class TestMannerAt24:
         result = await run(
             task("routine_coaching", self.REQUEST), at(24), client=says("social_manner", "인사하기")
         )
-        assert result.status == "completed" and result.readouts == ()
+        assert result.status == "completed"
+        assert [readout.code for readout in result.readouts] == ["empty"]  # 되묻기 + 안내 한 줄
         assert result.needs_observation == ask("ask.routine_current", "인사하기")
 
 
@@ -121,7 +122,8 @@ class TestHabitAt36:
         result = await run(
             task("routine_coaching", self.REQUEST), at(36), client=says("habit", "손톱 물어뜯기")
         )
-        assert result.status == "completed" and result.readouts == ()
+        assert result.status == "completed"
+        assert [readout.code for readout in result.readouts] == ["empty"]  # 되묻기 + 안내 한 줄
         assert result.needs_observation == ask("ask.habit_current", "손톱 물어뜯기")
 
 

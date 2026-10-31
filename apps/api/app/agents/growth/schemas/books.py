@@ -15,8 +15,11 @@ from pydantic import Field
 from app.agents.common.suggestion import MAX_SUGGESTIONS
 from app.agents.growth.schemas.common import EvidencePick, ToolArgs
 
-# 검색어 하나 = 캐시가 없을 때 정보나루 1회. run 하나가 하루 한도를 쓰지 않게 묶는다
+# 검색어 하나 = 캐시가 없을 때 정보나루 1회. `search_books` 한 번에 넣을 수 있는 수다
 MAX_KEYWORDS = 3
+# run 하나에서 정보나루로 보내는 검색어의 합. 모델이 여러 번 불러도 여기까지다 — IP 등록 전에는
+# 하루 500회라 run 하나가 한도를 쓰지 않게 묶는다(#452 리뷰: 상한이 호출에만 걸려 18번 나갔다)
+MAX_RUN_KEYWORDS = 6
 KEYWORD_MAX_LENGTH = 12
 # 낱말 사이 띄어쓰기는 한 칸만 — 앞뒤 공백 · 줄바꿈 · 문장부호는 받지 않는다
 _KEYWORD_PATTERN = r"^[0-9A-Za-z가-힣]+( [0-9A-Za-z가-힣]+)*$"

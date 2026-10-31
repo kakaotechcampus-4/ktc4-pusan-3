@@ -21,6 +21,7 @@ import { HomeComposer } from "@/components/home-composer";
 import { PhotoSourceSheet } from "@/components/photo-source-sheet";
 import { PROMPT_PILL } from "@/components/agent-prompts";
 import { ScreenTransition } from "@/components/route-transition";
+import { ScreenTour, TourHelpButton } from "@/components/screen-tour";
 import { Button } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -30,7 +31,7 @@ import { IconTile } from "@/components/ui/icon-tile";
 import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
 import { phaseOf, Swap } from "@/components/ui/swap";
-import { SkeletonBlock } from "@/components/ui/skeleton";
+import { SkeletonGroup, SkeletonText, SkeletonTile } from "@/components/ui/skeleton";
 import { useTodayChat } from "@/hooks/use-chat-history";
 import { useChildId } from "@/hooks/use-child-id";
 import { hasOpenQuestion, isBusy, sendLine, useConversation } from "@/stores/conversation";
@@ -38,6 +39,7 @@ import { useDraftStore, useDraftText } from "@/stores/draft";
 import { usePhotoDraftStore } from "@/stores/photo-draft";
 import { api, isApiError, qk, type HomeResponse, type Me } from "@/lib/api";
 import { cn } from "@/lib/cn";
+import { homeEmptyTour, homeTour } from "@/lib/tour/screens/home";
 import { FORWARD } from "@/lib/view-transition";
 
 /**
@@ -118,6 +120,11 @@ function HomeScreen() {
   }
 
   const consentBlocked = isApiError(home.error, "consent_required") ? home.error : null;
+  /**
+   * 🚨 기록이 없는 홈과 있는 홈은 다른 투어다 (`lib/tour/screens/home.ts`). 받기 전에는 기록 있는 쪽으로
+   *    두지만 `ready` 가 꺼져 있어 뜨지 않는다.
+   */
+  const tour = home.data?.observation_count === 0 ? homeEmptyTour : homeTour;
 
   /**
    * 🚨 **버튼의 `prompt_key` 를 그대로 넘긴다** (#286). 빼면 "저녁" 버튼을 눌러도 Agent 는
@@ -146,6 +153,7 @@ function HomeScreen() {
               locked={leaving !== null}
               busyLabel={leaving !== null ? "보내는 중이에요" : "답을 기다리는 중이에요"}
               sentLine={leaving !== null}
+              promptsPending={home.isPending}
               lead={
                 // 🚨 **오늘 대화가 있을 때만 선다** — 빈 대화로 가는 문을 세우지 않는다. 앱을 다시 켜면 대화
                 //    스토어가 비어 있어서 서버에 남은 오늘 대화도 본다 (#228).
@@ -171,9 +179,13 @@ function HomeScreen() {
               <p className="text-body-sm text-ink-subtle mt-2">
                 지금까지 함께 쌓은 기록 {home.data.observation_count}건
               </p>
+            ) : home.isPending ? (
+              // 받는 동안 줄 자리를 잡는다 — 받은 뒤에 줄이 생기면 아래 카드가 한 줄만큼 밀린다.
+              <SkeletonText size="body-sm" width="1/2" className="mt-2" />
             ) : null}
           </div>
           {/* 설정은 자주 가는 곳이 아니라 아래 네비에 칸을 주지 않는다 — 제목 옆 아이콘 하나다. */}
+          <TourHelpButton tour={tour} />
           <IconButton
             label="설정"
             onClick={() => router.push(`/child/${childId}/settings`, FORWARD)}
@@ -185,9 +197,7 @@ function HomeScreen() {
         {/* 스켈레톤 → 내용은 같은 자리의 교체다 (디자인 시스템 §8). */}
         <Swap id={phaseOf(home)}>
           {home.isPending ? (
-            <Card>
-              <SkeletonBlock label="홈을 불러오는 중" />
-            </Card>
+            <HomeBodySkeleton />
           ) : consentBlocked ? (
             // 🚨 403 consent_required 를 일반 실패로 그리면 "다시 시도" 만 누르게 된다 — 다시 시도해도
             //    같은 403 이다. 무엇이 막혔는지 말해야 한다 (§3 에러).
@@ -215,6 +225,9 @@ function HomeScreen() {
 
         {/* 🚨 고른 파일을 여기서 올리지 않는다. 08 이 업로드·스트림·저장을 통째로 소유하고,
           홈은 파일 하나를 스토어에 놓고 넘긴다 — 두 화면이 같은 흐름을 두 벌 갖지 않게. */}
+        {/* 막 보내고 대화로 넘어가는 순간에는 띄우지 않는다 (`leaving`). */}
+        <ScreenTour tour={tour} ready={home.isSuccess && leaving === null} />
+
         <PhotoSourceSheet
           open={photoSheetOpen}
           onClose={() => setPhotoSheetOpen(false)}
@@ -239,6 +252,7 @@ function HomeScreen() {
 function ChatEntryLink({ href, asking }: { href: string; asking: boolean }) {
   return (
     <Link
+      data-tour="chat-entry"
       href={href}
       {...FORWARD}
       className={cn(
@@ -262,6 +276,7 @@ function HomeBody({ data }: { data: HomeResponse }) {
   if (data.highlight === null && data.observation_count === 0) {
     return (
       <EmptyState
+        data-tour="empty"
         icon={NotebookPen}
         title="아래에 한 줄 적으면 여기에 쌓여요"
         description="기록이 없으면 제안도 만들지 않아요. 지어내지 않으려고요."
@@ -275,7 +290,7 @@ function HomeBody({ data }: { data: HomeResponse }) {
       <Counts week={data.week_count} upcoming={data.upcoming_count} />
 
       {data.today.length > 0 ? (
-        <Section label="오늘">
+        <Section label="오늘" tour="today">
           <Card className="flex flex-col gap-3">
             {data.today.map((item) =>
               item.kind === "meal" ? (
@@ -289,7 +304,7 @@ function HomeBody({ data }: { data: HomeResponse }) {
       ) : null}
 
       {data.highlight ? (
-        <Section label="눈여겨볼 것">
+        <Section label="눈여겨볼 것" tour="highlight">
           <Card tone="accent">
             <div className="flex items-start gap-3">
               <IconTile icon={Repeat} />
@@ -306,10 +321,58 @@ function HomeBody({ data }: { data: HomeResponse }) {
   );
 }
 
-/** 섹션 제목. 🚨 브랜드색 라벨이라 화면에 초록이 규칙적으로 들어온다 (문서 §2-2 "canvas 위 브랜드 텍스트"). */
-function Section({ label, children }: { label: string; children: ReactNode }) {
+/**
+ * 받는 동안의 본문. `HomeBody` 의 **가장 흔한 모양**(건수 카드 + "오늘" 한 장)과 같은 상자 · 같은 줄 높이다
+ * (CLS · `components/ui/skeleton.tsx`). 🚨 `Counts` · `TodayRow` 의 여백을 바꾸면 여기도 같이 바꾼다.
+ * 구역 이름은 받은 내용에 따라 서고 안 서서 글자로 쓰지 않고 자리만 잡는다.
+ */
+function HomeBodySkeleton() {
   return (
-    <section>
+    <SkeletonGroup label="홈을 불러오는 중" className="flex flex-col gap-6">
+      <Card className="flex items-stretch gap-4">
+        <CountSkeleton />
+        <span aria-hidden className="bg-line w-px self-stretch" />
+        <CountSkeleton />
+      </Card>
+      <section>
+        <SkeletonText size="label" width="1/4" />
+        <div className="mt-2">
+          <Card className="flex flex-col gap-3">
+            {[0, 1].map((i) => (
+              <div key={i} className="flex items-center gap-3">
+                <SkeletonTile />
+                <SkeletonText size="body-sm" width="2/3" className="min-w-0 flex-1" />
+              </div>
+            ))}
+          </Card>
+        </div>
+      </section>
+    </SkeletonGroup>
+  );
+}
+
+function CountSkeleton() {
+  return (
+    <div className="flex-1">
+      <SkeletonText size="display" width="short" />
+      <SkeletonText size="caption" width="1/2" className="mt-1" />
+    </div>
+  );
+}
+
+/** 섹션 제목. 🚨 브랜드색 라벨이라 화면에 초록이 규칙적으로 들어온다 (문서 §2-2 "canvas 위 브랜드 텍스트"). */
+function Section({
+  label,
+  tour,
+  children,
+}: {
+  label: string;
+  /** 화면 투어가 비추는 자리 (`lib/tour/screens/home.ts`). */
+  tour?: string;
+  children: ReactNode;
+}) {
+  return (
+    <section data-tour={tour}>
       <h2 className="text-label text-brand">{label}</h2>
       <div className="mt-2">{children}</div>
     </section>

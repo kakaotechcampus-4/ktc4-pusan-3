@@ -28,7 +28,7 @@ from enum import StrEnum
 from app.agents.common.suggestion import MAX_SUGGESTIONS
 from app.agents.growth.context import GrowthContext
 from app.agents.growth.result import ErrorCode, ToolResult, fail, ok
-from app.agents.growth.schemas.books import SearchBooksArgs
+from app.agents.growth.schemas.books import MAX_RUN_KEYWORDS, SearchBooksArgs
 from app.agents.growth.store.ports import BookRow
 from app.rules.book_evidence import normalize_isbn
 from app.rules.book_form import fits_age
@@ -80,6 +80,7 @@ async def search_books(
         raise RuntimeError("도서 포트 없이 도서 검색이 불렸다 — registry 가 열지 않았어야 한다")
 
     months = gate.stage.months
+    context.state.book_keywords += len(cleaned)
     rows = await books.search(keywords=cleaned, limit=SEARCH_POOL)
     context.state.book_searched = True
     found: dict[str, BookRow] = {}
@@ -184,6 +185,10 @@ def explain(rejections: Sequence[BookRejection]) -> str:
     return " / ".join(f"{r.index + 1}번 후보: {GUIDANCE[r.reason]}" for r in rejections)
 
 
+_SEARCH_LIMIT = (
+    "이번 요청에서는 책을 더 찾을 수 없다. 지금까지 찾은 책 중에서 골라 propose_books 로 "
+    "제출하고, 고를 책이 없으면 items 를 비워 제출한다."
+)
 _NO_BOOKS = (
     "이 낱말로 이 나이에 맞는 책이 없다. 다른 주제 낱말로 한 번 더 찾거나, "
     "그래도 없으면 propose_books 를 items 를 비워 부른다."
@@ -193,7 +198,11 @@ _NO_BOOKS = (
 async def search_books_tool(context: GrowthContext, args: SearchBooksArgs) -> ToolResult:
     """모델 tool `search_books`. 이름 · 저자 · 출판사 · 형태만 돌려준다 — 표지 주소는 모델에게
     쓸모가 없다. 0권이면 `NO_RECORDS` 로 다음 할 일만 알린다(검색어 · 책 이름은 싣지 않는다)."""
-    found = await search_books(context, keywords=args.keywords)
+    left = MAX_RUN_KEYWORDS - context.state.book_keywords
+    if left <= 0:
+        return fail("query", "search_books", ErrorCode.SEARCH_LIMIT, _SEARCH_LIMIT)
+    # 남은 자리만큼만 보낸다 — 앞의 낱말이 모델이 먼저 고른 것이다
+    found = await search_books(context, keywords=args.keywords[:left])
     if not found:
         return fail("query", "search_books", ErrorCode.NO_RECORDS, _NO_BOOKS)
     # 제목 · 저자가 같은 다른 판은 한 권만 보인다. 둘을 다 보이면 모델이 같은 책을 두 번 골라

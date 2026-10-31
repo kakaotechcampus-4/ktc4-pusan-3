@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
 import { IconButton } from "@/components/ui/icon-button";
 import { IconTile } from "@/components/ui/icon-tile";
+import { SkeletonGroup, SkeletonText, SkeletonTile } from "@/components/ui/skeleton";
 import { cn } from "@/lib/cn";
 import { formatDay } from "@/lib/format";
 import { useFlip, useReveal } from "@/lib/motion";
@@ -268,5 +269,47 @@ export function GrowthLatestCard({ log, href }: { log: GrowthLog; href: string }
         className="text-ink-subtle mt-1.5 shrink-0"
       />
     </Link>
+  );
+}
+
+/**
+ * 받는 동안의 줄 하나. `GrowthLogRow` · `GrowthLatestCard` 와 **같은 여백 · 같은 줄 높이**다
+ * (CLS · `components/ui/skeleton.tsx`). 🚨 진짜 줄의 여백을 바꾸면 여기도 같이 바꾼다.
+ */
+function GrowthRowSkeleton() {
+  return (
+    <div className="flex items-start gap-3 px-4 py-3.5">
+      <SkeletonTile />
+      <div className="flex min-w-0 flex-1 flex-col gap-1">
+        <SkeletonText width="2/3" />
+        <SkeletonText size="caption" width="1/3" />
+      </div>
+    </div>
+  );
+}
+
+/** 11 프로필 "키 · 몸무게" 구역이 받는 동안. */
+export function GrowthLatestCardSkeleton() {
+  return (
+    <SkeletonGroup
+      label="측정 기록을 불러오는 중"
+      className="rounded-card border-line bg-surface border"
+    >
+      <GrowthRowSkeleton />
+    </SkeletonGroup>
+  );
+}
+
+/** 11-1 기록 목록이 받는 동안. 줄 수는 진짜 목록이 화면에 세우는 만큼만 — 더 그리면 그만큼 줄어든다. */
+export function GrowthLogListSkeleton({ rows = 3 }: { rows?: number }) {
+  return (
+    <SkeletonGroup
+      label="측정 기록을 불러오는 중"
+      className="border-line divide-line rounded-card bg-surface divide-y overflow-hidden border"
+    >
+      {Array.from({ length: rows }, (_, i) => (
+        <GrowthRowSkeleton key={i} />
+      ))}
+    </SkeletonGroup>
   );
 }

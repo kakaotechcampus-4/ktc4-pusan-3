@@ -6,6 +6,7 @@ import { domainBar, domainField, domainLabel } from "@/components/domain-chip";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DOMAIN_ICON } from "@/components/ui/icon";
 import { IconTile } from "@/components/ui/icon-tile";
+import { SkeletonGroup, SkeletonText, SkeletonTile } from "@/components/ui/skeleton";
 import { PanelTabs } from "@/components/ui/tabs";
 import type { Agent, Evidence, Suggestion, SuggestionGroup } from "@/lib/api/types";
 import { cn } from "@/lib/cn";
@@ -137,22 +138,24 @@ export function SuggestionList({
       {/* 🚨 **묶음이 하나면 탭을 세우지 않는다.** 고를 것이 없는 탭 줄은 자리만 먹고, 누를 수
           있어 보이는데 아무 일도 안 일어난다. */}
       {order.length > 1 ? (
-        <PanelTabs
-          label="어느 영역의 제안을 볼까요"
-          panelId={PANEL_ID}
-          active={agent}
-          onChange={(key) => setOpen(key as Agent)}
-          items={order.map((a) => ({
-            key: a,
-            /**
-             * 🚨 **도메인 색을 탭에 얹지 않는다.** 두 탭에 `-soft` 면을 깔면 꺼진 탭이 켜진
-             *    것처럼 보이고, 활성 신호(`brand` 밑줄 + 잉크)와 도메인 신호가 같은 줄에서
-             *    싸운다. 남는 것은 **아이콘 모양**이고 색은 탭의 상태색을 따라간다.
-             */
-            icon: a,
-            label: `${domainLabel(a)} ${drawable.filter((s) => s.agent === a).length}가지`,
-          }))}
-        />
+        <div data-tour="tabs">
+          <PanelTabs
+            label="어느 영역의 제안을 볼까요"
+            panelId={PANEL_ID}
+            active={agent}
+            onChange={(key) => setOpen(key as Agent)}
+            items={order.map((a) => ({
+              key: a,
+              /**
+               * 🚨 **도메인 색을 탭에 얹지 않는다.** 두 탭에 `-soft` 면을 깔면 꺼진 탭이 켜진
+               *    것처럼 보이고, 활성 신호(`brand` 밑줄 + 잉크)와 도메인 신호가 같은 줄에서
+               *    싸운다. 남는 것은 **아이콘 모양**이고 색은 탭의 상태색을 따라간다.
+               */
+              icon: a,
+              label: `${domainLabel(a)} ${drawable.filter((s) => s.agent === a).length}가지`,
+            }))}
+          />
+        </div>
       ) : null}
 
       <section
@@ -201,9 +204,11 @@ export function SuggestionList({
             한 묶음인지 안 보인다" 였는데, **탭이 그 일을 가져갔다** — 한 번에 한 묶음만 서고
             묶음의 이름과 질문은 탭과 머리줄이 말한다. 그래서 상자는 최대 셋이다. */}
         <ul className="flex flex-col gap-3">
-          {rows.map((suggestion) => (
+          {rows.map((suggestion, i) => (
             <li
               key={suggestion.id}
+              // 화면 투어는 첫 후보를 비춘다 (`lib/tour/screens/suggestions.ts`).
+              data-tour={i === 0 ? "row" : undefined}
               /**
                * 🚨 **고른 카드는 테두리와 띠가 **함께** `brand` 가 된다.** 색의 뜻은
                *    `chip-choice`(고르는 칩)와 같은 "골랐음" 이다.
@@ -313,7 +318,10 @@ function SuggestionRow({
         {/* 🚨 **근거는 선 아래에 둔다.** 제안·이유와 같은 무게로 쌓으면 이 제품의 차별점인
             근거가 본문에 묻힌다. 나누는 것은 카드 속 카드가 아니라 **가는 선 하나**다.
             이유가 없으면 선이 제안 문장 바로 아래로 올라오니, 제안과의 사이를 이유 자리(16)로 둔다. */}
-        <div className={cn("border-line border-t pt-3", reason ? "mt-3" : "mt-4")}>
+        <div
+          data-tour="evidence"
+          className={cn("border-line border-t pt-3", reason ? "mt-3" : "mt-4")}
+        >
           <EvidenceList evidence={suggestion.evidence} />
         </div>
 
@@ -385,5 +393,53 @@ function EvidenceList({ evidence }: { evidence: Evidence[] }) {
         ))}
       </ul>
     </div>
+  );
+}
+
+/**
+ * 받는 동안의 목록 (제안은 Agent 가 만들어서 몇 초가 걸린다). 받은 뒤의 **탭 · 묶음 머리줄 · 후보 카드**와
+ * 같은 상자로 기다린다 (CLS · `components/ui/skeleton.tsx`). 세 줄짜리 블록이던 때는 아래 "홈으로" 가
+ * 받는 순간 화면 밖으로 튕겨 나갔다. 후보 카드는 근거 목록 길이가 제안마다 달라 대표 모양(이유 두 줄 ·
+ * 근거 하나)으로 잡는다. 🚨 진짜 카드의 여백을 바꾸면 여기도 같이 바꾼다.
+ */
+export function SuggestionListSkeleton({ tabs }: { tabs: boolean }) {
+  return (
+    <SkeletonGroup label="제안을 준비하는 중" className="flex flex-col gap-4">
+      {tabs ? (
+        <div className="border-line flex border-b">
+          {[0, 1].map((i) => (
+            <div key={i} className="min-h-touch flex flex-1 items-center justify-center px-2">
+              <SkeletonText size="label" width="1/2" className="w-full text-center" />
+            </div>
+          ))}
+        </div>
+      ) : null}
+      <div className="flex flex-col gap-2">
+        <div className="flex items-center gap-3">
+          <SkeletonTile />
+          <SkeletonText size="display" width="2/3" className="min-w-0 flex-1" />
+        </div>
+        <ul className="flex flex-col gap-3">
+          {/* 셋이다 — 한 묶음의 후보는 최대 셋이고, 그만큼 잡아 둬야 아래 "홈으로" 가 처음부터 화면 밖에 선다. */}
+          {[0, 1, 2].map((i) => (
+            <li key={i} className="rounded-card bg-surface border-line flex overflow-hidden border">
+              <span className="bg-line w-1.5 shrink-0" />
+              <div className="min-w-0 flex-1 px-4 py-4">
+                <SkeletonText size="title" width="3/4" />
+                <div className="pl-8">
+                  <SkeletonText size="body-sm" className="mt-4" />
+                  <SkeletonText size="body-sm" width="2/3" />
+                  <div className="border-line mt-3 border-t pt-3">
+                    <SkeletonText size="label" width="1/4" />
+                    <SkeletonText size="body-sm" width="1/3" className="mt-2" />
+                    <SkeletonText size="caption" width="1/2" className="mt-0.5" />
+                  </div>
+                </div>
+              </div>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </SkeletonGroup>
   );
 }

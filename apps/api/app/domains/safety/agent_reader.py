@@ -5,7 +5,7 @@ Agent 는 DB 에 직접 닿지 않는다. api 가 이 어댑터를 만들어(`ag
 포트 모양(`SafetyEntry`)은 agents 가 정한 계약이라 여기서 import 한다 — `DbMemoryStore` 와 같은
 예외 경로다(apps/api/CLAUDE.md "agents 가 정한 저장 계약").
 
-- 🚨 Food · Activity · Growth · Health 는 읽는 행이 다르다. 한 쿼리로 합치지 않는다.
+- 🚨 Food · Health 와 Activity · Growth 는 읽는 행이 다르다. 한 쿼리로 합치지 않는다.
   - Food: `active` 만, kind 는 전부. 질환 칸(`chronic_disease` "유당불내증")도
     `chronic_restriction.yaml` 로 메뉴를 막는다 — 빠지면 막히던 메뉴가 통과한다.
   - Activity · Growth: `allergy` · `environmental` 만, status 는 전부. 거르는 것은 호출부다.

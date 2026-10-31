@@ -100,8 +100,8 @@ function ChildOnboardingScreen() {
   });
 
   function buildBody(): OnboardingRequest | null {
-    const heightValue = parseMeasurement(height);
-    const weightValue = parseMeasurement(weight);
+    const heightValue = parseMeasurement("height", height);
+    const weightValue = parseMeasurement("weight", weight);
 
     const body: OnboardingRequest = {
       ...(relation ? { relation } : {}),
@@ -124,8 +124,8 @@ function ChildOnboardingScreen() {
      *    값을 그냥 빼는데, 그대로 제출하면 **적은 사람만 적었다고 믿는다.** 여기서 먼저 막는다.
      */
     const next = {
-      height: measurementError(parseMeasurement(height)),
-      weight: measurementError(parseMeasurement(weight)),
+      height: measurementError("height", parseMeasurement("height", height)),
+      weight: measurementError("weight", parseMeasurement("weight", weight)),
     };
     setMeasureErrors(next);
     if (next.height || next.weight) return;
@@ -220,7 +220,7 @@ function ChildOnboardingScreen() {
            알레르기는 **승인 게이트 ㉡** 라 시트에서 확정하는 즉시 저장된다 (NF-03 —
            알레르기의 유일한 쓰기 경로). 그래서 여기서 등록한 것은 "건너뛰기" 를 눌러도 남는다.
       */}
-      <SafetySection childId={childId} />
+      <SafetySection childId={childId} expectEmpty />
 
       <div className="mt-auto flex flex-col gap-3 pt-4">
         {emptyNotice && !body ? (

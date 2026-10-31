@@ -20,6 +20,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
 import { IconButton } from "@/components/ui/icon-button";
 import { IconTile } from "@/components/ui/icon-tile";
+import { SkeletonGroup, SkeletonText, SkeletonTile } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { TextArea } from "@/components/ui/text-area";
 import { useToast } from "@/components/ui/toast";
@@ -30,6 +31,7 @@ import type {
   CalendarEvent,
   DiaryRequest,
   EventItem,
+  EventItemUpdateRequest,
   EventItemUpdateResponse,
   MyDiary,
   Observation,
@@ -102,7 +104,7 @@ export function CalendarDayPanel({
       />
 
       {data.events.length > 0 ? (
-        <Section title="저장된 일정">
+        <Section title="저장된 일정" tour="events">
           <ul className="flex flex-col gap-3">
             {data.events.map((event) => (
               <li key={event.id}>
@@ -114,7 +116,7 @@ export function CalendarDayPanel({
       ) : null}
 
       {data.observations.length > 0 ? (
-        <Section title="이날 남긴 기록">
+        <Section title="이날 남긴 기록" tour="records">
           <ObservationList observations={data.observations} onOpen={onOpenObservation} />
         </Section>
       ) : null}
@@ -125,7 +127,7 @@ export function CalendarDayPanel({
           🚨 **"이날의 일기 쓰기" 와 같은 줄 모양이다** (`PANEL_ROW` · #503). 테두리 버튼 하나를 두면 덩그러니
              놓여 보였다. 다른 화면(04)으로 가는 것이라 버튼이 아니라 `<Link>` 다 (10 설정 줄과 같다). */}
       {data.chat_count > 0 ? (
-        <Section title="이날 나눈 대화">
+        <Section title="이날 나눈 대화" tour="chat">
           <Link
             href={`/child/${childId}/chat?date=${date}`}
             transitionTypes={FORWARD.transitionTypes}
@@ -162,17 +164,20 @@ export function CalendarDayPanel({
 function Section({
   title,
   action,
+  tour,
   children,
 }: {
   title: string;
   /** 제목 줄 오른쪽 끝의 그 구역 행동. */
   action?: React.ReactNode;
+  /** 화면 투어가 비추는 자리 (`lib/tour/screens/calendar.ts`). */
+  tour?: string;
   children?: React.ReactNode;
 }) {
   // 제목이 구역의 이름이 된다 — 스크린리더가 구역(region)으로 건너다닐 수 있다.
   const headingId = useId();
   return (
-    <section aria-labelledby={headingId} className="flex flex-col gap-2">
+    <section aria-labelledby={headingId} data-tour={tour} className="flex flex-col gap-2">
       {/* 🚨 **줄이 접힌다** (`flex-wrap`). 글자를 키우면 제목과 버튼이 한 줄에 안 들어가고,
           `keep-all` 이라 단어를 쪼개지도 못해 화면 밖으로 넘친다.
           🚨 **제목 줄은 버튼이 없어도 버튼 높이다** (`min-h-touch`). 버튼(44)이 선 구역만 줄이 커지면
@@ -187,6 +192,29 @@ function Section({
       </div>
       {children}
     </section>
+  );
+}
+
+/**
+ * 받는 동안의 하루 패널. 어느 날이든 서는 **일기 구역**(제목 + 줄 하나)과 같은 상자 · 같은 줄 높이다
+ * (CLS · `components/ui/skeleton.tsx`). 기록 · 일정 · 사진은 날마다 있고 없고가 달라 자리를 잡지 않는다 —
+ * 맨 아래에 붙는 것들이라 늦게 서도 위의 것을 밀지 않는다.
+ * 🚨 `Section` · `PANEL_ROW` 의 여백을 바꾸면 여기도 같이 바꾼다.
+ */
+export function CalendarDayPanelSkeleton() {
+  return (
+    <SkeletonGroup label="이날을 불러오는 중" className="flex flex-col gap-5">
+      <div className="flex flex-col gap-2">
+        <div className="min-h-touch flex items-center">
+          {/* 구역 이름은 값이 아니라서 그대로 그린다 — 어느 날이든 이 구역은 선다. */}
+          <p className="text-section text-ink">이날의 일기</p>
+        </div>
+        <div className="min-h-touch rounded-field bg-surface border-line flex items-center gap-3 border px-4 py-3.5">
+          <SkeletonTile />
+          <SkeletonText width="1/3" className="flex-1" />
+        </div>
+      </div>
+    </SkeletonGroup>
   );
 }
 
@@ -238,9 +266,10 @@ function EventCard({
       </p>
 
       {event.items.length > 0 ? (
-        <div className="mt-3">
+        // 준비물은 카드 폭이 넉넉하면 두 열로 선다 — 기준과 이유는 docs/web/screen-rules-v1.md §5.
+        <div data-tour="prep" className="@container mt-3">
           <p className="text-label text-ink-muted">준비물</p>
-          <ul className="mt-1">
+          <ul className="mt-1 grid grid-cols-1 gap-x-3 @2xs:grid-cols-2">
             {event.items.map((item) => (
               <li key={item.item_id}>
                 <PreparedCheckbox childId={childId} date={date} item={item} />
@@ -289,7 +318,7 @@ function PreparedCheckbox({
       queue.run(() =>
         api.patch<EventItemUpdateResponse>(`/children/${childId}/event-items/${item.item_id}`, {
           is_prepared: isPrepared,
-        }),
+        } satisfies EventItemUpdateRequest),
       ),
     onMutate: async (isPrepared) => {
       await queryClient.cancelQueries({ queryKey: key });
@@ -502,7 +531,7 @@ function DiaryCard({
   ) : null;
 
   return (
-    <Section title="이날의 일기" action={editing ? null : actions}>
+    <Section title="이날의 일기" tour="diary" action={editing ? null : actions}>
       {editing ? (
         // 편집기 카드는 두 덩어리다 — 입력칸과 그 아래 안내문(붙인다), 저장 · 취소와 그 사유(띄운다).
         <div className="rounded-card bg-surface border-line flex flex-col gap-4 border p-4">
