@@ -38,7 +38,7 @@ from app.agents.common.datetime_rules import ALL_DAY_END, ALL_DAY_START, DateRan
 from app.agents.common.llm_client import LLMClient, LLMConfigError
 from app.agents.food.schemas.common import FoodTaskType
 from app.agents.food.store.ports import DaycareMealRow
-from app.agents.memory.agent import _claims_saved
+from app.agents.memory.agent import _UNCLEAR_REPLY, _claims_saved
 from app.agents.memory.context import AgentContext
 from app.agents.memory.drafts import EventDraft
 from app.agents.memory.schemas.task import WorkType
@@ -139,6 +139,8 @@ _PLANS = ("T18", "T58")
 _RELAYED_EVENTS = ("T60",)
 # 보호자 인상. 저장하거나 값을 되묻는다. 거절하고 끝내면 안 된다
 _IMPRESSIONS = ("T65",)
+# 범위 밖 질문. Supervisor 가 어디로 보내든 Memory 가 쓴 문장은 나가지 않는다 (#642)
+_OFF_TOPIC = ("T66", "T67", "T68", "T69")
 
 
 async def _no_commit() -> None:
@@ -401,6 +403,8 @@ def _expected_end_to_end(live: LiveCase) -> tuple[str, ...]:
     if case.rows == 0:
         expected.append("일정 초안이 없고, 저장한 것처럼 답하지 않는다")
         expected.append("아이를 주어로 다시 말해 달라고 하지 않는다")
+    if case.case_id in _OFF_TOPIC:
+        expected.append("Memory 가 쓴 문장이 나가지 않는다 (고정 문구 또는 메모 없음)")
     if case.not_in:
         expected.append(f"{' · '.join(case.not_in)} 관찰이 없다 (말의 내용을 저장하지 않는다)")
     if case.case_id in _PLANS:
@@ -653,6 +657,8 @@ def _judge_rows(observed: Observed) -> None:
             observed.failures.append("저장 없이 저장한 것처럼 답했다")
         if "주어로" in message:
             observed.failures.append("아이를 주어로 다시 말해 달라고 했다")
+    if case.case_id in _OFF_TOPIC and message not in ("", _UNCLEAR_REPLY):
+        observed.failures.append("Memory 가 쓴 문장이 나갔다")
     leaked = [domain for domain in case.not_in if observed.observations[domain]]
     if leaked:
         observed.failures.append(f"말의 내용이 기록으로 샜다 ({leaked})")

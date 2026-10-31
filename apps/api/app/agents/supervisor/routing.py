@@ -9,6 +9,7 @@
   - MemoryTask
       원문 전체와 RECORD 조각 힌트, UNCLEAR 조각 원문을 전달한다.
       원문이 전부 요청·안내 조각이면 만들지 않는다 (SKIP_MEMORY_FOR_PURE_REQUEST).
+      unclear 와 요청·안내 조각만 있을 때도 만들지 않는다 — 답은 그쪽이 낸다.
 
   - DomainTask
       구현된 agent 로 간 REQUEST 조각을 agent × task_type 당 하나로 묶는다.
@@ -189,7 +190,13 @@ def route(raw_text: str, result: SupervisorResult, *, run_id: str) -> Routing:
     unclear = tuple(s.text for s in segments if s.kind == SegmentKind.UNCLEAR)
     # 기록 조각이 없어도 조각에 안 들어간 글자가 있으면 놓친 기록일 수 있어 다 막지 않는다
     unclear_only = not records and bool(unclear) and _covers_all(raw_text, result.output)
-    skip_memory = SKIP_MEMORY_FOR_PURE_REQUEST and covers_only_requests(raw_text, result.output)
+    # unclear 말고는 요청 · 안내뿐이면 답은 그쪽이 낸다.
+    # 불러도 관찰은 다 거절되고 모델 문장만 나간다. 일정 초안은 만들 수 있지만
+    # 이 입력에서는 그 기회를 포기한다 (#642)
+    answered_elsewhere = unclear_only and any(s.kind != SegmentKind.UNCLEAR for s in segments)
+    skip_memory = SKIP_MEMORY_FOR_PURE_REQUEST and (
+        answered_elsewhere or covers_only_requests(raw_text, result.output)
+    )
     memory_task = (
         None
         if skip_memory
