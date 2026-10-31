@@ -3,7 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { partialMessage } from "@/components/run-result";
 import { ApiError, NetworkError, isApiError } from "@/lib/api/errors";
 import { initialRunState } from "@/hooks/use-run-stream";
+import { api } from "@/lib/api/client";
 import { newIdempotencyKey } from "@/lib/api/idempotency";
+import { recordedDayOf } from "@/mocks/handlers/chat";
 import { submittedInput } from "@/mocks/handlers/runs";
 import { setScenario, type Scenario } from "@/mocks/scenario";
 import { useDraftStore } from "@/stores/draft";
@@ -234,23 +236,26 @@ describe("되묻기에 대화 안에서 답한다", () => {
 });
 
 describe("실패는 보낸 말풍선 아래에서 다시 시도 · 고쳐 쓰기", () => {
-  it("🚨 이어받기 run 이 실패하면 다시 시도가 같은 키 · 같은 `reply_to` 로 나가 저장된다", async () => {
+  it("🚨 이어받기 run 이 실패하면 다시 시도가 같은 `reply_to` 로 나가 저장된다 · 키는 새것이다 (#538)", async () => {
     scenario("reply_failed");
     const asked = send("어제부터 기침해");
     await settled(asked);
 
     const reply = send("사흘 전부터", true);
+    const sentKey = turn(reply).key;
     const failed = await settled(reply);
     expect(failed.run.status).toBe("failed");
     expect(canRetry(failed)).toBe(true);
     // 🚨 실패에서 질문을 닫지 않는다 (#175) — 서버가 맥락을 되돌려 뒀다.
     expect(turn(asked).question).toBe("open");
 
-    const key = failed.key;
+    const failedRun = runIdOf(reply);
     retryTurn(CHILD, reply);
     const retried = await settled(reply);
 
-    expect(retried.key).toBe(key);
+    // `failed` 는 서버가 "저장 없음" 을 보장한 끝이라 새 키로 다시 보낸다 — 새 run 이 뜬다.
+    expect(retried.key).not.toBe(sentKey);
+    expect(runIdOf(reply)).not.toBe(failedRun);
     expect(submittedInput(runIdOf(reply))?.replyTo).toBe(runIdOf(asked));
     expect(retried.run.observations.length).toBeGreaterThan(0);
     expect(turn(asked).question).toBe("answered");
@@ -329,6 +334,83 @@ describe("실패는 보낸 말풍선 아래에서 다시 시도 · 고쳐 쓰기
     },
     TWO_RUNS,
   );
+});
+
+describe("결과를 못 받은 줄을 채널이 지워진 뒤 다시 보낸다 (#538)", () => {
+  it("🚨 failed 로 끝난 줄은 키를 새로 받는다 — 다시 시도도, 같은 문장을 다시 보낸 줄도 새 키다", async () => {
+    scenario("failed");
+    const id = send("지어낸 한 줄");
+    const sentKey = turn(id).key;
+    const failed = await settled(id);
+    expect(failed.run.status).toBe("failed");
+    expect(failed.key).not.toBe(sentKey);
+
+    // 고쳐 쓰지 않고 그대로 다시 보내도 서버가 붙든 키(놓다가 실패했을 수 있다)가 아니다.
+    rewriteTurn(CHILD, id);
+    const again = send(useDraftStore.getState().byChild[CHILD] ?? "");
+    expect(turn(again).key).not.toBe(sentKey);
+    expect(turn(again).key).toBe(failed.key);
+    await settled(again);
+  });
+
+  it(
+    "서버가 이미 끝났다고 하면 SSE 를 열지 않고 그날을 남긴다 · 다시 시도는 없고 키는 놓는다",
+    async () => {
+      scenario("replay_finished");
+      const id = send("지어낸 한 줄");
+      const lost = await settled(id);
+      expect(lost.run.status).toBe("unconfirmed");
+      const runId = runIdOf(id);
+
+      retryTurn(CHILD, id);
+      await until(() => turn(id).recordedOn !== null);
+
+      const recorded = turn(id);
+      expect(runIdOf(id)).toBe(runId);
+      // 서버가 알려 준 그날이다. 서울 날짜로 다시 만들면 머신 시간대로 날짜를 만드는 목과 KST 새벽 UTC CI 에서 하루 어긋난다 (#630).
+      expect(recorded.recordedOn).toBe(recordedDayOf(runId));
+      expect(canRetry(recorded)).toBe(false);
+      expect(isBusy(conversation())).toBe(false);
+
+      // 끝을 받은 것과 같다 — 같은 문장은 이제 새 동작이라 새 키다.
+      scenario("default");
+      const fresh = send("지어낸 한 줄");
+      expect(turn(fresh).key).not.toBe(lost.key);
+      await settled(fresh);
+    },
+    TWO_RUNS,
+  );
+
+  it("채널도 대화 기록도 없으면 같은 run 이 또 결과 미확인이다 · 같은 키를 붙들고 그 사실을 남긴다", async () => {
+    scenario("replay_unknown");
+    const id = send("지어낸 한 줄");
+    const lost = await settled(id);
+    expect(lost.replayed).toBe(false);
+    const runId = runIdOf(id);
+
+    retryTurn(CHILD, id);
+    const again = await settled(id);
+    expect(runIdOf(id)).toBe(runId);
+    expect(again.run.status).toBe("unconfirmed");
+    expect(again.replayed).toBe(true);
+    expect(again.recordedOn).toBeNull();
+    expect(again.key).toBe(lost.key);
+    expect(canRetry(again)).toBe(true);
+  });
+
+  it("다시 시도 대신 고쳐 쓰기로 꺼내 그대로 다시 보낸 줄도 같은 run 을 받은 것으로 친다", async () => {
+    scenario("replay_unknown");
+    const first = send("지어낸 한 줄");
+    const lost = await settled(first);
+
+    rewriteTurn(CHILD, first);
+    const again = send(useDraftStore.getState().byChild[CHILD] ?? "");
+    expect(turn(again).key).toBe(lost.key);
+    const replayed = await settled(again);
+    expect(runIdOf(again)).toBe(runIdOf(first));
+    expect(replayed.run.status).toBe("unconfirmed");
+    expect(replayed.replayed).toBe(true);
+  });
 });
 
 describe("🚨 원문은 입력창에 옮겼을 때만 말풍선을 떠난다 (#231 리뷰)", () => {
@@ -449,6 +531,8 @@ describe("다시 시도는 응답을 못 받은 경우의 것이다 (#231 리뷰
       run: initialRunState,
       question: null,
       handedBack: false,
+      recordedOn: null,
+      replayed: false,
     };
   }
 
@@ -486,5 +570,38 @@ describe("부분 결과 문구 (PR #215 리뷰)", () => {
     );
     expect(text).toMatch(/쪽 일부, .+ 쪽은 이번에 처리하지 못했어요\./);
     expect(text).toContain("저장한 기록은 그대로");
+  });
+});
+
+describe("지난 턴의 질문에 답한다 (#228 · reply_open)", () => {
+  it("스토어에 없는 질문도 서버가 열려 있다고 하면 답한다 — reply_to 가 그 run 을, 날은 그 턴의 날을 따른다", async () => {
+    scenario("chat_history");
+    // 앱을 다시 켠 상태 — 스토어는 비었고 서버만 질문을 들고 있다 (목은 이 조회에서 맥락을 연다).
+    await api.get(`/children/${CHILD}/chat`);
+    expect(conversation().turns).toEqual([]);
+
+    answerQuestion(CHILD, "r_hist_nap", {
+      text: "몇 분쯤 잤는지 알려주시겠어요?",
+      day: "2026-10-01",
+    });
+    expect(conversation().answering).toEqual({
+      text: "몇 분쯤 잤는지 알려주시겠어요?",
+      runId: "r_hist_nap",
+      day: "2026-10-01",
+    });
+
+    const id = send("한 시간쯤", true);
+    // 🚨 자정을 넘겨 답해도 질문이 나온 날에 붙는다 — 그 줄이 스토어에 없어도 같다.
+    expect(turn(id).day).toBe("2026-10-01");
+    const done = await settled(id);
+    expect(done.run.status).toBe("done");
+    expect(submittedInput(runIdOf(id))).toMatchObject({ text: "한 시간쯤", replyTo: "r_hist_nap" });
+    // 답이 끝나면 입력창은 그 질문을 놓는다.
+    expect(conversation().answering).toBeNull();
+  });
+
+  it("past 없이 부르면 스토어에 없는 질문은 고르지 않는다", () => {
+    answerQuestion(CHILD, "r_unknown");
+    expect(conversation().answering).toBeNull();
   });
 });

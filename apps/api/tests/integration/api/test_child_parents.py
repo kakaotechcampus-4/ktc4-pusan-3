@@ -12,6 +12,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api import idempotency
+from app.domains.chat.models import ChatTurn
 from app.domains.child.models import ParentChild, ParentChildRelation
 from app.domains.identity.models import Parent
 from app.domains.schedule.models import (
@@ -23,7 +24,13 @@ from app.domains.schedule.models import (
     SharedPhoto,
 )
 from app.domains.schedule.repository import create_event, create_reminder, put_diary
-from tests.integration.api.conftest import Bearer, issue_bearer, link_child
+from tests.integration.api.conftest import (
+    Bearer,
+    in_memory,
+    issue_bearer,
+    link_child,
+    stash_in_memory,
+)
 
 DAY = date(2026, 3, 10)
 AT = datetime(2026, 3, 10, 1, tzinfo=UTC)
@@ -38,7 +45,7 @@ async def _member(
 
 
 async def _personal_records(session: AsyncSession, cid: uuid.UUID, pid: uuid.UUID) -> None:
-    """그 보호자가 이 아이에 남기는 개인 기록 — 일기 1 · 알림 1."""
+    """그 보호자가 이 아이에 남기는 개인 기록 — 일기 1 · 알림 1 · 대화 1."""
     event = await create_event(
         session,
         child_id=cid,
@@ -52,6 +59,18 @@ async def _personal_records(session: AsyncSession, cid: uuid.UUID, pid: uuid.UUI
     )
     await put_diary(session, child_id=cid, parent_id=pid, day=DAY, content="일기")
     await create_reminder(session, child_id=cid, event_id=event.id, parent_id=pid, remind_at=AT)
+    session.add(
+        ChatTurn(
+            parent_id=pid,
+            child_id=cid,
+            run_id=uuid.uuid4().hex,
+            conversation_date=DAY,
+            raw_text="synthetic line",
+            replies=[],
+            created_at=AT,
+        )
+    )
+    await session.flush()
 
 
 async def test_list_shows_role_in_connected_order(
@@ -119,7 +138,9 @@ async def test_who_can_unlink_whom(
 async def test_unlink_deletes_only_their_personal_records(
     db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
 ):
-    """끊긴 보호자의 일기 · 알림만 지운다. 다른 보호자의 것과 공동 기록의 "적은 사람"은 남는다."""
+    """끊긴 보호자의 일기 · 알림 · 대화만 지운다.
+
+    다른 보호자의 것과 공동 기록의 "적은 사람"은 남는다."""
     owner_headers, owner = bearer
     _, member = await _member(session, cid, "member")
     await _personal_records(session, cid, owner)
@@ -141,8 +162,32 @@ async def test_unlink_deletes_only_their_personal_records(
     reminders = await session.scalars(select(Reminder.parent_id))
     assert list(diaries) == [owner]
     assert list(reminders) == [owner]
+    chats = await session.scalars(select(ChatTurn.parent_id))
+    assert list(chats) == [owner]
     await session.refresh(photo)
     assert photo.uploader_parent_id == member
+
+
+async def test_unlink_forgets_only_their_in_memory_entries(
+    db_client: AsyncClient,
+    session: AsyncSession,
+    bearer: Bearer,
+    cid: uuid.UUID,
+    clean_in_memory_stores,
+):
+    """끊긴 보호자의 메모리 보관함 항목만 바로 지운다.
+
+    같은 아이의 다른 보호자 것은 남는다 (#561)."""
+    owner_headers, owner = bearer
+    _, member = await _member(session, cid, "member")
+    theirs = stash_in_memory(parent_id=member, child_id=cid)
+    owners = stash_in_memory(parent_id=owner, child_id=cid)
+
+    resp = await db_client.delete(f"/api/v1/children/{cid}/parents/{member}", headers=owner_headers)
+
+    assert resp.status_code == 204
+    assert in_memory(theirs, parent_id=member, child_id=cid) == (False, False)
+    assert in_memory(owners, parent_id=owner, child_id=cid) == (True, True)
 
 
 async def test_member_leaves_and_loses_access_even_on_replay(

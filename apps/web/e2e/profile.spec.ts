@@ -21,7 +21,10 @@ async function openAddSheet(page: import("@playwright/test").Page) {
   await page.goto(PROFILE);
   await page.getByRole("button", { name: "알레르기·건강 기록 추가" }).click();
   await page.getByRole("button", { name: /^직접 적기/ }).click();
-  return page.getByRole("dialog", { name: "알레르기 · 건강 기록 추가" });
+  const sheet = page.getByRole("dialog", { name: "알레르기 · 건강 기록 추가" });
+  // 시트는 아래에서 올라온다 (#490). 올라오는 중에 누르거나 휠을 굴리면 엉뚱한 자리에 맞는다.
+  await sheet.evaluate((el) => Promise.all(el.getAnimations().map((a) => a.finished)));
+  return sheet;
 }
 
 test.describe("알레르기 직접 등록은 승인 게이트 ㉡ (§2 안전)", () => {
@@ -96,6 +99,28 @@ test.describe("알레르기 직접 등록은 승인 게이트 ㉡ (§2 안전)",
         label: "복숭아",
         severity: "class_3",
       });
+    });
+
+    // Class 는 검사지를 처음 보면 무엇인지 모른다. 툴팁이 아니라 늘 보이는 한 줄이다 —
+    // 웹뷰에는 호버가 없다 (#570).
+    test("알레르기 검사 등급에는 설명이 붙고, 상자가 그 설명을 읽는다 — 지병으로 바꾸면 빠진다", async ({
+      page,
+    }) => {
+      const sheet = await openAddSheet(page);
+      const hint =
+        "알레르기 혈액검사 결과를 0부터 6까지 나눈 등급이에요. 검사를 안 했거나 잘 모르면 모르겠어요를 골라 주세요. 몇 등급이든 식단 추천에서는 똑같이 빼요.";
+      await expect(sheet.getByText(hint)).toBeVisible();
+      await expect(sheet.getByRole("combobox", { name: "검사 등급" })).toHaveAccessibleDescription(
+        hint,
+      );
+
+      await sheet.getByRole("combobox", { name: "종류" }).click();
+      await page.getByRole("option", { name: "지병 · 만성질환" }).click();
+      await expect(sheet.getByText(hint)).toHaveCount(0);
+      // 설명이 없는 상자는 `aria-describedby` 를 비우지 않고 아예 걸지 않는다.
+      await expect(sheet.getByRole("combobox", { name: "얼마나 심한가요" })).not.toHaveAttribute(
+        "aria-describedby",
+      );
     });
 
     test("지병으로 바꾸면 선택지가 바뀌고, 앞서 고른 Class 는 남지 않는다", async ({ page }) => {
@@ -173,6 +198,55 @@ test.describe("기본 정보 고치기는 서버 범위 안에서만 받는다 (
     // 서버는 21자부터 400 이다. 막히지 않으면 저장 버튼이 계속 실패한다.
     await nickname.pressSequentially("가".repeat(25));
     await expect(nickname).toHaveValue("가".repeat(20));
+  });
+});
+
+test.describe("고르는 칸의 체크는 글자 바로 옆에 선다 (#490)", () => {
+  /** 첫 줄의 글자 범위 · 체크 · 칸. 두 줄로 꺾인 라벨은 첫 줄만 본다 — 체크가 서는 줄이다. */
+  async function measure(label: import("@playwright/test").Locator) {
+    return label.evaluate((el) => {
+      const text = [...el.querySelector("span")!.childNodes].find(
+        (node) => node.nodeType === Node.TEXT_NODE,
+      )!;
+      const range = document.createRange();
+      range.selectNodeContents(text);
+      const firstLine = range.getClientRects()[0]!;
+      const icon = el.querySelector("svg")!.getBoundingClientRect();
+      const box = el.getBoundingClientRect();
+      return {
+        lines: new Set([...range.getClientRects()].map((r) => Math.round(r.top))).size,
+        box: { left: box.left, center: box.left + box.width / 2 },
+        firstLine: { left: firstLine.left, center: firstLine.left + firstLine.width / 2 },
+        icon: { left: icon.left, right: icon.right },
+      };
+    });
+  }
+
+  for (const name of ["여자아이", "밝히지 않을래요"]) {
+    test(`"${name}" — 글자는 칸 가운데에, 체크는 첫 줄 글자 바로 왼쪽에 선다`, async ({ page }) => {
+      await page.goto(PROFILE);
+      await page.getByRole("button", { name: "기본 정보 고치기" }).click();
+      const sheet = page.getByRole("dialog", { name: "기본 정보 고치기" });
+      await sheet.locator("label", { hasText: name }).click();
+      await expect(sheet.getByRole("radio", { name })).toBeChecked();
+
+      const m = await measure(sheet.locator("label", { hasText: name }));
+      // 🚨 글자가 체크 때문에 밀리지 않는다 — 고를 때 바뀌는 것은 색뿐이다.
+      expect(Math.abs(m.box.center - m.firstLine.center)).toBeLessThan(1);
+      // 🚨 체크가 칸 가장자리가 아니라 글자에 붙는다 (간격 `mr-1.5` = 6px). 꺾인 라벨도 같다.
+      expect(m.firstLine.left - m.icon.right).toBeCloseTo(6, 0);
+      expect(m.icon.left).toBeGreaterThan(m.box.left);
+    });
+  }
+
+  test('"밝히지 않을래요" 는 390px 에서 두 줄로 꺾인다 — 위 검사가 꺾인 칸을 실제로 본다', async ({
+    page,
+  }) => {
+    await page.goto(PROFILE);
+    await page.getByRole("button", { name: "기본 정보 고치기" }).click();
+    const sheet = page.getByRole("dialog", { name: "기본 정보 고치기" });
+    const m = await measure(sheet.locator("label", { hasText: "밝히지 않을래요" }));
+    expect(m.lines).toBe(2);
   });
 });
 

@@ -1,6 +1,15 @@
 import { authHeaders, authorizedFetch, buildUrl, notifyUnauthenticated } from "./client";
 import { NetworkError } from "./errors";
-import type { Affinity, Agent, EventDraft, Observation, PhotoEntry, PhotoLane, Ref } from "./types";
+import type {
+  Affinity,
+  Agent,
+  EventDraft,
+  Observation,
+  PhotoEntry,
+  PhotoLane,
+  Ref,
+  SuggestionStatus,
+} from "./types";
 
 /**
  * GET /runs/{rid}/events — 04 오버레이.
@@ -93,10 +102,12 @@ export interface GuidanceEvent {
     | "diagnosis"
     /** 구매·예약 대행은 하지 않는다. */
     | "out_of_scope"
+    /** 키·몸무게는 채팅으로 저장하지 않는다 — 잰 날짜와 함께 11-1 에서 넣는다 (#625). */
+    | "growth_record"
     | (string & {});
   message: string;
   /**
-   * ⚠️ 계약서의 `deeplink` 와 같이 **아이를 안 담은 상대 경로**다 (`settings/health-safety`).
+   * ⚠️ 계약서의 `deeplink` 와 같이 **아이를 안 담은 상대 경로**다 (`profile` · `profile/growth`).
    * 🚨 주소로 쓰지 않는다 — 어느 구역인지 **힌트**로만 쓴다 (apps/web/CLAUDE.md §3).
    *    서버가 키는 늘 실어 보내고 값이 없으면 `null` 이다 (`apps/api/app/api/runs/translate.py`).
    */
@@ -213,6 +224,13 @@ export interface AgentResultEvent {
    * 서버가 세지 못했거나 일반 묶음이 아니면 `null`.
    */
   record_count: number | null;
+  /**
+   * 🚨 **지난 대화(`GET /children/{cid}/chat`)에만 온다** (#228 · #498). 실시간 SSE 에는 없다.
+   * `suggestion_ids` 의 지금 상태, 같은 순서로. 행을 찾지 못한 id 는 빠져서 길이가 다를 수 있다.
+   * 24시간이 지난 `draft` 는 `expired` 로 온다. 지난 턴의 "후보 보기" 를 세울지 이 값으로 가른다
+   * (`lib/agent-result.ts` 의 `blockCandidates`).
+   */
+  suggestions?: Array<{ id: string; status: SuggestionStatus }>;
 }
 
 /**

@@ -20,6 +20,7 @@ from app.domains.memory.observation.models import (
     ObservationRoutine,
     ObservationStatus,
 )
+from app.domains.memory.search import contains_pattern
 
 
 class ObservationDomain(enum.StrEnum):
@@ -97,6 +98,30 @@ async def find_observation(
         stmt = stmt.with_for_update()
     row = await session.scalar(stmt)
     return _to_record(resolved, row) if row is not None else None
+
+
+async def find_observations(
+    session: AsyncSession,
+    *,
+    child_id: uuid.UUID,
+    refs: Collection[tuple[ObservationDomain, uuid.UUID]],
+) -> dict[tuple[ObservationDomain, uuid.UUID], ObservationRecord]:
+    """여러 관찰을 표마다 한 번씩 읽는다. 지운 · 없는 · 다른 아이의 것은 결과에 없다.
+
+    지난 대화(#228)가 한 화면의 `saved` 관찰을 모아 읽는다 — 하나씩 읽으면 턴 수만큼 쿼리가 나간다.
+    """
+    ids_by_domain: dict[ObservationDomain, set[uuid.UUID]] = {}
+    for domain, observation_id in refs:
+        ids_by_domain.setdefault(domain, set()).add(observation_id)
+    found: dict[tuple[ObservationDomain, uuid.UUID], ObservationRecord] = {}
+    for domain, ids in ids_by_domain.items():
+        model = _MODEL_BY_DOMAIN[domain]
+        rows = await session.scalars(
+            select(model).where(model.id.in_(ids), model.child_id == child_id, _not_deleted(model))
+        )
+        for row in rows:
+            found[(domain, row.id)] = _to_record(domain, row)
+    return found
 
 
 async def set_observation_status(
@@ -204,18 +229,28 @@ async def page_observations(
     statuses: Collection[ObservationStatus] | None = None,
     affinity_id: uuid.UUID | None = None,
     cursor: ObservationCursor | None = None,
+    q: str | None = None,
+    offset: int = 0,
     limit: int = 20,
 ) -> ObservationPage:
-    """5종 병합 목록: 기간 overlap, 상태/성향 필터, 역순 커서.
+    """5종 병합 목록: 기간 overlap, 상태/성향 필터, 검색, 역순 커서 또는 offset.
 
     domains 를 주면 그 표들만 합친다. growth Agent 처럼 한 분류가 두 표(education ·
     routine)를 읽는 경우가 있어 하나가 아니라 목록으로 받는다. 빈 목록은 받지 않는다 —
     "아무 표도 안 본다" 와 "전부 본다(None)" 가 섞이면 호출자 실수가 전체 조회로 새어 나간다.
     statuses 를 주면 status 대신 그 상태들을 합쳐서 본다. deleted 는 목록 필터로 열지 않는다.
     보호자에게 보이지 않는 상태다.
+
+    q 는 raw_text · subject 부분 일치(대소문자 무시)다. `%` · `_` · `\\` 는 글자 그대로 본다.
+    offset 은 앞에서 건너뛸 건수다 — 번호 쪽(page)을 쓰는 목록 API 가 준다. cursor 와 같이 줄 수
+    없다(어느 쪽을 따를지 모호하다). 캘린더처럼 cursor 로 끝까지 도는 호출은 offset 을 안 준다.
     """
     if not 1 <= limit <= 100:
         raise ValueError("limit은 1~100이어야 한다")
+    if offset < 0:
+        raise ValueError("offset은 0 이상이어야 한다")
+    if cursor is not None and offset:
+        raise ValueError("cursor 와 offset 은 같이 줄 수 없다")
     if date_from is not None and date_to is not None and date_from > date_to:
         raise ValueError("date_from은 date_to보다 늦을 수 없다")
     if domains is not None and not domains:
@@ -245,6 +280,8 @@ async def page_observations(
                 "cursor_upper": cursor.observed_to_exclusive if cursor else None,
                 "cursor_kind": f"observation_{cursor.domain.value}" if cursor else None,
                 "cursor_id": cursor.id if cursor else None,
+                "q_pattern": contains_pattern(q),
+                "offset": offset,
                 "fetch_limit": limit + 1,
             },
         )
@@ -292,16 +329,22 @@ async def list_active_refs_by_affinity(
     *,
     child_id: uuid.UUID,
     affinity_ids: Collection[uuid.UUID],
+    domains: Collection[ObservationDomain | str] | None = None,
 ) -> dict[uuid.UUID, list[tuple[ObservationDomain, uuid.UUID]]]:
     """기억마다 묶인 active 관찰의 (도메인, id). 최근 관찰이 앞이다.
 
     기억 카드의 "지금까지 N번" 과 근거 목록이 쓴다. 집계에서 빠지는 stand_alone · inactive 는
     세지 않는다 — Curator 가 세는 것과 같은 기준이어야 카드 숫자가 상태와 어긋나지 않는다.
+    `domains` 를 주면 그 관찰 표만 본다 — 기억은 자기 도메인의 관찰만 묶이므로 결과는 같고
+    조회만 준다. 없으면 세 표를 다 본다.
     """
     refs: dict[uuid.UUID, list[tuple[date, ObservationDomain, uuid.UUID]]] = {}
     if not affinity_ids:
         return {}
+    wanted = None if domains is None else {ObservationDomain(domain) for domain in domains}
     for domain in _PROMOTABLE_DOMAINS:
+        if wanted is not None and domain not in wanted:
+            continue
         model = _MODEL_BY_DOMAIN[domain]
         rows = await session.execute(
             select(model.affinity_id, model.id, func.upper(model.observed_range)).where(
@@ -316,6 +359,44 @@ async def list_active_refs_by_affinity(
         affinity_id: [(domain, oid) for _, domain, oid in sorted(found, reverse=True)]
         for affinity_id, found in refs.items()
     }
+
+
+async def count_active_days_by_affinity(
+    session: AsyncSession,
+    *,
+    child_id: uuid.UUID,
+    affinity_ids: Collection[uuid.UUID],
+    domains: Collection[ObservationDomain | str] | None = None,
+) -> dict[uuid.UUID, int]:
+    """기억마다 묶인 active 관찰의 서로 다른 시작일 수. 묶인 active 관찰이 없는 기억은 없다.
+
+    후보가 추천 근거 · 홈 하이라이트가 되는지 이 값으로 본다(`CANDIDATE_MIN_DAYS`). 승격 O
+    (`count_active_in_window`)처럼 같은 날 관찰 여러 건은 하루다 — 입력 한 번에 Memory 가 관찰을
+    여러 건 만들어도 근거가 되지 않는다 (#633 리뷰). 승격과 달리 윈도우는 없다. 오래된 기억은
+    archived · 6개월 낡음이 따로 거른다.
+    `domains` 는 `list_active_refs_by_affinity` 와 같다. 기억에는 자기 도메인 관찰만 묶여서 표끼리
+    더해도 날이 겹치지 않는다.
+    """
+    days: dict[uuid.UUID, int] = {}
+    if not affinity_ids:
+        return {}
+    wanted = None if domains is None else {ObservationDomain(domain) for domain in domains}
+    for domain in _PROMOTABLE_DOMAINS:
+        if wanted is not None and domain not in wanted:
+            continue
+        model = _MODEL_BY_DOMAIN[domain]
+        rows = await session.execute(
+            select(model.affinity_id, func.count(func.distinct(func.lower(model.observed_range))))
+            .where(
+                model.child_id == child_id,
+                model.affinity_id.in_(affinity_ids),
+                model.status == ObservationStatus.ACTIVE,
+            )
+            .group_by(model.affinity_id)
+        )
+        for affinity_id, count in rows:
+            days[affinity_id] = days.get(affinity_id, 0) + count
+    return days
 
 
 def _to_record(domain: ObservationDomain, row: Any) -> ObservationRecord:

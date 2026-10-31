@@ -17,11 +17,18 @@ from app.agents.activity.schemas.outing import (
     LookupWeatherArgs,
     SearchNearbyPlacesArgs,
 )
-from app.agents.activity.store.ports import ScheduleBlock, UpstreamUnavailable
+from app.agents.activity.store.ports import (
+    PLACE_MAX_RADIUS_M,
+    PLACE_TOP_K,
+    ScheduleBlock,
+    UpstreamUnavailable,
+)
 from app.agents.activity.weather import (
+    WEATHER_NOT_ASKED,
     WEATHER_UNCHECKED,
     WeatherBrief,
     judge_weather,
+    not_asked,
     parse_uv,
     read_advisories,
     read_air,
@@ -32,11 +39,8 @@ from app.rules.sun import sun_times
 
 logger = logging.getLogger(__name__)
 
-# 장소 검색은 넓게 찾고 가까운 순으로 몇 곳만 준다. 둘 다 모델 인자가 아니라 코드 상수이고
-# 잠정값이다 — eval 로 조정한다. 반경을 좁게 자르면 군 지역에서 0곳이 돼 외출 요청에
-# 장소가 빠진다. 20km 도 위경도 bounding box + haversine 으로 끝난다 (D9)
-PLACE_MAX_RADIUS_M = 20_000
-PLACE_TOP_K = 5
+# 위치가 없을 때 일몰을 계산하는 고정 기준점(대전 부근, 국토 가운데). 보호자 위치가 아니다
+SUNSET_REFERENCE = (36.35, 127.38)
 
 # 바깥 활동이 어려운 날(outdoor_ok=False)에도 찾을 수 있는 종류
 INDOOR_CATEGORIES = frozenset(
@@ -103,7 +107,8 @@ async def check_weather(context: ActivityContext, day: date) -> WeatherBrief:
 
     - 예보 · 대기질 · 자외선 · 특보를 병렬로 부른다. 하나가 실패해도 나머지는 쓴다 — 실패한
       조회만 None 으로 `judge_weather` 에 넘기고, 판정 규칙이 실내만 · 고지를 정한다 (D8).
-    - 위치나 날씨 포트가 없으면 조회하지 않고 실패와 같게 본다 — 실내만.
+    - 위치나 날씨 포트가 없으면 조회하지 않는다. 실패가 아니라 "묻지 않은 날"이라 바깥 놀이를
+      막지 않고 확인을 보호자에게 맡긴다(`not_asked`). 조회했는데 실패한 날은 실내만이다 (D8).
     - 🚨 대기질은 오늘만 본다. 에어코리아는 지금 측정값만 주고 예보가 아니다 — 내일 추천에 오늘
       미세먼지를 쓰지 않고 "확인 못 함"으로 둔다. 특보는 지금 발효 중인 것을 그날에도 본다
       (더 막는 쪽).
@@ -113,9 +118,7 @@ async def check_weather(context: ActivityContext, day: date) -> WeatherBrief:
     grid = context.grid
     location = context.location
     if weather is None or grid is None or location is None:
-        return judge_weather(
-            forecast=None, air=None, uv_index=None, advisories=None, after_sunset=False
-        )
+        return not_asked(after_sunset=day == context.today and _after_sunset(context, day))
 
     today = day == context.today
     forecast, air, uv, advisories = await asyncio.gather(
@@ -150,7 +153,8 @@ async def lookup_weather(context: ActivityContext, args: LookupWeatherArgs) -> T
     days = days_of(args.day, context.today)
     briefs = await asyncio.gather(*(check_weather(context, day) for day in days))
     context.state.weather.update(zip(days, briefs, strict=True))
-    checked = [WEATHER_UNCHECKED not in brief.notices for brief in briefs]
+    # 묻지 않은 날(위치 · 포트 없음)도 확인한 날이 아니다 — 이 tool 은 열리지 않았어야 한다
+    checked = [not {WEATHER_UNCHECKED, WEATHER_NOT_ASKED} & set(brief.notices) for brief in briefs]
     if not any(checked):
         return fail(
             "query",
@@ -221,7 +225,9 @@ async def search_nearby_places(
     if gate is None or location is None:
         raise RuntimeError("Gate · 위치 없이 장소 조회가 불렸다 — registry 가 열지 않았어야 한다")
 
-    if args.category not in INDOOR_CATEGORIES and not await outdoor_on(context, args.day):
+    # ToolArgs 는 use_enum_values 라 args.category 가 글자("park")로 온다. 포트에는 enum 으로 넘긴다
+    category = PlaceCategory(args.category)
+    if category not in INDOOR_CATEGORIES and not await outdoor_on(context, args.day):
         indoor = " · ".join(sorted(INDOOR_CATEGORIES))
         return fail(
             "query",
@@ -232,7 +238,7 @@ async def search_nearby_places(
 
     try:
         rows = await context.ports.places.nearby(
-            location=location, category=args.category, radius_m=PLACE_MAX_RADIUS_M
+            location=location, category=category, radius_m=PLACE_MAX_RADIUS_M
         )
     except UpstreamUnavailable:
         return fail(
@@ -335,14 +341,19 @@ def _span(begins: datetime, ends: datetime) -> dict[str, str]:
 
 
 def _after_sunset(context: ActivityContext, day: date) -> bool:
-    """지금이 그날 일몰 뒤인가. 위치 · 시각대는 context 에서 읽는다."""
+    """지금이 그날 일몰 뒤인가. 위치 · 시각대는 context 에서 읽는다.
+
+    위치가 없으면 국토 가운데 기준점으로 계산한다 — 보호자 위치가 아니라 고정값이고, 국내 일몰은
+    동서 끝이 30분 남짓 차이라 "해가 졌는데 공원" 을 막기에는 충분하다.
+    """
     location = context.location
     local = context.now.astimezone(context.timezone)
     offset = local.utcoffset()
-    if location is None or offset is None:
+    if offset is None:
         return False
+    lat, lon = (location.lat, location.lon) if location is not None else SUNSET_REFERENCE
     hours = offset.total_seconds() / 3600
-    times = sun_times(day, location.lat, location.lon, tz_offset_hours=hours)
+    times = sun_times(day, lat, lon, tz_offset_hours=hours)
     if times is None:
         return False
     _, sunset = times

@@ -59,9 +59,14 @@ TS 7 (네이티브 컴파일러) 이 최신이지만 **`typescript-eslint` 가 �
 `develop` push 에서 `format:check → lint → typecheck → test → build` 를 돈다. `make web-check` + `make web-build` 와 같다.
 같은 워크플로의 `e2e` job 이 화면 규칙 테스트(`make web-e2e`)를 따로 돈다 — 목은 개발 서버에서만 떠서 build 결과를 쓸 수 없다 (§8).
 셸은 [`ci-mobile.yml`](../../.github/workflows/ci-mobile.yml) 이 `typecheck` · `test` 를 돈다.
+[`ci-contract.yml`](../../.github/workflows/ci-contract.yml) 은 웹 API 타입을 서버 OpenAPI 와 맞춘다 (`make web-contract` · #559).
+`apps/web/src/lib/api/**` 뿐 아니라 **서버 스키마(`apps/api/app/**`)를 바꾼 PR 에서도** 돈다 — 규칙은 [`mock-and-tests-v1.md`](mock-and-tests-v1.md) §2.
 
 - 🚨 **pnpm · Node 버전을 워크플로에 적지 않는다.** pnpm 은 `package.json` 의 `packageManager` 를 읽고,
   Node 는 `Dockerfile` 의 메이저(24)와 같다 — 베이스 이미지를 올리면 워크플로의 `node-version` 도 같이 올린다
+  - `ci-contract.yml` 의 uv(0.13.0) · Python(3.12)은 `apps/api/Dockerfile` 과 같다. 그쪽을 올리면 같이 올린다
+  - `ci-contract.yml` 에는 서버 설정값을 적지 않는다. `.env` 가 없으면 덤프 스크립트가 필수 설정을 더미로 채운다
+    (`apps/api/scripts/dump_openapi.py` — 필수 설정이 늘면 고칠 곳도 그 파일이다, #560 리뷰). DB 에는 붙지 않는다
 - `build` 단계의 `NEXT_PUBLIC_API_BASE_URL` 은 더미다. `lib/env.ts` 가 값이 없으면 import 시점에 던져서
   넣는 것이고, 빌드는 그 주소로 요청하지 않는다
 - 포맷이 어긋나 빨간불이면 `make web-fmt` 로 고쳐서 **별도 커밋**으로 올린다 (로직 변경과 섞지 않는다 · CONTRIBUTING §3)

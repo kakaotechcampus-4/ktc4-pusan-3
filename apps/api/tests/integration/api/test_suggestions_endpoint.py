@@ -22,6 +22,7 @@ from app.domains.memory.observation.models import (
     ObservationFood,
     ObservationStatus,
 )
+from app.domains.memory.profile.agent_reader import DbAffinityReader
 from app.domains.safety.agent_reader import DbSafetyReader
 from app.domains.safety.models import HealthSafety, SafetyKind, SafetyStatus
 from app.domains.suggestion.models import (
@@ -197,6 +198,18 @@ async def test_05_도_러너와_같은_안전_어댑터를_넘긴다(db_client, 
     assert calls[0]["activity_safety"] is calls[0]["food_safety"]
 
 
+async def test_05_도_관심_어댑터를_넘긴다(db_client, bearer, cid, agents):
+    # 러너만 넘기면 홈 제안 · 다시 준비하기에서만 관심이 근거에서 빠진다
+    plan, calls = agents
+    headers, _ = bearer
+    plan["food"] = ("empty", "준비할 수 있는 메뉴가 없어요.")
+
+    resp = await _post(db_client, cid, headers, agents=["food"])
+
+    assert resp.status_code == 200
+    assert isinstance(calls[0]["affinity_reader"], DbAffinityReader)
+
+
 async def test_닫힌_Agent_는_guard_로_실패는_묶음에서_빠진다(db_client, bearer, cid, agents):
     plan, _ = agents
     headers, _ = bearer
@@ -210,7 +223,8 @@ async def test_닫힌_Agent_는_guard_로_실패는_묶음에서_빠진다(db_cl
             "code": "safety_unknown",
             "blocked_agents": ["food"],
             "message": "알레르기 정보를 확인할 수 없어서 추천을 드릴 수 없어요.",
-            "deeplink": None,
+            # 알레르기를 적는 곳 — 04 의 safety_record 안내와 같은 값이다 (#625)
+            "deeplink": "profile",
         }
     ]
     assert data["groups"] == []  # activity 는 실패 — 화면이 실패 카드를 그린다
@@ -221,7 +235,7 @@ async def test_구현_안_된_Agent_는_not_ready(db_client, bearer, cid, agents
 
     data = (await _post(db_client, cid, headers, agents=["growth"])).json()
 
-    assert [g["code"] for g in data["guards"]] == ["not_ready"]
+    assert [(g["code"], g["deeplink"]) for g in data["guards"]] == [("not_ready", None)]
     assert agents[1] == []  # Agent 를 부르지 않았다
 
 
@@ -542,7 +556,7 @@ async def test_다시_만들었더니_닫혔으면_다음_요청도_같은_guard
     first = (await _post(db_client, cid, headers, agents=["activity"], run_id="run-1")).json()
     second = (await _post(db_client, cid, headers, agents=["activity"], run_id="run-1")).json()
 
-    assert [g["code"] for g in first["guards"]] == ["safety_unknown"]
+    assert [(g["code"], g["deeplink"]) for g in first["guards"]] == [("safety_unknown", "profile")]
     assert second["guards"] == first["guards"]
     assert second["groups"] == []
     assert len(calls) == 1  # 두 번째는 다시 돌리지 않는다

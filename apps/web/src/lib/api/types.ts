@@ -3,6 +3,16 @@
  * 정본은 docs/api/api-interface-v1.html — 여기 타입이 계약서와 어긋나면 계약서가 맞다.
  */
 
+import type {
+  AgentResultEvent,
+  EventDraftsEvent,
+  GuidanceEvent,
+  NoteEvent,
+  PartialEvent,
+  SavedEvent,
+  UnavailableEvent,
+} from "./sse";
+
 /* ── Ref — 도메인 간 참조 ────────────────────────────────────────────────
  * observation 테이블이 5개로 나뉘어 있어 id 만으로는 어느 테이블인지 알 수 없다.
  * 모든 참조는 { kind, id } 모양이다.
@@ -82,7 +92,6 @@ interface ObservationBase {
   observed_label?: string;
   /** 적은 보호자. 서버는 별명이 없거나 탈퇴해 행이 없으면 `null` 로 보낸다. */
   source_writer?: { parent_id: string; nickname: string } | null;
-  source_notice_id?: string | null;
   created_at?: string;
 }
 
@@ -114,7 +123,12 @@ export interface ObservationHealth extends ObservationBase {
     body_part?: string;
     suspected_trigger?: string;
     action_taken?: string;
-    observed_time?: string;
+    /**
+     * ISO 시각 (`2026-10-15T21:00:00+09:00`). "밤" 같은 문구가 아니다 — 서버는 몇 시인지 알 수
+     * 있는 말만 시각으로 바꿔 담는다. 날짜는 `observed_label` 이 말하므로 화면은
+     * `formatTimeOfDay` 로 시각만 그린다 (#485). 몇 시인지 모르면 키를 빼지 않고 `null` 로 온다.
+     */
+    observed_time?: string | null;
     [key: string]: unknown;
   };
 }
@@ -281,7 +295,8 @@ export interface Suggestion {
 }
 
 /**
- * 또래 기준 일반 추천. 근거 Memory 가 부족할 때 개인화 **대신** 나간다 (CLAUDE.md §2).
+ * 또래 기준 일반 추천. 근거 Memory 가 부족한 후보는 개인화 **대신** 이것으로 나간다 (CLAUDE.md §2).
+ * ⚠️ 후보마다 정해지므로 한 응답에 `suggestions` 와 같이 실릴 수 있다 (#512 리뷰).
  *
  * 🚨 **`Suggestion` 과 별도 타입이고 응답에서도 별도 필드다.** 같은 배열에 플래그로 섞으면
  *    언젠가 근거 0건인 것이 개인화로 그려진다 (디자인 시스템 §7). 여기에는 `evidence` ·
@@ -400,7 +415,8 @@ export type PromptKey = (typeof PROMPT_KEYS)[number];
 /* ── 03 홈 · 한 줄 입력 ──────────────────────────────────────────────── */
 
 /**
- * POST /children/{cid}/inputs — 즉시 202 로 run_id 만 온다. 결과는 전부 SSE 로 흐른다.
+ * POST /children/{cid}/inputs — 즉시 202 로 run_id 가 온다. 결과는 SSE 로 흐른다 (끝난 run 의 재생은
+ * `CreateInputResponse` 의 `finished`).
  * 🚨 Idempotency-Key 가 필수다. 재시도할 때 키를 새로 만들지 않는다.
  */
 /**
@@ -415,8 +431,23 @@ export interface CreateInputRequest {
   reply_to?: string;
 }
 
+/**
+ * 202 — run_id. 결과는 SSE 로 흐른다.
+ *
+ * 🚨 **같은 키 재생에서만 `finished` 가 참일 수 있다** (#538 · 서버 `docs/api/idempotency-v1.md` §3-4-1).
+ *    서버는 끝난 run 의 채널을 5분 뒤 지우는데 키는 24시간 남는다. 그 사이에 결과를 못 받은 줄을 다시 보내면
+ *    서버가 대화 기록으로 끝났음을 알린다 — 그때는 SSE 를 열지 않는다(404 다). 같은 키 재생에서 채널도 대화
+ *    기록도 없으면 저장됐는지 서버도 모르는 run 이라 `false` 로 run_id 만 온다.
+ */
 export interface CreateInputResponse {
   run_id: string;
+  /**
+   * 참이면 이미 끝나 결과가 대화 기록에 저장된 run 이다. `conversation_date` 의 지난 대화로 그린다.
+   * ⚠️ 서버 #547 머지 전에는 오지 않는다 — 없으면 지금처럼 SSE 를 연다(404 → 결과 미확인). 그래서 선택 필드로 받는다.
+   */
+  finished?: boolean;
+  /** `finished` 일 때만. 그 턴이 붙은 대화 날짜(한국 시간). 되묻기 답이면 질문한 날이라 오늘이 아닐 수 있다. */
+  conversation_date?: string | null;
 }
 
 /* ── 05 제안 후보 ────────────────────────────────────────────────────── */
@@ -442,8 +473,11 @@ export interface Guard {
   code: "safety_unknown" | (string & {});
   blocked_agents: Agent[];
   message: string;
-  /** 아이를 안 담은 상대 경로다 (`settings/health-safety`). 지금 아이 경로 아래에 붙여 쓴다. */
-  deeplink?: string;
+  /**
+   * 아이를 안 담은 상대 경로다 (`safety_unknown` 이면 `profile`). 지금 아이 경로 아래에 붙여 쓴다.
+   * 서버는 칸을 늘 싣고, 보낼 곳이 없으면 `null` 이다.
+   */
+  deeplink: string | null;
 }
 
 /**
@@ -530,8 +564,9 @@ export interface SuggestionsResponse {
    */
   groups?: SuggestionGroup[] | null;
   /**
-   * 또래 기준 일반 추천. `scarcity` 가 있을 때만 채워진다 (개인화 **대신** 나가는 것이라
-   * 둘이 같이 나오지 않는다). 서버 DTO 에서 optional 이라 `null` 이 올 수 있다.
+   * 또래 기준 일반 추천. `scarcity` 가 있을 때만 채워진다. 근거가 부족한 후보가 개인화 **대신**
+   * 나간 것이고, 후보마다 정해져서 `suggestions` 와 같이 채워질 수 있다 (#512 리뷰).
+   * 서버 DTO 에서 optional 이라 `null` 이 올 수 있다.
    */
   general?: GeneralSuggestion[] | null;
   /** "오늘 급식 · 최근 3일 식사 · 확정 관심 2건" — 무엇을 봤는지. 서버가 만든 문구다. */
@@ -623,8 +658,12 @@ export interface EventDraft {
   /** 🚨 `create` 는 언제나 `null` 이다. */
   event_id: string | null;
   event: EventDraftFields;
-  /** 🚨 `create` 는 `null`. `update` 면 준비물까지 포함한 원본 전체다. */
-  before: EventDraftBefore | null;
+  /**
+   * 🚨 `create` 는 `null`. `update` 면 준비물까지 포함한 원본 전체다.
+   * 🚨 **키가 아예 없을 수 있다** — `POST /suggestions/event-drafts` 는 create 초안만 내서 이 칸을 싣지 않는다.
+   *    `=== null` 로 가르지 말고 값이 있는지로 가른다 (`event-draft-card.tsx`).
+   */
+  before?: EventDraftBefore | null;
   /**
    * 🚨 **제출 시점의 최종 목록이다.** 항목별 op 가 없어서, 배열에서 빠진 `item_id` 가
    *    삭제를 표현하는 유일한 방법이다 (#122 확정).
@@ -698,9 +737,18 @@ export interface ApproveSuggestionsRequest {
   suggestion_ids: string[];
 }
 
-/** 🚨 **바뀐 제안을 그대로 돌려받는다** — 화면이 `status` 를 지어내지 않는다. */
+/**
+ * 🚨 **바뀐 제안을 그대로 돌려받는다** — 화면이 `status` 를 지어내지 않는다.
+ *
+ * ⚠️ 일반 추천도 채택한다 (#509). 실서버는 일반 추천도 개인화와 같은 모양(`SuggestionOut`)에
+ *    `kind: "general"` 을 실어 돌려줘서 `GeneralSuggestion` 과도 맞지 않는다 (`basis` · `record_count` 가
+ *    없다). 그래서 **두 모양에 공통인 필드만** 적는다 — 더 꺼내 쓰면 목에서는 되고 실서버에서는
+ *    `undefined` 가 된다.
+ * 🚨 **채택 응답은 근거를 읽지 않는다** — 개인화도 `evidence: []` 로 온다. 이 모양은 서버 계약으로
+ *    고정됐다 (`docs/api/suggestions-v1.md` §7 · #545). 근거가 필요하면 05 응답에서 읽는다.
+ */
 export interface ApproveSuggestionsResponse {
-  suggestions: Suggestion[];
+  suggestions: Array<Pick<Suggestion, "id" | "child_id" | "agent" | "content" | "status">>;
 }
 
 /**
@@ -822,19 +870,48 @@ export interface UpdateHealthSafetyResponse {
  *    "한 번의 관찰을 성향으로 확정하지 않는다"(CLAUDE.md §2)가 화면에서 사라진다.
  */
 
-/** `GET /children/{cid}/observations`. `Page<T>` 와 달리 `total` 이 함께 온다. */
-export interface ObservationsResponse {
-  items: Observation[];
-  next_cursor: string | null;
+/**
+ * 번호 쪽 목록이 같이 싣는 네 칸 (#584). 기록과 기억 목록이 같은 모양이다.
+ *
+ * 🚨 **`page` 가 `total_pages` 보다 크면 오류가 아니라 빈 목록이다.** 고치기로 건수가 줄어 마지막
+ *    쪽이 사라질 수 있어서, 화면은 받은 `total_pages` 로 다시 맞춘다.
+ */
+export interface NumberedPage {
   /** 필터를 걸기 전 전체가 아니라 **그 필터의** 건수다. 화면에 그대로 보여준다. */
   total: number;
+  /** 요청한 쪽 번호 (1부터). */
+  page: number;
+  size: number;
+  /** `ceil(total / size)`. 0건이면 0 이다. */
+  total_pages: number;
+}
+
+/** `GET /children/{cid}/observations` — `observed_to` 최신순, 번호 쪽으로 나눈다 (#584). */
+export interface ObservationsResponse extends NumberedPage {
+  items: Observation[];
+}
+
+/**
+ * 기록과 기억 목록이 같이 받는 쿼리 (#584). 🚨 **서버가 검증한다** — 범위 밖 `page`·`size`, 100자를
+ * 넘는 `q`, `date_from > date_to` 는 400 `validation_failed` 다. 화면은 그런 값을 만들지 않는다.
+ */
+export interface ListQuery {
+  /** 1부터. 서버 상한은 10,000 이다. */
+  page?: number;
+  /** 1~100. 화면은 보내지 않고 서버 기본(20)을 쓴다. */
+  size?: number;
+  /** `YYYY-MM-DD`, 그날 포함. 🚨 기록은 관찰 기간이 겹치면, 기억은 마지막 기록 날짜가 범위 안이면 든다. */
+  date_from?: string;
+  date_to?: string;
+  /** 부분 일치. 기록은 원문 · 주제, 기억은 이름(띄어쓰기 무시)에서 찾는다. 100자까지. */
+  q?: string;
 }
 
 /**
  * 관찰 목록 필터. `?domain=` 생략 시 건강을 뺀 4개 테이블을 observed_to DESC 로 병합한다.
  * 🚨 `growth` 는 education 과 routine 두 테이블이다. `health` 는 첫 배포 범위 밖이라 늘 빈 목록이다 (#259).
  */
-export interface ObservationFilters {
+export interface ObservationFilters extends ListQuery {
   domain?: Agent;
   /** 고른 상태만 (#266). 주지 않으면 deleted 를 뺀 세 상태 모두다. `total` 도 이 기준으로 센다. */
   status?: ObservationBase["status"];
@@ -854,9 +931,11 @@ export interface ObservationDetailResponse {
 /**
  * `GET /children/{cid}/affinities` — 관심·선호는 **한 배열**로 내려온다.
  * 좋아함/싫어함은 별도 배열이 아니라 `polarity` 로 구분한다.
+ *
+ * 🚨 **쪽 네 칸(`NumberedPage`)은 `affinities` 기준이다** (#584). `safety` 는 쪽으로 나누지 않고 세지도 않는다.
  */
-export interface AffinitiesResponse {
-  /** 기본 `state != 'archived'`. */
+export interface AffinitiesResponse extends NumberedPage {
+  /** 기본 `state != 'archived'`. 마지막 기록이 최근인 것이 앞이다. */
   affinities: Affinity[];
   /** 지워지지 않은 전부. 🚨 감쇠가 없다 — 보호자만 지울 수 있다. */
   safety: HealthSafety[];
@@ -892,26 +971,63 @@ export interface CorrectionResponse {
 export const SUGGESTION_FEEDBACKS = ["child_liked", "child_disliked", "not_acted"] as const;
 export type SuggestionFeedback = (typeof SUGGESTION_FEEDBACKS)[number];
 
+export interface SuggestionFeedbackRequest {
+  feedback: SuggestionFeedback;
+}
+
 /**
  * 🚨 `memory_changed` 는 **항상 false** 다 (계약서 §08). 피드백은 제안 가중치만 바꾸고
  *    기억은 그대로 둔다 — 화면 문구가 이 사실과 같은 말을 해야 한다.
  *    기억을 고치려면 `POST /corrections` 로 간다.
  */
 export interface SuggestionFeedbackResponse {
-  suggestion: Suggestion;
+  suggestion: ReceivedSuggestion;
   memory_changed: boolean;
 }
 
 /**
+ * 07 피드백 목록의 일반 추천 한 줄 (#509). 05 에서 채택한 일반 추천도 해 보고 나서 평가한다.
+ *
+ * 🚨 **`GeneralSuggestion` 이 아니다.** 실서버는 이 목록에서 일반 추천도 개인화와 같은 모양
+ *    (`SuggestionOut`)에 `kind: "general"` · `evidence: []` 를 실어 보낸다 — `basis` · `record_count` ·
+ *    문서 근거가 없다. 그래서 **두 모양에 공통인 필드만** 적는다. 근거를 읽을 길이 타입에 없어야
+ *    "근거 0행인 것이 개인화로 그려지는" 길도 없다 (CLAUDE.md §2).
+ * ⚠️ `record_count` 를 싣지 않는 것은 서버가 정한 계약이다 (`docs/api/suggestions-v1.md` §7 · #545) —
+ *    05 응답 때 세는 값이라 저장되지 않고, 지금 다시 세면 그 추천이 지금 기록에서 나온 것처럼 읽힌다.
+ *    그래서 07 의 일반 추천 줄은 라벨만 둔다.
+ */
+export interface ReceivedGeneralSuggestion extends Pick<
+  Suggestion,
+  "id" | "child_id" | "agent" | "content" | "status" | "expires_at" | "feedback"
+> {
+  kind: "general";
+}
+
+/** 07 피드백 목록 한 줄. 🚨 **`kind` 로 가른다** — 일반 추천은 "또래 기준 일반 추천" 을 화면에 적는다. */
+export type ReceivedSuggestion = Suggestion | ReceivedGeneralSuggestion;
+
+/**
  * `GET /children/{cid}/suggestions` — 07 피드백 탭이 평가할 제안 목록 (#284).
  *
- * 🚨 **개인화만 온다.** 서버가 `kind = 'personalized'` 로 거른다 — 일반 추천은 채택하는 흐름이
- *    없어서 평가 대상이 아니다. 그래서 `items` 가 `GeneralSuggestion` 이 아니라 `Suggestion` 이다.
- * 커서 페이징이다 (`?cursor=&limit=`, 기본 20건). `next_cursor` 가 `null` 이면 마지막 장이다.
+ * 개인화와 **채택한 일반 추천**이 같이 온다 (#509). 🚨 둘은 `kind` 로 갈린다 — 일반 추천은
+ *    아이 기록 근거가 없어서 개인화로 집계되면 안 된다 (CLAUDE.md §2).
+ * 기본 목록은 `draft` 를 뺀다 — 05 에서 고르지 않은 일반 추천은 여기 오지 않는다.
+ * 계약은 `docs/api/suggestions-v1.md` §7 (#545 · #592).
+ * 기록 · 기억 목록과 같은 번호 쪽이다 (`?page=&size=`, 기본 20건). `total` 은 `rated` 를 건 **뒤의** 건수다.
  */
-export interface SuggestionListResponse {
-  items: Suggestion[];
-  next_cursor: string | null;
+export interface SuggestionListResponse extends NumberedPage {
+  items: ReceivedSuggestion[];
+}
+
+/**
+ * `GET /children/{cid}/suggestions` 의 쿼리 (#592).
+ * 🚨 **`rated` 는 세 갈래다** — 안 보내면 전부, `false` 면 피드백을 아직 안 남긴 것, `true` 면 남긴 것.
+ *    07 피드백 탭은 늘 둘 중 하나를 보낸다 (피드백 전 · 피드백 완료).
+ */
+export interface SuggestionListQuery {
+  rated?: boolean;
+  /** 1부터. 서버 상한은 10,000 이다. */
+  page?: number;
 }
 
 /* ── 08 사진으로 적기 ────────────────────────────────────────────────── */
@@ -1086,6 +1202,81 @@ export interface CalendarDayResponse {
   events: CalendarEvent[];
   /** 기록 탭 목록과 같은 모양 · 같은 상태 기준이다. */
   observations: Observation[];
+  /**
+   * 로그인한 보호자가 그날 나눈 대화 수 (#228). 🚨 **남의 대화는 세지 않는다** — 대화는 일기처럼
+   * 쓴 보호자 본인만 본다. 0 이면 그리지 않는다 (이 화면의 "없는 구역은 그리지 않는다").
+   */
+  chat_count: number;
+}
+
+/* ── 지난 대화 (#228) ─────────────────────────────────────────────────────
+ * `GET /children/{cid}/chat` — run 하나가 대화 한 턴이고, 하루 단위로 온다. 쓴 보호자 본인 것만 온다.
+ * 흐름과 이유는 서버 `docs/api/chat-v1.md`, 화면 규칙은 `docs/web/chat-run-v1.md` §4.
+ */
+
+/** 저장할 때 id 만 남긴 행. 관찰이면 `observation_food` 처럼 표 이름이 `kind` 다. */
+export interface StoredRef {
+  kind: string;
+  id: string;
+}
+
+/**
+ * 지난 턴의 답 하나. 🚨 **run 화면(SSE)과 같은 이름 · 같은 칸이다** — `type` 을 떼어 `data` 로 감싸면
+ * 그대로 `RunEvent` 가 되어 `runReducer` 에 흘릴 수 있다 (`lib/chat-history.ts`).
+ *
+ * SSE 와 다른 곳만 적는다.
+ * - `saved` — 관찰은 **지금 모습**으로 온다(건강 기록 포함). 보호자가 지운 기록은 내용 없이 `deleted` 에 id 만 온다.
+ * - `event_draft` — 🚨 **그때 만든 내용 그대로다.** 초안은 서버에 남지 않아서 지금 상태가 없다 — 읽기 전용으로만 그린다.
+ * - `agent_result` — 추천의 **지금 상태**(`suggestions`)가 같이 온다. 고를 수 있는 것이 없으면 "후보 보기" 를 세우지 않는다.
+ * - `done` — `completed` 만 온다. 늘 마지막이다.
+ * - 오지 않는 것 — `step` · `ping` · `offer` · `promoted` · `failed`(실패한 run 은 남기지 않는다).
+ */
+export type ChatReply =
+  | ({ type: "note" } & NoteEvent)
+  | ({ type: "guidance" } & GuidanceEvent)
+  | ({ type: "unavailable" } & UnavailableEvent)
+  | ({ type: "saved"; deleted: StoredRef[] } & SavedEvent)
+  | ({ type: "event_draft" } & EventDraftsEvent)
+  | ({ type: "agent_result" } & AgentResultEvent & Required<Pick<AgentResultEvent, "suggestions">>)
+  | ({ type: "partial" } & PartialEvent)
+  | { type: "done"; completed: boolean };
+
+export interface ChatTurnOut {
+  run_id: string;
+  /** 보호자가 보낸 글 그대로. 🚨 화면에 그릴 때 HTML 로 그리지 않는다 (apps/web/CLAUDE.md §4). */
+  raw_text: string;
+  /** 되묻기에 답한 턴이면 그 질문 턴의 `run_id`. 질문과 같은 날에 붙는다. */
+  reply_to: string | null;
+  /** 입력을 접수한 시각. 🚨 날짜 묶음은 이 값이 아니라 응답의 `date` 로 한다 (서버가 정한 대화 날짜). */
+  created_at: string;
+  /**
+   * 이 턴의 되묻기에 지금 `reply_to` 로 답할 수 있는가. 서버가 맥락을 15분만 들고 있어서 그 안이고 아직
+   * 답하지 않았을 때만 `true` 다. 되묻기가 아닌 턴은 늘 `false`.
+   * 🚨 **받은 순간의 값이다** — 그 뒤에 닫힐 수 있고, 그때 답하면 400 `reply_context_unavailable` 이다.
+   *    맥락 확인은 하루 한도보다 앞이라 400 은 하루 입력을 쓰지 않는다.
+   */
+  reply_open: boolean;
+  /** 도착 순서대로. 마지막은 늘 `done` 이다. */
+  replies: ChatReply[];
+}
+
+export interface ChatDayResponse {
+  /** 이 응답의 날짜(한국 시간 `YYYY-MM-DD`). `date` 없이 부르면 서버의 오늘이다. */
+  date: string;
+  /** 그날의 턴, 오래된 순. 최근 것부터 `limit` 개를 끊는다. 대화가 없는 날이면 빈 배열이다. */
+  turns: ChatTurnOut[];
+  /**
+   * 그날 안에 더 이른 턴이 남았으면 그 자리. 🚨 **날짜를 품은 값이라 풀어 보지 않고 그대로 돌려준다** —
+   * 날짜 없는 커서를 자정 뒤에 보내면 새 날로 읽혀 이미 보이는 턴이 두 번 그려진다(서버가 막는다).
+   */
+  next_cursor: string | null;
+  /** 이 날짜보다 앞에서 대화가 있었던 가장 늦은 날. 대화 없는 날은 건너뛴다. 없으면 `null`. */
+  prev_date: string | null;
+  /**
+   * 이 날짜보다 뒤에서 대화가 있었던 가장 이른 날. 대화 없는 날은 건너뛴다. 오늘이면 늘 `null`.
+   * 지난 날을 바로 열었을 때(09 입구) 아래로 내리며 다음 날을 이어 받는다.
+   */
+  next_date: string | null;
 }
 
 /**
@@ -1099,12 +1290,26 @@ export interface CalendarDayResponse {
  * 작성자는 로그인한 보호자다 — 요청에 싣지 않는다. 사진은 일기 밖에 있어서(#115) 여기 싣지 않고,
  * 일기를 덮거나 지워도 사진은 그대로다. `Idempotency-Key` 를 받지 않는다 — 몇 번 보내도 결과가
  * 같은 요청이다 (`idempotency.ts` 의 5곳이 아니다).
+ *
+ * 🚨 **1000자를 넘거나 NUL 이 든 `content` 는 400 `validation_failed` 다** (#549 · 서버 PR #550).
+ *    신고와 달리 앞뒤 공백을 떼지 않고 원문 길이로 센다 — 저장하는 것이 원문이라서다.
  */
 export interface DiaryRequest {
   content: string;
 }
 
+/**
+ * 서버 `DIARY_CONTENT_MAX`(`schemas/diary.py`)와 같은 값이다. 한쪽만 바꾸지 않는다.
+ * 앞뒤 공백 · 줄바꿈을 떼지 않은 원문 길이의 상한이다.
+ */
+export const DIARY_CONTENT_MAX_LENGTH = 1000;
+
 /** `PATCH /children/{cid}/event-items/{iid}` — 준비물 체크. 되돌릴 수 있어서 낙관적 업데이트를 써도 된다. */
+export interface EventItemUpdateRequest {
+  is_prepared: boolean;
+}
+
+/** `PATCH /children/{cid}/event-items/{iid}` 의 응답 — 체크를 바꾼 뒤의 준비물 한 줄. */
 export interface EventItemUpdateResponse {
   item: EventItem;
 }
@@ -1229,6 +1434,13 @@ export interface AuthRefreshResponse {
 export interface AuthSignupPending {
   status: "consent_required";
   consent_code: string;
+}
+
+/** `POST /auth/{provider}` — 로그인 복귀 뒤 일회용 코드를 세션으로 바꾼다. */
+export interface AuthExchangeRequest {
+  code: string;
+  /** 이 탭이 로그인을 시작했다는 표식 (`lib/auth/oauth-bind.ts`). */
+  bind: string;
 }
 
 export type AuthExchangeResponse = AuthSession | AuthSignupPending;
@@ -1483,21 +1695,6 @@ export interface DevScreeningResponse {
 }
 
 /**
- * 🚨 "잘 모르겠어요"(`unknown`) 는 "없음"(`none`) 이 아니다.
- *    unknown 이면 서버가 health_safety 에 아무것도 쓰지 않고, 이후 Food Agent 는
- *    guards.safety_unknown 으로 **실행 자체가 막힌다** (CLAUDE.md §2 — 조회 실패 시 실행 금지).
- */
-export type SafetyStatus = "none" | "has" | "unknown";
-
-/** 🚨 보호자가 직접 입력한 값만 들어간다. LLM 이 추론한 알레르기는 저장하지 않는다 (NF-03). */
-export interface OnboardingSafetyInput {
-  type: string;
-  label: string;
-  severity?: string;
-  reactions?: string[];
-}
-
-/**
  * 전부 선택이지만 **하나는 있어야 한다** — 빈 본문은 400 이다 (서버 PR #353). 화면은 아무것도
  * 안 적으면 보내지 않고, "건너뛰기" 는 요청 없이 홈으로 간다.
  *
@@ -1506,7 +1703,14 @@ export interface OnboardingSafetyInput {
  * ⚠️ **계약서 §05 의 본문과 달라졌다** (확정 전). 01 등록 화면을 "꼭 필요한 것" 만 남기고
  *    **고를 수 있는 것을 전부 이 화면으로 미루면서** 바뀌었다 —
  *    - 들어온 것: `relation`(01 에서 이동) · `gender` · `height_cm` · `weight_kg`
- *    - 빠진 것: `interests` · `dev_answers`
+ *    - 빠진 것: `interests` · `dev_answers` · `safety` · `safety_status` · `one_line`
+ *
+ * 🚨 **빠진 칸을 보내면 400 이다** — 서버가 모르는 칸을 받지 않는다(`extra="forbid"`). 한동안 계약서
+ *    초안에 남아 있다는 이유로 타입에만 두었는데, 서버는 처음부터 받지 않았다 (#559 에서 걷어냄).
+ *    - 알레르기는 승인 게이트 ㉡(`POST /children/{cid}/health-safety`) 하나로만 간다. 02 의 알레르기
+ *      구역이 11 과 같은 컴포넌트다 (`components/safety-section.tsx`) — 쓰기 경로를 둘로 두지 않는다 (NF-03).
+ *      그래서 "확인했고 없다" 와 "아직 모른다" 를 물을 자리가 지금 없다. 어디서 받을지는 팀 결정이다.
+ *    - 한 줄은 03 홈 입력으로 받는다. 온보딩에서 또 받으면 같은 것을 두 번 묻는다.
  *
  * 🚨 **`interests` 를 뺀 자리를 다른 것으로 채우지 않았다.** 관심사는 03 홈의 한 줄에서
  *    관찰로 쌓이는 값이고(그게 이 제품의 방식이다), 가입 첫날 칩으로 고른 여덟 개는
@@ -1527,23 +1731,6 @@ export interface OnboardingRequest {
    */
   height_cm?: number;
   weight_kg?: number;
-  /**
-   * ⚠️ **화면에서 보내지 않는다.** 02 의 알레르기 구역이 11 아이 프로필과 같은 것이 되면서
-   * (`components/safety-section.tsx`) 등록이 **승인 게이트 ㉡**(`POST /children/{cid}/health-safety`)
-   * 로만 간다 — 알레르기의 쓰기 경로를 둘로 두지 않는다 (NF-03).
-   *
-   * 🚨 **그래서 `safety_status` 를 물을 자리가 지금 없다.** 목록이 0건인 것만으로는
-   *    "확인했고 없다"(`none`)와 "아직 모른다"(`unknown`)를 가를 수 없는데, 계약서 §05 는
-   *    후자를 `guards.safety_unknown` 으로 받아 Food Agent 실행 자체를 막는다 (최상위 §2).
-   *    **어디서 그 선언을 받을지는 팀 결정이다** — 계약서에 남아 있어 타입만 유지한다.
-   */
-  safety_status?: SafetyStatus;
-  safety?: OnboardingSafetyInput[];
-  /**
-   * ⚠️ 화면에서 보내지 않는다. 온보딩에서 한 줄을 또 받으면 03 홈의 입력과 같은 것을
-   * 두 번 묻는 셈이라 뺐다 — 계약서에는 남아 있어서 타입만 유지한다.
-   */
-  one_line?: string;
 }
 
 /**

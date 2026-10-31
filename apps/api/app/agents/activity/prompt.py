@@ -31,6 +31,7 @@ tool이 못 막는 것을 막는 자리다. 월령 필터·알레르기·날씨 
 """
 
 from collections.abc import Sequence
+from uuid import UUID
 
 from app.agents.activity.context import ActivityContext
 from app.agents.activity.gating import checks_weather, finds_places, weather_checked
@@ -85,7 +86,7 @@ _EVIDENCE = """
   달지 않는다 — 기록이 있다고 다 달면 근거가 약한데 이 아이 맞춤처럼 보인다.
   싫어한 기록을 피해 골랐으면 그 기록은 이유가 되므로 단다.
 - 기억 근거가 없는 후보는 [예시] 중 가장 가까운 예시의 id 를 evidence 에 단다. note 에는
-  그 예시에서 무엇을 참고했는지 쓴다. 가까운 예시가 없을 때만 evidence 를 비운다.
+  그 예시에서 무엇을 참고했는지 쓴다. evidence 를 비우지 않는다 — 비우면 거절된다.
 - 기억 근거가 있는 후보도 [예시]를 바탕으로 했으면 그 id 를 같이 단다.
 - 기록이 없으면(NO_RECORDS) 기억 근거 없이 낸다. 보호자에게 되묻지 않는다.
 """.strip()
@@ -161,14 +162,28 @@ def _request(request_texts: Sequence[str]) -> str:
     return "\n".join(texts)
 
 
+def example_ids(examples: Sequence[ActivityDocRow]) -> dict[str, UUID]:
+    """[예시]에 보여 줄 짧은 id(예1 …) → 문서 행 id.
+
+    긴 UUID 를 그대로 보여 주면 모델이 두 행의 id 를 이어 붙인다 — 앞 8자는 한 행, 나머지는 다른
+    행(라이브 eval "내일 공원"). 그러면 없는 id 라 묶음째 거절되고, 모델은 무엇이 틀렸는지 몰라
+    같은 id 로 다시 내다 단계 한도에 걸린다. 짧은 id 는 이어 붙일 길이가 없다. 출력 tool 이 이
+    표로 문서 행 id 로 되돌린다.
+    """
+    return {f"예{n}": row.id for n, row in enumerate(examples, start=1)}
+
+
 def _examples(examples: tuple[ActivityDocRow, ...]) -> str:
     if not examples:
         return "[예시]\n이 월령의 예시는 아직 없다."
-    lines = ["[예시] 결만 참고한다. 그대로 베끼지 않는다. 바탕으로 했으면 id 를 evidence 에 단다."]
-    for row in examples:
+    lines = [
+        "[예시] 결만 참고한다. 그대로 베끼지 않는다. "
+        "바탕으로 했으면 그 id(예1 같은)를 evidence 에 그대로 단다."
+    ]
+    for short_id, row in zip(example_ids(examples), examples, strict=True):
         materials = ", ".join(row.materials) or "없음"
         lines.append(
-            f"- id {row.id} · {row.title}: {row.body} (장소 {row.setting.value} · "
+            f"- id {short_id} · {row.title}: {row.body} (장소 {row.setting.value} · "
             f"준비물 {materials} · 보호자 {row.caregiver_role.value})"
         )
     return "\n".join(lines)
@@ -177,14 +192,17 @@ def _examples(examples: tuple[ActivityDocRow, ...]) -> str:
 def _conditions(weather: WeatherBrief, *, checked: bool, gate: Gate) -> str:
     """오늘 날씨는 판정과 등급 라벨만 준다. 수치는 주지 않는다 (4-2).
 
-    확인하지 못한 날(위치 · 날씨 어댑터가 없거나 예보를 못 읽음)은 "어렵다" 와 나눠 쓴다 — 같은
-    말이면 모델이 확인 안 한 날씨를 이유 문장에 쓴다. 판정은 같다(실내만, D8).
+    확인하지 못한 날은 "어렵다" 와 나눠 쓴다 — 같은 말이면 모델이 확인 안 한 날씨를 이유 문장에
+    쓴다. 예보를 못 읽은 날은 실내만(D8)이고, 위치 · 날씨 어댑터가 없어 묻지 않은 날은 바깥
+    활동도 연다(`weather.not_asked`).
     오늘 판정은 오늘 하는 활동에만 건다. 내일 · 주말은 그날 판정으로 거른다 (#377).
     """
     if not checks_weather(gate):
+        # 묻지 않은 날 — 바깥 놀이를 막지 않는다. 확인은 보호자 몫이라 화면 문구가 알린다
         outdoor = (
-            "날씨는 확인하지 못했다. 날씨 이야기를 쓰지 않고, "
-            "setting 이 indoor 나 either 인 활동만 낸다."
+            "날씨는 확인하지 않았다. 날씨 이야기를 쓰지 않는다. 바깥 활동(outdoor)도 낼 수 있다."
+            if weather.outdoor_ok
+            else "해가 졌다. 오늘 하는 활동은 setting 이 indoor 나 either 인 것만 낸다."
         )
     elif not checked:
         outdoor = (

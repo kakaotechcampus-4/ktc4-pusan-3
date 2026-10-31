@@ -5,6 +5,7 @@ import {
   SEVERITY_LABEL,
   isSeverityFor,
   reactionsProblem,
+  severityFieldHint,
   severityFieldLabel,
   severityOptions,
   splitReactions,
@@ -45,6 +46,22 @@ describe("health_safety 심각도는 DB 규칙을 따른다", () => {
   it("알레르기 칸은 검사 등급이라고 말한다", () => {
     expect(severityFieldLabel("allergy")).toBe("검사 등급");
     expect(severityFieldLabel("chronic_disease")).toBe("얼마나 심한가요");
+  });
+
+  it("설명은 알레르기 칸에만 붙는다 (#570)", () => {
+    expect(severityFieldHint("allergy")).toBeTruthy();
+    for (const type of ["chronic_disease", "behavioral", "environmental", "other_medical"]) {
+      expect(severityFieldHint(type)).toBeUndefined();
+    }
+  });
+
+  // Class 는 혈액 속 특이 IgE 수치의 구간이라 반응의 심한 정도가 아니다. 등급으로 위험을 가늠하는
+  // 말은 의료 판단으로 읽힌다 (CLAUDE.md §1 안 만드는 것).
+  it("🚨 설명은 Class 로 반응의 심한 정도나 안전을 가늠하지 않는다", () => {
+    const hint = severityFieldHint("allergy") ?? "";
+    for (const word of ["심해", "심한", "위험", "안전", "괜찮", "클수록", "높을수록", "낮으면"]) {
+      expect(hint).not.toContain(word);
+    }
   });
 });
 

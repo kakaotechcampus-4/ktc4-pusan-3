@@ -5,7 +5,8 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { AuthGate } from "@/components/auth-gate";
-import { ConsentChecklist } from "@/components/consent-checklist";
+import { ConsentChecklist, ConsentChecklistSkeleton } from "@/components/consent-checklist";
+import { StartBackLink } from "@/components/start-back-link";
 import { Button } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -125,19 +126,18 @@ function CreateChildScreen() {
 
   return (
     <Screen className="gap-6">
-      <div>
+      <header>
         <p className="text-label text-ink-subtle">아이 등록 · 1 / 2</p>
-        <PageTitle className="mt-2">
-          누구 이야기를
-          <br />
-          모아둘까요
-        </PageTitle>
+        <div className="mt-1 -ml-3 flex items-center gap-1">
+          <StartBackLink />
+          <PageTitle>누구 이야기를 모아둘까요</PageTitle>
+        </div>
         <p className="text-body text-ink-muted mt-3">
           별명과 생일만 먼저 알려주세요.
           <br />
           나머지는 다음 화면에서 골라도 되고, 건너뛰어도 돼요.
         </p>
-      </div>
+      </header>
 
       <div className="flex flex-col gap-5">
         <TextInput
@@ -170,14 +170,8 @@ function CreateChildScreen() {
           </p>
         </div>
 
-        {policies.isPending ? (
-          <Card>
-            <p className="text-body text-ink-muted flex items-center gap-2">
-              <Spinner />
-              동의 항목을 불러오는 중…
-            </p>
-          </Card>
-        ) : null}
+        {/* 받는 동안 카드 모양으로 자리를 잡는다 — 약관이 오는 순간 아래가 밀리지 않게. */}
+        {policies.isPending ? <ConsentChecklistSkeleton /> : null}
 
         {/* 🚨 **기본값으로 그리지 않는다.** 약관을 못 받았으면 무엇에 동의하는지 모르는 것이고,
             그 상태로 아이를 만들면 근거 없는 동의가 아이와 함께 저장된다. */}

@@ -11,8 +11,9 @@ import {
 import { isApiError } from "@/lib/api/errors";
 import { newIdempotencyKey, type IdempotencyKey } from "@/lib/api/idempotency";
 import { submitInput, type InputRequest } from "@/lib/api/operations";
-import { qk } from "@/lib/api/queryKeys";
 import { isDraftEvent, type EventDraftsEvent } from "@/lib/api/sse";
+import type { CreateInputResponse } from "@/lib/api/types";
+import { refreshAfterRun, refreshTodayChat } from "@/lib/chat-history";
 import { toSeoulDateKey } from "@/lib/format";
 import { getQueryClient } from "@/lib/query-client";
 import { useDraftStore } from "@/stores/draft";
@@ -33,11 +34,13 @@ import { useEventDraftStore } from "@/stores/event-draft";
  *    계란이 두 번 저장되고 7일 승격 집계가 한 번의 관찰을 두 번으로 센다 (최상위 §2 · #154).
  * 2. 🚨 **`persist` 를 붙이지 말 것.** 보낸 원문과 되묻는 질문에는 아이 이야기가 그대로 들어 있다.
  *    디스크에 남기지 않는다 (최상위 §2 개인정보 · `stores/draft.ts` 와 같은 규칙). 그래서 앱을 끄면
- *    그날 대화가 사라진다 — 남기는 것은 서버 쪽 일이다 (#228). 🚨 콘솔·로그에도 찍지 않는다.
+ *    이 스토어는 빈다 — 다시 켜면 서버가 남긴 대화를 화면이 다시 그린다 (`useChatHistory` · #228).
+ *    🚨 그 지난 대화를 이 스토어에 옮겨 담지 않는다. 🚨 콘솔·로그에도 찍지 않는다.
  * 3. 🚨 **지우는 때는 보낸 때가 아니라 서버가 끝까지 처리했다고 말한 때다** (`isRunConfirmed` ·
  *    #71 · #175 리뷰). 이어받기 run 이 실패하면 서버는 맥락을 되돌려 두고, 화면은 같은 키 ·
  *    같은 `reply_to` 로 다시 보낼 수 있어야 한다. `unconfirmed` 에서 정리하면 저장됐는지 모르는
- *    한 줄의 키가 갈려서 다시 시도가 두 번 저장된다.
+ *    한 줄의 키가 갈려서 다시 시도가 두 번 저장된다. `failed` 는 키만 새로 받는다 — 서버가 "저장 없음" 을
+ *    보장한 끝이라 새 키로 보내도 두 번 저장되지 않는다 (`forgetFailedKey` · #538).
  * 4. 🚨 **답을 강요하지 않는다.** 질문은 입력창의 기본 대상이 될 뿐이고 "답하지 않고 새로 적기" 로
  *    내려놓을 수 있다. 내려놓아도 질문은 대화에 **열린 채로** 남아 다시 골라 답할 수 있다 —
  *    예전 "나중에 할게요" 는 질문과 `runId` 를 지워서 실제로는 그만두기였다 (#226). 답하려면 한 줄을
@@ -66,6 +69,11 @@ export interface ChatQuestion {
   text: string;
   /** 그 질문을 낸 run. 답을 보낼 때 `reply_to` 로 싣는다. */
   runId: string;
+  /**
+   * 그 질문이 나온 날 — 서버가 남긴 지난 턴의 질문일 때만 있다 (#228). 이 스토어에는 그 줄이 없어서 답의 날을
+   * 여기서 물려받는다. 이 앱에서 보낸 줄의 질문이면 그 줄의 `day` 를 본다.
+   */
+  day?: string;
 }
 
 /**
@@ -91,7 +99,10 @@ export interface ChatTurn {
   body: InputRequest;
   /** 이 한 줄이 답한 질문. 400 때 무엇을 물었는지 말풍선 아래에 다시 보여준다. */
   answering: ChatQuestion | null;
-  /** 🚨 보낸 순간의 키를 붙들어 둔다. 다시 시도가 같은 키로 나가야 두 번 저장되지 않는다. */
+  /**
+   * 🚨 보낸 순간의 키를 붙들어 둔다. 다시 시도가 같은 키로 나가야 두 번 저장되지 않는다.
+   * 서버가 `failed` 로 끝냈을 때만 새 키로 바뀐다 (`forgetFailedKey`).
+   */
   key: IdempotencyKey;
   send: SendState;
   run: RunState;
@@ -101,6 +112,17 @@ export interface ChatTurn {
    * 202 를 못 받은 말풍선은 다음 한 줄이 대체하고, 202 를 받은 말풍선은 남기고 다시 시도만 내린다.
    */
   handedBack: boolean;
+  /**
+   * 다시 보냈더니 서버가 이미 끝난 run 이라고 했다 — 그 턴이 붙은 대화 날짜 (#538). `null` 이면 아니다.
+   * 🚨 **결과는 이 스토어에 옮겨 담지 않는다.** 서버 상태라 화면이 그날 대화에서 찾아 그린다(`RecordedReply`) —
+   *    지난 턴을 스토어에 넣지 않는 것과 같은 이유다(`docs/web/chat-run-v1.md` §4). 여기 두는 것은 서버가 준 날짜뿐이다.
+   */
+  recordedOn: string | null;
+  /**
+   * 다시 보냈는데 서버가 앞과 **같은 run** 을 돌려줬다 (같은 키 재생). 그 run 이 결과 미확인으로 끝나면 채널이 이미
+   * 지워졌는데 대화 기록도 없는 run 일 수 있다 — 서버도 저장됐는지 모른다(#538). 화면은 기록 탭에서 확인하라고 말한다.
+   */
+  replayed: boolean;
 }
 
 interface ChildConversation {
@@ -135,7 +157,8 @@ const streams = new Map<string, () => void>();
 
 /**
  * childId → (본문 지문 → 키). 🚨 **본문에 묶는다** (`keyPayload` · PR #71 리뷰). 고쳐 쓴 본문은 새 키,
- * 그대로 다시 보낸 본문은 같은 키다. 🚨 **서버가 그 줄을 끝까지 처리했다고 말했을 때만 그 항목을 지운다.**
+ * 그대로 다시 보낸 본문은 같은 키다. 🚨 **서버가 그 줄을 끝까지 처리했다고, 또는 아무것도 저장하지 않고
+ * 실패했다고(`failed`) 말했을 때만 그 항목을 지운다.**
  *
  * 🚨 **아이당 한 칸이 아니라 표다** (#231 리뷰). 한동안 본문 하나만 기억하는 보관함이었는데,
  *    줄1 "A" 결과 미확인 → 줄2 "B" 보냄(보관함이 B 로 바뀜) → 줄1 을 고쳐 쓰기로 꺼내 그대로 보내면
@@ -210,7 +233,8 @@ export function isReplaceable(turn: ChatTurn): boolean {
  *    눌러도 같은 실패만 나오는 버튼이 섰다 (#231 리뷰). 다시 시도는 응답을 못 받은 경우(네트워크 · 5xx)의 것이다.
  */
 export function canRetry(turn: ChatTurn): boolean {
-  if (turn.handedBack) return false;
+  // 🚨 서버가 끝났다고 한 줄이다 (#538). 결과가 이미 저장돼 있어서 다시 보낼 것이 없다.
+  if (turn.handedBack || turn.recordedOn !== null) return false;
   if (turn.send.status === "error") return !isRejected(turn.send.error);
   return turn.run.status === "failed" || turn.run.status === "unconfirmed";
 }
@@ -272,10 +296,10 @@ export function sendLine(
     // 🚨 원문을 다시 보내지 않고 **어느 run 에 대한 답인지**만 싣는다 (위 규칙 1).
     ...(answering ? { reply_to: answering.runId } : {}),
   };
-  // 🚨 자정을 넘겨 온 답은 질문이 나온 날에 붙인다 (#226).
+  // 🚨 자정을 넘겨 온 답은 질문이 나온 날에 붙인다 (#226). 지난 턴의 질문이면 그 턴의 날이다 (#228).
   const askedOn = answering
-    ? conversation.turns.find((t) => t.send.status === "sent" && t.send.runId === answering.runId)
-        ?.day
+    ? (conversation.turns.find((t) => t.send.status === "sent" && t.send.runId === answering.runId)
+        ?.day ?? answering.day)
     : undefined;
 
   const turn: ChatTurn = {
@@ -290,6 +314,8 @@ export function sendLine(
     run: initialRunState,
     question: null,
     handedBack: false,
+    recordedOn: null,
+    replayed: false,
   };
 
   update(childId, (c) => ({
@@ -352,14 +378,24 @@ export function canHandBack(childId: string): boolean {
   return !(useDraftStore.getState().byChild[childId] ?? "").trim();
 }
 
-/** 열린 질문 하나를 입력창의 대상으로 고른다 (대화 안의 "이 질문에 답하기"). */
-export function answerQuestion(childId: string, runId: string): void {
+/**
+ * 열린 질문 하나를 입력창의 대상으로 고른다 (대화 안의 "이 질문에 답하기").
+ *
+ * @param past 서버가 남긴 지난 턴의 질문일 때 그 문장과 날 (#228 · `reply_open`). 🚨 이 스토어에는 그 줄이 없다 —
+ *   앱을 다시 켰는데 서버가 아직 맥락을 들고 있는 경우다. 열려 있는지는 화면이 서버 값으로 정했다.
+ */
+export function answerQuestion(
+  childId: string,
+  runId: string,
+  past?: { text: string; day: string },
+): void {
   update(childId, (c) => {
     const asked = c.turns.find(
       (t) => t.question === "open" && t.send.status === "sent" && t.send.runId === runId,
     );
-    if (!asked?.run.note) return c;
-    return { ...c, answering: { text: asked.run.note.text, runId } };
+    if (asked?.run.note) return { ...c, answering: { text: asked.run.note.text, runId } };
+    if (past) return { ...c, answering: { text: past.text, runId, day: past.day } };
+    return c;
   });
 }
 
@@ -380,9 +416,9 @@ async function submit(childId: string, turnId: string): Promise<void> {
   //    기록" 이 같이 사라졌다 (#231 리뷰). 보내는 동안 화면은 진행 표시를 그린다 (`ChatThread`).
   updateTurn(childId, turnId, (t) => ({ ...t, send: { status: "sending" } }));
 
-  let runId: string;
+  let accepted: CreateInputResponse;
   try {
-    ({ run_id: runId } = await submitInput(childId, turn.body, turn.key));
+    accepted = await submitInput(childId, turn.body, turn.key);
   } catch (error) {
     // 로그아웃으로 대화가 비워졌으면 쓸 자리가 없다.
     if (!findTurn(childId, turnId)) return;
@@ -405,10 +441,24 @@ async function submit(childId: string, turnId: string): Promise<void> {
   }
 
   if (!findTurn(childId, turnId)) return;
+  const runId = accepted.run_id;
+  // 🚨 SSE 를 열지 않는다 — 채널은 이미 지워져 404 다. 결과는 서버가 대화 기록에 남겼다 (#538).
+  if (accepted.finished && accepted.conversation_date) {
+    settleRecorded(childId, turnId, runId, accepted.conversation_date);
+    return;
+  }
+  // 이 줄이 앞서 받은 run 이거나(다시 시도), 다른 줄이 이미 받은 run 이다(결과 미확인 줄을 고치지 않고 다시 적어
+  // 보냈다 — 같은 본문이라 같은 키다). 🚨 `turn` 은 보내기 전에 잡은 것이라 이 줄의 앞 run 이 남아 있다.
+  const replayed =
+    (turn.send.status === "sent" && turn.send.runId === runId) ||
+    conversationOf(useConversationStore.getState(), childId).turns.some(
+      (t) => t.id !== turnId && t.send.status === "sent" && t.send.runId === runId,
+    );
   updateTurn(childId, turnId, (t) => ({
     ...t,
     send: { status: "sent", runId },
     run: runReducer(initialRunState, { type: "start" }),
+    replayed,
   }));
 
   const dispatch = (action: RunAction) => {
@@ -444,6 +494,8 @@ export function isRejected(error: unknown): boolean {
  */
 function failSend(childId: string, turn: ChatTurn, error: unknown): void {
   const lostContext = isApiError(error, "reply_context_unavailable");
+  // 지난 턴의 질문이었으면 서버의 `reply_open` 도 닫혔다 — 오늘 장을 다시 받아야 "닫힘" 으로 바뀐다 (#228).
+  if (lostContext) void refreshTodayChat(getQueryClient(), childId);
   const keepInComposer =
     isApiError(error, "daily_input_limit") || isApiError(error, "consent_required");
 
@@ -472,10 +524,16 @@ function failSend(childId: string, turn: ChatTurn, error: unknown): void {
  * 이 run 이 또 물었으면 그 질문이 입력창의 새 대상이 된다 (이어받기 run 이 또 물으면 그 run).
  */
 function settle(childId: string, turnId: string): void {
-  void getQueryClient().invalidateQueries({ queryKey: qk.child(childId) });
+  // 🚨 `qk.child` 를 통째로 무효화하되 대화 목록은 오늘 장만 갈아 끼운다 (`refreshAfterRun`).
+  void refreshAfterRun(getQueryClient(), childId);
 
   const turn = findTurn(childId, turnId);
-  if (!turn || !isRunConfirmed(turn.run.status)) return;
+  if (!turn) return;
+  if (turn.run.status === "failed") {
+    forgetFailedKey(childId, turn);
+    return;
+  }
+  if (!isRunConfirmed(turn.run.status)) return;
 
   releaseKey(childId, keyPayload(turn.body));
   const answeredRunId = turn.answering?.runId;
@@ -488,6 +546,56 @@ function settle(childId: string, turnId: string): void {
     answering: asked ?? (c.answering?.runId === answeredRunId ? null : c.answering),
     turns: c.turns.map((t) => {
       if (t.id === turnId) return { ...t, question: asked ? "open" : null };
+      if (answeredRunId && t.send.status === "sent" && t.send.runId === answeredRunId) {
+        return { ...t, question: "answered" };
+      }
+      return t;
+    }),
+  }));
+}
+
+/**
+ * `failed` 로 끝난 줄의 키를 놓고 새 키를 붙인다 (#538). 다시 시도와, 그 문장을 그대로 다시 보낸 한 줄이 새 키로 나간다.
+ *
+ * 🚨 **`failed` 만이다.** 서버는 `failed` 를 "저장 없음" 으로 보장하고 그때 자기도 키를 놓는다 — 그래서 새 키로 보내도
+ *    두 번 저장되지 않는다. `unconfirmed` 는 서버가 무엇을 저장했는지 모르니 키를 그대로 둔다 (위 규칙 3).
+ * 🚨 서버가 키를 놓다가 Redis 오류로 실패하면 키가 24시간 남는다. 같은 키로 다시 보내면 채널이 남은 5분 안에는 서버가
+ *    새 run 으로 받지만, 그 뒤에는 그 run 이 실패였는지 서버도 몰라 결과 미확인만 되풀이된다. 화면이 놓아야 풀린다.
+ */
+function forgetFailedKey(childId: string, turn: ChatTurn): void {
+  const payload = keyPayload(turn.body);
+  releaseKey(childId, payload);
+  const key = keyFor(childId, payload);
+  updateTurn(childId, turn.id, (t) => ({ ...t, key }));
+}
+
+/**
+ * 다시 보냈더니 서버가 **이미 끝나 대화 기록에 남은 run** 이라고 했다 (#538). 끝을 받은 것과 같이 정리한다 — 키를 놓고,
+ * 이 줄이 답한 질문을 닫는다. 결과는 화면이 그날 대화에서 찾아 그린다 (`ChatTurn.recordedOn`).
+ *
+ * - 🚨 **이 run 이 낸 질문은 여기서 열지 않는다.** 그 질문이 아직 답할 수 있는지는 서버가 안다(`reply_open`) — 결과를
+ *   그리는 화면이 지난 턴과 같은 규칙으로 정한다. 끝난 지 5분이 넘은 run 이라 대개 닫혀 있다.
+ * - `run` 은 앞의 것을 그대로 둔다. 화면은 `recordedOn` 이 있으면 그것을 그리지 않는다.
+ */
+function settleRecorded(childId: string, turnId: string, runId: string, day: string): void {
+  const turn = findTurn(childId, turnId);
+  if (!turn) return;
+  releaseKey(childId, keyPayload(turn.body));
+  const answeredRunId = turn.answering?.runId;
+
+  update(childId, (c) => ({
+    answering: c.answering?.runId === answeredRunId ? null : c.answering,
+    turns: c.turns.map((t) => {
+      if (t.id === turnId) {
+        return {
+          ...t,
+          send: { status: "sent", runId },
+          // 보내는 동안 진행 표시였다(`SENDING`). 앞 run 이 없던 줄(202 를 처음 받았다)이면 끝난 빈 run 으로 둔다.
+          run: t.run.status === "idle" ? { ...t.run, status: "done" } : t.run,
+          question: null,
+          recordedOn: day,
+        };
+      }
       if (answeredRunId && t.send.status === "sent" && t.send.runId === answeredRunId) {
         return { ...t, question: "answered" };
       }

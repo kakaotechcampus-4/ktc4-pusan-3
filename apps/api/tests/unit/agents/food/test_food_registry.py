@@ -325,3 +325,19 @@ def test_급식_갱신은_쓰지_않고_끝내는_출력_tool_도_있다() -> No
     assert output_tools_for(FoodTaskType.DAYCARE_MEAL) == frozenset(
         {"update_daycare_meal", "delete_daycare_meal", "keep_daycare_meal"}
     )
+
+
+# ── food_check — 단계로 닫지 않고, 열린 tool 없이 코드가 답한다 ─────────
+@pytest.mark.parametrize("months", [1, 8, 30])
+def test_섭취_확인은_단계로_닫지_않고_안전_조회_실패만_닫는다(months: int) -> None:
+    assert closed_readout_key(FoodTaskType.FOOD_CHECK, _gate(months)) is None
+    assert (
+        closed_readout_key(FoodTaskType.FOOD_CHECK, _gate(months, safety_ok=False))
+        == "check.blocked_safety"
+    )
+
+
+def test_섭취_확인은_열린_tool_없이_코드가_답한다() -> None:
+    assert tools_for(FoodTaskType.FOOD_CHECK, _gate(30)) == ()
+    assert answers_by_code(FoodTaskType.FOOD_CHECK) is True
+    assert output_tools_for(FoodTaskType.FOOD_CHECK) == frozenset()

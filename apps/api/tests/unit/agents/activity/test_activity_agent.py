@@ -11,6 +11,7 @@ from datetime import UTC, date, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from app.agents.activity import agent as agent_module
 from app.agents.activity.agent import MAX_STEPS, run
@@ -23,7 +24,7 @@ from app.agents.activity.store.inmemory import (
     in_memory_ports,
 )
 from app.agents.activity.store.ports import ActivityDocRow, CoarseLocation, SafetyEntry
-from app.agents.activity.weather import WEATHER_UNCHECKED
+from app.agents.activity.weather import WEATHER_NOT_ASKED
 from app.agents.common.llm_client import LLMResponse
 from app.agents.common.schemas.task import DomainTask
 from app.core.weather_raw import RawForecast
@@ -33,6 +34,8 @@ NOW = datetime(2026, 10, 7, 1, tzinfo=UTC)  # KST 10:00 수요일
 BORN_40_MONTHS = date(2023, 6, 1)
 BORN_20_MONTHS = date(2025, 2, 1)
 BUSAN = CoarseLocation(lat=35.18, lon=129.08)
+KST = ZoneInfo("Asia/Seoul")
+RAINY = RawForecast(sky="4", pcp="20.0mm", pop="90")
 
 # 일반 추천은 문서 행이 근거다 (루트 §2). 기록 없는 아이의 후보가 이 행을 인용하게 둔다
 DEFAULT_DOC = ActivityDocRow(
@@ -112,13 +115,15 @@ def memory() -> LLMResponse:
     return _tools(("search_activity_memory", {}))
 
 
-def context(born=BORN_40_MONTHS, *, location=None, weather=None, docs=None) -> ActivityContext:
+def context(
+    born=BORN_40_MONTHS, *, location=None, weather=None, docs=None, now=NOW, timezone=UTC
+) -> ActivityContext:
     docs = docs if docs is not None else InMemoryActivityDocs([DEFAULT_DOC])
     return ActivityContext(
         child_id=CHILD,
         run_id="run-1",
-        now=NOW,
-        timezone=UTC,
+        now=now,
+        timezone=timezone,
         ports=in_memory_ports(CHILD, born, weather=weather, docs=docs),
         location=location,
     )
@@ -140,15 +145,16 @@ class TestNormal:
         assert result.model_calls == 1
         assert contents(result) == ["종이컵 탑 쌓기", "그림자놀이", "색종이 접기"]
         assert all(draft.kind == "general" for draft in result.suggestions)  # 기록 0건
-        assert result.readouts == ()  # 3개라 개수 안내 없음 · 위치 없어 날씨 안내 없음
+        assert result.readouts == ()  # 3개라 개수 안내 없음 · 실내 놀이만이라 날씨 안내 없음
 
     async def test_거절되면_같은_진입_안에서_고쳐_낸다(self):
-        """바깥 활동이 어려운 날(위치 없음 → 실내만) 야외 후보는 거절된다. model_calls 는 그대로."""
+        """바깥 활동이 어려운 날(비) 야외 후보는 거절된다. model_calls 는 그대로."""
         llm = FakeLLM(
             propose("공원 산책", "그림자놀이", "색종이 접기", setting="outdoor"),
             propose("거실 보물찾기", "그림자놀이", "색종이 접기"),
         )
-        result = await run(task(), context(), client=llm)
+        rainy = InMemoryWeather(uv="4", forecast=RAINY)
+        result = await run(task(), context(location=BUSAN, weather=rainy), client=llm)
         assert result.model_calls == 1
         assert contents(result)[0] == "거실 보물찾기"
         rejected = json.loads(llm.seen[1][-1]["content"])
@@ -322,20 +328,81 @@ class TestWeather:
         assert "그날(day)은 바깥 활동이 어려운 날" in rejected
 
     async def test_위치나_날씨_어댑터가_없으면_날씨_tool_을_열지_않는다(self):
-        """부르면 늘 실패만 돌려준다. 프롬프트도 "확인하지 못했다" 로 간다."""
+        """부르면 늘 실패만 돌려준다. 프롬프트는 "확인하지 않았다 · 바깥도 낼 수 있다" 로 간다."""
         llm = FakeLLM(propose("종이컵 탑 쌓기", "그림자놀이", "색종이 접기"))
         await run(task(), context(), client=llm)
-        assert "날씨는 확인하지 못했다" in llm.seen[0][0]["content"]
-        assert "위치를 모른다" in llm.seen[0][0]["content"]
+        system = llm.seen[0][0]["content"]
+        assert "날씨는 확인하지 않았다" in system
+        assert "바깥 활동(outdoor)도 낼 수 있다" in system
+        assert "위치를 모른다" in system
 
     async def test_위치가_없으면_날씨를_부르지_않고_정상이다(self):
-        """위치가 없으면 실내 전용으로 정상 동작한다 (4-3). "날씨를 못 읽었어요" 를 안 붙인다."""
+        """묻지 않은 날은 실패가 아니다 (4-3). 실내 놀이만 나가면 날씨 안내를 붙이지 않는다."""
         llm = FakeLLM(propose("종이컵 탑 쌓기", "그림자놀이", "색종이 접기"))
         ctx = context()
         result = await run(task(), ctx, client=llm)
         assert result.status == "completed"
         assert result.readouts == ()
-        assert WEATHER_UNCHECKED in ctx.state.weather[ctx.today].notices
+        assert ctx.state.weather[ctx.today].notices == (WEATHER_NOT_ASKED,)
+
+    async def test_위치가_없어도_바깥_놀이를_내고_날씨_확인을_맡긴다(self):
+        """1차 배포는 위치가 없다 — 실내만이면 공원 · 산책이 한 번도 안 나간다. 확인은 보호자 몫."""
+        llm = FakeLLM(propose("공원 산책", "그림자놀이", "색종이 접기", setting="outdoor"))
+        result = await run(task(), context(), client=llm)
+        assert result.status == "completed"
+        assert contents(result)[0] == "공원 산책"
+        assert [r.body for r in result.readouts] == [
+            "날씨는 확인하지 않았어요. 바깥 놀이라면 나가기 전에 날씨를 한 번 봐 주세요."
+        ]
+
+    async def test_위치가_없어도_해가_지면_실내만이다(self):
+        """묻지 않은 날이어도 해가 진 뒤 공원은 막는다 — 일몰은 국토 가운데 기준점으로 계산한다."""
+        llm = FakeLLM(
+            propose("공원 산책", "그림자놀이", "색종이 접기", setting="outdoor"),
+            propose("거실 보물찾기", "그림자놀이", "색종이 접기"),
+        )
+        night = datetime(2026, 10, 7, 21, 0, tzinfo=KST)
+        result = await run(task(), context(now=night, timezone=KST), client=llm)
+        assert contents(result)[0] == "거실 보물찾기"
+        assert [r.body for r in result.readouts] == ["해가 져서 실내 놀이만 골랐어요."]
+
+    async def test_오늘_해가_져도_내일_바깥_놀이에는_해_진_안내를_붙이지_않는다(self):
+        """안내는 결과에 나간 바깥 활동의 날로 고른다 — 오늘 판정을 붙이면 틀린다 (#515 리뷰)."""
+        llm = FakeLLM(
+            propose("공원 산책", "그림자놀이", "색종이 접기", setting="outdoor", day="tomorrow")
+        )
+        night = datetime(2026, 10, 7, 21, 0, tzinfo=KST)
+        result = await run(task(), context(now=night, timezone=KST), client=llm)
+        assert contents(result)[0] == "공원 산책"
+        assert [r.body for r in result.readouts] == [
+            "날씨는 확인하지 않았어요. 바깥 놀이라면 나가기 전에 날씨를 한 번 봐 주세요."
+        ]
+
+    async def test_오늘_비가_와도_내일_바깥_놀이에는_실내만_안내를_붙이지_않는다(self):
+        tomorrow = NOW.date() + timedelta(days=1)
+        weather = InMemoryWeather(
+            uv="4",
+            forecast=RAINY,
+            forecasts={tomorrow: RawForecast(sky="1", pcp="강수없음", pop="0")},
+        )
+        llm = FakeLLM(
+            propose("공원 산책", "그림자놀이", "색종이 접기", setting="outdoor", day="tomorrow")
+        )
+        result = await run(task(), context(location=BUSAN, weather=weather), client=llm)
+        assert contents(result)[0] == "공원 산책"
+        bodies = [r.body for r in result.readouts]
+        assert not any("실내 놀이만" in body for body in bodies)
+
+    async def test_예보를_못_읽은_날은_그대로_실내만이다(self):
+        """조회했는데 실패한 날은 바깥을 열지 않는다 — 실패를 기본값으로 메우지 않는다 (D8)."""
+        llm = FakeLLM(
+            propose("공원 산책", "그림자놀이", "색종이 접기", setting="outdoor"),
+            propose("거실 보물찾기", "그림자놀이", "색종이 접기"),
+        )
+        broken = InMemoryWeather(uv="4", fail=frozenset({"forecast"}))
+        result = await run(task(), context(location=BUSAN, weather=broken), client=llm)
+        assert contents(result)[0] == "거실 보물찾기"
+        assert result.status == "degraded"
 
     async def test_맑으면_바깥_활동을_할_수_있다고_알린다(self):
         llm = FakeLLM(propose("공원 산책", "그림자놀이", "색종이 접기", setting="either"))
@@ -377,7 +444,21 @@ class TestDocEvidence:
         first = result.suggestions[0]
         assert first.kind == "general"
         assert [(c.ref.kind, c.ref.id) for c in first.citations] == [("activity_doc", row.id)]
-        assert f"id {row.id}" in llm.seen[0][0]["content"]  # 프롬프트 [예시]에 id 가 실린다
+        system = llm.seen[0][0]["content"]
+        # 프롬프트 [예시]에는 짧은 id 만 실린다 — UUID 를 베끼다 두 행의 id 를 이어 붙인다
+        assert "id 예1 · " in system and str(row.id) not in system
+
+
+async def test_예시의_짧은_id_를_run_state_에_남긴다():
+    """출력 tool 이 이 표로 문서 행 id 로 되돌린다. 프롬프트에 실린 순서 그대로다."""
+    ctx = context()
+    llm = FakeLLM(propose("종이컵 탑 쌓기", "그림자놀이", "색종이 접기"))
+    await run(task(), ctx, client=llm)
+    system = llm.seen[0][0]["content"]
+    assert ctx.state.example_ids  # 빈 표면 아래 비교가 아무것도 안 본다
+    assert set(ctx.state.example_ids.values()) == set(ctx.state.seen_docs)
+    for short_id, doc_id in ctx.state.example_ids.items():
+        assert f"id {short_id} · {ctx.state.seen_docs[doc_id].title}" in system
 
 
 class TestPrompt:

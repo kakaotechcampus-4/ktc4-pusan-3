@@ -1,13 +1,16 @@
 """놀이 추천의 출력 (모델 tool)."""
 
 import logging
+import re
+from collections.abc import Mapping, Sequence
 from datetime import timedelta
+from uuid import UUID
 
 from app.agents.activity.context import ActivityContext
 from app.agents.activity.result import ToolResult, fail, ok
 from app.agents.activity.review import error_code, explain, review_candidates
 from app.agents.activity.rules import DUPLICATE_WINDOW_DAYS
-from app.agents.activity.schemas.recommend import ProposeActivityCandidatesArgs
+from app.agents.activity.schemas.recommend import ActivityCandidate, ProposeActivityCandidatesArgs
 from app.agents.activity.tools.filters import allergy_cautions, safety_terms
 from app.agents.activity.tools.outing import outdoor_on
 from app.agents.common.suggestion import check_count
@@ -39,6 +42,7 @@ async def propose_activity_candidates(
     - 식품 사전에 없는 알레르기 이름의 확인 문구는 run 에 한 벌로 `state.cautions` 에 담는다 (D7).
       통과한 후보 수와 상관없다 — 재호출로 채운 추천에도 같이 붙어야 한다.
     - suggestion.allergens · items 는 `review._build` 가 코드로 채운다 (#232).
+    - [예시]는 짧은 id(예1 …)로 보여 준다. 검증 전에 문서 행 id 로 되돌린다(`_with_doc_ids`).
     """
     gate = context.state.gate
     entries = context.state.safety_entries
@@ -54,8 +58,9 @@ async def propose_activity_candidates(
         date_from=today - timedelta(days=DUPLICATE_WINDOW_DAYS - 1),
         date_to=today,
     )
+    candidates = _with_doc_ids(args.candidates, context.state.example_ids)
     review = review_candidates(
-        args.candidates,
+        candidates,
         months=gate.stage.months,
         seen=context.state.seen_evidence,
         docs=context.state.seen_docs,
@@ -82,11 +87,42 @@ async def propose_activity_candidates(
             len(review.removed),
             sorted({hit for removal in review.removed for hit in removal.hits}),
         )
-        context.state.excluded = tuple(args.candidates[r.index].content for r in review.removed)
+        context.state.excluded = tuple(candidates[r.index].content for r in review.removed)
     else:
         check_count(review.drafts)
         context.state.excluded = ()
     context.state.suggestions = review.drafts
     context.state.warnings = review.warnings
+    context.state.outdoor_drafts = context.state.outdoor_drafts | review.outdoor
     context.state.cautions = allergy_cautions(entries)
     return ok("propose", _NAME, count=len(review.drafts), kinds=[d.kind for d in review.drafts])
+
+
+def _with_doc_ids(
+    candidates: Sequence[ActivityCandidate], short_ids: Mapping[str, UUID]
+) -> list[ActivityCandidate]:
+    """모델이 단 [예시]의 짧은 id(예1 …)를 문서 행 id 로 바꾼다.
+
+    기억 근거 id 와 모르는 id 는 그대로 둔다 — 모르는 id 는 검증이 지어낸 근거로 거절한다.
+    """
+
+    def resolve(raw: str) -> str:
+        found = short_ids.get(_short_id(raw))
+        return raw if found is None else str(found)
+
+    return [
+        candidate.model_copy(
+            update={
+                "evidence": [
+                    pick.model_copy(update={"id": resolve(pick.id)}) for pick in candidate.evidence
+                ]
+            }
+        )
+        for candidate in candidates
+    ]
+
+
+def _short_id(raw: str) -> str:
+    """ "[예 1]" · "예시1" 도 예1 로 읽는다. 띄어쓰기 · 괄호만 다르게 쓴 것이다."""
+    key = re.sub(r"[\s\[\]]", "", raw)
+    return "예" + key[2:] if key.startswith("예시") else key

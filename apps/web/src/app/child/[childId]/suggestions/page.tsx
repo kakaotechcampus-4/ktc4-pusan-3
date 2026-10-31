@@ -11,17 +11,17 @@ import { ScreenTransition } from "@/components/route-transition";
 import { ConsentRequiredCard } from "@/components/consent-required-card";
 import { domainLabel } from "@/components/domain-chip";
 import { GeneralSuggestionCard } from "@/components/general-suggestion-card";
-import { SuggestionList } from "@/components/suggestion-list";
+import { SuggestionList, SuggestionListSkeleton } from "@/components/suggestion-list";
 import { Banner } from "@/components/ui/banner";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
 import { Chip, ChipRow } from "@/components/ui/chip";
 import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
-import { SkeletonBlock } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { phaseOf, Swap } from "@/components/ui/swap";
 import { useChildId } from "@/hooks/use-child-id";
+import { useSheetTarget } from "@/hooks/use-sheet-target";
 import {
   AGENTS,
   PROMPT_KEYS,
@@ -53,7 +53,11 @@ import { useEnterMotion } from "@/lib/motion";
  *
  * 🚨 **근거가 부족하면 개인화 대신 일반 추천을 그린다** (CLAUDE.md §2). 개인화 목록과
  *    일반 카드는 **다른 컴포넌트 · 다른 타입 · 응답의 다른 필드**다 — 한 곳에 섞으면
- *    언젠가 근거 0건인 것이 개인화로 그려진다. 둘이 한 화면에 같이 나오는 경우는 없다.
+ *    언젠가 근거 0건인 것이 개인화로 그려진다.
+ *    ⚠️ **둘이 한 화면에 같이 온다** (#512 리뷰). 같은 Agent 안에서도 후보마다 아이 기록 근거로
+ *    `kind` 가 갈려서(서버 `build()`), 한 응답에 `suggestions` · `general` · `scarcity` 가 다 실릴 수 있다.
+ *    🚨 **고르기는 둘이 같이 쓴다** (#509). 그리는 컴포넌트만 다르고, 고른 id · 채택 · 일정
+ *    만들기는 한 줄로 흐른다 — 서버의 채택 · 초안 API 는 `kind` 를 보지 않는다.
  *
  * 🚨 **실패는 "묶음이 없는 Agent" 다** (#249). 0개로 끝난 Agent 도 안내(`notice`)와 함께 묶음이 오고,
  *    이어서 할 수 없는 Agent(`cannot_resume`)도 안내만 온다 — 둘 다 다시 시도를 두지 않는다.
@@ -105,6 +109,8 @@ function SuggestionsScreen() {
    *    `food` 제안들은 서버가 한 끼로 묶어 초안 1건으로 내려준다 (`types.ts` 참고).
    */
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const toggleSelect = (id: string) =>
+    setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
   /**
    * 채택한 제안. `null` 이면 아직 고르는 중이다.
    *
@@ -120,7 +126,7 @@ function SuggestionsScreen() {
    *    알레르기가 확인된 제안은 **채택 자체를 하지 않는다** (`safety-check-sheet.tsx`).
    */
   const [checkingSafety, setCheckingSafety] = useState(false);
-  const [approving, setApproving] = useState<CreateEventDraftsResponse | null>(null);
+  const approving = useSheetTarget<CreateEventDraftsResponse>();
 
   const suggestions = useQuery({
     queryKey: qk.suggestions(childId, runId, agents, promptKey),
@@ -151,7 +157,7 @@ function SuggestionsScreen() {
    */
   const createDrafts = useMutation({
     mutationFn: (ids: string[]) => createEventDrafts(childId, { suggestion_ids: ids }),
-    onSuccess: (result) => setApproving(result),
+    onSuccess: (result) => approving.show(result),
   });
 
   /**
@@ -198,20 +204,29 @@ function SuggestionsScreen() {
   }
   const visible = data?.suggestions ?? [];
   /**
-   * 🚨 **새로고침해도 채택은 남는다** (#249). 서버가 그 run 의 채택한 추천도 돌려주므로 응답의
-   *    `status` 로 되살린다 — 다시 고르게 그리면 채택 API 가 `not_draft` 로 거절한다.
-   */
-  const restored = visible.filter((s) => s.status === "approved").map((s) => s.id);
-  const chosenIds = approvedIds ?? (restored.length > 0 ? restored : null);
-  /** 화면에 "고른 것" 으로 서는 id. 채택이 끝났으면 서버가 아는 채택, 아니면 지금 고르는 중인 것. */
-  const pickedIds = chosenIds ?? selectedIds;
-  /**
-   * 또래 기준 일반 추천. 🚨 **`scarcity` 가 있을 때만 그린다** — 개인화 **대신** 나가는 것이라
-   * 둘이 한 화면에 같이 서면 무엇이 우리 아이 기준인지가 흐려진다 (CLAUDE.md §2).
+   * 또래 기준 일반 추천. 🚨 **`scarcity` 가 있을 때만 그린다** — 서버도 일반 추천이 있을 때만
+   * `scarcity` 를 붙인다. 근거가 부족한 후보가 개인화 **대신** 나간 것이라, 개인화와 같은 화면에
+   * 설 때도 카드 라벨과 점선이 "또래 기준" 을 말한다 (CLAUDE.md §2 · #512 리뷰).
    * 서버가 아직 `general` 을 안 보내면 빈 배열이고, 화면은 질문 1개만 그린다.
    */
   const scarcity = data?.scarcity ?? null;
   const general = scarcity ? (data?.general ?? []) : [];
+  /**
+   * 고를 수 있게 그린 제안 전부 — 개인화가 먼저, 일반이 뒤다 (화면에 선 순서).
+   * 🚨 **id 와 Agent 만 꺼낸다.** 두 타입을 한 배열의 원소로 섞으면 근거를 읽는 자리에서
+   *    둘을 가를 수 없게 된다 — 여기서 쓰는 것은 고른 개수 · 채택 상태뿐이다.
+   */
+  const pickable = [...visible, ...general].map(({ id, agent, status }) => ({ id, agent, status }));
+  /**
+   * 🚨 **새로고침해도 채택은 남는다** (#249). 서버가 그 run 의 채택한 추천도 돌려주므로 응답의
+   *    `status` 로 되살린다 — 다시 고르게 그리면 채택 API 가 `not_draft` 로 거절한다.
+   */
+  const restored = pickable.filter((s) => s.status === "approved").map((s) => s.id);
+  const chosenIds = approvedIds ?? (restored.length > 0 ? restored : null);
+  /** 화면에 "고른 것" 으로 서는 id. 채택이 끝났으면 서버가 아는 채택, 아니면 지금 고르는 중인 것. */
+  const pickedIds = chosenIds ?? selectedIds;
+  /** 채택 중이거나 채택이 끝났다. 🚨 고르기를 잠근다 — 서버가 받은 것과 화면이 달라지면 안 된다. */
+  const pickLocked = approve.isPending || chosenIds !== null;
   const blockedByGuard = new Set(data?.guards.flatMap((g) => g.blocked_agents) ?? []);
   /**
    * 🚨 **실패는 "묶음이 없는 Agent" 다** (#249). 0개로 끝난 Agent 도 안내와 함께 묶음이 온다 —
@@ -236,7 +251,7 @@ function SuggestionsScreen() {
    * 고른 것을 묶음별로 센다. 🚨 **순서는 서버가 준 순서**다 — 목록과 요약이 다른 순서면
    *    보호자가 둘을 맞춰 읽어야 한다.
    */
-  const pickedByAgent = visible.reduce<Array<{ agent: Agent; count: number }>>((acc, s) => {
+  const pickedByAgent = pickable.reduce<Array<{ agent: Agent; count: number }>>((acc, s) => {
     if (!pickedIds.includes(s.id)) return acc;
     const found = acc.find((g) => g.agent === s.agent);
     if (found) found.count += 1;
@@ -255,6 +270,9 @@ function SuggestionsScreen() {
         {/* 🚨 looked_at 앞에 가운뎃점을 하나 더 붙이지 않는다 — 이미 점으로 나뉜 메타
             스트립이고, 띄운 가운뎃점은 줄당 하나까지다 (문서 §4). */}
         {/* 서버가 아직 무엇을 봤는지 내지 않으면 비어 온다 — 빈 줄을 그리지 않는다 (#249). */}
+        {/* ⚠️ 받는 동안 이 줄의 자리를 잡지 않는다. 지금 서버는 늘 빈 값을 보내서(`routers/suggestions.py`),
+            자리를 잡으면 받는 순간 회색 줄 하나가 생겼다 사라진다. 서버가 채우기 시작하면 그때 잡는다
+            (디자인 시스템 §7 "빈 상태 · 스켈레톤"). */}
         {data?.looked_at ? (
           <p className="text-body-sm text-ink-muted mt-2">{data.looked_at}</p>
         ) : null}
@@ -304,9 +322,7 @@ function SuggestionsScreen() {
             </p>
           </Card>
         ) : suggestions.isPending ? (
-          <Card>
-            <SkeletonBlock label="제안을 준비하는 중" />
-          </Card>
+          <SuggestionListSkeleton tabs={agents.length > 1} />
         ) : consentBlocked ? (
           <ConsentRequiredCard
             childId={childId}
@@ -356,20 +372,53 @@ function SuggestionsScreen() {
           suggestions={visible}
           groups={data?.groups ?? []}
           selectedIds={pickedIds}
-          // 🚨 채택한 뒤에는 고르기를 잠근다 — 서버가 받은 것과 화면이 달라지면 안 된다.
-          busy={approve.isPending || chosenIds !== null}
-          onToggleSelect={(suggestion) =>
-            setSelectedIds((prev) =>
-              prev.includes(suggestion.id)
-                ? prev.filter((id) => id !== suggestion.id)
-                : [...prev, suggestion.id],
-            )
-          }
+          busy={pickLocked}
+          onToggleSelect={(suggestion) => toggleSelect(suggestion.id)}
+          generalAgents={general.map((g) => g.agent)}
         />
+
+        {/* 🚨 일반 추천이 먼저, 되묻는 질문이 그 뒤다. 부모가 이 화면에 온 이유는 "지금 뭘 할까" 고,
+          질문은 "다음엔 더 맞추기" 다 — 순서를 뒤집으면 답부터 요구하는 화면이 된다.
+          카드마다 "또래 기준" 라벨과 기록 건수가 붙으므로 위에 따로 머리글을 두지 않는다.
+          🚨 **아래 요약 카드보다 위에 선다** (#509). 일반 추천도 고르는 대상이라, 다음 행동이
+          고를 것보다 먼저 서면 안 된다 (다음 행동은 목록 아래 한 곳 · `suggestion-list.tsx` 머리말). */}
+        {scarcity && general.length > 0 ? (
+          <ul className="flex flex-col gap-3">
+            {general.map((item) => (
+              // 카드의 기록 수는 그 Agent 도메인 수다 — 질문 카드의 `scarcity.count` 는 합이다 (#433 리뷰 ⑥)
+              <GeneralSuggestionCard
+                key={item.id}
+                suggestion={item}
+                recordCount={item.record_count}
+                selected={pickedIds.includes(item.id)}
+                onToggleSelect={() => toggleSelect(item.id)}
+                busy={pickLocked}
+              />
+            ))}
+          </ul>
+        ) : null}
+        {/* 🚨 **묶인다는 것을 고르기 전에 말한다.** 셋을 고르고 일정 1건이 나오면 놀란다.
+            🚨 **개인화와 일반을 합쳐 센다** (#512 리뷰). 서버는 `kind` 가 아니라 Agent 로 묶어서, 식사
+               개인화 1 + 식사 일반 1 도 초안 한 장이다. 두 목록이 각자 세면 그때 안내가 안 뜨거나 숫자가 모자란다.
+            🚨 **어느 영역인지 글자로 말한다** — 탭 밖에 서므로 지금 보는 탭과 다른 영역의 안내일 수 있다.
+            🚨 서버가 `merges_into_one` 을 안 보내면 **아무 말도 하지 않는다** — 어느 Agent 가
+               묶이는지는 도메인 지식이라 화면이 알 수 없다. */}
+        {(data?.groups ?? [])
+          .filter((group) => group.merges_into_one)
+          .map((group) => {
+            const count = pickable.filter(
+              (s) => s.agent === group.agent && pickedIds.includes(s.id),
+            ).length;
+            return count > 1 ? (
+              <p key={`merge:${group.agent}`} role="status" className="text-body-sm text-ink-muted">
+                {domainLabel(group.agent)}에서 고른 {count}가지는 일정 하나로 묶여요.
+              </p>
+            ) : null;
+          })}
 
         {/* 🚨 **다음 행동은 여기 한 곳이다** (줄마다 두지 않는다 · `suggestion-list.tsx` 머리말).
           그래서 화면의 `primary` 도 하나다 — 단계가 바뀌어도 이 카드 안에서 하나씩만 선다. */}
-        {visible.some((s) => s.agent !== "health") ? (
+        {pickable.some((s) => s.agent !== "health") ? (
           <Card>
             <p className="text-section text-ink">
               {chosenIds === null ? "이렇게 준비할게요" : "이렇게 하기로 했어요"}
@@ -493,24 +542,13 @@ function SuggestionsScreen() {
           </CardFailed>
         ))}
 
-        {/* 🚨 일반 추천이 먼저, 되묻는 질문이 그 뒤다. 부모가 이 화면에 온 이유는 "지금 뭘 할까" 고,
-          질문은 "다음엔 더 맞추기" 다 — 순서를 뒤집으면 답부터 요구하는 화면이 된다.
-          카드마다 "또래 기준" 라벨과 기록 건수가 붙으므로 위에 따로 머리글을 두지 않는다. */}
-        {scarcity && general.length > 0 ? (
-          <ul className="flex flex-col gap-3">
-            {general.map((item) => (
-              // 카드의 기록 수는 그 Agent 도메인 수다 — 질문 카드의 `scarcity.count` 는 합이다 (#433 리뷰 ⑥)
-              <GeneralSuggestionCard
-                key={item.id}
-                suggestion={item}
-                recordCount={item.record_count}
-              />
-            ))}
-          </ul>
-        ) : null}
-
         {scarcity ? (
-          <ScarcityCard childId={childId} scarcity={scarcity} hasGeneral={general.length > 0} />
+          <ScarcityCard
+            childId={childId}
+            scarcity={scarcity}
+            hasGeneral={general.length > 0}
+            hasPersonal={visible.length > 0}
+          />
         ) : null}
       </Swap>
 
@@ -533,15 +571,17 @@ function SuggestionsScreen() {
         onConfirm={afterSafety}
       />
 
-      {approving ? (
+      {/* 닫는 것은 `open` 이 해서 내려가는 움직임이 남는다 (`useSheetTarget`). */}
+      {approving.target ? (
         <ApprovalSheet
-          open
+          key={approving.session}
+          open={approving.open}
           onClose={() => {
-            setApproving(null);
+            approving.close();
             createDrafts.reset();
           }}
           childId={childId}
-          result={approving}
+          result={approving.target}
         />
       ) : null}
     </Screen>
@@ -555,15 +595,23 @@ function SuggestionsScreen() {
  * 🚨 **위에 일반 추천을 그렸는지에 따라 문구가 달라진다.** 또래 기준 추천을 이미 보여 준 화면에서
  *    "추천을 만들지 않겠다" 고 말하면 화면이 스스로를 부정한다. 카드가 두 경우를 다 알고 있어야
  *    서버가 `general` 을 안 보낼 때도 말이 된다.
+ * 🚨 **개인화도 같이 선 화면에서는 "위 추천" 이라고 하지 않는다** (#512 리뷰). 같은 Agent 안에서도 둘이
+ *    섞여 오는데, 그때 "위 추천은 또래 기준이에요" 는 위에 선 개인화 추천까지 또래 기준이라고 부른다 —
+ *    우리 아이 기록으로 고른 것을 일반 추천이라고 낮춰 부르는 것도 §2 가 막는 혼동이다.
+ *    대신 카드에 붙은 라벨("또래 기준 일반 추천")을 가리킨다. 제목도 같다 — 위에 우리 아이 기준 추천이
+ *    서 있는데 "다음엔 우리 아이 기준으로" 라고 하면 지금 것은 아니라는 뜻으로 읽힌다.
  */
 function ScarcityCard({
   childId,
   scarcity,
   hasGeneral,
+  hasPersonal,
 }: {
   childId: string;
   scarcity: Scarcity;
   hasGeneral: boolean;
+  /** 같은 화면에 개인화 추천도 섰다. */
+  hasPersonal: boolean;
 }) {
   const [answered, setAnswered] = useState<string | null>(null);
   /** 🚨 Agent 가 되물었을 때만 있다 (#249). 없으면 기록 건수만 말하고 질문은 세우지 않는다. */
@@ -582,17 +630,22 @@ function ScarcityCard({
   return (
     <Card>
       <h2 className="text-section text-ink">
-        {hasGeneral ? "다음엔 우리 아이 기준으로 골라 드릴게요" : "판단할 기록이 부족해요"}
+        {hasGeneral
+          ? hasPersonal
+            ? "기록이 더 쌓이면 모두 우리 아이 기준으로 골라 드릴게요"
+            : "다음엔 우리 아이 기준으로 골라 드릴게요"
+          : "판단할 기록이 부족해요"}
       </h2>
       <p className="text-body-sm text-ink-muted mt-1">
         {scarcity.count === 0
           ? "이 주제로 쌓인 기록이 아직 없어요."
           : `이 주제로 쌓인 기록이 ${scarcity.count}건뿐이에요.`}{" "}
         {hasGeneral
-          ? question
-            ? "그래서 위 추천은 또래 기준이에요. 하나만 알려주시면 다음부터 달라져요."
+          ? hasPersonal
+            ? "그래서 또래 기준이라고 적힌 추천은 우리 아이 기록 대신 또래 기준으로 골랐어요."
             : "그래서 위 추천은 또래 기준이에요."
           : "근거 없이 추천을 만들지는 않을게요."}
+        {hasGeneral && question ? " 하나만 알려주시면 다음부터 달라져요." : null}
       </p>
 
       {question ? <p className="text-body text-ink mt-4">{question.text}</p> : null}

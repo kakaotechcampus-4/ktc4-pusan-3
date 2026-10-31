@@ -6,11 +6,11 @@ import { UserRound } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
-import { SettingsGroup, SettingsInfoRow } from "@/components/settings-row";
+import { SettingsGroup, SettingsInfoRow, SettingsRowSkeleton } from "@/components/settings-row";
 import { BottomSheet } from "@/components/ui/bottom-sheet";
 import { Button } from "@/components/ui/button";
 import { CardFailed } from "@/components/ui/card";
-import { SkeletonBlock } from "@/components/ui/skeleton";
+import { SkeletonGroup } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { useToast } from "@/components/ui/toast";
 import {
@@ -24,7 +24,7 @@ import {
 } from "@/lib/api";
 import { formatInviteCode } from "@/lib/invite-code";
 import { parentDisplayName, RELATION_LABEL } from "@/lib/relation";
-import { formatDay } from "@/lib/format";
+import { formatDateTime, formatDay } from "@/lib/format";
 
 /**
  * 10 설정 — 함께 보는 보호자.
@@ -130,7 +130,21 @@ export function ParentSection({
     },
   });
 
-  if (parents.isPending) return <SkeletonBlock label="보호자 목록을 불러오는 중" />;
+  /**
+   * 🚨 **불러온 뒤와 같은 모양으로 기다린다** — 줄 두 개(보호자 둘이 가장 흔하다)와 아래 안내 한 줄.
+   *    세 줄짜리 블록이던 때는 카드가 들어오며 아래 구역 넷이 통째로 밀렸다 (CLS 0.2).
+   */
+  if (parents.isPending) {
+    return (
+      <SkeletonGroup label="보호자 목록을 불러오는 중" className="flex flex-col gap-2">
+        <SettingsGroup>
+          <SettingsRowSkeleton note />
+          <SettingsRowSkeleton note />
+        </SettingsGroup>
+        <ParentNote />
+      </SkeletonGroup>
+    );
+  }
 
   if (parents.isError) {
     return (
@@ -174,9 +188,7 @@ export function ParentSection({
         ))}
       </SettingsGroup>
 
-      <p className="text-caption text-ink-subtle">
-        누가 무엇을 적었는지는 기록마다 남아요. 함께 보는 보호자도 같은 기억을 봅니다.
-      </p>
+      <ParentNote />
 
       {/* 초대 — 코드를 만드는 것까지가 이 화면의 일이다. 전하는 것은 보호자가 한다. */}
       <BottomSheet
@@ -238,7 +250,7 @@ export function ParentSection({
               {formatInviteCode(issued.invite_code)}
             </p>
             <ul className="text-body-sm text-ink-muted marker:text-ink-subtle flex list-disc flex-col gap-1.5 pl-5">
-              <li>{formatDay(issued.expires_at)}까지 쓸 수 있어요.</li>
+              <li>{formatDateTime(issued.expires_at)}까지 쓸 수 있어요.</li>
               <li>한 번 쓰면 그 코드는 닫혀요. 더 초대하려면 다시 만들어 주세요.</li>
               <li>받는 분은 앱에서 로그인한 뒤 이 코드를 입력하면 돼요.</li>
             </ul>
@@ -347,4 +359,12 @@ function parentStatus(parent: ChildParent): string | undefined {
     return relation ? `${relation} · 아이를 만든 보호자` : "아이를 만든 보호자";
   }
   return relation ?? undefined;
+}
+
+function ParentNote() {
+  return (
+    <p className="text-caption text-ink-subtle">
+      누가 무엇을 적었는지는 기록마다 남아요. 함께 보는 보호자도 같은 기억을 봅니다.
+    </p>
+  );
 }

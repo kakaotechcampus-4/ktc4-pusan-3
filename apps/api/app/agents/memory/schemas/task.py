@@ -29,7 +29,8 @@ class MemoryTask:
     raw_text: str  # 원문 전체
     hints: tuple[MemoryHint, ...] = ()  # 참고용
     # Supervisor 가 unclear 로 판정한 조각 원문. 모델에게 보여 주지 않고 코드만 쓴다.
-    # 보호자 자신의 얘기·감상이라 아이 관찰로 저장하지 않는다
+    # 보호자 자신의 얘기·감상, 설명·번역, 아이가 전한 지시처럼 아이가 한 일이 아니라
+    # 아이 관찰로 저장하지 않는다
     unclear: tuple[str, ...] = ()
     # 기록 조각 없이 unclear 조각만 있고, 조각들이 원문을 다 덮었다(routing 이 정한다).
     # 강등(Supervisor 실패)도 힌트가 비지만 그건 못 본 것이라 unclear 가 없다. 이쪽은 보고 나서
@@ -53,6 +54,17 @@ class MemoryTask:
 
 
 @dataclass(frozen=True)
+class FoundRef:
+    """되묻기 전에 조회로 찾은 행 하나. 원문은 담지 않고 이어받을 때 store로 다시 읽는다.
+
+    resource는 조회 tool 결과의 resource 이름이다 (`observation_food` … `event`).
+    """
+
+    resource: str
+    id: str
+
+
+@dataclass(frozen=True)
 class PendingMemoryContext:
     """되묻고 멈춘 자리. 다음 입력이 이 맥락 위에 얹힌다.
 
@@ -71,3 +83,6 @@ class PendingMemoryContext:
     # unclear 조각만 있던 입력에서 아이 얘기인지 물은 것.
     # 보호자가 아니라고 하면 저장하지 않고 끝난다
     unclear: bool = False
+    # 이 질문 전에 조회로 찾은 행. 코드가 tool 결과에서 모으고 모델이 고르지 않는다.
+    # "응" 을 받은 run이 검색을 처음부터 다시 하다 못 찾는 상황 방지
+    found: tuple[FoundRef, ...] = ()

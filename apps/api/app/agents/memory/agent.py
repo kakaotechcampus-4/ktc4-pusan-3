@@ -14,13 +14,16 @@ task 를 넘기면(Supervisor 경로) 다섯 가지가 더 붙는다.
   - [조기 종료] 할 일을 다 한 게 코드로 확인되면 요약 호출 없이 끝낸다 (_covered)
   - [unclear] Supervisor 가 unclear 로 본 조각은 관찰로 저장하지 않는다 (_in_unclear)
   - [고쳐 말하기] lookup_edit 조각은 조회 결과를 본 뒤에만 새로 저장한다 (_skipped_lookup)
+task 가 없어도 위험 물질 이름이 대상인 식사 · 놀이 · 배움 · 생활 관찰은 저장하지 않는다 (_hazard).
+task 가 없어도 알레르기 · 만성질환 이름은 건강 관찰로 저장하지 않는다 (_safety_named).
 task 없이 부르면 전체 tool 을 열고 끊지 않는다 — Supervisor 없이 Memory 만 재는 경로다.
 """
 
 import json
 import logging
+import re
 from collections import Counter
-from collections.abc import Collection
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -41,11 +44,15 @@ from app.agents.memory.schemas.reply import (
     ReplyOutput,
 )
 from app.agents.memory.schemas.task import (
+    FoundRef,
     MemoryHint,
     MemoryTask,
     PendingMemoryContext,
     WorkType,
 )
+from app.rules.hazard import FOOD_NAME_TERMS, PLAY_NAME_TERMS, hazard_names
+from app.rules.safety_term import mentions_safety
+from app.rules.term_match import Term
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +64,9 @@ MAX_COMPLETION_TOKENS = 1400
 # 재질문 상한. 한 조각에 처음 질문까지 포함해 이만큼 물었으면 이어받기 run 이 또 물어도 되묻기
 # 맥락을 만들지 않고 끝낸다(`ask_limit_reached`).
 MAX_QUESTIONS = 4
+
+# 되묻기 맥락에 남기는 조회 결과 행 수의 상한. 넘으면 하나도 남기지 않는다
+MAX_FOUND = 40
 
 # 조기 종료: 모든 힌트에 대해 성공한 쓰기가 run 전체에서 그 수 이상이면 요약 호출 없이 끝냄
 EARLY_STOP = True
@@ -99,17 +109,35 @@ _UNCLEAR_FRAGMENT = (
 # Supervisor 가 unclear 로 본 조각의 관찰 저장. tool 을 빼면 모델이 이유를 몰라 저장 없이
 # "기록했어요" 라고 답했다. 그래서 열어 둔 채 거절하고 다음 행동을 적는다.
 # 묻지 않는다. "아이가 그랬나요?" 로 물으면 물을지가 반반으로 갈렸고, "아니 내가 먹은 거야" 라는
-# 답에도 저장한 적이 있다(6번 중 1번). 아이 얘기면 아이를 주어로 다시 말하면 record 로 간다
+# 답에도 저장한 적이 있다(6번 중 1번). 설명 · 전한 지시는 아이가 주어여도 unclear 라(#624)
+# "아이를 주어로" 가 아니라 실제로 한 일을 말해 달라고 안내한다
 _NOT_CHILD_RECORD_ALONE = (
-    "이 발화는 아이가 한 일이나 보인 반응인지 원문에서 드러나지 않아 관찰로 저장하지도 고치지도 "
-    "않는다. 다시 부르지 않는다. 묻지 않고, 아이 기록인지 알 수 없어 저장하지 않았다고 한 줄로 "
-    "알린다. 아이 얘기였다면 아이를 주어로 다시 말해 달라고 짧게 덧붙인다. 보호자 얘기를 "
+    "이 발화는 아이가 실제로 한 일이나 보인 반응으로 확인되지 않아 관찰로 저장하지도 고치지도 "
+    "않는다. 다시 부르지 않는다. 묻지 않고, 아이 기록으로 남기지 않았다고 한 줄로 알린다. "
+    "아이가 실제로 겪은 일이었다면 그 일을 말해 달라고 짧게 덧붙인다. 보호자 얘기를 "
     "'아이도 ~?' 처럼 아이에게 옮겨 묻지 않는다."
 )
 _NOT_CHILD_RECORD_MIXED = (
-    "이 문장은 아이가 한 일이나 보인 반응인지 원문에서 드러나지 않아 관찰로 저장하지 않는다. "
+    "이 문장은 아이가 실제로 한 일이나 보인 반응으로 확인되지 않아 관찰로 저장하지 않는다. "
     "다시 부르지 않는다. 발화의 다른 기록은 그대로 저장한다. 이 문장은 묻지 않고, "
-    "아이 기록인지 알 수 없어 남기지 않았다고 한 줄로만 알린다."
+    "아이 기록으로 남기지 않았다고 한 줄로만 알린다."
+)
+
+# 위험 물질이 대상인 식사 · 놀이 · 배움 · 생활 관찰 (#626).
+# 사전검사 · Supervisor 를 지나온 것의 마지막 자리다.
+# 저장되면 Curator 가 취향 후보를 만들어 추천 근거가 된다. 안내는 pipeline 이 따로 낸다
+_HAZARD = (
+    "음식이 아닌 위험한 것이라 관찰로 저장하지 않는다. 다시 부르지 않는다. "
+    "다른 이름 · 다른 종류의 관찰로 바꿔 저장하지 않는다. 기록하지 않았다고 한 줄로만 알린다."
+)
+
+# 알레르기 · 만성질환은 보호자가 프로필에 직접 입력한다 (루트 §2 · #639).
+# Supervisor 가 안내로 돌리지 못한 것의 마지막 자리다. 안내 카드는 pipeline 이 따로 낸다
+_SAFETY_RECORD = (
+    "알레르기 · 만성질환이 있다는 사실은 저장하지 않는다. 그 이름을 다른 표현이나 다른 종류의 "
+    "관찰로 옮겨 저장하지 않는다. 발화에 증상이 따로 있으면 병명을 뺀 증상만 저장하고, "
+    "아이에게 해 준 일이 있으면 건강 관찰의 symptom 에 병명 없이 그 일을, action_taken 에 "
+    "발화 그대로 적는다. 둘 다 없으면 저장하지 않았다고 한 줄로만 알린다."
 )
 
 # 고쳐 말하는 조각(lookup_edit)인데 조회 없이 새로 저장. "할머니 말고 할아버지랑 산책했어" 처럼
@@ -126,9 +154,14 @@ _LOOKUP_FIRST = (
 # 그래도 물으면 되묻기 맥락(unclear=True)이 남고, 이어받기는 _UNCLEAR_FRAGMENT 를 받는다
 _UNCLEAR_QUESTION = (
     "보호자에게 보이지 않는 확인이다. 여기에 답하지 말고 보호자에게 보낼 말만 다시 쓴다. "
-    "이 발화는 아이 기록인지 알 수 없다고 판정됐다. 묻지 않고, 아이 기록인지 알 수 없어 "
-    "저장하지 않았다고 한 줄로 알린다(kind=message). 아이 얘기였다면 아이를 주어로 다시 말해 "
-    "달라고 짧게 덧붙인다."
+    "이 발화는 아이가 실제로 한 일로 확인되지 않았다. 묻지 않고, 아이 기록으로 남기지 않았다고 "
+    "한 줄로 알린다(kind=message). 아이가 실제로 겪은 일이었다면 그 일을 말해 달라고 짧게 "
+    "덧붙인다."
+)
+
+# 이어받기 때 앞서 조회로 찾은 행을 다시 읽어 보여 주는 칸의 머리
+_FOUND_HEADER = (
+    "[앞서 조회해서 찾은 기록 — 보호자가 이 기록을 말한 것이면 다시 조회하지 않고 이 id 를 쓴다]"
 )
 
 _BAD_JSON = "arguments가 올바른 JSON이 아니다. 스키마에 맞는 JSON으로 다시 만든다."
@@ -152,6 +185,15 @@ _UNSAVED_REPLY = (
     "이번에는 아무것도 저장하지 않았고, 이 말을 보내면 처리가 끝나 나중에 기록할 수도 없다. "
     "저장했다거나 기록하겠다는 말은 넣지 않는다. 필요한 값이 없으면 그 값을 묻는다."
 )
+# 처음 run 도 저장 없이 "기록했어요" 로 끝낸 적이 있다 — 저장할 곳이 없는 채팅의
+# 키 · 몸무게에 (#625 멘토 리뷰). 처음 run 은 알림 안내 · 조회 답처럼 저장 없이 말로 끝나는 게
+# 정상이라 이어받기처럼 전부 다시 확인하지 않고, 저장했다 · 하겠다는 말로 끝났을 때만 확인한다.
+# 조회 · 수정 조각만 맡은 run 은 보지 않는다 (_lookup_only)
+_SAVED_CLAIM = re.compile(
+    r"(기록|저장)\s?(했어|했습|할게|하겠|해\s?(뒀|두었|놨|놓았|둘게|놓을게|드렸|드릴게))"
+)
+# 다시 확인해도 저장한 척하면 그 말 대신 내보낸다. 지켜지지 않을 말을 보호자에게 보내지 않는다
+_UNSAVED_FALLBACK = "이번에는 아무것도 저장하지 않았어요."
 _ALREADY_DONE = (
     "같은 작업을 이미 했다. 다시 부르지 않는다. "
     "같은 날 같은 대상은 한 건으로 합치고, 내용을 더할 거면 update로 고친다."
@@ -210,6 +252,10 @@ class MemoryAgentResult:
         """DB 에 실제로 쓴 호출이 하나라도 있는가. 일정 초안만 만든 run 은 False."""
         return any(persisted_write(call) for call in self.calls)
 
+    def refused(self, code: str) -> bool:
+        """이 코드로 거절된 호출이 있는가. pipeline 이 저장 게이트 거절을 본다."""
+        return _refused(self.calls, code)
+
 
 async def run(
     raw_text: str,
@@ -236,6 +282,7 @@ async def run(
     elif task is not None and task.raw_text != raw_text:
         raise ValueError("task.raw_text와 raw_text가 다르다")
 
+    shown = await _reread(continuation.found, context) if continuation is not None else []
     llm = client or LLMClient(role="memory")
     allowed = tools_for(task) if task is not None else None
     tools = specs_for(allowed) if allowed is not None else TOOL_SPECS
@@ -244,7 +291,7 @@ async def run(
         {
             "role": "user",
             "content": (
-                _continuation_message(raw_text, continuation)
+                _continuation_message(raw_text, continuation, shown)
                 if continuation is not None
                 else _user_message(raw_text, task)
             ),
@@ -326,14 +373,17 @@ async def run(
                     and continuation.work is not WorkType.LOOKUP_EDIT
                     and not continuation.unclear
                 )
-                if recording and replied.kind == "message" and not _wrote(calls):
-                    if not rechecked:
-                        # 저장 없이 말로 끝냈다. 저장한 척했을 수 있어 한 번 확인한다.
-                        # 실패한 쓰기도 저장이 아니다
-                        rechecked = True
-                        messages.append({"role": "assistant", "content": content})
-                        messages.append({"role": "user", "content": _UNSAVED_REPLY})
-                        continue
+                # 실패한 쓰기도 저장이 아니다
+                unsaved = replied.kind == "message" and not _wrote(calls)
+                claimed = unsaved and not _lookup_only(task) and _claims_saved(replied.text)
+                if (recording and unsaved or continuation is None and claimed) and not rechecked:
+                    # 저장 없이 말로 끝냈다. 저장한 척했을 수 있어 한 번 확인한다
+                    rechecked = True
+                    messages.append({"role": "assistant", "content": content})
+                    messages.append({"role": "user", "content": _UNSAVED_REPLY})
+                    continue
+                if rechecked and claimed:
+                    replied = MemoryReply(text=_UNSAVED_FALLBACK, kind="message")
                 return MemoryAgentResult(
                     reply=replied,
                     completed=True,
@@ -363,7 +413,9 @@ async def run(
         # 조회를 했는지는 이전 응답까지만 본다. 같은 응답의 조회는 모델이 결과를 못 본 것이다
         prior = list(calls)
         for call in tool_calls:  # 한 응답에 여러 개가 와도 전부, 온 순서대로 실행한다
-            record = await _execute(call, context, succeeded, allowed, task=task, prior=prior)
+            record = await _execute(
+                call, context, succeeded, allowed, task=task, prior=prior, shown=shown
+            )
             calls.append(record)
             step_records.append(record)
             messages.append(
@@ -434,6 +486,27 @@ def _wrote(calls: list[ToolCallRecord]) -> bool:
     return any(call.success and call.name.startswith(MUTATING_PREFIXES) for call in calls)
 
 
+def _claims_saved(text: str) -> bool:
+    """저장했다 · 하겠다고 끝내는 말인가.
+
+    지난 기록을 알려 주는 "기록했던" · 묻는 "기록할까요" 는 아니다.
+    """
+    return bool(_SAVED_CLAIM.search(text))
+
+
+def _lookup_only(task: MemoryTask | None) -> bool:
+    """조회 · 수정 조각만 맡은 run 인가.
+
+    여기서 "기록했어요" 는 지난 기록을 알려 주는 말이다. 다시 물어도 같은 답이 나와
+    맞는 조회 답이 _UNSAVED_FALLBACK 으로 바뀌었다. 일정 · 관찰 조각이 섞이면 그대로 본다.
+    """
+    return (
+        task is not None
+        and bool(task.hints)
+        and all(hint.work is WorkType.LOOKUP_EDIT for hint in task.hints)
+    )
+
+
 def _asked(continuation: PendingMemoryContext) -> int:
     """그 조각에 지금까지 물은 횟수. 처음 질문에 이어받은 (질문, 답) 쌍 수를 더한다.
 
@@ -497,7 +570,37 @@ def _squash(text: str) -> str:
     return " ".join(text.split())
 
 
-def _continuation_message(answer: str, pending: PendingMemoryContext) -> str:
+_OBSERVATION_RESOURCES = frozenset(
+    f"observation_{domain}" for domain in ("food", "health", "education", "activity", "routine")
+)
+
+
+async def _reread(
+    found: tuple[FoundRef, ...], context: AgentContext
+) -> list[tuple[FoundRef, dict[str, Any]]]:
+    """맥락에 남은 id를 store로 다시 읽는다. 그새 지워졌거나 이 아이 것이 아니면 빠진다."""
+    shown: list[tuple[FoundRef, dict[str, Any]]] = []
+    for ref in found:
+        if ref.resource in _OBSERVATION_RESOURCES:
+            observation = await context.store.get_observation(
+                domain=ref.resource.removeprefix("observation_"), observation_id=ref.id
+            )
+            if observation is not None:
+                shown.append((ref, observation.to_summary()))
+        elif ref.resource == "event":
+            event = await context.store.get_event(event_id=ref.id)
+            if event is not None:
+                # query_event 결과와 같은 모양으로 준비물까지 싣는다
+                items = await context.store.list_event_items(event_id=ref.id)
+                shown.append((ref, event.to_summary(items=items)))
+    return shown
+
+
+def _continuation_message(
+    answer: str,
+    pending: PendingMemoryContext,
+    shown: Sequence[tuple[FoundRef, dict[str, Any]]] = (),
+) -> str:
     """미완료 조각 · 이전 질문 · 새 답을 역할을 갈라 넣는다. 원문 전체는 넣지 않는다."""
     rounds = ""
     if pending.transcript:
@@ -510,9 +613,16 @@ def _continuation_message(answer: str, pending: PendingMemoryContext) -> str:
         note = f"\n{_WHOLE_FRAGMENT}"
     else:
         note = ""
+    found = ""
+    if shown:
+        lines = "\n".join(
+            f"- {ref.resource} {json.dumps(summary, ensure_ascii=False)}" for ref, summary in shown
+        )
+        found = f"{_FOUND_HEADER}\n{lines}\n\n"
     return (
         f"{_CONTINUATION_HEADER}{rounds}\n\n"
         f"[아직 저장하지 못한 조각]\n{pending.hint_text}{note}\n\n"
+        f"{found}"
         f"[직전에 물은 것]\n{pending.question}\n\n"
         f"[보호자의 답]\n{answer}"
     )
@@ -584,6 +694,7 @@ def _pending(
     calls = calls or []
     if reply.kind != "question":
         return None
+    found = _found(calls, continuation.found if continuation is not None else ())
     if continuation is not None:
         # 저장한 조각을 남기면 다음 답에서 한 번 더 저장된다.
         # 이어받기는 조기 종료하지 않아서 저장한 뒤에 묻는 경우가 생긴다
@@ -596,6 +707,7 @@ def _pending(
             transcript=(*continuation.transcript, continuation.question, answer),
             whole=continuation.whole,
             unclear=continuation.unclear,
+            found=found,
         )
     if task is None:
         return None
@@ -612,6 +724,7 @@ def _pending(
             work=WorkType.OBSERVE,
             whole=True,
             unclear=task.unclear_only,
+            found=found,
         )
     open_hints = _open_hints(task, calls)
     if len(task.hints) == 1:
@@ -619,7 +732,7 @@ def _pending(
             return None
         hint = open_hints[0]
         return PendingMemoryContext(
-            hint_text=hint.text, question=reply.text, work=WorkType(hint.work)
+            hint_text=hint.text, question=reply.text, work=WorkType(hint.work), found=found
         )
 
     chosen = next((hint for hint in open_hints if hint.text == named), None)
@@ -627,8 +740,33 @@ def _pending(
         logger.info("pending_hint 가 후보에 없다 hints=%d", len(task.hints))
         return None
     return PendingMemoryContext(
-        hint_text=chosen.text, question=reply.text, work=WorkType(chosen.work)
+        hint_text=chosen.text, question=reply.text, work=WorkType(chosen.work), found=found
     )
+
+
+def _found(calls: list[ToolCallRecord], carried: tuple[FoundRef, ...] = ()) -> tuple[FoundRef, ...]:
+    """되묻기 전에 조회로 찾은 행. 이번 run 에서 행이 나온 마지막 조회의 결과다.
+
+    질문은 마지막 조회를 보고 나온다. 앞선 넓은 조회까지 남기면 질문과 무관한 행이 같이 보인다.
+    이번 run에 행이 나온 조회가 없으면 앞 맥락의 것을 그대로 넘긴다.
+    id는 tool 결과에서 코드가 옮긴다. 실패한 조회는 data가 없어 들어오지 않는다.
+    MAX_FOUND를 넘으면 하나도 남기지 않는다.
+    """
+    refs = list(carried)
+    for call in reversed(calls):
+        if not call.success:
+            continue
+        data = call.result.get("data") or {}
+        if call.name.startswith("query_observation_"):
+            resource, rows = call.name.removeprefix("query_"), data.get("records") or []
+        elif call.name == "query_event":
+            resource, rows = "event", data.get("events") or []
+        else:
+            continue
+        if rows:
+            refs = list(dict.fromkeys(FoundRef(resource, str(row["id"])) for row in rows))
+            break
+    return tuple(refs) if len(refs) <= MAX_FOUND else ()
 
 
 async def _execute(
@@ -639,12 +777,17 @@ async def _execute(
     *,
     task: MemoryTask | None = None,
     prior: list[ToolCallRecord] | None = None,
+    shown: Sequence[tuple[FoundRef, dict[str, Any]]] = (),
 ) -> ToolCallRecord:
     name = call.function.name
     arguments = _parse_arguments(call.function.arguments)
     if arguments is None:
         # registry는 dict를 전제
         return _failed(name, {}, ErrorCode.INVALID_ARGS, _BAD_JSON)
+    if _hazard(name, arguments):
+        return _failed(name, arguments, ErrorCode.HAZARD, _HAZARD)
+    if _safety_named(name, arguments):
+        return _failed(name, arguments, ErrorCode.SAFETY_RECORD, _SAFETY_RECORD)
     if task is not None and task.unclear_only and name.startswith("update_observation_"):
         # 아이 기록이 아닌 말로 이미 저장된 아이 기록을 고치지 않는다
         return _failed(name, arguments, ErrorCode.NOT_CHILD_RECORD, _NOT_CHILD_RECORD_ALONE)
@@ -652,7 +795,13 @@ async def _execute(
         if _in_unclear(arguments, task):
             message = _NOT_CHILD_RECORD_ALONE if task.unclear_only else _NOT_CHILD_RECORD_MIXED
             return _failed(name, arguments, ErrorCode.NOT_CHILD_RECORD, message)
-        if _skipped_lookup(str(arguments.get("raw_text", "")), task, prior or []):
+        if _skipped_lookup(
+            str(arguments.get("raw_text", "")),
+            task,
+            prior or [],
+            # 같은 종류의 관찰을 보여 줬을 때만 조회한 것으로 본다
+            looked_up=name.removeprefix("create_") in {ref.resource for ref, _ in shown},
+        ):
             return _failed(name, arguments, ErrorCode.TARGET_REQUIRED, _LOOKUP_FIRST)
 
     key = _dedup_key(name, arguments)
@@ -682,6 +831,36 @@ def _targets(arguments: dict[str, Any]) -> list[str]:
         values = value if isinstance(value, list) else [value]
         names.extend(_letters(str(item)) for item in values if item)
     return [name for name in names if name]
+
+
+# 위험 물질을 보는 관찰과 그 대상 이름 칸. 음식 · 생활은 술 · 담배 · 화학제품까지, 놀이 · 배움은
+# 마약류만 — "담배의 해로움" 같은 배움 주제와 "동전 모으기" 같은 놀이는 기록이다.
+# 건강 관찰은 보지 않는다 — 위험 물질 사건을 건강 기록으로 남길지는 PM 결정이다 (#626 범위 밖)
+_HAZARD_FIELDS: dict[str, tuple[tuple[str, ...], tuple[Term, ...]]] = {
+    "observation_food": (("subject",), FOOD_NAME_TERMS),
+    "observation_activity": (("activity", "subject"), PLAY_NAME_TERMS),
+    "observation_education": (("topic", "subject"), PLAY_NAME_TERMS),
+    # 식사에서 거절된 뒤 "소주 마시기" 로 바꿔 저장하는 길을 막는다 (#626 리뷰)
+    "observation_routine": (("subject",), FOOD_NAME_TERMS),
+}
+
+
+def _hazard(name: str, arguments: dict[str, Any]) -> bool:
+    """관찰 create · update 의 대상 이름이 위험 물질인가. 원문(raw_text)은 보지 않는다."""
+    for prefix in ("create_", "update_"):
+        found = _HAZARD_FIELDS.get(name.removeprefix(prefix)) if name.startswith(prefix) else None
+        if found is not None:
+            fields, terms = found
+            names = [str(arguments[f]) for f in fields if arguments.get(f)]
+            return bool(names) and bool(hazard_names(names, terms))
+    return False
+
+
+def _safety_named(name: str, arguments: dict[str, Any]) -> bool:
+    """건강 관찰 create · update 의 증상이 알레르기 · 만성질환 이름인가. 원문은 보지 않는다."""
+    if name not in ("create_observation_health", "update_observation_health"):
+        return False
+    return any(mentions_safety(str(symptom)) for symptom in arguments.get("symptom") or ())
 
 
 def _in_unclear(arguments: dict[str, Any], task: MemoryTask) -> bool:
@@ -714,13 +893,18 @@ def _refused(calls: list[ToolCallRecord], code: str) -> bool:
     return any(call.result.get("error", {}).get("code") == code for call in calls)
 
 
-def _skipped_lookup(raw_text: str, task: MemoryTask, prior: list[ToolCallRecord]) -> bool:
+def _skipped_lookup(
+    raw_text: str, task: MemoryTask, prior: list[ToolCallRecord], *, looked_up: bool = False
+) -> bool:
     """고쳐 말하는 조각(lookup_edit)으로 관찰을 새로 만들면서 저장된 기록을 찾아본 적이 없는가.
 
     수정인지는 Supervisor 라벨을 따른다. 찾아본 뒤에 만드는 것은 막지 않는다 — 바뀌기 전 기록이
     없으면 바뀐 값만 새로 저장하는 게 맞다. prior 는 이전 응답까지의 호출이다.
     원문이 관찰(observe) 조각에도 들어가면 그 조각의 기록으로 보고 막지 않는다.
+    looked_up 은 이어받기에서 앞서 찾은 기록을 보여 준 경우로, 조회한 것으로 본다.
     """
+    if looked_up:
+        return False
     edits = [_letters(hint.text) for hint in task.hints if hint.work == WorkType.LOOKUP_EDIT]
     if not edits:
         return False

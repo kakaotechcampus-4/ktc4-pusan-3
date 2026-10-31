@@ -6,11 +6,15 @@ import { Shield } from "lucide-react";
 import { useRef, useState } from "react";
 
 import { ConsentRequiredCard } from "@/components/consent-required-card";
-import { HealthSafetyList, HealthSafetySheet } from "@/components/health-safety-list";
+import {
+  HealthSafetyList,
+  HealthSafetyListSkeleton,
+  HealthSafetySheet,
+} from "@/components/health-safety-list";
 import { BottomSheet } from "@/components/ui/bottom-sheet";
-import { EmptyState } from "@/components/ui/empty-state";
+import { EmptyState, EmptyStateSkeleton } from "@/components/ui/empty-state";
 import { Section, SectionAction, SectionError } from "@/components/ui/section";
-import { SkeletonBlock } from "@/components/ui/skeleton";
+import { useSheetTarget } from "@/hooks/use-sheet-target";
 import { useSafetyScanDraftStore } from "@/stores/safety-scan-draft";
 import { api, isApiError, qk, type HealthSafety, type HealthSafetyListResponse } from "@/lib/api";
 import { PENDING_SERVER_FEATURES } from "@/lib/features";
@@ -31,7 +35,17 @@ import { FORWARD } from "@/lib/view-transition";
  *    11 프로필에도 원래 없던 구멍이고, 02 가 같은 구역을 쓰면서 그대로 따라왔다 —
  *    **어디서 그 선언을 받을지는 팀 결정이다** (#96 에 적어 뒀다).
  */
-export function SafetySection({ childId }: { childId: string }) {
+export function SafetySection({
+  childId,
+  expectEmpty = false,
+}: {
+  childId: string;
+  /**
+   * 받는 동안 빈 상태 모양으로 기다린다. 🚨 **막 만든 아이(02)에서만** 켠다 — 거기서는 거의 늘 0 건이라,
+   * 목록 모양으로 기다리면 빈 상태로 바뀌며 아래 "다음" 버튼이 밀린다 (CLS).
+   */
+  expectEmpty?: boolean;
+}) {
   const router = useRouter();
 
   /**
@@ -58,7 +72,7 @@ export function SafetySection({ childId }: { childId: string }) {
    */
   const [mode, setMode] = useState<null | "choose" | "manual">(null);
   /** 고치는 중인 기록. 있으면 같은 승인 게이트 시트가 고치기로 열린다. */
-  const [editing, setEditing] = useState<HealthSafety | null>(null);
+  const editing = useSheetTarget<HealthSafety>();
 
   /**
    * 🚨 **파일 입력은 사용자 제스처에서 열어야 한다.** 시트를 닫고 나서 열려고 하면 제스처가
@@ -73,7 +87,16 @@ export function SafetySection({ childId }: { childId: string }) {
     <Section
       title="알레르기 · 건강"
       description="보호자가 직접 확인한 것만 저장돼요. AI 는 이 목록을 만들지도 고치지도 못해요."
-      count={items.length > 0 ? items.length : undefined}
+      // 받는 동안은 건수 자리만 잡는다 — 빈 상태를 기다리는 자리면 건수가 설 일이 없어 잡지 않는다.
+      count={
+        query.isPending
+          ? expectEmpty
+            ? undefined
+            : "pending"
+          : items.length > 0
+            ? items.length
+            : undefined
+      }
       action={
         <SectionAction
           label="알레르기·건강 기록 추가"
@@ -86,7 +109,11 @@ export function SafetySection({ childId }: { childId: string }) {
       {/* 🚨 **교체 페이드를 걸지 않는다** (디자인 시스템 §8 "하지 않는 것"). 이 목록은 게이트 ㉡ 의 결과라
           불러온 순간이라도 투명도로 흘려보내지 않는다. */}
       {query.isPending ? (
-        <SkeletonBlock label="안전 정보를 불러오는 중" />
+        expectEmpty ? (
+          <EmptyStateSkeleton label="안전 정보를 불러오는 중" descriptionLines={2} />
+        ) : (
+          <HealthSafetyListSkeleton />
+        )
       ) : isApiError(query.error, "consent_required") ? (
         // 🚨 일반 실패로 뭉뚱그리지 않는다 — 다시 시도해도 같은 403 이다.
         <ConsentRequiredCard
@@ -105,7 +132,7 @@ export function SafetySection({ childId }: { childId: string }) {
           countLabel="등록된 항목"
         />
       ) : (
-        <HealthSafetyList childId={childId} items={items} onEdit={setEditing} />
+        <HealthSafetyList childId={childId} items={items} onEdit={editing.show} />
       )}
 
       {PENDING_SERVER_FEATURES.safetyScan ? (
@@ -140,15 +167,16 @@ export function SafetySection({ childId }: { childId: string }) {
 
       <HealthSafetySheet open={mode === "manual"} onClose={() => setMode(null)} childId={childId} />
 
-      {/* 🚨 고치는 기록이 바뀌면 시트를 새로 만든다 (`key`) — 폼이 `useState` 로 값을 들고 있어서
-          같은 인스턴스를 재사용하면 앞 기록의 입력이 남는다. */}
-      {editing ? (
+      {/* 🚨 열 때마다 시트를 새로 만든다 (`key`) — 폼이 `useState` 로 값을 들고 있어서
+          같은 인스턴스를 재사용하면 앞 기록의 입력이 남는다. 닫는 것은 `open` 이 해서
+          내려가는 움직임이 남는다 (`useSheetTarget`). */}
+      {editing.target ? (
         <HealthSafetySheet
-          key={editing.id}
-          open
-          onClose={() => setEditing(null)}
+          key={editing.session}
+          open={editing.open}
+          onClose={editing.close}
           childId={childId}
-          item={editing}
+          item={editing.target}
         />
       ) : null}
     </Section>

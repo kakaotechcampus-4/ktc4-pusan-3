@@ -1,13 +1,14 @@
 import { http, HttpResponse } from "msw";
 
-import type {
-  CalendarDay,
-  CalendarDayResponse,
-  CalendarMonthResponse,
-  EventItem,
-  EventItemUpdateResponse,
-  MyDiary,
-  Observation,
+import {
+  DIARY_CONTENT_MAX_LENGTH,
+  type CalendarDay,
+  type CalendarDayResponse,
+  type CalendarMonthResponse,
+  type EventItem,
+  type EventItemUpdateResponse,
+  type MyDiary,
+  type Observation,
 } from "@/lib/api/types";
 
 import {
@@ -22,6 +23,7 @@ import {
   writeMyDiary,
 } from "../fixtures";
 import { currentScenario } from "../scenario";
+import { chatCountOn } from "./chat";
 import { apiError, networkDelay, url } from "./helpers";
 import { withIdempotency } from "./idempotency";
 import { listedObservations } from "./memories";
@@ -118,13 +120,26 @@ function calendarMonth(month: string): CalendarDay[] {
     );
 }
 
-function calendarDay(date: string): CalendarDayResponse {
+function calendarDay(childId: string, date: string): CalendarDayResponse {
   return {
     my_diary: readMyDiary(date),
     shared_photos: sharedPhotosOn(date),
     events: withPrepared(date),
     observations: observationsOn(date),
+    // 🚨 지난 대화 목록과 같은 표에서 센다 (`handlers/chat.ts`) — 내 대화만 센다.
+    chat_count: chatCountOn(childId, date),
   };
+}
+
+/**
+ * 서버 `DiaryRequest` 의 길이 · NUL 검사와 같다 (#549 · 서버 PR #550).
+ *
+ * 🚨 **앞뒤 공백을 떼지 않고 센다** — 신고(`reports.ts`)와 다르다. 일기는 원문 그대로 저장한다.
+ * 🚨 **서버 바디 검증이 라우터의 공백 검사보다 먼저다.** 그래서 공백뿐이어도 1000자를 넘으면 422 가 아니라 400 이다.
+ * 서버(Python)는 글자를 코드 포인트로 센다. JS `length` 는 UTF-16 단위라 이모지를 2 로 센다.
+ */
+function isDiaryContentAccepted(content: string): boolean {
+  return [...content].length <= DIARY_CONTENT_MAX_LENGTH && !content.includes("\u0000");
 }
 
 export const calendarHandlers = [
@@ -153,11 +168,12 @@ export const calendarHandlers = [
         shared_photos: [],
         events: [],
         observations: [],
+        chat_count: 0,
       };
       return HttpResponse.json(empty);
     }
 
-    return HttpResponse.json(calendarDay(date));
+    return HttpResponse.json(calendarDay(String(params.cid), date));
   }),
 
   /**
@@ -167,6 +183,7 @@ export const calendarHandlers = [
    * 🚨 **공백뿐이면 422 이고 기존 일기는 남는다.** 빈 내용은 지우기가 아니다 — 지우기는 아래
    *    `DELETE` 하나다. 저장은 앞뒤 공백 · 줄바꿈까지 원문 그대로다.
    * 🚨 **`content` 가 없거나 문자열이 아니면 400 이다** (서버 errors.py 의 바디 검증 — 경로는 422).
+   *    1000자를 넘거나 NUL 이 들어도 400 이다 (#549 · `isDiaryContentAccepted`).
    * 🚨 **`withIdempotency` 로 감싸지 않는다.** 서버가 키를 받지 않는다 — 몇 번 보내도 결과가 같다.
    * 🚨 사진은 일기 밖에 있어서 여기서 건드리지 않는다. 일기를 덮어도 사진은 그대로다 (#115).
    */
@@ -178,7 +195,7 @@ export const calendarHandlers = [
     const body: unknown = await request.json().catch(() => null);
     const content =
       typeof body === "object" && body !== null ? (body as Record<string, unknown>).content : null;
-    if (typeof content !== "string") {
+    if (typeof content !== "string" || !isDiaryContentAccepted(content)) {
       return apiError(400, "validation_failed", "요청 형식이 올바르지 않아요", {
         fields: ["content"],
       });

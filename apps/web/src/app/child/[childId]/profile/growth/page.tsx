@@ -8,8 +8,8 @@ import { useState } from "react";
 import { AuthGate } from "@/components/auth-gate";
 import { ScreenTransition } from "@/components/route-transition";
 import { ChildNav } from "@/components/child-nav";
-import { GrowthChart } from "@/components/growth-chart";
-import { GrowthLogList } from "@/components/growth-log-list";
+import { GrowthChart, GrowthChartSkeleton } from "@/components/growth-chart";
+import { GrowthLogList, GrowthLogListSkeleton } from "@/components/growth-log-list";
 import { GrowthSheet } from "@/components/growth-sheet";
 import { Button } from "@/components/ui/button";
 import { CardFailed } from "@/components/ui/card";
@@ -19,9 +19,9 @@ import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
 import { IconButton } from "@/components/ui/icon-button";
 import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
-import { SkeletonBlock } from "@/components/ui/skeleton";
 import { phaseOf, Swap } from "@/components/ui/swap";
 import { useChildId } from "@/hooks/use-child-id";
+import { useSheetTarget } from "@/hooks/use-sheet-target";
 import { api, qk, type GrowthLog, type GrowthLogsResponse } from "@/lib/api";
 import { BACK } from "@/lib/view-transition";
 
@@ -58,7 +58,7 @@ function GrowthDetailScreen() {
 
   const [adding, setAdding] = useState(false);
   /** 고치는 중인 줄. 있으면 **같은 시트**가 고치기로 열린다 (`GrowthSheet` 머리말). */
-  const [editing, setEditing] = useState<GrowthLog | null>(null);
+  const editing = useSheetTarget<GrowthLog>();
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   /** 🚨 프로필 화면과 **같은 쿼리 키**다 — 여기서 지운 줄이 뒤로 갔을 때 그대로 남으면 안 된다. */
@@ -125,7 +125,18 @@ function GrowthDetailScreen() {
       {/* 스켈레톤 → 내용은 같은 자리의 교체다 (디자인 시스템 §8). */}
       <Swap id={phaseOf(growth)}>
         {growth.isPending ? (
-          <SkeletonBlock label="측정 기록을 불러오는 중" />
+          // 🚨 불러온 뒤와 같은 두 구역으로 기다린다 — 세 줄짜리 블록이 그래프 두 장으로 바뀌면
+          //    화면 전체가 한 번에 자라서, 받은 순간 무엇이 어디 있는지 다시 찾아야 한다.
+          <>
+            <section className="flex flex-col gap-3">
+              <h2 className="text-label text-brand">변화</h2>
+              <GrowthChartSkeleton />
+            </section>
+            <section className="flex flex-col gap-3">
+              <h2 className="text-label text-brand">기록</h2>
+              <GrowthLogListSkeleton rows={2} />
+            </section>
+          </>
         ) : growth.isError ? (
           /* 🚨 실패를 빨강으로 칠하지 않는다 (디자인 시스템 §3). */
           <CardFailed>
@@ -163,7 +174,7 @@ function GrowthDetailScreen() {
                 것을 그대로 보여주는 것이 이 화면이 하는 일이다 (최상위 CLAUDE.md §2). */}
               <GrowthLogList
                 logs={logs}
-                onEdit={setEditing}
+                onEdit={editing.show}
                 onDelete={(log) => remove.mutate(log)}
                 deletingId={deletingId}
                 scrollable
@@ -180,15 +191,16 @@ function GrowthDetailScreen() {
 
       <GrowthSheet open={adding} onClose={() => setAdding(false)} childId={childId} />
 
-      {/* 🚨 고치는 줄이 바뀌면 시트를 새로 만든다 (`key`) — 폼이 `useState` 로 값을 들고 있어서
-          같은 인스턴스를 재사용하면 앞 줄의 값이 남는다 (11 프로필의 다른 시트들과 같다). */}
-      {editing ? (
+      {/* 🚨 열 때마다 시트를 새로 만든다 (`key`) — 폼이 `useState` 로 값을 들고 있어서
+          같은 인스턴스를 재사용하면 앞 줄의 값이 남는다 (11 프로필의 다른 시트들과 같다).
+          닫는 것은 `open` 이 해서 내려가는 움직임이 남는다 (`useSheetTarget`). */}
+      {editing.target ? (
         <GrowthSheet
-          key={editing.id}
-          open
-          onClose={() => setEditing(null)}
+          key={editing.session}
+          open={editing.open}
+          onClose={editing.close}
           childId={childId}
-          log={editing}
+          log={editing.target}
         />
       ) : null}
     </Screen>

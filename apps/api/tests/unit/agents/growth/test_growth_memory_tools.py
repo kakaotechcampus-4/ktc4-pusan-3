@@ -84,6 +84,7 @@ class TestAffinity:
             polarity=1,
             strength=0.9,
             last_observed_on=TODAY,
+            observed_days=3,
         )
         memory = InMemoryGrowthMemory(affinities=[("activity", row)])
         ctx = await opened(GrowthTaskType.LEARNING_SUGGESTION, memory=memory)

@@ -1,9 +1,9 @@
 """memory_bridge 검증. 같은 run 의 Memory store 를 Food · Activity 기억 포트로 읽는다."""
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any
 from uuid import UUID
 from zoneinfo import ZoneInfo
@@ -11,9 +11,10 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from app.agents.common.datetime_rules import build_observed_range
+from app.agents.common.evidence import AffinityRow
 from app.agents.memory.store import InMemoryStore, MemoryStore
 from app.agents.memory.store.ports import ObservationRow
-from app.agents.memory_bridge import StoreActivityMemory, StoreFoodMemory
+from app.agents.memory_bridge import StoreActivityMemory, StoreFoodMemory, same_store
 
 KST = ZoneInfo("Asia/Seoul")
 NOW = datetime(2026, 9, 9, 9, 0, tzinfo=KST)
@@ -133,11 +134,78 @@ async def test_다른_아이_다른_도메인_구간_밖은_읽지_않는다() -
     assert [row.subject for row in rows] == ["딸기"]
 
 
-async def test_profile_affinity_는_Memory_store_에_없어_빈_목록이다() -> None:
+class _Affinities:
+    """`DbAffinityReader` 자리. 어느 도메인을 물었는지 남긴다."""
+
+    def __init__(self, *rows: AffinityRow) -> None:
+        self.rows = list(rows)
+        self.calls: list[tuple[str, ...]] = []
+
+    async def affinities(self, *, child_id: UUID, domains: Sequence[str]) -> list[AffinityRow]:
+        self.calls.append(tuple(domains))
+        return list(self.rows)
+
+
+def _affinity(key: str, *, days_ago: int, state: str = "confirmed") -> AffinityRow:
+    return AffinityRow(
+        id=UUID(int=900 + days_ago),
+        merge_key=key,
+        state=state,
+        polarity=1,
+        strength=0.9,
+        last_observed_on=TODAY - timedelta(days=days_ago),
+        observed_days=3,
+    )
+
+
+async def test_관심_어댑터를_안_넘기면_빈_목록이다() -> None:
     store = InMemoryStore(now=NOW)
 
     assert await StoreFoodMemory(store).affinities(child_id=CHILD) == []
     assert await StoreActivityMemory(store).affinities(child_id=CHILD) == []
+
+
+async def test_Food_는_food_Activity_는_activity_로_읽는다() -> None:
+    reader = _Affinities(_affinity("공룡", days_ago=3))
+    store = InMemoryStore(now=NOW)
+
+    await StoreFoodMemory(store, affinities=reader, today=TODAY).affinities(child_id=CHILD)
+    await StoreActivityMemory(store, affinities=reader, today=TODAY).affinities(child_id=CHILD)
+
+    assert reader.calls == [("food",), ("activity",)]
+
+
+async def test_마지막_관찰_뒤_21일이_지난_관심은_그날_기준_archived_로_읽는다() -> None:
+    reader = _Affinities(
+        _affinity("공룡", days_ago=3),
+        _affinity("블록", days_ago=21),
+        _affinity("기차", days_ago=22),
+        _affinity("퍼즐", days_ago=30, state="candidate"),
+    )
+    memory = StoreActivityMemory(InMemoryStore(now=NOW), affinities=reader, today=TODAY)
+
+    rows = await memory.affinities(child_id=CHILD)
+
+    assert [(r.merge_key, r.state) for r in rows] == [
+        ("공룡", "confirmed"),
+        ("블록", "confirmed"),
+        ("기차", "archived"),
+        ("퍼즐", "archived"),  # 오래된 candidate 는 Food 되묻기에서도 빠진다
+    ]
+
+
+def test_관심_어댑터만_넘기고_기준일을_안_넘기면_막는다() -> None:
+    with pytest.raises(TypeError, match="기준일"):
+        StoreFoodMemory(InMemoryStore(now=NOW), affinities=_Affinities())
+
+
+async def test_opener_로_열어도_관심_어댑터를_같이_받는다() -> None:
+    reader = _Affinities(_affinity("공룡", days_ago=3))
+    memory = StoreActivityMemory(
+        opener=same_store(InMemoryStore(now=NOW)), affinities=reader, today=TODAY
+    )
+
+    assert [r.merge_key for r in await memory.affinities(child_id=CHILD)] == ["공룡"]
 
 
 class _NoStatusStore:

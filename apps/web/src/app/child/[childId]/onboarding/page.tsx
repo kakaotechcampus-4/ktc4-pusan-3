@@ -144,11 +144,7 @@ function ChildOnboardingScreen() {
     <Screen className="gap-5">
       <div>
         <p className="text-label text-ink-subtle">아이 등록 · 2 / 2</p>
-        <PageTitle className="mt-2">
-          알려주실 게
-          <br />
-          있다면 지금
-        </PageTitle>
+        <PageTitle className="mt-2">알려주실 게 있다면 지금</PageTitle>
         <p className="text-body text-ink-muted mt-3">
           전부 선택이에요. 편한 것만 적고 넘어가도 되고, 나중에 프로필에서 적어도 돼요.
         </p>
@@ -224,7 +220,7 @@ function ChildOnboardingScreen() {
            알레르기는 **승인 게이트 ㉡** 라 시트에서 확정하는 즉시 저장된다 (NF-03 —
            알레르기의 유일한 쓰기 경로). 그래서 여기서 등록한 것은 "건너뛰기" 를 눌러도 남는다.
       */}
-      <SafetySection childId={childId} />
+      <SafetySection childId={childId} expectEmpty />
 
       <div className="mt-auto flex flex-col gap-3 pt-4">
         {emptyNotice && !body ? (

@@ -1,7 +1,8 @@
 """내 일기 쓰기 · 지우기 API — #318.
 
 읽기(하루 보기의 `my_diary`)는 `test_calendar.py` 가 건다. 여기는 쓰기 · 지우기가 더하는 것만 본다:
-덮어쓰기, 작성자는 로그인한 보호자, 빈 내용 거부, 아이 접근 확인, 연결 끊기와 겹칠 때.
+덮어쓰기, 작성자는 로그인한 보호자, 빈 내용 · 길이 초과 · NUL 거부, 아이 접근 확인,
+연결 끊기와 겹칠 때.
 """
 
 import asyncio
@@ -13,6 +14,7 @@ from httpx import AsyncClient
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.api.v1.schemas.diary import DIARY_CONTENT_MAX
 from app.domains.child.models import Child
 from app.domains.child.parents import unlink_parent
 from app.domains.identity.models import Parent
@@ -75,6 +77,38 @@ async def test_blank_content_is_rejected_without_deleting(
     )
 
     assert (resp.status_code, resp.json()["error"]["code"]) == (422, "validation_failed")
+    assert (await _my_diary(db_client, cid, headers))["content"] == "내 일기"
+
+
+async def test_content_up_to_the_limit_is_saved(
+    db_client: AsyncClient, bearer: Bearer, cid: uuid.UUID
+):
+    headers, _ = bearer
+    content = "가" * DIARY_CONTENT_MAX
+
+    resp = await db_client.put(
+        f"/api/v1/children/{cid}/diary/{DAY}", json={"content": content}, headers=headers
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["content"] == content
+
+
+# NUL 은 Postgres text 칸이 받지 못해 막지 않으면 500 이 난다
+@pytest.mark.parametrize(
+    "content", ["가" * (DIARY_CONTENT_MAX + 1), "a\u0000b"], ids=["too_long", "nul"]
+)
+async def test_too_long_or_nul_content_is_rejected_without_overwriting(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID, content: str
+):
+    headers, me = bearer
+    await put_diary(session, child_id=cid, parent_id=me, day=DAY, content="내 일기")
+
+    resp = await db_client.put(
+        f"/api/v1/children/{cid}/diary/{DAY}", json={"content": content}, headers=headers
+    )
+
+    assert (resp.status_code, resp.json()["error"]["code"]) == (400, "validation_failed")
     assert (await _my_diary(db_client, cid, headers))["content"] == "내 일기"
 
 

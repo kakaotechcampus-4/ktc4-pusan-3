@@ -487,10 +487,48 @@ class TestOutputTool:
         assert result.data["kinds"] == ["personalized", "general", "general"]
         assert len(ctx.state.suggestions) == 3
 
+    @pytest.mark.parametrize("written", ["예1", " 예1 ", "[예1]", "예 1", "예시1"])
+    async def test_예시의_짧은_id_는_문서_행_근거가_된다(self, written):
+        """[예시]는 짧은 id 로 보여 준다. 띄어쓰기 · 괄호만 다르게 써도 같은 행이다."""
+        ctx = await self.context()
+        ctx.state.example_ids = {"예1": TOWER_DOC.id}
+        pick = {"id": written, "note": "종이컵 탑 쌓기 예시를 참고했어요"}
+        result = await propose_activity_candidates(
+            ctx,
+            self.args(
+                candidate(),
+                candidate(content="모래성 쌓기", evidence=[pick]),
+                candidate(content="종이컵 탑 쌓기", evidence=[pick]),
+            ),
+        )
+        assert result.success is True
+        tower = ctx.state.suggestions[2]
+        assert tower.kind == "general"
+        assert [(c.ref.kind, c.ref.id) for c in tower.citations] == [("activity_doc", TOWER_DOC.id)]
+
+    async def test_없는_짧은_id_는_지어낸_근거로_거절한다(self):
+        ctx = await self.context()
+        ctx.state.example_ids = {"예1": TOWER_DOC.id}
+        result = await propose_activity_candidates(
+            ctx,
+            self.args(
+                candidate(),
+                candidate(content="모래성 쌓기", evidence=[{"id": "예7", "note": "참고"}]),
+                candidate(content="종이컵 탑 쌓기", evidence=[DOC_PICK]),
+            ),
+        )
+        assert result.success is False
+        assert result.error["code"] == ErrorCode.EVIDENCE_REQUIRED
+        assert "예1 같은" in result.error["message"]  # 짧은 id 를 쓰라고 알려 준다
+
     async def test_장소_조회가_돌려준_곳을_붙여서_담는다(self):
         ctx = await self.context()
         ctx.state.seen_places[PARK] = PlaceRow(
-            name=PARK, category=PlaceCategory.PARK, distance_m=800, source="city_park"
+            name=PARK,
+            category=PlaceCategory.PARK,
+            distance_m=800,
+            source="city_park",
+            data_date=None,
         )
         await propose_activity_candidates(
             ctx,

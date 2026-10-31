@@ -23,6 +23,7 @@ from app.api.deps.child import AccessibleChild
 from app.api.deps.db import SessionDep
 from app.api.errors import ApiError, ErrorEnvelope, constraint_name
 from app.api.runs import suggestion_retry
+from app.api.v1.list_query import PageQueryDep
 from app.api.v1.schemas.common import Ref
 from app.api.v1.schemas.suggestions import (
     AnswerRequest,
@@ -54,6 +55,7 @@ from app.api.v1.schemas.suggestions import (
     SuggestionsResponse,
     UpdateEventRequest,
 )
+from app.core import deeplinks
 from app.core.config import settings
 from app.domains.consent.repository import child_health_granted
 from app.domains.food import repository as food_repo
@@ -79,6 +81,9 @@ _MERGED_AGENTS = frozenset({"food"})
 _CAUTION_AGENTS = frozenset({"activity"})
 
 _GUARD_CODES = {"blocked": "safety_unknown", "unsupported": "unsupported"}
+# guard 별 딥링크 — 알레르기를 몰라 막힌 것만 갈 곳이 있다. 04 safety_record 안내와 같은 곳이다.
+# 준비 중 · 지원하지 않는 주제는 어디서 무엇을 넣어도 풀리지 않아 null (#625)
+_GUARD_DEEPLINKS = {"safety_unknown": deeplinks.PROFILE}
 _NOT_READY = "아직 준비 중인 주제예요."
 _UNKNOWN_NOTE = "알레르기 기록에 없음"
 
@@ -404,7 +409,7 @@ async def create_suggestions(
     owner = {"parent_id": parent.parent_id, "child_id": child.child_id}
     ready = [a for a in agents if a in entrypoint.SUGGESTION_AGENTS]
     guards = [
-        GuardOut(code="not_ready", blocked_agents=[a], message=_NOT_READY)
+        _guard_out("not_ready", a, _NOT_READY)
         for a in agents
         if a not in entrypoint.SUGGESTION_AGENTS
     ]
@@ -445,7 +450,7 @@ async def create_suggestions(
                 if recorded is not None:
                     # 다시 만들었더니 닫혔던 Agent — 같은 guard 를 다시 낸다 (#433 리뷰 ⑧)
                     code, message = recorded
-                    guards.append(GuardOut(code=code, blocked_agents=[a], message=message))
+                    guards.append(_guard_out(code, a, message))
                     continue
                 task = suggestion_retry.claim(run_id=run_id, agent=a, **owner)
                 if task == suggestion_retry.BUSY:
@@ -491,6 +496,7 @@ async def create_suggestions(
                 domain_store=agent_ports.domain_store_opener(child.child_id),
                 **agent_ports.food_stores(),
                 **agent_ports.safety_readers(),
+                affinity_reader=agent_ports.affinity_reader(),
             )
             settled = {o.agent for o in run.outcomes}
     finally:
@@ -544,7 +550,7 @@ async def _suggestions_response(
     for agent, o in outcomes.items():
         code = _GUARD_CODES.get(o.status)
         if code is not None:
-            guards.append(GuardOut(code=code, blocked_agents=[agent], message=_guard_message(o)))
+            guards.append(_guard_out(code, agent, _guard_message(o)))
 
     # 이번에 보일 추천 행 — 재생 행 + 방금 저장한 행. 묶음 순서는 요청한 Agent 순서다
     fresh_ids = [_uuid.UUID(i) for o in run.outcomes for i in o.suggestion_ids]
@@ -696,6 +702,13 @@ def _notice_out(readout: Readout) -> GroupNoticeOut:
     return GroupNoticeOut(code=readout.code, message=readout.body)
 
 
+def _guard_out(code: str, agent: str, message: str) -> GuardOut:
+    """막힌 Agent 하나의 guard. 다시 만든 뒤 재생하는 guard 도 같은 딥링크를 싣는다."""
+    return GuardOut(
+        code=code, blocked_agents=[agent], message=message, deeplink=_GUARD_DEEPLINKS.get(code)
+    )
+
+
 def _guard_message(outcome: entrypoint.SuggestOutcome) -> str:
     """닫힌 Agent 의 코드 문구 — readout 본문이다. 없으면 기본 문구."""
     return next((r.body for r in outcome.readouts), "추천을 만들지 않았어요.")
@@ -778,33 +791,35 @@ async def answer_question(
     "/children/{cid}/suggestions",
     summary="지난 추천 목록",
     description=(
-        "개인화 추천만 커서 페이징으로 반환. 필터 없으면 draft 제외 (07 화면용). evidence 포함."
+        "개인화 · 일반 추천을 함께 `page` · `size` 쪽으로 나눠 반환하고 kind 로 구분한다. "
+        "필터 없으면 draft 제외 (07 화면용). evidence 는 개인화만 채워진다. "
+        "`rated=false` 는 피드백을 아직 안 남긴 것, `rated=true` 는 남긴 것만. "
+        "`total` 은 필터를 건 뒤의 전체 건수다."
     ),
     status_code=200,
+    responses={status: {"model": ErrorEnvelope} for status in (400, 403)},
 )
 async def list_suggestions(
     child: AccessibleChild,
     session: SessionDep,
+    query: PageQueryDep,
     status: str | None = Query(default=None),
-    cursor: str | None = Query(default=None),
-    limit: int = Query(default=20, ge=1, le=100),
+    rated: bool | None = Query(
+        default=None,
+        description="안 보내면 전부, false 면 피드백 미평가만, true 면 피드백을 남긴 것만",
+    ),
 ) -> SuggestionListResponse:
     try:
         status_enum = SuggestionStatus(status) if status else None
     except ValueError:
         raise ApiError(400, "validation_failed", "유효하지 않은 status 값이에요")
-    if cursor is not None:
-        try:
-            suggestion_repo.decode_cursor(cursor)
-        except (ValueError, KeyError, TypeError):
-            raise ApiError(400, "validation_failed", "유효하지 않은 cursor 값이에요")
-    rows, next_cursor = await suggestion_repo.list_suggestions(
+    rows, total = await suggestion_repo.list_suggestions(
         session,
         child_id=child.child_id,
         status=status_enum,
-        kind=SuggestionKind.PERSONALIZED,
-        cursor=cursor,
-        limit=limit,
+        rated=rated,
+        offset=query.offset,
+        limit=query.size,
     )
     evidence_map = await suggestion_repo.list_evidence_batch(
         session, suggestion_ids=[s.id for s in rows]
@@ -817,7 +832,10 @@ async def list_suggestions(
     )
     return SuggestionListResponse(
         items=[_suggestion_out(s, views.get(s.id, ())) for s in rows],
-        next_cursor=next_cursor,
+        total=total,
+        page=query.page,
+        size=query.size,
+        total_pages=query.total_pages(total),
     )
 
 

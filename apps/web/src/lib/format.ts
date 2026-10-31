@@ -67,7 +67,18 @@ const MONTH_ONLY = new Intl.DateTimeFormat("ko-KR", {
 export function formatEventTime(iso: string, allDay = false): string {
   const at = new Date(iso);
   if (Number.isNaN(at.getTime())) return "";
-  return allDay ? `${DATE_ONLY.format(at)} 하루 종일` : DATE_TIME.format(at);
+  return allDay ? `${DATE_ONLY.format(at)} 하루 종일` : formatDateTime(iso);
+}
+
+/**
+ * 날짜와 시각 한 줄 ("10월 17일 (토) 오후 3:20"). 🚨 **기한처럼 시각까지가 본체인 값**에 쓴다 —
+ * 초대 코드는 만든 시각부터 24시간이라, 날짜만 적으면 그날 하루가 끝날 때까지 쓸 수 있다고
+ * 읽힌다 (#493). 분 아래는 반올림하지 않고 버리므로, 보이는 시각이 실제 기한보다 늦지 않다.
+ */
+export function formatDateTime(iso: string): string {
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return "";
+  return DATE_TIME.format(at);
 }
 
 /**
@@ -105,6 +116,18 @@ export function formatDateWithYear(iso: string): string {
   const at = new Date(iso);
   if (Number.isNaN(at.getTime())) return "";
   return DATE_WITH_YEAR.format(at);
+}
+
+/**
+ * 기간 한 줄 (07 필터 · #584). 같은 날이면 하루, 같은 해면 끝일의 연도를 뺀다
+ * ("2026년 10월 1일부터 10월 31일까지"). 🚨 날짜를 더하고 빼지 않는다 — 두 `YYYY-MM-DD` 의 연도를 글자로 비교만 한다.
+ * 🚨 **`~` 로 잇지 않는다** — 화면 글자에 기호를 쓰지 않는 규칙(디자인 시스템 §4)이고, 스크린리더가 "물결" 로
+ *    읽거나 건너뛰어 "부터 · 까지" 라는 뜻이 사라진다. 조건 칩의 이름("… 조건 풀기")에도 이 글자가 그대로 간다.
+ */
+export function formatDateRange(from: string, to: string): string {
+  if (from === to) return formatDateWithYear(from);
+  const tail = from.slice(0, 4) === to.slice(0, 4) ? formatMonthDay(to) : formatDateWithYear(to);
+  return `${formatDateWithYear(from)}부터 ${tail}까지`;
 }
 
 /**

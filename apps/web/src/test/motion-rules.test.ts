@@ -9,7 +9,8 @@ import { describe, expect, it } from "vitest";
  * 실제로 움직이는지는 `e2e/motion.spec.ts` 가 브라우저에서 본다.
  *
  * 🚨 여기가 깨졌다면 목록을 고치기 전에 묻는다 — 승인 게이트 안에 움직임을 넣는 변경인가?
- *    게이트 안에서는 색 변화 말고 움직이지 않는다 (§8 "하지 않는 것").
+ *    게이트 안에서는 색 변화 말고 움직이지 않는다 (§8 "하지 않는 것"). 게이트를 담은 시트 자체는
+ *    다른 시트와 같이 열리고 닫힌다 (#490).
  */
 
 const SRC = fileURLToPath(new URL("..", import.meta.url));
@@ -33,30 +34,7 @@ function filesMatching(pattern: RegExp): string[] {
     .sort();
 }
 
-/** 내부 문서 화면. 컴포넌트를 전부 늘어놓고 보여 주는 곳이다. */
-const DESIGN_SYSTEM = /^app\/design-system\//;
-
 describe("승인 게이트 안에는 움직임이 없다", () => {
-  it("게이트 버튼을 담은 시트만 `gate` 로 열고 닫는 움직임을 끈다", () => {
-    // JSX 의 값 없는 prop 한 줄 (`gate`). 시트를 새로 만들 때 게이트가 안에 있으면 여기 더한다.
-    expect(filesMatching(/^\s*gate\s*$/m).filter((path) => !DESIGN_SYSTEM.test(path))).toEqual([
-      "app/child/[childId]/chat/page.tsx",
-      "components/approval-sheet.tsx",
-      "components/health-safety-list.tsx",
-      "components/photo-entry-sheet.tsx",
-      "components/safety-check-sheet.tsx",
-    ]);
-  });
-
-  it("게이트 확정을 부르는 파일의 시트는 전부 `gate` 다", () => {
-    const confirming = filesMatching(/\b(submitEventDraft|addHealthSafety|updateHealthSafety)\(/)
-      .filter((path) => path !== "lib/api/operations.ts")
-      .filter((path) => /<BottomSheet\b/.test(sources.get(path) ?? ""));
-    for (const path of confirming) {
-      expect(sources.get(path), `${path} 의 시트가 게이트인데 움직인다`).toMatch(/^\s*gate\s*$/m);
-    }
-  });
-
   it("11-2 검사지 확인(게이트 ㉡)의 자리 옮김은 새 줄을 페이드하지 않는다", () => {
     expect(sources.get("components/safety-scan-review.tsx")).toMatch(
       /useFlip<[^>]*>\(\{\s*fadeIn:\s*false\s*\}\)/,
@@ -74,6 +52,17 @@ describe("승인 게이트 안에는 움직임이 없다", () => {
         /\b(useFlip|useReveal|useEnterMotion|useMotionCue|playEnter|Swap)\b/,
       );
     }
+  });
+});
+
+describe("바텀시트는 모두 같은 움직임으로 열리고 닫힌다 (#490)", () => {
+  it("움직임을 끄는 `gate` 가 없다", () => {
+    expect(filesMatching(/^\s*gate(=\{[^}]*\})?\s*$/m)).toEqual([]);
+  });
+
+  it("시트의 `open` 을 상수로 박지 않는다", () => {
+    // `{editing ? <Sheet open /> : null}` 은 닫는 순간 통째로 빠져 닫히는 움직임이 없다 (`useSheetTarget`).
+    expect(filesMatching(/<\w*Sheet\b[^>]*\sopen(\s|\/?>)/)).toEqual([]);
   });
 });
 

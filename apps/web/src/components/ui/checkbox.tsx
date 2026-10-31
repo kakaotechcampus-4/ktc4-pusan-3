@@ -57,8 +57,10 @@ export function Checkbox({
       >
         <Check size={ICON_SIZE.sm} strokeWidth={ICON_STROKE} />
       </span>
-      <span className="flex flex-col gap-1">
-        <span className="text-body text-ink">{label}</span>
+      {/* 🚨 `min-w-0` · `break-words` — 띄어쓰기 없는 긴 라벨이 칸 밖으로 넘치지 않게 한다.
+          `keep-all` 이라 어절은 그대로 두고, 한 어절이 칸보다 길 때만 그 안에서 끊는다 (#568). */}
+      <span className="flex min-w-0 flex-col gap-1">
+        <span className="text-body text-ink break-words">{label}</span>
         {description ? (
           <span id={descriptionId} className="text-caption text-ink-subtle">
             {description}

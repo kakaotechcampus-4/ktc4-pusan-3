@@ -53,7 +53,7 @@ def agent_calls(monkeypatch) -> list[dict]:
         return runner.fake_job
 
     monkeypatch.setattr(runner, "agent_job", fake_agent_job)
-    monkeypatch.setattr(runner, "start", lambda channel, job, *, raw_text: None)
+    monkeypatch.setattr(runner, "start", lambda channel, job, *, raw_text, on_end: None)
     return calls
 
 
@@ -260,6 +260,32 @@ async def test_날씨_어댑터가_없으면_None_이다(client, agent_calls, co
     assert agent_calls[0]["activity_weather"] is None
 
 
+async def test_키_기억이_실패하면_되묻기_맥락의_표시를_푼다(
+    client, agent_calls, consent_reads, monkeypatch
+):
+    """찜한 뒤 러너가 뜨기 전에 실패하면 표시를 풀어 줄 러너가 없다 (#564).
+
+    풀지 않으면 15분 동안 그 질문에 답할 수 없다.
+    """
+    pending_reply.put(
+        run_id="prev-run",
+        parent_id=PARENT,
+        child_id=CHILD,
+        context=PendingMemoryContext("요즘 기침해", "언제부터였어요?", WorkType.OBSERVE),
+    )
+
+    def redis_down(**kwargs):
+        raise DbDown("키 기억 실패")
+
+    monkeypatch.setattr(idempotency, "remember", redis_down)
+
+    with pytest.raises(DbDown):
+        await client.post(URL, json={**BODY, "reply_to": "prev-run"}, headers=_key())
+
+    assert pending_reply.get(run_id="prev-run", parent_id=PARENT, child_id=CHILD) is not None
+    assert agent_calls == []
+
+
 async def _answer_same_question_twice_at_once(client, monkeypatch):
     """같은 되묻기에 두 답을 거의 동시에 보낸다.
 
@@ -294,9 +320,9 @@ async def _answer_same_question_twice_at_once(client, monkeypatch):
 async def test_같은_되묻기에_거의_동시에_두_번_답하면_하나만_받는다(
     client, agent_calls, monkeypatch
 ):
-    """맥락 확인(get)과 지우기(consume) 사이에 await 가 있으면 두 답이 다 확인을 통과한다.
+    """맥락 확인(get)과 찜하기(claim) 사이에 await 가 있으면 두 답이 다 확인을 통과한다.
 
-    동의 읽기가 get 과 consume 사이에 있으면 둘 다 202 가 되고, 같은 답으로 run 이 두 개 떠
+    동의 읽기가 get 과 claim 사이에 있으면 둘 다 202 가 되고, 같은 답으로 run 이 두 개 떠
     관찰이 두 행이 된다.
     """
     first, second = await _answer_same_question_twice_at_once(client, monkeypatch)
@@ -310,7 +336,7 @@ async def test_같은_되묻기에_거의_동시에_두_번_답하면_하나만_
 async def test_같은_되묻기에_늦게_온_답은_하루_한도를_쓰지_않는다(client, agent_calls, monkeypatch):
     """늦게 온 답은 한도를 세기 전에 400 으로 끝난다 (#439 리뷰).
 
-    순서는 두고 consume() 이 "이미 없음" 을 돌려줄 때 400 을 내는 방법도 위 테스트는 통과한다.
+    순서는 두고 claim() 이 "이미 없음" 을 돌려줄 때 400 을 내는 방법도 위 테스트는 통과한다.
     하지만 그때는 한도를 이미 센 뒤라, 늦게 온 답이 400 을 받으면서도 하루 한도 1회를 잃는다.
     동의 읽기를 get 앞으로 옮긴 이유가 이것이라, 남은 횟수로 직접 건다.
     """

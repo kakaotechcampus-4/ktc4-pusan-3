@@ -73,7 +73,29 @@ def match_terms(text: str, terms: Sequence[Term]) -> tuple[str, ...]:
     return tuple(hits)
 
 
-def match_fields(fields: Sequence[str], terms: Sequence[Term]) -> tuple[str, ...]:
+def match_spans(normalized: str, terms: Sequence[Term]) -> tuple[tuple[str, int, int], ...]:
+    """`match_terms` 와 같은 판정으로, guard 가 덮지 않은 자리마다 (key, 시작, 끝).
+
+    `normalized` 는 `normalize` 를 거친 글이다 — 자리는 그 글자열 기준이다. 두 용어가
+    얼마나 붙어 나오는지 봐야 할 때 쓴다 (위험 물질 이름 바로 뒤의 "마셨" 같은 것).
+    """
+    spans: list[tuple[str, int, int]] = []
+    for term in terms:
+        guard_spans = _spans(normalized, term.guards)
+        for alias in term.aliases:
+            alias_norm = normalize(alias)
+            if not alias_norm:
+                continue
+            for start in _find_all(normalized, alias_norm):
+                end = start + len(alias_norm)
+                if not _covered_by_any(start, end, guard_spans):
+                    spans.append((term.key, start, end))
+    return tuple(sorted(spans, key=lambda span: span[1]))
+
+
+def match_fields(
+    fields: Sequence[str], terms: Sequence[Term], *, cross_spaces: bool = True
+) -> tuple[str, ...]:
     """각 필드(메뉴명·재료)를 독립적으로 검사해 매칭된 `Term.key`를 `terms` 순서대로 반환한다.
 
     `match_terms`와 달리 필드 경계와 문장부호를 고려해 guard가 실제 재료명을 과도하게 가리는 것을
@@ -84,9 +106,12 @@ def match_fields(fields: Sequence[str], terms: Sequence[Term]) -> tuple[str, ...
       단, guard 자체에 띄어쓰기가 있으면 해당 위치는 허용한다.
     - alias는 띄어쓰기는 넘어 매칭하지만 문장부호는 넘지 않는다.
       단, alias 자체에 띄어쓰기가 있으면 해당 위치의 문장부호도 허용한다.
+    - `cross_spaces=False` 면 alias 도 띄어쓰기를 넘지 않는다(alias 자체의 띄어쓰기 자리만 허용).
+      놀이 · 교육 문장처럼 낱말이 이어지는 글에 쓴다 — 메뉴의 "달 걀" 은 놓치지만, 문장의
+      "장난감 자동차" 가 "감자" 로, "두고 기어서" 가 "고기" 로 걸리지 않는다.
     """
 
-    return TermMatcher(terms).match(prepare_fields(fields))
+    return TermMatcher(terms, cross_spaces=cross_spaces).match(prepare_fields(fields))
 
 
 # `prepare_fields` 결과 — 필드마다 (공백 · 문장부호를 지운 글자열, 지운 자리, 그중 문장부호 자리)
@@ -103,10 +128,12 @@ class TermMatcher:
 
     별칭 색인을 한 번 만들어 두고, 행마다 글자에 실제로 나온 별칭의 Term 만 guard 까지 본다.
     후보 풀은 카탈로그 전체라 행이 수천 개가 될 수 있다.
+    `cross_spaces` 는 `match_fields` 와 같다.
     """
 
-    def __init__(self, terms: Sequence[Term]) -> None:
+    def __init__(self, terms: Sequence[Term], *, cross_spaces: bool = True) -> None:
         self._terms = tuple(terms)
+        self._cross_spaces = cross_spaces
         self._compiled = tuple(_compiled(term) for term in self._terms)
         index: dict[str, set[int]] = {}
         for position, (aliases, _) in enumerate(self._compiled):
@@ -131,23 +158,16 @@ class TermMatcher:
             self._terms[position].key
             for position in sorted(candidates)
             if any(
-                _field_hits(text, breaks, hard, *self._compiled[position])
+                _field_hits(
+                    text, breaks, hard if self._cross_spaces else breaks, *self._compiled[position]
+                )
                 for text, breaks, hard in prepared
             )
         )
 
 
 def _term_hits(normalized: str, term: Term) -> bool:
-    guard_spans = _spans(normalized, term.guards)
-    for alias in term.aliases:
-        alias_norm = normalize(alias)
-        if not alias_norm:
-            continue
-        for start in _find_all(normalized, alias_norm):
-            end = start + len(alias_norm)
-            if not _covered_by_any(start, end, guard_spans):
-                return True
-    return False
+    return bool(match_spans(normalized, (term,)))
 
 
 def _field_hits(
@@ -157,6 +177,7 @@ def _field_hits(
     aliases: tuple[tuple[str, frozenset[int]], ...],
     guards: tuple[tuple[str, frozenset[int]], ...],
 ) -> bool:
+    """`hard` 는 alias 가 넘지 않는 경계 — 문장부호 자리, 띄어쓰기도 넘지 않으면 경계 전부다."""
     guard_spans: list[tuple[int, int]] | None = None
     for word, inner in aliases:
         if word not in text:
@@ -171,7 +192,7 @@ def _field_hits(
         for start in _find_all(text, word):
             end = start + len(word)
             if not _breaks_inside(hard, start, end) <= inner:
-                continue  # 문장부호를 넘는 자리(다른 재료에 걸친 글자다)
+                continue  # 경계를 넘는 자리(다른 재료 · 낱말에 걸친 글자다)
             if not _covered_by_any(start, end, guard_spans):
                 return True
     return False

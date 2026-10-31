@@ -48,8 +48,14 @@ export const qk = {
     agents: readonly string[],
     promptKey: string | null = null,
   ) => [...qk.child(childId), "suggestions", runId, [...agents].join(","), promptKey] as const,
-  /** 07 피드백 탭이 평가할 제안 목록. ⚠️ 엔드포인트가 계약서 협의 대상이다 (types.ts). */
-  suggestionList: (childId: string) => [...qk.child(childId), "suggestion-list"] as const,
+  /**
+   * 07 피드백 탭이 평가할 제안 목록 **전부** (보기 · 쪽마다 키가 따로라 무효화는 이 접두어로 한다).
+   * 🚨 평가하면 두 보기가 함께 바뀐다 — 피드백 전에서 빠지고 피드백 완료에 들어간다.
+   */
+  suggestionLists: (childId: string) => [...qk.child(childId), "suggestion-list"] as const,
+  /** 07 피드백 탭의 한 쪽. 보기(`rated`)와 쪽 번호가 키에 든다. */
+  suggestionList: (childId: string, filters: Record<string, unknown>) =>
+    [...qk.suggestionLists(childId), filters] as const,
   /** 09 월 조회. `month` 는 `YYYY-MM` — 달을 넘기면 다른 키라 이전 달이 캐시에 남는다. */
   calendar: (childId: string, month: string) => [...qk.calendarMonths(childId), month] as const,
   /**
@@ -63,6 +69,27 @@ export const qk = {
    */
   calendarDay: (childId: string, date: string) =>
     [...qk.child(childId), "calendar-day", date] as const,
+  /**
+   * 04 지난 대화 (`GET /children/{cid}/chat` · #228) 전부. 무효화는 이 접두어로 한다.
+   */
+  chat: (childId: string) => [...qk.child(childId), "chat"] as const,
+  /**
+   * 대화 목록 — 하루 한 장씩 이어 받는다. `from` 은 처음 연 날이다 (`null` 이면 오늘 · 09 입구면 그날).
+   * 🚨 **시작한 날마다 키가 다르다** — 같은 키면 오늘부터 받은 목록과 그날부터 받은 목록의 장이 섞인다.
+   * 🚨 run 이 끝나면 통째로 무효화하지 않고 오늘 장만 갈아 끼운다 (`lib/chat-history.ts` 의 `refreshAfterRun`).
+   */
+  chatList: (childId: string, from: string | null) => [...qk.chat(childId), "list", from] as const,
+  /**
+   * 03 홈의 "오늘 대화 이어보기" 가 보는 오늘 한 장. 🚨 **`chat` 과 따로 둔다** — 같은 키면 홈에 올 때마다
+   * 대화 화면에서 받아 둔 지난 날을 전부 다시 받는다. `chat` 아래라 대화 무효화에 같이 걸린다.
+   */
+  chatToday: (childId: string) => [...qk.chat(childId), "today"] as const,
+  /**
+   * 그날 한 장 — 결과를 못 받은 줄을 다시 보냈더니 서버가 이미 끝난 run 이라고 한 경우, 그 줄이 저장된 결과를
+   * 찾아 그린다 (#538 · `ChatThread` 의 `RecordedReply`). 🚨 대화 목록(`chatList`)에 기대지 않는다 — 되묻기 답이면
+   * 그 턴이 목록에 아직 받지 않은 지난 날에 붙어 있을 수 있다.
+   */
+  chatDay: (childId: string, date: string) => [...qk.chat(childId), "day", date] as const,
   corrections: (childId: string, ref?: { kind: string; id: string }) =>
     [...qk.child(childId), "corrections", ref ?? null] as const,
 } as const;

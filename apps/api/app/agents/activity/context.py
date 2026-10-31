@@ -12,6 +12,7 @@ from datetime import date, datetime, tzinfo
 from functools import partial
 from uuid import UUID
 
+from app.agents.activity.schemas.common import DayLabel
 from app.agents.activity.store.ports import (
     ActivityDocRow,
     ActivityPorts,
@@ -43,6 +44,8 @@ class ActivityRunState:
     # 프롬프트 [예시]에 실은 문서 행. run() 이 모델을 부르기 전에 채운다. 일반 추천은 이 행을
     # 근거로 단다 — 아이 기록이 아니라 개인화로 세지 않는다 (루트 §2)
     seen_docs: dict[UUID, ActivityDocRow] = field(default_factory=dict)
+    # [예시]의 짧은 id(예1 …) → 문서 행 id. 프롬프트에는 짧은 id 만 싣는다 (`prompt.example_ids`)
+    example_ids: dict[str, UUID] = field(default_factory=dict)
     gate: Gate | None = None
     # build_gate 가 읽은 health_safety 행. 출력 검증의 안전 필터는 이 값만 쓰고 다시 읽지 않는다.
     # None 은 아직 안 읽었다(build_gate 전)는 뜻이고, 동의가 없으면 빈 튜플이다
@@ -60,6 +63,9 @@ class ActivityRunState:
     # 안전 필터로 빠진 후보의 content. run() 이 재호출할 때 제외 목록으로만 넣는다 —
     # 걸린 사유는 넣지 않는다 (Tool_공통.md §5-2)
     excluded: tuple[str, ...] = ()
+    # 통과한 바깥 활동의 (정규화한 content, 날). 재호출 결과까지 모은다 — 날씨 안내를 결과에 실제로
+    # 나간 바깥 활동의 날로 고른다
+    outdoor_drafts: frozenset[tuple[str, DayLabel]] = frozenset()
 
 
 @dataclass(frozen=True)

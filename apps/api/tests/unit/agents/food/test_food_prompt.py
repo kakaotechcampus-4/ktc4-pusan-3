@@ -4,6 +4,8 @@ from datetime import datetime
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
+import pytest
+
 from app.agents.food.context import FoodContext
 from app.agents.food.prompt import build_system_prompt
 from app.agents.food.schemas.common import FoodTaskType
@@ -130,3 +132,30 @@ def test_영양소_분석_프롬프트에는_후보_고르기_안내가_없다()
     text = build_system_prompt(context(), FoodTaskType.NUTRIENT_ANALYSIS)
 
     assert "menu_key" not in text
+
+
+LINE = (
+    "- 보호자가 말한 음식이 후보 목록에 없으면 그 음식을 reason 에 쓰지 않는다. "
+    "후보 안에서 가까운 것을 고른다."
+)
+
+
+def test_식단_추천_프롬프트는_후보_밖_음식을_reason_에_쓰지_않게_한다() -> None:
+    assert LINE in build_system_prompt(context(), FoodTaskType.MEAL_RECOMMENDATION)
+    assert LINE not in build_system_prompt(context(), FoodTaskType.DAYCARE_MEAL)
+
+
+ALLERGY_LINE = (
+    "- 보호자가 알레르기나 피할 음식을 말했어도 reason 에는 그 이름이나 "
+    "'알레르기를 고려해' 같은 말을 쓰지 않는다. 고른 메뉴가 왜 지금 맞는지만 쓴다."
+)
+
+
+def test_식단_추천_프롬프트는_요청에_쓴_알레르기를_reason_에_되풀이하지_않게_한다() -> None:
+    assert ALLERGY_LINE in build_system_prompt(context(), FoodTaskType.MEAL_RECOMMENDATION)
+    assert ALLERGY_LINE not in build_system_prompt(context(), FoodTaskType.DAYCARE_MEAL)
+
+
+def test_코드가_답하는_섭취_확인은_프롬프트를_만들지_않는다() -> None:
+    with pytest.raises(ValueError, match="프롬프트"):
+        build_system_prompt(context(), FoodTaskType.FOOD_CHECK)

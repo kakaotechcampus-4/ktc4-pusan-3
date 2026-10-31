@@ -7,6 +7,7 @@ import {
   Hourglass,
   Info,
   MessageCircleQuestion,
+  Ruler,
   ShieldCheck,
   Sprout,
   Stethoscope,
@@ -14,11 +15,13 @@ import {
 } from "lucide-react";
 
 import { AgentPrompts } from "@/components/agent-prompts";
+import { CORRECTED_OBSERVATION } from "@/components/correction-buttons";
+import { CorrectedMark } from "@/components/observation-list";
 import { RewriteButton } from "@/components/rewrite-button";
-import { domainLabel, observationAgent } from "@/components/domain-chip";
+import { domainLabel, ObservationIcon, observationLabel } from "@/components/domain-chip";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
-import { DOMAIN_ICON, DomainIcon } from "@/components/ui/icon";
+import { DOMAIN_ICON } from "@/components/ui/icon";
 import { IconTile } from "@/components/ui/icon-tile";
 import { ProgressSteps } from "@/components/ui/progress-steps";
 import {
@@ -28,11 +31,19 @@ import {
   visibleAgentResults,
   type BlockCandidates,
 } from "@/lib/agent-result";
+import { cn } from "@/lib/cn";
 import { CONFIDENCE_LABEL } from "@/lib/confidence";
 import type { RunState } from "@/hooks/use-run-stream";
 import type { AgentResultEvent, GuidanceEvent, NoteEvent, PartialEvent } from "@/lib/api/sse";
 import type { QuestionState } from "@/stores/conversation";
-import { isHealthObservation, type Agent, type Observation } from "@/lib/api/types";
+import {
+  isHealthObservation,
+  type Agent,
+  type EventDraft,
+  type Observation,
+  type StoredRef,
+} from "@/lib/api/types";
+import { formatEventTime, formatTimeOfDay } from "@/lib/format";
 import { FORWARD } from "@/lib/view-transition";
 
 /**
@@ -68,6 +79,9 @@ export function RunReply({
   onAnswer,
   onOpenDrafts,
   onPickOffer,
+  archived = false,
+  deleted = NO_REFS,
+  checkRecords = false,
 }: {
   /** 안내의 목적지를 아이 경로 아래에 붙이는 데 쓴다 (`GUIDANCE_DESTINATION`). */
   childId: string;
@@ -93,6 +107,20 @@ export function RunReply({
   onAnswer: () => void;
   onOpenDrafts: () => void;
   onPickOffer: (agents: Agent[]) => void;
+  /**
+   * 서버가 남긴 지난 턴이다 (#228 · `lib/chat-history.ts`). 🚨 **그날 화면과 같게 그리되, 지금 누르면 막다른
+   * 길이 되는 것만 뺀다** — 보관함에 남지 않은 일정 초안의 "확인하고 넣기"(초안은 서버에 남지 않는다 · 남은
+   * 수는 `remainingDrafts`)와 부분 실패의 "다시 준비하기"(05 의 실패 맥락은 15분이다). "후보 보기" 는 고를 수
+   * 있는 추천이 남았을 때만 선다 (`blockCandidates`).
+   */
+  archived?: boolean;
+  /** 지난 턴에서 저장했지만 보호자가 지운 기록. 내용 없이 "이 기록은 지웠어요" 한 줄씩 선다. */
+  deleted?: readonly StoredRef[];
+  /**
+   * 결과 미확인을 다시 보냈는데 서버가 같은 run 을 돌려주고 또 결과 미확인으로 끝났다 (#538 · `ChatTurn.replayed`).
+   * 서버도 저장됐는지 모르는 run 일 수 있어서, 기록 화면에서 확인하라고 말한다.
+   */
+  checkRecords?: boolean;
 }) {
   if (run.status === "idle" || run.status === "streaming") {
     // 단계 문구는 서버가 보낸 `step.label` 을 그대로 쓴다.
@@ -115,11 +143,31 @@ export function RunReply({
       <div className="flex flex-col gap-3">
         <CardFailed>
           <p className="text-body text-ink">저장됐는지 확인하지 못했어요</p>
-          <p className="mt-1">
-            연결이 끊겨서 결과를 받지 못했어요. 다시 시도하면 같은 한 줄로 확인해요. 이미 저장됐다면
-            두 번 저장되지 않아요.
-          </p>
+          {/* 🚨 같은 키 재생인데 채널도 대화 기록도 없는 run 이면 다시 시도도 같은 답이다 (#538). 서버도 저장 여부를
+              모르니 "저장했어요" 도 "저장하지 않았어요" 도 말하지 않고, 확인할 곳을 알려 준다. 키는 그대로라
+              다시 보내도 두 번 저장되지 않는다 — 연결만 끊긴 경우도 있어서 다시 시도는 남긴다. */}
+          {checkRecords ? (
+            <p className="mt-1">
+              다시 보내도 결과를 받지 못했어요. 저장됐다면 기록 탭에 남아 있으니 먼저 확인해 주세요.
+              같은 한 줄로 다시 보내도 두 번 저장되지 않아요.
+            </p>
+          ) : (
+            <p className="mt-1">
+              연결이 끊겨서 결과를 받지 못했어요. 다시 시도하면 같은 한 줄로 확인해요. 이미
+              저장됐다면 두 번 저장되지 않아요.
+            </p>
+          )}
           <RetryActions onRetry={onRetry} onRewrite={onRewrite} rewriteBlocked={rewriteBlocked} />
+          {checkRecords ? (
+            <ButtonLink
+              href={`/child/${childId}/memories`}
+              variant="tertiary"
+              size="compact"
+              className="mt-2"
+            >
+              기록 확인하기
+            </ButtonLink>
+          ) : null}
         </CardFailed>
 
         {run.observations.length > 0 ? (
@@ -148,7 +196,9 @@ export function RunReply({
     );
   }
 
-  const noChildObservation = run.observations.length === 0;
+  /** 🚨 지운 기록도 그날 저장한 것이다 — 빼면 지운 뒤 지난 대화가 "저장하지 않았어요" 로 바뀐다. */
+  const savedCount = run.observations.length + deleted.length;
+  const noChildObservation = savedCount === 0;
   /**
    * 🚨 **저장한 것이 없으면 "저장했어요" 라고 하지 않는다.** "이번 주말에 공원 산책 가기" 처럼
    *    앞으로의 계획만 말한 한 줄은 아이에 대한 관찰이 아니라서 쌓을 것이 없고, 일정도 아직
@@ -175,7 +225,8 @@ export function RunReply({
    *    때만 이 길로 닫는다. 그래서 아래의 "저장하지 않았어요" 류 문장을 전부 세우지 않는다.
    */
   const interrupted = run.interrupted;
-  const retryHref = run.partial ? partialRetryHref(run.partial, { childId, runId }) : null;
+  const retryHref =
+    run.partial && !archived ? partialRetryHref(run.partial, { childId, runId }) : null;
 
   return (
     <div className="flex flex-col gap-3">
@@ -265,12 +316,21 @@ export function RunReply({
         )
       ) : (
         <section>
-          <h3 className="text-label text-brand">기록 {run.observations.length}건 저장됨</h3>
+          <h3 className="text-label text-brand">기록 {savedCount}건 저장됨</h3>
           {/* 🚨 관찰마다 카드를 한 장씩 주면 흰 상자가 줄줄이 서서 무엇이 한 덩어리인지 사라진다.
               한 장 안에 가는 선으로 나눈다 — 03 홈의 "오늘" 카드와 같은 방식이다. */}
           <Card className="divide-line mt-2 flex flex-col divide-y">
             {run.observations.map((observation) => (
               <ObservationRow key={observation.id} observation={observation} />
+            ))}
+            {/* 🚨 **내용을 싣지 않는다** — 서버도 id 만 준다. 지운 기록이 지난 대화에서 되살아나면 안 된다 (#228). */}
+            {deleted.map((ref) => (
+              <p
+                key={`${ref.kind}:${ref.id}`}
+                className="text-body-sm text-ink-subtle py-3 first:pt-0 last:pb-0"
+              >
+                이 기록은 지웠어요.
+              </p>
             ))}
           </Card>
         </section>
@@ -293,7 +353,10 @@ export function RunReply({
         </section>
       ) : null}
 
-      {run.drafts.length > 0 ? (
+      {/* 🚨 지난 턴이어도 보관함에 남은 초안이 있으면 그대로 넣을 수 있다 — 아직 넣지 않은 것이다 (`PastTurnItem`). */}
+      {run.drafts.length > 0 && archived && remainingDrafts === 0 ? (
+        <ArchivedDraftsCard drafts={run.drafts} />
+      ) : run.drafts.length > 0 ? (
         <DraftsCard
           found={run.drafts.length}
           remaining={remainingDrafts}
@@ -469,6 +532,10 @@ function AgentResultCard({
               {result.question}
             </p>
           ) : null}
+          {/* 지난 대화에서 다 지났거나 거절한 묶음 — 링크 대신 사실만 적는다 (#228). */}
+          {candidates?.closed ? (
+            <p className="text-caption text-ink-subtle mt-2">지금은 고를 수 있는 후보가 없어요.</p>
+          ) : null}
           {/* 그 블록의 Agent · 그 run 의 05 (#249 가 그 run 의 추천을 되살린다). 링크 글자에 기호를 붙이지 않는다. */}
           {candidates?.href ? (
             <ButtonLink
@@ -543,6 +610,43 @@ function DraftsCard({
 }
 
 /**
+ * 보관함에 남지 않은 지난 턴의 일정 초안 (#228). 🚨 **넣는 길이 없다** — 초안은 서버에 남지 않아서(9/21) 그때
+ * 내용만 있고, 넣었는지도 모른다. 여기서 넣게 하면 이미 넣은 일정이 한 번 더 들어간다. 그래서 무엇을 찾았는지만
+ * 적고 캘린더를 가리킨다. 보관함에 남아 있으면 아직 넣지 않은 것이라 이 카드 대신 `DraftsCard` 가 선다.
+ * 🚨 지난 턴의 초안을 보관함에 새로 얹지는 않는다 (`lib/chat-history.ts`).
+ */
+function ArchivedDraftsCard({ drafts }: { drafts: readonly EventDraft[] }) {
+  return (
+    <section>
+      <h3 className="text-label text-brand">그때 찾은 일정</h3>
+      <Card className="mt-2">
+        <div className="flex items-start gap-3">
+          <IconTile icon={CalendarPlus} tone="neutral" />
+          <div className="min-w-0">
+            <ul className="flex flex-col gap-1">
+              {drafts.map((draft) => (
+                <li key={draft.draft_id}>
+                  <p className="text-body text-ink">{draft.event.title}</p>
+                  {/* 🚨 일자를 못 읽은 초안은 비어 온다 — 오늘로 채우지 않는다 (`EventDraftFields.starts_at`). */}
+                  {draft.event.starts_at ? (
+                    <p className="text-caption text-ink-subtle">
+                      {formatEventTime(draft.event.starts_at, draft.event.all_day)}
+                    </p>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+            <p className="text-body-sm text-ink-muted mt-2">
+              지난 대화의 초안이라 여기서는 넣을 수 없어요. 넣은 일정은 캘린더에서 볼 수 있어요.
+            </p>
+          </div>
+        </div>
+      </Card>
+    </section>
+  );
+}
+
+/**
  * 04 의 제목. 🚨 **제목이 화면 내용을 앞질러 말하면 아래 카드가 전부 그 말을 뒤집는다.**
  *
  * 다섯 갈래인 이유는 "저장한 것이 없는 run" 이 한 종류가 아니라서다.
@@ -588,10 +692,10 @@ function resultTitle({
  *    지금 없는 경로가 오기도 하고, 외부 주소가 오면 화면이 앱 밖으로 나간다. 딥링크는
  *    **어느 구역인지 힌트**로만 쓰고, 실제로 가는 곳은 이 표가 정한다.
  *
- * ⚠️ **서버 힌트와 실제 자리가 다르다.** `safety_record` 의 딥링크는 `settings/health-safety`
- *    인데, 알레르기·건강 기록을 직접 넣는 구역(`components/safety-section.tsx`)은 10 설정이
- *    아니라 **11 아이 프로필**에 있다. 힌트를 그대로 썼으면 아무것도 없는 화면으로 보냈을 것이다.
- *    👉 이름을 맞출지는 `apps/api` Owner 협의 대상이다 (최상위 §8 · #141).
+ * ⚠️ **`to.path` 는 서버 딥링크와 같은 값이다** (#625 — 서버 정본은 `apps/api/app/core/deeplinks.py`).
+ *    예전 서버 힌트 `settings/health-safety` 는 없는 경로였다 — 알레르기·건강 기록을 넣는 구역
+ *    (`components/safety-section.tsx`)은 10 설정이 아니라 **11 아이 프로필**에 있다. 지금은 서버도
+ *    `profile` 을 보낸다. 그래도 주소는 이 표가 정한다 — 새 code 가 생기면 서버 표와 여기를 같이 고친다.
  *
  * 🚨 `to` 가 없는 안내에는 **버튼을 세우지 않는다** — 진단·구매 대행은 갈 곳이 없는 안내고,
  *    없는 길을 만들어 주는 것보다 말만 하고 마는 쪽이 맞다.
@@ -604,6 +708,12 @@ const GUIDANCE_KIND: Record<
     label: "안전 정보",
     icon: ShieldCheck,
     to: { path: "profile", label: "직접 입력하러 가기" },
+  },
+  // 채팅의 키 · 몸무게는 저장하지 않는다 — 잰 날짜와 함께 11-1 에서 넣는다 (#625)
+  growth_record: {
+    label: "키·몸무게",
+    icon: Ruler,
+    to: { path: "profile/growth", label: "직접 입력하러 가기" },
   },
   diagnosis: { label: "진단·처방", icon: Stethoscope },
   out_of_scope: { label: "서비스 범위", icon: Hand },
@@ -776,10 +886,22 @@ function NoteCard({
   );
 }
 
+const NO_REFS: readonly StoredRef[] = [];
+
+/**
+ * 저장된 기록 한 줄. 🚨 **지난 대화에서는 고친 기록도 온다** (#228 리뷰) — 교정은 기록을 지우지 않고 상태만
+ * 바꿔서, 서버가 지금 모습(`status`)으로 싣는다. 방금 저장한 run 에서는 늘 `active` 라 예전엔 볼 필요가 없었다.
+ * 07 기록 탭과 같은 고친 표시를 달고, 잘못된 기록(`inactive`)은 글자를 물린다 — 근거에서도 빠진 기록이다.
+ * 색만으로 가르지 않는다 — 무엇으로 고쳤는지가 글자로 선다.
+ */
 function ObservationRow({ observation }: { observation: Observation }) {
-  const agent = observationAgent(observation.kind);
+  const wrong = observation.status === "inactive";
   const detail = isHealthObservation(observation)
-    ? [observation.domain_fields.symptom?.join(", "), observation.domain_fields.observed_time]
+    ? [
+        observation.domain_fields.symptom?.join(", "),
+        observation.domain_fields.observed_time &&
+          formatTimeOfDay(observation.domain_fields.observed_time),
+      ]
         .filter(Boolean)
         .join(", ")
     : observation.subject;
@@ -791,20 +913,28 @@ function ObservationRow({ observation }: { observation: Observation }) {
           "어느 Agent 의 결과인가" 신호라(05 제안) 저장된 관찰에 쓰면 그 뜻이 흐려진다.
           모양은 아이콘이, 뜻은 라벨이 진다. */}
       <div className="text-label text-ink-muted flex flex-wrap items-center gap-1.5">
-        <DomainIcon agent={agent} className="text-ink-subtle" />
-        {domainLabel(agent)}
+        <ObservationIcon kind={observation.kind} className="text-ink-subtle" />
+        {observationLabel(observation.kind)}
         {observation.observed_label ? (
           <span className="text-caption text-ink-subtle">· {observation.observed_label}</span>
         ) : null}
       </div>
 
-      <p className="text-body text-ink mt-2">{observation.raw_text}</p>
+      <p className={cn("text-body mt-2", wrong ? "text-ink-muted" : "text-ink")}>
+        {observation.raw_text}
+      </p>
 
       <div className="text-caption text-ink-subtle mt-1.5 flex flex-wrap items-center gap-x-1.5">
         {detail ? <span>{detail}</span> : null}
         {detail ? <span aria-hidden>·</span> : null}
         <span>{CONFIDENCE_LABEL[observation.confidence_source]}</span>
       </div>
+
+      {observation.status !== "active" ? (
+        <div className="mt-1.5">
+          <CorrectedMark label={CORRECTED_OBSERVATION[observation.status].label} />
+        </div>
+      ) : null}
     </div>
   );
 }

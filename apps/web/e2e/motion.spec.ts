@@ -3,7 +3,7 @@ import type { Page } from "@playwright/test";
 import { CHILD, expect, test } from "./fixtures";
 
 /**
- * 움직임 규칙 (디자인 시스템 §8 · #426). 움직임은 **바뀐 순간에만** 서고, 방향을 모르는 이동과 승인 게이트에는 없다.
+ * 움직임 규칙 (디자인 시스템 §8 · #426). 움직임은 **바뀐 순간에만** 서고, 방향을 모르는 이동과 승인 게이트 안에는 없다.
  *
  * 움직임이 "보이는지" 는 스크린샷으로 못 건다 — 그래서 **무엇이 움직이기 시작했는지**를 기록한다.
  * 화면 전환은 `document.startViewTransition` 에 실린 방향(types)을, 화면 안의 움직임은 `Element.animate` 를
@@ -76,8 +76,8 @@ test.describe("화면 전환은 방향이 붙은 이동에서만 움직인다 (�
   });
 });
 
-test.describe("바텀시트 — 게이트 시트는 움직이지 않는다 (§8 하지 않는 것)", () => {
-  test("되돌릴 수 있는 시트는 아래에서 올라오고, 알레르기 등록(게이트 ㉡) 시트는 그대로 선다", async ({
+test.describe("바텀시트 — 모든 시트가 같은 움직임으로 열리고 닫힌다 (§8 시트 · 펼침 · #490)", () => {
+  test("되돌릴 수 있는 시트도, 알레르기 등록(게이트 ㉡) 시트도 아래에서 올라온다", async ({
     page,
   }) => {
     await page.goto(`/child/${CHILD}/profile`);
@@ -96,8 +96,90 @@ test.describe("바텀시트 — 게이트 시트는 움직이지 않는다 (§8 
     await page.getByRole("button", { name: /^직접 적기/ }).click();
     const gate = page.getByRole("dialog", { name: "알레르기 · 건강 기록 추가" });
     await expect(gate).toBeVisible();
-    await expect(gate).not.toHaveClass(/\bbottom-sheet\b/);
-    expect(await gate.evaluate((el) => getComputedStyle(el).translate)).toBe("none");
+    await expect(gate).toHaveClass(/\bbottom-sheet\b/);
+    expect(await gate.evaluate((el) => getComputedStyle(el).transitionProperty)).toContain(
+      "translate",
+    );
+  });
+
+  test("고치기 시트는 닫을 때 통째로 빠지지 않는다 — 닫히는 움직임을 탈 자리가 남는다", async ({
+    page,
+  }) => {
+    await page.goto(`/child/${CHILD}/profile`);
+    await page.getByRole("button", { name: "기본 정보 고치기" }).click();
+    const sheet = page.getByRole("dialog", { name: "기본 정보 고치기" });
+    await expect(sheet).toBeVisible();
+
+    await sheet.getByRole("button", { name: "그만두기" }).click();
+    // 🚨 조건부로 그리면 닫는 순간 `<dialog>` 가 DOM 에서 빠져 내려가는 움직임 없이 사라진다.
+    const closed = page.locator("dialog:not([open])", { hasText: "기본 정보 고치기" });
+    await expect(closed).toHaveCount(1);
+    await expect(closed).toHaveClass(/\bbottom-sheet\b/);
+  });
+
+  test("닫히는 동안에는 내용이 남고, 닫힘이 끝나면 놓는다", async ({ page }) => {
+    await page.goto(`/child/${CHILD}/memories`);
+    await page.getByText("저녁에 계란말이를 또 찾았어요").click();
+    const sheet = page.getByRole("dialog", { name: "기록 상세" });
+    await expect(sheet.getByText("이 기록이 어떤가요?")).toBeVisible();
+
+    // 🚨 닫으면서 대상이 `null` 이 되어도 시트는 열려 있던 마지막 모습으로 내려간다. 누른 바로 다음 프레임에
+    //    본다 — 내려가는 200ms 를 기다리면 이미 놓은 뒤다.
+    const right = await sheet.getByRole("button", { name: "닫기" }).evaluate(async (button) => {
+      (button as HTMLButtonElement).click();
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      const dialog = button.closest("dialog")!;
+      return { hidden: dialog.getAttribute("aria-hidden"), text: dialog.textContent ?? "" };
+    });
+    expect(right.hidden).toBe("true");
+    expect(right.text).toContain("이 기록이 어떤가요?");
+
+    // 🚨 닫힘이 끝나면 놓는다 — 계속 들고 있으면 다음에 열 때 지난번 인스턴스가 이어진다.
+    const closed = page.locator("dialog:not([open])", { hasText: "기록 상세" });
+    await expect(closed).not.toContainText("이 기록이 어떤가요?");
+  });
+
+  test("한 기록에서 누른 교정 확인이 다음에 연 기록으로 이어지지 않는다", async ({ page }) => {
+    await page.goto(`/child/${CHILD}/memories`);
+    await page.getByText("저녁에 계란말이를 또 찾았어요").click();
+    const sheet = page.getByRole("dialog", { name: "기록 상세" });
+    await sheet.getByRole("button", { name: "잘못된 기록" }).click();
+    await expect(sheet.getByText("잘못된 기록으로 바꿀까요?")).toBeVisible();
+    await sheet.getByRole("button", { name: "닫기" }).click();
+    await expect(sheet).toBeHidden();
+    // 닫힘이 끝나 시트가 내용을 놓을 때까지 — 그 전에는 같은 문장이 시트 안에도 남아 있다.
+    await expect(page.locator("dialog:not([open])", { hasText: "기록 상세" })).not.toContainText(
+      "저녁에 계란말이를 또 찾았어요",
+    );
+
+    await page.getByText("저녁에 계란말이를 또 찾았어요").click();
+    await expect(sheet.getByText("이 기록이 어떤가요?")).toBeVisible();
+    await expect(sheet.getByText("잘못된 기록으로 바꿀까요?")).toHaveCount(0);
+  });
+
+  test("닫히는 도중에 다시 열어도 눌러 둔 교정 확인이 이어지지 않는다", async ({ page }) => {
+    await page.goto(`/child/${CHILD}/memories`);
+    await page.getByText("저녁에 계란말이를 또 찾았어요").click();
+    const sheet = page.getByRole("dialog", { name: "기록 상세" });
+    await sheet.getByRole("button", { name: "잘못된 기록" }).click();
+    await expect(sheet.getByText("잘못된 기록으로 바꿀까요?")).toBeVisible();
+
+    // 🚨 닫히는 시트는 누르기를 받지 않아 아래 목록을 바로 누를 수 있다. 내려가는 200ms 안에 다시 연다.
+    await page.evaluate(async () => {
+      const open = [...document.querySelectorAll("dialog")].find((dialog) => dialog.open)!;
+      [...open.querySelectorAll("button")].find((button) => button.textContent === "닫기")!.click();
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      [...document.querySelectorAll("button")]
+        .find(
+          (button) =>
+            !button.closest("dialog") &&
+            button.textContent?.includes("저녁에 계란말이를 또 찾았어요"),
+        )!
+        .click();
+    });
+
+    await expect(sheet.getByText("이 기록이 어떤가요?")).toBeVisible();
+    await expect(sheet.getByText("잘못된 기록으로 바꿀까요?")).toHaveCount(0);
   });
 });
 

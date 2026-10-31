@@ -34,6 +34,12 @@ PROMOTION_THRESHOLD_WITH_G: int = 2
 """G 가 있으면 confirmed 로 올라가는 데 필요한 최소 O (W=0 기준)."""
 
 STRENGTH_DEFAULT: float = 0.5
+
+CANDIDATE_MIN_DAYS: int = 2
+"""candidate 가 추천 근거(티어 2) · 홈 하이라이트가 되는 데 필요한, 묶인 active 관찰이 있는
+서로 다른 날 수 (#626). 새 candidate 의 strength 가 STRENGTH_DEFAULT 라 근거 임계와 같아서, 관찰
+한 건이 바로 근거가 됐다. 승격 O 처럼 날로 센다 — 입력 한 번에 관찰이 여러 건 생겨도 하루다.
+한 번의 관찰을 성향으로 쓰지 않는다 (루트 §2 기억)."""
 STRENGTH_MIN: float = 0.0
 STRENGTH_MAX: float = 1.0
 
@@ -73,6 +79,14 @@ _VALID_PROFILE_VERDICTS = frozenset(VERDICT_DECAY)
 # ---------------------------------------------------------------------------
 
 
+def archived_by_time(*, last_observed_on: date, today: date) -> bool:
+    """상태 공식 1번 — 마지막 관찰 뒤 `ARCHIVED_WINDOW_DAYS` 가 지났는가.
+
+    Curator 가 다시 계산할 때와 기억 다리가 그날 기준으로 읽을 때 같이 쓴다.
+    """
+    return (today - last_observed_on).days > ARCHIVED_WINDOW_DAYS
+
+
 def compute_profile_status(
     *,
     obs_count: int,
@@ -90,8 +104,7 @@ def compute_profile_status(
        (obs_count >= PROMOTION_THRESHOLD_WITH_G + wrong_count 그리고 has_signal)  →  confirmed
     3. 그 외  →  candidate
     """
-    days_since = (today - last_observed_on).days
-    if days_since > ARCHIVED_WINDOW_DAYS:
+    if archived_by_time(last_observed_on=last_observed_on, today=today):
         return "archived"
 
     if obs_count >= PROMOTION_THRESHOLD + wrong_count:
