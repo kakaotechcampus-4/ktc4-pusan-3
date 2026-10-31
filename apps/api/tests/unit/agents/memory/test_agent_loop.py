@@ -1201,6 +1201,7 @@ async def test_unclear_만_있으면_모델_말_대신_고정_문구를_낸다(
     result = await run(_UNCLEAR_ONLY.raw_text, context, client=llm, task=_UNCLEAR_ONLY)
 
     assert result.reply == MemoryReply(_UNCLEAR_REPLY, "message")
+    assert result.ended_by == "unclear"  # 모델이 끝낸 것과 로그에서 갈린다
     assert result.pending is None
     assert len(llm.seen) == 1  # 재확인 · 빈 턴 재질문을 타지 않는다
 
@@ -1227,7 +1228,43 @@ async def test_unclear_만_있으면_저장을_거절당한_뒤_모델을_다시
     assert len(llm.seen) == 1
     assert result.calls[0].result["error"]["code"] == ErrorCode.NOT_CHILD_RECORD
     assert result.reply == MemoryReply(_UNCLEAR_REPLY, "message")
+    assert result.ended_by == "unclear"
     assert result.steps == 1
+
+
+_EVENT = {"title": "운동회", "starts_on": "모레", "starts_time": "오전 9시"}
+
+
+async def test_unclear_만_있으면_거절_뒤_일정_초안은_만들지_않는다(context: AgentContext) -> None:
+    # 거절 직후 끝내므로 다음 응답에서 부르려던 create_event 는 기회가 없다 (D13 의 예외)
+    llm = FakeLLM(
+        _tools(_call("c1", "create_observation_food", _STRAWBERRY)),
+        _tools(_call("c2", "create_event", _EVENT)),
+    )
+
+    result = await run(_UNCLEAR_ONLY.raw_text, context, client=llm, task=_UNCLEAR_ONLY)
+
+    assert len(llm.seen) == 1
+    assert result.drafts == ()
+    assert result.ended_by == "unclear"
+
+
+async def test_unclear_만_있어도_같은_응답의_일정_초안은_남는다(context: AgentContext) -> None:
+    said = "운동회 일정을 만들었어요. 승인하면 캘린더에 들어가요."
+    llm = FakeLLM(
+        _tools(
+            _call("c1", "create_observation_food", _STRAWBERRY),
+            _call("c2", "create_event", _EVENT),
+        ),
+        _answer({"text": said, "kind": "message"}),
+    )
+
+    result = await run(_UNCLEAR_ONLY.raw_text, context, client=llm, task=_UNCLEAR_ONLY)
+
+    assert [call.success for call in result.calls] == [False, True]
+    assert len(result.drafts) == 1
+    assert result.final_message == said
+    assert result.ended_by == "model"
 
 
 async def test_unclear_만_있어도_일정_초안을_만들면_모델_말을_낸다(context: AgentContext) -> None:

@@ -79,7 +79,7 @@ _NEEDS_REPLY_CUES = ("알림", "알람")
 # 이 tool을 부른 run은 조기 종료하지 않음(후속 변경이 있을 수 있음)
 _OPEN_ENDED = frozenset({"create_event_item", "update_event_item", "delete_event_item"})
 
-EndedBy = Literal["model", "coverage", "max_steps"]
+EndedBy = Literal["model", "coverage", "max_steps", "unclear"]
 
 _HINT_HEADER = "[먼저 나눠 본 기록 후보 — 빠진 게 있을 수 있다. 발화 전체에서 기록할 것을 찾는다]"
 
@@ -217,6 +217,7 @@ class MemoryAgentResult:
     # model: 모델이 tool 없이 말하고 끝남. 되묻기·조회 답·알림 안내가 전부 여기라
     #   질문 여부를 이 값으로 가르지 않는다 — reply.kind 를 본다
     # coverage: 할 일을 다 한 게 확인돼 요약 호출 없이 끝남
+    # unclear: unclear 뿐인 입력이 쓰기 없이 끝나 코드가 정한 문구(_UNCLEAR_REPLY)를 냄 (#642)
     # max_steps: 끝내지 못함
     ended_by: EndedBy = "model"
     drafts: tuple[EventDraft, ...] = ()  # 보호자 제출을 기다리는 일정 초안
@@ -401,7 +402,8 @@ async def run(
                 }
             )
 
-        # 거절 뒤에 모델이 쓸 알림은 어차피 버려진다. 한 번 더 부르지 않는다
+        # 거절 뒤에 모델이 쓸 알림은 어차피 버려진다. 한 번 더 부르지 않는다.
+        # 그래서 이 뒤 응답에서 만들려던 일정 초안은 기회가 없다. 같은 응답의 초안은 남는다
         if _unclear_unsaved(task, calls) and _refused(calls, ErrorCode.NOT_CHILD_RECORD):
             return _unclear_result(step + 1, calls, usage, context)
 
@@ -481,12 +483,14 @@ def _unclear_unsaved(task: MemoryTask | None, calls: list[ToolCallRecord]) -> bo
 def _unclear_result(
     steps: int, calls: list[ToolCallRecord], usage: dict[str, int], context: AgentContext
 ) -> MemoryAgentResult:
+    """모델이 한 말 대신 고정 문구로 끝낸다. 로그에서 갈리도록 ended_by 를 따로 둔다."""
     return MemoryAgentResult(
         reply=MemoryReply(_UNCLEAR_REPLY, "message"),
         completed=True,
         steps=steps,
         calls=calls,
         usage=usage,
+        ended_by="unclear",
         drafts=context.drafts.all(),
     )
 
