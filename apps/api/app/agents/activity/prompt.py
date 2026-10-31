@@ -204,18 +204,19 @@ def _conditions(weather: WeatherBrief, *, checked: bool, gate: Gate) -> str:
             if weather.outdoor_ok
             else "해가 졌다. 오늘 하는 활동은 setting 이 indoor 나 either 인 것만 낸다."
         )
+    elif not weather.outdoor_ok:
+        # 못 읽은 것이 있어도 해가 졌거나 읽은 신호가 나쁘면 막는다 — "확인하지 못했다" 보다 먼저
+        outdoor = (
+            "오늘은 바깥 활동이 어렵다. 오늘 하는 활동은 setting 이 indoor 나 either 인 것만 낸다."
+        )
     elif not checked:
-        # 못 읽은 날도 바깥 놀이를 막지 않는다. 막혔으면(해가 졌거나 읽은 신호가 나쁨) checked 다
+        # 못 읽은 날도 바깥 놀이를 막지 않는다
         outdoor = (
             "오늘 날씨는 확인하지 못했다. 날씨 이야기를 쓰지 않는다. "
             "바깥 활동(outdoor)도 낼 수 있다."
         )
-    elif weather.outdoor_ok:
-        outdoor = "오늘은 바깥 활동을 할 수 있다."
     else:
-        outdoor = (
-            "오늘은 바깥 활동이 어렵다. 오늘 하는 활동은 setting 이 indoor 나 either 인 것만 낸다."
-        )
+        outdoor = "오늘은 바깥 활동을 할 수 있다."
     labels = " · ".join(f"{key} {value}" for key, value in weather.labels.items())
     if finds_places(gate):
         place = "근처 장소는 search_nearby_places 로 찾을 수 있다."

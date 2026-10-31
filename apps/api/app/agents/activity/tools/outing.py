@@ -154,7 +154,8 @@ async def lookup_weather(context: ActivityContext, args: LookupWeatherArgs) -> T
     days = days_of(args.day, context.today)
     briefs = await asyncio.gather(*(check_weather(context, day) for day in days))
     context.state.weather.update(zip(days, briefs, strict=True))
-    # 묻지 않은 날(위치 · 포트 없음)도 확인한 날이 아니다 — 이 tool 은 열리지 않았어야 한다
+    # 묻지 않은 날(위치 · 포트 없음)도 확인한 날이 아니다 — 이 tool 은 열리지 않았어야 한다.
+    # 못 읽은 것이 있어도 막힌 날은 확인한 날로 준다 — "바깥 어려움" 은 읽은 신호로 난 판정이다
     checked = [not {WEATHER_UNCHECKED, WEATHER_NOT_ASKED} & set(brief.notices) for brief in briefs]
     if not any(checked):
         return fail(

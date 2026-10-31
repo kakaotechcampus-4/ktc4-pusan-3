@@ -85,6 +85,9 @@ class WeatherBrief:
     outdoor_ok: bool
     labels: dict[str, str] = field(default_factory=dict)  # 등급 라벨. 수치는 없다
     notices: tuple[str, ...] = ()  # 화면에 붙는 문구 키 (activity.readout.yaml)
+    # 예보 · 특보를 다 읽지 못했다. 화면 문구와 따로 둔다 — 막힌 날은 "확인하지 못했어요" 를
+    # 붙이지 않지만 실패는 실패다. status(degraded)와 프롬프트가 이 값을 본다 (#645 리뷰)
+    unread: bool = False
 
     def to_model_payload(self) -> dict[str, object]:
         return {"outdoor_ok": self.outdoor_ok, **self.labels}
@@ -127,7 +130,9 @@ def judge_weather(
     labels: dict[str, str] = {}
 
     rain = forecast.precip_mm_per_h if forecast is not None else None
-    if rain is None or advisories is None:
+    pop = forecast.pop_percent if forecast is not None else None
+    unread = rain is None or advisories is None
+    if unread:
         notices.append(WEATHER_UNCHECKED)
 
     # 강수량을 못 읽은 예보는 하늘 라벨도 싣지 않는다 — 모델이 "맑아요" 를 쓰지 않게
@@ -137,10 +142,12 @@ def judge_weather(
         labels["rain"] = _rain_label(rain)
         if rain >= RAIN_HEAVY_MM:
             block = True
-        elif rain >= RAIN_MODERATE_MM or (
-            forecast.pop_percent is not None and forecast.pop_percent >= POP_CAUTION_PERCENT
-        ):
-            notices.append(RAIN_LIKELY)
+    # 강수확률은 강수량과 따로 본다 — 비 오는 날의 강수량 형식은 아직 실호출로 못 봐서, 강수량을
+    # 못 읽는 날이 비 오는 날일 수 있다 (#645 리뷰). 막힌 날은 아래에서 이 안내를 뺀다
+    if (rain is not None and rain >= RAIN_MODERATE_MM) or (
+        pop is not None and pop >= POP_CAUTION_PERCENT
+    ):
+        notices.append(RAIN_LIKELY)
 
     if advisories is not None:
         if advisories.severe or "warning" in (advisories.heat, advisories.cold):
@@ -181,9 +188,16 @@ def judge_weather(
         # "날씨를 확인하지 못했어요. 바깥 놀이라면 …" 은 바깥 놀이가 없으니 뺀다
         kept = [key for key in notices if key in _UNCHECKED]
         notices = [*kept, AFTER_SUNSET if after_sunset else OUTDOOR_BLOCKED]
-        return WeatherBrief(outdoor_ok=False, labels=labels, notices=tuple(dict.fromkeys(notices)))
+        return WeatherBrief(
+            outdoor_ok=False,
+            labels=labels,
+            notices=tuple(dict.fromkeys(notices)),
+            unread=unread,
+        )
 
-    return WeatherBrief(outdoor_ok=True, labels=labels, notices=tuple(dict.fromkeys(notices)))
+    return WeatherBrief(
+        outdoor_ok=True, labels=labels, notices=tuple(dict.fromkeys(notices)), unread=unread
+    )
 
 
 # ── 파서 ────────────────────────────────────────────────────────────────────

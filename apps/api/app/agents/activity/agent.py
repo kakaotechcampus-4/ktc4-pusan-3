@@ -36,7 +36,6 @@ from app.agents.activity.tools.outing import check_weather, days_of
 from app.agents.activity.weather import (
     INDOOR_ONLY,
     OUTDOOR_ONLY,
-    WEATHER_UNCHECKED,
     WeatherBrief,
 )
 from app.agents.common.llm_client import LLMClient
@@ -127,7 +126,7 @@ async def run(
     return DomainAgentResult(
         agent=AGENT,
         task_type=task_type.value,
-        status="degraded" if attempted and WEATHER_UNCHECKED in weather.notices else "completed",
+        status="degraded" if attempted and weather.unread else "completed",
         suggestions=drafts,
         readouts=(
             *(_caution(text) for text in context.state.cautions),
