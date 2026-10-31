@@ -44,6 +44,7 @@
 | `suggestions` | 개인화. 보이는 아이 기록 근거가 0행이면 뺀다(지운 기록은 근거로 다시 보여 주지 않는다) |
 | `general` | 일반 추천. 근거는 문서 행이고 출처 기관 · 출처 제목을 싣는다. 문서 근거 0행인 일반 추천은 Agent 와 저장이 둘 다 거절한다 |
 | `scarcity` | 일반 추천이 있을 때만. `count` 는 그 도메인의 남아 있는 관찰 수, `question` 은 Agent 가 되물을 때만(답하는 길은 #246) |
+| `suggestions[].warnings` · `general[].warnings` | 그 추천의 위험 경고 문구(위험 용어 사전의 축 문구 — 작은 부품 · 물놀이 등). Agent 가 코드로 싣고 서버는 저장한 그대로 낸다. 근거가 아니어서 `evidence` 에 없다. 없으면 `[]` (#402) |
 | `groups[].cautions` | 식품 아닌 알레르기 확인 문구. `health_safety` 에서 코드로 다시 만든다(Activity 와 같은 함수) — 재생해도 같다. 동의가 없으면 `[]` |
 | `general[].record_count` | 그 Agent 도메인에 남아 있는 관찰 수. 04 `agent_result.record_count` 와 같은 표(`agent_ports.RECORD_KINDS`) |
 | `groups[].notice.code = "daily_limit"` | 하루 한도라 그 Agent 는 돌리지 않았다. 같은 응답에 보여 줄 다른 결과가 없으면 지금처럼 429 |
@@ -64,7 +65,6 @@ Agent 를 실제로 새로 돌릴 때만 `/inputs` 와 같은 하루 한도에�
   그 run 에 겹칠 draft 가 없다. Food 의 이력 포트는 DB 어댑터가 붙을 때 같이 연결한다.
 - `looked_at` · `groups[].prompt` 문구 — Agent 가 무엇을 봤는지 아직 내지 않는다.
 - 날씨 안내 — 04 대화(agent_result)로만 나간다. 알레르기 확인 문구는 `cautions` 로 05 에도 나간다.
-- 추천별 위험 경고 — #402.
 
 ## 6. 알아 둘 것
 

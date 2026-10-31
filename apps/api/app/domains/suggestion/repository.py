@@ -45,6 +45,7 @@ async def create_suggestion(
     items: Sequence[str] = (),
     run_id: str | None = None,
     place_notice: str | None = None,
+    warnings: Sequence[str] = (),
 ) -> Suggestion:
     """Agent 결과 저장. 일반/개인화 판정과 근거 필수 여부는 호출 계층에서 검증한다.
 
@@ -52,6 +53,7 @@ async def create_suggestion(
     그대로 받는다. `citations` 는 `source_kind` · `source_id` · `note` 세 칸이다.
     `run_id` 는 그 추천을 만든 입력 run 이다. run 밖에서 만들면 None.
     `place_notice` 는 장소가 붙은 추천의 확인 문구다(코드 문구). 장소가 없으면 None.
+    `warnings` 는 그 추천의 위험 경고 문구다(코드 문구). 경고가 없으면 비어 있다.
     """
     row = Suggestion(
         child_id=child_id,
@@ -65,6 +67,7 @@ async def create_suggestion(
         status=SuggestionStatus.DRAFT,
         run_id=run_id,
         place_notice=place_notice,
+        warnings=list(warnings),
     )
     session.add(row)
     await session.flush()
@@ -278,6 +281,8 @@ async def save_agent_suggestions(
             run_id=run_id,
             # 장소가 없는 추천 · 이 칸 전에 만든 payload 에는 키가 없다
             place_notice=item.get("place_notice"),
+            # 경고가 없는 추천은 빈 목록이다. 이 칸 전에 만든 payload 에는 키가 없다
+            warnings=item.get("warnings", ()),
         )
         ids.append(row.id)
     return ids
