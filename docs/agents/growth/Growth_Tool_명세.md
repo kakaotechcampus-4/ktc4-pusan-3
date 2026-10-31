@@ -57,7 +57,7 @@
 
 | Tool | 입력 | 출력 | 규칙 |
 | --- | --- | --- | --- |
-| `search_education_memory` | `query?`, `period` | `observation_education` + engagement | – |
+| `search_education_memory` | `query?`, `period` | `observation_education` + engagement | 낱말은 같은 영역의 낱말(`rules/growth_topic.py`)까지 넓혀 맞춘다 — "국어" 로 "글 읽기" 기록 |
 | `search_routine_memory` | `category?`, `period` | `observation_routine` (context · assistance · completion · **trigger**) | – |
 | `search_activity_memory` | `query?`, `period` | `observation_activity` (참고) | 결과 ref에 `kind="observation_activity"` 표시 → 화면 문구 분기 |
 | `search_affinity` | `domains ⊂ {education, activity}` | `rank_evidence` 정렬 결과 | `routine` 은 affinity 가 없다(09-23) — 루틴 관찰은 티어 3 로만 인용한다 |
@@ -149,7 +149,7 @@
 | `compute_growth_delta` | `child_growth_log[]`(**전부**), `asks_judgement: bool` → `Readout(code, kind="growth_delta")` | 측정 로그 전체를 시간순으로 읽어 **실제 수치 그대로** 서술. 최소 간격 없음 · 연령 축 없음. 측정일 전부 표기. 판정어 없음. 키 · 몸무게는 **지표별로** 판정 · 차분한다. 값은 `Decimal` 로 읽고 뺀다. **신체 성장의 유일한 계산** — 판정 요청("잘 크고 있어?")이면 `delta.checkup_hint`를 덧붙인다 |
 | `rank_evidence` | [`Tool_공통.md`](../shared/Tool_공통.md) §4 | domains 복수 |
 | `check_routine_category` | `category`, `stage` → allow \| readout key | 예절 ≥24개월 · 습관 ≥36개월 |
-| `search_growth_doc` | run 시작 시 자동. 월령·`row_type`·`routine_category`·`trigger_tags` 필터 → 의미 검색 top-3 → 프롬프트 `[예시]` 구획 | 쿼리는 **코드가 조립**한다(라벨·단계·관심사 `merge_key`·루틴 카테고리). 보호자 발화를 넣지 않는다. 결과는 근거가 아니라 참고라 `source_kind='growth_doc'`으로 담는다 |
+| `search_growth_doc` | run 시작 시 자동. 월령·`row_type`·`routine_category`·`trigger_tags`·주제 영역(`areas`) 필터 → 의미 검색 top-3 → 프롬프트 `[예시]` 구획 | 쿼리는 **코드가 조립**한다(라벨·단계·관심사 `merge_key`·루틴 카테고리·주제 영역 키). 보호자 발화를 넣지 않는다 — 주제는 코드가 사전으로 읽은 영역 키로만 온다. 결과는 근거가 아니라 참고라 `source_kind='growth_doc'`으로 담는다 |
 | `pick_next_step` | `subject` + 관찰의 `assistance_level` → `growth_doc` 행 | `next_step_of` 사슬에서 **현재 칸의 바로 다음 행**을 코드가 고른다. 모델은 그 행을 집 상황에 맞춰 문장으로 쓸 뿐 단계를 고르지 않는다 — 건너뛰면 아이가 아직 못 하는 걸 시키게 된다. **최근 14일 안 관찰의 `assistance_level` 만** 읽고, 없거나 비어 있으면 `ask.routine_current` (§2 "루틴 근거") |
 
 `growth_delta` 템플릿 — 요약 + 측정 전부를 시간순으로. 요약은 방향을 동사로 말하고 숫자는 크기만 적는다(G-9). 직전 대비 줄은 부호 그대로, 해석 문구 없음.

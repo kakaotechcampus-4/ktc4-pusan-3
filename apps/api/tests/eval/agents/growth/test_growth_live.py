@@ -155,6 +155,7 @@ class Case:
     expect: str
     judge: "Judge"
     records: tuple[str, ...] = ()  # 같은 입력의 기록 조각(혼합형)
+    recorded: tuple[str, ...] = ()  # 같은 run 에서 Memory 가 저장한 루틴 관찰의 행동 이름(혼합형)
     golden: bool = False
     model: bool = True
 
@@ -608,6 +609,49 @@ def j_allergy(*, consent: bool) -> Judge:
     return judge
 
 
+def _searched_keywords(ran: Ran) -> list[list[str]]:
+    """모델이 `search_education_memory` 에 넣은 keywords. 호출마다 하나씩 — 대화 기록에서 읽는다."""
+    found: list[list[str]] = []
+    for message in ran.llm.snapshots[-1] if ran.llm.snapshots else []:
+        for tool_call in message.get("tool_calls") or []:
+            function = tool_call["function"]
+            if function["name"] == "search_education_memory":
+                found.append(json.loads(function["arguments"] or "{}").get("keywords", []))
+    return found
+
+
+def j_topic(area: str, word: str) -> Judge:
+    """쪼개진 요청의 주제 — [예시]가 그 영역 행이고, 기억 조회에 주제 낱말이 들어갔다."""
+
+    def judge(ran: Ran) -> Verdict:
+        verdict = j_learning()(ran)
+        for row in ran.world.context.state.seen_docs.values():
+            if row.area != area:
+                verdict.failures.append(f"{word} 요청인데 {row.area} 영역 예시 {row.doc_key}")
+        searched = _searched_keywords(ran)
+        if searched and not any(searched):
+            verdict.failures.append("기억 조회를 했는데 keywords 가 모두 비었다 — 주제가 안 갔다")
+        verdict.notes.append(f"기억 조회 keywords {searched}")
+        return verdict
+
+    return judge
+
+
+def j_not_behavior(name: str) -> Judge:
+    """쪼개진 루틴 요청 — 요청하지 않은 행동(`name`)의 단계는 안 나간다. 되묻거나 닫아도 된다."""
+
+    def judge(ran: Ran) -> Verdict:
+        verdict = common(ran)
+        steps = _step_rows(ran)
+        for draft in ran.result.suggestions:
+            row = steps.get(step_of(draft))
+            if row is not None and _related(_chain_name(row), name):
+                verdict.failures.append(f"요청하지 않은 {name} 의 단계 {row.doc_key} 가 나갔다")
+        return verdict
+
+    return judge
+
+
 def j_t06(ran: Ran) -> Verdict:
     verdict = j_learning()(ran)
     verdict.gaps.append("notice — lookup_notice 정의가 없어 공지와 잇지 못한다(notice 표 뒤)")
@@ -644,11 +688,14 @@ def case(
     expect: str,
     text: str | None = None,
     records: tuple[str, ...] = (),
+    recorded: tuple[str, ...] = (),
     golden: bool = False,
     model: bool = True,
 ) -> Case:
     key, world = case_id.split("/", 1)
-    return Case(case_id, text or INPUTS[key], task, world, expect, judge, records, golden, model)
+    return Case(
+        case_id, text or INPUTS[key], task, world, expect, judge, records, recorded, golden, model
+    )
 
 
 CASES: tuple[Case, ...] = (
@@ -764,6 +811,17 @@ CASES: tuple[Case, ...] = (
          expect="혼합형 — 기록 조각이 약 → 요청 조각만 와도 닫힘 · 모델 0"),
     case("T42/C48", ROUTINE, j_closed(CLOSED_SYMPTOM_HABIT), model=False,
          expect="closed.symptom_habit · 진단명 없음 · 모델 0"),
+    # ── 쪼개진 요청의 주제 전달 (#646) ──
+    case("TA1/C48", LEARNING, j_topic("communication", "국어"),
+         text="어떻게 도와줘야 좋을까?", records=("아이가 국어 공부를 어려워하는데",),
+         expect="혼합형 — 기록 조각의 국어가 모델 · [예시] · 기억 조회까지 간다"),
+    case("TA2/C48", LEARNING, j_topic("nature", "수학"),
+         text="어떻게 도와줄까?", records=("수학 공부를 어려워하는데",),
+         expect="혼합형 — 기록 조각의 수학이 모델 · [예시] · 기억 조회까지 간다"),
+    case("TA3/C48", ROUTINE, j_not_behavior("손 씻기"),
+         text="어떻게 하면 좋을까?", records=("아이가 밥 먹을 때 너무 힘들어해",),
+         recorded=("밥 먹기",),
+         expect="혼합형 — 요청 조각만 보고 기록 있는 손 씻기 단계를 내지 않는다"),
     # ── 성장 추이 ──
     case("T24/C48", REVIEW, j_review(), model=False, expect="6개월 간격 2건 · 측정일 전부"),
     case("T24/C48-1m", REVIEW, j_review(need_more=True), model=False,
@@ -914,6 +972,7 @@ async def test_growth(
             task_type=case.task,
             request_texts=(case.text,),
             record_texts=case.records,
+            recorded_subjects=case.recorded,
         )
         caplog.clear()
         started = time.perf_counter()
