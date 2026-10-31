@@ -2,9 +2,9 @@
 
 Growth 와 같은 눈금 방식이다 — tool 마다 열리는 월령이 다르고 배타적인 tool 이 없다.
 **월령 · 위치 · 날씨로 닫히는 조합은 없다.** 어느 월령에서도 놀이 추천은 나간다. 월령이 바꾸는
-것은 근거를 어디서 모으느냐뿐이다. 장소 조회는 월령이 아니라 위치로 여닫는다
-(docs/agents/shared/연령별_Tool_전략.md §5-1). 알레르기 조회 실패로 전부 닫히는 것은 registry 의
-`closed_readout_key` 가 따로 본다 (D7).
+것은 근거를 어디서 모으느냐뿐이다. 장소 조회는 월령이 아니라 장소 어댑터로 여닫는다
+(docs/agents/shared/연령별_Tool_전략.md §5-1). 위치가 없으면 보호자가 말한 지역으로 찾는다.
+알레르기 조회 실패로 전부 닫히는 것은 registry 의 `closed_readout_key` 가 따로 본다 (D7).
 
 registry 와 tool 이 같이 읽는 값이라 따로 둔다 — registry 는 tool 을 import 하므로
 여기 값을 registry 에 두면 tool 쪽에서 되돌아 import 할 수 없다.
@@ -32,7 +32,8 @@ MIN_MONTH: dict[str, int] = {
 # Curator 도 같은 값으로 그 아래 아이의 프로필을 만들지 않는다 — 여기는 방어선이다 (age_gates.yaml).
 AFFINITY_MIN_MONTH = age_gates().affinity_min_month
 
-# 위치가 여닫는 tool. 날씨가 나쁘면 닫지 않고 실내 종류로 좁힌다 — 좁히는 것은 tool 이 한다
+# 장소 어댑터가 여닫는 tool. 날씨가 나쁘면 닫지 않고 실내 종류로 좁힌다 — 좁히는 것은 tool 이 한다.
+# 위치가 없어도 연다 — 보호자가 말한 지역으로 찾는다(`areas.py`)
 PLACES_TOOL = "search_nearby_places"
 # 위치와 날씨 어댑터가 둘 다 있어야 여는 tool. 없으면 부를 때마다 실패만 돌려준다
 WEATHER_TOOL = "lookup_weather"
@@ -51,8 +52,9 @@ def opens(name: str, gate: Gate) -> bool:
 
 
 def finds_places(gate: Gate) -> bool:
-    """근처 장소를 찾을 수 있는가 — 좌표와 장소 어댑터가 둘 다 있어야 한다."""
-    return gate.has_location and gate.data.places
+    """장소를 찾을 수 있는가 — 장소 어댑터가 있어야 한다. 좌표가 없으면 보호자가 말한 지역으로만
+    찾는다 — 지역도 없으면 tool 이 INVALID_ARGS 로 돌려보낸다."""
+    return gate.data.places
 
 
 def checks_weather(gate: Gate) -> bool:

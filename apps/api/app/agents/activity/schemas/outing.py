@@ -2,6 +2,7 @@
 
 날짜는 DayLabel 라벨로만 받는다. 모델이 날짜를 계산하지 않는다.
 위치는 인자에 없다 — 좌표는 요청 바디로만 받아 격자로 뭉갠 뒤 context 가 들고 있다 (4-3).
+보호자가 지역을 말했으면 그 이름만 글자로 받고, 대표 지점은 코드가 정한다(`areas.py`).
 반경도 인자에 없다 — 코드 상수다.
 """
 
@@ -37,6 +38,17 @@ class SearchNearbyPlacesArgs(ToolArgs):
             description=(
                 "park / playground / library / indoor_playground 중 하나. "
                 "experience_center 는 아직 데이터가 없다"
+            ),
+        ),
+    ]
+    area: Annotated[
+        str | None,
+        Field(
+            default=None,
+            max_length=30,
+            description=(
+                "보호자가 말한 지역 이름을 쓴 글자 그대로(예: 해운대, 부산 중구, 기장군). "
+                "지역을 말하지 않았으면 비운다 — 보호자 위치 근처에서 찾는다"
             ),
         ),
     ]

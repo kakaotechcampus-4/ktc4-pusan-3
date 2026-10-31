@@ -9,6 +9,7 @@ from collections.abc import Awaitable, Sequence
 from datetime import date, datetime, time, timedelta
 from typing import Any, TypeVar
 
+from app.agents.activity.areas import find_area, said
 from app.agents.activity.context import ActivityContext
 from app.agents.activity.result import ErrorCode, ToolResult, fail, ok
 from app.agents.activity.schemas.common import DayLabel, PlaceCategory
@@ -20,6 +21,7 @@ from app.agents.activity.schemas.outing import (
 from app.agents.activity.store.ports import (
     PLACE_MAX_RADIUS_M,
     PLACE_TOP_K,
+    CoarseLocation,
     ScheduleBlock,
     UpstreamUnavailable,
 )
@@ -109,6 +111,7 @@ async def check_weather(context: ActivityContext, day: date) -> WeatherBrief:
       조회만 None 으로 `judge_weather` 에 넘기고, 판정 규칙이 실내만 · 고지를 정한다 (D8).
     - 위치나 날씨 포트가 없으면 조회하지 않는다. 실패가 아니라 "묻지 않은 날"이라 바깥 놀이를
       막지 않고 확인을 보호자에게 맡긴다(`not_asked`). 조회했는데 실패한 날은 실내만이다 (D8).
+    - 위치는 외출 기준점(`context.outing_location`)이다 — 보호자가 지역을 말했으면 그 지역 날씨다.
     - 🚨 대기질은 오늘만 본다. 에어코리아는 지금 측정값만 주고 예보가 아니다 — 내일 추천에 오늘
       미세먼지를 쓰지 않고 "확인 못 함"으로 둔다. 특보는 지금 발효 중인 것을 그날에도 본다
       (더 막는 쪽).
@@ -116,8 +119,7 @@ async def check_weather(context: ActivityContext, day: date) -> WeatherBrief:
     """
     weather = context.ports.weather
     grid = context.grid
-    location = context.location
-    if weather is None or grid is None or location is None:
+    if weather is None or grid is None:
         return not_asked(after_sunset=day == context.today and _after_sunset(context, day))
 
     today = day == context.today
@@ -204,14 +206,17 @@ async def lookup_schedule(context: ActivityContext, args: LookupScheduleArgs) ->
 async def search_nearby_places(
     context: ActivityContext, args: SearchNearbyPlacesArgs
 ) -> ToolResult:
-    """근처 장소를 종류로 찾는다. 위치가 있을 때만 열린다 — 월령으로는 닫지 않는다.
+    """근처 장소를 종류로 찾는다. 장소 어댑터가 있으면 열린다 — 월령으로는 닫지 않는다.
 
-    - `context.location` · args.category · 반경만 포트에 넘긴다. 포트는 적재한 place
-      테이블에서 거리를 계산한다 — 외부 API 를 부르지 않는다 (D9).
-      🚨 검색 조건은 닫힌 enum 하나다. 모델이 만든 문자열로 찾지 않는다.
+    - 기준점은 보호자 위치다. 보호자가 지역을 말했으면(args.area) 그 지역 대표 지점이다
+      (`_origin`). 둘 다 없으면 INVALID_ARGS — 기본 좌표로 대신하지 않는다 (4-3).
+    - 기준점 · args.category · 반경만 포트에 넘긴다. 포트는 적재한 place 테이블에서 거리를
+      계산한다 — 외부 API 를 부르지 않는다 (D9).
+      🚨 검색 조건은 닫힌 enum 하나와 기준점이다. 모델이 만든 문자열로 찾지 않는다 — 지역 이름은
+      코드가 대표 지점으로 바꾸고, 보호자가 쓴 글자 안에 없으면 받지 않는다.
     - 바깥 활동이 어려운 날은 실내 종류만 찾는다. 바깥 종류를 고르면 INVALID_ARGS 이고
       모델이 실내 종류로 고쳐 다시 부른다. 그날은 args.day 다 — 오늘 비가 와도 주말 공원은
-      찾을 수 있다 (#377).
+      찾을 수 있다 (#377). 지역을 찾았으면 그 지역 날씨로 본다.
     - 가까운 순 `PLACE_TOP_K` 곳의 이름 · 종류만 싣는다. 🚨 거리는 모델에 주지 않는다 —
       이름 여러 곳과 거리를 같이 주면 위치를 거꾸로 짐작할 수 있고, 약관(draft-1 제8조 ③)이
       인공지능에 전달된다고 적은 것은 장소 이름뿐이다. 정렬은 여기서 끝낸다.
@@ -220,10 +225,12 @@ async def search_nearby_places(
     - 실패하면 UPSTREAM_ERROR. 모델은 장소가 필요 없는 활동만 낸다.
     - 장소 행은 근거(suggestion_evidence)에 넣지 않는다. 날씨처럼 필터 조건이다.
     """
-    gate = context.state.gate
-    location = context.location
-    if gate is None or location is None:
-        raise RuntimeError("Gate · 위치 없이 장소 조회가 불렸다 — registry 가 열지 않았어야 한다")
+    if context.state.gate is None:
+        raise RuntimeError("Gate 없이 장소 조회가 불렸다 — run() 이 먼저 만든다")
+
+    origin = _origin(context, args.area)
+    if isinstance(origin, ToolResult):
+        return origin
 
     # ToolArgs 는 use_enum_values 라 args.category 가 글자("park")로 온다. 포트에는 enum 으로 넘긴다
     category = PlaceCategory(args.category)
@@ -238,7 +245,7 @@ async def search_nearby_places(
 
     try:
         rows = await context.ports.places.nearby(
-            location=location, category=category, radius_m=PLACE_MAX_RADIUS_M
+            location=origin, category=category, radius_m=PLACE_MAX_RADIUS_M
         )
     except UpstreamUnavailable:
         return fail(
@@ -252,11 +259,66 @@ async def search_nearby_places(
     for row in nearest:
         # 이름이 같은 곳(체인 키즈카페 등)은 먼저 본 가까운 곳을 남긴다
         context.state.seen_places.setdefault(row.name, row)
+        if args.area:
+            context.state.area_places.add(row.name)
     return ok(
         "query",
         _PLACES,
         places=[{"name": row.name, "category": row.category.value} for row in nearest],
     )
+
+
+def _origin(context: ActivityContext, area_text: str | None) -> CoarseLocation | ToolResult:
+    """장소를 찾을 기준점. 실패면 모델에게 돌려줄 결과다.
+
+    - 지역을 말하지 않았으면 보호자 위치다. 위치도 없으면 INVALID_ARGS.
+    - 🚨 지역 이름은 보호자가 쓴 글자 안에 있어야 한다(`said`). 모델이 위치를 짐작해 지어낸
+      지역으로 찾지 않는다.
+    - 못 찾으면(모르는 이름 · 여러 곳인데 위치가 없음 · 시도만) 장소 없이 간다. 결과에 한 줄
+      안내가 붙는다(`state.area_missed`). 비슷한 곳으로 짐작하지 않는다.
+    - 찾으면 run 의 지역이 된다 — 날씨도 그 지역으로 다시 본다(`state.weather` 를 비운다).
+      한 run 에 한 지역이다. 날씨 판정이 지역마다 갈리면 어느 추천에 어느 날씨를 댈지 정할 수
+      없어서다.
+    """
+    if not area_text or not area_text.strip():
+        if context.location is None:
+            return fail(
+                "query",
+                _PLACES,
+                ErrorCode.INVALID_ARGS,
+                "위치를 모른다. 보호자가 지역을 말했을 때만 area 에 그 이름을 넣어 찾는다. "
+                "말하지 않았으면 장소가 필요 없는 놀이만 낸다.",
+            )
+        return context.location
+    if not said(area_text, context.state.request_texts):
+        return fail(
+            "query",
+            _PLACES,
+            ErrorCode.INVALID_ARGS,
+            "area 에는 보호자가 쓴 지역 이름을 글자 그대로 넣는다. 지역을 말하지 않았으면 비운다.",
+        )
+    area = find_area(area_text, near=context.location)
+    state = context.state
+    if area is None:
+        state.area_missed = state.area is None
+        return fail(
+            "query",
+            _PLACES,
+            ErrorCode.NOT_FOUND,
+            "그 지역을 찾지 못했다. 장소가 필요 없는 놀이만 낸다. 다른 이름으로 다시 찾지 않는다.",
+        )
+    if state.area is not None and state.area != area:
+        return fail(
+            "query",
+            _PLACES,
+            ErrorCode.INVALID_ARGS,
+            "한 번에 한 지역만 찾는다. 처음 찾은 지역 이름으로 찾는다.",
+        )
+    if state.area is None:
+        state.area = area
+        state.area_missed = False
+        state.weather.clear()  # 보호자 위치의 판정이다. 그 지역으로 다시 본다
+    return area.location
 
 
 async def _or_none(call: Awaitable[_T]) -> _T | None:
@@ -342,12 +404,12 @@ def _span(begins: datetime, ends: datetime) -> dict[str, str]:
 
 
 def _after_sunset(context: ActivityContext, day: date) -> bool:
-    """지금이 그날 일몰 뒤인가. 위치 · 시각대는 context 에서 읽는다.
+    """지금이 그날 일몰 뒤인가. 위치(`outing_location`) · 시각대는 context 에서 읽는다.
 
     위치가 없으면 국토 가운데 기준점으로 계산한다 — 보호자 위치가 아니라 고정값이고, 국내 일몰은
     동서 끝이 30분 남짓 차이라 "해가 졌는데 공원" 을 막기에는 충분하다.
     """
-    location = context.location
+    location = context.outing_location
     local = context.now.astimezone(context.timezone)
     offset = local.utcoffset()
     if offset is None:

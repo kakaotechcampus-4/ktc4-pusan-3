@@ -124,6 +124,7 @@ def review(
     safety=(),
     outdoor=None,
     docs=DOCS,
+    area_places=(),
 ):
     return review_candidates(
         candidates,
@@ -134,6 +135,7 @@ def review(
         safety=safety_terms(safety),
         outdoor=outdoor,
         docs=docs,
+        area_places=area_places,
         today=TODAY,
     )
 
@@ -363,6 +365,20 @@ class TestPlace:
         result = review(candidate(place_name="해운대 키즈파크"), places=places)
         assert reason_of(result) is RejectReason.UNKNOWN_PLACE
         assert "해운대" not in explain(result.rejections)  # 장소 이름은 로그로 흘러가지 않는다
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            {"reason": "근처 공원에서 모래를 만져요 오늘 오후가 비어 있어요"},
+            {"content": "근처 공원에서 모래성 쌓기"},
+        ],
+    )
+    def test_말한_지역에서_찾은_장소에는_근처를_쓰지_않는다(self, text):
+        """보호자는 그 지역에 있지 않다. 대표 지점에서 찾아서 "그 구 안" 도 단정하지 않는다."""
+        near = candidate(**{"content": "모래성 쌓기", "place_name": PARK, **text})
+        assert reason_of(review(near, area_places={PARK})) is RejectReason.NEARBY_WORDING
+        # 보호자 위치에서 찾은 곳이면 맞는 말이다
+        assert reason_of(review(near)) is None
 
     def test_띄어쓰기만_다르면_같은_곳이고_조회_결과의_이름을_붙인다(self):
         (draft,) = review(candidate(content="모래성 쌓기", place_name="사직 어린이공원")).drafts
