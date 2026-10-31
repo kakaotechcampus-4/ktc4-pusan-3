@@ -32,6 +32,11 @@ class DateNeedsAsking(DateParseError):
     모델이 다른 표현으로 고쳐 부르면 날짜를 지어내게 되니, 메시지대로 보호자에게 묻는다."""
 
 
+class DateNeedsAnchor(DateNeedsAsking):
+    """무엇에서 센 날인지가 있어야 풀린다("전날", 관찰의 "3일 뒤").
+    기준을 어디에 넣는지는 tool 마다 달라서, 다시 부르는 안내는 tool 쪽이 붙인다."""
+
+
 class MissingStartTime(DateParseError):
     """일정의 시작 시각을 모르면 자정으로 때우지 않고 몇 시인지 되묻게 한다."""
 
@@ -194,13 +199,14 @@ def resolve_date(
     *,
     today: date,
     direction: TemporalDirection = "nearest",
-    anchor: date | None = None,
+    anchor: DateRange | None = None,
 ) -> date:
     """하루를 가리키는 날짜 표현 또는 ISO 문자열을 확정 날짜로 바꾼다.
     명시적 연도는 그대로 사용하고, 연도 생략 월일·요일만 direction을 적용한다.
 
-    `anchor` 는 기준 일정의 날짜다("소풍 이틀 전에 열났어" 의 소풍). 있으면 표현을 그날에서 센
-    거리로만 읽는다. 없으면 기준은 말한 날(오늘)이다 — "이틀 전에 밥 먹었어"."""
+    `anchor` 는 기준의 기간이다("소풍 이틀 전에 열났어" 의 소풍, 여러 날이면 [첫날, 끝 다음 날)).
+    있으면 표현을 거기서 센 거리로만 읽는다.
+    없으면 기준은 말한 날(오늘)이다 — "이틀 전에 밥 먹었어"."""
     if not isinstance(value, str) or not value.strip():
         raise DateParseError("날짜 표현이 비어 있다.")
 
@@ -210,14 +216,7 @@ def resolve_date(
     key = text.replace(" ", "")
 
     if anchor is not None:
-        offset = _relative_offset(text)
-        if offset is None:
-            raise DateParseError(
-                f"기준 일정이 있으면 날짜에는 그 일정에서 며칠 떨어졌는지만 넣는다. {text!r} 대신 "
-                "'전날'·'이틀 전'·'3일 뒤' 처럼 넣는다. "
-                "기준 일정이 아니면 일정 이름을 빼고 다시 부른다."
-            )
-        return anchor + timedelta(days=offset)
+        return _from_anchor(text, anchor)
 
     iso = _try_iso_date(text)
     if iso is not None:
@@ -225,24 +224,16 @@ def resolve_date(
         return iso
 
     if key in _ANCHOR_WORDS:
-        raise DateNeedsAsking(
-            f"'{text}' 는 어느 일정의 {text}인지 있어야 풀리는 날짜다. 관찰 기록이고 발화에 "
-            "일정 이름이 있으면 anchor_event 에 넣어 다시 부르고, "
-            "아니면 언제인지 보호자에게 묻는다."
-        )
+        raise DateNeedsAnchor(f"'{text}' 는 무엇의 {text}인지 있어야 풀리는 날짜다.")
     if key in _DAY_OFFSETS:
         return today + timedelta(days=_DAY_OFFSETS[key])
 
     span = _span_offset(key)
     if span is not None:
-        if span > 0 and direction != "future":
-            # 오늘 기준 "3일 뒤" 는 앞으로의 일정에서만 뜻이 선다. 이미 일어난 관찰에서는
-            # "걸리고 3일 뒤에 나았어" 처럼 다른 사건이 기준이라, 미래 날짜로 저장하지 않는다
-            raise DateNeedsAsking(
-                f"'{text}' 는 무엇의 {text}인지 정해지지 않았다. 관찰 기록이고 일정이 기준이면 "
-                "anchor_event 에 그 일정 이름을 넣어 다시 부르고, "
-                "아니면 언제인지 보호자에게 묻는다."
-            )
+        if span > 0 and direction == "past":
+            # 지난 일을 말하면서 "3일 뒤" 라고 하면 오늘이 아니라 다른 사건이 기준이다
+            # ("걸리고 3일 뒤에 나았어"). 오늘 기준으로 풀면 미래 날짜가 된다
+            raise DateNeedsAnchor(f"'{text}' 는 무엇의 {text}인지 정해지지 않았다.")
         # "전" 이 방향을 말하므로 과거 쪽은 direction 을 보지 않는다
         return today + timedelta(days=span)
 
@@ -256,7 +247,7 @@ def resolve_date(
     if resolved is not None:
         return resolved
 
-    vague = _try_period(key, today)
+    vague = _try_period(key, today, direction)
     if vague is not None:
         last = vague.end - timedelta(days=1)
         raise DateNeedsAsking(
@@ -273,6 +264,28 @@ def resolve_date(
     raise DateParseError(f"해석할 수 없는 날짜 표현: {text!r}")
 
 
+def _from_anchor(text: str, anchor: DateRange) -> date:
+    """기준에서 센 날. 앞쪽("전날" · "이틀 전")은 첫날에서, 뒤쪽("다음날" · "사흘 뒤")은 마지막
+    날에서 센다 — 10/1~10/3 수련회의 "다음날" 은 10/2 가 아니라 10/4 다."""
+    offset = _relative_offset(text)
+    if offset is None:
+        raise DateParseError(
+            f"기준이 있으면 날짜에는 기준에서 며칠 떨어졌는지만 넣는다. {text!r} 대신 "
+            "'전날'·'이틀 전'·'3일 뒤' 처럼 넣는다. 기준이 아니면 기준을 빼고 다시 부른다."
+        )
+    last = anchor.end - timedelta(days=1)
+    if offset < 0:
+        return anchor.start + timedelta(days=offset)
+    if offset > 0:
+        return last + timedelta(days=offset)
+    if anchor.start != last:
+        raise DateNeedsAsking(
+            f"기준이 {anchor.start.isoformat()}~{last.isoformat()} 여러 날이라 '{text}' 가 "
+            "어느 날인지 정해지지 않는다. 며칠이었는지 보호자에게 묻는다."
+        )
+    return anchor.start
+
+
 def _relative_offset(value: str) -> int | None:
     """기준일에서 며칠 떨어졌는지. "전날" -1, "당일" 0, "이틀 전" -2, "3일 뒤" +3.
     거리를 말하는 표현이 아니면 None — 기준일은 호출하는 쪽이 정한다."""
@@ -283,10 +296,15 @@ def _relative_offset(value: str) -> int | None:
 
 
 def resolve_date_range(
-    value: str, *, today: date, direction: TemporalDirection = "nearest"
+    value: str,
+    *,
+    today: date,
+    direction: TemporalDirection = "nearest",
+    anchor: DateRange | None = None,
 ) -> DateRange:
     """조회용 날짜 표현을 [start, end) 범위로 바꾼다.
-    연도·연월·상대연도는 기간으로, 하루 표현은 1일 범위로 만든다."""
+    연도·연월·상대연도·주·주말·달은 기간으로, 하루 표현은 1일 범위로 만든다.
+    `anchor` 는 resolve_date 와 같다 — 있으면 하루 표현만 받는다."""
     if not isinstance(value, str) or not value.strip():
         raise DateParseError("조회 날짜 표현이 비어 있다.")
     text = _normalize(value)
@@ -310,12 +328,23 @@ def resolve_date_range(
         end = date(year + 1, 1, 1) if month == 12 else date(year, month + 1, 1)
         return DateRange(start=start, end=end)
 
-    day = resolve_date(text, today=today, direction=direction)
+    if anchor is None:
+        # 조회는 기간이면 된다. "지난주에 뭐 먹었지?" 를 무슨 요일이었는지 되묻지 않는다
+        period = _try_period(_RANGE_TAIL_RE.sub("", key) or key, today, direction)
+        if period is not None:
+            return period
+
+    day = resolve_date(text, today=today, direction=direction, anchor=anchor)
     return DateRange(start=day, end=day + timedelta(days=1))
 
 
 def resolve_query_bound(
-    value: str | None, *, today: date, direction: TemporalDirection, is_end: bool
+    value: str | None,
+    *,
+    today: date,
+    direction: TemporalDirection,
+    is_end: bool,
+    anchor: DateRange | None = None,
 ) -> date | None:
     """조회 경계를 확정한다. 표현이 없으면 경계도 없다(None).
 
@@ -327,7 +356,7 @@ def resolve_query_bound(
     """
     if value is None:
         return None
-    span = resolve_date_range(value, today=today, direction=direction)
+    span = resolve_date_range(value, today=today, direction=direction, anchor=anchor)
     return span.end - timedelta(days=1) if is_end else span.start
 
 
@@ -579,7 +608,7 @@ def _count_days(amount: str) -> int | None:
     return None
 
 
-def _try_period(key: str, today: date) -> DateRange | None:
+def _try_period(key: str, today: date, direction: TemporalDirection) -> DateRange | None:
     """하루보다 넓은 기간 — 주 · 주말 · 달. 주는 월요일에 시작한다."""
     monday = today - timedelta(days=today.weekday())
     if key in _WEEK_OFFSET:
@@ -588,8 +617,14 @@ def _try_period(key: str, today: date) -> DateRange | None:
     matched = _WEEKEND_RE.match(key)
     if matched is not None:
         week = matched.group("week")
-        # "주말" 만 말하면 이번 주말. 일요일에 말했으면 오늘이 든 그 주말이다
-        weeks = _WEEK_OFFSET[f"{week}주"] if week else 0
+        if week:
+            weeks = _WEEK_OFFSET[f"{week}주"]
+        elif direction == "past" and today.weekday() < 5:
+            # 화요일에 "주말에 키즈카페 갔어" 는 아직 안 온 이번 주말이 아니라 지난 주말이다
+            weeks = -1
+        else:
+            # 앞으로의 일이거나 주말 당일이면 이번 주말 — 일요일에 말했으면 오늘이 든 그 주말
+            weeks = 0
         saturday = monday + timedelta(days=weeks * 7 + 5)
         return DateRange(start=saturday, end=saturday + timedelta(days=2))
     if key in _MONTH_OFFSETS:

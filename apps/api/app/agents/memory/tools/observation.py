@@ -13,12 +13,9 @@ from datetime import date
 from typing import Any, Callable
 
 from app.agents.common.datetime_rules import (
-    DateNeedsAsking,
     DateParseError,
     build_observed_range,
     combine,
-    resolve_date,
-    resolve_query_bound,
     resolve_time,
 )
 from app.agents.memory.context import AgentContext
@@ -36,13 +33,27 @@ from app.agents.memory.schemas.observation import (
     ObservationRoutineCreate,
     ObservationRoutineUpdate,
 )
-from app.agents.memory.tools.schedule import anchor_day
+from app.agents.memory.tools.dates import (
+    check_observed,
+    date_remedy,
+    require_expression,
+    resolve_bounds,
+    resolve_day,
+)
 
 # create 인자 중 store가 따로 받는 것들. fields에 중복으로 넣지 않는다
-_CREATE_HANDLED = {"raw_text", "observed_on", "anchor_event", "temporal_direction"}
+_CREATE_HANDLED = {"raw_text", "observed_on", "anchor_event", "anchor_on", "temporal_direction"}
 
-# update도 날짜를 바꿀 수 있다. 이 넷은 fields로 내려보내지 않고 따로 푼다
-_UPDATE_HANDLED = {"observation_id", "observed_on", "temporal_direction", "clear", "status"}
+# update도 날짜를 바꿀 수 있다. 이것들은 fields로 내려보내지 않고 따로 푼다
+_UPDATE_HANDLED = {
+    "observation_id",
+    "observed_on",
+    "anchor_event",
+    "anchor_on",
+    "temporal_direction",
+    "clear",
+    "status",
+}
 
 # 음식 이름이 아니라 끼니 이름
 MEAL_SLOTS = frozenset(
@@ -77,9 +88,9 @@ async def _create(
     fields = args.model_dump(exclude=_CREATE_HANDLED)
 
     try:
-        day = await _observed_day(context, args)
+        day = await _observed_day(context, args.observed_on, args)
     except DateParseError as exc:
-        return fail("create", resource, ErrorCode.DATE_UNPARSEABLE, _date_remedy(exc))
+        return fail("create", resource, ErrorCode.DATE_UNPARSEABLE, date_remedy(exc))
 
     if resolve_observed_time:
         # 표현을 그대로 저장하지 않는다. 확정 못 하면 모델이 비우고 다시 부르게 한다
@@ -102,20 +113,10 @@ async def _create(
     return ok("create", resource, id=row.id, observed_on=day.isoformat())
 
 
-async def _observed_day(context: AgentContext, args: Any) -> date:
-    """관찰 날짜. 기준 일정(anchor_event)이 있으면 그 일정 날짜에서, 없으면 오늘에서 센다."""
-    if args.anchor_event is None:
-        return resolve_date(
-            args.observed_on, today=context.today, direction=args.temporal_direction
-        )
-    anchor = await anchor_day(context, args.anchor_event)
-    day = resolve_date(args.observed_on, today=context.today, anchor=anchor)
-    if day > context.today:
-        # 관찰은 이미 일어난 일이다. 기준 일정을 잘못 짚었을 가능성이 커서 저장하지 않는다
-        raise DateNeedsAsking(
-            f"'{args.anchor_event}' 기준 {args.observed_on} 은 {day.isoformat()} 로 "
-            "아직 오지 않은 날이다. 언제였는지 보호자에게 묻는다."
-        )
+async def _observed_day(context: AgentContext, expression: str, args: Any) -> date:
+    """관찰 날짜. 날짜 규칙은 일정과 같다(tools/dates.py). 관찰은 오늘보다 뒤일 수 없다."""
+    day = await resolve_day(context, expression, args, direction=args.temporal_direction)
+    check_observed(day, context.today)
     return day
 
 
@@ -123,22 +124,9 @@ async def _query(context: AgentContext, args: ObservationQueryArgs, *, domain: s
     resource = _resource(domain)
     try:
         # direction은 호출하는 쪽이 정함
-        bounds = {
-            "date_from": resolve_query_bound(
-                args.date_from,
-                today=context.today,
-                direction=args.temporal_direction,
-                is_end=False,
-            ),
-            "date_to": resolve_query_bound(
-                args.date_to,
-                today=context.today,
-                direction=args.temporal_direction,
-                is_end=True,
-            ),
-        }
+        bounds = await resolve_bounds(context, args, direction=args.temporal_direction)
     except DateParseError as exc:
-        return fail("query", resource, ErrorCode.DATE_UNPARSEABLE, _date_remedy(exc))
+        return fail("query", resource, ErrorCode.DATE_UNPARSEABLE, date_remedy(exc))
 
     rows = await context.store.query_observations(
         domain=domain,
@@ -171,13 +159,13 @@ async def _update(
     fields = args.model_dump(exclude=_UPDATE_HANDLED)
 
     day = current.observed_on
+    try:
+        require_expression(args, args.observed_on)
+        if args.observed_on is not None:
+            day = await _observed_day(context, args.observed_on, args)
+    except DateParseError as exc:
+        return fail("update", resource, ErrorCode.DATE_UNPARSEABLE, date_remedy(exc))
     if args.observed_on is not None:
-        try:
-            day = resolve_date(
-                args.observed_on, today=context.today, direction=args.temporal_direction
-            )
-        except DateParseError as exc:
-            return fail("update", resource, ErrorCode.DATE_UNPARSEABLE, _date_remedy(exc))
         # 날짜가 바뀌면 observed_range 도 같이 바꾼다. 어긋나면 조회와 감쇠가 다른 날을 본다
         fields["observed_range"] = build_observed_range(day)
 
@@ -229,12 +217,6 @@ def _not_found(domain: str) -> str:
 
 
 # 실패 메시지에는 다음에 뭘 해야 하는지까지 저장 후 전달
-def _date_remedy(exc: DateParseError) -> str:
-    if isinstance(exc, DateNeedsAsking):
-        return str(exc)  # 다른 표현으로 고쳐 부르면 날짜를 지어낸다. 메시지대로 묻는다
-    return f"{exc} 오늘·어제·모레·금요일 같은 원문의 시간 표현이나 YYYY-MM-DD 형태로 넣는다."
-
-
 def _time_remedy(exc: DateParseError) -> str:
     return (
         f"{exc} 시각은 '오후 2시'·'저녁 7시'·'14:30' 처럼 몇 시인지 알 수 있을 때만 넣는다. "

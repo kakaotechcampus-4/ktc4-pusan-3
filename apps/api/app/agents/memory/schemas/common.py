@@ -100,14 +100,25 @@ DateExpr = Annotated[
     ),
 ]
 
+# 날짜의 기준 (#497). 날짜를 받는 tool 은 모두 이 둘을 받는다 — 규칙은 tools/dates.py
 AnchorEvent = Annotated[
     str | None,
     Field(
         default=None,
         description=(
-            "날짜가 오늘이 아니라 어떤 일정을 기준으로 한 말이면 그 일정 이름. "
+            "날짜가 오늘이 아니라 어떤 일정을 기준으로 센 말이면 그 일정 이름. "
             "'소풍 이틀 전에 열났어' → '소풍' (날짜 표현은 '이틀 전'). "
             "'이틀 전에 열났어' 처럼 오늘 기준이면 비운다"
+        ),
+    ),
+]
+AnchorOn = Annotated[
+    str | None,
+    Field(
+        default=None,
+        description=(
+            "기준 일정이 등록돼 있지 않아 보호자에게 물었고 그 날짜를 들었으면 그 날짜 표현. "
+            "'지난 금요일', '10월 3일'. 있으면 anchor_event 보다 앞선다"
         ),
     ),
 ]
@@ -198,6 +209,7 @@ class ObservationCreateArgs(ToolArgs):
     raw_text: RawText
     observed_on: DateExpr
     anchor_event: AnchorEvent
+    anchor_on: AnchorOn
     temporal_direction: Direction
     confidence_source: Annotated[
         ConfidenceSource,
@@ -253,7 +265,7 @@ class ObservationUpdateArgs(ClearableUpdateArgs):
     """
 
     _NOT_A_CHANGE: ClassVar[frozenset[str]] = frozenset(
-        {"observation_id", "status", "temporal_direction", "clear"}
+        {"observation_id", "status", "temporal_direction", "clear", "anchor_event", "anchor_on"}
     )
 
     observation_id: RecordId
@@ -261,6 +273,8 @@ class ObservationUpdateArgs(ClearableUpdateArgs):
         str | None,
         Field(default=None, description="바꿀 관찰 날짜 표현. 날짜를 안 바꾸면 비운다"),
     ]
+    anchor_event: AnchorEvent
+    anchor_on: AnchorOn
     temporal_direction: Direction
     status: Annotated[
         Literal["deleted"] | None,
@@ -310,4 +324,6 @@ class ObservationQueryArgs(ToolArgs):
     date_to: Annotated[
         str | None, Field(default=None, description="관찰 일자 끝. 표현 또는 YYYY-MM-DD")
     ]
+    anchor_event: AnchorEvent
+    anchor_on: AnchorOn
     raw_text_query: Annotated[str | None, Field(default=None, description="원문에 포함된 키워드")]
