@@ -101,7 +101,7 @@ class TestNearest:
         assert result.data["places"] == [{"name": "○○어린이공원", "category": "park"}]
 
     async def test_데이터기준일자는_모델에_주지_않는다(self):
-        """기준일은 화면의 "공공데이터 기준 YYYY-MM" 용이다. 모델이 보는 결과는 이름 · 종류다."""
+        """기준일은 확인 문구("공공데이터 기준 2026년 6월이에요")의 달이다. 모델은 이름 · 종류만."""
         ctx = await context([park("○○어린이공원", 800), library("○○도서관", 900)])
         result = await search_nearby_places(ctx, args(PlaceCategory.PARK))
         for place in result.data["places"]:
@@ -116,6 +116,12 @@ class TestNearest:
         ctx = await context(rows)
         await search_nearby_places(ctx, args(PlaceCategory.PARK))
         assert set(ctx.state.seen_places) == {f"공원{i}" for i in range(PLACE_TOP_K)}
+
+    async def test_이름이_같으면_가까운_곳이_남는다(self):
+        """체인 키즈카페처럼 이름이 같은 곳이 둘 오면 먼 쪽이 덮어쓰지 않는다 (#600 리뷰)."""
+        ctx = await context([park("같은공원", 300), park("같은공원", 900)])
+        await search_nearby_places(ctx, args(PlaceCategory.PARK))
+        assert ctx.state.seen_places["같은공원"].distance_m == 300
 
     async def test_없으면_빈_목록이다(self):
         result = await search_nearby_places(await context(), args(PlaceCategory.PARK))
