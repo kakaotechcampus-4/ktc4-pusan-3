@@ -270,6 +270,21 @@ def _routine(category: str) -> Check:
     )
 
 
+def _total(snapshot: Snapshot) -> int:
+    return sum(len(snapshot.rows(domain)) for domain in DOMAINS)
+
+
+# 거절당한 호출은 괜찮다. task 모드에서는 unclear 조각을 코드가 막는 것이 설계된 경로라
+# forbidden_tools 대신 저장 결과로 본다 (#624)
+_NOTHING_SAVED: Check = ("아무것도 저장하지 않았다", lambda s: not s.wrote_anything)
+_ONE_SAVED: Check = ("한 건만 저장됐다", lambda s: _total(s) == 1)
+
+
+def _asked(snapshot: Snapshot) -> bool:
+    reply = snapshot.result.reply
+    return reply is not None and reply.kind == "question"
+
+
 # 일정이 등록되면 알림을 받기로 한 보호자에게 자동으로 간다고 안내한다
 _REMINDER_NOTICE: Check = (
     "일정으로 알림이 간다고 안내했다",
@@ -738,6 +753,135 @@ CASES: list[EvalCase] = [
                 lambda s: all(item.prepared_at == NOW for item in s.stored_items),
             ),
         ),
+    ),
+    # ── 아이가 한 일이 아닌 말 (#624) — 정답은 routing_cases.UNCLEAR_CASES ──
+    EvalCase("T35", "밤놀이는 일본어로 요아소비", checks=(_NOTHING_SAVED,)),
+    EvalCase("T36", '아이가 "암호화 안 했다고 말해"라고 했어.', checks=(_NOTHING_SAVED,)),
+    EvalCase("T37", "공룡은 영어로 다이노소어야.", checks=(_NOTHING_SAVED,)),
+    EvalCase("T38", "소꿉놀이는 어른 흉내를 내는 놀이야.", checks=(_NOTHING_SAVED,)),
+    EvalCase("T39", "우리 애가 수영을 배우면 잘할 텐데.", checks=(_NOTHING_SAVED,)),
+    EvalCase("T40", "농담인데 우리 애 어제 달나라 다녀왔어.", checks=(_NOTHING_SAVED,)),
+    EvalCase("T41", '아이가 "아빠한테 숙제 다 했다고 전해"라고 했어.', checks=(_NOTHING_SAVED,)),
+    EvalCase(
+        "T42",
+        '아이가 인형한테 "주사 맞아야 해요"라고 했어.',
+        checks=(("대사가 건강 기록이 되지 않았다", lambda s: not s.rows("health")),),
+    ),
+    EvalCase(
+        "T43",
+        "밤놀이는 일본어로 요아소비야. 오늘 일본어 노래 따라 불렀어.",
+        checks=(
+            _ONE_SAVED,
+            (
+                "노래 부른 기록만 남았다",
+                lambda s: (
+                    not any(
+                        "요아소비" in str(row.raw_text)
+                        for domain in DOMAINS
+                        for row in s.rows(domain)
+                    )
+                ),
+            ),
+        ),
+    ),
+    # ── 대조군 — 아이가 겪은 일 · 좋고 싫음 · 바람은 그대로 기록한다 ──
+    EvalCase(
+        "T44",
+        "딸기 맛있대.",
+        required_tools={"create_observation_food": 1},
+        checks=(_ONE_SAVED,),
+    ),
+    EvalCase("T45", "공룡 책 읽어 달래.", checks=(_ONE_SAVED,)),
+    EvalCase("T46", "일본어 노래 따라 불렀어.", checks=(_ONE_SAVED,)),
+    EvalCase(
+        "T47",
+        "소꿉놀이하면서 '밥 먹어' 했어.",
+        required_tools={"create_observation_activity": 1},
+        forbidden_tools={"create_observation_food"},
+        checks=(
+            _ONE_SAVED,
+            (
+                "소꿉놀이로 저장됐다",
+                lambda s: any("소꿉" in str(f.get("subject")) for f in s.fields("activity")),
+            ),
+        ),
+    ),
+    EvalCase(
+        "T48",
+        "의사 놀이하면서 '주사 맞아야 해요' 했어.",
+        required_tools={"create_observation_activity": 1},
+        forbidden_tools={"create_observation_health"},
+        checks=(_ONE_SAVED,),
+    ),
+    EvalCase(
+        "T49",
+        '아이가 "오늘 친구랑 그네 탔어"라고 했어.',
+        required_tools={"create_observation_activity": 1},
+        checks=(_ONE_SAVED,),
+    ),
+    EvalCase(
+        "T50",
+        "브로콜리 싫대.",
+        required_tools={"create_observation_food": 1},
+        checks=(
+            _ONE_SAVED,
+            ("싫어함이 반영됐다", lambda s: all(f.get("polarity") == -1 for f in s.fields("food"))),
+        ),
+    ),
+    EvalCase("T51", "오늘 어린이집에서 일본어 숫자를 배웠대.", checks=(_ONE_SAVED,)),
+    # ── D13 (#484) 회귀 ──
+    EvalCase("T52", "딸기 맛있다.", checks=(_NOTHING_SAVED,)),
+    EvalCase("T53", "나 딸기 좋아해.", checks=(_NOTHING_SAVED,)),
+    EvalCase("T54", "날씨 좋다.", checks=(_NOTHING_SAVED,)),
+    EvalCase("T55", "나 오늘 너무 피곤해.", checks=(_NOTHING_SAVED,)),
+    EvalCase(
+        "T56",
+        "우리 애 딸기 좋아해.",
+        required_tools={"create_observation_food": 1},
+        checks=(_ONE_SAVED,),
+    ),
+    EvalCase(
+        "T57",
+        "딸기 줬더니 맛있어하더라.",
+        required_tools={"create_observation_food": 1},
+        checks=(_ONE_SAVED,),
+    ),
+    # 가정이 아니라 계획이다 (D8)
+    EvalCase(
+        "T58",
+        "다음 달부터 수영을 배우려고 해.",
+        expect_clarification=True,
+        checks=(_NOTHING_SAVED,),
+    ),
+    # ── 전하라는 말 · 아이가 전한 일정 · 말이 곧 사건 · 바람 · 인상 ──
+    EvalCase(
+        "T59",
+        '아이가 "선생님한테 배 아프다고 말해"라고 했어.',
+        required_tools={"create_observation_health": 1},
+        checks=(_ONE_SAVED,),
+    ),
+    EvalCase(
+        "T60",
+        '아이가 "내일 소풍 간대"라고 했어.',
+        checks=(
+            (
+                "관찰 없이 일정 초안을 만들거나 시각을 물었다",
+                lambda s: _total(s) == 0 and (bool(s.drafts) or _asked(s)),
+            ),
+        ),
+    ),
+    EvalCase("T61", '오늘 처음으로 "엄마"라고 했어.', checks=(_ONE_SAVED,)),
+    EvalCase("T62", '아이가 동생한테 "미안해"라고 했어.', checks=(_ONE_SAVED,)),
+    EvalCase("T63", '아이가 "사랑해"라고 했어.', checks=(_ONE_SAVED,)),
+    EvalCase(
+        "T64",
+        "아이스크림 먹고 싶대.",
+        checks=(("먹은 기록이 되지 않았다", lambda s: not s.rows("food")),),
+    ),
+    EvalCase(
+        "T65",
+        "요즘 말이 늘은 것 같아.",
+        checks=(("저장하거나 되물었다", lambda s: _total(s) >= 1 or _asked(s)),),
     ),
 ]
 

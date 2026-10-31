@@ -7,6 +7,7 @@
 - RC63       숟가락을 세는 '술' 대조 (#633 리뷰)
 - T01~T30    라이브 eval 입력의 정답 Supervisor 출력. Step 7 이 Memory 힌트로 쓰고,
              Supervisor 채점에서는 "쉬운 30개" 대조군이 된다
+- T35~T65    아이가 한 일이 아닌 말(unclear)과 그대로 기록되는 말 대조 (#624 · #484)
 - score_split()  Step 5(Supervisor 단독)와 Step 9(끝까지)가 같은 기준으로 잰다
 
 정답은 조각 단위가 아니라 구간(Span) 단위로 적는다.
@@ -74,6 +75,10 @@ def X(text: str, *, strict: bool = True) -> Span:
     return Span(text=text, kind=SegmentKind.OUT_OF_SCOPE, strict=strict)
 
 
+def U(text: str, *, strict: bool = True) -> Span:
+    return Span(text=text, kind=SegmentKind.UNCLEAR, strict=strict)
+
+
 OBSERVE, SCHEDULE, LOOKUP_EDIT = WorkType.OBSERVE, WorkType.SCHEDULE, WorkType.LOOKUP_EDIT
 FOOD, ACTIVITY, GROWTH = (
     DomainAgentName.FOOD,
@@ -90,6 +95,8 @@ class RoutingCase:
     stage: Stage = "toddler"
     seed: str | None = None  # Step 9 에서 미리 넣어 둘 기록 (지금은 설명만)
     watch: str = ""  # 이 케이스로 무엇을 보는가
+    rows: int | None = None  # 끝까지 돌린 뒤 남을 관찰 수. None 이면 세지 않는다
+    not_in: tuple[str, ...] = ()  # 저장되면 안 되는 도메인 — 말의 내용이 기록으로 새는지 본다
 
 
 # ── T01~T30 의 정답 Supervisor 출력 ─────────────────────────────
@@ -681,7 +688,151 @@ FC_CASES: tuple[RoutingCase, ...] = (
     ),
 )
 
-ALL_CASES: tuple[RoutingCase, ...] = RC_CASES + T_CASES + FC_CASES
+
+# ── T35~T65 — 아이가 한 일이 아닌 말과 그대로 기록되는 말 (#624 · #484) ─────────
+# 입력은 test_input.txt 에 있어 test_memory.py 도 같은 문장을 쓴다.
+# 후보(profile_affinity)는 관찰에서만 나오므로 rows=0 이면 후보도 0건이다
+def _unclear_case(
+    case_id: str,
+    spans: tuple[Span, ...],
+    watch: str,
+    *,
+    rows: int | None,
+    not_in: tuple[str, ...] = (),
+) -> RoutingCase:
+    return RoutingCase(case_id, T_INPUTS[case_id], spans, watch=watch, rows=rows, not_in=not_in)
+
+
+UNCLEAR_CASES: tuple[RoutingCase, ...] = (
+    _unclear_case(
+        "T35",
+        (U("밤놀이는 일본어로 요아소비"),),
+        "멘토 리뷰 — 번역. 일본어 학습으로 저장되던 입력",
+        rows=0,
+    ),
+    _unclear_case(
+        "T36",
+        (U('아이가 "암호화 안 했다고 말해"라고 했어'),),
+        "멘토 리뷰 — 아이가 전한 지시. 활동 + 취향 후보가 되던 입력",
+        rows=0,
+    ),
+    _unclear_case("T37", (U("공룡은 영어로 다이노소어야"),), "변형 — 번역", rows=0),
+    _unclear_case("T38", (U("소꿉놀이는 어른 흉내를 내는 놀이야"),), "변형 — 정의", rows=0),
+    _unclear_case("T39", (U("우리 애가 수영을 배우면 잘할 텐데"),), "변형 — 가정", rows=0),
+    _unclear_case("T40", (U("농담인데 우리 애 어제 달나라 다녀왔어"),), "변형 — 농담", rows=0),
+    _unclear_case(
+        "T41", (U('아이가 "아빠한테 숙제 다 했다고 전해"라고 했어'),), "변형 — 전한 지시", rows=0
+    ),
+    _unclear_case(
+        "T42",
+        (U('아이가 인형한테 "주사 맞아야 해요"라고 했어'),),
+        # 인형과 논 것은 사실이라 놀이로 남아도 틀리지 않는다. 대사가 증상이 되면 안 된다
+        "변형 — 역할놀이 대사",
+        rows=None,
+        not_in=("health",),
+    ),
+    _unclear_case(
+        "T43",
+        (U("밤놀이는 일본어로 요아소비야"), R("오늘 일본어 노래 따라 불렀어", OBSERVE)),
+        "변형 — 설명 + 기록. 설명만 빠진다",
+        rows=1,
+    ),
+    _unclear_case("T44", (R("딸기 맛있대", OBSERVE),), "대조군 — 좋고 싫음을 전한 말", rows=1),
+    _unclear_case(
+        "T45", (R("공룡 책 읽어 달래", OBSERVE),), "대조군 — 아이의 바람을 전한 말", rows=1
+    ),
+    _unclear_case("T46", (R("일본어 노래 따라 불렀어", OBSERVE),), "대조군 — 실제로 한 일", rows=1),
+    _unclear_case(
+        "T47",
+        (R("소꿉놀이하면서 '밥 먹어' 했어", OBSERVE),),
+        "대조군 — 역할놀이는 놀이 사실만. '밥 먹어' 가 식사가 되면 안 된다",
+        rows=1,
+        not_in=("food",),
+    ),
+    _unclear_case(
+        "T48",
+        (R("의사 놀이하면서 '주사 맞아야 해요' 했어", OBSERVE),),
+        "대조군 — 역할놀이는 놀이 사실만. '주사' 가 증상이 되면 안 된다",
+        rows=1,
+        not_in=("health",),
+    ),
+    _unclear_case(
+        "T49",
+        (R('아이가 "오늘 친구랑 그네 탔어"라고 했어', OBSERVE),),
+        "대조군 — 자기 경험을 말한 아이의 말",
+        rows=1,
+    ),
+    _unclear_case("T50", (R("브로콜리 싫대", OBSERVE),), "대조군 — 좋고 싫음을 전한 말", rows=1),
+    _unclear_case(
+        "T51",
+        (R("오늘 어린이집에서 일본어 숫자를 배웠대", OBSERVE),),
+        "대조군 — 외국어라도 실제로 배운 일은 기록",
+        rows=1,
+    ),
+    _unclear_case("T52", (U("딸기 맛있다"),), "D13 — 누가 겪었는지 없는 감상", rows=0),
+    _unclear_case("T53", (U("나 딸기 좋아해"),), "D13 — 보호자가 주어", rows=0),
+    _unclear_case("T54", (U("날씨 좋다"),), "D13 — 누가 겪었는지 없는 감상", rows=0),
+    _unclear_case("T55", (U("나 오늘 너무 피곤해"),), "D13 — 보호자 자신의 얘기", rows=0),
+    _unclear_case("T56", (R("우리 애 딸기 좋아해", OBSERVE),), "D13 대조군 — 아이가 주어", rows=1),
+    _unclear_case(
+        "T57", (R("딸기 줬더니 맛있어하더라", OBSERVE),), "D13 대조군 — 아이의 반응", rows=1
+    ),
+    _unclear_case(
+        "T58",
+        # T18 과 같이 저장 대신 되묻는 말이라 fail-open 을 걸지 않는다 (채점은 test.py 의 _PLANS)
+        (R("다음 달부터 수영을 배우려고 해", OBSERVE, strict=False),),
+        "대조군 — 계획은 가정이 아니다. 일정으로 등록할지 묻는다 (D8)",
+        rows=0,
+    ),
+    _unclear_case(
+        "T59",
+        (R('아이가 "선생님한테 배 아프다고 말해"라고 했어', OBSERVE),),
+        "대조군 — 전하라는 말 속의 아이 증상은 기록",
+        rows=1,
+        not_in=("food", "education", "activity", "routine"),
+    ),
+    _unclear_case(
+        "T60",
+        (R('아이가 "내일 소풍 간대"라고 했어', SCHEDULE),),
+        "대조군 — 아이가 전한 일정은 일정 경로로 간다 (test.py 의 _RELAYED_EVENTS)",
+        rows=None,
+    ),
+    _unclear_case(
+        "T61",
+        (R('오늘 처음으로 "엄마"라고 했어', OBSERVE),),
+        "대조군 — 말이 곧 사건 (첫 말)",
+        rows=1,
+    ),
+    _unclear_case(
+        "T62",
+        (R('아이가 동생한테 "미안해"라고 했어', OBSERVE),),
+        "대조군 — 말이 곧 사건 (사과)",
+        rows=1,
+    ),
+    _unclear_case(
+        "T63",
+        (R('아이가 "사랑해"라고 했어', OBSERVE),),
+        "대조군 — 말이 곧 사건 (애정 표현)",
+        rows=1,
+    ),
+    _unclear_case(
+        "T64",
+        # 먹은 기록이 아니라 fail-open 을 걸지 않는다. 영양 합계에 들어가면 안 된다
+        (R("아이스크림 먹고 싶대", OBSERVE, strict=False),),
+        "대조군 — 먹고 싶다는 바람은 음식 기록이 아니다",
+        rows=None,
+        not_in=("food",),
+    ),
+    _unclear_case(
+        "T65",
+        # 날짜를 되물어도 맞아서 fail-open 을 걸지 않는다 (test.py 의 _IMPRESSIONS)
+        (R("요즘 말이 늘은 것 같아", OBSERVE, strict=False),),
+        "대조군 — 보호자 인상은 거절하지 않고 저장하거나 되묻는다",
+        rows=None,
+    ),
+)
+
+ALL_CASES: tuple[RoutingCase, ...] = RC_CASES + T_CASES + FC_CASES + UNCLEAR_CASES
 CASES_BY_ID: dict[str, RoutingCase] = {case.case_id: case for case in ALL_CASES}
 
 
@@ -737,6 +888,8 @@ class SplitScore:
     analysis_to_rec: int = 0  # 분석 요청이 추천으로 갔다 (사전 확인이 붙는다 — 안전)
     guarded_spans: int = 0
     guarded_found: int = 0
+    unclear_spans: int = 0
+    unclear_found: int = 0
     loose_spans: int = 0  # strict=False — 보고만
     loose_found: int = 0
     missed: list[str] = field(default_factory=list)  # 못 찾은 strict 구간의 라벨
@@ -832,6 +985,13 @@ def score_split(case: RoutingCase, output: SupervisorOutput | None) -> SplitScor
             else:
                 score.missed.append(f"{span.kind}/{span.guard}")
 
+        elif span.kind == SegmentKind.UNCLEAR:
+            score.unclear_spans += 1
+            if SegmentKind.UNCLEAR in kinds:
+                score.unclear_found += 1
+            else:
+                score.missed.append(f"{span.kind}")
+
     return score
 
 
@@ -889,6 +1049,7 @@ def format_score(score: SplitScore) -> str:
         f" (work {score.work_ok}) · REQUEST {score.request_found}/{score.request_spans}"
         f" (agent {score.agent_ok} · food 유형 {score.food_task_ok}/{score.food_spans})"
         f" · GUARDED {score.guarded_found}/{score.guarded_spans}"
+        f" · UNCLEAR {score.unclear_found}/{score.unclear_spans}"
         f" · RECORD→REQUEST {score.record_to_request}"
         + (f" · 놓친 구간 {score.missed}" if score.missed else "")
     )

@@ -29,7 +29,8 @@ class MemoryTask:
     raw_text: str  # 원문 전체
     hints: tuple[MemoryHint, ...] = ()  # 참고용
     # Supervisor 가 unclear 로 판정한 조각 원문. 모델에게 보여 주지 않고 코드만 쓴다.
-    # 보호자 자신의 얘기·감상이라 아이 관찰로 저장하지 않는다
+    # 보호자 자신의 얘기·감상, 설명·번역, 아이가 전한 지시처럼 아이가 한 일이 아니라
+    # 아이 관찰로 저장하지 않는다
     unclear: tuple[str, ...] = ()
     # 기록 조각 없이 unclear 조각만 있고, 조각들이 원문을 다 덮었다(routing 이 정한다).
     # 강등(Supervisor 실패)도 힌트가 비지만 그건 못 본 것이라 unclear 가 없다. 이쪽은 보고 나서

@@ -26,7 +26,7 @@ class SegmentKind(StrEnum):
     REQUEST = "request"  # 도메인 Agent 요청
     GUARDED = "guarded"  # 알레르기·만성질환 / 진단 문의 / 키·몸무게 기록 → 정해진 안내
     OUT_OF_SCOPE = "out_of_scope"  # 구매·예약·기관 연락·대신 발송
-    UNCLEAR = "unclear"  # 무엇을 하라는지 알 수 없음
+    UNCLEAR = "unclear"  # 무엇을 하라는지 알 수 없음 · 아이가 실제로 한 일이 아님
 
 
 class DomainAgentName(StrEnum):
@@ -129,7 +129,8 @@ class Segment(_Strict):
             description=(
                 "record(저장·조회·수정·삭제) / request(도메인 Agent 요청) / "
                 "guarded(알레르기·만성질환·진단 문의·키 몸무게 기록·위험 물질 섭취) / "
-                "out_of_scope(구매·예약·대신 발송) / unclear"
+                "out_of_scope(구매·예약·대신 발송) / "
+                "unclear(알 수 없는 말 · 아이가 실제로 한 일이 아닌 말)"
             )
         ),
     ]
