@@ -33,6 +33,7 @@ from app.domains.schedule.models import (
     Reminder,
     SharedPhoto,
 )
+from app.rules.reminder import ReminderLead
 
 OBSERVATION_MODELS = {
     ObservationFood,
@@ -192,9 +193,8 @@ async def test_reminder_deleted_with_parent(session, family):
     session.add(event)
     await session.flush()
 
-    remind_at = datetime(2026, 9, 1, tzinfo=timezone.utc)
-    reminder = Reminder(event_id=event.id, parent_id=writer.id, remind_at=remind_at)
-    other = Reminder(event_id=event.id, parent_id=owner.id, remind_at=remind_at)
+    reminder = Reminder(event_id=event.id, parent_id=writer.id, lead=ReminderLead.HOURS_1)
+    other = Reminder(event_id=event.id, parent_id=owner.id, lead=ReminderLead.HOURS_1)
     session.add_all([reminder, other])
     await session.flush()
     reminder_id, other_id = reminder.id, other.id

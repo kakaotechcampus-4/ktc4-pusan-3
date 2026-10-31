@@ -16,7 +16,9 @@ import type {
   ApproveSuggestionsRequest,
   ApproveSuggestionsResponse,
   Precheck,
+  Reminder,
 } from "@/lib/api/types";
+import { isReminderLead, refuseReminder } from "./calendar";
 import { allergyStatus } from "./children";
 import { apiError, consentRequired, networkDelay, url } from "./helpers";
 import { withIdempotency } from "./idempotency";
@@ -426,6 +428,7 @@ export const suggestionHandlers = [
         event: { title: string; starts_at: string | null; all_day: boolean };
         items: Array<{ item_id: string | null; item_name: string }>;
         suggestion_ids?: string[];
+        reminder?: { lead: unknown } | null;
       };
 
       // 🚨 일자 없이 제출되면 안 된다. 화면이 막지만 계약도 막는다 (규칙은 코드가 진다).
@@ -434,6 +437,20 @@ export const suggestionHandlers = [
         return apiError(400, "validation_failed", "요청 형식이 올바르지 않아요", {
           fields: ["event.starts_at"],
         });
+      }
+
+      // 🚨 알림이 틀리면 **일정도 넣지 않는다** — 서버는 저장 전에 검사한다 (#603).
+      let reminder: Reminder | null = null;
+      if (body.reminder) {
+        const { lead } = body.reminder;
+        if (!isReminderLead(lead)) {
+          return apiError(400, "validation_failed", "요청 형식이 올바르지 않아요", {
+            fields: ["reminder.lead"],
+          });
+        }
+        const wrong = refuseReminder(lead, body.event.starts_at, body.event.all_day);
+        if (wrong) return wrong;
+        reminder = { lead };
       }
 
       const sids = [...new Set(body.suggestion_ids ?? [])];
@@ -465,6 +482,8 @@ export const suggestionHandlers = [
           is_prepared: false,
           prepared_at: null,
         })),
+        // 🚨 제출한 보호자 본인의 알림만 걸린다 — 응답도 그것만 싣는다.
+        reminder,
       });
 
       // 🚨 제안의 `status` 를 싣지 않는다 — 제출은 상태를 바꾸지 않는다 (#206).

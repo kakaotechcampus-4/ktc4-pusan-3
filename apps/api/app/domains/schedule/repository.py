@@ -5,6 +5,7 @@
 
 import uuid
 from datetime import date, datetime
+from typing import Literal
 
 from sqlalchemy import case, delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -22,6 +23,7 @@ from app.domains.schedule.models import (
     Reminder,
     SharedPhoto,
 )
+from app.rules.reminder import ReminderLead, for_kind, remind_at
 
 
 async def list_events(
@@ -50,11 +52,23 @@ async def list_events(
 
 
 async def find_event(
-    session: AsyncSession, *, child_id: uuid.UUID, event_id: uuid.UUID
+    session: AsyncSession,
+    *,
+    child_id: uuid.UUID,
+    event_id: uuid.UUID,
+    lock: Literal["share", "update"] | None = None,
 ) -> Event | None:
-    return await session.scalar(
-        select(Event).where(Event.child_id == child_id, Event.id == event_id)
-    )
+    """lock 이면 그 일정 행을 잡고 읽는다. 다른 쪽이 먼저 잡고 있으면 그 커밋을 기다렸다가
+    바뀐 값을 읽는다.
+
+    - "share"(FOR SHARE) — 읽고 검사만 하는 쪽(알림 걸기). 일정 수정(`update_event`)이 기다린다.
+    - "update"(FOR UPDATE) — 읽은 뒤 일정을 고칠 쪽(PATCH). 🚨 고칠 쪽이 SHARE 로 읽으면 PATCH
+      두 건이 둘 다 SHARE 를 쥔 채 UPDATE 로 올리려다 서로 기다린다.
+    """
+    stmt = select(Event).where(Event.child_id == child_id, Event.id == event_id)
+    if lock is not None:
+        stmt = stmt.with_for_update(read=lock == "share").execution_options(populate_existing=True)
+    return await session.scalar(stmt)
 
 
 async def create_event(
@@ -100,8 +114,32 @@ async def update_event(
     ends_at: datetime | None,
     all_day: bool,
     category: EventCategory,
+    now: datetime,
 ) -> Event | None:
-    """일정 수정은 시간 구간을 한 묶음으로 받아 일부 시간만 어긋나지 않게 한다."""
+    """일정 수정은 시간 구간을 한 묶음으로 받아 일부 시간만 어긋나지 않게 한다.
+
+    걸린 알림(#594)도 여기서 맞춘다 — 일정을 고치는 길이 이 함수 하나다 (`_follow_event`).
+    🚨 같은 요청에서 알림을 걸 거라면 이 함수보다 먼저 `lock_link` 를 부른다. 여기서 알림 행을
+       잡은 뒤에 연결을 잠그면, 연결 → 알림 순으로 지우는 끊기(`unlink_parent`)와 교착이 된다.
+    """
+    before = (
+        await session.execute(
+            select(Event.starts_at, Event.all_day)
+            .where(Event.child_id == child_id, Event.id == event_id)
+            .with_for_update()
+        )
+    ).one_or_none()
+    if before is None:
+        return None
+    if before.all_day != all_day or before.starts_at != starts_at:
+        await _follow_event(
+            session,
+            event_id=event_id,
+            starts_at=starts_at,
+            all_day=all_day,
+            kind_changed=before.all_day != all_day,
+            now=now,
+        )
     stmt = (
         update(Event)
         .where(Event.child_id == child_id, Event.id == event_id)
@@ -114,8 +152,45 @@ async def update_event(
             category=EventCategory(category),
         )
         .returning(Event)
+        # 부르는 쪽이 이 일정을 먼저 읽었으면 그 객체에 새 값을 덮는다 — 아니면 응답이
+        # 고치기 전 값이다
+        .execution_options(populate_existing=True)
     )
     return await session.scalar(stmt)
+
+
+async def _follow_event(
+    session: AsyncSession,
+    *,
+    event_id: uuid.UUID,
+    starts_at: datetime,
+    all_day: bool,
+    kind_changed: bool,
+    now: datetime,
+) -> None:
+    """일정의 시작 · 종류가 바뀔 때 모든 보호자의 알림을 따라가게 한다.
+
+    - 종일 ↔ 시간 있는 일정이 바뀌면 날 수를 지켜 가까운 값으로 옮긴다(`for_kind`, #603 PM 결정).
+      옮긴 값의 울릴 시각이 이미 지났으면 그 알림만 지운다.
+    - 시작만 바뀌면 값은 그대로다.
+    - 새 울릴 시각이 아직 오지 않은 알림만 "울렸음"(`sent_at`)을 비워 다시 울린다. 이미 지난
+      시각으로 옮긴 알림은 비우지 않는다 — 비우면 이미 울린 알림이 발송 배치에서 곧바로 한 번 더
+      울린다.
+    알림 행을 잡고 읽는다(FOR UPDATE). 발송 배치가 그사이 맡아 `sent_at` 을 찍는 것과 엇갈리지 않게.
+    """
+    rows = await session.scalars(
+        select(Reminder)
+        .where(Reminder.event_id == event_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    for row in rows.all():
+        lead = for_kind(row.lead, all_day=all_day)
+        if remind_at(lead, starts_at=starts_at, all_day=all_day) > now:
+            row.lead, row.sent_at = lead, None
+        elif kind_changed:
+            await session.delete(row)
+    await session.flush()
 
 
 async def delete_event(session: AsyncSession, *, child_id: uuid.UUID, event_id: uuid.UUID) -> bool:
@@ -255,29 +330,88 @@ async def set_event_item_prepared(
     return await session.scalar(stmt)
 
 
-async def create_reminder(
+async def put_reminder(
     session: AsyncSession,
     *,
     child_id: uuid.UUID,
     event_id: uuid.UUID,
     parent_id: uuid.UUID,
-    remind_at: datetime,
+    lead: ReminderLead,
 ) -> Reminder | None:
-    if await find_event(session, child_id=child_id, event_id=event_id) is None:
+    """그 보호자의 이 일정 알림을 lead 로 둔다. 이미 있으면 바꾸고, 울렸던 기록은 지운다.
+
+    일정이 이 아이 것이 아니거나 보호자가 이 아이와 연결돼 있지 않으면 쓰지 않고 None.
+    일정 종류에 맞는 lead 인지 · 이미 지난 시각인지는 부르는 쪽이 `app/rules/reminder.py` 로 본다.
+    🚨 일기(`put_diary`)와 같은 이유로 연결을 잠근 뒤 확인한다 (#427) — 끊기와 동시에 오면
+       끊긴 보호자에게 알림이 남는다.
+    🚨 저장된 일정을 읽어 lead 를 검사했다면, 부르는 쪽이 `lock_link` → `find_event(lock=...)`
+       순으로 먼저 잡고 검사한다. 잠그지 않고 읽은 값으로 검사하면 그사이 종일로 바뀐 일정에
+       시간 있는 일정의 lead 가 저장된다. 여기서 다시 잡는 것은 이미 쥔 잠금이라 기다리지 않는다.
+    """
+    if not await lock_link(session, child_id=child_id, parent_id=parent_id):
         return None
-    if (
-        await session.scalar(
-            select(ParentChild.id).where(
-                ParentChild.child_id == child_id, ParentChild.parent_id == parent_id
-            )
+    if await find_event(session, child_id=child_id, event_id=event_id, lock="share") is None:
+        return None
+    stmt = (
+        pg_insert(Reminder)
+        .values(event_id=event_id, parent_id=parent_id, lead=lead)
+        .on_conflict_do_update(
+            constraint="uq_reminder_event_id_parent_id",
+            set_={"lead": lead, "sent_at": None},
         )
-        is None
-    ):
-        return None
-    row = Reminder(event_id=event_id, parent_id=parent_id, remind_at=remind_at)
-    session.add(row)
-    await session.flush()
-    return row
+        .returning(Reminder)
+        .execution_options(populate_existing=True)
+    )
+    return await session.scalar(stmt)
+
+
+async def delete_reminder(
+    session: AsyncSession, *, child_id: uuid.UUID, event_id: uuid.UUID, parent_id: uuid.UUID
+) -> None:
+    """그 보호자 본인의 이 일정 알림만 지운다. 없으면 아무것도 하지 않는다."""
+    await session.execute(
+        delete(Reminder).where(
+            Reminder.parent_id == parent_id,
+            Reminder.event_id.in_(
+                select(Event.id).where(Event.child_id == child_id, Event.id == event_id)
+            ),
+        )
+    )
+
+
+async def list_my_reminders(
+    session: AsyncSession, *, parent_id: uuid.UUID, event_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, Reminder]:
+    """여러 일정에서 그 보호자 본인의 알림만. 다른 보호자의 알림은 보이지 않는다."""
+    if not event_ids:
+        return {}
+    stmt = select(Reminder).where(Reminder.parent_id == parent_id, Reminder.event_id.in_(event_ids))
+    return {row.event_id: row for row in await session.scalars(stmt)}
+
+
+async def lock_link(session: AsyncSession, *, child_id: uuid.UUID, parent_id: uuid.UUID) -> bool:
+    """보호자 → 아이 → 연결 행을 FOR KEY SHARE 로 잡고, 연결이 있는지 돌려준다 (#427).
+
+    - 라우터의 접근 확인(`AccessibleChild`)은 잠그지 않는다. 그 뒤에 연결 끊기(`unlink_parent`)가
+      연결과 개인 기록을 지우고 커밋하면 여기서 쓴 행이 끊긴 보호자에게 남는다. 잡아 두면 끊기가
+      먼저면 연결이 없어 False, 여기가 먼저면 끊기가 커밋을 기다렸다가 이 행까지 지운다.
+    - 순서는 탈퇴(`withdraw_parent`)와 같다. 연결 행만 잡으면 그것을 쥔 채 탈퇴가 잠근 보호자 ·
+      아이를 기다리고, 탈퇴는 CASCADE 로 그 연결 행을 기다려 교착이 된다.
+      같은 이유로 일정 · 알림 행보다 먼저 잡는다 — 끊기는 연결을 지운 뒤 알림을 지운다.
+    - 세 행 모두 고치지 않고 지워지지만 않으면 되니 가장 약한 KEY SHARE 다. DELETE 만 막고
+      관계 바꾸기(`set_relation`) 같은 일반 수정과 같은 보호자의 다른 쓰기는 막지 않는다.
+    """
+    key_share = {"read": True, "key_share": True}
+    await session.execute(
+        select(Parent.id).where(Parent.id == parent_id).with_for_update(**key_share)
+    )
+    await session.execute(select(Child.id).where(Child.id == child_id).with_for_update(**key_share))
+    linked = await session.scalar(
+        select(ParentChild.id)
+        .where(ParentChild.child_id == child_id, ParentChild.parent_id == parent_id)
+        .with_for_update(**key_share)
+    )
+    return linked is not None
 
 
 async def find_diary(
@@ -303,26 +437,9 @@ async def put_diary(
     """작성자·아이·날짜별 한 행. 동시 재요청도 중복 행/unique 오류 없이 갱신한다.
 
     작성자가 이 아이와 연결돼 있지 않으면 쓰지 않고 None.
-    🚨 보호자 → 아이 → 연결 행을 FOR KEY SHARE 로 잡은 뒤 연결을 확인한다 (#427).
-       - 라우터의 접근 확인(`AccessibleChild`)은 잠그지 않는다. 그 뒤에 연결 끊기(`unlink_parent`)가
-         연결과 일기를 지우고 커밋하면 여기서 쓴 일기가 끊긴 보호자에게 남는다. 잡아 두면 끊기가
-         먼저면 행이 없어 None, 여기가 먼저면 끊기가 커밋을 기다렸다가 이 일기까지 지운다.
-       - 순서는 탈퇴(`withdraw_parent`)와 같다. 연결 행만 잡으면 그것을 쥔 채 탈퇴가 잠근 보호자 ·
-         아이를 기다리고, 탈퇴는 CASCADE 로 그 연결 행을 기다려 교착이 된다.
-       - 세 행 모두 고치지 않고 지워지지만 않으면 되니 가장 약한 KEY SHARE 다. DELETE 만 막고
-         관계 바꾸기(`set_relation`) 같은 일반 수정과 같은 보호자의 다른 일기 저장은 막지 않는다.
+    🚨 보호자 → 아이 → 연결 행을 FOR KEY SHARE 로 잡은 뒤 연결을 확인한다 (#427, `lock_link`).
     """
-    key_share = {"read": True, "key_share": True}
-    await session.execute(
-        select(Parent.id).where(Parent.id == parent_id).with_for_update(**key_share)
-    )
-    await session.execute(select(Child.id).where(Child.id == child_id).with_for_update(**key_share))
-    linked = await session.scalar(
-        select(ParentChild.id)
-        .where(ParentChild.child_id == child_id, ParentChild.parent_id == parent_id)
-        .with_for_update(**key_share)
-    )
-    if linked is None:
+    if not await lock_link(session, child_id=child_id, parent_id=parent_id):
         return None
     stmt = (
         pg_insert(DiaryEntry)
