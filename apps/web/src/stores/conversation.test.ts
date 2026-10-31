@@ -529,6 +529,8 @@ describe("다시 시도는 응답을 못 받은 경우의 것이다 (#231 리뷰
       send: { status: "error", error },
       run: initialRunState,
       question: null,
+      shareLocation: false,
+      withoutLocation: false,
       handedBack: false,
       recordedOn: null,
       replayed: false,
@@ -602,5 +604,101 @@ describe("지난 턴의 질문에 답한다 (#228 · reply_open)", () => {
   it("past 없이 부르면 스토어에 없는 질문은 고르지 않는다", () => {
     answerQuestion(CHILD, "r_unknown");
     expect(conversation().answering).toBeNull();
+  });
+});
+
+describe("🚨 흐린 위치는 동의가 있을 때만 싣고, 다시 시도는 처음 값 그대로다 (#593)", () => {
+  /** 셸 흉내. `position` 을 바꾸면 다음 `read` 의 답이 바뀐다. */
+  let position: { lat: number; lon: number } | null = { lat: 35.123_456, lon: 129.987_654 };
+  let reads = 0;
+
+  beforeEach(() => {
+    position = { lat: 35.123_456, lon: 129.987_654 };
+    reads = 0;
+    vi.stubGlobal("window", new EventTarget());
+    window.icatch = {
+      location: {
+        available: true,
+        check() {},
+        ask() {},
+        read() {
+          reads += 1;
+          window.dispatchEvent(
+            new CustomEvent("icatch:location", {
+              detail: position
+                ? { type: "position", ...position }
+                : { type: "unavailable", reason: "not-granted" },
+            }),
+          );
+        },
+        openSettings() {},
+      },
+    };
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function sendSharing(text: string, shareLocation: boolean): string {
+    const id = sendLine(CHILD, text, { asReply: false, source: "home_input", shareLocation });
+    if (!id) throw new Error("보내지 못했다");
+    return id;
+  }
+
+  it("동의가 없으면 휴대폰이 허용했어도 싣지 않는다 · 셸에 묻지도 않는다", async () => {
+    const id = sendSharing("지어낸 한 줄", false);
+    await settled(id);
+    expect(submittedInput(runIdOf(id))?.location).toBeUndefined();
+    expect(reads).toBe(0);
+  });
+
+  it("동의가 있으면 둘째 자리로 흐린 좌표를 싣는다", async () => {
+    const id = sendSharing("지어낸 한 줄", true);
+    await settled(id);
+    expect(submittedInput(runIdOf(id))?.location).toEqual({ lat: 35.12, lon: 129.99 });
+  });
+
+  it(
+    "다시 시도는 처음 읽은 좌표로 나간다 — 같은 키에 다른 본문을 싣지 않는다",
+    async () => {
+      scenario("send_failed");
+      const id = sendSharing("지어낸 한 줄", true);
+      expect((await settled(id)).send.status).toBe("error");
+
+      position = { lat: 37.566_535, lon: 126.977_969 };
+      retryTurn(CHILD, id);
+      const retried = await settled(id);
+      expect(retried.run.status).toBe("done");
+      expect(submittedInput(runIdOf(id))?.location).toEqual({ lat: 35.12, lon: 129.99 });
+      expect(reads).toBe(1);
+    },
+    TWO_RUNS,
+  );
+
+  it(
+    "동의는 있는데 위치 없이 나간 줄만 표시한다 — 놀이 추천 아래 안내가 이 값으로 선다 (#638 리뷰)",
+    async () => {
+      position = null;
+      const without = sendSharing("지어낸 한 줄", true);
+      await settled(without);
+      expect(turn(without).withoutLocation).toBe(true);
+
+      position = { lat: 35.123_456, lon: 129.987_654 };
+      const withLocation = sendSharing("다른 한 줄", true);
+      await settled(withLocation);
+      expect(turn(withLocation).withoutLocation).toBe(false);
+
+      const noConsent = sendSharing("또 한 줄", false);
+      await settled(noConsent);
+      expect(turn(noConsent).withoutLocation).toBe(false);
+    },
+    TWO_RUNS * 2,
+  );
+
+  it("말풍선의 본문에는 위치가 남지 않는다", async () => {
+    const id = sendSharing("지어낸 한 줄", true);
+    await settled(id);
+    expect(turn(id).body).not.toHaveProperty("location");
   });
 });

@@ -9,7 +9,7 @@ Owner: 고태영 (프론트 리드)
 
 ## 1. 이 앱이 하는 일 / 안 하는 일
 
-**한다** — 웹뷰로 `apps/web` 을 띄운다 · Android 물리 뒤로가기 → 웹뷰 히스토리 (하단 네비 네 칸에서는 두 번 눌러 종료) · 외부 링크를 in-app 브라우저로 앱 위에 · **로그인 시작 URL 을 인앱 인증 세션으로 열고 복귀를 웹에 싣는다** · 연결 실패 화면과 재시도 · safe area **값을 재서 웹에 넘긴다** · 백그라운드로 갈 때 웹뷰 쿠키를 디스크에 쓴다(값은 모른다) · **채팅바의 말로 적기를 기기 안 음성인식으로 돌리고 글자만 웹에 넘긴다**(#595) · **일정 알림의 FCM 토큰을 받아 웹에 넘기고, 알림을 누르면 그 화면 주소를 넘긴다**(#609 · 등록은 웹이 한다).
+**한다** — 웹뷰로 `apps/web` 을 띄운다 · Android 물리 뒤로가기 → 웹뷰 히스토리 (하단 네비 네 칸에서는 두 번 눌러 종료) · 외부 링크를 in-app 브라우저로 앱 위에 · **로그인 시작 URL 을 인앱 인증 세션으로 열고 복귀를 웹에 싣는다** · 연결 실패 화면과 재시도 · safe area **값을 재서 웹에 넘긴다** · 백그라운드로 갈 때 웹뷰 쿠키를 디스크에 쓴다(값은 모른다) · **채팅바의 말로 적기를 기기 안 음성인식으로 돌리고 글자만 웹에 넘긴다**(#595) · **일정 알림의 FCM 토큰을 받아 웹에 넘기고, 알림을 누르면 그 화면 주소를 넘긴다**(#609 · 등록은 웹이 한다) · **대략 위치를 읽어 소수점 둘째 자리로 흐린 좌표만 웹에 넘긴다**(#593 · 입력에 싣는 것은 웹이다).
 
 **안 한다** — 화면을 그리지 않는다. API 를 부르지 않는다. 로그인 토큰을 들고 있지 않다(FCM 토큰은 받아서 넘기기만 한다). 상태를 관리하지 않는다.
 
@@ -30,6 +30,7 @@ Owner: 고태영 (프론트 리드)
 | expo-dev-client | 57.0.20 | 개발 빌드 런처 — Expo Go 로는 로그인 복귀(`icatch://`)를 못 받는다 (아래) |
 | expo-web-browser | 57.0.3 | 카카오 로그인 인증 세션 (Android = Custom Tabs, iOS = `ASWebAuthenticationSession`) · 외부 링크 in-app 브라우저 |
 | expo-notifications | ~57.0.24 | 일정 알림 FCM 토큰 · 알림 채널 · 알림 누르기 (#609). `expo install` 이 골랐다. 함께 `expo-constants` 를 SDK 기대값 57.0.22 로 맞췄다 (두 벌이 되지 않게) |
+| expo-location | ~57.0.22 | 놀이 추천의 근처 장소용 대략 위치 (#593). `expo install` 이 골랐다 |
 | expo-speech-recognition | 57.1.1 | 말로 적기의 기기 안 음성인식 (#595). Expo 가 고르는 묶음 밖이라 메이저를 SDK 에 맞춰 고정했다 (57.x = SDK 57) |
 | TypeScript | 6.0.3 | |
 
@@ -62,6 +63,7 @@ src/native/internal-url.ts   웹뷰 안에 둘 주소인지 판정 — 출처 + 
 src/native/cookie-flush.ts   백그라운드로 갈 때 쿠키 flush 판단 (#469)
 src/native/speech.ts         말로 적기 — 웹 부탁 검사(`parseWebRequest` · 알림 부탁도 여기서) · 기기 안 인식 조건 · 오류 → 이유 · 웹에 넣는 창구와 이벤트 (#595)
 src/native/push.ts           일정 알림 — 알림 data → 화면 주소 · 권한 창을 띄울지 · 웹에 넣는 창구와 이벤트 (#609)
+src/native/location.ts       흐린 위치 — 좌표를 둘째 자리로 줄이기 · 권한 응답 → 상태 · 웹에 넣는 창구와 이벤트 (#593)
 app.config.ts                app.json 위에 빌드 때만 정해지는 것 — `google-services.json` 경로 (#609) · FCM auto-init 끄기(매니페스트). Node 에서 돌아서 tsconfig.test.json 이 본다
 modules/cookie-flush/        로컬 Expo 모듈 (Android 만) — `CookieManager.flush()` 하나. 🚨 `android/` 가 생성물이 아니라 소스다
 app.json                     Expo 설정 (name · scheme · bundle id · 막는 권한)
@@ -115,6 +117,7 @@ eas.json                     EAS 빌드 프로필 (배포 웹 주소 · versionC
 | `POST_NOTIFICATIONS` | 알림을 띄운다 (Android 13+ 실행 중 권한). **처음 알림을 고를 때** 묻는다 |
 | `com.google.android.c2dm.permission.RECEIVE` · `WAKE_LOCK` · `ACCESS_NETWORK_STATE` | FCM 수신 (firebase-messaging 이 더한다 · 일반 권한) |
 | `kr.ai.icatch.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION` | androidx 가 앱 안 브로드캐스트를 막으려고 스스로 만드는 서명 권한. 사용자에게 묻지 않는다 |
+| `ACCESS_COARSE_LOCATION` | 대략 위치 (#593 · 아래 "위치 권한" 절). **위치 동의를 켤 때** 묻는다 |
 
 - 🚨 **막은 것**: 런처 배지(ShortcutBadger · 배지를 안 쓴다 — `shouldSetBadge: false`), `RECEIVE_BOOT_COMPLETED`(기기 안에서 예약하는 알림이 없다 — 알림은 서버가 FCM 으로 보낸다), `BIND_GET_INSTALL_REFERRER_SERVICE`(`expo-application` 의 설치 경로 · 부르지 않는다).
   `expo-notifications` 를 올리면 매니페스트를 다시 보고 새로 붙은 것을 막는다
@@ -154,6 +157,34 @@ eas.json                     EAS 빌드 프로필 (배포 웹 주소 · versionC
   Play Console 데이터 보안에 기기 ID(FCM 토큰) 수집은 **웹 Firebase 값을 넣는 날** 적는다 (#618 리뷰). auto-init 을 꺼서 그 전까지는 이 빌드를 올려도 기기를 등록하지 않는다.
   순서는 [`docs/web/web-push-v1.md`](../../docs/web/web-push-v1.md) "켜는 순서"
 - ⚠️ **iOS 는 하지 않는다** (#594). `Notifications` 가 Android 에서만 불린다
+
+### 🚨 위치 권한은 대략 위치 하나만 쓴다 (#593)
+
+놀이 추천이 근처 공원 · 도서관을 찾을 수 있게, 보호자가 허용하면 입력 요청에 **약 1km 로 흐린 좌표**를 싣는다.
+셸은 좌표를 읽어 흐려 넘기기만 하고, 싣는 것은 웹이다 (`apps/web/src/lib/location.ts`).
+
+- 🚨 **Android 는 `ACCESS_COARSE_LOCATION` 만 선언한다.** `expo-location` 이 붙이는 `ACCESS_FINE_LOCATION` 과
+  `ACCESS_BACKGROUND_LOCATION` 은 `app.json` 의 `blockedPermissions` 로 막았다. 라이브러리의 `requestForegroundPermissionsAsync` 는
+  정밀과 대략을 같이 요청하지만, 선언하지 않은 정밀은 OS 가 묻지 않고 거절해서 권한 창에는 "대략적인 위치" 만 뜬다.
+  허용 여부는 대략 위치 권한으로 판정된다 (`LocationModule.getForegroundPermissionsAsync`).
+- 🚨 **원좌표는 셸 밖으로 나가지 않는다.** 위치 약관 제4조 ② 가 "휴대폰 안에서 약 1km 로 흐리게 바꾼 뒤 전달" 을 약속했다.
+  웹으로 가는 좌표는 `coarsePosition` 을 거친 소수점 둘째 자리 값뿐이다(서버 `CoarseLocation` 과 같은 반올림). 로그에 남기지 않는다.
+- 🚨 **웹뷰의 `geolocationEnabled` 를 켜지 않는다.** react-native-webview 13.16.1 은 웹의 `navigator.geolocation` 요청을
+  정밀 위치 권한으로만 확인하고 요청해서(`RNCWebChromeClient.onGeolocationPermissionsShowPrompt`), 그 길을 쓰면 정밀 위치를
+  선언해야 하고 원좌표가 웹 JS 까지 올라온다.
+- **부탁은 넷이다** (`LocationAction`). `check` 는 권한 상태만, `ask` 는 권한 창만(좌표를 읽지 않는다), `read` 는 이미 허용했을 때
+  좌표만(묻지 않는다), `settings` 는 이 앱의 휴대폰 설정 화면(`Linking.openSettings`)이다. 권한 창은 **위치 동의를 켤 때만** 뜬다 —
+  가입 화면에서 골랐을 때와 10 설정에서 켰을 때. 입력을 보낼 때는 묻지 않는다.
+- 권한 상태는 `granted` · `canAskAgain` 으로만 가른다 (`permissionStatus`). 묻지 않은 `check` 의 "허용 전" 은 `prompt` 다 —
+  한 번도 안 물었는지 한 번 거절했는지 OS 가 가르지 않는다. 더 묻지 못하게 막혔으면 `denied` 이고 웹이 설정을 여는 버튼을 준다.
+- 좌표는 마지막으로 알려진 위치(10분 안)부터 보고, 없으면 `Accuracy.Low` 로 한 번 읽는다. `mayShowUserSettingsDialog: false` —
+  위치 서비스가 꺼져 있어도 "정확도 높이기" 창을 띄우지 않는다. 웹은 2초를 기다리고 넘으면 위치 없이 보낸다.
+- 🚨 **패키지를 import 하지 않고 모듈이 있을 때만 불러온다** (`App.tsx` 의 `Location` · 알림과 같은 이유). 없으면 창구를 꺼서 낸다.
+- ⚠️ 라이브러리 매니페스트의 `LocationTaskService`(`foregroundServiceType="location"`)는 병합 매니페스트에 남는다. 권한
+  (`FOREGROUND_SERVICE_LOCATION`)은 붙지 않고 셸이 부르지 않는다. Play 심사가 이 선언을 문제 삼으면 config plugin 으로 뺀다
+- ⚠️ **iOS 는 기기 확인 전이다.** 사용 중 권한 문구(플러그인 `locationWhenInUsePermission`)와 `NSLocationDefaultAccuracyReduced`
+  (대략 위치로만 받기)는 넣어 두었다. 셸이 둘째 자리로 줄이는 것은 플랫폼과 무관하다
+- ⚠️ **머지 조건** — 위치기반서비스 신고 · 위치 이용 사실 확인자료 · 위치 약관 새 판이 끝난 뒤 머지한다 (#166 · #593)
 
 ### 🚨 사진 권한을 받지 않는다 (#408)
 
@@ -204,11 +235,11 @@ pnpm android          # = expo run:android — prebuild + gradle + 설치까지 
   ⚠️ Mobile CI 는 Kotlin 을 컴파일하지 않는다. `modules/` 를 고치면 `./gradlew assembleDebug` 로 직접 빌드해 본다.
 - **`cacheEnabled={false}`** 는 SSE(`/runs/{rid}/events`) 때문이다. 켜면 진행 이벤트가 버퍼링돼서 04 오버레이가 멈춘 것처럼 보인다.
 - 🚨 **웹에서 오는 메시지(`onMessage`)는 `parseWebRequest` 를 통과한 것만 받는다** (#595). 지금 웹의 부탁은
-  말로 적기 시작 · 멈춤과 일정 알림 준비 · 토큰 · 권한(`kind: "push"` · #609)이다. 🚨 **종류(`kind`)부터 가른다** —
+  말로 적기 시작 · 멈춤과 일정 알림 준비 · 토큰 · 권한(`kind: "push"` · #609), 위치 확인 · 묻기 · 읽기 · 설정 열기(`kind: "location"` · #593)다. 🚨 **종류(`kind`)부터 가른다** —
   "말로 적기 시작이 아니면 멈춤" 으로 두면 알림 부탁이 마이크를 끈다. 보낸 쪽 주소(`event.nativeEvent.url`)를 먼저 보고, 모양을 검사한 값으로만
-  네이티브를 부른다 — 모양이 어긋난 메시지 하나로 셸이 죽으면 안 된다. 부탁을 더하면(#593 위치 등) 같은 함수에
+  네이티브를 부른다 — 모양이 어긋난 메시지 하나로 셸이 죽으면 안 된다. 부탁을 더하면 같은 함수에
   `kind` 를 더하고 테스트를 단다.
-  셸 → 웹은 `injectJavaScript` 로 `icatch:speech` · `icatch:push` 이벤트를 쏜다. 글자와 토큰은 `JSON.stringify` 로만 싣는다.
+  셸 → 웹은 `injectJavaScript` 로 `icatch:speech` · `icatch:push` · `icatch:location` 이벤트를 쏜다. 글자와 토큰, 좌표는 `JSON.stringify` 로만 싣는다.
 - 🚨 **권한을 늘리지 않는다** (§3 "사진 권한을 받지 않는다"). 네이티브 기능이 필요해지면 그 권한이 스토어 심사에
   무엇을 요구하는지부터 본다. ⚠️ 마이크(`RECORD_AUDIO`)를 더한 첫 배포 전에 Play Console 의 권한 선언과
   데이터 보안 항목에 걸리는지 확인한다 (§3 마이크 · #595).
@@ -244,7 +275,7 @@ pnpm start           # Expo 개발 서버 (Expo Go / 개발 빌드)
 pnpm android         # Android 로 열기
 pnpm ios             # iOS 로 열기 (macOS 필요)
 pnpm typecheck       # tsc --noEmit (앱 + 테스트 두 벌)
-pnpm test            # Node 내장 러너 — 로그인 · 외부 링크 · 웹뷰 안 주소 · 뒤로가기 · safe area · 쿠키 flush · 말로 적기 · 일정 알림 판정 (src/native/*.test.ts)
+pnpm test            # Node 내장 러너 — 로그인 · 외부 링크 · 웹뷰 안 주소 · 뒤로가기 · safe area · 쿠키 flush · 말로 적기 · 일정 알림 · 흐린 위치 판정 (src/native/*.test.ts)
 pnpm deps:check      # expo install --check — SDK 와 어긋난 패키지 버전 확인
 pnpm doctor          # expo-doctor 전체 점검
 ```

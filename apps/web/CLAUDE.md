@@ -21,7 +21,7 @@ Owner: 고태영 (프론트 리드)
 | 05 · 07 · 08 · 09 · 11-1 · 11-2 화면, 라우트를 더하거나 시트를 라우트로 바꿀 때 | [`screen-rules-v1.md`](../../docs/web/screen-rules-v1.md) |
 | 04 대화 · `stores/conversation.ts` · `hooks/use-run-stream.ts` · `lib/api/sse.ts` · `components/run-result.tsx` · 지난 대화(`lib/chat-history.ts` · `hooks/use-chat-history.ts`) | [`chat-run-v1.md`](../../docs/web/chat-run-v1.md) |
 | `components/` · `components/ui/` · `globals.css` · 아이콘 · 서체 · 10 설정 하위 화면(고객센터 · 탈퇴 · 문제 알리기) | [`components-v1.md`](../../docs/web/components-v1.md) |
-| `lib/auth/` · `stores/session.ts` · `/auth/*` · 01 · 02 · 동의(`lib/consent.ts`) | [`auth-consent-v1.md`](../../docs/web/auth-consent-v1.md) |
+| `lib/auth/` · `stores/session.ts` · `/auth/*` · 01 · 02 · 동의(`lib/consent.ts`) · 위치(`lib/location.ts` · `lib/native/location.ts`) | [`auth-consent-v1.md`](../../docs/web/auth-consent-v1.md) |
 | `lib/api/` · 뮤테이션 · 에러 코드 처리 · `error.tsx` · `AppErrorBoundary` | [`api-client-v1.md`](../../docs/web/api-client-v1.md) |
 | `mocks/` · `*.test.ts` · `e2e/` · `contract/` | [`mock-and-tests-v1.md`](../../docs/web/mock-and-tests-v1.md) |
 | `package.json` 의 버전 · `eslint.config.mjs` · `ci-web.yml` · `Dockerfile` · 배포 | [`toolchain-deploy-v1.md`](../../docs/web/toolchain-deploy-v1.md) |

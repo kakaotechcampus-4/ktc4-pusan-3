@@ -461,6 +461,19 @@ export interface CreateInputRequest {
   source: "home_input" | "photo" | (string & {});
   /** 🔶 되묻기에 대한 답일 때만. 그 질문이 나온 `run_id` (#158 리뷰 · 서버 #175). 못 찾으면 400. */
   reply_to?: string;
+  /** 흐린 위치. 위치 동의가 있고 휴대폰이 허용했을 때만 싣는다 (#593 · `InputLocation`). */
+  location?: InputLocation;
+}
+
+/**
+ * 휴대폰이 약 1km 로 흐려 보낸 좌표 (서버 `InputLocation` · #380). 소수점 둘째 자리다.
+ *
+ * 🚨 **`lib/location.ts` 의 `coarseLocation` 을 거친 값만 싣는다.** 서버도 한 번 더 줄이고, 위치 동의가
+ *    granted 가 아니면 버린다. 저장하지 않고 로그에도 남기지 않는다 — 웹도 같다.
+ */
+export interface InputLocation {
+  lat: number;
+  lon: number;
 }
 
 /**

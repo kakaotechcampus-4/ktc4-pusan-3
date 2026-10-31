@@ -33,6 +33,7 @@ import { phaseOf, Swap } from "@/components/ui/swap";
 import { SkeletonGroup, SkeletonText, SkeletonTile } from "@/components/ui/skeleton";
 import { useTodayChat } from "@/hooks/use-chat-history";
 import { useChildId } from "@/hooks/use-child-id";
+import { useLocationConsent } from "@/hooks/use-consents";
 import { hasOpenQuestion, isBusy, sendLine, useConversation } from "@/stores/conversation";
 import { useDraftStore, useDraftText } from "@/stores/draft";
 import { usePhotoDraftStore } from "@/stores/photo-draft";
@@ -65,6 +66,8 @@ export default function HomePage() {
 
 function HomeScreen() {
   const childId = useChildId();
+  /** 위치 동의가 켜져 있으면 입력에 흐린 위치를 싣는다 (#593 · `lib/location.ts`). */
+  const shareLocation = useLocationConsent(childId);
   const router = useRouter();
 
   // 🚨 `useState` 가 아니다 — 네비로 다녀와도 쓰던 글이 살아 있어야 한다 (위 주석 · stores/draft.ts).
@@ -110,7 +113,7 @@ function HomeScreen() {
    */
   function send() {
     const line = text;
-    if (!sendLine(childId, line, { asReply: false, source: "home_input" })) return;
+    if (!sendLine(childId, line, { asReply: false, source: "home_input", shareLocation })) return;
     // 셋이 한 번에 그려진다 — 입력창은 막 보낸 글자를 든 채로 대화 화면으로 넘어간다.
     setLeaving(line);
     clearDraft(childId);

@@ -23,6 +23,7 @@ import { SkeletonBlock } from "@/components/ui/skeleton";
 import { useChatHistory } from "@/hooks/use-chat-history";
 import type { PastTurn } from "@/lib/chat-history";
 import { useChildId } from "@/hooks/use-child-id";
+import { useLocationConsent } from "@/hooks/use-consents";
 import { api, qk, type Agent, type Me } from "@/lib/api";
 import { useSeoulToday } from "@/hooks/use-seoul-today";
 import { formatDay, parseISODate } from "@/lib/format";
@@ -103,6 +104,8 @@ function dayUnder(line: number): string | null {
 
 function ChatScreen() {
   const childId = useChildId();
+  /** 위치 동의가 켜져 있으면 입력에 흐린 위치를 싣는다 (#593 · `lib/location.ts`). */
+  const shareLocation = useLocationConsent(childId);
   const router = useRouter();
   const conversation = useConversation(childId);
   const busy = isBusy(conversation);
@@ -278,6 +281,7 @@ function ChatScreen() {
       // 🚨 입력창 위에 질문이 떠 있을 때만 답이다 (`AnsweringBar`).
       asReply: conversation.answering !== null,
       source: "home_input",
+      shareLocation,
     });
     // 입력창은 비운다. 🚨 원문은 말풍선이 들고 있다 — 서버가 끝을 말하기 전에는 거기서 안 사라진다.
     if (!sent) return;

@@ -34,6 +34,14 @@ import { EXIT_HINT, decideBack } from "./src/native/back-press";
 import { flushOnBackground } from "./src/native/cookie-flush";
 import { isWebUrl } from "./src/native/in-app-browser";
 import {
+  type LocationAction,
+  type LocationEvent,
+  coarsePosition,
+  locationBridgeScript,
+  locationEventScript,
+  permissionStatus,
+} from "./src/native/location";
+import {
   PUSH_CHANNEL_ID,
   PUSH_CHANNEL_NAME,
   type PushEvent,
@@ -108,6 +116,20 @@ Notifications?.setNotificationHandler({
     shouldSetBadge: false,
   }),
 });
+
+/**
+ * 흐린 위치 (`expo-location` · #593). 🚨 알림과 같은 이유로 모듈이 있을 때만 불러온다 — 이 패키지를 넣기 전에
+ * 만든 개발 빌드에서 import 하면 셸이 뜨지 않는다. 없으면 창구를 꺼서 내고, 웹은 위치 없이 보낸다.
+ */
+const Location = requireOptionalNativeModule("ExpoLocation")
+  ? (require("expo-location") as typeof import("expo-location"))
+  : null;
+
+/**
+ * 마지막으로 알려진 위치를 이만큼 지난 것까지 쓴다. 새로 읽으면 몇 초가 걸려 입력 보내기가 그만큼 늦는다.
+ * 어차피 약 1km 로 흐리는 값이라 10분 사이에 달라질 일이 드물다.
+ */
+const LAST_KNOWN_MAX_AGE_MS = 10 * 60 * 1000;
 
 /** 이 휴대폰에서 말로 적기를 켤 수 있는가 — 기기 안 인식이 보장될 때만 (`src/native/speech.ts` 머리말). */
 const SPEECH_AVAILABLE = (() => {
@@ -422,6 +444,72 @@ function Shell() {
     return () => subscriptions.forEach((subscription) => subscription.remove());
   }, [openFromNotification, sendPush]);
 
+  /* ── 흐린 위치 (`src/native/location.ts`) ── */
+
+  /** 🚨 지금 떠 있는 문서가 우리 주소일 때만 보낸다 — 좌표를 남의 문서에 넣지 않는다. */
+  const sendLocation = useCallback((event: LocationEvent) => {
+    if (!isInternalUrl(urlRef.current)) return;
+    webViewRef.current?.injectJavaScript(locationEventScript(event));
+  }, []);
+
+  /**
+   * 위치 부탁 하나에 답한다 (`LocationAction`). `ask` 만 권한 창을 띄우고, 좌표는 `read` 만 읽는다.
+   *
+   * 🚨 Android 는 `ACCESS_COARSE_LOCATION` 만 선언한다 (`app.json` 이 정밀 · 백그라운드를 막는다). 라이브러리는
+   *    정밀과 대략을 같이 요청하지만, 선언하지 않은 정밀은 OS 가 묻지 않고 거절해서 권한 창에는 "대략적인 위치" 만 뜬다.
+   * 🚨 `mayShowUserSettingsDialog: false` — 위치 서비스가 꺼져 있어도 "정확도 높이기" 창을 띄우지 않는다. 못 읽으면 위치 없이 간다.
+   * 🚨 좌표를 로그에 남기지 않는다. 실패도 이유만 넘긴다.
+   */
+  const answerLocation = useCallback(
+    async (action: LocationAction) => {
+      if (action === "settings") {
+        void Linking.openSettings().catch(() => {});
+        return;
+      }
+      if (!Location) {
+        sendLocation(
+          action === "read"
+            ? { type: "unavailable", reason: "not-granted" }
+            : { type: "permission", action, status: "unsupported" },
+        );
+        return;
+      }
+      try {
+        let permission = await Location.getForegroundPermissionsAsync();
+        let asked = false;
+        if (action === "ask" && !permission.granted && permission.canAskAgain) {
+          permission = await Location.requestForegroundPermissionsAsync();
+          asked = true;
+        }
+        if (action !== "read") {
+          sendLocation({ type: "permission", action, status: permissionStatus(permission, asked) });
+          return;
+        }
+        if (!permission.granted) {
+          sendLocation({ type: "unavailable", reason: "not-granted" });
+          return;
+        }
+        const position =
+          (await Location.getLastKnownPositionAsync({ maxAge: LAST_KNOWN_MAX_AGE_MS })) ??
+          (await Location.getCurrentPositionAsync({
+            accuracy: Location.Accuracy.Low,
+            mayShowUserSettingsDialog: false,
+          }));
+        const coarse = coarsePosition(position.coords);
+        sendLocation(
+          coarse ? { type: "position", ...coarse } : { type: "unavailable", reason: "failed" },
+        );
+      } catch {
+        sendLocation(
+          action === "read"
+            ? { type: "unavailable", reason: "failed" }
+            : { type: "permission", action, status: "unsupported" },
+        );
+      }
+    },
+    [sendLocation],
+  );
+
   /** 웹 문서가 없어졌다(연결 실패 · 렌더 프로세스 종료). 듣기를 끊고, 알림 주소는 다시 뜬 문서의 `ready` 를 기다린다. */
   const onDocumentGone = useCallback(() => {
     abortListening();
@@ -444,6 +532,10 @@ function Shell() {
         void handOverPushToken(request.action === "ask");
         return;
       }
+      if (request.kind === "location") {
+        void answerLocation(request.action);
+        return;
+      }
       if (request.action === "start") {
         void startListening();
         return;
@@ -451,7 +543,7 @@ function Shell() {
       stopRequestedRef.current = true;
       SpeechRecognizer?.stop();
     },
-    [handOverPushToken, sendPush, startListening],
+    [answerLocation, handOverPushToken, sendPush, startListening],
   );
 
   /**
@@ -570,17 +662,20 @@ function Shell() {
               void openExternal(request.url);
               return false;
             }}
-            // 페이지가 뜨기 전에 상태바·제스처바가 먹는 자리와 말로 적기 · 알림 창구를 꽂는다
-            // (`src/native/safe-area.ts` · `src/native/speech.ts` · `src/native/push.ts`).
+            // 페이지가 뜨기 전에 상태바·제스처바가 먹는 자리와 말로 적기 · 알림 · 위치 창구를 꽂는다
+            // (`src/native/safe-area.ts` · `src/native/speech.ts` · `src/native/push.ts` · `src/native/location.ts`).
             injectedJavaScriptBeforeContentLoaded={
               SAFE_AREA_SCRIPT +
               safeAreaScript(webInsets) +
               speechBridgeScript(SPEECH_AVAILABLE) +
-              pushBridgeScript(PUSH_AVAILABLE)
+              pushBridgeScript(PUSH_AVAILABLE) +
+              locationBridgeScript(Location !== null)
             }
-            // 🚨 웹의 부탁은 말로 적기(시작 · 멈춤)와 알림(준비 · 토큰 · 권한) 뿐이다. 보낸 쪽 주소와 모양을
+            // 🚨 웹의 부탁은 말로 적기(시작 · 멈춤)와 알림(준비 · 토큰 · 권한), 위치(읽기 · 묻기) 뿐이다. 보낸 쪽 주소와 모양을
             //    검사한 것만 받는다 (`parseWebRequest` · CLAUDE.md §4).
             onMessage={onMessage}
+            // 🚨 `geolocationEnabled` 를 켜지 않는다 (#593). 웹의 `navigator.geolocation` 을 정밀 위치 권한으로만
+            //    요청하는 길이라, 원좌표가 웹까지 올라온다. 위치는 위의 `location` 창구로만 흐린 값을 넘긴다.
             // 08 사진 분석 — <input type="file"> 이 동작하려면 필요하다.
             allowFileAccess
             allowsInlineMediaPlayback

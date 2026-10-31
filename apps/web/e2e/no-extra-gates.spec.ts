@@ -42,10 +42,10 @@ test("10 설정", async ({ page }) => {
   await page.goto(`/child/${CHILD}/settings`);
   await expect(page.getByRole("heading", { name: "함께 보는 보호자" })).toBeVisible();
   await expect(page.getByRole("link", { name: "개인정보 처리방침" })).toBeVisible();
-  // 위치 동의는 지금 묻지 않는다 (`askedChoices` · #221) — 켜고 끌 선택 동의가 없어 "동의" 구역도 없다
-  await expect(page.getByText("위치정보")).toHaveCount(0);
-  // 없는 구역을 안내하지 않는다 — 머리말도 "동의" 를 빼고 말한다
-  await expect(page.getByText("함께 보는 사람과 알림, 계정을 여기서 관리해요.")).toBeVisible();
+  // 위치 동의를 다시 묻는다 (#593) — 켜고 끌 선택 동의가 생겨 "동의" 구역과 머리말이 선다
+  await expect(page.getByText("위치정보")).toBeVisible();
+  await expect(page.getByText("함께 보는 사람과 알림, 동의를 여기서 관리해요.")).toBeVisible();
+  // 위치 동의를 켜고 끄는 것은 되돌릴 수 있어서 게이트가 아니다
   // 알림 켜고 끄기는 개인 설정이라 게이트가 아니다 (#609)
   await expect(page.getByRole("button", { name: "끄기" })).toBeVisible();
   await expectNoGate(page);
@@ -60,7 +60,8 @@ test.describe("가입 · 첫 진입", () => {
     });
     await page.goto("/auth/consent");
     await expect(page.getByRole("checkbox", { name: "[필수] 서비스 이용약관" })).toBeVisible();
-    await expect(page.getByRole("checkbox", { name: /위치정보/ })).toHaveCount(0);
+    // 선택 동의(위치 · #593)가 서도 가입 동의는 게이트가 아니다
+    await expect(page.getByRole("checkbox", { name: /위치정보/ })).toBeVisible();
     await expectNoGate(page);
   });
 

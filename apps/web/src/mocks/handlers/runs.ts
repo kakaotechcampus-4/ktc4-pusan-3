@@ -1,7 +1,7 @@
 import { http, HttpResponse } from "msw";
 
 import type { AgentReadout, AgentResultEvent } from "@/lib/api/sse";
-import type { Agent, CreateInputResponse, Observation } from "@/lib/api/types";
+import type { Agent, CreateInputResponse, InputLocation, Observation } from "@/lib/api/types";
 
 import {
   educationObservation,
@@ -36,6 +36,8 @@ interface SubmittedInput {
   childId: string;
   text: string;
   replyTo?: string;
+  /** 흐린 위치 (#593). 테스트가 "동의 없으면 안 싣는다 · 다시 시도는 같은 값" 을 확인하는 자리. 목은 쓰지 않는다. */
+  location?: InputLocation;
 }
 
 const inputByRun = new Map<string, SubmittedInput>();
@@ -692,7 +694,11 @@ export const runHandlers = [
         // 앞 run 의 대화는 그새 다 쓰였다 (`chat.ts` 의 `hiddenRuns`).
         revealTurns();
         const childId = String(params.cid);
-        const body = (await request.json()) as { text: string; reply_to?: string };
+        const body = (await request.json()) as {
+          text: string;
+          reply_to?: string;
+          location?: InputLocation;
+        };
 
         // 🚨 한도보다 **먼저 확인만** 한다 — 잘못된 `reply_to` 가 하루 횟수를 쓰면 안 된다.
         //    꺼내는(지우는) 것은 한도를 통과한 뒤다. 한도에 걸린 답이 맥락까지 잃으면 안 되기
@@ -724,7 +730,12 @@ export const runHandlers = [
         const runId = `r_${Date.now()}`;
         // 🚨 `reply_to` 는 그대로 받아 둔다 — 이어받기 run 을 가르는 값이고 (#175),
         //    테스트가 "화면이 원문 대신 이 값을 보냈는가" 를 확인하는 자리다.
-        inputByRun.set(runId, { childId, text: body.text, replyTo: body.reply_to });
+        inputByRun.set(runId, {
+          childId,
+          text: body.text,
+          replyTo: body.reply_to,
+          location: body.location,
+        });
         // 즉시 202 로 run_id 를 준다. 결과는 전부 SSE 로 흐른다. 끝났다는 표시는 같은 키 재생에서만 선다.
         const accepted: CreateInputResponse = {
           run_id: runId,

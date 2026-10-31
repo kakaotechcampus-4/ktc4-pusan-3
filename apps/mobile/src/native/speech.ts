@@ -19,6 +19,7 @@
  * **양쪽을 같이** 고친다.
  */
 
+import type { LocationAction } from "./location";
 import type { PushAction } from "./push";
 
 /** 웹에 결과를 알리는 이벤트 이름. */
@@ -35,11 +36,12 @@ const ON_DEVICE_MIN_API = 33;
 
 /**
  * 웹이 셸에 하는 부탁. 🚨 이 모양이 아니면 네이티브를 부르지 않는다 (`apps/mobile/CLAUDE.md` §4).
- * `push` 는 일정 알림이다 (#609 · `push.ts`).
+ * `push` 는 일정 알림이다 (#609 · `push.ts`). `location` 은 흐린 위치다 (#593 · `location.ts`).
  */
 export type WebRequest =
   | { kind: "speech"; action: "start" | "stop" }
-  | { kind: "push"; action: PushAction };
+  | { kind: "push"; action: PushAction }
+  | { kind: "location"; action: LocationAction };
 
 /**
  * 웹 → 셸 메시지를 검사한다. 통과하지 못하면 `null` 이고, 호출부는 아무것도 하지 않는다.
@@ -65,6 +67,12 @@ export function parseWebRequest(
   const { kind, action } = value as Record<string, unknown>;
   if (kind === "speech" && (action === "start" || action === "stop")) return { kind, action };
   if (kind === "push" && (action === "ready" || action === "sync" || action === "ask")) {
+    return { kind, action };
+  }
+  if (
+    kind === "location" &&
+    (action === "check" || action === "ask" || action === "read" || action === "settings")
+  ) {
     return { kind, action };
   }
   return null;
