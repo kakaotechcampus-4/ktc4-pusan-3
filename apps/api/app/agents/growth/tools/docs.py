@@ -4,9 +4,10 @@ run 시작에 코드가 한 번 부른다. 결과는 프롬프트 `[예시]` 구
 없다 — 쿼리를 자유 문장으로 만들면서 보호자 발화를 넣을 수 있고, 조회를 했는지 테스트로 고정하기
 어렵다 (Growth_Agent_명세.md §5).
 
-    쿼리      라벨 · 단계 · 관심사 `merge_key` · 루틴 카테고리로만 조립한다. 발화를 받는 인자가 없다
+    쿼리      라벨 · 단계 · 관심사 `merge_key` · 루틴 카테고리 · 주제 영역 키로만 조립한다. 발화를
+              받는 인자가 없다 — 주제는 코드가 읽은 영역 키(`rules/growth_topic`)로만 온다
     종류      `row_type` 은 라벨 · 월령 · 카테고리에서 코드가 정한다 (`doc_row_type`)
-    두 번째 관문  포트가 월령 · 종류를 걸러 줘도 한 번 더 건다. 월령 밖 행은 안 나간다
+    두 번째 관문  포트가 월령 · 종류 · 영역을 걸러 줘도 한 번 더 건다. 월령 밖 행은 안 나간다
               — 비면 호출부가 `doc.no_row` 로 일반 템플릿을 낸다
     근거      문서 행은 참고다. `Ref(kind='growth_doc')` 로만 싣고 개인화 근거로 세지 않는다
               (`count_child_records` 가 뺀다)
@@ -26,11 +27,12 @@ from dataclasses import dataclass
 
 from app.agents.common.age import stage_of
 from app.agents.common.refs import Ref
-from app.agents.growth.doc_seed import ROUTINE_CATEGORIES, chain_key
+from app.agents.growth.doc_seed import AREAS, ROUTINE_CATEGORIES, chain_key
 from app.agents.growth.gating import routine_mode
 from app.agents.growth.schemas.task import GrowthTaskType
 from app.agents.growth.store.ports import GrowthDocReader, GrowthDocRow, GrowthDocType
 from app.agents.growth.tools.routine import ChainError, ordered_chain
+from app.rules.growth_topic import OTHER
 from app.rules.term_match import Term, match_fields, normalize
 
 logger = logging.getLogger(__name__)
@@ -45,6 +47,9 @@ CHAIN_POOL = 60
 MIN_CHAIN_MATCH = 2
 # 자립 단계 행 제목의 "이름 — 단계 설명" 구분자
 _TITLE_SEP = " — "
+# 사슬의 다른 이름. 보호자 말을 Memory 가 그대로 행동 이름으로 옮겨서 "칫솔질하기" 로 저장되면 양치
+# 사슬을 못 찾고 이미 말한 행동을 또 묻는다. 정규화한 값으로 적는다
+_CHAIN_ALIASES: Mapping[str, tuple[str, ...]] = {"양치": ("칫솔질", "이닦기")}
 
 # 상황 태그는 영문 식별자다 (bored · anxious · tired …). 발화 한 줄이 필터 · 쿼리로 안 흘러가게 한다
 _TRIGGER_TAG = re.compile(r"[a-z][a-z0-9_]*")
@@ -92,11 +97,13 @@ def build_doc_query(
     months: int,
     interest_keys: Sequence[str],
     routine_category: str | None,
+    areas: Sequence[str] = (),
 ) -> str:
     """의미 검색 쿼리. 코드가 아는 값만 이어 붙인다 — 보호자 원문은 들어올 길이 없다."""
     parts = [task_type.value, stage_of(months), *interest_keys]
     if routine_category:
         parts.append(routine_category)
+    parts.extend(areas)
     return " ".join(parts)
 
 
@@ -108,6 +115,7 @@ async def search_growth_doc(
     interest_keys: Sequence[str] = (),
     routine_category: str | None = None,
     trigger_tags: Sequence[str] = (),
+    areas: Sequence[str] = (),
     rotation: str = "",
     blocked: Sequence[Term] = (),
 ) -> tuple[DocHit, ...]:
@@ -120,6 +128,10 @@ async def search_growth_doc(
     태그라서 영문 식별자만 받는다. 모르는 `routine_category` 와 식별자가 아닌 태그는 `ValueError` —
     포트까지 가지 않는다.
 
+    `areas` 는 요청 · 기록 조각에서 코드가 읽은 주제 영역 키다(`GrowthRunState.topic`). 있으면 그
+    영역의 행에서만 고른다 — 국어를 물었는데 자연탐구 행이 [예시]로 가지 않게. `OTHER`(영어 같은
+    영역 밖 주제)는 행이 없어 비어 돌아간다. 모르는 영역 키는 `ValueError`.
+
     `blocked` 는 식품 아닌 알레르기의 대응표 낱말이다. 제목 · 본문 · 준비물 중 한 칸이라도 걸린
     행은 돌려 고르기 전에 뺀다 — 막힐 예시를 보이면 모델이 베껴 재호출만 는다.
     """
@@ -127,6 +139,8 @@ async def search_growth_doc(
         raise ValueError(f"routine_category 가 정해진 값이 아니다: {routine_category!r}")
     if not all(_TRIGGER_TAG.fullmatch(tag) for tag in trigger_tags):
         raise ValueError("trigger_tags 는 영문 소문자 식별자만 받는다")
+    if set(areas) - AREAS - {OTHER}:
+        raise ValueError("areas 가 정해진 영역 키가 아니다")
 
     row_type = doc_row_type(task_type, months, routine_category)
     rows = await docs.search(
@@ -134,10 +148,13 @@ async def search_growth_doc(
         row_type=row_type,
         routine_category=routine_category,
         trigger_tags=tuple(trigger_tags),
-        query=build_doc_query(task_type, months, interest_keys, routine_category),
+        areas=tuple(areas),
+        query=build_doc_query(task_type, months, interest_keys, routine_category, areas),
         limit=DOC_POOL,
     )
     served = [r for r in rows if r.row_type == row_type and r.min_month <= months < r.max_month]
+    if areas:
+        served = [r for r in served if r.area in areas]
     if blocked:
         served = [r for r in served if not match_fields((r.title, r.body, *r.materials), blocked)]
     if rotation:
@@ -260,16 +277,24 @@ def match_chain(
 ) -> tuple[GrowthDocRow, ...] | None:
     """관찰의 행동 이름에 맞는 사슬. 띄어쓰기를 무시하고 서로 포함 관계로 본다.
 
-    짧은 쪽이 `MIN_CHAIN_MATCH` 보다 짧으면 같을 때만 맞는다. 둘 이상 맞으면 이름이 긴 쪽이다.
-    없으면 None — 호출부는 `doc.no_row` 로 닫는다(단계를 지어내지 않는다).
+    사슬의 다른 이름(`_CHAIN_ALIASES`)도 같이 본다. 짧은 쪽이 `MIN_CHAIN_MATCH` 보다 짧으면
+    같을 때만 맞는다. 둘 이상 맞으면 이름이 긴 쪽이다. 없으면 None — 호출부는 `doc.no_row` 로
+    닫는다(단계를 지어내지 않는다).
     """
     wanted = normalize(subject)
     found = [
-        chain for chain in chains.values() if related_names(normalize(chain_name(chain)), wanted)
+        chain
+        for chain in chains.values()
+        if any(related_names(name, wanted) for name in _chain_names(chain))
     ]
     if not found:
         return None
     return max(found, key=lambda chain: len(chain_name(chain)))
+
+
+def _chain_names(chain: Sequence[GrowthDocRow]) -> tuple[str, ...]:
+    name = normalize(chain_name(chain))
+    return (name, *_CHAIN_ALIASES.get(name, ()))
 
 
 def related_names(a: str, b: str) -> bool:

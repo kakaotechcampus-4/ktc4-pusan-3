@@ -239,9 +239,11 @@ class GrowthDocReader(Protocol):
         trigger_tags: tuple[str, ...],
         query: str,
         limit: int,
+        areas: tuple[str, ...] = (),
     ) -> list[GrowthDocRow]:
         """`min_month <= months < max_month` 로 거른 뒤 의미 검색 상위 `limit` 행.
 
+        `areas` 가 있으면 그 `area` 의 행만이다(요청 주제의 영역 키). 비면 거르지 않는다.
         `status='approved'` 행만 돌려준다. `query` 는 코드가 조립한다 —
         보호자 발화가 들어가지 않는다.
         """

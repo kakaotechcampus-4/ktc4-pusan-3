@@ -647,7 +647,7 @@ async def handle_input(
             return True
 
         ran = await _run_domain(
-            routing.domain_tasks,
+            _with_recorded(routing.domain_tasks, memory),
             contexts,
             timeout=remaining,
             on_outcome=on_outcome,
@@ -1210,6 +1210,28 @@ def _saved_refs(memory: MemoryAgentResult) -> tuple[Ref, ...]:
         for call in memory.calls
         if call.success and call.name.startswith("create_observation_")
     )
+
+
+def _with_recorded(
+    tasks: tuple[DomainTask, ...], memory: MemoryAgentResult | None
+) -> tuple[DomainTask, ...]:
+    """Memory 가 이 run 에서 저장한 루틴 관찰의 행동 이름을 모든 도메인 task 에 싣는다.
+
+    저장이 끝난 뒤에만 읽는다 — 실패한 호출 · 다른 종류의 관찰은 세지 않는다. 없으면 task 를
+    그대로 돌려준다.
+    """
+    if memory is None:
+        return tasks
+    subjects = tuple(
+        subject
+        for call in memory.calls
+        if call.success
+        and call.name == "create_observation_routine"
+        and (subject := str(call.arguments.get("subject", "")).strip())
+    )
+    if not subjects:
+        return tasks
+    return tuple(replace(task, recorded_subjects=subjects) for task in tasks)
 
 
 class _QuestionSlot:

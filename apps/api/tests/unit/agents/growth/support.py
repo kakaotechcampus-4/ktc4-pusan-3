@@ -215,21 +215,34 @@ def _chain_rows(category: str, chain: str, name: str, materials: tuple[str, ...]
     return rows
 
 
+# 요청 주제의 영역 키로 [예시]를 거르므로 영역마다 행이 있어야 "숫자 놀이" 요청도 예시를 받는다
+_FIXTURE_AREAS = (
+    (
+        "communication",
+        "n",
+        "그림 카드 짝 맞추기",
+        "그림 카드를 늘어놓고 같은 그림끼리 짝을 지어 본다.",
+    ),
+    ("nature", "nat", "숫자 블록 세기", "블록을 하나씩 세어 본다."),
+)
+
+
 def _learning_rows(lo: int, hi: int) -> list[dict]:
     return [
         {
-            "doc_key": f"growth.learn.fixture.m{lo}_{hi}.n{n}",
+            "doc_key": f"growth.learn.fixture.m{lo}_{hi}.{prefix}{n}",
             "row_type": "learning_activity",
-            "title": f"그림 카드 짝 맞추기 {n}",
-            "body": "그림 카드를 늘어놓고 같은 그림끼리 짝을 지어 본다.",
+            "title": f"{title} {n}",
+            "body": body,
             "min_month": lo,
             "max_month": hi,
             "setting": "indoor",
-            "area": "communication",
+            "area": area,
             "materials": ["그림 카드"],
-            "tags": ["communication"],
+            "tags": [area],
             **_FIXTURE_META,
         }
+        for area, prefix, title, body in _FIXTURE_AREAS
         for n in range(1, 6)
     ]
 
