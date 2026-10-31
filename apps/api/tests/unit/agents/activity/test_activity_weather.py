@@ -172,21 +172,46 @@ class TestUv:
 
 
 class TestFailures:
-    """조회 실패를 기본값으로 메우지 않는다."""
+    """조회 실패를 기본값으로 메우지 않는다 — "맑음" 이라고 하지 않고 확인 못 했다고 알린다.
 
-    def test_예보가_실패하면_실내만(self):
+    못 읽었다고 바깥을 막지는 않는다. 위치를 켠 보호자가 우리 조회 실패로 바깥 놀이를 못 받으면
+    위치를 안 켠 보호자(묻지 않은 날)보다 손해다 — 확인은 보호자에게 맡긴다 (#612 멘토 리뷰).
+    """
+
+    def test_예보가_실패해도_바깥은_열고_확인_못_했다고_알린다(self):
         brief = judge(forecast=None)
-        assert brief.outdoor_ok is False
+        assert brief.outdoor_ok is True
         assert brief.notices == (WEATHER_UNCHECKED,)
+        assert "rain" not in brief.labels  # "비 없음"으로 채우지 않는다
 
     def test_강수량을_못_읽었으면_예보_실패와_같다(self):
         brief = judge(forecast=Forecast("맑음", None, 0))
-        assert brief.outdoor_ok is False
+        assert brief.outdoor_ok is True
         assert brief.notices == (WEATHER_UNCHECKED,)
 
-    def test_특보가_실패하면_실내만(self):
-        """특보는 차단 신호라 모르면 야외를 내지 않는다."""
-        assert judge(advisories=None).outdoor_ok is False
+    def test_특보가_실패해도_바깥은_열고_확인_못_했다고_알린다(self):
+        brief = judge(advisories=None)
+        assert brief.outdoor_ok is True
+        assert brief.notices == (WEATHER_UNCHECKED,)
+
+    @pytest.mark.parametrize(
+        "known",
+        [
+            dict(forecast=None, advisories=Advisories(heat="warning", cold="none", severe=False)),
+            dict(advisories=None, forecast=Forecast("흐림", 20.0, 90)),
+            dict(forecast=None, air=AirQuality(pm10=160, pm25=None, ozone_ppm=None)),
+        ],
+    )
+    def test_못_읽은_것이_있어도_읽은_신호가_나쁘면_막는다(self, known):
+        """막혔으니 "바깥 놀이라면 날씨를 봐 주세요" 는 붙이지 않는다."""
+        brief = judge(**known)
+        assert brief.outdoor_ok is False
+        assert brief.notices == (OUTDOOR_BLOCKED,)
+
+    def test_못_읽어도_해가_지면_실내만(self):
+        brief = judge(forecast=None, after_sunset=True)
+        assert brief.outdoor_ok is False
+        assert brief.notices == (AFTER_SUNSET,)
 
     def test_미세먼지만_실패하면_야외는_허용하고_알린다(self):
         brief = judge(air=None)
@@ -333,7 +358,7 @@ class TestReadForecast:
         """하늘상태는 라벨일 뿐 판정에 쓰지 않는다. 지어내지 않고 비운다."""
         assert read_forecast(RawForecast(sky="9", pcp="강수없음", pop="0")).sky is None
 
-    def test_강수량을_못_읽으면_실내만(self):
+    def test_강수량을_못_읽으면_확인_못_함이다(self):
         forecast = read_forecast(RawForecast(sky="1", pcp="비 많이", pop="90"))
         assert judge(forecast=forecast).notices == (WEATHER_UNCHECKED,)
 
@@ -429,20 +454,23 @@ class TestReadAdvisories:
         assert judge(advisories=result).outdoor_ok is True
 
     @pytest.mark.parametrize("warn_var", ["999", "13", "10", ""])
-    def test_처음_보는_특보_종류가_발효_중이면_모른다고_한다(self, warn_var):
-        """모르는 종류를 "없음"으로 넘기면 다른 조건이 좋을 때 야외가 열린다 (#194 리뷰)."""
+    def test_처음_보는_특보_종류가_발효_중이면_차단_신호다(self, warn_var):
+        """모르는 종류를 "없음"으로 넘기면 다른 조건이 좋을 때 야외가 열린다 (#194 리뷰).
+        조회 실패(None)와도 다르다 — 목록은 읽었고 무언가 발효 중이다. 실패는 바깥을 열고 알리지만
+        이건 막는다."""
         result = advisories(row(warn_var=warn_var, command="1", stress="1"))
-        assert result is None
-        assert judge(advisories=result).outdoor_ok is False
+        assert result == Advisories(heat="none", cold="none", severe=True)
+        brief = judge(advisories=result)
+        assert (brief.outdoor_ok, brief.notices) == (False, (OUTDOOR_BLOCKED,))
 
     def test_처음_보는_종류라도_해제된_행은_넘긴다(self):
         assert advisories(row(warn_var="999", command="2")) == CLEAR_SKY
 
     @pytest.mark.parametrize(("command", "stress"), [("5", "0"), ("1", "9")])
-    def test_모르는_코드가_섞이면_모른다고_한다(self, command, stress):
-        """모르는 특보를 "없음"으로 넘기지 않는다 — 실내만으로 간다."""
+    def test_모르는_코드가_섞이면_차단_신호다(self, command, stress):
+        """모르는 특보를 "없음"으로 넘기지 않는다 — 해제가 아닌 행은 발효 중으로 보고 막는다."""
         result = advisories(row(command=command, stress=stress))
-        assert result is None
+        assert result is not None and result.severe is True
         assert judge(advisories=result).outdoor_ok is False
 
     def test_정상인데_행이_없으면_특보_없음(self):

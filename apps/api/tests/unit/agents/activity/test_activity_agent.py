@@ -283,14 +283,17 @@ class TestRecall:
 
 
 class TestWeather:
-    async def test_날씨를_불렀는데_못_읽으면_degraded_와_안내(self):
+    async def test_날씨를_불렀는데_못_읽으면_degraded_고_바깥도_낼_수_있다(self):
+        """실내 놀이만 나가면 날씨 확인을 당부하지 않는다 — 묻지 않은 날과 같다."""
         weather = InMemoryWeather(uv="4", fail=frozenset({"forecast"}))
         llm = FakeLLM(propose("종이컵 탑 쌓기", "그림자놀이", "색종이 접기"))
         result = await run(task(), context(location=BUSAN, weather=weather), client=llm)
         assert result.status == "degraded"
-        assert any(r.kind for r in result.readouts)
-        assert "날씨는 확인하지 못했다" in llm.seen[0][0]["content"]
-        assert "바깥 활동이 어렵다" not in llm.seen[0][0]["content"]
+        assert result.readouts == ()
+        system = llm.seen[0][0]["content"]
+        assert "날씨는 확인하지 못했다" in system
+        assert "바깥 활동(outdoor)도 낼 수 있다" in system
+        assert "바깥 활동이 어렵다" not in system
 
     async def test_비가_많이_오면_바깥_활동이_어렵다고_알린다(self):
         rain = InMemoryWeather(uv="1", forecast=RawForecast(sky="4", pcp="20.0mm", pop="90"))
@@ -393,16 +396,17 @@ class TestWeather:
         bodies = [r.body for r in result.readouts]
         assert not any("실내 놀이만" in body for body in bodies)
 
-    async def test_예보를_못_읽은_날은_그대로_실내만이다(self):
-        """조회했는데 실패한 날은 바깥을 열지 않는다 — 실패를 기본값으로 메우지 않는다 (D8)."""
-        llm = FakeLLM(
-            propose("공원 산책", "그림자놀이", "색종이 접기", setting="outdoor"),
-            propose("거실 보물찾기", "그림자놀이", "색종이 접기"),
-        )
+    async def test_예보를_못_읽어도_바깥_놀이를_내고_날씨_확인을_맡긴다(self):
+        """조회 실패로 바깥을 막으면 위치를 켠 보호자가 안 켠 보호자보다 손해다 (#612 멘토 리뷰).
+        "맑음" 이라고 하지 않고 확인 못 했다고 알린다 — 실패를 기본값으로 메우지 않는다 (D8)."""
+        llm = FakeLLM(propose("공원 산책", "그림자놀이", "색종이 접기", setting="outdoor"))
         broken = InMemoryWeather(uv="4", fail=frozenset({"forecast"}))
         result = await run(task(), context(location=BUSAN, weather=broken), client=llm)
-        assert contents(result)[0] == "거실 보물찾기"
+        assert contents(result)[0] == "공원 산책"
         assert result.status == "degraded"
+        assert [r.body for r in result.readouts] == [
+            "날씨를 확인하지 못했어요. 바깥 놀이라면 나가기 전에 날씨와 특보를 한 번 봐 주세요."
+        ]
 
     async def test_맑으면_바깥_활동을_할_수_있다고_알린다(self):
         llm = FakeLLM(propose("공원 산책", "그림자놀이", "색종이 접기", setting="either"))

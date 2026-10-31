@@ -63,8 +63,8 @@ def checks_weather(gate: Gate) -> bool:
 
 
 def weather_checked(gate: Gate, weather: WeatherBrief) -> bool:
-    """오늘 날씨를 실제로 읽었는가. 부르지 않았거나(`checks_weather` 거짓) 예보를 못 읽은 날은
-    아니다 — 둘 다 판정은 실내만이지만, 모델에게 날씨를 말할 거리가 없다.
+    """오늘 날씨를 실제로 읽었는가. 부르지 않았거나(`checks_weather` 거짓) 예보 · 특보를 못 읽은
+    날은 아니다 — 둘 다 바깥 놀이는 열지만, 모델에게 날씨를 말할 거리가 없다.
     """
     return checks_weather(gate) and WEATHER_UNCHECKED not in weather.notices
 
