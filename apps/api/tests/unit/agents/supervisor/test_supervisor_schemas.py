@@ -363,6 +363,7 @@ def test_kind_와_guard_값() -> None:
         "safety_record",
         "diagnosis",
         "growth_record",
+        "hazard",
     }
 
 

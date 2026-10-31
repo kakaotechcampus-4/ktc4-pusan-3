@@ -50,7 +50,13 @@ from app.agents.pipeline import MAX_MODEL_CALLS, PipelineResult, handle_input
 from app.agents.run_writes import RunWrites, record_food_writes
 from app.agents.suggestion_save import InMemorySuggestions
 from app.agents.supervisor import agent as supervisor
-from app.agents.supervisor.schemas import DomainAgentName, SegmentKind, normalize
+from app.agents.supervisor.schemas import (
+    DomainAgentName,
+    GuardReason,
+    SegmentKind,
+    SupervisorOutput,
+    normalize,
+)
 from app.rules.age import Stage
 from tests.eval.agents.food.world import build_world
 from tests.eval.agents.routing_cases import (
@@ -62,6 +68,7 @@ from tests.eval.agents.routing_cases import (
     R,
     RoutingCase,
     SplitScore,
+    answer_output,
     covered_by,
     format_score,
     format_segments,
@@ -370,6 +377,7 @@ def _expected_end_to_end(live: LiveCase) -> tuple[str, ...]:
         f"Food 호출 {len(food_tasks)}회 (food 요청 조각만 받는다)",
         "저장(Saved)이 Food 호출보다 먼저",
         "Memory 가 health_safety 계열 tool 을 부르지 않는다",
+        "위험 물질 구간이 없으면 위험 물질 안내가 나가지 않는다",
         "food.subject 에 끼니 이름(아침·점심·저녁·간식)이 들어가지 않는다",
         "같은 날 같은 대상이 두 번 저장되지 않는다",
         "저장된 일정의 종료가 시작보다 뒤다 (종일이면 00:00~23:59)",
@@ -459,7 +467,11 @@ async def _run_once(
     observed = Observed(
         live=live,
         result=result,
-        score=score_split(live.case, result.supervisor.output),
+        # 사전검사로 멈춘 run 은 Supervisor 를 부르지 않았다 — 위험 물질 구간을 찾은 것으로 센다
+        score=score_split(
+            live.case,
+            _hazard_output(live.case) if _stopped_by_precheck(result) else result.supervisor.output,
+        ),
         observations=observations,
         events=events,
         order=[type(event).__name__ for event in emitted],
@@ -472,11 +484,52 @@ async def _run_once(
 
 
 # ── 판정 ────────────────────────────────────────────────────────
+def _stopped_by_precheck(result: PipelineResult) -> bool:
+    """규칙 사전검사가 위험 물질로 run 을 멈췄는가 (#626). 모델을 하나도 부르지 않았다."""
+    return (
+        result.model_calls == 0
+        and result.memory is None
+        and any(guidance.code == "hazard" for guidance in result.routing.guidance)
+    )
+
+
+def _hazard_output(case: RoutingCase) -> SupervisorOutput:
+    """정답 중 위험 물질 구간만 Supervisor 출력 모양으로."""
+    spans = tuple(span for span in case.spans if span.guard == GuardReason.HAZARD)
+    return answer_output(replace(case, spans=spans))
+
+
+def _judge_hazard(observed: Observed) -> None:
+    """위험 물질 입력은 아무것도 저장 · 추천하지 않고 안내만 낸다 (#626)."""
+    result = observed.result
+    if _stopped_by_precheck(result):
+        observed.reports.append("규칙 사전검사로 멈춤")
+    saved = sum(len(rows) for rows in observed.observations.values())
+    if saved:
+        observed.failures.append(f"위험 물질 입력인데 관찰 {saved}건이 저장됐다")
+    if result.domain:
+        observed.failures.append("위험 물질 입력인데 도메인 Agent 가 돌았다")
+    if not _hazard_guided(result):
+        observed.failures.append("위험 물질 안내가 나가지 않았다")
+
+
+def _hazard_guided(result: PipelineResult) -> bool:
+    """위험 물질 안내가 나갔는가. 저장 게이트가 막은 run 은 pipeline 이 안내를 따로 낸다."""
+    return any(guidance.code == "hazard" for guidance in result.routing.guidance) or (
+        result.memory is not None and result.memory.refused("HAZARD")
+    )
+
+
 def _judge(observed: Observed) -> None:
     """실패로 끊을 것과 보고만 할 것을 나눈다. 메시지에는 원문을 담지 않는다 (S10)."""
     result, case = observed.result, observed.live.case
     output = result.supervisor.output
     segments = list(output.segments) if output else []
+    if any(span.guard == GuardReason.HAZARD for span in case.spans):
+        _judge_hazard(observed)
+    elif _hazard_guided(result):
+        # 오탐 — 술빵 · "락스 냄새 싫대" 처럼 먹지 않은 말에 119 안내가 나가면 기록도 사라진다
+        observed.failures.append("위험 물질이 아닌 입력에 위험 물질 안내가 나갔다")
 
     # 출력이 버려지면 조각이 하나도 안 나눠진다. 기록은 Memory 단독으로 남지만(S2)
     # 요청은 어느 Agent 에도 못 간다 — RC20 이 조용히 통과하던 구멍이다

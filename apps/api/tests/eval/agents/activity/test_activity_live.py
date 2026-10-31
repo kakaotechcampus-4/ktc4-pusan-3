@@ -163,6 +163,7 @@ def affinity(n: int, key: str, *, polarity=1, state="confirmed", strength=0.9, d
         polarity=polarity,
         strength=strength,
         last_observed_on=TODAY - timedelta(days=days_ago),
+        observed_days=3,
     )
 
 

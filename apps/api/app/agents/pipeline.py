@@ -44,8 +44,16 @@ from app.agents.run_writes import RunWrites
 from app.agents.suggestion_save import SaveSuggestions, SuggestionBatch
 from app.agents.supervisor.agent import SupervisorResult
 from app.agents.supervisor.agent import run as run_supervisor
-from app.agents.supervisor.routing import SAFETY_GUIDANCE, Guidance, Routing, route
+from app.agents.supervisor.routing import (
+    HAZARD_GUIDANCE,
+    SAFETY_GUIDANCE,
+    Guidance,
+    Routing,
+    has_hazard,
+    route,
+)
 from app.agents.supervisor.schemas import DomainAgentName, normalize
+from app.rules.hazard import find_hazards
 from app.rules.safety_term import mentions_safety
 
 logger = logging.getLogger(__name__)
@@ -450,7 +458,10 @@ async def handle_input(
     """
     started = time.perf_counter()
     send = emit or _ignore
-    _safety_precheck(raw_text)
+    hazards = _safety_precheck(raw_text)
+    if hazards:
+        # 이어받기 답에 나와도 같다 — 되묻던 조각보다 아이 상태 확인이 먼저다
+        return _stop_for_hazard(hazards, run_id=run_id, send=send, started=started)
 
     if continuation is not None:
         return await _handle_continuation(
@@ -458,6 +469,7 @@ async def handle_input(
             memory_context,
             run_id=run_id,
             continuation=continuation,
+            supervisor_client=supervisor_client,
             memory_client=memory_client,
             send=send,
             started=started,
@@ -520,6 +532,9 @@ async def handle_input(
             unwritten = _unwritten(routing.memory_task, memory)
             if unwritten is not None:
                 send(unwritten)
+            if memory.refused(ErrorCode.HAZARD) and HAZARD_GUIDANCE not in routing.guidance:
+                # 사전검사 · Supervisor 가 놓치고 저장 게이트가 막은 경우. 같은 안내를 낸다
+                send(HAZARD_GUIDANCE)
 
     # Supervisor 가 놓친 알레르기 · 만성질환 언급도 같은 안내로 잇는다. "적지 않은 기록" 이 아니라
     # 막은 것이라 다시 나누지 않는다 — 다시 물으면 Supervisor 호출만 하나 더 쓴다
@@ -531,8 +546,13 @@ async def handle_input(
     # 위임이 어긋났으면 Supervisor에게 이유를 주고 한 번만 다시 나눈다.
     # Memory는 다시 돌리지 않는다.
     rerouted: Rerouted | None = None
+    # 저장 게이트가 위험 물질로 거절한 run 은 다시 나누지 않는다. 그 조각은 "적지 않은 기록" 이
+    # 아니라 막은 것이다 — 다시 물으면 안내가 두 번 나가거나 요청으로 바뀌어 Agent 가 돈다
+    hazard_refused = memory is not None and memory.refused(ErrorCode.HAZARD)
     bounced = (
-        _bounced_hints(routing.memory_task, memory) if failed is None and not safety_missed else ()
+        _bounced_hints(routing.memory_task, memory)
+        if failed is None and not hazard_refused and not safety_missed
+        else ()
     )
     # 도메인 Agent로 간 조각이 있으면 다시 나누지 않는다. 요청이 통째로 사라진 경우만 본다.
     stranded = not routing.domain_tasks and not routing.unavailable_agents
@@ -789,18 +809,36 @@ async def _handle_continuation(
     *,
     run_id: str,
     continuation: PendingMemoryContext,
+    supervisor_client: LLMClient | None,
     memory_client: LLMClient | None,
     send: Emit,
     started: float,
     commit: Commit,
     curator_trigger: CuratorTrigger | None = None,
 ) -> PipelineResult:
-    """이전 run의 되묻기를 이어받는다. Supervisor와 도메인 Agent를 타지 않는다."""
+    """이전 run의 되묻기를 이어받는다. 도메인 Agent를 타지 않는다.
+
+    Supervisor 는 위험 물질만 본다. 규칙이 못 잡게 돌려 말한 답("어른 음료를 한 모금")이 일반
+    입력에서는 막히고 되묻기 답으로는 저장되던 길을 닫는다 (#633 리뷰). 되묻던 조각을 앞에 붙여
+    보낸다 — "뭘 몰래 마셨어" 에 "아빠 맥주" 로 답해도 한 말처럼 읽힌다. 다른 라벨은 버린다 —
+    답은 그 질문의 답이라 다시 나누지 않는다. Supervisor 가 실패하면 일반 run 의 강등처럼
+    Memory 로 넘어가고 저장 게이트가 남는다.
+    """
     send(Step(1, 1, "이어서 적은 내용을 살펴보고 있어요"))
+    supervisor_started = time.perf_counter()
+    supervisor = await run_supervisor(
+        f"{continuation.hint_text}\n{answer}", client=supervisor_client
+    )
+    supervisor_ms = _ms_since(supervisor_started)
+    if has_hazard(supervisor):
+        return _stop_for_hazard(
+            (), run_id=run_id, send=send, started=started, supervisor=supervisor
+        )
+
     memory: MemoryAgentResult | None = None
     failed: Failed | None = None
     committed = False
-    model_calls = 0
+    model_calls = supervisor.model_calls
     memory_ms: int | None = None
     record_started = time.perf_counter()
     try:
@@ -811,7 +849,7 @@ async def _handle_continuation(
         memory_ms = _ms_since(record_started)
         failed = Failed("llm_unavailable", answer)
     else:
-        model_calls = 1
+        model_calls += 1
     if memory is not None and not memory.completed:
         memory_ms = _ms_since(record_started)
         # 반복 상한 — 일반 run과 같이 commit 하지 않고 failed로 끝냄
@@ -831,6 +869,9 @@ async def _handle_continuation(
             send(note)
         if memory.pending is not None:
             send(PendingReply(run_id, memory.pending))
+        if memory.refused(ErrorCode.HAZARD):
+            # Supervisor 가 놓치고 저장 게이트가 막은 경우 일반 run과 같은 안내
+            send(HAZARD_GUIDANCE)
         if memory.refused(ErrorCode.SAFETY_RECORD):
             send(SAFETY_GUIDANCE)
 
@@ -843,14 +884,14 @@ async def _handle_continuation(
 
     result = PipelineResult(
         run_id=run_id,
-        supervisor=SupervisorResult(output=None),
+        supervisor=supervisor,
         routing=_NO_ROUTING,
         memory=memory,
         failed=failed,
         committed=committed,
         model_calls=model_calls,
         latency_ms=_ms_since(started),
-        times=StageTimes(memory_ms=memory_ms),
+        times=StageTimes(supervisor_ms=supervisor_ms, memory_ms=memory_ms),
     )
     _log(result)
     return result
@@ -1062,11 +1103,49 @@ def _ignore(event: Event) -> None:
     """emit 콜백이 없을 때 이벤트를 무시한다."""
 
 
-def _safety_precheck(raw_text: str) -> None:
-    """안전 사전검사를 위한 자리.
+def _safety_precheck(raw_text: str) -> tuple[str, ...]:
+    """안전 사전검사. 걸린 위험 종류(`app/rules/hazard.py`), 없으면 빈 튜플.
 
-    실제 규칙은 app/rules/에 추가한다.
+    Supervisor 보다 먼저 돈다 — Supervisor 가 실패해 Memory 단독으로 가는 run 에서도 막힌다.
     """
+    return find_hazards(raw_text)
+
+
+def _stop_for_hazard(
+    hazards: tuple[str, ...],
+    *,
+    run_id: str,
+    send: Emit,
+    started: float,
+    supervisor: SupervisorResult | None = None,
+) -> PipelineResult:
+    """위험 물질 섭취가 나온 입력은 저장 · Curator · 추천 없이 안내 한 건으로 끝낸다 (#626).
+
+    규칙이 걸면 모델을 부르지 않는다. 이어받기에서 Supervisor 가 걸었으면 그 결과를 넘긴다.
+    같은 입력의 다른 기록 · 요청도 처리하지 않는다 — 아이 상태 확인이 먼저고, 섞어 처리하면
+    "좋아했다" 가 다른 조각으로 기록될 수 있다.
+    """
+    model_calls = 0 if supervisor is None else supervisor.model_calls
+    routing = Routing(intent_type="record", memory_task=None, guidance=(HAZARD_GUIDANCE,))
+    send(HAZARD_GUIDANCE)
+    send(Done(run_id, model_calls))
+    result = PipelineResult(
+        run_id=run_id,
+        supervisor=supervisor or SupervisorResult(output=None),
+        routing=routing,
+        memory=None,
+        model_calls=model_calls,
+        latency_ms=_ms_since(started),
+    )
+    # 원문 없이 걸린 종류만. Supervisor 가 건 이어받기는 종류가 없다
+    logger.info(
+        "hazard stop run_id=%s by=%s kinds=%s",
+        run_id,
+        "precheck" if supervisor is None else "continuation",
+        list(hazards),
+    )
+    _log(result)
+    return result
 
 
 def _ms_since(started: float) -> int:

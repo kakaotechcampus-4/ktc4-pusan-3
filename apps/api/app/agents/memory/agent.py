@@ -14,6 +14,7 @@ task 를 넘기면(Supervisor 경로) 다섯 가지가 더 붙는다.
   - [조기 종료] 할 일을 다 한 게 코드로 확인되면 요약 호출 없이 끝낸다 (_covered)
   - [unclear] Supervisor 가 unclear 로 본 조각은 관찰로 저장하지 않는다 (_in_unclear)
   - [고쳐 말하기] lookup_edit 조각은 조회 결과를 본 뒤에만 새로 저장한다 (_skipped_lookup)
+task 가 없어도 위험 물질 이름이 대상인 식사 · 놀이 · 배움 · 생활 관찰은 저장하지 않는다 (_hazard).
 task 가 없어도 알레르기 · 만성질환 이름은 건강 관찰로 저장하지 않는다 (_safety_named).
 task 없이 부르면 전체 tool 을 열고 끊지 않는다 — Supervisor 없이 Memory 만 재는 경로다.
 """
@@ -49,7 +50,9 @@ from app.agents.memory.schemas.task import (
     PendingMemoryContext,
     WorkType,
 )
+from app.rules.hazard import FOOD_NAME_TERMS, PLAY_NAME_TERMS, hazard_names
 from app.rules.safety_term import mentions_safety
+from app.rules.term_match import Term
 
 logger = logging.getLogger(__name__)
 
@@ -118,6 +121,14 @@ _NOT_CHILD_RECORD_MIXED = (
     "이 문장은 아이가 실제로 한 일이나 보인 반응으로 확인되지 않아 관찰로 저장하지 않는다. "
     "다시 부르지 않는다. 발화의 다른 기록은 그대로 저장한다. 이 문장은 묻지 않고, "
     "아이 기록으로 남기지 않았다고 한 줄로만 알린다."
+)
+
+# 위험 물질이 대상인 식사 · 놀이 · 배움 · 생활 관찰 (#626).
+# 사전검사 · Supervisor 를 지나온 것의 마지막 자리다.
+# 저장되면 Curator 가 취향 후보를 만들어 추천 근거가 된다. 안내는 pipeline 이 따로 낸다
+_HAZARD = (
+    "음식이 아닌 위험한 것이라 관찰로 저장하지 않는다. 다시 부르지 않는다. "
+    "다른 이름 · 다른 종류의 관찰로 바꿔 저장하지 않는다. 기록하지 않았다고 한 줄로만 알린다."
 )
 
 # 알레르기 · 만성질환은 보호자가 프로필에 직접 입력한다 (루트 §2 · #639).
@@ -773,6 +784,8 @@ async def _execute(
     if arguments is None:
         # registry는 dict를 전제
         return _failed(name, {}, ErrorCode.INVALID_ARGS, _BAD_JSON)
+    if _hazard(name, arguments):
+        return _failed(name, arguments, ErrorCode.HAZARD, _HAZARD)
     if _safety_named(name, arguments):
         return _failed(name, arguments, ErrorCode.SAFETY_RECORD, _SAFETY_RECORD)
     if task is not None and task.unclear_only and name.startswith("update_observation_"):
@@ -818,6 +831,29 @@ def _targets(arguments: dict[str, Any]) -> list[str]:
         values = value if isinstance(value, list) else [value]
         names.extend(_letters(str(item)) for item in values if item)
     return [name for name in names if name]
+
+
+# 위험 물질을 보는 관찰과 그 대상 이름 칸. 음식 · 생활은 술 · 담배 · 화학제품까지, 놀이 · 배움은
+# 마약류만 — "담배의 해로움" 같은 배움 주제와 "동전 모으기" 같은 놀이는 기록이다.
+# 건강 관찰은 보지 않는다 — 위험 물질 사건을 건강 기록으로 남길지는 PM 결정이다 (#626 범위 밖)
+_HAZARD_FIELDS: dict[str, tuple[tuple[str, ...], tuple[Term, ...]]] = {
+    "observation_food": (("subject",), FOOD_NAME_TERMS),
+    "observation_activity": (("activity", "subject"), PLAY_NAME_TERMS),
+    "observation_education": (("topic", "subject"), PLAY_NAME_TERMS),
+    # 식사에서 거절된 뒤 "소주 마시기" 로 바꿔 저장하는 길을 막는다 (#626 리뷰)
+    "observation_routine": (("subject",), FOOD_NAME_TERMS),
+}
+
+
+def _hazard(name: str, arguments: dict[str, Any]) -> bool:
+    """관찰 create · update 의 대상 이름이 위험 물질인가. 원문(raw_text)은 보지 않는다."""
+    for prefix in ("create_", "update_"):
+        found = _HAZARD_FIELDS.get(name.removeprefix(prefix)) if name.startswith(prefix) else None
+        if found is not None:
+            fields, terms = found
+            names = [str(arguments[f]) for f in fields if arguments.get(f)]
+            return bool(names) and bool(hazard_names(names, terms))
+    return False
 
 
 def _safety_named(name: str, arguments: dict[str, Any]) -> bool:
