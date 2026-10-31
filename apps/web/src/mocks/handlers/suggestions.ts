@@ -4,6 +4,8 @@ import {
   draftEvent,
   generalSuggestions,
   mealDraft,
+  placeGeneralSuggestion,
+  placeSuggestion,
   staleSuggestion,
   suggestionDraft,
   suggestionAllergens,
@@ -44,7 +46,7 @@ export function resetSubmittedEvents(): void {
 /**
  * 고를 수 있는 제안 — 개인화와 일반 둘 다다 (#509). 실서버의 채택 · 초안 · 제출은 `kind` 를 보지 않는다.
  */
-const pickable = [...suggestions, ...generalSuggestions];
+const pickable = [...suggestions, ...generalSuggestions, placeSuggestion, placeGeneralSuggestion];
 
 /**
  * 초안 만들기와 제출이 함께 거는 검사. 🚨 **실서버(#241)와 같은 순서 · 같은 코드 · 같은 문구다** —
@@ -286,6 +288,25 @@ export const suggestionHandlers = [
           suggestion_id: water.id,
         });
       }
+    }
+
+    /**
+     * 장소가 붙은 놀이 추천 (#516). 개인화 하나(실내 물놀이장 자리)와 일반 하나에 확인 문구(`place_notice`)가 온다.
+     * 🚨 문구는 근거가 아니라서 `evidence` 는 그대로다 — 화면이 "사용한 기록" 에 넣거나 세면 안 된다.
+     * 일반 추천이 있으니 `scarcity` 도 붙는다(`suggest_mixed` 와 같은 모양).
+     */
+    if (scenario === "suggest_place") {
+      const shown = alive.map((s) => (s.id === "s_4" ? placeSuggestion : s));
+      const general = [placeGeneralSuggestion].filter(notBlocked);
+      return HttpResponse.json({
+        suggestions: withStatus(shown),
+        groups: suggestionGroups.filter((g) => shown.some((s) => s.agent === g.agent)),
+        general: withStatus(general),
+        looked_at: "",
+        guards: [],
+        scarcity: { count: 3, question: null },
+        prechecks: prechecksFor([...shown, ...general]),
+      });
     }
 
     // 식품 사전에 없는 알레르기(꽃가루)는 뺄 놀이를 코드가 못 정해서 확인 문구만 낸다 (#433 리뷰 ③).

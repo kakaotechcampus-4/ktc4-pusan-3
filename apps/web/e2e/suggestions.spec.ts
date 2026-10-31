@@ -299,6 +299,57 @@ test.describe("개인화와 일반이 같은 Agent 에 섞여 오면 (#512 리�
   });
 });
 
+test.describe("장소가 붙은 추천의 확인 문구 (#516)", () => {
+  test.use({ scenario: "suggest_place" });
+
+  const PERSONAL_NOTICE = "공공데이터 기준 2026년 6월이에요. 가기 전에 운영 여부를 확인해 주세요.";
+  const GENERAL_NOTICE = "가기 전에 운영 여부를 확인해 주세요.";
+
+  test("개인화 줄은 제안 문장 아래 한 줄로 세우고, 사용한 기록에는 넣지 않는다", async ({
+    page,
+  }) => {
+    await page.goto(SUGGESTIONS);
+    await page.getByRole("tab", { name: "놀이 3가지" }).click();
+    const panel = page.getByRole("tabpanel");
+    const row = panel.locator(":scope > ul > li").filter({ hasText: "햇살어린이공원에서" });
+    await expect(row).toHaveCount(1);
+
+    const notice = row.getByText(PERSONAL_NOTICE, { exact: true });
+    await expect(notice).toBeVisible();
+    // 🚨 고르는 칸의 이름은 제안 문장뿐이다 — 문구가 라벨에 섞이면 체크박스 라벨이 길어진다
+    await expect(
+      row.getByRole("checkbox", { name: "햇살어린이공원에서 모래성 쌓기", exact: true }),
+    ).toBeVisible();
+    // 제안 문장 바로 아래, 이유보다 위다
+    const reasonLabel = row.getByText("추천 이유", { exact: true });
+    expect((await notice.boundingBox())!.y).toBeLessThan((await reasonLabel.boundingBox())!.y);
+
+    // 🚨 장소는 근거가 아니다 — 근거 목록 안에 없고, 건수는 근거 줄 수 그대로다
+    const label = row.getByText(/^사용한 기록 \d+건$/);
+    const list = label.locator("xpath=following-sibling::ul[1]");
+    const count = Number((await label.innerText()).match(/\d+/)![0]);
+    await expect(list.locator("li")).toHaveCount(count);
+    await expect(list.getByText(/운영 여부/)).toHaveCount(0);
+
+    // 장소가 없는 줄에는 서지 않는다
+    await expect(panel.getByText(/운영 여부를 확인해 주세요/)).toHaveCount(1);
+  });
+
+  test("일반 카드는 제안 문장 아래, 기준 문구보다 위에 세운다", async ({ page }) => {
+    await page.goto(SUGGESTIONS);
+    const card = page.locator("li").filter({ hasText: "별빛작은도서관에서" });
+    await expect(card).toHaveCount(1);
+    await expect(card).toContainText("또래 기준 일반 추천");
+    // 🚨 기록 건수는 그 Agent 도메인 수 그대로다 — 장소 문구가 붙어도 늘지 않는다
+    await expect(card).toContainText("기록 3건");
+
+    const notice = card.getByText(GENERAL_NOTICE, { exact: true });
+    await expect(notice).toBeVisible();
+    const basis = card.getByText("36개월 또래가 자주 찾는 놀이예요", { exact: true });
+    expect((await notice.boundingBox())!.y).toBeLessThan((await basis.boundingBox())!.y);
+  });
+});
+
 test.describe("알레르기 정보가 없으면 식사 제안을 만들지 않는다 (§2 안전)", () => {
   test.use({ scenario: "stale" });
 

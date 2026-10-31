@@ -47,6 +47,7 @@ export function GeneralSuggestionCard({
   busy: boolean;
 }) {
   const isHealth = suggestion.agent === "health";
+  const placeNotice = suggestion.place_notice?.trim();
 
   return (
     // 🚨 점선 테두리가 개인화 줄(실선 `line`)과 다른 신호다. 바탕은 `canvas` 라
@@ -78,6 +79,9 @@ export function GeneralSuggestionCard({
 
       {/* 체크박스 칸(20)과 사이(12)만큼 들여써서 기준 문구 · 출처가 제안 문장과 한 세로선에 선다. */}
       <div className={isHealth ? "" : "pl-8"}>
+        {/* 장소 확인 문구는 제안 문장에 딸린 말이라 바로 아래, 기준 문구보다 위다 (#516).
+            기준 문구는 아래 출처와 한 묶음이다. 개인화 줄과 같은 글씨다. */}
+        {placeNotice ? <p className="text-caption text-ink-muted mt-1">{placeNotice}</p> : null}
         <p className="text-body-sm text-ink-muted mt-1">{suggestion.basis}</p>
 
         {/* 🚨 일반 추천의 근거는 **문서 행**이다 (최상위 §2). 출처를 같이 적는다 — CC BY 문서는 출처

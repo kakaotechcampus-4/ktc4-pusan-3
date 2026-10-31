@@ -285,6 +285,15 @@ export interface Suggestion {
    * 🚨 **`null` 이 온다** (서버 `SuggestionOut.reason: str | None`). 비면 라벨도 세우지 않는다.
    */
   reason: string | null;
+  /**
+   * 장소가 붙은 추천에만 오는 확인 문구 한 문장 ("공공데이터 기준 2026년 6월이에요. 가기 전에 운영 여부를
+   * 확인해 주세요."). **서버 코드 문구 그대로** 제안 문장 아래 한 줄로 세운다 (#516). 장소가 없으면 `null`.
+   *
+   * 🚨 **근거가 아니다.** "사용한 기록" 목록에 넣지 않고 건수에도 세지 않는다 — 장소는 아이 기록이 아니라서,
+   *    거기 들어가면 기록이 늘어 보인다. 서버도 `evidence` 에 싣지 않는다.
+   * 🚨 **장소 이름은 여기가 아니라 `content` 에 있다** ("○○공원에서 모래성 쌓기"). 화면이 이름을 따로 꺼내지 않는다.
+   */
+  place_notice: string | null;
   status: SuggestionStatus;
   /** 생성 +24h. 승인 없는 draft 는 여기서 만료된다 (NF-07). */
   expires_at: string;
@@ -311,6 +320,8 @@ export interface GeneralSuggestion {
   agent: Agent;
   kind: "general";
   content: string;
+  /** 장소가 붙은 추천의 확인 문구. 개인화와 같은 칸이다 (`Suggestion.place_notice`). 장소가 없으면 `null`. */
+  place_notice: string | null;
   /** "36개월 또래가 자주 찾는 놀이예요" 처럼 무엇을 기준으로 골랐는지. 서버가 만든다. */
   basis: string;
   status: SuggestionStatus;
