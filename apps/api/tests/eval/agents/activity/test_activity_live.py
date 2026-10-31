@@ -281,3 +281,23 @@ async def test_꽃가루_알레르기면_확인_문구가_붙는다(llm):
 async def test_요청한_놀이를_따라간다(llm):
     out = await play(llm, "ball_request", "공놀이 하고 싶대", months=30)
     assert any("공" in d.content for d in out.result.suggestions)
+
+
+@pytest.mark.parametrize(
+    ("case", "ask"),
+    [
+        ("paint_request", "물감 놀이 하고 싶대"),
+        ("cookie_request", "아이랑 쿠키 만들기 하고 싶어"),
+        ("bread_request", "빵 만들기 체험 하고 싶어"),
+    ],
+)
+async def test_놀이를_정해_물으면_요청_기반으로_낸다(llm, case, ask):
+    """기록이 없는 아이가 놀이를 정해 물으면 셋 다 요청 기반 일반 추천이다 (#597).
+
+    후보가 요청에 맞는지는 여기서 판정하지 않는다 — 결과 파일을 사람이 읽는다. 낱말로 보면
+    "색을 두 가지씩 섞어 새 색 만들기"(물감) · 빵 이름만 쓴 후보처럼 맞는 후보를 틀렸다고 본다.
+    """
+    out = await play(llm, case, ask, months=40)
+    drafts = out.result.suggestions
+    assert len(drafts) == 3
+    assert all(d.kind == "general" and d.requested for d in drafts)

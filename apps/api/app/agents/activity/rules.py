@@ -18,6 +18,8 @@ _TOKEN = re.compile(r"[0-9A-Za-z가-힣]+")
 _OVERSTATING_TOKENS = frozenset({"또", "늘", "항상"})
 _OVERSTATING_PREFIXES = ("어제도",)
 _OVERSTATING_PHRASES = ("좋아하는", "좋아해")
+# requested_play 낱말 끝의 이 말은 떼고 본다 — "공놀이" 의 "공" 이 보호자 말에 있으면 같은 요청이다
+_PLAY_SUFFIX = "놀이"
 
 
 def normalize_activity(text: str) -> str:
@@ -38,6 +40,35 @@ def is_recent_duplicate(content: str, recent: Iterable[str]) -> bool:
     """
     key = normalize_activity(content)
     return bool(key) and any(key == normalize_activity(item) for item in recent)
+
+
+def said_in_request(requested_play: str | None, request_texts: Iterable[str]) -> bool:
+    """모델이 적은 `requested_play` 가 보호자가 이번 요청에서 한 말에 있는가.
+
+    모델이 막연한 요청("뭐 하고 놀까?")에 놀이를 지어 넣으면 근거 없는 일반 추천이 통과한다
+    (#597 리뷰). 그래서 요청 기반은 보호자 말에 그 놀이가 있을 때만이다. 낱말마다 끝의 "놀이" 를
+    떼고 본다("공놀이" → "공").
+
+    - 두 글자 이상은 보호자 말 안에 들어 있으면 된다 — "물놀이" ↔ "물놀이 뭐 하지?",
+      "티니핑" ↔ "티니핑으로"
+    - 한 글자는 보호자 말의 낱말과 같아야 한다 — "공" 이 "공룡" 에 걸리지 않게
+    - "놀이" 만 적은 것은 놀이를 정한 것이 아니다 — 떼고 나면 남는 말이 없다
+    """
+    if not requested_play:
+        return False
+    said = normalize_activity(" ".join(request_texts))
+    said_words = {normalize_activity(word) for text in request_texts for word in text.split()}
+    for word in _TOKEN.findall(unicodedata.normalize("NFKC", requested_play).casefold()):
+        stem = word.removesuffix(_PLAY_SUFFIX)
+        if not stem:
+            continue
+        if len(word) >= 2 and word in said:  # "물놀이" ↔ "물놀이 뭐 하지?"
+            return True
+        if len(stem) >= 2 and stem in said:
+            return True
+        if len(stem) == 1 and stem in said_words:
+            return True
+    return False
 
 
 def overstates(note: str) -> bool:
