@@ -471,7 +471,7 @@ export function partialMessage(partial: PartialEvent, savedSomething: boolean): 
 
 /**
  * 도메인 Agent 결과 한 블록 (#227 · 서버 #276). readout · 되묻기 · 추천 묶음(후보 N개 · 이유 · 일반이면
- * 또래 기준과 쌓인 기록 수 · 후보 보기)을 싣는다 (#227).
+ * 일반 추천 라벨과 쌓인 기록 수 · 후보 보기)을 싣는다 (#227).
  *
  * 🚨 **도메인 색을 쓰지 않는다** (`ObservationRow` 와 같은 이유). 대화는 하루치 답이 위아래로 이어져서
  *    Agent 블록마다 도메인 색 타일을 주면 한 화면에 도메인 색 2개 규칙(문서 §3)을 넘는다. 어느 Agent 인지는
@@ -500,13 +500,14 @@ function AgentResultCard({
           {candidates ? (
             <div className="mt-1">
               <p className="text-body text-ink">후보 {candidates.count}개</p>
-              {/* 🚨 일반 묶음은 "또래 기준" 과 쌓인 기록 수를 그대로 적는다 — 0건도 적는다 (최상위 §2).
-                  색으로 가르지 않는다 — 라벨과 건수가 본체다 (apps/web CLAUDE §5). */}
+              {/* 🚨 일반 묶음은 "일반 추천" 과 쌓인 기록 수를 그대로 적는다 — 0건도 적는다 (최상위 §2).
+                  색으로 가르지 않는다 — 라벨과 건수가 본체다 (apps/web CLAUDE §5).
+                  "또래 기준" 은 붙이지 않는다 — 요청에 맞춰 고른 일반 추천도 있다 (#597). 기준은 아래 `reason` 이 말한다. */}
               {candidates.general ? (
                 <p className="text-caption text-ink-muted mt-1">
                   {candidates.recordCount === null
-                    ? "또래 기준 일반 추천"
-                    : `또래 기준 일반 추천 · 쌓인 기록 ${candidates.recordCount}건`}
+                    ? "일반 추천"
+                    : `일반 추천 · 쌓인 기록 ${candidates.recordCount}건`}
                 </p>
               ) : null}
               {/* 🚨 서버 코드 문구다 — 줄이거나 다시 쓰지 않는다. */}

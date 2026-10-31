@@ -462,13 +462,13 @@ test.describe("검색과 필터 (#584)", () => {
 });
 
 test.describe("피드백 탭의 일반 추천 (#509)", () => {
-  test("채택한 일반 추천은 또래 기준이라고 적고, 개인화처럼 평가할 수 있다", async ({ page }) => {
+  test("채택한 일반 추천은 일반 추천이라고 적고, 개인화처럼 평가할 수 있다", async ({ page }) => {
     await page.goto(`${MEMORIES}?tab=feedback`);
     const general = "블록 쌓기처럼 손을 많이 쓰는 놀이를 15분쯤 해 보세요";
     const row = page.locator("li").filter({ hasText: general });
-    await expect(row).toContainText("또래 기준 일반 추천");
+    await expect(row.getByText("일반 추천", { exact: true })).toBeVisible();
     // 🚨 개인화 줄에는 그 라벨이 없다 — 우리 아이 기준 제안을 일반 추천으로 부르지 않는다.
-    await expect(page.locator("li").filter({ hasText: "또래 기준 일반 추천" })).toHaveCount(1);
+    await expect(page.getByText("일반 추천", { exact: true })).toHaveCount(1);
 
     await row.getByRole("button", { name: "아이가 좋아했어요" }).click();
     await expect(row).toHaveCount(0);
@@ -476,7 +476,7 @@ test.describe("피드백 탭의 일반 추천 (#509)", () => {
     // 평가는 피드백 완료에 남는다 — 일반 추천 라벨도 그대로다.
     await chooseView(page, "피드백 완료");
     const done = page.locator("li").filter({ hasText: general });
-    await expect(done).toContainText("또래 기준 일반 추천");
+    await expect(done.getByText("일반 추천", { exact: true })).toBeVisible();
     await expect(done.getByRole("button", { name: "아이가 좋아했어요" })).toHaveAttribute(
       "aria-pressed",
       "true",
