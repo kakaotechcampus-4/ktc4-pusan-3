@@ -2,6 +2,7 @@
 
 import uuid
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -100,7 +101,7 @@ def agents(monkeypatch):
     return plan, calls
 
 
-def _general(agent="activity", content="블록 쌓기") -> SuggestionDraft:
+def _general(agent="activity", content="블록 쌓기", place_notice=None) -> SuggestionDraft:
     doc = EvidenceCitation(ref=Ref(kind="activity_doc", id=DOC_ID), note="또래 놀이 자료")
     return SuggestionDraft(
         agent=agent,
@@ -108,6 +109,7 @@ def _general(agent="activity", content="블록 쌓기") -> SuggestionDraft:
         content=content,
         reason="또래 아이들이 많이 하는 놀이예요.",
         citations=(doc,),
+        place_notice=place_notice,
     )
 
 
@@ -162,6 +164,7 @@ async def test_홈_요청은_Agent_마다_묶음과_안내를_싣는다(db_clien
     [food] = data["suggestions"]
     assert food["evidence"][0]["label"] == "계란말이"
     assert food["evidence"][0]["is_stale"] is False
+    assert food["place_notice"] is None  # 장소가 없는 추천
     groups = {g["agent"]: g for g in data["groups"]}
     assert groups["food"]["notice"] == {
         "code": "fewer",
@@ -456,6 +459,38 @@ async def test_일반_추천은_문서_근거와_기록_건수를_싣는다(db_c
         }
     ]
     assert data["scarcity"] == {"count": 0, "question": None}
+    assert general["place_notice"] is None  # 장소가 없는 추천
+
+
+async def test_장소가_붙은_추천은_확인_문구를_칸으로_싣는다(db_client, bearer, cid, agents):
+    """문장에 섞지 않는다 — 화면이 제안 문장 아래 한 줄로 세운다 (#516)."""
+    plan, _ = agents
+    headers, _ = bearer
+    notice = "공공데이터 기준 2026년 6월이에요. 가기 전에 운영 여부를 확인해 주세요."
+    plan["activity"] = (
+        "drafts",
+        [_general(content="사직어린이공원에서 모래성 쌓기", place_notice=notice)],
+    )
+
+    data = (await _post(db_client, cid, headers, agents=["activity"])).json()
+
+    [general] = data["general"]
+    assert general["content"] == "사직어린이공원에서 모래성 쌓기"
+    assert general["place_notice"] == notice
+    assert [e["ref"]["kind"] for e in general["evidence"]] == ["activity_doc"]
+
+
+async def test_개인화_추천도_확인_문구를_싣는다(db_client, session, bearer, cid, agents):
+    plan, _ = agents
+    headers, parent_id = bearer
+    notice = "가기 전에 운영 여부를 확인해 주세요."
+    draft = await _personal(session, cid, parent_id, agent="activity", content="공원에서 공놀이")
+    plan["activity"] = ("drafts", [replace(draft, place_notice=notice)])
+
+    data = (await _post(db_client, cid, headers, agents=["activity"])).json()
+
+    [activity] = data["suggestions"]
+    assert activity["place_notice"] == notice
 
 
 async def test_문서_행을_읽을_수_없으면_일반_추천을_내지_않는다(

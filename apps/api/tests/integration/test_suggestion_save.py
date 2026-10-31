@@ -141,6 +141,7 @@ async def test_추천을_draft_로_저장하고_id_를_순서대로_돌려준다
     assert {row.run_id for row in rows} == {RUN}
     assert {row.expires_at for row in rows} == {NOW + SUGGESTION_TTL}
     assert (rows[0].allergens, rows[0].items) == (["난류"], ["계란"])
+    assert {row.place_notice for row in rows} == {None}  # payload 에 키가 없으면 비운다
     assert await counts(session, child.id) == (2, 2)  # 아이 기록 근거 1행 + 문서 근거 1행
 
 
@@ -174,6 +175,28 @@ async def test_SuggestionDraft_의_payload_가_그대로_저장된다(session, k
     )
     assert (row.allergens, row.items) == (["난류"], ["계란"])
     assert await counts(session, child.id) == (1, 2)
+
+
+async def test_장소가_붙은_추천의_확인_문구를_저장한다(session, kids):
+    """Activity 가 장소를 붙이면 코드 문구를 칸으로 싣는다 (#516). 근거 행은 늘지 않는다."""
+    _, child, _ = kids
+    notice = "공공데이터 기준 2026년 6월이에요. 가기 전에 운영 여부를 확인해 주세요."
+    draft = SuggestionDraft(
+        agent="activity",
+        kind="general",
+        content="사직어린이공원에서 모래성 쌓기",
+        reason="이유",
+        citations=(EvidenceCitation(ref=Ref(kind="activity_doc", id=DOC_ID), note="놀이 자료"),),
+        place_notice=notice,
+    )
+
+    [row_id] = await save_agent_suggestions(
+        session, child_id=child.id, run_id=RUN, now=NOW, payloads=[draft.to_payload()]
+    )
+
+    row = await session.get(Suggestion, row_id)
+    assert row.place_notice == notice
+    assert await counts(session, child.id) == (1, 1)  # 장소는 근거가 아니다
 
 
 async def test_문서_행_근거는_대상_테이블_없이_저장한다(session, kids):
