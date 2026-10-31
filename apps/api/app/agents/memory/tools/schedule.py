@@ -21,6 +21,7 @@ created_by / child_id 는 규칙이 채운다.
 
 import logging
 from dataclasses import replace
+from datetime import date
 from typing import Any
 
 from app.agents.common.datetime_rules import (
@@ -49,9 +50,8 @@ from app.agents.memory.store.ports import EventItemRow, EventRow
 from app.agents.memory.tools.dates import (
     check_new_event,
     date_remedy,
-    require_expression,
     resolve_bounds,
-    resolve_day,
+    resolve_event_days,
 )
 
 logger = logging.getLogger(__name__)
@@ -104,17 +104,16 @@ async def _event_summary(context: AgentContext, row: EventRow) -> dict[str, Any]
 # ── event ───────────────────────────────────────────────────────
 async def create_event(context: AgentContext, args: EventCreate) -> ToolResult:
     try:
-        # 날짜 규칙은 관찰과 같다(tools/dates.py). 시각 · 끝은 resolve_when 이 이 날짜에 얹는다
-        start_day = await resolve_day(
-            context, args.starts_on, args, direction=args.temporal_direction
-        )
-        check_new_event(start_day, context.today, args)
+        # 날짜 규칙은 관찰과 같다(tools/dates.py). 시각은 resolve_when 이 이 날짜에 얹는다
+        starts_on, ends_on = await resolve_event_days(context, args, current_start=None)
+        if starts_on is not None:  # create_event 는 starts_on 이 필수라 늘 있다
+            check_new_event(date.fromisoformat(starts_on), context.today, args)
     except DateParseError as exc:
         return fail("create", EVENT, ErrorCode.DATE_UNPARSEABLE, date_remedy(exc))
     patch = WhenPatch(
-        starts_on=start_day.isoformat(),
+        starts_on=starts_on,
         starts_time=args.starts_time,
-        ends_on=args.ends_on,
+        ends_on=ends_on,
         ends_time=args.ends_time,
         direction=args.temporal_direction,
     )
@@ -169,18 +168,15 @@ async def update_event(context: AgentContext, args: EventUpdate) -> ToolResult:
     if current is None:
         return fail("update", EVENT, ErrorCode.UNKNOWN_EVENT, _UNKNOWN_EVENT)
 
-    starts_on = args.starts_on
     try:
-        require_expression(args, args.starts_on)
-        if starts_on is not None:
-            day = await resolve_day(context, starts_on, args, direction=args.temporal_direction)
-            starts_on = day.isoformat()
+        current_start = current.starts_at.astimezone(context.timezone).date()
+        starts_on, ends_on = await resolve_event_days(context, args, current_start=current_start)
     except DateParseError as exc:
         return fail("update", EVENT, ErrorCode.DATE_UNPARSEABLE, date_remedy(exc))
     patch = WhenPatch(
         starts_on=starts_on,
         starts_time=args.starts_time,
-        ends_on=args.ends_on,
+        ends_on=ends_on,
         ends_time=args.ends_time,
         direction=args.temporal_direction,
         # ends_at은 컬럼째로만 지움(ends_on·ends_time 두 인자로 나뉘어 들어와서)

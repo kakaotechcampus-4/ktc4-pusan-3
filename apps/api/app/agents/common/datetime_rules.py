@@ -230,11 +230,9 @@ def resolve_date(
 
     span = _span_offset(key)
     if span is not None:
-        if span > 0 and direction == "past":
-            # 지난 일을 말하면서 "3일 뒤" 라고 하면 오늘이 아니라 다른 사건이 기준이다
-            # ("걸리고 3일 뒤에 나았어"). 오늘 기준으로 풀면 미래 날짜가 된다
-            raise DateNeedsAnchor(f"'{text}' 는 무엇의 {text}인지 정해지지 않았다.")
-        # "전" 이 방향을 말하므로 과거 쪽은 direction 을 보지 않는다
+        # 기준이 없으면 어디서든 오늘에서 센다. "전" · "뒤" 가 방향을 말하므로 direction 은
+        # 보지 않는다. 지난 일의 "3일 뒤"("걸리고 3일 뒤에 나았어")는 미래 날짜가 되고,
+        # 그건 계산이 아니라 관찰 저장의 검사가 막는다(tools/dates.py check_observed)
         return today + timedelta(days=span)
 
     resolved = _try_year_month_day(key)

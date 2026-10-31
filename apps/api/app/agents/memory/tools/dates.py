@@ -100,9 +100,37 @@ def require_expression(args: Any, *expressions: str | None) -> None:
 async def resolve_day(
     context: AgentContext, expression: str, args: Any, *, direction: TemporalDirection
 ) -> date:
-    """하루가 필요한 자리(관찰 날짜 · 일정 시작일). 기준이 있으면 거기서, 없으면 오늘에서 센다."""
+    """하루가 필요한 자리(관찰 날짜). 기준이 있으면 거기서, 없으면 오늘에서 센다."""
     anchor = await anchor_span(context, args, direction=direction)
     return resolve_date(expression, today=context.today, direction=direction, anchor=anchor)
+
+
+async def resolve_event_days(
+    context: AgentContext, args: Any, *, current_start: date | None
+) -> tuple[str | None, str | None]:
+    """일정의 시작 · 종료 날짜 표현을 같은 규칙으로 확정해 ISO 로 돌려준다(말하지 않은 쪽은 None).
+
+    시각과 구간 검증은 resolve_when 이 이 날짜에 얹는다. 기준 없이 센 종료일이 시작일보다 앞이면
+    ("다음 주 수요일부터 금요일까지" 의 금요일) 표현을 그대로 넘겨 resolve_when 이 시작일에서 다시
+    세게 한다. 기준이 있는데 앞이면 그대로 넘겨 check_when 이 구간 오류로 돌려준다.
+    """
+    require_expression(args, args.starts_on, args.ends_on)
+    direction = args.temporal_direction
+    anchor = await anchor_span(context, args, direction=direction)
+    starts_on = ends_on = None
+    start_day = current_start
+    if args.starts_on is not None:
+        start_day = resolve_date(
+            args.starts_on, today=context.today, direction=direction, anchor=anchor
+        )
+        starts_on = start_day.isoformat()
+    if args.ends_on is not None:
+        end_day = resolve_date(
+            args.ends_on, today=context.today, direction=direction, anchor=anchor
+        )
+        before_start = start_day is not None and end_day < start_day
+        ends_on = args.ends_on if before_start and anchor is None else end_day.isoformat()
+    return starts_on, ends_on
 
 
 async def resolve_bounds(
@@ -121,13 +149,15 @@ async def resolve_bounds(
     }
 
 
-def check_observed(day: date, today: date) -> None:
-    """관찰은 이미 일어난 일이다. 오늘보다 뒤면 기준을 잘못 짚었을 가능성이 커서 저장하지 않는다."""
-    if day > today:
-        raise DateNeedsAsking(
-            f"관찰 날짜가 {day.isoformat()} 로 아직 오지 않은 날이다. 저장하지 않고 "
-            "언제였는지 보호자에게 묻는다."
-        )
+def check_observed(day: date, today: date, args: Any) -> None:
+    """관찰은 이미 일어난 일이다. 오늘보다 뒤면 저장하지 않는다.
+    기준 없이 미래가 나왔으면 다른 사건에서 센 날일 가능성이 크다("걸리고 3일 뒤에 나았어")."""
+    if day <= today:
+        return
+    message = f"관찰 날짜가 {day.isoformat()} 로 아직 오지 않은 날이다."
+    if args.anchor_on is None and args.anchor_event is None:
+        raise DateNeedsAnchor(message)
+    raise DateNeedsAsking(f"{message} 저장하지 않고 언제였는지 보호자에게 묻는다.")
 
 
 def check_new_event(day: date, today: date, args: Any) -> None:

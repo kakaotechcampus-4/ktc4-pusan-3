@@ -116,7 +116,7 @@ async def _create(
 async def _observed_day(context: AgentContext, expression: str, args: Any) -> date:
     """관찰 날짜. 날짜 규칙은 일정과 같다(tools/dates.py). 관찰은 오늘보다 뒤일 수 없다."""
     day = await resolve_day(context, expression, args, direction=args.temporal_direction)
-    check_observed(day, context.today)
+    check_observed(day, context.today, args)
     return day
 
 

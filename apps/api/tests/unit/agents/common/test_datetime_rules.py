@@ -18,7 +18,6 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from app.agents.common.datetime_rules import (
-    DateNeedsAnchor,
     DateNeedsAsking,
     DateRange,
     TemporalDirection,
@@ -47,11 +46,11 @@ def test_오늘_기준_며칠_전을_날짜로_바꾼다(value: str, want: date)
     assert resolve_date(value, today=TODAY) == want
 
 
-@pytest.mark.parametrize("value", ["2일 뒤", "5일 후", "3일 뒤까지", "사흘 뒤"])
-def test_지난_일의_며칠_뒤는_기준이_모호해_되묻는다(value: str) -> None:
-    # 오늘 기준으로 읽으면 "걸리고 3일 뒤에 나았어" 가 미래 날짜로 저장된다
-    with pytest.raises(DateNeedsAnchor):
-        resolve_date(value, today=TODAY, direction="past")
+@pytest.mark.parametrize("value", ["3일 뒤", "3일 후", "3일 뒤까지", "사흘 뒤"])
+def test_기준이_없으면_며칠_뒤도_방향과_상관없이_오늘에서_센다(value: str) -> None:
+    # 지난 일의 "3일 뒤" 를 막는 건 계산이 아니라 관찰 저장의 검사다 (#643 리뷰)
+    for direction in ("past", "nearest", "future"):
+        assert resolve_date(value, today=TODAY, direction=direction) == date(2026, 10, 2)
 
 
 def test_며칠_전은_direction_과_상관없이_과거다() -> None:
@@ -118,12 +117,6 @@ async def test_관찰_저장에_3일_전부터를_넣으면_그날로_저장한�
 def test_기준_일정_없이_말한_날수는_오늘에서_센다(value: str, want: date) -> None:
     # "그저께" · "2일 전" 은 받는데 같은 뜻의 "이틀 전" 만 되묻던 것 (#497)
     assert resolve_date(value, today=TODAY, direction="past") == want
-
-
-@pytest.mark.parametrize("direction", ["future", "nearest"])
-def test_앞으로의_며칠_뒤는_오늘에서_센다(direction: TemporalDirection) -> None:
-    # 일정 조회는 nearest 가 기본이다 — "사흘 뒤에 일정 있어?" 가 막히면 안 된다 (#643 리뷰)
-    assert resolve_date("사흘 뒤", today=TODAY, direction=direction) == date(2026, 10, 2)
 
 
 @pytest.mark.parametrize(
@@ -276,17 +269,23 @@ async def test_여러_날_일정_다음날의_관찰은_마지막_날_다음날�
     assert payload["data"]["observed_on"] == "2026-09-23", payload
 
 
-async def test_관찰은_오늘보다_뒤면_저장하지_않는다() -> None:
-    # 기준 일정이 없어도 같다 — nearest 로 온 "사흘 뒤" 가 미래 날짜로 남으면 안 된다
+async def test_관찰은_오늘보다_뒤면_저장하지_않고_기준을_묻는다() -> None:
+    # "걸리고 3일 뒤에 나았어" 를 오늘에서 세면 미래 날짜다. 다른 사건이 기준일 가능성이 크다
     context = _context()
     payload = await _call(
         context,
-        "create_observation_food",
-        {"raw_text": "사흘 뒤 카레", "observed_on": "사흘 뒤", "subject": "카레"},
+        "create_observation_health",
+        {
+            "raw_text": "걸리고 3일 뒤에 나았어",
+            "observed_on": "3일 뒤",
+            "temporal_direction": "past",
+            "symptom": ["회복"],
+        },
     )
 
     assert payload["success"] is False
-    assert await context.store.query_observations(domain="food", child_id=context.child_id) == []
+    assert "anchor_event" in payload["error"]["message"]
+    assert await context.store.query_observations(domain="health", child_id=context.child_id) == []
 
 
 async def test_등록_안_된_기준_일정은_물어서_들은_날짜로_센다() -> None:
@@ -378,8 +377,86 @@ async def test_새_일정이_오늘보다_앞이면_만들지_않고_기준을_�
     assert context.drafts.all() == ()
 
 
-async def test_일정_조회의_며칠_뒤는_막히지_않는다() -> None:
-    # query_event 의 기본 방향은 nearest 다 (#643 리뷰)
-    payload = await _call(_context(), "query_event", {"date_from": "사흘 뒤"})
+@pytest.mark.parametrize("tool", ["query_event", "query_observation_food"])
+async def test_조회의_며칠_뒤는_막히지_않는다(tool: str) -> None:
+    # 관찰 조회의 기본 방향은 past 다. 조회에는 날짜 제한이 없다 (#643 리뷰)
+    payload = await _call(_context(), tool, {"date_from": "사흘 뒤"})
 
     assert payload["success"] is True, payload
+
+
+async def _event_days(context: AgentContext) -> tuple[str, str]:
+    draft = context.drafts.all()[-1]
+    assert draft.ends_at is not None
+    return draft.starts_at.date().isoformat(), draft.ends_at.date().isoformat()
+
+
+async def test_일정_종료일도_기준_일정에서_센다() -> None:
+    context = _context()
+    await _seed_event(context, "소풍", date(2026, 10, 10))
+    payload = await _call(
+        context,
+        "create_event",
+        {
+            "title": "캠프",
+            "starts_on": "이틀 뒤",
+            "ends_on": "사흘 뒤",
+            "anchor_event": "소풍",
+            "starts_time": "오전 9시",
+            "ends_time": "오후 5시",
+        },
+    )
+
+    assert payload["success"] is True, payload
+    assert await _event_days(context) == ("2026-10-12", "2026-10-13")  # 10/15 가 아니다
+
+
+async def test_일정_종료일만_기준과_함께_고칠_수_있다() -> None:
+    context = _context()
+    await _seed_event(context, "소풍", date(2026, 10, 10))
+    await _seed_event(context, "캠프", date(2026, 10, 12))
+    camp = (await _call(context, "query_event", {"title_query": "캠프"}))["data"]["events"][0]
+
+    payload = await _call(
+        context,
+        "update_event",
+        {
+            "event_id": camp["id"],
+            "ends_on": "사흘 뒤",
+            "ends_time": "오후 5시",
+            "anchor_event": "소풍",
+        },
+    )
+
+    assert payload["success"] is True, payload
+    assert await _event_days(context) == ("2026-10-12", "2026-10-13")
+
+
+@pytest.mark.parametrize(
+    ("starts_on", "ends_on", "want"),
+    [
+        # 기준이 없으면 종료일도 오늘에서 센다 — 시작일(10/1)에서 세어 10/4 가 되지 않는다
+        ("이틀 뒤", "사흘 뒤", ("2026-10-01", "2026-10-02")),
+        # 오늘에서 센 금요일(10/2)이 시작보다 앞이면 시작일에서 다시 센다
+        ("다음 주 수요일", "금요일", ("2026-10-07", "2026-10-09")),
+    ],
+)
+async def test_기준_없는_일정_종료일은_오늘에서_세고_시작보다_앞이면_시작일에서_센다(
+    starts_on: str, ends_on: str, want: tuple[str, str]
+) -> None:
+    context = _context()
+    payload = await _call(
+        context,
+        "create_event",
+        {
+            "title": "캠프",
+            "starts_on": starts_on,
+            "ends_on": ends_on,
+            "starts_time": "오전 9시",
+            "ends_time": "오후 5시",
+            "temporal_direction": "future",
+        },
+    )
+
+    assert payload["success"] is True, payload
+    assert await _event_days(context) == want
