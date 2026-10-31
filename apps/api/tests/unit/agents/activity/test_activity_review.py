@@ -400,7 +400,10 @@ class TestPlace:
             candidate(content="볼풀에서 공 던지기", place_name="시험키즈카페"),
             places={"시험키즈카페": cafe},
         ).drafts
-        assert draft.place_notice == "가기 전에 운영 여부와 이용료를 확인해 주세요."
+        # 출처가 안 보이면 왜 이 가게가 나왔는지 몰라 광고처럼 읽힌다 — 날짜 없이 출처만 (#600 PM)
+        assert draft.place_notice == (
+            "공공데이터에 있는 시설이에요. 가기 전에 운영 여부와 이용료를 확인해 주세요."
+        )
 
     def test_기준일자가_없는_장소는_운영_여부_확인만(self):
         undated = replace(PARK_ROW, data_date=None)
