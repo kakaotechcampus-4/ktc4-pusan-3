@@ -253,6 +253,44 @@ async def _seed_sports_day_items(context: AgentContext) -> None:
     await context.store.create_event_item(event_id=events[0].id, item_name="체육복")
 
 
+async def _seed_picnic(context: AgentContext) -> None:
+    """T68 — 그저께 다녀온 소풍. "소풍 전날" 은 이 날짜에서 센다."""
+    await context.store.create_event(
+        child_id=CHILD,
+        title="소풍",
+        starts_at=_at(-2),
+        ends_at=None,
+        all_day=False,
+        fields={"created_by": "caregiver", "category": "institution"},
+    )
+
+
+async def _seed_coming_picnic(context: AgentContext) -> None:
+    """T70 — 모레 가는 소풍. "소풍 사흘 뒤" 는 이 날짜에서 센다."""
+    await context.store.create_event(
+        child_id=CHILD,
+        title="소풍",
+        starts_at=_at(2),
+        ends_at=None,
+        all_day=False,
+        fields={"created_by": "caregiver", "category": "institution"},
+    )
+
+
+async def _seed_curry_last_week(context: AgentContext) -> None:
+    """T71 — 지난주 수요일 카레."""
+    day = TODAY - timedelta(days=TODAY.weekday() + 5)
+    await context.store.create_observation(
+        domain="food",
+        child_id=CHILD,
+        source_writer=WRITER,
+        raw_text="카레 먹었어",
+        observed_on=day,
+        observed_range=DateRange(start=day, end=day + timedelta(days=1)),
+        fields={"subject": "카레", "action": "먹었다"},
+    )
+
+
 def _no_guess(domain: str, key: str) -> Check:
     return (
         f"{domain}.{key} 를 지어내지 않았다",
@@ -882,6 +920,63 @@ CASES: list[EvalCase] = [
         "T65",
         "요즘 말이 늘은 것 같아.",
         checks=(("저장하거나 되물었다", lambda s: _total(s) >= 1 or _asked(s)),),
+    ),
+    # ── 날짜의 기준점 (#497) ──
+    EvalCase(
+        "T66",
+        "이틀 전에 카레 먹었어.",
+        required_tools={"create_observation_food": 1},
+        checks=(("오늘에서 이틀 전으로 저장됐다", lambda s: s.observed_on("food") == [_date(-2)]),),
+    ),
+    EvalCase(
+        "T67",
+        "일주일 전에 놀이터에서 그네 탔어.",
+        required_tools={"create_observation_activity": 1},
+        checks=(
+            ("오늘에서 일주일 전으로 저장됐다", lambda s: s.observed_on("activity") == [_date(-7)]),
+        ),
+    ),
+    EvalCase(
+        "T68",
+        "소풍 전날 김밥 먹었어.",
+        seed=_seed_picnic,
+        required_tools={"create_observation_food": 1},
+        checks=(
+            ("소풍 날짜에서 하루 전으로 저장됐다", lambda s: s.observed_on("food") == [_date(-3)]),
+        ),
+    ),
+    EvalCase(
+        "T69",
+        "지난주에 카레 먹었어.",
+        expect_clarification=True,
+        checks=(_NOTHING_SAVED,),
+    ),
+    EvalCase(
+        "T70",
+        "소풍 사흘 뒤 오후 2시에 정리하기 일정 잡아줘.",
+        seed=_seed_coming_picnic,
+        required_tools={"create_event": 1},
+        checks=(
+            ("소풍(모레) 사흘 뒤 오후 2시 초안", lambda s: s.starts_at() == _at(5, 14).isoformat()),
+        ),
+    ),
+    EvalCase(
+        "T71",
+        "지난주에 먹은 거 보여줘.",
+        seed=_seed_curry_last_week,
+        required_tools={"query_observation_food": 1},
+        forbidden_tools={MUTATING},
+        # 검색어 칸에 "먹은 거" 를 넣어 0건이 되는 일은 날짜와 별개라 결과 건수는 보지 않는다
+        checks=(
+            ("되묻지 않았다", lambda s: not _asked(s)),
+            (
+                "지난주로 막히지 않고 조회됐다",
+                lambda s: any(
+                    call.name == "query_observation_food" and call.success
+                    for call in s.result.calls
+                ),
+            ),
+        ),
     ),
 ]
 
