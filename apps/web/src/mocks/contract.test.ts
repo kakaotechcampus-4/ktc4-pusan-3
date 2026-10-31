@@ -68,6 +68,7 @@ import type {
   HealthSafety,
   HealthSafetyListResponse,
   MyDiary,
+  NotificationSettings,
   Observation,
   ObservationDetailResponse,
   ObservationsResponse,
@@ -2273,6 +2274,43 @@ describe("㉘ 일정 알림 — 서버 #603 과 같은 계약 (#609)", () => {
     expect(isApiError(await put("e_missing", "1h"), "not_found")).toBe(true);
     expect(isApiError(await put(event?.id ?? "", "3h"), "validation_failed")).toBe(true);
     expect(isApiError(await put(event?.id ?? "", "day_of_9am"), "invalid_reminder")).toBe(true);
+  });
+});
+
+describe("㉙ 10 설정 알림 스위치 — 서버 #605 와 같은 계약 (#609)", () => {
+  const path = "/me/notification-settings";
+
+  it("바꾼 적 없으면 기본값이고, 두 칸을 보내면 그 값이 남는다", async () => {
+    expect(await api.get<NotificationSettings>(path)).toEqual({
+      schedule_enabled: true,
+      medication_enabled: true,
+    });
+
+    const saved = await api.put<NotificationSettings>(path, {
+      schedule_enabled: false,
+      medication_enabled: true,
+    });
+
+    expect(saved).toEqual({ schedule_enabled: false, medication_enabled: true });
+    expect(await api.get<NotificationSettings>(path)).toEqual(saved);
+  });
+
+  it("🚨 한 칸만 보내거나 다른 칸이 끼면 400 이고 값은 그대로다", async () => {
+    const oneField = await api
+      .put<NotificationSettings>(path, { schedule_enabled: false })
+      .catch((error: unknown) => error);
+    const extraField = await api
+      .put<NotificationSettings>(path, {
+        schedule_enabled: false,
+        medication_enabled: true,
+        device_enabled: false,
+      })
+      .catch((error: unknown) => error);
+
+    expect(isApiError(oneField, "validation_failed")).toBe(true);
+    expect((oneField as ApiError).status).toBe(400);
+    expect(isApiError(extraField, "validation_failed")).toBe(true);
+    expect((await api.get<NotificationSettings>(path)).schedule_enabled).toBe(true);
   });
 });
 
