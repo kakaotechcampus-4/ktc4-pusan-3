@@ -253,6 +253,18 @@ async def _seed_sports_day_items(context: AgentContext) -> None:
     await context.store.create_event_item(event_id=events[0].id, item_name="체육복")
 
 
+async def _seed_picnic(context: AgentContext) -> None:
+    """T68 — 그저께 다녀온 소풍. "소풍 전날" 은 이 날짜에서 센다."""
+    await context.store.create_event(
+        child_id=CHILD,
+        title="소풍",
+        starts_at=_at(-2),
+        ends_at=None,
+        all_day=False,
+        fields={"created_by": "caregiver", "category": "institution"},
+    )
+
+
 def _no_guess(domain: str, key: str) -> Check:
     return (
         f"{domain}.{key} 를 지어내지 않았다",
@@ -882,6 +894,36 @@ CASES: list[EvalCase] = [
         "T65",
         "요즘 말이 늘은 것 같아.",
         checks=(("저장하거나 되물었다", lambda s: _total(s) >= 1 or _asked(s)),),
+    ),
+    # ── 날짜의 기준점 (#497) ──
+    EvalCase(
+        "T66",
+        "이틀 전에 카레 먹었어.",
+        required_tools={"create_observation_food": 1},
+        checks=(("오늘에서 이틀 전으로 저장됐다", lambda s: s.observed_on("food") == [_date(-2)]),),
+    ),
+    EvalCase(
+        "T67",
+        "일주일 전에 놀이터에서 그네 탔어.",
+        required_tools={"create_observation_activity": 1},
+        checks=(
+            ("오늘에서 일주일 전으로 저장됐다", lambda s: s.observed_on("activity") == [_date(-7)]),
+        ),
+    ),
+    EvalCase(
+        "T68",
+        "소풍 전날 김밥 먹었어.",
+        seed=_seed_picnic,
+        required_tools={"create_observation_food": 1},
+        checks=(
+            ("소풍 날짜에서 하루 전으로 저장됐다", lambda s: s.observed_on("food") == [_date(-3)]),
+        ),
+    ),
+    EvalCase(
+        "T69",
+        "지난주에 카레 먹었어.",
+        expect_clarification=True,
+        checks=(_NOTHING_SAVED,),
     ),
 ]
 
