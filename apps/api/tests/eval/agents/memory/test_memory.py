@@ -254,7 +254,7 @@ async def _seed_sports_day_items(context: AgentContext) -> None:
 
 
 async def _seed_picnic(context: AgentContext) -> None:
-    """T68 — 그저께 다녀온 소풍. "소풍 전날" 은 이 날짜에서 센다."""
+    """T72 — 그저께 다녀온 소풍. "소풍 전날" 은 이 날짜에서 센다."""
     await context.store.create_event(
         child_id=CHILD,
         title="소풍",
@@ -266,7 +266,7 @@ async def _seed_picnic(context: AgentContext) -> None:
 
 
 async def _seed_coming_picnic(context: AgentContext) -> None:
-    """T70 — 모레 가는 소풍. "소풍 사흘 뒤" 는 이 날짜에서 센다."""
+    """T74 — 모레 가는 소풍. "소풍 사흘 뒤" 는 이 날짜에서 센다."""
     await context.store.create_event(
         child_id=CHILD,
         title="소풍",
@@ -278,7 +278,7 @@ async def _seed_coming_picnic(context: AgentContext) -> None:
 
 
 async def _seed_curry_last_week(context: AgentContext) -> None:
-    """T71 — 지난주 수요일 카레."""
+    """T75 — 지난주 수요일 카레."""
     day = TODAY - timedelta(days=TODAY.weekday() + 5)
     await context.store.create_observation(
         domain="food",
@@ -923,13 +923,13 @@ CASES: list[EvalCase] = [
     ),
     # ── 날짜의 기준점 (#497) ──
     EvalCase(
-        "T66",
+        "T70",
         "이틀 전에 카레 먹었어.",
         required_tools={"create_observation_food": 1},
         checks=(("오늘에서 이틀 전으로 저장됐다", lambda s: s.observed_on("food") == [_date(-2)]),),
     ),
     EvalCase(
-        "T67",
+        "T71",
         "일주일 전에 놀이터에서 그네 탔어.",
         required_tools={"create_observation_activity": 1},
         checks=(
@@ -937,7 +937,7 @@ CASES: list[EvalCase] = [
         ),
     ),
     EvalCase(
-        "T68",
+        "T72",
         "소풍 전날 김밥 먹었어.",
         seed=_seed_picnic,
         required_tools={"create_observation_food": 1},
@@ -946,13 +946,13 @@ CASES: list[EvalCase] = [
         ),
     ),
     EvalCase(
-        "T69",
+        "T73",
         "지난주에 카레 먹었어.",
         expect_clarification=True,
         checks=(_NOTHING_SAVED,),
     ),
     EvalCase(
-        "T70",
+        "T74",
         "소풍 사흘 뒤 오후 2시에 정리하기 일정 잡아줘.",
         seed=_seed_coming_picnic,
         required_tools={"create_event": 1},
@@ -961,7 +961,7 @@ CASES: list[EvalCase] = [
         ),
     ),
     EvalCase(
-        "T71",
+        "T75",
         "지난주에 먹은 거 보여줘.",
         seed=_seed_curry_last_week,
         required_tools={"query_observation_food": 1},
@@ -1050,7 +1050,8 @@ def _task_for(case: EvalCase) -> MemoryTask:
     # 파이프라인은 순수 요청형에서 Memory 를 건너뛴다(SKIP_MEMORY_FOR_PURE_REQUEST).
     # 여기서는 그래도 Memory 를 돌린다 — 불렸을 때 무엇을 하는지가 이 eval 이 재는 것이고,
     # T19("알레르기 등록해줘")처럼 저장하면 안 되는 케이스가 회귀 감시 대상이다.
-    # 힌트는 어차피 비어 있어서 건너뛰기 전과 같은 입력이 된다
+    # 힌트는 어차피 비어 있어서 건너뛰기 전과 같은 입력이 된다. 단 unclear 가 요청 · 안내와 섞여
+    # 건너뛰는 입력(#642)은 unclear 정보가 빠진다 — 이 eval 에 그런 케이스는 없다
     return routing.memory_task or MemoryTask(raw_text=case.text)
 
 

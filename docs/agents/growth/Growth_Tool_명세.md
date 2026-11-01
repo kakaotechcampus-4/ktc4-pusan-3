@@ -7,18 +7,26 @@
 > **2026-10-06** — 추천은 최대 3개(C-8 닫힘, #216) · 다 못 채우면 남은 만큼 + 개수 안내, 0개면 안내만
 > **2026-10-08** — 안전 필터 범위(음식 용어는 교육·루틴, `health_safety` 는 교육만) · 18개월 미만 승격 미적용 · 루틴 근거는 같은 카테고리 14일 · 성장폭은 지표별 + 자세 단서 · 의료 처치 / 증상 닫힘 · `search_affinity` 는 {education, activity} · 교육 알레르기는 이름 대조 + 환경 알레르기 확인 문구(#261) · 도서 연령은 책 형태(`form`)로
 > **2026-10-10** — #282 PM 리뷰 반영: 0–17개월 경고 → 차단 승격을 Growth 에도 적용 · G-9 확정(요약은 방향을 동사로, 숫자는 크기만) · 확인 문구는 식품 사전에 없는 알레르기 이름에(`caution.non_food_allergy`, `environmental` 제외) · 루틴 닫힘 목록 확정 · 교육 활동은 #249 경고 자리 전에는 파이프라인에 붙이지 않는다
+> **2026-10-14** — 모델 경로(교육 · 루틴): 인자 근거를 `evidence[{id, note}]` 로 · 루틴 `items` 에 `step_id` 와 요청 `subject` 추가, `curriculum_ref` 는 뺌(문서 행은 [예시] id 를 `evidence` 로) · 루틴 다음 단계는 `search_routine_memory` 가 관찰 subject 와 사슬 이름을 맞춰 코드가 고름(맞는 사슬이 없으면 `doc.no_row`) · #402 전까지 교육 후보는 경고가 붙어도 뺌 · 예절 · 습관은 전략 행이 생길 때까지 `doc.no_row` · 도서는 포트 · `book_guide` 행이 생긴 뒤
+> **2026-10-18** — 도서 열림: `search_books(keywords[1–3])` · `propose_books(items[≤3]: {isbn, evidence[{id, note}], reason})` · 정보나루 어댑터 + Redis 검색어 캐시(`book_catalog` 표 없음) · 일반 도서 추천의 근거는 고른 책의 서지 행(`book_catalog`) — `book_guide` 행은 필수가 아니다 (#506)
 
 ## 0. 외부 데이터 소스
 
 | 소스 | 제공 | 용도 | 연결 방식 |
 | --- | --- | --- | --- |
-| **도서관 정보나루** (국립중앙도서관) — data4library.kr | 도서 검색 · 연령대별 인기대출 · 도서 상세(ISBN·표지) | `search_books` | REST. 하루 500회, 서버 IP 등록 시 30,000회 → **`book_catalog` 캐시** |
+| **도서관 정보나루** (국립중앙도서관) — data4library.kr | 도서 검색 · 연령대별 인기대출 · 도서 상세(ISBN·표지) | `search_books` | REST. 하루 500회, 서버 IP 등록 시 30,000회 → **검색어 캐시(Redis, 30일)** |
 | **국립중앙도서관 사서추천도서 API** — nl.go.kr | 사서 추천 목록(분류별) | 추천 가중치 (+) | 월 1회 배치 |
 | 교육부 **표준보육과정 고시** (교육부고시 제2024-23호) — 0~1세 · 2세 | 5개 영역 · 내용 | `search_growth_doc` (`learning_activity` 12–35 · `routine_step`) | 사람이 읽고 **행으로 재작성**. 고시는 `public_law`(저작권법 제7조 2호) |
 | 같은 고시의 **3~5세(누리과정)** — 「2019 개정 누리과정」 고시와 내용이 같다 | 5개 영역 · 내용 | `search_growth_doc` (`learning_activity` 36+ · `routine_step`) | 동일. 출처 문자열은 0~5세 모두 `표준보육과정 고시 (교육부고시 제2024-23호)` 하나(activity_doc 과 같다) |
-| 루틴 자료 (배변·수면·습관·예절) | 미확보 — 상업적 이용 · 변경이 허락된 자료만 쓴다(#337). 국가건강정보포털 · 해설서는 공공누리 제4유형이라 쓰지 않는다 | `search_growth_doc` (`habit_strategy`·`manner_practice`·`rhythm_info`) | 동일. 확보 전에는 연령별 코드 템플릿만 |
+| 루틴 자료 (배변·수면·습관·예절) | 미확보 — 상업적 이용 · 변경이 허락된 자료만 쓴다(#337). 국가건강정보포털 · 해설서는 공공누리 제4유형이라 쓰지 않는다 | `search_growth_doc` (`habit_strategy`·`manner_practice`·`rhythm_info`) | 동일. 예절 · 습관 · 리듬은 고시 내용(사회관계 · 신체운동·건강 · 의사소통)에서 쓰고, 고시로 단계를 받칠 수 없는 자립 사슬(옷 입기 · 신발 · 빨래 · 등원 준비)은 #337 기준 자료가 생길 때까지 행이 없다. 행이 없으면 `doc.no_row` · `rhythm.no_row` |
 | `child_growth_log` | 키·몸무게·측정일 | `compute_growth_delta` | 포트 |
 
+- **도서 검색어** — 어떤 낱말로 책을 찾을지는 `search_book_interests` 가 읽은 기록의 점수를 보고 모델이 정한다. 점수는 코드가 정한다(`tools/interests.py`):
+  - 출처 가중치 — 확정 관심 3.0 · 쌓이는 관심 2.0 · 교육 기록 1.5 · 놀이 기록 1.0 · 생활 기록 1.0. 같은 낱말(서로 포함하는 두 글자 이상 낱말)의 기록은 점수를 더한다 — 짧은 낱말부터 묶고 새 낱말은 묶음의 첫 낱말하고만 비교한다(공룡 · 공룡 블록 · 블록 → 공룡 · 블록)
+  - 최근성 — 관찰은 `1 / (1 + 경과일 / 7)`, 관심은 마지막 관찰일 기준 `1 / (1 + 경과일 / 30)`. 극성 계수는 긍정 1.0 · 중립 0.5
+  - 뺀다 — 싫어한 교육 · 놀이 · 관심, 6개월 지난 관심, 14일 지난 관찰, 12개월 전 교육 기록, 음식 기록(읽지 않는다). 생활 기록은 **힘들어하는 행동(극성 −1)만** 쓰고 습관 카테고리 · 의료 처치 · 증상처럼 보이는 행동은 쓰지 않는다
+  - 모델은 요청에 주제가 있으면 그 낱말을 먼저, 기록 주제는 보조로 쓴다. 상위 주제 한두 개를 함께 보고, 한 권도 못 찾으면 두 번 더 찾아 본 뒤에만 빈 제출을 한다. 힘들어하는 행동을 근거로 달면 reason 에 그 행동 이름을 쓴다(기피 근거 규칙)
+  - 검색어에서 행동 이름의 "~하기" 는 뗀다("양치하기" 는 정보나루에서 0권, "양치" 는 그림책이 나온다)
 - 도서는 **API 응답만 추천 가능** — 모델이 책 제목을 생성하면 `propose_books`가 ISBN 검증에서 거절.
 - 연령 필터는 코드가 넣는다. 정보나루의 연령 코드(`age`)는 대출자 연령대라(0 = 영유아 0~5세) v1 월령 전체가 코드 하나에 들어가므로, 아동 도서(ISBN 부가기호 첫 자리 7)로 좁힌 뒤 서명 키워드(보드북·촉감책)와 KDC 로 책 형태(`form`)를 가르고 그 형태의 월령 범위를 쓴다. 처음 값은 [`growth_agent_own_table.md`](growth_agent_own_table.md) §7 GT-3 이다. 청구기호(`유` 계열)는 소장 도서관마다 달라 쓰지 않는다.
 - **별도 KB 인덱스를 만들지 않는다.** 교육과정도 루틴 자료도 전부 `growth_doc` 행이다. 원문을 청크로 잘라 색인하면 라이선스가 걸리고 품질도 사람이 못 고친다 — 사람이 읽고 한 행 = 한 가지 쓸모로 새로 쓴다([`RAG_plan.md`](../shared/RAG_plan.md) §0).
@@ -32,14 +40,14 @@
 
 | tool | `min_month` |
 | --- | --- |
-| routine · activity · affinity 검색 · `propose_routine_plan` · `search_books` · `propose_books` · `compute_growth_delta` | 0 |
+| routine · activity · affinity 검색 · `search_book_interests` · `propose_routine_plan` · `search_books` · `propose_books` · `compute_growth_delta` | 0 |
 | `search_education_memory` · `lookup_notice` · `propose_learning_activity` | **12** |
 
 라벨 안에서 코드가 정하는 것: `propose_routine_plan.mode`(0–11 `rhythm_info` / 12+ `next_step` / 36+ `habit_fix`) · 허용 `routine_category`(12+ 자립·식사·전환·집안일, 24+ 예절, 36+ 습관) · `search_growth_doc`의 월령 필터(12–35는 표준보육과정에서 쓴 행, 36+는 누리과정에서 쓴 행) · 도서 연령 필터(보드북 / 그림책 / 지식책).
 
 `growth_review`에는 연령 축이 없다 — `compute_growth_delta`는 월령과 무관하게 측정 로그 전부를 읽는다.
 
-추가 닫힘: `growth_review` + `consent_child_health=False` → readout · `lookup_notice`는 `notice` 0건이면 목록에서 제외 · 도서 API 장애 → `book_suggestion` `()` + readout · `learning_suggestion` + `health_safety` 조회 실패 → `blocked.safety`(모델 0회, 다른 라벨은 그대로) · `routine_coaching` + 의료 처치 / 증상처럼 보이는 습관 → 해당 readout(§2 "루틴에서 닫는 것").
+추가 닫힘: `growth_review` + `consent_child_health=False` → readout · `lookup_notice`는 `notice` 0건이면 목록에서 제외 · 도서 API 장애 → `book_suggestion` `()` + readout · `learning_suggestion` + `health_safety` 조회 실패 → `blocked.safety`(모델 0회, 다른 라벨은 그대로) · `learning_suggestion` + [예시] 0행 + 근거로 달 아이 기록(교육 · 놀이 · 루틴 관찰 14일, 관심, 6개월 안) 0행 → `doc.no_row`(모델 0회) · `routine_coaching` + 의료 처치 / 증상처럼 보이는 습관 → 해당 readout(§2 "루틴에서 닫는 것").
 
 `routine_coaching`의 카테고리 판정: 모델이 `propose_routine_plan.category`로 선언 → 코드가 연령 허용표와 대조, 불허면 해당 readout으로 교체 (모델 호출 1회 유지).
 
@@ -49,21 +57,22 @@
 
 | Tool | 입력 | 출력 | 규칙 |
 | --- | --- | --- | --- |
-| `search_education_memory` | `query?`, `period` | `observation_education` + engagement | – |
+| `search_education_memory` | `query?`, `period` | `observation_education` + engagement | 낱말은 같은 영역의 낱말(`rules/growth_topic.py`)까지 넓혀 맞춘다 — "국어" 로 "글 읽기" 기록 |
 | `search_routine_memory` | `category?`, `period` | `observation_routine` (context · assistance · completion · **trigger**) | – |
 | `search_activity_memory` | `query?`, `period` | `observation_activity` (참고) | 결과 ref에 `kind="observation_activity"` 표시 → 화면 문구 분기 |
 | `search_affinity` | `domains ⊂ {education, activity}` | `rank_evidence` 정렬 결과 | `routine` 은 affinity 가 없다(09-23) — 루틴 관찰은 티어 3 로만 인용한다 |
 | `lookup_notice` | `period: "this_week"\|"next_week"` | 일반 기관 공지 요약 (보조) | 읽기만. 준비물·행사는 `event`로 가므로 여기 없음 |
-| `search_books` | `keywords[]`, `k≤10` | `{isbn, title, author, publisher, cover_url}` | 연령 필터 코드 주입 · 캐시 우선 |
-| `propose_learning_activity` | `items[3]: {title, steps[≤4], materials[], evidence_ids[], curriculum_ref?, reason}` | `SuggestionDraft[]` | 안전 필터(음식 용어 · `hazard_term` · 동의 시 알레르기) → 금지 표현 순 — 아래 "안전 필터", 순서는 [`Tool_공통.md`](../shared/Tool_공통.md) §5-1. `materials` 는 이 검사들의 대상이자 `suggestion.items` 를 채우는 자리다 |
-| `propose_routine_plan` | `category`, `items[3]: {next_step, how, evidence_ids[], reason}` (`rhythm_info` 모드면 `items` 없음) | `SuggestionDraft[]` \| readout | `mode=rhythm_info`(0–11개월)면 **`Readout(code)` 하나**로 끝낸다(suggestion 없음) · `habit` + `trigger` NULL → `needs_observation` · **근거 0 → `needs_observation` (카테고리 무관)** — 근거를 세는 법은 아래 "루틴 근거". `routine_coaching`은 일반 추천을 내지 않는다 — 아이와 무관한 생활 조언이 되기 때문 · 음식 용어 → 금지 표현 필터 |
-| `propose_books` | `items[3]: {isbn, reason, evidence_ids[]}` | `SuggestionDraft[]` | ISBN이 직전 `search_books` 결과에 없으면 거절 · **만료 전 `suggestion`에 이미 낸 책도 거절** ("다른 책도"에 같은 책이 다시 나오지 않게). "직전" 은 이번 run 에서 `search_books` 가 돌려준 책 전부다(검색을 여러 번 하면 쌓인다). 연령 필터에 걸러진 책은 돌려주지 않았으므로 낼 수 없다. 같은 호출 안의 같은 책과 4권째도 거절한다. 같은 책은 ISBN 이 아니라 `items` 에 들어가는 "제목(저자)"(`book_label`)로 가른다 — ISBN 은 저장하지 않아서 지난 추천과 맞춰 볼 값이 이것뿐이고, 보드북판 · 양장판처럼 ISBN 만 다른 같은 책도 함께 거른다. 거절은 후보 번호와 사유 코드로만 남기고 ISBN · 제목은 싣지 않는다. 코드는 `tools/books.py` |
+| `search_book_interests` | 없음 | `{keyword, score, signals[], evidence[{id, kind, tier, label, polarity, observed_on}]}` 점수 순 최대 5주제 · 주제마다 근거 3개까지 | 도서 검색어의 근거. 교육 · 관심 · 놀이 · 생활 기록을 코드가 한 번에 읽어 점수로 줄 세운다(아래 "도서 검색어"). 기록이 없으면 `NO_RECORDS` — 요청 낱말로 찾는다 |
+| `search_books` | `keywords[1–3]` — 한 개 12자 · 한글 영문 숫자 · 낱말 사이 한 칸(정보나루로 나가는 값이라 코드가 모양을 묶는다) | `{isbn, title, author, publisher, form}` 최대 10권 | 연령 필터 코드 주입 · 캐시 우선 · 0권이면 `NO_RECORDS` 로 다른 낱말 · 빈 제출 안내 |
+| `propose_learning_activity` | `items[3]: {title, steps[≤4], materials[], evidence[{id, note}], reason}` | `SuggestionDraft[]` | 안전 필터(음식 용어 · `hazard_term` · 동의 시 알레르기) → 금지 표현 순 — 아래 "안전 필터", 순서는 [`Tool_공통.md`](../shared/Tool_공통.md) §5-1. `materials` 는 이 검사들의 대상이자 `suggestion.items` 를 채우는 자리다. 그 뒤 같은 호출 안의 같은 제목(띄어쓰기 · 문장부호 무시)은 거절하고, 근거 note 의 반복 · 성향 표현(어제도 · 또 · 늘 · 항상 · 좋아하는)은 티어 1 근거에만 쓴다 — Activity 와 같은 `common/evidence.overstates` |
+| `propose_routine_plan` | `category`, `subject`, `items[≤next_steps 수]: {step_id, next_step, how, evidence[{id, note}], reason}` (`rhythm_info` 모드면 `items` 없음 · 되묻기 · 닫힘이면 `items` 를 비운다) | `SuggestionDraft[]` \| readout | `mode=rhythm_info`(0–11개월)면 **`Readout(code)` 하나**로 끝낸다(suggestion 없음) · `habit` + `trigger` NULL → `needs_observation` · **근거 0 → `needs_observation` (카테고리 무관)** — 근거를 세는 법은 아래 "루틴 근거". `routine_coaching`은 일반 추천을 내지 않는다 — 아이와 무관한 생활 조언이 되기 때문 · 예절 · 습관은 사슬 대신 코드가 고른 전략 행을 옮긴다(아래 "예절 · 습관 — 전략 행") · 음식 용어 → 금지 표현 필터 · 근거 note 의 성향 표현은 티어 1 근거에만(교육과 같다) · 낼 단계는 요청한 행동(`subject`)과 같은 사슬만이다 — 같은 카테고리의 다른 행동 단계를 끼우지 않는다. 맞는 사슬이 없고 `items` 가 비면 그 행동 이름으로 `ask.routine_current` |
+| `propose_books` | `items[≤3]: {isbn, evidence[{id, note}], reason}` — 검색한 책 중 낼 수 있는 책이 3권보다 적으면 그만큼, 0권이면 빈 제출(검색한 뒤에만) | `SuggestionDraft[]` | ISBN이 직전 `search_books` 결과에 없으면 거절 · **만료 전 `suggestion`에 이미 낸 책도 거절** ("다른 책도"에 같은 책이 다시 나오지 않게). "직전" 은 이번 run 에서 `search_books` 가 돌려준 책 전부다(검색을 여러 번 하면 쌓인다). 연령 필터에 걸러진 책은 돌려주지 않았으므로 낼 수 없다. 같은 호출 안의 같은 책과 4권째도 거절한다. 같은 책은 ISBN 이 아니라 `items` 에 들어가는 "제목(저자)"(`book_label`)로 가른다 — ISBN 은 저장하지 않아서 지난 추천과 맞춰 볼 값이 이것뿐이고, 보드북판 · 양장판처럼 ISBN 만 다른 같은 책도 함께 거른다. 거절은 후보 번호와 사유 코드로만 남기고 ISBN · 제목은 싣지 않는다. 코드는 `tools/books.py` · 개인화 근거는 고른 기록뿐이고, 기록이 없으면 일반 추천이며 근거는 그 책(`book_catalog`)이다 — Food 메뉴(#442)처럼 코드가 `general_basis` 로만 단다. 금지 표현은 이유 · 근거 메모 · 책 이름에 건다. 핸들러는 `tools/books.search_books_tool` · `tools/propose.propose_books_tool` |
 
 ### 0–11개월은 추천을 내지 않는다
 
 `mode=rhythm_info`는 **`Readout(code)` 하나**다. 수면·수유 리듬 안내는 "다음에 해볼 것"이 아니라 일반 안내라서 승인할 것이 없고, 카드 3장을 띄우면 화면이 거짓말을 한다. 18개월 미만은 `profile_affinity`가 구조적으로 0행이라 티어 1·2 근거가 없다. 티어 3(최근 14일 관찰)은 살아 있어서 개인화가 아예 막히지는 않는다.
 
-문구는 `growth_doc`의 `rhythm_info` 행에서 온다. 행이 없으면 연령별 코드 템플릿으로 간다.
+문구는 `growth_doc`의 `rhythm_info` 행 본문 그대로다(모델을 거치지 않는다). 한 구간에 행이 여럿이면 아이 · 날짜로 돌려 고르고(교육 [예시]와 같다), 출처를 따라갈 수 있게 그 행을 readout 의 `source_refs` 에 단다. 행이 없으면 `rhythm.no_row` 한 줄이다. 리듬 행은 잠 · 하루 일과 순서만 담는다 — 수유 · 이유식은 Food 몫이고, 시간 · 횟수 숫자는 기준표라 넣지 않는다.
 
 ### 승인된 추천이 가는 관찰 테이블
 
@@ -80,7 +89,7 @@
 
 **개수·재호출** — 출력은 최대 3개. 사후 필터(`hazard_term` · 금지 표현 · 음식 용어 · 알레르기 · 의료 처치 — 아래 "안전 필터" · "루틴에서 닫는 것")로 3개 미만이 되면 걸러진 항목을 제외 목록으로 넣어 **모델을 1회 재호출**한다. 그래도 못 채우면 남은 만큼만 내고, 0개면 추천 없이 안내만 낸다([`Tool_공통.md`](../shared/Tool_공통.md) §5-2). 재호출 결과는 첫 호출에서 통과한 것 뒤 빈자리만 채우고, 같은 후보는 교육 · 루틴은 `content`, 도서는 "제목(저자)"(`book_label`)로 가른다. 금지 표현을 재호출 사유에 넣는 것은 Growth 의 확장이다 — Tool_공통 §5-2 는 안전 필터만 적고 늘릴지를 열어 두었는데, 금지 표현으로 지운 후보도 제외 목록에 넣어야 같은 후보가 다시 나오지 않는다. 그 외 이유로는 재호출하지 않는다. **기피(−1)는 필터가 아니라 근거라 여기 들어가지 않는다** — 걸러내지 않고 `reason`에 무엇을 피했는지 적는다.
 
-**금지 표현 필터** (전 propose 공통, 코드): [`app/rules/evaluative.py`](../../../apps/api/app/rules/evaluative.py) 공통 목록 — 또래 비교 · 백분위 · 성장곡선 · 발달 속도 판정(늦 · 느리 · 발달이) · 능력 꼬리표(뛰어나 · 재능 · 소질) · 성장 정체 · 부족(정체 · 부족해) · 문제 행동. 한 글자 어간을 그대로 걸면 평범한 문장까지 걸려서 *"걸음마가 늦어요"* · *"체중이 부족해요"* 처럼 **성장 항목 뒤에 판정이 올 때**만 잡는다. `잘 크고` 는 넣지 않았다 — *"콩나물이 잘 크고 있어요"* 같은 기르기 놀이 문장이 걸린다.
+**금지 표현 필터** (전 propose 공통, 코드): [`app/rules/evaluative.py`](../../../apps/api/app/rules/evaluative.py) 공통 목록 — 또래 비교 · 백분위 · 성장곡선 · 발달 속도 판정(늦 · 느리 · 발달이) · 능력 꼬리표(뛰어나 · 재능 · 소질) · 성장 정체 · 부족(정체 · 부족해) · 문제 행동. 한 글자 어간을 그대로 걸면 평범한 문장까지 걸려서 *"걸음마가 늦어요"* · *"체중이 부족해요"* 처럼 **성장 항목 뒤에 판정이 올 때**만 잡는다. `잘 크고` 는 넣지 않았다 — *"콩나물이 잘 크고 있어요"* 같은 기르기 놀이 문장이 걸린다. 아니라고 안심시키는 말(*"한글이 늦지 않아요"* · *"늦은 게 아니에요"*)도 판정이라 잡는다. 교육은 `materials` 도 본다(준비물로 그대로 나간다).
 
 ### 안전 필터 — 무엇을 어디서 거르나 (2026-10-08)
 
@@ -92,12 +101,12 @@
 | `routine_coaching` | ✅ | – | – |
 | `book_suggestion` · `growth_review` | – | – | – |
 
-- **음식 용어 스캔** — 후보 문장(교육은 `title` · `steps` · `materials`, 루틴은 `next_step` · `how`)에 `reference/allergen_terms.yaml`(식품 알레르기 표시 대상) 용어나 `reference/hazard_terms.yaml` 의 `food_choking` 축 용어가 나오면 **아이와 무관하게, 월령과도 무관하게** 후보를 뺀다. 건강정보를 읽지 않는 검사라 동의와 상관없이 돈다. 놀이 문장에서 오탐을 내는 별칭("에그 쉐이커" · "밀크 카톤" …)은 Activity 와 같은 제외 목록을 쓰고, 한 글자 별칭(밀 · 게 · 닭 · 잣 …)도 *"공 밀기"* · *"카드 게임"* 이 걸려서 Activity 처럼 쓰지 않는다(#261). "콩나물 기르기" 도 빠진다(대두 별칭) — 기르기 놀이 하나를 잃지만 경계와 맞다.
-- **`health_safety` 대조 (교육만)** — Activity D7 과 같다. 동의가 있으면 `build_gate` 가 `allergy` · `environmental` 의 active 행을 run 당 한 번 읽어 run state 에 담고, 출력 검증은 그 값으로 **보호자가 적은 이름**을 후보 문장 · `materials` 와 대조한다. 19종은 사전 별칭으로 넓혀 보고, 19종 밖(라텍스 · 쑥 · 꽃가루 · 동물털)은 적은 이름 그대로 본다. 이름은 Food · Activity 와 같은 공용 `read_label` 로 읽는다(#283 5번) — 한 칸에 적은 여러 이름("키위, 꽃가루" · "라텍스/꽃가루")은 조각마다, 띄어 쓴 이름("고양이 털")은 두 글자 이상 낱말까지 보고, 묶음 이름("갑각류")은 19종 여럿으로 펼친다. **한 글자는 Activity 와 같은 허용 목록(`common/allergy.SINGLE_CHAR_NAMES` — 잣 · 콩 · 깨 · 쑥 · 쌀 · 팥 · 꽃)만 그 guard 와 함께 본다** (#305 · #341 리뷰) — 사전 별칭(잣)이든 보호자가 적은 이름(쑥 · 쌀)이든 같고, "쌀" 로 등록해도 "쌀쌀한 날씨" 는 막지 않는다. 그래서 "잣" 으로 등록하면 "잣 까기" 도 막고(#261 에서 남긴 비대칭이 풀렸다), 강아지 알레르기를 "개" 로 적어도 "블록 3개" 는 막지 않고(#320 리뷰 4번에서 정한 순서), 띄어 쓴 이름에서 떨어져 나온 한 글자(털 · 곳)로도 막지 않는다. Food 는 메뉴를 보는 자기 목록(`SINGLE_CHAR_FOODS`)을 쓰고 이 글자들도 다 막는다. 꽃가루 · 동물털 같은 환경 알레르기도 `allergy` 이고, `environmental` 은 고소공포 같은 것이다(`data_model.md`). 그래서 "라텍스" 로 적었는데 문장엔 *"풍선으로 숫자 세기"* 가 나오는 것처럼 이름이 다르면 걸리지 않는다. 이름을 물건 · 장소로 넓히는 대응표는 "어디까지 위험한가" 를 우리가 정하는 일이라 만들지 않고, 대신 **`allergy` active 행 중 이름이 식품 사전에 없는 것**이 있으면 교육 추천에 확인 문구(`caution.non_food_allergy`)를 붙인다(#261 리뷰 4번 · #282 리뷰). 식품 알레르기는 이름 대조로 빼고, 식품이 아닌 것은 뺄 활동을 코드가 못 정하니 보여 주고 확인하게 하는 것이다. 이름은 조각마다 공용 `read_label` 로 읽어 식품을 하나도 못 찾은 조각이 있으면 붙인다 — "땅콩, 꽃가루" 는 꽃가루 때문에 붙고, "달걀흰자" 는 달걀을 찾아서 붙지 않는다. 19종 밖 식품은 별칭 표(`extra_allergens`)에 없을 때만 붙는다(쑥) — 표에 있는 키위 · 버섯은 `allergy_book()` 이 식품으로 읽어 별칭 전부로 막는다(#437). 문장에 대조할 때는 Activity 와 같이 문장용 guard 를 더하고 다른 뜻이 더 흔한 별칭(오리 · 미음)을 빼며(`for_sentences`), 이름이 띄어쓰기를 넘어 걸리지 않게 한다(`match_fields(cross_spaces=False)` — "다물고 기다린다" 는 물고기가 아니다). 시드 문장 전체가 어느 식품 이름으로도 막히지 않는지를 테스트가 본다(#556 리뷰). 고르는 판정은 Activity 와 같은 공용 함수(`common/allergy.non_food_allergies`)다(#319). `environmental`(고소공포)에는 붙이지 않는다 — `health_safety.category` 가 빠진 뒤로는 환경 알레르기만 고를 칸이 없어서 사전으로 가른다. 동의가 없으면 읽지 않고 진행한다. 조회에 실패하면 빈 목록으로 넘기지 않고 `learning_suggestion` 을 닫는다(`blocked.safety`, 모델 0회).
+- **음식 용어 스캔** — 후보 문장(교육은 `title` · `steps` · `materials`, 루틴은 `next_step` · `how`)에 `reference/allergen_terms.yaml`(식품 알레르기 표시 대상) 용어나 `reference/hazard_terms.yaml` 의 `food_choking` 축 용어가 나오면 **아이와 무관하게, 월령과도 무관하게** 후보를 뺀다. 건강정보를 읽지 않는 검사라 동의와 상관없이 돈다. 놀이 문장에서 오탐을 내는 별칭("에그 쉐이커" · "밀크 카톤" …)은 Activity 와 같은 제외 목록을 쓰고, 한 글자 별칭(밀 · 게 · 닭 · 굴)도 *"공 밀기"* · *"카드 게임"* 이 걸려서 쓰지 않는다(#261). 잣 · 콩은 놀이 문장에서도 거의 그 식품이라 문장 guard(콩콩 · 콩닥 · 콩당 · 콩쥐)와 함께 본다 — *"콩주머니 던지기"* 도 빠진다. 대조는 필드마다 `match_fields` 라 guard 가 띄어쓰기를 넘지 않는다(Activity · Food 와 같다). "콩나물 기르기" 도 빠진다(대두 별칭) — 기르기 놀이 하나를 잃지만 경계와 맞다.
+- **`health_safety` 대조 (교육만)** — Activity D7 과 같다. 동의가 있으면 `build_gate` 가 `allergy` · `environmental` 의 active 행을 run 당 한 번 읽어 run state 에 담고, 출력 검증은 그 값으로 **보호자가 적은 이름**을 후보 문장 · `materials` 와 대조한다. 19종은 사전 별칭으로 넓혀 보고, 19종 밖(라텍스 · 쑥 · 꽃가루 · 동물털)은 적은 이름 그대로 본다. 이름은 Food · Activity 와 같은 공용 `read_label` 로 읽는다(#283 5번) — 한 칸에 적은 여러 이름("키위, 꽃가루" · "라텍스/꽃가루")은 조각마다, 띄어 쓴 이름("고양이 털")은 두 글자 이상 낱말까지 보고, 묶음 이름("갑각류")은 19종 여럿으로 펼친다. **한 글자는 Activity 와 같은 허용 목록(`common/allergy.SINGLE_CHAR_NAMES` — 잣 · 콩 · 깨 · 쑥 · 쌀 · 팥 · 꽃)만 그 guard 와 함께 본다** (#305 · #341 리뷰) — 사전 별칭(잣)이든 보호자가 적은 이름(쑥 · 쌀)이든 같고, "쌀" 로 등록해도 "쌀쌀한 날씨" 는 막지 않는다. 그래서 "잣" 으로 등록하면 "잣 까기" 도 막고(#261 에서 남긴 비대칭이 풀렸다), 강아지 알레르기를 "개" 로 적어도 "블록 3개" 는 막지 않고(#320 리뷰 4번에서 정한 순서), 띄어 쓴 이름에서 떨어져 나온 한 글자(털 · 곳)로도 막지 않는다. Food 는 메뉴를 보는 자기 목록(`SINGLE_CHAR_FOODS`)을 쓰고 이 글자들도 다 막는다. 19종 밖 식품은 별칭 표(`extra_allergens`)에 있으면(키위 · 버섯) `allergy_book()` 이 식품으로 읽어 별칭 전부로 막는다(#437). 문장에 대조할 때는 Activity 와 같이 문장용 guard 를 더하고 다른 뜻이 더 흔한 별칭(오리 · 미음)을 빼며(`for_sentences`), 이름이 띄어쓰기를 넘어 걸리지 않게 한다(`match_fields(cross_spaces=False)` — "다물고 기다린다" 는 물고기가 아니다). 시드 문장 전체가 어느 식품 이름으로도 막히지 않는지를 테스트가 본다(#556 리뷰). 꽃가루 · 동물털 같은 환경 알레르기도 `allergy` 이고, `environmental` 은 고소공포 같은 것이다(`data_model.md`). 식품 아닌 알레르기(꽃가루 · 라텍스 · 동물털)는 확인 문구 대신 **사람이 정한 대응표**(`reference/allergy_related_terms.yaml`)로 막는다(PM 확인). 보호자가 적은 이름이 표의 별칭(꽃가루 · 화분증 · 화분 · 잔디 · pollen / 라텍스 · 고무 · latex / 동물털 · 개털 · 고양이털 · 강아지털 · 강아지 · 고양이 · 반려동물 · 애완동물 · cat hair · dog hair)에 걸리면, 그 항목의 낱말(꽃 · 나뭇잎 · 산책 · 공원 … / 풍선 · 고무 … / 털 · 깃털 · 강아지 …)이 든 후보를 빼고(`allergy_related`) 같은 낱말이 든 [예시] 행도 싣지 않는다. 매칭은 `match_fields` 라 칸마다 따로 보고 guard 는 띄어쓰기를 넘지 않는다. "풀" 한 글자 · "밖" · 인형 · 공 · 동물 단독은 넣지 않았다(접착제 "풀" · 헝겊 공 · 인형극까지 빠진다). 시드 교육 행 80개 중 꽃가루로 9행이 빠지고 라텍스 · 동물털은 0행이며, 월령 구간마다 [예시] 3행이 남는다. 표에 없는 이름("집먼지진드기")은 이름 대조만 한다 — 예전에 확인 문구가 붙던 이름도 이제 문구 없이 이름 대조만 한다. 한 글자 "개" 는 별칭에 넣지 않았다("계란 2개" · "개복치" 까지 걸린다). `environmental`(고소공포)은 대상이 아니다. Growth 는 알레르기 확인 문구를 내지 않는다 — Activity 는 그대로 낸다. 동의가 없으면 읽지 않고 진행한다. 조회에 실패하면 빈 목록으로 넘기지 않고 `learning_suggestion` 을 닫는다(`blocked.safety`, 모델 0회).
 - `chronic_disease` · `behavioral` · `other_medical` 은 읽지 않는다 — Activity D7 과 같은 이유다. *"변비가 있으니 배변 훈련은…"* 같은 분기가 곧 LLM 없는 자동 진단이 된다.
 - 루틴 · 도서는 `health_safety` 를 읽지 않는다. 루틴 문장에 나오는 음식은 음식 용어 스캔이 막는다.
 - **0–17개월은 경고(warn)도 차단으로 올린다** (2026-10-10, #282 PM 리뷰). Activity 와 같은 선이다. 몇 개월부터 물놀이가 되는지는 어디에도 선이 없어서(AAP 도 "팔 닿는 거리에서 지켜봐라" 지 나이 제한이 없고, `hazard_terms.yaml` 출처 칸에도 "임계 월령 없음"), 서비스가 그은 선은 하나여야 한다 — 같은 아이에게 놀이는 막고 교육은 내보내면 설명이 안 된다. 잃는 것도 작다. `water` 축은 "들어가는 물"(욕조 · 풀 · 대야 · 바다)과 "물놀이" 라는 말뿐이라 수도꼭지 물 만지기 · 그릇에 물 담아 첨벙은 그대로 나간다. 음식 용어가 먼저 빠지므로 12–17개월 교육 활동에서 이 승격으로 막히는 축은 `water` · `suffocation_film` 이다. 승격은 공용 판정 `HazardAxis.level_at`(`common/reference.py`) 한 곳에 있어 Activity 와 같은 규칙을 읽는다(#319). 나중에 풀 때도 Growth 만이 아니라 Activity 와 같이, 축 단위로 푼다.
-- 경고 · 확인 문구는 run state 에 남기고 화면 자리는 #249 를 따른다(`SuggestionDraft` 에 칸을 더하지 않는다). **#249 의 자리가 생기기 전에는 교육 활동을 파이프라인에 붙이지 않는다** (#282 PM 리뷰) — 자리 없이 나가면 "경고와 함께" 가 실제로는 경고 없이 나가는 것이다. 18개월 이상에도 경고는 남는다(`water` 72 · `suffocation_film` 96 · `small_parts` 36–72개월).
+- 위험 용어 경고는 run state 에 남기고 화면 자리는 #249 를 따른다(`SuggestionDraft` 에 칸을 더하지 않는다). **#249 의 자리가 생기기 전에는 교육 활동을 파이프라인에 붙이지 않는다** (#282 PM 리뷰) — 자리 없이 나가면 "경고와 함께" 가 실제로는 경고 없이 나가는 것이다. 그 자리는 #402 로 넘어갔다. 그 전까지 경고가 붙는 교육 후보는 **뺀다**(제외 목록에 넣어 재호출 사유로 센다) — 파이프라인 연결은 이 조건으로 한다. #402 뒤에는 경고를 싣고 통과시킨다(0–17개월 승격은 그대로). 18개월 이상에도 경고는 남는다(`water` 72 · `suffocation_film` 96 · `small_parts` 36–72개월).
 - `suggestion.allergens` 는 비운다 — 음식 용어나 등록한 이름이 든 후보는 빠지기 때문이다. `suggestion.items` 는 교육은 `materials` 로, 도서는 "제목(저자)"(`book_label`) 하나로 채운다 — 일정으로 만들면 준비물로 그대로 옮겨지기 때문이다. 도서의 ISBN 은 `suggestion` 에 저장하지 않는다(#292 리뷰). 저장한 뒤에 ISBN 을 읽는 곳이 없어서다 — 화면에 표지를 그리는 설계가 없고, `propose_books` 의 이미 낸 책 검사는 `items` 의 "제목(저자)" 로 한다. 그래서 `suggestion` 테이블에 칸을 더하지 않는다.
 
 ### 루틴 근거 — 무엇을 세나 (2026-10-08)
@@ -109,6 +118,16 @@
 - `pick_next_step` 도 같은 창 안 관찰의 `assistance_level` 만 읽는다. 창 안 관찰이 없거나 `assistance_level` 이 비어 있으면 `ask.routine_current` 로 되묻는다. 오래된 수준으로 단계를 고르면 이미 넘어선 단계를 시킬 수 있다.
 - 창을 넓히지 않는다. #246 의 재질문 상한(4회)은 Memory 되묻기 것이라 여기에 그대로 걸리지 않고, 되묻기가 잦아지는 문제는 도메인 Agent 되묻기에 답하는 길과 같이 #246 에서 정한다(#276).
 
+### 예절 · 습관 — 전략 행
+
+예절(`social_manner`, 24개월+)과 습관(`habit`, 36개월+)은 자립 단계처럼 사슬을 따라가지 않는다. 행 하나가 연습 · 대응 방법 하나이고, `search_routine_memory` 가 **코드로** 골라 `next_steps` 에 싣는다(`tools/docs.strategy_rows`). 모델은 그 행을 집 상황에 맞춰 문장으로 옮길 뿐이다.
+
+- 예절 — `manner_practice` 행 제목의 이름(" — " 앞)이 관찰 subject 와 맞는 행. 맞춤 규칙은 사슬 이름과 같다(띄어쓰기 무시 · 서로 포함 · 두 글자 이상)
+- 습관 — 행동(subject)마다 그 행동 자신의 관찰 `trigger` 를 코드가 상황 태그로 옮기고(다른 행동의 trigger 를 빌리지 않는다. 증상으로 닫히는 subject 는 행을 고르지 않는다)(`reference/growth_triggers.yaml` — 긴장 · 화남 · 졸림 · 심심함), 그 태그의 `habit_strategy` 행. 보호자가 말한 trigger 원문은 문서 조회에 넣지 않는다
+- 카테고리마다 최대 3칸, 같은 날 같은 아이는 같은 행(아이 · 날짜로 돌린다)
+- 근거는 자립과 같다 — 같은 카테고리 14일 관찰을 인용해야 하고, 고른 행은 코드가 `growth_doc` 근거로 덧붙인다. 일반 추천은 없다
+- 닫힘 — 맞는 행이 없으면 `doc.no_row`(모델이 전략을 지어내지 않는다). 습관 trigger 가 비면 지금처럼 `ask.habit_trigger` 로 되묻고, trigger 가 있는데 사전에 없는 상황이면 되묻지 않고 `doc.no_row` 다 — 이미 답한 질문을 다시 하게 되어서다
+
 ### 루틴에서 닫는 것 — 의료 처치 · 증상 (2026-10-08)
 
 사람이 정한 목록 두 개로 코드가 닫는다. 진단명은 말하지 않는다.
@@ -118,7 +137,8 @@
 | 의료 처치 용어 | 약 먹이기 · 안약 · 연고 · 흡입기 · 네뷸라이저 · 혈당 | `closed.medical_routine` — 처치 방법은 처방한 곳이 답한다. *"약을 주스에 섞어 보세요"* 는 약과 음식의 상호작용을 건드리는 의료 조언이다 |
 | 증상처럼 보이는 반복 행동 | 눈 깜빡임 · 킁킁거림 · 머리 박기 | `closed.symptom_habit` — 습관인지 증상인지 Agent 가 가를 수 없어 교정안을 내지 않는다. 틱이라면 교정 시도가 오히려 해가 된다 |
 
-- 요청 문장이나 인용한 관찰의 `subject` 에 걸리면 모델을 부르지 않고 닫는다(모델 0회). 모델 출력에 걸린 후보는 빼고 재호출 규칙을 따른다.
+- 요청 문장이나 같은 입력의 기록 조각(*"약 먹기 싫어해. 어떻게 하지?"* 의 앞 조각 — `DomainTask.record_texts`)에 걸리면 모델을 부르지 않고 닫는다(모델 0회). 모델이 정한 행동 이름이나 근거로 단 관찰의 `subject` 에 걸리면 그 자리에서 닫는다(모델 1회). 모델 출력에 걸린 후보는 빼고 재호출 규칙을 따른다.
+- guard 는 띄어쓰기를 넘지 않는다(`match_fields`) — *"약 한 숟가락"* 은 닫힌다. *"약 30분"* · *"약 3살"* 처럼 숫자 + 시간 · 나이 단위 앞의 "약" 은 '대략' 으로 읽는다(*"약 4시간마다"* 는 그대로 닫힌다). 지어낸 문장 82개로 쟀다 — 오탐 16 → 2, 놓침 7 → 0 (`test_growth_closure_cases.py`)
 - Health 로 보내지 않는다. Health 는 보호자 기록을 옮겨 적을 뿐 조언하지 않아서, 보내면 보호자는 답을 받지 못한다.
 - 목록 내용은 사람이 정한다(`hazard_terms.yaml` 과 같은 원칙). 목록은 `apps/api/reference/growth_closures.yaml` 에 두고, 처음 목록과 오탐 guard(*"치약"* · *"약속"* · *"약간"* · *"관장님"* …)는 구현 PR 에서 PM 확인을 받는다.
 
@@ -129,7 +149,7 @@
 | `compute_growth_delta` | `child_growth_log[]`(**전부**), `asks_judgement: bool` → `Readout(code, kind="growth_delta")` | 측정 로그 전체를 시간순으로 읽어 **실제 수치 그대로** 서술. 최소 간격 없음 · 연령 축 없음. 측정일 전부 표기. 판정어 없음. 키 · 몸무게는 **지표별로** 판정 · 차분한다. 값은 `Decimal` 로 읽고 뺀다. **신체 성장의 유일한 계산** — 판정 요청("잘 크고 있어?")이면 `delta.checkup_hint`를 덧붙인다 |
 | `rank_evidence` | [`Tool_공통.md`](../shared/Tool_공통.md) §4 | domains 복수 |
 | `check_routine_category` | `category`, `stage` → allow \| readout key | 예절 ≥24개월 · 습관 ≥36개월 |
-| `search_growth_doc` | run 시작 시 자동. 월령·`row_type`·`routine_category`·`trigger_tags` 필터 → 의미 검색 top-3 → 프롬프트 `[예시]` 구획 | 쿼리는 **코드가 조립**한다(라벨·단계·관심사 `merge_key`·루틴 카테고리). 보호자 발화를 넣지 않는다. 결과는 근거가 아니라 참고라 `source_kind='growth_doc'`으로 담는다 |
+| `search_growth_doc` | run 시작 시 자동. 월령·`row_type`·`routine_category`·`trigger_tags`·주제 영역(`areas`) 필터 → 의미 검색 top-3 → 프롬프트 `[예시]` 구획 | 쿼리는 **코드가 조립**한다(라벨·단계·관심사 `merge_key`·루틴 카테고리·주제 영역 키). 보호자 발화를 넣지 않는다 — 주제는 코드가 사전으로 읽은 영역 키로만 온다. 결과는 근거가 아니라 참고라 `source_kind='growth_doc'`으로 담는다 |
 | `pick_next_step` | `subject` + 관찰의 `assistance_level` → `growth_doc` 행 | `next_step_of` 사슬에서 **현재 칸의 바로 다음 행**을 코드가 고른다. 모델은 그 행을 집 상황에 맞춰 문장으로 쓸 뿐 단계를 고르지 않는다 — 건너뛰면 아이가 아직 못 하는 걸 시키게 된다. **최근 14일 안 관찰의 `assistance_level` 만** 읽고, 없거나 비어 있으면 `ask.routine_current` (§2 "루틴 근거") |
 
 `growth_delta` 템플릿 — 요약 + 측정 전부를 시간순으로. 요약은 방향을 동사로 말하고 숫자는 크기만 적는다(G-9). 직전 대비 줄은 부호 그대로, 해석 문구 없음.
@@ -171,15 +191,15 @@
 | `delta.posture_hint` | 두 돌 무렵에는 누워서 재다가 서서 재기 시작해서, 재는 방법에 따라 키가 조금 다르게 나올 수 있어요. |
 | `delta.checkup_hint` | 성장 평가는 영유아 건강검진에서 확인해 보세요. |
 | `blocked.safety` | 지금 알레르기 정보를 불러오지 못했어요. 잠시 후 다시 시도해 주세요. (Activity 와 같은 문구) |
-| `caution.non_food_allergy` | 등록된 알레르기({label})가 있어요. 장소랑 재료를 한 번 확인해 주세요. (#261 리뷰 4번 문구 — 식품 사전에 없는 알레르기 이름에 붙는다, #282 리뷰) |
 | `closed.medical_routine` | 약이나 처치 방법은 처방한 병원이나 약국에 여쭤보시는 게 가장 정확해요. |
 | `closed.symptom_habit` | 이런 행동은 집에서 고치는 방법을 알려드리기 어려워요. 걱정되면 영유아 검진 때나 소아청소년과에서 상담해 보세요. |
 | `closed.consent` | 키·몸무게를 보려면 건강정보 동의가 필요해요. |
 | `ask.habit_trigger` | {subject}은(는) 주로 어떤 상황에서 하나요? |
 | `ask.habit_current` | 요즘도 {subject} 하나요? |
 | `ask.routine_current` | {subject}은(는) 요즘 어느 정도까지 혼자 하나요? |
+| `ask.need_level` | 지금 어떤지 알아야 맞는 방법을 고를 수 있어요. |
 | `rhythm.no_row` | 아직 이 시기 리듬 안내를 준비하지 못했어요. |
-| `doc.no_row` | 이 시기에 맞는 자료가 아직 없어서 또래 기준으로 알려드려요. |
+| `doc.no_row` | 이 시기에 맞는 자료가 아직 없어서 준비하지 못했어요. |
 | `next_step.chain_end` | 이건 이미 혼자 잘 하고 있어요. 다음 단계는 준비되면 알려드릴게요. |
 
 `rhythm_info` 본문은 상수가 아니라 `growth_doc`의 `rhythm_info` 행에서 온다 — 월령마다 다르기 때문이다. 행이 없을 때만 `rhythm.no_row`로 떨어진다.

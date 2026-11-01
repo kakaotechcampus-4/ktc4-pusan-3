@@ -65,6 +65,15 @@ _REQUEST = """
                        "다음 주 월요일 어린이집 간식은 요거트 말고 바나나로 바꿔줘" 처럼
                        급식을 "~말고 ~로 바꿔줘" 라고 해도 이쪽이다
 - meal_recommendation 과 nutrient_analysis 가 애매하면 meal_recommendation 으로 보낸다.
+- growth로 보내는 건 네 가지다.
+  learning_suggestion  배움 · 공부 · 한글 · 숫자 · 교육 활동을 추천해 달라는 말
+  routine_coaching     생활 습관 · 혼자 하기(양치 · 손 씻기 · 숟가락) · 예절 · 습관 고치기 · 잠 리듬
+  book_suggestion      책 · 그림책 추천
+  growth_review        키 · 몸무게가 얼마나 컸는지 · 잘 크고 있는지. 판정을 물어도 이쪽이다
+- 놀 거리 · 나들이는 activity, 배울 거리 · 생활 습관 · 책은 growth 다.
+- '놀이' 라는 말이 있어도 숫자 · 한글 · 글자처럼 배우는 낱말이 있으면
+  growth/learning_suggestion 이다. 배우는 낱말이 없는 놀 거리는 activity 다.
+- growth 유형이 애매하면 learning_suggestion 으로 보낸다.
 """.strip()
 
 _GUARDED = """
@@ -79,10 +88,12 @@ _GUARDED = """
 - diagnosis      진단 · 영양 결핍 판정 · 치료식 추천, 어떤 약 · 영양제를 얼마나 · 언제 먹일지
                  묻는 말. 이미 일어난 일은 diagnosis 가 아니다. 보호자가 먹인 약은 record/observe,
                  먹으면 안 되는 약을 먹었거나 한꺼번에 많이 먹은 일은 hazard 다.
-                 약을 싫어하는 아이를 어떻게 먹일지처럼 먹이는 습관을 묻는 말은 request/growth 다.
+                 약을 싫어하는 아이를 어떻게 먹일지처럼 먹이는 습관을 묻는 말은
+                 request/growth/routine_coaching 이다.
 - growth_record  키 · 몸무게를 쟀다거나 얼마라는 말, 적어 달라는 말. 채팅으로는 저장하지 않는다.
                  값이 터무니없어도 이쪽이다. 키 · 몸무게 값은 record 로 다시 보내지 않는다.
-                 얼마나 컸는지 · 잘 크고 있는지 묻는 말은 값이 들어 있어도 request/growth 다.
+                 얼마나 컸는지 · 잘 크고 있는지 묻는 말은 값이 들어 있어도
+                 request/growth/growth_review 다.
 - hazard         아이가 음식이 아닌 위험한 것(마약류 · 술 · 담배 · 세제 · 농약 · 약품 ·
                  삼킨 물건)을 먹거나 마시거나 삼켰다는 말. 돌려 말해도("어른 음료를 한 모금")
                  이쪽이다. 좋아했다는 말이 붙어도 record 로 나누지 않고 문장 전체를 hazard 로 둔다.
@@ -141,7 +152,19 @@ _EXAMPLES = """
   + request/food/meal_recommendation "안 되면 다른 간식 추천해줘"
 - "해열제 더 먹여도 돼?" → guarded/diagnosis
 - "지금 또 먹여도 돼?" → request/health
-- "숫자 공부는 어떻게 시켜야 할까?" → request/growth
+- "숫자 공부는 어떻게 시켜야 할까?" → request/growth/learning_suggestion
+- "농구 좋아하는데 뭐 하고 놀까" → request/activity
+- "농구 좋아하는데 관련된 책 있어?" → request/growth/book_suggestion
+- "밥 먹을 때 혼자 하게 하고 싶은데" → request/growth/routine_coaching
+- "얼마나 컸어?" → request/growth/growth_review
+- "잘 크고 있어?" → request/growth/growth_review
+- "10cm 컸는데 많이 큰 거야?" → request/growth/growth_review
+  (판정을 물어도 guarded 가 아니다 — Growth 가 판정 없이 추이만 정리한다)
+- "약 먹는 걸 너무 싫어해. 어떻게 먹이지?" → request/growth/routine_coaching
+  (guarded 가 아니다 — Growth 가 코드로 닫는다)
+- "눈을 자꾸 깜빡여. 어떻게 고쳐?" → request/growth/routine_coaching
+  (진단하지 않는다 — Growth 가 교정안 없이 닫는다)
+- "오늘 블록 쌓는 거 배웠대" → record/observe (요청이 아니다)
 - "어린이집에서 계란말이 엄청 많이 먹었대" → request/food/daycare_meal
 - "오늘 급식 대신 두유 받았대" → request/food/daycare_meal
 - "내일모레는 어린이집 빠져" → request/food/daycare_meal
@@ -161,7 +184,7 @@ _EXAMPLES = """
 - "어제 몸무게 쟀더니 17kg 나왔어" → guarded/growth_record
 - "낮잠 두 시간 잤어. 키 100cm 적어 줘."
   → record/observe "낮잠 두 시간 잤어" + guarded/growth_record "키 100cm 적어 줘"
-- "작년보다 키가 얼마나 컸어?" → request/growth (성장 추이를 묻는 말)
+- "작년보다 키가 얼마나 컸어?" → request/growth/growth_review (성장 추이를 묻는 말)
 - "이 반찬 좀 주문해줘." → out_of_scope
 - "새 블록 세트 하나 주문해줘." → out_of_scope (블록이라도 activity 가 아니다)
 - "밤놀이는 일본어로 요아소비" → unclear (번역)

@@ -23,6 +23,7 @@ Agent 는 그 결과를 읽기만 한다 — 유예일을 여기서 다시 세�
 상위 N 개를 모델에게 돌려주며 run state 의 대조표에 적고, 출력 tool 이 `unseen()` 으로 대조한다.
 """
 
+import re
 from collections.abc import Container, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -42,6 +43,28 @@ DEFAULT_STRENGTH_THRESHOLD = 0.5
 
 # 조회 tool 이 모델에게 돌려주는 근거 수. 모델은 이 안에서만 인용할 수 있다 (Tool_공통.md §5-3)
 TOP_N = 10
+
+_TOKEN = re.compile(r"[0-9A-Za-z가-힣]+")
+
+# 한 번의 관찰을 성향처럼 말하는 표현. 근거가 티어 1(confirmed)일 때만 허용한다 (루트 §2)
+_OVERSTATING_TOKENS = frozenset({"또", "늘", "항상"})
+_OVERSTATING_PREFIXES = ("어제도",)
+_OVERSTATING_PHRASES = ("좋아하는", "좋아해")
+
+
+def overstates(note: str) -> bool:
+    """근거 문장이 반복 · 성향 표현을 쓰는가 — 어제도 · 또 · 늘 · 항상 · 좋아하는.
+
+    낱말 단위로 본다. "오늘" 의 "늘" · "또래" 의 "또" 는 걸리지 않는다. 출력 검증이 티어 1 이
+    아닌 근거의 note 에서 이 표현을 찾으면 후보를 거절한다 (Activity · Growth).
+    """
+    tokens = _TOKEN.findall(note)
+    if any(token in _OVERSTATING_TOKENS for token in tokens):
+        return True
+    if any(token.startswith(_OVERSTATING_PREFIXES) for token in tokens):
+        return True
+    dense = "".join(note.split())
+    return any(phrase in dense for phrase in _OVERSTATING_PHRASES)
 
 
 @dataclass(frozen=True)

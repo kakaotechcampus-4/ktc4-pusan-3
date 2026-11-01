@@ -1,6 +1,8 @@
 import { test as base, expect, type Page, type Request } from "@playwright/test";
 
+import { PARENT_ID } from "@/mocks/fixtures";
 import type { Scenario } from "@/mocks/scenario";
+import { seenStorageKey, TOUR_KEYS } from "@/lib/tour/types";
 
 /**
  * 화면 규칙 테스트의 공통 바탕 (#242).
@@ -37,15 +39,21 @@ type Options = {
    * `/api/v1/` 요청이 하나라도 실패할 때 테스트가 실패한다 — 목을 통과해 실서버로 나간 것이다.
    */
   allowFailedApi: boolean;
+  /**
+   * 화면 투어를 이미 다 본 채로 시작하는가 (#632). 🚨 기본은 본 채다 — 처음 들어온 화면마다 덮개가 뜨면
+   * 다른 화면 테스트의 누르기를 전부 막는다. 투어를 거는 `screen-tour.spec.ts` 만 끈다.
+   */
+  toursSeen: boolean;
 };
 
 export const test = base.extend<Options>({
   scenario: ["default", { option: true }],
   signedIn: [true, { option: true }],
   allowFailedApi: [false, { option: true }],
+  toursSeen: [true, { option: true }],
 
   // 🚨 두 번째 인자를 `use` 로 부르지 않는다 — React 의 `use` 훅으로 읽혀 lint 가 막는다.
-  page: async ({ page, scenario, signedIn, allowFailedApi }, provide) => {
+  page: async ({ page, scenario, signedIn, allowFailedApi, toursSeen }, provide) => {
     // 🚨 `?scenario=` 대신 저장소에 심는다. 주소로 넘기면 URL 단언마다 쿼리가 끼어든다.
     //    목은 요청마다 이 값을 다시 읽는다 (`currentScenario()`).
     // 🚨 표식은 탭마다 **한 번만** 심는다. 이 스크립트는 새로고침마다 다시 돈다 — 매번 심으면
@@ -60,6 +68,16 @@ export const test = base.extend<Options>({
       },
       [scenario, MOCK_REFRESH_KEY, SEEDED_KEY, signedIn] as const,
     );
+
+    // 화면 투어를 본 채로 시작한다 (`toursSeen` 머리말). 화면이 이미 남긴 기록이 있으면 덮지 않는다.
+    if (toursSeen) {
+      await page.addInitScript(
+        ([key, keys]) => {
+          if (localStorage.getItem(key) === null) localStorage.setItem(key, JSON.stringify(keys));
+        },
+        [seenStorageKey(PARENT_ID), TOUR_KEYS] as const,
+      );
+    }
 
     // 개발 전용 떠 있는 버튼(Next 개발 표시기 · Query devtools)이 하단 네비와 보내기 버튼을 덮는다.
     await page.addInitScript(() => {

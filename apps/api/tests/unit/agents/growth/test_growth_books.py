@@ -10,11 +10,16 @@
 """
 
 from collections.abc import Sequence
+from datetime import timedelta
 from uuid import UUID
 
 import pytest
 
+from app.agents.common.evidence import RankedEvidence
+from app.agents.common.refs import Ref
 from app.agents.growth.context import GrowthContext, build_gate
+from app.agents.growth.review import BOOK_GENERAL_REASON
+from app.agents.growth.schemas.books import ProposeBooksArgs, SearchBooksArgs
 from app.agents.growth.schemas.task import GrowthTaskType
 from app.agents.growth.store.inmemory import InMemoryBooks, InMemoryIssuedBooks
 from app.agents.growth.store.ports import BookForm, BookRow, UpstreamUnavailable
@@ -28,8 +33,11 @@ from app.agents.growth.tools.books import (
     normalize_isbn,
     propose_books,
     search_books,
+    search_books_tool,
 )
-from tests.unit.agents.growth.support import CHILD, NOW, birth_for, context
+from app.agents.growth.tools.propose import propose_books_tool
+from app.rules.book_evidence import book_evidence_id
+from tests.unit.agents.growth.support import CHILD, NOW, TODAY, birth_for, context
 
 BOOK = GrowthTaskType.BOOK_SUGGESTION
 
@@ -171,6 +179,19 @@ class TestSearchCall:
         ctx = context(birth_for(30), books=InMemoryBooks([book(1)]))
         with pytest.raises(RuntimeError, match="Gate"):
             await search_books(ctx, keywords=["공룡"])
+
+    async def test_검색하면_이번_run_에_검색한_것으로_친다(self):
+        ctx = await ready(8, [book(1, "picture")])
+        assert ctx.state.book_searched is False
+        await search_books(ctx, keywords=["공룡"])  # 연령 필터로 0권이어도
+        assert ctx.state.book_searched is True
+
+    async def test_조회가_실패하면_검색한_것으로_치지_않는다(self):
+        ctx = context(birth_for(30), books=InMemoryBooks([book(1)], fail=True))
+        ctx.state.gate = await build_gate(ctx, BOOK)
+        with pytest.raises(UpstreamUnavailable):
+            await search_books(ctx, keywords=["공룡"])
+        assert ctx.state.book_searched is False
 
 
 class TestSeenBooks:
@@ -373,3 +394,206 @@ class TestNormalizeIsbn:
     )
     def test_숫자와_X_만_남긴다(self, raw, expected):
         assert normalize_isbn(raw) == expected
+
+
+class TestAvailable:
+    """낼 수 있는 책 = 이번 run 에 검색한 책 − 이미 낸 책 − 재호출 전에 고르거나 빠진 책,
+    3권까지."""
+
+    async def test_검색한_책에서_이미_낸_책을_뺀_수_3권까지(self):
+        many = await searched(30, [book(n, "picture") for n in range(1, 6)], issued=["책1"])
+        assert (await propose_books(many, [])).available == 3
+        few = await searched(30, [book(1, "picture"), book(2, "picture")], issued=["책1"])
+        assert (await propose_books(few, [])).available == 1
+
+    async def test_재호출에서는_이번_run_에_고른_책도_이미_낸_책이다(self):
+        ctx = await searched(30, [book(n, "picture") for n in range(1, 4)])
+        ctx.state.done_books = frozenset({"책1"})
+        review = await propose_books(ctx, [isbn(1), isbn(2)])
+        assert [r.reason for r in review.rejections] == [BookRejectReason.ALREADY_ISSUED]
+        assert review.available == 2
+
+
+class TestSearchTool:
+    async def test_찾은_책을_이름_저자_출판사_형태로_돌려준다(self):
+        row = book(1, "picture", author="가", publisher="나", cover_url="https://example.com/c.jpg")
+        ctx = await ready(30, [row])
+        result = await search_books_tool(ctx, SearchBooksArgs(keywords=["공룡"]))
+        assert result.success
+        assert result.data["books"] == [
+            {"isbn": isbn(1), "title": "책1", "author": "가", "publisher": "나", "form": "picture"}
+        ]
+
+    async def test_제목과_저자가_같은_다른_판은_모델에게_한_권만_보인다(self):
+        # 둘을 다 보이면 모델이 같은 책을 두 번 골라 거절당하고 대화가 한 번 더 돈다
+        # (끝까지 라이브에서 찾음)
+        rows = [
+            book(1, "picture", author="가"),
+            BookRow(isbn=isbn(2), title="책1", form="picture", author="가"),
+            book(3, "picture", author="가"),
+        ]
+        ctx = await ready(30, rows)
+        result = await search_books_tool(ctx, SearchBooksArgs(keywords=["공룡"]))
+        assert [b["isbn"] for b in result.data["books"]] == [isbn(1), isbn(3)]
+        # 낸 판이 아닌 판의 ISBN 을 알아도 propose 가 같은 책으로 거른다 — seen 에는 남는다
+        assert set(ctx.state.seen_books) == {isbn(1), isbn(2), isbn(3)}
+
+    async def test_검색어는_run_하나에_상한까지만_정보나루로_간다(self):
+        # #452 리뷰 — 상한이 호출 하나에만 걸리면 모델이 여러 번 불러 한 run 에 18번 나갔다
+        recording = RecordingBooks([book(1, "picture")])
+        ctx = context(birth_for(30), books=recording, issued_books=InMemoryIssuedBooks())
+        ctx.state.gate = await build_gate(ctx, BOOK)
+
+        for words in (["공룡", "기차", "자동차"], ["바다", "우주"], ["곤충", "꽃"]):
+            last = await search_books_tool(ctx, SearchBooksArgs(keywords=words))
+
+        sent = [word for keywords, _limit in recording.calls for word in keywords]
+        assert sent == ["공룡", "기차", "자동차", "바다", "우주", "곤충"]  # 남은 자리만큼만
+        blocked = await search_books_tool(ctx, SearchBooksArgs(keywords=["물고기"]))
+        assert last.success and blocked.error["code"] == "SEARCH_LIMIT"
+        assert "물고기" not in blocked.error["message"]
+        assert len(recording.calls) == 3
+
+    async def test_맞는_책이_없으면_NO_RECORDS_로_다른_낱말이나_빈_제출을_알린다(self):
+        ctx = await ready(8, [book(1, "picture")])
+        result = await search_books_tool(ctx, SearchBooksArgs(keywords=["공룡"]))
+        assert result.error["code"] == "NO_RECORDS"
+        assert "items 를 비워" in result.error["message"]
+        assert "공룡" not in result.error["message"]
+
+
+DINO = RankedEvidence(
+    ref=Ref(kind="observation_education", id=UUID(int=901)),
+    tier=3,
+    label="공룡 그림을 오래 봤다",
+    polarity=1,
+    observed_on=TODAY - timedelta(days=2),
+    subject="공룡",
+)
+
+
+def pick(
+    n: int, *, evidence: Sequence[dict] = (), reason: str = "공룡이 나오는 그림책이에요"
+) -> dict:
+    return {"isbn": isbn(n), "evidence": list(evidence), "reason": reason}
+
+
+def books_of(*picks: dict) -> ProposeBooksArgs:
+    return ProposeBooksArgs.model_validate({"items": list(picks)})
+
+
+class TestProposeTool:
+    async def test_검색한_책_3권은_일반_추천이고_책이_근거다(self):
+        ctx = await searched(30, [book(n, "picture", author="가") for n in range(1, 4)])
+        result = await propose_books_tool(ctx, books_of(pick(1), pick(2), pick(3)))
+        assert result.success
+        drafts = ctx.state.suggestions
+        assert [d.content for d in drafts] == ["책1(가)", "책2(가)", "책3(가)"]
+        assert [d.items for d in drafts] == [("책1(가)",), ("책2(가)",), ("책3(가)",)]
+        assert {d.kind for d in drafts} == {"general"}
+        assert drafts[0].reason == BOOK_GENERAL_REASON
+        assert [(c.ref.kind, c.ref.id) for c in drafts[0].citations] == [
+            ("book_catalog", book_evidence_id(isbn(1)))
+        ]
+        assert ctx.state.capacity == 3 and ctx.state.excluded == ()
+
+    async def test_개인화_도서는_아이_기록만_근거고_책_근거는_0행이다(self):
+        # 책 근거는 코드가 general_basis 로만 넘기고 개인화면 build() 가 버린다 (Food #442 와 같다)
+        ctx = await searched(30, [book(n, "picture", author="가") for n in range(1, 4)])
+        ctx.state.seen_evidence[DINO.ref.id] = DINO
+        cite = [{"id": str(DINO.ref.id), "note": "공룡 그림을 오래 봤어요"}]
+        await propose_books_tool(ctx, books_of(*(pick(n, evidence=cite) for n in (1, 2, 3))))
+        for draft in ctx.state.suggestions:
+            assert draft.kind == "personalized" and draft.reason == "공룡이 나오는 그림책이에요"
+            assert [(c.ref.kind, c.ref.id) for c in draft.citations] == [
+                ("observation_education", DINO.ref.id)
+            ]
+            assert not any(c.ref.kind == "book_catalog" for c in draft.citations)
+
+    async def test_모델이_책_id_를_근거로_적어도_받지_않는다(self):
+        # 책 근거는 모델 citations 로 들어오지 않는다 — 조회 결과에 없는 id 라 근거 대조가 거절한다
+        ctx = await searched(30, [book(n, "picture") for n in range(1, 4)])
+        forged = [{"id": str(book_evidence_id(isbn(1))), "note": "이 책이에요"}]
+        result = await propose_books_tool(ctx, books_of(pick(1, evidence=forged), pick(2), pick(3)))
+        assert result.error["code"] == "EVIDENCE_REQUIRED"
+
+    async def test_책_근거_id_를_거절할_때_조회한_기록의_id_를_알려_준다(self):
+        ctx = await searched(30, [book(n, "picture") for n in range(1, 4)])
+        ctx.state.seen_evidence[DINO.ref.id] = DINO
+        forged = [{"id": str(book_evidence_id(isbn(1))), "note": "이 책이에요"}]
+        result = await propose_books_tool(ctx, books_of(pick(1, evidence=forged), pick(2), pick(3)))
+        assert result.error["code"] == "EVIDENCE_REQUIRED"
+        assert str(DINO.ref.id) in result.error["message"]
+
+    async def test_검색하기_전에는_빈_제출도_받지_않는다(self):
+        ctx = await ready(30, [book(1, "picture")])
+        result = await propose_books_tool(ctx, books_of())
+        assert result.error["code"] == "CANDIDATE_REJECTED"
+        assert "search_books" in result.error["message"]
+
+    async def test_낼_수_있는_책보다_적게_내면_거절한다(self):
+        ctx = await searched(30, [book(n, "picture") for n in range(1, 5)])
+        result = await propose_books_tool(ctx, books_of(pick(1), pick(2)))
+        assert result.error["code"] == "CANDIDATE_REJECTED" and "3권" in result.error["message"]
+        assert ctx.state.suggestions == ()
+
+    async def test_맞는_책이_2권뿐이면_2권으로_끝난다(self):
+        ctx = await searched(8, [book(1, "board"), book(2, "board"), book(3, "picture")])
+        result = await propose_books_tool(ctx, books_of(pick(1), pick(2)))
+        assert result.success and len(ctx.state.suggestions) == 2
+        assert ctx.state.capacity == 2
+
+    async def test_맞는_책이_없으면_빈_제출로_끝난다(self):
+        ctx = await searched(8, [book(1, "picture")])
+        result = await propose_books_tool(ctx, books_of())
+        assert result.success and ctx.state.suggestions == () and ctx.state.capacity == 0
+
+    async def test_지어낸_ISBN_은_거절하고_ISBN_을_싣지_않는다(self):
+        ctx = await searched(30, [book(n, "picture") for n in range(1, 4)])
+        result = await propose_books_tool(ctx, books_of(pick(1), pick(2), pick(999)))
+        assert result.error["code"] == "CANDIDATE_REJECTED"
+        assert isbn(999) not in result.error["message"]
+
+    async def test_이미_낸_책뿐이면_비우라고_알린다(self):
+        ctx = await searched(30, [book(1, "picture")], issued=["책1"])
+        result = await propose_books_tool(ctx, books_of(pick(1)))
+        assert "items 를 비운다" in result.error["message"]
+
+    async def test_모르는_근거_id_는_EVIDENCE_REQUIRED(self):
+        ctx = await searched(30, [book(n, "picture") for n in range(1, 4)])
+        stranger = [{"id": str(UUID(int=999)), "note": "지어낸 기록"}]
+        result = await propose_books_tool(
+            ctx, books_of(pick(1, evidence=stranger), pick(2), pick(3))
+        )
+        assert result.error["code"] == "EVIDENCE_REQUIRED"
+
+    async def test_이유에_금지_표현이면_빼고_제외_목록에_책_이름을_남긴다(self):
+        ctx = await searched(30, [book(n, "picture", author="가") for n in range(1, 4)])
+        result = await propose_books_tool(
+            ctx, books_of(pick(1, reason="숫자에 재능이 있어서 골랐어요"), pick(2), pick(3))
+        )
+        assert result.success
+        assert [d.content for d in ctx.state.suggestions] == ["책2(가)", "책3(가)"]
+        assert ctx.state.excluded == ("책1(가)",) and ctx.state.capacity == 3
+
+    async def test_책_이름에_금지_표현이_있어도_뺀다(self):
+        rows = [
+            BookRow(isbn=isbn(1), title="소질 찾기", form="picture"),
+            book(2, "picture"),
+            book(3, "picture"),
+        ]
+        ctx = await searched(30, rows)
+        await propose_books_tool(ctx, books_of(pick(1), pick(2), pick(3)))
+        assert [d.content for d in ctx.state.suggestions] == ["책2", "책3"]
+        assert ctx.state.excluded == ("소질 찾기",)
+
+    async def test_관찰_근거에_성향_표현을_쓰면_거절한다(self):
+        # 한 번의 관찰을 성향으로 단정하지 않는다 — 티어 1 근거에만 쓸 수 있다 (교육 · 루틴과 같다)
+        ctx = await searched(30, [book(n, "picture") for n in range(1, 4)])
+        ctx.state.seen_evidence[DINO.ref.id] = DINO
+        cite = [{"id": str(DINO.ref.id), "note": "공룡을 늘 좋아해요"}]
+        result = await propose_books_tool(
+            ctx, books_of(*(pick(n, evidence=cite) for n in (1, 2, 3)))
+        )
+        assert result.error["code"] == "CANDIDATE_REJECTED"
+        assert "tier 1" in result.error["message"]

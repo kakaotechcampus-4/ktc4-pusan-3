@@ -75,10 +75,11 @@ def compute_growth_delta(
     """측정 전부를 시간순으로 정리한 `growth_delta` readout.
 
     둘 다 1건 이하면 `delta.need_more` 한 줄이다 — 숫자를 만들지 않는다. 한 지표만 2건 이상이면 그
-    지표만 요약하고 `delta.one_metric` 을 붙인다. 같은 날 여러 번 잰 기록은 입력 순서대로
-    따로 적는다.
+    지표만 요약하고 `delta.one_metric` 을 붙인다. 같은 날 여러 번 잰 기록은 적은 순서(id)대로
+    따로 적는다 — 받은 순서는 어댑터마다 달라서(DB 는 `measured_on desc, id desc`) 믿지 않는다.
     """
-    rows = sorted(measurements, key=lambda m: m.measured_on)  # 안정 정렬 — 같은 날은 입력 순서
+    # 같은 날은 id 순서. DB 의 id 는 uuidv7 이라 늦게 적은 기록이 뒤에 온다
+    rows = sorted(measurements, key=lambda m: (m.measured_on, m.id))
     heights = [m for m in rows if m.height_cm is not None]
     weights = [m for m in rows if m.weight_kg is not None]
     has_height, has_weight = len(heights) >= 2, len(weights) >= 2

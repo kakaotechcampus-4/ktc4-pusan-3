@@ -16,6 +16,8 @@ import {
   createEventDrafts,
   submitEventDraft,
   submitInput,
+  submitMedicationDraft,
+  updateMedicationDraft,
   photoFormData,
   submitOnboarding,
   updateHealthSafety,
@@ -23,11 +25,13 @@ import {
 } from "@/lib/api/operations";
 import {
   isDraftEvent,
+  isMedicationDraftEvent,
   streamRunEvents,
   type AgentResultEvent,
   type EventDraftsEvent,
   type GuidanceEvent,
   type LaneEvent,
+  type MedicationDraftsEvent,
   type NoteEvent,
   type OfferEvent,
   type ParsedEvent,
@@ -35,7 +39,7 @@ import {
   type RunEvent,
   type UnavailableEvent,
 } from "@/lib/api/sse";
-import { toISODate } from "@/lib/format";
+import { toISODate, toSeoulDateKey } from "@/lib/format";
 import { isSeverityFor } from "@/lib/health-safety";
 import { api } from "@/lib/api/client";
 import {
@@ -44,6 +48,9 @@ import {
   REPORT_MESSAGE_MAX_LENGTH,
 } from "@/lib/api/types";
 import type {
+  MedicationDose,
+  MedicationsResponse,
+  SubmitMedicationBody,
   Affinity,
   AffinitiesResponse,
   Agent,
@@ -3144,15 +3151,20 @@ describe("⑬ 측정 기록은 승인 게이트가 아니다", () => {
   });
 
   it.each([
-    ["300 을 넘는 키", { height_cm: 300.1 }, "height_cm"],
-    ["반올림해 0 이 되는 몸무게", { weight_kg: 0.04 }, "weight_kg"],
-  ])("%s 는 400 이다 — 서버 `Measurement` 와 같은 범위", async (_, value, field) => {
-    const caught = await api
-      .post("/children/c1/growth", { measured_on: "2026-09-12", ...value })
-      .catch((e) => e);
-    expect(isApiError(caught, "validation_failed") && caught.status).toBe(400);
-    expect((caught as ApiError).detail).toEqual({ fields: [field] });
-  });
+    ["220 을 넘는 키", { height_cm: 220.1 }, "height_cm"],
+    ["m 로 적은 키", { height_cm: 1.04 }, "height_cm"],
+    ["150 을 넘는 몸무게", { weight_kg: 300 }, "weight_kg"],
+    ["0.3 보다 가벼운 몸무게", { weight_kg: 0.04 }, "weight_kg"],
+  ])(
+    "%s 는 400 이다 — 서버 `HeightCm` · `WeightKg` 와 같은 칸별 범위 (#628)",
+    async (_, value, field) => {
+      const caught = await api
+        .post("/children/c1/growth", { measured_on: "2026-09-12", ...value })
+        .catch((e) => e);
+      expect(isApiError(caught, "validation_failed") && caught.status).toBe(400);
+      expect((caught as ApiError).detail).toEqual({ fields: [field] });
+    },
+  );
 
   it.each([
     ["아이 생일 이전", "2021-04-01"],
@@ -4181,5 +4193,182 @@ describe("지난 대화 — 서버처럼 끝난 run 만 남긴다 (#228)", () =>
     for (const result of results) {
       expect(result.suggestions.map((s) => s.id)).toEqual(result.suggestion_ids);
     }
+  });
+});
+
+/* ── 복약 (#537 · 잠정 경로) ───────────────────────────────────────────── */
+
+describe("복약 — 승인 게이트 ㉡ 제출 · 회차 체크 (#537)", () => {
+  const medicationBody = (over: Partial<SubmitMedicationBody["schedule"]> = {}) =>
+    ({
+      schedule: {
+        title: "기침 시럽",
+        dosage: "3ml",
+        indication_text: "기침",
+        storage: null,
+        med_form: null,
+        note: null,
+        symptom_codes: ["cough"],
+        starts_on: toSeoulDateKey(new Date()),
+        ends_on: toSeoulDateKey(new Date()),
+        ...over,
+      },
+      doses: [
+        { timing_anchor: "breakfast", offset_minutes: 30, fixed_time: null },
+        { timing_anchor: "dinner", offset_minutes: 30, fixed_time: null },
+      ],
+      source: "utterance",
+    }) satisfies SubmitMedicationBody;
+
+  const listOf = () => api.get<MedicationsResponse>("/children/c1/medications");
+
+  it("🚨 키 없이 제출하면 요청이 나가지 않는다 — 클라이언트가 먼저 막는다", async () => {
+    await expect(api.post("/children/c1/medications", medicationBody())).rejects.toThrow(
+      /Idempotency-Key/,
+    );
+  });
+
+  it("같은 키 재시도는 처음 응답을 재생한다 — 코스가 두 개 생기지 않는다", async () => {
+    const key = newIdempotencyKey();
+    const before = (await listOf()).courses.length;
+    const first = await submitMedicationDraft("c1", medicationBody(), key);
+    const second = await submitMedicationDraft("c1", medicationBody(), key);
+
+    expect(second).toEqual(first);
+    expect((await listOf()).courses).toHaveLength(before + 1);
+    // 시각은 서버가 계산한다 — 저녁 기준 19:00 (#546).
+    expect(first.course.notice_times).toEqual(["08:30", "19:30"]);
+  });
+
+  it("기간이 비었거나 거꾸로면 400 이다 — 무기한 코스가 없다", async () => {
+    await expect(
+      submitMedicationDraft(
+        "c1",
+        { ...medicationBody(), schedule: { ...medicationBody().schedule, ends_on: "" } },
+        newIdempotencyKey(),
+      ),
+    ).rejects.toSatisfy((e: unknown) => isApiError(e, "validation_failed"));
+    await expect(
+      submitMedicationDraft(
+        "c1",
+        medicationBody({ starts_on: "2026-10-25", ends_on: "2026-10-24" }),
+        newIdempotencyKey(),
+      ),
+    ).rejects.toSatisfy((e: unknown) => isApiError(e, "validation_failed"));
+  });
+
+  it("🚨 수정해도 체크한 회차는 지우지 않는다 — 미체크 회차만 새 시각으로 다시 만든다", async () => {
+    const { courses, today } = await listOf();
+    // 🚨 **오늘 회차를 체크한다.** 시드의 체크는 어제 것뿐이라 "지난 날이라 남는다" 와 가를 수 없다 (#537 리뷰).
+    const todays = courses[0].doses.find((d) => d.dose_date === today && d.checked_at === null);
+    if (!todays) throw new Error("오늘 회차가 없다");
+    await api.put(`/children/c1/medication-doses/${todays.id}/check`, { checked: true });
+    const seed = (await listOf()).courses[0];
+    const checked = seed.doses.filter((dose) => dose.checked_at !== null);
+    expect(checked.map((d) => d.id)).toContain(todays.id);
+
+    const updated = await updateMedicationDraft(
+      "c1",
+      seed.id,
+      {
+        schedule: {
+          ...medicationBody().schedule,
+          starts_on: seed.starts_on,
+          ends_on: seed.ends_on,
+        },
+        doses: [{ timing_anchor: "fixed", offset_minutes: 0, fixed_time: "20:00" }],
+      },
+      newIdempotencyKey(),
+    );
+
+    for (const dose of checked) {
+      expect(updated.course.doses).toContainEqual(dose);
+    }
+    expect(updated.course.notice_times).toEqual(["20:00"]);
+  });
+
+  it("회차 체크는 게이트가 아니다 — 키 없이 체크 · 해제하고, 다시 체크해도 처음 시각을 둔다", async () => {
+    const dose = (await listOf()).courses[0].doses.find((d) => d.checked_at === null);
+    if (!dose) throw new Error("체크할 회차가 없다");
+    const path = `/children/c1/medication-doses/${dose.id}/check`;
+
+    const first = await api.put<MedicationDose>(path, { checked: true });
+    expect(first.checked_at).not.toBeNull();
+    const again = await api.put<MedicationDose>(path, { checked: true });
+    expect(again.checked_at).toBe(first.checked_at);
+    const cleared = await api.put<MedicationDose>(path, { checked: false });
+    expect(cleared.checked_at).toBeNull();
+  });
+
+  it("`empty` 는 진행 중 복약이 없다", async () => {
+    setScenario("empty");
+    try {
+      expect((await listOf()).courses).toEqual([]);
+    } finally {
+      setScenario("default");
+    }
+  });
+});
+
+describe("복약 run 대본 (#537)", () => {
+  async function medicationEvents(scenario: "med_draft" | "med_question" | "med_handoff") {
+    setScenario(scenario);
+    try {
+      const { run_id } = await submitInput(
+        "c1",
+        { text: "지어낸 한 줄", source: "home_input" },
+        newIdempotencyKey(),
+      );
+      return { runId: run_id, events: await eventsOf(run_id) };
+    } finally {
+      setScenario("default");
+    }
+  }
+
+  it("med_draft — 저장 없이 Health 결과와 복약 초안 묶음이 오고 done 으로 끝난다", async () => {
+    const { events } = await medicationEvents("med_draft");
+    const types = events.map((e) => e.type);
+    expect(types).not.toContain("saved");
+    expect(types.at(-1)).toBe("done");
+    const frame = events.find((e) => isMedicationDraftEvent(e.type));
+    const { drafts } = frame?.data as MedicationDraftsEvent;
+    expect(drafts.map((d) => [d.op, d.missing])).toEqual([
+      ["create", ["ends_on"]],
+      ["update", []],
+    ]);
+    // 🚨 수정 초안에는 원본이 있다 — 카드가 "19:30 → 20:00" 을 그린다.
+    expect(drafts[1].before?.doses.map((d) => d.scheduled_time)).toContain("19:30");
+  });
+
+  it("med_question — 답을 받는 질문이라 `awaits_reply` 이고, 그 run 에 답할 수 있다", async () => {
+    const { runId, events } = await medicationEvents("med_question");
+    const result = events.find((e) => e.type === "agent_result")?.data as AgentResultEvent;
+    expect(result).toMatchObject({ agent: "health", awaits_reply: true });
+    expect(result.question).toContain("멈출까요");
+
+    const { run_id } = await submitInput(
+      "c1",
+      { text: "네", source: "chat", reply_to: runId },
+      newIdempotencyKey(),
+    );
+    const reply = (await eventsOf(run_id)).find((e) => e.type === "agent_result")
+      ?.data as AgentResultEvent;
+    expect(reply.readouts[0]?.body).toContain("멈췄어요");
+    // 멈춘 코스는 진행 중이 아니다.
+    const { courses } = await api.get<MedicationsResponse>("/children/c1/medications");
+    expect(courses.map((c) => c.id)).not.toContain("ms_seed");
+  });
+
+  it("med_handoff — 🚨 응급 카드의 조회 실패 줄은 '없음' 이 아니라 실패라고 적혀 온다", async () => {
+    const { events } = await medicationEvents("med_handoff");
+    const result = events.find((e) => e.type === "agent_result")?.data as AgentResultEvent;
+    const kinds = result.readouts.map((r) => r.kind);
+    expect(kinds).toEqual(["dose_status", "med_notice_form", "emergency_card"]);
+    const card = result.readouts.find((r) => r.kind === "emergency_card")?.body ?? "";
+    expect(card).toContain("불러오지 못했어요");
+    expect(card).not.toMatch(/알레르기[^\n]*없음/);
+    expect(result.readouts.find((r) => r.kind === "med_notice_form")?.body).toContain(
+      "보호자 확인 후 서명해 주세요.",
+    );
   });
 });

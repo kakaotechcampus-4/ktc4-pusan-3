@@ -19,6 +19,8 @@ dependencies = [
     "openpyxl>=3.1.5",
     "pyyaml>=6.0.3",
     "redis[hiredis]>=5.0.0",
+    # FCM 발송(app/integrations/fcm.py)의 서비스 계정 JWT 서명. 토큰 교환 · 발송은 httpx 로 한다.
+    "google-auth>=2.40",
 ]
 
 [dependency-groups]

@@ -37,6 +37,10 @@
 
 라벨은 **Tool 묶음이 갈릴 때만** 만든다.
 
+- Growth 라벨이 빠지면 `learning_suggestion` 으로 채운다(Food 의 "애매하면 추천" 과 같은 방식).
+- 한 run 에 Growth 추천 라벨(learning · routine · book)은 하나만 돈다 — 처음 것이되, 도서는 다른 추천 라벨이 같이 오면 자리를 내준다(`YIELDING_LABELS`). 뺀 요청은 `task_limit` 안내로 알린다 — 05 의 다시 시도 · 0개 기록이 (run, agent) 로 묶여서다. `growth_review` 는 추천이 아니라 같이 돈다.
+  - 도서가 양보하는 이유 — 도서는 인증키(`DATA4LIBRARY_AUTH_KEY`)가 없거나 정보나루가 실패하면 닫히고(`closed.book_api`), 열려도 외부 호출에 하루 한도가 있다. "공룡 책이랑 양치 혼자 하는 법" 처럼 앞에 와서 루틴을 빼면 화면에 도서 닫힘 안내만 남을 수 있다. 도서만 왔으면 도서가 돈다 (#452 리뷰 — 도서가 열린 뒤에도 그대로 두기로 했다).
+
 > **라벨이 13개다.** 이전 판이 스스로 "라벨을 늘릴 때마다 오분류가 는다"고 적어 뒀는데 그 사이 다섯 배가 됐다.
 > 프롬프트를 쓸 때 **라벨별 경계 예시를 한 번에 뽑아 검토**해야 한다.
 
@@ -144,3 +148,12 @@
 **키 · 몸무게는 묻는 말이면 growth, 값을 알리는 말이면 guarded 다.** `child_growth_log` 는 보호자가 잰 날짜와
 단위를 화면에서 넣는 기록이라(루트 §2) 채팅 쓰기 경로가 없다. 예전에는 record 로 가서 Memory 가 저장할 곳 없이
 "기록했어요" 라고 답했다(멘토 리뷰). 같이 온 기록 · 요청은 다른 guarded 와 같이 잘라서 보낸다.
+
+### eval · 보정 규칙
+
+이 예시와 프롬프트에 없는 변형을 `tests/eval/agents/routing_cases.py` 의 GR01~GR28 이 잰다(`supervisor/test.py -m live -k growth_routing`, `TEST_REPEAT=3`).
+
+- 합격선 — agent 일치 90% · growth 유형 일치 90% 이상, 0건 규칙 위반 0
+- 0건 규칙 — 신체 성장 3줄은 growth_review(Health · guarded 아님) · "배웠대" 는 요청이 아님 · "약 먹기 싫어해" · "깜빡이는데" 는 낱말이 Growth 로 간 조각이나 같은 입력의 기록 조각에 남음(Growth 의 코드 닫힘이 둘 다 본다)
+- 보정 이력 — 끝까지 라이브(`growth/test_growth_supervisor_e2e.py`)에서 "숫자 놀이 뭐 없어?" 가 "놀이" 라는 낱말만 보고 activity 로 새는 것을 찾았다(직접 표본 3/10 만 growth). `_REQUEST` 에 "놀이라는 말이 있어도 배우는 낱말(숫자 · 한글 · 글자)이 있으면 growth/learning_suggestion, 없으면 activity" 한 줄을 더했고 12/12 가 됐다. 같은 말투(GR25 · GR26)와 반대 경계(GR27 · GR28 — 배우는 낱말이 없는 놀이는 activity)를 GR 에 더했다.
+- 보정은 한 번에 하나, 최대 3회. "변형" 케이스의 문장을 프롬프트에 옮기지 않는다. 고친 뒤 split 합계(RC · T)가 떨어지면 되돌린다. 3회 뒤에도 미달이면 합격선을 낮추지 않고 숫자로 남긴다
