@@ -68,6 +68,9 @@ class Suggestion(Base, UUIDPk, Timestamps):
     # 장소가 붙은 추천의 확인 문구(공공데이터 기준일 · 운영 여부). Agent 가 코드 문구로 만든다.
     # 근거가 아니다 — 화면이 제안 문장 아래 한 줄로 세운다 (#516). 장소가 없으면 비어 있다
     place_notice: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 그 추천의 위험 경고 문구(위험 용어 사전의 축 문구). Agent 가 코드 문구로 싣는다.
+    # 근거가 아니다 — 화면이 그 추천 카드에 글자 그대로 보인다 (#402). 경고가 없으면 빈 배열
+    warnings: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False, server_default="{}")
     status: Mapped[SuggestionStatus] = mapped_column(
         enum_col_py(SuggestionStatus, name="suggestion_status"),
         nullable=False,
