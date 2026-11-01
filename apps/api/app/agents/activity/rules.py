@@ -12,12 +12,6 @@ from collections.abc import Iterable
 DUPLICATE_WINDOW_DAYS = 7
 
 _NOT_WORD = re.compile(r"[\W_]+")
-_TOKEN = re.compile(r"[0-9A-Za-z가-힣]+")
-
-# 한 번의 관찰을 성향처럼 말하는 표현. 근거가 티어 1(confirmed)일 때만 허용한다 (D12)
-_OVERSTATING_TOKENS = frozenset({"또", "늘", "항상"})
-_OVERSTATING_PREFIXES = ("어제도",)
-_OVERSTATING_PHRASES = ("좋아하는", "좋아해")
 
 
 def normalize_activity(text: str) -> str:
@@ -38,17 +32,3 @@ def is_recent_duplicate(content: str, recent: Iterable[str]) -> bool:
     """
     key = normalize_activity(content)
     return bool(key) and any(key == normalize_activity(item) for item in recent)
-
-
-def overstates(note: str) -> bool:
-    """근거 문장이 반복 · 성향 표현을 쓰는가 — 어제도 · 또 · 늘 · 항상 · 좋아하는.
-
-    낱말 단위로 본다. "오늘" 의 "늘" · "또래" 의 "또" 는 걸리지 않는다.
-    """
-    tokens = _TOKEN.findall(note)
-    if any(token in _OVERSTATING_TOKENS for token in tokens):
-        return True
-    if any(token.startswith(_OVERSTATING_PREFIXES) for token in tokens):
-        return True
-    dense = "".join(note.split())
-    return any(phrase in dense for phrase in _OVERSTATING_PHRASES)

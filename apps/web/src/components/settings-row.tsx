@@ -139,6 +139,7 @@ export function SettingsInfoRow({
   status,
   note,
   action,
+  "data-tour": tour,
 }: {
   icon: LucideIcon;
   title: ReactNode;
@@ -154,9 +155,11 @@ export function SettingsInfoRow({
    * `onTitleClick` 으로 이름에 건다.
    */
   action?: ReactNode;
+  /** 화면 투어가 비추는 자리 (`components/screen-tour.tsx`). */
+  "data-tour"?: string;
 }) {
   return (
-    <li className="flex items-center gap-3 p-4">
+    <li data-tour={tour} className="flex items-center gap-3 p-4">
       <RowBody
         icon={icon}
         title={title}

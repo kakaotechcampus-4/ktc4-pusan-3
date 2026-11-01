@@ -27,6 +27,7 @@ export function EmptyState({
   countLabel = "쌓인 기록",
   action,
   className,
+  "data-tour": tour,
 }: {
   icon: LucideIcon;
   title: string;
@@ -36,9 +37,12 @@ export function EmptyState({
   countLabel?: string;
   action?: ReactNode;
   className?: string;
+  /** 화면 투어가 비추는 자리 (`components/screen-tour.tsx`). */
+  "data-tour"?: string;
 }) {
   return (
     <div
+      data-tour={tour}
       className={cn(
         "bg-surface-muted rounded-card flex flex-col items-center px-4 py-8 text-center",
         className,

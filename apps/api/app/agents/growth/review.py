@@ -1,11 +1,14 @@
-"""교육 · 루틴 후보 출력 검증 (Tool_공통 §5-1 순서).
+"""교육 · 루틴 · 도서 후보 출력 검증 (Tool_공통 §5-1 순서).
 
   1. 안전 필터   교육: 음식 용어 · 등록 이름 · 위험 용어 / 루틴: 음식 용어 · 의료 처치 · 증상.
                  걸린 후보는 거절이 아니라 뺀다(`removed`) — 모델에게 사유를 돌려주지 않는다
+                 도서: 안전 필터 없음(책은 정보나루 행이고 건강정보를 읽지 않는다)
   2. 금지 표현   걸리면 뺀다. 재호출 제외 목록에도 넣는다 — Tool_공통 §5-2 는 안전 필터만 적었고
                  Growth 가 넓혔다(같은 후보가 다시 나오지 않게)
-  3. Growth 검증 근거 id 대조 · 루틴은 코드가 고른 단계(step_id)만
-  4. build()     아이 기록 근거 수로 kind 를 정한다. 루틴은 일반 추천을 내지 않는다
+  3. Growth 검증 같은 제목(교육) · 근거 id 대조 · note 의 성향 표현은 티어 1 근거에만 ·
+                 루틴은 코드가 고른 단계(step_id)만
+  4. build()     아이 기록 근거 수로 kind 를 정한다. 루틴은 일반 추천을 내지 않는다.
+                 도서는 기록이 없으면 그 책 자체가 근거다
 
 🚨 #402(추천별 경고 자리) 전까지 교육 후보는 경고가 붙어도 뺀다. 화면에 경고 자리가 없으면
 "경고와 함께" 가 실제로는 경고 없이 나가는 것이다.
@@ -17,14 +20,16 @@ from datetime import date
 from enum import StrEnum
 from uuid import UUID
 
-from app.agents.common.evidence import RankedEvidence, cite
+from app.agents.common.evidence import RankedEvidence, cite, overstates
 from app.agents.common.refs import EvidenceCitation, Ref
 from app.agents.common.suggestion import SuggestionDraft, SuggestionRejected, build
 from app.agents.growth.result import ErrorCode
+from app.agents.growth.schemas.books import BookItem
 from app.agents.growth.schemas.common import EvidencePick
 from app.agents.growth.schemas.learning import LearningItem
 from app.agents.growth.schemas.routine import RoutineItem
-from app.agents.growth.store.ports import GrowthDocRow, RoutineObservation, SafetyEntry
+from app.agents.growth.store.ports import BookRow, GrowthDocRow, RoutineObservation, SafetyEntry
+from app.agents.growth.tools.books import book_label
 from app.agents.growth.tools.closures import closure_key
 from app.agents.growth.tools.routine import routine_evidence
 from app.agents.growth.tools.safety import (
@@ -32,11 +37,20 @@ from app.agents.growth.tools.safety import (
     check_learning_candidate,
     check_routine_candidate,
 )
+from app.rules.book_evidence import book_evidence_id
 from app.rules.evaluative import find_evaluative
+from app.rules.growth_topic import on_topic
+from app.rules.term_match import normalize
 
 AGENT = "growth"
 # 아이 기록 근거가 0행이면 build() 가 reason 을 이 문구로 덮어쓴다 (kind="general", 루트 §2)
 GENERAL_REASON = "쌓인 배움 기록이 아직 적어서, 이 나이 아이들에게 많이 권하는 활동으로 골랐어요."
+# 도서 일반 추천의 이유 — 아이 기록 근거가 0행이면 build() 가 reason 을 이 문구로 덮어쓴다.
+# 무엇으로 골랐는지(월령에 맞는 형태)만 말한다 — 재지 않은 인기 · 대출 수를 말하지 않는다
+BOOK_GENERAL_REASON = "쌓인 배움 기록이 아직 적어서, 이 나이에 맞는 형태의 책 중에서 골랐어요."
+# 책 근거 행의 note. 코드 문구라 금지 표현 검사가 필요 없다. 비울 수 없는 칸이다
+# (Food `meal_review.MENU_EVIDENCE_NOTE` 와 같은 자리)
+BOOK_EVIDENCE_NOTE = "도서관 정보나루 검색 결과에 있는 책이에요."
 # #402 전까지 경고가 붙는 교육 후보도 뺀다. 경고 자리가 생기면 False 로 두고 경고를 싣는다
 DROP_WARNED = True
 
@@ -48,7 +62,9 @@ class RejectReason(StrEnum):
     UNKNOWN_EVIDENCE = "unknown_evidence"
     UNKNOWN_STEP = "unknown_step"
     DUPLICATE_STEP = "duplicate_step"
+    DUPLICATE_TITLE = "duplicate_title"
     OVER_CAPACITY = "over_capacity"
+    OVERSTATED_NOTE = "overstated_note"
     BUILD = "build_rejected"
 
 
@@ -56,11 +72,15 @@ GUIDANCE: dict[RejectReason, str] = {
     RejectReason.UNKNOWN_EVIDENCE: "evidence 에는 조회 결과나 [예시]에 있던 id 만 쓴다.",
     RejectReason.UNKNOWN_STEP: "step_id 는 search_routine_memory 의 next_steps 에 있던 것만 쓴다.",
     RejectReason.DUPLICATE_STEP: "같은 단계를 두 번 냈다. 단계마다 하나씩만 낸다.",
+    RejectReason.DUPLICATE_TITLE: "같은 활동을 두 번 냈다. 후보마다 다른 활동을 낸다.",
     RejectReason.OVER_CAPACITY: "next_steps 에 있는 단계 수보다 많이 냈다.",
+    RejectReason.OVERSTATED_NOTE: (
+        "note 의 '어제도 · 또 · 늘 · 항상 · 좋아하는' 은 확정된 관심(tier 1)에만 쓴다."
+    ),
     RejectReason.BUILD: (
         "아이 기록을 인용하지 않으면 [예시] 문서 행 id 를 하나 이상 인용한다. "
         "생활 루틴은 그 루틴 기록을 인용한다. 싫어하는 것을 근거로 썼으면 "
-        "무엇을 피했는지 reason 에 쓴다."
+        "무엇을 피했는지 reason 에 쓴다. 그 기록의 subject(행동 이름)를 reason 에 그대로 넣는다."
     ),
 }
 
@@ -93,22 +113,40 @@ def review_learning(
     seen: Seen,
     docs: Docs,
     today: date,
+    topic: Sequence[str] = (),
 ) -> Review:
+    """`topic` 은 요청 주제의 영역 키(`GrowthRunState.topic`)다. 있으면 그 영역의 낱말이 제목 ·
+    단계 · 준비물에 없고 그 영역의 [예시] 행도 인용하지 않은 후보는 주제 밖이라 뺀다 — 거절이
+    아니라 빼기라서 재호출 제외 목록으로 간다."""
     drafts: list[SuggestionDraft] = []
     rejections: list[Rejection] = []
     removed: list[int] = []
+    titles: set[str] = set()
     for index, item in enumerate(items):
         texts = (item.title, *item.steps, *item.materials)
         verdict = check_learning_candidate(texts, months=months, entries=entries, rules=rules)
         if not verdict.allowed or (DROP_WARNED and verdict.cautions):
             removed.append(index)
             continue
-        if _evaluative((item.title, *item.steps, item.reason), item.evidence):
+        # 준비물도 화면 · 일정 준비물로 그대로 나간다 — 안전 필터와 같은 칸을 본다
+        if _evaluative((item.title, *item.steps, *item.materials, item.reason), item.evidence):
             removed.append(index)
             continue
+        if not _in_topic(item, texts, topic, docs, seen):
+            removed.append(index)
+            continue
+        # 같은 카드가 두 장 나가지 않게. 재호출 합치기(`agent._same`)와 같은 키다
+        title = normalize(item.title)
+        if title and title in titles:
+            rejections.append(Rejection(index, RejectReason.DUPLICATE_TITLE))
+            continue
+        titles.add(title)
         citations = _resolve(item.evidence, seen, docs)
         if citations is None:
             rejections.append(Rejection(index, RejectReason.UNKNOWN_EVIDENCE))
+            continue
+        if _overstated(item.evidence, seen):
+            rejections.append(Rejection(index, RejectReason.OVERSTATED_NOTE))
             continue
         try:
             drafts.append(
@@ -125,6 +163,33 @@ def review_learning(
         except SuggestionRejected:
             rejections.append(Rejection(index, RejectReason.BUILD))
     return Review(tuple(drafts), tuple(rejections), tuple(removed))
+
+
+def _in_topic(
+    item: LearningItem, texts: Sequence[str], topic: Sequence[str], docs: Docs, seen: Seen
+) -> bool:
+    """주제 안인가. 주제 영역의 낱말이 글에 있거나, 주제에 맞는 근거를 인용했으면 안이다.
+
+    - [예시] 는 요청 주제의 영역 행에서 골랐으므로(`search_growth_doc(areas=...)`) 그 행을 단 후보는
+      낱말이 활용형으로 달라도 주제 안이다.
+    - 인용한 아이 기록의 subject · 이름이 주제 안이면 그 기록을 잇는 후보도 주제 안이다 — "글 읽기"
+      기록을 근거로 낸 "공룡 이야기 따라 읽기" 같은 것.
+
+    인용한 id 의 대조는 근거 검증이 따로 한다.
+    """
+    if on_topic(texts, topic):
+        return True
+    for pick in item.evidence:
+        key = parse_id(pick.id)
+        if key is None:
+            continue
+        row = docs.get(key)
+        if row is not None and row.area in topic:
+            return True
+        cited = seen.get(key)
+        if cited is not None and on_topic((cited.subject, cited.label), topic):
+            return True
+    return False
 
 
 def review_routine(
@@ -153,7 +218,7 @@ def review_routine(
         if index >= capacity:
             rejections.append(Rejection(index, RejectReason.OVER_CAPACITY))
             continue
-        step_id = _uuid(item.step_id)
+        step_id = parse_id(item.step_id)
         row = rows.get(step_id) if step_id else None
         if row is None or step_id is None:
             rejections.append(Rejection(index, RejectReason.UNKNOWN_STEP))
@@ -171,6 +236,9 @@ def review_routine(
         citations = _resolve(item.evidence, seen, {})
         if citations is None:
             rejections.append(Rejection(index, RejectReason.UNKNOWN_EVIDENCE))
+            continue
+        if _overstated(item.evidence, seen):
+            rejections.append(Rejection(index, RejectReason.OVERSTATED_NOTE))
             continue
         cited = [observations[c.ref.id] for c in citations if c.ref.id in observations]
         if not routine_evidence(cited, category=category, today=today):
@@ -198,6 +266,62 @@ def review_routine(
     return Review(tuple(drafts), tuple(rejections), tuple(removed))
 
 
+def book_basis(row: BookRow) -> tuple[EvidenceCitation, ...]:
+    """고른 책 자체를 일반 도서 추천의 근거로. 개인화 추천이면 `build()` 가 버린다.
+
+    Food `meal_review._menu_basis` 와 같은 자리다(#442). 모델 citations 에 섞지 않고 코드가
+    `general_basis` 로만 넘긴다 — 모델이 책 근거를 고르거나 빼지 못하고, 개인화 근거에는 아이 기록만
+    남는다. id 는 ISBN 의 uuid5 다(`rules/book_evidence`).
+    """
+    ref = Ref(kind="book_catalog", id=book_evidence_id(row.isbn))
+    return (EvidenceCitation(ref=ref, note=BOOK_EVIDENCE_NOTE, label=row.title),)
+
+
+def review_books(
+    items: Sequence[BookItem], rows: Sequence[BookRow], *, seen: Seen, today: date
+) -> Review:
+    """`rows[i]` 는 `items[i]` 가 고른 책이다 — `propose_books` 가 다 통과시킨 뒤에만 부른다.
+
+    도서는 안전 필터가 없다(Growth_Tool_명세 §2 안전 필터 표). 금지 표현만 본다 — 모델이 쓴 이유 ·
+    근거 메모와 "제목(저자)". 책 이름은 정보나루 원문이지만 화면에 그대로 나가서 같이 본다.
+    개인화 근거는 모델이 고른 아이 기록(`seen`)뿐이다. 기록이 없거나 6개월이 지났으면 일반 추천이고,
+    이유는 코드 문구로 덮이고 근거는 그 책(`book_basis`, `general_basis`)이다 — 개인화면
+    `build()` 가 책 근거를 버린다. `suggestion.items` 는 "제목(저자)" 하나 — 일정으로 만들면
+    준비물이 된다.
+    """
+    drafts: list[SuggestionDraft] = []
+    rejections: list[Rejection] = []
+    removed: list[int] = []
+    for index, (item, row) in enumerate(zip(items, rows, strict=True)):
+        label = book_label(row)
+        if _evaluative((label, item.reason), item.evidence):
+            removed.append(index)
+            continue
+        citations = _resolve(item.evidence, seen, {})
+        if citations is None:
+            rejections.append(Rejection(index, RejectReason.UNKNOWN_EVIDENCE))
+            continue
+        if _overstated(item.evidence, seen):
+            rejections.append(Rejection(index, RejectReason.OVERSTATED_NOTE))
+            continue
+        try:
+            drafts.append(
+                build(
+                    agent=AGENT,
+                    content=label,
+                    reason=item.reason.strip(),
+                    citations=citations,
+                    general_reason=BOOK_GENERAL_REASON,
+                    general_basis=book_basis(row),
+                    items=(label,),
+                    today=today,
+                )
+            )
+        except SuggestionRejected:
+            rejections.append(Rejection(index, RejectReason.BUILD))
+    return Review(tuple(drafts), tuple(rejections), tuple(removed))
+
+
 def step_of(draft: SuggestionDraft) -> UUID | None:
     """루틴 추천이 옮긴 단계 행 id. 재호출 결과를 합칠 때 "같은 추천" 판정에 쓴다."""
     return next((c.ref.id for c in draft.citations if c.ref.kind == "growth_doc"), None)
@@ -209,18 +333,46 @@ def error_code(rejections: Sequence[Rejection]) -> str:
     return ErrorCode.CANDIDATE_REJECTED
 
 
-def explain(rejections: Sequence[Rejection]) -> str:
-    """모델이 읽는 거절 설명. 후보 번호(1부터)와 고칠 방향만 싣는다."""
-    return " / ".join(f"{r.index + 1}번 후보: {GUIDANCE[r.reason]}" for r in rejections)
+def explain(rejections: Sequence[Rejection], usable: Sequence[UUID] = ()) -> str:
+    """모델이 읽는 거절 설명. 후보 번호(1부터)와 고칠 방향만 싣는다.
+
+    모르는 근거 id 때문에 거절했으면 `usable`(조회 결과 · [예시]의 id)을 한 번 덧붙인다. 알려 주지
+    않으면 모델이 옮겨 적다 한 글자 틀린 id 로 같은 후보를 되풀이해 왕복 상한까지 간다.
+    """
+    text = " / ".join(f"{r.index + 1}번 후보: {GUIDANCE[r.reason]}" for r in rejections)
+    if usable and any(r.reason is RejectReason.UNKNOWN_EVIDENCE for r in rejections):
+        text += " 쓸 수 있는 id: " + ", ".join(str(key) for key in usable)
+    return text
 
 
 def _evaluative(texts: Sequence[str], evidence: Sequence[EvidencePick]) -> bool:
     return any(find_evaluative(text) for text in (*texts, *(pick.note for pick in evidence)))
 
 
-def _uuid(raw: str) -> UUID | None:
+def _overstated(evidence: Sequence[EvidencePick], seen: Seen) -> bool:
+    """note 가 반복 · 성향 표현인데 그 근거가 티어 1(확정 관심)이 아닌가.
+
+    한 번의 관찰을 성향으로 확정하지 않는다(루트 §2) — Activity 와 같은 판정이다. 문서 행 ·
+    관찰은 티어 1 이 아니다. "늘 좋아하는" 은 문서가 아니라 아이에 대한 말이라 문서 행 note 도
+    본다. 조회 결과에 없는 id 는 `_resolve` 가 먼저 거절한다.
+    """
+    for pick in evidence:
+        if not overstates(pick.note):
+            continue
+        key = parse_id(pick.id)
+        found = seen.get(key) if key is not None else None
+        if found is None or found.tier != 1:
+            return True
+    return False
+
+
+def parse_id(raw: str) -> UUID | None:
+    """모델이 옮겨 적은 id 를 읽는다. 가운데 공백만 지우고, 읽은 값은 알려진 id 와 대조한다.
+
+    공백을 지운 결과가 조회 결과나 [예시]의 id와 정확히 같을 때만 받는다.
+    """
     try:
-        return UUID(raw)
+        return UUID("".join(raw.split()))
     except ValueError:
         return None
 
@@ -231,7 +383,7 @@ def _resolve(
     """조회 결과 · [예시]에 있던 id 만 인용으로 옮긴다. 하나라도 밖이면 None — 후보를 거절한다."""
     citations: list[EvidenceCitation] = []
     for pick in picks:
-        key = _uuid(pick.id)
+        key = parse_id(pick.id)
         if key is not None and key in seen:
             citations.append(cite(seen[key], note=pick.note))
         elif key is not None and key in docs:
