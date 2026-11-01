@@ -15,7 +15,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime
 from typing import Any, Literal, Protocol, Self
 from uuid import UUID
@@ -32,19 +32,31 @@ from app.agents.common.suggestion import (
 )
 from app.agents.food.agent import run as run_food
 from app.agents.food.registry import WRITING_TASKS as FOOD_WRITING_TASKS
+from app.agents.growth.agent import run as run_growth
+from app.agents.growth.schemas.task import RECOMMENDING_LABELS as GROWTH_RECOMMENDING
 from app.agents.memory.agent import MemoryAgentResult
 from app.agents.memory.agent import run as run_memory
 from app.agents.memory.bundles import MUTATING_PREFIXES, WRITES_FOR
 from app.agents.memory.context import AgentContext
 from app.agents.memory.drafts import EventDraft
+from app.agents.memory.result import ErrorCode
 from app.agents.memory.schemas.reply import ReplyKind
 from app.agents.memory.schemas.task import MemoryTask, PendingMemoryContext, WorkType
 from app.agents.run_writes import RunWrites
 from app.agents.suggestion_save import SaveSuggestions, SuggestionBatch
 from app.agents.supervisor.agent import SupervisorResult
 from app.agents.supervisor.agent import run as run_supervisor
-from app.agents.supervisor.routing import Guidance, Routing, route
+from app.agents.supervisor.routing import (
+    HAZARD_GUIDANCE,
+    SAFETY_GUIDANCE,
+    Guidance,
+    Routing,
+    has_hazard,
+    route,
+)
 from app.agents.supervisor.schemas import DomainAgentName, normalize
+from app.rules.hazard import find_hazards
+from app.rules.safety_term import mentions_safety
 
 logger = logging.getLogger(__name__)
 
@@ -125,6 +137,7 @@ PartialReason = Literal["timeout_20s", "agent_error"]
 _RUNNERS: dict[str, DomainRunner] = {
     DomainAgentName.FOOD.value: run_food,
     DomainAgentName.ACTIVITY.value: run_activity,
+    DomainAgentName.GROWTH.value: run_growth,
 }
 
 # 같은 run의 다른 task가 읽는 행을 쓰는 라벨. 각 Agent registry가 정한다.
@@ -138,6 +151,8 @@ _WRITING_TASKS: dict[str, frozenset[str]] = {
 RECOMMENDING_TASKS: dict[str, frozenset[str | None]] = {
     DomainAgentName.FOOD.value: frozenset({"meal_recommendation"}),
     DomainAgentName.ACTIVITY.value: frozenset({None}),
+    # growth_review 는 추천이 아니다 — 05 화면이 없다
+    DomainAgentName.GROWTH.value: frozenset(GROWTH_RECOMMENDING),
 }
 
 
@@ -218,7 +233,9 @@ class AgentResult:
     task_type: str | None
     status: str
     readouts: tuple[Readout, ...]
-    question: str | None  # needs_observation 하나. 되묻기는 한 번에 하나다 (DomainAgentResult)
+    # needs_observation 하나. 되묻기는 Agent 마다 하나(DomainAgentResult)이고 run 마다도 하나다 —
+    # 먼저 끝난 결과가 가진다(`_QuestionSlot`)
+    question: str | None
     suggestion_ids: tuple[str, ...] = ()  # 저장이 끝난 추천 id. 추천 순서 그대로
     kind: str | None = None  # "personalized" · "general" · 추천이 없으면 None
     reason: str | None = None  # 묶음의 이유 한 문장(코드 문구)
@@ -448,7 +465,10 @@ async def handle_input(
     """
     started = time.perf_counter()
     send = emit or _ignore
-    _safety_precheck(raw_text)
+    hazards = _safety_precheck(raw_text)
+    if hazards:
+        # 이어받기 답에 나와도 같다 — 되묻던 조각보다 아이 상태 확인이 먼저다
+        return _stop_for_hazard(hazards, run_id=run_id, send=send, started=started)
 
     if continuation is not None:
         return await _handle_continuation(
@@ -456,6 +476,7 @@ async def handle_input(
             memory_context,
             run_id=run_id,
             continuation=continuation,
+            supervisor_client=supervisor_client,
             memory_client=memory_client,
             send=send,
             started=started,
@@ -518,11 +539,28 @@ async def handle_input(
             unwritten = _unwritten(routing.memory_task, memory)
             if unwritten is not None:
                 send(unwritten)
+            if memory.refused(ErrorCode.HAZARD) and HAZARD_GUIDANCE not in routing.guidance:
+                # 사전검사 · Supervisor 가 놓치고 저장 게이트가 막은 경우. 같은 안내를 낸다
+                send(HAZARD_GUIDANCE)
+
+    # Supervisor 가 놓친 알레르기 · 만성질환 언급도 같은 안내로 잇는다. "적지 않은 기록" 이 아니라
+    # 막은 것이라 다시 나누지 않는다 — 다시 물으면 Supervisor 호출만 하나 더 쓴다
+    safety_missed = failed is None and _safety_missed(routing.memory_task, memory)
+    if safety_missed and SAFETY_GUIDANCE not in routing.guidance:
+        routing = replace(routing, guidance=(*routing.guidance, SAFETY_GUIDANCE))
+        send(SAFETY_GUIDANCE)
 
     # 위임이 어긋났으면 Supervisor에게 이유를 주고 한 번만 다시 나눈다.
     # Memory는 다시 돌리지 않는다.
     rerouted: Rerouted | None = None
-    bounced = _bounced_hints(routing.memory_task, memory) if failed is None else ()
+    # 저장 게이트가 위험 물질로 거절한 run 은 다시 나누지 않는다. 그 조각은 "적지 않은 기록" 이
+    # 아니라 막은 것이다 — 다시 물으면 안내가 두 번 나가거나 요청으로 바뀌어 Agent 가 돈다
+    hazard_refused = memory is not None and memory.refused(ErrorCode.HAZARD)
+    bounced = (
+        _bounced_hints(routing.memory_task, memory)
+        if failed is None and not hazard_refused and not safety_missed
+        else ()
+    )
     # 도메인 Agent로 간 조각이 있으면 다시 나누지 않는다. 요청이 통째로 사라진 경우만 본다.
     stranded = not routing.domain_tasks and not routing.unavailable_agents
     # 되묻고 있는 조각은 위임이 어긋난 게 아니라 답을 기다리는 것이다. 다시 나누면 Supervisor
@@ -569,6 +607,7 @@ async def handle_input(
         # 결과는 끝나는 대로 내보낸다 (K-11). 추천이 있으면 저장(commit)이 끝난 뒤에 카드가
         # 나간다(공통규약 §3). Partial은 다 끝나거나 20초가 된 뒤 아래에서 한 번
         saved: list[str] = []  # 이 run 에서 저장한 추천 id — 확정된 저장이다
+        question_slot = _QuestionSlot()
 
         async def on_outcome(outcome: DomainOutcome) -> bool:
             send(_routed(outcome))  # 로그 · 지표용
@@ -581,6 +620,17 @@ async def handle_input(
                     return False  # 그 Agent 카드는 내지 않는다 — _run_domain 이 실패로 센다
                 ids = stored
                 saved.extend(ids)
+            # 질문 자리는 카드가 나갈 것이 확정된 뒤에 잡는다 — 저장에 실패해 카드가 없는 결과가
+            # 자리를 쥐면 뒤에 끝난 결과의 질문까지 버려진다 (#452 리뷰)
+            asks = question_slot.take(outcome)
+            if not asks and _only_a_question(outcome):
+                # 질문이 전부였던 결과가 질문을 잃었다. 라벨만 남는 카드는 내지 않는다(실패 아님)
+                logger.info(
+                    "질문만 낸 결과를 내지 않았다 — 되묻기는 run 에 하나 run_id=%s task=%s",
+                    run_id,
+                    _label(outcome.agent, outcome.task_type),
+                )
+                return True
             message = (
                 _empty_notice(outcome) if _recommends(outcome.agent, outcome.task_type) else None
             )
@@ -593,11 +643,11 @@ async def handle_input(
                 await _count(outcome.agent, count_records) if summary.kind == "general" else None
             )
             # 화면용 — readout · 되묻기 · 추천 칸 (#227)
-            send(_result(outcome, ids, summary, count))
+            send(_result(outcome, ids, summary, count, asks=asks))
             return True
 
         ran = await _run_domain(
-            routing.domain_tasks,
+            _with_recorded(routing.domain_tasks, memory),
             contexts,
             timeout=remaining,
             on_outcome=on_outcome,
@@ -778,18 +828,36 @@ async def _handle_continuation(
     *,
     run_id: str,
     continuation: PendingMemoryContext,
+    supervisor_client: LLMClient | None,
     memory_client: LLMClient | None,
     send: Emit,
     started: float,
     commit: Commit,
     curator_trigger: CuratorTrigger | None = None,
 ) -> PipelineResult:
-    """이전 run의 되묻기를 이어받는다. Supervisor와 도메인 Agent를 타지 않는다."""
+    """이전 run의 되묻기를 이어받는다. 도메인 Agent를 타지 않는다.
+
+    Supervisor 는 위험 물질만 본다. 규칙이 못 잡게 돌려 말한 답("어른 음료를 한 모금")이 일반
+    입력에서는 막히고 되묻기 답으로는 저장되던 길을 닫는다 (#633 리뷰). 되묻던 조각을 앞에 붙여
+    보낸다 — "뭘 몰래 마셨어" 에 "아빠 맥주" 로 답해도 한 말처럼 읽힌다. 다른 라벨은 버린다 —
+    답은 그 질문의 답이라 다시 나누지 않는다. Supervisor 가 실패하면 일반 run 의 강등처럼
+    Memory 로 넘어가고 저장 게이트가 남는다.
+    """
     send(Step(1, 1, "이어서 적은 내용을 살펴보고 있어요"))
+    supervisor_started = time.perf_counter()
+    supervisor = await run_supervisor(
+        f"{continuation.hint_text}\n{answer}", client=supervisor_client
+    )
+    supervisor_ms = _ms_since(supervisor_started)
+    if has_hazard(supervisor):
+        return _stop_for_hazard(
+            (), run_id=run_id, send=send, started=started, supervisor=supervisor
+        )
+
     memory: MemoryAgentResult | None = None
     failed: Failed | None = None
     committed = False
-    model_calls = 0
+    model_calls = supervisor.model_calls
     memory_ms: int | None = None
     record_started = time.perf_counter()
     try:
@@ -800,7 +868,7 @@ async def _handle_continuation(
         memory_ms = _ms_since(record_started)
         failed = Failed("llm_unavailable", answer)
     else:
-        model_calls = 1
+        model_calls += 1
     if memory is not None and not memory.completed:
         memory_ms = _ms_since(record_started)
         # 반복 상한 — 일반 run과 같이 commit 하지 않고 failed로 끝냄
@@ -820,6 +888,11 @@ async def _handle_continuation(
             send(note)
         if memory.pending is not None:
             send(PendingReply(run_id, memory.pending))
+        if memory.refused(ErrorCode.HAZARD):
+            # Supervisor 가 놓치고 저장 게이트가 막은 경우 일반 run과 같은 안내
+            send(HAZARD_GUIDANCE)
+        if memory.refused(ErrorCode.SAFETY_RECORD):
+            send(SAFETY_GUIDANCE)
 
     # 쓴 것도 한 말도 없으면 실패 처리
     if failed is None and not _did_anything(memory, [], _NO_ROUTING):
@@ -830,14 +903,14 @@ async def _handle_continuation(
 
     result = PipelineResult(
         run_id=run_id,
-        supervisor=SupervisorResult(output=None),
+        supervisor=supervisor,
         routing=_NO_ROUTING,
         memory=memory,
         failed=failed,
         committed=committed,
         model_calls=model_calls,
         latency_ms=_ms_since(started),
-        times=StageTimes(memory_ms=memory_ms),
+        times=StageTimes(supervisor_ms=supervisor_ms, memory_ms=memory_ms),
     )
     _log(result)
     return result
@@ -1049,11 +1122,49 @@ def _ignore(event: Event) -> None:
     """emit 콜백이 없을 때 이벤트를 무시한다."""
 
 
-def _safety_precheck(raw_text: str) -> None:
-    """안전 사전검사를 위한 자리.
+def _safety_precheck(raw_text: str) -> tuple[str, ...]:
+    """안전 사전검사. 걸린 위험 종류(`app/rules/hazard.py`), 없으면 빈 튜플.
 
-    실제 규칙은 app/rules/에 추가한다.
+    Supervisor 보다 먼저 돈다 — Supervisor 가 실패해 Memory 단독으로 가는 run 에서도 막힌다.
     """
+    return find_hazards(raw_text)
+
+
+def _stop_for_hazard(
+    hazards: tuple[str, ...],
+    *,
+    run_id: str,
+    send: Emit,
+    started: float,
+    supervisor: SupervisorResult | None = None,
+) -> PipelineResult:
+    """위험 물질 섭취가 나온 입력은 저장 · Curator · 추천 없이 안내 한 건으로 끝낸다 (#626).
+
+    규칙이 걸면 모델을 부르지 않는다. 이어받기에서 Supervisor 가 걸었으면 그 결과를 넘긴다.
+    같은 입력의 다른 기록 · 요청도 처리하지 않는다 — 아이 상태 확인이 먼저고, 섞어 처리하면
+    "좋아했다" 가 다른 조각으로 기록될 수 있다.
+    """
+    model_calls = 0 if supervisor is None else supervisor.model_calls
+    routing = Routing(intent_type="record", memory_task=None, guidance=(HAZARD_GUIDANCE,))
+    send(HAZARD_GUIDANCE)
+    send(Done(run_id, model_calls))
+    result = PipelineResult(
+        run_id=run_id,
+        supervisor=supervisor or SupervisorResult(output=None),
+        routing=routing,
+        memory=None,
+        model_calls=model_calls,
+        latency_ms=_ms_since(started),
+    )
+    # 원문 없이 걸린 종류만. Supervisor 가 건 이어받기는 종류가 없다
+    logger.info(
+        "hazard stop run_id=%s by=%s kinds=%s",
+        run_id,
+        "precheck" if supervisor is None else "continuation",
+        list(hazards),
+    )
+    _log(result)
+    return result
 
 
 def _ms_since(started: float) -> int:
@@ -1101,6 +1212,57 @@ def _saved_refs(memory: MemoryAgentResult) -> tuple[Ref, ...]:
     )
 
 
+def _with_recorded(
+    tasks: tuple[DomainTask, ...], memory: MemoryAgentResult | None
+) -> tuple[DomainTask, ...]:
+    """Memory 가 이 run 에서 저장한 루틴 관찰의 행동 이름을 모든 도메인 task 에 싣는다.
+
+    저장이 끝난 뒤에만 읽는다 — 실패한 호출 · 다른 종류의 관찰은 세지 않는다. 없으면 task 를
+    그대로 돌려준다.
+    """
+    if memory is None:
+        return tasks
+    subjects = tuple(
+        subject
+        for call in memory.calls
+        if call.success
+        and call.name == "create_observation_routine"
+        and (subject := str(call.arguments.get("subject", "")).strip())
+    )
+    if not subjects:
+        return tasks
+    return tuple(replace(task, recorded_subjects=subjects) for task in tasks)
+
+
+class _QuestionSlot:
+    """run 하나가 화면에 내보내는 되묻기는 하나다 (루트 §2 · 최소 질문 1개 · 복수 금지).
+
+    Agent 하나가 질문을 둘 못 내게는 `DomainAgentResult` 가 막지만, Agent 둘이 한 run 에서 각자
+    물을 수 있다. 카드는 끝나는 대로 나가서(K-11) 먼저 끝난 결과가 자리를 갖고, 뒤에 끝난 결과의
+    질문은 뺀다. 질문을 다른 카드가 끝나기를 기다렸다 붙이면 Agent 하나가 20초까지 걸릴 때 추천
+    카드까지 20초에 나간다 — 부분 결과 원칙(NF-06)과 맞지 않는다.
+
+    05 는 여기를 지나지 않는다. 응답을 만들 때 `agents` 순서로 하나만 고른다.
+    """
+
+    def __init__(self) -> None:
+        self._taken = False
+
+    def take(self, outcome: DomainOutcome) -> bool:
+        """이 결과의 질문을 카드에 실을지. 질문이 없으면 싣을 것이 없어 True 다."""
+        if not outcome.needs_observation:
+            return True
+        if self._taken:
+            return False
+        self._taken = True
+        return True
+
+
+def _only_a_question(outcome: DomainOutcome) -> bool:
+    """추천도 readout 도 없이 질문만 낸 결과인가. 질문을 잃으면 카드에 라벨만 남는다."""
+    return bool(outcome.needs_observation) and not outcome.suggestions and not outcome.readouts
+
+
 def _routed(outcome: DomainOutcome) -> DomainRouted:
     task_type = _task_label(outcome.task_type)
     return DomainRouted(outcome.agent, task_type, str(outcome.status), outcome.model_calls)
@@ -1116,9 +1278,12 @@ def _result(
     suggestion_ids: tuple[str, ...],
     summary: BundleSummary = BundleSummary(kind=None, reason=None),
     record_count: int | None = None,
+    *,
+    asks: bool = True,
 ) -> AgentResult:
+    """`asks` 가 거짓이면 이 결과의 질문을 싣지 않는다 — 질문 자리를 다른 결과가 가졌다."""
     task_type = _task_label(outcome.task_type)
-    question = outcome.needs_observation[0] if outcome.needs_observation else None
+    question = outcome.needs_observation[0] if asks and outcome.needs_observation else None
     return AgentResult(
         outcome.agent,
         task_type,
@@ -1203,6 +1368,19 @@ def _unwritten(task: MemoryTask | None, memory: MemoryAgentResult) -> Unwritten 
     return event
 
 
+def _safety_missed(task: MemoryTask | None, memory: MemoryAgentResult | None) -> bool:
+    """Supervisor 가 안내로 돌리지 못한 알레르기 · 만성질환 언급이 있었는가.
+
+    저장 게이트가 막았거나, 그 조각을 저장하지 않고 말로만 끝낸 run 이다. 그 조각을 저장했으면
+    ("아토피 크림 발라 줬어") 한 일을 말한 기록이라 안내하지 않는다.
+    """
+    if memory is None:
+        return False
+    return memory.refused(ErrorCode.SAFETY_RECORD) or any(
+        mentions_safety(hint) for hint in _bounced_hints(task, memory)
+    )
+
+
 def _bounced_hints(task: MemoryTask | None, memory: MemoryAgentResult | None) -> tuple[str, ...]:
     """Supervisor가 기록이라고 보냈는데 Memory가 적지 않은 조각.
 
@@ -1236,7 +1414,8 @@ def _reroute_feedback(bounced: tuple[str, ...]) -> str:
         "[다시 나누기] 아래 조각을 record 로 보냈는데 Memory 가 기록하지 않았다.\n"
         f"{listed}\n"
         "기록할 사실이 아니라 요청이면 request로 바꾸고 담당 agent와 food 유형을 정한다. "
-        "기록이 맞으면 record로 두고, 발화 전체를 다시 나눠 route를 부른다."
+        "기록이 맞으면 record로 두고, 둘 다 아니면 unclear로 바꾼다. "
+        "발화 전체를 다시 나눠 route를 부른다."
     )
 
 

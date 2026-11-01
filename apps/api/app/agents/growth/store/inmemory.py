@@ -147,6 +147,7 @@ class InMemoryGrowthDocs:
         trigger_tags: tuple[str, ...],
         query: str,
         limit: int,
+        areas: tuple[str, ...] = (),
     ) -> list[GrowthDocRow]:
         rows = [
             r
@@ -155,6 +156,7 @@ class InMemoryGrowthDocs:
             and r.min_month <= months < r.max_month
             and (routine_category is None or r.routine_category == routine_category)
             and (not trigger_tags or set(trigger_tags) & set(r.trigger_tags))
+            and (not areas or r.area in areas)
         ]
         return rows[:limit]
 

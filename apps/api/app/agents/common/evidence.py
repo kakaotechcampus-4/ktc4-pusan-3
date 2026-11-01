@@ -6,7 +6,8 @@
 모델에게 보이지 않는 코드 tool 이다 (docs/agents/shared/Tool_공통.md §4).
 
     티어 1  confirmed  · polarity ∈ {+1, −1} · archived 제외
-    티어 2  candidate  · polarity ∈ {+1, −1} · strength ≥ 임계
+    티어 2  candidate  · polarity ∈ {+1, −1} · strength ≥ 임계 · 묶인 active 관찰이 2일 이상
+            (같은 날 여러 건은 하루 — 승격 O 와 같다)
     티어 3  최근 14일 관찰 (polarity 무관)
     ── 전부 0행 ──  호출부가 kind="general"
 
@@ -22,6 +23,7 @@ Agent 는 그 결과를 읽기만 한다 — 유예일을 여기서 다시 세�
 상위 N 개를 모델에게 돌려주며 run state 의 대조표에 적고, 출력 tool 이 `unseen()` 으로 대조한다.
 """
 
+import re
 from collections.abc import Container, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -29,6 +31,7 @@ from typing import Literal
 from uuid import UUID
 
 from app.agents.common.refs import ChildRecordKind, EvidenceCitation, Ref
+from app.rules.profile import CANDIDATE_MIN_DAYS
 
 AffinityState = Literal["candidate", "confirmed", "archived"]
 
@@ -40,6 +43,28 @@ DEFAULT_STRENGTH_THRESHOLD = 0.5
 
 # 조회 tool 이 모델에게 돌려주는 근거 수. 모델은 이 안에서만 인용할 수 있다 (Tool_공통.md §5-3)
 TOP_N = 10
+
+_TOKEN = re.compile(r"[0-9A-Za-z가-힣]+")
+
+# 한 번의 관찰을 성향처럼 말하는 표현. 근거가 티어 1(confirmed)일 때만 허용한다 (루트 §2)
+_OVERSTATING_TOKENS = frozenset({"또", "늘", "항상"})
+_OVERSTATING_PREFIXES = ("어제도",)
+_OVERSTATING_PHRASES = ("좋아하는", "좋아해")
+
+
+def overstates(note: str) -> bool:
+    """근거 문장이 반복 · 성향 표현을 쓰는가 — 어제도 · 또 · 늘 · 항상 · 좋아하는.
+
+    낱말 단위로 본다. "오늘" 의 "늘" · "또래" 의 "또" 는 걸리지 않는다. 출력 검증이 티어 1 이
+    아닌 근거의 note 에서 이 표현을 찾으면 후보를 거절한다 (Activity · Growth).
+    """
+    tokens = _TOKEN.findall(note)
+    if any(token in _OVERSTATING_TOKENS for token in tokens):
+        return True
+    if any(token.startswith(_OVERSTATING_PREFIXES) for token in tokens):
+        return True
+    dense = "".join(note.split())
+    return any(phrase in dense for phrase in _OVERSTATING_PHRASES)
 
 
 @dataclass(frozen=True)
@@ -55,6 +80,9 @@ class AffinityRow:
     polarity: int | None  # -1 기피 · +1 선호 · None 은 아직 모름
     strength: float
     last_observed_on: date
+    # 묶인 active 관찰이 있는 서로 다른 날 수 — 승격 O 처럼 같은 날 여러 건은 하루다.
+    # 기본값을 두지 않는다 — 포트가 빠뜨리면 관찰 한 건짜리 candidate 가 조용히 근거가 된다
+    observed_days: int
 
 
 @dataclass(frozen=True)
@@ -113,7 +141,8 @@ def rank_evidence(
             continue
         if row.state == "confirmed":
             tier: Literal[1, 2, 3] = 1
-        elif row.strength >= strength_threshold:
+        elif row.strength >= strength_threshold and row.observed_days >= CANDIDATE_MIN_DAYS:
+            # 하루치 관찰로 생긴 candidate 는 근거가 아니다 (#626) — 티어 3 이 그 관찰을 본다
             tier = 2
         else:
             continue

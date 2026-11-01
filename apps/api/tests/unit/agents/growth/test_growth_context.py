@@ -15,6 +15,7 @@ from app.agents.common.schemas.task import DomainTask
 from app.agents.growth.agent import run
 from app.agents.growth.context import GrowthContext, build_gate
 from app.agents.growth.readouts import READOUTS
+from app.agents.growth.registry import closed_readout_key
 from app.agents.growth.schemas.task import GrowthTaskType
 from app.agents.growth.store.inmemory import (
     InMemoryBooks,
@@ -276,3 +277,26 @@ class TestRun:
         )
         with pytest.raises(ValueError):
             await run(other, context())
+
+
+class TestUnwiredSafety:
+    """안전 어댑터가 붙기 전 — 동의하지 않은 아이가 알레르기 확인 없이 교육을 받으면 안 된다."""
+
+    @pytest.mark.parametrize("consent", [True, False])
+    async def test_어댑터가_없으면_동의와_상관없이_교육이_닫힌다(self, consent):
+        from app.agents.growth.store.ports import UnwiredSafety
+
+        ctx = context(birth_for(30), consent=consent, safety=UnwiredSafety())
+        gate = await build_gate(ctx, GrowthTaskType.LEARNING_SUGGESTION)
+        assert gate.safety_ok is False
+        assert closed_readout_key(GrowthTaskType.LEARNING_SUGGESTION, gate) == "blocked.safety"
+
+    @pytest.mark.parametrize(
+        "label", [GrowthTaskType.ROUTINE_COACHING, GrowthTaskType.GROWTH_REVIEW]
+    )
+    async def test_루틴과_성장_추이는_어댑터_없이도_열린다(self, label):
+        from app.agents.growth.store.ports import UnwiredSafety
+
+        ctx = context(birth_for(30), safety=UnwiredSafety())
+        gate = await build_gate(ctx, label)
+        assert closed_readout_key(label, gate) is None

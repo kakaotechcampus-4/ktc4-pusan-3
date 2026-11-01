@@ -95,7 +95,7 @@ def tools_for(task_type, gate: Gate) -> tuple[str, ...]:
 | 우선순위 | 조건 |
 | --- | --- |
 | Tier 1 | `profile_affinity` · `confirmed` · polarity ∈ {+1, −1} · 비archived |
-| Tier 2 | `profile_affinity` · `candidate` · polarity ∈ {+1, −1} · `strength ≥ 0.5` |
+| Tier 2 | `profile_affinity` · `candidate` · polarity ∈ {+1, −1} · `strength ≥ 0.5` · 묶인 active 관찰이 서로 다른 날 2일 이상 (#626) |
 | Tier 3 | 최근 14일 `observation_activity` (polarity 무관) |
 
 - `search_activity_memory` 는 결과에 **`id` 를 함께 돌려준다.** `suggestion_evidence` 의 허용 `source_kind` 에 `observation_activity` 가 있고, 루트 §2 가 막는 것은 관찰을 **프로필로 승격**하는 것이지 그 한 번의 추천 근거로 **인용**하는 것이 아니다.
@@ -113,8 +113,8 @@ def tools_for(task_type, gate: Gate) -> tuple[str, ...]:
 | --- | --- |
 | +1 / confirmed | 근거 (Tier 1) |
 | **−1 / confirmed** | **근거** — 피할 이유 (Tier 1) |
-| +1 / candidate (`strength ≥ 0.5`) | 근거 (Tier 2) |
-| **−1 / candidate (`strength ≥ 0.5`)** | **근거** — 피할 이유 (Tier 2) |
+| +1 / candidate (`strength ≥ 0.5` · 관찰 2일 이상) | 근거 (Tier 2) |
+| **−1 / candidate (`strength ≥ 0.5` · 관찰 2일 이상)** | **근거** — 피할 이유 (Tier 2) |
 | NULL | 쓰지 않음 |
 | archived | 쓰지 않음 |
 | 관찰 14일 | 근거 (Tier 3) |
@@ -316,7 +316,7 @@ class ActivityCandidate(ToolArgs):
 - 행마다 원문 출처(`source_title`, `source_locator`)를 열로 남긴다 (`RAG_plan.md` §1). 라이선스가 문제되면 `DELETE WHERE source_title = ?` 한 줄로 뺀다 (D10).
 - 조회는 **코드 tool `search_activity_doc`** — 월령 슬라이스로 거른 뒤 의미 검색 상위 5행을 프롬프트 `[예시]` 에 넣는다. 모델을 부르기 전에 코드가 부른다.
 - **근거(`suggestion_evidence`)에는 넣되 개인화 근거로 세지 않는다.** `refs.py` 가 `activity_doc` 을 `DocKind` 로 따로 두고 `count_child_records()` 가 아이 기록만 센다. 넣어두면 어느 문서 행을 봤는지 추적되고, 문서 행만 달고 나간 추천은 자동으로 `general` 이 된다.
-- **다는 방법.** run() 이 조회한 행을 `state.seen_docs` 에 담고 `[예시]` 에 행 `id` 와 함께 싣는다. 모델은 예시를 바탕으로 고른 후보의 `evidence` 에 그 id 와 note 를 단다 — 기억 근거와 같은 칸이다. 출력 검증은 이번 run 에 실은 행만 받고(없는 id 는 `UNKNOWN_EVIDENCE`), note 의 반복 표현 검사도 똑같이 건다 — *"늘 좋아하는"* 은 문서가 아니라 아이에 대한 말이고 문서 행은 확정 관심이 아니다. 기억 근거와 같이 달면 개인화이고 둘 다 근거로 남는다.
+- **다는 방법.** run() 이 조회한 행을 `state.seen_docs` 에 담고 `[예시]` 에 짧은 id(`예1` …)와 함께 싣는다 — UUID 를 그대로 보여 주면 모델이 두 행의 id 를 이어 붙여(앞 8자는 한 행, 나머지는 다른 행) 없는 id 가 되고, 무엇이 틀렸는지 몰라 같은 id 로 다시 내다 단계 한도에 걸렸다(10-28 라이브 eval). 출력 tool 이 짧은 id 를 행 `id` 로 되돌린다(`state.example_ids`). 모델은 예시를 바탕으로 고른 후보의 `evidence` 에 그 id 와 note 를 단다 — 기억 근거와 같은 칸이다. 출력 검증은 이번 run 에 실은 행만 받고(없는 id 는 `UNKNOWN_EVIDENCE`), note 의 반복 표현 검사도 똑같이 건다 — *"늘 좋아하는"* 은 문서가 아니라 아이에 대한 말이고 문서 행은 확정 관심이 아니다. 기억 근거와 같이 달면 개인화이고 둘 다 근거로 남는다.
 - **기억은 그 후보를 고른 이유가 된 것만 단다.** 라이브 eval 에서 관찰이 "블록 쌓기" 1건뿐인데 크레용 놀이 · 색깔 찾기에도 그 기록을 달았다. 이러면 근거가 약한데 개인화로 집계된다(루트 §2 *"맞춤인 척하지 않는다"*). 상관없는 후보는 가장 가까운 예시 행을 달아 일반 추천으로 나가게 한다. 기피 기록은 예외다 — 피해 고른 이유라 근거로 단다(D4). 관련성을 코드로 대조하지 않는 이유: `subject`("블록")가 후보 문장("레고로 탑 쌓기")에 안 나오는 정상 인용까지 막힌다. 프롬프트로 두고 eval 로 본다.
 - 🚩 **시드 80행이 아직 전부 `draft` 다.** 서비스는 `approved` 만 읽으므로 검수 전까지는 `[예시]` 가 비고 일반 추천의 근거도 0행이다 — 품질 지표로 잡힌다 (H-10).
 - **커버리지는 행 수가 아니라 월령 구간을 빠짐없이 덮는 것이 기준이다.** 행마다 `min_month`·`max_month` 가 있으므로, 행이 적어도 0–71개월을 빈틈없이 덮으면 문서 행이 0개인 경우가 거의 생기지 않는다.

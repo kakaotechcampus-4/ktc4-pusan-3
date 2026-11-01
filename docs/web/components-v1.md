@@ -40,14 +40,16 @@
   `useReveal`(펼침) · `useFlip`(자리 옮김) · `playEnter`. 화면 전환은 `components/route-transition.tsx` 의 `ScreenTransition` 과
   `lib/view-transition.ts` 의 `FORWARD` · `BACK`. 쓰는 자리와 규칙은 디자인 시스템 §8
 - 도메인을 아는 조합 (`components/`) — `DomainChip`/`DomainMeta`/`ObservationMeta` · `AgentPrompts` · `ChildNav` · `SuggestionList` ·
-  `HomeComposer` · `GeneralSuggestionCard` · `ChatThread` · `RunReply` · `SafetyCheckSheet`(게이트 ㉡) · `ApprovalSheet`(게이트 ㉠) · `ConsentRequiredCard` ·
+  `HomeComposer`/`VoiceLevelMeter`(말로 적기 듣는 동안의 음량 막대 · 셸 `volume` 이벤트를 직접 구독) · `GeneralSuggestionCard` · `ChatThread` · `RunReply` · `SafetyCheckSheet`(게이트 ㉡) · `ApprovalSheet`(게이트 ㉠) · `ConsentRequiredCard` ·
   `AuthGate`/`SessionChecking`/`SessionUnreachable` · `ChildScope` · `ObservationList` · `AffinityList` · `CorrectionButtons` · `MemoryDetailSheet` ·
   `SuggestionFeedbackList` · `MonthGrid`/`DayMarkLegend` · `CalendarDayPanel` ·
   `SettingsGroup`/`SettingsLinkRow`/`SettingsInfoRow` · `StartBackLink`(01 · 초대 → 00-1) · `ConsentSection`/`LegalDocumentSection` ·
   `ParentSection` · `AccountSection` ·
   `ChildIdentityCard`/`ChildIdentitySheet` · `GrowthLogList`/`GrowthLatestCard` · `GrowthSheet` ·
   `GrowthChart` · `HealthSafetyList`/`HealthSafetySheet` · `SafetyScanReview`/`SafetyScanRowSheet` ·
-  `PhotoReview`/`PhotoEntrySheet` · `PhotoSourceSheet`
+  `PhotoReview`/`PhotoEntrySheet` · `PhotoSourceSheet` · `ScreenTour`/`TourHelpButton`(화면 투어 · [`screen-tour-v1.md`](screen-tour-v1.md)) ·
+  `MedicationDraftCard`/`MedicationDraftList`(게이트 ㉡ · 복약 초안 · [`medication-v1.md`](medication-v1.md)) ·
+  `DoseCheck`(회차 체크 줄 · 03 홈과 11-3 이 같이 씀) · `TodayMedications`(03 홈 "오늘 먹일 약")
   (시트 안의 사진 종류 줄 · 최근 사진 줄 · 촬영/앨범 줄은 그 파일의 내부 조각이다)
 - 받는 동안의 모양은 **그 컴포넌트 옆에 `…Skeleton` 으로** 둔다 — `SettingsRowSkeleton` · `ChildIdentityCardSkeleton` ·
   `GrowthLatestCardSkeleton`/`GrowthLogListSkeleton` · `GrowthChartSkeleton` · `HealthSafetyListSkeleton` · `ObservationListSkeleton` ·

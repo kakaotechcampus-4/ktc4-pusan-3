@@ -25,8 +25,10 @@ class Settings(AgentLLMSettings):
     MEAL_OCR_API_KEY: str | None = None
     MEAL_OCR_MODEL: str = "gemini-3.1-pro-preview"
 
-    # 도서관 정보나루(data4library.kr) 인증키 — 도서 추천 (#290). 비어 있으면 도서 라벨만
-    # 닫히고(`closed.book_api`) 서버는 뜬다. 키 없이 빈 목록으로 채우지 않는다
+    # 도서관 정보나루(data4library.kr) 인증키 — Growth 도서 추천. 비어 있으면 도서 라벨만
+    # 닫히고(`closed.book_api`) 서버는 뜬다. 키 없이 빈 목록으로 채우지 않는다. 서버 IP 를 등록해야
+    # 하루 500회 → 30,000회다. 🚨 비밀 — 키가 요청 주소에 들어가서 응답 · 로그 · 예외 문구에 싣지
+    # 않는다 (integrations/data4library/client.py)
     DATA4LIBRARY_AUTH_KEY: str = ""
 
     # 공공데이터포털(data.go.kr) 일반 인증키(Decoding). 기상청 · 에어코리아 날씨 조회(어댑터는

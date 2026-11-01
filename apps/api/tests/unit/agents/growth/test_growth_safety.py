@@ -1,8 +1,8 @@
 """Growth 안전 필터 검증.
 
 - 음식 용어: 교육 · 루틴 후보에 나오면 **아이 · 월령 · 동의와 무관하게** 뺀다.
-- 등록한 이름: 교육만, `active` 행만. 대응표는 없고 식품 사전에 없는 알레르기 이름(꽃가루 ·
-  라텍스)에는 확인 문구가 붙는다. `environmental`(고소공포 같은 것)에는 붙지 않는다.
+- 등록한 이름: 교육만, `active` 행만. 식품 사전에 없는 알레르기 이름(꽃가루 · 라텍스 · 동물털)은
+  사람이 정한 대응표의 낱말이 든 후보를 뺀다. `environmental`(고소공포 같은 것)은 대상이 아니다.
 - 위험 용어: 차단은 뺀다. 경고는 후보와 함께 나간다 — **0–17개월은 경고도 차단이다**
   (Activity 와 같다).
 - 사전을 못 읽으면 빈 사전으로 통과시키지 않는다.
@@ -13,6 +13,7 @@
 
 import pytest
 
+from app.agents.common.allergy import allergy_related_table, related_blocks
 from app.agents.common.reference import allergen_groups, food_safety_terms
 from app.agents.growth.doc_seed import growth_doc_seed
 from app.agents.growth.store.ports import SafetyEntry
@@ -21,13 +22,12 @@ from app.agents.growth.tools.safety import (
     SafetyRules,
     SafetyRulesUnavailable,
     SafetyVerdict,
-    allergy_cautions,
     check_learning_candidate,
     check_routine_candidate,
     load_safety_rules,
 )
 from app.rules.allergen import ALLERGEN_NAMES
-from app.rules.term_match import Term
+from app.rules.term_match import Term, match_fields
 
 
 def fake_rules(
@@ -171,42 +171,6 @@ class TestVerdict:
             SafetyVerdict(allowed=True, removed_by="food_term")
 
 
-class TestNonFoodAllergyCaution:
-    """식품 사전에 없는 알레르기 이름에 확인 문구를 붙인다 (#282 리뷰).
-
-    식품 알레르기는 이름 대조와 음식 용어 스캔이 뺀다. 식품이 아닌 것(꽃가루 · 라텍스)은 뺄 활동을
-    코드가 못 정해서, 보호자가 적은 이름을 보여 주고 확인하게 한다. 어느 행에 붙일지는 Activity 와
-    같은 공용 판정(`non_food_allergies`)이 고른다 — 판정 사례는
-    tests/unit/agents/common/test_allergy.py.
-    """
-
-    POLLEN = "등록된 알레르기(꽃가루)가 있어요. 장소랑 재료를 한 번 확인해 주세요."
-
-    def test_식품_사전에_없는_알레르기에_확인_문구를_낸다(self):
-        assert allergy_cautions([SafetyEntry("allergy", "꽃가루", "active")]) == (self.POLLEN,)
-
-    def test_environmental_은_알레르기가_아니라_문구를_내지_않는다(self):
-        # data_model.md — environmental 은 고소공포 같은 것이다.
-        # "등록된 알레르기(고소공포)" 가 되면 안 된다
-        assert allergy_cautions([SafetyEntry("environmental", "고소공포", "active")]) == ()
-
-    def test_식품이_아닌_알레르기에만_적은_이름_그대로_붙인다(self):
-        entries = [
-            SafetyEntry("environmental", "고소공포", "active"),
-            SafetyEntry("allergy", "꽃가루", "active"),
-            SafetyEntry("allergy", "우유", "active"),
-            SafetyEntry("allergy", "라텍스 알레르기", "active"),
-        ]
-        assert allergy_cautions(entries) == (
-            self.POLLEN,
-            "등록된 알레르기(라텍스 알레르기)가 있어요. 장소랑 재료를 한 번 확인해 주세요.",
-        )
-
-    def test_어디가_위험한지는_말하지_않는다(self):
-        (text,) = allergy_cautions([SafetyEntry("allergy", "꽃가루", "active")])
-        assert "공원" not in text and "위험" not in text
-
-
 class TestDefaultRules:
     """실제 사전(`allergen_terms.yaml` · `hazard_terms.yaml`)과 공용 판정으로 만든 규칙."""
 
@@ -224,6 +188,37 @@ class TestDefaultRules:
     @pytest.mark.parametrize("text", ["공 밀기", "카드 게임", "블록 쌓기", "비밀 상자 열기"])
     def test_한_글자_별칭은_놀이_문장에서_쓰지_않는다(self, rules, text):
         assert rules.food_terms(text) == ()
+
+    @pytest.mark.parametrize(
+        "text", ["콩으로 숫자 세기", "검은콩 세기", "콩주머니 던지기", "잣 까기"]
+    )
+    def test_한_글자_식품_콩_잣은_문장에서도_찾는다(self, rules, text):
+        """C48-food — 아이와 상관없이 뺀다. 콩주머니에도 실제 콩이 든다."""
+        assert rules.food_terms(text)
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "콩콩 뛰기 놀이",
+            "콩닥콩닥 심장 소리 듣기",
+            "콩쥐팥쥐 동화 읽기",
+            "홍콩 지도 보기",
+            "강낭콩 키우기",  # 대두가 아닌 콩은 사전 guard 다 — 심고 기르는 활동
+            "잦은 실수 줄이기",
+        ],
+    )
+    def test_콩_잣이_식품이_아닌_자리는_걸리지_않는다(self, rules, text):
+        assert rules.food_terms(text) == ()
+
+    def test_guard_는_띄어쓰기를_넘지_않는다(self, rules):
+        """'꽃 게임' 은 띄어 썼다 — guard '꽃게' 로 덮지 않는다.
+
+        Activity · Food 의 match_fields 와 같다. "꽃" 은 대응표 별칭(꽃가루 · 화분증)이 아니라
+        이름 대조만 한다 — 표 판정은 plan1 테스트가 본다.
+        """
+        flower = (SafetyEntry("allergy", "꽃", "active"),)
+        assert rules.registered_names("꽃 게임 하기", flower)
+        assert rules.registered_names("꽃게 그리기", flower) == ()
 
     def test_18개월_미만은_경고도_차단이다(self, rules):
         hits = rules.hazards("풍선으로 숫자 세기", 15)
@@ -507,8 +502,8 @@ class TestRulesUnavailable:
             load_safety_rules()
 
     def test_이름_사전을_못_읽어도_같다(self, monkeypatch):
-        """확인 문구를 고르는 이름 사전(`allergy_book`)도 게이트에서 먼저 읽는다 — 못 읽으면 문구
-        없이 넘기지 않는다."""
+        """보호자가 적은 이름을 읽는 사전(`allergy_book`)도 게이트에서 먼저 읽는다 — 못 읽으면 이름
+        대조 없이 넘기지 않는다."""
 
         def broken():
             raise ValueError("allergen_groups.yaml 깨짐")
@@ -525,3 +520,92 @@ class TestRulesUnavailable:
         with pytest.raises(SafetyRulesUnavailable) as caught:
             load_safety_rules()
         assert isinstance(caught.value.__cause__, ValueError)
+
+
+POLLEN = SafetyEntry("allergy", "꽃가루", "active")
+
+
+class TestAllergyRelated:
+    """식품 아닌 알레르기는 확인 문구 대신 사람이 정한 대응표로 막는다 (PM 확인)."""
+
+    @pytest.fixture
+    def rules(self) -> SafetyRules:
+        return load_safety_rules()
+
+    def test_표_낱말이_든_후보를_뺀다(self, rules):
+        verdict = check_learning_candidate(
+            ("나뭇잎 세기", "주운 잎을 센다"), months=30, entries=[POLLEN], rules=rules
+        )
+        assert verdict == SafetyVerdict(allowed=False, removed_by="allergy_related")
+
+    def test_꽃가루로_등록한_아이에게_잔디_활동을_막는다(self, rules):
+        # 잔디는 꽃가루의 별칭이라("잔디" 로 적으면 꽃가루로 읽는다) 막을 낱말에도 있어야 한다
+        # (#452 리뷰). 없으면 "꽃가루" 로 등록한 아이에게만 잔디 놀이가 통과한다
+        verdict = check_learning_candidate(
+            ("잔디밭에서 공 굴리기", "공을 굴린다"), months=30, entries=[POLLEN], rules=rules
+        )
+        assert verdict == SafetyVerdict(allowed=False, removed_by="allergy_related")
+
+    def test_준비물_칸도_본다(self, rules):
+        # "풍선" 은 위험 용어 경고도 걸리지만, 표가 위험 용어보다 먼저 본다
+        verdict = check_learning_candidate(
+            ("숫자 세기", "하나씩 센다", "풍선"),
+            months=30,
+            entries=[SafetyEntry("allergy", "라텍스", "active")],
+            rules=rules,
+        )
+        assert verdict.removed_by == "allergy_related"
+
+    @pytest.mark.parametrize(
+        "entry",
+        [
+            SafetyEntry("allergy", "꽃가루", "retracted"),
+            SafetyEntry("allergy", "꽃가루", "none"),
+            SafetyEntry("environmental", "꽃가루", "active"),
+        ],
+    )
+    def test_active_allergy_가_아니면_표로_막지_않는다(self, rules, entry):
+        verdict = check_learning_candidate(
+            ("나뭇잎 세기",), months=30, entries=[entry], rules=rules
+        )
+        assert verdict.removed_by != "allergy_related"
+
+    def test_표에_없는_이름은_이름_대조만_한다(self, rules):
+        mite = SafetyEntry("allergy", "집먼지진드기", "active")
+        named = check_learning_candidate(
+            ("집먼지진드기 관찰",), months=30, entries=[mite], rules=rules
+        )
+        other = check_learning_candidate(("먼지 관찰",), months=30, entries=[mite], rules=rules)
+        assert named.removed_by == "allergy_name"
+        assert other.allowed
+
+    @pytest.mark.parametrize("label", ["강아지 털", "강아지", "고양이", "애완동물"])
+    def test_동물_이름으로_적어도_동물털_낱말이_든_후보를_뺀다(self, rules, label):
+        """동물털 알레르기를 흔히 적는 이름으로 적어도 깃털 · 동물원 후보가 안 나간다."""
+        entry = SafetyEntry("allergy", label, "active")
+        for text in ("깃털 날리기", "동물원 구경", "털실 만지기"):
+            verdict = check_learning_candidate((text,), months=30, entries=[entry], rules=rules)
+            assert verdict.removed_by in {"allergy_related", "allergy_name"}, (label, text)
+
+    def test_결과에_알레르기_이름이나_낱말을_싣지_않는다(self, rules):
+        verdict = check_learning_candidate(
+            ("나뭇잎 세기",), months=30, entries=[POLLEN], rules=rules
+        )
+        assert "꽃가루" not in repr(verdict) and "나뭇잎" not in repr(verdict)
+
+
+def _seed_learning_rows():
+    return [
+        entry.to_row()
+        for entry in growth_doc_seed()
+        if entry.meta.status == "approved" and entry.to_row().row_type == "learning_activity"
+    ]
+
+
+@pytest.mark.parametrize(("label", "count"), [("꽃가루", 9), ("라텍스", 0), ("동물털", 0)])
+def test_시드_교육_행에서_표에_걸리는_수(label, count):
+    """표 낱말을 바꾸면 이 수가 바뀐다 — 바뀐 수를 보고 과차단인지 사람이 판단한다."""
+    terms = related_blocks([label], allergy_related_table())
+    rows = _seed_learning_rows()
+    hit = [r for r in rows if match_fields((r.title, r.body, *r.materials), terms)]
+    assert len(rows) == 80 and len(hit) == count
