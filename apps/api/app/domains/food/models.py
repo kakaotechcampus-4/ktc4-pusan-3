@@ -31,6 +31,8 @@ FOOD_GROUPS_CHECK = (
     "food_groups <@ '{grains,meat_fish_egg_legumes,vegetables,fruits,dairy,fats_sugars}'::text[]"
 )
 SERVING_CHECK = "serving_g IS NULL OR serving_g > 0"
+# `RecipeSource`(core)보다 넓다 — 식약처(`mfds_recipe`)는 DB 만 받는다
+RECIPE_SOURCE_CHECK = "source IN ('mafra_recipe', 'mfds_recipe', 'nics_recipe')"
 
 
 class _CatalogColumns:
@@ -76,7 +78,7 @@ class RecipeCatalog(_CatalogColumns, Base):
 
     __tablename__ = "recipe_catalog"
     __table_args__ = (
-        CheckConstraint("source IN ('mafra_recipe', 'mfds_recipe')", name="recipe_catalog_source"),
+        CheckConstraint(RECIPE_SOURCE_CHECK, name="recipe_catalog_source"),
         CheckConstraint(ALLERGEN_CODES_CHECK, name="recipe_catalog_allergen_codes"),
         CheckConstraint(STAGE_CHECK, name="recipe_catalog_stage_min"),
         CheckConstraint(FOOD_GROUPS_CHECK, name="recipe_catalog_food_groups"),
