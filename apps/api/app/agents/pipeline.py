@@ -7,6 +7,9 @@ Memory 가 끝나면 러너가 넘긴 commit 으로 기록 단계를 확정하�
 도메인 단계는 쓰는 task 를 먼저 끝낸 뒤 읽는 task 를 돌린다.
 도메인 결과는 끝나는 대로 내보내고, Partial은 다 끝나거나 20초가 된 뒤 한 번 낸다.
 되묻기는 카드에 싣지 않는다. 결과를 다 본 뒤 하나만 골라 Partial 앞에 AgentQuestion 으로 낸다.
+답을 받아야 추천을 낼 수 있는 질문(`_RESUMED_BY_ANSWER`)은 맥락(PendingReply)을 먼저 내고
+답을 받는 질문으로 낸다. 답이 오면 Memory 가 저장하고, 저장했으면 그 요청을 같은 20초 안에서
+이어서 돈다.
 
 Supervisor가 요청을 기록으로 잘못 나누면 그 조각은 어디서도 처리되지 않는다.
 Memory가 적지 않은 RECORD 조각이 남으면 그 이유를 Supervisor에 돌려주고 한 번만 다시 나눈다.
@@ -24,6 +27,7 @@ from uuid import UUID
 from app.agents.activity.agent import run as run_activity
 from app.agents.common.llm_client import LLMClient, LLMError
 from app.agents.common.readout import Readout
+from app.agents.common.result import DomainPending
 from app.agents.common.schemas.task import DomainTask
 from app.agents.common.suggestion import (
     BundleSummary,
@@ -35,6 +39,7 @@ from app.agents.food.agent import run as run_food
 from app.agents.food.registry import WRITING_TASKS as FOOD_WRITING_TASKS
 from app.agents.growth.agent import run as run_growth
 from app.agents.growth.schemas.task import RECOMMENDING_LABELS as GROWTH_RECOMMENDING
+from app.agents.growth.schemas.task import GrowthTaskType
 from app.agents.memory.agent import MemoryAgentResult
 from app.agents.memory.agent import run as run_memory
 from app.agents.memory.bundles import MUTATING_PREFIXES, WRITES_FOR
@@ -102,6 +107,8 @@ class DomainOutcome(Protocol):
     def needs_observation(self) -> tuple[str, ...]: ...
     @property
     def suggestions(self) -> tuple[SuggestionDraft, ...]: ...
+    @property
+    def pending(self) -> DomainPending | None: ...
 
 
 # client 키워드 인자는 domain_clients 에 그 agent 몫이 있을 때만 넘어간다(_run_domain.run_one)
@@ -155,6 +162,16 @@ RECOMMENDING_TASKS: dict[str, frozenset[str | None]] = {
     # growth_review 는 추천이 아니다 — 05 화면이 없다
     DomainAgentName.GROWTH.value: frozenset(GROWTH_RECOMMENDING),
 }
+
+# 답을 받아야 추천을 낼 수 있어서 되묻기의 답으로 다시 도는 task. 루틴은 지금 수준을 모르면 일반
+# 추천도 내지 않는다(Growth_Agent_명세 §6). 질문이 화면 안내로만 끝나면 답이 맥락 없는 새 입력이
+# 되어 버려지거나 기록만 남고, 다시 요청해도 같은 질문이 돌아온다. Health 는 표에 없다
+_RESUMED_BY_ANSWER: dict[str, frozenset[str]] = {
+    DomainAgentName.GROWTH.value: frozenset({GrowthTaskType.ROUTINE_COACHING.value}),
+}
+
+# 질문을 낸 결과와, 그 질문에 답하면 다시 돌릴 task(답을 받지 않는 질문이면 None)
+_Asked = tuple["DomainOutcome", DomainTask | None]
 
 
 # 이벤트
@@ -502,6 +519,10 @@ async def handle_input(
             started=started,
             commit=commit,
             curator_trigger=curator_trigger,
+            contexts=contexts,
+            domain_clients=domain_clients,
+            save_suggestions=save_suggestions,
+            count_records=count_records,
         )
 
     send(Step(1, _TOTAL_STEPS, _LABELS[0]))
@@ -554,6 +575,8 @@ async def handle_input(
             if memory.drafts:
                 send(EventDrafts(memory.drafts))
             note = _memory_note(memory)
+            if note is not None and note.kind == "message" and _request_only(memory, routing):
+                note = MemoryNote(REQUEST_ONLY_NOTE, "message")
             if note is not None:
                 memory_asked = note.kind == "question"
                 send(note)
@@ -621,71 +644,30 @@ async def handle_input(
     budget_ms: int | None = None
     writers_ms: int | None = None
     readers_ms: int | None = None
+    domain_asked: _Asked | None = None
     if failed is None and routing.domain_tasks:
         # Memory 가 성공한 뒤에 돈다. 방금 저장한 관찰이 도메인 Agent 조회에 잡혀야 한다
-        send(Step(3, _TOTAL_STEPS, _LABELS[2]))
-        remaining = max(0.0, RUN_DEADLINE_S - (time.perf_counter() - started))
-        budget_ms = int(remaining * 1000)
-
-        # 결과는 끝나는 대로 내보낸다 (K-11). 추천이 있으면 저장(commit)이 끝난 뒤에 카드가
-        # 나간다(공통규약 §3). 카드는 질문을 싣지 않는다 — 질문은 결과를 다 본 뒤 `_pick_question`
-        # 이 하나만 골라 보낸다. Partial은 다 끝나거나 20초가 된 뒤 아래에서 한 번
-        saved: list[str] = []  # 이 run 에서 저장한 추천 id — 확정된 저장이다
-
-        async def on_outcome(outcome: DomainOutcome) -> bool:
-            send(_routed(outcome))  # 로그 · 지표용
-            if _failed(outcome):
-                return True  # 실패는 Partial.failed 로만 알린다 — _run_domain 이 센다
-            ids: tuple[str, ...] = ()
-            if outcome.suggestions:
-                stored = await _save(outcome, save_suggestions, run_id=run_id)
-                if stored is None:
-                    return False  # 그 Agent 카드는 내지 않는다 — _run_domain 이 실패로 센다
-                ids = stored
-                saved.extend(ids)
-            message = (
-                _empty_notice(outcome) if _recommends(outcome.agent, outcome.task_type) else None
-            )
-            if message is not None:
-                # 05 가 24시간 안에 같은 0개 안내를 낸다. 화면 결과보다 먼저 보관함에 들어가야
-                # 결과를 받자마자 "후보 보기" 로 들어와도 기록이 있다
-                send(EmptyResult(run_id, outcome.agent, _task_label(outcome.task_type), message))
-            summary = bundle_summary(outcome.suggestions)
-            count = (
-                await _count(outcome.agent, count_records) if summary.kind == "general" else None
-            )
-            # 화면용 — readout · 추천 칸 (#227)
-            send(_result(outcome, ids, summary, count))
-            return True
-
-        ran = await _run_domain(
+        stage = await _domain_stage(
             _with_recorded(routing.domain_tasks, memory),
             contexts,
-            timeout=remaining,
-            on_outcome=on_outcome,
+            run_id=run_id,
+            sent_at=memory_context.now,
+            started=started,
+            send=send,
+            save_suggestions=save_suggestions,
+            count_records=count_records,
             domain_clients=domain_clients,
+            # Memory 도 되물었으면 답이 갈 맥락이 그쪽에 있다 — 한 run 에 맥락은 하나다
+            can_resume=memory is None or memory.pending is None,
+            step=Step(3, _TOTAL_STEPS, _LABELS[2]),
         )
-        partial = ran.partial
-        writers_ms, readers_ms = ran.writers_ms, ran.readers_ms
-        for task in ran.failed_tasks:
-            if _recommends(task.agent, task.task_type):
-                # partial 보다 먼저 — 화면이 실패 카드를 그리자마자 다시 시도해도 맥락이 있다
-                send(
-                    RetryContext(
-                        run_id,
-                        task.agent,
-                        _task_label(task.task_type),
-                        task.request_texts,
-                        memory_context.now,
-                    )
-                )
+        partial, domain_asked = stage.partial, stage.asked
+        budget_ms, writers_ms, readers_ms = stage.budget_ms, stage.writers_ms, stage.readers_ms
         # 쓰기 포트는 호출마다 바로 commit. 포트 호출이 성공한 뒤에만 표시가 남는다.
         # 추천 저장도 commit 이 끝난 뒤에만 saved 에 들어간다
-        committed = committed or (writes is not None and writes.wrote) or bool(saved)
-        for outcome in ran.outcomes:
-            domain.append(outcome)
-            model_calls += outcome.model_calls
-        model_calls += ran.failed_model_calls
+        committed = committed or (writes is not None and writes.wrote) or stage.saved
+        domain.extend(stage.outcomes)
+        model_calls += stage.model_calls
 
     if failed is None and not committed and not _did_anything(memory, domain, routing):
         # 도메인 Agent 가 전부 실패했고 남은 결과도 없으면 부분 결과가 아니라 실패다
@@ -694,11 +676,8 @@ async def handle_input(
         send(failed)
     else:
         # 결과를 다 본 뒤 하나만. 부분 결과(partial)는 결과 뒤에 오는 계약이라 질문이 먼저다
-        asked = None if memory_asked else _pick_question(domain)
-        if asked is not None:
-            send(
-                AgentQuestion(asked.agent, _task_label(asked.task_type), asked.needs_observation[0])
-            )
+        if domain_asked is not None and not memory_asked:
+            _send_question(domain_asked, run_id, send)
         if partial is not None:
             send(partial)
     send(Done(run_id, model_calls))
@@ -797,6 +776,11 @@ async def run_suggestions(
 # 이어받기 run의 routing 자리. 안내·준비 중 agent가 없어 _did_anything에는 쓴 것과 말만 남는다
 _NO_ROUTING = Routing(intent_type="record", memory_task=None)
 
+# 요청과 같이 온 기록 조각을 하나도 저장하지 않았을 때 Memory 의 말 대신 내는 문구. 모델이 쓰면
+# 매번 달라서 보호자가 무엇이 일어났는지 알기 어렵다. 화면이 note 에 "적어주신 말을 확인했어요"
+# 제목을 달아서 "확인" 을 쓰지 않는다(`ASK_LIMIT_NOTE` 와 같은 이유)
+REQUEST_ONLY_NOTE = "요청으로 보고 기록에는 남기지 않았어요."
+
 # 이어받기 답에 섞여 온 다른 말은 처리하지 않는다.
 # 다시 보내도 두 번 저장되지 않게 반영하지 않았다는 것까지 알린다.
 LEFTOVER_NOTE = "답변과 함께 적은 다른 내용은 반영하지 않았어요. 따로 한 줄로 보내 주세요."
@@ -853,8 +837,13 @@ async def _handle_continuation(
     started: float,
     commit: Commit,
     curator_trigger: CuratorTrigger | None = None,
+    contexts: Mapping[str, DomainContext],
+    domain_clients: Mapping[str, LLMClient] | None,
+    save_suggestions: SaveSuggestions,
+    count_records: CountRecords | None,
 ) -> PipelineResult:
-    """이전 run의 되묻기를 이어받는다. 도메인 Agent를 타지 않는다.
+    """이전 run의 되묻기를 이어받는다. 도메인 Agent를 타지 않는다. 도메인 Agent가 물은 질문에
+    답해 그 요청을 이어서 돌리는 경우(`continuation.resume`)만 뺀다.
 
     Supervisor 는 위험 물질만 본다. 규칙이 못 잡게 돌려 말한 답("어른 음료를 한 모금")이 일반
     입력에서는 막히고 되묻기 답으로는 저장되던 길을 닫는다 (#633 리뷰). 되묻던 조각을 앞에 붙여
@@ -862,7 +851,9 @@ async def _handle_continuation(
     답은 그 질문의 답이라 다시 나누지 않는다. Supervisor 가 실패하면 일반 run 의 강등처럼
     Memory 로 넘어가고 저장 게이트가 남는다.
     """
-    send(Step(1, 1, "이어서 적은 내용을 살펴보고 있어요"))
+    # 답을 저장한 뒤 도메인 단계를 이어서 돌 수 있는 run 은 단계가 둘이다 (_domain_stage)
+    total = 1 if continuation.resume is None else 2
+    send(Step(1, total, "이어서 적은 내용을 살펴보고 있어요"))
     supervisor_started = time.perf_counter()
     supervisor = await run_supervisor(
         f"{continuation.hint_text}\n{answer}", client=supervisor_client
@@ -903,6 +894,11 @@ async def _handle_continuation(
         if memory.drafts:
             send(EventDrafts(memory.drafts))
         note = _memory_note(memory)
+        if note is not None and _resumes(continuation, memory) and memory.reply is not None:
+            if memory.reply.kind == "question":
+                # 저장했고 Growth 가 이어 돈다. 답할 수 없는 질문은 내지 않는다.
+                # 한 run 에 질문은 하나다. 답에 섞인 다른 말이 있었다면 그 안내만 남긴다
+                note = MemoryNote(LEFTOVER_NOTE, "message") if memory.leftover else None
         if note is not None:
             send(note)
         if memory.pending is not None:
@@ -913,11 +909,54 @@ async def _handle_continuation(
         if memory.refused(ErrorCode.SAFETY_RECORD):
             send(SAFETY_GUIDANCE)
 
+    stage: _DomainStage | None = None
+    resume = continuation.resume
+    # 답을 저장했을 때만 이어서 돈다. 또 묻는 중이면 다음 답을 기다리고, 저장한 것이 없으면 도메인
+    # Agent가 읽을 것이 그대로라 같은 질문만 되돌아온다. 끝난 Memory의 commit이 우선
+    if (
+        failed is None
+        and memory is not None
+        and resume is not None
+        and _resumes(continuation, memory)
+    ):
+        asked = continuation.asked
+        subject = str(asked.payload.get("subject") or "") if asked is not None else ""
+        task = replace(
+            resume,
+            run_id=run_id,
+            # 답에 나온 낱말도 코드 판정이 본다 — 요청에 없던 약 · 증상이 답에서 나온다. 모델
+            # 입력으로는 가지 않는다(`DomainTask.answer_texts`)
+            answer_texts=(answer,),
+            answered_subject=subject or None,
+        )
+        stage = await _domain_stage(
+            _with_recorded((task,), memory),
+            contexts,
+            run_id=run_id,
+            sent_at=memory_context.now,
+            started=started,
+            send=send,
+            save_suggestions=save_suggestions,
+            count_records=count_records,
+            domain_clients=domain_clients,
+            # 답을 받아 다시 돈 run 은 또 맥락을 만들지 않는다 — 질문은 문장으로만 남는다
+            can_resume=False,
+            step=Step(2, 2, _LABELS[2]),
+        )
+        committed = committed or stage.saved
+        model_calls += stage.model_calls
+
+    domain = list(stage.outcomes) if stage is not None else []
     # 쓴 것도 한 말도 없으면 실패 처리
-    if failed is None and not _did_anything(memory, [], _NO_ROUTING):
+    if failed is None and not _did_anything(memory, domain, _NO_ROUTING):
         failed = Failed("unparsable", answer)
     if failed is not None:
         send(failed)
+    elif stage is not None:
+        if stage.asked is not None:
+            _send_question(stage.asked, run_id, send)
+        if stage.partial is not None:
+            send(stage.partial)
     send(Done(run_id, model_calls))
 
     result = PipelineResult(
@@ -925,14 +964,121 @@ async def _handle_continuation(
         supervisor=supervisor,
         routing=_NO_ROUTING,
         memory=memory,
+        domain=tuple(domain),
+        partial=stage.partial if stage is not None else None,
         failed=failed,
         committed=committed,
         model_calls=model_calls,
         latency_ms=_ms_since(started),
-        times=StageTimes(supervisor_ms=supervisor_ms, memory_ms=memory_ms),
+        times=StageTimes(
+            supervisor_ms=supervisor_ms,
+            memory_ms=memory_ms,
+            budget_ms=stage.budget_ms if stage is not None else None,
+            writers_ms=stage.writers_ms if stage is not None else None,
+            readers_ms=stage.readers_ms if stage is not None else None,
+        ),
     )
     _log(result)
     return result
+
+
+def _resumes(continuation: PendingMemoryContext, memory: MemoryAgentResult) -> bool:
+    """답을 저장했고 Memory 가 더 묻지 않아서 요청을 이어서 돌 때인가."""
+    return continuation.resume is not None and memory.pending is None and bool(_saved_refs(memory))
+
+
+@dataclass(frozen=True)
+class _DomainStage:
+    """도메인 단계 한 번의 결과. 입력 run 과 이어받기 run 이 같은 길을 지난다."""
+
+    outcomes: tuple[DomainOutcome, ...]
+    partial: Partial | None
+    saved: bool  # 추천 저장이 commit 까지 끝났다
+    model_calls: int
+    budget_ms: int
+    writers_ms: int | None
+    readers_ms: int | None
+    asked: _Asked | None  # 이 run 이 보낼 되묻기. 보내는 것은 부른 쪽이다
+
+
+async def _domain_stage(
+    tasks: tuple[DomainTask, ...],
+    contexts: Mapping[str, DomainContext],
+    *,
+    run_id: str,
+    sent_at: datetime,
+    started: float,
+    send: Emit,
+    save_suggestions: SaveSuggestions,
+    count_records: CountRecords | None,
+    domain_clients: Mapping[str, LLMClient] | None,
+    can_resume: bool,
+    step: Step,
+) -> _DomainStage:
+    """도메인 task 를 돌리고 결과를 화면 이벤트로 낸다. 남은 시간은 입력 시각부터 센다.
+
+    결과는 끝나는 대로 내보낸다 (K-11). 추천이 있으면 저장(commit)이 끝난 뒤에 카드가
+    나간다(공통규약 §3). 카드는 질문을 싣지 않는다 — 질문은 결과를 다 본 뒤 `_pick_question` 이
+    하나만 고르고, 내는 것은 부른 쪽이다(Partial 앞). Partial 도 부른 쪽이 낸다.
+    `can_resume` 이면 `_RESUMED_BY_ANSWER` 의 질문을 답을 받는 질문으로 고를 수 있다(`_resumable`).
+    """
+    send(step)
+    remaining = max(0.0, RUN_DEADLINE_S - (time.perf_counter() - started))
+    saved: list[str] = []  # 이 run 에서 저장한 추천 id — 확정된 저장이다
+
+    async def on_outcome(outcome: DomainOutcome) -> bool:
+        send(_routed(outcome))  # 로그 · 지표용
+        if _failed(outcome):
+            return True  # 실패는 Partial.failed 로만 알린다 — _run_domain 이 센다
+        ids: tuple[str, ...] = ()
+        if outcome.suggestions:
+            stored = await _save(outcome, save_suggestions, run_id=run_id)
+            if stored is None:
+                return False  # 그 Agent 카드는 내지 않는다 — _run_domain 이 실패로 센다
+            ids = stored
+            saved.extend(ids)
+        message = _empty_notice(outcome) if _recommends(outcome.agent, outcome.task_type) else None
+        # 05 가 24시간 안에 같은 0개 안내를 낸다. 화면 결과보다 먼저 보관함에 들어가야 결과를
+        # 받자마자 "후보 보기" 로 들어와도 기록이 있다. 답을 받는 질문은 남기지 않는다 — 답이 오면
+        # 다른 run 이 추천을 내니, 05 가 처음 run 의 0개 안내를 24시간 동안 다시 내지 않게 한다
+        if message is not None and not (can_resume and _resumable(outcome, tasks)):
+            send(EmptyResult(run_id, outcome.agent, _task_label(outcome.task_type), message))
+        summary = bundle_summary(outcome.suggestions)
+        count = await _count(outcome.agent, count_records) if summary.kind == "general" else None
+        # 화면용 — readout · 추천 칸 (#227)
+        send(_result(outcome, ids, summary, count))
+        return True
+
+    ran = await _run_domain(
+        tasks,
+        contexts,
+        timeout=remaining,
+        on_outcome=on_outcome,
+        domain_clients=domain_clients,
+    )
+    for task in ran.failed_tasks:
+        if _recommends(task.agent, task.task_type):
+            # partial 보다 먼저 — 화면이 실패 카드를 그리자마자 다시 시도해도 맥락이 있다
+            send(
+                RetryContext(
+                    run_id,
+                    task.agent,
+                    _task_label(task.task_type),
+                    task.request_texts,
+                    sent_at,
+                )
+            )
+    asked = _pick_question(ran.outcomes, tasks, can_resume=can_resume)
+    return _DomainStage(
+        outcomes=tuple(ran.outcomes),
+        partial=ran.partial,
+        saved=bool(saved),
+        model_calls=sum(outcome.model_calls for outcome in ran.outcomes) + ran.failed_model_calls,
+        budget_ms=int(remaining * 1000),
+        writers_ms=ran.writers_ms,
+        readers_ms=ran.readers_ms,
+        asked=asked,
+    )
 
 
 async def _run_domain(
@@ -1254,18 +1400,72 @@ def _with_recorded(
     return tuple(replace(task, recorded_subjects=subjects) for task in tasks)
 
 
-def _pick_question(outcomes: Sequence[DomainOutcome]) -> DomainOutcome | None:
-    """질문을 낸 결과 중 run 이 보낼 하나. 없으면 None.
+def _pick_question(
+    outcomes: Sequence[DomainOutcome], tasks: tuple[DomainTask, ...], *, can_resume: bool
+) -> _Asked | None:
+    """질문을 낸 결과 중 run 이 보낼 하나와, 그 질문에 답하면 다시 돌릴 task. 없으면 None.
 
     질문이 답의 전부인 결과(추천이 없다)가 추천에 덧붙는 질문보다 먼저다 — 추천을 받은 보호자에게
     덧붙는 질문보다 추천 없이 막힌 쪽의 질문이 답을 더 필요로 한다. 🚨 readout 이 아니라 추천 유무로
-    가른다: 질문만 낸 결과에도 안내 한 줄이 readout 으로 붙는다. 같은 순위면 task 순서다 —
-    `outcomes` 는 끝난 순서가 아니라 task 순서라 어느 Agent 가 먼저 끝나도 같은 질문이 나간다.
+    가른다: 질문만 낸 결과에도 안내 한 줄이 readout 으로 붙는다. 같으면 답을 받는 질문이 먼저다 —
+    답을 이어받을 수 있는 쪽이 보호자에게 더 값지다. 그래도 같으면 task 순서다. `outcomes` 는 끝난
+    순서가 아니라 task 순서라 어느 Agent 가 먼저 끝나도 같은 질문이 나간다.
     """
-    asking = [outcome for outcome in outcomes if outcome.needs_observation]
+    asking = [
+        (outcome, _resumable(outcome, tasks) if can_resume else None)
+        for outcome in outcomes
+        if outcome.needs_observation
+    ]
     if not asking:
         return None
-    return min(asking, key=lambda outcome: bool(outcome.suggestions))
+    return min(asking, key=lambda pair: (bool(pair[0].suggestions), pair[1] is None))
+
+
+def _resumable(outcome: DomainOutcome, tasks: tuple[DomainTask, ...]) -> DomainTask | None:
+    """이 결과의 질문에 답하면 다시 돌릴 task. 답을 받지 않는 질문이면 None.
+
+    Agent 가 물은 자리(`pending`)를 싣고 pipeline 표(`_RESUMED_BY_ANSWER`)에 있는 task 여야 하고,
+    추천에 덧붙은 질문은 이어받지 않는다 — 이미 낸 추천을 두고 다시 돌 일이 없다.
+    """
+    label = _task_label(outcome.task_type)
+    if outcome.pending is None or outcome.suggestions or not outcome.needs_observation:
+        return None
+    if label not in _RESUMED_BY_ANSWER.get(outcome.agent, frozenset()):
+        return None
+    return next(
+        (t for t in tasks if t.agent == outcome.agent and _task_label(t.task_type) == label), None
+    )
+
+
+def _send_question(asked: _Asked, run_id: str, send: Emit) -> None:
+    """고른 질문을 낸다. 답을 받는 질문이면 맥락을 먼저 보낸다.
+
+    러너가 맥락을 넣어 둔 뒤에 질문 카드가 나가야 카드가 보일 때 답(reply_to)이 400 이 아니다.
+    """
+    outcome, resume = asked
+    pending = outcome.pending
+    if resume is not None and pending is not None:
+        send(
+            PendingReply(
+                run_id,
+                PendingMemoryContext(
+                    hint_text=" ".join(resume.request_texts),
+                    question=pending.question,
+                    work=WorkType.OBSERVE,
+                    # 요청 조각만 둔다. 같은 입력의 기록 조각 원문을 15분 메모리에 두지 않는다
+                    resume=replace(resume, record_texts=(), recorded_subjects=(), answer_texts=()),
+                    asked=pending,
+                ),
+            )
+        )
+    send(
+        AgentQuestion(
+            outcome.agent,
+            _task_label(outcome.task_type),
+            outcome.needs_observation[0],
+            awaits_reply=resume is not None,
+        )
+    )
 
 
 def _routed(outcome: DomainOutcome) -> DomainRouted:
@@ -1350,6 +1550,25 @@ async def _save(
 def _label(agent: str, task_type: object) -> str:
     """로그용 이름. 라벨이 없는 Agent 는 이름만."""
     return agent if task_type is None else f"{agent}:{task_type}"
+
+
+def _request_only(memory: MemoryAgentResult, routing: Routing) -> bool:
+    """Memory 가 요청과 같이 온 기록 조각을 저장하려 하지 않고 말로만 끝냈는가.
+
+    그러면 안내는 코드 문구다. 도메인 task 가 있고, 기록 조각이 전부 `observe` 이고, 쓰기를
+    시도조차 하지 않았을 때다. 시도했다 못 한 것(위험 물질 · 안전 기록 · 아이 기록 아님 거절,
+    인자 오류)은 그 말이 무엇이 막혔는지 담고 있어서 모델 문장 그대로 둔다. 질문은 맥락 없이
+    message 로 내려가도(`NO_CONTEXT_NOTE`) 묻던 말을 덮지 않는다. 조회 · 수정의 말도 그대로다.
+    """
+    task = routing.memory_task
+    if task is None or not task.hints or not routing.domain_tasks:
+        return False
+    if any(hint.work != WorkType.OBSERVE for hint in task.hints):
+        return False
+    if memory.reply is None or memory.reply.kind != "message":
+        return False
+    attempted = any(call.name.startswith(MUTATING_PREFIXES) for call in memory.calls)
+    return not (attempted or memory.drafts)
 
 
 def _unwritten(task: MemoryTask | None, memory: MemoryAgentResult) -> Unwritten | None:

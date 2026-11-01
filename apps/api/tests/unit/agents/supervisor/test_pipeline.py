@@ -34,6 +34,7 @@ from app.agents.common.llm_client import LLMResponse, LLMUnavailableError
 from app.agents.common.readout import Readout
 from app.agents.common.refs import EvidenceCitation
 from app.agents.common.refs import Ref as EvidenceRef
+from app.agents.common.result import DomainPending
 from app.agents.common.schemas.task import DomainTask
 from app.agents.common.suggestion import SuggestionDraft, count_notice
 from app.agents.food.agent import run as run_food
@@ -1355,6 +1356,7 @@ class _Outcome:
     readouts: tuple[Readout, ...] = ()
     needs_observation: tuple[str, ...] = ()
     suggestions: tuple[SuggestionDraft, ...] = ()
+    pending: DomainPending | None = None
 
 
 @dataclass(frozen=True)

@@ -29,6 +29,9 @@ DOC_NO_ROW = "doc.no_row"
 BOOK_NO_TOPIC = "book.no_topic"  # 요청한 주제의 책이 없으면 다른 주제로 안 넘어간다
 RHYTHM_NO_ROW = "rhythm.no_row"
 NEXT_STEP_CHAIN_END = "next_step.chain_end"
+# 되묻기에 답을 받았는데 도움 수준도 수행 결과도 읽히지 않는다. 추정하지 않고 같은 질문도 되풀이하지
+# 않으려고 안내로 닫는다
+LEVEL_UNREAD = "next_step.level_unread"
 
 # 되묻기 — needs_observation 한 줄
 ASK_HABIT_TRIGGER = "ask.habit_trigger"
@@ -36,5 +39,12 @@ ASK_HABIT_CURRENT = "ask.habit_current"
 ASK_ROUTINE_CURRENT = "ask.routine_current"
 # 되묻기와 같이 나가는 0개 안내 (code="empty")
 ASK_NEED_LEVEL = "ask.need_level"
+# 되묻기 키 → 보호자의 답이 채울 관찰 칸. 이어받는 Memory 가 이 칸에 답을 옮긴다.
+# 여기 없는 키는 답을 이어받지 않는다 — `ask.habit_current`("요즘도 X 하나요?")는 예/아니오라 어느
+# 칸에도 옮길 값이 없다
+ASKED_FIELD: dict[str, str] = {
+    ASK_ROUTINE_CURRENT: "assistance_level",
+    ASK_HABIT_TRIGGER: "trigger",
+}
 
 READOUTS = ReadoutCatalog.from_yaml(Path(__file__).with_name("growth.readout.yaml"))
