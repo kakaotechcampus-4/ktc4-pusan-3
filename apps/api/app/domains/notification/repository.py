@@ -2,8 +2,9 @@
 
 import uuid
 from dataclasses import dataclass
+from datetime import datetime
 
-from sqlalchemy import delete, func, select, text
+from sqlalchemy import Select, delete, func, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -138,3 +139,74 @@ async def _lock_parent(session: AsyncSession, *, parent_id: uuid.UUID) -> bool:
         select(Parent.id).where(Parent.id == parent_id).with_for_update(read=True, key_share=True)
     )
     return locked is not None
+
+
+async def schedule_push_targets(
+    session: AsyncSession, *, parent_ids: list[uuid.UUID], now: datetime
+) -> dict[uuid.UUID, list[tuple[uuid.UUID, str]]]:
+    """일정 알림을 받을 기기 — {보호자: [(기기 id, 토큰)]}. 받지 않을 보호자는 키가 없다.
+
+    - 일정 알림 스위치가 꺼진 보호자는 뺀다. 바꾼 적 없으면 `DEFAULT_SETTING` 을 따른다.
+    - 로그인이 만료된 기기는 뺀다. 만료된 로그인은 하루 한 번 정리 배치가 지우는데, 그 전까지
+      남아 있는 기기로 보내지 않는다 (인증 판정과 같은 경계 `<=`).
+    """
+    if not parent_ids:
+        return {}
+    stmt = (
+        _schedule_targets(now)
+        .where(PushDevice.parent_id.in_(parent_ids))
+        .order_by(PushDevice.parent_id, PushDevice.id)
+    )
+    targets: dict[uuid.UUID, list[tuple[uuid.UUID, str]]] = {}
+    for parent_id, device_id, token in await session.execute(stmt):
+        targets.setdefault(parent_id, []).append((device_id, token))
+    return targets
+
+
+async def still_schedule_target(
+    session: AsyncSession,
+    *,
+    parent_id: uuid.UUID,
+    device_id: uuid.UUID,
+    device_token: str,
+    now: datetime,
+) -> bool:
+    """보내기 바로 직전에 다시 본다 — 그 기기가 아직 그 보호자의 것이고, 토큰이 같고, 로그인이
+    살아 있고, 일정 알림이 켜져 있나.
+
+    `schedule_push_targets` 로 읽은 목록을 끝까지 쓰면, 배치가 보내는 사이 로그아웃하고 다른
+    계정으로 로그인한 공용 기기에 앞 보호자의 알림(아이 · 일정 id)이 간다. 이 확인과 발송 사이의
+    짧은 틈은 남는다 — 보내는 동안 행을 잡으면 로그아웃이 FCM 응답을 기다리게 돼서 잡지 않는다.
+    """
+    stmt = _schedule_targets(now).where(
+        PushDevice.id == device_id,
+        PushDevice.parent_id == parent_id,
+        PushDevice.device_token == device_token,
+    )
+    return (await session.execute(stmt)).first() is not None
+
+
+def _schedule_targets(now: datetime) -> Select:
+    """일정 알림을 받을 수 있는 기기 — 로그인이 살아 있고 그 보호자의 일정 알림이 켜져 있다."""
+    enabled = func.coalesce(NotificationSetting.schedule_enabled, DEFAULT_SETTING.schedule_enabled)
+    return (
+        select(PushDevice.parent_id, PushDevice.id, PushDevice.device_token)
+        .join(AuthSession, AuthSession.id == PushDevice.session_id)
+        .outerjoin(NotificationSetting, NotificationSetting.parent_id == PushDevice.parent_id)
+        .where(
+            AuthSession.refresh_expires_at > now,
+            AuthSession.absolute_expires_at > now,
+            enabled.is_(True),
+        )
+    )
+
+
+async def forget_devices(session: AsyncSession, *, devices: list[tuple[uuid.UUID, str]]) -> None:
+    """FCM 이 더는 유효하지 않다고 한 기기를 지운다 — [(기기 id, 그때 보낸 토큰)].
+
+    토큰까지 맞춰 지운다. 보내는 사이에 같은 로그인이 새 토큰으로 다시 등록했으면 그 행은 남긴다.
+    """
+    for device_id, token in devices:
+        await session.execute(
+            delete(PushDevice).where(PushDevice.id == device_id, PushDevice.device_token == token)
+        )

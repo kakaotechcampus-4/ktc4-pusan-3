@@ -108,3 +108,16 @@ def remind_at(lead: ReminderLead, *, starts_at: datetime, all_day: bool) -> date
         return starts_at - _TIMED[lead]
     day = starts_at.astimezone(_KST).date() - timedelta(days=_ALL_DAY[lead])
     return datetime.combine(day, _ALL_DAY_AT, tzinfo=_KST)
+
+
+def starts_window(remind_from: datetime, remind_until: datetime) -> tuple[datetime, datetime]:
+    """울릴 시각이 [remind_from, remind_until] 안인 알림이 걸려 있을 수 있는 일정 시작의 범위.
+
+    발송이 모든 일정을 훑지 않고 이 범위의 일정만 꺼낸 뒤 `remind_at` 으로 정확히 거른다.
+    넉넉하게 잡는다 — 좁히는 용도라 더 꺼내는 것은 괜찮고 빠뜨리는 것은 안 된다.
+      - 시작보다 늦게 울리는 값: 종일 당일 오전 9시 — 시작(그날 00:00)의 9시간 뒤. 하루를 둔다.
+      - 시작보다 가장 일찍 울리는 값: 1주 전 · 7일 전 오전 9시. 종일 일정의 시작을 그날 끝까지
+        보면 7일 15시간이라, 가장 먼 값에 하루를 더 둔다.
+    """
+    furthest = max(max(_TIMED.values()), timedelta(days=max(_ALL_DAY.values())))
+    return remind_from - timedelta(days=1), remind_until + furthest + timedelta(days=1)
