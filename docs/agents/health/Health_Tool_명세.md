@@ -281,6 +281,7 @@ Memory 가 뽑은 문장이라 보호자 말 그대로라고 보장하지 못해
 | `visit.med_check` | {day} {title} 체크 {checked}/{planned}회 |
 | `visit.meal` | {day} {text} |
 | `place.unavailable` | 병원 정보를 불러오지 못했어요. 응급 시 119에 연락하세요. |
+| `place.preparing` | 병원 찾기는 아직 준비 중이에요. |
 | `prescription.not_found` | 처방전 정보를 찾지 못했어요. |
 | `safety.unavailable` | 알레르기 정보를 불러오지 못했어요. 아래 정리는 그것 없이 만든 거예요. |
 | `checkup.current` | 지금은 {round}차 영유아 건강검진 기간이에요. ({starts_on} ~ {ends_on}) |
