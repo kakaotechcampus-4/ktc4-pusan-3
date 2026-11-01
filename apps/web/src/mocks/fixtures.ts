@@ -514,6 +514,7 @@ function personalized(
     kind: "personalized",
     content,
     reason,
+    place_notice: null,
     status: "draft",
     expires_at: hoursFromNow(24),
     feedback: null,
@@ -616,6 +617,7 @@ export const generalSuggestions: GeneralSuggestion[] = [
     agent: "activity",
     kind: "general",
     content: "블록 쌓기처럼 손을 많이 쓰는 놀이를 15분쯤 해 보세요",
+    place_notice: null,
     basis: "36개월 또래가 자주 찾는 놀이예요",
     status: "draft",
     expires_at: hoursFromNow(24),
@@ -637,6 +639,7 @@ export const generalSuggestions: GeneralSuggestion[] = [
     agent: "food",
     kind: "general",
     content: "국물 없이 집어 먹는 반찬을 한 가지 곁들여 보세요",
+    place_notice: null,
     basis: "36개월 또래의 식사에서 흔한 형태예요",
     status: "draft",
     expires_at: hoursFromNow(24),
@@ -653,6 +656,52 @@ export const generalSuggestions: GeneralSuggestion[] = [
     ],
   },
 ];
+
+/**
+ * 장소가 붙은 놀이 추천 (`suggest_place` 시나리오 · #516). 실서버는 좌표가 실린 입력 run 에서만 장소를 찾아서
+ * (#593 전에는 웹이 좌표를 안 보낸다) 이 상태를 화면에서 볼 길이 목뿐이다.
+ *
+ * 🚨 **장소 이름은 `content` 앞에 붙어 온다** (서버 `review.py` 의 `_with_place`). 확인 문구는 `place_notice` 로
+ *    따로 오고, 근거(`evidence`)에는 장소가 없다 — 장소는 근거가 아니다.
+ * 🚨 장소 이름은 지어낸 것이다. 저장소가 public 이라 실제 시설 이름을 픽스처에 두지 않는다.
+ */
+export const placeSuggestion: Suggestion = {
+  ...personalized(
+    "s_place_1",
+    "activity",
+    "햇살어린이공원에서 모래성 쌓기",
+    "바깥 놀이 뒤에 잘 잤고, 이번 주말 일정이 비어 있어요.",
+    [evidenceFrom(affinities[1])],
+  ),
+  place_notice: "공공데이터 기준 2026년 6월이에요. 가기 전에 운영 여부를 확인해 주세요.",
+};
+
+/**
+ * 일반 추천에도 장소가 붙는다. 🚨 장소 행의 기준일자가 비어 있으면 뒤 문장만 온다 (서버 #600) — 화면이
+ * 두 모양을 다 그려 보도록 이쪽을 그 경우로 둔다. 도서관이 늘 기준일자 없이 온다는 뜻은 아니다.
+ */
+export const placeGeneralSuggestion: GeneralSuggestion = {
+  id: "g_place_1",
+  child_id: CHILD_ID,
+  agent: "activity",
+  kind: "general",
+  content: "별빛작은도서관에서 그림책 고르기",
+  place_notice: "가기 전에 운영 여부를 확인해 주세요.",
+  basis: "36개월 또래가 자주 찾는 놀이예요",
+  status: "draft",
+  expires_at: hoursFromNow(24),
+  record_count: 3,
+  evidence: [
+    {
+      ref: { kind: "activity_doc", id: "doc_3" },
+      title: "그림책 함께 보기",
+      source_org: "교육부",
+      source_title: "표준보육과정",
+      source_url: null,
+      note: "또래 놀이 자료",
+    },
+  ],
+};
 
 /**
  * stale 시나리오 — 근거가 전부 6개월을 넘겼다.

@@ -625,6 +625,22 @@ describe("05 묶음 안내 · 일반 추천 근거 (#249)", () => {
     expect((data.prechecks ?? []).some((p) => ids.has(p.suggestion_id!))).toBe(true);
   });
 
+  it("🚨 장소 확인 문구는 장소가 붙은 추천에만 문장과 따로 칸으로 온다 (#516)", async () => {
+    const body: SuggestionsRequest = { agents: ["food", "activity"] };
+    const plain = await fetchWith("default", body);
+    // 장소가 없는 추천은 키가 있고 값이 null 이다 (서버 `place_notice: str | None = None`)
+    for (const s of plain.suggestions) expect(s.place_notice, s.id).toBeNull();
+
+    const data = await fetchWith("suggest_place", body);
+    const noticed = [...data.suggestions, ...(data.general ?? [])].filter((s) => s.place_notice);
+    expect(noticed.map((s) => s.kind).sort()).toEqual(["general", "personalized"]);
+    for (const s of noticed) {
+      expect(s.agent).toBe("activity");
+      // 문구는 문장에 섞여 오지 않는다 — 장소 이름만 문장 앞에 붙는다
+      expect(s.content).not.toContain(s.place_notice!);
+    }
+  });
+
   it("🚨 0개로 끝난 Agent 도 묶음이 오고 안내가 실린다 — 실패가 아니다", async () => {
     const data = await fetchWith("suggest_counts", { agents: ["food", "activity"] });
 
