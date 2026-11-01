@@ -27,6 +27,7 @@ from app.agents.common.suggestion import SuggestionRejected, build
 from app.agents.food.context import MealPick
 from app.agents.food.food_check import mentions_blocked_food
 from app.agents.food.nutrient_wording import wording_problem
+from app.agents.food.preparation_items import preparation_items
 from app.agents.food.readouts import GENERAL_REASON_TODDLER, GENERAL_REASON_WEANING, READOUTS
 from app.agents.food.result import ErrorCode
 from app.agents.food.schemas.common import EvidenceRef, MealSlot
@@ -157,7 +158,8 @@ def review_candidates(
                 else GENERAL_REASON,
                 general_basis=_menu_basis(row),
                 allergens=verdict.allergens.get(row.menu_key, ()),
-                items=row.ingredients,
+                # 준비물만 주재료로 줄인다. 안전 필터는 위에서 전체 재료 · 코드로 이미 걸렀다 (#474)
+                items=preparation_items(row.main_ingredients),
                 today=today,
             )
         except SuggestionRejected:
