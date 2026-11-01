@@ -5,7 +5,7 @@
 allergens · items 와 같은 모양(text[] · 기본 빈 배열)이라 이 칸 전의 행은 빈 배열이다.
 
 Revision ID: 3399eb6864ff
-Revises: 01803571133f
+Revises: 23b12754714a
 """
 
 from typing import Sequence, Union
@@ -15,7 +15,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = "3399eb6864ff"
-down_revision: Union[str, Sequence[str], None] = "01803571133f"
+down_revision: Union[str, Sequence[str], None] = "23b12754714a"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

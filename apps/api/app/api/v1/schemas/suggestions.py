@@ -132,10 +132,11 @@ class DocEvidenceOut(BaseModel):
 
 
 class GeneralSuggestionOut(BaseModel):
-    """또래 기준 일반 추천. 아이 기록이 아니라 문서 행을 근거로 단다 (루트 §2).
+    """일반 추천. 아이 기록이 아니라 문서 행을 근거로 단다 (루트 §2).
 
     Food 는 고른 메뉴(레시피 카탈로그 행)만으로도 된다(#442). Growth 도서는 고른 책(정보나루
-    서지 행)이 근거다.
+    서지 행)이 근거다. 보호자가 놀이를 정해 물은 Activity 추천("물놀이 뭐 하지?")은 그 요청이
+    기준이라 `evidence` 가 비어 올 수 있다 — 그때 기준은 `basis` 문구다 (#597).
     """
 
     id: str
@@ -166,7 +167,12 @@ class GeneralSuggestionOut(BaseModel):
             "그 Agent 도메인에 쌓인 기록 수 (남아 있는 관찰만). 04 블록의 record_count 와 같은 표"
         )
     )
-    evidence: list[DocEvidenceOut]
+    evidence: list[DocEvidenceOut] = Field(
+        description=(
+            "문서 · 메뉴 · 책 근거 카드. 보호자가 놀이를 정해 물은 Activity 추천은 비어 올 수 "
+            "있다 — 그때는 basis 만 보여 준다"
+        )
+    )
 
 
 class GroupNoticeOut(BaseModel):
