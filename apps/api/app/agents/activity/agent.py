@@ -102,7 +102,7 @@ async def run(
     if not await _converse(llm, messages, context, allowed):
         return _failed(task_type.value, model_calls=1)
 
-    picked = _picked(context)
+    picked = context.state.suggestions
     model_calls = 1
     if context.state.excluded and len(picked) < MAX_SUGGESTIONS:
         # 안전 필터로 빠졌다. 사유 없이 제외 목록만 주고 1회 더 부른다 (Tool_공통.md §5-2)
@@ -113,15 +113,13 @@ async def run(
             # 모델이 실패한 것이다 — 1~2개가 남았으면 그것을 낸다 (#359 리뷰)
             return _failed(task_type.value, model_calls=model_calls)
         picked = merge_drafts(picked, again or (), key=_same_activity)
-        check_count(tuple(draft for draft, _ in picked), exhausted=True)
+        check_count(picked, exhausted=True)
 
-    drafts = tuple(draft for draft, _ in picked)
+    drafts = picked
     # 확인 문구(state.cautions)는 결과의 readouts 로 싣는다 — pipeline 은 for_task() 사본으로
     # Agent 를 돌리고 결과만 받아서, 여기 싣지 않으면 표시 없이 빠진다 (#380).
-    # 🚨 위험 경고(state.warnings)는 아직 결과에 없다. 추천 하나에 붙는 문구라 공통
-    # SuggestionDraft 에 칸이 생겨야 한다 — #402 (1차 배포 범위 밖)
+    # 위험 경고는 추천 하나에 붙는 문구라 그 초안의 warnings 칸에 이미 있다 (#402)
     context.state.suggestions = drafts
-    context.state.warnings = tuple(warning for _, warning in picked)
     notice = count_notice(len(drafts))
     attempted = checks_weather(gate)
     return DomainAgentResult(
@@ -136,9 +134,6 @@ async def run(
         ),
         model_calls=model_calls,
     )
-
-
-Picked = tuple[tuple[SuggestionDraft, tuple[str, ...]], ...]
 
 
 def _weather_notices(
@@ -174,14 +169,9 @@ def _caution(text: str) -> Readout:
     return Readout(kind=READOUTS.get(CAUTION_NON_FOOD_ALLERGY).kind, body=text, authored_by="code")
 
 
-def _picked(context: ActivityContext) -> Picked:
-    """출력 tool 이 통과시킨 후보와 그 경고 문구를 짝으로. 합칠 때 순서가 같이 간다."""
-    return tuple(zip(context.state.suggestions, context.state.warnings, strict=True))
-
-
-def _same_activity(item: tuple[SuggestionDraft, tuple[str, ...]]) -> str:
+def _same_activity(draft: SuggestionDraft) -> str:
     """재호출 결과에서 "같은 후보" — 최근 중복 검사와 같은 정규화다 (Tool_공통.md §5-2)."""
-    return normalize_activity(item[0].content)
+    return normalize_activity(draft.content)
 
 
 def _failed(task_type: str, *, model_calls: int) -> DomainAgentResult:
@@ -196,8 +186,8 @@ async def _recall(
     task: DomainTask,
     context: ActivityContext,
     allowed: Collection[str],
-    first: Picked,
-) -> Picked | None:
+    first: tuple[SuggestionDraft, ...],
+) -> tuple[SuggestionDraft, ...] | None:
     """재호출 1회. 같은 대화에 제외 목록 한 줄을 더해 이어 부른다 (Tool_공통.md §5-2).
 
     새 대화로 시작하면 모델이 기억 · 날씨 조회를 처음부터 다시 해 왕복이 늘고, pipeline 의 20초에
@@ -209,16 +199,16 @@ async def _recall(
             "role": "user",
             "content": recall_message(
                 task.request_texts,
-                chosen=[draft.content for draft, _ in first],
+                chosen=[draft.content for draft in first],
                 excluded=context.state.excluded,
             ),
         }
     )
-    context.state.suggestions, context.state.warnings, context.state.excluded = (), (), ()
+    context.state.suggestions, context.state.excluded = (), ()
     if not await _converse(llm, messages, context, allowed):
         logger.warning("Activity 재호출이 후보를 내지 못했다 run_id=%s", context.run_id)
         return None
-    return _picked(context)
+    return context.state.suggestions
 
 
 async def _converse(

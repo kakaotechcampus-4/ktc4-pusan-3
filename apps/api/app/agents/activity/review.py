@@ -7,7 +7,7 @@
                      note 반복 표현 · 최근 중복 · 0–17개월 보호자 동반
   4. build()         6개월이 안 지난 아이 기록 근거 수로 kind 를 정한다. 모델이 고르지 않는다.
                      장소 이름은 코드가 content 앞에 붙이고, 확인 문구(place_notice)를 칸으로
-                     싣는다. allergens · items 도 코드가 채운다
+                     싣는다. allergens · items · 위험 경고(warnings)도 코드가 채운다
   5. check_count()   최대 3개 — 호출부(출력 tool)가 부른다
 
 순서가 결과를 바꾼다. 안전에 걸린 후보가 뒤 검사를 타면 엉뚱한 사유가 나간다.
@@ -129,8 +129,6 @@ class Review:
     drafts: tuple[SuggestionDraft, ...]
     rejections: tuple[Rejection, ...]
     removed: tuple[Removal, ...] = ()
-    # drafts 와 같은 순서로 짝지은 위험 용어 경고 문구 (상수). 경고가 없으면 빈 튜플
-    warnings: tuple[tuple[str, ...], ...] = ()
     # 통과한 바깥 활동(`_outdoors`)의 (정규화한 content, 날). 날씨 안내를 결과에 실제로 나간
     # 바깥 활동의 날로 고르는 데 쓴다 — 오늘 해가 졌어도 내일 공원은 나간다 (#515 리뷰)
     outdoor: frozenset[tuple[str, DayLabel]] = frozenset()
@@ -176,7 +174,6 @@ def review_candidates(
         key: row for row in (places or {}).values() if (key := normalize_activity(row.name))
     }
     drafts: list[SuggestionDraft] = []
-    warnings: list[tuple[str, ...]] = []
     outdoor_drafts: set[tuple[str, DayLabel]] = set()
     rejections: list[Rejection] = []
     removed: list[Removal] = []
@@ -204,6 +201,7 @@ def review_candidates(
                         citations,
                         place,
                         allergens=check.allergens,
+                        warnings=check.warnings,
                         today=today,
                         requested=requested,
                     )
@@ -211,7 +209,6 @@ def review_candidates(
             except SuggestionRejected:
                 reason = RejectReason.BUILD
             else:
-                warnings.append(check.warnings)
                 if _outdoors(candidate, place):
                     outdoor_drafts.add((normalize_activity(drafts[-1].content), candidate.day))
         if reason is not None:
@@ -220,7 +217,6 @@ def review_candidates(
         drafts=tuple(drafts),
         rejections=tuple(rejections),
         removed=tuple(removed),
-        warnings=tuple(warnings),
         outdoor=frozenset(outdoor_drafts),
     )
 
@@ -318,6 +314,7 @@ def _build(
     place: PlaceRow | None,
     *,
     allergens: tuple[str, ...],
+    warnings: tuple[str, ...],
     today: date,
     requested: bool = False,
 ) -> SuggestionDraft:
@@ -327,7 +324,8 @@ def _build(
     일반 추천으로 나가고 이유는 `REQUESTED_REASON` 이다 — 막연한 요청만 [예시]를 근거로 단다.
 
     allergens 는 상태(없음/모름)를 담지 않는다 — 승인할 때 서버가 health_safety 를 다시 읽는다.
-    장소가 붙으면 확인 문구를 칸으로 싣는다 — 문장에 섞으면 화면이 따로 세울 수 없다 (#516).
+    장소가 붙으면 확인 문구를, 위험 용어에 걸리면 그 축의 경고 문구를 칸으로 싣는다 — 문장에
+    섞으면 화면이 따로 세울 수 없다 (#516 · #402).
     """
     draft = build(
         agent="activity",
@@ -340,9 +338,11 @@ def _build(
         requested=requested,
         today=today,
     )
-    if place is None:
-        return draft
-    return replace(draft, place_notice=place_notice(place))
+    return replace(
+        draft,
+        place_notice=place_notice(place) if place is not None else None,
+        warnings=warnings,
+    )
 
 
 def place_notice(place: PlaceRow) -> str:

@@ -38,7 +38,7 @@ async def propose_activity_candidates(
       않는다 — 어휘 회피를 가르치게 된다 (§5-2). 통과한 초안과 빠진 후보(`excluded`)를 run state
       에 담고 끝낸다. 3개가 안 되면 재호출 1회는 run() 이 제외 목록과 함께 한다 —
       재호출 결과를 합친 뒤 `check_count(..., exhausted=True)` → `count_notice(len)` 순서다.
-    - 경고 문구(위험 용어 사전 상수)는 추천과 같은 순서로 `state.warnings` 에 담는다.
+    - 경고 문구(위험 용어 사전 상수)는 그 추천의 `warnings` 칸에 `review._build` 가 싣는다 (#402).
     - 식품 사전에 없는 알레르기 이름의 확인 문구는 run 에 한 벌로 `state.cautions` 에 담는다 (D7).
       통과한 후보 수와 상관없다 — 재호출로 채운 추천에도 같이 붙어야 한다.
     - suggestion.allergens · items 는 `review._build` 가 코드로 채운다 (#232).
@@ -95,7 +95,6 @@ async def propose_activity_candidates(
         check_count(review.drafts)
         context.state.excluded = ()
     context.state.suggestions = review.drafts
-    context.state.warnings = review.warnings
     context.state.outdoor_drafts = context.state.outdoor_drafts | review.outdoor
     context.state.cautions = allergy_cautions(entries)
     return ok("propose", _NAME, count=len(review.drafts), kinds=[d.kind for d in review.drafts])

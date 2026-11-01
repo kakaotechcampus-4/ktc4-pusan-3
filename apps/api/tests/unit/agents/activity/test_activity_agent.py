@@ -26,6 +26,7 @@ from app.agents.activity.store.inmemory import (
 from app.agents.activity.store.ports import ActivityDocRow, CoarseLocation, SafetyEntry
 from app.agents.activity.weather import WEATHER_NOT_ASKED
 from app.agents.common.llm_client import LLMResponse
+from app.agents.common.reference import hazard_terms
 from app.agents.common.schemas.task import DomainTask
 from app.core.weather_raw import RawAdvisories, RawAdvisoryRow, RawForecast
 
@@ -147,6 +148,14 @@ class TestNormal:
         assert all(draft.kind == "general" for draft in result.suggestions)  # 기록 0건
         assert result.readouts == ()  # 3개라 개수 안내 없음 · 실내 놀이만이라 날씨 안내 없음
 
+    async def test_위험_경고는_그_추천에_싣는다(self):
+        """40개월 — 구슬(작은 부품)은 72개월 미만 경고다. 결과 안내가 아니라 그 추천의 칸이다."""
+        llm = FakeLLM(propose("구슬 꿰기", "그림자놀이", "색종이 접기"))
+        result = await run(task(), context(), client=llm)
+        small_parts = hazard_terms().axes["small_parts"].warning_text
+        assert [draft.warnings for draft in result.suggestions] == [(small_parts,), (), ()]
+        assert result.readouts == ()
+
     async def test_거절되면_같은_진입_안에서_고쳐_낸다(self):
         """바깥 활동이 어려운 날(비) 야외 후보는 거절된다. model_calls 는 그대로."""
         llm = FakeLLM(
@@ -237,6 +246,17 @@ class TestRecall:
         )
         result = await run(task(), context(BORN_20_MONTHS), client=llm)
         assert contents(result) == ["그림자놀이", "색종이 접기", "까꿍 놀이"]
+
+    async def test_재호출로_합쳐도_경고는_그_추천을_따라간다(self):
+        """40개월 — 전동킥보드는 차단, 구슬은 경고. 처음 통과한 구슬의 경고가 합친 뒤에도 남는다."""
+        llm = FakeLLM(
+            propose("전동킥보드 타기", "구슬 꿰기", "그림자놀이"),
+            propose("색종이 접기", "컵 쌓기", "까꿍 놀이"),
+        )
+        result = await run(task(), context(), client=llm)
+        small_parts = hazard_terms().axes["small_parts"].warning_text
+        assert contents(result) == ["구슬 꿰기", "그림자놀이", "색종이 접기"]
+        assert [draft.warnings for draft in result.suggestions] == [(small_parts,), (), ()]
 
     async def test_재호출로도_못_채우면_있는_만큼_내고_안내한다(self):
         llm = FakeLLM(
