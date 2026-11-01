@@ -13,6 +13,7 @@ from uuid import NAMESPACE_URL, uuid5
 import pytest
 
 from app.agents.common.age import stage_of
+from app.agents.common.allergy import allergy_related_table, related_blocks
 from app.agents.common.refs import count_child_records
 from app.agents.growth.schemas.task import GrowthTaskType
 from app.agents.growth.store.inmemory import InMemoryGrowthDocs
@@ -26,8 +27,18 @@ from app.agents.growth.tools.docs import (
     match_chain,
     routine_chains,
     search_growth_doc,
+    strategy_rows,
 )
 from app.agents.growth.tools.routine import pick_next_step
+from app.rules.term_match import match_fields
+from tests.unit.agents.growth.support import (
+    CALM,
+    GREETING,
+    REST,
+    TAKING_TURNS,
+    fixture_docs,
+    strategy_row,
+)
 
 LEARNING = GrowthTaskType.LEARNING_SUGGESTION
 ROUTINE = GrowthTaskType.ROUTINE_COACHING
@@ -97,7 +108,9 @@ class TestQuery:
             "interest_keys",
             "routine_category",
             "trigger_tags",
+            "areas",  # 코드가 요청 · 기록 조각에서 읽은 영역 키다 — 발화를 받는 칸이 아니다
             "rotation",  # 코드가 "아이 | 날짜" 로 만든다 — 발화를 받는 칸이 아니다
+            "blocked",  # 대응표 낱말이다 — 포트 · 쿼리로 가지 않고 돌려받은 행을 거르기만 한다
         }
 
     async def test_trigger_tags_는_영문_식별자만_받는다(self):
@@ -295,27 +308,169 @@ class TestRotation:
 
 class TestChains:
     async def test_카테고리의_사슬을_이름별로_모은다(self):
-        docs = InMemoryGrowthDocs.from_seed()
-        chains = await routine_chains(docs, months=30, category="self_care")
+        chains = await routine_chains(fixture_docs(), months=30, category="self_care")
         names = {chain_name(chain) for chain in chains.values()}
         assert {"손 씻기", "양치", "얼굴 닦기", "화장실 가기"} <= names
         assert all(len(chain) == 4 for chain in chains.values())
 
     async def test_관찰_subject_는_사슬_이름과_양쪽으로_맞춘다(self):
-        chains = await routine_chains(
-            InMemoryGrowthDocs.from_seed(), months=30, category="self_care"
-        )
+        chains = await routine_chains(fixture_docs(), months=30, category="self_care")
         assert chain_name(match_chain(chains, "양치하기")) == "양치"
         assert chain_name(match_chain(chains, "손씻기")) == "손 씻기"
 
     async def test_맞는_사슬이_없으면_None(self):
-        chains = await routine_chains(
-            InMemoryGrowthDocs.from_seed(), months=30, category="self_care"
-        )
+        chains = await routine_chains(fixture_docs(), months=30, category="self_care")
         assert match_chain(chains, "신발 신기") is None
 
     async def test_한_글자_subject_는_맞추지_않는다(self):
-        chains = await routine_chains(
-            InMemoryGrowthDocs.from_seed(), months=30, category="self_care"
-        )
+        chains = await routine_chains(fixture_docs(), months=30, category="self_care")
         assert match_chain(chains, "손") is None
+
+    @pytest.mark.parametrize("subject", ["칫솔질하기", "칫솔질", "이 닦기", "양치하기"])
+    async def test_양치의_다른_말도_양치_사슬을_찾는다(self, subject):
+        chains = await routine_chains(fixture_docs(), months=36, category="self_care")
+        assert match_chain(chains, subject) is chains["growth.routine.self_care.toothbrush"]
+
+
+@pytest.mark.parametrize("months", [13, 30, 40])
+async def test_막을_낱말이_든_행은_고르기_전에_빼고_구간마다_3행이_남는다(months):
+    """꽃가루 아이 — 12–24 · 24–36 · 36–72 구간마다 [예시] 3행이 그대로 찬다."""
+    pollen = related_blocks(["꽃가루"], allergy_related_table())
+    hits = await search_growth_doc(
+        InMemoryGrowthDocs.from_seed(),
+        task_type=GrowthTaskType.LEARNING_SUGGESTION,
+        months=months,
+        rotation="child|day",
+        blocked=pollen,
+    )
+    assert len(hits) == 3
+    assert not any(
+        match_fields((hit.row.title, hit.row.body, *hit.row.materials), pollen) for hit in hits
+    )
+
+
+class TestStrategyRows:
+    """예절 · 습관은 사슬이 아니라 행 하나가 연습 · 대응 방법 하나다. 코드가 고른다."""
+
+    async def test_예절은_행_이름이_관찰_subject_와_맞는_행만_고른다(self):
+        docs = SpyDocs([GREETING, TAKING_TURNS])
+        picked = await strategy_rows(docs, months=40, category="social_manner", subject="인사")
+        assert picked == (GREETING,)
+        assert docs.calls[0]["row_type"] == "manner_practice"
+
+    async def test_습관은_상황_태그가_겹치는_행만_고른다(self):
+        docs = SpyDocs([CALM, REST])
+        picked = await strategy_rows(docs, months=40, category="habit", trigger_tags=("tired",))
+        assert picked == (REST,)
+        assert docs.calls[0]["row_type"] == "habit_strategy"
+        assert docs.calls[0]["trigger_tags"] == ("tired",)
+
+    async def test_습관은_태그가_없으면_포트에_가지_않는다(self):
+        docs = SpyDocs([CALM])
+        assert await strategy_rows(docs, months=40, category="habit") == ()
+        assert docs.calls == []
+
+    async def test_월령_밖_행은_포트가_돌려줘도_고르지_않는다(self):
+        """차례 지키기 행은 36개월부터다. 걸러 주지 않는 포트여도 30개월에는 나가지 않는다."""
+        picked = await strategy_rows(
+            SpyDocs([TAKING_TURNS]), months=30, category="social_manner", subject="차례 지키기"
+        )
+        assert picked == ()
+
+    async def test_다른_카테고리_행은_고르지_않는다(self):
+        picked = await strategy_rows(
+            SpyDocs([CALM]), months=40, category="social_manner", subject="긴장할 때"
+        )
+        assert picked == ()
+
+    async def test_최대_세_행이다(self):
+        rows = [
+            strategy_row(
+                f"growth.habit.anxious.r{n}", f"긴장할 때 — {n}", lo=36, trigger_tags=("anxious",)
+            )
+            for n in range(5)
+        ]
+        picked = await strategy_rows(
+            SpyDocs(rows), months=40, category="habit", trigger_tags=("anxious",)
+        )
+        assert len(picked) == DOC_LIMIT
+
+    async def test_자립_카테고리는_전략_행이_없다(self):
+        with pytest.raises(ValueError, match="전략"):
+            await strategy_rows(SpyDocs(), months=40, category="self_care", subject="양치")
+
+    async def test_trigger_tags_는_영문_식별자만_받는다(self):
+        with pytest.raises(ValueError, match="trigger_tags"):
+            await strategy_rows(SpyDocs(), months=40, category="habit", trigger_tags=("긴장할 때",))
+
+
+def _mixed() -> list[GrowthDocRow]:
+    return [
+        *(doc_row(f"c{n}", area="communication") for n in range(4)),
+        *(doc_row(f"n{n}", area="nature") for n in range(4)),
+        *(doc_row(f"a{n}", area="art") for n in range(4)),
+    ]
+
+
+class TestAreas:
+    """요청 주제의 영역 키로 [예시]를 고른다 — 영역 키만 포트 · 쿼리로 간다."""
+
+    async def test_영역이_있으면_그_영역_행만_돌려_고른다(self):
+        hits = await search_growth_doc(
+            SpyDocs(_mixed()),
+            task_type=LEARNING,
+            months=20,
+            areas=("communication",),
+            rotation="a|10-14",
+        )
+        assert len(hits) == DOC_LIMIT
+        assert {h.row.area for h in hits} == {"communication"}
+
+    async def test_두_영역이면_두_영역_행에서만_고른다(self):
+        hits = await search_growth_doc(
+            SpyDocs(_mixed()), task_type=LEARNING, months=20, areas=("communication", "art")
+        )
+        assert {h.row.area for h in hits} <= {"communication", "art"}
+
+    async def test_영역은_포트와_쿼리에_키로만_간다(self):
+        spy = SpyDocs(_mixed())
+        await search_growth_doc(spy, task_type=LEARNING, months=20, areas=("nature",))
+        (sent,) = spy.calls
+        assert sent["areas"] == ("nature",)
+        assert sent["query"].split()[-1] == "nature"
+
+    async def test_영역_밖_주제만_있으면_예시가_없다(self):
+        hits = await search_growth_doc(
+            SpyDocs(_mixed()), task_type=LEARNING, months=20, areas=("other",)
+        )
+        assert hits == ()
+
+    async def test_모르는_영역은_포트까지_가지_않는다(self):
+        spy = SpyDocs(_mixed())
+        with pytest.raises(ValueError, match="areas"):
+            await search_growth_doc(spy, task_type=LEARNING, months=20, areas=("korean",))
+        assert spy.calls == []
+
+    async def test_영역이_없으면_지금처럼_고른다(self):
+        rows = _mixed()
+        without = await search_growth_doc(
+            SpyDocs(rows), task_type=LEARNING, months=20, rotation="a|10-14"
+        )
+        empty = await search_growth_doc(
+            SpyDocs(rows), task_type=LEARNING, months=20, rotation="a|10-14", areas=()
+        )
+        assert without == empty
+        assert len(without) == DOC_LIMIT
+
+    async def test_메모리_포트도_영역으로_거른다(self):
+        rows = await InMemoryGrowthDocs(_mixed()).search(
+            months=20,
+            row_type="learning_activity",
+            routine_category=None,
+            trigger_tags=(),
+            query="",
+            limit=DOC_POOL,
+            areas=("art",),
+        )
+        assert rows
+        assert {r.area for r in rows} == {"art"}

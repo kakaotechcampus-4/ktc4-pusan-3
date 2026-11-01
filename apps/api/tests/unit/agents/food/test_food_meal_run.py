@@ -575,3 +575,120 @@ async def test_질식_주의_문구는_결과에_싣지_않는다() -> None:
 
     assert all("질식" not in readout.body for readout in result.readouts)
     assert all(readout.kind != "caution" for readout in result.readouts)
+
+
+# ── 요청 글의 알레르기 · 연령 금지 음식 — 빼고 골랐다고 코드가 안내한다 ──────────────
+NUT = [SafetyEntry(kind="allergy", label="견과류", status="active")]
+WALNUT_CANDY = recipe("호두강정", "호두", "조청")
+NUT_NOTICE = (
+    "요청하신 견과류에는 등록해 두신 알레르기와 겹치는 것이 있어서 그런 메뉴는 빼고 골랐어요."
+)
+
+
+async def test_요청에_등록_알레르기_음식이_있으면_빼고_골랐다고_안내한다() -> None:
+    llm = ScriptedLLM(propose("두부조림", "시금치나물", "미역국"))
+
+    result = await run(
+        meal_task("견과류 들어간 메뉴 추천해줘"),
+        meal_context(TOFU, SPINACH, SOUP, WALNUT_CANDY, safety=NUT),
+        client=llm,
+    )
+
+    assert [readout.body for readout in result.readouts] == [NUT_NOTICE]
+    assert [draft.content for draft in result.suggestions] == ["두부조림", "시금치나물", "미역국"]
+    assert "호두강정" not in "\n".join(str(m["content"]) for m in llm.seen[0])
+
+
+async def test_호두만_등록했으면_견과류_요청에서_호두_쪽만_빠진다() -> None:
+    walnut = [SafetyEntry(kind="allergy", label="호두", status="active")]
+    peanut_stew = recipe("땅콩조림", "땅콩", "간장")
+    llm = ScriptedLLM(propose("땅콩조림", "두부조림", "시금치나물"))
+
+    result = await run(
+        meal_task("견과류 들어간 메뉴 추천해줘"),
+        meal_context(TOFU, SPINACH, peanut_stew, WALNUT_CANDY, safety=walnut),
+        client=llm,
+    )
+
+    assert [readout.body for readout in result.readouts] == [NUT_NOTICE]
+    shown = "\n".join(str(m["content"]) for m in llm.seen[0])
+    assert "땅콩조림" in shown and "호두강정" not in shown
+
+
+async def test_요청_안내에는_등록한_알레르기_이름이_없다() -> None:
+    llm = ScriptedLLM(propose("두부조림", "시금치나물", "미역국"))
+
+    result = await run(
+        meal_task("계란 요리 추천해줘"),
+        meal_context(TOFU, SPINACH, SOUP, EGGROLL, safety=EGG),
+        client=llm,
+    )
+
+    bodies = [readout.body for readout in result.readouts]
+    assert bodies == [
+        "요청하신 계란에는 등록해 두신 알레르기와 겹치는 것이 있어서 그런 메뉴는 빼고 골랐어요."
+    ]
+    assert all("달걀" not in body for body in bodies)
+
+
+async def test_12개월_전_꿀_요청은_빼고_골랐다고_안내한다() -> None:
+    weaning = [
+        recipe("쌀미음", "쌀", stage_min="infant_weaning"),
+        recipe("감자퓌레", "감자", stage_min="infant_weaning"),
+        recipe("애호박죽", "애호박", "쌀", stage_min="infant_weaning"),
+        recipe("꿀바나나죽", "바나나", "쌀", "꿀", stage_min="infant_weaning"),
+    ]
+    llm = ScriptedLLM(propose("쌀미음", "감자퓌레", "애호박죽", evidence=[]))
+
+    result = await run(
+        meal_task("꿀 넣은 이유식 추천해줘"),
+        meal_context(*weaning, birth=date(2026, 2, 14)),  # NOW 기준 8개월
+        client=llm,
+    )
+
+    assert result.readouts[0].body == "요청하신 꿀은 12개월 전에는 먹이지 않아서 빼고 골랐어요."
+
+
+async def test_풀이_비어도_요청_안내가_붙는다() -> None:
+    result = await run(
+        meal_task("견과류 들어간 메뉴 추천해줘"),
+        meal_context(WALNUT_CANDY, safety=NUT),
+        client=ScriptedLLM(),
+    )
+
+    assert [readout.body for readout in result.readouts] == [
+        NUT_NOTICE,
+        "조건에 맞는 메뉴가 없어요.",
+    ]
+    assert result.model_calls == 0
+
+
+async def test_reason_이_막힌_음식을_말하면_고쳐_내게_하고_같은_진입으로_끝난다() -> None:
+    llm = ScriptedLLM(
+        propose(
+            "두부조림", "시금치나물", "미역국", reason="고소한 견과류가 들어가 아이가 좋아할 거예요"
+        ),
+        propose("두부조림", "시금치나물", "미역국"),
+    )
+
+    result = await run(meal_task(), meal_context(TOFU, SPINACH, SOUP, safety=NUT), client=llm)
+
+    assert [draft.content for draft in result.suggestions] == ["두부조림", "시금치나물", "미역국"]
+    assert (result.model_calls, llm.calls) == (1, 2)
+    tool_texts = [str(m.get("content")) for m in llm.seen[-1] if m.get("role") == "tool"]
+    assert tool_texts and not any("견과" in text for text in tool_texts)
+
+
+async def test_요청_안내는_보호자가_쓴_어절로_말한다() -> None:
+    shrimp = [SafetyEntry(kind="allergy", label="새우", status="active")]
+    llm = ScriptedLLM(propose("두부조림", "시금치나물", "미역국"))
+
+    result = await run(
+        meal_task("새우깡 같은 간식 추천해줘"),
+        meal_context(TOFU, SPINACH, SOUP, safety=shrimp),
+        client=llm,
+    )
+
+    assert [readout.body for readout in result.readouts] == [
+        "요청하신 새우깡에는 등록해 두신 알레르기와 겹치는 것이 있어서 그런 메뉴는 빼고 골랐어요."
+    ]

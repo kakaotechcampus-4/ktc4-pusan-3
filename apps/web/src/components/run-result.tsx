@@ -1,12 +1,16 @@
 "use client";
 
 import { josa } from "es-hangul";
+import { useState } from "react";
 import {
   CalendarPlus,
+  Copy,
   Hand,
   Hourglass,
   Info,
   MessageCircleQuestion,
+  Pill,
+  Ruler,
   ShieldCheck,
   Sprout,
   Stethoscope,
@@ -20,10 +24,11 @@ import { RewriteButton } from "@/components/rewrite-button";
 import { domainLabel, ObservationIcon, observationLabel } from "@/components/domain-chip";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
-import { DOMAIN_ICON } from "@/components/ui/icon";
+import { DOMAIN_ICON, ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
 import { IconTile } from "@/components/ui/icon-tile";
 import { ProgressSteps } from "@/components/ui/progress-steps";
 import {
+  askedQuestion,
   blockCandidates,
   blockReadouts,
   partialRetryHref,
@@ -31,14 +36,22 @@ import {
   type BlockCandidates,
 } from "@/lib/agent-result";
 import { cn } from "@/lib/cn";
+import { PENDING_SERVER_FEATURES } from "@/lib/features";
 import { CONFIDENCE_LABEL } from "@/lib/confidence";
 import type { RunState } from "@/hooks/use-run-stream";
-import type { AgentResultEvent, GuidanceEvent, NoteEvent, PartialEvent } from "@/lib/api/sse";
+import type {
+  AgentReadout,
+  AgentResultEvent,
+  GuidanceEvent,
+  NoteEvent,
+  PartialEvent,
+} from "@/lib/api/sse";
 import type { QuestionState } from "@/stores/conversation";
 import {
   isHealthObservation,
   type Agent,
   type EventDraft,
+  type MedicationDraft,
   type Observation,
   type StoredRef,
 } from "@/lib/api/types";
@@ -71,12 +84,15 @@ export function RunReply({
   answeringNow,
   remainingDrafts,
   draftsReplaced,
+  remainingMedicationDrafts = 0,
+  medicationDraftsReplaced = false,
   followUp,
   onRetry,
   onRewrite,
   rewriteBlocked,
   onAnswer,
   onOpenDrafts,
+  onOpenMedicationDrafts,
   onPickOffer,
   archived = false,
   deleted = NO_REFS,
@@ -95,6 +111,10 @@ export function RunReply({
   remainingDrafts: number;
   /** 뒤 run 이 같은 초안을 다시 냈다 — 남은 것이 0 이어도 "넣었다" 가 아니다. */
   draftsReplaced: boolean;
+  /** 이 run 이 낸 복약 초안 중 아직 안 넣은 것 (#537 · `stores/medication-draft.ts`). */
+  remainingMedicationDrafts?: number;
+  /** 뒤 run 이 같은 코스의 복약 초안을 다시 냈다 — 남은 것이 0 이어도 "넣었다" 가 아니다. */
+  medicationDraftsReplaced?: boolean;
   /** 이어받기 run 의 답이다 (질문에 대한 답을 보낸 줄). */
   followUp: boolean;
   /** 🚨 같은 자리에서 다시 보낼 수 없으면 `undefined` — 버튼을 세우지 않는다. */
@@ -105,6 +125,8 @@ export function RunReply({
   rewriteBlocked: boolean;
   onAnswer: () => void;
   onOpenDrafts: () => void;
+  /** 복약 초안 시트를 연다 (#537). 없으면 "확인하고 넣기" 를 세우지 않는다. */
+  onOpenMedicationDrafts?: () => void;
   onPickOffer: (agents: Agent[]) => void;
   /**
    * 서버가 남긴 지난 턴이다 (#228 · `lib/chat-history.ts`). 🚨 **그날 화면과 같게 그리되, 지금 누르면 막다른
@@ -216,7 +238,16 @@ export function RunReply({
    *    답이 Agent 블록(성장 추이)뿐이다 — 그 아래에 "기록을 찾지 못했어요" 를 세우면 답을 받은 보호자가
    *    실패한 줄 안다.
    */
-  const noticedWhy = run.guidance.length > 0 || run.note !== null || agentResults.length > 0;
+  const noticedWhy =
+    run.guidance.length > 0 ||
+    run.note !== null ||
+    agentResults.length > 0 ||
+    run.medicationDrafts.length > 0;
+  /**
+   * 이 run 이 답을 기다리는 질문 (#537). Memory 질문이거나 `awaits_reply` 인 Agent 질문 하나다 — 답하기 버튼은
+   * 그 자리에만 선다 (`askedQuestion`).
+   */
+  const asked = askedQuestion(run);
   /** Memory 가 답을 기다리는 중. 🚨 `kind` 를 모르면 질문으로 보지 않는다 (`NoteCard`). */
   const askingMore = run.note?.kind === "question";
   /**
@@ -272,8 +303,10 @@ export function RunReply({
       {agentResults.map((result, index) => (
         <AgentResultCard
           key={`${result.agent}:${result.task_type ?? ""}:${index}`}
+          childId={childId}
           result={result}
           candidates={blockCandidates(result, { childId, runId })}
+          reply={asked?.result === result ? { question, answeringNow, onAnswer } : null}
         />
       ))}
 
@@ -314,7 +347,7 @@ export function RunReply({
           </CardFailed>
         )
       ) : (
-        <section>
+        <section data-tour="saved">
           <h3 className="text-label text-brand">기록 {savedCount}건 저장됨</h3>
           {/* 🚨 관찰마다 카드를 한 장씩 주면 흰 상자가 줄줄이 서서 무엇이 한 덩어리인지 사라진다.
               한 장 안에 가는 선으로 나눈다 — 03 홈의 "오늘" 카드와 같은 방식이다. */}
@@ -336,7 +369,7 @@ export function RunReply({
       )}
 
       {run.promoted.length > 0 ? (
-        <section className="flex flex-col gap-2">
+        <section data-tour="promoted" className="flex flex-col gap-2">
           <h3 className="text-label text-brand">기억이 자랐어요</h3>
           {run.promoted.map((change) => (
             <Card key={change.ref.id}>
@@ -361,6 +394,17 @@ export function RunReply({
           remaining={remainingDrafts}
           replaced={draftsReplaced}
           onOpen={onOpenDrafts}
+        />
+      ) : null}
+
+      {/* 복약 초안 (#537). 🚨 일정 초안과 다른 카드다 — 게이트가 다르다(㉡ 건강 기록 확정). 지난 턴은 초안이
+          보관함에 없으면 넣는 길이 없다 (`stores/medication-draft.ts` 는 메모리 전용이다). */}
+      {run.medicationDrafts.length > 0 ? (
+        <MedicationDraftsCard
+          drafts={run.medicationDrafts}
+          remaining={remainingMedicationDrafts}
+          replaced={medicationDraftsReplaced}
+          onOpen={archived && remainingMedicationDrafts === 0 ? undefined : onOpenMedicationDrafts}
         />
       ) : null}
 
@@ -479,17 +523,32 @@ export function partialMessage(partial: PartialEvent, savedSomething: boolean): 
  * 🚨 **readout `body` 를 그대로 그린다.** 성장 추이는 코드가 만든 문장이고, 화면이 줄이거나 색을 입히면
  *    평가로 읽힌다 (최상위 §2 키 · 몸무게). 여러 줄이라 줄바꿈을 살린다 (`whitespace-pre-line`).
  * 🚨 **모델이 쓴 readout 도 HTML 로 그리지 않는다** (apps/web/CLAUDE.md §4). `{}` 로 넣는다.
- * 🚨 **되묻기에 답하기 버튼을 세우지 않는다.** Memory 질문(`NoteCard`)과 달리 이어서 답할 길이 서버에 아직
- *    없다 — `reply_to` 로 보내면 400 이다 (`AgentResultEvent.question` · #246).
+ * 🚨 **답하기 버튼은 답을 받는 질문(`awaits_reply`)에만 세운다** (#537). 아닌 질문은 이어서 답할 길이 서버에
+ *    없다 — `reply_to` 로 보내면 400 이다 (`AgentResultEvent.question` · #246). 그 질문은 안내 문장으로만 선다.
+ * 🚨 **전달 서류(`med_notice_form` · `emergency_card`)는 body 그대로 + 복사 버튼이다.** 우리가 대신 보내지 않는다 —
+ *    복사해서 보호자가 직접 전한다. 응급 카드의 "불러오지 못했어요" 줄을 "없음" 처럼 바꾸지 않는다 (body 를 다시 쓰지 않는다).
+ * 🚨 **`dose_status` 는 사실만 나가는 칸이다.** 먹여도 된다는 뜻으로 읽힐 표시(초록 체크 · 색)를 붙이지 않는다 —
+ *    체크하는 곳(복약 화면)으로 가는 길만 둔다.
  */
 function AgentResultCard({
+  childId,
   result,
   candidates,
+  reply,
 }: {
+  childId: string;
   result: AgentResultEvent;
   candidates: BlockCandidates | null;
+  /** 이 블록의 질문이 run 의 답을 받는 질문이면 그 처지. 아니면 `null` — 답하기 버튼이 서지 않는다. */
+  reply: {
+    question: QuestionState | null;
+    answeringNow: boolean;
+    onAnswer: () => void;
+  } | null;
 }) {
   const readouts = blockReadouts(result);
+  // 🚨 복약 화면이 실서버에 생기기 전에는 링크를 세우지 않는다 (`lib/features.ts` · #537).
+  const showsDoseStatus = readouts.some((readout) => readout.kind === "dose_status");
   return (
     <Card>
       <div className="flex items-start gap-3">
@@ -518,9 +577,24 @@ function AgentResultCard({
             <div key={index} className="mt-1">
               {readout.title ? <p className="text-label text-ink-muted">{readout.title}</p> : null}
               <p className="text-body text-ink whitespace-pre-line">{readout.body}</p>
+              {COPYABLE_READOUTS.has(readout.kind) ? <CopyReadout readout={readout} /> : null}
             </div>
           ))}
-          {result.question ? (
+          {/* 복용 체크는 복약 화면에서만 한다 — 기록이 생기는 곳이 한 곳이다 (#537). */}
+          {showsDoseStatus && PENDING_SERVER_FEATURES.medications ? (
+            <ButtonLink
+              href={`/child/${childId}/profile/medications`}
+              variant="secondary"
+              size="compact"
+              className="mt-3"
+              transitionTypes={FORWARD.transitionTypes}
+            >
+              복약 화면 열기
+            </ButtonLink>
+          ) : null}
+          {reply && result.question ? (
+            <AgentQuestion text={result.question} {...reply} />
+          ) : result.question ? (
             <p
               className={
                 readouts.length > 0 || candidates
@@ -553,6 +627,144 @@ function AgentResultCard({
   );
 }
 
+/** body 를 그대로 복사해 가는 전달 서류 (#537). 🚨 우리가 대신 보내지 않는다 — 보호자가 붙여 넣어 전한다. */
+const COPYABLE_READOUTS = new Set<AgentReadout["kind"]>(["med_notice_form", "emergency_card"]);
+
+/**
+ * 서류 한 장의 복사 버튼. 🚨 **body 를 고치지 않고 그대로 복사한다** — 서명 문구 · 조회 실패 줄까지다.
+ * 🚨 토스트를 쓰지 않는다 — 성공은 조용한 실패가 아니다(문서 §7). 결과는 버튼 옆 한 줄이 말한다.
+ */
+function CopyReadout({ readout }: { readout: AgentReadout }) {
+  const [copied, setCopied] = useState<"idle" | "copied" | "failed">("idle");
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+      <Button
+        variant="secondary"
+        size="compact"
+        onClick={() => {
+          void navigator.clipboard
+            .writeText(readout.body)
+            .then(() => setCopied("copied"))
+            .catch(() => setCopied("failed"));
+        }}
+      >
+        <Copy aria-hidden size={ICON_SIZE.sm} strokeWidth={ICON_STROKE} />
+        복사하기
+      </Button>
+      <p role="status" className="text-caption text-ink-subtle">
+        {copied === "copied"
+          ? "복사했어요. 필요한 곳에 붙여 넣어 전해 주세요."
+          : copied === "failed"
+            ? "복사하지 못했어요. 글을 길게 눌러 복사해 주세요."
+            : null}
+      </p>
+    </div>
+  );
+}
+
+/**
+ * Agent 가 답을 기다리는 질문 (#537 · `awaits_reply`). 🚨 **Memory 질문(`NoteCard`)과 같은 길이다** — 입력창이 이
+ * 질문을 대상으로 잡고, 답은 `reply_to` 로 이 run 을 가리킨다. 답을 강요하지 않고, 내려놓아도 열린 채 남는다.
+ * 🚨 **답은 짧은 글로 받는다** — "네" · 약 이름 · "저녁 8시". 버튼으로 미리 답을 깔지 않는다(서버가 글자로 받는다).
+ */
+function AgentQuestion({
+  text,
+  question,
+  answeringNow,
+  onAnswer,
+}: {
+  text: string;
+  question: QuestionState | null;
+  answeringNow: boolean;
+  onAnswer: () => void;
+}) {
+  return (
+    <div className="border-line mt-3 border-t pt-3">
+      <p className="text-body text-ink">{text}</p>
+      {question === "open" ? (
+        answeringNow ? (
+          <p className="text-caption text-ink-muted mt-2">아래 입력창에서 답하는 중이에요.</p>
+        ) : (
+          <Button variant="secondary" size="compact" className="mt-3" onClick={onAnswer}>
+            이 질문에 답하기
+          </Button>
+        )
+      ) : question === "answered" ? (
+        <p className="text-caption text-ink-subtle mt-2">아래에 답해 주셨어요.</p>
+      ) : question === "dropped" ? (
+        <p className="text-caption text-ink-subtle mt-2">이 질문은 더 이어서 답할 수 없어요.</p>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * 복약 초안 (#537). 🚨 **저장 결과가 아니다** — 넣어야 등록된다 (승인 게이트 ㉡). 일정 초안(`DraftsCard`)과 같은 자리
+ * 같은 모양이지만 **다른 카드**다 — 넣는 곳이 다른 게이트라 한 카드에서 세면 무엇을 넣는지 흐려진다.
+ * 🚨 대화에는 카드만 두고 넣는 것은 시트에서 한다 (`DraftsCard` 와 같은 이유).
+ */
+function MedicationDraftsCard({
+  drafts,
+  remaining,
+  replaced,
+  onOpen,
+}: {
+  drafts: readonly MedicationDraft[];
+  remaining: number;
+  replaced: boolean;
+  /** 없으면 넣을 길이 없다 — 지난 턴인데 보관함에 없는 초안이다. */
+  onOpen?: () => void;
+}) {
+  const found = drafts.length;
+  return (
+    <section>
+      <h3 className="text-label text-brand">복약 일정으로 넣을까요?</h3>
+      <Card className="mt-2">
+        <div className="flex items-start gap-3">
+          <IconTile icon={Pill} tone={onOpen && remaining > 0 ? "brand" : "neutral"} />
+          <div className="min-w-0">
+            {remaining > 0 && onOpen ? (
+              <>
+                <p className="text-body text-ink">
+                  적어주신 말에서 복약 {found}건을 찾았어요.
+                  {remaining < found ? ` 아직 넣지 않은 것은 ${remaining}건이에요.` : null}
+                </p>
+                <p className="text-body-sm text-ink-muted mt-1">
+                  넣기 전까지는 등록되지 않아요. 알려드릴 시각을 확인하고 넣어 주세요.
+                </p>
+                <Button variant="secondary" size="compact" className="mt-3" onClick={onOpen}>
+                  확인하고 넣기
+                </Button>
+              </>
+            ) : remaining > 0 || !onOpen ? (
+              // 🚨 복약 초안은 메모리에만 있어서(건강 정보) 새로고침하면 사라진다. 넣었는지 모르니 "넣었어요" 라고 하지 않는다.
+              <>
+                <ul className="flex flex-col gap-1">
+                  {drafts.map((draft) => (
+                    <li key={draft.draft_id} className="text-body text-ink">
+                      {draft.schedule.title ?? "이름 없는 약"}
+                    </li>
+                  ))}
+                </ul>
+                <p className="text-body-sm text-ink-muted mt-2">
+                  여기서는 더 넣을 수 없어요. 넣은 복약은 복약 화면에서 볼 수 있어요.
+                </p>
+              </>
+            ) : (
+              <p className="text-body text-ink">
+                {/* 🚨 뒤 답이 같은 코스의 초안을 다시 냈으면 "넣었다" 고 하지 않는다 — 넣은 적이 없다. */}
+                {replaced
+                  ? "이 복약 초안은 아래 답에서 다시 찾은 초안으로 바뀌었어요."
+                  : "남은 복약 초안이 없어요. 넣은 복약은 복약 화면에서 볼 수 있어요."}
+              </p>
+            )}
+          </div>
+        </div>
+      </Card>
+    </section>
+  );
+}
+
 /**
  * 일정 초안 — 🚨 **저장 결과가 아니다.** 위의 관찰·기억은 이미 저장된 것이고, 이건 **보호자가
  * 넣어야 들어가는 것**이다 (승인 게이트 ㉠). 한 덩어리로 섞으면 "이렇게 저장했어요" 라는 첫 줄이
@@ -574,7 +786,7 @@ function DraftsCard({
   onOpen: () => void;
 }) {
   return (
-    <section>
+    <section data-tour="drafts">
       <h3 className="text-label text-brand">일정으로 만들까요?</h3>
       <Card className="mt-2">
         <div className="flex items-start gap-3">
@@ -691,10 +903,10 @@ function resultTitle({
  *    지금 없는 경로가 오기도 하고, 외부 주소가 오면 화면이 앱 밖으로 나간다. 딥링크는
  *    **어느 구역인지 힌트**로만 쓰고, 실제로 가는 곳은 이 표가 정한다.
  *
- * ⚠️ **서버 힌트와 실제 자리가 다르다.** `safety_record` 의 딥링크는 `settings/health-safety`
- *    인데, 알레르기·건강 기록을 직접 넣는 구역(`components/safety-section.tsx`)은 10 설정이
- *    아니라 **11 아이 프로필**에 있다. 힌트를 그대로 썼으면 아무것도 없는 화면으로 보냈을 것이다.
- *    👉 이름을 맞출지는 `apps/api` Owner 협의 대상이다 (최상위 §8 · #141).
+ * ⚠️ **`to.path` 는 서버 딥링크와 같은 값이다** (#625 — 서버 정본은 `apps/api/app/core/deeplinks.py`).
+ *    예전 서버 힌트 `settings/health-safety` 는 없는 경로였다 — 알레르기·건강 기록을 넣는 구역
+ *    (`components/safety-section.tsx`)은 10 설정이 아니라 **11 아이 프로필**에 있다. 지금은 서버도
+ *    `profile` 을 보낸다. 그래도 주소는 이 표가 정한다 — 새 code 가 생기면 서버 표와 여기를 같이 고친다.
  *
  * 🚨 `to` 가 없는 안내에는 **버튼을 세우지 않는다** — 진단·구매 대행은 갈 곳이 없는 안내고,
  *    없는 길을 만들어 주는 것보다 말만 하고 마는 쪽이 맞다.
@@ -707,6 +919,12 @@ const GUIDANCE_KIND: Record<
     label: "안전 정보",
     icon: ShieldCheck,
     to: { path: "profile", label: "직접 입력하러 가기" },
+  },
+  // 채팅의 키 · 몸무게는 저장하지 않는다 — 잰 날짜와 함께 11-1 에서 넣는다 (#625)
+  growth_record: {
+    label: "키·몸무게",
+    icon: Ruler,
+    to: { path: "profile/growth", label: "직접 입력하러 가기" },
   },
   diagnosis: { label: "진단·처방", icon: Stethoscope },
   out_of_scope: { label: "서비스 범위", icon: Hand },
@@ -844,7 +1062,7 @@ function NoteCard({
   }
 
   return (
-    <Card>
+    <Card data-tour="question">
       <div className="flex items-start gap-3">
         <IconTile icon={MessageCircleQuestion} />
         <div className="min-w-0">

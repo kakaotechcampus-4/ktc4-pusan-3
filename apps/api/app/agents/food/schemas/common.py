@@ -23,6 +23,8 @@ class FoodTaskType(StrEnum):
     NUTRIENT_ANALYSIS = "nutrient_analysis"  # 영양소 분석: 식단 기반 비중까지
     # 기관 급식 갱신·삭제. Food 가 보호자 말을 반영해 쓰는 유일한 테이블
     DAYCARE_MEAL = "daycare_meal"
+    # 정해진 음식을 먹여도 되는지 묻는 말. 코드가 등록 알레르기 · 연령 규칙으로 답한다(모델 0회)
+    FOOD_CHECK = "food_check"
 
 
 class MealSlot(StrEnum):

@@ -332,8 +332,14 @@ export interface GeneralSuggestion {
  * 🚨 출처(`source_org`)를 함께 보여 준다 — CC BY 문서는 출처 표시가 이용 조건이다.
  */
 export interface DocEvidence {
-  /** 문서 행 · 또는 Food 일반 추천이 고른 메뉴(`recipe_catalog`, #442). 화면은 `id` 만 키로 쓴다. */
-  ref: { kind: "food_doc" | "activity_doc" | "growth_doc" | "recipe_catalog"; id: string };
+  /**
+   * 문서 행 · Food 일반 추천이 고른 메뉴(`recipe_catalog`, #442) · Growth 도서 추천이 고른 책
+   * (`book_catalog` — 도서관 정보나루 서지 행. `title` 은 "제목(저자)"). 화면은 `id` 만 키로 쓴다.
+   */
+  ref: {
+    kind: "food_doc" | "activity_doc" | "growth_doc" | "recipe_catalog" | "book_catalog";
+    id: string;
+  };
   title: string;
   source_org: string;
   source_title: string;
@@ -352,11 +358,29 @@ export interface EventItem {
   prepared_at: string | null;
 }
 
+/**
+ * 얼마나 먼저 울릴지 (#594). 일정 종류마다 고를 수 있는 값이 다르다 — 맞지 않으면 422 invalid_reminder.
+ * 시간 있는 일정은 앞의 10개, 종일 일정은 `_9am` 4개(KST 오전 9시).
+ */
+export type ReminderLead =
+  | "at_start"
+  | "5m"
+  | "10m"
+  | "15m"
+  | "30m"
+  | "1h"
+  | "2h"
+  | "1d"
+  | "2d"
+  | "1w"
+  | "day_of_9am"
+  | "1d_9am"
+  | "2d_9am"
+  | "1w_9am";
+
+/** 내 알림. 보호자 개인 것이라 다른 보호자의 알림은 오지 않는다 (#594). */
 export interface Reminder {
-  id: string;
-  remind_at: string;
-  /** true 면 PATCH·DELETE 모두 409 already_sent. */
-  sent: boolean;
+  lead: ReminderLead;
 }
 
 /**
@@ -375,7 +399,8 @@ export interface CalendarEvent {
   source_notice_id: string | null;
   source_refs: Ref[];
   items: EventItem[];
-  reminders: Reminder[];
+  /** 요청한 보호자 본인의 알림. 걸지 않았으면 null. */
+  reminder: Reminder | null;
 }
 
 /* ── 화면 응답 ────────────────────────────────────────────────────────── */
@@ -474,7 +499,7 @@ export interface Guard {
   blocked_agents: Agent[];
   message: string;
   /**
-   * 아이를 안 담은 상대 경로다 (`settings/health-safety`). 지금 아이 경로 아래에 붙여 쓴다.
+   * 아이를 안 담은 상대 경로다 (`safety_unknown` 이면 `profile`). 지금 아이 경로 아래에 붙여 쓴다.
    * 서버는 칸을 늘 싣고, 보낼 곳이 없으면 `null` 이다.
    */
   deeplink: string | null;
@@ -614,7 +639,7 @@ export interface AnswerRequest {
  * 🚨 **제출은 건별이다** (9/21 회의). 초안 여러 장을 한 요청으로 묶지 않는다.
  */
 
-/** 초안 안의 일정 본체. `CalendarEvent` 와 달리 `id` · `reminders` 가 없다 — 아직 행이 아니다. */
+/** 초안 안의 일정 본체. `CalendarEvent` 와 달리 `id` · `reminder` 가 없다 — 아직 행이 아니다. */
 export interface EventDraftFields {
   title: string;
   /**
@@ -819,6 +844,154 @@ export interface CreateEventDraftsResponse {
  */
 export interface SubmitEventResponse {
   event: CalendarEvent;
+}
+
+/* ── 복약 초안 · 회차 (#537) ──────────────────────────────────────────── */
+
+/**
+ * 🚨 **초안 모양만 확정이다.** 정본은 `apps/api/app/core/medication_draft.py` 의 `MedicationDraft.to_payload()`
+ *    (#544). 제출 · 조회 · 체크 · 수정 경로와 본문은 서버 API(#520 · `app/api/v1/routers/medications.py`)와
+ *    맞췄다. 계약 대응표(`contract/schema-map.ts`)의 복약 절은 서버 스키마와 같이 #520 이 더한다 —
+ *    서버에 없는 스키마를 대응표에 두면 계약 검사가 실패한다.
+ *
+ * 🚨 **시각을 화면이 계산하지 않는다.** `scheduled_time` · `notice_times` 는 서버가 기준 시각 + 오프셋으로 만든
+ *    값이다 (저녁 기준이 17:00 에서 19:00 으로 바뀐 것처럼 기준은 서버 상수다 · #546). 그래서 카드는 회차
+ *    시각을 고치는 칸을 두지 않는다 — 바꾸려면 대화로 다시 말한다.
+ */
+export type TimingAnchor = "fixed" | "wake_up" | "breakfast" | "lunch" | "dinner" | "bedtime";
+
+/** 보관. 🚨 보호자가 카드에서 고르는 선택 칸이다 — Agent 는 늘 `null` 로 낸다. */
+export type MedicationStorage = "room" | "fridge";
+/** 약 모양. 보관과 같은 선택 칸이다. */
+export type MedicationForm = "liquid" | "powder" | "tablet" | "ointment" | "drops";
+
+/** 하루 시각 패턴 한 칸. 날짜가 없다 — 제출 때 서버가 `starts_on` ~ `ends_on` 의 날마다 펼친다. */
+export interface MedicationDoseDraft {
+  timing_anchor: TimingAnchor;
+  /** 기준 시각에서 몇 분 앞뒤인가 (−120 ~ 180). `fixed` 면 0. */
+  offset_minutes: number;
+  /** `HH:MM`. `fixed` 일 때만 있다. */
+  fixed_time: string | null;
+  /** 실제로 울릴 시각 `HH:MM`. 🚨 서버가 계산한 값이다 — 화면은 그리기만 한다. */
+  scheduled_time: string;
+}
+
+/** 코스 한 건. 값이 없으면 `null` 이고, 필수 칸(`title` · `starts_on` · `ends_on`)이 비면 `missing` 에 실린다. */
+export interface MedicationScheduleDraft {
+  /** 🚨 원문에서 그대로 옮긴 약 이름이다 (모델이 바꾸지 않았는지 서버가 검사했다). 화면도 다듬지 않는다. */
+  title: string | null;
+  /** 용량. 원문 그대로. */
+  dosage: string | null;
+  /** 복약 이유. 원문 그대로. */
+  indication_text: string | null;
+  storage: MedicationStorage | null;
+  med_form: MedicationForm | null;
+  /** 투약의뢰서 특이사항. 보호자가 적는 선택 칸 — Agent 는 비워 둔다. */
+  note: string | null;
+  /** 증상 코드 — 서버가 사전으로 뽑는다. 🚨 화면이 고치지 않고 그대로 되돌려 보낸다. */
+  symptom_codes: string[];
+  /** `YYYY-MM-DD`. */
+  starts_on: string | null;
+  /** `YYYY-MM-DD`. 🚨 **무기한 코스가 없다** — 비면 제출할 수 없다 (회차 행을 기간만큼 미리 만든다). */
+  ends_on: string | null;
+}
+
+/** 수정 전 원본. 카드가 "19:30 → 20:00" 을 그리는 데 쓴다. */
+export interface MedicationSnapshot {
+  schedule: MedicationScheduleDraft;
+  doses: MedicationDoseDraft[];
+}
+
+/**
+ * 복약 초안 한 장. 🚨 **아직 아무것도 저장되지 않았다** — 제출이 승인 게이트 ㉡(건강 기록 확정)이다.
+ *
+ * 🚨 **`missing` 은 초안이 만들어질 때 비어 있던 칸이다.** 카드는 그 칸을 채우게 하고, 제출을 잠글지는
+ *    **지금 칸의 값**으로 정한다 (보호자가 채웠으면 풀린다).
+ */
+export interface MedicationDraft {
+  /** 🚨 화면 전용 키 — 서버는 읽지 않고 제출에도 싣지 않는다 (`EventDraft.draft_id` 와 같다). */
+  draft_id: string;
+  op: "create" | "update";
+  source: "utterance" | "prescription_ocr" | null;
+  schedule: MedicationScheduleDraft;
+  doses: MedicationDoseDraft[];
+  /** 실제로 울릴 시각 `HH:MM` 정렬. 🚨 **카드가 반드시 보여 준다** — 보호자가 승인하는 것이 이 시각이다. */
+  notice_times: string[];
+  /** 비어 있던 필수 칸 이름 (`title` · `starts_on` · `ends_on`). */
+  missing: string[];
+  /** 🚨 `update` 에만 있다. `create` 는 키 자체가 없다. */
+  schedule_id?: string;
+  before?: MedicationSnapshot;
+}
+
+/**
+ * 복약 초안 제출 본문 — 🚨 **승인 게이트 ㉡. 되돌릴 수 없는 지점.** (`docs/web/medication-v1.md` §5)
+ *
+ * 🚨 `op` 에 따라 엔드포인트가 갈린다 — create 는 `POST`, update 는 `PATCH …/{schedule_id}` (일정 초안과 같다).
+ * 🚨 보호자가 확인한 **최종 상태 전체**다. `doses` 는 초안의 시각 패턴을 그대로 되돌려 보낸다 —
+ *    `scheduled_time` 은 싣지 않는다 (서버 생성 컬럼이다).
+ * 🚨 `draft_id` · `notice_times` · `missing` · `before` 를 싣지 않는다 — 화면 전용이거나 서버가 다시 계산한다.
+ */
+export interface SubmitMedicationBody {
+  schedule: Omit<MedicationScheduleDraft, "title" | "starts_on" | "ends_on"> & {
+    title: string;
+    starts_on: string;
+    ends_on: string;
+  };
+  doses: Array<Omit<MedicationDoseDraft, "scheduled_time">>;
+  source: "utterance" | "prescription_ocr";
+}
+
+/** 복약 수정 본문. 🚨 `source` 는 수정에서 바뀌지 않아 싣지 않는다 — 나머지는 등록과 같다. */
+export type ReviseMedicationBody = Omit<SubmitMedicationBody, "source">;
+
+/** 회차 한 번. 🚨 **체크 칸이 곧 복용 기록이다** — 따로 로그가 없다 (`medication_dose` 1행). */
+export interface MedicationDose {
+  id: string;
+  /** 한국 시간 `YYYY-MM-DD`. */
+  dose_date: string;
+  /** `HH:MM`. 서버 생성 컬럼. */
+  scheduled_time: string;
+  /** 보호자가 체크한 시각. `null` 이면 미체크. */
+  checked_at: string | null;
+  /**
+   * 지금 체크 · 해제할 수 있는가. 🚨 **아직 오지 않은 날의 회차는 서버가 막는다** — 화면이 오늘과 비교해
+   *    정하지 않는다 (날짜 계산 · apps/web/CLAUDE.md §4).
+   */
+  checkable: boolean;
+}
+
+/** 진행 중인 코스 하나. 🚨 끝남 · 진행 중은 서버가 정한다 (`in_progress(today)` · #546). */
+export interface MedicationCourse {
+  id: string;
+  title: string;
+  dosage: string | null;
+  starts_on: string;
+  ends_on: string;
+  /** 하루에 울릴 시각 `HH:MM` 정렬. */
+  notice_times: string[];
+  /** 지금까지 온 날의 회차, 날짜 · 시각 순. 아직 오지 않은 날은 싣지 않는다. */
+  doses: MedicationDose[];
+}
+
+/** `GET /children/{cid}/medications`. 진행 중인 코스만 온다. */
+export interface MedicationsResponse {
+  /** 서버의 오늘 (한국 시간 `YYYY-MM-DD`). 🚨 화면이 오늘을 따로 구하지 않는다. */
+  today: string;
+  courses: MedicationCourse[];
+}
+
+/** 제출 · 수정 응답. 만든 · 고친 코스. */
+export interface SubmitMedicationResponse {
+  course: MedicationCourse;
+}
+
+/**
+ * `PUT /children/{cid}/medication-doses/{did}/check`. 체크 · 해제는 같은 상태를 두 번 보내도 결과가
+ * 같아서 Idempotency-Key 를 받지 않는다. 🚨 **승인 게이트가 아니다** — 되돌릴 수 있다.
+ */
+export interface CheckDoseRequest {
+  checked: boolean;
 }
 
 /**
@@ -1698,7 +1871,8 @@ export interface DevScreeningResponse {
  * 전부 선택이지만 **하나는 있어야 한다** — 빈 본문은 400 이다 (서버 PR #353). 화면은 아무것도
  * 안 적으면 보내지 않고, "건너뛰기" 는 요청 없이 홈으로 간다.
  *
- * 🚨 **키 · 몸무게는 서버가 소수 한 자리로 반올림해 저장한다.** 범위는 `lib/measurement.ts`.
+ * 🚨 **키 · 몸무게는 칸별 범위 밖이거나 소수 둘째 자리부터 적으면 400 이다** (#628).
+ *    범위는 `lib/measurement.ts`.
  *
  * ⚠️ **계약서 §05 의 본문과 달라졌다** (확정 전). 01 등록 화면을 "꼭 필요한 것" 만 남기고
  *    **고를 수 있는 것을 전부 이 화면으로 미루면서** 바뀌었다 —

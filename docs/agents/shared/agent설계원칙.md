@@ -94,7 +94,7 @@ Agent 쪽에서 들고 갈 안은 이렇다.
 
 ### 2-5. 응급 신호를 규칙으로 잡는다
 
-`_safety_precheck` 는 아무것도 하지 않는다([pipeline.py:750](apps/api/app/agents/pipeline.py#L750), 호출은 [pipeline.py:339](apps/api/app/agents/pipeline.py#L339)). Supervisor 의 `guarded` 에도 응급 라벨이 없다. 알레르기 등록과 진단 문의 둘뿐이다([supervisor/prompt.py:52-57](apps/api/app/agents/supervisor/prompt.py#L52-L57)). 그래서 지금은 응급 신호를 아무 데서도 잡지 않는다. "증상은 잘라서 record 로 보낸다"는 프롬프트 규칙을 따르면 "숨을 못 쉬어"는 관찰 기록으로 갈 것이다. 실제로 돌려 보지는 않았다.
+`_safety_precheck` 는 위험 물질 섭취만 잡는다([rules/hazard.py](apps/api/app/rules/hazard.py) · #626). 걸리면 Supervisor · Memory 를 부르지 않고 안내 한 건으로 끝낸다. Supervisor 의 `guarded` 에도 응급 라벨이 없다. 알레르기 등록 · 진단 문의 · 위험 물질 섭취(`hazard`) 셋이다. 그래서 지금은 응급 신호를 아무 데서도 잡지 않는다. 같은 자리(`_safety_precheck` · `HAZARD_GUIDANCE`)에 응급 규칙과 안내를 붙이면 된다. "증상은 잘라서 record 로 보낸다"는 프롬프트 규칙을 따르면 "숨을 못 쉬어"는 관찰 기록으로 갈 것이다. 실제로 돌려 보지는 않았다.
 
 루트 §4 와 공통규약 §9 는 규칙이 Agent 라우팅보다 먼저 잡도록 정했다. Health 명세도 응급 신호는 Agent 를 거치면 늦다고 적었다([Health_Agent_명세.md:70](docs/agents/health/Health_Agent_명세.md)). health_plan S10 에 잡혀 있지만 Health 가 올리는 순서의 마지막이라 그때까지 비어 있게 된다.
 

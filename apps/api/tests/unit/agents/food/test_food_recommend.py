@@ -524,3 +524,72 @@ async def test_제품마다_다른_성분_때문에만_막히는_후보도_빠�
 
     assert ctx.state.blocked_keys == {"불고기"}
     assert [p.menu_key for p in ctx.state.picks] == ["계란말이", "시금치나물"]
+
+
+# ── reason 에 막힌 음식 — 등록 알레르기 · 연령 금지 음식을 말하면 거절한다 ────────────
+NUT = [SafetyEntry(kind="allergy", label="견과류", status="active")]
+FOOD_GUIDANCE = "후보 목록에 없는 음식 이름은 쓰지 않는다"
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "고소한 견과류가 들어가 아이가 좋아할 거예요",
+        "땅콩 대신 참깨로 고소한 맛을 냈어요",
+        "아몬드를 조금 뿌려 주면 더 고소해요",
+    ],
+)
+async def test_reason_에_막힌_음식을_쓰면_거절하고_사유에_음식_이름이_없다(reason: str) -> None:
+    ctx = shown(*FULL, safety=NUT)
+
+    result = await propose_meal_candidates(ctx, args(pick("두부조림", reason=reason)))
+
+    assert not result.success
+    assert result.error is not None
+    assert result.error["code"] == ErrorCode.INVALID_ARGS
+    assert FOOD_GUIDANCE in result.error["message"]
+    assert not any(word in result.error["message"] for word in ("견과", "땅콩", "아몬드"))
+    assert ctx.state.picks == ()
+
+
+async def test_이름에_땅콩이_든_다른_음식은_막힌_음식이_아니다() -> None:
+    ctx = shown(*FULL, safety=NUT, exhausted=True)
+
+    result = await propose_meal_candidates(
+        ctx, args(pick("두부조림", reason="땅콩호박으로 부드럽게 만든 수프예요"))
+    )
+
+    assert result.success
+
+
+async def test_12개월_전_아이의_reason_에_꿀이_있으면_거절한다() -> None:
+    ctx = shown(*FULL, birth=date(2026, 2, 14), exhausted=True)  # NOW 기준 8개월
+
+    result = await propose_meal_candidates(
+        ctx, args(pick("두부조림", reason="꿀을 조금 넣으면 달콤해요"))
+    )
+
+    assert not result.success
+    assert result.error is not None
+    assert FOOD_GUIDANCE in result.error["message"]
+
+
+async def test_피한_음식을_근거로_달았으면_이유에_그_음식을_써도_거절하지_않는다() -> None:
+    # 기피 근거를 인용하면 build() 가 이유에 피한 것을 쓰라고 요구한다 — 그 음식이 알레르기여도
+    ctx = shown(
+        *FULL, safety=[SafetyEntry(kind="allergy", label="생선", status="active")], exhausted=True
+    )
+    key = seen_affinity(ctx, "생선", polarity=-1)
+
+    result = await propose_meal_candidates(
+        ctx,
+        args(
+            pick(
+                "두부조림",
+                reason="생선을 싫어해서 피해 골랐어요",
+                evidence=[cite(key, note="생선을 싫어함")],
+            )
+        ),
+    )
+
+    assert result.success, result.error

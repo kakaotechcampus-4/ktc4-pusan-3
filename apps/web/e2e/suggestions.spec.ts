@@ -327,7 +327,7 @@ test.describe("알레르기 정보가 없으면 식사 제안을 만들지 않�
     await page.goto(SUGGESTIONS);
     await expect(page.getByText("식사 제안을 만들지 않았어요")).toBeVisible();
     await expectNoGate(page);
-    // 서버 deeplink(settings/health-safety)를 주소로 쓰지 않는다 — 알레르기는 11 프로필에서 적는다.
+    // 서버 deeplink(profile)를 주소로 쓰지 않는다 — 알레르기는 11 프로필에서 적는다.
     await expect(page.getByRole("link", { name: "알레르기 적으러 가기" })).toHaveAttribute(
       "href",
       `/child/${CHILD}/profile`,

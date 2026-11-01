@@ -115,6 +115,7 @@ def affinity(
         polarity=polarity,
         strength=strength,
         last_observed_on=day(days_ago),
+        observed_days=3,
     )
 
 
