@@ -1,7 +1,8 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { Pencil, Ruler } from "lucide-react";
+import { ChevronRight, Pencil, Pill, Ruler } from "lucide-react";
+import Link from "next/link";
 import { useState } from "react";
 
 import { AuthGate } from "@/components/auth-gate";
@@ -15,15 +16,30 @@ import { ChildNav } from "@/components/child-nav";
 import { GrowthLatestCard, GrowthLatestCardSkeleton } from "@/components/growth-log-list";
 import { GrowthSheet } from "@/components/growth-sheet";
 import { SafetySection } from "@/components/safety-section";
+import { ScreenTour, TourHelpButton } from "@/components/screen-tour";
 import { EmptyState } from "@/components/ui/empty-state";
+import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
+import { IconTile } from "@/components/ui/icon-tile";
 import { PageTitle } from "@/components/ui/page-title";
 import { Screen } from "@/components/ui/screen";
 import { Section, SectionAction, SectionError } from "@/components/ui/section";
+import { SkeletonBlock } from "@/components/ui/skeleton";
 import { phaseOf, Swap } from "@/components/ui/swap";
 import { useChildId } from "@/hooks/use-child-id";
 import { useSheetTarget } from "@/hooks/use-sheet-target";
 import { EARLIEST_BIRTH_DATE } from "@/lib/date-bounds";
-import { api, qk, type ChildProfile, type GrowthLog, type GrowthLogsResponse } from "@/lib/api";
+import { PENDING_SERVER_FEATURES } from "@/lib/features";
+import {
+  api,
+  qk,
+  type ChildProfile,
+  type GrowthLog,
+  type GrowthLogsResponse,
+  type MedicationsResponse,
+} from "@/lib/api";
+import { timesLabel } from "@/lib/medication";
+import { FORWARD } from "@/lib/view-transition";
+import { profileTour } from "@/lib/tour/screens/profile";
 
 export default function ChildProfilePage() {
   return (
@@ -53,18 +69,29 @@ function ChildProfileScreen() {
       {/* 🚨 **머리에 아이 이름·나이를 다시 세우지 않는다.** 바로 아래 "기본 정보" 구역의
           별명 입력과 생일 입력이 같은 값을 들고 있어서, 머리에 또 쓰면 한 화면에서 같은 사실이
           두 번 선다. 제목은 화면을 가리키고, 아이가 누구인지는 그 구역이 진다. */}
-      <header>
-        <PageTitle>아이 프로필</PageTitle>
-        <p className="text-body-sm text-ink-muted mt-2">
-          기본 정보와 키·몸무게, 알레르기를 여기서 관리해요.
-        </p>
+      <header className="flex items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <PageTitle>아이 프로필</PageTitle>
+          <p className="text-body-sm text-ink-muted mt-2">
+            {/* 복약 구역이 숨은 빌드에서는 말하지 않는다 (`PENDING_SERVER_FEATURES.medications`). */}
+            {PENDING_SERVER_FEATURES.medications
+              ? "기본 정보와 키·몸무게, 복약, 알레르기를 여기서 관리해요."
+              : "기본 정보와 키·몸무게, 알레르기를 여기서 관리해요."}
+          </p>
+        </div>
+        <TourHelpButton tour={profileTour} />
       </header>
 
       <IdentitySection childId={childId} query={profile} />
 
       <GrowthSection childId={childId} query={growth} />
 
+      {/* 실서버에 복약 API 가 생기기 전에는 구역을 세우지 않는다 — 늘 "불러오지 못했어요" 가 선다 (#537). */}
+      {PENDING_SERVER_FEATURES.medications ? <MedicationSection childId={childId} /> : null}
+
       <SafetySection childId={childId} />
+
+      <ScreenTour tour={profileTour} ready={profile.isSuccess && growth.isSuccess} />
     </Screen>
   );
 }
@@ -85,6 +112,7 @@ function IdentitySection({
 
   return (
     <Section
+      data-tour="identity"
       title="기본 정보"
       // 🚨 **설명 줄을 두지 않는다.** "아이를 부르는 말과 생일이에요" 는 바로 아래 카드가
       //    별명 · 생일 · 성별을 글자로 다 보여주는 것을 한 번 더 말할 뿐이었다 —
@@ -165,6 +193,7 @@ function GrowthSection({
 
   return (
     <Section
+      data-tour="growth"
       title="키 · 몸무게"
       description="가장 최근에 잰 것만 보여줘요. 눌러서 지난 기록과 변화를 볼 수 있어요."
       // 🚨 불러오기 전에는 숫자 대신 자리만(`"pending"`), 0 건이면 넘기지 않는다 — 앞은 "아직 모름" 이라
@@ -196,6 +225,71 @@ function GrowthSection({
       </Swap>
 
       <GrowthSheet open={adding} onClose={() => setAdding(false)} childId={childId} />
+    </Section>
+  );
+}
+
+/* ── 복약 (#537) ─────────────────────────────────────────────────────── */
+
+/**
+ * 진행 중인 복약의 입구. 🚨 **여기서 등록하지 않는다** — 복약은 대화가 만든 초안을 보호자가 확인해 넣는다
+ * (승인 게이트 ㉡ · 04 "찾은 복약" 시트). 그래서 머리줄에 더하기 버튼이 없다.
+ * 🚨 **회차 체크도 여기서 하지 않는다** — 11-3 상세가 진다. 이 구역은 무엇을 먹이는 중인지 한 줄씩만 세운다
+ * (`GrowthSection` 이 가장 최근 한 줄만 세우는 것과 같은 이유 · 한 구역이 다른 구역을 밀지 않게).
+ */
+function MedicationSection({ childId }: { childId: string }) {
+  const query = useQuery({
+    queryKey: qk.medications(childId),
+    queryFn: () => api.get<MedicationsResponse>(`/children/${childId}/medications`),
+  });
+  const courses = query.data?.courses ?? [];
+
+  return (
+    <Section
+      title="복약"
+      description="지금 먹이는 약이에요. 눌러서 먹인 회차를 체크할 수 있어요."
+      count={courses.length > 0 ? courses.length : undefined}
+    >
+      <Swap id={phaseOf(query)}>
+        {query.isPending ? (
+          <SkeletonBlock label="복약을 불러오는 중" />
+        ) : query.isError ? (
+          <SectionError what="복약을 불러오지 못했어요" onRetry={() => void query.refetch()} />
+        ) : courses.length === 0 ? (
+          <EmptyState
+            icon={Pill}
+            title="지금 먹이는 약이 없어요"
+            description="대화에 약 이름과 언제, 며칠 먹이는지 적어 주시면 복약 일정을 만들어 드려요."
+            count={0}
+            countLabel="진행 중인 복약"
+          />
+        ) : (
+          <Link
+            href={`/child/${childId}/profile/medications`}
+            {...FORWARD}
+            className="rounded-card border-line bg-surface ease-standard active:bg-surface-muted hover:bg-surface-muted min-h-touch flex items-start gap-3 border px-4 py-3.5 transition-colors duration-120"
+          >
+            <IconTile icon={Pill} tone="neutral" />
+            <span className="flex min-w-0 flex-1 flex-col gap-1.5">
+              {courses.map((course) => (
+                <span key={course.id} className="flex flex-col">
+                  <span className="text-body text-ink">{course.title}</span>
+                  <span className="text-caption text-ink-subtle">
+                    매일 {timesLabel(course.notice_times)}
+                  </span>
+                </span>
+              ))}
+            </span>
+            <span className="sr-only">회차 체크하러 가기</span>
+            <ChevronRight
+              aria-hidden
+              size={ICON_SIZE.md}
+              strokeWidth={ICON_STROKE}
+              className="text-ink-subtle mt-1.5 shrink-0"
+            />
+          </Link>
+        )}
+      </Swap>
     </Section>
   );
 }

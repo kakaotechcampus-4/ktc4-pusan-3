@@ -5,7 +5,7 @@
 nullable — 장소가 없는 추천과 이 칸이 생기기 전의 행은 비어 있다.
 
 Revision ID: 01803571133f
-Revises: 5bdc0aad2e70
+Revises: d916c437f5dd
 """
 
 from typing import Sequence, Union
@@ -14,7 +14,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "01803571133f"
-down_revision: Union[str, Sequence[str], None] = "5bdc0aad2e70"
+down_revision: Union[str, Sequence[str], None] = "d916c437f5dd"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

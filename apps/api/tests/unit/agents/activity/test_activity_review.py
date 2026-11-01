@@ -22,7 +22,7 @@ from app.agents.activity.review import (
     explain,
     review_candidates,
 )
-from app.agents.activity.rules import is_recent_duplicate, normalize_activity, overstates
+from app.agents.activity.rules import is_recent_duplicate, normalize_activity
 from app.agents.activity.schemas.common import (
     ActivitySetting,
     CaregiverRole,
@@ -44,7 +44,7 @@ from app.agents.activity.store.ports import (
 )
 from app.agents.activity.tools.filters import safety_terms
 from app.agents.activity.tools.recommend import propose_activity_candidates
-from app.agents.common.evidence import RankedEvidence
+from app.agents.common.evidence import RankedEvidence, overstates
 from app.agents.common.reference import hazard_terms
 from app.agents.common.refs import Ref
 

@@ -24,6 +24,7 @@ from app.api.deps.db import SessionDep
 from app.api.errors import ApiError, ErrorEnvelope, constraint_name
 from app.api.runs import suggestion_retry
 from app.api.v1.list_query import PageQueryDep
+from app.api.v1.reminder_check import check_reminder, reminder_out
 from app.api.v1.schemas.common import Ref
 from app.api.v1.schemas.suggestions import (
     AnswerRequest,
@@ -55,6 +56,7 @@ from app.api.v1.schemas.suggestions import (
     SuggestionsResponse,
     UpdateEventRequest,
 )
+from app.core import deeplinks
 from app.core.config import settings
 from app.domains.consent.repository import child_health_granted
 from app.domains.food import repository as food_repo
@@ -65,6 +67,7 @@ from app.domains.suggestion import repository as suggestion_repo
 from app.domains.suggestion.draft_items import draft_items
 from app.domains.suggestion.evidence_view import EvidenceView, describe_evidence
 from app.domains.suggestion.models import SuggestionFeedback, SuggestionKind, SuggestionStatus
+from app.rules.book_evidence import BOOK_EVIDENCE_KIND
 from app.rules.home_prompts import prompt_request
 from app.rules.menu_evidence import MENU_EVIDENCE_KIND
 
@@ -80,6 +83,12 @@ _MERGED_AGENTS = frozenset({"food"})
 _CAUTION_AGENTS = frozenset({"activity"})
 
 _GUARD_CODES = {"blocked": "safety_unknown", "unsupported": "unsupported"}
+# 안전이 아닌 이유로 닫힌 Growth(closed.* · doc.no_row). 화면은 `safety_unknown` 일 때만 알레르기
+# 등록 안내를 그린다 — 다른 이유에 그 코드를 쓰면 알레르기 안내가 잘못 뜬다
+_CLOSED_CODE = "closed"
+# guard 별 딥링크 — 알레르기를 몰라 막힌 것만 갈 곳이 있다. 04 safety_record 안내와 같은 곳이다.
+# 준비 중 · 지원하지 않는 주제는 어디서 무엇을 넣어도 풀리지 않아 null (#625)
+_GUARD_DEEPLINKS = {"safety_unknown": deeplinks.PROFILE}
 _NOT_READY = "아직 준비 중인 주제예요."
 _UNKNOWN_NOTE = "알레르기 기록에 없음"
 
@@ -293,6 +302,11 @@ async def submit_event(
     if replayed is not None and isinstance(replayed, dict):
         return JSONResponse(status_code=201, content=replayed)
 
+    if body.reminder is not None:
+        check_reminder(
+            body.reminder.lead, starts_at=body.event.starts_at, all_day=body.event.all_day
+        )
+
     # suggestion_ids 검증 (중복 제거)
     suggestion_ids = list(dict.fromkeys(body.suggestion_ids)) if body.suggestion_ids else []
     if suggestion_ids:
@@ -307,6 +321,13 @@ async def submit_event(
 
         if await suggestion_repo.is_any_linked(session, suggestion_ids=suggestion_ids):
             raise ApiError(409, "already_confirmed", "이미 캘린더에 넣은 제안이에요")
+
+    # 알림을 함께 걸면 연결부터 잡는다 — 일정을 넣으면 아이 행에 외래 키 잠금이 걸리는데, 그 뒤에
+    # 보호자 → 아이 순으로 잠그면 같은 순서로 잡는 탈퇴(`withdraw_parent`)와 엇갈린다 (#603 리뷰)
+    if body.reminder is not None and not await schedule_repo.lock_link(
+        session, child_id=child.child_id, parent_id=parent.parent_id
+    ):
+        raise ApiError(403, "child_access_denied", "이 아이에 접근할 수 없어요")
 
     # Event INSERT
     created_by = EventCreatedBy.AGENT if suggestion_ids else EventCreatedBy.CAREGIVER
@@ -338,6 +359,19 @@ async def submit_event(
             session, suggestion_ids=suggestion_ids, event_id=event.id
         )
 
+    # 알림은 제출한 보호자에게만 건다 — 다른 보호자는 캘린더에서 각자 건다 (#594)
+    reminder = None
+    if body.reminder is not None:
+        reminder = await schedule_repo.put_reminder(
+            session,
+            child_id=child.child_id,
+            event_id=event.id,
+            parent_id=parent.parent_id,
+            lead=body.reminder.lead,
+        )
+        if reminder is None:  # 위에서 연결을 잡아 두어 오지 않는다. 계약대로 막아만 둔다
+            raise ApiError(403, "child_access_denied", "이 아이에 접근할 수 없어요")
+
     try:
         await session.commit()
     except IntegrityError as exc:
@@ -367,6 +401,7 @@ async def submit_event(
                 )
                 for ei in items
             ],
+            reminder=reminder_out(reminder),
         )
     )
 
@@ -404,12 +439,13 @@ async def create_suggestions(
 
     now = datetime.now(timezone.utc)
     owner = {"parent_id": parent.parent_id, "child_id": child.child_id}
-    ready = [a for a in agents if a in entrypoint.SUGGESTION_AGENTS]
-    guards = [
-        GuardOut(code="not_ready", blocked_agents=[a], message=_NOT_READY)
-        for a in agents
-        if a not in entrypoint.SUGGESTION_AGENTS
-    ]
+    # run 이 없으면 처음 요청이다 — 추천 라벨이 하나인 Agent 만 무엇을 돌릴지 안다.
+    # Growth 는 라벨이 셋이라 처음 요청은 not_ready 고, run 이 있으면 그 run 의 맥락으로 돈다
+    startable = (
+        entrypoint.SUGGESTION_AGENTS if body.run_id is not None else entrypoint.FIRST_REQUEST_AGENTS
+    )
+    ready = [a for a in agents if a in startable]
+    guards = [_guard_out("not_ready", a, _NOT_READY) for a in agents if a not in startable]
 
     # 판단 순서 (#249) — run_id 가 없으면 전부 처음 요청이다
     run_id = body.run_id
@@ -447,7 +483,7 @@ async def create_suggestions(
                 if recorded is not None:
                     # 다시 만들었더니 닫혔던 Agent — 같은 guard 를 다시 낸다 (#433 리뷰 ⑧)
                     code, message = recorded
-                    guards.append(GuardOut(code=code, blocked_agents=[a], message=message))
+                    guards.append(_guard_out(code, a, message))
                     continue
                 task = suggestion_retry.claim(run_id=run_id, agent=a, **owner)
                 if task == suggestion_retry.BUSY:
@@ -493,6 +529,8 @@ async def create_suggestions(
                 domain_store=agent_ports.domain_store_opener(child.child_id),
                 **agent_ports.food_stores(),
                 **agent_ports.safety_readers(),
+                **agent_ports.growth_book_ports(),
+                growth_log=agent_ports.growth_log_reader(),
                 affinity_reader=agent_ports.affinity_reader(),
             )
             settled = {o.agent for o in run.outcomes}
@@ -509,7 +547,7 @@ async def create_suggestions(
         if o.agent not in claimed:
             continue
         empty = entrypoint.empty_notice(o.readouts)
-        code = _GUARD_CODES.get(o.status)
+        code = _guard_code(o)
         if empty is not None:
             suggestion_retry.put_empty(run_id=run_id, agent=o.agent, message=empty.body, **owner)
         elif code is not None:
@@ -545,9 +583,9 @@ async def _suggestions_response(
     today = now.astimezone(KST).date()
     outcomes = {o.agent: o for o in run.outcomes}
     for agent, o in outcomes.items():
-        code = _GUARD_CODES.get(o.status)
+        code = _guard_code(o)
         if code is not None:
-            guards.append(GuardOut(code=code, blocked_agents=[agent], message=_guard_message(o)))
+            guards.append(_guard_out(code, agent, _guard_message(o)))
 
     # 이번에 보일 추천 행 — 재생 행 + 방금 저장한 행. 묶음 순서는 요청한 Agent 순서다
     fresh_ids = [_uuid.UUID(i) for o in run.outcomes for i in o.suggestion_ids]
@@ -609,7 +647,8 @@ async def _suggestions_response(
             basis = [
                 out
                 for e in general_ev.get(row.id, [])
-                if (out := _general_evidence_out(e, cards, menus)) is not None
+                if (out := _general_evidence_out(e, cards, menus, book_title=row.content))
+                is not None
             ]
             if not basis:
                 # 일반 추천의 근거는 문서 행(Food 는 메뉴 행도)이다 — 검수가 풀린 문서 · 후보 풀에서
@@ -699,6 +738,26 @@ def _notice_out(readout: Readout) -> GroupNoticeOut:
     return GroupNoticeOut(code=readout.code, message=readout.body)
 
 
+def _guard_code(outcome: entrypoint.SuggestOutcome) -> str | None:
+    """닫힌 Agent 를 guard 로 알리는 code. 정상 결과면 None.
+
+    Food · Activity 의 `blocked` 는 안전 조회 실패뿐이라 상태만 본다. Growth 는 월령 · 동의 · 포트 ·
+    문서 행 없음으로도 닫혀서 코드 문구의 종류가 `blocked`(안전)일 때만 `safety_unknown` 이다.
+    """
+    code = _GUARD_CODES.get(outcome.status)
+    if code == "safety_unknown" and outcome.agent == "growth":
+        if not any(r.kind == "blocked" for r in outcome.readouts):
+            return _CLOSED_CODE
+    return code
+
+
+def _guard_out(code: str, agent: str, message: str) -> GuardOut:
+    """막힌 Agent 하나의 guard. 다시 만든 뒤 재생하는 guard 도 같은 딥링크를 싣는다."""
+    return GuardOut(
+        code=code, blocked_agents=[agent], message=message, deeplink=_GUARD_DEEPLINKS.get(code)
+    )
+
+
 def _guard_message(outcome: entrypoint.SuggestOutcome) -> str:
     """닫힌 Agent 의 코드 문구 — readout 본문이다. 없으면 기본 문구."""
     return next((r.body for r in outcome.readouts), "추천을 만들지 않았어요.")
@@ -710,10 +769,19 @@ MENU_SOURCE_ORG = "농식품정보원"
 MENU_SOURCE_TITLE = "농림축산식품 공공데이터포털 레시피 기본 · 재료정보"
 MENU_SOURCE_URL = "https://data.mafra.go.kr"
 
+# Growth 도서 추천의 근거 카드 — 그 책을 찾은 공개 서지 정보의 출처다. 화면은 문서 카드와 같이
+# "참고 · 제목(저자) (기관, 출처)" 로 그린다. 책 정보 표가 없어서 제목은 그 추천의 "제목(저자)" 다
+BOOK_SOURCE_ORG = "국립중앙도서관"
+BOOK_SOURCE_TITLE = "도서관 정보나루"
+BOOK_SOURCE_URL = "https://data4library.kr"
 
-def _general_evidence_out(e, cards: dict, menus: dict[_uuid.UUID, str]) -> DocEvidenceOut | None:
+
+def _general_evidence_out(
+    e, cards: dict, menus: dict[_uuid.UUID, str], *, book_title: str
+) -> DocEvidenceOut | None:
     """일반 추천 근거 한 행 → 화면 카드. 문서 행은 검수된 시드에서, 메뉴 행은 후보 풀(검수된
-    레시피)에서 찾는다. 못 찾으면 None — 그 근거는 보여 주지 않는다."""
+    레시피)에서 찾는다. 책 행(Growth 도서)은 그 추천의 "제목(저자)"(`book_title`)로 그린다 — 근거가
+    그 책 자체라 따로 찾을 곳이 없다. 못 찾으면 None — 그 근거는 보여 주지 않는다."""
     ref = Ref(kind=e.source_kind, id=str(e.source_id))
     if e.source_kind == MENU_EVIDENCE_KIND:
         name = menus.get(e.source_id)
@@ -725,6 +793,15 @@ def _general_evidence_out(e, cards: dict, menus: dict[_uuid.UUID, str]) -> DocEv
             source_org=MENU_SOURCE_ORG,
             source_title=MENU_SOURCE_TITLE,
             source_url=MENU_SOURCE_URL,
+            note=e.note,
+        )
+    if e.source_kind == BOOK_EVIDENCE_KIND:
+        return DocEvidenceOut(
+            ref=ref,
+            title=book_title,
+            source_org=BOOK_SOURCE_ORG,
+            source_title=BOOK_SOURCE_TITLE,
+            source_url=BOOK_SOURCE_URL,
             note=e.note,
         )
     card = cards.get((e.source_kind, e.source_id))
@@ -906,6 +983,40 @@ async def update_event(
     if replayed is not None and isinstance(replayed, dict):
         return JSONResponse(status_code=200, content=replayed)
 
+    # 연결부터 잡는다 — 수정이 알림 행을 잡은 뒤에 알림을 걸며 연결을 잠그면, 연결 → 알림 순으로
+    # 지우는 끊기(`unlink_parent`)와 교착이 된다. 끊긴 뒤면 일정도 고치지 않는다 (#427)
+    if not await schedule_repo.lock_link(
+        session, child_id=child.child_id, parent_id=parent.parent_id
+    ):
+        raise ApiError(403, "child_access_denied", "이 아이에 접근할 수 없어요")
+    before = await schedule_repo.find_event(
+        session, child_id=child.child_id, event_id=eid, lock="update"
+    )
+    if before is None:
+        raise ApiError(404, "not_found", "일정을 찾을 수 없어요")
+
+    touch_reminder = "reminder" in body.model_fields_set
+    if touch_reminder and body.reminder is not None:
+        mine_before = (
+            await schedule_repo.list_my_reminders(
+                session, parent_id=parent.parent_id, event_ids=[eid]
+            )
+        ).get(eid)
+        # 화면은 일정 폼 전체를 보내서, 일정만 고쳐도 지금 알림 값이 같이 온다. 저장된 값과 같으면
+        # 알림은 안 건드린 것으로 보고 검사도 저장도 하지 않는다 (#603 리뷰)
+        #   - 시작 · 종류가 그대로면: 이미 울린 알림을 검사하면 제목 수정까지 422 가 되고,
+        #     저장하면 "울렸음" 이 지워져 한 번 더 울린다.
+        #   - 종류만 바뀌면: 옛 종류의 값이라 검사에 걸린다. `update_event` 가 날 수를 지켜 옮긴다.
+        #   - 같은 종류에서 시작만 바뀌면 검사한다 — 그 값의 울릴 시각이 지났으면 다시 고르게 한다.
+        same_lead = mine_before is not None and mine_before.lead == body.reminder.lead
+        kind_changed = before.all_day != body.event.all_day
+        if same_lead and (kind_changed or before.starts_at == body.event.starts_at):
+            touch_reminder = False
+        else:
+            check_reminder(
+                body.reminder.lead, starts_at=body.event.starts_at, all_day=body.event.all_day
+            )
+
     event = await schedule_repo.update_event(
         session,
         child_id=child.child_id,
@@ -916,8 +1027,9 @@ async def update_event(
         ends_at=body.event.ends_at,
         all_day=body.event.all_day,
         category=EventCategory(body.event.category),
+        now=datetime.now(timezone.utc),
     )
-    if event is None:
+    if event is None:  # 위에서 잡아 두어 오지 않는다
         raise ApiError(404, "not_found", "일정을 찾을 수 없어요")
 
     try:
@@ -929,6 +1041,24 @@ async def update_event(
         )
     except ValueError:
         raise ApiError(400, "validation_failed", "유효하지 않은 item_id예요")
+
+    if touch_reminder and body.reminder is None:
+        await schedule_repo.delete_reminder(
+            session, child_id=child.child_id, event_id=eid, parent_id=parent.parent_id
+        )
+    elif touch_reminder:
+        put = await schedule_repo.put_reminder(
+            session,
+            child_id=child.child_id,
+            event_id=eid,
+            parent_id=parent.parent_id,
+            lead=body.reminder.lead,
+        )
+        if put is None:  # 확인한 뒤 연결이 끊겼다 (#427)
+            raise ApiError(403, "child_access_denied", "이 아이에 접근할 수 없어요")
+    mine = (
+        await schedule_repo.list_my_reminders(session, parent_id=parent.parent_id, event_ids=[eid])
+    ).get(eid)
 
     await session.commit()
 
@@ -953,6 +1083,7 @@ async def update_event(
                 )
                 for ei in items
             ],
+            reminder=reminder_out(mine),
         )
     )
 

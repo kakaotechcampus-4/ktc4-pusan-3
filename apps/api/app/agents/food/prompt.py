@@ -65,6 +65,8 @@ _OUTPUT_TOOL: dict[FoodTaskType, str] = {
 
 
 def _instructions(task_type: FoodTaskType) -> str:
+    if task_type not in _OUTPUT_TOOL:
+        raise ValueError(f"{task_type} 는 코드가 답하는 task 라 프롬프트가 없다")
     tool = _OUTPUT_TOOL[task_type]
     lines = [
         "[지시]",
@@ -80,6 +82,14 @@ def _instructions(task_type: FoodTaskType) -> str:
         lines.append(
             "- reason 에는 이 아이에게 맞는 이유와 지금인 이유를 한두 문장으로 쓴다. 싫어하는 것을 "
             "피해 골랐으면 무엇을 피했는지 쓴다. 몸 상태나 수치는 쓰지 않는다."
+        )
+        lines.append(
+            "- 보호자가 말한 음식이 후보 목록에 없으면 그 음식을 reason 에 쓰지 않는다. "
+            "후보 안에서 가까운 것을 고른다."
+        )
+        lines.append(
+            "- 보호자가 알레르기나 피할 음식을 말했어도 reason 에는 그 이름이나 "
+            "'알레르기를 고려해' 같은 말을 쓰지 않는다. 고른 메뉴가 왜 지금 맞는지만 쓴다."
         )
     if task_type == FoodTaskType.NUTRIENT_ANALYSIS:
         lines.append(

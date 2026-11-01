@@ -13,7 +13,7 @@ registry 와 tool 이 같이 읽는 값이라 따로 둔다 — registry 는 too
 tool 이 열리는 월령은 전부 0 이라(항상 열림) 표만 두고, 0 이 아닌 값만 파일에서 읽는다.
 """
 
-from app.agents.activity.weather import WEATHER_UNCHECKED, WeatherBrief
+from app.agents.activity.weather import WeatherBrief
 from app.agents.common.gate import Gate
 from app.agents.common.reference import age_gates
 
@@ -65,10 +65,11 @@ def checks_weather(gate: Gate) -> bool:
 
 
 def weather_checked(gate: Gate, weather: WeatherBrief) -> bool:
-    """오늘 날씨를 실제로 읽었는가. 부르지 않았거나(`checks_weather` 거짓) 예보를 못 읽은 날은
-    아니다 — 둘 다 판정은 실내만이지만, 모델에게 날씨를 말할 거리가 없다.
+    """오늘 날씨를 실제로 읽었는가. 부르지 않았거나(`checks_weather` 거짓) 예보 · 특보를 못 읽은
+    날은 아니다 — 모델에게 날씨를 말할 거리가 없다. 못 읽었어도 읽은 신호가 나빠 막힌 날이
+    있어서, 화면 문구(notices)가 아니라 `unread` 로 본다 (#645 리뷰).
     """
-    return checks_weather(gate) and WEATHER_UNCHECKED not in weather.notices
+    return checks_weather(gate) and not weather.unread
 
 
 def reads_affinity(gate: Gate) -> bool:

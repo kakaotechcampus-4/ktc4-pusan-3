@@ -1,0 +1,354 @@
+{
+  "$comment": [
+    "화면을 추가하면 여기에 한 줄 넣는다. 이 파일이 '지금 살아 있어야 하는 화면 목록'이다.",
+    "expect 는 최종 경로다 — 리다이렉트가 설계인 화면(AuthGate 튕김 등)이 있어서 필요하다.",
+    "auth: true 면 목 세션을 심고 들어간다. mustSee 는 그 화면에 반드시 보여야 하는 문구.",
+    "라우트마다 브라우저 컨텍스트가 새로 만들어져서 시나리오·세션이 서로 새지 않는다.",
+    "mustSee 는 되도록 '데이터가 와야 나오는 문구'로 고른다 — 정적 제목으로 잡으면 쿼리가 끝나기 전에 통과한다.",
+    "누를 수 있어야 하는 버튼은 mustBeEnabled 로 따로 본다 — 비활성 버튼도 글자는 보인다.",
+    "seed 는 그 화면에 들어가려면 있어야 하는 sessionStorage 값이다 (예: 가입 대기표).",
+    "status 는 기대 HTTP 상태다. 안 적으면 2xx·3xx 면 통과 — 404 화면처럼 4xx 가 정상인 곳에만 적는다."
+  ],
+  "routes": [
+    {
+      "name": "00 소개 · 로그인",
+      "path": "/",
+      "expect": "/",
+      "mustSee": "카카오로 시작하기",
+      "mustBeEnabled": "카카오로 시작하기"
+    },
+    {
+      "name": "00 로그인 · 미연결 (ready:false)",
+      "path": "/?scenario=auth_unready",
+      "expect": "/",
+      "mustSee": "로그인은 아직 연결 전이에요"
+    },
+    {
+      "name": "01 첫 진입 — 토큰 없이 (AuthGate 튕김)",
+      "path": "/onboarding",
+      "expect": "/",
+      "mustSee": "카카오로 시작하기"
+    },
+    {
+      "name": "01 첫 진입 — 아이 만들기",
+      "path": "/onboarding",
+      "auth": true,
+      "expect": "/onboarding",
+      "comment": "동의 항목은 GET /policies 가 그린다 (#90) — 서버가 준 제목으로 잡아야 '약관이 안 온 화면'이 통과하지 않는다.",
+      "mustSee": "민감정보 처리 (아이 건강·알레르기)"
+    },
+    {
+      "name": "02 아이 정보 (전부 선택)",
+      "path": "/child/c1/onboarding",
+      "auth": true,
+      "expect": "/child/c1/onboarding",
+      "mustSee": "우유"
+    },
+    {
+      "name": "03 홈 — 기억이 쌓인 상태",
+      "path": "/child/c1/home",
+      "auth": true,
+      "expect": "/child/c1/home",
+      "mustSee": "눈여겨볼 것"
+    },
+    {
+      "name": "03 홈 — 기록 0건 (빈 상태)",
+      "path": "/child/c1/home?scenario=empty",
+      "auth": true,
+      "expect": "/child/c1/home",
+      "mustSee": "아래에 한 줄 적으면 여기에 쌓여요"
+    },
+    {
+      "name": "04 대화 — 주소로 바로 들어옴 (대화 없음)",
+      "path": "/child/c1/chat",
+      "auth": true,
+      "expect": "/child/c1/chat",
+      "mustSee": "아래에 한 줄 적으면 여기서 이어져요"
+    },
+    {
+      "name": "07 기억 — 관찰 탭",
+      "path": "/child/c1/memories",
+      "auth": true,
+      "expect": "/child/c1/memories",
+      "mustSee": "저녁에 계란말이를 또 찾았어요"
+    },
+    {
+      "name": "07 기억 — 기억 탭 (프로필)",
+      "path": "/child/c1/memories?tab=profile",
+      "auth": true,
+      "expect": "/child/c1/memories",
+      "mustSee": "서로 다른 3일에 기록됐어요"
+    },
+    {
+      "name": "07 기억 — 제안 피드백 탭 · 피드백 전",
+      "path": "/child/c1/memories?tab=feedback",
+      "auth": true,
+      "expect": "/child/c1/memories",
+      "mustSee": "두부를 부쳐서 한 조각 곁들여 보세요"
+    },
+    {
+      "name": "07 기억 — 제안 피드백 탭 · 피드백 완료 (#592)",
+      "path": "/child/c1/memories?tab=feedback&view=rated",
+      "auth": true,
+      "expect": "/child/c1/memories",
+      "mustSee": "계란말이에 시금치를 조금 섞어 보세요"
+    },
+    {
+      "name": "07 기억 — 제안 피드백 21건 · 2쪽 (#592)",
+      "path": "/child/c1/memories?tab=feedback&scenario=suggestions_many",
+      "auth": true,
+      "expect": "/child/c1/memories",
+      "mustSee": "제안 21건"
+    },
+    {
+      "name": "07 기억 — 기록 탭 · 식사 필터",
+      "path": "/child/c1/memories?domain=food",
+      "auth": true,
+      "expect": "/child/c1/memories",
+      "mustSee": "기록 3건"
+    },
+    {
+      "name": "07 기억 — 기록 25건 · 2쪽 (#584)",
+      "path": "/child/c1/memories?scenario=observations_many&page=2",
+      "auth": true,
+      "expect": "/child/c1/memories",
+      "mustSee": "블록으로 탑을 쌓았어요 (19)",
+      "mustBeEnabled": "이전 쪽"
+    },
+    {
+      "name": "07 기억 — 기억 탭 · 검색과 기간 (#584)",
+      "path": "/child/c1/memories?tab=profile&q=%EA%B3%84%EB%9E%80%EB%B0%98%EC%B0%AC&from=2020-01-01&to=2030-12-31",
+      "auth": true,
+      "expect": "/child/c1/memories",
+      "mustSee": "기억 1건",
+      "mustBeEnabled": "필터"
+    },
+    {
+      "name": "07 기억 — 기록 0건 (빈 상태)",
+      "path": "/child/c1/memories?scenario=empty",
+      "auth": true,
+      "expect": "/child/c1/memories",
+      "mustSee": "아직 적은 말이 없어요"
+    },
+    {
+      "name": "07 기억 — 프로필이 전부 6개월 지남 (NF-08)",
+      "path": "/child/c1/memories?tab=profile&scenario=stale",
+      "auth": true,
+      "expect": "/child/c1/memories",
+      "mustSee": "6개월이 지나서"
+    },
+    {
+      "name": "09 캘린더 — 일정 · 관찰이 있는 달",
+      "path": "/child/c1/calendar",
+      "auth": true,
+      "expect": "/child/c1/calendar",
+      "mustSee": "저녁에 계란말이를 또 찾았어요"
+    },
+    {
+      "name": "09 캘린더 — 기록 0건 (빈 달 · 빈 날)",
+      "path": "/child/c1/calendar?scenario=empty",
+      "auth": true,
+      "expect": "/child/c1/calendar",
+      "mustSee": "이날은 아무것도 없어요"
+    },
+    {
+      "name": "08 사진으로 적기 — 사진 없이 직접 들어온 경우",
+      "path": "/child/c1/photos",
+      "auth": true,
+      "expect": "/child/c1/photos",
+      "mustSee": "사진 한 장이 한 줄을 대신해요",
+      "mustBeEnabled": "사진 고르기"
+    },
+    {
+      "name": "08 사진으로 적기 — 날짜를 싣고 들어온 경우",
+      "path": "/child/c1/photos?date=2026-09-12",
+      "auth": true,
+      "expect": "/child/c1/photos",
+      "mustSee": "9월 12일"
+    },
+    {
+      "name": "10 설정",
+      "path": "/child/c1/settings",
+      "auth": true,
+      "expect": "/child/c1/settings",
+      "mustSee": "함께 보는 사람",
+      "mustBeEnabled": "보호자 초대하기"
+    },
+    {
+      "name": "10 설정 › 고객센터",
+      "path": "/child/c1/settings/help",
+      "auth": true,
+      "expect": "/child/c1/settings/help",
+      "mustSee": "알레르기를 AI 가 추측하나요?"
+    },
+    {
+      "name": "10 설정 › 탈퇴",
+      "path": "/child/c1/settings/withdraw",
+      "auth": true,
+      "expect": "/child/c1/settings/withdraw",
+      "mustSee": "내가 쓴 일기는 지워지고"
+    },
+    {
+      "name": "10 설정 › 문제 알리기",
+      "path": "/child/c1/settings/report",
+      "auth": true,
+      "expect": "/child/c1/settings/report",
+      "mustSee": "어떤 일인가요?"
+    },
+    {
+      "name": "11 아이 프로필 — 기본",
+      "path": "/child/c1/profile",
+      "auth": true,
+      "expect": "/child/c1/profile",
+      "mustSee": "키 104.2cm, 몸무게 17.1kg",
+      "mustBeEnabled": "키·몸무게 새로 적기"
+    },
+    {
+      "name": "11-1 키 · 몸무게 상세 — 변화 그래프 + 기록 목록",
+      "path": "/child/c1/profile/growth",
+      "auth": true,
+      "expect": "/child/c1/profile/growth",
+      "mustSee": "키 104.2cm, 몸무게 17.1kg",
+      "mustBeEnabled": "키·몸무게 새로 적기"
+    },
+    {
+      "name": "11-1 키 · 몸무게 상세 — 잰 기록 0건",
+      "path": "/child/c1/profile/growth?scenario=empty",
+      "auth": true,
+      "expect": "/child/c1/profile/growth",
+      "mustSee": "아직 잰 기록이 없어요"
+    },
+    {
+      "name": "11-3 복약 — 진행 중 코스 · 회차 체크 (#537 · 게이트 아님)",
+      "path": "/child/c1/profile/medications",
+      "auth": true,
+      "expect": "/child/c1/profile/medications",
+      "mustSee": "오늘 체크"
+    },
+    {
+      "name": "11-3 복약 — 진행 중 복약 0건",
+      "path": "/child/c1/profile/medications?scenario=empty",
+      "auth": true,
+      "expect": "/child/c1/profile/medications",
+      "mustSee": "지금 먹이는 약이 없어요"
+    },
+    {
+      "name": "11 아이 프로필 — 측정 기록 · 알레르기 0건",
+      "path": "/child/c1/profile?scenario=empty",
+      "auth": true,
+      "expect": "/child/c1/profile",
+      "mustSee": "아직 잰 기록이 없어요"
+    },
+    {
+      "name": "11-2 검사지에서 가져오기 — 사진 없이 직접 들어온 경우",
+      "path": "/child/c1/profile/safety-scan",
+      "auth": true,
+      "expect": "/child/c1/profile/safety-scan",
+      "mustSee": "고른 검사지가 없어요",
+      "mustBeEnabled": "프로필에서 다시 고르기"
+    },
+    {
+      "name": "05 제안 후보 — 개인화 추천",
+      "path": "/child/c1/suggestions?agents=food,activity",
+      "auth": true,
+      "expect": "/child/c1/suggestions",
+      "mustSee": "추천 이유"
+    },
+    {
+      "name": "05 제안 후보 — 근거 부족 (일반 추천 + 질문 1개)",
+      "path": "/child/c1/suggestions?agents=food,activity&scenario=scarcity",
+      "auth": true,
+      "expect": "/child/c1/suggestions",
+      "mustSee": "36개월 또래가 자주 찾는 놀이예요"
+    },
+    {
+      "name": "05 제안 후보 — 요청에 맞춘 일반 추천 (문서 출처 없음 · #597)",
+      "path": "/child/c1/suggestions?agents=food,activity&scenario=suggest_requested",
+      "auth": true,
+      "expect": "/child/c1/suggestions",
+      "mustSee": "요청하신 놀이에 맞춰 골랐어요"
+    },
+    {
+      "name": "05 제안 후보 — Agent 1개 실패 (NF-06)",
+      "path": "/child/c1/suggestions?agents=food,activity&scenario=partial",
+      "auth": true,
+      "expect": "/child/c1/suggestions",
+      "mustSee": "이번에 준비하지 못했어요"
+    },
+    {
+      "name": "05 제안 후보 — 알레르기 미상 guard · 오래된 근거",
+      "path": "/child/c1/suggestions?agents=food,activity&scenario=stale",
+      "auth": true,
+      "expect": "/child/c1/suggestions",
+      "mustSee": "사용한 기록"
+    },
+    {
+      "name": "가입 동의 — 대기표 없이 직접 접근",
+      "path": "/auth/consent",
+      "expect": "/",
+      "mustSee": "카카오로 시작하기"
+    },
+    {
+      "name": "가입 — 이름 + 계정 동의 2건",
+      "path": "/auth/consent",
+      "seed": {
+        "icatch.oauth.consent_code": "cc_mock",
+        "icatch.oauth.provider": "kakao"
+      },
+      "expect": "/auth/consent",
+      "mustSee": "개인정보 수집·이용 (보호자 본인)"
+    },
+    {
+      "name": "00-1 경로 고르기 — 아이 0명",
+      "path": "/start?scenario=consent",
+      "auth": true,
+      "expect": "/start",
+      "mustSee": "먼저 등록해 버리면 초대를 받을 수 없어요"
+    },
+    {
+      "name": "00-1 경로 고르기 — 아이가 이미 있으면 홈으로",
+      "path": "/start",
+      "auth": true,
+      "expect": "/child/c1/home",
+      "mustSee": "눈여겨볼 것"
+    },
+    {
+      "name": "초대 코드 입력",
+      "path": "/invite?scenario=consent",
+      "auth": true,
+      "expect": "/invite",
+      "mustSee": "누구의 초대인지 먼저 보여드려요"
+    },
+    {
+      "name": "초대 코드 입력 — 토큰 없이 (AuthGate 튕김)",
+      "path": "/invite",
+      "expect": "/",
+      "mustSee": "카카오로 시작하기"
+    },
+    {
+      "name": "디자인 시스템 (내부 문서)",
+      "path": "/design-system",
+      "expect": "/design-system",
+      "mustSee": "기준이 있는"
+    },
+    {
+      "name": "로그인 복귀 — 코드 없이 직접 접근",
+      "path": "/auth/callback",
+      "expect": "/",
+      "mustSee": "카카오로 시작하기"
+    },
+    {
+      "name": "404 — 없는 주소",
+      "path": "/nope",
+      "expect": "/nope",
+      "status": 404,
+      "mustSee": "주소가 바뀌었거나 링크가 잘못된 것 같아요"
+    },
+    {
+      "name": "로그인 복귀 — 서버 에러 코드",
+      "path": "/auth/callback?error=invalid_state",
+      "expect": "/auth/callback",
+      "mustSee": "로그인 요청이 만료됐어요"
+    }
+  ]
+}

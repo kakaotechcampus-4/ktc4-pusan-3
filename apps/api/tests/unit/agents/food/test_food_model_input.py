@@ -193,3 +193,15 @@ async def test_결과에도_알레르기_이름이_없다(monkeypatch: pytest.Mo
     ]
     for text in map(str, shown):
         assert "달걀" not in text
+
+
+async def test_요청에_알레르기_음식이_있어도_모델_입력에는_등록_이름이_없다() -> None:
+    llm = ScriptedLLM(propose("두부조림", "시금치나물", "미역국"))
+
+    await run(
+        meal_task("계란 요리 추천해줘"),
+        meal_context(TOFU, SPINACH, SOUP, safety=EGG),
+        client=llm,
+    )
+
+    assert_clean(model_input(llm))  # "계란" 은 보호자가 쓴 말이라 남고, "달걀" · "난류" 는 없다

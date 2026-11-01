@@ -24,13 +24,19 @@ export function Card({
   children,
   className,
   tone = "default",
+  "data-tour": tour,
 }: {
   children: ReactNode;
   className?: string;
   tone?: CardTone;
+  /** 화면 투어가 비추는 자리 (`components/screen-tour.tsx`). */
+  "data-tour"?: string;
 }) {
   return (
-    <div className={cn("rounded-card bg-surface border p-4", TONE[tone], className)}>
+    <div
+      data-tour={tour}
+      className={cn("rounded-card bg-surface border p-4", TONE[tone], className)}
+    >
       {children}
     </div>
   );

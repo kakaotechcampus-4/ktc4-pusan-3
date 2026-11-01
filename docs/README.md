@@ -91,6 +91,10 @@
 
 - [event/event-draft-flow-v1.md](event/event-draft-flow-v1.md) — 승인 전 `event` 행을 두지 않기로 하면서 생긴 초안 계약 · `op`(create/update) 두 모양 · `items` 는 최종 목록(빠진 `item_id` 는 삭제) · `before` 는 원본 전체이고 `changed` 는 뺌 · `draft_id` 는 화면 전용 키 · `is_prepared` 는 초안이 읽지 않음
 
+## 알림 (notification)
+
+- [notification/reminder-v1.md](notification/reminder-v1.md) — **일정 알림.** 일정마다 보호자 개인 알림 1개(고정 목록 · 종일은 KST 오전 9시) · 울릴 시각이 아니라 `lead` 를 저장하고 보낼 때 계산 · 기기는 로그인에 묶여 로그아웃 · 만료 때 함께 지워짐 · 스위치 2개(보호자 단위, 행 없으면 코드 기본값) · 1분 배치가 보내기 전에 `sent_at` 을 찍음(두 번 울리느니 한 번 빠짐) · 10분 넘게 지난 알림은 안 보냄 · 문구에 일정 제목 없음 · 🔶 문구 · 토큰 동의 · 기본값은 PM 결정 대기 (#594)
+
 ## 급식표 (meal-plan)
 
 - [meal-plan/meal-plan-pipeline-v1.md](meal-plan/meal-plan-pipeline-v1.md) — 입력 3종(사진 · 엑셀 · 한글)이 모이는 `MealPlanJSON` 과 `MealPlanReader` 확정 · `source` 필드로 검수 필요 여부 구분 · `meal_type` 5종 · `allergen_codes` 는 JSON 에 없음(규칙이 뽑음) · 저장 기준은 미정(우선 아이 기준) · 못 읽은 칸은 그 칸만 비움
@@ -102,11 +106,13 @@
 - [web/kakao-login-v1.md](web/kakao-login-v1.md) — 로그인은 API 호출이 아니라 페이지 이동 · 셸은 인앱 인증 세션만 열고 토큰을 안 만짐 · 복귀는 `/auth/callback` 웹앱 공통 · 에러 문구는 프론트가 만듦 · 세션은 access 15분 메모리 + refresh HttpOnly 쿠키 (#465)
 - [web/mock-screens-v1.md](web/mock-screens-v1.md) — 목 서버 화면 확인 조회표 · 시나리오별 주소 · 저장소 둘(sessionStorage/localStorage) 초기화 스니펫 · 목의 refresh 표식
 - [web/event-draft-ui-v1.md](web/event-draft-ui-v1.md) — 초안이 생기는 시점 3곳(한 줄 입력 · 제안 · 사진)과 경로별 흐름 · 그릇은 셋 카드는 한 벌 · 초안 만들기는 게이트가 아니고 **제출만 게이트 ㉠**(`/events/{eid}/confirm` 에서 옮겨옴) · 건별 제출 · 못 읽은 일자를 화면이 안 채움 · 초안은 세션 스토리지에만 · 🔶 `photo-runs/{rid}/commit` 이 게이트인지는 미결
+- [web/screen-tour-v1.md](web/screen-tour-v1.md) — 화면 투어(#632) · 어느 화면에 자동으로 뜨나 · "봤음" 은 서버 별도 테이블(지금은 기기 저장) · 그만 봐도 본 것 · 비출 것이 없으면 단계를 뺀다 · 비춘 요소도 눌리지 않는다 · 화면이 바뀌면 같은 PR 에서 단계를 맞춘다
 - [web/screen-rules-v1.md](web/screen-rules-v1.md) — 04 · 11-1 · 11-2 가 시트가 아니라 라우트인 이유(웹뷰 뒤로가기) · `childId` 정본은 URL · 05 채택과 일정 만들기 분리 · 알레르기 확인이 채택보다 먼저 · 07 기록/기억 이름 · 교정 · 필터 · 08 은 게이트가 아님 · 사진 시트 두 단계 · 09 표식은 모양
 - [web/chat-run-v1.md](web/chat-run-v1.md) — 04 는 라우트 · 보내는 순간 넘어감 · 대화는 하루 하나 · `EventSource` 금지 · `partial` · `interrupted` · `guidance` 는 실패 아님 · `unconfirmed` 분리 · 되묻기는 `reply_to` · 키는 말풍선에
 - [web/components-v1.md](web/components-v1.md) — 컴포넌트 목록 · `Screen` 고정 바 · 네비는 가는 곳에만 · `IconButtonLink` · `ButtonLink` · 직접 만든 `Select` · 외부 UI 라이브러리 예외 셋 · 토큰 · 높이 · 서체 두 벌 · 호버 변형
 - [web/auth-consent-v1.md](web/auth-consent-v1.md) — 로그인 시작 지점 하나 · `bind` · 복귀 경로 검증 · 가입 동의와 아이 동의를 나눈 이유 · 관계는 02 · "전체 동의" 금지 · 동의 정본은 `GET /policies` · 토큰은 메모리, refresh 는 쿠키 · 확인 실패는 로그아웃이 아님
 - [web/api-client-v1.md](web/api-client-v1.md) — `fetch` 직접 호출 금지와 예외 · 되돌릴 수 없는 5곳은 `operations.ts` 로만 · 키 수명(`rotate` 는 성공 뒤) · 에러 코드별 "다시 시도" 금지 · 게이트에 낙관적 업데이트 금지 · 에러 바운더리 표
+- [web/medication-v1.md](web/medication-v1.md) — 복약 확인 카드는 **게이트 ㉡ 안의 메서드**(새 게이트 아님) · 알림 시각을 반드시 보여 주고 고치지 않음 · 비어 온 기간을 채우기 전엔 잠금 · 복약 초안은 건강 정보라 메모리 전용 · 회차 체크는 11-3 이고 게이트 아님 · `awaits_reply` 인 Agent 질문만 답하기 · 서류는 body 그대로 + 복사 · ⚠️ 제출 · 조회 · 체크 경로와 SSE 이름은 잠정 (#537)
 - [web/mock-and-tests-v1.md](web/mock-and-tests-v1.md) — 목 시나리오 표 · 목 규칙(타입 강제 · `withIdempotency` · 핸들러 순서) · Vitest 와 Playwright 가 거는 것 · 테스트 전용 핸들러 금지 · 목 상태 리셋
 - [web/toolchain-deploy-v1.md](web/toolchain-deploy-v1.md) — 스택 버전과 TS 7 을 안 쓰는 이유 · `make web-build` 를 PR 전에 · CI 단계 · API 주소는 빌드 인자 · `.dockerignore` 의 `.env*` · standalone 복사
 
