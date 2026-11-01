@@ -6,6 +6,7 @@
 틈을 흉내 낸다.
 """
 
+import logging
 from collections.abc import Sequence
 from datetime import date
 from uuid import uuid4
@@ -40,6 +41,7 @@ from tests.unit.agents.food.support import (
     affinity,
     doc_row,
     menu_row,
+    observation,
     propose,
     reply,
     tool_call,
@@ -180,6 +182,160 @@ async def test_기억을_조회해_근거를_달면_개인화_추천이고_근�
 
     assert {draft.kind for draft in result.suggestions} == {"personalized"}
     assert all(draft.citations for draft in result.suggestions)  # 근거 0행인 개인화는 버그다
+
+
+def _cite(row: AffinityRow, note: str = "두부를 잘 먹음") -> list[dict[str, str]]:
+    return [{"kind": "profile_affinity", "id": str(row.id), "note": note}]
+
+
+# ── 모델을 부르기 전 기억 선조회 (#662) ─────────────────────────────────────
+async def test_모델이_검색_도구를_안_불러도_선조회한_기록을_인용하면_개인화_추천이다() -> None:
+    liked = affinity("두부", polarity=1)
+    memory = InMemoryFoodMemory({CHILD: [liked]}, {})
+    llm = ScriptedLLM(propose("두부조림", "시금치나물", "미역국", evidence=_cite(liked)))
+
+    result = await run(meal_task(), meal_context(TOFU, SPINACH, SOUP, memory=memory), client=llm)
+
+    assert llm.calls == 1  # 검색 도구 왕복 없이 첫 응답이 곧바로 출력 tool 이다
+    assert {draft.kind for draft in result.suggestions} == {"personalized"}
+    assert all(draft.citations for draft in result.suggestions)
+
+
+async def test_선조회한_기록이_있어도_모델이_인용하지_않으면_일반_추천이다() -> None:
+    # 기록이 있다는 것만으로 개인화로 바꾸지 않는다 — 코드가 근거를 대신 붙이지도 않는다
+    memory = InMemoryFoodMemory({CHILD: [affinity("두부", polarity=1)]}, {})
+    llm = ScriptedLLM(propose("두부조림", "시금치나물", "미역국"))
+
+    result = await run(meal_task(), meal_context(TOFU, SPINACH, SOUP, memory=memory), client=llm)
+
+    assert {draft.kind for draft in result.suggestions} == {"general"}
+    assert all(
+        not citation.ref.is_child_record
+        for draft in result.suggestions
+        for citation in draft.citations
+    )
+
+
+async def test_선조회하지_않은_id_를_인용하면_그_후보는_거절된다() -> None:
+    memory = InMemoryFoodMemory({CHILD: [affinity("두부", polarity=1)]}, {})
+    stranger = affinity("김치", polarity=1)  # 이 아이의 기록이 아니라 조회된 적이 없다
+    llm = ScriptedLLM(
+        propose("두부조림", "시금치나물", "미역국", evidence=_cite(stranger)),
+        propose("두부조림", "시금치나물", "미역국"),
+    )
+
+    result = await run(meal_task(), meal_context(TOFU, SPINACH, SOUP, memory=memory), client=llm)
+
+    rejected = "\n".join(str(message.get("content")) for message in llm.seen[1])
+    assert "EVIDENCE_REQUIRED" in rejected
+    assert {draft.kind for draft in result.suggestions} == {"general"}
+
+
+async def test_선조회_상위_열_개_밖의_근거도_키워드로_다시_찾으면_인용할_수_있다() -> None:
+    fillers = [affinity(name, strength=0.9) for name in "가나다라마바사아자차"]
+    target = affinity("시금치", strength=0.3)
+    memory = InMemoryFoodMemory({CHILD: [*fillers, target]}, {})
+    llm = ScriptedLLM(
+        tool_response(tool_call("m", "search_food_memory", {"keywords": ["시금치"]})),
+        propose("두부조림", "시금치나물", "미역국", evidence=_cite(target, "시금치를 잘 먹음")),
+    )
+
+    result = await run(meal_task(), meal_context(TOFU, SPINACH, SOUP, memory=memory), client=llm)
+
+    first_user = next(m["content"] for m in llm.seen[0] if m["role"] == "user")
+    assert str(target.id) not in first_user  # 선조회 밖이었다
+    assert {draft.kind for draft in result.suggestions} == {"personalized"}
+
+
+async def test_첫_user_메시지에_아이_기록_후보가_id_와_함께_실린다() -> None:
+    liked = affinity("두부", polarity=1)
+    meal = observation("시금치", days_ago=2, polarity=1, amount_text="한 그릇")
+    memory = InMemoryFoodMemory({CHILD: [liked]}, {CHILD: [meal]})
+    llm = ScriptedLLM(propose("두부조림", "시금치나물", "미역국"))
+
+    await run(meal_task(), meal_context(TOFU, SPINACH, SOUP, memory=memory), client=llm)
+
+    user = next(m["content"] for m in llm.seen[0] if m["role"] == "user")
+    assert "[아이 기록 후보]" in user
+    assert str(liked.id) in user and str(meal.id) in user
+    assert "profile_affinity" in user and "observation_food" in user
+    assert "한 그릇" not in user  # 원문 · 양 표현은 싣지 않는다
+
+
+async def test_최근_기록이_없으면_인용할_기록이_없다고_프롬프트가_말하고_일반_추천이다() -> None:
+    llm = ScriptedLLM(propose("두부조림", "시금치나물", "미역국"))
+
+    result = await run(meal_task(), meal_context(TOFU, SPINACH, SOUP), client=llm)
+
+    user = next(m["content"] for m in llm.seen[0] if m["role"] == "user")
+    assert "[아이 기록 후보]\n(인용 가능한 최근 기록 없음)" in user
+    assert {draft.kind for draft in result.suggestions} == {"general"}
+
+
+async def test_후보_풀이_비어_모델을_안_부르면_선조회도_하지_않는다(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with_pool(monkeypatch)
+    prefetched: list[FoodContext] = []
+    real = food_agent.prefetch_food_memory
+
+    async def spy(context: FoodContext):  # noqa: ANN202
+        prefetched.append(context)
+        return await real(context)
+
+    monkeypatch.setattr(food_agent, "prefetch_food_memory", spy)
+
+    await run(meal_task(), meal_context(TOFU), client=ScriptedLLM())
+
+    assert prefetched == []
+
+
+async def test_추천_한_번마다_근거_건수를_로그로_남기고_이름과_원문은_싣지_않는다(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO)
+    liked = affinity("두부", polarity=1)
+    memory = InMemoryFoodMemory({CHILD: [liked]}, {})
+    llm = ScriptedLLM(propose("두부조림", "시금치나물", "미역국", evidence=_cite(liked)))
+
+    await run(meal_task(), meal_context(TOFU, SPINACH, SOUP, memory=memory), client=llm)
+
+    line = next(r.getMessage() for r in caplog.records if "Food 추천 근거" in r.getMessage())
+    for expected in (
+        "run_id=run-1",
+        "prefetched=1",
+        "seen=1",
+        "cited=1",
+        "personalized=3",
+        "general=0",
+        "model_search=False",
+    ):
+        assert expected in line
+    assert "두부" not in caplog.text
+
+
+async def test_선조회한_기록이_있는데_하나도_인용하지_않은_일반_추천이_있으면_경고한다(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO)
+    memory = InMemoryFoodMemory({CHILD: [affinity("두부", polarity=1)]}, {})
+    llm = ScriptedLLM(propose("두부조림", "시금치나물", "미역국"))
+
+    await run(meal_task(), meal_context(TOFU, SPINACH, SOUP, memory=memory), client=llm)
+
+    warned = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("근거를 쓰지 않았다" in r.getMessage() for r in warned)
+
+
+async def test_기록이_없으면_일반_추천이어도_경고하지_않는다(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO)
+    llm = ScriptedLLM(propose("두부조림", "시금치나물", "미역국"))
+
+    await run(meal_task(), meal_context(TOFU, SPINACH, SOUP), client=llm)
+
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
 
 
 async def test_후보_풀이_비면_모델을_부르지_않고_추천_없이_안내만_낸다() -> None:
