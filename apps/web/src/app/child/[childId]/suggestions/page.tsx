@@ -17,6 +17,7 @@ import { Button, ButtonLink } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
 import { Chip, ChipRow } from "@/components/ui/chip";
 import { PageTitle } from "@/components/ui/page-title";
+import { ScreenTour, TourHelpButton } from "@/components/screen-tour";
 import { Screen } from "@/components/ui/screen";
 import { Spinner } from "@/components/ui/spinner";
 import { phaseOf, Swap } from "@/components/ui/swap";
@@ -39,6 +40,7 @@ import {
   type SuggestionsResponse,
 } from "@/lib/api";
 import { useEnterMotion } from "@/lib/motion";
+import { suggestionsTour } from "@/lib/tour/screens/suggestions";
 
 /**
  * 05 제안 후보.
@@ -266,7 +268,10 @@ function SuggestionsScreen() {
   return (
     <Screen className="gap-5">
       <header>
-        <PageTitle>제안 후보</PageTitle>
+        <div className="flex items-start gap-3">
+          <PageTitle className="min-w-0 flex-1">제안 후보</PageTitle>
+          <TourHelpButton tour={suggestionsTour} />
+        </div>
         {/* 🚨 looked_at 앞에 가운뎃점을 하나 더 붙이지 않는다 — 이미 점으로 나뉜 메타
             스트립이고, 띄운 가운뎃점은 줄당 하나까지다 (문서 §4). */}
         {/* 서버가 아직 무엇을 봤는지 내지 않으면 비어 온다 — 빈 줄을 그리지 않는다 (#249). */}
@@ -419,7 +424,7 @@ function SuggestionsScreen() {
         {/* 🚨 **다음 행동은 여기 한 곳이다** (줄마다 두지 않는다 · `suggestion-list.tsx` 머리말).
           그래서 화면의 `primary` 도 하나다 — 단계가 바뀌어도 이 카드 안에서 하나씩만 선다. */}
         {pickable.some((s) => s.agent !== "health") ? (
-          <Card>
+          <Card data-tour="confirm">
             <p className="text-section text-ink">
               {chosenIds === null ? "이렇게 준비할게요" : "이렇게 하기로 했어요"}
             </p>
@@ -584,6 +589,9 @@ function SuggestionsScreen() {
           result={approving.target}
         />
       ) : null}
+
+      {/* 🚨 제안이 다 선 뒤에만 뜬다. 실패 카드만 있으면 비출 것도 없다. */}
+      <ScreenTour tour={suggestionsTour} ready={suggestions.isSuccess} />
     </Screen>
   );
 }
@@ -628,7 +636,7 @@ function ScarcityCard({
   });
 
   return (
-    <Card>
+    <Card data-tour="question">
       <h2 className="text-section text-ink">
         {hasGeneral
           ? hasPersonal

@@ -1,0 +1,126 @@
+{
+  "response": {
+    "numFound": 10,
+    "docs": [
+      {
+        "doc": {
+          "isbn13": "9788952233363",
+          "bookname": "공룡이 궁금하면 열어 봐! :플랩북 ",
+          "authors": "지은이: 케이트 데이너스 ;옮긴이: 박영도",
+          "publisher": "살림출판사",
+          "publication_year": "2016",
+          "addition_symbol": "73490",
+          "class_no": "457",
+          "bookImageURL": "https://bookthumb-phinf.pstatic.net/cover/106/885/10688528.jpg?type=m1&udate=20170316"
+        }
+      },
+      {
+        "doc": {
+          "isbn13": "9788956186511",
+          "bookname": "먼지깨비 ",
+          "authors": "글·그림: 이연실 ;빛그림: 김향수",
+          "publisher": "반달",
+          "publication_year": "2014",
+          "addition_symbol": "73800",
+          "class_no": "813.7",
+          "bookImageURL": "http://image.aladin.co.kr/product/4351/19/cover/8956186510_1.jpg"
+        }
+      },
+      {
+        "doc": {
+          "isbn13": "9780744598575",
+          "bookname": "I like books",
+          "authors": "Anthony Browne",
+          "publisher": "Walker Books",
+          "addition_symbol": "90100",
+          "class_no": "",
+          "bookImageURL": "https://bookthumb-phinf.pstatic.net/cover/025/242/02524218.jpg?type=m1&udate=20170308"
+        }
+      },
+      {
+        "doc": {
+          "isbn13": "9788955823981",
+          "bookname": "강아지똥 ",
+          "authors": "권정생 글 ;정승각 그림",
+          "publisher": "길벗어린이",
+          "publication_year": "2017",
+          "addition_symbol": "77810",
+          "class_no": "813.6",
+          "bookImageURL": "http://image.aladin.co.kr/product/10995/75/cover/8955823983_1.jpg"
+        }
+      },
+      {
+        "doc": {
+          "isbn13": "9788952229021",
+          "bookname": "동물이 궁금하면 열어 봐! ",
+          "authors": "케이트 데이너스 글 ;유수미 옮김",
+          "publisher": "살림어린이",
+          "publication_year": "2014",
+          "addition_symbol": "73400",
+          "class_no": "031",
+          "bookImageURL": "http://image.aladin.co.kr/product/4843/39/cover/8952229029_1.jpg"
+        }
+      },
+      {
+        "doc": {
+          "isbn13": "9780140502961",
+          "bookname": "Brown Bear, Brown Bear, What Do You See? (Paperback)",
+          "authors": "Bill Martin Jr.",
+          "publisher": "PUFFINBOOKS",
+          "publication_year": "1999",
+          "addition_symbol": "",
+          "class_no": "",
+          "bookImageURL": "https://bookthumb-phinf.pstatic.net/cover/002/017/00201730.jpg?type=m1&udate=20110718"
+        }
+      },
+      {
+        "doc": {
+          "isbn13": "9791195641345",
+          "bookname": "바닷속 생일 파티 :야광 보드북 ",
+          "authors": "글 그림: 질라사우레 ;옮긴이: 황정혜",
+          "publisher": "후즈갓마이테일",
+          "publication_year": "2016",
+          "addition_symbol": "77800",
+          "class_no": "375.1",
+          "bookImageURL": "http://image.aladin.co.kr/product/8769/86/cover/k912535687_1.jpg"
+        }
+      },
+      {
+        "doc": {
+          "isbn13": "9791186872185",
+          "bookname": "우리 아기 첫 촉감 그림책 : 이건 우리 산타가 아니야",
+          "authors": "피오나 와트",
+          "publisher": "어스본코리아",
+          "publication_year": "2016",
+          "addition_symbol": "",
+          "class_no": "",
+          "bookImageURL": "https://bookthumb-phinf.pstatic.net/cover/112/912/11291221.jpg?type=m1&udate=20161117"
+        }
+      },
+      {
+        "doc": {
+          "isbn13": "9788943311995",
+          "bookname": "둘이서 둘이서 :보드북 ",
+          "authors": "글,그림: 김복태",
+          "publisher": "보림출판사",
+          "publication_year": "2019",
+          "addition_symbol": "77810",
+          "class_no": "813.7",
+          "bookImageURL": "https://image.aladin.co.kr/product/17963/84/cover/8943311990_1.jpg"
+        }
+      },
+      {
+        "doc": {
+          "isbn13": "9788960863163",
+          "bookname": "놓지 마 과학!",
+          "authors": "글·그림: 신태훈,나승훈",
+          "publisher": "위즈덤하우스",
+          "publication_year": "2016",
+          "addition_symbol": "67400",
+          "class_no": "408",
+          "bookImageURL": "http://image.aladin.co.kr/product/10065/1/cover/8960863165_1.jpg"
+        }
+      }
+    ]
+  }
+}

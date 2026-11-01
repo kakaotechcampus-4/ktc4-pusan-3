@@ -25,9 +25,13 @@ MIN_KEYWORD_MATCH = 2
 _MEMORY = "search_activity_memory"
 # NO_RECORDS 의 다음 행동. 모델이 넣은 keywords 는 싣지 않는다 — message 는 로그로 흘러간다
 _NO_MATCH = (
-    "그 이름의 놀이 기록은 없다. keywords 를 비우고 다시 찾거나, 근거 없이 일반 추천을 낸다."
+    "그 이름의 놀이 기록은 없다. keywords 를 비우고 다시 찾거나, 기억 근거 없이 일반 추천을 낸다."
 )
-_NO_RECORDS = "놀이 기록이 없다. evidence 를 비우고 일반 추천을 낸다. 보호자에게 되묻지 않는다."
+# evidence 를 어떻게 달지는 프롬프트 [근거]가 정한다 — 여기서 따로 말하면 둘이 어긋난다(#590 리뷰)
+_NO_RECORDS = (
+    "놀이 기록이 없다. 기억 근거 없이 일반 추천을 낸다 — evidence 는 [근거] 규칙대로 단다. "
+    "보호자에게 되묻지 않는다."
+)
 
 
 async def search_activity_memory(

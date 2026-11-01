@@ -153,8 +153,9 @@ async def test_Idempotency_Key_가_없으면_400_이고_아무것도_안_바뀐�
         {"one_line": "요즘 블록 놀이를 좋아해요"},  # 한 줄은 홈 입력으로만
         {"height_cm": 0},
         {"weight_kg": -1},
-        {"height_cm": 300.1},  # 오타 막기 — DB 칸(999.9)에 닿기 전에
-        {"weight_kg": 0.04},  # 소수 한 자리로 반올림하면 0
+        {"height_cm": 220.1},  # 칸별 범위 밖 (#628)
+        {"weight_kg": 150.1},
+        {"height_cm": 98.55},  # 소수 둘째 자리 — 반올림해 저장하지 않는다
         {"relation": "mother", "height_cm": None},  # null 은 받지 않는다 — 안 적은 칸은 안 보낸다
         {"gender": "unknown"},
         {"relation": "uncle"},
@@ -187,23 +188,6 @@ async def test_400_을_받은_키는_남지_않아_고친_본문으로_다시_�
 
     assert (refused.status_code, accepted.status_code) == (400, 200)
     assert len(await growth_rows(session, cid)) == 1
-
-
-async def test_소수_둘째_자리는_반올림해_저장하고_저장된_값을_돌려준다(
-    db_client, session, bearer, cid
-):
-    headers, _ = bearer
-
-    response = await db_client.post(
-        onboarding_url(cid), json={"height_cm": 98.55}, headers=with_key(headers)
-    )
-
-    assert response.status_code == 200
-    assert response.json()["growth"]["height_cm"] == 98.6
-    await session.rollback()
-    (row,) = await growth_rows(session, cid)
-    await session.refresh(row)
-    assert row.height_cm == Decimal("98.6")
 
 
 async def test_보호자2의_온보딩은_보호자2의_관계만_바꾼다(db_client, session, bearer, cid):

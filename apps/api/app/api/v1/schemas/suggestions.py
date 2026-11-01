@@ -99,13 +99,14 @@ class DocEvidenceOut(BaseModel):
     """일반 추천의 근거인 문서 행. CC BY 행은 출처 표시가 조건이라 기관 · 제목을 같이 싣는다.
 
     Food 일반 추천은 고른 메뉴(레시피 카탈로그 행)도 이 모양으로 싣는다(#442) — `title` 은 메뉴
-    이름, 출처는 그 레시피를 받아 온 공개 데이터다.
+    이름, 출처는 그 레시피를 받아 온 공개 데이터다. Growth 일반 도서 추천도 고른
+    책(`book_catalog`)을 싣는다 — `title` 은 그 추천의 "제목(저자)", 출처는 도서관 정보나루다.
     """
 
     ref: Ref = Field(
         description=(
-            "kind 는 food_doc · activity_doc · growth_doc, "
-            "또는 recipe_catalog(Food 일반 추천의 메뉴 근거)"
+            "kind 는 food_doc · activity_doc · growth_doc, 또는 recipe_catalog(Food 일반 추천의 "
+            "메뉴 근거) · book_catalog(Growth 일반 도서 추천의 책 근거)"
         )
     )
     title: str
@@ -118,7 +119,8 @@ class DocEvidenceOut(BaseModel):
 class GeneralSuggestionOut(BaseModel):
     """또래 기준 일반 추천. 아이 기록이 아니라 문서 행을 근거로 단다 (루트 §2).
 
-    Food 는 고른 메뉴(레시피 카탈로그 행)만으로도 된다(#442).
+    Food 는 고른 메뉴(레시피 카탈로그 행)만으로도 된다(#442). Growth 도서는 고른 책(정보나루
+    서지 행)이 근거다.
     """
 
     id: str
@@ -168,7 +170,14 @@ class GuardOut(BaseModel):
     code: str
     blocked_agents: list[AgentValue]
     message: str
-    deeplink: str | None = None
+    deeplink: str | None = Field(
+        default=None,
+        description=(
+            "풀러 갈 곳 — 아이 id 를 안 담은 웹 상대 경로. "
+            "safety_unknown 이면 profile(11 아이 프로필), "
+            "갈 곳이 없는 guard(not_ready · unsupported)는 null"
+        ),
+    )
 
 
 class ScarcityQuestionOut(BaseModel):

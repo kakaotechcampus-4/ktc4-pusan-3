@@ -22,7 +22,7 @@ from enum import StrEnum
 from uuid import UUID
 
 from app.agents.activity.result import ErrorCode
-from app.agents.activity.rules import is_recent_duplicate, normalize_activity, overstates
+from app.agents.activity.rules import is_recent_duplicate, normalize_activity
 from app.agents.activity.schemas.common import (
     ActivitySetting,
     CaregiverRole,
@@ -32,7 +32,7 @@ from app.agents.activity.schemas.common import (
 from app.agents.activity.schemas.recommend import ActivityCandidate
 from app.agents.activity.store.ports import ActivityDocRow
 from app.agents.activity.tools.filters import SafetyTerms, check_candidate
-from app.agents.common.evidence import RankedEvidence, cite
+from app.agents.common.evidence import RankedEvidence, cite, overstates
 from app.agents.common.reference import age_gates
 from app.agents.common.refs import EvidenceCitation, Ref
 from app.agents.common.suggestion import SuggestionDraft, SuggestionRejected, build
@@ -71,7 +71,7 @@ class RejectReason(StrEnum):
 GUIDANCE: dict[RejectReason, str] = {
     RejectReason.EVALUATIVE: "또래 비교나 발달 판정 표현을 쓰지 않는다.",
     RejectReason.UNKNOWN_EVIDENCE: (
-        "evidence 에는 search_activity_memory 결과나 [예시]에 있던 id 만 쓴다."
+        "evidence 에는 search_activity_memory 결과의 id 나 [예시]의 id(예1 같은)만 그대로 쓴다."
     ),
     RejectReason.AVOIDED: "싫어한다고 나온 활동은 다시 내지 않는다. 다른 활동으로 바꾼다.",
     RejectReason.OVERSTATED_NOTE: (

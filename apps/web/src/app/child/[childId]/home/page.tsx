@@ -21,6 +21,12 @@ import { HomeComposer } from "@/components/home-composer";
 import { PhotoSourceSheet } from "@/components/photo-source-sheet";
 import { PROMPT_PILL } from "@/components/agent-prompts";
 import { ScreenTransition } from "@/components/route-transition";
+import { ScreenTour, TourHelpButton } from "@/components/screen-tour";
+import {
+  TodayMedications,
+  TodayMedicationsFailed,
+  todayCourses,
+} from "@/components/today-medications";
 import { Button } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -36,8 +42,17 @@ import { useChildId } from "@/hooks/use-child-id";
 import { hasOpenQuestion, isBusy, sendLine, useConversation } from "@/stores/conversation";
 import { useDraftStore, useDraftText } from "@/stores/draft";
 import { usePhotoDraftStore } from "@/stores/photo-draft";
-import { api, isApiError, qk, type HomeResponse, type Me } from "@/lib/api";
+import {
+  api,
+  isApiError,
+  qk,
+  type HomeResponse,
+  type Me,
+  type MedicationsResponse,
+} from "@/lib/api";
 import { cn } from "@/lib/cn";
+import { homeEmptyTour, homeTour } from "@/lib/tour/screens/home";
+import { PENDING_SERVER_FEATURES } from "@/lib/features";
 import { FORWARD } from "@/lib/view-transition";
 
 /**
@@ -99,6 +114,19 @@ function HomeScreen() {
     queryFn: () => api.get<HomeResponse>(`/children/${childId}/home`),
   });
 
+  /**
+   * 오늘 먹일 약 (#563 리뷰). 🚨 **홈 쿼리와 같이 시작한다** — 구역 안에서 부르면 홈 응답을 받은 뒤에야 나가서, 뜬 화면
+   *    한가운데에 구역이 뒤늦게 끼어들며 아래 카드를 밀었다 (디자인 시스템 §8). 홈은 둘 다 끝난 뒤 한 번에 그린다.
+   * 실서버에 복약 API 가 생기기 전에는 부르지 않는다 (`lib/features.ts`).
+   */
+  const medications = useQuery({
+    queryKey: qk.medications(childId),
+    queryFn: () => api.get<MedicationsResponse>(`/children/${childId}/medications`),
+    enabled: PENDING_SERVER_FEATURES.medications,
+  });
+  // 🚨 꺼진 쿼리도 `isPending` 이 참으로 남는다 — 켜져 있을 때만 기다린다.
+  const medicationsPending = PENDING_SERVER_FEATURES.medications && medications.isPending;
+
   // 🚨 이름은 스토어에 캐시하지 않는다. 개인정보는 화면이 필요할 때 Query 로 가져온다 (§3).
   const me = useQuery({ queryKey: qk.me(), queryFn: () => api.get<Me>("/me") });
   const nickname = me.data?.children.find((c) => c.child_id === childId)?.nickname;
@@ -118,6 +146,11 @@ function HomeScreen() {
   }
 
   const consentBlocked = isApiError(home.error, "consent_required") ? home.error : null;
+  /**
+   * 🚨 기록이 없는 홈과 있는 홈은 다른 투어다 (`lib/tour/screens/home.ts`). 받기 전에는 기록 있는 쪽으로
+   *    두지만 `ready` 가 꺼져 있어 뜨지 않는다.
+   */
+  const tour = home.data?.observation_count === 0 ? homeEmptyTour : homeTour;
 
   /**
    * 🚨 **버튼의 `prompt_key` 를 그대로 넘긴다** (#286). 빼면 "저녁" 버튼을 눌러도 Agent 는
@@ -178,6 +211,7 @@ function HomeScreen() {
             ) : null}
           </div>
           {/* 설정은 자주 가는 곳이 아니라 아래 네비에 칸을 주지 않는다 — 제목 옆 아이콘 하나다. */}
+          <TourHelpButton tour={tour} />
           <IconButton
             label="설정"
             onClick={() => router.push(`/child/${childId}/settings`, FORWARD)}
@@ -187,8 +221,8 @@ function HomeScreen() {
         </header>
 
         {/* 스켈레톤 → 내용은 같은 자리의 교체다 (디자인 시스템 §8). */}
-        <Swap id={phaseOf(home)}>
-          {home.isPending ? (
+        <Swap id={medicationsPending ? "pending" : phaseOf(home)}>
+          {home.isPending || medicationsPending ? (
             <HomeBodySkeleton />
           ) : consentBlocked ? (
             // 🚨 403 consent_required 를 일반 실패로 그리면 "다시 시도" 만 누르게 된다 — 다시 시도해도
@@ -211,12 +245,28 @@ function HomeScreen() {
               </Button>
             </CardFailed>
           ) : home.data ? (
-            <HomeBody data={home.data} />
+            <HomeBody
+              data={home.data}
+              medications={
+                !PENDING_SERVER_FEATURES.medications ? null : medications.isError ? (
+                  <Section label="오늘 먹일 약">
+                    <TodayMedicationsFailed onRetry={() => void medications.refetch()} />
+                  </Section>
+                ) : medications.data && todayCourses(medications.data).length > 0 ? (
+                  <Section label="오늘 먹일 약">
+                    <TodayMedications childId={childId} courses={todayCourses(medications.data)} />
+                  </Section>
+                ) : null
+              }
+            />
           ) : null}
         </Swap>
 
         {/* 🚨 고른 파일을 여기서 올리지 않는다. 08 이 업로드·스트림·저장을 통째로 소유하고,
           홈은 파일 하나를 스토어에 놓고 넘긴다 — 두 화면이 같은 흐름을 두 벌 갖지 않게. */}
+        {/* 막 보내고 대화로 넘어가는 순간에는 띄우지 않는다 (`leaving`). */}
+        <ScreenTour tour={tour} ready={home.isSuccess && leaving === null} />
+
         <PhotoSourceSheet
           open={photoSheetOpen}
           onClose={() => setPhotoSheetOpen(false)}
@@ -241,6 +291,7 @@ function HomeScreen() {
 function ChatEntryLink({ href, asking }: { href: string; asking: boolean }) {
   return (
     <Link
+      data-tour="chat-entry"
       href={href}
       {...FORWARD}
       className={cn(
@@ -259,16 +310,24 @@ function ChatEntryLink({ href, asking }: { href: string; asking: boolean }) {
   );
 }
 
-function HomeBody({ data }: { data: HomeResponse }) {
+/**
+ * @param medications 오늘 먹일 약 구역 (#563 리뷰). 🚨 **오늘 회차가 있을 때만** 홈 화면이 넘긴다 — 없으면 `null` 이고
+ *   아무것도 그리지 않는다. 기록이 0건인 빈 홈에서도 먹일 약은 있을 수 있어서 빈 상태 위에 따로 세운다.
+ */
+function HomeBody({ data, medications }: { data: HomeResponse; medications: ReactNode }) {
   // 🚨 기억이 0건이면 빈 상태다. 경보가 아니라 건수를 그대로 보여준다 (문서 §7).
   if (data.highlight === null && data.observation_count === 0) {
     return (
-      <EmptyState
-        icon={NotebookPen}
-        title="아래에 한 줄 적으면 여기에 쌓여요"
-        description="기록이 없으면 제안도 만들지 않아요. 지어내지 않으려고요."
-        count={0}
-      />
+      <div className="flex flex-col gap-6">
+        {medications}
+        <EmptyState
+          data-tour="empty"
+          icon={NotebookPen}
+          title="아래에 한 줄 적으면 여기에 쌓여요"
+          description="기록이 없으면 제안도 만들지 않아요. 지어내지 않으려고요."
+          count={0}
+        />
+      </div>
     );
   }
 
@@ -277,7 +336,7 @@ function HomeBody({ data }: { data: HomeResponse }) {
       <Counts week={data.week_count} upcoming={data.upcoming_count} />
 
       {data.today.length > 0 ? (
-        <Section label="오늘">
+        <Section label="오늘" tour="today">
           <Card className="flex flex-col gap-3">
             {data.today.map((item) =>
               item.kind === "meal" ? (
@@ -290,8 +349,10 @@ function HomeBody({ data }: { data: HomeResponse }) {
         </Section>
       ) : null}
 
+      {medications}
+
       {data.highlight ? (
-        <Section label="눈여겨볼 것">
+        <Section label="눈여겨볼 것" tour="highlight">
           <Card tone="accent">
             <div className="flex items-start gap-3">
               <IconTile icon={Repeat} />
@@ -348,9 +409,18 @@ function CountSkeleton() {
 }
 
 /** 섹션 제목. 🚨 브랜드색 라벨이라 화면에 초록이 규칙적으로 들어온다 (문서 §2-2 "canvas 위 브랜드 텍스트"). */
-function Section({ label, children }: { label: string; children: ReactNode }) {
+function Section({
+  label,
+  tour,
+  children,
+}: {
+  label: string;
+  /** 화면 투어가 비추는 자리 (`lib/tour/screens/home.ts`). */
+  tour?: string;
+  children: ReactNode;
+}) {
   return (
-    <section>
+    <section data-tour={tour}>
       <h2 className="text-label text-brand">{label}</h2>
       <div className="mt-2">{children}</div>
     </section>

@@ -15,7 +15,8 @@ Growth는 쓰기 포트가 없다 — 관찰은 Memory가, 추천 저장은 주�
 | GrowthMemoryReader | profile_affinity(education · activity) · 교육 · 루틴 · 놀이 관찰 |
 | NoticeReader | notice — 기관 공지가 있는가 (없어도 추천은 동작) |
 | GrowthDocReader | growth_doc — 월령 슬라이스 + 의미 검색, 자립 단계 사슬 통째로 |
-| BookSource | 도서 검색 — book_catalog 캐시 + 도서관 정보나루 |
+| BookSource | 도서 검색 — 정보나루 원문을 `library.LibraryBooks` 가 책 행으로 |
+| RawBookSearch | 정보나루 키워드 검색 원문 + 검색어 캐시 (`integrations/data4library`) |
 | IssuedBookReader | 만료 전 Growth suggestion 의 items — 도서는 "제목(저자)" |
 
 🚨 키 · 몸무게는 `Decimal` 이다.
@@ -31,17 +32,11 @@ from app.agents.common.evidence import AffinityRow
 from app.agents.common.ports import (
     ChildProfileReader,
     ConsentReader,
-    SafetyLookupError,  # noqa: F401 — context.py · inmemory.py 가 여기서 가져간다
+    SafetyLookupError,
 )
+from app.core.book_raw import RawBook
+from app.core.book_raw import UpstreamUnavailable as UpstreamUnavailable  # 다시 내보낸다
 from app.rules.book_form import BookForm
-
-
-class UpstreamUnavailable(Exception):
-    """외부 조회 실패(도서 API). 결과가 0건인 것과 다르다.
-
-    캐시만으로 목록을 꾸미지 않고 `book_suggestion` 을 `closed.book_api` 로 닫는다.
-    """
-
 
 # 읽는 health_safety kind. 나머지 셋(chronic_disease · behavioral · other_medical)은 어디서도
 # 읽지 않는다 — 그걸로 추천을 가르면 LLM 없는 자동 진단이다
@@ -186,6 +181,19 @@ class SafetyReader(Protocol):
         ...
 
 
+class UnwiredSafety:
+    """`health_safety` 어댑터가 붙기 전의 자리. 읽으면 늘 `SafetyLookupError` 다.
+
+    Food · Activity 의 `UnwiredSafety` 와 같다.
+
+    `build_gate` 는 이 포트가 들어 있으면 동의를 보지 않고 교육을 닫는다 — 동의하지 않은 아이가
+    알레르기 확인 없이 열리지 않게. 루틴 · 도서 · 성장 추이는 건강정보를 읽지 않아 상관없다.
+    """
+
+    async def growth_safety(self, *, child_id: UUID) -> list[SafetyEntry]:
+        raise SafetyLookupError("health_safety 어댑터가 연결되지 않았다")
+
+
 class GrowthLogReader(Protocol):
     async def measurements(self, *, child_id: UUID) -> list[GrowthMeasurement]:
         """측정 **전부**. 순서는 보장하지 않는다 — 시간순은 호출부가 정렬한다.
@@ -231,9 +239,11 @@ class GrowthDocReader(Protocol):
         trigger_tags: tuple[str, ...],
         query: str,
         limit: int,
+        areas: tuple[str, ...] = (),
     ) -> list[GrowthDocRow]:
         """`min_month <= months < max_month` 로 거른 뒤 의미 검색 상위 `limit` 행.
 
+        `areas` 가 있으면 그 `area` 의 행만이다(요청 주제의 영역 키). 비면 거르지 않는다.
         `status='approved'` 행만 돌려준다. `query` 는 코드가 조립한다 —
         보호자 발화가 들어가지 않는다.
         """
@@ -250,7 +260,19 @@ class GrowthDocReader(Protocol):
 
 class BookSource(Protocol):
     async def search(self, *, keywords: tuple[str, ...], limit: int) -> list[BookRow]:
-        """캐시를 먼저 보고 API 를 부른다. 실패하면 UpstreamUnavailable — 빈 목록이 아니다."""
+        """검색어 여럿의 책 행. 실패하면 UpstreamUnavailable — 빈 목록이 아니다.
+
+        `limit` 은 검색어마다 받는 권수다 — 합쳐서 자르지 않는다. 구현은 `library.LibraryBooks`.
+        """
+        ...
+
+
+class RawBookSearch(Protocol):
+    async def search(self, *, keyword: str, limit: int) -> tuple[RawBook, ...]:
+        """검색어 하나의 정보나루 원문, 결과 순서 그대로 `limit` 권까지. 캐시를 먼저 본다.
+
+        실패하면 UpstreamUnavailable. 0건은 빈 튜플이다. 해석(아동 도서 · 형태)은 하지 않는다.
+        """
         ...
 
 
