@@ -658,6 +658,20 @@ describe("05 묶음 안내 · 일반 추천 근거 (#249)", () => {
     }
   });
 
+  it("🚨 놀이를 정해 물은 일반 추천은 문서 근거가 비어 오고 기준 문구를 단다 (#597)", async () => {
+    const data = await fetchWith("suggest_requested", { agents: ["activity"] });
+
+    const general = data.general ?? [];
+    expect(general.length).toBeGreaterThan(0);
+    for (const item of general) {
+      // 🚨 종류는 그대로 general 이다 — 요청 기반인지 가르는 칸은 응답에 없다
+      expect(item.kind).toBe("general");
+      expect(item.evidence).toEqual([]);
+      expect(item.basis).not.toBe("");
+    }
+    expect(data.suggestions).toEqual([]);
+  });
+
   it("🚨 묶음마다 확인 문구 칸이 늘 있고, 식품 아닌 알레르기는 놀이 묶음에 문구가 온다", async () => {
     const plain = await fetchWith("default", { agents: ["food", "activity"] });
     for (const group of plain.groups ?? []) expect(Array.isArray(group.cautions)).toBe(true);
