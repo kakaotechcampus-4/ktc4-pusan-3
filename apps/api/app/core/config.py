@@ -50,6 +50,12 @@ class Settings(AgentLLMSettings):
     # 비어 있으면 CORS 를 켜지 않는다 — 같은 오리진 배포에서는 필요 없다.
     CORS_ALLOW_ORIGINS: str = ""
 
+    # 푸시 알림(FCM) 서비스 계정 키 JSON 파일 경로 (#594, app/integrations/fcm.py). 비어 있으면
+    # 발송 배치(workers/reminder_dispatch)만 돌지 않고 서버는 뜬다.
+    # 🚨 비밀 — 파일을 저장소에 두지 않는다. 배포는 서버에 둔 파일을 컨테이너에 읽기 전용으로
+    #    붙인다 (docs/notification/reminder-v1.md).
+    FCM_SERVICE_ACCOUNT_FILE: str = ""
+
     # ERROR 이상 로그를 알릴 Discord 웹훅 주소 (app/core/alerts.py). 비어 있으면 알림만 꺼지고
     # 서버는 뜬다. 🚨 비밀 — 응답 · 로그에 싣지 않는다. 켜는 법 · 본문은 README "로그와 알림".
     ALERT_WEBHOOK_URL: str = ""
@@ -105,6 +111,11 @@ class Settings(AgentLLMSettings):
 
     # 보호자별 하루 한 줄 입력 횟수 (app/api/quota.py). 모델 크레딧 보호용 — 테스트용 숫자.
     INPUT_DAILY_LIMIT: int = 5
+
+    # 푸시 기기 토큰을 받기 시작하는 스위치 (#594). 기기 토큰이 실린 처리방침 새 판이 나가기 전에는
+    # 꺼 둔다 — 꺼져 있으면 `PUT /me/push-device` 가 204 만 주고 저장하지 않는다 (#605 PM).
+    # 웹 빌드 인자를 거치지 않는 앱 토큰까지 서버 한 곳에서 막는다
+    PUSH_DEVICE_ACCEPT: bool = False
 
     @field_validator("AUTH_RETURN_URL_WEB", "AUTH_RETURN_URL_APP")
     @classmethod

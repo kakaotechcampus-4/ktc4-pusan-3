@@ -376,11 +376,29 @@ export interface EventItem {
   prepared_at: string | null;
 }
 
+/**
+ * 얼마나 먼저 울릴지 (#594). 일정 종류마다 고를 수 있는 값이 다르다 — 맞지 않으면 422 invalid_reminder.
+ * 시간 있는 일정은 앞의 10개, 종일 일정은 `_9am` 4개(KST 오전 9시).
+ */
+export type ReminderLead =
+  | "at_start"
+  | "5m"
+  | "10m"
+  | "15m"
+  | "30m"
+  | "1h"
+  | "2h"
+  | "1d"
+  | "2d"
+  | "1w"
+  | "day_of_9am"
+  | "1d_9am"
+  | "2d_9am"
+  | "1w_9am";
+
+/** 내 알림. 보호자 개인 것이라 다른 보호자의 알림은 오지 않는다 (#594). */
 export interface Reminder {
-  id: string;
-  remind_at: string;
-  /** true 면 PATCH·DELETE 모두 409 already_sent. */
-  sent: boolean;
+  lead: ReminderLead;
 }
 
 /**
@@ -399,7 +417,8 @@ export interface CalendarEvent {
   source_notice_id: string | null;
   source_refs: Ref[];
   items: EventItem[];
-  reminders: Reminder[];
+  /** 요청한 보호자 본인의 알림. 걸지 않았으면 null. */
+  reminder: Reminder | null;
 }
 
 /* ── 화면 응답 ────────────────────────────────────────────────────────── */
@@ -638,7 +657,7 @@ export interface AnswerRequest {
  * 🚨 **제출은 건별이다** (9/21 회의). 초안 여러 장을 한 요청으로 묶지 않는다.
  */
 
-/** 초안 안의 일정 본체. `CalendarEvent` 와 달리 `id` · `reminders` 가 없다 — 아직 행이 아니다. */
+/** 초안 안의 일정 본체. `CalendarEvent` 와 달리 `id` · `reminder` 가 없다 — 아직 행이 아니다. */
 export interface EventDraftFields {
   title: string;
   /**

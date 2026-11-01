@@ -107,6 +107,8 @@ import-linter 로 CI 에서 강제할 예정이다(#79 API CI 와 함께). 설�
 
 ### `app/workers/`
 - **허용**: domains, rules, core
+  — 그리고 배치가 부르는 외부 발송 integration(`discord` · `fcm`)과, 실행 진입점(`__main__`)의
+    DB 세션(`infra/db/session`). 정리 배치(`cleanup.py`)와 일정 알림 발송(`reminder_dispatch.py`)이 쓴다
 - **금지**: agents import
   — 승인 없는 알림 발송 경로를 구조적으로 차단 ([루트 §2 실행](../../CLAUDE.md#실행))
 

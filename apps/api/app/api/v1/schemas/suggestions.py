@@ -8,6 +8,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.api.v1.schemas.common import Ref
+from app.api.v1.schemas.reminders import ReminderIn, ReminderOut
 from app.core.event_draft import (
     MAX_DRAFT_ITEMS,
     MAX_ITEM_NAME,
@@ -275,6 +276,14 @@ class UpdateEventBody(BaseModel):
 class UpdateEventRequest(BaseModel):
     event: UpdateEventBody
     items: list[DraftItemPayload] = Field(default=[], max_length=MAX_DRAFT_ITEMS)
+    reminder: ReminderIn | None = Field(
+        default=None,
+        description=(
+            "요청한 보호자 본인의 알림. 칸을 빼거나 저장된 값과 같으면 그대로 두고, null 이면 "
+            "지운다. 종일 여부를 바꾸면 이 일정에 걸린 알림은 날 수를 지켜 가까운 값으로 옮겨진다"
+            "(시간 있는 일정의 1h → 종일의 day_of_9am 등). 옮긴 값의 울릴 시각이 지났으면 지워진다"
+        ),
+    )
 
     @model_validator(mode="after")
     def _item_name_length(self) -> UpdateEventRequest:
@@ -343,6 +352,10 @@ class SubmitEventRequest(BaseModel):
     event: SubmitEventBody
     items: list[DraftItemPayload] = Field(default=[], max_length=MAX_DRAFT_ITEMS)
     suggestion_ids: list[uuid.UUID] | None = Field(default=None, max_length=20)
+    reminder: ReminderIn | None = Field(
+        default=None,
+        description="제출한 보호자 본인의 알림. 다른 보호자에게는 걸리지 않는다. 기본값은 없음",
+    )
 
     @model_validator(mode="after")
     def _item_name_length(self) -> SubmitEventRequest:
@@ -372,7 +385,10 @@ class CalendarEventOut(BaseModel):
     source_notice_id: str | None
     source_refs: list[Ref]
     items: list[EventItemOut]
-    reminders: list = []
+    reminder: ReminderOut | None = Field(
+        default=None,
+        description="요청한 보호자 본인의 알림. 다른 보호자의 알림은 싣지 않는다",
+    )
 
 
 class SubmitEventResponse(BaseModel):

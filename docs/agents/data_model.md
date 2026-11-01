@@ -496,10 +496,14 @@
 | id | uuid | PK, UUIDv7 |
 | event_id | uuid | FK → `event.id`, NOT NULL, ON DELETE CASCADE, index |
 | parent_id | uuid | FK → `parent.id`, NOT NULL, ON DELETE CASCADE, index |
-| remind_at | timestamptz | NOT NULL |
+| lead | enum | NOT NULL. 얼마나 먼저 울릴지. 시간 있는 일정 `at_start` / `5m` / `10m` / `15m` / `30m` / `1h` / `2h` / `1d` / `2d` / `1w`, 종일 일정 `day_of_9am` / `1d_9am` / `2d_9am` / `1w_9am` (KST 오전 9시) |
 | sent_at | timestamptz | nullable, 실제 발송 시점 |
+- UNIQUE: `(event_id, parent_id)` — 보호자 한 명은 한 일정에 알림 1개 (#594).
 
-`parent_id`로 같은 Event를 보는 보호자마다 독립적인 알림을 소유한다.
+`parent_id`로 같은 Event를 보는 보호자마다 독립적인 알림을 소유한다. 일정을 만든 보호자는 제출할 때 함께 걸고, 다른 보호자는 캘린더에서 각자 건다.
+울릴 시각은 저장하지 않는다 — 보낼 때 `event.starts_at`에서 계산한다(`app/rules/reminder.py`). 그래서 일정을 고치면:
+- 종일 여부가 바뀌면 지우지 않고 날 수를 지켜 가까운 값으로 옮긴다 (`at_start`~`2h` ↔ `day_of_9am`, `1d`/`2d`/`1w` ↔ `*_9am`, #603 PM 결정). 옮긴 값의 울릴 시각이 이미 지났으면 그 알림만 지운다.
+- 새 울릴 시각이 아직 오지 않은 알림만 `sent_at`을 비워 다시 울린다. 이미 지난 시각으로 옮긴 알림은 비우지 않는다 — 이미 울린 알림이 한 번 더 울리지 않게.
 
 ### push_device (푸시 수신 기기)
 
@@ -507,13 +511,28 @@
 | --- | --- | --- |
 | id | uuid | PK, UUIDv7 |
 | parent_id | uuid | FK → `parent.id`, NOT NULL, ON DELETE CASCADE, index |
-| device_token | text | NOT NULL, UNIQUE. APNs/FCM 원문 토큰 |
-| platform | enum | `ios | android`, NOT NULL |
-| enabled | bool | NOT NULL, DEFAULT true |
+| session_id | uuid | FK → `session.id`, NOT NULL, UNIQUE, ON DELETE CASCADE |
+| device_token | text | NOT NULL, UNIQUE. FCM 등록 토큰 원문 (로그에 남기지 않는다) |
+| platform | enum | `ios | android | web`, NOT NULL |
 | last_seen_at | timestamptz | NOT NULL, DEFAULT now() |
 | created_at / updated_at | timestamptz | NOT NULL |
 
-같은 기기에서 계정이 바뀌면 upsert 시 `parent_id`, `platform`, `enabled`, `last_seen_at`을 함께 갱신한다.
+기기는 로그인(`session`) 1건에 묶인다 (#594). 로그아웃 · 세션 만료 · 탈퇴로 세션이 지워지면 기기도 함께 지워진다 — 공용 기기에서 로그아웃한 뒤 앞 보호자의 알림이 울리지 않는다.
+- 로그인 하나에 기기 하나. 토큰이 바뀌면 같은 행을 새 토큰으로 덮는다.
+- 같은 토큰이 다른 로그인에 있으면 지우고 넣는다 — 같은 기기에서 계정을 바꾼 것이다.
+- 켜고 끄기는 기기 단위가 아니라 보호자 단위다(`notification_setting`).
+
+### notification_setting (보호자 알림 켜고 끄기)
+
+| **필드** | **타입** | **비고** |
+| --- | --- | --- |
+| parent_id | uuid | PK, FK → `parent.id`, ON DELETE CASCADE |
+| schedule_enabled | bool | NOT NULL. 일정 알림을 받는다 |
+| medication_enabled | bool | NOT NULL. 복약 알림을 받는다 |
+| updated_at | timestamptz | NOT NULL |
+
+설정 탭의 스위치 2개다. 알림 시각은 여기서 고르지 않는다(일정마다 `reminder.lead`).
+행이 없으면 아직 바꾼 적이 없는 것이고 코드의 기본값(`domains/notification/repository.py` 의 `DEFAULT_SETTING`)으로 본다 — 기본값이 바뀌면 만진 적 없는 보호자 모두에게 바로 적용된다.
 
 ### diary_entry (보호자 개인 일기)
 
