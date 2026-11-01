@@ -57,6 +57,9 @@ class GrowthRunState:
     book_searched: bool = False
     # book_suggestion. 이번 run 에서 정보나루로 보낸 검색어 수 — `MAX_RUN_KEYWORDS` 까지
     book_keywords: int = 0
+    # book_suggestion. 이번 run 에서 보호자가 요청에 말한 검색 낱말(정규화). 있으면 그 낱말로 제목을
+    # 찾고, 제목에 이 낱말이 없는 책은 낼 수 없다. 다른 주제 책으로 채우지 않는다
+    asked_book_words: frozenset[str] = frozenset()
     # 재호출 전에 이미 통과했거나 빠진 책(정규화한 "제목(저자)"). 재호출은 이 책을 다시 낼 수 없다
     done_books: frozenset[str] = frozenset()
 
@@ -70,6 +73,12 @@ class GrowthRunState:
     # 요청 · 같은 입력의 기록 조각에서 코드가 읽은 주제 영역 키(`rules/growth_topic`).
     # 모델이 정하지 않는다. [예시]를 고르고 기억 조회를 넓히는 데 쓴다. 비면 주제가 없는 요청이다
     topic: tuple[str, ...] = ()
+    # `topic` 중 후보 글의 낱말로 거를 수 있는 영역(`rules/growth_topic.strict_topic`). 교육 후보의
+    # 주제 확인에만 쓴다. 비면 거르지 않는다
+    strict_topic: tuple[str, ...] = ()
+    # 보호자가 말한 루틴 카테고리 키(`rules/growth_topic.routine_scope`). 모델이 다른 카테고리의
+    # 단계를 내지 못하게 한다. 비면 범위를 정하지 않는다
+    routine_scope: tuple[str, ...] = ()
     # 보호자가 이 입력에서 한 말(요청 조각 + 같은 입력의 기록 조각)과, 같은 run 에서 Memory 가
     # 저장한 루틴 관찰의 행동 이름. 쪼개진 요청에서 보호자가 말한 행동을 코드가 알아
     # 모델이 다른 행동을 적는 것을 막는다

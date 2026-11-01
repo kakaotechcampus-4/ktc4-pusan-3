@@ -4,7 +4,8 @@
 - 아동 도서(ISBN 부가기호 첫 자리 7)가 아니면 후보에서 뺀다. 부가기호가 없는 책은 `unknown`
 - 서명 키워드가 있으면 `board`, KDC 대분류 8(문학)이면 `picture`, 그 밖의 KDC 면 `info`
 - 월령 범위는 form 하나로 정해진다 — 8개월 아이에게는 `board` 만 나간다
-- `unknown` 은 0–11개월에서 제외한다. 보드북인지 모르면 영아에게 내지 않는 쪽이 안전하다
+- `unknown` 은 어느 월령에도 내지 않는다. 아동 도서인지 확인이 안 되는 책(어른 책 · 외서)이
+  주제 낱말만 맞아 나가면 안 된다
 """
 
 import pytest
@@ -72,7 +73,7 @@ class TestAgeRange:
             "board": (0, 35),
             "picture": (12, 71),
             "info": (36, 71),
-            "unknown": (12, 71),
+            "unknown": (0, -1),  # 빈 구간 — 어느 월령에도 나가지 않는다
         }
 
     @pytest.mark.parametrize("months", [0, 8, 11])
@@ -94,11 +95,11 @@ class TestAgeRange:
         assert not fits_age("info", 35)
         assert fits_age("info", 36)
 
-    def test_unknown_is_out_only_for_the_first_year(self):
-        assert not fits_age("unknown", 11)
-        assert fits_age("unknown", 12)
+    @pytest.mark.parametrize("months", [0, 11, 12, 30, 48, 71])
+    def test_unknown_is_never_a_candidate(self, months):
+        assert not fits_age("unknown", months)
 
-    @pytest.mark.parametrize("form", ["picture", "info", "unknown"])
+    @pytest.mark.parametrize("form", ["picture", "info"])
     def test_last_month_of_v1_range_is_included(self, form):
         assert fits_age(form, 71)
 

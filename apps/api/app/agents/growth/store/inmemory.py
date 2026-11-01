@@ -172,7 +172,9 @@ class InMemoryBooks:
         self._rows = list(rows)
         self._fail = fail
 
-    async def search(self, *, keywords: tuple[str, ...], limit: int) -> list[BookRow]:
+    async def search(
+        self, *, keywords: tuple[str, ...], limit: int, title_words: tuple[str, ...] = ()
+    ) -> list[BookRow]:
         if self._fail:
             raise UpstreamUnavailable("도서 조회 실패 (테스트 주입)")
         return self._rows[:limit]

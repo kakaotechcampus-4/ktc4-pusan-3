@@ -7,6 +7,7 @@ import asyncio
 import json
 import logging
 import re
+import time
 from datetime import timedelta
 from types import SimpleNamespace
 from typing import Any
@@ -538,11 +539,11 @@ class FailsSecondSearch(InMemoryBooks):
         super().__init__(rows)
         self.searches = 0
 
-    async def search(self, *, keywords, limit):
+    async def search(self, *, keywords, limit, title_words=()):
         self.searches += 1
         if self.searches > 1:
             raise UpstreamUnavailable("도서 조회 실패 (테스트 주입)")
-        return await super().search(keywords=keywords, limit=limit)
+        return await super().search(keywords=keywords, limit=limit, title_words=title_words)
 
 
 def rhythm_row(key: str, lo: int, hi: int) -> GrowthDocRow:
@@ -603,9 +604,7 @@ class TestBook:
             call("propose_books", {"items": [pick(1), pick(2), pick(3)]}),
         )
         rows = [book(n) for n in range(1, 6)]
-        result = await run(
-            task("book_suggestion", "공룡 책 추천해줘"), books_ctx(rows=rows), client=llm
-        )
+        result = await run(task("book_suggestion", "책 추천해줘"), books_ctx(rows=rows), client=llm)
 
         assert result.status == "completed" and result.model_calls == 1
         assert [d.content for d in result.suggestions] == ["책1(가)", "책2(가)", "책3(가)"]
@@ -634,7 +633,7 @@ class TestBook:
         ctx = books_ctx(
             rows=[book(n) for n in range(1, 4)], memory=InMemoryGrowthMemory(education=[edu])
         )
-        result = await run(task("book_suggestion", "공룡 책"), ctx, client=llm)
+        result = await run(task("book_suggestion", "책 추천해줘"), ctx, client=llm)
 
         assert {d.kind for d in result.suggestions} == {"personalized"}
         for draft in result.suggestions:
@@ -733,6 +732,48 @@ class TestBook:
         assert result.suggestions == ()
         assert [r.body for r in result.readouts] == [READOUTS.render("closed.book_api").body]
 
+    async def test_도서_검색_실패_경고에_사유와_모델_호출_수가_남고_검색어는_없다(self, caplog):
+        caplog.set_level(logging.WARNING, logger="app.agents.growth.agent")
+        llm = FakeLLM(call("search_books", {"keywords": ["공룡"]}))
+        await run(task("book_suggestion"), books_ctx(rows=[book(1)], fail=True), client=llm)
+
+        lines = [r.getMessage() for r in caplog.records if "도서 검색 실패" in r.getMessage()]
+        assert len(lines) == 1
+        assert "reason=도서 조회 실패 (테스트 주입)" in lines[0] and "model_calls=1" in lines[0]
+        assert "공룡" not in lines[0]
+
+    async def test_도서_재검색_실패_경고에도_사유와_모델_호출_수가_남는다(self, caplog):
+        caplog.set_level(logging.WARNING, logger="app.agents.growth.agent")
+        llm = FakeLLM(
+            call("search_books", {"keywords": ["공룡"]}),
+            call(
+                "propose_books",
+                {"items": [pick(1, reason="숫자에 재능이 있어서 골랐어요"), pick(2), pick(3)]},
+            ),
+            call("search_books", {"keywords": ["기차"]}),
+        )
+        rows = [book(n) for n in range(1, 6)]
+        await run(
+            task("book_suggestion"),
+            context(
+                birth_for(30), books=FailsSecondSearch(rows), issued_books=InMemoryIssuedBooks()
+            ),
+            client=llm,
+        )
+
+        lines = [r.getMessage() for r in caplog.records if "도서 재검색 실패" in r.getMessage()]
+        assert len(lines) == 1
+        assert "reason=도서 조회 실패 (테스트 주입)" in lines[0] and "model_calls=2" in lines[0]
+
+    async def test_도서_프롬프트는_요청_낱말을_모두_넣고_책_종류는_주제가_아니라고_한다(self):
+        llm = FakeLLM()
+        await run(task("book_suggestion", "곰 책 추천해줘"), books_ctx(rows=[book(1)]), client=llm)
+        system = llm.seen[0][0]["content"]
+        assert "책 종류는 주제가 아니다" in system
+        assert "기록 주제는 섞지 않는다" in system
+        # 책 종류를 주제 예시로 들지 않는다
+        assert "공룡 · 그림책 · 잠자리" not in system
+
     async def test_8개월은_보드북만_나가고_모자라면_개수_안내가_붙는다(self):
         rows = [book(1), book(2, "board"), book(3)]
         llm = FakeLLM(
@@ -753,6 +794,19 @@ class TestBook:
 
         assert result.status == "completed" and result.suggestions == ()
         assert [r.code for r in result.readouts] == ["empty"]
+
+    async def test_요청한_주제의_책이_없으면_book_no_topic_으로_닫는다(self):
+        llm = FakeLLM(
+            call("search_books", {"keywords": ["곰"]}),
+            call("propose_books", {"items": []}),
+        )
+        result = await run(
+            task("book_suggestion", "곰 책 추천해줘"), books_ctx(8, [book(1)]), client=llm
+        )
+
+        assert (result.status, result.model_calls) == ("blocked", 1)
+        assert result.suggestions == ()
+        assert result.readouts == (READOUTS.render("book.no_topic"),)
 
     async def test_금지_표현으로_빠지면_재호출에서_다른_책으로_빈자리만_채운다(self):
         llm = FakeLLM(
@@ -890,6 +944,106 @@ class TestTopic:
         ctx = docs_ctx()
         await run(task("learning_suggestion", "놀이 추천해줘"), ctx, client=FakeLLM())
         assert ctx.state.topic == ()
+
+
+class TestOffTopicRecall:
+    async def test_주제_밖_후보가_빠지면_재호출로_채운다(self):
+        text = "한글 놀이 추천해줘"
+        probe = FakeLLM()
+        await run(task("learning_suggestion", text), docs_ctx(), client=probe)
+        doc_id = probe.seen[0][0]["content"].split("- id ", 1)[1].split(" ", 1)[0]
+        first = call(
+            "propose_learning_activity",
+            {
+                "items": [
+                    {
+                        "title": title,
+                        "steps": ["하나씩 해 본다"],
+                        "materials": [],
+                        "evidence": evidence,
+                        "reason": "이 나이에 많이 하는 활동이에요",
+                    }
+                    for title, evidence in (
+                        ("공룡 이름 짝맞추기", []),
+                        ("한글 자음 찾기", [{"id": doc_id, "note": "이 나이 예시를 참고했어요"}]),
+                        (
+                            "이야기 이어 말하기",
+                            [{"id": doc_id, "note": "이 나이 예시를 참고했어요"}],
+                        ),
+                    )
+                ]
+            },
+        )
+        # 재호출은 후보 세 개를 다시 내고, 앞에서 통과한 둘은 그대로 두고 빈자리만 채운다
+        llm = FakeLLM(
+            first, learning("글자 카드 놀이", "낱말 이어 말하기", "한글 소리 놀이", doc_id=doc_id)
+        )
+        result = await run(task("learning_suggestion", text), docs_ctx(), client=llm)
+        assert result.status == "completed" and result.model_calls == 2
+        titles = [d.content.split("\n")[0] for d in result.suggestions]
+        assert titles == ["한글 자음 찾기", "이야기 이어 말하기", "글자 카드 놀이"]
+        assert "공룡 이름 짝맞추기" in llm.seen[1][-1]["content"]
+
+
+class SlowSecondCall:
+    """첫 대화는 정해 둔 응답, 둘째 대화부터는 오래 걸리는 모델 가짜."""
+
+    def __init__(self, first: LLMResponse, delay: float) -> None:
+        self._first = first
+        self._delay = delay
+        self.calls = 0
+
+    async def chat(self, messages, **kwargs) -> LLMResponse:
+        self.calls += 1
+        if self.calls == 1:
+            return self._first
+        await asyncio.sleep(self._delay)
+        return LLMResponse(
+            message=SimpleNamespace(content="끝", tool_calls=None), usage={}, latency_ms=1
+        )
+
+
+def _with_deadline(text: str, seconds: float) -> DomainTask:
+    return DomainTask(
+        run_id="run-1",
+        agent="growth",
+        task_type="learning_suggestion",
+        request_texts=(text,),
+        deadline=time.perf_counter() + seconds,
+    )
+
+
+class TestRecallDeadline:
+    """안전 필터로 빠져 재호출하다 run 마감(20초)에 걸려도 처음 통과한 후보는 지킨다."""
+
+    async def test_재호출이_마감에_걸리면_처음_통과한_후보로_완료한다(self, monkeypatch):
+        monkeypatch.setattr("app.agents.growth.agent.RECALL_MARGIN_S", 0.0)
+        doc_id = await example_id()
+        first = learning("땅콩 세기", "색깔 찾기", "모양 맞추기", doc_id=doc_id)
+        llm = SlowSecondCall(first, delay=3.0)
+        started = time.perf_counter()
+        result = await run(_with_deadline("숫자 놀이 추천해줘", 0.5), docs_ctx(), client=llm)
+        assert time.perf_counter() - started < 2.0
+        assert result.status == "completed" and len(result.suggestions) == 2
+        assert [r.code for r in result.readouts] == ["fewer"]
+
+    async def test_재호출_전에_마감이_지났으면_재호출하지_않는다(self):
+        doc_id = await example_id()
+        llm = FakeLLM(learning("땅콩 세기", "색깔 찾기", "모양 맞추기", doc_id=doc_id))
+        result = await run(_with_deadline("숫자 놀이 추천해줘", -1.0), docs_ctx(), client=llm)
+        assert result.status == "completed" and len(result.suggestions) == 2
+        assert result.model_calls == 1 and len(llm.seen) == 1
+
+    async def test_마감이_없으면_지금처럼_재호출한다(self):
+        doc_id = await example_id()
+        llm = FakeLLM(
+            learning("땅콩 세기", "색깔 찾기", "모양 맞추기", doc_id=doc_id),
+            learning("색깔 찾기", "소리 듣기", "그림자 놀이", doc_id=doc_id),
+        )
+        result = await run(
+            task("learning_suggestion", "숫자 놀이 추천해줘"), docs_ctx(), client=llm
+        )
+        assert result.model_calls == 2 and len(result.suggestions) == 3
 
 
 class TestEvidencePrompt:

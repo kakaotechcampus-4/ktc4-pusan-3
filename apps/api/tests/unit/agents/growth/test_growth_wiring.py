@@ -5,6 +5,7 @@ LLM 은 정해 둔 응답을 내는 가짜다. 포트는 entrypoint 가 만드�
 """
 
 import json
+import time
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
@@ -468,7 +469,7 @@ async def test_도서는_정보나루_어댑터가_있으면_고른_책을_책_�
 
     saved = entrypoint.InMemorySuggestions()
     (shown,) = await handle(
-        "공룡 책 추천해줘",
+        "책 추천해줘",
         "book_suggestion",
         InMemoryStore(now=NOW),
         growth_llm,
@@ -561,7 +562,7 @@ class ReadsHandwash:
         self.calls += 1
         if self.calls == 1:
             return call("search_routine_memory", {})
-        result = json.loads(next(m for m in reversed(messages) if m["role"] == "tool")["content"])
+        result = json.loads(next(m for m in messages if m["role"] == "tool")["content"])
         record = next(r for r in result["data"]["records"] if r["category"] == "self_care")
         (step,) = result["data"]["next_steps"]
         return call(
@@ -703,3 +704,141 @@ class TestWithRecorded:
     def test_Memory_가_없으면_그대로다(self):
         tasks = self._tasks()
         assert pipeline._with_recorded(tasks, None) == tasks
+
+
+async def test_Memory_가_저장하지_못해도_식사_고민에_손_씻기_단계를_내지_않는다():
+    """기록한 행동을 모르는 run — 보호자가 말한 카테고리(식사) 밖의 단계는 범위가 막는다."""
+    store = InMemoryStore(now=NOW)
+    day = TODAY - timedelta(days=1)
+    await store.create_observation(
+        domain="routine",
+        child_id=CHILD,
+        source_writer=PARENT,
+        raw_text="어제 손 씻기는 어른이 다 해 줬어",
+        observed_on=day,
+        observed_range=build_observed_range(day),
+        fields={
+            "subject": "손 씻기",
+            "routine_category": "self_care",
+            "polarity": 0,
+            "assistance_level": "full_assist",
+        },
+    )
+    raw = "아이가 밥 먹을 때 너무 힘들어해 어떻게 하면 좋을까?"
+    supervisor = FakeLLM(
+        call(
+            "route",
+            {
+                "segments": [
+                    {
+                        "text": "아이가 밥 먹을 때 너무 힘들어해",
+                        "kind": "record",
+                        "work": "observe",
+                    },
+                    {
+                        "text": "어떻게 하면 좋을까?",
+                        "kind": "request",
+                        "agent": "growth",
+                        "growth_task": "routine_coaching",
+                    },
+                ]
+            },
+        )
+    )
+    # Memory 는 아무것도 저장하지 않고 끝낸다
+    memory = FakeLLM(
+        LLMResponse(
+            message=SimpleNamespace(content="기록하지 못했어요.", tool_calls=None),
+            usage={},
+            latency_ms=1,
+        )
+    )
+    saved = entrypoint.InMemorySuggestions()
+    events: list[Any] = []
+
+    await pipeline.handle_input(
+        raw,
+        AgentContext(child_id=CHILD, source_writer=PARENT, now=NOW, timezone=KST, store=store),
+        contexts(store),
+        run_id="run-1",
+        supervisor_client=supervisor,
+        memory_client=memory,
+        domain_clients={"growth": ReadsHandwash()},
+        emit=events.append,
+        commit=_no_commit,
+        save_suggestions=saved,
+    )
+
+    assert not saved.batches
+    assert all(not e.suggestion_ids for e in events if isinstance(e, pipeline.AgentResult))
+
+
+async def test_도메인_task_에_run_마감이_실린다(monkeypatch):
+    """Growth 는 이 마감으로 재호출 여부를 정한다 — pipeline 이 아는 값이다."""
+    real = pipeline._RUNNERS["growth"]
+    deadlines: list[float | None] = []
+
+    async def recording(task, context, **kwargs):
+        deadlines.append(task.deadline)
+        return await real(task, context, **kwargs)
+
+    monkeypatch.setitem(pipeline._RUNNERS, "growth", recording)
+    before = time.perf_counter()
+    await handle("잘 크고 있어?", "growth_review", InMemoryStore(now=NOW), FakeLLM())
+
+    (deadline,) = deadlines
+    assert deadline is not None
+    assert before < deadline <= time.perf_counter() + pipeline.RUN_DEADLINE_S
+
+
+async def test_도서_요청_낱말은_제목으로_찾고_제목에_낱말이_든_책만_저장한다():
+    from app.agents.growth.store.inmemory import InMemoryIssuedBooks
+    from tests.unit.agents.growth.support import FakeRawSearch, raw_book
+
+    raw = FakeRawSearch({"곰": [raw_book(n, title=f"곰 이야기{n}") for n in range(1, 4)]})
+    items = [
+        {"isbn": raw_book(n).isbn13, "evidence": [], "reason": "곰이 나오는 그림책이에요"}
+        for n in range(1, 4)
+    ]
+    growth_llm = FakeLLM(
+        call("search_books", {"keywords": ["곰"]}),
+        call("propose_books", {"items": items}),
+    )
+    saved = entrypoint.InMemorySuggestions()
+    (shown,) = await handle(
+        "곰 책 추천해줘",
+        "book_suggestion",
+        InMemoryStore(now=NOW),
+        growth_llm,
+        saved=saved,
+        growth_books=raw,
+        growth_issued_books=InMemoryIssuedBooks(),
+    )
+
+    assert shown.status == "completed" and len(shown.suggestion_ids) == 3
+    assert raw.by_field == {"곰": "title"}
+
+
+async def test_도서_요청_낱말이_제목에_든_책이_없으면_book_no_topic_으로_닫는다():
+    from app.agents.growth.store.inmemory import InMemoryIssuedBooks
+    from tests.unit.agents.growth.support import FakeRawSearch, raw_book
+
+    raw = FakeRawSearch({"곰": [raw_book(1, title="공룡 대탐험")]})
+    growth_llm = FakeLLM(
+        call("search_books", {"keywords": ["곰"]}),
+        call("propose_books", {"items": []}),
+    )
+    saved = entrypoint.InMemorySuggestions()
+    (shown,) = await handle(
+        "곰 책 추천해줘",
+        "book_suggestion",
+        InMemoryStore(now=NOW),
+        growth_llm,
+        saved=saved,
+        growth_books=raw,
+        growth_issued_books=InMemoryIssuedBooks(),
+    )
+
+    assert shown.status == "blocked" and shown.suggestion_ids == ()
+    assert shown.readouts[0].body == GROWTH_READOUTS.render("book.no_topic").body
+    assert not saved.batches

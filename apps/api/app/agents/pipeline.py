@@ -945,6 +945,7 @@ async def _run_domain(
 
     async def run_one(index: int) -> DomainOutcome:
         task, runner, context = prepared[index]
+        task = replace(task, deadline=deadline)
         client = (domain_clients or {}).get(task.agent)
         kwargs = {} if client is None else {"client": client}
         task_started = time.perf_counter()
