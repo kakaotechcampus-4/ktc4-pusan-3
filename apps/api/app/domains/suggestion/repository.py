@@ -45,12 +45,14 @@ async def create_suggestion(
     allergens: Sequence[str] = (),
     items: Sequence[str] = (),
     run_id: str | None = None,
+    place_notice: str | None = None,
 ) -> Suggestion:
     """Agent 결과 저장. 일반/개인화 판정과 근거 필수 여부는 호출 계층에서 검증한다.
 
     `citations` · `allergens` · `items` 는 `SuggestionDraft.to_payload()` 의 같은 이름 칸을
     그대로 받는다. `citations` 는 `source_kind` · `source_id` · `note` 세 칸이다.
     `run_id` 는 그 추천을 만든 입력 run 이다. run 밖에서 만들면 None.
+    `place_notice` 는 장소가 붙은 추천의 확인 문구다(코드 문구). 장소가 없으면 None.
     """
     row = Suggestion(
         child_id=child_id,
@@ -63,6 +65,7 @@ async def create_suggestion(
         expires_at=expires_at,
         status=SuggestionStatus.DRAFT,
         run_id=run_id,
+        place_notice=place_notice,
     )
     session.add(row)
     await session.flush()
@@ -278,6 +281,8 @@ async def save_agent_suggestions(
             allergens=item["allergens"],
             items=item["items"],
             run_id=run_id,
+            # 장소가 없는 추천 · 이 칸 전에 만든 payload 에는 키가 없다
+            place_notice=item.get("place_notice"),
         )
         ids.append(row.id)
     return ids
