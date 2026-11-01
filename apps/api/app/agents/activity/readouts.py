@@ -12,5 +12,7 @@ CAUTION_NON_FOOD_ALLERGY = "caution.non_food_allergy"
 PLACE_NOTICE = "place.notice"
 PLACE_NOTICE_UNDATED = "place.notice_undated"
 PLACE_NOTICE_FACILITY = "place.notice_facility"
+# 보호자가 말한 지역을 못 찾아 장소 없이 골랐다 (`areas.py`)
+PLACE_AREA_UNKNOWN = "place.area_unknown"
 
 READOUTS = ReadoutCatalog.from_yaml(Path(__file__).with_name("activity.readout.yaml"))

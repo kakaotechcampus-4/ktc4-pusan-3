@@ -68,6 +68,7 @@ async def propose_activity_candidates(
         seen=context.state.seen_evidence,
         docs=context.state.seen_docs,
         places=context.state.seen_places,
+        area_places=context.state.area_places,
         recent_activities=[row.activity for row in observations],
         safety=safety_terms(entries),
         today=today,

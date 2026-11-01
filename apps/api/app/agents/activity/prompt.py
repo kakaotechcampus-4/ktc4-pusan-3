@@ -223,8 +223,17 @@ def _conditions(weather: WeatherBrief, *, checked: bool, gate: Gate) -> str:
     else:
         outdoor = "오늘은 바깥 활동을 할 수 있다."
     labels = " · ".join(f"{key} {value}" for key, value in weather.labels.items())
-    if finds_places(gate):
-        place = "근처 장소는 search_nearby_places 로 찾을 수 있다."
+    if finds_places(gate) and gate.has_location:
+        place = (
+            "근처 장소는 search_nearby_places 로 찾을 수 있다. 보호자가 다른 지역을 말했으면 "
+            "area 에 그 이름을 쓴 그대로 넣어 그 지역에서 찾는다."
+        )
+    elif finds_places(gate):
+        place = (
+            "위치를 모른다. 보호자가 지역을 말했으면 search_nearby_places 의 area 에 그 이름을 "
+            "쓴 그대로 넣어 그 지역 장소를 찾는다. "
+            "말하지 않았으면 특정 장소가 필요한 활동은 내지 않는다."
+        )
     elif gate.has_location:
         place = "근처 장소는 찾을 수 없다. 특정 장소가 필요한 활동은 내지 않는다."
     else:

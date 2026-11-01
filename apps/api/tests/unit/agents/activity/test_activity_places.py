@@ -4,21 +4,23 @@
 - 실패는 빈 목록으로 숨기지 않는다.
 """
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta, timezone
 from uuid import UUID
 
 import pytest
 
+from app.agents.activity.areas import find_area
 from app.agents.activity.context import ActivityContext, build_gate
 from app.agents.activity.result import ErrorCode
 from app.agents.activity.schemas.common import DayLabel, PlaceCategory
 from app.agents.activity.schemas.outing import SearchNearbyPlacesArgs
-from app.agents.activity.store.inmemory import InMemoryPlaces, in_memory_ports
+from app.agents.activity.store.inmemory import InMemoryPlaces, InMemoryWeather, in_memory_ports
 from app.agents.activity.store.ports import CoarseLocation, PlaceRow
 from app.agents.activity.tools.outing import (
     INDOOR_CATEGORIES,
     PLACE_MAX_RADIUS_M,
     PLACE_TOP_K,
+    day_of,
     days_of,
     outdoor_on,
     search_nearby_places,
@@ -77,6 +79,56 @@ def args(category: PlaceCategory, day: DayLabel = DayLabel.TODAY) -> SearchNearb
 
 def names(result) -> list[str]:
     return [place["name"] for place in result.data["places"]]
+
+
+# 보호자가 지역을 말한 요청. 모델이 area 로 옮겨 적는 글자는 이 안에 있어야 한다
+REQUEST = ("주말에 해운대 가서 놀 곳 알려줘",)
+HAEUNDAE = find_area("해운대")
+# 지역 판정은 그 자리에서 날씨를 다시 본다 — 해가 지기 전 시각이어야 바깥 종류가 열린다
+KST = timezone(timedelta(hours=9))
+DAYTIME = datetime(2026, 10, 2, 10, tzinfo=KST)
+
+
+class SpyPlaces(InMemoryPlaces):
+    """어느 좌표로 찾았는지 남긴다."""
+
+    def __init__(self, rows=()) -> None:
+        super().__init__(rows)
+        self.locations: list[CoarseLocation] = []
+
+    async def nearby(self, *, location, category, radius_m):
+        self.locations.append(location)
+        return await super().nearby(location=location, category=category, radius_m=radius_m)
+
+
+class SpyWeather(InMemoryWeather):
+    """어느 격자로 예보를 물었는지 남긴다."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.grids: list[object] = []
+
+    async def forecast(self, *, grid, day):
+        self.grids.append(grid)
+        return await super().forecast(grid=grid, day=day)
+
+
+async def area_context(rows=(), *, location=None, request=REQUEST, weather=None):
+    ctx = ActivityContext(
+        child_id=CHILD,
+        run_id="run-1",
+        now=DAYTIME,
+        timezone=KST,
+        ports=in_memory_ports(CHILD, date(2025, 1, 1), places=SpyPlaces(rows), weather=weather),
+        location=location,
+    )
+    ctx.state.gate = await build_gate(ctx, outdoor_ok=True)
+    ctx.state.request_texts = request
+    return ctx
+
+
+def area_args(category: PlaceCategory, area: str | None, day=DayLabel.TODAY):
+    return SearchNearbyPlacesArgs(category=category, day=day, area=area)
 
 
 class TestNearest:
@@ -185,19 +237,125 @@ class TestFailure:
         assert result.success is False
         assert result.error["code"] == ErrorCode.UPSTREAM_ERROR
 
-    async def test_위치_없이_불리면_버그다(self):
-        """registry 가 위치 없으면 열지 않는다. 불렸다면 그쪽이 틀렸다."""
-        ctx = await context()
-        no_location = ActivityContext(
-            child_id=ctx.child_id,
-            run_id=ctx.run_id,
-            now=ctx.now,
-            timezone=ctx.timezone,
-            ports=ctx.ports,
-            state=ctx.state,
+    async def test_위치도_지역도_없으면_지역을_말해야_찾는다(self):
+        """위치가 없으면 보호자가 말한 지역으로만 찾는다. 기본 좌표로 대신하지 않는다 (4-3)."""
+        ctx = await area_context([park("○○공원", 500)])
+        result = await search_nearby_places(ctx, args(PlaceCategory.PARK))
+        assert result.success is False
+        assert result.error["code"] == ErrorCode.INVALID_ARGS
+        assert "area" in result.error["message"]
+        assert ctx.ports.places.locations == []
+
+
+class TestArea:
+    """보호자가 말한 지역의 대표 지점에서 찾는다 — 위치가 없어도 된다."""
+
+    async def test_보호자가_말한_지역의_대표_지점에서_찾는다(self):
+        ctx = await area_context([park("○○공원", 500)])
+        result = await search_nearby_places(ctx, area_args(PlaceCategory.PARK, "해운대"))
+        assert names(result) == ["○○공원"]
+        assert ctx.ports.places.locations == [HAEUNDAE.location]
+        assert ctx.state.area == HAEUNDAE
+
+    async def test_위치가_있어도_지역을_말하면_그_지역에서_찾는다(self):
+        ctx = await area_context([park("○○공원", 500)], location=LOCATION)
+        await search_nearby_places(ctx, area_args(PlaceCategory.PARK, "해운대"))
+        assert ctx.ports.places.locations == [HAEUNDAE.location]
+
+    async def test_지역을_말하지_않으면_보호자_위치에서_찾는다(self):
+        ctx = await area_context([park("○○공원", 500)], location=LOCATION)
+        await search_nearby_places(ctx, area_args(PlaceCategory.PARK, None))
+        assert ctx.ports.places.locations == [LOCATION]
+        assert ctx.state.area is None
+
+    async def test_여러_곳이면_보호자_위치에서_가까운_곳(self):
+        daejeon = CoarseLocation(lat=36.35, lon=127.38)
+        ctx = await area_context(location=daejeon, request=("중구 가서 놀 곳",))
+        await search_nearby_places(ctx, area_args(PlaceCategory.LIBRARY, "중구"))
+        assert ctx.state.area == find_area("대전 중구")
+
+    async def test_보호자가_쓰지_않은_지역은_받지_않는다(self):
+        """모델이 지어낸 지역으로 찾지 않는다 — 보호자가 쓴 글자 안에 있어야 한다."""
+        ctx = await area_context([park("○○공원", 500)])
+        result = await search_nearby_places(ctx, area_args(PlaceCategory.PARK, "기장"))
+        assert result.error["code"] == ErrorCode.INVALID_ARGS
+        assert ctx.ports.places.locations == []
+        assert ctx.state.area is None and ctx.state.area_missed is False
+
+    async def test_못_찾은_지역은_장소_없이_가고_안내를_남긴다(self):
+        ctx = await area_context([park("○○공원", 500)], request=("서면 가서 놀 곳",))
+        result = await search_nearby_places(ctx, area_args(PlaceCategory.PARK, "서면"))
+        assert result.success is False
+        assert result.error["code"] == ErrorCode.NOT_FOUND
+        assert "장소가 필요 없는" in result.error["message"]
+        assert ctx.ports.places.locations == []
+        assert ctx.state.area_missed is True
+
+    async def test_뒤에_찾으면_안내를_거둔다(self):
+        ctx = await area_context(request=("해운대구청 쪽 해운대 공원",))
+        await search_nearby_places(ctx, area_args(PlaceCategory.PARK, "해운대구청"))
+        await search_nearby_places(ctx, area_args(PlaceCategory.PARK, "해운대"))
+        assert ctx.state.area == HAEUNDAE and ctx.state.area_missed is False
+
+    async def test_한_run_에_한_지역만_찾는다(self):
+        """날씨도 그 지역 하나로 본다. 둘째 지역은 고쳐 부르게 한다."""
+        ctx = await area_context(request=("해운대나 기장 가서 놀 곳",))
+        await search_nearby_places(ctx, area_args(PlaceCategory.PARK, "해운대"))
+        result = await search_nearby_places(ctx, area_args(PlaceCategory.PARK, "기장"))
+        assert result.error["code"] == ErrorCode.INVALID_ARGS
+        assert ctx.state.area == HAEUNDAE
+        assert ctx.ports.places.locations == [HAEUNDAE.location]
+
+    async def test_지역을_찾으면_날씨도_그_지역으로_다시_본다(self):
+        """보호자 위치는 비 와도 그 지역이 맑으면 공원을 찾는다. 예보는 그 지역 격자로 묻는다."""
+        weather = SpyWeather()
+        ctx = await area_context([park("○○공원", 500)], location=LOCATION, weather=weather)
+        tomorrow = day_of(DayLabel.TOMORROW, ctx.today)
+        ctx.state.weather[tomorrow] = WeatherBrief(outdoor_ok=False)  # 보호자 위치의 판정
+        result = await search_nearby_places(
+            ctx, area_args(PlaceCategory.PARK, "해운대", DayLabel.TOMORROW)
         )
-        with pytest.raises(RuntimeError):
-            await search_nearby_places(no_location, args(PlaceCategory.PARK))
+        assert names(result) == ["○○공원"]
+        assert weather.grids == [HAEUNDAE.location.grid]
+        assert ctx.state.weather[tomorrow].outdoor_ok is True
+
+    async def test_그_지역에서_찾은_장소를_남긴다(self):
+        """출력 검증이 "근처" 를 쓰지 못하게 할 장소들이다 — 보호자는 그 지역에 있지 않다."""
+        ctx = await area_context([park("○○공원", 500)])
+        await search_nearby_places(ctx, area_args(PlaceCategory.PARK, "해운대"))
+        assert ctx.state.area_places == {"○○공원"}
+
+    async def test_고양이는_고양시가_아니다(self):
+        """지역 이름은 보호자 글에 낱말로 있어야 한다 — 다른 낱말의 앞부분은 아니다 (#657 리뷰)."""
+        ctx = await area_context([park("○○공원", 500)], request=("고양이와 아이가 놀 만한 곳",))
+        result = await search_nearby_places(ctx, area_args(PlaceCategory.PARK, "고양"))
+        assert result.error["code"] == ErrorCode.INVALID_ARGS
+        assert ctx.ports.places.locations == []
+        assert ctx.state.area is None
+
+    async def test_요청_조각을_이어_지역을_만들지_않는다(self):
+        ctx = await area_context(
+            [park("○○공원", 500)], request=("바닷가에서 해운", "대 공원 말고 다른 놀이")
+        )
+        result = await search_nearby_places(ctx, area_args(PlaceCategory.PARK, "해운대"))
+        assert result.error["code"] == ErrorCode.INVALID_ARGS
+        assert ctx.ports.places.locations == []
+
+    async def test_지역을_찾은_뒤에는_area_를_비워도_그_지역에서_찾는다(self):
+        """장소와 날씨의 기준점이 한 run 에서 갈리지 않는다 (#657 리뷰)."""
+        ctx = await area_context([park("○○공원", 500), library("○○도서관", 800)], location=LOCATION)
+        await search_nearby_places(ctx, area_args(PlaceCategory.PARK, "해운대"))
+        await search_nearby_places(ctx, area_args(PlaceCategory.LIBRARY, None))
+        assert ctx.ports.places.locations == [HAEUNDAE.location, HAEUNDAE.location]
+        assert ctx.state.area_places == {"○○공원", "○○도서관"}  # 둘 다 그 지역에서 찾았다
+
+    async def test_지역으로_바꾸면_보호자_위치에서_찾은_장소는_버린다(self):
+        """날씨는 그 지역 기준인데 보호자 위치의 장소가 추천에 붙지 않게 (#657 리뷰)."""
+        ctx = await area_context([park("○○공원", 500), library("○○도서관", 800)], location=LOCATION)
+        await search_nearby_places(ctx, area_args(PlaceCategory.LIBRARY, None))
+        await search_nearby_places(ctx, area_args(PlaceCategory.PARK, "해운대"))
+        assert set(ctx.state.seen_places) == {"○○공원"}
+        assert ctx.state.area_places == {"○○공원"}
 
 
 def test_실내_종류는_도서관과_실내_놀이터다():

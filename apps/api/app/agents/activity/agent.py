@@ -26,7 +26,7 @@ from app.agents.activity.prompt import (
     recall_message,
     request_message,
 )
-from app.agents.activity.readouts import CAUTION_NON_FOOD_ALLERGY, READOUTS
+from app.agents.activity.readouts import CAUTION_NON_FOOD_ALLERGY, PLACE_AREA_UNKNOWN, READOUTS
 from app.agents.activity.registry import closed_readout_key, execute_tool, specs_for, tools_for
 from app.agents.activity.result import ToolResult
 from app.agents.activity.rules import normalize_activity
@@ -66,6 +66,8 @@ async def run(
 ) -> DomainAgentResult:
     """놀이 추천 하나를 처리한다. 결과는 공통 `DomainAgentResult` 다."""
     task_type = task_type_of(task)
+    # 장소 조회의 area · 출력 tool 의 requested_play 를 이 글과 대조한다 — 지어낸 값을 받지 않게
+    context.state.request_texts = tuple(task.request_texts)
     weather = await check_weather(context, context.today)
     gate = await build_gate(context, outdoor_ok=weather.outdoor_ok)
     context.state.gate = gate
@@ -91,7 +93,6 @@ async def run(
     # 프롬프트에 실은 행만 근거로 달 수 있다. 재호출도 같은 system 프롬프트라 그대로 쓴다
     context.state.seen_docs = {row.id: row for row in examples}
     context.state.example_ids = example_ids(examples)
-    context.state.request_texts = tuple(task.request_texts)
     system = build_system_prompt(context, examples, weather=weather)
     llm = client or LLMClient(role="activity")
     messages: list[dict[str, Any]] = [
@@ -122,6 +123,13 @@ async def run(
     context.state.suggestions = drafts
     notice = count_notice(len(drafts))
     attempted = checks_weather(gate)
+    if context.state.area is not None:
+        # 보호자가 말한 지역을 찾았다. 장소 조회가 보호자 위치의 판정을 비웠으니 오늘도 그 지역
+        # 날씨로 다시 본다 — 위치가 없어도 그 지역 날씨는 물은 것이다
+        if context.today not in context.state.weather:
+            context.state.weather[context.today] = await check_weather(context, context.today)
+        weather = context.state.weather[context.today]
+        attempted = gate.data.weather
     return DomainAgentResult(
         agent=AGENT,
         task_type=task_type.value,
@@ -130,6 +138,7 @@ async def run(
         readouts=(
             *(_caution(text) for text in context.state.cautions),
             *(READOUTS.render(key) for key in _weather_notices(weather, drafts, context)),
+            *((READOUTS.render(PLACE_AREA_UNKNOWN),) if context.state.area_missed else ()),
             *((notice,) if notice else ()),
         ),
         model_calls=model_calls,
