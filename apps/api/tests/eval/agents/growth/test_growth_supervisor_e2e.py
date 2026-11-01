@@ -278,6 +278,17 @@ def j_no_growth(o: Observed) -> None:
         o.failures.append("Memory 가 기록을 저장하지 않았다")
 
 
+def j_in_time(judge: Judge) -> Judge:
+    """판정에 더해 run 이 20초 예산 안에 끝나야 한다 — 재호출이 마감에 걸려 후보를 잃지 않았는지."""
+
+    def wrapped(o: Observed) -> None:
+        judge(o)
+        if o.elapsed_ms > 20_000:
+            o.failures.append(f"run {o.elapsed_ms}ms — 20초를 넘겼다")
+
+    return wrapped
+
+
 def j_activity_and_learning(o: Observed) -> None:
     j_learning(o)
     if not any(t.agent == "activity" for t in o.result.routing.domain_tasks):
@@ -335,8 +346,8 @@ CASES: tuple[Case, ...] = (
         "GR23/C48",
         _gr("GR23"),
         "C48",
-        "나들이 + 한글 → Activity + Growth 교육",
-        j_activity_and_learning,
+        "나들이 + 한글 → Activity + Growth 교육 · 20초 안",
+        j_in_time(j_activity_and_learning),
     ),
     Case(
         "T07/C48", INPUTS["T07"], "C48", "도서 → 포트 없는 eval 은 closed.book_api", j_book_closed
