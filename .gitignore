@@ -83,6 +83,11 @@ Claude outputs/
 .impeccable/*
 !.impeccable/design.json
 
+# ── Claude Code ────────────────────────────────────
+# 저장소에 올리는 것은 .claude/skills/ 의 팀 공유 스킬(screen-tour · web-smoke)이다.
+# 개인 설정은 사람마다 달라서 올리지 않는다. 스킬이 돌며 만드는 것은 각 스킬의 .gitignore 가 뺀다.
+.claude/settings.local.json
+
 # ── oh-my-claudecode(OMC) 로컬 상태 ──────────────────
 # 세션별 작업 상태 · 계획 · 로그. 개인 로컬 도구 상태라 저장소와 무관하다.
 .omc/

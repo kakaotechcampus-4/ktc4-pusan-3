@@ -34,6 +34,7 @@ MIN_MONTH: dict[str, int] = {
     "search_routine_memory": 0,
     "search_activity_memory": 0,
     "search_affinity": 0,
+    "search_book_interests": 0,
     "lookup_notice": EDUCATION_MIN_MONTH,
     "search_books": 0,
     "propose_learning_activity": EDUCATION_MIN_MONTH,

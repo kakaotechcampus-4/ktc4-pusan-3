@@ -85,6 +85,7 @@ export function SafetySection({
 
   return (
     <Section
+      data-tour="safety"
       title="알레르기 · 건강"
       description="보호자가 직접 확인한 것만 저장돼요. AI 는 이 목록을 만들지도 고치지도 못해요."
       // 받는 동안은 건수 자리만 잡는다 — 빈 상태를 기다리는 자리면 건수가 설 일이 없어 잡지 않는다.
@@ -99,6 +100,7 @@ export function SafetySection({
       }
       action={
         <SectionAction
+          data-tour="safety-add"
           label="알레르기·건강 기록 추가"
           // 🚨 검사지 길이 닫혀 있으면(`lib/features.ts` · #409) 고를 것이 직접 적기 하나뿐이라,
           //    고르는 시트를 건너뛰고 바로 연다 — 한 줄짜리 선택지를 한 번 더 누르게 하지 않는다.

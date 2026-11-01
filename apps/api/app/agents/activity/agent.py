@@ -35,8 +35,7 @@ from app.agents.activity.tools.docs import search_activity_doc
 from app.agents.activity.tools.outing import check_weather, days_of
 from app.agents.activity.weather import (
     INDOOR_ONLY,
-    WEATHER_NOT_ASKED,
-    WEATHER_UNCHECKED,
+    OUTDOOR_ONLY,
     WeatherBrief,
 )
 from app.agents.common.llm_client import LLMClient
@@ -127,7 +126,7 @@ async def run(
     return DomainAgentResult(
         agent=AGENT,
         task_type=task_type.value,
-        status="degraded" if attempted and WEATHER_UNCHECKED in weather.notices else "completed",
+        status="degraded" if attempted and weather.unread else "completed",
         suggestions=drafts,
         readouts=(
             *(_caution(text) for text in context.state.cautions),
@@ -146,8 +145,9 @@ def _weather_notices(
 ) -> tuple[str, ...]:
     """화면에 붙일 날씨 안내 키 — 결과에 실제로 나간 추천의 날로 고른다 (#515 리뷰).
 
-    - 바깥 활동이 없으면 오늘 판정의 안내다 — 왜 실내만인지("해가 져서" · "확인하지 못해")를
-      알린다. "날씨는 확인하지 않았어요" 는 빼고 — 실내 놀이에 날씨 확인을 당부하면 군말이다.
+    - 바깥 활동이 없으면 오늘 판정의 안내다 — 왜 실내만인지("해가 져서" · "바깥 활동이 어려운
+      날")를 알린다. "날씨는 확인하지 않았어요" · "확인하지 못했어요" 는 빼고(`OUTDOOR_ONLY`) —
+      실내 놀이에 날씨 확인을 당부하면 군말이다.
     - 바깥 활동이 있으면 그 활동의 날 중 바깥이 열린 날의 안내다. "실내 놀이만 골랐어요" 류는
       뺀다 — 오늘 해가 졌어도 내일 공원이 나가면 그 말은 틀린다.
     """
@@ -156,7 +156,7 @@ def _weather_notices(
         day for content, day in sorted(context.state.outdoor_drafts) if content in shown
     )
     if not labels:
-        return tuple(key for key in weather.notices if key != WEATHER_NOT_ASKED)
+        return tuple(key for key in weather.notices if key not in OUTDOOR_ONLY)
     keys: list[str] = []
     for label in labels:
         for day in days_of(label, context.today):
