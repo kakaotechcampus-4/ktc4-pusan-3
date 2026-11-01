@@ -84,7 +84,7 @@ async def outdoor_on(context: ActivityContext, label: DayLabel) -> bool:
       판정해 넣는다 — 모델이 `lookup_weather` 를 안 불렀어도 그날 판정으로 거른다.
     - 이번 주말은 토 · 일 중 **하루라도** 되면 연다. 보호자가 둘 중 하루를 고르는 일이라, 둘 다
       맑아야 열면 주말 나들이가 너무 자주 막힌다. 되는 날은 모델이 reason 에 쓴다.
-    - 못 읽은 날은 실내만이다 (`check_weather` 가 outdoor_ok=False 를 준다).
+    - 날씨를 못 읽은 날도 바깥을 막지 않는다 — 판정은 `check_weather` 가 한다.
     """
     days = days_of(label, context.today)
     missing = [day for day in days if day not in context.state.weather]
