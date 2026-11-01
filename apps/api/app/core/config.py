@@ -25,8 +25,10 @@ class Settings(AgentLLMSettings):
     MEAL_OCR_API_KEY: str | None = None
     MEAL_OCR_MODEL: str = "gemini-3.1-pro-preview"
 
-    # 도서관 정보나루(data4library.kr) 인증키 — 도서 추천 (#290). 비어 있으면 도서 라벨만
-    # 닫히고(`closed.book_api`) 서버는 뜬다. 키 없이 빈 목록으로 채우지 않는다
+    # 도서관 정보나루(data4library.kr) 인증키 — Growth 도서 추천. 비어 있으면 도서 라벨만
+    # 닫히고(`closed.book_api`) 서버는 뜬다. 키 없이 빈 목록으로 채우지 않는다. 서버 IP 를 등록해야
+    # 하루 500회 → 30,000회다. 🚨 비밀 — 키가 요청 주소에 들어가서 응답 · 로그 · 예외 문구에 싣지
+    # 않는다 (integrations/data4library/client.py)
     DATA4LIBRARY_AUTH_KEY: str = ""
 
     # 공공데이터포털(data.go.kr) 일반 인증키(Decoding). 기상청 · 에어코리아 날씨 조회(어댑터는
@@ -47,6 +49,12 @@ class Settings(AgentLLMSettings):
     # 브라우저가 다른 오리진에서 이 API 를 부를 수 있는 목록. 쉼표로 구분한다.
     # 비어 있으면 CORS 를 켜지 않는다 — 같은 오리진 배포에서는 필요 없다.
     CORS_ALLOW_ORIGINS: str = ""
+
+    # 푸시 알림(FCM) 서비스 계정 키 JSON 파일 경로 (#594, app/integrations/fcm.py). 비어 있으면
+    # 발송 배치(workers/reminder_dispatch)만 돌지 않고 서버는 뜬다.
+    # 🚨 비밀 — 파일을 저장소에 두지 않는다. 배포는 서버에 둔 파일을 컨테이너에 읽기 전용으로
+    #    붙인다 (docs/notification/reminder-v1.md).
+    FCM_SERVICE_ACCOUNT_FILE: str = ""
 
     # ERROR 이상 로그를 알릴 Discord 웹훅 주소 (app/core/alerts.py). 비어 있으면 알림만 꺼지고
     # 서버는 뜬다. 🚨 비밀 — 응답 · 로그에 싣지 않는다. 켜는 법 · 본문은 README "로그와 알림".
@@ -103,6 +111,11 @@ class Settings(AgentLLMSettings):
 
     # 보호자별 하루 한 줄 입력 횟수 (app/api/quota.py). 모델 크레딧 보호용 — 테스트용 숫자.
     INPUT_DAILY_LIMIT: int = 5
+
+    # 푸시 기기 토큰을 받기 시작하는 스위치 (#594). 기기 토큰이 실린 처리방침 새 판이 나가기 전에는
+    # 꺼 둔다 — 꺼져 있으면 `PUT /me/push-device` 가 204 만 주고 저장하지 않는다 (#605 PM).
+    # 웹 빌드 인자를 거치지 않는 앱 토큰까지 서버 한 곳에서 막는다
+    PUSH_DEVICE_ACCEPT: bool = False
 
     @field_validator("AUTH_RETURN_URL_WEB", "AUTH_RETURN_URL_APP")
     @classmethod

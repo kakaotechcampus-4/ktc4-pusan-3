@@ -107,12 +107,12 @@ export function GrowthSheet({
   }
 
   function submit() {
-    const h = parseMeasurement(height);
-    const w = parseMeasurement(weight);
+    const h = parseMeasurement("height", height);
+    const w = parseMeasurement("weight", weight);
 
     // 숫자도 빈 칸도 아니면 읽지 못한 값이다 (`MeasurementRead`).
     if (typeof h === "string" || typeof w === "string") {
-      setErrors({ height: measurementError(h), weight: measurementError(w) });
+      setErrors({ height: measurementError("height", h), weight: measurementError("weight", w) });
       return;
     }
     // 🚨 한쪽만 재고 오는 날이 있다. 둘 다 비어 있을 때만 막는다.

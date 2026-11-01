@@ -3,6 +3,7 @@
 도메인 Agent 의 기억 포트는 호출마다, 추천 저장은 Agent 결과 하나마다 세션 하나다. 요청 세션이나
 run 세션을 같이 타면 동시에 도는 task 들이 AsyncSession 을 함께 써서 깨진다.
 기록 건수 · 장소 조회도 호출마다 세션 하나다.
+Growth 도서 어댑터(정보나루 · 이미 낸 책)도 같다 — 인증키가 있을 때만 만든다.
 """
 
 from collections.abc import AsyncIterator, Callable
@@ -18,6 +19,8 @@ from app.api.deps.db import background_session
 RECORD_KINDS: dict[str, tuple[str, ...]] = {
     "food": ("observation_food",),
     "activity": ("observation_activity",),
+    # 놀이 기록은 Growth 가 근거로 읽기만 해서 세지 않는다 — Activity 의 기록이다
+    "growth": ("observation_education", "observation_routine"),
 }
 
 
@@ -31,6 +34,13 @@ def domain_store_opener(child_id: UUID) -> entrypoint.StoreOpener:
             yield DbMemoryStore(read_session, child_id=child_id)
 
     return domain_store
+
+
+def growth_log_reader() -> entrypoint.GrowthLogReader:
+    from app.domains.child.agent_reader import DbGrowthLogReader
+
+    # 호출마다 짧은 세션으로 child_growth_log 를 읽는다 — run 세션을 같이 타지 않게 (#257)
+    return DbGrowthLogReader(background_session)
 
 
 def suggestion_saver(
@@ -95,16 +105,39 @@ def food_stores() -> dict[str, object]:
 
 
 def safety_readers() -> dict[str, object]:
-    """Food · Activity 가 읽는 `health_safety` 어댑터 — 러너와 05 가 같이 쓴다 (#460).
+    """Food · Activity · Growth 가 읽는 `health_safety` 어댑터 — 러너와 05 가 같이 쓴다 (#460).
 
-    어댑터 하나를 둘에게 넘기고, Food 는 `food_safety`(active · kind 전부), Activity 는
-    `activity_safety`(allergy · environmental · status 전부)로 읽는다. 안 넘기면 둘 다
-    `blocked.safety` 로 닫힌다. 호출마다 짧은 세션을 연다 — 만들 때는 열지 않는다.
+    어댑터 하나를 셋에게 넘기고, Food 는 `food_safety`(active · kind 전부), Activity 와 Growth 는
+    `activity_safety` · `growth_safety`(allergy · environmental · status 전부)로 읽는다. 안 넘기면
+    Food · Activity 와 Growth 교육이 `blocked.safety` 로 닫힌다. 호출마다 짧은 세션을 연다 —
+    만들 때는 열지 않는다.
     """
     from app.domains.safety.agent_reader import DbSafetyReader
 
     reader = DbSafetyReader(background_session)
-    return {"food_safety": reader, "activity_safety": reader}
+    return {"food_safety": reader, "activity_safety": reader, "growth_safety": reader}
+
+
+def growth_book_ports() -> dict[str, object]:
+    """Growth 도서 어댑터 — 정보나루 검색(검색어 캐시 포함)과 이미 낸 책. 러너와 05 가 같이 쓴다.
+
+    인증키(`DATA4LIBRARY_AUTH_KEY`)가 없으면 둘 다 넘기지 않는다 — 도서는 `closed.book_api` 로
+    닫힌다. 키 없이 빈 목록으로 채우지 않는다. 검색어 캐시는 `REDIS_URL` 이 있을 때만 쓴다(없으면
+    정보나루를 바로 부른다). 만들 때는 세션 · HTTP 연결을 열지 않는다 — 호출마다 연다.
+    """
+    from app.core.config import settings
+
+    key = settings.DATA4LIBRARY_AUTH_KEY.strip()
+    if not key:
+        return {}
+    from app.domains.suggestion.agent_reader import DbIssuedBooks
+    from app.infra.redis import get_redis
+    from app.integrations.data4library.client import Data4LibraryBooks
+
+    return {
+        "growth_books": Data4LibraryBooks(auth_key=key, cache=get_redis()),
+        "growth_issued_books": DbIssuedBooks(background_session),
+    }
 
 
 def affinity_reader() -> entrypoint.AffinityReader:

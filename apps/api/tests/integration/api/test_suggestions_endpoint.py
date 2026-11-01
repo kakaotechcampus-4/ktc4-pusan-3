@@ -203,6 +203,23 @@ async def test_05_도_러너와_같은_안전_어댑터를_넘긴다(db_client, 
     assert resp.status_code == 200
     assert isinstance(calls[0]["food_safety"], DbSafetyReader)
     assert calls[0]["activity_safety"] is calls[0]["food_safety"]
+    assert calls[0]["growth_safety"] is calls[0]["food_safety"]
+
+
+async def test_05_도_인증키가_있으면_도서_어댑터를_넘긴다(
+    db_client, bearer, cid, agents, monkeypatch
+):
+    from app.integrations.data4library.client import Data4LibraryBooks
+
+    monkeypatch.setattr(settings, "DATA4LIBRARY_AUTH_KEY", "test-auth-key")
+    plan, calls = agents
+    headers, _ = bearer
+    plan["food"] = ("empty", "준비할 수 있는 메뉴가 없어요.")
+
+    resp = await _post(db_client, cid, headers, agents=["food"])
+
+    assert resp.status_code == 200
+    assert isinstance(calls[0]["growth_books"], Data4LibraryBooks)
 
 
 async def test_05_도_관심_어댑터를_넘긴다(db_client, bearer, cid, agents):
@@ -230,7 +247,8 @@ async def test_닫힌_Agent_는_guard_로_실패는_묶음에서_빠진다(db_cl
             "code": "safety_unknown",
             "blocked_agents": ["food"],
             "message": "알레르기 정보를 확인할 수 없어서 추천을 드릴 수 없어요.",
-            "deeplink": None,
+            # 알레르기를 적는 곳 — 04 의 safety_record 안내와 같은 값이다 (#625)
+            "deeplink": "profile",
         }
     ]
     assert data["groups"] == []  # activity 는 실패 — 화면이 실패 카드를 그린다
@@ -239,10 +257,35 @@ async def test_닫힌_Agent_는_guard_로_실패는_묶음에서_빠진다(db_cl
 async def test_구현_안_된_Agent_는_not_ready(db_client, bearer, cid, agents):
     headers, _ = bearer
 
+    data = (await _post(db_client, cid, headers, agents=["health"])).json()
+
+    assert [(g["code"], g["deeplink"]) for g in data["guards"]] == [("not_ready", None)]
+    assert agents[1] == []  # Agent 를 부르지 않았다
+
+
+async def test_Growth_처음_요청은_라벨을_못_골라_not_ready(db_client, bearer, cid, agents):
+    """Growth 는 추천 라벨이 셋이라 run 없이 무엇을 돌릴지 모른다."""
+    headers, _ = bearer
+
     data = (await _post(db_client, cid, headers, agents=["growth"])).json()
 
     assert [g["code"] for g in data["guards"]] == ["not_ready"]
-    assert agents[1] == []  # Agent 를 부르지 않았다
+    assert [g["blocked_agents"] for g in data["guards"]] == [["growth"]]
+    assert agents[1] == []
+
+
+async def test_run_이_있으면_Growth_추천도_그_run_에서_재생한다(
+    db_client, session, bearer, cid, agents
+):
+    _, calls = agents
+    headers, parent_id = bearer
+    row = await _saved_in_run(session, cid, parent_id, "run-1", agent="growth")
+
+    data = (await _post(db_client, cid, headers, agents=["growth"], run_id="run-1")).json()
+
+    assert [s["id"] for s in data["suggestions"]] == [str(row.id)]
+    assert data["guards"] == []
+    assert calls == []  # 다시 만든 것이 없다
 
 
 # ── 판단 순서 ────────────────────────────────────────────────────────────
@@ -595,7 +638,7 @@ async def test_다시_만들었더니_닫혔으면_다음_요청도_같은_guard
     first = (await _post(db_client, cid, headers, agents=["activity"], run_id="run-1")).json()
     second = (await _post(db_client, cid, headers, agents=["activity"], run_id="run-1")).json()
 
-    assert [g["code"] for g in first["guards"]] == ["safety_unknown"]
+    assert [(g["code"], g["deeplink"]) for g in first["guards"]] == [("safety_unknown", "profile")]
     assert second["guards"] == first["guards"]
     assert second["groups"] == []
     assert len(calls) == 1  # 두 번째는 다시 돌리지 않는다
@@ -877,3 +920,44 @@ async def test_위험_경고는_그_추천에_싣는다(db_client, session, bear
     [general] = data["general"]
     assert activity["warnings"] == [warning]
     assert general["warnings"] == [warning]
+
+
+# ── Growth 도서 추천의 책 근거 ───────────────────────────────────────────
+async def test_Growth_도서_일반_추천은_그_책을_정보나루_출처로_보여_준다(
+    db_client, session, bearer, cid, agents
+):
+    """도서는 책 정보 표가 없어서 카드 제목은 그 추천의 "제목(저자)" 다 — 근거는 그 책 자체다."""
+    from app.domains.suggestion.repository import save_agent_suggestions
+    from app.rules.book_evidence import book_evidence_id
+
+    headers, _ = bearer
+    book = book_evidence_id("9788900000001")
+    draft = SuggestionDraft(
+        agent="growth",
+        kind="general",
+        content="공룡 기차(가나다)",
+        reason="쌓인 배움 기록이 아직 적어서, 이 나이에 맞는 형태의 책 중에서 골랐어요.",
+        citations=(
+            EvidenceCitation(
+                ref=Ref(kind="book_catalog", id=book),
+                note="도서관 정보나루 검색 결과에 있는 책이에요.",
+            ),
+        ),
+        items=("공룡 기차(가나다)",),
+    )
+    await save_agent_suggestions(
+        session, child_id=cid, run_id="run-1", payloads=[draft.to_payload()], now=datetime.now(UTC)
+    )
+
+    resp = await _post(db_client, cid, headers, agents=["growth"], run_id="run-1")
+
+    assert resp.status_code == 200
+    [general] = resp.json()["general"]
+    [evidence] = general["evidence"]
+    assert evidence["ref"] == {"kind": "book_catalog", "id": str(book)}
+    assert evidence["title"] == "공룡 기차(가나다)"
+    assert (evidence["source_org"], evidence["source_title"]) == (
+        "국립중앙도서관",
+        "도서관 정보나루",
+    )
+    assert evidence["source_url"] == "https://data4library.kr"

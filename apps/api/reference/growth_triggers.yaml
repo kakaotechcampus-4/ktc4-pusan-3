@@ -1,0 +1,29 @@
+# Growth 습관 상황 태그 — reference/growth_triggers.yaml
+# 설계: docs/agents/growth/Growth_Tool_명세.md §2 "예절 · 습관 — 전략 행"
+#
+# 관찰의 trigger(보호자가 말한 "긴장할 때" 같은 말)를 habit_strategy 행의 trigger_tags 로 옮긴다.
+# 🚨 목록은 사람이 정한다 (growth_closures.yaml 과 같은 원칙). 모델이 고르지 않는다.
+# 🚨 trigger 원문은 문서 조회에 넣지 않는다 — 여기서 걸린 태그만 넘긴다 (쿼리에 보호자 발화 0건).
+# 🚨 어느 별칭에도 안 걸리는 trigger 는 태그가 없다 → 전략 행을 고르지 않고 doc.no_row 로 닫는다.
+# 🚨 한 글자 별칭은 guards 가 있을 때만 쓴다. 로더가 guards 없는 한 글자 별칭을 거절한다.
+# ⚠️ 별칭을 늘리기 전에 eval 실제 문장으로 오탐을 잰다.
+# tag 는 영문 소문자 식별자다 — search_growth_doc 이 그 모양만 받는다. 태그를 더하면 그 태그의
+# habit_strategy 행도 같이 쓴다 (행이 없는 태그는 doc.no_row).
+
+source: Growth Owner 초안 — Memory 의 trigger 예시(긴장할 때) · test_input_growth T19 · 표준보육과정 고시 3~5세 내용(감정 표현 · 휴식 · 신체활동)과 짝을 맞춘 네 상황
+version: "2026.1"
+fetched_at: 2026-10-18
+
+triggers:
+  - tag: anxious
+    aliases: [긴장, 불안, 낯선, 낯가림, 무서, 겁나, 겁이 나, 겁이 날, 겁이 났, 걱정]
+    guards: []
+  - tag: frustrated
+    aliases: [화날, 화가 나, 화가 날, 화가 났, 화나, 화를 내, 화를 낼, 화낼, 속상, 짜증, 혼났, 혼날, 혼난, 혼나, 떼쓸, 떼를 쓸]
+    guards: []
+  - tag: tired
+    aliases: [졸릴, 졸려, 졸리, 피곤, 잠들, 잠자기, 잘 때, 자기 전, 낮잠]
+    guards: [잘 때려, 잘 때리, 잘 때렸, 자기 전용]
+  - tag: bored
+    aliases: [심심, 지루, 기다릴, 기다리는, 기다리다, 할 일이 없, 가만히 있을]
+    guards: []
