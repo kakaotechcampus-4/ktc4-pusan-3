@@ -24,7 +24,7 @@ archived 로 넘긴다. 어댑터를 안 넘기면(테스트 · eval) 빈 목록
 from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import replace
-from datetime import date
+from datetime import date, timedelta
 from typing import Protocol
 from uuid import NAMESPACE_URL, UUID, uuid5
 
@@ -37,6 +37,7 @@ from app.agents.growth.store.ports import (
     EducationObservation,
     RoutineObservation,
 )
+from app.agents.health.store.ports import HealthObservation, MealRecord
 from app.agents.memory.store.ports import MemoryStore, ObservationRow
 from app.rules.profile import archived_by_time
 
@@ -46,6 +47,10 @@ FOOD_STATUSES = frozenset({"active", "stand_alone"})
 # Activity는 active만 읽는다. Activity 포트(ActivityObservation 주석)와 activity-agent-v1
 #   A-10 이 stand_alone을 근거에서 뺀다 — "이번만 그랬어요" 로 고친 기록이 근거로 돌아오지 않게
 ACTIVITY_STATUSES = frozenset({"active"})
+# Health 는 Food 와 같다 — stand_alone("이번만 그랬어요")도 그날 있었던 증상이라 날 수에 센다.
+# 정정으로 내린 기록(wrong → inactive)과 삭제는 읽지 않는다
+HEALTH_STATUSES = frozenset({"active", "stand_alone"})
+
 # Growth 도 active 만 읽는다 — "이번만 그랬어요" 로 고친 기록으로 루틴 수준을 잡지 않는다
 #   (growth/store/ports.py RoutineObservation 주석)
 GROWTH_STATUSES = frozenset({"active"})
@@ -117,6 +122,13 @@ def _uuid(row_id: str) -> UUID:
         return UUID(row_id)
     except ValueError:
         return uuid5(NAMESPACE_URL, f"inmemory:{row_id}")
+
+
+def _optional_uuid(value: UUID | str | None) -> UUID | None:
+    """DB store 는 UUID, InMemory 는 tool 이 넘긴 문자열 id 일 수 있다."""
+    if value is None:
+        return None
+    return value if isinstance(value, UUID) else _uuid(value)
 
 
 async def _rows(
@@ -280,6 +292,64 @@ class StoreGrowthMemory(_StoreReader):
                 subject=row.fields["subject"],
                 activity=row.fields["activity"],
                 polarity=int(row.fields.get("polarity") or 0),
+            )
+            for row in rows
+        ]
+
+
+class StoreHealthMemory(_StoreReader):
+    """`HealthMemoryReader` 구현. `observation_health` 를 Memory store 에서 읽는다."""
+
+    async def health_observations(
+        self, *, child_id: UUID, date_from: date, date_to: date
+    ) -> list[HealthObservation]:
+        rows = await _rows(
+            self._open,
+            "health",
+            child_id=child_id,
+            date_from=date_from,
+            date_to=date_to,
+            statuses=HEALTH_STATUSES,
+        )
+        found: list[HealthObservation] = []
+        for row in rows:
+            observed_range = row.fields.get("observed_range")
+            # [start, end) 반닫힘 — 포함하는 마지막 날은 end 의 전날이다
+            last = observed_range.end - timedelta(days=1) if observed_range else row.observed_on
+            found.append(
+                HealthObservation(
+                    id=_uuid(row.id),
+                    observed_from=row.observed_on,
+                    observed_to=max(last, row.observed_on),
+                    observed_time=row.fields.get("observed_time"),
+                    symptoms=tuple(row.fields.get("symptom") or ()),
+                    severity=row.fields.get("severity"),
+                    action_taken=row.fields.get("action_taken"),
+                    temperature=row.fields.get("temperature"),
+                    measured_at=row.fields.get("measured_at"),
+                    measure_site=row.fields.get("measure_site"),
+                    medication_given=row.fields.get("medication_given"),
+                    linked_symptom_id=_optional_uuid(row.fields.get("linked_symptom_id")),
+                )
+            )
+        return found
+
+    async def meals(self, *, child_id: UUID, date_from: date, date_to: date) -> list[MealRecord]:
+        """최근 식사. Food 와 같은 상태(`FOOD_STATUSES`)만 읽는다 — 영양 숫자는 없다."""
+        rows = await _rows(
+            self._open,
+            "food",
+            child_id=child_id,
+            date_from=date_from,
+            date_to=date_to,
+            statuses=FOOD_STATUSES,
+        )
+        return [
+            MealRecord(
+                id=_uuid(row.id),
+                observed_on=row.observed_on,
+                subject=row.fields["subject"],
+                amount_text=row.fields.get("amount"),
             )
             for row in rows
         ]

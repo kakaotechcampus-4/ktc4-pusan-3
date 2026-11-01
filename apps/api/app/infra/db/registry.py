@@ -15,6 +15,7 @@ from app.domains.consent import models as consent  # noqa: F401
 from app.domains.correction import models as correction  # noqa: F401
 from app.domains.food import models as food  # noqa: F401
 from app.domains.identity import models as identity  # noqa: F401
+from app.domains.medication import models as medication  # noqa: F401
 from app.domains.memory.observation import models as observation  # noqa: F401
 from app.domains.memory.profile import models as profile  # noqa: F401
 from app.domains.notification import models as notification  # noqa: F401

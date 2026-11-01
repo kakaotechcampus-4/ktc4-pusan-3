@@ -54,6 +54,20 @@ from app.agents.growth.store.ports import (
 )
 from app.agents.growth.store.ports import SafetyReader as GrowthSafetyReader
 from app.agents.growth.store.ports import UnwiredSafety as GrowthUnwiredSafety
+from app.agents.health.context import HealthContext
+from app.agents.health.store.inmemory import InMemoryConsent as HealthConsent
+from app.agents.health.store.inmemory import InMemoryProfile as HealthProfile
+from app.agents.health.store.ports import (
+    ChildBasicReader,
+    HealthPorts,
+    HealthSafetyReader,
+    MedicationReader,
+    MedicationWriter,
+    UnwiredBirthDate,
+    UnwiredChildBasic,
+    UnwiredHealthSafety,
+    UnwiredMedication,
+)
 from app.agents.memory.agent import MemoryReply
 from app.agents.memory.context import AgentContext
 from app.agents.memory.drafts import EventDraft
@@ -64,6 +78,7 @@ from app.agents.memory_bridge import (
     StoreActivityMemory,
     StoreFoodMemory,
     StoreGrowthMemory,
+    StoreHealthMemory,
     StoreOpener,
 )
 from app.agents.pipeline import (
@@ -226,6 +241,10 @@ async def handle_input(
     growth_log: GrowthLogReader | None = None,
     growth_books: RawBookSearch | None = None,
     growth_issued_books: IssuedBookReader | None = None,
+    health_safety: HealthSafetyReader | None = None,
+    health_medication: MedicationReader | None = None,
+    health_medication_writer: MedicationWriter | None = None,
+    health_child: ChildBasicReader | None = None,
     affinity_reader: AffinityReader | None = None,
 ) -> PipelineResult:
     """입력 한 줄을 처리한다. 진행 상황은 emit 으로 나간다.
@@ -275,6 +294,9 @@ async def handle_input(
       (`DbSafetyReader`, #405 · #460). 같은 객체여도 Food 는 `food_safety`, Activity 는
       `activity_safety`, Growth 는 `growth_safety` 로 읽는다 — 읽는 행이 다르다. 안 넘기면(테스트 ·
       eval) `UnwiredSafety` 라 동의와 상관없이 닫힌다 — Growth 는 교육만 닫힌다.
+    - health_safety · health_medication · health_medication_writer · health_child 는 api 가 넘긴
+      Health 어댑터다. 복약 어댑터는 읽기와 중단 쓰기를 한 객체가 한다. 안 넘기면(테스트 · eval)
+      읽을 때 실패로 닫힌다 — 빈 저장소로 열려 복약 · 알레르기가 "없음" 으로 읽히지 않게.
     - affinity_reader 는 api 가 넘긴 `profile_affinity` 어댑터다(`DbAffinityReader`). 기억 포트가 그
       run 의 기준일과 함께 받아, 마지막 관찰 뒤 21일이 지난 관심은 archived 로 읽는다. 안 넘기면
       (테스트 · eval) 관심이 없는 아이로 읽는다.
@@ -313,6 +335,10 @@ async def handle_input(
         growth_log=growth_log,
         growth_books=growth_books,
         growth_issued_books=growth_issued_books,
+        health_safety=health_safety,
+        health_medication=health_medication,
+        health_medication_writer=health_medication_writer,
+        health_child=health_child,
         affinity_reader=affinity_reader,
     )
 
@@ -522,9 +548,13 @@ def _domain_contexts(
     growth_log: GrowthLogReader | None = None,
     growth_books: RawBookSearch | None = None,
     growth_issued_books: IssuedBookReader | None = None,
+    health_safety: HealthSafetyReader | None = None,
+    health_medication: MedicationReader | None = None,
+    health_medication_writer: MedicationWriter | None = None,
+    health_child: ChildBasicReader | None = None,
     affinity_reader: AffinityReader | None = None,
 ) -> tuple[dict[str, DomainContext], RunWrites]:
-    """Food · Activity · Growth 컨텍스트. 입력 run 과 05 가 같은 값으로 연다.
+    """Food · Activity · Growth · Health 컨텍스트. 입력 run 과 05 가 같은 값으로 연다.
 
     포트가 두 벌이 되지 않게 한 곳에서 만든다.
     """
@@ -641,8 +671,38 @@ def _domain_contexts(
             issued_books=growth_issued_books if books is not None else None,
         ),
     )
+    # Health 도 같은 생일 · 동의 · 기준일 · store 를 받는다. 동의 값을 못 받은 호출(테스트 · eval)은
+    # 동의 없음으로 읽는다 — 건강정보를 읽지 않게. 안전 · 복약 · 아이 기본 정보는 api 가 넘긴
+    # 어댑터이고, 안 넘기면 읽을 때 실패한다(빈 저장소로 열리면 복약 · 알레르기가 "없음" 이 된다).
+    # 복약 어댑터는 읽기와 중단 쓰기를 한 객체가 한다
+    unwired_medication = UnwiredMedication()
+    health_context = HealthContext(
+        child_id=child_id,
+        run_id=run_id,
+        now=now,
+        timezone=KST,
+        ports=HealthPorts(
+            # 생일이 없으면 지어낸 생일로 열지 않는다 — Health 는 나이로 응급을 가른다
+            profile=(
+                UnwiredBirthDate()
+                if birth_date is None
+                else activity_child or HealthProfile({child_id: birth_date})
+            ),
+            consent=activity_child or HealthConsent({child_id: False}),
+            safety=health_safety or UnwiredHealthSafety(),
+            memory=(
+                StoreHealthMemory(store)
+                if domain_store is None
+                else StoreHealthMemory(opener=domain_store)
+            ),
+            medication=health_medication or unwired_medication,
+            medication_writer=health_medication_writer or unwired_medication,
+            child=health_child or UnwiredChildBasic(),
+        ),
+    )
     return {
         "food": food_context,
         "activity": activity_context,
         "growth": growth_context,
+        "health": health_context,
     }, writes

@@ -29,6 +29,7 @@ from app.api.v1.routers import (
     home,
     invites,
     me,
+    medications,
     notifications,
     observations,
     policies,
@@ -57,6 +58,7 @@ protected_router.include_router(child_parents.router)
 protected_router.include_router(client_errors.router)
 protected_router.include_router(consents.router)
 protected_router.include_router(health_safety.router)
+protected_router.include_router(medications.router)
 protected_router.include_router(invites.router)
 protected_router.include_router(me.router)
 protected_router.include_router(notifications.router)

@@ -91,6 +91,9 @@
 
 - [event/event-draft-flow-v1.md](event/event-draft-flow-v1.md) — 승인 전 `event` 행을 두지 않기로 하면서 생긴 초안 계약 · `op`(create/update) 두 모양 · `items` 는 최종 목록(빠진 `item_id` 는 삭제) · `before` 는 원본 전체이고 `changed` 는 뺌 · `draft_id` 는 화면 전용 키 · `is_prepared` 는 초안이 읽지 않음
 
+## 복약 (medication)
+
+- [medication/medication-tables-v1.md](medication/medication-tables-v1.md) — 회차 1번 = 1행이고 체크 칸이 곧 복용 기록(로그 표 없음) · 그래서 `ends_on` 필수 · `status` 는 `active`/`stopped` 둘, 진행 중은 `in_progress(today)` 한 곳 · 회차에 `created_at`·`updated_at` 없음 · 오프셋 범위가 자정 넘김을 막음 · DB 가 못 막아 제출 API 가 막을 것(체크된 회차는 지우지 않음) · core 기준 시각(`ANCHOR_TIMES`)과 생성 식 대조 테스트는 `test_medication_tables.py` (#537)
 ## 알림 (notification)
 
 - [notification/reminder-v1.md](notification/reminder-v1.md) — **일정 알림.** 일정마다 보호자 개인 알림 1개(고정 목록 · 종일은 KST 오전 9시) · 울릴 시각이 아니라 `lead` 를 저장하고 보낼 때 계산 · 기기는 로그인에 묶여 로그아웃 · 만료 때 함께 지워짐 · 스위치 2개(보호자 단위, 행 없으면 코드 기본값) · 1분 배치가 보내기 전에 `sent_at` 을 찍음(두 번 울리느니 한 번 빠짐) · 10분 넘게 지난 알림은 안 보냄 · 문구에 일정 제목 없음 · 🔶 문구 · 토큰 동의 · 기본값은 PM 결정 대기 (#594)

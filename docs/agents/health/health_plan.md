@@ -8,7 +8,7 @@
 ## 0. 이 Agent의 특이점
 
 1. **마지막에 붙입니다.** 앞의 셋으로 뼈대가 굳은 뒤에 시작합니다. 안전에 가장 민감하고 외부 의존이 가장 많습니다.
-2. **유일하게 아이 데이터를 직접 씁니다** — 복용 기록(`medication_dose_log`)과 한 번 물어 확인한 중단. 복약 코스의 생성·수정은 초안 → 보호자 제출입니다.
+2. **유일하게 아이 데이터를 직접 씁니다** — 한 번 물어 확인한 복약 중단 하나뿐입니다. 복약 코스의 생성·수정은 초안 → 보호자 제출이고, 복용 체크는 보호자가 화면에서 회차마다 합니다(10-20).
 3. **라벨 5개 중 3개가 모델 호출 0회**입니다. 판단은 코드와 공식 기준표가 합니다.
 4. **의료 검수가 릴리스 게이트**입니다. 응급 신호·병원 안내 문구는 검수 전에 나가지 않습니다.
 
@@ -34,19 +34,20 @@
 
 ### 1-1. 이슈 순서 (10-18)
 
-위 단계를 이슈 일곱으로 나눠 순서대로 진행한다. 1번 브랜치가 통합 브랜치이고, 2–6 은 앞 PR 이 머지된 뒤 시작한다. 7 은 2 이후 3–6 과 병렬로 해도 된다.
+위 단계를 이슈 여덟로 나눠 순서대로 진행한다. 1번은 develop 으로 먼저 들어갔고, 2번 브랜치(`feat/ai-519-health-skeleton`)가 통합 브랜치다. 3–6 은 앞 PR 이 머지된 뒤 시작한다. 7 은 2 이후 3–6 과 병렬로 해도 된다. 8(연결)은 5번의 BE/FE 작업이 들어온 뒤 시작한다.
 
 | # | 이슈 | 맞물리는 단계 | 다른 직군 확인 |
 | --- | --- | --- | --- |
 | 1 | 명세 개정 4 (#514) | S0 | PM — 루트 문구 |
 | 2 | 뼈대 + 케이스 재실행 eval | S5 | – |
 | 3 | 검진 · 접종 (`schedule_check`) | S1 · S6 일부 | – |
-| 4 | 증상 반복 안내 — 날 수 세기 · 만성질환 연결 | S1 · S3 · S6 | 의료 검수 — (질환 × 증상) 안내 문구 |
-| 5 | 복약 기록 · 초안 + 전달 서류 | S2 · S6 · S7 | – |
+| 4 | 증상 반복 안내 — 날 수 세기 · 만성질환 연결 | S1 · S3 · S6 | (질환 × 증상) 안내 문구 확인 — 원문 대조 · 연결 적절성 (의료인 검수 필수 아님, PM 확인 대기) |
+| 5 | 복약 기록 · 초안 + 전달 서류 | S2 · S6 · S7 | BE · FE — 복약 테이블 · 제출 API · 회차 체크 API · 초안 카드 · 체크 화면 (8번 선행) |
 | 6 | 진료 준비 정리 · 열 타임라인 · 검진 맥락 요약 | S2(체온 3칸) · S8 | 의료 검수 — 3개월 미만 발열 응급 기준 |
 | 7 | 병원 찾기 (`place_lookup`) — 다른 작업자 | S4 · S6 | PM — 위치 약관 목적 · 다시 동의, API 키 · 서버 IP |
+| 8 | 연결 — Supervisor · pipeline · 복약 어댑터 (§16) | S9 · S10 | BE · FE — SSE 번역 · 되묻기 보관 · 답하기 화면은 같이 |
 
-연결 이슈(§16)는 7번에서 병원 찾기가 API 로 도는 것을 확인한 뒤 한 번에 연다. 처방전 OCR 경로(`prescription_draft`)는 이 순서 밖이다 — OCR 파이프라인과 테이블이 생기면 따로 연다.
+연결 이슈(§16)는 **5번의 BE/FE 작업이 develop 에 들어온 뒤** 연다(10-20 변경 — 원래는 7번 확인 직후였다). 복약을 실제 테이블로 읽지 못하는 채로 연결하면 `medication` · `care_handoff` 가 빈 저장소로 돌기 때문이다. 처방전 OCR 경로(`prescription_draft`)는 이 순서 밖이다 — OCR 파이프라인과 테이블이 생기면 따로 연다.
 
 ---
 
@@ -73,7 +74,7 @@
 | `reference/vaccine_2026.yaml` | 표준예방접종일정 | **매년 교체** 절차 문서화 |
 | `reference/symptom_codes.yaml` | 증상 표준 코드 + 별칭 | `health_phrases.yaml`의 `seek_care` 키 · `condition_guidance.yaml`의 증상 키와 **동일 어휘** |
 | `reference/condition_codes.yaml` (10-18) | 질환 표준 코드 + 별칭 + guards — 보호자가 `health_safety`에 적는 만성질환 이름을 맞춘다 | 사전 밖 이름은 기본 문장으로 떨어지는지 · 알레르기 항목은 대상 아님 |
-| `reference/condition_guidance.yaml` (10-18) | (질환 코드 × 증상 코드) → 고정 안내 문구 + 출처 | **의료 검수 필수** · 출처는 공공누리 0·1 · 고시 · CC BY만 · `medical_reviewed: true`만 로드 |
+| `reference/condition_guidance.yaml` (10-18) | (질환 코드 × 증상 코드) → 고정 안내 문구 + 출처 | **원문 대조 + 연결 적절성 확인**(작성자 가능, 의료인 검수 필수 아님) · 출처는 공공누리 0·1 · 고시 · CC BY만 · `medical_reviewed: true` + `reviewed_by` 가 있는 행만 로드 |
 | `allergen_term` | Food와 공유 | 이미 적재돼 있으면 재사용 |
 
 
@@ -83,10 +84,9 @@
 
 ```
 1) prescription_draft        (OCR 팀 소유 · Health는 SELECT)
-2) medication_schedule       (+ indication_text · symptom_codes · storage · med_form · source · source_draft_id. status는 active/completed 둘뿐)
-3) medication_dose           (generated column)
-4) medication_dose_log
-5) observation_health.temperature · measured_at · measure_site   ← Memory 소유, 변경 요청
+2) medication_schedule       (+ indication_text · symptom_codes · storage · med_form · source · source_draft_id. ends_on NOT NULL · status는 active/stopped 둘뿐 — 끝남은 ends_on 으로 계산)
+3) medication_dose           (회차 1행 + checked_at 체크 칸 · generated column)
+4) observation_health.temperature · measured_at · measure_site   ← Memory 소유, 변경 요청
 ```
 
 DDL은 [`health_agent_own_table.md`](health_agent_own_table.md) §7.
@@ -95,8 +95,8 @@ DDL은 [`health_agent_own_table.md`](health_agent_own_table.md) §7.
 
 | role | 부여 |
 | --- | --- |
-| agent | `medication_dose_log` INSERT · `medication_schedule` 중단 UPDATE(`status` · `updated_at`) · 나머지는 SELECT (10-18) |
-| app (보호자 세션) | 복약 초안 제출 — `medication_schedule` · `medication_dose` INSERT/UPDATE, 수정 시 dose 재생성. `stopped` 코스 수정은 거절 |
+| agent | `medication_schedule` 중단 UPDATE(`status` · `updated_at`) · 나머지는 SELECT (10-18, 10-20 — 복용 체크는 보호자 화면) |
+| app (보호자 세션) | 복약 초안 제출 — `medication_schedule` · `medication_dose` INSERT/UPDATE, 수정 시 아직 오지 않은 회차만 재생성. 회차 체크(`checked_at`) 채우기·비우기. `stopped` 코스 수정은 거절 |
 | agent | `health_safety` write **비부여** · `prescription_draft` write **비부여** |
 | app (보호자 세션) | `health_safety` INSERT (`created_by = parent.id`) |
 
@@ -177,8 +177,8 @@ DoD: mock `run()` · 라벨 5개 각각 `tools_for()` 스냅샷 테스트.
 | 7-2 | `validate_verbatim_spans` | `title`·`dosage`·`indication`이 **발화 또는 확인된 draft**의 부분 문자열 |
 | 7-3 | `create_medication_schedule` | 코스+dose N개 **한 트랜잭션** · 항상 `draft` · `notice_times[]` 필수 필드 |
 | 7-4 | `update` · `stop` | update는 `op="update"` 초안(DB 미접촉) · stop은 한 번 묻고(그 run 변경 0) '네' 다음 run 에서 `status='stopped'` · `updated_at`=중단 시각 · 대상 모호하면 역질의 |
-| 7-4a | 제출 처리 (백엔드) | create → INSERT, update → 같은 행 UPDATE + dose 재생성 (한 트랜잭션) · `missing` 비지 않으면 거절 · `stopped` 코스 수정 거절 |
-| 7-5 | `log_dose_taken` · `get_next_dose` | 미래 기록 거절 · 중복 확인 · **반환에 `can_take` 없음** |
+| 7-4a | 제출 처리 (백엔드) | create → INSERT 코스 + 기간만큼 회차 행, update → 같은 행 UPDATE + 아직 오지 않은 회차만 재생성 (한 트랜잭션) · `missing` 비지 않으면 거절 · `stopped` 코스 수정 거절 |
+| 7-5 | `get_next_dose` · "먹였어" 안내 | 오늘 체크 n/m · 마지막 체크 = 회차 예정 시각 · 쓰기 0 · **반환에 `can_take` 없음** |
 | 7-6 | `lookup_prescription_draft` | 낮은 신뢰도 칸 빈값 유지 · 확인 전 등록 차단 |
 
 승인 모달의 실제 시각: 생성·수정 결과에 시각이 없으면 **tool 호출 실패**로 처리합니다.
@@ -220,8 +220,8 @@ hook(`check_symptom_repetition` → `lookup_condition_guidance`)은 pipeline에�
 | 파일 | 핵심 |
 | --- | --- |
 | `test_health_gating.py` | 동의 철회 → 전 라벨 0회 |
-| `test_medication.py` | anchor 매핑 · **생성·수정이 DB를 건드리지 않음**(초안만) · 제출 전 `medication_schedule` 0건 · `missing` 비지 않으면 제출 잠김 · 제출 시 create=INSERT / update=같은 행 UPDATE · **stop 은 묻는 run 에서 변경 0건, '네' 다음 run 에서 `status='stopped'` · `updated_at`=중단 시각이고 `medication_dose_log`가 남음 · '아니요' 면 변경 0건** · 발송 0건 · `notice_times` 필수 · span 검증 · 영아는 `fixed` 19:30 |
-| `test_dose_log.py` | 미래 기록 거절 · 중복 · `can_take` 필드 **부재** |
+| `test_medication.py` | anchor 매핑 · **생성·수정이 DB를 건드리지 않음**(초안만) · 제출 전 `medication_schedule` 0건 · `missing` 비지 않으면 제출 잠김 · 제출 시 create=INSERT / update=같은 행 UPDATE · **stop 은 묻는 run 에서 변경 0건, '네' 다음 run 에서 `status='stopped'` · `updated_at`=중단 시각이고 회차 행·체크가 남음 · '아니요' 면 변경 0건** · 발송 0건 · `notice_times` 필수 · span 검증 · 영아는 `fixed` 19:30 |
+| `test_dose_status.py` | "먹였어" · "못 먹였어" 쓰기 0 · 오늘 체크 n/m · 마지막 체크 = 회차 예정 시각 · `can_take` 필드 **부재** |
 | `test_symptom_episode.py` | 3일 연속 발열 = 에피소드 1건 · 반복은 날 수(최근 7일 3일 · 같은 날 = 1일 · 3일 연속 = 3일) |
 | `test_condition_guidance.py` | 질환 사전 매칭 · 행 있을 때만 질환 문장 · 알레르기 제외 · 출처 동봉 · 쓰기 0건 · 미검수 행 로드 거부 · 원인·질환 추정 표현 0건 |
 | `test_fever_timeline.py` | 약 계열 단어 0건 · 다음 예정 출처 |
@@ -297,17 +297,28 @@ H-1 · H-8 · H-9 · H-11 · H-13 ([`Health_Agent_명세.md`](Health_Agent_명�
 
 ## 16. 연결 이슈에서 할 일
 
-이슈 7(병원 찾기)이 API 로 도는 것을 확인한 뒤 한 이슈로 연다. 그 전에는 Health 가 pipeline 에 붙지 않아서 Supervisor 가 health 로 보내면 `unavailable` 로 끝난다. 그 사이 빠지는 게 없도록 여기 고정한다.
+5번의 BE/FE 작업이 들어온 뒤 한 이슈로 연다(10-20 변경). 그 전에는 Health 가 pipeline 에 붙지 않아서 Supervisor 가 health 로 보내면 `unavailable` 로 끝난다. 그 사이 빠지는 게 없도록 여기 고정한다.
+
+**시작 조건**
+
+- 5번 BE/FE 작업이 develop 에 들어왔다 — 복약 테이블 2개(회차 1행 + 체크 칸, `ends_on` 필수) · 초안 제출 API(게이트 ㉡) · 회차 체크 API · 초안 카드 · 체크 화면. 내용은 5번 이슈의 "BE/FE팀에 부탁드리는 내용"
+- develop 을 통합 브랜치(519)로 받았다. Growth 의 Supervisor 연결(#531)이 `entrypoint` · `pipeline` · `supervisor/routing` · `schemas` · `prompt` · `agent_ports` · `runner` 를 같이 고치므로, 그게 develop 에 들어온 뒤에 받는다
+
+**연결 이슈에서 하는 것 (이시하)**
 
 - **Supervisor** — `Segment` 에 health 라벨(`visit_summary` · `schedule_check` · `place_lookup` · `medication` · `care_handoff`), 프롬프트 경계 예시(명세 §3), `routing._task_label`
 - **`routing.IMPLEMENTED_AGENTS` · `pipeline._RUNNERS`** 에 health
 - **`pipeline.RECOMMENDING_TASKS` 계약** — 키가 `IMPLEMENTED_AGENTS` 와 같아야 한다는 테스트와 `entrypoint.recommendation_task_type` 의 `[label] = …` 가 추천 없는 Agent 를 받지 못한다. 둘 중 무엇을 바꿀지 정한다
-- **`pipeline._WRITING_TASKS`** 에 `medication`(복용 기록 · 중단)
-- **출력 채널** — `DomainOutcome` · `AgentResult` · `api/runs/translate.py` 가 `medication_drafts` · `event_requests` 를 화면 이벤트로 내보낸다 (지금은 조용히 사라진다)
+- **`pipeline._WRITING_TASKS`** 에 `medication`(확인된 중단 — Agent 가 쓰는 유일한 것)
+- **pipeline 출력** — `DomainOutcome` · `AgentResult` 가 `medication_drafts` · `event_requests` · `pending` 을 싣는다 (지금은 조용히 사라진다)
 - **`event_requests`**(검진 알림) → Memory 일정 tool 을 코드로 불러 초안 payload
 - **hook** — Memory 가 `observation_health` 를 저장한 직후 `check_symptom_repetition` 을 동기 호출
-- **복약 초안 제출 API** — 게이트 ㉡. create → INSERT · update → 같은 행 UPDATE + dose 재생성 · `stopped` 코스 수정 거절(중단 시각인 `updated_at` 을 지킨다) · `missing` 이 비지 않으면 거절 · Idempotency-Key 필수. 프론트의 "되돌릴 수 없는 곳" 목록과 `approval-gates.test.ts` 가 늘어난다 → **FE 확인**. 중단은 이 API 가 아니다(아래 되묻기)
-- **Health 되묻기 맥락** — 복약 중단 확인(`DomainAgentResult.pending`)을 run 사이에 보관하고, 다음 입력의 `reply_to` 로 같은 Agent 에 돌려준다. Memory 의 `api/runs/pending_reply.py` 와 같은 저장소 · 같은 보관 시간
-- **화면** — 복약 확인 모달(실제 알림 시각) · 반복 안내 카드(읽기 전용, 출처) · 응급 카드 · 투약의뢰서 복사
-- **DB 어댑터 배선** — `entrypoint._domain_contexts` · `api/agent_ports.py`
+- **복약 DB 어댑터 · 배선** — `domains/health/agent_reader.py`(Agent 포트를 테이블로) · `apps/api/CLAUDE.md` 저장 계약 예외 표 · `entrypoint._domain_contexts` · `api/agent_ports.py`
+- **병원 찾기 위치** — pipeline 에서 `find_pediatric_places(location=…)` 로 위치를 넘기는 길. `now` 는 KST 벽시계로 바꿔 넘긴다. PM 확인(위치 약관 목적 추가 · 다시 동의)이 먼저다
+
+**BE/FE 와 같이 하는 것** — pipeline 이벤트가 생겨야 끝까지 확인할 수 있어서 연결 이슈에 둔다
+
+- **SSE 번역** — `api/runs/translate.py` 가 `medication_drafts` 를 화면 이벤트(`medication_draft`, 일정 `event_draft` 와 같은 모양)로. FE 카드는 이 모양으로 목에서 먼저 만든다
+- **Health 되묻기 맥락** — 중단 확인 · 대상 약 · 복용 시점(`DomainAgentResult.pending`)을 run 사이에 보관하고, 다음 입력의 `reply_to` 로 같은 Agent 에 돌려준다. Memory 의 `api/runs/pending_reply.py` 와 같은 저장소 · 같은 보관 시간. `agent_result` 에 "답을 받는 질문" 표시, FE 는 그 질문에만 이어서 적기를 연다
+- **화면** — 반복 안내 카드(읽기 전용, 출처) · 응급 카드 · 투약의뢰서 복사가 실제 run 에서 그려지는지
 

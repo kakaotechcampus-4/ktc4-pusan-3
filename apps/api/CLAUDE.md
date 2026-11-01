@@ -45,13 +45,17 @@ import-linter 로 CI 에서 강제할 예정이다(#79 API CI 와 함께). 설�
   | `domains/memory/curator/db_store.py` | `agents.curator.embedding.ports` |
   | `domains/memory/curator/recompute.py` | `agents.curator.embedding.linker`(`LinkResult` 타입) |
   | `domains/memory/curator/trigger.py` | `agents.curator.embedding.embed_step` · `.judge`(Protocol) · `.linker.link_observations`(실행) |
-  | `domains/safety/agent_reader.py` | `agents.common.ports`(`SafetyLookupError`) · `agents.food.store.ports` · `agents.activity.store.ports` · `agents.growth.store.ports`(`SafetyEntry`) |
+  | `domains/safety/agent_reader.py` | `agents.common.ports`(`SafetyLookupError`) · `agents.food.store.ports` · `agents.activity.store.ports` · `agents.growth.store.ports`(`SafetyEntry`) · `agents.health.store.ports`(`HealthSafetyEntry`) |
   | `domains/food/agent_reader.py` | `agents.food.store.ports`(`MenuCatalogRow` · `RECIPE_SOURCES`) |
-  | `domains/child/agent_reader.py` | `agents.growth.store.ports`(`GrowthMeasurement`) |
+  | `domains/child/agent_reader.py` | `agents.growth.store.ports`(`GrowthMeasurement`) · `agents.health.store.ports`(`ChildBasic`) |
+  | `domains/medication/agent_reader.py` | `agents.health.store.ports`(`MedicationCourse` · `MedicationDose` · `DoseSlot`) |
   | `domains/memory/profile/agent_reader.py` | `agents.common.evidence`(`AffinityRow`) |
   | `domains/place/agent_reader.py` | `agents.activity.store.ports`(`PlaceRow` · `CoarseLocation` · `UpstreamUnavailable` · `PLACE_MAX_RADIUS_M` · `PLACE_TOP_K`) · `agents.activity.schemas.common`(`PlaceCategory`) |
   | `domains/place/models.py` | `agents.activity.store.ports`(`PLACE_SOURCES` — source CHECK 를 포트와 같은 값으로 만든다) |
 
+  - Agent 가 직접 쓰는 것은 `DbMedicationStore.stop_course`(보호자가 확인한 복약 중단 UPDATE) 하나뿐이다.
+    복약 어댑터에 다른 쓰기 메서드를 두지 않는다 — 명세의 "Agent role 은 중단 UPDATE 만" 을 DB 역할
+    분리 없이 어댑터 모양으로 대신하는 것이다.
   - `trigger.py` 만 타입이 아니라 agents 의 함수를 부른다. Curator 판정 흐름은 agents 몫이고 세션 ·
     트랜잭션 · advisory lock 은 domains 몫이라 여기서 만난다. 실행을 api 로 옮기려면 api 가
     entrypoint 밖의 agents 를 import 해야 해서 지금은 이 자리에 둔다.
@@ -59,7 +63,7 @@ import-linter 로 CI 에서 강제할 예정이다(#79 API CI 와 함께). 설�
 ### `app/agents/`
 - **허용**: domains, rules, providers, core
   — core 는 역할별 LLM 설정(`core/agent_config.py`), 일정 초안 payload 계약(`core/event_draft.py`),
-    날씨 원문 계약(`core/weather_raw.py`), 화면 딥링크 값(`core/deeplinks.py` — api 의 05 guard · 동의 오류와 같이 쓴다)을 쓴다
+    날씨 원문 계약(`core/weather_raw.py`), 병원 원문 계약(`core/hospital_raw.py`), 화면 딥링크 값(`core/deeplinks.py` — api 의 05 guard · 동의 오류와 같이 쓴다)을 쓴다
 - **금지**: fastapi, infra 직접 접근
 - ⚠️ **내부 구조는 이시하(AI Owner)가 정한다.** 이 문서는 경계만 정하고 하위 폴더를
   미리 만들지 않았다 (`CLAUDE.md` §8 "기능 내부 기술 결정 → 해당 기능 Owner").
@@ -92,7 +96,8 @@ import-linter 로 CI 에서 강제할 예정이다(#79 API CI 와 함께). 설�
 - **허용**: core, 사용하는 외부 SDK·HTTP 클라이언트
 - **금지**: api, domains, agents, infra import
 - Agent 포트가 받는 모양을 integration 이 만들어야 하면 그 모양은 `core` 에 둔다 — 날씨 어댑터는
-  `core/weather_raw.py` 의 원문 DTO 를 싣고, 해석은 Activity `weather.py` 가 한다.
+  `core/weather_raw.py` 의 원문 DTO 를 싣고, 해석은 Activity `weather.py` 가 한다. 병원 어댑터
+  (`integrations/hospital/`)도 `core/hospital_raw.py` 를 싣고 "지금 진료 중" 은 Health 가 판정한다.
 - 인증 라우터는 카카오 integration을 호출할 수 있지만, 카카오 응답 모양을 다른 도메인으로
   퍼뜨리지 않는다.
 

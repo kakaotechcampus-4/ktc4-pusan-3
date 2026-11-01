@@ -21,10 +21,12 @@ import type {
   CorrectionVerdict,
   Observation,
   ObservationDetailResponse,
+  ObservationHealth,
   Ref,
 } from "@/lib/api/types";
 import { isHealthObservation } from "@/lib/api/types";
 import { formatDay, formatTimeOfDay } from "@/lib/format";
+import { isMedicationRow, temperatureLabel } from "@/lib/health-observation";
 
 /**
  * 07 상세 · 교정 시트 — 관찰과 프로필이 **같은 시트**를 쓴다.
@@ -352,10 +354,16 @@ function ObservationDetail({
  *    `symptom` 은 **배열**이다 (apps/web/CLAUDE.md §4).
  * 🚨 여기 있는 값은 전부 보호자가 적은 것을 서버가 담은 것이다. 화면이 증상을 해석하거나
  *    심각도를 판단하지 않는다 — Health Agent 도 진단하지 않는다 (CLAUDE.md §2).
+ *    체온도 숫자와 잰 부위만 옮긴다 — 정상 범위 · 높다/낮다 · 색이 없다.
+ * 🚨 한 행 = 한 사건이다 (#551). 먹인 약 행은 증상이 비어 있고 `observed_time` 이 먹인 시각이다.
  */
-function HealthFields({ fields }: { fields: { symptom?: string[]; [key: string]: unknown } }) {
+function HealthFields({ fields }: { fields: ObservationHealth["domain_fields"] }) {
   const symptoms = fields.symptom;
+  const medicine = isMedicationRow(fields);
   const bodyPart = typeof fields.body_part === "string" ? fields.body_part : null;
+  const temperature = temperatureLabel(fields);
+  const measuredAt =
+    typeof fields.measured_at === "string" ? formatTimeOfDay(fields.measured_at) : null;
   const when =
     typeof fields.observed_time === "string" ? formatTimeOfDay(fields.observed_time) : null;
 
@@ -364,8 +372,11 @@ function HealthFields({ fields }: { fields: { symptom?: string[]; [key: string]:
       {symptoms && symptoms.length > 0 ? (
         <MetaRow label="증상">{symptoms.join(", ")}</MetaRow>
       ) : null}
+      {medicine ? <MetaRow label="먹인 약">{fields.medication_given}</MetaRow> : null}
+      {temperature ? <MetaRow label="체온">{temperature}</MetaRow> : null}
+      {measuredAt ? <MetaRow label="잰 시간">{measuredAt}</MetaRow> : null}
       {bodyPart ? <MetaRow label="부위">{bodyPart}</MetaRow> : null}
-      {when ? <MetaRow label="시간">{when}</MetaRow> : null}
+      {when ? <MetaRow label={medicine ? "먹인 시간" : "시간"}>{when}</MetaRow> : null}
     </>
   );
 }
