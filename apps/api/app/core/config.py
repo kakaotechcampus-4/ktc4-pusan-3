@@ -106,6 +106,11 @@ class Settings(AgentLLMSettings):
     # 보호자별 하루 한 줄 입력 횟수 (app/api/quota.py). 모델 크레딧 보호용 — 테스트용 숫자.
     INPUT_DAILY_LIMIT: int = 5
 
+    # 푸시 기기 토큰을 받기 시작하는 스위치 (#594). 기기 토큰이 실린 처리방침 새 판이 나가기 전에는
+    # 꺼 둔다 — 꺼져 있으면 `PUT /me/push-device` 가 204 만 주고 저장하지 않는다 (#605 PM).
+    # 웹 빌드 인자를 거치지 않는 앱 토큰까지 서버 한 곳에서 막는다
+    PUSH_DEVICE_ACCEPT: bool = False
+
     @field_validator("AUTH_RETURN_URL_WEB", "AUTH_RETURN_URL_APP")
     @classmethod
     def _require_return_url(cls, raw: str, info: ValidationInfo) -> str:

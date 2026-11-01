@@ -243,4 +243,7 @@ export const NOT_MAPPED: Record<string, string> = {
   AnswerResponse: "05 가 되묻기 답의 응답 본문을 읽지 않는다",
   ReminderIn: "웹 미사용 — FE 후속 #594 (일정 알림 칸 · 내 알림 걸기)",
   ReminderResponse: "웹 미사용 — FE 후속 #594 (PUT …/events/{eid}/reminder 응답)",
+  PushDeviceIn: "웹 미사용 — FE 후속 #594 (PUT /me/push-device — 푸시 토큰 등록)",
+  PushPlatform: "웹 미사용 — FE 후속 #594 (PushDeviceIn.platform)",
+  NotificationSettings: "웹 미사용 — FE 후속 #594 (설정 탭 일정 · 복약 알림 스위치)",
 };
