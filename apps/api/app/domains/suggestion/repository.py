@@ -45,12 +45,14 @@ async def create_suggestion(
     allergens: Sequence[str] = (),
     items: Sequence[str] = (),
     run_id: str | None = None,
+    requested: bool = False,
 ) -> Suggestion:
     """Agent 결과 저장. 일반/개인화 판정과 근거 필수 여부는 호출 계층에서 검증한다.
 
     `citations` · `allergens` · `items` 는 `SuggestionDraft.to_payload()` 의 같은 이름 칸을
     그대로 받는다. `citations` 는 `source_kind` · `source_id` · `note` 세 칸이다.
     `run_id` 는 그 추천을 만든 입력 run 이다. run 밖에서 만들면 None.
+    `requested` 는 보호자가 놀이를 정해 물은 Activity 일반 추천인지다(`_requested` 가 정한다).
     """
     row = Suggestion(
         child_id=child_id,
@@ -63,6 +65,7 @@ async def create_suggestion(
         expires_at=expires_at,
         status=SuggestionStatus.DRAFT,
         run_id=run_id,
+        requested=requested,
     )
     session.add(row)
     await session.flush()
@@ -278,6 +281,7 @@ async def save_agent_suggestions(
             allergens=item["allergens"],
             items=item["items"],
             run_id=run_id,
+            requested=_requested(item),
         )
         ids.append(row.id)
     return ids
@@ -312,13 +316,11 @@ async def _checked_citations(
     if books and (payload["agent"] != "growth" or kind is not SuggestionKind.GENERAL):
         # 도서 근거는 Growth 일반 추천만 단다 — 개인화는 아이 기록이 근거다(메뉴와 같은 규칙)
         raise SuggestionEvidenceError("도서 근거는 Growth 일반 추천에만 단다")
-    # 보호자가 놀이를 정해 물은 Activity 일반 추천(`requested`)은 그 요청이 기준이라 문서 행이
-    # 없어도 된다 — "물놀이 뭐 하지?" 에 시드에 없는 놀이를 낼 수 있게 (루트 §2). Food 는 후보가
-    # 레시피북에서만 나와야 해서 면제하지 않는다 (#597 리뷰)
-    requested = payload.get("requested", False) and payload["agent"] == "activity"
+    # 보호자가 놀이를 정해 물은 Activity 일반 추천은 그 요청이 기준이라 문서 행이 없어도 된다 —
+    # "물놀이 뭐 하지?" 에 시드에 없는 놀이를 낼 수 있게 (루트 §2)
     if (
         kind is SuggestionKind.GENERAL
-        and not requested
+        and not _requested(payload)
         and not any(
             item["source_kind"] in _DOC_KINDS | _MENU_KINDS | _BOOK_KINDS for item in citations
         )
@@ -340,6 +342,19 @@ async def _checked_citations(
         if found is None:
             raise SuggestionEvidenceError("근거 기록이 없거나 다른 아이의 기록이다")
     return citations
+
+
+def _requested(payload: Mapping[str, Any]) -> bool:
+    """보호자가 놀이를 정해 물은 Activity 일반 추천인가. 저장 검사와 행의 `requested` 가 같이 쓴다.
+
+    Activity 만이다 — Food 는 후보가 레시피북에서만 나와야 해서, `requested` 가 와도 문서 · 메뉴
+    근거를 본다 (#597 리뷰). 개인화는 아이 기록이 근거라 요청 기반이 아니다.
+    """
+    return (
+        bool(payload.get("requested", False))
+        and payload["agent"] == "activity"
+        and SuggestionKind(payload["kind"]) is SuggestionKind.GENERAL
+    )
 
 
 async def list_evidence(

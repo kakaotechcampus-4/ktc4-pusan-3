@@ -304,8 +304,32 @@ async def test_보호자가_정한_요청에_맞춘_일반_추천은_문서_근�
         payloads=[payload(kind="general", requested=True, agent="activity")],
         now=NOW,
     )
-    assert suggestion_id
     assert await counts(session, child.id) == (1, 0)
+    # 05 가 문서 근거 없이도 내보낼 수 있게 요청 기반임을 행에 남긴다 (#597 리뷰)
+    assert (await session.get(Suggestion, suggestion_id)).requested is True
+
+
+async def test_요청_기반은_Activity_일반_추천만_행에_남긴다(session, kids):
+    """Food 가 requested 를 보내도 요청 기반으로 남지 않는다 — 05 에서 문서 근거가 사라지면
+    다른 일반 추천처럼 빠진다. 막연한 요청의 Activity 일반 추천도 남기지 않는다."""
+    _, child, _ = kids
+    food, activity = await save_agent_suggestions(
+        session,
+        child_id=child.id,
+        run_id=RUN,
+        payloads=[
+            payload(
+                kind="general",
+                requested=True,
+                agent="food",
+                citations=[doc_citation("food_doc")],
+            ),
+            payload(kind="general", agent="activity", citations=[doc_citation()]),
+        ],
+        now=NOW,
+    )
+    assert (await session.get(Suggestion, food)).requested is False
+    assert (await session.get(Suggestion, activity)).requested is False
 
 
 async def test_요청_기반_면제는_Activity_만이다(session, kids):
