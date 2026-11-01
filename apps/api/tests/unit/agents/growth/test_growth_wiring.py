@@ -469,7 +469,7 @@ async def test_도서는_정보나루_어댑터가_있으면_고른_책을_책_�
 
     saved = entrypoint.InMemorySuggestions()
     (shown,) = await handle(
-        "공룡 책 추천해줘",
+        "책 추천해줘",
         "book_suggestion",
         InMemoryStore(now=NOW),
         growth_llm,
@@ -789,3 +789,56 @@ async def test_도메인_task_에_run_마감이_실린다(monkeypatch):
     (deadline,) = deadlines
     assert deadline is not None
     assert before < deadline <= time.perf_counter() + pipeline.RUN_DEADLINE_S
+
+
+async def test_도서_요청_낱말은_제목으로_찾고_제목에_낱말이_든_책만_저장한다():
+    from app.agents.growth.store.inmemory import InMemoryIssuedBooks
+    from tests.unit.agents.growth.support import FakeRawSearch, raw_book
+
+    raw = FakeRawSearch({"곰": [raw_book(n, title=f"곰 이야기{n}") for n in range(1, 4)]})
+    items = [
+        {"isbn": raw_book(n).isbn13, "evidence": [], "reason": "곰이 나오는 그림책이에요"}
+        for n in range(1, 4)
+    ]
+    growth_llm = FakeLLM(
+        call("search_books", {"keywords": ["곰"]}),
+        call("propose_books", {"items": items}),
+    )
+    saved = entrypoint.InMemorySuggestions()
+    (shown,) = await handle(
+        "곰 책 추천해줘",
+        "book_suggestion",
+        InMemoryStore(now=NOW),
+        growth_llm,
+        saved=saved,
+        growth_books=raw,
+        growth_issued_books=InMemoryIssuedBooks(),
+    )
+
+    assert shown.status == "completed" and len(shown.suggestion_ids) == 3
+    assert raw.by_field == {"곰": "title"}
+
+
+async def test_도서_요청_낱말이_제목에_든_책이_없으면_book_no_topic_으로_닫는다():
+    from app.agents.growth.store.inmemory import InMemoryIssuedBooks
+    from tests.unit.agents.growth.support import FakeRawSearch, raw_book
+
+    raw = FakeRawSearch({"곰": [raw_book(1, title="공룡 대탐험")]})
+    growth_llm = FakeLLM(
+        call("search_books", {"keywords": ["곰"]}),
+        call("propose_books", {"items": []}),
+    )
+    saved = entrypoint.InMemorySuggestions()
+    (shown,) = await handle(
+        "곰 책 추천해줘",
+        "book_suggestion",
+        InMemoryStore(now=NOW),
+        growth_llm,
+        saved=saved,
+        growth_books=raw,
+        growth_issued_books=InMemoryIssuedBooks(),
+    )
+
+    assert shown.status == "blocked" and shown.suggestion_ids == ()
+    assert shown.readouts[0].body == GROWTH_READOUTS.render("book.no_topic").body
+    assert not saved.batches

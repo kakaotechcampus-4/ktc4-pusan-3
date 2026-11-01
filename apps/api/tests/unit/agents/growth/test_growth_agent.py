@@ -539,11 +539,11 @@ class FailsSecondSearch(InMemoryBooks):
         super().__init__(rows)
         self.searches = 0
 
-    async def search(self, *, keywords, limit):
+    async def search(self, *, keywords, limit, title_words=()):
         self.searches += 1
         if self.searches > 1:
             raise UpstreamUnavailable("도서 조회 실패 (테스트 주입)")
-        return await super().search(keywords=keywords, limit=limit)
+        return await super().search(keywords=keywords, limit=limit, title_words=title_words)
 
 
 def rhythm_row(key: str, lo: int, hi: int) -> GrowthDocRow:
@@ -604,9 +604,7 @@ class TestBook:
             call("propose_books", {"items": [pick(1), pick(2), pick(3)]}),
         )
         rows = [book(n) for n in range(1, 6)]
-        result = await run(
-            task("book_suggestion", "공룡 책 추천해줘"), books_ctx(rows=rows), client=llm
-        )
+        result = await run(task("book_suggestion", "책 추천해줘"), books_ctx(rows=rows), client=llm)
 
         assert result.status == "completed" and result.model_calls == 1
         assert [d.content for d in result.suggestions] == ["책1(가)", "책2(가)", "책3(가)"]
@@ -635,7 +633,7 @@ class TestBook:
         ctx = books_ctx(
             rows=[book(n) for n in range(1, 4)], memory=InMemoryGrowthMemory(education=[edu])
         )
-        result = await run(task("book_suggestion", "공룡 책"), ctx, client=llm)
+        result = await run(task("book_suggestion", "책 추천해줘"), ctx, client=llm)
 
         assert {d.kind for d in result.suggestions} == {"personalized"}
         for draft in result.suggestions:
@@ -734,6 +732,48 @@ class TestBook:
         assert result.suggestions == ()
         assert [r.body for r in result.readouts] == [READOUTS.render("closed.book_api").body]
 
+    async def test_도서_검색_실패_경고에_사유와_모델_호출_수가_남고_검색어는_없다(self, caplog):
+        caplog.set_level(logging.WARNING, logger="app.agents.growth.agent")
+        llm = FakeLLM(call("search_books", {"keywords": ["공룡"]}))
+        await run(task("book_suggestion"), books_ctx(rows=[book(1)], fail=True), client=llm)
+
+        lines = [r.getMessage() for r in caplog.records if "도서 검색 실패" in r.getMessage()]
+        assert len(lines) == 1
+        assert "reason=도서 조회 실패 (테스트 주입)" in lines[0] and "model_calls=1" in lines[0]
+        assert "공룡" not in lines[0]
+
+    async def test_도서_재검색_실패_경고에도_사유와_모델_호출_수가_남는다(self, caplog):
+        caplog.set_level(logging.WARNING, logger="app.agents.growth.agent")
+        llm = FakeLLM(
+            call("search_books", {"keywords": ["공룡"]}),
+            call(
+                "propose_books",
+                {"items": [pick(1, reason="숫자에 재능이 있어서 골랐어요"), pick(2), pick(3)]},
+            ),
+            call("search_books", {"keywords": ["기차"]}),
+        )
+        rows = [book(n) for n in range(1, 6)]
+        await run(
+            task("book_suggestion"),
+            context(
+                birth_for(30), books=FailsSecondSearch(rows), issued_books=InMemoryIssuedBooks()
+            ),
+            client=llm,
+        )
+
+        lines = [r.getMessage() for r in caplog.records if "도서 재검색 실패" in r.getMessage()]
+        assert len(lines) == 1
+        assert "reason=도서 조회 실패 (테스트 주입)" in lines[0] and "model_calls=2" in lines[0]
+
+    async def test_도서_프롬프트는_요청_낱말을_모두_넣고_책_종류는_주제가_아니라고_한다(self):
+        llm = FakeLLM()
+        await run(task("book_suggestion", "곰 책 추천해줘"), books_ctx(rows=[book(1)]), client=llm)
+        system = llm.seen[0][0]["content"]
+        assert "책 종류는 주제가 아니다" in system
+        assert "기록 주제는 섞지 않는다" in system
+        # 책 종류를 주제 예시로 들지 않는다
+        assert "공룡 · 그림책 · 잠자리" not in system
+
     async def test_8개월은_보드북만_나가고_모자라면_개수_안내가_붙는다(self):
         rows = [book(1), book(2, "board"), book(3)]
         llm = FakeLLM(
@@ -754,6 +794,19 @@ class TestBook:
 
         assert result.status == "completed" and result.suggestions == ()
         assert [r.code for r in result.readouts] == ["empty"]
+
+    async def test_요청한_주제의_책이_없으면_book_no_topic_으로_닫는다(self):
+        llm = FakeLLM(
+            call("search_books", {"keywords": ["곰"]}),
+            call("propose_books", {"items": []}),
+        )
+        result = await run(
+            task("book_suggestion", "곰 책 추천해줘"), books_ctx(8, [book(1)]), client=llm
+        )
+
+        assert (result.status, result.model_calls) == ("blocked", 1)
+        assert result.suggestions == ()
+        assert result.readouts == (READOUTS.render("book.no_topic"),)
 
     async def test_금지_표현으로_빠지면_재호출에서_다른_책으로_빈자리만_채운다(self):
         llm = FakeLLM(

@@ -165,9 +165,12 @@ async def _run(
     context.state.model_calls = 1
     try:
         completed = await _converse(llm, messages, context, allowed, output)
-    except UpstreamUnavailable:
-        # 도서 검색이 실패했다. 빈 목록이나 캐시로 꾸미지 않고 닫는다 — 모델은 한 번 불렀다
-        logger.warning("Growth 도서 검색 실패 run_id=%s", context.run_id)
+    except UpstreamUnavailable as exc:
+        # 도서 검색이 실패 -> 빈 목록이나 캐시로 꾸미지 않고 닫는다
+        # 사유는 어댑터가 남긴 단계와 상태 코드(검색어 · 키 · 주소는 없다)
+        logger.warning(
+            "Growth 도서 검색 실패 run_id=%s model_calls=1 reason=%s", context.run_id, exc
+        )
         context.state.closed_reason = CLOSED_BOOK_API
         return _result(
             task_type, "blocked", readouts=(READOUTS.render(CLOSED_BOOK_API),), model_calls=1
@@ -202,9 +205,13 @@ async def _run(
                 again = await asyncio.wait_for(
                     _recall(llm, messages, task, context, allowed, output, picked), budget
                 )
-            except UpstreamUnavailable:
+            except UpstreamUnavailable as exc:
                 # 재호출에서 다시 찾다가 실패했다. 처음 통과한 책은 그대로 낸다 (부분 결과)
-                logger.warning("Growth 도서 재검색 실패 run_id=%s", context.run_id)
+                logger.warning(
+                    "Growth 도서 재검색 실패 run_id=%s model_calls=2 reason=%s",
+                    context.run_id,
+                    exc,
+                )
             except TimeoutError:
                 logger.warning("Growth 재호출이 마감에 걸렸다 run_id=%s", context.run_id)
         if again is None and not picked:

@@ -78,17 +78,17 @@ class TestSearchAgeFilter:
     async def test_30개월은_info_만_빠진다(self):
         ctx = await ready(30, self.ALL_FORMS)
         found = await search_books(ctx, keywords=["공룡"])
-        assert isbns_of(found) == [isbn(1), isbn(2), isbn(4)]
+        assert isbns_of(found) == [isbn(1), isbn(2)]
 
     async def test_48개월은_board_만_빠진다(self):
         ctx = await ready(48, self.ALL_FORMS)
         found = await search_books(ctx, keywords=["공룡"])
-        assert isbns_of(found) == [isbn(2), isbn(3), isbn(4)]
+        assert isbns_of(found) == [isbn(2), isbn(3)]
 
-    async def test_unknown_은_돌_전에만_빠진다(self):
+    @pytest.mark.parametrize("months", [8, 12, 30, 48])
+    async def test_unknown_은_어느_월령에서도_빠진다(self, months):
         rows = [book(1, "unknown")]
-        assert await search_books(await ready(11, rows), keywords=["공룡"]) == ()
-        assert isbns_of(await search_books(await ready(12, rows), keywords=["공룡"])) == [isbn(1)]
+        assert await search_books(await ready(months, rows), keywords=["공룡"]) == ()
 
     async def test_캐시_행의_월령_칸이_틀려도_form_으로_다시_건다(self):
         # 월령 칸을 다시 믿으면 오래된 캐시 하나로 8개월 아이에게 그림책이 간다
@@ -112,10 +112,14 @@ class RecordingBooks(InMemoryBooks):
     def __init__(self, rows: Sequence[BookRow] = ()) -> None:
         super().__init__(rows)
         self.calls: list[tuple[tuple[str, ...], int]] = []
+        self.title_calls: list[tuple[str, ...]] = []
 
-    async def search(self, *, keywords: tuple[str, ...], limit: int) -> list[BookRow]:
+    async def search(
+        self, *, keywords: tuple[str, ...], limit: int, title_words: tuple[str, ...] = ()
+    ) -> list[BookRow]:
         self.calls.append((keywords, limit))
-        return await super().search(keywords=keywords, limit=limit)
+        self.title_calls.append(title_words)
+        return await super().search(keywords=keywords, limit=limit, title_words=title_words)
 
 
 class ScriptedBooks(InMemoryBooks):
@@ -125,8 +129,107 @@ class ScriptedBooks(InMemoryBooks):
         super().__init__()
         self._batches = list(batches)
 
-    async def search(self, *, keywords: tuple[str, ...], limit: int) -> list[BookRow]:
+    async def search(
+        self, *, keywords: tuple[str, ...], limit: int, title_words: tuple[str, ...] = ()
+    ) -> list[BookRow]:
         return list(self._batches.pop(0))
+
+
+def titled(n: int, title: str, form: str = "picture") -> BookRow:
+    return BookRow(isbn=isbn(n), title=title, form=form)
+
+
+async def asked_ctx(said: str, books_port: InMemoryBooks, months: int = 30) -> GrowthContext:
+    """보호자가 한 말(`said_texts`)을 채운 도서 context."""
+    ctx = context(birth_for(months), books=books_port, issued_books=InMemoryIssuedBooks())
+    ctx.state.gate = await build_gate(ctx, BOOK)
+    ctx.state.said_texts = (said,)
+    return ctx
+
+
+class TestAskedWords:
+    """요청에 나온 낱말은 제목으로 찾고, 제목에 그 낱말이 없는 책은 낼 수 없다."""
+
+    async def test_요청에_나온_검색어만_title_로_찾는다(self):
+        port = RecordingBooks([titled(1, "곰 사냥을 떠나자")])
+        ctx = await asked_ctx("곰이랑 코끼리 책 추천해줘", port)
+        await search_books(ctx, keywords=["곰", "공룡"])
+        assert port.title_calls == [("곰",)]
+        assert ctx.state.asked_book_words == frozenset({"곰"})
+
+    async def test_요청에_없는_낱말로만_찾으면_제목을_대조하지_않는다(self):
+        port = RecordingBooks([titled(1, "곰돌이 푸")])
+        ctx = await asked_ctx("곰 책 추천해줘", port)
+        await search_books(ctx, keywords=["곰돌이"])
+        assert port.title_calls == [()]
+        assert ctx.state.asked_book_words == frozenset()
+
+    async def test_제목에_요청_낱말이_없는_책은_검색_결과에서_빠진다(self):
+        rows = [
+            titled(1, "곰 사냥을 떠나자"),
+            titled(2, "공룡 대탐험"),
+            titled(3, "아기 곰 이야기"),
+        ]
+        ctx = await asked_ctx("곰 책 추천해줘", InMemoryBooks(rows))
+        found = await search_books(ctx, keywords=["곰"])
+        assert [row.title for row in found] == ["곰 사냥을 떠나자", "아기 곰 이야기"]
+        review = await propose_books(ctx, [isbn(2)])
+        assert [r.reason for r in review.rejections] == ["not_searched"]  # 공룡 책은 낼 수 없다
+
+    async def test_요청_낱말을_찾기_전에_찾은_다른_주제_책은_낼_수_없다(self):
+        """모델이 관심 주제를 먼저 찾고 요청 낱말을 나중에 찾는 순서."""
+        port = ScriptedBooks([[titled(1, "공룡 대탐험")], []])
+        ctx = await asked_ctx("곰 책 추천해줘", port)
+        await search_books(ctx, keywords=["공룡"])  # 아직 요청 낱말이 아니라 거르지 않는다
+        assert isbn(1) in ctx.state.seen_books
+        await search_books(ctx, keywords=["곰"])  # 요청 낱말이 나오면 앞서 찾은 책도 거른다
+        assert ctx.state.seen_books == {}
+        review = await propose_books(ctx, [isbn(1)])
+        assert [r.reason for r in review.rejections] == ["not_searched"]
+        assert review.available == 0
+
+    async def test_다른_주제를_먼저_찾았어도_빈_제출은_book_no_topic_으로_닫는다(self):
+        port = ScriptedBooks([[titled(1, "공룡 대탐험")], []])
+        ctx = await asked_ctx("곰 책 추천해줘", port)
+        await search_books_tool(ctx, SearchBooksArgs(keywords=["공룡"]))
+        await search_books_tool(ctx, SearchBooksArgs(keywords=["곰"]))
+        await propose_books_tool(ctx, books_of())
+        assert ctx.state.closing == "book.no_topic"
+
+    @pytest.mark.parametrize("word", ["그림책", "동화", "동화책", "보드북", "책"])
+    async def test_책_종류를_말한_것은_주제가_아니라서_제목을_거르지_않는다(self, word):
+        port = RecordingBooks([titled(1, "달님 안녕"), titled(2, "사과가 쿵")])
+        ctx = await asked_ctx(f"{word} 추천해줘", port)
+        found = await search_books(ctx, keywords=[word, "공룡"])
+        assert port.title_calls == [()]
+        assert ctx.state.asked_book_words == frozenset()
+        assert len(found) == 2
+
+    async def test_요청_낱말이_없으면_지금처럼_거르지_않는다(self):
+        rows = [titled(1, "곰 사냥을 떠나자"), titled(2, "공룡 대탐험")]
+        ctx = await asked_ctx("재미있는 책 추천해줘", InMemoryBooks(rows))
+        found = await search_books(ctx, keywords=["공룡"])
+        assert len(found) == 2
+
+    async def test_요청_낱말의_책이_없으면_다른_주제로_안내하지_않는다(self):
+        ctx = await asked_ctx("곰 책 추천해줘", InMemoryBooks([titled(1, "공룡 대탐험")]))
+        result = await search_books_tool(ctx, SearchBooksArgs(keywords=["곰"]))
+        assert not result.success and result.error["code"] == "NO_RECORDS"
+        assert "바꾸지 말고" in result.error["message"]
+        assert "다른 주제 낱말로" not in result.error["message"]
+
+    async def test_요청_낱말의_책이_없을_때_빈_제출은_book_no_topic_으로_닫는다(self):
+        ctx = await asked_ctx("곰 책 추천해줘", InMemoryBooks([titled(1, "공룡 대탐험")]))
+        await search_books_tool(ctx, SearchBooksArgs(keywords=["곰"]))
+        result = await propose_books_tool(ctx, books_of())
+        assert result.success
+        assert ctx.state.closing == "book.no_topic" and ctx.state.suggestions == ()
+
+    async def test_요청_낱말이_없으면_빈_제출은_지금처럼_빈_결과다(self):
+        ctx = await asked_ctx("재미있는 책 추천해줘", InMemoryBooks([titled(1, "공룡 대탐험")]))
+        await search_books_tool(ctx, SearchBooksArgs(keywords=["공룡"]))
+        await propose_books_tool(ctx, books_of())
+        assert ctx.state.closing is None
 
 
 class TestSearchCall:

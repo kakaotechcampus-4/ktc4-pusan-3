@@ -259,17 +259,25 @@ class GrowthDocReader(Protocol):
 
 
 class BookSource(Protocol):
-    async def search(self, *, keywords: tuple[str, ...], limit: int) -> list[BookRow]:
+    async def search(
+        self, *, keywords: tuple[str, ...], limit: int, title_words: tuple[str, ...] = ()
+    ) -> list[BookRow]:
         """검색어 여럿의 책 행. 실패하면 UpstreamUnavailable — 빈 목록이 아니다.
 
-        `limit` 은 검색어마다 받는 권수다 — 합쳐서 자르지 않는다. 구현은 `library.LibraryBooks`.
+        `limit` 은 검색어마다 받는 권수다 — 합쳐서 자르지 않는다. `title_words` 는 `keywords` 중
+        보호자가 요청에서 말한 낱말이다 — 제목으로 찾는다(나머지는 관심 주제라 `keyword` 로 찾는다).
+        구현은 `library.LibraryBooks`.
         """
         ...
 
 
 class RawBookSearch(Protocol):
-    async def search(self, *, keyword: str, limit: int) -> tuple[RawBook, ...]:
+    async def search(
+        self, *, keyword: str, limit: int, field: Literal["keyword", "title"] = "keyword"
+    ) -> tuple[RawBook, ...]:
         """검색어 하나의 정보나루 원문, 결과 순서 그대로 `limit` 권까지. 캐시를 먼저 본다.
+
+        `field` 는 정보나루에 어느 인자로 보내는가다 — `title` 은 서명 검색이다.
 
         실패하면 UpstreamUnavailable. 0건은 빈 튜플이다. 해석(아동 도서 · 형태)은 하지 않는다.
         """

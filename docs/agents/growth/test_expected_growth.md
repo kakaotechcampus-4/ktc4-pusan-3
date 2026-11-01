@@ -94,7 +94,9 @@ run 은 이전 run 을 기억하지 않는다. 추천이 저장되면 대화에�
 | T08 | growth/book | 1 | 근거 없으면 `general` + "또래 기준" | – |
 | T09 | growth/book | 1 | 한글 입문 도서 | – |
 | T10 | growth/book | 1 | 3권 전부 만료 전 `suggestion`에 없는 책("제목(저자)") · 주제는 affinity 에서 (이전 run 을 기억하지 않는다) | 직전에 낸 책이 다시 나옴 · 이전 run 대화를 참조함 |
-| | 도서 API 장애 | **0** | `book_suggestion` 닫힘 readout | 책 생성 |
+| | 도서 API 장애 | **0** | `book_suggestion` 닫힘 readout (로그에 실패 단계 · 상태 코드) | 책 생성 |
+| TB1 | growth/book ("곰이랑 코끼리 관련된 책을 추천해줘") | 1 | 제목에 곰 또는 코끼리가 든 책만, 없으면 `book.no_topic` | 다른 주제(공룡 등) 책 · 제목에 낱말이 없는 책 |
+| TB2 | growth/book ("돼지 관련된 책을 추천해줘") | 1 | 제목에 돼지가 든 책만 | 다른 주제 책 |
 
 ## 3. 생활 루틴
 

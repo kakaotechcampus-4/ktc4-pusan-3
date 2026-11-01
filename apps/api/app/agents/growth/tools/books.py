@@ -31,7 +31,7 @@ from app.agents.growth.result import ErrorCode, ToolResult, fail, ok
 from app.agents.growth.schemas.books import MAX_RUN_KEYWORDS, SearchBooksArgs
 from app.agents.growth.store.ports import BookRow
 from app.rules.book_evidence import normalize_isbn
-from app.rules.book_form import fits_age
+from app.rules.book_form import FORMAT_WORDS, fits_age
 from app.rules.term_match import normalize
 
 # 모델이 한 번에 받는 책 수의 상한 (Tool_명세 §2 — `k≤10`)
@@ -59,13 +59,17 @@ async def search_books(
 ) -> tuple[BookRow, ...]:
     """키워드로 책을 찾고, 이 아이 월령에 맞는 형태만 `k` 권까지 돌려준다.
 
-    - 월령은 `Gate` 의 것이다. 8개월이면 `board` 만, 12개월 미만에게 `unknown` 은 나가지 않는다.
+    - 월령은 `Gate` 의 것이다. 8개월이면 `board` 만 나가고, `unknown` 은 어느 월령에도 나가지
+      않는다.
     - 돌려준 책만 `context.state.seen_books` 에 적는다 — `propose_books` 가 이 표와 대조한다.
       연령 필터에 걸러진 책은 모델이 ISBN 을 알아도 낼 수 없다. 검색을 여러 번 하면 쌓인다.
     - 포트가 답하면(0권이어도) `book_searched` 를 세운다 — 빈 제출은 검색한 뒤에만 받는다.
     - 포트가 실패하면 `UpstreamUnavailable`. 빈 목록도 캐시 목록도 아니다.
     - 키워드는 코드가 다듬는다(공백 제거 · 중복 제거). 비면 `ValueError` — 포트까지 가지 않는다.
     - 같은 ISBN 은 한 번만 준다. 먼저 온 행을 쓴다.
+    - 보호자가 요청에서 말한 검색어(`said_texts` 에 있는 낱말)는 제목으로 찾고, 그 낱말이 제목에
+      없는 책은 돌려주지 않는다 — 관심 주제 책으로 채우지 않는다. 그런 낱말이 없으면 지금처럼
+      거르지 않는다.
     """
     if not 1 <= k <= SEARCH_LIMIT:
         raise ValueError(f"k 는 1~{SEARCH_LIMIT} 이다: {k}")
@@ -80,19 +84,41 @@ async def search_books(
         raise RuntimeError("도서 포트 없이 도서 검색이 불렸다 — registry 가 열지 않았어야 한다")
 
     months = gate.stage.months
-    context.state.book_keywords += len(cleaned)
-    rows = await books.search(keywords=cleaned, limit=SEARCH_POOL)
-    context.state.book_searched = True
+    state = context.state
+    said = normalize(" ".join(state.said_texts))
+    asked = tuple(
+        word for word in cleaned if normalize(word) in said and normalize(word) not in FORMAT_WORDS
+    )
+    grown = state.asked_book_words | {normalize(word) for word in asked}
+    if grown != state.asked_book_words:
+        # 요청 낱말이 이제야 나왔다 — 앞서 다른 주제로 찾아 둔 책도 이 낱말로 다시 거른다.
+        # 안 그러면 제목에 낱말이 없는 책이 `seen_books` 에 남아 낼 수 있고 빈 제출도 막힌다
+        for key in [k for k, row in state.seen_books.items() if not _on_topic(row, grown)]:
+            del state.seen_books[key]
+    state.asked_book_words = grown
+    state.book_keywords += len(cleaned)
+    rows = await books.search(keywords=cleaned, limit=SEARCH_POOL, title_words=asked)
+    state.book_searched = True
     found: dict[str, BookRow] = {}
     for row in rows:
         key = normalize_isbn(row.isbn)
         if key in found or not fits_age(row.form, months):
+            continue
+        if not _on_topic(row, state.asked_book_words):
             continue
         found[key] = row
         if len(found) == k:
             break
     context.state.seen_books.update(found)
     return tuple(found.values())
+
+
+def _on_topic(row: BookRow, asked: frozenset[str]) -> bool:
+    """요청한 낱말이 있으면 제목에 그 낱말이 하나라도 든 책만이다. 없으면 거르지 않는다."""
+    if not asked:
+        return True
+    title = normalize(row.title)
+    return any(word in title for word in asked)
 
 
 class BookRejectReason(StrEnum):
@@ -193,6 +219,11 @@ _NO_BOOKS = (
     "이 낱말로 이 나이에 맞는 책이 없다. 다른 주제 낱말로 한 번 더 찾거나, "
     "그래도 없으면 propose_books 를 items 를 비워 부른다."
 )
+# 보호자가 말한 낱말이 있을 때 — 다른 주제로 넘어가지 않는다
+_NO_ASKED_BOOKS = (
+    "요청한 주제의 책을 이 나이에 맞게 찾지 못했다. 주제를 바꾸지 말고 "
+    "propose_books 를 items 를 비워 부른다."
+)
 
 
 async def search_books_tool(context: GrowthContext, args: SearchBooksArgs) -> ToolResult:
@@ -204,7 +235,8 @@ async def search_books_tool(context: GrowthContext, args: SearchBooksArgs) -> To
     # 남은 자리만큼만 보낸다 — 앞의 낱말이 모델이 먼저 고른 것이다
     found = await search_books(context, keywords=args.keywords[:left])
     if not found:
-        return fail("query", "search_books", ErrorCode.NO_RECORDS, _NO_BOOKS)
+        message = _NO_ASKED_BOOKS if context.state.asked_book_words else _NO_BOOKS
+        return fail("query", "search_books", ErrorCode.NO_RECORDS, message)
     # 제목 · 저자가 같은 다른 판은 한 권만 보인다. 둘을 다 보이면 모델이 같은 책을 두 번 골라
     # `propose_books` 에 거절당하고 대화가 한 번 더 돈다. `seen_books` 에는 둘 다 남는다
     first: dict[str, BookRow] = {}
