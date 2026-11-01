@@ -60,6 +60,10 @@ FACILITY_SOURCE: PlaceSourceName = "kids_play_facility"
 # 아이 기록 근거가 0행이면 build() 가 reason 을 이 문구로 덮어쓴다 (kind="general").
 # 화면이 일반 추천임을 표시하고 쌓인 기록 건수를 함께 보여준다 (루트 §2).
 GENERAL_REASON = "쌓인 놀이 기록이 아직 적어서, 이 나이 아이들에게 많이 권하는 놀이로 골랐어요."
+# 보호자가 놀이를 정해 물었고 아이 기록 근거가 없을 때 — 기준이 [예시]가 아니라 이번 요청이다.
+# "맞춰" 가 아니라 "바탕으로" 다 — 요청을 그대로 못 하면 비슷한 놀이로 바꿔 낸다("복숭아 따기 체험"
+# → 집에서 하는 과일 놀이, 판정 모델 실측 3%). 바꾼 것도 거짓말이 되지 않는 말로 둔다 (#597 리뷰)
+REQUESTED_REASON = "쌓인 놀이 기록이 아직 적어서, 요청하신 놀이를 바탕으로 골랐어요."
 
 Seen = Mapping[UUID, RankedEvidence]
 # 이번 run 의 프롬프트 [예시]에 실은 문서 행. 일반 추천은 이 행을 근거로 단다 (루트 §2)
@@ -98,7 +102,8 @@ GUIDANCE: dict[RejectReason, str] = {
         " 활동으로 바꾸거나, lookup_weather 로 바깥 활동이 되는 날을 찾아 day 를 고친다."
     ),
     RejectReason.BUILD: (
-        "아이 기록을 인용하지 않으면 [예시] 문서 행 id 를 하나 이상 인용한다. "
+        "아이 기록을 인용하지 않으면 [예시] 문서 행 id 를 하나 이상 인용한다 "
+        "(보호자가 이번 요청에서 직접 말한 놀이일 때만 requested_play 로 면제된다). "
         "싫어하는 것을 근거로 썼으면 무엇을 피했는지 reason 에 쓴다."
     ),
 }
@@ -140,6 +145,7 @@ def review_candidates(
     outdoor: Mapping[DayLabel, bool] | None = None,
     docs: Docs | None = None,
     today: date,
+    requested: bool = False,
 ) -> Review:
     """후보를 3-3 순서로 검사해 통과한 것은 SuggestionDraft 로, 걸린 것은 사유로 돌려준다.
 
@@ -197,6 +203,7 @@ def review_candidates(
                         allergens=check.allergens,
                         warnings=check.warnings,
                         today=today,
+                        requested=requested,
                     )
                 )
             except SuggestionRejected:
@@ -309,8 +316,12 @@ def _build(
     allergens: tuple[str, ...],
     warnings: tuple[str, ...],
     today: date,
+    requested: bool = False,
 ) -> SuggestionDraft:
     """allergens 는 안전 필터가 찾은 알레르기 항목 정식 명칭, items 는 후보의 재료다 (#232).
+
+    `requested` 면 보호자가 놀이를 정해 물은 것이다. 아이 기록 근거가 없으면 [예시] 근거 없이도
+    일반 추천으로 나가고 이유는 `REQUESTED_REASON` 이다 — 막연한 요청만 [예시]를 근거로 단다.
 
     allergens 는 상태(없음/모름)를 담지 않는다 — 승인할 때 서버가 health_safety 를 다시 읽는다.
     장소가 붙으면 확인 문구를, 위험 용어에 걸리면 그 축의 경고 문구를 칸으로 싣는다 — 문장에
@@ -321,9 +332,10 @@ def _build(
         content=_with_place(candidate.content, place.name if place else None),
         reason=candidate.reason.strip(),
         citations=citations,
-        general_reason=GENERAL_REASON,
+        general_reason=REQUESTED_REASON if requested else GENERAL_REASON,
         allergens=allergens,
         items=tuple(candidate.materials),
+        requested=requested,
         today=today,
     )
     return replace(
