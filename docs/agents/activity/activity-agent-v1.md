@@ -95,7 +95,7 @@ def tools_for(task_type, gate: Gate) -> tuple[str, ...]:
 | 우선순위 | 조건 |
 | --- | --- |
 | Tier 1 | `profile_affinity` · `confirmed` · polarity ∈ {+1, −1} · 비archived |
-| Tier 2 | `profile_affinity` · `candidate` · polarity ∈ {+1, −1} · `strength ≥ 0.5` |
+| Tier 2 | `profile_affinity` · `candidate` · polarity ∈ {+1, −1} · `strength ≥ 0.5` · 묶인 active 관찰이 서로 다른 날 2일 이상 (#626) |
 | Tier 3 | 최근 14일 `observation_activity` (polarity 무관) |
 
 - `search_activity_memory` 는 결과에 **`id` 를 함께 돌려준다.** `suggestion_evidence` 의 허용 `source_kind` 에 `observation_activity` 가 있고, 루트 §2 가 막는 것은 관찰을 **프로필로 승격**하는 것이지 그 한 번의 추천 근거로 **인용**하는 것이 아니다.
@@ -113,8 +113,8 @@ def tools_for(task_type, gate: Gate) -> tuple[str, ...]:
 | --- | --- |
 | +1 / confirmed | 근거 (Tier 1) |
 | **−1 / confirmed** | **근거** — 피할 이유 (Tier 1) |
-| +1 / candidate (`strength ≥ 0.5`) | 근거 (Tier 2) |
-| **−1 / candidate (`strength ≥ 0.5`)** | **근거** — 피할 이유 (Tier 2) |
+| +1 / candidate (`strength ≥ 0.5` · 관찰 2일 이상) | 근거 (Tier 2) |
+| **−1 / candidate (`strength ≥ 0.5` · 관찰 2일 이상)** | **근거** — 피할 이유 (Tier 2) |
 | NULL | 쓰지 않음 |
 | archived | 쓰지 않음 |
 | 관찰 14일 | 근거 (Tier 3) |

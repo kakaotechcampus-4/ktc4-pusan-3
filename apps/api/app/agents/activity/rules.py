@@ -13,11 +13,6 @@ DUPLICATE_WINDOW_DAYS = 7
 
 _NOT_WORD = re.compile(r"[\W_]+")
 _TOKEN = re.compile(r"[0-9A-Za-z가-힣]+")
-
-# 한 번의 관찰을 성향처럼 말하는 표현. 근거가 티어 1(confirmed)일 때만 허용한다 (D12)
-_OVERSTATING_TOKENS = frozenset({"또", "늘", "항상"})
-_OVERSTATING_PREFIXES = ("어제도",)
-_OVERSTATING_PHRASES = ("좋아하는", "좋아해")
 # requested_play 낱말 끝의 이 말은 떼고 본다 — "공놀이" 의 "공" 이 보호자 말에 있으면 같은 요청이다
 _PLAY_SUFFIX = "놀이"
 
@@ -69,17 +64,3 @@ def said_in_request(requested_play: str | None, request_texts: Iterable[str]) ->
         if len(stem) == 1 and stem in said_words:
             return True
     return False
-
-
-def overstates(note: str) -> bool:
-    """근거 문장이 반복 · 성향 표현을 쓰는가 — 어제도 · 또 · 늘 · 항상 · 좋아하는.
-
-    낱말 단위로 본다. "오늘" 의 "늘" · "또래" 의 "또" 는 걸리지 않는다.
-    """
-    tokens = _TOKEN.findall(note)
-    if any(token in _OVERSTATING_TOKENS for token in tokens):
-        return True
-    if any(token.startswith(_OVERSTATING_PREFIXES) for token in tokens):
-        return True
-    dense = "".join(note.split())
-    return any(phrase in dense for phrase in _OVERSTATING_PHRASES)

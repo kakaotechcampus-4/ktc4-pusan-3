@@ -43,8 +43,15 @@ export interface RecentPhotosBridge {
 }
 
 declare global {
+  /**
+   * 셸이 `window.icatch` 에 꽂는 창구들. 창구마다 자기 파일에서 이 인터페이스에 칸을 더한다
+   * (말로 적기는 `speech.ts`).
+   */
+  interface IcatchShell {
+    recentPhotos?: RecentPhotosBridge;
+  }
   interface Window {
-    icatch?: { recentPhotos?: RecentPhotosBridge };
+    icatch?: IcatchShell;
   }
 }
 

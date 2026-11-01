@@ -53,7 +53,8 @@ test.describe("일정은 승인 전에는 저장하지 않는다 (§2 실행)", 
 
     const sheet = page.getByRole("dialog", { name: "찾은 일정" });
     await expect(sheet.getByText("2건 중 1번째")).toBeVisible();
-    await expect(sheet.getByText("아직 저장되지 않았어요")).toBeVisible();
+    // 숨은 장도 마운트돼 있어서(넘겨도 제출 상태가 남게) 보이는 것만 본다.
+    await expect(sheet.getByText("아직 저장되지 않았어요").filter({ visible: true })).toBeVisible();
     expect(writes(calls, "POST", /\/events$/)).toEqual([]);
 
     await sheet.getByRole("button", { name: "확인했어요, 캘린더에 넣을게요" }).click();
@@ -61,6 +62,32 @@ test.describe("일정은 승인 전에는 저장하지 않는다 (§2 실행)", 
     const submitted = writes(calls, "POST", /\/children\/c1\/events$/);
     expect(submitted).toHaveLength(1);
     expect(submitted[0].idempotencyKey).toBeTruthy();
+  });
+
+  test("🚨 넣고 다음 장으로 넘겼다 돌아와도 '넣었어요' 그대로다 — 다시 넣을 길이 없고 쓰기는 한 번이다 (#537 리뷰)", async ({
+    page,
+  }) => {
+    const calls = recordApi(page);
+    await sendFromHome(page, "지어낸 한 줄");
+    await turn(page, "지어낸 한 줄").getByRole("button", { name: "확인하고 넣기" }).click();
+    const sheet = page.getByRole("dialog", { name: "찾은 일정" });
+
+    await sheet.getByRole("button", { name: "확인했어요, 캘린더에 넣을게요" }).click();
+    await expect(sheet.getByText("2건 중 1건 넣었어요.")).toBeVisible();
+
+    await sheet.getByRole("button", { name: "다음" }).click();
+    await expect(sheet.getByText("2건 중 2번째")).toBeVisible();
+    await sheet.getByRole("button", { name: "이전" }).click();
+    await expect(sheet.getByText("2건 중 1번째")).toBeVisible();
+
+    // 넘기면서 카드가 처음 상태로 되살아나면 새 키로 한 번 더 넣을 수 있었다 (일정 두 건).
+    await expect(
+      sheet.getByText("넣었어요", { exact: true }).filter({ visible: true }),
+    ).toBeVisible();
+    await expect(sheet.getByText("아직 저장되지 않았어요").filter({ visible: true })).toHaveCount(
+      0,
+    );
+    expect(writes(calls, "POST", /\/children\/c1\/events$/)).toHaveLength(1);
   });
 });
 
@@ -109,6 +136,22 @@ test.describe("성공과 실패 · 안내를 한 화면에 (§2 실행 NF-06)", 
       await expect(
         reply.getByText("아이에 관한 기록은 찾지 못했어요", { exact: false }),
       ).toHaveCount(0);
+    });
+  });
+
+  test.describe("guidance_growth — 키·몸무게는 채팅으로 저장하지 않는다 (#625)", () => {
+    test.use({ scenario: "guidance_growth" });
+
+    test("저장 0건이라고 말하고, 직접 입력하는 곳은 11-1 성장 기록이다", async ({ page }) => {
+      await sendFromHome(page, "몸무게는 1톤");
+      const reply = turn(page, "몸무게는 1톤");
+      await expect(reply.getByRole("heading", { name: "적어주신 말을 확인했어요" })).toBeVisible();
+      await expect(reply.getByText("키·몸무게", { exact: true })).toBeVisible();
+      await expect(reply.getByRole("link", { name: "직접 입력하러 가기" })).toHaveAttribute(
+        "href",
+        `/child/${CHILD}/profile/growth`,
+      );
+      await expect(reply.getByText("이렇게 저장했어요")).toHaveCount(0);
     });
   });
 

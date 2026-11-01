@@ -45,6 +45,7 @@ export function Section({
   count,
   action,
   children,
+  "data-tour": tour,
 }: {
   title: string;
   /**
@@ -65,9 +66,11 @@ export function Section({
    */
   action?: ReactNode;
   children: ReactNode;
+  /** 화면 투어가 비추는 자리 (`components/screen-tour.tsx`). */
+  "data-tour"?: string;
 }) {
   return (
-    <section className="flex flex-col gap-3">
+    <section data-tour={tour} className="flex flex-col gap-3">
       <div>
         {/* 🚨 라벨 · 건수 · 행동이 한 줄이다. 건수를 라벨 아래로 내리지 않는다 —
             설명 줄과 같은 높이가 되면 "몇 건인지" 가 설명의 일부로 읽힌다.
@@ -112,6 +115,7 @@ export function SectionAction({
   icon: Icon = Plus,
   onClick,
   disabled,
+  "data-tour": tour,
 }: {
   label: string;
   /** 기본은 더하기다. 고치는 구역만 연필을 넘긴다 — 뜻이 다르면 모양도 달라야 한다. */
@@ -119,9 +123,17 @@ export function SectionAction({
   onClick: () => void;
   /** 고칠 대상을 아직 받는 중일 때. 버튼이 뒤늦게 서면 머리줄이 커져서 자리는 지키고 누르지만 못 하게 한다. */
   disabled?: boolean;
+  /** 화면 투어가 비추는 자리 (`components/screen-tour.tsx`). */
+  "data-tour"?: string;
 }) {
   return (
-    <IconButton label={label} onClick={onClick} disabled={disabled} className="-my-1">
+    <IconButton
+      label={label}
+      onClick={onClick}
+      disabled={disabled}
+      className="-my-1"
+      data-tour={tour}
+    >
       <Icon aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
     </IconButton>
   );
