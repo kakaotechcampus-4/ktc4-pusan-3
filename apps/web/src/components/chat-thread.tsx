@@ -12,6 +12,7 @@ import { Button, ButtonLink } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
 import { initialRunState } from "@/hooks/use-run-stream";
 import { api, isApiError, qk, type Agent, type ChatDayResponse } from "@/lib/api";
+import { askedQuestion } from "@/lib/agent-result";
 import { pastTurnsOf, type PastTurn } from "@/lib/chat-history";
 import { formatDay } from "@/lib/format";
 import { VIEW_TRANSITION } from "@/lib/view-transition";
@@ -26,6 +27,7 @@ import {
   type ChatTurn,
 } from "@/stores/conversation";
 import { NO_DRAFTS, useEventDraftStore } from "@/stores/event-draft";
+import { NO_MEDICATION_DRAFTS, useMedicationDraftStore } from "@/stores/medication-draft";
 
 /**
  * 04 대화 — 보낸 한 줄과 그 답을 하루 단위로 쌓는다 (#226).
@@ -48,6 +50,8 @@ import { NO_DRAFTS, useEventDraftStore } from "@/stores/event-draft";
  * 🚨 **지난 줄의 날짜는 서버가 정한 것이다**(`PastTurn.day`). 화면이 접수 시각으로 다시 계산하지 않는다.
  *
  * `onOpenDrafts` 는 일정 초안 시트를 그 답의 초안으로 연다 — `key` 는 시트를 답마다 새로 그리는 값이다.
+ * `onOpenMedicationDrafts` 는 복약 초안 시트다 (#537). 🚨 이 앱에서 보낸 줄에만 있다 — 복약 초안은 메모리에만 있어서
+ * 지난 턴에는 넣을 초안이 남지 않는다 (`stores/medication-draft.ts`).
  */
 export function ChatThread({
   childId,
@@ -55,6 +59,7 @@ export function ChatThread({
   turns,
   answering,
   onOpenDrafts,
+  onOpenMedicationDrafts,
   onPickOffer,
 }: {
   childId: string;
@@ -64,6 +69,7 @@ export function ChatThread({
   /** 입력창이 지금 답하는 질문 — 그 질문의 카드가 "답하는 중" 으로 바뀐다. */
   answering: ChatQuestion | null;
   onOpenDrafts: (key: string, draftIds: string[]) => void;
+  onOpenMedicationDrafts: (key: string, draftIds: string[]) => void;
   onPickOffer: (agents: Agent[]) => void;
 }) {
   const last = turns.at(-1);
@@ -118,6 +124,7 @@ export function ChatThread({
                   answered={answered}
                   answering={answering}
                   onOpenDrafts={onOpenDrafts}
+                  onOpenMedicationDrafts={onOpenMedicationDrafts}
                   onPickOffer={onPickOffer}
                 />
               ),
@@ -223,8 +230,8 @@ function PastReply({
   const remainingDrafts = stored.filter(
     (d) => d.origin === "input" && draftIds.includes(d.draft.draft_id),
   ).length;
-  const note = turn.run.note;
-  const asked = note?.kind === "question";
+  // 🚨 Memory 질문만이 아니다 — 답을 받는 Agent 질문도 같은 `reply_open` 으로 연다 (#537 · `askedQuestion`).
+  const asked = askedQuestion(turn.run);
   const question = !asked
     ? null
     : answered.has(turn.runId)
@@ -245,7 +252,7 @@ function PastReply({
       followUp={turn.replyTo !== null}
       rewriteBlocked={false}
       onAnswer={() => {
-        if (note) answerQuestion(childId, turn.runId, { text: note.text, day: turn.day });
+        if (asked) answerQuestion(childId, turn.runId, { text: asked.text, day: turn.day });
       }}
       onOpenDrafts={() => onOpenDrafts(`past:${turn.runId}`, draftIds)}
       onPickOffer={noop}
@@ -265,6 +272,7 @@ function LiveTurnItem({
   answered,
   answering,
   onOpenDrafts,
+  onOpenMedicationDrafts,
   onPickOffer,
 }: {
   childId: string;
@@ -274,6 +282,7 @@ function LiveTurnItem({
   answered: ReadonlySet<string>;
   answering: ChatQuestion | null;
   onOpenDrafts: (key: string, draftIds: string[]) => void;
+  onOpenMedicationDrafts: (key: string, draftIds: string[]) => void;
   onPickOffer: (agents: Agent[]) => void;
 }) {
   return (
@@ -300,6 +309,12 @@ function LiveTurnItem({
             onOpenDrafts(
               turn.id,
               turn.run.drafts.map((d) => d.draft_id),
+            )
+          }
+          onOpenMedicationDrafts={() =>
+            onOpenMedicationDrafts(
+              turn.id,
+              turn.run.medicationDrafts.map((d) => d.draft_id),
             )
           }
           onPickOffer={(agents) => {
@@ -446,6 +461,7 @@ function TurnReply({
   later,
   answering,
   onOpenDrafts,
+  onOpenMedicationDrafts,
   onPickOffer,
 }: {
   childId: string;
@@ -454,9 +470,17 @@ function TurnReply({
   later: ChatTurn[];
   answering: ChatQuestion | null;
   onOpenDrafts: () => void;
+  onOpenMedicationDrafts: () => void;
   onPickOffer: (agents: Agent[]) => void;
 }) {
   const runId = turn.send.status === "sent" ? turn.send.runId : null;
+  const storedMedications = useMedicationDraftStore(
+    (s) => s.byChild[childId] ?? NO_MEDICATION_DRAFTS,
+  );
+  const remainingMedicationDrafts = storedMedications.filter((d) =>
+    turn.run.medicationDrafts.some((r) => r.draft_id === d.draft_id),
+  ).length;
+  const medicationsReplaced = medicationsReplacedByLater(turn, later);
   const rewriteBlocked = useRewriteBlocked(childId);
   const stored = useEventDraftStore((s) => s.byChild[childId] ?? NO_DRAFTS);
   const remainingDrafts = stored.filter(
@@ -480,6 +504,8 @@ function TurnReply({
         answeringNow={runId !== null && answering?.runId === runId}
         remainingDrafts={remainingDrafts}
         draftsReplaced={draftsReplaced}
+        remainingMedicationDrafts={remainingMedicationDrafts}
+        medicationDraftsReplaced={medicationsReplaced}
         // 이어받기 run 이 또 물은 질문이다 — "한 가지만 더" 를 두 번 말하지 않는다.
         followUp={turn.answering !== null}
         onRetry={canRetry(turn) ? () => retryTurn(childId, turn.id) : undefined}
@@ -490,9 +516,26 @@ function TurnReply({
           if (runId) answerQuestion(childId, runId);
         }}
         onOpenDrafts={onOpenDrafts}
+        onOpenMedicationDrafts={onOpenMedicationDrafts}
         onPickOffer={onPickOffer}
       />
     </Swap>
+  );
+}
+
+/**
+ * 이 줄의 복약 초안을 뒤 run 이 **같은 코스의 초안으로 다시 냈는가** (#537). 보관함이 같은 `schedule_id` 를 새 장으로
+ * 갈아 끼우므로(`mergeMedicationDrafts`) 이 줄의 남은 초안이 0 이 되는데, 그건 "넣었다" 가 아니다 — 일정 초안과 같다.
+ */
+function medicationsReplacedByLater(turn: ChatTurn, later: ChatTurn[]): boolean {
+  const ids = new Set(turn.run.medicationDrafts.map((d) => d.draft_id));
+  const schedules = new Set(
+    turn.run.medicationDrafts.flatMap((d) => (d.schedule_id ? [d.schedule_id] : [])),
+  );
+  return later.some((t) =>
+    t.run.medicationDrafts.some(
+      (d) => ids.has(d.draft_id) || (d.schedule_id !== undefined && schedules.has(d.schedule_id)),
+    ),
   );
 }
 

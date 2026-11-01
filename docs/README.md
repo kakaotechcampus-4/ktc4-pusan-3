@@ -108,6 +108,7 @@
 - [web/components-v1.md](web/components-v1.md) — 컴포넌트 목록 · `Screen` 고정 바 · 네비는 가는 곳에만 · `IconButtonLink` · `ButtonLink` · 직접 만든 `Select` · 외부 UI 라이브러리 예외 셋 · 토큰 · 높이 · 서체 두 벌 · 호버 변형
 - [web/auth-consent-v1.md](web/auth-consent-v1.md) — 로그인 시작 지점 하나 · `bind` · 복귀 경로 검증 · 가입 동의와 아이 동의를 나눈 이유 · 관계는 02 · "전체 동의" 금지 · 동의 정본은 `GET /policies` · 토큰은 메모리, refresh 는 쿠키 · 확인 실패는 로그아웃이 아님
 - [web/api-client-v1.md](web/api-client-v1.md) — `fetch` 직접 호출 금지와 예외 · 되돌릴 수 없는 5곳은 `operations.ts` 로만 · 키 수명(`rotate` 는 성공 뒤) · 에러 코드별 "다시 시도" 금지 · 게이트에 낙관적 업데이트 금지 · 에러 바운더리 표
+- [web/medication-v1.md](web/medication-v1.md) — 복약 확인 카드는 **게이트 ㉡ 안의 메서드**(새 게이트 아님) · 알림 시각을 반드시 보여 주고 고치지 않음 · 비어 온 기간을 채우기 전엔 잠금 · 복약 초안은 건강 정보라 메모리 전용 · 회차 체크는 11-3 이고 게이트 아님 · `awaits_reply` 인 Agent 질문만 답하기 · 서류는 body 그대로 + 복사 · ⚠️ 제출 · 조회 · 체크 경로와 SSE 이름은 잠정 (#537)
 - [web/mock-and-tests-v1.md](web/mock-and-tests-v1.md) — 목 시나리오 표 · 목 규칙(타입 강제 · `withIdempotency` · 핸들러 순서) · Vitest 와 Playwright 가 거는 것 · 테스트 전용 핸들러 금지 · 목 상태 리셋
 - [web/toolchain-deploy-v1.md](web/toolchain-deploy-v1.md) — 스택 버전과 TS 7 을 안 쓰는 이유 · `make web-build` 를 PR 전에 · CI 단계 · API 주소는 빌드 인자 · `.dockerignore` 의 `.env*` · standalone 복사
 
