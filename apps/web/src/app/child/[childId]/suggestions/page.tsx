@@ -40,6 +40,7 @@ import {
   type SuggestionsResponse,
 } from "@/lib/api";
 import { useEnterMotion } from "@/lib/motion";
+import { scarcityCopy } from "@/lib/scarcity-copy";
 import { suggestionsTour } from "@/lib/tour/screens/suggestions";
 
 /**
@@ -606,8 +607,10 @@ function SuggestionsScreen() {
  * 🚨 **개인화도 같이 선 화면에서는 "위 추천" 이라고 하지 않는다** (#512 리뷰). 같은 Agent 안에서도 둘이
  *    섞여 오는데, 그때 "위 추천은 또래 기준이에요" 는 위에 선 개인화 추천까지 또래 기준이라고 부른다 —
  *    우리 아이 기록으로 고른 것을 일반 추천이라고 낮춰 부르는 것도 §2 가 막는 혼동이다.
- *    대신 카드에 붙은 라벨("또래 기준 일반 추천")을 가리킨다. 제목도 같다 — 위에 우리 아이 기준 추천이
- *    서 있는데 "다음엔 우리 아이 기준으로" 라고 하면 지금 것은 아니라는 뜻으로 읽힌다.
+ *    대신 카드에 붙은 라벨("또래 기준 일반 추천")을 가리킨다.
+ * 🚨 **누적 건수를 "적다" 고 말하지 않는다** (#662). `scarcity.count` 는 기간 제한 없는 누적이라 22건이
+ *    있어도 이번 추천에 쓴 아이 기록은 0건일 수 있다. 문구는 `scarcityCopy()` 가 정한다 — 건수는 그대로
+ *    말하고, 이번 추천에 직접 쓴 기록이 없었다는 사실만 덧붙인다.
  */
 function ScarcityCard({
   childId,
@@ -624,6 +627,12 @@ function ScarcityCard({
   const [answered, setAnswered] = useState<string | null>(null);
   /** 🚨 Agent 가 되물었을 때만 있다 (#249). 없으면 기록 건수만 말하고 질문은 세우지 않는다. */
   const question = scarcity.question;
+  const copy = scarcityCopy({
+    count: scarcity.count,
+    hasGeneral,
+    hasPersonal,
+    asked: question !== null,
+  });
 
   const answer = useMutation({
     mutationFn: (value: string) => {
@@ -637,24 +646,8 @@ function ScarcityCard({
 
   return (
     <Card data-tour="question">
-      <h2 className="text-section text-ink">
-        {hasGeneral
-          ? hasPersonal
-            ? "기록이 더 쌓이면 모두 우리 아이 기준으로 골라 드릴게요"
-            : "다음엔 우리 아이 기준으로 골라 드릴게요"
-          : "판단할 기록이 부족해요"}
-      </h2>
-      <p className="text-body-sm text-ink-muted mt-1">
-        {scarcity.count === 0
-          ? "이 주제로 쌓인 기록이 아직 없어요."
-          : `이 주제로 쌓인 기록이 ${scarcity.count}건뿐이에요.`}{" "}
-        {hasGeneral
-          ? hasPersonal
-            ? "그래서 또래 기준이라고 적힌 추천은 우리 아이 기록 대신 또래 기준으로 골랐어요."
-            : "그래서 위 추천은 또래 기준이에요."
-          : "근거 없이 추천을 만들지는 않을게요."}
-        {hasGeneral && question ? " 하나만 알려주시면 다음부터 달라져요." : null}
-      </p>
+      <h2 className="text-section text-ink">{copy.title}</h2>
+      <p className="text-body-sm text-ink-muted mt-1">{copy.body}</p>
 
       {question ? <p className="text-body text-ink mt-4">{question.text}</p> : null}
       {/* 🚨 답하는 길(#246) 전에는 선택지가 비어 온다 — 문장으로만 세운다 (04 의 되묻기와 같다). */}
