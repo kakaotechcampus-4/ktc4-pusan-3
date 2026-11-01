@@ -579,6 +579,28 @@ async def test_요청_기반_일반_추천은_문서_근거_없이도_05_에_선
     assert data["scarcity"] == {"count": 0, "question": None}
 
 
+async def test_요청_기반_일반_추천은_같은_run_으로_다시_열어도_그대로다(
+    db_client, bearer, cid, agents
+):
+    """저장한 run 을 다시 열면(새로고침) 행에 남긴 requested 로 거른다 (#653 리뷰)."""
+    plan, calls = agents
+    headers, parent_id = bearer
+    task = suggestion_retry.RetryTask(None, ("물놀이 뭐 하지?",), datetime.now(UTC))
+    suggestion_retry.put_failed(
+        run_id="run-1", parent_id=parent_id, child_id=cid, agent="activity", task=task
+    )
+    plan["activity"] = ("drafts", [_requested()])
+
+    first = (await _post(db_client, cid, headers, agents=["activity"], run_id="run-1")).json()
+    second = (await _post(db_client, cid, headers, agents=["activity"], run_id="run-1")).json()
+
+    assert len(calls) == 1  # 두 번째는 저장된 행을 읽었다
+    [general] = second["general"]
+    assert general == first["general"][0]
+    assert general["basis"] == REQUESTED_REASON
+    assert general["evidence"] == []
+
+
 async def test_요청_기반이어도_단_문서가_검수에서_빠지면_내지_않는다(
     db_client, bearer, cid, agents, monkeypatch
 ):
