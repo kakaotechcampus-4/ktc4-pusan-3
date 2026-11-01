@@ -319,6 +319,66 @@ async def test_event_drafts_food_items_merged_once(
     assert all(i["item_id"] is None for i in draft["items"])
 
 
+async def test_event_drafts_food_core_items_merged_once(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    """주재료만 남긴 food 둘을 한 끼로 묶어도 핵심 재료는 처음 나온 순서로 한 번씩이다 (#474)."""
+    s1 = await _make_suggestion(
+        session,
+        child_id=cid,
+        agent=SuggestionAgent.FOOD,
+        status=SuggestionStatus.APPROVED,
+        items=["두부", "시금치"],
+    )
+    s2 = await _make_suggestion(
+        session,
+        child_id=cid,
+        agent=SuggestionAgent.FOOD,
+        status=SuggestionStatus.APPROVED,
+        items=["두부", "당근"],
+    )
+    headers, _ = bearer
+    resp = await db_client.post(
+        f"/api/v1/children/{cid}/suggestions/event-drafts",
+        json={"suggestion_ids": [str(s1.id), str(s2.id)]},
+        headers=headers,
+    )
+    assert resp.status_code == 201
+    [draft] = resp.json()["drafts"]
+    assert [i["item_name"] for i in draft["items"]] == ["두부", "시금치", "당근"]
+
+
+async def test_event_drafts_food_without_items_make_empty_draft_items(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    """주재료가 없거나 모두 상비 재료라 items 가 비어도 초안은 만들어지고 준비물만 빈다 (#474).
+
+    Activity 준비물은 그대로이고, food 초안과 섞이지 않는다.
+    """
+    food = await _make_suggestion(
+        session,
+        child_id=cid,
+        agent=SuggestionAgent.FOOD,
+        status=SuggestionStatus.APPROVED,
+        items=[],
+    )
+    activity = await _make_suggestion(
+        session, child_id=cid, status=SuggestionStatus.APPROVED, items=["돗자리", "물통"]
+    )
+    headers, _ = bearer
+    resp = await db_client.post(
+        f"/api/v1/children/{cid}/suggestions/event-drafts",
+        json={"suggestion_ids": [str(food.id), str(activity.id)]},
+        headers=headers,
+    )
+    assert resp.status_code == 201
+    by_suggestion = {
+        tuple(d["suggestion_ids"]): [i["item_name"] for i in d["items"]]
+        for d in resp.json()["drafts"]
+    }
+    assert by_suggestion == {(str(food.id),): [], (str(activity.id),): ["돗자리", "물통"]}
+
+
 async def test_event_drafts_items_stay_with_their_suggestion(
     db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
 ):
