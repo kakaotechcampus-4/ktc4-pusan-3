@@ -17,6 +17,7 @@ from app.agents import entrypoint
 from app.agents.common.readout import Readout
 from app.agents.common.refs import Ref as EvidenceRef
 from app.agents.entrypoint import (
+    AgentQuestion,
     AgentResult,
     DomainRouted,
     Done,
@@ -42,7 +43,16 @@ from app.api.runs.chat_record import to_reply
 
 KST = ZoneInfo("Asia/Seoul")
 
-RECORDED = {Guidance, EventDrafts, MemoryNote, Unavailable, Partial, AgentResult, Saved}
+RECORDED = {
+    Guidance,
+    EventDrafts,
+    MemoryNote,
+    Unavailable,
+    Partial,
+    AgentResult,
+    AgentQuestion,
+    Saved,
+}
 """대화에 남기는 것. 끝 상태(`done`)는 이벤트가 아니라 채널에서 읽어 따로 붙인다."""
 SKIPPED = {
     Step,  # 진행 중에만 의미가 있다
@@ -101,10 +111,15 @@ def test_every_pipeline_event_is_either_recorded_or_skipped():
                     source_refs=(EvidenceRef(kind="child_growth_log", id=uuid.UUID(int=7)),),
                 ),
             ),
-            question=None,
             suggestion_ids=("s1",),
             kind="personalized",
             reason="기록 2건을 근거로 골랐어요.",
+        ),
+        AgentQuestion(
+            "growth",
+            "routine_coaching",
+            "양치는 요즘 어느 정도까지 혼자 하나요?",
+            awaits_reply=True,
         ),
     ],
     ids=lambda event: type(event).__name__,
@@ -132,9 +147,7 @@ def test_readouts_keep_the_sentence_and_drop_source_refs():
         authored_by="code",
         source_refs=(EvidenceRef(kind="child_growth_log", id=uuid.UUID(int=7)),),
     )
-    event = AgentResult(
-        agent="activity", task_type=None, status="completed", readouts=(readout,), question=None
-    )
+    event = AgentResult(agent="activity", task_type=None, status="completed", readouts=(readout,))
 
     [stored] = CHAT_REPLIES.dump_python([to_reply(event)], mode="json")[0]["readouts"]
 
@@ -145,3 +158,57 @@ def test_readouts_keep_the_sentence_and_drop_source_refs():
         "authored_by": "code",
         "code": None,
     }
+
+
+def test_질문은_agent_result_답으로_남고_답할_수_있는지도_남는다():
+    """지난 대화가 이 한 칸으로 답하기를 다시 연다 (`askedQuestion` · reply_open). 저장하지 않으면
+    앱을 다시 켠 뒤 열린 질문을 못 찾는다 (#537 · #615)."""
+    event = AgentQuestion(
+        "growth", "routine_coaching", "양치는 요즘 어느 정도까지?", awaits_reply=True
+    )
+
+    stored = CHAT_REPLIES.dump_python([to_reply(event)], mode="json")[0]
+
+    assert stored == {
+        "type": "agent_result",
+        "agent": "growth",
+        "task_type": "routine_coaching",
+        "status": "completed",
+        "readouts": [],
+        "question": "양치는 요즘 어느 정도까지?",
+        "awaits_reply": True,
+        "suggestion_ids": [],
+        "kind": None,
+        "reason": None,
+        "record_count": None,
+    }
+
+
+def test_카드는_질문을_남기지_않는다():
+    event = AgentResult(
+        agent="growth", task_type="routine_coaching", status="completed", readouts=()
+    )
+
+    stored = CHAT_REPLIES.dump_python([to_reply(event)], mode="json")[0]
+
+    assert (stored["question"], stored["awaits_reply"]) == (None, False)
+
+
+def test_옛_행은_awaits_reply_없이_읽는다():
+    """배포 전에 쌓인 행에는 이 칸이 없다. 못 읽으면 그날 대화가 통째로 안 열린다."""
+    old_row = {
+        "type": "agent_result",
+        "agent": "health",
+        "task_type": "medication",
+        "status": "completed",
+        "readouts": [],
+        "question": "복약 알림을 멈출까요?",
+        "suggestion_ids": [],
+        "kind": None,
+        "reason": None,
+        "record_count": None,
+    }
+
+    [reply] = CHAT_REPLIES.validate_python([old_row])
+
+    assert (reply.question, reply.awaits_reply) == ("복약 알림을 멈출까요?", False)

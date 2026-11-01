@@ -94,12 +94,29 @@ class StoredReadout(_Reply):
 
 
 class AgentResultReply(_Reply):
+    """도메인 Agent 결과 카드, 또는 run 의 되묻기 한 줄 (`AgentQuestion`).
+
+    카드(`question` 이 null)와 질문(readouts · suggestion_ids 가 비고 `question` 이 찬 것)이 같은
+    모양이다 — 화면이 이미 아는 `agent_result` 로 보내고 지난 대화도 같은 칸으로 읽는다 (#615).
+    `question` 이 찬 지난 행은 그대로 읽는다.
+    """
+
     type: Literal["agent_result"] = "agent_result"
     agent: str
     task_type: str | None
     status: str
     readouts: list[StoredReadout]
     question: str | None
+    awaits_reply: bool = Field(
+        default=False,
+        description=(
+            "`question` 에 `reply_to` 로 답할 수 있는가. 서버가 그 run 의 되묻기 맥락을 "
+            "들고 있을 때만 참이다. 아니면 `reply_to` 로 보내도 400 "
+            "`reply_context_unavailable` 이다 (#246). 맥락은 15분만 있어서 지난 대화에서 "
+            "지금 답할 수 있는지는 turn 의 `reply_open` 이 말한다. "
+            "이 칸이 없던 때 쌓인 행은 false 다."
+        ),
+    )
     suggestion_ids: list[str]
     kind: Literal["personalized", "general"] | None
     reason: str | None

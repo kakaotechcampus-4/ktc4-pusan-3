@@ -45,7 +45,7 @@ from app.agents.growth.store.inmemory import (
     InMemorySafety,
 )
 from app.agents.growth.tools.books import MAX_BOOKS, SEARCH_POOL
-from app.agents.pipeline import AgentResult, PipelineResult, Unavailable
+from app.agents.pipeline import AgentQuestion, AgentResult, PipelineResult, Unavailable
 from app.agents.suggestion_save import InMemorySuggestions
 from app.core.config import settings
 from app.integrations.data4library.client import Data4LibraryBooks
@@ -101,6 +101,11 @@ class Observed:
     @property
     def growth_events(self) -> list[AgentResult]:
         return [e for e in self.events if isinstance(e, AgentResult) and e.agent == "growth"]
+
+    @property
+    def growth_questions(self) -> list[AgentQuestion]:
+        """질문은 카드에 실리지 않고 run 끝에 하나만 나간다 (#615)."""
+        return [e for e in self.events if isinstance(e, AgentQuestion) and e.agent == "growth"]
 
     @property
     def growth_outcomes(self) -> list[Any]:
@@ -179,7 +184,7 @@ def j_routine(*, need_suggestion: bool) -> Judge:
             return
         if event.status == "failed":
             o.failures.append("루틴 결과를 못 냈다")
-        asked = bool(event.question)
+        asked = any(question.task_type == ROUTINE for question in o.growth_questions)
         if need_suggestion and not event.suggestion_ids:
             o.failures.append("루틴 추천이 없다")
         if not need_suggestion and not (event.suggestion_ids or asked or event.readouts):
@@ -497,7 +502,7 @@ def _record(o: Observed, attempt: int) -> dict[str, Any]:
                 "suggestions": len(e.suggestion_ids),
                 "kind": e.kind,
                 "readouts": [r.body[:40] for r in e.readouts],
-                "asked": bool(e.question),
+                "asked": any(q.task_type == e.task_type for q in o.growth_questions),
             }
             for e in o.growth_events
         ],

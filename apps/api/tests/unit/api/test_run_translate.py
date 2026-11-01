@@ -23,6 +23,7 @@ from app.agents import entrypoint
 from app.agents.common.readout import Readout
 from app.agents.common.refs import Ref as EvidenceRef
 from app.agents.entrypoint import (
+    AgentQuestion,
     AgentResult,
     DomainRouted,
     Done,
@@ -63,6 +64,7 @@ SENT = {
     Unavailable,
     Partial,
     AgentResult,
+    AgentQuestion,
     Saved,
 }
 """화면으로 보내는 것."""
@@ -197,7 +199,6 @@ def _growth_review() -> AgentResult:
                 source_refs=(EvidenceRef(kind="child_growth_log", id=uuid.UUID(int=7)),),
             ),
         ),
-        question=None,
     )
 
 
@@ -219,6 +220,7 @@ def test_agent_result_copies_readouts_without_source_refs():
                 }
             ],
             "question": None,
+            "awaits_reply": False,
             "suggestion_ids": [],
             "kind": None,
             "reason": None,
@@ -234,7 +236,6 @@ def test_agent_result_carries_saved_suggestion_ids_in_order():
         task_type="meal_recommendation",
         status="completed",
         readouts=(),
-        question=None,
         suggestion_ids=("s-1", "s-2"),
     )
 
@@ -255,7 +256,6 @@ def test_agent_result_keeps_the_notice_code():
                 kind="notice", body="조건에 맞는 추천이 없어요.", authored_by="code", code="empty"
             ),
         ),
-        question=None,
     )
 
     _, payload = translate.to_sse(result)
@@ -263,21 +263,50 @@ def test_agent_result_keeps_the_notice_code():
     assert [readout["code"] for readout in payload["readouts"]] == [None, "empty"]
 
 
-def test_agent_result_carries_the_one_question():
-    """되묻기는 한 번에 하나다. 화면은 이 한 줄을 묻는다."""
+def test_agent_result_cards_carry_no_question():
+    """카드는 질문을 싣지 않는다. 키는 늘 있고 값은 null 이다 — 계약 모양을 그대로 둔다 (#615)."""
     result = AgentResult(
-        agent="growth",
-        task_type="routine_coaching",
-        status="completed",
-        readouts=(),
-        question="양치는 요즘 어느 정도까지 혼자 하나요?",
+        agent="growth", task_type="routine_coaching", status="completed", readouts=()
     )
 
     name, payload = translate.to_sse(result)
 
     assert name == "agent_result"
-    assert payload["readouts"] == []
-    assert payload["question"] == "양치는 요즘 어느 정도까지 혼자 하나요?"
+    assert payload["question"] is None
+    assert payload["awaits_reply"] is False
+
+
+def test_agent_question_goes_out_as_an_agent_result():
+    """run 의 되묻기는 마지막 agent_result 한 장으로 간다. 웹이 이미 아는 이름이라 새 이벤트가
+    필요 없다. 답할 수 있는 질문인지는 `awaits_reply` 가 말한다 (#537)."""
+    question = AgentQuestion(
+        "growth", "routine_coaching", "양치는 요즘 어느 정도까지 혼자 하나요?", awaits_reply=True
+    )
+
+    assert translate.to_sse(question) == (
+        "agent_result",
+        {
+            "agent": "growth",
+            "task_type": "routine_coaching",
+            "status": "completed",
+            "readouts": [],
+            "question": "양치는 요즘 어느 정도까지 혼자 하나요?",
+            "awaits_reply": True,
+            "suggestion_ids": [],
+            "kind": None,
+            "reason": None,
+            "record_count": None,
+        },
+    )
+
+
+def test_agent_question_defaults_to_not_answerable():
+    """맥락을 싣지 않은 질문에 답하면 서버가 400 이다. 기본은 답할 수 없는 질문이다."""
+    _, payload = translate.to_sse(
+        AgentQuestion("food", "meal_recommendation", "브로콜리 좋아해요?")
+    )
+
+    assert payload["awaits_reply"] is False
 
 
 @pytest.mark.parametrize(
@@ -292,6 +321,7 @@ def test_agent_result_carries_the_one_question():
         Unavailable(("activity", "growth")),
         Partial("timeout_20s", ("activity",), ("food",)),
         _growth_review(),
+        AgentQuestion("growth", "routine_coaching", "양치는 요즘 어느 정도까지 혼자 하나요?"),
     ],
     ids=lambda event: type(event).__name__,
 )
@@ -522,7 +552,6 @@ def test_agent_result_carries_bundle_kind_reason_and_record_count():
         task_type=None,
         status="completed",
         readouts=(),
-        question=None,
         suggestion_ids=("s-1",),
         kind="general",
         reason="또래 기준",

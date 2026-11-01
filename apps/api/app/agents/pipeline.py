@@ -6,6 +6,7 @@ Supervisor 실패 시에는 Memory가 원문을 처리하고, Memory 실패 시 
 Memory 가 끝나면 러너가 넘긴 commit 으로 기록 단계를 확정하고, 저장 안내는 그 뒤에 낸다.
 도메인 단계는 쓰는 task 를 먼저 끝낸 뒤 읽는 task 를 돌린다.
 도메인 결과는 끝나는 대로 내보내고, Partial은 다 끝나거나 20초가 된 뒤 한 번 낸다.
+되묻기는 카드에 싣지 않는다. 결과를 다 본 뒤 하나만 골라 Partial 앞에 AgentQuestion 으로 낸다.
 
 Supervisor가 요청을 기록으로 잘못 나누면 그 조각은 어디서도 처리되지 않는다.
 Memory가 적지 않은 RECORD 조각이 남으면 그 이유를 Supervisor에 돌려주고 한 번만 다시 나눈다.
@@ -14,7 +15,7 @@ Memory가 적지 않은 RECORD 조각이 남으면 그 이유를 Supervisor에 �
 import asyncio
 import logging
 import time
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import date, datetime
 from typing import Any, Literal, Protocol, Self
@@ -221,7 +222,8 @@ class AgentResult:
     Agent 결과 한 건에 하나씩, `DomainRouted` 바로 뒤에 나간다. 추천이 있으면 저장(commit)이
     끝난 뒤에 나가고, 저장된 id 를 추천 순서대로 `suggestion_ids` 에 싣는다 — 카드의 승인 ·
     거절 · 피드백은 저장된 행의 id 로 동작한다(공통규약 §3). 추천이 없는 결과(성장 추이 ·
-    닫힘 안내 · 개수 안내 · 되묻기)는 `()` 로 바로 나간다. 결과를 못 낸 Agent(예외 · 시간
+    닫힘 안내 · 개수 안내)는 `()` 로 바로 나간다. 되묻기는 싣지 않는다(`AgentQuestion`).
+    질문만 낸 결과도 카드는 나간다. 결과를 못 낸 Agent(예외 · 시간
     초과 · `status="failed"` · 추천 저장 실패)는 이 이벤트가 없고 `Partial.failed` 로만 알린다.
     후보 내용 · 근거 모드는 싣지 않는다 — 화면이 05 에서 id 로 읽는다.
 
@@ -233,13 +235,30 @@ class AgentResult:
     task_type: str | None
     status: str
     readouts: tuple[Readout, ...]
-    # needs_observation 하나. 되묻기는 Agent 마다 하나(DomainAgentResult)이고 run 마다도 하나다 —
-    # 먼저 끝난 결과가 가진다(`_QuestionSlot`)
-    question: str | None
     suggestion_ids: tuple[str, ...] = ()  # 저장이 끝난 추천 id. 추천 순서 그대로
     kind: str | None = None  # "personalized" · "general" · 추천이 없으면 None
     reason: str | None = None  # 묶음의 이유 한 문장(코드 문구)
     record_count: int | None = None  # kind == "general" 일 때만. 세지 못했으면 None
+
+
+@dataclass(frozen=True)
+class AgentQuestion:
+    """run 이 보호자에게 내는 되묻기 하나 (루트 §2 최소 질문 1개 · 복수 금지).
+
+    Agent 하나가 질문을 둘 못 내게는 `DomainAgentResult` 가 막지만, Agent 둘이 한 run 에서 각자
+    물을 수 있다. 그래서 카드(`AgentResult`)는 끝나는 대로 질문 없이 나가고(K-11 · NF-06), 질문은
+    결과를 다 본 뒤 `_pick_question` 이 하나만 골라 `Partial` 앞에 따로 보낸다. 끝나는 순서가
+    입력마다 달라도 같은 질문이 나간다. Memory 가 되물은 run(`MemoryNote.kind == "question"`)
+    과 `failed` run 에는 없다. 05 는 여기를 지나지 않는다.
+
+    `awaits_reply` 는 이 질문에 `reply_to` 로 답할 수 있는가다.
+    서버가 맥락을 들고 있을 때만 참이다.
+    """
+
+    agent: str
+    task_type: str | None
+    text: str
+    awaits_reply: bool = False
 
 
 @dataclass(frozen=True)
@@ -349,6 +368,7 @@ Event = (
     | EventDrafts
     | DomainRouted
     | AgentResult
+    | AgentQuestion
     | Unavailable
     | Guidance
     | MemoryNote
@@ -500,6 +520,8 @@ async def handle_input(
     failed: Failed | None = None
     committed = False
     memory_ms: int | None = None
+    # Memory 가 답할 수 있는 질문(note)을 냈는가. 그러면 도메인 Agent 질문은 보내지 않는다
+    memory_asked = False
     # 기록할 조각이 있으면 Memory를 부른다. 원문이 전부 요청·안내 조각이면 건너뛴다
     if routing.memory_task is not None:
         send(Step(2, _TOTAL_STEPS, _LABELS[1]))
@@ -533,6 +555,7 @@ async def handle_input(
                 send(EventDrafts(memory.drafts))
             note = _memory_note(memory)
             if note is not None:
+                memory_asked = note.kind == "question"
                 send(note)
             if memory.pending is not None:
                 send(PendingReply(run_id, memory.pending))
@@ -605,9 +628,9 @@ async def handle_input(
         budget_ms = int(remaining * 1000)
 
         # 결과는 끝나는 대로 내보낸다 (K-11). 추천이 있으면 저장(commit)이 끝난 뒤에 카드가
-        # 나간다(공통규약 §3). Partial은 다 끝나거나 20초가 된 뒤 아래에서 한 번
+        # 나간다(공통규약 §3). 카드는 질문을 싣지 않는다 — 질문은 결과를 다 본 뒤 `_pick_question`
+        # 이 하나만 골라 보낸다. Partial은 다 끝나거나 20초가 된 뒤 아래에서 한 번
         saved: list[str] = []  # 이 run 에서 저장한 추천 id — 확정된 저장이다
-        question_slot = _QuestionSlot()
 
         async def on_outcome(outcome: DomainOutcome) -> bool:
             send(_routed(outcome))  # 로그 · 지표용
@@ -620,17 +643,6 @@ async def handle_input(
                     return False  # 그 Agent 카드는 내지 않는다 — _run_domain 이 실패로 센다
                 ids = stored
                 saved.extend(ids)
-            # 질문 자리는 카드가 나갈 것이 확정된 뒤에 잡는다 — 저장에 실패해 카드가 없는 결과가
-            # 자리를 쥐면 뒤에 끝난 결과의 질문까지 버려진다 (#452 리뷰)
-            asks = question_slot.take(outcome)
-            if not asks and _only_a_question(outcome):
-                # 질문이 전부였던 결과가 질문을 잃었다. 라벨만 남는 카드는 내지 않는다(실패 아님)
-                logger.info(
-                    "질문만 낸 결과를 내지 않았다 — 되묻기는 run 에 하나 run_id=%s task=%s",
-                    run_id,
-                    _label(outcome.agent, outcome.task_type),
-                )
-                return True
             message = (
                 _empty_notice(outcome) if _recommends(outcome.agent, outcome.task_type) else None
             )
@@ -642,8 +654,8 @@ async def handle_input(
             count = (
                 await _count(outcome.agent, count_records) if summary.kind == "general" else None
             )
-            # 화면용 — readout · 되묻기 · 추천 칸 (#227)
-            send(_result(outcome, ids, summary, count, asks=asks))
+            # 화면용 — readout · 추천 칸 (#227)
+            send(_result(outcome, ids, summary, count))
             return True
 
         ran = await _run_domain(
@@ -680,8 +692,15 @@ async def handle_input(
         failed = Failed("llm_unavailable" if partial is not None else "unparsable", raw_text)
     if failed is not None:
         send(failed)
-    elif partial is not None:
-        send(partial)
+    else:
+        # 결과를 다 본 뒤 하나만. 부분 결과(partial)는 결과 뒤에 오는 계약이라 질문이 먼저다
+        asked = None if memory_asked else _pick_question(domain)
+        if asked is not None:
+            send(
+                AgentQuestion(asked.agent, _task_label(asked.task_type), asked.needs_observation[0])
+            )
+        if partial is not None:
+            send(partial)
     send(Done(run_id, model_calls))
 
     result = PipelineResult(
@@ -1235,33 +1254,18 @@ def _with_recorded(
     return tuple(replace(task, recorded_subjects=subjects) for task in tasks)
 
 
-class _QuestionSlot:
-    """run 하나가 화면에 내보내는 되묻기는 하나다 (루트 §2 · 최소 질문 1개 · 복수 금지).
+def _pick_question(outcomes: Sequence[DomainOutcome]) -> DomainOutcome | None:
+    """질문을 낸 결과 중 run 이 보낼 하나. 없으면 None.
 
-    Agent 하나가 질문을 둘 못 내게는 `DomainAgentResult` 가 막지만, Agent 둘이 한 run 에서 각자
-    물을 수 있다. 카드는 끝나는 대로 나가서(K-11) 먼저 끝난 결과가 자리를 갖고, 뒤에 끝난 결과의
-    질문은 뺀다. 질문을 다른 카드가 끝나기를 기다렸다 붙이면 Agent 하나가 20초까지 걸릴 때 추천
-    카드까지 20초에 나간다 — 부분 결과 원칙(NF-06)과 맞지 않는다.
-
-    05 는 여기를 지나지 않는다. 응답을 만들 때 `agents` 순서로 하나만 고른다.
+    질문이 답의 전부인 결과(추천이 없다)가 추천에 덧붙는 질문보다 먼저다 — 추천을 받은 보호자에게
+    덧붙는 질문보다 추천 없이 막힌 쪽의 질문이 답을 더 필요로 한다. 🚨 readout 이 아니라 추천 유무로
+    가른다: 질문만 낸 결과에도 안내 한 줄이 readout 으로 붙는다. 같은 순위면 task 순서다 —
+    `outcomes` 는 끝난 순서가 아니라 task 순서라 어느 Agent 가 먼저 끝나도 같은 질문이 나간다.
     """
-
-    def __init__(self) -> None:
-        self._taken = False
-
-    def take(self, outcome: DomainOutcome) -> bool:
-        """이 결과의 질문을 카드에 실을지. 질문이 없으면 싣을 것이 없어 True 다."""
-        if not outcome.needs_observation:
-            return True
-        if self._taken:
-            return False
-        self._taken = True
-        return True
-
-
-def _only_a_question(outcome: DomainOutcome) -> bool:
-    """추천도 readout 도 없이 질문만 낸 결과인가. 질문을 잃으면 카드에 라벨만 남는다."""
-    return bool(outcome.needs_observation) and not outcome.suggestions and not outcome.readouts
+    asking = [outcome for outcome in outcomes if outcome.needs_observation]
+    if not asking:
+        return None
+    return min(asking, key=lambda outcome: bool(outcome.suggestions))
 
 
 def _routed(outcome: DomainOutcome) -> DomainRouted:
@@ -1279,18 +1283,14 @@ def _result(
     suggestion_ids: tuple[str, ...],
     summary: BundleSummary = BundleSummary(kind=None, reason=None),
     record_count: int | None = None,
-    *,
-    asks: bool = True,
 ) -> AgentResult:
-    """`asks` 가 거짓이면 이 결과의 질문을 싣지 않는다 — 질문 자리를 다른 결과가 가졌다."""
+    """카드는 질문을 싣지 않는다 — 질문은 `AgentQuestion` 으로 따로 나간다."""
     task_type = _task_label(outcome.task_type)
-    question = outcome.needs_observation[0] if asks and outcome.needs_observation else None
     return AgentResult(
         outcome.agent,
         task_type,
         str(outcome.status),
         tuple(outcome.readouts),
-        question,
         suggestion_ids,
         kind=summary.kind,
         reason=summary.reason,

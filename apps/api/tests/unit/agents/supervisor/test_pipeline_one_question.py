@@ -1,4 +1,4 @@
-"""한 run 에서 화면으로 가는 되묻기는 하나다 — 진짜 Food · Growth 로 본다 (#452 리뷰).
+"""한 run 에서 화면으로 가는 되묻기는 하나다 — 진짜 Food · Growth 로 본다 (#452 리뷰 · #615).
 
 진짜 Supervisor 라우팅 · 파이프라인 · Food Agent · Growth Agent 를 쓰고, 가짜는 LLM 응답과
 in-memory 저장소뿐이다. 입력 "저녁 뭐 먹일까 양치 혼자 하는 법 알려줘" 가
@@ -7,9 +7,9 @@ food:meal_recommendation + growth:routine_coaching 으로 나뉜다.
 - Food: 극성을 모르는 관심 후보 하나("브로콜리", #576 기억 다리로 읽음) → 추천 3개 + 되묻기
 - Growth: 양치 루틴 기록 0건 → 추천 없이 되묻기만
 
-규칙 자체(먼저 끝난 결과가 자리를 갖는다 · 질문을 잃은 결과의 카드)는 `test_pipeline.py` 의 가짜
-러너 테스트가 순서를 바꿔 가며 본다. 여기는 두 Agent 를 처음 같이 돌린 그 장면이 화면 이벤트에서
-질문 하나로 나오는지만 본다.
+규칙 자체(끝난 순서와 상관없이 같은 질문 · 질문을 고르는 순서)는 `test_pipeline.py` 의 가짜
+러너 테스트가 순서를 바꿔 가며 본다. 여기는 두 Agent 를 처음 같이 돌린 그 장면에서 질문이 하나만
+나가고, 그것이 추천 없이 질문만 낸 Growth 의 것인지만 본다.
 """
 
 from collections.abc import Sequence
@@ -29,9 +29,8 @@ from app.agents.food.store import (
 from app.agents.memory.context import AgentContext
 from app.agents.memory.store import InMemoryStore
 from app.agents.memory_bridge import StoreFoodMemory
-from app.agents.pipeline import AgentResult, handle_input
+from app.agents.pipeline import AgentQuestion, AgentResult, handle_input
 from app.agents.suggestion_save import InMemorySuggestions
-from app.api.runs.translate import to_sse
 from tests.unit.agents.food.support import (
     BIRTH_DATE,
     MEAL_DOC,
@@ -58,7 +57,6 @@ from tests.unit.agents.supervisor.test_pipeline import (
 
 TEXT_FOOD = "저녁 뭐 먹일까"
 TEXT_GROWTH = "양치 혼자 하는 법 알려줘"
-FOOD_QUESTION = "브로콜리은(는) 좋아하는 편인가요?"
 
 
 class _Affinities:
@@ -129,7 +127,7 @@ async def test_Food_와_Growth_가_둘_다_되물어도_화면의_질문은_하�
 ) -> None:
     events: list[Any] = []
 
-    await handle_input(
+    result = await handle_input(
         f"{TEXT_FOOD} {TEXT_GROWTH}",
         memory_context,
         {
@@ -153,16 +151,16 @@ async def test_Food_와_Growth_가_둘_다_되물어도_화면의_질문은_하�
         save_suggestions=InMemorySuggestions(),
     )
 
-    # 두 Agent 가 같은 틱에 끝나면 task 순서가 앞선 Food 가 자리를 갖는다
-    cards = [
-        data
-        for sse in (to_sse(e) for e in events)
-        if sse and sse[0] == "agent_result"
-        for data in [sse[1]]
+    # Food 는 추천 3개에 질문이 덧붙었고 Growth 는 추천 없이 질문만 냈다 — 질문이 답의 전부인
+    # Growth 의 것이 나간다. 끝나는 순서와 상관없다
+    growth_outcome = next(outcome for outcome in result.domain if outcome.agent == "growth")
+    asked = _of(events, AgentQuestion)
+    assert [(question.agent, question.task_type) for question in asked] == [
+        ("growth", "routine_coaching")
     ]
-    asked = [(card["agent"], card["question"]) for card in cards if card["question"]]
-    assert asked == [("food", FOOD_QUESTION)]
-    # Growth 는 질문을 잃어도 안내 한 줄이 있어 카드가 선다 — 양치 요청에 화면 반응이 남는다
-    growth = next(result for result in _of(events, AgentResult) if result.agent == "growth")
-    assert growth.question is None
-    assert [readout.code for readout in growth.readouts] == ["empty"]
+    assert asked[0].text == growth_outcome.needs_observation[0]
+    # 카드는 둘 다 선다. Growth 카드는 안내 한 줄만 싣는다 — 양치 요청에 화면 반응이 남는다
+    cards = {card.agent: card for card in _of(events, AgentResult)}
+    assert set(cards) == {"food", "growth"}
+    assert [readout.code for readout in cards["growth"].readouts] == ["empty"]
+    assert len(cards["food"].suggestion_ids) == 3
