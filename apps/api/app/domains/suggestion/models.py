@@ -81,6 +81,10 @@ class Suggestion(Base, UUIDPk, Timestamps):
     # 추천을 만든 입력 run. 05 가 "후보 보기 →" 로 연 run 의 추천을 찾는다.
     # run 밖에서 만든 행은 비어 있다
     run_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 보호자가 놀이를 정해 물은 Activity 일반 추천이다("물놀이 뭐 하지?"). 기준이 그 요청이라
+    # 문서 행 근거 없이 저장되고, 05 도 문서 근거 없이 내보낸다. 저장 검사가 Activity 일반 추천일
+    # 때만 켠다 — 문서 근거가 검수에서 빠진 일반 추천과 가를 수 있게 행에 남긴다 (#597 리뷰)
+    requested: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, server_default=sa.false())
 
 
 class SuggestionEvent(Base):
