@@ -654,7 +654,8 @@ async def test_쪼개진_식사_고민에_다른_행동_단계를_내지_않는�
 
     (shown,) = [e for e in events if isinstance(e, pipeline.AgentResult)]
     assert shown.suggestion_ids == () and not saved.batches
-    assert "밥 먹기" in (shown.question or "") and "손 씻기" not in (shown.question or "")
+    (asked,) = [e for e in events if isinstance(e, pipeline.AgentQuestion)]
+    assert "밥 먹기" in asked.text and "손 씻기" not in asked.text
 
 
 def _routine_call(name: str, subject: str, *, success: bool = True) -> Any:

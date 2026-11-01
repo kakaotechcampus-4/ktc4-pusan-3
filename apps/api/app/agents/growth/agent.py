@@ -28,7 +28,7 @@ from typing import Any
 
 from app.agents.common.llm_client import LLMClient
 from app.agents.common.readout import Readout
-from app.agents.common.result import AgentStatus, DomainAgentResult
+from app.agents.common.result import AgentStatus, DomainAgentResult, DomainPending
 from app.agents.common.schemas.task import DomainTask
 from app.agents.common.suggestion import (
     SuggestionDraft,
@@ -43,6 +43,7 @@ from app.agents.growth.gating import routine_mode
 from app.agents.growth.prompt import build_system_prompt, recall_message, request_message
 from app.agents.growth.readouts import (
     ASK_NEED_LEVEL,
+    ASKED_FIELD,
     CLOSED_BOOK_API,
     DOC_NO_ROW,
     READOUTS,
@@ -106,13 +107,14 @@ async def _run(
     context.state.topic = request_topic(task.request_texts, task.record_texts)
     context.state.strict_topic = strict_topic(task.request_texts, task.record_texts)
     context.state.routine_scope = routine_scope(task.request_texts, task.record_texts)
-    context.state.said_texts = (*task.request_texts, *task.record_texts)
+    context.state.said_texts = (*task.request_texts, *task.record_texts, *task.answer_texts)
     context.state.recorded_subjects = task.recorded_subjects
+    context.state.answered_subject = task.answered_subject
 
     key = closed_readout_key(task_type, gate)
     if key is None and task_type is GrowthTaskType.ROUTINE_COACHING:
         # 같은 입력의 기록 조각도 본다 — "약 먹기 싫어해. 어떻게 하지?" 는 요청 조각에 약이 없다
-        key = closure_key((*task.request_texts, *task.record_texts))
+        key = closure_key((*task.request_texts, *task.record_texts, *task.answer_texts))
     if key is not None:
         context.state.closed_reason = key
         return _result(task_type, "blocked", readouts=(READOUTS.render(key),))
@@ -273,6 +275,7 @@ def _result(
     suggestions: tuple[SuggestionDraft, ...] = (),
     readouts: tuple[Readout, ...] = (),
     question: str | None = None,
+    pending: DomainPending | None = None,
     model_calls: int = 0,
 ) -> DomainAgentResult:
     return DomainAgentResult(
@@ -282,7 +285,23 @@ def _result(
         suggestions=suggestions,
         readouts=readouts,
         needs_observation=(question,) if question else (),
+        pending=pending,
         model_calls=model_calls,
+    )
+
+
+def _pending(state: GrowthRunState) -> DomainPending | None:
+    """되묻기를 낸 자리. 답을 받는 pipeline 이 보관했다가 Memory 에 넘긴다."""
+    if state.question is None or state.asked is None:
+        return None
+    key, subject, category = state.asked
+    if key not in ASKED_FIELD:
+        return None
+    return DomainPending(
+        agent=AGENT,
+        kind=key,
+        question=state.question,
+        payload={"subject": subject, "category": category, "field": ASKED_FIELD[key]},
     )
 
 
@@ -294,7 +313,12 @@ def _ended(task_type: GrowthTaskType, context: GrowthContext) -> DomainAgentResu
         # 실어 카드가 혼자 서게 한다 — 05 묶음 안내(`empty_notice`)도 이 문장이 된다 (#452 리뷰)
         notice = replace(READOUTS.render(ASK_NEED_LEVEL), code="empty")
         return _result(
-            task_type, "completed", readouts=(notice,), question=state.question, model_calls=1
+            task_type,
+            "completed",
+            readouts=(notice,),
+            question=state.question,
+            pending=_pending(state),
+            model_calls=1,
         )
     assert state.closing is not None
     state.closed_reason = state.closing

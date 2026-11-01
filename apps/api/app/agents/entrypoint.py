@@ -68,6 +68,7 @@ from app.agents.memory_bridge import (
 )
 from app.agents.pipeline import (
     RECOMMENDING_TASKS,
+    AgentQuestion,
     AgentResult,
     Commit,
     CountRecords,
@@ -106,6 +107,7 @@ __all__ = [
     "FIRST_REQUEST_AGENTS",
     "SUGGESTION_AGENTS",
     "AffinityReader",
+    "AgentQuestion",
     "AgentResult",
     "AllergenCheck",
     "CoarseLocation",

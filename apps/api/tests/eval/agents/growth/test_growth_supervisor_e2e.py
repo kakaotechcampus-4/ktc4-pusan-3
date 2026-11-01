@@ -45,7 +45,7 @@ from app.agents.growth.store.inmemory import (
     InMemorySafety,
 )
 from app.agents.growth.tools.books import MAX_BOOKS, SEARCH_POOL
-from app.agents.pipeline import AgentResult, PipelineResult, Unavailable
+from app.agents.pipeline import AgentQuestion, AgentResult, PipelineResult, Unavailable
 from app.agents.suggestion_save import InMemorySuggestions
 from app.core.config import settings
 from app.integrations.data4library.client import Data4LibraryBooks
@@ -101,6 +101,11 @@ class Observed:
     @property
     def growth_events(self) -> list[AgentResult]:
         return [e for e in self.events if isinstance(e, AgentResult) and e.agent == "growth"]
+
+    @property
+    def growth_questions(self) -> list[AgentQuestion]:
+        """질문은 카드에 실리지 않고 run 끝에 하나만 나간다 (#615)."""
+        return [e for e in self.events if isinstance(e, AgentQuestion) and e.agent == "growth"]
 
     @property
     def growth_outcomes(self) -> list[Any]:
@@ -179,7 +184,7 @@ def j_routine(*, need_suggestion: bool) -> Judge:
             return
         if event.status == "failed":
             o.failures.append("루틴 결과를 못 냈다")
-        asked = bool(event.question)
+        asked = any(question.task_type == ROUTINE for question in o.growth_questions)
         if need_suggestion and not event.suggestion_ids:
             o.failures.append("루틴 추천이 없다")
         if not need_suggestion and not (event.suggestion_ids or asked or event.readouts):
@@ -187,6 +192,21 @@ def j_routine(*, need_suggestion: bool) -> Judge:
         o.notes.append(f"추천 {len(event.suggestion_ids)}개 · 되묻기 {asked}")
 
     return judge
+
+
+def j_asks_once(o: Observed) -> None:
+    """기록이 없는 아이에게 루틴을 물으면 카드가 먼저 나가고 되묻기는 run 끝에 하나 나간다."""
+    event = _ran(o, ROUTINE)
+    if event is None:
+        return
+    if len(o.growth_questions) != 1:
+        o.failures.append(f"되묻기 {len(o.growth_questions)}개 (run 에 하나여야 한다)")
+        return
+    if o.events.index(o.growth_questions[0]) < o.events.index(event):
+        o.failures.append("질문이 카드보다 먼저 나갔다")
+    if event.suggestion_ids:
+        o.failures.append("기록이 없는데 추천이 나갔다")
+    o.notes.append(f"되묻기: {o.growth_questions[0].text}")
 
 
 def j_review(o: Observed) -> None:
@@ -315,6 +335,20 @@ CASES: tuple[Case, ...] = (
         "C48-tooth",
         "양치 → routine 추천 저장",
         j_routine(need_suggestion=True),
+    ),
+    Case(
+        "ASK2/C48-empty-mixed",
+        "양치를 아직 잘 못해서 걱정이야. 어떻게 가르치지?",
+        "C48-empty",
+        "기록 + 요청 혼합 → 저장 먼저, 그다음 되묻거나 추천 (어느 쪽이든 죽지 않는다)",
+        j_routine(need_suggestion=False),
+    ),
+    Case(
+        "ASK1/C48-empty",
+        "양치 혼자 하게 하고 싶어",
+        "C48-empty",
+        "기록 없는 루틴 요청 → 되묻기 하나 · 카드 뒤",
+        j_asks_once,
     ),
     Case("T24/C48", INPUTS["T24"], "C48", "키 · 몸무게 추이 → growth_review · 모델 0", j_review),
     Case("T27/C48", INPUTS["T27"], "C48", "잘 크고 있어? → growth_review", j_review),
@@ -497,7 +531,7 @@ def _record(o: Observed, attempt: int) -> dict[str, Any]:
                 "suggestions": len(e.suggestion_ids),
                 "kind": e.kind,
                 "readouts": [r.body[:40] for r in e.readouts],
-                "asked": bool(e.question),
+                "asked": any(q.task_type == e.task_type for q in o.growth_questions),
             }
             for e in o.growth_events
         ],

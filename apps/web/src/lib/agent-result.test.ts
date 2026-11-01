@@ -187,4 +187,32 @@ describe("askedQuestion — run 이 답을 기다리는 질문 (#537)", () => {
       askedQuestion({ note: { text: "기록해 두었어요.", kind: "message" }, agentResults: [] }),
     ).toBeNull();
   });
+
+  // 서버는 run 의 되묻기를 카드가 아니라 마지막 `agent_result` 한 장으로 보낸다 (#615). 같은 Agent 의
+  // 안내 카드가 앞에 이미 서 있어도 그 질문 장이 답을 받는다.
+  describe("run 끝에 온 질문 장", () => {
+    const ASK = "양치는 요즘 어느 정도까지 혼자 하나요?";
+    const growth = (over: Partial<AgentResultEvent>) =>
+      result({ agent: "growth", task_type: "routine_coaching", ...over });
+    const guide = growth({
+      readouts: [notice("지금 어떤지 알아야 맞는 방법을 고를 수 있어요.", "empty")],
+    });
+    const asking = growth({ question: ASK, awaits_reply: true });
+
+    it("앞의 안내 카드가 아니라 질문 장이 답을 받는다", () => {
+      const asked = askedQuestion({ note: null, agentResults: [result(), guide, asking] });
+      expect(asked?.text).toBe(ASK);
+      expect(asked?.result).toBe(asking);
+    });
+
+    it("질문 장은 추천도 안내도 없어도 보인다 — 질문이 곧 내용이다", () => {
+      expect(visibleAgentResults([guide, asking])).toEqual([guide, asking]);
+    });
+
+    it("🚨 답을 받지 않는 질문 장(`awaits_reply: false`)은 문장으로만 선다", () => {
+      const sentence = growth({ question: ASK, awaits_reply: false });
+      expect(askedQuestion({ note: null, agentResults: [guide, sentence] })).toBeNull();
+      expect(visibleAgentResults([sentence])).toEqual([sentence]);
+    });
+  });
 });

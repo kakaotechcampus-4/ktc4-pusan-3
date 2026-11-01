@@ -145,8 +145,10 @@ run 상태는 **서버 상태도 클라이언트 상태도 아니다.** 구독�
     들고 있지 않아서 `reply_to` 로 보내면 400 이다 (#246) — 안내 문장으로만 선다. 답을 받는 질문은 **run 당 하나**다:
     Memory 질문이 먼저, 그다음이 `awaits_reply` 인 Agent 질문의 첫째다 (`lib/agent-result.ts` 의 `askedQuestion`).
     답하는 길은 Memory 질문과 같다 — 원문 없이 `reply_to`. 규칙 원문은 [`medication-v1.md`](medication-v1.md) §4
-  - 🚨 **한 run 에서 `question` 이 있는 `agent_result` 는 하나다.** 서버가 먼저 끝난 결과의 질문만 보낸다
-    (`Agent_공통규약` 되묻기). 화면이 따로 걸러 규칙을 두 곳에 두지 않는다
+  - 🚨 **한 run 에서 `question` 이 있는 `agent_result` 는 하나다.** 서버가 결과를 다 본 뒤 하나만 골라 **마지막
+    `agent_result` 한 장**(readouts · 추천이 빈 장)으로 보낸다 — 카드의 `question` 은 늘 `null` 이다 (`Agent_공통규약`
+    되묻기 · 서버 #615). 질문 장은 부분 결과(`partial`) 앞에 온다. 화면이 따로 걸러 규칙을 두 곳에 두지 않는다.
+    이미 저장된 지난 대화의 카드 안 질문은 그대로 읽는다. 새 이벤트 이름과 질문을 답 묶음 맨 아래로 옮기는 일은 #616
   - 🚨 **추천이 든 결과는 "후보 N개" · 이유 한 문장 · "후보 보기" 가 블록에 선다** (#227 3단계). 링크는 그 블록의
     Agent 하나와 그 run 을 싣는다(`?agents=<agent>&run=<run_id>`) — 05 가 그 run 의 추천을 되살린다 (#249).
     후보가 있으면 개수 안내(`code`)는 "후보 N개" 가 대신해 그리지 않고, `code` 가 없는 readout(날씨 안내)은 그대로

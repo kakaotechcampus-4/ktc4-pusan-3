@@ -55,6 +55,9 @@ rhythm.no_row:
 next_step.chain_end:
   kind: notice
   template: "이건 이미 혼자 잘 하고 있어요. 다음 단계는 준비되면 알려드릴게요."
+next_step.level_unread:
+  kind: notice
+  template: "말씀해 주신 내용에서 도움 정도를 읽지 못했어요. 같은 요청을 다시 보내 주시면 한 번 더 여쭤볼게요."
 
 # 루틴 되묻기에 같이 싣는 0개 안내(code="empty"). 질문 자리를 다른 Agent 가 가져가도 카드에 이 한
 # 줄이 남는다 — 05 묶음 안내도 이 문장이다. 자립 · 예절(어느 정도까지 혼자 하나요)과 습관(어떤
