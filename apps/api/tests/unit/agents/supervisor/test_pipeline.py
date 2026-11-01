@@ -1337,10 +1337,14 @@ def test_구현된_agent_마다_실행_함수가_있다() -> None:
     assert set(pipeline._RUNNERS) == routing_module.IMPLEMENTED_AGENTS
 
 
-def test_추천을_내는_task_표도_구현된_agent_와_키가_같다() -> None:
-    # 05 의 다시 시도 · 0개 기록은 이 표로 남긴다 (#249). 한쪽만 늘리면 새 Agent 의 실패가 맥락 없이
-    # "이어서 할 수 없음" 으로 떨어진다
-    assert set(pipeline.RECOMMENDING_TASKS) == routing_module.IMPLEMENTED_AGENTS
+def test_구현된_agent_는_추천_표와_추천_없는_표_중_한_곳에만_있다() -> None:
+    # 05 의 다시 시도 · 0개 기록은 추천 표로 남긴다 (#249). 한쪽만 늘리면 새 Agent 의 실패가
+    # 맥락 없이 "이어서 할 수 없음" 으로 떨어진다. 추천을 안 내는 Agent 는 따로 적는다
+    assert (
+        set(pipeline.RECOMMENDING_TASKS) | pipeline.NON_RECOMMENDING_AGENTS
+        == routing_module.IMPLEMENTED_AGENTS
+    )
+    assert not set(pipeline.RECOMMENDING_TASKS) & pipeline.NON_RECOMMENDING_AGENTS
 
 
 # ── 도메인 Agent 실행 (공통_구현_계획 §5 · NF-06) ─────────────────
@@ -1355,6 +1359,9 @@ class _Outcome:
     readouts: tuple[Readout, ...] = ()
     needs_observation: tuple[str, ...] = ()
     suggestions: tuple[SuggestionDraft, ...] = ()
+    medication_drafts: tuple[Any, ...] = ()
+    event_requests: tuple[Any, ...] = ()
+    pending: Any = None
 
 
 @dataclass(frozen=True)

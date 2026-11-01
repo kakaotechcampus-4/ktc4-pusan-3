@@ -10,6 +10,7 @@
 import json
 from dataclasses import fields, replace
 from datetime import datetime, time, timedelta
+from uuid import UUID
 
 import pytest
 
@@ -324,3 +325,38 @@ class TestSearchMedicationSchedules:
         result = await search_medication_schedules(ctx, SearchMedicationArgs())
 
         assert result.data["courses"] == []
+
+
+SYRUP_ID = UUID(int=701)
+ANTIBIOTIC_ID = UUID(int=702)
+
+
+def two_courses():
+    syrup, syrup_rows = course_with_doses(
+        "해열 시럽",
+        (DoseSlot.of("bedtime"),),
+        TODAY,
+        TODAY + timedelta(days=2),
+        course_id=SYRUP_ID,
+    )
+    anti, anti_rows = course_with_doses(
+        "항생제",
+        PATTERN,
+        TODAY - timedelta(days=1),
+        TODAY + timedelta(days=1),
+        course_id=ANTIBIOTIC_ID,
+    )
+    store = InMemoryMedicationStore([anti, syrup], [*anti_rows, *syrup_rows])
+    return context(medication=store)
+
+
+async def test_체크_안내_ref_는_발화가_가리킨_코스다():
+    readout = await check_on_screen(two_courses(), ["해열 시럽 먹였어"])
+
+    assert [ref.id for ref in readout.source_refs] == [SYRUP_ID]
+
+
+async def test_코스를_가리키지_않으면_진행_중_코스_전부다():
+    readout = await check_on_screen(two_courses(), ["아까 약 먹였어"])
+
+    assert {ref.id for ref in readout.source_refs} == {SYRUP_ID, ANTIBIOTIC_ID}

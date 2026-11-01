@@ -17,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from app.agents.common.tool_schema import ToolDefinition, build_tool_spec
 from app.agents.food.schemas.common import FoodTaskType
 from app.agents.growth.schemas.task import GrowthTaskType
+from app.agents.health.schemas.task import HealthTaskType
 from app.agents.memory.schemas.task import WorkType
 
 logger = logging.getLogger(__name__)
@@ -65,6 +66,7 @@ _LABEL_ENUMS: dict[str, type] = {
     "guard": GuardReason,
     "food_task": FoodTaskType,
     "growth_task": GrowthTaskType,
+    "health_task": HealthTaskType,
 }
 
 
@@ -74,6 +76,8 @@ def _repair(data: dict[str, Any]) -> dict[str, Any]:
     - work는 record 전용. request인데 work만 있고 agent가 없으면 kind를 잘못 붙인 것
     - food에 유형이 빠졌으면 프롬프트가 정해 둔 기본값("애매하면 추천")사용
     - growth에 유형이 빠졌으면 교육 추천(learning_suggestion)으로 채운다
+    - health 는 유형이 빠져도 채우지 않는다. 짐작한 라벨이 틀리면 복약 쓰기 경로가 열리기 때문에,
+      비워 두고 Health 가 unsupported 로 닫게 한다
     """
     for name, enum in _LABEL_ENUMS.items():
         value = data.get(name)
@@ -182,6 +186,18 @@ class Segment(_Strict):
             ),
         ),
     ]
+    health_task: Annotated[
+        HealthTaskType | None,
+        Field(
+            default=None,
+            description=(
+                "agent=health 면 하나. visit_summary(진료 준비 정리 · 열 언제부터) / "
+                "schedule_check(검진 · 접종 시기) / place_lookup(문 연 병원 찾기) / "
+                "medication(약 등록 · 바꾸기 · 끊기 · 먹였어 · 다음 약) / "
+                "care_handoff(투약의뢰서 · 응급 카드). 모르겠으면 비운다"
+            ),
+        ),
+    ]
     guard: Annotated[
         GuardReason | None,
         Field(
@@ -222,6 +238,11 @@ class Segment(_Strict):
         )
         if not is_growth and data.get("growth_task") is not None:
             dropped.append("growth_task")
+        is_health = data.get("kind") == SegmentKind.REQUEST and data.get("agent") == (
+            DomainAgentName.HEALTH
+        )
+        if not is_health and data.get("health_task") is not None:
+            dropped.append("health_task")
         if not dropped:
             return data
 
@@ -246,6 +267,7 @@ class Segment(_Strict):
         if self.kind == SegmentKind.REQUEST and self.agent == DomainAgentName.GROWTH:
             if self.growth_task is None:
                 raise ValueError("agent=growth이면 growth_task가 필요하다")
+        # health 는 라벨을 요구하지 않는다 — 엉뚱한 라벨을 받느니 비워 두고 Health 가 닫게 한다
         return self
 
 

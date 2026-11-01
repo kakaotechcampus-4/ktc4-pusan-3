@@ -22,6 +22,7 @@ from pathlib import Path
 
 from app.agents.food.schemas.common import FoodTaskType
 from app.agents.growth.schemas.task import GrowthTaskType
+from app.agents.health.schemas.task import HealthTaskType
 from app.agents.memory.schemas.task import WorkType
 from app.agents.supervisor.schemas import (
     DomainAgentName,
@@ -54,6 +55,7 @@ class Span:
     agent: DomainAgentName | None = None
     food_task: FoodTaskType | None = None
     growth_task: GrowthTaskType | None = None
+    health_task: HealthTaskType | None = None
     guard: GuardReason | None = None
     strict: bool = True  # False = 보고만 한다
 
@@ -85,6 +87,17 @@ def QG(text: str, growth_task: GrowthTaskType, *, strict: bool = True) -> Span:
     )
 
 
+def QH(text: str, health_task: HealthTaskType, *, strict: bool = True) -> Span:
+    """Health 요청 구간. 라벨이 복약 쓰기 경로를 가르는 Agent 라 유형까지 적는다."""
+    return Span(
+        text=text,
+        kind=SegmentKind.REQUEST,
+        agent=DomainAgentName.HEALTH,
+        health_task=health_task,
+        strict=strict,
+    )
+
+
 def G(text: str, guard: GuardReason, *, strict: bool = True) -> Span:
     return Span(text=text, kind=SegmentKind.GUARDED, guard=guard, strict=strict)
 
@@ -98,10 +111,11 @@ def U(text: str, *, strict: bool = True) -> Span:
 
 
 OBSERVE, SCHEDULE, LOOKUP_EDIT = WorkType.OBSERVE, WorkType.SCHEDULE, WorkType.LOOKUP_EDIT
-FOOD, ACTIVITY, GROWTH = (
+FOOD, ACTIVITY, GROWTH, HEALTH = (
     DomainAgentName.FOOD,
     DomainAgentName.ACTIVITY,
     DomainAgentName.GROWTH,
+    DomainAgentName.HEALTH,
 )
 
 
@@ -906,10 +920,97 @@ FC_CASES: tuple[RoutingCase, ...] = (
     RoutingCase(
         "FC10",
         "지금 또 먹여도 돼?",
-        (Q("지금 또 먹여도 돼?", DomainAgentName.HEALTH),),
+        (QH("지금 또 먹여도 돼?", HealthTaskType.MEDICATION),),
         watch="무엇을 먹일지 없이 시점만 묻는 말 — 약 이야기라 health (Health T11)",
     ),
 )
+
+
+# ── HR01~HR11 — Health 경계 (명세 §3 경계 예시 + Health 로 오지 않는 것) ─────────
+# "잘 크고 있어?" 와 "해열제 더 먹여도 돼?" 는 RC53 · GR13 · FC06 이 이미 같은 문장이라
+# 새로 두지 않고 그 케이스를 0건 규칙(HR_NEVER_HEALTH)에 센다.
+# 🚨 watch 가 변형인 문장은 프롬프트에 옮기지 않는다 — 옮기면 일반화가 아니라 외운 것을 잰다.
+HR_CASES: tuple[RoutingCase, ...] = (
+    RoutingCase(
+        "HR01",
+        "하루 세 번 항생제 먹여야 해",
+        (QH("하루 세 번 항생제 먹여야 해", HealthTaskType.MEDICATION),),
+        watch="경계 예시 — 약 등록은 health/medication",
+    ),
+    RoutingCase(
+        "HR02",
+        "열나서 병원 갔더니 항생제 먹이래",
+        (
+            R("열나서 병원 갔더니", OBSERVE, strict=False),
+            QH("항생제 먹이래", HealthTaskType.MEDICATION),
+        ),
+        watch="경계 예시 — 앞은 관찰 · 뒤는 약 등록. 앞부분은 요청에 붙여도 맞다",
+    ),
+    RoutingCase(
+        "HR03",
+        "검진 언제 받아야 돼?",
+        (QH("검진 언제 받아야 돼?", HealthTaskType.SCHEDULE_CHECK),),
+        watch="경계 예시 — 검진 시기는 health/schedule_check",
+    ),
+    RoutingCase(
+        "HR04",
+        "검진 받았는데 키 95cm래",
+        (G("검진 받았는데 키 95cm래", GuardReason.GROWTH_RECORD),),
+        watch="경계 예시 — 검진에서 쟀어도 키 값은 growth_record 안내. Health 로 보내지 않는다",
+    ),
+    RoutingCase(
+        "HR05",
+        "아까 약 먹였어",
+        (QH("아까 약 먹였어", HealthTaskType.MEDICATION),),
+        watch="경계 예시 — 먹였어는 복약 화면 체크 안내(health/medication)",
+    ),
+    RoutingCase(
+        "HR06",
+        "어린이집 투약의뢰서 필요해",
+        (QH("어린이집 투약의뢰서 필요해", HealthTaskType.CARE_HANDOFF),),
+        watch="경계 예시 — 남에게 전할 서류는 health/care_handoff",
+    ),
+    RoutingCase(
+        "HR07",
+        "열 언제부터 났더라",
+        (QH("열 언제부터 났더라", HealthTaskType.VISIT_SUMMARY),),
+        watch="경계 예시 — 열 경과는 health/visit_summary",
+    ),
+    RoutingCase(
+        "HR08",
+        "내일 소아과 가는데 정리해줘",
+        (QH("내일 소아과 가는데 정리해줘", HealthTaskType.VISIT_SUMMARY),),
+        watch="변형 — 진료 준비 정리. 병원 이름이 나와도 구매 · 예약이 아니다",
+    ),
+    RoutingCase(
+        "HR09",
+        "지금 문 연 소아과 찾아줘",
+        (QH("지금 문 연 소아과 찾아줘", HealthTaskType.PLACE_LOOKUP),),
+        watch="경계 예시 — 문 연 병원은 health/place_lookup (예약이 아니다)",
+    ),
+    RoutingCase(
+        "HR13",
+        "밤 11시에 열 재보니까 38.5도였어.",
+        (R("밤 11시에 열 재보니까 38.5도였어.", OBSERVE),),
+        watch="변형 — 체온을 재는 말은 growth_record 가 아니라 건강 기록(record/observe)",
+    ),
+    RoutingCase(
+        "HR11",
+        "어제부터 계속 기침하는데 폐렴이야?",
+        (
+            R("어제부터 계속 기침하는데", OBSERVE),
+            G("폐렴이야?", GuardReason.DIAGNOSIS),
+        ),
+        watch="변형 — 병명을 묻는 말은 진단 안내. 증상 부분만 기록 (Health 로 안 간다)",
+    ),
+)
+
+# 0건이어야 하는 오분류 — 출력에 health request 조각이 있으면 위반이다. 비율과 섞지 않는다
+#   HR04   검진에서 쟀어도 키 값은 growth_record
+#   GR13   잘 크고 있어? 는 growth_review (판정을 물어도 Health 가 아니다)
+#   HR11   병명을 묻는 말은 diagnosis
+#   FC06   약 용량 문의는 diagnosis
+HR_NEVER_HEALTH: tuple[str, ...] = ("HR04", "GR13", "HR11", "FC06")
 
 
 # ── T35~T69 — 아이가 한 일이 아닌 말과 그대로 기록되는 말 (#624 · #484 · #642) ─────────
@@ -1083,7 +1184,9 @@ UNCLEAR_CASES: tuple[RoutingCase, ...] = (
     ),
 )
 
-ALL_CASES: tuple[RoutingCase, ...] = RC_CASES + T_CASES + GR_CASES + FC_CASES + UNCLEAR_CASES
+ALL_CASES: tuple[RoutingCase, ...] = (
+    RC_CASES + T_CASES + GR_CASES + FC_CASES + HR_CASES + UNCLEAR_CASES
+)
 CASES_BY_ID: dict[str, RoutingCase] = {case.case_id: case for case in ALL_CASES}
 
 
@@ -1101,6 +1204,7 @@ def answer_output(case: RoutingCase) -> SupervisorOutput:
             "agent": span.agent,
             "food_task": span.food_task,
             "growth_task": span.growth_task,
+            "health_task": span.health_task,
             "guard": span.guard,
         }
         segments.append({key: value for key, value in fields.items() if value is not None})
@@ -1140,6 +1244,8 @@ class SplitScore:
     analysis_to_rec: int = 0  # 분석 요청이 추천으로 갔다 (사전 확인이 붙는다 — 안전)
     growth_spans: int = 0
     growth_task_ok: int = 0
+    health_spans: int = 0
+    health_task_ok: int = 0
     guarded_spans: int = 0
     guarded_found: int = 0
     unclear_spans: int = 0
@@ -1236,6 +1342,15 @@ def score_split(case: RoutingCase, output: SupervisorOutput | None) -> SplitScor
                 labels = {s.growth_task for s in requests if s.agent == DomainAgentName.GROWTH}  # type: ignore[attr-defined]
                 if span.growth_task in labels:
                     score.growth_task_ok += 1
+            if span.health_task is not None:
+                score.health_spans += 1
+                health = {
+                    s.health_task  # type: ignore[attr-defined]
+                    for s in requests
+                    if s.agent == DomainAgentName.HEALTH  # type: ignore[attr-defined]
+                }
+                if span.health_task in health:
+                    score.health_task_ok += 1
 
         elif span.kind == SegmentKind.GUARDED:
             score.guarded_spans += 1
@@ -1288,6 +1403,8 @@ def format_segments(output: SupervisorOutput | None) -> str:
             label = f"{label}·{segment.food_task}"
         if segment.growth_task:
             label = f"{label}·{segment.growth_task}"
+        if segment.health_task:
+            label = f"{label}·{segment.health_task}"
         parts.append(f"[{index}] {segment.kind}/{label} {segment.text!r}")
     return " ".join(parts)
 
@@ -1301,6 +1418,8 @@ def format_spans(case: RoutingCase) -> str:
             label = f"{label}·{span.food_task}"
         if span.growth_task:
             label = f"{label}·{span.growth_task}"
+        if span.health_task:
+            label = f"{label}·{span.health_task}"
         head = f"[{index}] {span.kind}/{label}" if label else f"[{index}] {span.kind}"
         parts.append(f"{head} {span.text!r}{'' if span.strict else ' (보고만)'}")
     return " ".join(parts)
@@ -1311,7 +1430,8 @@ def format_score(score: SplitScore) -> str:
         f"조각 {score.segments} · RECORD {score.record_found}/{score.record_spans}"
         f" (work {score.work_ok}) · REQUEST {score.request_found}/{score.request_spans}"
         f" (agent {score.agent_ok} · food 유형 {score.food_task_ok}/{score.food_spans}"
-        f" · growth 유형 {score.growth_task_ok}/{score.growth_spans})"
+        f" · growth 유형 {score.growth_task_ok}/{score.growth_spans}"
+        f" · health 유형 {score.health_task_ok}/{score.health_spans})"
         f" · GUARDED {score.guarded_found}/{score.guarded_spans}"
         f" · UNCLEAR {score.unclear_found}/{score.unclear_spans}"
         f" · RECORD→REQUEST {score.record_to_request}"
@@ -1372,3 +1492,17 @@ def growth_violations(case_id: str, output: SupervisorOutput | None) -> list[str
     if term is not None and not any(term in s.text for s in carried):
         found.append(f"{case_id}: Growth 로 가는 조각에 닫힘 낱말이 없다")
     return found
+
+
+def health_violations(case_id: str, output: SupervisorOutput | None) -> list[str]:
+    """0건 규칙 위반(HR_NEVER_HEALTH) — 출력에 health request 조각이 있으면 위반이다.
+
+    출력이 없으면(검증 실패) 보지 않는다 — 호출부가 따로 센다. 줄에는 케이스 번호와 라벨만 싣는다.
+    """
+    if output is None or case_id not in HR_NEVER_HEALTH:
+        return []
+    return [
+        f"{case_id}: request/health/{s.health_task or '-'}"
+        for s in output.segments
+        if s.kind == SegmentKind.REQUEST and s.agent == DomainAgentName.HEALTH
+    ]

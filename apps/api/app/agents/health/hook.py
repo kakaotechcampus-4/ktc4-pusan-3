@@ -1,4 +1,4 @@
-"""코드 hook — Memory 가 `observation_health` 를 저장한 직후 pipeline 이 부른다 (연결은 다른 이슈).
+"""코드 hook — Memory 가 `observation_health` 를 저장한 직후 pipeline 이 부른다.
 
 `check_symptom_repetition` 은 라벨이 아니다. 모델이 "이 기록은 반복이다" 라고 붙이는 게 아니라,
 코드가 최근 7일의 증상 기록을 읽어 **기록된 날 수**를 센다. 센 값은 저장하지 않는다 — 부를 때마다

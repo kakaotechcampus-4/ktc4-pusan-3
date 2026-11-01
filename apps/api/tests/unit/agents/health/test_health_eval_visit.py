@@ -360,27 +360,27 @@ async def test_열_타임라인_줄에_ref_가_없으면_실패다():
     assert fever_timeline()(replace(ran, result=bare)).failures
 
 
-async def test_3개월_미만은_응급_안내가_먼저다():
+async def test_3개월_미만은_응급_안내만_나간다():
     ran = await _ran("T22-C2")
 
-    assert ran.result.readouts[0] == READOUTS.render(EMERGENCY)
-    assert fever_timeline(emergency_first=True)(ran).failures == []
+    assert ran.result.readouts == (READOUTS.render(EMERGENCY),)
+    assert fever_timeline(emergency_only=True)(ran).failures == []
     assert fever_timeline()(ran).failures  # 응급 안내가 나가면 안 되는 자리라고 기대하면 실패
 
 
-async def test_응급_안내가_타임라인_뒤면_실패다():
+async def test_응급_안내_뒤에_타임라인이_붙으면_실패다():
     ran = await _ran("T22-C2")
-    first, *rest = ran.result.readouts
-    late = replace(ran.result, readouts=(*rest, first))
+    extra = Readout(kind="fever_timeline", body="38.2도 · 오전 9시")
+    late = replace(ran.result, readouts=(*ran.result.readouts, extra))
 
-    assert fever_timeline(emergency_first=True)(replace(ran, result=late)).failures
+    assert fever_timeline(emergency_only=True)(replace(ran, result=late)).failures
 
 
 async def test_응급_안내가_빠지면_실패다():
     ran = await _ran("T22-C2")
-    missing = replace(ran.result, readouts=ran.result.readouts[1:])
+    missing = replace(ran.result, readouts=())
 
-    assert fever_timeline(emergency_first=True)(replace(ran, result=missing)).failures
+    assert fever_timeline(emergency_only=True)(replace(ran, result=missing)).failures
 
 
 async def test_체온_기록이_없으면_fever_no_record_한_줄이다():

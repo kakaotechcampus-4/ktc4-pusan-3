@@ -1,0 +1,234 @@
+# 응급 신호 사전 — 보호자 발화에 이 말이 있으면 Supervisor 보다 먼저 119 · 응급실 안내가 나간다.
+# Health_Agent_명세 §9 "응급 신호 후보" — H-1(응급 신호 원문 대조) 검수 대기.
+# 읽는 쪽은 app/agents/supervisor/emergency.py, 맞추는 규칙은 app/rules/emergency.py.
+#
+# 🚨 medical_reviewed: false 여도 이 사전은 켠다 (infant_fever.yaml 과 같은 이유, 10-23 결정).
+#    끄면 응급 신호에 안내가 사라진다. 놓치는 쪽이 더 위험하다.
+#    그 대신 표현은 "아이가 지금 그렇다" 는 말에만 걸리게 좁혀 둔다. 걸리지 않아야 할 말이 걸리면
+#    도메인 Agent 가 전부 빠지기 때문이다. 그래서 guards(오탐 취소)를 둔다 —
+#    "경련 얘기를 들었어" · "숨쉬기 힘들지 않아" 는 걸지 않는다.
+#
+# 표현 쓰는 법
+#   - 띄어쓰기 · 문장부호는 무시하고 비교한다(app/rules/term_match.py 의 normalize).
+#   - 비교는 글자(음절) 단위 부분 일치다. 한국어는 활용에서 글자가 바뀐다(토해 → 토했 · 힘들 → 힘든 ·
+#     나 → 났). 그래서 활용형마다 별칭을 따로 둔다 — "토해" 만 두면 "토했어" 를 놓친다.
+#   - all_of 는 묶음의 목록이다. 묶음마다 aliases 중 하나가 나와야 하고, 묶음이 전부 나와야 걸린다.
+#     예) head_injury 는 "머리를 부딪" 류 한 묶음 + "토해" 류 한 묶음이 둘 다 있어야 한다.
+#   - guards 는 그 묶음의 별칭이 나온 자리를 덮는 말이다. 자기 별칭을 품어야 한다("경련 얘기" 는
+#     "경련" 을 덮는다). 별칭과 같으면 그 별칭이 통째로 꺼지므로 안 된다. 부정("안 해" · "없었어" ·
+#     "하지 않았어")은 어미마다 따로 둔다.
+#   - 남에게 들은 말("친구가 경련했대")은 거르지 않는다. 우리 아이가 어린이집에서 경련했다는 전달과
+#     글자로 구분되지 않는다. 놓치는 쪽이 더 위험하다.
+#   - infant: true 는 infant_fever 한 행뿐이다. 발화에 적힌 월령이 기준 미만일 때만 걸린다. 별칭 대신
+#     열 이야기 속의 기준 이상 체온("열이 38도야")으로도 걸린다. 월령 · 체온 기준은
+#     infant_fever.yaml 한 곳에 있다 — 여기에 숫자를 두지 않는다.
+#
+# 알려진 한계 (H-1 검수에서 정한다)
+#   - "목이 부었어" 는 swelling 별칭에서 뺐다. 편도염 · 인후염을 흔히 이렇게 말해서 아이 상태가 아닌
+#     말처럼 119 안내가 가장 많이 나갈 말이다. 목이 붓고 숨쉬기 힘들면 breathing 이 잡는다.
+#   - 아침 붓기("자고 일어났더니") · 모기 물린 자리 붓기는 guard 로 뺐다. 벌 · 음식 뒤 붓기는
+#     그대로 걸린다.
+#   - "반응이 없" 은 "새 장난감엔 반응이 없더라" 에도 걸린다. "아이가 반응이 없어" 를 놓치지 않으려고
+#     넓게 두었다.
+#
+# 검수 — 응급 신호는 의료 검수 필수다.
+#   ① 표현이 증상을 제대로 가리키는가 ② 출처가 "지금 바로 119 · 응급실" 강도의 안내를 이 증상에
+#   하는가. 마치면 그 행의 medical_reviewed: true 와 reviewed_by(GitHub 아이디) · reviewed_at 을
+#   채운다. 표현이 바뀌면 이 파일만 고친다.
+
+source: 출처 후보 2건(행마다 sources) — 원문 대조 전
+version: "2026.1"
+fetched_at: 2026-10-27
+
+signs:
+  - key: breathing
+    label: 숨쉬기 힘들어함 · 입술이 파래짐
+    all_of:
+      - aliases:
+          - 숨을 못 쉬
+          - 숨을 못 쉰
+          - 숨을 잘 못 쉬
+          - 숨을 잘 못 쉰
+          - 숨 못 쉬
+          - 숨쉬기 힘들
+          - 숨쉬기 힘든
+          - 숨쉬기 어려
+          - 숨쉬기 어렵
+          - 숨이 넘어가
+          - 입술이 파래
+          - 입술이 파랗
+        guards:
+          - 숨쉬기 힘들지
+          - 숨쉬기 어렵지
+          - 숨쉬기 힘든 줄
+          - 숨쉬기 힘든 건 아니
+          - 숨쉬기 힘든 게 아니
+          - 숨이 넘어가게
+          - 입술이 파랗지
+          - 입술이 파래지지
+    infant: false
+    medical_reviewed: false
+    reviewed_by: null
+    reviewed_at: null
+    sources: &sources
+      - title: 응급 신호 후보 표현 (가안)
+        publisher: 질병관리청 국가건강정보포털
+        url: https://health.kdca.go.kr
+        note: 원문을 대조하기 전의 표현 가안이다. H-1 검수에서 원문과 글자 대조한다.
+      - title: 응급 신호 후보 표현 (가안)
+        publisher: 대한소아청소년과학회
+        url: https://www.pediatrics.or.kr
+        note: 원문을 대조하기 전의 표현 가안이다. H-1 검수에서 원문과 글자 대조한다.
+
+  - key: swelling
+    label: 입술 · 얼굴 · 목이 붓고 두드러기 (식후 급격히)
+    all_of:
+      - aliases:
+          - 입술이 부었
+          - 입술이 부어
+          - 입술이 붓
+          - 얼굴이 부었
+          - 얼굴이 부어
+          - 얼굴이 붓
+        guards:
+          - 입술이 부었다가 가라앉
+          - 얼굴이 부었다가 가라앉
+          - 입술이 부었는데 붓기가 빠
+          - 얼굴이 부었는데 붓기가 빠
+          - 입술이 붓지
+          - 얼굴이 붓지
+          - 자고 일어났더니 얼굴이 부었
+          - 자고 일어났더니 얼굴이 부어
+          - 자고 일어나서 얼굴이 부었
+          - 울어서 얼굴이 부었
+          - 울어서 얼굴이 부어
+          - 모기 물려서 입술이 부었
+          - 모기 물려서 입술이 부어
+          - 모기 물려서 얼굴이 부었
+          - 모기 물려서 얼굴이 부어
+    infant: false
+    medical_reviewed: false
+    reviewed_by: null
+    reviewed_at: null
+    sources: *sources
+
+  - key: seizure
+    label: 경련 · 부르거나 건드려도 반응이 없음 · 축 늘어짐
+    all_of:
+      - aliases:
+          - 경련
+          - 발작
+          - 경기를 일으
+          - 경기 일으
+          - 반응이 없
+          - 반응을 안
+          - 축 늘어
+        guards:
+          - 경련 얘기
+          - 경련 이야기
+          - 경련 안
+          - 경련은 안
+          - 경련을 안
+          - 경련 없
+          - 경련은 없
+          - 경련하지 않
+          - 발작 얘기
+          - 발작 안
+          - 발작은 안
+          - 발작 없
+          - 발작적
+          - 축 늘어지게
+          - 알레르기 반응이 없
+          - 이상 반응이 없
+          - 특별한 반응이 없
+          - 별다른 반응이 없
+          - 별 반응이 없
+          - 접종 반응이 없
+    infant: false
+    medical_reviewed: false
+    reviewed_by: null
+    reviewed_at: null
+    sources: *sources
+
+  - key: infant_fever
+    label: 생후 3개월 미만의 발열
+    all_of:
+      - aliases:
+          - 열이 나
+          - 열이 났
+          - 열나
+          - 열났
+          - 발열
+          - 고열
+          - 열이 있
+          - 열이 올
+          - 열이 높
+        guards:
+          - 열이 나지 않
+          - 열이 나진 않
+          - 열이 나는 건 아니
+          - 열나지 않
+          - 열나진 않
+          - 열나지는 않
+          - 열이 났다가 내
+    infant: true
+    medical_reviewed: false
+    reviewed_by: null
+    reviewed_at: null
+    sources: *sources
+
+  - key: head_injury
+    label: 머리를 부딪힌 뒤 반복 구토 · 처짐
+    all_of:
+      - aliases:
+          - 머리를 부딪
+          - 머리 부딪
+          - 머리를 박
+          - 머리 박
+          - 머리를 찧
+          - 머리를 다쳤
+          - 머리 다쳤
+        guards: []
+      - aliases:
+          - 토해
+          - 토했
+          - 토한
+          - 토하
+          - 구토
+          - 게워
+          - 처져
+          - 처지
+          - 축 처
+        guards:
+          - 토하지
+          - 구토는 없
+          - 구토 없
+          - 안 토해
+          - 안 토했
+    infant: false
+    medical_reviewed: false
+    reviewed_by: null
+    reviewed_at: null
+    sources: *sources
+
+  - key: dehydration
+    label: 소변이 거의 없고 입이 마름 (탈수)
+    all_of:
+      - aliases:
+          - 소변이 거의 없
+          - 소변을 거의 안
+          - 소변을 안
+          - 오줌을 안
+          - 쉬를 안
+        guards: []
+      - aliases:
+          - 입이 마르
+          - 입이 말라
+          - 입이 바싹
+          - 입술이 말라
+        guards: []
+    infant: false
+    medical_reviewed: false
+    reviewed_by: null
+    reviewed_at: null
+    sources: *sources
