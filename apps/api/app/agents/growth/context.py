@@ -57,6 +57,9 @@ class GrowthRunState:
     book_searched: bool = False
     # book_suggestion. 이번 run 에서 정보나루로 보낸 검색어 수 — `MAX_RUN_KEYWORDS` 까지
     book_keywords: int = 0
+    # book_suggestion. 이번 run 에서 보호자가 요청에 말한 검색 낱말(정규화). 있으면 그 낱말로 제목을
+    # 찾고, 제목에 이 낱말이 없는 책은 낼 수 없다. 다른 주제 책으로 채우지 않는다
+    asked_book_words: frozenset[str] = frozenset()
     # 재호출 전에 이미 통과했거나 빠진 책(정규화한 "제목(저자)"). 재호출은 이 책을 다시 낼 수 없다
     done_books: frozenset[str] = frozenset()
 

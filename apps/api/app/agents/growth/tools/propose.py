@@ -14,7 +14,12 @@ import logging
 from app.agents.common.gate import Gate
 from app.agents.common.suggestion import MAX_SUGGESTIONS, check_count
 from app.agents.growth.context import GrowthContext, GrowthRunState
-from app.agents.growth.readouts import ASK_ROUTINE_CURRENT, DOC_NO_ROW, NEXT_STEP_CHAIN_END
+from app.agents.growth.readouts import (
+    ASK_ROUTINE_CURRENT,
+    BOOK_NO_TOPIC,
+    DOC_NO_ROW,
+    NEXT_STEP_CHAIN_END,
+)
 from app.agents.growth.result import ErrorCode, ToolResult, fail, ok
 from app.agents.growth.review import (
     error_code,
@@ -208,6 +213,10 @@ async def propose_books_tool(context: GrowthContext, args: ProposeBooksArgs) -> 
         return fail(
             "propose", _BOOKS, ErrorCode.CANDIDATE_REJECTED, explain_books(picked.rejections) + hint
         )
+    if state.asked_book_words and not args.items and picked.available == 0:
+        # 요청한 주제의 책이 없다. 다른 주제로 채우지 않고 코드 문구로 닫는다
+        state.closing = BOOK_NO_TOPIC
+        return ok("propose", _BOOKS, closed=True)
     review = review_books(
         args.items, picked.accepted, seen=state.seen_evidence, today=context.today
     )

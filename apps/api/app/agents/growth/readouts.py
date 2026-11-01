@@ -26,6 +26,7 @@ DELTA_CHECKUP_HINT = "delta.checkup_hint"
 
 # 안전 · 근거 안내
 DOC_NO_ROW = "doc.no_row"
+BOOK_NO_TOPIC = "book.no_topic"  # 요청한 주제의 책이 없으면 다른 주제로 안 넘어간다
 RHYTHM_NO_ROW = "rhythm.no_row"
 NEXT_STEP_CHAIN_END = "next_step.chain_end"
 

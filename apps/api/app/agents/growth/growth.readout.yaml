@@ -46,6 +46,9 @@ delta.checkup_hint:
 doc.no_row:
   kind: notice
   template: "이 시기에 맞는 자료가 아직 없어서 준비하지 못했어요."
+book.no_topic:
+  kind: notice
+  template: "찾는 주제의 책을 이 나이에 맞게 찾지 못했어요."
 rhythm.no_row:
   kind: rhythm_info
   template: "아직 이 시기 리듬 안내를 준비하지 못했어요."
