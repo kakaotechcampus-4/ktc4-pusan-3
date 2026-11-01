@@ -108,7 +108,8 @@ async def check_weather(context: ActivityContext, day: date) -> WeatherBrief:
     - 예보 · 대기질 · 자외선 · 특보를 병렬로 부른다. 하나가 실패해도 나머지는 쓴다 — 실패한
       조회만 None 으로 `judge_weather` 에 넘기고, 판정 규칙이 실내만 · 고지를 정한다 (D8).
     - 위치나 날씨 포트가 없으면 조회하지 않는다. 실패가 아니라 "묻지 않은 날"이라 바깥 놀이를
-      막지 않고 확인을 보호자에게 맡긴다(`not_asked`). 조회했는데 실패한 날은 실내만이다 (D8).
+      막지 않고 확인을 보호자에게 맡긴다(`not_asked`). 조회했는데 실패한 날도 바깥은 막지 않고
+      "확인하지 못했어요" 를 붙인다(`judge_weather`).
     - 🚨 대기질은 오늘만 본다. 에어코리아는 지금 측정값만 주고 예보가 아니다 — 내일 추천에 오늘
       미세먼지를 쓰지 않고 "확인 못 함"으로 둔다. 특보는 지금 발효 중인 것을 그날에도 본다
       (더 막는 쪽).
@@ -147,20 +148,22 @@ async def lookup_weather(context: ActivityContext, args: LookupWeatherArgs) -> T
       모델이 자기 기준으로 재해석해 "나쁨이지만 잠깐이면 괜찮아요"를 쓴다.
     - 화면에 붙는 안내(문구 키)는 모델에게 주지 않고 `context.state.weather` 에 날짜별로 둔다.
     - 미세먼지만 실패하면 야외는 허용하되 "미세먼지는 확인하지 못했어요" 를 싣는다.
-    - 날씨를 못 읽은 날은 `checked=False` · 실내만이다. 모든 날을 못 읽으면 UPSTREAM_ERROR.
-      "맑음"으로 가정하지 않는다.
+    - 날씨를 못 읽은 날은 `checked=False` 다. 모든 날을 못 읽으면 UPSTREAM_ERROR. "맑음"으로
+      가정하지 않지만 바깥을 막지도 않는다 — 모델은 날씨 이야기만 쓰지 않는다.
     """
     days = days_of(args.day, context.today)
     briefs = await asyncio.gather(*(check_weather(context, day) for day in days))
     context.state.weather.update(zip(days, briefs, strict=True))
-    # 묻지 않은 날(위치 · 포트 없음)도 확인한 날이 아니다 — 이 tool 은 열리지 않았어야 한다
+    # 묻지 않은 날(위치 · 포트 없음)도 확인한 날이 아니다 — 이 tool 은 열리지 않았어야 한다.
+    # 못 읽은 것이 있어도 막힌 날은 확인한 날로 준다 — "바깥 어려움" 은 읽은 신호로 난 판정이다
     checked = [not {WEATHER_UNCHECKED, WEATHER_NOT_ASKED} & set(brief.notices) for brief in briefs]
     if not any(checked):
         return fail(
             "query",
             _WEATHER,
             ErrorCode.UPSTREAM_ERROR,
-            "날씨를 확인하지 못했다. 맑다고 가정하지 않는다. 실내 활동만 낸다.",
+            "날씨를 확인하지 못했다. 맑다고 가정하지 않고 날씨 이야기를 쓰지 않는다. "
+            "바깥 활동도 낼 수 있다.",
         )
     return ok(
         "query",
