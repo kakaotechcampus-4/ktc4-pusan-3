@@ -216,8 +216,9 @@ export interface AgentResultEvent {
    *
    * 🚨 **이 값이 참인 질문만 답할 자리를 연다.** 아닌 질문에 `reply_to` 를 실어 보내면 서버가 400
    *    `reply_context_unavailable` 로 막는다 (#246). 답은 Memory 질문과 같은 길(`reply_to` = 이 run)로 간다.
-   * 이름은 #563 리뷰에서 AI 와 맞췄다 — Health 결과에 `pending` 이 있을 때 `true` 다. ⚠️ 서버가 아직 싣지 않는다
-   *    (Supervisor 연결 이슈 · BE 번역).
+   * 이름은 #563 리뷰에서 AI 와 맞췄다 — Health 결과에 `pending` 이 있을 때 `true` 다. 서버는 키를 늘 싣는다.
+   *    run 의 되묻기는 카드가 아니라 **마지막 `agent_result` 한 장**(readouts · 추천이 빈 장)으로 오고(#615),
+   *    ⚠️ 서버가 맥락을 들고 있게 되는 Agent 부터 `true` 가 된다 — 그 전에는 모든 질문이 `false` 다.
    */
   awaits_reply?: boolean;
   /** 저장(commit)이 끝난 추천 id. 추천 순서 그대로다. 없으면 `[]` (키는 늘 있다). */
