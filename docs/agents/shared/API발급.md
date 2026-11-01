@@ -19,6 +19,7 @@
 | --- | --- | --- | --- |
 | **공공데이터포털 인증키** + 활용신청: 식품의약품안전처_식품영양성분DB정보 | data.go.kr | `menu_catalog` 영양 · 메뉴 해석 | 활용신청 1건 · 키 동작 확인(10-11) · `DATA_GO_KR_SERVICE_KEY` |
 | **농식품정보원 인증키** (농림축산식품 공공데이터포털) | data.mafra.go.kr | 레시피 기본 · 재료정보 — 추천 후보의 재료(배치 전용) | **data.go.kr 키와 별개.** 승인 필요 · **호출 서버 IP 등록**(로컬 확인은 개발 PC 공인 IP, 서버가 정해지면 바꾼다) · 일반 키 1,000행/회 · `sample` 키는 5행 · `MAFRA_RECIPE_API_KEY` |
+| **공공데이터포털 인증키** + 활용신청: 농촌진흥청 국립식량과학원_농식품 이달의 식재료 목록정보 (15168024) | data.go.kr | 이달의 식재료 레시피 목록 · 상세 — 추천 후보의 재료(배치 전용, #510) | 활용신청 1건 · **Decoding 키** · 팀의 `DATA_GO_KR_SERVICE_KEY` 와 값이 같아도 설정은 따로 · `NICS_RECIPE_API_KEY` · **배포 서버 `apps/api/.env` 에도 넣어야 적재된다**(없으면 이 소스만 건너뛴다) |
 | ~~식품안전나라 인증키~~ | foodsafetykorea.go.kr | 조리식품 레시피 DB(`COOKRCP01`) | **보류(10-11)** — COOKRCP01 을 쓰지 않는다. 도입할 때 신청 |
 
 키가 필요 없는 것: 한국인 영양소 섭취기준(문서 → 시드), 알레르기 19종(상수), K-FIND(검수용 웹 조회).
@@ -93,6 +94,7 @@ ANTHROPIC_API_KEY=
 EMBEDDING_API_KEY=
 DATA_GO_KR_SERVICE_KEY=        # 식품영양성분·심평원·응급의료·기상청·에어코리아 공용 (식품영양성분은 #321 에서 들어감)
 MAFRA_RECIPE_API_KEY=          # 농식품정보원 레시피 — 배치 전용 (#321)
+NICS_RECIPE_API_KEY=           # 농촌진흥청 이달의 식재료 레시피 — 배치 전용 (#510)
 # FOODSAFETYKOREA_API_KEY=     # COOKRCP01 보류 — 도입할 때
 DATA4LIBRARY_AUTH_KEY=
 NL_GO_KR_API_KEY=

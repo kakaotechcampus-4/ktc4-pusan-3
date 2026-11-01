@@ -57,6 +57,14 @@ def test_농식품정보원_키는_비워도_서버가_뜬다() -> None:
     assert Settings.model_fields["MAFRA_RECIPE_API_KEY"].default == ""
 
 
+def test_농촌진흥청_키는_비워도_서버가_뜬다() -> None:
+    """NICS_RECIPE_API_KEY(이달의 식재료 레시피 배치)가 없으면 그 소스만 건너뛰고 서버는 뜬다.
+
+    팀의 공공데이터포털 키와 값이 같아도 설정 이름은 연동별로 따로다 — 다른 키로 대신 읽지 않는다.
+    """
+    assert Settings.model_fields["NICS_RECIPE_API_KEY"].default == ""
+
+
 # --- _blank_is_default validator ---
 
 
