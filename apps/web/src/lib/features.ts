@@ -18,4 +18,10 @@ export const PENDING_SERVER_FEATURES = {
   photoEntry: MOCK_SERVER,
   /** 11-2 알레르기 검사지에서 가져오기 — `POST /children/{cid}/health-safety/scan`. 11 프로필 안전 정보 추가 시트의 진입점. */
   safetyScan: MOCK_SERVER,
+  /**
+   * 11-3 복약 — `GET /children/{cid}/medications` · 회차 체크 (#537 · 잠정 경로). 11 프로필의 "복약" 구역과
+   * 04 회차 현황의 "복약 화면 열기" 가 진입점이다. 🚨 복약 초안 카드는 여기 걸지 않는다 — 서버가 초안 프레임을
+   * 보내기 시작하면 제출 API 도 같이 생기는 묶음이라(#537 BE 몫), 프레임이 없으면 카드도 서지 않는다.
+   */
+  medications: MOCK_SERVER,
 } as const;
