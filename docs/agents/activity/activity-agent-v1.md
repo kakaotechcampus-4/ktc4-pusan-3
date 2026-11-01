@@ -365,7 +365,7 @@ i-누리·중앙육아종합지원센터·서울육아종합지원센터·아이
 - `draft_id` 는 전체에서 유일한 uuid 다(`_next_draft_id`, #241). Memory 초안과 같은 규칙이다 — 화면은 `draft_id` 가 같으면 같은 장으로 갈아 끼운다 (#250).
 - `op` 는 `create` 하나다. 추천에서 생기는 일정은 언제나 새 일정이라 `event_id`·`before` 가 없다.
 
-**준비물(`items`)** — 초안의 `items` 는 **`suggestion.items` 를 그대로 싣는다** (`item_id: null`, #315). 초안을 만드는 시점에 Agent 가 돌지 않으므로 Agent 는 추천을 저장할 때 **`ActivityCandidate.materials` 를 `suggestion.items` 에 담아 두고**, 서버가 초안을 만들 때 옮기기만 한다. 도시락·여벌옷 같은 외출용품을 코드 상수로 붙이는 것은 아직 하지 않았다.
+**준비물(`items`)** — 초안의 `items` 는 **`suggestion.items` 를 그대로 싣는다** (`item_id: null`, #315). 초안을 만드는 시점에 Agent 가 돌지 않으므로 Agent 는 추천을 저장할 때 **`ActivityCandidate.materials` 를 `suggestion.items` 에 담아 두고**, 서버가 초안을 만들 때 옮기기만 한다. 도시락·여벌옷 같은 외출용품은 붙이지 않는다 — 기획서의 준비물은 교육 쪽이고, Activity 의 `items` 는 놀이 재료(`materials`)뿐이다. 재료에서만 가져와야 위험 용어 검사(`hazard_term`)를 같이 탄다.
 
 🚩 **`source`(출처) 필드는 아직 payload 에 없다.** Memory 는 채울 값이 영원히 `null` 이라 넣지 않았고, **키 이름과 모양은 이 경로를 만드는 PR 에서 정한다.**
 
