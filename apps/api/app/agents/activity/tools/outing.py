@@ -211,8 +211,9 @@ async def search_nearby_places(
 ) -> ToolResult:
     """근처 장소를 종류로 찾는다. 장소 어댑터가 있으면 열린다 — 월령으로는 닫지 않는다.
 
-    - 기준점은 보호자 위치다. 보호자가 지역을 말했으면(args.area) 그 지역 대표 지점이다
-      (`_origin`). 둘 다 없으면 INVALID_ARGS — 기본 좌표로 대신하지 않는다 (4-3).
+    - 기준점은 보호자 위치다. 보호자가 지역을 말했으면(args.area) 그 지역 대표 지점이고, 한 번
+      찾으면 이 run 내내 그 지점이다(`_origin`). 둘 다 없으면 INVALID_ARGS — 기본 좌표로
+      대신하지 않는다 (4-3).
     - 기준점 · args.category · 반경만 포트에 넘긴다. 포트는 적재한 place 테이블에서 거리를
       계산한다 — 외부 API 를 부르지 않는다 (D9).
       🚨 검색 조건은 닫힌 enum 하나와 기준점이다. 모델이 만든 문자열로 찾지 않는다 — 지역 이름은
@@ -262,7 +263,7 @@ async def search_nearby_places(
     for row in nearest:
         # 이름이 같은 곳(체인 키즈카페 등)은 먼저 본 가까운 곳을 남긴다
         context.state.seen_places.setdefault(row.name, row)
-        if args.area:
+        if context.state.area is not None:
             context.state.area_places.add(row.name)
     return ok(
         "query",
@@ -274,17 +275,20 @@ async def search_nearby_places(
 def _origin(context: ActivityContext, area_text: str | None) -> CoarseLocation | ToolResult:
     """장소를 찾을 기준점. 실패면 모델에게 돌려줄 결과다.
 
-    - 지역을 말하지 않았으면 보호자 위치다. 위치도 없으면 INVALID_ARGS.
+    - 지역을 말하지 않았으면 이 run 의 기준점이다 — 앞에서 지역을 찾았으면 그 지역, 아니면 보호자
+      위치다(`outing_location`). 지역을 찾은 뒤 보호자 위치로 돌아가면 장소와 날씨의 기준점이
+      갈린다 (#657 리뷰). 둘 다 없으면 INVALID_ARGS.
     - 🚨 지역 이름은 보호자가 쓴 글자 안에 있어야 한다(`said`). 모델이 위치를 짐작해 지어낸
       지역으로 찾지 않는다.
     - 못 찾으면(모르는 이름 · 여러 곳인데 위치가 없음 · 시도만) 장소 없이 간다. 결과에 한 줄
       안내가 붙는다(`state.area_missed`). 비슷한 곳으로 짐작하지 않는다.
-    - 찾으면 run 의 지역이 된다 — 날씨도 그 지역으로 다시 본다(`state.weather` 를 비운다).
-      한 run 에 한 지역이다. 날씨 판정이 지역마다 갈리면 어느 추천에 어느 날씨를 댈지 정할 수
-      없어서다.
+    - 찾으면 run 의 지역이 된다 — 날씨도 그 지역으로 다시 보고(`state.weather` 를 비운다), 보호자
+      위치에서 찾은 장소도 버린다(`state.seen_places`). 남기면 그 지역 날씨로 보호자 동네 장소가
+      붙는다 (#657 리뷰). 한 run 에 한 지역이다. 날씨 판정이 지역마다 갈리면 어느 추천에 어느
+      날씨를 댈지 정할 수 없어서다.
     """
     if not area_text or not area_text.strip():
-        if context.location is None:
+        if context.outing_location is None:
             return fail(
                 "query",
                 _PLACES,
@@ -292,7 +296,7 @@ def _origin(context: ActivityContext, area_text: str | None) -> CoarseLocation |
                 "위치를 모른다. 보호자가 지역을 말했을 때만 area 에 그 이름을 넣어 찾는다. "
                 "말하지 않았으면 장소가 필요 없는 놀이만 낸다.",
             )
-        return context.location
+        return context.outing_location
     if not said(area_text, context.state.request_texts):
         return fail(
             "query",
@@ -320,7 +324,9 @@ def _origin(context: ActivityContext, area_text: str | None) -> CoarseLocation |
     if state.area is None:
         state.area = area
         state.area_missed = False
-        state.weather.clear()  # 보호자 위치의 판정이다. 그 지역으로 다시 본다
+        # 보호자 위치의 판정 · 장소다. 그 지역으로 다시 본다
+        state.weather.clear()
+        state.seen_places.clear()
     return area.location
 
 

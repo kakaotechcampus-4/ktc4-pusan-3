@@ -28,6 +28,7 @@ import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 from functools import cache
+from itertools import accumulate
 from statistics import fmean
 
 from app.agents.activity.areas_data import DISTRICTS
@@ -59,6 +60,20 @@ PROVINCE_ALIASES: dict[str, tuple[str, ...]] = {
 _SUFFIXES = ("구", "군", "시")
 # 구가 있는 시의 구 — "수원시장안구" → 수원시 · 장안구
 _CITY_GU = re.compile(r"^(.+시)(.+구)$")
+# 지역 이름을 낱말로 나눌 때. 문장부호 · 띄어쓰기는 낱말 사이다
+_WORD = re.compile(r"[0-9A-Za-z가-힣]+")
+# 보호자 글에서 지역 이름 바로 뒤에 붙을 수 있는 말(`said`). 받침 뒤 "이" 로 시작하는 조사
+# (이 · 이랑 · 이와)는 넣지 않는다 — "고양이" 가 고양시가 된다
+_AREA_TAILS = frozenset(
+    (
+        "",
+        *("에", "에서", "에선", "엔", "에도", "에서도", "으로", "로", "까지", "의"),
+        *("은", "는", "도", "쪽", "쪽에", "쪽에서", "쪽으로", "근처", "근처에", "근처에서"),
+        *("나", "랑", "와", "과", "하고", "부터"),  # "해운대나 기장"
+    )
+)
+# "가" 로 시작하면 받는다 — 조사 "가" 와 "해운대가서" · "해운대가자" 처럼 붙여 쓴 "가다"
+_GO = "가"
 
 
 @dataclass(frozen=True)
@@ -96,10 +111,33 @@ def find_area(text: str, *, near: CoarseLocation | None = None) -> Area | None:
 
 
 def said(area: str, request_texts: Iterable[str]) -> bool:
-    """보호자가 쓴 글자 안에 그 이름이 있는가. 띄어쓰기는 보지 않는다 — 모델이 지어낸 지역으로
-    찾지 않게 한다."""
-    key = re.sub(r"\s+", "", area)
-    return bool(key) and key in re.sub(r"\s+", "", "".join(request_texts))
+    """보호자가 쓴 글에 그 이름이 지역으로 있는가 — 모델이 지어낸 지역으로 찾지 않게 한다.
+
+    - 요청 조각마다 따로 본다. 이어 붙이면 "…해운" + "대 공원…" 이 해운대가 된다 (#657 리뷰)
+    - 낱말 첫 글자에서 시작해야 한다 — "부산진구" 의 "진구" 는 아니다. 낱말 사이 띄어쓰기는
+      보지 않는다("부산 해운대" ↔ "부산해운대")
+    - 이름 뒤 같은 낱말에 남은 글자는 구 · 군 · 시와 조사(`_AREA_TAILS`)나 "가-"(가서 · 가자)
+      뿐이다 — "고양이와" 의 고양은 아니다. 받침 뒤 "이" 로 시작하는 조사는 받지 않는다
+      ("고양이랑"). 다른 꼴로 말했으면("해운대해수욕장") 놓친다 — 그러면 장소 없이 간다
+    """
+    key = "".join(_WORD.findall(area))
+    return bool(key) and any(_said_in(key, text) for text in request_texts)
+
+
+def _said_in(key: str, text: str) -> bool:
+    words = _WORD.findall(text)
+    joined = "".join(words)
+    ends = list(accumulate(len(word) for word in words))
+    for start in (0, *ends[:-1]):
+        if not joined.startswith(key, start):
+            continue
+        end = start + len(key)
+        tail = joined[end : next(word_end for word_end in ends if word_end >= end)]
+        if tail.startswith(_SUFFIXES) and not key.endswith(_SUFFIXES):
+            tail = tail[1:]  # "해운대구에서" → "에서"
+        if tail in _AREA_TAILS or tail.startswith(_GO):
+            return True
+    return False
 
 
 def _province_only(key: str, province: str) -> Area | None:

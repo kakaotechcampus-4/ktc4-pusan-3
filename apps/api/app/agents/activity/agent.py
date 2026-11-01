@@ -66,7 +66,7 @@ async def run(
 ) -> DomainAgentResult:
     """놀이 추천 하나를 처리한다. 결과는 공통 `DomainAgentResult` 다."""
     task_type = task_type_of(task)
-    # 장소 조회가 area 인자를 이 글과 대조한다 — 모델이 지어낸 지역으로 찾지 않게
+    # 장소 조회의 area · 출력 tool 의 requested_play 를 이 글과 대조한다 — 지어낸 값을 받지 않게
     context.state.request_texts = tuple(task.request_texts)
     weather = await check_weather(context, context.today)
     gate = await build_gate(context, outdoor_ok=weather.outdoor_ok)
@@ -93,7 +93,6 @@ async def run(
     # 프롬프트에 실은 행만 근거로 달 수 있다. 재호출도 같은 system 프롬프트라 그대로 쓴다
     context.state.seen_docs = {row.id: row for row in examples}
     context.state.example_ids = example_ids(examples)
-    context.state.request_texts = tuple(task.request_texts)
     system = build_system_prompt(context, examples, weather=weather)
     llm = client or LLMClient(role="activity")
     messages: list[dict[str, Any]] = [

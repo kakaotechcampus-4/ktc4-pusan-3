@@ -325,6 +325,38 @@ class TestArea:
         await search_nearby_places(ctx, area_args(PlaceCategory.PARK, "해운대"))
         assert ctx.state.area_places == {"○○공원"}
 
+    async def test_고양이는_고양시가_아니다(self):
+        """지역 이름은 보호자 글에 낱말로 있어야 한다 — 다른 낱말의 앞부분은 아니다 (#657 리뷰)."""
+        ctx = await area_context([park("○○공원", 500)], request=("고양이와 아이가 놀 만한 곳",))
+        result = await search_nearby_places(ctx, area_args(PlaceCategory.PARK, "고양"))
+        assert result.error["code"] == ErrorCode.INVALID_ARGS
+        assert ctx.ports.places.locations == []
+        assert ctx.state.area is None
+
+    async def test_요청_조각을_이어_지역을_만들지_않는다(self):
+        ctx = await area_context(
+            [park("○○공원", 500)], request=("바닷가에서 해운", "대 공원 말고 다른 놀이")
+        )
+        result = await search_nearby_places(ctx, area_args(PlaceCategory.PARK, "해운대"))
+        assert result.error["code"] == ErrorCode.INVALID_ARGS
+        assert ctx.ports.places.locations == []
+
+    async def test_지역을_찾은_뒤에는_area_를_비워도_그_지역에서_찾는다(self):
+        """장소와 날씨의 기준점이 한 run 에서 갈리지 않는다 (#657 리뷰)."""
+        ctx = await area_context([park("○○공원", 500), library("○○도서관", 800)], location=LOCATION)
+        await search_nearby_places(ctx, area_args(PlaceCategory.PARK, "해운대"))
+        await search_nearby_places(ctx, area_args(PlaceCategory.LIBRARY, None))
+        assert ctx.ports.places.locations == [HAEUNDAE.location, HAEUNDAE.location]
+        assert ctx.state.area_places == {"○○공원", "○○도서관"}  # 둘 다 그 지역에서 찾았다
+
+    async def test_지역으로_바꾸면_보호자_위치에서_찾은_장소는_버린다(self):
+        """날씨는 그 지역 기준인데 보호자 위치의 장소가 추천에 붙지 않게 (#657 리뷰)."""
+        ctx = await area_context([park("○○공원", 500), library("○○도서관", 800)], location=LOCATION)
+        await search_nearby_places(ctx, area_args(PlaceCategory.LIBRARY, None))
+        await search_nearby_places(ctx, area_args(PlaceCategory.PARK, "해운대"))
+        assert set(ctx.state.seen_places) == {"○○공원"}
+        assert ctx.state.area_places == {"○○공원"}
+
 
 def test_실내_종류는_도서관과_실내_놀이터다():
     # 체험관은 싣는 데이터가 없어 빼 두었다 — 넣으면 모델이 매번 빈 검색을 한다
