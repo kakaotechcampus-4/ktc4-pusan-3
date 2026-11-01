@@ -9,6 +9,7 @@ from __future__ import annotations
 import uuid as _uuid
 from collections.abc import Sequence
 from datetime import datetime, timezone
+from typing import NamedTuple
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Header, Query, Request
@@ -765,11 +766,27 @@ def _guard_message(outcome: entrypoint.SuggestOutcome) -> str:
     return next((r.body for r in outcome.readouts), "추천을 만들지 않았어요.")
 
 
+class _MenuSource(NamedTuple):
+    org: str
+    title: str
+    url: str
+
+
 # Food 일반 추천의 메뉴 근거 카드 — 고른 메뉴가 온 공개 레시피의 출처다(#442). 화면은 문서 카드와
-# 같이 "참고 · 메뉴 이름 (기관, 출처)" 로 그린다
-MENU_SOURCE_ORG = "농식품정보원"
-MENU_SOURCE_TITLE = "농림축산식품 공공데이터포털 레시피 기본 · 재료정보"
-MENU_SOURCE_URL = "https://data.mafra.go.kr"
+# 같이 "참고 · 메뉴 이름 (기관, 출처)" 로 그린다. 레시피 소스마다 기관이 다르다(#510) — 이 표에
+# 없는 소스는 다른 기관으로 대신하지 않고 카드를 만들지 않는다
+MENU_SOURCES: dict[str, _MenuSource] = {
+    "mafra_recipe": _MenuSource(
+        org="농식품정보원",
+        title="농림축산식품 공공데이터포털 레시피 기본 · 재료정보",
+        url="https://data.mafra.go.kr",
+    ),
+    "nics_recipe": _MenuSource(
+        org="농촌진흥청 국립식량과학원",
+        title="농식품 이달의 식재료 목록정보",
+        url="https://www.data.go.kr/data/15168024/openapi.do",
+    ),
+}
 
 # Growth 도서 추천의 근거 카드 — 그 책을 찾은 공개 서지 정보의 출처다. 화면은 문서 카드와 같이
 # "참고 · 제목(저자) (기관, 출처)" 로 그린다. 책 정보 표가 없어서 제목은 그 추천의 "제목(저자)" 다
@@ -779,22 +796,24 @@ BOOK_SOURCE_URL = "https://data4library.kr"
 
 
 def _general_evidence_out(
-    e, cards: dict, menus: dict[_uuid.UUID, str], *, book_title: str
+    e, cards: dict, menus: dict[_uuid.UUID, food_repo.ResolvedRecipe], *, book_title: str
 ) -> DocEvidenceOut | None:
     """일반 추천 근거 한 행 → 화면 카드. 문서 행은 검수된 시드에서, 메뉴 행은 후보 풀(검수된
-    레시피)에서 찾는다. 책 행(Growth 도서)은 그 추천의 "제목(저자)"(`book_title`)로 그린다 — 근거가
-    그 책 자체라 따로 찾을 곳이 없다. 못 찾으면 None — 그 근거는 보여 주지 않는다."""
+    레시피)에서 찾는다. 메뉴 카드의 출처 기관은 그 레시피의 소스로 고른다(`MENU_SOURCES`). 책
+    행(Growth 도서)은 그 추천의 "제목(저자)"(`book_title`)로 그린다 — 근거가 그 책 자체라 따로
+    찾을 곳이 없다. 못 찾으면 None — 그 근거는 보여 주지 않는다."""
     ref = Ref(kind=e.source_kind, id=str(e.source_id))
     if e.source_kind == MENU_EVIDENCE_KIND:
-        name = menus.get(e.source_id)
-        if name is None:
+        menu = menus.get(e.source_id)
+        origin = MENU_SOURCES.get(menu.source) if menu is not None else None
+        if menu is None or origin is None:
             return None
         return DocEvidenceOut(
             ref=ref,
-            title=name,
-            source_org=MENU_SOURCE_ORG,
-            source_title=MENU_SOURCE_TITLE,
-            source_url=MENU_SOURCE_URL,
+            title=menu.name,
+            source_org=origin.org,
+            source_title=origin.title,
+            source_url=origin.url,
             note=e.note,
         )
     if e.source_kind == BOOK_EVIDENCE_KIND:

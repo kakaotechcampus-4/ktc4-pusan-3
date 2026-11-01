@@ -12,6 +12,7 @@ agents 의 행 모양은 `agent_reader.py` 가 옮긴다.
 
 import uuid
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy import func, select, update
@@ -114,18 +115,34 @@ async def retire_missing_recipes(
     return (await session.execute(stmt)).rowcount
 
 
-async def resolved_recipe_names(session: AsyncSession) -> dict[uuid.UUID, str]:
-    """후보 풀(resolved)의 레시피를 메뉴 근거 id → 메뉴 이름으로 (#442).
+@dataclass(frozen=True)
+class ResolvedRecipe:
+    """후보 풀 레시피 한 건 — 근거 카드가 이름과 출처 기관을 고르는 데 쓴다.
+
+    `source` 는 DB 가 받는 값 그대로다. `RecipeSource`(core)보다 넓어서 식약처(`mfds_recipe`)도 올
+    수 있고, 출처 표에 없는 소스는 05 가 거른다.
+    """
+
+    name: str
+    source: str
+
+
+async def resolved_recipe_names(session: AsyncSession) -> dict[uuid.UUID, ResolvedRecipe]:
+    """후보 풀(resolved)의 레시피를 메뉴 근거 id → 메뉴 이름 · 소스로 (#442 · #510).
 
     Food 일반 추천의 메뉴 근거가 실제 후보 풀의 레시피인지 저장 때 확인하고, 05 가 근거 카드의
-    이름을 찾는다. 근거 id 는 (source, source_id) 로 만드는 uuid5 라 표에 칸이 없어서, 해석된
-    행을 읽어 같은 함수(`rules/menu_evidence`)로 다시 만든다 — 지금은 537행이라 한 번에 읽는다.
+    이름과 출처 기관을 찾는다. 근거 id 는 (source, source_id) 로 만드는 uuid5 라 표에 칸이 없어서,
+    해석된 행을 읽어 같은 함수(`rules/menu_evidence`)로 다시 만든다 — 지금은 537행이라 한 번에
+    읽는다.
     """
     stmt = select(RecipeCatalog.source, RecipeCatalog.source_id, RecipeCatalog.display_name).where(
         RecipeCatalog.resolved.is_(True)
     )
     rows = (await session.execute(stmt)).all()
-    return {menu_evidence_id(source, source_id): name for source, source_id, name in rows}
+    return {
+        menu_evidence_id(source, source_id): ResolvedRecipe(name=name, source=source)
+        for source, source_id, name in rows
+    }
 
 
 async def list_resolved_recipes(session: AsyncSession) -> list[RecipeCatalog]:

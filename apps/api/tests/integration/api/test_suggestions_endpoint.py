@@ -4,6 +4,7 @@ import uuid
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from typing import get_args
 
 import pytest
 from sqlalchemy import select
@@ -17,7 +18,9 @@ from app.agents.common.suggestion import SuggestionDraft
 from app.agents.suggestion_save import SuggestionBatch
 from app.api import agent_ports, quota
 from app.api.runs import suggestion_retry
+from app.api.v1.schemas.suggestions import DocEvidenceOut
 from app.core.config import settings
+from app.core.recipe_source import RecipeSource
 from app.domains.memory.observation.models import (
     ConfidenceSource,
     ObservationActivity,
@@ -962,6 +965,112 @@ async def test_Food_일반_추천은_고른_메뉴를_근거로_보여_준다(
     assert evidence["ref"] == {"kind": "recipe_catalog", "id": str(menu)}
     assert evidence["title"] == "두부조림"
     assert evidence["source_org"] and evidence["note"] == "재료가 검수된 메뉴예요."
+
+
+async def _post_food_menu(db_client, session, bearer, cid, agents, *, source: str):
+    """후보 풀에 `source` 의 레시피 한 행을 넣고, 그 메뉴를 근거로 단 Food 일반 추천을 받는다."""
+    from app.domains.food import repository as food_repository
+    from app.rules.menu_evidence import menu_evidence_id
+
+    plan, _ = agents
+    headers, _ = bearer
+    await food_repository.upsert_recipes(
+        session,
+        rows=[
+            {
+                "source": source,
+                "source_id": "7",
+                "menu_key": "두부조림",
+                "display_name": "두부조림",
+                "ingredients": ["두부"],
+                "resolved": True,
+                "synced_at": datetime.now(UTC),
+            }
+        ],
+    )
+    menu = menu_evidence_id(source, "7")
+    plan["food"] = (
+        "drafts",
+        [
+            SuggestionDraft(
+                agent="food",
+                kind="general",
+                content="두부조림",
+                reason="또래 아이들이 많이 먹는 메뉴예요.",
+                citations=(
+                    EvidenceCitation(
+                        ref=Ref(kind="recipe_catalog", id=menu), note="재료가 검수된 메뉴예요."
+                    ),
+                ),
+            )
+        ],
+    )
+    return await _post(db_client, cid, headers, agents=["food"])
+
+
+async def test_Food_메뉴_근거는_농식품정보원_레시피를_그_출처로_보여_준다(
+    db_client, session, bearer, cid, agents
+):
+    """#510 — 소스별 표로 바꿔도 기존 농식품정보원 카드의 응답은 그대로다."""
+    resp = await _post_food_menu(db_client, session, bearer, cid, agents, source="mafra_recipe")
+
+    assert resp.status_code == 200
+    [evidence] = resp.json()["general"][0]["evidence"]
+    assert (evidence["source_org"], evidence["source_title"], evidence["source_url"]) == (
+        "농식품정보원",
+        "농림축산식품 공공데이터포털 레시피 기본 · 재료정보",
+        "https://data.mafra.go.kr",
+    )
+
+
+async def test_Food_메뉴_근거는_농촌진흥청_레시피를_그_출처로_보여_준다(
+    db_client, session, bearer, cid, agents
+):
+    resp = await _post_food_menu(db_client, session, bearer, cid, agents, source="nics_recipe")
+
+    assert resp.status_code == 200
+    [evidence] = resp.json()["general"][0]["evidence"]
+    assert evidence["title"] == "두부조림"
+    assert (evidence["source_org"], evidence["source_title"], evidence["source_url"]) == (
+        "농촌진흥청 국립식량과학원",
+        "농식품 이달의 식재료 목록정보",
+        "https://www.data.go.kr/data/15168024/openapi.do",
+    )
+
+
+async def test_Food_메뉴_근거의_소스가_출처_표에_없으면_다른_기관으로_대신하지_않는다(
+    db_client, session, bearer, cid, agents
+):
+    """DB 는 받지만 운영에서 받지 않는 소스(mfds_recipe)다. 농식품정보원 카드로 바꿔 내면 틀린
+    출처다 — 보여 줄 근거가 없으면 일반 추천도 내지 않는다."""
+    resp = await _post_food_menu(db_client, session, bearer, cid, agents, source="mfds_recipe")
+
+    assert resp.status_code == 200
+    assert resp.json()["general"] == []
+
+
+def test_근거_카드_응답_칸은_그대로다():
+    """#510 — 출처 표시 문구는 기존 `source_title` 칸에 붙는다. 칸을 더하거나 빼지 않는다."""
+    assert set(DocEvidenceOut.model_json_schema()["properties"]) == {
+        "ref",
+        "title",
+        "source_org",
+        "source_title",
+        "source_url",
+        "note",
+    }
+
+
+def test_근거_카드의_source_title_설명은_라이선스_표시를_말한다():
+    description = DocEvidenceOut.model_json_schema()["properties"]["source_title"]["description"]
+
+    assert "라이선스" in description
+
+
+def test_메뉴_출처_표는_RecipeSource_와_같은_소스를_다룬다():
+    from app.api.v1.routers.suggestions import MENU_SOURCES
+
+    assert set(MENU_SOURCES) == set(get_args(RecipeSource))
 
 
 # ── Growth 도서 추천의 책 근거 ───────────────────────────────────────────
