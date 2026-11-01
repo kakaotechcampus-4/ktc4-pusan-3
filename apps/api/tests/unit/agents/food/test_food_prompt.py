@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from app.agents.food.context import FoodContext
-from app.agents.food.prompt import build_system_prompt
+from app.agents.food.prompt import build_system_prompt, request_message
 from app.agents.food.schemas.common import FoodTaskType
 from app.agents.food.store import FoodDocRow, in_memory_ports
 
@@ -159,3 +159,48 @@ def test_식단_추천_프롬프트는_요청에_쓴_알레르기를_reason_에_
 def test_코드가_답하는_섭취_확인은_프롬프트를_만들지_않는다() -> None:
     with pytest.raises(ValueError, match="프롬프트"):
         build_system_prompt(context(), FoodTaskType.FOOD_CHECK)
+
+
+# ── 아이 기록 후보 (#662) ────────────────────────────────────────────────
+def test_식단_추천_프롬프트는_아이_기록_후보에서_고른_이유가_된_기록만_인용하라고_한다() -> None:
+    text = build_system_prompt(context(), FoodTaskType.MEAL_RECOMMENDATION)
+
+    assert "[아이 기록 후보]" in text
+    assert "고른 이유가 된 기록만" in text
+    assert "모든 후보에" in text  # 한 기록을 관성적으로 복사하지 않는다
+    assert "search_food_memory" in text  # 목록에 없는 음식은 키워드로 다시 찾는다
+
+
+def test_영양소_분석_프롬프트에는_아이_기록_후보_지시가_없다() -> None:
+    text = build_system_prompt(context(), FoodTaskType.NUTRIENT_ANALYSIS)
+
+    assert "[아이 기록 후보]" not in text
+
+
+def test_요청_메시지에_기록_후보를_주면_정해진_칸만_싣는다() -> None:
+    record = {
+        "kind": "profile_affinity",
+        "id": "11111111-1111-1111-1111-111111111111",
+        "tier": 1,
+        "label": "두부",
+        "polarity": 1,
+        "observed_on": "2026-10-13",
+        "is_stale": False,
+    }
+
+    text = request_message(("저녁",), (), records=[record])
+
+    section = text.split("[아이 기록 후보]")[1]
+    for part in ("profile_affinity", record["id"], "두부", "2026-10-13"):
+        assert part in section
+    assert "raw_text" not in text
+
+
+def test_요청_메시지에_기록_후보가_비어_있으면_없다고_명시한다() -> None:
+    text = request_message(("저녁",), (), records=[])
+
+    assert "[아이 기록 후보]\n(인용 가능한 최근 기록 없음)" in text
+
+
+def test_요청_메시지는_기록_후보를_안_주면_구획을_만들지_않는다() -> None:
+    assert "[아이 기록 후보]" not in request_message(("저녁",), ())

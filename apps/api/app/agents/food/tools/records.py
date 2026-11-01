@@ -4,6 +4,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Any
+from uuid import UUID
 
 from app.agents.common.evidence import (
     OBSERVATION_WINDOW_DAYS,
@@ -62,7 +63,64 @@ async def search_food_memory(context: FoodContext, args: SearchFoodMemoryArgs) -
     - 결과에는 kind · id · tier · label · polarity · 날짜 · is_stale 만 싣는다.
       raw_text 는 싣지 않는다.
     - 0행이면 NO_RECORDS. 호출부는 일반 추천으로 간다 — 추천을 질문으로 대신하지 않는다.
+    - 식단 추천은 모델을 부르기 전에 같은 검색을 인자 없이 한 번 한다(`prefetch_food_memory`).
+      모델은 이 도구를 `keywords` 로 좁혀 선조회 목록 밖의 음식을 다시 찾을 때 쓴다.
     """
+    context.state.memory_search_calls += 1
+    found = await _find(context, args)
+    if not found.picked:
+        message = _NO_MATCH if args.keywords and found.total else _NO_RECORDS
+        return fail("query", _MEMORY, ErrorCode.NO_RECORDS, message)
+
+    context.state.seen_evidence.update(found.picked)
+    return ok(
+        "query",
+        _MEMORY,
+        records=[memory_record(item, context.today) for item in found.picked.values()],
+    )
+
+
+async def prefetch_food_memory(context: FoodContext) -> tuple[RankedEvidence, ...]:
+    """식단 추천이 모델을 부르기 전에 하는 기본 기억 검색. 모델이 `search_food_memory` 를 건너뛰어도
+    아이의 최근 기록을 인용할 수 있게 한다.
+
+    - 도구와 같은 규칙이다(`_find`) — 인자를 비운 `search_food_memory` 와 결과가 같다. 기간 ·
+      정렬 · 중복 제거 · 상위 `TOP_N` 이 갈라지지 않는다.
+    - 돌려준 것은 `seen_evidence` 와 `prefetched_evidence_ids` 에 적는다. 모델에게 보여 줄 것만
+      적으므로 출력 tool 은 이 표 밖 id 를 계속 `EVIDENCE_REQUIRED` 로 거절한다.
+    - 0건이어도 `memory_prefetched` 는 참이다. 근거가 없는 것과 조회를 안 한 것을 가른다.
+    - 근거를 후보에 대신 붙이지 않는다. 무엇을 인용할지는 모델이 정하고 `SuggestionDraft.build()`
+      가 인용한 아이 기록으로 개인화와 일반을 가른다.
+    """
+    found = await _find(context, SearchFoodMemoryArgs())
+    state = context.state
+    state.memory_prefetched = True
+    state.seen_evidence.update(found.picked)
+    state.prefetched_evidence_ids.update(found.picked)
+    return tuple(found.picked.values())
+
+
+def memory_record(item: RankedEvidence, today: date) -> dict[str, Any]:
+    """모델에게 보여 주는 근거 한 줄. 도구 결과와 선조회 목록이 같은 칸만 싣는다 — raw_text 없음."""
+    return {
+        "kind": item.ref.kind,
+        "id": str(item.ref.id),
+        "tier": item.tier,
+        "label": item.label,
+        "polarity": item.polarity,
+        "observed_on": item.observed_on.isoformat(),
+        "is_stale": item.ref.kind == "profile_affinity" and is_stale(item.observed_on, today),
+    }
+
+
+@dataclass(frozen=True)
+class _Found:
+    total: int  # keywords 를 걸기 전 근거 수. 0 이면 기록 자체가 없다
+    picked: dict[UUID, RankedEvidence]  # 모델에게 보여 줄 상위 근거 (id → 근거)
+
+
+async def _find(context: FoodContext, args: SearchFoodMemoryArgs) -> _Found:
+    """`search_food_memory` 와 `prefetch_food_memory` 가 같이 쓰는 검색. 상태는 건드리지 않는다."""
     today = context.today
     if args.period is None:
         date_from, date_to = today - timedelta(days=OBSERVATION_WINDOW_DAYS), today
@@ -90,28 +148,7 @@ async def search_food_memory(context: FoodContext, args: SearchFoodMemoryArgs) -
         today=today,
     )
     picked = top_refs(_matching(_latest_per_subject(ranked), args.keywords))
-    if not picked:
-        message = _NO_MATCH if args.keywords and ranked else _NO_RECORDS
-        return fail("query", _MEMORY, ErrorCode.NO_RECORDS, message)
-
-    context.state.seen_evidence.update(picked)
-    return ok(
-        "query",
-        _MEMORY,
-        records=[
-            {
-                "kind": item.ref.kind,
-                "id": str(item.ref.id),
-                "tier": item.tier,
-                "label": item.label,
-                "polarity": item.polarity,
-                "observed_on": item.observed_on.isoformat(),
-                "is_stale": item.ref.kind == "profile_affinity"
-                and is_stale(item.observed_on, today),
-            }
-            for item in picked.values()
-        ],
-    )
+    return _Found(total=len(ranked), picked=picked)
 
 
 def _latest_per_subject(ranked: tuple[RankedEvidence, ...]) -> tuple[RankedEvidence, ...]:

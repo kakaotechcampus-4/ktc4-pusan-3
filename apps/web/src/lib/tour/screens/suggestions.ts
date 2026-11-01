@@ -22,7 +22,7 @@ export const suggestionsTour: TourDefinition = {
     {
       target: "general",
       title: "또래 기준 일반 추천",
-      body: "이 주제로 쌓인 기록이 아직 적어서 또래 기준으로 골랐어요. 우리 아이 기록으로 고른 제안과 헷갈리지 않게 점선으로 나눠 보여요.",
+      body: "이번 제안에 직접 쓸 아이 기록이 없어서 또래 기준으로 골랐어요. 우리 아이 기록으로 고른 제안과 헷갈리지 않게 점선으로 나눠 보여요.",
     },
     {
       target: "question",

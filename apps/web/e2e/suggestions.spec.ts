@@ -130,11 +130,17 @@ test.describe("근거가 부족하면 일반 추천 (§2 기억)", () => {
       await expect(card).toContainText("블록 쌓기처럼 손을 많이 쓰는 놀이를 15분쯤 해 보세요");
 
       await expect(
-        page.getByRole("heading", { name: "다음엔 우리 아이 기준으로 골라 드릴게요" }),
+        page.getByRole("heading", { name: "이번에는 일반 기준으로 골랐어요" }),
       ).toBeVisible();
+      await expect(page.getByText("이 주제로 기록은 1건 있어요.", { exact: false })).toBeVisible();
       await expect(
-        page.getByText("이 주제로 쌓인 기록이 1건뿐이에요.", { exact: false }),
+        page.getByText("이번 추천에 직접 사용한 아이 기록이 없어 일반 기준으로 골랐어요.", {
+          exact: false,
+        }),
       ).toBeVisible();
+      // 🚨 누적 건수를 "적다" 고 단정하거나 쌓이면 달라진다고 약속하지 않는다 (#662)
+      await expect(page.getByText("뿐이에요", { exact: false })).toHaveCount(0);
+      await expect(page.getByText("더 쌓이면", { exact: false })).toHaveCount(0);
       // 🚨 되물을 때는 최소 질문 1개 (복수 금지).
       await expect(page.getByText("요즘 실내와 야외 중 어디를 더 찾나요?")).toHaveCount(1);
       await expect(page.getByText("질문은 한 개까지만 드려요.")).toBeVisible();
@@ -182,9 +188,7 @@ test.describe("근거가 부족하면 일반 추천 (§2 기억)", () => {
     test("일반 추천이 위, 되묻는 질문이 아래다", async ({ page }) => {
       await page.goto(SUGGESTIONS);
       const card = page.locator("li").filter({ hasText: "또래 기준 일반 추천" });
-      const question = page.getByRole("heading", {
-        name: "다음엔 우리 아이 기준으로 골라 드릴게요",
-      });
+      const question = page.getByRole("heading", { name: "이번에는 일반 기준으로 골랐어요" });
       const cardBox = (await card.boundingBox())!;
       const questionBox = (await question.boundingBox())!;
       expect(cardBox.y).toBeLessThan(questionBox.y);
@@ -284,18 +288,21 @@ test.describe("개인화와 일반이 같은 Agent 에 섞여 오면 (#512 리�
     await expect(page.locator("li").filter({ hasText: "또래 기준 일반 추천" })).toHaveCount(1);
 
     await expect(page.getByText("위 추천은 또래 기준이에요", { exact: false })).toHaveCount(0);
-    // 🚨 제목도 "다음엔 우리 아이 기준으로" 가 아니다 — 위에 우리 아이 기준 추천이 이미 서 있다
+    // 🚨 제목이 위에 선 개인화까지 일반이라고 부르지 않는다 — "일부는" 이다
     await expect(
-      page.getByRole("heading", { name: "다음엔 우리 아이 기준으로 골라 드릴게요" }),
+      page.getByRole("heading", { name: "이번에는 일반 기준으로 골랐어요" }),
     ).toHaveCount(0);
     await expect(
-      page.getByRole("heading", { name: "기록이 더 쌓이면 모두 우리 아이 기준으로 골라 드릴게요" }),
+      page.getByRole("heading", { name: "일부는 일반 기준으로 골랐어요" }),
     ).toBeVisible();
     await expect(
-      page.getByText("또래 기준이라고 적힌 추천은 우리 아이 기록 대신 또래 기준으로 골랐어요", {
+      page.getByText("또래 기준이라고 적힌 추천에는 직접 연결한 아이 기록이 없어요", {
         exact: false,
       }),
     ).toBeVisible();
+    // 🚨 누적 건수를 "적다" 고 단정하거나 쌓이면 달라진다고 약속하지 않는다 (#662)
+    await expect(page.getByText("뿐이에요", { exact: false })).toHaveCount(0);
+    await expect(page.getByText("더 쌓이면", { exact: false })).toHaveCount(0);
   });
 });
 

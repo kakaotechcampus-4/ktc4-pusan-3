@@ -62,6 +62,13 @@ class FoodRunState:
     # search_food_memory 가 돌려준 근거(id → 순위 매긴 근거). 출력 tool 이 이 표 밖 id 를 인용한
     # 후보를 거절하고(`common/evidence.unseen`), 기피 근거를 이 표로 찾는다
     seen_evidence: dict[UUID, RankedEvidence] = field(default_factory=dict)
+    # 식단 추천이 모델을 부르기 전에 기본 기억 검색을 했는가(`prefetch_food_memory`). 0건이어도 참.
+    # 모델이 도구로 다시 찾은 근거와 가르려고 선조회로 보여 준 id 를 따로 둔다.
+    # 출력 검증은 계속 `seen_evidence` 만 믿는다
+    memory_prefetched: bool = False
+    prefetched_evidence_ids: set[UUID] = field(default_factory=set)
+    # 모델이 `search_food_memory` 를 부른 횟수. 선조회는 세지 않는다 — 품질 로그용
+    memory_search_calls: int = 0
     # 이번 run 에서 모델에게 보여 준 문서 행([예시] · guide_weaning_stage). 인용하면 `food_doc`
     # 근거가 되고 개인화로 세지 않는다
     seen_docs: dict[UUID, FoodDocRow] = field(default_factory=dict)

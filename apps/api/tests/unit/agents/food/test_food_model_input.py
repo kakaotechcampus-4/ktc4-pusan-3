@@ -127,6 +127,39 @@ async def test_재호출까지_간_모델_입력에도_알레르기_이름이_�
     assert_clean(model_input(llm))
 
 
+async def test_알레르기와_같은_이름의_선호_기록은_선조회_목록에_없고_인용도_거절된다() -> None:
+    # 등록 알레르기와 같은 음식의 선호 기록이 남아 있어도(알레르기를 나중에 등록한 아이) 선조회가 그
+    # 이름을 모델에게 내보내지 않는다 — 모델이 부르지 않아도 항상 나가는 경로라 코드가 거른다(#662)
+    egg_liked = affinity("달걀", polarity=1)
+    tofu_liked = affinity("두부", polarity=1)
+    memory = InMemoryFoodMemory({CHILD: [egg_liked, tofu_liked]}, {})
+    llm = ScriptedLLM(
+        propose(
+            "두부조림",
+            "시금치나물",
+            "미역국",
+            evidence=[{"kind": "profile_affinity", "id": str(egg_liked.id), "note": "x"}],
+        ),
+        propose(
+            "두부조림",
+            "시금치나물",
+            "미역국",
+            evidence=[{"kind": "profile_affinity", "id": str(tofu_liked.id), "note": "x"}],
+        ),
+    )
+
+    result = await run(
+        meal_task(), meal_context(TOFU, SPINACH, SOUP, safety=EGG, memory=memory), client=llm
+    )
+
+    first_user = next(m["content"] for m in llm.seen[0] if m["role"] == "user")
+    assert str(tofu_liked.id) in first_user
+    assert str(egg_liked.id) not in first_user
+    assert "EVIDENCE_REQUIRED" in "\n".join(str(m.get("content")) for m in llm.seen[1])
+    assert {draft.kind for draft in result.suggestions} == {"personalized"}
+    assert_clean(model_input(llm))
+
+
 async def test_급식_갱신의_모델_입력에도_알레르기_이름이_없다() -> None:
     # 급식 메뉴 계란국 이 알레르기에 걸려도 화면에는 경고가 나가지만 모델에게는 걸렸다는 사실만 간다
     context = daycare_context(safety=EGG)
