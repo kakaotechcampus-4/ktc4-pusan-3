@@ -12,6 +12,7 @@ Agent 는 체크를 읽기만 한다.
     - `can_take` 같은 허가 필드 · 문구가 없다. 용량 · 간격 판단은 하지 않는다
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from datetime import date, datetime
 from uuid import UUID
@@ -33,9 +34,18 @@ from app.agents.health.schemas.medication import (
     ShowDoseStatusArgs,
 )
 from app.agents.health.store.ports import MedicationCourse, MedicationDose
+from app.rules.medicine_name import mentions_medicine
 
 # "먹였어" 로 읽는 표현. 걸리면 모델을 부르지 않고 체크 안내만 낸다
-DOSE_WORDS: tuple[str, ...] = ("먹였어", "먹였다", "먹였는데", "먹였어요", "못 먹였", "안 먹였")
+DOSE_WORDS: tuple[str, ...] = (
+    "먹였어",
+    "먹였다",
+    "먹였는데",
+    "먹였어요",
+    "먹였더니",
+    "못 먹였",
+    "안 먹였",
+)
 
 _NONE = "-"
 
@@ -89,21 +99,24 @@ async def dose_status_readouts(context: HealthContext) -> list[Readout]:
     ]
 
 
-async def check_on_screen(context: HealthContext) -> Readout:
+async def check_on_screen(context: HealthContext, texts: Sequence[str] = ()) -> Readout:
     """ "먹였어" 의 답. 쓰기 0 — 복약 화면에서 체크해 달라고만 안내한다.
 
-    진행 중 복약이 없으면 체크할 회차도 없으니 없다는 안내를 낸다. 안내에는 진행 중 코스의 ref 가
-    붙는다 — 화면이 그 코스를 가리킬 수 있게 하는 값이고, 체크할 수 없는 끝났거나 멈춘 코스는
-    싣지 않는다. 어느 코스 얘기인지 가리는 것은 이 함수가 아니다(약 이름을 보지 않는다).
+    진행 중 복약이 없으면 체크할 회차도 없으니 없다는 안내를 낸다. 안내에는 코스의 ref 가 붙는다 —
+    화면이 그 코스를 가리킬 수 있게 하는 값이다. 복약 화면 목록이 싣는 진행 중 코스만 ref 로
+    단다(화면이 열 수 있는 코스만 가리킨다). 발화(`texts`)에 코스 이름이 든 약이 있으면 그
+    코스들만, 어느 약인지 안 말했으면 진행 중 코스 전부다. 이름 대조는 코드가 한다.
     다만 run 결과를 화면으로 옮기는 쪽이 아직 readout 의 ref 를 내보내지 않아서, 화면이 이 값을
     읽는 것은 그 길이 열린 뒤다.
     """
     courses = await _active(context)
     if not courses:
         return READOUTS.render(NOTICE_NO_ACTIVE_MED)
+    said = " ".join(texts)
+    named = [course for course in courses if mentions_medicine(said, course.title)]
     return replace(
         READOUTS.render(DOSE_CHECK_ON_SCREEN),
-        source_refs=tuple(Ref("medication_schedule", course.id) for course in courses),
+        source_refs=tuple(Ref("medication_schedule", course.id) for course in named or courses),
     )
 
 

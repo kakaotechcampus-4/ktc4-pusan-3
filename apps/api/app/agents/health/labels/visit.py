@@ -1,7 +1,8 @@
 """`visit_summary` — 진료 준비 정리 · 열 타임라인. 코드가 먼저 거르고, 정리만 모델 한 번.
 
-순서 (앞에서 걸리면 거기서 끝난다 — 단 ①은 끝내지 않고 맨 앞에 얹는다)
-  ① 3개월 미만 + 최근 48시간 발열 → `emergency` 를 결과 맨 앞에 둔다. 타임라인보다 먼저다
+순서 (앞에서 걸리면 거기서 끝난다)
+  ① 3개월 미만 + 최근 48시간 발열 → `emergency` 안내만 내고 끝 — 모델 0회. 정리 · 열 타임라인을
+     잇지 않는다. 응급 화면에 다른 카드를 줄이려는 것이다
   ② 열 표현("열 언제부터" · "몇 도")  → 열 타임라인(`build_fever_timeline`) — 모델 0회
   ③ 조회 tool 이 볼 수 있는 가장 긴 기간(30일)에 건강 기록도 복약 코스도 0건 → `visit.no_record`
      — 모델 0회. 빈 타임라인을 만들지 않는다. 복약만 있어도 정리로 간다(체크 n/m 을 보여 준다)
@@ -122,21 +123,16 @@ async def run_visit_summary(
     # 표에 안 걸린 열 질문의 출구(`show_fever_timeline`)가 다시 읽지 않고 같은 기록을 쓴다
     context.state.visit_observations = tuple(observations)
 
-    # ① 응급 안내는 무엇보다 먼저다. 이후 경로가 무엇이든 맨 앞에 남는다
-    infant = infant_fever(
+    # ① 3개월 미만 발열이면 응급 안내만 낸다. 정리나 열 타임라인을 잇지 않는다
+    if infant_fever(
         observations, months=gate.stage.months, now=context.now, timezone=context.timezone
-    )
-    if infant:
+    ):
         context.state.readouts.append(READOUTS.render(EMERGENCY))
+        return _finish(context)
 
     # ② 열 질문은 모델 없이 나열만 한다
     if is_fever_question(task.request_texts):
-        try:
-            context.state.readouts += await fever_readouts(context, observations)
-        except Exception as exc:
-            if not infant:
-                raise
-            return _emergency_only(context, exc)
+        context.state.readouts += await fever_readouts(context, observations)
         return _finish(context)
 
     # ③ 기록이 없으면 모델을 부르지 않는다. 먹인 약 행 · 복약 코스도 건강 기록이다
@@ -144,16 +140,7 @@ async def run_visit_summary(
         context.state.readouts.append(READOUTS.render(VISIT_NO_RECORD))
         return _finish(context)
 
-    try:
-        outcome = await _summarize(task, context, client)
-    except Exception as exc:
-        if not infant:
-            raise
-        return _emergency_only(context, exc)
-    if infant and outcome.status == "failed":
-        # failed 결과는 pipeline 이 버린다 — 응급 안내가 같이 사라지면 안 된다
-        return _finish(context, model_calls=outcome.model_calls)
-    return outcome
+    return await _summarize(task, context, client)
 
 
 async def _summarize(
@@ -208,22 +195,6 @@ async def _summarize(
         )
         return _finish(context, status="failed", model_calls=1)
     return _finish(context, model_calls=1)
-
-
-def _emergency_only(context: HealthContext, exc: Exception) -> DomainAgentResult:
-    """3개월 미만 발열 run 에서 나머지가 예외로 끝났다. 이미 만든 readout(응급 안내)만 내보낸다.
-
-    `completed` 로 낸다 — failed 는 pipeline 이 버려서 응급 안내가 사라진다. 정리 실패를 알리는
-    문구는 만들지 않는다(맞는 키가 없다). `Exception` 만 잡는다: 취소 · 20초 timeout 은
-    `BaseException` 이라 그대로 pipeline 으로 간다. 로그에는 예외 종류만 싣는다 — 메시지에
-    원문이 들어 있을 수 있다.
-    """
-    logger.warning(
-        "Health 진료 준비가 예외로 끝나 응급 안내만 낸다 run_id=%s error=%s",
-        context.run_id,
-        type(exc).__name__,
-    )
-    return _finish(context)
 
 
 def _first_day(context: HealthContext) -> date:

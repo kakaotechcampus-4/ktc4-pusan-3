@@ -52,6 +52,7 @@ from app.agents.memory.schemas.task import (
     WorkType,
 )
 from app.rules.hazard import FOOD_NAME_TERMS, PLAY_NAME_TERMS, hazard_names
+from app.rules.medicine_name import is_generic_medicine, same_medicine
 from app.rules.safety_term import mentions_safety
 from app.rules.term_match import Term
 
@@ -131,6 +132,14 @@ _SAFETY_RECORD = (
     "관찰로 옮겨 저장하지 않는다. 발화에 증상이 따로 있으면 병명을 뺀 증상만 저장하고, "
     "아이에게 해 준 일이 있으면 건강 관찰의 symptom 에 병명 없이 그 일을, action_taken 에 "
     "발화 그대로 적는다. 둘 다 없으면 저장하지 않았다고 한 줄로만 알린다."
+)
+
+# 진행 중 복약 일정에 있는 약이다. 먹인 것은 보호자가 복약 화면에서 체크하고, 같은 약을 먹인 약
+# 행으로도 적으면 투약이 두 번 남는다. 체크 안내는 pipeline 이 Health 로 따로 낸다
+_MEDICINE_REGISTERED = (
+    "이 약은 진행 중인 복약 일정에 있다. 먹인 것은 보호자가 복약 화면에서 체크한다. "
+    "medication_given 을 빼고 증상만 있으면 증상만 다시 부르고, 증상도 없으면 "
+    "저장하지 않았다고 한 줄로만 알린다."
 )
 
 # 고쳐 말하는 조각(lookup_edit)인데 조회 없이 새로 저장. "할머니 말고 할아버지랑 산책했어" 처럼
@@ -800,6 +809,8 @@ async def _execute(
         return _failed(name, arguments, ErrorCode.HAZARD, _HAZARD)
     if _safety_named(name, arguments):
         return _failed(name, arguments, ErrorCode.SAFETY_RECORD, _SAFETY_RECORD)
+    if _registered_medicine(name, arguments, context):
+        return _failed(name, arguments, ErrorCode.REGISTERED_MEDICINE, _MEDICINE_REGISTERED)
     if task is not None and task.unclear_only and name.startswith("update_observation_"):
         # 아이 기록이 아닌 말로 이미 저장된 아이 기록을 고치지 않는다
         return _failed(name, arguments, ErrorCode.NOT_CHILD_RECORD, _NOT_CHILD_RECORD_ALONE)
@@ -877,6 +888,22 @@ def _safety_named(name: str, arguments: dict[str, Any]) -> bool:
     if name not in ("create_observation_health", "update_observation_health"):
         return False
     return any(mentions_safety(str(symptom)) for symptom in arguments.get("symptom") or ())
+
+
+def _registered_medicine(name: str, arguments: dict[str, Any], context: AgentContext) -> bool:
+    """먹인 약 행을 만드는 호출이 진행 중 복약 일정의 약(또는 이름 없는 "약")을 가리키는가.
+
+    정정(update)은 보지 않는다 — 이미 저장된 행을 고치는 길이다. 코스를 모르면(비어 있으면)
+    막지 않는다.
+    """
+    if name != "create_observation_health" or not context.registered_medicines:
+        return False
+    given = str(arguments.get("medication_given") or "")
+    if not given:
+        return False
+    return is_generic_medicine(given) or any(
+        same_medicine(given, title) for title in context.registered_medicines
+    )
 
 
 def _in_unclear(arguments: dict[str, Any], task: MemoryTask) -> bool:

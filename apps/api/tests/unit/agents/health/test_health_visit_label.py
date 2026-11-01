@@ -1,7 +1,8 @@
 """`visit_summary` 라벨 실행기 — 열 질문 · 기록 없음은 모델 0회, 정리는 모델 한 번.
 
-- 순서: 3개월 미만 발열이면 `emergency` 가 맨 앞 → 열 표현이면 열 타임라인(0회) → 최근 30일 건강
-  기록도 복약 코스도 0건이면 `visit.no_record`(0회) → 그 밖에는 tool loop(`model_calls=1`)
+- 순서: 3개월 미만 발열이면 `emergency` 만 내고 끝(0회) → 열 표현이면 열 타임라인(0회) →
+  최근 30일 건강 기록도 복약 코스도 0건이면 `visit.no_record`(0회) → 그 밖에는 tool loop
+  (`model_calls=1`)
 - 🚨 정리 loop 에서 모델은 기간 · 증상 하나만 정한다 (#551 리뷰) — 줄은 코드가 다 넣고, 모델에게
   가는 글에 기록 원문 · 약 이름 · 용량 · 식사 내용이 없다
 - 열 표현은 작은 표로 가른다. 모델이 가르지 않는다
@@ -292,24 +293,19 @@ async def test_모델이_정리를_내지_못하면_실패():
     assert not [r for r in result.readouts if r.kind == "symptom_timeline"]
 
 
-async def test_3개월_미만_발열은_응급_안내가_먼저():
-    # T22-C2 — 열 질문이든 정리든 emergency 가 타임라인보다 앞이다
-    young = birth_for(2)
-    emergency = READOUTS.render("emergency")
+@pytest.mark.parametrize(
+    "text", ["내일 소아과 가는데 정리해줘", "열 언제부터 났어?", "열나는데 언제부터였지"]
+)
+async def test_3개월_미만_발열이면_응급_안내만_내고_모델을_부르지_않는다(text):
+    # 정리 · 열 타임라인까지 이어 내면 응급 화면에 다른 카드가 섞인다. 모델 응답을 하나도 안 준다
+    llm = FakeLLM()
 
-    fever = await run(visit("열 언제부터였지"), world(READING, birth=young), client=FakeLLM())
-    assert fever.readouts[0] == emergency
-    assert [r.kind for r in fever.readouts[1:]] == ["fever_timeline"] * len(fever.readouts[1:])
-    assert len(fever.readouts) > 1 and fever.model_calls == 0
+    result = await run(visit(text), world(READING, birth=birth_for(2)), client=llm)
 
-    llm = FakeLLM(
-        call("search_health_observations", {}),
-        call("compose_symptom_timeline", {}),
-    )
-    summary = await run(visit(), world(READING, birth=young), client=llm)
-
-    assert [r.kind for r in summary.readouts] == ["emergency", "symptom_timeline"]
-    assert summary.readouts[0] == emergency
+    assert [r.kind for r in result.readouts] == ["emergency"]
+    assert result.readouts[0] == READOUTS.render("emergency")
+    assert result.status == "completed" and result.model_calls == 0
+    assert llm.seen == []
 
 
 async def test_3개월_이상이면_응급_안내가_없다():
@@ -330,16 +326,6 @@ async def test_표에_없는_열_질문은_모델이_열_타임라인을_고른�
     assert result.status == "completed" and result.model_calls == 1
     assert "symptom_timeline" not in {r.kind for r in result.readouts}
     assert result.readouts == table.readouts  # 표가 받았을 때와 같은 줄이다
-
-
-async def test_모델이_고른_열_타임라인도_응급_안내가_먼저():
-    young = birth_for(2)
-    llm = FakeLLM(call("show_fever_timeline", {}))
-
-    result = await run(visit("열나는데 언제부터였지"), world(READING, birth=young), client=llm)
-
-    assert result.readouts[0] == READOUTS.render("emergency")
-    assert {r.kind for r in result.readouts[1:]} == {"fever_timeline"}
 
 
 async def test_열_타임라인_tool_은_건강_기록을_다시_읽지_않는다():
@@ -505,36 +491,8 @@ class _BrokenMedication(InMemoryMedicationStore):
         raise RuntimeError("복약 조회 실패")
 
 
-class TestEmergencySurvives:
-    """3개월 미만 발열 안내는 나머지가 실패해도 결과에 남는다 — failed 는 pipeline 이 버린다."""
-
-    async def test_정리_loop_가_끝나지_못해도_응급_안내는_남는다(self):
-        # 조회만 하고 compose 를 부르지 않은 채 말로 끝난다
-        llm = FakeLLM(call("search_health_observations", {}))
-
-        result = await run(visit(), world(READING, birth=birth_for(2)), client=llm)
-
-        assert result.status == "completed"
-        assert result.readouts == (READOUTS.render("emergency"),)
-
-    async def test_모델_예외여도_응급_안내는_남는다(self):
-        llm = _RaisingLLM()
-
-        result = await run(visit(), world(READING, birth=birth_for(2)), client=llm)
-
-        assert result.status == "completed"
-        assert result.readouts == (READOUTS.render("emergency"),)
-        assert len(llm.seen) == 1
-
-    async def test_열_경로의_복약_조회가_실패해도_응급_안내는_남는다(self):
-        ctx = world(READING, birth=birth_for(2))
-        broken = replace(ctx, ports=replace(ctx.ports, medication=_BrokenMedication()))
-
-        result = await run(visit("열 언제부터였지"), broken, client=FakeLLM())
-
-        assert result.status == "completed"
-        assert result.model_calls == 0
-        assert result.readouts == (READOUTS.render("emergency"),)
+class TestFailuresPropagate:
+    """3개월 이상 아이의 진료 준비는 실패를 그대로 올린다 — 숨길 응급 안내가 없다."""
 
     async def test_3개월_이상이면_loop_실패는_failed_그대로(self):
         llm = FakeLLM(call("search_health_observations", {}))

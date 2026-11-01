@@ -23,6 +23,7 @@ from app.agents.health.labels.medication import (
     STOP_STEMS,
     YES_WORDS,
     confirm_answer,
+    is_dose_report,
 )
 from app.agents.health.prompt import build_system_prompt
 from app.agents.health.readouts import READOUTS
@@ -1238,3 +1239,16 @@ class TestSameTimeFlow:
 
         assert result.medication_drafts == () and result.pending is None
         assert [r.body for r in result.readouts] == [READOUTS.render("med.timing_unclear").body]
+
+
+def test_is_dose_report():
+    assert is_dose_report(["아까 약 먹였어"]) and not is_dose_report(["먹였는데 이제 끊을게"])
+    assert not is_dose_report(["다음 약 언제 먹여?"])
+    # "끊이지 않아" 의 "끊" 은 약을 끊는다는 말이 아니다
+    assert is_dose_report(["기침이 끊이지 않아서 약 먹였어"])
+
+
+def test_먹였더니_도_복용_표현이다():
+    # "먹였고" · "먹였지만" 은 넣지 않는다 — "몇 번 먹였고 양 늘려도 돼?" 가 체크 안내로 샌다
+    assert is_dose_report(["해열제 먹였더니 열이 내렸어"])
+    assert not is_dose_report(["몇 번 먹였고 양 늘려도 돼?"])

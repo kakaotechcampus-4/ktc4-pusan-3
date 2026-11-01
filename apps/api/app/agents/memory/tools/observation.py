@@ -9,8 +9,7 @@ create / query / update 3종. 삭제는 update 에 status=deleted 로 온다 (so
 LLM은 표현까지만 제공하고, 계산과 기본값은 이쪽에서 해결
 """
 
-import re
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from typing import Any, Callable
 
 from app.agents.common.datetime_rules import (
@@ -38,6 +37,7 @@ from app.agents.memory.schemas.observation import (
     ObservationRoutineUpdate,
 )
 from app.agents.memory.store.ports import ObservationRow
+from app.rules.temperature import temperatures_said
 
 # create 인자 중 store가 따로 받는 것들. fields에 중복으로 넣지 않는다
 _CREATE_HANDLED = {"raw_text", "observed_on", "temporal_direction"}
@@ -337,12 +337,6 @@ _TEMPERATURE_NOT_SAID = (
     "몇 도였는지 묻는다."
 )
 
-# 말에 적힌 체온 꼴 — 섭씨 단위가 붙은 숫자만 센다(#551 BE 리뷰). "38.5도" · "38도" · "38.5℃" ·
-# "38.5°C". 단위 없는 숫자는 날수 · 월령 · 분일 수 있다("생후 38일" 이 38.0 으로 통과했다).
-# "38도 5부" 는 38.5 하나다 — 38 은 아니다. °F 는 받지 않는다(화씨 숫자를 섭씨 칸에 넣지 않는다)
-_DEGREE = re.compile(r"(?<![\d.])(\d+(?:\.\d+)?)\s*(?:℃|°(?!\s*[Ff])|도(?!\s*\d\s*부))")
-_DEGREE_TENTH = re.compile(r"(?<![\d.])(\d+)\s*도\s*(\d)\s*부")
-
 
 def _sources(context: AgentContext, *quoted: str) -> list[str]:
     """대조할 글들. 이번 run 의 발화(`context.utterance`)가 기준이다.
@@ -367,18 +361,7 @@ def _temperature_said(value: Decimal, context: AgentContext, *quoted: str) -> bo
     없으면 거짓이다.
     """
     sources = _sources(context, *quoted)
-    return bool(sources) and all(value in _temperatures(source) for source in sources)
-
-
-def _temperatures(text: str) -> set[Decimal]:
-    found: set[Decimal] = set()
-    for number in _DEGREE.findall(text):
-        try:
-            found.add(Decimal(number))
-        except InvalidOperation:  # pragma: no cover — 정규식이 숫자만 뽑는다
-            continue
-    found.update(Decimal(f"{whole}.{tenth}") for whole, tenth in _DEGREE_TENTH.findall(text))
-    return found
+    return bool(sources) and all(value in temperatures_said(source) for source in sources)
 
 
 async def create_observation_health(
