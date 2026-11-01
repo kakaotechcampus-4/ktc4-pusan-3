@@ -46,6 +46,8 @@ class ActivityRunState:
     seen_docs: dict[UUID, ActivityDocRow] = field(default_factory=dict)
     # [예시]의 짧은 id(예1 …) → 문서 행 id. 프롬프트에는 짧은 id 만 싣는다 (`prompt.example_ids`)
     example_ids: dict[str, UUID] = field(default_factory=dict)
+    # 이번 run 의 보호자 요청 글. 출력 tool 이 requested_play 가 이 안에 있는지 본다 (#597 리뷰)
+    request_texts: tuple[str, ...] = ()
     gate: Gate | None = None
     # build_gate 가 읽은 health_safety 행. 출력 검증의 안전 필터는 이 값만 쓰고 다시 읽지 않는다.
     # None 은 아직 안 읽었다(build_gate 전)는 뜻이고, 동의가 없으면 빈 튜플이다
