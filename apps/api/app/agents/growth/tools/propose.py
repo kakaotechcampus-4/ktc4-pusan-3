@@ -30,7 +30,7 @@ from app.agents.growth.schemas.routine import ProposeRoutinePlanArgs
 from app.agents.growth.tools.books import book_label, propose_books
 from app.agents.growth.tools.books import explain as explain_books
 from app.agents.growth.tools.closures import closure_key
-from app.agents.growth.tools.docs import chain_name, related_names
+from app.agents.growth.tools.docs import MIN_CHAIN_MATCH, chain_name, related_names
 from app.agents.growth.tools.memory import SELF_RELIANCE
 from app.agents.growth.tools.routine import (
     PickedStep,
@@ -39,7 +39,7 @@ from app.agents.growth.tools.routine import (
     routine_gap,
 )
 from app.agents.growth.tools.safety import SafetyRules
-from app.rules.term_match import normalize
+from app.rules.term_match import normalize, split_words
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +72,10 @@ async def propose_learning_activity(
         today=context.today,
     )
     if review.rejections:
-        return fail("propose", _LEARNING, error_code(review.rejections), explain(review.rejections))
+        usable = (*state.seen_evidence, *state.seen_docs)
+        return fail(
+            "propose", _LEARNING, error_code(review.rejections), explain(review.rejections, usable)
+        )
     _log_removed(context, len(review.removed))
     state.excluded = tuple(args.items[i].title for i in review.removed)
     if not review.removed:
@@ -109,9 +112,13 @@ async def propose_routine_plan(context: GrowthContext, args: ProposeRoutinePlanA
     # 요청한 행동의 단계만 낸다 — 양치를 물었는데 같은 카테고리의 손 씻기 단계를 끼우지 않는다.
     # 맞는 단계가 없고 모델이 단계를 비워 냈으면 그 행동의 지금 수준을 모르므로 되묻는다.
     # 맞는 것이 없는데 단계를 냈으면("아침 씻기" 처럼 여러 행동) 지금처럼 고른 단계 전부다
-    wanted = [p for p in picked if _same_behavior(p, args.subject)]
+    requested, from_record = _requested(state, args.subject)
+    wanted = [p for p in picked if _same_behavior(p, requested)]
     if wanted:
         picked = wanted
+    elif from_record:
+        # 보호자가 말한 행동을 코드가 안다 — 모델이 적은 다른 행동의 단계로 채우지 않는다
+        picked = []
     elif picked and not args.items:
         state.question = ask_question(ASK_ROUTINE_CURRENT, args.subject.strip())
         return ok("propose", _ROUTINE, asked=True)
@@ -120,7 +127,7 @@ async def propose_routine_plan(context: GrowthContext, args: ProposeRoutinePlanA
         keys = {p.step.readout_key for p in picked}
         if args.category in SELF_RELIANCE and (ASK_ROUTINE_CURRENT in keys or not picked):
             state.question = ask_question(
-                ASK_ROUTINE_CURRENT, _subject(context, args.category, args.subject)
+                ASK_ROUTINE_CURRENT, _subject(context, args.category, requested)
             )
             return ok("propose", _ROUTINE, asked=True)
         # 맞는 사슬 · 전략 행이 없다. 모델이 단계 · 전략을 지어내지 않게 코드 문구로 닫는다
@@ -143,7 +150,12 @@ async def propose_routine_plan(context: GrowthContext, args: ProposeRoutinePlanA
         today=today,
     )
     if review.rejections:
-        return fail("propose", _ROUTINE, error_code(review.rejections), explain(review.rejections))
+        return fail(
+            "propose",
+            _ROUTINE,
+            error_code(review.rejections),
+            explain(review.rejections, tuple(state.seen_evidence)),
+        )
     if not review.removed and len(review.drafts) < capacity:
         return fail(
             "propose",
@@ -184,7 +196,12 @@ async def propose_books_tool(context: GrowthContext, args: ProposeBooksArgs) -> 
         args.items, picked.accepted, seen=state.seen_evidence, today=context.today
     )
     if review.rejections:
-        return fail("propose", _BOOKS, error_code(review.rejections), explain(review.rejections))
+        return fail(
+            "propose",
+            _BOOKS,
+            error_code(review.rejections),
+            explain(review.rejections, tuple(state.seen_evidence)),
+        )
     if not review.removed and len(review.drafts) < picked.available:
         return fail(
             "propose",
@@ -213,6 +230,24 @@ def _cited_subjects(state: GrowthRunState, args: ProposeRoutinePlanArgs) -> tupl
             if row is not None:
                 subjects.append(row.subject)
     return tuple(subjects)
+
+
+def _requested(state: GrowthRunState, subject: str) -> tuple[str, bool]:
+    """요청 행동과, 그것이 모델이 아니라 같은 run 의 기록에서 왔는가.
+
+    같은 run 에서 저장한 행동이 있고, 모델이 적은 행동 이름이 보호자가 한 말(요청 · 기록 조각)
+    어디에도 비치지 않으면 그 저장한 행동이 요청 행동이다 — "어떻게 하면 좋을까?" 처럼 행동이 없는
+    조각만 본 모델이 기록 있는 다른 행동을 적는 경우다. 앞 두 글자나 띄어쓰기로 나눈 낱말이
+    한 번이라도 보이면 물은 행동을 모델이 맞게 적은 것으로 믿는다("손은 어떻게 씻겨?" 의
+    "손 씻기"). 애매하면 모델을 믿는다 — 기록한 행동이 없던 때와 같은 판정이다.
+    """
+    if not state.recorded_subjects:
+        return subject, False
+    said = normalize(" ".join(state.said_texts))
+    heads = {normalize(subject)[:MIN_CHAIN_MATCH], *split_words(subject)}
+    if any(head and head in said for head in heads):
+        return subject, False
+    return state.recorded_subjects[0], True
 
 
 def _subject(context: GrowthContext, category: str, fallback: str) -> str:

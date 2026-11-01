@@ -227,6 +227,72 @@ class TestLearningWithoutExamples:
         result = await run(task("learning_suggestion"), ctx, client=llm)
         assert result.readouts == (READOUTS.render("doc.no_row"),) and llm.seen == []
 
+
+def _nature_rows(count: int) -> list[GrowthDocRow]:
+    return [
+        GrowthDocRow(
+            id=uuid5(NAMESPACE_URL, f"topic.nature.{n}"),
+            doc_key=f"growth.learn.topic.nature{n}",
+            row_type="learning_activity",
+            title=f"숫자 블록 세기 {n}",
+            body="블록을 하나씩 세어 본다.",
+            min_month=24,
+            max_month=36,
+            area="nature",
+        )
+        for n in range(count)
+    ]
+
+
+class TestExamplesByTopic:
+    async def test_국어_요청은_의사소통_예시만_받는다(self):
+        """고정 행은 의사소통 5행 · 자연탐구 20행 — 주제 없이 고르면 자연탐구가 섞인다."""
+        ctx = context(birth_for(30), docs=fixture_docs(*_nature_rows(20)))
+        await run(
+            _task(
+                "learning_suggestion",
+                "어떻게 도와줘야 좋을까?",
+                records=("아이가 국어 공부를 어려워하는데",),
+            ),
+            ctx,
+            client=FakeLLM(),
+        )
+        assert len(ctx.state.seen_docs) == 3
+        assert {row.area for row in ctx.state.seen_docs.values()} == {"communication"}
+
+    async def test_기록_조각의_다른_주제는_요청_주제의_예시를_바꾸지_않는다(self):
+        ctx = context(birth_for(30), docs=fixture_docs(*_nature_rows(20)))
+        await run(
+            _task(
+                "learning_suggestion",
+                "한글 놀이 추천해줘",
+                records=("오늘 어린이집에서 숫자 블록 배웠대",),
+            ),
+            ctx,
+            client=FakeLLM(),
+        )
+        assert {row.area for row in ctx.state.seen_docs.values()} == {"communication"}
+
+    async def test_기록_조각에만_영어가_있으면_모델_전에_닫지_않는다(self):
+        ctx = docs_ctx()
+        llm = FakeLLM()
+        result = await run(
+            _task(
+                "learning_suggestion", "집에서 뭐 하면 좋을까?", records=("영어 유치원 다니는데",)
+            ),
+            ctx,
+            client=llm,
+        )
+        assert result.model_calls == 1 and llm.seen
+        assert ctx.state.topic == ()
+
+    async def test_영어만_물었고_기록도_없으면_모델_전에_닫는다(self):
+        ctx = docs_ctx()
+        llm = FakeLLM()
+        result = await run(task("learning_suggestion", "영어 공부 어떻게 시켜?"), ctx, client=llm)
+        assert (result.status, result.model_calls) == ("blocked", 0)
+        assert result.readouts == (READOUTS.render("doc.no_row"),) and llm.seen == []
+
     @pytest.mark.parametrize(
         "memory",
         [
@@ -783,3 +849,51 @@ class TestObserve:
             )
 
         assert "status=cancelled model_calls=1" in self.line(caplog)
+
+
+def _task(label: str, text: str, *, records: tuple[str, ...] = ()) -> DomainTask:
+    return DomainTask(
+        run_id="run-1",
+        agent="growth",
+        task_type=label,
+        request_texts=(text,),
+        record_texts=records,
+    )
+
+
+class TestTopic:
+    async def test_기록_조각은_요청_다음에_따로_실린다(self):
+        llm = FakeLLM()
+        ctx = docs_ctx()
+        await run(
+            _task(
+                "learning_suggestion",
+                "어떻게 도와줘야 좋을까?",
+                records=("아이가 국어 공부를 어려워하는데",),
+            ),
+            ctx,
+            client=llm,
+        )
+        assert llm.seen[0][1]["content"] == (
+            "어떻게 도와줘야 좋을까?\n\n[보호자가 같이 한 말]\n아이가 국어 공부를 어려워하는데"
+        )
+        assert ctx.state.topic == ("communication",)
+
+    async def test_기록_조각이_없으면_요청만_실린다(self):
+        llm = FakeLLM()
+        ctx = docs_ctx()
+        await run(task("learning_suggestion", "한글 놀이 추천해줘"), ctx, client=llm)
+        assert llm.seen[0][1]["content"] == "한글 놀이 추천해줘"
+        assert ctx.state.topic == ("communication",)
+
+    async def test_주제가_없는_요청은_주제_키가_비어_있다(self):
+        ctx = docs_ctx()
+        await run(task("learning_suggestion", "놀이 추천해줘"), ctx, client=FakeLLM())
+        assert ctx.state.topic == ()
+
+
+class TestEvidencePrompt:
+    async def test_근거_id_는_한_글자도_바꾸지_말고_그대로_옮기라고_말한다(self):
+        llm = FakeLLM()
+        await run(task("learning_suggestion", "한글 놀이 추천해줘"), docs_ctx(), client=llm)
+        assert "한 글자도 바꾸지 않고 그대로 복사" in llm.seen[0][0]["content"]

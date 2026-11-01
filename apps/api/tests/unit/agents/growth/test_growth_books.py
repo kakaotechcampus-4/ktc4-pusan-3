@@ -517,6 +517,14 @@ class TestProposeTool:
         result = await propose_books_tool(ctx, books_of(pick(1, evidence=forged), pick(2), pick(3)))
         assert result.error["code"] == "EVIDENCE_REQUIRED"
 
+    async def test_책_근거_id_를_거절할_때_조회한_기록의_id_를_알려_준다(self):
+        ctx = await searched(30, [book(n, "picture") for n in range(1, 4)])
+        ctx.state.seen_evidence[DINO.ref.id] = DINO
+        forged = [{"id": str(book_evidence_id(isbn(1))), "note": "이 책이에요"}]
+        result = await propose_books_tool(ctx, books_of(pick(1, evidence=forged), pick(2), pick(3)))
+        assert result.error["code"] == "EVIDENCE_REQUIRED"
+        assert str(DINO.ref.id) in result.error["message"]
+
     async def test_검색하기_전에는_빈_제출도_받지_않는다(self):
         ctx = await ready(30, [book(1, "picture")])
         result = await propose_books_tool(ctx, books_of())

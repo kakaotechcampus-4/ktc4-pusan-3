@@ -88,6 +88,21 @@ export const SCHEMA_MAP: Record<string, MapValue> = {
   UpdateHealthSafetyRequest: "UpdateHealthSafetyRequest",
   UpdateHealthSafetyResponse: "UpdateHealthSafetyResponse",
 
+  /* ── 복약 — 초안 제출 · 수정 · 진행 중 코스 · 회차 체크 (#537) ── */
+  SubmitMedicationRequest: "SubmitMedicationBody",
+  ReviseMedicationRequest: "ReviseMedicationBody",
+  MedicationScheduleIn: "SubmitMedicationBody.schedule",
+  MedicationDoseIn: "SubmitMedicationBody.doses[]",
+  MedicationSource: "SubmitMedicationBody.source",
+  TimingAnchor: "TimingAnchor",
+  MedicationStorage: "MedicationStorage",
+  MedicationForm: "MedicationForm",
+  SubmitMedicationResponse: "SubmitMedicationResponse",
+  MedicationsResponse: "MedicationsResponse",
+  MedicationCourseOut: "MedicationCourse",
+  MedicationDoseOut: "MedicationDose",
+  CheckDoseRequest: "CheckDoseRequest",
+
   /* ── 03 홈 · 04 한 줄 입력 · 지난 대화 ── */
   HomeResponse: "HomeResponse",
   HighlightOut: "HomeResponse.highlight",
@@ -102,7 +117,13 @@ export const SCHEMA_MAP: Record<string, MapValue> = {
   UnavailableReply: "ChatReply<type=unavailable>",
   SavedOut: "ChatReply<type=saved>",
   EventDraftReply: "ChatReply<type=event_draft>",
-  AgentResultOut: "ChatReply<type=agent_result>",
+  AgentResultOut: {
+    web: "ChatReply<type=agent_result>",
+    allow: {
+      awaits_reply:
+        "지난 대화의 질문에는 답할 수 없다 — 되묻기 맥락은 15분 동안 서버 메모리에만 있어 지난 대화 응답에는 싣지 않는다. 웹은 없으면 false 로 읽는다 (sse.ts · #537)",
+    },
+  },
   PartialReply: "ChatReply<type=partial>",
   DoneReply: "ChatReply<type=done>",
   StoredReadout: "AgentReadout",

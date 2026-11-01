@@ -67,6 +67,14 @@ class GrowthRunState:
     seen_routine: dict[UUID, RoutineObservation] = field(default_factory=dict)
     # 프롬프트 [예시]에 실은 문서 행. 일반 추천은 이 행을 근거로 단다 (루트 §2)
     seen_docs: dict[UUID, GrowthDocRow] = field(default_factory=dict)
+    # 요청 · 같은 입력의 기록 조각에서 코드가 읽은 주제 영역 키(`rules/growth_topic`).
+    # 모델이 정하지 않는다. [예시]를 고르고 기억 조회를 넓히는 데 쓴다. 비면 주제가 없는 요청이다
+    topic: tuple[str, ...] = ()
+    # 보호자가 이 입력에서 한 말(요청 조각 + 같은 입력의 기록 조각)과, 같은 run 에서 Memory 가
+    # 저장한 루틴 관찰의 행동 이름. 쪼개진 요청에서 보호자가 말한 행동을 코드가 알아
+    # 모델이 다른 행동을 적는 것을 막는다
+    said_texts: tuple[str, ...] = ()
+    recorded_subjects: tuple[str, ...] = ()
     # 관찰 subject(정규화) → 코드가 고른 다음 단계. 모델은 여기 있는 step_id 만 쓴다
     steps: dict[str, PickedStep] = field(default_factory=dict)
     # 출력 tool 이 통과시킨 추천과 안전 필터 · 금지 표현으로 빠진 후보 이름 (재호출 제외 목록)

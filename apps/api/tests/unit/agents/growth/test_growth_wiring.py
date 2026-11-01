@@ -546,3 +546,160 @@ async def test_기록_조각이_약이면_요청_조각만_와도_Growth_가_모
     assert [r.body for r in shown.readouts] == [
         GROWTH_READOUTS.get("closed.medical_routine").template
     ]
+
+
+class ReadsHandwash:
+    """조회 결과의 손 씻기 단계를 그대로 제출하는 Growth 모델 가짜.
+
+    보호자는 밥 먹을 때 힘들다고 했는데 모델은 요청 조각만 보고 기록 있는 행동(손 씻기)을 적는다.
+    """
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def chat(self, messages, **kwargs) -> LLMResponse:
+        self.calls += 1
+        if self.calls == 1:
+            return call("search_routine_memory", {})
+        result = json.loads(next(m for m in reversed(messages) if m["role"] == "tool")["content"])
+        record = next(r for r in result["data"]["records"] if r["category"] == "self_care")
+        (step,) = result["data"]["next_steps"]
+        return call(
+            "propose_routine_plan",
+            {
+                "category": "self_care",
+                "subject": "손 씻기",
+                "items": [
+                    {
+                        "step_id": step["step_id"],
+                        "next_step": "비누 거품을 같이 내 봐요",
+                        "how": "어른 손을 아이 손 위에 얹어요",
+                        "evidence": [{"id": record["id"], "note": "어제 손 씻기 기록이에요"}],
+                        "reason": "지금은 어른이 다 해 주고 있어서 한 칸만 올려요",
+                    }
+                ],
+            },
+        )
+
+
+async def test_쪼개진_식사_고민에_다른_행동_단계를_내지_않는다():
+    """ "밥 먹을 때 힘들어해 / 어떻게 하면 좋을까?" — 요청 조각만 보고 손 씻기를 추천하던 경우."""
+    store = InMemoryStore(now=NOW)
+    day = TODAY - timedelta(days=1)
+    await store.create_observation(
+        domain="routine",
+        child_id=CHILD,
+        source_writer=PARENT,
+        raw_text="어제 손 씻기는 어른이 다 해 줬어",
+        observed_on=day,
+        observed_range=build_observed_range(day),
+        fields={
+            "subject": "손 씻기",
+            "routine_category": "self_care",
+            "polarity": 0,
+            "assistance_level": "full_assist",
+        },
+    )
+    raw = "아이가 밥 먹을 때 너무 힘들어해 어떻게 하면 좋을까?"
+    supervisor = FakeLLM(
+        call(
+            "route",
+            {
+                "segments": [
+                    {
+                        "text": "아이가 밥 먹을 때 너무 힘들어해",
+                        "kind": "record",
+                        "work": "observe",
+                    },
+                    {
+                        "text": "어떻게 하면 좋을까?",
+                        "kind": "request",
+                        "agent": "growth",
+                        "growth_task": "routine_coaching",
+                    },
+                ]
+            },
+        )
+    )
+    memory = FakeLLM(
+        call(
+            "create_observation_routine",
+            {
+                "raw_text": "아이가 밥 먹을 때 너무 힘들어해",
+                "observed_on": "오늘",
+                "subject": "밥 먹기",
+                "routine_category": "mealtime",
+            },
+        ),
+        LLMResponse(
+            message=SimpleNamespace(content="기록했어요.", tool_calls=None), usage={}, latency_ms=1
+        ),
+    )
+    saved = entrypoint.InMemorySuggestions()
+    events: list[Any] = []
+
+    await pipeline.handle_input(
+        raw,
+        AgentContext(child_id=CHILD, source_writer=PARENT, now=NOW, timezone=KST, store=store),
+        contexts(store),
+        run_id="run-1",
+        supervisor_client=supervisor,
+        memory_client=memory,
+        domain_clients={"growth": ReadsHandwash()},
+        emit=events.append,
+        commit=_no_commit,
+        save_suggestions=saved,
+    )
+
+    (shown,) = [e for e in events if isinstance(e, pipeline.AgentResult)]
+    assert shown.suggestion_ids == () and not saved.batches
+    assert "밥 먹기" in (shown.question or "") and "손 씻기" not in (shown.question or "")
+
+
+def _routine_call(name: str, subject: str, *, success: bool = True) -> Any:
+    from app.agents.memory.agent import ToolCallRecord
+
+    return ToolCallRecord(
+        name=name, arguments={"subject": subject}, result={"success": success, "data": {}}
+    )
+
+
+class TestWithRecorded:
+    """Memory 가 같은 run 에서 저장한 루틴 관찰의 행동 이름을 도메인 task 에 싣는다."""
+
+    def _tasks(self) -> tuple[Any, ...]:
+        from app.agents.common.schemas.task import DomainTask
+
+        return (
+            DomainTask(
+                run_id="run-1",
+                agent="growth",
+                task_type="routine_coaching",
+                request_texts=("어떻게 하면 좋을까?",),
+            ),
+        )
+
+    def _memory(self, *calls: Any) -> Any:
+        from app.agents.memory.agent import MemoryAgentResult
+
+        return MemoryAgentResult(reply=None, completed=True, steps=1, calls=list(calls))
+
+    def test_저장한_루틴_행동을_저장한_순서대로_싣는다(self):
+        memory = self._memory(
+            _routine_call("create_observation_routine", " 밥 먹기 "),
+            _routine_call("create_observation_routine", "양치"),
+        )
+        (task,) = pipeline._with_recorded(self._tasks(), memory)
+        assert task.recorded_subjects == ("밥 먹기", "양치")
+
+    def test_저장이_실패했거나_다른_도구면_싣지_않는다(self):
+        tasks = self._tasks()
+        memory = self._memory(
+            _routine_call("create_observation_routine", "밥 먹기", success=False),
+            _routine_call("create_observation_activity", "블록"),
+        )
+        assert pipeline._with_recorded(tasks, memory) == tasks
+
+    def test_Memory_가_없으면_그대로다(self):
+        tasks = self._tasks()
+        assert pipeline._with_recorded(tasks, None) == tasks

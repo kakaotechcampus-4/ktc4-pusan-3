@@ -64,14 +64,21 @@ async def opened(task_type: GrowthTaskType, **kwargs):
     return ctx
 
 
-def education(n: int, *, days_ago: int) -> EducationObservation:
+def education(
+    n: int,
+    *,
+    days_ago: int,
+    subject: str = "숫자",
+    topic: str = "계단 숫자 세기",
+    polarity: int = 1,
+) -> EducationObservation:
     return EducationObservation(
         id=UUID(int=800 + n),
         child_id=CHILD,
         observed_on=TODAY - timedelta(days=days_ago),
-        subject="숫자",
-        topic="계단 숫자 세기",
-        polarity=1,
+        subject=subject,
+        topic=topic,
+        polarity=polarity,
     )
 
 
@@ -98,6 +105,28 @@ class TestEducation:
         )
         result = await search_education_memory(ctx, SearchEducationMemoryArgs())
         assert not result.success
+
+    async def test_국어로_글_읽기_기록을_찾는다(self):
+        reading = education(
+            1, days_ago=2, subject="글 읽기", topic="4문장 이상 글 읽기", polarity=-1
+        )
+        dino = education(2, days_ago=2, subject="공룡", topic="공룡 모형 줄 세우기")
+        ctx = await opened(
+            GrowthTaskType.LEARNING_SUGGESTION,
+            memory=InMemoryGrowthMemory(education=[reading, dino]),
+        )
+        result = await search_education_memory(ctx, SearchEducationMemoryArgs(keywords=["국어"]))
+        assert [r["id"] for r in result.data["records"]] == [str(reading.id)]
+
+    async def test_영역_밖_낱말은_지금처럼_맞춘다(self):
+        reading = education(1, days_ago=2, subject="글 읽기", topic="4문장 이상 글 읽기")
+        dino = education(2, days_ago=2, subject="공룡", topic="공룡 모형 줄 세우기")
+        ctx = await opened(
+            GrowthTaskType.LEARNING_SUGGESTION,
+            memory=InMemoryGrowthMemory(education=[reading, dino]),
+        )
+        result = await search_education_memory(ctx, SearchEducationMemoryArgs(keywords=["공룡"]))
+        assert [r["id"] for r in result.data["records"]] == [str(dino.id)]
 
 
 class TestAffinity:
