@@ -516,8 +516,8 @@ class TestCountNotice:
     def test_개수와_상관없는_안내는_code_가_없다(self):
         """날씨 안내도 kind="notice" 다. 개수 안내와 섞여 와도 code 로 가른다."""
         weather = ReadoutText(
-            key="weather.unchecked",
-            template="날씨를 확인하지 못해 실내 놀이만 골랐어요.",
+            key="weather.after_sunset",
+            template="해가 져서 실내 놀이만 골랐어요.",
             kind="notice",
         ).render()
         assert weather.code is None

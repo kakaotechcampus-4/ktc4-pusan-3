@@ -65,6 +65,9 @@ class Suggestion(Base, UUIDPk, Timestamps):
     allergens: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False, server_default="{}")
     # 일정으로 만들 때 준비물(event_item.item_name) 하나씩. 알레르기 판단에는 쓰지 않는다.
     items: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False, server_default="{}")
+    # 장소가 붙은 추천의 확인 문구(공공데이터 기준일 · 운영 여부). Agent 가 코드 문구로 만든다.
+    # 근거가 아니다 — 화면이 제안 문장 아래 한 줄로 세운다 (#516). 장소가 없으면 비어 있다
+    place_notice: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[SuggestionStatus] = mapped_column(
         enum_col_py(SuggestionStatus, name="suggestion_status"),
         nullable=False,
