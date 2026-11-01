@@ -46,6 +46,13 @@ class Settings(AgentLLMSettings):
     # 응답 · 로그 · 예외 문구에 싣지 않는다 (integrations/mafra/client.py)
     MAFRA_RECIPE_API_KEY: str = ""
 
+    # 농촌진흥청 국립식량과학원 「농식품 이달의 식재료」(data.go.kr) 인증키(Decoding) —
+    # 이달의 식재료 레시피 목록 · 상세(Food 추천 후보 재료, #510). 팀의 공공데이터포털 키와
+    # 값이 같아도 설정은 따로 읽는다. 배치에서만 부른다 — 요청 중에는 쓰지 않는다. 비어 있으면
+    # 이 소스만 건너뛰고(기존 적재본은 그대로) 서버는 뜬다. 🚨 비밀 — 키가 요청 주소에
+    # 들어가서 응답 · 로그 · 예외 문구에 싣지 않는다.
+    NICS_RECIPE_API_KEY: str = ""
+
     # 브라우저가 다른 오리진에서 이 API 를 부를 수 있는 목록. 쉼표로 구분한다.
     # 비어 있으면 CORS 를 켜지 않는다 — 같은 오리진 배포에서는 필요 없다.
     CORS_ALLOW_ORIGINS: str = ""

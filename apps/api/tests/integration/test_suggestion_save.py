@@ -401,13 +401,15 @@ async def test_일반_추천인데_문서_근거가_없으면_한_행도_쓰지_
 
 
 # ── Food 일반 추천의 메뉴 근거 (#442) ────────────────────────────────────
-async def recipe_in_catalog(session, source_id="7", *, resolved=True) -> uuid.UUID:
+async def recipe_in_catalog(
+    session, source_id="7", *, resolved=True, source="mafra_recipe"
+) -> uuid.UUID:
     """레시피 카탈로그에 한 행을 넣고 그 행을 가리키는 메뉴 근거 id 를 돌려준다."""
     await food_repository.upsert_recipes(
         session,
         rows=[
             {
-                "source": "mafra_recipe",
+                "source": source,
                 "source_id": source_id,
                 "menu_key": f"레시피{source_id}",
                 "display_name": f"레시피{source_id}",
@@ -417,7 +419,7 @@ async def recipe_in_catalog(session, source_id="7", *, resolved=True) -> uuid.UU
             }
         ],
     )
-    return menu_evidence_id("mafra_recipe", source_id)
+    return menu_evidence_id(source, source_id)
 
 
 def menu_citation(menu: uuid.UUID) -> dict:
@@ -432,6 +434,25 @@ async def test_Food_일반_추천은_메뉴_근거만으로_저장한다(session
     """문서 행이 없어도 고른 메뉴(레시피 카탈로그 행)가 근거다 — 근거 0행이 아니다."""
     _, child, _ = kids
     menu = await recipe_in_catalog(session)
+
+    [row_id] = await save_agent_suggestions(
+        session,
+        child_id=child.id,
+        run_id=RUN,
+        now=NOW,
+        payloads=[payload(citations=[menu_citation(menu)])],
+    )
+
+    row = await session.scalar(
+        select(SuggestionEvidence).where(SuggestionEvidence.suggestion_id == row_id)
+    )
+    assert (row.source_kind, row.source_id) == ("recipe_catalog", menu)
+
+
+async def test_Food_일반_추천은_nics_레시피_메뉴_근거도_저장한다(session, kids):
+    """저장 검사는 소스를 가리지 않고 후보 풀에 그 행이 있는지만 본다 (#510)."""
+    _, child, _ = kids
+    menu = await recipe_in_catalog(session, source="nics_recipe")
 
     [row_id] = await save_agent_suggestions(
         session,

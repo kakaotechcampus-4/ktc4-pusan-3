@@ -57,12 +57,24 @@ async def test_menu_catalog_이_막는_값(session, bad):
 
 @pytest.mark.parametrize(
     "bad",
-    [{"source": "mfds_nutri"}, {"allergen_codes": [20]}, {"stage_min": "adult"}],
+    [
+        {"source": "mfds_nutri"},
+        {"source": "unknown_recipe"},  # 모르는 레시피 소스는 계속 막는다
+        {"allergen_codes": [20]},
+        {"stage_min": "adult"},
+    ],
 )
 async def test_recipe_catalog_이_막는_값(session, bad):
     session.add(recipe(**bad))
     with pytest.raises(IntegrityError):
         await session.flush()
+
+
+@pytest.mark.parametrize("source", ["mafra_recipe", "nics_recipe", "mfds_recipe"])
+async def test_recipe_catalog_이_받는_레시피_소스(session, source):
+    # mfds_recipe 는 RecipeSource 에 아직 없지만 CHECK 는 처음부터 받던 값이다 — 지우지 않는다
+    session.add(recipe(source=source))
+    await session.flush()
 
 
 async def test_이름이_같은_레시피도_따로_행을_둔다(session):
