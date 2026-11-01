@@ -194,6 +194,21 @@ def j_routine(*, need_suggestion: bool) -> Judge:
     return judge
 
 
+def j_asks_once(o: Observed) -> None:
+    """기록이 없는 아이에게 루틴을 물으면 카드가 먼저 나가고 되묻기는 run 끝에 하나 나간다."""
+    event = _ran(o, ROUTINE)
+    if event is None:
+        return
+    if len(o.growth_questions) != 1:
+        o.failures.append(f"되묻기 {len(o.growth_questions)}개 (run 에 하나여야 한다)")
+        return
+    if o.events.index(o.growth_questions[0]) < o.events.index(event):
+        o.failures.append("질문이 카드보다 먼저 나갔다")
+    if event.suggestion_ids:
+        o.failures.append("기록이 없는데 추천이 나갔다")
+    o.notes.append(f"되묻기: {o.growth_questions[0].text}")
+
+
 def j_review(o: Observed) -> None:
     event = _ran(o, REVIEW)
     if event is None:
@@ -320,6 +335,13 @@ CASES: tuple[Case, ...] = (
         "C48-tooth",
         "양치 → routine 추천 저장",
         j_routine(need_suggestion=True),
+    ),
+    Case(
+        "ASK1/C48-empty",
+        "양치를 아직 잘 못해서 걱정이야. 어떻게 가르치지?",
+        "C48-empty",
+        "기록 없는 루틴 요청 → 되묻기 하나 · 카드 뒤",
+        j_asks_once,
     ),
     Case("T24/C48", INPUTS["T24"], "C48", "키 · 몸무게 추이 → growth_review · 모델 0", j_review),
     Case("T27/C48", INPUTS["T27"], "C48", "잘 크고 있어? → growth_review", j_review),
