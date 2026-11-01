@@ -18,6 +18,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.infra.db.base import Base, Timestamps, UUIDPk
 from app.infra.db.types import enum_col_py
+from app.rules.reminder import ReminderLead
 
 
 class EventType(enum.StrEnum):
@@ -106,11 +107,15 @@ class Reminder(Base, UUIDPk):
 
     parent_id 는 ON DELETE CASCADE 다 — 받을 사람 없는 개인 알림 설정은 의미가 없어
     작성자가 탈퇴하면 함께 삭제된다 (다른 공동 기록의 작성자 FK SET NULL 과 다르다).
+
+    울릴 시각은 저장하지 않는다 (#594). `lead`("1시간 전")만 두고 보낼 때 일정 시작에서
+    계산한다(`app/rules/reminder.py`) — 일정 시간을 옮기면 알림이 따라간다.
+    (event_id, parent_id) 유니크 — 보호자 한 명은 한 일정에 알림 1개.
     """
 
     __tablename__ = "reminder"
     __table_args__ = (
-        Index("ix_reminder_event_id", "event_id"),
+        UniqueConstraint("event_id", "parent_id", name="uq_reminder_event_id_parent_id"),
         Index("ix_reminder_parent_id", "parent_id"),
     )
 
@@ -120,7 +125,9 @@ class Reminder(Base, UUIDPk):
     parent_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("parent.id", ondelete="CASCADE"), nullable=False
     )
-    remind_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    lead: Mapped[ReminderLead] = mapped_column(
+        enum_col_py(ReminderLead, name="reminder_lead"), nullable=False
+    )
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
