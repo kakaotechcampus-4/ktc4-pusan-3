@@ -337,8 +337,15 @@ CASES: tuple[Case, ...] = (
         j_routine(need_suggestion=True),
     ),
     Case(
-        "ASK1/C48-empty",
+        "ASK2/C48-empty-mixed",
         "양치를 아직 잘 못해서 걱정이야. 어떻게 가르치지?",
+        "C48-empty",
+        "기록 + 요청 혼합 → 저장 먼저, 그다음 되묻거나 추천 (어느 쪽이든 죽지 않는다)",
+        j_routine(need_suggestion=False),
+    ),
+    Case(
+        "ASK1/C48-empty",
+        "양치 혼자 하게 하고 싶어",
         "C48-empty",
         "기록 없는 루틴 요청 → 되묻기 하나 · 카드 뒤",
         j_asks_once,

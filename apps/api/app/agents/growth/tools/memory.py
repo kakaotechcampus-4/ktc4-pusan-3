@@ -52,8 +52,8 @@ from app.agents.growth.tools.routine import (
     ChainError,
     NextStep,
     PickedStep,
-    current_assistance_level,
     pick_next_step,
+    routine_level,
 )
 from app.agents.growth.tools.triggers import trigger_tags
 from app.rules.growth_topic import expand_keywords
@@ -308,6 +308,24 @@ async def search_routine_memory(
     )
 
 
+async def category_chains(
+    context: GrowthContext, category: str
+) -> dict[str, tuple[GrowthDocRow, ...]]:
+    """이 아이 월령의 자립 단계 사슬. run 안에서 카테고리마다 한 번만 읽는다.
+
+    조회(`_pick_steps`)와 되묻기 쪽(저장 이름 · 자료 없음 판정)이 같은 사슬을 쓴다. 되묻는 길에서
+    문서 포트를 다시 부르면 20초 안의 왕복이 는다.
+    """
+    cached = context.state.chains.get(category)
+    if cached is None:
+        gate = context.state.gate
+        assert gate is not None
+        months = gate.stage.months
+        cached = await routine_chains(context.ports.docs, months=months, category=category)
+        context.state.chains[category] = cached
+    return cached
+
+
 async def _pick_steps(context: GrowthContext, rows: Sequence[RoutineObservation]) -> None:
     """관찰마다가 아니라 **사슬마다** 한 번 고른다.
 
@@ -318,18 +336,13 @@ async def _pick_steps(context: GrowthContext, rows: Sequence[RoutineObservation]
     """
     gate = context.state.gate
     assert gate is not None
-    months, today = gate.stage.months, context.today
+    today = context.today
     steps = context.state.steps
-    chains_by_category: dict[str, dict[str, tuple[GrowthDocRow, ...]]] = {}
     for row in rows:
         category = row.routine_category
         if category not in SELF_RELIANCE:
             continue
-        if category not in chains_by_category:
-            chains_by_category[category] = await routine_chains(
-                context.ports.docs, months=months, category=category
-            )
-        chain = match_chain(chains_by_category[category], row.subject)
+        chain = match_chain(await category_chains(context, category), row.subject)
         if chain is None:
             unmatched = f"{category}|{normalize(row.subject)}"
             if unmatched not in steps:
@@ -345,7 +358,7 @@ async def _pick_steps(context: GrowthContext, rows: Sequence[RoutineObservation]
             for obs in rows
             if obs.routine_category == category and match_chain({key: chain}, obs.subject)
         ]
-        level = current_assistance_level(same, category=category, subject=None, today=today)
+        level = routine_level(same, category=category, today=today)
         latest = max(same, key=lambda obs: obs.observed_on)
         try:
             step = pick_next_step(chain, assistance_level=level)

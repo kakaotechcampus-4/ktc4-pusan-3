@@ -346,13 +346,78 @@ class TestRoutine:
         )
         result = await run(task("routine_coaching", "양치 혼자 하게"), docs_ctx(), client=llm)
         assert result.status == "completed" and result.model_calls == 1
-        assert result.needs_observation == ("양치은(는) 요즘 어느 정도까지 혼자 하나요?",)
+        assert result.needs_observation == ("양치는 요즘 어느 정도까지 혼자 하나요?",)
         # #452 리뷰 — 질문 자리를 못 받아도 카드가 혼자 서는 안내 한 줄. 0개 안내라 05 묶음
         # 안내(`empty_notice`)도 이 문장이다
         (notice,) = result.readouts
         assert (notice.code, notice.authored_by) == ("empty", "code")
         # 습관(상황 · 지금도 하는지)을 물을 때도 붙어서 "다음 단계" 라고 하지 않는다
         assert notice.body == "지금 어떤지 알아야 맞는 방법을 고를 수 있어요."
+
+    async def test_되묻기_결과에_물은_자리가_실린다(self):
+        llm = FakeLLM(
+            call("propose_routine_plan", {"category": "self_care", "subject": "양치", "items": []})
+        )
+        result = await run(task("routine_coaching", "양치 혼자 하게"), docs_ctx(), client=llm)
+        pending = result.pending
+        assert pending is not None
+        assert (pending.agent, pending.kind) == ("growth", "ask.routine_current")
+        assert pending.payload == {
+            "subject": "양치",
+            "category": "self_care",
+            "field": "assistance_level",
+        }
+        assert result.needs_observation == (pending.question,)
+
+    async def test_사슬_이름과_다른_말로_물어도_저장_이름은_사슬_이름이다(self):
+        llm = FakeLLM(
+            call(
+                "propose_routine_plan", {"category": "self_care", "subject": "칫솔질", "items": []}
+            )
+        )
+        result = await run(task("routine_coaching", "칫솔질 혼자 하게"), docs_ctx(), client=llm)
+        assert result.pending is not None
+        assert result.pending.payload["subject"] == "양치"
+
+    async def test_예_아니오_습관_질문은_이어받을_자리가_없다(self):
+        """ "요즘도 손가락 빨기 하나요?" 의 답은 어느 칸에도 옮길 값이 없다."""
+        llm = FakeLLM(
+            call(
+                "propose_routine_plan",
+                {"category": "habit", "subject": "손가락 빨기", "items": []},
+            )
+        )
+        result = await run(
+            task("routine_coaching", "손가락 빨기 고치고 싶어"), docs_ctx(months=40), client=llm
+        )
+        assert result.needs_observation == ("요즘도 손가락 빨기 하나요?",)
+        assert result.pending is None
+
+    async def test_습관_상황을_묻는_질문은_trigger_칸을_싣는다(self):
+        obs = RoutineObservation(
+            id=UUID(int=702),
+            child_id=CHILD,
+            observed_on=TODAY - timedelta(days=1),
+            subject="손가락 빨기",
+            routine_category="habit",
+            polarity=0,
+        )
+        ctx = docs_ctx(months=40, memory=InMemoryGrowthMemory(routine=[obs]))
+        llm = FakeLLM(
+            call("search_routine_memory", {}),
+            call(
+                "propose_routine_plan",
+                {"category": "habit", "subject": "손가락 빨기", "items": []},
+            ),
+        )
+        result = await run(task("routine_coaching", "손가락 빨기 고치고 싶어"), ctx, client=llm)
+        assert result.pending is not None
+        assert result.pending.kind == "ask.habit_trigger"
+        assert result.pending.payload["field"] == "trigger"
+
+    async def test_닫힌_결과에는_물은_자리가_없다(self):
+        result = await run(task("routine_coaching", "약 먹이기"), docs_ctx(), client=FakeLLM())
+        assert result.pending is None
 
     async def test_고른_단계로_개인화_추천_하나와_개수_안내다(self):
         obs = RoutineObservation(

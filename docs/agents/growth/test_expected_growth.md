@@ -111,6 +111,7 @@ run 은 이전 run 을 기억하지 않는다. 추천이 저장되면 대화에�
 | | C48-stale | 1 | **역질의** `ask.routine_current` — 15일 전 관찰은 근거가 아니다 | 오래된 수준으로 다음 단계 제안 |
 | | C48-othercat | 1 | **역질의** `ask.routine_current` | 다른 카테고리 관찰 · affinity 를 근거로 제안 |
 | | C48-noassist | 1 | **역질의** `ask.routine_current` | `assistance_level` 을 추정해 단계를 고름 |
+| | C48-empty 에서 되묻기에 답함 (`reply_to`) | 1 | 답을 **물은 행동**(`양치`) 한 건으로 저장 · 질문 0개 · 수준을 읽었으면 추천 1개 이상 · 사슬 끝이면 `next_step.chain_end` · 수준도 수행 결과도 안 읽히면 `next_step.level_unread` | 답이 맥락 없는 새 입력으로 버려짐 · 모델이 적은 다른 행동 이름으로 저장 · 읽히지 않는 수준을 추정 · 같은 질문 되풀이 |
 | T14 | growth/routine (`self_care`) | 1 | 일반 안내 | "늦었다" · 시기 판정 |
 | T15 | growth/routine (`transition`) | 1 | 예고·순서 만들기 | – |
 | T16 | growth/routine (`transition`) | 1 | 동일 | "떼쓰기 문제" 규정 |
