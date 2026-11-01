@@ -7,6 +7,7 @@ import asyncio
 import json
 import logging
 import re
+import time
 from datetime import timedelta
 from types import SimpleNamespace
 from typing import Any
@@ -890,6 +891,106 @@ class TestTopic:
         ctx = docs_ctx()
         await run(task("learning_suggestion", "놀이 추천해줘"), ctx, client=FakeLLM())
         assert ctx.state.topic == ()
+
+
+class TestOffTopicRecall:
+    async def test_주제_밖_후보가_빠지면_재호출로_채운다(self):
+        text = "한글 놀이 추천해줘"
+        probe = FakeLLM()
+        await run(task("learning_suggestion", text), docs_ctx(), client=probe)
+        doc_id = probe.seen[0][0]["content"].split("- id ", 1)[1].split(" ", 1)[0]
+        first = call(
+            "propose_learning_activity",
+            {
+                "items": [
+                    {
+                        "title": title,
+                        "steps": ["하나씩 해 본다"],
+                        "materials": [],
+                        "evidence": evidence,
+                        "reason": "이 나이에 많이 하는 활동이에요",
+                    }
+                    for title, evidence in (
+                        ("공룡 이름 짝맞추기", []),
+                        ("한글 자음 찾기", [{"id": doc_id, "note": "이 나이 예시를 참고했어요"}]),
+                        (
+                            "이야기 이어 말하기",
+                            [{"id": doc_id, "note": "이 나이 예시를 참고했어요"}],
+                        ),
+                    )
+                ]
+            },
+        )
+        # 재호출은 후보 세 개를 다시 내고, 앞에서 통과한 둘은 그대로 두고 빈자리만 채운다
+        llm = FakeLLM(
+            first, learning("글자 카드 놀이", "낱말 이어 말하기", "한글 소리 놀이", doc_id=doc_id)
+        )
+        result = await run(task("learning_suggestion", text), docs_ctx(), client=llm)
+        assert result.status == "completed" and result.model_calls == 2
+        titles = [d.content.split("\n")[0] for d in result.suggestions]
+        assert titles == ["한글 자음 찾기", "이야기 이어 말하기", "글자 카드 놀이"]
+        assert "공룡 이름 짝맞추기" in llm.seen[1][-1]["content"]
+
+
+class SlowSecondCall:
+    """첫 대화는 정해 둔 응답, 둘째 대화부터는 오래 걸리는 모델 가짜."""
+
+    def __init__(self, first: LLMResponse, delay: float) -> None:
+        self._first = first
+        self._delay = delay
+        self.calls = 0
+
+    async def chat(self, messages, **kwargs) -> LLMResponse:
+        self.calls += 1
+        if self.calls == 1:
+            return self._first
+        await asyncio.sleep(self._delay)
+        return LLMResponse(
+            message=SimpleNamespace(content="끝", tool_calls=None), usage={}, latency_ms=1
+        )
+
+
+def _with_deadline(text: str, seconds: float) -> DomainTask:
+    return DomainTask(
+        run_id="run-1",
+        agent="growth",
+        task_type="learning_suggestion",
+        request_texts=(text,),
+        deadline=time.perf_counter() + seconds,
+    )
+
+
+class TestRecallDeadline:
+    """안전 필터로 빠져 재호출하다 run 마감(20초)에 걸려도 처음 통과한 후보는 지킨다."""
+
+    async def test_재호출이_마감에_걸리면_처음_통과한_후보로_완료한다(self, monkeypatch):
+        monkeypatch.setattr("app.agents.growth.agent.RECALL_MARGIN_S", 0.0)
+        doc_id = await example_id()
+        first = learning("땅콩 세기", "색깔 찾기", "모양 맞추기", doc_id=doc_id)
+        llm = SlowSecondCall(first, delay=3.0)
+        started = time.perf_counter()
+        result = await run(_with_deadline("숫자 놀이 추천해줘", 0.5), docs_ctx(), client=llm)
+        assert time.perf_counter() - started < 2.0
+        assert result.status == "completed" and len(result.suggestions) == 2
+        assert [r.code for r in result.readouts] == ["fewer"]
+
+    async def test_재호출_전에_마감이_지났으면_재호출하지_않는다(self):
+        doc_id = await example_id()
+        llm = FakeLLM(learning("땅콩 세기", "색깔 찾기", "모양 맞추기", doc_id=doc_id))
+        result = await run(_with_deadline("숫자 놀이 추천해줘", -1.0), docs_ctx(), client=llm)
+        assert result.status == "completed" and len(result.suggestions) == 2
+        assert result.model_calls == 1 and len(llm.seen) == 1
+
+    async def test_마감이_없으면_지금처럼_재호출한다(self):
+        doc_id = await example_id()
+        llm = FakeLLM(
+            learning("땅콩 세기", "색깔 찾기", "모양 맞추기", doc_id=doc_id),
+            learning("색깔 찾기", "소리 듣기", "그림자 놀이", doc_id=doc_id),
+        )
+        result = await run(
+            task("learning_suggestion", "숫자 놀이 추천해줘"), docs_ctx(), client=llm
+        )
+        assert result.model_calls == 2 and len(result.suggestions) == 3
 
 
 class TestEvidencePrompt:

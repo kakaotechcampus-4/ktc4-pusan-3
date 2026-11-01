@@ -27,3 +27,6 @@ class DomainTask:
     # "밥 먹을 때 힘들어해. 어떻게 하면 좋을까?" 에서 모델이 요청 조각만 보고 다른 행동을 적어도
     # 보호자가 말한 행동을 코드가 안다. 05 다시 시도는 Memory 가 없어 싣지 않는다
     recorded_subjects: tuple[str, ...] = ()
+    # pipeline 이 이 task 를 돌리는 run 의 마감 시각(`time.perf_counter` 기준). 없으면 마감이 없다.
+    # Growth 는 재호출이 마감에 걸리면 처음 통과한 후보를 지키려고 이 값을 본다
+    deadline: float | None = None

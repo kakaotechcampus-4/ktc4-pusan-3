@@ -5,6 +5,7 @@ LLM 은 정해 둔 응답을 내는 가짜다. 포트는 entrypoint 가 만드�
 """
 
 import json
+import time
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
@@ -561,7 +562,7 @@ class ReadsHandwash:
         self.calls += 1
         if self.calls == 1:
             return call("search_routine_memory", {})
-        result = json.loads(next(m for m in reversed(messages) if m["role"] == "tool")["content"])
+        result = json.loads(next(m for m in messages if m["role"] == "tool")["content"])
         record = next(r for r in result["data"]["records"] if r["category"] == "self_care")
         (step,) = result["data"]["next_steps"]
         return call(
@@ -703,3 +704,88 @@ class TestWithRecorded:
     def test_Memory_가_없으면_그대로다(self):
         tasks = self._tasks()
         assert pipeline._with_recorded(tasks, None) == tasks
+
+
+async def test_Memory_가_저장하지_못해도_식사_고민에_손_씻기_단계를_내지_않는다():
+    """기록한 행동을 모르는 run — 보호자가 말한 카테고리(식사) 밖의 단계는 범위가 막는다."""
+    store = InMemoryStore(now=NOW)
+    day = TODAY - timedelta(days=1)
+    await store.create_observation(
+        domain="routine",
+        child_id=CHILD,
+        source_writer=PARENT,
+        raw_text="어제 손 씻기는 어른이 다 해 줬어",
+        observed_on=day,
+        observed_range=build_observed_range(day),
+        fields={
+            "subject": "손 씻기",
+            "routine_category": "self_care",
+            "polarity": 0,
+            "assistance_level": "full_assist",
+        },
+    )
+    raw = "아이가 밥 먹을 때 너무 힘들어해 어떻게 하면 좋을까?"
+    supervisor = FakeLLM(
+        call(
+            "route",
+            {
+                "segments": [
+                    {
+                        "text": "아이가 밥 먹을 때 너무 힘들어해",
+                        "kind": "record",
+                        "work": "observe",
+                    },
+                    {
+                        "text": "어떻게 하면 좋을까?",
+                        "kind": "request",
+                        "agent": "growth",
+                        "growth_task": "routine_coaching",
+                    },
+                ]
+            },
+        )
+    )
+    # Memory 는 아무것도 저장하지 않고 끝낸다
+    memory = FakeLLM(
+        LLMResponse(
+            message=SimpleNamespace(content="기록하지 못했어요.", tool_calls=None),
+            usage={},
+            latency_ms=1,
+        )
+    )
+    saved = entrypoint.InMemorySuggestions()
+    events: list[Any] = []
+
+    await pipeline.handle_input(
+        raw,
+        AgentContext(child_id=CHILD, source_writer=PARENT, now=NOW, timezone=KST, store=store),
+        contexts(store),
+        run_id="run-1",
+        supervisor_client=supervisor,
+        memory_client=memory,
+        domain_clients={"growth": ReadsHandwash()},
+        emit=events.append,
+        commit=_no_commit,
+        save_suggestions=saved,
+    )
+
+    assert not saved.batches
+    assert all(not e.suggestion_ids for e in events if isinstance(e, pipeline.AgentResult))
+
+
+async def test_도메인_task_에_run_마감이_실린다(monkeypatch):
+    """Growth 는 이 마감으로 재호출 여부를 정한다 — pipeline 이 아는 값이다."""
+    real = pipeline._RUNNERS["growth"]
+    deadlines: list[float | None] = []
+
+    async def recording(task, context, **kwargs):
+        deadlines.append(task.deadline)
+        return await real(task, context, **kwargs)
+
+    monkeypatch.setitem(pipeline._RUNNERS, "growth", recording)
+    before = time.perf_counter()
+    await handle("잘 크고 있어?", "growth_review", InMemoryStore(now=NOW), FakeLLM())
+
+    (deadline,) = deadlines
+    assert deadline is not None
+    assert before < deadline <= time.perf_counter() + pipeline.RUN_DEADLINE_S

@@ -70,6 +70,7 @@ async def propose_learning_activity(
         seen=state.seen_evidence,
         docs=state.seen_docs,
         today=context.today,
+        topic=state.strict_topic,
     )
     if review.rejections:
         usable = (*state.seen_evidence, *state.seen_docs)
@@ -100,6 +101,22 @@ async def propose_routine_plan(context: GrowthContext, args: ProposeRoutinePlanA
         state.closing = closed
         return ok("propose", _ROUTINE, closed=True)
 
+    requested, from_record = _requested(state, args.subject)
+    scope = state.routine_scope
+    if scope and args.category not in scope and not from_record:
+        # 보호자가 말한 행동의 카테고리가 아니다 — 기록이 있는 다른 행동(손 씻기)의 단계로
+        # 채우지 않고 말한 카테고리로 다시 부르게 한다. 카테고리 키는 tool 인자의 값이라
+        # 모델이 이미 안다. 같은 run 에 저장한 행동을 아는 경우(`from_record`)는 아래가 그
+        # 행동으로 바로 되묻는다
+        return fail(
+            "propose",
+            _ROUTINE,
+            ErrorCode.CANDIDATE_REJECTED,
+            f"보호자가 말한 행동은 {', '.join(scope)} 카테고리다. "
+            "category 와 subject 를 그에 맞춰 다시 부른다. 필요하면 search_routine_memory 로 "
+            "그 카테고리의 기록을 다시 조회한다.",
+        )
+
     observed = tuple(state.seen_routine.values())
     gap = routine_gap(observed, category=args.category, today=today)
     if gap is not None:
@@ -112,7 +129,6 @@ async def propose_routine_plan(context: GrowthContext, args: ProposeRoutinePlanA
     # 요청한 행동의 단계만 낸다 — 양치를 물었는데 같은 카테고리의 손 씻기 단계를 끼우지 않는다.
     # 맞는 단계가 없고 모델이 단계를 비워 냈으면 그 행동의 지금 수준을 모르므로 되묻는다.
     # 맞는 것이 없는데 단계를 냈으면("아침 씻기" 처럼 여러 행동) 지금처럼 고른 단계 전부다
-    requested, from_record = _requested(state, args.subject)
     wanted = [p for p in picked if _same_behavior(p, requested)]
     if wanted:
         picked = wanted

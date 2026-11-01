@@ -63,7 +63,7 @@ from app.agents.growth.tools.closures import closure_key
 from app.agents.growth.tools.delta import asks_judgement, compute_growth_delta
 from app.agents.growth.tools.docs import DocHit, search_growth_doc
 from app.agents.growth.tools.memory import has_citable_memory
-from app.rules.growth_topic import request_topic
+from app.rules.growth_topic import request_topic, routine_scope, strict_topic
 from app.rules.term_match import normalize
 
 logger = logging.getLogger(__name__)
@@ -72,6 +72,8 @@ AGENT = "growth"
 # 대화 한 번의 왕복 상한. 기억 조회 두세 번 + 제출 + 거절 뒤 재제출
 MAX_STEPS = 8
 MAX_COMPLETION_TOKENS = 2000
+# 재호출은 run 마감(20초)보다 이만큼 일찍 끝낸다. 마감에 걸리면 처음 통과한 후보까지 버려진다
+RECALL_MARGIN_S = 2.0
 
 
 async def run(
@@ -102,6 +104,8 @@ async def _run(
     gate = await build_gate(context, task_type)
     context.state.gate = gate
     context.state.topic = request_topic(task.request_texts, task.record_texts)
+    context.state.strict_topic = strict_topic(task.request_texts, task.record_texts)
+    context.state.routine_scope = routine_scope(task.request_texts, task.record_texts)
     context.state.said_texts = (*task.request_texts, *task.record_texts)
     context.state.recorded_subjects = task.recorded_subjects
 
@@ -178,21 +182,31 @@ async def _run(
     picked = state.suggestions
     model_calls = 1
     if state.excluded and len(picked) < state.capacity:
-        # 안전 필터 · 금지 표현으로 빠졌다. 사유 없이 제외 목록만 주고 1회 더 부른다
-        model_calls = 2
-        state.model_calls = 2
-        state.done_steps = frozenset(step for draft in picked if (step := step_of(draft)))
-        if task_type is GrowthTaskType.BOOK_SUGGESTION:
-            # 처음 고른 책과 빠진 책은 재호출에서 다시 낼 수 없다 — 이미 낸 책처럼 거절한다
-            state.done_books = frozenset(
-                normalize(name) for name in (*(d.content for d in picked), *state.excluded)
-            )
-        try:
-            again = await _recall(llm, messages, task, context, allowed, output, picked)
-        except UpstreamUnavailable:
-            # 재호출에서 다시 찾다가 실패했다. 처음 통과한 책은 그대로 낸다 (부분 결과)
-            logger.warning("Growth 도서 재검색 실패 run_id=%s", context.run_id)
-            again = None
+        # 안전 필터 · 금지 표현 · 주제 밖으로 빠졌다. 사유 없이 제외 목록만 주고 1회 더 부른다.
+        # run 마감(20초)까지 남은 시간이 모자라면 재호출하지 않는다 — 마감에 걸려 처음 통과한
+        # 후보까지 잃느니 그 후보로 끝낸다
+        budget = _recall_budget(task)
+        again: tuple[SuggestionDraft, ...] | None = None
+        if budget is not None and budget <= 0:
+            logger.warning("Growth 재호출을 건너뛴다 — 마감이 가깝다 run_id=%s", context.run_id)
+        else:
+            model_calls = 2
+            state.model_calls = 2
+            state.done_steps = frozenset(step for draft in picked if (step := step_of(draft)))
+            if task_type is GrowthTaskType.BOOK_SUGGESTION:
+                # 처음 고른 책과 빠진 책은 재호출에서 다시 낼 수 없다 — 이미 낸 책처럼 거절한다
+                state.done_books = frozenset(
+                    normalize(name) for name in (*(d.content for d in picked), *state.excluded)
+                )
+            try:
+                again = await asyncio.wait_for(
+                    _recall(llm, messages, task, context, allowed, output, picked), budget
+                )
+            except UpstreamUnavailable:
+                # 재호출에서 다시 찾다가 실패했다. 처음 통과한 책은 그대로 낸다 (부분 결과)
+                logger.warning("Growth 도서 재검색 실패 run_id=%s", context.run_id)
+            except TimeoutError:
+                logger.warning("Growth 재호출이 마감에 걸렸다 run_id=%s", context.run_id)
         if again is None and not picked:
             return _result(task_type, "failed", model_calls=model_calls)
         picked = merge_drafts(picked, again or (), key=_same(task_type))
@@ -315,6 +329,13 @@ def _same(task_type: GrowthTaskType) -> Callable[[SuggestionDraft], object]:
     if task_type is GrowthTaskType.BOOK_SUGGESTION:
         return lambda draft: normalize(draft.content)
     return lambda draft: normalize(draft.content.split("\n", 1)[0])
+
+
+def _recall_budget(task: DomainTask) -> float | None:
+    """재호출에 쓸 수 있는 초. 마감이 없으면 None(제한 없음), 0 이하면 재호출하지 않는다."""
+    if task.deadline is None:
+        return None
+    return task.deadline - time.perf_counter() - RECALL_MARGIN_S
 
 
 async def _recall(
