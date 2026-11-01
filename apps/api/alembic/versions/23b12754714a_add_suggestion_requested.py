@@ -8,7 +8,7 @@ NOT NULL · 기본 false — 이 칸이 생기기 전의 행은 요청 기반 �
 requested 를 보내지 않았다).
 
 Revision ID: 23b12754714a
-Revises: d916c437f5dd
+Revises: 01803571133f
 Create Date: 2026-11-01
 """
 
@@ -19,7 +19,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "23b12754714a"
-down_revision: Union[str, Sequence[str], None] = "d916c437f5dd"
+down_revision: Union[str, Sequence[str], None] = "01803571133f"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
