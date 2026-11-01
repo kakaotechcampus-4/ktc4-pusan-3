@@ -1,0 +1,169 @@
+"""행사 원문 읽기 · 거르기 규칙 — 어댑터는 원문만 넘기고 여기서 읽는다 (`events.py`).
+
+- 못 읽는 행은 빼고, 온라인 · 술 행사는 아이와 갈 곳으로 내지 않는다.
+- 관람 연령이 아이보다 높으면 뺀다. 보호자와 함께 들어갈 수 있으면 둔다. 못 읽는 조건은 뺀다.
+"""
+
+from datetime import date
+
+import pytest
+
+from app.agents.activity.events import (
+    EventKind,
+    age_allows,
+    distance_m,
+    open_on,
+    read_event,
+)
+from app.agents.activity.store.ports import CoarseLocation
+from app.core.event_raw import RawEvent
+
+
+def raw(**overrides: str) -> RawEvent:
+    values = {
+        "content_id": "100",
+        "title": "부산 바다 축제",
+        "start": "20261101",
+        "end": "20261109",
+        "mapx": "129.16",
+        "mapy": "35.16",
+        "kind_code": "EV01",
+        "progress": "",
+    }
+    values.update(overrides)
+    return RawEvent(**values)
+
+
+class TestReadEvent:
+    def test_원문을_날짜_좌표_종류로_읽는다(self):
+        event = read_event(raw())
+
+        assert event is not None
+        assert event.name == "부산 바다 축제"
+        assert event.kind is EventKind.FESTIVAL
+        assert (event.starts_on, event.ends_on) == (date(2026, 11, 1), date(2026, 11, 9))
+        assert (event.lat, event.lon) == (35.16, 129.16)
+
+    @pytest.mark.parametrize(
+        ("code", "kind"),
+        [("EV01", EventKind.FESTIVAL), ("EV02", EventKind.PERFORMANCE), ("EV03", EventKind.EVENT)],
+    )
+    def test_종류는_분류_코드로_정한다(self, code, kind):
+        event = read_event(raw(kind_code=code))
+
+        assert event is not None
+        assert event.kind is kind
+
+    @pytest.mark.parametrize(
+        "broken",
+        [
+            {"title": " "},
+            {"start": ""},
+            {"end": "2026-11-09"},
+            {"start": "20261110", "end": "20261101"},
+            {"mapx": ""},
+            {"mapy": "북위"},
+            {"mapx": "0", "mapy": "0"},
+            {"kind_code": "EV09"},
+        ],
+    )
+    def test_못_읽는_행은_뺀다(self, broken):
+        assert read_event(raw(**broken)) is None
+
+    def test_온라인_행사는_갈_곳이_없어_뺀다(self):
+        assert read_event(raw(progress="온라인")) is None
+
+    @pytest.mark.parametrize(
+        "title",
+        [
+            "거제맥주축제",
+            "고양 푸드앤비어페스티벌",
+            "전주막걸리축제",
+            "춘천 술 페스타",
+            "2026 대한민국 우리술 대축제",
+            "와인 페스티벌",
+            "전통주 갤러리 시음회",
+        ],
+    )
+    def test_술_행사는_아이와_할_활동으로_내지_않는다(self, title):
+        assert read_event(raw(title=title)) is None
+
+    @pytest.mark.parametrize(
+        "title",
+        [
+            "부산종합민속예술제",
+            "2026 달성 대구현대미술제",
+            "변용의 기술",
+            "어린이 마술 공연",
+            "술래잡기 한마당",
+        ],
+    )
+    def test_술이_낱말_안에_든_이름은_술_행사가_아니다(self, title):
+        assert read_event(raw(title=title)) is not None
+
+
+class TestOpenOn:
+    def test_그날이_기간_안이면_열린다(self):
+        event = read_event(raw(start="20261101", end="20261109"))
+
+        assert open_on(event, [date(2026, 11, 1)])
+        assert open_on(event, [date(2026, 11, 9)])
+        assert not open_on(event, [date(2026, 11, 10)])
+
+    def test_여러_날_중_하루라도_열리면_열린다(self):
+        event = read_event(raw(start="20261108", end="20261108"))
+
+        assert open_on(event, [date(2026, 11, 7), date(2026, 11, 8)])
+        assert not open_on(event, [date(2026, 11, 7)])
+
+
+# 만 나이(개월). 3살 아이
+THREE_YEARS = 36
+
+
+class TestAgeAllows:
+    @pytest.mark.parametrize("text", ["", "  ", "전 연령", "전연령", "누구나", "제한 없음"])
+    def test_제한이_없으면_된다(self, text):
+        assert age_allows(text, THREE_YEARS)
+
+    @pytest.mark.parametrize("text", ["만 13세 이상", "만 18세 이상", "8세 이상", "48개월 이상"])
+    def test_아이보다_높은_연령이면_뺀다(self, text):
+        assert not age_allows(text, THREE_YEARS)
+
+    @pytest.mark.parametrize("text", ["만 3세 이상", "36개월 이상", "24개월 이상"])
+    def test_아이가_그_연령이면_된다(self, text):
+        assert age_allows(text, THREE_YEARS)
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "만 13세(중학생) 이상 ※ 13세 미만의 경우 보호자 동행 필수",
+            "전 연령 (만 12세 이하 성인 동반 필수)",
+            "전 연령※ 미성년자는 보호자 동반 시 입장 가능",
+        ],
+    )
+    def test_보호자와_함께_들어갈_수_있으면_된다(self, text):
+        # 이 서비스의 나들이는 보호자와 간다
+        assert age_allows(text, THREE_YEARS)
+
+    def test_보호자_동반이_안_된다고_적혀_있으면_연령으로_본다(self):
+        assert not age_allows("만 19세 이상 (보호자 동반 불가)", THREE_YEARS)
+
+    @pytest.mark.parametrize("text", ["초등학생 이상", "성인", "청소년 관람불가"])
+    def test_못_읽는_조건은_뺀다(self, text):
+        # 연령을 모르는 채 아이에게 내지 않는다 — 더 막는 쪽
+        assert not age_allows(text, THREE_YEARS)
+
+
+class TestDistance:
+    def test_서버가_거리를_계산한다(self):
+        event = read_event(raw(mapx="129.08", mapy="35.18"))
+        origin = CoarseLocation(lat=35.18, lon=129.08)
+
+        assert distance_m(event, origin) == 0
+
+    def test_위도_0도1은_약_11km다(self):
+        event = read_event(raw(mapx="129.08", mapy="35.28"))
+        origin = CoarseLocation(lat=35.18, lon=129.08)
+
+        assert 11_000 < distance_m(event, origin) < 11_300

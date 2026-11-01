@@ -32,6 +32,7 @@ from app.agents.activity.schemas.common import (
     ActivitySetting,
     CaregiverRole,
     DayLabel,
+    EventKind,
     Intensity,
     PlaceCategory,
 )
@@ -44,6 +45,7 @@ from app.agents.activity.store.inmemory import (
 from app.agents.activity.store.ports import (
     ActivityDocRow,
     ActivityObservation,
+    EventRow,
     PlaceRow,
     SafetyEntry,
 )
@@ -101,6 +103,16 @@ PARK_ROW = PlaceRow(
     data_date=date(2026, 6, 30),
 )
 
+FEST = "광안리 가을 축제"  # 이번 run 에 행사 조회가 돌려준 행사. TODAY(09-29 화) 부터 10-01 까지
+FEST_ROW = EventRow(
+    name=FEST,
+    kind=EventKind.FESTIVAL,
+    starts_on=date(2026, 9, 29),
+    ends_on=date(2026, 10, 1),
+    place="광안리해수욕장 일원",
+    distance_m=3_000,
+)
+
 
 TOWER_DOC = ActivityDocRow(
     id=UUID(int=21),
@@ -126,6 +138,7 @@ def review(
     seen=SEEN,
     recent=(),
     places=None,
+    events=None,
     safety=(),
     outdoor=None,
     docs=DOCS,
@@ -138,6 +151,7 @@ def review(
         seen=seen,
         recent_activities=recent,
         places={PARK: PARK_ROW} if places is None else places,
+        events={FEST: FEST_ROW} if events is None else events,
         safety=safety_terms(safety),
         outdoor=outdoor,
         docs=docs,
@@ -470,6 +484,47 @@ class TestPlace:
         assert draft.place_notice == "가기 전에 운영 여부를 확인해 주세요."
 
 
+class TestEvent:
+    """행사는 장소처럼 place_name 으로 붙는다. 그날 열려야 하고, 바깥 나들이로 본다."""
+
+    def test_조회한_행사는_이름을_문장_앞에_붙이고_확인_문구를_칸으로_싣는다(self):
+        (draft,) = review(candidate(content="모래 조각 구경하기", place_name=FEST)).drafts
+        assert draft.content == "광안리 가을 축제에서 모래 조각 구경하기"
+        assert draft.place_notice == (
+            "한국관광공사 행사 정보예요. 일정과 관람 연령이 바뀔 수 있으니 가기 전에 확인해 주세요."
+        )
+
+    def test_행사는_근거에_넣지_않는다(self):
+        (draft,) = review(candidate(content="모래 조각 구경하기", place_name=FEST)).drafts
+        assert [c.ref.id for c in draft.citations] == [BLOCKS]
+
+    @pytest.mark.parametrize("day", [DayLabel.TOMORROW, DayLabel.THIS_WEEKEND])
+    def test_그날_열리지_않는_행사는_거절(self, day):
+        """10-01 에 끝나서 주말(10-03 · 04)에는 없다. 내일(09-30)은 열린다."""
+        result = review(candidate(content="축제 구경", place_name=FEST, day=day))
+        expected = None if day == DayLabel.TOMORROW else RejectReason.EVENT_CLOSED
+        assert reason_of(result) is expected
+        assert "광안리" not in explain(result.rejections)
+
+    def test_행사는_바깥_나들이라_바깥이_어려운_날이면_거절(self):
+        """실내 공연이어도 오가는 길과 줄이 바깥이다 — setting 이 indoor 여도 막는다."""
+        indoor = candidate(content="공연 보기", setting="indoor", place_name=FEST)
+        result = review(indoor, outdoor={DayLabel.TODAY: False})
+        assert reason_of(result) is RejectReason.OUTDOOR_CLOSED
+
+    def test_말한_지역에서_찾은_행사에는_근처를_쓰지_않는다(self):
+        near = candidate(content="근처 축제 구경", place_name=FEST)
+        assert reason_of(review(near, area_places={FEST})) is RejectReason.NEARBY_WORDING
+
+    def test_장소_이름과_같으면_장소로_본다(self):
+        """조회한 장소와 행사 이름이 겹치면 장소 문구가 붙는다 — 상설 시설이 먼저다."""
+        same = replace(FEST_ROW, name=PARK)
+        (draft,) = review(
+            candidate(content="모래성 쌓기", place_name=PARK), events={PARK: same}
+        ).drafts
+        assert draft.place_notice.startswith("공공데이터 기준")
+
+
 class TestSafety:
     """안전 필터가 맨 앞이다. 걸린 후보는 거절이 아니라 제거 — 모델에게 사유가 가지 않는다."""
 
@@ -666,6 +721,20 @@ class TestOutputTool:
         assert ctx.state.suggestions[1].content == "사직어린이공원에서 모래성 쌓기"
         assert ctx.state.suggestions[1].place_notice is not None
         assert ctx.state.suggestions[0].place_notice is None
+
+    async def test_행사_조회가_돌려준_행사를_붙여서_담는다(self):
+        ctx = await self.context()
+        ctx.state.seen_events[FEST] = FEST_ROW
+        result = await propose_activity_candidates(
+            ctx,
+            self.args(
+                candidate(),
+                candidate(content="모래 조각 구경하기", evidence=[DOC_PICK], place_name=FEST),
+                candidate(content="종이컵 탑 쌓기", evidence=[DOC_PICK]),
+            ),
+        )
+        assert result.success is True
+        assert ctx.state.suggestions[1].content == "광안리 가을 축제에서 모래 조각 구경하기"
 
     async def test_하나라도_걸리면_사유를_돌려주고_아무것도_담지_않는다(self):
         ctx = await self.context()

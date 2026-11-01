@@ -3,8 +3,9 @@
   1. 안전 필터       위험 용어(월령별 차단 · 경고) · health_safety(active). 걸린 후보는 거절이
                      아니라 풀에서 뺀다(`removed`) — 모델에게 사유를 돌려주지 않는다 (§5-2)
   2. 평가 표현       content · reason · note
-  3. Activity 검증   근거 id · 장소 이름 · 말한 지역의 장소에 "근처" · 바깥 활동이 어려운 날의
-                     야외 후보 · 기피 대상 · note 반복 표현 · 최근 중복 · 0–17개월 보호자 동반
+  3. Activity 검증   근거 id · 장소 · 행사 이름 · 그날 열리지 않는 행사 · 말한 지역의 장소에
+                     "근처" · 바깥 활동이 어려운 날의 야외 후보(행사 포함) · 기피 대상 ·
+                     note 반복 표현 · 최근 중복 · 0–17개월 보호자 동반
   4. build()         6개월이 안 지난 아이 기록 근거 수로 kind 를 정한다. 모델이 고르지 않는다.
                      장소 이름은 코드가 content 앞에 붙이고, 확인 문구(place_notice)를 칸으로
                      싣는다. allergens · items · 위험 경고(warnings)도 코드가 채운다
@@ -22,8 +23,10 @@ from datetime import date
 from enum import StrEnum
 from uuid import UUID
 
+from app.agents.activity.events import open_on
 from app.agents.activity.readouts import (
     PLACE_NOTICE,
+    PLACE_NOTICE_EVENT,
     PLACE_NOTICE_FACILITY,
     PLACE_NOTICE_UNDATED,
     READOUTS,
@@ -37,9 +40,14 @@ from app.agents.activity.schemas.common import (
     EvidencePick,
 )
 from app.agents.activity.schemas.recommend import ActivityCandidate
-from app.agents.activity.store.ports import ActivityDocRow, PlaceRow, PlaceSourceName
+from app.agents.activity.store.ports import (
+    ActivityDocRow,
+    EventRow,
+    PlaceRow,
+    PlaceSourceName,
+)
 from app.agents.activity.tools.filters import SafetyTerms, check_candidate
-from app.agents.activity.tools.outing import INDOOR_CATEGORIES
+from app.agents.activity.tools.outing import INDOOR_CATEGORIES, days_of
 from app.agents.common.evidence import RankedEvidence, cite, overstates
 from app.agents.common.reference import age_gates
 from app.agents.common.refs import EvidenceCitation, Ref
@@ -81,6 +89,7 @@ class RejectReason(StrEnum):
     RECENT_DUPLICATE = "recent_duplicate"
     CAREGIVER_ROLE = "caregiver_role"
     UNKNOWN_PLACE = "unknown_place"
+    EVENT_CLOSED = "event_closed"
     NEARBY_WORDING = "nearby_wording"
     OUTDOOR_CLOSED = "outdoor_closed"
     BUILD = "build_rejected"
@@ -99,7 +108,12 @@ GUIDANCE: dict[RejectReason, str] = {
     RejectReason.RECENT_DUPLICATE: "최근에 한 활동이다. 다른 활동으로 바꾼다.",
     RejectReason.CAREGIVER_ROLE: "이 월령은 보호자가 같이 하는 활동(together)만 낸다.",
     RejectReason.UNKNOWN_PLACE: (
-        "place_name 에는 search_nearby_places 결과에 있던 이름만 쓴다. 없으면 비운다."
+        "place_name 에는 search_nearby_places · search_events 결과에 있던 이름만 쓴다. "
+        "없으면 비운다."
+    ),
+    RejectReason.EVENT_CLOSED: (
+        "place_name 의 행사는 그날(day) 열리지 않는다. 행사 기간 안의 날로 day 를 고치거나 "
+        "place_name 을 비운다."
     ),
     RejectReason.NEARBY_WORDING: (
         "보호자가 말한 지역에서 찾은 장소다. 보호자가 지금 그 자리에 있지 않으니 "
@@ -150,6 +164,7 @@ def review_candidates(
     recent_activities: Collection[str],
     safety: SafetyTerms,
     places: Mapping[str, PlaceRow] | None = None,
+    events: Mapping[str, EventRow] | None = None,
     outdoor: Mapping[DayLabel, bool] | None = None,
     docs: Docs | None = None,
     area_places: Collection[str] = (),
@@ -163,9 +178,11 @@ def review_candidates(
 
     `seen` 은 이번 run 에서 search_activity_memory 가 돌려준 근거다. 기피 대상 거절도 이 표를
     쓴다 — 모델이 인용하지 않은 기피 근거여도 조회됐으면 막는다.
-    `places` 는 이번 run 에서 search_nearby_places 가 돌려준 장소다(이름 → 행).
-    `area_places` 는 그중 보호자가 말한 지역에서 찾은 장소 이름이다 — 이 장소에 "근처" 를 쓰면
-    거절한다.
+    `places` 는 이번 run 에서 search_nearby_places 가 돌려준 장소다(이름 → 행). `events` 는
+    search_events 가 돌려준 행사다 — place_name 이 장소에 없으면 여기서 찾는다(이름이 겹치면
+    상설 장소가 먼저다). 행사는 후보의 날에 열려야 하고, 바깥 나들이로 본다.
+    `area_places` 는 그중 보호자가 말한 지역에서 찾은 장소 · 행사 이름이다 — 이 장소에 "근처" 를
+    쓰면 거절한다.
     `outdoor` 는 후보의 날(`day`)마다 바깥 활동을 할 수 있는지다 (`outing.outdoor_on`). 출력 tool 이
     후보에 나온 날을 전부 채운다. None 이면 날씨로 거르지 않는다(날씨와 무관한 검사의 테스트용).
     `docs` 는 이번 run 의 프롬프트 [예시]에 실은 문서 행이다. 인용하면 `activity_doc` 근거가
@@ -181,8 +198,10 @@ def review_candidates(
         and len(subject := normalize_activity(ranked.subject)) >= MIN_AVOIDED_LABEL
     )
     # 띄어쓰기만 다르게 써도 같은 곳으로 본다. 붙일 때는 조회 결과의 이름을 그대로 쓴다
-    known_places = {
-        key: row for row in (places or {}).values() if (key := normalize_activity(row.name))
+    known_places: dict[str, PlaceRow | EventRow] = {
+        key: row
+        for row in (*(events or {}).values(), *(places or {}).values())
+        if (key := normalize_activity(row.name))
     }
     far_places = frozenset(normalize_activity(name) for name in area_places)
     drafts: list[SuggestionDraft] = []
@@ -205,6 +224,7 @@ def review_candidates(
             avoided=avoided,
             recent=recent_activities,
             outdoor=outdoor,
+            today=today,
         )
         if reason is None:
             try:
@@ -258,12 +278,13 @@ def _check(
     months: int,
     seen: Seen,
     docs: Docs,
-    places: Mapping[str, PlaceRow],
+    places: Mapping[str, PlaceRow | EventRow],
     far_places: frozenset[str],
     avoided: tuple[str, ...],
     recent: Collection[str],
     outdoor: Mapping[DayLabel, bool] | None,
-) -> tuple[RejectReason | None, tuple[EvidenceCitation, ...], PlaceRow | None]:
+    today: date,
+) -> tuple[RejectReason | None, tuple[EvidenceCitation, ...], PlaceRow | EventRow | None]:
     # 1. 안전 필터는 호출부(review_candidates)가 먼저 돌렸다
 
     # 2. 평가 표현
@@ -280,11 +301,13 @@ def _check(
             return RejectReason.UNKNOWN_EVIDENCE, (), None
         resolved.append((pick, found))
 
-    place: PlaceRow | None = None
+    place: PlaceRow | EventRow | None = None
     if candidate.place_name and candidate.place_name.strip():
         place = places.get(normalize_activity(candidate.place_name))
         if place is None:
             return RejectReason.UNKNOWN_PLACE, (), None
+        if isinstance(place, EventRow) and not open_on(place, days_of(candidate.day, today)):
+            return RejectReason.EVENT_CLOSED, (), None
         if normalize_activity(place.name) in far_places and any(
             word in text for text in texts for word in NEARBY_WORDS
         ):
@@ -314,14 +337,16 @@ def _check(
     return None, citations, place
 
 
-def _outdoors(candidate: ActivityCandidate, place: PlaceRow | None) -> bool:
+def _outdoors(candidate: ActivityCandidate, place: PlaceRow | EventRow | None) -> bool:
     """바깥에서 하는 후보인가. either 는 실내에서도 되니 바깥이 아니다.
+
+    행사가 붙으면 바깥이다 — 실내 공연도 오가는 길과 줄이 바깥이라 행사 조회와 같은 기준이다.
 
     붙은 장소가 실내 종류가 아니면(공원 · 실외 놀이터) setting 과 상관없이 바깥이다. 장소 조회는
     그 조회의 `day` 로만 바깥 종류를 막아서, 오늘로 찾은 공원을 비 오는 내일 either 활동에 붙이면
     여기서 막아야 한다 (#600 리뷰).
     """
-    if candidate.setting == ActivitySetting.OUTDOOR:
+    if candidate.setting == ActivitySetting.OUTDOOR or isinstance(place, EventRow):
         return True
     return place is not None and place.category not in INDOOR_CATEGORIES
 
@@ -329,7 +354,7 @@ def _outdoors(candidate: ActivityCandidate, place: PlaceRow | None) -> bool:
 def _build(
     candidate: ActivityCandidate,
     citations: tuple[EvidenceCitation, ...],
-    place: PlaceRow | None,
+    place: PlaceRow | EventRow | None,
     *,
     allergens: tuple[str, ...],
     warnings: tuple[str, ...],
@@ -363,12 +388,15 @@ def _build(
     )
 
 
-def place_notice(place: PlaceRow) -> str:
+def place_notice(place: PlaceRow | EventRow) -> str:
     """장소가 붙은 추천의 확인 문구 (#516). 모델이 아니라 코드 문구다.
 
     공공데이터 기준일자가 있으면 그 달을 앞에 둔다. 어린이놀이시설은 이용료도 확인해 달라고 한다 —
-    민간 키즈카페는 영업장이고, 공공 시설도 이용료 · 예약이 있는 곳이 많다.
+    민간 키즈카페는 영업장이고, 공공 시설도 이용료 · 예약이 있는 곳이 많다. 행사는 출처와 함께
+    일정 · 관람 연령을 확인해 달라고 한다.
     """
+    if isinstance(place, EventRow):
+        return READOUTS.render(PLACE_NOTICE_EVENT).body
     if place.source == FACILITY_SOURCE:
         return READOUTS.render(PLACE_NOTICE_FACILITY).body
     if place.data_date is None:
