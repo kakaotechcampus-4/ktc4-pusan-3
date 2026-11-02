@@ -4,6 +4,9 @@ import {
   draftEvent,
   generalSuggestions,
   mealDraft,
+  placeGeneralSuggestion,
+  placeSuggestion,
+  requestedGeneralSuggestion,
   staleSuggestion,
   suggestionDraft,
   suggestionAllergens,
@@ -44,7 +47,13 @@ export function resetSubmittedEvents(): void {
 /**
  * 고를 수 있는 제안 — 개인화와 일반 둘 다다 (#509). 실서버의 채택 · 초안 · 제출은 `kind` 를 보지 않는다.
  */
-const pickable = [...suggestions, ...generalSuggestions];
+const pickable = [
+  ...suggestions,
+  ...generalSuggestions,
+  requestedGeneralSuggestion,
+  placeSuggestion,
+  placeGeneralSuggestion,
+];
 
 /**
  * 초안 만들기와 제출이 함께 거는 검사. 🚨 **실서버(#241)와 같은 순서 · 같은 코드 · 같은 문구다** —
@@ -131,12 +140,18 @@ export const suggestionHandlers = [
     //    근거 0건인 것이 개인화로 집계된다 (CLAUDE.md §2). 일반 추천의 근거는 **문서 행**이다 (#249).
     //    결과를 낸 Agent 는 묶음이 온다 — 일반 추천만 있어도 그 Agent 의 묶음이 있다.
     //    ⚠️ 답하는 길(#246) 전이라 `options` 는 비어 온다 — 서버와 같은 모양이다.
-    if (scenario === "scarcity" || scenario === "empty") {
+    //    `suggest_requested` 는 보호자가 놀이를 정해 물은 일반 추천이다 — 문서 근거가 비어 온다 (#597).
+    if (scenario === "scarcity" || scenario === "empty" || scenario === "suggest_requested") {
       // 🚨 등록된 알레르기(`active`)가 든 일반 추천은 빼고 내보낸다 (`notBlocked`). 사전검사만 거르면
       //    확인 시트에서 "있어요" 로 등록한 재료가 다음 화면에서 다시 서고, 이번에는 묻지도 않고 채택된다.
-      const general = (scenario === "empty" ? generalSuggestions : [generalSuggestions[0]]).filter(
-        notBlocked,
-      );
+      const general = (
+        scenario === "empty"
+          ? generalSuggestions
+          : scenario === "suggest_requested"
+            ? [requestedGeneralSuggestion]
+            : [generalSuggestions[0]]
+      ).filter(notBlocked);
+      const count = scenario === "scarcity" ? 1 : 0;
       const generalAgents = new Set(general.map((g) => g.agent));
       return HttpResponse.json({
         suggestions: [],
@@ -150,13 +165,11 @@ export const suggestionHandlers = [
           cautions: [],
         })),
         // 카드의 기록 수는 그 Agent 도메인 수다 (#433 리뷰 ⑥) — 질문 카드의 scarcity.count 와 같은 값을 싣는다
-        general: withStatus(
-          general.map((g) => ({ ...g, record_count: scenario === "empty" ? 0 : 1 })),
-        ),
+        general: withStatus(general.map((g) => ({ ...g, record_count: count }))),
         looked_at: "",
         guards: [],
         scarcity: {
-          count: scenario === "empty" ? 0 : 1,
+          count,
           question: {
             id: "q1",
             text: "요즘 실내와 야외 중 어디를 더 찾나요?",
@@ -286,6 +299,25 @@ export const suggestionHandlers = [
           suggestion_id: water.id,
         });
       }
+    }
+
+    /**
+     * 장소가 붙은 놀이 추천 (#516). 개인화 하나(실내 물놀이장 자리)와 일반 하나에 확인 문구(`place_notice`)가 온다.
+     * 🚨 문구는 근거가 아니라서 `evidence` 는 그대로다 — 화면이 "사용한 기록" 에 넣거나 세면 안 된다.
+     * 일반 추천이 있으니 `scarcity` 도 붙는다(`suggest_mixed` 와 같은 모양).
+     */
+    if (scenario === "suggest_place") {
+      const shown = alive.map((s) => (s.id === "s_4" ? placeSuggestion : s));
+      const general = [placeGeneralSuggestion].filter(notBlocked);
+      return HttpResponse.json({
+        suggestions: withStatus(shown),
+        groups: suggestionGroups.filter((g) => shown.some((s) => s.agent === g.agent)),
+        general: withStatus(general),
+        looked_at: "",
+        guards: [],
+        scarcity: { count: 3, question: null },
+        prechecks: prechecksFor([...shown, ...general]),
+      });
     }
 
     // 식품 사전에 없는 알레르기(꽃가루)는 뺄 놀이를 코드가 못 정해서 확인 문구만 낸다 (#433 리뷰 ③).

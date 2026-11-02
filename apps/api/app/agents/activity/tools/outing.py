@@ -9,7 +9,13 @@ from collections.abc import Awaitable, Sequence
 from datetime import date, datetime, time, timedelta
 from typing import Any, TypeVar
 
-from app.agents.activity.areas import find_area, find_province, named_area, said
+from app.agents.activity.areas import (
+    find_area,
+    find_province,
+    leads_with_area,
+    named_area,
+    said,
+)
 from app.agents.activity.context import ActivityContext
 from app.agents.activity.events import (
     Event,
@@ -432,6 +438,15 @@ def _origin(
             tool,
             ErrorCode.INVALID_ARGS,
             "area 에는 보호자가 쓴 지역 이름을 글자 그대로 넣는다. 지역을 말하지 않았으면 비운다.",
+        )
+    # 명소 이름을 통째로 넣었다. 앞의 지역 이름을 떼어 쓰지 않는다 — 그 지역에 있는지는 모델이 안다
+    if name is None and leads_with_area(area_text):
+        return fail(
+            "query",
+            tool,
+            ErrorCode.INVALID_ARGS,
+            "area 에는 지역 이름만 넣는다(해수욕장 · 역 · 읍 같은 뒷말을 뺀다). 명소 이름이 지역 "
+            "이름으로 시작해도 그 명소가 그 지역에 있지 않으면 그 지역 이름을 쓰지 않고 비운다.",
         )
     # 보호자가 말했지만 사전에 없는 이름(서면)은 못 찾은 지역이다 — 안내가 붙는다
     area = find_province(name) if provinces and name is not None else None

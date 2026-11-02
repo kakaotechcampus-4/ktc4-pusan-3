@@ -375,7 +375,7 @@
 | content | text | NOT NULL. 실제로 추천하는 내용 |
 | reason | text | nullable. 근거 문구 |
 | allergens | text[] | NOT NULL, default `'{}'`. 그 추천에 들어 있는 알레르기 항목의 정식 명칭(`allergen_terms.yaml`, 예: `새우` · `난류`). 19종 밖(예: Activity 의 `쑥`)도 이름으로 담는다. 상태(없음/모름)는 담지 않는다 — 승인할 때 `health_safety` 를 다시 읽는다 |
-| items | text[] | NOT NULL, default `'{}'`. 일정으로 만들 때 준비물(`event_item.item_name`) 하나씩. Food: `된장` · `두부`, Activity: `수영복`. 알레르기 판단에는 쓰지 않는다 |
+| items | text[] | NOT NULL, default `'{}'`. 일정으로 만들 때 준비물(`event_item.item_name`) 하나씩. Food: `두부` · `시금치` — 레시피 주재료(`recipe_catalog.main_ingredients`)에서 물 · 소금 · 설탕 · 기름 · 향신 가루를 뺀 것이고, 비면 `'{}'` 다(#474), Activity: `수영복`. 알레르기 판단에는 쓰지 않는다 — Food 의 안전 판정은 전체 `ingredients` · `allergen_codes` 로 한다 |
 | status | enum | `draft` / `approved` / `rejected` / `expired`, NOT NULL, default `draft` |
 | expires_at | timestamptz | 생성 +24h, NOT NULL |
 | run_id | text | nullable. 추천을 만든 입력 run(`RunChannel.run_id`). 05 가 그 run 의 추천을 찾는다. 인덱스 `(child_id, run_id)` |

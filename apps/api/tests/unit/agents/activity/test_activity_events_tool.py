@@ -358,3 +358,33 @@ class TestProvince:
 
         assert result.error["code"] == ErrorCode.NOT_FOUND
         assert ctx.state.area is None and ctx.state.area_missed is True
+
+    async def test_옛_광역시_이름은_시도_전체가_아니라_그_시에서_찾는다(self):
+        """광주광역시는 통합 뒤 시도 이름이 아니다 — 전남 행사까지 넓히지 않는다 (#676)."""
+        city = find_area("광주광역시")
+        ctx = await self.province_context(
+            InMemoryEvents(
+                [
+                    raw("1", "광주 축제", km=3, near=city.location, region="12"),
+                    raw("2", "먼 전남 축제", km=60, near=city.location, region="12"),
+                ]
+            )
+        )
+        ctx.state.request_texts = ("광주광역시 놀러 갈 건데 행사 추천해줘",)
+
+        result = await search_events(ctx, SearchEventsArgs(day=DayLabel.TODAY, area="광주광역시"))
+
+        assert names(result) == ["광주 축제"]
+        assert ctx.state.area == city and not ctx.state.area.whole_province
+
+    async def test_명소_이름을_통째로_넘기면_지역_이름만_다시_쓰라고_돌려보낸다(self):
+        ctx = await self.province_context(InMemoryEvents([raw("1", "바다 축제")]))
+        ctx.state.request_texts = ("해운대해수욕장 가는데 행사 추천해줘",)
+
+        result = await search_events(
+            ctx, SearchEventsArgs(day=DayLabel.TODAY, area="해운대해수욕장")
+        )
+
+        assert result.error["code"] == ErrorCode.INVALID_ARGS
+        assert result.resource == "search_events"
+        assert "지역 이름만" in result.error["message"]
