@@ -41,6 +41,14 @@ test("08 사진 확인 화면 — 저장은 게이트가 아니다 (일정 넣�
   await expectNoGate(page);
 });
 
+test("11-3 복약 — 회차 체크는 게이트가 아니다 (#537 · 게이트는 복약을 넣는 카드에 있다)", async ({
+  page,
+}) => {
+  await page.goto(`/child/${CHILD}/profile/medications`);
+  await expect(page.getByText(/오늘 체크/)).toBeVisible();
+  await expectNoGate(page);
+});
+
 test("10 설정", async ({ page }) => {
   await page.goto(`/child/${CHILD}/settings`);
   await expect(page.getByRole("heading", { name: "함께 보는 보호자" })).toBeVisible();

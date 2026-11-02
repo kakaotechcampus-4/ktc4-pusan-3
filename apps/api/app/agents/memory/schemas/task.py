@@ -80,9 +80,6 @@ class PendingMemoryContext:
     # 원문 전체가 한 조각. 그중 하나라도 저장했으면 맥락을 만들지 않으므로,
     # True 면 조각 안의 기록은 아직 하나도 저장되지 않았다
     whole: bool = False
-    # unclear 조각만 있던 입력에서 아이 얘기인지 물은 것.
-    # 보호자가 아니라고 하면 저장하지 않고 끝난다
-    unclear: bool = False
     # 이 질문 전에 조회로 찾은 행. 코드가 tool 결과에서 모으고 모델이 고르지 않는다.
     # "응" 을 받은 run이 검색을 처음부터 다시 하다 못 찾는 상황 방지
     found: tuple[FoundRef, ...] = ()

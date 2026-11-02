@@ -824,7 +824,7 @@ export function draftEvent(overrides: Partial<CalendarEvent> = {}): CalendarEven
     source_notice_id: null,
     source_refs: [{ kind: "suggestion", id: "s_2" }],
     items: [{ item_id: "i_1", item_name: "수영복", is_prepared: false, prepared_at: null }],
-    reminders: [],
+    reminder: null,
     ...overrides,
   };
 }
@@ -954,7 +954,7 @@ export const confirmedEvent: CalendarEvent = {
       prepared_at: null,
     },
   ],
-  reminders: [],
+  reminder: null,
 };
 
 /**

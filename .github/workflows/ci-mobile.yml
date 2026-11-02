@@ -1,5 +1,5 @@
 name: Mobile CI
-# apps/mobile(웹뷰 셸)을 바꾼 PR 에서 typecheck · test 를 돈다 (#225).
+# apps/mobile(웹뷰 셸)을 바꾼 PR 에서 typecheck · test 와 말로 적기 로그 패치 검사를 돈다 (#225 · #595).
 #
 # 네이티브 빌드(expo run:android)는 돌리지 않는다 — 셸의 로직은 src/ 의 순수 함수(로그인 URL ·
 # 웹뷰 안 주소 판정)에 모여 있고, 그건 Node 내장 러너로 잡힌다. 개발 빌드는 사람이 기기에서 확인한다.
@@ -58,6 +58,19 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      # 🚨 말로 적기의 인식 결과(아이 얘기 원문)가 logcat 에 남지 않게 한 패치가 살아 있는지 (#595).
+      #    패키지 버전을 바꾸면 pnpm 이 `ERR_PNPM_UNUSED_PATCH` 로 멈추는데, 그걸 풀려고 `patchedDependencies`
+      #    줄을 지우면 install 은 통과한다 — 그 경우를 여기서 잡는다. 이 job 은 Kotlin 을 컴파일하지 않는다.
+      #    고치는 법은 apps/mobile/CLAUDE.md §3 "마이크 권한" 의 패치 항목.
+      - name: Speech log patch
+        run: |
+          f=node_modules/expo-speech-recognition/android/src/main/java/expo/modules/speechrecognition/ExpoSpeechService.kt
+          test -f "$f" || { echo "::error::$f 이 없다. 패키지 구조가 바뀌었으면 이 검사와 패치를 같이 고친다"; exit 1; }
+          if grep -nE '\$\{?(resultsList|nonEmptyStrings)(\}|[^.A-Za-z_]|$)' "$f"; then
+            echo "::error::expo-speech-recognition 이 인식 결과를 logcat 에 찍는다. 패치를 다시 만든다 (apps/mobile/CLAUDE.md)"
+            exit 1
+          fi
 
       - name: Typecheck
         run: pnpm typecheck

@@ -18,11 +18,16 @@ from app.agents.activity.review import (
     GENERAL_REASON,
     GUIDANCE,
     MIN_AVOIDED_LABEL,
+    REQUESTED_REASON,
     RejectReason,
     explain,
     review_candidates,
 )
-from app.agents.activity.rules import is_recent_duplicate, normalize_activity, overstates
+from app.agents.activity.rules import (
+    is_recent_duplicate,
+    normalize_activity,
+    said_in_request,
+)
 from app.agents.activity.schemas.common import (
     ActivitySetting,
     CaregiverRole,
@@ -44,7 +49,7 @@ from app.agents.activity.store.ports import (
 )
 from app.agents.activity.tools.filters import safety_terms
 from app.agents.activity.tools.recommend import propose_activity_candidates
-from app.agents.common.evidence import RankedEvidence
+from app.agents.common.evidence import RankedEvidence, overstates
 from app.agents.common.reference import hazard_terms
 from app.agents.common.refs import Ref
 
@@ -88,6 +93,13 @@ def candidate(**kwargs) -> ActivityCandidate:
 
 
 PARK = "사직어린이공원"  # 이번 run 에 장소 조회가 돌려준 곳
+PARK_ROW = PlaceRow(
+    name=PARK,
+    category=PlaceCategory.PARK,
+    distance_m=800,
+    source="city_park",
+    data_date=date(2026, 6, 30),
+)
 
 
 TOWER_DOC = ActivityDocRow(
@@ -113,21 +125,23 @@ def review(
     months=40,
     seen=SEEN,
     recent=(),
-    places=(PARK,),
+    places=None,
     safety=(),
     outdoor=None,
     docs=DOCS,
+    requested=False,
 ):
     return review_candidates(
         candidates,
         months=months,
         seen=seen,
         recent_activities=recent,
-        places=places,
+        places={PARK: PARK_ROW} if places is None else places,
         safety=safety_terms(safety),
         outdoor=outdoor,
         docs=docs,
         today=TODAY,
+        requested=requested,
     )
 
 
@@ -198,6 +212,40 @@ class TestEvidence:
         """지어낸 근거로 개인화인 척하지 못한다."""
         result = review(candidate(evidence=[{"id": raw, "note": "모래놀이를 했어요"}]))
         assert reason_of(result) is RejectReason.UNKNOWN_EVIDENCE
+
+
+class TestRequested:
+    """보호자가 놀이를 정해 물었으면("물놀이 뭐 하지?") 그 요청에 맞춰 만든다. 아이 기록이 없으면
+    일반 추천이고, 문서 행 근거가 없어도 된다 — 기준이 이번 요청이다."""
+
+    def test_기록이_없으면_문서_근거_없이_일반_추천이고_요청_문구를_단다(self):
+        result = review(candidate(content="욕조에서 컵으로 물 옮기기", evidence=[]), requested=True)
+        (draft,) = result.drafts
+        assert draft.kind == "general"
+        assert draft.reason == REQUESTED_REASON
+        assert draft.citations == ()
+
+    def test_예시를_참고했으면_그_문서도_근거로_남는다(self):
+        (draft,) = review(candidate(evidence=[DOC_PICK]), requested=True).drafts
+        assert draft.kind == "general"
+        assert draft.reason == REQUESTED_REASON
+        assert [c.ref.id for c in draft.citations] == [TOWER_DOC.id]
+
+    def test_기록이_있으면_요청이어도_개인화다(self):
+        (draft,) = review(candidate(), requested=True).drafts
+        assert draft.kind == "personalized"
+
+    def test_막연한_요청은_지금처럼_문서_근거가_있어야_한다(self):
+        assert reason_of(review(candidate(evidence=[]), requested=False)) is RejectReason.BUILD
+
+    def test_요청_기반도_안전_필터는_그대로다(self):
+        result = review(
+            candidate(content="밀가루 반죽 주무르기", materials=["밀가루"], evidence=[]),
+            requested=True,
+            safety=[SafetyEntry(kind="allergy", label="밀", status="active")],
+        )
+        assert result.drafts == ()
+        assert len(result.removed) == 1
 
 
 class TestDocEvidence:
@@ -350,7 +398,7 @@ class TestPlace:
         (draft,) = review(candidate(content="모래성 쌓기", place_name=PARK)).drafts
         assert draft.content == "사직어린이공원에서 모래성 쌓기"
 
-    @pytest.mark.parametrize("places", [(PARK,), ()])
+    @pytest.mark.parametrize("places", [{PARK: PARK_ROW}, {}])
     def test_조회_결과에_없는_장소는_거절(self, places):
         """장소를 조회하지 않았거나 결과에 없는 이름이면 지어낸 것으로 본다."""
         result = review(candidate(place_name="해운대 키즈파크"), places=places)
@@ -370,6 +418,40 @@ class TestPlace:
     def test_장소가_없으면_문장을_그대로_둔다(self, place_name):
         (draft,) = review(candidate(place_name=place_name)).drafts
         assert draft.content == "큰 블록으로 탑 쌓기"
+        assert draft.place_notice is None
+
+    def test_장소가_붙으면_기준일과_확인_문구를_칸으로_싣는다(self):
+        """문장에 섞지 않는다 — 화면이 제안 문장 아래 한 줄로 세운다 (#516)."""
+        (draft,) = review(candidate(content="모래성 쌓기", place_name=PARK)).drafts
+        assert draft.content == "사직어린이공원에서 모래성 쌓기"
+        assert draft.place_notice == (
+            "공공데이터 기준 2026년 6월이에요. 가기 전에 운영 여부를 확인해 주세요."
+        )
+        assert draft.to_payload()["place_notice"] == draft.place_notice
+
+    def test_놀이시설은_이용료도_확인해_달라고_한다(self):
+        cafe = PlaceRow(
+            name="시험키즈카페",
+            category=PlaceCategory.INDOOR_PLAYGROUND,
+            distance_m=900,
+            source="kids_play_facility",
+            data_date=None,
+        )
+        (draft,) = review(
+            candidate(content="볼풀에서 공 던지기", place_name="시험키즈카페"),
+            places={"시험키즈카페": cafe},
+        ).drafts
+        # 출처가 안 보이면 왜 이 가게가 나왔는지 몰라 광고처럼 읽힌다 — 날짜 없이 출처만 (#600 PM)
+        assert draft.place_notice == (
+            "공공데이터에 있는 시설이에요. 가기 전에 운영 여부와 이용료를 확인해 주세요."
+        )
+
+    def test_기준일자가_없는_장소는_운영_여부_확인만(self):
+        undated = replace(PARK_ROW, data_date=None)
+        (draft,) = review(
+            candidate(content="모래성 쌓기", place_name=PARK), places={PARK: undated}
+        ).drafts
+        assert draft.place_notice == "가기 전에 운영 여부를 확인해 주세요."
 
 
 class TestSafety:
@@ -402,10 +484,13 @@ class TestSafety:
         result = review(candidate(content="밀가루 점토 놀이", evidence=[]), safety=[entry])
         assert result.removed[0].hits == ("health_safety",)
 
-    def test_경고_문구는_초안과_같은_순서로_짝짓는다(self):
+    def test_경고_문구는_그_초안에_싣는다(self):
+        """추천 하나에 붙는 문구라 결과 안내(readouts)가 아니라 초안 칸이다 (#402)."""
         result = review(candidate(), candidate(content="구슬 꿰기", evidence=[DOC_PICK]), months=40)
         small_parts = hazard_terms().axes["small_parts"].warning_text
-        assert result.warnings == ((), (small_parts,))
+        assert [draft.warnings for draft in result.drafts] == [(), (small_parts,)]
+        assert result.drafts[1].to_payload()["warnings"] == [small_parts]
+        assert result.drafts[0].to_payload()["warnings"] == []
 
     def test_allergens_와_items_를_코드가_채운다(self):
         """#232 — 승인 때 알레르기 안내와 일정 준비물에 쓴다. 모델이 고르지 않는다."""
@@ -439,6 +524,36 @@ class TestOutdoor:
         weekend = candidate(setting="outdoor", day="this_weekend")
         result = review(weekend, outdoor=self.RAIN_TODAY)
         assert reason_of(result) is RejectReason.OUTDOOR_CLOSED
+
+    def test_either_여도_공원이_붙으면_그날_날씨를_받는다(self):
+        """오늘로 찾은 공원을 비 오는 날 either 활동에 붙이면 막는다 (#600 리뷰)."""
+        either_park = candidate(content="모래성 쌓기", setting="either", place_name=PARK)
+        result = review(either_park, outdoor=self.RAIN_TODAY)
+        assert reason_of(result) is RejectReason.OUTDOOR_CLOSED
+
+    def test_실내_놀이시설이_붙은_either_는_통과(self):
+        cafe = PlaceRow(
+            name="시험키즈카페",
+            category=PlaceCategory.INDOOR_PLAYGROUND,
+            distance_m=900,
+            source="kids_play_facility",
+            data_date=None,
+        )
+        either_cafe = candidate(
+            content="볼풀에서 공 던지기", setting="either", place_name="시험키즈카페"
+        )
+        result = review(either_cafe, outdoor=self.RAIN_TODAY, places={"시험키즈카페": cafe})
+        assert result.rejections == ()
+        assert result.outdoor == frozenset()
+
+    def test_공원이_붙은_either_는_바깥_활동으로_센다(self):
+        """날씨를 묻지 않은 날의 안내("날씨는 확인하지 않았어요")가 이 추천에도 붙는다 (#515)."""
+        either_park = candidate(
+            content="모래성 쌓기", setting="either", place_name=PARK, day="tomorrow"
+        )
+        result = review(either_park, outdoor=self.RAIN_TODAY)
+        (draft,) = result.drafts
+        assert result.outdoor == {(normalize_activity(draft.content), DayLabel.TOMORROW)}
 
 
 class TestOutputTool:
@@ -523,13 +638,7 @@ class TestOutputTool:
 
     async def test_장소_조회가_돌려준_곳을_붙여서_담는다(self):
         ctx = await self.context()
-        ctx.state.seen_places[PARK] = PlaceRow(
-            name=PARK,
-            category=PlaceCategory.PARK,
-            distance_m=800,
-            source="city_park",
-            data_date=None,
-        )
+        ctx.state.seen_places[PARK] = PARK_ROW
         await propose_activity_candidates(
             ctx,
             self.args(
@@ -539,6 +648,8 @@ class TestOutputTool:
             ),
         )
         assert ctx.state.suggestions[1].content == "사직어린이공원에서 모래성 쌓기"
+        assert ctx.state.suggestions[1].place_notice is not None
+        assert ctx.state.suggestions[0].place_notice is None
 
     async def test_하나라도_걸리면_사유를_돌려주고_아무것도_담지_않는다(self):
         ctx = await self.context()
@@ -666,3 +777,44 @@ class TestOutputTool:
         ctx.state.safety_entries = None
         with pytest.raises(RuntimeError):
             await propose_activity_candidates(ctx, self.args(candidate(), candidate(), candidate()))
+
+
+class TestSaidInRequest:
+    """requested_play 는 보호자가 이번 요청에서 한 말에 있어야 한다 (#597 리뷰)."""
+
+    @pytest.mark.parametrize(
+        ("play", "said"),
+        [
+            ("물놀이", "물놀이 뭐 하지?"),
+            ("티니핑", "티니핑으로 놀고 싶대"),
+            ("공놀이", "공 굴리기 놀이"),  # "놀이" 를 떼면 "공" — 낱말이 같다
+            ("전래놀이", "전래놀이 해보고 싶어"),
+            ("쿠키 만들기", "아이랑 쿠키 만들기 하고 싶어"),
+            # 정한 놀이 옆의 때 · 일반 표현은 빼고 본다
+            ("물놀이 추천", "물놀이 추천해줘"),
+            ("주말 물놀이", "주말에 물놀이 하려는데"),
+        ],
+    )
+    def test_보호자_말에_있으면_요청이다(self, play, said):
+        assert said_in_request(play, [said]) is True
+
+    @pytest.mark.parametrize(
+        ("play", "said"),
+        [
+            ("블록놀이", "오늘 뭐 하고 놀까?"),  # 막연한 요청에 모델이 지어 넣은 놀이
+            ("놀이", "놀이 추천해줘"),  # "놀이" 만으로는 정한 게 아니다
+            ("공", "공룡 그림책 읽고 할 놀이"),  # 한 글자는 낱말이 같아야 한다
+            # 언제 · 어디서 · 날씨 · 일반 표현만 남으면 막연한 요청이다 (#597 리뷰)
+            ("놀이 추천", "놀이 추천해줘"),
+            ("오늘", "오늘 뭐 하고 놀까?"),
+            ("주말", "주말에 뭐 하고 놀까?"),
+            ("실내 놀이", "비 오는 날 실내 놀이 추천해줘"),
+            ("비 오는 날 놀이", "비 오는 날 놀 거 추천해줘"),
+            # 낱말 하나만 겹쳐서는 안 된다 — 남은 낱말이 모두 보호자 말에 있어야 한다
+            ("실내 블록놀이", "비 오는 날 실내 놀이 추천해줘"),
+            (None, "물놀이 뭐 하지?"),
+            ("", "물놀이 뭐 하지?"),
+        ],
+    )
+    def test_보호자_말에_없으면_요청이_아니다(self, play, said):
+        assert said_in_request(play, [said]) is False

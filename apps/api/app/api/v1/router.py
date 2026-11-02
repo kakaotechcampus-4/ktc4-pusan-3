@@ -29,9 +29,11 @@ from app.api.v1.routers import (
     home,
     invites,
     me,
+    notifications,
     observations,
     policies,
     privacy_policy,
+    reminders,
     reports,
     runs,
     suggestions,
@@ -57,6 +59,7 @@ protected_router.include_router(consents.router)
 protected_router.include_router(health_safety.router)
 protected_router.include_router(invites.router)
 protected_router.include_router(me.router)
+protected_router.include_router(notifications.router)
 protected_router.include_router(observations.router)
 protected_router.include_router(affinities.router)
 protected_router.include_router(corrections.router)
@@ -65,6 +68,7 @@ protected_router.include_router(calendar.router)
 protected_router.include_router(chat.router)
 protected_router.include_router(diary.router)
 protected_router.include_router(event_items.router)
+protected_router.include_router(reminders.router)
 protected_router.include_router(reports.router)
 protected_router.include_router(runs.router)
 protected_router.include_router(suggestions.router)

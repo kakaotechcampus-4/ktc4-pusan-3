@@ -8,7 +8,9 @@ import { Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { AuthGate } from "@/components/auth-gate";
 import { ChatThread, chatDayAnchor } from "@/components/chat-thread";
 import { ScreenTransition } from "@/components/route-transition";
+import { ScreenTour, TourHelpButton } from "@/components/screen-tour";
 import { EventDraftList } from "@/components/event-draft-list";
+import { MedicationDraftList } from "@/components/medication-draft-list";
 import { HomeComposer } from "@/components/home-composer";
 import { PhotoSourceSheet } from "@/components/photo-source-sheet";
 import { BottomSheet } from "@/components/ui/bottom-sheet";
@@ -26,6 +28,7 @@ import { useChildId } from "@/hooks/use-child-id";
 import { api, qk, type Agent, type Me } from "@/lib/api";
 import { useSeoulToday } from "@/hooks/use-seoul-today";
 import { formatDay, parseISODate } from "@/lib/format";
+import { chatTour } from "@/lib/tour/screens/chat";
 import { BACK, FORWARD } from "@/lib/view-transition";
 import {
   isBusy,
@@ -171,6 +174,10 @@ function ChatScreen() {
    * 지난 턴도 연다 — 보관함에 아직 남은 초안이면 이어서 넣을 수 있다 (`ChatThread` 의 `PastTurnItem`).
    */
   const [draftsOf, setDraftsOf] = useState<{ key: string; draftIds: string[] } | null>(null);
+  /** 복약 초안 시트 (#537). 🚨 일정 초안 시트와 따로다 — 넣는 곳이 다른 게이트다. */
+  const [medicationsOf, setMedicationsOf] = useState<{ key: string; draftIds: string[] } | null>(
+    null,
+  );
   const [photoSheetOpen, setPhotoSheetOpen] = useState(false);
   const putPhoto = usePhotoDraftStore((s) => s.putPhoto);
 
@@ -320,16 +327,17 @@ function ChatScreen() {
                 <ArrowLeft aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
               </IconButtonLink>
             )}
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               {/* 🚨 제목에 "오늘" 을 붙이지 않는다 (#541) — 캘린더에서 지난 날을 보러 와도, 위로 올려 전날을
                 보고 있어도 같은 제목이다. 어느 날인지는 아래 줄이 말한다. */}
               <PageTitle>대화</PageTitle>
               {/* 누구의 어느 날 대화인지 — 스크롤을 따라 바뀐다 (`shownDay`). 🚨 날짜 머리줄은 날이 둘 이상일
                 때만 본문에 선다 (`ChatThread`) — 하루뿐이면 이 줄이 그 말을 한다. */}
-              <p className="text-caption text-ink-subtle">
+              <p data-tour="day" className="text-caption text-ink-subtle w-fit">
                 {nickname ? `${nickname} · ${formatDay(shownDay)}` : formatDay(shownDay)}
               </p>
             </div>
+            <TourHelpButton tour={chatTour} />
           </header>
         }
         bottomBar={
@@ -416,6 +424,7 @@ function ChatScreen() {
             turns={liveTurns}
             answering={conversation.answering}
             onOpenDrafts={(key, draftIds) => setDraftsOf({ key, draftIds })}
+            onOpenMedicationDrafts={(key, draftIds) => setMedicationsOf({ key, draftIds })}
             onPickOffer={goToSuggestions}
           />
         )}
@@ -458,6 +467,27 @@ function ChatScreen() {
           ) : null}
         </BottomSheet>
 
+        {/* 🚨 **승인 게이트 ㉡ 가 이 시트 안의 카드에 있다** (#537 · 복약 제출). 일정 시트와 같은 이유로 스크림으로도
+            닫힌다 — 닫아도 초안은 남고 넣는 것은 카드마다의 버튼이다. 닫으면 아무것도 부르지 않는다. */}
+        <BottomSheet
+          open={medicationsOf !== null}
+          onClose={() => setMedicationsOf(null)}
+          title="찾은 복약"
+          footer={
+            <Button variant="secondary" block onClick={() => setMedicationsOf(null)}>
+              닫기
+            </Button>
+          }
+        >
+          {medicationsOf ? (
+            <MedicationDraftList
+              key={medicationsOf.key}
+              childId={childId}
+              draftIds={medicationsOf.draftIds}
+            />
+          ) : null}
+        </BottomSheet>
+
         <PhotoSourceSheet
           open={photoSheetOpen}
           onClose={() => setPhotoSheetOpen(false)}
@@ -467,6 +497,9 @@ function ChatScreen() {
             router.push(`/child/${childId}/photos`, FORWARD);
           }}
         />
+
+        {/* 🚨 결과가 다 온 뒤에만 뜬다 — 진행 카드가 도는 동안 덮으면 결과가 서는 순간을 가린다. */}
+        <ScreenTour tour={chatTour} ready={!busy && !nothingYet && data !== undefined} />
       </Screen>
     </ScreenTransition>
   );

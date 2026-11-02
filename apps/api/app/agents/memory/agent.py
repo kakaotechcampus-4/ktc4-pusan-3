@@ -12,7 +12,8 @@ task 를 넘기면(Supervisor 경로) 다섯 가지가 더 붙는다.
   - [tool 묶음] 기록 기본 묶음은 항상, 수정·삭제는 MemoryTask.open_lookup_edit 일 때만
   - [허용 목록] 모델에게 안 보여준 tool은 이름으로 불러도 실행하지 않는다
   - [조기 종료] 할 일을 다 한 게 코드로 확인되면 요약 호출 없이 끝낸다 (_covered)
-  - [unclear] Supervisor 가 unclear 로 본 조각은 관찰로 저장하지 않는다 (_in_unclear)
+  - [unclear] Supervisor 가 unclear 로 본 조각은 관찰로 저장하지 않는다 (_in_unclear).
+    unclear 뿐인 입력이 쓰기 없이 말로 끝나면 모델 문장 대신 고정 문구를 낸다 (_UNCLEAR_REPLY)
   - [고쳐 말하기] lookup_edit 조각은 조회 결과를 본 뒤에만 새로 저장한다 (_skipped_lookup)
 task 가 없어도 위험 물질 이름이 대상인 식사 · 놀이 · 배움 · 생활 관찰은 저장하지 않는다 (_hazard).
 task 가 없어도 알레르기 · 만성질환 이름은 건강 관찰로 저장하지 않는다 (_safety_named).
@@ -78,7 +79,7 @@ _NEEDS_REPLY_CUES = ("알림", "알람")
 # 이 tool을 부른 run은 조기 종료하지 않음(후속 변경이 있을 수 있음)
 _OPEN_ENDED = frozenset({"create_event_item", "update_event_item", "delete_event_item"})
 
-EndedBy = Literal["model", "coverage", "max_steps"]
+EndedBy = Literal["model", "coverage", "max_steps", "unclear"]
 
 _HINT_HEADER = "[먼저 나눠 본 기록 후보 — 빠진 게 있을 수 있다. 발화 전체에서 기록할 것을 찾는다]"
 
@@ -96,14 +97,6 @@ _WHOLE_FRAGMENT = (
     "(나누지 못한 원문 전체다. 이 글에 적힌 기록은 아직 하나도 저장하지 않았다. "
     "물은 것과 상관없는 것도 이 글에 적힌 기록이면 하나씩 모두 저장한다. "
     "보호자의 답에만 있고 이 글에 없는 기록은 섞인 말이다)"
-)
-
-# unclear 조각만 있던 입력에서 물은 뒤의 이어받기. 원문을 못 나눈 강등 경로(_WHOLE_FRAGMENT)와
-# 달리 "아니" 가 답일 수 있는 질문이다. _WHOLE_FRAGMENT 를 붙이면 아니라고 해도 같은 걸 다시 물었다
-_UNCLEAR_FRAGMENT = (
-    "(아이가 한 일인지 알 수 없어 물었던 문장이다. 보호자가 아이 얘기라고 답했을 때만 이 글에 적힌 "
-    "기록을 저장한다. 보호자 자신의 얘기라거나 아니라고 답하면 저장하지 않고, 아이 기록이 아니라서 "
-    "남기지 않았다고 한 줄로 알리고 끝낸다. 이때는 다시 묻지 않는다)"
 )
 
 # Supervisor 가 unclear 로 본 조각의 관찰 저장. tool 을 빼면 모델이 이유를 몰라 저장 없이
@@ -148,17 +141,6 @@ _LOOKUP_FIRST = (
     "저장한다. 찾기와 저장을 한 응답에 같이 부르지 않는다."
 )
 
-# unclear 조각만 있던 입력을 되묻기로 끝낸 턴. "나 딸기 좋아해" 에 tool 없이 바로
-# "아이의 음식 취향으로 기록할까요?" 라고 물어 거절 메시지의 안내가 닿지 않았다(3번 중 2번).
-# 프롬프트에 더해도 그대로라 이 턴만 코드가 집어 run 당 한 번 다시 확인한다.
-# 그래도 물으면 되묻기 맥락(unclear=True)이 남고, 이어받기는 _UNCLEAR_FRAGMENT 를 받는다
-_UNCLEAR_QUESTION = (
-    "보호자에게 보이지 않는 확인이다. 여기에 답하지 말고 보호자에게 보낼 말만 다시 쓴다. "
-    "이 발화는 아이가 실제로 한 일로 확인되지 않았다. 묻지 않고, 아이 기록으로 남기지 않았다고 "
-    "한 줄로 알린다(kind=message). 아이가 실제로 겪은 일이었다면 그 일을 말해 달라고 짧게 "
-    "덧붙인다."
-)
-
 # 이어받기 때 앞서 조회로 찾은 행을 다시 읽어 보여 주는 칸의 머리
 _FOUND_HEADER = (
     "[앞서 조회해서 찾은 기록 — 보호자가 이 기록을 말한 것이면 다시 조회하지 않고 이 id 를 쓴다]"
@@ -194,6 +176,12 @@ _SAVED_CLAIM = re.compile(
 )
 # 다시 확인해도 저장한 척하면 그 말 대신 내보낸다. 지켜지지 않을 말을 보호자에게 보내지 않는다
 _UNSAVED_FALLBACK = "이번에는 아무것도 저장하지 않았어요."
+
+# unclear 뿐인 입력이 쓰기 없이 말로 끝나면 모델이 쓴 문장을 보내지 않는다.
+# 프롬프트는 추천만 금지해서 "공룡에 대해 알려줘" · "안녕이라고 말해줘" 에
+# 모델이 그대로 답했고(#642), "아이의 취향으로 기록할까요?" 처럼 보호자 얘기를 아이에게
+# 옮겨 묻기도 했다. 문장은 코드가 정한다
+_UNCLEAR_REPLY = "아이 기록으로 남기지 않았어요. 아이가 겪은 일이었다면 그 일을 말해 주세요."
 _ALREADY_DONE = (
     "같은 작업을 이미 했다. 다시 부르지 않는다. "
     "같은 날 같은 대상은 한 건으로 합치고, 내용을 더할 거면 update로 고친다."
@@ -229,6 +217,7 @@ class MemoryAgentResult:
     # model: 모델이 tool 없이 말하고 끝남. 되묻기·조회 답·알림 안내가 전부 여기라
     #   질문 여부를 이 값으로 가르지 않는다 — reply.kind 를 본다
     # coverage: 할 일을 다 한 게 확인돼 요약 호출 없이 끝남
+    # unclear: unclear 뿐인 입력이 쓰기 없이 끝나 코드가 정한 문구(_UNCLEAR_REPLY)를 냄 (#642)
     # max_steps: 끝내지 못함
     ended_by: EndedBy = "model"
     drafts: tuple[EventDraft, ...] = ()  # 보호자 제출을 기다리는 일정 초안
@@ -303,7 +292,6 @@ async def run(
     nudged = False  # 빈 턴을 다시 물은 적이 있는지
     nudged_hint = False  # 조각 지목을 다시 물은 적이 있는지
     rechecked = False  # 저장 없이 말로 끝낸 이어받기를 다시 확인하게 한 적이 있는지
-    asked_unclear = False  # unclear 만 있는 입력의 되묻기를 다시 확인하게 한 적이 있는지
     # 이어받기는 답에 다른 말이 섞였는지(leftover)를 더 받는다
     reply_format = CONTINUATION_REPLY_FORMAT if continuation is not None else REPLY_FORMAT
     reply_model: type[ReplyOutput] = (
@@ -322,6 +310,9 @@ async def run(
 
         tool_calls = getattr(response.message, "tool_calls", None) or []
         if not tool_calls:
+            if _unclear_unsaved(task, calls):
+                # 모델 응답은 읽지 않는다. 스키마 · 평문 · 빈 턴 어느 쪽이든 같은 문구로 끝낸다
+                return _unclear_result(step + 1, calls, usage, context)
             content = (response.message.content or "").strip()
             parsed = _parse_reply(content, reply_model)
             # structured output 이라 빈 턴은 text 가 빈 JSON 으로도 온다 (라이브 RC26)
@@ -355,23 +346,8 @@ async def run(
                     messages.append({"role": "user", "content": _PENDING_RETRY})
                     continue
                 # 조회 · 수정은 "지우지 않을게요" 처럼 저장 없이 끝나는 말이 정상이라 보지 않는다
-                unclear_question = (
-                    continuation is None
-                    and task is not None
-                    and task.unclear_only
-                    and replied.kind == "question"
-                )
-                if unclear_question and not asked_unclear:
-                    asked_unclear = True
-                    messages.append({"role": "assistant", "content": content})
-                    messages.append({"role": "user", "content": _UNCLEAR_QUESTION})
-                    continue
-                # unclear 맥락은 "아이 얘기가 아니에요" 면 저장 없이 끝나는 게 맞다. 재확인 문구의
-                # "필요한 값을 묻는다" 가 같은 질문을 다시 부를 수 있다
                 recording = (
-                    continuation is not None
-                    and continuation.work is not WorkType.LOOKUP_EDIT
-                    and not continuation.unclear
+                    continuation is not None and continuation.work is not WorkType.LOOKUP_EDIT
                 )
                 # 실패한 쓰기도 저장이 아니다
                 unsaved = replied.kind == "message" and not _wrote(calls)
@@ -426,6 +402,11 @@ async def run(
                 }
             )
 
+        # 거절 뒤에 모델이 쓸 알림은 어차피 버려진다. 한 번 더 부르지 않는다.
+        # 그래서 이 뒤 응답에서 만들려던 일정 초안은 기회가 없다. 같은 응답의 초안은 남는다
+        if _unclear_unsaved(task, calls) and _refused(calls, ErrorCode.NOT_CHILD_RECORD):
+            return _unclear_result(step + 1, calls, usage, context)
+
         # 이어받기는 조기 종료하지 않는다. 조각이 하나라 저장 한 번에 끝나 버리면
         # leftover를 받을 턴이 없다
         if (
@@ -433,7 +414,7 @@ async def run(
             and continuation is None
             and EARLY_STOP
             and _covered(task, step_records, calls)
-            # unclear 조각을 거절했으면 남기지 않았다고 알릴 턴을 준다
+            # 섞인 입력에서 unclear 조각을 거절했으면 남기지 않았다고 알릴 턴을 준다
             and not _refused(calls, ErrorCode.NOT_CHILD_RECORD)
         ):
             # 모델에게 "무엇을 했는지" 요약을 받으려고 한 번 더 부르지 않는다
@@ -492,6 +473,26 @@ def _claims_saved(text: str) -> bool:
     지난 기록을 알려 주는 "기록했던" · 묻는 "기록할까요" 는 아니다.
     """
     return bool(_SAVED_CLAIM.search(text))
+
+
+def _unclear_unsaved(task: MemoryTask | None, calls: list[ToolCallRecord]) -> bool:
+    """unclear 뿐인 입력이고 이번 run 에서 쓴 것이 없는가. 이때 보호자에게 갈 말은 코드가 정한다."""
+    return task is not None and task.unclear_only and not _wrote(calls)
+
+
+def _unclear_result(
+    steps: int, calls: list[ToolCallRecord], usage: dict[str, int], context: AgentContext
+) -> MemoryAgentResult:
+    """모델이 한 말 대신 고정 문구로 끝낸다. 로그에서 갈리도록 ended_by 를 따로 둔다."""
+    return MemoryAgentResult(
+        reply=MemoryReply(_UNCLEAR_REPLY, "message"),
+        completed=True,
+        steps=steps,
+        calls=calls,
+        usage=usage,
+        ended_by="unclear",
+        drafts=context.drafts.all(),
+    )
 
 
 def _lookup_only(task: MemoryTask | None) -> bool:
@@ -607,12 +608,7 @@ def _continuation_message(
         lines = "\n".join(pending.transcript)
         rounds = f"\n\n[앞서 주고받은 것]\n{lines}"
     # 헤더가 아니라 원문 전체 조각에만 붙인다. 헤더에 두면 답에 섞인 말까지 저장했다
-    if pending.unclear:
-        note = f"\n{_UNCLEAR_FRAGMENT}"
-    elif pending.whole:
-        note = f"\n{_WHOLE_FRAGMENT}"
-    else:
-        note = ""
+    note = f"\n{_WHOLE_FRAGMENT}" if pending.whole else ""
     found = ""
     if shown:
         lines = "\n".join(
@@ -706,7 +702,6 @@ def _pending(
             work=continuation.work,
             transcript=(*continuation.transcript, continuation.question, answer),
             whole=continuation.whole,
-            unclear=continuation.unclear,
             found=found,
         )
     if task is None:
@@ -718,12 +713,10 @@ def _pending(
             return None
         # 작업 종류를 모른다. observe로 두면 이어받기가 수정·삭제 tool을 열지 않는다
         return PendingMemoryContext(
-            # unclear 만 있었으면 그 조각만 잇는다. 원문에 섞인 요청은 이어받기 대상이 아니다
-            hint_text=" ".join(task.unclear) if task.unclear_only else task.raw_text,
+            hint_text=task.raw_text,
             question=reply.text,
             work=WorkType.OBSERVE,
             whole=True,
-            unclear=task.unclear_only,
             found=found,
         )
     open_hints = _open_hints(task, calls)

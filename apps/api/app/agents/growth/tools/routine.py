@@ -45,7 +45,8 @@ ASSISTANCE_TAG_PREFIX = "assistance:"
 class ChainError(ValueError):
     """`next_step_of` 사슬이 끊겼거나 갈라졌거나 돈다. 추측해서 고르지 않고 올린다.
 
-    적재 검사가 먼저 막으므로 run 중에는 나오지 않아야 한다.(TODO)
+    시드는 적재 검사(`test_growth_doc_seed` 의 `chain_problems`)가 막는다. run 중에 만나면
+    (`routine_chains` · `search_routine_memory`) 그 사슬만 빼고 그 행동은 `doc.no_row` 로 닫는다.
     """
 
 

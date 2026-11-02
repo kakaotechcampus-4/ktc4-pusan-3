@@ -85,8 +85,13 @@ _EVIDENCE = """
 - 기억은 그 후보를 고른 이유가 된 것만 단다. 후보와 상관없는 기록(블록 기록을 크레용 놀이에)을
   달지 않는다 — 기록이 있다고 다 달면 근거가 약한데 이 아이 맞춤처럼 보인다.
   싫어한 기록을 피해 골랐으면 그 기록은 이유가 되므로 단다.
-- 기억 근거가 없는 후보는 [예시] 중 가장 가까운 예시의 id 를 evidence 에 단다. note 에는
-  그 예시에서 무엇을 참고했는지 쓴다. evidence 를 비우지 않는다 — 비우면 거절된다.
+- 보호자가 이번 요청에서 놀이 종류 · 소재 · 주제를 정했으면(물놀이 · 공놀이 · 티니핑처럼)
+  requested_play 에 그 말을 적고, 그 놀이를 요청대로 만든다. 기억 근거가 없어도 [예시]를 근거로
+  달지 않아도 된다 — [예시]는 이 월령에 맞는 결을 보는 참고다. 언제 · 어디서 · 얼마나만
+  말했거나("비 오는 날", "자기 전에") 막연하면("뭐 하고 놀까?") requested_play 를 비운다.
+- requested_play 가 비었으면, 기억 근거가 없는 후보는 [예시] 중 가장 가까운 예시의 id 를
+  evidence 에 단다. note 에는 그 예시에서 무엇을 참고했는지 쓴다. 이때 evidence 를 비우지
+  않는다 — 비우면 거절된다.
 - 기억 근거가 있는 후보도 [예시]를 바탕으로 했으면 그 id 를 같이 단다.
 - 기록이 없으면(NO_RECORDS) 기억 근거 없이 낸다. 보호자에게 되묻지 않는다.
 """.strip()
@@ -193,8 +198,8 @@ def _conditions(weather: WeatherBrief, *, checked: bool, gate: Gate) -> str:
     """오늘 날씨는 판정과 등급 라벨만 준다. 수치는 주지 않는다 (4-2).
 
     확인하지 못한 날은 "어렵다" 와 나눠 쓴다 — 같은 말이면 모델이 확인 안 한 날씨를 이유 문장에
-    쓴다. 예보를 못 읽은 날은 실내만(D8)이고, 위치 · 날씨 어댑터가 없어 묻지 않은 날은 바깥
-    활동도 연다(`weather.not_asked`).
+    쓴다. 위치 · 날씨 어댑터가 없어 묻지 않은 날(`weather.not_asked`)도, 예보 · 특보를 못 읽은
+    날(`weather.unchecked`)도 바깥 활동을 연다 — 날씨 이야기만 쓰지 않는다 (#612 멘토 리뷰).
     오늘 판정은 오늘 하는 활동에만 건다. 내일 · 주말은 그날 판정으로 거른다 (#377).
     """
     if not checks_weather(gate):
@@ -204,17 +209,19 @@ def _conditions(weather: WeatherBrief, *, checked: bool, gate: Gate) -> str:
             if weather.outdoor_ok
             else "해가 졌다. 오늘 하는 활동은 setting 이 indoor 나 either 인 것만 낸다."
         )
-    elif not checked:
-        outdoor = (
-            "오늘 날씨는 확인하지 못했다. 날씨 이야기를 쓰지 않는다. "
-            "오늘 하는 활동은 setting 이 indoor 나 either 인 것만 낸다."
-        )
-    elif weather.outdoor_ok:
-        outdoor = "오늘은 바깥 활동을 할 수 있다."
-    else:
+    elif not weather.outdoor_ok:
+        # 못 읽은 것이 있어도 해가 졌거나 읽은 신호가 나쁘면 막는다 — "확인하지 못했다" 보다 먼저
         outdoor = (
             "오늘은 바깥 활동이 어렵다. 오늘 하는 활동은 setting 이 indoor 나 either 인 것만 낸다."
         )
+    elif not checked:
+        # 못 읽은 날도 바깥 놀이를 막지 않는다
+        outdoor = (
+            "오늘 날씨는 확인하지 못했다. 날씨 이야기를 쓰지 않는다. "
+            "바깥 활동(outdoor)도 낼 수 있다."
+        )
+    else:
+        outdoor = "오늘은 바깥 활동을 할 수 있다."
     labels = " · ".join(f"{key} {value}" for key, value in weather.labels.items())
     if finds_places(gate):
         place = "근처 장소는 search_nearby_places 로 찾을 수 있다."

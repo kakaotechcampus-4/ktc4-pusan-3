@@ -9,22 +9,35 @@ health_safety.label 은 자유 입력이다. 고르는 목록이 없고, 검사�
 공용 이름 사전(allergen_terms.yaml)에 Food 는 자기 음식 어휘를 더하고, Activity · Growth 는
 19종 밖 식품 별칭만 더한 `allergy_book()` 을 쓴다.
 
-식품 사전에 없는 알레르기 이름(꽃가루 · 라텍스)에 붙이는 확인 문구도 여기서 고른다
-(`non_food_allergies`). 문구 자체는 Agent 마다 자기 `*.readout.yaml` 에 둔다.
+식품 사전에 없는 알레르기 이름(꽃가루 · 라텍스)은 Agent 마다 다르게 다룬다. Activity 는 확인 문구를
+붙이고(`non_food_allergies`, 문구는 자기 `*.readout.yaml`), Growth 교육은 사람이 정한 대응표
+(`reference/allergy_related_terms.yaml`)의 낱말이 든 후보를 막는다(`related_blocks`).
 
 Food · Activity · Growth 가 같이 쓴다. food 패키지를 import 하지 않는다 (docs/agents/README.md §6).
 """
 
 import re
 import unicodedata
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from functools import cache
 from types import MappingProxyType
 from typing import Literal, Protocol
 
-from app.agents.common.reference import allergen_groups, allergen_terms, food_safety_terms
-from app.rules.term_match import Term, TermMatcher, normalize, prepare_fields, split_words
+from app.agents.common.reference import (
+    allergen_groups,
+    allergen_terms,
+    food_safety_terms,
+    load_reference,
+)
+from app.rules.term_match import (
+    Term,
+    TermMatcher,
+    match_fields,
+    normalize,
+    prepare_fields,
+    split_words,
+)
 
 
 @dataclass(frozen=True)
@@ -185,6 +198,19 @@ SENTENCE_GUARDS: Mapping[str, tuple[str, ...]] = MappingProxyType(
         "조기": ("조기교육", "조기축구"),
         "방어": ("방어하기", "방어하는", "방어해", "방어막"),
         "도미": ("도미노",),
+        # 생선(미꾸라지) 별칭이지만 문장에서는 "~추다" 의 활용형이다 — "목소리를 낮추어" ·
+        # "박자에 맞추어"
+        "추어": (
+            "낮추어",
+            "맞추어",
+            "갖추어",
+            "늦추어",
+            "멈추어",
+            "감추어",
+            "들추어",
+            "비추어",
+            "춤추어",
+        ),
     }
 )
 
@@ -455,10 +481,11 @@ def non_food_allergies(rows: Iterable[SafetyRow], book: LabelBook) -> tuple[str,
     """확인 문구를 붙일 알레르기 이름 — 보호자가 적은 그대로, 같은 이름은 한 번.
 
     `allergy` 이고 active인 행 중 이름에 식품 사전이 못 찾은 조각이 있는 것이다. 꽃가루 · 라텍스 ·
-    동물털처럼 식품이 아닌 알레르기는 뺄 활동을 코드가 못 정한다 — 이름을 물건 · 장소로 넓히는
-    대응표(꽃가루 → 공원)는 판단을 담게 된다. 그래서 적은 이름을 되돌려 보여 주고 확인하게 할
-    뿐이다. 19종 밖 식품도 별칭 표(`extra_allergens`)에 있으면 `allergy_book()` 이 식품으로
-    읽어 빠지고(키위 · 버섯), 표에 없는 것(쑥)만 들어간다. 식품 알레르기는 이름 대조가 뺀다.
+    동물털처럼 식품이 아닌 알레르기다. Activity 는 이 이름을 되돌려 보여 주고 확인하게 한다.
+    Growth 교육은 확인 문구 대신 사람이 정한 대응표로 막는다(`related_blocks`) — 표에 없는 이름은
+    이름 대조만 한다. 19종 밖 식품도 별칭 표(`extra_allergens`)에 있으면 `allergy_book()` 이
+    식품으로 읽어 빠지고(키위 · 버섯), 표에 없는 것(쑥)만 들어간다. 식품 알레르기는 이름 대조가
+    뺀다.
 
     `environmental`은 고소공포 같은 것이라(data_model.md) 알레르기 문구가 맞지 않아 넣지 않는다.
     `health_safety.category`가 빠진 뒤로는 환경 알레르기만 고를 칸이 없어서 사전으로 가른다.
@@ -473,6 +500,65 @@ def non_food_allergies(rows: Iterable[SafetyRow], book: LabelBook) -> tuple[str,
             seen.add(key)
             labels.append(row.label)
     return tuple(labels)
+
+
+@dataclass(frozen=True)
+class RelatedAllergy:
+    """식품 아닌 알레르기 하나 — 보호자가 적을 이름과, 교육 후보에서 막을 낱말.
+
+    `names` · `blocks` 의 key 는 둘 다 `label` 이다. 판정 결과에는 이 key 만 나간다.
+    """
+
+    label: str
+    names: Term
+    blocks: Term
+
+
+_RELATED_KEYS = frozenset({"label", "aliases", "blocks", "guards"})
+
+
+@cache
+def allergy_related_table() -> tuple[RelatedAllergy, ...]:
+    """`allergy_related_terms.yaml`. 읽지 못하거나 모양이 틀리면 예외를 그대로 올린다.
+
+    호출부(Growth `load_safety_rules`)가 "안전 사전을 못 읽음" 으로 바꿔 교육을 닫는다 —
+    빈 표로 통과시키지 않는다.
+    """
+    data = load_reference("allergy_related_terms.yaml")
+    table: list[RelatedAllergy] = []
+    for raw in data.get("entries") or ():
+        if not isinstance(raw, dict) or set(raw) != _RELATED_KEYS:
+            raise ValueError(f"allergy_related_terms.yaml 항목 모양이 틀렸다: {raw!r}")
+        label = str(raw["label"])
+        aliases = tuple(str(alias) for alias in raw["aliases"])
+        words = tuple(str(word) for word in raw["blocks"])
+        guards = tuple(str(guard) for guard in raw["guards"])
+        if label not in aliases or not words:
+            raise ValueError(f"allergy_related_terms.yaml {label!r}: 별칭 · 낱말이 비었다")
+        table.append(
+            RelatedAllergy(
+                label=label,
+                names=Term(key=label, aliases=aliases),
+                blocks=Term(key=label, aliases=words, guards=guards),
+            )
+        )
+    if not table:
+        raise ValueError("allergy_related_terms.yaml 에 항목이 없다")
+    return tuple(table)
+
+
+def related_blocks(labels: Iterable[str], table: Sequence[RelatedAllergy]) -> tuple[Term, ...]:
+    """보호자가 적은 이름 중 표에 있는 것의 막을 낱말. 표 순서, 같은 항목은 한 번.
+
+    이름은 `split_label` 조각마다 별칭을 찾는다 — "땅콩, 꽃가루" · "고양이 털" · "개털 알레르기" 가
+    걸린다. 표에 없는 이름은 빈 튜플이다(호출부가 이름 대조만 한다). kind · status 는 호출부가
+    거른다 — 이 함수는 이름만 본다.
+    """
+    names = tuple(entry.names for entry in table)
+    found: set[str] = set()
+    for label in labels:
+        found.update(match_fields(split_label(label), names))
+    return tuple(entry.blocks for entry in table if entry.label in found)
 
 
 AllergenState = Literal["active", "known"] | None

@@ -12,8 +12,8 @@ store 종류는 모른다 — MemoryStore Protocol 로만 읽는다.
    주고(#257), Memory 는 도메인 단계 전에 commit 되므로 따로 연 세션에서도 방금 저장한
    관찰이 보인다.
 
-Agent 패키지는 서로 import 하지 않는다. Memory store 와 Food · Activity
-포트를 둘 다 아는 곳은 pipeline · entrypoint 층이라 여기 둔다.
+Agent 패키지는 서로 import 하지 않는다. Memory store 와 Food · Activity ·
+Growth 포트를 둘 다 아는 곳은 pipeline · entrypoint 층이라 여기 둔다.
 Curator 는 이 다리를 쓰지 않고 DbCuratorStore 를 직접 쓴다 (domains/memory/curator/trigger.py).
 
 profile_affinity 는 Memory store 에 없어 따로 받은 어댑터(`affinities=`, 운영은
@@ -31,6 +31,12 @@ from uuid import NAMESPACE_URL, UUID, uuid5
 from app.agents.activity.store.ports import ActivityObservation
 from app.agents.common.evidence import AffinityRow
 from app.agents.food.store.ports import FoodObservation
+from app.agents.growth.store.ports import ActivityObservation as GrowthActivityObservation
+from app.agents.growth.store.ports import (
+    AffinityDomain,
+    EducationObservation,
+    RoutineObservation,
+)
 from app.agents.memory.store.ports import MemoryStore, ObservationRow
 from app.rules.profile import archived_by_time
 
@@ -40,6 +46,9 @@ FOOD_STATUSES = frozenset({"active", "stand_alone"})
 # Activity는 active만 읽는다. Activity 포트(ActivityObservation 주석)와 activity-agent-v1
 #   A-10 이 stand_alone을 근거에서 뺀다 — "이번만 그랬어요" 로 고친 기록이 근거로 돌아오지 않게
 ACTIVITY_STATUSES = frozenset({"active"})
+# Growth 도 active 만 읽는다 — "이번만 그랬어요" 로 고친 기록으로 루틴 수준을 잡지 않는다
+#   (growth/store/ports.py RoutineObservation 주석)
+GROWTH_STATUSES = frozenset({"active"})
 
 
 # 호출 한 번에 쓸 store 를 여는 함수. 러너가 짧은 DB 세션으로 만든다
@@ -179,6 +188,92 @@ class StoreActivityMemory(_StoreReader):
         )
         return [
             ActivityObservation(
+                id=_uuid(row.id),
+                child_id=child_id,
+                observed_on=row.observed_on,
+                subject=row.fields["subject"],
+                activity=row.fields["activity"],
+                polarity=int(row.fields.get("polarity") or 0),
+            )
+            for row in rows
+        ]
+
+
+class StoreGrowthMemory(_StoreReader):
+    """`GrowthMemoryReader` 구현. 교육 · 루틴 · 놀이 관찰을 Memory store 에서 읽는다.
+
+    놀이 관찰은 Growth가 근거로 읽기만 한다 — 쓰지 않는다. 관심은 Food · Activity 와 같은
+    어댑터로 읽고, 어느 도메인을 읽을지는 호출부(교육 · 놀이 조회 tool)가 정한다.
+    """
+
+    async def affinities(
+        self, *, child_id: UUID, domains: tuple[AffinityDomain, ...]
+    ) -> list[AffinityRow]:
+        return await self._affinity_rows(child_id, domains)
+
+    async def education(
+        self, *, child_id: UUID, date_from: date, date_to: date
+    ) -> list[EducationObservation]:
+        rows = await _rows(
+            self._open,
+            "education",
+            child_id=child_id,
+            date_from=date_from,
+            date_to=date_to,
+            statuses=GROWTH_STATUSES,
+        )
+        return [
+            EducationObservation(
+                id=_uuid(row.id),
+                child_id=child_id,
+                observed_on=row.observed_on,
+                subject=row.fields["subject"],
+                topic=row.fields["topic"],
+                polarity=int(row.fields.get("polarity") or 0),
+                engagement_level=row.fields.get("engagement_level"),
+            )
+            for row in rows
+        ]
+
+    async def routine(
+        self, *, child_id: UUID, date_from: date, date_to: date
+    ) -> list[RoutineObservation]:
+        rows = await _rows(
+            self._open,
+            "routine",
+            child_id=child_id,
+            date_from=date_from,
+            date_to=date_to,
+            statuses=GROWTH_STATUSES,
+        )
+        return [
+            RoutineObservation(
+                id=_uuid(row.id),
+                child_id=child_id,
+                observed_on=row.observed_on,
+                subject=row.fields["subject"],
+                routine_category=row.fields["routine_category"],
+                polarity=int(row.fields.get("polarity") or 0),
+                assistance_level=row.fields.get("assistance_level"),
+                completion_status=row.fields.get("completion_status"),
+                trigger=row.fields.get("trigger"),
+            )
+            for row in rows
+        ]
+
+    async def activities(
+        self, *, child_id: UUID, date_from: date, date_to: date
+    ) -> list[GrowthActivityObservation]:
+        rows = await _rows(
+            self._open,
+            "activity",
+            child_id=child_id,
+            date_from=date_from,
+            date_to=date_to,
+            statuses=GROWTH_STATUSES,
+        )
+        return [
+            GrowthActivityObservation(
                 id=_uuid(row.id),
                 child_id=child_id,
                 observed_on=row.observed_on,
