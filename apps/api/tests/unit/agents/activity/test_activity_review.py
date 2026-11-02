@@ -662,6 +662,25 @@ class TestEventName:
         (draft,) = review(candidate(content=content, place_name=place_name), events=EVENTS).drafts
         assert draft.content == content
 
+    @pytest.mark.parametrize(
+        ("content", "expected"),
+        [
+            ("귤 축제에서 본 색 찾기", "바닷가 귤 축제에서 본 색 찾기"),
+            ("축제에서 본 색 찾기", "바닷가 귤 축제에서 본 색 찾기"),
+            ("귤 따기 체험하기", "바닷가 귤 축제에서 귤 따기 체험하기"),
+        ],
+    )
+    def test_행사_이름의_뒷부분으로_시작하면_그_자리를_행사_이름으로_바꾼다(
+        self, content, expected
+    ):
+        """앞에 붙이기만 하면 "바닷가 귤 축제에서 귤 축제에서 …" 가 된다 (11-03 실측)."""
+        tangerine = replace(FEST_ROW, name="바닷가 귤 축제")
+        (draft,) = review(
+            candidate(content=content, place_name=tangerine.name),
+            events={tangerine.name: tangerine},
+        ).drafts
+        assert draft.content == expected
+
     def test_place_name_을_비워도_문장에_행사가_있으면_붙인다(self):
         (draft,) = review(
             candidate(content="정원문화박람회에서 꽃 모양 찾기", place_name=None), events=EVENTS
