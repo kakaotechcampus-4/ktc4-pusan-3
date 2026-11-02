@@ -5,7 +5,7 @@ import type { GeneralSuggestion } from "@/lib/api/types";
 import { cn } from "@/lib/cn";
 
 /**
- * 디자인 시스템 §7 `card-general` — 또래 기준 일반 추천.
+ * 디자인 시스템 §7 `card-general` — 일반 추천.
  *
  * 근거 Memory 가 부족한 후보는 개인화 **대신** 이 카드로 나간다 (CLAUDE.md §2).
  * ⚠️ 같은 Agent 안에서도 개인화 목록(`SuggestionList`)과 **같이 설 수 있다** — Agent 가 후보마다 아이 기록
@@ -15,9 +15,12 @@ import { cn } from "@/lib/cn";
  *    근거 0건인데 개인화로 그려진다 (문서 §7). 타입도 따로라(`GeneralSuggestion.evidence` 는
  *    아이 기록이 아니라 문서 행 `DocEvidence[]` 다) 이 카드에 개인화 제안을 넘기면 컴파일이 막는다.
  *
- * 🚨 **"또래 기준" 이라는 사실을 카드가 직접 말한다.** 라벨과 기록 건수는 장식이 아니라
+ * 🚨 **"일반 추천" 이라는 사실을 카드가 직접 말한다.** 라벨과 기록 건수는 장식이 아니라
  *    이 카드의 본체다 — 근거가 없는데 "우리 아이 맞춤" 인 척하지 않는 것이 이 화면의 전부다.
  *    그래서 둘 다 빼거나 접을 수 없게 붙박이로 둔다.
+ * 🚨 **라벨에 "또래 기준" 을 붙이지 않는다** (#597). 막연한 요청이면 또래 기준이지만, 보호자가 놀이를
+ *    정해 물었으면 그 요청에 맞춰 고른다. 응답에는 둘을 가르는 칸이 없어서 고정 라벨이 한쪽을 말하면
+ *    다른 쪽에서 거짓말이 된다. 무엇을 기준으로 골랐는지는 아래 `basis` 가 말한다.
  * 🚨 **색으로 구분하지 않는다.** 개인화와 일반을 가르는 것은 라벨과 건수지 색이 아니다
  *    (문서 §3). 도메인 칩의 색은 여기서도 "어느 Agent 에서 왔나" 하나만 뜻한다.
  *
@@ -29,7 +32,7 @@ import { cn } from "@/lib/cn";
  * 🚨 **health 는 고르는 칸이 없다** — 개인화 줄과 같은 이유다 (진단하지 않는다 · CLAUDE.md §2).
  *
  * ⚠️ `basis` 는 **서버 문구**다. 무엇을 기준으로 골랐는지는 만든 쪽만 안다 —
- *    프론트가 "또래 기준" 뒤의 설명을 지어내지 않는다.
+ *    프론트가 기준을 지어내지 않는다.
  */
 export function GeneralSuggestionCard({
   suggestion,
@@ -62,7 +65,7 @@ export function GeneralSuggestionCard({
     >
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
         <DomainChip agent={suggestion.agent} />
-        <span className="text-label text-ink-muted">또래 기준 일반 추천</span>
+        <span className="text-label text-ink-muted">일반 추천</span>
         <CountChip>기록 {recordCount}건</CountChip>
       </div>
 
@@ -83,7 +86,9 @@ export function GeneralSuggestionCard({
 
         {/* 🚨 일반 추천의 근거는 **문서 행**이다 (최상위 §2). 출처를 같이 적는다 — CC BY 문서는 출처
           표시가 이용 조건이고, 무엇을 보고 골랐는지가 "또래 기준" 의 근거다. "사용한 기록 N건" 으로
-          세지 않는다 (아이 기록이 아니다). */}
+          세지 않는다 (아이 기록이 아니다).
+          ⚠️ 비어 올 수 있다 — 보호자가 놀이를 정해 물은 일반 추천은 그 요청이 기준이라 문서 행을
+          달지 않기도 한다 (#597). 그때는 출처 줄 없이 `basis` 만 선다. */}
         {suggestion.evidence.length > 0 ? (
           <ul className="mt-3 flex flex-col gap-1">
             {suggestion.evidence.map((doc) => (
