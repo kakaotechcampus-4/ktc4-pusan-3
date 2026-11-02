@@ -147,6 +147,7 @@ def _event(item: dict[str, Any]) -> RawEvent:
         mapy=_text(item.get("mapy")),
         kind_code=_text(item.get("lclsSystm2")),
         progress=_text(item.get("progresstype")),
+        region_code=_text(item.get("lDongRegnCd")),
     )
 
 

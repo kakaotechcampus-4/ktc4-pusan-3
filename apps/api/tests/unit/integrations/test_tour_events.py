@@ -86,6 +86,7 @@ FESTIVAL = {
     "mapy": "35.1657825587",
     "lclsSystm2": "EV01",
     "progresstype": "",
+    "lDongRegnCd": "26",
     "addr1": "부산광역시 해운대구",
     "tel": "051-000-0000",
     "firstimage": "http://example.invalid/a.jpg",
@@ -112,6 +113,7 @@ class TestEvents:
                 mapy="35.1657825587",
                 kind_code="EV01",
                 progress="",
+                region_code="26",  # 시 · 도만 말한 행사 검색이 쓴다
             )
         ]
 
