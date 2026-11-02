@@ -375,7 +375,7 @@
 | content | text | NOT NULL. 실제로 추천하는 내용 |
 | reason | text | nullable. 근거 문구 |
 | allergens | text[] | NOT NULL, default `'{}'`. 그 추천에 들어 있는 알레르기 항목의 정식 명칭(`allergen_terms.yaml`, 예: `새우` · `난류`). 19종 밖(예: Activity 의 `쑥`)도 이름으로 담는다. 상태(없음/모름)는 담지 않는다 — 승인할 때 `health_safety` 를 다시 읽는다 |
-| items | text[] | NOT NULL, default `'{}'`. 일정으로 만들 때 준비물(`event_item.item_name`) 하나씩. Food: `된장` · `두부`, Activity: `수영복`. 알레르기 판단에는 쓰지 않는다 |
+| items | text[] | NOT NULL, default `'{}'`. 일정으로 만들 때 준비물(`event_item.item_name`) 하나씩. Food: `두부` · `시금치` — 레시피 주재료(`recipe_catalog.main_ingredients`)에서 물 · 소금 · 설탕 · 기름 · 향신 가루를 뺀 것이고, 비면 `'{}'` 다(#474), Activity: `수영복`. 알레르기 판단에는 쓰지 않는다 — Food 의 안전 판정은 전체 `ingredients` · `allergen_codes` 로 한다 |
 | status | enum | `draft` / `approved` / `rejected` / `expired`, NOT NULL, default `draft` |
 | expires_at | timestamptz | 생성 +24h, NOT NULL |
 | run_id | text | nullable. 추천을 만든 입력 run(`RunChannel.run_id`). 05 가 그 run 의 추천을 찾는다. 인덱스 `(child_id, run_id)` |
@@ -387,7 +387,7 @@
 | **필드** | **타입** | **비고** |
 | --- | --- | --- |
 | suggestion_id | uuid | FK → `suggestion.id`, NOT NULL, `ON DELETE CASCADE` |
-| source_kind | text | NOT NULL. 아래 세 무리 중 하나 |
+| source_kind | text | NOT NULL. 아래 네 무리 중 하나 |
 | source_id | uuid | NOT NULL. **다형 참조라 FK가 아니다** — `correction.target_id`와 같은 패턴이고, 대상 존재 여부와 같은 `child_id`인지는 서버가 검증한다 |
 | note | text | NOT NULL. 그 행에서 추천 근거로 채택한 내용. Agent 가 쓰고 **보호자 화면에 그대로 나간다**. 비면 그 후보를 거절한다 |
 | created_at | timestamptz | NOT NULL, default `now()` |
@@ -396,13 +396,14 @@
 - `source_kind` 인덱스를 따로 둔다 — 품질 지표가 kind로 거르기 때문
 - **이름이 `memory_*`가 아니라 `source_*`인 이유** — 가리키는 대상이 Memory 소유 테이블만이 아니다. 문서 행(`*_doc`)과 Food 소유인 `daycare_meal`도 들어온다 (2026-09-23 회의 확정).
 
-**`source_kind`는 세 무리다.**
+**`source_kind`는 네 무리다.**
 
 | 무리 | 값 | 개인화 근거로 셈 |
 | --- | --- | --- |
 | 아이 기록 | `observation_food` · `observation_health` · `observation_education` · `observation_activity` · `observation_routine` · `profile_affinity` · `child_growth_log` · `notice` · `daycare_meal` | ✅ |
 | 문서 행 | `food_doc` · `growth_doc` · `activity_doc` | ❌ 참고만 (Health는 문서 행을 쓰지 않는다 — 상수 파일이다) |
 | 메뉴 행 | `recipe_catalog` | ❌ **Food 일반 추천만** — 고른 메뉴(레시피 카탈로그 행) 자체다(#442). 문서 행이 없는 월령(36개월부터 Food 문서 시드 0행)에도 일반 추천에 근거가 붙게. `source_id` 는 (source, source_id) 로 만드는 uuid5(`rules/menu_evidence.py`)이고, 저장할 때 후보 풀(resolved)의 레시피인지 본다 |
+| 책 행 | `book_catalog` | ❌ **Growth 일반 도서 추천만** — 고른 책의 서지 행(도서관 정보나루)이다. 메뉴 행(#442)과 같은 방식이다(#506): 코드가 `general_basis` 로만 달고 개인화면 버린다. 책 정보 표가 없어 `source_id` 는 ISBN 의 uuid5(`rules/book_evidence.py`)이고 종류만 본다 |
 
 🚨 **품질 지표는 아이 기록만 센다.** `kind='personalized'`인데 아이 기록 행이 0이면 버그다 — 문서 행만 달고 나가면 COUNT는 통과하지만 근거 없는 추천이다.
 
@@ -478,7 +479,7 @@
 | id | uuid | PK, UUIDv7 |
 | event_id | uuid | FK → `event.id`, NOT NULL, ON DELETE CASCADE, index |
 | parent_id | uuid | FK → `parent.id`, NOT NULL, ON DELETE CASCADE, index |
-| lead | enum | NOT NULL. 얼마나 먼저 울릴지. 시간 있는 일정 `at_start | 5m | 10m | 15m | 30m | 1h | 2h | 1d | 2d | 1w`, 종일 일정 `day_of_9am | 1d_9am | 2d_9am | 1w_9am` (KST 오전 9시) |
+| lead | enum | NOT NULL. 얼마나 먼저 울릴지. 시간 있는 일정 `at_start` / `5m` / `10m` / `15m` / `30m` / `1h` / `2h` / `1d` / `2d` / `1w`, 종일 일정 `day_of_9am` / `1d_9am` / `2d_9am` / `1w_9am` (KST 오전 9시) |
 | sent_at | timestamptz | nullable, 실제 발송 시점 |
 - UNIQUE: `(event_id, parent_id)` — 보호자 한 명은 한 일정에 알림 1개 (#594).
 

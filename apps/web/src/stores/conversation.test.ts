@@ -5,10 +5,11 @@ import { ApiError, NetworkError, isApiError } from "@/lib/api/errors";
 import { initialRunState } from "@/hooks/use-run-stream";
 import { api } from "@/lib/api/client";
 import { newIdempotencyKey } from "@/lib/api/idempotency";
-import { toSeoulDateKey } from "@/lib/format";
+import { recordedDayOf } from "@/mocks/handlers/chat";
 import { submittedInput } from "@/mocks/handlers/runs";
 import { setScenario, type Scenario } from "@/mocks/scenario";
 import { useDraftStore } from "@/stores/draft";
+import { useMedicationDraftStore } from "@/stores/medication-draft";
 
 import {
   canRetry,
@@ -86,6 +87,7 @@ function scenario(name: Scenario) {
 beforeEach(() => {
   useConversationStore.getState().clearAll();
   useDraftStore.getState().clearAll();
+  useMedicationDraftStore.getState().clearAll();
   scenario("default");
 });
 
@@ -367,7 +369,8 @@ describe("결과를 못 받은 줄을 채널이 지워진 뒤 다시 보낸다 (
 
       const recorded = turn(id);
       expect(runIdOf(id)).toBe(runId);
-      expect(recorded.recordedOn).toBe(toSeoulDateKey(new Date()));
+      // 서버가 알려 준 그날이다. 서울 날짜로 다시 만들면 머신 시간대로 날짜를 만드는 목과 KST 새벽 UTC CI 에서 하루 어긋난다 (#630).
+      expect(recorded.recordedOn).toBe(recordedDayOf(runId));
       expect(canRetry(recorded)).toBe(false);
       expect(isBusy(conversation())).toBe(false);
 
@@ -602,5 +605,60 @@ describe("지난 턴의 질문에 답한다 (#228 · reply_open)", () => {
   it("past 없이 부르면 스토어에 없는 질문은 고르지 않는다", () => {
     answerQuestion(CHILD, "r_unknown");
     expect(conversation().answering).toBeNull();
+  });
+});
+
+describe("Agent 가 답을 받는 질문 (#537 · `awaits_reply`)", () => {
+  it(
+    "복약 중단 확인에 답하면 `reply_to` 가 그 run 이고, Health 가 이어받아 질문이 닫힌다",
+    async () => {
+      scenario("med_question");
+      const asked = send("해열 시럽 그만 먹일래");
+      await settled(asked);
+
+      // 🚨 Memory 질문이 아니어도 입력창의 대상이 된다 — 답은 같은 `reply_to` 길로 간다.
+      expect(turn(asked).question).toBe("open");
+      expect(conversation().answering).toMatchObject({
+        runId: runIdOf(asked),
+        text: "해열 시럽 복약 알림을 멈출까요? 먹인 기록은 그대로 남아요.",
+      });
+
+      const reply = send("네", true);
+      expect(turn(reply).body.reply_to).toBe(runIdOf(asked));
+      const done = await settled(reply);
+
+      expect(turn(asked).question).toBe("answered");
+      expect(conversation().answering).toBeNull();
+      expect(done.run.agentResults.map((r) => r.readouts[0]?.body)).toEqual([
+        "해열 시럽 복약 알림을 멈췄어요. 먹인 기록은 그대로 남아요.",
+      ]);
+    },
+    TWO_RUNS,
+  );
+
+  it("🚨 `awaits_reply` 가 없는 Agent 질문은 열지 않는다 — 답하면 서버가 400 이다 (#246)", async () => {
+    scenario("agent_question");
+    const id = send("주말에 뭐 하고 놀까");
+    const done = await settled(id);
+
+    expect(done.run.agentResults[0]?.question).not.toBeNull();
+    expect(done.question).toBeNull();
+    expect(conversation().answering).toBeNull();
+  });
+});
+
+describe("복약 초안 (#537)", () => {
+  it("도착한 초안을 보관함에 한 번 얹고, 아무것도 저장하지 않는다", async () => {
+    scenario("med_draft");
+    const id = send("기침 시럽 하루 세 번 식후");
+    const done = await settled(id);
+
+    expect(done.run.medicationDrafts.map((d) => d.op)).toEqual(["create", "update"]);
+    expect(useMedicationDraftStore.getState().byChild[CHILD]?.map((d) => d.draft_id)).toEqual([
+      "md_create",
+      "md_update",
+    ]);
+    // 🚨 기간이 비어 온 초안 — 화면이 오늘로 채우지 않아야 할 칸이다.
+    expect(done.run.medicationDrafts[0]?.missing).toEqual(["ends_on"]);
   });
 });

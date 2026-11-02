@@ -19,6 +19,7 @@ from app.agents.common.allergy import (
     shared_book,
     shared_name_rules,
     split_label,
+    split_particle,
 )
 from app.rules.term_match import Term
 
@@ -308,3 +309,18 @@ def test_non_food_allergies_keeps_the_label_as_written() -> None:
     """보호자가 적은 그대로 보여 준다 — 조각으로 쪼갠 이름을 내지 않는다."""
     rows = [Row("allergy", "땅콩, 꽃가루", "active")]
     assert non_food_allergies(rows, shared_book()) == ("땅콩, 꽃가루",)
+
+
+@pytest.mark.parametrize(
+    ("word", "pairs"),
+    [
+        ("김밥은", [("김밥", "은")]),
+        ("사과를", [("사과", "를")]),
+        ("밤이", [("밤", "이")]),
+        ("배가", [("배", "가")]),
+        ("다과", []),  # 과는 받침 뒤에만 온다
+        ("고양이랑", [("고양", "이랑"), ("고양이", "랑")]),
+    ],
+)
+def test_split_particle_은_받침이_맞는_조사만_뗀다(word, pairs) -> None:
+    assert split_particle(word) == pairs

@@ -31,6 +31,7 @@ tool이 못 막는 것을 막는 자리다. 월령 필터·알레르기·날씨 
 """
 
 from collections.abc import Sequence
+from uuid import UUID
 
 from app.agents.activity.context import ActivityContext
 from app.agents.activity.gating import checks_weather, finds_places, weather_checked
@@ -84,8 +85,13 @@ _EVIDENCE = """
 - 기억은 그 후보를 고른 이유가 된 것만 단다. 후보와 상관없는 기록(블록 기록을 크레용 놀이에)을
   달지 않는다 — 기록이 있다고 다 달면 근거가 약한데 이 아이 맞춤처럼 보인다.
   싫어한 기록을 피해 골랐으면 그 기록은 이유가 되므로 단다.
-- 기억 근거가 없는 후보는 [예시] 중 가장 가까운 예시의 id 를 evidence 에 단다. note 에는
-  그 예시에서 무엇을 참고했는지 쓴다. evidence 를 비우지 않는다 — 비우면 거절된다.
+- 보호자가 이번 요청에서 놀이 종류 · 소재 · 주제를 정했으면(물놀이 · 공놀이 · 티니핑처럼)
+  requested_play 에 그 말을 적고, 그 놀이를 요청대로 만든다. 기억 근거가 없어도 [예시]를 근거로
+  달지 않아도 된다 — [예시]는 이 월령에 맞는 결을 보는 참고다. 언제 · 어디서 · 얼마나만
+  말했거나("비 오는 날", "자기 전에") 막연하면("뭐 하고 놀까?") requested_play 를 비운다.
+- requested_play 가 비었으면, 기억 근거가 없는 후보는 [예시] 중 가장 가까운 예시의 id 를
+  evidence 에 단다. note 에는 그 예시에서 무엇을 참고했는지 쓴다. 이때 evidence 를 비우지
+  않는다 — 비우면 거절된다.
 - 기억 근거가 있는 후보도 [예시]를 바탕으로 했으면 그 id 를 같이 단다.
 - 기록이 없으면(NO_RECORDS) 기억 근거 없이 낸다. 보호자에게 되묻지 않는다.
 """.strip()
@@ -161,14 +167,28 @@ def _request(request_texts: Sequence[str]) -> str:
     return "\n".join(texts)
 
 
+def example_ids(examples: Sequence[ActivityDocRow]) -> dict[str, UUID]:
+    """[예시]에 보여 줄 짧은 id(예1 …) → 문서 행 id.
+
+    긴 UUID 를 그대로 보여 주면 모델이 두 행의 id 를 이어 붙인다 — 앞 8자는 한 행, 나머지는 다른
+    행(라이브 eval "내일 공원"). 그러면 없는 id 라 묶음째 거절되고, 모델은 무엇이 틀렸는지 몰라
+    같은 id 로 다시 내다 단계 한도에 걸린다. 짧은 id 는 이어 붙일 길이가 없다. 출력 tool 이 이
+    표로 문서 행 id 로 되돌린다.
+    """
+    return {f"예{n}": row.id for n, row in enumerate(examples, start=1)}
+
+
 def _examples(examples: tuple[ActivityDocRow, ...]) -> str:
     if not examples:
         return "[예시]\n이 월령의 예시는 아직 없다."
-    lines = ["[예시] 결만 참고한다. 그대로 베끼지 않는다. 바탕으로 했으면 id 를 evidence 에 단다."]
-    for row in examples:
+    lines = [
+        "[예시] 결만 참고한다. 그대로 베끼지 않는다. "
+        "바탕으로 했으면 그 id(예1 같은)를 evidence 에 그대로 단다."
+    ]
+    for short_id, row in zip(example_ids(examples), examples, strict=True):
         materials = ", ".join(row.materials) or "없음"
         lines.append(
-            f"- id {row.id} · {row.title}: {row.body} (장소 {row.setting.value} · "
+            f"- id {short_id} · {row.title}: {row.body} (장소 {row.setting.value} · "
             f"준비물 {materials} · 보호자 {row.caregiver_role.value})"
         )
     return "\n".join(lines)
@@ -178,8 +198,8 @@ def _conditions(weather: WeatherBrief, *, checked: bool, gate: Gate) -> str:
     """오늘 날씨는 판정과 등급 라벨만 준다. 수치는 주지 않는다 (4-2).
 
     확인하지 못한 날은 "어렵다" 와 나눠 쓴다 — 같은 말이면 모델이 확인 안 한 날씨를 이유 문장에
-    쓴다. 예보를 못 읽은 날은 실내만(D8)이고, 위치 · 날씨 어댑터가 없어 묻지 않은 날은 바깥
-    활동도 연다(`weather.not_asked`).
+    쓴다. 위치 · 날씨 어댑터가 없어 묻지 않은 날(`weather.not_asked`)도, 예보 · 특보를 못 읽은
+    날(`weather.unchecked`)도 바깥 활동을 연다 — 날씨 이야기만 쓰지 않는다 (#612 멘토 리뷰).
     오늘 판정은 오늘 하는 활동에만 건다. 내일 · 주말은 그날 판정으로 거른다 (#377).
     """
     if not checks_weather(gate):
@@ -189,20 +209,31 @@ def _conditions(weather: WeatherBrief, *, checked: bool, gate: Gate) -> str:
             if weather.outdoor_ok
             else "해가 졌다. 오늘 하는 활동은 setting 이 indoor 나 either 인 것만 낸다."
         )
-    elif not checked:
-        outdoor = (
-            "오늘 날씨는 확인하지 못했다. 날씨 이야기를 쓰지 않는다. "
-            "오늘 하는 활동은 setting 이 indoor 나 either 인 것만 낸다."
-        )
-    elif weather.outdoor_ok:
-        outdoor = "오늘은 바깥 활동을 할 수 있다."
-    else:
+    elif not weather.outdoor_ok:
+        # 못 읽은 것이 있어도 해가 졌거나 읽은 신호가 나쁘면 막는다 — "확인하지 못했다" 보다 먼저
         outdoor = (
             "오늘은 바깥 활동이 어렵다. 오늘 하는 활동은 setting 이 indoor 나 either 인 것만 낸다."
         )
+    elif not checked:
+        # 못 읽은 날도 바깥 놀이를 막지 않는다
+        outdoor = (
+            "오늘 날씨는 확인하지 못했다. 날씨 이야기를 쓰지 않는다. "
+            "바깥 활동(outdoor)도 낼 수 있다."
+        )
+    else:
+        outdoor = "오늘은 바깥 활동을 할 수 있다."
     labels = " · ".join(f"{key} {value}" for key, value in weather.labels.items())
-    if finds_places(gate):
-        place = "근처 장소는 search_nearby_places 로 찾을 수 있다."
+    if finds_places(gate) and gate.has_location:
+        place = (
+            "근처 장소는 search_nearby_places 로 찾을 수 있다. 보호자가 다른 지역을 말했으면 "
+            "area 에 그 이름을 쓴 그대로 넣어 그 지역에서 찾는다. " + _AREA_ONLY
+        )
+    elif finds_places(gate):
+        place = (
+            "위치를 모른다. 보호자가 지역을 말했으면 search_nearby_places 의 area 에 그 이름을 "
+            "쓴 그대로 넣어 그 지역 장소를 찾는다. " + _AREA_ONLY + " "
+            "말하지 않았으면 특정 장소가 필요한 활동은 내지 않는다."
+        )
     elif gate.has_location:
         place = "근처 장소는 찾을 수 없다. 특정 장소가 필요한 활동은 내지 않는다."
     else:
@@ -212,6 +243,15 @@ def _conditions(weather: WeatherBrief, *, checked: bool, gate: Gate) -> str:
         lines.append(f"날씨: {labels}")
     lines.append(place)
     return "\n".join(lines)
+
+
+# 지역 이름과 글자가 같은 다른 뜻의 낱말. 코드는 글자로 가릴 수 없어서 모델이 문장 뜻으로 고른다
+# (#657 — "양산 챙겨서" 를 양산시로 찾았다)
+_AREA_ONLY = (
+    "area 는 보호자가 그 지역에 가거나 그 지역에서 놀려고 말했을 때만 쓴다. "
+    "지역 이름과 글자가 같은 물건 · 다른 뜻의 낱말(양산 챙겨서 · 화성에서 온 · 장수풍뎅이)은 "
+    "지역이 아니라 비운다."
+)
 
 
 def _now(context: ActivityContext) -> str:

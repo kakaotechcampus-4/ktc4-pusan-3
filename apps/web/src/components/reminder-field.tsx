@@ -19,6 +19,7 @@ export function ReminderField({
   onChange,
   label = "알림",
   hint = "나에게만 울려요.",
+  contextLabelId,
 }: {
   /** 일정 시작. 날짜를 아직 안 고른 초안이면 `null` 이고, 그때는 지난 값을 거르지 않는다. */
   startsAt: string | null;
@@ -31,12 +32,15 @@ export function ReminderField({
    *    보여요" 라서, 알림까지 같이 가는 줄로 읽히지 않게 기본으로 말한다.
    */
   hint?: string;
+  /** 어느 일정의 알림인지 말하는 요소의 id — 한 화면에 알림 칸이 여럿일 때 (`Select` 의 같은 이름 칸). */
+  contextLabelId?: string;
 }) {
   return (
     <Select
       shape="field"
       label={label}
       hint={hint}
+      contextLabelId={contextLabelId}
       value={value}
       options={reminderOptions({ startsAt, allDay, keep: value })}
       onChange={onChange}

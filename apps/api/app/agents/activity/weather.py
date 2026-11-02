@@ -6,7 +6,8 @@
 임계는 출처가 이미 정한 경계를 그대로 옮겼다. 특보는 기준 수치 대신 발효 여부만 본다 — 기준이
 개정되면 자동으로 따라가게 하려는 것이다. 관례값은 강수확률 60% 하나이고 eval 로 조정한다.
 
-🚨 실패를 기본값으로 메우지 않는다. 예보 실패는 "맑음"이 아니고 미세먼지 실패는 "좋음"이 아니다.
+🚨 실패를 기본값으로 메우지 않는다. 예보 실패는 "맑음"이 아니고 미세먼지 실패는 "좋음"이 아니다 —
+라벨을 채우지 않고 확인 못 했다고 알린다. 못 읽었다고 바깥을 막지는 않는다(`judge_weather`).
 """
 
 import math
@@ -53,7 +54,7 @@ UV_GRADE_FLOORS: tuple[tuple[int, str], ...] = (
 # ── 화면 문구 키 ────────────────────────────────────────────────────────────
 # 문구는 activity.readout.yaml 에 있다 (공통규약 §10). 여기는 키만 둔다
 WEATHER_UNCHECKED = "weather.unchecked"
-# 날씨를 아예 묻지 않았다(위치 · 날씨 어댑터 없음). 조회 실패(WEATHER_UNCHECKED)와 다르다
+# 날씨를 아예 묻지 않았다(위치 · 날씨 어댑터 없음). 조회 실패(WEATHER_UNCHECKED)와 문구가 다르다
 WEATHER_NOT_ASKED = "weather.not_asked"
 AIR_UNCHECKED = "weather.air_unchecked"
 UV_UNCHECKED = "weather.uv_unchecked"
@@ -67,7 +68,11 @@ UV_VERY_HIGH = "weather.uv_very_high"
 RAIN_LIKELY = "weather.rain_likely"
 
 # "실내 놀이만 골랐어요" 류 — 바깥 활동이 결과에 나가면 붙이지 않는다 (#515 리뷰)
-INDOOR_ONLY = frozenset({WEATHER_UNCHECKED, OUTDOOR_BLOCKED, AFTER_SUNSET})
+INDOOR_ONLY = frozenset({OUTDOOR_BLOCKED, AFTER_SUNSET})
+
+# "바깥 놀이라면 날씨를 봐 주세요" 류 — 바깥 활동이 결과에 없으면 붙이지 않는다. 실내 놀이에
+# 날씨 확인을 당부하면 군말이다
+OUTDOOR_ONLY = frozenset({WEATHER_NOT_ASKED, WEATHER_UNCHECKED})
 
 # 야외를 막아도 남겨야 하는 안내 — 무엇을 확인 못 했는지는 막혀도 알린다
 _UNCHECKED = frozenset({AIR_UNCHECKED, UV_UNCHECKED})
@@ -80,6 +85,9 @@ class WeatherBrief:
     outdoor_ok: bool
     labels: dict[str, str] = field(default_factory=dict)  # 등급 라벨. 수치는 없다
     notices: tuple[str, ...] = ()  # 화면에 붙는 문구 키 (activity.readout.yaml)
+    # 예보 · 특보를 다 읽지 못했다. 화면 문구와 따로 둔다 — 막힌 날은 "확인하지 못했어요" 를
+    # 붙이지 않지만 실패는 실패다. status(degraded)와 프롬프트가 이 값을 본다 (#645 리뷰)
+    unread: bool = False
 
     def to_model_payload(self) -> dict[str, object]:
         return {"outdoor_ok": self.outdoor_ok, **self.labels}
@@ -93,8 +101,8 @@ def not_asked(*, after_sunset: bool) -> WeatherBrief:
 
     위치가 없으면(1차 배포는 위치 기능을 두지 않는다, #451) 매번 실내만 나가 공원 · 산책 같은
     추천이 한 번도 안 나온다. 그래서 조회를 시도하지 않은 날은 바깥 놀이를 열고 "날씨는 확인하지
-    않았어요" 를 붙인다. 🚨 **조회했는데 실패한 날은 그대로 실내만이다** — 실패를 기본값으로
-    메우지 않는다(D8). 해가 진 뒤는 묻지 않았어도 실내만이다.
+    않았어요" 를 붙인다. 조회했는데 실패한 날도 바깥은 열고 "확인하지 못했어요" 를 붙인다
+    (`judge_weather`). 해가 진 뒤는 묻지 않았어도 실내만이다.
     """
     if after_sunset:
         return WeatherBrief(outdoor_ok=False, notices=(AFTER_SUNSET,))
@@ -111,33 +119,43 @@ def judge_weather(
 ) -> WeatherBrief:
     """조회 결과를 4-2 표로 판정한다. None 은 그 조회가 실패했다는 뜻이다.
 
-    - 예보나 특보가 실패했거나 강수량을 못 읽었으면 실내만. 특보는 차단 신호라 예보와 같이 본다.
-    - 미세먼지 · 자외선만 실패했으면 야외는 허용하고 확인 못 했다고 알린다.
+    - 예보나 특보가 실패했거나 강수량을 못 읽었으면 "날씨를 확인하지 못했어요" 를 붙이고 바깥은
+      막지 않는다. 조회 실패로 막으면 위치를 켠 보호자가 안 켠 보호자(`not_asked`)보다 바깥 놀이를
+      덜 받는다 — 맑다고 가정하지 않고 확인을 보호자에게 맡긴다 (#612 멘토 리뷰).
+    - 미세먼지 · 자외선만 실패했으면 무엇을 확인 못 했는지 알린다.
+    - 읽은 신호가 나쁘면 못 읽은 것이 있어도 막는다. 막힌 날은 "바깥 놀이라면 …" 을 붙이지 않는다.
     """
-    if forecast is None or forecast.precip_mm_per_h is None or advisories is None:
-        return WeatherBrief(outdoor_ok=False, notices=(WEATHER_UNCHECKED,))
-
     block = False
     notices: list[str] = []
     labels: dict[str, str] = {}
 
-    if forecast.sky:
-        labels["sky"] = forecast.sky
-    rain = forecast.precip_mm_per_h
-    labels["rain"] = _rain_label(rain)
-    if rain >= RAIN_HEAVY_MM:
-        block = True
-    elif rain >= RAIN_MODERATE_MM or (
-        forecast.pop_percent is not None and forecast.pop_percent >= POP_CAUTION_PERCENT
+    rain = forecast.precip_mm_per_h if forecast is not None else None
+    pop = forecast.pop_percent if forecast is not None else None
+    unread = rain is None or advisories is None
+    if unread:
+        notices.append(WEATHER_UNCHECKED)
+
+    # 강수량을 못 읽은 예보는 하늘 라벨도 싣지 않는다 — 모델이 "맑아요" 를 쓰지 않게
+    if forecast is not None and rain is not None:
+        if forecast.sky:
+            labels["sky"] = forecast.sky
+        labels["rain"] = _rain_label(rain)
+        if rain >= RAIN_HEAVY_MM:
+            block = True
+    # 강수확률은 강수량과 따로 본다 — 비 오는 날의 강수량 형식은 아직 실호출로 못 봐서, 강수량을
+    # 못 읽는 날이 비 오는 날일 수 있다 (#645 리뷰). 막힌 날은 아래에서 이 안내를 뺀다
+    if (rain is not None and rain >= RAIN_MODERATE_MM) or (
+        pop is not None and pop >= POP_CAUTION_PERCENT
     ):
         notices.append(RAIN_LIKELY)
 
-    if advisories.severe or "warning" in (advisories.heat, advisories.cold):
-        block = True
-    if advisories.heat == "advisory":
-        notices.append(HEAT_ADVISORY)
-    if advisories.cold == "advisory":
-        notices.append(COLD_ADVISORY)
+    if advisories is not None:
+        if advisories.severe or "warning" in (advisories.heat, advisories.cold):
+            block = True
+        if advisories.heat == "advisory":
+            notices.append(HEAT_ADVISORY)
+        if advisories.cold == "advisory":
+            notices.append(COLD_ADVISORY)
 
     if air is None or (air.pm10 is None and air.pm25 is None):
         notices.append(AIR_UNCHECKED)
@@ -166,12 +184,20 @@ def judge_weather(
             notices.append(UV_VERY_HIGH)
 
     if after_sunset or block:
-        # 야외가 막히면 "우산 챙기세요" 같은 안내는 필요 없다. 확인 못 한 것만 남긴다
+        # 야외가 막히면 "우산 챙기세요" 같은 안내는 필요 없다. 확인 못 한 것만 남긴다 —
+        # "날씨를 확인하지 못했어요. 바깥 놀이라면 …" 은 바깥 놀이가 없으니 뺀다
         kept = [key for key in notices if key in _UNCHECKED]
         notices = [*kept, AFTER_SUNSET if after_sunset else OUTDOOR_BLOCKED]
-        return WeatherBrief(outdoor_ok=False, labels=labels, notices=tuple(dict.fromkeys(notices)))
+        return WeatherBrief(
+            outdoor_ok=False,
+            labels=labels,
+            notices=tuple(dict.fromkeys(notices)),
+            unread=unread,
+        )
 
-    return WeatherBrief(outdoor_ok=True, labels=labels, notices=tuple(dict.fromkeys(notices)))
+    return WeatherBrief(
+        outdoor_ok=True, labels=labels, notices=tuple(dict.fromkeys(notices)), unread=unread
+    )
 
 
 # ── 파서 ────────────────────────────────────────────────────────────────────
@@ -290,12 +316,13 @@ def read_air(raw: RawAir) -> AirQuality:
 
 
 def read_advisories(raw: RawAdvisories) -> Advisories | None:
-    """특보 행을 발효 여부로. None 은 "모른다"이고 judge_weather 가 실내만으로 처리한다.
+    """특보 행을 발효 여부로. None 은 조회 실패다 — judge_weather 가 "확인하지 못했어요" 를 붙인다.
 
     - `03 NO_DATA` 는 발효 중인 특보가 없다는 뜻이다. 그 밖의 결과 코드는 실패다.
     - 발표와 해제가 따로 한 행씩 온다. (구역, 종류)마다 가장 최근 행의 command 로 본다.
-    - 모르는 command · 등급 · 종류가 발효 중이면 None — 모르는 특보를 "없음"으로 넘기지 않는다.
-      해제된 행은 종류를 몰라도 넘긴다. 끝난 특보다.
+    - 모르는 command · 등급 · 종류의 행이 해제가 아니면 차단 신호(severe)로 본다 — 목록은 읽었고
+      무언가 발효 중인데 무엇인지 모른다. 모르는 특보를 "없음"으로 넘기지 않고(#194 리뷰), 바깥을
+      열어 두는 조회 실패(None)와도 섞지 않는다. 해제된 행은 종류를 몰라도 넘긴다. 끝난 특보다.
     """
     code = raw.result_code.strip()
     if code == KMA_NO_DATA:
@@ -317,16 +344,15 @@ def read_advisories(raw: RawAdvisories) -> Advisories | None:
         if command in _CLEARED or warn_var in _WARN_IGNORED:
             continue
         level = _STRESS.get(row.warn_stress.strip())
-        if command not in _IN_EFFECT or level is None:
-            return None
-        if warn_var == _WARN_HEAT:
+        known = warn_var in _WARN_SEVERE or warn_var in (_WARN_HEAT, _WARN_COLD)
+        if command not in _IN_EFFECT or level is None or not known:
+            severe = True  # 모르는 command · 등급 · 종류 — 무엇인지 몰라도 발효 중이다
+        elif warn_var == _WARN_HEAT:
             heat = _stronger(heat, level)
         elif warn_var == _WARN_COLD:
             cold = _stronger(cold, level)
-        elif warn_var in _WARN_SEVERE:
-            severe = True
         else:
-            return None  # 처음 보는 종류
+            severe = True
     return Advisories(heat=heat, cold=cold, severe=severe)
 
 
