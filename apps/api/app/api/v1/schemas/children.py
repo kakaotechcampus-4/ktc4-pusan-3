@@ -5,7 +5,7 @@
 """
 
 from datetime import date
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import Decimal
 from typing import Annotated, Literal
 from uuid import UUID
 
@@ -96,38 +96,45 @@ class UpdateChildResponse(BaseModel):
     child: ChildProfile
 
 
-MEASUREMENT_MAX = 300
-"""키(cm) · 몸무게(kg)의 상한. 평가가 아니라 오타 막기다.
+HEIGHT_CM_RANGE = (Decimal("20"), Decimal("220"))
+WEIGHT_KG_RANGE = (Decimal("0.3"), Decimal("150"))
+"""키(cm) · 몸무게(kg)가 받는 범위 (양 끝 포함, #628). 화면과 같은 값이다
+(apps/web/src/lib/measurement.ts 의 `MEASUREMENT_RANGE`).
 
-DB 칸(999.9)에 닿기 전에 400 으로 돌려보낸다. 화면은 0 보다 큰 숫자를 전부 보낸다
-(apps/web/src/lib/measurement.ts).
+🚨 평가가 아니라 오타 막기다 (루트 §2). 이른둥이부터 서비스 상한 나이(20세)까지 넉넉히 감싸고,
+   키를 m · mm 로, 몸무게를 g 으로 적은 값만 걸린다. DB 는 "0 보다 커야" 만 막는다 —
+   범위는 바뀔 수 있는 기준이라 CHECK 로 좁히지 않았다. 범위 밖으로 이미 저장된 값은 그대로 둔다.
 """
 
 _ONE_PLACE = Decimal("0.1")
 
 
-def _round_one_place(value: Decimal) -> Decimal:
-    """소수 한 자리로 반올림한다 — DB 칸이 numeric(4,1) 이다 (docs/agents/data_model.md 09-22).
+def _one_place(value: Decimal) -> Decimal:
+    """끝의 0 을 소수 한 자리로 맞춘다 (`104.20` → `104.2`).
 
-    DB 가 말없이 반올림하게 두면 응답(보낸 값)과 저장된 값이 달라진다.
-    서버가 먼저 반올림하고 그 값을 저장 · 응답한다.
-    반올림해서 0 이 되는 값(0.04)은 잰 것이 아니라 400 이다 — 그대로 두면 DB 의 "0 보다 커야" 에
-    걸려 500 이 된다.
+    소수 둘째 자리부터는 `decimal_places=1` 이 400 으로 막는다 — 반올림해 저장하면 보낸 값과
+    저장된 값이 말없이 달라진다. 화면도 같은 값을 막는다. 끝의 0 은 같은 값이라 받는다.
     """
-    rounded = value.quantize(_ONE_PLACE, rounding=ROUND_HALF_UP)
-    if rounded < _ONE_PLACE:
-        raise ValueError("0.1 보다 작다")
-    return rounded
+    return value.quantize(_ONE_PLACE)
 
 
-Measurement = Annotated[Decimal, Field(gt=0, le=MEASUREMENT_MAX), AfterValidator(_round_one_place)]
+HeightCm = Annotated[
+    Decimal,
+    Field(ge=HEIGHT_CM_RANGE[0], le=HEIGHT_CM_RANGE[1], decimal_places=1),
+    AfterValidator(_one_place),
+]
+WeightKg = Annotated[
+    Decimal,
+    Field(ge=WEIGHT_KG_RANGE[0], le=WEIGHT_KG_RANGE[1], decimal_places=1),
+    AfterValidator(_one_place),
+]
 
 
 class OnboardingRequest(BaseModel):
     """POST /children/{cid}/onboarding — 아이 등록 뒤 02 화면. 적은 칸만 보낸다. 하나도 없으면 400.
 
     null 은 받지 않는다(400) — 적지 않은 칸은 보내지 않는다.
-    키 · 몸무게는 소수 한 자리로 반올림한다.
+    키 · 몸무게는 칸별 범위 밖이거나 소수 둘째 자리부터 적었으면 400.
 
     알레르기(`safety` · `safety_status`)와 한 줄(`one_line`)은 받지 않는다(400). 알레르기는
     POST /children/{cid}/health-safety 로, 한 줄은 홈 입력으로 보낸다.
@@ -143,11 +150,13 @@ class OnboardingRequest(BaseModel):
     gender: Gender = Field(
         default=None, description="male · female · undisclosed. 화면은 기본값이면 보내지 않는다"
     )
-    height_cm: Measurement = Field(
-        default=None, description="키(cm). 0 보다 크고 300 이하. 잰 날은 서버가 오늘로 찍는다"
+    height_cm: HeightCm = Field(
+        default=None,
+        description="키(cm). 20 이상 220 이하, 소수 한 자리까지. 잰 날은 서버가 오늘로 찍는다",
     )
-    weight_kg: Measurement = Field(
-        default=None, description="몸무게(kg). 0 보다 크고 300 이하. 잰 날은 서버가 오늘로 찍는다"
+    weight_kg: WeightKg = Field(
+        default=None,
+        description="몸무게(kg). 0.3 이상 150 이하, 소수 한 자리까지. 잰 날은 서버가 오늘로 찍는다",
     )
 
 
@@ -177,16 +186,19 @@ class GrowthLogsResponse(BaseModel):
 class CreateGrowthLogRequest(BaseModel):
     """POST /children/{cid}/growth — 잰 날 필수, 키 · 몸무게는 하나 이상.
 
-    잰 날은 아이 생일부터 오늘(한국 날짜)까지. 키 · 몸무게는 소수 한 자리로 반올림해 저장한다.
+    잰 날은 아이 생일부터 오늘(한국 날짜)까지. 키 · 몸무게는 칸별 범위 밖이거나 소수 둘째 자리부터
+    적었으면 400.
     승인 게이트가 아니라 Idempotency-Key 를 받지 않는다.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     measured_on: date = Field(description="잰 날 (YYYY-MM-DD). 생일보다 앞이거나 오늘보다 뒤면 400")
-    height_cm: Measurement | None = Field(default=None, description="키(cm). 0 보다 크고 300 이하")
-    weight_kg: Measurement | None = Field(
-        default=None, description="몸무게(kg). 0 보다 크고 300 이하"
+    height_cm: HeightCm | None = Field(
+        default=None, description="키(cm). 20 이상 220 이하, 소수 한 자리까지"
+    )
+    weight_kg: WeightKg | None = Field(
+        default=None, description="몸무게(kg). 0.3 이상 150 이하, 소수 한 자리까지"
     )
 
 
@@ -195,14 +207,19 @@ class UpdateGrowthLogRequest(BaseModel):
 
     하나도 없으면(`{}`) 바꾸지 않고 지금 줄을 200 으로 돌려준다.
     키 · 몸무게의 null 은 "그날 그건 안 잰 것으로 되돌리기" 다(안 보내면 그대로). 다만 고친 결과가
-    둘 다 비면 400. 잰 날은 비울 수 없다. 키 · 몸무게는 소수 한 자리로 반올림해 저장한다.
+    둘 다 비면 400. 잰 날은 비울 수 없다. 키 · 몸무게는 POST 와 같은 범위 · 자릿수로 막는다.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     measured_on: date = Field(default=None, description="잰 날. null 은 받지 않는다")
-    height_cm: Measurement | None = Field(default=None, description="키(cm). null 이면 비운다")
-    weight_kg: Measurement | None = Field(default=None, description="몸무게(kg). null 이면 비운다")
+    height_cm: HeightCm | None = Field(
+        default=None, description="키(cm). 20 이상 220 이하, 소수 한 자리까지. null 이면 비운다"
+    )
+    weight_kg: WeightKg | None = Field(
+        default=None,
+        description="몸무게(kg). 0.3 이상 150 이하, 소수 한 자리까지. null 이면 비운다",
+    )
 
 
 class GrowthLogResponse(BaseModel):

@@ -1,5 +1,5 @@
 /**
- * 되돌릴 수 없는 5개 엔드포인트 — **키가 필수 인자인 함수**로만 부른다.
+ * 되돌릴 수 없는 엔드포인트 — **키가 필수 인자인 함수**로만 부른다.
  *
  * 왜 `api.post(...)` 를 그대로 쓰지 않나 —
  * `api.post` 의 `idempotencyKey` 는 선택 인자다. 빠뜨려도 컴파일이 통과하고,
@@ -21,6 +21,9 @@ import type {
   CreateEventDraftsResponse,
   CreateInputResponse,
   HealthSafety,
+  ReviseMedicationBody,
+  SubmitMedicationBody,
+  SubmitMedicationResponse,
   OnboardingRequest,
   OnboardingResponse,
   PhotoCommitRequest,
@@ -182,6 +185,36 @@ export function updateHealthSafety(
   idempotencyKey: IdempotencyKey,
 ): Promise<UpdateHealthSafetyResponse> {
   return api.patch(idempotentPath.updateHealthSafety(childId, safetyId), body, { idempotencyKey });
+}
+
+/* ── 🚨 승인 게이트 ㉡ — 복약 초안 제출 (#537) ─────────────────────────── */
+
+/**
+ * 복약 초안을 **등록한다.** 코스와 기간만큼의 회차가 생긴다 — 되돌릴 수 없는 지점이다.
+ *
+ * 🚨 **게이트 ㉡ 안의 메서드다** (건강 기록 확정). 새 게이트가 아니다 (`idempotentPath.submitMedication`).
+ * 🚨 본문은 보호자가 카드에서 확인한 최종 상태 전체다. 낙관적 업데이트 금지 · 재시도는 같은 키.
+ * 경로 · 본문 · 응답은 서버 계약(`SubmitMedicationRequest` · `SubmitMedicationResponse`)과 같다.
+ */
+export function submitMedicationDraft(
+  childId: string,
+  body: SubmitMedicationBody,
+  idempotencyKey: IdempotencyKey,
+): Promise<SubmitMedicationResponse> {
+  return api.post(idempotentPath.submitMedication(childId), body, { idempotencyKey });
+}
+
+/**
+ * 복약 수정 초안을 반영한다. 🚨 **이것도 게이트 ㉡ 이고 키를 받는다.** 지난 회차와 그 체크는 서버가 그대로 둔다 —
+ * 화면은 그 규칙을 흉내 내지 않고 본문만 보낸다. 🚨 `source` 는 수정에서 바뀌지 않아 싣지 않는다.
+ */
+export function updateMedicationDraft(
+  childId: string,
+  scheduleId: string,
+  body: ReviseMedicationBody,
+  idempotencyKey: IdempotencyKey,
+): Promise<SubmitMedicationResponse> {
+  return api.patch(idempotentPath.updateMedication(childId, scheduleId), body, { idempotencyKey });
 }
 
 /* ── 05 제안 → 일정 초안 ──────────────────────────────────────────────── */

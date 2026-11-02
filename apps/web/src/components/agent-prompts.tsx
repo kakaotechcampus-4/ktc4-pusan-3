@@ -89,8 +89,9 @@ export function AgentPrompts<T extends AgentPrompt>({
     <ul className="-mx-3 flex gap-2 overflow-x-auto overscroll-x-contain px-3 min-[380px]:-mx-4 min-[380px]:px-4">
       {lead ? <li className="shrink-0">{lead}</li> : null}
       {waiting ? <PromptPillSkeletons /> : null}
-      {shown.map((prompt) => (
-        <li key={prompt.agent} className="shrink-0">
+      {shown.map((prompt, i) => (
+        // 화면 투어는 첫 알약을 비춘다 (`lib/tour/screens/home.ts`). 줄 전체는 화면 밖까지 흘러 구멍이 잘린다.
+        <li key={prompt.agent} data-tour={i === 0 ? "prompts" : undefined} className="shrink-0">
           <PromptButton prompt={prompt} onPick={onPick} disabled={disabled} />
         </li>
       ))}

@@ -13,6 +13,7 @@ from app.api.deps.auth import CurrentParent
 from app.api.deps.db import SessionDep
 from app.api.errors import ApiError, ErrorEnvelope
 from app.api.v1.schemas.notifications import NotificationSettings, PushDeviceIn
+from app.core.config import settings
 from app.domains.notification.repository import (
     Switches,
     get_switches,
@@ -36,7 +37,11 @@ async def put_my_push_device(
     """이 로그인에서 알림을 받을 기기를 둔다. 앱 실행 · 로그인 · 토큰이 바뀔 때마다 부른다.
 
     같은 토큰이 다른 계정의 로그인에 있으면 그쪽에서 뺀다 — 같은 기기에서 계정을 바꾼 것이다.
+    서버가 아직 기기를 받지 않을 때(처리방침 새 판 전)도 204 다 — 저장만 하지 않는다. 화면은
+    다음 실행 때 다시 부르므로 켠 뒤부터 저절로 등록된다.
     """
+    if not settings.PUSH_DEVICE_ACCEPT:  # 🚨 처리방침에 실리기 전에는 토큰을 받지 않는다 (#605 PM)
+        return Response(status_code=204)
     registered = await register_device(
         session,
         parent_id=auth.parent_id,

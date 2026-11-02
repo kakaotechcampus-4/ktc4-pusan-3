@@ -346,6 +346,8 @@ async def test_건강정보_동의가_없으면_403_이고_저장하지_않는�
     assert response.status_code == 403
     error = response.json()["error"]
     assert (error["code"], error["detail"]["scopes"]) == ("consent_required", ["child_health"])
+    # 동의를 켜는 곳 — 10 설정 (#625). 아이 id 를 담지 않는다
+    assert error["detail"]["deeplink"] == "settings"
     assert await rows_of(session, cid) == []
 
 
@@ -667,7 +669,8 @@ async def test_건강정보_동의가_없으면_고치기도_403(db_client, sess
     )
 
     assert response.status_code == 403
-    assert response.json()["error"]["code"] == "consent_required"
+    error = response.json()["error"]
+    assert (error["code"], error["detail"]["deeplink"]) == ("consent_required", "settings")
 
 
 async def test_보호자2가_남의_아이_기록을_고치면_403(db_client, session, bearer, consented):

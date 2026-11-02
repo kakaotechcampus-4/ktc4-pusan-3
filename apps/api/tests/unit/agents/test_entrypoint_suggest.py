@@ -66,7 +66,9 @@ async def test_처음_시각이_없으면_지금을_쓴다(monkeypatch):
 def test_추천_task_라벨():
     assert entrypoint.recommendation_task_type("food") == "meal_recommendation"
     assert entrypoint.recommendation_task_type("activity") is None
-    assert entrypoint.SUGGESTION_AGENTS == {"food", "activity"}
+    assert entrypoint.SUGGESTION_AGENTS == {"food", "activity", "growth"}
+    # Growth 는 추천 라벨이 셋이라 05 처음 요청으로 돌 라벨을 못 고른다 (결정 C)
+    assert entrypoint.FIRST_REQUEST_AGENTS == {"food", "activity"}
 
 
 def test_사전검사는_active_를_막고_없는_것만_묻는다():

@@ -2,6 +2,7 @@
 
 import uuid
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -9,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import Range
 
 from app.agents import entrypoint
+from app.agents.activity.review import REQUESTED_REASON
 from app.agents.common.readout import Readout
 from app.agents.common.refs import EvidenceCitation, Ref
 from app.agents.common.suggestion import SuggestionDraft
@@ -100,7 +102,7 @@ def agents(monkeypatch):
     return plan, calls
 
 
-def _general(agent="activity", content="블록 쌓기") -> SuggestionDraft:
+def _general(agent="activity", content="블록 쌓기", place_notice=None) -> SuggestionDraft:
     doc = EvidenceCitation(ref=Ref(kind="activity_doc", id=DOC_ID), note="또래 놀이 자료")
     return SuggestionDraft(
         agent=agent,
@@ -108,6 +110,19 @@ def _general(agent="activity", content="블록 쌓기") -> SuggestionDraft:
         content=content,
         reason="또래 아이들이 많이 하는 놀이예요.",
         citations=(doc,),
+        place_notice=place_notice,
+    )
+
+
+def _requested(*, citations=()) -> SuggestionDraft:
+    """보호자가 놀이를 정해 물은 Activity 일반 추천("물놀이 뭐 하지?"). 기준은 그 요청이다."""
+    return SuggestionDraft(
+        agent="activity",
+        kind="general",
+        content="물놀이 — 대야에 컵 띄우기",
+        reason=REQUESTED_REASON,
+        citations=tuple(citations),
+        requested=True,
     )
 
 
@@ -162,6 +177,7 @@ async def test_홈_요청은_Agent_마다_묶음과_안내를_싣는다(db_clien
     [food] = data["suggestions"]
     assert food["evidence"][0]["label"] == "계란말이"
     assert food["evidence"][0]["is_stale"] is False
+    assert food["place_notice"] is None  # 장소가 없는 추천
     groups = {g["agent"]: g for g in data["groups"]}
     assert groups["food"]["notice"] == {
         "code": "fewer",
@@ -196,6 +212,23 @@ async def test_05_도_러너와_같은_안전_어댑터를_넘긴다(db_client, 
     assert resp.status_code == 200
     assert isinstance(calls[0]["food_safety"], DbSafetyReader)
     assert calls[0]["activity_safety"] is calls[0]["food_safety"]
+    assert calls[0]["growth_safety"] is calls[0]["food_safety"]
+
+
+async def test_05_도_인증키가_있으면_도서_어댑터를_넘긴다(
+    db_client, bearer, cid, agents, monkeypatch
+):
+    from app.integrations.data4library.client import Data4LibraryBooks
+
+    monkeypatch.setattr(settings, "DATA4LIBRARY_AUTH_KEY", "test-auth-key")
+    plan, calls = agents
+    headers, _ = bearer
+    plan["food"] = ("empty", "준비할 수 있는 메뉴가 없어요.")
+
+    resp = await _post(db_client, cid, headers, agents=["food"])
+
+    assert resp.status_code == 200
+    assert isinstance(calls[0]["growth_books"], Data4LibraryBooks)
 
 
 async def test_05_도_관심_어댑터를_넘긴다(db_client, bearer, cid, agents):
@@ -223,7 +256,8 @@ async def test_닫힌_Agent_는_guard_로_실패는_묶음에서_빠진다(db_cl
             "code": "safety_unknown",
             "blocked_agents": ["food"],
             "message": "알레르기 정보를 확인할 수 없어서 추천을 드릴 수 없어요.",
-            "deeplink": None,
+            # 알레르기를 적는 곳 — 04 의 safety_record 안내와 같은 값이다 (#625)
+            "deeplink": "profile",
         }
     ]
     assert data["groups"] == []  # activity 는 실패 — 화면이 실패 카드를 그린다
@@ -232,10 +266,35 @@ async def test_닫힌_Agent_는_guard_로_실패는_묶음에서_빠진다(db_cl
 async def test_구현_안_된_Agent_는_not_ready(db_client, bearer, cid, agents):
     headers, _ = bearer
 
+    data = (await _post(db_client, cid, headers, agents=["health"])).json()
+
+    assert [(g["code"], g["deeplink"]) for g in data["guards"]] == [("not_ready", None)]
+    assert agents[1] == []  # Agent 를 부르지 않았다
+
+
+async def test_Growth_처음_요청은_라벨을_못_골라_not_ready(db_client, bearer, cid, agents):
+    """Growth 는 추천 라벨이 셋이라 run 없이 무엇을 돌릴지 모른다."""
+    headers, _ = bearer
+
     data = (await _post(db_client, cid, headers, agents=["growth"])).json()
 
     assert [g["code"] for g in data["guards"]] == ["not_ready"]
-    assert agents[1] == []  # Agent 를 부르지 않았다
+    assert [g["blocked_agents"] for g in data["guards"]] == [["growth"]]
+    assert agents[1] == []
+
+
+async def test_run_이_있으면_Growth_추천도_그_run_에서_재생한다(
+    db_client, session, bearer, cid, agents
+):
+    _, calls = agents
+    headers, parent_id = bearer
+    row = await _saved_in_run(session, cid, parent_id, "run-1", agent="growth")
+
+    data = (await _post(db_client, cid, headers, agents=["growth"], run_id="run-1")).json()
+
+    assert [s["id"] for s in data["suggestions"]] == [str(row.id)]
+    assert data["guards"] == []
+    assert calls == []  # 다시 만든 것이 없다
 
 
 # ── 판단 순서 ────────────────────────────────────────────────────────────
@@ -456,6 +515,38 @@ async def test_일반_추천은_문서_근거와_기록_건수를_싣는다(db_c
         }
     ]
     assert data["scarcity"] == {"count": 0, "question": None}
+    assert general["place_notice"] is None  # 장소가 없는 추천
+
+
+async def test_장소가_붙은_추천은_확인_문구를_칸으로_싣는다(db_client, bearer, cid, agents):
+    """문장에 섞지 않는다 — 화면이 제안 문장 아래 한 줄로 세운다 (#516)."""
+    plan, _ = agents
+    headers, _ = bearer
+    notice = "공공데이터 기준 2026년 6월이에요. 가기 전에 운영 여부를 확인해 주세요."
+    plan["activity"] = (
+        "drafts",
+        [_general(content="사직어린이공원에서 모래성 쌓기", place_notice=notice)],
+    )
+
+    data = (await _post(db_client, cid, headers, agents=["activity"])).json()
+
+    [general] = data["general"]
+    assert general["content"] == "사직어린이공원에서 모래성 쌓기"
+    assert general["place_notice"] == notice
+    assert [e["ref"]["kind"] for e in general["evidence"]] == ["activity_doc"]
+
+
+async def test_개인화_추천도_확인_문구를_싣는다(db_client, session, bearer, cid, agents):
+    plan, _ = agents
+    headers, parent_id = bearer
+    notice = "가기 전에 운영 여부를 확인해 주세요."
+    draft = await _personal(session, cid, parent_id, agent="activity", content="공원에서 공놀이")
+    plan["activity"] = ("drafts", [replace(draft, place_notice=notice)])
+
+    data = (await _post(db_client, cid, headers, agents=["activity"])).json()
+
+    [activity] = data["suggestions"]
+    assert activity["place_notice"] == notice
 
 
 async def test_문서_행을_읽을_수_없으면_일반_추천을_내지_않는다(
@@ -466,6 +557,59 @@ async def test_문서_행을_읽을_수_없으면_일반_추천을_내지_않는
     headers, _ = bearer
     monkeypatch.setattr(entrypoint, "_doc_index", lambda: {})
     plan["activity"] = ("drafts", [_general()])
+
+    data = (await _post(db_client, cid, headers, agents=["activity"])).json()
+
+    assert data["general"] == []
+    assert data["scarcity"] is None
+
+
+async def test_요청_기반_일반_추천은_문서_근거_없이도_05_에_선다(db_client, bearer, cid, agents):
+    """저장부터 05 응답까지 — 문서 근거가 없어 evidence 는 비고, 기준은 basis 문구다 (#597 리뷰)."""
+    plan, _ = agents
+    headers, _ = bearer
+    plan["activity"] = ("drafts", [_requested()])
+
+    data = (await _post(db_client, cid, headers, agents=["activity"])).json()
+
+    [general] = data["general"]
+    assert general["content"] == "물놀이 — 대야에 컵 띄우기"
+    assert general["basis"] == REQUESTED_REASON
+    assert general["evidence"] == []
+    assert data["scarcity"] == {"count": 0, "question": None}
+
+
+async def test_요청_기반_일반_추천은_같은_run_으로_다시_열어도_그대로다(
+    db_client, bearer, cid, agents
+):
+    """저장한 run 을 다시 열면(새로고침) 행에 남긴 requested 로 거른다 (#653 리뷰)."""
+    plan, calls = agents
+    headers, parent_id = bearer
+    task = suggestion_retry.RetryTask(None, ("물놀이 뭐 하지?",), datetime.now(UTC))
+    suggestion_retry.put_failed(
+        run_id="run-1", parent_id=parent_id, child_id=cid, agent="activity", task=task
+    )
+    plan["activity"] = ("drafts", [_requested()])
+
+    first = (await _post(db_client, cid, headers, agents=["activity"], run_id="run-1")).json()
+    second = (await _post(db_client, cid, headers, agents=["activity"], run_id="run-1")).json()
+
+    assert len(calls) == 1  # 두 번째는 저장된 행을 읽었다
+    [general] = second["general"]
+    assert general == first["general"][0]
+    assert general["basis"] == REQUESTED_REASON
+    assert general["evidence"] == []
+
+
+async def test_요청_기반이어도_단_문서가_검수에서_빠지면_내지_않는다(
+    db_client, bearer, cid, agents, monkeypatch
+):
+    """그 문서를 바탕으로 만든 추천이다 — 요청 기반이어도 검수가 풀린 문서의 추천은 서지 않는다."""
+    plan, _ = agents
+    headers, _ = bearer
+    monkeypatch.setattr(entrypoint, "_doc_index", lambda: {})
+    doc = EvidenceCitation(ref=Ref(kind="activity_doc", id=DOC_ID), note="또래 놀이 자료")
+    plan["activity"] = ("drafts", [_requested(citations=[doc])])
 
     data = (await _post(db_client, cid, headers, agents=["activity"])).json()
 
@@ -555,7 +699,7 @@ async def test_다시_만들었더니_닫혔으면_다음_요청도_같은_guard
     first = (await _post(db_client, cid, headers, agents=["activity"], run_id="run-1")).json()
     second = (await _post(db_client, cid, headers, agents=["activity"], run_id="run-1")).json()
 
-    assert [g["code"] for g in first["guards"]] == ["safety_unknown"]
+    assert [(g["code"], g["deeplink"]) for g in first["guards"]] == [("safety_unknown", "profile")]
     assert second["guards"] == first["guards"]
     assert second["groups"] == []
     assert len(calls) == 1  # 두 번째는 다시 돌리지 않는다
@@ -818,3 +962,44 @@ async def test_Food_일반_추천은_고른_메뉴를_근거로_보여_준다(
     assert evidence["ref"] == {"kind": "recipe_catalog", "id": str(menu)}
     assert evidence["title"] == "두부조림"
     assert evidence["source_org"] and evidence["note"] == "재료가 검수된 메뉴예요."
+
+
+# ── Growth 도서 추천의 책 근거 ───────────────────────────────────────────
+async def test_Growth_도서_일반_추천은_그_책을_정보나루_출처로_보여_준다(
+    db_client, session, bearer, cid, agents
+):
+    """도서는 책 정보 표가 없어서 카드 제목은 그 추천의 "제목(저자)" 다 — 근거는 그 책 자체다."""
+    from app.domains.suggestion.repository import save_agent_suggestions
+    from app.rules.book_evidence import book_evidence_id
+
+    headers, _ = bearer
+    book = book_evidence_id("9788900000001")
+    draft = SuggestionDraft(
+        agent="growth",
+        kind="general",
+        content="공룡 기차(가나다)",
+        reason="쌓인 배움 기록이 아직 적어서, 이 나이에 맞는 형태의 책 중에서 골랐어요.",
+        citations=(
+            EvidenceCitation(
+                ref=Ref(kind="book_catalog", id=book),
+                note="도서관 정보나루 검색 결과에 있는 책이에요.",
+            ),
+        ),
+        items=("공룡 기차(가나다)",),
+    )
+    await save_agent_suggestions(
+        session, child_id=cid, run_id="run-1", payloads=[draft.to_payload()], now=datetime.now(UTC)
+    )
+
+    resp = await _post(db_client, cid, headers, agents=["growth"], run_id="run-1")
+
+    assert resp.status_code == 200
+    [general] = resp.json()["general"]
+    [evidence] = general["evidence"]
+    assert evidence["ref"] == {"kind": "book_catalog", "id": str(book)}
+    assert evidence["title"] == "공룡 기차(가나다)"
+    assert (evidence["source_org"], evidence["source_title"]) == (
+        "국립중앙도서관",
+        "도서관 정보나루",
+    )
+    assert evidence["source_url"] == "https://data4library.kr"

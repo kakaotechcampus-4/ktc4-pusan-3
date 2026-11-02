@@ -36,8 +36,8 @@ const DRAFT_BODY: SubmitEventBody = {
 describe("되돌릴 수 없는 경로 판정", () => {
   const operations = Object.keys(idempotentPath) as IdempotentOperation[];
 
-  it("표의 줄을 전부 그 메서드로 요구한다 — 5곳 · 초안 제출과 알레르기 기록은 각각 두 줄", () => {
-    expect(operations).toHaveLength(7);
+  it("표의 줄을 전부 그 메서드로 요구한다 — 5곳 · 초안 제출 · 알레르기 기록 · 복약 제출은 각각 두 줄", () => {
+    expect(operations).toHaveLength(9);
     for (const operation of operations) {
       const path = idempotentPath[operation]("x1", "x2");
       expect(requiresIdempotencyKey(idempotentMethod[operation], path), operation).toBe(true);
@@ -55,6 +55,14 @@ describe("되돌릴 수 없는 경로 판정", () => {
     expect(requiresIdempotencyKey("DELETE", "/children/c1/health-safety/hs_1")).toBe(false);
     // 목록 경로를 PATCH 로 부르는 것은 표에 없다.
     expect(requiresIdempotencyKey("PATCH", "/children/c1/health-safety")).toBe(false);
+  });
+
+  it("🚨 복약 제출은 게이트 ㉡ 의 두 메서드다 — 등록 POST · 수정 PATCH 둘 다 키가 필요하다 (#537)", () => {
+    expect(requiresIdempotencyKey("POST", "/children/c1/medications")).toBe(true);
+    expect(requiresIdempotencyKey("PATCH", "/children/c1/medications/ms_1")).toBe(true);
+    // 읽기와 회차 체크는 되돌릴 수 있다 — 키를 걸지 않는다.
+    expect(requiresIdempotencyKey("GET", "/children/c1/medications")).toBe(false);
+    expect(requiresIdempotencyKey("PUT", "/children/c1/medication-doses/d1/check")).toBe(false);
   });
 
   it("같은 경로라도 다른 메서드는 걸지 않는다", () => {

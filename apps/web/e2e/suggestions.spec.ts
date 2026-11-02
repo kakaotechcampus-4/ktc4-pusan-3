@@ -50,9 +50,9 @@ test.describe("개인화 추천 (default)", () => {
       }
     }
 
-    // 기본 시나리오는 개인화만 온다 — 일반 추천이 없으면 "또래 기준" 표시도 되묻는 질문도 서지 않는다.
+    // 기본 시나리오는 개인화만 온다 — 일반 추천이 없으면 "일반 추천" 표시도 되묻는 질문도 서지 않는다.
     // (같은 Agent 에 둘이 섞이는 경우는 아래 `suggest_mixed` 가 건다.)
-    await expect(page.getByText("또래 기준 일반 추천")).toHaveCount(0);
+    await expect(page.getByText("일반 추천", { exact: true })).toHaveCount(0);
     await expect(page.getByText("질문은 한 개까지만 드려요.")).toHaveCount(0);
   });
 
@@ -120,14 +120,17 @@ test.describe("근거가 부족하면 일반 추천 (§2 기억)", () => {
   test.describe("scarcity — 기록 1건", () => {
     test.use({ scenario: "scarcity" });
 
-    test("또래 기준이라고 말하고, 쌓인 기록 건수를 그대로 보여주고, 질문은 하나다", async ({
+    test("일반 추천이라고 말하고, 쌓인 기록 건수를 그대로 보여주고, 질문은 하나다", async ({
       page,
     }) => {
       await page.goto(SUGGESTIONS);
-      const card = page.locator("li").filter({ hasText: "또래 기준 일반 추천" });
+      const card = page.locator("li").filter({ has: page.getByText("일반 추천", { exact: true }) });
       await expect(card).toHaveCount(1);
       await expect(card).toContainText("기록 1건");
       await expect(card).toContainText("블록 쌓기처럼 손을 많이 쓰는 놀이를 15분쯤 해 보세요");
+      // 🚨 라벨은 "또래 기준" 을 말하지 않는다 — 기준은 서버 문구(`basis`)가 말한다 (#597)
+      await expect(card).toContainText("36개월 또래가 자주 찾는 놀이예요");
+      await expect(page.getByText("또래 기준", { exact: false })).toHaveCount(0);
 
       await expect(
         page.getByRole("heading", { name: "다음엔 우리 아이 기준으로 골라 드릴게요" }),
@@ -149,7 +152,7 @@ test.describe("근거가 부족하면 일반 추천 (§2 기억)", () => {
     test("일반 추천도 골라서 채택하고 일정으로 만든다 (#509)", async ({ page }) => {
       const calls = recordApi(page);
       await page.goto(SUGGESTIONS);
-      const card = page.locator("li").filter({ hasText: "또래 기준 일반 추천" });
+      const card = page.locator("li").filter({ has: page.getByText("일반 추천", { exact: true }) });
       const checkbox = card.getByRole("checkbox", { name: /블록 쌓기처럼/ });
 
       // 🚨 다음 행동은 고를 것보다 아래다.
@@ -181,7 +184,7 @@ test.describe("근거가 부족하면 일반 추천 (§2 기억)", () => {
 
     test("일반 추천이 위, 되묻는 질문이 아래다", async ({ page }) => {
       await page.goto(SUGGESTIONS);
-      const card = page.locator("li").filter({ hasText: "또래 기준 일반 추천" });
+      const card = page.locator("li").filter({ has: page.getByText("일반 추천", { exact: true }) });
       const question = page.getByRole("heading", {
         name: "다음엔 우리 아이 기준으로 골라 드릴게요",
       });
@@ -192,7 +195,7 @@ test.describe("근거가 부족하면 일반 추천 (§2 기억)", () => {
 
     test("일반 추천과 개인화 추천을 색으로 가르지 않는다", async ({ page }) => {
       await page.goto(SUGGESTIONS);
-      const card = page.locator("li").filter({ hasText: "또래 기준 일반 추천" });
+      const card = page.locator("li").filter({ has: page.getByText("일반 추천", { exact: true }) });
       await expect(card).toBeVisible();
       // 도메인 칩 하나는 "어느 Agent 에서 왔나" 다. 그 밖에는 색 면이 없다 (apps/web §5).
       const tinted = await card.evaluate((root) => {
@@ -226,7 +229,9 @@ test.describe("근거가 부족하면 일반 추천 (§2 기억)", () => {
 
     test("일반 추천마다 기록 0건이라고 말한다", async ({ page }) => {
       await page.goto(SUGGESTIONS);
-      const cards = page.locator("li").filter({ hasText: "또래 기준 일반 추천" });
+      const cards = page
+        .locator("li")
+        .filter({ has: page.getByText("일반 추천", { exact: true }) });
       await expect(cards).toHaveCount(2);
       for (const card of await cards.all()) await expect(card).toContainText("기록 0건");
       await expect(
@@ -277,13 +282,15 @@ test.describe("개인화와 일반이 같은 Agent 에 섞여 오면 (#512 리�
     await expect(page.getByText("식사 · 3가지 중에서")).toHaveCount(0);
   });
 
-  test("질문 카드는 위의 개인화까지 또래 기준이라고 부르지 않는다", async ({ page }) => {
+  test("질문 카드는 위의 개인화까지 일반 추천이라고 부르지 않는다", async ({ page }) => {
     await page.goto(SUGGESTIONS);
     // 둘 다 선다 — 근거가 붙은 개인화와 라벨이 붙은 일반
     await expect(page.getByText(/^사용한 기록/).first()).toBeVisible();
-    await expect(page.locator("li").filter({ hasText: "또래 기준 일반 추천" })).toHaveCount(1);
+    await expect(
+      page.locator("li").filter({ has: page.getByText("일반 추천", { exact: true }) }),
+    ).toHaveCount(1);
 
-    await expect(page.getByText("위 추천은 또래 기준이에요", { exact: false })).toHaveCount(0);
+    await expect(page.getByText("위 추천은", { exact: false })).toHaveCount(0);
     // 🚨 제목도 "다음엔 우리 아이 기준으로" 가 아니다 — 위에 우리 아이 기준 추천이 이미 서 있다
     await expect(
       page.getByRole("heading", { name: "다음엔 우리 아이 기준으로 골라 드릴게요" }),
@@ -292,10 +299,64 @@ test.describe("개인화와 일반이 같은 Agent 에 섞여 오면 (#512 리�
       page.getByRole("heading", { name: "기록이 더 쌓이면 모두 우리 아이 기준으로 골라 드릴게요" }),
     ).toBeVisible();
     await expect(
-      page.getByText("또래 기준이라고 적힌 추천은 우리 아이 기록 대신 또래 기준으로 골랐어요", {
-        exact: false,
-      }),
+      page.getByText(
+        "일반 추천이라고 적힌 것은 우리 아이 기록 대신 추천 아래 적힌 기준으로 골랐어요",
+        {
+          exact: false,
+        },
+      ),
     ).toBeVisible();
+  });
+});
+
+test.describe("장소가 붙은 추천의 확인 문구 (#516)", () => {
+  test.use({ scenario: "suggest_place" });
+
+  const PERSONAL_NOTICE = "공공데이터 기준 2026년 6월이에요. 가기 전에 운영 여부를 확인해 주세요.";
+  const GENERAL_NOTICE = "가기 전에 운영 여부를 확인해 주세요.";
+
+  test("개인화 줄은 제안 문장 아래 한 줄로 세우고, 사용한 기록에는 넣지 않는다", async ({
+    page,
+  }) => {
+    await page.goto(SUGGESTIONS);
+    await page.getByRole("tab", { name: "놀이 3가지" }).click();
+    const panel = page.getByRole("tabpanel");
+    const row = panel.locator(":scope > ul > li").filter({ hasText: "햇살어린이공원에서" });
+    await expect(row).toHaveCount(1);
+
+    const notice = row.getByText(PERSONAL_NOTICE, { exact: true });
+    await expect(notice).toBeVisible();
+    // 🚨 고르는 칸의 이름은 제안 문장뿐이다 — 문구가 라벨에 섞이면 체크박스 라벨이 길어진다
+    await expect(
+      row.getByRole("checkbox", { name: "햇살어린이공원에서 모래성 쌓기", exact: true }),
+    ).toBeVisible();
+    // 제안 문장 바로 아래, 이유보다 위다
+    const reasonLabel = row.getByText("추천 이유", { exact: true });
+    expect((await notice.boundingBox())!.y).toBeLessThan((await reasonLabel.boundingBox())!.y);
+
+    // 🚨 장소는 근거가 아니다 — 근거 목록 안에 없고, 건수는 근거 줄 수 그대로다
+    const label = row.getByText(/^사용한 기록 \d+건$/);
+    const list = label.locator("xpath=following-sibling::ul[1]");
+    const count = Number((await label.innerText()).match(/\d+/)![0]);
+    await expect(list.locator("li")).toHaveCount(count);
+    await expect(list.getByText(/운영 여부/)).toHaveCount(0);
+
+    // 장소가 없는 줄에는 서지 않는다
+    await expect(panel.getByText(/운영 여부를 확인해 주세요/)).toHaveCount(1);
+  });
+
+  test("일반 카드는 제안 문장 아래, 기준 문구보다 위에 세운다", async ({ page }) => {
+    await page.goto(SUGGESTIONS);
+    const card = page.locator("li").filter({ hasText: "별빛작은도서관에서" });
+    await expect(card).toHaveCount(1);
+    await expect(card.getByText("일반 추천", { exact: true })).toBeVisible();
+    // 🚨 기록 건수는 그 Agent 도메인 수 그대로다 — 장소 문구가 붙어도 늘지 않는다
+    await expect(card).toContainText("기록 3건");
+
+    const notice = card.getByText(GENERAL_NOTICE, { exact: true });
+    await expect(notice).toBeVisible();
+    const basis = card.getByText("36개월 또래가 자주 찾는 놀이예요", { exact: true });
+    expect((await notice.boundingBox())!.y).toBeLessThan((await basis.boundingBox())!.y);
   });
 });
 
@@ -327,7 +388,7 @@ test.describe("알레르기 정보가 없으면 식사 제안을 만들지 않�
     await page.goto(SUGGESTIONS);
     await expect(page.getByText("식사 제안을 만들지 않았어요")).toBeVisible();
     await expectNoGate(page);
-    // 서버 deeplink(settings/health-safety)를 주소로 쓰지 않는다 — 알레르기는 11 프로필에서 적는다.
+    // 서버 deeplink(profile)를 주소로 쓰지 않는다 — 알레르기는 11 프로필에서 적는다.
     await expect(page.getByRole("link", { name: "알레르기 적으러 가기" })).toHaveAttribute(
       "href",
       `/child/${CHILD}/profile`,
@@ -610,13 +671,39 @@ test.describe("0개 · 이어서 할 수 없음은 실패가 아니다 (#249)", 
     test("문서 출처를 적고, 아이 기록처럼 세지 않는다", async ({ page }) => {
       await page.goto(SUGGESTIONS);
 
-      const card = page.locator("li").filter({ hasText: "또래 기준 일반 추천" });
+      const card = page.locator("li").filter({ has: page.getByText("일반 추천", { exact: true }) });
       await expect(card).toContainText("참고 · 블록 쌓기 (교육부, 표준보육과정)");
       // 🚨 문서는 아이 기록이 아니다 — "사용한 기록 N건" 으로 세지 않는다
       await expect(page.getByText(/^사용한 기록/)).toHaveCount(0);
       // 답하는 길(#246) 전에는 선택지가 비어 온다 — 문장으로만 서고 칩이 없다
       await expect(page.getByText("요즘 실내와 야외 중 어디를 더 찾나요?")).toBeVisible();
       await expect(page.getByRole("button", { name: "실내" })).toHaveCount(0);
+    });
+  });
+
+  test.describe("요청에 맞춘 일반 추천 (#597)", () => {
+    test.use({ scenario: "suggest_requested" });
+
+    test("문서 출처 없이 기준 문구만 서고, 라벨은 또래 기준을 말하지 않는다", async ({ page }) => {
+      await page.goto(SUGGESTIONS);
+
+      const card = page.locator("li").filter({ has: page.getByText("일반 추천", { exact: true }) });
+      await expect(card).toHaveCount(1);
+      await expect(card).toContainText("기록 0건");
+      await expect(card).toContainText(
+        "쌓인 놀이 기록이 아직 적어서, 요청하신 놀이에 맞춰 골랐어요.",
+      );
+      // 🚨 요청이 기준이라 문서 행이 없다 — 출처 줄을 지어내지 않는다
+      await expect(card.getByText(/^참고/)).toHaveCount(0);
+      // 🚨 요청에 맞춰 고른 것을 또래 기준이라고 부르지 않는다 (카드 · 질문 카드 둘 다)
+      await expect(page.getByText("또래", { exact: false })).toHaveCount(0);
+      await expect(
+        page.getByText("그래서 위 추천은 우리 아이 기록 대신 추천 아래 적힌 기준으로 골랐어요.", {
+          exact: false,
+        }),
+      ).toBeVisible();
+      // 아이 기록 근거도 없다 — 개인화로 그려지지 않는다
+      await expect(page.getByText(/^사용한 기록/)).toHaveCount(0);
     });
   });
 

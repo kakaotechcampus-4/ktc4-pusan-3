@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.agents.common.tool_schema import ToolDefinition, build_tool_spec
 from app.agents.food.schemas.common import FoodTaskType
+from app.agents.growth.schemas.task import GrowthTaskType
 from app.agents.memory.schemas.task import WorkType
 
 logger = logging.getLogger(__name__)
@@ -24,9 +25,9 @@ logger = logging.getLogger(__name__)
 class SegmentKind(StrEnum):
     RECORD = "record"  # Memory 몫(저장·조회·수정·삭제 전부)
     REQUEST = "request"  # 도메인 Agent 요청
-    GUARDED = "guarded"  # 알레르기 등록 / 진단 문의 → 정해진 안내
+    GUARDED = "guarded"  # 알레르기·만성질환 / 진단 문의 / 키·몸무게 기록 → 정해진 안내
     OUT_OF_SCOPE = "out_of_scope"  # 구매·예약·기관 연락·대신 발송
-    UNCLEAR = "unclear"  # 무엇을 하라는지 알 수 없음
+    UNCLEAR = "unclear"  # 무엇을 하라는지 알 수 없음 · 아이가 실제로 한 일이 아님
 
 
 class DomainAgentName(StrEnum):
@@ -39,8 +40,12 @@ class DomainAgentName(StrEnum):
 
 
 class GuardReason(StrEnum):
-    SAFETY_RECORD = "safety_record"  # 알레르기·만성질환 등록·수정은 보호자 직접 입력
+    SAFETY_RECORD = "safety_record"  # 알레르기·만성질환을 알리는 말 · 등록 요청. 보호자 직접 입력
     DIAGNOSIS = "diagnosis"  # 진단·결핍 판정·치료식·약·영양제 추천은 하지 않음
+    GROWTH_RECORD = "growth_record"  # 키·몸무게는 채팅으로 저장하지 않고 성장 기록 화면으로 (#625)
+    HAZARD = (
+        "hazard"  # 음식이 아닌 위험 물질을 먹거나 마셨다는 말. 기록하지 않고 상태 확인 안내 (#626)
+    )
 
 
 class _Strict(BaseModel):
@@ -59,6 +64,7 @@ _LABEL_ENUMS: dict[str, type] = {
     "agent": DomainAgentName,
     "guard": GuardReason,
     "food_task": FoodTaskType,
+    "growth_task": GrowthTaskType,
 }
 
 
@@ -67,6 +73,7 @@ def _repair(data: dict[str, Any]) -> dict[str, Any]:
 
     - work는 record 전용. request인데 work만 있고 agent가 없으면 kind를 잘못 붙인 것
     - food에 유형이 빠졌으면 프롬프트가 정해 둔 기본값("애매하면 추천")사용
+    - growth에 유형이 빠졌으면 교육 추천(learning_suggestion)으로 채운다
     """
     for name, enum in _LABEL_ENUMS.items():
         value = data.get(name)
@@ -102,6 +109,13 @@ def _repair(data: dict[str, Any]) -> dict[str, Any]:
     ):
         data["food_task"] = FoodTaskType.MEAL_RECOMMENDATION.value
         logger.info("supervisor food 조각에 유형이 없어 기본값(meal_recommendation)을 넣음")
+    if (
+        kind == SegmentKind.REQUEST
+        and data.get("agent") == DomainAgentName.GROWTH
+        and not data.get("growth_task")
+    ):
+        data["growth_task"] = GrowthTaskType.LEARNING_SUGGESTION.value
+        logger.info("supervisor growth 조각에 유형이 없어 기본값(learning_suggestion)을 넣음")
     return data
 
 
@@ -124,7 +138,9 @@ class Segment(_Strict):
         Field(
             description=(
                 "record(저장·조회·수정·삭제) / request(도메인 Agent 요청) / "
-                "guarded(알레르기 등록·진단 문의) / out_of_scope(구매·예약·대신 발송) / unclear"
+                "guarded(알레르기·만성질환·진단 문의·키 몸무게 기록·위험 물질 섭취) / "
+                "out_of_scope(구매·예약·대신 발송) / "
+                "unclear(알 수 없는 말 · 아이가 실제로 한 일이 아닌 말)"
             )
         ),
     ]
@@ -149,7 +165,20 @@ class Segment(_Strict):
             description=(
                 "agent=food 면 반드시 하나. meal_recommendation(뭘 먹일까·메뉴·간식) / "
                 "nutrient_analysis(영양 괜찮은지·영양소·과잉/부족) / "
+                "food_check(정해진 음식을 먹여도 되는지) / "
                 "daycare_meal(기관 급식이 실제로 바뀌었다는 말 — 대체식·결식)"
+            ),
+        ),
+    ]
+    growth_task: Annotated[
+        GrowthTaskType | None,
+        Field(
+            default=None,
+            description=(
+                "agent=growth 면 반드시 하나. learning_suggestion(배움 · 공부 · 교육 활동) / "
+                "routine_coaching(생활 습관 · 혼자 하기 · 예절 · 습관 고치기 · 잠 리듬) / "
+                "book_suggestion(책 · 그림책) / "
+                "growth_review(키 · 몸무게가 얼마나 컸는지 · 잘 크고 있는지)"
             ),
         ),
     ]
@@ -157,7 +186,9 @@ class Segment(_Strict):
         GuardReason | None,
         Field(
             default=None,
-            description="kind=guarded 면 반드시 하나. safety_record / diagnosis",
+            description=(
+                "kind=guarded 면 반드시 하나. safety_record / diagnosis / growth_record / hazard"
+            ),
         ),
     ]
 
@@ -186,6 +217,11 @@ class Segment(_Strict):
         )
         if not is_food and data.get("food_task") is not None:
             dropped.append("food_task")
+        is_growth = data.get("kind") == SegmentKind.REQUEST and data.get("agent") == (
+            DomainAgentName.GROWTH
+        )
+        if not is_growth and data.get("growth_task") is not None:
+            dropped.append("growth_task")
         if not dropped:
             return data
 
@@ -207,6 +243,9 @@ class Segment(_Strict):
         if self.kind == SegmentKind.REQUEST and self.agent == DomainAgentName.FOOD:
             if self.food_task is None:
                 raise ValueError("agent=food이면 food_task가 필요하다")
+        if self.kind == SegmentKind.REQUEST and self.agent == DomainAgentName.GROWTH:
+            if self.growth_task is None:
+                raise ValueError("agent=growth이면 growth_task가 필요하다")
         return self
 
 

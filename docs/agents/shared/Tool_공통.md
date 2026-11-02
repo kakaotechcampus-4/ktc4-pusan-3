@@ -79,7 +79,7 @@ def rank_evidence(affinities, observations, *, today, strength_threshold=0.5)
 | 티어 | 조건 |
 | --- | --- |
 | 1 | `confirmed` · polarity ∈ {+1, −1} · 비archived |
-| 2 | `candidate` · polarity ∈ {+1, −1} · strength ≥ 임계 |
+| 2 | `candidate` · polarity ∈ {+1, −1} · strength ≥ 임계 · 묶인 active 관찰이 서로 다른 날 2일 이상 (#626) |
 | 3 | 최근 14일 관찰 (polarity 무관) |
 | 역질의 | `candidate` + polarity NULL → `needs_observation` 후보로 반환 (1개만 사용) |
 | 감쇠 | **여기서 하지 않는다.** Curator 가 `strength` 를 내리거나 `archived` 로 바꿔 이미 반영한다. 6개월 넘은 아이 기록만 남은 후보는 `build()` 가 일반 추천으로 돌린다(§5-3) |
@@ -117,7 +117,7 @@ def rank_evidence(affinities, observations, *, today, strength_threshold=0.5)
 - **재호출 결과는 빈자리만 채운다.** 첫 호출에서 통과한 것을 먼저 두고, 재호출에서 통과한 것으로 3개가 될 때까지만 채운다. 첫 호출 것과 같은 후보는 건너뛰고 남는 것은 버린다 — 둘을 그대로 합치면 4개가 넘을 수 있고, 그러면 `check_count` 가 넘친다고 거절한다. 무엇을 같은 후보로 볼지는 Agent 가 정한다 — Food 는 `menu_key`, Activity 는 `content`(최근 중복 검사 `is_recent_duplicate` 가 보는 칸)로 본다 (#245 리뷰).
 - **0개는 실패가 아니다.** 더 채울 길이 없는데 0개면 `check_count(exhausted=True)` 가 예외 없이 통과시키고, Agent 는 추천 없이 안내만 내고 끝낸다. 호출부는 0개를 따로 거르지 않고 `check_count` → `count_notice(len(drafts))` 순서로 부르면 0~3개가 다 처리된다 — 0개에 예외를 던지면 호출부가 놓쳤을 때 pipeline 이 그 Agent 를 실패로 세고 화면에 다시 시도가 뜬다 (#245 리뷰). 채울 수 있는데 0개(`exhausted=False`)는 1~2개처럼 거절한다. `status` 는 `completed` 다 — 실패가 아니라 안전 조건을 통과한 후보가 없다는 결과라, 화면은 다시 시도를 띄우지 않는다. 근거가 없어 일반 추천으로 가는 경우(5-3)와 다르다 — 그쪽은 추천이 나간다.
 - **모델이 결과를 못 낸 것은 0개가 아니라 실패다.** tool 루프가 `no_tool_call`(출력 tool 없이 말로 끝남)이나 `max_steps`(상한까지 출력 tool 이 통과하지 못함)로 끝나면 Agent 는 `status="failed"` 로 낸다 — 화면은 다시 시도를 띄운다. 이걸 0개(`completed` + 0개 안내)로 받으면 모델이 실패한 게 "추천할 게 없다" 로 보인다. 0개 `completed` 는 출력 tool 이 통과했는데 안전 조건을 지난 후보가 없을 때(풀 0개 · 사후 필터 뒤 0개)뿐이다 (#320 PM 리뷰 — 각 Agent 의 `run()` 연결에서 지킨다). 다만 Food 영양소 분석은 예외다 — 판정 · 식품군 안내가 코드가 계산한 값이라 `failed` 대신 코드 문장 틀(`nutrient.band.*`)을 `status="ok"` 로 낸다(`authored_by="code"`, 경고 로그로 센다 — Food_Tool_명세 §2 · §4, #357 리뷰). 도메인 Agent 의 tool 루프는 `tool_choice="required"` 로 부른다 — Activity 실호출에서 auto 는 tool 을 0/3, required 는 3/3 불렀고(#320), Food 급식 갱신도 auto 에서 분명한 지시 12건 중 4건이 말로 끝났다(#411). 출력 tool 이 쓰기뿐이면 쓰지 않고 끝내는 출력 tool 을 같이 두고, 되돌릴 수 없는 쓰기는 원문을 코드가 다시 본다(Food `keep_daycare_meal` · `daycare_intent`).
-- 재호출 사유는 **안전 필터뿐이다.** 기피(`polarity = −1`)는 필터가 아니라 근거라 재호출 사유가 되지 않는다.
+- 재호출 사유는 **안전 필터뿐이다.** 기피(`polarity = −1`)는 필터가 아니라 근거라 재호출 사유가 되지 않는다. Growth 는 금지 표현으로 지운 후보도 제외 목록에 넣고 재호출 사유로 센다 — 같은 후보가 다시 나오지 않게 ([Growth_Tool_명세.md](../growth/Growth_Tool_명세.md) §2).
 - 이때만 그 Agent 의 진입 수가 2가 된다 ([Agent_공통규약.md](Agent_공통규약.md) §7).
 - `note` 가 비어 후보가 빠지면 개수가 3개 아래로 내려간다. 재호출 사유는 안전 필터뿐이라 지금은 묶음이 거절된다. 금지 표현 필터(5-1 의 2번)도 같은 자리에 있어 새로 생긴 문제는 아니다. 재호출 사유를 늘릴지는 아직 안 정했다 (2026-09-25).
 - 다 채우지 못했으면 안내 한 줄이 같이 나간다. 문구는 코드 상수(`app/agents/common/suggestion.readout.yaml`)이고 `count_notice()` 가 나가는 개수로 고른다 — 아래 표.

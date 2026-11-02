@@ -138,7 +138,7 @@ test.describe("들은 말은 입력창에 넣기만 하고 보내지 않는다",
     // 지난 듣기의 `end` 가 오기 전에 누르면 아무 일도 없다 — 늦은 글자가 새 글 뒤에 붙지 않게.
     await mic(page).click();
     expect(await speechCalls(page)).toEqual(["start", "stop"]);
-    // 그만 듣기 뒤에도 마지막 구간이 한 번 더 온다 (셸 머리말). 되돌린 글을 덮지 않는다.
+    // 그만 듣기 뒤에도 마지막 구간이 한 번 더 올 수 있다 (`SpeechBridge.stop`). 와도 되돌린 글을 덮지 않는다.
     await emit(page, { type: "result", text: "그네도 탔어요", final: true });
     await expect(input(page)).toHaveValue("아침에");
     // 기다리는 동안 오는 `start` 는 버린 듣기다(셸이 권한을 확인하는 사이에 보냈을 때) — 멈춘다.
