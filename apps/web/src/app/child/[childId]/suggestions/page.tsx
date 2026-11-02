@@ -40,7 +40,7 @@ import {
   type SuggestionsResponse,
 } from "@/lib/api";
 import { useEnterMotion } from "@/lib/motion";
-import { scarcityCopy } from "@/lib/scarcity-copy";
+import { scarcityCopy, type AgentRecordCount } from "@/lib/scarcity-copy";
 import { suggestionsTour } from "@/lib/tour/screens/suggestions";
 
 /**
@@ -214,6 +214,23 @@ function SuggestionsScreen() {
    */
   const scarcity = data?.scarcity ?? null;
   const general = scarcity ? (data?.general ?? []) : [];
+  /**
+   * 일반 추천을 낸 Agent별 기록 수. 같은 Agent가 추천을 여러 장 내도 안내에는 한 번만 쓰고,
+   * 서버 응답의 Agent 순서를 유지한다. 정상 문구는 합계인 `scarcity.count`를 읽지 않는다 (#662).
+   */
+  const generalRecords = general.reduce<{
+    seen: Set<Agent>;
+    records: AgentRecordCount[];
+  }>(
+    (result, item) => {
+      if (!result.seen.has(item.agent)) {
+        result.seen.add(item.agent);
+        result.records.push({ label: domainLabel(item.agent), count: item.record_count });
+      }
+      return result;
+    },
+    { seen: new Set<Agent>(), records: [] },
+  ).records;
   /**
    * 고를 수 있게 그린 제안 전부 — 개인화가 먼저, 일반이 뒤다 (화면에 선 순서).
    * 🚨 **id 와 Agent 만 꺼낸다.** 두 타입을 한 배열의 원소로 섞으면 근거를 읽는 자리에서
@@ -391,7 +408,7 @@ function SuggestionsScreen() {
         {scarcity && general.length > 0 ? (
           <ul className="flex flex-col gap-3">
             {general.map((item) => (
-              // 카드의 기록 수는 그 Agent 도메인 수다 — 질문 카드의 `scarcity.count` 는 합이다 (#433 리뷰 ⑥)
+              // 카드와 안내의 기록 수는 이 Agent 도메인 수다. 합계인 `scarcity.count`는 호환 필드다.
               <GeneralSuggestionCard
                 key={item.id}
                 suggestion={item}
@@ -552,7 +569,7 @@ function SuggestionsScreen() {
           <ScarcityCard
             childId={childId}
             scarcity={scarcity}
-            hasGeneral={general.length > 0}
+            records={generalRecords}
             hasPersonal={visible.length > 0}
           />
         ) : null}
@@ -615,12 +632,12 @@ function SuggestionsScreen() {
 function ScarcityCard({
   childId,
   scarcity,
-  hasGeneral,
+  records,
   hasPersonal,
 }: {
   childId: string;
   scarcity: Scarcity;
-  hasGeneral: boolean;
+  records: readonly AgentRecordCount[];
   /** 같은 화면에 개인화 추천도 섰다. */
   hasPersonal: boolean;
 }) {
@@ -628,8 +645,8 @@ function ScarcityCard({
   /** 🚨 Agent 가 되물었을 때만 있다 (#249). 없으면 기록 건수만 말하고 질문은 세우지 않는다. */
   const question = scarcity.question;
   const copy = scarcityCopy({
-    count: scarcity.count,
-    hasGeneral,
+    records,
+    fallbackCount: scarcity.count,
     hasPersonal,
     asked: question !== null,
   });

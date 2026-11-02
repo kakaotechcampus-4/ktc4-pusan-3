@@ -62,6 +62,7 @@ async def test_관심도_기록도_없으면_문서_행을_근거로_한_일반_
     assert result.status == "completed" and len(result.suggestions) == 3
     for draft in result.suggestions:
         assert draft.kind == "general" and draft.reason == GENERAL_REASON
+        assert "기록이 아직 적어서" not in draft.reason
         assert {c.ref.kind for c in draft.citations} == {"growth_doc"}
         assert not any(c.ref.is_child_record for c in draft.citations)
 

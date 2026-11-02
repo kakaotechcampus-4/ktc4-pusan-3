@@ -159,12 +159,12 @@ class TestSuggestionBuild:
             content="욕조에서 컵으로 물 붓고 옮기기",
             reason="모델이 쓴 문장",
             citations=(),
-            general_reason="요청하신 놀이에 맞춰 골랐어요.",
+            general_reason="요청하신 놀이를 바탕으로 골랐어요.",
             requested=True,
             today=TODAY,
         )
         assert draft.kind == "general"
-        assert draft.reason == "요청하신 놀이에 맞춰 골랐어요."
+        assert draft.reason == "요청하신 놀이를 바탕으로 골랐어요."
         assert draft.citations == ()
         assert draft.requested is True
         assert draft.to_payload()["requested"] is True
@@ -189,7 +189,7 @@ class TestSuggestionBuild:
             content="욕조에서 컵으로 물 붓기",
             reason="지난주에 물 붓기를 좋아해서요",
             citations=(citation(),),
-            general_reason="요청하신 놀이에 맞춰 골랐어요.",
+            general_reason="요청하신 놀이를 바탕으로 골랐어요.",
             requested=True,
             today=TODAY,
         )

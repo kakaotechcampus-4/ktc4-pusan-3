@@ -1801,7 +1801,7 @@ React `<ViewTransition>` 이 브라우저 View Transitions 로 그린다. 자식
 | **에러 화면 전문** | 네트워크 끊김 · 세션 만료 등 화면 단위 에러는 계약서 에러 코드가 확정된 뒤 |
 | **월 조회의 기억 변화** | 09 월 그리드의 "기억 변화"(빈 고리) 표식을 **보류했다** (#318). 서버에 기억 변화 이력 표가 없어서 월 조회(`has_event` · `has_my_diary` · `has_shared_photo` · `observation_count`)에 실을 값이 없다. 프론트가 셀 수 없는 값이다 — 승격은 Curator 의 반복 집계 결과라 관찰 건수로 역산되지 않는다. 이력 표가 생기면 실제 화면을 본 뒤 다시 정한다 |
 | **`GET /children/{cid}/suggestions`** | 07 제안 피드백 탭이 평가할 제안을 **목록으로 얻을 길이 없다.** 계약서 §03 은 07 에 `PATCH /feedback` 을 배정했는데 조회가 빠져 있다. `SuggestionListResponse` 를 optional 로 두고 목으로 세웠다(안 오면 빈 상태를 그린다). 👉 `apps/api` Owner 협의 대상 |
-| **일반 추천의 응답 필드** | 화면은 만들었고(`card-general`) 목으로 돌아간다. 남은 것은 계약서다 — v1 의 `scarcity` 응답은 `suggestions: []` 로 끝나서 또래 기준 추천을 실을 자리가 없다. 프론트는 `SuggestionsResponse.general: GeneralSuggestion[]` 과 양쪽의 `kind` 필드를 **제안 형태로** 두고 optional 로 받는다(서버가 안 보내면 질문 1개만 그린다). 👉 `apps/api` Owner 협의 대상 (최상위 CLAUDE.md §8) |
+| **일반 추천의 응답 필드** | `SuggestionsResponse.general: GeneralSuggestion[]` 과 양쪽의 `kind` 필드로 개인화와 분리한다. 선택 기준은 `basis`, 기록 수는 Agent별 `general[].record_count`를 쓰며, `scarcity.count` 합계는 정상 문구에 쓰지 않는다 (#662). 서버가 `general` 을 안 보내는 예전 응답에서는 질문 카드만 방어적으로 그린다 |
 | **`Evidence.is_stale`** | `chip-evidence-stale` 을 그리려면 6개월 판정이 필요한데 프론트는 날짜를 계산하지 않는다(CLAUDE.md §3). `Affinity` 에는 `is_stale` 이 있고 `Evidence` 에는 없다 — 계약서 수정 대상이고, 그때까지 점선 칩은 목에서만 나온다 |
 
 ---

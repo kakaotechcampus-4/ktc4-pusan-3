@@ -705,6 +705,16 @@ describe("05 묶음 안내 · 일반 추천 근거 (#249)", () => {
     for (const item of data.general ?? []) expect(typeof item.record_count).toBe("number");
   });
 
+  it("🚨 Agent 둘의 기록 수는 카드별로 남고 scarcity.count만 호환 합계다 (#662)", async () => {
+    const data = await fetchWith("suggest_multi_general", { agents: ["food", "activity"] });
+
+    expect((data.general ?? []).map(({ agent, record_count }) => [agent, record_count])).toEqual([
+      ["food", 22],
+      ["activity", 8],
+    ]);
+    expect(data.scarcity?.count).toBe(30);
+  });
+
   it("🚨 05 의 하루 한도는 429 daily_input_limit 이다", async () => {
     await expect(fetchWith("daily_limit", { agents: ["food"] })).rejects.toSatisfy(
       (e: unknown) => isApiError(e, "daily_input_limit") && (e as ApiError).status === 429,

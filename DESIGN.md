@@ -472,7 +472,7 @@ radius 는 네 개뿐이다 — `field` 10px(입력·버튼·배너) · `card` 1
 - **브랜드색이 서는 자리:** 섹션 라벨 · 먼저 읽는 숫자 · 아이콘 타일/빈 상태 아이콘 · `card-accent` 테두리 · 주 버튼 · 04 대화의 보낸 한 줄(흰 글자 · 꼬리 없음). 🚨 `brand-soft` 로 큰 면을 칠하지 않는다 — 제안이 앉는 색 면은 **도메인 색**이고, 고르는 버튼만 브랜드다("어디서 왔나" 와 "무엇을 하는가" 를 같은 색으로 쓰지 않는다)
 
 > **§7 의 컴포넌트가 전부 구현됐다.**
-> `card-general`(일반 추천)은 화면을 만들었고 목으로 돌아간다 — 남은 것은 계약서에 `SuggestionsResponse.general` 과 `kind` 를 넣는 협의뿐이다 (`docs/web/design-system-v1.md` §14).
+> `card-general`(일반 추천)은 `SuggestionsResponse.general` 과 `kind` 계약으로 동작한다. 선택 기준은 `basis`, 기록 수는 Agent별 `general[].record_count`를 쓴다 (`docs/web/design-system-v1.md` §14).
 > 구현된 것은 `Screen` · `PageTitle` · `Button` · `TextInput` · `TextArea` · `DateField` · `Checkbox` · `Chip`/`ChipRow` · `EvidenceChip`/`CountChip` · `DomainChip`/`DomainMeta` · `Card`/`CardFailed` · `Banner` · `Spinner` · `ProgressSteps` · `EmptyState` · `Skeleton` · `BottomSheet` · `DomainIcon` · `Tabs` · `MonthGrid`/`DayMarkLegend` · `PhotoCard`/`PhotoSlotButton` 이다.
 
 ## Do's and Don'ts
