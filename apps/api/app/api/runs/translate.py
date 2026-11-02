@@ -15,6 +15,11 @@ pipeline 은 진행 상황을 파이썬 객체(`Step` · `Failed` …)로 내보
 🚨 화면에 보낼 것만 번역하고, 나머지는 None(보내지 않음)이다.
    - `DomainRouted` · `Unwritten` · `Rerouted` — 로그·지표용이다. 도메인 Agent 결과 중
      화면에 갈 것은 바로 뒤에 오는 `AgentResult`(agent_result, #227)가 싣는다.
+
+🚨 되묻기는 카드가 아니라 `AgentQuestion` 이 싣는다 (#615). 화면이 이미 아는 `agent_result` 한
+   장으로 보낸다(readouts · 추천 칸이 빈 카드, `question` 이 찬 것). 카드의 `question` 은 키만
+   남기고 늘 null 이다. 답할 수 있는 질문인지는 `awaits_reply` 가 말한다.
+   새 이벤트 이름은 화면이 정한 뒤에 바꾼다.
    - `PendingReply` — 조각 원문이 들어 있다. API 의 pending store 로만 간다(runner.py).
    - `RetryContext` · `EmptyResult` — 05 추천 엔드포인트의 보관함(suggestion_retry.py)으로만 간다.
      `RetryContext` 에는 요청 원문 조각이 들어 있다.
@@ -31,6 +36,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from app.agents.entrypoint import (
+    AgentQuestion,
     AgentResult,
     Done,
     Emit,
@@ -115,7 +121,8 @@ def to_sse(event: Event, *, saved_rows: SavedRows | None = None) -> sse.SseEvent
                 }
                 for readout in event.readouts
             ],
-            "question": event.question,
+            "question": None,
+            "awaits_reply": False,
             # 저장(commit)이 끝난 추천의 id. 추천 순서 그대로다. 추천이 없으면 [] — 키는 늘 있다
             "suggestion_ids": list(event.suggestion_ids),
             # 추천 묶음 한 줄 (#227). 개인화 · 일반 · 없음(null). 이유는 코드 문구다(모델 아님).
@@ -123,6 +130,20 @@ def to_sse(event: Event, *, saved_rows: SavedRows | None = None) -> sse.SseEvent
             "kind": event.kind,
             "reason": event.reason,
             "record_count": event.record_count,
+        }
+    if isinstance(event, AgentQuestion):
+        # run 의 되묻기 하나. 카드와 같은 모양의 마지막 agent_result 로 간다
+        return "agent_result", {
+            "agent": event.agent,
+            "task_type": event.task_type,
+            "status": "completed",
+            "readouts": [],
+            "question": event.text,
+            "awaits_reply": event.awaits_reply,
+            "suggestion_ids": [],
+            "kind": None,
+            "reason": None,
+            "record_count": None,
         }
     if isinstance(event, Partial):
         # 끝 신호가 아니다. 뒤에 done 이 오고, 화면은 그때 "부분 결과" 로 닫는다.

@@ -20,9 +20,9 @@ from app.agents.growth.tools.closures import (
 from app.agents.growth.tools.routine import (
     ask_question,
     check_routine_category,
-    current_assistance_level,
     routine_evidence,
     routine_gap,
+    routine_level,
 )
 from tests.unit.agents.growth.support import CHILD, TODAY, doc_inputs
 
@@ -35,6 +35,7 @@ def obs(
     subject: str = "양치하기",
     assistance: str | None = "partial_assist",
     trigger: str | None = None,
+    completion: str | None = None,
 ) -> RoutineObservation:
     return RoutineObservation(
         id=UUID(int=2000 + n),
@@ -44,8 +45,60 @@ def obs(
         routine_category=category,
         polarity=0,
         assistance_level=assistance,
+        completion_status=completion,
         trigger=trigger,
     )
+
+
+class TestAskParticle:
+    @pytest.mark.parametrize(
+        ("subject", "expected"),
+        [
+            ("양치", "양치는 요즘 어느 정도까지 혼자 하나요?"),
+            ("숟가락 쓰기", "숟가락 쓰기는 요즘 어느 정도까지 혼자 하나요?"),
+            ("밥", "밥은 요즘 어느 정도까지 혼자 하나요?"),
+            ("ABC", "ABC은(는) 요즘 어느 정도까지 혼자 하나요?"),
+        ],
+    )
+    def test_되묻기에_괄호_조사가_남지_않는다(self, subject, expected):
+        assert ask_question("ask.routine_current", subject) == expected
+
+    def test_습관_질문도_받침에_맞춘다(self):
+        assert ask_question("ask.habit_trigger", "손톱 물어뜯기") == (
+            "손톱 물어뜯기는 주로 어떤 상황에서 하나요?"
+        )
+
+
+class TestRoutineLevel:
+    """도움 수준이 비어도 수행 결과가 있으면 읽는다. 둘 다 없으면 짚지 않는다."""
+
+    def level(self, *rows):
+        return routine_level(rows, category="self_care", today=TODAY)
+
+    def test_적힌_도움_수준이_먼저다(self):
+        row = obs(1, 0, assistance="verbal_prompt", completion="partial")
+        assert self.level(row) == "verbal_prompt"
+
+    def test_일부만_했다는_기록은_일부_도움으로_읽는다(self):
+        assert self.level(obs(1, 0, assistance=None, completion="partial")) == "partial_assist"
+
+    def test_혼자_했다면서_일부만_해냈으면_말로_알려_주는_칸이다(self):
+        """`independent` 그대로면 "이미 혼자 잘 하고 있어요" 로 닫힌다. 말로 알려 주는 칸이면 사슬의
+        마지막 단계가 다음 칸이다."""
+        row = obs(1, 0, assistance="independent", completion="partial")
+        assert self.level(row) == "verbal_prompt"
+
+    def test_더_최근_기록이_혼자_다_했으면_앞의_일부_기록을_보지_않는다(self):
+        older = obs(1, 3, assistance=None, completion="partial")
+        newer = obs(2, 0, assistance="independent", completion="completed")
+        assert self.level(older, newer) == "independent"
+
+    @pytest.mark.parametrize("completion", [None, "completed", "refused", "interrupted"])
+    def test_수준도_수행_결과도_없으면_읽지_않는다(self, completion):
+        assert self.level(obs(1, 0, assistance=None, completion=completion)) is None
+
+    def test_14일이_지난_기록으로는_읽지_않는다(self):
+        assert self.level(obs(1, 15, assistance=None, completion="partial")) is None
 
 
 class TestCategory:
@@ -133,8 +186,8 @@ class TestEvidence:
 
 class TestAssistanceLevel:
     def level(self, observations, **kwargs):
-        defaults = dict(category="self_care", subject=None, today=TODAY)
-        return current_assistance_level(observations, **{**defaults, **kwargs})
+        defaults = dict(category="self_care", today=TODAY)
+        return routine_level(observations, **{**defaults, **kwargs})
 
     def test_창_안에서_가장_최근_수준을_고른다(self):
         rows = [obs(1, 10, assistance="full_assist"), obs(2, 2, assistance="verbal_prompt")]
@@ -153,15 +206,6 @@ class TestAssistanceLevel:
     def test_같은_날_둘이면_도움이_더_필요한_쪽이다(self):
         rows = [obs(1, 2, assistance="independent"), obs(2, 2, assistance="partial_assist")]
         assert self.level(rows) == "partial_assist"
-
-    def test_행동_이름이_다르면_보지_않는다(self):
-        rows = [obs(1, 1, subject="손 씻기", assistance="independent")]
-        assert self.level(rows, subject="양치하기") is None
-        assert self.level(rows, subject="손 씻기") == "independent"
-
-    def test_행동_이름은_공백과_상관없이_맞춘다(self):
-        rows = [obs(1, 1, subject="손 씻기", assistance="independent")]
-        assert self.level(rows, subject="손씻기") == "independent"
 
     def test_다른_카테고리는_보지_않는다(self):
         assert self.level([obs(1, 1, "mealtime", assistance="independent")]) is None
