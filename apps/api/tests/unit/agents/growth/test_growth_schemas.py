@@ -1,10 +1,15 @@
-"""Growth 모델 tool 인자 — 개수 고정 · 정의 안 된 칸 거부 · tool 정의 6개."""
+"""Growth 모델 tool 인자 — 개수 고정 · 정의 안 된 칸 거부 · tool 정의 9개."""
 
 import pytest
 from pydantic import ValidationError
 
 from app.agents.growth.schemas.learning import ProposeLearningActivityArgs
-from app.agents.growth.schemas.memory import SearchAffinityArgs, SearchRoutineMemoryArgs
+from app.agents.growth.schemas.memory import (
+    SearchActivityMemoryArgs,
+    SearchAffinityArgs,
+    SearchEducationMemoryArgs,
+    SearchRoutineMemoryArgs,
+)
 from app.agents.growth.schemas.routine import ProposeRoutinePlanArgs
 from app.agents.growth.schemas.tool_defs import TOOL_DEFINITIONS
 
@@ -18,6 +23,22 @@ def learning_item(title: str = "블록 숫자 세기", **overrides) -> dict:
         "reason": "이 나이에 많이 하는 수 세기 놀이예요",
         **overrides,
     }
+
+
+class TestMemoryKeywords:
+    """기억 조회 검색어는 다섯 개까지다. 넘게 적으면 거절하지 않고 앞의 다섯 개만 쓴다.
+
+    거절하면 모델이 한 번 더 부르느라 대화가 한 번 늘고, 검색어 몇 개 덜 쓰는 것은 안전과 무관하다.
+    """
+
+    @pytest.mark.parametrize("args", [SearchEducationMemoryArgs, SearchActivityMemoryArgs])
+    def test_다섯_개를_넘으면_앞의_다섯_개만_쓴다(self, args):
+        words = ["숫자", "공룡", "그림", "블록", "노래", "퍼즐"]
+        assert args.model_validate({"keywords": words}).keywords == words[:5]
+
+    @pytest.mark.parametrize("args", [SearchEducationMemoryArgs, SearchActivityMemoryArgs])
+    def test_다섯_개_이하는_그대로다(self, args):
+        assert args.model_validate({"keywords": ["숫자", "공룡"]}).keywords == ["숫자", "공룡"]
 
 
 class TestLearning:
@@ -72,14 +93,17 @@ class TestAffinity:
 
 
 class TestDefinitions:
-    def test_모델_tool_정의는_여섯_개다(self):
+    def test_모델_tool_정의는_아홉_개다(self):
         assert [d.name for d in TOOL_DEFINITIONS] == [
             "search_education_memory",
             "search_routine_memory",
             "search_activity_memory",
             "search_affinity",
+            "search_book_interests",
+            "search_books",
             "propose_learning_activity",
             "propose_routine_plan",
+            "propose_books",
         ]
 
     def test_모델이_kind_status_allergens_를_고르는_칸이_없다(self):
@@ -87,3 +111,39 @@ class TestDefinitions:
             schema = str(definition.args.model_json_schema())
             for forbidden in ("'kind'", "'status'", "'allergens'", "'expires_at'"):
                 assert forbidden not in schema, (definition.name, forbidden)
+
+
+class TestBookArgs:
+    """검색어는 정보나루로 나간다 — 문장 · 문장부호 · 긴 이름이 밖으로 나가지 않게 모양을 묶는다."""
+
+    @pytest.mark.parametrize("words", [["공룡"], ["아기 공룡", "dino", "숫자 123"]])
+    def test_주제_낱말은_받는다(self, words):
+        from app.agents.growth.schemas.books import SearchBooksArgs
+
+        assert SearchBooksArgs.model_validate({"keywords": words}).keywords == words
+
+    @pytest.mark.parametrize(
+        "words",
+        [
+            [],
+            ["공룡", "기차", "동물", "숫자"],
+            ["가" * 13],
+            [" 공룡"],
+            ["공룡  책"],
+            ["우리 아이가 좋아하는 공룡!"],
+            ["공룡\n책"],
+        ],
+    )
+    def test_모양이_다르면_받지_않는다(self, words):
+        from app.agents.growth.schemas.books import SearchBooksArgs
+
+        with pytest.raises(ValidationError):
+            SearchBooksArgs.model_validate({"keywords": words})
+
+    def test_책은_3권까지_빈_제출도_모양으로는_받는다(self):
+        from app.agents.growth.schemas.books import ProposeBooksArgs
+
+        assert ProposeBooksArgs.model_validate({"items": []}).items == []
+        item = {"isbn": "9788900000001", "reason": "공룡이 나와요"}
+        with pytest.raises(ValidationError):
+            ProposeBooksArgs.model_validate({"items": [item] * 4})

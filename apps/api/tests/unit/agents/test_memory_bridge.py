@@ -14,7 +14,12 @@ from app.agents.common.datetime_rules import build_observed_range
 from app.agents.common.evidence import AffinityRow
 from app.agents.memory.store import InMemoryStore, MemoryStore
 from app.agents.memory.store.ports import ObservationRow
-from app.agents.memory_bridge import StoreActivityMemory, StoreFoodMemory, same_store
+from app.agents.memory_bridge import (
+    StoreActivityMemory,
+    StoreFoodMemory,
+    StoreGrowthMemory,
+    same_store,
+)
 
 KST = ZoneInfo("Asia/Seoul")
 NOW = datetime(2026, 9, 9, 9, 0, tzinfo=KST)
@@ -154,6 +159,7 @@ def _affinity(key: str, *, days_ago: int, state: str = "confirmed") -> AffinityR
         polarity=1,
         strength=0.9,
         last_observed_on=TODAY - timedelta(days=days_ago),
+        observed_days=3,
     )
 
 
@@ -264,3 +270,73 @@ def test_store_와_opener_는_하나만_받는다() -> None:
         StoreFoodMemory(store, opener=opener)
     with pytest.raises(TypeError):
         StoreActivityMemory()
+
+
+async def test_Growth_포트는_교육_루틴_놀이_관찰을_읽는다() -> None:
+    store = InMemoryStore(now=NOW)
+    await _save(
+        store,
+        "education",
+        subject="숫자",
+        topic="계단 숫자 세기",
+        polarity=1,
+        engagement_level="high",
+    )
+    await _save(
+        store,
+        "routine",
+        subject="양치",
+        routine_category="self_care",
+        polarity=0,
+        assistance_level="full_assist",
+        completion_status=None,
+        trigger=None,
+    )
+    await _save(store, "activity", subject="블록", activity="블록 쌓기", polarity=1)
+    reader = StoreGrowthMemory(store)
+
+    (education,) = await reader.education(child_id=CHILD, date_from=TODAY, date_to=TODAY)
+    (routine,) = await reader.routine(child_id=CHILD, date_from=TODAY, date_to=TODAY)
+    (activity,) = await reader.activities(child_id=CHILD, date_from=TODAY, date_to=TODAY)
+
+    assert (education.subject, education.topic, education.engagement_level) == (
+        "숫자",
+        "계단 숫자 세기",
+        "high",
+    )
+    assert (routine.routine_category, routine.assistance_level) == ("self_care", "full_assist")
+    assert (activity.subject, activity.activity) == ("블록", "블록 쌓기")
+    assert await reader.affinities(child_id=CHILD, domains=("education",)) == []
+
+
+async def test_Growth_는_물은_도메인_그대로_읽는다() -> None:
+    reader = _Affinities(_affinity("공룡", days_ago=3))
+    memory = StoreGrowthMemory(InMemoryStore(now=NOW), affinities=reader, today=TODAY)
+
+    await memory.affinities(child_id=CHILD, domains=("education", "activity"))
+    await memory.affinities(child_id=CHILD, domains=("activity",))
+
+    assert reader.calls == [("education", "activity"), ("activity",)]
+
+
+async def test_Growth_도_마지막_관찰_뒤_21일이_지난_관심은_archived_로_읽는다() -> None:
+    reader = _Affinities(_affinity("숫자", days_ago=21), _affinity("공룡", days_ago=22))
+    memory = StoreGrowthMemory(InMemoryStore(now=NOW), affinities=reader, today=TODAY)
+
+    rows = await memory.affinities(child_id=CHILD, domains=("education", "activity"))
+
+    assert [(r.merge_key, r.state) for r in rows] == [
+        ("숫자", "confirmed"),
+        ("공룡", "archived"),
+    ]
+
+
+async def test_Growth_포트는_이번만_그랬어요로_고친_루틴을_읽지_않는다() -> None:
+    store = InMemoryStore(now=NOW)
+    row = await _save(store, "routine", subject="양치", routine_category="self_care", polarity=0)
+    await store.update_observation(
+        domain="routine", observation_id=row.id, fields={"status": "stand_alone"}
+    )
+    reader = StoreGrowthMemory(store)
+
+    assert await reader.routine(child_id=CHILD, date_from=TODAY, date_to=TODAY) == []

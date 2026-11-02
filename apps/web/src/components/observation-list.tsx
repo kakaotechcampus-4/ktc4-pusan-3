@@ -89,8 +89,9 @@ export function ObservationList({
 }) {
   return (
     <ul className="flex flex-col gap-2">
-      {observations.map((observation) => (
-        <li key={`${observation.kind}:${observation.id}`}>
+      {observations.map((observation, i) => (
+        // 화면 투어는 첫 줄을 비춘다 (07 · 09 · `lib/tour/screens/`).
+        <li key={`${observation.kind}:${observation.id}`} data-tour={i === 0 ? "row" : undefined}>
           <ObservationRow observation={observation} onOpen={() => onOpen(observation)} />
         </li>
       ))}

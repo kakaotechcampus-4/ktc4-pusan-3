@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { authHeaders } from "@/lib/api/client";
 import { MOCK_REFRESH_KEY } from "@/mocks/handlers/auth";
 import { setScenario } from "@/mocks/scenario";
+import { useMedicationDraftStore } from "@/stores/medication-draft";
 import { hasLiveSession, useSessionStore } from "@/stores/session";
 
 /**
@@ -72,5 +73,42 @@ describe("저장소", () => {
     useSessionStore.getState().signIn("token", 0);
 
     expect(hasLiveSession(useSessionStore.getState())).toBe(true);
+  });
+});
+
+describe("signOut — 로그아웃", () => {
+  it("🚨 아직 넣지 않은 복약 초안을 비운다 — 약 이름 · 복용 이유가 든 건강 정보다 (#537)", () => {
+    useMedicationDraftStore.getState().seed("c1", [
+      {
+        draft_id: "d1",
+        op: "create",
+        source: "utterance",
+        schedule: {
+          title: "기침 시럽",
+          dosage: null,
+          indication_text: null,
+          storage: null,
+          med_form: null,
+          note: null,
+          symptom_codes: [],
+          starts_on: null,
+          ends_on: null,
+        },
+        doses: [
+          {
+            timing_anchor: "fixed",
+            offset_minutes: 0,
+            fixed_time: "09:00",
+            scheduled_time: "09:00",
+          },
+        ],
+        notice_times: ["09:00"],
+        missing: ["starts_on", "ends_on"],
+      },
+    ]);
+
+    useSessionStore.getState().signOut();
+
+    expect(useMedicationDraftStore.getState().byChild).toEqual({});
   });
 });

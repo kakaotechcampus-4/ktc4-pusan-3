@@ -56,14 +56,10 @@ class TestToolsFor:
         for months in (0, 11, 12, 23, 24, 35, 36, 60):
             assert tools_for(ROUTINE, gate(months)) == expected
 
-    def test_도서는_교육_기억_검색만_12개월부터다(self):
-        assert tools_for(BOOK, gate(8)) == ("search_affinity", "search_books", "propose_books")
-        assert tools_for(BOOK, gate(12)) == (
-            "search_education_memory",
-            "search_affinity",
-            "search_books",
-            "propose_books",
-        )
+    def test_도서는_관심_주제_검색_하나와_책_tool_둘이고_월령과_상관없이_같다(self):
+        expected = ("search_book_interests", "search_books", "propose_books")
+        for months in (0, 8, 12, 30, 60):
+            assert tools_for(BOOK, gate(months)) == expected
 
     def test_성장_추이는_모델에게_열리는_tool_이_없다(self):
         for months in (0, 11, 12, 36, 60):
@@ -222,3 +218,9 @@ class TestExecute:
         from app.agents.growth.schemas.tool_defs import TOOL_DEFINITIONS
 
         assert {d.name for d in TOOL_DEFINITIONS} == set(TOOL_HANDLERS)
+
+    def test_도서_tool_은_정의와_핸들러가_있어_모델에게_보인다(self):
+        from app.agents.growth.registry import specs_for
+
+        names = [spec["function"]["name"] for spec in specs_for(tools_for(BOOK, gate(30)))]
+        assert names == ["search_book_interests", "search_books", "propose_books"]

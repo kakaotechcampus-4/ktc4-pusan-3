@@ -65,7 +65,10 @@ class EvidencePick(ToolArgs):
     id: Annotated[
         str,
         Field(
-            description="search_activity_memory 결과나 프롬프트 [예시]에 있던 id만. 지어내지 않는다"
+            description=(
+                "search_activity_memory 결과의 id 나 프롬프트 [예시]의 id(예1 같은)만 그대로 쓴다. "
+                "지어내지 않는다"
+            )
         ),
     ]
     note: Annotated[

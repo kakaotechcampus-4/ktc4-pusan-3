@@ -38,7 +38,7 @@ export function resetProfileState(): void {
 }
 
 /**
- * 서버 `Measurement`(0 보다 크고 300 이하, 반올림해 0.1 이상)와 `_check_measured_on`
+ * 서버 `HeightCm` · `WeightKg` 의 칸별 범위(`lib/measurement.ts` · #628)와 `_check_measured_on`
  * (아이 생일부터 오늘까지) 를 흉내 낸다. 걸리면 서버와 같은 400 응답, 없으면 `null`.
  */
 function rejectGrowthBody(body: {
@@ -48,7 +48,10 @@ function rejectGrowthBody(body: {
 }) {
   const outOfRange = (["height_cm", "weight_kg"] as const).filter((name) => {
     const value = body[name];
-    return typeof value === "number" && !isMeasurementInRange(value);
+    return (
+      typeof value === "number" &&
+      !isMeasurementInRange(name === "height_cm" ? "height" : "weight", value)
+    );
   });
   if (outOfRange.length > 0) {
     // 스키마 검증이라 서버 공통 문구다 (`app/api/errors.py`).

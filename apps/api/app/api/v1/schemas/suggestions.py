@@ -43,6 +43,13 @@ class SuggestionOut(BaseModel):
         )
     )
     content: str
+    place_notice: str | None = Field(
+        default=None,
+        description=(
+            "장소가 붙은 추천에만 오는 확인 문구 한 문장(공공데이터 기준일 · 운영 여부 확인). "
+            "서버 코드 문구다. 근거가 아니어서 evidence 에 들어가지 않는다. 장소가 없으면 null"
+        ),
+    )
     reason: str | None = Field(
         default=None,
         description=(
@@ -99,13 +106,14 @@ class DocEvidenceOut(BaseModel):
     """일반 추천의 근거인 문서 행. CC BY 행은 출처 표시가 조건이라 기관 · 제목을 같이 싣는다.
 
     Food 일반 추천은 고른 메뉴(레시피 카탈로그 행)도 이 모양으로 싣는다(#442) — `title` 은 메뉴
-    이름, 출처는 그 레시피를 받아 온 공개 데이터다.
+    이름, 출처는 그 레시피를 받아 온 공개 데이터다. Growth 일반 도서 추천도 고른
+    책(`book_catalog`)을 싣는다 — `title` 은 그 추천의 "제목(저자)", 출처는 도서관 정보나루다.
     """
 
     ref: Ref = Field(
         description=(
-            "kind 는 food_doc · activity_doc · growth_doc, "
-            "또는 recipe_catalog(Food 일반 추천의 메뉴 근거)"
+            "kind 는 food_doc · activity_doc · growth_doc, 또는 recipe_catalog(Food 일반 추천의 "
+            "메뉴 근거) · book_catalog(Growth 일반 도서 추천의 책 근거)"
         )
     )
     title: str
@@ -116,9 +124,11 @@ class DocEvidenceOut(BaseModel):
 
 
 class GeneralSuggestionOut(BaseModel):
-    """또래 기준 일반 추천. 아이 기록이 아니라 문서 행을 근거로 단다 (루트 §2).
+    """일반 추천. 아이 기록이 아니라 문서 행을 근거로 단다 (루트 §2).
 
-    Food 는 고른 메뉴(레시피 카탈로그 행)만으로도 된다(#442).
+    Food 는 고른 메뉴(레시피 카탈로그 행)만으로도 된다(#442). Growth 도서는 고른 책(정보나루
+    서지 행)이 근거다. 보호자가 놀이를 정해 물은 Activity 추천("물놀이 뭐 하지?")은 그 요청이
+    기준이라 `evidence` 가 비어 올 수 있다 — 그때 기준은 `basis` 문구다 (#597).
     """
 
     id: str
@@ -126,6 +136,13 @@ class GeneralSuggestionOut(BaseModel):
     agent: str
     kind: Literal["general"] = "general"
     content: str
+    place_notice: str | None = Field(
+        default=None,
+        description=(
+            "장소가 붙은 추천에만 오는 확인 문구 한 문장(공공데이터 기준일 · 운영 여부 확인). "
+            "서버 코드 문구다. 근거가 아니어서 evidence 에 들어가지 않는다. 장소가 없으면 null"
+        ),
+    )
     basis: str = Field(description="코드 템플릿 문구. 모델이 쓴 문장이 아니다")
     status: str
     expires_at: str
@@ -134,7 +151,12 @@ class GeneralSuggestionOut(BaseModel):
             "그 Agent 도메인에 쌓인 기록 수 (남아 있는 관찰만). 04 블록의 record_count 와 같은 표"
         )
     )
-    evidence: list[DocEvidenceOut]
+    evidence: list[DocEvidenceOut] = Field(
+        description=(
+            "문서 · 메뉴 · 책 근거 카드. 보호자가 놀이를 정해 물은 Activity 추천은 비어 올 수 "
+            "있다 — 그때는 basis 만 보여 준다"
+        )
+    )
 
 
 class GroupNoticeOut(BaseModel):
@@ -168,7 +190,14 @@ class GuardOut(BaseModel):
     code: str
     blocked_agents: list[AgentValue]
     message: str
-    deeplink: str | None = None
+    deeplink: str | None = Field(
+        default=None,
+        description=(
+            "풀러 갈 곳 — 아이 id 를 안 담은 웹 상대 경로. "
+            "safety_unknown 이면 profile(11 아이 프로필), "
+            "갈 곳이 없는 guard(not_ready · unsupported)는 null"
+        ),
+    )
 
 
 class ScarcityQuestionOut(BaseModel):
@@ -270,8 +299,9 @@ class UpdateEventRequest(BaseModel):
     reminder: ReminderIn | None = Field(
         default=None,
         description=(
-            "요청한 보호자 본인의 알림. 칸을 빼면 그대로 두고, null 이면 지운다. "
-            "종일 여부를 바꾸면 이 일정에 걸린 알림은 모두 지워진다 — 새 알림은 이 칸으로 다시 건다"
+            "요청한 보호자 본인의 알림. 칸을 빼거나 저장된 값과 같으면 그대로 두고, null 이면 "
+            "지운다. 종일 여부를 바꾸면 이 일정에 걸린 알림은 날 수를 지켜 가까운 값으로 옮겨진다"
+            "(시간 있는 일정의 1h → 종일의 day_of_9am 등). 옮긴 값의 울릴 시각이 지났으면 지워진다"
         ),
     )
 

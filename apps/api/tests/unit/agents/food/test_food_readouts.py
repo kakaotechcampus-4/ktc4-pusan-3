@@ -59,3 +59,13 @@ class TestCatalog:
     def test_모르는_키는_바로_실패한다(self) -> None:
         with pytest.raises(KeyError):
             READOUTS.get("closed.없는키")
+
+
+BANNED = ("먹여도 돼", "먹어도 돼", "괜찮", "안 돼", "드셔도")
+
+
+def test_섭취_확인과_요청_안내_문구에는_허가_표현이_없다() -> None:
+    keys = [key for key in READOUTS.texts if key.startswith(("check.", "meal.request_"))]
+    assert keys
+    for key in keys:
+        assert not any(word in READOUTS.get(key).template for word in BANNED), key

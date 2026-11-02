@@ -102,7 +102,21 @@ test.describe("새로 재서 적기", () => {
     await sheet.getByLabel("키 · cm").fill("1042");
     await sheet.getByRole("button", { name: "적어 두기" }).click();
 
-    await expect(sheet.getByText("0.1부터 300까지 적을 수 있어요")).toBeVisible();
+    await expect(sheet.getByText("cm 단위로 20부터 220까지 적을 수 있어요")).toBeVisible();
+    expect(writes(calls, "POST", /\/growth$/)).toHaveLength(0);
+  });
+
+  // 🚨 키와 몸무게가 범위 하나(0.05 ~ 300)를 같이 쓰던 때는 키 1cm 와 몸무게 300kg 이 저장됐다 (#627).
+  test("키와 몸무게는 각자의 범위로 막는다", async ({ page }) => {
+    const calls = recordApi(page);
+    const sheet = await openSheet(page);
+
+    await sheet.getByLabel("키 · cm").fill("1");
+    await sheet.getByLabel("몸무게 · kg").fill("300");
+    await sheet.getByRole("button", { name: "적어 두기" }).click();
+
+    await expect(sheet.getByText("cm 단위로 20부터 220까지 적을 수 있어요")).toBeVisible();
+    await expect(sheet.getByText("kg 단위로 0.3부터 150까지 적을 수 있어요")).toBeVisible();
     expect(writes(calls, "POST", /\/growth$/)).toHaveLength(0);
   });
 

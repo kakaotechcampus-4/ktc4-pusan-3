@@ -4,6 +4,7 @@ import { resetAuthState } from "@/mocks/handlers/auth";
 import { resetCalendarState } from "@/mocks/handlers/calendar";
 import { resetChatState } from "@/mocks/handlers/chat";
 import { resetInviteState } from "@/mocks/handlers/invites";
+import { resetMedicationState } from "@/mocks/handlers/medications";
 import { resetMembership } from "@/mocks/handlers/membership";
 import { resetSafetyState } from "@/mocks/handlers/children";
 import { resetMemoryState } from "@/mocks/handlers/memories";
@@ -38,6 +39,7 @@ afterEach(() => {
   resetSafetyState();
   resetMemoryState();
   resetCalendarState();
+  resetMedicationState();
   resetChatState();
   resetPhotoRuns();
   resetSubmittedInputs();

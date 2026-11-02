@@ -1,7 +1,7 @@
 """날씨 조회 tool — 네 조회를 병렬로 · 실패한 것만 "모름" · 판정과 등급 라벨만 모델에게.
 
 판정 표(4-2) 자체는 test_activity_weather.py 가 본다. 여기서는 조회를 묶는 쪽을 본다.
-- 날씨를 못 읽으면 "맑음"이 아니라 UPSTREAM_ERROR 이고 실내만이다.
+- 날씨를 못 읽으면 "맑음"이 아니라 UPSTREAM_ERROR 다. 바깥은 막지 않고 확인 못 했다고 알린다.
 - 대기질은 오늘만 본다 — 지금 측정값이라 내일 추천에 쓰지 않는다.
 - 해가 졌는지는 오늘만 본다.
 """
@@ -139,11 +139,11 @@ class TestLookupWeather:
         assert [(d["weekday"], d["outdoor_ok"]) for d in days] == [("토", False), ("일", True)]
         assert set(ctx.state.weather) == {date(2026, 10, 10), date(2026, 10, 11)}
 
-    async def test_하루만_못_읽으면_그날만_실내로_표시한다(self):
+    async def test_하루만_못_읽으면_그날만_확인_못_함으로_표시한다(self):
         ctx = await context(ForecastDownOn(date(2026, 10, 10)))
         result = await lookup(ctx, DayLabel.THIS_WEEKEND)
         sat, sun = result.data["days"]
-        assert (sat["checked"], sat["outdoor_ok"]) == (False, False)
+        assert (sat["checked"], sat["outdoor_ok"]) == (False, True)
         assert (sun["checked"], sun["outdoor_ok"]) == (True, True)
 
     async def test_화면_안내는_모델에게_주지_않고_run_state_에_둔다(self):
@@ -154,10 +154,12 @@ class TestLookupWeather:
 
     @pytest.mark.parametrize("dead", ["forecast", "advisories"])
     async def test_예보나_특보를_못_읽으면_맑음이_아니라_실패(self, dead):
+        """실패지만 바깥은 막지 않는다. 모델은 날씨 이야기만 쓰지 않는다 (#612 멘토 리뷰)."""
         ctx = await context(InMemoryWeather(uv="4", fail=frozenset({dead})))
         result = await lookup(ctx)
         assert result.error["code"] == ErrorCode.UPSTREAM_ERROR
-        assert ctx.state.weather[ctx.today].outdoor_ok is False
+        assert "실내 활동만" not in result.error["message"]
+        assert ctx.state.weather[ctx.today].outdoor_ok is True
         assert WEATHER_UNCHECKED in ctx.state.weather[ctx.today].notices
 
     async def test_미세먼지만_실패하면_야외는_허용하고_알린다(self):
