@@ -644,6 +644,8 @@ class TestEventName:
             candidate(content="정원문화박람회에서 꽃 모양 찾기", place_name=None), events=EVENTS
         ).drafts
         assert draft.place_notice == EVENT_NOTICE
+        assert draft.event_starts_on == EXPO_ROW.starts_on
+        assert draft.event_ends_on == EXPO_ROW.ends_on
 
     @pytest.mark.parametrize(
         ("day", "outdoor", "expected"),
