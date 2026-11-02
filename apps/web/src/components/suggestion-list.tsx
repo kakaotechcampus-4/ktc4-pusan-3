@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import { domainBar, domainField, domainLabel } from "@/components/domain-chip";
+import { SuggestionWarnings } from "@/components/suggestion-warnings";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DOMAIN_ICON } from "@/components/ui/icon";
 import { IconTile } from "@/components/ui/icon-tile";
@@ -315,6 +316,10 @@ function SuggestionRow({
         {/* 🚨 장소 확인 문구는 제안 문장에 딸린 한 줄이다 (#516). 서버 문구 그대로, 이유보다 위에 둔다.
             근거가 아니라서 선 아래 "사용한 기록" 에 넣지 않는다 — 넣으면 기록이 늘어 보인다. */}
         {placeNotice ? <p className="text-caption text-ink-muted mt-1">{placeNotice}</p> : null}
+
+        {/* 🚨 위험 경고도 제안 문장에 딸린 말이다 (#402 · #672). 장소 문구 아래, 이유보다 위 — 고르기 전에 읽게.
+            근거가 아니라서 선 아래 "사용한 기록" 에 넣지 않는다. */}
+        <SuggestionWarnings warnings={suggestion.warnings} className="mt-2" />
 
         {reason ? (
           <Reason className="mt-4" term={isHealth ? "무엇을 봤나" : "추천 이유"} value={reason} />
