@@ -251,7 +251,8 @@ def _conditions(weather: WeatherBrief, *, checked: bool, gate: Gate) -> str:
         lines.append(
             "그날 열리는 축제 · 공연 · 행사는 search_events 로 찾을 수 있다. 결과에 있는 "
             "이름만 place_name 에 쓰고 day 는 그 행사가 열리는 날로 쓴다. 보호자가 지역을 "
-            "말했으면 area 에 그 이름을 쓴 그대로 넣는다."
+            "말했으면 area 에 그 이름을 쓴 그대로 넣는다. 시 · 도만 말해도(부산) 행사는 그 시 · 도 "
+            "전체에서 찾는다."
         )
     return "\n".join(lines)
 

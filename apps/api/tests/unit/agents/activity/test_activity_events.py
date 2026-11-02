@@ -8,10 +8,13 @@ from datetime import date
 
 import pytest
 
+from app.agents.activity.areas import PROVINCE_ALIASES
 from app.agents.activity.events import (
+    TOUR_REGION_CODES,
     EventKind,
     age_allows,
     distance_m,
+    in_province,
     open_on,
     read_event,
 )
@@ -29,6 +32,7 @@ def raw(**overrides: str) -> RawEvent:
         "mapy": "35.16",
         "kind_code": "EV01",
         "progress": "",
+        "region_code": "26",
     }
     values.update(overrides)
     return RawEvent(**values)
@@ -167,3 +171,26 @@ class TestDistance:
         origin = CoarseLocation(lat=35.18, lon=129.08)
 
         assert 11_000 < distance_m(event, origin) < 11_300
+
+
+class TestProvince:
+    """시 · 도 행사 검색은 TourAPI 법정동 시도 코드(lDongRegnCd)로 거른다."""
+
+    def test_모든_시도에_코드가_있다(self):
+        assert set(TOUR_REGION_CODES) == set(PROVINCE_ALIASES)
+
+    def test_그_시도의_행사만이다(self):
+        busan = read_event(raw(region_code="26"))
+        gyeongnam = read_event(raw(region_code="48"))
+        assert in_province(busan, "부산광역시")
+        assert not in_province(gyeongnam, "부산광역시")
+
+    @pytest.mark.parametrize(
+        ("code", "province"), [("36110", "세종특별자치시"), ("12", "전남광주통합특별시")]
+    )
+    def test_코드_모양이_달라도_맞춘다(self, code, province):
+        """세종은 다섯 자리로 온다. 전남광주는 통합 코드다 (11-02 실측)."""
+        assert in_province(read_event(raw(region_code=code)), province)
+
+    def test_코드가_비면_어느_시도도_아니다(self):
+        assert not in_province(read_event(raw(region_code="")), "부산광역시")

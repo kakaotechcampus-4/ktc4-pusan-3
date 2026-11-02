@@ -9,9 +9,16 @@ from collections.abc import Awaitable, Sequence
 from datetime import date, datetime, time, timedelta
 from typing import Any, TypeVar
 
-from app.agents.activity.areas import find_area, named_area, said
+from app.agents.activity.areas import find_area, find_province, named_area, said
 from app.agents.activity.context import ActivityContext
-from app.agents.activity.events import age_allows, distance_m, open_on, read_event
+from app.agents.activity.events import (
+    Event,
+    age_allows,
+    distance_m,
+    in_province,
+    open_on,
+    read_event,
+)
 from app.agents.activity.result import ErrorCode, ToolResult, fail, ok
 from app.agents.activity.schemas.common import DayLabel, PlaceCategory
 from app.agents.activity.schemas.outing import (
@@ -302,7 +309,7 @@ async def search_events(context: ActivityContext, args: SearchEventsArgs) -> Too
     if gate is None or events is None:
         raise RuntimeError("Gate · 행사 어댑터 없이 행사 조회가 불렸다 — registry 가 열지 않는다")
 
-    origin = _origin(context, args.area, tool=_EVENTS)
+    origin = _origin(context, args.area, tool=_EVENTS, provinces=True)
     if isinstance(origin, ToolResult):
         return origin
 
@@ -327,13 +334,17 @@ async def search_events(context: ActivityContext, args: SearchEventsArgs) -> Too
             "행사를 찾지 못했다. 행사 없이 낸다.",
         )
 
-    found = [
-        (distance, event)
-        for raw in raws
-        if (event := read_event(raw)) is not None
-        and open_on(event, days)
-        and (distance := distance_m(event, origin)) <= EVENT_MAX_RADIUS_M
-    ]
+    # 시 · 도만 말했으면 반경이 아니라 그 시 · 도의 행사다. 정렬은 대표 지점에서 가까운 순이다
+    area = context.state.area
+    province = area.province if area is not None and area.whole_province else None
+    found: list[tuple[int, Event]] = []
+    for raw in raws:
+        event = read_event(raw)
+        if event is None or not open_on(event, days):
+            continue
+        distance = distance_m(event, origin)
+        if in_province(event, province) if province else distance <= EVENT_MAX_RADIUS_M:
+            found.append((distance, event))
     nearest = sorted(found, key=lambda pair: pair[0])[:EVENT_INTRO_LIMIT]
     intros = await asyncio.gather(
         *(_or_none(events.intro(content_id=event.content_id)) for _, event in nearest)
@@ -370,7 +381,11 @@ async def search_events(context: ActivityContext, args: SearchEventsArgs) -> Too
 
 
 def _origin(
-    context: ActivityContext, area_text: str | None, *, tool: str = _PLACES
+    context: ActivityContext,
+    area_text: str | None,
+    *,
+    tool: str = _PLACES,
+    provinces: bool = False,
 ) -> CoarseLocation | ToolResult:
     """장소 · 행사를 찾을 기준점. 실패면 모델에게 돌려줄 결과다(`tool` 은 그 tool 이름).
 
@@ -381,11 +396,23 @@ def _origin(
       지역으로 찾지 않는다.
     - 못 찾으면(모르는 이름 · 여러 곳인데 위치가 없음 · 시도만) 장소 없이 간다. 결과에 한 줄
       안내가 붙는다(`state.area_missed`). 비슷한 곳으로 짐작하지 않는다.
+    - `provinces` 면(행사 조회) 시 · 도만 말해도 그 시 · 도 전체가 지역이다(`find_province`). 장소
+      조회는 시 · 도 전체에서 찾지 않는다 — 행사로 시 · 도를 정한 뒤에도 안내를 남기고 장소 없이
+      간다.
     - 찾으면 run 의 지역이 된다 — 날씨도 그 지역으로 다시 보고(`state.weather` 를 비운다), 보호자
       위치에서 찾은 장소 · 행사도 버린다(`state.seen_places` · `seen_events`). 남기면 그 지역
       날씨로 보호자 동네 장소가 붙는다 (#657 리뷰). 한 run 에 한 지역이다. 날씨 판정이 지역마다
       갈리면 어느 추천에 어느 날씨를 댈지 정할 수 없어서다.
     """
+    state = context.state
+    if not provinces and state.area is not None and state.area.whole_province:
+        state.area_missed = True
+        return fail(
+            "query",
+            tool,
+            ErrorCode.NOT_FOUND,
+            "시 · 도 전체는 넓어서 장소를 찾지 않는다. 장소가 필요 없는 놀이만 낸다.",
+        )
     if not area_text or not area_text.strip():
         if context.outing_location is None:
             return fail(
@@ -396,7 +423,6 @@ def _origin(
                 "말하지 않았으면 장소가 필요 없는 놀이만 낸다.",
             )
         return context.outing_location
-    state = context.state
     name = named_area(area_text, state.request_texts)
     if name is None and not said(area_text, state.request_texts):
         return fail(
@@ -407,6 +433,8 @@ def _origin(
         )
     # 보호자가 말했지만 사전에 없는 이름(서면)은 못 찾은 지역이다 — 안내가 붙는다
     area = find_area(name, near=context.location) if name is not None else None
+    if area is None and provinces and name is not None:
+        area = find_province(name)
     if area is None:
         state.area_missed = state.area is None
         return fail(

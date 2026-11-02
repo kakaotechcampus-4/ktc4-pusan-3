@@ -8,14 +8,14 @@
 from datetime import UTC, date, datetime, timedelta, timezone
 from uuid import UUID
 
-from app.agents.activity.areas import find_area
+from app.agents.activity.areas import find_area, find_province
 from app.agents.activity.context import ActivityContext, build_gate
 from app.agents.activity.result import ErrorCode
-from app.agents.activity.schemas.common import DayLabel
-from app.agents.activity.schemas.outing import SearchEventsArgs
+from app.agents.activity.schemas.common import DayLabel, PlaceCategory
+from app.agents.activity.schemas.outing import SearchEventsArgs, SearchNearbyPlacesArgs
 from app.agents.activity.store.inmemory import InMemoryEvents, in_memory_ports
 from app.agents.activity.store.ports import EVENT_TOP_K, CoarseLocation
-from app.agents.activity.tools.outing import days_of, search_events
+from app.agents.activity.tools.outing import days_of, search_events, search_nearby_places
 from app.agents.activity.weather import WeatherBrief
 from app.core.event_raw import RawEvent, RawEventIntro
 
@@ -27,7 +27,16 @@ LOCATION = CoarseLocation(lat=35.18, lon=129.08)
 KM_PER_DEGREE = 111.2
 
 
-def raw(cid: str, title: str, *, km: float = 1.0, start="20261101", end="20261109", near=LOCATION):
+def raw(
+    cid: str,
+    title: str,
+    *,
+    km: float = 1.0,
+    start="20261101",
+    end="20261109",
+    near=LOCATION,
+    region="26",
+):
     return RawEvent(
         content_id=cid,
         title=title,
@@ -37,6 +46,7 @@ def raw(cid: str, title: str, *, km: float = 1.0, start="20261101", end="2026110
         mapy=f"{near.lat + km / KM_PER_DEGREE:.6f}",
         kind_code="EV01",
         progress="",
+        region_code=region,
     )
 
 
@@ -274,3 +284,44 @@ class TestArea:
         await search_events(ctx, SearchEventsArgs(day=DayLabel.TODAY, area="해운대"))
 
         assert set(ctx.state.seen_events) == {"해운대 모래축제"}
+
+
+BUSAN = find_province("부산")
+
+
+class TestProvince:
+    """시 · 도만 말해도 행사는 그 시 · 도 전체에서 찾는다 — "부산 놀러 갈 건데 행사 추천해줘"."""
+
+    async def province_context(self, events):
+        ctx = await area_context(events)
+        ctx.state.request_texts = ("부산 놀러 갈 건데 행사 추천해줘",)
+        return ctx
+
+    async def test_그_시도의_행사를_대표_지점에서_가까운_순으로_준다(self):
+        center = BUSAN.location
+        rows = [
+            raw("1", "부산 먼 축제", km=25, near=center),  # 20km 밖이어도 부산이다
+            raw("2", "경남 가까운 축제", km=5, near=center, region="48"),  # 가까워도 경남이다
+            raw("3", "부산 가까운 축제", km=3, near=center),
+        ]
+        ctx = await self.province_context(InMemoryEvents(rows))
+
+        result = await search_events(ctx, SearchEventsArgs(day=DayLabel.TODAY, area="부산"))
+
+        assert names(result) == ["부산 가까운 축제", "부산 먼 축제"]
+        assert ctx.state.area == BUSAN
+        assert ctx.state.area_places == {"부산 가까운 축제", "부산 먼 축제"}
+
+    async def test_장소는_시도_전체에서_찾지_않고_안내를_남긴다(self):
+        """장소는 넓어서 찾지 않는다 — 행사로 시도를 정한 뒤에도 같다."""
+        ctx = await self.province_context(
+            InMemoryEvents([raw("3", "부산 축제", near=BUSAN.location)])
+        )
+        await search_events(ctx, SearchEventsArgs(day=DayLabel.TODAY, area="부산"))
+
+        result = await search_nearby_places(
+            ctx, SearchNearbyPlacesArgs(day=DayLabel.TODAY, category=PlaceCategory.PARK)
+        )
+
+        assert result.error["code"] == ErrorCode.NOT_FOUND
+        assert ctx.state.area_missed is True

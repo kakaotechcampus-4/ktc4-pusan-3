@@ -22,6 +22,28 @@ from app.core.event_raw import RawEvent
 
 EARTH_RADIUS_M = 6_371_000
 
+# 시도(`areas.PROVINCE_ALIASES` 의 이름) → TourAPI 법정동 시도 코드(lDongRegnCd). 11-02 실측 —
+# 세종은 다섯 자리로 오고, 전남광주는 통합 코드다. 옛 코드(광주 29 · 전남 46 · 강원 42 · 전북 45)도
+# 같은 시도로 본다 — 표가 늦게 바뀐 행이 섞일 수 있다
+TOUR_REGION_CODES: dict[str, tuple[str, ...]] = {
+    "서울특별시": ("11",),
+    "부산광역시": ("26",),
+    "대구광역시": ("27",),
+    "인천광역시": ("28",),
+    "대전광역시": ("30",),
+    "울산광역시": ("31",),
+    "세종특별자치시": ("36110", "36"),
+    "경기도": ("41",),
+    "강원특별자치도": ("51", "42"),
+    "충청북도": ("43",),
+    "충청남도": ("44",),
+    "전북특별자치도": ("52", "45"),
+    "전남광주통합특별시": ("12", "29", "46"),
+    "경상북도": ("47",),
+    "경상남도": ("48",),
+    "제주특별자치도": ("50",),
+}
+
 _KINDS = {"EV01": EventKind.FESTIVAL, "EV02": EventKind.PERFORMANCE, "EV03": EventKind.EVENT}
 
 # 술 · 주류 행사 이름. "술" 한 글자로 걸면 예술 · 미술 · 기술 · 마술이 걸려서 "술" 은 낱말 첫 글자일
@@ -62,6 +84,7 @@ class Event:
     # 행사 위치(공공데이터). 보호자 위치가 아니다 — 거리 계산에만 쓰고 모델에 주지 않는다
     lat: float
     lon: float
+    region_code: str = ""  # 법정동 시도 코드 — 시 · 도 행사 검색(`in_province`)
 
 
 def read_event(raw: RawEvent) -> Event | None:
@@ -86,12 +109,18 @@ def read_event(raw: RawEvent) -> Event | None:
         ends_on=ends_on,
         lat=lat,
         lon=lon,
+        region_code=raw.region_code.strip(),
     )
 
 
 def open_on(event: Event | EventRow, days: Iterable[date]) -> bool:
     """그날들 중 하루라도 기간 안인가. 시작일 · 종료일을 포함한다."""
     return any(event.starts_on <= day <= event.ends_on for day in days)
+
+
+def in_province(event: Event, province: str) -> bool:
+    """그 시도의 행사인가 — TourAPI 법정동 시도 코드로 본다. 코드가 비면 어느 시도도 아니다."""
+    return event.region_code in TOUR_REGION_CODES.get(province, ())
 
 
 def age_allows(age_limit: str, months: int) -> bool:

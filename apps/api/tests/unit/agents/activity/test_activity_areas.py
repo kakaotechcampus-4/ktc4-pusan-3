@@ -4,7 +4,13 @@ from statistics import fmean
 
 import pytest
 
-from app.agents.activity.areas import find_area, named_area, said
+from app.agents.activity.areas import (
+    PROVINCE_ALIASES,
+    find_area,
+    find_province,
+    named_area,
+    said,
+)
 from app.agents.activity.areas_data import DISTRICTS
 from app.agents.activity.store.ports import CoarseLocation
 
@@ -191,3 +197,29 @@ class TestNamedArea:
     )
     def test_없으면_None(self, area, texts):
         assert named_area(area, texts) is None
+
+
+class TestProvince:
+    """시 · 도만 말한 요청 — 행사는 그 시 · 도 전체에서 찾는다(장소는 넓어서 찾지 않는다)."""
+
+    @pytest.mark.parametrize("text", ["부산", "부산광역시", " 부산 시 "])
+    def test_시도_이름이면_시도_전체다(self, text):
+        area = find_province(text)
+        assert area is not None and area.whole_province
+        assert area.province == "부산광역시"
+        busan = [(lat, lon) for p, _, lat, lon in DISTRICTS if p == "부산광역시"]
+        assert (area.lat, area.lon) == (
+            fmean(lat for lat, _ in busan),
+            fmean(lon for _, lon in busan),
+        )
+
+    @pytest.mark.parametrize("text", ["해운대", "부산 해운대", "서면", ""])
+    def test_시군구를_말했거나_모르는_이름이면_None(self, text):
+        assert find_province(text) is None
+
+    def test_시군구로_찾은_지역은_시도_전체가_아니다(self):
+        assert find_area("해운대").whole_province is False
+
+    def test_모든_시도에_대표_지점이_있다(self):
+        for province in PROVINCE_ALIASES:
+            assert find_province(province) is not None

@@ -79,6 +79,8 @@ class Area:
     province: str
     lat: float
     lon: float
+    # 시 · 도 전체(`find_province`). 행사만 그 시 · 도에서 찾고 장소는 넓어서 찾지 않는다
+    whole_province: bool = False
 
     @property
     def location(self) -> CoarseLocation:
@@ -156,6 +158,26 @@ def _is_name(key: str) -> bool:
     return any(
         key == alias or (key.startswith(alias) and key[len(alias) :] in index)
         for alias, _ in _aliases()
+    )
+
+
+def find_province(text: str) -> Area | None:
+    """시 · 도 이름만이면 그 시 · 도 전체. 대표 지점은 시군구 대표 지점들의 가운데다(날씨 · 정렬).
+
+    `find_area` 가 넓어서 찾지 않는 "부산" 같은 이름이다. 행사 조회만 쓴다 — 축제 · 공연은 시 · 도
+    단위로 찾는 게 자연스럽고, 장소는 시 · 도 가운데에서 가까운 곳이 그 시 · 도를 대표하지 않는다.
+    """
+    key = re.sub(r"\s+", "", text)
+    province = next((p for alias, p in _aliases() if key == alias), None)
+    if province is None:
+        return None
+    districts = _districts_of(province)
+    return Area(
+        province,
+        province,
+        fmean(area.lat for area in districts),
+        fmean(area.lon for area in districts),
+        whole_province=True,
     )
 
 

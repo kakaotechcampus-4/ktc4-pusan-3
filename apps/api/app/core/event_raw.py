@@ -26,6 +26,8 @@ class RawEvent:
     mapy: str  # 위도
     kind_code: str  # lclsSystm2 — EV01 축제 · EV02 공연 · EV03 행사
     progress: str  # progresstype — "온라인" 이면 갈 곳이 없다. 대개 비어 있다
+    # lDongRegnCd — 법정동 시도 코드(부산 26 · 세종 36110). 시 · 도만 말한 행사 검색이 쓴다
+    region_code: str = ""
 
 
 @dataclass(frozen=True)
