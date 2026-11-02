@@ -644,6 +644,37 @@ describe("05 묶음 안내 · 일반 추천 근거 (#249)", () => {
     }
   });
 
+  it("🚨 행사 기간은 행사가 붙은 추천에만 두 날짜가 같이 온다 (#681)", async () => {
+    const body: SuggestionsRequest = { agents: ["food", "activity"] };
+    // 장소 추천과 장소가 없는 추천은 키가 있고 둘 다 null 이다 (서버 `date | None = None`)
+    for (const scenario of ["default", "suggest_place"] as const) {
+      const data = await fetchWith(scenario, body);
+      for (const s of [...data.suggestions, ...(data.general ?? [])]) {
+        expect([s.event_starts_on, s.event_ends_on], `${scenario} ${s.id}`).toEqual([null, null]);
+      }
+    }
+
+    const data = await fetchWith("suggest_event", body);
+    const all = [...data.suggestions, ...(data.general ?? [])];
+    const dated = all.filter((s) => s.event_starts_on !== null || s.event_ends_on !== null);
+    expect(dated.map((s) => s.kind).sort()).toEqual(["general", "personalized"]);
+    for (const s of dated) {
+      expect(s.agent).toBe("activity");
+      // 한쪽만 오지 않는다 — 화면은 반쪽 기간을 그리지 않는다
+      expect(s.event_starts_on).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      expect(s.event_ends_on).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      // 행사에는 확인 문구도 붙는다. 기간은 문장에도 문구에도 섞여 오지 않는다
+      expect(s.place_notice).toBeTruthy();
+      for (const text of [s.content, s.place_notice!]) {
+        expect(text).not.toContain(s.event_starts_on!);
+        expect(text).not.toMatch(/\d+월 \d+일/);
+      }
+    }
+    // 하루짜리 행사와 여러 날 행사를 둘 다 그려 보게 한다
+    expect(dated.some((s) => s.event_starts_on === s.event_ends_on)).toBe(true);
+    expect(dated.some((s) => s.event_starts_on !== s.event_ends_on)).toBe(true);
+  });
+
   it("🚨 0개로 끝난 Agent 도 묶음이 오고 안내가 실린다 — 실패가 아니다", async () => {
     const data = await fetchWith("suggest_counts", { agents: ["food", "activity"] });
 
