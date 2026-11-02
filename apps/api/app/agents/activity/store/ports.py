@@ -196,8 +196,8 @@ class PlaceRow:
     category: PlaceCategory
     distance_m: int
     source: PlaceSourceName
-    # 데이터기준일자 — 화면의 "공공데이터 기준 YYYY-MM" 용이다 (D9). 🚨 모델에는 주지 않는다 —
-    # tool 결과는 이름 · 종류뿐이다(`tools/outing.py`)
+    # 데이터기준일자 — 확인 문구 "공공데이터 기준 2026년 6월이에요" 의 달이다 (D9 · #516).
+    # 🚨 모델에는 주지 않는다 — tool 결과는 이름 · 종류뿐이다(`tools/outing.py`)
     data_date: date | None
 
 

@@ -4,6 +4,7 @@ import type { AgentReadout, AgentResultEvent, PartialEvent } from "@/lib/api/sse
 import type { SuggestionStatus } from "@/lib/api/types";
 
 import {
+  askedQuestion,
   blockCandidates,
   blockReadouts,
   partialRetryHref,
@@ -148,5 +149,42 @@ describe("partialRetryHref", () => {
 
   it("run 을 모르면 링크가 없다", () => {
     expect(partialRetryHref(partial(["activity"]), { childId: "c1", runId: null })).toBeNull();
+  });
+});
+
+describe("askedQuestion — run 이 답을 기다리는 질문 (#537)", () => {
+  const STOP = "해열 시럽 복약 알림을 멈출까요? 먹인 기록은 그대로 남아요.";
+  const health = (over: Partial<AgentResultEvent>) =>
+    result({ agent: "health", task_type: "medication", ...over });
+
+  it("답을 받는 Agent 질문이면 그 결과 객체를 가리킨다", () => {
+    const asking = health({ question: STOP, awaits_reply: true });
+    const asked = askedQuestion({ note: null, agentResults: [result(), asking] });
+    expect(asked?.text).toBe(STOP);
+    expect(asked?.result).toBe(asking);
+  });
+
+  it("🚨 `awaits_reply` 가 없는 Agent 질문은 답할 수 없다 (#246 · 서버가 맥락이 없어 400 이다)", () => {
+    expect(askedQuestion({ note: null, agentResults: [health({ question: STOP })] })).toBeNull();
+    expect(
+      askedQuestion({
+        note: null,
+        agentResults: [health({ question: STOP, awaits_reply: false })],
+      }),
+    ).toBeNull();
+  });
+
+  it("Memory 질문이 먼저다 — 답은 run 하나로 가서 둘을 다 열 수 없다", () => {
+    const asked = askedQuestion({
+      note: { text: "언제부터 그랬나요?", kind: "question" },
+      agentResults: [health({ question: STOP, awaits_reply: true })],
+    });
+    expect(asked).toEqual({ text: "언제부터 그랬나요?", result: null });
+  });
+
+  it("안내 문장(`message`)은 질문이 아니다", () => {
+    expect(
+      askedQuestion({ note: { text: "기록해 두었어요.", kind: "message" }, agentResults: [] }),
+    ).toBeNull();
   });
 });

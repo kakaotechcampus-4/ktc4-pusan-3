@@ -1,0 +1,241 @@
+"""푸시 기기 등록 · 알림 켜고 끄기 — #594."""
+
+import asyncio
+from datetime import UTC, datetime
+
+import pytest
+from httpx import AsyncClient
+from sqlalchemy import delete, func, select, update
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from app.core.config import settings
+from app.domains.identity.models import AuthSession, Parent
+from app.domains.identity.repository import delete_session
+from app.domains.identity.withdraw import withdraw_parent
+from app.domains.notification.models import NotificationSetting, PushDevice, PushPlatform
+from app.domains.notification.repository import (
+    DEFAULT_SETTING,
+    Switches,
+    put_switches,
+    register_device,
+)
+from app.infra.db.session import engine
+from app.workers.auth_cleanup import purge_expired_auth_rows
+from tests.integration.api.conftest import (
+    Bearer,
+    backend_pid,
+    issue_bearer,
+    seed_login,
+    wait_for_lock_wait,
+)
+
+DEVICE = "/api/v1/me/push-device"
+SETTINGS = "/api/v1/me/notification-settings"
+
+
+@pytest.fixture(autouse=True)
+def _accept_devices(monkeypatch):
+    monkeypatch.setattr(settings, "PUSH_DEVICE_ACCEPT", True)
+
+
+async def _devices(session: AsyncSession) -> list[tuple]:
+    rows = await session.execute(
+        select(PushDevice.parent_id, PushDevice.device_token)
+        .order_by(PushDevice.device_token)
+        .execution_options(populate_existing=True)
+    )
+    return [tuple(r) for r in rows]
+
+
+async def test_device_lives_as_long_as_the_login(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer
+):
+    """토큰이 바뀌면 같은 행을 덮고, 로그아웃하면 따로 지우지 않아도 사라진다."""
+    headers, parent_id = bearer
+    await db_client.put(DEVICE, json={"token": "fcm-a", "platform": "web"}, headers=headers)
+    resp = await db_client.put(DEVICE, json={"token": "fcm-b", "platform": "web"}, headers=headers)
+    assert resp.status_code == 204
+    assert await _devices(session) == [(parent_id, "fcm-b")]
+
+    assert (await db_client.post("/api/v1/auth/logout", headers=headers)).status_code == 204
+    assert await _devices(session) == []
+
+
+async def test_devices_are_not_kept_until_the_server_accepts_them(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, monkeypatch
+):
+    """처리방침 새 판 전에는 기기 토큰을 저장하지 않는다. 화면은 바꿀 것이 없게 204 다 (#605 PM)."""
+    monkeypatch.setattr(settings, "PUSH_DEVICE_ACCEPT", False)
+    headers, _ = bearer
+    resp = await db_client.put(DEVICE, json={"token": "fcm-a", "platform": "web"}, headers=headers)
+    assert resp.status_code == 204
+    assert await _devices(session) == []
+
+
+async def test_blank_token_is_refused(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer
+):
+    headers, _ = bearer
+    resp = await db_client.put(DEVICE, json={"token": "  ", "platform": "web"}, headers=headers)
+    assert resp.status_code == 400
+    assert await _devices(session) == []
+
+
+async def test_device_and_switches_go_with_the_login_and_the_account(
+    session: AsyncSession, bearer: Bearer
+):
+    """기기는 로그인이, 스위치는 계정이 지워질 때 함께 지워진다 — 이 PR 의 핵심 결정이 외래 키
+    CASCADE 하나에 기대고 있어서, 누가 그 키를 바꾸면 여기서 걸린다 (#605 리뷰)."""
+    _, parent_id = bearer
+    expired = await seed_login(session, parent_id=parent_id, token="test-token-expired")
+    live = await seed_login(session, parent_id=parent_id, token="test-token-live")
+    for login, token in ((expired, "fcm-expired"), (live, "fcm-live")):
+        await register_device(
+            session,
+            parent_id=parent_id,
+            session_id=login,
+            device_token=token,
+            platform=PushPlatform.WEB,
+        )
+    await put_switches(
+        session,
+        parent_id=parent_id,
+        switches=Switches(schedule_enabled=False, medication_enabled=True),
+    )
+    await session.execute(
+        update(AuthSession)
+        .where(AuthSession.id == expired)
+        .values(refresh_expires_at=datetime.now(UTC))
+    )
+
+    await purge_expired_auth_rows(session, now=datetime.now(UTC))
+    assert await _devices(session) == [(parent_id, "fcm-live")]
+
+    assert await withdraw_parent(session, parent_id=parent_id, now=datetime.now(UTC))
+    assert await _devices(session) == []
+    left = await session.scalar(select(func.count()).select_from(NotificationSetting))
+    assert left == 0
+
+
+async def test_same_device_moves_to_the_account_that_logged_in_last(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer
+):
+    """같은 기기에서 계정을 바꾸면 앞 계정의 알림이 그 기기로 가지 않는다."""
+    first_headers, _ = bearer
+    second_headers, second = await issue_bearer(session, token="test-token-second")
+    body = {"token": "fcm-shared", "platform": "android"}
+    await db_client.put(DEVICE, json=body, headers=first_headers)
+    await db_client.put(DEVICE, json=body, headers=second_headers)
+    assert await _devices(session) == [(second, "fcm-shared")]
+
+    assert (await db_client.delete(DEVICE, headers=second_headers)).status_code == 204
+    assert await _devices(session) == []
+
+
+async def test_switches_start_at_the_default_and_keep_what_was_set(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer
+):
+    headers, _ = bearer
+    other_headers, _ = await issue_bearer(session, token="test-token-other")
+    resp = await db_client.get(SETTINGS, headers=headers)
+    assert resp.json() == vars(DEFAULT_SETTING)
+
+    off = {"schedule_enabled": False, "medication_enabled": True}
+    assert (await db_client.put(SETTINGS, json=off, headers=headers)).json() == off
+    assert (await db_client.get(SETTINGS, headers=headers)).json() == off
+    assert (await db_client.get(SETTINGS, headers=other_headers)).json() == vars(DEFAULT_SETTING)
+
+
+# 다른 요청과 겹칠 때. 핸들러도 자기 세션으로 커밋해야 겹치므로 `client` 와 커밋하는 세션을 쓰고,
+# 끝나면 만든 보호자를 지운다 (로그인 · 기기는 CASCADE).
+
+
+@pytest.fixture
+async def committed_logins():
+    """(세션 공장, [(헤더, 보호자 id, 로그인 id)] × 2) — 실제로 커밋된 값."""
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with factory() as setup:
+        parents = [Parent(), Parent()]
+        setup.add_all(parents)
+        await setup.flush()
+        logins = []
+        for i, parent in enumerate(parents):
+            token = f"test-token-device-race-{i}"
+            login = await seed_login(setup, parent_id=parent.id, token=token)
+            logins.append(({"Authorization": f"Bearer {token}"}, parent.id, login))
+        await setup.commit()
+    yield factory, logins
+    async with factory() as cleanup:
+        await cleanup.execute(delete(Parent).where(Parent.id.in_([p.id for p in parents])))
+        await cleanup.commit()
+
+
+async def test_logout_in_flight_leaves_no_device(client: AsyncClient, committed_logins):
+    """로그아웃이 커밋하기 전에 기기 등록이 들어오면, 등록은 401 이고 기기가 남지 않는다."""
+    factory, [(headers, _, login), _] = committed_logins
+    async with factory() as logout:
+        await delete_session(logout, session_id=login)
+        putting = asyncio.create_task(
+            client.put(DEVICE, json={"token": "fcm-race", "platform": "web"}, headers=headers)
+        )
+        await wait_for_lock_wait(blocker=await backend_pid(logout))  # 등록이 로그인 행에서 기다린다
+        await logout.commit()
+
+    assert (await asyncio.wait_for(putting, timeout=5)).status_code == 401
+    async with factory() as check:
+        assert await _devices(check) == []
+
+
+async def test_next_account_registers_while_the_previous_one_is_in_flight(
+    client: AsyncClient, committed_logins
+):
+    """같은 기기에서 앞 계정의 등록이 커밋하기 전에 다음 계정이 등록해도, 오류 없이 다음 계정에만
+    남는다."""
+    factory, [(_, first, first_login), (second_headers, second, _)] = committed_logins
+    async with factory() as earlier:
+        await register_device(
+            earlier,
+            parent_id=first,
+            session_id=first_login,
+            device_token="fcm-race",
+            platform=PushPlatform.ANDROID,
+        )
+        putting = asyncio.create_task(
+            client.put(
+                DEVICE, json={"token": "fcm-race", "platform": "android"}, headers=second_headers
+            )
+        )
+        await wait_for_lock_wait(blocker=await backend_pid(earlier))  # 나중 등록이 기다린다
+        await earlier.commit()
+
+    assert (await asyncio.wait_for(putting, timeout=5)).status_code == 204
+    async with factory() as check:
+        assert await _devices(check) == [(second, "fcm-race")]
+
+
+async def test_withdraw_in_flight_refuses_the_switches(client: AsyncClient, committed_logins):
+    """탈퇴가 커밋하기 전에 스위치 저장이 들어오면, 저장은 401 이고 설정이 남지 않는다."""
+    factory, [(headers, parent_id, _), _] = committed_logins
+    async with factory() as withdraw:
+        assert await withdraw_parent(withdraw, parent_id=parent_id, now=datetime.now(UTC))
+        putting = asyncio.create_task(
+            client.put(
+                SETTINGS,
+                json={"schedule_enabled": False, "medication_enabled": False},
+                headers=headers,
+            )
+        )
+        await wait_for_lock_wait(
+            blocker=await backend_pid(withdraw)
+        )  # 저장이 보호자 행에서 기다린다
+        await withdraw.commit()
+
+    resp = await asyncio.wait_for(putting, timeout=5)
+    assert resp.status_code == 401, resp.text
+    async with factory() as check:
+        left = await check.scalar(
+            select(func.count())
+            .select_from(NotificationSetting)
+            .where(NotificationSetting.parent_id == parent_id)
+        )
+    assert left == 0

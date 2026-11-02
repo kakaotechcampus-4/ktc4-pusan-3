@@ -156,8 +156,8 @@ CHECK (status <> 'approved' OR reviewed_at IS NOT NULL)
 | `routine_step` | 이 자립 행동의 다음 단계는? (도움 받아 → 혼자) | `propose_routine_plan` | 12개월+ |
 | `habit_strategy` | 이 습관이 이런 상황(`trigger`)에서 나올 때 대응은? | `propose_routine_plan` | 36개월+ |
 | `manner_practice` | 이 예절을 어떤 상황극으로 연습하나? | `propose_routine_plan` | 24개월+ |
-| `rhythm_info` | 영아 수면·수유 리듬 일반 안내 | `propose_routine_plan` (`rhythm_info`) | 0–11개월 |
-| `book_guide` | 이 나이에 맞는 책 형태 (보드북·그림책·지식책) | `search_books` 필터 보조 | 전체 |
+| `rhythm_info` | 영아 잠 · 하루 일과 순서 안내 (수유 · 이유식은 Food, 시간 · 횟수 숫자 없음) | `propose_routine_plan` (`rhythm_info`) | 0–11개월 |
+| `book_guide` | 이 나이에 맞는 책 형태 (보드북·그림책·지식책) | `search_books` 필터 보조 | 전체 — 지금은 쓰지 않는다(읽는 코드 · 출처 없음) |
 | `measure_guide` | 키·몸무게를 정확히 재는 법 | `compute_growth_delta`의 `delta.need_more` 옆 | 전체 |
 
 **넣지 않는 것** → 발달 이정표 · 또래 비교 · "이 나이면 ~할 수 있다" 식 문장. 이런 행은 평가 문장의 씨앗이 된다. 그리고 실제 책 목록(도서 API).

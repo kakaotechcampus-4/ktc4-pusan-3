@@ -29,7 +29,14 @@
       ]
     },
     "plugins": [
-      "expo-web-browser"
+      "expo-web-browser",
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "아이 이야기를 말로 남길 때 마이크를 써요. 음성은 휴대폰 안에서 글자로 바뀌고 밖으로 보내지 않아요.",
+          "speechRecognitionPermission": "말한 내용을 휴대폰 안에서 글자로 바꿔 입력창에 넣어요."
+        }
+      ]
     ],
     "web": {
       "favicon": "./assets/favicon.png"

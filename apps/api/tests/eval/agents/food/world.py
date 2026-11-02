@@ -90,6 +90,15 @@ _TODDLER = (
     ),
     ("무나물", ("무",), ("무", "참기름"), ("vegetables",), ()),
 )
+# 견과류 알레르기 세계(C48-nut)에 더하는 견과류 메뉴 — 풀 필터가 이 다섯을 모두 빼야 한다.
+# 땅콩 4 · 호두 14 · 잣 19. 아몬드 · 밤은 19종 밖이라 코드 없이 글자로만 걸린다
+_NUT_DISHES = (
+    ("호두강정", ("호두",), ("호두", "조청"), (), (14,)),
+    ("땅콩조림", ("땅콩",), ("땅콩", "간장", "설탕"), (), (4,)),
+    ("잣죽", ("잣",), ("잣", "쌀"), (), (19,)),
+    ("아몬드멸치볶음", ("멸치",), ("멸치", "아몬드", "간장"), (), ()),
+    ("밤밥", ("쌀",), ("쌀", "밤"), (), ()),
+)
 # 이유기(4–11개월) — 단계 · 질감은 `stage_min` 으로만 건다
 _WEANING = (
     ("쌀미음", ("쌀",), ("쌀", "물"), ("grains",), ()),
@@ -131,6 +140,7 @@ WORLDS: dict[str, WorldSpec] = {
     "C48-peanut": WorldSpec(allergy=("땅콩",)),
     "C48-egg": WorldSpec(allergy=("달걀",)),  # 재호출 시험 — test 가 풀에 계란 레시피를 끼운다
     "C48-shrimp": WorldSpec(allergy=("새우",)),
+    "C48-nut": WorldSpec(allergy=("견과류",), recipes="nut"),  # 견과류 요청 · 섭취 확인
     "C48-noconsent": WorldSpec(consent=False),
     "C48-safetyfail": WorldSpec(safety_fails=True),
     "C48-empty": WorldSpec(records=False),
@@ -217,6 +227,8 @@ def _row(spec: tuple, now: datetime, *, stage_min: str | None = None) -> MenuCat
 def _recipes(spec: WorldSpec, now: datetime) -> list[MenuCatalogRow]:
     if spec.recipes == "weaning":
         return [_row(row, now, stage_min="infant_weaning") for row in _WEANING]
+    if spec.recipes == "nut":
+        return [_row(row, now) for row in (*_TODDLER, *_NUT_DISHES)]
     if spec.recipes == "pool2":
         return [_row(row, now) for row in _TODDLER[:2]]
     if spec.recipes == "pool0":
@@ -273,6 +285,7 @@ def _affinity(
         polarity=polarity,
         strength=strength,
         last_observed_on=today - timedelta(days=2),
+        observed_days=3,
     )
 
 
