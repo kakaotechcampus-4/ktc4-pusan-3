@@ -177,8 +177,23 @@ _SAVED_CLAIM = re.compile(
     # 것이 400번 중 20번이었다 (#643)
     r"|기록(을|으로|에)?\s?(남겼|남길게|남기겠|남겨\s?(뒀|두었|놨|놓았|둘게|놓을게|드렸|드릴게))"
 )
-# 다시 확인해도 저장한 척하면 그 말 대신 내보낸다. 지켜지지 않을 말을 보호자에게 보내지 않는다
+# 다시 확인해도 저장한 척하면 그 말 대신 내보낸다. 지켜지지 않을 말을 보호자에게 보내지 않는다.
+# 아무것도 쓰지 않은 run 에만 쓴다 — 일부라도 처리했으면 그걸 부정하는 말이 된다
 _UNSAVED_FALLBACK = "이번에는 아무것도 저장하지 않았어요."
+# Supervisor 가 관찰 · 일정으로 나눈 처음 run 은 말투가 아니라 쓰기 성공으로 본다 (#667).
+# 말투 패턴은 새 말투가 나오면 샌다("기록을 남겼어요" 가 400번 중 20번 그대로 나갔다, #643).
+# 일부 종류만 처리했으면 처리한 것을 부정하지 않게 따로 묻는다
+_PARTIAL_UNSAVED_REPLY = (
+    "보호자에게 보이지 않는 확인이다. 여기에 답하지 말고 보호자에게 보낼 말만 다시 쓴다. "
+    "이번에 {done}은 처리했지만 {missing}은 저장하지 않았고, 이 말을 보내면 처리가 끝나 "
+    "나중에 기록할 수도 없다. 처리한 것은 그대로 말해도 된다. {missing}을 저장했다거나 "
+    "하겠다는 말은 넣지 않는다. 필요한 값이 없으면 그 값을 묻는다."
+)
+# 저장이 필요한 작업 종류와 확인 문구에 쓰는 이름. 순서는 문구에 나오는 순서다
+_RECORD_WORK: dict[WorkType, str] = {
+    WorkType.OBSERVE: "관찰 기록",
+    WorkType.SCHEDULE: "일정 초안",
+}
 
 # unclear 뿐인 입력이 쓰기 없이 말로 끝나면 모델이 쓴 문장을 보내지 않는다.
 # 프롬프트는 추천만 금지해서 "공룡에 대해 알려줘" · "안녕이라고 말해줘" 에
@@ -295,6 +310,8 @@ async def run(
     nudged = False  # 빈 턴을 다시 물은 적이 있는지
     nudged_hint = False  # 조각 지목을 다시 물은 적이 있는지
     rechecked = False  # 저장 없이 말로 끝낸 이어받기를 다시 확인하게 한 적이 있는지
+    # 다시 확인하는 차례의 답. 그 차례에는 tool 을 주지 않는다 — 확인에 밀려 저장하지 않게 (#667)
+    before_recheck: MemoryReply | None = None
     # 이어받기는 답에 다른 말이 섞였는지(leftover)를 더 받는다
     reply_format = CONTINUATION_REPLY_FORMAT if continuation is not None else REPLY_FORMAT
     reply_model: type[ReplyOutput] = (
@@ -305,6 +322,8 @@ async def run(
         response = await llm.chat(
             messages=messages,
             tools=tools,
+            # 다시 확인하는 차례는 답만 받는다
+            tool_choice="none" if before_recheck is not None else "auto",
             max_completion_tokens=MAX_COMPLETION_TOKENS,
             # 말하는 턴의 content를 스키마 JSON 으로 받는다. tool을 부르는 턴에는 쓰이지 않는다
             response_format=reply_format,
@@ -312,6 +331,17 @@ async def run(
         _accumulate(usage, response.usage)
 
         tool_calls = getattr(response.message, "tool_calls", None) or []
+        if tool_calls and before_recheck is not None:
+            # tool_choice=none 을 무시한 provider. 실행하지 않고 확인 전 답으로 끝낸다
+            logger.warning("다시 확인하는 차례에 tool 을 불러 실행하지 않는다 steps=%d", step + 1)
+            return MemoryAgentResult(
+                reply=_settle(before_recheck, calls, claimed=_claims_saved(before_recheck.text)),
+                completed=True,
+                steps=step + 1,
+                calls=calls,
+                usage=usage,
+                drafts=context.drafts.all(),
+            )
         if not tool_calls:
             if _unclear_unsaved(task, calls):
                 # 모델 응답은 읽지 않는다. 스키마 · 평문 · 빈 턴 어느 쪽이든 같은 문구로 끝낸다
@@ -355,14 +385,22 @@ async def run(
                 # 실패한 쓰기도 저장이 아니다
                 unsaved = replied.kind == "message" and not _wrote(calls)
                 claimed = unsaved and not _lookup_only(task) and _claims_saved(replied.text)
-                if (recording and unsaved or continuation is None and claimed) and not rechecked:
+                # 처음 run 에서 관찰 · 일정 조각인데 그 종류의 쓰기 성공이 없다. 말투는 보지 않는다
+                missing = (
+                    _missing_work(task, calls)
+                    if continuation is None and replied.kind == "message"
+                    else ()
+                )
+                if (
+                    recording and unsaved or continuation is None and claimed or missing
+                ) and not rechecked:
                     # 저장 없이 말로 끝냈다. 저장한 척했을 수 있어 한 번 확인한다
                     rechecked = True
+                    before_recheck = replied
                     messages.append({"role": "assistant", "content": content})
-                    messages.append({"role": "user", "content": _UNSAVED_REPLY})
+                    messages.append({"role": "user", "content": _recheck_prompt(task, calls)})
                     continue
-                if rechecked and claimed:
-                    replied = MemoryReply(text=_UNSAVED_FALLBACK, kind="message")
+                replied = _settle(replied, calls, claimed=rechecked and claimed)
                 return MemoryAgentResult(
                     reply=replied,
                     completed=True,
@@ -468,6 +506,45 @@ def _written_texts(calls: list[ToolCallRecord]) -> list[str]:
 def _wrote(calls: list[ToolCallRecord]) -> bool:
     """이번 run 에서 성공한 쓰기가 하나라도 있는지. 일정 초안도 센다."""
     return any(call.success and call.name.startswith(MUTATING_PREFIXES) for call in calls)
+
+
+def _missing_work(task: MemoryTask | None, calls: list[ToolCallRecord]) -> tuple[WorkType, ...]:
+    """Supervisor 가 관찰 · 일정으로 나눈 작업 중 이번 run 에서 쓰기 성공이 하나도 없는 종류.
+
+    성공은 ToolCallRecord.success 로 본다. 일정은 승인 전 초안이라 초안 생성 성공을 센다.
+    같은 종류의 조각이 여러 개여도 그 종류의 성공 1건이면 된다 — 조각과 호출을 짝짓지 않는다.
+    조각이 없으면(강등 · Memory 단독) 판단할 근거가 없어 빈 값이다.
+    """
+    if task is None:
+        return ()
+    needed = {WorkType(hint.work) for hint in task.hints}
+    written = [call.name for call in calls if call.success]
+    return tuple(
+        work
+        for work in _RECORD_WORK
+        if work in needed and not any(name.startswith(WRITES_FOR[work]) for name in written)
+    )
+
+
+def _recheck_prompt(task: MemoryTask | None, calls: list[ToolCallRecord]) -> str:
+    """다시 확인 문구. 일부라도 처리했으면 그걸 부정하지 않는 문구를 쓴다."""
+    missing = _missing_work(task, calls)
+    if task is None or not missing or not _wrote(calls):
+        return _UNSAVED_REPLY
+    needed = {WorkType(hint.work) for hint in task.hints}
+    done = [
+        label for work, label in _RECORD_WORK.items() if work in needed and work not in missing
+    ] or ["다른 작업"]  # 관찰 조각 + 조회 · 수정 조각에서 수정만 한 경우
+    return _PARTIAL_UNSAVED_REPLY.format(
+        done=" · ".join(done), missing=" · ".join(_RECORD_WORK[work] for work in missing)
+    )
+
+
+def _settle(reply: MemoryReply, calls: list[ToolCallRecord], *, claimed: bool) -> MemoryReply:
+    """다시 확인한 뒤에도 저장한 척하면 대체 문구로. 무엇이든 썼으면 그대로 둔다."""
+    if claimed and not _wrote(calls):
+        return MemoryReply(text=_UNSAVED_FALLBACK, kind="message")
+    return reply
 
 
 def _claims_saved(text: str) -> bool:
