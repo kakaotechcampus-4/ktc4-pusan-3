@@ -46,12 +46,14 @@ TOUR_REGION_CODES: dict[str, tuple[str, ...]] = {
 
 _KINDS = {"EV01": EventKind.FESTIVAL, "EV02": EventKind.PERFORMANCE, "EV03": EventKind.EVENT}
 
-# 행사 이름 앞의 연도 · 회차와 괄호 · 부제. 모델은 긴 공식 이름을 문장에 쓸 때 이 부분을 뗀다
-# (11-03 실측 — "2026 제5회 ○○비엔날레 … : 부제" 를 "○○비엔날레" 로 썼다)
+# 행사 이름 앞의 연도 · 회차와 괄호 · 부제 · 뒤의 판 번호. 모델은 긴 공식 이름을 문장에 쓸 때 이
+# 부분을 뗀다 (11-03 실측 — "2026 제5회 ○○비엔날레 … : 부제" 를 "○○비엔날레" 로, "○○페어V.7" 을
+# "○○페어" 로 썼다). 판 번호는 영문 낱말 안의 V(TV2)와 갈라 본다
 _LEADING_YEAR = re.compile(r"^(?:19|20)\d{2}\s*년?\s+")
 _LEADING_ROUND = re.compile(r"^제?\s*\d+\s*회\s+")
 _BRACKETED = re.compile(r"[(\[<〈《「『【][^)\]>〉》」』】]*[)\]>〉》」』】]")
 _SUBTITLE = re.compile(r"\s*(?:[:：]|\s[-–—]\s).*$")
+_EDITION = re.compile(r"(?<![A-Za-z])\s*[Vv](?:ol|er)?\.?\s*\d+$")
 
 # 술 · 주류 행사 이름. "술" 한 글자로 걸면 예술 · 미술 · 기술 · 마술이 걸려서 "술" 은 낱말 첫 글자일
 # 때만 본다(앞이 한글이 아님). 술래잡기는 빼 둔다
@@ -128,13 +130,15 @@ def read_event(raw: RawEvent) -> Event | None:
 
 
 def core_name(name: str) -> str:
-    """행사 이름에서 앞의 연도 · 회차와 괄호 · 부제를 뗀 이름. 다 떼고 남는 게 없으면 원래 이름이다.
+    """행사 이름에서 앞의 연도 · 회차와 괄호 · 부제 · 뒤의 판 번호를 뗀 이름. 다 떼고 남는 게 없으면
+    원래 이름이다.
 
     출력 검증이 place_name · 문장에서 행사를 알아보는 데 쓴다(`review.py`). 화면에는 원래 이름이
     나간다.
     """
     core = _LEADING_ROUND.sub("", _LEADING_YEAR.sub("", name.strip()))
-    core = " ".join(_SUBTITLE.sub("", _BRACKETED.sub("", core)).split())
+    core = _EDITION.sub("", _SUBTITLE.sub("", _BRACKETED.sub("", core)))
+    core = " ".join(core.split())
     return core or name.strip()
 
 
