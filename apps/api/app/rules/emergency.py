@@ -79,7 +79,8 @@ def stated_months(text: str) -> tuple[int, ...]:
     found: list[int] = []
     for pattern in (_AFTER_BIRTH, _AGED):
         for match in pattern.finditer(text):
-            if pattern is _AGED and _ELAPSED.search(text[: match.start()]):
+            before = text[: match.start()]
+            if pattern is _AGED and (_ELAPSED.search(before) or _DATE.search(before)):
                 continue
             found.append(_months(match["n"], match["unit"]))
     if _NEWBORN in text:
