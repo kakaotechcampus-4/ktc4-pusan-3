@@ -8,6 +8,7 @@ import type {
   ConsentResponse,
   ConsentsResponse,
   InviteResponse,
+  NotificationSettings,
 } from "@/lib/api/types";
 import { CHILD_ID, PARENT_ID } from "../fixtures";
 import { currentScenario } from "../scenario";
@@ -255,7 +256,47 @@ function setParentsFor(role: "owner" | "member", rows: ChildParent[]): void {
   else memberView = rows;
 }
 
+/**
+ * 알림 스위치 (#609 · 서버 #605). 🚨 프로세스 수명만큼 산다 — `resetNotificationSettings()` 로 되돌린다.
+ *
+ * 처음 값은 서버 `DEFAULT_SETTING` 과 같다 (둘 다 켜짐). ⚠️ 그 기본값은 PM 결정 전 자리값이다 (#605).
+ */
+const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
+  schedule_enabled: true,
+  medication_enabled: true,
+};
+let notificationSettings = DEFAULT_NOTIFICATION_SETTINGS;
+
+export function resetNotificationSettings(): void {
+  notificationSettings = DEFAULT_NOTIFICATION_SETTINGS;
+}
+
 export const settingsHandlers = [
+  http.get(url("/me/notification-settings"), async () => {
+    await networkDelay();
+    return HttpResponse.json(notificationSettings);
+  }),
+
+  /**
+   * 🚨 **두 칸을 다 받는다.** 하나라도 빠지거나 다른 칸이 끼면 서버 바디 검증(`extra="forbid"`)과 같은 400 이다.
+   * ⚠️ **값의 모양은 보지 않는다.** 서버 스키마는 pydantic 기본(lax) 모드라 `"off"` · `1` 같은 값도
+   *    불리언으로 바꿔 받는다 — 목이 그걸 400 으로 막으면 서버에 없는 거절을 지어낸 것이다.
+   *    화면은 불리언만 보낸다.
+   * 🚨 `withIdempotency` 로 감싸지 않는다 — 최종 상태를 보내는 요청이라 몇 번 보내도 결과가 같다.
+   */
+  http.put(url("/me/notification-settings"), async ({ request }) => {
+    await networkDelay();
+    const body = (await request.json()) as Partial<NotificationSettings>;
+    const fields = (["schedule_enabled", "medication_enabled"] as const).filter(
+      (field) => !(field in body),
+    );
+    if (fields.length > 0 || Object.keys(body).length !== 2) {
+      return apiError(400, "validation_failed", "요청 형식이 올바르지 않아요", { fields });
+    }
+    notificationSettings = body as NotificationSettings;
+    return HttpResponse.json(notificationSettings);
+  }),
+
   /**
    * 🚨 `child_id` 가 없으면 **계정 동의만** 준다. 아이 동의는 그 아이를 가리켜야 읽을 수 있고,
    *    남의 아이면 403 이다 (실서버 `GET /consents` · PR #355).
