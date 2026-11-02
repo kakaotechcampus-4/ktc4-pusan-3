@@ -185,6 +185,20 @@ async def test_이름이_같은_레시피는_풀에서_하나로_묶고_알레�
     assert item.row.food_groups == {"meat_fish_egg_legumes", "vegetables"}
 
 
+async def test_이름이_같은_레시피의_주재료는_처음_나온_순서로_한_번씩_합친다() -> None:
+    # 준비 목록(`preparation_items`)이 이 합집합을 입력으로 쓴다 (#474)
+    first = recipe(
+        "샤브샤브", "쇠고기", "배추", source_id="a", main_ingredients=("쇠고기", "소금", "배추")
+    )
+    second = recipe(
+        "샤브샤브", "새우", "배추", source_id="b", main_ingredients=("새우", "쇠고기", "배추")
+    )
+
+    [item] = await build_pool(context(recipes=recipes(first, second)))
+
+    assert item.row.main_ingredients == ("쇠고기", "소금", "배추", "새우")
+
+
 async def test_이름이_같은_레시피_중_하나만_알레르기여도_묶음_전체가_빠진다() -> None:
     # 하나만 고르면 다른 쪽 알레르기를 놓친다
     beef = recipe("샤브샤브", "쇠고기", "배추", source_id="a", allergen_codes=frozenset({16}))
