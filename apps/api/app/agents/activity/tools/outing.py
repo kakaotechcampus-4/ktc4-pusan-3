@@ -9,7 +9,7 @@ from collections.abc import Awaitable, Sequence
 from datetime import date, datetime, time, timedelta
 from typing import Any, TypeVar
 
-from app.agents.activity.areas import find_area, said
+from app.agents.activity.areas import find_area, named_area, said
 from app.agents.activity.context import ActivityContext
 from app.agents.activity.result import ErrorCode, ToolResult, fail, ok
 from app.agents.activity.schemas.common import DayLabel, PlaceCategory
@@ -297,15 +297,17 @@ def _origin(context: ActivityContext, area_text: str | None) -> CoarseLocation |
                 "말하지 않았으면 장소가 필요 없는 놀이만 낸다.",
             )
         return context.outing_location
-    if not said(area_text, context.state.request_texts):
+    state = context.state
+    name = named_area(area_text, state.request_texts)
+    if name is None and not said(area_text, state.request_texts):
         return fail(
             "query",
             _PLACES,
             ErrorCode.INVALID_ARGS,
             "area 에는 보호자가 쓴 지역 이름을 글자 그대로 넣는다. 지역을 말하지 않았으면 비운다.",
         )
-    area = find_area(area_text, near=context.location)
-    state = context.state
+    # 보호자가 말했지만 사전에 없는 이름(서면)은 못 찾은 지역이다 — 안내가 붙는다
+    area = find_area(name, near=context.location) if name is not None else None
     if area is None:
         state.area_missed = state.area is None
         return fail(

@@ -1,8 +1,10 @@
 """보호자가 말한 지역 이름 → 그 지역의 대표 지점. 장소와 날씨를 그 지점 기준으로 본다.
 
 "해운대 가서 놀 곳" 처럼 보호자가 지역을 말하면, 모델이 그 이름을 `search_nearby_places` 의
-`area` 로 넘기고 여기서 코드가 시군구로 바꾼다. 모델은 지역을 고르지 않는다 — 이름을 옮겨 적을
-뿐이고, 보호자가 쓴 글자 안에 없으면 받지 않는다(`said`).
+`area` 로 넘기고 여기서 코드가 시군구로 바꾼다. 모델은 보호자가 쓴 말을 옮겨 적는다 —
+"해운대해수욕장" · "기장읍" 처럼 통째로 넘겨도 앞쪽의 지역 이름으로 찾고(`named_area`), 보호자가
+쓴 글자 안에 없으면 받지 않는다(`said`). 지역 뜻으로 썼는지는 모델이 문장을 보고 정한다 — 코드는
+조사를 따지지 않는다 (#657 리뷰).
 
 대표 지점은 기상청 격자 · 위경도 표의 시군구 행이다(대개 시군구청 자리, `areas_data.py`).
 장소는 이 지점에서 가까운 순으로 찾아서, 시군구 경계 너머의 곳이 섞일 수 있다 — 그래서 이유
@@ -62,18 +64,11 @@ _SUFFIXES = ("구", "군", "시")
 _CITY_GU = re.compile(r"^(.+시)(.+구)$")
 # 지역 이름을 낱말로 나눌 때. 문장부호 · 띄어쓰기는 낱말 사이다
 _WORD = re.compile(r"[0-9A-Za-z가-힣]+")
-# 보호자 글에서 지역 이름 바로 뒤에 붙을 수 있는 말(`said`). 받침 뒤 "이" 로 시작하는 조사
-# (이 · 이랑 · 이와)는 넣지 않는다 — "고양이" 가 고양시가 된다
-_AREA_TAILS = frozenset(
-    (
-        "",
-        *("에", "에서", "에선", "엔", "에도", "에서도", "으로", "로", "까지", "의"),
-        *("은", "는", "도", "쪽", "쪽에", "쪽에서", "쪽으로", "근처", "근처에", "근처에서"),
-        *("나", "랑", "와", "과", "하고", "부터"),  # "해운대나 기장"
-    )
-)
-# "가" 로 시작하면 받는다 — 조사 "가" 와 "해운대가서" · "해운대가자" 처럼 붙여 쓴 "가다"
-_GO = "가"
+# 지역 이름으로 볼 가장 긴 글자 수(띄어쓰기 뺌). "전남광주통합특별시광산구" 가 12 자다
+_MAX_NAME = 16
+# 지역 이름 바로 뒤에 오면 지역으로 보지 않는 글자. "고양이" 가 고양시가 되지 않게 — 그래서 받침으로
+# 끝나는 이름의 "기장이랑" 은 놓친다
+_NOT_AREA_TAIL = "이"
 
 
 @dataclass(frozen=True)
@@ -111,17 +106,31 @@ def find_area(text: str, *, near: CoarseLocation | None = None) -> Area | None:
 
 
 def said(area: str, request_texts: Iterable[str]) -> bool:
-    """보호자가 쓴 글에 그 이름이 지역으로 있는가 — 모델이 지어낸 지역으로 찾지 않게 한다.
+    """보호자가 쓴 글에 그 이름이 있는가 — 모델이 지어낸 지역으로 찾지 않게 한다.
 
     - 요청 조각마다 따로 본다. 이어 붙이면 "…해운" + "대 공원…" 이 해운대가 된다 (#657 리뷰)
     - 낱말 첫 글자에서 시작해야 한다 — "부산진구" 의 "진구" 는 아니다. 낱말 사이 띄어쓰기는
       보지 않는다("부산 해운대" ↔ "부산해운대")
-    - 이름 뒤 같은 낱말에 남은 글자는 구 · 군 · 시와 조사(`_AREA_TAILS`)나 "가-"(가서 · 가자)
-      뿐이다 — "고양이와" 의 고양은 아니다. 받침 뒤 "이" 로 시작하는 조사는 받지 않는다
-      ("고양이랑"). 다른 꼴로 말했으면("해운대해수욕장") 놓친다 — 그러면 장소 없이 간다
+    - 뒤에 무엇이 붙든 따지지 않는다 — 조사 목록은 매번 빠지는 꼴이 생겼다(#657). 바로 뒤가 "이"
+      면 받지 않는다("고양이와")
     """
     key = "".join(_WORD.findall(area))
     return bool(key) and any(_said_in(key, text) for text in request_texts)
+
+
+def named_area(text: str, request_texts: Iterable[str]) -> str | None:
+    """모델이 넘긴 글자 앞쪽에서 보호자가 말한 지역 이름을 찾는다. 없으면 None.
+
+    모델은 "해운대해수욕장" · "기장읍" 처럼 보호자가 쓴 말을 통째로 넘긴다(라이브 비교). 앞에서
+    시작하는 지역 이름을 긴 것부터 보고 보호자 글에 있는 첫 이름을 준다 — 모델이 "해운대구" 로 고쳐
+    써도 보호자가 "해운대" 라고 했으면 "해운대" 다.
+    """
+    key = "".join(_WORD.findall(text))
+    for length in range(min(_MAX_NAME, len(key)), 1, -1):
+        name = key[:length]
+        if _is_name(name) and said(name, request_texts):
+            return name
+    return None
 
 
 def _said_in(key: str, text: str) -> bool:
@@ -133,11 +142,21 @@ def _said_in(key: str, text: str) -> bool:
             continue
         end = start + len(key)
         tail = joined[end : next(word_end for word_end in ends if word_end >= end)]
-        if tail.startswith(_SUFFIXES) and not key.endswith(_SUFFIXES):
-            tail = tail[1:]  # "해운대구에서" → "에서"
-        if tail in _AREA_TAILS or tail.startswith(_GO):
+        if not tail.startswith(_NOT_AREA_TAIL):
             return True
     return False
+
+
+@cache
+def _is_name(key: str) -> bool:
+    """지역 사전에 있는 이름인가 — 시군구 이름 · 시도 이름 · 시도 + 시군구."""
+    index = _index()
+    if key in index:
+        return True
+    return any(
+        key == alias or (key.startswith(alias) and key[len(alias) :] in index)
+        for alias, _ in _aliases()
+    )
 
 
 def _province_only(key: str, province: str) -> Area | None:

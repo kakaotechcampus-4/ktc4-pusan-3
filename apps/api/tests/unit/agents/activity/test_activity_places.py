@@ -292,8 +292,8 @@ class TestArea:
         assert ctx.state.area_missed is True
 
     async def test_뒤에_찾으면_안내를_거둔다(self):
-        ctx = await area_context(request=("해운대구청 쪽 해운대 공원",))
-        await search_nearby_places(ctx, area_args(PlaceCategory.PARK, "해운대구청"))
+        ctx = await area_context(request=("서면이나 해운대 공원",))
+        await search_nearby_places(ctx, area_args(PlaceCategory.PARK, "서면"))
         await search_nearby_places(ctx, area_args(PlaceCategory.PARK, "해운대"))
         assert ctx.state.area == HAEUNDAE and ctx.state.area_missed is False
 
@@ -318,6 +318,22 @@ class TestArea:
         assert names(result) == ["○○공원"]
         assert weather.grids == [HAEUNDAE.location.grid]
         assert ctx.state.weather[tomorrow].outdoor_ok is True
+
+    @pytest.mark.parametrize(
+        ("written", "texts", "expected"),
+        [
+            ("해운대해수욕장", ("해운대해수욕장 가서 놀 곳",), "해운대"),
+            ("기장읍", ("기장읍에서 놀 곳",), "기장"),
+        ],
+    )
+    async def test_보호자가_쓴_말을_통째로_넘겨도_앞의_지역_이름으로_찾는다(
+        self, written, texts, expected
+    ):
+        """모델은 보호자가 쓴 말을 통째로 넘긴다 — 라이브 비교에서 조사 목록 방식이 놓친 경우."""
+        ctx = await area_context([park("○○공원", 500)], request=texts)
+        result = await search_nearby_places(ctx, area_args(PlaceCategory.PARK, written))
+        assert result.success is True
+        assert ctx.state.area == find_area(expected)
 
     async def test_그_지역에서_찾은_장소를_남긴다(self):
         """출력 검증이 "근처" 를 쓰지 못하게 할 장소들이다 — 보호자는 그 지역에 있지 않다."""
