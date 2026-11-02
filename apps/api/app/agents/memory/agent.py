@@ -182,18 +182,39 @@ _SAVED_CLAIM = re.compile(
 _UNSAVED_FALLBACK = "이번에는 아무것도 저장하지 않았어요."
 # Supervisor 가 관찰 · 일정으로 나눈 처음 run 은 말투가 아니라 쓰기 성공으로 본다 (#667).
 # 말투 패턴은 새 말투가 나오면 샌다("기록을 남겼어요" 가 400번 중 20번 그대로 나갔다, #643).
+# 처음 run 의 다시 확인은 이어받기와 달리 저장하지 않는 게 정답인 입력에도 걸린다 —
+# 앞으로의 계획 · 바람("아이스크림 먹고 싶대"). 이어받기 문구의
+# "필요한 값이 없으면 그 값을 묻는다" 를 그대로 쓰면 맞게 설명한 답이 "실제로 먹었나요?" ·
+# 장소 · 양을 묻는 질문으로 바뀌었다(#667 라이브).
+# 그래서 이유를 말하는 답을 먼저 허용하고, 꼭 필요한 값이 빠졌을 때만 하나 묻게 한다.
+# "앞의 답이 맞으면 그대로 써도 된다" 는 넣지 않는다 — 거짓 저장 답을 그대로 다시 냈다(100번 중 2번)
+_FIRST_RUN_GUIDE = (
+    "저장하지 않는 게 맞는 말(앞으로의 계획 · 바람 · 알림 요청 등)이었다면 저장하지 않았다는 것과 "
+    "그 이유를 짧게 말한다. 날짜처럼 저장에 꼭 필요한 값이 빠져 저장하지 못했을 때만 그 값 하나를 "
+    "묻는다. 보호자가 이미 말한 것은 다시 묻지 않는다."
+)
+_FIRST_RUN_UNSAVED_REPLY = (
+    "보호자에게 보이지 않는 확인이다. 여기에 답하지 말고 보호자에게 보낼 말만 다시 쓴다. "
+    "이번에는 아무것도 저장하지 않았고, 이 말을 보내면 처리가 끝나 나중에 기록할 수도 없다. "
+    "저장했다거나 기록하겠다는 말은 넣지 않는다. " + _FIRST_RUN_GUIDE
+)
 # 일부 종류만 처리했으면 처리한 것을 부정하지 않게 따로 묻는다
 _PARTIAL_UNSAVED_REPLY = (
     "보호자에게 보이지 않는 확인이다. 여기에 답하지 말고 보호자에게 보낼 말만 다시 쓴다. "
     "이번에 {done}은 처리했지만 {missing}은 저장하지 않았고, 이 말을 보내면 처리가 끝나 "
     "나중에 기록할 수도 없다. 처리한 것은 그대로 말해도 된다. {missing}을 저장했다거나 "
-    "하겠다는 말은 넣지 않는다. 필요한 값이 없으면 그 값을 묻는다."
+    "하겠다는 말은 넣지 않는다. " + _FIRST_RUN_GUIDE
 )
 # 저장이 필요한 작업 종류와 확인 문구에 쓰는 이름. 순서는 문구에 나오는 순서다
 _RECORD_WORK: dict[WorkType, str] = {
     WorkType.OBSERVE: "관찰 기록",
     WorkType.SCHEDULE: "일정 초안",
 }
+# 알림을 해 달라는 일정 조각은 초안 없이 안내로 끝나는 게 정상이다. 다시 확인해도 답이 그대로라
+# 호출만 늘었다("모레 운동회 전날 저녁 8시에 알려줘" 10번 모두, #667). 조각 문구는 원문 그대로라
+# "알려줘" 가 많아 _NEEDS_REPLY_CUES 보다 넓게 본다. 일정 조각에만 쓴다 — 조회 조각의
+# "뭐 먹었는지 알려줘" 는 원래 대상이 아니다
+_REMINDER_REQUEST = re.compile(r"알림|알람|알려\s?(줘|주세요|줄래|달라)")
 
 # unclear 뿐인 입력이 쓰기 없이 말로 끝나면 모델이 쓴 문장을 보내지 않는다.
 # 프롬프트는 추천만 금지해서 "공룡에 대해 알려줘" · "안녕이라고 말해줘" 에
@@ -398,7 +419,8 @@ async def run(
                     rechecked = True
                     before_recheck = replied
                     messages.append({"role": "assistant", "content": content})
-                    messages.append({"role": "user", "content": _recheck_prompt(task, calls)})
+                    prompt = _recheck_prompt(task, calls, first_run=continuation is None)
+                    messages.append({"role": "user", "content": prompt})
                     continue
                 replied = _settle(replied, calls, claimed=rechecked and claimed)
                 return MemoryAgentResult(
@@ -517,7 +539,11 @@ def _missing_work(task: MemoryTask | None, calls: list[ToolCallRecord]) -> tuple
     """
     if task is None:
         return ()
-    needed = {WorkType(hint.work) for hint in task.hints}
+    needed = {
+        WorkType(hint.work)
+        for hint in task.hints
+        if not (hint.work == WorkType.SCHEDULE and _REMINDER_REQUEST.search(hint.text))
+    }
     written = [call.name for call in calls if call.success]
     return tuple(
         work
@@ -526,11 +552,18 @@ def _missing_work(task: MemoryTask | None, calls: list[ToolCallRecord]) -> tuple
     )
 
 
-def _recheck_prompt(task: MemoryTask | None, calls: list[ToolCallRecord]) -> str:
-    """다시 확인 문구. 일부라도 처리했으면 그걸 부정하지 않는 문구를 쓴다."""
+def _recheck_prompt(
+    task: MemoryTask | None, calls: list[ToolCallRecord], *, first_run: bool
+) -> str:
+    """다시 확인 문구. 이어받기는 기존 문구, 처음 run 은 이유를 말하는 답을 허용하는 문구.
+
+    일부라도 처리했으면 그걸 부정하지 않는 문구를 쓴다.
+    """
+    if not first_run:
+        return _UNSAVED_REPLY
     missing = _missing_work(task, calls)
     if task is None or not missing or not _wrote(calls):
-        return _UNSAVED_REPLY
+        return _FIRST_RUN_UNSAVED_REPLY
     needed = {WorkType(hint.work) for hint in task.hints}
     done = [
         label for work, label in _RECORD_WORK.items() if work in needed and work not in missing

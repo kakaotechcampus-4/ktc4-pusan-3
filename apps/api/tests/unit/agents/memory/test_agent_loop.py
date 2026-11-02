@@ -770,6 +770,8 @@ async def test_이어받기에서_저장_없이_말로_끝내면_한_번_다시_
 
     assert len(llm.seen) == 2
     assert "아무것도 저장하지 않았고" in llm.seen[1][-1]["content"]
+    # 이어받기는 처음 run 문구(이유를 말해도 된다)를 쓰지 않는다 — 저장할 조각이 이미 정해져 있다
+    assert "그 이유를 짧게 말한다" not in llm.seen[1][-1]["content"]
     assert result.reply is not None and result.reply.kind == "question"
     assert result.pending is not None
 
@@ -1793,6 +1795,8 @@ async def test_관찰_조각이_쓰기_없이_패턴에_없는_말로_끝나도_
     assert not _claims_saved("수영한 거 적어 뒀어요.")  # 패턴으로는 못 잡는 말투다
     assert len(llm.seen) == 2
     assert "아무것도 저장하지 않았고" in _recheck_prompt_of(llm)
+    # 처음 run 은 저장하지 않는 게 맞는 입력에도 걸려서 이유를 말하는 답을 허용한다
+    assert "그 이유를 짧게 말한다" in _recheck_prompt_of(llm)
     assert result.reply is not None and result.reply.kind == "question"
 
 
@@ -1936,5 +1940,17 @@ async def test_되묻기로_끝나면_쓰기가_없어도_다시_확인하지_�
     llm = FakeLLM(_answer({"text": "수영한 날이 언제였어요?", "kind": "question"}))
 
     await run(_SWIM.raw_text, context, client=llm, task=_SWIM)
+
+    assert len(llm.seen) == 1
+
+
+async def test_알림을_해_달라는_일정_조각은_쓰기_없이_끝나도_다시_확인하지_않는다(
+    context: AgentContext,
+) -> None:
+    # 알림 요청은 초안 없이 안내로 끝나는 게 정상이고, 다시 확인해도 답이 그대로였다 (#667 라이브)
+    task = _task(("모레 운동회 전날 저녁 8시에 알려줘", "schedule"))
+    llm = FakeLLM(_answer({"text": "일정이 있으면 전날 알림이 가요.", "kind": "message"}))
+
+    await run(task.raw_text, context, client=llm, task=task)
 
     assert len(llm.seen) == 1
