@@ -8,6 +8,8 @@
 from datetime import UTC, date, datetime, timedelta, timezone
 from uuid import UUID
 
+import pytest
+
 from app.agents.activity.areas import find_area, find_province
 from app.agents.activity.context import ActivityContext, build_gate
 from app.agents.activity.result import ErrorCode
@@ -325,3 +327,34 @@ class TestProvince:
 
         assert result.error["code"] == ErrorCode.NOT_FOUND
         assert ctx.state.area_missed is True
+
+    @pytest.mark.parametrize(
+        ("area", "region", "province"),
+        [("제주", "50", "제주특별자치도"), ("세종", "36110", "세종특별자치시")],
+    )
+    async def test_시도_이름이_그_시도의_시와_같아도_시도_전체에서_찾는다(
+        self, area, region, province
+    ):
+        """제주 · 세종은 장소 조회에서는 제주시 · 그곳이지만 행사는 시 · 도 코드로 찾는다 (#668)."""
+        center = find_province(area).location
+        ctx = await self.province_context(
+            InMemoryEvents([raw("1", "먼 축제", km=30, near=center, region=region)])
+        )
+        ctx.state.request_texts = (f"{area} 놀러 갈 건데 행사 추천해줘",)
+
+        result = await search_events(ctx, SearchEventsArgs(day=DayLabel.TODAY, area=area))
+
+        assert names(result) == ["먼 축제"]  # 20km 밖이어도 그 시 · 도다
+        assert ctx.state.area.whole_province and ctx.state.area.province == province
+
+    async def test_다른_시도의_시와_겹치는_이름은_모호해서_찾지_않는다(self):
+        """광주시는 경기 광주시와 겹친다 — 전남광주 전체 행사를 내지 않는다 (#668 리뷰)."""
+        ctx = await self.province_context(
+            InMemoryEvents([raw("1", "광주 축제", near=BUSAN.location, region="12")])
+        )
+        ctx.state.request_texts = ("광주시 놀러 갈 건데 행사 추천해줘",)
+
+        result = await search_events(ctx, SearchEventsArgs(day=DayLabel.TODAY, area="광주시"))
+
+        assert result.error["code"] == ErrorCode.NOT_FOUND
+        assert ctx.state.area is None and ctx.state.area_missed is True

@@ -141,6 +141,7 @@ def review(
     events=None,
     safety=(),
     outdoor=None,
+    outdoor_days=None,
     docs=DOCS,
     area_places=(),
     requested=False,
@@ -154,6 +155,7 @@ def review(
         events={FEST: FEST_ROW} if events is None else events,
         safety=safety_terms(safety),
         outdoor=outdoor,
+        outdoor_days=outdoor_days,
         docs=docs,
         area_places=area_places,
         today=TODAY,
@@ -511,6 +513,27 @@ class TestEvent:
         indoor = candidate(content="공연 보기", setting="indoor", place_name=FEST)
         result = review(indoor, outdoor={DayLabel.TODAY: False})
         assert reason_of(result) is RejectReason.OUTDOOR_CLOSED
+
+    @pytest.mark.parametrize(
+        ("ends_on", "saturday_ok", "rejected"),
+        [
+            (date(2026, 10, 3), False, True),  # 토요일에만 열리고 토요일은 비 · 일요일은 맑음
+            (date(2026, 10, 3), True, False),
+            (date(2026, 10, 4), False, False),  # 일요일에도 열리고 일요일이 맑다
+        ],
+    )
+    def test_주말은_행사가_열리는_날과_바깥이_되는_날이_같아야_한다(
+        self, ends_on, saturday_ok, rejected
+    ):
+        """주말은 하루라도 맑으면 열리지만 행사는 그 맑은 날에 열려야 한다 (#668 리뷰)."""
+        weekend = replace(FEST_ROW, starts_on=date(2026, 10, 3), ends_on=ends_on)
+        result = review(
+            candidate(content="축제 구경", place_name=FEST, day=DayLabel.THIS_WEEKEND),
+            events={FEST: weekend},
+            outdoor={DayLabel.THIS_WEEKEND: True},
+            outdoor_days={date(2026, 10, 3): saturday_ok, date(2026, 10, 4): True},
+        )
+        assert reason_of(result) is (RejectReason.OUTDOOR_CLOSED if rejected else None)
 
     def test_말한_지역에서_찾은_행사에는_근처를_쓰지_않는다(self):
         near = candidate(content="근처 축제 구경", place_name=FEST)

@@ -166,6 +166,7 @@ def review_candidates(
     places: Mapping[str, PlaceRow] | None = None,
     events: Mapping[str, EventRow] | None = None,
     outdoor: Mapping[DayLabel, bool] | None = None,
+    outdoor_days: Mapping[date, bool] | None = None,
     docs: Docs | None = None,
     area_places: Collection[str] = (),
     today: date,
@@ -185,6 +186,8 @@ def review_candidates(
     쓰면 거절한다.
     `outdoor` 는 후보의 날(`day`)마다 바깥 활동을 할 수 있는지다 (`outing.outdoor_on`). 출력 tool 이
     후보에 나온 날을 전부 채운다. None 이면 날씨로 거르지 않는다(날씨와 무관한 검사의 테스트용).
+    `outdoor_days` 는 같은 판정의 날짜별 값이다. 행사는 열리는 날 중 하루가 바깥이 되는 날이어야
+    한다 — 주말이 일요일만 맑아도 토요일에만 열리는 행사는 갈 날이 없다 (#668 리뷰).
     `docs` 는 이번 run 의 프롬프트 [예시]에 실은 문서 행이다. 인용하면 `activity_doc` 근거가
     되고, 아이 기록이 아니라 개인화로 세지 않는다 — 문서 행만 단 추천은 `general` 이다.
     `today` 는 `build()` 의 6개월 판정 기준일이다.
@@ -224,6 +227,7 @@ def review_candidates(
             avoided=avoided,
             recent=recent_activities,
             outdoor=outdoor,
+            outdoor_days=outdoor_days,
             today=today,
         )
         if reason is None:
@@ -283,6 +287,7 @@ def _check(
     avoided: tuple[str, ...],
     recent: Collection[str],
     outdoor: Mapping[DayLabel, bool] | None,
+    outdoor_days: Mapping[date, bool] | None,
     today: date,
 ) -> tuple[RejectReason | None, tuple[EvidenceCitation, ...], PlaceRow | EventRow | None]:
     # 1. 안전 필터는 호출부(review_candidates)가 먼저 돌렸다
@@ -306,8 +311,15 @@ def _check(
         place = places.get(normalize_activity(candidate.place_name))
         if place is None:
             return RejectReason.UNKNOWN_PLACE, (), None
-        if isinstance(place, EventRow) and not open_on(place, days_of(candidate.day, today)):
-            return RejectReason.EVENT_CLOSED, (), None
+        if isinstance(place, EventRow):
+            open_days = [day for day in days_of(candidate.day, today) if open_on(place, (day,))]
+            if not open_days:
+                return RejectReason.EVENT_CLOSED, (), None
+            # 열리는 날과 바깥이 되는 날이 같은 날이어야 한다. 표에 없는 날은 판정하지 않은 날이다
+            if outdoor_days is not None and not any(
+                outdoor_days.get(day, False) for day in open_days
+            ):
+                return RejectReason.OUTDOOR_CLOSED, (), None
         if normalize_activity(place.name) in far_places and any(
             word in text for text in texts for word in NEARBY_WORDS
         ):

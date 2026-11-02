@@ -220,6 +220,21 @@ class TestProvince:
     def test_시군구로_찾은_지역은_시도_전체가_아니다(self):
         assert find_area("해운대").whole_province is False
 
+    @pytest.mark.parametrize("text", ["제주", "제주도", "세종", "세종시"])
+    def test_시도_이름이_그_시도의_시와_같아도_시도_전체다(self, text):
+        """find_area 는 제주 → 제주시 · 세종 → 그곳이지만 행사는 시 · 도 전체다 (#668 리뷰)."""
+        area = find_province(text)
+        assert area is not None and area.whole_province
+
+    @pytest.mark.parametrize("text", ["광주", "광주시"])
+    def test_다른_시도의_시와_겹치는_이름은_모호해서_None(self, text):
+        """경기 광주시와 겹친다 — 전남광주 전체로 정하지 않는다 (#668 리뷰)."""
+        assert find_province(text) is None
+
+    @pytest.mark.parametrize("text", ["광주광역시", "전남광주", "전남"])
+    def test_겹치지_않는_별칭은_시도_전체다(self, text):
+        assert find_province(text).province == "전남광주통합특별시"
+
     def test_모든_시도에_대표_지점이_있다(self):
         for province in PROVINCE_ALIASES:
             assert find_province(province) is not None

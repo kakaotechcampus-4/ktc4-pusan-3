@@ -166,10 +166,12 @@ def find_province(text: str) -> Area | None:
 
     `find_area` 가 넓어서 찾지 않는 "부산" 같은 이름이다. 행사 조회만 쓴다 — 축제 · 공연은 시 · 도
     단위로 찾는 게 자연스럽고, 장소는 시 · 도 가운데에서 가까운 곳이 그 시 · 도를 대표하지 않는다.
+    행사 조회는 `find_area` 보다 먼저 부른다 — 제주(→ 제주시) · 세종(→ 그곳)도 시 · 도 전체다.
+    다른 시도의 시군구와 이름이 겹치면(광주 · 광주시 ↔ 경기 광주시) 모호해서 None 이다 (#668 리뷰).
     """
     key = re.sub(r"\s+", "", text)
     province = next((p for alias, p in _aliases() if key == alias), None)
-    if province is None:
+    if province is None or any(area.province != province for area in _index().get(key, ())):
         return None
     districts = _districts_of(province)
     return Area(

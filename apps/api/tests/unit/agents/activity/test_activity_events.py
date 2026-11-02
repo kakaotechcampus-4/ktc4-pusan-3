@@ -150,8 +150,27 @@ class TestAgeAllows:
         # 이 서비스의 나들이는 보호자와 간다
         assert age_allows(text, THREE_YEARS)
 
-    def test_보호자_동반이_안_된다고_적혀_있으면_연령으로_본다(self):
-        assert not age_allows("만 19세 이상 (보호자 동반 불가)", THREE_YEARS)
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "만 19세 이상 (보호자 동반 불가)",
+            "만 19세 이상(보호자 동반 시에도 관람 불가)",
+            "만 15세 이상 보호자 동반 여부와 관계없이 입장 불가",
+            "보호자 동반 시 입장 가능, 단 48개월 미만 입장 불가",
+        ],
+    )
+    def test_보호자_동반이_허용으로_적혀_있지_않으면_연령으로_본다(self, text):
+        """동반 문구가 있다는 것만으로 들이지 않는다 — 허용이 명시돼야 한다 (#668 리뷰).
+        불가 · 금지가 같이 적혀 있으면 동반 문구를 믿지 않고 연령으로 본다(못 읽으면 뺀다).
+        """
+        assert not age_allows(text, THREE_YEARS)
+
+    @pytest.mark.parametrize(
+        "text",
+        ["만 7세 이상 (보호자 동반 시 관람가)", "만 8세 이상, 미만은 부모 동반 하에 참여 가능"],
+    )
+    def test_허용이_적힌_다른_모양도_읽는다(self, text):
+        assert age_allows(text, THREE_YEARS)
 
     @pytest.mark.parametrize("text", ["초등학생 이상", "성인", "청소년 관람불가"])
     def test_못_읽는_조건은_뺀다(self, text):

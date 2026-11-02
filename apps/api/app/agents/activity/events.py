@@ -67,7 +67,14 @@ _LIQUOR_WORDS = (
 _LIQUOR = re.compile(r"(?:^|[^가-힣])술(?!래)")
 
 # 보호자와 함께면 들어갈 수 있다는 문구. "동반 불가" 는 아니다
-_WITH_GUARDIAN = re.compile(r"(?:보호자|성인|부모)\s*(?:동반|동행)(?!\s*불가)")
+# 보호자 동반을 허용으로 적은 문구만 — "동행 필수" · "동반 시 입장 가능" · "동반 하에 관람가".
+# "동반 시에도 관람 불가" 처럼 동반이 나오기만 하는 문구로 들이지 않는다 (#668 리뷰)
+_WITH_GUARDIAN = re.compile(
+    r"(?:보호자|성인|부모)\s*(?:동반|동행)\s*(?:시|하에)?\s*"
+    r"(?:필수|가능|(?:입장|관람|참여|참가|이용)\s*가능?)"
+)
+# 이 말이 같이 있으면 동반 문구를 믿지 않고 연령으로 본다 — 어느 아이를 막는지 못 읽으면 뺀다
+_REFUSED = ("불가", "금지")
 _MIN_MONTHS = re.compile(r"(\d+)\s*개월\s*이상")
 # "만 13세 이상" · "만 13세(중학생) 이상"
 _MIN_YEARS = re.compile(r"(\d+)\s*세\s*(?:\([^)]*\)\s*)?이상")
@@ -126,11 +133,14 @@ def in_province(event: Event, province: str) -> bool:
 def age_allows(age_limit: str, months: int) -> bool:
     """관람 연령 원문이 이 월령의 아이를 들이는가.
 
-    보호자 동반 문구 → 된다. 최소 연령(개월 · 세)을 읽으면 그 값과 비교한다 — "전 연령" 보다
-    먼저 본다(더 막는 쪽). 비어 있거나 제한이 없다는 말이면 된다. 그 밖의 문구는 안 된다.
+    보호자 동반을 허용으로 적었으면 된다 — 불가 · 금지가 같이 적혀 있으면 이 길로 들이지 않는다.
+    최소 연령(개월 · 세)을 읽으면 그 값과 비교한다 — "전 연령" 보다 먼저 본다(더 막는 쪽).
+    비어 있거나 제한이 없다는 말이면 된다. 그 밖의 문구는 안 된다.
     """
     text = age_limit.strip()
-    if not text or _WITH_GUARDIAN.search(text):
+    if not text:
+        return True
+    if _WITH_GUARDIAN.search(text) and not any(word in text for word in _REFUSED):
         return True
     if found := _MIN_MONTHS.search(text):
         return months >= int(found[1])
