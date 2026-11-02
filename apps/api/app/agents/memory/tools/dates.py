@@ -20,7 +20,7 @@ from app.agents.common.datetime_rules import (
     DateRange,
     TemporalDirection,
     resolve_date,
-    resolve_query_bound,
+    resolve_query_bounds,
 )
 from app.agents.memory.context import AgentContext
 
@@ -136,17 +136,13 @@ async def resolve_event_days(
 async def resolve_bounds(
     context: AgentContext, args: Any, *, direction: TemporalDirection
 ) -> dict[str, date | None]:
-    """조회 경계. "지난주" 같은 기간은 그대로 기간으로 쓴다."""
+    """조회 경계. "지난주" 같은 기간은 그대로 기간으로 쓴다(한쪽에만 와도 기간 전체)."""
     require_expression(args, args.date_from, args.date_to)
     anchor = await anchor_span(context, args, direction=direction)
-    return {
-        "date_from": resolve_query_bound(
-            args.date_from, today=context.today, direction=direction, is_end=False, anchor=anchor
-        ),
-        "date_to": resolve_query_bound(
-            args.date_to, today=context.today, direction=direction, is_end=True, anchor=anchor
-        ),
-    }
+    date_from, date_to = resolve_query_bounds(
+        args.date_from, args.date_to, today=context.today, direction=direction, anchor=anchor
+    )
+    return {"date_from": date_from, "date_to": date_to}
 
 
 def check_observed(day: date, today: date, args: Any) -> None:

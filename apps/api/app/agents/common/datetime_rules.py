@@ -185,6 +185,8 @@ _TIME_RE = re.compile(
 _TIME_TAIL_RE = re.compile(r"(에|쯤|경|정각|께)$")
 # 구간을 여닫는 조사와 때를 가리키는 "에". "이틀 전에" · "어제부터"
 _RANGE_TAIL_RE = re.compile(r"(?:부터|까지|에)$")
+# 조회 구간의 한쪽을 연다고 말한 것. "지난주부터" · "어제까지"
+_OPEN_TAIL_RE = re.compile(r"(?:부터|까지)$")
 
 _PM_MERIDIEMS = {"오후", "저녁", "낮", "점심"}
 _AM_MERIDIEMS = {"오전", "아침", "새벽"}
@@ -356,6 +358,38 @@ def resolve_query_bound(
         return None
     span = resolve_date_range(value, today=today, direction=direction, anchor=anchor)
     return span.end - timedelta(days=1) if is_end else span.start
+
+
+def resolve_query_bounds(
+    date_from: str | None,
+    date_to: str | None,
+    *,
+    today: date,
+    direction: TemporalDirection,
+    anchor: DateRange | None = None,
+) -> tuple[date | None, date | None]:
+    """조회 경계 두 개를 함께 확정한다.
+
+    한쪽에만 기간("지난주" · "이번 달")이 오고 "부터" · "까지" 가 없으면 그 기간 전체로 읽는다.
+    "지난주에 먹은 거" 를 date_from 하나로만 넘겨도 이번 주가, date_to 하나로만 넘겨도 지지난주가
+    섞이지 않게 (#643 리뷰). "지난주부터" 처럼 열린 쪽을 말했으면 그대로 연다.
+    하루 표현("어제")은 그대로 둔다 — "오늘부터 앞으로" 를 date_from="오늘" 로만 받는
+    일정 조회가 있다.
+    """
+    start = resolve_query_bound(
+        date_from, today=today, direction=direction, is_end=False, anchor=anchor
+    )
+    end = resolve_query_bound(date_to, today=today, direction=direction, is_end=True, anchor=anchor)
+    if (date_from is None) == (date_to is None):
+        return start, end
+    value = date_from if date_from is not None else date_to
+    assert value is not None
+    if _OPEN_TAIL_RE.search(_normalize(value)):
+        return start, end
+    span = resolve_date_range(value, today=today, direction=direction, anchor=anchor)
+    if span.end - span.start <= timedelta(days=1):
+        return start, end
+    return span.start, span.end - timedelta(days=1)
 
 
 def is_all_day(value: str | None) -> bool:

@@ -23,6 +23,7 @@ from app.agents.common.datetime_rules import (
     TemporalDirection,
     resolve_date,
     resolve_date_range,
+    resolve_query_bounds,
 )
 from app.agents.memory.context import AgentContext
 from app.agents.memory.registry import execute_tool
@@ -349,6 +350,46 @@ async def test_관찰_조회의_지난주는_기간으로_찾는다() -> None:
     )
 
     assert payload["data"]["count"] == 2, payload
+
+
+@pytest.mark.parametrize(
+    ("bounds", "want"),
+    [
+        # 한쪽에만 기간이 와도 그 기간만 — 이번 주(죽)도 지지난주(떡)도 섞이지 않는다 (#643 리뷰)
+        ({"date_from": "지난주"}, 2),
+        ({"date_to": "지난주"}, 2),
+        ({"date_from": "지난주에"}, 2),
+        # 열린 쪽을 말했으면 그대로 연다
+        ({"date_from": "지난주부터"}, 3),
+        ({"date_to": "지난주까지"}, 3),
+    ],
+)
+async def test_조회_경계가_한쪽만_와도_기간은_그_기간만_찾는다(
+    bounds: dict[str, str], want: int
+) -> None:
+    context = _context()
+    for raw, day in (
+        ("지지난주 떡", "2026-09-20"),
+        ("월요일 카레", "2026-09-21"),
+        ("일요일 우동", "2026-09-27"),
+        ("오늘 죽", "오늘"),
+    ):
+        await _call(
+            context,
+            "create_observation_food",
+            {"raw_text": raw, "observed_on": day, "subject": raw.split()[1]},
+        )
+
+    payload = await _call(
+        context, "query_observation_food", {**bounds, "temporal_direction": "past"}
+    )
+
+    assert payload["data"]["count"] == want, payload
+
+
+def test_조회_경계_한쪽의_하루_표현은_열린_채로_둔다() -> None:
+    # "오늘부터 앞으로 일정" 을 date_from="오늘" 하나로 받는 조회가 있다
+    assert resolve_query_bounds("오늘", None, today=TODAY, direction="future") == (TODAY, None)
 
 
 async def test_일정의_며칠_뒤는_기준이_있으면_거기서_없으면_오늘에서_센다() -> None:
