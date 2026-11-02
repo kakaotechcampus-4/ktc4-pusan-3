@@ -604,7 +604,7 @@ export const suggestionGroups: SuggestionGroup[] = [
 ];
 
 /**
- * 근거가 부족할 때 개인화 **대신** 나가는 또래 기준 일반 추천 (CLAUDE.md §2).
+ * 근거가 부족할 때 개인화 **대신** 나가는 일반 추천 (CLAUDE.md §2).
  *
  * 🚨 `evidence` 는 **아이 기록이 아니라 문서 행**이다 (`DocEvidence`) — 일반 추천은 아이 기록 근거 0행이
  *    정상이고, 그래서 개인화와 **타입이 다르다.** 막연한 요청의 일반 추천은 문서 행을 단다.
@@ -718,7 +718,7 @@ export const requestedGeneralSuggestion: GeneralSuggestion = {
   kind: "general",
   content: "큰 종이를 바닥에 깔고 손바닥에 물감을 묻혀 찍어 보세요",
   place_notice: null,
-  basis: "쌓인 놀이 기록이 아직 적어서, 요청하신 놀이에 맞춰 골랐어요.",
+  basis: "요청하신 놀이를 바탕으로 골랐어요.",
   status: "draft",
   expires_at: hoursFromNow(24),
   record_count: 0,

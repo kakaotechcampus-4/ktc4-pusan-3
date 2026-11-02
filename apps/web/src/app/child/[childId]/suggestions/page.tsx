@@ -40,6 +40,7 @@ import {
   type SuggestionsResponse,
 } from "@/lib/api";
 import { useEnterMotion } from "@/lib/motion";
+import { scarcityCopy, type AgentRecordCount } from "@/lib/scarcity-copy";
 import { suggestionsTour } from "@/lib/tour/screens/suggestions";
 
 /**
@@ -213,6 +214,23 @@ function SuggestionsScreen() {
    */
   const scarcity = data?.scarcity ?? null;
   const general = scarcity ? (data?.general ?? []) : [];
+  /**
+   * 일반 추천을 낸 Agent별 기록 수. 같은 Agent가 추천을 여러 장 내도 안내에는 한 번만 쓰고,
+   * 서버 응답의 Agent 순서를 유지한다. 정상 문구는 합계인 `scarcity.count`를 읽지 않는다 (#662).
+   */
+  const generalRecords = general.reduce<{
+    seen: Set<Agent>;
+    records: AgentRecordCount[];
+  }>(
+    (result, item) => {
+      if (!result.seen.has(item.agent)) {
+        result.seen.add(item.agent);
+        result.records.push({ label: domainLabel(item.agent), count: item.record_count });
+      }
+      return result;
+    },
+    { seen: new Set<Agent>(), records: [] },
+  ).records;
   /**
    * 고를 수 있게 그린 제안 전부 — 개인화가 먼저, 일반이 뒤다 (화면에 선 순서).
    * 🚨 **id 와 Agent 만 꺼낸다.** 두 타입을 한 배열의 원소로 섞으면 근거를 읽는 자리에서
@@ -390,7 +408,7 @@ function SuggestionsScreen() {
         {scarcity && general.length > 0 ? (
           <ul className="flex flex-col gap-3">
             {general.map((item) => (
-              // 카드의 기록 수는 그 Agent 도메인 수다 — 질문 카드의 `scarcity.count` 는 합이다 (#433 리뷰 ⑥)
+              // 카드와 안내의 기록 수는 이 Agent 도메인 수다. 합계인 `scarcity.count`는 호환 필드다.
               <GeneralSuggestionCard
                 key={item.id}
                 suggestion={item}
@@ -551,7 +569,7 @@ function SuggestionsScreen() {
           <ScarcityCard
             childId={childId}
             scarcity={scarcity}
-            hasGeneral={general.length > 0}
+            records={generalRecords}
             hasPersonal={visible.length > 0}
           />
         ) : null}
@@ -608,22 +626,30 @@ function SuggestionsScreen() {
  *    우리 아이 기록으로 고른 것을 일반 추천이라고 낮춰 부르는 것도 §2 가 막는 혼동이다.
  *    대신 카드에 붙은 라벨("일반 추천")을 가리킨다. 제목도 같다 — 위에 우리 아이 기준 추천이
  *    서 있는데 "다음엔 우리 아이 기준으로" 라고 하면 지금 것은 아니라는 뜻으로 읽힌다.
+ * 🚨 **누적 건수를 "적다" 고 말하지 않는다** (#662). 안내 문구는 Agent별 `general[].record_count`를
+ *    그대로 말하고, 이번 추천에 직접 쓴 기록이 없었다는 사실만 덧붙인다.
  */
 function ScarcityCard({
   childId,
   scarcity,
-  hasGeneral,
+  records,
   hasPersonal,
 }: {
   childId: string;
   scarcity: Scarcity;
-  hasGeneral: boolean;
+  records: readonly AgentRecordCount[];
   /** 같은 화면에 개인화 추천도 섰다. */
   hasPersonal: boolean;
 }) {
   const [answered, setAnswered] = useState<string | null>(null);
   /** 🚨 Agent 가 되물었을 때만 있다 (#249). 없으면 기록 건수만 말하고 질문은 세우지 않는다. */
   const question = scarcity.question;
+  const copy = scarcityCopy({
+    records,
+    fallbackCount: scarcity.count,
+    hasPersonal,
+    asked: question !== null,
+  });
 
   const answer = useMutation({
     mutationFn: (value: string) => {
@@ -637,24 +663,8 @@ function ScarcityCard({
 
   return (
     <Card data-tour="question">
-      <h2 className="text-section text-ink">
-        {hasGeneral
-          ? hasPersonal
-            ? "기록이 더 쌓이면 모두 우리 아이 기준으로 골라 드릴게요"
-            : "다음엔 우리 아이 기준으로 골라 드릴게요"
-          : "판단할 기록이 부족해요"}
-      </h2>
-      <p className="text-body-sm text-ink-muted mt-1">
-        {scarcity.count === 0
-          ? "이 주제로 쌓인 기록이 아직 없어요."
-          : `이 주제로 쌓인 기록이 ${scarcity.count}건뿐이에요.`}{" "}
-        {hasGeneral
-          ? hasPersonal
-            ? "그래서 일반 추천이라고 적힌 것은 우리 아이 기록 대신 추천 아래 적힌 기준으로 골랐어요."
-            : "그래서 위 추천은 우리 아이 기록 대신 추천 아래 적힌 기준으로 골랐어요."
-          : "근거 없이 추천을 만들지는 않을게요."}
-        {hasGeneral && question ? " 하나만 알려주시면 다음부터 달라져요." : null}
-      </p>
+      <h2 className="text-section text-ink">{copy.title}</h2>
+      <p className="text-body-sm text-ink-muted mt-1">{copy.body}</p>
 
       {question ? <p className="text-body text-ink mt-4">{question.text}</p> : null}
       {/* 🚨 답하는 길(#246) 전에는 선택지가 비어 온다 — 문장으로만 세운다 (04 의 되묻기와 같다). */}

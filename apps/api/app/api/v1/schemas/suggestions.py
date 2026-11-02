@@ -207,7 +207,12 @@ class ScarcityQuestionOut(BaseModel):
 
 
 class ScarcityOut(BaseModel):
-    count: int = Field(description="그 Agent 도메인에 쌓인 기록 건수 (남아 있는 관찰만)")
+    count: int = Field(
+        description=(
+            "일반 추천을 낸 Agent별 record_count의 합(남아 있는 관찰만). 호환 필드이며 화면의 "
+            "정상 일반 추천 문구는 general[].record_count를 Agent별로 쓴다"
+        )
+    )
     question: ScarcityQuestionOut | None = Field(
         default=None, description="Agent 가 되물은 한 줄. 없으면 null — 최대 1개"
     )
@@ -228,12 +233,13 @@ class SuggestionsResponse(BaseModel):
         description="결과를 낸 Agent 마다 하나. 실패한 Agent 는 없다 — 화면이 실패 카드를 그린다"
     )
     general: list[GeneralSuggestionOut] = Field(
-        description="또래 기준 일반 추천. 근거는 문서 행이다. Agent 마다 0~3개"
+        description="일반 추천. 근거는 문서 행이다. Agent 마다 0~3개"
     )
     looked_at: str
     guards: list[GuardOut]
     scarcity: ScarcityOut | None = Field(
-        default=None, description="일반 추천이 있을 때만. 쌓인 기록 건수 · 질문은 최대 1개"
+        default=None,
+        description="일반 추천이 있을 때만. Agent별 기록 수 합계인 호환 필드 · 질문은 최대 1개",
     )
     prechecks: list[PrecheckOut] = Field(
         description="채택 전에 물을 알레르기 항목. active 에 걸린 추천은 응답에서 빠진다"
