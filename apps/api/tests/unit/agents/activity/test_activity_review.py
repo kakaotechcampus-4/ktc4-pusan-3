@@ -414,6 +414,24 @@ class TestPlace:
         (draft,) = review(candidate(content=content, place_name=PARK)).drafts
         assert draft.content == content
 
+    @pytest.mark.parametrize("content", ["공원에서 모래성 쌓기", "어린이공원에서 모래성 쌓기"])
+    def test_장소_이름이_그_낱말로_끝나면_그_자리를_장소_이름으로_바꾼다(self, content):
+        """앞에 붙이기만 하면 "사직어린이공원에서 공원에서 …" 가 된다 (10-28 QA)."""
+        (draft,) = review(candidate(content=content, place_name=PARK)).drafts
+        assert draft.content == "사직어린이공원에서 모래성 쌓기"
+
+    @pytest.mark.parametrize(
+        "content, expected",
+        [
+            ("놀이터에서 모래성 쌓기", "사직어린이공원 놀이터에서 모래성 쌓기"),
+            ("모래밭에서 모래성 쌓기", "사직어린이공원 모래밭에서 모래성 쌓기"),
+        ],
+    )
+    def test_어디서를_먼저_썼으면_그_앞에_장소_이름만_붙인다(self, content, expected):
+        """ "~에서" 가 두 번 붙지 않게 — 공원 안의 놀이터 · 모래밭이다."""
+        (draft,) = review(candidate(content=content, place_name=PARK)).drafts
+        assert draft.content == expected
+
     @pytest.mark.parametrize("place_name", [None, "", "  "])
     def test_장소가_없으면_문장을_그대로_둔다(self, place_name):
         (draft,) = review(candidate(place_name=place_name)).drafts
@@ -602,9 +620,12 @@ class TestOutputTool:
         assert result.data["kinds"] == ["personalized", "general", "general"]
         assert len(ctx.state.suggestions) == 3
 
-    @pytest.mark.parametrize("written", ["예1", " 예1 ", "[예1]", "예 1", "예시1"])
+    @pytest.mark.parametrize(
+        "written",
+        ["예1", " 예1 ", "[예1]", "예 1", "예시1", "(예1)", "예１"],  # 전각 1
+    )
     async def test_예시의_짧은_id_는_문서_행_근거가_된다(self, written):
-        """[예시]는 짧은 id 로 보여 준다. 띄어쓰기 · 괄호만 다르게 써도 같은 행이다."""
+        """[예시]는 짧은 id 로 보여 준다. 띄어쓰기 · 괄호 · 전각 숫자만 달라도 같은 행이다(#606)."""
         ctx = await self.context()
         ctx.state.example_ids = {"예1": TOWER_DOC.id}
         pick = {"id": written, "note": "종이컵 탑 쌓기 예시를 참고했어요"}

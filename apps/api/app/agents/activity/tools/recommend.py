@@ -2,6 +2,7 @@
 
 import logging
 import re
+import unicodedata
 from collections.abc import Mapping, Sequence
 from datetime import timedelta
 from uuid import UUID
@@ -125,6 +126,7 @@ def _with_doc_ids(
 
 
 def _short_id(raw: str) -> str:
-    """ "[예 1]" · "예시1" 도 예1 로 읽는다. 띄어쓰기 · 괄호만 다르게 쓴 것이다."""
-    key = re.sub(r"[\s\[\]]", "", raw)
+    """ "[예 1]" · "(예1)" · "예시1" · 전각 "예１" 도 예1 로 읽는다. 띄어쓰기 · 괄호 · 글자 폭만
+    다르게 쓴 것이다 (#606)."""
+    key = re.sub(r"[\s\[\]()]", "", unicodedata.normalize("NFKC", raw))
     return "예" + key[2:] if key.startswith("예시") else key

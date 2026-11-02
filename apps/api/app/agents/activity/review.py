@@ -361,10 +361,21 @@ def place_notice(place: PlaceRow) -> str:
 
 
 def _with_place(content: str, place: str | None) -> str:
-    """장소 이름을 코드가 문장 앞에 붙인다. 모델이 이미 문장에 썼으면 다시 붙이지 않는다."""
+    """장소 이름을 코드가 문장 앞에 붙인다. 모델이 이미 문장에 썼으면 다시 붙이지 않는다.
+
+    모델이 문장을 "~에서" 로 시작했으면 "~에서" 를 두 번 붙이지 않는다 (10-28 QA).
+    - 장소 이름이 그 낱말로 끝나면 그 자리를 바꾼다 — "도서관에서 …" → "○○도서관에서 …"
+    - 아니면 그 앞에 장소 이름만 둔다 — "놀이터에서 …" → "○○공원 놀이터에서 …"
+    """
     if place is None or normalize_activity(place) in normalize_activity(content):
         return content
-    return f"{place}에서 {content}"
+    first, _, rest = content.strip().partition(" ")
+    where = normalize_activity(first.removesuffix("에서"))
+    if not rest or not first.endswith("에서") or not where:
+        return f"{place}에서 {content}"
+    if normalize_activity(place).endswith(where):
+        return f"{place}에서 {rest}"
+    return f"{place} {content}"
 
 
 def _lookup(seen: Seen, docs: Docs, raw_id: str) -> RankedEvidence | ActivityDocRow | None:
