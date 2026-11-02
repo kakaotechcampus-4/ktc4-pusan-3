@@ -21,6 +21,7 @@ created_by / child_id 는 규칙이 채운다.
 
 import logging
 from dataclasses import replace
+from datetime import date
 from typing import Any
 
 from app.agents.common.datetime_rules import (
@@ -30,7 +31,6 @@ from app.agents.common.datetime_rules import (
     MissingStartTime,
     WhenPatch,
     check_when,
-    resolve_query_bound,
     resolve_when,
 )
 from app.agents.memory.context import AgentContext
@@ -47,6 +47,12 @@ from app.agents.memory.schemas.schedule import (
     EventUpdate,
 )
 from app.agents.memory.store.ports import EventItemRow, EventRow
+from app.agents.memory.tools.dates import (
+    check_new_event,
+    date_remedy,
+    resolve_bounds,
+    resolve_event_days,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -69,10 +75,6 @@ _ITEM_GONE_AFTER_CHECK = (
     "챙김 표시를 먼저 반영한 뒤 이름 초안을 만들다 준비물을 찾지 못했다. "
     "query_event 로 준비물이 남아 있는지 확인한다."
 )
-
-
-def _date_remedy(exc: DateParseError) -> str:
-    return f"{exc} 오늘·모레·금요일 같은 원문 표현이나 YYYY-MM-DD 로 넣는다."
 
 
 def _new_items(names: list[str]) -> tuple[DraftItem, ...]:
@@ -101,10 +103,17 @@ async def _event_summary(context: AgentContext, row: EventRow) -> dict[str, Any]
 
 # ── event ───────────────────────────────────────────────────────
 async def create_event(context: AgentContext, args: EventCreate) -> ToolResult:
+    try:
+        # 날짜 규칙은 관찰과 같다(tools/dates.py). 시각은 resolve_when 이 이 날짜에 얹는다
+        starts_on, ends_on = await resolve_event_days(context, args, current_start=None)
+        if starts_on is not None:  # create_event 는 starts_on 이 필수라 늘 있다
+            check_new_event(date.fromisoformat(starts_on), context.today, args)
+    except DateParseError as exc:
+        return fail("create", EVENT, ErrorCode.DATE_UNPARSEABLE, date_remedy(exc))
     patch = WhenPatch(
-        starts_on=args.starts_on,
+        starts_on=starts_on,
         starts_time=args.starts_time,
-        ends_on=args.ends_on,
+        ends_on=ends_on,
         ends_time=args.ends_time,
         direction=args.temporal_direction,
     )
@@ -139,22 +148,9 @@ async def create_event(context: AgentContext, args: EventCreate) -> ToolResult:
 async def query_event(context: AgentContext, args: EventQuery) -> ToolResult:
     try:
         # 날짜 조건은 starts_at 기준
-        bounds = {
-            "date_from": resolve_query_bound(
-                args.date_from,
-                today=context.today,
-                direction=args.temporal_direction,
-                is_end=False,
-            ),
-            "date_to": resolve_query_bound(
-                args.date_to,
-                today=context.today,
-                direction=args.temporal_direction,
-                is_end=True,
-            ),
-        }
+        bounds = await resolve_bounds(context, args, direction=args.temporal_direction)
     except DateParseError as exc:
-        return fail("query", EVENT, ErrorCode.DATE_UNPARSEABLE, _date_remedy(exc))
+        return fail("query", EVENT, ErrorCode.DATE_UNPARSEABLE, date_remedy(exc))
 
     rows = await context.store.query_events(
         child_id=context.child_id, title_query=args.title_query, **bounds
@@ -172,10 +168,15 @@ async def update_event(context: AgentContext, args: EventUpdate) -> ToolResult:
     if current is None:
         return fail("update", EVENT, ErrorCode.UNKNOWN_EVENT, _UNKNOWN_EVENT)
 
+    try:
+        current_start = current.starts_at.astimezone(context.timezone).date()
+        starts_on, ends_on = await resolve_event_days(context, args, current_start=current_start)
+    except DateParseError as exc:
+        return fail("update", EVENT, ErrorCode.DATE_UNPARSEABLE, date_remedy(exc))
     patch = WhenPatch(
-        starts_on=args.starts_on,
+        starts_on=starts_on,
         starts_time=args.starts_time,
-        ends_on=args.ends_on,
+        ends_on=ends_on,
         ends_time=args.ends_time,
         direction=args.temporal_direction,
         # ends_at은 컬럼째로만 지움(ends_on·ends_time 두 인자로 나뉘어 들어와서)
@@ -291,7 +292,7 @@ def _resolve_when(
     except MissingEndTime:
         return fail(operation, EVENT, ErrorCode.DATE_UNPARSEABLE, _NEEDS_END_TIME)
     except DateParseError as exc:
-        return fail(operation, EVENT, ErrorCode.DATE_UNPARSEABLE, _date_remedy(exc))
+        return fail(operation, EVENT, ErrorCode.DATE_UNPARSEABLE, date_remedy(exc))
 
     problem = check_when(when, patch)
     if problem is not None:

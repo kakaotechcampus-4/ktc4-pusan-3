@@ -650,9 +650,11 @@ async def _suggestions_response(
                 if (out := _general_evidence_out(e, cards, menus, book_title=row.content))
                 is not None
             ]
-            if not basis:
+            if not basis and (not row.requested or general_ev.get(row.id)):
                 # 일반 추천의 근거는 문서 행(Food 는 메뉴 행도)이다 — 검수가 풀린 문서 · 후보 풀에서
-                # 빠진 메뉴만 남았으면 보여 줄 근거가 없어서 내지 않는다
+                # 빠진 메뉴만 남았으면 보여 줄 근거가 없어서 내지 않는다. 보호자가 놀이를 정해 물은
+                # Activity 추천은 그 요청이 기준이라 문서 없이도 낸다 — 단 문서를 달았다가 그 문서가
+                # 빠졌으면 그 문서를 바탕으로 만든 추천이라 같이 내지 않는다 (#597 리뷰)
                 continue
             general.append(_general_out(row, basis, await records(str(row.agent))))
         prechecks.extend(

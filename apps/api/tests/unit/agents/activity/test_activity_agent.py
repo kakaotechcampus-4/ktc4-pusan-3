@@ -16,16 +16,23 @@ from zoneinfo import ZoneInfo
 from app.agents.activity import agent as agent_module
 from app.agents.activity.agent import MAX_STEPS, run
 from app.agents.activity.context import ActivityContext
-from app.agents.activity.schemas.common import ActivitySetting, CaregiverRole, Intensity
+from app.agents.activity.schemas.common import (
+    ActivitySetting,
+    CaregiverRole,
+    Intensity,
+    PlaceCategory,
+)
 from app.agents.activity.store.inmemory import (
     InMemoryActivityDocs,
+    InMemoryPlaces,
     InMemorySafety,
     InMemoryWeather,
     in_memory_ports,
 )
-from app.agents.activity.store.ports import ActivityDocRow, CoarseLocation, SafetyEntry
+from app.agents.activity.store.ports import ActivityDocRow, CoarseLocation, PlaceRow, SafetyEntry
 from app.agents.activity.weather import WEATHER_NOT_ASKED
 from app.agents.common.llm_client import LLMResponse
+from app.agents.common.reference import hazard_terms
 from app.agents.common.schemas.task import DomainTask
 from app.core.weather_raw import RawAdvisories, RawAdvisoryRow, RawForecast
 
@@ -147,6 +154,14 @@ class TestNormal:
         assert all(draft.kind == "general" for draft in result.suggestions)  # 기록 0건
         assert result.readouts == ()  # 3개라 개수 안내 없음 · 실내 놀이만이라 날씨 안내 없음
 
+    async def test_위험_경고는_그_추천에_싣는다(self):
+        """40개월 — 구슬(작은 부품)은 72개월 미만 경고다. 결과 안내가 아니라 그 추천의 칸이다."""
+        llm = FakeLLM(propose("구슬 꿰기", "그림자놀이", "색종이 접기"))
+        result = await run(task(), context(), client=llm)
+        small_parts = hazard_terms().axes["small_parts"].warning_text
+        assert [draft.warnings for draft in result.suggestions] == [(small_parts,), (), ()]
+        assert result.readouts == ()
+
     async def test_거절되면_같은_진입_안에서_고쳐_낸다(self):
         """바깥 활동이 어려운 날(비) 야외 후보는 거절된다. model_calls 는 그대로."""
         llm = FakeLLM(
@@ -237,6 +252,17 @@ class TestRecall:
         )
         result = await run(task(), context(BORN_20_MONTHS), client=llm)
         assert contents(result) == ["그림자놀이", "색종이 접기", "까꿍 놀이"]
+
+    async def test_재호출로_합쳐도_경고는_그_추천을_따라간다(self):
+        """40개월 — 전동킥보드는 차단, 구슬은 경고. 처음 통과한 구슬의 경고가 합친 뒤에도 남는다."""
+        llm = FakeLLM(
+            propose("전동킥보드 타기", "구슬 꿰기", "그림자놀이"),
+            propose("색종이 접기", "컵 쌓기", "까꿍 놀이"),
+        )
+        result = await run(task(), context(), client=llm)
+        small_parts = hazard_terms().axes["small_parts"].warning_text
+        assert contents(result) == ["구슬 꿰기", "그림자놀이", "색종이 접기"]
+        assert [draft.warnings for draft in result.suggestions] == [(small_parts,), (), ()]
 
     async def test_재호출로도_못_채우면_있는_만큼_내고_안내한다(self):
         llm = FakeLLM(
@@ -520,3 +546,76 @@ class TestPrompt:
         llm = FakeLLM(propose("종이컵 탑 쌓기", "그림자놀이", "색종이 접기"))
         await run(task("비 오는데 뭐 하지"), context(), client=llm)
         assert llm.seen[0][1] == {"role": "user", "content": "비 오는데 뭐 하지"}
+
+
+class TestArea:
+    """보호자가 말한 지역으로 장소를 찾는다 — 위치가 없어도 된다."""
+
+    PARK = PlaceRow(
+        name="○○공원",
+        category=PlaceCategory.PARK,
+        distance_m=500,
+        source="city_park",
+        data_date=date(2026, 6, 30),
+    )
+
+    def area_context(self, *, weather=None) -> ActivityContext:
+        return ActivityContext(
+            child_id=CHILD,
+            run_id="run-1",
+            now=NOW,
+            timezone=KST,
+            ports=in_memory_ports(
+                CHILD,
+                BORN_40_MONTHS,
+                weather=weather,
+                docs=InMemoryActivityDocs([DEFAULT_DOC]),
+                places=InMemoryPlaces([self.PARK]),
+            ),
+        )
+
+    async def test_위치가_없으면_지역을_말했을_때만_찾는다고_알린다(self):
+        llm = FakeLLM(propose("종이컵 탑 쌓기", "그림자놀이", "색종이 접기"))
+        await run(task(), self.area_context(), client=llm)
+        system = llm.seen[0][0]["content"]
+        assert "위치를 모른다" in system
+        assert "area" in system
+
+    async def test_위치가_없어도_말한_지역의_장소를_붙인다(self):
+        park = {**candidate("모래성 쌓기", setting="outdoor"), "place_name": "○○공원"}
+        llm = FakeLLM(
+            _tools(("search_nearby_places", {"category": "park", "area": "해운대"})),
+            _tools(
+                (
+                    "propose_activity_candidates",
+                    {"candidates": [park, candidate("그림자놀이"), candidate("색종이 접기")]},
+                )
+            ),
+        )
+        result = await run(task("해운대 가서 뭐 하고 놀까"), self.area_context(), client=llm)
+        assert contents(result)[0] == "○○공원에서 모래성 쌓기"
+        assert result.status == "completed"
+
+    async def test_못_찾은_지역이면_장소_없이_한_줄_안내를_붙인다(self):
+        llm = FakeLLM(
+            _tools(("search_nearby_places", {"category": "park", "area": "서면"})),
+            propose("종이컵 탑 쌓기", "그림자놀이", "색종이 접기"),
+        )
+        result = await run(task("서면 가서 뭐 하고 놀까"), self.area_context(), client=llm)
+        assert contents(result) == ["종이컵 탑 쌓기", "그림자놀이", "색종이 접기"]
+        assert [r.body for r in result.readouts] == [
+            "말씀하신 지역을 찾지 못해 장소 없이 골랐어요. "
+            "시·도와 구·군까지 말씀해 주시면 그 지역 장소도 찾아볼게요."
+        ]
+
+    async def test_그_지역_날씨를_못_읽으면_degraded_다(self):
+        """보호자 위치가 없어도 그 지역 날씨는 물었다 — 묻지 않은 날이 아니다."""
+        broken = InMemoryWeather(fail=frozenset({"forecast"}))
+        llm = FakeLLM(
+            _tools(("search_nearby_places", {"category": "library", "area": "해운대"})),
+            propose("종이컵 탑 쌓기", "그림자놀이", "색종이 접기"),
+        )
+        result = await run(
+            task("해운대 가서 뭐 하고 놀까"), self.area_context(weather=broken), client=llm
+        )
+        assert result.status == "degraded"

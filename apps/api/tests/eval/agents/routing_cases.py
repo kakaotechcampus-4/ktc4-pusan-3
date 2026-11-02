@@ -9,6 +9,7 @@
 - T01~T30    라이브 eval 입력의 정답 Supervisor 출력. Step 7 이 Memory 힌트로 쓰고,
              Supervisor 채점에서는 "쉬운 30개" 대조군이 된다
 - T35~T69    아이가 한 일이 아닌 말(unclear)과 그대로 기록되는 말 대조 (#624 · #484 · #642)
+- T70~T75    날짜의 기준점 — 오늘 기준 · 일정 기준 · 하루로 안 정해지는 말 (#497)
 - score_split()  Step 5(Supervisor 단독)와 Step 9(끝까지)가 같은 기준으로 잰다
 
 정답은 조각 단위가 아니라 구간(Span) 단위로 적는다.
@@ -1083,7 +1084,47 @@ UNCLEAR_CASES: tuple[RoutingCase, ...] = (
     ),
 )
 
-ALL_CASES: tuple[RoutingCase, ...] = RC_CASES + T_CASES + GR_CASES + FC_CASES + UNCLEAR_CASES
+# ── T70~T75 — 날짜의 기준점 (#497) ──────────────────────────────
+# 날짜는 Memory 가 표현만 넘기고 코드가 센다. Supervisor 는 조각만 나누면 된다
+DATE_CASES: tuple[RoutingCase, ...] = (
+    RoutingCase("T70", T_INPUTS["T70"], (R("이틀 전에 카레 먹었어", OBSERVE),), rows=1),
+    RoutingCase("T71", T_INPUTS["T71"], (R("일주일 전에 놀이터에서 그네 탔어", OBSERVE),), rows=1),
+    RoutingCase(
+        "T72",
+        T_INPUTS["T72"],
+        (R("소풍 전날 김밥 먹었어", OBSERVE),),
+        seed="소풍 일정 (그저께)",
+        watch="일정 기준 — 소풍 날짜에서 센다",
+        rows=1,
+    ),
+    RoutingCase(
+        "T73",
+        T_INPUTS["T73"],
+        (R("지난주에 카레 먹었어", OBSERVE),),
+        watch="지난주는 하루로 정해지지 않는다 — 날짜를 고르지 않고 묻는다",
+        rows=0,
+    ),
+    RoutingCase(
+        "T74",
+        T_INPUTS["T74"],
+        (R("소풍 사흘 뒤 오후 2시에 정리하기 일정 잡아줘", SCHEDULE),),
+        seed="소풍 일정 (모레)",
+        watch="일정도 같은 기준점 규칙 — 소풍 날짜에서 센다 (#643 리뷰)",
+        rows=0,
+    ),
+    RoutingCase(
+        "T75",
+        T_INPUTS["T75"],
+        (R("지난주에 먹은 거 보여줘", LOOKUP_EDIT),),
+        seed="지난주 카레 기록",
+        watch="조회의 지난주는 기간 — 되묻지 않는다 (#643 리뷰)",
+        rows=None,
+    ),
+)
+
+ALL_CASES: tuple[RoutingCase, ...] = (
+    RC_CASES + T_CASES + GR_CASES + FC_CASES + UNCLEAR_CASES + DATE_CASES
+)
 CASES_BY_ID: dict[str, RoutingCase] = {case.case_id: case for case in ALL_CASES}
 
 

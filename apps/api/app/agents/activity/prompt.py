@@ -85,8 +85,13 @@ _EVIDENCE = """
 - 기억은 그 후보를 고른 이유가 된 것만 단다. 후보와 상관없는 기록(블록 기록을 크레용 놀이에)을
   달지 않는다 — 기록이 있다고 다 달면 근거가 약한데 이 아이 맞춤처럼 보인다.
   싫어한 기록을 피해 골랐으면 그 기록은 이유가 되므로 단다.
-- 기억 근거가 없는 후보는 [예시] 중 가장 가까운 예시의 id 를 evidence 에 단다. note 에는
-  그 예시에서 무엇을 참고했는지 쓴다. evidence 를 비우지 않는다 — 비우면 거절된다.
+- 보호자가 이번 요청에서 놀이 종류 · 소재 · 주제를 정했으면(물놀이 · 공놀이 · 티니핑처럼)
+  requested_play 에 그 말을 적고, 그 놀이를 요청대로 만든다. 기억 근거가 없어도 [예시]를 근거로
+  달지 않아도 된다 — [예시]는 이 월령에 맞는 결을 보는 참고다. 언제 · 어디서 · 얼마나만
+  말했거나("비 오는 날", "자기 전에") 막연하면("뭐 하고 놀까?") requested_play 를 비운다.
+- requested_play 가 비었으면, 기억 근거가 없는 후보는 [예시] 중 가장 가까운 예시의 id 를
+  evidence 에 단다. note 에는 그 예시에서 무엇을 참고했는지 쓴다. 이때 evidence 를 비우지
+  않는다 — 비우면 거절된다.
 - 기억 근거가 있는 후보도 [예시]를 바탕으로 했으면 그 id 를 같이 단다.
 - 기록이 없으면(NO_RECORDS) 기억 근거 없이 낸다. 보호자에게 되묻지 않는다.
 """.strip()
@@ -218,8 +223,17 @@ def _conditions(weather: WeatherBrief, *, checked: bool, gate: Gate) -> str:
     else:
         outdoor = "오늘은 바깥 활동을 할 수 있다."
     labels = " · ".join(f"{key} {value}" for key, value in weather.labels.items())
-    if finds_places(gate):
-        place = "근처 장소는 search_nearby_places 로 찾을 수 있다."
+    if finds_places(gate) and gate.has_location:
+        place = (
+            "근처 장소는 search_nearby_places 로 찾을 수 있다. 보호자가 다른 지역을 말했으면 "
+            "area 에 그 이름을 쓴 그대로 넣어 그 지역에서 찾는다. " + _AREA_ONLY
+        )
+    elif finds_places(gate):
+        place = (
+            "위치를 모른다. 보호자가 지역을 말했으면 search_nearby_places 의 area 에 그 이름을 "
+            "쓴 그대로 넣어 그 지역 장소를 찾는다. " + _AREA_ONLY + " "
+            "말하지 않았으면 특정 장소가 필요한 활동은 내지 않는다."
+        )
     elif gate.has_location:
         place = "근처 장소는 찾을 수 없다. 특정 장소가 필요한 활동은 내지 않는다."
     else:
@@ -229,6 +243,15 @@ def _conditions(weather: WeatherBrief, *, checked: bool, gate: Gate) -> str:
         lines.append(f"날씨: {labels}")
     lines.append(place)
     return "\n".join(lines)
+
+
+# 지역 이름과 글자가 같은 다른 뜻의 낱말. 코드는 글자로 가릴 수 없어서 모델이 문장 뜻으로 고른다
+# (#657 — "양산 챙겨서" 를 양산시로 찾았다)
+_AREA_ONLY = (
+    "area 는 보호자가 그 지역에 가거나 그 지역에서 놀려고 말했을 때만 쓴다. "
+    "지역 이름과 글자가 같은 물건 · 다른 뜻의 낱말(양산 챙겨서 · 화성에서 온 · 장수풍뎅이)은 "
+    "지역이 아니라 비운다."
+)
 
 
 def _now(context: ActivityContext) -> str:

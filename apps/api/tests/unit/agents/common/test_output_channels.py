@@ -152,6 +152,50 @@ class TestSuggestionBuild:
         # 문서 행은 kind 를 바꾸지 않지만 인용은 그대로 실려 나간다
         assert len(draft.citations) == 1
 
+    def test_보호자가_정한_놀이면_문서_근거_없이도_일반_추천이다(self):
+        """요청 기반 — 보호자가 놀이를 정해 물었고 아이 기록이 없으면 그 요청이 기준이다."""
+        draft = build(
+            agent="activity",
+            content="욕조에서 컵으로 물 붓고 옮기기",
+            reason="모델이 쓴 문장",
+            citations=(),
+            general_reason="요청하신 놀이에 맞춰 골랐어요.",
+            requested=True,
+            today=TODAY,
+        )
+        assert draft.kind == "general"
+        assert draft.reason == "요청하신 놀이에 맞춰 골랐어요."
+        assert draft.citations == ()
+        assert draft.requested is True
+        assert draft.to_payload()["requested"] is True
+
+    def test_요청_기반_면제는_Activity_만이다(self):
+        """Food 는 레시피북 밖 메뉴가 나가면 안 된다 — requested 로 근거를 면제하지 않는다."""
+        with pytest.raises(SuggestionRejected, match="문서 행 근거가 없다"):
+            build(
+                agent="food",
+                content="책에 없는 메뉴",
+                reason="이유",
+                citations=(),
+                general_reason="요청하신 메뉴에 맞춰 골랐어요.",
+                requested=True,
+                today=TODAY,
+            )
+
+    def test_요청_기반이어도_아이_기록이_있으면_개인화다(self):
+        """같은 요청도 기록이 쌓이면 개인화로 나간다 — 요청 기반은 종류가 아니다."""
+        draft = build(
+            agent="activity",
+            content="욕조에서 컵으로 물 붓기",
+            reason="지난주에 물 붓기를 좋아해서요",
+            citations=(citation(),),
+            general_reason="요청하신 놀이에 맞춰 골랐어요.",
+            requested=True,
+            today=TODAY,
+        )
+        assert draft.kind == "personalized"
+        assert draft.requested is False  # 개인화는 아이 기록이 근거다
+
     def test_근거_0행인데_일반_문구가_없으면_거절(self):
         with pytest.raises(SuggestionRejected, match="일반 추천 문구"):
             build(agent="food", content="계란말이", reason="이유", citations=(), today=TODAY)

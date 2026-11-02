@@ -12,11 +12,12 @@ import pytest
 from app.agents.common.evidence import RankedEvidence
 from app.agents.common.refs import Ref
 from app.agents.food.context import FoodContext
+from app.agents.food.meal_pool import build_pool
 from app.agents.food.readouts import GENERAL_REASON_TODDLER, GENERAL_REASON_WEANING, READOUTS
 from app.agents.food.result import ErrorCode
 from app.agents.food.schemas.common import EvidenceRef
 from app.agents.food.schemas.recommend import MealCandidate, ProposeMealCandidatesArgs
-from app.agents.food.store import SafetyEntry
+from app.agents.food.store import InMemoryRecipeCatalog, MenuCatalogRow, SafetyEntry
 from app.agents.food.tools.recommend import propose_meal_candidates
 from app.agents.food.tools.safety import filter_food_safety
 from app.rules.menu_evidence import menu_evidence_id
@@ -25,7 +26,9 @@ from tests.unit.agents.food.support import MEAL_DOC, context, day, doc_row, menu
 MILK = [SafetyEntry(kind="allergy", label="우유", status="active")]
 GENERAL_REASON = READOUTS.get(GENERAL_REASON_TODDLER).template
 
-TOFU = menu_row("두부조림", source="mafra_recipe", ingredients=("두부", "간장"))
+TOFU = menu_row(
+    "두부조림", source="mafra_recipe", ingredients=("두부", "간장"), main_ingredients=("두부",)
+)
 EGGROLL = menu_row(
     "계란말이",
     source="mafra_recipe",
@@ -35,7 +38,12 @@ EGGROLL = menu_row(
 MILKBREAD = menu_row(
     "우유식빵", source="mafra_recipe", ingredients=("우유", "식빵"), allergen_codes=frozenset({2})
 )
-SPINACH = menu_row("시금치나물", source="mafra_recipe", ingredients=("시금치", "참기름"))
+SPINACH = menu_row(
+    "시금치나물",
+    source="mafra_recipe",
+    ingredients=("시금치", "참기름"),
+    main_ingredients=("시금치",),
+)
 
 
 # 일반 추천은 문서 행이 근거다 (루트 §2). 기본 후보는 이 행을 인용하고, shown() 이 보여 준다
@@ -122,8 +130,8 @@ async def test_띄어쓰기만_다르게_옮겨_쓴_menu_key_는_보여_준_후�
     assert [p.menu_key for p in ctx.state.picks] == ["두부조림"]
 
 
-# ── 메뉴 이름 · 재료는 카탈로그에서 ───────────────────────────────────
-async def test_메뉴_이름과_재료는_카탈로그_행에서_온다() -> None:
+# ── 메뉴 이름 · 준비 재료는 카탈로그에서 ──────────────────────────────
+async def test_메뉴_이름과_준비_재료는_카탈로그_행에서_온다() -> None:
     ctx = shown(*FULL, exhausted=True)
 
     result = await propose_meal_candidates(ctx, args(pick("두부조림"), pick("시금치나물")))
@@ -131,8 +139,8 @@ async def test_메뉴_이름과_재료는_카탈로그_행에서_온다() -> Non
     assert result.success
     first, second = ctx.state.picks
     assert first.draft.content == "두부조림"
-    assert first.draft.items == ("두부", "간장")
-    assert (second.draft.content, second.draft.items) == ("시금치나물", ("시금치", "참기름"))
+    assert first.draft.items == ("두부",)
+    assert (second.draft.content, second.draft.items) == ("시금치나물", ("시금치",))
     assert (first.menu_key, first.meal_slot) == ("두부조림", "dinner")
 
 
@@ -224,6 +232,109 @@ async def test_추천의_allergens_는_안전_필터_결과와_같다() -> None:
     assert by_key["계란말이"].allergens == verdict.allergens["계란말이"]
     assert by_key["계란말이"].allergens  # 비어 있지 않다 — 승인할 때 묻는 목록이다
     assert by_key["두부조림"].allergens == verdict.allergens.get("두부조림", ())
+
+
+# ── items — 준비 목록은 주재료에서만 (#474) ───────────────────────────
+async def items_of(row: MenuCatalogRow, *, safety=()) -> tuple[str, ...]:
+    """`row` 하나를 골랐을 때 추천 초안의 준비물."""
+    ctx = shown(row, safety=safety, exhausted=True)
+
+    result = await propose_meal_candidates(ctx, args(pick(row.menu_key)))
+
+    assert result.success
+    [picked] = ctx.state.picks
+    return picked.draft.items
+
+
+async def test_준비물은_전체_재료가_아니라_주재료에서_만든다() -> None:
+    row = menu_row(
+        "두부부침",
+        source="mafra_recipe",
+        ingredients=("두부", "양파", "간장"),
+        main_ingredients=("두부",),
+    )
+
+    assert await items_of(row) == ("두부",)
+
+
+async def test_주재료여도_상비_재료는_준비물에서_빠지고_밀가루는_남는다() -> None:
+    row = menu_row(
+        "밀전병",
+        source="mafra_recipe",
+        ingredients=("밀가루", "식용유", "후추", "소금"),
+        main_ingredients=("밀가루", "식용유", "후추"),
+    )
+
+    assert await items_of(row) == ("밀가루",)
+
+
+async def test_주재료가_비어_있어도_전체_재료로_되돌아가지_않는다() -> None:
+    row = menu_row(
+        "정체불명국", source="mafra_recipe", ingredients=("두부", "양파"), main_ingredients=()
+    )
+
+    assert await items_of(row) == ()
+
+
+async def test_주재료가_모두_상비_재료면_준비물은_빈_튜플로_정상_추천이다() -> None:
+    row = menu_row(
+        "양념밥",
+        source="mafra_recipe",
+        ingredients=("쌀", "소금", "참기름"),
+        main_ingredients=("소금", "참기름"),
+    )
+
+    assert await items_of(row) == ()
+
+
+@pytest.mark.parametrize(
+    ("label", "ingredients", "codes"),
+    [
+        ("우유", ("두부", "우유"), frozenset()),
+        ("우유", ("두부", "양파"), frozenset({2})),
+        ("밀", ("두부", "밀가루"), frozenset()),
+        ("밀", ("두부", "양파"), frozenset({6})),
+        ("호두", ("두부", "호두"), frozenset()),
+        ("호두", ("두부", "양파"), frozenset({14})),
+    ],
+)
+async def test_준비물에서_빠진_재료도_안전_필터는_계속_본다(
+    label: str, ingredients: tuple[str, ...], codes: frozenset[int]
+) -> None:
+    # 주재료는 두부뿐이라 준비 목록에 알레르기 재료가 없다. 그래도 전체 재료 · 코드가 후보를 막는다
+    row = menu_row(
+        "두부요리",
+        source="mafra_recipe",
+        ingredients=ingredients,
+        allergen_codes=codes,
+        main_ingredients=("두부",),
+    )
+    ctx = shown(row, safety=[SafetyEntry(kind="allergy", label=label, status="active")])
+
+    await propose_meal_candidates(ctx, args(pick("두부요리")))
+
+    assert ctx.state.picks == ()
+    assert ctx.state.blocked_keys == {"두부요리"}
+
+
+async def test_같은_이름_레시피를_묶은_주재료_합집합이_순서대로_준비물이_된다() -> None:
+    beef = menu_row(
+        "샤브샤브",
+        source="mafra_recipe",
+        source_id="a",
+        ingredients=("쇠고기", "배추", "소금"),
+        main_ingredients=("쇠고기", "소금"),
+    )
+    shrimp = menu_row(
+        "샤브샤브",
+        source="mafra_recipe",
+        source_id="b",
+        ingredients=("새우", "배추", "소금"),
+        main_ingredients=("새우", "쇠고기", "소금"),
+    )
+    [merged] = await build_pool(context(recipes=InMemoryRecipeCatalog([beef, shrimp])))
+
+    assert await items_of(merged.row) == ("쇠고기", "새우")
 
 
 # ── reason 문장 규칙 ─────────────────────────────────────────────────
