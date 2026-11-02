@@ -13,6 +13,7 @@ from app.agents.activity.events import (
     TOUR_REGION_CODES,
     EventKind,
     age_allows,
+    core_name,
     distance_m,
     in_province,
     open_on,
@@ -119,6 +120,26 @@ class TestOpenOn:
 
         assert open_on(event, [date(2026, 11, 7), date(2026, 11, 8)])
         assert not open_on(event, [date(2026, 11, 7)])
+
+
+class TestCoreName:
+    """모델은 긴 공식 이름의 연도 · 회차 · 괄호 · 부제를 떼고 쓴다 — 그 이름으로도 알아본다."""
+
+    @pytest.mark.parametrize(
+        ("title", "core"),
+        [
+            ("2026 제5회 바다 비엔날레 : 물결의 기술", "바다 비엔날레"),
+            ("2026년 대한민국 정원박람회", "대한민국 정원박람회"),
+            ("골목 작품투어 (시민예술프로젝트)", "골목 작품투어"),
+            ("제12회 별빛 축제 - 가을밤", "별빛 축제"),
+            ("가을 국악 공연", "가을 국악 공연"),
+        ],
+    )
+    def test_연도_회차_괄호_부제를_뗀다(self, title, core):
+        assert core_name(title) == core
+
+    def test_다_떼고_남는_게_없으면_원래_이름이다(self):
+        assert core_name("2026 (가칭)") == "2026 (가칭)"
 
 
 # 만 나이(개월). 3살 아이
