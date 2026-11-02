@@ -223,8 +223,17 @@ def _conditions(weather: WeatherBrief, *, checked: bool, gate: Gate) -> str:
     else:
         outdoor = "오늘은 바깥 활동을 할 수 있다."
     labels = " · ".join(f"{key} {value}" for key, value in weather.labels.items())
-    if finds_places(gate):
-        place = "근처 장소는 search_nearby_places 로 찾을 수 있다."
+    if finds_places(gate) and gate.has_location:
+        place = (
+            "근처 장소는 search_nearby_places 로 찾을 수 있다. 보호자가 다른 지역을 말했으면 "
+            "area 에 그 이름을 쓴 그대로 넣어 그 지역에서 찾는다. " + _AREA_ONLY
+        )
+    elif finds_places(gate):
+        place = (
+            "위치를 모른다. 보호자가 지역을 말했으면 search_nearby_places 의 area 에 그 이름을 "
+            "쓴 그대로 넣어 그 지역 장소를 찾는다. " + _AREA_ONLY + " "
+            "말하지 않았으면 특정 장소가 필요한 활동은 내지 않는다."
+        )
     elif gate.has_location:
         place = "근처 장소는 찾을 수 없다. 특정 장소가 필요한 활동은 내지 않는다."
     else:
@@ -234,6 +243,15 @@ def _conditions(weather: WeatherBrief, *, checked: bool, gate: Gate) -> str:
         lines.append(f"날씨: {labels}")
     lines.append(place)
     return "\n".join(lines)
+
+
+# 지역 이름과 글자가 같은 다른 뜻의 낱말. 코드는 글자로 가릴 수 없어서 모델이 문장 뜻으로 고른다
+# (#657 — "양산 챙겨서" 를 양산시로 찾았다)
+_AREA_ONLY = (
+    "area 는 보호자가 그 지역에 가거나 그 지역에서 놀려고 말했을 때만 쓴다. "
+    "지역 이름과 글자가 같은 물건 · 다른 뜻의 낱말(양산 챙겨서 · 화성에서 온 · 장수풍뎅이)은 "
+    "지역이 아니라 비운다."
+)
 
 
 def _now(context: ActivityContext) -> str:
