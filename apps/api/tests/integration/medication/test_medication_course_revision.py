@@ -17,8 +17,6 @@ from datetime import UTC, date, datetime, time, timedelta
 import pytest
 from sqlalchemy import text, update
 
-from app.domains.child.models import Child
-from app.domains.identity.models import Parent
 from app.domains.medication.models import (
     MedicationCreatedBy,
     MedicationDose,
@@ -43,17 +41,6 @@ from app.domains.medication.service import (
 TODAY = date(2026, 10, 27)
 NOW = datetime(2026, 10, 27, 0, 40, tzinfo=UTC)  # 한국 시간 09:40
 FIXED = TimingAnchor.FIXED
-
-
-@pytest.fixture
-async def child(session):
-    owner = Parent()
-    session.add(owner)
-    await session.flush()
-    child = Child(owner_parent_id=owner.id, nickname="test", birth_date=date(2023, 1, 1))
-    session.add(child)
-    await session.flush()
-    return child
 
 
 def day(offset: int) -> date:
@@ -422,13 +409,8 @@ async def test_없는_코스는_찾지_못한다(session, child):
     assert ghost.title == "약"
 
 
-async def test_다른_아이의_코스는_찾지_못하고_바꾸지_않는다(session, child):
-    other = Child(
-        owner_parent_id=child.owner_parent_id, nickname="other", birth_date=date(2022, 1, 1)
-    )
-    session.add(other)
-    await session.flush()
-    course = await seed(session, other, daily(9, 1, 2), starts=1, ends=2)
+async def test_다른_아이의_코스는_찾지_못하고_바꾸지_않는다(session, child, other_child):
+    course = await seed(session, other_child, daily(9, 1, 2), starts=1, ends=2)
     before = await rows(session, course)
 
     with pytest.raises(CourseNotFound):

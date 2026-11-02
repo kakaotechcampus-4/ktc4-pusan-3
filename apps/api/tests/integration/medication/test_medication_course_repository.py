@@ -14,7 +14,6 @@ from sqlalchemy import func, select, true
 from sqlalchemy.exc import IntegrityError
 
 from app.domains.child.models import Child
-from app.domains.identity.models import Parent
 from app.domains.medication.models import (
     MedicationCreatedBy,
     MedicationDose,
@@ -34,17 +33,6 @@ from app.domains.medication.repository import (
 
 STARTS = date(2026, 10, 27)
 ENDS = date(2026, 10, 29)
-
-
-@pytest.fixture
-async def child(session):
-    owner = Parent()
-    session.add(owner)
-    await session.flush()
-    child = Child(owner_parent_id=owner.id, nickname="test", birth_date=date(2023, 1, 1))
-    session.add(child)
-    await session.flush()
-    return child
 
 
 def dose(
@@ -91,18 +79,14 @@ async def test_코스_1행과_회차_9행이_저장되고_회차는_그_코스�
     assert await count(session, MedicationSchedule) == 1
 
 
-async def test_코스는_받은_아이에게만_붙고_다른_아이의_목록에는_안_보인다(session, child):
-    other = Child(
-        owner_parent_id=child.owner_parent_id, nickname="other", birth_date=date(2022, 1, 1)
-    )
-    session.add(other)
-    await session.flush()
-
+async def test_코스는_받은_아이에게만_붙고_다른_아이의_목록에는_안_보인다(
+    session, child, other_child
+):
     course = await add(session, child)
 
     assert course.child_id == child.id
     mine = await list_courses(session, child_id=child.id, where=true())
-    theirs = await list_courses(session, child_id=other.id, where=true())
+    theirs = await list_courses(session, child_id=other_child.id, where=true())
     assert [c.id for c in mine] == [course.id]
     assert theirs == []
 
@@ -322,15 +306,10 @@ async def test_기간이_하루라도_다르면_중복이_아니다_provisional(
     assert await is_duplicate(session, child, **over) is False
 
 
-async def test_다른_아이의_같은_코스는_중복이_아니다(session, child):
-    other = Child(
-        owner_parent_id=child.owner_parent_id, nickname="other", birth_date=date(2022, 1, 1)
-    )
-    session.add(other)
-    await session.flush()
+async def test_다른_아이의_같은_코스는_중복이_아니다(session, child, other_child):
     await add(session, child)
 
-    assert await is_duplicate(session, other) is False
+    assert await is_duplicate(session, other_child) is False
 
 
 async def test_멈춘_코스는_중복이_아니다_다시_같은_기간으로_등록할_수_있다(session, child):

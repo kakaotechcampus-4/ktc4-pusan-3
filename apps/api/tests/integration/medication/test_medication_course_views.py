@@ -12,8 +12,6 @@ from datetime import UTC, date, datetime, time, timedelta
 import pytest
 from sqlalchemy import update
 
-from app.domains.child.models import Child
-from app.domains.identity.models import Parent
 from app.domains.medication.agent_reader import pattern_of
 from app.domains.medication.models import (
     MedicationCreatedBy,
@@ -26,17 +24,6 @@ from app.domains.medication.service import course_views, list_in_progress
 
 TODAY = date(2026, 10, 27)
 MEALS = (TimingAnchor.BREAKFAST, TimingAnchor.LUNCH, TimingAnchor.DINNER)
-
-
-@pytest.fixture
-async def child(session):
-    owner = Parent()
-    session.add(owner)
-    await session.flush()
-    child = Child(owner_parent_id=owner.id, nickname="test", birth_date=date(2023, 1, 1))
-    session.add(child)
-    await session.flush()
-    return child
 
 
 def day(offset: int) -> date:
@@ -97,13 +84,8 @@ async def test_코스가_없으면_빈_목록(session, child):
     assert await list_in_progress(session, child_id=child.id, today=TODAY) == []
 
 
-async def test_다른_아이의_코스는_오지_않는다(session, child):
-    other = Child(
-        owner_parent_id=child.owner_parent_id, nickname="other", birth_date=date(2022, 1, 1)
-    )
-    session.add(other)
-    await session.flush()
-    await seed(session, other, title="남의 약")
+async def test_다른_아이의_코스는_오지_않는다(session, child, other_child):
+    await seed(session, other_child, title="남의 약")
 
     assert await titles(session, child) == []
 

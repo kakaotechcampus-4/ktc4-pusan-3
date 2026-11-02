@@ -13,8 +13,6 @@ from datetime import UTC, date, datetime, time, timedelta
 import pytest
 from sqlalchemy import func, select, text
 
-from app.domains.child.models import Child
-from app.domains.identity.models import Parent
 from app.domains.medication.models import (
     MedicationCreatedBy,
     MedicationDose,
@@ -38,17 +36,6 @@ from app.domains.medication.service import (
 TODAY = date(2026, 10, 27)
 STARTS = date(2026, 10, 28)  # 내일부터
 ENDS = date(2026, 10, 30)
-
-
-@pytest.fixture
-async def child(session):
-    owner = Parent()
-    session.add(owner)
-    await session.flush()
-    child = Child(owner_parent_id=owner.id, nickname="test", birth_date=date(2023, 1, 1))
-    session.add(child)
-    await session.flush()
-    return child
 
 
 def pattern(
@@ -272,17 +259,12 @@ async def test_멈춘_뒤에는_같은_코스를_다시_등록할_수_있다(ses
     assert again.id != first.id
 
 
-async def test_다른_아이는_같은_코스를_등록할_수_있다(session, child):
-    other = Child(
-        owner_parent_id=child.owner_parent_id, nickname="other", birth_date=date(2022, 1, 1)
-    )
-    session.add(other)
-    await session.flush()
+async def test_다른_아이는_같은_코스를_등록할_수_있다(session, child, other_child):
     await create(session, child)
 
-    again = await create(session, other)
+    again = await create(session, other_child)
 
-    assert again.child_id == other.id
+    assert again.child_id == other_child.id
 
 
 async def test_칸_오류가_중복보다_먼저_거절된다(session, child):
