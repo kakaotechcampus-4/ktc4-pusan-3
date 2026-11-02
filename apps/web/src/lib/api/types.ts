@@ -294,6 +294,17 @@ export interface Suggestion {
    * 🚨 **장소 이름은 여기가 아니라 `content` 에 있다** ("○○공원에서 모래성 쌓기"). 화면이 이름을 따로 꺼내지 않는다.
    */
   place_notice: string | null;
+  /**
+   * 해 보는 데 필요한 것 (#659). Food 는 **필요한 재료**, Activity · Growth 는 **준비물**이고 Growth 도서는
+   * "제목(저자)" 한 항목이다. 서버가 일정 초안의 준비물을 만드는 것과 **같은 원본**(`suggestion.items`)이라,
+   * 고르기 전에 보는 것과 일정에 붙는 것이 어긋나지 않는다. 화면은 `SuggestionItems` 하나로 그린다.
+   *
+   * 🚨 **읽기 전용이다.** 여기서 "준비했어요" 를 체크하지 않는다 — 준비 상태는 일정이 생긴 뒤 캘린더의
+   *    `EventItem.is_prepared` 다. 추천 단계에 체크박스를 두면 추천을 고르는 체크박스와 섞인다.
+   * 🚨 **서버가 아직 이 칸을 내리지 않는다** (#674 · `contract/schema-map.ts` 의 `allow`). 그때까지 실서버
+   *    응답에서는 빠져 오고, 화면은 빈 배열과 같게 영역을 세우지 않는다. 서버에 칸이 생기면 늘 배열이다.
+   */
+  items: string[];
   status: SuggestionStatus;
   /** 생성 +24h. 승인 없는 draft 는 여기서 만료된다 (NF-07). */
   expires_at: string;
@@ -325,6 +336,8 @@ export interface GeneralSuggestion {
   place_notice: string | null;
   /** "36개월 또래가 자주 찾는 놀이예요" · "요청하신 놀이에 맞춰 골랐어요" 처럼 무엇을 기준으로 골랐는지. 서버가 만든다. */
   basis: string;
+  /** 필요한 재료 · 준비물. 개인화와 같은 칸 · 같은 원본이다 (`Suggestion.items` · #659). */
+  items: string[];
   status: SuggestionStatus;
   /** 생성 +24h. 개인화 추천과 같다. */
   expires_at: string;
