@@ -52,6 +52,10 @@ class SuggestionDraft:
     items: tuple[str, ...] = ()
     # 장소가 붙은 추천의 확인 문구(공공데이터 기준일 · 운영 여부). 코드 문구 · 근거 아님 (#516)
     place_notice: str | None = None
+    # 행사가 붙은 추천의 행사 기간. 화면이 확인 문구 줄에 날짜로 세운다 — 날짜 없이 이름만 나가면
+    # 지난 행사인지 알 수 없다. 근거 아님 · 장소 · 행사가 없으면 비어 있다 (#516)
+    event_starts_on: date | None = None
+    event_ends_on: date | None = None
     # 그 추천에 붙는 위험 경고 문구(위험 용어 사전의 축 문구). 코드 문구 · 근거 아님.
     # Activity · Growth 가 같이 쓴다. 경고가 없으면 비어 있다 (#402)
     warnings: tuple[str, ...] = ()
@@ -69,6 +73,8 @@ class SuggestionDraft:
             "allergens": list(self.allergens),
             "items": list(self.items),
             "place_notice": self.place_notice,
+            "event_starts_on": self.event_starts_on and self.event_starts_on.isoformat(),
+            "event_ends_on": self.event_ends_on and self.event_ends_on.isoformat(),
             "warnings": list(self.warnings),
             "requested": self.requested,
         }
