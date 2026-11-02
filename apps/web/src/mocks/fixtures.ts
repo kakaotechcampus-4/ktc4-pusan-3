@@ -515,6 +515,8 @@ function personalized(
     content,
     reason,
     place_notice: null,
+    event_starts_on: null,
+    event_ends_on: null,
     status: "draft",
     expires_at: hoursFromNow(24),
     feedback: null,
@@ -619,6 +621,8 @@ export const generalSuggestions: GeneralSuggestion[] = [
     kind: "general",
     content: "블록 쌓기처럼 손을 많이 쓰는 놀이를 15분쯤 해 보세요",
     place_notice: null,
+    event_starts_on: null,
+    event_ends_on: null,
     basis: "36개월 또래가 자주 찾는 놀이예요",
     status: "draft",
     expires_at: hoursFromNow(24),
@@ -641,6 +645,8 @@ export const generalSuggestions: GeneralSuggestion[] = [
     kind: "general",
     content: "국물 없이 집어 먹는 반찬을 한 가지 곁들여 보세요",
     place_notice: null,
+    event_starts_on: null,
+    event_ends_on: null,
     basis: "36개월 또래의 식사에서 흔한 형태예요",
     status: "draft",
     expires_at: hoursFromNow(24),
@@ -688,6 +694,8 @@ export const placeGeneralSuggestion: GeneralSuggestion = {
   kind: "general",
   content: "별빛작은도서관에서 그림책 고르기",
   place_notice: "가기 전에 운영 여부를 확인해 주세요.",
+  event_starts_on: null,
+  event_ends_on: null,
   basis: "36개월 또래가 자주 찾는 놀이예요",
   status: "draft",
   expires_at: hoursFromNow(24),
@@ -696,6 +704,58 @@ export const placeGeneralSuggestion: GeneralSuggestion = {
     {
       ref: { kind: "activity_doc", id: "doc_3" },
       title: "그림책 함께 보기",
+      source_org: "교육부",
+      source_title: "표준보육과정",
+      source_url: null,
+      note: "또래 놀이 자료",
+    },
+  ],
+};
+
+/** 행사 확인 문구. 서버 `place.notice_event` 와 같은 글자다 (#668). */
+const EVENT_NOTICE =
+  "한국관광공사 행사 정보예요. 일정과 관람 연령이 바뀔 수 있으니 가기 전에 확인해 주세요.";
+
+/**
+ * 행사가 붙은 놀이 추천 (`suggest_event` 시나리오 · #681). 장소처럼 행사 이름이 `content` 앞에 붙고 확인 문구는
+ * `place_notice` 로, 기간은 `event_starts_on` · `event_ends_on` 으로 따로 온다 (서버 #677).
+ * 실서버도 좌표나 말한 지역이 실린 입력 run 에서만 행사를 찾아서, 화면에서 볼 길이 목뿐이다.
+ *
+ * 🚨 기간도 근거가 아니다 — `evidence` 에 행사가 없다.
+ * 🚨 날짜는 고정이다. 화면이 오늘과 비교하지 않으니 지난 날짜여도 그대로 그려야 맞다.
+ * 🚨 행사 이름은 지어낸 것이다 (저장소가 public 이다).
+ */
+export const eventSuggestion: Suggestion = {
+  ...personalized(
+    "s_event_1",
+    "activity",
+    "들꽃마을 가을 축제에서 꽃 이름 맞히기",
+    "바깥 놀이 뒤에 잘 잤고, 이번 주말 일정이 비어 있어요.",
+    [evidenceFrom(affinities[1])],
+  ),
+  place_notice: EVENT_NOTICE,
+  event_starts_on: "2026-10-30",
+  event_ends_on: "2026-11-01",
+};
+
+/** 일반 추천에도 행사가 붙는다. 🚨 하루짜리 행사다 — 시작일과 종료일이 같으면 화면은 날짜 하나만 적는다. */
+export const eventGeneralSuggestion: GeneralSuggestion = {
+  id: "g_event_1",
+  child_id: CHILD_ID,
+  agent: "activity",
+  kind: "general",
+  content: "솔숲 어린이 인형극 한마당에서 인형극 보기",
+  place_notice: EVENT_NOTICE,
+  event_starts_on: "2026-11-07",
+  event_ends_on: "2026-11-07",
+  basis: "36개월 또래가 자주 찾는 놀이예요",
+  status: "draft",
+  expires_at: hoursFromNow(24),
+  record_count: 3,
+  evidence: [
+    {
+      ref: { kind: "activity_doc", id: "doc_4" },
+      title: "인형극 함께 보기",
       source_org: "교육부",
       source_title: "표준보육과정",
       source_url: null,
@@ -718,6 +778,8 @@ export const requestedGeneralSuggestion: GeneralSuggestion = {
   kind: "general",
   content: "큰 종이를 바닥에 깔고 손바닥에 물감을 묻혀 찍어 보세요",
   place_notice: null,
+  event_starts_on: null,
+  event_ends_on: null,
   basis: "쌓인 놀이 기록이 아직 적어서, 요청하신 놀이에 맞춰 골랐어요.",
   status: "draft",
   expires_at: hoursFromNow(24),

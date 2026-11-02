@@ -1,4 +1,5 @@
 import { DomainChip } from "@/components/domain-chip";
+import { EventPeriod } from "@/components/event-period";
 import { Checkbox } from "@/components/ui/checkbox";
 import { CountChip } from "@/components/ui/chip";
 import type { GeneralSuggestion } from "@/lib/api/types";
@@ -84,7 +85,9 @@ export function GeneralSuggestionCard({
       {/* 체크박스 칸(20)과 사이(12)만큼 들여써서 기준 문구 · 출처가 제안 문장과 한 세로선에 선다. */}
       <div className={isHealth ? "" : "pl-8"}>
         {/* 장소 확인 문구는 제안 문장에 딸린 말이라 바로 아래, 기준 문구보다 위다 (#516).
-            기준 문구는 아래 출처와 한 묶음이다. 개인화 줄과 같은 글씨다. */}
+            기준 문구는 아래 출처와 한 묶음이다. 개인화 줄과 같은 글씨다.
+            행사면 그 기간이 문구 바로 위에 선다 (#681). */}
+        <EventPeriod startsOn={suggestion.event_starts_on} endsOn={suggestion.event_ends_on} />
         {placeNotice ? <p className="text-caption text-ink-muted mt-1">{placeNotice}</p> : null}
         <p className="text-body-sm text-ink-muted mt-1">{suggestion.basis}</p>
 

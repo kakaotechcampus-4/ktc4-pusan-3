@@ -2,6 +2,8 @@ import { http, HttpResponse } from "msw";
 
 import {
   draftEvent,
+  eventGeneralSuggestion,
+  eventSuggestion,
   generalSuggestions,
   mealDraft,
   placeGeneralSuggestion,
@@ -55,6 +57,8 @@ const pickable = [
   requestedGeneralSuggestion,
   placeSuggestion,
   placeGeneralSuggestion,
+  eventSuggestion,
+  eventGeneralSuggestion,
 ];
 
 /**
@@ -311,6 +315,25 @@ export const suggestionHandlers = [
     if (scenario === "suggest_place") {
       const shown = alive.map((s) => (s.id === "s_4" ? placeSuggestion : s));
       const general = [placeGeneralSuggestion].filter(notBlocked);
+      return HttpResponse.json({
+        suggestions: withStatus(shown),
+        groups: suggestionGroups.filter((g) => shown.some((s) => s.agent === g.agent)),
+        general: withStatus(general),
+        looked_at: "",
+        guards: [],
+        scarcity: { count: 3, question: null },
+        prechecks: prechecksFor([...shown, ...general]),
+      });
+    }
+
+    /**
+     * 행사가 붙은 놀이 추천 (#681). 개인화 하나(여러 날 행사)와 일반 하나(하루짜리 행사)에 기간
+     * (`event_starts_on` · `event_ends_on`)과 행사 확인 문구가 온다. `suggest_place` 와 같은 자리를 바꾼다.
+     * 🚨 기간도 근거가 아니라서 `evidence` 는 그대로다.
+     */
+    if (scenario === "suggest_event") {
+      const shown = alive.map((s) => (s.id === "s_4" ? eventSuggestion : s));
+      const general = [eventGeneralSuggestion].filter(notBlocked);
       return HttpResponse.json({
         suggestions: withStatus(shown),
         groups: suggestionGroups.filter((g) => shown.some((s) => s.agent === g.agent)),

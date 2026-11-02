@@ -294,6 +294,16 @@ export interface Suggestion {
    * 🚨 **장소 이름은 여기가 아니라 `content` 에 있다** ("○○공원에서 모래성 쌓기"). 화면이 이름을 따로 꺼내지 않는다.
    */
   place_notice: string | null;
+  /**
+   * 행사가 붙은 추천에만 오는 행사 시작일 (`YYYY-MM-DD`, #681). 장소 추천과 장소가 없는 추천은 `null`.
+   * 화면이 확인 문구 바로 위에 기간 한 줄로 세운다 — 날짜 없이 행사 이름만 나가면 지난 행사인지 알 수 없다.
+   *
+   * 🚨 **근거가 아니다** (`place_notice` 와 같다). 🚨 날짜를 더하고 빼지 않는다 — "3일 남았어요" 같은 말을
+   *    만들지 않고 두 날짜를 그대로 적는다 (`docs/web/screen-rules-v1.md` §2).
+   */
+  event_starts_on: string | null;
+  /** 행사 종료일 (`YYYY-MM-DD`). 시작일과 같이 오고 같이 빈다. 하루짜리 행사면 시작일과 같다. */
+  event_ends_on: string | null;
   status: SuggestionStatus;
   /** 생성 +24h. 승인 없는 draft 는 여기서 만료된다 (NF-07). */
   expires_at: string;
@@ -323,6 +333,9 @@ export interface GeneralSuggestion {
   content: string;
   /** 장소가 붙은 추천의 확인 문구. 개인화와 같은 칸이다 (`Suggestion.place_notice`). 장소가 없으면 `null`. */
   place_notice: string | null;
+  /** 행사가 붙은 추천의 기간. 개인화와 같은 칸이다 (`Suggestion.event_starts_on`). 행사가 없으면 `null`. */
+  event_starts_on: string | null;
+  event_ends_on: string | null;
   /** "36개월 또래가 자주 찾는 놀이예요" · "요청하신 놀이에 맞춰 골랐어요" 처럼 무엇을 기준으로 골랐는지. 서버가 만든다. */
   basis: string;
   status: SuggestionStatus;
