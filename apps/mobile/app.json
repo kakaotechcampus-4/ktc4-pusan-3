@@ -10,7 +10,10 @@
     "userInterfaceStyle": "light",
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "kr.ai.icatch"
+      "bundleIdentifier": "kr.ai.icatch",
+      "infoPlist": {
+        "NSLocationDefaultAccuracyReduced": true
+      }
     },
     "android": {
       "package": "kr.ai.icatch",
@@ -26,6 +29,8 @@
         "android.permission.WRITE_EXTERNAL_STORAGE",
         "android.permission.SYSTEM_ALERT_WINDOW",
         "android.permission.VIBRATE",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_BACKGROUND_LOCATION",
         "android.permission.READ_APP_BADGE",
         "android.permission.RECEIVE_BOOT_COMPLETED",
         "com.anddoes.launcher.permission.UPDATE_COUNT",
@@ -63,6 +68,18 @@
         "expo-notifications",
         {
           "defaultChannel": "schedule"
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "근처 공원이나 도서관을 놀이 추천에 넣으려고 대략적인 위치를 써요. 휴대폰 안에서 약 1km 로 흐린 뒤 보내고 저장하지 않아요.",
+          "locationAlwaysAndWhenInUsePermission": false,
+          "locationAlwaysPermission": false,
+          "motionUsagePermission": false,
+          "isIosBackgroundLocationEnabled": false,
+          "isAndroidBackgroundLocationEnabled": false,
+          "isAndroidForegroundServiceEnabled": false
         }
       ]
     ],

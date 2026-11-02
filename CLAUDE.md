@@ -169,9 +169,10 @@
 │   │   ├── modules/          로컬 Expo 모듈 — `cookie-flush`(Android 웹뷰 쿠키를 디스크에 쓴다 · #469). 그 안의 `android/` 는 생성물이 아니라 소스다
 │   │   └── src/
 │   │       ├── config.ts     EXPO_PUBLIC_WEB_URL — 이 앱이 아는 유일한 주소
-│   │       └── native/       웹이 못 하는 것만 — safe area 크기 · 로그인 인증 세션 · 외부 링크 · 쿠키 flush 시점 · 기기 안 음성인식 · 일정 알림 토큰.
-│   │                         🚨 Android 실행 중 권한은 RECORD_AUDIO · POST_NOTIFICATIONS 둘이다. 마이크는 말로 적기(#595), 음성은 휴대폰 밖으로 안 나간다.
+│   │       └── native/       웹이 못 하는 것만 — safe area 크기 · 로그인 인증 세션 · 외부 링크 · 쿠키 flush 시점 · 기기 안 음성인식 · 일정 알림 토큰 · 흐린 위치.
+│   │                         🚨 Android 실행 중 권한은 RECORD_AUDIO · POST_NOTIFICATIONS · ACCESS_COARSE_LOCATION 셋이다. 마이크는 말로 적기(#595), 음성은 휴대폰 밖으로 안 나간다.
 │   │                         알림은 일정 알림(#609) — 나머지는 FCM 수신용 일반 권한이고, 패키지가 붙이는 배지 · 부팅 권한은 막았다.
+│   │                         위치는 대략 위치만(#593) — 정밀 · 백그라운드는 막았고, 좌표는 셸 안에서 소수점 둘째 자리로 흐린 값만 웹에 넘긴다.
 │   │                         사진 권한은 스토어 심사 때문에 뺐다 (#408)
 │   └── api/                  백엔드 + AI **한 서비스** (Python/FastAPI · uv)
 │       ├── CLAUDE.md         스택·레이어 경계 — 김명성 · 이시하 공동

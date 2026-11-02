@@ -6,6 +6,7 @@
     "expo": "57.0.28",
     "expo-constants": "~57.0.22",
     "expo-dev-client": "~57.0.20",
+    "expo-location": "~57.0.22",
     "expo-notifications": "~57.0.24",
     "expo-speech-recognition": "57.1.1",
     "expo-status-bar": "~57.0.1",
