@@ -33,6 +33,9 @@ yarn-error.*
 # local env files
 .env*.local
 
+# 일정 알림 FCM 설정 (#609). 저장소가 public 이다 — EAS 는 파일 환경변수(GOOGLE_SERVICES_JSON)로 받는다 (app.config.ts)
+google-services.json
+
 # typescript
 *.tsbuildinfo
 

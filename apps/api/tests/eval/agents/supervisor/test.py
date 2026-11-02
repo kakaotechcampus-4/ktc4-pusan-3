@@ -62,6 +62,7 @@ from app.rules.age import Stage
 from tests.eval.agents.food.world import build_world
 from tests.eval.agents.routing_cases import (
     CASES_BY_ID,
+    DATE_CASES,
     FC_CASES,
     GR_CASES,
     RC_CASES,
@@ -136,7 +137,7 @@ RESULT_PATH = Path(
 INPUT_PRICE = float(os.getenv("LLM_INPUT_PRICE_PER_M", "0"))
 OUTPUT_PRICE = float(os.getenv("LLM_OUTPUT_PRICE_PER_M", "0"))
 
-_CASES = (*RC_CASES, *T_CASES, *FC_CASES, *UNCLEAR_CASES)
+_CASES = (*RC_CASES, *T_CASES, *FC_CASES, *UNCLEAR_CASES, *DATE_CASES)
 
 # 앞으로의 계획. unclear 로 가면 일정으로 등록할지 묻지 못한다 (D8 · #624)
 _PLANS = ("T18", "T58")

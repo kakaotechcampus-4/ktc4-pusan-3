@@ -714,8 +714,8 @@
       "name": "General Suggestion Card",
       "kind": "card",
       "refersTo": "card-general",
-      "description": "근거가 없을 때. 점선 테두리 + 또래 기준 라벨 + 쌓인 기록 건수가 전부 필수다.",
-      "html": "<article class=\"ds-card-general\"><p class=\"ds-card-tag\">또래 기준 일반 추천</p><p class=\"ds-card-body-n\">5세가 좋아하는 놀이로 골랐어요. 종이컵 쌓기는 어때요?</p><p class=\"ds-card-meta\">쌓인 기록 2건 · 더 쌓이면 우리 아이 기준으로 바뀌어요</p></article>",
+      "description": "근거가 없을 때. 점선 테두리 + 일반 추천 라벨 + 쌓인 기록 건수가 전부 필수다. 라벨에 또래 기준을 붙이지 않는다 — 무엇을 기준으로 골랐는지는 기준 문구(서버 basis)가 말한다 (#597).",
+      "html": "<article class=\"ds-card-general\"><p class=\"ds-card-tag\">일반 추천</p><p class=\"ds-card-body-n\">5세가 좋아하는 놀이로 골랐어요. 종이컵 쌓기는 어때요?</p><p class=\"ds-card-meta\">쌓인 기록 2건 · 더 쌓이면 우리 아이 기준으로 바뀌어요</p></article>",
       "css": ".ds-card-general{display:block;background:var(--color-canvas);border:1px dashed var(--color-line-strong);border-radius:var(--radius-card);padding:16px;font-family:var(--font-sans);}.ds-card-tag{margin:0;font-size:0.8125rem;font-weight:500;line-height:1.4;color:var(--color-ink-muted)}.ds-card-body-n{margin:8px 0 0;font-size:1rem;line-height:1.6;color:var(--color-ink)}.ds-card-meta{margin:8px 0 0;font-size:0.75rem;line-height:1.4;color:var(--color-ink-subtle)}"
     },
     {
@@ -802,7 +802,7 @@
       },
       {
         "name": "The 일반 추천은 개인화와 섞이지 않는다 규칙",
-        "body": "근거가 부족하면 개인화 대신 또래 기준 일반 추천(card-general, canvas 바탕 + line-strong 1px 점선)을 그린다. 컴포넌트·타입·응답 필드가 전부 따로다 — GeneralSuggestion 에는 evidence 필드가 없어서 개인화 목록에 넘기면 컴파일이 막는다. 구분은 색이 아니라 라벨과 기록 건수가 진다.",
+        "body": "근거가 부족하면 개인화 대신 일반 추천(card-general, canvas 바탕 + line-strong 1px 점선)을 그린다. 컴포넌트·타입·응답 필드가 전부 따로다 — GeneralSuggestion 에는 evidence 필드가 없어서 개인화 목록에 넘기면 컴파일이 막는다. 구분은 색이 아니라 라벨과 기록 건수가 진다.",
         "section": "colors"
       },
       {
@@ -844,7 +844,7 @@
     "dos": [
       "Do 모든 색을 뜻과 1:1 로 쓴다. 도메인 색은 그 도메인에만, caution 은 승인 게이트 2곳에만, danger 는 알레르기·건강 중단·파괴적 확정에만.",
       "Do 색을 바꿀 때 그 색이 얹히는 배경과의 쌍을 다시 계산한다. soft 배경 위 텍스트는 canvas 가 아니라 그 soft 색과 비교한다.",
-      "Do 기록 건수 · 날짜 · 근거를 화면에 그대로 보여준다. 근거가 없으면 '또래 기준 일반 추천' 이라고 쓴다.",
+      "Do 기록 건수 · 날짜 · 근거를 화면에 그대로 보여준다. 근거가 없으면 '일반 추천' 이라고 쓴다.",
       "Do 상태 변화를 색으로만 만든다(120ms). 크기와 위치는 움직이지 않는다.",
       "Do 움직임은 상태가 바뀐 순간에만 쓴다(시트 · 펼침 · 교체 · 단계 넘김 · 자리 옮김 · 화면 전환). 처음 그려질 때는 움직이지 않고, 승인 게이트 안에는 색 변화 말고 넣지 않는다.",
       "Do 브라우저가 대신 칠하는 표면(선택 영역 · 캐럿 · 탭 하이라이트 · 스크롤바)도 팔레트 안에 둔다.",

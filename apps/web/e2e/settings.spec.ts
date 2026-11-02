@@ -1,9 +1,9 @@
 import type { Page } from "@playwright/test";
 
-import { asOtherCaregiver, CHILD, expect, test } from "./fixtures";
+import { asOtherCaregiver, CHILD, expect, recordApi, test, writes } from "./fixtures";
 
 /**
- * 10 설정 — 함께 보는 보호자 (#336 · #351).
+ * 10 설정 — 함께 보는 보호자 (#336 · #351), 알림 (#609).
  *
  * 누가 누구를 끊을 수 있는지가 **버튼이 서는 자리**로 화면에 나타나는지 본다. 서버가 다시
  * 막는 것(403 `owner_only` · 409 `owner_required`)은 계약 테스트가 건다.
@@ -131,3 +131,54 @@ async function joinAndOpenSettings(page: Page): Promise<string> {
   await expect(page.getByRole("button", { name: "나가기" })).toHaveCount(1);
   return childId;
 }
+
+/* ── 알림 (#609) ──────────────────────────────────────────────────────── */
+
+test.describe("알림", () => {
+  test("일정 알림을 끄면 두 칸을 키 없이 보내고, 서버가 돌려준 값으로 상태와 안내가 바뀐다", async ({
+    page,
+  }) => {
+    const calls = recordApi(page);
+    await page.goto(`/child/${CHILD}/settings`);
+
+    const row = page.getByRole("listitem").filter({ hasText: "일정 알림" });
+    await expect(row.getByText("켜짐", { exact: true })).toBeVisible();
+    await expect(row.getByText("일정마다 고른 시각에 알려 드려요.")).toBeVisible();
+
+    const saved = page.waitForResponse(
+      (res) =>
+        res.request().method() === "PUT" &&
+        new URL(res.url()).pathname === "/api/v1/me/notification-settings",
+    );
+    await row.getByRole("button", { name: "끄기" }).click();
+
+    // 🚨 낙관적으로 바꾸지 않는다 — 응답이 오기 전에는 "켜짐" 그대로이고 버튼만 잠긴다
+    //    (목의 응답 지연 220ms · `networkDelay`). 응답 뒤의 "꺼짐" 은 서버가 돌려준 값이다.
+    await expect(row.getByRole("button", { name: "끄기" })).toBeDisabled();
+    await expect(row.getByText("켜짐", { exact: true })).toBeVisible();
+    expect(await (await saved).json()).toEqual({
+      schedule_enabled: false,
+      medication_enabled: true,
+    });
+    await expect(row.getByText("꺼짐", { exact: true })).toBeVisible();
+    // 🚨 끄면 발송만 멈춘다 — 걸어 둔 알림이 지워지는 줄 알지 않게 줄이 말한다.
+    await expect(row.getByText("걸어 둔 알림은 남아 있어요.", { exact: false })).toBeVisible();
+    await expect(row.getByRole("button", { name: "켜기" })).toBeVisible();
+    // 🚨 두 칸을 함께 보낸다 (한 칸이면 서버가 400). 개인 설정이라 Idempotency-Key 가 없다.
+    expect(writes(calls, "PUT", /\/me\/notification-settings$/)).toEqual([
+      {
+        method: "PUT",
+        path: "/me/notification-settings",
+        body: { schedule_enabled: false, medication_enabled: true },
+        idempotencyKey: undefined,
+      },
+    ]);
+  });
+
+  test("🚨 복약 알림 줄은 없다 — 발송이 없어서 켜도 아무 일이 없는 줄이 된다", async ({ page }) => {
+    await page.goto(`/child/${CHILD}/settings`);
+    await expect(page.getByRole("heading", { name: "알림" })).toBeVisible();
+    await expect(page.getByText("일정 알림", { exact: true })).toBeVisible();
+    await expect(page.getByText("복약 알림")).toHaveCount(0);
+  });
+});

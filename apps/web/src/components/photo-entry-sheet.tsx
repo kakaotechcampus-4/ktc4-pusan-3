@@ -4,6 +4,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { X } from "lucide-react";
 import { useState } from "react";
 
+import { ReminderField } from "@/components/reminder-field";
 import { BottomSheet } from "@/components/ui/bottom-sheet";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -13,11 +14,12 @@ import { Spinner } from "@/components/ui/spinner";
 import { TextInput } from "@/components/ui/text-input";
 import { TimeField } from "@/components/ui/time-field";
 import { qk, submitEventDraft } from "@/lib/api";
-import type { PhotoEntry } from "@/lib/api/types";
+import type { PhotoEntry, SubmitEventBody } from "@/lib/api/types";
 import { useIdempotencyKey } from "@/lib/api/use-idempotency-key";
 import { cn } from "@/lib/cn";
 import { withSeoulDateTime } from "@/lib/event-draft";
 import { formatDay } from "@/lib/format";
+import { forKind, isPast, NO_REMINDER, type ReminderChoice } from "@/lib/reminder";
 
 /**
  * 08 사진 — 읽어낸 항목 **하나**를 고치는 시트.
@@ -159,6 +161,9 @@ function EntryForm({
    *    끄면 실제로 그렇게 나가고 있었다 (#151 · `lib/event-draft.ts` 머리말).
    */
   const [time, setTime] = useState("");
+  /** 넣을 일정의 내 알림 (#609 · 초안 카드와 같은 칸). 🚨 기본값은 "없음" 이다. */
+  const [reminder, setReminder] = useState<ReminderChoice>(NO_REMINDER);
+  const startsAt = withSeoulDateTime(date, time, allDay);
 
   /** 🚨 한 항목이 사용자 동작 하나다. 재시도는 같은 키로 간다. */
   const eventKey = useIdempotencyKey();
@@ -184,23 +189,22 @@ function EntryForm({
      * 🚨 **보낸 시각을 뮤테이션 변수로 들고 간다.** `onSuccess` 에서 다시 조립하면 그 사이
      *    칸을 만진 값이 잡혀서, **캘린더에 들어간 것과 목록이 말하는 것이 달라진다.**
      */
-    mutationFn: (startsAt: string) =>
-      submitEventDraft(
-        childId,
-        {
-          event: {
-            title: title.trim(),
-            starts_at: startsAt,
-            ends_at: null,
-            all_day: allDay,
-            event_type: "episodic",
-            // 🚨 알림장에서 읽은 것은 기관이 알려준 일정이다 (계약서 §09 와 같은 출처 판정).
-            category: "institution",
-          },
-          items: showItems ? items.map((item) => ({ item_id: null, item_name: item })) : [],
+    mutationFn: (startsAt: string) => {
+      const body: SubmitEventBody = {
+        event: {
+          title: title.trim(),
+          starts_at: startsAt,
+          ends_at: null,
+          all_day: allDay,
+          event_type: "episodic",
+          // 🚨 알림장에서 읽은 것은 기관이 알려준 일정이다 (계약서 §09 와 같은 출처 판정).
+          category: "institution",
         },
-        eventKey.current(),
-      ),
+        items: showItems ? items.map((item) => ({ item_id: null, item_name: item })) : [],
+        reminder: reminder === NO_REMINDER ? null : { lead: reminder },
+      };
+      return submitEventDraft(childId, body, eventKey.current());
+    },
     onSuccess: async (_res, startsAt) => {
       // 🚨 성공한 뒤에만 다음 키로 넘어간다. 실패 뒤 다시 누르는 것은 재시도라 같은 키여야 한다.
       eventKey.rotate();
@@ -218,7 +222,6 @@ function EntryForm({
 
   /** 🚨 잠금이 그대로면 버튼이 비활성이라 여기 못 온다 — 타입을 좁히는 자리다. */
   function addToCalendar() {
-    const startsAt = withSeoulDateTime(date, time, allDay);
     if (startsAt !== null) addEvent.mutate(startsAt);
   }
 
@@ -234,6 +237,10 @@ function EntryForm({
     date === "" ? "날짜를 골라주셔야 넣을 수 있어요." : null,
     // 🚨 하루 종일이면 시각을 안 묻는다 — 물을 것이 없는 것이지 안 고른 것이 아니다.
     !allDay && time === "" ? "몇 시에 시작하는지 골라주셔야 넣을 수 있어요." : null,
+    // 🚨 조용히 "없음" 으로 바꾸지 않는다 — 고른 것과 들어간 것이 달라진다 (초안 카드와 같다).
+    reminder !== NO_REMINDER && startsAt !== null && isPast(reminder, startsAt, allDay)
+      ? "고른 알림 시각이 이미 지났어요. 알림을 다시 골라주셔야 넣을 수 있어요."
+      : null,
   ].filter((reason) => reason !== null);
 
   function submit() {
@@ -346,12 +353,27 @@ function EntryForm({
             </p>
           ) : asEvent ? (
             <div className="mt-3 flex flex-col gap-3">
-              <Checkbox checked={allDay} onChange={setAllDay} label="하루 종일" />
+              <Checkbox
+                checked={allDay}
+                onChange={(next) => {
+                  setAllDay(next);
+                  // 🚨 지우지 않고 날 수를 지켜 옮긴다 — 서버 `for_kind` 와 같은 방향이다.
+                  setReminder((prev) => forKind(prev, next));
+                }}
+                label="하루 종일"
+              />
 
               {/* 🚨 **하루 종일이면 칸을 감춘다** (초안 카드와 같은 처리). 알림장에서 읽어낸
                   것에는 시각이 없어서 이 칸은 늘 비어서 시작한다 — 고르기 전에는 아래 버튼이
                   잠기고, 왜 잠겼는지는 버튼 위에서 말한다. */}
               {!allDay ? <TimeField label="시작 시간" value={time} onChange={setTime} /> : null}
+
+              <ReminderField
+                startsAt={startsAt}
+                allDay={allDay}
+                value={reminder}
+                onChange={setReminder}
+              />
 
               {addEvent.isError ? (
                 // 🚨 실패를 빨강으로 칠하지 않는다 (디자인 시스템 §3).

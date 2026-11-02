@@ -151,7 +151,7 @@
 │   │   ├── CLAUDE.md         스택·버전 · API 클라이언트 관례 · 화면 규칙 — 고태영
 │   │   ├── package.json      pnpm · 버전 고정 (^ 없음)
 │   │   ├── pnpm-lock.yaml    ⚠️ 반드시 커밋
-│   │   ├── .env.example      NEXT_PUBLIC_API_BASE_URL 템플릿
+│   │   ├── .env.example      NEXT_PUBLIC_API_BASE_URL · 웹 푸시 Firebase 값 템플릿 (값은 넣지 않는다)
 │   │   ├── Dockerfile        배포 이미지 (standalone 3단계). 🚨 API 주소는 빌드 인자다 — 런타임에 못 바꾼다
 │   │   ├── .dockerignore     빌드 컨텍스트 제외 목록. `.env*` 를 여기서 막는다
 │   │   ├── e2e/              Playwright 화면 규칙 테스트 (`make web-e2e`) — §2 가 화면에서 지켜지는지를 목 서버로 건다
@@ -169,8 +169,10 @@
 │   │   ├── modules/          로컬 Expo 모듈 — `cookie-flush`(Android 웹뷰 쿠키를 디스크에 쓴다 · #469). 그 안의 `android/` 는 생성물이 아니라 소스다
 │   │   └── src/
 │   │       ├── config.ts     EXPO_PUBLIC_WEB_URL — 이 앱이 아는 유일한 주소
-│   │       └── native/       웹이 못 하는 것만 — safe area 크기 · 로그인 인증 세션 · 외부 링크 · 쿠키 flush 시점 · 기기 안 음성인식.
-│   │                         🚨 Android 권한은 INTERNET · RECORD_AUDIO 둘이다. 마이크는 말로 적기(#595), 음성은 휴대폰 밖으로 안 나간다.
+│   │       └── native/       웹이 못 하는 것만 — safe area 크기 · 로그인 인증 세션 · 외부 링크 · 쿠키 flush 시점 · 기기 안 음성인식 · 일정 알림 토큰 · 흐린 위치.
+│   │                         🚨 Android 실행 중 권한은 RECORD_AUDIO · POST_NOTIFICATIONS · ACCESS_COARSE_LOCATION 셋이다. 마이크는 말로 적기(#595), 음성은 휴대폰 밖으로 안 나간다.
+│   │                         알림은 일정 알림(#609) — 나머지는 FCM 수신용 일반 권한이고, 패키지가 붙이는 배지 · 부팅 권한은 막았다.
+│   │                         위치는 대략 위치만(#593) — 정밀 · 백그라운드는 막았고, 좌표는 셸 안에서 소수점 둘째 자리로 흐린 값만 웹에 넘긴다.
 │   │                         사진 권한은 스토어 심사 때문에 뺐다 (#408)
 │   └── api/                  백엔드 + AI **한 서비스** (Python/FastAPI · uv)
 │       ├── CLAUDE.md         스택·레이어 경계 — 김명성 · 이시하 공동
@@ -299,6 +301,9 @@
 🚨 **이 저장소는 public 이다.** 1단계에서 학생 API 토큰 8건이 실제로 유출됐고, 노트북·`docs/*.md` 본문에서도 나왔다.
 
 - `.env` 는 커밋하지 않는다. 프론트 번들에 API 키를 넣지 않는다.
+  - 예외는 **Firebase 웹 설정값**(`NEXT_PUBLIC_FIREBASE_*`) 하나다 (#609). 웹 푸시 토큰을 받는 데 쓰는 공개 식별자라
+    번들에 들어가야 동작한다. 그래도 **값은 저장소에 쓰지 않는다** (`.env.local` · `deploy/docker/.env`).
+    서버의 FCM 서비스 계정 키는 비밀이고 프론트에 오지 않는다 ([`docs/web/web-push-v1.md`](docs/web/web-push-v1.md))
 - `/api/v1` 엔드포인트는 기본적으로 Bearer 인증을 요구한다. 로그인 자체를 시작·완료하기
   위한 아래 5개, 쿠키로 access 를 다시 받는 `POST /auth/refresh`, 가입 전 동의 화면이 약관을 읽는
   `GET /policies` · `GET /policies/{scope}/{version}`, 개인정보 처리방침 정본 `GET /privacy-policy` ·
