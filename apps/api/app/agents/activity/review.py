@@ -428,7 +428,9 @@ def _attach(
     줄인 이름을 쓰고, 거절되면 place_name 만 비우고 행사를 문장에 남겼다. 그래서
     - place_name 이 장소 이름이면 장소다. 문장에 그 장소에서 열리는 행사를 썼으면 그 행사다.
     - 아니면 행사 이름 · 줄인 이름 · 개최 장소로 찾는다. 개최 장소가 같은 행사가 여럿이면 문장의
-      행사 이름으로 고르고, 문장에도 없으면 못 고른다(UNKNOWN_PLACE).
+      행사 이름으로 고르고, 문장에도 없으면 못 고른다(UNKNOWN_PLACE). 개최 장소를 여럿 적은 행사
+      ("○○해수욕장, △△ 일원")는 그중 한 곳만 써도 문장에 그 행사가 있으면 그 행사다 — 문장에 없으면
+      그곳에서 하는 다른 활동일 수 있어 붙이지 않는다.
     - place_name 이 비어도 문장에 행사 이름이 나오면 그 행사다 — 🚨 행사 이름이 나간 후보는 반드시
       붙어서 그날 열리는지 · 바깥이 되는지 검증을 받는다.
     - 한 후보에 장소 · 행사가 둘이면 거절한다(MIXED_PLACES) — 하나만 붙고 나머지는 검증 없이 나간다.
@@ -442,16 +444,18 @@ def _attach(
     if (place := known.places.get(declared)) is not None:
         if not named:
             return None, place
-        hosted = [row for row in named.values() if declared in normalize_activity(row.place)]
-        if len(named) == 1 and hosted:
-            return None, hosted[0]
+        # 그 장소에서 열리는 행사를 문장에 썼으면 그 행사다
+        if len(named) == 1 and _held_at(declared, row := next(iter(named.values()))):
+            return None, row
         return RejectReason.MIXED_PLACES, None
     pointed = known.pointed(declared)
+    if len(named) == 1:
+        row = next(iter(named.values()))
+        if row.name in pointed or _held_at(declared, row):
+            return None, row
     if not pointed:
         return RejectReason.UNKNOWN_PLACE, None
     if named:
-        if len(named) == 1 and named.keys() <= pointed.keys():
-            return None, next(iter(named.values()))
         return RejectReason.MIXED_PLACES, None
     if len(pointed) == 1:
         return None, next(iter(pointed.values()))
@@ -528,6 +532,11 @@ def place_notice(place: PlaceRow | EventRow) -> str:
     return READOUTS.render(
         PLACE_NOTICE, year=place.data_date.year, month=place.data_date.month
     ).body
+
+
+def _held_at(declared: str, event: EventRow) -> bool:
+    """정규화한 place_name 이 행사 개최 장소의 일부인가 — 개최 장소를 여럿 적은 행사의 한 곳."""
+    return len(declared) >= MIN_EVENT_NAME and declared in normalize_activity(event.place)
 
 
 def _with_place(content: str, place: PlaceRow | EventRow | None) -> str:

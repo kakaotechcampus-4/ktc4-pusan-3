@@ -619,6 +619,29 @@ class TestEventName:
         (draft,) = review(named, events=events).drafts
         assert draft.place_notice == EVENT_NOTICE
 
+    def test_개최_장소를_여럿_적은_행사는_그중_한_곳만_써도_문장의_행사로_붙는다(self):
+        """TourAPI 개최 장소는 "○○해수욕장, △△, □□ 일원" 처럼 여럿일 때가 있고, 모델은 그중 한 곳을
+        쓴다 — 거절하면 한 바퀴를 더 돈다 (11-03 실측)."""
+        dance = replace(
+            FEST_ROW, name="달빛 체조 챌린지", place="시민공원 다솜광장 / 북항공원 잔디광장"
+        )
+        (draft,) = review(
+            candidate(content="달빛 체조 챌린지 구경하기", place_name="북항공원 잔디광장"),
+            events={dance.name: dance},
+        ).drafts
+        assert draft.place_notice == EVENT_NOTICE
+
+    def test_개최_장소의_한_곳만_쓰고_문장에_행사가_없으면_붙이지_않는다(self):
+        """그곳에서 하는 다른 활동(잔디밭 공놀이)일 수 있다 — 행사 문구가 잘못 붙는다."""
+        dance = replace(
+            FEST_ROW, name="달빛 체조 챌린지", place="시민공원 다솜광장 / 북항공원 잔디광장"
+        )
+        result = review(
+            candidate(content="잔디밭에서 공 굴리기", place_name="북항공원 잔디광장"),
+            events={dance.name: dance},
+        )
+        assert reason_of(result) is RejectReason.UNKNOWN_PLACE
+
     @pytest.mark.parametrize("place_name", ["대한민국 정원문화박람회", "정원문화박람회"])
     def test_줄여_쓴_행사_이름으로도_붙는다(self, place_name):
         """연도를 뗀 이름, 그 안의 긴 낱말(6자 이상)로도 알아본다."""
