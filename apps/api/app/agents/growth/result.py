@@ -22,6 +22,8 @@ class ErrorCode(CommonErrorCode):
     # 출력 검증에서 후보가 거절됨 → 사유대로 고쳐 다시 제출한다.
     # 안전 필터 · 금지 표현에 걸린 후보는 이 코드가 아니다 — 빠지고 사유도 알려 주지 않는다
     CANDIDATE_REJECTED = "CANDIDATE_REJECTED"
+    # 이번 run 의 도서 검색어를 다 썼다 → 찾은 책 중에서 고르거나 빈 목록으로 제출한다
+    SEARCH_LIMIT = "SEARCH_LIMIT"
 
 
 def ok(operation: Operation, resource: str, **data: Any) -> ToolResult:

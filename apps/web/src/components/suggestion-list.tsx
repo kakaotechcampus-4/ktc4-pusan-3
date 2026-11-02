@@ -138,22 +138,24 @@ export function SuggestionList({
       {/* 🚨 **묶음이 하나면 탭을 세우지 않는다.** 고를 것이 없는 탭 줄은 자리만 먹고, 누를 수
           있어 보이는데 아무 일도 안 일어난다. */}
       {order.length > 1 ? (
-        <PanelTabs
-          label="어느 영역의 제안을 볼까요"
-          panelId={PANEL_ID}
-          active={agent}
-          onChange={(key) => setOpen(key as Agent)}
-          items={order.map((a) => ({
-            key: a,
-            /**
-             * 🚨 **도메인 색을 탭에 얹지 않는다.** 두 탭에 `-soft` 면을 깔면 꺼진 탭이 켜진
-             *    것처럼 보이고, 활성 신호(`brand` 밑줄 + 잉크)와 도메인 신호가 같은 줄에서
-             *    싸운다. 남는 것은 **아이콘 모양**이고 색은 탭의 상태색을 따라간다.
-             */
-            icon: a,
-            label: `${domainLabel(a)} ${drawable.filter((s) => s.agent === a).length}가지`,
-          }))}
-        />
+        <div data-tour="tabs">
+          <PanelTabs
+            label="어느 영역의 제안을 볼까요"
+            panelId={PANEL_ID}
+            active={agent}
+            onChange={(key) => setOpen(key as Agent)}
+            items={order.map((a) => ({
+              key: a,
+              /**
+               * 🚨 **도메인 색을 탭에 얹지 않는다.** 두 탭에 `-soft` 면을 깔면 꺼진 탭이 켜진
+               *    것처럼 보이고, 활성 신호(`brand` 밑줄 + 잉크)와 도메인 신호가 같은 줄에서
+               *    싸운다. 남는 것은 **아이콘 모양**이고 색은 탭의 상태색을 따라간다.
+               */
+              icon: a,
+              label: `${domainLabel(a)} ${drawable.filter((s) => s.agent === a).length}가지`,
+            }))}
+          />
+        </div>
       ) : null}
 
       <section
@@ -183,7 +185,7 @@ export function SuggestionList({
             {/* 🚨 탭이 있으면 이름·건수를 여기서 다시 말하지 않는다 — 탭이 "놀이 3가지" 로
                 이미 말해서 60px 안에 같은 말이 두 번 선다. 탭이 없을 때(묶음 하나)만 선다. */}
             {/* 🚨 **같은 영역의 일반 추천이 같이 서면 무엇을 셌는지 말한다** (#512 리뷰). 건수는 개인화
-                줄만 센 것이고, 일반 카드는 자기 라벨("또래 기준 일반 추천")로 따로 말한다. 합쳐 세지
+                줄만 센 것이고, 일반 카드는 자기 라벨("일반 추천")로 따로 말한다. 합쳐 세지
                 않는 이유는 일반 카드가 이 묶음 밖에 서서다 — 탭이 있으면 "4가지" 탭을 눌러도 셋만 보인다.
                 ⚠️ 탭 이름("식사 3가지")은 그대로다. 탭 이름은 패널 안 줄 수와 맞다. */}
             {order.length > 1 ? null : (
@@ -202,9 +204,11 @@ export function SuggestionList({
             한 묶음인지 안 보인다" 였는데, **탭이 그 일을 가져갔다** — 한 번에 한 묶음만 서고
             묶음의 이름과 질문은 탭과 머리줄이 말한다. 그래서 상자는 최대 셋이다. */}
         <ul className="flex flex-col gap-3">
-          {rows.map((suggestion) => (
+          {rows.map((suggestion, i) => (
             <li
               key={suggestion.id}
+              // 화면 투어는 첫 후보를 비춘다 (`lib/tour/screens/suggestions.ts`).
+              data-tour={i === 0 ? "row" : undefined}
               /**
                * 🚨 **고른 카드는 테두리와 띠가 **함께** `brand` 가 된다.** 색의 뜻은
                *    `chip-choice`(고르는 칩)와 같은 "골랐음" 이다.
@@ -319,7 +323,10 @@ function SuggestionRow({
         {/* 🚨 **근거는 선 아래에 둔다.** 제안·이유와 같은 무게로 쌓으면 이 제품의 차별점인
             근거가 본문에 묻힌다. 나누는 것은 카드 속 카드가 아니라 **가는 선 하나**다.
             이유가 없으면 선이 제안 문장 바로 아래로 올라오니, 제안과의 사이를 이유 자리(16)로 둔다. */}
-        <div className={cn("border-line border-t pt-3", reason ? "mt-3" : "mt-4")}>
+        <div
+          data-tour="evidence"
+          className={cn("border-line border-t pt-3", reason ? "mt-3" : "mt-4")}
+        >
           <EvidenceList evidence={suggestion.evidence} />
         </div>
 

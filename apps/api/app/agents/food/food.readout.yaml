@@ -1,7 +1,7 @@
 # Food 의 코드 상수 문구 (Food_Tool_명세.md §4). 모델을 거치지 않고 화면에 그대로 나간다.
 # 테스트(test_food_readouts.py)가 명세 §4 표와 글자 단위로 비교한다. 문구를 바꾸면 명세도 같이 고친다.
 # `{menu}` · `{recorded}` · `{date}` · `{slot}` · `{label}` · `{nutrient}` · `{action}` · `{days}` ·
-# `{group}` · `{count}` 자리는 코드가 만든 값으로만 채운다.
+# `{group}` · `{count}` · `{food}` · `{when}` · `{labels}` · `{what}` 자리는 코드가 만든 값으로만 채운다.
 
 unsupported.milk_meal:
   kind: unsupported
@@ -105,3 +105,45 @@ daycare.replaced_unknown:
 daycare.unchanged:
   kind: daycare
   template: "급식 기록은 그대로 두었어요."
+check.blocked_safety:
+  kind: blocked
+  template: "알레르기 정보를 확인할 수 없어서 지금은 답을 드릴 수 없어요."
+check.conflict:
+  kind: check
+  template: "{food}{은는} 등록해 두신 {label}{와과} 겹쳐요."
+check.peanut_in_nuts:
+  kind: check
+  template: "땅콩은 콩과 식물이지만 견과류와 함께 막고 있어요."
+check.age_block:
+  kind: check
+  template: "{food}{은는} {when} 먹이지 않는 음식이에요."
+check.choking:
+  kind: check
+  template: "{food}{은는} {when} 목에 걸릴 수 있어서, 먹는 동안 곁에서 지켜봐 주세요."
+check.not_found:
+  kind: check
+  template: "{food} 이름으로는 등록해 두신 {labels}{와과} 겹치는 걸 찾지 못했어요."
+check.unknown_food:
+  kind: check
+  template: "음식 이름을 알아보지 못해서 연령 기준과 등록해 두신 {labels}{와과} 겹치는지는 확인하지 못했어요."
+check.unknown_food_plain:
+  kind: check
+  template: "음식 이름을 알아보지 못해서 연령 기준에 걸리는지는 확인하지 못했어요."
+check.ingredients_caveat:
+  kind: check
+  template: "여러 재료가 든 음식이면 들어간 재료나 성분표를 한 번 더 확인해 주세요."
+check.none_registered:
+  kind: check
+  template: "등록된 알레르기가 없어서 알레르기는 확인하지 못했어요."
+check.no_consent:
+  kind: check
+  template: "건강 정보 이용에 동의하지 않아서 알레르기는 확인하지 않았어요."
+check.ask_food:
+  kind: followup
+  template: "어떤 음식인지 알려 주시면 등록된 알레르기와 겹치는지 볼게요."
+meal.request_conflict:
+  kind: notice
+  template: "요청하신 {food}에는 등록해 두신 {what}와 겹치는 것이 있어서 그런 메뉴는 빼고 골랐어요."
+meal.request_age_block:
+  kind: notice
+  template: "요청하신 {food}{은는} {when} 먹이지 않아서 빼고 골랐어요."

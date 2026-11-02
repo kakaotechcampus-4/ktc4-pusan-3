@@ -157,7 +157,6 @@ export function EventDraftList({
   if (rows.length === 0) return null;
 
   const index = Math.min(page, rows.length - 1);
-  const current = rows[index];
   const done = submittedIds.length;
   const multiple = rows.length > 1;
 
@@ -172,18 +171,23 @@ export function EventDraftList({
         </p>
       </div>
 
-      {/* 🚨 `key` 에 `draft_id` 를 준다. 안 주면 넘길 때 React 가 같은 카드를 재사용해서
-          앞 장에서 고친 값(제목 · 날짜 · 준비물)이 다음 장에 그대로 남는다. */}
-      <DraftRow
-        key={current.draft.draft_id}
-        childId={childId}
-        draft={current.draft}
-        blocked={blockedDraftIds?.includes(current.draft.draft_id) ?? false}
-        lockReason={lockReason}
-        onSubmitted={(draftId) =>
-          setSubmittedIds((prev) => (prev.includes(draftId) ? prev : [...prev, draftId]))
-        }
-      />
+      {/* 🚨 **모든 장을 마운트해 두고 지금 장만 보인다** (#537 리뷰). 지금 장만 그리면 넘길 때 앞 장이 언마운트되면서
+          제출 상태와 키 홀더가 같이 사라졌다 — 넣은 장으로 돌아오면 "아직 저장되지 않았어요" 로 되살아나 **새 키로
+          한 번 더** 넣을 수 있었다(일정 두 건). 결과를 확인하지 못한 제출 뒤 넘겼다 돌아와 다시 누르는 것도 새 키였다.
+          🚨 `key` 는 `draft_id` 다 — 장마다 자기 칸 값(제목 · 날짜 · 준비물)과 자기 키를 든다. */}
+      {rows.map((row, i) => (
+        <div key={row.draft.draft_id} hidden={i !== index}>
+          <DraftRow
+            childId={childId}
+            draft={row.draft}
+            blocked={blockedDraftIds?.includes(row.draft.draft_id) ?? false}
+            lockReason={lockReason}
+            onSubmitted={(draftId) =>
+              setSubmittedIds((prev) => (prev.includes(draftId) ? prev : [...prev, draftId]))
+            }
+          />
+        </div>
+      ))}
 
       {multiple ? (
         <div className="flex flex-col gap-2">

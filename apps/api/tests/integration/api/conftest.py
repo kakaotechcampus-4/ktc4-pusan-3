@@ -1,9 +1,11 @@
 """이 폴더의 API 테스트가 같이 쓰는 픽스처."""
 
+import asyncio
 import uuid
 from datetime import UTC, date, datetime, timedelta
 
 import pytest
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.entrypoint import PendingMemoryContext
@@ -13,6 +15,7 @@ from app.api.runs import pending_reply, suggestion_retry
 from app.domains.child.models import Child, ParentChild, ParentChildRelation
 from app.domains.identity.models import Parent
 from app.domains.identity.repository import create_access, create_session
+from app.infra.db.session import engine
 
 Bearer = tuple[dict[str, str], uuid.UUID]
 """(Authorization 헤더, parent_id)."""
@@ -142,3 +145,37 @@ def in_memory(run_id: str, *, parent_id: uuid.UUID, child_id: uuid.UUID) -> tupl
         pending_reply.get(**owner) is not None,
         suggestion_retry.empty_message(agent="food", **owner) is not None,
     )
+
+
+async def backend_pid(session: AsyncSession) -> int:
+    """그 세션이 쥔 DB 연결의 pid — `wait_for_lock_wait` 에 넘긴다."""
+    return await session.scalar(text("SELECT pg_backend_pid()"))
+
+
+async def wait_for_lock_wait(
+    *, blocker: int | None = None, waiter: int | None = None, timeout: float = 5.0
+) -> None:
+    """다른 연결이 실제로 잠금에서 기다리기 시작할 때까지 기다린다 (겹치는 요청 테스트용).
+
+    `blocker` 를 주면 그 연결이 쥔 잠금에서 기다리는 연결을, `waiter` 를 주면 그 연결이 무엇이든
+    잠금에서 기다리는지를 본다.
+    🚨 `sleep` 으로 "그쯤이면 도착했겠지" 를 두면, 상대가 잠금에 닿기 전에 커밋해 버려 겹치지 않은
+       채 통과할 수 있다 — 검사가 아무것도 증명하지 못한다.
+    pg_stat_activity 는 트랜잭션 안에서 한 번 찍은 값을 계속 보여 줘서 매번 새 연결로 묻는다.
+    """
+    query = text(
+        "SELECT count(*) FROM pg_stat_activity"
+        " WHERE cardinality(pg_blocking_pids(pid)) > 0"
+        " AND (CAST(:waiter AS int) IS NULL OR pid = :waiter)"
+        " AND (CAST(:blocker AS int) IS NULL OR :blocker = ANY(pg_blocking_pids(pid)))"
+    )
+    deadline = asyncio.get_running_loop().time() + timeout
+    while True:
+        async with engine.connect() as probe:
+            if await probe.scalar(query, {"waiter": waiter, "blocker": blocker}):
+                return
+        if asyncio.get_running_loop().time() > deadline:
+            raise AssertionError(
+                "겹치는 요청이 잠금에서 기다리지 않았다 — 테스트가 겹침을 재현하지 못했다"
+            )
+        await asyncio.sleep(0.02)

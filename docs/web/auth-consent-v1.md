@@ -100,7 +100,8 @@
 | 받는 곳 | 교환 · 가입 응답, `POST /auth/refresh` 응답 | 교환 · 가입 · refresh 가 심고(회전), 로그아웃 · 탈퇴가 지운다 |
 
 - 🚨 **토큰을 어떤 저장소에도 두지 않는다.** `localStorage` 금지는 그대로고(이유는 `apps/web/CLAUDE.md` §4 의 XSS 항목 · [`docs/api/auth-kakao-v1.md`](../../docs/api/auth-kakao-v1.md) §7-7), 이제 `sessionStorage` 에도 두지 않는다. 메모리의 access 는 15분이면 끝나고, 오래 사는 refresh 는 JS 가 읽지 못한다.
-  남기는 것은 `activeChildId` 하나다(`localStorage` 의 `icatch.active-child`) — 권한 근거가 아니라 "마지막에 본 아이" 이고, 앱을 다시 켰을 때 그 아이의 홈으로 열려고 둔다. 쓰기 전에 `/me` 목록에 있는지 본다 (`lib/auth/landing.ts`)
+  세션 쪽에서 남기는 것은 `activeChildId` 하나다(`localStorage` 의 `icatch.active-child`) — 권한 근거가 아니라 "마지막에 본 아이" 이고, 앱을 다시 켰을 때 그 아이의 홈으로 열려고 둔다. 쓰기 전에 `/me` 목록에 있는지 본다 (`lib/auth/landing.ts`)
+  ⚠️ 세션과 무관하게 **화면 투어의 "봤음"** 도 `localStorage` 에 있다(`icatch.tour.seen.<보호자 id>` · 투어 이름 목록뿐 · #632). 보호자 id 가 키에 드는 것은 한 기기에서 다른 보호자로 로그인하면 그 사람은 아직 안 봤기 때문이다. 로그아웃 · 탈퇴로 지우지 않는다(다시 로그인한 같은 사람에게 다시 뜨지 않게). 서버 테이블로 옮기면 이 키는 없어진다 ([`screen-tour-v1.md`](screen-tour-v1.md) §2)
 - 토큰은 불투명 난수다. **JWT 가 아니니 디코딩해서 정보를 꺼내려 하지 않는다**
 - **앱을 켜면 `restore()` 가 `POST /auth/refresh` 를 부른다** (Providers · 목이 뜬 뒤). 200 이면 로그인, 401 이면 로그인 전이다.
   🚨 **서버에 닿지 못한 것(네트워크 · 5xx)은 로그아웃이 아니다** — `restoreFailed` 로 갈라 `SessionUnreachable`(연결 확인 + 다시 시도)을 세우고, 로그인 화면으로 보내지 않는다. 쿠키가 그대로라 연결이 돌아오면 이어진다

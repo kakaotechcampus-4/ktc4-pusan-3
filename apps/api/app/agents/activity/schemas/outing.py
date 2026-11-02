@@ -35,7 +35,8 @@ class SearchNearbyPlacesArgs(ToolArgs):
         PlaceCategory,
         Field(
             description=(
-                "park / playground / library / indoor_playground / experience_center 중 하나"
+                "park / playground / library / indoor_playground 중 하나. "
+                "experience_center 는 아직 데이터가 없다"
             ),
         ),
     ]

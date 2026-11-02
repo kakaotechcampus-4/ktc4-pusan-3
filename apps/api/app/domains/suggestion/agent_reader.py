@@ -1,6 +1,11 @@
-"""Food 의 추천 이력 포트(`SuggestionHistoryReader`)를 `suggestion` 표로 구현한다.
+"""Agent 가 읽는 추천 이력 포트 둘을 `suggestion` 표로 구현한다.
 
-같은 메뉴를 며칠 안에 다시 내지 않으려고 Food 가 읽는다(`meal_pool.RECENT_DAYS`). `suggestion` 에는
+- Food 의 `SuggestionHistoryReader`(`DbSuggestionHistory`) — 같은 메뉴를 며칠 안에 다시 내지
+  않으려고 읽는다. 아래 Food 설명.
+- Growth 의 `IssuedBookReader`(`DbIssuedBooks`) — "다른 책도" 에 같은 책이 다시 나오지 않게 만료 전
+  Growth 추천의 `items` 를 읽는다.
+
+Food 는 같은 메뉴를 며칠 안에 다시 내지 않으려고 읽는다(`meal_pool.RECENT_DAYS`). `suggestion` 에는
 `menu_key` 칸이 없고 Food 는 `content` 에 메뉴 이름(`display_name`)을 그대로 쓴다 — 그래서 읽을 때
 `normalize_menu_key` 로 바꾼다. 레시피 행의 `menu_key` 도 같은 함수로 만든 값이라 서로 만난다.
 
@@ -46,3 +51,27 @@ class DbSuggestionHistory:
         async with self._open() as session:
             contents = (await session.scalars(stmt)).all()
         return frozenset(key for content in contents if (key := normalize_menu_key(content)))
+
+
+class DbIssuedBooks:
+    """Growth 의 이미 낸 책 포트를 `suggestion` 표로.
+
+    만료 전(`expires_at > now`) Growth 추천의 `items` 를 상태와 상관없이 모은다 — 승인 · 거절한 책도
+    다시 나오지 않게. 도서 추천의 `items` 는 "제목(저자)" 하나다. 교육 준비물도 같은 칸이라 섞여
+    오지만 "제목(저자)" 와 겹칠 일이 드물다. draft 만 만료를 거르는 목록 함수를 쓰지 않는다 — 승인한
+    책을 놓친다. 읽기 실패는 그대로 올린다 — 빈 집합이면 같은 책이 다시 나간다. 호출마다 짧은
+    세션이다(#257).
+    """
+
+    def __init__(self, open_session: SessionOpener) -> None:
+        self._open = open_session
+
+    async def labels(self, *, child_id: UUID, now: datetime) -> frozenset[str]:
+        stmt = select(Suggestion.items).where(
+            Suggestion.child_id == child_id,
+            Suggestion.agent == SuggestionAgent.GROWTH,
+            Suggestion.expires_at > now,
+        )
+        async with self._open() as session:
+            rows = (await session.scalars(stmt)).all()
+        return frozenset(item for items in rows for item in items)

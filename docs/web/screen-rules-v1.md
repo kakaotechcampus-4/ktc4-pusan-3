@@ -67,6 +67,12 @@ hydrate 직후 그릴 것과 **같은 것**을 둔다. 다른 것을 끼우면 �
   두고 넘긴다. 라우트 이동이 사용자 제스처를 소비해서 도착한 뒤 `input.click()` 을 부르는
   방법은 브라우저가 막는다. 🚨 그 스토어에 `persist` 를 붙이지 말 것 — **의료 기록 사진**이다
 
+🚨 **11-3 복약도 11 아래 라우트다** (#537). 11-1 과 같은 이유다 — 회차가 기간만큼 쌓여서 프로필 구역에
+펼치면 다른 구역을 민다. 그래서 프로필은 진행 중인 약 이름만 세우고 회차 체크는 이 주소가 진다 (오늘 회차는 03 홈에서도 체크한다 · #563 리뷰). 가는 곳이라
+네비가 붙고, 🚨 **게이트가 아니다**(체크는 되돌릴 수 있다). 대화 · 초안 카드에서도 들어오지만 돌아가는 길은
+"아이 프로필" 링크로 고정한다. ⚠️ 실서버에 복약 API 가 생기기 전에는 11 의 입구를 숨긴다
+(`PENDING_SERVER_FEATURES.medications`). 규칙 원문은 [`medication-v1.md`](medication-v1.md) §3.
+
 🚨 **화면이 읽는 `childId` 의 정본은 URL 이다.** `stores/session.ts` 의 `activeChildId` 는
 "마지막에 본 아이" 복원용일 뿐이고, `components/child-scope.tsx` 가 URL → 스토어 **한 방향으로만** 흘린다.
 
@@ -77,10 +83,19 @@ hydrate 직후 그릴 것과 **같은 것**을 둔다. 다른 것을 끼우면 �
   ⚠️ 하단 네비 네 칸에서는 셸이 히스토리로 가지 않고 두 번 눌러 종료한다 (#462). 그래서 이 이유는 **하위 화면**(설정 · 11-1 등)에서 아이를 바꾼 경우에만 남는다 — URL 을 고른 첫째 이유(위)는 그대로다
 - 쿼리 키가 이미 `qk.child(cid)` 스코프라 URL 파라미터와 1:1 이다
 
-⚠️ 계약서의 `deeplink` 는 `settings/consent` 처럼 **아이를 안 담은 상대 경로**다.
-🚨 **그 값을 주소로 쓰지 않는다.** 서버가 준 문자열이라 지금 없는 경로(`settings/consents`)가 오기도 하고,
-외부 주소가 오면 화면이 앱 밖으로 나간다. 가는 곳은 10 설정 한 곳(`/child/{childId}/settings`)이고,
-딥링크는 **어느 구역인지 힌트**로만 쓴다 (`ConsentRequiredCard`).
+⚠️ 계약서의 `deeplink` 는 **아이를 안 담은 상대 경로**다. 서버가 내는 값은 `profile` · `profile/growth` · `settings`
+셋뿐이고 정본은 [`apps/api/app/core/deeplinks.py`](../../apps/api/app/core/deeplinks.py) 다 (#625 — 허용 목록 테스트가 웹 경로와 맞는지 본다).
+
+| 어디서 | code | deeplink | 웹이 보내는 곳 |
+| --- | --- | --- | --- |
+| 04 안내 (`guidance`) | `safety_record` | `profile` | 11 아이 프로필 |
+| 04 안내 (`guidance`) | `growth_record` | `profile/growth` | 11-1 키 · 몸무게 |
+| 05 `guards` | `safety_unknown` | `profile` | 11 아이 프로필 |
+| 403 `consent_required` (건강정보) | — | `settings` | 10 설정 |
+
+🚨 **그 값을 주소로 쓰지 않는다.** 서버가 준 문자열이라 없는 경로(예전 `settings/health-safety` · 목의 `settings/consents`)가
+오기도 했고, 외부 주소가 오면 화면이 앱 밖으로 나간다. 가는 곳은 화면의 code 별 표가 정하고(`run-result.tsx` 의 `GUIDANCE_KIND` ·
+05 배너 · `ConsentRequiredCard`), 딥링크는 **어느 구역인지 힌트**로만 쓴다. 새 안내가 생기면 서버 표와 화면 표를 같이 고친다.
 
 클라이언트 컴포넌트에서는 `useChildId()`, 서버 컴포넌트에서는 `params` 를 그대로 쓴다.
 **스토어를 읽어 화면을 그리지 않는다.**
@@ -163,7 +178,7 @@ hydrate 직후 그릴 것과 **같은 것**을 둔다. 다른 것을 끼우면 �
   🚨 **브랜드는 여전히 못 쓴다** — "어디서 왔나"(도메인) 와 "무엇을 하는가"(브랜드) 를 같은 색으로 쓰지 않는다
 
 - 🚨 **피드백 탭은 채택한 일반 추천도 평가한다** (#509). 05 에서 일반 추천을 채택할 수 있게 됐으니
-  해 본 뒤의 평가도 받는다. 줄에 **"또래 기준 일반 추천" 을 글자로** 적고(색 · 점선으로 가르지 않는다),
+  해 본 뒤의 평가도 받는다. 줄에 **"일반 추천" 을 글자로** 적고(색 · 점선으로 가르지 않는다),
   둘은 `kind` 로 가른다. 일반 추천 줄의 타입(`ReceivedGeneralSuggestion`)에는 근거 필드가 아예 없다 —
   이 목록은 근거를 그리지 않아서 05 와 달리 한 컴포넌트에 둔다.
   목록(`GET /children/{cid}/suggestions`)과 평가(`PATCH /children/{cid}/suggestions/{sid}/feedback`)는 `kind` 를 가리지 않고, 기본 목록은 `draft` 를 뺀다 —

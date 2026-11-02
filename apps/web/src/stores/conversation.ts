@@ -11,13 +11,20 @@ import {
 import { isApiError } from "@/lib/api/errors";
 import { newIdempotencyKey, type IdempotencyKey } from "@/lib/api/idempotency";
 import { submitInput, type InputRequest } from "@/lib/api/operations";
-import { isDraftEvent, type EventDraftsEvent } from "@/lib/api/sse";
+import { askedQuestion } from "@/lib/agent-result";
+import {
+  isDraftEvent,
+  isMedicationDraftEvent,
+  type EventDraftsEvent,
+  type MedicationDraftsEvent,
+} from "@/lib/api/sse";
 import type { CreateInputResponse } from "@/lib/api/types";
 import { refreshAfterRun, refreshTodayChat } from "@/lib/chat-history";
 import { toSeoulDateKey } from "@/lib/format";
 import { getQueryClient } from "@/lib/query-client";
 import { useDraftStore } from "@/stores/draft";
 import { useEventDraftStore } from "@/stores/event-draft";
+import { useMedicationDraftStore } from "@/stores/medication-draft";
 
 /**
  * 04 대화 — 그날 보낸 한 줄 · 그 한 줄의 run · 답을 기다리는 질문. 아이별로 하나 (#226).
@@ -63,7 +70,11 @@ import { useEventDraftStore } from "@/stores/event-draft";
  *    질문의 답인지, 질문을 언제 닫는지가 도착 순서에 달린다. Claude · ChatGPT 와 같은 방식이다.
  */
 
-/** Memory 가 되물은 질문 하나. 🚨 `runId` 가 본체다 — 위 규칙 1. */
+/**
+ * 되물은 질문 하나. 🚨 `runId` 가 본체다 — 위 규칙 1.
+ * Memory 의 질문이거나, 답을 받는 Agent 질문(`awaits_reply` · #537)이다 — 어느 쪽이든 답은 같은 `reply_to` 로 간다.
+ * run 이 어느 질문을 기다리는지는 `askedQuestion()` 한 곳이 정한다.
+ */
 export interface ChatQuestion {
   /** 화면에 그대로 그린다. 🚨 LLM 이 만든 문장이라 HTML 로 그리지 않는다 (apps/web/CLAUDE.md §4). */
   text: string;
@@ -393,7 +404,8 @@ export function answerQuestion(
     const asked = c.turns.find(
       (t) => t.question === "open" && t.send.status === "sent" && t.send.runId === runId,
     );
-    if (asked?.run.note) return { ...c, answering: { text: asked.run.note.text, runId } };
+    const text = asked ? askedQuestion(asked.run)?.text : undefined;
+    if (text) return { ...c, answering: { text, runId } };
     if (past) return { ...c, answering: { text: past.text, runId, day: past.day } };
     return c;
   });
@@ -466,6 +478,12 @@ async function submit(childId: string, turnId: string): Promise<void> {
     if (action.type === "event" && isDraftEvent(action.event.type)) {
       seedDrafts(childId, (action.event.data as EventDraftsEvent).drafts);
     }
+    // 🚨 복약 초안도 도착하는 순간 한 번만 얹는다 — `seedDrafts` 와 같은 이유 (#537).
+    if (action.type === "event" && isMedicationDraftEvent(action.event.type)) {
+      useMedicationDraftStore
+        .getState()
+        .seed(childId, (action.event.data as MedicationDraftsEvent).drafts);
+    }
     updateTurn(childId, turnId, (t) => ({ ...t, run: runReducer(t.run, action) }));
   };
 
@@ -537,9 +555,11 @@ function settle(childId: string, turnId: string): void {
 
   releaseKey(childId, keyPayload(turn.body));
   const answeredRunId = turn.answering?.runId;
+  // 🚨 Memory 질문만이 아니다 — 답을 받는 Agent 질문도 입력창의 새 대상이 된다 (#537 · `askedQuestion`).
+  const question = askedQuestion(turn.run);
   const asked: ChatQuestion | null =
-    turn.run.note?.kind === "question" && turn.send.status === "sent"
-      ? { text: turn.run.note.text, runId: turn.send.runId }
+    question && turn.send.status === "sent"
+      ? { text: question.text, runId: turn.send.runId }
       : null;
 
   update(childId, (c) => ({

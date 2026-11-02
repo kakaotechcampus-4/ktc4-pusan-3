@@ -6,6 +6,7 @@ import {
   mealDraft,
   placeGeneralSuggestion,
   placeSuggestion,
+  requestedGeneralSuggestion,
   staleSuggestion,
   suggestionDraft,
   suggestionAllergens,
@@ -46,7 +47,13 @@ export function resetSubmittedEvents(): void {
 /**
  * 고를 수 있는 제안 — 개인화와 일반 둘 다다 (#509). 실서버의 채택 · 초안 · 제출은 `kind` 를 보지 않는다.
  */
-const pickable = [...suggestions, ...generalSuggestions, placeSuggestion, placeGeneralSuggestion];
+const pickable = [
+  ...suggestions,
+  ...generalSuggestions,
+  requestedGeneralSuggestion,
+  placeSuggestion,
+  placeGeneralSuggestion,
+];
 
 /**
  * 초안 만들기와 제출이 함께 거는 검사. 🚨 **실서버(#241)와 같은 순서 · 같은 코드 · 같은 문구다** —
@@ -133,12 +140,18 @@ export const suggestionHandlers = [
     //    근거 0건인 것이 개인화로 집계된다 (CLAUDE.md §2). 일반 추천의 근거는 **문서 행**이다 (#249).
     //    결과를 낸 Agent 는 묶음이 온다 — 일반 추천만 있어도 그 Agent 의 묶음이 있다.
     //    ⚠️ 답하는 길(#246) 전이라 `options` 는 비어 온다 — 서버와 같은 모양이다.
-    if (scenario === "scarcity" || scenario === "empty") {
+    //    `suggest_requested` 는 보호자가 놀이를 정해 물은 일반 추천이다 — 문서 근거가 비어 온다 (#597).
+    if (scenario === "scarcity" || scenario === "empty" || scenario === "suggest_requested") {
       // 🚨 등록된 알레르기(`active`)가 든 일반 추천은 빼고 내보낸다 (`notBlocked`). 사전검사만 거르면
       //    확인 시트에서 "있어요" 로 등록한 재료가 다음 화면에서 다시 서고, 이번에는 묻지도 않고 채택된다.
-      const general = (scenario === "empty" ? generalSuggestions : [generalSuggestions[0]]).filter(
-        notBlocked,
-      );
+      const general = (
+        scenario === "empty"
+          ? generalSuggestions
+          : scenario === "suggest_requested"
+            ? [requestedGeneralSuggestion]
+            : [generalSuggestions[0]]
+      ).filter(notBlocked);
+      const count = scenario === "scarcity" ? 1 : 0;
       const generalAgents = new Set(general.map((g) => g.agent));
       return HttpResponse.json({
         suggestions: [],
@@ -152,13 +165,11 @@ export const suggestionHandlers = [
           cautions: [],
         })),
         // 카드의 기록 수는 그 Agent 도메인 수다 (#433 리뷰 ⑥) — 질문 카드의 scarcity.count 와 같은 값을 싣는다
-        general: withStatus(
-          general.map((g) => ({ ...g, record_count: scenario === "empty" ? 0 : 1 })),
-        ),
+        general: withStatus(general.map((g) => ({ ...g, record_count: count }))),
         looked_at: "",
         guards: [],
         scarcity: {
-          count: scenario === "empty" ? 0 : 1,
+          count,
           question: {
             id: "q1",
             text: "요즘 실내와 야외 중 어디를 더 찾나요?",
@@ -232,7 +243,7 @@ export const suggestionHandlers = [
             code: "safety_unknown",
             blocked_agents: ["food"],
             message: "알레르기 정보가 없어 식사 제안을 안전하게 걸러낼 수 없어요",
-            deeplink: "settings/health-safety",
+            deeplink: "profile",
           },
         ],
         scarcity: null,

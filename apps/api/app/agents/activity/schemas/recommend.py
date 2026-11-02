@@ -96,3 +96,13 @@ class ProposeActivityCandidatesArgs(ToolArgs):
             description=f"놀이 후보 {MAX_SUGGESTIONS}개",
         ),
     ]
+    requested_play: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description=(
+                "보호자가 이번 요청에서 정한 놀이 종류 · 소재 · 주제를 짧게(예: 물놀이, 공놀이, "
+                "티니핑). 언제 · 어디서 · 얼마나만 말했거나 막연하면 비운다"
+            ),
+        ),
+    ] = None

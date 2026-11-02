@@ -104,7 +104,7 @@ export function CalendarDayPanel({
       />
 
       {data.events.length > 0 ? (
-        <Section title="저장된 일정">
+        <Section title="저장된 일정" tour="events">
           <ul className="flex flex-col gap-3">
             {data.events.map((event) => (
               <li key={event.id}>
@@ -116,7 +116,7 @@ export function CalendarDayPanel({
       ) : null}
 
       {data.observations.length > 0 ? (
-        <Section title="이날 남긴 기록">
+        <Section title="이날 남긴 기록" tour="records">
           <ObservationList observations={data.observations} onOpen={onOpenObservation} />
         </Section>
       ) : null}
@@ -127,7 +127,7 @@ export function CalendarDayPanel({
           🚨 **"이날의 일기 쓰기" 와 같은 줄 모양이다** (`PANEL_ROW` · #503). 테두리 버튼 하나를 두면 덩그러니
              놓여 보였다. 다른 화면(04)으로 가는 것이라 버튼이 아니라 `<Link>` 다 (10 설정 줄과 같다). */}
       {data.chat_count > 0 ? (
-        <Section title="이날 나눈 대화">
+        <Section title="이날 나눈 대화" tour="chat">
           <Link
             href={`/child/${childId}/chat?date=${date}`}
             transitionTypes={FORWARD.transitionTypes}
@@ -164,17 +164,20 @@ export function CalendarDayPanel({
 function Section({
   title,
   action,
+  tour,
   children,
 }: {
   title: string;
   /** 제목 줄 오른쪽 끝의 그 구역 행동. */
   action?: React.ReactNode;
+  /** 화면 투어가 비추는 자리 (`lib/tour/screens/calendar.ts`). */
+  tour?: string;
   children?: React.ReactNode;
 }) {
   // 제목이 구역의 이름이 된다 — 스크린리더가 구역(region)으로 건너다닐 수 있다.
   const headingId = useId();
   return (
-    <section aria-labelledby={headingId} className="flex flex-col gap-2">
+    <section aria-labelledby={headingId} data-tour={tour} className="flex flex-col gap-2">
       {/* 🚨 **줄이 접힌다** (`flex-wrap`). 글자를 키우면 제목과 버튼이 한 줄에 안 들어가고,
           `keep-all` 이라 단어를 쪼개지도 못해 화면 밖으로 넘친다.
           🚨 **제목 줄은 버튼이 없어도 버튼 높이다** (`min-h-touch`). 버튼(44)이 선 구역만 줄이 커지면
@@ -264,7 +267,7 @@ function EventCard({
 
       {event.items.length > 0 ? (
         // 준비물은 카드 폭이 넉넉하면 두 열로 선다 — 기준과 이유는 docs/web/screen-rules-v1.md §5.
-        <div className="@container mt-3">
+        <div data-tour="prep" className="@container mt-3">
           <p className="text-label text-ink-muted">준비물</p>
           <ul className="mt-1 grid grid-cols-1 gap-x-3 @2xs:grid-cols-2">
             {event.items.map((item) => (
@@ -528,7 +531,7 @@ function DiaryCard({
   ) : null;
 
   return (
-    <Section title="이날의 일기" action={editing ? null : actions}>
+    <Section title="이날의 일기" tour="diary" action={editing ? null : actions}>
       {editing ? (
         // 편집기 카드는 두 덩어리다 — 입력칸과 그 아래 안내문(붙인다), 저장 · 취소와 그 사유(띄운다).
         <div className="rounded-card bg-surface border-line flex flex-col gap-4 border p-4">

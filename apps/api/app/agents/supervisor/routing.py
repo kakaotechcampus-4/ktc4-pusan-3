@@ -9,11 +9,13 @@
   - MemoryTask
       원문 전체와 RECORD 조각 힌트, UNCLEAR 조각 원문을 전달한다.
       원문이 전부 요청·안내 조각이면 만들지 않는다 (SKIP_MEMORY_FOR_PURE_REQUEST).
+      unclear 와 요청·안내 조각만 있을 때도 만들지 않는다 — 답은 그쪽이 낸다.
 
   - DomainTask
       구현된 agent 로 간 REQUEST 조각을 agent × task_type 당 하나로 묶는다.
       task_type 은 Supervisor 라벨 문자열 그대로다. enum 변환은 각 Agent 의 task_type_of 가 한다.
       라벨이 없는 Agent(activity)는 None 이다.
+      Growth 추천 라벨은 run 당 하나 — 처음 것이되 늘 닫히는 도서는 다른 추천 라벨에 자리를 내준다.
 
   - 미구현 Agent 처리
       activity / growth / health 로 라우팅된 조각은
@@ -25,6 +27,7 @@
 
   - 안내 문구
       guarded / out_of_scope 조각에는 코드에 정의된 고정 문구를 사용한다.
+      guarded/hazard 가 하나라도 있으면 그 안내만 내고 Memory · 도메인 Agent 를 부르지 않는다.
 
   - 강등(fallback)
       Supervisor 처리에 실패하면 Memory만 호출한다.
@@ -41,6 +44,8 @@ from dataclasses import dataclass
 from typing import Literal
 
 from app.agents.common.schemas.task import MAX_DOMAIN_AGENTS, DomainTask
+from app.agents.growth.schemas.task import RECOMMENDING_LABELS as GROWTH_RECOMMENDING
+from app.agents.growth.schemas.task import YIELDING_LABELS as GROWTH_YIELDING
 from app.agents.memory.schemas.task import MemoryHint, MemoryTask, WorkType
 from app.agents.supervisor.agent import SupervisorResult
 from app.agents.supervisor.schemas import (
@@ -51,14 +56,27 @@ from app.agents.supervisor.schemas import (
     align_segment,
     normalize,
 )
+from app.core import deeplinks
 
 logger = logging.getLogger(__name__)
 
 IntentType = Literal["record", "request", "mixed"]
 
 IMPLEMENTED_AGENTS: frozenset[str] = frozenset(
-    {DomainAgentName.FOOD.value, DomainAgentName.ACTIVITY.value}
+    {DomainAgentName.FOOD.value, DomainAgentName.ACTIVITY.value, DomainAgentName.GROWTH.value}
 )
+
+
+# 한 run 에 추천 라벨을 하나만 돌리는 Agent. 05 의 다시 시도 맥락 · 0개 기록이 (run, agent) 로
+# 묶여서, 같은 Agent 의 추천 task 가 둘이면 서로 덮는다. Food 는 추천 라벨이 하나라 해당이 없다
+_ONE_RECOMMENDATION: dict[str, frozenset[str]] = {
+    DomainAgentName.GROWTH.value: GROWTH_RECOMMENDING,
+}
+# _ONE_RECOMMENDATION 의 Agent 가 추천 하나를 고를 때 뒤로 미는 라벨 —
+# 다른 추천 라벨이 없을 때만 돈다
+_YIELDING: dict[str, frozenset[str]] = {
+    DomainAgentName.GROWTH.value: GROWTH_YIELDING,
+}
 
 # True: 순수 요청형(원문이 전부 요청, 안내 조각)이면 Memory를 건너뛴다.
 #       (Supervisor가 의도를 제대로 나눴다고 보는 정책으로, 잘못 나누면 입력 정보가 그대로 삭제)
@@ -80,23 +98,57 @@ class Guidance:
     deeplink: str | None = None
 
 
-# guard · out_of_scope 별 문구
+# 위험 물질을 먹거나 마셨다는 입력 (#626). 규칙 사전검사(pipeline)와 Supervisor 의 hazard 라벨이
+# 같은 안내를 낸다. 갈 곳이 없는 안내라 deeplink 가 없다.
+# 규칙은 "아이가 그랬다면" 으로 시작.
+# 삼킨 것의 증상은 늦게 나올 수 있어 "걱정되면" 같은 기다릴 여지를 두지 않고 119 하나만
+HAZARD_GUIDANCE = Guidance(
+    code=GuardReason.HAZARD.value,
+    message=(
+        "아이가 먹으면 안 되는 것을 먹거나 마셨다면, 지금 괜찮아 보여도 바로 119에 전화해 주세요. "
+        "응급처치와 가까운 병원을 안내받을 수 있어요. "
+        "이 내용은 식사·취향 기록으로 남기지 않았어요."
+    ),
+)
+
+# guard · out_of_scope 별 문구. 서버가 입력 run 으로 내는 딥링크는 여기가 정본이고,
+# 값은 core/deeplinks.py 의 웹 경로만 쓴다 (#625)
 _GUIDANCE: dict[str, Guidance] = {
     GuardReason.SAFETY_RECORD.value: Guidance(
         code=GuardReason.SAFETY_RECORD.value,
         message="알레르기·건강 정보는 직접 입력해 주세요. 대신 등록해 드릴 수 없어요.",
-        # 앱에서 deeplink를 열면 알레르기 등록 화면으로 이동하도록
-        deeplink="settings/health-safety",
+        # 알레르기 · 건강 정보를 넣는 곳은 10 설정이 아니라 11 아이 프로필이다
+        deeplink=deeplinks.PROFILE,
     ),
+    # 채팅의 키 · 몸무게는 child_growth_log 에 쓰지 않는다 — 잰 날짜와 단위를 화면에서 받는다.
+    # 값이 이상해도("1톤") 같은 안내다. 평가 · 또래 비교 표현은 넣지 않는다 (루트 §2)
+    GuardReason.GROWTH_RECORD.value: Guidance(
+        code=GuardReason.GROWTH_RECORD.value,
+        message=(
+            "키·몸무게는 성장 기록에서 잰 날짜와 함께 직접 입력해 주세요. "
+            "채팅으로는 저장하지 않아요."
+        ),
+        deeplink=deeplinks.PROFILE_GROWTH,
+    ),
+    # 기록을 남겼는지는 적지 않는다 — 묻기만 한 말("해열제 몇 ml 먹여?")은 남길 기록이 없다.
+    # 함께 온 증상을 저장했으면 Memory가 따로 알린다.
+    # 진단 문의와 약 문의가 한 라벨이라 어디서 확인하면 되는지를 둘 다 적는다 (#633 리뷰)
     GuardReason.DIAGNOSIS.value: Guidance(
         code=GuardReason.DIAGNOSIS.value,
-        message="진단이나 결핍 판정, 영양제·치료식 추천은 도와드릴 수 없어요. 기록은 남겨 둘게요.",
+        message=(
+            "진단이나 결핍 판정, 약·영양제·치료식 추천은 도와드릴 수 없어요. "
+            "약 용량은 약 설명서나 약사에게, 아이 상태는 병원에서 확인해 주세요."
+        ),
     ),
     SegmentKind.OUT_OF_SCOPE.value: Guidance(
         code=SegmentKind.OUT_OF_SCOPE.value,
         message="구매·예약·연락처럼 대신 해 드려야 하는 일은 도와드릴 수 없어요.",
     ),
+    GuardReason.HAZARD.value: HAZARD_GUIDANCE,
 }
+
+# Supervisor 가 놓친 알레르기 · 만성질환 언급에 pipeline 이 같은 안내를 낸다 (#639)
+SAFETY_GUIDANCE = _GUIDANCE[GuardReason.SAFETY_RECORD.value]
 
 # 한 번에 부를 수 있는 도메인 Agent 상한을 넘겨 빠진 요청이 있을 때 알리는 용도
 # TODO: 사용자에게 제공될 답변 점검
@@ -107,15 +159,32 @@ _AGENT_LIMIT = Guidance(
 )
 
 
+# 한 Agent 의 추천을 여러 가지 물어 뒤의 것을 뺐을 때 알리는 용도
+TASK_LIMIT = "task_limit"
+_TASK_LIMIT = Guidance(
+    code=TASK_LIMIT,
+    message="한 번에 한 가지씩 추천할 수 있어요. 나머지는 다시 말씀해 주세요.",
+)
+
+
 @dataclass(frozen=True)
 class Routing:
     intent_type: IntentType
-    memory_task: MemoryTask | None  # None은 SKIP_MEMORY_FOR_PURE_REQUEST가 켜졌을 때만
+    # None은 SKIP_MEMORY_FOR_PURE_REQUEST가 켜졌거나 위험 물질 안내로 멈췄을 때만
+    memory_task: MemoryTask | None
     domain_tasks: tuple[DomainTask, ...] = ()  # 구현된 agent 몫만
     unavailable_agents: tuple[str, ...] = ()  # 이동하려 했지만 아직 없는 agent
     dropped_agents: tuple[str, ...] = ()  # 호출 상한을 넘어 제외된 agent
     guidance: tuple[Guidance, ...] = ()
     degraded: bool = False  # Supervisor 실패 -> Memory 단독
+
+
+def has_hazard(result: SupervisorResult) -> bool:
+    """`guarded/hazard` 조각이 하나라도 있는가. Supervisor 가 실패했으면 False."""
+    return result.output is not None and any(
+        s.kind == SegmentKind.GUARDED and s.guard == GuardReason.HAZARD
+        for s in result.output.segments
+    )
 
 
 def route(raw_text: str, result: SupervisorResult, *, run_id: str) -> Routing:
@@ -129,6 +198,13 @@ def route(raw_text: str, result: SupervisorResult, *, run_id: str) -> Routing:
         return routing
 
     segments = result.output.segments
+    if has_hazard(result):
+        # 위험 물질 섭취가 나온 입력은 아무것도 저장 · 추천하지 않는다 — 규칙 사전검사와 같다.
+        # 같이 나온 기록 · 요청도 버린다. 아이 상태 확인이 먼저고, 섞어 처리하면 "좋아했다" 가
+        # 다른 조각으로 기록될 수 있다
+        routing = Routing(intent_type="record", memory_task=None, guidance=(HAZARD_GUIDANCE,))
+        _log(routing, None)
+        return routing
     records = [s for s in segments if s.kind == SegmentKind.RECORD]
     requests = [s for s in segments if s.kind == SegmentKind.REQUEST]
 
@@ -137,7 +213,13 @@ def route(raw_text: str, result: SupervisorResult, *, run_id: str) -> Routing:
     unclear = tuple(s.text for s in segments if s.kind == SegmentKind.UNCLEAR)
     # 기록 조각이 없어도 조각에 안 들어간 글자가 있으면 놓친 기록일 수 있어 다 막지 않는다
     unclear_only = not records and bool(unclear) and _covers_all(raw_text, result.output)
-    skip_memory = SKIP_MEMORY_FOR_PURE_REQUEST and covers_only_requests(raw_text, result.output)
+    # unclear 말고는 요청 · 안내뿐이면 답은 그쪽이 낸다.
+    # 불러도 관찰은 다 거절되고 모델 문장만 나간다. 일정 초안은 만들 수 있지만
+    # 이 입력에서는 그 기회를 포기한다 (#642)
+    answered_elsewhere = unclear_only and any(s.kind != SegmentKind.UNCLEAR for s in segments)
+    skip_memory = SKIP_MEMORY_FOR_PURE_REQUEST and (
+        answered_elsewhere or covers_only_requests(raw_text, result.output)
+    )
     memory_task = (
         None
         if skip_memory
@@ -148,9 +230,10 @@ def route(raw_text: str, result: SupervisorResult, *, run_id: str) -> Routing:
     wanted = list(dict.fromkeys(str(s.agent) for s in requests))
     selected, dropped = wanted[:MAX_DOMAIN_AGENTS], wanted[MAX_DOMAIN_AGENTS:]
 
-    domain_tasks = _domain_tasks(
+    domain_tasks, trimmed = _domain_tasks(
         [s for s in requests if str(s.agent) in selected and str(s.agent) in IMPLEMENTED_AGENTS],
         run_id=run_id,
+        record_texts=tuple(s.text for s in records),
     )
 
     routing = Routing(
@@ -159,7 +242,7 @@ def route(raw_text: str, result: SupervisorResult, *, run_id: str) -> Routing:
         domain_tasks=domain_tasks,
         unavailable_agents=tuple(a for a in selected if a not in IMPLEMENTED_AGENTS),
         dropped_agents=tuple(dropped),
-        guidance=_guidance(result.output, dropped=bool(dropped)),
+        guidance=_guidance(result.output, dropped=bool(dropped), trimmed=trimmed),
     )
     _log(routing, None)
     return routing
@@ -172,28 +255,72 @@ def _intent(*, has_record: bool, has_request: bool) -> IntentType:
     return "record"
 
 
-def _domain_tasks(segments: list, *, run_id: str) -> tuple[DomainTask, ...]:
-    """agent × task_type 당 하나. 처음 나온 순서를 따른다."""
+def _domain_tasks(
+    segments: list, *, run_id: str, record_texts: tuple[str, ...] = ()
+) -> tuple[tuple[DomainTask, ...], bool]:
+    """agent × task_type 당 하나. 처음 나온 순서를 따른다.
+
+    `_ONE_RECOMMENDATION` 의 Agent 는 추천 라벨을 하나만 남긴다(`_kept_recommendations`). 뺀 조각이
+    있으면 True — 호출부가 안내 한 줄을 붙인다(조용히 빠지면 사용자는 답이 없는 이유를 모른다).
+    `record_texts` 는 같은 입력의 기록 조각이다 — 모든 task 에 같이 싣는다(코드 판정만 읽는다).
+    """
+    kept = _kept_recommendations(segments)
     texts: dict[tuple[str, str | None], list[str]] = {}
+    trimmed = False
     for segment in segments:
-        texts.setdefault((str(segment.agent), _task_label(segment)), []).append(segment.text)
-    return tuple(
-        DomainTask(run_id=run_id, agent=agent, task_type=task_type, request_texts=tuple(items))
+        agent, label = str(segment.agent), _task_label(segment)
+        if label in _ONE_RECOMMENDATION.get(agent, frozenset()) and label != kept.get(agent):
+            trimmed = True
+            continue
+        texts.setdefault((agent, label), []).append(segment.text)
+    tasks = tuple(
+        DomainTask(
+            run_id=run_id,
+            agent=agent,
+            task_type=task_type,
+            request_texts=tuple(items),
+            record_texts=record_texts,
+        )
         for (agent, task_type), items in texts.items()
     )
+    return tasks, trimmed
+
+
+def _kept_recommendations(segments: list) -> dict[str, str]:
+    """`_ONE_RECOMMENDATION` Agent 마다 이번 run 에 돌릴 추천 라벨 하나.
+
+    처음 나온 것이되 `_YIELDING` 라벨은 다른 추천 라벨이 없을 때만 고른다 — "공룡 책이랑 양치 혼자
+    하는 법" 에서 늘 닫히는 도서가 앞이라고 열리는 루틴까지 빠지지 않게.
+    """
+    kept: dict[str, str] = {}
+    for agent, limited in _ONE_RECOMMENDATION.items():
+        labels = [
+            label
+            for segment in segments
+            if str(segment.agent) == agent and (label := _task_label(segment)) in limited
+        ]
+        if not labels:
+            continue
+        yielding = _YIELDING.get(agent, frozenset())
+        kept[agent] = next((label for label in labels if label not in yielding), labels[0])
+    return kept
 
 
 def _task_label(segment) -> str | None:
-    """Supervisor 가 agent 별로 붙이는 라벨. 지금은 food_task 하나뿐이다.
+    """Supervisor 가 agent 별로 붙이는 라벨. food 와 growth 만 있다 — activity 는 라벨이 없다.
 
-    TODO: Activity·Growth·Health 라벨이 Supervisor 스키마에 생기면 여기만 늘린다.
+    TODO: Health 라벨이 Supervisor 스키마에 생기면 여기만 늘린다.
     """
     if segment.agent == DomainAgentName.FOOD:
         return str(segment.food_task)
+    if segment.agent == DomainAgentName.GROWTH:
+        return str(segment.growth_task)
     return None
 
 
-def _guidance(output: SupervisorOutput, *, dropped: bool = False) -> tuple[Guidance, ...]:
+def _guidance(
+    output: SupervisorOutput, *, dropped: bool = False, trimmed: bool = False
+) -> tuple[Guidance, ...]:
     """guard · out_of_scope 별 안내. 같은 코드는 한 번만.
 
     상한을 넘겨 버린 요청이 있으면 그것도 알린다 — 조용히 빠지면 사용자는 답이 없는 이유를 모른다.
@@ -207,6 +334,8 @@ def _guidance(output: SupervisorOutput, *, dropped: bool = False) -> tuple[Guida
     guidance = [_GUIDANCE[code] for code in dict.fromkeys(codes)]
     if dropped:
         guidance.append(_AGENT_LIMIT)
+    if trimmed:
+        guidance.append(_TASK_LIMIT)
     return tuple(guidance)
 
 

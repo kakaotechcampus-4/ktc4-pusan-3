@@ -91,7 +91,9 @@ def agent_job(
     - 도메인 Agent 의 기억 포트가 쓸 store 와 추천 저장 함수는 `agent_ports` 로 연다. 호출마다
       · Agent 결과 하나마다 짧은 세션이고, 저장 commit 이 돌아오면 `channel.suggestions_saved`
       를 세운다 — Memory commit 과 같이 확정된 저장이다. 일반 추천 블록의 기록 건수도 같은 곳에서
-      연다(#227).
+      연다(#227). Growth 의 성장 기록 어댑터도 같은 곳에서 연다 — 안 넘기면 성장 추이가 "측정
+      0건" 으로 읽힌다. 도서 어댑터(`growth_book_ports`)도 같다 — 키가 없으면 넘기지 않아 도서가
+      닫힌다.
     - Curator 트리거도 여기서 만든다(`_curator_trigger`). 진입점은 받은 것을 pipeline 에
       넘기기만 한다.
     - 생일은 창구가 확인한 아이의 것을 넘긴다 (9단계). 식이 단계(12개월 경계)는 진입점이 계산한다.
@@ -102,6 +104,7 @@ def agent_job(
       만들어지지 않는다.
     - `location` 은 창구가 위치정보 동의를 확인한 흐린 좌표, `activity_weather` 는 서버 시작 때 만든
       날씨 어댑터다(#380). 둘 다 그대로 진입점에 넘긴다. None 이면 Activity 는 실내 전용이다.
+      장소 어댑터는 `agent_ports.place_source` 로 연다 — 좌표가 없으면 진입점 쪽에서 닫힌다.
     - Agent 가 스스로 낸 실패(Failed)는 예외가 아니라 이벤트로 온다. 뒤따르는 Done 은 채널이 버린다.
     - continuation 이 있으면 이전 되묻기를 이어받는 run 이다. Supervisor 를 타지 않는다.
     - 되묻기로 끝나면 PendingReply 가 이벤트로 온다. 화면에 보내지 않고 pending store 에 넣는다 —
@@ -189,6 +192,7 @@ def agent_job(
                         child_health_granted=child_health_granted,
                         location=location,
                         activity_weather=activity_weather,
+                        activity_places=agent_ports.place_source(),
                         run_id=channel.run_id,
                         emit=emit,
                         continuation=continuation,
@@ -202,6 +206,8 @@ def agent_job(
                         domain_store=agent_ports.domain_store_opener(child_id),
                         **agent_ports.food_stores(),
                         **agent_ports.safety_readers(),
+                        **agent_ports.growth_book_ports(),
+                        growth_log=agent_ports.growth_log_reader(),
                         affinity_reader=agent_ports.affinity_reader(),
                     )
             except TimeoutError:

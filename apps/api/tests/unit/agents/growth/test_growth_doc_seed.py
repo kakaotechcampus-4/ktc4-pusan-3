@@ -34,12 +34,14 @@ from app.agents.growth.store.inmemory import InMemoryGrowthDocs
 from app.agents.growth.store.ports import GrowthDocType
 from app.agents.growth.tools.routine import ChainError, pick_next_step
 from app.agents.growth.tools.safety import load_safety_rules
+from app.agents.growth.tools.triggers import trigger_tag_set
 from app.agents.memory.schemas.common import RoutineCategory
 from app.rules.evaluative import find_evaluative
 from app.rules.term_match import match_terms
 
 SEED = growth_doc_seed()
 RULES = load_safety_rules()
+TRIGGER_TAGS = trigger_tag_set()
 
 # 이 수의 approved 행이 모이면 월령 구간 빈틈을 CI 가 막기 시작한다.
 # 행은 여러 PR 로 나눠 들어오므로 그 전에는 비어 있는 구간이 있어도 정상이다 (plan1013 4번)
@@ -91,6 +93,57 @@ def chain(*, levels=("full_assist", "partial_assist", "independent")) -> list[di
 
 def entries_of(*rows: dict) -> tuple[GrowthDocEntry, ...]:
     return parse_growth_doc({"rows": list(rows)})
+
+
+# 예절 · 습관 · 리듬 행의 doc_key. 습관은 셋째 칸이 그 행의 상황 태그다
+_NEW_KEYS = {
+    "manner_practice": re.compile(r"growth\.manner\.[a-z_]+\.[a-z0-9_]+"),
+    "habit_strategy": re.compile(r"growth\.habit\.([a-z_]+)\.[a-z0-9_]+"),
+    "rhythm_info": re.compile(r"growth\.rhythm\.m\d+_\d+\.[a-z0-9_]+"),
+}
+_STRATEGY_BASE = {
+    "manner_practice": {
+        "doc_key": "growth.manner.greeting.puppet",
+        "title": "인사하기 — 인형 둘로 인사 주고받기",
+        "body": "어른과 아이가 인형을 하나씩 들고 문 앞에서 만난 것처럼 인사를 주고받는다.",
+        "routine_category": "social_manner",
+        "min_month": MANNER_MIN_MONTH,
+        "max_month": 72,
+        "tags": ["social_manner"],
+        "materials": ["인형"],
+    },
+    "habit_strategy": {
+        "doc_key": "growth.habit.anxious.name_feeling",
+        "title": "긴장할 때 — 마음을 말로 붙여 주기",
+        "body": "아이가 긴장해 보이면 어른이 그 마음을 말로 붙여 주고 손을 잡는다.",
+        "routine_category": "habit",
+        "trigger_tags": ["anxious"],
+        "min_month": HABIT_MIN_MONTH,
+        "max_month": 72,
+        "tags": ["habit"],
+        "materials": [],
+    },
+    "rhythm_info": {
+        "doc_key": "growth.rhythm.m6_9.evening_order",
+        "title": "저녁 순서 — 같은 순서로 하루 마무리하기",
+        "body": "저녁마다 씻기, 옷 갈아입기, 불 끄기를 같은 순서로 하고 하루를 마무리한다.",
+        "routine_category": None,
+        "min_month": 6,
+        "max_month": 9,
+        "tags": ["rhythm"],
+        "materials": [],
+    },
+}
+NEW_ROW_TYPES = sorted(_STRATEGY_BASE)
+# 리듬 안내는 잠 · 하루 일과 순서만 — 수유 · 이유식은 Food 몫이고, 시간 · 횟수 숫자는 기준표라
+# 문서 행에 넣지 않는다 (RAG_plan §0-4). 본문이 모델을 거치지 않고 화면에 그대로 나간다
+_RHYTHM_FEEDING = re.compile(r"수유|분유|모유|이유식|젖병|젖을|젖 먹")
+_RHYTHM_NUMBER = re.compile(r"\d+\s*(?:시간|분|번|회)")
+
+
+def strategy(row_type: str, **overrides) -> dict:
+    """검수 전(draft)인 예절 · 습관 · 리듬 행 하나. 칸 검사를 통과하는 모양이다."""
+    return raw(row_type=row_type, **{**_STRATEGY_BASE[row_type], **overrides})
 
 
 def learning(key: str, lo: int, hi: int, **overrides) -> dict:
@@ -156,12 +209,30 @@ def type_problems(entry: GrowthDocEntry) -> list[str]:
         return [] if ok and meta.min_month >= EDUCATION_MIN_MONTH else ["step_category_or_month"]
     if meta.row_type == "manner_practice":
         problems = [] if category == "social_manner" else ["manner_category"]
-        return problems + ([] if meta.min_month >= MANNER_MIN_MONTH else ["manner_min_month"])
+        problems += [] if meta.min_month >= MANNER_MIN_MONTH else ["manner_min_month"]
+        problems += [] if _NEW_KEYS["manner_practice"].fullmatch(meta.doc_key) else ["manner_key"]
+        # 행 이름(제목의 " — " 앞)을 관찰 subject 와 맞춘다 (tools/docs.strategy_rows)
+        return problems + ([] if " — " in meta.title else ["manner_name"])
     if meta.row_type == "habit_strategy":
         problems = [] if category == "habit" else ["habit_category"]
-        return problems + ([] if entry.trigger_tags else ["habit_trigger"])
+        if not entry.trigger_tags:
+            return problems + ["habit_trigger"]
+        # 상황 태그는 사전(reference/growth_triggers.yaml)의 것 하나 — 사전에 없는 태그의 행은
+        # 코드가 고르지 못한다
+        if len(entry.trigger_tags) != 1 or entry.trigger_tags[0] not in TRIGGER_TAGS:
+            problems.append("habit_trigger_tag")
+        key = _NEW_KEYS["habit_strategy"].fullmatch(meta.doc_key)
+        if key is None or key.group(1) not in entry.trigger_tags:
+            problems.append("habit_key")
+        return problems
     if meta.row_type == "rhythm_info":
-        return [] if meta.max_month <= EDUCATION_MIN_MONTH else ["rhythm_range"]
+        problems = [] if meta.max_month <= EDUCATION_MIN_MONTH else ["rhythm_range"]
+        problems += [] if _NEW_KEYS["rhythm_info"].fullmatch(meta.doc_key) else ["rhythm_key"]
+        texts = (meta.title, meta.body)
+        problems += ["rhythm_feeding"] if any(_RHYTHM_FEEDING.search(t) for t in texts) else []
+        return problems + (
+            ["rhythm_number"] if any(_RHYTHM_NUMBER.search(t) for t in texts) else []
+        )
     return []
 
 
@@ -309,6 +380,73 @@ def test_적재_검사가_틀린_행을_잡는다(overrides, expected):
 def test_row_type_별_칸_검사가_틀린_행을_잡는다(overrides, expected):
     (entry,) = entries_of(raw(**overrides))
     assert expected in type_problems(entry)
+
+
+@pytest.mark.parametrize(
+    ("row_type", "overrides", "expected"),
+    [
+        ("manner_practice", {"title": "인형 둘로 인사 주고받기"}, "manner_name"),
+        ("manner_practice", {"doc_key": "growth.etiquette.greeting.puppet"}, "manner_key"),
+        ("habit_strategy", {"trigger_tags": ["sleepy"]}, "habit_trigger_tag"),
+        ("habit_strategy", {"trigger_tags": ["anxious", "tired"]}, "habit_trigger_tag"),
+        ("habit_strategy", {"doc_key": "growth.habit.tired.name_feeling"}, "habit_key"),
+        ("rhythm_info", {"doc_key": "growth.rhythm.sleep.evening_order"}, "rhythm_key"),
+        ("rhythm_info", {"body": "잠들기 전에 수유를 하고 불을 끈다."}, "rhythm_feeding"),
+        ("rhythm_info", {"body": "낮잠은 2번, 한 번에 1시간쯤 재운다."}, "rhythm_number"),
+    ],
+)
+def test_예절_습관_리듬_행의_이름_태그_키를_본다(row_type, overrides, expected):
+    (entry,) = entries_of(strategy(row_type, **overrides))
+    assert expected in type_problems(entry)
+
+
+class TestNewRowTypes:
+    """예절 · 습관 · 리듬 행도 읽을 때 DB CHECK 와 같은 것을 막는다 (own_table §5)."""
+
+    @pytest.mark.parametrize("row_type", NEW_ROW_TYPES)
+    def test_멀쩡한_draft_행은_읽히고_적재_검사를_통과한다(self, row_type):
+        (entry,) = entries_of(strategy(row_type))
+        assert lint_entry(entry) == []
+
+    @pytest.mark.parametrize("row_type", NEW_ROW_TYPES)
+    def test_approved_인데_검수자가_없으면_읽을_때_실패한다(self, row_type):
+        with pytest.raises(ValueError, match="검수자"):
+            entries_of(strategy(row_type, status="approved"))
+
+    @pytest.mark.parametrize("row_type", NEW_ROW_TYPES)
+    def test_작성자가_검수하면_읽을_때_실패한다(self, row_type):
+        with pytest.raises(ValueError, match="같다"):
+            entries_of(
+                strategy(
+                    row_type,
+                    status="approved",
+                    reviewed_by="writer-a",
+                    reviewed_at=date(2026, 10, 19),
+                )
+            )
+
+    def test_습관_행은_36개월_전이면_읽을_때_실패한다(self):
+        with pytest.raises(ValueError, match=str(HABIT_MIN_MONTH)):
+            entries_of(strategy("habit_strategy", min_month=HABIT_MIN_MONTH - 1))
+
+    @pytest.mark.parametrize("row_type", NEW_ROW_TYPES)
+    async def test_검수를_마친_행만_포트로_나간다(self, row_type, monkeypatch):
+        approved = strategy(
+            row_type, status="approved", reviewed_by="reviewer-b", reviewed_at=date(2026, 10, 19)
+        )
+        draft = strategy(row_type, doc_key=f"{approved['doc_key']}_draft")
+        entries = entries_of(approved, draft)
+        monkeypatch.setattr("app.agents.growth.store.inmemory.growth_doc_seed", lambda: entries)
+        base = _STRATEGY_BASE[row_type]
+        rows = await InMemoryGrowthDocs.from_seed().search(
+            months=base["min_month"],
+            row_type=row_type,
+            routine_category=base["routine_category"],
+            trigger_tags=tuple(base.get("trigger_tags", ())),
+            query="",
+            limit=99,
+        )
+        assert [r.doc_key for r in rows] == [approved["doc_key"]]
 
 
 def test_평가_표현은_제목에서도_잡는다():

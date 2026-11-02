@@ -28,6 +28,7 @@ from app.domains.suggestion.models import (
     SuggestionKind,
     SuggestionStatus,
 )
+from app.rules.book_evidence import BOOK_EVIDENCE_KIND
 from app.rules.menu_evidence import MENU_EVIDENCE_KIND
 
 
@@ -44,12 +45,16 @@ async def create_suggestion(
     allergens: Sequence[str] = (),
     items: Sequence[str] = (),
     run_id: str | None = None,
+    place_notice: str | None = None,
+    requested: bool = False,
 ) -> Suggestion:
     """Agent 결과 저장. 일반/개인화 판정과 근거 필수 여부는 호출 계층에서 검증한다.
 
     `citations` · `allergens` · `items` 는 `SuggestionDraft.to_payload()` 의 같은 이름 칸을
     그대로 받는다. `citations` 는 `source_kind` · `source_id` · `note` 세 칸이다.
     `run_id` 는 그 추천을 만든 입력 run 이다. run 밖에서 만들면 None.
+    `place_notice` 는 장소가 붙은 추천의 확인 문구다(코드 문구). 장소가 없으면 None.
+    `requested` 는 보호자가 놀이를 정해 물은 Activity 일반 추천인지다(`_requested` 가 정한다).
     """
     row = Suggestion(
         child_id=child_id,
@@ -62,6 +67,8 @@ async def create_suggestion(
         expires_at=expires_at,
         status=SuggestionStatus.DRAFT,
         run_id=run_id,
+        place_notice=place_notice,
+        requested=requested,
     )
     session.add(row)
     await session.flush()
@@ -217,6 +224,10 @@ _DOC_KINDS = frozenset(("food_doc", "growth_doc", "activity_doc"))
 # 저장할 때 본다
 _MENU_KINDS = frozenset((MENU_EVIDENCE_KIND,))
 
+# agents/common/refs.py BookKind 와 같은 목록. Growth 일반 도서 추천만 고른 책(정보나루 서지 행)을
+# 근거로 단다 — Food 메뉴와 같은 방식(#442). 책 정보 표가 없어서(ISBN 의 uuid5) 종류만 본다
+_BOOK_KINDS = frozenset((BOOK_EVIDENCE_KIND,))
+
 # 근거의 아이 기록 중 대상 테이블이 있는 것 — 같은 아이의 행이 있는지 본다(correction 과 같은
 # 방식). 여기 없는 아이 기록(notice · daycare_meal)은 테이블이 생길 때까지 거절한다
 _EVIDENCE_TARGETS = {
@@ -250,9 +261,9 @@ async def save_agent_suggestions(
     - `payloads` 의 한 항목은 `SuggestionDraft.to_payload()` 모양이다. 돌려주는 id 는 그 순서다.
     - 근거를 먼저 다 본 뒤에 쓴다. 하나라도 어긋나면 `SuggestionEvidenceError` 이고 한 행도
       쓰지 않는다 — 개인화인데 아이 기록 근거 0행 · 일반인데 아이 기록 근거 · 일반인데 문서 행
-      (Food 는 메뉴 행도) 근거 0행 · Food 일반 추천이 아닌데 메뉴 근거 · 후보 풀에 없는 메뉴 ·
-      정해지지 않은 근거 종류 · 같은 아이의 행이 없는 아이 기록 · 대상 테이블이 아직
-      없는 아이 기록.
+      (Food 는 메뉴 행, Growth 도서는 책 행도) 근거 0행 · Food 일반 추천이 아닌데 메뉴 근거 ·
+      Growth 일반 추천이 아닌데 도서 근거 · 후보 풀에 없는 메뉴 · 정해지지 않은 근거 종류 ·
+      같은 아이의 행이 없는 아이 기록 · 대상 테이블이 아직 없는 아이 기록.
     - 한 추천이 같은 (source_kind, source_id) 를 두 번 인용하면 첫 인용만 남긴다(PK).
     - `status=draft` · `expires_at=now+SUGGESTION_TTL` 은 여기서 정한다.
     """
@@ -273,6 +284,9 @@ async def save_agent_suggestions(
             allergens=item["allergens"],
             items=item["items"],
             run_id=run_id,
+            # 장소가 없는 추천 · 이 칸 전에 만든 payload 에는 키가 없다
+            place_notice=item.get("place_notice"),
+            requested=_requested(item),
         )
         ids.append(row.id)
     return ids
@@ -291,7 +305,7 @@ async def _checked_citations(
         if key not in seen:
             seen.add(key)
             citations.append(dict(item))
-    known = _CHILD_RECORD_KINDS | _DOC_KINDS | _MENU_KINDS
+    known = _CHILD_RECORD_KINDS | _DOC_KINDS | _MENU_KINDS | _BOOK_KINDS
     if any(item["source_kind"] not in known for item in citations):
         raise SuggestionEvidenceError("정해지지 않은 근거 종류다")
     child = [item for item in citations if item["source_kind"] in _CHILD_RECORD_KINDS]
@@ -303,8 +317,18 @@ async def _checked_citations(
     if menus and (payload["agent"] != "food" or kind is not SuggestionKind.GENERAL):
         # 메뉴 근거는 Food 일반 추천만 단다(#442). 개인화는 아이 기록이 근거다
         raise SuggestionEvidenceError("메뉴 근거는 Food 일반 추천에만 단다")
-    if kind is SuggestionKind.GENERAL and not any(
-        item["source_kind"] in _DOC_KINDS | _MENU_KINDS for item in citations
+    books = [item for item in citations if item["source_kind"] in _BOOK_KINDS]
+    if books and (payload["agent"] != "growth" or kind is not SuggestionKind.GENERAL):
+        # 도서 근거는 Growth 일반 추천만 단다 — 개인화는 아이 기록이 근거다(메뉴와 같은 규칙)
+        raise SuggestionEvidenceError("도서 근거는 Growth 일반 추천에만 단다")
+    # 보호자가 놀이를 정해 물은 Activity 일반 추천은 그 요청이 기준이라 문서 행이 없어도 된다 —
+    # "물놀이 뭐 하지?" 에 시드에 없는 놀이를 낼 수 있게 (루트 §2)
+    if (
+        kind is SuggestionKind.GENERAL
+        and not _requested(payload)
+        and not any(
+            item["source_kind"] in _DOC_KINDS | _MENU_KINDS | _BOOK_KINDS for item in citations
+        )
     ):
         raise SuggestionEvidenceError("일반 추천인데 문서 행 근거가 없다")
     if menus:
@@ -323,6 +347,19 @@ async def _checked_citations(
         if found is None:
             raise SuggestionEvidenceError("근거 기록이 없거나 다른 아이의 기록이다")
     return citations
+
+
+def _requested(payload: Mapping[str, Any]) -> bool:
+    """보호자가 놀이를 정해 물은 Activity 일반 추천인가. 저장 검사와 행의 `requested` 가 같이 쓴다.
+
+    Activity 만이다 — Food 는 후보가 레시피북에서만 나와야 해서, `requested` 가 와도 문서 · 메뉴
+    근거를 본다 (#597 리뷰). 개인화는 아이 기록이 근거라 요청 기반이 아니다.
+    """
+    return (
+        bool(payload.get("requested", False))
+        and payload["agent"] == "activity"
+        and SuggestionKind(payload["kind"]) is SuggestionKind.GENERAL
+    )
 
 
 async def list_evidence(
@@ -405,9 +442,9 @@ async def count_child_records(
 async def list_general_evidence_batch(
     session: AsyncSession, *, suggestion_ids: list[uuid.UUID]
 ) -> dict[uuid.UUID, list[SuggestionEvidence]]:
-    """일반 추천의 근거 — 문서 행과 메뉴 행(Food, #442). 아이 기록 근거와 섞지 않는다 — 화면
-    타입이 다르다."""
-    return await _evidence_batch(session, suggestion_ids, _DOC_KINDS | _MENU_KINDS)
+    """일반 추천의 근거 — 문서 행 · 메뉴 행(Food, #442) · 책 행(Growth 도서). 아이 기록 근거와
+    섞지 않는다 — 화면 타입이 다르다."""
+    return await _evidence_batch(session, suggestion_ids, _DOC_KINDS | _MENU_KINDS | _BOOK_KINDS)
 
 
 async def list_evidence_batch(
