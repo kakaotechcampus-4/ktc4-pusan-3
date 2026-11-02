@@ -800,9 +800,16 @@ export const runEventDrafts: EventDraft[] = [
       category: "activity",
     },
     before: null,
+    // 준비물이 여럿이고 이름이 길 때의 배치를 보려고 둔다 (#679 — 두 열 그리드, 09 의 `confirmedEvent` 와 같은 구성).
     items: [
       { item_id: null, item_name: "수영복" },
       { item_id: null, item_name: "여벌옷" },
+      { item_id: null, item_name: "수건" },
+      { item_id: null, item_name: "물안경" },
+      { item_id: null, item_name: "모자" },
+      { item_id: null, item_name: "선크림" },
+      { item_id: null, item_name: "물통" },
+      { item_id: null, item_name: "갈아입을속옷과양말한켤레" },
     ],
   },
   {
