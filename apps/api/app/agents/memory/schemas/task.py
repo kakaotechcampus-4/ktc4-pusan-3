@@ -11,6 +11,9 @@ hints는 참고용으로, Memory는 원문 전체에서 기록할 것을 찾는�
 from dataclasses import dataclass
 from enum import StrEnum
 
+from app.agents.common.result import DomainPending
+from app.agents.common.schemas.task import DomainTask
+
 
 class WorkType(StrEnum):
     OBSERVE = "observe"  # 이미 일어난 일
@@ -69,6 +72,7 @@ class PendingMemoryContext:
     """되묻고 멈춘 자리. 다음 입력이 이 맥락 위에 얹힌다.
 
     hint_text 는 아직 저장하지 못한 조각 하나다. 발화 원문 전체를 담지 않는다.
+    도메인 Agent 가 되물은 질문이면(`resume`) hint_text 는 그 Agent 가 받은 요청 조각이다.
     다만 Supervisor 가 조각을 못 나눈 강등 경로에서는 원문 전체가 한 조각이고, whole 이 True 다.
     transcript는 이전 (질문, 답)을 순서대로 담는다. 코드가 채우고 모델이 쓰지 않는다.
     """
@@ -83,3 +87,8 @@ class PendingMemoryContext:
     # 이 질문 전에 조회로 찾은 행. 코드가 tool 결과에서 모으고 모델이 고르지 않는다.
     # "응" 을 받은 run이 검색을 처음부터 다시 하다 못 찾는 상황 방지
     found: tuple[FoundRef, ...] = ()
+    # 도메인 Agent 가 되물은 질문이면 그 요청과 물은 자리. 답을 저장한 뒤 이 task 를 이어서 돌린다.
+    # 요청 조각만 든다 — 같은 입력의 기록 조각 원문은 싣지 않는다(15분 메모리에 두는 글을 늘리지
+    # 않는다). Memory 는 물은 자리만 읽고, 다시 물을 때는 맥락에 그대로 옮긴다
+    resume: DomainTask | None = None
+    asked: DomainPending | None = None

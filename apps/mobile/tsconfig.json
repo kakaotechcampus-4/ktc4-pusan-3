@@ -4,5 +4,6 @@
     "strict": true
   },
   // 테스트는 앱 번들에 들어가지 않고 Node 위에서만 돈다 — 타입도 따로 본다 (tsconfig.test.json).
-  "exclude": ["node_modules", "src/**/*.test.ts"]
+  // `app.config.ts` 는 Node 에서 도는 Expo 설정이라 Node 타입이 있는 쪽에서 본다.
+  "exclude": ["node_modules", "src/**/*.test.ts", "app.config.ts"]
 }

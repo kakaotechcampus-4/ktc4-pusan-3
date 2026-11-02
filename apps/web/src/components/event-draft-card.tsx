@@ -3,6 +3,7 @@
 import { ArrowRight, Plus, X } from "lucide-react";
 import { useState } from "react";
 
+import { ReminderField } from "@/components/reminder-field";
 import { Button } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -14,7 +15,8 @@ import { TimeField } from "@/components/ui/time-field";
 import { cn } from "@/lib/cn";
 import { moveStart, sameInstant, seoulDate, seoulTime, withSeoulDateTime } from "@/lib/event-draft";
 import { formatEventTime } from "@/lib/format";
-import type { EventDraft, EventDraftFields, EventDraftItem } from "@/lib/api/types";
+import { forKind, isPast, NO_REMINDER, reminderLabel, type ReminderChoice } from "@/lib/reminder";
+import type { EventDraft, EventDraftFields, EventDraftItem, Reminder } from "@/lib/api/types";
 
 /**
  * 일정 초안 한 장 — **초안이 만들어지는 세 경로가 같이 쓰는 한 벌.**
@@ -60,7 +62,21 @@ import type { EventDraft, EventDraftFields, EventDraftItem } from "@/lib/api/typ
  *
  * 🚨 **도메인 색을 쓰지 않는다.** `category` 는 Agent 도메인이 아니다 (이름이 겹치는
  *    `activity` 가 있지만 뜻이 다르다) — `photo-review.tsx` 와 같은 판단이다.
+ *
+ * 🚨 **알림 칸은 새 일정에만 선다** (#609). 알림은 일정이 아니라 보호자 개인 설정이라 게이트가
+ *    아니고, 고른 값은 제출과 함께 **이 보호자에게만** 걸린다. 수정 초안은 `reminder` 를 아예
+ *    싣지 않는다 — 칸이 없으면 서버가 걸린 알림을 그대로 두고 시각 · 종일이 바뀌면 알아서 옮긴다.
+ *    수정에서 같은 값을 다시 보내면 시작을 옮긴 경우 그 값이 지나 422 로 일정까지 못 넣는다 (#603).
+ *    걸린 알림을 바꾸는 자리는 09 하루 패널이다.
  */
+
+/** 제출할 때 넘기는 최종 상태. `reminder` 는 새 일정에만 있다 (위 머리말). */
+export interface DraftSubmitFinal {
+  event: EventDraftFields;
+  items: EventDraftItem[];
+  /** 🚨 `null` 은 "알림 없음" 이다. 수정 초안에서는 칸 자체가 없다. */
+  reminder?: Reminder | null;
+}
 
 /** 게이트를 통과한 뒤. 🚨 보호자의 선택이 아니라 **서버가 저장을 끝냈는가**다. */
 export type DraftSubmitState = "idle" | "submitting" | "submitted" | "failed";
@@ -96,7 +112,7 @@ export function EventDraftCard({
    */
   lockReason?: string;
   /** 🚨 보호자가 확인한 **최종 상태**를 통째로 넘긴다 (#122 확정 — 부분 갱신이 아니다). */
-  onSubmit: (final: { event: EventDraftFields; items: EventDraftItem[] }) => void;
+  onSubmit: (final: DraftSubmitFinal) => void;
 }) {
   /**
    * 🚨 **정본은 여기다.** 보호자가 고치면 이 값이 바뀌고 제출은 이 값을 보낸다 —
@@ -110,9 +126,10 @@ export function EventDraftCard({
    *    살아 있어서, 기다리는 사이 날짜를 바꾸면 "넣었어요" 카드가 **캘린더에 안 들어간 값**을
    *    보여준다 — 승인 게이트가 자기가 쓴 것과 다른 것을 말하게 된다.
    */
-  const [sent, setSent] = useState<{ event: EventDraftFields; items: EventDraftItem[] } | null>(
-    null,
-  );
+  const [sent, setSent] = useState<DraftSubmitFinal | null>(null);
+  /** 새 일정에만 쓴다. 🚨 기본값은 "없음" 이다 (#594). */
+  const [reminder, setReminder] = useState<ReminderChoice>(NO_REMINDER);
+  const creating = draft.op !== "update";
   /**
    * 🚨 **날짜와 시각은 따로 둔다.** `starts_at` 하나로 들면 "날짜는 골랐고 시각은 아직" 을
    *    담을 자리가 없어서, 그 상태가 **자정**으로 접힌다 (그게 이 카드가 냈던 버그다).
@@ -132,6 +149,15 @@ export function EventDraftCard({
   const missingTime = !event.all_day && time === "";
   const done = state === "submitted";
   const busy = state === "submitting";
+  /**
+   * 고른 알림 시각이 이미 지났다 — 날짜를 앞으로 당겼거나 고른 채 시간이 흘렀다.
+   * 🚨 **조용히 "없음" 으로 바꾸지 않는다.** 고른 것과 들어간 것이 달라진다. 막고 다시 고르게 한다.
+   */
+  const reminderPast =
+    creating &&
+    reminder !== NO_REMINDER &&
+    event.starts_at !== null &&
+    isPast(reminder, event.starts_at, event.all_day);
 
   /** 🚨 일시가 없으면 제출할 수 없다. 화면이 왜 잠겼는지 말한다 — 조용히 비활성으로 두지 않는다. */
   const canSubmit =
@@ -140,6 +166,7 @@ export function EventDraftCard({
     event.title.trim() !== "" &&
     !blocked &&
     !lockReason &&
+    !reminderPast &&
     !busy &&
     !done;
 
@@ -158,6 +185,8 @@ export function EventDraftCard({
 
     if (next.date !== undefined) setDate(next.date);
     if (next.time !== undefined) setTime(next.time);
+    // 🚨 종류가 바뀌면 고른 알림을 지우지 않고 날 수를 지켜 옮긴다 — 서버 `for_kind` 와 같은 방향이다.
+    if (allDay !== event.all_day) setReminder((prev) => forKind(prev, allDay));
     patch({
       all_day: allDay,
       ...moveStart(event, withSeoulDateTime(nextDate, nextTime, allDay)),
@@ -187,6 +216,11 @@ export function EventDraftCard({
         {shown.event.starts_at ? (
           <p className="text-body-sm text-ink-muted mt-1">
             {formatEventTime(shown.event.starts_at, shown.event.all_day)}
+          </p>
+        ) : null}
+        {shown.reminder ? (
+          <p className="text-body-sm text-ink-muted mt-1">
+            알림 {reminderLabel(shown.reminder.lead)}
           </p>
         ) : null}
       </Card>
@@ -252,6 +286,15 @@ export function EventDraftCard({
                이고(아래), 같은 말을 두 곳에서 하면 하나는 반드시 어긋난다. */}
         {!event.all_day ? (
           <TimeField label="시작 시간" value={time} onChange={(next) => setWhen({ time: next })} />
+        ) : null}
+
+        {creating ? (
+          <ReminderField
+            startsAt={event.starts_at}
+            allDay={event.all_day}
+            value={reminder}
+            onChange={setReminder}
+          />
         ) : null}
 
         <ItemList items={items} disabled={busy} onChange={setItems} />
@@ -320,6 +363,11 @@ export function EventDraftCard({
               {missingTime ? (
                 <p className="text-body-sm">몇 시에 시작하는지 골라주셔야 넣을 수 있어요.</p>
               ) : null}
+              {reminderPast ? (
+                <p className="text-body-sm">
+                  고른 알림 시각이 이미 지났어요. 알림을 다시 골라주셔야 넣을 수 있어요.
+                </p>
+              ) : null}
               {canSubmit ? (
                 <p className="text-body-sm">
                   누르면 캘린더에 들어가요. 함께 보는 보호자에게도 보여요.
@@ -331,8 +379,15 @@ export function EventDraftCard({
               disabled={!canSubmit}
               aria-busy={busy}
               onClick={() => {
-                setSent({ event, items });
-                onSubmit({ event, items });
+                const final: DraftSubmitFinal = creating
+                  ? {
+                      event,
+                      items,
+                      reminder: reminder === NO_REMINDER ? null : { lead: reminder },
+                    }
+                  : { event, items };
+                setSent(final);
+                onSubmit(final);
               }}
             >
               {busy ? <Spinner /> : null}

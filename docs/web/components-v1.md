@@ -33,7 +33,7 @@
   `IconButton`/`IconButtonLink`/`IconButtonPlaceholder`(받는 동안 버튼 자리) · `IconTile` · `ProgressSteps` · `EmptyState`/`EmptyStateSkeleton` ·
   `Skeleton`/`SkeletonText`/`SkeletonTile`/`SkeletonGroup`(🚨 받은 내용과 같은 상자 · 디자인 시스템 §7 "빈 상태 · 스켈레톤") ·
   `BottomSheet` · `Tabs`/`PanelTabs`(🚨 주소가 바뀌면 앞, **패널만 바뀌면** 뒤 · 디자인 시스템 §7) · `Toast` · `ButtonLink` ·
-  `Select` · `ChoiceField`(반드시 하나 · 🚨 선택지가 둘이면 `Select` 를 쓰지 않는다 · 넷 이상이거나 문장이 길면 `direction="vertical"` · 목록 위의 보기 전환만 `labelHidden` · 디자인 시스템 §7) ·
+  `Select`(같은 라벨의 칸이 한 화면에 여럿이면 `contextLabelId` 로 무엇의 칸인지 접근용 이름 앞에 붙인다 · #611) · `ChoiceField`(반드시 하나 · 🚨 선택지가 둘이면 `Select` 를 쓰지 않는다 · 넷 이상이거나 문장이 길면 `direction="vertical"` · 목록 위의 보기 전환만 `labelHidden` · 디자인 시스템 §7) ·
   `Pagination`(번호 쪽 목록의 아래 한 줄 · 화살표 둘 + 번호 다섯 개의 창 · 디자인 시스템 §7 "쪽 넘기기") ·
   `PhotoCard`/`PhotoSlotButton` · `Swap`(같은 자리의 교체 페이드 · `phaseOf`) · `Named`(화면 전환의 이름 쌍)
 - 움직임 (`lib/motion.ts`) — `useEnterMotion`(데이터가 바꾸는 교체 · 단계 넘김) · `useMotionCue`(누른 것만) ·
@@ -41,15 +41,16 @@
   `lib/view-transition.ts` 의 `FORWARD` · `BACK`. 쓰는 자리와 규칙은 디자인 시스템 §8
 - 도메인을 아는 조합 (`components/`) — `DomainChip`/`DomainMeta`/`ObservationMeta` · `AgentPrompts` · `ChildNav` · `SuggestionList` ·
   `HomeComposer`/`VoiceLevelMeter`(말로 적기 듣는 동안의 음량 막대 · 셸 `volume` 이벤트를 직접 구독) · `GeneralSuggestionCard` · `ChatThread` · `RunReply` · `SafetyCheckSheet`(게이트 ㉡) · `ApprovalSheet`(게이트 ㉠) · `ConsentRequiredCard` ·
-  `AuthGate`/`SessionChecking`/`SessionUnreachable` · `ChildScope` · `ObservationList` · `AffinityList` · `CorrectionButtons` · `MemoryDetailSheet` ·
+  `AuthGate`/`SessionChecking`/`SessionUnreachable` · `WebPushBridge`(그리는 것 없음 · 로그인이 살아나면 기기 등록, 앱이면 셸이 넘긴 토큰 등록, 알림을 누르면 그 화면으로 · #609) · `ChildScope` · `ObservationList` · `AffinityList` · `CorrectionButtons` · `MemoryDetailSheet` ·
   `SuggestionFeedbackList` · `MonthGrid`/`DayMarkLegend` · `CalendarDayPanel` ·
-  `SettingsGroup`/`SettingsLinkRow`/`SettingsInfoRow` · `StartBackLink`(01 · 초대 → 00-1) · `ConsentSection`/`LegalDocumentSection` ·
-  `ParentSection` · `AccountSection` ·
+  `SettingsGroup`/`SettingsLinkRow`/`SettingsInfoRow` · `StartBackLink`(01 · 초대 → 00-1) · `ConsentSection`/`LegalDocumentSection` · `LocationPermissionNote`(10 설정 · 위치 동의는 켜졌는데 휴대폰이 허용 안 했을 때만 · #593) · `LocationOffNote`(04 놀이 추천 아래 · 같은 어긋남 · 하루 한 번 · #638 리뷰) ·
+  `ParentSection` · `AccountSection` · `NotificationSection`(10 설정의 일정 알림 켜고 끄기 · 동의 줄과 같은 모양 · 복약 줄은 발송이 붙을 때까지 없다 · #609) ·
   `ChildIdentityCard`/`ChildIdentitySheet` · `GrowthLogList`/`GrowthLatestCard` · `GrowthSheet` ·
   `GrowthChart` · `HealthSafetyList`/`HealthSafetySheet` · `SafetyScanReview`/`SafetyScanRowSheet` ·
   `PhotoReview`/`PhotoEntrySheet` · `PhotoSourceSheet` · `ScreenTour`/`TourHelpButton`(화면 투어 · [`screen-tour-v1.md`](screen-tour-v1.md)) ·
   `MedicationDraftCard`/`MedicationDraftList`(게이트 ㉡ · 복약 초안 · [`medication-v1.md`](medication-v1.md)) ·
-  `DoseCheck`(회차 체크 줄 · 03 홈과 11-3 이 같이 씀) · `TodayMedications`(03 홈 "오늘 먹일 약")
+  `DoseCheck`(회차 체크 줄 · 03 홈과 11-3 이 같이 씀) · `TodayMedications`(03 홈 "오늘 먹일 약") ·
+  `ReminderField`(일정 알림 고르기 · 초안 카드 · 08 시트 · 09 패널이 같이 쓴다 · 지난 값은 목록에서 뺀다 · #609)
   (시트 안의 사진 종류 줄 · 최근 사진 줄 · 촬영/앨범 줄은 그 파일의 내부 조각이다)
 - 받는 동안의 모양은 **그 컴포넌트 옆에 `…Skeleton` 으로** 둔다 — `SettingsRowSkeleton` · `ChildIdentityCardSkeleton` ·
   `GrowthLatestCardSkeleton`/`GrowthLogListSkeleton` · `GrowthChartSkeleton` · `HealthSafetyListSkeleton` · `ObservationListSkeleton` ·

@@ -18,6 +18,7 @@ import pytest
 from app.agents import entrypoint
 from app.agents.common.suggestion import SuggestionDraft
 from app.agents.entrypoint import (
+    AgentQuestion,
     Done,
     EmptyResult,
     EventDrafts,
@@ -430,6 +431,38 @@ async def test_되묻기로_끝난_run_의_맥락은_채널이_아니라_store_�
     assert names(channel) == ["note", "done"]
     stored = pending_reply.get(run_id=channel.run_id, parent_id=PARENT, child_id=CHILD)
     assert stored == _PENDING
+    pending_reply.clear()
+
+
+async def test_답을_받는_질문은_보내기_전에_맥락이_들어간다(monkeypatch):
+    """질문 카드가 화면에 보일 때 답(reply_to)이 바로 올 수 있다 — 맥락이 없으면 400 이다."""
+    pending_reply.clear()
+    seen: list[bool] = []
+
+    async def fake_handle_input(**kwargs):
+        emit = kwargs["emit"]
+        emit(PendingReply(kwargs["run_id"], _PENDING))
+        emit(AgentQuestion("growth", "routine_coaching", "언제부터였어요?", awaits_reply=True))
+        emit(Done(kwargs["run_id"], 2))
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+    publish = channel.publish
+
+    def checking_publish(event):
+        if event[0] == "agent_result":
+            stored = pending_reply.get(run_id=channel.run_id, parent_id=PARENT, child_id=CHILD)
+            seen.append(stored == _PENDING)
+        return publish(event)
+
+    monkeypatch.setattr(channel, "publish", checking_publish)
+
+    job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    assert seen == [True]
+    (payload,) = [p for n, p in channel.events if n == "agent_result"]
+    assert (payload["question"], payload["awaits_reply"]) == ("언제부터였어요?", True)
     pending_reply.clear()
 
 
