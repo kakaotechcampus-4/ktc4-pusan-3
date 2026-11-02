@@ -9,6 +9,7 @@ import type {
   ConsentsResponse,
   InviteResponse,
   NotificationSettings,
+  PushDeviceRequest,
 } from "@/lib/api/types";
 import { CHILD_ID, PARENT_ID } from "../fixtures";
 import { currentScenario } from "../scenario";
@@ -271,7 +272,37 @@ export function resetNotificationSettings(): void {
   notificationSettings = DEFAULT_NOTIFICATION_SETTINGS;
 }
 
+const PUSH_PLATFORMS: readonly string[] = ["web", "android", "ios"];
+
 export const settingsHandlers = [
+  /**
+   * 이 로그인의 기기 등록 — 서버 `PUT /me/push-device` (#605). 204.
+   *
+   * 🚨 **목은 토큰을 기억하지 않는다.** 이 응답을 읽는 화면이 없고, 실제로 푸시를 보내지도 않는다.
+   * 🚨 서버처럼 앞뒤 공백을 자른 뒤 빈 토큰, 4096자 넘는 토큰, 목록 밖 기기 종류, 다른 칸은 400 이다.
+   */
+  http.put(url("/me/push-device"), async ({ request }) => {
+    await networkDelay();
+    const body = (await request.json()) as Partial<Record<keyof PushDeviceRequest, unknown>>;
+    const token = typeof body.token === "string" ? body.token.trim() : "";
+    const fields = [
+      ...(token.length < 1 || token.length > 4096 ? ["token"] : []),
+      ...(typeof body.platform === "string" && PUSH_PLATFORMS.includes(body.platform)
+        ? []
+        : ["platform"]),
+    ];
+    if (fields.length > 0 || Object.keys(body).length !== 2) {
+      return apiError(400, "validation_failed", "요청 형식이 올바르지 않아요", { fields });
+    }
+    return new HttpResponse(null, { status: 204 });
+  }),
+
+  /** 이 로그인의 기기 지우기. 없어도 204 다. */
+  http.delete(url("/me/push-device"), async () => {
+    await networkDelay();
+    return new HttpResponse(null, { status: 204 });
+  }),
+
   http.get(url("/me/notification-settings"), async () => {
     await networkDelay();
     return HttpResponse.json(notificationSettings);

@@ -114,6 +114,7 @@
 - [web/api-client-v1.md](web/api-client-v1.md) — `fetch` 직접 호출 금지와 예외 · 되돌릴 수 없는 5곳은 `operations.ts` 로만 · 키 수명(`rotate` 는 성공 뒤) · 에러 코드별 "다시 시도" 금지 · 게이트에 낙관적 업데이트 금지 · 에러 바운더리 표
 - [web/medication-v1.md](web/medication-v1.md) — 복약 확인 카드는 **게이트 ㉡ 안의 메서드**(새 게이트 아님) · 알림 시각을 반드시 보여 주고 고치지 않음 · 비어 온 기간을 채우기 전엔 잠금 · 복약 초안은 건강 정보라 메모리 전용 · 회차 체크는 11-3 이고 게이트 아님 · `awaits_reply` 인 Agent 질문만 답하기 · 서류는 body 그대로 + 복사 · ⚠️ 제출 · 조회 · 체크 경로와 SSE 이름은 잠정 (#537)
 - [web/mock-and-tests-v1.md](web/mock-and-tests-v1.md) — 목 시나리오 표 · 목 규칙(타입 강제 · `withIdempotency` · 핸들러 순서) · Vitest 와 Playwright 가 거는 것 · 테스트 전용 핸들러 금지 · 목 상태 리셋
+- [web/web-push-v1.md](web/web-push-v1.md) — 일정 알림을 브라우저로 받기 · Firebase 값 다섯 개를 다 넣으면 켜지고 다 비우면 꺼짐 · 서비스 워커는 Firebase 없이 직접(클릭 가로채기 때문) · 권한은 처음 알림을 고를 때 · 로그인이 살아날 때마다 기기 등록 · 누르면 그날 09
 - [web/toolchain-deploy-v1.md](web/toolchain-deploy-v1.md) — 스택 버전과 TS 7 을 안 쓰는 이유 · `make web-build` 를 PR 전에 · CI 단계 · API 주소는 빌드 인자 · `.dockerignore` 의 `.env*` · standalone 복사
 
 *아직 문서 없음.* 화면 01~10, 입력 · 진행 오버레이 · 저장 확인 · 제안 · 승인 · 기록 고치기의 **설계 문서**. 이미 만든 화면의 구현 규칙은 위 `screen-rules` · `chat-run` · `auth-consent` 에 있다.

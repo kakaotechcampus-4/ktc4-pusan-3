@@ -25,6 +25,7 @@
 | TanStack Query | 5.102.8 | 서버 상태 전용 |
 | Zod | 4.5.4 | 환경변수 검증 · (필요해지면) 응답 파싱 |
 | Recharts | 3.10.1 | 11-1 변화 그래프 **하나**에만 쓴다 — 아래 §3 컴포넌트 |
+| Firebase | 13.0.0 | 웹 푸시 **토큰 받기 하나**에만 쓴다 (`lib/push/web-push.ts`, 동적 import). 🚨 서비스 워커에는 넣지 않는다 · [`web-push-v1.md`](web-push-v1.md). 설치 스크립트 둘(`@firebase/util` · `protobufjs`)은 `pnpm-workspace.yaml` 에서 껐다 |
 | ESLint | 10.10.0 | `eslint-config-next` flat config |
 | Prettier | 3.9.6 | `prettier-plugin-tailwindcss` 로 클래스 정렬 |
 
@@ -83,6 +84,9 @@ TS 7 (네이티브 컴파일러) 이 최신이지만 **`typescript-eslint` 가 �
 - 🚨 **그 주소의 오리진은 서버의 `KAKAO_CALLBACK_URL` 오리진과 같아야 한다.** 다르면 `state` 쿠키가
   콜백에 실리지 않는다 ([`docs/api/auth-kakao-v1.md`](../../docs/api/auth-kakao-v1.md) §5-5) —
   **로컬은 포트가 달라도 쿠키가 공유돼 우연히 통과한다.** 이 값은 배포 기준으로 확인한다
+- **웹 푸시 Firebase 값 다섯 개(`NEXT_PUBLIC_FIREBASE_*`)도 빌드 인자다** (#609). API 주소와 달리 **비어도 빌드가
+  멈추지 않는다** — 비우면 웹 푸시가 꺼진 이미지다. 기기 토큰 수집 동의가 나가기 전에는 운영에서 비워 둔다.
+  다섯 개를 다 넣거나 다 비운다(일부만이면 `lib/env.ts` 가 빌드 중에 멈춘다) · [`web-push-v1.md`](web-push-v1.md)
 - 🚨 **목 서버는 이 이미지로 켤 수 없고, 켤 수 있는 척하지도 않는다.** `NEXT_PUBLIC_API_MOCKING` 을
   빌드 인자로 열지 않고 `disabled` 로 고정해 뒀다 — 프로덕션 빌드에는 msw 가 통째로 빠져서(§7)
   인자만 열어 두면 "배포에서 목이 안 뜬다" 를 디버깅하게 된다
