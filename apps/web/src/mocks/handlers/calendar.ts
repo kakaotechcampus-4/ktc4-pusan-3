@@ -9,7 +9,12 @@ import {
   type EventItemUpdateResponse,
   type MyDiary,
   type Observation,
+  type Reminder,
+  type ReminderLead,
+  type ReminderRequest,
+  type ReminderResponse,
 } from "@/lib/api/types";
+import { fitsKind, forKind, isPast, NO_REMINDER } from "@/lib/reminder";
 
 import {
   calendarEventDates,
@@ -53,7 +58,16 @@ type PreparedState = Pick<EventItem, "is_prepared" | "prepared_at">;
 
 const preparedItems = new Map<string, PreparedState>();
 
+/**
+ * 내 일정 알림 (#594 · #609). 🚨 프로세스 수명만큼 산다 — `resetCalendarState()` 로 되돌린다.
+ *
+ * 🚨 **목에는 보호자가 한 명이라 "내 것" 만 든다.** 실서버는 보호자마다 따로 들고, 응답에는 요청한
+ *    보호자의 것만 싣는다 — 다른 보호자의 알림이 섞이는 경우는 목으로 만들 수 없다.
+ */
+const myReminders = new Map<string, Reminder>();
+
 export function resetCalendarState(): void {
+  myReminders.clear();
   preparedItems.clear();
   for (const { item_id, is_prepared, prepared_at } of confirmedEvent.items) {
     preparedItems.set(item_id, { is_prepared, prepared_at });
@@ -65,7 +79,44 @@ function withPrepared(date: string) {
   return calendarEventsOn(date).map((event) => ({
     ...event,
     items: event.items.map((item) => ({ ...item, ...preparedItems.get(item.item_id) })),
+    reminder: myReminders.get(event.id) ?? null,
   }));
+}
+
+const REMINDER_LEADS: readonly string[] = [
+  "at_start",
+  "5m",
+  "10m",
+  "15m",
+  "30m",
+  "1h",
+  "2h",
+  "1d",
+  "2d",
+  "1w",
+  "day_of_9am",
+  "1d_9am",
+  "2d_9am",
+  "1w_9am",
+] satisfies ReminderLead[];
+
+/** 계약의 알림 값인가. 목록 밖이면 서버는 바디 검증에서 400 이다. */
+export function isReminderLead(value: unknown): value is ReminderLead {
+  return typeof value === "string" && REMINDER_LEADS.includes(value);
+}
+
+/**
+ * 서버 `check_reminder` 와 같다 — 그 일정 종류에 맞지 않거나 울릴 시각이 지났으면 422.
+ * 🚨 서버는 같은 시각도 지난 것으로 본다 (`<=`).
+ */
+export function refuseReminder(lead: ReminderLead, startsAt: string, allDay: boolean) {
+  if (!fitsKind(lead, allDay)) {
+    return apiError(422, "invalid_reminder", "이 일정에는 걸 수 없는 알림이에요");
+  }
+  if (isPast(lead, startsAt, allDay)) {
+    return apiError(422, "invalid_reminder", "알림 시각이 이미 지났어요");
+  }
+  return null;
 }
 
 /** 서버처럼 기간(`observed_from` ~ `observed_to`)이 그날과 겹치는 기록. 여러 날 기록은 걸친 날마다 나온다. */
@@ -248,6 +299,27 @@ export const calendarHandlers = [
         return apiError(400, "invalid_request", "일자가 없는 일정은 만들 수 없어요");
       }
 
+      /**
+       * 🚨 **`reminder` 칸이 없으면 걸린 알림을 그대로 둔다** (서버 #603). 웹은 수정에 이 칸을 싣지 않는다.
+       *    걸린 알림은 서버 `_follow_event` 처럼 일정을 따라간다.
+       *    - 시작도 종일 여부도 그대로면 건드리지 않는다
+       *    - 종일 여부가 바뀌면 날 수를 지켜 옮기고, 옮긴 값이 이미 지났으면 그 알림만 지운다
+       *    - 시작만 바뀌면 값은 그대로다. 지난 시각이 됐어도 지우지 않는다
+       *    목은 고친 일정을 들고 있지 않아서 고치기 전 값은 늘 `confirmedEvent` 다.
+       */
+      const mine = myReminders.get(eid);
+      const kindChanged = body.event.all_day !== confirmedEvent.all_day;
+      const startChanged =
+        Date.parse(body.event.starts_at) !== Date.parse(confirmedEvent.starts_at);
+      if (mine && (kindChanged || startChanged)) {
+        const moved = forKind(mine.lead, body.event.all_day);
+        if (moved !== NO_REMINDER && !isPast(moved, body.event.starts_at, body.event.all_day)) {
+          myReminders.set(eid, { lead: moved });
+        } else if (kindChanged) {
+          myReminders.delete(eid);
+        }
+      }
+
       return HttpResponse.json({
         event: {
           ...confirmedEvent,
@@ -255,6 +327,7 @@ export const calendarHandlers = [
           title: body.event.title,
           starts_at: body.event.starts_at,
           all_day: body.event.all_day,
+          reminder: myReminders.get(eid) ?? null,
           items: body.items.map((item, index) => ({
             item_id: item.item_id ?? `i_new_${index}`,
             item_name: item.item_name,
@@ -268,6 +341,39 @@ export const calendarHandlers = [
       });
     }),
   ),
+
+  /**
+   * 내 알림 걸기 · 바꾸기 — 서버 `PUT /children/{cid}/events/{eid}/reminder` (#594 · PR #603) 와 같다.
+   *
+   * 🚨 **`withIdempotency` 로 감싸지 않는다.** 서버가 키를 받지 않는다 — 최종 상태를 보내는 요청이다.
+   * 🚨 그 아이의 일정이 아니면 404, 값이 목록 밖이면 400(바디 검증), 종류가 맞지 않거나 지났으면 422.
+   */
+  http.put(url("/children/:cid/events/:eid/reminder"), async ({ params, request }) => {
+    await networkDelay();
+    const eid = String(params.eid);
+    const { lead } = (await request.json()) as Partial<ReminderRequest>;
+    if (!isReminderLead(lead)) {
+      return apiError(400, "validation_failed", "요청 형식이 올바르지 않아요", {
+        fields: ["lead"],
+      });
+    }
+    // 🚨 목의 저장된 일정은 이것 하나다 (`calendarEventsOn`).
+    if (eid !== confirmedEvent.id) return apiError(404, "not_found", "일정을 찾을 수 없어요");
+
+    const refused = refuseReminder(lead, confirmedEvent.starts_at, confirmedEvent.all_day);
+    if (refused) return refused;
+
+    myReminders.set(eid, { lead });
+    const body: ReminderResponse = { reminder: { lead } };
+    return HttpResponse.json(body);
+  }),
+
+  /** 내 알림 지우기 — 서버와 같이 **없어도 204** 다. 두 번 눌러도 결과가 같다. */
+  http.delete(url("/children/:cid/events/:eid/reminder"), async ({ params }) => {
+    await networkDelay();
+    myReminders.delete(String(params.eid));
+    return new HttpResponse(null, { status: 204 });
+  }),
 
   /**
    * 준비물 체크 — 서버 `PATCH /children/{cid}/event-items/{iid}` (#318 3/3 · PR #335) 와 같다.
