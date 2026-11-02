@@ -3,7 +3,7 @@
 import uuid
 from contextlib import asynccontextmanager
 from dataclasses import replace
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 from sqlalchemy import select
@@ -516,6 +516,7 @@ async def test_일반_추천은_문서_근거와_기록_건수를_싣는다(db_c
     ]
     assert data["scarcity"] == {"count": 0, "question": None}
     assert general["place_notice"] is None  # 장소가 없는 추천
+    assert (general["event_starts_on"], general["event_ends_on"]) == (None, None)
 
 
 async def test_장소가_붙은_추천은_확인_문구를_칸으로_싣는다(db_client, bearer, cid, agents):
@@ -547,6 +548,28 @@ async def test_개인화_추천도_확인_문구를_싣는다(db_client, session
 
     [activity] = data["suggestions"]
     assert activity["place_notice"] == notice
+    assert (activity["event_starts_on"], activity["event_ends_on"]) == (None, None)
+
+
+async def test_행사가_붙은_추천은_기간을_날짜_칸으로_싣는다(
+    db_client, session, bearer, cid, agents
+):
+    """화면이 확인 문구 줄에 "9월 29일 ~ 10월 1일" 로 세운다 (#516 FE 합의)."""
+    plan, _ = agents
+    headers, parent_id = bearer
+    period = {"event_starts_on": date(2026, 9, 29), "event_ends_on": date(2026, 10, 1)}
+    general = replace(_general(content="광안리 가을 축제에서 축제 구경"), **period)
+    personal = replace(
+        await _personal(session, cid, parent_id, agent="activity", content="축제 구경"), **period
+    )
+    plan["activity"] = ("drafts", [personal, general])
+
+    data = (await _post(db_client, cid, headers, agents=["activity"])).json()
+
+    [activity] = data["suggestions"]
+    [general_out] = data["general"]
+    for out in (activity, general_out):
+        assert (out["event_starts_on"], out["event_ends_on"]) == ("2026-09-29", "2026-10-01")
 
 
 async def test_문서_행을_읽을_수_없으면_일반_추천을_내지_않는다(

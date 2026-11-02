@@ -1,9 +1,9 @@
 import enum
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
 import sqlalchemy as sa
-from sqlalchemy import DateTime, ForeignKey, Index, Text, func
+from sqlalchemy import Date, DateTime, ForeignKey, Index, Text, func
 from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -68,6 +68,10 @@ class Suggestion(Base, UUIDPk, Timestamps):
     # 장소가 붙은 추천의 확인 문구(공공데이터 기준일 · 운영 여부). Agent 가 코드 문구로 만든다.
     # 근거가 아니다 — 화면이 제안 문장 아래 한 줄로 세운다 (#516). 장소가 없으면 비어 있다
     place_notice: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 행사가 붙은 추천의 행사 기간. 화면이 확인 문구 줄에 날짜로 세운다 — 날짜 없이 이름만
+    # 나가면 지난 행사인지 알 수 없다 (#516). 근거가 아니다. 행사가 없으면 비어 있다
+    event_starts_on: Mapped[date | None] = mapped_column(Date, nullable=True)
+    event_ends_on: Mapped[date | None] = mapped_column(Date, nullable=True)
     status: Mapped[SuggestionStatus] = mapped_column(
         enum_col_py(SuggestionStatus, name="suggestion_status"),
         nullable=False,
