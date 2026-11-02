@@ -72,9 +72,11 @@ test.describe("초안 카드의 알림 칸", () => {
   }) => {
     const sheet = await openRunDrafts(page);
     const reminder = sheet.getByRole("combobox", { name: "알림" });
+    // 숨은 장도 마운트돼 있어서(넘겨도 제출 상태가 남게 · #537) 보이는 장의 것만 누른다.
+    const allDay = sheet.getByText("하루 종일", { exact: true }).filter({ visible: true });
 
     await pickReminder(sheet, page, "1일 전");
-    await sheet.getByText("하루 종일", { exact: true }).click();
+    await allDay.click();
     await expect(reminder).toHaveText(/1일 전 오전 9시/);
 
     // 종일 일정의 목록에는 "몇 분 · 몇 시간 전" 이 없다.
@@ -89,7 +91,7 @@ test.describe("초안 카드의 알림 칸", () => {
     await page.keyboard.press("Escape");
 
     // 다시 끄면 같은 날 수의 값으로 돌아온다.
-    await sheet.getByText("하루 종일", { exact: true }).click();
+    await allDay.click();
     await expect(reminder).toHaveText(/1일 전/);
     await expect(reminder).not.toHaveText(/오전 9시/);
   });
