@@ -150,7 +150,7 @@ def test_guidance_goes_out_as_guidance():
     guidance = Guidance(
         code="safety_record",
         message="알레르기·건강 정보는 직접 입력해 주세요. 대신 등록해 드릴 수 없어요.",
-        deeplink="settings/health-safety",
+        deeplink="profile",
     )
 
     assert translate.to_sse(guidance) == (
@@ -158,7 +158,7 @@ def test_guidance_goes_out_as_guidance():
         {
             "code": "safety_record",
             "message": "알레르기·건강 정보는 직접 입력해 주세요. 대신 등록해 드릴 수 없어요.",
-            "deeplink": "settings/health-safety",
+            "deeplink": "profile",
         },
     )
 
@@ -250,9 +250,7 @@ def test_agent_result_keeps_the_notice_code():
         task_type="activity_recommendation",
         status="completed",
         readouts=(
-            Readout(
-                kind="notice", body="날씨를 확인하지 못해 실내 놀이만 골랐어요.", authored_by="code"
-            ),
+            Readout(kind="notice", body="해가 져서 실내 놀이만 골랐어요.", authored_by="code"),
             Readout(
                 kind="notice", body="조건에 맞는 추천이 없어요.", authored_by="code", code="empty"
             ),

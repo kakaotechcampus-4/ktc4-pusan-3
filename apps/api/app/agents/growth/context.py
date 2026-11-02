@@ -27,6 +27,7 @@ from app.agents.growth.store.ports import (
     RoutineObservation,
     SafetyEntry,
     SafetyLookupError,
+    UnwiredSafety,
 )
 from app.agents.growth.tools.routine import PickedStep
 from app.agents.growth.tools.safety import SafetyRules, SafetyRulesUnavailable, load_safety_rules
@@ -51,6 +52,16 @@ class GrowthRunState:
     # book_suggestion. 이번 run 에서 `search_books` 가 돌려준 책 (정규화한 ISBN → 행).
     # `propose_books` 는 이 표에 있는 ISBN 만 통과시킨다 — 연령 필터에 걸러진 책은 들어오지 않는다
     seen_books: dict[str, BookRow] = field(default_factory=dict)
+    # book_suggestion. 이번 run 에서 search_books 를 한 번이라도 불렀는가 — 0권 제출은 검색한 뒤에만
+    # 받는다. 찾아보지도 않고 "추천이 없어요" 를 내지 않게
+    book_searched: bool = False
+    # book_suggestion. 이번 run 에서 정보나루로 보낸 검색어 수 — `MAX_RUN_KEYWORDS` 까지
+    book_keywords: int = 0
+    # book_suggestion. 이번 run 에서 보호자가 요청에 말한 검색 낱말(정규화). 있으면 그 낱말로 제목을
+    # 찾고, 제목에 이 낱말이 없는 책은 낼 수 없다. 다른 주제 책으로 채우지 않는다
+    asked_book_words: frozenset[str] = frozenset()
+    # 재호출 전에 이미 통과했거나 빠진 책(정규화한 "제목(저자)"). 재호출은 이 책을 다시 낼 수 없다
+    done_books: frozenset[str] = frozenset()
 
     # ── 모델 경로 ──
     # 이번 run 에서 조회 tool 이 돌려준 근거 (id → 근거). 이 표 밖 id 는 출력 tool 이 거절한다
@@ -59,13 +70,25 @@ class GrowthRunState:
     seen_routine: dict[UUID, RoutineObservation] = field(default_factory=dict)
     # 프롬프트 [예시]에 실은 문서 행. 일반 추천은 이 행을 근거로 단다 (루트 §2)
     seen_docs: dict[UUID, GrowthDocRow] = field(default_factory=dict)
+    # 요청 · 같은 입력의 기록 조각에서 코드가 읽은 주제 영역 키(`rules/growth_topic`).
+    # 모델이 정하지 않는다. [예시]를 고르고 기억 조회를 넓히는 데 쓴다. 비면 주제가 없는 요청이다
+    topic: tuple[str, ...] = ()
+    # `topic` 중 후보 글의 낱말로 거를 수 있는 영역(`rules/growth_topic.strict_topic`). 교육 후보의
+    # 주제 확인에만 쓴다. 비면 거르지 않는다
+    strict_topic: tuple[str, ...] = ()
+    # 보호자가 말한 루틴 카테고리 키(`rules/growth_topic.routine_scope`). 모델이 다른 카테고리의
+    # 단계를 내지 못하게 한다. 비면 범위를 정하지 않는다
+    routine_scope: tuple[str, ...] = ()
+    # 보호자가 이 입력에서 한 말(요청 조각 + 같은 입력의 기록 조각)과, 같은 run 에서 Memory 가
+    # 저장한 루틴 관찰의 행동 이름. 쪼개진 요청에서 보호자가 말한 행동을 코드가 알아
+    # 모델이 다른 행동을 적는 것을 막는다
+    said_texts: tuple[str, ...] = ()
+    recorded_subjects: tuple[str, ...] = ()
     # 관찰 subject(정규화) → 코드가 고른 다음 단계. 모델은 여기 있는 step_id 만 쓴다
     steps: dict[str, PickedStep] = field(default_factory=dict)
     # 출력 tool 이 통과시킨 추천과 안전 필터 · 금지 표현으로 빠진 후보 이름 (재호출 제외 목록)
     suggestions: tuple[SuggestionDraft, ...] = ()
     excluded: tuple[str, ...] = ()
-    # 식품 사전에 없는 알레르기 이름의 확인 문구 (교육). 결과 readouts 앞에 붙는다
-    cautions: tuple[str, ...] = ()
     # 이번 출력이 채울 수 있는 최대 개수. 루틴은 고른 단계 수가 상한이다
     capacity: int = MAX_SUGGESTIONS
     # 재호출 전에 이미 통과한 루틴 단계. 재호출은 남은 단계만 다시 내면 된다
@@ -74,6 +97,12 @@ class GrowthRunState:
     closing: str | None = None
     # 되묻기 한 줄 (needs_observation)
     question: str | None = None
+
+    # ── 관측 로그 (agent.run 이 끝날 때 한 줄) ──
+    # 추천 없이 끝낸 코드 문구 키 — closed.* · blocked.safety · doc.no_row · rhythm.no_row …
+    closed_reason: str | None = None
+    # 시작한 대화 수. 20초에 끊겨 결과가 없을 때 몇 번째 대화에서 끊겼는지 남긴다
+    model_calls: int = 0
 
 
 @dataclass(frozen=True)
@@ -112,6 +141,7 @@ async def build_gate(
         그 밖                읽지 않는다 — 루틴 · 도서는 건강정보를 쓰지 않는다
     - 읽다가 실패하면 빈 목록이 아니라 닫는다. 안전 조회 실패는 `safety_ok=False` 다
       (교육만 닫힌다).
+      안전 포트가 `UnwiredSafety` 면 동의와 상관없이 교육을 닫는다.
       안전 사전을 못 읽은 것도 같다 — 빈 사전으로 통과시키지 않는다. 측정 읽기 실패는 예외를 그대로
       올린다 ("측정 0건" 으로 읽히면 안 된다).
     - 교육이 0–11개월이면 어차피 `closed.infant_learning` 으로 닫혀서 안전 정보도 읽지 않는다.
@@ -130,15 +160,21 @@ async def build_gate(
     notice = False
 
     if task_type is GrowthTaskType.LEARNING_SUGGESTION and stage.months >= EDUCATION_MIN_MONTH:
-        try:
-            state.rules = context.safety_rules()
-            entries = await ports.safety.growth_safety(child_id=context.child_id) if consent else []
-        except (SafetyRulesUnavailable, SafetyLookupError):
+        if isinstance(ports.safety, UnwiredSafety):
+            # 어댑터가 붙기 전이다. 동의가 없어도 닫는다 — 읽지도 않는다 (Activity #380 과 같다)
             safety_ok = False
-            state.rules = None
         else:
-            state.safety_entries = tuple(entries)
-            allergy_states = tuple(entry.status for entry in entries if entry.kind == "allergy")
+            try:
+                state.rules = context.safety_rules()
+                entries = (
+                    await ports.safety.growth_safety(child_id=context.child_id) if consent else []
+                )
+            except (SafetyRulesUnavailable, SafetyLookupError):
+                safety_ok = False
+                state.rules = None
+            else:
+                state.safety_entries = tuple(entries)
+                allergy_states = tuple(entry.status for entry in entries if entry.kind == "allergy")
         if ports.notice is not None:
             notice = await ports.notice.has_notice(child_id=context.child_id)
     elif task_type is GrowthTaskType.ROUTINE_COACHING:

@@ -29,6 +29,7 @@ from app.api.v1.schemas.health_safety import (
     UpdateHealthSafetyResponse,
     WrittenBy,
 )
+from app.core import deeplinks
 from app.domains.consent.models import ConsentAction, ConsentScope
 from app.domains.consent.repository import latest_action
 from app.domains.identity.repository import find_parent
@@ -43,6 +44,16 @@ from app.domains.safety.repository import (
 )
 
 router = APIRouter()
+
+
+def _health_consent_required() -> ApiError:
+    """건강정보 동의가 없을 때. 동의는 10 설정에서 켠다 — 딥링크는 아이 id 를 담지 않는다 (#625)."""
+    return ApiError(
+        403,
+        "consent_required",
+        "건강 정보 동의가 필요해요",
+        {"scopes": [ConsentScope.CHILD_HEALTH.value], "deeplink": deeplinks.CONSENT},
+    )
 
 
 def _out(row: HealthSafety, nickname: str | None) -> HealthSafetyOut:
@@ -119,12 +130,7 @@ async def register_health_safety(
     # 보통은 있다 — 동의를 받기 전 만들어진 아이 같은 경우를 막는다
     granted = await latest_action(session, scope=ConsentScope.CHILD_HEALTH, child_id=child.child_id)
     if granted is not ConsentAction.GRANTED:
-        raise ApiError(
-            403,
-            "consent_required",
-            "건강 정보 동의가 필요해요",
-            {"scopes": [ConsentScope.CHILD_HEALTH.value]},
-        )
+        raise _health_consent_required()
 
     if body.severity is not None and (body.type is SafetyKind.ALLERGY) != (
         body.severity in ALLERGY_SEVERITIES
@@ -211,12 +217,7 @@ async def revise_health_safety(
 
     granted = await latest_action(session, scope=ConsentScope.CHILD_HEALTH, child_id=child.child_id)
     if granted is not ConsentAction.GRANTED:
-        raise ApiError(
-            403,
-            "consent_required",
-            "건강 정보 동의가 필요해요",
-            {"scopes": [ConsentScope.CHILD_HEALTH.value]},
-        )
+        raise _health_consent_required()
 
     current = await find_active_safety_for_update(
         session, child_id=child.child_id, safety_id=safety_id

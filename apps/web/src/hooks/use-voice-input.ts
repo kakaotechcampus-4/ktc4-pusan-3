@@ -30,7 +30,7 @@ const serverSupport = (): SpeechSupport => "none";
  *    되돌리기가 그 길이다(`stores/conversation.ts` 의 `canHandBack` 은 입력창이 비었는지만 본다). 그대로 두면
  *    다음 결과가 누를 때의 글 뒤에 들은 말을 붙여 입력창을 통째로 바꾸고, 원문이 입력창에도 말풍선에도 남지
  *    않는다 (#231 "말풍선은 원문을 입력창에 옮겼을 때만 지운다").
- * 🚨 **버린 듣기의 글자는 입력창에 넣지 않는다**(`release`). 그만 듣기 뒤에도 마지막 구간이 한 번 더 오는데,
+ * 🚨 **버린 듣기의 글자는 입력창에 넣지 않는다**(`release`). 그만 듣기 뒤에도 마지막 구간이 한 번 더 올 수 있는데,
  *    되돌린 글이나 다른 코드가 넣은 글을 그것이 덮으면 안 된다.
  * 🚨 **버린 듣기의 `end` 가 오기 전에는 새로 듣지 않는다**(`drainingRef`). 셸 이벤트에는 어느 듣기의 것인지가
  *    없어서, 그 사이에 새로 시작하면 지난 듣기의 늦은 글자가 새 글 뒤에 붙고 늦은 `end` 가 새 듣기를 끈다.
@@ -167,7 +167,7 @@ export function useVoiceInput({
     bridge.start();
   }, []);
 
-  /** 다 말했어요 — 셸에 멈춤을 보낸다. 마지막 구간이 한 번 더 오고 `end` 로 끝난다. */
+  /** 다 말했어요 — 셸에 멈춤을 보낸다. `end` 로 끝난다(마지막 구간은 올 수도 안 올 수도 있다 · `SpeechBridge.stop`). */
   const finish = useCallback(() => {
     if (activeRef.current) getSpeechBridge()?.stop();
   }, []);

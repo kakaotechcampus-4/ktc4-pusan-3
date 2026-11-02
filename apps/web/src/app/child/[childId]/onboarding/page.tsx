@@ -100,8 +100,8 @@ function ChildOnboardingScreen() {
   });
 
   function buildBody(): OnboardingRequest | null {
-    const heightValue = parseMeasurement(height);
-    const weightValue = parseMeasurement(weight);
+    const heightValue = parseMeasurement("height", height);
+    const weightValue = parseMeasurement("weight", weight);
 
     const body: OnboardingRequest = {
       ...(relation ? { relation } : {}),
@@ -124,8 +124,8 @@ function ChildOnboardingScreen() {
      *    값을 그냥 빼는데, 그대로 제출하면 **적은 사람만 적었다고 믿는다.** 여기서 먼저 막는다.
      */
     const next = {
-      height: measurementError(parseMeasurement(height)),
-      weight: measurementError(parseMeasurement(weight)),
+      height: measurementError("height", parseMeasurement("height", height)),
+      weight: measurementError("weight", parseMeasurement("weight", weight)),
     };
     setMeasureErrors(next);
     if (next.height || next.weight) return;

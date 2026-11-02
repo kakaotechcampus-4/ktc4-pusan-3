@@ -285,6 +285,15 @@ export interface Suggestion {
    * 🚨 **`null` 이 온다** (서버 `SuggestionOut.reason: str | None`). 비면 라벨도 세우지 않는다.
    */
   reason: string | null;
+  /**
+   * 장소가 붙은 추천에만 오는 확인 문구 한 문장 ("공공데이터 기준 2026년 6월이에요. 가기 전에 운영 여부를
+   * 확인해 주세요."). **서버 코드 문구 그대로** 제안 문장 아래 한 줄로 세운다 (#516). 장소가 없으면 `null`.
+   *
+   * 🚨 **근거가 아니다.** "사용한 기록" 목록에 넣지 않고 건수에도 세지 않는다 — 장소는 아이 기록이 아니라서,
+   *    거기 들어가면 기록이 늘어 보인다. 서버도 `evidence` 에 싣지 않는다.
+   * 🚨 **장소 이름은 여기가 아니라 `content` 에 있다** ("○○공원에서 모래성 쌓기"). 화면이 이름을 따로 꺼내지 않는다.
+   */
+  place_notice: string | null;
   status: SuggestionStatus;
   /** 생성 +24h. 승인 없는 draft 는 여기서 만료된다 (NF-07). */
   expires_at: string;
@@ -295,15 +304,16 @@ export interface Suggestion {
 }
 
 /**
- * 또래 기준 일반 추천. 근거 Memory 가 부족한 후보는 개인화 **대신** 이것으로 나간다 (CLAUDE.md §2).
+ * 일반 추천. 근거 Memory 가 부족한 후보는 개인화 **대신** 이것으로 나간다 (CLAUDE.md §2).
  * ⚠️ 후보마다 정해지므로 한 응답에 `suggestions` 와 같이 실릴 수 있다 (#512 리뷰).
  *
  * 🚨 **`Suggestion` 과 별도 타입이고 응답에서도 별도 필드다.** 같은 배열에 플래그로 섞으면
  *    언젠가 근거 0건인 것이 개인화로 그려진다 (디자인 시스템 §7). 여기에는 `evidence` ·
  *    `source_refs` 필드가 **아예 없어서**, 개인화 목록(`SuggestionList`)에 넘기면 타입이 막는다.
  *
- * 🚨 **`basis` 는 서버 문구다.** "또래 기준" 이라는 말을 프론트가 지어내지 않는다 —
- *    무엇을 기준으로 골랐는지는 만든 쪽만 안다.
+ * 🚨 **`basis` 는 서버 문구다.** 무엇을 기준으로 골랐는지는 만든 쪽만 안다 — 막연한 요청이면
+ *    또래 기준이고, 보호자가 놀이를 정해 물었으면 그 요청에 맞춘 것이다 (#597). 응답에는 둘을 가르는
+ *    칸이 없어서 화면은 라벨에 "또래 기준" 을 붙이지 않고 이 문구를 그대로 보인다.
  */
 export interface GeneralSuggestion {
   id: string;
@@ -311,7 +321,9 @@ export interface GeneralSuggestion {
   agent: Agent;
   kind: "general";
   content: string;
-  /** "36개월 또래가 자주 찾는 놀이예요" 처럼 무엇을 기준으로 골랐는지. 서버가 만든다. */
+  /** 장소가 붙은 추천의 확인 문구. 개인화와 같은 칸이다 (`Suggestion.place_notice`). 장소가 없으면 `null`. */
+  place_notice: string | null;
+  /** "36개월 또래가 자주 찾는 놀이예요" · "요청하신 놀이에 맞춰 골랐어요" 처럼 무엇을 기준으로 골랐는지. 서버가 만든다. */
   basis: string;
   status: SuggestionStatus;
   /** 생성 +24h. 개인화 추천과 같다. */
@@ -319,8 +331,10 @@ export interface GeneralSuggestion {
   /** 그 Agent 도메인에 쌓인 기록 수 (04 `record_count` 와 같은 표). 🚨 카드의 "기록 N건" 은 이 값이다 — 0 도 그린다. */
   record_count: number;
   /**
-   * 🚨 **문서 행 근거다** (#249 · 최상위 §2 "일반은 문서 행을 근거로 단다"). 비어 오지 않는다 —
-   *    문서 근거가 없는 일반 추천은 서버가 만들지도 내보내지도 않는다.
+   * 🚨 **문서 행 근거다** (#249 · 최상위 §2 "일반은 문서 행을 근거로 단다").
+   * ⚠️ **비어 올 수 있다** (#597). 보호자가 놀이를 정해 물은 Activity 일반 추천은 그 요청이 기준이라
+   *    문서 행이 없어도 된다. 화면은 출처 줄 없이 `basis` 만 그린다 — 근거 0건을 개인화로 그릴 길은
+   *    여전히 없다 (`Suggestion` 과 타입이 다르다).
    *    아이 기록 근거(`Suggestion.evidence`)와 필드 이름까지 같지만 **다른 타입**이다.
    */
   evidence: DocEvidence[];
@@ -332,8 +346,14 @@ export interface GeneralSuggestion {
  * 🚨 출처(`source_org`)를 함께 보여 준다 — CC BY 문서는 출처 표시가 이용 조건이다.
  */
 export interface DocEvidence {
-  /** 문서 행 · 또는 Food 일반 추천이 고른 메뉴(`recipe_catalog`, #442). 화면은 `id` 만 키로 쓴다. */
-  ref: { kind: "food_doc" | "activity_doc" | "growth_doc" | "recipe_catalog"; id: string };
+  /**
+   * 문서 행 · Food 일반 추천이 고른 메뉴(`recipe_catalog`, #442) · Growth 도서 추천이 고른 책
+   * (`book_catalog` — 도서관 정보나루 서지 행. `title` 은 "제목(저자)"). 화면은 `id` 만 키로 쓴다.
+   */
+  ref: {
+    kind: "food_doc" | "activity_doc" | "growth_doc" | "recipe_catalog" | "book_catalog";
+    id: string;
+  };
   title: string;
   source_org: string;
   source_title: string;
@@ -519,7 +539,7 @@ export interface Guard {
   blocked_agents: Agent[];
   message: string;
   /**
-   * 아이를 안 담은 상대 경로다 (`settings/health-safety`). 지금 아이 경로 아래에 붙여 쓴다.
+   * 아이를 안 담은 상대 경로다 (`safety_unknown` 이면 `profile`). 지금 아이 경로 아래에 붙여 쓴다.
    * 서버는 칸을 늘 싣고, 보낼 곳이 없으면 `null` 이다.
    */
   deeplink: string | null;
@@ -609,7 +629,7 @@ export interface SuggestionsResponse {
    */
   groups?: SuggestionGroup[] | null;
   /**
-   * 또래 기준 일반 추천. `scarcity` 가 있을 때만 채워진다. 근거가 부족한 후보가 개인화 **대신**
+   * 일반 추천. `scarcity` 가 있을 때만 채워진다. 근거가 부족한 후보가 개인화 **대신**
    * 나간 것이고, 후보마다 정해져서 `suggestions` 와 같이 채워질 수 있다 (#512 리뷰).
    * 서버 DTO 에서 optional 이라 `null` 이 올 수 있다.
    */
@@ -871,6 +891,154 @@ export interface SubmitEventResponse {
   event: CalendarEvent;
 }
 
+/* ── 복약 초안 · 회차 (#537) ──────────────────────────────────────────── */
+
+/**
+ * 🚨 **초안 모양만 확정이다.** 정본은 `apps/api/app/core/medication_draft.py` 의 `MedicationDraft.to_payload()`
+ *    (#544). 제출 · 조회 · 체크 · 수정 경로와 본문은 서버 API(#520 · `app/api/v1/routers/medications.py`)와
+ *    맞췄다. 계약 대응표(`contract/schema-map.ts`)의 복약 절은 서버 스키마와 같이 #520 이 더한다 —
+ *    서버에 없는 스키마를 대응표에 두면 계약 검사가 실패한다.
+ *
+ * 🚨 **시각을 화면이 계산하지 않는다.** `scheduled_time` · `notice_times` 는 서버가 기준 시각 + 오프셋으로 만든
+ *    값이다 (저녁 기준이 17:00 에서 19:00 으로 바뀐 것처럼 기준은 서버 상수다 · #546). 그래서 카드는 회차
+ *    시각을 고치는 칸을 두지 않는다 — 바꾸려면 대화로 다시 말한다.
+ */
+export type TimingAnchor = "fixed" | "wake_up" | "breakfast" | "lunch" | "dinner" | "bedtime";
+
+/** 보관. 🚨 보호자가 카드에서 고르는 선택 칸이다 — Agent 는 늘 `null` 로 낸다. */
+export type MedicationStorage = "room" | "fridge";
+/** 약 모양. 보관과 같은 선택 칸이다. */
+export type MedicationForm = "liquid" | "powder" | "tablet" | "ointment" | "drops";
+
+/** 하루 시각 패턴 한 칸. 날짜가 없다 — 제출 때 서버가 `starts_on` ~ `ends_on` 의 날마다 펼친다. */
+export interface MedicationDoseDraft {
+  timing_anchor: TimingAnchor;
+  /** 기준 시각에서 몇 분 앞뒤인가 (−120 ~ 180). `fixed` 면 0. */
+  offset_minutes: number;
+  /** `HH:MM`. `fixed` 일 때만 있다. */
+  fixed_time: string | null;
+  /** 실제로 울릴 시각 `HH:MM`. 🚨 서버가 계산한 값이다 — 화면은 그리기만 한다. */
+  scheduled_time: string;
+}
+
+/** 코스 한 건. 값이 없으면 `null` 이고, 필수 칸(`title` · `starts_on` · `ends_on`)이 비면 `missing` 에 실린다. */
+export interface MedicationScheduleDraft {
+  /** 🚨 원문에서 그대로 옮긴 약 이름이다 (모델이 바꾸지 않았는지 서버가 검사했다). 화면도 다듬지 않는다. */
+  title: string | null;
+  /** 용량. 원문 그대로. */
+  dosage: string | null;
+  /** 복약 이유. 원문 그대로. */
+  indication_text: string | null;
+  storage: MedicationStorage | null;
+  med_form: MedicationForm | null;
+  /** 투약의뢰서 특이사항. 보호자가 적는 선택 칸 — Agent 는 비워 둔다. */
+  note: string | null;
+  /** 증상 코드 — 서버가 사전으로 뽑는다. 🚨 화면이 고치지 않고 그대로 되돌려 보낸다. */
+  symptom_codes: string[];
+  /** `YYYY-MM-DD`. */
+  starts_on: string | null;
+  /** `YYYY-MM-DD`. 🚨 **무기한 코스가 없다** — 비면 제출할 수 없다 (회차 행을 기간만큼 미리 만든다). */
+  ends_on: string | null;
+}
+
+/** 수정 전 원본. 카드가 "19:30 → 20:00" 을 그리는 데 쓴다. */
+export interface MedicationSnapshot {
+  schedule: MedicationScheduleDraft;
+  doses: MedicationDoseDraft[];
+}
+
+/**
+ * 복약 초안 한 장. 🚨 **아직 아무것도 저장되지 않았다** — 제출이 승인 게이트 ㉡(건강 기록 확정)이다.
+ *
+ * 🚨 **`missing` 은 초안이 만들어질 때 비어 있던 칸이다.** 카드는 그 칸을 채우게 하고, 제출을 잠글지는
+ *    **지금 칸의 값**으로 정한다 (보호자가 채웠으면 풀린다).
+ */
+export interface MedicationDraft {
+  /** 🚨 화면 전용 키 — 서버는 읽지 않고 제출에도 싣지 않는다 (`EventDraft.draft_id` 와 같다). */
+  draft_id: string;
+  op: "create" | "update";
+  source: "utterance" | "prescription_ocr" | null;
+  schedule: MedicationScheduleDraft;
+  doses: MedicationDoseDraft[];
+  /** 실제로 울릴 시각 `HH:MM` 정렬. 🚨 **카드가 반드시 보여 준다** — 보호자가 승인하는 것이 이 시각이다. */
+  notice_times: string[];
+  /** 비어 있던 필수 칸 이름 (`title` · `starts_on` · `ends_on`). */
+  missing: string[];
+  /** 🚨 `update` 에만 있다. `create` 는 키 자체가 없다. */
+  schedule_id?: string;
+  before?: MedicationSnapshot;
+}
+
+/**
+ * 복약 초안 제출 본문 — 🚨 **승인 게이트 ㉡. 되돌릴 수 없는 지점.** (`docs/web/medication-v1.md` §5)
+ *
+ * 🚨 `op` 에 따라 엔드포인트가 갈린다 — create 는 `POST`, update 는 `PATCH …/{schedule_id}` (일정 초안과 같다).
+ * 🚨 보호자가 확인한 **최종 상태 전체**다. `doses` 는 초안의 시각 패턴을 그대로 되돌려 보낸다 —
+ *    `scheduled_time` 은 싣지 않는다 (서버 생성 컬럼이다).
+ * 🚨 `draft_id` · `notice_times` · `missing` · `before` 를 싣지 않는다 — 화면 전용이거나 서버가 다시 계산한다.
+ */
+export interface SubmitMedicationBody {
+  schedule: Omit<MedicationScheduleDraft, "title" | "starts_on" | "ends_on"> & {
+    title: string;
+    starts_on: string;
+    ends_on: string;
+  };
+  doses: Array<Omit<MedicationDoseDraft, "scheduled_time">>;
+  source: "utterance" | "prescription_ocr";
+}
+
+/** 복약 수정 본문. 🚨 `source` 는 수정에서 바뀌지 않아 싣지 않는다 — 나머지는 등록과 같다. */
+export type ReviseMedicationBody = Omit<SubmitMedicationBody, "source">;
+
+/** 회차 한 번. 🚨 **체크 칸이 곧 복용 기록이다** — 따로 로그가 없다 (`medication_dose` 1행). */
+export interface MedicationDose {
+  id: string;
+  /** 한국 시간 `YYYY-MM-DD`. */
+  dose_date: string;
+  /** `HH:MM`. 서버 생성 컬럼. */
+  scheduled_time: string;
+  /** 보호자가 체크한 시각. `null` 이면 미체크. */
+  checked_at: string | null;
+  /**
+   * 지금 체크 · 해제할 수 있는가. 🚨 **아직 오지 않은 날의 회차는 서버가 막는다** — 화면이 오늘과 비교해
+   *    정하지 않는다 (날짜 계산 · apps/web/CLAUDE.md §4).
+   */
+  checkable: boolean;
+}
+
+/** 진행 중인 코스 하나. 🚨 끝남 · 진행 중은 서버가 정한다 (`in_progress(today)` · #546). */
+export interface MedicationCourse {
+  id: string;
+  title: string;
+  dosage: string | null;
+  starts_on: string;
+  ends_on: string;
+  /** 하루에 울릴 시각 `HH:MM` 정렬. */
+  notice_times: string[];
+  /** 지금까지 온 날의 회차, 날짜 · 시각 순. 아직 오지 않은 날은 싣지 않는다. */
+  doses: MedicationDose[];
+}
+
+/** `GET /children/{cid}/medications`. 진행 중인 코스만 온다. */
+export interface MedicationsResponse {
+  /** 서버의 오늘 (한국 시간 `YYYY-MM-DD`). 🚨 화면이 오늘을 따로 구하지 않는다. */
+  today: string;
+  courses: MedicationCourse[];
+}
+
+/** 제출 · 수정 응답. 만든 · 고친 코스. */
+export interface SubmitMedicationResponse {
+  course: MedicationCourse;
+}
+
+/**
+ * `PUT /children/{cid}/medication-doses/{did}/check`. 체크 · 해제는 같은 상태를 두 번 보내도 결과가
+ * 같아서 Idempotency-Key 를 받지 않는다. 🚨 **승인 게이트가 아니다** — 되돌릴 수 있다.
+ */
+export interface CheckDoseRequest {
+  checked: boolean;
+}
+
 /**
  * 🚨 승인 게이트 ㉡ — 알레르기·만성질환의 **유일한 쓰기 경로**다.
  *    보호자가 확인한 값만 들어간다. LLM 이 추론한 값을 여기에 싣지 않는다 (NF-03).
@@ -1053,7 +1221,7 @@ export interface ReceivedGeneralSuggestion extends Pick<
   kind: "general";
 }
 
-/** 07 피드백 목록 한 줄. 🚨 **`kind` 로 가른다** — 일반 추천은 "또래 기준 일반 추천" 을 화면에 적는다. */
+/** 07 피드백 목록 한 줄. 🚨 **`kind` 로 가른다** — 일반 추천은 "일반 추천" 을 화면에 적는다. */
 export type ReceivedSuggestion = Suggestion | ReceivedGeneralSuggestion;
 
 /**
@@ -1748,7 +1916,8 @@ export interface DevScreeningResponse {
  * 전부 선택이지만 **하나는 있어야 한다** — 빈 본문은 400 이다 (서버 PR #353). 화면은 아무것도
  * 안 적으면 보내지 않고, "건너뛰기" 는 요청 없이 홈으로 간다.
  *
- * 🚨 **키 · 몸무게는 서버가 소수 한 자리로 반올림해 저장한다.** 범위는 `lib/measurement.ts`.
+ * 🚨 **키 · 몸무게는 칸별 범위 밖이거나 소수 둘째 자리부터 적으면 400 이다** (#628).
+ *    범위는 `lib/measurement.ts`.
  *
  * ⚠️ **계약서 §05 의 본문과 달라졌다** (확정 전). 01 등록 화면을 "꼭 필요한 것" 만 남기고
  *    **고를 수 있는 것을 전부 이 화면으로 미루면서** 바뀌었다 —

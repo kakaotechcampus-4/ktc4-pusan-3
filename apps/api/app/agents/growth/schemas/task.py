@@ -16,6 +16,17 @@ class GrowthTaskType(StrEnum):
     GROWTH_REVIEW = "growth_review"  # 성장 추이 — 모델 0회
 
 
+# 추천을 내는 라벨. growth_review 는 측정을 정리할 뿐 추천이 아니다 — 05 의 다시 시도 · 0개 기록과
+# run 당 추천 하나 규칙(routing)이 이 표를 본다
+RECOMMENDING_LABELS: frozenset[str] = frozenset(
+    {"learning_suggestion", "routine_coaching", "book_suggestion"}
+)
+# run 당 추천 하나를 고를 때 다른 추천 라벨에 자리를 내주는 라벨(routing). 도서는 인증키가 없거나
+# 정보나루가 실패하면 닫히고(closed.book_api), 열려도 외부 호출에 하루 한도가 있다 — 앞에 와서
+# 같이 온 교육 · 루틴 요청을 빼면 닫힘 안내만 남을 수 있다. 도서만 왔으면 도서가 돈다
+YIELDING_LABELS: frozenset[str] = frozenset({"book_suggestion"})
+
+
 def task_type_of(task: DomainTask) -> GrowthTaskType:
     """봉투에서 Growth 의 task 유형을 꺼낸다."""
     if task.agent != "growth":

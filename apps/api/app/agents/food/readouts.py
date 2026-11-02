@@ -38,6 +38,26 @@ NUTRIENT_BAND_ALL_OK = "nutrient.band.all_ok"
 # 기록은 충분한데 모든 항목이 빈 칸이라 구간이 하나도 안 나왔을 때 — "고르게" 라고 말하지 않는다
 NUTRIENT_UNSCORED = "nutrient.unscored"
 
+# 섭취 확인(food_check) — 코드가 등록 알레르기 · 연령 규칙으로 답한다. 허가 표현은 쓰지 않는다
+CHECK_BLOCKED_SAFETY = "check.blocked_safety"  # 안전 조회 실패 — 답하지 않는다
+CHECK_CONFLICT = "check.conflict"
+CHECK_PEANUT_IN_NUTS = "check.peanut_in_nuts"  # 땅콩과 견과류가 한 묶음으로 막힌다는 설명
+CHECK_AGE_BLOCK = "check.age_block"
+# 질식 주의 — 섭취 확인 답에만 낸다(#575 PM 결정). 추천 목록 · 급식에는 내지 않는다(10-13).
+# 문구에 "통째로" 를 넣지 않는다 — 땅콩버터는 통째가 아니라 끈적여서 걸린다
+CHECK_CHOKING = "check.choking"
+CHECK_NOT_FOUND = "check.not_found"
+CHECK_UNKNOWN_FOOD = "check.unknown_food"  # 음식 이름을 알아보지 못했다 — 연령 · 등록 대조 못 함
+CHECK_UNKNOWN_FOOD_PLAIN = "check.unknown_food_plain"  # 대조할 등록이 없거나 동의가 없다
+CHECK_INGREDIENTS_CAVEAT = "check.ingredients_caveat"  # 못 찾음에는 늘 붙는다
+CHECK_NONE_REGISTERED = "check.none_registered"
+CHECK_NO_CONSENT = "check.no_consent"
+CHECK_ASK_FOOD = "check.ask_food"  # 음식 이름이 없을 때 되묻는 한 줄
+
+# 식단 추천 요청 글에 알레르기 · 연령 금지 음식이 있을 때의 안내. 등록한 이름은 싣지 않는다
+MEAL_REQUEST_CONFLICT = "meal.request_conflict"
+MEAL_REQUEST_AGE_BLOCK = "meal.request_age_block"
+
 # 급식 조회 · 갱신 · 삭제
 DAYCARE_ASK_SUBSTITUTE = "daycare.ask_substitute"
 DAYCARE_UNCHECKED = "daycare.unchecked"

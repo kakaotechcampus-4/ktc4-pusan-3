@@ -118,6 +118,13 @@ test("셸이 멈춘 것과 모델이 없는 것은 웹에 바로 알리지 않�
   assert.equal(speechErrorReason("language-not-supported"), null);
 });
 
+test("웹의 그만으로 멈춘 뒤의 오류는 알리지 않는다", () => {
+  // Google 의 기기 안 인식기는 stop() 에 늘 client 를 낸다 — 완료를 누를 때마다 "시작하지 못했어요" 가 떴다
+  assert.equal(speechErrorReason("client", true), null);
+  assert.equal(speechErrorReason("no-speech", true), null);
+  assert.equal(speechErrorReason("client"), "failed");
+});
+
 test("창구 스크립트는 지원 여부를 그대로 싣는다", () => {
   assert.match(speechBridgeScript(true), /available: true,/);
   assert.match(speechBridgeScript(false), /available: false,/);

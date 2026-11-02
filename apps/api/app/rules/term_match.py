@@ -73,6 +73,26 @@ def match_terms(text: str, terms: Sequence[Term]) -> tuple[str, ...]:
     return tuple(hits)
 
 
+def match_spans(normalized: str, terms: Sequence[Term]) -> tuple[tuple[str, int, int], ...]:
+    """`match_terms` 와 같은 판정으로, guard 가 덮지 않은 자리마다 (key, 시작, 끝).
+
+    `normalized` 는 `normalize` 를 거친 글이다 — 자리는 그 글자열 기준이다. 두 용어가
+    얼마나 붙어 나오는지 봐야 할 때 쓴다 (위험 물질 이름 바로 뒤의 "마셨" 같은 것).
+    """
+    spans: list[tuple[str, int, int]] = []
+    for term in terms:
+        guard_spans = _spans(normalized, term.guards)
+        for alias in term.aliases:
+            alias_norm = normalize(alias)
+            if not alias_norm:
+                continue
+            for start in _find_all(normalized, alias_norm):
+                end = start + len(alias_norm)
+                if not _covered_by_any(start, end, guard_spans):
+                    spans.append((term.key, start, end))
+    return tuple(sorted(spans, key=lambda span: span[1]))
+
+
 def match_fields(
     fields: Sequence[str], terms: Sequence[Term], *, cross_spaces: bool = True
 ) -> tuple[str, ...]:
@@ -147,16 +167,7 @@ class TermMatcher:
 
 
 def _term_hits(normalized: str, term: Term) -> bool:
-    guard_spans = _spans(normalized, term.guards)
-    for alias in term.aliases:
-        alias_norm = normalize(alias)
-        if not alias_norm:
-            continue
-        for start in _find_all(normalized, alias_norm):
-            end = start + len(alias_norm)
-            if not _covered_by_any(start, end, guard_spans):
-                return True
-    return False
+    return bool(match_spans(normalized, (term,)))
 
 
 def _field_hits(

@@ -73,6 +73,7 @@ export function Select<T extends string>({
   labelHidden = false,
   placeholder,
   shape = "pill",
+  contextLabelId,
 }: {
   label: string;
   /** 🚨 빈 문자열은 "아직 안 골랐다" 다 — 그때는 `placeholder` 가 선다. */
@@ -89,6 +90,12 @@ export function Select<T extends string>({
   placeholder?: string;
   /** 필터·고르기 자리는 `pill`, 폼 칸은 `field` (위 머리말). */
   shape?: "pill" | "field";
+  /**
+   * 이 칸이 무엇에 딸렸는지 말하는 요소의 id. 접근용 이름 **앞에** 붙는다 — "물놀이 알림 1시간 전".
+   * 🚨 **같은 라벨의 칸이 한 화면에 여럿일 때** 쓴다(09 일정마다의 알림 · #611 리뷰). 라벨만으로는 스크린리더가
+   *    칸을 옮겨 다닐 때 어느 것의 칸인지 알 수 없다. 보이는 라벨은 그대로 둔다.
+   */
+  contextLabelId?: string;
 }) {
   const id = useId();
   const listId = `${id}-list`;
@@ -194,7 +201,7 @@ export function Select<T extends string>({
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={open ? listId : undefined}
-        aria-labelledby={`${labelId} ${id}-value`}
+        aria-labelledby={cn(contextLabelId, labelId, `${id}-value`)}
         aria-invalid={error ? true : undefined}
         aria-describedby={cn(hint ? hintId : null, error ? errorId : null) || undefined}
         onClick={() => setOpen((prev) => !prev)}
@@ -259,7 +266,7 @@ export function Select<T extends string>({
             }}
             id={listId}
             role="listbox"
-            aria-labelledby={labelId}
+            aria-labelledby={cn(contextLabelId, labelId)}
             // 🚨 그림자 대신 `line-strong` 1px 이 떠 있는 면을 만든다 (문서 §6).
             // 🚨 **안쪽 여백을 두지 않는다.** 위아래에 `py-*` 를 주면 고른 항목의 색 면이 테두리에
             //    못 닿아서, 첫 항목이 골라졌을 때 색 띠가 상자 안에 떠 있는 것처럼 보인다.
