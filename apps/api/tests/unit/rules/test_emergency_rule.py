@@ -129,3 +129,26 @@ def test_열_낱말_조각이나_부정은_체온_경로를_열지_않는다(tex
 
 def test_열_다음_숫자도_체온_이야기다():
     assert detect("두 달 된 아기 열 38도야", [FEVER], RULE) == ("infant_fever",)
+
+
+def test_태어난_지_N_된_은_월령_그대로다():
+    # "지" 로 끝나도 "태어난 지" 는 지난 기간이 아니라 나이다
+    text = "태어난 지 두 달 된 아기가 열이 나요"
+
+    assert stated_months(text) == (2,)
+    assert detect(text, [FEVER], RULE) == ("infant_fever",)
+    assert stated_months("낳은 지 50일 된 아기") == (1,)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "11월 1일 아이가 열이 나서 소아과 다녀왔어",
+        "11월1일 아기가 열이 났어",
+        "10월 3일 아이 열이 39도였어",
+    ],
+)
+def test_날짜는_월령이_아니다(text):
+    # "1일 아이" 를 생후 1일로 읽으면 아이가 몇 살이든 119 안내가 나간다
+    assert stated_months(text) == ()
+    assert detect(text, [FEVER], RULE) == ()

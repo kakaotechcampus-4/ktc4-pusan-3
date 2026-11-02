@@ -531,9 +531,16 @@ async def test_Agent_상한이_차_있으면_복약_조각을_더하지_않는�
         "activity": _FakeContext(),
     }
 
-    result = await _handle(raw, supervisor, None, events, contexts=contexts)
+    memory_llm = FakeLLM(call("create_observation_health", _given("해열 시럽", raw)))
+
+    result = await _handle(raw, supervisor, None, events, contexts=contexts, memory_llm=memory_llm)
 
     assert {t.agent for t in result.routing.domain_tasks} == {"food", "activity"}
+    # 체크 안내를 낼 자리가 없는 run 에서 먹인 약이 기록에도 안 남으면 두 번 먹일 수 있다.
+    # 등록된 약이어도 Memory 가 평소처럼 기록한다
+    [saved] = _of(events, Saved)
+    assert [ref.kind for ref in saved.refs] == ["observation_health"]
+    assert not _medication_results(events)
 
 
 # ── 응급 사전검사 — 안내 먼저, 도메인 Agent 는 건너뛴다, 기록은 평소처럼 ─────────
@@ -749,3 +756,31 @@ async def test_응급이면_개수_제한_안내도_내지_않는다(events: lis
 
     # 준비하는 것이 없는데 "한 번에 2가지까지 준비할 수 있어요" 가 119 안내 밑에 나가면 안 된다
     assert [g.code for g in events if isinstance(g, Guidance)] == ["emergency"]
+
+
+async def test_Agent_상한이_차_있어도_복약_조각이_이미_있으면_체크_안내로_간다(
+    events: list[Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 더할 자리가 아니라 이미 있는 조각에 문장을 더하는 것이라 자리가 모자라지 않는다
+    async def fixed(task: Any, context: Any, **kwargs: Any) -> Any:
+        return DomainAgentResult(agent="food", task_type=task.task_type, status="completed")
+
+    monkeypatch.setitem(pipeline._RUNNERS, "food", fixed)
+    raw = "간식 추천해줘. 해열 시럽 먹였어"
+    supervisor = _supervisor(
+        {
+            "text": "간식 추천해줘",
+            "kind": "request",
+            "agent": "food",
+            "food_task": "meal_recommendation",
+        },
+        _segment("해열 시럽 먹였어", "medication"),
+    )
+    memory_llm = FakeLLM(call("create_observation_health", _given("해열 시럽", raw)))
+    contexts = {"health": _world("해열 시럽"), "food": _FakeContext()}
+
+    await _handle(raw, supervisor, None, events, contexts=contexts, memory_llm=memory_llm)
+
+    assert not _of(events, Saved)
+    [checked] = _medication_results(events)
+    assert checked.readouts[0].kind == "notice"

@@ -256,3 +256,65 @@ def test_일상_말과_부정은_걸리지_않는다(text):
 def test_같은_자리의_진짜_응급은_여전히_걸린다():
     assert emergency_guidance("입술이 부었어") is not None
     assert emergency_guidance("머리를 부딪혔는데 계속 토해") is not None
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["경련 안 멈춰요", "경련이 안 멈춰요", "발작 안 멈춰요", "발작이 안 멈춰요"],
+)
+def test_멈추지_않는_경련은_부정이_아니다(text):
+    # "경련 안" 통째가 아니라 "안 했 · 안 해" 만 덮는다
+    assert emergency_guidance(text) is not None
+
+
+@pytest.mark.parametrize(
+    "text", ["경련 안 했어", "경련은 안 했어요", "발작 안 해", "발작은 안 했어"]
+)
+def test_안_했다는_경련은_걸리지_않는다(text):
+    assert emergency_guidance(text) is None
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "아이가 숨을 안 쉬어요",
+        "숨을 안 쉰다",
+        "호흡곤란이 온 것 같아요",
+        "아이가 경기를 해요",
+        "갑자기 경기를 했어요",
+        "경기해요 지금",
+        "아까 경기했어요",
+        "열경기 했어요",
+        "머리를 세게 부딪혔는데 토했어",
+        "머리 세게 부딪히고 계속 토해",
+    ],
+)
+def test_놓치면_위험한_표현도_걸린다(text):
+    assert emergency_guidance(text) is not None
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "머리 부딪혔는데 구토 안 했어",
+        "머리 부딪혔는데 구토 안 해",
+        "머리 부딪혔는데 구토를 안 했어",
+        "머리 부딪혔는데 구토는 안 했어",
+    ],
+)
+def test_부딪힌_뒤_구토_안_했다는_말은_걸리지_않는다(text):
+    assert emergency_guidance(text) is None
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "오늘 축구 경기를 했어요",
+        "어제 야구 경기를 했는데 이겼어",
+        "농구 경기했어",
+        "게임 경기를 해서 졌어요",
+    ],
+)
+def test_운동_경기_말은_걸리지_않는다(text):
+    # "경기" 는 아이의 경기(경련)이기도 하고 시합이기도 하다. 시합 말에 119 안내가 나가면 안 된다
+    assert emergency_guidance(text) is None

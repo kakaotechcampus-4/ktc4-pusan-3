@@ -1143,6 +1143,14 @@ def _refused_medicines(memory: MemoryAgentResult | None) -> tuple[str, ...]:
     )
 
 
+def _medication_room(routing: Routing) -> bool:
+    """복약 조각이 이미 있거나, 새로 더할 Agent 자리가 있는가."""
+    if any(_is_medication(task) for task in routing.domain_tasks):
+        return True
+    agents = {task.agent for task in routing.domain_tasks} | set(routing.unavailable_agents)
+    return len(agents) < MAX_DOMAIN_AGENTS
+
+
 def _with_medication_texts(routing: Routing, named: tuple[str, ...], *, run_id: str) -> Routing:
     """복약 조각에 문장을 더한다. 조각이 없으면 만들되 Agent 상한이면 더하지 않는다."""
     if not named:
@@ -1150,8 +1158,7 @@ def _with_medication_texts(routing: Routing, named: tuple[str, ...], *, run_id: 
     tasks = list(routing.domain_tasks)
     index = next((i for i, task in enumerate(tasks) if _is_medication(task)), None)
     if index is None:
-        agents = {task.agent for task in tasks} | set(routing.unavailable_agents)
-        if len(agents) >= MAX_DOMAIN_AGENTS:
+        if not _medication_room(routing):
             return routing
         hints = routing.memory_task.hints if routing.memory_task else ()
         tasks.append(
@@ -1185,6 +1192,8 @@ async def _match_registered_doses(
     ① 진행 중 코스 이름을 읽어 Memory 컨텍스트에 싣는다(저장 게이트가 쓴다) ② 복용 문장을 Memory
     힌트로도 ③ 등록된 약이면 Health 복약 조각으로도 보낸다. 코스를 못 읽으면(동의 없음 · 조회
     실패 · 어댑터 없음) 대조하지 않는다 — 투약이 두 번 남는 쪽이 기록이 사라지는 쪽보다 낫다.
+    체크 안내를 낼 자리가 없는 run 도 같다. "시럽" 처럼 이름 일부만 말하면 이 시점에는 복약 조각이
+    없어서, 조각이 있는지가 아니라 더할 자리가 있는지를 본다(`_medication_room`).
     """
     dose = _dose_texts(routing)
     if not dose:
@@ -1193,6 +1202,8 @@ async def _match_registered_doses(
     titles = None if health is None else await registered_titles(health.for_task())
     routing = _with_dose_hints(routing, raw_text, dose)
     routing = _with_registered_doses(routing, dose, titles, run_id=run_id)
+    if not _medication_room(routing):
+        titles = None
     return routing, replace(memory_context, registered_medicines=titles or ())
 
 

@@ -67,6 +67,11 @@ class TestCheckOnScreen:
     def test_못_먹였어_표현도_걸린다(self, text):
         assert any(word in text for word in DOSE_WORDS)
 
+    @pytest.mark.parametrize("text", ["약 먹었어", "해열제 먹었어", "아이가 시럽 먹었어요"])
+    def test_아이가_주어인_먹었어도_걸린다(self, text):
+        # 등록된 약 대조를 지나가면 같은 약이 두 번 남을 수 있다
+        assert any(word in text for word in DOSE_WORDS)
+
     @pytest.mark.parametrize(
         "text",
         [
