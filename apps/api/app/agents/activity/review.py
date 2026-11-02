@@ -543,7 +543,8 @@ def _with_place(content: str, place: PlaceRow | EventRow | None) -> str:
     "○○ 작품투어 (…)에서 ○○ 작품투어에서 …" 가 된다 (11-03 실측).
 
     모델이 문장을 "~에서" 로 시작했으면 "~에서" 를 두 번 붙이지 않는다 (10-28 QA).
-    - 장소 이름이 그 낱말로 끝나면 그 자리를 바꾼다 — "도서관에서 …" → "○○도서관에서 …"
+    - 장소 이름이 그 낱말(두 낱말까지)로 끝나면 그 자리를 바꾼다 — "도서관에서 …" →
+      "○○도서관에서 …", "귤 축제에서 …" → "○○ 귤 축제에서 …" (11-03 실측)
     - 아니면 그 앞에 장소 이름만 둔다 — "놀이터에서 …" → "○○공원 놀이터에서 …"
     """
     if place is None:
@@ -554,13 +555,16 @@ def _with_place(content: str, place: PlaceRow | EventRow | None) -> str:
         names |= _event_keys(place)
     if any(name in written for name in names):
         return content
-    first, _, rest = content.strip().partition(" ")
-    where = normalize_activity(first.removesuffix("에서"))
-    if not rest or not first.endswith("에서") or not where:
+    head, at, tail = content.strip().partition("에서 ")
+    where = normalize_activity(head)
+    if not (at and tail and where) or len(head.split()) > 2:
         return f"{place.name}에서 {content}"
     if normalize_activity(place.name).endswith(where):
-        return f"{place.name}에서 {rest}"
-    return f"{place.name} {content}"
+        return f"{place.name}에서 {tail}"
+    # 한 낱말이면 장소 안의 한 곳이다. 두 낱말은 바꿀 때만 본다 — "가족과 공원에서" 는 곳이 아니다
+    if " " not in head:
+        return f"{place.name} {content}"
+    return f"{place.name}에서 {content}"
 
 
 def _lookup(seen: Seen, docs: Docs, raw_id: str) -> RankedEvidence | ActivityDocRow | None:
