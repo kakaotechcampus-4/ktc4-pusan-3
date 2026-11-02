@@ -9,7 +9,13 @@ from collections.abc import Awaitable, Sequence
 from datetime import date, datetime, time, timedelta
 from typing import Any, TypeVar
 
-from app.agents.activity.areas import find_area, find_province, named_area, said
+from app.agents.activity.areas import (
+    find_area,
+    find_province,
+    leads_with_area,
+    named_area,
+    said,
+)
 from app.agents.activity.context import ActivityContext
 from app.agents.activity.events import (
     Event,
@@ -396,7 +402,9 @@ def _origin(
       지역으로 찾지 않는다.
     - 못 찾으면(모르는 이름 · 여러 곳인데 위치가 없음 · 시도만) 장소 없이 간다. 결과에 한 줄
       안내가 붙는다(`state.area_missed`). 비슷한 곳으로 짐작하지 않는다.
-    - `provinces` 면(행사 조회) 시 · 도만 말해도 그 시 · 도 전체가 지역이다(`find_province`). 장소
+    - `provinces` 면(행사 조회) 시 · 도만 말해도 그 시 · 도 전체가 지역이다(`find_province` 를 먼저
+      본다 — 제주는 제주시가 아니라 제주도 전체다). 다른 시도의 시와 겹치는 이름(광주시)은 못 찾은
+      지역이다. 장소
       조회는 시 · 도 전체에서 찾지 않는다 — 행사로 시 · 도를 정한 뒤에도 안내를 남기고 장소 없이
       간다.
     - 찾으면 run 의 지역이 된다 — 날씨도 그 지역으로 다시 보고(`state.weather` 를 비운다), 보호자
@@ -431,10 +439,19 @@ def _origin(
             ErrorCode.INVALID_ARGS,
             "area 에는 보호자가 쓴 지역 이름을 글자 그대로 넣는다. 지역을 말하지 않았으면 비운다.",
         )
+    # 명소 이름을 통째로 넣었다. 앞의 지역 이름을 떼어 쓰지 않는다 — 그 지역에 있는지는 모델이 안다
+    if name is None and leads_with_area(area_text):
+        return fail(
+            "query",
+            tool,
+            ErrorCode.INVALID_ARGS,
+            "area 에는 지역 이름만 넣는다(해수욕장 · 역 · 읍 같은 뒷말을 뺀다). 명소 이름이 지역 "
+            "이름으로 시작해도 그 명소가 그 지역에 있지 않으면 그 지역 이름을 쓰지 않고 비운다.",
+        )
     # 보호자가 말했지만 사전에 없는 이름(서면)은 못 찾은 지역이다 — 안내가 붙는다
-    area = find_area(name, near=context.location) if name is not None else None
-    if area is None and provinces and name is not None:
-        area = find_province(name)
+    area = find_province(name) if provinces and name is not None else None
+    if area is None and name is not None:
+        area = find_area(name, near=context.location)
     if area is None:
         state.area_missed = state.area is None
         return fail(

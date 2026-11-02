@@ -2,6 +2,7 @@
 
 import logging
 import re
+import unicodedata
 from collections.abc import Mapping, Sequence
 from datetime import timedelta
 from uuid import UUID
@@ -59,6 +60,11 @@ async def propose_activity_candidates(
         date_to=today,
     )
     candidates = _with_doc_ids(args.candidates, context.state.example_ids)
+    # 후보마다 그날 판정으로 야외를 거른다. 판정이 없는 날은 여기서 판정한다 (#377)
+    outdoor = {
+        label: await outdoor_on(context, label)
+        for label in dict.fromkeys(candidate.day for candidate in args.candidates)
+    }
     review = review_candidates(
         candidates,
         # 보호자가 놀이를 정해 물었으면 그 요청에 맞춘 일반 추천이다 — [예시] 근거가 없어도 된다.
@@ -73,11 +79,9 @@ async def propose_activity_candidates(
         recent_activities=[row.activity for row in observations],
         safety=safety_terms(entries),
         today=today,
-        # 후보마다 그날 판정으로 야외를 거른다. 판정이 없는 날은 여기서 판정한다 (#377)
-        outdoor={
-            label: await outdoor_on(context, label)
-            for label in dict.fromkeys(candidate.day for candidate in args.candidates)
-        },
+        outdoor=outdoor,
+        # outdoor_on 이 위에서 후보의 날을 모두 판정해 넣었다. 행사는 날짜마다 본다 (#668 리뷰)
+        outdoor_days={day: brief.outdoor_ok for day, brief in context.state.weather.items()},
     )
     if review.rejections:
         # 거절만 모델에게 돌려준다. 같이 빠진 후보는 말하지 않는다 — 다시 내면 또 빠진다
@@ -127,6 +131,7 @@ def _with_doc_ids(
 
 
 def _short_id(raw: str) -> str:
-    """ "[예 1]" · "예시1" 도 예1 로 읽는다. 띄어쓰기 · 괄호만 다르게 쓴 것이다."""
-    key = re.sub(r"[\s\[\]]", "", raw)
+    """ "[예 1]" · "(예1)" · "예시1" · 전각 "예１" 도 예1 로 읽는다. 띄어쓰기 · 괄호 · 글자 폭만
+    다르게 쓴 것이다 (#606)."""
+    key = re.sub(r"[\s\[\]()]", "", unicodedata.normalize("NFKC", raw))
     return "예" + key[2:] if key.startswith("예시") else key

@@ -8,6 +8,7 @@ from app.agents.activity.areas import (
     PROVINCE_ALIASES,
     find_area,
     find_province,
+    leads_with_area,
     named_area,
     said,
 )
@@ -76,10 +77,42 @@ class TestFind:
         assert name("제주") == "제주특별자치도 제주시"
 
     def test_옛_광주광역시와_경기_광주시는_가른다(self):
-        assert name("광주") is None
-        assert name("광주시") is None
         assert name("광주 동구") == name("광주광역시 동구") == "전남광주통합특별시 동구"
         assert name("경기 광주") == name("경기도 광주시") == "경기도 광주시"
+
+    def test_광주광역시는_옛_광주의_다섯_구_가운데다(self):
+        """2026 년 전남과 통합돼 시도 이름에는 없지만 보호자는 여전히 그렇게 부른다.
+        수원처럼 구가 있는 시로 본다."""
+        gu = [
+            (lat, lon)
+            for p, d, lat, lon in DISTRICTS
+            if p == "전남광주통합특별시" and d in ("동구", "서구", "남구", "북구", "광산구")
+        ]
+        area = find_area("광주광역시")
+        assert area.name == "전남광주통합특별시 광주"
+        assert (area.lat, area.lon) == (fmean(a for a, _ in gu), fmean(b for _, b in gu))
+
+    @pytest.mark.parametrize("text", ["광주", "광주시"])
+    def test_광주는_위치가_없으면_모호해서_찾지_않는다(self, text):
+        assert name(text) is None
+
+    @pytest.mark.parametrize("text", ["광주", "광주시"])
+    def test_광주는_보호자_위치에서_가까운_쪽이다(self, text):
+        """경기 광주시와 옛 광주광역시 — 위치가 있으면 중구처럼 가까운 곳이다."""
+        assert name(text, near=CoarseLocation(lat=37.43, lon=127.25)) == "경기도 광주시"
+        assert name(text, near=CoarseLocation(lat=35.16, lon=126.85)) == "전남광주통합특별시 광주"
+
+    @pytest.mark.parametrize("text", ["화성시 동탄", "화성 동탄", "화성시동탄구", "동탄"])
+    def test_구가_있는_시는_시_이름과_구_앞이름을_붙여도_찾는다(self, text):
+        """사전에 없을 때 "화성시 동탄" 은 모델이 네 번 거절당한 뒤 "동탄" 으로 다시 썼다."""
+        assert name(text) == "경기도 화성시동탄구"
+
+    def test_동서로_나뉜_구의_앞_이름은_두_구의_가운데다(self):
+        """일산동구 · 일산서구 → "일산". 보호자는 구 이름보다 생활권 이름으로 부른다."""
+        east, west = find_area("일산동구"), find_area("일산서구")
+        area = find_area("일산")
+        assert area.name == "경기도 고양시일산"
+        assert (area.lat, area.lon) == (fmean((east.lat, west.lat)), fmean((east.lon, west.lon)))
 
     @pytest.mark.parametrize("text", ["", "  ", "서면", "인천 중구", "우리 동네", "해운대구청"])
     def test_모르는_이름은_찾지_않는다(self, text):
@@ -175,8 +208,8 @@ class TestNamedArea:
         ("area", "texts", "name"),
         [
             ("해운대", ["해운대 가서 놀 곳"], "해운대"),
-            ("해운대해수욕장", ["해운대해수욕장 가서 놀 곳"], "해운대"),
-            ("기장읍", ["기장읍에서 놀 곳"], "기장"),
+            ("해운대", ["해운대해수욕장 가서 놀 곳"], "해운대"),
+            ("기장", ["기장읍에서 놀 곳"], "기장"),
             ("부산 해운대", ["부산 해운대 쪽 공원"], "부산해운대"),
             ("부산진구", ["부산진구 가서"], "부산진구"),
             # 모델이 구를 붙여도 보호자가 쓴 짧은 이름으로 받는다
@@ -193,10 +226,22 @@ class TestNamedArea:
             ("서면", ["서면 가서 놀 곳"]),  # 사전에 없는 이름
             ("고양", ["고양이와 놀 곳"]),
             ("", ["해운대"]),
+            # 지역 이름만 받는다 — 뒤에 붙은 말이 명소면 그 지역에 있는지 코드는 모른다
+            ("해운대해수욕장", ["해운대해수욕장 가서 놀 곳"]),
+            ("세종문화회관", ["세종문화회관 가서 공연 보고"]),
+            ("기장읍", ["기장읍에서 놀 곳"]),
         ],
     )
     def test_없으면_None(self, area, texts):
         assert named_area(area, texts) is None
+
+    @pytest.mark.parametrize(
+        ("text", "leads"),
+        [("해운대해수욕장", True), ("세종문화회관", True), ("서면", False), ("광안리", False)],
+    )
+    def test_지역_이름으로_시작하는_말인가(self, text, leads):
+        """area 에 명소 이름을 통째로 넣었을 때 지역 이름만 다시 쓰라고 돌려보낼지를 가른다."""
+        assert leads_with_area(text) is leads
 
 
 class TestProvince:
@@ -219,6 +264,26 @@ class TestProvince:
 
     def test_시군구로_찾은_지역은_시도_전체가_아니다(self):
         assert find_area("해운대").whole_province is False
+
+    @pytest.mark.parametrize("text", ["제주", "제주도", "세종", "세종시"])
+    def test_시도_이름이_그_시도의_시와_같아도_시도_전체다(self, text):
+        """find_area 는 제주 → 제주시 · 세종 → 그곳이지만 행사는 시 · 도 전체다 (#668 리뷰)."""
+        area = find_province(text)
+        assert area is not None and area.whole_province
+
+    @pytest.mark.parametrize("text", ["광주", "광주시"])
+    def test_다른_시도의_시와_겹치는_이름은_모호해서_None(self, text):
+        """경기 광주시와 겹친다 — 전남광주 전체로 정하지 않는다 (#668 리뷰)."""
+        assert find_province(text) is None
+
+    @pytest.mark.parametrize("text", ["전남광주", "전남"])
+    def test_겹치지_않는_별칭은_시도_전체다(self, text):
+        assert find_province(text).province == "전남광주통합특별시"
+
+    def test_옛_광역시_이름은_시도_전체가_아니라_그_시다(self):
+        """광주광역시는 통합 뒤 시도 이름이 아니다 — 행사도 옛 광주 다섯 구 가운데에서 찾는다."""
+        assert find_province("광주광역시") is None
+        assert find_area("광주광역시").name == "전남광주통합특별시 광주"
 
     def test_모든_시도에_대표_지점이_있다(self):
         for province in PROVINCE_ALIASES:
