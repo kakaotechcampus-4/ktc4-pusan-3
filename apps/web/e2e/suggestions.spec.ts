@@ -1,3 +1,5 @@
+import type { Page } from "@playwright/test";
+
 import {
   CHILD,
   asOtherCaregiver,
@@ -357,6 +359,131 @@ test.describe("장소가 붙은 추천의 확인 문구 (#516)", () => {
     await expect(notice).toBeVisible();
     const basis = card.getByText("36개월 또래가 자주 찾는 놀이예요", { exact: true });
     expect((await notice.boundingBox())!.y).toBeLessThan((await basis.boundingBox())!.y);
+  });
+});
+
+test.describe("필요한 재료 · 준비물 (#659)", () => {
+  /** 05 개인화 줄 하나. 제안 문장으로 찾는다 — 탭을 먼저 골라야 그 묶음의 줄이 선다. */
+  const personalRow = (page: Page, text: string) =>
+    page.getByRole("tabpanel").locator(":scope > ul > li").filter({ hasText: text });
+
+  test("식사는 필요한 재료, 놀이는 준비물로 이유 다음 · 근거 선 위에 서고, 비어 오면 영역이 없다", async ({
+    page,
+  }) => {
+    await page.goto(SUGGESTIONS);
+
+    await page.getByRole("tab", { name: "식사 3가지" }).click();
+    const tofu = personalRow(page, "두부를 부쳐서");
+    await expect(tofu).toHaveCount(1);
+    const ingredients = tofu.getByRole("list", { name: "필요한 재료" });
+    await expect(ingredients.getByRole("listitem")).toHaveText(["두부"]);
+    // 🚨 읽기 전용이다 — 재료마다 체크박스가 없고, 고르는 칸은 제안 하나뿐이다
+    await expect(tofu.getByRole("checkbox")).toHaveCount(1);
+    await expect(
+      tofu.getByRole("checkbox", { name: "두부를 부쳐서 한 조각 곁들여 보세요", exact: true }),
+    ).toBeVisible();
+    // 이유 다음, 근거 선 위다 — 근거가 아니라서 "사용한 기록" 목록에 섞이지 않는다
+    const reasonY = (await tofu.getByText("추천 이유", { exact: true }).boundingBox())!.y;
+    const itemsY = (await tofu.getByText("필요한 재료", { exact: true }).boundingBox())!.y;
+    const evidence = tofu.getByText(/^사용한 기록 \d+건$/);
+    expect(reasonY).toBeLessThan(itemsY);
+    expect(itemsY).toBeLessThan((await evidence.boundingBox())!.y);
+    await expect(
+      evidence.locator("xpath=following-sibling::ul[1]").getByText("두부", { exact: true }),
+    ).toHaveCount(0);
+
+    await page.getByRole("tab", { name: "놀이 3가지" }).click();
+    const pool = personalRow(page, "실내 물놀이장");
+    await expect(pool.getByRole("list", { name: "준비물" }).getByRole("listitem")).toHaveCount(3);
+    await expect(pool.getByText("필요한 재료", { exact: true })).toHaveCount(0);
+
+    // 🚨 비어 온 줄은 라벨만 선 빈 영역이 없다
+    const blocks = personalRow(page, "블록으로 높이 쌓기");
+    await expect(blocks).toHaveCount(1);
+    await expect(blocks.getByText(/^(준비물|필요한 재료)$/)).toHaveCount(0);
+  });
+
+  test("다섯 개부터 넷만 보이고, 펼치고 접어도 고른 상태는 그대로다", async ({ page }) => {
+    await page.goto(SUGGESTIONS);
+    await page.getByRole("tab", { name: "식사 3가지" }).click();
+    const row = personalRow(page, "계란말이에 시금치를");
+    const items = row.getByRole("list", { name: "필요한 재료" }).getByRole("listitem");
+    const pick = row.getByRole("checkbox");
+    await expect(items).toHaveCount(4);
+
+    const more = row.getByRole("button", { name: "1개 더 보기" });
+    await expect(more).toHaveAttribute("aria-expanded", "false");
+    await more.click();
+    await expect(items).toHaveCount(5);
+    await expect(items.last()).toHaveText("애호박");
+    const fold = row.getByRole("button", { name: "접기" });
+    await expect(fold).toHaveAttribute("aria-expanded", "true");
+    // 🚨 펼치기는 고르기가 아니다
+    await expect(pick).not.toBeChecked();
+    await expect(page.getByRole("button", { name: /가지로 할게요$/ })).toHaveCount(0);
+
+    // 체크박스 표식은 숨긴 input 이라 라벨(제안 문장)을 누른다 — 보호자가 누르는 자리다
+    await row.getByText("계란말이에 시금치를 조금 섞어 보세요", { exact: true }).click();
+    await fold.click();
+    await expect(items).toHaveCount(4);
+    await expect(pick).toBeChecked();
+    await expect(page.getByRole("button", { name: "이 1가지로 할게요" })).toBeVisible();
+  });
+
+  test("긴 준비물 이름은 칩 안에서 줄을 바꾸고 화면이 가로로 넘치지 않는다", async ({ page }) => {
+    await page.setViewportSize({ width: 320, height: 720 });
+    await page.goto(SUGGESTIONS);
+    await page.getByRole("tab", { name: "놀이 3가지" }).click();
+    const row = personalRow(page, "실내 물놀이장");
+    const long = row
+      .getByRole("listitem")
+      .filter({ hasText: "유아용일회용방수기저귀겸수영팬티세트와여벌속옷두벌" });
+    await expect(long).toBeVisible();
+
+    const card = (await row.boundingBox())!;
+    const chip = (await long.boundingBox())!;
+    expect(chip.x + chip.width).toBeLessThanOrEqual(card.x + card.width);
+    // 🚨 칩 상자는 `max-w-full` 로 카드 안에 들어도 글자가 상자 밖으로 나갈 수 있다 (카드가 `overflow-hidden` 이라
+    //    문서 폭도 안 는다). 글자가 칩 안에 있고, 그러려고 칩이 두 줄이 됐는지를 본다
+    const fits = await long.evaluate((el) => ({
+      overflow: el.scrollWidth - el.clientWidth,
+      lines: el.getBoundingClientRect().height / parseFloat(getComputedStyle(el).lineHeight),
+    }));
+    expect(fits.overflow).toBeLessThanOrEqual(0);
+    // 한 줄 칩도 `min-h-chip`(28) 이라 caption 한 줄(16.8)의 1.67 배다 — 두 줄이어야 2 를 넘는다
+    expect(fits.lines).toBeGreaterThanOrEqual(2);
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth),
+    ).toBeLessThanOrEqual(0);
+  });
+
+  test.describe("일반 추천", () => {
+    test.use({ scenario: "empty" });
+
+    test("일반 식사 · 놀이도 같은 모양으로 기준 문구 다음 · 출처 위에 선다", async ({ page }) => {
+      await page.goto(SUGGESTIONS);
+      const meal = page
+        .locator("li")
+        .filter({ hasText: "국물 없이 집어 먹는 반찬을 한 가지 곁들여 보세요" })
+        .filter({ has: page.getByText("일반 추천", { exact: true }) });
+      await expect(meal).toHaveCount(1);
+      await expect(
+        meal.getByRole("list", { name: "필요한 재료" }).getByRole("listitem"),
+      ).toHaveText(["애호박", "두부", "당근"]);
+      const basisY = (await meal.getByText("36개월 또래의 식사에서 흔한 형태예요").boundingBox())!
+        .y;
+      const itemsY = (await meal.getByText("필요한 재료", { exact: true }).boundingBox())!.y;
+      const sourceY = (await meal.getByText(/^참고 · /).boundingBox())!.y;
+      expect(basisY).toBeLessThan(itemsY);
+      expect(itemsY).toBeLessThan(sourceY);
+
+      const play = page
+        .locator("li")
+        .filter({ hasText: "블록 쌓기처럼 손을 많이 쓰는 놀이" })
+        .filter({ has: page.getByText("일반 추천", { exact: true }) });
+      await expect(play.getByRole("list", { name: "준비물" }).getByRole("listitem")).toHaveCount(2);
+      await expect(play.getByRole("checkbox")).toHaveCount(1);
+    });
   });
 });
 
