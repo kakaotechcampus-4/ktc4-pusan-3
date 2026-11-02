@@ -33,6 +33,7 @@ from app.agents.food.schemas.common import EvidenceRef, MealSlot
 from app.agents.food.schemas.recommend import MealCandidate
 from app.agents.food.store.ports import RECIPE_SOURCES, FoodDocRow, MenuCatalogRow, SafetyEntry
 from app.agents.food.tools.safety import filter_food_safety
+from app.core.recipe_source import RECIPE_SOURCE_INFO
 from app.rules.age import Stage
 from app.rules.menu_evidence import menu_evidence_id
 from app.rules.menu_key import normalize_menu_key
@@ -44,10 +45,6 @@ Docs = Mapping[UUID, FoodDocRow]
 # 추천임을 표시하고 쌓인 기록 건수를 함께 보여 준다(루트 §2). 이유기 아이는 "이 시기 아기들" 문구다
 GENERAL_REASON = READOUTS.get(GENERAL_REASON_TODDLER).template
 GENERAL_REASON_INFANT = READOUTS.get(GENERAL_REASON_WEANING).template
-
-# 일반 추천에 붙는 메뉴 근거의 한 줄. 코드 문구다(모델이 쓰지 않는다). 05 화면에 그대로 나가서
-# 사실만 쓴다 — 후보 풀의 레시피는 재료 정리 표를 사람이 검수한 것만 들어온다(resolved)
-MENU_EVIDENCE_NOTE = "농식품정보원 공개 레시피 중 재료가 검수된 메뉴예요."
 
 
 class RejectReason(StrEnum):
@@ -237,11 +234,23 @@ def _menu_basis(row: MenuCatalogRow) -> tuple[EvidenceCitation, ...]:
 
     레시피 카탈로그 행만 가리킬 수 있다(id 는 `rules/menu_evidence`). 레시피 번호가 없는 행은
     비운다 — 그때는 지금처럼 문서 행을 인용해야 일반 추천이다. 운영 후보 풀은 늘 레시피 행이다.
+
+    같은 이름을 합친 행은 합쳐진 레시피를 모두 단다(`merged_from`). 그 메뉴의 재료 · 알레르기가
+    모두에서 왔고, 대표만 달면 대표가 소스에서 내려간 뒤 다른 소스로 남은 메뉴를 05 가 숨긴다.
+    한 줄 문구는 소스 정보 표의 `note` 다(코드 문구, #510).
     """
     if row.source not in RECIPE_SOURCES or not row.source_id:
         return ()
-    ref = Ref(kind="recipe_catalog", id=menu_evidence_id(row.source, row.source_id))
-    return (EvidenceCitation(ref=ref, note=MENU_EVIDENCE_NOTE, label=row.display_name),)
+    pairs = ((row.source, row.source_id), *row.merged_from)
+    return tuple(
+        EvidenceCitation(
+            ref=Ref(kind="recipe_catalog", id=menu_evidence_id(source, source_id)),
+            note=RECIPE_SOURCE_INFO[source].note,  # type: ignore[index] — RECIPE_SOURCES 와 같은 키다
+            label=row.display_name,
+        )
+        for source, source_id in pairs
+        if source in RECIPE_SOURCES
+    )
 
 
 def _cite(item: RankedEvidence | FoodDocRow, *, note: str) -> EvidenceCitation:

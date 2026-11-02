@@ -30,6 +30,7 @@ from app.agents.food.store import (
     MenuCatalogRow,
     SafetyEntry,
 )
+from app.rules.menu_evidence import menu_evidence_id
 from tests.unit.agents.food.support import (
     CHILD,
     affinity,
@@ -193,6 +194,43 @@ async def test_이름이_같은_레시피_중_하나만_알레르기여도_묶�
     ctx = context(recipes=recipes(beef, shrimp), safety=SHRIMP)
 
     assert await build_pool(ctx) == ()
+
+
+async def test_이름이_같은_레시피의_대표_행은_입력_순서와_무관하다() -> None:
+    # 대표 행의 (source, source_id) 가 메뉴 근거 id 가 된다. 입력 순서에 따라 바뀌면 같은 메뉴의
+    # 근거 id 가 run 마다 달라진다. 농식품정보원 번호가 더 커도 소스 이름순(mafra_recipe 먼저)이다
+    mafra = recipe("열무김치", "열무", source_id="9", allergen_codes=frozenset({5}))
+    nics = menu_row(
+        "열무김치",
+        source="nics_recipe",
+        ingredients=("열무", "고춧가루"),
+        source_id="3",
+        allergen_codes=frozenset({6}),
+    )
+
+    [forward] = await build_pool(context(recipes=recipes(mafra, nics)))
+    [backward] = await build_pool(context(recipes=recipes(nics, mafra)))
+
+    for pool_item in (forward, backward):
+        assert (pool_item.row.source, pool_item.row.source_id) == ("mafra_recipe", "9")
+        assert pool_item.row.source_version == mafra.source_version
+        assert pool_item.row.allergen_codes == {5, 6}  # 합집합은 그대로다
+        assert set(pool_item.row.ingredients) == {"열무", "고춧가루"}
+        # 대표가 아닌 쪽도 근거로 달 수 있게 남긴다
+        assert pool_item.row.merged_from == (("nics_recipe", "3"),)
+    assert menu_evidence_id(forward.row.source, forward.row.source_id) == menu_evidence_id(
+        backward.row.source, backward.row.source_id
+    )
+
+
+async def test_같은_소스의_같은_이름_레시피는_번호_순으로_대표를_정한다() -> None:
+    first = recipe("샤브샤브", "쇠고기", source_id="a")
+    second = recipe("샤브샤브", "새우", source_id="b")
+
+    [forward] = await build_pool(context(recipes=recipes(first, second)))
+    [backward] = await build_pool(context(recipes=recipes(second, first)))
+
+    assert forward.row.source_id == backward.row.source_id == "a"
 
 
 async def test_이름이_같은_레시피_중_단계가_높은_쪽을_따른다() -> None:

@@ -4,8 +4,11 @@ import json
 from dataclasses import replace
 from datetime import UTC, datetime
 
+import pytest
+
 from app.agents.food.recipe_catalog import build_recipe_row, parse_ingredient_table
-from app.core.mafra_recipe_raw import RawIngredient, RawRecipe
+from app.core.mafra_recipe_raw import RawIngredient, RawRecipe, RecipeSync
+from scripts import recipe_fetch
 from scripts.recipe_review_order import build_parser, main, review_order
 
 
@@ -79,7 +82,9 @@ def test_순서가_약속한_레시피가_실제로_resolved_가_된다():
     }
 
     now = datetime(2026, 10, 14, tzinfo=UTC)
-    resolved = sum(build_recipe_row(r, after, now=now).resolved for r in recipes)
+    resolved = sum(
+        build_recipe_row(r, after, now=now, source="mafra_recipe").resolved for r in recipes
+    )
     assert resolved == order[-1][1]
 
 
@@ -106,3 +111,69 @@ def test_출력은_cp949_로_못_찍는_글자가_있어도_UTF8_파일로_남�
 
 def test_도움말은_cp949_콘솔에서도_찍힌다():
     build_parser().format_help().encode("cp949")
+
+
+# ── --source (#510) ───────────────────────────────────────────────────
+def _sync(*names: str) -> RecipeSync:
+    return RecipeSync(
+        recipes=(RawRecipe("1", "가짜", ingredients=tuple(RawIngredient(n) for n in names)),),
+        recipe_rows=1,
+        ingredient_rows=len(names),
+        orphan_ingredient_rows=0,
+        unnamed_ingredient_rows=0,
+    )
+
+
+@pytest.fixture
+def fetchers(monkeypatch):
+    calls: list[str] = []
+
+    async def fake_mafra():
+        calls.append("mafra")
+        return _sync("마파재료")
+
+    async def fake_nics():
+        calls.append("nics")
+        return _sync("닉스재료")
+
+    monkeypatch.setattr(recipe_fetch, "fetch_mafra", fake_mafra)
+    monkeypatch.setattr(recipe_fetch, "fetch_nics", fake_nics)
+    return calls
+
+
+def test_source_는_정해진_이름만_받는다():
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["--fetch", "--source", "unknown"])
+
+
+def test_source_없이_받으면_농식품정보원이다(tmp_path, fetchers):
+    out = tmp_path / "order.txt"
+
+    main(["--fetch", "--target", "1", "--output", str(out)], table=table(마파재료="draft"))
+
+    assert fetchers == ["mafra"]
+    assert out.read_text(encoding="utf-8").splitlines() == ["   1  마파재료"]
+
+
+def test_받아_둔_결과에는_source_를_붙일_수_없다(tmp_path, fetchers):
+    # 받아 둔 결과는 이미 소스가 정해져 있다 — 붙여도 무시되니 받지 않는다
+    source = tmp_path / "sync.json"
+    source.write_text(json.dumps({"recipes": [{"ingredients": [{"name": "두부"}]}]}), "utf-8")
+
+    with pytest.raises(SystemExit):
+        main(
+            ["--input", str(source), "--source", "nics", "--target", "1"], table=table(두부="draft")
+        )
+    assert fetchers == []
+
+
+def test_nics_로_받으면_NICS_클라이언트만_쓴다(tmp_path, fetchers):
+    out = tmp_path / "order.txt"
+
+    main(
+        ["--fetch", "--source", "nics", "--target", "1", "--output", str(out)],
+        table=table(닉스재료="draft", 마파재료="draft"),
+    )
+
+    assert fetchers == ["nics"]
+    assert out.read_text(encoding="utf-8").splitlines() == ["   1  닉스재료"]
