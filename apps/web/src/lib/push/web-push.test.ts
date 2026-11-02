@@ -4,6 +4,7 @@ import { api } from "@/lib/api/client";
 import {
   askWebPush,
   forgetWebPushRegistration,
+  registerShellToken,
   shouldAskWebPush,
   syncWebPush,
 } from "@/lib/push/web-push";
@@ -152,6 +153,67 @@ describe("기기 등록", () => {
     });
     const put = vi.spyOn(api, "put");
     await syncWebPush();
+
+    expect(put).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * 앱(안드로이드 웹뷰) — Push API 가 없어 셸이 토큰을 받는다 (#609 FE-4). 웹은 묻기 · 토큰 받기를 셸에 부탁하고,
+ * 셸이 넘긴 토큰을 같은 규칙으로 등록한다.
+ */
+describe("앱 셸", () => {
+  const bridge = { available: true, ready: vi.fn(), sync: vi.fn(), ask: vi.fn() };
+
+  beforeEach(() => {
+    bridge.ready.mockClear();
+    bridge.sync.mockClear();
+    bridge.ask.mockClear();
+    // 웹뷰에는 Push API 가 없다 — 브라우저 길은 `unavailable` 이다.
+    vi.stubGlobal("window", { icatch: { push: bridge } });
+    vi.stubGlobal("navigator", {});
+  });
+
+  it("🚨 '없음' 이면 묻지 않고, 알림을 고르면 셸에 맡긴다 — 다시 묻지 않는 판단은 셸이 한다", async () => {
+    expect(shouldAskWebPush(NO_REMINDER)).toBe(false);
+    expect(shouldAskWebPush("1h")).toBe(true);
+
+    await askWebPush();
+    expect(bridge.ask).toHaveBeenCalledTimes(1);
+    expect(FakeNotification.requestPermission).not.toHaveBeenCalled();
+  });
+
+  it("🚨 앱을 켤 때는 묻지 않고 토큰만 부탁한다", async () => {
+    await syncWebPush();
+
+    expect(bridge.sync).toHaveBeenCalledTimes(1);
+    expect(bridge.ask).not.toHaveBeenCalled();
+    expect(firebase.getToken).not.toHaveBeenCalled();
+  });
+
+  it("셸이 넘긴 토큰을 android 로 등록하고, 같은 토큰은 다시 보내지 않는다", async () => {
+    const put = vi.spyOn(api, "put");
+    await registerShellToken("device-token");
+    await registerShellToken("device-token");
+
+    expect(put).toHaveBeenCalledTimes(1);
+    expect(put).toHaveBeenCalledWith("/me/push-device", {
+      token: "device-token",
+      platform: "android",
+    });
+  });
+
+  it("🚨 같은 토큰이 거의 동시에 두 번 와도 한 번만 보낸다 — 실기기에서 두 번 나갔다", async () => {
+    const put = vi.spyOn(api, "put");
+    await Promise.all([registerShellToken("device-token"), registerShellToken("device-token")]);
+
+    expect(put).toHaveBeenCalledTimes(1);
+  });
+
+  it("🚨 로그인 전에 온 토큰은 보내지 않는다 — 셸의 토큰 교체 알림은 언제든 온다", async () => {
+    useSessionStore.setState({ token: null });
+    const put = vi.spyOn(api, "put");
+    await registerShellToken("device-token");
 
     expect(put).not.toHaveBeenCalled();
   });

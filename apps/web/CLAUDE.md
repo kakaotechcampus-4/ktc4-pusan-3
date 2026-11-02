@@ -27,7 +27,7 @@ Owner: 고태영 (프론트 리드)
 | `mocks/` · `*.test.ts` · `e2e/` · `contract/` | [`mock-and-tests-v1.md`](../../docs/web/mock-and-tests-v1.md) |
 | 복약 초안 카드 · 11-3 복약 · `stores/medication-draft.ts` · `lib/medication.ts` (#537) | [`medication-v1.md`](../../docs/web/medication-v1.md) |
 | `package.json` 의 버전 · `eslint.config.mjs` · `ci-web.yml` · `Dockerfile` · 배포 | [`toolchain-deploy-v1.md`](../../docs/web/toolchain-deploy-v1.md) |
-| 웹 푸시 — `lib/push/` · `public/push-sw.js` · `WebPushBridge` · `ReminderField` 의 권한 묻기 · `NEXT_PUBLIC_FIREBASE_*` | [`web-push-v1.md`](../../docs/web/web-push-v1.md) |
+| 웹 푸시 — `lib/push/` · `lib/native/push.ts`(앱 셸 창구) · `public/push-sw.js` · `WebPushBridge` · `ReminderField` 의 권한 묻기 · `NEXT_PUBLIC_FIREBASE_*` | [`web-push-v1.md`](../../docs/web/web-push-v1.md) |
 
 🚨 **같은 규칙이 이 파일의 요약과 `docs/web/` 원문 두 곳에 있으면 원문이 정본이다.** 규칙을 바꾸면 같은 PR 에서 둘 다 고친다.
 

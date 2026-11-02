@@ -1,6 +1,8 @@
 import { api } from "@/lib/api/client";
 import type { PushDeviceRequest } from "@/lib/api/types";
 import { FIREBASE_WEB } from "@/lib/env";
+import { shellPush } from "@/lib/native/push";
+import { isPushOpenPath } from "@/lib/push/open-path";
 import { NO_REMINDER, type ReminderChoice } from "@/lib/reminder";
 // ⚠️ `lib/` 에서 스토어를 읽는 드문 자리다. `lib/api/client.ts` 는 서버 컴포넌트에서도 쓰여서 스토어를 안 읽지만,
 //    이 파일은 브라우저 API 를 쓰는 클라이언트 전용이라(`ReminderField` · `WebPushBridge` 만 부른다) 그 제약이 없다.
@@ -21,8 +23,13 @@ import { hasLiveSession, useSessionStore } from "@/stores/session";
  * 🚨 **이 코드는 토큰을 로그 · 웹 저장소 · 에러 리포트에 쓰지 않는다.** 같은 토큰을 다시 보내지 않으려고
  *    메모리에만 든다. ⚠️ Firebase SDK 는 브라우저 단위로 IndexedDB 에 토큰 정보를 둔다 — 로그아웃 때
  *    `deleteToken` 을 부르지 않는 이유는 `docs/web/web-push-v1.md` "토큰이 남는 곳".
- * 🚨 **앱 셸(안드로이드 웹뷰)에서는 동작하지 않는다.** 웹뷰에는 Push API 가 없어 `unavailable` 이고,
- *    앱의 토큰은 셸이 넘긴다(#609 FE-4).
+ * 🚨 **앱(안드로이드 웹뷰)에서는 셸이 토큰을 받는다** (#609 FE-4 · `lib/native/push.ts`). 웹뷰에는 Push API 가
+ *    없어서 브라우저 길은 `unavailable` 이다. 셸이 있으면 묻기 · 토큰 받기를 셸에 부탁하고, 셸이 넘긴 토큰을
+ *    여기서 같은 규칙으로 등록한다(`platform: "android"`).
+ * 🚨 **앱도 같은 스위치를 따른다** — Firebase 웹 값(`FIREBASE_WEB`)이 비어 있으면 앱에서도 묻지도 넘기지도
+ *    않는다. 이 값은 **"묻고 넘기기" 스위치**다. 토큰을 **저장할지**는 서버의 `PUSH_DEVICE_ACCEPT` 가 정한다
+ *    (#610 · 처리방침 새 판 전에는 204 만 주고 저장하지 않는다). 서버가 받지 않는 동안 권한 창부터 띄우면 허용한
+ *    보호자에게 알림이 오지 않으니, 켜는 순서는 서버 → 웹이다 (`docs/web/web-push-v1.md` "켜는 순서").
  */
 
 export const PUSH_SW_URL = "/push-sw.js";
@@ -46,6 +53,11 @@ export function webPushPermission(): WebPushPermission {
 
 /** 이번 로그인에 등록한 토큰. 같은 토큰을 화면마다 다시 보내지 않는다. 🚨 이 코드는 메모리에만 둔다. */
 let registeredToken: string | null = null;
+/**
+ * 지금 보내는 중인 토큰. 🚨 셸은 같은 토큰을 거의 동시에 두 번 넘길 수 있다(토큰 받기 + 토큰 교체 알림 ·
+ * 실기기 확인). 첫 PUT 이 끝나기 전이라 `registeredToken` 만 보면 둘 다 보낸다.
+ */
+let sendingToken: string | null = null;
 let inFlight: Promise<void> | null = null;
 
 /** 로그아웃하면 잊는다 — 다음 로그인은 새 기기 행이라 다시 보내야 한다. */
@@ -53,16 +65,34 @@ export function forgetWebPushRegistration(): void {
   registeredToken = null;
 }
 
-/**
- * 알림을 고른 순간 권한을 물을 것인가. 🚨 **"없음" 을 고를 때는 묻지 않는다** — 무엇에 쓰는지 안 보이는 때다.
- * 이미 답한 브라우저 · 웹 푸시가 꺼진 환경 · 앱 셸에서도 묻지 않는다.
- */
-export function shouldAskWebPush(choice: ReminderChoice): boolean {
-  return choice !== NO_REMINDER && webPushPermission() === "default";
+/** 등록을 받는 환경인가 — 앱과 브라우저가 같은 스위치를 따른다 (머리말). */
+function pushEnabled(): boolean {
+  return FIREBASE_WEB !== null;
 }
 
-/** 앱을 켤 때 · 로그인 직후. 🚨 **묻지 않는다** — 이미 허용한 브라우저만 등록한다. */
+/** 앱 셸의 알림 창구. 스위치가 꺼져 있으면 없는 것으로 본다. */
+function shell() {
+  return pushEnabled() ? shellPush() : null;
+}
+
+/**
+ * 알림을 고른 순간 권한을 물을 것인가. 🚨 **"없음" 을 고를 때는 묻지 않는다** — 무엇에 쓰는지 안 보이는 때다.
+ * 이미 답한 브라우저 · 웹 푸시가 꺼진 환경에서도 묻지 않는다. 앱이면 셸에 맡긴다 — 창을 띄울지는 OS 가 다시
+ * 물을 수 있는지 아는 셸이 정한다 (`apps/mobile/src/native/push.ts` 의 `shouldAskPermission`).
+ */
+export function shouldAskWebPush(choice: ReminderChoice): boolean {
+  if (choice === NO_REMINDER) return false;
+  if (shell()) return true;
+  return webPushPermission() === "default";
+}
+
+/** 앱을 켤 때 · 로그인 직후. 🚨 **묻지 않는다** — 이미 허용한 브라우저 · 휴대폰만 등록한다. */
 export function syncWebPush(): Promise<void> {
+  const app = shell();
+  if (app) {
+    app.sync(); // 토큰은 `icatch:push` 로 온다 → `registerShellToken`
+    return Promise.resolve();
+  }
   if (webPushPermission() !== "granted") return Promise.resolve();
   return register();
 }
@@ -73,6 +103,11 @@ export function syncWebPush(): Promise<void> {
  *    그래서 `requestPermission` 이 이 함수의 첫 일이다.
  */
 export function askWebPush(): Promise<void> {
+  const app = shell();
+  if (app) {
+    app.ask();
+    return Promise.resolve();
+  }
   if (webPushPermission() !== "default") return Promise.resolve();
   return Notification.requestPermission().then((permission) =>
     permission === "granted" ? register() : undefined,
@@ -110,16 +145,31 @@ async function registerOnce(): Promise<void> {
     vapidKey,
     serviceWorkerRegistration: registration,
   });
-  if (!token || token === registeredToken) return;
+  if (token) await sendToken(token, "web");
+}
+
+/**
+ * 셸이 넘긴 이 휴대폰의 토큰을 등록한다 (`WebPushBridge` 가 `icatch:push` 에서 부른다).
+ * 토큰이 바뀌어도 셸이 다시 넘긴다. 스위치가 꺼져 있으면 보내지 않는다.
+ */
+export function registerShellToken(token: string): Promise<void> {
+  if (!pushEnabled()) return Promise.resolve();
+  return sendToken(token, "android");
+}
+
+async function sendToken(token: string, platform: PushDeviceRequest["platform"]): Promise<void> {
+  if (token === registeredToken || token === sendingToken) return;
   // 🚨 토큰을 받는 사이(처음엔 몇 초) 로그아웃했으면 보내지 않는다. 토큰 없이 나간 요청이 401 을 맞으면
-  //    세션 만료 처리가 한 번 더 돈다.
+  //    세션 만료 처리가 한 번 더 돈다. 셸의 토큰 교체 알림은 로그인 전에도 올 수 있다.
   if (!hasLiveSession(useSessionStore.getState())) return;
 
-  await api.put<void>("/me/push-device", {
-    token,
-    platform: "web",
-  } satisfies PushDeviceRequest);
-  registeredToken = token;
+  sendingToken = token;
+  try {
+    await api.put<void>("/me/push-device", { token, platform } satisfies PushDeviceRequest);
+    registeredToken = token;
+  } finally {
+    sendingToken = null;
+  }
 }
 
 const ACTIVATE_TIMEOUT_MS = 10_000;
@@ -144,9 +194,6 @@ function whenActive(registration: ServiceWorkerRegistration): Promise<void> {
 
 /* ── 알림을 눌렀을 때 ─────────────────────────────────────────────────── */
 
-/** `push-sw.js` 의 `targetPath` 가 만드는 모양. 🚨 둘을 같이 고친다. */
-const OPEN_PATH = /^\/$|^\/child\/[A-Za-z0-9_-]{1,64}\/calendar\?date=\d{4}-\d{2}-\d{2}$/;
-
 /**
  * 워커가 열린 탭에 보낸 "여기로 가 주세요" 를 읽는다. 아니면 `null`.
  * 🚨 **모양을 다시 본다.** 이 페이지에는 목 워커도 메시지를 보낸다 — 우리 것만, 우리 주소만 받는다.
@@ -155,5 +202,5 @@ export function pushOpenPath(message: unknown): string | null {
   if (typeof message !== "object" || message === null) return null;
   const { type, path } = message as { type?: unknown; path?: unknown };
   if (type !== "icatch:push-open" || typeof path !== "string") return null;
-  return OPEN_PATH.test(path) ? path : null;
+  return isPushOpenPath(path) ? path : null;
 }

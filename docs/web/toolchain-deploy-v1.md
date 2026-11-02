@@ -85,7 +85,7 @@ TS 7 (네이티브 컴파일러) 이 최신이지만 **`typescript-eslint` 가 �
   콜백에 실리지 않는다 ([`docs/api/auth-kakao-v1.md`](../../docs/api/auth-kakao-v1.md) §5-5) —
   **로컬은 포트가 달라도 쿠키가 공유돼 우연히 통과한다.** 이 값은 배포 기준으로 확인한다
 - **웹 푸시 Firebase 값 다섯 개(`NEXT_PUBLIC_FIREBASE_*`)도 빌드 인자다** (#609). API 주소와 달리 **비어도 빌드가
-  멈추지 않는다** — 비우면 웹 푸시가 꺼진 이미지다. 기기 토큰 수집 동의가 나가기 전에는 운영에서 비워 둔다.
+  멈추지 않는다** — 비우면 웹 푸시가 꺼진 이미지다. 서버가 기기 토큰을 받기 시작한 뒤(`PUSH_DEVICE_ACCEPT`)에 넣는다 ([`web-push-v1.md`](web-push-v1.md) "켜는 순서").
   다섯 개를 다 넣거나 다 비운다(일부만이면 `lib/env.ts` 가 빌드 중에 멈춘다) · [`web-push-v1.md`](web-push-v1.md)
 - 🚨 **목 서버는 이 이미지로 켤 수 없고, 켤 수 있는 척하지도 않는다.** `NEXT_PUBLIC_API_MOCKING` 을
   빌드 인자로 열지 않고 `disabled` 로 고정해 뒀다 — 프로덕션 빌드에는 msw 가 통째로 빠져서(§7)

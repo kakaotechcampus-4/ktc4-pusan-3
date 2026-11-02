@@ -25,7 +25,29 @@
         "android.permission.READ_EXTERNAL_STORAGE",
         "android.permission.WRITE_EXTERNAL_STORAGE",
         "android.permission.SYSTEM_ALERT_WINDOW",
-        "android.permission.VIBRATE"
+        "android.permission.VIBRATE",
+        "android.permission.READ_APP_BADGE",
+        "android.permission.RECEIVE_BOOT_COMPLETED",
+        "com.anddoes.launcher.permission.UPDATE_COUNT",
+        "com.android.launcher.permission.INSTALL_SHORTCUT",
+        "com.android.launcher.permission.READ_SETTINGS",
+        "com.android.launcher.permission.UNINSTALL_SHORTCUT",
+        "com.android.launcher.permission.WRITE_SETTINGS",
+        "com.google.android.finsky.permission.BIND_GET_INSTALL_REFERRER_SERVICE",
+        "com.htc.launcher.permission.READ_SETTINGS",
+        "com.htc.launcher.permission.UPDATE_SHORTCUT",
+        "com.huawei.android.launcher.permission.CHANGE_BADGE",
+        "com.huawei.android.launcher.permission.READ_SETTINGS",
+        "com.huawei.android.launcher.permission.WRITE_SETTINGS",
+        "com.majeur.launcher.permission.UPDATE_BADGE",
+        "com.oppo.launcher.permission.READ_SETTINGS",
+        "com.oppo.launcher.permission.WRITE_SETTINGS",
+        "com.sec.android.provider.badge.permission.READ",
+        "com.sec.android.provider.badge.permission.WRITE",
+        "com.sonyericsson.home.permission.BROADCAST_BADGE",
+        "com.sonymobile.home.permission.PROVIDER_INSERT_BADGE",
+        "me.everything.badger.permission.BADGE_COUNT_READ",
+        "me.everything.badger.permission.BADGE_COUNT_WRITE"
       ]
     },
     "plugins": [
@@ -35,6 +57,12 @@
         {
           "microphonePermission": "아이 이야기를 말로 남길 때 마이크를 써요. 음성은 휴대폰 안에서 글자로 바뀌고 밖으로 보내지 않아요.",
           "speechRecognitionPermission": "말한 내용을 휴대폰 안에서 글자로 바꿔 입력창에 넣어요."
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "defaultChannel": "schedule"
         }
       ]
     ],

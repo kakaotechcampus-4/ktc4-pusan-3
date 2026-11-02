@@ -19,6 +19,8 @@
  * **양쪽을 같이** 고친다.
  */
 
+import type { PushAction } from "./push";
+
 /** 웹에 결과를 알리는 이벤트 이름. */
 const EVENT = "icatch:speech";
 
@@ -31,8 +33,13 @@ export const SPEECH_LANG = "ko-KR";
 /** Android 13 — 기기 안 인식기를 따로 만들 수 있는 첫 버전 (`createOnDeviceSpeechRecognizer`). */
 const ON_DEVICE_MIN_API = 33;
 
-/** 웹이 셸에 하는 부탁. 🚨 이 모양이 아니면 네이티브를 부르지 않는다 (`apps/mobile/CLAUDE.md` §4). */
-export type WebRequest = { kind: "speech"; action: "start" | "stop" };
+/**
+ * 웹이 셸에 하는 부탁. 🚨 이 모양이 아니면 네이티브를 부르지 않는다 (`apps/mobile/CLAUDE.md` §4).
+ * `push` 는 일정 알림이다 (#609 · `push.ts`).
+ */
+export type WebRequest =
+  | { kind: "speech"; action: "start" | "stop" }
+  | { kind: "push"; action: PushAction };
 
 /**
  * 웹 → 셸 메시지를 검사한다. 통과하지 못하면 `null` 이고, 호출부는 아무것도 하지 않는다.
@@ -56,9 +63,11 @@ export function parseWebRequest(
   }
   if (typeof value !== "object" || value === null) return null;
   const { kind, action } = value as Record<string, unknown>;
-  if (kind !== "speech") return null;
-  if (action !== "start" && action !== "stop") return null;
-  return { kind, action };
+  if (kind === "speech" && (action === "start" || action === "stop")) return { kind, action };
+  if (kind === "push" && (action === "ready" || action === "sync" || action === "ask")) {
+    return { kind, action };
+  }
+  return null;
 }
 
 /**
