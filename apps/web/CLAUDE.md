@@ -81,6 +81,8 @@ Owner: 고태영 (프론트 리드)
   대화 스토어는 로그아웃에서 **도는 스트림도 끊는다**
 - `public/mockServiceWorker.js` 는 msw 가 생성한 파일이다. 손으로 고치지 않고 lint·prettier 대상에서 빼 뒀다.
   같은 자리의 `public/push-sw.js`(웹 푸시 · #609)는 **손으로 쓴 파일**이라 lint·prettier 대상이다
+- `src/app/icon.svg` · `favicon.ico` · `apple-icon.png`(파비콘 · #695)은 생성물이다. 손으로 고치지 않고
+  `apps/mobile/scripts/build-icons.py` 로 앱 아이콘과 함께 다시 만든다 (원본 로고가 `apps/mobile/assets/logo.svg` 하나라서)
 
 화면을 붙일 때 요청 · 응답 모양은 **Swagger(`/docs`)** 를 기준으로 잡는다. [`docs/api/api-interface-v1.html`](../../docs/api/api-interface-v1.html) 은 갱신하지 않는 초안이라, 그 **화면 → 호출** 표는 어느 화면이 무엇을 부르는지 훑는 용도로만 본다.
 

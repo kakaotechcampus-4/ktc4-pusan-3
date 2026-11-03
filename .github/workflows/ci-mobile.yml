@@ -13,12 +13,16 @@ on:
       - main
     paths:
       - apps/mobile/**
+      # 스플래시 바탕색이 웹의 --color-canvas 와 같은지 `splash.test.ts` 가 본다 (#690). 웹만 바꾼 PR 에서도 돈다.
+      - apps/web/src/app/globals.css
       - .github/workflows/ci-mobile.yml
   push:
     branches:
       - develop
     paths:
       - apps/mobile/**
+      # 스플래시 바탕색이 웹의 --color-canvas 와 같은지 `splash.test.ts` 가 본다 (#690). 웹만 바꾼 PR 에서도 돈다.
+      - apps/web/src/app/globals.css
       - .github/workflows/ci-mobile.yml
 
 concurrency:
