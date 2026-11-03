@@ -427,7 +427,7 @@ npx eas-cli@latest build -p android --profile preview       # apk — 설치 링
 - 🚨 **배포 빌드의 웹 주소는 `eas.json` 의 `env` 가 정한다.** `.env.local` 은 `.gitignore` 라 EAS 서버로
   올라가지 않는다. 주소를 바꾸면 `eas.json` 을 고친다 — `EXPO_PUBLIC_*` 는 번들에 박히므로 다시 빌드해야 한다.
 - 🚨 **`versionCode` 는 EAS 가 올린다** (`appVersionSource: remote` + `autoIncrement`). `app.json` 에 손으로 적지 않는다.
-  사용자에게 보이는 `version`(지금 `0.1.0`)만 `app.json` 에서 올린다.
+  사용자에게 보이는 `version`(지금 `1.0.0`)만 `app.json` 에서 올린다.
 - 🚨 **업로드 키는 EAS 가 만들어 `truedoc` 조직 자격 증명에 보관한다** (2026-10-14 결정). 키 파일을 팀원 PC 에
   두지 않는다 — 누가 빌드하든 같은 키로 서명된다. 한 번 올린 업로드 키는 Play Console 에 재설정을 요청해야 바뀌므로,
   `eas credentials` 에서 키를 지우거나 새로 만들지 않는다. 백업이 필요하면 조직 Owner 가 `eas credentials` 로 내려받는다.
