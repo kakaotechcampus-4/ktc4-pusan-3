@@ -6,13 +6,13 @@
     ② 새 버전을 등록한 scope 의 draft-0 은 끝난 것으로 기록된다
     ③ 🚨 운영자 주소·전화는 빈칸 그대로다 — 저장소가 public 이라 실제 값은 배포 때만 채운다 (#166)
 
-draft-2(b5be2945826e)가 위치를 뺀 셋을 이어받았다 — 지금 판인지는 위치만 여기서 보고, 나머지는
-tests/integration/test_policy_draft_2.py 가 본다. draft-1 행의 본문 · 해시 · 정본은 그대로 남는다.
+draft-2(b5be2945826e)가 위치를 뺀 셋을, 2026-11-03 판(c7d18f3ae5b2)이 위치를 이어받았다.
+지금 판인지는 test_policy_draft_2.py · test_policy_2026_11_03.py 가 본다.
+draft-1 행의 본문 · 해시 · 정본은 그대로 남는다.
 """
 
 import hashlib
 import json
-from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -20,26 +20,15 @@ from sqlalchemy import select
 
 from app.domains.consent.models import ConsentScope
 from app.domains.policy.models import PolicyVersion
-from app.domains.policy.repository import find_active_versions
 
 TEXTS = Path(__file__).resolve().parents[2] / "alembic" / "policy_texts" / "draft-1"
 REGISTERED = (ConsentScope.SERVICE_TERMS, ConsentScope.PRIVACY_ACCOUNT, ConsentScope.LOCATION)
-STILL_CURRENT = (ConsentScope.LOCATION,)
-"""draft-2 가 이어받지 않은 scope — 위치는 첫 빌드에서 묻지 않아 draft-1 이 그대로 지금 판이다."""
 
 
 async def version_row(session, scope: ConsentScope, version: str) -> PolicyVersion | None:
     return await session.scalar(
         select(PolicyVersion).where(PolicyVersion.scope == scope, PolicyVersion.version == version)
     )
-
-
-@pytest.mark.parametrize("scope", STILL_CURRENT, ids=lambda s: s.value)
-async def test_draft_1_is_the_current_version(session, scope):
-    """GET /policies 가 지금 보여 주는 버전이 draft-1 이다 — draft-2 가 이어받지 않은 위치."""
-    current = {row.scope: row for row in await find_active_versions(session, now=datetime.now(UTC))}
-
-    assert current[scope].version == "draft-1"
 
 
 @pytest.mark.parametrize("scope", REGISTERED, ids=lambda s: s.value)
