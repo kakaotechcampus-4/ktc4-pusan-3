@@ -4,7 +4,8 @@
                      아니라 풀에서 뺀다(`removed`) — 모델에게 사유를 돌려주지 않는다 (§5-2)
   2. 평가 표현       content · reason · note
   3. Activity 검증   근거 id · 장소 · 행사 이름(문장에만 쓴 행사도 붙인다 · 한 후보에 둘이면
-                     거절) · 그날 열리지 않는 행사 · 말한 지역의 장소에 "근처" · 바깥 활동이
+                     거절) · 그날 열리지 않는 행사(일정으로) · 그날이 아닌 날의 행사 장소 ·
+                     말한 지역의 장소에 "근처" · 바깥 활동이
                      어려운 날의 야외 후보(행사 포함) · 기피 대상 · note 반복 표현 · 최근 중복 ·
                      0–17개월 보호자 동반
   4. build()         6개월이 안 지난 아이 기록 근거 수로 kind 를 정한다. 모델이 고르지 않는다.
@@ -81,6 +82,9 @@ NEARBY_WORDS = ("근처",)
 # 행사를 이름 전체(또는 연도 · 회차 · 괄호 · 부제를 뗀 이름)로 알아보는 최소 길이(정규화한 글자 수).
 # 짧은 이름은 흔한 말과 겹친다
 MIN_EVENT_NAME = 4
+# 장소가 날마다 다른 행사에서 다른 날 장소를 알아보는 낱말의 최소 길이. "모래섬 해변" 을
+# "모래섬" 으로 줄여 써도 본다. "공원" · "해변" 같은 두 글자 말은 어느 날 장소에나 있다
+MIN_EVENT_PLACE_WORD = 3
 # 행사 이름 안의 낱말 하나로 알아보는 최소 길이. 모델은 "2026 대한민국 ○○박람회" 를 "○○박람회" 로
 # 줄여 쓴다(11-03 실측). "크리스마스"(5) · "놀이터" 같은 흔한 말로 알아보면 행사가 아닌 후보에
 # 붙는다
@@ -100,6 +104,7 @@ class RejectReason(StrEnum):
     CAREGIVER_ROLE = "caregiver_role"
     UNKNOWN_PLACE = "unknown_place"
     EVENT_CLOSED = "event_closed"
+    EVENT_PLACE = "event_place"
     NEARBY_WORDING = "nearby_wording"
     OUTDOOR_CLOSED = "outdoor_closed"
     MIXED_PLACES = "mixed_places"
@@ -124,8 +129,12 @@ GUIDANCE: dict[RejectReason, str] = {
         "행사를 뺀다."
     ),
     RejectReason.EVENT_CLOSED: (
-        "후보의 행사는 그날(day) 열리지 않는다. 행사 기간 안의 날로 day 를 고치거나, "
-        "문장에서도 그 행사를 빼고 다른 활동으로 바꾼다."
+        "후보의 행사는 그날(day) 열리지 않는다. search_events 결과의 open_days 에 있는 날로 day 를 "
+        "고치거나, 문장에서도 그 행사를 빼고 다른 활동으로 바꾼다."
+    ),
+    RejectReason.EVENT_PLACE: (
+        "그날(day) 그 행사가 열리는 곳이 아니다. 장소는 search_events 결과의 그날 place 로 "
+        "고치거나, 문장에서도 그 행사를 빼고 다른 활동으로 바꾼다."
     ),
     RejectReason.NEARBY_WORDING: (
         "보호자가 말한 지역에서 찾은 장소다. 보호자가 지금 그 자리에 있지 않으니 "
@@ -326,6 +335,8 @@ def _check(
         open_days = [day for day in days_of(candidate.day, today) if open_on(place, (day,))]
         if not open_days:
             return RejectReason.EVENT_CLOSED, (), None
+        if _elsewhere(candidate, place, open_days):
+            return RejectReason.EVENT_PLACE, (), None
         # 열리는 날과 바깥이 되는 날이 같은 날이어야 한다. 표에 없는 날은 판정하지 않은 날이다
         if outdoor_days is not None and not any(outdoor_days.get(day, False) for day in open_days):
             return RejectReason.OUTDOOR_CLOSED, (), None
@@ -372,7 +383,9 @@ class _Known:
     # 알아보는 이름(`_event_keys`) → 행사. 두 행사가 같이 쓰는 이름 · 장소 이름과 같은 이름은 뺐다 —
     # 어느 쪽인지 모른다
     event_keys: Mapping[str, EventRow]
-    venues: Mapping[str, tuple[EventRow, ...]]  # 정규화한 개최 장소 → 행사
+    # 정규화한 개최 장소 → 행사. 장소가 날마다 다른 행사는 그날그날의 장소도 넣는다 — tool 결과의
+    # place 가 그날 장소다
+    venues: Mapping[str, tuple[EventRow, ...]]
 
     @classmethod
     def of(cls, places: Mapping[str, PlaceRow], events: Mapping[str, EventRow]) -> "_Known":
@@ -382,7 +395,8 @@ class _Known:
         for event in events.values():
             for key in _event_keys(event):
                 owners.setdefault(key, []).append(event)
-            if venue := normalize_activity(event.place):
+            held = {event.place, *(name for _, name in event.schedule.day_places)}
+            for venue in {normalize_activity(name) for name in held} - {""}:
                 venues.setdefault(venue, []).append(event)
         return cls(
             places=by_place,
@@ -533,6 +547,25 @@ def place_notice(place: PlaceRow | EventRow) -> str:
     return READOUTS.render(
         PLACE_NOTICE, year=place.data_date.year, month=place.data_date.month
     ).body
+
+
+def _elsewhere(candidate: ActivityCandidate, event: EventRow, days: Sequence[date]) -> bool:
+    """장소가 날마다 다른 행사인데 후보가 그날(`days`)이 아닌 날의 장소를 썼다.
+
+    다른 날 장소의 이름 · 그 안의 낱말(`MIN_EVENT_PLACE_WORD` 자 이상)이 문장이나 place_name 에
+    있으면 쓴 것으로 본다. 그날 장소에도 있는 낱말은 보지 않는다. 그날 장소를 모르면 보지 않는다.
+    """
+    places = event.schedule.day_places
+    there = {name for day, name in places if day in days}
+    if not there:
+        return False
+    here = {normalize_activity(word) for name in there for word in (name, *name.split())}
+    written = normalize_activity(f"{candidate.content} {candidate.place_name or ''}")
+    for name in {name for _, name in places} - there:
+        words = {normalize_activity(word) for word in (name, *name.split())} - here
+        if any(len(word) >= MIN_EVENT_PLACE_WORD and word in written for word in words):
+            return True
+    return False
 
 
 def _held_at(declared: str, event: EventRow) -> bool:

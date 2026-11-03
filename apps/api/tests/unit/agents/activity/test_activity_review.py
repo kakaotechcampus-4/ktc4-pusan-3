@@ -13,6 +13,7 @@ from uuid import UUID
 import pytest
 
 from app.agents.activity.context import ActivityContext, build_gate
+from app.agents.activity.events import schedule_days
 from app.agents.activity.result import ErrorCode
 from app.agents.activity.review import (
     GENERAL_REASON,
@@ -46,6 +47,7 @@ from app.agents.activity.store.ports import (
     ActivityDocRow,
     ActivityObservation,
     EventRow,
+    EventSchedule,
     PlaceRow,
     SafetyEntry,
 )
@@ -103,6 +105,13 @@ PARK_ROW = PlaceRow(
     data_date=date(2026, 6, 30),
 )
 
+
+def daily(starts_on: date, ends_on: date) -> EventSchedule:
+    """기간 안 매일 열리는 일정 — 일정 원문에 요일 · 날짜 제한이 없는 행사."""
+    days = schedule_days(TODAY)
+    return EventSchedule(open_days=frozenset(day for day in days if starts_on <= day <= ends_on))
+
+
 FEST = "광안리 가을 축제"  # 이번 run 에 행사 조회가 돌려준 행사. TODAY(09-29 화) 부터 10-01 까지
 FEST_ROW = EventRow(
     name=FEST,
@@ -111,6 +120,7 @@ FEST_ROW = EventRow(
     ends_on=date(2026, 10, 1),
     place="광안리해수욕장 일원",
     distance_m=3_000,
+    schedule=daily(date(2026, 9, 29), date(2026, 10, 1)),
 )
 
 
@@ -544,7 +554,12 @@ class TestEvent:
         self, ends_on, saturday_ok, rejected
     ):
         """주말은 하루라도 맑으면 열리지만 행사는 그 맑은 날에 열려야 한다 (#668 리뷰)."""
-        weekend = replace(FEST_ROW, starts_on=date(2026, 10, 3), ends_on=ends_on)
+        weekend = replace(
+            FEST_ROW,
+            starts_on=date(2026, 10, 3),
+            ends_on=ends_on,
+            schedule=daily(date(2026, 10, 3), ends_on),
+        )
         result = review(
             candidate(content="축제 구경", place_name=FEST, day=DayLabel.THIS_WEEKEND),
             events={FEST: weekend},
@@ -552,6 +567,19 @@ class TestEvent:
             outdoor_days={date(2026, 10, 3): saturday_ok, date(2026, 10, 4): True},
         )
         assert reason_of(result) is (RejectReason.OUTDOOR_CLOSED if rejected else None)
+
+    @pytest.mark.parametrize(
+        ("day", "closed"), [(DayLabel.TODAY, True), (DayLabel.TOMORROW, False)]
+    )
+    def test_기간_안이어도_일정에_없는_날이면_거절(self, day, closed):
+        """수요일(09-30)에만 여는 행사 — 화요일(오늘)은 기간 안이어도 닫혀 있다."""
+        wednesday = replace(
+            FEST_ROW, schedule=EventSchedule(open_days=frozenset({date(2026, 9, 30)}))
+        )
+        result = review(
+            candidate(content="축제 구경", place_name=FEST, day=day), events={FEST: wednesday}
+        )
+        assert reason_of(result) is (RejectReason.EVENT_CLOSED if closed else None)
 
     def test_말한_지역에서_찾은_행사에는_근처를_쓰지_않는다(self):
         near = candidate(content="근처 축제 구경", place_name=FEST)
@@ -781,11 +809,75 @@ class TestEventName:
 
     @pytest.mark.parametrize(
         "reason",
-        [RejectReason.UNKNOWN_PLACE, RejectReason.EVENT_CLOSED, RejectReason.OUTDOOR_CLOSED],
+        [
+            RejectReason.UNKNOWN_PLACE,
+            RejectReason.EVENT_CLOSED,
+            RejectReason.EVENT_PLACE,
+            RejectReason.OUTDOOR_CLOSED,
+        ],
     )
     def test_place_name_만_비우라고_안내하지_않는다(self, reason):
         """비울 때는 문장에서도 뺀다 — 비우기만 하면 행사가 문장에 남는다 (11-03 실측)."""
         assert "문장에서도" in GUIDANCE[reason]
+
+
+# 날마다 장소를 옮겨 가며 여는 행사. 오늘(09-29 화)은 바람숲공원, 토요일(10-03)은 모래섬 해변이다
+MOVING = "달빛 체조 교실"
+MOVING_ROW = replace(
+    FEST_ROW,
+    name=MOVING,
+    place="바람숲공원 잔디광장 / 모래섬 해변",
+    schedule=EventSchedule(
+        open_days=frozenset({date(2026, 9, 29), date(2026, 10, 3)}),
+        day_places=((date(2026, 9, 29), "바람숲공원 잔디광장"), (date(2026, 10, 3), "모래섬 해변")),
+    ),
+)
+
+
+class TestEventPlaceOfDay:
+    """한 행사가 날마다 다른 곳에서 열린다 — 그날이 아닌 날의 장소를 쓰면 보호자가 엉뚱한 곳에
+    간다."""
+
+    @pytest.mark.parametrize(
+        ("content", "day", "expected"),
+        [
+            ("모래섬 해변에서 달빛 체조 교실 함께하기", DayLabel.TODAY, RejectReason.EVENT_PLACE),
+            ("모래섬에서 달빛 체조 교실 함께하기", DayLabel.TODAY, RejectReason.EVENT_PLACE),
+            ("모래섬 해변에서 달빛 체조 교실 함께하기", DayLabel.THIS_WEEKEND, None),
+            ("바람숲공원에서 달빛 체조 교실 함께하기", DayLabel.TODAY, None),
+        ],
+    )
+    def test_그날이_아닌_날의_장소를_쓰면_거절(self, content, day, expected):
+        result = review(
+            candidate(content=content, setting="outdoor", place_name=MOVING, day=day),
+            events={MOVING: MOVING_ROW},
+        )
+        assert reason_of(result) is expected
+        assert "모래섬" not in explain(result.rejections)
+
+    def test_그날_장소를_place_name_에_쓰면_그_행사로_붙는다(self):
+        (draft,) = review(
+            candidate(
+                content="체조 따라 하기",
+                setting="outdoor",
+                place_name="모래섬 해변",
+                day=DayLabel.THIS_WEEKEND,
+            ),
+            events={MOVING: MOVING_ROW},
+        ).drafts
+        assert draft.place_notice == EVENT_NOTICE
+
+    def test_다른_날_장소를_place_name_에_쓰면_그날_장소가_아니라고_거절(self):
+        result = review(
+            candidate(
+                content="체조 따라 하기",
+                setting="outdoor",
+                place_name="바람숲공원 잔디광장",
+                day=DayLabel.THIS_WEEKEND,
+            ),
+            events={MOVING: MOVING_ROW},
+        )
+        assert reason_of(result) is RejectReason.EVENT_PLACE
 
 
 class TestSafety:
