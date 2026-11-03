@@ -12,6 +12,7 @@ ORM 어댑터가 여기서 변환한다 —
 JSON 직렬화는 ToolResult를 만들 때만 한다. 저장 경로에서는 하지 않는다.
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, Protocol
@@ -80,6 +81,21 @@ class EventRow:
             "all_day": self.all_day,
             "items": [item.to_summary() for item in (items or [])],
         }
+
+
+@dataclass(frozen=True)
+class DeleteCandidates:
+    """삭제 제안의 한 종류(탭 하나) (#535).
+
+    kind 는 `Saved` 의 ref 와 같은 값이다 — 관찰은 표 이름(`observation_food` …), 일정은 `event`.
+    ids 는 모델이 그 run 에서 조회해 본 행(최대 40건), picked 는 그중 요청에 맞는 것(기본 체크).
+    truncated 는 조회가 잘려 더 있었는지 — 화면이 "더 있어요" 를 알린다.
+    """
+
+    kind: str
+    truncated: bool
+    ids: tuple[str, ...]
+    picked: tuple[str, ...]
 
 
 class MemoryStore(Protocol):
@@ -174,3 +190,14 @@ class MemoryStore(Protocol):
         ...
 
     async def delete_event_item(self, *, item_id: str) -> bool: ...
+
+    # delete proposal (#535)
+    async def propose_delete(
+        self, *, parent_id: UUID, run_id: str, tabs: Sequence[DeleteCandidates]
+    ) -> str:
+        """지울 후보를 제안으로 남기고 id 를 돌려준다. 아무것도 지우지 않는다.
+
+        보호자가 화면 버튼으로 확정하면 서버가 후보 안의 체크한 것만 지운다. 한 run 에 하나다 —
+        같은 run 에서 다시 부르면 ValueError. 빈 후보 · 후보 밖의 picked 도 ValueError 다.
+        """
+        ...

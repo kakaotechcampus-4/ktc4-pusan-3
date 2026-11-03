@@ -7,7 +7,8 @@ InMemoryStore 와 동일한 fields 매핑을 유지한다 -- Memory Agent 도구
 row.fields["subject"], row.fields["status"] 등으로 읽기 때문이다.
 """
 
-from datetime import date, datetime, time, timedelta, timezone
+from collections.abc import Sequence
+from datetime import UTC, date, datetime, time, timedelta, timezone
 from typing import Any
 from uuid import UUID
 
@@ -17,11 +18,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.common.datetime_rules import DateRange
 from app.agents.memory.store.ports import (
+    DeleteCandidates,
     EventItemRow,
     EventRow,
     ObservationDomain,
     ObservationRow,
 )
+from app.domains.delete_proposal.repository import ProposalTab, add_proposal
 from app.domains.memory.observation.models import (
     ObservationActivity,
     ObservationEducation,
@@ -159,6 +162,8 @@ class DbMemoryStore:
         self.created: list[tuple[str, UUID]] = []
         """이 run 에서 새로 만든 관찰 (도메인, id) — 만든 순서대로. 고치기 · 지우기는 넣지 않는다.
         runner 가 commit 뒤에 이 행들을 읽어 화면에 `saved` 로 보낸다 (#471)."""
+        self.proposal_id: UUID | None = None
+        """이 run 이 남긴 삭제 제안 (#535). runner 가 commit 뒤에 후보 행을 읽어 화면에 보낸다."""
 
     def _today(self) -> date:
         """Profile 재계산 기준일. 안 넘기면 서비스 시간대(KST)의 오늘."""
@@ -457,3 +462,22 @@ class DbMemoryStore:
         await self._session.flush()
         self.wrote = True
         return True
+
+    # ── delete proposal (#535) ──────────────────────────────────
+
+    async def propose_delete(
+        self, *, parent_id: UUID, run_id: str, tabs: Sequence[DeleteCandidates]
+    ) -> str:
+        if self.proposal_id is not None:
+            raise ValueError("한 run 에 제안은 하나다")
+        self.proposal_id = await add_proposal(
+            self._session,
+            parent_id=parent_id,
+            child_id=self._child_id,
+            run_id=run_id,
+            tabs=[ProposalTab(tab.kind, tab.truncated, tab.ids, tab.picked) for tab in tabs],
+            now=datetime.now(UTC),
+        )
+        # 제안도 commit 해야 남는 쓰기다 — 뒤에서 터져도 run 을 done 으로 닫아 키를 지킨다
+        self.wrote = True
+        return str(self.proposal_id)

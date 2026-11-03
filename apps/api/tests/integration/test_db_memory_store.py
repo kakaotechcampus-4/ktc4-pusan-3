@@ -14,7 +14,9 @@ from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.common.datetime_rules import DateRange
+from app.agents.memory.store.ports import DeleteCandidates
 from app.domains.child.models import Child
+from app.domains.delete_proposal.models import DeleteProposal
 from app.domains.identity.models import Parent
 from app.domains.memory.observation.models import ObservationFood
 from app.domains.memory.store.db_store import DbMemoryStore
@@ -594,3 +596,24 @@ class TestUpdatedAtRefresh:
         orm = await session.get(ObservationFood, UUID(obs_of_a), populate_existing=True)
         assert orm is not None
         assert orm.updated_at > past
+
+
+class TestProposeDelete:
+    """삭제 제안 (#535) — 지우지 않고 제안만 남기고, 한 run 에 하나다."""
+
+    async def test_제안은_지우지_않고_한_run_에_하나다(
+        self, session: AsyncSession, family: tuple, obs_of_a: str
+    ) -> None:
+        owner, child_a, _ = family
+        store = DbMemoryStore(session, child_id=child_a.id)
+        tab = DeleteCandidates("observation_food", False, (obs_of_a,), (obs_of_a,))
+
+        proposal_id = await store.propose_delete(parent_id=owner.id, run_id="run-1", tabs=[tab])
+
+        row = await session.get(DeleteProposal, UUID(proposal_id))
+        assert row is not None and row.child_id == child_a.id
+        assert store.wrote and store.proposal_id == row.id
+        # 관찰은 그대로다
+        assert await store.get_observation(domain="food", observation_id=obs_of_a) is not None
+        with pytest.raises(ValueError):
+            await store.propose_delete(parent_id=owner.id, run_id="run-1", tabs=[tab])
