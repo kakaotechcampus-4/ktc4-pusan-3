@@ -1,12 +1,14 @@
 """기억을 다시 계산하는 경로들이 같은 기억을 동시에 고칠 때 (#636)
 
+경로는 넷이다 — Curator 연결 · Correction · Memory 의 관찰 수정/삭제 · 하루 배치.
   · 기억 행 — recompute_profile 이 FOR UPDATE 로 잠그고 DB 값으로 다시 읽는다. 아니면 한쪽이 읽은
     낡은 strength 로 다른 쪽이 커밋한 값을 덮어써 보호자 정정의 감소분이 사라진다(lost update).
-  · 아이 잠금 — 기억 여러 개를 잠그는 쪽(Curator · Memory 수정/삭제)은 lock_child_memory 를
+  · 아이 잠금 — 기억 여러 개를 잠그는 쪽(Curator · Memory 수정/삭제 · 배치)은 lock_child_memory 를
     먼저 잡는다. 아니면 서로 반대 순서로 잠가 Postgres 가 한쪽을 DeadlockDetected 로 죽인다.
 
 트랜잭션 둘이 실제로 겹쳐야 해서 롤백 픽스처(session)를 쓰지 않는다 — test_invite_concurrency 와
-같다. 심은 행은 끝에 직접 지운다(아이를 지우면 기억 · 관찰 · Correction 은 CASCADE).
+같다. 배치 전체(run_recompute)는 DB 의 모든 기억을 커밋하므로, 아이 한 명 몫(_recompute_child)만
+돌린다. 심은 행은 끝에 직접 지운다(아이를 지우면 기억 · 관찰 · Correction 은 CASCADE).
 """
 
 import asyncio
@@ -24,6 +26,7 @@ from app.domains.memory.observation.models import ConfidenceSource, ObservationF
 from app.domains.memory.profile import service
 from app.domains.memory.profile.models import MemoryDomain, ProfileAffinity, ProfileState
 from app.infra.db.session import engine
+from app.workers.profile_recompute import _recompute_child
 
 TODAY = date(2026, 9, 26)
 START = 0.55  # 승격 보너스가 붙은 확인됨
@@ -75,6 +78,82 @@ async def seeded():
             await cleanup.execute(delete(Child).where(Child.id == child.id))
             await cleanup.execute(delete(Parent).where(Parent.id == owner.id))
             await cleanup.commit()
+
+
+async def test_배치가_읽은_뒤_Correction_이_커밋돼도_정정의_감소분이_남는다(seeded, monkeypatch):
+    parent_id, child_id, profile_id = seeded
+    batch_read = asyncio.Event()  # 배치가 기억을 읽었다
+    release = asyncio.Event()  # 배치를 이어서 쓰게 한다
+    real_count = service.count_active_in_window
+
+    async with (
+        AsyncSession(engine, expire_on_commit=False) as batch_s,
+        AsyncSession(engine, expire_on_commit=False) as correction_s,
+    ):
+
+        async def pause_batch_after_read(session, **kw):
+            # recompute_profile 이 기억을 읽은 직후 · 쓰기 전. 배치 쪽 세션만 멈춘다
+            if session is batch_s and not batch_read.is_set():
+                batch_read.set()
+                await release.wait()
+            return await real_count(session, **kw)
+
+        monkeypatch.setattr(service, "count_active_in_window", pause_batch_after_read)
+
+        batch = asyncio.create_task(_recompute_child(batch_s, child_id, [profile_id], today=TODAY))
+        await batch_read.wait()
+
+        async def correct():
+            await service.handle_profile_correction(
+                correction_s,
+                child_id=child_id,
+                profile_id=profile_id,
+                verdict="wrong",
+                parent_id=parent_id,
+                today=TODAY,
+            )
+            await correction_s.commit()
+
+        correction = asyncio.create_task(correct())
+        await asyncio.sleep(0.3)  # 잠금이 없으면 이 사이에 Correction 이 먼저 커밋한다
+        release.set()
+        await asyncio.wait_for(asyncio.gather(batch, correction), timeout=5)
+
+    async with AsyncSession(engine) as check:
+        state, strength = (
+            await check.execute(
+                select(ProfileAffinity.state, ProfileAffinity.strength).where(
+                    ProfileAffinity.id == profile_id
+                )
+            )
+        ).one()
+
+    # 어느 쪽이 먼저든 차례로 돌면 같은 값이다 — 강등 ×0.90 과 wrong ×0.93 이 둘 다 붙는다
+    # 배치가 덮어쓰면 START × 0.90 = 0.495 로 남는다 (wrong 감소분이 사라짐)
+    assert state == ProfileState.CANDIDATE
+    assert strength == pytest.approx(START * 0.90 * 0.93)
+
+
+async def test_Curator_가_같은_아이를_잡고_있으면_배치가_기다린다(seeded):
+    """Curator 는 관찰을 붙이고 재계산하는 동안 아이 단위 advisory lock 을 쥔다(trigger.py).
+
+    배치가 이 잠금을 같은 (namespace, key) 로 잡지 않으면, Curator 가 읽은 낡은 상태로 배치의
+    전이를 덮어쓸 수 있다. 잠금을 쥔 Curator 대역을 세우고, 배치가 그동안 끝나지 않는지 본다.
+    """
+    _, child_id, profile_id = seeded
+    async with (
+        AsyncSession(engine) as curator_s,
+        AsyncSession(engine, expire_on_commit=False) as batch_s,
+    ):
+        await service.lock_child_memory(
+            curator_s, child_id
+        )  # trigger.py `_run_curator` 와 같은 잠금
+        batch = asyncio.create_task(_recompute_child(batch_s, child_id, [profile_id], today=TODAY))
+        await asyncio.sleep(0.3)
+        assert not batch.done()  # Curator 가 쥐고 있는 동안은 기다린다
+
+        await curator_s.commit()  # xact 잠금이 풀린다
+        assert await asyncio.wait_for(batch, timeout=5) == (1, 1)
 
 
 async def test_Curator_가_미리_읽은_뒤_Correction_이_커밋돼도_정정의_감소분이_남는다(

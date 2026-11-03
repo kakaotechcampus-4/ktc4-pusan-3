@@ -7,9 +7,8 @@ grep 으로 직접 `.state =` 대입이 이 함수 밖에 없어야 한다.
   - correction 핸들러 (handle_observation_correction, handle_profile_correction)
   - Curator 연결 후 (curator/recompute.recompute_after_linking)
   - Memory Agent 가 관찰을 고치거나 지운 뒤 (memory/store/db_store.py, #257)
-TODO(#149-followup): 시간 경과에 의한 상태 변화(21일 무관찰 → archived)를
-  반영하는 배치 호출이 아직 없다. Agent 가 DB 의 state 를 그대로 읽으므로
-  오래 전에 confirmed 된 성향이 배치 전까지 개인화 근거로 남을 수 있다.
+  - 하루 한 번 배치 (workers/profile_recompute.py, #636) — 새 기록 없이 날짜만 지나
+    바뀌는 상태(14일 O 이탈 강등 · 21일 W 이탈 재승격 · 21일 무관찰 archived)를 맞춘다
 """
 
 import uuid
