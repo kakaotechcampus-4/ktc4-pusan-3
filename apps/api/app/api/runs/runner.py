@@ -163,9 +163,13 @@ def agent_job(
                     message=event.message,
                 )
                 return
-            relay(event)
+            sent = relay(event)
             # 번역이 끝난 뒤에 넘긴다 — 번역이 터진 이벤트는 화면에 안 나갔다. 위에서 돌아간
             # 셋(PendingReply 등)은 대화에도 남기지 않는 것이라 여기까지 오지 않아도 된다
+            # 조회 카드는 행을 못 읽어 안 나갔으면 남기지 않는다 — 안 그러면 보지 못한 카드가 지난
+            # 대화에만 생긴다 (#535). 삭제 카드는 늘 나간다
+            if isinstance(event, entrypoint.FoundTabs) and not sent:
+                return
             if on_event is not None and live:
                 on_event(event)
 

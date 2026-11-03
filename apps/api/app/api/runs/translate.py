@@ -38,7 +38,7 @@ agents 는 진입점(`app.agents.entrypoint`) 하나로만 본다 (apps/api/CLAU
 """
 
 import logging
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from app.agents.entrypoint import (
@@ -46,7 +46,6 @@ from app.agents.entrypoint import (
     AgentResult,
     DeleteProposed,
     Done,
-    Emit,
     Event,
     EventDrafts,
     Failed,
@@ -206,11 +205,14 @@ def relay(
     *,
     saved_rows: SavedRows | None = None,
     card_rows: CardRows | None = None,
-) -> Emit:
+) -> Callable[[Event], bool]:
     """pipeline 에 넘길 emit 을 만든다. 번역해서 채널에 넣는다.
 
     saved_rows — 러너의 commit 이 채우는 dict. `Saved` 가 올 때 읽는다 (#471).
     card_rows — 러너의 `load_cards` 가 채우는 dict. `FoundTabs` · `DeleteProposed` 가 올 때 읽는다.
+
+    돌려준 emit 은 채널에 실제로 넣었는지를 돌려준다 — 러너가 화면에 안 나간 조회 카드를 대화
+    기록에서 빼는 데 쓴다. pipeline 에 넘길 때는 `Emit`(돌려준 값을 안 본다)으로 그대로 쓴다.
 
     sync 다 — pipeline 은 emit 을 기다리지(await) 않고, 채널의 publish 도 sync 라 그대로 이어진다.
     끝 신호 뒤에 오는 것(pipeline 이 Failed 뒤에 보내는 Done 등)은 채널이 버린다.
@@ -225,11 +227,12 @@ def relay(
        보낸 뒤 스트림 중간에 끊기고, 다시 붙어도 같은 자리에서 또 끊긴다 — 넣기 전에 터뜨린다.
     """
 
-    def emit(event: Event) -> None:
+    def emit(event: Event) -> bool:
         translated = to_sse(event, saved_rows=saved_rows, card_rows=card_rows)
         if translated is None:
-            return
+            return False
         sse.frame(*translated)  # JSON 으로 못 바뀌면 여기서 터진다 — 채널에 넣기 전에
         channel.publish(translated)
+        return True
 
     return emit

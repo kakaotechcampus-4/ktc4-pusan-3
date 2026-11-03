@@ -102,12 +102,15 @@ async def read_card_rows(
     return rows
 
 
-def _split(kind: str, ids: Sequence[str], rows: Mapping[tuple[str, str], CardRow]):
+def _split(
+    kind: str, ids: Sequence[str], rows: Mapping[tuple[str, str], CardRow]
+) -> tuple[list[str], list, list]:
+    """(남은 id, 관찰 칸, 일정 칸). 종류에 따라 한쪽 칸만 찬다."""
     present = [oid for oid in ids if rows.get((kind, oid)) is not None]
-    picked_rows = [rows[(kind, oid)] for oid in present]
+    present_rows = [rows[(kind, oid)] for oid in present]
     if kind == EVENT_KIND:
-        return present, [], picked_rows
-    return present, picked_rows, []
+        return present, [], present_rows
+    return present, present_rows, []
 
 
 def card_tab(
