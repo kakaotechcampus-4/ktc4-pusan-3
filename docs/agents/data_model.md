@@ -176,6 +176,19 @@
 
 **삭제 순서**: 증빙 복사 → 운영 `consent` 삭제 → 대상 hard delete. 호출자의 단일 트랜잭션 안에서 수행해 중간 실패 시 모두 롤백한다. 만료된 보관 행은 worker가 `purge_at` 기준으로 삭제한다.
 
+### location_use_log
+
+위치를 쓴 사실 1건. 위치정보법 제16조 ② 의 확인자료다 (#693). 🚨 좌표 칸을 두지 않는다.
+
+| **필드** | **타입** | **비고** |
+| --- | --- | --- |
+| id | uuid | PK |
+| parent_id | uuid | FK → `parent.id`, NOT NULL, `ON DELETE CASCADE`. 위치 동의는 계정 동의라 아이를 적지 않는다 |
+| purpose | enum | `location_purpose`, NOT NULL. 값이 가리키는 취득경로 · 방법 · 제공받는 자는 [`retention-v1.md`](../safety/retention-v1.md) |
+| used_at | timestamptz | NOT NULL, default `now()` |
+
+위치 동의를 철회하면 그 보호자의 행을 지우고, 6개월이 지난 행은 worker가 지운다.
+
 ## Memory/Observation
 
 ### observation 계층 테이블 5개(food/health/education/activity/routine)
