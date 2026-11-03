@@ -13,8 +13,8 @@ TourAPI 목록의 시작일 · 종료일은 전체 기간이다. "매주 토요�
    - 제한(요일 · 날짜 · 쉬는 요일)에는 근거 구절이 있고, 원문에 그대로 있다
    - 요일 · 몇째 주 값 · 날짜는 기간 안 · 장소는 원문에 있는 이름
    - 쉬는 요일 · 몇째 주 요일 · 그 요일만 여는 요일은 근거 구절에 요일로 적혀 있다
-   - 날짜를 적었으면 요일은 버린다 · 매월 몇째 주와 같은 요일의 "매주" 는 버린다 · 쉬는 요일만
-     적었으면 매일에서 그 요일을 뺀다
+   - 날짜와 요일을 같이 적었으면 둘 다 맞는 날만 연다 · 매월 몇째 주와 같은 요일의 "매주" 는
+     버린다 · 쉬는 요일만 적었으면 매일에서 그 요일을 뺀다
    - 제한인데 열리는 날이 없으면 모른다
 4. 운영 시간 칸만 코드로 읽은 요일과 날마다 맞댄다. 둘 다 연다고 한 날만 연다.
 
@@ -252,12 +252,16 @@ class _Rules:
             return False
         if self.every_day:
             return True
-        return (
-            day.weekday() in self.open_weekdays
-            or day in self.dates
-            or any(when == day for when, _ in self.places)
-            or any(weekday == day.weekday() and _nth(day, n) for n, weekday in self.monthly)
+        weekly = day.weekday() in self.open_weekdays or any(
+            weekday == day.weekday() and _nth(day, n) for n, weekday in self.monthly
         )
+        listed = self.dates | {when for when, _ in self.places}
+        if not listed:
+            return weekly
+        # 날짜와 요일을 같이 적었으면 둘 다 맞는 날만 연다. 모델이 날짜 목록에 "토 · 일" 을 같이
+        # 적어 날짜 밖 주말을 열었다(11-03 실측). 기간을 날짜로 다 옮기고 "주말" 을 같이 적으면
+        # 날짜만 볼 때 평일을 연다
+        return day in listed and (weekly or not (self.open_weekdays or self.monthly))
 
 
 def _message(event: Event, intro: RawEventIntro, overview: str) -> str:
@@ -314,18 +318,18 @@ def _rules(reply: Any, event: Event, source: str) -> _Rules | None:
         ),
         key=lambda pair: pair[0],
     )
-    # 날짜를 적었으면 요일보다 좁다 — 날짜 목록에 "토 · 일" 을 같이 적으면 날짜 밖 주말도 연다
-    # (11-03 실측). 매월 몇째 주 X요일을 "매주 X요일" 로도 적는다 — 몇째 주가 더 좁다
-    if dates or places:
-        opened.clear()
+    # 매월 몇째 주 X요일을 "매주 X요일" 로도 적는다 — 몇째 주가 더 좁다
     opened -= {weekday for _, weekday in monthly}
     # 요일 숫자를 하나 밀려 적는다("월요일은 쉰다" 를 1 로, 11-03 실측). 이름 붙인 요일은 근거
     # 구절에 요일로 적혀 있거나, 근거가 적은 요일의 나머지여야 한다("화요일부터 일요일까지" 의
-    # 월요일). 쉬는 요일을 적었으면 여는 요일은 그 나머지라 보지 않는다
+    # 월요일). 쉬는 요일을 적었으면 여는 요일은 그 나머지라 보지 않는다. 날짜를 적었으면 여는
+    # 요일은 날짜를 좁히기만 해서(`_Rules.opens`) 밀려 적어도 닫힌 날을 열지 않는다
     quoted = _quoted_weekdays(quotes)
-    groups = [closed, {weekday for _, weekday in monthly}]
-    if kind == "restricted" and not closed:
-        groups.append(opened)
+    groups = [closed]
+    if not (dates or places):
+        groups.append({weekday for _, weekday in monthly})
+        if kind == "restricted" and not closed:
+            groups.append(opened)
     if not all(days <= quoted or days == _ALL_DAYS - quoted for days in groups):
         return None
     if kind == "restricted" and not (opened or monthly or dates or places):

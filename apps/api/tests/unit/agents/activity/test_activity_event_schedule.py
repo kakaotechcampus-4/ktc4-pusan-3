@@ -187,18 +187,27 @@ class TestModel:
         schedule = await read(client, overview="11월 4일, 7일에 연다.")
         assert schedule.open_days == {WED, SAT}
 
-    async def test_날짜를_적었으면_요일은_보지_않는다(self):
+    async def test_날짜와_요일을_같이_적었으면_둘_다_맞는_날만_연다(self):
         """모델이 날짜 목록과 함께 "토 · 일" 요일도 적었다 — 날짜 밖 일요일(11-08)을 열면 안
-        된다."""
+        된다 (11-03 실측)."""
         client = FakeClient(
             reply(
-                open_weekdays=[5, 6],
+                open_weekdays=[4, 5, 6],
                 dates=["2026-11-06", "2026-11-07"],
                 evidence=["11월 6일(금), 7일(토) 저녁"],
             )
         )
         schedule = await read(client, overview="11월 6일(금), 7일(토) 저녁에 연다.")
         assert schedule.open_days == {FRI, SAT}
+
+    async def test_기간을_날짜로_다_적고_요일을_같이_적었으면_그_요일만_연다(self):
+        """ "11월 2일부터 8일까지 주말" 의 기간을 날짜로 다 옮겼다 — 날짜만 보면 평일도 연다."""
+        week = [day.isoformat() for day in WINDOW]
+        client = FakeClient(
+            reply(open_weekdays=[5, 6], dates=week, evidence=["11월 2일부터 8일까지 주말"])
+        )
+        schedule = await read(client, overview="11월 2일부터 8일까지 주말에 연다.")
+        assert schedule.open_days == {SAT, SUN}
 
     async def test_장소마다_날짜가_다르면_그날_장소를_싣는다(self):
         program = "1. 바람숲공원 - 10.31.(토)\n2. 모래섬 해변 - 11.7.(토)"
