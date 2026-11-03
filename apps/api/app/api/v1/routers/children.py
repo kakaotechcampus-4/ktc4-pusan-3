@@ -57,7 +57,8 @@ from app.domains.child.repository import (
     set_relation,
     update_child,
 )
-from app.domains.consent.models import ConsentAction, ConsentScope
+from app.domains.consent.location_log import record_location_use
+from app.domains.consent.models import ConsentAction, ConsentScope, LocationPurpose
 from app.domains.consent.repository import (
     REQUIRED_CHILD_SCOPES,
     child_health_granted,
@@ -443,8 +444,8 @@ async def create_input(
 ) -> CreateInputResponse:
     """접수만 한다 — 채널을 열고 러너를 뒤에서 띄우고 바로 202. Agent 를 기다리지 않는다.
 
-    순서: (아이 접근 확인 — 의존성) → 키 확인 → 재생 → 동의 읽기 → 맥락 확인 → 한도 →
-    맥락 찜하기 → 채널 열기 → 키 기억 → 러너 시작.
+    순서: (아이 접근 확인 — 의존성) → 키 확인 → 재생 → 동의 읽기 → 위치 이용 기록 → 맥락 확인 →
+    한도 → 맥락 찜하기 → 채널 열기 → 키 기억 → 러너 시작.
     키를 러너보다 먼저 적어 두면 같은 키가 몇 ms 뒤에 또 와도 새 run이 아니라
     재생으로 흡수된다 (idempotency.py). 이어받기 맥락은 재생 뒤에 본다. 같은 키 재생은 이미 꺼낸
     맥락으로 돈 run을 돌려받아야 하고, 400 을 받으면 안 된다. 찜하는 건 한도를 통과한 뒤다.
@@ -497,6 +498,13 @@ async def create_input(
     location = None
     if body.location is not None and await location_granted(session, parent_id=parent.parent_id):
         location = entrypoint.CoarseLocation(lat=body.location.lat, lon=body.location.lon)
+        # 좌표를 넘기기 전에 쓴 사실을 남긴다 (위치정보법 제16조 ② · #693). 실패하면 좌표만 버리지
+        # 않고 예외로 끝낸다 — 기록 없는 사용을 만들지 않는다. 한도 · 되묻기 맥락보다 앞이라 되돌릴
+        # 것이 없다. 뒤에서 429 로 끝나도 기록은 남는다 — 이 기록은 빠지는 쪽이 더 나쁘다.
+        await record_location_use(
+            session, parent_id=parent.parent_id, purpose=LocationPurpose.SUGGESTION
+        )
+        await session.commit()
 
     continuation = None
     if body.reply_to is not None:

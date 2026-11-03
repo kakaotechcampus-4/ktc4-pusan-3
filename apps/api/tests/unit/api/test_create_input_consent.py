@@ -63,6 +63,13 @@ class _Reads(list):
     value: bool | Exception = True
 
 
+class _CommitOnlySession:
+    """창구가 위치 기록을 커밋한다. 기록 함수는 가짜라 DB 는 부르지 않는다."""
+
+    async def commit(self) -> None:
+        pass
+
+
 @pytest.fixture
 def consent_reads(monkeypatch) -> _Reads:
     """동의 조회를 가짜로 바꿔 끼운다. 기본은 granted 이고, 읽을 때마다 아이 id 를 적는다."""
@@ -85,7 +92,7 @@ async def client():
     app.include_router(children.router, prefix="/api/v1")
 
     async def fake_session():
-        yield object()
+        yield _CommitOnlySession()
 
     app.dependency_overrides[get_session] = fake_session
     app.dependency_overrides[get_current_parent] = lambda: AuthContext(
@@ -189,8 +196,28 @@ async def test_동의_조회가_실패해도_한도와_되묻기_맥락은_그�
 LOCATION = {"lat": 35.177019, "lon": 129.076952}
 
 
+class _LocationLogs(list):
+    """위치 기록을 부른 보호자 id 들. `error` 가 있으면 그것을 올린다."""
+
+    error: Exception | None = None
+
+
 @pytest.fixture
-def location_reads(monkeypatch) -> _Reads:
+def location_logs(monkeypatch) -> _LocationLogs:
+    """위치 기록을 가짜로 바꿔 끼운다. 실제 저장은 integration/api/test_location_use_log.py."""
+    logs = _LocationLogs()
+
+    async def fake_record(session, *, parent_id, purpose):
+        if logs.error is not None:
+            raise logs.error
+        logs.append(parent_id)
+
+    monkeypatch.setattr(children, "record_location_use", fake_record)
+    return logs
+
+
+@pytest.fixture
+def location_reads(monkeypatch, location_logs) -> _Reads:
     """위치정보 동의 조회를 가짜로 바꿔 끼운다. 기본은 granted, 읽을 때마다 보호자 id 를 적는다."""
     reads = _Reads()
 
@@ -231,6 +258,25 @@ async def test_좌표가_없으면_위치_동의를_읽지_않는다(
 
     assert agent_calls[0]["location"] is None
     assert location_reads == []
+
+
+async def test_위치_기록에_실패하면_run_을_시작하지_않고_한도도_쓰지_않는다(
+    client, agent_calls, consent_reads, location_reads, location_logs
+):
+    """기록 없는 사용을 만들지 않는다 (위치정보법 제16조 ②). 좌표만 버리고 넘어가지 않는다."""
+    from app.core.config import settings
+
+    location_logs.error = DbDown("위치 기록 실패")
+    request = {**BODY, "location": LOCATION}
+
+    with pytest.raises(DbDown):
+        await client.post(URL, json=request, headers=_key())
+
+    assert agent_calls == []
+    location_logs.error = None
+    for _ in range(settings.INPUT_DAILY_LIMIT):
+        response = await client.post(URL, json=request, headers=_key())
+        assert response.status_code == 202
 
 
 async def test_범위_밖_좌표는_400_이고_값을_돌려주지_않는다(

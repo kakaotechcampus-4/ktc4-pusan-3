@@ -26,6 +26,7 @@ from app.api.v1.schemas.consents import (
     ConsentsResponse,
 )
 from app.domains.child.repository import find_accessible_child
+from app.domains.consent.location_log import erase_location_logs
 from app.domains.consent.models import ConsentAction, ConsentScope
 from app.domains.consent.repository import (
     ACCOUNT_SCOPES,
@@ -101,6 +102,7 @@ async def change_consent(
     """동의 1건을 켜거나 끈다. 같은 상태로 다시 오면 기록을 더하지 않고 마지막 행을 돌려준다.
 
     다만 새 약관 버전에 다시 동의하면 새 행을 남긴다 — 새 글에 동의한 것은 새 증빙이다.
+    위치 동의를 끄면 위치 이용 확인자료도 함께 지운다 (위치 약관 제10조 ①).
 
     오류 (순서대로): 400 validation_failed(대상 · 필수 끄기) → 403 child_access_denied →
     403 consent_required(아이 동의의 법정대리인 확인) → 400 policy_version_invalid.
@@ -169,6 +171,11 @@ async def change_consent(
         if latest is None:  # 같은 상태라는 것은 행이 있다는 뜻이라 여기 오지 않는다
             raise RuntimeError("같은 상태인데 마지막 동의 행이 없다")
         row, version = latest
+
+    if scope is ConsentScope.LOCATION and body.action is ConsentAction.WITHDRAWN:
+        # 철회 행과 한 트랜잭션이다 (위치 약관 제10조 ①). 이미 끈 상태여도 지운다 — 입력 접수와
+        # 철회가 겹치면 철회 뒤에 기록이 들어올 수 있다
+        await erase_location_logs(session, parent_id=parent.parent_id)
 
     # 응답은 commit 전에 만든다 — commit 뒤에 터지면 저장됐는데 실패로 보인다 (#214 리뷰 ⑤)
     response = ConsentResponse(
