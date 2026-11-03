@@ -18,6 +18,7 @@
 사유는 코드로만 남긴다 — 활동명 · 근거 문장을 싣지 않는다 (로그로 흘러간다).
 """
 
+import re
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import date
@@ -540,7 +541,8 @@ def _with_place(content: str, place: PlaceRow | EventRow | None) -> str:
     """장소 이름을 코드가 문장 앞에 붙인다. 모델이 이미 문장에 썼으면 다시 붙이지 않는다.
 
     행사는 줄여 쓴 이름(`_event_keys`)도 쓴 것으로 본다 — 긴 공식 이름을 다시 붙이면
-    "○○ 작품투어 (…)에서 ○○ 작품투어에서 …" 가 된다 (11-03 실측).
+    "○○ 작품투어 (…)에서 ○○ 작품투어에서 …" 가 된다 (11-03 실측). 이름의 뒤쪽 두 낱말
+    이상(*"전통시장 박람회"*)만 썼으면 그 자리를 행사 이름으로 바꾼다 (`_spell_out`).
 
     모델이 문장을 "~에서" 로 시작했으면 "~에서" 를 두 번 붙이지 않는다 (10-28 QA).
     - 장소 이름이 그 낱말(두 낱말까지)로 끝나면 그 자리를 바꾼다 — "도서관에서 …" →
@@ -555,6 +557,8 @@ def _with_place(content: str, place: PlaceRow | EventRow | None) -> str:
         names |= _event_keys(place)
     if any(name in written for name in names):
         return content
+    if isinstance(place, EventRow) and (spelled := _spell_out(content, place)) is not None:
+        return spelled
     head, at, tail = content.strip().partition("에서 ")
     where = normalize_activity(head)
     if not (at and tail and where) or len(head.split()) > 2:
@@ -565,6 +569,21 @@ def _with_place(content: str, place: PlaceRow | EventRow | None) -> str:
     if " " not in head:
         return f"{place.name} {content}"
     return f"{place.name}에서 {content}"
+
+
+def _spell_out(content: str, event: EventRow) -> str | None:
+    """문장에 쓴 행사 이름의 뒤쪽(두 낱말 이상)을 행사 이름으로 바꾼 문장. 없으면 None.
+
+    이미 붙은 행사의 표시만 고친다 — 행사를 알아보는 데(`_Known.named`)는 쓰지 않는다.
+    다른 낱말의 일부("늦가을 축제" 의 "가을 축제")는 바꾸지 않는다.
+    """
+    words = core_name(event.name).split()
+    for start in range(len(words) - 1):
+        chars = normalize_activity(" ".join(words[start:]))
+        pattern = r"(?<!\w)" + r"\W*".join(map(re.escape, chars))
+        if chars and (found := re.search(pattern, content, re.IGNORECASE)) is not None:
+            return f"{content[: found.start()]}{event.name}{content[found.end() :]}"
+    return None
 
 
 def _lookup(seen: Seen, docs: Docs, raw_id: str) -> RankedEvidence | ActivityDocRow | None:
