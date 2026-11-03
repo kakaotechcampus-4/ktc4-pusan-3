@@ -20,7 +20,8 @@
 - 관찰을 지웠으면 commit 뒤 Curator 를 띄운다 — 대화 run 이 저장 뒤 띄우는 것과 같다.
 """
 
-from datetime import UTC, datetime
+import logging
+from datetime import UTC, date, datetime
 from typing import Annotated
 from uuid import UUID
 
@@ -48,6 +49,8 @@ from app.domains.delete_proposal.repository import (
 )
 from app.domains.memory.store.db_store import DbMemoryStore
 
+log = logging.getLogger(__name__)
+
 router = APIRouter()
 
 _ERRORS = {status: {"model": ErrorEnvelope} for status in (400, 403, 404, 409, 422)}
@@ -62,8 +65,8 @@ def _out(row: DeleteProposal, now: datetime) -> DeleteProposalOut:
     )
 
 
-async def _pending(session, child: AccessibleChild, parent: CurrentParent, pid: UUID, now):
-    """잡은 제안. 없으면 404, 끝났거나 만료면 409."""
+async def _locked(session, child: AccessibleChild, parent: CurrentParent, pid: UUID):
+    """제안한 보호자의 제안을 잡는다. 없으면(남의 제안 포함) 404."""
     row = await find_proposal(
         session,
         proposal_id=pid,
@@ -73,12 +76,16 @@ async def _pending(session, child: AccessibleChild, parent: CurrentParent, pid: 
     )
     if row is None:
         raise ApiError(404, "not_found", "삭제 확인을 찾지 못했어요")
+    return row
+
+
+def _require_pending(row: DeleteProposal, now: datetime) -> None:
+    """끝났거나 만료면 409."""
     state = effective_status(row, now)
     if state == "expired":
         raise ApiError(409, "proposal_expired", "시간이 지나 삭제 확인이 닫혔어요")
     if state != "pending":
         raise ApiError(409, "proposal_closed", "이미 끝난 삭제 확인이에요")
-    return row
 
 
 async def _delete(store: DbMemoryStore, kind: str, oid: str) -> bool:
@@ -124,14 +131,21 @@ async def confirm_delete_proposal(
         return JSONResponse(status_code=200, content=replayed)
 
     now = datetime.now(UTC)
-    row = await _pending(session, child, parent, pid, now)
+    row = await _locked(session, child, parent, pid)
+    # 같은 키가 동시에 두 번 왔으면 뒤의 것은 앞의 것이 끝날 때까지 잠금에서 기다렸다 — 그 사이
+    # 앞의 것이 기억해 둔 응답을 다시 본다. 안 보면 지운 것은 맞는데 화면에 409 가 뜬다
+    replayed = idempotency.recall(**scope)
+    if isinstance(replayed, dict):
+        return JSONResponse(status_code=200, content=replayed)
+    _require_pending(row, now)
     kind_of = {oid: kind for kind, oid in candidates_of(row)}
     checked = list(dict.fromkeys(body.ids))  # 순서를 지키며 중복만 뺀다
     outside = [oid for oid in checked if oid not in kind_of]
     if outside:
         raise ApiError(422, "not_in_proposal", "삭제 확인에 없던 기록이 섞여 있어요")
 
-    store = DbMemoryStore(session, child_id=child.child_id, today=today_kst())
+    today = today_kst()  # 프로필 재계산과 Curator 가 같은 기준일을 쓴다
+    store = DbMemoryStore(session, child_id=child.child_id, today=today)
     result: dict[str, int] = {}
     for oid in checked:
         kind = kind_of[oid]
@@ -143,11 +157,21 @@ async def confirm_delete_proposal(
     await session.commit()
     idempotency.remember(**scope, replay=response)
     if any(kind != "event" for kind in result):
-        # commit 뒤에만 — 같은 트랜잭션에서 띄우면 Curator 실패가 삭제까지 되돌린다
+        _trigger_curator(child.child_id, today)
+    return JSONResponse(status_code=200, content=response)
+
+
+def _trigger_curator(child_id: UUID, today: date) -> None:
+    """commit 뒤에만 부른다 — 같은 트랜잭션에서 띄우면 Curator 실패가 삭제까지 되돌린다.
+
+    🚨 터져도 응답은 성공이다 — 지운 것은 이미 commit 됐다 (pipeline._trigger_curator 와 같다).
+    """
+    try:
         trigger = curator_trigger()
         if trigger is not None:
-            trigger(child.child_id, today_kst())
-    return JSONResponse(status_code=200, content=response)
+            trigger(child_id, today)
+    except Exception as exc:
+        log.error("삭제 확정 뒤 curator trigger 실패 error=%s", type(exc).__name__)
 
 
 @router.post(
@@ -165,12 +189,11 @@ async def cancel_delete_proposal(
     409 proposal_expired · proposal_closed(이미 지운 제안).
     """
     now = datetime.now(UTC)
-    row = await find_proposal(
-        session, proposal_id=pid, parent_id=parent.parent_id, child_id=child.child_id
-    )
-    if row is not None and row.status is DeleteProposalStatus.CANCELLED:
+    # 잡은 뒤에 본다 — 두 번 눌러 동시에 와도 뒤의 것은 "이미 취소함" 으로 같은 응답을 받는다
+    row = await _locked(session, child, parent, pid)
+    if row.status is DeleteProposalStatus.CANCELLED:
         return DeleteProposalResponse(proposal=_out(row, now))
-    row = await _pending(session, child, parent, pid, now)
+    _require_pending(row, now)
     await finish(session, row, status=DeleteProposalStatus.CANCELLED, result=None, now=now)
     out = DeleteProposalResponse(proposal=_out(row, now))
     await session.commit()

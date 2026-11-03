@@ -5,10 +5,10 @@
 """
 
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 
 # 탭 수(6) × 탭당 최대 40건. 이보다 많으면 제안 후보 밖이 섞인 것이다
 MAX_CONFIRM_IDS = 240
@@ -16,8 +16,12 @@ MAX_CONFIRM_IDS = 240
 DeleteProposalState = Literal["pending", "deleted", "cancelled", "expired"]
 
 
+# 행 id 는 UUID 글자(36자)다. 길이만 막는다 — 형식이 달라도 후보에 없으면 422 다
+RowId = Annotated[str, StringConstraints(min_length=1, max_length=64)]
+
+
 class ConfirmDeleteProposalRequest(BaseModel):
-    ids: list[str] = Field(
+    ids: list[RowId] = Field(
         min_length=1,
         max_length=MAX_CONFIRM_IDS,
         description=(
