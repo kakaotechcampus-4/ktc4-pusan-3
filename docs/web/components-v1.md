@@ -57,7 +57,7 @@
   `AffinityListSkeleton` · `SuggestionFeedbackListSkeleton` · `SuggestionListSkeleton` · `CalendarDayPanelSkeleton` · `ConsentChecklistSkeleton`.
   🚨 진짜 컴포넌트의 여백 · 줄을 바꾸면 옆의 스켈레톤도 같은 PR 에서 바꾼다 (`e2e/layout-shift.spec.ts` 는 아래가 통째로 밀리는 큰 어긋남만 잡는다 · 모양은 받는 중 화면을 직접 보고 맞춘다 · [`mock-and-tests-v1.md`](mock-and-tests-v1.md) §3-1)
 
-- 🚨 **화면 위 · 아래 고정 바는 `Screen` 의 `topBar` · `bottomBar` · `nav` 로 넘긴다.** `topBar` 는 위 safe area + 여백을 대신 받는다 (04 대화의 머리 — 대화가 자라도 돌아가는 화살표가 밀려나지 않게). 화면이 직접 `sticky` 를 붙이면
+- 🚨 **화면 위 · 아래 고정 바는 `Screen` 의 `topBar` · `bottomBar` · `nav` 로 넘긴다.** `topBar` 는 위 safe area + 여백을 대신 받는다 (04 대화 · 05 제안 후보의 머리 — 화면이 아래로 길어져도 돌아가는 화살표가 밀려나지 않게 · #683). 화면이 직접 `sticky` 를 붙이면
   아래 여백을 0 으로 되돌려야 하는데, 그게 상하 여백을 두 번 죽인 바로 그 조작이다.
   둘 다 넘기면 채팅바가 위·네비가 아래로 한 덩어리가 되고 **safe area 는 제일 아래 것만** 받는다
 - 🚨 **하단 네비(`ChildNav`)는 가는 곳 네 화면과 설정에만 붙인다** (홈·캘린더·기록/기억·아이). 04 대화·05 제안 후보처럼
