@@ -1,12 +1,13 @@
 """약관 2026-11-03 판 — 다섯 글을 등록한다. 모두 2026-11-03 에 시작한다.
 
 원고는 `alembic/policy_texts/2026-11-03/<scope>.md`, 정본은 같은 폴더의 `<scope>.html` 이고
-마이그레이션(c7d18f3ae5b2)이 두 파일을 그대로 넣는다. 여기서 지키는 것 다섯.
+마이그레이션(c7d18f3ae5b2)이 두 파일을 그대로 넣는다. 여기서 지키는 것 여섯.
     ① 다섯이 지금 판이다. 시작 1초 전까지는 앞 판이다
     ② DB 본문 · 정본 · 제목은 저장소 파일과 한 글자도 다르지 않다
     ③ 앞 판은 이 판이 시작한 시각에 끝난 것으로 기록된다
     ④ 🚨 공개 글에 빈칸 표시 · 미정 표시가 남지 않는다. 위치 약관은 처음으로 연락처가 채워진다
     ⑤ 🚨 글로 쓴 키와 몸무게가 전송된다는 것을 건강정보 동의가 말한다
+    ⑥ 🚨 문서 사진이 외부로 전송된다는 것을 아이 기본정보 동의가 말한다
 """
 
 import hashlib
@@ -100,6 +101,14 @@ async def test_location_terms_have_operator_contact_and_no_age_gate(session):
     for row in ("| 주소 |", "| 전화번호 |", "| 전자우편 |"):
         assert row in operator
     assert "36개월" not in content
+
+
+async def test_child_consent_tells_document_photos_are_sent(session):
+    """⑥ 🚨 문서 사진은 별도 동의 없이 이 동의문으로 받는다 — 외부 전송을 여기서 말해야 한다."""
+    content = (await version_row(session, ConsentScope.CHILD_BASIC, "2026-11-03")).content
+
+    assert "문서 사진을 올리시면 사진 그대로 외부의 인공지능 회사(미국)로 전송됩니다" in content
+    assert "사진을 올리지 않으면 아무것도 전송되지 않습니다" in content
 
 
 async def test_health_consent_says_written_values_are_sent(session):
