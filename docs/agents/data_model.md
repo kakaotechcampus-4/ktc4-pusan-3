@@ -187,7 +187,7 @@
 | purpose | enum | `location_purpose`, NOT NULL. 값이 가리키는 취득경로 · 방법 · 제공받는 자는 [`retention-v1.md`](../safety/retention-v1.md) |
 | used_at | timestamptz | NOT NULL, default `now()` |
 
-위치 동의를 철회하면 그 보호자의 행을 지우고, 6개월이 지난 행은 worker가 지운다.
+러너가 좌표를 Agent 에 넘기기 직전에 남긴다. 위치 동의를 철회하면 그 보호자의 행을 지우고, 6개월이 지난 행은 worker가 지운다. 남기기와 철회는 `parent` 행 잠금(FOR KEY SHARE / FOR UPDATE)으로 줄을 선다 — 철회 뒤에 행이 남지 않게.
 
 ## Memory/Observation
 
