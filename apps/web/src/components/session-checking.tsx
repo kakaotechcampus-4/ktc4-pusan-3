@@ -12,7 +12,8 @@ import { Spinner } from "@/components/ui/spinner";
  */
 export function SessionChecking() {
   return (
-    <Screen className="justify-center gap-4">
+    // 🚨 `waiting` — 앱 셸의 스플래시를 이 화면에서 내리지 않는다. 확인이 끝나고 선 화면이 내린다 (#690).
+    <Screen className="justify-center gap-4" waiting>
       <p
         className="text-body text-ink-muted flex items-center justify-center gap-2"
         aria-live="polite"
