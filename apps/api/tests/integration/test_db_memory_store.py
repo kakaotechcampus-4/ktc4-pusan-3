@@ -6,11 +6,12 @@ child_a's observation id로 child_b의 store에서 get/update/delete하면 차�
 이벤트 날짜 필터가 KST 자정 경계를 올바르게 다루는지 검증한다.
 """
 
+import asyncio
 from datetime import date, datetime, timedelta, timezone
 from uuid import UUID
 
 import pytest
-from sqlalchemy import update
+from sqlalchemy import delete, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.common.datetime_rules import DateRange
@@ -617,3 +618,53 @@ class TestProposeDelete:
         assert await store.get_observation(domain="food", observation_id=obs_of_a) is not None
         with pytest.raises(ValueError):
             await store.propose_delete(parent_id=owner.id, run_id="run-1", tabs=[tab])
+
+
+async def test_같은_일정을_동시에_지우면_뒤의_것은_False_다() -> None:
+    """#535 — 실제로 지운 쪽만 True 다. 버튼 확정이 지운 건수를 두 번 세지 않게.
+
+    트랜잭션 둘이 실제로 겹쳐야 해서 롤백 픽스처를 쓰지 않는다. 심은 행은 끝에 직접 지운다.
+    a 가 지우고 커밋 전에 행 잠금을 쥐고 있으면 b 는 그 잠금에서 기다렸다가 0행을 지운다.
+    """
+    from app.infra.db.session import engine
+
+    async with AsyncSession(engine, expire_on_commit=False) as setup:
+        owner = Parent()
+        setup.add(owner)
+        await setup.flush()
+        child = Child(owner_parent_id=owner.id, nickname="동시", birth_date=date(2023, 1, 1))
+        setup.add(child)
+        await setup.flush()
+        event = Event(
+            child_id=child.id,
+            title="synthetic",
+            event_type=EventType.EPISODIC,
+            starts_at=datetime(2026, 10, 28, 1, tzinfo=timezone.utc),
+            all_day=False,
+            category=EventCategory.ACTIVITY,
+            created_by=EventCreatedBy.CAREGIVER,
+        )
+        setup.add(event)
+        await setup.commit()
+
+    try:
+        async with (
+            AsyncSession(engine, expire_on_commit=False) as a,
+            AsyncSession(engine, expire_on_commit=False) as b,
+        ):
+            store_a = DbMemoryStore(a, child_id=child.id)
+            store_b = DbMemoryStore(b, child_id=child.id)
+            assert await store_a.delete_event(event_id=str(event.id))
+            pending_b = asyncio.create_task(store_b.delete_event(event_id=str(event.id)))
+            await asyncio.sleep(0.2)
+            assert not pending_b.done()
+
+            await a.commit()
+            assert await pending_b is False
+            assert not store_b.wrote
+            await b.commit()
+    finally:
+        async with AsyncSession(engine) as cleanup:
+            await cleanup.execute(delete(Child).where(Child.id == child.id))
+            await cleanup.execute(delete(Parent).where(Parent.id == owner.id))
+            await cleanup.commit()

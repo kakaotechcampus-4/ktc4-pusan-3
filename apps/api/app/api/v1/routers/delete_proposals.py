@@ -130,8 +130,10 @@ async def confirm_delete_proposal(
     if isinstance(replayed, dict):
         return JSONResponse(status_code=200, content=replayed)
 
-    now = datetime.now(UTC)
     row = await _locked(session, child, parent, pid)
+    # 🚨 시각은 잠금을 얻은 뒤에 잰다 — 잠금을 기다리는 사이 만료됐는데 기다리기 전 시각으로
+    #    보면 만료된 제안으로 지운다
+    now = datetime.now(UTC)
     # 같은 키가 동시에 두 번 왔으면 뒤의 것은 앞의 것이 끝날 때까지 잠금에서 기다렸다 — 그 사이
     # 앞의 것이 기억해 둔 응답을 다시 본다. 안 보면 지운 것은 맞는데 화면에 409 가 뜬다
     replayed = idempotency.recall(**scope)
@@ -188,9 +190,10 @@ async def cancel_delete_proposal(
     다시 취소하면 같은 응답을 돌려준다. 오류: 403 child_access_denied → 404 not_found →
     409 proposal_expired · proposal_closed(이미 지운 제안).
     """
-    now = datetime.now(UTC)
-    # 잡은 뒤에 본다 — 두 번 눌러 동시에 와도 뒤의 것은 "이미 취소함" 으로 같은 응답을 받는다
+    # 잡은 뒤에 본다 — 두 번 눌러 동시에 와도 뒤의 것은 "이미 취소함" 으로 같은 응답을 받는다.
+    # 시각도 잡은 뒤에 잰다 (확정과 같은 이유)
     row = await _locked(session, child, parent, pid)
+    now = datetime.now(UTC)
     if row.status is DeleteProposalStatus.CANCELLED:
         return DeleteProposalResponse(proposal=_out(row, now))
     _require_pending(row, now)

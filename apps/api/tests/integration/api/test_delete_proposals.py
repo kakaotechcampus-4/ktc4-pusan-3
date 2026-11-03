@@ -206,3 +206,44 @@ async def test_same_key_replays_first_response(
     assert again.json() == first.json()
     row = await session.get(DeleteProposal, proposal, populate_existing=True)
     assert row.result == {"observation_food": 1}
+
+
+async def test_expiring_while_waiting_for_the_lock_cannot_delete(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID, monkeypatch
+):
+    """잠금을 기다리는 사이 만료되면 지우지 않는다 — 시각은 잠금을 얻은 뒤에 잰다.
+
+    잠금 대기를 흉내 낸다: 잠금을 얻는 순간 시계를 만료 뒤로 옮긴다. 기다리기 전 시각으로 보면
+    200 이 나고 지워진다.
+    """
+    headers, pid = bearer
+    lunch = await _meal(session, cid, pid, "rice")
+    created = datetime.now(UTC)
+    proposal = await _propose(
+        session,
+        cid,
+        pid,
+        [ProposalTab("observation_food", False, (lunch,), (lunch,))],
+        now=created,
+    )
+    clock = [created]
+
+    class _Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return clock[0]
+
+    locked = delete_proposals._locked
+
+    async def slow_lock(*args, **kwargs):
+        row = await locked(*args, **kwargs)
+        clock[0] = created + PROPOSAL_TTL + timedelta(seconds=1)
+        return row
+
+    monkeypatch.setattr(delete_proposals, "datetime", _Clock)
+    monkeypatch.setattr(delete_proposals, "_locked", slow_lock)
+
+    resp = await db_client.post(_url(cid, proposal), json={"ids": [lunch]}, headers=_key(headers))
+
+    assert (resp.status_code, resp.json()["error"]["code"]) == (409, "proposal_expired")
+    assert await _status(session, lunch) is not ObservationStatus.DELETED

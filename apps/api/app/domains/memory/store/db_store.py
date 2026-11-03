@@ -394,15 +394,15 @@ class DbMemoryStore:
         uid = _parse_uuid(event_id)
         if uid is None:
             return False
-        orm = await self._session.scalar(
-            select(Event).where(Event.id == uid, Event.child_id == self._child_id)
+        # 🚨 DELETE … RETURNING 으로 실제로 지웠는지 본다. 읽고 나서 ORM 으로 지우면, 같은 일정을
+        #    다른 트랜잭션이 먼저 지웠을 때 0행 삭제가 경고로만 끝나 True 가 된다 — 버튼 확정이
+        #    지운 건수를 두 번 센다 (#535). 준비물 · 알림 · 추천 연결은 DB 의 ON DELETE CASCADE 다
+        deleted = await schedule_repository.delete_event(
+            self._session, child_id=self._child_id, event_id=uid
         )
-        if orm is None:
-            return False
-        await self._session.delete(orm)
-        await self._session.flush()
-        self.wrote = True
-        return True
+        if deleted:
+            self.wrote = True
+        return deleted
 
     # ── event_item ──────────────────────────────────────────────
 
