@@ -138,7 +138,10 @@ function LoginScreen() {
   }
 
   return (
-    <Screen className="gap-8">
+    // 🚨 `waiting` — 로그인 준비 여부를 받는 동안은 앱 셸의 스플래시를 걷지 않는다 (#690). 그동안 버튼이 꺼져
+    //    회색인데, 걷히는 순간 그 회색이 한 번 보였다가 카카오 노랑으로 바뀌었다 (에뮬레이터 확인).
+    //    실패해도 `isPending` 은 끝나므로 걷힌다 — 셸의 시간 초과까지 남지 않는다.
+    <Screen className="gap-8" waiting={status.isPending}>
       <header>
         <p className="text-label text-brand">아이캐치</p>
         <PageTitle className="mt-2">아이 이야기를 여기에 모아둘게요</PageTitle>

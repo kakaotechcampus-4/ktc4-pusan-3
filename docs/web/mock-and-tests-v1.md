@@ -212,6 +212,8 @@ OpenAPI(`app.openapi()` · Swagger 와 같은 것)와 칸 단위로 맞춘다 (#
 - **셸이 꽂는 창구는 목이 아니라 `addInitScript` 로 심는다** (`voice-input.spec.ts` · #595). 말로 적기는 API 가 아니라
   `window.icatch.speech` 라 MSW 가 가로챌 대상이 없다. 창구는 부탁(시작 · 멈춤)을 적기만 하고, 결과는 테스트가 셸 대신
   `icatch:speech` 이벤트로 쏜다. ⚠️ 채팅바의 status 줄을 찾을 때 `getByRole("status")` 만 쓰지 않는다 — 토스트 자리도 status 다
+  스플래시(`splash-shell.spec.ts` · #690)도 같다 — `window.icatch.splash.done` 이 불린 순간의 주소와 화면 글자를 적어 두고,
+  로그인한 채로 `/` 를 열었을 때 세션 확인("불러오는 중…")이 아니라 홈이 선 뒤에 한 번만 알리는지 본다
 
 ### 규칙
 

@@ -1,5 +1,6 @@
 import { ViewTransition, type ReactNode, type Ref } from "react";
 
+import { SplashDone } from "@/components/ui/splash-done";
 import { cn } from "@/lib/cn";
 import { TRANSITION_TYPE, VIEW_TRANSITION } from "@/lib/view-transition";
 
@@ -32,6 +33,7 @@ export function Screen({
   bottomBar,
   nav,
   bodyRef,
+  waiting = false,
 }: {
   children: ReactNode;
   className?: string;
@@ -49,6 +51,13 @@ export function Screen({
   bottomBar?: ReactNode;
   /** 그보다 더 아래에 붙는 화면 이동 바 (`ChildNav`). */
   nav?: ReactNode;
+  /**
+   * 아직 화면이 다 서지 않았다 — 앱 셸의 스플래시를 걷지 않는다 (#690). 화면을 기다리는 자리(`SessionChecking`)와,
+   * 첫 모습을 정하는 값을 받는 동안의 화면(00 로그인의 버튼 상태)이다. 거짓이 되는 순간 셸에 알린다.
+   * 🚨 끝나지 않을 수 있는 조건을 넘기지 않는다 — 그 화면에서 앱을 켜면 스플래시가 셸의 시간 초과까지 남는다.
+   *    실패로도 끝나는 값(`isPending`)을 넘긴다.
+   */
+  waiting?: boolean;
 }) {
   const pinned = Boolean(bottomBar || nav);
 
@@ -80,6 +89,8 @@ export function Screen({
       >
         {children}
       </div>
+      {/* 앱을 켠 뒤 처음 선 화면이면 셸이 스플래시를 내린다 (`lib/native/splash.ts`). */}
+      {waiting ? null : <SplashDone />}
 
       {pinned ? (
         // sticky 라 본문이 짧으면 그냥 아래에 놓이고, 길면 스크롤 위에 떠 있는다.
