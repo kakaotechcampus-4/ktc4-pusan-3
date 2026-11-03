@@ -239,4 +239,5 @@ export const NOT_MAPPED: Record<string, string> = {
   ValidationError: "HTTPValidationError 안쪽",
   LinkedAffinityOut: "웹이 ObservationOut.affinity 를 읽지 않는다",
   AnswerResponse: "05 가 되묻기 답의 응답 본문을 읽지 않는다",
+  SeenTours: "웹 미사용 — FE 후속 (#696 머지 뒤 lib/tour/seen.ts 를 서버 호출로 바꿀 때)",
 };
