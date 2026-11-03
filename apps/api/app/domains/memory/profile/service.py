@@ -15,6 +15,7 @@ TODO(#149-followup): 시간 경과에 의한 상태 변화(21일 무관찰 → a
 import uuid
 from datetime import date, datetime, timezone
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domains.correction.models import CorrectionTargetKind, CorrectionVerdict
@@ -45,6 +46,26 @@ _VERDICT_TO_OBS_STATUS: dict[str, ObservationStatus] = {
     "wrong": ObservationStatus.INACTIVE,
     "once_only": ObservationStatus.STAND_ALONE,
 }
+
+
+CHILD_MEMORY_LOCK_NS = 1
+"""`pg_advisory_xact_lock(int4, int4)` 의 첫 번째 인자 — 아이 한 명의 기억을 고치는 쪽이 같이 쓴다.
+다른 기능이 advisory lock 을 쓸 때는 다른 값을 준다 (notification 은 2)."""
+
+
+async def lock_child_memory(session: AsyncSession, child_id: uuid.UUID) -> None:
+    """아이 한 명의 기억을 고치는 쪽을 차례로 돌게 한다.
+
+    트랜잭션이 끝나면 풀린다. 같은 트랜잭션은 다시 잡아도 기다리지 않는다.
+
+    기억 여러 개를 잠그는 쪽은 기억 행을 잠그기 **전에** 이것부터 잡는다. 순서가 아이 잠금 →
+    관찰 행 → 기억 행으로 같아야 교착이 없다 (#636 — 둘이 기억 둘을 반대 순서로 잠그면 Postgres 가
+    한쪽을 DeadlockDetected 로 죽인다). 기억 하나만 잠그는 Correction 은 잡지 않아도 된다.
+    """
+    await session.execute(
+        text("SELECT pg_advisory_xact_lock(:ns, :key)"),
+        {"ns": CHILD_MEMORY_LOCK_NS, "key": child_id.int % (2**31)},
+    )
 
 
 async def recompute_profile(
