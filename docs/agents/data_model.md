@@ -517,6 +517,17 @@
 설정 탭의 스위치 2개다. 알림 시각은 여기서 고르지 않는다(일정마다 `reminder.lead`).
 행이 없으면 아직 바꾼 적이 없는 것이고 코드의 기본값(`domains/notification/repository.py` 의 `DEFAULT_SETTING`)으로 본다 — 기본값이 바뀌면 만진 적 없는 보호자 모두에게 바로 적용된다.
 
+### tour_seen (화면 가이드를 본 기록)
+
+| **필드** | **타입** | **비고** |
+| --- | --- | --- |
+| parent_id | uuid | PK, FK → `parent.id`, ON DELETE CASCADE |
+| tour_key | text | PK. 본 가이드 이름 (`home-empty` · `home` · `chat` · …) |
+| seen_at | timestamptz | NOT NULL, DEFAULT now(). 처음 본 시각 |
+
+보호자 × 가이드 1행이다 (#696). 행이 없으면 아직 안 본 것이고, ? 로 다시 봐도 행을 바꾸지 않는다. 아이가 아니라 계정 단위라 함께 보는 보호자도 각자 센다.
+🚨 `tour_key` 는 정해진 값인데도 `VARCHAR + CHECK` 가 아니라 `text` 다 — 팀 규칙의 예외다. 이름을 정하는 쪽은 프론트(`lib/tour/types.ts` 의 `TOUR_KEYS`)이고, 서버는 값으로 분기하지 않고 저장해 돌려주기만 한다. CHECK 를 두면 같은 목록을 세 곳(프론트 · API · DB)에서 맞춰야 하고, 마이그레이션이 늦으면 새 화면의 기록이 500 으로 실패해 가이드가 계속 다시 뜬다. 허용 값은 API 스키마(`TourKey` Literal)가 막고, 목록에서 빠진 이름의 행은 `GET` 이 걸러 낸다.
+
 ### diary_entry (보호자 개인 일기)
 
 | **필드** | **타입** | **비고** |
