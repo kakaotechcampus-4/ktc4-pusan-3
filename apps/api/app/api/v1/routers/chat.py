@@ -14,6 +14,8 @@
 (24시간이 지나도 draft) 여기서 `expires_at` 으로 가른다 (#500 리뷰).
 되묻기는 맥락이 아직 살아 있는지(`reply_open`)를 서버 메모리에서 읽어 싣는다 — 앱을 다시 켜도
 15분 안이면 이어서 답할 수 있다.
+조회 카드(`found_tabs`)와 삭제 제안 카드(`delete_proposal`, #535)도 지금 상태로 다시 그린다. 삭제
+카드는 결정 전이면 후보와 버튼을 그대로, 끝났으면(지움 · 취소 · 만료) 한 줄 요약만이다.
 
 🚨 `next_cursor` 는 자기 날짜를 품는다. `date` 를 빼면 오늘이라, 날짜 없는 커서를 자정이 지난 뒤
    보내면 새 날에 적용돼 빈 목록과 `prev_date`=어제가 나가고, 화면이 어제를 처음부터 다시 그려
@@ -37,6 +39,8 @@ from app.api.chat_replies import (
     CHAT_REPLY,
     AgentResultReply,
     ChatReply,
+    DeleteProposalReply,
+    FoundTabsReply,
     SavedReply,
     StoredRef,
 )
@@ -46,7 +50,9 @@ from app.api.deps.db import SessionDep
 from app.api.errors import ApiError, ErrorEnvelope
 from app.api.quota import today_kst
 from app.api.runs import pending_reply
+from app.api.v1.card_rows import CardRows, card_tab, proposal_tab, read_card_rows
 from app.api.v1.observation_outs import to_observation_outs
+from app.api.v1.schemas.cards import DeleteProposalCardOut, FoundTabsOut
 from app.api.v1.schemas.chat import (
     AgentResultOut,
     ChatDayResponse,
@@ -57,6 +63,13 @@ from app.api.v1.schemas.chat import (
 )
 from app.api.v1.schemas.observations import ObservationHealthOut, ObservationOut
 from app.domains.chat.repository import TurnCursor, next_date, page_turns, previous_date
+from app.domains.delete_proposal.models import DeleteProposal
+from app.domains.delete_proposal.repository import (
+    candidates_of,
+    effective_status,
+    find_proposals,
+    tabs_of,
+)
 from app.domains.memory.observation.repository import ObservationDomain, find_observations
 from app.domains.suggestion.models import Suggestion, SuggestionStatus
 from app.domains.suggestion.repository import list_suggestions_by_ids
@@ -111,6 +124,7 @@ async def get_chat_day(
     stored = [_readable(turn.id, turn.replies) for turn in turns]
     observations = await _current_observations(session, child.child_id, stored)
     suggestions = await _current_suggestions(session, child.child_id, stored)
+    cards = await _current_cards(session, parent.parent_id, child.child_id, stored)
     return ChatDayResponse(
         date=day,
         turns=[
@@ -120,7 +134,7 @@ async def get_chat_day(
                 reply_to=turn.reply_to,
                 created_at=turn.created_at,
                 reply_open=pending_reply.get(run_id=turn.run_id, **owner) is not None,
-                replies=_fill(replies, observations, suggestions),
+                replies=_fill(replies, observations, suggestions, cards),
             )
             for turn, replies in zip(turns, stored, strict=True)
         ],
@@ -233,15 +247,109 @@ def _status(row: Suggestion, now: dt.datetime) -> str:
     return row.status.value
 
 
+@dataclass(frozen=True)
+class _Cards:
+    """한 화면의 조회 · 삭제 제안 카드 몫 (#535) — 제안 행과 카드에 실을 지금 행."""
+
+    proposals: dict[str, DeleteProposal]
+    rows: CardRows
+    now: dt.datetime
+
+
+async def _current_cards(
+    session: SessionDep, parent_id: uuid.UUID, child_id: uuid.UUID, stored: list[list[ChatReply]]
+) -> _Cards:
+    """제안은 한 번에 읽고, 카드 행은 표마다 한 번씩 읽는다.
+
+    끝난 제안의 후보는 읽지 않는다 — 한 줄 요약만 그린다. 지운 행은 다시 읽을 수 없기도 하다.
+    """
+    now = dt.datetime.now(dt.UTC)
+    proposal_ids = {
+        pid
+        for replies in stored
+        for reply in replies
+        if isinstance(reply, DeleteProposalReply)
+        if (pid := _uuid(reply.proposal_id)) is not None
+    }
+    found = await find_proposals(
+        session, proposal_ids=proposal_ids, parent_id=parent_id, child_id=child_id
+    )
+    proposals = {str(pid): row for pid, row in found.items()}
+    refs = {
+        (tab.kind, oid)
+        for replies in stored
+        for reply in replies
+        if isinstance(reply, FoundTabsReply)
+        for tab in reply.tabs
+        for oid in tab.ids
+    } | {
+        ref
+        for row in proposals.values()
+        if effective_status(row, now) == "pending"
+        for ref in candidates_of(row)
+    }
+    rows = (
+        await read_card_rows(
+            session, child_id=child_id, parent_id=parent_id, refs=refs, today=today_kst()
+        )
+        if refs
+        else {}
+    )
+    return _Cards(proposals=proposals, rows=rows, now=now)
+
+
+def _found_tabs(reply: FoundTabsReply, cards: _Cards) -> FoundTabsOut | None:
+    """지금 남은 행으로 다시 그린다. 그사이 지운 행은 빼고, 다 지워졌으면 카드도 뺀다."""
+    tabs = [
+        out
+        for tab in reply.tabs
+        if (out := card_tab(tab.kind, tab.truncated, tab.ids, cards.rows)) is not None
+    ]
+    return FoundTabsOut(tabs=tabs) if tabs else None
+
+
+def _proposal_card(reply: DeleteProposalReply, cards: _Cards) -> DeleteProposalCardOut | None:
+    """지금 상태로. 결정 전이면 후보와 함께, 끝났으면 한 줄 요약에 쓸 상태 · 건수만.
+
+    제안 행이 없으면(아이 삭제 등) 카드를 뺀다.
+    """
+    row = cards.proposals.get(reply.proposal_id)
+    if row is None:
+        return None
+    state = effective_status(row, cards.now)
+    tabs = (
+        [
+            out
+            for tab in tabs_of(row)
+            if (out := proposal_tab(tab.kind, tab.truncated, tab.ids, tab.picked, cards.rows))
+            is not None
+        ]
+        if state == "pending"
+        else []
+    )
+    return DeleteProposalCardOut(
+        proposal_id=reply.proposal_id, status=state, result=row.result, tabs=tabs
+    )
+
+
 def _fill(
     replies: list[ChatReply],
     observations: dict[ObservationKey, ObservationView],
     suggestions: dict[str, SuggestionStateOut],
+    cards: _Cards,
 ) -> list[ChatReplyOut]:
     """saved 의 id 를 지금 기록으로 바꾼다. 지운 기록은 내용 없이 deleted 에.
-    agent_result 에는 추천의 지금 상태를 더한다."""
+    agent_result 에는 추천의 지금 상태를 더한다. 조회 · 삭제 제안 카드는 지금 상태로 다시 그린다."""
     filled: list[ChatReplyOut] = []
     for reply in replies:
+        if isinstance(reply, FoundTabsReply):
+            if (found := _found_tabs(reply, cards)) is not None:
+                filled.append(found)
+            continue
+        if isinstance(reply, DeleteProposalReply):
+            if (card := _proposal_card(reply, cards)) is not None:
+                filled.append(card)
+            continue
         if isinstance(reply, AgentResultReply):
             filled.append(
                 AgentResultOut(

@@ -11,6 +11,8 @@
   일정 초안은 DB 에 쓰지 않아서(9/17) id 로 지금 상태를 찾을 곳이 없다 — 내용을 담고, 지난
   대화에서는 "넣기" 없이 읽기 전용으로만 그린다.
 - `{kind, id}` 만 — `saved` 의 관찰, `agent_result` 의 추천 id. 관찰 표가 5개라 종류도 담는다.
+  조회 카드(`found_tabs`, #535)도 탭마다 (종류, id) 만 담는다. 삭제 제안 카드(`delete_proposal`)는
+  제안 id 하나만 — 후보와 결과는 `delete_proposal` 표에 있고, 조회할 때 지금 상태로 그린다.
   관찰은 조회할 때 지금 상태로 채운다 — 지운 관찰은 내용 없이 "지웠어요" 로(`v1/schemas/chat.py`).
   추천은 id 그대로 둔다 — 블록은 "후보 보기" 만 세우고, 채택 · 만료는 05 가 지금 상태로 거른다.
 - 저장하지 않음 — `step`(진행 중에만 의미가 있다), 되묻기 조각 원문(`PendingReply`), 05 보관함
@@ -69,6 +71,28 @@ class SavedReply(_Reply):
 
     type: Literal["saved"] = "saved"
     refs: list[StoredRef]
+
+
+class StoredTab(_Reply):
+    """조회 카드의 탭 하나. 내용은 담지 않는다 — 지난 대화를 열 때 지금 상태로 읽는다."""
+
+    kind: str
+    truncated: bool
+    ids: list[str]
+
+
+class FoundTabsReply(_Reply):
+    """조회 답변 · 수정 후보 카드 (#535)."""
+
+    type: Literal["found_tabs"] = "found_tabs"
+    tabs: list[StoredTab]
+
+
+class DeleteProposalReply(_Reply):
+    """삭제 제안 카드 (#535). 후보 · 상태 · 지운 건수는 `delete_proposal` 표가 들고 있다."""
+
+    type: Literal["delete_proposal"] = "delete_proposal"
+    proposal_id: str
 
 
 class EventDraftReply(_Reply):
@@ -143,6 +167,8 @@ ChatReply = Annotated[
     | GuidanceReply
     | UnavailableReply
     | SavedReply
+    | FoundTabsReply
+    | DeleteProposalReply
     | EventDraftReply
     | AgentResultReply
     | PartialReply

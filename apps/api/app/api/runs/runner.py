@@ -127,7 +127,9 @@ def agent_job(
     async def job(channel: RunChannel) -> None:
         # commit 이 채우고 Saved 가 꺼내 쓴다 — 이 run 이 만든 관찰의 화면 모양 (#471)
         saved_rows: dict[tuple[str, str], Any] = {}
-        relay = translate.relay(channel, saved_rows=saved_rows)
+        # load_cards 가 채우고 FoundTabs · DeleteProposed 가 꺼내 쓴다 — 카드의 화면 모양 행 (#535)
+        card_rows: dict[tuple[str, str], Any] = {}
+        relay = translate.relay(channel, saved_rows=saved_rows, card_rows=card_rows)
 
         def emit(event: entrypoint.Event) -> None:
             # 끝 신호 뒤의 이벤트는 채널이 버린다 — 화면에 안 나간 것은 대화에도 남기지 않는다
@@ -183,6 +185,9 @@ def agent_job(
                 # pipeline 은 이 commit 뒤에 Saved 를 낸다 — 그때 화면에 실을 행을 읽어 둔다
                 saved_rows.update(await _read_saved(session, child_id, store.created, channel))
 
+            async def load_cards(refs: tuple[entrypoint.Ref, ...]) -> None:
+                card_rows.update(await _read_cards(session, child_id, parent_id, refs, channel))
+
             try:
                 async with asyncio.timeout(RUN_DEADLINE_SECONDS):
                     await entrypoint.handle_input(
@@ -203,6 +208,7 @@ def agent_job(
                             child_id, on_commit=mark_saved
                         ),
                         count_records=agent_ports.record_counter(child_id),
+                        load_cards=load_cards,
                         curator_trigger=curator_trigger(),
                         domain_store=agent_ports.domain_store_opener(child_id),
                         **agent_ports.food_stores(),
@@ -284,6 +290,47 @@ async def _read_saved(
         return {}
     deleted = {(f"observation_{domain}", str(oid)): None for domain, oid in created}
     return deleted | {(out.kind, out.id): out for out in outs}
+
+
+async def _read_cards(
+    session: Any,
+    child_id: UUID,
+    parent_id: UUID,
+    refs: tuple[entrypoint.Ref, ...],
+    channel: RunChannel,
+) -> dict[tuple[str, str], Any]:
+    """조회 · 삭제 제안 카드의 행을 화면 모양으로 읽는다 (#535).
+
+    🚨 읽기가 실패해도 run 을 실패로 만들지 않는다 — 카드에서 행이 빠질 뿐이다. 삭제 제안은 이미
+       저장돼 있고 지난 대화에서 다시 읽힌다. `_read_saved` 와 같이 ERROR 로그만 남긴다(원문 없이).
+    """
+    from app.api.quota import today_kst
+    from app.api.v1.card_rows import read_card_rows
+
+    if not refs:
+        return {}
+    try:
+        return await read_card_rows(
+            session,
+            child_id=child_id,
+            parent_id=parent_id,
+            refs=[(ref.kind, ref.id) for ref in refs],
+            today=today_kst(),
+        )
+    except Exception as exc:
+        log.error(
+            "run %s 의 카드 행을 읽지 못했다 (%s) — 카드에서 뺀다\n%s",
+            channel.run_id,
+            type(exc).__name__,
+            "".join(traceback.format_tb(exc.__traceback__)),
+        )
+        try:
+            await session.rollback()
+        except Exception as rollback_exc:
+            log.warning(
+                "run %s 의 rollback 도 실패했다 (%s)", channel.run_id, type(rollback_exc).__name__
+            )
+        return {}
 
 
 async def fake_job(channel: RunChannel, *, step_delay: float | None = None) -> None:

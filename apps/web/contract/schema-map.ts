@@ -243,4 +243,9 @@ export const NOT_MAPPED: Record<string, string> = {
   ConfirmDeleteProposalRequest: "웹 미사용 — FE 후속 (#535 삭제 카드 버튼, BE 머지 뒤 요청)",
   DeleteProposalOut: "웹 미사용 — FE 후속 (#535)",
   DeleteProposalResponse: "웹 미사용 — FE 후속 (#535)",
+  CardTabOut:
+    "웹 미사용 — FE 후속 (#535 조회 · 삭제 카드의 탭, SSE found_tabs · delete_proposal 과 같은 모양)",
+  ProposalTabOut: "웹 미사용 — FE 후속 (#535)",
+  FoundTabsOut: "웹 미사용 — FE 후속 (#535 지난 대화의 조회 카드)",
+  DeleteProposalCardOut: "웹 미사용 — FE 후속 (#535 지난 대화의 삭제 카드)",
 };

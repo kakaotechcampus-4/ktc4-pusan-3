@@ -25,12 +25,15 @@ from app.agents.common.refs import Ref as EvidenceRef
 from app.agents.entrypoint import (
     AgentQuestion,
     AgentResult,
+    CardTab,
+    DeleteProposed,
     DomainRouted,
     Done,
     EmptyResult,
     EventDraft,
     EventDrafts,
     Failed,
+    FoundTabs,
     Guidance,
     MemoryNote,
     Partial,
@@ -50,6 +53,7 @@ from app.agents.entrypoint import (
 from app.agents.memory.drafts import DraftItem, EventSnapshot
 from app.agents.memory.schemas.task import WorkType
 from app.api.runs import registry, sse, translate
+from app.api.v1.schemas.suggestions import CalendarEventOut
 
 KST = ZoneInfo("Asia/Seoul")
 PARENT = uuid.UUID(int=1)
@@ -66,6 +70,8 @@ SENT = {
     AgentResult,
     AgentQuestion,
     Saved,
+    FoundTabs,
+    DeleteProposed,
 }
 """화면으로 보내는 것."""
 HELD = {PendingReply, DomainRouted, Unwritten, Rerouted, RetryContext, EmptyResult}
@@ -574,3 +580,52 @@ def test_partial_carries_retryable_agents():
     )
 
     assert translate.to_sse(event)[1]["retryable"] == ["activity"]
+
+
+def _event_row(eid: str) -> CalendarEventOut:
+    return CalendarEventOut(
+        id=eid,
+        title="synthetic",
+        event_type="episodic",
+        starts_at="2026-10-28T10:00:00+09:00",
+        ends_at=None,
+        all_day=False,
+        category="activity",
+        created_by="caregiver",
+        source_notice_id=None,
+        source_refs=[],
+        items=[],
+    )
+
+
+def test_found_tabs_keep_order_and_drop_missing_rows():
+    """#535 — 탭 순서 · 행 순서 그대로. 못 읽은 행 · 행이 없는 탭은 빼고, 다 없으면 안 보낸다."""
+    rows = {("event", "e2"): _event_row("e2"), ("event", "e1"): _event_row("e1")}
+    event = FoundTabs(
+        (
+            CardTab("observation_food", False, ("gone",)),
+            CardTab("event", True, ("e1", "missing", "e2")),
+        )
+    )
+
+    name, payload = translate.to_sse(event, card_rows=rows)
+
+    assert name == "found_tabs"
+    [tab] = payload["tabs"]
+    assert (tab["kind"], tab["truncated"], tab["records"]) == ("event", True, [])
+    assert [row["id"] for row in tab["events"]] == ["e1", "e2"]
+    assert translate.to_sse(FoundTabs((CardTab("event", False, ("x",)),)), card_rows={}) is None
+
+
+def test_delete_proposal_is_sent_even_without_rows():
+    """#535 — 제안은 이미 저장됐다. 행을 못 읽어도 보내야 보호자가 취소할 수 있다.
+    기본 체크는 남아 있는 후보 안에서만."""
+    rows = {("event", "e1"): _event_row("e1")}
+    event = DeleteProposed("p1", (CardTab("event", False, ("e1", "e2"), ("e1", "e2")),))
+
+    name, payload = translate.to_sse(event, card_rows=rows)
+    assert name == "delete_proposal"
+    assert (payload["proposal_id"], payload["status"], payload["result"]) == ("p1", "pending", None)
+    [tab] = payload["tabs"]
+    assert tab["picked_ids"] == ["e1"]
+    assert translate.to_sse(event, card_rows={})[1]["tabs"] == []

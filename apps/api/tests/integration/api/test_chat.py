@@ -8,6 +8,7 @@
     ⑤ 저장한 기록은 지금 상태로 — run 화면의 saved 와 같은 모양(건강 포함), 지운 기록은 내용 없이
     ⑦ 추천은 지금 상태로 — 24시간 지난 draft 는 expired, 못 찾은 id 는 빠진다
     ⑧ 되묻기는 맥락이 살아 있을 때만 reply_open
+    ⑨ 조회 · 삭제 제안 카드(#535)는 지금 상태로 — 지운 행은 빠지고, 끝난 제안은 한 줄 요약만
 
 아이 접근 확인(403)은 다른 아이 주소와 같은 의존성이라 여기서 다시 보지 않는다.
 무엇을 어떻게 남기는지는 tests/integration/test_chat_record.py. 발화는 전부 가짜 값이다.
@@ -25,6 +26,13 @@ from app.agents.entrypoint import PendingMemoryContext
 from app.agents.memory.schemas.task import WorkType
 from app.api.runs import pending_reply
 from app.domains.chat.repository import add_turn
+from app.domains.delete_proposal.models import DeleteProposalStatus
+from app.domains.delete_proposal.repository import (
+    ProposalTab,
+    add_proposal,
+    find_proposal,
+    finish,
+)
 from app.domains.memory.observation.models import ConfidenceSource
 from app.domains.memory.observation.repository import create_observation, delete_observation
 from app.domains.suggestion.models import (
@@ -353,3 +361,60 @@ async def test_reply_open_only_while_the_question_context_lives(
     ).json()
 
     assert [t["reply_open"] for t in body["turns"]] == [True, False]
+
+
+async def test_cards_come_back_as_they_are_now(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    """#535 — 조회 카드는 그사이 지운 행을 빼고, 삭제 카드는 결정 전이면 후보와 기본 체크를,
+    끝났으면 상태와 지운 건수만 싣는다 (한 줄 요약)."""
+    headers, me = bearer
+    kept, gone = [
+        await _observation(session, domain="food", child_id=cid, writer=me, fields={"subject": s})
+        for s in ("rice", "soup")
+    ]
+    await delete_observation(session, domain="food", child_id=cid, observation_id=uuid.UUID(gone))
+    tab = ProposalTab("observation_food", True, (kept,), (kept,))
+    pending = await add_proposal(
+        session,
+        parent_id=me,
+        child_id=cid,
+        run_id=uuid.uuid4().hex,
+        tabs=[tab],
+        now=datetime.now(UTC),
+    )
+    decided = await add_proposal(
+        session, parent_id=me, child_id=cid, run_id=uuid.uuid4().hex, tabs=[tab], now=NOON
+    )
+    row = await find_proposal(session, proposal_id=decided, parent_id=me, child_id=cid)
+    await finish(
+        session, row, status=DeleteProposalStatus.DELETED, result={"observation_food": 1}, now=NOON
+    )
+    found = {
+        "type": "found_tabs",
+        "tabs": [{"kind": "observation_food", "truncated": False, "ids": [kept, gone]}],
+    }
+    cards = [
+        found,
+        {"type": "delete_proposal", "proposal_id": str(pending)},
+        {"type": "delete_proposal", "proposal_id": str(decided)},
+        {"type": "done", "completed": True},
+    ]
+    await _turn(session, parent_id=me, child_id=cid, replies=cards)
+
+    body = (
+        await db_client.get(CHAT.format(cid=cid), params={"date": "2026-10-15"}, headers=headers)
+    ).json()
+
+    [turn] = body["turns"]
+    [lookup, open_card, closed_card, _] = turn["replies"]
+    [lookup_tab] = lookup["tabs"]
+    assert [r["id"] for r in lookup_tab["records"]] == [kept]
+    assert open_card["status"] == "pending"
+    [open_tab] = open_card["tabs"]
+    assert (open_tab["truncated"], open_tab["picked_ids"]) == (True, [kept])
+    assert (closed_card["status"], closed_card["result"], closed_card["tabs"]) == (
+        "deleted",
+        {"observation_food": 1},
+        [],
+    )

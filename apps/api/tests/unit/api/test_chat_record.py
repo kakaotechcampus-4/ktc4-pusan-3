@@ -19,12 +19,15 @@ from app.agents.common.refs import Ref as EvidenceRef
 from app.agents.entrypoint import (
     AgentQuestion,
     AgentResult,
+    CardTab,
+    DeleteProposed,
     DomainRouted,
     Done,
     EmptyResult,
     EventDraft,
     EventDrafts,
     Failed,
+    FoundTabs,
     Guidance,
     MemoryNote,
     Partial,
@@ -52,6 +55,8 @@ RECORDED = {
     AgentResult,
     AgentQuestion,
     Saved,
+    FoundTabs,
+    DeleteProposed,
 }
 """대화에 남기는 것. 끝 상태(`done`)는 이벤트가 아니라 채널에서 읽어 따로 붙인다."""
 SKIPPED = {
@@ -212,3 +217,18 @@ def test_옛_행은_awaits_reply_없이_읽는다():
     [reply] = CHAT_REPLIES.validate_python([old_row])
 
     assert (reply.question, reply.awaits_reply) == ("복약 알림을 멈출까요?", False)
+
+
+def test_cards_keep_only_ids():
+    """#535 — 조회 카드는 탭마다 (종류, id) 만, 삭제 카드는 제안 id 만 남긴다. 내용은 지난 대화가
+    지금 상태로 읽는다 — 지워 달라고 한 내용의 사본을 대화 표에 남기지 않는다."""
+    found = to_reply(FoundTabs((CardTab("observation_food", True, ("o1", "o2")),)))
+    proposal = to_reply(DeleteProposed("p1", (CardTab("event", False, ("e1",), ("e1",)),)))
+
+    assert CHAT_REPLIES.dump_python([found, proposal], mode="json") == [
+        {
+            "type": "found_tabs",
+            "tabs": [{"kind": "observation_food", "truncated": True, "ids": ["o1", "o2"]}],
+        },
+        {"type": "delete_proposal", "proposal_id": "p1"},
+    ]
