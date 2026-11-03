@@ -24,3 +24,4 @@ from app.domains.report import models as report  # noqa: F401
 from app.domains.safety import models as safety  # noqa: F401
 from app.domains.schedule import models as schedule  # noqa: F401
 from app.domains.suggestion import models as suggestion  # noqa: F401
+from app.domains.tour import models as tour  # noqa: F401
