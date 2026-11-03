@@ -98,6 +98,35 @@ class DeleteCandidates:
     picked: tuple[str, ...]
 
 
+DELETE_KINDS = frozenset(
+    {
+        "observation_food",
+        "observation_health",
+        "observation_education",
+        "observation_activity",
+        "observation_routine",
+        "event",
+    }
+)
+"""제안에 담을 수 있는 종류 — 조회 tool 하나 = 탭 하나. DB 쪽도 같은 목록으로 한 번 더 막는다
+(`domains/delete_proposal/repository.KINDS`)."""
+
+
+def check_candidates(tabs: Sequence[DeleteCandidates]) -> None:
+    """제안 모양을 막는다 — 두 store 가 같은 규칙으로 거르게 여기 둔다. 어기면 ValueError.
+
+    후보 id 가 정말 이 아이의 행인지는 여기서 보지 않는다. 지울 때 서버가 아이로 다시 거른다.
+    """
+    kinds = [tab.kind for tab in tabs]
+    if not tabs or len(set(kinds)) != len(kinds) or not set(kinds) <= DELETE_KINDS:
+        raise ValueError("후보가 없거나, 종류가 겹치거나, 담을 수 없는 종류다")
+    for tab in tabs:
+        if not tab.ids or len(set(tab.ids)) != len(tab.ids):
+            raise ValueError("탭의 후보가 비었거나 같은 id 가 두 번 있다")
+        if len(set(tab.picked)) != len(tab.picked) or not set(tab.picked) <= set(tab.ids):
+            raise ValueError("고른 id 가 겹치거나 후보 밖이다")
+
+
 class MemoryStore(Protocol):
     """Memory Agent 가 쓰는 저장소. 전부 async."""
 

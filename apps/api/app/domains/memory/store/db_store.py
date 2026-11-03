@@ -23,6 +23,7 @@ from app.agents.memory.store.ports import (
     EventRow,
     ObservationDomain,
     ObservationRow,
+    check_candidates,
 )
 from app.domains.delete_proposal.repository import ProposalTab, add_proposal
 from app.domains.memory.observation.models import (
@@ -470,6 +471,7 @@ class DbMemoryStore:
     ) -> str:
         if self.proposal_id is not None:
             raise ValueError("한 run 에 제안은 하나다")
+        check_candidates(tabs)
         self.proposal_id = await add_proposal(
             self._session,
             parent_id=parent_id,

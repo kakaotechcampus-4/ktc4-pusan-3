@@ -15,6 +15,7 @@ from app.agents.memory.store.ports import (
     EventRow,
     ObservationDomain,
     ObservationRow,
+    check_candidates,
 )
 
 
@@ -253,7 +254,6 @@ class InMemoryStore:
     ) -> str:
         if self.proposal is not None:
             raise ValueError("한 run 에 제안은 하나다")
-        if not tabs or any(not tab.ids or not set(tab.picked) <= set(tab.ids) for tab in tabs):
-            raise ValueError("후보가 비었거나 고른 id 가 후보 밖이다")
+        check_candidates(tabs)
         self.proposal = (self._next_id("delete_proposal"), tuple(tabs))
         return self.proposal[0]
