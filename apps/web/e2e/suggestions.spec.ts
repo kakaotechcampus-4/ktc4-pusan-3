@@ -116,6 +116,46 @@ test.describe("홈 버튼에서 들어오면 (#286)", () => {
   });
 });
 
+test.describe("들어온 곳으로 돌아가기 (#683)", () => {
+  test("홈 버튼에서 왔으면 위 화살표가 홈으로 간다", async ({ page }) => {
+    await page.goto(`/child/${CHILD}/home`);
+    await page.getByRole("button", { name: /저녁 추천해드릴까요/ }).click();
+    await expect(page.getByText("사용한 기록", { exact: false }).first()).toBeVisible();
+
+    await expect(page.getByRole("link", { name: "대화로 돌아가기" })).toHaveCount(0);
+    await page.getByRole("link", { name: "홈으로 돌아가기" }).click();
+    await expect(page).toHaveURL(new RegExp(`/child/${CHILD}/home$`));
+  });
+
+  test("대화에서 왔으면 위 화살표가 대화로 가고, 스크롤해도 화면 위에 남는다", async ({ page }) => {
+    // 04 "후보 보기" 는 run 을 싣고, "이것도 도와드릴까요?" 는 영역만 싣는다 — 둘 다 대화다
+    for (const path of [`${SUGGESTIONS}&run=r1`, SUGGESTIONS]) {
+      await page.goto(path);
+      await expect(page.getByText("사용한 기록", { exact: false }).first()).toBeVisible();
+      const back = page.getByRole("link", { name: "대화로 돌아가기" });
+      await expect(back).toHaveAttribute("href", `/child/${CHILD}/chat`);
+      await expect(page.getByRole("link", { name: "홈으로 돌아가기" })).toHaveCount(0);
+
+      // 🚨 나가는 길이 본문에 있으면 후보 셋을 지나 한참 내려가야 한다 — 맨 아래에서도 보여야 한다
+      await page.getByRole("link", { name: "홈으로", exact: true }).scrollIntoViewIfNeeded();
+      await expect(back).toBeInViewport();
+    }
+
+    await page.getByRole("link", { name: "대화로 돌아가기" }).click();
+    await expect(page).toHaveURL(new RegExp(`/child/${CHILD}/chat$`));
+  });
+
+  test("맨 아래 홈으로는 버튼이 아니라 링크다", async ({ page }) => {
+    await page.goto(SUGGESTIONS);
+    await expect(page.getByText("사용한 기록", { exact: false }).first()).toBeVisible();
+    await expect(page.getByRole("button", { name: "홈으로", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("link", { name: "홈으로", exact: true })).toHaveAttribute(
+      "href",
+      `/child/${CHILD}/home`,
+    );
+  });
+});
+
 test.describe("근거가 부족하면 일반 추천 (§2 기억)", () => {
   test.describe("scarcity — 기록 1건", () => {
     test.use({ scenario: "scarcity" });
@@ -309,6 +349,35 @@ test.describe("개인화와 일반이 같은 Agent 에 섞여 오면 (#512 리�
 
     await page.getByText("두부를 부쳐서 한 조각 곁들여 보세요").click();
     await expect(notice).toHaveText("식사에서 고른 3가지는 일정 하나로 묶여요.");
+  });
+
+  test("개인화 후보와 일반 추천의 제안 문장은 같은 글씨다 (#683)", async ({ page }) => {
+    await page.goto(SUGGESTIONS);
+    const font = (text: string) =>
+      page.getByText(text, { exact: true }).evaluate((el) => {
+        const style = getComputedStyle(el);
+        return { size: style.fontSize, weight: style.fontWeight };
+      });
+
+    const personal = await font("계란말이에 시금치를 조금 섞어 보세요");
+    const general = await font("국물 없이 집어 먹는 반찬을 한 가지 곁들여 보세요");
+    // 🚨 개인화만 크고 굵으면 더 중요한 추천처럼 읽힌다 — 가르는 것은 라벨 · 점선 · 근거다
+    expect(personal).toEqual(general);
+
+    // 묶음 질문은 후보보다 크고, 화면 제목보다는 작다 — 층이 셋으로 갈린다.
+    // 🚨 좁은 폰(360)에서도 본다 — 화면 제목이 380 미만에서 한 단계 내려가서, 질문도 같이 내려야 한다.
+    const px = (value: string) => Number.parseFloat(value);
+    const size = (heading: string) =>
+      page
+        .getByRole("heading", { name: heading, exact: true })
+        .evaluate((el) => getComputedStyle(el).fontSize);
+    for (const width of [390, 360]) {
+      await page.setViewportSize({ width, height: 844 });
+      const candidate = px((await font("계란말이에 시금치를 조금 섞어 보세요")).size);
+      const prompt = px(await size("오늘 저녁 뭐 차려 줄까요"));
+      expect(prompt, `${width} 폭`).toBeGreaterThan(candidate);
+      expect(prompt, `${width} 폭`).toBeLessThan(px(await size("제안 후보")));
+    }
   });
 
   test("묶음 건수 줄은 개인화만 셌다는 것을 글자로 말한다", async ({ page }) => {
