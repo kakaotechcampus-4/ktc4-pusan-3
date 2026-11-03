@@ -111,8 +111,6 @@ async def test_위험_물질_거절_문장은_바꾸지_않는다() -> None:
     memory = FakeLLM(
         saves("create_observation_food", subject="소주"),
         memory_says("기록하지 않았어요.", answering=False),
-        # 저장이 거절돼 쓰기 성공이 없어 한 번 다시 쓰게 한다 (#667)
-        memory_says("기록하지 않았어요.", answering=False),
     )
 
     (note, *_) = await notes(memory)

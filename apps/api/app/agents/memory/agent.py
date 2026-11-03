@@ -30,7 +30,7 @@ from typing import Any, Literal
 
 from pydantic import ValidationError
 
-from app.agents.common.llm_client import LLMClient
+from app.agents.common.llm_client import LLMClient, LLMError
 from app.agents.common.result import DomainPending
 from app.agents.memory.bundles import MUTATING_PREFIXES, WRITES_FOR, tools_for
 from app.agents.memory.context import AgentContext
@@ -80,7 +80,7 @@ _NEEDS_REPLY_CUES = ("알림", "알람")
 # 이 tool을 부른 run은 조기 종료하지 않음(후속 변경이 있을 수 있음)
 _OPEN_ENDED = frozenset({"create_event_item", "update_event_item", "delete_event_item"})
 
-EndedBy = Literal["model", "coverage", "max_steps", "unclear"]
+EndedBy = Literal["model", "coverage", "max_steps", "unclear", "unsaved_fallback"]
 
 _HINT_HEADER = "[먼저 나눠 본 기록 후보 — 빠진 게 있을 수 있다. 발화 전체에서 기록할 것을 찾는다]"
 
@@ -205,6 +205,7 @@ _SAVED_CLAIM = re.compile(
     r"|기록(을|으로|에)?\s?(남겼|남길게|남기겠|남겨\s?(뒀|두었|놨|놓았|둘게|놓을게|드렸|드릴게))"
 )
 # 다시 확인해도 저장한 척하면 그 말 대신 내보낸다. 지켜지지 않을 말을 보호자에게 보내지 않는다.
+# 다시 확인이 끝나지 못했을 때(호출 실패 · 남은 차례 없음 · 형식이 깨진 답)도 이 말로 끝낸다.
 # 아무것도 쓰지 않은 run 에만 쓴다 — 일부라도 처리했으면 그걸 부정하는 말이 된다
 _UNSAVED_FALLBACK = "이번에는 아무것도 저장하지 않았어요."
 # Supervisor 가 관찰 · 일정으로 나눈 처음 run 은 말투가 아니라 쓰기 성공으로 본다 (#667).
@@ -225,17 +226,31 @@ _FIRST_RUN_UNSAVED_REPLY = (
     "이번에는 아무것도 저장하지 않았고, 이 말을 보내면 처리가 끝나 나중에 기록할 수도 없다. "
     "저장했다거나 기록하겠다는 말은 넣지 않는다. " + _FIRST_RUN_GUIDE
 )
-# 일부 종류만 처리했으면 처리한 것을 부정하지 않게 따로 묻는다
-_PARTIAL_UNSAVED_REPLY = (
-    "보호자에게 보이지 않는 확인이다. 여기에 답하지 말고 보호자에게 보낼 말만 다시 쓴다. "
-    "이번에 {done}은 처리했지만 {missing}은 저장하지 않았고, 이 말을 보내면 처리가 끝나 "
-    "나중에 기록할 수도 없다. 처리한 것은 그대로 말해도 된다. {missing}을 저장했다거나 "
-    "하겠다는 말은 넣지 않는다. " + _FIRST_RUN_GUIDE
-)
-# 저장이 필요한 작업 종류와 확인 문구에 쓰는 이름. 순서는 문구에 나오는 순서다
-_RECORD_WORK: dict[WorkType, str] = {
-    WorkType.OBSERVE: "관찰 기록",
-    WorkType.SCHEDULE: "일정 초안",
+# 저장이 필요한 작업 종류와, 일부만 처리한 run 에서 코드가 내는 문장 (처리함, 처리 안 함).
+# 순서는 문장에 나오는 순서다. 관찰은 {} 에 남긴 영역(_DOMAIN_NAMES)을 넣는다 —
+# "기록은 남겼어요" 만으로는 모델이 맞게 말한 것("김밥 먹은 기록과 놀이공원 가고 싶다는 기록을
+# 남겼어요")보다 알려 주는 게 적었다 (#678 라이브)
+_RECORD_WORK: dict[WorkType, tuple[str, str]] = {
+    WorkType.OBSERVE: ("{}기록은 남겼어요.", "기록은 남기지 않았어요."),
+    WorkType.SCHEDULE: ("일정 초안은 만들었어요.", "일정 초안은 만들지 않았어요."),
+}
+_DOMAIN_NAMES = {
+    "food": "식사",
+    "health": "건강",
+    "education": "배움",
+    "activity": "놀이",
+    "routine": "생활",
+}
+# 일부만 저장한 run 의 답이 못 한 것도 말하는가. 정직한 답은 한 것과 못 한 것을 같이 말해서
+# ("김밥은 기록했어요. 놀이공원은 기록하지 않았어요") 저장했다는 말투만으로는 거짓과 갈리지 않는다
+# (#678 라이브). 다 했다고만 하는 답("사과도 기록했어요")에는 이 말이 없다
+_ADMITS_UNSAVED = re.compile(r"않았|않고|않을|못\s?했|못\s?남|안\s?(남|했|만들|넣|적)")
+# 그 종류의 일을 해낸 것으로 보는 쓰기. 수정도 센다 — 관찰 조각에 unclear 가 섞이면 수정 tool 이
+# 열리고, "~를 ~로 바꿔줘" 는 저장된 기록을 고치는 게 맞다 (#678 리뷰).
+# WRITES_FOR 는 조기 종료가 조각 수만큼 새로 만들었는지 세는 데도 쓰여 따로 둔다
+_DONE_BY: dict[WorkType, tuple[str, ...]] = {
+    WorkType.OBSERVE: (*WRITES_FOR[WorkType.OBSERVE], "update_observation_"),
+    WorkType.SCHEDULE: (*WRITES_FOR[WorkType.SCHEDULE], "update_event"),
 }
 # 알림을 해 달라는 일정 조각은 초안 없이 안내로 끝나는 게 정상이다. 다시 확인해도 답이 그대로라
 # 호출만 늘었다("모레 운동회 전날 저녁 8시에 알려줘" 10번 모두, #667). 조각 문구는 원문 그대로라
@@ -291,6 +306,7 @@ class MemoryAgentResult:
     # coverage: 할 일을 다 한 게 확인돼 요약 호출 없이 끝남
     # unclear: unclear 뿐인 입력이 쓰기 없이 끝나 코드가 정한 문구(_UNCLEAR_REPLY)를 냄 (#642)
     # max_steps: 끝내지 못함
+    # unsaved_fallback: 저장 0건 run 의 다시 확인이 끝나지 못해 코드 문구(_UNSAVED_FALLBACK)를 냄
     ended_by: EndedBy = "model"
     drafts: tuple[EventDraft, ...] = ()  # 보호자 제출을 기다리는 일정 초안
     pending: PendingMemoryContext | None = None  # 되묻고 멈춘 조각. kind=question 일 때만
@@ -364,7 +380,9 @@ async def run(
     nudged = False  # 빈 턴을 다시 물은 적이 있는지
     nudged_hint = False  # 조각 지목을 다시 물은 적이 있는지
     rechecked = False  # 저장 없이 말로 끝낸 이어받기를 다시 확인하게 한 적이 있는지
-    # 다시 확인하는 차례의 답. 그 차례에는 tool 을 주지 않는다 — 확인에 밀려 저장하지 않게 (#667)
+    # 다시 확인하는 차례의 답. 그 차례에는 tool 을 주지 않는다 — 확인에 밀려 저장하지 않게 (#667).
+    # 이 차례는 저장 0건 run 에만 온다. 그래서 끝나지 못해도 잃을 기록이 없고, run 을 실패로
+    # 올리지 않고 코드 문구로 끝낸다 (#678 리뷰)
     before_recheck: MemoryReply | None = None
     # 이어받기는 답에 다른 말이 섞였는지(leftover)를 더 받는다
     reply_format = CONTINUATION_REPLY_FORMAT if continuation is not None else REPLY_FORMAT
@@ -373,29 +391,30 @@ async def run(
     )
 
     for step in range(max_steps):
-        response = await llm.chat(
-            messages=messages,
-            tools=tools,
-            # 다시 확인하는 차례는 답만 받는다
-            tool_choice="none" if before_recheck is not None else "auto",
-            max_completion_tokens=MAX_COMPLETION_TOKENS,
-            # 말하는 턴의 content를 스키마 JSON 으로 받는다. tool을 부르는 턴에는 쓰이지 않는다
-            response_format=reply_format,
-        )
+        try:
+            response = await llm.chat(
+                messages=messages,
+                tools=tools,
+                # 다시 확인하는 차례는 답만 받는다
+                tool_choice="none" if before_recheck is not None else "auto",
+                max_completion_tokens=MAX_COMPLETION_TOKENS,
+                # 말하는 턴의 content를 스키마 JSON 으로 받는다. tool을 부르는 턴에는 쓰이지 않는다
+                response_format=reply_format,
+            )
+        except LLMError:
+            if before_recheck is None:
+                raise
+            # 답을 다듬는 호출의 실패를 기록 실패로 올리지 않는다
+            logger.warning("다시 확인 호출이 실패해 코드 문구로 끝낸다 steps=%d", step + 1)
+            return _unsaved_result(step + 1, calls, usage, context)
         _accumulate(usage, response.usage)
 
         tool_calls = getattr(response.message, "tool_calls", None) or []
         if tool_calls and before_recheck is not None:
-            # tool_choice=none 을 무시한 provider. 실행하지 않고 확인 전 답으로 끝낸다
+            # tool_choice=none 을 무시한 provider. 실행하지 않는다. 확인 전 답은 저장한 척을 의심해
+            # 다시 묻던 답이라 내보내지 않는다
             logger.warning("다시 확인하는 차례에 tool 을 불러 실행하지 않는다 steps=%d", step + 1)
-            return MemoryAgentResult(
-                reply=_settle(before_recheck, calls, claimed=_claims_saved(before_recheck.text)),
-                completed=True,
-                steps=step + 1,
-                calls=calls,
-                usage=usage,
-                drafts=context.drafts.all(),
-            )
+            return _unsaved_result(step + 1, calls, usage, context)
         if not tool_calls:
             if _unclear_unsaved(task, calls):
                 # 모델 응답은 읽지 않는다. 스키마 · 평문 · 빈 턴 어느 쪽이든 같은 문구로 끝낸다
@@ -404,6 +423,11 @@ async def run(
             parsed = _parse_reply(content, reply_model)
             # structured output 이라 빈 턴은 text 가 빈 JSON 으로도 온다 (라이브 RC26)
             spoken = parsed.text.strip() if parsed is not None else content
+            if before_recheck is not None and (parsed is None or not spoken):
+                # 다시 쓴 답이 비었거나 스키마와 맞지 않는다. 확인을 거치지 못한 말은 내보내지
+                # 않는다
+                logger.warning("다시 확인한 답이 비었거나 형식이 깨져 코드 문구로 끝낸다")
+                return _unsaved_result(step + 1, calls, usage, context)
             if not spoken and not nudged:
                 # 빈 턴. 응답 문구는 화면이 지어내지 않으므로 모델에게 한 번 더 묻는다
                 nudged = True
@@ -448,25 +472,43 @@ async def run(
                     if continuation is None and replied.kind == "message"
                     else ()
                 )
+                # 다시 확인은 저장 0건일 때만 한다. 일부라도 저장했으면 확인이 끝나지 못할 때
+                # 그 저장까지 되돌려진다 (#678 리뷰) — 그 run 은 아래 _partial_reply 가 맡는다.
+                # 위험 물질 · 알레르기를 막은 run 은 "한 줄로만" 알리는 규칙과 안내가 따로 있다
+                recheck_missing = bool(missing) and unsaved and not _blocked(calls)
                 asked_again = resuming and replied.kind == "question" and not _wrote(calls)
                 if (
                     (recording and unsaved)
                     or (continuation is None and claimed)
-                    or missing
+                    or recheck_missing
                     or asked_again
                 ) and not rechecked:
                     # 저장 없이 말로 끝냈다. 저장한 척했을 수 있어 한 번 확인한다
                     rechecked = True
+                    if not resuming and step == max_steps - 1:
+                        # 다시 물을 차례가 없다. 끝내지 못한 run 으로 두지 않는다
+                        return _unsaved_result(step + 1, calls, usage, context)
                     messages.append({"role": "assistant", "content": content})
                     if resuming:
                         # 물은 질문의 답은 저장이 일이라 확인하는 차례에도 tool 을 준다 (#660)
                         prompt = _RESUME_UNSAVED
                     else:
                         before_recheck = replied
-                        prompt = _recheck_prompt(task, calls, first_run=continuation is None)
+                        prompt = (
+                            _FIRST_RUN_UNSAVED_REPLY if continuation is None else _UNSAVED_REPLY
+                        )
                     messages.append({"role": "user", "content": prompt})
                     continue
                 replied = _settle(replied, calls, claimed=rechecked and claimed)
+                if (
+                    missing
+                    and _wrote(calls)
+                    and _claims_saved(replied.text)
+                    and not _ADMITS_UNSAVED.search(replied.text)
+                ):
+                    # 일부만 저장했는데 저장했다고만 말한다. 어느 종류를 두고 한 말인지 가릴 수
+                    # 없어, 처리한 것과 못 한 것을 tool 기록대로 코드가 말한다
+                    replied = _partial_reply(task, missing, calls)
                 return MemoryAgentResult(
                     reply=replied,
                     completed=True,
@@ -588,6 +630,7 @@ def _missing_work(task: MemoryTask | None, calls: list[ToolCallRecord]) -> tuple
     """Supervisor 가 관찰 · 일정으로 나눈 작업 중 이번 run 에서 쓰기 성공이 하나도 없는 종류.
 
     성공은 ToolCallRecord.success 로 본다. 일정은 승인 전 초안이라 초안 생성 성공을 센다.
+    저장된 것을 고친 것도 센다(_DONE_BY).
     같은 종류의 조각이 여러 개여도 그 종류의 성공 1건이면 된다 — 조각과 호출을 짝짓지 않는다.
     조각이 없으면(강등 · Memory 단독) 판단할 근거가 없어 빈 값이다.
     """
@@ -602,29 +645,52 @@ def _missing_work(task: MemoryTask | None, calls: list[ToolCallRecord]) -> tuple
     return tuple(
         work
         for work in _RECORD_WORK
-        if work in needed and not any(name.startswith(WRITES_FOR[work]) for name in written)
+        if work in needed and not any(name.startswith(_DONE_BY[work]) for name in written)
     )
 
 
-def _recheck_prompt(
-    task: MemoryTask | None, calls: list[ToolCallRecord], *, first_run: bool
-) -> str:
-    """다시 확인 문구. 이어받기는 기존 문구, 처음 run 은 이유를 말하는 답을 허용하는 문구.
-
-    일부라도 처리했으면 그걸 부정하지 않는 문구를 쓴다.
-    """
-    if not first_run:
-        return _UNSAVED_REPLY
-    missing = _missing_work(task, calls)
-    if task is None or not missing or not _wrote(calls):
-        return _FIRST_RUN_UNSAVED_REPLY
-    needed = {WorkType(hint.work) for hint in task.hints}
+def _partial_reply(
+    task: MemoryTask | None, missing: Sequence[WorkType], calls: list[ToolCallRecord]
+) -> MemoryReply:
+    """일부 종류만 저장한 run 에서 보호자에게 나갈 말. 한 것과 못 한 것을 tool 기록대로 적는다."""
+    needed = {WorkType(hint.work) for hint in task.hints} if task is not None else set()
+    domains = [
+        name
+        for domain, name in _DOMAIN_NAMES.items()
+        if any(
+            call.success and call.name.endswith(f"_observation_{domain}")
+            for call in calls
+            if call.name.startswith(_DONE_BY[WorkType.OBSERVE])
+        )
+    ]
+    fill = f"{' · '.join(domains)} " if domains else ""
     done = [
-        label for work, label in _RECORD_WORK.items() if work in needed and work not in missing
-    ] or ["다른 작업"]  # 관찰 조각 + 조회 · 수정 조각에서 수정만 한 경우
-    return _PARTIAL_UNSAVED_REPLY.format(
-        done=" · ".join(done), missing=" · ".join(_RECORD_WORK[work] for work in missing)
+        said.format(fill)
+        for work, (said, _) in _RECORD_WORK.items()
+        if work in needed and work not in missing
+    ]
+    undone = [said for work, (_, said) in _RECORD_WORK.items() if work in missing]
+    return MemoryReply(text=" ".join([*done, *undone]), kind="message")
+
+
+def _unsaved_result(
+    steps: int, calls: list[ToolCallRecord], usage: dict[str, int], context: AgentContext
+) -> MemoryAgentResult:
+    """저장 0건 run 의 다시 확인이 끝나지 못했다. 모델 말 대신 고정 문구로 정상 종료한다."""
+    return MemoryAgentResult(
+        reply=MemoryReply(text=_UNSAVED_FALLBACK, kind="message"),
+        completed=True,
+        steps=steps,
+        calls=calls,
+        usage=usage,
+        ended_by="unsaved_fallback",
+        drafts=context.drafts.all(),
     )
+
+
+def _blocked(calls: list[ToolCallRecord]) -> bool:
+    """위험 물질 · 알레르기 이름이라 저장 게이트가 막았는가. 안내는 pipeline 이 따로 낸다."""
+    return _refused(calls, ErrorCode.HAZARD) or _refused(calls, ErrorCode.SAFETY_RECORD)
 
 
 def _settle(reply: MemoryReply, calls: list[ToolCallRecord], *, claimed: bool) -> MemoryReply:
