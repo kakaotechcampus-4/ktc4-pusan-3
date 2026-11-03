@@ -1878,16 +1878,48 @@ async def test_마지막_차례에서는_다시_확인하지_않고_고정_문�
     assert result.final_message == _UNSAVED_FALLBACK
 
 
-@pytest.mark.parametrize("again", ["", "수영은 적어 뒀어요."], ids=["빈_답", "스키마_밖"])
-async def test_다시_쓴_답이_비었거나_형식이_깨지면_고정_문구로_끝낸다(
-    context: AgentContext, again: str
-) -> None:
-    # 평문은 확인 결과인지 알 수 없다. 빈 답을 또 묻지도 않는다 — 호출만 늘고 끝낼 차례가 줄어든다
-    llm = FakeLLM(_answer({"text": "수영 적어 뒀어요.", "kind": "message"}), _reply(again))
+async def test_다시_쓴_답이_스키마와_맞지_않으면_고정_문구로_끝낸다(context: AgentContext) -> None:
+    # 평문은 확인 결과인지 알 수 없다
+    llm = FakeLLM(
+        _answer({"text": "수영 적어 뒀어요.", "kind": "message"}), _reply("수영은 적어 뒀어요.")
+    )
 
     result = await run(_SWIM.raw_text, context, client=llm, task=_SWIM)
 
     assert len(llm.seen) == 2
+    assert result.final_message == _UNSAVED_FALLBACK
+
+
+async def test_다시_쓴_답이_비면_한_번_더_묻는다(context: AgentContext) -> None:
+    # 거짓 첫 답에 다시 쓰게 하면 빈 답이 자주 왔고, 한 번 더 물으면 날짜를 되물었다 (#678 라이브)
+    llm = FakeLLM(
+        _answer({"text": "수영 적어 뒀어요.", "kind": "message"}),
+        _answer({"text": "", "kind": "message"}),
+        _answer({"text": "수영한 날이 언제였어요?", "kind": "question"}),
+    )
+
+    result = await run(_SWIM.raw_text, context, client=llm, task=_SWIM)
+
+    assert len(llm.seen) == 3
+    assert llm.seen_kwargs[2]["tool_choice"] == "none"
+    assert result.final_message == "수영한 날이 언제였어요?"
+
+
+@pytest.mark.parametrize(
+    ("max_steps", "answers"),
+    [(7, 2), (2, 1)],
+    ids=["또_빈_답", "더_물을_차례가_없음"],
+)
+async def test_다시_쓴_답이_비었는데_더_물을_수_없으면_고정_문구로_끝낸다(
+    context: AgentContext, max_steps: int, answers: int
+) -> None:
+    empty = _answer({"text": "", "kind": "message"})
+    llm = FakeLLM(_answer({"text": "수영 적어 뒀어요.", "kind": "message"}), *[empty] * answers)
+
+    result = await run(_SWIM.raw_text, context, client=llm, task=_SWIM, max_steps=max_steps)
+
+    assert len(llm.seen) == 1 + answers
+    assert result.completed
     assert result.final_message == _UNSAVED_FALLBACK
 
 
