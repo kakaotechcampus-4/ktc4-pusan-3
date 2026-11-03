@@ -53,10 +53,11 @@ RUN_DEADLINE_SECONDS = 60.0
 """
 
 
-def _curator_trigger() -> entrypoint.CuratorTrigger | None:
+def curator_trigger() -> entrypoint.CuratorTrigger | None:
     """Memory commit 직후 Curator 를 띄우는 콜백. 임베딩 키가 없으면 None — pipeline 이 건너뛴다.
 
     store · commit 과 같이 러너가 만든다. DB 세션을 여는 곳을 러너 한 곳에 모으려는 것이다 (#257).
+    버튼으로 관찰을 지운 삭제 제안 확정(`routers/delete_proposals.py`, #535)도 이것을 쓴다.
     콜백은 별도 세션에서 백그라운드 task 로 돈다 — run 은 Curator 를 기다리지 않는다.
     """
     from app.domains.memory.curator.trigger import trigger_curator_background
@@ -94,7 +95,7 @@ def agent_job(
       연다(#227). Growth 의 성장 기록 어댑터도 같은 곳에서 연다 — 안 넘기면 성장 추이가 "측정
       0건" 으로 읽힌다. 도서 어댑터(`growth_book_ports`)도 같다 — 키가 없으면 넘기지 않아 도서가
       닫힌다.
-    - Curator 트리거도 여기서 만든다(`_curator_trigger`). 진입점은 받은 것을 pipeline 에
+    - Curator 트리거도 여기서 만든다(`curator_trigger`). 진입점은 받은 것을 pipeline 에
       넘기기만 한다.
     - 생일은 창구가 확인한 아이의 것을 넘긴다 (9단계). 식이 단계(12개월 경계)는 진입점이 계산한다.
       None 이면 진입점의 기본값을 쓴다.
@@ -202,7 +203,7 @@ def agent_job(
                             child_id, on_commit=mark_saved
                         ),
                         count_records=agent_ports.record_counter(child_id),
-                        curator_trigger=_curator_trigger(),
+                        curator_trigger=curator_trigger(),
                         domain_store=agent_ports.domain_store_opener(child_id),
                         **agent_ports.food_stores(),
                         **agent_ports.safety_readers(),
