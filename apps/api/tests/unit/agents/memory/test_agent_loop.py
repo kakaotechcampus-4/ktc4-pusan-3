@@ -2097,3 +2097,25 @@ async def test_알림을_해_달라는_일정_조각은_쓰기_없이_끝나도_
     await run(task.raw_text, context, client=llm, task=task)
 
     assert len(llm.seen) == 1
+
+
+def test_알림장_이야기는_알림_요청이_아니라_일정_조각으로_본다() -> None:
+    # "알림장에 …" 는 기관 공지를 옮긴 말이다. 초안이 없으면 일정을 못 한 것으로 본다 (#678 리뷰)
+    task = _task(("알림장에 내일 소풍 간대", "schedule"))
+
+    assert _missing_work(task, []) == (WorkType.SCHEDULE,)
+
+
+async def test_새_일정과_알림_요청이_한_조각이면_시각을_되물은_답을_그대로_낸다(
+    context: AgentContext,
+) -> None:
+    # 알림 요청이라 판정에서는 빠지지만, 새 일정은 일정 규칙대로 시각을 묻는다
+    # (#678 리뷰 · 라이브 10/10)
+    task = _task(("다음 주 수요일 병원 예약 있어. 전날 밤 9시에 알려줘", "schedule"))
+    asked = "병원 예약이 몇 시인가요?"
+    llm = FakeLLM(_answer({"text": asked, "kind": "question"}))
+
+    result = await run(task.raw_text, context, client=llm, task=task)
+
+    assert len(llm.seen) == 1
+    assert result.reply == MemoryReply(text=asked, kind="question")
