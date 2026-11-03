@@ -68,6 +68,11 @@ app.config.ts                app.json 위에 빌드 때만 정해지는 것 — 
 modules/cookie-flush/        로컬 Expo 모듈 (Android 만) — `CookieManager.flush()` 하나. 🚨 `android/` 가 생성물이 아니라 소스다
 app.json                     Expo 설정 (name · scheme · bundle id · 막는 권한)
 eas.json                     EAS 빌드 프로필 (배포 웹 주소 · versionCode 관리)
+assets/logo.svg              로고 원본 (글자 없음). 앱 아이콘 · 웹 파비콘의 입력
+assets/icon.png              앱 아이콘 (iOS · Android 7 이하). 🚨 생성물 — `scripts/build-icons.py` 가 만든다
+assets/android-icon-*.png    적응형 아이콘 전경 · 테마 아이콘 실루엣. 🚨 생성물 — 같은 스크립트
+assets/notification-icon.png 알림 아이콘 (흰 실루엣). 🚨 생성물 — 같은 스크립트
+store/play-icon.png          Play 등록 정보 아이콘 (빌드 밖 · 손으로 올린다). 🚨 생성물 — 같은 스크립트
 ```
 
 ### 🚨 마이크 권한은 말로 적기 하나에만 쓴다 (#595)
@@ -154,7 +159,10 @@ eas.json                     EAS 빌드 프로필 (배포 웹 주소 · versionC
   (`eas env:create --name GOOGLE_SERVICES_JSON --type file --visibility secret`), 로컬은 이 폴더의 파일. 없으면 알림만 꺼진 빌드다 (`app.config.ts`)
 - 🚨 **패키지를 import 하지 않고 모듈이 있을 때만 불러온다** (`App.tsx` 의 `Notifications`). 하위 모듈이 전부 `requireNativeModule` 이라,
   이 패키지를 넣기 전에 만든 개발 빌드에서 import 하면 셸이 뜨지 않는다
-- ⚠️ **알림 아이콘이 없다.** `assets/android-icon-monochrome.png` 는 Expo 템플릿의 기본 그림이라 쓰지 않았다(런처의 테마 아이콘에도 이 그림이 쓰이고 있다). 아이콘을 정하면 플러그인 `icon` 에 넣는다
+- 🚨 **알림 아이콘은 플러그인 `icon`(`assets/notification-icon.png`) · `color`(로고 초록 `#266746`)다** (#695). 플러그인이 FCM 과 Expo 의
+  기본 알림 아이콘 · 색(매니페스트 `default_notification_icon` · `default_notification_color`)으로 넣어서, 서버 FCM 이 아이콘을 따로 정하지 않아도
+  이 그림이 뜬다. 🚨 서버(`reminder_dispatch.py`)에서 `android.notification.icon` 을 정하지 않는다 — 정하면 그 값이 이 기본값을 덮는다.
+  그림은 테마 아이콘과 같은 실루엣을 24dp 칸에 맞춰 키운 것이다 (아래 "앱 아이콘 · 웹 파비콘" 절)
 - ⚠️ **알림을 켜기 전에** 개인정보 처리방침 제10장 ③("알림 권한을 요청하지 않습니다")을 고친 새 판이 먼저 나가야 하고 (#166 · 말로 적기의 마이크 문구와 한 판으로),
   Play Console 데이터 보안에 기기 ID(FCM 토큰) 수집은 **웹 Firebase 값을 넣는 날** 적는다 (#618 리뷰). auto-init 을 꺼서 그 전까지는 이 빌드를 올려도 기기를 등록하지 않는다.
   순서는 [`docs/web/web-push-v1.md`](../../docs/web/web-push-v1.md) "켜는 순서"
@@ -209,6 +217,40 @@ iOS 첫 빌드 때 08 시트의 촬영과 앨범을 확인하고, 필요하면 `
 - `app.json` 의 `android.blockedPermissions` 는 Expo 템플릿이 기본으로 넣는 저장소 · 오버레이 · 진동
   권한과, `expo-notifications` 가 붙이는 런처 배지 · 부팅 수신 · 설치 경로 권한을 막는다 (위 "알림 권한" 절). 셸이 쓰는 곳이 없다. 권한을 더하는 패키지를 넣으면 릴리스 매니페스트를 다시 확인한다
   (`./gradlew :app:processReleaseMainManifest` 뒤 `app/build/intermediates/merged_manifest/release/`).
+
+### 앱 아이콘 · 웹 파비콘 (#695)
+
+전부 로고 한 장(`assets/logo.svg`)에서 스크립트로 만든다. 🚨 로고가 바뀌면 스플래시 그림(`scripts/build-splash.py` · #690)도 같이 다시 만든다 — 같은 원본을 읽는다.
+
+```bash
+uv run --no-project --with resvg-py==0.5.0 --with pillow==13.0.0 python scripts/build-icons.py
+```
+
+- 이 스크립트는 **웹 파일도 쓴다** (`apps/web/src/app/`). 웹과 셸은 코드를 나누지 않지만(최상위 CLAUDE.md §6), 로고 원본이 한 장이라
+  생성을 한 곳에 둔다. 웹은 결과 파일만 갖고 이 폴더를 읽지 않는다 — 웹 배포 이미지는 셸 폴더 없이 그대로 굽힌다.
+
+| 파일 | 쓰는 곳 | 모양 |
+| --- | --- | --- |
+| `assets/icon.png` | iOS · Android 7 이하 | 1024 흰 바탕을 꽉 채운 **불투명** PNG |
+| `assets/android-icon-foreground.png` | Android 8+ 적응형 아이콘 전경 | 1024 투명. 배경은 `app.json` 의 `backgroundColor`(흰색) |
+| `assets/android-icon-monochrome.png` | Android 13+ 테마 아이콘 | 전경과 같은 자리의 한 색 실루엣. 볼(분홍)은 뺐다 |
+| `assets/favicon.png` | Expo `web.favicon` (쓰지 않지만 템플릿 그림을 남기지 않게) | 48 흰 둥근 사각형 |
+| `assets/notification-icon.png` | 알림 아이콘 (`expo-notifications` 플러그인 `icon`) | 96 흰 실루엣. 플러그인이 24dp 밀도별로 줄인다 |
+| `store/play-icon.png` | Play Console 등록 정보 아이콘 (빌드에 안 들어간다) | 512 흰 바탕을 꽉 채운 그림. 모서리 · 그림자는 Play 가 입힌다 |
+| `apps/web/src/app/icon.svg` · `favicon.ico` · `apple-icon.png` | 웹 탭 · iOS 홈 화면 추가. Next 가 파일 이름으로 `<link>` 를 단다 | 흰 둥근 사각형(`apple-icon` 은 꽉 채운 불투명 180) |
+
+- 🚨 **적응형 아이콘의 로고는 지름 66dp 원 안에 있어야 한다.** 런처는 108dp 그림을 원 · 둥근 사각형 같은 제 모양으로 자르고,
+  어떤 모양이든 남는 것이 가운데 66dp 원이다. 스크립트는 bbox 가 아니라 로고 외곽선 점을 전부 담는 원으로 크기와 가운데를 잡는다
+  (`ADAPTIVE_RADIUS`). 그래서 주황 점 쪽으로 무게가 실려 C 가 살짝 왼쪽 아래에 앉는다 — 키우면 원형 런처에서 주황 점이 먼저 잘린다.
+- 🚨 **알림 아이콘은 흰색 하나에 투명 바탕이다.** Android 는 알파만 보고 플러그인 `color` 로 칠하지만, 흰색이 아니면 그대로 그리는 제조사 · 옛 버전이 있다.
+  얼굴은 비워 둔다(눈 · 입 · 윤곽만 흰색) — 채우면 24dp 에서 C 옆의 동그라미가 되고, 세부를 빼면 아기가 사라진다.
+  크기는 24dp 칸 안쪽 20dp 원(`NOTIFICATION_RADIUS`)이다.
+- 🚨 **`icon.png` 와 `apple-icon.png` 는 투명 픽셀이 없어야 한다.** App Store 가 알파 채널이 있는 아이콘을 받지 않는다. 스크립트가 RGB 로 저장한다.
+- 파비콘은 흰 바탕 위에 둔다. 투명으로 두면 어두운 탭에서 로고 초록(`#266746`)이 묻힌다. 16px 에서는 얼굴 세부가 뭉개지지만
+  세부를 뺀 단순형은 32px 에서 얼굴이 사라져 덩어리로 보여서 한 그림으로 갔다.
+- 아이콘은 네이티브 리소스라 바꾼 뒤에는 prebuild 부터 다시 빌드해야 런처에 보인다.
+- Play 등록 정보 아이콘(`store/play-icon.png`)은 Play Console 에 손으로 올린다. 🚨 Play 는 32비트 PNG 만 받아서 이 파일만 알파 채널을 둔다(전부 불투명).
+  🚨 둥근 모서리나 그림자를 그려 넣지 않는다 — Play 가 입혀서 두 겹이 된다.
 
 ### 🚨 Expo Go 로는 로그인을 끝낼 수 없다 — 개발 빌드가 필요하다
 

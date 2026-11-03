@@ -18,9 +18,8 @@
     "android": {
       "package": "kr.ai.icatch",
       "adaptiveIcon": {
-        "backgroundColor": "#E7F1EA",
+        "backgroundColor": "#FFFFFF",
         "foregroundImage": "./assets/android-icon-foreground.png",
-        "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
@@ -67,7 +66,9 @@
       [
         "expo-notifications",
         {
-          "defaultChannel": "schedule"
+          "defaultChannel": "schedule",
+          "icon": "./assets/notification-icon.png",
+          "color": "#266746"
         }
       ],
       [
