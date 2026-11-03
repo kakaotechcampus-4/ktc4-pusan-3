@@ -32,6 +32,7 @@ Owner: 고태영 (프론트 리드)
 | expo-notifications | ~57.0.24 | 일정 알림 FCM 토큰 · 알림 채널 · 알림 누르기 (#609). `expo install` 이 골랐다. 함께 `expo-constants` 를 SDK 기대값 57.0.22 로 맞췄다 (두 벌이 되지 않게) |
 | expo-splash-screen | ~57.0.10 | 네이티브 스플래시 그림 (#690). JS 에서는 부르지 않는다 — 웹까지 이어 주는 것은 셸의 덮개다. `expo install` 이 골랐다 |
 | expo-location | ~57.0.22 | 놀이 추천의 근처 장소용 대략 위치 (#593). `expo install` 이 골랐다 |
+| expo-build-properties | ~57.0.22 | 릴리스 빌드의 R8(코드 축소 · 난독화)과 리소스 축소를 켠다 (#692). 설정만 하는 플러그인이라 앱 코드에서 부르지 않는다. `expo install` 이 골랐다 |
 | expo-speech-recognition | 57.1.1 | 말로 적기의 기기 안 음성인식 (#595). Expo 가 고르는 묶음 밖이라 메이저를 SDK 에 맞춰 고정했다 (57.x = SDK 57) |
 | TypeScript | 6.0.3 | |
 
@@ -436,6 +437,12 @@ npx eas-cli@latest build -p android --profile preview       # apk — 설치 링
   EAS 자격 증명은 applicationId 별로 저장돼서, 10-14 에 만든 `kr.ac.pusan.ktc4.icatch` 용 키는 쓰이지 않고
   `kr.ai.icatch` 용 키가 첫 `production` 빌드 때 한 번 새로 만들어진다. 그 뒤로는 위 규칙대로 건드리지 않는다.
   옛 식별자로 깔아 둔 앱은 덮어써지지 않고 따로 남아 둘 다 `icatch://` 를 받는다 — 로그인 복귀 때 앱 선택 창이 뜨니 지운다.
+- 🚨 **릴리스 빌드는 R8 로 코드를 줄이고 난독화한다** (`app.json` 의 `expo-build-properties` · #692). 꺼 두면 Play Console 이
+  "난독화 비율 1%" 로 경고한다 — `android/` 는 생성물이라 `build.gradle` 을 직접 고치면 prebuild 때 사라진다.
+  debug 빌드와 개발 빌드는 그대로이고 `preview` · `production` 만 바뀐다. 매핑 파일은 aab 안에 같이 들어가 Play 가 크래시를 풀 때 쓴다.
+  ⚠️ R8 은 리플렉션으로만 닿는 클래스를 지울 수 있어서, 빌드가 통과해도 앱을 켜거나 기능을 쓸 때 죽을 수 있다.
+  네이티브 패키지를 더하거나 `modules/` 를 고치면 `preview` 빌드로 로그인 · 앱 재실행 뒤 로그인 유지(`cookie-flush`) ·
+  말로 적기 · 일정 알림 · 위치를 한 번씩 확인한다. Expo 모듈은 `expo-modules-core` 의 keep 규칙(`Module` 하위 클래스)이 지킨다.
 - EAS 없이 aab 가 만들어지는지만 볼 때는 로컬 gradle 로 굽는다. 서명은 디버그 키이고 `versionCode` 는 늘 1 이라
   스토어에는 못 올린다. 🚨 **두 줄을 같이 돌린다.** 셸에서 준 주소가 `.env.local` 보다 앞서는데, `prebuild --clean`
   없이 둘째 줄만 다른 주소로 다시 돌리면 gradle 이 번들 작업을 건너뛰어 옛 주소가 남을 수 있다.
