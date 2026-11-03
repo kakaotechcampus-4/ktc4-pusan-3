@@ -440,6 +440,29 @@
 - 프로필의 `need_more_observation`은 한 단계 강등, `outdated`와 `wrong`은 archived 처리한다. 이 상태 전이 서비스 로직은 후속 구현 범위다.
 - `target_kind + target_id`, `child_id` 조회 인덱스를 둔다.
 
+### delete_proposal (삭제 제안 — 버튼으로 확정할 때까지)
+
+대화로 "지워줘" 하면 Memory 는 지우지 않고 제안 1행을 남긴다. 보호자가 카드에서 체크를 고쳐 버튼을 누르면 서버가 **후보 안의 체크한 것만** 지운다 (#535). 되돌릴 수 없는 삭제를 사람이 승인하는 자리다.
+
+| **필드** | **타입** | **비고** |
+| --- | --- | --- |
+| id | uuid | PK |
+| parent_id | uuid | FK → `parent.id`, NOT NULL, ON DELETE CASCADE. 제안한 보호자 — 이 보호자만 확정 · 취소한다 |
+| child_id | uuid | FK → `child.id`, NOT NULL, ON DELETE CASCADE |
+| run_id | text | NOT NULL, UNIQUE. 제안을 만든 run — 한 run 에 제안은 하나 |
+| tabs | jsonb | NOT NULL. 종류별 후보 `[{kind, truncated, ids, picked}]`. kind 는 `observation_food` … · `event`, `picked` 는 AI 가 고른 id(기본 체크) |
+| status | enum | `pending / deleted / cancelled`, DEFAULT `pending` |
+| result | jsonb | 끝난 뒤 종류별 실제 지운 건수 `{kind: n}`. 지난 대화의 한 줄 요약이 읽는다 |
+| created_at | timestamptz | NOT NULL, DEFAULT now() |
+| expires_at | timestamptz | NOT NULL. 만든 뒤 24시간 |
+| decided_at | timestamptz | 확정 · 취소한 시각 |
+
+- **만료는 저장하지 않는다.** `expires_at` 이 지난 `pending` 이 만료다 — 배치가 늦거나 멈춰도 만료된 제안으로는 지울 수 없다.
+- **원문을 담지 않는다.** (종류, id) 만 두고 카드 내용은 그때마다 다시 읽는다. 지워 달라고 한 내용의 사본을 따로 남기면 삭제가 무의미해진다 (`chat_turn` 과 같은 이유).
+- 다형 참조라 후보 id 에 FK 가 없다. 지울 때 같은 아이의 행인지 서버가 다시 확인한다.
+- 개인 기록이다 — 연결 끊기(`unlink_parent`)가 대화 기록과 함께 지운다.
+- `(parent_id, child_id)` 인덱스를 둔다.
+
 ## Schedule
 
 ### event (보호자가 제출한 일정)
