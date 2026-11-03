@@ -18,6 +18,7 @@
 
 import asyncio
 import logging
+import time
 from collections.abc import Callable
 from typing import Any
 from urllib.parse import quote
@@ -26,6 +27,7 @@ import httpx
 import pytest
 
 from app.core.mafra_recipe_raw import RawIngredient
+from app.integrations.nics import client as nics_client
 from app.integrations.nics.client import (
     BASE_URL,
     CONCURRENCY,
@@ -36,7 +38,9 @@ from app.integrations.nics.client import (
     NicsRecipeClient,
     nics_recipe_http,
 )
-from app.integrations.nics import client as nics_client
+
+# 자동 적용되는 `no_pacing` 이 모듈 값을 0 으로 바꾸기 전의 실제 값
+REAL_INTERVAL_S = nics_client.MIN_INTERVAL_S
 
 # 가짜 Decoding 키. 실제 키처럼 + / = 가 섞여 있어야 쿼리 인코딩을 거쳐도 그대로 가는지 본다
 KEY = "Fake+Decoding/Key=0123456789abcdefABCDEF"
@@ -408,7 +412,7 @@ async def test_결과_코드가_정상이_아니면_코드만_남기고_메시�
     assert message not in str(caught.value)
 
 
-async def test_연결_실패는_주소와_키_없이_NicsApiError() -> None:
+async def test_연결_실패는_주소와_키_없이_NicsApiError(clock) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError(f"connect failed: {request.url}")
 
@@ -462,7 +466,7 @@ async def test_모양이_깨진_응답은_받지_않는다(payload: Any) -> None
 
 @pytest.mark.parametrize("code", ["200", "00"])
 async def test_감싸지_않은_응답과_표준_성공_코드도_받는다(code: str) -> None:
-    # 실제 응답은 `response` 로 감싸고 "200" 이다. 감싸지 않은 모양 · "00"(공공데이터포털 표준)도 받는다
+    # 실제 응답은 `response` 로 감싸고 "200" 이다. 감싸지 않은 모양과 "00"(포털 표준)도 받는다
     server = FakeServer()
 
     def bare(request: httpx.Request) -> httpx.Response:
@@ -548,41 +552,111 @@ async def test_HTTP_클라이언트는_느린_서버를_기다리되_끝없지�
         assert 10.0 <= HTTP_TIMEOUT_S <= 120.0
 
 
+@pytest.fixture(autouse=True)
+def no_pacing(monkeypatch) -> None:
+    """호출 간격은 아래 전용 테스트에서만 켠다 — 나머지는 기다리지 않는다."""
+    monkeypatch.setattr(nics_client, "MIN_INTERVAL_S", 0.0)
+
+
 def test_호출_상한과_동시성은_실측_값이다() -> None:
     assert (ROWS_PER_CALL, MAX_DETAIL_CALLS, CONCURRENCY) == (1000, 1000, 2)
 
 
-# ── 호출 빈도 제한(429) ───────────────────────────────────────────────
-# 실제 API 는 짧은 시간에 몰리면 429 를 준다(2026-11-02 실측: 동시 5 로 몰면 약 20건 뒤부터,
-# 초당 5건 안팎의 지속 호출은 120건까지 통과). 쉬었다가 다시 부른다
-@pytest.fixture
-def no_wait(monkeypatch):
-    waits: list[float] = []
-
-    async def fake_sleep(seconds: float) -> None:
-        waits.append(seconds)
-
-    monkeypatch.setattr(nics_client.asyncio, "sleep", fake_sleep)
-    return waits
+def test_호출_간격은_초당_5건을_넘지_않는다() -> None:
+    # 실측: 몰면 429, 초당 5건 안팎은 120건까지 통과. 목록 12 + 상세 598 이 몇 분 안에 끝난다
+    assert 1 / REAL_INTERVAL_S <= 5
+    assert REAL_INTERVAL_S * 610 < 600
 
 
-async def test_429_는_쉬었다가_다시_불러_받는다(no_wait) -> None:
+# ── 호출 간격 ─────────────────────────────────────────────────────────
+async def test_요청은_정해진_간격을_두고_시작한다(monkeypatch) -> None:
+    monkeypatch.setattr(nics_client, "MIN_INTERVAL_S", 0.05)
+    starts: list[float] = []
     server = FakeServer()
-    limited = {"left": 3}
 
     def handler(request: httpx.Request) -> httpx.Response:
-        if limited["left"] > 0:
-            limited["left"] -= 1
-            return httpx.Response(429, text="Too Many Requests")
+        starts.append(time.monotonic())
         return server(request)
 
-    synced = await build(handler).recipes_with_ingredients()
+    await build(handler).recipes_with_ingredients()
+
+    gaps = [later - earlier for earlier, later in zip(starts, starts[1:], strict=False)]
+    assert len(starts) == 24  # 목록 12 + 상세 12
+    assert min(gaps) >= 0.03  # 동시 2개로 받아도 시작은 몰리지 않는다
+
+
+# ── 호출 빈도 제한(429) ───────────────────────────────────────────────
+# 실제 API 는 짧은 시간에 몰리면 429 를 준다(2026-11-02 실측: 동시 5 로 몰면 약 20건 뒤부터,
+# 초당 5건 안팎의 지속 호출은 120건까지 통과). 429 를 받으면 모든 호출이 같이 쉬었다가 다시 부른다
+@pytest.fixture
+def clock(monkeypatch) -> dict[str, float]:
+    """가짜 시계. sleep 은 기다리지 않고 시계를 그만큼 앞으로 돌린다."""
+    state = {"now": 1000.0}
+    real_sleep = asyncio.sleep
+
+    async def fake_sleep(seconds: float) -> None:
+        wake = state["now"] + seconds
+        await real_sleep(0)
+        state["now"] = max(state["now"], wake)  # 같이 자는 호출이 쉬는 시간을 더하지 않는다
+
+    monkeypatch.setattr(nics_client.asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr(nics_client, "_monotonic", lambda: state["now"])
+    return state
+
+
+def limited_first(count: int, clock: dict[str, float], log: list[tuple[float, int]]):
+    """처음 `count` 번은 429, 이후는 정상. `log` 에 (시각, 응답 코드)를 남긴다."""
+    server = FakeServer()
+    left = {"n": count}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if left["n"] > 0:
+            left["n"] -= 1
+            log.append((clock["now"], 429))
+            return httpx.Response(429, text="Too Many Requests")
+        log.append((clock["now"], 200))
+        return server(request)
+
+    return handler
+
+
+async def test_429_를_받으면_쉬었다가_다시_불러_받는다(clock) -> None:
+    log: list[tuple[float, int]] = []
+
+    synced = await build(limited_first(3, clock, log)).recipes_with_ingredients()
 
     assert synced.recipe_rows == 12
-    assert no_wait == list(nics_client.RETRY_DELAYS_S[:3])  # 점점 길게 쉰다
+    first_limit = min(at for at, status in log if status == 429)
+    # 429 를 받은 뒤에는 첫 쉬는 시간이 지나기 전에 아무도 시작하지 않는다
+    later = [at for at, _ in log if at > first_limit]
+    assert min(later) >= first_limit + nics_client.RETRY_DELAYS_S[0]
 
 
-async def test_429_가_계속되면_상태_코드만_남기고_멈춘다(no_wait) -> None:
+async def test_같이_받은_429_는_쉬는_시간을_더하지_않고_겹친다(clock) -> None:
+    # 처음 1초 안에 들어온 요청은 전부 거절하는 서버 — 동시에 나간 호출이 모두 429 를 받는다
+    server = FakeServer()
+    start = clock["now"]
+    log: list[tuple[float, int]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        for _ in range(3):  # 응답이 올 때까지 다른 호출이 나갈 틈을 준다 — 둘이 같이 날아가 있다
+            await asyncio.sleep(0)
+        if clock["now"] < start + 1:
+            log.append((clock["now"], 429))
+            return httpx.Response(429, text="Too Many Requests")
+        log.append((clock["now"], 200))
+        return server(request)
+
+    await build(handler).recipes_with_ingredients()
+
+    limited = [at for at, status in log if status == 429]
+    first_ok = min(at for at, status in log if status == 200)
+    assert len(limited) >= 2  # 동시에 나간 둘이 다 거절됐다
+    # 둘이 각자 5초씩 쉬어 10초가 되지 않는다 — 같이 5초 쉰다
+    assert first_ok - start == pytest.approx(nics_client.RETRY_DELAYS_S[0], abs=0.5)
+
+
+async def test_429_가_계속되면_상태_코드만_남기고_멈춘다(clock) -> None:
     calls = 0
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -600,7 +674,7 @@ async def test_429_가_계속되면_상태_코드만_남기고_멈춘다(no_wait
 
 
 @pytest.mark.parametrize("status", [401, 403, 500, 502])
-async def test_429_가_아닌_HTTP_오류는_다시_부르지_않는다(no_wait, status: int) -> None:
+async def test_429_가_아닌_HTTP_오류는_다시_부르지_않는다(clock, status: int) -> None:
     calls = 0
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -608,7 +682,47 @@ async def test_429_가_아닌_HTTP_오류는_다시_부르지_않는다(no_wait,
         calls += 1
         return httpx.Response(status)
 
+    start = clock["now"]
     with pytest.raises(NicsApiError):
         await build(handler).recipes_with_ingredients()
 
-    assert no_wait == []
+    assert clock["now"] == start  # 쉬지 않았다
+
+
+# ── 일시적인 연결 끊김 ────────────────────────────────────────────────
+# 실제 동기화 중 상세 호출 하나가 ReadError 로 끊겨 전체가 멈춘 적이 있다(2026-11-04). 한 건 때문에
+# 598건을 처음부터 다시 받지 않도록 같은 방식으로 쉬었다가 다시 부른다
+@pytest.mark.parametrize("error", [httpx.ReadError, httpx.ConnectError, httpx.ReadTimeout])
+async def test_연결이_잠깐_끊기면_쉬었다가_다시_불러_받는다(clock, error) -> None:
+    server = FakeServer()
+    broken = {"left": 2}
+    log: list[float] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        log.append(clock["now"])
+        if broken["left"] > 0:
+            broken["left"] -= 1
+            raise error(f"dropped: {request.url}")
+        return server(request)
+
+    synced = await build(handler).recipes_with_ingredients()
+
+    assert synced.recipe_rows == 12
+    # 끊긴 뒤에는 첫 쉬는 시간이 지나기 전에 아무도 시작하지 않는다
+    assert min(log[2:]) >= log[0] + nics_client.RETRY_DELAYS_S[0]
+
+
+async def test_연결이_계속_끊기면_종류만_남기고_멈춘다(clock) -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        raise httpx.ReadError(f"dropped: {request.url}")
+
+    with pytest.raises(NicsApiError) as caught:
+        await build(handler).recipes_with_ingredients()
+
+    _assert_clean(caught.value)
+    assert "ReadError" in str(caught.value)
+    assert calls <= (len(nics_client.RETRY_DELAYS_S) + 1) * 12

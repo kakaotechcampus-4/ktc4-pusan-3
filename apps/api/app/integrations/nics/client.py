@@ -15,11 +15,15 @@
     가 온다. `recipeSn` 은 안내에는 정수, 실제 응답은 글자(`"55"`)라 둘 다 받아 글자로 쓴다.
   - 이용허락범위는 "제한 없음", 개발 계정 하루 10,000건.
 
-실제 응답 모양(2026-11-02 키로 확인)은 `{response: {header: {resultCode: "200", resultMsg}, body}}` 이고,
-목록은 `body.items.item`(목록)과 `body.totalCount`(글자), 상세는 `body.stdInfo` 다. 성공 코드가
-"200" 이라는 것만 처음 가정("00")과 달랐다. 오류 응답의 코드 값은 확인하지 못했다 — 성공 코드가
-아니면 코드만 싣고 멈춘다. 모양이 다르면 "응답 모양이 다르다" 로 멈춘다 — 조용히 틀린 데이터를
-적재하지 않는다.
+실제 응답 모양(2026-11-02 키로 확인)은 `{response: {header: {resultCode: "200", resultMsg},
+body}}` 이고, 목록은 `body.items.item`(목록)과 `body.totalCount`(글자), 상세는
+`body.stdInfo` 다. 성공 코드가 "200" 이라는 것만 처음 가정("00")과 달랐다. 오류 응답의
+코드 값은 확인하지 못했다 — 성공 코드가 아니면 코드만 싣고 멈춘다. 모양이 다르면
+"응답 모양이 다르다" 로 멈춘다 — 조용히 틀린 데이터를 적재하지 않는다.
+
+호출 빈도 제한이 있다(HTTP 429). 몰아서 부르면 약 20건 뒤부터 거절한다. 그래서 요청 시작
+간격을 일정하게 두고(`MIN_INTERVAL_S`), 429 를 받으면 모든 호출이 같이 쉰다(`_Pacer`). 처음에
+몰아 부르고 429 마다 따로 쉬었을 때는 552번 거절당해 50분이 걸렸다.
 
 받은 수가 `totalCount` 와 다르거나, 어느 달이든 목록이 비거나, 상세가 어긋나면 하나도 돌려주지 않고
 `NicsApiError` 로 올린다. 일부만 적재하면 재료를 덜 아는 레시피가 생기고, 비어 온 달의 레시피가 후보
@@ -37,6 +41,7 @@ import asyncio
 import contextlib
 import logging
 import re
+import time
 from collections.abc import Coroutine, Iterable, Iterator
 from dataclasses import dataclass, field
 from typing import Any, TypeVar
@@ -58,11 +63,14 @@ ROWS_PER_CALL = 1000
 # 상세 호출 상한. 고유 레시피가 598건이다 — 이보다 많으면 데이터가 크게 바뀐 것이라 받지 않는다
 MAX_DETAIL_CALLS = 1000
 # 동시에 부르는 수. 실제 API 는 짧은 시간에 몰리면 429 를 준다(2026-11-02 실측: 동시 5 로 몰면 약
-# 20건 뒤부터 거절, 초당 5건 안팎의 지속 호출은 120건까지 통과). 목록 12 + 상세 598 이 1분 남짓이다
+# 20건 뒤부터 거절, 초당 5건 안팎의 지속 호출은 120건까지 통과). 몰리지 않게 시작 간격도 둔다
 CONCURRENCY = 2
-# 429 를 받으면 이만큼씩 쉬었다가 다시 부른다(점점 길게). 다 쉬고도 안 되면 멈춘다. 몰렸던 제한은
-# 1분 안에 풀렸다
-RETRY_DELAYS_S = (1.0, 2.0, 4.0, 8.0, 16.0, 32.0)
+# 요청을 시작하는 간격(초당 4건). 몰아서 부르고 429 를 받아 쉬는 것보다 처음부터 고르게 부르는 쪽이
+# 빠르다 — 첫 전체 동기화는 몰아 부르다 429 를 552번 받아 50분이 걸렸다(목록 12 + 상세 598)
+MIN_INTERVAL_S = 0.25
+# 429 나 연결 끊김(ReadError 등)을 받으면 모든 호출이 같이 이만큼 쉬었다가 다시 부른다(점점 길게).
+# 다 쉬고도 안 되면 멈춘다. 몰렸던 제한은 1분 안에 풀렸다
+RETRY_DELAYS_S = (5.0, 15.0, 30.0, 60.0)
 # 응답을 기다리는 시간. 배치 전용이라 길게 둔다
 HTTP_TIMEOUT_S = 30.0
 
@@ -82,9 +90,48 @@ class NicsApiError(Exception):
     """
 
 
+class _TransportFailure(NicsApiError):
+    """연결 · 시간 초과로 응답을 못 받았다. 잠깐일 수 있어 쉬었다가 다시 부른다."""
+
+    def __init__(self, kind: str) -> None:
+        super().__init__(f"nics 요청 실패 {kind}")
+        self.kind = kind
+
+
 def nics_recipe_http() -> httpx.AsyncClient:
     """배치용 httpx 클라이언트. `async with` 로 쓰고 키는 `NicsRecipeClient` 가 들고 있다."""
     return httpx.AsyncClient(timeout=httpx.Timeout(HTTP_TIMEOUT_S, connect=10.0))
+
+
+def _monotonic() -> float:
+    return time.monotonic()
+
+
+class _Pacer:
+    """요청 시작 간격을 일정하게 하고, 429 를 받으면 모든 호출이 같이 쉬게 한다.
+
+    호출마다 따로 쉬면 429 를 받은 호출들이 한꺼번에 깨어나 다시 몰린다. 쉬는 시각을 한 곳에 두면
+    같이 받은 429 가 쉬는 시간을 더하지 않고 겹친다.
+    """
+
+    def __init__(self) -> None:
+        self._lock = asyncio.Lock()
+        self._next_at = 0.0
+
+    async def turn(self) -> None:
+        """내 차례(다음 요청을 시작해도 되는 시각)가 될 때까지 기다린다."""
+        while True:
+            async with self._lock:
+                now = _monotonic()
+                if now >= self._next_at:
+                    self._next_at = now + MIN_INTERVAL_S
+                    return
+                wait = self._next_at - now
+            await asyncio.sleep(wait)
+
+    def pause(self, seconds: float) -> None:
+        """지금부터 `seconds` 동안 아무도 시작하지 않는다. 이미 더 길게 쉬는 중이면 그대로 둔다."""
+        self._next_at = max(self._next_at, _monotonic() + seconds)
 
 
 @dataclass(frozen=True)
@@ -94,6 +141,7 @@ class NicsRecipeClient:
     # repr 에서 뺀다 — traceback 이 지역 변수를 찍거나 로그가 객체를 찍어도 키가 남지 않게
     api_key: str = field(repr=False)
     http: httpx.AsyncClient
+    _pacer: _Pacer = field(default_factory=_Pacer, init=False, repr=False)
 
     async def recipes_with_ingredients(self) -> RecipeSync:
         """12달 목록과 상세를 다 받아 레시피로 옮긴다. 하나라도 어긋나면 `NicsApiError`."""
@@ -155,11 +203,19 @@ class NicsRecipeClient:
     async def _call(self, operation: str, params: dict[str, Any]) -> dict[str, Any]:
         query = {"serviceKey": self.api_key, "format": "json", **params}
         for delay in (*RETRY_DELAYS_S, None):
-            response = await self._get(operation, query)
+            await self._pacer.turn()
+            try:
+                response = await self._get(operation, query)
+            except _TransportFailure as failure:
+                if delay is None:
+                    raise
+                logger.warning("nics %s — 모두 %s초 쉬었다가 다시 부른다", failure.kind, delay)
+                self._pacer.pause(delay)
+                continue
             if response.status_code != 429 or delay is None:
                 break
-            logger.warning("nics 429 — %s초 쉬었다가 다시 부른다", delay)
-            await asyncio.sleep(delay)
+            logger.warning("nics 429 — 모두 %s초 쉬었다가 다시 부른다", delay)
+            self._pacer.pause(delay)
         if response.status_code != 200:
             raise NicsApiError(f"nics HTTP {response.status_code}")
         try:
@@ -180,7 +236,7 @@ class NicsRecipeClient:
         try:
             return await self.http.get(f"{BASE_URL}/{operation}", params=query)
         except Exception as exc:  # 연결 · 시간 초과 — 문구에 주소(키)가 들어 있다
-            raise NicsApiError(f"nics 요청 실패 {type(exc).__name__}") from None
+            raise _TransportFailure(type(exc).__name__) from None
 
 
 async def _all_or_none(calls: Iterable[Coroutine[Any, Any, _T]]) -> list[_T]:
@@ -219,7 +275,7 @@ def _check(header: Any) -> None:
 
 
 def _items(body: dict[str, Any]) -> list[dict[str, Any]]:
-    """목록 응답에서 항목을 꺼낸다. 실제 응답은 `items.item` 목록이다 — 목록 · 한 건 객체도 받는다."""
+    """목록 응답에서 항목을 꺼낸다. 실제 응답은 `items.item` 목록이고 목록 · 한 건 객체도 받는다."""
     raw = body.get("items")
     if isinstance(raw, dict):  # `items.item` 으로 한 겹 더 감싼 모양
         raw = raw.get("item")
