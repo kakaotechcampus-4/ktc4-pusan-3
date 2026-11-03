@@ -15,7 +15,7 @@ TODO(#149-followup): 시간 경과에 의한 상태 변화(21일 무관찰 → a
 import uuid
 from datetime import date, datetime, timezone
 
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domains.correction.models import CorrectionTargetKind, CorrectionVerdict
@@ -78,8 +78,19 @@ async def recompute_profile(
 
     멱등: 같은 입력으로 여러 번 호출해도 상태·strength 가 동일하다.
     전이 보너스는 상태가 실제로 바뀔 때만 1회 적용된다.
+
+    🚨 행을 잠그고 DB 값으로 다시 읽는다. 여러 경로(Curator · Correction · 관찰 수정 · 하루 배치)가
+    같은 기억을 동시에 다시 계산할 수 있는데, 잠그지 않으면 한쪽이 읽은 낡은 strength 로 다른
+    쪽이 커밋한 값을 덮어쓴다(#636 에서 재현). 잠금은 호출자 트랜잭션이 끝날 때 풀린다.
+      · populate_existing — 호출자가 이 행을 잠그기 전에 이미 읽어 뒀어도(refresh_profile)
+        잠근 뒤의 값으로 다시 채운다. 아직 안 쓴 변경은 autoflush 가 먼저 DB 에 쓴다.
     """
-    profile = await session.get(ProfileAffinity, profile_id)
+    profile = await session.scalar(
+        select(ProfileAffinity)
+        .where(ProfileAffinity.id == profile_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
     if profile is None:
         raise ValueError(f"프로필을 찾을 수 없다: {profile_id}")
 
