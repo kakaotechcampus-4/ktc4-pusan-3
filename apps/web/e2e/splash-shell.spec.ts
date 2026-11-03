@@ -10,7 +10,7 @@ import { CHILD, expect, test } from "./fixtures";
  */
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
-    const sent: Array<{ path: string; checking: boolean }> = [];
+    const sent: Array<{ path: string; checking: boolean; loginDisabled: boolean | null }> = [];
     (window as unknown as { __splashSent: typeof sent }).__splashSent = sent;
     (window as unknown as { icatch: unknown }).icatch = {
       splash: {
@@ -18,6 +18,11 @@ test.beforeEach(async ({ page }) => {
           sent.push({
             path: location.pathname,
             checking: document.body.innerText.includes("불러오는 중"),
+            // 00 로그인의 카카오 버튼. 없으면 null (로그인한 채로 켠 경우).
+            loginDisabled:
+              Array.from(document.querySelectorAll("button"))
+                .find((button) => button.textContent?.includes("카카오로 시작하기"))
+                ?.hasAttribute("disabled") ?? null,
           }),
       },
     };
@@ -27,8 +32,11 @@ test.beforeEach(async ({ page }) => {
 function splashSent(page: import("@playwright/test").Page) {
   return page.evaluate(
     () =>
-      (window as unknown as { __splashSent: Array<{ path: string; checking: boolean }> })
-        .__splashSent,
+      (
+        window as unknown as {
+          __splashSent: Array<{ path: string; checking: boolean; loginDisabled: boolean | null }>;
+        }
+      ).__splashSent,
   );
 }
 
@@ -38,7 +46,9 @@ test("🚨 로그인한 채로 앱을 켜면 세션 확인 화면이 아니라 �
   await expect(page).toHaveURL(new RegExp(`/child/${CHILD}/home$`));
 
   await expect.poll(() => splashSent(page)).toHaveLength(1);
-  expect(await splashSent(page)).toEqual([{ path: `/child/${CHILD}/home`, checking: false }]);
+  expect(await splashSent(page)).toEqual([
+    { path: `/child/${CHILD}/home`, checking: false, loginDisabled: null },
+  ]);
 });
 
 test("화면을 옮겨도 다시 알리지 않는다 — 셸에 보낼 것은 문서마다 처음 한 번이다", async ({
@@ -51,4 +61,18 @@ test("화면을 옮겨도 다시 알리지 않는다 — 셸에 보낼 것은 �
   await page.waitForURL(`**/child/${CHILD}/calendar**`);
 
   expect(await splashSent(page)).toHaveLength(1);
+});
+
+test.describe("로그인하지 않은 채로", () => {
+  test.use({ signedIn: false });
+
+  test("🚨 로그인 버튼이 켜진 뒤에 알린다 — 꺼진 회색 버튼이 스플래시 뒤에서 드러나지 않는다", async ({
+    page,
+  }) => {
+    await page.goto("/");
+    await expect(page.getByRole("button", { name: "카카오로 시작하기" })).toBeEnabled();
+
+    await expect.poll(() => splashSent(page)).toHaveLength(1);
+    expect(await splashSent(page)).toEqual([{ path: "/", checking: false, loginDisabled: false }]);
+  });
 });
