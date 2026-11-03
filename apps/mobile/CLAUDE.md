@@ -30,6 +30,7 @@ Owner: 고태영 (프론트 리드)
 | expo-dev-client | 57.0.20 | 개발 빌드 런처 — Expo Go 로는 로그인 복귀(`icatch://`)를 못 받는다 (아래) |
 | expo-web-browser | 57.0.3 | 카카오 로그인 인증 세션 (Android = Custom Tabs, iOS = `ASWebAuthenticationSession`) · 외부 링크 in-app 브라우저 |
 | expo-notifications | ~57.0.24 | 일정 알림 FCM 토큰 · 알림 채널 · 알림 누르기 (#609). `expo install` 이 골랐다. 함께 `expo-constants` 를 SDK 기대값 57.0.22 로 맞췄다 (두 벌이 되지 않게) |
+| expo-splash-screen | ~57.0.10 | 네이티브 스플래시 그림 (#690). JS 에서는 부르지 않는다 — 웹까지 이어 주는 것은 셸의 덮개다. `expo install` 이 골랐다 |
 | expo-location | ~57.0.22 | 놀이 추천의 근처 장소용 대략 위치 (#593). `expo install` 이 골랐다 |
 | expo-speech-recognition | 57.1.1 | 말로 적기의 기기 안 음성인식 (#595). Expo 가 고르는 묶음 밖이라 메이저를 SDK 에 맞춰 고정했다 (57.x = SDK 57) |
 | TypeScript | 6.0.3 | |
@@ -52,7 +53,7 @@ Expo autolinking 이 pnpm 의 격리된 심볼릭 링크 구조에서 네이티�
 ## 3. 구조
 
 ```
-App.tsx                      웹뷰 셸 (로딩 · 실패 · 뒤로가기 · 외부 링크 · 주입 배선)
+App.tsx                      웹뷰 셸 (스플래시 덮개 · 로딩 · 실패 · 뒤로가기 · 외부 링크 · 주입 배선)
 index.ts                     registerRootComponent
 src/config.ts                WEB_URL · 허용 출처 판정
 src/native/safe-area.ts      상태바·제스처바 크기를 CSS 변수로 웹에 넘긴다 (키보드가 열리면 아래는 0)
@@ -64,9 +65,13 @@ src/native/cookie-flush.ts   백그라운드로 갈 때 쿠키 flush 판단 (#46
 src/native/speech.ts         말로 적기 — 웹 부탁 검사(`parseWebRequest` · 알림 부탁도 여기서) · 기기 안 인식 조건 · 오류 → 이유 · 웹에 넣는 창구와 이벤트 (#595)
 src/native/push.ts           일정 알림 — 알림 data → 화면 주소 · 권한 창을 띄울지 · 웹에 넣는 창구와 이벤트 (#609)
 src/native/location.ts       흐린 위치 — 좌표를 둘째 자리로 줄이기 · 권한 응답 → 상태 · 웹에 넣는 창구와 이벤트 (#593)
+src/native/splash.ts         스플래시 — 웹의 첫 화면 알림 창구 · 덮개를 걷는 시간 초과 (#690)
 app.config.ts                app.json 위에 빌드 때만 정해지는 것 — `google-services.json` 경로 (#609) · FCM auto-init 끄기(매니페스트). Node 에서 돌아서 tsconfig.test.json 이 본다
 modules/cookie-flush/        로컬 Expo 모듈 (Android 만) — `CookieManager.flush()` 하나. 🚨 `android/` 가 생성물이 아니라 소스다
-app.json                     Expo 설정 (name · scheme · bundle id · 막는 권한)
+app.json                     Expo 설정 (name · scheme · bundle id · 막는 권한 · 스플래시)
+assets/logo.svg              로고 원본 (글자 없음). 스플래시 그림의 입력
+assets/splash-logo.svg       로고 + "아이캐치" 글자(외곽선). 🚨 생성물 — `scripts/build-splash.py` 가 만든다
+assets/splash-icon.png       스플래시 그림 (1024 투명 PNG). 🚨 생성물 — 같은 스크립트
 eas.json                     EAS 빌드 프로필 (배포 웹 주소 · versionCode 관리)
 ```
 
@@ -188,6 +193,42 @@ eas.json                     EAS 빌드 프로필 (배포 웹 주소 · versionC
   (대략 위치로만 받기)는 넣어 두었다. 셸이 둘째 자리로 줄이는 것은 플랫폼과 무관하다
 - ⚠️ **머지 조건** — 위치기반서비스 신고 · 위치 이용 사실 확인자료 · 위치 약관 새 판이 끝난 뒤 머지한다 (#166 · #593)
 
+### 스플래시 (#690)
+
+앱을 켜면 `canvas`(`#fbf9f5`) 바탕에 로고와 "아이캐치" 글자가 뜨고, **웹의 첫 화면이 서면 흐려지며 걷힌다.**
+두 겹이다 — OS 가 그리는 네이티브 스플래시(`expo-splash-screen`)와, 셸의 첫 그림인 **같은 그림의 덮개**(`App.tsx` 의 `SplashCover`).
+네이티브는 셸이 처음 그릴 때 내려가고, 그 자리에 똑같은 덮개가 있어서 보호자 눈에는 하나로 보인다.
+덮개는 화면이 아니라 로딩 표시다 (셸의 연결 대기 스피너와 같은 자리 · §1).
+
+- 🚨 **그림은 손으로 고치지 않고 스크립트로 다시 만든다.** 로고(`assets/logo.svg`)와 웹의 학교안심 날개 700 으로
+  글자를 외곽선으로 바꿔 붙인다. 글자를 바꾸거나 로고가 바뀌면 이것만 돌린다.
+  ```bash
+  uv run --no-project --with "fonttools[woff]" --with resvg-py python scripts/build-splash.py
+  ```
+- 🚨 **그림 전체가 정사각형의 내접원 안에 있어야 한다.** Android 12+ 는 스플래시 아이콘을 원으로 잘라 그린다
+  (288dp 칸 가운데 지름 192dp). 플러그인은 그림을 `imageWidth`(dp) 정사각형으로 놓으므로 `imageWidth: 192` 와
+  내접원 배치가 한 짝이다. 하나만 바꾸면 글자 끝이나 주황 점이 잘린다. 스크립트가 외곽선 점으로 크기를 잡는다.
+- 🚨 **네이티브와 덮개는 바탕색 · 그림 · 크기 · 자리가 같아야 한다** — 다르면 네이티브가 내려갈 때 색이나 그림이 튄다.
+  바탕은 `app.json` 플러그인 `backgroundColor` = 셸 `CANVAS` = 웹 `--color-canvas`, 그림 크기는 `imageWidth` = `SPLASH_IMAGE_DP`(192),
+  자리는 둘 다 화면 한가운데다. 값은 `splash.test.ts` 가 묶는다.
+- 🚨 **네이티브 스플래시를 웹까지 들고 있지 않는다** (`preventAutoHideAsync` 를 부르지 않는다). 들고 있는 동안 Android 는
+  앱을 그리지 않아서 웹뷰도 프레임을 내지 못하고, 프레임을 기다리는 웹의 화면 전환(로그인한 보호자가 홈으로 옮겨 가는
+  View Transition)이 멈춘다. 셸은 웹을, 웹은 프레임을 기다리다 시간 초과로만 내려갔다 (에뮬레이터 Android 17 확인).
+  덮개 아래에서는 웹뷰가 그려진다.
+- 🚨 **덮개는 웹이 알리면 걷는다** (`src/native/splash.ts`). 문서가 뜬 것(`onLoadEnd`)에서 걷으면 로그인한 보호자는 웹의
+  "불러오는 중…"(세션 확인)을 한 번 더 본다. 그래서 웹의 공통 `Screen` 이 처음 서면 `window.icatch.splash.done()` 으로
+  알린다 (웹 쪽 짝 `apps/web/src/lib/native/splash.ts` · 기다리는 화면 `SessionChecking` 은 `waiting` 으로 빠진다).
+  웹이 안 알려도 갇히지 않게 셋을 더 둔다.
+  - 문서가 뜬 뒤 `SPLASH_AFTER_LOAD_MS`(3초) — 이 창구를 모르는 웹, 알리기 전에 멈춘 화면. 그 뒤는 웹의 "불러오는 중…" 이다
+  - 앱을 켠 뒤 `SPLASH_MAX_MS`(8초) — 문서조차 오지 않는 느린 망. 그 뒤는 셸의 연결 대기 스피너다
+  - 실패로 가는 모든 길 (`onError` · 5xx · `onRenderProcessGone`) — 바로 걷는다.
+    🚨 **실패 경로에서 빼지 않는다** — 빼면 연결 실패 화면이 덮개 뒤에 숨는다
+- 🚨 **덮고 있는 동안은 누름을 막는다** — 안 보이는 페이지의 버튼이 눌리면 안 된다. 걷히는 동안부터 통과시킨다.
+- 뒤로가기로 앱을 끝낸 뒤 다시 켜도(프로세스는 남아 있다) 덮개가 다시 선다 — 셸 컴포넌트가 새로 붙기 때문이다.
+  네이티브 스플래시만 잠깐 뜨고 내려간다.
+- ⚠️ 홈은 뼈대(스켈레톤)가 첫 화면이다. 덮개는 뼈대에서 걷히고, 홈 데이터는 화면 안에서 채워진다.
+- ⚠️ iOS 는 설정만 들어가 있고 기기 확인 전이다.
+
 ### 🚨 사진 권한을 받지 않는다 (#408)
 
 사진 권한은 받지 않는다. 사진을 고르는 길은 웹의
@@ -237,7 +278,8 @@ pnpm android          # = expo run:android — prebuild + gradle + 설치까지 
   ⚠️ Mobile CI 는 Kotlin 을 컴파일하지 않는다. `modules/` 를 고치면 `./gradlew assembleDebug` 로 직접 빌드해 본다.
 - **`cacheEnabled={false}`** 는 SSE(`/runs/{rid}/events`) 때문이다. 켜면 진행 이벤트가 버퍼링돼서 04 오버레이가 멈춘 것처럼 보인다.
 - 🚨 **웹에서 오는 메시지(`onMessage`)는 `parseWebRequest` 를 통과한 것만 받는다** (#595). 지금 웹의 부탁은
-  말로 적기 시작 · 멈춤과 일정 알림 준비 · 토큰 · 권한(`kind: "push"` · #609), 위치 확인 · 묻기 · 읽기 · 설정 열기(`kind: "location"` · #593)다. 🚨 **종류(`kind`)부터 가른다** —
+  말로 적기 시작 · 멈춤과 일정 알림 준비 · 토큰 · 권한(`kind: "push"` · #609), 위치 확인 · 묻기 · 읽기 · 설정 열기(`kind: "location"` · #593),
+  첫 화면이 섰다는 알림(`kind: "splash"` · #690)이다. 🚨 **종류(`kind`)부터 가른다** —
   "말로 적기 시작이 아니면 멈춤" 으로 두면 알림 부탁이 마이크를 끈다. 보낸 쪽 주소(`event.nativeEvent.url`)를 먼저 보고, 모양을 검사한 값으로만
   네이티브를 부른다 — 모양이 어긋난 메시지 하나로 셸이 죽으면 안 된다. 부탁을 더하면 같은 함수에
   `kind` 를 더하고 테스트를 단다.
@@ -277,12 +319,12 @@ pnpm start           # Expo 개발 서버 (Expo Go / 개발 빌드)
 pnpm android         # Android 로 열기
 pnpm ios             # iOS 로 열기 (macOS 필요)
 pnpm typecheck       # tsc --noEmit (앱 + 테스트 두 벌)
-pnpm test            # Node 내장 러너 — 로그인 · 외부 링크 · 웹뷰 안 주소 · 뒤로가기 · safe area · 쿠키 flush · 말로 적기 · 일정 알림 · 흐린 위치 판정 (src/native/*.test.ts)
+pnpm test            # Node 내장 러너 — 로그인 · 외부 링크 · 웹뷰 안 주소 · 뒤로가기 · safe area · 쿠키 flush · 말로 적기 · 일정 알림 · 흐린 위치 · 스플래시 판정 (src/native/*.test.ts)
 pnpm deps:check      # expo install --check — SDK 와 어긋난 패키지 버전 확인
 pnpm doctor          # expo-doctor 전체 점검
 ```
 
-PR 에서는 [`.github/workflows/ci-mobile.yml`](../../.github/workflows/ci-mobile.yml) 이 `typecheck` · `test` 와 말로 적기 로그 패치 검사를 다시 돈다 (`apps/mobile/**` 를 바꾼 PR 만).
+PR 에서는 [`.github/workflows/ci-mobile.yml`](../../.github/workflows/ci-mobile.yml) 이 `typecheck` · `test` 와 말로 적기 로그 패치 검사를 다시 돈다 (`apps/mobile/**` 와 웹의 `globals.css` 를 바꾼 PR 만 · 스플래시 바탕색 검사 #690).
 네이티브 빌드는 CI 가 하지 않는다 — 개발 빌드는 기기에서 확인한다.
 
 **최초 세팅** — `cp .env.example .env.local`.
