@@ -20,6 +20,19 @@ PROPOSAL_TTL = timedelta(hours=24)
 
 EffectiveStatus = Literal["pending", "deleted", "cancelled", "expired"]
 
+KINDS = frozenset(
+    {
+        "observation_food",
+        "observation_health",
+        "observation_education",
+        "observation_activity",
+        "observation_routine",
+        "event",
+    }
+)
+"""제안에 담을 수 있는 종류 — 조회 tool 하나 = 탭 하나 (#535). `Saved` 의 ref 와 같은 이름이다.
+알레르기 · 만성질환(`health_safety`)은 없다 — 대화로 지우는 대상이 아니다 (루트 §2 ㉡)."""
+
 
 @dataclass(frozen=True)
 class ProposalTab:
@@ -31,11 +44,12 @@ class ProposalTab:
     picked: tuple[str, ...]
 
     def to_json(self) -> dict:
+        # id 는 늘 글자로 둔다 — 버튼 API 가 받은 id(글자)와 비교한다
         return {
             "kind": self.kind,
             "truncated": self.truncated,
-            "ids": list(self.ids),
-            "picked": list(self.picked),
+            "ids": [str(oid) for oid in self.ids],
+            "picked": [str(oid) for oid in self.picked],
         }
 
     @classmethod
@@ -71,10 +85,12 @@ def _check(tabs: Sequence[ProposalTab]) -> None:
     kinds = [tab.kind for tab in tabs]
     if len(set(kinds)) != len(kinds):
         raise ValueError("종류마다 탭은 하나다")
+    if not set(kinds) <= KINDS:
+        raise ValueError("제안에 담을 수 없는 종류다")
     for tab in tabs:
         if not tab.ids:
             raise ValueError("후보가 없는 탭은 넣지 않는다")
-        if len(set(tab.ids)) != len(tab.ids):
+        if len(set(tab.ids)) != len(tab.ids) or len(set(tab.picked)) != len(tab.picked):
             raise ValueError("한 탭 안에 같은 id 가 두 번 있다")
         if not set(tab.picked) <= set(tab.ids):
             raise ValueError("고른 id 는 후보 안에 있어야 한다")
@@ -156,9 +172,14 @@ async def finish(
     result: dict[str, int] | None,
     now: datetime,
 ) -> None:
-    """확정 · 취소. 부르는 쪽이 `find_proposal(for_update=True)` 로 잡고 pending 인지 본다."""
-    if row.status is not DeleteProposalStatus.PENDING:
-        raise ValueError("이미 끝난 제안이다")
+    """확정 · 취소. 부르는 쪽이 `find_proposal(for_update=True)` 로 잡은 행을 넘긴다.
+
+    🚨 만료도 여기서 막는다 — 부르는 쪽이 상태만 보고 넘겨도 만료된 제안으로는 지울 수 없다.
+    """
+    if status not in (DeleteProposalStatus.DELETED, DeleteProposalStatus.CANCELLED):
+        raise ValueError("확정 · 취소만 한다")
+    if effective_status(row, now) != "pending":
+        raise ValueError("이미 끝났거나 만료된 제안이다")
     row.status = status
     row.result = result
     row.decided_at = now

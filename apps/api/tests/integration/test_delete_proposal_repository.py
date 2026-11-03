@@ -2,7 +2,7 @@
 
     ① 제안한 보호자만 찾는다 — 같은 아이의 다른 보호자에게는 없는 제안이다
     ② 결정 전이라도 24시간이 지나면 만료다 (저장하지 않고 읽을 때 판정)
-    ③ 끝난 제안은 다시 끝낼 수 없다 — 두 번 눌러도 한 번만 지운다
+    ③ 끝난 제안 · 만료된 제안은 끝낼 수 없다 — 두 번 눌러도 한 번만, 만료 뒤에는 못 지운다
     ④ AI 가 고른 id 는 후보 안에 있어야 한다
 
 아이 정보는 전부 가짜 값이다 (루트 CLAUDE.md §9).
@@ -94,6 +94,23 @@ async def test_finished_proposal_cannot_finish_again(session, family):
         await finish(session, row, status=DeleteProposalStatus.CANCELLED, result=None, now=NOW)
     # 끝난 뒤에는 만료 시각이 지나도 끝난 상태 그대로다
     assert effective_status(row, NOW + PROPOSAL_TTL * 2) == "deleted"
+
+
+async def test_expired_proposal_cannot_finish(session, family):
+    owner, _, child = family
+    pid = await _propose(session, owner, child)
+    row = await find_proposal(
+        session, proposal_id=pid, parent_id=owner, child_id=child, for_update=True
+    )
+
+    with pytest.raises(ValueError):
+        await finish(
+            session,
+            row,
+            status=DeleteProposalStatus.DELETED,
+            result={"observation_food": 1},
+            now=NOW + PROPOSAL_TTL,
+        )
 
 
 async def test_picked_must_be_candidate(session, family):
