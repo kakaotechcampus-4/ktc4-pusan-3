@@ -70,12 +70,12 @@ THIS_VERSION = {
         "2f68b50e3e5bd505600857ce8470fcd9eb39be0fba7a1e46be0fbe43dbb04f91",
     ),
     "child_health": (
-        "104a7b8a91296eb3de76479f7d142bc0ccc03487202a535a405188d9d7d84d0e",
-        "88b38f86ea6f660eee01d682ed141cf92f751ff2ef7c465176a116b30520775e",
+        "ecfeeaf35f614bdaeb4916b4554d50b563c11f609b155d2b1e04b39dc4191be9",
+        "46df2ea616055d28f59fcf41d5a07927c5899584bf3863730a3e9817b5628567",
     ),
     "location": (
-        "7363e9d13a250b3d45027300628b32b06e55963115fca37a6e5b607692d5e226",
-        "d5fe6691fe9a1af384ea2f9d69eb084221ab03c91e99b3c2926f3e3a2d948ec7",
+        "81d7c6fad55f248ccb4477ad7292cab51f21b8252f176406f40ae76225a95273",
+        "44223dbda12b1af42a08952cdccd80bf6f627168239029bbc7a082882f9bcd16",
     ),
 }
 """scope → (원고 .md 의 SHA-256, 정본 .html 의 SHA-256). 파일이 이 값과 다르면 등록하지 않는다."""
