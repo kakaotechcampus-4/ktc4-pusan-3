@@ -217,7 +217,8 @@ eas.json                     EAS 빌드 프로필 (배포 웹 주소 · versionC
   덮개 아래에서는 웹뷰가 그려진다.
 - 🚨 **덮개는 웹이 알리면 걷는다** (`src/native/splash.ts`). 문서가 뜬 것(`onLoadEnd`)에서 걷으면 로그인한 보호자는 웹의
   "불러오는 중…"(세션 확인)을 한 번 더 본다. 그래서 웹의 공통 `Screen` 이 처음 서면 `window.icatch.splash.done()` 으로
-  알린다 (웹 쪽 짝 `apps/web/src/lib/native/splash.ts` · 기다리는 화면 `SessionChecking` 은 `waiting` 으로 빠진다).
+  알린다 (웹 쪽 짝 `apps/web/src/lib/native/splash.ts` · 기다리는 화면 `SessionChecking` 과 버튼 상태를 받는 중인
+  00 로그인은 `waiting` 으로 빠진다).
   웹이 안 알려도 갇히지 않게 셋을 더 둔다.
   - 문서가 뜬 뒤 `SPLASH_AFTER_LOAD_MS`(3초) — 이 창구를 모르는 웹, 알리기 전에 멈춘 화면. 그 뒤는 웹의 "불러오는 중…" 이다
   - 앱을 켠 뒤 `SPLASH_MAX_MS`(8초) — 문서조차 오지 않는 느린 망. 그 뒤는 셸의 연결 대기 스피너다

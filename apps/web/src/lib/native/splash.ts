@@ -5,8 +5,8 @@
  * 보호자는 스플래시 → "불러오는 중…"(세션 확인) → 홈으로 로딩 모양이 한 번 더 바뀐다.
  * 그래서 첫 화면이 서면 웹이 `done` 을 보낸다. 셸 쪽 짝은 `apps/mobile/src/native/splash.ts`.
  *
- * 🚨 보내는 곳은 공통 `Screen` 하나다 (`components/ui/splash-done.tsx`). 기다리는 화면(`SessionChecking`)은
- *    `waiting` 으로 빠진다. 화면마다 부르지 않는다 — 하나를 빠뜨리면 그 화면에서 켤 때 스플래시가 셸의
+ * 🚨 보내는 곳은 공통 `Screen` 하나다 (`components/ui/splash-done.tsx`). 기다리는 화면(`SessionChecking`)과
+ *    버튼 상태를 받는 중인 00 로그인은 `waiting` 으로 빠진다. 화면마다 부르지 않는다 — 하나를 빠뜨리면 그 화면에서 켤 때 스플래시가 셸의
  *    시간 초과까지 남는다.
  * 🚨 창구가 없으면(브라우저 · 이 기능 전의 앱) 아무것도 하지 않는다.
  */
