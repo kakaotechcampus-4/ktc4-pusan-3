@@ -1,7 +1,8 @@
 "use client";
 
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useRouter, useSearchParams } from "next/navigation";
+import { ArrowLeft } from "lucide-react";
+import { useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
 
 import { ApprovalSheet } from "@/components/approval-sheet";
@@ -16,6 +17,8 @@ import { Banner } from "@/components/ui/banner";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
 import { Chip, ChipRow } from "@/components/ui/chip";
+import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
+import { IconButtonLink } from "@/components/ui/icon-button";
 import { PageTitle } from "@/components/ui/page-title";
 import { ScreenTour, TourHelpButton } from "@/components/screen-tour";
 import { Screen } from "@/components/ui/screen";
@@ -42,6 +45,7 @@ import {
 import { useEnterMotion } from "@/lib/motion";
 import { scarcityCopy, type AgentRecordCount } from "@/lib/scarcity-copy";
 import { suggestionsTour } from "@/lib/tour/screens/suggestions";
+import { BACK } from "@/lib/view-transition";
 
 /**
  * 05 제안 후보.
@@ -93,7 +97,6 @@ function isPromptKey(value: string | null): value is PromptKey {
 
 function SuggestionsScreen() {
   const childId = useChildId();
-  const router = useRouter();
   const searchParams = useSearchParams();
 
   const runId = searchParams.get("run");
@@ -106,6 +109,15 @@ function SuggestionsScreen() {
    */
   const rawPromptKey = searchParams.get("prompt");
   const promptKey = isPromptKey(rawPromptKey) ? rawPromptKey : null;
+  /**
+   * 위 화살표가 돌아갈 곳 (#683). 🚨 **주소로 정한다** — `router.back()` 은 어디서 왔는지 모르고,
+   *    기기 뒤로가기는 웹뷰 히스토리라 따로 있다 (apps/web CLAUDE.md §3 라우팅).
+   *    03 홈 버튼은 `prompt` 를 싣고 오고, 고른 영역이 없으면 안내 카드가 "홈에서 고르면" 이라고 말한다 —
+   *    둘은 홈이다. 그 밖의 입구(04 "후보 보기" · "이것도 도와드릴까요?" · 부분 실패 "다시 준비하기")는
+   *    전부 04 대화다. ⚠️ 날짜(`?date=`)는 싣지 않는다 — 05 로 오는 주소에 날짜가 없다.
+   */
+  const fromHome = rawPromptKey !== null || agents.length === 0;
+  const backHref = fromHome ? `/child/${childId}/home` : `/child/${childId}/chat`;
 
   /**
    * 🚨 **여러 개 고를 수 있다.** 고른 것을 한 번에 초안으로 바꾼다 —
@@ -284,23 +296,36 @@ function SuggestionsScreen() {
     : null;
 
   return (
-    <Screen className="gap-5">
-      <header>
-        <div className="flex items-start gap-3">
-          <PageTitle className="min-w-0 flex-1">제안 후보</PageTitle>
+    <Screen
+      className="gap-5"
+      topBar={
+        // 🚨 **머리를 붙여 둔다** (#683). 후보가 Agent 당 셋에 일반 카드 · 요약 · 질문까지 서서 화면이 길고,
+        //    흐름 화면이라 네비가 없다 — 돌아가는 길이 본문에 있으면 스크롤 몇 번에 화면 밖으로 밀린다.
+        // 🚨 줄 전체를 `-ml-3` 로 민다 (44px 원 안의 아이콘이 왼쪽 기준선에 맞게 · 04 대화와 같다).
+        <header className="-ml-3 flex items-center gap-1">
+          <IconButtonLink
+            href={backHref}
+            label={fromHome ? "홈으로 돌아가기" : "대화로 돌아가기"}
+            {...BACK}
+          >
+            <ArrowLeft aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
+          </IconButtonLink>
+          <div className="min-w-0 flex-1">
+            <PageTitle>제안 후보</PageTitle>
+            {/* 🚨 looked_at 앞에 가운뎃점을 하나 더 붙이지 않는다 — 이미 점으로 나뉜 메타
+                스트립이고, 띄운 가운뎃점은 줄당 하나까지다 (문서 §4). */}
+            {/* 서버가 아직 무엇을 봤는지 내지 않으면 비어 온다 — 빈 줄을 그리지 않는다 (#249). */}
+            {/* ⚠️ 받는 동안 이 줄의 자리를 잡지 않는다. 지금 서버는 늘 빈 값을 보내서(`routers/suggestions.py`),
+                자리를 잡으면 받는 순간 회색 줄 하나가 생겼다 사라진다. 서버가 채우기 시작하면 그때 잡는다
+                (디자인 시스템 §7 "빈 상태 · 스켈레톤"). */}
+            {data?.looked_at ? (
+              <p className="text-caption text-ink-subtle">{data.looked_at}</p>
+            ) : null}
+          </div>
           <TourHelpButton tour={suggestionsTour} />
-        </div>
-        {/* 🚨 looked_at 앞에 가운뎃점을 하나 더 붙이지 않는다 — 이미 점으로 나뉜 메타
-            스트립이고, 띄운 가운뎃점은 줄당 하나까지다 (문서 §4). */}
-        {/* 서버가 아직 무엇을 봤는지 내지 않으면 비어 온다 — 빈 줄을 그리지 않는다 (#249). */}
-        {/* ⚠️ 받는 동안 이 줄의 자리를 잡지 않는다. 지금 서버는 늘 빈 값을 보내서(`routers/suggestions.py`),
-            자리를 잡으면 받는 순간 회색 줄 하나가 생겼다 사라진다. 서버가 채우기 시작하면 그때 잡는다
-            (디자인 시스템 §7 "빈 상태 · 스켈레톤"). */}
-        {data?.looked_at ? (
-          <p className="text-body-sm text-ink-muted mt-2">{data.looked_at}</p>
-        ) : null}
-      </header>
-
+        </header>
+      }
+    >
       {/* 🚨 배너는 화면 최상단 **한 곳**에만 둔다 (문서 §7). guard 가 여럿이어도 배너는 하나고,
           안에서 줄로 나눈다. 도메인 이름은 `blocked_agents` 에서 만든다 — 문구에 박지 않는다.
           🚨 **`danger` 다** — guard 는 "막혔다" 다 (문서 §7 배너). `caution` 은 "내가 확인해야
@@ -580,9 +605,11 @@ function SuggestionsScreen() {
 
       {/* 🚨 화면 바닥에 붙이지 않는다. 후보가 한두 개뿐인 화면에서 `mt-auto` 는 목록과 버튼 사이에
           빈 화면을 한 폭 만든다 — 나가는 버튼은 내용 바로 뒤를 따라간다. */}
-      <Button variant="secondary" block onClick={() => router.push(`/child/${childId}/home`)}>
+      {/* 🚨 위 화살표와 따로 남긴다 — 채택을 마친 보호자가 "일정은 안 만들래" 하고 나가는 자리다
+          (위 ② 의 "안 만드는 버튼을 두지 않는다"). 대화에서 왔어도 할 일을 끝낸 것이라 홈으로 간다. */}
+      <ButtonLink href={`/child/${childId}/home`} variant="secondary" block {...BACK}>
         홈으로
-      </Button>
+      </ButtonLink>
 
       {/* 🚨 **승인 게이트 ㉡ 는 여기다** — 채택 **전**에 묻는다 (`safety-check-sheet.tsx`).
           채택을 되돌리는 길이 없어서, 알레르기가 확인된 제안은 채택 자체를 하지 않는다. */}
