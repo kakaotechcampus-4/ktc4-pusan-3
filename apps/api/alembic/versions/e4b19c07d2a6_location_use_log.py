@@ -1,6 +1,7 @@
 """위치 이용 확인자료 표 location_use_log (#693)
 
 위치정보법 제16조 ② 의 자동 기록이다. 좌표 칸을 두지 않는다 — 위치 값은 저장하지 않는다.
+🚨 downgrade 하면 표와 함께 확인자료가 사라진다. 운영에서는 내리지 않는다.
 
 Revision ID: e4b19c07d2a6
 Revises: c7d18f3ae5b2

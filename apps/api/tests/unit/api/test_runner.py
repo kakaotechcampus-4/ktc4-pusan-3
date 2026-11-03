@@ -89,6 +89,20 @@ async def test_agent_job_calls_the_agents_entrypoint_and_relays_its_events(monke
     assert channel.closed
 
 
+def _location_logs(monkeypatch, result: bool | Exception = True) -> list[uuid.UUID]:
+    """위치 기록을 가짜로 바꿔 끼운다. 실제 저장은 integration/api/test_location_use_log.py."""
+    logged: list[uuid.UUID] = []
+
+    async def fake_record(session, *, parent_id, purpose):
+        if isinstance(result, Exception):
+            raise result
+        logged.append(parent_id)
+        return result
+
+    monkeypatch.setattr(runner, "record_location_use_if_granted", fake_record)
+    return logged
+
+
 async def test_agent_job_좌표와_날씨_어댑터를_진입점에_그대로_넘긴다(monkeypatch):
     """창구가 위치 동의를 확인한 좌표와 서버 시작 때 만든 날씨 어댑터 (#380)."""
     seen: dict = {}
@@ -98,6 +112,7 @@ async def test_agent_job_좌표와_날씨_어댑터를_진입점에_그대로_�
         kwargs["emit"](Done(kwargs["run_id"], 1))
 
     monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    logged = _location_logs(monkeypatch)
     channel = registry.open_run(parent_id=PARENT)
     location, weather = entrypoint.CoarseLocation(lat=35.18, lon=129.08), object()
 
@@ -111,9 +126,33 @@ async def test_agent_job_좌표와_날씨_어댑터를_진입점에_그대로_�
     await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
 
     assert seen["location"] is location
+    assert logged == [PARENT]  # 넘기기 전에 쓴 사실을 남겼다 (#693)
     assert seen["activity_weather"] is weather
     # 장소는 적재한 place 표를 읽는 어댑터다. 좌표가 없는 run 에서는 tool 이 닫혀 부르지 않는다
     assert isinstance(seen["activity_places"], DbPlaceSource)
+
+
+async def test_agent_job_위치_기록에_실패하면_Agent_를_부르지_않고_failed(monkeypatch):
+    """기록 없는 사용을 만들지 않는다 (위치정보법 제16조 ②). 좌표만 버리고 넘어가지 않는다."""
+    called: list[dict] = []
+
+    async def fake_handle_input(**kwargs):
+        called.append(kwargs)
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    _location_logs(monkeypatch, RuntimeError("위치 기록 실패"))
+    channel = registry.open_run(parent_id=PARENT)
+    job = runner.agent_job(
+        child_id=CHILD,
+        parent_id=PARENT,
+        raw_text=RAW_TEXT,
+        location=entrypoint.CoarseLocation(lat=35.18, lon=129.08),
+    )
+
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    assert called == []
+    assert names(channel) == ["failed"]
 
 
 async def test_agent_job_안전_어댑터를_Food_Activity_Growth_에_넘긴다(monkeypatch):

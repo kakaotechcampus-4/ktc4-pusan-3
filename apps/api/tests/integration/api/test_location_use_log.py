@@ -1,25 +1,31 @@
 """위치 이용 확인자료 — 위치정보법 제16조 ② · 위치 약관 제4조 ④ · 제10조 ① (#693).
 
 여기서 지키는 것.
-    ① 위치 동의를 통과한 좌표를 Agent 에 넘긴 입력마다 1건 남긴다 (커밋까지)
+    ① run 이 좌표를 Agent 에 넘길 때마다 1건 남긴다 (커밋까지)
     ② 🚨 기록에는 좌표가 없다 — 처리방침이 위치 값을 남기지 않는다고 약속했다
-    ③ 좌표를 넘기지 않은 입력(동의 없음 · 좌표 없음 · 같은 키 재생)은 남기지 않는다
+    ③ 위치를 넘기지 않은 요청은 남기지 않는다 — run 이 뜨기 전에 끝난 요청, 그새 동의를 끈 보호자
     ④ 동의를 철회하면 그 보호자의 기록을 지운다
     ⑤ 6개월이 지나면 지운다. 탈퇴하면 보호자 행과 함께 지워진다
 
-세션은 바깥 트랜잭션 안의 savepoint 로 열린다 (tests/conftest.py). 그래서 입력 뒤에 rollback 을
-불러도 행이 남아 있으면 커밋된 것이다 — 커밋이 빠지면 약관의 "자동으로 기록" 이 조용히 거짓이 된다.
+철회와 기록이 동시에 오는 경우는 tests/integration/test_location_use_concurrency.py 가 본다.
+러너가 여는 세션은 테스트 세션으로 바꿔 끼운다 (test_run_saved.py 와 같다). 그 세션은 바깥
+트랜잭션 안의 savepoint 라, run 뒤에 rollback 을 불러도 행이 남아 있으면 커밋된 것이다.
 등장하는 사람은 전부 테스트용 가짜다.
 """
 
+import asyncio
 import uuid
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import select, text
 
-from app.api import idempotency, quota
+from app.agents import entrypoint
+from app.agents.entrypoint import Done
+from app.api import agent_ports, idempotency, quota
 from app.api.runs import pending_reply, registry, runner
+from app.core.config import settings
 from app.domains.consent.location_log import purge_expired_location_logs
 from app.domains.consent.models import ConsentScope, LocationPurpose, LocationUseLog
 from app.domains.consent.repository import grant_account_scope
@@ -30,38 +36,50 @@ from .conftest import issue_bearer
 
 INPUTS = "/api/v1/children/{cid}/inputs"
 CONSENTS = "/api/v1/consents"
-BODY = {"text": "오늘 어디 갈까요", "source": "home_input"}
-LOCATION = {"lat": 35.18, "lon": 129.08}
+RAW_TEXT = "오늘 어디 갈까요"
+COORDS = entrypoint.CoarseLocation(lat=35.18, lon=129.08)
 
 
 @pytest.fixture(autouse=True)
 def _clean_process_memory():
-    registry.clear()
-    idempotency.clear()
-    quota.clear()
-    pending_reply.clear()
+    for module in (registry, idempotency, quota, pending_reply):
+        module.clear()
     yield
-    registry.clear()
-    idempotency.clear()
-    quota.clear()
-    pending_reply.clear()
+    for module in (registry, idempotency, quota, pending_reply):
+        module.clear()
 
 
 @pytest.fixture(autouse=True)
-def agent_calls(monkeypatch) -> list[dict]:
-    """진짜 Agent 대신 가짜 러너를 끼우고, 창구가 agent_job 에 넘긴 값을 기록한다."""
-    calls: list[dict] = []
+def _same_session(monkeypatch, session):
+    """러너 · 포트가 여는 세션을 테스트 세션으로."""
 
-    def fake_agent_job(**kwargs):
-        calls.append(kwargs)
-        return runner.fake_job
+    @asynccontextmanager
+    async def same():
+        yield session
 
-    monkeypatch.setattr(runner, "agent_job", fake_agent_job)
-    return calls
+    monkeypatch.setattr(runner, "background_session", same)
+    monkeypatch.setattr(agent_ports, "background_session", same)
 
 
-def with_key(headers: dict[str, str], key: str | None = None) -> dict[str, str]:
-    return {**headers, "Idempotency-Key": key or str(uuid.uuid4())}
+@pytest.fixture
+def handed(monkeypatch) -> list:
+    """진짜 Agent 대신 가짜 진입점. Agent 에 넘어간 좌표를 적는다."""
+    seen: list = []
+
+    async def fake_handle_input(**kwargs):
+        seen.append(kwargs["location"])
+        kwargs["emit"](Done(kwargs["run_id"], 1))
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    return seen
+
+
+async def run_with_coords(cid: uuid.UUID, parent_id: uuid.UUID) -> registry.RunChannel:
+    """창구가 동의를 확인하고 좌표를 넘긴 run 하나를 끝까지 돌린다."""
+    channel = registry.open_run(parent_id=parent_id)
+    job = runner.agent_job(child_id=cid, parent_id=parent_id, raw_text=RAW_TEXT, location=COORDS)
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=5)
+    return channel
 
 
 async def location_version(session) -> tuple[uuid.UUID, str]:
@@ -92,69 +110,62 @@ def old_log(parent_id: uuid.UUID, used_at: datetime) -> LocationUseLog:
 # ── 남기기 ─────────────────────────────────────────────────────────
 
 
-async def test_위치_동의를_통과한_입력은_기록이_1건_커밋된다(
-    db_client, session, bearer, cid, agent_calls
-):
-    headers, parent_id = bearer
+async def test_run_이_좌표를_넘기면_기록이_1건_커밋된다(session, bearer, cid, handed):
+    _, parent_id = bearer
     await grant_location(session, parent_id)
 
-    response = await db_client.post(
-        INPUTS.format(cid=cid), json={**BODY, "location": LOCATION}, headers=with_key(headers)
-    )
+    await run_with_coords(cid, parent_id)
     await session.rollback()  # 커밋이 빠졌다면 여기서 행이 사라진다
 
-    assert response.status_code == 202
-    assert agent_calls[0]["location"] is not None
+    assert handed == [COORDS]
     logs = await logs_of(session, parent_id)
     assert [log.purpose for log in logs] == [LocationPurpose.SUGGESTION]
     assert abs(datetime.now(UTC) - logs[0].used_at) < timedelta(minutes=1)
 
 
-async def test_기록_표에는_좌표를_담을_칸이_없다(db_client, session, bearer, cid):
+async def test_그새_위치_동의가_꺼졌으면_좌표를_버리고_기록하지_않는다(
+    session, bearer, cid, handed
+):
+    """창구가 동의를 읽은 뒤 run 이 뜨기 전에 철회된 경우. run 은 위치 없이 끝까지 돈다."""
+    _, parent_id = bearer
+
+    channel = await run_with_coords(cid, parent_id)
+
+    assert handed == [None]
+    assert [name for name, _ in channel.events][-1] == "done"
+    assert await logs_of(session, parent_id) == []
+
+
+async def test_기록_표에는_좌표를_담을_칸이_없다(session):
     """🚨 칸을 더하려면 이 테스트가 먼저 멈춘다. 위치 값을 남기면 처리방침 · 약관이 거짓이 된다."""
-    headers, parent_id = bearer
-    await grant_location(session, parent_id)
-    await db_client.post(
-        INPUTS.format(cid=cid), json={**BODY, "location": LOCATION}, headers=with_key(headers)
+    columns = await session.scalars(
+        text(
+            "SELECT column_name FROM information_schema.columns"
+            " WHERE table_name = 'location_use_log'"
+        )
     )
 
-    row = (await session.execute(text("SELECT * FROM location_use_log"))).mappings().one()
-
-    assert set(row) == {"id", "parent_id", "purpose", "used_at"}
+    assert set(columns) == {"id", "parent_id", "purpose", "used_at"}
 
 
-async def test_위치_동의가_없으면_기록하지_않는다(db_client, session, bearer, cid, agent_calls):
+async def test_하루_한도에_걸린_입력은_기록하지_않는다(db_client, session, bearer, cid, handed):
+    """run 이 뜨지 않은 요청은 위치를 쓰지 않았다. 한도를 넘긴 반복 요청이 표를 키우지도 않는다."""
     headers, parent_id = bearer
+    await grant_location(session, parent_id)
+    for _ in range(settings.INPUT_DAILY_LIMIT):
+        quota.consume(
+            parent_id=parent_id, today=quota.today_kst(), limit=settings.INPUT_DAILY_LIMIT
+        )
 
-    await db_client.post(
-        INPUTS.format(cid=cid), json={**BODY, "location": LOCATION}, headers=with_key(headers)
+    response = await db_client.post(
+        INPUTS.format(cid=cid),
+        json={"text": RAW_TEXT, "source": "home_input", "location": {"lat": 35.18, "lon": 129.08}},
+        headers={**headers, "Idempotency-Key": str(uuid.uuid4())},
     )
 
-    assert agent_calls[0]["location"] is None
+    assert response.status_code == 429
+    assert handed == []
     assert await logs_of(session, parent_id) == []
-
-
-async def test_좌표가_없는_입력은_기록하지_않는다(db_client, session, bearer, cid):
-    headers, parent_id = bearer
-    await grant_location(session, parent_id)
-
-    await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=with_key(headers))
-
-    assert await logs_of(session, parent_id) == []
-
-
-async def test_같은_키로_다시_보내도_기록은_1건이다(db_client, session, bearer, cid):
-    """재생은 Agent 를 다시 부르지 않는다. 쓰지 않은 위치를 썼다고 남기면 안 된다."""
-    headers, parent_id = bearer
-    await grant_location(session, parent_id)
-    key = str(uuid.uuid4())
-    url = INPUTS.format(cid=cid)
-    payload = {**BODY, "location": LOCATION}
-
-    await db_client.post(url, json=payload, headers=with_key(headers, key))
-    await db_client.post(url, json=payload, headers=with_key(headers, key))
-
-    assert len(await logs_of(session, parent_id)) == 1
 
 
 # ── 철회 ───────────────────────────────────────────────────────────
@@ -178,21 +189,6 @@ async def test_위치_동의를_끄면_그_보호자의_기록만_지운다(db_c
     assert response.status_code == 201
     assert await logs_of(session, parent_id) == []
     assert len(await logs_of(session, other_id)) == 1
-
-
-async def test_이미_끈_뒤에_다시_꺼도_남은_기록을_지운다(db_client, session, bearer):
-    """접수와 철회가 겹쳐 철회 뒤에 들어온 기록은 끄기를 다시 누르면 지워진다."""
-    headers, parent_id = bearer
-    await grant_location(session, parent_id)
-    _, version = await location_version(session)
-    request = {"scope": "location", "action": "withdrawn", "policy_version": version}
-    await db_client.post(CONSENTS, json=request, headers=headers)
-    session.add(old_log(parent_id, datetime.now(UTC)))
-    await session.commit()
-
-    await db_client.post(CONSENTS, json=request, headers=headers)
-
-    assert await logs_of(session, parent_id) == []
 
 
 async def test_위치_동의를_켜는_것은_기록을_지우지_않는다(db_client, session, bearer):
