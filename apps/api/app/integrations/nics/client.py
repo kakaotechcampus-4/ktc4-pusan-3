@@ -15,10 +15,11 @@
     가 온다. `recipeSn` 은 안내에는 정수, 실제 응답은 글자(`"55"`)라 둘 다 받아 글자로 쓴다.
   - 이용허락범위는 "제한 없음", 개발 계정 하루 10,000건.
 
-⚠️ 확인하지 못한 것 — 목록 응답에서 항목이 든 칸의 모양. 안내 페이지에 응답 명세가 없고 키 없이는
-부를 수 없었다. `_items` 한 곳에 가정을 모았다(`body.items` 가 목록이거나 `body.items.item` 이
-목록 · 하나). 실제 응답이 다르면 "응답 모양이 다르다" 로 멈춘다 — 틀린 데이터를 조용히 적재하지
-않는다.
+실제 응답 모양(2026-11-02 키로 확인)은 `{response: {header: {resultCode: "200", resultMsg}, body}}` 이고,
+목록은 `body.items.item`(목록)과 `body.totalCount`(글자), 상세는 `body.stdInfo` 다. 성공 코드가
+"200" 이라는 것만 처음 가정("00")과 달랐다. 오류 응답의 코드 값은 확인하지 못했다 — 성공 코드가
+아니면 코드만 싣고 멈춘다. 모양이 다르면 "응답 모양이 다르다" 로 멈춘다 — 조용히 틀린 데이터를
+적재하지 않는다.
 
 받은 수가 `totalCount` 와 다르거나, 어느 달이든 목록이 비거나, 상세가 어긋나면 하나도 돌려주지 않고
 `NicsApiError` 로 올린다. 일부만 적재하면 재료를 덜 아는 레시피가 생기고, 비어 온 달의 레시피가 후보
@@ -56,13 +57,18 @@ DETAIL_OPERATION = "recipeCont"
 ROWS_PER_CALL = 1000
 # 상세 호출 상한. 고유 레시피가 598건이다 — 이보다 많으면 데이터가 크게 바뀐 것이라 받지 않는다
 MAX_DETAIL_CALLS = 1000
-# 상세를 동시에 부르는 수. 개발 계정 하루 10,000건 안에서 서버를 몰아붙이지 않는다
-CONCURRENCY = 5
+# 동시에 부르는 수. 실제 API 는 짧은 시간에 몰리면 429 를 준다(2026-11-02 실측: 동시 5 로 몰면 약
+# 20건 뒤부터 거절, 초당 5건 안팎의 지속 호출은 120건까지 통과). 목록 12 + 상세 598 이 1분 남짓이다
+CONCURRENCY = 2
+# 429 를 받으면 이만큼씩 쉬었다가 다시 부른다(점점 길게). 다 쉬고도 안 되면 멈춘다. 몰렸던 제한은
+# 1분 안에 풀렸다
+RETRY_DELAYS_S = (1.0, 2.0, 4.0, 8.0, 16.0, 32.0)
 # 응답을 기다리는 시간. 배치 전용이라 길게 둔다
 HTTP_TIMEOUT_S = 30.0
 
 _MONTHS = range(1, 13)
-_OK = "00"
+# 성공 코드. 실제 응답은 "200" 이다(2026-11-02 확인). "00" 은 공공데이터포털 표준이라 같이 받는다
+_OK_CODES = frozenset({"200", "00"})
 # 화면에 찍을 수 있는 ASCII 만 — 공백 · 제어문자 · 한글이 든 키는 부르지 않는다. 일반
 # 인증키(Decoding)는 `+` `/` `=` 가 섞이는데, 쿼리로 보내면 httpx 가 인코딩해 준다
 _KEY = re.compile(r"[\x21-\x7e]{1,256}")
@@ -148,10 +154,12 @@ class NicsRecipeClient:
 
     async def _call(self, operation: str, params: dict[str, Any]) -> dict[str, Any]:
         query = {"serviceKey": self.api_key, "format": "json", **params}
-        try:
-            response = await self.http.get(f"{BASE_URL}/{operation}", params=query)
-        except Exception as exc:  # 연결 · 시간 초과 — 문구에 주소(키)가 들어 있다
-            raise NicsApiError(f"nics 요청 실패 {type(exc).__name__}") from None
+        for delay in (*RETRY_DELAYS_S, None):
+            response = await self._get(operation, query)
+            if response.status_code != 429 or delay is None:
+                break
+            logger.warning("nics 429 — %s초 쉬었다가 다시 부른다", delay)
+            await asyncio.sleep(delay)
         if response.status_code != 200:
             raise NicsApiError(f"nics HTTP {response.status_code}")
         try:
@@ -167,6 +175,12 @@ class NicsRecipeClient:
         if not isinstance(body, dict):
             raise NicsApiError("nics 응답 모양이 다르다")
         return body
+
+    async def _get(self, operation: str, query: dict[str, Any]) -> httpx.Response:
+        try:
+            return await self.http.get(f"{BASE_URL}/{operation}", params=query)
+        except Exception as exc:  # 연결 · 시간 초과 — 문구에 주소(키)가 들어 있다
+            raise NicsApiError(f"nics 요청 실패 {type(exc).__name__}") from None
 
 
 async def _all_or_none(calls: Iterable[Coroutine[Any, Any, _T]]) -> list[_T]:
@@ -198,14 +212,14 @@ def _check(header: Any) -> None:
     code = header.get("resultCode") if isinstance(header, dict) else None
     if isinstance(code, int) and not isinstance(code, bool):
         code = f"{code:02d}"
-    if code == _OK:
+    if code in _OK_CODES:
         return
     shown = code if isinstance(code, str) and _CODE.fullmatch(code) else "?"
     raise NicsApiError(f"nics 결과 코드 {shown}")
 
 
 def _items(body: dict[str, Any]) -> list[dict[str, Any]]:
-    """목록 응답에서 항목을 꺼낸다. ⚠️ 실제 응답으로 확인하지 못한 모양 — 모듈 머리 참고."""
+    """목록 응답에서 항목을 꺼낸다. 실제 응답은 `items.item` 목록이다 — 목록 · 한 건 객체도 받는다."""
     raw = body.get("items")
     if isinstance(raw, dict):  # `items.item` 으로 한 겹 더 감싼 모양
         raw = raw.get("item")

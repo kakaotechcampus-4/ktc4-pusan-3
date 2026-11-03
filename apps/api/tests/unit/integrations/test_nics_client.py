@@ -4,10 +4,8 @@
 (오퍼레이션 이름 · 칸 이름 · `header`/`body` 로 감싸는 방식)만 실제 호출을 확인한 기록(2026-10-18)과
 공개 안내 페이지에서 옮겼다.
 
-⚠️ 목록 응답에서 항목이 든 칸(`body.items`)의 모양은 실제 응답으로 확인하지 못했다. 안내 페이지에
-응답 명세가 없고 키 없이는 부를 수 없어서다. 그 가정은 클라이언트의 `_items` 한 곳에 모아 두었고, 두
-가지 모양(`items` 가 목록 · `items.item` 이 목록 또는 하나)을 받는다. 실제 응답이 다르면 응답 모양이
-다르다는 실패로 멈춘다 — 조용히 틀린 데이터를 적재하지 않는다.
+실제 응답(2026-11-02 키로 확인)은 `response` 로 한 번 감싸고 성공 코드가 "200" 이다. 목록 항목은
+`body.items.item` 에 든다.
 
 여기서 지키는 것 다섯.
     ① 12달 목록을 빈 식재료명 · numOfRows=1000 으로 받고 고유 번호마다 상세를 한 번만 부른다
@@ -38,13 +36,15 @@ from app.integrations.nics.client import (
     NicsRecipeClient,
     nics_recipe_http,
 )
+from app.integrations.nics import client as nics_client
 
 # 가짜 Decoding 키. 실제 키처럼 + / = 가 섞여 있어야 쿼리 인코딩을 거쳐도 그대로 가는지 본다
 KEY = "Fake+Decoding/Key=0123456789abcdefABCDEF"
 
 
 def ok(body: dict[str, Any]) -> dict[str, Any]:
-    return {"header": {"resultCode": "00", "resultMsg": "NORMAL SERVICE"}, "body": body}
+    # 실제 응답(2026-11-02 확인): `response` 로 한 번 감싸고 성공 코드는 "200" 이다
+    return {"response": {"header": {"resultCode": "200", "resultMsg": "성공"}, "body": body}}
 
 
 def listing(items: list[Any], *, total: int | None = None, form: str = "list") -> dict[str, Any]:
@@ -351,7 +351,7 @@ async def test_상세에_같은_레시피가_두_번_오면_받지_않는다() -
 @pytest.mark.parametrize("name", [None, "", "   "])
 async def test_상세에_이름이_없으면_받지_않는다(name: str | None) -> None:
     body = detail(3)
-    body["body"]["stdInfo"]["recipeNm"] = name
+    body["response"]["body"]["stdInfo"]["recipeNm"] = name
 
     with pytest.raises(NicsApiError):
         await build(
@@ -460,14 +460,17 @@ async def test_모양이_깨진_응답은_받지_않는다(payload: Any) -> None
     _assert_clean(caught.value)
 
 
-async def test_response_로_한_번_감싼_응답도_받는다() -> None:
+@pytest.mark.parametrize("code", ["200", "00"])
+async def test_감싸지_않은_응답과_표준_성공_코드도_받는다(code: str) -> None:
+    # 실제 응답은 `response` 로 감싸고 "200" 이다. 감싸지 않은 모양 · "00"(공공데이터포털 표준)도 받는다
     server = FakeServer()
 
-    def wrapped(request: httpx.Request) -> httpx.Response:
-        inner = server(request)
-        return httpx.Response(200, json={"response": inner.json()})
+    def bare(request: httpx.Request) -> httpx.Response:
+        payload = server(request).json()["response"]
+        payload["header"]["resultCode"] = code
+        return httpx.Response(200, json=payload)
 
-    synced = await build(wrapped).recipes_with_ingredients()
+    synced = await build(bare).recipes_with_ingredients()
 
     assert synced.recipe_rows == 12
 
@@ -545,5 +548,67 @@ async def test_HTTP_클라이언트는_느린_서버를_기다리되_끝없지�
         assert 10.0 <= HTTP_TIMEOUT_S <= 120.0
 
 
-def test_호출_상한과_동시성은_계획_값이다() -> None:
-    assert (ROWS_PER_CALL, MAX_DETAIL_CALLS, CONCURRENCY) == (1000, 1000, 5)
+def test_호출_상한과_동시성은_실측_값이다() -> None:
+    assert (ROWS_PER_CALL, MAX_DETAIL_CALLS, CONCURRENCY) == (1000, 1000, 2)
+
+
+# ── 호출 빈도 제한(429) ───────────────────────────────────────────────
+# 실제 API 는 짧은 시간에 몰리면 429 를 준다(2026-11-02 실측: 동시 5 로 몰면 약 20건 뒤부터,
+# 초당 5건 안팎의 지속 호출은 120건까지 통과). 쉬었다가 다시 부른다
+@pytest.fixture
+def no_wait(monkeypatch):
+    waits: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        waits.append(seconds)
+
+    monkeypatch.setattr(nics_client.asyncio, "sleep", fake_sleep)
+    return waits
+
+
+async def test_429_는_쉬었다가_다시_불러_받는다(no_wait) -> None:
+    server = FakeServer()
+    limited = {"left": 3}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if limited["left"] > 0:
+            limited["left"] -= 1
+            return httpx.Response(429, text="Too Many Requests")
+        return server(request)
+
+    synced = await build(handler).recipes_with_ingredients()
+
+    assert synced.recipe_rows == 12
+    assert no_wait == list(nics_client.RETRY_DELAYS_S[:3])  # 점점 길게 쉰다
+
+
+async def test_429_가_계속되면_상태_코드만_남기고_멈춘다(no_wait) -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(429, text=f"{request.url}")
+
+    with pytest.raises(NicsApiError) as caught:
+        await build(handler).recipes_with_ingredients()
+
+    _assert_clean(caught.value)
+    assert "429" in str(caught.value)
+    # 달 목록 하나가 다 쉬고도 안 되면 끝낸다 — 12달이 각자 재시도해도 한 달의 시도 수는 정해져 있다
+    assert calls <= (len(nics_client.RETRY_DELAYS_S) + 1) * 12
+
+
+@pytest.mark.parametrize("status", [401, 403, 500, 502])
+async def test_429_가_아닌_HTTP_오류는_다시_부르지_않는다(no_wait, status: int) -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(status)
+
+    with pytest.raises(NicsApiError):
+        await build(handler).recipes_with_ingredients()
+
+    assert no_wait == []
