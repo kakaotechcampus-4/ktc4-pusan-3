@@ -574,6 +574,9 @@ EXPO_ROW = replace(FEST_ROW, name=EXPO, place="바람숲공원 일원")
 TOUR = "골목 작품투어 (시민예술프로젝트)"  # 괄호를 떼고 "골목 작품투어" 로 쓴다
 TOUR_ROW = replace(FEST_ROW, name=TOUR, place="예술공원 파빌리온")
 EVENTS = {FEST: FEST_ROW, EXPO: EXPO_ROW, TOUR: TOUR_ROW}
+# 문장에 "전통시장 박람회" · "드론 라이트쇼" 처럼 이름의 뒤쪽만 쓴다
+MARKET_ROW = replace(FEST_ROW, name="2026 이웃 전통시장 박람회", place="바람숲공원 다솜광장")
+DRONE_ROW = replace(FEST_ROW, name="모래섬 M(Magic) 드론 라이트쇼", place="모래섬 해변 일원")
 
 
 class TestEventName:
@@ -660,6 +663,43 @@ class TestEventName:
             events={tangerine.name: tangerine},
         ).drafts
         assert draft.content == expected
+
+    @pytest.mark.parametrize(
+        ("event", "content", "expected"),
+        [
+            (
+                MARKET_ROW,
+                "바람숲공원에서 전통시장 박람회 구경하기",
+                "바람숲공원에서 2026 이웃 전통시장 박람회 구경하기",
+            ),
+            (
+                DRONE_ROW,
+                "모래섬에서 드론 라이트쇼와 바다 풍경 보기",
+                "모래섬에서 모래섬 M(Magic) 드론 라이트쇼와 바다 풍경 보기",
+            ),
+            (
+                DRONE_ROW,
+                "모래섬에서 드론라이트쇼 보기",
+                "모래섬에서 모래섬 M(Magic) 드론 라이트쇼 보기",
+            ),
+        ],
+    )
+    def test_행사_이름의_뒤쪽_두_낱말_이상을_문장에_썼으면_그_자리를_행사_이름으로_바꾼다(
+        self, event, content, expected
+    ):
+        """앞에 붙이면 "○○ 전통시장 박람회 바람숲공원에서 전통시장 박람회 …" 가 된다
+        (11-03 실측, 행사를 묻지 않은 나들이 요청)."""
+        (draft,) = review(
+            candidate(content=content, place_name=event.place), events={event.name: event}
+        ).drafts
+        assert draft.content == expected
+
+    def test_줄인_이름이_다른_낱말의_일부면_바꾸지_않는다(self):
+        """ "늦가을 축제" 의 "가을 축제" 를 바꾸면 "늦광안리 가을 축제" 가 된다."""
+        (draft,) = review(
+            candidate(content="늦가을 축제 분위기 느끼기", place_name=FEST), events=EVENTS
+        ).drafts
+        assert draft.content == "광안리 가을 축제에서 늦가을 축제 분위기 느끼기"
 
     def test_place_name_을_비워도_문장에_행사가_있으면_붙인다(self):
         (draft,) = review(
