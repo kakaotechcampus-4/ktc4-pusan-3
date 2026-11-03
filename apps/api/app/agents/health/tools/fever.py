@@ -190,10 +190,15 @@ def _window_first_day(context: HealthContext) -> date:
     return (context.now - WINDOW).astimezone(context.timezone).date()
 
 
+def says_fever(symptoms: Sequence[str]) -> bool:
+    """증상 원문이 열 이야기인가. 모델이 적은 "열" 한 글자는 증상 사전의 표현이 아니라 따로 본다."""
+    return "열" in symptoms or "fever" in symptom_codes_of(symptoms)
+
+
 def infant_fever(
     observations: Sequence[HealthObservation], *, months: int, now: datetime, timezone: tzinfo
 ) -> bool:
-    """3개월 미만 + 최근 48시간 안 `fever` 코드 또는 `temperature >= FEVER_TEMPERATURE`.
+    """3개월 미만 + 최근 48시간 안 열 증상 또는 `temperature >= FEVER_TEMPERATURE`.
 
     시각을 말하지 않은 기록은 날짜로 본다 — 48시간 경계 날짜까지 센다(응급 안내는 놓치는 쪽이 더
     위험하다). 기록 없음이 "열 없음" 은 아니지만 이 함수는 기록이 있을 때만 참이다.
@@ -204,7 +209,7 @@ def infant_fever(
     return any(
         _event(o, start, timezone) is not None
         and (
-            "fever" in symptom_codes_of(o.symptoms)
+            says_fever(o.symptoms)
             or (o.temperature is not None and o.temperature >= FEVER_TEMPERATURE)
         )
         for o in observations

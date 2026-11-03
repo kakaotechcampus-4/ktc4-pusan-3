@@ -113,6 +113,7 @@ from app.agents.pipeline import handle_input as _handle_input
 from app.agents.run_writes import RunWrites, record_food_writes
 from app.agents.suggestion_save import InMemorySuggestions, SaveSuggestions, SuggestionBatch
 from app.agents.supervisor.routing import Guidance
+from app.rules.age import months_between
 
 # api가 이 파일만 보면 되도록 진행 이벤트 타입도 여기서 내보냄
 # pipeline에 이벤트를 추가하면 여기에도 작성
@@ -247,7 +248,8 @@ async def handle_input(
 ) -> PipelineResult:
     """입력 한 줄을 처리한다. 진행 상황은 emit 으로 나간다.
 
-    - birth_date를 넘기면 Food Agent가 build_gate에서 그 값으로 식이 단계를 계산한다.
+    - birth_date를 넘기면 Food Agent가 build_gate에서 그 값으로 식이 단계를 계산한다. 응급
+      사전검사도 이 값으로 월령을 센다. 없으면 만 2세로 지어내지 않고 말에 적힌 월령만 본다.
     - child_health_granted 는 API 가 run 마다 한 번 읽은 `child_health` 동의의 현재 값이다.
       생일과 같이 값을 감싼 포트(`ChildValues`)로 Food 의 `ConsentReader` 에 들어간다. 읽는 데
       실패하면 API 가 run 을 시작하지 않으므로 여기에는 실패 값이 없다 — None 은 값을 안 넘긴
@@ -349,6 +351,9 @@ async def handle_input(
         writes=writes,
         curator_trigger=curator_trigger,
         count_records=count_records,
+        child_months=(
+            None if birth_date is None else months_between(birth_date, today_of(now, KST))
+        ),
     )
 
 

@@ -35,6 +35,7 @@ def test_규칙_키는_명세_9절_순서다():
         "swelling",
         "seizure",
         "infant_fever",
+        "high_fever",
         "head_injury",
         "dehydration",
     )
@@ -45,6 +46,7 @@ POSITIVE = {
     "breathing": "숨을 잘 못 쉬어.",
     "seizure": "경련을 해.",
     "infant_fever": "두 달 된 아기가 열이 38도야.",
+    "high_fever": "아이가 고열이에요",
     "swelling": "입술이 부었어",
     "head_injury": "머리를 부딪혔는데 계속 토해",
     "dehydration": "소변을 거의 안 보고 입이 바싹 말랐어",
@@ -84,11 +86,11 @@ def test_응급_문구는_Health_응급_readout_과_같다():
 
 
 def test_검수_전_행도_켠다():
-    # 실제 파일의 행이 전부 medical_reviewed false 여도 6개가 로드된다
+    # 실제 파일의 행이 전부 medical_reviewed false 여도 전부 로드된다
     rows = load_reference("emergency_signs.yaml")["signs"]
 
     assert all(row["medical_reviewed"] is False for row in rows)
-    assert len(emergency_signs()) == 6
+    assert len(emergency_signs()) == 7
 
 
 def _data() -> dict[str, Any]:
@@ -313,8 +315,69 @@ def test_부딪힌_뒤_구토_안_했다는_말은_걸리지_않는다(text):
         "어제 야구 경기를 했는데 이겼어",
         "농구 경기했어",
         "게임 경기를 해서 졌어요",
+        "운동회에서 달리기 경기를 했어요",
+        "어린이집에서 줄다리기 경기를 했어",
+        "오늘 탁구 경기를 했어",
+        "피구 경기했어",
     ],
 )
 def test_운동_경기_말은_걸리지_않는다(text):
     # "경기" 는 아이의 경기(경련)이기도 하고 시합이기도 하다. 시합 말에 119 안내가 나가면 안 된다
     assert emergency_guidance(text) is None
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "아이가 경기를 했어요",
+        "애가 경기했어요",
+        "갑자기 경기했어요",
+        "아까 경기를 했어",
+        "자면서 경기를 했어",
+        "울면서 경기했어",
+        "지금 경기를 해요",
+    ],
+)
+def test_앞말이_있는_경기는_걸린다(text):
+    assert "seizure" in matched_signs(text)
+
+
+def test_생일로_계산한_월령이면_말에_월령이_없어도_걸린다():
+    assert "infant_fever" in matched_signs("지금 열이 38.7도예요", child_months=2)
+    assert emergency_guidance("지금 열이 38.7도예요", child_months=2) == Guidance(
+        code="emergency", message=EMERGENCY_MESSAGE
+    )
+
+
+@pytest.mark.parametrize(
+    "text", ["열이 나요", "열났어", "미열이 있어", "열이 높아요", "열이 39도야"]
+)
+def test_3개월_이상은_고열이라고_말하지_않으면_걸리지_않는다(text):
+    assert emergency_guidance(text, child_months=3) is None
+    assert emergency_guidance(text, child_months=48) is None
+
+
+@pytest.mark.parametrize("child_months", [3, 48, None])
+@pytest.mark.parametrize("text", ["고열이 나요", "고열이에요", "아이가 고열이라 걱정이야"])
+def test_월령과_상관없이_고열이라고_말하면_걸린다(text, child_months):
+    assert "high_fever" in matched_signs(text, child_months=child_months)
+
+
+@pytest.mark.parametrize(
+    "text", ["고열은 아니야", "고열 없어", "고열은 안 났어", "고열이 아니라 미열"]
+)
+def test_고열이_아니라는_말은_걸리지_않는다(text):
+    assert emergency_guidance(text, child_months=48) is None
+
+
+@pytest.mark.parametrize(
+    "text", ["열이 나요", "열났어", "열이 있어", "열이 올랐어", "발열이 있어요"]
+)
+def test_3개월_미만은_그냥_열도_걸린다(text):
+    assert emergency_guidance(text, child_months=2) is not None
+
+
+def test_월령을_모르면_말에_적힌_월령만_본다():
+    assert emergency_guidance("지금 열이 38.7도예요") is None
+    assert emergency_guidance("지금 열이 38.7도예요", child_months=48) is None
+    assert emergency_guidance("두 달 된 아기가 열이 38도야", child_months=48) is not None

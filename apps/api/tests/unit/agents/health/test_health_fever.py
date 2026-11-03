@@ -403,9 +403,10 @@ class TestInfantFever:
         return infant_fever(observations, months=months, now=NOW, timezone=KST)
 
     def test_3개월_미만_열_증상이면_참(self):
-        obs = reading(None, at=kst(10, 14, 22, 0), symptoms=("열나요",))
+        for symptom in ("열나요", "열", "발열", "고열"):
+            obs = reading(None, at=kst(10, 14, 22, 0), symptoms=(symptom,))
 
-        assert self.check([obs]) is True
+            assert self.check([obs]) is True
 
     def test_3개월_미만_체온이_기준_이상이면_참(self):
         assert self.check([reading("38.0", measured=kst(10, 14, 22, 0))]) is True

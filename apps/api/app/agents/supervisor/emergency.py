@@ -17,7 +17,7 @@ from typing import Any
 from app.agents.common.reference import load_reference
 from app.agents.health.reference import infant_fever_rule
 from app.agents.supervisor.routing import Guidance
-from app.rules.emergency import InfantThreshold, Sign, detect
+from app.rules.emergency import InfantThreshold, Sign, detect, is_infant
 from app.rules.term_match import Term, normalize
 
 logger = logging.getLogger(__name__)
@@ -31,6 +31,7 @@ SIGN_KEYS: tuple[str, ...] = (
     "swelling",
     "seizure",
     "infant_fever",
+    "high_fever",
     "head_injury",
     "dehydration",
 )
@@ -125,18 +126,27 @@ def _parse_group(where: str, index: int, group: Any) -> Term:
     return Term(key=f"{index}", aliases=tuple(aliases), guards=tuple(guards))
 
 
-def matched_signs(raw_text: str) -> tuple[str, ...]:
-    """걸린 신호 키를 사전 순서로. 월령 · 체온 기준은 `infant_fever.yaml` 이 정한다."""
+def _threshold() -> InfantThreshold:
     rule = infant_fever_rule()
-    threshold = InfantThreshold(
-        below_month=rule.below_month, fever_temperature=rule.fever_temperature
-    )
-    return detect(raw_text, emergency_signs(), threshold)
+    return InfantThreshold(below_month=rule.below_month, fever_temperature=rule.fever_temperature)
 
 
-def emergency_guidance(raw_text: str) -> Guidance | None:
+def infant_fever_age(raw_text: str, *, child_months: int | None = None) -> bool:
+    """열 이야기만으로 응급인 월령인가. `infant_fever.yaml` 의 월령 기준을 쓴다."""
+    return is_infant(raw_text, _threshold(), child_months=child_months)
+
+
+def matched_signs(raw_text: str, *, child_months: int | None = None) -> tuple[str, ...]:
+    """걸린 신호 키를 사전 순서로. 월령 · 체온 기준은 `infant_fever.yaml` 이 정한다.
+
+    child_months 는 생일로 계산한 월령이다. 모르면 None 이고, 발화에 적힌 월령만 본다.
+    """
+    return detect(raw_text, emergency_signs(), _threshold(), child_months=child_months)
+
+
+def emergency_guidance(raw_text: str, *, child_months: int | None = None) -> Guidance | None:
     """응급 신호가 있으면 안내 한 건, 없으면 None. 로그에는 걸린 신호 키만 싣는다(원문 없음)."""
-    keys = matched_signs(raw_text)
+    keys = matched_signs(raw_text, child_months=child_months)
     if not keys:
         return None
     logger.info("emergency precheck keys=%s", list(keys))

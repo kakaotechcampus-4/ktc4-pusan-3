@@ -625,6 +625,12 @@ async def _reread(
     return shown
 
 
+_SAVED_FEVER_HEADER = (
+    "[이미 저장한 기록 — 새로 만들지 않고, "
+    "답에 체온이 있으면 찾은 행에 update 로 temperature 만 넣는다]"
+)
+
+
 def _continuation_message(
     answer: str,
     pending: PendingMemoryContext,
@@ -643,9 +649,11 @@ def _continuation_message(
             f"- {ref.resource} {json.dumps(summary, ensure_ascii=False)}" for ref, summary in shown
         )
         found = f"{_FOUND_HEADER}\n{lines}\n\n"
+    # 체온을 되묻는 자리는 조각이 이미 저장됐다. 저장 못 했다고 하면 새로 만들거나 또 묻는다
+    fragment = _SAVED_FEVER_HEADER if pending.asks_temperature else "[아직 저장하지 못한 조각]"
     return (
         f"{_CONTINUATION_HEADER}{rounds}\n\n"
-        f"[아직 저장하지 못한 조각]\n{pending.hint_text}{note}\n\n"
+        f"{fragment}\n{pending.hint_text}{note}\n\n"
         f"{found}"
         f"[직전에 물은 것]\n{pending.question}\n\n"
         f"[보호자의 답]\n{answer}"
@@ -731,6 +739,7 @@ def _pending(
             transcript=(*continuation.transcript, continuation.question, answer),
             whole=continuation.whole,
             found=found,
+            asks_temperature=continuation.asks_temperature,
         )
     if task is None:
         return None

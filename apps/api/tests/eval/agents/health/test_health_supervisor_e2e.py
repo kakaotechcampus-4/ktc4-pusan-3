@@ -35,7 +35,7 @@ from app.agents.health.wording import (
     FORBIDDEN_SUFFIX,
     squash,
 )
-from app.agents.pipeline import AgentResult, MemoryNote, PipelineResult, Saved
+from app.agents.pipeline import AgentResult, MemoryNote, PendingReply, PipelineResult, Saved
 from app.agents.suggestion_save import InMemorySuggestions
 from app.agents.supervisor.emergency import EMERGENCY_MESSAGE
 from app.agents.supervisor.routing import Guidance
@@ -225,16 +225,31 @@ def j_emergency(o: Observed) -> None:
         o.failures.append("결과에 emergency 표시가 없다")
 
 
-def j_infant_hook(o: Observed) -> None:
-    """T25-pipeline — 기록만 해도 3개월 미만 발열이면 hook 이 응급 안내를 한 번 낸다."""
+def j_infant_precheck(o: Observed) -> None:
+    """T25-pipeline — 말에 월령이 없어도 사전검사가 생일 월령으로 안내하고 기록도 남는다.
+
+    저장 뒤 hook 이 같은 응급을 만들어도 run 에 한 번만 나간다.
+    """
     if "observation_health" not in o.saved_kinds:
         o.failures.append("건강 관찰이 저장되지 않았다")
         o.notes.append(_memory_summary(o))
-    count = o.readout_kinds.count("emergency")
+    count = sum(g.code == "emergency" for g in o.guidance)
     if count != 1:
-        o.failures.append(f"hook 응급 readout {count}건 (1건이어야 한다)")
-    if any(g.code == "emergency" for g in o.guidance):
-        o.failures.append("사전검사 안내가 나갔다 (발화에 월령이 없다)")
+        o.failures.append(f"사전검사 응급 안내 {count}건 (1건이어야 한다)")
+    repeated = o.readout_kinds.count("emergency")
+    if repeated:
+        o.failures.append(f"hook 응급 readout {repeated}건이 더 나갔다 (0건이어야 한다)")
+
+
+def j_asks_temperature(o: Observed) -> None:
+    """E-fever — 3개월 이상의 그냥 "열이 나" 는 119 없이 저장하고 코드가 몇 도인지 묻는다."""
+    _no_emergency(o)
+    if "observation_health" not in o.saved_kinds:
+        o.failures.append("건강 관찰이 저장되지 않았다")
+        o.notes.append(_memory_summary(o))
+    asked = [e for e in o.events if isinstance(e, PendingReply) and e.context.asks_temperature]
+    if not asked:
+        o.failures.append("몇 도인지 되묻지 않았다")
 
 
 def j_false_alarm(o: Observed) -> None:
@@ -276,9 +291,12 @@ CASES: tuple[Case, ...] = (
         "T25-pipeline",
         "열이 38.3도야",
         "C2",
-        "Memory 저장 · hook 응급 readout 1건 · 사전검사 안내 0",
-        j_infant_hook,
+        "Memory 저장 · 사전검사 안내 1건 · hook 응급 readout 0(생일 월령)",
+        j_infant_precheck,
     ),
+    Case("E-fever", "열이 나요", "C48", "저장 · 응급 안내 0 · 체온 되묻기", j_asks_temperature),
+    Case("E-fever-high", "고열이에요", "C48", "저장 · 사전검사 안내 1건", j_infant_precheck),
+    Case("E-fever-infant", "열이 나요", "C2", "저장 · 사전검사 안내 1건", j_infant_precheck),
     Case(
         "E-false1",
         "어제 경련 얘기를 들었어",

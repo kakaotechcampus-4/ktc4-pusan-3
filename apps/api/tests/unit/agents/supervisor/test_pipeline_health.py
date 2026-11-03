@@ -11,6 +11,7 @@
 
 import asyncio
 import json
+from dataclasses import replace
 from datetime import datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
@@ -36,12 +37,15 @@ from app.agents.health.store.inmemory import (
     course_with_doses,
 )
 from app.agents.health.store.ports import DoseSlot, HealthObservation
+from app.agents.memory.agent import MemoryReply, _continuation_message, _pending
 from app.agents.memory.context import AgentContext
-from app.agents.memory.schemas.task import PendingMemoryContext, WorkType
+from app.agents.memory.schemas.task import FoundRef, PendingMemoryContext, WorkType
 from app.agents.memory.store import InMemoryStore
 from app.agents.pipeline import (
     AgentResult,
     EventDrafts,
+    MemoryNote,
+    PendingReply,
     RetryContext,
     Saved,
     Unavailable,
@@ -110,6 +114,7 @@ async def _handle(
     memory_llm: FakeLLM | None = None,
     continuation: PendingMemoryContext | None = None,
     contexts: dict[str, Any] | None = None,
+    child_months: int | None = None,
 ) -> pipeline.PipelineResult:
     return await handle_input(
         raw_text,
@@ -122,6 +127,7 @@ async def _handle(
         continuation=continuation,
         commit=_no_commit,
         save_suggestions=InMemorySuggestions(),
+        child_months=child_months,
     )
 
 
@@ -612,6 +618,182 @@ async def test_응급_안내는_run_에_한_번(events: list[Any]) -> None:
         r.kind == "emergency" for e in _of(events, AgentResult) for r in e.readouts
     )
     assert count == 1
+
+
+async def test_생일_월령이면_말에_월령이_없어도_저장_전에_안내가_나간다(
+    events: list[Any],
+) -> None:
+    # 모델이 저장하지 않아도 안내가 나간다. hook 은 저장돼야 돌아서 이 run 을 못 잡는다
+    raw = "지금 열이 38.7도예요"
+
+    result = await _handle(raw, _observe(raw), context(birth_for(2)), events, child_months=2)
+
+    assert isinstance(events[0], Guidance) and events[0].code == "emergency"
+    assert result.emergency and result.routing.domain_tasks == ()
+    assert not _of(events, Saved)
+
+
+async def test_생일_월령으로_걸린_run_도_저장_뒤_hook_과_겹치지_않는다(
+    events: list[Any],
+) -> None:
+    raw = "열이 38.3도야"
+    fever = {"raw_text": raw, "observed_on": "오늘", "symptom": ["열"], "temperature": "38.3"}
+    health = context(birth_for(2), memory=InMemoryHealthMemory([_fever_reading()]))
+
+    await _handle(
+        raw,
+        _observe(raw),
+        health,
+        events,
+        memory_llm=FakeLLM(call("create_observation_health", fever)),
+        child_months=2,
+    )
+
+    assert _of(events, Saved)
+    assert len(_emergency_guidance(events)) == 1
+    assert not [r for e in _of(events, AgentResult) for r in e.readouts if r.kind == "emergency"]
+
+
+async def test_생일_월령이_기준_이상이면_열_이야기여도_안내가_없다(events: list[Any]) -> None:
+    raw = "열이 38도야"
+
+    result = await _handle(raw, _observe(raw), _world(), events, child_months=48)
+
+    assert not _emergency_guidance(events) and not result.emergency
+
+
+def _fever(raw: str, **fields: Any) -> FakeLLM:
+    args = {"raw_text": raw, "observed_on": "오늘", "symptom": ["열"], **fields}
+    return FakeLLM(call("create_observation_health", args))
+
+
+TEMPERATURE_QUESTION = "체온이 몇 도인지 알려주세요."
+
+
+@pytest.mark.parametrize("child_months", [3, 48])
+async def test_3개월_이상_그냥_열은_저장하고_코드가_몇_도인지_묻는다(
+    child_months: int, events: list[Any]
+) -> None:
+    raw = "열이 나요"
+
+    result = await _handle(
+        raw, _observe(raw), _world(), events, memory_llm=_fever(raw), child_months=child_months
+    )
+
+    assert not _emergency_guidance(events) and not result.emergency
+    [saved] = _of(events, Saved)
+    [asked] = [n for n in _of(events, MemoryNote) if n.kind == "question"]
+    assert asked.text == TEMPERATURE_QUESTION
+    [pending] = _of(events, PendingReply)
+    assert pending.context.asks_temperature and pending.context.hint_text == raw
+    assert pending.context.work is WorkType.LOOKUP_EDIT
+    assert pending.context.found == (FoundRef("observation_health", saved.refs[0].id),)
+
+
+async def test_3개월_미만_그냥_열은_되묻지_않고_119_안내가_나간다(events: list[Any]) -> None:
+    raw = "열이 나요"
+
+    result = await _handle(
+        raw, _observe(raw), _world(), events, memory_llm=_fever(raw), child_months=2
+    )
+
+    assert result.emergency and len(_emergency_guidance(events)) == 1
+    assert _of(events, Saved) and not _of(events, PendingReply)
+    assert TEMPERATURE_QUESTION not in [n.text for n in _of(events, MemoryNote)]
+
+
+async def test_월령을_모르면_그냥_열에_체온을_묻지_않는다(events: list[Any]) -> None:
+    raw = "열이 나요"
+
+    await _handle(raw, _observe(raw), _world(), events, memory_llm=_fever(raw))
+
+    assert _of(events, Saved) and not _of(events, PendingReply)
+
+
+async def test_체온을_말했으면_되묻지_않는다(events: list[Any]) -> None:
+    raw = "열이 38.5도야"
+
+    result = await _handle(
+        raw,
+        _observe(raw),
+        _world(),
+        events,
+        memory_llm=_fever(raw, temperature="38.5"),
+        child_months=48,
+    )
+
+    assert _of(events, Saved) and not _of(events, PendingReply)
+    assert not result.emergency
+
+
+async def test_3개월_이상도_고열이라고_말하면_되묻지_않고_119_안내가_나간다(
+    events: list[Any],
+) -> None:
+    raw = "고열이에요"
+
+    result = await _handle(
+        raw, _observe(raw), _world(), events, memory_llm=_fever(raw), child_months=48
+    )
+
+    assert result.emergency and len(_emergency_guidance(events)) == 1
+    assert _of(events, Saved) and not _of(events, PendingReply)
+
+
+def _asked_temperature() -> PendingMemoryContext:
+    return PendingMemoryContext(
+        hint_text="열이 나요",
+        question=TEMPERATURE_QUESTION,
+        work=WorkType.LOOKUP_EDIT,
+        asks_temperature=True,
+    )
+
+
+async def test_3개월_이상은_되물은_체온이_높아도_119_안내가_없다(events: list[Any]) -> None:
+    result = await _handle(
+        "39도야",
+        FakeLLM(call("route", {"segments": []})),
+        _world(),
+        events,
+        continuation=_asked_temperature(),
+        child_months=48,
+    )
+
+    assert not _emergency_guidance(events) and not result.emergency
+
+
+async def test_되물은_답에_고열이라고_말하면_119_안내가_나간다(events: list[Any]) -> None:
+    result = await _handle(
+        "고열이에요",
+        FakeLLM(call("route", {"segments": []})),
+        _world(),
+        events,
+        continuation=_asked_temperature(),
+        child_months=48,
+    )
+
+    assert isinstance(events[0], Guidance) and events[0].code == "emergency"
+    assert result.emergency
+
+
+def test_체온을_되물은_자리는_이미_저장한_기록이라고_알린다() -> None:
+    asked = _asked_temperature()
+    other = replace(asked, asks_temperature=False)
+
+    assert "이미 저장한 기록" in _continuation_message("38.5도야", asked)
+    assert "아직 저장하지 못한 조각" not in _continuation_message("38.5도야", asked)
+    assert "아직 저장하지 못한 조각" in _continuation_message("38.5도야", other)
+
+
+def test_체온을_또_되물어도_이미_저장한_기록이라는_표시가_남는다() -> None:
+    again = _pending(
+        MemoryReply(text="몇 도였나요?", kind="question"),
+        None,
+        None,
+        _asked_temperature(),
+        "잠깐만요",
+    )
+
+    assert again is not None and again.asks_temperature
 
 
 async def test_응급_안내만_냈어도_실패가_아니다(events: list[Any]) -> None:

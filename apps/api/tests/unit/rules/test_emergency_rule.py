@@ -8,7 +8,7 @@ from decimal import Decimal
 
 import pytest
 
-from app.rules.emergency import InfantThreshold, Sign, detect, stated_months
+from app.rules.emergency import InfantThreshold, Sign, detect, is_infant, stated_months
 from app.rules.term_match import Term
 
 
@@ -152,3 +152,49 @@ def test_날짜는_월령이_아니다(text):
     # "1일 아이" 를 생후 1일로 읽으면 아이가 몇 살이든 119 안내가 나간다
     assert stated_months(text) == ()
     assert detect(text, [FEVER], RULE) == ()
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "지금 열이 38.7도예요",
+        "열이 38도야",
+        "고열이에요",
+        "2개월인데 고열이에요",
+        "두 달 됐는데 고열",
+    ],
+)
+def test_생일_월령이_기준_미만이면_말에_월령이_없어도_본다(text):
+    assert detect(text, [FEVER], RULE, child_months=2) == ("infant_fever",)
+
+
+@pytest.mark.parametrize("child_months", [3, 48, None])
+def test_생일_월령이_기준_이상이거나_없으면_말에_월령이_있어야_한다(child_months):
+    assert detect("열이 38도야", [FEVER], RULE, child_months=child_months) == ()
+
+
+def test_말에_적힌_월령은_생일_월령과_따로_본다():
+    # 생일이 틀렸어도 3개월 미만이라는 말을 놓치지 않는다
+    assert detect("두 달 된 아기가 열이 38도야", [FEVER], RULE, child_months=48) == (
+        "infant_fever",
+    )
+
+
+def test_생일_월령이_어려도_열_이야기가_아니면_걸리지_않는다():
+    assert detect("목욕물 38도로 맞췄어", [FEVER], RULE, child_months=2) == ()
+    assert detect("열이 37.5도야", [FEVER], RULE, child_months=2) == ()
+    assert detect("열 안 나고 체온도 38도 아래야", [FEVER], RULE, child_months=2) == ()
+    assert detect("잘 먹고 잘 자", [FEVER], RULE, child_months=2) == ()
+
+
+def test_생일_월령은_다른_신호를_열지_않는다():
+    seizure = Sign("seizure", (Term("s", ("경련",)),))
+    assert detect("열이 38도야", [seizure], RULE, child_months=2) == ()
+
+
+def test_기준_미만_월령인지는_생일과_말을_둘_다_본다():
+    assert is_infant("열이 나요", RULE, child_months=2)
+    assert is_infant("두 달 된 아기 열이 나요", RULE, child_months=48)
+    assert is_infant("두 달 된 아기 열이 나요", RULE)
+    assert not is_infant("열이 나요", RULE, child_months=3)
+    assert not is_infant("열이 나요", RULE)

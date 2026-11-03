@@ -83,3 +83,5 @@ class PendingMemoryContext:
     # 이 질문 전에 조회로 찾은 행. 코드가 tool 결과에서 모으고 모델이 고르지 않는다.
     # "응" 을 받은 run이 검색을 처음부터 다시 하다 못 찾는 상황 방지
     found: tuple[FoundRef, ...] = ()
+    # 코드가 체온을 되물은 자리다. 조각은 이미 저장됐고 답은 그 행을 고친다
+    asks_temperature: bool = False

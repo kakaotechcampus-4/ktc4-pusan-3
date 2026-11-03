@@ -40,7 +40,8 @@ from app.agents.health.agent import run as run_health
 from app.agents.health.agent import run_hooks as run_health_hooks
 from app.agents.health.registry import WRITING_TASKS as HEALTH_WRITING_TASKS
 from app.agents.health.schemas.task import HealthTaskType
-from app.agents.memory.agent import MemoryAgentResult
+from app.agents.health.tools.fever import says_fever
+from app.agents.memory.agent import MemoryAgentResult, ToolCallRecord
 from app.agents.memory.agent import run as run_memory
 from app.agents.memory.bundles import MUTATING_PREFIXES, WRITES_FOR
 from app.agents.memory.context import AgentContext
@@ -48,6 +49,7 @@ from app.agents.memory.drafts import EventDraft, draft_from_request
 from app.agents.memory.result import ErrorCode
 from app.agents.memory.schemas.reply import ReplyKind
 from app.agents.memory.schemas.task import (
+    FoundRef,
     MemoryHint,
     MemoryTask,
     PendingMemoryContext,
@@ -57,7 +59,7 @@ from app.agents.run_writes import RunWrites
 from app.agents.suggestion_save import SaveSuggestions, SuggestionBatch
 from app.agents.supervisor.agent import SupervisorResult
 from app.agents.supervisor.agent import run as run_supervisor
-from app.agents.supervisor.emergency import emergency_guidance
+from app.agents.supervisor.emergency import emergency_guidance, infant_fever_age
 from app.agents.supervisor.routing import (
     AGENT_LIMIT,
     HAZARD_GUIDANCE,
@@ -185,6 +187,7 @@ NON_RECOMMENDING_AGENTS: frozenset[str] = frozenset({DomainAgentName.HEALTH.valu
 # Health 응급 readout 의 kind. hook 과 진료 준비가 한 run 에서 둘 다 걸려도 화면에는 한 번만
 # 나간다(`_EmergencyOnce`). health.readouts 의 `emergency` 와 같아야 한다 (테스트가 본다)
 EMERGENCY_KIND = "emergency"
+_TEMPERATURE_QUESTION = "체온이 몇 도인지 알려주세요."
 
 
 class _EmergencyOnce:
@@ -196,6 +199,10 @@ class _EmergencyOnce:
 
     def __init__(self) -> None:
         self._shown = False
+
+    @property
+    def shown(self) -> bool:
+        return self._shown
 
     def mark(self) -> None:
         self._shown = True
@@ -507,6 +514,7 @@ async def handle_input(
     writes: RunWrites | None = None,
     curator_trigger: CuratorTrigger | None = None,
     count_records: CountRecords | None = None,
+    child_months: int | None = None,
 ) -> PipelineResult:
     """사용자 입력 한 건을 처리한다.
 
@@ -523,6 +531,8 @@ async def handle_input(
     eval 은 `InMemorySuggestions()` 를 넘긴다.
     writes는 도메인 쓰기 포트가 성공했는지 남는 표시다. entrypoint가 쓰기 포트를 감싸 넘긴다.
     count_records 를 넘기면 일반 추천 블록의 쌓인 기록 수를 센다(없으면 그 칸이 빈다).
+    child_months 는 생일로 계산한 월령이다. 응급 사전검사가 말에 적힌 월령과 함께 본다. 저장 뒤
+    hook 에 맡기면 동의가 없거나 Memory 가 저장하지 않은 run 에서 안내가 빠진다. 없으면 None.
     """
     started = time.perf_counter()
     send = emit or _ignore
@@ -534,7 +544,7 @@ async def handle_input(
 
     # 응급 안내는 Supervisor 보다 먼저, 이어받기 답에 나와도 같다. 기록은 평소처럼 남기고
     # 도메인 Agent 만 건너뛴다 — 응급 화면에 다른 카드를 줄인다
-    emergency = _emergency_precheck(raw_text)
+    emergency = _emergency_precheck(raw_text, child_months)
     if emergency is not None:
         send(emergency)
         once.mark()
@@ -554,6 +564,7 @@ async def handle_input(
             once=once,
             emergency=emergency is not None,
             curator_trigger=curator_trigger,
+            child_months=child_months,
         )
 
     send(Step(1, _TOTAL_STEPS, _LABELS[0]))
@@ -621,11 +632,7 @@ async def handle_input(
             # 저장된 것과 제출을 기다리는 것을 한 run에서 같이 내보낸다
             if memory.drafts:
                 send(EventDrafts(memory.drafts))
-            note = _memory_note(memory)
-            if note is not None:
-                send(note)
-            if memory.pending is not None:
-                send(PendingReply(run_id, memory.pending))
+            _send_reply(memory, run_id=run_id, send=send, once=once, child_months=child_months)
             unwritten = _unwritten(routing.memory_task, memory)
             if unwritten is not None:
                 send(unwritten)
@@ -948,6 +955,58 @@ def _memory_note(memory: MemoryAgentResult) -> MemoryNote | None:
     return MemoryNote(text=reply.text, kind=reply.kind)
 
 
+def _unmeasured_fever(memory: MemoryAgentResult) -> ToolCallRecord | None:
+    """체온 없이 저장한 열 기록. 없으면 None."""
+    for call in memory.calls:
+        if (
+            call.success
+            and call.name == "create_observation_health"
+            and call.arguments.get("temperature") is None
+            and says_fever(call.arguments.get("symptom") or ())
+        ):
+            return call
+    return None
+
+
+def _send_reply(
+    memory: MemoryAgentResult,
+    *,
+    run_id: str,
+    send: Emit,
+    once: _EmergencyOnce,
+    child_months: int | None,
+) -> None:
+    """Memory 의 말과 되묻기 맥락을 낸다.
+
+    3개월 이상 아이의 체온 없는 열 기록이면 코드가 몇 도인지 묻는다. Memory 는 저장한 조각을
+    되물을 수 없어서 답이 그 행을 고치게 맥락을 여기서 만든다. 3개월 미만은 열 이야기가 응급이라
+    묻지 않는다. 월령을 모르면 묻지 않는다. 응급 안내가 이미 나갔거나 Memory 가 다른 것을 묻는
+    중이어도 묻지 않는다(질문은 하나).
+    """
+    note = _memory_note(memory)
+    pending = memory.pending
+    fever = _unmeasured_fever(memory) if pending is None and not once.shown else None
+    raw_text = "" if fever is None else str(fever.arguments["raw_text"])
+    older = child_months is not None and not infant_fever_age(raw_text, child_months=child_months)
+    if fever is not None and older:
+        if memory.reply is not None and memory.reply.kind == "question":
+            note = None
+        if note is not None:
+            send(note)
+        note = MemoryNote(text=_TEMPERATURE_QUESTION, kind="question")
+        pending = PendingMemoryContext(
+            hint_text=raw_text,
+            question=_TEMPERATURE_QUESTION,
+            work=WorkType.LOOKUP_EDIT,
+            found=(FoundRef(resource="observation_health", id=fever.result["data"]["id"]),),
+            asks_temperature=True,
+        )
+    if note is not None:
+        send(note)
+    if pending is not None:
+        send(PendingReply(run_id, pending))
+
+
 async def _handle_continuation(
     answer: str,
     memory_context: AgentContext,
@@ -963,6 +1022,7 @@ async def _handle_continuation(
     once: _EmergencyOnce,
     emergency: bool,
     curator_trigger: CuratorTrigger | None = None,
+    child_months: int | None = None,
 ) -> PipelineResult:
     """이전 run의 되묻기를 이어받는다. 도메인 Agent를 타지 않는다.
 
@@ -1015,11 +1075,7 @@ async def _handle_continuation(
             hooked = await _run_hooks(contexts, send=send, once=once)
         if memory.drafts:
             send(EventDrafts(memory.drafts))
-        note = _memory_note(memory)
-        if note is not None:
-            send(note)
-        if memory.pending is not None:
-            send(PendingReply(run_id, memory.pending))
+        _send_reply(memory, run_id=run_id, send=send, once=once, child_months=child_months)
         if memory.refused(ErrorCode.HAZARD):
             # Supervisor 가 놓치고 저장 게이트가 막은 경우 일반 run과 같은 안내
             send(HAZARD_GUIDANCE)
@@ -1506,13 +1562,13 @@ def _safety_precheck(raw_text: str) -> tuple[str, ...]:
     return find_hazards(raw_text)
 
 
-def _emergency_precheck(raw_text: str) -> Guidance | None:
+def _emergency_precheck(raw_text: str, child_months: int | None) -> Guidance | None:
     """응급 신호 사전검사. 걸리면 안내 한 건, 아니면 None.
 
     위험 물질 사전검사(`_safety_precheck`)와 별개다. 판정은 사전 · 규칙이 하고 모델은 부르지
     않는다. 로그에는 걸린 신호 키만 남는다(`emergency_guidance`).
     """
-    return emergency_guidance(raw_text)
+    return emergency_guidance(raw_text, child_months=child_months)
 
 
 def _stop_for_hazard(

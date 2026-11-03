@@ -6,7 +6,8 @@
 
 🚨 걸리지 않아야 할 것이 걸리면 도메인 Agent 가 전부 빠진다. 그래서 두 가지를 지킨다.
   - 표현마다 guard(오탐 취소)를 둘 수 있다 ("경련 얘기" · "숨 잘 쉬")
-  - 월령은 **발화에 적힌 것만** 읽는다. 기간 표현("두 달 전부터")은 월령이 아니다
+  - 발화에서는 아이 나이를 말한 꼴만 월령으로 읽는다. 기간 표현("두 달 전부터")은 월령이 아니다.
+    생일로 계산한 월령은 호출하는 쪽이 넘긴다 — 여기서 날짜를 세지 않는다
 """
 
 import re
@@ -22,8 +23,9 @@ from app.rules.term_match import Term, match_terms
 class Sign:
     """응급 신호 하나. `all_of` 의 Term 이 전부 걸려야 한다.
 
-    `infant=True` 면 발화에 적힌 월령이 기준 미만이어야 한다. 그리고 `all_of` 대신 기준 이상의
-    체온을 말한 것으로도 걸린다("두 달 된 아기가 열이 38도야" 에는 열 표현이 없어도 체온이 있다).
+    `infant=True` 면 발화에 적힌 월령이나 생일로 계산한 월령이 기준 미만이어야 한다. 그리고
+    `all_of` 대신 기준 이상의 체온을 말한 것으로도 걸린다("두 달 된 아기가 열이 38도야" 에는 열
+    표현이 없어도 체온이 있다).
     """
 
     key: str
@@ -96,19 +98,46 @@ def _months(number: str, unit: str) -> int:
     return days // _DAYS_PER_MONTH
 
 
-def detect(text: str, signs: Sequence[Sign], infant: InfantThreshold) -> tuple[str, ...]:
-    """걸린 `Sign.key` 를 `signs` 순서로. 걸린 것이 없으면 빈 튜플."""
+def detect(
+    text: str,
+    signs: Sequence[Sign],
+    infant: InfantThreshold,
+    *,
+    child_months: int | None = None,
+) -> tuple[str, ...]:
+    """걸린 `Sign.key` 를 `signs` 순서로. 걸린 것이 없으면 빈 튜플.
+
+    child_months 는 생일로 계산한 월령이다. 모르면 None 이고, 발화에 적힌 월령만 본다.
+    """
     months = stated_months(text)
-    return tuple(sign.key for sign in signs if _fires(text, sign, months, infant))
+    return tuple(sign.key for sign in signs if _fires(text, sign, months, infant, child_months))
 
 
-def _fires(text: str, sign: Sign, months: tuple[int, ...], infant: InfantThreshold) -> bool:
+def is_infant(text: str, infant: InfantThreshold, *, child_months: int | None = None) -> bool:
+    """생일로 계산한 월령이나 발화에 적힌 월령이 기준 미만인가."""
+    return _young(stated_months(text), infant, child_months)
+
+
+def _young(months: tuple[int, ...], infant: InfantThreshold, child_months: int | None) -> bool:
+    # 생일로 계산한 월령이 기준 미만이면 말에 월령이 없어도 본다
+    if child_months is not None and child_months < infant.below_month:
+        return True
+    # 한 아이의 지금 월령은 하나다. "생후 2개월 때 접종했는데 지금 7개월" 은 가장 큰 값을 본다
+    return bool(months) and max(months) < infant.below_month
+
+
+def _fires(
+    text: str,
+    sign: Sign,
+    months: tuple[int, ...],
+    infant: InfantThreshold,
+    child_months: int | None,
+) -> bool:
     # all_of 가 비면 모든 말에 걸린다 — 사전 검사가 막지만 규칙도 스스로 막는다
     matched = bool(sign.all_of) and all(match_terms(text, (term,)) for term in sign.all_of)
     if not sign.infant:
         return matched
-    # 한 아이의 지금 월령은 하나다. "생후 2개월 때 접종했는데 지금 7개월" 은 가장 큰 값을 본다
-    if not months or max(months) >= infant.below_month:
+    if not _young(months, infant, child_months):
         return False
     hot = (
         any(value >= infant.fever_temperature for value in temperatures_said(text))
