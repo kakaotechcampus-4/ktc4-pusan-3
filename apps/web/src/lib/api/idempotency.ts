@@ -82,7 +82,7 @@ export function createIdempotencyKeyHolder(): IdempotencyKeyHolder {
 /* ── 되돌릴 수 없는 엔드포인트 ────────────────────────────────────────── */
 
 /**
- * 계약서 §01 의 5곳. 승인 게이트 2곳(㉠ 초안 제출 · ㉡ healthSafety · 복약 제출)이 여기 포함된다.
+ * 계약서 §01 의 5곳과 대화의 삭제 확정(#535). 승인 게이트 2곳(㉠ 초안 제출 · ㉡ healthSafety · 복약 제출)이 여기 포함된다.
  * 🚨 초안 제출은 create(`submitEvent`)와 update(`updateEvent`) **두 줄**이다 — 한 곳의 두 갈래라
  *    게이트가 늘어난 것이 아니다 (9/21 에 op 별로 엔드포인트를 갈랐다).
  *    알레르기 · 건강 기록도 같다 — 등록(`healthSafety`)과 고치기(`updateHealthSafety`) 두 줄이 게이트 ㉡ 하나다.
@@ -136,6 +136,15 @@ export const idempotentPath = {
    */
   updateMedication: (childId: string, scheduleId: string) =>
     `/children/${childId}/medications/${scheduleId}`,
+  /**
+   * 🚨 대화의 삭제 확정 (#535) — 체크한 기록 · 일정을 **지운다.** 지운 기록은 되살릴 수 없다.
+   *    AI 가 남긴 제안을 보호자가 버튼으로 확정하는 자리라, 채팅 "응" 을 모델이 해석하던 빈 게이트를 채운 것이다
+   *    (11-03 팀 회의 · 최상위 §2 문구는 별도 문서 PR). 서버도 키가 필수다(없으면 400) — 응답만 잃고 다시
+   *    누르면 처음 응답이 재생돼서 두 번 지우지 않는다.
+   *    취소(`…/cancel`)는 아무것도 지우지 않고 다시 보내도 같은 응답이라 표에 없다.
+   */
+  confirmDeleteProposal: (childId: string, proposalId: string) =>
+    `/children/${childId}/delete-proposals/${proposalId}/confirm`,
 } as const satisfies Record<string, (...ids: string[]) => string>;
 
 export type IdempotentOperation = keyof typeof idempotentPath;
@@ -156,6 +165,7 @@ export const idempotentMethod = {
   updateEvent: "PATCH",
   submitMedication: "POST",
   updateMedication: "PATCH",
+  confirmDeleteProposal: "POST",
 } as const satisfies Record<IdempotentOperation, "POST" | "PATCH">;
 
 const ID_SLOT = "__ID__";

@@ -102,6 +102,13 @@ export const qk = {
    * 그 턴이 목록에 아직 받지 않은 지난 날에 붙어 있을 수 있다.
    */
   chatDay: (childId: string, date: string) => [...qk.chat(childId), "day", date] as const,
+  /**
+   * 대화의 삭제 카드를 확정 · 취소한 뒤의 상태 (#535 · `components/record-tabs-card.tsx`). 🚨 **받아 오는 쿼리가 없다** —
+   * 버튼 응답(`DeleteProposalResponse.proposal`)을 그대로 넣어 둔다. run 화면의 카드는 대화 스토어에 `pending` 으로
+   * 굳어 있어서, 이 값이 없으면 화면을 떠났다 오면 이미 지운 카드에 체크와 버튼이 다시 선다.
+   */
+  deleteProposal: (childId: string, proposalId: string) =>
+    [...qk.child(childId), "delete-proposal", proposalId] as const,
   corrections: (childId: string, ref?: { kind: string; id: string }) =>
     [...qk.child(childId), "corrections", ref ?? null] as const,
 } as const;

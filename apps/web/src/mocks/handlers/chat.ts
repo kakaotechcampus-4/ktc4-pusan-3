@@ -5,6 +5,7 @@ import type { ChatDayResponse, ChatReply, ChatTurnOut } from "@/lib/api/types";
 import { daysAgo, healthObservation, observations, runEventDrafts, suggestions } from "../fixtures";
 import { currentScenario } from "../scenario";
 import { apiError, networkDelay, url } from "./helpers";
+import { currentProposalCard } from "./delete-proposals";
 import { pendingReplies } from "./pending-replies";
 
 /**
@@ -104,6 +105,10 @@ function toReply(event: string, data: Record<string, unknown>): ChatReply | null
     case "guidance":
     case "unavailable":
     case "partial":
+    // 조회 · 삭제 카드 (#535). 서버는 (종류, id) 와 제안 id 만 남기고 조회 때 지금 상태로 다시 읽는다 —
+    // 목은 행을 그대로 두고, 삭제 카드만 조회 때 지금 상태로 바꾼다 (아래 GET).
+    case "found_tabs":
+    case "delete_proposal":
       return { type: event, ...data } as ChatReply;
     default:
       return null;
@@ -416,6 +421,12 @@ export const chatHandlers = [
       date: day,
       turns: ofDay.slice(start, end).map((turn) => ({
         ...turn,
+        // 🚨 삭제 카드는 지금 상태다 — 끝났으면 후보 없이 상태 · 건수만 (서버 `chat_replies`).
+        replies: turn.replies.map((reply) =>
+          reply.type === "delete_proposal"
+            ? { type: "delete_proposal" as const, ...currentProposalCard(reply) }
+            : reply,
+        ),
         // 그 run 의 되묻기에 아직 답할 수 있는가 — 맥락이 남아 있고 그 아이 것이다.
         reply_open:
           turn.replies.some((r) => r.type === "note" && r.kind === "question") &&

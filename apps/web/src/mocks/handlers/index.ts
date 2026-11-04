@@ -3,6 +3,7 @@ import { calendarHandlers } from "./calendar";
 import { chatHandlers } from "./chat";
 import { childrenHandlers } from "./children";
 import { clientErrorHandlers } from "./client-errors";
+import { deleteProposalHandlers } from "./delete-proposals";
 import { inviteHandlers } from "./invites";
 import { medicationHandlers } from "./medications";
 import { memoryHandlers } from "./memories";
@@ -46,6 +47,8 @@ export const handlers = [
   ...medicationHandlers,
   // 04 지난 대화 (#228). 끝난 입력 run 을 `runHandlers` 가 이리로 남긴다 (`recordingTurn`).
   ...chatHandlers,
+  // 04 대화의 삭제 확정 · 취소 (#535). 아이 스코프 아래 `/delete-proposals` 라 겹치는 경로가 없다.
+  ...deleteProposalHandlers,
   ...settingsHandlers,
   // `/invites/{code}/accept` 는 아이 스코프 밖이라 어느 핸들러와도 경로가 겹치지 않는다.
   ...inviteHandlers,
