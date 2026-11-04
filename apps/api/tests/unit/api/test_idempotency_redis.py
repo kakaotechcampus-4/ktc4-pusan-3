@@ -160,3 +160,15 @@ def test_Redis_가_응답_없이_매달려도_1초_남짓에_메모리로_넘어
 
     assert result is None
     assert elapsed < infra_redis.TIMEOUT_S * 3
+
+
+def test_strict_는_Redis_장애면_메모리로_넘어가지_않고_503():
+    """승인 게이트 쓰기 — 장애 직전 Redis 키가 안 보여 두 번 저장되는 것을 막는다 (#671 리뷰)."""
+    import pytest
+
+    from app.api.errors import ApiError
+
+    with patch("app.api.idempotency.get_redis", return_value=_down):
+        with pytest.raises(ApiError) as caught:
+            idempotency.recall(parent_id=PID, method="POST", path="/e", key="s1", strict=True)
+    assert (caught.value.status, caught.value.code) == (503, "temporarily_unavailable")

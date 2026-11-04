@@ -277,7 +277,7 @@ async def create_event_drafts(
     ),
     status_code=201,
     response_model=SubmitEventResponse,
-    responses={status: {"model": ErrorEnvelope} for status in (400, 404, 409, 422)},
+    responses={status: {"model": ErrorEnvelope} for status in (400, 404, 409, 422, 503)},
 )
 async def submit_event(
     child: AccessibleChild,
@@ -298,7 +298,7 @@ async def submit_event(
         "path": request.url.path,
         "key": idempotency_key,
     }
-    replayed = idempotency.recall(**scope)
+    replayed = idempotency.recall(**scope, strict=True)  # 승인 게이트
     if replayed is not None and isinstance(replayed, dict):
         return JSONResponse(status_code=201, content=replayed)
 
@@ -961,7 +961,7 @@ async def set_suggestion_feedback(
     ),
     status_code=200,
     response_model=SubmitEventResponse,
-    responses={status: {"model": ErrorEnvelope} for status in (400, 404, 409, 422)},
+    responses={status: {"model": ErrorEnvelope} for status in (400, 404, 409, 422, 503)},
 )
 async def update_event(
     child: AccessibleChild,
@@ -983,7 +983,7 @@ async def update_event(
         "path": request.url.path,
         "key": idempotency_key,
     }
-    replayed = idempotency.recall(**scope)
+    replayed = idempotency.recall(**scope, strict=True)  # 승인 게이트
     if replayed is not None and isinstance(replayed, dict):
         return JSONResponse(status_code=200, content=replayed)
 

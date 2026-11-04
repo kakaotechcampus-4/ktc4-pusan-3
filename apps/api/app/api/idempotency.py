@@ -17,6 +17,11 @@ Redis 가 죽어도 같은 메모리 폴백으로 계속 받는다 (#671) — �
 그동안 적은 키는 메모리에만 있어서, Redis 가 돌아온 뒤에도 recall 이 Redis 에 없으면 메모리를 본다.
 로그에는 오류 종류만 남긴다 (키에 parent_id 가 들어 있다).
 
+🚨 폴백에는 구멍이 하나 있다 — 장애 **직전에** Redis 에 적힌 키는 장애 동안 안 보여서, 같은 키
+   재시도가 새 요청으로 처리된다. 한 줄 입력은 관찰이 두 번 저장될 뿐이라(보호자가 지울 수 있다)
+   받아 주지만, 되돌릴 수 없는 쓰기(승인 게이트 — 일정 등록 · 수정, 건강 기록)는 `strict=True` 로
+   불러 Redis 장애면 503 으로 막는다 (루트 §3 "틀렸을 때 되돌릴 수 있나?").
+
 재시작 뒤 키는 Redis 에 남고 run 채널(registry)은 사라진다 — 새로고침하면 새 키.
 """
 
@@ -26,6 +31,7 @@ from uuid import UUID
 
 from redis import RedisError
 
+from app.api.errors import ApiError
 from app.infra.redis import get_redis
 
 log = logging.getLogger(__name__)
@@ -54,8 +60,14 @@ def _run_key(run_id: str) -> str:
     return f"idem-run:{run_id}"
 
 
-def recall(*, parent_id: UUID, method: str, path: str, key: str) -> str | dict | None:
-    """이 보호자가 이 창구에 이 키로 보낸 적이 있으면 그때의 재생값(run_id str 또는 응답 dict)."""
+def recall(
+    *, parent_id: UUID, method: str, path: str, key: str, strict: bool = False
+) -> str | dict | None:
+    """이 보호자가 이 창구에 이 키로 보낸 적이 있으면 그때의 재생값(run_id str 또는 응답 dict).
+
+    strict — Redis 장애면 메모리로 넘어가지 않고 503 으로 막는다. 되돌릴 수 없는 쓰기용.
+    remember 는 그대로 둔다 — 저장(commit) 뒤라 막으면 성공한 요청이 실패로 보인다.
+    """
     fallback = _seen.get((parent_id, method, path, key))
     r = get_redis()
     if r is None:
@@ -64,6 +76,8 @@ def recall(*, parent_id: UUID, method: str, path: str, key: str) -> str | dict |
         raw = r.get(_idem_key(parent_id, method, path, key))
     except RedisError as exc:
         _warn(exc)
+        if strict:
+            raise ApiError(503, "temporarily_unavailable", "잠시 후 다시 시도해 주세요") from None
         return fallback
     if raw is None:
         return fallback
