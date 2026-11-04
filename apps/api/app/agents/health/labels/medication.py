@@ -60,12 +60,14 @@ from app.agents.health.tools.drafts import (
 )
 from app.agents.health.tools.exits import blocked_exit, log_rejected_exit
 from app.agents.health.tools.spans import normalize_spaces
+from app.agents.health.tools.symptoms import symptom_codes_of
 from app.agents.health.tools.timing import (
     anchors_named,
     resolve_dose_answer,
     resolve_dose_timing,
 )
 from app.core.medication_draft import MedicationDraft
+from app.rules.temperature import temperatures_said
 
 logger = logging.getLogger(__name__)
 
@@ -137,6 +139,65 @@ def confirm_answer(texts: Sequence[str]) -> Literal["yes", "no", "unclear"]:
     if any(_YES.match(token) for token in tokens):
         return "yes"
     return "unclear"
+
+
+# 증상 · 체온 · 복용 낱말이 없어도 표(네 · 아니요 · 약 이름)에 걸리지 않는 글이 이만큼 남으면 기록이
+# 섞였다고 본다. 인사 · 이유("네네 알겠습니다 감사합니다" · "의사 선생님이 그만 먹이래요")에 안내가
+# 붙지 않게 일부러 넉넉히 잡았다
+LEFTOVER_MIN_CHARS = 20
+
+
+def answer_leftover(pending: DomainPending, texts: Sequence[str]) -> bool:
+    """되묻기 답에 그 질문의 답이 아닌 말이 섞여 있는가.
+
+    Health 답 run 은 Memory 를 거치지 않아서 답에 섞인 기록("응, 그리고 열 38도였어")이 저장되지
+    않는다. 모델이 가려 줄 수도 없어서 코드가 판정하고, pipeline 이 "반영하지 않았어요" 를 붙인다.
+    판정은 보수적이다 — Memory 가 저장했을 기록의 표시(체온 · 증상 사전의 말 · 복용 표현)가 있거나,
+    표에 걸리지 않는 글이 `LEFTOVER_MIN_CHARS` 자 이상 남을 때만 참이다. 중단 확인에 인사나 이유를
+    덧붙인 답에 "반영하지 않았어요" 가 붙으면 중단이 안 됐다고 읽힌다. 시점 답은 시점 사전이
+    어디까지 읽는지 여기서 알 수 없어서 글자 수는 보지 않는다. 모르는 맥락이면 거짓이다.
+    """
+    if pending.agent != "health" or pending.kind not in (KIND_STOP, KIND_WHICH, KIND_TIMING):
+        return False
+    # 물은 약 이름을 먼저 뺀다 — "기침약" 의 "기침" 은 증상 기록이 아니다
+    text = _without_titles(" ".join(texts), _asked_titles(pending))
+    if temperatures_said(text) or symptom_codes_of([text]) or _says_dose(text):
+        return True
+    if pending.kind == KIND_TIMING:
+        return False
+    return _unmatched_chars(text) >= LEFTOVER_MIN_CHARS
+
+
+def _says_dose(text: str) -> bool:
+    return any(word in text for word in DOSE_WORDS)
+
+
+def _asked_titles(pending: DomainPending) -> list[str]:
+    """질문이 가리킨 약 이름. 맥락이 망가졌으면 빈 목록이다(이어받는 쪽이 따로 실패로 다룬다)."""
+    payload = pending.payload
+    try:
+        if pending.kind == KIND_STOP:
+            return [str(payload["title"])]
+        return [str(candidate["title"]) for candidate in payload["candidates"]]
+    except (KeyError, TypeError):
+        return []
+
+
+def _without_titles(text: str, titles: Sequence[str]) -> str:
+    cleaned = normalize_spaces(text)
+    for title in sorted(titles, key=len, reverse=True):
+        cleaned = cleaned.replace(normalize_spaces(title), " ")
+    return cleaned
+
+
+def _unmatched_chars(text: str) -> int:
+    """'네' · '아니요' 표에 걸리는 낱말을 뺀 뒤 남는 글자 수. 약 이름은 이미 뺀 글이다."""
+    cleaned = _NUMERAL_NE.sub(" ", text)
+    return sum(
+        len(token)
+        for token in _TOKEN.findall(cleaned)
+        if not (_YES.match(token) or _NO.match(token) or token in _NEGATIONS)
+    )
 
 
 def is_dose_report(texts: Sequence[str]) -> bool:
