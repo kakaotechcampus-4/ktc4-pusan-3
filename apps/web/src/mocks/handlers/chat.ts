@@ -341,6 +341,29 @@ function historyTurns(childId: string): StoredTurn[] {
   ];
 }
 
+/**
+ * `chat_history_long` — 오늘부터 열흘 전까지 날마다 한 줄 (#707). 🚨 실제 발화가 아니다 (최상위 §9).
+ * 높이가 화면 두 장을 못 채워야 미리 받기의 상한이 보인다 — 답 묶음을 크게 키우지 않는다.
+ */
+const LONG_HISTORY_DAYS = 10;
+
+function longHistoryTurns(childId: string): StoredTurn[] {
+  return Array.from({ length: LONG_HISTORY_DAYS }, (_, n) => {
+    const day = daysAgo(n);
+    return {
+      childId,
+      day,
+      turn: {
+        run_id: `r_long_${n}`,
+        raw_text: n === 0 ? "오늘 이야기" : `${n}일 전 이야기`,
+        reply_to: null,
+        created_at: `${day}T19:00:00+09:00`,
+        replies: [{ type: "saved", observations: [observations[0]], deleted: [] }, done],
+      },
+    };
+  });
+}
+
 /** `chat_history` 에서 아직 답할 수 있는 질문. */
 const OPEN_QUESTION_RUN = "r_hist_nap";
 
@@ -358,7 +381,9 @@ function turnsOf(childId: string): StoredTurn[] {
       : // 오늘 대화가 없는 날 — 캘린더에서 지난 날로 들어올 때 첫 장이 비어 온다.
         scenario === "chat_history_past"
         ? historyTurns(childId).filter((t) => t.day !== daysAgo(0))
-        : [];
+        : scenario === "chat_history_long"
+          ? longHistoryTurns(childId)
+          : [];
   return [
     ...base,
     ...recorded.filter((t) => t.childId === childId && !hiddenRuns.has(t.turn.run_id)),
