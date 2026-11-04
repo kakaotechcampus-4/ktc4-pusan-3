@@ -167,7 +167,16 @@ RECOMMENDING_TASKS: dict[str, frozenset[str | None]] = {
 # 추천도 내지 않는다(Growth_Agent_명세 §6). 질문이 화면 안내로만 끝나면 답이 맥락 없는 새 입력이
 # 되어 버려지거나 기록만 남고, 다시 요청해도 같은 질문이 돌아온다. Health 는 표에 없다
 _RESUMED_BY_ANSWER: dict[str, frozenset[str]] = {
-    DomainAgentName.GROWTH.value: frozenset({GrowthTaskType.ROUTINE_COACHING.value}),
+    DomainAgentName.GROWTH.value: frozenset(
+        {GrowthTaskType.ROUTINE_COACHING.value, GrowthTaskType.LEARNING_SUGGESTION.value}
+    ),
+}
+
+# 추천에 질문이 덧붙어도 그 답을 이어받는 task. 추천을 이미 냈으면 보통 다시 돌 일이 없어 이어받지
+# 않지만, Growth 교육은 일반 추천을 낸 뒤 "해 본 적이 있나요?" 를 묻고 답이 기록이 되면 같은 요청을
+# 개인화로 다시 낸다 (#702). Food 의 덧붙는 질문은 이어받지 않는다
+_RESUMED_WITH_SUGGESTIONS: dict[str, frozenset[str]] = {
+    DomainAgentName.GROWTH.value: frozenset({GrowthTaskType.LEARNING_SUGGESTION.value}),
 }
 
 # 질문을 낸 결과와, 그 질문에 답하면 다시 돌릴 task(답을 받지 않는 질문이면 None)
@@ -1425,10 +1434,15 @@ def _resumable(outcome: DomainOutcome, tasks: tuple[DomainTask, ...]) -> DomainT
     """이 결과의 질문에 답하면 다시 돌릴 task. 답을 받지 않는 질문이면 None.
 
     Agent 가 물은 자리(`pending`)를 싣고 pipeline 표(`_RESUMED_BY_ANSWER`)에 있는 task 여야 하고,
-    추천에 덧붙은 질문은 이어받지 않는다 — 이미 낸 추천을 두고 다시 돌 일이 없다.
+    추천에 덧붙은 질문은 이어받지 않는다 — 이미 낸 추천을 두고 다시 돌 일이 없다. 단
+    `_RESUMED_WITH_SUGGESTIONS` 의 task 는 덧붙은 질문도 받는다.
     """
     label = _task_label(outcome.task_type)
-    if outcome.pending is None or outcome.suggestions or not outcome.needs_observation:
+    if outcome.pending is None or not outcome.needs_observation:
+        return None
+    if outcome.suggestions and label not in _RESUMED_WITH_SUGGESTIONS.get(
+        outcome.agent, frozenset()
+    ):
         return None
     if label not in _RESUMED_BY_ANSWER.get(outcome.agent, frozenset()):
         return None
