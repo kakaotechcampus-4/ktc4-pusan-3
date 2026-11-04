@@ -20,6 +20,7 @@
 로그에 약명 · 이유 원문을 남기지 않는다. 실패 메시지에도 값을 싣지 않는다.
 """
 
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
@@ -137,7 +138,7 @@ async def create_medication_schedule(
     )
     fields = dict(
         title=_clean(args.title_span),
-        dosage=_clean(args.dosage_span),
+        dosage=_dose(args.dosage_span),
         indication_text=_clean(args.indication_span),
         starts_on=starts_on,
         ends_on=ends_on,
@@ -185,7 +186,7 @@ async def update_medication_schedule(
             "update",
             target.candidates,
             {
-                "dosage_span": _clean(args.dosage_span),
+                "dosage_span": _dose(args.dosage_span),
                 "timing_spans": timing_spans,
                 "period_span": _clean(args.period_span),
             },
@@ -193,7 +194,7 @@ async def update_medication_schedule(
     outcome = await update_for(
         context,
         target,
-        dosage_span=_clean(args.dosage_span),
+        dosage_span=_dose(args.dosage_span),
         timing_spans=timing_spans,
         period_span=_clean(args.period_span),
     )
@@ -810,6 +811,21 @@ async def child_months(context: HealthContext) -> int:
 
 def _clean(span: str | None) -> str | None:
     return span if span and span.strip() else None
+
+
+_DOSE_SUFFIX = re.compile(r"\s*씩$")
+
+
+def _dose(span: str | None) -> str | None:
+    """용량 span 에서 뒤따르는 "씩" 을 뗀다. "5ml씩" 이 투약의뢰서에 그대로 나가지 않게 한다.
+
+    원문의 앞부분이라 "원문에 있는 말만" 이라는 복사 규칙(검증은 떼기 전의 span 으로 끝났다)을
+    지킨다. 프롬프트로 빼라고 시키면 복용 이유 같은 다른 칸의 span 고르기까지 흔들려서 코드로 뗀다.
+    """
+    cleaned = _clean(span)
+    if cleaned is None:
+        return None
+    return _DOSE_SUFFIX.sub("", cleaned.strip()) or None
 
 
 def _spans(spans: Sequence[str]) -> list[str]:
