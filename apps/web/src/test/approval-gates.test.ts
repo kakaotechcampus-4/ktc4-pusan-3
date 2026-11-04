@@ -17,6 +17,8 @@ import { describe, expect, it } from "vitest";
  * 🚨 이 테스트가 깨졌다면 목록을 고치기 전에 묻는다 — 게이트를 **늘리는** 변경인가?
  *    늘리지도 줄이지도 않는다 (§2). 같은 게이트를 다른 화면으로 옮긴 것이면 목록을 고치고,
  *    그 이유를 PR 에 적는다 (11-2 가 시트에서 화면으로 옮겨 온 것처럼 · apps/web/CLAUDE.md §3).
+ * ⚠️ **대화의 삭제 확정(#535)은 §2 문구 PR 대기다.** 팀은 비어 있던 게이트를 채운 것으로 봤지만(11-03 회의) 위의
+ *    "딱 2곳" 은 아직 그대로라, 아래 블록이 호출처만 고정하고 게이트 표식은 쓰지 않는다. 문구가 바뀌면 여기도 고친다.
  */
 
 const SRC = fileURLToPath(new URL("..", import.meta.url));
@@ -75,6 +77,17 @@ describe("승인 게이트 ㉡ 건강·알레르기 확정", () => {
   it("복약 제출은 04 '찾은 복약' 시트의 초안 목록에서만 부른다 (#537 · 같은 게이트의 다른 메서드)", () => {
     expect(callers("submitMedicationDraft")).toEqual(["components/medication-draft-list.tsx"]);
     expect(callers("updateMedicationDraft")).toEqual(["components/medication-draft-list.tsx"]);
+  });
+});
+
+/**
+ * 🚨 **대화의 삭제 확정** (#535). 지운 기록은 되살릴 수 없어 사람이 버튼으로 확정한다 — 채팅 "응" 을 모델이 해석하던
+ *    빈 게이트를 채운 것이다 (11-03 팀 회의). 최상위 §2 의 "딱 2곳" 문구는 별도 문서 PR 에서 고친다.
+ *    그때까지 표식(approve · caution)은 쓰지 않는다 — 아래 표식 목록에 이 카드가 없는 것으로 같이 걸린다.
+ */
+describe("대화의 삭제 확정 (#535)", () => {
+  it("확정은 04 대화의 삭제 카드에서만 부른다", () => {
+    expect(callers("confirmDeleteProposal")).toEqual(["components/record-tabs-card.tsx"]);
   });
 });
 

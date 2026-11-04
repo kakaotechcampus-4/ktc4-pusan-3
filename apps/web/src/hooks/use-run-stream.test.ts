@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import { idempotentPath, newIdempotencyKey } from "@/lib/api/idempotency";
 import { api } from "@/lib/api/client";
 import { streamRunEvents, type RunEvent } from "@/lib/api/sse";
+import type { DeleteProposalCard } from "@/lib/api/types";
+import { observations } from "@/mocks/fixtures";
 import { setScenario } from "@/mocks/scenario";
 
 import {
@@ -413,5 +415,50 @@ describe("복약 초안 프레임 (#537)", () => {
     expect(state.medicationDrafts.map((d) => d.draft_id)).toEqual(["d1", "d2"]);
     expect(state.drafts).toEqual([]);
     expect(state.status).toBe("done");
+  });
+});
+
+describe("조회 · 삭제 카드 (#535)", () => {
+  const proposal: DeleteProposalCard = {
+    proposal_id: "dp_1",
+    status: "pending",
+    expires_at: "2026-11-05T03:00:00Z",
+    result: null,
+    tabs: [
+      {
+        kind: "observation_food",
+        truncated: true,
+        records: [observations[0]!],
+        events: [],
+        picked_ids: [observations[0]!.id],
+      },
+    ],
+  };
+
+  it("조회 카드의 탭을 담고, 끝이 아니라 done 까지 이어진다", () => {
+    const tabs = [{ kind: "event" as const, truncated: false, records: [], events: [] }];
+    const state = fold([
+      { type: "found_tabs", data: { tabs } },
+      { type: "done", data: { run_id: "r1", model_calls: 1 } },
+    ]);
+    expect(state.foundTabs).toEqual(tabs);
+    expect(state.status).toBe("done");
+  });
+
+  it("🚨 삭제 제안은 제안으로만 담긴다 — 저장된 기록(observations)에 섞이지 않는다", () => {
+    const state = fold([
+      { type: "delete_proposal", data: proposal },
+      { type: "done", data: { run_id: "r1", model_calls: 1 } },
+    ]);
+    expect(state.deleteProposal).toEqual(proposal);
+    expect(state.observations).toEqual([]);
+    expect(state.status).toBe("done");
+  });
+
+  it("새 run 을 시작하면 앞 run 의 카드가 남지 않는다", () => {
+    const state = fold([{ type: "delete_proposal", data: proposal }]);
+    const next = runReducer(state, { type: "start" });
+    expect(next.deleteProposal).toBeNull();
+    expect(next.foundTabs).toEqual([]);
   });
 });
