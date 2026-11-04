@@ -6,11 +6,18 @@ from app.agents.growth.doc_seed import AREAS, ROUTINE_CATEGORIES, growth_doc_see
 from app.rules.growth_topic import (
     OTHER,
     ROUTINE_TERMS,
+    SCREEN,
+    TOPIC_DOC,
     TOPIC_TERMS,
+    doc_areas,
+    doc_tags,
     expand_keywords,
     on_topic,
+    record_on_topic,
     request_topic,
     routine_scope,
+    row_on_topic,
+    screen_use,
     strict_topic,
     topic_areas,
 )
@@ -39,8 +46,17 @@ def test_요청과_기록_조각에서_영역을_읽는다(texts, areas):
 
 def test_영역_키는_문서_행_area_와_같다():
     keys = {term.key for term in TOPIC_TERMS}
-    assert keys - {OTHER} <= AREAS
+    # 문서 행에 영역 키가 따로 없는 주제는 `TOPIC_DOC` 이 행의 영역 · 태그로 잇는다
+    assert keys - {OTHER} - set(TOPIC_DOC) <= AREAS
+    assert {area for area, _ in TOPIC_DOC.values()} <= AREAS
     assert len(keys) == len(TOPIC_TERMS)
+    tagged = {
+        tag
+        for entry in growth_doc_seed()
+        if entry.meta.status == "approved"
+        for tag in entry.to_row().tags
+    }
+    assert {tag for _, tag in TOPIC_DOC.values()} <= tagged
 
 
 def test_같은_영역_낱말로_넓힌다():
@@ -162,3 +178,108 @@ def test_후보를_글로_거르는_영역은_낱말이_덮는_영역뿐이다(r
 )
 def test_띄어쓴_루틴_낱말도_카테고리로_읽는다(text, scope):
     assert routine_scope((text,), ()) == scope
+
+
+SCREEN_CONCERN = ("아이가 요새 게임만 자꾸 하려고 하는데",)
+
+
+@pytest.mark.parametrize(
+    ("request_texts", "record_texts"),
+    [
+        (("어떻게 해야해?",), SCREEN_CONCERN),
+        (("요즘 유튜브를 너무 많이 봐.",), ()),
+        (("TV 를 너무 오래 봐",), ()),
+        (("스마트폰만 들여다봐서 걱정이야",), ()),
+    ],
+)
+def test_화면_낱말을_주제로_읽는다(request_texts, record_texts):
+    assert request_topic(request_texts, record_texts) == (SCREEN,)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "보드게임 하고 놀았어",
+        "카드 게임 추천해줘",
+        "숫자 게임 해 볼까",
+        "영상 통화로 할머니랑 얘기했어",
+        "퍼즐 게임 추천해줘",
+        "빙고 게임 하고 싶어해요",
+        "끝말잇기 게임 어떻게 가르쳐요",
+        "숨바꼭질 게임 규칙을 알려줘",
+    ],
+)
+def test_놀이_이름의_게임은_화면이_아니다(text):
+    assert SCREEN not in topic_areas((text,))
+
+
+def test_루틴_낱말이_있으면_화면이어도_루틴이다():
+    assert screen_use(("어떻게 해야해?",), SCREEN_CONCERN) is True
+    assert screen_use(("양치할 때 유튜브 틀어 줘야 해",), ()) is False
+    assert screen_use(("밥 먹을 때 영상을 틀어 줘야 먹어",), ()) is False
+    assert screen_use(("어떻게 해야해?",), ()) is False
+
+
+def test_화면_주제는_신체운동_건강_행에서_screen_태그로_고른다():
+    assert doc_areas((SCREEN,)) == ("physical_health",)
+    assert doc_tags((SCREEN,)) == ("screen",)
+    assert doc_areas(("communication",)) == ("communication",)
+    assert doc_tags(("communication",)) == ()
+    # 태그가 없는 주제가 섞이면 태그로 좁히지 않는다 — 그 영역 행이 빠진다
+    assert doc_areas((SCREEN, "communication")) == ("physical_health", "communication")
+    assert doc_tags((SCREEN, "communication")) == ()
+    assert doc_areas(()) == () and doc_tags(()) == ()
+
+
+def test_문서_행이_주제_안인지_영역과_태그로_본다():
+    assert row_on_topic("physical_health", ("physical_health", "screen"), (SCREEN,))
+    assert not row_on_topic("physical_health", ("physical_health", "rule"), (SCREEN,))
+    assert not row_on_topic("communication", ("screen",), (SCREEN,))
+    assert row_on_topic("communication", ("communication",), ("communication", SCREEN))
+    assert not row_on_topic(None, (), ("communication",))
+
+
+def test_시드_화면_행은_화면_주제의_후보_글로_통과한다():
+    rows = [
+        entry.to_row()
+        for entry in growth_doc_seed()
+        if entry.meta.status == "approved" and "screen" in entry.to_row().tags
+    ]
+    assert rows
+    failed = [r.title for r in rows if not on_topic((r.title, r.body, *r.materials), (SCREEN,))]
+    assert failed == []
+
+
+def test_화면_후보는_화면_낱말이나_약속_낱말이_있어야_한다():
+    assert on_topic(("게임 끝나면 블록 쌓기",), (SCREEN,))
+    assert on_topic(("끝나는 시간 모래시계로 정하기",), (SCREEN,))
+    assert not on_topic(("신호등 놀이",), (SCREEN,))
+    assert not on_topic(("카드 게임 따라 하기",), (SCREEN,))
+
+
+def test_화면은_후보_글로_거르는_영역이다():
+    assert strict_topic(("어떻게 해야해?",), SCREEN_CONCERN) == (SCREEN,)
+
+
+@pytest.mark.parametrize(
+    ("names", "area", "expected"),
+    [
+        # 기록 이름은 주제 낱말로만 읽는다 — 후보 글의 활동 낱말(약속 · 규칙 · 끄기)은 쓰지 않는다
+        (("약속 지키기",), "screen", False),
+        (("불 끄기",), "screen", False),
+        (("규칙 지키기",), "nature", False),
+        (("순서 기다리기",), "nature", False),
+        (("게임",), "screen", True),
+        (("휴대폰 게임",), "screen", True),
+        (("글 읽기", "4문장 이상 글 읽기"), "communication", True),
+        (("숫자",), "nature", True),
+        (("영어",), "other", True),
+        (("블록 쌓기",), "communication", False),
+    ],
+)
+def test_기록_이름은_주제_낱말로만_주제_안인지_본다(names, area, expected):
+    assert record_on_topic(names, (area,)) is expected
+
+
+def test_주제가_없으면_기록은_늘_주제_안이다():
+    assert record_on_topic(("블록 쌓기",), ()) is True
