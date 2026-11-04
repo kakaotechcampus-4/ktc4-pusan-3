@@ -315,7 +315,7 @@ export function isDraftEvent(type: string): boolean {
  * 🚨 **아직 아무것도 저장되지 않았다.** 제출이 승인 게이트 ㉡(건강 기록 확정)이다 — 일정 초안(게이트 ㉠)과
  *    모양도 게이트도 다르다. 같은 카드 · 같은 프레임에 섞지 않는다.
  * 🚨 **이름은 `medication_draft` 하나다** (#563 리뷰 · AI 와 합의). 일정 초안(`event_draft`)과 같은 단수형이고,
- *    모양도 같은 `{ drafts: [...] }` 한 프레임이다. 서버는 `apps/api/app/api/runs/translate.py` 가 이 이름으로 낸다 (PR #716 · 머지 전).
+ *    모양도 같은 `{ drafts: [...] }` 한 프레임이다. 서버는 `apps/api/app/api/runs/translate.py` 가 이 이름으로 낸다 (PR #716).
  */
 export interface MedicationDraftsEvent {
   drafts: MedicationDraft[];
