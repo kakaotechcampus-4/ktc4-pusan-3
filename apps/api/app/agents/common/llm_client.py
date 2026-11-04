@@ -174,16 +174,11 @@ class LLMClient:
             raise LLMError(f"LLM 호출 실패: {exc}") from exc
 
         latency_ms = int((time.perf_counter() - started) * 1000)
-        # 콘텐츠 필터 등을 이유로 choices가 비거나 message가 null로 오는 provider의 경우
-        choice = response.choices[0] if response.choices else None
-        message = getattr(choice, "message", None)
-        if message is None:
-            raise LLMError("LLM 응답에 message가 없다.")
         usage = _usage_dict(response.usage)
         # 게이트웨이가 별칭을 실제 모델로 풀 수 있다 — 과금은 응답에 찍힌 모델 기준이다
         served = getattr(response, "model", None)
         model = served if isinstance(served, str) and served else self._profile.model
-        self._log_call(message, usage, latency_ms, model)
+        # 🚨 이상한 응답을 거절하기 전에 기록한다 — 거절해도 토큰은 이미 과금됐다
         if usage:  # 셀 값이 없는 응답은 0 토큰 행을 만들지 않는다
             llm_usage.record(
                 role=self._profile.role,
@@ -195,6 +190,12 @@ class LLMClient:
                 reasoning_tokens=usage.get("reasoning_tokens", 0),
                 latency_ms=latency_ms,
             )
+        # 콘텐츠 필터 등을 이유로 choices가 비거나 message가 null로 오는 provider의 경우
+        choice = response.choices[0] if response.choices else None
+        message = getattr(choice, "message", None)
+        if message is None:
+            raise LLMError("LLM 응답에 message가 없다.")
+        self._log_call(message, usage, latency_ms, model)
         return LLMResponse(message=message, usage=usage, latency_ms=latency_ms)
 
     def _log_call(self, message: Any, usage: dict[str, int], latency_ms: int, model: str) -> None:

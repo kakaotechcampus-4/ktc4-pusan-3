@@ -98,6 +98,19 @@ class Embedder:
         except APIError as exc:
             raise LLMError(f"임베딩 호출 실패: {exc}") from exc
 
+        tokens = getattr(response.usage, "total_tokens", None)
+        latency_ms = int((time.perf_counter() - started) * 1000)
+        # 🚨 개수 · 차원 검사보다 앞에서 기록한다 — 검사에 걸려 버려도 토큰은 이미 과금됐다
+        if isinstance(tokens, int):  # 셀 값이 없는 응답은 0 토큰 행을 만들지 않는다
+            served = getattr(response, "model", None)
+            llm_usage.record(
+                role="embedding",
+                provider=self._provider,
+                model=served if isinstance(served, str) and served else self._model,
+                prompt_tokens=tokens,
+                latency_ms=latency_ms,
+            )
+
         # 응답 순서가 입력 순서라는 보장은 index 로만 한다
         data = sorted(response.data, key=lambda item: item.index)
         if len(data) != len(texts):
@@ -111,8 +124,6 @@ class Embedder:
                 "EMBEDDING_MODEL 을 확인한다."
             )
 
-        tokens = getattr(response.usage, "total_tokens", None)
-        latency_ms = int((time.perf_counter() - started) * 1000)
         logger.info(
             "embedding call model=%s inputs=%d tokens=%s latency_ms=%d",
             self._model,
@@ -120,13 +131,4 @@ class Embedder:
             tokens,
             latency_ms,
         )
-        if isinstance(tokens, int):  # 셀 값이 없는 응답은 0 토큰 행을 만들지 않는다
-            served = getattr(response, "model", None)
-            llm_usage.record(
-                role="embedding",
-                provider=self._provider,
-                model=served if isinstance(served, str) and served else self._model,
-                prompt_tokens=tokens,
-                latency_ms=latency_ms,
-            )
         return vectors

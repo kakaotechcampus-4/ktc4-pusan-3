@@ -101,31 +101,42 @@ class JevJudge:
             raise LLMUnavailableError("판정 서버 연결 실패.") from exc
 
         _raise_for_status(response.status_code)
+        # 🚨 모양 검사(_parse)보다 앞에서 기록한다 — 모양이 틀려 버려도 토큰은 이미 과금됐다.
+        #    HTTP 오류는 위에서 끝난다: LLMClient 도 SDK 가 오류 응답을 먼저 예외로 바꾼다
+        self._record_usage(response, started)
         answer, body = _parse(response)
 
         # subject · 후보 원문은 남기지 않는다. Elice 응답에는 금액(cost)이 없어 토큰 수를 남긴다
         # (금액은 Elice 콘솔에서 본다). 출력 토큰은 과금되지 않는다
-        usage = body.get("usage") or {}
-        input_tokens = usage.get("input_tokens")
-        latency_ms = int((time.perf_counter() - started) * 1000)
         logger.info(
             "curator judge model=%s candidates=%d confidence=%s input_tokens=%s latency_ms=%d",
             answer.model,
             len(options),
             answer.confidence,
-            input_tokens,
-            latency_ms,
+            (body.get("usage") or {}).get("input_tokens"),
+            int((time.perf_counter() - started) * 1000),
         )
-        if isinstance(input_tokens, int):  # 셀 값이 없는 응답은 0 토큰 행을 만들지 않는다
-            llm_usage.record(
-                role="curator_judge",
-                provider=self._provider,
-                model=answer.model or self._model,
-                prompt_tokens=input_tokens,
-                completion_tokens=usage.get("output_tokens"),
-                latency_ms=latency_ms,
-            )
         return answer
+
+    def _record_usage(self, response: httpx.Response, started: float) -> None:
+        """응답 원문에서 사용량만 따로 읽어 기록한다. 읽을 수 없으면 조용히 건너뛴다."""
+        try:
+            body = response.json()
+        except ValueError:  # JSON 이 아니면 읽을 사용량이 없다. _parse 가 LLMError 로 끝낸다
+            return
+        usage = body.get("usage") if isinstance(body, dict) else None
+        input_tokens = usage.get("input_tokens") if isinstance(usage, dict) else None
+        if not isinstance(input_tokens, int):  # 셀 값이 없는 응답은 0 토큰 행을 만들지 않는다
+            return
+        served = body.get("model")
+        llm_usage.record(
+            role="curator_judge",
+            provider=self._provider,
+            model=served if isinstance(served, str) and served else self._model,
+            prompt_tokens=input_tokens,
+            completion_tokens=usage.get("output_tokens"),
+            latency_ms=int((time.perf_counter() - started) * 1000),
+        )
 
 
 def _raise_for_status(status: int) -> None:

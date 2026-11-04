@@ -16,7 +16,7 @@ from uuid import uuid4
 import pytest
 
 from app.agents.common.config import AgentSettings
-from app.agents.common.llm_client import LLMClient
+from app.agents.common.llm_client import LLMClient, LLMError
 from app.core import llm_usage
 
 
@@ -172,3 +172,30 @@ async def test_귀속이_없으면_로그_줄의_run_은_대시다(caplog: pytes
     [line] = [r.getMessage() for r in caplog.records if r.getMessage().startswith("llm call")]
     assert "run=- " in line
     assert "source=- " in line
+
+
+def _broken_response(*, choices: list[Any]) -> Any:
+    """콘텐츠 필터 등으로 choices 가 비거나 message 가 null 로 오는 응답 — 사용량은 들어 있다."""
+    usage = SimpleNamespace(prompt_tokens=500, completion_tokens=0)
+    return SimpleNamespace(choices=choices, usage=usage, model="served-growth-model")
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        _broken_response(choices=[]),
+        _broken_response(choices=[SimpleNamespace(message=None)]),
+    ],
+    ids=["choices_비어_있음", "message_null"],
+)
+async def test_message_가_없는_응답도_토큰은_이미_썼으니_기록하고_LLMError_로_끝난다(
+    response: Any,
+) -> None:
+    client = _client("growth", response)
+
+    with llm_usage.attribute(parent_id=uuid4(), run_id="run-1", source="input"):
+        with pytest.raises(LLMError, match="message"):
+            await client.chat([{"role": "user", "content": "hi"}])
+
+    [row] = llm_usage.drain()
+    assert (row.role, row.model, row.prompt_tokens) == ("growth", "served-growth-model", 500)

@@ -17,6 +17,7 @@ import httpx
 import pytest
 
 from app.agents.common.config import AgentSettings
+from app.agents.common.llm_client import LLMError
 from app.agents.curator.embedding import embedder as embedder_module
 from app.agents.curator.embedding.embedder import EMBEDDING_DIM, Embedder
 from app.agents.curator.embedding.jev import JevJudge
@@ -61,13 +62,23 @@ async def _ask(judge: JevJudge) -> None:
 
 
 class _FakeEmbeddings:
-    def __init__(self, *, usage: Any = "default", model: str | None = "served-embed") -> None:
+    def __init__(
+        self,
+        *,
+        usage: Any = "default",
+        model: str | None = "served-embed",
+        dim: int = EMBEDDING_DIM,
+        drop: int = 0,
+    ) -> None:
         self._usage = usage
         self._model = model
+        self._dim = dim
+        self._drop = drop
 
     async def create(self, *, model: str, input: list[str]) -> Any:
         data = [
-            SimpleNamespace(index=i, embedding=[0.0] * EMBEDDING_DIM) for i in range(len(input))
+            SimpleNamespace(index=i, embedding=[0.0] * self._dim)
+            for i in range(len(input) - self._drop)
         ]
         usage = SimpleNamespace(total_tokens=len(input) * 7) if self._usage == "default" else None
         fields: dict[str, Any] = {"data": data, "usage": usage}
@@ -189,5 +200,70 @@ async def test_임베딩이_여러_묶음으로_나뉘면_묶음마다_한_행�
 async def test_임베딩_응답에_사용량이_없으면_기록하지_않는다() -> None:
     with llm_usage.attribute(parent_id=uuid4(), run_id="run-1", source="input"):
         await _embedder(_FakeEmbeddings(usage=None)).embed(["딸기"])
+
+    assert llm_usage.drain() == []
+
+
+@pytest.mark.parametrize(
+    ("fake", "message"),
+    [(_FakeEmbeddings(drop=1), "개수"), (_FakeEmbeddings(dim=3072), "차원")],
+    ids=["개수_모자람", "차원_다름"],
+)
+async def test_개수나_차원_검사에_걸린_응답도_토큰은_기록한다(
+    fake: _FakeEmbeddings, message: str
+) -> None:
+    """검사에 걸려 저장하지 못해도 토큰은 이미 과금됐다."""
+    with llm_usage.attribute(parent_id=uuid4(), run_id="run-1", source="input"):
+        with pytest.raises(LLMError, match=message):
+            await _embedder(fake).embed(["딸기", "레고"])
+
+    [row] = llm_usage.drain()
+    assert (row.role, row.prompt_tokens) == ("embedding", 14)
+
+
+# ── 판정: 응답 모양이 틀려도 토큰은 기록하고, HTTP 오류 · JSON 아님은 기록하지 않는다
+def _judge_with(response: httpx.Response) -> JevJudge:
+    settings = AgentSettings(
+        _env_file=None,
+        CURATOR_JUDGE_API_KEY="test-key",
+        CURATOR_JUDGE_BASE_URL=JUDGE_BASE,
+        CURATOR_JUDGE_MODEL="typesafe/jev-1.13",
+    )
+    return JevJudge(settings, transport=httpx.MockTransport(lambda _request: response))
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [{}, {"type": "choice"}, {"type": "choice", "choice": 123}],
+    ids=["identity_비어_있음", "choice_없음", "choice_문자열_아님"],
+)
+async def test_판정_응답_모양이_틀려도_토큰은_기록하고_LLMError_로_끝난다(
+    answer: dict[str, Any],
+) -> None:
+    body = _judge_body(answers={"identity": answer})
+
+    with llm_usage.attribute(parent_id=uuid4(), run_id="run-1", source="input"):
+        with pytest.raises(LLMError):
+            await _ask(_judge_with(httpx.Response(200, json=body)))
+
+    [row] = llm_usage.drain()
+    assert (row.role, row.prompt_tokens) == ("curator_judge", 395)
+    assert row.model == "typesafe/jev-1.13-20260917"  # 모양이 틀려도 body 의 model 은 읽는다
+
+
+@pytest.mark.parametrize("status", [401, 429, 500])
+async def test_HTTP_오류_응답은_본문에_사용량이_있어도_기록하지_않는다(status: int) -> None:
+    """LLMClient 도 SDK 가 HTTP 오류를 먼저 예외로 바꿔 사용량을 못 읽는다 — 같은 기준이다."""
+    with llm_usage.attribute(parent_id=uuid4(), run_id="run-1", source="input"):
+        with pytest.raises(LLMError):
+            await _ask(_judge_with(httpx.Response(status, json=_judge_body())))
+
+    assert llm_usage.drain() == []
+
+
+async def test_JSON_이_아닌_응답은_기록하지_않는다() -> None:
+    with llm_usage.attribute(parent_id=uuid4(), run_id="run-1", source="input"):
+        with pytest.raises(LLMError):
+            await _ask(_judge_with(httpx.Response(200, content=b"not json")))
 
     assert llm_usage.drain() == []

@@ -60,7 +60,7 @@ Curator 는 run 이 끝난 뒤에 끝나도 그 run 으로 남는다 (asyncio �
 
 ## 4. 새 LLM 호출 지점을 만들 때
 
-1. 응답의 usage 를 읽어 `llm_usage.record(...)` 를 부른다. 예외를 던지는 검사(출력 상한 · 거절)보다 **앞**에 둔다. 잘린 응답도 과금된다.
+1. 응답의 usage 를 읽어 `llm_usage.record(...)` 를 부른다. 예외를 던지는 검사(출력 상한 · 거절 · `message` 없음 · 개수 · 차원 · 응답 모양)보다 **앞**에 둔다. 검사에 걸려 버리는 응답도 토큰은 이미 과금됐다. 예외: HTTP 오류(4xx · 5xx)는 기록하지 않는다 — SDK 가 오류 응답을 먼저 예외로 바꿔 사용량을 읽을 수 없고, 직접 부르는 Curator 판정도 같은 기준으로 맞춘다.
 2. 그 지점을 부르는 창구에서 `llm_usage.attribute(...)` 를 건다. §3 표에 한 줄을 더한다.
 3. 빼 먹으면 `tests/unit/core/test_llm_usage_sites.py` 가 실패한다 (`completions.create` · `embeddings.create` · `OpenAI(` · `"/decisions"` 가 있는 파일은 `record(` 가 있어야 한다).
 
