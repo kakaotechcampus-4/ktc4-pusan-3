@@ -8,9 +8,8 @@
 선행 문서: 이슈 [#537](https://github.com/kakaotechcampus-4/ktc4-pusan-3/issues/537) · `apps/api/app/core/medication_draft.py`(초안 모양 정본 · #544) · [`docs/medication/medication-tables-v1.md`](../medication/medication-tables-v1.md)(두 표와 제출 · 체크 API 가 막을 것 · #546) · [`event-draft-ui-v1.md`](event-draft-ui-v1.md)(같은 규칙을 먼저 정한 일정 초안)
 
 > ✅ **계약이 서버에 붙었다** (#713). 제출 · 조회 · 회차 체크 API(PR #520)와 SSE 번역 · 되묻기 이어받기 · readout 근거(PR #716 ·
-> 2026-11-04 머지)가 모두 `feat/ai-519-health-skeleton` 에 있다. 화면이 목 위에서 먼저 잡은 §5 의 이름과 모양을 서버가 그대로 받았다.
-> ⚠️ 복약 API 가 아직 develop 밖이라 이 화면도 519 로 먼저 올라간다.
-> ⚠️ 복약 API 가 아직 develop 밖이라 이 화면도 519 로 먼저 올라간다.
+> 2026-11-04 머지)가 `feat/ai-519-health-skeleton` 을 거쳐 develop 에 들어갔다(#520 머지). 화면이 목 위에서 먼저 잡은 §5 의 이름과
+> 모양을 서버가 그대로 받았다.
 
 ---
 
