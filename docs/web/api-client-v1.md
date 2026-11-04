@@ -1,6 +1,6 @@
 # API 호출 · 에러 처리 구현 규칙 v1
 
-문서 목적: `lib/api` 를 거치는 호출 규칙, 되돌릴 수 없는 5곳의 Idempotency-Key, 에러 코드별 화면 처리, 에러 바운더리를 고정한다.
+문서 목적: `lib/api` 를 거치는 호출 규칙, 되돌릴 수 없는 5곳(과 대화의 삭제 확정)의 Idempotency-Key, 에러 코드별 화면 처리, 에러 바운더리를 고정한다.
 
 기준 브랜치: `docs/fe-406-split-web-claude-md`
 작성일: 2026-10-14
@@ -41,6 +41,9 @@
 `PATCH …/medications/{sid}`. 코스와 기간만큼의 회차를 만드는 건강 기록 확정이라 ㉡ 안에 메서드가 는 것이지
 세 번째 게이트가 아니다. 둘 다 키를 단다. ⚠️ 경로는 잠정이다 — 서버 API 가 아직 없다 ([`medication-v1.md`](medication-v1.md) §5).
 회차 체크(`PUT …/medication-doses/{did}/check`)는 되돌릴 수 있어서 표에 없다.
+🚨 **대화의 삭제 확정도 표에 있다** (#535) — `POST /children/{cid}/delete-proposals/{pid}/confirm`. 체크한 기록 · 일정을 지워서
+되살릴 수 없고 서버도 키가 필수다. 본문은 체크한 id 라 `current(ids)` 로 넘긴다. 취소(`…/cancel`)는 아무것도 지우지 않고 다시
+보내도 같은 응답이라 표에 없다. 화면 규칙은 [`chat-run-v1.md`](chat-run-v1.md) §5.
 그래서 표(`idempotentPath`)는 줄마다 메서드(`idempotentMethod`)를 같이 들고, 클라이언트 차단도 그 메서드로 건다.
 
 **`lib/api/operations.ts` 의 전용 함수로만 부른다.** 키가 필수 인자라 빠뜨리면 `tsc` 가 잡는다.
