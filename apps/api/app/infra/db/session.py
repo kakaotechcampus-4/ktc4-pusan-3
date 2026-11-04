@@ -13,7 +13,11 @@ from app.infra.db.url import build_url
 # hide_parameters — DB 오류 글 끝의 [parameters: (...)] 를 숨긴다. INSERT 의 모든 값(부르는 이름 ·
 # 원문)이 실리는 줄이다. 🚨 PostgreSQL 이 보낸 DETAIL 줄의 값은 못 숨긴다 — 그건 API 의
 # DB 오류 처리기가 글을 아예 찍지 않는 것으로 막는다 (app/api/errors.py).
-engine = create_async_engine(build_url("postgresql+asyncpg"), hide_parameters=True)
+# pool_pre_ping — DB 가 재시작돼 끊긴 연결을 풀에서 꺼낼 때 한 번 확인하고 버린다. 없으면 DB 가
+# 돌아온 뒤에도 첫 요청들이 죽은 연결을 받아 500 이 난다 (#671).
+engine = create_async_engine(
+    build_url("postgresql+asyncpg"), hide_parameters=True, pool_pre_ping=True
+)
 
 async_session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
