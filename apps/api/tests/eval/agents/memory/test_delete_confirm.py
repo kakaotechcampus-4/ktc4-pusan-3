@@ -47,7 +47,7 @@ YESTERDAY = TODAY - timedelta(days=1)
 # 지난주 수요일 — "저번주" 의 가운데
 LAST_WEEK = TODAY - timedelta(days=TODAY.weekday() + 5)
 
-# 같은 케이스를 몇 번 돌릴지. 흔들림은 한 번으로 안 보인다 (D02 는 20번 중 5번이었다)
+# 같은 케이스를 몇 번 돌릴지. 흔들림은 한 번으로 안 보인다 (D02 는 16번 중 3번이었다)
 REPEAT = int(os.getenv("DELETE_EVAL_REPEAT", "1"))
 
 # 지웠다고 답한 말. "삭제하지 않았어요" 가 걸리지 않게 어미까지 본다
@@ -92,7 +92,8 @@ async def _event(store: InMemoryStore, seeded: Seeded, name: str, title: str, da
 
 
 def _next(weekday: int) -> date:
-    return TODAY + timedelta((weekday - TODAY.weekday()) % 7 or 7)
+    """오늘부터 가장 가까운 그 요일. 오늘이 그 요일이면 오늘이다 — "토요일" 이 토요일엔 오늘이다."""
+    return TODAY + timedelta((weekday - TODAY.weekday()) % 7)
 
 
 async def _seed_apple(store: InMemoryStore, seeded: Seeded) -> None:
@@ -190,6 +191,30 @@ async def _seed_clinic(store: InMemoryStore, seeded: Seeded) -> None:
     await _event(store, seeded, "swim", "수영 수업", _next(5))
 
 
+async def _seed_long_juk(store: InMemoryStore, seeded: Seeded) -> None:
+    # 원문이 길다 — 모델이 검색어를 줄여 쓰면 원문에 그 글자가 붙어 있지 않아 0건이 난다 (#529)
+    await _observation(
+        store,
+        seeded,
+        "juk",
+        "food",
+        TODAY,
+        raw_text="점심으로는 전복죽 먹었어.",
+        subject="전복죽",
+        action="먹었다",
+    )
+    await _observation(
+        store,
+        seeded,
+        "rice",
+        "food",
+        TODAY,
+        raw_text="아침에 밥 먹었어.",
+        subject="밥",
+        action="먹었다",
+    )
+
+
 async def _seed_sports_and_apple(store: InMemoryStore, seeded: Seeded) -> None:
     await _event(store, seeded, "sports", "운동회", TODAY + timedelta(days=2))
     await _seed_apple(store, seeded)
@@ -205,6 +230,10 @@ class Case:
     tab_kinds: frozenset[str] | None = None  # 탭이 이 종류만이어야 한다 (None 이면 보지 않음)
     # 한 원문에 다른 조각이 섞인 입력. 없으면 원문 하나가 lookup_edit 조각이다
     hints: tuple[tuple[str, WorkType], ...] = ()
+    writes: frozenset[str] = frozenset()  # 이 케이스가 허락하는 쓰기 (섞인 수정 요청)
+    # 못 찾고 "못 찾았어요" 로 끝나도 통과 — 검색 방식의 한계를 재는 케이스.
+    # 틀린 것은 절대 고르지 않는다
+    may_miss: bool = False
 
 
 CASES = [
@@ -251,6 +280,17 @@ CASES = [
             ("모레 운동회 시간 오전 11시로 바꿔줘", WorkType.LOOKUP_EDIT),
             ("어제 사과 먹은 기록은 지워줘", WorkType.LOOKUP_EDIT),
         ),
+        writes=frozenset({"update_event"}),  # 초안만 만든다 — 저장된 일정은 그대로다
+    ),
+    # 원문을 그대로 인용한 요청. 검색어가 원문과 어긋나면 못 찾는다 — 안전한 실패다
+    # (검색 방식 개선은 #535 범위 밖)
+    Case(
+        "P06",
+        '아까 "점심으로는 전복죽 먹었어." 기록 보낸 것 지워줘.',
+        _seed_long_juk,
+        frozenset({"juk"}),
+        frozenset({"rice"}),
+        may_miss=True,
     ),
 ]
 
@@ -296,8 +336,25 @@ async def _flow(case: Case, client: LLMClient) -> None:
     result = await run(case.text, context, client=client, task=task)
     _log(case, result, store, seeded)
 
-    assert await _rows(store) == before, "기록 · 일정이 사라졌다 — 모델은 지우지 않는다"
+    assert await _rows(store) == before, (
+        "기록 · 일정 수가 바뀌었다 — 모델은 지우지도 새로 쓰지도 않는다"
+    )
+    # 수 말고 내용도 그대로여야 한다. 수정을 요청한 케이스만 그 수정을 허락한다
+    wrote = [
+        c.name
+        for c in result.calls
+        if c.success and c.name.startswith(("create_", "update_")) and c.name not in case.writes
+    ]
+    assert not wrote, f"제안 말고 다른 쓰기: {wrote}"
     proposals = [c for c in result.calls if c.success and c.name == "propose_delete"]
+    if case.may_miss and not proposals:
+        # 못 찾았다 — 제안 없이 "못 찾았어요" 나 날짜를 묻는 말로 끝난다. 지웠다고 말하지 않는다
+        assert result.reply is not None and result.reply.text.strip(), "답이 비었다"
+        assert not any(word in result.reply.text for word in _SAID_DELETED), (
+            "안 지웠는데 지웠다고 했다"
+        )
+        print(f"  [{case.case_id}] 못 찾음 (안전한 실패)")
+        return
     assert len(proposals) == 1, f"제안을 한 번 남기지 않았다: {result.tool_names}"
     assert store.proposal is not None
     tabs = store.proposal[1]

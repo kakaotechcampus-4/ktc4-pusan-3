@@ -34,6 +34,7 @@ from app.agents.common.config import AgentSettings
 from app.agents.common.datetime_rules import DateRange
 from app.agents.common.llm_client import LLMClient
 from app.agents.memory.agent import MemoryAgentResult, run
+from app.agents.memory.bundles import MUTATING_PREFIXES
 from app.agents.memory.context import AgentContext
 from app.agents.memory.drafts import EventDraft
 from app.agents.memory.schemas.task import MemoryTask
@@ -84,7 +85,7 @@ CHILD = UUID("00000000-0000-7000-8000-000000000001")
 WRITER = UUID("00000000-0000-7000-8000-0000000000ff")
 
 DOMAINS = ("food", "health", "education", "activity", "routine")
-MUTATING = "쓰기"  # forbidden_tools 에 넣으면 create/update/delete 전부를 금지한다
+MUTATING = "쓰기"  # forbidden_tools 에 넣으면 create/update/delete · 삭제 제안 전부를 금지한다
 
 # solo — task 없이 전체 tool 로. task — Supervisor 정답 출력으로 만든 MemoryTask 로.
 # task 모드는 "Supervisor 가 완벽하다고 가정한 Memory 만의 성적" 이다 (supervisor_plan Step 7)
@@ -547,7 +548,10 @@ CASES: list[EvalCase] = [
         seed=_seed_today_two_domains,
         # 기간이 있으니 묻지 않고 오늘 기록을 조회해 제안한다. 지우는 것은 보호자의 버튼이다 (#535)
         required_tools={"propose_delete": 1},
-        forbidden_tools={MUTATING},
+        # MUTATING 은 제안까지 막는다 — 저장 · 수정만 막는다
+        forbidden_tools={
+            f"{op}_observation_{domain}" for op in ("create", "update") for domain in DOMAINS
+        },
         checks=(
             (
                 "아무것도 지우지 않았다",
@@ -1071,7 +1075,7 @@ def _judge(case: EvalCase, snapshot: Snapshot) -> list[str]:
             used = [
                 call.name
                 for call in snapshot.result.calls
-                if call.name.startswith(("create_", "update_", "delete_"))
+                if call.name.startswith(MUTATING_PREFIXES)
             ]
         else:
             used = [call.name for call in snapshot.result.calls if call.name == tool]
@@ -1134,7 +1138,7 @@ def _expected_text(case: EvalCase) -> str:
         )
     if case.forbidden_tools:
         names = sorted(
-            "쓰기 전부(create·update·delete)" if tool == MUTATING else tool
+            "쓰기 전부(create·update·delete·propose)" if tool == MUTATING else tool
             for tool in case.forbidden_tools
         )
         parts.append(f"금지 {' · '.join(names)}")
