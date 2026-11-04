@@ -25,6 +25,7 @@ from app.agents.memory.agent import (
     ToolCallRecord,
     _claims_saved,
     _missing_work,
+    _partial_reply,
     run,
 )
 from app.agents.memory.context import AgentContext
@@ -1969,6 +1970,62 @@ async def test_일부만_저장하고_못_한_것을_말하면_모델_답을_그
 
     assert len(llm.seen) == 2
     assert result.final_message == text
+
+
+def _rec(name: str, data: dict[str, Any] | None = None, **arguments: Any) -> ToolCallRecord:
+    result = {"success": True, "data": data or {}} if data is not None else {"success": False}
+    return ToolCallRecord(name, arguments, result)
+
+
+@pytest.mark.parametrize(
+    ("calls", "expected"),
+    [
+        (
+            [_rec("create_event_item", {"added": True})],
+            "준비물은 일정 초안에 더했어요. 기록은 남기지 않았어요.",
+        ),
+        (
+            [_rec("update_event_item", {"draft": False}, is_prepared=True)],
+            "준비물 챙김은 표시했어요. 기록은 남기지 않았어요.",
+        ),
+        # 성공이어도 바뀐 게 없으면 한 일이 아니다
+        (
+            [_rec("create_event_item", {"added": False})],
+            "기록은 남기지 않았어요. 일정 초안은 만들지 않았어요.",
+        ),
+        (
+            [_rec("update_event", {"draft": False, "changed": []})],
+            "기록은 남기지 않았어요. 일정 초안은 만들지 않았어요.",
+        ),
+        # 끝내 성공하지 못한 일정 쪽 호출도 말한다. 고쳐 다시 불러 성공했으면 말하지 않는다
+        (
+            [_rec("create_event", {"draft": True}), _rec("create_event_item")],
+            "일정 초안은 만들었어요. 기록은 남기지 않았어요. 준비물은 더하지 않았어요.",
+        ),
+        (
+            [
+                _rec("create_event", {"draft": True}),
+                _rec("create_event_item"),
+                _rec("create_event_item", {"added": True}),
+            ],
+            "일정 초안은 만들었어요. 준비물은 일정 초안에 더했어요. 기록은 남기지 않았어요.",
+        ),
+    ],
+    ids=[
+        "준비물_추가",
+        "챙김_표시",
+        "이미_있는_준비물",
+        "바뀐_것_없는_수정",
+        "준비물_실패",
+        "실패_뒤_성공",
+    ],
+)
+def test_일부_저장_답은_일정_쪽_호출마다_한_일과_하지_않은_일을_말한다(
+    calls: list[ToolCallRecord], expected: str
+) -> None:
+    missing = _missing_work(_OBS_AND_EVENT, calls)
+
+    assert _partial_reply(_OBS_AND_EVENT, missing, calls).text == expected
 
 
 async def test_관찰_조각을_저장된_기록_수정으로_끝내도_관찰을_한_것으로_본다() -> None:

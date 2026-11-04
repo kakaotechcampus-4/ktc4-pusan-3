@@ -229,14 +229,11 @@ _FIRST_RUN_UNSAVED_REPLY = (
     "이번에는 아무것도 저장하지 않았고, 이 말을 보내면 처리가 끝나 나중에 기록할 수도 없다. "
     "저장했다거나 기록하겠다는 말은 넣지 않는다. " + _FIRST_RUN_GUIDE
 )
-# 저장이 필요한 작업 종류와, 일부만 처리한 run 에서 코드가 내는 문장 (처리함, 처리 안 함).
-# 순서는 문장에 나오는 순서다. 관찰은 {} 에 남긴 영역(_DOMAIN_NAMES)을 넣는다 —
-# "기록은 남겼어요" 만으로는 모델이 맞게 말한 것("김밥 먹은 기록과 놀이공원 가고 싶다는 기록을
-# 남겼어요")보다 알려 주는 게 적었다 (#678 라이브)
-_RECORD_WORK: dict[WorkType, tuple[str, str]] = {
-    WorkType.OBSERVE: ("{}기록은 남겼어요.", "기록은 남기지 않았어요."),
-    WorkType.SCHEDULE: ("일정 초안은 만들었어요.", "일정 초안은 만들지 않았어요."),
-}
+# 일부만 처리한 run 에서 코드가 내는 관찰 문장 (처리함, 처리 안 함).
+# {} 에는 남긴 영역(_DOMAIN_NAMES)을 넣는다 — "기록은 남겼어요" 만으로는 모델이 맞게 말한 것
+# ("김밥 먹은 기록과 놀이공원 가고 싶다는 기록을 남겼어요")보다 알려 주는 게 적었다 (#678 라이브).
+# 일정 문장은 호출마다 정한다(_schedule_done)
+_OBSERVE_SAID = ("{}기록은 남겼어요.", "기록은 남기지 않았어요.")
 _DOMAIN_NAMES = {
     "food": "식사",
     "health": "건강",
@@ -248,12 +245,16 @@ _DOMAIN_NAMES = {
 # ("김밥은 기록했어요. 놀이공원은 기록하지 않았어요") 저장했다는 말투만으로는 거짓과 갈리지 않는다
 # (#678 라이브). 다 했다고만 하는 답("사과도 기록했어요")에는 이 말이 없다
 _ADMITS_UNSAVED = re.compile(r"않았|않고|않을|못\s?했|못\s?남|안\s?(남|했|만들|넣|적)")
-# 그 종류의 일을 해낸 것으로 보는 쓰기. 수정도 센다 — 관찰 조각에 unclear 가 섞이면 수정 tool 이
+# 관찰을 해낸 것으로 보는 쓰기. 수정도 센다 — 관찰 조각에 unclear 가 섞이면 수정 tool 이
 # 열리고, "~를 ~로 바꿔줘" 는 저장된 기록을 고치는 게 맞다 (#678 리뷰).
 # WRITES_FOR 는 조기 종료가 조각 수만큼 새로 만들었는지 세는 데도 쓰여 따로 둔다
-_DONE_BY: dict[WorkType, tuple[str, ...]] = {
-    WorkType.OBSERVE: (*WRITES_FOR[WorkType.OBSERVE], "update_observation_"),
-    WorkType.SCHEDULE: (*WRITES_FOR[WorkType.SCHEDULE], "update_event"),
+_OBSERVE_DONE_BY: tuple[str, ...] = (*WRITES_FOR[WorkType.OBSERVE], "update_observation_")
+# 일정 쪽 tool 이 끝내 성공하지 못했을 때의 문장. 해낸 쪽은 _schedule_done 이 결과를 보고 정한다
+_SCHEDULE_UNDONE = {
+    "create_event": "일정 초안은 만들지 않았어요.",
+    "create_event_item": "준비물은 더하지 않았어요.",
+    "update_event": "일정은 고치지 않았어요.",
+    "update_event_item": "준비물은 고치지 않았어요.",
 }
 # 알림을 해 달라는 일정 조각은 판정에서 뺀다. 일정 이름만 나오는 알림 요청은 초안 없이 안내로
 # 끝나는 게 정상이고, 다시 확인해도 답이 그대로라 호출만 늘었다("모레 운동회 전날 저녁 8시에 알려줘"
@@ -636,10 +637,10 @@ def _wrote(calls: list[ToolCallRecord]) -> bool:
 
 
 def _missing_work(task: MemoryTask | None, calls: list[ToolCallRecord]) -> tuple[WorkType, ...]:
-    """Supervisor 가 관찰 · 일정으로 나눈 작업 중 이번 run 에서 쓰기 성공이 하나도 없는 종류.
+    """Supervisor 가 관찰 · 일정으로 나눈 작업 중 이번 run 에서 해낸 쓰기가 하나도 없는 종류.
 
-    성공은 ToolCallRecord.success 로 본다. 일정은 승인 전 초안이라 초안 생성 성공을 센다.
-    저장된 것을 고친 것도 센다(_DONE_BY).
+    성공은 ToolCallRecord.success 로 본다. 일정은 승인 전 초안이라 초안 생성 성공을 세고,
+    바뀐 게 없는 성공은 세지 않는다(_schedule_done). 저장된 것을 고친 것도 센다.
     같은 종류의 조각이 여러 개여도 그 종류의 성공 1건이면 된다 — 조각과 호출을 짝짓지 않는다.
     조각이 없으면(강등 · Memory 단독) 판단할 근거가 없어 빈 값이다.
     """
@@ -650,18 +651,66 @@ def _missing_work(task: MemoryTask | None, calls: list[ToolCallRecord]) -> tuple
         for hint in task.hints
         if not (hint.work == WorkType.SCHEDULE and _REMINDER_REQUEST.search(hint.text))
     }
-    written = [call.name for call in calls if call.success]
-    return tuple(
-        work
-        for work in _RECORD_WORK
-        if work in needed and not any(name.startswith(_DONE_BY[work]) for name in written)
-    )
+    done = {
+        WorkType.OBSERVE: any(
+            call.success and call.name.startswith(_OBSERVE_DONE_BY) for call in calls
+        ),
+        WorkType.SCHEDULE: any(_schedule_done(call) for call in calls),
+    }
+    return tuple(work for work, did in done.items() if work in needed and not did)
+
+
+def _schedule_done(call: ToolCallRecord) -> str | None:
+    """일정 쪽 호출 하나가 해낸 일. 해낸 게 없으면 None.
+
+    tool 마다 하는 일이 달라 "일정 초안은 만들었어요" 하나로 묶으면 준비물만 더했거나 고친 run 이
+    새 일정을 만든 것처럼 들린다. 성공이어도 이미 있는 준비물(`added=False`) · 같은 값으로 고친
+    것(`changed=[]`)은 아무것도 하지 않았다 (#678 리뷰). 결과 모양은 `tools/schedule.py` 가 정한다.
+    """
+    if not call.success:
+        return None
+    data = call.result.get("data") or {}
+    if call.name == "create_event":
+        return "일정 초안은 만들었어요."
+    if call.name == "create_event_item":
+        return "준비물은 일정 초안에 더했어요." if data.get("added") else None
+    if call.name == "update_event":
+        return "일정 수정 초안은 만들었어요." if data.get("changed") else None
+    if call.name == "update_event_item":
+        if data.get("draft"):
+            return "준비물 수정 초안은 만들었어요."
+        # 챙김 표시는 초안 없이 바로 쓴다 (persisted_write)
+        checked = call.arguments.get("is_prepared") is not None
+        return "준비물 챙김은 표시했어요." if checked else None
+    return None
+
+
+def _schedule_undone(calls: list[ToolCallRecord]) -> list[str]:
+    """실패한 뒤 같은 tool 이 끝내 성공하지 못한 일정 쪽 호출의 문장.
+
+    모델은 실패하면 인자를 고쳐 다시 부르는 일이 많아, 뒤에 같은 tool 이 성공했으면 말하지 않는다.
+    호출과 대상을 짝짓지 않아서 같은 tool 로 두 대상을 다루다 하나만 실패하면 놓친다 — 조각 단위
+    판정은 후속 이슈다.
+    """
+    said: list[str] = []
+    for index, call in enumerate(calls):
+        if call.success or call.name not in _SCHEDULE_UNDONE:
+            continue
+        if any(later.success and later.name == call.name for later in calls[index + 1 :]):
+            continue
+        if _SCHEDULE_UNDONE[call.name] not in said:
+            said.append(_SCHEDULE_UNDONE[call.name])
+    return said
 
 
 def _partial_reply(
     task: MemoryTask | None, missing: Sequence[WorkType], calls: list[ToolCallRecord]
 ) -> MemoryReply:
-    """일부 종류만 저장한 run 에서 보호자에게 나갈 말. 한 것과 못 한 것을 tool 기록대로 적는다."""
+    """일부 종류만 저장한 run 에서 보호자에게 나갈 말. 한 것과 하지 않은 것을 tool 기록대로 적는다.
+
+    한 것을 먼저, 하지 않은 것을 뒤에 둔다. 실패도 "못 했다" 대신 "하지 않았다" 로 말한다
+    (#678 리뷰).
+    """
     needed = {WorkType(hint.work) for hint in task.hints} if task is not None else set()
     domains = [
         name
@@ -669,16 +718,25 @@ def _partial_reply(
         if any(
             call.success and call.name.endswith(f"_observation_{domain}")
             for call in calls
-            if call.name.startswith(_DONE_BY[WorkType.OBSERVE])
+            if call.name.startswith(_OBSERVE_DONE_BY)
         )
     ]
     fill = f"{' · '.join(domains)} " if domains else ""
-    done = [
-        said.format(fill)
-        for work, (said, _) in _RECORD_WORK.items()
-        if work in needed and work not in missing
-    ]
-    undone = [said for work, (_, said) in _RECORD_WORK.items() if work in missing]
+    done: list[str] = []
+    undone: list[str] = []
+    if WorkType.OBSERVE in missing:
+        undone.append(_OBSERVE_SAID[1])
+    elif WorkType.OBSERVE in needed:
+        done.append(_OBSERVE_SAID[0].format(fill))
+    if WorkType.SCHEDULE in needed:
+        for phrase in filter(None, map(_schedule_done, calls)):
+            if phrase not in done:
+                done.append(phrase)
+        failed = _schedule_undone(calls)
+        if not failed and WorkType.SCHEDULE in missing:
+            # 실패도 없이 해낸 게 없다(부르지 않았거나 바뀐 게 없었다)
+            failed = [_SCHEDULE_UNDONE["create_event"]]
+        undone += failed
     return MemoryReply(text=" ".join([*done, *undone]), kind="message")
 
 
