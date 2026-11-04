@@ -416,6 +416,10 @@ def _resolve(reply: Any, event: Event, fields: _Fields, today: date) -> EventSch
         if ((day not in closed and day.weekday() not in scanned) or day in again)
         and (not open_weekdays or day.weekday() in open_weekdays)
     )
+    if places:
+        # 날짜별 장소를 적은 행사에서 그날 장소를 못 짝지었으면 그날은 열지 않는다 — 행사 장소
+        # 전체로 메우면 다른 날 장소로 보낼 수 있다(#701 리뷰)
+        open_days = open_days & {day for day, _ in places}
     return EventSchedule(
         open_days=open_days,
         day_places=tuple(sorted(pair for pair in places if pair[0] in open_days)),

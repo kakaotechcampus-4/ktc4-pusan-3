@@ -271,6 +271,24 @@ class TestSpans:
         assert schedule.open_days == {FRI, SAT}
         assert schedule.day_places == ((FRI, "물빛호수공원"), (SAT, "은행나무공원"))
 
+    async def test_날짜별_장소를_못_짝지은_날은_열지_않는다(self):
+        # 그날 장소를 모르는데 행사 장소 전체("물빛호수공원 / 은행나무공원")로 메우지 않는다
+        info = intro(place="물빛호수공원 / 은행나무공원")
+        overview = (
+            "2026.11.07.(토) 야간 공연은 물빛호수공원과 은행나무공원 중 날씨를 보고 정한다. "
+            "2026.11.06.(금) 물빛호수공원 낮 공연"
+        )
+        client = FakeClient(
+            reply(
+                "restricted",
+                ("open", "2026.11.06.(금) 물빛호수공원"),
+                ("open", "2026.11.07.(토) 야간 공연"),
+            )
+        )
+        schedule = await read(client, info=info, overview=overview)
+        assert schedule.open_days == {FRI}
+        assert schedule.day_places == ((FRI, "물빛호수공원"),)
+
     async def test_장소_칸에_없는_장소는_모른다(self):
         info = intro(place="물빛호수공원 / 은행나무공원")
         overview = "2026.11.06.(금) 시청 앞 광장"
