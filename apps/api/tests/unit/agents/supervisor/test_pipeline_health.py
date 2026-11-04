@@ -487,6 +487,65 @@ async def test_등록된_약을_먹였다면_체크_안내만_내고_먹인_약_
     assert checked.readouts[0].kind == "notice"
 
 
+def _memory_says(text: str) -> LLMResponse:
+    reply = {"text": text, "kind": "message", "pending_hint": None}
+    return LLMResponse(
+        message=SimpleNamespace(content=json.dumps(reply, ensure_ascii=False), tool_calls=None),
+        usage={},
+        latency_ms=1,
+    )
+
+
+async def test_등록된_약만_말해_저장한_것이_없으면_Memory_말은_내지_않는다(
+    events: list[Any],
+) -> None:
+    """체크 안내는 Health 카드가 이미 낸다. Memory 가 같은 말을 한 번 더 하면 안내가 두 번이다."""
+    raw = "해열 시럽 먹였어"
+    memory_llm = FakeLLM(
+        call("create_observation_health", _given("해열 시럽", raw)),
+        _memory_says("복약 화면에서 먹인 것으로 체크해 주세요."),
+    )
+
+    await _handle(
+        raw,
+        _supervisor(_segment(raw, "medication")),
+        _world("해열 시럽"),
+        events,
+        memory_llm=memory_llm,
+    )
+
+    assert not _of(events, MemoryNote)
+    [checked] = _medication_results(events)
+    assert checked.readouts[0].kind == "notice"
+
+
+async def test_증상은_저장하고_약만_걸러지면_Memory_말은_그대로_낸다(events: list[Any]) -> None:
+    """저장한 증상을 알리는 말은 필요하다. 거른 것은 약 쪽뿐이다."""
+    raw = "열 났어. 해열 시럽 먹였어"
+    fever = {"raw_text": "열 났어", "observed_on": "오늘", "symptom": ["열"]}
+    memory_llm = FakeLLM(
+        calls(
+            ("create_observation_health", fever),
+            ("create_observation_health", _given("해열 시럽", "해열 시럽 먹였어")),
+        ),
+        _memory_says("열 기록을 남겼어요."),
+    )
+
+    await _handle(
+        raw,
+        _supervisor(
+            {"text": "열 났어", "kind": "record", "work": "observe"},
+            {"text": "해열 시럽 먹였어", "kind": "record", "work": "observe"},
+        ),
+        _world("해열 시럽"),
+        events,
+        memory_llm=memory_llm,
+    )
+
+    assert _of(events, Saved)
+    assert [n.text for n in _of(events, MemoryNote)] == ["열 기록을 남겼어요."]
+
+
 async def test_순수_복약_요청도_Memory_를_거른다(events: list[Any]) -> None:
     raw = "해열제 먹였어"
 

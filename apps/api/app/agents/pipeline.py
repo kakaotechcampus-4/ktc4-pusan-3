@@ -1027,6 +1027,10 @@ def _send_reply(
         and _request_only(memory, routing)
     ):
         note = MemoryNote(REQUEST_ONLY_NOTE, "message")
+    elif note is not None and note.kind == "message" and _only_registered_medicine(memory):
+        # 등록된 약이라 저장하지 않은 것밖에 없다. 같은 run 의 Health 카드가 체크 안내를 낸다 —
+        # Memory 의 말까지 나가면 같은 안내가 두 번이다
+        note = None
     pending = memory.pending
     fever = _unmeasured_fever(memory) if pending is None and not once.shown else None
     raw_text = "" if fever is None else str(fever.arguments["raw_text"])
@@ -2177,6 +2181,11 @@ async def _save(
 def _label(agent: str, task_type: object) -> str:
     """로그용 이름. 라벨이 없는 Agent 는 이름만."""
     return agent if task_type is None else f"{agent}:{task_type}"
+
+
+def _only_registered_medicine(memory: MemoryAgentResult) -> bool:
+    """Memory 가 등록된 약을 먹인 약으로 쓰려다 거절된 것 말고는 저장한 것이 없는가."""
+    return memory.refused(ErrorCode.REGISTERED_MEDICINE) and not _saved_refs(memory)
 
 
 def _request_only(memory: MemoryAgentResult, routing: Routing) -> bool:
