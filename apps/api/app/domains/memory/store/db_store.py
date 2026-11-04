@@ -7,7 +7,9 @@ InMemoryStore 와 동일한 fields 매핑을 유지한다 -- Memory Agent 도구
 row.fields["subject"], row.fields["status"] 등으로 읽기 때문이다.
 """
 
+import logging
 from datetime import date, datetime, time, timedelta, timezone
+from time import monotonic
 from typing import Any
 from uuid import UUID
 
@@ -35,6 +37,8 @@ from app.domains.memory.observation.models import (
 from app.domains.memory.profile.service import lock_child_memory, refresh_profile
 from app.domains.schedule import repository as schedule_repository
 from app.domains.schedule.models import Event, EventItem
+
+logger = logging.getLogger(__name__)
 
 _KST = timezone(timedelta(hours=9))
 
@@ -174,7 +178,15 @@ class DbMemoryStore:
         새 관찰 저장은 잡지 않는다 — 커밋 전에는 Curator 에게 보이지 않아 겹치지 않는다.
         같은 트랜잭션은 다시 잡아도 기다리지 않는다.
         """
+        started = monotonic()
         await lock_child_memory(self._session, self._child_id)
+        # 기다린 시간 — 직전 입력의 Curator 가 쥐고 있으면 그만큼 20초 예산에서 빠진다 (#636).
+        # 같은 run 의 두 번째 수정부터는 이미 쥐고 있어 0 이다
+        logger.info(
+            "Memory 아이 잠금 child_id=%s wait_ms=%d",
+            self._child_id,
+            (monotonic() - started) * 1000,
+        )
 
     async def _refresh_profile(self, affinity_id: UUID | None) -> None:
         if affinity_id is not None:

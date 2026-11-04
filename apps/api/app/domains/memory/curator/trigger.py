@@ -11,6 +11,7 @@
 import asyncio
 import logging
 from datetime import date
+from time import monotonic
 from uuid import UUID
 
 from sqlalchemy import select
@@ -39,11 +40,14 @@ async def _run_curator(
 ) -> None:
     """별도 세션·트랜잭션에서 Curator 를 돌리고 recompute 한다."""
     async with async_session_factory() as session:
+        started = monotonic()
+        locked: float | None = None
         try:
             # 같은 아이의 동시 curator 실행을 직렬화한다.
             # xact_lock 이라 트랜잭션이 끝나면 자동으로 풀린다.
             # 두 int4 오버로드 — ns 로 curator 잠금과 다른 기능의 잠금이 겹치지 않는다.
             await lock_child_memory(session, child_id)
+            locked = monotonic()
             # 잠금 대기 중 바뀐 생일도 반영한다. PATCH 자체를 잠그는 것은 아니다.
             birth_date = (
                 await session.execute(
@@ -71,6 +75,16 @@ async def _run_curator(
                 child_id,
                 type(exc).__name__,
             )
+        finally:
+            if locked is not None:
+                # 잠금을 쥔 시간 — 그동안 같은 아이의 관찰 수정 · 삭제가 기다린다 (#636).
+                # 길면 임베딩 · judge 를 잠금 밖으로 빼는 근거가 된다. 커밋 · 롤백까지 센다
+                logger.info(
+                    "curator 아이 잠금 child_id=%s wait_ms=%d held_ms=%d",
+                    child_id,
+                    (locked - started) * 1000,
+                    (monotonic() - locked) * 1000,
+                )
 
 
 def trigger_curator_background(

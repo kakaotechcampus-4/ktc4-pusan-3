@@ -12,6 +12,8 @@
 """
 
 import asyncio
+import logging
+import re
 from datetime import date, timedelta
 
 import pytest
@@ -387,7 +389,7 @@ async def test_새_기록_저장은_Curator_를_기다리지_않는다(two_linke
 
 
 @pytest.mark.parametrize("change", ["update", "delete"])
-async def test_관찰을_고치는_run_은_Curator_가_끝날_때까지_기다린다(two_linked, change):
+async def test_관찰을_고치는_run_은_Curator_가_끝날_때까지_기다린다(two_linked, change, caplog):
     """위의 짝 — 고치기 · 지우기는 아이 잠금을 기다린다.
 
     이게 없으면 교착 테스트가 타이밍 때문에 우연히 통과해도 알 수 없다.
@@ -411,6 +413,11 @@ async def test_관찰을_고치는_run_은_Curator_가_끝날_때까지_기다�
         await asyncio.sleep(0.3)
         assert not pending.done()  # Curator 가 쥐고 있는 동안은 기다린다
 
-        await curator_s.commit()  # Curator 끝 — 잠금이 풀린다
-        assert await asyncio.wait_for(pending, timeout=5)
+        with caplog.at_level(logging.INFO, logger="app.domains.memory.store.db_store"):
+            await curator_s.commit()  # Curator 끝 — 잠금이 풀린다
+            assert await asyncio.wait_for(pending, timeout=5)
         await run_s.rollback()
+
+    # 기다린 시간이 로그에 남는다 — 20초 예산에서 빠진 몫을 운영에서 잴 수 있게
+    waited = re.search(rf"Memory 아이 잠금 child_id={child_id} wait_ms=(\d+)", caplog.text)
+    assert waited and int(waited.group(1)) >= 250
