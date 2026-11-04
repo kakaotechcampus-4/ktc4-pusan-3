@@ -59,7 +59,7 @@ from app.agents.entrypoint import (
 )
 from app.api.runs import sse
 from app.api.runs.registry import RunChannel
-from app.api.v1.card_rows import card_tab, proposal_tab
+from app.api.v1.card_rows import card_tab, in_kind_order, proposal_tab
 from app.api.v1.schemas.cards import DeleteProposalCardOut
 
 log = logging.getLogger(__name__)
@@ -88,7 +88,7 @@ def to_sse(
         rows = card_rows or {}
         found = [
             out.model_dump(mode="json")
-            for tab in event.tabs
+            for tab in in_kind_order(event.tabs)
             if (out := card_tab(tab.kind, tab.truncated, tab.ids, rows)) is not None
         ]
         return ("found_tabs", {"tabs": found}) if found else None
@@ -104,7 +104,7 @@ def to_sse(
             result=None,
             tabs=[
                 out
-                for tab in event.tabs
+                for tab in in_kind_order(event.tabs)
                 if (out := proposal_tab(tab.kind, tab.truncated, tab.ids, tab.picked, rows))
                 is not None
             ],

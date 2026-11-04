@@ -53,7 +53,10 @@ from app.agents.entrypoint import (
 from app.agents.memory.drafts import DraftItem, EventSnapshot
 from app.agents.memory.schemas.task import WorkType
 from app.api.runs import registry, sse, translate
+from app.api.v1.card_rows import in_kind_order
+from app.api.v1.schemas.cards import KIND_ORDER
 from app.api.v1.schemas.suggestions import CalendarEventOut
+from app.domains.delete_proposal.repository import KINDS
 
 KST = ZoneInfo("Asia/Seoul")
 PARENT = uuid.UUID(int=1)
@@ -631,3 +634,21 @@ def test_delete_proposal_is_sent_even_without_rows():
     [tab] = payload["tabs"]
     assert tab["picked_ids"] == ["e1"]
     assert translate.to_sse(event, card_rows={expires: rows[expires]})[1]["tabs"] == []
+
+
+def test_tabs_follow_screen_order_not_query_order():
+    """#535 (#714 리뷰) — 모델이 조회한 순서가 화면 배치를 정하지 않는다. 확인 문장 · 요약이
+    식사 · 건강 · 교육 · 놀이 · 생활습관 · 일정 순서를 따른다."""
+    tabs = (
+        CardTab("event", False, ("e1",)),
+        CardTab("observation_activity", False, ("a1",)),
+        CardTab("observation_food", False, ("f1",)),
+    )
+
+    assert [tab.kind for tab in in_kind_order(tabs)] == [
+        "observation_food",
+        "observation_activity",
+        "event",
+    ]
+    # 종류 목록이 갈라지지 않는다 — 탭 순서 · 제안에 담을 수 있는 종류가 같다
+    assert set(KIND_ORDER) == KINDS

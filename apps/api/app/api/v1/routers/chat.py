@@ -50,7 +50,7 @@ from app.api.deps.db import SessionDep
 from app.api.errors import ApiError, ErrorEnvelope
 from app.api.quota import today_kst
 from app.api.runs import pending_reply
-from app.api.v1.card_rows import CardRows, card_tab, proposal_tab, read_card_rows
+from app.api.v1.card_rows import CardRows, card_tab, in_kind_order, proposal_tab, read_card_rows
 from app.api.v1.observation_outs import to_observation_outs
 from app.api.v1.schemas.cards import DeleteProposalCardOut, FoundTabsOut
 from app.api.v1.schemas.chat import (
@@ -302,7 +302,7 @@ def _found_tabs(reply: FoundTabsReply, cards: _Cards) -> FoundTabsOut | None:
     """지금 남은 행으로 다시 그린다. 그사이 지운 행은 빼고, 다 지워졌으면 카드도 뺀다."""
     tabs = [
         out
-        for tab in reply.tabs
+        for tab in in_kind_order(reply.tabs)
         if (out := card_tab(tab.kind, tab.truncated, tab.ids, cards.rows)) is not None
     ]
     return FoundTabsOut(tabs=tabs) if tabs else None
@@ -320,7 +320,7 @@ def _proposal_card(reply: DeleteProposalReply, cards: _Cards) -> DeleteProposalC
     tabs = (
         [
             out
-            for tab in tabs_of(row)
+            for tab in in_kind_order(tabs_of(row))
             if (out := proposal_tab(tab.kind, tab.truncated, tab.ids, tab.picked, cards.rows))
             is not None
         ]

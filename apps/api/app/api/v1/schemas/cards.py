@@ -6,7 +6,7 @@ tool 하나다. 관찰은 `records`, 일정은 `events` 에 싣고, 다른 쪽�
 """
 
 from datetime import datetime
-from typing import Literal
+from typing import Literal, get_args
 
 from pydantic import BaseModel, Field
 
@@ -15,9 +15,25 @@ from app.api.v1.schemas.suggestions import CalendarEventOut
 
 DeleteProposalState = Literal["pending", "deleted", "cancelled", "expired"]
 
+CardKind = Literal[
+    "observation_food",
+    "observation_health",
+    "observation_education",
+    "observation_activity",
+    "observation_routine",
+    "event",
+]
+"""탭 종류. 이 순서가 탭 순서다 — 서버가 이 순서로 정렬해서 보낸다."""
+KIND_ORDER: tuple[str, ...] = get_args(CardKind)
+
 
 class CardTabOut(BaseModel):
-    kind: str = Field(description="`observation_food` · … · `event`. 탭 순서는 서버가 정한 그대로")
+    kind: CardKind = Field(
+        description=(
+            "탭 종류. 탭은 늘 식사 · 건강 · 교육 · 놀이 · 생활습관 · 일정 순서로 온다 — "
+            "AI 가 조회한 순서와 상관없이 서버가 정렬한다. 행이 없는 탭은 오지 않는다"
+        )
+    )
     truncated: bool = Field(
         description="최근 40건만 실었는지. 참이면 화면이 더 있다고 알린다 (건수는 싣지 않는다)"
     )

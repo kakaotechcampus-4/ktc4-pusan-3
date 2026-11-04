@@ -12,12 +12,13 @@
 import uuid
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import date
+from typing import Protocol
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.observation_outs import to_observation_outs
 from app.api.v1.reminder_check import reminder_out
-from app.api.v1.schemas.cards import CardTabOut, ProposalTabOut
+from app.api.v1.schemas.cards import KIND_ORDER, CardTabOut, ProposalTabOut
 from app.api.v1.schemas.observations import ObservationHealthOut, ObservationOut
 from app.api.v1.schemas.suggestions import CalendarEventOut, EventItemOut
 from app.domains.memory.observation.repository import ObservationDomain, find_observations
@@ -55,6 +56,16 @@ def event_out(event: Event, items: list[EventItem], reminder: Reminder | None) -
         ],
         reminder=reminder_out(reminder),
     )
+
+
+class _HasKind(Protocol):
+    kind: str
+
+
+def in_kind_order[T: _HasKind](tabs: Iterable[T]) -> list[T]:
+    """탭을 화면 순서(`KIND_ORDER`)로. 모델이 조회한 순서가 화면 배치를 정하지 않게 한다 —
+    확인 문장 · 요약("식사 27건, 놀이 12건")이 이 순서를 따른다 (#714 리뷰)."""
+    return sorted(tabs, key=lambda tab: KIND_ORDER.index(tab.kind))
 
 
 def _uuid(raw: str) -> uuid.UUID | None:
