@@ -275,3 +275,20 @@ async def test_후보_밖_except_ids_도_실패한다(context: AgentContext, sto
 
     assert result.success is False and result.error["code"] == ErrorCode.TARGET_NOT_FOUND
     assert store.proposal is None
+
+
+async def test_조회했는데_0건인_종류는_all_kinds_에_있어도_받는다(
+    context: AgentContext, store: InMemoryStore
+) -> None:
+    # "저번주 기록 다 지워줘" 에 다섯 종류를 다 넣는다 — 0건인 종류는 고를 것이 없을 뿐이다
+    rice = await _meal(context, "rice")
+    await _call(context, "query_observation_food")
+    await _call(context, "query_observation_health")
+
+    result = await _call(
+        context, "propose_delete", {"all_kinds": ["observation_food", "observation_health"]}
+    )
+
+    assert result.success is True, result.error
+    assert store.proposal is not None
+    assert store.proposal[1] == (DeleteCandidates("observation_food", False, (rice,), (rice,)),)

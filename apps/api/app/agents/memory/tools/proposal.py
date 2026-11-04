@@ -49,14 +49,15 @@ async def propose_delete(context: AgentContext, args: ProposeDeleteArgs) -> Tool
     tabs = candidate_tabs(context)
     if not tabs:
         return fail("create", RESOURCE, ErrorCode.TARGET_REQUIRED, _QUERY_FIRST)
-    queried = {tab.kind for tab in tabs}
-    unqueried = [kind for kind in args.all_kinds if kind not in queried]
+    # 조회했는데 0건인 종류는 받는다 — "다 지워줘" 에 다섯 종류를 다 넣는 것이 자연스럽고, 고를 것이
+    # 없을 뿐이다. 조회하지 않은 종류만 막는다
+    unqueried = [kind for kind in args.all_kinds if kind not in context.found]
     if unqueried:
         return fail(
             "create",
             RESOURCE,
             ErrorCode.TARGET_NOT_FOUND,
-            f"{', '.join(unqueried)} 는 이 run 에서 조회한 결과가 없다. 조회한 종류만 all_kinds 에 "
+            f"{', '.join(unqueried)} 는 이 run 에서 조회하지 않았다. 조회한 종류만 all_kinds 에 "
             "넣는다. 그 종류도 지울 거면 먼저 조회한다.",
         )
     known = {oid for tab in tabs for oid in tab.ids}
