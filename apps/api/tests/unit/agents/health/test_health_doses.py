@@ -99,7 +99,7 @@ class TestCheckOnScreen:
 
         readout = await check_on_screen(ctx)
 
-        assert readout.body == "복용 체크는 복약 화면에서 해 주세요."
+        assert readout.body == "복용 체크는 홈이나 복약 화면에서 해 주세요."
         assert store.writes == []
         rows = await store.doses(
             schedule_ids=[
