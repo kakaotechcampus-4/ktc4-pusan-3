@@ -215,6 +215,63 @@ async def _seed_long_juk(store: InMemoryStore, seeded: Seeded) -> None:
     )
 
 
+_MENUS = ("죽", "김밥", "국수", "볶음밥", "미역국", "카레")
+_PLAYS = ("블록", "레고", "퍼즐", "그림", "공놀이", "모래놀이")
+
+
+async def _seed_bulk_last_week(store: InMemoryStore, seeded: Seeded) -> None:
+    # 종류마다 45건 — 조회가 40건에서 잘린다. "다" 지우려면 id 를 늘어놓지 않고 종류로 골라야
+    # 한 응답 출력에 들어간다 (90건 × id 20토큰 남짓 > 1400토큰)
+    for i in range(45):
+        day = LAST_WEEK + timedelta(days=i % 5 - 2)
+        menu, play = _MENUS[i % len(_MENUS)], _PLAYS[i % len(_PLAYS)]
+        await _observation(
+            store,
+            seeded,
+            f"food{i}",
+            "food",
+            day,
+            raw_text=f"{menu} 먹었어 {i}",
+            subject=menu,
+            action="먹었다",
+        )
+        await _observation(
+            store,
+            seeded,
+            f"play{i}",
+            "activity",
+            day,
+            raw_text=f"{play} 했어 {i}",
+            subject=play,
+            activity=f"{play} 놀이",
+        )
+
+
+async def _seed_bulk_meals_and_snack(store: InMemoryStore, seeded: Seeded) -> None:
+    for i in range(30):
+        menu = _MENUS[i % len(_MENUS)]
+        await _observation(
+            store,
+            seeded,
+            f"meal{i}",
+            "food",
+            YESTERDAY,
+            raw_text=f"{menu} 먹었어 {i}",
+            subject=menu,
+            action="먹었다",
+        )
+    await _observation(
+        store,
+        seeded,
+        "cookie",
+        "food",
+        YESTERDAY,
+        raw_text="간식으로 과자 먹었어",
+        subject="과자",
+        action="간식으로 먹었다",
+    )
+
+
 async def _seed_sports_and_apple(store: InMemoryStore, seeded: Seeded) -> None:
     await _event(store, seeded, "sports", "운동회", TODAY + timedelta(days=2))
     await _seed_apple(store, seeded)
@@ -234,6 +291,8 @@ class Case:
     # 못 찾고 "못 찾았어요" 로 끝나도 통과 — 검색 방식의 한계를 재는 케이스.
     # 틀린 것은 절대 고르지 않는다
     may_miss: bool = False
+    # 카드에 보인 후보(not_picked 빼고)가 전부 체크돼야 한다 — 대량 삭제
+    picked_all: bool = False
 
 
 CASES = [
@@ -292,6 +351,23 @@ CASES = [
         frozenset({"rice"}),
         may_miss=True,
     ),
+    Case(
+        "P07",
+        "저번주 기록 다 지워줘.",
+        _seed_bulk_last_week,
+        frozenset(),
+        tab_kinds=frozenset({"observation_food", "observation_activity"}),
+        picked_all=True,
+    ),
+    Case(
+        "P08",
+        "어제 식사 기록 중에 간식은 빼고 다 지워줘.",
+        _seed_bulk_meals_and_snack,
+        frozenset(),
+        frozenset({"cookie"}),
+        frozenset({"observation_food"}),
+        picked_all=True,
+    ),
 ]
 
 
@@ -314,10 +390,22 @@ async def _rows(store: InMemoryStore) -> int:
 def _log(case: Case, result: MemoryAgentResult, store: InMemoryStore, seeded: Seeded) -> None:
     names = {oid: name for name, oid in seeded.ids.items()}
     tabs = store.proposal[1] if store.proposal else ()
-    shown = [(tab.kind, [names.get(i, i) for i in tab.picked], len(tab.ids)) for tab in tabs]
+    # 대량이면 이름 대신 건수만 — (종류, 고른 수, 후보 수)
+    shown = [
+        (tab.kind, len(tab.picked), len(tab.ids))
+        if len(tab.ids) > 10
+        else (tab.kind, [names.get(i, i) for i in tab.picked], len(tab.ids))
+        for tab in tabs
+    ]
+    # 모델이 어떻게 골랐는지 — id 를 늘어놓았는지, 종류로 골랐는지
+    how = [
+        {key: (len(v) if key != "all_kinds" else v) for key, v in c.arguments.items()}
+        for c in result.calls
+        if c.name == "propose_delete"
+    ]
     reply = result.reply
     print(
-        f"\n[{case.case_id}] tools={result.tool_names} tabs={shown} "
+        f"\n[{case.case_id}] tools={result.tool_names} propose={how} tabs={shown} "
         f"kind={reply.kind if reply else None} {result.final_message!r}"
     )
 
@@ -363,6 +451,10 @@ async def _flow(case: Case, client: LLMClient) -> None:
     assert want <= picked, f"골라야 할 것을 안 골랐다: {sorted(case.picked)}"
     wrong = sorted(name for name in case.not_picked if seeded.ids[name] in picked)
     assert not wrong, f"고르면 안 되는 것을 골랐다: {wrong}"
+    if case.picked_all:
+        excluded = {seeded.ids[name] for name in case.not_picked}
+        shown = {oid for tab in tabs for oid in tab.ids} - excluded
+        assert shown <= picked, f"보인 후보 {len(shown)}건 중 {len(shown - picked)}건을 안 골랐다"
     if case.tab_kinds is not None:
         assert {tab.kind for tab in tabs} == case.tab_kinds, f"탭: {[t.kind for t in tabs]}"
     assert result.reply is not None and result.reply.kind == "message", "제안한 뒤에 되물었다"
