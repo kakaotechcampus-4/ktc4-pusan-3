@@ -41,11 +41,23 @@ async def _redis() -> None:
         await asyncio.to_thread(r.ping)
 
 
+_stuck: set[asyncio.Task] = set()
+"""시간 안에 못 끝낸 확인 — 취소만 걸고 기다리지 않는다. 끝날 때까지 여기서 붙잡아 GC 를 막는다."""
+
+
 async def _check(name: str, probe) -> str:
-    try:
-        async with asyncio.timeout(READY_TIMEOUT_S):
-            await probe()
-    except Exception as exc:
+    # 🚨 asyncio.timeout 으로 감싸면 안 된다. 취소는 한 번뿐이라, 멈춘 DB 연결을 닫는 정리
+    #    (세션 rollback · close)가 다시 매달려 응답이 DB 가 돌아올 때까지 붙잡힌다
+    #    (#671 리뷰에서 재현). 확인을 따로 띄우고, 시간이 지나면 정리를 안 기다리고 fail 로 답한다.
+    task = asyncio.create_task(probe())
+    done, _ = await asyncio.wait({task}, timeout=READY_TIMEOUT_S)
+    if not done:
+        task.cancel()
+        _stuck.add(task)
+        task.add_done_callback(_stuck.discard)
+        log.warning("health/ready %s 실패: TimeoutError", name)
+        return "fail"
+    if (exc := task.exception()) is not None:
         log.warning("health/ready %s 실패: %s", name, type(exc).__name__)
         return "fail"
     return "ok"
