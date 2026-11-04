@@ -6,9 +6,11 @@
 """
 
 import re
+from pathlib import Path
 
 import pytest
 
+from app.agents.common.readout import ReadoutCatalog
 from app.agents.health import readouts
 from app.agents.health.readouts import READOUTS
 from tests.unit.agents.health.support import HEALTH_DOCS
@@ -82,3 +84,19 @@ class TestCatalog:
     def test_없는_키는_KeyError(self):
         with pytest.raises(KeyError):
             READOUTS.get("closed.없는키")
+
+
+class TestScreenWording:
+    """화면 글자 규칙과 안내의 종류. 복사 버튼은 종류(kind)로 선다."""
+
+    def test_Health_문구에_줄표가_없다(self):
+        health_dir = Path(readouts.__file__).parent
+        paths = sorted(health_dir.rglob("*.readout.yaml"))
+        assert paths, "readout yaml 을 찾지 못했다"
+        for path in paths:
+            catalog = ReadoutCatalog.from_yaml(path)
+            dashed = sorted(key for key, text in catalog.texts.items() if "—" in text.template)
+            assert not dashed, f"{path.name}: 줄표가 있는 문구 {dashed}"
+
+    def test_진행_중_복약이_없다는_안내는_서식이_아니라_안내다(self):
+        assert READOUTS.get("notice.no_active_med").kind == "medication_notice"

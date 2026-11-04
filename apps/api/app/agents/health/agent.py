@@ -24,7 +24,7 @@ from app.agents.common.schemas.task import DomainTask
 from app.agents.health.context import HealthContext, build_gate
 from app.agents.health.envelope import result as _result
 from app.agents.health.labels.handoff import run_care_handoff
-from app.agents.health.labels.medication import is_dose_report, run_medication
+from app.agents.health.labels.medication import answer_leftover, is_dose_report, run_medication
 from app.agents.health.labels.schedule import run_schedule_check
 from app.agents.health.labels.visit import run_visit_summary
 from app.agents.health.readouts import PLACE_PREPARING, READOUTS
@@ -34,6 +34,7 @@ from app.agents.health.schemas.task import HealthTaskType, task_type_of
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "answer_leftover",
     "is_dose_report",
     "registered_titles",
     "run",

@@ -221,9 +221,9 @@ Memory 가 뽑은 문장이라 보호자 말 그대로라고 보장하지 못해
 | `symptom.repeat` | 최근 1주 동안 '{symptom}'이(가) {n}번 기록됐어요. 병원에서 확인해 보시는 게 좋겠어요. |
 | `symptom.repeat_condition` | 최근 1주 동안 '{symptom}'이(가) {n}번 기록됐어요. 등록하신 '{condition}'이(가) 있어 병원에서 확인해 보시는 게 좋겠어요. |
 | `vaccine.disclaimer` | 이 시기에 권장되는 접종이에요. 실제 접종 기록은 예방접종도우미에서 확인할 수 있어요. |
-| `med.confirm` | {title} — {times}에 알려드릴까요? ({starts_on} ~ {ends_on}) |
+| `med.confirm` | {title}, {times}에 알려드릴까요? ({starts_on} ~ {ends_on}) |
 | `med.update_confirm` | {title} 알림을 {times}로 바꿀까요? 확인 전까지는 기존 시각에 알려드려요. |
-| `med.notice` | {title} — {times}에 알려드릴게요. ({starts_on} ~ {ends_on}) |
+| `med.notice` | {title}, {times}에 알려드릴게요. ({starts_on} ~ {ends_on}) |
 | `med.stop_confirm` | {title} 복약 알림을 멈출까요? 먹인 기록은 그대로 남아요. |
 | `med.stopped` | {title} 복약 알림을 멈췄어요. 먹인 기록은 그대로 남아요. |
 | `med.stop_kept` | {title} 복약 알림은 그대로 둘게요. |

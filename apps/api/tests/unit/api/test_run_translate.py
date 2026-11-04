@@ -22,7 +22,7 @@ from app.agents import entrypoint
 # 이유로 레이어 경계 밖이다. 번역은 readout 의 칸만 읽어 옮긴다.
 from app.agents.common.readout import Readout
 from app.agents.common.refs import Ref as EvidenceRef
-from app.agents.common.result import DomainPending, MedicationDraft
+from app.agents.common.result import MedicationDraft
 from app.agents.entrypoint import (
     AgentQuestion,
     AgentResult,
@@ -33,6 +33,7 @@ from app.agents.entrypoint import (
     EventDrafts,
     Failed,
     Guidance,
+    MedicationDrafts,
     MemoryNote,
     Partial,
     PendingMemoryContext,
@@ -61,6 +62,7 @@ SENT = {
     Done,
     Guidance,
     EventDrafts,
+    MedicationDrafts,
     MemoryNote,
     Unavailable,
     Partial,
@@ -203,8 +205,8 @@ def _growth_review() -> AgentResult:
     )
 
 
-def test_agent_result_copies_readouts_without_source_refs():
-    """readout은 칸을 하나씩 옮긴다. 근거 종류(`source_refs`)는 화면 `Ref` 에 아직 없어서 뺀다."""
+def test_agent_result_copies_readouts_and_drops_refs_the_screen_lacks():
+    """readout은 칸을 하나씩 옮긴다. 성장 근거 같은 종류는 화면 `Ref` 에 아직 없어서 뺀다."""
     assert translate.to_sse(_growth_review()) == (
         "agent_result",
         {
@@ -218,6 +220,7 @@ def test_agent_result_copies_readouts_without_source_refs():
                     "body": "3월 2일부터 6월 2일까지 3개월간 키 2.1cm 늘었어요.",
                     "authored_by": "code",
                     "code": None,
+                    "source_refs": [],
                 }
             ],
             "question": None,
@@ -230,30 +233,9 @@ def test_agent_result_copies_readouts_without_source_refs():
     )
 
 
-def test_agent_result_does_not_send_drafts_or_pending():
-    """복약 초안 · 되묻기 맥락은 AgentResult 에 실려도 화면으로 가지 않는다.
-
-    초안 카드와 이어받기는 다른 프레임의 몫이라, agent_result 의 키는 지금 그대로 열 개다.
-    """
-    result = AgentResult(
-        agent="health",
-        task_type="medication",
-        status="completed",
-        readouts=(),
-        medication_drafts=(
-            MedicationDraft(
-                draft_id="d1",
-                op="create",
-                source="utterance",
-                schedule={"title": "항생제"},
-                doses=({"scheduled_time": "08:30"},),
-                notice_times=("08:30",),
-            ),
-        ),
-        pending=DomainPending(
-            agent="health", kind="medication_which", question="어느 약인가요?", payload={}
-        ),
-    )
+def test_agent_result_keys_are_ten():
+    """agent_result 의 키는 열 개다. 복약 초안 · 되묻기 맥락은 다른 이벤트의 몫이다."""
+    result = AgentResult(agent="health", task_type="medication", status="completed", readouts=())
 
     name, payload = translate.to_sse(result)
 
@@ -270,6 +252,120 @@ def test_agent_result_does_not_send_drafts_or_pending():
         "reason",
         "record_count",
     }
+
+
+_SCHEDULE_ID = uuid.UUID("11111111-1111-1111-1111-111111111111")
+
+
+def _med_create() -> MedicationDraft:
+    return MedicationDraft(
+        draft_id="m1",
+        op="create",
+        source="utterance",
+        schedule={"title": "항생제", "starts_on": "2026-11-04", "ends_on": None},
+        doses=({"timing_anchor": "breakfast", "offset_minutes": 30},),
+        notice_times=("08:30",),
+        missing=("ends_on",),
+    )
+
+
+def _med_update() -> MedicationDraft:
+    return MedicationDraft(
+        draft_id="m2",
+        op="update",
+        source="utterance",
+        schedule={"title": "항생제", "starts_on": "2026-11-04", "ends_on": "2026-11-08"},
+        doses=({"timing_anchor": "dinner", "offset_minutes": 30},),
+        notice_times=("19:30",),
+        schedule_id=_SCHEDULE_ID,
+        before={"title": "항생제", "notice_times": ["18:30"]},
+    )
+
+
+def test_복약_초안은_medication_draft_프레임_하나():
+    name, data = translate.to_sse(MedicationDrafts((_med_create(), _med_update())))
+
+    assert name == "medication_draft" and len(data["drafts"]) == 2
+    assert set(data["drafts"][0]) == {
+        "draft_id",
+        "op",
+        "source",
+        "schedule",
+        "doses",
+        "notice_times",
+        "missing",
+    }
+    assert data["drafts"][0]["notice_times"] == ["08:30"]
+    assert data["drafts"][0]["missing"] == ["ends_on"]
+
+
+def test_create_초안에는_schedule_id_와_before_키가_없다():
+    _, data = translate.to_sse(MedicationDrafts((_med_create(),)))
+
+    assert "schedule_id" not in data["drafts"][0] and "before" not in data["drafts"][0]
+
+
+def test_update_초안은_schedule_id_문자열과_before_를_싣는다():
+    _, data = translate.to_sse(MedicationDrafts((_med_update(),)))
+
+    assert data["drafts"][0]["schedule_id"] == str(_SCHEDULE_ID)
+    assert data["drafts"][0]["before"] == {"title": "항생제", "notice_times": ["18:30"]}
+
+
+def test_복약_초안_프레임은_JSON_으로_바뀐다():
+    sse.frame(*translate.to_sse(MedicationDrafts((_med_create(), _med_update()))))
+
+
+_COURSE_A = uuid.UUID(int=0xA)
+_COURSE_B = uuid.UUID(int=0xB)
+
+
+def _card(*readouts: Readout) -> AgentResult:
+    return AgentResult(
+        agent="health", task_type="medication", status="completed", readouts=readouts
+    )
+
+
+def _notice(*refs: EvidenceRef) -> Readout:
+    return Readout(
+        kind="notice",
+        body="복용 체크는 복약 화면에서 해 주세요.",
+        authored_by="code",
+        source_refs=refs,
+    )
+
+
+def test_readout_ref_는_medication_schedule_만_싣는다():
+    """화면 `Ref.kind` 에 있는 종류만 보낸다 — 지금은 복약 코스 하나다."""
+    readout = _notice(
+        EvidenceRef("medication_schedule", _COURSE_A),
+        EvidenceRef("observation_health", uuid.UUID(int=1)),
+    )
+
+    _, data = translate.to_sse(_card(readout))
+
+    assert data["readouts"][0]["source_refs"] == [
+        {"kind": "medication_schedule", "id": str(_COURSE_A)}
+    ]
+
+
+def test_ref_가_없는_readout_도_source_refs_키가_있다():
+    _, data = translate.to_sse(_card(_notice()))
+
+    assert data["readouts"][0]["source_refs"] == []
+
+
+def test_코스가_여럿이면_순서대로_목록이다():
+    readout = _notice(
+        EvidenceRef("medication_schedule", _COURSE_B), EvidenceRef("medication_schedule", _COURSE_A)
+    )
+
+    _, data = translate.to_sse(_card(readout))
+
+    assert [ref["id"] for ref in data["readouts"][0]["source_refs"]] == [
+        str(_COURSE_B),
+        str(_COURSE_A),
+    ]
 
 
 def test_agent_result_carries_saved_suggestion_ids_in_order():
