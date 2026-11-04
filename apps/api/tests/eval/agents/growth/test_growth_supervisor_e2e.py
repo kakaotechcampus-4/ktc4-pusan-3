@@ -37,6 +37,7 @@ from app.agents.growth.readouts import (
     CLOSED_INFANT_LEARNING,
     CLOSED_MEDICAL_ROUTINE,
     CLOSED_SYMPTOM_HABIT,
+    DOC_NO_ROW,
     READOUTS,
 )
 from app.agents.growth.store.inmemory import (
@@ -192,6 +193,25 @@ def j_routine(*, need_suggestion: bool) -> Judge:
         o.notes.append(f"추천 {len(event.suggestion_ids)}개 · 되묻기 {asked}")
 
     return judge
+
+
+def j_screen_concern(o: Observed) -> None:
+    """게임 고민 — Supervisor 가 어느 라벨로 보내든 교육 흐름으로 돌아 추천이 저장된다.
+
+    Memory 가 게임 기록을 남겼는지는 모델이 정한다 — 기록이 있으면 개인화, 없으면 화면 약속 행
+    근거의 일반 추천이다. 어느 쪽이든 자료 없음(`doc.no_row`)이 아니다.
+    """
+    if len(o.growth_events) != 1:
+        o.failures.append(f"Growth agent_result {len(o.growth_events)}개 (1개여야 한다)")
+        return
+    event = o.growth_events[0]
+    if event.task_type != LEARN:
+        o.failures.append(f"교육 흐름으로 돌지 않았다 (task_type={event.task_type})")
+    if any(r.body == READOUTS.get(DOC_NO_ROW).template for r in event.readouts):
+        o.failures.append("자료 없음(doc.no_row)으로 닫혔다")
+    if event.status != "completed" or not event.suggestion_ids:
+        o.failures.append(f"추천이 없다 (status={event.status})")
+    o.notes.append(f"추천 {len(event.suggestion_ids)}개 · {event.kind} · 저장 {o.growth_saved}")
 
 
 def j_asks_once(o: Observed) -> None:
@@ -434,6 +454,20 @@ CASES: tuple[Case, ...] = (
         "8개월 → 보드북만 · 일반 추천",
         j_book_recommended,
         books=True,
+    ),
+    Case(
+        "GAME/C48",
+        "아이가 요새 게임만 자꾸 하려고 하는데 어떻게 해야해?",
+        "C48",
+        "게임 고민 → 교육 흐름 · 자료 없음 아님 · 추천 저장",
+        j_screen_concern,
+    ),
+    Case(
+        "GAME/C48-empty",
+        "아이가 요새 게임만 자꾸 하려고 하는데 어떻게 해야해?",
+        "C48-empty",
+        "기록 없는 아이의 게임 고민 → 화면 약속 행 근거 일반 추천",
+        j_screen_concern,
     ),
     Case(
         "T01/C11",

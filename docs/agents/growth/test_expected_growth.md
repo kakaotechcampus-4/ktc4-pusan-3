@@ -9,6 +9,9 @@
 
 | 이름 | 월령 | 비고 |
 | --- | --- | --- |
+| C48-unrelated | 48개월 | 공룡 confirmed affinity · 교육 "영어 노래" · 놀이 "블록 쌓기" · 루틴 "손 씻기" — 국어 · 수학 · 곰 · 식사와 무관한 기록뿐 (#702) |
+| C48-reading | 48개월 | 교육 "4문장 이상 글 읽기 어려움"(polarity −1) · 공룡 affinity (#702) |
+| C48-game | 48개월 | 놀이 "휴대폰 게임" 1건 · 공룡 affinity (#702) |
 | **C48 (기본)** | 48개월 | 농구·공룡 confirmed affinity · 측정 2건(6개월 간격) · 동의 있음 · `notice` 있음 |
 | C8 | 8개월 | 영아기 |
 | C20 | 20개월 | 예절 미개방 |
@@ -85,6 +88,19 @@ run 은 이전 run 을 기억하지 않는다. 추천이 저장되면 대화에�
 | TA1 | M → growth/learning (혼합형 — 기록 "아이가 국어 공부를 어려워하는데" · 요청 "어떻게 도와줘야 좋을까?") | 1~2 | [예시] 전부 `communication` 영역 · 기억 조회 keywords 에 주제 낱말 | 자연탐구 등 다른 영역 예시 · keywords 가 비어 전체 조회 |
 | TA2 | M → growth/learning (혼합형 — 기록 "수학 공부를 어려워하는데" · 요청 "어떻게 도와줄까?") | 1~2 | [예시] 전부 `nature` 영역 · 기억 조회 keywords 에 주제 낱말 | 다른 영역 예시 · keywords 가 비어 전체 조회 |
 
+### 주제 근거 · 화면 고민 (#702)
+
+| ID | 라우팅 | 호출 | 기대 | 실패 |
+| --- | --- | --- | --- | --- |
+| EV1 | M → growth/learning (C48-unrelated — 기록 "아이가 국어 공부를 어려워하는데") | 1~2 | 국어 기록이 없어 **개인화 0** · [예시] 근거 일반 추천 | 공룡 관심으로 `개인화` |
+| EV2 | M → growth/learning (C48-unrelated — 기록 "수학 공부를 어려워하는데") | 1~2 | 개인화 0 · 일반 추천 | 영어 기록으로 `개인화` |
+| EV3 | M → growth/learning (C48-reading — 국어) | 1~2 | `개인화` · 근거에 **글 읽기** 기록 · 이유에 "피했다" 없음 | 글 읽기를 피한 근거로 씀 · 공룡만 달고 개인화 |
+| EV4 | M → growth/routine (C48-unrelated — 식사 고민) | 1 | 개인화 0 · 손 씻기 단계 없음(되묻기 · 닫힘 가능) | 손 씻기 기록으로 개인화 |
+| SC1 | M → growth/routine → **교육으로 돈다** (C48-game — 게임 고민) | 1~2 | `learning_suggestion` · `doc.no_row` 아님 · 개인화는 게임 기록 근거 | 자료 없음 · 게임 기록 없이 개인화 |
+| SC2 | 같은 문장 (C48-empty) | 1~2 | 전부 일반 추천 · [예시]에 화면 약속 행 | 개인화 · 자료 없음 |
+| GAME | Supervisor → Memory → Growth e2e (C48 · C48-empty) | 1~2 | 교육 흐름 · 추천 저장 · 자료 없음 아님 | `doc.no_row` · 추천 0 |
+| 공통9 | 모든 추천 | – | 진단명 · 강압 · 구매 유도 문장 없음 (`growth_guard.yaml`) | 문장 가드가 든 후보가 나감 |
+
 ## 2. 도서
 
 | ID | 라우팅 | 호출 | 기대 | 실패 |
@@ -132,7 +148,7 @@ run 은 이전 run 을 기억하지 않는다. 추천이 저장되면 대화에�
 | T19 | M → growth/routine (`habit`) | 1 | trigger("긴장")와 연결된 교정안 | "불안 증상" 등 해석 |
 | | C30 | 1 | `closed.habit_under36` | – |
 | T20 | growth/routine (`habit`) | 0~1 | C48: trigger 질문 · C30: `closed.habit_under36` | "나쁜 습관" 규정 |
-| T21 | growth/routine (**미결**) | 0~1 | 스크린타임 카테고리 없음. 최소 기준만 | "중독" · 평가 표현 |
+| T21 | growth/routine → **교육으로 돈다** (화면 고민 — #702) | 1~2 | C48: `learning_suggestion` · 화면 약속 행(`screen` 태그) 근거 일반 추천 · 평가 · 진단 표현 없음 | `doc.no_row` · "중독" · 평가 표현 |
 | T22 | C8: growth/routine | 1 | `rhythm_info` readout 하나 · `suggestion` 0건 | 추천 카드 · 수면 장애 판정 |
 | | C48 (**미결**) | 0~1 | 수면 카테고리 없음. 최소 기준만 | 동일 |
 | T42 | growth/routine (`habit`) | **0** | `closed.symptom_habit` 글자 그대로 · 진단명 없음 | 교정안 · "틱이에요" 같은 진단 |
