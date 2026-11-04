@@ -95,9 +95,19 @@ function toReply(event: string, data: Record<string, unknown>): ChatReply | null
     case "agent_result": {
       // 서버는 조회할 때 추천의 지금 상태를 채운다. 목의 추천은 고르기 전이라 draft 다.
       const ids = (data.suggestion_ids as string[] | undefined) ?? [];
+      const result = data as Omit<
+        Extract<ChatReply, { type: "agent_result" }>,
+        "type" | "suggestions"
+      >;
       return {
         type: "agent_result",
-        ...(data as Omit<Extract<ChatReply, { type: "agent_result" }>, "type" | "suggestions">),
+        ...result,
+        // 🚨 서버는 지난 대화에 readout 근거를 싣지 않는다 (#713 · SSE 에만 온다). 목도 떼고 남긴다.
+        readouts: result.readouts.map((readout) => {
+          const stored = { ...readout };
+          delete stored.source_refs;
+          return stored;
+        }),
         suggestions: ids.map((id) => ({ id, status: "draft" as const })),
       };
     }
