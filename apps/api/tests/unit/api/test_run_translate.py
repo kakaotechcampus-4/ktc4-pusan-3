@@ -10,7 +10,7 @@ DB 도 LLM 도 없이 객체만 넣어 본다.
 
 import logging
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import get_args
 from zoneinfo import ZoneInfo
 
@@ -620,12 +620,14 @@ def test_found_tabs_keep_order_and_drop_missing_rows():
 def test_delete_proposal_is_sent_even_without_rows():
     """#535 — 제안은 이미 저장됐다. 행을 못 읽어도 보내야 보호자가 취소할 수 있다.
     기본 체크는 남아 있는 후보 안에서만."""
-    rows = {("event", "e1"): _event_row("e1")}
+    expires = (translate.PROPOSAL_KIND, "p1")
+    rows = {("event", "e1"): _event_row("e1"), expires: datetime(2026, 10, 28, 3, tzinfo=UTC)}
     event = DeleteProposed("p1", (CardTab("event", False, ("e1", "e2"), ("e1", "e2")),))
 
     name, payload = translate.to_sse(event, card_rows=rows)
     assert name == "delete_proposal"
     assert (payload["proposal_id"], payload["status"], payload["result"]) == ("p1", "pending", None)
+    assert payload["expires_at"] == "2026-10-28T03:00:00Z"
     [tab] = payload["tabs"]
     assert tab["picked_ids"] == ["e1"]
-    assert translate.to_sse(event, card_rows={})[1]["tabs"] == []
+    assert translate.to_sse(event, card_rows={expires: rows[expires]})[1]["tabs"] == []

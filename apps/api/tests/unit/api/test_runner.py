@@ -41,6 +41,7 @@ from app.domains.safety.agent_reader import DbSafetyReader
 PARENT = uuid.UUID(int=1)
 """채널은 만든 보호자를 반드시 안다. 여기서는 누구인지가 중요하지 않다."""
 CHILD = uuid.UUID(int=2)
+PROPOSAL = uuid.UUID(int=3)
 RAW_TEXT = "계란말이 또 찾아요"
 
 
@@ -1181,10 +1182,12 @@ async def test_화면에_안_나간_조회_카드는_대화에도_남기지_않�
         return {}
 
     async def fake_handle_input(**kwargs):
+        store = kwargs["store"]  # Memory 가 제안을 저장하고 commit 한 뒤라고 친다
+        store.proposal_id, store.proposal_expires_at = PROPOSAL, datetime(2026, 10, 28, tzinfo=UTC)
         tab = entrypoint.CardTab("event", False, ("e1",), ("e1",))
         await kwargs["load_cards"](tab.refs())
         kwargs["emit"](entrypoint.FoundTabs((tab,)))
-        kwargs["emit"](entrypoint.DeleteProposed("p1", (tab,)))
+        kwargs["emit"](entrypoint.DeleteProposed(str(PROPOSAL), (tab,)))
         kwargs["emit"](Done(kwargs["run_id"], 1))
 
     monkeypatch.setattr(runner, "_read_cards", no_rows)

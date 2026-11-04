@@ -60,6 +60,7 @@ from app.agents.entrypoint import (
 from app.api.runs import sse
 from app.api.runs.registry import RunChannel
 from app.api.v1.card_rows import card_tab, proposal_tab
+from app.api.v1.schemas.cards import DeleteProposalCardOut
 
 log = logging.getLogger(__name__)
 
@@ -68,7 +69,12 @@ SavedRows = Mapping[tuple[str, str], Any]
 
 
 CardRows = Mapping[tuple[str, str], Any]
-"""(kind, id) → 러너가 `load_cards` 로 읽어 둔 화면 모양 행(`card_rows.read_card_rows`)."""
+"""(kind, id) → 러너가 `load_cards` 로 읽어 둔 화면 모양 행(`card_rows.read_card_rows`).
+
+삭제 제안은 `(PROPOSAL_KIND, proposal_id)` → 만료 시각(datetime)도 같이 둔다 — 카드의 expires_at.
+"""
+
+PROPOSAL_KIND = "delete_proposal"
 
 
 def to_sse(
@@ -88,19 +94,22 @@ def to_sse(
         return ("found_tabs", {"tabs": found}) if found else None
     if isinstance(event, DeleteProposed):
         rows = card_rows or {}
-        # 지난 대화의 `DeleteProposalCardOut` 과 같은 칸이다. 상태는 늘 pending 이다 — 방금 저장한
-        # 제안이다. 확정 · 취소 · 만료는 버튼 응답과 지난 대화가 지금 상태로 알린다
-        return "delete_proposal", {
-            "proposal_id": event.proposal_id,
-            "status": "pending",
-            "result": None,
-            "tabs": [
-                out.model_dump(mode="json")
+        # 지난 대화와 같은 모양(`DeleteProposalCardOut`)으로 만든다. 상태는 늘 pending 이다 — 방금
+        # 저장한 제안이다. 확정 · 취소 · 만료는 버튼 응답과 지난 대화가 지금 상태로 알린다.
+        # 만료 시각이 없으면 터진다 — 제안을 저장하지 않고 카드를 낸 코드 버그다
+        card = DeleteProposalCardOut(
+            proposal_id=event.proposal_id,
+            status="pending",
+            expires_at=rows[(PROPOSAL_KIND, event.proposal_id)],
+            result=None,
+            tabs=[
+                out
                 for tab in event.tabs
                 if (out := proposal_tab(tab.kind, tab.truncated, tab.ids, tab.picked, rows))
                 is not None
             ],
-        }
+        )
+        return "delete_proposal", card.model_dump(mode="json", exclude={"type"})
     if isinstance(event, Saved):
         rows = saved_rows or {}
         keys = [(ref.kind, ref.id) for ref in event.refs]

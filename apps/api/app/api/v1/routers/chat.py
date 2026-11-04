@@ -328,7 +328,11 @@ def _proposal_card(reply: DeleteProposalReply, cards: _Cards) -> DeleteProposalC
         else []
     )
     return DeleteProposalCardOut(
-        proposal_id=reply.proposal_id, status=state, result=row.result, tabs=tabs
+        proposal_id=reply.proposal_id,
+        status=state,
+        expires_at=row.expires_at,
+        result=row.result,
+        tabs=tabs,
     )
 
 

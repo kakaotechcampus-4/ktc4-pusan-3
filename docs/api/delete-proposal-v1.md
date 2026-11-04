@@ -20,7 +20,7 @@
 보호자  "저번주 식사 기록 중에 간식은 빼고 지워줘"
 AI      조회 → 제안 tool 로 후보와 기본 체크를 남긴다 (지우지 않는다)
         └ Memory commit 때 delete_proposal 1행이 함께 저장된다
-SSE     delete_proposal { proposal_id, status: pending, tabs: [{kind, truncated, records|events, picked_ids}] }
+SSE     delete_proposal { proposal_id, status: pending, expires_at, result: null, tabs: [{kind, truncated, records, events, picked_ids}] }
 보호자  체크를 고치고 [N건 삭제하기] → 한 번 더 확인
 화면    POST /children/{cid}/delete-proposals/{pid}/confirm  { ids }  + Idempotency-Key
 서버    후보 안의 체크한 것만 한 트랜잭션에서 지운다 → 관찰을 지웠으면 Curator

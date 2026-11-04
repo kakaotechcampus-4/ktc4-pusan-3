@@ -411,6 +411,7 @@ async def test_cards_come_back_as_they_are_now(
     [lookup_tab] = lookup["tabs"]
     assert [r["id"] for r in lookup_tab["records"]] == [kept]
     assert open_card["status"] == "pending"
+    assert open_card["expires_at"] is not None
     [open_tab] = open_card["tabs"]
     assert (open_tab["truncated"], open_tab["picked_ids"]) == (True, [kept])
     assert (closed_card["status"], closed_card["result"], closed_card["tabs"]) == (

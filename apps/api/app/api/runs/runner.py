@@ -191,6 +191,10 @@ def agent_job(
 
             async def load_cards(refs: tuple[entrypoint.Ref, ...]) -> None:
                 card_rows.update(await _read_cards(session, child_id, parent_id, refs, channel))
+                # 삭제 카드의 expires_at. Memory commit 뒤에 불리므로 제안은 이미 저장돼 있다
+                if store.proposal_id is not None:
+                    key = (translate.PROPOSAL_KIND, str(store.proposal_id))
+                    card_rows[key] = store.proposal_expires_at
 
             try:
                 async with asyncio.timeout(RUN_DEADLINE_SECONDS):

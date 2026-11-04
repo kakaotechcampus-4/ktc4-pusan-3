@@ -25,7 +25,7 @@ from app.agents.memory.store.ports import (
     ObservationRow,
     check_candidates,
 )
-from app.domains.delete_proposal.repository import ProposalTab, add_proposal
+from app.domains.delete_proposal.repository import PROPOSAL_TTL, ProposalTab, add_proposal
 from app.domains.memory.observation.models import (
     ObservationActivity,
     ObservationEducation,
@@ -164,6 +164,8 @@ class DbMemoryStore:
         """이 run 에서 새로 만든 관찰 (도메인, id) — 만든 순서대로. 고치기 · 지우기는 넣지 않는다.
         runner 가 commit 뒤에 이 행들을 읽어 화면에 `saved` 로 보낸다 (#471)."""
         self.proposal_id: UUID | None = None
+        # 카드의 expires_at — 러너가 SSE delete_proposal 에 싣는다 (#535)
+        self.proposal_expires_at: datetime | None = None
         """이 run 이 남긴 삭제 제안 (#535). runner 가 commit 뒤에 후보 행을 읽어 화면에 보낸다."""
 
     def _today(self) -> date:
@@ -472,14 +474,16 @@ class DbMemoryStore:
         if self.proposal_id is not None:
             raise ValueError("한 run 에 제안은 하나다")
         check_candidates(tabs)
+        now = datetime.now(UTC)
         self.proposal_id = await add_proposal(
             self._session,
             parent_id=parent_id,
             child_id=self._child_id,
             run_id=run_id,
             tabs=[ProposalTab(tab.kind, tab.truncated, tab.ids, tab.picked) for tab in tabs],
-            now=datetime.now(UTC),
+            now=now,
         )
+        self.proposal_expires_at = now + PROPOSAL_TTL
         # 제안도 commit 해야 남는 쓰기다 — 뒤에서 터져도 run 을 done 으로 닫아 키를 지킨다
         self.wrote = True
         return str(self.proposal_id)

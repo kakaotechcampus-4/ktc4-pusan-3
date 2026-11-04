@@ -614,6 +614,7 @@ class TestProposeDelete:
         row = await session.get(DeleteProposal, UUID(proposal_id))
         assert row is not None and row.child_id == child_a.id
         assert store.wrote and store.proposal_id == row.id
+        assert store.proposal_expires_at == row.expires_at
         # 관찰은 그대로다
         assert await store.get_observation(domain="food", observation_id=obs_of_a) is not None
         with pytest.raises(ValueError):

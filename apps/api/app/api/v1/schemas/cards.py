@@ -5,6 +5,7 @@ tool 하나다. 관찰은 `records`, 일정은 `events` 에 싣고, 다른 쪽�
 칸 유무를 따로 보지 않게 두 칸을 늘 둔다.
 """
 
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -48,6 +49,13 @@ class DeleteProposalCardOut(BaseModel):
         description=(
             "지금 상태. pending 이면 카드와 버튼을 그대로, 나머지는 한 줄 요약으로 그린다. "
             "24시간이 지난 pending 은 expired 로 온다"
+        )
+    )
+    expires_at: datetime = Field(
+        description=(
+            "이 시각이 지나면 확정 · 취소할 수 없다(만든 뒤 24시간). run 화면의 카드는 늘 "
+            "pending 으로 오므로, 띄워 둔 채 이 시각이 지나면 화면이 직접 닫힌 카드로 그린다 — "
+            "그래도 누르면 409 proposal_expired 다"
         )
     )
     result: dict[str, int] | None = Field(
