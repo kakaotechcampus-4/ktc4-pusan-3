@@ -10,19 +10,9 @@
 from app.agents.memory.context import AgentContext, Proposal
 from app.agents.memory.result import ErrorCode, ToolResult, fail, ok
 from app.agents.memory.schemas.proposal import ProposeDeleteArgs
-from app.agents.memory.store.ports import DeleteCandidates
+from app.agents.memory.store.ports import DELETE_KINDS, DeleteCandidates
 
 RESOURCE = "delete_proposal"
-
-# 탭 순서 — 화면이 이 순서로 그린다 (#535 정한 것 1)
-TAB_ORDER = (
-    "observation_food",
-    "observation_health",
-    "observation_education",
-    "observation_activity",
-    "observation_routine",
-    "event",
-)
 
 _QUERY_FIRST = (
     "이 run 에서 조회한 기록 · 일정이 없다. 지울 기간과 종류로 조회 tool 을 먼저 부르고, "
@@ -39,7 +29,7 @@ _DONE = (
 def candidate_tabs(
     context: AgentContext, picked: frozenset[str] = frozenset()
 ) -> list[DeleteCandidates]:
-    """이 run 의 후보 탭. 행이 있는 종류만, TAB_ORDER 순서로."""
+    """이 run 의 후보 탭. 행이 있는 종류만, 화면 순서(DELETE_KINDS)로."""
     return [
         DeleteCandidates(
             kind=kind,
@@ -47,12 +37,15 @@ def candidate_tabs(
             ids=rows.ids,
             picked=tuple(oid for oid in rows.ids if oid in picked),
         )
-        for kind in TAB_ORDER
+        for kind in DELETE_KINDS
         if (rows := context.found.get(kind)) is not None and rows.ids
     ]
 
 
 async def propose_delete(context: AgentContext, args: ProposeDeleteArgs) -> ToolResult:
+    # 두 번째 호출이면 다른 검사보다 먼저 알린다 — 다시 조회하라는 안내를 받으면 또 부른다
+    if context.proposals:
+        return fail("create", RESOURCE, ErrorCode.INVALID_ARGS, _ONCE)
     tabs = candidate_tabs(context, frozenset(args.ids))
     if not tabs:
         return fail("create", RESOURCE, ErrorCode.TARGET_REQUIRED, _QUERY_FIRST)
@@ -66,11 +59,13 @@ async def propose_delete(context: AgentContext, args: ProposeDeleteArgs) -> Tool
             f"{', '.join(outside)} 는 이 run 의 조회 결과에 없다. 조회 결과에 있는 id 만 넣는다. "
             "같은 종류를 다시 조회했으면 마지막 조회 결과만 후보다.",
         )
-    if context.proposals:
+    try:
+        proposal_id = await context.store.propose_delete(
+            parent_id=context.source_writer, run_id=context.run_id, tabs=tabs
+        )
+    except ValueError:
+        # store 가 같은 run 의 제안을 이미 들고 있다 — 이 context 밖에서 남긴 것이다
         return fail("create", RESOURCE, ErrorCode.INVALID_ARGS, _ONCE)
-    proposal_id = await context.store.propose_delete(
-        parent_id=context.source_writer, run_id=context.run_id, tabs=tabs
-    )
     context.proposals.append(Proposal(proposal_id, tuple(tabs)))
     return ok(
         "create",

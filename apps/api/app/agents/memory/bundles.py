@@ -15,6 +15,8 @@ _DOMAINS = ("food", "health", "education", "activity", "routine")
 MUTATING_PREFIXES: tuple[str, ...] = ("create_", "update_", "delete_", "propose_")
 
 # 작업 종류마다 "해냈다" 로 치는 쓰기. agent의 조기 종료와 pipeline의 불일치 기록이 같이 쓴다
+# 삭제 제안(propose_delete)은 넣지 않는다 — 제안 뒤에는 모델이 "카드에서 확인해 주세요" 를 말해야
+# 해서 조기 종료하면 안 된다. pipeline 의 불일치 기록은 lookup_edit 를 비교하지 않는다
 WRITES_FOR: dict[WorkType, tuple[str, ...]] = {
     WorkType.OBSERVE: ("create_observation_",),
     WorkType.SCHEDULE: ("create_event", "create_event_item"),

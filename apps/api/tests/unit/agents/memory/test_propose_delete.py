@@ -170,3 +170,21 @@ async def test_좁힌_조회가_0건이면_그_종류는_후보에서_빠진다(
 
     assert store.proposal is not None
     assert [tab.kind for tab in store.proposal[1]] == ["event"]
+
+
+async def test_store_가_이미_제안을_들고_있으면_실패로_알린다(
+    context: AgentContext, store: InMemoryStore
+) -> None:
+    # 같은 store 를 새 context 로 다시 쓴 경우 — run 을 터뜨리지 않고 모델에게 알린다
+    rice = await _meal(context, "rice")
+    await _call(context, "query_observation_food")
+    await store.propose_delete(
+        parent_id=context.source_writer,
+        run_id=context.run_id,
+        tabs=[DeleteCandidates("observation_food", False, (rice,), ())],
+    )
+
+    result = await _call(context, "propose_delete", {"ids": [rice]})
+
+    assert result.success is False and result.error["code"] == ErrorCode.INVALID_ARGS
+    assert context.proposals == []
