@@ -27,8 +27,8 @@ from uuid import UUID
 from app.agents.activity.agent import run as run_activity
 from app.agents.common.llm_client import LLMClient, LLMError
 from app.agents.common.readout import Readout
-from app.agents.common.result import DomainPending
-from app.agents.common.schemas.task import DomainTask
+from app.agents.common.result import DomainPending, EventRequest, MedicationDraft
+from app.agents.common.schemas.task import MAX_DOMAIN_AGENTS, DomainTask
 from app.agents.common.suggestion import (
     BundleSummary,
     SuggestionDraft,
@@ -40,21 +40,36 @@ from app.agents.food.registry import WRITING_TASKS as FOOD_WRITING_TASKS
 from app.agents.growth.agent import run as run_growth
 from app.agents.growth.schemas.task import RECOMMENDING_LABELS as GROWTH_RECOMMENDING
 from app.agents.growth.schemas.task import GrowthTaskType
-from app.agents.memory.agent import MemoryAgentResult
+from app.agents.health.agent import answer_leftover, is_dose_report, registered_titles
+from app.agents.health.agent import run as run_health
+from app.agents.health.agent import run_hooks as run_health_hooks
+from app.agents.health.registry import WRITING_TASKS as HEALTH_WRITING_TASKS
+from app.agents.health.schemas.task import HealthTaskType
+from app.agents.health.tools.fever import says_fever
+from app.agents.memory.agent import MemoryAgentResult, ToolCallRecord
 from app.agents.memory.agent import run as run_memory
 from app.agents.memory.bundles import MUTATING_PREFIXES, WRITES_FOR
 from app.agents.memory.context import AgentContext
-from app.agents.memory.drafts import EventDraft
+from app.agents.memory.drafts import DraftBook, EventDraft, draft_from_request
 from app.agents.memory.result import ErrorCode
 from app.agents.memory.schemas.reply import ReplyKind
-from app.agents.memory.schemas.task import MemoryTask, PendingMemoryContext, WorkType
+from app.agents.memory.schemas.task import (
+    FoundRef,
+    MemoryHint,
+    MemoryTask,
+    PendingMemoryContext,
+    WorkType,
+)
 from app.agents.run_writes import RunWrites
 from app.agents.suggestion_save import SaveSuggestions, SuggestionBatch
 from app.agents.supervisor.agent import SupervisorResult
 from app.agents.supervisor.agent import run as run_supervisor
+from app.agents.supervisor.emergency import emergency_guidance, infant_fever_age
 from app.agents.supervisor.routing import (
+    AGENT_LIMIT,
     HAZARD_GUIDANCE,
     SAFETY_GUIDANCE,
+    TASK_LIMIT,
     Guidance,
     Routing,
     has_hazard,
@@ -62,6 +77,7 @@ from app.agents.supervisor.routing import (
 )
 from app.agents.supervisor.schemas import DomainAgentName, normalize
 from app.rules.hazard import find_hazards
+from app.rules.medicine_name import mentions_medicine
 from app.rules.safety_term import mentions_safety
 
 logger = logging.getLogger(__name__)
@@ -108,6 +124,10 @@ class DomainOutcome(Protocol):
     @property
     def suggestions(self) -> tuple[SuggestionDraft, ...]: ...
     @property
+    def medication_drafts(self) -> tuple[MedicationDraft, ...]: ...
+    @property
+    def event_requests(self) -> tuple[EventRequest, ...]: ...
+    @property
     def pending(self) -> DomainPending | None: ...
 
 
@@ -146,16 +166,18 @@ _RUNNERS: dict[str, DomainRunner] = {
     DomainAgentName.FOOD.value: run_food,
     DomainAgentName.ACTIVITY.value: run_activity,
     DomainAgentName.GROWTH.value: run_growth,
+    DomainAgentName.HEALTH.value: run_health,
 }
 
 # 같은 run의 다른 task가 읽는 행을 쓰는 라벨. 각 Agent registry가 정한다.
 # 이 task를 먼저 끝낸 뒤 나머지를 동시에 돌린다(기록 단계 → 쓰는 task → 읽는 task)
 _WRITING_TASKS: dict[str, frozenset[str]] = {
     DomainAgentName.FOOD.value: frozenset(task.value for task in FOOD_WRITING_TASKS),
+    DomainAgentName.HEALTH.value: frozenset(task.value for task in HEALTH_WRITING_TASKS),
 }
 
 # 추천을 내는 task. 05 의 다시 시도 · 0개 기록은 이것만 남긴다 — 급식 갱신 · 영양소 분석은
-# 05 화면이 없다. routing.IMPLEMENTED_AGENTS 와 키가 같아야 한다
+# 05 화면이 없다. `NON_RECOMMENDING_AGENTS` 와 합쳐 routing.IMPLEMENTED_AGENTS 와 같아야 한다
 RECOMMENDING_TASKS: dict[str, frozenset[str | None]] = {
     DomainAgentName.FOOD.value: frozenset({"meal_recommendation"}),
     DomainAgentName.ACTIVITY.value: frozenset({None}),
@@ -163,11 +185,53 @@ RECOMMENDING_TASKS: dict[str, frozenset[str | None]] = {
     DomainAgentName.GROWTH.value: frozenset(GROWTH_RECOMMENDING),
 }
 
-# 답을 받아야 추천을 낼 수 있어서 되묻기의 답으로 다시 도는 task. 루틴은 지금 수준을 모르면 일반
-# 추천도 내지 않는다(Growth_Agent_명세 §6). 질문이 화면 안내로만 끝나면 답이 맥락 없는 새 입력이
-# 되어 버려지거나 기록만 남고, 다시 요청해도 같은 질문이 돌아온다. Health 는 표에 없다
+# 추천을 내지 않는 Agent. 05 의 다시 시도 · 0개 기록 대상이 아니라서 실패해도 `retryable` 에
+# 들지 않는다. Health 는 안내 · 초안만 내고 추천(`suggestions`)은 늘 0건이다
+NON_RECOMMENDING_AGENTS: frozenset[str] = frozenset({DomainAgentName.HEALTH.value})
+
+# Health 응급 readout 의 kind. hook 과 진료 준비가 한 run 에서 둘 다 걸려도 화면에는 한 번만
+# 나간다(`_EmergencyOnce`). health.readouts 의 `emergency` 와 같아야 한다 (테스트가 본다)
+EMERGENCY_KIND = "emergency"
+_TEMPERATURE_QUESTION = "체온이 몇 도인지 알려주세요."
+
+
+class _EmergencyOnce:
+    """응급 안내는 run 에 한 번만 화면에 나간다.
+
+    Health hook 과 진료 준비가 같은 응급 안내를 따로 만들어도 보호자에게는 한 번이면 된다.
+    화면으로 나가는 이벤트만 거른다. 결과 객체(`PipelineResult.domain`)는 Health 가 낸 그대로다.
+    """
+
+    def __init__(self) -> None:
+        self._shown = False
+
+    @property
+    def shown(self) -> bool:
+        return self._shown
+
+    def mark(self) -> None:
+        self._shown = True
+
+    def take(self, readouts: tuple[Readout, ...]) -> tuple[Readout, ...]:
+        kept: list[Readout] = []
+        for readout in readouts:
+            if readout.kind == EMERGENCY_KIND:
+                if self._shown:
+                    continue
+                self._shown = True
+            kept.append(readout)
+        return tuple(kept)
+
+
+# 되묻기의 답으로 다시 도는 task. 질문이 화면 안내로만 끝나면 답이 맥락 없는 새 입력이 되어
+# 버려지거나 기록만 남는다.
+# 루틴은 지금 수준을 모르면 일반 추천도 내지 않아서(Growth_Agent_명세 §6) 답을 받아야 추천을 낼 수
+# 있다. 답은 기록이라 Memory 가 저장한 뒤에 그 요청을 다시 돈다.
+# 복약은 중단 확인 · 대상 약 · 복용 시점을 묻는다. 답은 기록이 아니라 Health 가 코드 표로 가르는
+# 값이라 Memory 를 거치지 않고 Health 로 바로 간다(`_handle_health_reply`).
 _RESUMED_BY_ANSWER: dict[str, frozenset[str]] = {
     DomainAgentName.GROWTH.value: frozenset({GrowthTaskType.ROUTINE_COACHING.value}),
+    DomainAgentName.HEALTH.value: frozenset({HealthTaskType.MEDICATION.value}),
 }
 
 # 질문을 낸 결과와, 그 질문에 답하면 다시 돌릴 task(답을 받지 않는 질문이면 None)
@@ -217,6 +281,19 @@ class EventDrafts:
     """
 
     drafts: tuple[EventDraft, ...]
+
+
+@dataclass(frozen=True)
+class MedicationDrafts:
+    """보호자 제출을 기다리는 복약 초안. SSE 이름은 medication_draft.
+
+    일정 초안(`EventDrafts`)과 같은 모양이다 — run 당 한 프레임에 초안이 배열로 실리고, run 이
+    끝나면 사라진다. 서버에 저장하지 않는다. 제출이 승인 게이트이고, 그때 백엔드가 코스와 회차를
+    쓴다. 초안 하나의 모양은 `app/core/medication_draft.py` 의 `to_payload()` 가 정한다.
+    일정 초안과 게이트가 달라(건강 기록 확정) 같은 이벤트에 섞지 않는다.
+    """
+
+    drafts: tuple[MedicationDraft, ...]
 
 
 @dataclass(frozen=True)
@@ -383,6 +460,7 @@ Event = (
     Step
     | Saved
     | EventDrafts
+    | MedicationDrafts
     | DomainRouted
     | AgentResult
     | AgentQuestion
@@ -457,6 +535,8 @@ class PipelineResult:
     failed: Failed | None = None
     # 이 run 에서 확정된 쓰기가 있었는지. True면 failed가 아니다
     committed: bool = False
+    # 응급 신호 사전검사에 걸린 run. 안내를 먼저 냈고 도메인 Agent 는 건너뛰었다
+    emergency: bool = False
     disagreement: Disagreement = Disagreement()
     model_calls: int = 0
     latency_ms: int = 0
@@ -483,6 +563,7 @@ async def handle_input(
     writes: RunWrites | None = None,
     curator_trigger: CuratorTrigger | None = None,
     count_records: CountRecords | None = None,
+    child_months: int | None = None,
 ) -> PipelineResult:
     """사용자 입력 한 건을 처리한다.
 
@@ -499,18 +580,46 @@ async def handle_input(
     eval 은 `InMemorySuggestions()` 를 넘긴다.
     writes는 도메인 쓰기 포트가 성공했는지 남는 표시다. entrypoint가 쓰기 포트를 감싸 넘긴다.
     count_records 를 넘기면 일반 추천 블록의 쌓인 기록 수를 센다(없으면 그 칸이 빈다).
+    child_months 는 생일로 계산한 월령이다. 응급 사전검사가 말에 적힌 월령과 함께 본다. 저장 뒤
+    hook 에 맡기면 동의가 없거나 Memory 가 저장하지 않은 run 에서 안내가 빠진다. 없으면 None.
     """
     started = time.perf_counter()
     send = emit or _ignore
+    once = _EmergencyOnce()
     hazards = _safety_precheck(raw_text)
     if hazards:
         # 이어받기 답에 나와도 같다 — 되묻던 조각보다 아이 상태 확인이 먼저다
         return _stop_for_hazard(hazards, run_id=run_id, send=send, started=started)
 
+    # 응급 안내는 Supervisor 보다 먼저, 이어받기 답에 나와도 같다. 기록은 평소처럼 남기고
+    # 도메인 Agent 만 건너뛴다 — 응급 화면에 다른 카드를 줄인다
+    emergency = _emergency_precheck(raw_text, child_months)
+    if emergency is not None:
+        send(emergency)
+        once.mark()
+
+    if continuation is not None and _answers_health(continuation):
+        return await _handle_health_reply(
+            raw_text,
+            memory_context,
+            contexts,
+            run_id=run_id,
+            continuation=continuation,
+            send=send,
+            started=started,
+            once=once,
+            emergency=emergency is not None,
+            writes=writes,
+            domain_clients=domain_clients,
+            save_suggestions=save_suggestions,
+            count_records=count_records,
+        )
+
     if continuation is not None:
         return await _handle_continuation(
             raw_text,
             memory_context,
+            contexts,
             run_id=run_id,
             continuation=continuation,
             supervisor_client=supervisor_client,
@@ -518,8 +627,10 @@ async def handle_input(
             send=send,
             started=started,
             commit=commit,
+            once=once,
+            emergency=emergency is not None,
             curator_trigger=curator_trigger,
-            contexts=contexts,
+            child_months=child_months,
             domain_clients=domain_clients,
             save_suggestions=save_suggestions,
             count_records=count_records,
@@ -530,6 +641,21 @@ async def handle_input(
     supervisor = await run_supervisor(raw_text, client=supervisor_client)
     supervisor_ms = _ms_since(supervisor_started)
     routing = route(raw_text, supervisor, run_id=run_id)
+    if emergency is not None:
+        # 응급이면 도메인 Agent 가 돌지 않는다. 복약 대조도 하지 않는다 — 기록 힌트에서
+        # health 조각을 다시 더하면 응급 run 에 도메인 Agent 가 돈다
+        # 준비하는 것이 없는데 "한 번에 2가지까지" 안내가 119 안내 밑에 나가면 안 된다
+        routing = replace(
+            routing,
+            domain_tasks=(),
+            unavailable_agents=(),
+            dropped_agents=(),
+            guidance=tuple(g for g in routing.guidance if g.code not in (AGENT_LIMIT, TASK_LIMIT)),
+        )
+    else:
+        routing, memory_context = await _match_registered_doses(
+            raw_text, routing, memory_context, contexts, run_id=run_id
+        )
     model_calls = supervisor.model_calls
 
     for guidance in routing.guidance:
@@ -541,6 +667,7 @@ async def handle_input(
     failed: Failed | None = None
     committed = False
     memory_ms: int | None = None
+    hooked: DomainOutcome | None = None
     # Memory 가 답할 수 있는 질문(note)을 냈는가. 그러면 도메인 Agent 질문은 보내지 않는다
     memory_asked = False
     # 기록할 조각이 있으면 Memory를 부른다. 원문이 전부 요청·안내 조각이면 건너뛴다
@@ -571,23 +698,33 @@ async def handle_input(
             refs = _saved_refs(memory)
             if refs:
                 send(Saved(refs))
+            if _saved_health(refs):
+                hooked = await _run_hooks(contexts, send=send, once=once)
             # 저장된 것과 제출을 기다리는 것을 한 run에서 같이 내보낸다
             if memory.drafts:
                 send(EventDrafts(memory.drafts))
-            note = _memory_note(memory)
-            if note is not None and note.kind == "message" and _request_only(memory, routing):
-                note = MemoryNote(REQUEST_ONLY_NOTE, "message")
-            if note is not None:
-                memory_asked = note.kind == "question"
-                send(note)
-            if memory.pending is not None:
-                send(PendingReply(run_id, memory.pending))
+            memory_asked = _send_reply(
+                memory,
+                run_id=run_id,
+                send=send,
+                once=once,
+                child_months=child_months,
+                routing=routing,
+            )
             unwritten = _unwritten(routing.memory_task, memory)
             if unwritten is not None:
                 send(unwritten)
             if memory.refused(ErrorCode.HAZARD) and HAZARD_GUIDANCE not in routing.guidance:
                 # 사전검사 · Supervisor 가 놓치고 저장 게이트가 막은 경우. 같은 안내를 낸다
                 send(HAZARD_GUIDANCE)
+
+    # Memory 가 먹인 약 행을 남긴 문장은 체크 안내에서 뺀다. 등록 안 된 약은 기록만 남긴다
+    if failed is None:
+        routing = _without_recorded_doses(
+            routing, _given_medicines(memory), memory_context.registered_medicines
+        )
+        # 저장 게이트가 등록된 약으로 거절한 문장은 체크 안내가 맡는다
+        routing = _with_refused_doses(routing, memory, _dose_texts(routing), run_id=run_id)
 
     # Supervisor 가 놓친 알레르기 · 만성질환 언급도 같은 안내로 잇는다. "적지 않은 기록" 이 아니라
     # 막은 것이라 다시 나누지 않는다 — 다시 물으면 Supervisor 호출만 하나 더 쓴다
@@ -602,9 +739,15 @@ async def handle_input(
     # 저장 게이트가 위험 물질로 거절한 run 은 다시 나누지 않는다. 그 조각은 "적지 않은 기록" 이
     # 아니라 막은 것이다 — 다시 물으면 안내가 두 번 나가거나 요청으로 바뀌어 Agent 가 돈다
     hazard_refused = memory is not None and memory.refused(ErrorCode.HAZARD)
+    # 등록된 약이라 저장하지 않은 것도 막은 것이다. 체크 안내가 그 조각을 맡았다
+    medicine_refused = memory is not None and memory.refused(ErrorCode.REGISTERED_MEDICINE)
     bounced = (
         _bounced_hints(routing.memory_task, memory)
-        if failed is None and not hazard_refused and not safety_missed
+        if failed is None
+        and not hazard_refused
+        and not safety_missed
+        and not medicine_refused
+        and emergency is None
         else ()
     )
     # 도메인 Agent로 간 조각이 있으면 다시 나누지 않는다. 요청이 통째로 사라진 경우만 본다.
@@ -639,7 +782,8 @@ async def handle_input(
         else:
             logger.info("reroute 실패 run_id=%s error=%s", run_id, retry.error)
 
-    domain: list[DomainOutcome] = []
+    # hook 결과가 앞이다. 저장 직후에 나갔고 도메인 Agent 결과는 그 뒤에 온다
+    domain: list[DomainOutcome] = [] if hooked is None else [hooked]
     partial: Partial | None = None
     budget_ms: int | None = None
     writers_ms: int | None = None
@@ -657,9 +801,12 @@ async def handle_input(
             save_suggestions=save_suggestions,
             count_records=count_records,
             domain_clients=domain_clients,
-            # Memory 도 되물었으면 답이 갈 맥락이 그쪽에 있다 — 한 run 에 맥락은 하나다
-            can_resume=memory is None or memory.pending is None,
+            # Memory 도 되물었으면 답이 갈 맥락이 그쪽에 있다 — 한 run 에 맥락은 하나다. 코드가
+            # 체온을 되묻는 것도 Memory 질문이라 `memory_asked` 가 막는다
+            can_resume=not memory_asked and (memory is None or memory.pending is None),
             step=Step(3, _TOTAL_STEPS, _LABELS[2]),
+            once=once,
+            drafts=memory_context.drafts,
         )
         partial, domain_asked = stage.partial, stage.asked
         budget_ms, writers_ms, readers_ms = stage.budget_ms, stage.writers_ms, stage.readers_ms
@@ -669,13 +816,18 @@ async def handle_input(
         domain.extend(stage.outcomes)
         model_calls += stage.model_calls
 
-    if failed is None and not committed and not _did_anything(memory, domain, routing):
+    if (
+        failed is None
+        and not committed
+        and not _did_anything(memory, domain, routing, emergency=emergency is not None)
+    ):
         # 도메인 Agent 가 전부 실패했고 남은 결과도 없으면 부분 결과가 아니라 실패다
         failed = Failed("llm_unavailable" if partial is not None else "unparsable", raw_text)
     if failed is not None:
         send(failed)
     else:
-        # 결과를 다 본 뒤 하나만. 부분 결과(partial)는 결과 뒤에 오는 계약이라 질문이 먼저다
+        # 결과를 다 본 뒤 하나만. 부분 결과(partial)는 결과 뒤에 오는 계약이라 질문이 먼저다.
+        # Memory 가 물었으면 도메인 질문은 보내지 않는다 — 한 run 의 질문은 하나다(루트 §2)
         if domain_asked is not None and not memory_asked:
             _send_question(domain_asked, run_id, send)
         if partial is not None:
@@ -692,6 +844,7 @@ async def handle_input(
         partial=partial,
         failed=failed,
         committed=committed,
+        emergency=emergency is not None,
         disagreement=_disagreement(routing, memory),
         model_calls=model_calls,
         latency_ms=_ms_since(started),
@@ -825,9 +978,181 @@ def _memory_note(memory: MemoryAgentResult) -> MemoryNote | None:
     return MemoryNote(text=reply.text, kind=reply.kind)
 
 
+def _unmeasured_fever(memory: MemoryAgentResult) -> ToolCallRecord | None:
+    """체온 없이 저장한 열 기록. 없으면 None."""
+    for call in memory.calls:
+        if (
+            call.success
+            and call.name == "create_observation_health"
+            and call.arguments.get("temperature") is None
+            and says_fever(call.arguments.get("symptom") or ())
+        ):
+            return call
+    return None
+
+
+def _send_reply(
+    memory: MemoryAgentResult,
+    *,
+    run_id: str,
+    send: Emit,
+    once: _EmergencyOnce,
+    child_months: int | None,
+    routing: Routing | None = None,
+    resuming: bool = False,
+) -> bool:
+    """Memory 의 말과 되묻기 맥락을 낸다. 보호자가 답할 수 있는 질문을 냈으면 True.
+
+    3개월 이상 아이의 체온 없는 열 기록이면 코드가 몇 도인지 묻는다. Memory 는 저장한 조각을
+    되물을 수 없어서 답이 그 행을 고치게 맥락을 여기서 만든다. 3개월 미만은 열 이야기가 응급이라
+    묻지 않는다. 월령을 모르면 묻지 않는다. 응급 안내가 이미 나갔거나 Memory 가 다른 것을 묻는
+    중이어도 묻지 않는다(질문은 하나).
+
+    `routing` 이 있는 일반 run 은 요청과 같이 온 기록 조각을 하나도 저장하지 않았을 때 모델의 말
+    대신 코드 문구를 낸다. `resuming` 은 답을 저장했고 도메인 Agent 가 이어 도는 run 이다 — 답할 수
+    없는 질문은 내지 않고, 답에 섞인 다른 말이 있었다면 그 안내만 남긴다.
+    """
+    note = _memory_note(memory)
+    if (
+        resuming
+        and note is not None
+        and memory.reply is not None
+        and memory.reply.kind == "question"
+    ):
+        note = MemoryNote(LEFTOVER_NOTE, "message") if memory.leftover else None
+    elif (
+        routing is not None
+        and note is not None
+        and note.kind == "message"
+        and _request_only(memory, routing)
+    ):
+        note = MemoryNote(REQUEST_ONLY_NOTE, "message")
+    pending = memory.pending
+    fever = _unmeasured_fever(memory) if pending is None and not once.shown else None
+    raw_text = "" if fever is None else str(fever.arguments["raw_text"])
+    older = child_months is not None and not infant_fever_age(raw_text, child_months=child_months)
+    if fever is not None and older:
+        if memory.reply is not None and memory.reply.kind == "question":
+            note = None
+        if note is not None:
+            send(note)
+        note = MemoryNote(text=_TEMPERATURE_QUESTION, kind="question")
+        pending = PendingMemoryContext(
+            hint_text=raw_text,
+            question=_TEMPERATURE_QUESTION,
+            work=WorkType.LOOKUP_EDIT,
+            found=(FoundRef(resource="observation_health", id=fever.result["data"]["id"]),),
+            asks_temperature=True,
+        )
+    if note is not None:
+        send(note)
+    if pending is not None:
+        send(PendingReply(run_id, pending))
+    return note is not None and note.kind == "question"
+
+
+def _answers_health(continuation: PendingMemoryContext) -> bool:
+    """Health 가 되물은 질문에 답하는 run 인가. 답은 기록이 아니라 Health 가 표로 가르는 값이다."""
+    asked = continuation.asked
+    return asked is not None and continuation.resume is not None and asked.agent == _HEALTH
+
+
+async def _handle_health_reply(
+    answer: str,
+    memory_context: AgentContext,
+    contexts: Mapping[str, DomainContext],
+    *,
+    run_id: str,
+    continuation: PendingMemoryContext,
+    send: Emit,
+    started: float,
+    once: _EmergencyOnce,
+    emergency: bool,
+    writes: RunWrites | None,
+    domain_clients: Mapping[str, LLMClient] | None,
+    save_suggestions: SaveSuggestions,
+    count_records: CountRecords | None,
+) -> PipelineResult:
+    """Health 가 되물은 질문(중단 확인 · 대상 약 · 복용 시점)에 보호자가 답했다.
+
+    Supervisor 도 Memory 도 거치지 않고 Health `medication` 으로 바로 간다. 답은 저장할 관찰이
+    아니라서 Memory 를 거치면 아무것도 저장하지 않고 요청도 다시 돌지 않는다. 모델을 부르지 않아
+    "이어받는 턴은 모델 0회" 이다(명세 §6-5). 응급 사전검사는 호출 전에 이미 끝났다 — 응급이면
+    안내만 나가고 Health 는 돌지 않는다(중단 확인에 "응" 이 섞여 있어도 멈추지 않는다).
+
+    다른 Agent 의 이어받기와 달리 답에서 또 물을 수 있다(대상 약 → 중단 확인). 답에 섞인 기록은
+    저장되지 않으므로, 코드가 알아채면 그 사실을 알린다(`answer_leftover`).
+    """
+    asked, resume = continuation.asked, continuation.resume
+    assert asked is not None and resume is not None  # `_answers_health` 가 보장한다
+    stage: _DomainStage | None = None
+    if not emergency:
+        task = replace(resume, run_id=run_id, request_texts=(answer,))
+        health = replace(contexts[_HEALTH], pending=asked)
+        stage = await _domain_stage(
+            (task,),
+            {**contexts, _HEALTH: health},
+            run_id=run_id,
+            sent_at=memory_context.now,
+            started=started,
+            send=send,
+            save_suggestions=save_suggestions,
+            count_records=count_records,
+            domain_clients=domain_clients,
+            can_resume=True,
+            step=Step(1, 1, "이어서 적은 내용을 살펴보고 있어요"),
+            once=once,
+            drafts=memory_context.drafts,
+        )
+        # 실패한 run 에는 붙이지 않는다 — 실패 카드 위에 "반영하지 않았어요" 가 겹친다
+        if stage.partial is None and answer_leftover(asked, (answer,)):
+            # 다시 묻는 턴이면 화면이 이 note 를 질문으로 잡고 다음 한 줄을 그 답으로 보낸다.
+            # 따로 보낼 말은 질문에 답한 뒤에 보내게 한다(`LEFTOVER_NOTE_QUESTION`)
+            asks_again = stage.asked is not None and stage.asked[1] is not None
+            send(MemoryNote(LEFTOVER_NOTE_QUESTION if asks_again else LEFTOVER_NOTE, "message"))
+    domain = list(stage.outcomes) if stage is not None else []
+    committed = (writes is not None and writes.wrote) or (stage is not None and stage.saved)
+    # Health 가 이어 가지 못했으면 실패다. 모델을 부르지 않은 run 이라 "연결 실패"(llm_unavailable)
+    # 가 아니다 — 그렇게 보이면 보호자가 같은 답을 다시 보내 같은 실패를 되풀이한다
+    failed = None
+    if not _did_anything(None, domain, _NO_ROUTING, emergency=emergency):
+        failed = Failed("unparsable", answer)
+    if failed is not None:
+        send(failed)
+    elif stage is not None:
+        if stage.asked is not None:
+            _send_question(stage.asked, run_id, send)
+        if stage.partial is not None:
+            send(stage.partial)
+    model_calls = stage.model_calls if stage is not None else 0
+    send(Done(run_id, model_calls))
+
+    result = PipelineResult(
+        run_id=run_id,
+        supervisor=SupervisorResult(output=None),
+        routing=_NO_ROUTING,
+        memory=None,
+        domain=tuple(domain),
+        partial=stage.partial if stage is not None else None,
+        failed=failed,
+        committed=committed,
+        emergency=emergency,
+        model_calls=model_calls,
+        latency_ms=_ms_since(started),
+        times=StageTimes(
+            budget_ms=stage.budget_ms if stage is not None else None,
+            writers_ms=stage.writers_ms if stage is not None else None,
+            readers_ms=stage.readers_ms if stage is not None else None,
+        ),
+    )
+    _log(result)
+    return result
+
+
 async def _handle_continuation(
     answer: str,
     memory_context: AgentContext,
+    contexts: Mapping[str, DomainContext],
     *,
     run_id: str,
     continuation: PendingMemoryContext,
@@ -836,8 +1161,10 @@ async def _handle_continuation(
     send: Emit,
     started: float,
     commit: Commit,
+    once: _EmergencyOnce,
+    emergency: bool,
     curator_trigger: CuratorTrigger | None = None,
-    contexts: Mapping[str, DomainContext],
+    child_months: int | None = None,
     domain_clients: Mapping[str, LLMClient] | None,
     save_suggestions: SaveSuggestions,
     count_records: CountRecords | None,
@@ -869,6 +1196,7 @@ async def _handle_continuation(
     committed = False
     model_calls = supervisor.model_calls
     memory_ms: int | None = None
+    hooked: DomainOutcome | None = None
     record_started = time.perf_counter()
     try:
         memory = await run_memory(
@@ -891,18 +1219,18 @@ async def _handle_continuation(
         refs = _saved_refs(memory)
         if refs:
             send(Saved(refs))
+        if _saved_health(refs):
+            hooked = await _run_hooks(contexts, send=send, once=once)
         if memory.drafts:
             send(EventDrafts(memory.drafts))
-        note = _memory_note(memory)
-        if note is not None and _resumes(continuation, memory) and memory.reply is not None:
-            if memory.reply.kind == "question":
-                # 저장했고 Growth 가 이어 돈다. 답할 수 없는 질문은 내지 않는다.
-                # 한 run 에 질문은 하나다. 답에 섞인 다른 말이 있었다면 그 안내만 남긴다
-                note = MemoryNote(LEFTOVER_NOTE, "message") if memory.leftover else None
-        if note is not None:
-            send(note)
-        if memory.pending is not None:
-            send(PendingReply(run_id, memory.pending))
+        _send_reply(
+            memory,
+            run_id=run_id,
+            send=send,
+            once=once,
+            child_months=child_months,
+            resuming=_resumes(continuation, memory),
+        )
         if memory.refused(ErrorCode.HAZARD):
             # Supervisor 가 놓치고 저장 게이트가 막은 경우 일반 run과 같은 안내
             send(HAZARD_GUIDANCE)
@@ -942,13 +1270,16 @@ async def _handle_continuation(
             # 답을 받아 다시 돈 run 은 또 맥락을 만들지 않는다 — 질문은 문장으로만 남는다
             can_resume=False,
             step=Step(2, 2, _LABELS[2]),
+            once=once,
+            drafts=memory_context.drafts,
         )
         committed = committed or stage.saved
         model_calls += stage.model_calls
 
-    domain = list(stage.outcomes) if stage is not None else []
+    # hook 결과가 앞이다. 저장 직후에 나갔고 이어 돈 도메인 결과는 그 뒤에 온다
+    domain = ([] if hooked is None else [hooked]) + (list(stage.outcomes) if stage else [])
     # 쓴 것도 한 말도 없으면 실패 처리
-    if failed is None and not _did_anything(memory, domain, _NO_ROUTING):
+    if failed is None and not _did_anything(memory, domain, _NO_ROUTING, emergency=emergency):
         failed = Failed("unparsable", answer)
     if failed is not None:
         send(failed)
@@ -968,6 +1299,7 @@ async def _handle_continuation(
         partial=stage.partial if stage is not None else None,
         failed=failed,
         committed=committed,
+        emergency=emergency,
         model_calls=model_calls,
         latency_ms=_ms_since(started),
         times=StageTimes(
@@ -980,6 +1312,248 @@ async def _handle_continuation(
     )
     _log(result)
     return result
+
+
+def _shown(event: AgentResult, once: _EmergencyOnce) -> AgentResult:
+    """화면에 보낼 AgentResult. 이미 낸 응급 안내는 뺀다."""
+    return replace(event, readouts=once.take(event.readouts))
+
+
+_HEALTH = DomainAgentName.HEALTH.value
+_MEDICATION = HealthTaskType.MEDICATION.value
+
+
+def _is_medication(task: DomainTask) -> bool:
+    return task.agent == _HEALTH and task.task_type == _MEDICATION
+
+
+def _dose_texts(routing: Routing) -> tuple[str, ...]:
+    """먹인 약을 말한 문장들. 복약 조각의 문장과 기록 힌트 중 복용 표현만 있는 것."""
+    texts: list[str] = []
+    for task in routing.domain_tasks:
+        if _is_medication(task):
+            texts.extend(task.request_texts)
+    if routing.memory_task is not None:
+        texts.extend(
+            hint.text
+            for hint in routing.memory_task.hints
+            if WorkType(hint.work) is WorkType.OBSERVE
+        )
+    return tuple(dict.fromkeys(text for text in texts if is_dose_report((text,))))
+
+
+def _with_dose_hints(routing: Routing, raw_text: str, dose: tuple[str, ...]) -> Routing:
+    """복용 문장을 Memory 힌트에도 싣는다. 순수 복약 요청이어도 Memory 를 거르지 않는다.
+
+    Supervisor 가 요청으로만 나눠도 등록 안 된 약은 먹인 약 행으로 남아야 한다.
+    """
+    task = routing.memory_task or MemoryTask(raw_text=raw_text)
+    known = {normalize(hint.text) for hint in task.hints}
+    added = tuple(
+        MemoryHint(text=text, work=WorkType.OBSERVE)
+        for text in dose
+        if normalize(text) not in known
+    )
+    if not added:
+        return routing
+    intent = "mixed" if routing.intent_type == "request" else routing.intent_type
+    return replace(
+        routing,
+        memory_task=replace(task, hints=(*task.hints, *added)),
+        intent_type=intent,
+    )
+
+
+def _with_registered_doses(
+    routing: Routing, dose: tuple[str, ...], titles: tuple[str, ...] | None, *, run_id: str
+) -> Routing:
+    """등록된 약을 말한 복용 문장은 Health 복약 조각으로도 보낸다.
+
+    Supervisor 가 기록으로만 나눠도 체크 안내가 나가야 한다. Agent 가 이미 상한이면 더하지
+    않는다 — 다른 요청이 밀려나면 안 된다.
+    """
+    if not titles:
+        return routing
+    named = tuple(text for text in dose if any(mentions_medicine(text, title) for title in titles))
+    return _with_medication_texts(routing, named, run_id=run_id)
+
+
+def _with_refused_doses(
+    routing: Routing, memory: MemoryAgentResult | None, dose: tuple[str, ...], *, run_id: str
+) -> Routing:
+    """Memory 저장 게이트가 등록된 약이라 거절한 복용 문장도 체크 안내로 보낸다.
+
+    게이트는 "시럽" 이나 이름 없는 "약" 도 등록된 약으로 본다(`same_medicine` ·
+    `is_generic_medicine`). 등록 이름이 문장에 통째로 있어야 보는 앞쪽 대조는 그 말을 놓치므로,
+    거절된 약 이름이 든 문장을 여기서 잇는다. 둘이 어긋나면 먹인 약이 기록에도 체크 안내에도
+    안 남는다.
+    """
+    refused = _refused_medicines(memory)
+    if not refused:
+        return routing
+    named = tuple(text for text in dose if any(mentions_medicine(text, name) for name in refused))
+    return _with_medication_texts(routing, named, run_id=run_id)
+
+
+def _refused_medicines(memory: MemoryAgentResult | None) -> tuple[str, ...]:
+    """등록된 약이라 저장하지 않은 호출이 말한 약 이름들."""
+    if memory is None:
+        return ()
+    return tuple(
+        name
+        for call in memory.calls
+        if call.result.get("error", {}).get("code") == ErrorCode.REGISTERED_MEDICINE
+        and (name := str(call.arguments.get("medication_given") or "").strip())
+    )
+
+
+def _medication_room(routing: Routing) -> bool:
+    """복약 조각이 이미 있거나, 새로 더할 Agent 자리가 있는가."""
+    if any(_is_medication(task) for task in routing.domain_tasks):
+        return True
+    agents = {task.agent for task in routing.domain_tasks} | set(routing.unavailable_agents)
+    return len(agents) < MAX_DOMAIN_AGENTS
+
+
+def _with_medication_texts(routing: Routing, named: tuple[str, ...], *, run_id: str) -> Routing:
+    """복약 조각에 문장을 더한다. 조각이 없으면 만들되 Agent 상한이면 더하지 않는다."""
+    if not named:
+        return routing
+    tasks = list(routing.domain_tasks)
+    index = next((i for i, task in enumerate(tasks) if _is_medication(task)), None)
+    if index is None:
+        if not _medication_room(routing):
+            return routing
+        hints = routing.memory_task.hints if routing.memory_task else ()
+        tasks.append(
+            DomainTask(
+                run_id=run_id,
+                agent=_HEALTH,
+                task_type=_MEDICATION,
+                request_texts=named,
+                record_texts=tuple(hint.text for hint in hints),
+            )
+        )
+    else:
+        missing = tuple(text for text in named if text not in tasks[index].request_texts)
+        if not missing:
+            return routing
+        tasks[index] = replace(tasks[index], request_texts=(*tasks[index].request_texts, *missing))
+    intent = "mixed" if routing.intent_type == "record" else routing.intent_type
+    return replace(routing, domain_tasks=tuple(tasks), intent_type=intent)
+
+
+async def _match_registered_doses(
+    raw_text: str,
+    routing: Routing,
+    memory_context: AgentContext,
+    contexts: Mapping[str, DomainContext],
+    *,
+    run_id: str,
+) -> tuple[Routing, AgentContext]:
+    """먹인 약 문장을 등록된 약과 코드로 대조한다. 기록 단계 전에 한 번.
+
+    ① 진행 중 코스 이름을 읽어 Memory 컨텍스트에 싣는다(저장 게이트가 쓴다) ② 복용 문장을 Memory
+    힌트로도 ③ 등록된 약이면 Health 복약 조각으로도 보낸다. 코스를 못 읽으면(동의 없음 · 조회
+    실패 · 어댑터 없음) 대조하지 않는다 — 투약이 두 번 남는 쪽이 기록이 사라지는 쪽보다 낫다.
+    체크 안내를 낼 자리가 없는 run 도 같다. "시럽" 처럼 이름 일부만 말하면 이 시점에는 복약 조각이
+    없어서, 조각이 있는지가 아니라 더할 자리가 있는지를 본다(`_medication_room`).
+    """
+    dose = _dose_texts(routing)
+    if not dose:
+        return routing, memory_context
+    health = contexts.get(_HEALTH)
+    titles = None if health is None else await registered_titles(health.for_task())
+    routing = _with_dose_hints(routing, raw_text, dose)
+    routing = _with_registered_doses(routing, dose, titles, run_id=run_id)
+    if not _medication_room(routing):
+        titles = None
+    return routing, replace(memory_context, registered_medicines=titles or ())
+
+
+def _given_medicines(memory: MemoryAgentResult | None) -> tuple[str, ...]:
+    """이 run 에서 먹인 약 행으로 저장한 약 이름들(성공한 건강 관찰 create 만)."""
+    if memory is None:
+        return ()
+    return tuple(
+        name
+        for call in memory.calls
+        if call.success
+        and call.name == "create_observation_health"
+        and (name := str(call.arguments.get("medication_given") or "").strip())
+    )
+
+
+def _without_recorded_doses(
+    routing: Routing, medicines: tuple[str, ...], registered: tuple[str, ...] = ()
+) -> Routing:
+    """Memory 가 먹인 약으로 남긴 문장은 복약 조각에서 뺀다. 문장이 0개가 된 조각은 지운다.
+
+    등록된 약 이름도 든 문장은 남긴다 — "해열제랑 해열 시럽 먹였어" 에서 해열제만 기록되고
+    시럽은 거절됐다. 문장째 빼면 시럽 체크 안내가 사라진다.
+    """
+    if not medicines:
+        return routing
+    kept: list[DomainTask] = []
+    for task in routing.domain_tasks:
+        if _is_medication(task):
+            texts = tuple(
+                text
+                for text in task.request_texts
+                if not (
+                    is_dose_report((text,))
+                    and any(mentions_medicine(text, medicine) for medicine in medicines)
+                    and not any(mentions_medicine(text, title) for title in registered)
+                )
+            )
+            if not texts:
+                continue
+            task = replace(task, request_texts=texts)
+        kept.append(task)
+    return replace(routing, domain_tasks=tuple(kept))
+
+
+def _unlabeled_health(outcome: DomainOutcome) -> bool:
+    """라벨이 없어 `unsupported` 로 닫힌 Health 결과 — 보여줄 것이 하나도 없다."""
+    return (
+        outcome.agent == DomainAgentName.HEALTH.value
+        and str(outcome.status) == "unsupported"
+        and not outcome.readouts
+        and not outcome.needs_observation
+    )
+
+
+def _saved_health(refs: tuple[Ref, ...]) -> bool:
+    """이 run 이 건강 관찰을 저장했는가. 저장이 안 된 run 은 refs 가 비어 hook 을 안 부른다."""
+    return any(ref.kind == "observation_health" for ref in refs)
+
+
+async def _run_hooks(
+    contexts: Mapping[str, DomainContext], *, send: Emit, once: _EmergencyOnce
+) -> DomainOutcome | None:
+    """건강 관찰을 저장한 직후 Health hook 을 돌려 화면 이벤트로 낸다. 낼 것이 없으면 None.
+
+    관찰은 이미 commit 됐다. 생일 · 기록 · 안전 조회가 실패해도 run 을 실패로 만들지 않는다.
+    화면이 "저장 못 함" 으로 보이기 때문이다. 예외 메시지에는 아이 정보가 섞일 수 있어 종류만
+    남긴다. 동의가 없으면 hook 이 읽지 않고 빈 결과를 낸다.
+    """
+    context = contexts.get(DomainAgentName.HEALTH.value)
+    if context is None:
+        return None
+    try:
+        outcome = await run_health_hooks(context.for_task())
+    except Exception as exc:
+        logger.error("Health hook 실패 error=%s", type(exc).__name__)
+        return None
+    if not outcome.readouts:
+        return None
+    event = _shown(_result(outcome, ()), once)
+    if not event.readouts:
+        # 사전검사가 이미 낸 응급 안내만 있었다. 빈 결과를 화면으로 내보내지 않는다
+        return outcome
+    send(_routed(outcome))
+    send(event)
+    return outcome
 
 
 def _resumes(continuation: PendingMemoryContext, memory: MemoryAgentResult) -> bool:
@@ -1014,6 +1588,8 @@ async def _domain_stage(
     domain_clients: Mapping[str, LLMClient] | None,
     can_resume: bool,
     step: Step,
+    once: _EmergencyOnce | None = None,
+    drafts: DraftBook | None = None,
 ) -> _DomainStage:
     """도메인 task 를 돌리고 결과를 화면 이벤트로 낸다. 남은 시간은 입력 시각부터 센다.
 
@@ -1021,7 +1597,12 @@ async def _domain_stage(
     나간다(공통규약 §3). 카드는 질문을 싣지 않는다 — 질문은 결과를 다 본 뒤 `_pick_question` 이
     하나만 고르고, 내는 것은 부른 쪽이다(Partial 앞). Partial 도 부른 쪽이 낸다.
     `can_resume` 이면 `_RESUMED_BY_ANSWER` 의 질문을 답을 받는 질문으로 고를 수 있다(`_resumable`).
+
+    `once` 는 같은 run 에서 이미 낸 응급 안내를 가리고, `drafts` 는 Memory 와 같은 일정 초안
+    보관함이다. 없으면 이 단계 안에서만 새로 둔다(이 단계만 따로 돌리는 테스트).
     """
+    emergency_once = once if once is not None else _EmergencyOnce()
+    draft_book = drafts if drafts is not None else DraftBook()
     send(step)
     remaining = max(0.0, RUN_DEADLINE_S - (time.perf_counter() - started))
     saved: list[str] = []  # 이 run 에서 저장한 추천 id — 확정된 저장이다
@@ -1030,6 +1611,11 @@ async def _domain_stage(
         send(_routed(outcome))  # 로그 · 지표용
         if _failed(outcome):
             return True  # 실패는 Partial.failed 로만 알린다 — _run_domain 이 센다
+        if _unlabeled_health(outcome):
+            # 라벨을 못 정한 Health 요청은 화면이 숨기는 빈 결과가 된다. 조용히 사라지면
+            # 보호자는 답이 없는 이유를 모른다 — 이미 있는 "준비 중" 카드로 알린다
+            send(Unavailable((outcome.agent,)))
+            return True
         ids: tuple[str, ...] = ()
         if outcome.suggestions:
             stored = await _save(outcome, save_suggestions, run_id=run_id)
@@ -1046,7 +1632,21 @@ async def _domain_stage(
         summary = bundle_summary(outcome.suggestions)
         count = await _count(outcome.agent, count_records) if summary.kind == "general" else None
         # 화면용 — readout · 추천 칸 (#227)
-        send(_result(outcome, ids, summary, count))
+        send(_shown(_result(outcome, ids, summary, count), emergency_once))
+        if outcome.medication_drafts:
+            # 카드 뒤에 낸다 — 화면이 카드를 세운 뒤 그 아래에 초안 카드를 얹는다. 저장하지 않는다
+            send(MedicationDrafts(tuple(outcome.medication_drafts)))
+        if outcome.event_requests:
+            # 일정 초안은 저장하지 않는다. Memory 와 같은 DraftBook 에 넣어 draft_id 가
+            # run 안에서 겹치지 않게 하고, 보호자가 제출해야 일정이 생긴다
+            send(
+                EventDrafts(
+                    tuple(
+                        draft_book.put(draft_from_request(request))
+                        for request in outcome.event_requests
+                    )
+                )
+            )
         return True
 
     ran = await _run_domain(
@@ -1296,6 +1896,15 @@ def _safety_precheck(raw_text: str) -> tuple[str, ...]:
     return find_hazards(raw_text)
 
 
+def _emergency_precheck(raw_text: str, child_months: int | None) -> Guidance | None:
+    """응급 신호 사전검사. 걸리면 안내 한 건, 아니면 None.
+
+    위험 물질 사전검사(`_safety_precheck`)와 별개다. 판정은 사전 · 규칙이 하고 모델은 부르지
+    않는다. 로그에는 걸린 신호 키만 남는다(`emergency_guidance`).
+    """
+    return emergency_guidance(raw_text, child_months=child_months)
+
+
 def _stop_for_hazard(
     hazards: tuple[str, ...],
     *,
@@ -1370,11 +1979,17 @@ def _memory_wrote(memory: MemoryAgentResult | None) -> bool:
 
 
 def _saved_refs(memory: MemoryAgentResult) -> tuple[Ref, ...]:
-    """성공한 관찰 저장 결과만 반환"""
+    """성공한 관찰 저장 결과만 반환.
+
+    health 는 호출 한 번이 증상 행과 약 행 두 개를 만들 수 있다 — 약 행은 `medication_id` 로 온다
+    (#551). 빼면 04 화면의 "저장됨" 에서 약 행이 빠진다.
+    """
     return tuple(
-        Ref(kind=call.result["resource"], id=call.result["data"]["id"])
+        Ref(kind=call.result["resource"], id=row_id)
         for call in memory.calls
         if call.success and call.name.startswith("create_observation_")
+        for row_id in (call.result["data"]["id"], call.result["data"].get("medication_id"))
+        if row_id is not None
     )
 
 
@@ -1443,21 +2058,8 @@ def _send_question(asked: _Asked, run_id: str, send: Emit) -> None:
     러너가 맥락을 넣어 둔 뒤에 질문 카드가 나가야 카드가 보일 때 답(reply_to)이 400 이 아니다.
     """
     outcome, resume = asked
-    pending = outcome.pending
-    if resume is not None and pending is not None:
-        send(
-            PendingReply(
-                run_id,
-                PendingMemoryContext(
-                    hint_text=" ".join(resume.request_texts),
-                    question=pending.question,
-                    work=WorkType.OBSERVE,
-                    # 요청 조각만 둔다. 같은 입력의 기록 조각 원문을 15분 메모리에 두지 않는다
-                    resume=replace(resume, record_texts=(), recorded_subjects=(), answer_texts=()),
-                    asked=pending,
-                ),
-            )
-        )
+    if resume is not None and outcome.pending is not None:
+        send(PendingReply(run_id, _pending_context(outcome.agent, outcome.pending, resume)))
     send(
         AgentQuestion(
             outcome.agent,
@@ -1465,6 +2067,31 @@ def _send_question(asked: _Asked, run_id: str, send: Emit) -> None:
             outcome.needs_observation[0],
             awaits_reply=resume is not None,
         )
+    )
+
+
+def _pending_context(
+    agent: str, pending: DomainPending, resume: DomainTask
+) -> PendingMemoryContext:
+    """답을 받을 질문의 보관 맥락. 같은 입력의 기록 조각 원문은 15분 메모리에 두지 않는다.
+
+    Growth 는 요청 조각을 남긴다 — 답을 저장한 뒤 그 요청을 다시 돌려야 해서다. Health 는 이어 가는
+    데 `pending.payload`(대상 id · 화면에 나갈 값 · 검증을 통과한 span)만 쓰므로 요청 조각도 싣지
+    않는다. 발화 원문 전체는 싣지 않는다는 명세 §8 의 약속이다.
+    """
+    texts = () if agent == _HEALTH else resume.request_texts
+    return PendingMemoryContext(
+        hint_text=" ".join(texts),
+        question=pending.question,
+        work=WorkType.OBSERVE,
+        resume=replace(
+            resume,
+            request_texts=tuple(texts),
+            record_texts=(),
+            recorded_subjects=(),
+            answer_texts=(),
+        ),
+        asked=pending,
     )
 
 
@@ -1640,16 +2267,26 @@ def _reroute_feedback(bounced: tuple[str, ...]) -> str:
 
 
 def _did_anything(
-    memory: MemoryAgentResult | None, domain: list[DomainOutcome], routing: Routing
+    memory: MemoryAgentResult | None,
+    domain: list[DomainOutcome],
+    routing: Routing,
+    *,
+    emergency: bool = False,
 ) -> bool:
     """저장, 추천, 안내, 메모 중 하나라도 처리됐는지 확인한다.
 
     순수 요청형+구현중인 에이전트로 분기했을 경우 화면에 "준비 중" 을 띄울 수 있다.
+    응급 안내를 낸 run 은 쓴 것이 없어도 처리한 일이다 — 실패로 끝내면 안내가 실패 화면에 묻힌다.
     """
     wrote = _memory_wrote(memory)
     note = memory is not None and bool(memory.final_message)
     return (
-        wrote or note or bool(domain) or bool(routing.guidance) or bool(routing.unavailable_agents)
+        wrote
+        or note
+        or bool(domain)
+        or bool(routing.guidance)
+        or bool(routing.unavailable_agents)
+        or emergency
     )
 
 
@@ -1681,7 +2318,7 @@ def _log(result: PipelineResult) -> None:
         "ended_by=%s saved=%d drafts=%d domain=%s guidance=%s unavailable=%s note=%s "
         "rerouted=%s partial=%s failed=%s committed=%s memory_only=%s supervisor_only=%s "
         "model_calls=%d latency_ms=%d supervisor_ms=%s memory_ms=%s budget_ms=%s "
-        "writers_ms=%s readers_ms=%s",
+        "writers_ms=%s readers_ms=%s emergency=%s",
         result.run_id,
         result.routing.intent_type,
         result.routing.degraded,
@@ -1708,6 +2345,7 @@ def _log(result: PipelineResult) -> None:
         result.times.budget_ms,
         result.times.writers_ms,
         result.times.readers_ms,
+        result.emergency,
     )
     # 다시 나눈 run 은 Supervisor 호출이 하나 더 붙는다. 그만큼만 예산을 늘려 잡는다
     budget = MAX_MODEL_CALLS + (1 if result.rerouted else 0)

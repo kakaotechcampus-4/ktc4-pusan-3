@@ -12,6 +12,7 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import uuid4
 
+from app.agents.common.result import EventRequest
 from app.core.event_draft import (
     CreateEventDraft,
     DraftItemPayload,
@@ -127,6 +128,25 @@ def _before_payload(before: EventSnapshot) -> EventBefore:
 def _item_payloads(items: tuple[DraftItem, ...]) -> list[DraftItemPayload]:
     """is_prepared는 싣지 않는다."""
     return [DraftItemPayload(item_id=item.item_id, item_name=item.item_name) for item in items]
+
+
+def draft_from_request(request: EventRequest) -> EventDraft:
+    """도메인 Agent 가 정한 일정 요청을 새 일정 초안으로 옮긴다.
+
+    `create_event` tool 은 날짜 표현을 푸는 자리인데, 요청은 시각까지 확정된 값이라 그 길을 타지
+    않고 같은 `EventDraft` 를 만든다. 저장하지 않는다 — 보호자가 제출해야 일정이 생긴다.
+    draft_id 는 DraftBook 에 넣을 때 붙는다.
+    """
+    return EventDraft(
+        op="create",
+        event_id=None,
+        title=request.title,
+        starts_at=request.starts_at,
+        ends_at=request.ends_at,
+        all_day=request.all_day,
+        event_type="episodic",
+        category=request.category,
+    )
 
 
 class DraftBook:

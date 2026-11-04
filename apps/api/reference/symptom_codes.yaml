@@ -1,0 +1,48 @@
+# Health 증상 표준 코드 사전 — reference/symptom_codes.yaml
+# 설계: docs/agents/health/Health_Tool_명세.md §3 normalize_symptom_term · group_symptom_episodes
+#
+# 🚨 증상 반복(최근 7일 안 3일)과 진료 준비 타임라인, 복약 이유(symptom_codes)가 모두 이 어휘 위에 선다.
+#    사전 밖 표현은 코드로 바꾸지 않는다 — 원문끼리 같다고 묶지도 않는다.
+# 🚨 원인 · 질환 · 중증도를 말하는 칸을 두지 않는다. 이 파일은 "보호자가 쓴 말 → 같은 증상" 만 안다.
+# 형식은 hazard_terms.yaml 의 terms 와 같다: code · label(화면 이름, aliases 안에 있어야 한다) · aliases · guards.
+#   별칭은 공백 · 문장부호를 지우고 부분 일치로 찾는다. 한 글자 별칭은 과차단이라 거절한다.
+#   guards 는 별칭이 나온 자리를 덮어 취소한다 ("열이 없어요" 는 발열이 아니다).
+# 범위(H-8): 처음엔 기록에 자주 나올 증상 8개. health_phrases.yaml 이 생기면 seek_care 키와 같은 어휘여야 한다.
+
+source: 보호자가 기록에 쓰는 표현 (팀 작성 사전) — 의학 용어집이 아니다
+version: "2026.1"
+fetched_at: 2026-10-19
+
+terms:
+  - code: fever
+    label: 발열
+    aliases: [발열, 열나, 열이, 열난, 열올, 미열, 고열, 38도, 39도, 40도, 열감]
+    guards: [열이 없, 열이 안, 열나지 않, 열나지는 않, 발열 없, 발열은 없, 열감 없]
+  - code: cough
+    label: 기침
+    aliases: [기침, 콜록, 잔기침]
+    guards: [기침 안, 기침은 없, 기침 없, 기침이 없]
+  - code: runny_nose
+    label: 콧물
+    aliases: [콧물, 코가 나, 코가 줄줄, 코흘림]
+    guards: [콧물 없, 콧물은 없, 콧물이 없]
+  - code: vomiting
+    label: 구토
+    aliases: [구토, 토했, 토해, 토하, 게워, 게웠]
+    guards: [구토 없, 구토는 없, 구토가 없, 토하지 않]
+  - code: diarrhea
+    label: 설사
+    aliases: [설사, 묽은 변, 물똥, 물변]
+    guards: [설사 없, 설사는 없, 설사가 없]
+  - code: rash
+    label: 발진
+    aliases: [발진, 빨간 반점, 붉은 반점, 반점이 올, 열꽃]
+    guards: [발진 없, 발진은 없, 발진이 없]
+  - code: hives
+    label: 두드러기
+    aliases: [두드러기, 팽진]
+    guards: [두드러기 없, 두드러기는 없, 두드러기가 없]
+  - code: stomachache
+    label: 배앓이
+    aliases: [배앓이, 배가 아파, 배아파, 복통, 배 아프]
+    guards: [복통 없, 복통은 없, 배가 아프지 않]
