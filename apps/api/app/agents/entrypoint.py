@@ -24,6 +24,7 @@ from app.agents.common.child_values import ChildValues
 from app.agents.common.datetime_rules import today_of
 from app.agents.common.readout import Readout
 from app.agents.common.reference_docs import doc_row_id
+from app.agents.common.result import MedicationDraft
 from app.agents.common.schemas.task import DomainTask
 from app.agents.common.suggestion import (
     MAX_SUGGESTIONS,
@@ -96,6 +97,7 @@ from app.agents.pipeline import (
     Event,
     EventDrafts,
     Failed,
+    MedicationDrafts,
     MemoryNote,
     Partial,
     PendingReply,
@@ -111,7 +113,7 @@ from app.agents.pipeline import (
     Unwritten,
 )
 from app.agents.pipeline import handle_input as _handle_input
-from app.agents.run_writes import RunWrites, record_food_writes
+from app.agents.run_writes import RunWrites, record_food_writes, record_medication_writes
 from app.agents.suggestion_save import InMemorySuggestions, SaveSuggestions, SuggestionBatch
 from app.agents.supervisor.routing import Guidance
 from app.rules.age import months_between
@@ -138,6 +140,8 @@ __all__ = [
     "Event",
     "EventDraft",
     "EventDrafts",
+    "MedicationDraft",
+    "MedicationDrafts",
     "Failed",
     "Guidance",
     "GrowthLogReader",
@@ -703,7 +707,9 @@ def _domain_contexts(
                 else StoreHealthMemory(opener=domain_store)
             ),
             medication=health_medication or unwired_medication,
-            medication_writer=health_medication_writer or unwired_medication,
+            medication_writer=record_medication_writes(
+                health_medication_writer or unwired_medication, writes
+            ),
             child=health_child or UnwiredChildBasic(),
         ),
     )

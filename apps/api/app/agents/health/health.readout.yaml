@@ -59,15 +59,18 @@ checkup.no_ghostwrite:
   template: "문진표는 대신 작성해 드릴 수 없어요. 들고 가실 기록을 정리했어요."
 
 # ── 복약 ──
+# TODO: 복약 알림을 보내는 발송 배치가 아직 없다. 아래 "알려드릴게요" · "알림을 멈출까요" 는 발송이
+#   생길 때를 앞서 약속하는 문구라서, 발송을 만들지 정해지면(만들면 이 문구가 사실이 되고, 안 만들면
+#   "복용 시각" 문구로 바꾼다) 이 여섯 줄과 화면 카드의 "알림 시각" 을 같이 고친다
 med.confirm:
   kind: medication_notice
-  template: "{title} — {times}에 알려드릴까요? ({starts_on} ~ {ends_on})"
+  template: "{title}, {times}에 알려드릴까요? ({starts_on} ~ {ends_on})"
 med.update_confirm:
   kind: medication_notice
   template: "{title} 알림을 {times}로 바꿀까요? 확인 전까지는 기존 시각에 알려드려요."
 med.notice:
   kind: medication_notice
-  template: "{title} — {times}에 알려드릴게요. ({starts_on} ~ {ends_on})"
+  template: "{title}, {times}에 알려드릴게요. ({starts_on} ~ {ends_on})"
 med.stop_confirm:
   kind: medication_notice
   template: "{title} 복약 알림을 멈출까요? 먹인 기록은 그대로 남아요."
@@ -209,7 +212,7 @@ card.safety_unavailable:
   kind: emergency_card
   template: "• 알레르기 · 만성질환 : 불러오지 못했어요. 직접 확인해 주세요."
 notice.no_active_med:
-  kind: med_notice_form
+  kind: medication_notice
   template: "지금 등록된 복약 일정이 없어요."
 prescription.low_confidence:
   kind: prescription_draft

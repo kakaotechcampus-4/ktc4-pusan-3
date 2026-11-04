@@ -45,6 +45,7 @@ from app.agents.pipeline import (
     AgentQuestion,
     AgentResult,
     EventDrafts,
+    MedicationDrafts,
     MemoryNote,
     PendingReply,
     RetryContext,
@@ -226,7 +227,7 @@ PENDING = DomainPending(
 )
 
 
-async def test_복약_초안은_AgentResult_로_되묻기는_AgentQuestion_으로_나간다(
+async def test_복약_초안은_카드_뒤에_MedicationDrafts_로_되묻기는_AgentQuestion_으로_나간다(
     events: list[Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     outcome = health_result(
@@ -241,8 +242,10 @@ async def test_복약_초안은_AgentResult_로_되묻기는_AgentQuestion_으�
 
     await _handle(raw, _supervisor(_segment(raw, "medication")), _world(), events)
 
-    [agent_result] = _of(events, AgentResult)
-    assert agent_result.medication_drafts == (DRAFT,) and agent_result.pending == PENDING
+    order = [type(event).__name__ for event in events]
+    assert order.index("AgentResult") < order.index("MedicationDrafts")
+    [drafts] = _of(events, MedicationDrafts)
+    assert drafts.drafts == (DRAFT,)
     [question] = _of(events, AgentQuestion)
     assert question.agent == "health" and question.text == PENDING.question
 

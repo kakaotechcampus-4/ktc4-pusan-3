@@ -96,6 +96,33 @@ class TestCreate:
         assert draft.schedule.starts_on == TODAY
         assert draft.schedule.ends_on is None and draft.missing == ["ends_on"]
 
+    @pytest.mark.parametrize(
+        ("said", "dosage"),
+        [("5ml씩", "5ml"), ("한 스푼씩", "한 스푼"), ("5ml 씩", "5ml"), ("5ml", "5ml")],
+    )
+    async def test_용량_뒤에_붙은_씩은_뗀다(self, said, dosage):
+        """투약의뢰서에 "5ml씩" 이 나가지 않게 한다. 원문의 앞부분이라 복사 규칙은 그대로다."""
+        text = f"항생제 하루 세 번 식후에 {said} 먹여야 해."
+        ctx, _ = world(text=text)
+
+        result = await create_medication_schedule(
+            ctx,
+            create_args(title_span="항생제", dosage_span=said, timing_spans=["하루 세 번 식후"]),
+        )
+
+        assert result.success
+        assert ctx.state.drafts[0].schedule.dosage == dosage
+
+    async def test_씩만_있는_용량은_빈칸이다(self):
+        ctx, _ = world(text="항생제 하루 세 번 식후에 씩 먹여야 해.")
+
+        result = await create_medication_schedule(
+            ctx,
+            create_args(title_span="항생제", dosage_span="씩", timing_spans=["하루 세 번 식후"]),
+        )
+
+        assert result.success and ctx.state.drafts[0].schedule.dosage is None
+
     async def test_초안은_아무것도_쓰지_않는다(self):
         course, rows = antibiotic()
         ctx, store = world((course, rows), text=T01)

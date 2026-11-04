@@ -47,7 +47,9 @@ def test_넘긴_Health_어댑터를_그대로_쓴다() -> None:
     ).ports
 
     assert ports.safety is safety
-    assert ports.medication is medication and ports.medication_writer is medication
+    assert ports.medication is medication
+    # 쓰기 포트는 그 run 의 쓰기 표시(RunWrites)로 감싸서 넘긴다 — 안쪽은 넘긴 어댑터다
+    assert ports.medication_writer._inner is medication
     assert ports.child is child
 
 
@@ -134,3 +136,30 @@ async def test_생일을_못_받으면_사전검사에_지어낸_월령을_넘�
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     assert await _child_months(monkeypatch, None) is None
+
+
+async def test_Health_중단_쓰기는_run_의_쓰기_표시에_남는다() -> None:
+    """멈춘 뒤 시간 초과가 나도 러너가 쓴 run 으로 보게, 진입점이 쓰기 포트를 감싼다."""
+
+    class Writer:
+        async def stop_course(self, **_: object) -> str:
+            return "stopped"
+
+    now = datetime.now(timezone.utc)
+    contexts, writes = entrypoint._domain_contexts(
+        child_id=CHILD,
+        run_id="r",
+        now=now,
+        store=InMemoryStore(now=now),
+        birth_date=None,
+        child_health_granted=None,
+        location=None,
+        activity_weather=None,
+        domain_store=None,
+        health_medication_writer=Writer(),
+    )
+    await contexts["health"].ports.medication_writer.stop_course(
+        child_id=CHILD, schedule_id=UUID(int=2), stopped_at=now
+    )
+
+    assert writes.wrote

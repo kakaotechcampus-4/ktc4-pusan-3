@@ -299,7 +299,7 @@ H-1 · H-8 · H-9 · H-11 · H-13 ([`Health_Agent_명세.md`](Health_Agent_명�
 
 ## 16. 연결 이슈에서 할 일
 
-**상태 (10번 PR ①)** — 끝난 것: Supervisor health 라벨 · `IMPLEMENTED_AGENTS` · `_RUNNERS` · `_WRITING_TASKS` · 추천 없는 Agent 표(`NON_RECOMMENDING_AGENTS`) · pipeline 출력(복약 초안 · 되묻기 · 검진 알림 일정 초안) · 건강 기록 저장 직후 hook(영아 발열 · 증상 반복) · 등록된 약 대조 · 응급 사전검사. 남은 것: **병원 찾기 위치**(PR ②, PM 확인 뒤 — 지금은 `place.preparing` 문구로 닫힌다) · SSE 번역 · 되묻기 이어받기 · 화면 확인(11번).
+**상태 (10번 PR ①)** — 끝난 것: Supervisor health 라벨 · `IMPLEMENTED_AGENTS` · `_RUNNERS` · `_WRITING_TASKS` · 추천 없는 Agent 표(`NON_RECOMMENDING_AGENTS`) · pipeline 출력(복약 초안 · 되묻기 · 검진 알림 일정 초안) · 건강 기록 저장 직후 hook(영아 발열 · 증상 반복) · 등록된 약 대조 · 응급 사전검사. 남은 것: **병원 찾기 위치**(16번 — 지금은 `place.preparing` 문구로 닫힌다) · 화면 확인(FE). SSE 번역(`medication_draft` · 코스 ref) · 되묻기 이어받기(`awaits_reply` · Health 답 run)는 11번에서 끝났다.
 
 5번의 BE/FE 작업이 들어온 뒤 한 이슈로 연다(10-20 변경). 그 전에는 Health 가 pipeline 에 붙지 않아서 Supervisor 가 health 로 보내면 `unavailable` 로 끝난다. 그 사이 빠지는 게 없도록 여기 고정한다.
 

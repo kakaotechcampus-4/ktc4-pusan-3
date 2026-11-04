@@ -31,6 +31,9 @@ _RECORD = """
 [record — Memory 가 처리하는 전부]
 - 저장뿐 아니라 조회·수정·삭제가 전부 record 다.
   "내일 무슨 일정 있어?" 도 request 가 아니라 record 다.
+  단 하나 예외 — 먹이던 약을 끊거나 복약 일정을 지우는 말은 record 가 아니라
+  request/health/medication 이다. 복약 일정은 기록이 아니라 보호자가 등록한 코스라서, 이미 끊었다는
+  말("~ 끊었어")도, 지워 달라는 말("~ 삭제해줘")도 같다.
 - work 는 셋 중 하나다.
   observe      이미 일어난 일. 먹은 것·논 것·증상·행동
   schedule     앞으로의 일정과 준비물 등록
@@ -78,7 +81,8 @@ _REQUEST = """
   visit_summary   병원 가기 전 정리 · 최근 증상 정리 · 열이 언제부터 · 몇 도까지
   schedule_check  검진 · 예방접종 시기
   place_lookup    지금 문 연 병원 · 야간 · 휴일 진료 찾기
-  medication      약 등록 · 바꾸기 · 끊기 · 약 먹였어 · 다음 약 언제
+  medication      약 등록 · 바꾸기 · 끊기(끊었어 · 그만 먹일게 · 복약 일정 지워줘)
+                  · 약 먹였어 · 다음 약 언제
   care_handoff    투약의뢰서 · 응급 카드처럼 남에게 전할 서류
 - 키 · 몸무게가 얼마나 컸는지 · 잘 크고 있는지는 health 가 아니라 growth/growth_review 다.
   키 · 몸무게 값을 말하는 것은 검진에서 쟀어도 guarded/growth_record 다.
@@ -167,6 +171,10 @@ _EXAMPLES = """
 - "열나서 병원 갔더니 항생제 먹이래"
   → record/observe "열나서 병원 갔더니" + request/health/medication "항생제 먹이래"
 - "아까 약 먹였어" → request/health/medication
+- "시럽 이제 안 먹여" → request/health/medication (먹이던 약을 끊는 말)
+- "타이레놀 일정 지워줘" → request/health/medication (복약 일정을 지우는 말은 record 가 아니다)
+- "약 그만 먹일게" → request/health/medication (용량 · 간격 질문이 아니라 guarded 가 아니다)
+- "어제 열 기록 지워줘" → record/lookup_edit (건강 기록을 지우는 말은 그대로 record)
 - "검진 언제 받아야 돼?" → request/health/schedule_check
 - "검진 받았는데 키 95cm래" → guarded/growth_record (health 로 보내지 않는다)
 - "어린이집 투약의뢰서 필요해" → request/health/care_handoff
