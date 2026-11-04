@@ -36,6 +36,12 @@ Redis 전환과 함께 자연 만료를 건다."""
 
 # --- 프로세스 메모리 폴백 (REDIS_URL 없을 때) ---
 _seen: dict[tuple[UUID, str, str, str], str | dict] = {}
+# ponytail: 장애 중 적은 항목에는 24시간 만료가 없다 — 장애 동안 들어온 요청 수만큼만 남고
+#   재시작에 비워진다. 장애가 길어 커지면 만료 시각을 같이 적는다
+
+_forgotten: set[str] = set()
+"""Redis 장애로 Redis 에서 못 지운 실패 run. Redis 가 돌아와 그 값이 나와도 재생하지 않는다
+(#671 리뷰). 안 그러면 같은 키 재시도가 24시간 TTL 동안 끝난 실패만 돌려받는다."""
 
 
 def _idem_key(parent_id: UUID, method: str, path: str, key: str) -> str:
@@ -59,7 +65,11 @@ def recall(*, parent_id: UUID, method: str, path: str, key: str) -> str | dict |
     except RedisError as exc:
         _warn(exc)
         return fallback
-    return json.loads(raw) if raw is not None else fallback
+    if raw is None:
+        return fallback
+    replay = json.loads(raw)
+    # dict(일정 응답)는 forget_run 대상이 아니고 set 에 넣을 수도 없다
+    return None if isinstance(replay, str) and replay in _forgotten else replay
 
 
 def remember(*, parent_id: UUID, method: str, path: str, key: str, replay: str | dict) -> None:
@@ -101,8 +111,8 @@ def forget_run(run_id: str) -> None:
         if idem is not None:
             r.delete(idem, rk)
     except RedisError as exc:
-        # ponytail: 못 지운 키는 24시간 TTL 로 사라진다. 그동안 같은 키 재시도는 실패가 재생된다
         _warn(exc)
+        _forgotten.add(run_id)  # Redis 의 키는 24시간 TTL 로 사라진다. 그때까지 recall 이 가린다
 
 
 def _warn(exc: RedisError) -> None:
@@ -112,6 +122,7 @@ def _warn(exc: RedisError) -> None:
 def clear() -> None:
     """idem:* · idem-run:* 키와 메모리 폴백을 비운다. 테스트용."""
     _seen.clear()
+    _forgotten.clear()
     r = get_redis()
     if r is None:
         return

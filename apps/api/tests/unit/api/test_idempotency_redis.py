@@ -109,3 +109,54 @@ class TestRedisDown:
             idempotency.recall(parent_id=PID, method="POST", path="/i", key="d5")
         assert "ConnectionError" in caplog.text
         assert str(PID) not in caplog.text
+
+    def test_장애_중_못_지운_실패_run_은_복구_뒤에도_재생하지_않는다(self):
+        """Redis 에 남은 실패 run 이 TTL(24시간) 동안 같은 키 재시도를 막지 않게 (#671 리뷰)."""
+        with patch("app.api.idempotency.get_redis", return_value=_r):
+            idempotency.remember(parent_id=PID, method="POST", path="/i", key="d6", replay="run-x")
+        with patch("app.api.idempotency.get_redis", return_value=_down):
+            idempotency.forget_run("run-x")
+        with patch("app.api.idempotency.get_redis", return_value=_r):
+            assert idempotency.recall(parent_id=PID, method="POST", path="/i", key="d6") is None
+
+    def test_dict_재생값은_못_지운_run_목록과_상관없이_재생된다(self):
+        body = {"id": "evt-1"}
+        with patch("app.api.idempotency.get_redis", return_value=_r):
+            idempotency.remember(parent_id=PID, method="POST", path="/e", key="d7", replay=body)
+        with patch("app.api.idempotency.get_redis", return_value=_down):
+            idempotency.forget_run("run-y")
+        with patch("app.api.idempotency.get_redis", return_value=_r):
+            assert idempotency.recall(parent_id=PID, method="POST", path="/e", key="d7") == body
+
+
+def test_Redis_가_응답_없이_매달려도_1초_남짓에_메모리로_넘어간다(monkeypatch):
+    """연결은 받고 아무 말도 안 하는 서버 — 연결 거부(즉시 실패)와 달리 응답 상한이 있어야 끝난다.
+
+    동기 클라이언트라 그동안 이벤트 루프 전체가 멈춘다 (#671 리뷰).
+    """
+    import socket
+    import threading
+    import time
+
+    from app.infra import redis as infra_redis
+
+    server = socket.socket()
+    server.bind(("127.0.0.1", 0))
+    server.listen()
+    held: list[socket.socket] = []
+    threading.Thread(target=lambda: held.append(server.accept()[0]), daemon=True).start()
+    monkeypatch.setattr(
+        infra_redis.settings, "REDIS_URL", f"redis://127.0.0.1:{server.getsockname()[1]}/0"
+    )
+    monkeypatch.setattr(infra_redis, "_client", None)
+    try:
+        started = time.monotonic()
+        result = idempotency.recall(parent_id=PID, method="POST", path="/h", key="hang")
+        elapsed = time.monotonic() - started
+    finally:
+        server.close()
+        for conn in held:
+            conn.close()
+
+    assert result is None
+    assert elapsed < infra_redis.TIMEOUT_S * 3

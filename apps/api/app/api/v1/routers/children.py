@@ -477,9 +477,9 @@ async def create_input(
             return CreateInputResponse(run_id=replayed)
         if previous.ended_with != "failed":
             return CreateInputResponse(run_id=replayed)
-        # failed 는 "저장 없음" 이라 러너가 키를 놓는데, 거기서 Redis 오류로 실패하면 키가 남는다.
-        # 여기서 다시 놓고 새 run 으로 받는다. 지난 실패를 재생하면 다시 보내도 같은 실패뿐이다
-        # (#538)
+        # failed 는 "저장 없음" 이라 러너가 키를 놓는데, Redis 장애로 못 지웠으면 키가 남아 있을
+        # 수 있다. 여기서 다시 놓고 새 run 으로 받는다. 지난 실패를 재생하면 다시 보내도 같은
+        # 실패뿐이다 (#538 · #671)
         idempotency.forget_run(replayed)
 
     # 아이 건강정보 동의의 현재 값을 입력 한 번에 한 번 읽어 Agent 까지 값으로 넘긴다 (#372).

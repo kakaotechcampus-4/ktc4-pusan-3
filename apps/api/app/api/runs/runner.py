@@ -333,8 +333,9 @@ async def _guarded(
                 channel.publish(done)
             else:
                 channel.publish(sse.failed_event("internal_error", raw_text))
-        # 🚨 닫기가 키 놓기보다 먼저다. forget_run 은 Redis 를 부르고 예외를 삼키지 않는다 —
-        #    거기서 터지면 close 가 안 불려 원문이 실린 failed 채널이 지워지지 않는다 (#536 리뷰).
+        # 🚨 닫기가 키 놓기보다 먼저다. forget_run 은 Redis 오류는 삼키지만(#671) 다른 예외까지
+        #    막지는 않는다 — 거기서 터지면 close 가 안 불려 원문이 실린 failed 채널이 지워지지
+        #    않는다 (#536 리뷰).
         channel.close()
         # 실패로 끝난 run 만 키를 놓아준다 — 같은 키로 "다시 시도" 하면 새 run 이 떠야 한다.
         # 🚨 done 으로 끝난 run 은 저장이 끝났다. 뒤에서 터졌어도 놓으면 재시도가 두 번 저장한다.
