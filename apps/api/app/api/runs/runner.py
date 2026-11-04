@@ -47,9 +47,10 @@ RUN_DEADLINE_SECONDS = 60.0
 다 써도 25초 안팎이다(09-23 실측). 서버가 안 끊으면 10초마다 나가는 ping 이 화면의 20초 타이머를
 계속 되살려서 진행 화면이 몇 분씩 돈다.
 
-⏰ 이건 §2 "20초 초과 시 부분 결과로 전환"(NF-06)이 아니다. 20초에 잘라 실패로 만들면 긴 입력이
-   매번 실패한다 — 규칙의 뜻은 "된 것까지 보여 줘라"이고, 어느 Agent 가 끝났는지 아는 pipeline 이
-   `partial` 을 내야 한다. 도메인 Agent(식사 추천 등)가 실제로 붙을 때 이시하님과 넣는다.
+⏰ 이건 §2 "20초 초과 시 부분 결과로 전환"(NF-06)이 아니다. 그건 pipeline 이 한다 —
+   입력부터 20초(`agents/pipeline.py` RUN_DEADLINE_S) 중 Supervisor · Memory 가 쓰고 남은 시간만
+   도메인 Agent 에 주고, 넘기면 그 Agent 를 끊어 `partial` 을 낸다.
+   Supervisor · Memory 는 저장이 반만 남지 않게 끊지 않는다.
 """
 
 
