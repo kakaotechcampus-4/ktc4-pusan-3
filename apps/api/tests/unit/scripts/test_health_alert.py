@@ -10,6 +10,7 @@ docker 와 curl 을 가짜로 바꿔 돈다 — 가짜 docker 는 환경변수�
 
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -218,3 +219,62 @@ def test_unhealthy_는_빨강이다(box):
     )
 
     assert lines == ["🔴 [prod] ktc4-web: running healthy → running unhealthy"]
+
+
+# ---------------------------------------------------------------------------
+# api 컨테이너 안에서 도는 python 한 토막 — 가짜 docker 는 이걸 실행하지 않으므로 따로 돌린다
+# ---------------------------------------------------------------------------
+
+
+def _ready_probe() -> str:
+    """스크립트에 박힌 python 을 꺼낸다. 스크립트가 바뀌면 여기서 바로 깨진다."""
+    text = SCRIPT.read_text()
+    start = text.index("python -c '") + len("python -c '")
+    return text[start : text.index("' 2>/dev/null", start)]
+
+
+@pytest.fixture
+def ready_server():
+    """/health/ready 흉내 — 정해 둔 상태 코드와 본문을 돌려준다."""
+    import http.server
+    import json
+    import threading
+
+    answer: dict = {}
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            body = json.dumps(answer["body"]).encode()
+            self.send_response(answer["status"])
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+
+    def probe(status: int, checks: dict) -> str:
+        answer.update(status=status, body={"status": "x", "checks": checks})
+        code = _ready_probe().replace(
+            "http://127.0.0.1:8000", f"http://127.0.0.1:{server.server_port}"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", code], capture_output=True, text=True, timeout=10
+        )
+        assert result.returncode == 0, result.stderr
+        return result.stdout.strip()
+
+    yield probe
+    server.shutdown()
+
+
+def test_ready_probe_는_200_이면_ready(ready_server):
+    assert ready_server(200, {"db": "ok", "redis": "ok"}) == "ready"
+
+
+def test_ready_probe_는_503_이면_실패한_구성요소만_붙인다(ready_server):
+    assert ready_server(503, {"db": "ok", "redis": "fail"}) == "not-ready:redis"
+    assert ready_server(503, {"db": "fail", "redis": "fail"}) == "not-ready:db,redis"
