@@ -371,14 +371,22 @@ Growth 루틴이 "지금 어느 정도까지 하나요?" 를 물으면 보호자
 
 - 맥락에는 `resume`(요청 조각만 든 `DomainTask`, 같은 입력의 기록 조각 원문은 싣지 않는다)과 `asked`(Agent 가
   물은 자리 `DomainPending`: 행동 이름 · 카테고리 · 채울 칸)가 더해진다. 15분 · 같은 보관 규칙이다.
-  답을 채울 칸이 있는 질문만 싣는다 — Growth 는 `ask.routine_current`(수준)와 `ask.habit_trigger`(상황)이고,
-  예/아니오인 `ask.habit_current` 는 이어받지 않는다(옮길 값이 없다).
+  답을 채울 칸이 있는 질문만 싣는다 — Growth 는 `ask.routine_current`(수준)와 `ask.habit_trigger`(상황),
+  `ask.learning_current`(교육 주제를 집에서 해 본 일)이고, 예/아니오인 `ask.habit_current` 는 이어받지
+  않는다(옮길 값이 없다).
 - 이어받는 Memory 는 머리말을 따로 받고(`_RESUME_HEADER`) 답을 물은 행동의 기록 한 건으로 저장한다.
   누가 어떻게 도왔는지 말하지 않은 답("하기 싫어해")은 수준을 비운다. 처음 머리말은 이런 답을 `independent`
   로 옮겨 "이미 혼자 잘 하고 있어요" 로 닫히게 했다(라이브 5회 중 4회).
   `create_observation_routine` 의 행동 이름 · 카테고리는 모델이 아니라 코드가 물은 값으로 덮는다(`_pinned`).
   위험 물질 · 안전 판정을 지난 뒤에 덮고, 덮은 이름에도 위험 물질 판정을 한 번 더 건다. 루틴 기록은 답
   하나에 한 건만 받는다 — 두 번째는 이유(다른 행동 이야기는 `leftover`)를 알려 거절한다.
+- 교육 질문(`ask.learning_current`, 물은 칸 `topic`)의 답은 그 주제의 **교육 기록 한 건**이다. 머리말이
+  "물은 주제를 집에서 해 본 일을 교육 기록으로 남기고, 어려워했다면 polarity −1" 이라고 알리고,
+  `create_observation_education` 의 `subject` 는 코드가 물은 주제로 덮는다(`_pinned` — 모델이 "받아쓰기"
+  로 적어도 "국어"). 그래야 다시 도는 Growth 의 주제 판정(`record_on_topic`)이 그 기록을 잡아 개인화로
+  이어진다. 교육 기록은 두 번째를 받지 않고, 교육 밖 관찰은 이 답에서 저장하지 않는다
+  (`_outside_topic_answer` — 이유를 알려 거절). 이 질문은 추천에 덧붙어 나가서
+  `_RESUMED_WITH_SUGGESTIONS`(pipeline)에 있는 task 만 덧붙은 질문도 이어받는다(Food 는 그대로 받지 않는다).
 - 저장 없이 말로 끝났거나 또 물으려 하면 이어받기용 안내로 한 번 되돌린다. 그래도 물으면 맥락을 그대로
   옮겨 다음 답을 기다린다. 답에 섞인 다른 말은 저장하지 않고 `leftover` 로 두어 `LEFTOVER_NOTE` 가 붙는다.
 - 저장했고 Memory 가 더 묻지 않으면(`memory.pending is None`) 같은 task 를 다시 돈다. 답 원문은 코드 판정(닫힘 ·
