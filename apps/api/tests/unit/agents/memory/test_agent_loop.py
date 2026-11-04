@@ -19,14 +19,13 @@ from app.agents.memory.agent import (
     _FOUND_HEADER,
     _UNCLEAR_REPLY,
     _UNSAVED_FALLBACK,
-    MAX_FOUND,
     MAX_QUESTIONS,
     MemoryReply,
     _claims_saved,
     run,
 )
 from app.agents.memory.context import AgentContext
-from app.agents.memory.result import ErrorCode
+from app.agents.memory.result import MAX_ROWS, ErrorCode
 from app.agents.memory.schemas.task import (
     FoundRef,
     MemoryHint,
@@ -1539,33 +1538,53 @@ async def test_일정을_조회하고_되물으면_일정_id를_남긴다(contex
     assert result.pending.found == (FoundRef("event", event.id),)
 
 
-async def test_찾은_기록이_상한과_같으면_모두_남긴다(context: AgentContext) -> None:
-    for index in range(MAX_FOUND):
-        await _seed_juk(context, f"전복죽 {index}")
+async def _seed_juk_days(context: AgentContext, count: int) -> list[str]:
+    """하루에 한 건씩, 오래된 것부터. 조회 결과가 날짜순이라 마지막이 가장 최근이다."""
+    ids = []
+    for back in range(count, 0, -1):
+        day = NOW.date() - timedelta(days=back)
+        row = await context.store.create_observation(
+            domain="food",
+            child_id=context.child_id,
+            source_writer=context.source_writer,
+            raw_text=f"전복죽 {back}일 전",
+            observed_on=day,
+            observed_range=DateRange(start=day, end=day + timedelta(days=1)),
+            fields={"subject": "전복죽", "action": "먹었다"},
+        )
+        ids.append(row.id)
+    return ids
+
+
+async def _query_juk(context: AgentContext) -> dict:
     llm = FakeLLM(
         _tools(_call("q1", "query_observation_food", {"raw_text_query": "전복죽"})),
-        _answer({"text": "전복죽 기록을 모두 삭제할까요?", "kind": "question"}),
+        _answer({"text": "전복죽 기록을 찾았어요.", "kind": "message"}),
     )
-
     result = await run(_JUK_DELETE.raw_text, context, client=llm, task=_JUK_DELETE)
-
-    assert result.pending is not None
-    assert len(result.pending.found) == MAX_FOUND
+    return result.calls[0].result["data"]
 
 
-async def test_찾은_기록이_상한을_넘으면_하나도_남기지_않는다(context: AgentContext) -> None:
-    # 일부만 남기면 "전부 지워줘" 에 "응" 했을 때 일부만 지워진다
-    for index in range(MAX_FOUND + 1):
-        await _seed_juk(context, f"전복죽 {index}")
-    llm = FakeLLM(
-        _tools(_call("q1", "query_observation_food", {"raw_text_query": "전복죽"})),
-        _answer({"text": "전복죽 기록을 모두 삭제할까요?", "kind": "question"}),
-    )
+async def test_조회가_상한과_같으면_잘렸다는_표시가_없다(context: AgentContext) -> None:
+    # 잘리지 않은 결과는 예전과 같은 모양이다 — 늘 싣으면 모델 행동이 흔들렸다(D02)
+    await _seed_juk_days(context, MAX_ROWS)
 
-    result = await run(_JUK_DELETE.raw_text, context, client=llm, task=_JUK_DELETE)
+    data = await _query_juk(context)
 
-    assert result.pending is not None
-    assert result.pending.found == ()
+    assert data["count"] == MAX_ROWS
+    assert "truncated" not in data and "notice" not in data
+
+
+async def test_조회가_상한을_넘으면_최근_것만_돌려주고_잘렸다고_알린다(
+    context: AgentContext,
+) -> None:
+    # 카드에 실리는 것과 모델이 본 것이 같아야 한다 — 보이지 않던 기록은 삭제 후보가 아니다 (#535)
+    ids = await _seed_juk_days(context, MAX_ROWS + 1)
+
+    data = await _query_juk(context)
+
+    assert data["count"] == MAX_ROWS and data["truncated"] is True
+    assert [row["id"] for row in data["records"]] == ids[1:]
 
 
 async def test_실패한_조회는_찾은_기록으로_세지_않는다(context: AgentContext) -> None:

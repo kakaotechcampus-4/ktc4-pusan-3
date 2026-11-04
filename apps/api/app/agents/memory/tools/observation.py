@@ -19,7 +19,7 @@ from app.agents.common.datetime_rules import (
     resolve_time,
 )
 from app.agents.memory.context import AgentContext
-from app.agents.memory.result import ErrorCode, ToolResult, fail, ok
+from app.agents.memory.result import ErrorCode, ToolResult, cut, fail, ok, recent
 from app.agents.memory.schemas.observation import (
     ObservationActivityCreate,
     ObservationActivityUpdate,
@@ -134,11 +134,13 @@ async def _query(context: AgentContext, args: ObservationQueryArgs, *, domain: s
         raw_text_query=args.raw_text_query,
         **bounds,
     )
+    kept, truncated = recent(rows)
     return ok(
         "query",
         resource,
-        count=len(rows),
-        records=[row.to_summary() for row in rows],
+        count=len(kept),
+        records=[row.to_summary() for row in kept],
+        **cut(truncated),
     )
 
 

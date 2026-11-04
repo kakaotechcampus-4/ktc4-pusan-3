@@ -67,9 +67,6 @@ MAX_COMPLETION_TOKENS = 1400
 # 맥락을 만들지 않고 끝낸다(`ask_limit_reached`).
 MAX_QUESTIONS = 4
 
-# 되묻기 맥락에 남기는 조회 결과 행 수의 상한. 넘으면 하나도 남기지 않는다
-MAX_FOUND = 40
-
 # 조기 종료: 모든 힌트에 대해 성공한 쓰기가 run 전체에서 그 수 이상이면 요약 호출 없이 끝냄
 EARLY_STOP = True
 
@@ -807,7 +804,7 @@ def _found(calls: list[ToolCallRecord], carried: tuple[FoundRef, ...] = ()) -> t
     질문은 마지막 조회를 보고 나온다. 앞선 넓은 조회까지 남기면 질문과 무관한 행이 같이 보인다.
     이번 run에 행이 나온 조회가 없으면 앞 맥락의 것을 그대로 넘긴다.
     id는 tool 결과에서 코드가 옮긴다. 실패한 조회는 data가 없어 들어오지 않는다.
-    MAX_FOUND를 넘으면 하나도 남기지 않는다.
+    조회 tool 이 종류마다 MAX_ROWS 건까지만 돌려주므로 따로 자르지 않는다.
     """
     refs = list(carried)
     for call in reversed(calls):
@@ -823,7 +820,7 @@ def _found(calls: list[ToolCallRecord], carried: tuple[FoundRef, ...] = ()) -> t
         if rows:
             refs = list(dict.fromkeys(FoundRef(resource, str(row["id"])) for row in rows))
             break
-    return tuple(refs) if len(refs) <= MAX_FOUND else ()
+    return tuple(refs)
 
 
 async def _execute(
