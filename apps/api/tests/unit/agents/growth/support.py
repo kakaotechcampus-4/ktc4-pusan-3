@@ -153,9 +153,13 @@ class FakeRawSearch:
         self._by_keyword = {keyword: tuple(rows) for keyword, rows in by_keyword.items()}
         self._fail = frozenset(fail)
         self.calls: list[tuple[str, int]] = []
+        self.by_field: dict[str, str] = {}  # 검색어 -> 어느 인자(keyword, title)로 찾았는가
 
-    async def search(self, *, keyword: str, limit: int) -> tuple[RawBook, ...]:
+    async def search(
+        self, *, keyword: str, limit: int, field: str = "keyword"
+    ) -> tuple[RawBook, ...]:
         self.calls.append((keyword, limit))
+        self.by_field[keyword] = field
         if keyword in self._fail:
             raise UpstreamUnavailable("정보나루 조회 실패 (테스트 주입)")
         return self._by_keyword.get(keyword, ())[:limit]

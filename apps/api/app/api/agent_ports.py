@@ -2,7 +2,7 @@
 
 도메인 Agent 의 기억 포트는 호출마다, 추천 저장은 Agent 결과 하나마다 세션 하나다. 요청 세션이나
 run 세션을 같이 타면 동시에 도는 task 들이 AsyncSession 을 함께 써서 깨진다.
-기록 건수도 호출마다 세션 하나다.
+기록 건수 · 장소 조회도 호출마다 세션 하나다.
 Growth 도서 어댑터(정보나루 · 이미 낸 책)도 같다 — 인증키가 있을 때만 만든다.
 """
 
@@ -65,6 +65,14 @@ def suggestion_saver(
         return tuple(str(row_id) for row_id in ids)
 
     return save_suggestions
+
+
+def place_source() -> entrypoint.PlaceSource:
+    from app.domains.place.agent_reader import DbPlaceSource
+
+    # 장소를 찾을 때마다 짧은 세션 하나 — 어댑터가 nearby 마다 연다(#257).
+    # 05 추천은 좌표를 받지 않아서 입력 run 만 쓴다
+    return DbPlaceSource(background_session)
 
 
 def record_counter(child_id: UUID) -> entrypoint.CountRecords:

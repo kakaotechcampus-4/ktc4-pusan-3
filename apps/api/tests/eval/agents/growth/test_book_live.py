@@ -26,6 +26,7 @@ from app.agents.common.schemas.task import DomainTask
 from app.agents.growth.agent import run
 from app.agents.growth.context import GrowthContext
 from app.agents.growth.library import LibraryBooks
+from app.agents.growth.readouts import READOUTS
 from app.agents.growth.store.inmemory import (
     InMemoryGrowthMemory,
     InMemoryIssuedBooks,
@@ -188,3 +189,26 @@ async def test_다른_책도_는_이미_낸_책을_다시_내지_않는다(llm, 
     )
     check(second, rows, months=48)
     assert not {normalize(d.content) for d in second.suggestions} & {normalize(x) for x in issued}
+
+
+def only_asked(result, rows, words, *, months):
+    """요청한 낱말이 든 책만 나가거나, 그런 책이 없어 `book.no_topic` 으로 닫힌다."""
+    if result.status == "blocked":
+        assert [r.body for r in result.readouts] == [READOUTS.render("book.no_topic").body]
+        assert result.suggestions == ()
+        return
+    check(result, rows, months=months)
+    for draft in result.suggestions:
+        assert any(normalize(word) in normalize(draft.content) for word in words), draft.content
+
+
+async def test_곰_코끼리_요청은_제목에_낱말이_든_책만_나간다(llm, auth_key):
+    result, rows = await play(
+        llm, auth_key, "bear-elephant", "곰이랑 코끼리 관련된 책을 추천해줘", months=30
+    )
+    only_asked(result, rows, ("곰", "코끼리"), months=30)
+
+
+async def test_돼지_요청은_제목에_돼지가_든_책만_나간다(llm, auth_key):
+    result, rows = await play(llm, auth_key, "pig", "돼지 관련된 책을 추천해줘", months=30)
+    only_asked(result, rows, ("돼지",), months=30)

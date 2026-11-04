@@ -28,7 +28,7 @@ from typing import Any
 
 from app.agents.common.llm_client import LLMClient
 from app.agents.common.readout import Readout
-from app.agents.common.result import AgentStatus, DomainAgentResult
+from app.agents.common.result import AgentStatus, DomainAgentResult, DomainPending
 from app.agents.common.schemas.task import DomainTask
 from app.agents.common.suggestion import (
     SuggestionDraft,
@@ -43,6 +43,7 @@ from app.agents.growth.gating import routine_mode
 from app.agents.growth.prompt import build_system_prompt, recall_message, request_message
 from app.agents.growth.readouts import (
     ASK_NEED_LEVEL,
+    ASKED_FIELD,
     CLOSED_BOOK_API,
     DOC_NO_ROW,
     READOUTS,
@@ -63,7 +64,7 @@ from app.agents.growth.tools.closures import closure_key
 from app.agents.growth.tools.delta import asks_judgement, compute_growth_delta
 from app.agents.growth.tools.docs import DocHit, search_growth_doc
 from app.agents.growth.tools.memory import has_citable_memory
-from app.rules.growth_topic import request_topic
+from app.rules.growth_topic import request_topic, routine_scope, strict_topic
 from app.rules.term_match import normalize
 
 logger = logging.getLogger(__name__)
@@ -72,6 +73,8 @@ AGENT = "growth"
 # 대화 한 번의 왕복 상한. 기억 조회 두세 번 + 제출 + 거절 뒤 재제출
 MAX_STEPS = 8
 MAX_COMPLETION_TOKENS = 2000
+# 재호출은 run 마감(20초)보다 이만큼 일찍 끝낸다. 마감에 걸리면 처음 통과한 후보까지 버려진다
+RECALL_MARGIN_S = 2.0
 
 
 async def run(
@@ -102,13 +105,16 @@ async def _run(
     gate = await build_gate(context, task_type)
     context.state.gate = gate
     context.state.topic = request_topic(task.request_texts, task.record_texts)
-    context.state.said_texts = (*task.request_texts, *task.record_texts)
+    context.state.strict_topic = strict_topic(task.request_texts, task.record_texts)
+    context.state.routine_scope = routine_scope(task.request_texts, task.record_texts)
+    context.state.said_texts = (*task.request_texts, *task.record_texts, *task.answer_texts)
     context.state.recorded_subjects = task.recorded_subjects
+    context.state.answered_subject = task.answered_subject
 
     key = closed_readout_key(task_type, gate)
     if key is None and task_type is GrowthTaskType.ROUTINE_COACHING:
         # 같은 입력의 기록 조각도 본다 — "약 먹기 싫어해. 어떻게 하지?" 는 요청 조각에 약이 없다
-        key = closure_key((*task.request_texts, *task.record_texts))
+        key = closure_key((*task.request_texts, *task.record_texts, *task.answer_texts))
     if key is not None:
         context.state.closed_reason = key
         return _result(task_type, "blocked", readouts=(READOUTS.render(key),))
@@ -161,9 +167,12 @@ async def _run(
     context.state.model_calls = 1
     try:
         completed = await _converse(llm, messages, context, allowed, output)
-    except UpstreamUnavailable:
-        # 도서 검색이 실패했다. 빈 목록이나 캐시로 꾸미지 않고 닫는다 — 모델은 한 번 불렀다
-        logger.warning("Growth 도서 검색 실패 run_id=%s", context.run_id)
+    except UpstreamUnavailable as exc:
+        # 도서 검색이 실패 -> 빈 목록이나 캐시로 꾸미지 않고 닫는다
+        # 사유는 어댑터가 남긴 단계와 상태 코드(검색어 · 키 · 주소는 없다)
+        logger.warning(
+            "Growth 도서 검색 실패 run_id=%s model_calls=1 reason=%s", context.run_id, exc
+        )
         context.state.closed_reason = CLOSED_BOOK_API
         return _result(
             task_type, "blocked", readouts=(READOUTS.render(CLOSED_BOOK_API),), model_calls=1
@@ -178,21 +187,35 @@ async def _run(
     picked = state.suggestions
     model_calls = 1
     if state.excluded and len(picked) < state.capacity:
-        # 안전 필터 · 금지 표현으로 빠졌다. 사유 없이 제외 목록만 주고 1회 더 부른다
-        model_calls = 2
-        state.model_calls = 2
-        state.done_steps = frozenset(step for draft in picked if (step := step_of(draft)))
-        if task_type is GrowthTaskType.BOOK_SUGGESTION:
-            # 처음 고른 책과 빠진 책은 재호출에서 다시 낼 수 없다 — 이미 낸 책처럼 거절한다
-            state.done_books = frozenset(
-                normalize(name) for name in (*(d.content for d in picked), *state.excluded)
-            )
-        try:
-            again = await _recall(llm, messages, task, context, allowed, output, picked)
-        except UpstreamUnavailable:
-            # 재호출에서 다시 찾다가 실패했다. 처음 통과한 책은 그대로 낸다 (부분 결과)
-            logger.warning("Growth 도서 재검색 실패 run_id=%s", context.run_id)
-            again = None
+        # 안전 필터 · 금지 표현 · 주제 밖으로 빠졌다. 사유 없이 제외 목록만 주고 1회 더 부른다.
+        # run 마감(20초)까지 남은 시간이 모자라면 재호출하지 않는다 — 마감에 걸려 처음 통과한
+        # 후보까지 잃느니 그 후보로 끝낸다
+        budget = _recall_budget(task)
+        again: tuple[SuggestionDraft, ...] | None = None
+        if budget is not None and budget <= 0:
+            logger.warning("Growth 재호출을 건너뛴다 — 마감이 가깝다 run_id=%s", context.run_id)
+        else:
+            model_calls = 2
+            state.model_calls = 2
+            state.done_steps = frozenset(step for draft in picked if (step := step_of(draft)))
+            if task_type is GrowthTaskType.BOOK_SUGGESTION:
+                # 처음 고른 책과 빠진 책은 재호출에서 다시 낼 수 없다 — 이미 낸 책처럼 거절한다
+                state.done_books = frozenset(
+                    normalize(name) for name in (*(d.content for d in picked), *state.excluded)
+                )
+            try:
+                again = await asyncio.wait_for(
+                    _recall(llm, messages, task, context, allowed, output, picked), budget
+                )
+            except UpstreamUnavailable as exc:
+                # 재호출에서 다시 찾다가 실패했다. 처음 통과한 책은 그대로 낸다 (부분 결과)
+                logger.warning(
+                    "Growth 도서 재검색 실패 run_id=%s model_calls=2 reason=%s",
+                    context.run_id,
+                    exc,
+                )
+            except TimeoutError:
+                logger.warning("Growth 재호출이 마감에 걸렸다 run_id=%s", context.run_id)
         if again is None and not picked:
             return _result(task_type, "failed", model_calls=model_calls)
         picked = merge_drafts(picked, again or (), key=_same(task_type))
@@ -252,6 +275,7 @@ def _result(
     suggestions: tuple[SuggestionDraft, ...] = (),
     readouts: tuple[Readout, ...] = (),
     question: str | None = None,
+    pending: DomainPending | None = None,
     model_calls: int = 0,
 ) -> DomainAgentResult:
     return DomainAgentResult(
@@ -261,7 +285,23 @@ def _result(
         suggestions=suggestions,
         readouts=readouts,
         needs_observation=(question,) if question else (),
+        pending=pending,
         model_calls=model_calls,
+    )
+
+
+def _pending(state: GrowthRunState) -> DomainPending | None:
+    """되묻기를 낸 자리. 답을 받는 pipeline 이 보관했다가 Memory 에 넘긴다."""
+    if state.question is None or state.asked is None:
+        return None
+    key, subject, category = state.asked
+    if key not in ASKED_FIELD:
+        return None
+    return DomainPending(
+        agent=AGENT,
+        kind=key,
+        question=state.question,
+        payload={"subject": subject, "category": category, "field": ASKED_FIELD[key]},
     )
 
 
@@ -273,7 +313,12 @@ def _ended(task_type: GrowthTaskType, context: GrowthContext) -> DomainAgentResu
         # 실어 카드가 혼자 서게 한다 — 05 묶음 안내(`empty_notice`)도 이 문장이 된다 (#452 리뷰)
         notice = replace(READOUTS.render(ASK_NEED_LEVEL), code="empty")
         return _result(
-            task_type, "completed", readouts=(notice,), question=state.question, model_calls=1
+            task_type,
+            "completed",
+            readouts=(notice,),
+            question=state.question,
+            pending=_pending(state),
+            model_calls=1,
         )
     assert state.closing is not None
     state.closed_reason = state.closing
@@ -315,6 +360,13 @@ def _same(task_type: GrowthTaskType) -> Callable[[SuggestionDraft], object]:
     if task_type is GrowthTaskType.BOOK_SUGGESTION:
         return lambda draft: normalize(draft.content)
     return lambda draft: normalize(draft.content.split("\n", 1)[0])
+
+
+def _recall_budget(task: DomainTask) -> float | None:
+    """재호출에 쓸 수 있는 초. 마감이 없으면 None(제한 없음), 0 이하면 재호출하지 않는다."""
+    if task.deadline is None:
+        return None
+    return task.deadline - time.perf_counter() - RECALL_MARGIN_S
 
 
 async def _recall(

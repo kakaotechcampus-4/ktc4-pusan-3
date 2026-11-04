@@ -8,7 +8,7 @@
     event_requests     저장 안 함 — 초안 payload, 제출 시 저장         Health
     needs_observation  저장 안 함 — 화면이 한 줄로 묻는다              전부
     medication_drafts  저장 안 함 — 제출 시 백엔드가 INSERT/UPDATE     Health
-    pending            저장 안 함 — 되묻고 멈춘 자리. run 사이에 보관    Health
+    pending            저장 안 함 — 되묻고 멈춘 자리. run 사이에 보관    Health · Growth
 
 `status` 와 근거 모드(`personalized`/`general`)는 **직교한다.** 날씨 조회는 실패했지만
 개인화 근거는 있는 run 이 `degraded` + `personalized` 다.
@@ -58,7 +58,7 @@ class MedicationDraft:
     notice_times: tuple[str, ...]  # 필수 — 보호자가 승인하는 것은 실제로 울릴 시각이다
     missing: tuple[str, ...] = ()  # 비어 있는 NOT NULL 칸. 비지 않으면 화면이 제출을 막는다
     schedule_id: UUID | None = None  # update 만
-    before: dict[str, Any] | None = None  # update 만 — 화면이 "19:30 → 20:00" 을 보여준다
+    before: dict[str, Any] | None = None  # update 만 — 화면이 "18:30 → 19:00" 을 보여준다
 
     def __post_init__(self) -> None:
         if not self.notice_times:
@@ -76,7 +76,9 @@ class DomainPending:
     """
 
     agent: str
-    kind: str  # health: "medication_stop" · "medication_which" · "dose_timing"
+    # health: "medication_stop" · "medication_which" · "dose_timing"
+    # growth: "ask.routine_current" · "ask.habit_trigger"
+    kind: str
     question: str
     # JSON 으로 바뀌는 값만. 대상 id · 화면에 나갈 값 · 이어서 처리할 칸(검증을 통과한 span).
     # 발화 원문 전체는 담지 않는다

@@ -166,6 +166,7 @@ async def test_추천을_draft_로_저장하고_id_를_순서대로_돌려준다
     assert {row.run_id for row in rows} == {RUN}
     assert {row.expires_at for row in rows} == {NOW + SUGGESTION_TTL}
     assert (rows[0].allergens, rows[0].items) == (["난류"], ["계란"])
+    assert {row.place_notice for row in rows} == {None}  # payload 에 키가 없으면 비운다
     assert await counts(session, child.id) == (2, 2)  # 아이 기록 근거 1행 + 문서 근거 1행
 
 
@@ -199,6 +200,28 @@ async def test_SuggestionDraft_의_payload_가_그대로_저장된다(session, k
     )
     assert (row.allergens, row.items) == (["난류"], ["계란"])
     assert await counts(session, child.id) == (1, 2)
+
+
+async def test_장소가_붙은_추천의_확인_문구를_저장한다(session, kids):
+    """Activity 가 장소를 붙이면 코드 문구를 칸으로 싣는다 (#516). 근거 행은 늘지 않는다."""
+    _, child, _ = kids
+    notice = "공공데이터 기준 2026년 6월이에요. 가기 전에 운영 여부를 확인해 주세요."
+    draft = SuggestionDraft(
+        agent="activity",
+        kind="general",
+        content="사직어린이공원에서 모래성 쌓기",
+        reason="이유",
+        citations=(EvidenceCitation(ref=Ref(kind="activity_doc", id=DOC_ID), note="놀이 자료"),),
+        place_notice=notice,
+    )
+
+    [row_id] = await save_agent_suggestions(
+        session, child_id=child.id, run_id=RUN, now=NOW, payloads=[draft.to_payload()]
+    )
+
+    row = await session.get(Suggestion, row_id)
+    assert row.place_notice == notice
+    assert await counts(session, child.id) == (1, 1)  # 장소는 근거가 아니다
 
 
 async def test_문서_행_근거는_대상_테이블_없이_저장한다(session, kids):
@@ -304,8 +327,32 @@ async def test_보호자가_정한_요청에_맞춘_일반_추천은_문서_근�
         payloads=[payload(kind="general", requested=True, agent="activity")],
         now=NOW,
     )
-    assert suggestion_id
     assert await counts(session, child.id) == (1, 0)
+    # 05 가 문서 근거 없이도 내보낼 수 있게 요청 기반임을 행에 남긴다 (#597 리뷰)
+    assert (await session.get(Suggestion, suggestion_id)).requested is True
+
+
+async def test_요청_기반은_Activity_일반_추천만_행에_남긴다(session, kids):
+    """Food 가 requested 를 보내도 요청 기반으로 남지 않는다 — 05 에서 문서 근거가 사라지면
+    다른 일반 추천처럼 빠진다. 막연한 요청의 Activity 일반 추천도 남기지 않는다."""
+    _, child, _ = kids
+    food, activity = await save_agent_suggestions(
+        session,
+        child_id=child.id,
+        run_id=RUN,
+        payloads=[
+            payload(
+                kind="general",
+                requested=True,
+                agent="food",
+                citations=[doc_citation("food_doc")],
+            ),
+            payload(kind="general", agent="activity", citations=[doc_citation()]),
+        ],
+        now=NOW,
+    )
+    assert (await session.get(Suggestion, food)).requested is False
+    assert (await session.get(Suggestion, activity)).requested is False
 
 
 async def test_요청_기반_면제는_Activity_만이다(session, kids):

@@ -392,7 +392,7 @@
 | content | text | NOT NULL. 실제로 추천하는 내용 |
 | reason | text | nullable. 근거 문구 |
 | allergens | text[] | NOT NULL, default `'{}'`. 그 추천에 들어 있는 알레르기 항목의 정식 명칭(`allergen_terms.yaml`, 예: `새우` · `난류`). 19종 밖(예: Activity 의 `쑥`)도 이름으로 담는다. 상태(없음/모름)는 담지 않는다 — 승인할 때 `health_safety` 를 다시 읽는다 |
-| items | text[] | NOT NULL, default `'{}'`. 일정으로 만들 때 준비물(`event_item.item_name`) 하나씩. Food: `된장` · `두부`, Activity: `수영복`. 알레르기 판단에는 쓰지 않는다 |
+| items | text[] | NOT NULL, default `'{}'`. 일정으로 만들 때 준비물(`event_item.item_name`) 하나씩. Food: `두부` · `시금치` — 레시피 주재료(`recipe_catalog.main_ingredients`)에서 물 · 소금 · 설탕 · 기름 · 향신 가루를 뺀 것이고, 비면 `'{}'` 다(#474), Activity: `수영복`. 알레르기 판단에는 쓰지 않는다 — Food 의 안전 판정은 전체 `ingredients` · `allergen_codes` 로 한다 |
 | status | enum | `draft` / `approved` / `rejected` / `expired`, NOT NULL, default `draft` |
 | expires_at | timestamptz | 생성 +24h, NOT NULL |
 | run_id | text | nullable. 추천을 만든 입력 run(`RunChannel.run_id`). 05 가 그 run 의 추천을 찾는다. 인덱스 `(child_id, run_id)` |
@@ -533,6 +533,19 @@
 
 설정 탭의 스위치 2개다. 알림 시각은 여기서 고르지 않는다(일정마다 `reminder.lead`).
 행이 없으면 아직 바꾼 적이 없는 것이고 코드의 기본값(`domains/notification/repository.py` 의 `DEFAULT_SETTING`)으로 본다 — 기본값이 바뀌면 만진 적 없는 보호자 모두에게 바로 적용된다.
+
+### tour_seen (화면 가이드를 본 기록)
+
+| **필드** | **타입** | **비고** |
+| --- | --- | --- |
+| parent_id | uuid | PK, FK → `parent.id`, ON DELETE CASCADE |
+| tour_key | text | PK. 본 가이드 이름 (`home-empty` · `home` · `chat` · …) |
+| seen_at | timestamptz | NOT NULL, DEFAULT now(). 처음 본 시각 |
+
+보호자 × 가이드 1행이다 (#696). 행이 없으면 아직 안 본 것이고, ? 로 다시 봐도 행을 바꾸지 않는다. 아이가 아니라 계정 단위라 함께 보는 보호자도 각자 센다.
+🚨 `tour_key` 는 정해진 값인데도 `VARCHAR + CHECK` 가 아니라 `text` 다 — 팀 규칙의 예외다. 이름을 정하는 쪽은 프론트(`lib/tour/types.ts` 의 `TOUR_KEYS`)이고, 서버는 값으로 분기하지 않고 저장해 돌려주기만 한다. CHECK 를 두면 프론트 · API 에 더해 DB 마이그레이션까지 배포 순서에 묶여, 화면이 늘 때마다 마이그레이션을 먼저 돌려야 한다. 허용 값은 API 스키마(`TourKey` Literal)가 막고 — 보호자당 행 수가 여기서 정해지므로 Literal 은 자유 문자열로 풀지 않는다 — 목록에서 빠진 이름의 행은 `GET` 이 걸러 낸다.
+- 새 화면에 가이드를 붙일 때는 `TourKey` 를 프론트보다 먼저(또는 같은 배포에) 늘린다. 프론트에만 있는 이름은 `PUT` 이 422 로 실패해 가이드가 다시 뜨고, `make web-contract` 는 경로 파라미터를 비교하지 않아 이 어긋남을 못 잡는다.
+- 나중에 이 표에 쓰는 경로(배치 · 스크립트)가 생기면 화면 목록을 박는 CHECK 대신 형식 제약(소문자 · 하이픈, 32자 이하 등)을 건다 — 화면이 늘어도 마이그레이션이 필요 없다.
 
 ### diary_entry (보호자 개인 일기)
 

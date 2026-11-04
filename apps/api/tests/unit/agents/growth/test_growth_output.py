@@ -8,7 +8,8 @@ from uuid import UUID
 
 import pytest
 
-from app.agents.common.evidence import AffinityRow
+from app.agents.common.evidence import AffinityRow, RankedEvidence
+from app.agents.common.refs import Ref
 from app.agents.growth.context import build_gate
 from app.agents.growth.review import step_of
 from app.agents.growth.schemas.learning import ProposeLearningActivityArgs
@@ -264,6 +265,72 @@ def plan(category, subject, items=()):
     )
 
 
+class TestTopic:
+    """요청 주제(`state.topic`)와 맞지 않는 교육 후보는 빠지고 재호출 제외 목록으로 간다."""
+
+    async def test_주제와_무관한_후보는_빠지고_제외_목록에_간다(self):
+        ctx = await memory_ctx()
+        ctx.state.strict_topic = ("communication",)
+        mine = [{"id": str(EDU.id), "note": "계단 숫자를 셌어요"}]
+        args = ProposeLearningActivityArgs.model_validate(
+            {
+                "items": [
+                    item("공룡 이름 짝맞추기", evidence=mine),
+                    item("한글 자음 찾기", evidence=[doc_pick(ctx)]),
+                    item("이야기 이어 말하기", evidence=[doc_pick(ctx)]),
+                ]
+            }
+        )
+        result = await propose_learning_activity(ctx, args)
+        assert result.success and len(ctx.state.suggestions) == 2
+        assert ctx.state.excluded == ("공룡 이름 짝맞추기",)
+
+    async def test_주제_영역_예시를_단_후보는_낱말이_없어도_통과한다(self):
+        ctx = await learning_ctx()
+        ctx.state.strict_topic = ("communication",)
+        result = await propose_learning_activity(
+            ctx, learning_args(ctx, "블록 세기", "색깔 찾기", "모양 맞추기")
+        )
+        assert result.success and len(ctx.state.suggestions) == 3
+        assert ctx.state.excluded == ()
+
+    async def test_인용한_기억_행이_주제_안이면_낱말이_없어도_통과한다(self):
+        ctx = await memory_ctx()
+        ctx.state.strict_topic = ("communication",)
+        reading = EducationObservation(
+            id=UUID(int=811),
+            child_id=CHILD,
+            observed_on=TODAY - timedelta(days=2),
+            subject="글 읽기",
+            topic="4문장 이상 글 읽기",
+            polarity=1,
+        )
+        ctx.state.seen_evidence[reading.id] = RankedEvidence(
+            ref=Ref(kind="observation_education", id=reading.id),
+            tier=3,
+            label=reading.topic,
+            polarity=1,
+            observed_on=reading.observed_on,
+            subject=reading.subject,
+        )
+        mine = [{"id": str(reading.id), "note": "긴 글을 읽기 어려워했어요"}]
+        args = ProposeLearningActivityArgs.model_validate(
+            {"items": [item(t, evidence=mine) for t in ("공룡 놀이", "블록 놀이", "자동차 놀이")]}
+        )
+        result = await propose_learning_activity(ctx, args)
+        assert result.success and len(ctx.state.suggestions) == 3
+        assert ctx.state.excluded == ()
+
+    async def test_주제_키가_없으면_빼지_않는다(self):
+        ctx = await memory_ctx()
+        mine = [{"id": str(EDU.id), "note": "계단 숫자를 셌어요"}]
+        args = ProposeLearningActivityArgs.model_validate(
+            {"items": [item(t, evidence=mine) for t in ("블록 세기", "색깔 찾기", "모양 맞추기")]}
+        )
+        result = await propose_learning_activity(ctx, args)
+        assert result.success and len(ctx.state.suggestions) == 3
+
+
 class TestOverstatedNote:
     """note 의 반복 · 성향 표현은 확정 관심(티어 1) 근거에만 — Activity 와 같은 판정이다."""
 
@@ -328,7 +395,7 @@ class TestRoutine:
         ctx = await routine_ctx()
         result = await propose_routine_plan(ctx, plan("self_care", "양치"))
         assert result.success
-        assert ctx.state.question == "양치은(는) 요즘 어느 정도까지 혼자 하나요?"
+        assert ctx.state.question == "양치는 요즘 어느 정도까지 혼자 하나요?"
         assert ctx.state.suggestions == ()
 
     async def test_고른_단계를_문장으로_옮기면_개인화_한_개다(self):
@@ -556,10 +623,90 @@ class TestRoutine:
         await propose_routine_plan(ctx, plan("mealtime", "앉아서 먹기"))
         assert ctx.state.closing == "doc.no_row" and ctx.state.suggestions == ()
 
-    async def test_맞는_단계가_없고_모델이_비워_냈으면_그_행동으로_되묻는다(self):
+    async def test_맞는_단계가_없고_모델이_비워_냈으면_묻지_않고_자료_없음으로_닫는다(self):
         ctx = await routine_ctx(observations=[routine_obs(1, "양치", "full_assist")])
         await propose_routine_plan(ctx, plan("self_care", "기저귀 떼기"))
-        assert ctx.state.question == "기저귀 떼기은(는) 요즘 어느 정도까지 혼자 하나요?"
+        # 사슬이 없는 행동이다. 물어서 수준을 알아도 낼 단계가 없어서 묻지 않고 자료 없음으로 닫는다
+        assert ctx.state.closing == "doc.no_row" and ctx.state.question is None
+
+    async def test_답한_행동의_수준을_못_읽으면_되묻지_않고_안내로_닫는다(self):
+        """답을 저장했는데 수준도 수행 결과도 비었다. 추정도, 같은 질문의 되풀이도 없다."""
+        ctx = await routine_ctx(observations=[routine_obs(1, "양치", None)])
+        ctx.state.answered_subject = "양치"
+        result = await propose_routine_plan(ctx, plan("self_care", "양치"))
+        assert result.success
+        assert ctx.state.closing == "next_step.level_unread"
+        assert ctx.state.question is None and ctx.state.suggestions == ()
+
+    async def test_답하지_않은_행동은_수준이_없으면_되묻는다(self):
+        ctx = await routine_ctx(observations=[routine_obs(1, "손 씻기", None)])
+        ctx.state.answered_subject = "양치"
+        await propose_routine_plan(ctx, plan("self_care", "손 씻기"))
+        assert ctx.state.question is not None and "손 씻기" in ctx.state.question
+        assert ctx.state.closing is None
+
+    async def test_되묻는_길은_사슬을_한_번만_읽는다(self, monkeypatch):
+        """사슬 찾기 · 자료 없음 판정 · 저장 이름이 같은 것을 다시 읽으면 20초 안의 왕복이 는다."""
+        ctx = await routine_ctx()
+        reads: list[int] = []
+        search = ctx.ports.docs.search
+
+        async def counted(**kwargs):
+            reads.append(1)
+            return await search(**kwargs)
+
+        monkeypatch.setattr(ctx.ports.docs, "search", counted)
+        await propose_routine_plan(ctx, plan("self_care", "양치"))
+        assert ctx.state.question is not None
+        assert len(reads) == 1
+
+    async def test_사슬_없는_행동은_묻지_않고_자료_없음으로_닫는다(self):
+        """물어서 수준을 알아도 낼 단계가 없다. 답을 받고 "자료가 아직 없어요" 로 끝내지 않는다."""
+        ctx = await routine_ctx()
+        result = await propose_routine_plan(ctx, plan("mealtime", "밥 먹을 때 돌아다니기"))
+        assert result.success
+        assert ctx.state.closing == "doc.no_row" and ctx.state.question is None
+
+    async def test_사슬_없는_카테고리는_묻지_않는다(self):
+        ctx = await routine_ctx()
+        await propose_routine_plan(ctx, plan("transition", "자리 바꾸기"))
+        assert ctx.state.closing == "doc.no_row" and ctx.state.question is None
+
+    async def test_단계를_낸_제출은_자료_판정을_건너뛴다(self):
+        """ "아침 씻기" 처럼 행동이 묶인 요청은 사슬 이름과 안 맞아도 모델이 낸 단계를 본다."""
+        ctx = await routine_ctx()
+        item = {
+            "step_id": str(UUID(int=999)),
+            "next_step": "세수부터 같이 해 봐요",
+            "how": "물을 함께 만져요",
+            "evidence": [],
+            "reason": "아침마다 같이 해요",
+        }
+        await propose_routine_plan(ctx, plan("self_care", "아침 씻기", [item]))
+        assert ctx.state.closing != "doc.no_row"
+
+    async def test_습관은_다른_습관_기록이_있어도_습관_질문이다(self):
+        """손톱 기록(trigger 있음)이 있어도 손가락 빨기는 "얼마나 혼자 하나요" 로 묻지 않는다."""
+        obs = routine_obs(1, "손톱 물어뜯기", None, "habit", trigger="긴장할 때")
+        ctx = await routine_ctx(months=40, observations=[obs], rows=(CALM,))
+        await propose_routine_plan(ctx, plan("habit", "손가락 빨기"))
+        assert ctx.state.question == "요즘도 손가락 빨기 하나요?"
+
+    async def test_습관은_묻기_전에_자료를_판정하지_않는다(self):
+        """습관 전략 행은 trigger 태그로 고른다 — 묻기 전에는 맞는 행이 있는지 모른다."""
+        ctx = await routine_ctx(months=40)
+        await propose_routine_plan(ctx, plan("habit", "손가락 빨기"))
+        assert ctx.state.question == "요즘도 손가락 빨기 하나요?" and ctx.state.closing is None
+
+    async def test_맞는_전략_행이_없는_예절은_묻지_않는다(self):
+        ctx = await routine_ctx(months=40)
+        await propose_routine_plan(ctx, plan("social_manner", "인사하기"))
+        assert ctx.state.closing == "doc.no_row" and ctx.state.question is None
+
+    async def test_맞는_전략_행이_있는_예절은_지금처럼_묻는다(self):
+        ctx = await routine_ctx(months=40, rows=(GREETING,))
+        await propose_routine_plan(ctx, plan("social_manner", "인사하기"))
+        assert ctx.state.question is not None and ctx.state.closing is None
 
     async def test_습관_되묻기는_요청한_행동_이름으로_묻는다(self):
         """GAP-2 — 손가락 빨기를 물었는데 같은 습관 카테고리의 손톱 관찰 이름으로 묻지 않는다."""
@@ -567,7 +714,7 @@ class TestRoutine:
             months=48, observations=[routine_obs(1, "손톱 물어뜯기", None, "habit")]
         )
         await propose_routine_plan(ctx, plan("habit", "손가락 빨기"))
-        assert ctx.state.question == "손가락 빨기은(는) 주로 어떤 상황에서 하나요?"
+        assert ctx.state.question == "손가락 빨기는 주로 어떤 상황에서 하나요?"
 
 
 def strategy_item(row, note: str, reason: str) -> dict:
@@ -617,7 +764,7 @@ class TestStrategyPlan:
         obs = routine_obs(1, "손톱 물어뜯기", None, "habit")
         ctx = await routine_ctx(months=40, observations=[obs], rows=(CALM,))
         await propose_routine_plan(ctx, plan("habit", "손톱 물어뜯기"))
-        assert ctx.state.question == "손톱 물어뜯기은(는) 주로 어떤 상황에서 하나요?"
+        assert ctx.state.question == "손톱 물어뜯기는 주로 어떤 상황에서 하나요?"
         assert ctx.state.suggestions == ()
 
     async def test_습관_trigger_에_맞는_행이_없으면_doc_no_row_로_닫는다(self):
@@ -736,3 +883,34 @@ class TestUsableIds:
         result = await propose_routine_plan(ctx, plan("self_care", "양치", [item]))
         assert result.error["code"] == "EVIDENCE_REQUIRED"
         assert str(UUID(int=701)) in result.error["message"]
+
+
+class TestRoutineScope:
+    """보호자가 말한 루틴 카테고리 밖의 단계는 낼 수 없다 — 행동 이름을 몰라도 막는다."""
+
+    async def test_범위_밖_카테고리로_내면_범위_카테고리로_다시_내라고_한다(self):
+        ctx = await handwash_ctx(recorded=(), request=("어떻게 하면 좋을까?",))
+        ctx.state.routine_scope = ("mealtime",)
+        result = await propose_routine_plan(ctx, handwash_plan(ctx))
+        assert not result.success and result.error["code"] == "CANDIDATE_REJECTED"
+        assert "mealtime" in result.error["message"]
+        assert "search_routine_memory" in result.error["message"]
+        assert ctx.state.suggestions == () and ctx.state.question is None
+
+    async def test_범위_안_카테고리는_그대로_낸다(self):
+        ctx = await handwash_ctx(recorded=(), request=("손 씻기 어떻게 가르쳐?",))
+        ctx.state.routine_scope = ("self_care",)
+        await propose_routine_plan(ctx, handwash_plan(ctx))
+        assert len(ctx.state.suggestions) == 1
+
+    async def test_범위가_비면_지금처럼_고른다(self):
+        ctx = await handwash_ctx(recorded=(), request=("어떻게 하면 좋을까?",))
+        ctx.state.routine_scope = ()
+        await propose_routine_plan(ctx, handwash_plan(ctx))
+        assert len(ctx.state.suggestions) == 1
+
+    async def test_의료_처치는_범위보다_먼저_닫는다(self):
+        ctx = await handwash_ctx(recorded=(), request=("약 먹이는 법",))
+        ctx.state.routine_scope = ("mealtime",)
+        await propose_routine_plan(ctx, plan("self_care", "안약 넣기"))
+        assert ctx.state.closing == "closed.medical_routine"

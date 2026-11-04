@@ -76,6 +76,7 @@ from app.agents.food.tools.safety import (
     resolve_safety,
 )
 from app.rules.age import Stage
+from app.rules.particle import has_final, topic_particle
 from app.rules.term_match import Term, TermMatcher, normalize, prepare_fields
 
 # 이름만으로는 음식인지 알 수 없는 낱말 — 어절 전체이고 먹이는 말이 곁에 있을 때만 음식으로 본다.
@@ -617,23 +618,10 @@ def label_text(entry: SafetyEntry) -> str:
     return f"{name} 알레르기" if entry.kind == "allergy" else name
 
 
-def _topic(word: str) -> str:
-    """받침에 맞는 "은" · "는". 한글로 끝나지 않으면 받침을 몰라 "은(는)" 이다."""
-    final = _has_final(word)
-    return "은(는)" if final is None else ("은" if final else "는")
-
-
 def _joined(word: str) -> str:
     """받침에 맞는 "과" · "와". 한글로 끝나지 않으면 받침을 몰라 "와(과)" 다."""
-    final = _has_final(word)
+    final = has_final(word)
     return "와(과)" if final is None else ("과" if final else "와")
-
-
-def _has_final(word: str) -> bool | None:
-    last = word.strip()[-1:]
-    if not "가" <= last <= "힣":
-        return None
-    return (ord(last) - ord("가")) % 28 > 0
 
 
 def when_text(rule: AgeRule) -> str:
@@ -671,20 +659,24 @@ def answer_food_check(
                     READOUTS.render(
                         CHECK_CONFLICT,
                         food=phrase,
-                        은는=_topic(phrase),
+                        은는=topic_particle(phrase),
                         label=label,
                         와과=_joined(label),
                     )
                 )
     for phrase, rule in _strictest_age_blocks(text, verdicts).items():
         readouts.append(
-            READOUTS.render(CHECK_AGE_BLOCK, food=phrase, 은는=_topic(phrase), when=when_text(rule))
+            READOUTS.render(
+                CHECK_AGE_BLOCK, food=phrase, 은는=topic_particle(phrase), when=when_text(rule)
+            )
         )
     if any(_peanut_in_nuts(verdict) for verdict in verdicts):
         readouts.append(READOUTS.render(CHECK_PEANUT_IN_NUTS))
     for phrase, rule in _cautions(text, verdicts).items():
         readouts.append(
-            READOUTS.render(CHECK_CHOKING, food=phrase, 은는=_topic(phrase), when=when_text(rule))
+            READOUTS.render(
+                CHECK_CHOKING, food=phrase, 은는=topic_particle(phrase), when=when_text(rule)
+            )
         )
 
     if not verdicts:
@@ -746,7 +738,7 @@ def request_notices(
                     READOUTS.render(
                         MEAL_REQUEST_AGE_BLOCK,
                         food=phrase,
-                        은는=_topic(phrase),
+                        은는=topic_particle(phrase),
                         when=when_text(rule),
                     )
                 )

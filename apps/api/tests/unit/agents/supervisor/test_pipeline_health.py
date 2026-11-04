@@ -42,6 +42,7 @@ from app.agents.memory.context import AgentContext
 from app.agents.memory.schemas.task import FoundRef, PendingMemoryContext, WorkType
 from app.agents.memory.store import InMemoryStore
 from app.agents.pipeline import (
+    AgentQuestion,
     AgentResult,
     EventDrafts,
     MemoryNote,
@@ -225,7 +226,7 @@ PENDING = DomainPending(
 )
 
 
-async def test_복약_초안과_되묻기가_AgentResult_까지_실린다(
+async def test_복약_초안은_AgentResult_로_되묻기는_AgentQuestion_으로_나간다(
     events: list[Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     outcome = health_result(
@@ -242,7 +243,8 @@ async def test_복약_초안과_되묻기가_AgentResult_까지_실린다(
 
     [agent_result] = _of(events, AgentResult)
     assert agent_result.medication_drafts == (DRAFT,) and agent_result.pending == PENDING
-    assert agent_result.question == PENDING.question
+    [question] = _of(events, AgentQuestion)
+    assert question.agent == "health" and question.text == PENDING.question
 
 
 async def test_검진_알림은_일정_초안_한_장이고_저장하지_않는다(
@@ -994,3 +996,26 @@ async def test_Agent_상한이_차_있어도_복약_조각이_이미_있으면_�
     assert not _of(events, Saved)
     [checked] = _medication_results(events)
     assert checked.readouts[0].kind == "notice"
+
+
+async def test_코드가_체온을_물으면_같은_run_의_Health_질문이_맥락을_만들지_않는다(
+    events: list[Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """한 run 에 보관하는 맥락은 하나다. 체온 되묻기도 Memory 질문이라 Health 질문이 못 가로챈다."""
+    outcome = health_result(
+        HealthTaskType.MEDICATION, "completed", question=PENDING.question, pending=PENDING
+    )
+    _fake_health(monkeypatch, outcome)
+    raw = "열이 나요. 약 끊었어"
+    supervisor = _supervisor(
+        {"text": "열이 나요", "kind": "record", "work": "observe"},
+        _segment("약 끊었어", "medication"),
+    )
+
+    await _handle(
+        raw, supervisor, _world("항생제"), events, memory_llm=_fever("열이 나요"), child_months=48
+    )
+
+    [pending] = _of(events, PendingReply)
+    assert pending.context.asks_temperature
+    assert not any(question.awaits_reply for question in _of(events, AgentQuestion))

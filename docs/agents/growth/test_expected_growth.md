@@ -94,7 +94,9 @@ run 은 이전 run 을 기억하지 않는다. 추천이 저장되면 대화에�
 | T08 | growth/book | 1 | 근거 없으면 `general` + "또래 기준" | – |
 | T09 | growth/book | 1 | 한글 입문 도서 | – |
 | T10 | growth/book | 1 | 3권 전부 만료 전 `suggestion`에 없는 책("제목(저자)") · 주제는 affinity 에서 (이전 run 을 기억하지 않는다) | 직전에 낸 책이 다시 나옴 · 이전 run 대화를 참조함 |
-| | 도서 API 장애 | **0** | `book_suggestion` 닫힘 readout | 책 생성 |
+| | 도서 API 장애 | **0** | `book_suggestion` 닫힘 readout (로그에 실패 단계 · 상태 코드) | 책 생성 |
+| TB1 | growth/book ("곰이랑 코끼리 관련된 책을 추천해줘") | 1 | 제목에 곰 또는 코끼리가 든 책만, 없으면 `book.no_topic` | 다른 주제(공룡 등) 책 · 제목에 낱말이 없는 책 |
+| TB2 | growth/book ("돼지 관련된 책을 추천해줘") | 1 | 제목에 돼지가 든 책만 | 다른 주제 책 |
 
 ## 3. 생활 루틴
 
@@ -109,6 +111,7 @@ run 은 이전 run 을 기억하지 않는다. 추천이 저장되면 대화에�
 | | C48-stale | 1 | **역질의** `ask.routine_current` — 15일 전 관찰은 근거가 아니다 | 오래된 수준으로 다음 단계 제안 |
 | | C48-othercat | 1 | **역질의** `ask.routine_current` | 다른 카테고리 관찰 · affinity 를 근거로 제안 |
 | | C48-noassist | 1 | **역질의** `ask.routine_current` | `assistance_level` 을 추정해 단계를 고름 |
+| | C48-empty 에서 되묻기에 답함 (`reply_to`) | 1 | 답을 **물은 행동**(`양치`) 한 건으로 저장 · 질문 0개 · 수준을 읽었으면 추천 1개 이상 · 사슬 끝이면 `next_step.chain_end` · 수준도 수행 결과도 안 읽히면 `next_step.level_unread` | 답이 맥락 없는 새 입력으로 버려짐 · 모델이 적은 다른 행동 이름으로 저장 · 읽히지 않는 수준을 추정 · 같은 질문 되풀이 |
 | T14 | growth/routine (`self_care`) | 1 | 일반 안내 | "늦었다" · 시기 판정 |
 | T15 | growth/routine (`transition`) | 1 | 예고·순서 만들기 | – |
 | T16 | growth/routine (`transition`) | 1 | 동일 | "떼쓰기 문제" 규정 |

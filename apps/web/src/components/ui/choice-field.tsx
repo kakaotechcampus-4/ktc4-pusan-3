@@ -95,12 +95,18 @@ export function ChoiceField<T extends string>({
           한쪽이 기본값처럼 보인다 — 여기서는 어느 쪽도 기본이 아니다. 세로는 칸이 모두 한 줄을
           꽉 채워서 이 문제가 없다. */}
       <div className={cn("flex gap-2", !labelHidden && "mt-1", vertical && "flex-col")}>
-        {options.map((option) => {
+        {options.map((option, index) => {
           const selected = option.value === value;
+          /* 🚨 **감싸기만 하지 않고 `for`/`id` 로도 잇는다** (#685). 브라우저와 스크린리더는 감싼
+             구조로도 이름을 붙이지만, 접근성 검사(KWCAG)는 명시 연결이 없으면 "레이블과 연결되지
+             않았다" 로 잡는다. `Checkbox` · `TextInput` 과 같은 처리다. 값이 아니라 순번으로 만드는
+             것은 id 에 쓸 수 없는 글자가 값에 섞여도 깨지지 않게 하려는 것이다. */
+          const inputId = `${id}-${index}`;
 
           return (
             <label
               key={option.value}
+              htmlFor={inputId}
               className={cn(
                 "rounded-field min-h-field ease-standard flex cursor-pointer items-center border py-2 transition-colors duration-120",
                 vertical
@@ -116,6 +122,7 @@ export function ChoiceField<T extends string>({
               )}
             >
               <input
+                id={inputId}
                 type="radio"
                 name={id}
                 value={option.value}

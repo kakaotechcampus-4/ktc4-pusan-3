@@ -20,10 +20,11 @@ import asyncio
 import re
 from collections.abc import Iterator, Sequence
 
-from app.agents.growth.store.ports import BookRow, RawBookSearch, UpstreamUnavailable
+from app.agents.growth.store.ports import BookRow, RawBookSearch
 from app.core.book_raw import RawBook
 from app.rules.book_evidence import normalize_isbn
 from app.rules.book_form import BOOK_AGE_MONTHS, classify_book_form
+from app.rules.term_match import normalize
 
 # "글: 가나다" · "지은이：가나다" 같은 역할 머리. 실제 표기는 정보나루 응답 픽스처로 본다
 _ROLE_HEAD = re.compile(r"^[^:：]{1,12}[:：]\s*")
@@ -33,16 +34,26 @@ class LibraryBooks:
     def __init__(self, raw: RawBookSearch) -> None:
         self._raw = raw
 
-    async def search(self, *, keywords: tuple[str, ...], limit: int) -> list[BookRow]:
+    async def search(
+        self, *, keywords: tuple[str, ...], limit: int, title_words: tuple[str, ...] = ()
+    ) -> list[BookRow]:
+        titled = {normalize(word) for word in title_words}
         results = await asyncio.gather(
-            *(self._raw.search(keyword=keyword, limit=limit) for keyword in keywords),
+            *(
+                self._raw.search(
+                    keyword=keyword,
+                    limit=limit,
+                    field="title" if normalize(keyword) in titled else "keyword",
+                )
+                for keyword in keywords
+            ),
             return_exceptions=True,
         )
         batches: list[tuple[RawBook, ...]] = []
         for result in results:
-            if isinstance(result, UpstreamUnavailable):
-                raise UpstreamUnavailable("도서 검색 실패") from None
             if isinstance(result, BaseException):
+                # 어댑터가 남긴 사유(실패한 단계 · 상태 코드)를 그대로 올린다. 덮으면 키가 없었는지
+                # 호출이 실패했는지 로그로 못 가른다. 어댑터 문구에는 검색어 · 키 · 주소가 없다
                 raise result
             batches.append(result)
         rows: list[BookRow] = []

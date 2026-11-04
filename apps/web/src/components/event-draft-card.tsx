@@ -3,6 +3,7 @@
 import { ArrowRight, Plus, X } from "lucide-react";
 import { useState } from "react";
 
+import { ReminderField } from "@/components/reminder-field";
 import { Button } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -14,7 +15,8 @@ import { TimeField } from "@/components/ui/time-field";
 import { cn } from "@/lib/cn";
 import { moveStart, sameInstant, seoulDate, seoulTime, withSeoulDateTime } from "@/lib/event-draft";
 import { formatEventTime } from "@/lib/format";
-import type { EventDraft, EventDraftFields, EventDraftItem } from "@/lib/api/types";
+import { forKind, isPast, NO_REMINDER, reminderLabel, type ReminderChoice } from "@/lib/reminder";
+import type { EventDraft, EventDraftFields, EventDraftItem, Reminder } from "@/lib/api/types";
 
 /**
  * 일정 초안 한 장 — **초안이 만들어지는 세 경로가 같이 쓰는 한 벌.**
@@ -60,7 +62,21 @@ import type { EventDraft, EventDraftFields, EventDraftItem } from "@/lib/api/typ
  *
  * 🚨 **도메인 색을 쓰지 않는다.** `category` 는 Agent 도메인이 아니다 (이름이 겹치는
  *    `activity` 가 있지만 뜻이 다르다) — `photo-review.tsx` 와 같은 판단이다.
+ *
+ * 🚨 **알림 칸은 새 일정에만 선다** (#609). 알림은 일정이 아니라 보호자 개인 설정이라 게이트가
+ *    아니고, 고른 값은 제출과 함께 **이 보호자에게만** 걸린다. 수정 초안은 `reminder` 를 아예
+ *    싣지 않는다 — 칸이 없으면 서버가 걸린 알림을 그대로 두고 시각 · 종일이 바뀌면 알아서 옮긴다.
+ *    수정에서 같은 값을 다시 보내면 시작을 옮긴 경우 그 값이 지나 422 로 일정까지 못 넣는다 (#603).
+ *    걸린 알림을 바꾸는 자리는 09 하루 패널이다.
  */
+
+/** 제출할 때 넘기는 최종 상태. `reminder` 는 새 일정에만 있다 (위 머리말). */
+export interface DraftSubmitFinal {
+  event: EventDraftFields;
+  items: EventDraftItem[];
+  /** 🚨 `null` 은 "알림 없음" 이다. 수정 초안에서는 칸 자체가 없다. */
+  reminder?: Reminder | null;
+}
 
 /** 게이트를 통과한 뒤. 🚨 보호자의 선택이 아니라 **서버가 저장을 끝냈는가**다. */
 export type DraftSubmitState = "idle" | "submitting" | "submitted" | "failed";
@@ -96,23 +112,30 @@ export function EventDraftCard({
    */
   lockReason?: string;
   /** 🚨 보호자가 확인한 **최종 상태**를 통째로 넘긴다 (#122 확정 — 부분 갱신이 아니다). */
-  onSubmit: (final: { event: EventDraftFields; items: EventDraftItem[] }) => void;
+  onSubmit: (final: DraftSubmitFinal) => void;
 }) {
   /**
    * 🚨 **정본은 여기다.** 보호자가 고치면 이 값이 바뀌고 제출은 이 값을 보낸다 —
    *    서버가 보낸 `draft` 를 다시 읽지 않는다 (`photo-review.tsx` 와 같은 구조).
    */
   const [event, setEvent] = useState<EventDraftFields>(() => draft.event);
-  const [items, setItems] = useState<EventDraftItem[]>(() => draft.items);
+  /**
+   * 카드가 처음 받은 준비물 — "새로 더한 것" 을 가르는 기준이다 (`ItemList`).
+   * 🚨 `draft.items` 를 직접 쓰지 않는다. 그릇이 같은 초안을 새 객체로 다시 넘기면 같은 항목이
+   *    다른 참조가 되어 전부 "새로 더한 것" 이 된다 — 처음 받은 배열을 붙잡아 둔다.
+   */
+  const [originalItems] = useState<readonly EventDraftItem[]>(() => draft.items);
+  const [items, setItems] = useState<EventDraftItem[]>(() => [...originalItems]);
   const [newItem, setNewItem] = useState("");
   /**
    * 🚨 **넣은 뒤에 보여줄 것은 로컬 값이 아니라 보낸 값이다.** 제출이 나가는 동안에도 칸은
    *    살아 있어서, 기다리는 사이 날짜를 바꾸면 "넣었어요" 카드가 **캘린더에 안 들어간 값**을
    *    보여준다 — 승인 게이트가 자기가 쓴 것과 다른 것을 말하게 된다.
    */
-  const [sent, setSent] = useState<{ event: EventDraftFields; items: EventDraftItem[] } | null>(
-    null,
-  );
+  const [sent, setSent] = useState<DraftSubmitFinal | null>(null);
+  /** 새 일정에만 쓴다. 🚨 기본값은 "없음" 이다 (#594). */
+  const [reminder, setReminder] = useState<ReminderChoice>(NO_REMINDER);
+  const creating = draft.op !== "update";
   /**
    * 🚨 **날짜와 시각은 따로 둔다.** `starts_at` 하나로 들면 "날짜는 골랐고 시각은 아직" 을
    *    담을 자리가 없어서, 그 상태가 **자정**으로 접힌다 (그게 이 카드가 냈던 버그다).
@@ -132,6 +155,15 @@ export function EventDraftCard({
   const missingTime = !event.all_day && time === "";
   const done = state === "submitted";
   const busy = state === "submitting";
+  /**
+   * 고른 알림 시각이 이미 지났다 — 날짜를 앞으로 당겼거나 고른 채 시간이 흘렀다.
+   * 🚨 **조용히 "없음" 으로 바꾸지 않는다.** 고른 것과 들어간 것이 달라진다. 막고 다시 고르게 한다.
+   */
+  const reminderPast =
+    creating &&
+    reminder !== NO_REMINDER &&
+    event.starts_at !== null &&
+    isPast(reminder, event.starts_at, event.all_day);
 
   /** 🚨 일시가 없으면 제출할 수 없다. 화면이 왜 잠겼는지 말한다 — 조용히 비활성으로 두지 않는다. */
   const canSubmit =
@@ -140,6 +172,7 @@ export function EventDraftCard({
     event.title.trim() !== "" &&
     !blocked &&
     !lockReason &&
+    !reminderPast &&
     !busy &&
     !done;
 
@@ -158,6 +191,8 @@ export function EventDraftCard({
 
     if (next.date !== undefined) setDate(next.date);
     if (next.time !== undefined) setTime(next.time);
+    // 🚨 종류가 바뀌면 고른 알림을 지우지 않고 날 수를 지켜 옮긴다 — 서버 `for_kind` 와 같은 방향이다.
+    if (allDay !== event.all_day) setReminder((prev) => forKind(prev, allDay));
     patch({
       all_day: allDay,
       ...moveStart(event, withSeoulDateTime(nextDate, nextTime, allDay)),
@@ -187,6 +222,11 @@ export function EventDraftCard({
         {shown.event.starts_at ? (
           <p className="text-body-sm text-ink-muted mt-1">
             {formatEventTime(shown.event.starts_at, shown.event.all_day)}
+          </p>
+        ) : null}
+        {shown.reminder ? (
+          <p className="text-body-sm text-ink-muted mt-1">
+            알림 {reminderLabel(shown.reminder.lead)}
           </p>
         ) : null}
       </Card>
@@ -254,7 +294,16 @@ export function EventDraftCard({
           <TimeField label="시작 시간" value={time} onChange={(next) => setWhen({ time: next })} />
         ) : null}
 
-        <ItemList items={items} disabled={busy} onChange={setItems} />
+        {creating ? (
+          <ReminderField
+            startsAt={event.starts_at}
+            allDay={event.all_day}
+            value={reminder}
+            onChange={setReminder}
+          />
+        ) : null}
+
+        <ItemList items={items} original={originalItems} disabled={busy} onChange={setItems} />
 
         {/* 🚨 `TextInput` 의 `className` 은 래퍼가 아니라 `<input>` 으로 간다 — 폭은 바깥에서 준다. */}
         <div className="flex items-end gap-2">
@@ -271,9 +320,10 @@ export function EventDraftCard({
               }}
             />
           </div>
+          {/* 입력칸(`min-h-field`)과 한 줄로 서는 버튼이라 `field` 크기다 (디자인 시스템 §7). */}
           <Button
             variant="secondary"
-            size="compact"
+            size="field"
             disabled={busy || newItem.trim() === ""}
             onClick={addItem}
           >
@@ -320,6 +370,11 @@ export function EventDraftCard({
               {missingTime ? (
                 <p className="text-body-sm">몇 시에 시작하는지 골라주셔야 넣을 수 있어요.</p>
               ) : null}
+              {reminderPast ? (
+                <p className="text-body-sm">
+                  고른 알림 시각이 이미 지났어요. 알림을 다시 골라주셔야 넣을 수 있어요.
+                </p>
+              ) : null}
               {canSubmit ? (
                 <p className="text-body-sm">
                   누르면 캘린더에 들어가요. 함께 보는 보호자에게도 보여요.
@@ -331,8 +386,15 @@ export function EventDraftCard({
               disabled={!canSubmit}
               aria-busy={busy}
               onClick={() => {
-                setSent({ event, items });
-                onSubmit({ event, items });
+                const final: DraftSubmitFinal = creating
+                  ? {
+                      event,
+                      items,
+                      reminder: reminder === NO_REMINDER ? null : { lead: reminder },
+                    }
+                  : { event, items };
+                setSent(final);
+                onSubmit(final);
               }}
             >
               {busy ? <Spinner /> : null}
@@ -356,13 +418,28 @@ export function EventDraftCard({
 /**
  * 준비물 목록. 🚨 **지우기가 있어야 계약이 성립한다** — `items` 가 최종 목록이라
  * 배열에서 빠지는 것이 삭제를 표현하는 유일한 방법이다 (#122).
+ *
+ * 카드 폭이 넉넉하면 **두 열로 선다** (#679 · 09 일정 카드 #568 과 같은 방식). 기준과 이유는
+ * `docs/web/event-draft-ui-v1.md` §3-5.
+ * ⚠️ 기준 폭은 09 의 `@2xs`(18rem) 가 아니라 `@3xs`(16rem) 다. 시트 여백과 카드 안쪽 여백을 빼면
+ *    360 폭 폰에서 칸이 286px 라 18rem 에 2px 모자라 한 열로 섰다.
+ *
+ * 🚨 **"N개 더 보기" 로 접지 않는다.** 이 카드는 승인 게이트라 접힌 항목도 제출에 실려
+ *    캘린더에 들어간다 — 보호자가 보지 않은 것이 저장된다.
  */
 function ItemList({
   items,
+  original,
   disabled,
   onChange,
 }: {
   items: EventDraftItem[];
+  /**
+   * 카드가 처음 받은 준비물. 🚨 **"새로 더한 것" 은 `item_id === null` 이 아니라 여기에 없는 항목이다.**
+   *    새 일정 초안은 서버가 찾아 준 준비물도 전부 `item_id: null` 이라(아직 행이 없다), `null` 로
+   *    가르면 보호자가 더하지 않은 것까지 전부 "새로 더한 것" 이 된다 (#679).
+   */
+  original: readonly EventDraftItem[];
   disabled: boolean;
   onChange: (next: EventDraftItem[]) => void;
 }) {
@@ -371,18 +448,23 @@ function ItemList({
   }
 
   return (
-    <div>
+    <div className="@container">
       <p className="text-label text-ink-muted">준비물</p>
-      <ul className="mt-1.5 flex flex-col gap-1.5">
+      <ul className="mt-1.5 grid grid-cols-1 gap-1.5 @3xs:grid-cols-2">
         {items.map((item, index) => (
           <li
             key={item.item_id ?? `new-${index}-${item.item_name}`}
-            className="border-line rounded-field flex items-center gap-2 border px-3 py-2"
+            className="border-line rounded-field flex min-w-0 items-center gap-1 border py-2 pr-1 pl-3"
           >
-            <span className="text-body-sm text-ink flex-1">{item.item_name}</span>
-            {item.item_id === null ? (
-              <span className="text-caption text-ink-subtle">새로 더한 것</span>
-            ) : null}
+            {/* 🚨 `wrap-anywhere` · `min-w-0` — 칸이 좁아져서 띄어쓰기 없는 긴 이름이 칸 밖으로 넘친다.
+                전역이 `keep-all` 이라 끊을 자리가 없고, `break-words` 는 최소 폭을 줄이지 못한다. */}
+            <div className="min-w-0 flex-1">
+              <p className="text-body-sm text-ink wrap-anywhere">{item.item_name}</p>
+              {/* 좁은 칸에서 이름과 한 줄에 두면 이름이 서너 글자씩 꺾여서 아래 줄로 내렸다. */}
+              {!original.includes(item) ? (
+                <p className="text-caption text-ink-subtle">새로 더한 것</p>
+              ) : null}
+            </div>
             <button
               type="button"
               disabled={disabled}

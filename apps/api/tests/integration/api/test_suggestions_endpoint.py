@@ -2,6 +2,7 @@
 
 import uuid
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -9,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import Range
 
 from app.agents import entrypoint
+from app.agents.activity.review import REQUESTED_REASON
 from app.agents.common.readout import Readout
 from app.agents.common.refs import EvidenceCitation, Ref
 from app.agents.common.suggestion import SuggestionDraft
@@ -100,7 +102,7 @@ def agents(monkeypatch):
     return plan, calls
 
 
-def _general(agent="activity", content="블록 쌓기") -> SuggestionDraft:
+def _general(agent="activity", content="블록 쌓기", place_notice=None) -> SuggestionDraft:
     doc = EvidenceCitation(ref=Ref(kind="activity_doc", id=DOC_ID), note="또래 놀이 자료")
     return SuggestionDraft(
         agent=agent,
@@ -108,6 +110,19 @@ def _general(agent="activity", content="블록 쌓기") -> SuggestionDraft:
         content=content,
         reason="또래 아이들이 많이 하는 놀이예요.",
         citations=(doc,),
+        place_notice=place_notice,
+    )
+
+
+def _requested(*, citations=()) -> SuggestionDraft:
+    """보호자가 놀이를 정해 물은 Activity 일반 추천("물놀이 뭐 하지?"). 기준은 그 요청이다."""
+    return SuggestionDraft(
+        agent="activity",
+        kind="general",
+        content="물놀이 — 대야에 컵 띄우기",
+        reason=REQUESTED_REASON,
+        citations=tuple(citations),
+        requested=True,
     )
 
 
@@ -162,6 +177,7 @@ async def test_홈_요청은_Agent_마다_묶음과_안내를_싣는다(db_clien
     [food] = data["suggestions"]
     assert food["evidence"][0]["label"] == "계란말이"
     assert food["evidence"][0]["is_stale"] is False
+    assert food["place_notice"] is None  # 장소가 없는 추천
     groups = {g["agent"]: g for g in data["groups"]}
     assert groups["food"]["notice"] == {
         "code": "fewer",
@@ -499,6 +515,38 @@ async def test_일반_추천은_문서_근거와_기록_건수를_싣는다(db_c
         }
     ]
     assert data["scarcity"] == {"count": 0, "question": None}
+    assert general["place_notice"] is None  # 장소가 없는 추천
+
+
+async def test_장소가_붙은_추천은_확인_문구를_칸으로_싣는다(db_client, bearer, cid, agents):
+    """문장에 섞지 않는다 — 화면이 제안 문장 아래 한 줄로 세운다 (#516)."""
+    plan, _ = agents
+    headers, _ = bearer
+    notice = "공공데이터 기준 2026년 6월이에요. 가기 전에 운영 여부를 확인해 주세요."
+    plan["activity"] = (
+        "drafts",
+        [_general(content="사직어린이공원에서 모래성 쌓기", place_notice=notice)],
+    )
+
+    data = (await _post(db_client, cid, headers, agents=["activity"])).json()
+
+    [general] = data["general"]
+    assert general["content"] == "사직어린이공원에서 모래성 쌓기"
+    assert general["place_notice"] == notice
+    assert [e["ref"]["kind"] for e in general["evidence"]] == ["activity_doc"]
+
+
+async def test_개인화_추천도_확인_문구를_싣는다(db_client, session, bearer, cid, agents):
+    plan, _ = agents
+    headers, parent_id = bearer
+    notice = "가기 전에 운영 여부를 확인해 주세요."
+    draft = await _personal(session, cid, parent_id, agent="activity", content="공원에서 공놀이")
+    plan["activity"] = ("drafts", [replace(draft, place_notice=notice)])
+
+    data = (await _post(db_client, cid, headers, agents=["activity"])).json()
+
+    [activity] = data["suggestions"]
+    assert activity["place_notice"] == notice
 
 
 async def test_문서_행을_읽을_수_없으면_일반_추천을_내지_않는다(
@@ -509,6 +557,59 @@ async def test_문서_행을_읽을_수_없으면_일반_추천을_내지_않는
     headers, _ = bearer
     monkeypatch.setattr(entrypoint, "_doc_index", lambda: {})
     plan["activity"] = ("drafts", [_general()])
+
+    data = (await _post(db_client, cid, headers, agents=["activity"])).json()
+
+    assert data["general"] == []
+    assert data["scarcity"] is None
+
+
+async def test_요청_기반_일반_추천은_문서_근거_없이도_05_에_선다(db_client, bearer, cid, agents):
+    """저장부터 05 응답까지 — 문서 근거가 없어 evidence 는 비고, 기준은 basis 문구다 (#597 리뷰)."""
+    plan, _ = agents
+    headers, _ = bearer
+    plan["activity"] = ("drafts", [_requested()])
+
+    data = (await _post(db_client, cid, headers, agents=["activity"])).json()
+
+    [general] = data["general"]
+    assert general["content"] == "물놀이 — 대야에 컵 띄우기"
+    assert general["basis"] == REQUESTED_REASON
+    assert general["evidence"] == []
+    assert data["scarcity"] == {"count": 0, "question": None}
+
+
+async def test_요청_기반_일반_추천은_같은_run_으로_다시_열어도_그대로다(
+    db_client, bearer, cid, agents
+):
+    """저장한 run 을 다시 열면(새로고침) 행에 남긴 requested 로 거른다 (#653 리뷰)."""
+    plan, calls = agents
+    headers, parent_id = bearer
+    task = suggestion_retry.RetryTask(None, ("물놀이 뭐 하지?",), datetime.now(UTC))
+    suggestion_retry.put_failed(
+        run_id="run-1", parent_id=parent_id, child_id=cid, agent="activity", task=task
+    )
+    plan["activity"] = ("drafts", [_requested()])
+
+    first = (await _post(db_client, cid, headers, agents=["activity"], run_id="run-1")).json()
+    second = (await _post(db_client, cid, headers, agents=["activity"], run_id="run-1")).json()
+
+    assert len(calls) == 1  # 두 번째는 저장된 행을 읽었다
+    [general] = second["general"]
+    assert general == first["general"][0]
+    assert general["basis"] == REQUESTED_REASON
+    assert general["evidence"] == []
+
+
+async def test_요청_기반이어도_단_문서가_검수에서_빠지면_내지_않는다(
+    db_client, bearer, cid, agents, monkeypatch
+):
+    """그 문서를 바탕으로 만든 추천이다 — 요청 기반이어도 검수가 풀린 문서의 추천은 서지 않는다."""
+    plan, _ = agents
+    headers, _ = bearer
+    monkeypatch.setattr(entrypoint, "_doc_index", lambda: {})
+    doc = EvidenceCitation(ref=Ref(kind="activity_doc", id=DOC_ID), note="또래 놀이 자료")
+    plan["activity"] = ("drafts", [_requested(citations=[doc])])
 
     data = (await _post(db_client, cid, headers, agents=["activity"])).json()
 
@@ -765,7 +866,9 @@ async def test_일반_추천은_그_도메인의_기록_수를_싣는다(
 
     counts = {g["agent"]: g["record_count"] for g in data["general"]}
     assert counts == {"food": 2, "activity": 1}
-    assert data["scarcity"]["count"] == 3  # 질문 카드의 "이 주제" 는 합 그대로
+    # 호환 필드는 일반 추천을 낸 Agent별 수의 합이다.
+    # 화면의 정상 문구는 general[].record_count를 쓴다.
+    assert data["scarcity"]["count"] == 3
 
 
 async def test_한도에_걸려도_다른_Agent_재생은_보인다(
@@ -877,7 +980,7 @@ async def test_Growth_도서_일반_추천은_그_책을_정보나루_출처로_
         agent="growth",
         kind="general",
         content="공룡 기차(가나다)",
-        reason="쌓인 배움 기록이 아직 적어서, 이 나이에 맞는 형태의 책 중에서 골랐어요.",
+        reason="이 나이에 맞는 형태의 책 중에서 골랐어요.",
         citations=(
             EvidenceCitation(
                 ref=Ref(kind="book_catalog", id=book),

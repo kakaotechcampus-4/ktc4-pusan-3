@@ -240,7 +240,7 @@ test.describe("도메인 Agent 결과는 답 묶음 안의 블록이다 (#227)",
   test.describe("agent_suggestions — 추천이 든 결과", () => {
     test.use({ scenario: "agent_suggestions" });
 
-    test("후보 수 · 이유 · 또래 기준 표시가 서고, 후보 보기는 그 run 의 05 로 간다", async ({
+    test("후보 수 · 이유 · 일반 추천 표시가 서고, 후보 보기는 그 run 의 05 로 간다", async ({
       page,
     }) => {
       await sendFromHome(page, "저녁이랑 놀이 추천해줘");
@@ -248,8 +248,9 @@ test.describe("도메인 Agent 결과는 답 묶음 안의 블록이다 (#227)",
 
       await expect(reply.getByText("후보 3개")).toBeVisible();
       await expect(reply.getByText("아이 기록 4건을 보고 골랐어요.")).toBeVisible();
-      // 🚨 일반 묶음은 또래 기준임과 쌓인 기록 수를 그대로 적는다 (최상위 §2)
-      await expect(reply.getByText("또래 기준 일반 추천 · 쌓인 기록 1건")).toBeVisible();
+      // 🚨 일반 묶음은 일반 추천임과 쌓인 기록 수를 그대로 적는다 (최상위 §2).
+      //    "또래 기준" 은 붙이지 않는다 — 요청에 맞춰 고른 일반 추천도 있다 (#597)
+      await expect(reply.getByText("일반 추천 · 쌓인 기록 1건", { exact: true })).toBeVisible();
       // 🚨 개수 안내는 "후보 N개" 가 대신하고, 날씨 안내는 그대로 선다
       await expect(reply.getByText("조건에 맞는 추천을 1개 준비했어요.")).toHaveCount(0);
       await expect(
@@ -541,5 +542,118 @@ test.describe("기록 줄은 Agent 가 아니라 기록 종류로 선다 (#501)"
     await expect(reply.getByText(/^생활습관/)).toBeVisible();
     await expect(reply.getByText(/^교육/)).toBeVisible();
     await expect(reply.getByText(/^성장/)).toHaveCount(0);
+  });
+});
+
+/* ── 초안 준비물 배치 (#679) ─────────────────────────────────────────────── */
+
+/**
+ * 초안 카드의 준비물도 09 일정 카드(#568)처럼 카드 폭이 넉넉하면 두 열, 좁으면 한 열이다
+ * (`docs/web/event-draft-ui-v1.md` §3-5). 목의 물놀이 초안에는 준비물이 8개 있고 하나는 띄어쓰기 없이 길다.
+ *
+ * 🚨 이 카드는 승인 게이트 ㉠ 이라 **접지 않는다** — 8개가 전부 보이고 각자 빼기가 있어야 한다.
+ */
+test.describe("초안 카드의 준비물 (#679)", () => {
+  const NAMES = [
+    "수영복",
+    "여벌옷",
+    "수건",
+    "물안경",
+    "모자",
+    "선크림",
+    "물통",
+    "갈아입을속옷과양말한켤레",
+  ];
+
+  async function openDraft(page: Page) {
+    // `가기` 가 든 한 줄은 일정형이라 물놀이 초안 한 장만 낸다 (`mocks/handlers/runs.ts`).
+    await sendFromHome(page, "이번 주말에 물놀이 가기");
+    await turn(page, "이번 주말에 물놀이 가기")
+      .getByRole("button", { name: "확인하고 넣기" })
+      .click();
+    return page.getByRole("dialog", { name: "찾은 일정" });
+  }
+
+  for (const { width, columns } of [
+    { width: 360, columns: 2 },
+    { width: 320, columns: 1 },
+  ]) {
+    test.describe(`${width} 폭`, () => {
+      test.use({ viewport: { width, height: 844 } });
+
+      test(`준비물이 ${columns}열로 서고 접히지 않으며 칸 밖으로 넘치지 않는다`, async ({
+        page,
+      }) => {
+        const sheet = await openDraft(page);
+        const row = (name: string) =>
+          sheet
+            .getByRole("listitem")
+            .filter({ has: page.getByRole("button", { name: `${name} 빼기` }) });
+
+        // 접지 않는다 — 전부 보이고 각자 빼기가 있다.
+        for (const name of NAMES) {
+          await expect(row(name)).toBeVisible();
+        }
+        await expect(sheet.getByRole("button", { name: /더 보기/ })).toHaveCount(0);
+
+        // 🚨 칸 위치는 **한 번에** 잰다. 시트가 올라오는 중이라 칸마다 따로 재면 그 사이에 자리가 움직인다.
+        const layout = await row("수영복")
+          .locator("xpath=..")
+          .evaluate((list) => {
+            const box = list.getBoundingClientRect();
+            const cells = [...list.children].map((cell) => {
+              const rect = cell.getBoundingClientRect();
+              // 🚨 `<p>` 상자가 아니라 **글자**를 잰다. 블록 상자는 칸 폭 그대로이고 넘친 글자만 밖으로 나간다.
+              const text = document.createRange();
+              text.selectNodeContents(cell.querySelector("p")!);
+              const name = text.getBoundingClientRect();
+              return {
+                x: rect.x,
+                y: rect.y,
+                width: rect.width,
+                right: rect.right,
+                name: name.right,
+              };
+            });
+            return { right: box.right, cells };
+          });
+        const [first, second] = layout.cells;
+        if (columns === 2) {
+          expect(second.y).toBeCloseTo(first.y, 0);
+          expect(second.x).toBeGreaterThan(first.x + first.width / 2);
+        } else {
+          expect(second.x).toBeCloseTo(first.x, 0);
+          expect(second.y).toBeGreaterThan(first.y);
+        }
+
+        // 띄어쓰기 없는 긴 이름도 제 칸 안에서 꺾인다 — 이름은 칸을, 칸은 목록 폭을 넘지 않는다.
+        for (const cell of layout.cells) {
+          expect(cell.name).toBeLessThanOrEqual(cell.right + 0.5);
+          expect(cell.right).toBeLessThanOrEqual(layout.right + 0.5);
+        }
+        expect(
+          await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth),
+        ).toBe(0);
+      });
+    });
+  }
+
+  test('"새로 더한 것" 은 보호자가 이 카드에서 더한 준비물에만 붙는다', async ({ page }) => {
+    const sheet = await openDraft(page);
+    // 새 일정 초안은 서버가 찾은 준비물도 `item_id: null` 이지만 보호자가 더한 것이 아니다.
+    // 카드가 그려지기 전에 0개를 세면 늘 통과한다 — 서버 준비물 칸이 선 뒤에 센다.
+    await expect(sheet.getByRole("button", { name: "수영복 빼기" })).toBeVisible();
+    await expect(sheet.getByText("새로 더한 것")).toHaveCount(0);
+
+    await sheet.getByRole("textbox", { name: "준비물 더하기" }).fill("간식");
+    await sheet.getByRole("button", { name: "더하기", exact: true }).click();
+
+    await expect(sheet.getByText("새로 더한 것")).toHaveCount(1);
+    await expect(
+      sheet
+        .getByRole("listitem")
+        .filter({ has: page.getByRole("button", { name: "간식 빼기" }) })
+        .getByText("새로 더한 것"),
+    ).toBeVisible();
   });
 });

@@ -30,6 +30,7 @@ from app.integrations.data4library.client import (
     CACHE_TTL_S,
     FIELDS,
     PAGE_SIZE,
+    TITLE_CACHE_PREFIX,
     Data4LibraryBooks,
 )
 from app.rules.book_form import classify_book_form
@@ -87,6 +88,15 @@ class TestRequest:
         assert params["keyword"] == "아기 공룡"
         assert params["pageSize"] == str(PAGE_SIZE) and params["pageNo"] == "1"
         assert params["format"] == "json" and params["authKey"] == KEY
+
+    async def test_제목_검색은_title_인자로_보낸다(self):
+        handler, seen = recording()
+        await books(handler).search(keyword="곰", limit=10, field="title")
+
+        (request,) = seen
+        params = request.url.params
+        assert params["title"] == "곰" and "keyword" not in params
+        assert params["authKey"] == KEY and params["format"] == "json"
 
     async def test_빈_검색어는_부르지_않는다(self):
         handler, seen = recording()
@@ -195,6 +205,18 @@ class TestCache:
         assert len(seen) == 1
         assert CACHE_TTL_S == 30 * 24 * 3600 and cache.ttls == {CACHE_PREFIX + "공룡": CACHE_TTL_S}
         assert first == again[:2] and len(again) == len(USABLE)  # 캐시는 limit 보다 많이 담는다
+
+    async def test_제목_검색은_캐시를_따로_둔다(self):
+        cache = FakeCache()
+        handler, seen = recording()
+        client = books(handler, cache=cache)
+
+        await client.search(keyword="곰", limit=10, field="title")
+        await client.search(keyword="곰", limit=10, field="keyword")
+        await client.search(keyword="곰", limit=10, field="title")
+
+        assert len(seen) == 2  # 같은 낱말도 찾는 방식이 다르면 다른 결과다
+        assert set(cache.values) == {TITLE_CACHE_PREFIX + "곰", CACHE_PREFIX + "곰"}
 
     async def test_캐시가_죽어도_정보나루로_간다(self):
         handler, seen = recording()

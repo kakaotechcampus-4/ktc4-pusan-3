@@ -476,7 +476,7 @@ class MedicationDraft:
     before: dict[str, Any] | None = None   # update면 수정 전 원본
 ```
 
-`suggestion`은 쓰지 않습니다. Health에는 "또래 기준 일반 추천"이 성립하지 않습니다.
+`suggestion`은 쓰지 않습니다. Health에는 일반 추천이 성립하지 않습니다.
 
 ---
 

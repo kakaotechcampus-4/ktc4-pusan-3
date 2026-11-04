@@ -1,4 +1,4 @@
-"""Jev 판정기. OpenRouter Decisions API 로 동일 대상 여부를 묻는다.
+"""Jev 판정기. Elice ML API 의 Decisions API(`POST /v1/decisions`)로 동일 대상 여부를 묻는다.
 
 요청 모양은 실험 3 · 4 와 같다 (tests/eval/agents/curator/exp3_flow.py).
 보내는 값은 subject · 도메인 · 후보 merge_key 뿐이다. 원문 · 아이 id 는 보내지 않는다.
@@ -101,13 +101,14 @@ class JevJudge:
         _raise_for_status(response.status_code)
         answer, body = _parse(response)
 
-        # subject · 후보 원문은 남기지 않는다
+        # subject · 후보 원문은 남기지 않는다. Elice 응답에는 금액(cost)이 없어 토큰 수를 남긴다
+        # (금액은 Elice 콘솔에서 본다). 출력 토큰은 과금되지 않는다
         logger.info(
-            "curator judge model=%s candidates=%d confidence=%s cost=%s latency_ms=%d",
+            "curator judge model=%s candidates=%d confidence=%s input_tokens=%s latency_ms=%d",
             answer.model,
             len(options),
             answer.confidence,
-            (body.get("usage") or {}).get("cost"),
+            (body.get("usage") or {}).get("input_tokens"),
             int((time.perf_counter() - started) * 1000),
         )
         return answer
@@ -118,7 +119,10 @@ def _raise_for_status(status: int) -> None:
     if status == 200:
         return
     if status in (401, 403):
-        raise LLMAuthError(f"판정 인증 실패 (HTTP {status}). CURATOR_JUDGE_API_KEY 를 확인한다.")
+        # Elice 는 크레딧을 넘기면 키를 지운다 — 잔액 부족이 402 가 아니라 401 로 올 수 있다
+        raise LLMAuthError(
+            f"판정 인증 실패 (HTTP {status}). CURATOR_JUDGE_API_KEY 와 Elice 크레딧을 확인한다."
+        )
     if status == 402:
         raise JudgeQuotaError("판정 계정 잔액 부족 (HTTP 402).")
     if status == 429:

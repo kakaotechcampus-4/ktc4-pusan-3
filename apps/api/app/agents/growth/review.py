@@ -39,14 +39,15 @@ from app.agents.growth.tools.safety import (
 )
 from app.rules.book_evidence import book_evidence_id
 from app.rules.evaluative import find_evaluative
+from app.rules.growth_topic import on_topic
 from app.rules.term_match import normalize
 
 AGENT = "growth"
 # 아이 기록 근거가 0행이면 build() 가 reason 을 이 문구로 덮어쓴다 (kind="general", 루트 §2)
-GENERAL_REASON = "쌓인 배움 기록이 아직 적어서, 이 나이 아이들에게 많이 권하는 활동으로 골랐어요."
+GENERAL_REASON = "이 나이 아이들에게 많이 권하는 활동으로 골랐어요."
 # 도서 일반 추천의 이유 — 아이 기록 근거가 0행이면 build() 가 reason 을 이 문구로 덮어쓴다.
 # 무엇으로 골랐는지(월령에 맞는 형태)만 말한다 — 재지 않은 인기 · 대출 수를 말하지 않는다
-BOOK_GENERAL_REASON = "쌓인 배움 기록이 아직 적어서, 이 나이에 맞는 형태의 책 중에서 골랐어요."
+BOOK_GENERAL_REASON = "이 나이에 맞는 형태의 책 중에서 골랐어요."
 # 책 근거 행의 note. 코드 문구라 금지 표현 검사가 필요 없다. 비울 수 없는 칸이다
 # (Food `meal_review.MENU_EVIDENCE_NOTE` 와 같은 자리)
 BOOK_EVIDENCE_NOTE = "도서관 정보나루 검색 결과에 있는 책이에요."
@@ -112,7 +113,11 @@ def review_learning(
     seen: Seen,
     docs: Docs,
     today: date,
+    topic: Sequence[str] = (),
 ) -> Review:
+    """`topic` 은 요청 주제의 영역 키(`GrowthRunState.topic`)다. 있으면 그 영역의 낱말이 제목 ·
+    단계 · 준비물에 없고 그 영역의 [예시] 행도 인용하지 않은 후보는 주제 밖이라 뺀다 — 거절이
+    아니라 빼기라서 재호출 제외 목록으로 간다."""
     drafts: list[SuggestionDraft] = []
     rejections: list[Rejection] = []
     removed: list[int] = []
@@ -125,6 +130,9 @@ def review_learning(
             continue
         # 준비물도 화면 · 일정 준비물로 그대로 나간다 — 안전 필터와 같은 칸을 본다
         if _evaluative((item.title, *item.steps, *item.materials, item.reason), item.evidence):
+            removed.append(index)
+            continue
+        if not _in_topic(item, texts, topic, docs, seen):
             removed.append(index)
             continue
         # 같은 카드가 두 장 나가지 않게. 재호출 합치기(`agent._same`)와 같은 키다
@@ -155,6 +163,33 @@ def review_learning(
         except SuggestionRejected:
             rejections.append(Rejection(index, RejectReason.BUILD))
     return Review(tuple(drafts), tuple(rejections), tuple(removed))
+
+
+def _in_topic(
+    item: LearningItem, texts: Sequence[str], topic: Sequence[str], docs: Docs, seen: Seen
+) -> bool:
+    """주제 안인가. 주제 영역의 낱말이 글에 있거나, 주제에 맞는 근거를 인용했으면 안이다.
+
+    - [예시] 는 요청 주제의 영역 행에서 골랐으므로(`search_growth_doc(areas=...)`) 그 행을 단 후보는
+      낱말이 활용형으로 달라도 주제 안이다.
+    - 인용한 아이 기록의 subject · 이름이 주제 안이면 그 기록을 잇는 후보도 주제 안이다 — "글 읽기"
+      기록을 근거로 낸 "공룡 이야기 따라 읽기" 같은 것.
+
+    인용한 id 의 대조는 근거 검증이 따로 한다.
+    """
+    if on_topic(texts, topic):
+        return True
+    for pick in item.evidence:
+        key = parse_id(pick.id)
+        if key is None:
+            continue
+        row = docs.get(key)
+        if row is not None and row.area in topic:
+            return True
+        cited = seen.get(key)
+        if cited is not None and on_topic((cited.subject, cited.label), topic):
+            return True
+    return False
 
 
 def review_routine(
