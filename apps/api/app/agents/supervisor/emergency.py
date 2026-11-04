@@ -31,7 +31,6 @@ SIGN_KEYS: tuple[str, ...] = (
     "swelling",
     "seizure",
     "infant_fever",
-    "high_fever",
     "head_injury",
     "dehydration",
 )

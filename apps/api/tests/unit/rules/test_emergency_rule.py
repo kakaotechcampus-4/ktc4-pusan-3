@@ -35,7 +35,7 @@ def test_기간_표현은_월령이_아니다(text):
     assert stated_months(text) == ()
 
 
-FEVER = Sign("infant_fever", (Term("fever", ("열이나", "열나", "발열", "고열")),), infant=True)
+FEVER = Sign("infant_fever", (Term("fever", ("열이 나", "열 나", "발열", "고열")),), infant=True)
 RULE = InfantThreshold(below_month=3, fever_temperature=Decimal("38.0"))
 
 
@@ -125,6 +125,37 @@ def test_복합_수사와_낱말_조각은_월령이_아니다(text):
 )
 def test_열_낱말_조각이나_부정은_체온_경로를_열지_않는다(text):
     assert detect(text, [FEVER], RULE) == ()
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["고열량 분유를 40도 물에 탔어", "고열량 분유 38도로 데웠어", "고열 살균 우유 38도로 데웠어"],
+)
+def test_고열량_고열_살균은_체온_경로를_열지_않는다(text):
+    # 별칭으로는 안 걸리는 신호로 체온 경로만 본다
+    by_temperature = Sign("infant_fever", (Term("fever", ("열 나",)),), infant=True)
+
+    assert detect(text, [by_temperature], RULE, child_months=2) == ()
+
+
+@pytest.mark.parametrize("text", ["열나요", "열 나요", "아기열나요", "열이나요", "열이 나요"])
+def test_발열_행은_별칭보다_적게_띄어_써도_걸린다(text):
+    assert detect(text, [FEVER], RULE, child_months=2) == ("infant_fever",)
+
+
+@pytest.mark.parametrize("text", ["밥 먹고 열심히 놀았어", "자고 열 시에 일어났어", "열 이 나요"])
+def test_발열_행은_별칭에_없는_띄어쓰기를_넘지_않는다(text):
+    assert detect(text, [FEVER], RULE, child_months=2) == ()
+
+
+def test_다른_행은_띄어쓰기를_넘어_맞춘다():
+    # 경련 · 호흡 같은 행은 "호흡 곤란" 처럼 띄어 써도 놓치지 않는다
+    breathing = Sign("breathing", (Term("b", ("호흡곤란",)),))
+    assert detect("호흡 곤란이 와요", [breathing], RULE) == ("breathing",)
+
+
+def test_고열_다음_체온은_열_이야기다():
+    assert detect("고열이 39도까지 올랐어", [FEVER], RULE, child_months=2) == ("infant_fever",)
 
 
 def test_열_다음_숫자도_체온_이야기다():

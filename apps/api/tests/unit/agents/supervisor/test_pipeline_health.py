@@ -726,17 +726,44 @@ async def test_체온을_말했으면_되묻지_않는다(events: list[Any]) -> 
     assert not result.emergency
 
 
-async def test_3개월_이상도_고열이라고_말하면_되묻지_않고_119_안내가_나간다(
-    events: list[Any],
-) -> None:
+async def test_3개월_이상은_고열이라고_해도_119_없이_체온을_묻는다(events: list[Any]) -> None:
     raw = "고열이에요"
-
-    result = await _handle(
-        raw, _observe(raw), _world(), events, memory_llm=_fever(raw), child_months=48
+    memory = FakeLLM(
+        call(
+            "create_observation_health",
+            {"raw_text": raw, "observed_on": "오늘", "symptom": ["고열"]},
+        )
     )
 
-    assert result.emergency and len(_emergency_guidance(events)) == 1
-    assert _of(events, Saved) and not _of(events, PendingReply)
+    result = await _handle(raw, _observe(raw), _world(), events, memory_llm=memory, child_months=48)
+
+    assert not _emergency_guidance(events) and not result.emergency
+    [pending] = _of(events, PendingReply)
+    assert pending.context.asks_temperature
+
+
+async def test_Memory_가_묻는_중이면_체온은_묻지_않는다(events: list[Any]) -> None:
+    raw = "열이 나서 약 먹였어"
+    supervisor = _supervisor(
+        {"text": "열이 나서", "kind": "record", "work": "observe"},
+        {"text": "약 먹였어", "kind": "record", "work": "observe"},
+    )
+    fever = {"raw_text": "열이 나서", "observed_on": "오늘", "symptom": ["열"]}
+    asks = {"text": "어떤 약을 먹였어요?", "kind": "question", "pending_hint": "약 먹였어"}
+    memory = FakeLLM(
+        call("create_observation_health", fever),
+        LLMResponse(
+            message=SimpleNamespace(content=json.dumps(asks, ensure_ascii=False), tool_calls=None),
+            usage={},
+            latency_ms=1,
+        ),
+    )
+
+    await _handle(raw, supervisor, _world(), events, memory_llm=memory, child_months=48)
+
+    [pending] = _of(events, PendingReply)
+    assert pending.context.hint_text == "약 먹였어" and not pending.context.asks_temperature
+    assert TEMPERATURE_QUESTION not in [n.text for n in _of(events, MemoryNote)]
 
 
 def _asked_temperature() -> PendingMemoryContext:
@@ -761,7 +788,9 @@ async def test_3개월_이상은_되물은_체온이_높아도_119_안내가_없
     assert not _emergency_guidance(events) and not result.emergency
 
 
-async def test_되물은_답에_고열이라고_말하면_119_안내가_나간다(events: list[Any]) -> None:
+async def test_3개월_이상은_되묻기_답에_고열이라고_해도_119_안내가_없다(
+    events: list[Any],
+) -> None:
     result = await _handle(
         "고열이에요",
         FakeLLM(call("route", {"segments": []})),
@@ -771,8 +800,7 @@ async def test_되물은_답에_고열이라고_말하면_119_안내가_나간�
         child_months=48,
     )
 
-    assert isinstance(events[0], Guidance) and events[0].code == "emergency"
-    assert result.emergency
+    assert not _emergency_guidance(events) and not result.emergency
 
 
 def test_체온을_되물은_자리는_이미_저장한_기록이라고_알린다() -> None:

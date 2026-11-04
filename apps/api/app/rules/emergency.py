@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 
 from app.rules.temperature import temperatures_said
-from app.rules.term_match import Term, match_terms
+from app.rules.term_match import Term, match_fields, match_terms
 
 
 @dataclass(frozen=True)
@@ -57,8 +57,9 @@ _ELAPSED = re.compile(r"(?<!태어난)(?<!태어난 )(?<!낳은)(?<!낳은 )지\
 _DATE = re.compile(r"\d\s*월\s*$")
 # 3개월 미만의 체온은 열 이야기일 때만 센다. "목욕물 38도" 는 아이 체온이 아니다
 # "열" 한 글자는 "열심히" · "열쇠" 에도 있다. 열 이야기로 읽히는 꼴만 센다. 부정("열 안 나")은
-# 열이 없다는 말이라 체온 경로를 열지 않는다
-_FEVER_CUE = re.compile(r"체온|발열|고열|열\s*(?:이|은|을|도|재|나|났|오|올|있|높|\d)")
+# 열이 없다는 말이라 체온 경로를 열지 않는다. "고열" · "발열" 같은 낱말은 사전 별칭이 맡는다 —
+# 빼야 할 말("고열량")도 사전 guard 한 곳에 둔다. 여기는 "열" 뒤에 조사 · 숫자가 오는 꼴만 본다
+_FEVER_CUE = re.compile(r"체온|열\s*(?:이|은|을|도|재|나|났|오|올|있|높|\d)")
 _FEVER_NEGATION = re.compile(r"열(?:이|은)?\s*(?:안|없|나지\s*않)")
 _WORD_NUMBERS = {
     "한": 1,
@@ -126,6 +127,18 @@ def _young(months: tuple[int, ...], infant: InfantThreshold, child_months: int |
     return bool(months) and max(months) < infant.below_month
 
 
+def _hit(text: str, term: Term, words: bool) -> bool:
+    """`words` 면 별칭에 없는 띄어쓰기를 넘지 않는다.
+
+    3개월 미만 발열 행은 생일만으로 아이의 모든 말에 돈다. 띄어쓰기를 지우고 맞추면 "먹고 열심히"
+    의 "고열" 처럼 앞뒤 낱말에 걸친 글자가 걸린다. 다른 행은 "호흡 곤란" 처럼 띄어 써도 놓치지
+    않도록 띄어쓰기를 넘어 맞춘다.
+    """
+    if words:
+        return bool(match_fields((text,), (term,), cross_spaces=False))
+    return bool(match_terms(text, (term,)))
+
+
 def _fires(
     text: str,
     sign: Sign,
@@ -134,7 +147,7 @@ def _fires(
     child_months: int | None,
 ) -> bool:
     # all_of 가 비면 모든 말에 걸린다 — 사전 검사가 막지만 규칙도 스스로 막는다
-    matched = bool(sign.all_of) and all(match_terms(text, (term,)) for term in sign.all_of)
+    matched = bool(sign.all_of) and all(_hit(text, term, sign.infant) for term in sign.all_of)
     if not sign.infant:
         return matched
     if not _young(months, infant, child_months):

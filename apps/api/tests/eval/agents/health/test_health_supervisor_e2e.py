@@ -295,7 +295,9 @@ CASES: tuple[Case, ...] = (
         j_infant_precheck,
     ),
     Case("E-fever", "열이 나요", "C48", "저장 · 응급 안내 0 · 체온 되묻기", j_asks_temperature),
-    Case("E-fever-high", "고열이에요", "C48", "저장 · 사전검사 안내 1건", j_infant_precheck),
+    Case(
+        "E-fever-high", "고열이에요", "C48", "저장 · 응급 안내 0 · 체온 되묻기", j_asks_temperature
+    ),
     Case("E-fever-infant", "열이 나요", "C2", "저장 · 사전검사 안내 1건", j_infant_precheck),
     Case(
         "E-false1",
