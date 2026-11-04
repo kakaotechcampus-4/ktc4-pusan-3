@@ -487,8 +487,11 @@ async def test_등록된_약을_먹였다면_체크_안내만_내고_먹인_약_
     assert checked.readouts[0].kind == "notice"
 
 
-def _memory_says(text: str) -> LLMResponse:
-    reply = {"text": text, "kind": "message", "pending_hint": None}
+def _memory_says(text: str, *, resuming: bool = False) -> LLMResponse:
+    """Memory 의 마지막 말. 이어받기 run 의 답 스키마에는 `leftover` 칸이 더 있다."""
+    reply: dict[str, Any] = {"text": text, "kind": "message", "pending_hint": None}
+    if resuming:
+        reply["leftover"] = False
     return LLMResponse(
         message=SimpleNamespace(content=json.dumps(reply, ensure_ascii=False), tool_calls=None),
         usage={},
@@ -544,6 +547,83 @@ async def test_증상은_저장하고_약만_걸러지면_Memory_말은_그대�
 
     assert _of(events, Saved)
     assert [n.text for n in _of(events, MemoryNote)] == ["열 기록을 남겼어요."]
+
+
+class _Elsewhere:
+    """Food · Activity 자리를 채우는 가짜 context. pipeline 은 for_task 만 부른다."""
+
+    def for_task(self) -> "_Elsewhere":
+        return self
+
+
+async def test_Agent_자리가_다_차면_등록된_약도_기록으로_남아_빈_run_이_되지_않는다(
+    events: list[Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """두 자리를 Food · Activity 가 차지하면 체크 안내를 더할 수 없다.
+
+    그때는 등록 약 목록을 Memory 에 넘기지 않아 거절도 없다 — 먹인 약 행으로 남는다. 거절되고 체크
+    안내도 없으면 "먹였어" 에 아무 결과가 없는 run 이 된다.
+    """
+    for agent in ("food", "activity"):
+
+        async def done(task: Any, context: Any, *, _a: str = agent, **kwargs: Any) -> Any:
+            return DomainAgentResult(agent=_a, task_type=task.task_type, status="completed")
+
+        monkeypatch.setitem(pipeline._RUNNERS, agent, done)
+    raw = "해열 시럽 먹였어. 저녁 메뉴랑 놀이 추천해 줘"
+    supervisor = _supervisor(
+        {"text": "해열 시럽 먹였어", "kind": "record", "work": "observe"},
+        {
+            "text": "저녁 메뉴 추천해 줘",
+            "kind": "request",
+            "agent": "food",
+            "food_task": "meal_recommendation",
+        },
+        {"text": "놀이 추천해 줘", "kind": "request", "agent": "activity"},
+    )
+    memory_llm = FakeLLM(call("create_observation_health", _given("해열 시럽", "해열 시럽 먹였어")))
+
+    await _handle(
+        raw,
+        supervisor,
+        _world("해열 시럽"),
+        events,
+        memory_llm=memory_llm,
+        contexts={"health": _world("해열 시럽"), "food": _Elsewhere(), "activity": _Elsewhere()},
+    )
+
+    assert not _medication_results(events)  # 자리가 없어 체크 안내는 없다
+    assert _of(events, Saved)  # 대신 먹인 약 행으로 남는다
+
+
+async def test_이어받기_답에서는_등록_약_거절이어도_Memory_말을_남긴다(events: list[Any]) -> None:
+    """이어받기 run 은 체크 안내를 더하는 길이 없다. Memory 말을 지우면 답에 아무 말이 없다.
+
+    지금은 이어받기에 등록 약 목록이 넘어가지 않아 거절이 일어나지 않는다. 그 규칙에 기대지 않고
+    지우는 조건만 따로 보려고 목록을 직접 넣는다."""
+    raw = "해열 시럽 먹였어"
+    memory_llm = FakeLLM(
+        call("create_observation_health", _given("해열 시럽", raw)),
+        # 이어받기는 도구 단계가 끝난 뒤 마지막 답을 한 번 더 받는다
+        _memory_says("해열 시럽은 기록하지 않았어요.", resuming=True),
+        _memory_says("해열 시럽은 기록하지 않았어요.", resuming=True),
+    )
+    memory_context = replace(_memory_context(), registered_medicines=("해열 시럽",))
+
+    await handle_input(
+        raw,
+        memory_context,
+        {"health": _world("해열 시럽")},
+        run_id=RUN_ID,
+        supervisor_client=FakeLLM(),
+        memory_client=memory_llm,
+        emit=events.append,
+        continuation=PendingMemoryContext("아까 약 먹였어", "어떤 약이었어요?", WorkType.OBSERVE),
+        commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
+    )
+
+    assert [n.text for n in _of(events, MemoryNote)] == ["해열 시럽은 기록하지 않았어요."]
 
 
 async def test_순수_복약_요청도_Memory_를_거른다(events: list[Any]) -> None:
