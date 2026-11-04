@@ -59,7 +59,7 @@ from app.agents.entrypoint import (
 )
 from app.api.runs import sse
 from app.api.runs.registry import RunChannel
-from app.api.v1.card_rows import card_tab, in_kind_order, proposal_tab
+from app.api.v1.card_rows import card_tabs, proposal_tabs
 from app.api.v1.schemas.cards import DeleteProposalCardOut
 
 log = logging.getLogger(__name__)
@@ -86,11 +86,7 @@ def to_sse(
     """이벤트 하나를 화면용 (이름, 내용) 으로. 화면에 보낼 게 아니면 None."""
     if isinstance(event, FoundTabs):
         rows = card_rows or {}
-        found = [
-            out.model_dump(mode="json")
-            for tab in in_kind_order(event.tabs)
-            if (out := card_tab(tab.kind, tab.truncated, tab.ids, rows)) is not None
-        ]
+        found = [out.model_dump(mode="json") for out in card_tabs(event.tabs, rows)]
         return ("found_tabs", {"tabs": found}) if found else None
     if isinstance(event, DeleteProposed):
         rows = card_rows or {}
@@ -102,12 +98,7 @@ def to_sse(
             status="pending",
             expires_at=rows[(PROPOSAL_KIND, event.proposal_id)],
             result=None,
-            tabs=[
-                out
-                for tab in in_kind_order(event.tabs)
-                if (out := proposal_tab(tab.kind, tab.truncated, tab.ids, tab.picked, rows))
-                is not None
-            ],
+            tabs=proposal_tabs(event.tabs, rows),
         )
         return "delete_proposal", card.model_dump(mode="json", exclude={"type"})
     if isinstance(event, Saved):

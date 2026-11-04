@@ -63,9 +63,44 @@ class _HasKind(Protocol):
 
 
 def in_kind_order[T: _HasKind](tabs: Iterable[T]) -> list[T]:
-    """탭을 화면 순서(`KIND_ORDER`)로. 모델이 조회한 순서가 화면 배치를 정하지 않게 한다 —
-    확인 문장 · 요약("식사 27건, 놀이 12건")이 이 순서를 따른다 (#714 리뷰)."""
-    return sorted(tabs, key=lambda tab: KIND_ORDER.index(tab.kind))
+    """탭을 화면 순서(`KIND_ORDER`)로. 모르는 종류는 뺀다.
+
+    모델이 조회한 순서가 화면 배치를 정하지 않게 한다 — 화면의 확인 문장 · 요약은 같은 고정 순서로
+    종류를 읽는다(웹 `KIND_ORDER`, #714 리뷰). 모르는 종류(지난 대화에 남은 옛 값 등)는 예전처럼 그
+    탭만 빠진다 — 터뜨리면 run 이 실패하고 지난 대화가 계속 500 이다.
+    """
+    known = [tab for tab in tabs if tab.kind in KIND_ORDER]
+    return sorted(known, key=lambda tab: KIND_ORDER.index(tab.kind))
+
+
+class _CardSource(Protocol):
+    kind: str
+    truncated: bool
+    ids: Sequence[str]
+
+
+class _ProposalSource(_CardSource, Protocol):
+    picked: Sequence[str]
+
+
+def card_tabs(
+    tabs: Iterable[_CardSource], rows: Mapping[tuple[str, str], CardRow]
+) -> list[CardTabOut]:
+    """조회 카드의 탭 전부 — 화면 순서로, 행이 없는 탭은 빼고. 러너와 지난 대화가 같이 쓴다."""
+    return [
+        out
+        for tab in in_kind_order(tabs)
+        if (out := card_tab(tab.kind, tab.truncated, tab.ids, rows)) is not None
+    ]
+
+
+def proposal_tabs(tabs: Iterable[_ProposalSource], rows: Mapping[tuple[str, str], CardRow]) -> list:
+    """삭제 카드의 탭 전부 — 화면 순서로, 행이 하나도 없는 탭은 빼고."""
+    return [
+        out
+        for tab in in_kind_order(tabs)
+        if (out := proposal_tab(tab.kind, tab.truncated, tab.ids, tab.picked, rows)) is not None
+    ]
 
 
 def _uuid(raw: str) -> uuid.UUID | None:

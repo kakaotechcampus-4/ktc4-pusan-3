@@ -52,6 +52,7 @@ from app.agents.entrypoint import (
 # 레이어 경계(api는 진입점만) 밖이다. 화면으로 가는 모양은 app/core/event_draft.py가 정한다.
 from app.agents.memory.drafts import DraftItem, EventSnapshot
 from app.agents.memory.schemas.task import WorkType
+from app.agents.memory.store.ports import DELETE_KINDS
 from app.api.runs import registry, sse, translate
 from app.api.v1.card_rows import in_kind_order
 from app.api.v1.schemas.cards import KIND_ORDER
@@ -637,18 +638,39 @@ def test_delete_proposal_is_sent_even_without_rows():
 
 
 def test_tabs_follow_screen_order_not_query_order():
-    """#535 (#714 리뷰) — 모델이 조회한 순서가 화면 배치를 정하지 않는다. 확인 문장 · 요약이
-    식사 · 건강 · 교육 · 놀이 · 생활습관 · 일정 순서를 따른다."""
+    """#535 (#714 리뷰) — 모델이 조회한 순서가 화면 배치를 정하지 않는다. SSE 의 탭은 식사 · 건강 ·
+    교육 · 놀이 · 생활습관 · 일정 순서다. 모르는 종류의 탭은 터뜨리지 않고 뺀다."""
+    rows = {("event", "e1"): _event_row("e1"), ("event", "e2"): _event_row("e2")}
+    expires = (translate.PROPOSAL_KIND, "p1")
+    found = FoundTabs(
+        (
+            CardTab("observation_unknown", False, ("x1",)),
+            CardTab("event", False, ("e1",)),
+        )
+    )
+    proposed = DeleteProposed(
+        "p1",
+        (CardTab("event", False, ("e2",), ("e2",)), CardTab("health_safety", False, ("y",))),
+    )
+
+    assert [tab["kind"] for tab in translate.to_sse(found, card_rows=rows)[1]["tabs"]] == ["event"]
+    sent = translate.to_sse(
+        proposed, card_rows={**rows, expires: datetime(2026, 11, 6, tzinfo=UTC)}
+    )
+    assert [tab["kind"] for tab in sent[1]["tabs"]] == ["event"]
     tabs = (
         CardTab("event", False, ("e1",)),
         CardTab("observation_activity", False, ("a1",)),
         CardTab("observation_food", False, ("f1",)),
     )
-
     assert [tab.kind for tab in in_kind_order(tabs)] == [
         "observation_food",
         "observation_activity",
         "event",
     ]
-    # 종류 목록이 갈라지지 않는다 — 탭 순서 · 제안에 담을 수 있는 종류가 같다
+
+
+def test_kind_lists_agree():
+    """탭 순서 · DB 가 받는 종류 · Agent 가 담는 종류가 같다 — 하나만 늘리면 카드가 깨진다."""
+    assert set(KIND_ORDER) == set(DELETE_KINDS)
     assert set(KIND_ORDER) == KINDS
