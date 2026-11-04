@@ -241,7 +241,7 @@ class InMemoryEvents:
 
 
 class InMemoryEventSchedules:
-    """행사 id → 일정. 없는 행사는 기간 안 매일이다 — 일정 낱말이 없는 행사처럼 읽는다.
+    """행사 id → 일정. 없는 행사는 기간 안 매일이다 — 원문에 요일 · 날짜 제한이 없는 행사처럼.
 
     일정 원문을 읽는 길(`ReadEventSchedules`)은 따로 테스트한다. `calls` 에 물은 행사를 남긴다.
     """

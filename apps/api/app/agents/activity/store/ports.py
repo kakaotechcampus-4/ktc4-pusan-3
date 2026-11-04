@@ -370,8 +370,9 @@ class EventSource(Protocol):
 
 
 class EventScheduleSource(Protocol):
-    """행사가 열리는 날(`EventSchedule`). 지금은 run 안에서 일정 원문을 읽고 하루 캐시한다
-    (`event_schedule.ReadEventSchedules`). 매일 미리 읽어 두는 표로 옮겨도 이 모양은 그대로다.
+    """행사가 열리는 날(`EventSchedule`). 지금은 run 안에서 일정 원문을 읽고 모델 답을 원문째
+    캐시한다(`event_schedule.ReadEventSchedules`). 매일 미리 읽어 두는 표로 옮겨도 이 모양은
+    그대로다.
 
     🚨 실패를 예외로 올리지 않는다 — 읽지 못한 행사는 열리는 날이 없는 일정이다(그날 내지 않는다).
     """
