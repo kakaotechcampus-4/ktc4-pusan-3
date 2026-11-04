@@ -8,6 +8,13 @@ Postgres 없이 돈다.
     ② POST /auth/logout 이 /auth/{provider} 에 먹히지 않는다 (등록 순서)
 """
 
+import logging
+
+from fastapi import FastAPI
+from httpx import ASGITransport, AsyncClient
+
+from app.api.errors import register_error_handlers
+
 
 async def test_unknown_path_returns_envelope(client):
     """FastAPI 기본 {"detail": "Not Found"} 가 아니라 계약 봉투로 나와야 한다."""
@@ -50,3 +57,38 @@ async def test_health_stays_outside_v1(client):
     """마운트가 기존 운영 엔드포인트를 깨지 않았는지 (계약서 §01)."""
     assert (await client.get("/health")).status_code == 200
     assert (await client.get("/api/v1/health")).status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# 처리되지 않은 예외 (#670) — 로그에도 메시지를 싣지 않는다. 메시지에 입력 원문이 섞일 수 있다
+# ---------------------------------------------------------------------------
+
+SECRET = "우리아이-원문-문장"
+
+
+def _boom_app() -> FastAPI:
+    app = FastAPI()
+    register_error_handlers(app)
+
+    @app.get("/boom")
+    async def boom():
+        try:
+            raise KeyError(f"원인 {SECRET}")
+        except KeyError as cause:
+            raise ValueError(f"입력 {SECRET} 를 처리하지 못했다") from cause
+
+    return app
+
+
+async def test_처리되지_않은_예외는_종류와_위치만_로그에_남긴다(caplog):
+    transport = ASGITransport(app=_boom_app(), raise_app_exceptions=False)
+    with caplog.at_level(logging.ERROR, logger="app.api.errors"):
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
+            response = await c.get("/boom")
+
+    assert response.status_code == 500
+    assert response.json()["error"]["code"] == "internal_error"
+    assert SECRET not in response.text
+    assert "ValueError" in caplog.text
+    assert "in boom" in caplog.text  # 어디서 났는지는 남는다
+    assert SECRET not in caplog.text  # 연결된 예외(KeyError)의 메시지도
