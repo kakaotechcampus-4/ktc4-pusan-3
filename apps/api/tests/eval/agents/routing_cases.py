@@ -1004,6 +1004,30 @@ HR_CASES: tuple[RoutingCase, ...] = (
         ),
         watch="변형 — 병명을 묻는 말은 진단 안내. 증상 부분만 기록 (Health 로 안 간다)",
     ),
+    RoutingCase(
+        "HR14",
+        "항생제 끊었어.",
+        (QH("항생제 끊었어.", HealthTaskType.MEDICATION),),
+        watch="중단 — 이미 끊었다는 말도 관찰이 아니라 복약 중단 요청(Health 가 한 번 묻는다)",
+    ),
+    RoutingCase(
+        "HR15",
+        "그 약 끊어줘.",
+        (QH("그 약 끊어줘.", HealthTaskType.MEDICATION),),
+        watch="중단 — 약 이름이 없어도 복약 중단. 기록 수정(lookup_edit)이 아니다",
+    ),
+    RoutingCase(
+        "HR16",
+        "복약 일정 삭제해줘.",
+        (QH("복약 일정 삭제해줘.", HealthTaskType.MEDICATION),),
+        watch="중단 — 복약 일정은 보호자가 등록한 코스라 '삭제' 여도 record 가 아니다",
+    ),
+    RoutingCase(
+        "HR17",
+        "아까 적은 기침 기록 삭제해줘",
+        (R("아까 적은 기침 기록 삭제해줘", LOOKUP_EDIT),),
+        watch="대조 — 건강 기록을 지우는 말은 그대로 record/lookup_edit (복약 중단이 아니다)",
+    ),
 )
 
 # 0건이어야 하는 오분류 — 출력에 health request 조각이 있으면 위반이다. 비율과 섞지 않는다

@@ -1,18 +1,13 @@
 """Health 가 되묻고 보호자가 답하는 두 턴 이상의 흐름 — 실제 모델로 운영 입구를 돈다.
 
-운영 입구는 러너가 부르는 `entrypoint.handle_input` 이다. 첫 턴은 Health 가 실모델이고, 이어받는
-턴은 앞 턴의 `PendingReply.context` 를 `continuation` 으로 넘긴다. 러너가 `reply_to` 로 보관함에서
-꺼내 주는 것과 같다. `test_health_run.py` 는 앞 턴의 `pending` 을 다음 턴 context 에 직접 넣어 흉내
-냈지만, 여기서는 pipeline 이 맥락을 만들고 되돌려 준다.
+운영 입구는 러너가 부르는 `entrypoint.handle_input` 이다. 첫 턴은 Supervisor · Health 가
+실모델이고, 이어받는 턴은 앞 턴의 `PendingReply.context` 를 `continuation` 으로 넘긴다. 러너가
+`reply_to` 로 보관함에서 꺼내 주는 것과 같다. `test_health_run.py` 는 앞 턴의 `pending` 을 다음 턴
+context 에 직접 넣어 흉내 냈지만, 여기서는 pipeline 이 맥락을 만들고 되돌려 준다.
 
-🚨 첫 턴의 Supervisor 는 "Health `medication` 으로 보낸다" 로 고정한다. 여기서 보는 것은 답을
-이어받는 흐름이지 라우팅이 아니다. 실모델 Supervisor 에 맡기면 중단 문장이 Health 로 가지 않아
-이 흐름에 닿지 못한다(아래 "라우팅 빈틈"). 라우팅의 질은 `supervisor/test.py` 와
-`routing_cases.py` 가 본다.
-
-라우팅 빈틈: 실모델 Supervisor 는 "항생제 끊었어." 를 5번 중 2번만, "그 약 끊어줘." ·
-"복약 일정 삭제해줘." 를 한 번도 Health 로 보내지 않았다(11-04 측정). 프롬프트에 중단 예시가
-없고 라우팅 케이스에도 중단 문장이 없다. 이 파일을 고정 없이 돌리면 그 빈틈이 실패로 보인다.
+첫 턴은 실모델 Supervisor 를 거친다 — 중단 문장("항생제 끊었어." · "그 약 끊어줘." · "복약
+일정 삭제해줘.")이 Health `medication` 으로 가는지까지 이 흐름의 일부로 본다. 이어받는 턴은
+Supervisor 를 부르지 않는다.
 
     unset PYTEST_ADDOPTS   # PowerShell: Remove-Item Env:PYTEST_ADDOPTS
     uv run pytest tests/eval/agents/health/test_health_reply_e2e.py -m live -s
@@ -27,16 +22,14 @@ import json
 import os
 import time
 from collections.abc import Callable
-from contextlib import nullcontext
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
 
 import pytest
 
-from app.agents import entrypoint, pipeline
+from app.agents import entrypoint
 from app.agents.health.readouts import READOUTS
 from app.agents.memory.schemas.task import PendingMemoryContext
 from app.agents.pipeline import (
@@ -49,7 +42,6 @@ from app.agents.pipeline import (
 from app.agents.suggestion_save import InMemorySuggestions
 from tests.eval.agents.health.cases import doc_inputs
 from tests.eval.agents.health.world import CHILD, KST, WORLDS, World, build_world
-from tests.unit.agents.health.support import FakeLLM, call
 
 RESULT_PATH = Path(
     os.getenv(
@@ -264,24 +256,6 @@ def test_케이스가_문서_입력의_두_턴_케이스를_다룬다() -> None:
     assert {case.case_id.split("-")[0] for case in CASES} == {"T02", "T13", "T14", "T15"}
 
 
-def _pinned_supervisor(text: str) -> Callable[..., Any]:
-    """`pipeline.run_supervisor` 를 "이 문장을 Health `medication` 으로 보낸다" 로 고정한 것."""
-    real = pipeline.run_supervisor
-    route = call(
-        "route",
-        {
-            "segments": [
-                {"text": text, "kind": "request", "agent": "health", "health_task": "medication"}
-            ]
-        },
-    )
-
-    async def pinned(raw_text: str, **kwargs: Any) -> Any:
-        return await real(raw_text, **{**kwargs, "client": FakeLLM(route)})
-
-    return pinned
-
-
 async def _turn(
     text: str,
     run_id: str,
@@ -292,29 +266,22 @@ async def _turn(
     events: list[Any] = []
     birth = await world.context.ports.profile.birth_date(child_id=CHILD)
     started = time.perf_counter()
-    # 이어받는 턴은 Supervisor 를 부르지 않아야 한다 — 고정하지 않아 부르면 실모델을 부르고 걸린다
-    pin = (
-        patch.object(pipeline, "run_supervisor", _pinned_supervisor(text))
-        if continuation is None
-        else nullcontext()
+    result = await entrypoint.handle_input(
+        child_id=CHILD,
+        parent_id=PARENT,
+        raw_text=text,
+        run_id=run_id,
+        birth_date=birth,
+        child_health_granted=world.spec.consent,
+        emit=events.append,
+        store=store,
+        commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
+        health_safety=world.context.ports.safety,
+        health_medication=world.medication,
+        health_medication_writer=world.medication,
+        continuation=continuation,
     )
-    with pin:
-        result = await entrypoint.handle_input(
-            child_id=CHILD,
-            parent_id=PARENT,
-            raw_text=text,
-            run_id=run_id,
-            birth_date=birth,
-            child_health_granted=world.spec.consent,
-            emit=events.append,
-            store=store,
-            commit=_no_commit,
-            save_suggestions=InMemorySuggestions(),
-            health_safety=world.context.ports.safety,
-            health_medication=world.medication,
-            health_medication_writer=world.medication,
-            continuation=continuation,
-        )
     ms = int((time.perf_counter() - started) * 1000)
     return Turn(text, events, result, len(world.medication.writes), ms)
 
