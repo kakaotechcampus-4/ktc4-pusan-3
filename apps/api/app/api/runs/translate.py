@@ -52,13 +52,11 @@ from app.agents.entrypoint import (
     Step,
     Unavailable,
 )
+from app.api.chat_replies import SCREEN_REF_KINDS
 from app.api.runs import sse
 from app.api.runs.registry import RunChannel
 
 log = logging.getLogger(__name__)
-
-_SCREEN_REF_KINDS = frozenset({"medication_schedule"})
-"""readout 근거 중 화면으로 보내는 종류. 화면이 `Ref.kind` 로 받기로 한 것만이다."""
 
 SavedRows = Mapping[tuple[str, str], Any]
 """(kind, id) → 러너가 commit 뒤에 읽어 둔 화면 모양 행(`observation_outs`). model_dump 만 쓴다."""
@@ -132,7 +130,7 @@ def to_sse(event: Event, *, saved_rows: SavedRows | None = None) -> sse.SseEvent
                     "source_refs": [
                         ref.to_payload()
                         for ref in readout.source_refs
-                        if ref.kind in _SCREEN_REF_KINDS
+                        if ref.kind in SCREEN_REF_KINDS
                     ],
                 }
                 for readout in event.readouts

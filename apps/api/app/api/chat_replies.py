@@ -29,6 +29,13 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
+SCREEN_REF_KINDS = frozenset({"medication_schedule"})
+"""readout 근거 중 화면으로 보내는 종류. 화면이 `Ref.kind` 로 받기로 한 것만이다.
+
+SSE(`runs/translate.py`)와 지난 대화(`StoredReadout`)가 같은 기준을 쓴다 — 실시간 화면과 다시 그린
+화면에서 같은 버튼이 서야 한다.
+"""
+
 
 class _Reply(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -82,8 +89,8 @@ class StoredReadout(_Reply):
     """`agent_result` 의 readout 한 덩어리. 종류와 상관없이 문장 그대로 담는다.
 
     알레르기 확인 문구 · 성장 추이처럼 아이 기록 값이 문장에 들어 있어도 그날 오간 말로 둔다
-    (입력 원문 · `note` 와 같다). 근거(`source_refs`)는 담지 않는다 — 근거로 문장을 다시 그리는
-    길이 생기면 그때 기본값이 있는 칸으로 늘린다.
+    (입력 원문 · `note` 와 같다). 근거는 화면이 받는 종류(`SCREEN_REF_KINDS`)만 담는다 — 체크 안내
+    아래 "복약 화면 열기" 가 다시 그린 대화에서도 그 코스로 가게 한다. 값은 id 뿐이다.
     """
 
     kind: str
@@ -91,6 +98,13 @@ class StoredReadout(_Reply):
     body: str
     authored_by: Literal["code", "model"]
     code: str | None
+    source_refs: list[StoredRef] = Field(
+        default_factory=list,
+        description=(
+            "이 readout 이 가리키는 복약 코스(`medication_schedule`). 다른 근거 종류는 "
+            "싣지 않는다. 이 칸이 없던 때 쌓인 행은 빈 목록이다."
+        ),
+    )
 
 
 class AgentResultReply(_Reply):
