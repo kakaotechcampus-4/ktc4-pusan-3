@@ -185,6 +185,10 @@ cd apps/api && APP_ENV=dev uv run python -c "import logging, app.main; logging.g
 실패하면 다음 분에 다시 보낸다. 1분마다 돌아도 `docker inspect` 몇 밀리초라 부담이 없다 (healthcheck
 자체가 이미 5~30초마다 돈다).
 
+docker healthcheck 는 api 의 `/health`(프로세스)만 본다 — DB 가 죽었다고 api 를 재시작해 봐야 재시작만
+반복하니까. 그래서 api 가 DB · Redis 에 닿는지는 api 컨테이너 안에서 `/health/ready` 를 불러
+`ktc4-api-ready` 한 줄로 같이 본다 — `[prod] ktc4-api-ready: ready → not-ready:redis` (#671).
+
 서버 준비 — `deploy/docker/.env` 에 `ALERT_WEBHOOK_URL=` (api 의 `.env` 와 같은 값) 을 넣고 `crontab -e`:
 
 ```

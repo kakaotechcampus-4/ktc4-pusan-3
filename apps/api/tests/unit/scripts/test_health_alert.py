@@ -28,7 +28,10 @@ def box(tmp_path: Path):
     (bin_dir / "docker").write_text(
         "#!/bin/sh\n"
         'case "$1" in\n'
-        '  compose) printf "%s\\n" $FAKE_IDS ;;\n'
+        '  compose) case " $* " in\n'
+        '    *" exec "*) [ -n "$FAKE_READY" ] && printf "%s\\n" "$FAKE_READY" || exit 1 ;;\n'
+        '    *) printf "%s\\n" $FAKE_IDS ;;\n'
+        "  esac ;;\n"
         '  inspect) printf "%b" "$FAKE_INSPECT" ;;\n'
         "esac\n"
     )
@@ -48,6 +51,7 @@ def box(tmp_path: Path):
         ids: str = "id1 id2",
         curl_code: str = "200",
         alert_env: str | None = "prod",
+        ready: str = "",
     ) -> subprocess.CompletedProcess:
         env = {
             **os.environ,
@@ -56,6 +60,7 @@ def box(tmp_path: Path):
             "FAKE_INSPECT": inspect,
             "FAKE_CURL_LOG": str(tmp_path / "curl.log"),
             "FAKE_CURL_CODE": curl_code,
+            "FAKE_READY": ready,  # 비우면 api 컨테이너 exec 가 실패한다(unreachable)
             "STATE_FILE": str(tmp_path / "state"),
             "ENV_FILE": str(env_file),
         }
@@ -172,6 +177,37 @@ def test_dry_run_never_calls_curl(box):
     box(HEALTHY, "--dry-run")
 
     assert not box.curl_log.exists()
+
+
+# ---------------------------------------------------------------------------
+# api 의존성 (#671) — docker healthcheck 는 /health(프로세스)만 봐서 DB · Redis 장애를 모른다
+# ---------------------------------------------------------------------------
+
+WITH_API = "/ktc4-api running healthy\\n/ktc4-web running healthy\\n"
+
+
+def test_api_가_있으면_ready_한_줄을_같이_본다(box):
+    lines = _lines(box(WITH_API, "--dry-run", ready="ready"))
+
+    assert lines == [
+        "🟢 [prod] ktc4-api: 없음 → running healthy",
+        "🟢 [prod] ktc4-api-ready: 없음 → ready",
+        "🟢 [prod] ktc4-web: 없음 → running healthy",
+    ]
+
+
+def test_api_는_살아_있는데_Redis_가_죽으면_그것만_알린다(box):
+    box(WITH_API, "--dry-run", ready="ready")
+    lines = _lines(box(WITH_API, "--dry-run", ready="not-ready:redis"))
+
+    assert lines == ["🔴 [prod] ktc4-api-ready: ready → not-ready:redis"]
+
+
+def test_api_에_닿지_못하면_unreachable(box):
+    box(WITH_API, "--dry-run", ready="ready")
+    lines = _lines(box(WITH_API, "--dry-run"))
+
+    assert lines == ["🔴 [prod] ktc4-api-ready: ready → unreachable"]
 
 
 def test_unhealthy_는_빨강이다(box):

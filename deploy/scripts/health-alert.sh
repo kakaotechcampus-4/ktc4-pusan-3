@@ -4,6 +4,8 @@
 # api 안의 알림(apps/api/app/core/alerts.py)은 api 가 살아 있을 때만 말할 수 있다. 컨테이너가 못 뜨거나
 # (배포 실패) redis 가 죽거나 재시작을 반복하는 건 밖에서 봐야 한다 — 서버의 cron 이 1분마다 이걸 돌린다.
 # docker 의 healthcheck 는 판정만 하고 아무에게도 말하지 않는다. 이 스크립트가 그 판정을 읽어 통보한다.
+# docker healthcheck 는 api 의 /health(프로세스)만 본다 — DB 가 죽었다고 api 를 재시작하면 재시작만 반복하니까.
+# 그래서 api 가 DB · Redis 에 닿는지(/health/ready)는 여기서 따로 물어 "ktc4-api-ready" 한 줄로 끼운다 (#671).
 #
 #   사용: deploy/scripts/health-alert.sh [--dry-run] [compose 파일]
 #     compose 파일  기본값: 이 파일 옆의 ../docker/docker-compose.deploy.yml
@@ -66,6 +68,21 @@ if [ -n "$ids" ]; then
     '{{.Name}} {{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{else}}-{{end}}' \
     $ids | sed 's#^/##' | sort)"
 fi
+# api 의존성 — api 컨테이너 안에서 /health/ready 를 부른다 (api 포트는 호스트에 열려 있지 않다).
+# 503 이면 실패한 구성요소 이름만 붙인다(예: not-ready:redis). exec 자체가 안 되면 unreachable.
+# api 컨테이너(ktc4-api)가 있는 compose 에서만 — 로컬 개발 DB compose 에는 api 가 없다.
+if printf '%s\n' "$current" | grep -q '^ktc4-api '; then
+ready="$(docker compose -f "$COMPOSE" --env-file "$ENV_FILE" exec -T api python -c '
+import json, urllib.request as u
+try:
+    r = u.urlopen("http://127.0.0.1:8000/health/ready", timeout=5)
+except u.HTTPError as e:
+    r = e
+b = json.load(r)
+print("ready" if r.status == 200 else "not-ready:" + ",".join(k for k, v in b["checks"].items() if v != "ok"))
+' 2>/dev/null || echo unreachable)"
+current="$(printf '%s\n%s\n' "$current" "ktc4-api-ready $ready" | sed '/^$/d' | sort)"
+fi
 previous=""
 if [ -f "$STATE_FILE" ]; then
   previous="$(cat "$STATE_FILE")"
@@ -83,7 +100,7 @@ while IFS= read -r line; do
   case "$now" in
     # *unhealthy 를 먼저 — 아래 *healthy 가 unhealthy 끝에도 맞아 죽은 컨테이너를 🟢 로 알렸다
     *unhealthy) mark="🔴" ;;
-    *healthy | "running -") mark="🟢" ;;
+    *healthy | "running -" | ready) mark="🟢" ;;
     *) mark="🔴" ;;
   esac
   changes="${changes}${mark} [$ALERT_ENV] $name: ${before:-없음} → $now"$'\n'
