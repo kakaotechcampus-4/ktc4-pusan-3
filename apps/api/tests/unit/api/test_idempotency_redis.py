@@ -4,6 +4,7 @@ from unittest.mock import patch
 from uuid import uuid4
 
 import fakeredis
+import redis
 
 from app.api import idempotency
 
@@ -64,3 +65,47 @@ class TestIdempotencyRedis:
 
         assert idempotency.recall(parent_id=PID, method="POST", path="/input", key="k5") is None
         assert _r.get("other:something") == "keep-me"
+
+
+# ---------------------------------------------------------------------------
+# Redis 장애 (#671) — 입력 창구가 500 이 되지 않게 메모리로 계속 받는다
+# ---------------------------------------------------------------------------
+
+_down = redis.Redis(host="127.0.0.1", port=1, socket_connect_timeout=0.2)
+"""아무것도 듣지 않는 포트 — 부르면 진짜 ConnectionError 가 난다."""
+
+
+class TestRedisDown:
+    def setup_method(self):
+        _r.flushdb()
+        idempotency.clear()
+
+    def test_장애_중에도_기억하고_재생한다(self):
+        with patch("app.api.idempotency.get_redis", return_value=_down):
+            idempotency.remember(parent_id=PID, method="POST", path="/i", key="d1", replay="run-d")
+            assert idempotency.recall(parent_id=PID, method="POST", path="/i", key="d1") == "run-d"
+
+    def test_장애_중_적은_키는_Redis_가_돌아온_뒤에도_재생된다(self):
+        with patch("app.api.idempotency.get_redis", return_value=_down):
+            idempotency.remember(parent_id=PID, method="POST", path="/i", key="d2", replay="run-e")
+        with patch("app.api.idempotency.get_redis", return_value=_r):
+            assert idempotency.recall(parent_id=PID, method="POST", path="/i", key="d2") == "run-e"
+
+    def test_장애_중_적은_키도_실패한_run_이면_지운다(self):
+        with patch("app.api.idempotency.get_redis", return_value=_down):
+            idempotency.remember(parent_id=PID, method="POST", path="/i", key="d3", replay="run-f")
+        with patch("app.api.idempotency.get_redis", return_value=_r):
+            idempotency.forget_run("run-f")
+            assert idempotency.recall(parent_id=PID, method="POST", path="/i", key="d3") is None
+
+    def test_장애_중_forget_run_은_터지지_않는다(self):
+        with patch("app.api.idempotency.get_redis", return_value=_down):
+            idempotency.remember(parent_id=PID, method="POST", path="/i", key="d4", replay="run-g")
+            idempotency.forget_run("run-g")
+            assert idempotency.recall(parent_id=PID, method="POST", path="/i", key="d4") is None
+
+    def test_로그에는_오류_종류만_남는다(self, caplog):
+        with patch("app.api.idempotency.get_redis", return_value=_down):
+            idempotency.recall(parent_id=PID, method="POST", path="/i", key="d5")
+        assert "ConnectionError" in caplog.text
+        assert str(PID) not in caplog.text
