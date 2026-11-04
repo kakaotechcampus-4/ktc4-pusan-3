@@ -7,7 +7,9 @@ InMemoryStore 와 동일한 fields 매핑을 유지한다 -- Memory Agent 도구
 row.fields["subject"], row.fields["status"] 등으로 읽기 때문이다.
 """
 
+import logging
 from datetime import date, datetime, time, timedelta, timezone
+from time import monotonic
 from typing import Any
 from uuid import UUID
 
@@ -32,9 +34,11 @@ from app.domains.memory.observation.models import (
     ObservationStatus,
     Promotable,
 )
-from app.domains.memory.profile.service import refresh_profile
+from app.domains.memory.profile.service import lock_child_memory, refresh_profile
 from app.domains.schedule import repository as schedule_repository
 from app.domains.schedule.models import Event, EventItem
+
+logger = logging.getLogger(__name__)
 
 _KST = timezone(timedelta(hours=9))
 
@@ -164,6 +168,26 @@ class DbMemoryStore:
         """Profile 재계산 기준일. 안 넘기면 서비스 시간대(KST)의 오늘."""
         return self._fixed_today or datetime.now(_KST).date()
 
+    async def _lock_child(self) -> None:
+        """관찰을 고치거나 지우기 **전에** 아이 잠금을 잡는다 (#636).
+
+        Curator · 하루 배치와 같은 잠금이다. 순서가 아이 잠금 → 관찰 행 → 기억 행으로 같아야
+        교착이 없다 — run 트랜잭션은 고친 관찰 · 기억의 행 잠금을 커밋까지 쥐는데, 그사이
+        Curator 가 아이 잠금을 쥔 채 같은 행을 기다리면 둘이 서로를 기다린다.
+        연결 안 된 관찰을 고칠 때도 잡는다 — Curator 가 바로 그 관찰을 연결하려 할 수 있다.
+        새 관찰 저장은 잡지 않는다 — 커밋 전에는 Curator 에게 보이지 않아 겹치지 않는다.
+        같은 트랜잭션은 다시 잡아도 기다리지 않는다.
+        """
+        started = monotonic()
+        await lock_child_memory(self._session, self._child_id)
+        # 기다린 시간 — 직전 입력의 Curator 가 쥐고 있으면 그만큼 20초 예산에서 빠진다 (#636).
+        # 같은 run 의 두 번째 수정부터는 이미 쥐고 있어 0 이다
+        logger.info(
+            "Memory 아이 잠금 child_id=%s wait_ms=%d",
+            self._child_id,
+            (monotonic() - started) * 1000,
+        )
+
     async def _refresh_profile(self, affinity_id: UUID | None) -> None:
         if affinity_id is not None:
             await refresh_profile(self._session, profile_id=affinity_id, today=self._today())
@@ -268,6 +292,7 @@ class DbMemoryStore:
         uid = _parse_uuid(observation_id)
         if uid is None:
             return None
+        await self._lock_child()
         model = _MODEL_BY_DOMAIN[domain]
         values: dict[str, Any] = {}
         for k, v in fields.items():
@@ -325,6 +350,7 @@ class DbMemoryStore:
         uid = _parse_uuid(observation_id)
         if uid is None:
             return False
+        await self._lock_child()
         model = _MODEL_BY_DOMAIN[domain]
         values: dict[str, Any] = {"status": ObservationStatus.DELETED}
         if issubclass(model, Promotable):
