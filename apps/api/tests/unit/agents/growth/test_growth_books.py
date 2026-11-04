@@ -601,6 +601,17 @@ class TestProposeTool:
         ]
         assert ctx.state.capacity == 3 and ctx.state.excluded == ()
 
+    async def test_run_이_요청_기반으로_서도_도서_일반_추천은_요청_기반이_아니다(self):
+        """요청 기반 면제는 Growth 교육만이다. 저장 검사(`_REQUESTED_AGENTS`)는 Agent 이름 단위라
+        도서 초안에 `requested` 가 실리면 막지 못한다 — 도서 출력 tool 이 넘기지 않는다."""
+        ctx = await searched(30, [book(n, "picture", author="가") for n in range(1, 4)])
+        ctx.state.requested = True
+        result = await propose_books_tool(ctx, books_of(pick(1), pick(2), pick(3)))
+        assert result.success
+        drafts = ctx.state.suggestions
+        assert {(d.kind, d.requested) for d in drafts} == {("general", False)}
+        assert drafts[0].reason == BOOK_GENERAL_REASON
+
     async def test_개인화_도서는_아이_기록만_근거고_책_근거는_0행이다(self):
         # 책 근거는 코드가 general_basis 로만 넘기고 개인화면 build() 가 버린다 (Food #442 와 같다)
         ctx = await searched(30, [book(n, "picture", author="가") for n in range(1, 4)])

@@ -76,7 +76,12 @@ class SuggestionDraft:
 
 # 보호자가 정한 요청에 맞춘 일반 추천으로 문서 행 근거를 면제받을 수 있는 Agent (루트 §2).
 # 저장 검사(`domains/suggestion/repository._REQUESTED_AGENTS`)가 같은 값을 따로 갖는다 —
-# 레이어가 달라 서로 import 하지 않고 테스트가 맞춘다
+# 레이어가 달라 서로 import 하지 않고 테스트가 맞춘다.
+# 표는 Agent 이름 단위지만 Growth 는 교육 경로(`review_learning`)만 `requested` 를 넘긴다. 저장 행에
+# task 가 없어 저장 검사가 경로를 가르지 못하니 출력 tool 쪽에서 막는다 — 루틴은 일반 추천을 내지
+# 않고(`general_reason=None`), 도서는 넘기지 않는다. 지키는 테스트:
+# `tests/unit/agents/growth/test_growth_books.py` 의
+# `test_run_이_요청_기반으로_서도_도서_일반_추천은_요청_기반이_아니다`
 REQUESTED_AGENTS: frozenset[str] = frozenset({"activity", "growth"})
 
 
