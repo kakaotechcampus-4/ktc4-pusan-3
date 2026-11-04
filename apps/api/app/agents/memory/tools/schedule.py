@@ -35,7 +35,7 @@ from app.agents.common.datetime_rules import (
 )
 from app.agents.memory.context import AgentContext
 from app.agents.memory.drafts import DraftItem, EventDraft, EventSnapshot
-from app.agents.memory.result import ErrorCode, Operation, ToolResult, cut, fail, ok, recent
+from app.agents.memory.result import ErrorCode, Operation, ToolResult, cut, fail, nearest, ok
 from app.agents.memory.schemas.common import EventCategory, EventType
 from app.agents.memory.schemas.schedule import (
     EventCreate,
@@ -155,13 +155,13 @@ async def query_event(context: AgentContext, args: EventQuery) -> ToolResult:
     rows = await context.store.query_events(
         child_id=context.child_id, title_query=args.title_query, **bounds
     )
-    kept, truncated = recent(rows)
+    kept, truncated = nearest(rows, lambda row: abs((row.starts_at - context.now).total_seconds()))
     return ok(
         "query",
         EVENT,
         count=len(kept),
         events=[await _event_summary(context, row) for row in kept],
-        **cut(truncated),
+        **cut(truncated, event=True),
     )
 
 

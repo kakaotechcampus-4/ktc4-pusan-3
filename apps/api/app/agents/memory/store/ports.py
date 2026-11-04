@@ -151,7 +151,9 @@ class MemoryStore(Protocol):
         date_from: date | None = None,
         date_to: date | None = None,
         raw_text_query: str | None = None,
-    ) -> list[ObservationRow]: ...
+    ) -> list[ObservationRow]:
+        """관찰한 날 오래된 순. 조회 tool 이 뒤에서 최근 40건을 자른다 (`result.recent`)."""
+        ...
 
     async def get_observation(
         self, *, domain: ObservationDomain, observation_id: str
@@ -192,7 +194,9 @@ class MemoryStore(Protocol):
         date_from: date | None = None,
         date_to: date | None = None,
         title_query: str | None = None,
-    ) -> list[EventRow]: ...
+    ) -> list[EventRow]:
+        """시작 시각 오름차순. 조회 tool 이 오늘에 가까운 40건을 남긴다 (`result.nearest`)."""
+        ...
 
     async def get_event(self, *, event_id: str) -> EventRow | None: ...
 

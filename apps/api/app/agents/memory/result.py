@@ -7,7 +7,7 @@ db write가 필요한 tool은 구조화된 스키마를 리턴.
 모델은 error.code 를 보고 다음 행동을 정하므로 코드 문자열을 임의로 만들지 않는다.
 """
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Any, Literal
 
 from app.agents.common.tool_runtime import ErrorCode as CommonErrorCode
@@ -17,7 +17,17 @@ from app.agents.common.tool_runtime import ok as _ok
 
 Operation = Literal["parse", "create", "query", "update", "delete"]
 
-__all__ = ["MAX_ROWS", "ErrorCode", "Operation", "ToolResult", "cut", "fail", "ok", "recent"]
+__all__ = [
+    "MAX_ROWS",
+    "ErrorCode",
+    "Operation",
+    "ToolResult",
+    "cut",
+    "fail",
+    "nearest",
+    "ok",
+    "recent",
+]
 
 # 조회 tool 이 종류마다 돌려주는 행 수의 상한 (#535). 조회 · 삭제 카드의 탭 하나에 실리는 양이고,
 # 보호자가 한 화면에서 보고 판단할 수 있는 양이다. 보이지 않던 기록은 삭제 후보가 아니다
@@ -28,6 +38,11 @@ MAX_ROWS = 40
 _CUT_NOTICE = (
     f"최근 {MAX_ROWS}건만 돌려줬다. 그보다 앞선 기록이 더 있지만 보이지 않는다. "
     "조회 결과를 알릴 때는 최근 기록까지만 봤다고 말하고 기간을 좁혀 달라고 한다."
+)
+# 일정은 오늘에서 가까운 것을 남긴다 — 앞뒤로 더 있을 수 있어서 "최근" 이라고 하지 않는다
+_EVENT_CUT_NOTICE = (
+    f"오늘에서 가까운 일정 {MAX_ROWS}건만 돌려줬다. 그보다 먼 일정이 더 있지만 보이지 않는다. "
+    "조회 결과를 알릴 때는 가까운 일정까지만 봤다고 말하고 기간을 좁혀 달라고 한다."
 )
 
 
@@ -59,7 +74,7 @@ def fail(operation: Operation | None, resource: str, code: str, message: str) ->
 
 
 def recent[T](rows: Sequence[T]) -> tuple[list[T], bool]:
-    """오래된 순 조회 결과에서 최근 MAX_ROWS 건과 잘렸는지.
+    """오래된 순 관찰 조회 결과에서 최근 MAX_ROWS 건과 잘렸는지. 순서는 store 가 지킨다(ports).
 
     순서는 그대로 둔다. 보호자에게 보여 줄 수 있는 것이 이만큼이라 전체 건수는 돌려주지 않는다 —
     결과에 넣으면 모델이 그 숫자로 "N건 삭제할까요?" 를 써서 카드와 어긋난다.
@@ -67,6 +82,19 @@ def recent[T](rows: Sequence[T]) -> tuple[list[T], bool]:
     return list(rows[-MAX_ROWS:]), len(rows) > MAX_ROWS
 
 
-def cut(truncated: bool) -> dict[str, Any]:
+def nearest[T](rows: Sequence[T], distance: Callable[[T], float]) -> tuple[list[T], bool]:
+    """일정 조회 결과에서 오늘에 가까운 MAX_ROWS 건과 잘렸는지. 남긴 것은 원래 순서 그대로다.
+
+    일정은 시작 시각 오름차순이라 뒤에서 자르면 가장 먼 미래만 남는다 — 이번 주 일정이 빠진다.
+    """
+    if len(rows) <= MAX_ROWS:
+        return list(rows), False
+    keep = set(sorted(range(len(rows)), key=lambda i: distance(rows[i]))[:MAX_ROWS])
+    return [row for i, row in enumerate(rows) if i in keep], True
+
+
+def cut(truncated: bool, *, event: bool = False) -> dict[str, Any]:
     """조회 결과에 더할 잘림 표시. 잘리지 않았으면 아무것도 더하지 않는다."""
-    return {"truncated": True, "notice": _CUT_NOTICE} if truncated else {}
+    if not truncated:
+        return {}
+    return {"truncated": True, "notice": _EVENT_CUT_NOTICE if event else _CUT_NOTICE}

@@ -5,7 +5,7 @@ tests/unit/agents/supervisor 에 있다.
 """
 
 import json
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
@@ -25,6 +25,7 @@ from app.agents.memory.agent import (
     run,
 )
 from app.agents.memory.context import AgentContext
+from app.agents.memory.registry import execute_tool
 from app.agents.memory.result import MAX_ROWS, ErrorCode
 from app.agents.memory.schemas.task import (
     FoundRef,
@@ -1487,8 +1488,8 @@ _JUK_DELETE = MemoryTask(
 )
 
 
-async def _seed_juk(context: AgentContext, raw_text: str = _JUK) -> str:
-    today = NOW.date()
+async def _seed_juk(context: AgentContext, raw_text: str = _JUK, *, day: date | None = None) -> str:
+    today = day or NOW.date()
     row = await context.store.create_observation(
         domain="food",
         child_id=context.child_id,
@@ -1540,20 +1541,10 @@ async def test_일정을_조회하고_되물으면_일정_id를_남긴다(contex
 
 async def _seed_juk_days(context: AgentContext, count: int) -> list[str]:
     """하루에 한 건씩, 오래된 것부터. 조회 결과가 날짜순이라 마지막이 가장 최근이다."""
-    ids = []
-    for back in range(count, 0, -1):
-        day = NOW.date() - timedelta(days=back)
-        row = await context.store.create_observation(
-            domain="food",
-            child_id=context.child_id,
-            source_writer=context.source_writer,
-            raw_text=f"전복죽 {back}일 전",
-            observed_on=day,
-            observed_range=DateRange(start=day, end=day + timedelta(days=1)),
-            fields={"subject": "전복죽", "action": "먹었다"},
-        )
-        ids.append(row.id)
-    return ids
+    return [
+        await _seed_juk(context, f"전복죽 {back}일 전", day=NOW.date() - timedelta(days=back))
+        for back in range(count, 0, -1)
+    ]
 
 
 async def _query_juk(context: AgentContext) -> dict:
@@ -1585,6 +1576,30 @@ async def test_조회가_상한을_넘으면_최근_것만_돌려주고_잘렸�
 
     assert data["count"] == MAX_ROWS and data["truncated"] is True
     assert [row["id"] for row in data["records"]] == ids[1:]
+
+
+async def test_일정_조회가_상한을_넘으면_오늘에_가까운_것을_남긴다(context: AgentContext) -> None:
+    # 일정은 시작 시각 오름차순이라 뒤에서 자르면 먼 미래만 남고 이번 주 일정이 빠진다
+    days = [*range(-5, 0), *range(1, MAX_ROWS + 1)]  # 지난 5일 + 앞으로 40일
+    ids = {}
+    for offset in days:
+        row = await context.store.create_event(
+            child_id=context.child_id,
+            title="수영",
+            starts_at=NOW + timedelta(days=offset),
+            ends_at=None,
+            all_day=False,
+            fields={"event_type": "recurring", "category": "activity"},
+        )
+        ids[offset] = row.id
+
+    result = await execute_tool("query_event", {"title_query": "수영"}, context)
+
+    data = result.to_payload()["data"]
+    assert data["truncated"] is True and "가까운" in data["notice"]
+    # 가까운 40건 = 지난 5일 + 앞으로 35일. 먼 5일(36~40일 뒤)이 빠진다
+    kept = [ids[offset] for offset in days if offset <= MAX_ROWS - 5]
+    assert [event["id"] for event in data["events"]] == kept
 
 
 async def test_실패한_조회는_찾은_기록으로_세지_않는다(context: AgentContext) -> None:
