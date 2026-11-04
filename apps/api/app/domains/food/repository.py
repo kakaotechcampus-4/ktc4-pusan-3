@@ -132,8 +132,8 @@ async def resolved_recipe_names(session: AsyncSession) -> dict[uuid.UUID, Resolv
 
     Food 일반 추천의 메뉴 근거가 실제 후보 풀의 레시피인지 저장 때 확인하고, 05 가 근거 카드의
     이름과 출처 기관을 찾는다. 근거 id 는 (source, source_id) 로 만드는 uuid5 라 표에 칸이 없어서,
-    해석된 행을 읽어 같은 함수(`rules/menu_evidence`)로 다시 만든다 — 지금은 537행이라 한 번에
-    읽는다.
+    해석된 행을 읽어 같은 함수(`rules/menu_evidence`)로 다시 만든다 — 두 소스를 합쳐 1,100행대라
+    한 번에 읽는다. 필요한 행만 읽으려면 근거 id 를 표에 칸으로 두어야 한다(마이그레이션).
     """
     stmt = select(RecipeCatalog.source, RecipeCatalog.source_id, RecipeCatalog.display_name).where(
         RecipeCatalog.resolved.is_(True)

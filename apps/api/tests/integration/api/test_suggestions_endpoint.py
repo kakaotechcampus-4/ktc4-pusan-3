@@ -4,10 +4,9 @@ import uuid
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
-from typing import get_args
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import Range
 
 from app.agents import entrypoint
@@ -20,7 +19,6 @@ from app.api import agent_ports, quota
 from app.api.runs import suggestion_retry
 from app.api.v1.schemas.suggestions import DocEvidenceOut
 from app.core.config import settings
-from app.core.recipe_source import RecipeSource
 from app.domains.memory.observation.models import (
     ConfidenceSource,
     ObservationActivity,
@@ -1049,6 +1047,69 @@ async def test_Food_메뉴_근거의_소스가_출처_표에_없으면_다른_�
     assert resp.json()["general"] == []
 
 
+async def test_레시피_행이_지워진_뒤에도_05_는_오류_없이_근거_카드만_뺀다(
+    db_client, session, bearer, cid, agents
+):
+    """#510 A4 — downgrade 는 `nics_recipe` 행을 지운다. `suggestion_evidence.source_id` 는 FK 가
+    아니라 그 근거 행은 남는데, 그 근거로 05 를 불러도 오류 없이 카드(와 그 메뉴만 근거였던 일반
+    추천)만 빠지고, 다시 적재하면 같은 id 로 돌아온다."""
+    from app.domains.food import repository as food_repository
+    from app.domains.food.models import RecipeCatalog
+    from app.domains.suggestion.repository import save_agent_suggestions
+    from app.rules.menu_evidence import menu_evidence_id
+
+    headers, _ = bearer
+    recipe = {
+        "source": "nics_recipe",
+        "source_id": "7",
+        "menu_key": "두부조림",
+        "display_name": "두부조림",
+        "ingredients": ["두부"],
+        "resolved": True,
+        "synced_at": datetime.now(UTC),
+    }
+    await food_repository.upsert_recipes(session, rows=[recipe])
+    menu = menu_evidence_id("nics_recipe", "7")
+    draft = SuggestionDraft(
+        agent="food",
+        kind="general",
+        content="두부조림",
+        reason="또래 아이들이 많이 먹는 메뉴예요.",
+        citations=(
+            EvidenceCitation(
+                ref=Ref(kind="recipe_catalog", id=menu), note="재료가 검수된 메뉴예요."
+            ),
+        ),
+    )
+    await save_agent_suggestions(
+        session, child_id=cid, run_id="run-1", payloads=[draft.to_payload()], now=datetime.now(UTC)
+    )
+
+    shown = await _post(db_client, cid, headers, agents=["food"], run_id="run-1")
+    [evidence] = shown.json()["general"][0]["evidence"]
+    assert evidence["ref"]["id"] == str(menu)
+
+    # downgrade 가 하는 일 — 그 소스의 행을 지운다. 근거 행은 FK 가 아니라 남는다
+    await session.execute(delete(RecipeCatalog).where(RecipeCatalog.source == "nics_recipe"))
+    kept = await session.scalar(
+        select(func.count())
+        .select_from(SuggestionEvidence)
+        .where(SuggestionEvidence.source_id == menu)
+    )
+    assert kept == 1
+
+    after = await _post(db_client, cid, headers, agents=["food"], run_id="run-1")
+    assert after.status_code == 200
+    assert after.json()["general"] == []  # 보여 줄 근거가 없으면 일반 추천도 내지 않는다
+
+    # 다시 올리고 재적재하면 같은 (source, source_id) 라 같은 근거 id 로 이어진다
+    await food_repository.upsert_recipes(session, rows=[recipe])
+    again = await _post(db_client, cid, headers, agents=["food"], run_id="run-1")
+    [evidence] = again.json()["general"][0]["evidence"]
+    assert evidence["ref"]["id"] == str(menu)
+    assert evidence["source_org"] == "농촌진흥청 국립식량과학원"
+
+
 def test_근거_카드_응답_칸은_그대로다():
     """#510 — 출처 표시 문구는 기존 `source_title` 칸에 붙는다. 칸을 더하거나 빼지 않는다."""
     assert set(DocEvidenceOut.model_json_schema()["properties"]) == {
@@ -1067,10 +1128,59 @@ def test_근거_카드의_source_title_설명은_라이선스_표시를_말한�
     assert "라이선스" in description
 
 
-def test_메뉴_출처_표는_RecipeSource_와_같은_소스를_다룬다():
-    from app.api.v1.routers.suggestions import MENU_SOURCES
+async def test_합친_메뉴의_대표_레시피가_내려가도_다른_소스_근거로_추천이_남는다(
+    db_client, session, bearer, cid, agents
+):
+    """같은 이름을 합친 메뉴는 합쳐진 레시피를 모두 근거로 단다. 대표(농식품정보원)가 후보 풀에서
+    내려가도 농촌진흥청 레시피가 남아 있으면 그 근거로 05 에 나온다."""
+    from app.domains.food import repository as food_repository
+    from app.domains.suggestion.repository import save_agent_suggestions
+    from app.rules.menu_evidence import menu_evidence_id
 
-    assert set(MENU_SOURCES) == set(get_args(RecipeSource))
+    headers, _ = bearer
+
+    def recipe(source: str, source_id: str, *, resolved: bool = True) -> dict:
+        return {
+            "source": source,
+            "source_id": source_id,
+            "menu_key": "열무김치",
+            "display_name": "열무김치",
+            "ingredients": ["열무"],
+            "resolved": resolved,
+            "synced_at": datetime.now(UTC),
+        }
+
+    await food_repository.upsert_recipes(
+        session, rows=[recipe("mafra_recipe", "9"), recipe("nics_recipe", "3")]
+    )
+    mafra, nics = menu_evidence_id("mafra_recipe", "9"), menu_evidence_id("nics_recipe", "3")
+    draft = SuggestionDraft(
+        agent="food",
+        kind="general",
+        content="열무김치",
+        reason="또래 아이들이 많이 먹는 메뉴예요.",
+        citations=tuple(
+            EvidenceCitation(
+                ref=Ref(kind="recipe_catalog", id=menu), note="재료가 검수된 메뉴예요."
+            )
+            for menu in (mafra, nics)
+        ),
+    )
+    await save_agent_suggestions(
+        session, child_id=cid, run_id="run-1", payloads=[draft.to_payload()], now=datetime.now(UTC)
+    )
+
+    # 농식품정보원이 9 번을 내렸다(적재가 resolved=false 로)
+    await food_repository.upsert_recipes(
+        session, rows=[recipe("mafra_recipe", "9", resolved=False)]
+    )
+    resp = await _post(db_client, cid, headers, agents=["food"], run_id="run-1")
+
+    assert resp.status_code == 200
+    [general] = resp.json()["general"]
+    [evidence] = general["evidence"]
+    assert evidence["ref"]["id"] == str(nics)
+    assert evidence["source_org"] == "농촌진흥청 국립식량과학원"
 
 
 # ── Growth 도서 추천의 책 근거 ───────────────────────────────────────────
