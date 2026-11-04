@@ -357,6 +357,10 @@ async def run(
                 continue
             if parsed is not None:
                 replied = MemoryReply(text=parsed.text, kind=parsed.kind)
+                if context.proposals and replied.kind == "question":
+                    # 삭제 제안을 남긴 run 은 되묻기가 아니다 (#535). 맥락을 넘기면 다음 채팅의
+                    # "응" 이 제안을 이어받는 것처럼 읽힌다 — 지우는 것은 카드의 버튼뿐이다
+                    replied = MemoryReply(text=parsed.text, kind="message")
                 # 재질문 상한은 여기서 한 번만 판정한다. 상한이면 맥락을 만들지 않고 표시만 싣는다
                 at_limit = _at_ask_limit(replied, continuation, calls)
                 pending = (
