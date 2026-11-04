@@ -219,13 +219,15 @@ export interface AgentResultEvent {
   question: string | null;
   /**
    * 이 `question` 이 **답을 받는 질문**인가 (#537 · #563 리뷰에서 AI 와 맞춘 이름). 서버가 그 run 의 되묻기 맥락을 들고 있을 때만
-   * `true` 다. 지금은 Growth 루틴 질문이 그렇다(#654). 없으면 `false` 로 읽는다.
+   * `true` 다. 지금은 Growth 루틴 질문(#654)과 Health 복약 질문(중단 확인, 어느 약, 복용 시점 · #716)이 그렇다.
+   * 없으면 `false` 로 읽는다.
+   * Health 는 이어받은 run 이 또 물을 수 있다 (어느 약 → 멈출까요). 그 질문도 `true` 라 화면은 같은 길로 받는다.
    *
    * 🚨 **이 값이 참인 질문만 답할 자리를 연다.** 아닌 질문에 `reply_to` 를 실어 보내면 서버가 400
    *    `reply_context_unavailable` 로 막는다 (#246). 답은 Memory 질문과 같은 길(`reply_to` = 이 run)로 간다.
    * 이름은 #563 리뷰에서 AI 와 맞췄다. pipeline 은 `PendingReply` 로 맥락을 먼저 보관한 뒤
    *    `AgentQuestion(awaits_reply=true)` 을 내므로, 질문 장이 보일 때는 이미 답할 수 있다.
-   *    Health 복약 질문은 #586 연결 뒤 같은 뜻으로 쓴다. 서버는 키를 늘 싣는다.
+   *    서버는 키를 늘 싣는다.
    *    run 의 되묻기는 카드가 아니라 **마지막 `agent_result` 한 장**(readouts · 추천이 빈 장)으로 오고(#615),
    *    카드는 `false`, 맥락을 보관하지 않은 질문도 `false` 다.
    */
