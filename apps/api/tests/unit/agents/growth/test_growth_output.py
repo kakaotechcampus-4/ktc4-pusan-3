@@ -12,7 +12,13 @@ import pytest
 from app.agents.common.evidence import AffinityRow, RankedEvidence
 from app.agents.common.refs import Ref, count_child_records
 from app.agents.growth.context import build_gate
-from app.agents.growth.review import GENERAL_REASON, GUIDANCE, RejectReason, step_of
+from app.agents.growth.review import (
+    GENERAL_REASON,
+    GUIDANCE,
+    REQUESTED_REASON,
+    RejectReason,
+    step_of,
+)
 from app.agents.growth.schemas.learning import ProposeLearningActivityArgs
 from app.agents.growth.schemas.memory import (
     SearchActivityMemoryArgs,
@@ -1305,3 +1311,98 @@ class TestRoutineBehaviorNames:
         )
         assert result.success and ctx.state.question is None
         assert len(ctx.state.suggestions) == 1
+
+
+async def requested_ctx(*, said=("영어 어떻게 가르쳐?",), **kwargs):
+    """주제는 읽었는데 그 주제의 [예시] 행이 없는 요청 기반 교육 컨텍스트."""
+    ctx = await topic_ctx(("other",), **kwargs)
+    ctx.state.seen_docs = {}
+    ctx.state.requested = True
+    ctx.state.said_texts = tuple(said)
+    return ctx
+
+
+def free_args(ctx, *ids, steps=("그림 카드를 보며 이름을 말해요",), reason="요청에 맞춰 골랐어요"):
+    """[예시]가 없으니 근거는 아이 기록뿐이다. ids 가 없으면 근거 없이 낸다."""
+    picks = [{"id": str(key), "note": "기록을 참고했어요"} for key in ids]
+    titles = ("영어 그림 카드 놀이", "알파벳 찾기 놀이", "영어 노래 따라 하기")
+    return ProposeLearningActivityArgs.model_validate(
+        {"items": [item(t, steps=steps, evidence=picks, reason=reason) for t in titles]}
+    )
+
+
+class TestRequestedGeneral:
+    """보호자가 주제를 정해 물었는데 그 주제의 문서 행이 없으면 요청이 기준인 일반 추천이다."""
+
+    async def test_근거_없이_낸_후보는_요청_기반_일반_추천이다(self):
+        ctx = await requested_ctx()
+        result = await propose_learning_activity(ctx, free_args(ctx))
+        assert result.success and len(ctx.state.suggestions) == 3
+        for draft in ctx.state.suggestions:
+            assert draft.kind == "general" and draft.requested is True
+            assert draft.reason == REQUESTED_REASON
+            assert draft.citations == ()
+
+    async def test_요청_기반이_아니면_근거_없는_후보는_거절한다(self):
+        ctx = await requested_ctx()
+        ctx.state.requested = False
+        result = await propose_learning_activity(ctx, free_args(ctx))
+        assert not result.success and result.error["code"] == "CANDIDATE_REJECTED"
+        assert GUIDANCE[RejectReason.BUILD] in result.error["message"]
+
+    async def test_관심만_달면_아이_기록을_빼고_요청_기반_일반_추천이다(self):
+        ctx = await requested_ctx(affinities=[DINO_LIKE])
+        result = await propose_learning_activity(ctx, free_args(ctx, DINO_LIKE.id))
+        assert result.success
+        for draft in ctx.state.suggestions:
+            assert draft.kind == "general" and draft.requested is True
+            assert child_refs(draft) == 0
+
+    async def test_주제_기록을_달면_개인화다(self):
+        english = replace(READING, id=UUID(int=840), subject="영어", topic="영어 그림책 보기")
+        ctx = await requested_ctx(education=[english])
+        result = await propose_learning_activity(
+            ctx, free_args(ctx, english.id, reason="영어 그림책을 이어서 골랐어요")
+        )
+        assert result.success
+        for draft in ctx.state.suggestions:
+            assert draft.kind == "personalized" and draft.requested is False
+
+    async def test_보호자가_말하지_않은_시간_수치는_뺀다(self):
+        ctx = await requested_ctx()
+        args = free_args(ctx, steps=("하루 1시간까지 카드를 본다",))
+        result = await propose_learning_activity(ctx, args)
+        assert result.success
+        assert ctx.state.suggestions == ()
+        assert len(ctx.state.excluded) == 3
+
+    async def test_보호자가_말한_수치는_그대로_쓴다(self):
+        ctx = await requested_ctx(said=("영어 노래를 하루 30분 틀어 주는데 어떻게 가르쳐?",))
+        result = await propose_learning_activity(
+            ctx, free_args(ctx, steps=("30분 안에 카드를 본다",))
+        )
+        assert result.success and len(ctx.state.suggestions) == 3
+
+    async def test_아이_월령은_말한_수치로_센다(self):
+        ctx = await requested_ctx()
+        result = await propose_learning_activity(
+            ctx, free_args(ctx, steps=("30개월 아이가 따라 하기 쉬운 카드를 본다",))
+        )
+        assert result.success and len(ctx.state.suggestions) == 3
+
+    async def test_의료_증상_낱말이_든_후보는_뺀다(self):
+        ctx = await requested_ctx()
+        result = await propose_learning_activity(
+            ctx, free_args(ctx, steps=("눈 깜빡임이 줄도록 카드를 본다",))
+        )
+        assert result.success and ctx.state.suggestions == ()
+        assert len(ctx.state.excluded) == 3
+
+    async def test_요청_기반이_아니면_수치를_보지_않는다(self):
+        """문서 행이 받치는 run 에서는 행이 말한 수치를 지우지 않는다."""
+        ctx = await topic_ctx(("communication",), affinities=[DINO_LIKE])
+        args = basis_args(ctx, DINO_LIKE.id)
+        for it in args.items:
+            it.steps = ["하루 1시간까지 이야기를 나눈다"]
+        result = await propose_learning_activity(ctx, args)
+        assert result.success and len(ctx.state.suggestions) == 3

@@ -13,7 +13,7 @@
 
 from collections.abc import Mapping, Sequence
 
-from app.rules.term_match import Term, match_fields, match_terms
+from app.rules.term_match import Term, match_fields, match_spans, match_terms, normalize
 
 # 문서 행에 영역이 없는 주제. 영역 키로는 남기지만 [예시] 행은 없다
 OTHER = "other"
@@ -172,6 +172,35 @@ def request_topic(request_texts: Sequence[str], record_texts: Sequence[str]) -> 
     return tuple(area for area in topic_areas(record_texts) if area != OTHER)
 
 
+# 질문 문장에 그대로 넣으면 어색한 활용형 낱말. 같은 요청의 다음 주제 낱말을 쓴다
+_CONJUGATED = frozenset({"읽어", "말해", "세어", "그려"})
+
+
+def topic_word(request_texts: Sequence[str], record_texts: Sequence[str]) -> str | None:
+    """보호자가 말한 주제 낱말 하나(별칭 그대로). 질문 문장에 넣는다("국어는 집에서 해 본 적이…").
+
+    요청 조각이 먼저고, 요청에 주제가 없을 때만 기록 조각을 읽는다. `TOPIC_TERMS` 순서에서 처음
+    걸린 명사 별칭이다 — 활용형(읽어 · 말해 · 세어 · 그려)은 건너뛴다. 기록 조각의 `OTHER`(영어)는
+    읽지 않는다(`request_topic` 과 같은 기준). 주제 낱말이 없으면 None 이고 호출부는 묻지 않는다.
+    """
+    return _first_word(request_texts, skip_other=False) or _first_word(
+        record_texts, skip_other=True
+    )
+
+
+def _first_word(texts: Sequence[str], *, skip_other: bool) -> str | None:
+    for term in TOPIC_TERMS:
+        if skip_other and term.key == OTHER:
+            continue
+        for alias in term.aliases:
+            if alias in _CONJUGATED:
+                continue
+            single = Term(term.key, (alias,), term.guards)
+            if match_fields(tuple(texts), (single,), cross_spaces=False):
+                return alias
+    return None
+
+
 def routine_scope(request_texts: Sequence[str], record_texts: Sequence[str]) -> tuple[str, ...]:
     """보호자가 말한 루틴 카테고리 키. 요청 조각이 먼저고, 없을 때만 같은 입력의 기록 조각을 읽는다.
 
@@ -179,6 +208,27 @@ def routine_scope(request_texts: Sequence[str], record_texts: Sequence[str]) -> 
     카테고리(손 씻기)를 골라도 이 범위 밖이면 낼 수 없다. 비면 범위를 정하지 않는다.
     """
     return _routine_keys(request_texts) or _routine_keys(record_texts)
+
+
+def routine_words(request_texts: Sequence[str], record_texts: Sequence[str]) -> tuple[str, ...]:
+    """보호자가 말한 루틴 낱말(정규화한 별칭). 요청 조각이 먼저고, 없을 때만 기록 조각을 읽는다.
+
+    "아침에 등원 준비가 너무 오래 걸려" 는 `("등원",)` 이다. `routine_scope` 가 카테고리 키를 주는
+    것과 달리 이 낱말은 아이 기록의 이름에 그 낱말이 있는지 볼 때 쓴다 — 행이 없는 루틴 행동을
+    교육 활동으로 낼 때 "등원 준비" 기록만 개인화 근거로 세려는 것이다. 판정에만 쓰고 문서 쿼리 ·
+    로그에는 보내지 않는다.
+    """
+    return _routine_spans(request_texts) or _routine_spans(record_texts)
+
+
+def _routine_spans(texts: Sequence[str]) -> tuple[str, ...]:
+    words: list[str] = []
+    for text in texts:
+        normalized = normalize(text)
+        for _, start, end in match_spans(normalized, ROUTINE_TERMS):
+            if (word := normalized[start:end]) not in words:
+                words.append(word)
+    return tuple(words)
 
 
 def _routine_keys(texts: Sequence[str]) -> tuple[str, ...]:

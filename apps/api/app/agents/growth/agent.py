@@ -6,7 +6,9 @@
   ③ growth_review 는 측정을 그대로 정리한 readout 하나 — 모델 0회
   ④ 0–11개월 루틴은 리듬 안내(`rhythm_info` 행, 없으면 `rhythm.no_row`) 하나 — 모델 0회
   ⑤ 교육은 코드가 문서 행 [예시]를 골라 프롬프트에 싣는다. 모델에게 문서 검색 tool 은 없다.
-     [예시]도 근거로 달 아이 기록도 없으면 `doc.no_row` 로 닫는다 — 모델 0회
+     [예시]도 근거로 달 아이 기록도 없으면 `doc.no_row` 로 닫는다 — 모델 0회. 단 코드가 요청 주제를
+     읽었는데 그 주제의 [예시]만 없으면 닫지 않는다(`state.requested`) — 보호자의 요청이 기준인
+     일반 추천이다
   ⑥ 공통 `run_tool_loop` 로 대화한다. 출력 tool 이 통과하면 끝난다
   ⑦ 안전 필터 · 금지 표현으로 모자라면 같은 대화에 제외 목록 한 줄을 더해 1회 더 부른다
      (model_calls=2). 처음 통과한 것을 먼저 두고 빈자리만 채운다(`merge_drafts`)
@@ -42,6 +44,7 @@ from app.agents.growth.context import GrowthContext, GrowthRunState, build_gate
 from app.agents.growth.gating import EDUCATION_MIN_MONTH, routine_mode
 from app.agents.growth.prompt import build_system_prompt, recall_message, request_message
 from app.agents.growth.readouts import (
+    ASK_LEARNING_CURRENT,
     ASK_NEED_LEVEL,
     ASKED_FIELD,
     CLOSED_BOOK_API,
@@ -64,13 +67,17 @@ from app.agents.growth.tools.closures import closure_key
 from app.agents.growth.tools.delta import asks_judgement, compute_growth_delta
 from app.agents.growth.tools.docs import DocHit, search_growth_doc
 from app.agents.growth.tools.memory import has_citable_memory, has_topic_memory
+from app.agents.growth.tools.routine import ask_question
 from app.rules.growth_topic import (
+    SCREEN,
     doc_areas,
     doc_tags,
     request_topic,
     routine_scope,
+    routine_words,
     screen_use,
     strict_topic,
+    topic_word,
 )
 from app.rules.term_match import normalize
 
@@ -82,6 +89,9 @@ MAX_STEPS = 8
 MAX_COMPLETION_TOKENS = 2000
 # 재호출은 run 마감(20초)보다 이만큼 일찍 끝낸다. 마감에 걸리면 처음 통과한 후보까지 버려진다
 RECALL_MARGIN_S = 2.0
+# 루틴 대화가 자료 없음으로 끝난 뒤 교육 흐름으로 한 번 더 도는 데 필요한 남은 시간(초). 교육 대화는
+# 모델 1회 + 재호출이라 이보다 모자라면 넘기지 않고 지금처럼 `doc.no_row` 로 끝낸다
+FALLBACK_MIN_S = 8.0
 
 
 async def run(
@@ -106,10 +116,22 @@ async def run(
 
 
 async def _run(
-    task: DomainTask, context: GrowthContext, *, client: LLMClient | None
+    task: DomainTask,
+    context: GrowthContext,
+    *,
+    client: LLMClient | None,
+    from_routine: bool = False,
 ) -> DomainAgentResult:
+    """`from_routine` 은 루틴 대화가 단계 · 전략 행이 없어 `doc.no_row` 로 끝나 교육 흐름으로 넘어온
+    run 이다(`_fall_back_to_education`). 라벨은 교육이고, [예시]를 찾지 않는다 — 그 행동의 공식
+    행이 없어서 넘어왔고, 다른 영역 행을 근거로 달면 근거가 틀린다. 먼저 쓴 모델 호출 수는 이어서
+    센다."""
     task_type = task_type_of(task)
-    if _screen_candidate(task, task_type):
+    prior_calls = context.state.model_calls
+    if from_routine:
+        task_type = GrowthTaskType.LEARNING_SUGGESTION
+        gate = await build_gate(context, task_type)
+    elif _screen_candidate(task, task_type):
         # 게임 · 영상 고민은 루틴 단계를 낼 사슬이 없다 — 교육 흐름으로 연다. 교육 게이트가 알레르기
         # 조회도 하고(실패하면 교육처럼 닫힌다) 월령도 읽는다. 돌 전이면 교육이 열리지 않으니 루틴
         # (리듬 안내)으로 되돌린다 — 이때만 게이트를 다시 만든다
@@ -122,8 +144,20 @@ async def _run(
         gate = await build_gate(context, task_type)
     context.state.gate = gate
     context.state.task_type = task_type.value
-    context.state.topic = request_topic(task.request_texts, task.record_texts)
-    context.state.strict_topic = strict_topic(task.request_texts, task.record_texts)
+    if from_routine:
+        # 주제 영역이 아니라 보호자가 말한 루틴 낱말이 이 run 의 주제다. 영역으로 [예시]를 고르거나
+        # 후보 글을 거르지 않는다
+        context.state.routine_words = routine_words(task.request_texts, task.record_texts)
+    else:
+        # 되묻기에 답하고 이어서 도는 교육 run 은 맥락에 요청 조각만 남아("어떻게 도와줘야 좋을까?")
+        # 무엇을 물었는지 모른다. 물은 주제를 요청 조각에 더해 읽는다
+        asked_texts = (
+            (*task.request_texts, task.answered_subject)
+            if task_type is GrowthTaskType.LEARNING_SUGGESTION and task.answered_subject
+            else task.request_texts
+        )
+        context.state.topic = request_topic(asked_texts, task.record_texts)
+        context.state.strict_topic = strict_topic(asked_texts, task.record_texts)
     context.state.routine_scope = routine_scope(task.request_texts, task.record_texts)
     context.state.said_texts = (*task.request_texts, *task.record_texts, *task.answer_texts)
     context.state.recorded_subjects = task.recorded_subjects
@@ -157,23 +191,32 @@ async def _run(
         rules = context.state.rules
         assert rules is not None  # 교육이 열렸으면 build_gate 가 채운다
         active = [e for e in context.state.safety_entries if e.status == "active"]
-        examples = await search_growth_doc(
-            context.ports.docs,
-            task_type=task_type,
-            months=gate.stage.months,
-            # 요청 주제의 영역 행에서 고른다. 주제가 없으면 영역으로 거르지 않는다
-            areas=doc_areas(context.state.topic),
-            tags=doc_tags(context.state.topic),
-            # 같은 날 같은 아이는 같은 [예시] — 재호출도 같은 프롬프트다. 날이 바뀌면 바뀐다
-            rotation=f"{context.child_id}|{context.today.isoformat()}",
-            # 식품 아닌 알레르기의 대응표 낱말이 든 행은 싣지 않는다
-            blocked=rules.related_blocks(active),
-        )
+        if not from_routine:
+            examples = await search_growth_doc(
+                context.ports.docs,
+                task_type=task_type,
+                months=gate.stage.months,
+                # 요청 주제의 영역 행에서 고른다. 주제가 없으면 영역으로 거르지 않는다
+                areas=doc_areas(context.state.topic),
+                tags=doc_tags(context.state.topic),
+                # 같은 날 같은 아이는 같은 [예시] — 재호출도 같은 프롬프트다. 날이 바뀌면 바뀐다
+                rotation=f"{context.child_id}|{context.today.isoformat()}",
+                # 식품 아닌 알레르기의 대응표 낱말이 든 행은 싣지 않는다
+                blocked=rules.related_blocks(active),
+            )
         # 프롬프트에 실은 행만 근거로 달 수 있다
         context.state.seen_docs = {hit.row.id: hit.row for hit in examples}
-        if not examples and not await _has_basis(context):
-            # 문서 행도 (요청 주제의) 아이 기록도 못 단다 — 어떤 후보도 근거 검증을 못 지나서 모델을
-            # 부르지 않는다
+        # 코드가 주제를 읽었는데 그 주제의 [예시] 행이 없다 — 보호자가 정한 요청이 기준인 일반
+        # 추천을 낼 수 있다(`review_learning`). 주제를 못 읽은 막연한 요청은 해당하지 않는다.
+        # 루틴에서 넘어온 run 은 [예시]를 찾지 않으니 보호자가 말한 루틴 낱말이 그 요청이다
+        context.state.requested = (
+            bool(context.state.routine_words)
+            if from_routine
+            else bool(context.state.topic) and not examples
+        )
+        if not examples and not context.state.requested and not await has_citable_memory(context):
+            # 문서 행도 아이 기록도 요청도 근거로 못 단다 — 어떤 후보도 근거 검증을 못 지나서
+            # 모델을 부르지 않는다
             context.state.closed_reason = DOC_NO_ROW
             return _result(task_type, "blocked", readouts=(READOUTS.render(DOC_NO_ROW),))
 
@@ -184,7 +227,7 @@ async def _run(
         {"role": "user", "content": request_message(task.request_texts, task.record_texts)},
     ]
     output = OUTPUT_TOOL[task_type]
-    context.state.model_calls = 1
+    context.state.model_calls = prior_calls + 1
     try:
         completed = await _converse(llm, messages, context, allowed, output)
     except UpstreamUnavailable as exc:
@@ -197,15 +240,17 @@ async def _run(
         return _result(
             task_type, "blocked", readouts=(READOUTS.render(CLOSED_BOOK_API),), model_calls=1
         )
-    if not completed:
-        return _result(task_type, "failed", model_calls=1)
-
     state = context.state
+    model_calls = state.model_calls
+    if not completed:
+        return _result(task_type, "failed", model_calls=model_calls)
+
+    if _no_row_in_routine(task_type, state, from_routine) and _time_left(task) >= FALLBACK_MIN_S:
+        return await _fall_back_to_education(task, context, client=llm)
     if state.closing is not None or state.question is not None:
         return _ended(task_type, context)
 
     picked = state.suggestions
-    model_calls = 1
     if state.excluded and len(picked) < state.capacity:
         # 안전 필터 · 금지 표현 · 주제 밖으로 빠졌다. 사유 없이 제외 목록만 주고 1회 더 부른다.
         # run 마감(20초)까지 남은 시간이 모자라면 재호출하지 않는다 — 마감에 걸려 처음 통과한
@@ -215,8 +260,8 @@ async def _run(
         if budget is not None and budget <= 0:
             logger.warning("Growth 재호출을 건너뛴다 — 마감이 가깝다 run_id=%s", context.run_id)
         else:
-            model_calls = 2
-            state.model_calls = 2
+            model_calls += 1
+            state.model_calls = model_calls
             state.done_steps = frozenset(step for draft in picked if (step := step_of(draft)))
             if task_type is GrowthTaskType.BOOK_SUGGESTION:
                 # 처음 고른 책과 빠진 책은 재호출에서 다시 낼 수 없다 — 이미 낸 책처럼 거절한다
@@ -243,8 +288,15 @@ async def _run(
 
     notice = count_notice(len(picked))
     readouts = (notice,) if notice else ()
+    question, pending = await _learning_question(task, context, task_type, picked, from_routine)
     return _result(
-        task_type, "completed", suggestions=picked, readouts=readouts, model_calls=model_calls
+        task_type,
+        "completed",
+        suggestions=picked,
+        readouts=readouts,
+        question=question,
+        pending=pending,
+        model_calls=model_calls,
     )
 
 
@@ -279,6 +331,74 @@ def _observe(
     )
 
 
+async def _learning_question(
+    task: DomainTask,
+    context: GrowthContext,
+    task_type: GrowthTaskType,
+    picked: tuple[SuggestionDraft, ...],
+    from_routine: bool,
+) -> tuple[str | None, DomainPending | None]:
+    """교육 추천에 덧붙이는 질문 하나(`ask.learning_current`)와, 답을 이어받을 자리.
+
+    보호자가 정한 주제의 아이 기록이 아직 없을 때만이다. 일반 추천은 그대로 나가고, 답이 교육
+    기록으로 저장되면 같은 요청을 다시 돌아 개인화로 이어진다(pipeline 의 이어받기). 묻지 않는
+    경우: 후보가 없을 때 · 이미 답을 받고 도는 run · 화면 고민(방금 한 말이 곧 기록이다) ·
+    루틴에서 넘어온 run · 주제 낱말을 못 읽었을 때 · 그 주제의 기록이 이미 있을 때.
+    """
+    state = context.state
+    if (
+        task_type is not GrowthTaskType.LEARNING_SUGGESTION
+        or from_routine
+        or not picked
+        or task.answered_subject
+        or not state.topic
+        or SCREEN in state.topic
+    ):
+        return None, None
+    word = topic_word(task.request_texts, task.record_texts)
+    if word is None or await has_topic_memory(context, state.topic):
+        return None, None
+    question = ask_question(ASK_LEARNING_CURRENT, word)
+    state.question = question
+    pending = DomainPending(
+        agent=AGENT,
+        kind=ASK_LEARNING_CURRENT,
+        question=question,
+        payload={"subject": word, "category": None, "field": ASKED_FIELD[ASK_LEARNING_CURRENT]},
+    )
+    return question, pending
+
+
+def _no_row_in_routine(
+    task_type: GrowthTaskType, state: GrowthRunState, from_routine: bool
+) -> bool:
+    """루틴 대화가 그 행동의 단계 · 전략 행이 없어 `doc.no_row` 로 끝났는가. 코드가 보호자가 말한
+    루틴 행동(`routine_scope`)을 읽었을 때만이다 — 읽지 못한 행동은 지금처럼 자료 없음이다.
+    닫힘(`closed.*`) · 되묻기 · 사슬 끝(`next_step.chain_end`)은 넘기지 않는다."""
+    return (
+        task_type is GrowthTaskType.ROUTINE_COACHING
+        and not from_routine
+        and state.closing == DOC_NO_ROW
+        and bool(state.routine_scope)
+    )
+
+
+def _time_left(task: DomainTask) -> float:
+    """run 마감(20초)까지 남은 초. 마감이 없으면 제한이 없다."""
+    return float("inf") if task.deadline is None else task.deadline - time.perf_counter()
+
+
+async def _fall_back_to_education(
+    task: DomainTask, context: GrowthContext, *, client: LLMClient
+) -> DomainAgentResult:
+    """루틴 단계는 행에서만 나온다 — 행이 없는 루틴 행동은 모델이 단계를 쓰게 하지 않고, 교육 흐름의
+    활동 제안으로 넘긴다. 루틴이 쓴 상태를 비우고(시작한 모델 호출 수만 이어 센다) 교육으로 돈다."""
+    calls = context.state.model_calls
+    context.state.reset()
+    context.state.model_calls = calls
+    return await _run(task, context, client=client, from_routine=True)
+
+
 def _screen_candidate(task: DomainTask, task_type: GrowthTaskType) -> bool:
     """루틴 라벨로 온 화면 · 게임 고민을 교육 흐름으로 열어 볼 것인가(월령은 게이트가 정한다).
 
@@ -290,14 +410,6 @@ def _screen_candidate(task: DomainTask, task_type: GrowthTaskType) -> bool:
         and screen_use(task.request_texts, task.record_texts)
         and closure_key((*task.request_texts, *task.record_texts, *task.answer_texts)) is None
     )
-
-
-async def _has_basis(context: GrowthContext) -> bool:
-    """[예시]가 없을 때 후보를 낼 아이 기록이 있는가. 주제가 있으면 그 주제의 기록이어야 한다."""
-    topic = context.state.topic
-    if topic:
-        return await has_topic_memory(context, topic)
-    return await has_citable_memory(context)
 
 
 def _doc_hits(state: GrowthRunState) -> int:
@@ -359,11 +471,16 @@ def _ended(task_type: GrowthTaskType, context: GrowthContext) -> DomainAgentResu
             readouts=(notice,),
             question=state.question,
             pending=_pending(state),
-            model_calls=1,
+            model_calls=state.model_calls,
         )
     assert state.closing is not None
     state.closed_reason = state.closing
-    return _result(task_type, "blocked", readouts=(READOUTS.render(state.closing),), model_calls=1)
+    return _result(
+        task_type,
+        "blocked",
+        readouts=(READOUTS.render(state.closing),),
+        model_calls=state.model_calls,
+    )
 
 
 async def _rhythm(context: GrowthContext) -> Readout:

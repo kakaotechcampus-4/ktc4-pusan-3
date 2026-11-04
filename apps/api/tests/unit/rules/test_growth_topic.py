@@ -16,10 +16,12 @@ from app.rules.growth_topic import (
     record_on_topic,
     request_topic,
     routine_scope,
+    routine_words,
     row_on_topic,
     screen_use,
     strict_topic,
     topic_areas,
+    topic_word,
 )
 
 
@@ -283,3 +285,63 @@ def test_기록_이름은_주제_낱말로만_주제_안인지_본다(names, are
 
 def test_주제가_없으면_기록은_늘_주제_안이다():
     assert record_on_topic(("블록 쌓기",), ()) is True
+
+
+class TestRoutineWords:
+    """보호자가 말한 루틴 낱말 — 자료 없는 루틴 행동의 개인화 근거를 이름으로 맞출 때 쓴다."""
+
+    def test_요청에서_걸린_루틴_낱말을_돌려준다(self):
+        assert routine_words(("아침에 등원 준비가 너무 오래 걸려.",), ()) == ("등원",)
+
+    def test_여러_낱말은_나온_순서로_한_번씩(self):
+        assert routine_words(("양치하고 손 씻기 혼자 하게 하고 싶어",), ()) == ("양치", "씻")
+
+    def test_요청에_없을_때만_기록_조각을_읽는다(self):
+        assert routine_words(("어떻게 하면 좋을까?",), ("아이가 밥 먹을 때 힘들어해",)) == (
+            "밥",
+            "먹",
+        )
+        assert routine_words(("등원 준비가 힘들어",), ("아이가 밥 먹을 때 힘들어해",)) == ("등원",)
+
+    def test_루틴_낱말이_없으면_빈_튜플이다(self):
+        assert routine_words(("놀이 추천해줘",), ("공룡을 좋아해",)) == ()
+
+    def test_요청_범위와_같이_비거나_채워진다(self):
+        for texts in (("등원 준비가 힘들어",), ("영어 어떻게 가르쳐?",), ("양치 싫어해",)):
+            assert bool(routine_words(texts, ())) == bool(routine_scope(texts, ()))
+
+
+class TestTopicWord:
+    """질문 문장에 넣는 주제 낱말 — 요청 조각이 먼저고, 없을 때만 기록 조각이다."""
+
+    @pytest.mark.parametrize(
+        ("request_texts", "record_texts", "word"),
+        [
+            (("국어 공부 어떻게 도와줘?",), (), "국어"),
+            (("어떻게 도와줘야 좋을까?",), ("아이가 국어 공부를 어려워하는데",), "국어"),
+            (("수학 공부를 어려워하는데 어떻게 도와줄까?",), (), "수학"),
+            (("영어 어떻게 가르쳐?",), (), "영어"),
+            (("그림책 읽어 주는 방법 알려줘",), (), "그림"),
+            (("놀이 추천해줘",), ("공룡을 좋아해",), None),
+            ((), (), None),
+        ],
+    )
+    def test_요청에서_주제_낱말을_읽는다(self, request_texts, record_texts, word):
+        assert topic_word(request_texts, record_texts) == word
+
+    def test_활용형은_건너뛰고_다음_낱말을_본다(self):
+        # "읽어" 는 질문 문장에 넣으면 어색하다 — 같은 요청의 다음 주제 낱말("그림")을 쓴다
+        assert topic_word(("그림책 읽어 주기",), ()) == "그림"
+        assert topic_word(("읽어 주기만 해",), ()) is None
+
+    def test_기록_조각의_영어는_묻지_않는다(self):
+        """ "영어 유치원 다니는데" 의 영어는 물은 것이 아니다 — request_topic 과 같은 기준."""
+        assert topic_word(("집에서 뭐 하면 좋을까?",), ("영어 유치원 다니는데",)) is None
+        assert topic_word(("영어 유치원 다니는데 뭐 하면 좋을까?",), ()) == "영어"
+
+    def test_요청이_주제를_정했으면_기록_조각을_보지_않는다(self):
+        assert topic_word(("수학 놀이 추천해줘",), ("오늘 노래 배웠대",)) == "수학"
+
+    def test_주제_영역이_있으면_낱말도_있다(self):
+        for texts in (("국어 어떻게 해?",), ("수학 어떻게 해?",), ("운동 어떻게 해?",)):
+            assert bool(request_topic(texts, ())) == (topic_word(texts, ()) is not None)

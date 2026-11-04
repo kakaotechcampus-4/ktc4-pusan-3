@@ -110,13 +110,19 @@ class TestMannerAt24:
         assert [readout.code for readout in result.readouts] == ["empty"]  # 되묻기 + 안내 한 줄
         assert result.needs_observation == ask("ask.routine_current", "인사하기")
 
-    async def test_24개월_예절도_맞는_전략_행이_없으면_묻지_않고_자료_없음으로_닫는다(self):
+    async def test_24개월_예절도_맞는_전략_행이_없으면_묻지_않고_교육_흐름으로_넘긴다(self):
+        # 전략 행이 없어 물어도 낼 단계가 없다 — 묻지 않는다. 보호자가 말한 행동이라 루틴 단계를
+        # 지어내는 대신 교육 흐름이 도는데, 이 가짜 모델은 교육 대화에서 후보를 내지 못한다
         ctx = context(birth_for(24), docs=fixture_docs())
         result = await run(
             task("routine_coaching", self.REQUEST), ctx, client=says("social_manner", "인사하기")
         )
         assert result.needs_observation == ()
-        assert result.readouts == (READOUTS.render("doc.no_row"),)
+        assert (result.task_type, result.status, result.model_calls) == (
+            "learning_suggestion",
+            "failed",
+            2,
+        )
 
 
 class TestHabitAt36:

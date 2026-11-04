@@ -69,7 +69,7 @@ MIN_KEYWORD_MATCH = 2
 # 자립 단계 사슬이 있는 카테고리. 예절 · 습관은 단계가 아니라 전략 행이다
 SELF_RELIANCE = frozenset({"self_care", "mealtime", "household_task", "transition"})
 
-_NO_RECORDS = "기록이 없다. 기억 근거 없이 [예시]를 바탕으로 낸다. 보호자에게 되묻지 않는다."
+_NO_RECORDS = "기록이 없다. 기억 근거 없이 [예시]를 바탕으로 낸다. 되묻기는 코드가 한다."
 _NO_ROUTINE = (
     "생활 루틴 기록이 없다. propose_routine_plan 을 items 를 비우고 category · subject 만 넣어 "
     "부른다 — 코드가 보호자에게 되묻는다."

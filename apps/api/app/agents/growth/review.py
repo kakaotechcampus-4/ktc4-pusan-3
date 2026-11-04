@@ -52,6 +52,9 @@ from app.rules.term_match import normalize
 AGENT = "growth"
 # 아이 기록 근거가 0행이면 build() 가 reason 을 이 문구로 덮어쓴다 (kind="general", 루트 §2)
 GENERAL_REASON = "이 나이 아이들에게 많이 권하는 활동으로 골랐어요."
+# 보호자가 정한 주제의 문서 행이 없어 요청이 기준인 일반 추천의 이유 (Activity 의 "요청하신 놀이를
+# 바탕으로 골랐어요." 와 같은 결). 모델이 쓴 이유는 덮인다
+REQUESTED_REASON = "요청하신 내용을 바탕으로 골랐어요."
 # 도서 일반 추천의 이유 — 아이 기록 근거가 0행이면 build() 가 reason 을 이 문구로 덮어쓴다.
 # 무엇으로 골랐는지(월령에 맞는 형태)만 말한다 — 재지 않은 인기 · 대출 수를 말하지 않는다
 BOOK_GENERAL_REASON = "이 나이에 맞는 형태의 책 중에서 골랐어요."
@@ -136,12 +139,22 @@ def topic_citations(
     return tuple(item for item in citations if not item.ref.is_child_record)
 
 
-def _learning_about(topic: Sequence[str], today: date) -> Aboutness | None:
-    if not topic:
+def _learning_about(
+    topic: Sequence[str], today: date, words: Sequence[str] = ()
+) -> Aboutness | None:
+    """교육 후보의 개인화 근거 판정. 주제가 없고 `words` 만 있으면(행이 없는 루틴 행동) 기록 이름에
+    보호자가 말한 루틴 낱말이 있어야 한다."""
+    if not topic and not words:
         return None
 
     def about(item: EvidenceCitation) -> bool:
-        return fresh_child(item, today) and record_on_topic((item.subject, item.label), topic)
+        if not fresh_child(item, today):
+            return False
+        names = (item.subject, item.label)
+        if topic and record_on_topic(names, topic):
+            return True
+        wanted = [normalize(name) for name in names]
+        return any(word in name for word in words for name in wanted)
 
     return about
 
@@ -178,6 +191,9 @@ def review_learning(
     today: date,
     topic: Sequence[str] = (),
     basis_topic: Sequence[str] = (),
+    requested: bool = False,
+    grounds: Sequence[str] = (),
+    basis_words: Sequence[str] = (),
 ) -> Review:
     """`topic` 은 후보 글로 거를 주제 영역 키(`GrowthRunState.strict_topic`)다. 있으면 그 영역의
     낱말이 제목 · 단계 · 준비물에 없고 그 영역의 [예시] 행도 인용하지 않은 후보는 주제 밖이라
@@ -185,8 +201,18 @@ def review_learning(
 
     `basis_topic` 은 개인화 근거를 판정할 요청 주제(`GrowthRunState.topic`)다. 있으면 그 주제의
     아이 기록을 하나도 안 단 후보의 아이 기록 인용은 빠지고(`topic_citations`) 일반 추천이 된다.
+
+    `requested` 는 보호자가 주제를 정해 물었는데 그 주제의 [예시] 행이 없는 run 이다
+    (`GrowthRunState.requested`). 이때 아이 기록 근거가 없는 후보는 문서 행 없이도 일반 추천이고
+    이유는 `REQUESTED_REASON` 으로 덮인다. 공식 문서가 받쳐 주지 않으니 후보 글(제목 · 단계 ·
+    준비물)에 의료 · 증상 낱말과 `grounds`(보호자가 한 말)에 없는 시간 · 횟수 · 나이 수치가 있으면
+    뺀다. 아이 기록 근거가 있으면 요청과 상관없이 개인화다.
+
+    `basis_words` 는 단계 · 전략 행이 없는 루틴 행동을 교육 활동으로 낼 때 보호자가 말한 루틴
+    낱말(`GrowthRunState.routine_words`)이다. 주제 영역 대신 이 낱말이 기록 이름에 있는지로
+    개인화 근거를 판정한다 — "등원 준비" 를 물었는데 손 씻기 기록만 달면 일반 추천이다.
     """
-    about = _learning_about(basis_topic, today)
+    about = _learning_about(basis_topic, today, basis_words)
     drafts: list[SuggestionDraft] = []
     rejections: list[Rejection] = []
     removed: list[int] = []
@@ -201,7 +227,7 @@ def review_learning(
         if _evaluative((item.title, *item.steps, *item.materials, item.reason), item.evidence):
             removed.append(index)
             continue
-        if _guarded(texts):
+        if _guarded(texts, strict=requested, grounds=grounds):
             removed.append(index)
             continue
         if not _in_topic(item, texts, topic, docs, seen):
@@ -227,8 +253,9 @@ def review_learning(
                 content=learning_content(item),
                 reason=item.reason.strip(),
                 citations=kept,
-                general_reason=GENERAL_REASON,
+                general_reason=REQUESTED_REASON if requested else GENERAL_REASON,
                 items=tuple(m.strip() for m in item.materials if m.strip()),
+                requested=requested,
                 today=today,
             )
         except SuggestionRejected:
@@ -446,9 +473,20 @@ def _evaluative(texts: Sequence[str], evidence: Sequence[EvidencePick]) -> bool:
     return any(find_evaluative(text) for text in (*texts, *(pick.note for pick in evidence)))
 
 
-def _guarded(texts: Sequence[str], evidence: Sequence[EvidencePick] = ()) -> bool:
-    """모델이 쓴 문장과 근거 메모가 문장 가드(진단명 · 강압 · 구매 유도)에 걸리는가."""
-    return not check_growth_text((*texts, *(pick.note for pick in evidence))).allowed
+def _guarded(
+    texts: Sequence[str],
+    evidence: Sequence[EvidencePick] = (),
+    *,
+    strict: bool = False,
+    grounds: Sequence[str] = (),
+) -> bool:
+    """모델이 쓴 문장과 근거 메모가 문장 가드(진단명 · 강압 · 구매 유도)에 걸리는가.
+
+    `strict` 는 문서 행이 없는 요청 기반 후보다 — 의료 · 증상 낱말과 `grounds` 에 없는 수치도 본다.
+    """
+    return not check_growth_text(
+        (*texts, *(pick.note for pick in evidence)), strict=strict, grounds=grounds
+    ).allowed
 
 
 def _shown_guarded(draft: SuggestionDraft, *, content: bool = True) -> bool:

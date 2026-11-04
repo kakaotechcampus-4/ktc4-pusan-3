@@ -88,6 +88,10 @@ async def propose_learning_activity(
         today=context.today,
         topic=state.strict_topic,
         basis_topic=state.topic,
+        basis_words=state.routine_words,
+        requested=state.requested,
+        # 보호자가 한 말과 프롬프트의 [월령] 이 아는 수치. 이 밖의 시간 · 횟수 · 나이는 근거가 없다
+        grounds=(*state.said_texts, f"{gate.stage.months}개월"),
     )
     if review.rejections:
         usable = (*state.seen_evidence, *state.seen_docs)
