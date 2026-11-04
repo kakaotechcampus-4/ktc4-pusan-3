@@ -1482,6 +1482,44 @@ class TestRoutineFallsBackToEducation:
         )
         assert result.readouts == (READOUTS.render("doc.no_row"),)
 
+    async def test_넘긴_교육_대화가_마감에_걸리면_루틴의_자료_없음으로_끝낸다(self, monkeypatch):
+        """pipeline 의 20초에 걸리면 Growth 가 통째로 실패로 세져 자료 없음 안내까지 사라진다 —
+        넘기기 전보다 나빠지지 않게 마감 전에 넘기기 전 결과로 돌아간다."""
+        monkeypatch.setattr("app.agents.growth.agent.FALLBACK_MIN_S", 0.0)
+        monkeypatch.setattr("app.agents.growth.agent.FALLBACK_MARGIN_S", 0.0)
+        ctx = docs_ctx(36)
+        slow = DomainTask(
+            run_id="run-1",
+            agent="growth",
+            task_type="routine_coaching",
+            request_texts=(self.TEXT,),
+            deadline=time.perf_counter() + 0.5,
+        )
+        started = time.perf_counter()
+        result = await run(slow, ctx, client=SlowSecondCall(self._empty_plan(), delay=3.0))
+        assert time.perf_counter() - started < 2.0
+        # 교육 대화는 시작했으니 호출 수에 센다
+        assert (result.task_type, result.status, result.model_calls) == (
+            "routine_coaching",
+            "blocked",
+            2,
+        )
+        assert result.readouts == (READOUTS.render("doc.no_row"),)
+        assert (ctx.state.task_type, ctx.state.closed_reason) == ("routine_coaching", "doc.no_row")
+
+    async def test_넘긴_교육_대화가_결과를_못_내면_루틴의_자료_없음으로_끝낸다(self):
+        """교육 대화가 출력 tool 없이 끝나면 Growth 가 실패로 세져 안내가 사라진다 — 마감과 같다."""
+        ctx = docs_ctx(36)
+        llm = FakeLLM(self._empty_plan())  # 교육 대화는 말로 끝난다
+        result = await run(task("routine_coaching", self.TEXT), ctx, client=llm)
+        assert (result.task_type, result.status, result.model_calls) == (
+            "routine_coaching",
+            "blocked",
+            2,
+        )
+        assert result.readouts == (READOUTS.render("doc.no_row"),)
+        assert (ctx.state.task_type, ctx.state.closed_reason) == ("routine_coaching", "doc.no_row")
+
     async def test_코드가_행동을_못_읽으면_넘기지_않는다(self):
         ctx = docs_ctx(36)
         llm = FakeLLM(

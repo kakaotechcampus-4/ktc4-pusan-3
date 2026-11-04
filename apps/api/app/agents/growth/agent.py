@@ -92,6 +92,9 @@ RECALL_MARGIN_S = 2.0
 # 루틴 대화가 자료 없음으로 끝난 뒤 교육 흐름으로 한 번 더 도는 데 필요한 남은 시간(초). 교육 대화는
 # 모델 1회 + 재호출이라 이보다 모자라면 넘기지 않고 지금처럼 `doc.no_row` 로 끝낸다
 FALLBACK_MIN_S = 8.0
+# 넘긴 교육 대화는 run 마감보다 이만큼 일찍 끊고 루틴의 `doc.no_row` 로 끝낸다. 재호출 여유
+# (`RECALL_MARGIN_S`)보다 짧아서, 교육의 재호출이 먼저 끊겨 처음 통과한 후보로 끝날 자리가 남는다
+FALLBACK_MARGIN_S = 1.0
 
 
 async def run(
@@ -392,11 +395,34 @@ async def _fall_back_to_education(
     task: DomainTask, context: GrowthContext, *, client: LLMClient
 ) -> DomainAgentResult:
     """루틴 단계는 행에서만 나온다 — 행이 없는 루틴 행동은 모델이 단계를 쓰게 하지 않고, 교육 흐름의
-    활동 제안으로 넘긴다. 루틴이 쓴 상태를 비우고(시작한 모델 호출 수만 이어 센다) 교육으로 돈다."""
+    활동 제안으로 넘긴다. 루틴이 쓴 상태를 비우고(시작한 모델 호출 수만 이어 센다) 교육으로 돈다.
+
+    교육 대화가 마감(`FALLBACK_MARGIN_S` 앞)까지 끝나지 않거나 결과를 못 내면(`failed`) 넘기기 전
+    결과(루틴의 `doc.no_row`)로 끝낸다. 그대로 두면 Growth 가 통째로 실패로 세져 자료 없음 안내까지
+    사라진다 — 넘기기가 넘기지 않은 것보다 나쁜 화면을 만들지 않게 한다."""
+    no_row = _ended(GrowthTaskType.ROUTINE_COACHING, context)
+    reason = context.state.closed_reason
     calls = context.state.model_calls
     context.state.reset()
     context.state.model_calls = calls
-    return await _run(task, context, client=client, from_routine=True)
+    budget = None if task.deadline is None else _time_left(task) - FALLBACK_MARGIN_S
+    try:
+        result = await asyncio.wait_for(
+            _run(task, context, client=client, from_routine=True), budget
+        )
+    except TimeoutError:
+        why = "마감에 걸렸다"
+    else:
+        if result.status != "failed":
+            return result
+        why = "결과를 못 냈다"
+    logger.warning(
+        "Growth 교육 넘기기가 %s — 루틴 자료 없음으로 끝낸다 run_id=%s", why, context.run_id
+    )
+    state = context.state
+    state.task_type = GrowthTaskType.ROUTINE_COACHING.value
+    state.closed_reason = reason
+    return replace(no_row, model_calls=state.model_calls)
 
 
 def _screen_candidate(task: DomainTask, task_type: GrowthTaskType) -> bool:

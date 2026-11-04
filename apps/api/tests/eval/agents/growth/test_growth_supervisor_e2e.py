@@ -214,6 +214,29 @@ def j_screen_concern(o: Observed) -> None:
     o.notes.append(f"추천 {len(event.suggestion_ids)}개 · {event.kind} · 저장 {o.growth_saved}")
 
 
+def j_fallback(o: Observed) -> None:
+    """단계 행이 없는 루틴 행동(등원) — 교육으로 넘겼으면 추천이, 시간이 모자라 넘기지 않았거나 넘긴
+    대화가 마감 1초 전에 끊겼으면 루틴의 자료 없음 안내가 나간다. 어느 쪽이든 Growth 가 실패로
+    세지지 않고 20초 안에 끝난다 (#708 리뷰)."""
+    if len(o.growth_events) != 1:
+        o.failures.append(f"Growth agent_result {len(o.growth_events)}개 (1개여야 한다)")
+        return
+    event = o.growth_events[0]
+    calls = [out.model_calls for out in o.growth_outcomes]
+    if event.task_type == LEARN:
+        if event.status != "completed" or not event.suggestion_ids:
+            o.failures.append(f"넘겼는데 추천이 없다 (status={event.status})")
+        o.notes.append(f"넘김 · 추천 {len(event.suggestion_ids)}개 · {event.kind} · 모델 {calls}")
+    else:
+        if not any(r.body == READOUTS.get(DOC_NO_ROW).template for r in event.readouts):
+            o.failures.append(
+                f"넘기지 않았는데 자료 없음 안내가 없다 (task_type={event.task_type})"
+            )
+        o.notes.append(f"안 넘김 · {event.status} · 모델 {calls}")
+    if o.elapsed_ms > 20_000:
+        o.failures.append(f"run {o.elapsed_ms}ms — 20초를 넘겼다")
+
+
 def j_asks_once(o: Observed) -> None:
     """기록이 없는 아이에게 루틴을 물으면 카드가 먼저 나가고 되묻기는 run 끝에 하나 나간다."""
     event = _ran(o, ROUTINE)
@@ -468,6 +491,20 @@ CASES: tuple[Case, ...] = (
         "C48-empty",
         "기록 없는 아이의 게임 고민 → 화면 약속 행 근거 일반 추천",
         j_screen_concern,
+    ),
+    Case(
+        "FALLBACK/C48-empty",
+        "아침에 등원 준비가 너무 오래 걸려. 어떻게 하지?",
+        "C48-empty",
+        "등원(전환 사슬 없음) → 교육 활동으로 넘기거나 자료 없음 · 20초 안",
+        j_fallback,
+    ),
+    Case(
+        "FALLBACK/C48",
+        "아침에 등원 준비가 너무 오래 걸려. 어떻게 하지?",
+        "C48",
+        "기록이 있는 아이의 등원 → 교육 활동으로 넘기거나 자료 없음 · 20초 안",
+        j_fallback,
     ),
     Case(
         "T01/C11",
