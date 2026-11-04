@@ -12,6 +12,8 @@ monkeypatch 해서 테스트 세션을 돌려준다.
 """
 
 import asyncio
+import logging
+import re
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta, timezone
 
@@ -278,3 +280,37 @@ async def test_없거나_삭제된_아이는_실패_로그_없이_건너뛴다(
         ).one()
         assert row.embedding is None
         assert row.affinity_id is None
+
+
+async def test_잠금을_쥔_시간을_child_id_와_함께_남긴다(session, family, monkeypatch, caplog):
+    """#636 리뷰 — 임베딩 · judge 가 잠금 안에서 돈다. 쥔 시간이 길면 그 구조를 바꾼다."""
+    owner, child = family
+    await _save(
+        session, child_id=child.id, parent_id=owner.id, subject="귤", observed_on=date(2026, 10, 14)
+    )
+
+    class SlowEmbedder:
+        async def embed(self, texts):
+            await asyncio.sleep(0.2)  # 잠금 안에서 도는 모델 호출
+            return [[0.1] * 1536 for _ in texts]
+
+    @asynccontextmanager
+    async def fake_factory():
+        yield session
+
+    import app.domains.memory.curator.trigger as trigger_mod
+
+    monkeypatch.setattr(trigger_mod, "async_session_factory", fake_factory)
+    with caplog.at_level(logging.INFO, logger="app.domains.memory.curator.trigger"):
+        await trigger_mod.trigger_curator_background(
+            child_id=child.id,
+            today=date(2026, 10, 14),
+            embedder=SlowEmbedder(),
+            judge=_FakeJudge(),
+        )
+
+    held = re.search(
+        rf"curator 아이 잠금 child_id={child.id} wait_ms=\d+ held_ms=(\d+)", caplog.text
+    )
+    assert held and int(held.group(1)) >= 200
+    assert "귤" not in caplog.text  # 원문 대신 id 만

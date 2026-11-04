@@ -12,7 +12,8 @@ from app.domains.identity.models import AuthSession, Parent
 from app.domains.notification.models import NotificationSetting, PushDevice, PushPlatform
 
 _DEVICE_TOKEN_LOCK_NS = 2
-"""pg_advisory_xact_lock(int4, int4) 의 첫 번째 인자. Curator 는 1 (`curator/trigger.py`)."""
+"""pg_advisory_xact_lock(int4, int4) 의 첫 번째 인자.
+아이 기억 잠금은 1 (`memory/profile/service.py` `CHILD_MEMORY_LOCK_NS`)."""
 
 
 @dataclass(frozen=True)
