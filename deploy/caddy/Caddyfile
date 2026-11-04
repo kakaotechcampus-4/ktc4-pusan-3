@@ -1,7 +1,18 @@
+# HSTS — 브라우저가 이 주소를 정해진 기간 동안 https 로만 연다 (#670).
+#   http 로 먼저 여는 첫 요청이 사라져, 그 순간을 가로채 https 로 못 가게 붙잡는 공격을 막는다.
+#   🚨 한 번 보낸 기간은 보호자 브라우저에 남아 서버에서 되돌릴 수 없다 — 그 기간에 https 가
+#      깨지면(인증서 만료 등) 우회 없이 접속이 막힌다. 그래서 1일로 시작한다.
+#      문제없이 돌면 늘린다(예: 1년 31536000). includeSubDomains · preload 는 아직 걸지 않는다.
+(hsts) {
+	header Strict-Transport-Security "max-age=86400"
+}
+
 icatch.ai.kr {
+	import hsts
 	reverse_proxy web:3000
 }
 
 api.icatch.ai.kr {
+	import hsts
 	reverse_proxy api:8000
 }
