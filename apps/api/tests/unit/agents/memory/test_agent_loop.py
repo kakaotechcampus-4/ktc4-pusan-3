@@ -1834,3 +1834,31 @@ async def test_삭제_제안_뒤에도_다른_조각을_묻는_질문은_살린�
 
     assert result.reply is not None and result.reply.kind == "question"
     assert result.pending is not None and result.pending.work is WorkType.OBSERVE
+
+
+async def test_삭제_제안_뒤에도_다른_수정_조각을_묻는_질문은_살린다(context: AgentContext) -> None:
+    # 삭제도 수정도 lookup_edit 이다 — 수정 쪽 질문까지 막으면 그 조각이 답할 곳 없이 사라진다
+    juk = await _seed_juk(context)
+    task = MemoryTask(
+        raw_text=f'아까 "{_JUK}" 기록 지워줘. 병원 일정 시간을 바꿔줘',
+        hints=(
+            MemoryHint(text=f'아까 "{_JUK}" 기록 지워줘', work=WorkType.LOOKUP_EDIT),
+            MemoryHint(text="병원 일정 시간을 바꿔줘", work=WorkType.LOOKUP_EDIT),
+        ),
+    )
+    llm = FakeLLM(
+        _tools(_call("q1", "query_observation_food", {"raw_text_query": "전복죽"})),
+        _tools(_call("p1", "propose_delete", {"ids": [juk]})),
+        _answer(
+            {
+                "text": "병원 일정을 몇 시로 바꿀까요?",
+                "kind": "question",
+                "pending_hint": "병원 일정 시간을 바꿔줘",
+            }
+        ),
+    )
+
+    result = await run(task.raw_text, context, client=llm, task=task)
+
+    assert result.reply == MemoryReply(text="병원 일정을 몇 시로 바꿀까요?", kind="question")
+    assert result.pending is not None and result.pending.hint_text == "병원 일정 시간을 바꿔줘"

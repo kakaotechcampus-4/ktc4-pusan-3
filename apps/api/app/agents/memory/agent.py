@@ -735,14 +735,27 @@ def _parse_reply(content: str, model: type[ReplyOutput] = ReplyOutput) -> ReplyO
 PROPOSED_REPLY = "지울 기록을 카드에 담았어요. 확인하고 삭제 버튼을 눌러 주세요."
 
 
+# 삭제를 말한 조각. "시간은 빼줘" 처럼 값만 비우는 수정이 걸리지 않게 "빼" 는 넣지 않는다
+_DELETE_CUES = ("지워", "지우", "지울", "지운", "삭제", "없애")
+
+
 def _asks_after_proposal(
     context: AgentContext, reply: MemoryReply, pending: PendingMemoryContext | None
 ) -> bool:
-    """삭제 제안을 남긴 뒤 그 삭제를 되묻는가. 섞인 입력의 다른 조각(기록 · 일정)을 묻는 질문은
-    살린다 — 끊으면 그 조각이 답할 곳 없이 사라진다."""
+    """삭제 제안을 남긴 뒤 그 삭제를 되묻는가.
+
+    섞인 입력의 다른 조각을 묻는 질문은 살린다 — 기록 저장이든 같은 lookup_edit 인 일정 수정
+    ("병원 일정 몇 시로 바꿀까요?")이든, 끊으면 그 조각이 답할 곳 없이 사라진다. 제안이 어느 조각을
+    위한 것인지 코드는 모르므로, 질문이 이어 붙는 조각이 삭제를 말했는지로 본다. 이어 붙일 조각을
+    못 고른 질문은 삭제를 되묻는 것으로 본다.
+    """
     if not context.proposals or reply.kind != "question":
         return False
-    return pending is None or pending.work is WorkType.LOOKUP_EDIT
+    if pending is None:
+        return True
+    return pending.work is WorkType.LOOKUP_EDIT and any(
+        cue in pending.hint_text for cue in _DELETE_CUES
+    )
 
 
 def _pending(
