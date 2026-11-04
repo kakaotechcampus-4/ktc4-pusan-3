@@ -13,6 +13,7 @@ app 로그는 루트로도 올라간다(propagate). pytest 의 caplog 가 루트
 SDK 가 basicConfig 를 부른다.
 
 uvicorn 의 접근 로그(요청마다 한 줄)는 쿼리 문자열과 초대 코드를 가린다 — `_RedactAccessLog`.
+uvicorn 의 오류 로그는 예외 메시지를 빼고 종류 · 코드 위치만 남긴다 — `_HideExceptionMessage`.
 
 모듈 이름이 logging 이 아닌 이유 — 표준 라이브러리 logging 과 헷갈리지 않게.
 """
@@ -20,6 +21,7 @@ uvicorn 의 접근 로그(요청마다 한 줄)는 쿼리 문자열과 초대 �
 import logging
 import logging.config
 import re
+import traceback
 
 _FORMAT = "%(asctime)s %(levelname)s %(name)s %(message)s"
 DATEFMT = "%Y-%m-%d %H:%M:%S%z"
@@ -61,6 +63,27 @@ class _RedactAccessLog(logging.Filter):
         return True
 
 
+class _HideExceptionMessage(logging.Filter):
+    """uvicorn 오류 로그의 예외에서 메시지를 빼고 종류와 코드 위치만 남긴다 (#670).
+
+    🚨 처리되지 않은 예외는 API 의 마지막 그물(api/errors.py)이 메시지 없이 찍은 뒤, Starlette 이
+       다시 던져 uvicorn 이 "Exception in ASGI application" 으로 traceback 전체를 한 번 더 찍는다.
+       그 마지막 줄 "ValueError: <메시지>" 에 입력 원문이 섞일 수 있다 (루트 §2 개인정보).
+       연결된 예외(__cause__ · __context__)의 메시지도 같은 이유로 남기지 않는다.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.exc_info and record.exc_info[1] is not None:
+            _, exc, tb = record.exc_info
+            # 다 만든 글로 바꾼다 — args 를 남기면 uvicorn 포매터가 한 번 더 끼워 넣다 깨진다
+            where = "".join(traceback.format_tb(tb))
+            record.msg = f"{record.getMessage().rstrip()} {type(exc).__name__}\n{where}"
+            record.args = ()
+            record.exc_info = None
+            record.exc_text = None
+        return True
+
+
 def configure_logging() -> None:
     """app 로거에 처리기를 하나 단다. 여러 번 불러도 처리기는 하나다 (dictConfig 가 갈아 끼운다).
 
@@ -93,6 +116,9 @@ def configure_logging() -> None:
     access = logging.getLogger("uvicorn.access")
     if not any(isinstance(f, _RedactAccessLog) for f in access.filters):
         access.addFilter(_RedactAccessLog())
+    errors = logging.getLogger("uvicorn.error")
+    if not any(isinstance(f, _HideExceptionMessage) for f in errors.filters):
+        errors.addFilter(_HideExceptionMessage())
     # 🚨 httpx 는 INFO 로 요청 주소 전체를 찍는다 — NEIS 의 KEY=, Discord 웹훅의 토큰이 주소에 있다.
     #    루트가 INFO 로 열리는 일(OPENAI_LOG · basicConfig)이 있어도 새지 않게 WARNING 으로 못
     #    박는다.

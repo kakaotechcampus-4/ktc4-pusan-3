@@ -29,6 +29,16 @@ import app.main  # 그다음에 앱을 불러온다
 
 logging.getLogger("app.probe").info("app-probe-line")
 logging.getLogger("uvicorn.error").warning("uvicorn-probe-line")
+# uvicorn 이 처리되지 않은 예외를 찍는 모양 그대로 — 메시지에 원문이 섞인 예외 (#670)
+def probe_route():
+    try:
+        raise KeyError("SECRET-CAUSE-MESSAGE")
+    except KeyError as cause:
+        raise ValueError("SECRET-EXC-MESSAGE") from cause
+try:
+    probe_route()
+except ValueError:
+    logging.getLogger("uvicorn.error").error("Exception in ASGI application\\n", exc_info=True)
 logging.getLogger("httpx").info("https://open.example.test/hub?KEY=secret-key")
 
 access = logging.getLogger("uvicorn.access")
@@ -128,3 +138,11 @@ def test_access_log_hides_query_strings_and_invite_codes(output):
 def test_access_log_keeps_ids_in_paths(output):
     """아이 id · run id 는 남긴다 — 원문이 아니라 id 다 (루트 CLAUDE.md §2)."""
     assert "/api/v1/children/0b6f5c1e-0000-4000-8000-000000000001/inputs" in output
+
+
+def test_uvicorn_exception_log_keeps_type_and_place_but_not_message(output):
+    """uvicorn 이 예외를 한 번 더 찍을 때 메시지(원문이 섞일 수 있다)는 뺀다 (#670)."""
+    assert "Exception in ASGI application ValueError" in output
+    assert "in probe_route" in output  # 어디서 났는지는 남는다
+    assert "SECRET-EXC-MESSAGE" not in output
+    assert "SECRET-CAUSE-MESSAGE" not in output
