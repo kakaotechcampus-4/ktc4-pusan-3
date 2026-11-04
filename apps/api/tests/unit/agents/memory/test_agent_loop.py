@@ -1950,6 +1950,20 @@ async def test_일부만_저장하고_다_했다고_하면_tool_기록대로_코
     assert result.final_message == expected
 
 
+async def test_아이_이야기의_부정은_못_한_것을_말한_것으로_보지_않는다(
+    context: AgentContext,
+) -> None:
+    # "편식하지 않고" 는 저장에 대한 말이 아니다. 걸리면 다 했다고만 한 답이 그대로 나간다
+    text = "사과랑 운동회 다 기록했어요. 편식하지 않고 잘 먹었네요!"
+    llm = FakeLLM(
+        _tools(_call("e1", "create_event", _EVENT)), _answer({"text": text, "kind": "message"})
+    )
+
+    result = await run(_OBS_AND_EVENT.raw_text, context, client=llm, task=_OBS_AND_EVENT)
+
+    assert result.final_message == "일정 초안은 만들었어요. 기록은 남기지 않았어요."
+
+
 @pytest.mark.parametrize(
     "text",
     [
@@ -1972,6 +1986,10 @@ async def test_일부만_저장하고_못_한_것을_말하면_모델_답을_그
     assert result.final_message == text
 
 
+def _checked(prepared: bool, *, was: bool) -> dict[str, Any]:
+    return {"draft": False, "is_prepared": prepared, "was_prepared": was}
+
+
 def _rec(name: str, data: dict[str, Any] | None = None, **arguments: Any) -> ToolCallRecord:
     result = {"success": True, "data": data or {}} if data is not None else {"success": False}
     return ToolCallRecord(name, arguments, result)
@@ -1985,17 +2003,30 @@ def _rec(name: str, data: dict[str, Any] | None = None, **arguments: Any) -> Too
             "준비물은 일정 초안에 더했어요. 기록은 남기지 않았어요.",
         ),
         (
-            [_rec("update_event_item", {"draft": False}, is_prepared=True)],
+            [_rec("update_event_item", _checked(True, was=False))],
             "준비물 챙김은 표시했어요. 기록은 남기지 않았어요.",
         ),
-        # 성공이어도 바뀐 게 없으면 한 일이 아니다
+        (
+            [_rec("update_event_item", _checked(False, was=True))],
+            "준비물 챙김 표시는 풀었어요. 기록은 남기지 않았어요.",
+        ),
+        # 고친 것은 남긴 것과 따로 말한다
+        (
+            [_rec("update_observation_food", {}), _rec("create_event", {"draft": True})],
+            "식사 기록은 고쳤어요. 일정 초안은 만들었어요.",
+        ),
+        # 바뀐 게 없는 성공은 실패가 아니라 할 일이 없었던 것이다 (#678 리뷰)
+        (
+            [_rec("update_event_item", _checked(True, was=True))],
+            "준비물은 이미 챙김 표시돼 있어요. 기록은 남기지 않았어요.",
+        ),
         (
             [_rec("create_event_item", {"added": False})],
-            "기록은 남기지 않았어요. 일정 초안은 만들지 않았어요.",
+            "준비물은 이미 일정에 있어요. 기록은 남기지 않았어요.",
         ),
         (
             [_rec("update_event", {"draft": False, "changed": []})],
-            "기록은 남기지 않았어요. 일정 초안은 만들지 않았어요.",
+            "일정은 이미 그렇게 되어 있어요. 기록은 남기지 않았어요.",
         ),
         # 끝내 성공하지 못한 일정 쪽 호출도 말한다. 고쳐 다시 불러 성공했으면 말하지 않는다
         (
@@ -2014,6 +2045,9 @@ def _rec(name: str, data: dict[str, Any] | None = None, **arguments: Any) -> Too
     ids=[
         "준비물_추가",
         "챙김_표시",
+        "챙김_해제",
+        "관찰_수정",
+        "이미_챙긴_준비물",
         "이미_있는_준비물",
         "바뀐_것_없는_수정",
         "준비물_실패",
@@ -2036,9 +2070,12 @@ async def test_관찰_조각을_저장된_기록_수정으로_끝내도_관찰�
         unclear=("바꿔줘",),
     )
     updated = ToolCallRecord("update_observation_food", {}, {"success": True})
+    deleted = ToolCallRecord("update_observation_food", {"status": "deleted"}, {"success": True})
 
     assert task.open_lookup_edit
     assert _missing_work(task, [updated]) == ()
+    # 지우기도 update 로 오지만 기록을 남긴 게 아니다
+    assert _missing_work(task, [deleted]) == (WorkType.OBSERVE,)
 
 
 @pytest.mark.parametrize(
@@ -2156,9 +2193,12 @@ async def test_알림을_해_달라는_일정_조각은_쓰기_없이_끝나도_
     assert len(llm.seen) == 1
 
 
-def test_알림장_이야기는_알림_요청이_아니라_일정_조각으로_본다() -> None:
-    # "알림장에 …" 는 기관 공지를 옮긴 말이다. 초안이 없으면 일정을 못 한 것으로 본다 (#678 리뷰)
-    task = _task(("알림장에 내일 소풍 간대", "schedule"))
+@pytest.mark.parametrize(
+    "text", ["알림장에 내일 소풍 간대", "키즈노트 알림 왔는데 금요일 현장학습이래"]
+)
+def test_기관_공지_이야기는_알림_요청이_아니라_일정_조각으로_본다(text: str) -> None:
+    # 기관 공지를 옮긴 말이다. 초안이 없으면 일정을 못 한 것으로 본다 (#678 리뷰)
+    task = _task((text, "schedule"))
 
     assert _missing_work(task, []) == (WorkType.SCHEDULE,)
 
