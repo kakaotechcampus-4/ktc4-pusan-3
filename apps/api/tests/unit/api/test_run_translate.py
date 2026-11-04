@@ -672,5 +672,5 @@ def test_tabs_follow_screen_order_not_query_order():
 
 def test_kind_lists_agree():
     """탭 순서 · DB 가 받는 종류 · Agent 가 담는 종류가 같다 — 하나만 늘리면 카드가 깨진다."""
-    assert set(KIND_ORDER) == set(DELETE_KINDS)
+    assert KIND_ORDER == DELETE_KINDS  # 순서까지 — Agent 가 만드는 탭 순서와 서버 정렬이 같다
     assert set(KIND_ORDER) == KINDS
