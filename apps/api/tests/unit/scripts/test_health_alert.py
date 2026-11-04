@@ -172,3 +172,13 @@ def test_dry_run_never_calls_curl(box):
     box(HEALTHY, "--dry-run")
 
     assert not box.curl_log.exists()
+
+
+def test_unhealthy_는_빨강이다(box):
+    """*healthy 패턴이 unhealthy 끝에도 맞아 죽은 컨테이너를 🟢 로 알리던 버그 (#671 에서 발견)."""
+    box(HEALTHY, "--dry-run")
+    lines = _lines(
+        box("/ktc4-redis-deploy running healthy\\n/ktc4-web running unhealthy\\n", "--dry-run")
+    )
+
+    assert lines == ["🔴 [prod] ktc4-web: running healthy → running unhealthy"]

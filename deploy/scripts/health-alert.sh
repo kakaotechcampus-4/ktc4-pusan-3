@@ -81,6 +81,8 @@ while IFS= read -r line; do
   [ "$before" = "$now" ] && continue
   # 세기 표시 — 🟢 살아 있음(healthy · 헬스체크 없이 running) · 🔴 그 밖(죽음 · unhealthy · 재시작 중)
   case "$now" in
+    # *unhealthy 를 먼저 — 아래 *healthy 가 unhealthy 끝에도 맞아 죽은 컨테이너를 🟢 로 알렸다
+    *unhealthy) mark="🔴" ;;
     *healthy | "running -") mark="🟢" ;;
     *) mark="🔴" ;;
   esac
