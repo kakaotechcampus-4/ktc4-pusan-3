@@ -39,7 +39,7 @@ from app.agents.entrypoint import (
     Unwritten,
 )
 from app.agents.memory.drafts import DraftItem
-from app.api.chat_replies import CHAT_REPLIES
+from app.api.chat_replies import CHAT_REPLIES, SCREEN_REF_KINDS
 from app.api.runs.chat_record import to_reply
 
 KST = ZoneInfo("Asia/Seoul")
@@ -187,6 +187,28 @@ def test_체크_안내의_복약_코스_근거는_지난_대화에도_남는다(
     [stored] = CHAT_REPLIES.dump_python([to_reply(event)], mode="json")[0]["readouts"]
 
     assert stored["source_refs"] == [{"kind": "medication_schedule", "id": str(course)}]
+
+
+def test_readout_근거의_kind_는_스키마에서도_복약_코스만이다():
+    """Swagger 에도 "복약 코스만 온다" 는 약속이 남는다. 다른 종류를 넣으면 검증에서 막힌다."""
+    from app.api.chat_replies import StoredReadout
+
+    schema = StoredReadout.model_json_schema()
+    ref = schema["$defs"][schema["properties"]["source_refs"]["items"]["$ref"].split("/")[-1]]
+    kind = ref["properties"]["kind"]
+    # 종류가 하나면 const, 둘 이상이면 enum 으로 나온다
+    assert kind.get("enum", [kind.get("const")]) == sorted(SCREEN_REF_KINDS)
+    with pytest.raises(ValueError):
+        StoredReadout.model_validate(
+            {
+                "kind": "notice",
+                "title": "",
+                "body": "안내",
+                "authored_by": "code",
+                "code": None,
+                "source_refs": [{"kind": "child_growth_log", "id": "x"}],
+            }
+        )
 
 
 def test_근거_칸이_없던_예전_행은_빈_근거로_읽는다():

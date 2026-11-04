@@ -42,6 +42,7 @@ from app.api.chat_replies import (
     SavedReply,
     StoredReadout,
     StoredRef,
+    StoredScreenRef,
     UnavailableReply,
 )
 from app.api.deps.db import background_session
@@ -83,7 +84,7 @@ def to_reply(event: Event) -> ChatReply | None:
                     authored_by=readout.authored_by,
                     code=readout.code,
                     source_refs=[
-                        StoredRef(kind=ref.kind, id=str(ref.id))
+                        StoredScreenRef(kind=ref.kind, id=str(ref.id))
                         for ref in readout.source_refs
                         if ref.kind in SCREEN_REF_KINDS
                     ],
