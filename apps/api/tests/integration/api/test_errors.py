@@ -14,6 +14,7 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from app.api.errors import register_error_handlers
+from app.core.alerts import format_alert
 
 
 async def test_unknown_path_returns_envelope(client):
@@ -92,3 +93,17 @@ async def test_처리되지_않은_예외는_종류와_위치만_로그에_남�
     assert "ValueError" in caplog.text
     assert "in boom" in caplog.text  # 어디서 났는지는 남는다
     assert SECRET not in caplog.text  # 연결된 예외(KeyError)의 메시지도
+
+
+async def test_처리되지_않은_예외의_Discord_카드_제목은_예외_종류다(caplog):
+    """exc_info 를 싣지 않아 제목을 직접 준다 — 아니면 제목이 "처리되지 않은 예외 %s" 다."""
+    transport = ASGITransport(app=_boom_app(), raise_app_exceptions=False)
+    with caplog.at_level(logging.ERROR, logger="app.api.errors"):
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
+            await c.get("/boom")
+
+    [record] = [r for r in caplog.records if r.name == "app.api.errors"]
+    card = str(format_alert(record, env="test"))
+    assert "처리되지 않은 예외 ValueError" in card
+    assert "%s" not in card
+    assert SECRET not in card

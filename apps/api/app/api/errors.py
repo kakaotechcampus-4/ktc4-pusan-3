@@ -205,9 +205,12 @@ def register_error_handlers(app: FastAPI) -> None:
         # 참고: Starlette 은 이 응답을 보낸 뒤 예외를 다시 raise 한다. 테스트에서는
         #      예외가 그대로 올라오고(정상), 운영에서는 uvicorn 이 "Exception in ASGI application"
         #      으로 한 번 더 찍는다 — 그 줄의 메시지는 logging_config._HideExceptionMessage 가 뺀다.
+        # alert_heading — exc_info 가 없으면 Discord 카드 제목이 글귀 첫 줄("… %s")이 된다. 종류
+        # 이름은 값이 아니라 그대로 제목에 싣는다 (core/alerts.py)
         log.error(
             "처리되지 않은 예외 %s\n%s",
             type(exc).__name__,
             "".join(traceback.format_tb(exc.__traceback__)),
+            extra={"alert_heading": f"처리되지 않은 예외 {type(exc).__name__}"},
         )
         return envelope(500, "internal_error", "잠시 후 다시 시도해 주세요")
