@@ -25,6 +25,7 @@ from tests.eval.agents.health.judges import (
     schedule_check,
     symptom_repeat,
 )
+from tests.eval.agents.health.test_health_supervisor_e2e import E2E_IDS
 from tests.eval.agents.health.world import CHILD, WORLDS, build_world
 
 
@@ -54,7 +55,7 @@ def _blocked(*readouts: Readout) -> DomainAgentResult:
 
 
 def test_문서의_입력이_전부_eval_표에_있다():
-    assert set(doc_inputs()) == {c.input_id for c in CASES} | set(OUTSIDE)
+    assert set(doc_inputs()) == {c.input_id for c in CASES} | set(OUTSIDE) | set(E2E_IDS)
 
 
 def test_케이스_id_가_겹치지_않는다():
@@ -68,6 +69,13 @@ def test_케이스_세계가_전부_있다():
 
 def test_Health_밖_입력은_케이스에_없다():
     assert not set(OUTSIDE) & {c.input_id for c in CASES}
+
+
+def test_문서_입력은_한_곳에서만_판정한다():
+    # 라벨 케이스 · Health 밖(SKIP) · Supervisor 를 거친 판정, 셋이 겹치지 않는다
+    labelled = {c.input_id for c in CASES}
+    assert not labelled & set(E2E_IDS)
+    assert not set(OUTSIDE) & set(E2E_IDS)
 
 
 def test_동의_철회_케이스는_다섯이다():
@@ -98,7 +106,9 @@ def test_미구현은_gap_이다():
     assert not verdict.failures
 
 
-def test_hook_이_아직_없으면_gap_이다():
+def test_hook_이_아직_없으면_gap_이다(monkeypatch):
+    monkeypatch.setattr(registry, "HOOK_HANDLERS", {})
+
     verdict = pending("hook")(_ran(None))
 
     assert verdict.gaps == ["hook 미구현"]

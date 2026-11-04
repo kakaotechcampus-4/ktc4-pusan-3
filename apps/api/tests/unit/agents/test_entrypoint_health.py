@@ -1,6 +1,6 @@
 """Health 포트 묶음이 `_domain_contexts` 까지 오는 길. Supervisor 가 Health 를 부르기 전의 배선."""
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID
 
@@ -12,6 +12,7 @@ from app.agents.common.ports import SafetyLookupError
 from app.agents.health.context import HealthContext
 from app.agents.memory.store import InMemoryStore
 from app.agents.memory_bridge import StoreHealthMemory
+from app.agents.suggestion_save import InMemorySuggestions
 
 CHILD = UUID(int=1)
 BIRTH = date(2024, 3, 1)
@@ -96,3 +97,40 @@ async def test_생일을_못_받으면_지어낸_생일로_열지_않는다(gran
 
     with pytest.raises(LookupError):
         await ports.profile.birth_date(child_id=CHILD)
+
+
+async def _child_months(monkeypatch: pytest.MonkeyPatch, birth_date: date | None) -> int | None:
+    """entrypoint 가 pipeline 에 넘긴 월령."""
+    seen: dict[str, Any] = {}
+
+    async def capture(*args: Any, **kwargs: Any) -> None:
+        seen.update(kwargs)
+
+    async def no_commit() -> None:
+        """호출되지 않는다 — pipeline 을 바꿔 끼웠다."""
+
+    monkeypatch.setattr(entrypoint, "_handle_input", capture)
+    await entrypoint.handle_input(
+        child_id=CHILD,
+        parent_id=UUID(int=2),
+        raw_text="열이 38도야",
+        run_id="r",
+        birth_date=birth_date,
+        commit=no_commit,
+        save_suggestions=InMemorySuggestions(),
+    )
+    return seen["child_months"]
+
+
+async def test_응급_사전검사에_생일로_계산한_월령을_넘긴다(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    today = datetime.now(entrypoint.KST).date()
+
+    assert await _child_months(monkeypatch, today - timedelta(days=70)) == 2
+
+
+async def test_생일을_못_받으면_사전검사에_지어낸_월령을_넘기지_않는다(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert await _child_months(monkeypatch, None) is None

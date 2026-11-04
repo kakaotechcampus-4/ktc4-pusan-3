@@ -90,6 +90,7 @@ VISIT_GIVEN = "visit.given"
 VISIT_MED_CHECK = "visit.med_check"
 VISIT_MEAL = "visit.meal"
 PLACE_UNAVAILABLE = "place.unavailable"
+PLACE_PREPARING = "place.preparing"
 SAFETY_UNAVAILABLE = "safety.unavailable"
 
 READOUTS = ReadoutCatalog.from_yaml(Path(__file__).with_name("health.readout.yaml"))

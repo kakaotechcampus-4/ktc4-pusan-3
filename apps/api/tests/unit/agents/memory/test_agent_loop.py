@@ -5,6 +5,7 @@ tests/unit/agents/supervisor 에 있다.
 """
 
 import json
+from dataclasses import replace
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
@@ -1759,3 +1760,76 @@ async def test_알_수_없는_종류의_id는_보여주지_않는다(context: Ag
     )
 
     assert _FOUND_HEADER not in llm.seen[0][1]["content"]
+
+
+# ── 등록된 약 — 먹인 약 행으로 쓰지 않는다 ────────────────────────────
+def _given(medicine: str, raw: str) -> dict[str, Any]:
+    return {"raw_text": raw, "observed_on": "오늘", "medication_given": medicine}
+
+
+def _syrup_registered(context: AgentContext) -> AgentContext:
+    return replace(context, registered_medicines=("해열 시럽",))
+
+
+async def test_진행_중_코스의_약은_먹인_약_행으로_쓰지_않는다(context: AgentContext) -> None:
+    llm = FakeLLM(
+        _tools(_call("c1", "create_observation_health", _given("해열 시럽", "해열 시럽 먹였어"))),
+        _answer({"text": "복약 화면에서 체크해 주세요.", "kind": "message"}),
+    )
+
+    result = await run("해열 시럽 먹였어", _syrup_registered(context), client=llm)
+
+    assert result.refused(ErrorCode.REGISTERED_MEDICINE)
+    assert await _health_rows(context) == []
+
+
+async def test_등록_약이_있으면_이름_없는_약도_쓰지_않는다(context: AgentContext) -> None:
+    llm = FakeLLM(
+        _tools(_call("c1", "create_observation_health", _given("약", "약 먹였어"))),
+        _answer({"text": "복약 화면에서 체크해 주세요.", "kind": "message"}),
+    )
+
+    result = await run("약 먹였어", _syrup_registered(context), client=llm)
+
+    assert result.refused(ErrorCode.REGISTERED_MEDICINE)
+    assert await _health_rows(context) == []
+
+
+async def test_등록되지_않은_약은_그대로_쓴다(context: AgentContext) -> None:
+    llm = FakeLLM(
+        _tools(_call("c1", "create_observation_health", _given("해열제", "해열제 먹였어"))),
+        _answer({"text": "해열제 먹인 것을 기록했어요.", "kind": "message"}),
+    )
+
+    result = await run("해열제 먹였어", _syrup_registered(context), client=llm)
+
+    assert not result.refused(ErrorCode.REGISTERED_MEDICINE)
+    assert len(await _health_rows(context)) == 1
+
+
+async def test_코스를_모르면_이름_없는_약도_쓴다(context: AgentContext) -> None:
+    # 투약이 두 번 남는 쪽이 기록이 사라지는 쪽보다 낫다 — 코스를 못 읽었으면 평소처럼 기록한다
+    llm = FakeLLM(
+        _tools(_call("c1", "create_observation_health", _given("약", "약 먹였어"))),
+        _answer({"text": "약 먹인 것을 기록했어요.", "kind": "message"}),
+    )
+
+    result = await run("약 먹였어", context, client=llm)
+
+    assert not result.refused(ErrorCode.REGISTERED_MEDICINE)
+    assert len(await _health_rows(context)) == 1
+
+
+def test_먹인_약_정정은_막지_않는다(context: AgentContext) -> None:
+    from app.agents.memory.agent import _registered_medicine
+
+    arguments = {"id": "00000000-0000-0000-0000-000000000000", "medication_given": "해열 시럽"}
+
+    assert not _registered_medicine(
+        "update_observation_health", arguments, _syrup_registered(context)
+    )
+    assert _registered_medicine(
+        "create_observation_health",
+        _given("해열 시럽", "해열 시럽 먹였어"),
+        _syrup_registered(context),
+    )

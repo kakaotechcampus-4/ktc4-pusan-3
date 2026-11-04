@@ -242,6 +242,11 @@ visit.meal:
 place.unavailable:
   kind: place_list
   template: "병원 정보를 불러오지 못했어요. 응급 시 119에 연락하세요."
+# 위치 약관에 병원 찾기 목적이 들어가기 전까지 `place_lookup` 이 이 문구로 닫힌다.
+# 위치를 받는 연결이 들어오면 이 문구와 키를 함께 지운다. 문구는 PM 확인 대상이다
+place.preparing:
+  kind: unsupported
+  template: "병원 찾기는 아직 준비 중이에요."
 safety.unavailable:
   kind: caution
   template: "알레르기 정보를 불러오지 못했어요. 아래 정리는 그것 없이 만든 거예요."

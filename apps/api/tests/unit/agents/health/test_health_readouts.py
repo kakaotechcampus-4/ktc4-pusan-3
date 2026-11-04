@@ -33,6 +33,7 @@ KINDS = {
     "place_list",
     "caution",
     "notice",
+    "unsupported",
 }
 
 
@@ -42,8 +43,8 @@ def doc_constants() -> dict[str, str]:
     return dict(_ROW.findall(section))
 
 
-def test_명세의_문구는_72개다():
-    assert len(doc_constants()) == 72
+def test_명세의_문구는_73개다():
+    assert len(doc_constants()) == 73
 
 
 class TestDocParity:

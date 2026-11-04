@@ -74,6 +74,15 @@ _REQUEST = """
 - '놀이' 라는 말이 있어도 숫자 · 한글 · 글자처럼 배우는 낱말이 있으면
   growth/learning_suggestion 이다. 배우는 낱말이 없는 놀 거리는 activity 다.
 - growth 유형이 애매하면 learning_suggestion 으로 보낸다.
+- health로 보내는 건 다섯 가지다.
+  visit_summary   병원 가기 전 정리 · 최근 증상 정리 · 열이 언제부터 · 몇 도까지
+  schedule_check  검진 · 예방접종 시기
+  place_lookup    지금 문 연 병원 · 야간 · 휴일 진료 찾기
+  medication      약 등록 · 바꾸기 · 끊기 · 약 먹였어 · 다음 약 언제
+  care_handoff    투약의뢰서 · 응급 카드처럼 남에게 전할 서류
+- 키 · 몸무게가 얼마나 컸는지 · 잘 크고 있는지는 health 가 아니라 growth/growth_review 다.
+  키 · 몸무게 값을 말하는 것은 검진에서 쟀어도 guarded/growth_record 다.
+- health 유형을 모르겠으면 health_task 를 비워 둔다. 짐작해서 채우지 않는다.
 """.strip()
 
 _GUARDED = """
@@ -94,6 +103,8 @@ _GUARDED = """
                  값이 터무니없어도 이쪽이다. 키 · 몸무게 값은 record 로 다시 보내지 않는다.
                  얼마나 컸는지 · 잘 크고 있는지 묻는 말은 값이 들어 있어도
                  request/growth/growth_review 다.
+                 체온 · 열을 쟀다는 말은 키 · 몸무게가 아니다. '재다' 가 들어 있어도
+                 record/observe 다.
 - hazard         아이가 음식이 아닌 위험한 것(마약류 · 술 · 담배 · 세제 · 농약 · 약품 ·
                  삼킨 물건)을 먹거나 마시거나 삼켰다는 말. 돌려 말해도("어른 음료를 한 모금")
                  이쪽이다. 좋아했다는 말이 붙어도 record 로 나누지 않고 문장 전체를 hazard 로 둔다.
@@ -151,7 +162,16 @@ _EXAMPLES = """
   → request/food/food_check "땅콩버터 먹여도 돼?"
   + request/food/meal_recommendation "안 되면 다른 간식 추천해줘"
 - "해열제 더 먹여도 돼?" → guarded/diagnosis
-- "지금 또 먹여도 돼?" → request/health
+- "지금 또 먹여도 돼?" → request/health/medication
+- "하루 세 번 항생제 먹여야 해" → request/health/medication
+- "열나서 병원 갔더니 항생제 먹이래"
+  → record/observe "열나서 병원 갔더니" + request/health/medication "항생제 먹이래"
+- "아까 약 먹였어" → request/health/medication
+- "검진 언제 받아야 돼?" → request/health/schedule_check
+- "검진 받았는데 키 95cm래" → guarded/growth_record (health 로 보내지 않는다)
+- "어린이집 투약의뢰서 필요해" → request/health/care_handoff
+- "열 언제부터 났더라" → request/health/visit_summary
+- "지금 문 연 소아과 찾아줘" → request/health/place_lookup
 - "숫자 공부는 어떻게 시켜야 할까?" → request/growth/learning_suggestion
 - "농구 좋아하는데 뭐 하고 놀까" → request/activity
 - "농구 좋아하는데 관련된 책 있어?" → request/growth/book_suggestion
@@ -182,6 +202,7 @@ _EXAMPLES = """
 - "기침약을 혼자 꺼내서 반 통 마셨어" → guarded/hazard 문장 전체 (정해진 양을 넘긴 약)
 - "아빠 맥주를 몰래 마셨는데 맛있대" → guarded/hazard 문장 전체
 - "어제 몸무게 쟀더니 17kg 나왔어" → guarded/growth_record
+- "열을 재 보니 37.8도였어" → record/observe (체온은 키 · 몸무게가 아니다)
 - "낮잠 두 시간 잤어. 키 100cm 적어 줘."
   → record/observe "낮잠 두 시간 잤어" + guarded/growth_record "키 100cm 적어 줘"
 - "작년보다 키가 얼마나 컸어?" → request/growth/growth_review (성장 추이를 묻는 말)

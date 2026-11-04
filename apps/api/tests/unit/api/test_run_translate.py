@@ -22,6 +22,7 @@ from app.agents import entrypoint
 # 이유로 레이어 경계 밖이다. 번역은 readout 의 칸만 읽어 옮긴다.
 from app.agents.common.readout import Readout
 from app.agents.common.refs import Ref as EvidenceRef
+from app.agents.common.result import DomainPending, MedicationDraft
 from app.agents.entrypoint import (
     AgentResult,
     DomainRouted,
@@ -225,6 +226,48 @@ def test_agent_result_copies_readouts_without_source_refs():
             "record_count": None,
         },
     )
+
+
+def test_agent_result_does_not_send_drafts_or_pending():
+    """복약 초안 · 되묻기 맥락은 AgentResult 에 실려도 화면으로 가지 않는다.
+
+    초안 카드와 이어받기는 다른 프레임의 몫이라, agent_result 의 키는 지금 그대로 아홉 개다.
+    """
+    result = AgentResult(
+        agent="health",
+        task_type="medication",
+        status="completed",
+        readouts=(),
+        question="어느 약인가요?",
+        medication_drafts=(
+            MedicationDraft(
+                draft_id="d1",
+                op="create",
+                source="utterance",
+                schedule={"title": "항생제"},
+                doses=({"scheduled_time": "08:30"},),
+                notice_times=("08:30",),
+            ),
+        ),
+        pending=DomainPending(
+            agent="health", kind="medication_which", question="어느 약인가요?", payload={}
+        ),
+    )
+
+    name, payload = translate.to_sse(result)
+
+    assert name == "agent_result"
+    assert set(payload) == {
+        "agent",
+        "task_type",
+        "status",
+        "readouts",
+        "question",
+        "suggestion_ids",
+        "kind",
+        "reason",
+        "record_count",
+    }
 
 
 def test_agent_result_carries_saved_suggestion_ids_in_order():

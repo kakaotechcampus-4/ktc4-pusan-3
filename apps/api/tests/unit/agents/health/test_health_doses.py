@@ -10,6 +10,7 @@
 import json
 from dataclasses import fields, replace
 from datetime import datetime, time, timedelta
+from uuid import UUID
 
 import pytest
 
@@ -64,6 +65,11 @@ class TestCheckOnScreen:
         ],
     )
     def test_못_먹였어_표현도_걸린다(self, text):
+        assert any(word in text for word in DOSE_WORDS)
+
+    @pytest.mark.parametrize("text", ["약 먹었어", "해열제 먹었어", "아이가 시럽 먹었어요"])
+    def test_아이가_주어인_먹었어도_걸린다(self, text):
+        # 등록된 약 대조를 지나가면 같은 약이 두 번 남을 수 있다
         assert any(word in text for word in DOSE_WORDS)
 
     @pytest.mark.parametrize(
@@ -324,3 +330,38 @@ class TestSearchMedicationSchedules:
         result = await search_medication_schedules(ctx, SearchMedicationArgs())
 
         assert result.data["courses"] == []
+
+
+SYRUP_ID = UUID(int=701)
+ANTIBIOTIC_ID = UUID(int=702)
+
+
+def two_courses():
+    syrup, syrup_rows = course_with_doses(
+        "해열 시럽",
+        (DoseSlot.of("bedtime"),),
+        TODAY,
+        TODAY + timedelta(days=2),
+        course_id=SYRUP_ID,
+    )
+    anti, anti_rows = course_with_doses(
+        "항생제",
+        PATTERN,
+        TODAY - timedelta(days=1),
+        TODAY + timedelta(days=1),
+        course_id=ANTIBIOTIC_ID,
+    )
+    store = InMemoryMedicationStore([anti, syrup], [*anti_rows, *syrup_rows])
+    return context(medication=store)
+
+
+async def test_체크_안내_ref_는_발화가_가리킨_코스다():
+    readout = await check_on_screen(two_courses(), ["해열 시럽 먹였어"])
+
+    assert [ref.id for ref in readout.source_refs] == [SYRUP_ID]
+
+
+async def test_코스를_가리키지_않으면_진행_중_코스_전부다():
+    readout = await check_on_screen(two_courses(), ["아까 약 먹였어"])
+
+    assert {ref.id for ref in readout.source_refs} == {SYRUP_ID, ANTIBIOTIC_ID}

@@ -37,6 +37,7 @@ from pydantic import ValidationError
 from app.agents.common.gate import Gate
 from app.agents.common.tool_schema import ToolDefinition, build_tool_specs
 from app.agents.health.context import HealthContext
+from app.agents.health.hook import check_infant_fever, check_symptom_repetition
 from app.agents.health.readouts import BLOCKED_CONSENT
 from app.agents.health.result import ErrorCode, ToolResult, fail
 from app.agents.health.schemas.task import HealthTaskType
@@ -130,7 +131,11 @@ HOOK_TOOLS: frozenset[str] = frozenset(
 )
 # 구현된 hook 함수. 키는 `HOOK_TOOLS` 안의 이름이다. 비어 있으면 eval 의 hook 케이스가 GAP 으로
 # 남고, 하나라도 있는데 eval 이 아직 부르지 않으면 실패한다 (tests/eval/agents/health/judges.py)
-HOOK_HANDLERS: dict[str, Callable[..., Awaitable[Any]]] = {}
+# 순서가 곧 화면에 그려지는 순서다. 응급 안내가 증상 반복 안내보다 먼저 와야 한다
+HOOK_HANDLERS: dict[str, Callable[..., Awaitable[Any]]] = {
+    "check_infant_fever": check_infant_fever,
+    "check_symptom_repetition": check_symptom_repetition,
+}
 
 # 모델이 마지막에 부르는 출력 tool. 이게 없는 라벨은 모델을 부르지 않는다
 OUTPUT_TOOLS: dict[HealthTaskType, frozenset[str]] = {
@@ -156,6 +161,10 @@ IMPLEMENTED_TASKS: frozenset[HealthTaskType] = frozenset(
         HealthTaskType.VISIT_SUMMARY,
     }
 )
+
+# 같은 run 의 다른 라벨이 읽는 행을 쓰는 라벨. pipeline 이 이 라벨을 먼저 끝낸 뒤 나머지를 돌린다.
+# 복약 중단이 같은 run 의 진료 준비 · 전달 서류가 읽는 코스 상태를 바꾼다
+WRITING_TASKS: frozenset[HealthTaskType] = frozenset({HealthTaskType.MEDICATION})
 
 TOOL_HANDLERS: dict[str, ToolHandler] = {
     "search_health_observations": search_health_observations,

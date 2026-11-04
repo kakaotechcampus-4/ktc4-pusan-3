@@ -155,7 +155,7 @@ Health의 성장 판정은 제거됐습니다(2026-09-22). `growth_check` 라벨
 | T37 | **growth/review** | – | 동일. 체중 판정 없음 | Health 호출 · "비만" · "과체중" |
 | T38 | **growth/review** | – | 동일. 키 판정·또래 비교 없음 | Health 호출 · "저신장" |
 | T39 | **growth/review** | – | 동일 | Health 호출 |
-| T40 | **M** (`child_growth_log`) | – | 저장만 · 판정 요청 없으므로 Health 미호출 | 자동 판정 |
+| T40 | **S** (`guarded` growth_record) | – | "성장 기록에서 직접 입력" 안내 · 저장 0 · Health 미호출 | 채팅으로 저장 · 자동 판정 |
 
 ## 9. 병원 · 응급
 

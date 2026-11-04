@@ -139,6 +139,19 @@ def confirm_answer(texts: Sequence[str]) -> Literal["yes", "no", "unclear"]:
     return "unclear"
 
 
+def is_dose_report(texts: Sequence[str]) -> bool:
+    """ "먹였어" 같은 복용 표현만 있는 말인가. 등록 · 수정 · 중단 말이나 조회 말이 섞이면 거짓이다.
+
+    `run_medication` 의 ③ 이 쓰는 조건이다. pipeline 도 같은 조건으로 먹인 약 문장을 가려낸다.
+    """
+    text = _NOT_STOP_REQUEST.sub(" ", " ".join(texts))
+    return (
+        not any(word in text for word in ACTION_WORDS)
+        and not any(word in text for word in QUERY_WORDS)
+        and any(word in text for word in DOSE_WORDS)
+    )
+
+
 async def run_medication(
     task: DomainTask, context: HealthContext, client: LLMClient | None
 ) -> DomainAgentResult:
@@ -149,13 +162,12 @@ async def run_medication(
     text = _NOT_STOP_REQUEST.sub(" ", " ".join(task.request_texts))
     # 등록 · 수정 · 중단 말이 같이 있으면 표가 가로채지 않는다 — "먹였는데 이제 끊을게" 가 체크
     # 안내로 가면 보호자의 요청이 아무 말 없이 사라진다. 그런 말은 모델이 본다
-    if not any(word in text for word in ACTION_WORDS):
-        if any(word in text for word in QUERY_WORDS):
-            context.state.readouts += await dose_status_readouts(context)
-            return _finish(context)
-        if any(word in text for word in DOSE_WORDS):
-            context.state.readouts.append(await check_on_screen(context))
-            return _finish(context)
+    if not any(word in text for word in ACTION_WORDS) and any(word in text for word in QUERY_WORDS):
+        context.state.readouts += await dose_status_readouts(context)
+        return _finish(context)
+    if is_dose_report(task.request_texts):
+        context.state.readouts.append(await check_on_screen(context, task.request_texts))
+        return _finish(context)
     return await _converse(task, context, client)
 
 

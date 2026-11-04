@@ -101,9 +101,9 @@ def test_구현된_hook_은_hook_tool_안에_있다():
     assert set(HOOK_HANDLERS) <= HOOK_TOOLS
 
 
-def test_응급_hook_은_아직_등록하지_않는다():
-    # 등록은 pipeline 이 hook 을 부르는 연결과 같이 한다 — 등록하면 eval 이 hook 호출을 요구한다
-    assert "check_infant_fever" not in HOOK_HANDLERS
+def test_hook_은_응급이_먼저다():
+    # 화면이 도착 순서대로 그린다 — 응급 안내가 증상 반복 안내보다 위에 와야 한다
+    assert list(HOOK_HANDLERS) == ["check_infant_fever", "check_symptom_repetition"]
 
 
 @pytest.mark.parametrize("label", list(HealthTaskType))

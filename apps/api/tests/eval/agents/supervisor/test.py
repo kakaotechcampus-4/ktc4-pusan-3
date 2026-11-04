@@ -4,6 +4,7 @@
     uv run pytest tests/eval/agents/supervisor/test.py -m live -k end_to_end -s   # 끝까지
     uv run pytest tests/eval/agents/supervisor/test.py -m live -k split -s        # Supervisor 단독
     uv run pytest tests/eval/agents/supervisor/test.py -m live -k growth_routing -s  # Growth 경계
+    uv run pytest tests/eval/agents/supervisor/test.py -m live -k health_routing -s  # Health 경계
     uv run pytest tests/eval/agents/supervisor/test.py -m live -s                 # 둘 다
 
 
@@ -64,6 +65,8 @@ from tests.eval.agents.routing_cases import (
     CASES_BY_ID,
     FC_CASES,
     GR_CASES,
+    HR_CASES,
+    HR_NEVER_HEALTH,
     RC_CASES,
     T_CASES,
     UNCLEAR_CASES,
@@ -76,12 +79,15 @@ from tests.eval.agents.routing_cases import (
     format_segments,
     format_spans,
     growth_violations,
+    health_violations,
     rate,
     score_split,
     sum_scores,
 )
 
 pytestmark = pytest.mark.live
+
+HR_IDS = frozenset(case.case_id for case in HR_CASES)
 
 # 흔들림(같은 입력에 결과가 바뀌는 것)을 보려면 2 이상으로 올린다
 TEST_REPEAT = int(os.getenv("TEST_REPEAT", "1"))
@@ -242,6 +248,53 @@ def test_growth_routing(expect: Callable[..., None]) -> None:
     assert not violations, f"0건 규칙 위반: {violations}"
     assert agent >= GROWTH_AGENT_MIN, f"agent {agent:.0%} < {GROWTH_AGENT_MIN:.0%}"
     assert growth >= GROWTH_TASK_MIN, f"growth 유형 {growth:.0%} < {GROWTH_TASK_MIN:.0%}"
+
+
+# ── Health 경계 (Supervisor 단독) ───────────────────────────────
+# 합격선 — Growth 와 같다. 0건 규칙은 비율과 섞지 않는다
+HEALTH_AGENT_MIN = 0.9
+HEALTH_TASK_MIN = 0.9
+
+
+def test_health_routing(expect: Callable[..., None]) -> None:
+    """HR01~HR11 — 0건 규칙 위반이 없고 agent · health 유형 일치율이 합격선 이상이다.
+
+    0건 규칙(routing_cases): 키 값 · 성장 판정 · 병명 · 약 용량 문의는 health 로 가지 않는다.
+    """
+    expect(
+        f"0건 규칙 위반 0 · agent ≥ {HEALTH_AGENT_MIN:.0%} · health 유형 ≥ {HEALTH_TASK_MIN:.0%}"
+    )
+    client = _client()
+    # 0건 규칙은 HR 밖의 같은 문장 케이스(GR13 · FC06)도 센다. 비율에는 HR 만 넣는다
+    never = [CASES_BY_ID[case_id] for case_id in HR_NEVER_HEALTH if case_id not in HR_IDS]
+    scores: list[SplitScore] = []
+    violations: list[str] = []
+    errors: list[str] = []
+    for case in (*HR_CASES, *never):
+        for attempt in range(1, TEST_REPEAT + 1):
+            started = time.perf_counter()
+            result = asyncio.run(supervisor.run(case.text, client=client, keep_rejected=True))
+            elapsed_ms = int((time.perf_counter() - started) * 1000)
+            if case.case_id in HR_IDS:
+                scores.append(score_split(case, result.output))
+            violations.extend(health_violations(case.case_id, result.output))
+            if result.error:
+                errors.append(f"{case.case_id}: {result.error}")
+            suffix = f" #{attempt}" if TEST_REPEAT > 1 else ""
+            print(f"\n[{case.case_id}{suffix}] {case.watch}")
+            print(f"    S {result.model_calls}회 {elapsed_ms}ms  {format_segments(result.output)}")
+
+    total = sum_scores(scores)
+    agent = rate(total.agent_ok, total.request_spans)
+    health = rate(total.health_task_ok, total.health_spans)
+    print(f"\n══ Health 경계 합계 — 실행 {len(scores)}회 · {format_score(total)}")
+    print(f"   agent {agent:.0%} · health 유형 {health:.0%} · 0건 규칙 위반 {len(violations)}")
+    if violations:
+        print(f"   0건 규칙 위반: {violations}")
+    assert not errors, f"Supervisor 실패: {errors}"
+    assert not violations, f"0건 규칙 위반: {violations}"
+    assert agent >= HEALTH_AGENT_MIN, f"agent {agent:.0%} < {HEALTH_AGENT_MIN:.0%}"
+    assert health >= HEALTH_TASK_MIN, f"health 유형 {health:.0%} < {HEALTH_TASK_MIN:.0%}"
 
 
 def _format_split_totals(scores: list[SplitScore]) -> str:

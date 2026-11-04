@@ -101,23 +101,12 @@ def doc_inputs() -> dict[str, str]:
     return parsed
 
 
-# Health 로 오지 않는 입력 → 이유. SKIP 으로 남아 빠진 이유가 결과에 보인다
+# Health 로 오지 않는 입력 → 이유. SKIP 으로 남아 빠진 이유가 결과에 보인다.
+# Supervisor 를 거쳐 Health 밖에서 끝나는 입력(진단 문의 · 신체 성장 · 응급 · 체온 기록 …)은
+# `test_health_supervisor_e2e.py` 가 판정한다 — 그 id 는 거기 `E2E_IDS` 에 있다
 OUTSIDE: dict[str, str] = {
     "T06": "처방전 OCR 경로 — 이번 묶음 밖",
-    "T17": "진단 · 교차투약 문의(S?) — Supervisor 연결 이슈",
-    "T20": "Memory 체온 기록 — 연결 이슈",
-    "T26": "진단 문의(S?) — Supervisor 연결 이슈",
-    "T27": "진단 문의(S?) — Supervisor 연결 이슈",
-    "T28": "Memory 관찰 — 연결 이슈",
     "T29": "알레르기 등록 안내 — Supervisor",
-    "T36": "신체 성장 — Growth growth_review",
-    "T37": "신체 성장 — Growth growth_review",
-    "T38": "신체 성장 — Growth growth_review",
-    "T39": "신체 성장 — Growth growth_review",
-    "T40": "Memory child_growth_log — 연결 이슈",
-    "T43": "응급 사전검사(S!) — Supervisor 연결 이슈",
-    "T44": "응급 사전검사(S!) — Supervisor 연결 이슈",
-    "T45": "응급 사전검사(S!) — Supervisor 연결 이슈",
 }
 
 _CONSENT = "blocked.consent 글자 그대로 · 모델 호출 안 함 · 건강정보를 읽지 않음"
@@ -455,8 +444,8 @@ CASES: list[Case] = [
         "T22-C2",
         V,
         "C2",
-        "emergency 가 맨 앞 (3개월 미만 발열) → 이어서 열 타임라인 · 모델 0회",
-        judge=fever_timeline(emergency_first=True),
+        "emergency 한 건만 (3개월 미만 발열) · 열 타임라인을 잇지 않는다 · 모델 0회",
+        judge=fever_timeline(emergency_only=True),
     ),
     _case(
         "T22-model",

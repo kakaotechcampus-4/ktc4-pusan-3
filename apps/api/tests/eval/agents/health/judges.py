@@ -1151,7 +1151,7 @@ def visit_no_record() -> Callable[[Ran], Verdict]:
 
 
 def fever_timeline(
-    *, emergency_first: bool = False, model_calls: int = 0
+    *, emergency_only: bool = False, model_calls: int = 0
 ) -> Callable[[Ran], Verdict]:
     """열 타임라인 판정 — 모델 0회 · 줄마다 ref · 나열만.
 
@@ -1165,8 +1165,9 @@ def fever_timeline(
       - 다음 예정은 등록된 회차 행 중 지금 뒤 가장 이른 것
       - 보호자가 기록한 먹인 약은 원문 · 말한 시각 그대로, 같은 말로 남긴 체온 줄 바로 아래
       - 그 밖의 줄은 없다. 해석 · 계열 · "안 먹였다" · 비율 0건
-    체온 기록이 없으면 `fever.no_record` 한 줄이다. `emergency_first` 면 3개월 미만 발열이라
-    `emergency` 가 맨 앞이고, 나머지는 같은 기준으로 본다. 아니면 응급 안내가 있으면 실패다.
+    체온 기록이 없으면 `fever.no_record` 한 줄이다. `emergency_only` 면 3개월 미만 발열이라
+    `emergency` 한 건만 나가야 한다(타임라인을 이어 내지 않는다). 아니면 응급 안내가 있으면
+    실패다.
     """
 
     def judge(ran: Ran) -> Verdict:
@@ -1175,11 +1176,10 @@ def fever_timeline(
             return verdict
         readouts = list(result.readouts)
         emergency = READOUTS.render(EMERGENCY)
-        if emergency_first:
-            if readouts and readouts[0] == emergency:
-                readouts = readouts[1:]
-            else:
-                verdict.failures.append("3개월 미만 발열인데 응급 안내(emergency)가 맨 앞이 아니다")
+        if emergency_only:
+            if readouts != [emergency]:
+                verdict.failures.append("3개월 미만 발열인데 응급 안내(emergency) 한 건만 아니다")
+            return verdict
         if emergency in readouts:
             verdict.failures.append("응급 안내가 있으면 안 되는 자리에 있다")
             readouts = [r for r in readouts if r != emergency]
