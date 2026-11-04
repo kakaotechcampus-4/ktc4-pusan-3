@@ -1645,13 +1645,13 @@ async def test_이어받기는_찾은_기록을_다시_읽어_보여준다(conte
     juk = await _seed_juk(context)
     llm = FakeLLM(
         _tools(
-            _call("u1", "update_observation_food", {"observation_id": juk, "status": "deleted"})
+            _call("u1", "update_observation_food", {"observation_id": juk, "reaction": "좋아함"})
         ),
-        _cont_answer({"text": "삭제했어요.", "kind": "message"}),
+        _cont_answer({"text": "고쳤어요.", "kind": "message"}),
     )
 
     result = await run(
-        "응 지워줘.",
+        "응 그거 좋아했다고 고쳐줘.",
         context,
         client=llm,
         continuation=_asked_delete(FoundRef("observation_food", juk)),
@@ -1661,7 +1661,6 @@ async def test_이어받기는_찾은_기록을_다시_읽어_보여준다(conte
     assert _FOUND_HEADER in sent and juk in sent and _JUK in sent
     assert sent.index(_FOUND_HEADER) < sent.index("[직전에 물은 것]")
     assert result.calls[0].success is True
-    assert await context.store.get_observation(domain="food", observation_id=juk) is None
 
 
 async def test_그새_지워진_기록은_보여주지_않는다(context: AgentContext) -> None:
@@ -1734,24 +1733,6 @@ async def test_이어받기가_보여주는_일정에는_준비물이_담긴다(
 
     sent = llm.seen[0][1]["content"]
     assert _FOUND_HEADER in sent and "보험증" in sent
-
-
-async def test_일정_이어받기는_조회_없이_그_일정을_지운다(context: AgentContext) -> None:
-    event_id = await _seed_pediatric_event(context)
-    llm = FakeLLM(
-        _tools(_call("d1", "delete_event", {"event_id": event_id})),
-        _cont_answer({"text": "삭제했어요.", "kind": "message"}),
-    )
-
-    result = await run(
-        "응",
-        context,
-        client=llm,
-        continuation=_asked_delete(FoundRef("event", event_id)),
-    )
-
-    assert result.tool_names == ["delete_event"] and result.calls[0].success is True
-    assert await context.store.get_event(event_id=event_id) is None
 
 
 async def test_일정만_보여준_이어받기는_관찰_새_저장을_막는다(context: AgentContext) -> None:

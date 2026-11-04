@@ -33,7 +33,7 @@ from app.agents.common.datetime_rules import (
     check_when,
     resolve_when,
 )
-from app.agents.memory.context import AgentContext
+from app.agents.memory.context import AgentContext, FoundRows
 from app.agents.memory.drafts import DraftItem, EventDraft, EventSnapshot
 from app.agents.memory.result import ErrorCode, Operation, ToolResult, cut, fail, nearest, ok
 from app.agents.memory.schemas.common import EventCategory, EventType
@@ -43,7 +43,6 @@ from app.agents.memory.schemas.schedule import (
     EventItemRef,
     EventItemUpdate,
     EventQuery,
-    EventRef,
     EventUpdate,
 )
 from app.agents.memory.store.ports import EventItemRow, EventRow
@@ -156,6 +155,7 @@ async def query_event(context: AgentContext, args: EventQuery) -> ToolResult:
         child_id=context.child_id, title_query=args.title_query, **bounds
     )
     kept, truncated = nearest(rows, lambda row: abs((row.starts_at - context.now).total_seconds()))
+    context.found[EVENT] = FoundRows(tuple(row.id for row in kept), truncated)
     return ok(
         "query",
         EVENT,
@@ -300,15 +300,6 @@ def _resolve_when(
     if problem is not None:
         return fail(operation, EVENT, ErrorCode.INVALID_ARGS, problem)
     return when
-
-
-async def delete_event(context: AgentContext, args: EventRef) -> ToolResult:
-    # 준비물도 함께 사라진다 (ON DELETE CASCADE)
-    if not await context.store.delete_event(event_id=args.event_id):
-        return fail("delete", EVENT, ErrorCode.UNKNOWN_EVENT, _UNKNOWN_EVENT)
-    # 같은 run 에서 고쳤다가 지운 일정이면 초안도 뺀다. 없는 일정의 초안을 승인 화면에 올리지 않는다
-    context.drafts.drop(args.event_id)
-    return ok("delete", EVENT, id=args.event_id)
 
 
 # ── event_item ──────────────────────────────────────────────────
@@ -498,7 +489,6 @@ SCHEDULE_HANDLERS = {
     "create_event": create_event,
     "query_event": query_event,
     "update_event": update_event,
-    "delete_event": delete_event,
     "create_event_item": create_event_item,
     "update_event_item": update_event_item,
     "delete_event_item": delete_event_item,
