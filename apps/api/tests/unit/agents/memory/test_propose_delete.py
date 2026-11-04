@@ -211,3 +211,67 @@ async def test_store_가_이미_제안을_들고_있으면_실패로_알린다(
 
     assert result.success is False and result.error["code"] == ErrorCode.INVALID_ARGS
     assert context.proposals == []
+
+
+async def test_all_kinds_는_그_종류의_조회_결과를_전부_고른다(
+    context: AgentContext, store: InMemoryStore
+) -> None:
+    # 전부를 id 로 늘어놓으면 한 응답 출력을 넘는다 — 종류 이름 하나로 고른다
+    rice, snack = await _meal(context, "rice"), await _meal(context, "snack")
+    event = await _event(context)
+    await _call(context, "query_observation_food")
+    await _call(context, "query_event", {"date_from": "2026-09-13", "date_to": "2026-09-15"})
+
+    result = await _call(context, "propose_delete", {"all_kinds": ["observation_food"]})
+
+    assert result.success is True, result.error
+    assert store.proposal is not None
+    assert store.proposal[1] == (
+        DeleteCandidates("observation_food", False, (rice, snack), (rice, snack)),
+    )
+    assert event not in {oid for tab in store.proposal[1] for oid in tab.ids}
+
+
+async def test_except_ids_는_all_kinds_로_고른_것에서_뺀다(
+    context: AgentContext, store: InMemoryStore
+) -> None:
+    rice, snack = await _meal(context, "rice"), await _meal(context, "snack")
+    await _call(context, "query_observation_food")
+
+    await _call(
+        context,
+        "propose_delete",
+        {"all_kinds": ["observation_food"], "except_ids": [snack]},
+    )
+
+    assert store.proposal is not None
+    assert store.proposal[1] == (
+        DeleteCandidates("observation_food", False, (rice, snack), (rice,)),
+    )
+
+
+async def test_조회하지_않은_종류를_all_kinds_에_넣으면_실패한다(
+    context: AgentContext, store: InMemoryStore
+) -> None:
+    await _meal(context, "rice")
+    await _call(context, "query_observation_food")
+
+    result = await _call(context, "propose_delete", {"all_kinds": ["event"]})
+
+    assert result.success is False and result.error["code"] == ErrorCode.TARGET_NOT_FOUND
+    assert "event" in result.error["message"]
+    assert store.proposal is None
+
+
+async def test_후보_밖_except_ids_도_실패한다(context: AgentContext, store: InMemoryStore) -> None:
+    await _meal(context, "rice")
+    await _call(context, "query_observation_food")
+
+    result = await _call(
+        context,
+        "propose_delete",
+        {"all_kinds": ["observation_food"], "except_ids": ["made-up"]},
+    )
+
+    assert result.success is False and result.error["code"] == ErrorCode.TARGET_NOT_FOUND
+    assert store.proposal is None

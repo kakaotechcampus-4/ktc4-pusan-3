@@ -46,10 +46,21 @@ async def propose_delete(context: AgentContext, args: ProposeDeleteArgs) -> Tool
     # 두 번째 호출이면 다른 검사보다 먼저 알린다 — 다시 조회하라는 안내를 받으면 또 부른다
     if context.proposals:
         return fail("create", RESOURCE, ErrorCode.INVALID_ARGS, _ONCE)
-    tabs = candidate_tabs(context, frozenset(args.ids))
+    tabs = candidate_tabs(context)
     if not tabs:
         return fail("create", RESOURCE, ErrorCode.TARGET_REQUIRED, _QUERY_FIRST)
-    outside = [oid for oid in args.ids if oid not in {i for tab in tabs for i in tab.ids}]
+    queried = {tab.kind for tab in tabs}
+    unqueried = [kind for kind in args.all_kinds if kind not in queried]
+    if unqueried:
+        return fail(
+            "create",
+            RESOURCE,
+            ErrorCode.TARGET_NOT_FOUND,
+            f"{', '.join(unqueried)} 는 이 run 에서 조회한 결과가 없다. 조회한 종류만 all_kinds 에 "
+            "넣는다. 그 종류도 지울 거면 먼저 조회한다.",
+        )
+    known = {oid for tab in tabs for oid in tab.ids}
+    outside = [oid for oid in (*args.ids, *args.except_ids) if oid not in known]
     if outside:
         return fail(
             "create",
@@ -58,6 +69,11 @@ async def propose_delete(context: AgentContext, args: ProposeDeleteArgs) -> Tool
             f"{', '.join(outside)} 는 이 run 의 조회 결과에 없다. 조회 결과에 있는 id 만 넣는다. "
             "같은 종류를 다시 조회했으면 마지막 조회 결과만 후보다.",
         )
+    whole = set(args.all_kinds)
+    picked = (set(args.ids) | {oid for tab in tabs if tab.kind in whole for oid in tab.ids}) - set(
+        args.except_ids
+    )
+    tabs = candidate_tabs(context, frozenset(picked))
     if any(tab.picked for tab in tabs):
         # 고른 것이 있는 종류만 탭으로 남긴다. 한 run 이 다른 요청(일정 수정 등)을 위해 조회한
         # 종류가 체크 없는 탭으로 붙으면, 잘못 누른 한 번에 상관없는 기록이 지워진다.
