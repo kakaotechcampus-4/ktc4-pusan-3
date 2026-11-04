@@ -39,7 +39,7 @@ from app.agents.common.suggestion import (
 )
 from app.agents.common.tool_loop import run_tool_loop
 from app.agents.growth.context import GrowthContext, GrowthRunState, build_gate
-from app.agents.growth.gating import routine_mode
+from app.agents.growth.gating import EDUCATION_MIN_MONTH, routine_mode
 from app.agents.growth.prompt import build_system_prompt, recall_message, request_message
 from app.agents.growth.readouts import (
     ASK_NEED_LEVEL,
@@ -63,8 +63,15 @@ from app.agents.growth.store.ports import UpstreamUnavailable
 from app.agents.growth.tools.closures import closure_key
 from app.agents.growth.tools.delta import asks_judgement, compute_growth_delta
 from app.agents.growth.tools.docs import DocHit, search_growth_doc
-from app.agents.growth.tools.memory import has_citable_memory
-from app.rules.growth_topic import request_topic, routine_scope, strict_topic
+from app.agents.growth.tools.memory import has_citable_memory, has_topic_memory
+from app.rules.growth_topic import (
+    doc_areas,
+    doc_tags,
+    request_topic,
+    routine_scope,
+    screen_use,
+    strict_topic,
+)
 from app.rules.term_match import normalize
 
 logger = logging.getLogger(__name__)
@@ -102,8 +109,19 @@ async def _run(
     task: DomainTask, context: GrowthContext, *, client: LLMClient | None
 ) -> DomainAgentResult:
     task_type = task_type_of(task)
-    gate = await build_gate(context, task_type)
+    if _screen_candidate(task, task_type):
+        # 게임 · 영상 고민은 루틴 단계를 낼 사슬이 없다 — 교육 흐름으로 연다. 교육 게이트가 알레르기
+        # 조회도 하고(실패하면 교육처럼 닫힌다) 월령도 읽는다. 돌 전이면 교육이 열리지 않으니 루틴
+        # (리듬 안내)으로 되돌린다 — 이때만 게이트를 다시 만든다
+        gate = await build_gate(context, GrowthTaskType.LEARNING_SUGGESTION)
+        if gate.stage.months >= EDUCATION_MIN_MONTH:
+            task_type = GrowthTaskType.LEARNING_SUGGESTION
+        else:
+            gate = await build_gate(context, task_type)
+    else:
+        gate = await build_gate(context, task_type)
     context.state.gate = gate
+    context.state.task_type = task_type.value
     context.state.topic = request_topic(task.request_texts, task.record_texts)
     context.state.strict_topic = strict_topic(task.request_texts, task.record_texts)
     context.state.routine_scope = routine_scope(task.request_texts, task.record_texts)
@@ -144,7 +162,8 @@ async def _run(
             task_type=task_type,
             months=gate.stage.months,
             # 요청 주제의 영역 행에서 고른다. 주제가 없으면 영역으로 거르지 않는다
-            areas=context.state.topic,
+            areas=doc_areas(context.state.topic),
+            tags=doc_tags(context.state.topic),
             # 같은 날 같은 아이는 같은 [예시] — 재호출도 같은 프롬프트다. 날이 바뀌면 바뀐다
             rotation=f"{context.child_id}|{context.today.isoformat()}",
             # 식품 아닌 알레르기의 대응표 낱말이 든 행은 싣지 않는다
@@ -152,8 +171,9 @@ async def _run(
         )
         # 프롬프트에 실은 행만 근거로 달 수 있다
         context.state.seen_docs = {hit.row.id: hit.row for hit in examples}
-        if not examples and not await has_citable_memory(context):
-            # 문서 행도 아이 기록도 못 단다 — 어떤 후보도 build() 를 못 지나서 모델을 부르지 않는다
+        if not examples and not await _has_basis(context):
+            # 문서 행도 (요청 주제의) 아이 기록도 못 단다 — 어떤 후보도 근거 검증을 못 지나서 모델을
+            # 부르지 않는다
             context.state.closed_reason = DOC_NO_ROW
             return _result(task_type, "blocked", readouts=(READOUTS.render(DOC_NO_ROW),))
 
@@ -248,7 +268,7 @@ def _observe(
         context.run_id,
         context.child_id,
         gate.stage.stage if gate is not None else None,
-        task.task_type,
+        state.task_type or task.task_type,
         status,
         result.model_calls if result is not None else state.model_calls,
         bundle_summary(result.suggestions).kind if result is not None else None,
@@ -257,6 +277,27 @@ def _observe(
         state.closed_reason,
         int((time.perf_counter() - started) * 1000),
     )
+
+
+def _screen_candidate(task: DomainTask, task_type: GrowthTaskType) -> bool:
+    """루틴 라벨로 온 화면 · 게임 고민을 교육 흐름으로 열어 볼 것인가(월령은 게이트가 정한다).
+
+    루틴 낱말이 없고(`screen_use`) 닫힘(의료 처치 · 증상)에 안 걸릴 때만이다. 닫힘이 먼저 —
+    루틴에서 닫히던 말은 교육으로 돌려도 닫혀야 한다.
+    """
+    return (
+        task_type is GrowthTaskType.ROUTINE_COACHING
+        and screen_use(task.request_texts, task.record_texts)
+        and closure_key((*task.request_texts, *task.record_texts, *task.answer_texts)) is None
+    )
+
+
+async def _has_basis(context: GrowthContext) -> bool:
+    """[예시]가 없을 때 후보를 낼 아이 기록이 있는가. 주제가 있으면 그 주제의 기록이어야 한다."""
+    topic = context.state.topic
+    if topic:
+        return await has_topic_memory(context, topic)
+    return await has_citable_memory(context)
 
 
 def _doc_hits(state: GrowthRunState) -> int:

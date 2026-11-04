@@ -116,7 +116,7 @@ def build(
                 f"{agent}: {item.ref.kind} 를 인용했는데 무엇을 근거로 봤는지(note)가 비었다"
             )
 
-    if not any(_fresh(item, today) for item in citations):
+    if not any(fresh_child(item, today) for item in citations):
         if general_reason is None:
             raise SuggestionRejected(
                 f"{agent}: 아이 기록 근거가 0행인데 일반 추천 문구(general_reason)가 없다"
@@ -155,7 +155,7 @@ def build(
     )
 
 
-def _fresh(item: EvidenceCitation, today: date) -> bool:
+def fresh_child(item: EvidenceCitation, today: date) -> bool:
     """개인화 근거로 셀 수 있는 아이 기록인가. 날짜를 모르면 낡았는지 알 수 없어 세지 않는다."""
     return (
         item.ref.is_child_record

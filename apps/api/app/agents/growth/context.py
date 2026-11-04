@@ -111,6 +111,8 @@ class GrowthRunState:
     closed_reason: str | None = None
     # 시작한 대화 수. 20초에 끊겨 결과가 없을 때 몇 번째 대화에서 끊겼는지 남긴다
     model_calls: int = 0
+    # 이 run 이 실제로 돈 라벨. 화면 고민은 루틴 라벨로 와도 교육으로 돈다(`agent._run`)
+    task_type: str | None = None
 
 
 @dataclass(frozen=True)

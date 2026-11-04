@@ -1116,3 +1116,272 @@ class TestEvidencePrompt:
         llm = FakeLLM()
         await run(task("learning_suggestion", "한글 놀이 추천해줘"), docs_ctx(), client=llm)
         assert "한 글자도 바꾸지 않고 그대로 복사" in llm.seen[0][0]["content"]
+
+
+SCREEN_CONCERN = ("아이가 요새 게임만 자꾸 하려고 하는데",)
+
+
+def _screen_rows() -> list[GrowthDocRow]:
+    def row(key: str, title: str, tags: tuple[str, ...]) -> GrowthDocRow:
+        return GrowthDocRow(
+            id=uuid5(NAMESPACE_URL, key),
+            doc_key=key,
+            row_type="learning_activity",
+            title=title,
+            body="가족이 함께 정한 약속을 그림으로 붙여 둔다.",
+            min_month=36,
+            max_month=72,
+            area="physical_health",
+            tags=tags,
+        )
+
+    return [
+        row(
+            "growth.learn.screen.promise",
+            "화면 보는 약속 그림으로 정하기",
+            ("physical_health", "screen"),
+        ),
+        row("growth.learn.walk.tape", "테이프 선 위 걷기", ("physical_health",)),
+    ]
+
+
+class TestScreenConcern:
+    """게임 · 영상 고민은 코드가 읽는다 — 모델이 고른 루틴 칸에 따라 결과가 갈리지 않는다."""
+
+    def _ctx(self, months=48):
+        return context(birth_for(months), docs=fixture_docs(*_screen_rows()))
+
+    async def test_게임_고민은_루틴이_아니라_교육으로_돈다(self):
+        ctx = self._ctx()
+        screen_id = str(uuid5(NAMESPACE_URL, "growth.learn.screen.promise"))
+        llm = FakeLLM(
+            learning(
+                "약속 그림 그리기", "끝난 뒤 할 일 정하기", "모래시계 맞추기", doc_id=screen_id
+            )
+        )
+        result = await run(
+            _task("routine_coaching", "어떻게 해야해?", records=SCREEN_CONCERN), ctx, client=llm
+        )
+        assert result.task_type == "learning_suggestion" and result.status == "completed"
+        assert len(result.suggestions) == 3
+        assert {d.kind for d in result.suggestions} == {"general"}
+        system = llm.seen[0][0]["content"]
+        assert "[교육 활동]" in system and "화면 보는 약속 그림으로 정하기" in system
+        assert "중독 같은 말" in system
+
+    async def test_화면_주제는_화면_태그_행만_예시로_싣는다(self):
+        ctx = self._ctx()
+        await run(
+            _task("learning_suggestion", "어떻게 해야해?", records=SCREEN_CONCERN),
+            ctx,
+            client=FakeLLM(),
+        )
+        assert [row.doc_key for row in ctx.state.seen_docs.values()] == [
+            "growth.learn.screen.promise"
+        ]
+
+    async def test_화면_행이_없는_월령은_예시가_없다(self):
+        ctx = self._ctx(months=30)
+        llm = FakeLLM()
+        result = await run(
+            _task("learning_suggestion", "어떻게 해야해?", records=SCREEN_CONCERN), ctx, client=llm
+        )
+        assert ctx.state.seen_docs == {}
+        assert result.readouts == (READOUTS.render("doc.no_row"),) and llm.seen == []
+
+    async def test_닫힘_낱말이_있으면_화면이어도_루틴_닫힘이다(self):
+        for record, key in (
+            ("게임할 때 눈을 자꾸 깜빡여", "closed.symptom_habit"),
+            ("게임하다 연고 바르는 걸 싫어해", "closed.medical_routine"),
+        ):
+            llm = FakeLLM()
+            result = await run(
+                _task("routine_coaching", "어떻게 고쳐?", records=(record,)),
+                self._ctx(),
+                client=llm,
+            )
+            assert result.task_type == "routine_coaching" and result.model_calls == 0, record
+            assert result.readouts == (READOUTS.render(key),) and llm.seen == [], record
+
+    async def test_돌_전은_흐름을_바꾸지_않는다(self):
+        llm = FakeLLM()
+        result = await run(
+            _task("routine_coaching", "어떻게 해야해?", records=SCREEN_CONCERN),
+            self._ctx(months=8),
+            client=llm,
+        )
+        assert result.task_type == "routine_coaching" and result.model_calls == 0
+        assert llm.seen == []
+
+    async def test_루틴_낱말이_있으면_루틴으로_돈다(self):
+        result = await run(
+            _task("routine_coaching", "양치할 때 유튜브 틀어 줘야 해"),
+            self._ctx(),
+            client=FakeLLM(),
+        )
+        assert result.task_type == "routine_coaching"
+
+    async def test_교육이_아닌_다른_라벨은_바꾸지_않는다(self):
+        result = await run(
+            _task("book_suggestion", "게임 좋아하는데 책 추천해줘"), self._ctx(), client=FakeLLM()
+        )
+        assert result.task_type == "book_suggestion"
+
+    async def test_관측_줄에는_바뀐_라벨이_남는다(self, caplog):
+        caplog.set_level(logging.INFO, logger="app.agents.growth.agent")
+        await run(
+            _task("routine_coaching", "어떻게 해야해?", records=SCREEN_CONCERN),
+            self._ctx(),
+            client=FakeLLM(),
+        )
+        lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("growth run")]
+        assert "task_type=learning_suggestion" in lines[-1]
+
+
+class TestClosedWithoutTopicEvidence:
+    """주제는 읽었는데 [예시]도 그 주제의 기록도 없으면 모델 전에 닫는다 — 낼 근거가 없다."""
+
+    def _memory(self, *, activities=()):
+        like = AffinityRow(
+            id=UUID(int=950),
+            merge_key="공룡",
+            state="confirmed",
+            polarity=1,
+            strength=0.9,
+            last_observed_on=TODAY - timedelta(days=3),
+            observed_days=3,
+        )
+        return InMemoryGrowthMemory(affinities=[("education", like)], activities=list(activities))
+
+    async def test_화면_행이_없는_월령에_공룡_기록뿐이면_닫는다(self):
+        ctx = context(birth_for(30), docs=fixture_docs(*_screen_rows()), memory=self._memory())
+        llm = FakeLLM()
+        result = await run(
+            _task("learning_suggestion", "어떻게 해야해?", records=SCREEN_CONCERN), ctx, client=llm
+        )
+        assert (result.status, result.model_calls) == ("blocked", 0)
+        assert result.readouts == (READOUTS.render("doc.no_row"),) and llm.seen == []
+
+    async def test_영어를_물었는데_공룡_기록뿐이면_닫는다(self):
+        ctx = context(birth_for(48), docs=fixture_docs(), memory=self._memory())
+        llm = FakeLLM()
+        result = await run(task("learning_suggestion", "영어 공부 어떻게 시켜?"), ctx, client=llm)
+        assert (result.status, result.model_calls) == ("blocked", 0)
+        assert llm.seen == []
+
+    async def test_주제_기록이_있으면_모델을_부른다(self):
+        game = ActivityObservation(
+            id=UUID(int=951),
+            child_id=CHILD,
+            observed_on=TODAY - timedelta(days=1),
+            subject="게임",
+            activity="휴대폰 게임",
+            polarity=1,
+        )
+        ctx = context(
+            birth_for(30),
+            docs=fixture_docs(*_screen_rows()),
+            memory=self._memory(activities=[game]),
+        )
+        llm = FakeLLM()
+        await run(
+            _task("learning_suggestion", "어떻게 해야해?", records=SCREEN_CONCERN), ctx, client=llm
+        )
+        assert llm.seen
+
+    async def test_주제가_없으면_공룡_기록만으로_모델을_부른다(self):
+        ctx = context(birth_for(48), docs=fixture_docs(), memory=self._memory())
+        llm = FakeLLM()
+        await run(task("learning_suggestion", "놀이 추천해줘"), ctx, client=llm)
+        assert llm.seen
+
+
+class TestBasisLookupIsLazy:
+    """[예시]가 있으면 근거로 달 기억 범위를 따로 읽지 않는다 — 교육 run 마다 조회가 늘지 않게."""
+
+    @pytest.mark.parametrize("text", ["놀이 추천해줘", "한글 놀이 추천해줘"])
+    async def test_예시가_있으면_기억_범위를_읽지_않는다(self, monkeypatch, text):
+        async def boom(*args, **kwargs):
+            raise AssertionError("[예시]가 있는데 기억 범위를 읽었다")
+
+        monkeypatch.setattr("app.agents.growth.agent.has_citable_memory", boom)
+        monkeypatch.setattr("app.agents.growth.agent.has_topic_memory", boom)
+        ctx = docs_ctx()
+        await run(task("learning_suggestion", text), ctx, client=FakeLLM())
+        assert ctx.state.seen_docs
+
+
+class TestScreenGate:
+    """화면 고민을 교육으로 돌려도 프로필 · 동의는 한 번만 읽는다.
+
+    돌 전만 루틴 게이트로 되돌리느라 다시 읽는다.
+    """
+
+    @staticmethod
+    def _count_profile(ctx):
+        reads: list[int] = []
+        real = ctx.ports.profile.birth_date
+
+        async def counting(**kwargs):
+            reads.append(1)
+            return await real(**kwargs)
+
+        ctx.ports.profile.birth_date = counting
+        return reads
+
+    async def test_교육으로_돌아도_프로필을_한_번만_읽는다(self):
+        ctx = context(birth_for(48), docs=fixture_docs(*_screen_rows()))
+        reads = self._count_profile(ctx)
+        await run(
+            _task("routine_coaching", "어떻게 해야해?", records=SCREEN_CONCERN),
+            ctx,
+            client=FakeLLM(),
+        )
+        assert ctx.state.task_type == "learning_suggestion" and len(reads) == 1
+
+    async def test_루틴으로_남는_고민은_프로필을_한_번만_읽는다(self):
+        ctx = context(birth_for(48), docs=fixture_docs(*_screen_rows()))
+        reads = self._count_profile(ctx)
+        await run(_task("routine_coaching", "양치 어떻게 가르쳐?"), ctx, client=FakeLLM())
+        assert ctx.state.task_type == "routine_coaching" and len(reads) == 1
+
+
+class TestPromptScope:
+    """주제 근거 · 화면 안내는 코드가 그 주제를 읽었을 때만, 교육 프롬프트에만 실린다.
+
+    주제를 못 읽은 요청에 실으면 모델이 스스로 주제가 있다고 보고 [예시] id 를 더 옮겨 적다 한
+    글자씩 틀려 같은 제출이 되풀이됐다(라이브 20회 중 3회 failed).
+    """
+
+    TOPIC_MARK = "주제의 기록이 없으면 [예시] id 를 근거로 단다"
+    SCREEN_MARK = "화면 · 게임 이야기면"
+    DONT_MARK = "중독 같은 말"
+
+    async def _prompt(self, label: GrowthTaskType, topic: tuple[str, ...] = ()) -> str:
+        from app.agents.growth.context import build_gate
+        from app.agents.growth.prompt import build_system_prompt
+
+        ctx = context(birth_for(48), docs=fixture_docs(), books=InMemoryBooks())
+        ctx.state.gate = await build_gate(ctx, label)
+        ctx.state.topic = topic
+        return build_system_prompt(ctx, label, ())
+
+    async def test_주제를_읽었을_때만_교육_프롬프트에_주제_안내가_있다(self):
+        learning = GrowthTaskType.LEARNING_SUGGESTION
+        assert self.TOPIC_MARK in await self._prompt(learning, ("communication",))
+        assert self.TOPIC_MARK not in await self._prompt(learning, ())
+
+    @pytest.mark.parametrize(
+        "label", [GrowthTaskType.ROUTINE_COACHING, GrowthTaskType.BOOK_SUGGESTION]
+    )
+    async def test_도서와_루틴_프롬프트에는_주제가_있어도_없다(self, label):
+        prompt = await self._prompt(label, ("communication", "screen"))
+        assert self.TOPIC_MARK not in prompt and self.SCREEN_MARK not in prompt
+
+    async def test_화면_안내와_중독_금지는_화면_주제에만_있다(self):
+        learning = GrowthTaskType.LEARNING_SUGGESTION
+        screen = await self._prompt(learning, ("screen",))
+        assert self.SCREEN_MARK in screen and self.DONT_MARK in screen
+        for topic in ((), ("communication",)):
+            other = await self._prompt(learning, topic)
+            assert self.SCREEN_MARK not in other and self.DONT_MARK not in other

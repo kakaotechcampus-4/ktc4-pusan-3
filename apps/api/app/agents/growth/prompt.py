@@ -15,6 +15,7 @@ from collections.abc import Sequence
 from app.agents.growth.context import GrowthContext
 from app.agents.growth.schemas.task import GrowthTaskType
 from app.agents.growth.tools.docs import DocHit
+from app.rules.growth_topic import SCREEN
 
 # 같은 입력의 기록 조각을 요청과 가르는 머리말
 RECORD_HEADER = "[보호자가 같이 한 말]"
@@ -43,6 +44,22 @@ _LEARNING = """
 - 관심사가 있으면 활동에 잇는다. 예시는 결을 보여주는 것이다. 그대로 베끼지 않는다.
 - 요청이나 [보호자가 같이 한 말]에 주제(국어 · 숫자 같은 낱말)가 있으면 search_education_memory 의
   keywords 에 그 낱말을 넣는다.
+""".strip()
+
+# 코드가 요청 주제를 읽었을 때만 싣는다. 주제를 못 읽은 요청("열매 관찰")에 실으면 모델이 스스로
+# 주제가 있다고 보고 [예시] id 를 더 옮겨 적다 한 글자씩 틀려 제출이 되풀이됐다
+_LEARNING_TOPIC = """
+- 요청에 주제가 있으면 그 주제의 기록만 개인화 근거다. 관심 기록(공룡 등)은 주제 기록과 같이 달 때만
+  남는다. 주제의 기록이 없으면 [예시] id 를 근거로 단다.
+- 요청 주제의 기록이 어려워한 것(polarity −1)이면 도울 대상이다. reason 에 그 기록의 subject 와
+  어떻게 돕는지 쓴다. 주제 밖에서 싫어한 기록을 근거로 달면 무엇을 피했는지 reason 에 쓴다.
+""".strip()
+
+# 화면 · 게임 고민(`state.topic` 에 screen)일 때만 싣는다
+_LEARNING_SCREEN = """
+- 화면 · 게임 이야기면 search_activity_memory 와 search_routine_memory 로 그 기록을 찾는다. 화면을
+  더 보게 하는 활동이 아니라 화면 보는 약속이나 끝낸 뒤 할 놀이를 낸다.
+- 중독 같은 말로 행동을 부르지 않는다.
 """.strip()
 
 _ROUTINE = """
@@ -80,6 +97,8 @@ _BOOK = """
 - 책 내용을 지어내지 않는다. reason 은 조회한 기록과 제목 · 형태에서 알 수 있는 것으로만 쓴다.
 - evidence 에는 search_book_interests 결과에 있던 id 만 쓴다. 근거로 쓴 기록이 없으면 비운다.
   책 자체는 코드가 근거로 단다.
+- 요청에 주제 낱말이 있으면 그 낱말의 기록만 개인화 근거다. 다른 주제의 관심(공룡 등)만 달면 일반
+  추천이 된다.
 """.strip()
 
 _LABEL_SECTIONS: dict[GrowthTaskType, str] = {
@@ -117,6 +136,12 @@ def build_system_prompt(
     if gate is None:
         raise RuntimeError("Gate 없이 프롬프트를 만들었다 — run() 이 build_gate 를 먼저 부른다")
     label = _LABEL_SECTIONS[task_type]
+    if task_type is GrowthTaskType.LEARNING_SUGGESTION:
+        topic = context.state.topic
+        if topic:
+            label = f"{label}\n{_LEARNING_TOPIC}"
+        if SCREEN in topic:
+            label = f"{label}\n{_LEARNING_SCREEN}"
     dynamic = [f"[월령]\n아이는 {gate.stage.months}개월이다.", _now(context)]
     if task_type is not GrowthTaskType.BOOK_SUGGESTION:
         dynamic.insert(0, _examples(examples))
