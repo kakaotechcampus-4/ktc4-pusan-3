@@ -29,6 +29,7 @@ from app.agents.curator.embedding.judge import (
     JudgeQuotaError,
 )
 from app.agents.curator.embedding.ports import CuratorDomain
+from app.core import llm_usage
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +58,7 @@ class JevJudge:
         self._key = values["CURATOR_JUDGE_API_KEY"]
         self._url = values["CURATOR_JUDGE_BASE_URL"].rstrip("/") + "/decisions"
         self._model = values["CURATOR_JUDGE_MODEL"]
+        self._provider = llm_usage.provider_of(values["CURATOR_JUDGE_BASE_URL"])
         self._timeout = s.LLM_TIMEOUT_S
         self._transport = transport  # 테스트는 httpx.MockTransport 를 넣는다
         self._prompt = prompt
@@ -103,14 +105,26 @@ class JevJudge:
 
         # subject · 후보 원문은 남기지 않는다. Elice 응답에는 금액(cost)이 없어 토큰 수를 남긴다
         # (금액은 Elice 콘솔에서 본다). 출력 토큰은 과금되지 않는다
+        usage = body.get("usage") or {}
+        input_tokens = usage.get("input_tokens")
+        latency_ms = int((time.perf_counter() - started) * 1000)
         logger.info(
             "curator judge model=%s candidates=%d confidence=%s input_tokens=%s latency_ms=%d",
             answer.model,
             len(options),
             answer.confidence,
-            (body.get("usage") or {}).get("input_tokens"),
-            int((time.perf_counter() - started) * 1000),
+            input_tokens,
+            latency_ms,
         )
+        if isinstance(input_tokens, int):  # 셀 값이 없는 응답은 0 토큰 행을 만들지 않는다
+            llm_usage.record(
+                role="curator_judge",
+                provider=self._provider,
+                model=answer.model or self._model,
+                prompt_tokens=input_tokens,
+                completion_tokens=usage.get("output_tokens"),
+                latency_ms=latency_ms,
+            )
         return answer
 
 

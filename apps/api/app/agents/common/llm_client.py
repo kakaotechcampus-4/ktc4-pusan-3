@@ -20,6 +20,7 @@ from app.agents.common.config import (
     AgentSettings,
     get_agent_settings,
 )
+from app.core import llm_usage
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +110,7 @@ class LLMClient:
             )
 
         self._profile = profile
+        self._provider = llm_usage.provider_of(profile.base_url)
         self._client = AsyncOpenAI(
             base_url=profile.base_url,
             api_key=profile.api_key,
@@ -178,19 +180,38 @@ class LLMClient:
         if message is None:
             raise LLMError("LLM 응답에 message가 없다.")
         usage = _usage_dict(response.usage)
-        self._log_call(message, usage, latency_ms)
+        # 게이트웨이가 별칭을 실제 모델로 풀 수 있다 — 과금은 응답에 찍힌 모델 기준이다
+        served = getattr(response, "model", None)
+        model = served if isinstance(served, str) and served else self._profile.model
+        self._log_call(message, usage, latency_ms, model)
+        if usage:  # 셀 값이 없는 응답은 0 토큰 행을 만들지 않는다
+            llm_usage.record(
+                role=self._profile.role,
+                provider=self._provider,
+                model=model,
+                prompt_tokens=usage.get("prompt_tokens", 0),
+                cached_prompt_tokens=usage.get("cached_prompt_tokens", 0),
+                completion_tokens=usage.get("completion_tokens", 0),
+                reasoning_tokens=usage.get("reasoning_tokens", 0),
+                latency_ms=latency_ms,
+            )
         return LLMResponse(message=message, usage=usage, latency_ms=latency_ms)
 
-    def _log_call(self, message: Any, usage: dict[str, int], latency_ms: int) -> None:
+    def _log_call(self, message: Any, usage: dict[str, int], latency_ms: int, model: str) -> None:
         tool_calls = getattr(message, "tool_calls", None) or []
+        attribution = llm_usage.current()
 
         # 발화 원문·프롬프트·응답 본문은 로그에 남기지 않는다
         logger.info(
-            "llm call role=%s model=%s prompt_tokens=%s completion_tokens=%s "
-            "reasoning_tokens=%s tool_calls=%d tools=%s latency_ms=%d",
+            "llm call role=%s model=%s run=%s source=%s prompt_tokens=%s "
+            "cached_prompt_tokens=%s completion_tokens=%s reasoning_tokens=%s "
+            "tool_calls=%d tools=%s latency_ms=%d",
             self._profile.role,
-            self._profile.model,
+            model,
+            attribution.run_id if attribution else "-",
+            attribution.source if attribution else "-",
             usage.get("prompt_tokens"),
+            usage.get("cached_prompt_tokens"),
             usage.get("completion_tokens"),
             usage.get("reasoning_tokens"),
             len(tool_calls),
