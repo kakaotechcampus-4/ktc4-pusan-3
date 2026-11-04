@@ -135,6 +135,52 @@ class TestCheck:
         assert check_growth_text(("", "  ")).allowed is True
 
 
+class TestStrict:
+    """문서 행이 없는 요청 기반 후보는 의료 · 증상 낱말과 근거 없는 수치까지 본다."""
+
+    def test_엄하지_않으면_수치와_증상은_보지_않는다(self):
+        assert check_growth_text(["하루 1시간까지 보여 주세요"]).allowed
+
+    def test_근거_없는_수치는_걸린다(self):
+        verdict = check_growth_text(["하루 1시간까지 보여 주세요"], strict=True)
+        assert not verdict.allowed
+        assert verdict.hits == ("amount",)
+
+    def test_보호자가_말한_수치는_통과한다(self):
+        verdict = check_growth_text(
+            ["30분 타이머를 맞춰 두기"], strict=True, grounds=["30분만 보여 주는데 힘들어요"]
+        )
+        assert verdict.allowed
+
+    def test_의료_처치와_증상_낱말은_걸린다(self):
+        verdict = check_growth_text(["눈 깜빡임이 줄어드는 놀이"], strict=True)
+        assert verdict.hits == ("closure",)
+        assert check_growth_text(["안약 넣는 연습 놀이"], strict=True).hits == ("closure",)
+
+    def test_걸린_종류는_함께_남는다(self):
+        verdict = check_growth_text(["치료 효과가 있으니 하루 2시간"], strict=True)
+        assert set(verdict.hits) == {"diagnosis", "amount"}
+
+    def test_수치_없는_일반_문장은_엄해도_통과한다(self):
+        assert check_growth_text(["영어 그림 카드를 보며 이름 말하기"], strict=True).allowed
+
+    def test_시드_문서_행_문장은_엄한_검사에도_걸리지_않는다(self):
+        """엄한 검사는 문서 행이 없는 run 에만 쓰지만, 같은 문장이 걸리면 낱말이 과하다는 신호다."""
+        rows = [e.to_row() for e in growth_doc_seed() if e.meta.status == "approved"]
+        assert rows
+        found = []
+        for row in rows:
+            texts = (row.title, row.body, *row.materials)
+            # 수치는 행 본문이 말한 것이라 근거로 둔다 — 보는 것은 의료 · 증상 낱말이다
+            if not check_growth_text(texts, strict=True, grounds=texts).allowed:
+                found.append(row.doc_key)
+        assert found == []
+
+    def test_원문_수치는_결과에_남지_않는다(self):
+        verdict = check_growth_text(["하루 1시간까지"], strict=True)
+        assert "1시간" not in repr(verdict)
+
+
 class TestLoader:
     def test_실제_목록을_읽는다(self):
         terms = guard_terms()
