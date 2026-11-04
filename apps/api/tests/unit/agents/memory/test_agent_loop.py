@@ -1862,3 +1862,30 @@ async def test_삭제_제안_뒤에도_다른_수정_조각을_묻는_질문은_
 
     assert result.reply == MemoryReply(text="병원 일정을 몇 시로 바꿀까요?", kind="question")
     assert result.pending is not None and result.pending.hint_text == "병원 일정 시간을 바꿔줘"
+
+
+async def test_수정_삭제_조각이_하나면_그_조각을_되묻는_질문은_막는다(
+    context: AgentContext,
+) -> None:
+    # 말투로 가르지 않는다 — "취소해줘" 도 삭제다. 조각이 하나면 제안한 그 삭제를 묻는 것이다
+    juk = await _seed_juk(context)
+    task = MemoryTask(
+        raw_text="점심 전복죽 기록 취소해줘",
+        hints=(MemoryHint(text="점심 전복죽 기록 취소해줘", work=WorkType.LOOKUP_EDIT),),
+    )
+    llm = FakeLLM(
+        _tools(_call("q1", "query_observation_food", {"raw_text_query": "전복죽"})),
+        _tools(_call("p1", "propose_delete", {"ids": [juk]})),
+        _answer(
+            {
+                "text": "전복죽 기록을 삭제할까요?",
+                "kind": "question",
+                "pending_hint": "점심 전복죽 기록 취소해줘",
+            }
+        ),
+    )
+
+    result = await run(task.raw_text, context, client=llm, task=task)
+
+    assert result.reply == MemoryReply(text=PROPOSED_REPLY, kind="message")
+    assert result.pending is None

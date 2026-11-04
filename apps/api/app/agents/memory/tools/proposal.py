@@ -18,6 +18,14 @@ _QUERY_FIRST = (
     "이 run 에서 조회한 기록 · 일정이 없다. 지울 기간과 종류로 조회 tool 을 먼저 부르고, "
     "그 결과의 id 로 다시 부른다."
 )
+_NOTHING_FOUND = (
+    "조회한 종류에 지울 기록 · 일정이 하나도 없다. propose_delete 를 다시 부르지 않고 "
+    "보호자에게 못 찾았다고 알린다."
+)
+_CUT = (
+    "조회가 잘린 종류가 있다 — 보이지 않던 기록은 후보에 없어 지워지지 않는다. "
+    "안내할 때 최근 것까지만 담았다고 말하고, 전부라고 말하지 않는다."
+)
 _ONCE = "이미 삭제 제안을 남겼다. 다시 부르지 않는다. 고칠 것은 보호자가 카드에서 체크로 고친다."
 _DONE = (
     "아직 아무것도 지우지 않았다. "
@@ -46,9 +54,11 @@ async def propose_delete(context: AgentContext, args: ProposeDeleteArgs) -> Tool
     # 두 번째 호출이면 다른 검사보다 먼저 알린다 — 다시 조회하라는 안내를 받으면 또 부른다
     if context.proposals:
         return fail("create", RESOURCE, ErrorCode.INVALID_ARGS, _ONCE)
+    if not context.found:
+        return fail("create", RESOURCE, ErrorCode.TARGET_REQUIRED, _QUERY_FIRST)
     tabs = candidate_tabs(context)
     if not tabs:
-        return fail("create", RESOURCE, ErrorCode.TARGET_REQUIRED, _QUERY_FIRST)
+        return fail("create", RESOURCE, ErrorCode.TARGET_NOT_FOUND, _NOTHING_FOUND)
     # 조회했는데 0건인 종류는 받는다 — "다 지워줘" 에 다섯 종류를 다 넣는 것이 자연스럽고, 고를 것이
     # 없을 뿐이다. 조회하지 않은 종류만 막는다
     unqueried = [kind for kind in args.all_kinds if kind not in context.found]
@@ -61,6 +71,19 @@ async def propose_delete(context: AgentContext, args: ProposeDeleteArgs) -> Tool
             "넣는다. 그 종류도 지울 거면 먼저 조회한다.",
         )
     known = {oid for tab in tabs for oid in tab.ids}
+    whole = set(args.all_kinds)
+    in_whole = {oid for tab in tabs if tab.kind in whole for oid in tab.ids}
+    # 빼기는 종류 전부로 고른 것 안에서만 뜻이 있다. 밖이면 아무것도 안 빠져 요청과 카드가 어긋난다
+    stray = [oid for oid in args.except_ids if oid in known and oid not in in_whole]
+    both = [oid for oid in args.ids if oid in set(args.except_ids)]
+    if stray or both:
+        return fail(
+            "create",
+            RESOURCE,
+            ErrorCode.INVALID_ARGS,
+            "except_ids 는 all_kinds 로 고른 종류 안의 id 만 넣고, ids 와 겹치지 않게 한다. "
+            "몇 건만 고를 때는 ids 만 쓴다.",
+        )
     outside = [oid for oid in (*args.ids, *args.except_ids) if oid not in known]
     if outside:
         return fail(
@@ -70,10 +93,7 @@ async def propose_delete(context: AgentContext, args: ProposeDeleteArgs) -> Tool
             f"{', '.join(outside)} 는 이 run 의 조회 결과에 없다. 조회 결과에 있는 id 만 넣는다. "
             "같은 종류를 다시 조회했으면 마지막 조회 결과만 후보다.",
         )
-    whole = set(args.all_kinds)
-    picked = (set(args.ids) | {oid for tab in tabs if tab.kind in whole for oid in tab.ids}) - set(
-        args.except_ids
-    )
+    picked = (set(args.ids) | in_whole) - set(args.except_ids)
     tabs = candidate_tabs(context, frozenset(picked))
     if any(tab.picked for tab in tabs):
         # 고른 것이 있는 종류만 탭으로 남긴다. 한 run 이 다른 요청(일정 수정 등)을 위해 조회한
@@ -95,7 +115,7 @@ async def propose_delete(context: AgentContext, args: ProposeDeleteArgs) -> Tool
         id=proposal_id,
         picked=sum(len(tab.picked) for tab in tabs),
         candidates=candidates,
-        notice=_DONE,
+        notice=f"{_DONE} {_CUT}" if any(tab.truncated for tab in tabs) else _DONE,
     )
 
 

@@ -364,7 +364,7 @@ async def run(
                     if at_limit
                     else _pending(replied, parsed.pending_hint, task, continuation, raw_text, calls)
                 )
-                if _asks_after_proposal(context, replied, pending):
+                if _asks_after_proposal(context, replied, pending, task):
                     # 삭제 제안을 남긴 run 은 그 삭제를 되묻지 않는다 (#535). 맥락을 넘기면 다음
                     # 채팅의 "응" 이 제안을 이어받는 것처럼 읽힌다 — 지우는 것은 카드의 버튼뿐이다.
                     # 모델 문장("삭제할까요?")은 답할 곳이 없는 질문이라 고정 안내로 바꾼다
@@ -735,27 +735,32 @@ def _parse_reply(content: str, model: type[ReplyOutput] = ReplyOutput) -> ReplyO
 PROPOSED_REPLY = "지울 기록을 카드에 담았어요. 확인하고 삭제 버튼을 눌러 주세요."
 
 
-# 삭제를 말한 조각. "시간은 빼줘" 처럼 값만 비우는 수정이 걸리지 않게 "빼" 는 넣지 않는다
-_DELETE_CUES = ("지워", "지우", "지울", "지운", "삭제", "없애")
-
-
 def _asks_after_proposal(
-    context: AgentContext, reply: MemoryReply, pending: PendingMemoryContext | None
+    context: AgentContext,
+    reply: MemoryReply,
+    pending: PendingMemoryContext | None,
+    task: MemoryTask | None,
 ) -> bool:
-    """삭제 제안을 남긴 뒤 그 삭제를 되묻는가.
+    """삭제 제안을 남긴 뒤 그 삭제를 되묻는 것이 확실한가. 확실할 때만 막는다.
 
-    섞인 입력의 다른 조각을 묻는 질문은 살린다 — 기록 저장이든 같은 lookup_edit 인 일정 수정
-    ("병원 일정 몇 시로 바꿀까요?")이든, 끊으면 그 조각이 답할 곳 없이 사라진다. 제안이 어느 조각을
-    위한 것인지 코드는 모르므로, 질문이 이어 붙는 조각이 삭제를 말했는지로 본다. 이어 붙일 조각을
-    못 고른 질문은 삭제를 되묻는 것으로 본다.
+    제안이 어느 조각을 위한 것인지 코드는 모른다. 그래서 이렇게 가른다.
+    - 이어 붙일 조각을 못 고른 질문 → 막는다
+    - 기록 저장 등 다른 작업 조각을 묻는 질문 → 살린다
+    - 수정 · 삭제 조각이 하나뿐인 run 에서 그 조각을 묻는 질문 → 제안한 그 삭제다. 막는다
+    - 수정 · 삭제 조각이 둘 이상이면 → 살린다. "병원 일정 몇 시로 바꿀까요?" 를 막으면 그 조각이
+      답할 곳 없이 사라진다. 삭제를 되물은 것이었어도 다음 "응" 은 새 카드를 낼 뿐 지우지 않는다
+    단어("지워" 등)로 가르지 않는다 — "지우" 는 흔한 이름이고 "취소해줘" 처럼 말이 여럿이다.
     """
     if not context.proposals or reply.kind != "question":
         return False
     if pending is None:
         return True
-    return pending.work is WorkType.LOOKUP_EDIT and any(
-        cue in pending.hint_text for cue in _DELETE_CUES
-    )
+    if pending.work is not WorkType.LOOKUP_EDIT:
+        return False
+    if task is None:  # 이어받기 run — 이어받은 조각 하나다
+        return True
+    edits = sum(1 for hint in task.hints if hint.work == WorkType.LOOKUP_EDIT)
+    return edits <= 1
 
 
 def _pending(

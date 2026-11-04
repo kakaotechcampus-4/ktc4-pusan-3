@@ -8,6 +8,7 @@
 """
 
 from datetime import datetime, timedelta
+from typing import get_args
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -16,9 +17,10 @@ import pytest
 from app.agents.common.datetime_rules import DateRange
 from app.agents.memory.context import AgentContext
 from app.agents.memory.registry import execute_tool
-from app.agents.memory.result import ErrorCode
+from app.agents.memory.result import MAX_ROWS, ErrorCode
+from app.agents.memory.schemas.proposal import DeleteKind
 from app.agents.memory.store import InMemoryStore
-from app.agents.memory.store.ports import DeleteCandidates
+from app.agents.memory.store.ports import DELETE_KINDS, DeleteCandidates
 
 KST = ZoneInfo("Asia/Seoul")
 NOW = datetime(2026, 9, 15, 9, 0, tzinfo=KST)
@@ -292,3 +294,50 @@ async def test_조회했는데_0건인_종류는_all_kinds_에_있어도_받는�
     assert result.success is True, result.error
     assert store.proposal is not None
     assert store.proposal[1] == (DeleteCandidates("observation_food", False, (rice,), (rice,)),)
+
+
+async def test_조회한_종류가_모두_0건이면_못_찾았다고_알리게_한다(
+    context: AgentContext, store: InMemoryStore
+) -> None:
+    await _call(context, "query_observation_food")
+
+    result = await _call(context, "propose_delete", {"all_kinds": ["observation_food"]})
+
+    assert result.success is False and result.error["code"] == ErrorCode.TARGET_NOT_FOUND
+    assert "못 찾았다" in result.error["message"]
+    assert store.proposal is None
+
+
+async def test_all_kinds_밖의_except_ids_나_ids_와_겹치는_빼기는_실패한다(
+    context: AgentContext, store: InMemoryStore
+) -> None:
+    rice = await _meal(context, "rice")
+    event = await _event(context)
+    await _call(context, "query_observation_food")
+    await _call(context, "query_event", {"date_from": "2026-09-13", "date_to": "2026-09-15"})
+
+    stray = await _call(
+        context, "propose_delete", {"all_kinds": ["observation_food"], "except_ids": [event]}
+    )
+    both = await _call(context, "propose_delete", {"ids": [rice], "except_ids": [rice]})
+
+    assert stray.success is False and stray.error["code"] == ErrorCode.INVALID_ARGS
+    assert both.success is False and both.error["code"] == ErrorCode.INVALID_ARGS
+    assert store.proposal is None
+
+
+async def test_잘린_종류를_담으면_전부라고_말하지_않게_알린다(
+    context: AgentContext, store: InMemoryStore
+) -> None:
+    for i in range(MAX_ROWS + 1):
+        await _meal(context, f"meal{i}")
+    await _call(context, "query_observation_food")
+
+    result = await _call(context, "propose_delete", {"all_kinds": ["observation_food"]})
+
+    assert result.success is True
+    assert "전부라고 말하지 않는다" in result.data["notice"]
+
+
+def test_제안_인자의_종류는_포트의_종류와_같다() -> None:
+    assert get_args(DeleteKind) == DELETE_KINDS
