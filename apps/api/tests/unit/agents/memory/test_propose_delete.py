@@ -94,16 +94,39 @@ async def test_조회한_종류마다_탭을_만들고_고른_것만_기본_체�
     assert [p.id for p in context.proposals] == [result.data["id"]]
 
 
-async def test_고른_것이_없어도_제안한다(context: AgentContext, store: InMemoryStore) -> None:
+async def test_고른_것이_없으면_조회한_종류를_모두_보여_준다(
+    context: AgentContext, store: InMemoryStore
+) -> None:
     # 모델이 못 골랐어도 보호자가 카드에서 직접 고를 수 있다
     rice = await _meal(context, "rice")
+    event = await _event(context)
     await _call(context, "query_observation_food")
+    await _call(context, "query_event", {"date_from": "2026-09-13", "date_to": "2026-09-15"})
 
     result = await _call(context, "propose_delete", {"ids": []})
 
     assert result.success is True
     assert store.proposal is not None
-    assert store.proposal[1] == (DeleteCandidates("observation_food", False, (rice,), ()),)
+    assert store.proposal[1] == (
+        DeleteCandidates("observation_food", False, (rice,), ()),
+        DeleteCandidates("event", False, (event,), ()),
+    )
+
+
+async def test_고른_것이_없는_종류는_탭으로_붙이지_않는다(
+    context: AgentContext, store: InMemoryStore
+) -> None:
+    # "운동회 시간 바꾸고 간식 기록 지워줘" — 시간을 바꾸려고 조회한 일정이 삭제 카드에 붙지 않는다
+    snack = await _meal(context, "snack")
+    await _event(context)
+    await _call(context, "query_event", {"date_from": "2026-09-13", "date_to": "2026-09-15"})
+    await _call(context, "query_observation_food")
+
+    result = await _call(context, "propose_delete", {"ids": [snack]})
+
+    assert result.data["candidates"] == 1
+    assert store.proposal is not None
+    assert [tab.kind for tab in store.proposal[1]] == ["observation_food"]
 
 
 async def test_조회_없이_부르면_실패한다(context: AgentContext, store: InMemoryStore) -> None:

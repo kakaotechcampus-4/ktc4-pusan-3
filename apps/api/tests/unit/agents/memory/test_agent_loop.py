@@ -20,6 +20,7 @@ from app.agents.memory.agent import (
     _UNCLEAR_REPLY,
     _UNSAVED_FALLBACK,
     MAX_QUESTIONS,
+    PROPOSED_REPLY,
     MemoryReply,
     _claims_saved,
     run,
@@ -1781,3 +1782,55 @@ async def test_알_수_없는_종류의_id는_보여주지_않는다(context: Ag
     )
 
     assert _FOUND_HEADER not in llm.seen[0][1]["content"]
+
+
+# ── 삭제 제안 뒤의 되묻기 (#535) ──────────────────────────────────
+_DELETE_AND_SNACK = MemoryTask(
+    raw_text=f'아까 "{_JUK}" 기록 지워주고, 오늘 간식도 먹었어',
+    hints=(
+        MemoryHint(text=f'아까 "{_JUK}" 기록 지워줘', work=WorkType.LOOKUP_EDIT),
+        MemoryHint(text="오늘 간식도 먹었어", work=WorkType.OBSERVE),
+    ),
+)
+
+
+def _propose_then_ask(juk: str, pending_hint: str | None) -> FakeLLM:
+    return FakeLLM(
+        _tools(_call("q1", "query_observation_food", {"raw_text_query": "전복죽"})),
+        _tools(_call("p1", "propose_delete", {"ids": [juk]})),
+        _answer(
+            {"text": "전복죽 기록을 삭제할까요?", "kind": "question", "pending_hint": pending_hint}
+        ),
+    )
+
+
+async def test_삭제_제안_뒤_그_삭제를_물으면_고정_안내로_끝낸다(context: AgentContext) -> None:
+    juk = await _seed_juk(context)
+
+    result = await run(
+        _JUK_DELETE.raw_text, context, client=_propose_then_ask(juk, None), task=_JUK_DELETE
+    )
+
+    assert result.reply == MemoryReply(text=PROPOSED_REPLY, kind="message")
+    assert result.pending is None
+
+
+async def test_삭제_제안_뒤에도_다른_조각을_묻는_질문은_살린다(context: AgentContext) -> None:
+    # 섞인 입력에서 간식 조각을 묻는 질문까지 끊으면 그 조각이 답할 곳 없이 사라진다
+    juk = await _seed_juk(context)
+    llm = FakeLLM(
+        _tools(_call("q1", "query_observation_food", {"raw_text_query": "전복죽"})),
+        _tools(_call("p1", "propose_delete", {"ids": [juk]})),
+        _answer(
+            {
+                "text": "어떤 간식을 먹었나요?",
+                "kind": "question",
+                "pending_hint": "오늘 간식도 먹었어",
+            }
+        ),
+    )
+
+    result = await run(_DELETE_AND_SNACK.raw_text, context, client=llm, task=_DELETE_AND_SNACK)
+
+    assert result.reply is not None and result.reply.kind == "question"
+    assert result.pending is not None and result.pending.work is WorkType.OBSERVE

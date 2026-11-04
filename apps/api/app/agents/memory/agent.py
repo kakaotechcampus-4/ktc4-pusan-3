@@ -357,10 +357,6 @@ async def run(
                 continue
             if parsed is not None:
                 replied = MemoryReply(text=parsed.text, kind=parsed.kind)
-                if context.proposals and replied.kind == "question":
-                    # 삭제 제안을 남긴 run 은 되묻기가 아니다 (#535). 맥락을 넘기면 다음 채팅의
-                    # "응" 이 제안을 이어받는 것처럼 읽힌다 — 지우는 것은 카드의 버튼뿐이다
-                    replied = MemoryReply(text=parsed.text, kind="message")
                 # 재질문 상한은 여기서 한 번만 판정한다. 상한이면 맥락을 만들지 않고 표시만 싣는다
                 at_limit = _at_ask_limit(replied, continuation, calls)
                 pending = (
@@ -368,6 +364,11 @@ async def run(
                     if at_limit
                     else _pending(replied, parsed.pending_hint, task, continuation, raw_text, calls)
                 )
+                if _asks_after_proposal(context, replied, pending):
+                    # 삭제 제안을 남긴 run 은 그 삭제를 되묻지 않는다 (#535). 맥락을 넘기면 다음
+                    # 채팅의 "응" 이 제안을 이어받는 것처럼 읽힌다 — 지우는 것은 카드의 버튼뿐이다.
+                    # 모델 문장("삭제할까요?")은 답할 곳이 없는 질문이라 고정 안내로 바꾼다
+                    replied, pending = MemoryReply(text=PROPOSED_REPLY, kind="message"), None
                 misnamed = (
                     replied.kind == "question"
                     and pending is None
@@ -729,6 +730,19 @@ def _parse_reply(content: str, model: type[ReplyOutput] = ReplyOutput) -> ReplyO
         return model.model_validate_json(content)
     except ValidationError:
         return None
+
+
+PROPOSED_REPLY = "지울 기록을 카드에 담았어요. 확인하고 삭제 버튼을 눌러 주세요."
+
+
+def _asks_after_proposal(
+    context: AgentContext, reply: MemoryReply, pending: PendingMemoryContext | None
+) -> bool:
+    """삭제 제안을 남긴 뒤 그 삭제를 되묻는가. 섞인 입력의 다른 조각(기록 · 일정)을 묻는 질문은
+    살린다 — 끊으면 그 조각이 답할 곳 없이 사라진다."""
+    if not context.proposals or reply.kind != "question":
+        return False
+    return pending is None or pending.work is WorkType.LOOKUP_EDIT
 
 
 def _pending(

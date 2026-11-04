@@ -10,12 +10,15 @@
 
 from datetime import timedelta
 from typing import Any
+from uuid import UUID
 
 import pytest
 
 from app.agents.common.datetime_rules import DateRange
+from app.agents.memory.agent import PROPOSED_REPLY
 from app.agents.memory.context import AgentContext
-from app.agents.memory.schemas.task import PendingMemoryContext, WorkType
+from app.agents.memory.schemas.task import FoundRef, PendingMemoryContext, WorkType
+from app.agents.memory.store import InMemoryStore
 from app.agents.pipeline import (
     CardTab,
     DeleteProposed,
@@ -30,6 +33,7 @@ from app.agents.suggestion_save import InMemorySuggestions
 from tests.eval.agents.routing_cases import CASES_BY_ID
 from tests.unit.agents.supervisor.test_pipeline import (
     CHILD,
+    KST,
     NOW,
     RUN_ID,
     FakeLLM,
@@ -44,11 +48,6 @@ from tests.unit.agents.supervisor.test_pipeline import (
 
 @pytest.fixture
 def memory_context() -> AgentContext:
-    from uuid import UUID
-
-    from app.agents.memory.store import InMemoryStore
-    from tests.unit.agents.supervisor.test_pipeline import KST
-
     return AgentContext(
         child_id=CHILD,
         source_writer=UUID(int=2),
@@ -190,7 +189,7 @@ async def test_삭제_제안을_남기면_삭제_카드를_내고_되묻기_맥�
     assert card.tabs == (CardTab("observation_activity", False, (blocks, lego), (blocks,)),)
     assert log.of(FoundTabs) == []
     assert log.of(PendingReply) == []
-    assert [note.kind for note in log.of(MemoryNote)] == ["message"]
+    assert [(note.text, note.kind) for note in log.of(MemoryNote)] == [(PROPOSED_REPLY, "message")]
 
 
 async def test_저장이_섞인_run_에는_조회_카드를_붙이지_않는다(memory_context: AgentContext) -> None:
@@ -219,22 +218,38 @@ async def test_저장이_섞인_run_에는_조회_카드를_붙이지_않는다(
     assert log.of(FoundTabs) == []
 
 
-async def test_되묻기에_답하는_run_에는_조회_카드를_붙이지_않는다(
-    memory_context: AgentContext,
-) -> None:
-    await _activity(memory_context, "블록")
+async def _answer_lookup(memory_context: AgentContext, found: tuple[FoundRef, ...]) -> _Log:
     asked = PendingMemoryContext(
         hint_text="어제 블록놀이 기록 보여줘",
         question="어느 날 기록인가요?",
         work=WorkType.LOOKUP_EDIT,
+        found=found,
     )
     llm = FakeLLM(
         _tools(_call("q1", "query_observation_activity", {"date_from": "어제", "date_to": "어제"})),
         _answer({"text": "어제 블록놀이 기록이 있어요.", "kind": "message", "leftover": False}),
     )
     log = _Log()
-
     await _run("T08", memory_context, llm, log, continuation=asked, text="어제")
+    return log
+
+
+async def test_앞_턴이_후보를_보였으면_답하는_run_에는_조회_카드를_다시_붙이지_않는다(
+    memory_context: AgentContext,
+) -> None:
+    blocks = await _activity(memory_context, "블록")
+
+    log = await _answer_lookup(memory_context, (FoundRef("observation_activity", blocks),))
 
     assert memory_context.found  # 조회는 했다 — 카드만 붙지 않는다
     assert log.of(FoundTabs) == [] and log.loaded == []
+
+
+async def test_앞_턴이_못_찾고_물었으면_답하는_run_이_조회_카드를_낸다(
+    memory_context: AgentContext,
+) -> None:
+    blocks = await _activity(memory_context, "블록")
+
+    log = await _answer_lookup(memory_context, ())
+
+    assert log.of(FoundTabs) == [FoundTabs((CardTab("observation_activity", False, (blocks,)),))]

@@ -49,8 +49,7 @@ async def propose_delete(context: AgentContext, args: ProposeDeleteArgs) -> Tool
     tabs = candidate_tabs(context, frozenset(args.ids))
     if not tabs:
         return fail("create", RESOURCE, ErrorCode.TARGET_REQUIRED, _QUERY_FIRST)
-    candidates = {oid for tab in tabs for oid in tab.ids}
-    outside = [oid for oid in args.ids if oid not in candidates]
+    outside = [oid for oid in args.ids if oid not in {i for tab in tabs for i in tab.ids}]
     if outside:
         return fail(
             "create",
@@ -59,6 +58,12 @@ async def propose_delete(context: AgentContext, args: ProposeDeleteArgs) -> Tool
             f"{', '.join(outside)} 는 이 run 의 조회 결과에 없다. 조회 결과에 있는 id 만 넣는다. "
             "같은 종류를 다시 조회했으면 마지막 조회 결과만 후보다.",
         )
+    if any(tab.picked for tab in tabs):
+        # 고른 것이 있는 종류만 탭으로 남긴다. 한 run 이 다른 요청(일정 수정 등)을 위해 조회한
+        # 종류가 체크 없는 탭으로 붙으면, 잘못 누른 한 번에 상관없는 기록이 지워진다.
+        # 하나도 못 골랐으면 조회한 종류를 모두 보여 보호자가 고르게 한다
+        tabs = [tab for tab in tabs if tab.picked]
+    candidates = sum(len(tab.ids) for tab in tabs)
     try:
         proposal_id = await context.store.propose_delete(
             parent_id=context.source_writer, run_id=context.run_id, tabs=tabs
@@ -72,7 +77,7 @@ async def propose_delete(context: AgentContext, args: ProposeDeleteArgs) -> Tool
         RESOURCE,
         id=proposal_id,
         picked=sum(len(tab.picked) for tab in tabs),
-        candidates=len(candidates),
+        candidates=candidates,
         notice=_DONE,
     )
 

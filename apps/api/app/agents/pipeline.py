@@ -48,6 +48,7 @@ from app.agents.memory.drafts import EventDraft
 from app.agents.memory.result import ErrorCode
 from app.agents.memory.schemas.reply import ReplyKind
 from app.agents.memory.schemas.task import MemoryTask, PendingMemoryContext, WorkType
+from app.agents.memory.store.ports import DeleteCandidates
 from app.agents.memory.tools.proposal import candidate_tabs
 from app.agents.run_writes import RunWrites
 from app.agents.suggestion_save import SaveSuggestions, SuggestionBatch
@@ -632,6 +633,8 @@ async def handle_input(
             if note is not None:
                 memory_asked = note.kind == "question"
                 send(note)
+            if memory.pending is not None:
+                send(PendingReply(run_id, memory.pending))
             await _send_cards(
                 memory,
                 memory_context,
@@ -639,8 +642,6 @@ async def handle_input(
                 load_cards=load_cards,
                 send=send,
             )
-            if memory.pending is not None:
-                send(PendingReply(run_id, memory.pending))
             unwritten = _unwritten(routing.memory_task, memory)
             if unwritten is not None:
                 send(unwritten)
@@ -961,10 +962,17 @@ async def _handle_continuation(
                 note = MemoryNote(LEFTOVER_NOTE, "message") if memory.leftover else None
         if note is not None:
             send(note)
-        # 되묻기에 답하는 run 에는 조회 카드를 붙이지 않는다 — 앞 턴에 이미 보였다. 삭제 제안은 낸다
-        await _send_cards(memory, memory_context, lookup=False, load_cards=load_cards, send=send)
         if memory.pending is not None:
             send(PendingReply(run_id, memory.pending))
+        # 앞 턴이 찾은 행을 보였으면(found) 조회 카드를 다시 붙이지 않는다. 앞 턴이 아무것도 못 찾고
+        # 물었으면("어느 날이요?") 이 답 run 이 처음 찾은 것이라 보여 준다. 삭제 제안은 늘 낸다
+        await _send_cards(
+            memory,
+            memory_context,
+            lookup=continuation.work is WorkType.LOOKUP_EDIT and not continuation.found,
+            load_cards=load_cards,
+            send=send,
+        )
         if memory.refused(ErrorCode.HAZARD):
             # Supervisor 가 놓치고 저장 게이트가 막은 경우 일반 run과 같은 안내
             send(HAZARD_GUIDANCE)
@@ -1405,6 +1413,11 @@ def _lookup_task(task: MemoryTask | None) -> bool:
     return task is not None and any(hint.work == WorkType.LOOKUP_EDIT for hint in task.hints)
 
 
+def _card_tabs(tabs: Sequence[DeleteCandidates]) -> tuple[CardTab, ...]:
+    """후보 탭 → 이벤트의 탭. 조회 카드에서는 picked 가 늘 비어 있다."""
+    return tuple(CardTab(t.kind, t.truncated, t.ids, t.picked) for t in tabs)
+
+
 async def _send_cards(
     memory: MemoryAgentResult,
     memory_context: AgentContext,
@@ -1425,10 +1438,9 @@ async def _send_cards(
     cards: list[FoundTabs | DeleteProposed] = []
     if memory_context.proposals:
         proposal = memory_context.proposals[0]
-        tabs = tuple(CardTab(t.kind, t.truncated, t.ids, t.picked) for t in proposal.tabs)
-        cards.append(DeleteProposed(proposal.id, tabs))
-    elif lookup and not _memory_wrote(memory) and not memory.drafts:
-        found = tuple(CardTab(t.kind, t.truncated, t.ids) for t in candidate_tabs(memory_context))
+        cards.append(DeleteProposed(proposal.id, _card_tabs(proposal.tabs)))
+    elif lookup and not _memory_wrote(memory):  # 일정 초안도 쓰기로 센다
+        found = _card_tabs(candidate_tabs(memory_context))
         if found:
             cards.append(FoundTabs(found))
     if not cards:
