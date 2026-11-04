@@ -57,6 +57,10 @@ make dev
 # 다른 터미널에서 health 확인
 curl http://localhost:8000/health
 # 예상 응답: {"status":"ok","env":"local"}
+
+# DB · Redis 까지 닿는지 (하나라도 안 되면 503)
+curl http://localhost:8000/health/ready
+# 예상 응답: {"status":"ok","checks":{"db":"ok","redis":"ok"}}
 ```
 
 > 헬스체크는 `/api/v1` **밖**에 있습니다. API 계약서 §01이 "경로는 모두 `/api/v1` 하위 ·
