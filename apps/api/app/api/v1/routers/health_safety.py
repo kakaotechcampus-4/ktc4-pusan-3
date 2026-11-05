@@ -122,7 +122,7 @@ async def register_health_safety(
         "path": request.url.path,
         "key": idempotency_key,
     }
-    replayed = idempotency.recall(**scope, strict=True)  # 승인 게이트
+    replayed = idempotency.recall(**scope)
     if isinstance(replayed, dict):
         return JSONResponse(status_code=201, content=replayed)
 
@@ -211,7 +211,7 @@ async def revise_health_safety(
         "path": request.url.path,
         "key": idempotency_key,
     }
-    replayed = idempotency.recall(**scope, strict=True)  # 승인 게이트
+    replayed = idempotency.recall(**scope)
     if isinstance(replayed, dict):
         return JSONResponse(status_code=200, content=replayed)
 

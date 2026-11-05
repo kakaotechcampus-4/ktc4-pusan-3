@@ -4,9 +4,11 @@ from unittest.mock import patch
 from uuid import uuid4
 
 import fakeredis
+import pytest
 import redis
 
 from app.api import idempotency
+from app.api.errors import ApiError
 
 PID = uuid4()
 
@@ -68,11 +70,17 @@ class TestIdempotencyRedis:
 
 
 # ---------------------------------------------------------------------------
-# Redis 장애 (#671) — 입력 창구가 500 이 되지 않게 메모리로 계속 받는다
+# Redis 장애 (#671) — 메모리로 넘어가지 않고 503 으로 막는다. 다시 보내면 되는 오류다
 # ---------------------------------------------------------------------------
 
 _down = redis.Redis(host="127.0.0.1", port=1, socket_connect_timeout=0.2)
 """아무것도 듣지 않는 포트 — 부르면 진짜 ConnectionError 가 난다."""
+
+
+def _refused(**scope) -> ApiError:
+    with pytest.raises(ApiError) as caught:
+        idempotency.recall(parent_id=PID, method="POST", **scope)
+    return caught.value
 
 
 class TestRedisDown:
@@ -80,33 +88,33 @@ class TestRedisDown:
         _r.flushdb()
         idempotency.clear()
 
-    def test_장애_중에도_기억하고_재생한다(self):
+    def test_장애면_recall_은_503(self):
         with patch("app.api.idempotency.get_redis", return_value=_down):
-            idempotency.remember(parent_id=PID, method="POST", path="/i", key="d1", replay="run-d")
-            assert idempotency.recall(parent_id=PID, method="POST", path="/i", key="d1") == "run-d"
+            refused = _refused(path="/i", key="d1")
+        assert (refused.status, refused.code) == (503, "temporarily_unavailable")
 
-    def test_장애_중_적은_키는_Redis_가_돌아온_뒤에도_재생된다(self):
-        with patch("app.api.idempotency.get_redis", return_value=_down):
-            idempotency.remember(parent_id=PID, method="POST", path="/i", key="d2", replay="run-e")
+    def test_장애_직전에_적힌_키를_새_요청으로_받지_않는다(self):
+        """메모리로 넘어가면 이 키가 안 보여 같은 요청이 두 번 저장된다 — 그래서 막는다."""
         with patch("app.api.idempotency.get_redis", return_value=_r):
-            assert idempotency.recall(parent_id=PID, method="POST", path="/i", key="d2") == "run-e"
+            idempotency.remember(parent_id=PID, method="POST", path="/i", key="d2", replay="run-a")
+        with patch("app.api.idempotency.get_redis", return_value=_down):
+            _refused(path="/i", key="d2")
+        with patch("app.api.idempotency.get_redis", return_value=_r):
+            assert idempotency.recall(parent_id=PID, method="POST", path="/i", key="d2") == "run-a"
 
-    def test_장애_중_적은_키도_실패한_run_이면_지운다(self):
+    def test_장애_중_remember_는_터지지_않고_메모리에도_적지_않는다(self):
+        """저장(commit) 뒤라 실패로 답하면 보호자가 다시 눌러 겹친다. 메모리 상태는 두지 않는다."""
         with patch("app.api.idempotency.get_redis", return_value=_down):
-            idempotency.remember(parent_id=PID, method="POST", path="/i", key="d3", replay="run-f")
-        with patch("app.api.idempotency.get_redis", return_value=_r):
-            idempotency.forget_run("run-f")
-            assert idempotency.recall(parent_id=PID, method="POST", path="/i", key="d3") is None
+            idempotency.remember(parent_id=PID, method="POST", path="/i", key="d3", replay="run-b")
+        assert idempotency._seen == {}
 
     def test_장애_중_forget_run_은_터지지_않는다(self):
         with patch("app.api.idempotency.get_redis", return_value=_down):
-            idempotency.remember(parent_id=PID, method="POST", path="/i", key="d4", replay="run-g")
-            idempotency.forget_run("run-g")
-            assert idempotency.recall(parent_id=PID, method="POST", path="/i", key="d4") is None
+            idempotency.forget_run("run-c")
 
     def test_로그에는_오류_종류만_남는다(self, caplog):
         with patch("app.api.idempotency.get_redis", return_value=_down):
-            idempotency.recall(parent_id=PID, method="POST", path="/i", key="d5")
+            _refused(path="/i", key="d5")
         assert "ConnectionError" in caplog.text
         assert str(PID) not in caplog.text
 
@@ -129,7 +137,7 @@ class TestRedisDown:
             assert idempotency.recall(parent_id=PID, method="POST", path="/e", key="d7") == body
 
 
-def test_Redis_가_응답_없이_매달려도_1초_남짓에_메모리로_넘어간다(monkeypatch):
+def test_Redis_가_응답_없이_매달려도_1초_남짓에_503(monkeypatch):
     """연결은 받고 아무 말도 안 하는 서버 — 연결 거부(즉시 실패)와 달리 응답 상한이 있어야 끝난다.
 
     동기 클라이언트라 그동안 이벤트 루프 전체가 멈춘다 (#671 리뷰).
@@ -151,24 +159,12 @@ def test_Redis_가_응답_없이_매달려도_1초_남짓에_메모리로_넘어
     monkeypatch.setattr(infra_redis, "_client", None)
     try:
         started = time.monotonic()
-        result = idempotency.recall(parent_id=PID, method="POST", path="/h", key="hang")
+        refused = _refused(path="/h", key="hang")
         elapsed = time.monotonic() - started
     finally:
         server.close()
         for conn in held:
             conn.close()
 
-    assert result is None
+    assert refused.status == 503
     assert elapsed < infra_redis.TIMEOUT_S * 3
-
-
-def test_strict_는_Redis_장애면_메모리로_넘어가지_않고_503():
-    """승인 게이트 쓰기 — 장애 직전 Redis 키가 안 보여 두 번 저장되는 것을 막는다 (#671 리뷰)."""
-    import pytest
-
-    from app.api.errors import ApiError
-
-    with patch("app.api.idempotency.get_redis", return_value=_down):
-        with pytest.raises(ApiError) as caught:
-            idempotency.recall(parent_id=PID, method="POST", path="/e", key="s1", strict=True)
-    assert (caught.value.status, caught.value.code) == (503, "temporarily_unavailable")

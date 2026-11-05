@@ -728,18 +728,19 @@ async def test_막힌_요청은_하루_횟수를_쓰지_않는다(db_client, bea
     assert accepted.status_code == 202
 
 
-async def test_Redis_가_죽어도_입력을_받고_같은_키는_같은_run_을_돌려준다(
+async def test_Redis_가_죽으면_입력은_503_이고_Agent_를_부르지_않는다(
     db_client, bearer, agent_calls, monkeypatch, cid
 ):
-    """#671 — Redis 장애에 입력 창구가 500 이 되거나 멈추지 않는다. 메모리 폴백으로 재생도 된다."""
+    """#671 — 메모리로 받으면 장애 직전에 적힌 키가 안 보여 같은 한 줄이 두 번 저장된다.
+
+    서버를 늘리면 다른 서버로 간 재시도도 못 막는다. 다시 보내면 되는 503 으로 막는다.
+    """
     down = redis.Redis(host="127.0.0.1", port=1, socket_connect_timeout=0.2)
     monkeypatch.setattr(idempotency, "get_redis", lambda: down)
     headers, _ = bearer
-    keyed = with_key(headers)
 
-    first = await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=keyed)
-    again = await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=keyed)
+    response = await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=with_key(headers))
 
-    assert first.status_code == 202
-    assert again.json() == first.json()
-    assert len(agent_calls) == 1  # 두 번째는 재생이다 — 관찰이 두 번 저장되지 않는다
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "temporarily_unavailable"
+    assert agent_calls == []

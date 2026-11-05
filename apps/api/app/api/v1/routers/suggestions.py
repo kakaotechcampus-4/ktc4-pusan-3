@@ -298,7 +298,7 @@ async def submit_event(
         "path": request.url.path,
         "key": idempotency_key,
     }
-    replayed = idempotency.recall(**scope, strict=True)  # 승인 게이트
+    replayed = idempotency.recall(**scope)
     if replayed is not None and isinstance(replayed, dict):
         return JSONResponse(status_code=201, content=replayed)
 
@@ -983,7 +983,7 @@ async def update_event(
         "path": request.url.path,
         "key": idempotency_key,
     }
-    replayed = idempotency.recall(**scope, strict=True)  # 승인 게이트
+    replayed = idempotency.recall(**scope)
     if replayed is not None and isinstance(replayed, dict):
         return JSONResponse(status_code=200, content=replayed)
 

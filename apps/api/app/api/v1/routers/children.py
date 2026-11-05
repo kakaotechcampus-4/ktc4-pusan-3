@@ -264,7 +264,7 @@ async def update_child_profile(
 
 @router.post(
     "/children/{cid}/onboarding",
-    responses={status: {"model": ErrorEnvelope} for status in (400, 403)},
+    responses={status: {"model": ErrorEnvelope} for status in (400, 403, 503)},
 )
 async def submit_onboarding(
     child: AccessibleChild,
@@ -432,7 +432,11 @@ async def remove_growth_log(child: AccessibleChild, log_id: UUID, session: Sessi
     return Response(status_code=204)
 
 
-@router.post("/children/{cid}/inputs", status_code=202)
+@router.post(
+    "/children/{cid}/inputs",
+    status_code=202,
+    responses={503: {"model": ErrorEnvelope}},
+)
 async def create_input(
     child: AccessibleChild,
     body: CreateInputRequest,
