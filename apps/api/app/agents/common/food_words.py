@@ -51,8 +51,10 @@ from app.agents.common.allergy import (
     SINGLE_CHAR_NAMES,
     SafetyRow,
     SentenceScope,
+    allergy_related_table,
     for_sentences,
     read_label,
+    split_label,
     split_particle,
 )
 from app.agents.common.food_safety import (
@@ -68,9 +70,10 @@ from app.agents.common.reference import (
     allergen_terms,
     chronic_restriction_terms,
     food_safety_terms,
+    known_foods,
 )
 from app.rules.age import Stage
-from app.rules.term_match import Term, TermMatcher, normalize, prepare_fields
+from app.rules.term_match import Term, TermMatcher, match_fields, normalize, prepare_fields
 
 # 헷갈리는 낱말 뒤에 붙어도 음식으로 쓰인 것으로 보는 조사(`split_particle` 이 받침을 본다).
 # 이 · 가는 시간 · 장소 뜻이 많아("밤이 늦었는데") 바로 다음 어절이 먹이는 말일 때만 본다.
@@ -148,6 +151,8 @@ class WordRules:
     context: tuple[str, ...]  # 헷갈리는 낱말 곁에 있어야 음식으로 보는 말. 비면 곁의 말 없이 본다
     unnamed: bool  # 사전 낱말이 없는 어절을 먹이는 말 앞에서 찾는가("전복죽 먹여도 돼?")
     every_mention: bool  # 빼 달라는 말("땅콩 대신")에 나온 음식도 판정하는가
+    # 글이 `known_foods`(사전이 모르는 흔한 재료)의 이름과 통째로 같으면 겹침 없는 판정을 내는가
+    known: bool = False
 
     @property
     def scan_key(self) -> tuple[bool, SentenceScope | None]:
@@ -168,8 +173,10 @@ SCAN_CONTEXT_WORDS = (
 QUESTION = WordRules(True, None, FEEDING_WORDS, True, False)
 # 추천 이유 사후 검사 — "땅콩 대신" 이어도 화면에 그 이름이 나간다
 REASON = WordRules(True, None, FEEDING_WORDS, True, True)
-# 모델이 적은 음식 항목 하나("어묵" · "밤") — 항목은 그 음식이라 곁의 말을 기다리지 않는다
-ITEM = WordRules(False, None, (), False, True)
+# 모델이 적은 음식 항목 하나("어묵" · "밤") — 항목은 그 음식이라 곁의 말을 기다리지 않는다.
+# 흔한 재료(귤 · 오이)는 사전이 몰라 빈 튜플이 되던 것이라 이름이 통째로 같을 때만 겹침 없는
+# 판정을 낸다
+ITEM = WordRules(False, None, (), False, True, known=True)
 # 모델이 쓴 음식 활동 문장(Activity). 놀이 문장용 별칭 규칙을 따른다
 SENTENCE = WordRules(False, "content", HANDLING_WORDS, False, True)
 # 아이와 상관없이 문장의 음식 용어를 빼는 스캔(Growth). 오탐이 모든 아이에게 가서 더 거른다
@@ -223,6 +230,10 @@ def check_foods(
 
     verdicts: list[FoodVerdict] = []
     words = _words(text, registered.scan, rules)
+    whole = normalize(text)
+    if rules.known and whole in _known_names() and whole not in words and _readable(active):
+        # 이름이 통째로 같을 때만 — 미역국의 미역 · 김치의 김으로는 판정하지 않는다
+        words = [*words, whole]
     for word in words:
         if not rules.every_mention and not _mentioned(tokens, word):
             continue
@@ -311,6 +322,8 @@ def preload(rules: WordRules) -> None:
     (Growth 안전 게이트) 시작할 때 한 번 부른다 — 빈 사전으로 통과시키지 않는다.
     """
     _static_scan(*rules.scan_key)
+    if rules.known:
+        _known_names()
 
 
 def find_food_words(text: str, rules: WordRules) -> tuple[str, ...]:
@@ -398,6 +411,37 @@ def _ambiguous_aliases(scope: SentenceScope | None) -> frozenset[str]:
         weak = (AMBIGUOUS_ALIASES | SCAN_WEAK_ALIASES) - _allergen_alias_names()
         return frozenset(w for w in weak if len(w) > 1 and w not in OTHER_MEANING_ALIASES)
     return AMBIGUOUS_ALIASES.difference(SENTENCE_GUARDS, SINGLE_CHAR_NAMES)
+
+
+def _readable(active: Sequence[SafetyRow]) -> bool:
+    """등록한 알레르기를 사전이 모두 읽을 수 있는가 — 흔한 재료에 막히지 않았다고 말해도 되는 조건.
+
+    "과일" · "채소" · "해조류" 는 보호자가 넓게 막으려고 쓰는 묶음 이름인데 사전은 읽지 못한다.
+    그런 알레르기가 있으면 귤이 그 묶음에 드는지 알 수 없으니, 전처럼 "확인 못 함" 으로 둔다.
+    사전이 아는 이름이거나 흔한 재료 하나의 이름("배" · "귤")이면 읽은 것이다 — 그 재료만 막고
+    다른 재료로는 넓히지 않는다. 식품 아닌 알레르기 표(`allergy_related_terms.yaml` — 꽃가루 ·
+    라텍스 · 동물털)에 있는 이름도 음식 묶음 이름이 아니라서 건너뛴다. Activity 가 음식 알레르기를
+    가를 때 쓰는 표와 같은 기준이다. 알레르기가 아닌 등록(질환 · 환경)은 보지 않는다.
+    """
+    book = food_book()
+    known = _known_names()
+    non_food = tuple(entry.names for entry in allergy_related_table())
+    for entry in active:
+        if entry.kind != "allergy":
+            continue
+        for piece in split_label(entry.label):
+            _, rest = read_label(piece, book)
+            if all(normalize(word) in known for word in rest):
+                continue
+            if not match_fields((piece,), non_food):
+                return False
+    return True
+
+
+@cache
+def _known_names() -> frozenset[str]:
+    """`known_foods` 의 이름(정규화). 항목 하나가 이 이름과 통째로 같을 때만 쓴다."""
+    return frozenset(normalize(name) for name in known_foods())
 
 
 @cache
