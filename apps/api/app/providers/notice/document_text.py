@@ -17,7 +17,7 @@ from xml.etree import ElementTree
 import olefile
 import pypdfium2
 from openpyxl import load_workbook
-from PIL import Image, UnidentifiedImageError
+from PIL import Image, ImageOps, UnidentifiedImageError
 from pillow_heif import register_heif_opener
 from pypdf import PdfReader
 
@@ -196,11 +196,26 @@ def pdf_pages_as_png(data: bytes, *, max_pages: int, scale: float = 2.0) -> list
         document.close()
 
 
+def _flatten(image: Image.Image) -> Image.Image:
+    """투명한 바탕은 흰색으로 채운다 — 검은 바탕이 되면 검은 글자가 사라진다."""
+    if image.mode in ("RGBA", "LA") or (image.mode == "P" and "transparency" in image.info):
+        rgba = image.convert("RGBA")
+        background = Image.new("RGB", rgba.size, "white")
+        background.paste(rgba, mask=rgba.getchannel("A"))
+        return background
+    return image.convert("RGB")
+
+
 def normalize_image(data: bytes) -> tuple[bytes, str]:
     """모델이 받는 형식(PNG · JPEG)으로 맞춘다. 확장자는 믿지 않고 내용을 본다.
 
     게시판의 `.gif` 는 대개 JPEG 이다. 움직이는 GIF 는 첫 장만 쓴다. 폭이 너무 넓을 때만 줄인다 —
     긴 소식지 · 휴대폰 캡처는 세로가 6,000 픽셀을 넘는데, 긴 변으로 줄이면 글자가 뭉개진다.
+
+    🚨 원본 바이트를 그대로 보내지 않는다. 사진 파일에 담긴 촬영 장소(GPS) · 기기 같은 부가 정보는
+       모델로 보내기 전에 지운다 (처리방침 1장 ⑧ 4호). 다시 그려서 저장하면 부가 정보가 따라가지
+       않는다. 지우기 전에 방향 정보대로 돌려 둔다 — 폰은 세로 사진을 가로로 저장하고 "돌려 보라"
+       는 표시만 남겨서, 표시가 지워지면 사진이 눕는다. JPEG 는 화질 95 로 다시 저장한다.
     """
     try:
         with Image.open(io.BytesIO(data)) as image:
@@ -208,16 +223,17 @@ def normalize_image(data: bytes) -> tuple[bytes, str]:
             if image.width * image.height > MAX_IMAGE_PIXELS:
                 raise UnreadableDocument("사진이 너무 커요")
             image.load()
-            wide = image.width > MAX_IMAGE_WIDTH
-            if image.format in ("PNG", "JPEG") and not wide:
-                return data, f"image/{image.format.lower()}"
-            converted = image.convert("RGB")
+            fmt = image.format
+            converted = _flatten(ImageOps.exif_transpose(image))
     except (UnidentifiedImageError, OSError, Image.DecompressionBombError) as e:
         raise UnreadableDocument("이미지를 열 수 없어요") from e
-    if wide:
+    if converted.width > MAX_IMAGE_WIDTH:
         height = round(converted.height * MAX_IMAGE_WIDTH / converted.width)
         converted = converted.resize((MAX_IMAGE_WIDTH, height))
     buffer = io.BytesIO()
+    if fmt == "JPEG":
+        converted.save(buffer, format="JPEG", quality=95)
+        return buffer.getvalue(), "image/jpeg"
     converted.save(buffer, format="PNG")
     return buffer.getvalue(), "image/png"
 

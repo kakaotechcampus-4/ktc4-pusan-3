@@ -170,7 +170,7 @@ GET /runs/{rid}/events                       step → lane → step → parsed �
 서버 스위치 `PHOTO_UPLOAD_ACCEPT` 는 기본값 꺼짐이고, 꺼져 있으면 `POST /children/{cid}/photos` 가 503 이다. 화면 입구(`features.ts` 의 `photoEntry`)도 닫아 둔다. 사진이 외부 AI 로 나가므로 처리방침 · 동의가 먼저다 ([`consent-texts-v1.md`](../safety/consent-texts-v1.md) "공통").
 
 - [x] 처리방침 · 동의 — 2026-11-03 판에 조건문으로 들어갔다 ([`consent-texts-v1.md`](../safety/consent-texts-v1.md) "급식표 · 알림장 사진 읽기"). 사진은 별도 선택 동의 없이 아이 동의문의 한 항목으로 받는다 (11-03 PM). 처리방침에 S3 임시 보관("읽은 즉시 지우고 늦어도 하루 안에") 문장을 더할지는 #166
-- [ ] 🚨 **EXIF 지우기** — 처리방침이 약속했는데 코드가 없다. 지금 JPEG 는 폭이 2,000 이하면 그대로 모델로 간다 (`normalize_image`). 찍은 위치(GPS)가 들어 있을 수 있다
+- [x] **EXIF 지우기** (처리방침 1장 ⑧ 4호) — `normalize_image` 가 사진을 방향대로 돌린 뒤 다시 그려서 보낸다. 촬영 장소 · 기기 같은 부가 정보와 PNG 글자 정보가 따라가지 않는다. JPEG 는 화질 95 로 다시 저장한다(완전 무손실은 아님). S3 에는 원본이 몇 초 있다가 지워진다 — 약속은 "전송하기 전에" 라 모델로 가는 사진에서 지운다
 - [ ] 사진 고르는 화면에 "외부 인공지능으로 전송" 안내
 - [ ] 보관 기준 — [`retention-v1.md`](../safety/retention-v1.md) 의 🚧 제안
 - [ ] 하루 한도 — 사진이 한 줄 입력과 `INPUT_DAILY_LIMIT` 를 나눠 쓴다. 사진 한 장이 모델 호출 1~3회다
