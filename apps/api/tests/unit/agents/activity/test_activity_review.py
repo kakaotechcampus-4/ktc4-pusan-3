@@ -129,6 +129,7 @@ def review(
     safety=(),
     outdoor=None,
     docs=DOCS,
+    area_places=(),
     requested=False,
 ):
     return review_candidates(
@@ -140,6 +141,7 @@ def review(
         safety=safety_terms(safety),
         outdoor=outdoor,
         docs=docs,
+        area_places=area_places,
         today=TODAY,
         requested=requested,
     )
@@ -164,6 +166,7 @@ class TestPass:
         (draft,) = review(candidate(evidence=[DOC_PICK])).drafts
         assert draft.kind == "general"
         assert draft.reason == GENERAL_REASON
+        assert "기록이 아직 적어서" not in draft.reason
 
     def test_인용이_하나도_없으면_거절한다(self):
         """일반 추천의 근거는 문서 행이다. 아이 기록도 문서도 없는 후보는 나가지 않는다."""
@@ -223,6 +226,7 @@ class TestRequested:
         (draft,) = result.drafts
         assert draft.kind == "general"
         assert draft.reason == REQUESTED_REASON
+        assert "기록이 아직 적어서" not in draft.reason
         assert draft.citations == ()
 
     def test_예시를_참고했으면_그_문서도_근거로_남는다(self):
@@ -405,6 +409,20 @@ class TestPlace:
         assert reason_of(result) is RejectReason.UNKNOWN_PLACE
         assert "해운대" not in explain(result.rejections)  # 장소 이름은 로그로 흘러가지 않는다
 
+    @pytest.mark.parametrize(
+        "text",
+        [
+            {"reason": "근처 공원에서 모래를 만져요 오늘 오후가 비어 있어요"},
+            {"content": "근처 공원에서 모래성 쌓기"},
+        ],
+    )
+    def test_말한_지역에서_찾은_장소에는_근처를_쓰지_않는다(self, text):
+        """보호자는 그 지역에 있지 않다. 대표 지점에서 찾아서 "그 구 안" 도 단정하지 않는다."""
+        near = candidate(**{"content": "모래성 쌓기", "place_name": PARK, **text})
+        assert reason_of(review(near, area_places={PARK})) is RejectReason.NEARBY_WORDING
+        # 보호자 위치에서 찾은 곳이면 맞는 말이다
+        assert reason_of(review(near)) is None
+
     def test_띄어쓰기만_다르면_같은_곳이고_조회_결과의_이름을_붙인다(self):
         (draft,) = review(candidate(content="모래성 쌓기", place_name="사직 어린이공원")).drafts
         assert draft.content == "사직어린이공원에서 모래성 쌓기"
@@ -413,6 +431,24 @@ class TestPlace:
         content = "사직어린이공원 모래놀이터에서 모래성 쌓기"
         (draft,) = review(candidate(content=content, place_name=PARK)).drafts
         assert draft.content == content
+
+    @pytest.mark.parametrize("content", ["공원에서 모래성 쌓기", "어린이공원에서 모래성 쌓기"])
+    def test_장소_이름이_그_낱말로_끝나면_그_자리를_장소_이름으로_바꾼다(self, content):
+        """앞에 붙이기만 하면 "사직어린이공원에서 공원에서 …" 가 된다 (10-28 QA)."""
+        (draft,) = review(candidate(content=content, place_name=PARK)).drafts
+        assert draft.content == "사직어린이공원에서 모래성 쌓기"
+
+    @pytest.mark.parametrize(
+        "content, expected",
+        [
+            ("놀이터에서 모래성 쌓기", "사직어린이공원 놀이터에서 모래성 쌓기"),
+            ("모래밭에서 모래성 쌓기", "사직어린이공원 모래밭에서 모래성 쌓기"),
+        ],
+    )
+    def test_어디서를_먼저_썼으면_그_앞에_장소_이름만_붙인다(self, content, expected):
+        """ "~에서" 가 두 번 붙지 않게 — 공원 안의 놀이터 · 모래밭이다."""
+        (draft,) = review(candidate(content=content, place_name=PARK)).drafts
+        assert draft.content == expected
 
     @pytest.mark.parametrize("place_name", [None, "", "  "])
     def test_장소가_없으면_문장을_그대로_둔다(self, place_name):
@@ -602,9 +638,12 @@ class TestOutputTool:
         assert result.data["kinds"] == ["personalized", "general", "general"]
         assert len(ctx.state.suggestions) == 3
 
-    @pytest.mark.parametrize("written", ["예1", " 예1 ", "[예1]", "예 1", "예시1"])
+    @pytest.mark.parametrize(
+        "written",
+        ["예1", " 예1 ", "[예1]", "예 1", "예시1", "(예1)", "예１"],  # 전각 1
+    )
     async def test_예시의_짧은_id_는_문서_행_근거가_된다(self, written):
-        """[예시]는 짧은 id 로 보여 준다. 띄어쓰기 · 괄호만 다르게 써도 같은 행이다."""
+        """[예시]는 짧은 id 로 보여 준다. 띄어쓰기 · 괄호 · 전각 숫자만 달라도 같은 행이다(#606)."""
         ctx = await self.context()
         ctx.state.example_ids = {"예1": TOWER_DOC.id}
         pick = {"id": written, "note": "종이컵 탑 쌓기 예시를 참고했어요"}

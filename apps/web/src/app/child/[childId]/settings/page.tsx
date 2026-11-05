@@ -9,6 +9,7 @@ import { AuthGate } from "@/components/auth-gate";
 import { ScreenTransition } from "@/components/route-transition";
 import { ChildNav } from "@/components/child-nav";
 import { ConsentSection, LegalDocumentSection } from "@/components/consent-section";
+import { NotificationSection } from "@/components/notification-section";
 import { ParentSection } from "@/components/parent-section";
 import { ScreenTour, TourHelpButton } from "@/components/screen-tour";
 import { SettingsGroup, SettingsInfoRow, SettingsLinkRow } from "@/components/settings-row";
@@ -35,8 +36,9 @@ import { BACK, FORWARD } from "@/lib/view-transition";
  * 🚨 **맨 위에 현황 요약을 두지 않는다.** 한동안 `card-accent` 한 장에 모아 뒀는데, 그 값들이
  *    바로 아래 구역들이 이미 말하는 것이라 **같은 사실을 두 번** 적는 꼴이었다.
  *
- * 🚨 **위에서 아래로 "손대는 것 → 읽는 것 → 나가는 것" 이다.** 지금 켜고 끌 수 있는 동의가
- *    위에 서고, 읽기만 하는 약관 목록이 그 아래, 계정(로그아웃·탈퇴)이 마지막이다.
+ * 🚨 **위에서 아래로 "손대는 것 → 읽는 것 → 나가는 것" 이다.** 함께 보는 보호자, 알림, 지금 켜고
+ *    끌 수 있는 동의가 위에 서고, 읽기만 하는 약관 목록이 그 아래, 계정(로그아웃·탈퇴)이 마지막이다.
+ *    알림(#609)은 날마다 손대는 쪽이라 동의보다 위다.
  *    손댈 수 없는 넷이 손댈 수 있는 하나보다 위에서 자리를 먹지 않게 한다.
  *
  * 🚨 **아이 정보를 여기서 다루지 않는다.** 이름·생일·알레르기는 11 아이 프로필이 소유하고,
@@ -81,14 +83,18 @@ function SettingsScreen() {
    */
   const me = useQuery({ queryKey: qk.me(), queryFn: () => api.get<Me>("/me") });
   /**
-   * 🚨 **켜고 끌 선택 동의가 없으면 "동의" 구역을 세우지 않는다.** 지금은 유일한 선택 동의(위치)를
-   *    묻지 않는다 (`askedChoices` · #221). 빈 구역에 "지금 켜고 끌 수 있는 것이에요" 를 달면
-   *    아무것도 없는 목록을 설명하는 화면이 된다. 위치를 다시 물으면 저절로 돌아온다.
+   * 🚨 **켜고 끌 선택 동의가 없으면 "동의" 구역을 세우지 않는다.** 서버가 내주는 선택 동의를 화면이
+   *    묻지 않는 동안(`askedChoices` · `NOT_ASKED_YET`) 빈 구역에 "지금 켜고 끌 수 있는 것이에요" 를 달면
+   *    아무것도 없는 목록을 설명하는 화면이 된다. 지금은 위치(#593)가 서서 구역이 있다.
    */
   const policies = usePolicies();
-  const hasOptionalConsent = askedChoices(consentChoices(policies.data)).some(
-    ({ policy }) => !policy.required,
-  );
+  /**
+   * 🚨 **약관을 받는 동안에도 구역을 세워 둔다** (그 안은 `ConsentSection` 의 스켈레톤). 받은 뒤에야 세우면 아래 고객센터 ·
+   *    약관 구역이 한 번 밀려난다 (`layout-shift.spec.ts` · #593 에서 위치 동의가 다시 서며 드러났다).
+   */
+  const hasOptionalConsent =
+    policies.isPending ||
+    askedChoices(consentChoices(policies.data)).some(({ policy }) => !policy.required);
   const role = me.data?.children.find((child) => child.child_id === childId)?.role;
   const inviteNote =
     role === "owner"
@@ -116,8 +122,8 @@ function SettingsScreen() {
         {/* 아래 "동의" 구역과 같은 값으로 고른다 — 없는 구역을 안내하지 않는다 */}
         <p className="text-body-sm text-ink-muted mt-2">
           {hasOptionalConsent
-            ? "함께 보는 사람과 동의를 여기서 관리해요."
-            : "함께 보는 사람과 계정을 여기서 관리해요."}
+            ? "함께 보는 사람과 알림, 동의를 여기서 관리해요."
+            : "함께 보는 사람과 알림, 계정을 여기서 관리해요."}
         </p>
       </header>
 
@@ -146,6 +152,10 @@ function SettingsScreen() {
           inviteOpen={inviteOpen}
           onInviteOpenChange={setInviteOpen}
         />
+      </Section>
+
+      <Section title="알림" description="내 계정에만 적용돼요. 함께 보는 보호자는 각자 정해요.">
+        <NotificationSection />
       </Section>
 
       {hasOptionalConsent ? (

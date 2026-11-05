@@ -3,8 +3,8 @@
   1. 안전 필터       위험 용어(월령별 차단 · 경고) · health_safety(active). 걸린 후보는 거절이
                      아니라 풀에서 뺀다(`removed`) — 모델에게 사유를 돌려주지 않는다 (§5-2)
   2. 평가 표현       content · reason · note
-  3. Activity 검증   근거 id · 장소 이름 · 바깥 활동이 어려운 날의 야외 후보 · 기피 대상 ·
-                     note 반복 표현 · 최근 중복 · 0–17개월 보호자 동반
+  3. Activity 검증   근거 id · 장소 이름 · 말한 지역의 장소에 "근처" · 바깥 활동이 어려운 날의
+                     야외 후보 · 기피 대상 · note 반복 표현 · 최근 중복 · 0–17개월 보호자 동반
   4. build()         6개월이 안 지난 아이 기록 근거 수로 kind 를 정한다. 모델이 고르지 않는다.
                      장소 이름은 코드가 content 앞에 붙이고, 확인 문구(place_notice)를 칸으로
                      싣는다. allergens · items · 위험 경고(warnings)도 코드가 채운다
@@ -59,11 +59,14 @@ FACILITY_SOURCE: PlaceSourceName = "kids_play_facility"
 
 # 아이 기록 근거가 0행이면 build() 가 reason 을 이 문구로 덮어쓴다 (kind="general").
 # 화면이 일반 추천임을 표시하고 쌓인 기록 건수를 함께 보여준다 (루트 §2).
-GENERAL_REASON = "쌓인 놀이 기록이 아직 적어서, 이 나이 아이들에게 많이 권하는 놀이로 골랐어요."
+GENERAL_REASON = "이 나이 아이들에게 많이 권하는 놀이로 골랐어요."
 # 보호자가 놀이를 정해 물었고 아이 기록 근거가 없을 때 — 기준이 [예시]가 아니라 이번 요청이다.
 # "맞춰" 가 아니라 "바탕으로" 다 — 요청을 그대로 못 하면 비슷한 놀이로 바꿔 낸다("복숭아 따기 체험"
 # → 집에서 하는 과일 놀이, 판정 모델 실측 3%). 바꾼 것도 거짓말이 되지 않는 말로 둔다 (#597 리뷰)
-REQUESTED_REASON = "쌓인 놀이 기록이 아직 적어서, 요청하신 놀이를 바탕으로 골랐어요."
+REQUESTED_REASON = "요청하신 놀이를 바탕으로 골랐어요."
+
+# 보호자가 말한 지역에서 찾은 장소에 쓰면 틀리는 말. 보호자는 그 자리에 있지 않다 (`areas.py`)
+NEARBY_WORDS = ("근처",)
 
 Seen = Mapping[UUID, RankedEvidence]
 # 이번 run 의 프롬프트 [예시]에 실은 문서 행. 일반 추천은 이 행을 근거로 단다 (루트 §2)
@@ -78,6 +81,7 @@ class RejectReason(StrEnum):
     RECENT_DUPLICATE = "recent_duplicate"
     CAREGIVER_ROLE = "caregiver_role"
     UNKNOWN_PLACE = "unknown_place"
+    NEARBY_WORDING = "nearby_wording"
     OUTDOOR_CLOSED = "outdoor_closed"
     BUILD = "build_rejected"
 
@@ -96,6 +100,10 @@ GUIDANCE: dict[RejectReason, str] = {
     RejectReason.CAREGIVER_ROLE: "이 월령은 보호자가 같이 하는 활동(together)만 낸다.",
     RejectReason.UNKNOWN_PLACE: (
         "place_name 에는 search_nearby_places 결과에 있던 이름만 쓴다. 없으면 비운다."
+    ),
+    RejectReason.NEARBY_WORDING: (
+        "보호자가 말한 지역에서 찾은 장소다. 보호자가 지금 그 자리에 있지 않으니 "
+        "'근처' 를 쓰지 않는다."
     ),
     RejectReason.OUTDOOR_CLOSED: (
         "그날(day)은 바깥 활동이 어려운 날이다. 공원 · 놀이터를 붙이지 않은 indoor 나 either"
@@ -144,6 +152,7 @@ def review_candidates(
     places: Mapping[str, PlaceRow] | None = None,
     outdoor: Mapping[DayLabel, bool] | None = None,
     docs: Docs | None = None,
+    area_places: Collection[str] = (),
     today: date,
     requested: bool = False,
 ) -> Review:
@@ -155,6 +164,8 @@ def review_candidates(
     `seen` 은 이번 run 에서 search_activity_memory 가 돌려준 근거다. 기피 대상 거절도 이 표를
     쓴다 — 모델이 인용하지 않은 기피 근거여도 조회됐으면 막는다.
     `places` 는 이번 run 에서 search_nearby_places 가 돌려준 장소다(이름 → 행).
+    `area_places` 는 그중 보호자가 말한 지역에서 찾은 장소 이름이다 — 이 장소에 "근처" 를 쓰면
+    거절한다.
     `outdoor` 는 후보의 날(`day`)마다 바깥 활동을 할 수 있는지다 (`outing.outdoor_on`). 출력 tool 이
     후보에 나온 날을 전부 채운다. None 이면 날씨로 거르지 않는다(날씨와 무관한 검사의 테스트용).
     `docs` 는 이번 run 의 프롬프트 [예시]에 실은 문서 행이다. 인용하면 `activity_doc` 근거가
@@ -173,6 +184,7 @@ def review_candidates(
     known_places = {
         key: row for row in (places or {}).values() if (key := normalize_activity(row.name))
     }
+    far_places = frozenset(normalize_activity(name) for name in area_places)
     drafts: list[SuggestionDraft] = []
     outdoor_drafts: set[tuple[str, DayLabel]] = set()
     rejections: list[Rejection] = []
@@ -189,6 +201,7 @@ def review_candidates(
             seen=seen,
             docs=docs or {},
             places=known_places,
+            far_places=far_places,
             avoided=avoided,
             recent=recent_activities,
             outdoor=outdoor,
@@ -246,6 +259,7 @@ def _check(
     seen: Seen,
     docs: Docs,
     places: Mapping[str, PlaceRow],
+    far_places: frozenset[str],
     avoided: tuple[str, ...],
     recent: Collection[str],
     outdoor: Mapping[DayLabel, bool] | None,
@@ -271,6 +285,10 @@ def _check(
         place = places.get(normalize_activity(candidate.place_name))
         if place is None:
             return RejectReason.UNKNOWN_PLACE, (), None
+        if normalize_activity(place.name) in far_places and any(
+            word in text for text in texts for word in NEARBY_WORDS
+        ):
+            return RejectReason.NEARBY_WORDING, (), None
 
     # 그날 날씨 판정이 야외를 막았다(D8 · #377). 표에 없는 날은 판정하지 않은 날이라 막는다 —
     # 맑다고 가정하지 않는다
@@ -361,10 +379,21 @@ def place_notice(place: PlaceRow) -> str:
 
 
 def _with_place(content: str, place: str | None) -> str:
-    """장소 이름을 코드가 문장 앞에 붙인다. 모델이 이미 문장에 썼으면 다시 붙이지 않는다."""
+    """장소 이름을 코드가 문장 앞에 붙인다. 모델이 이미 문장에 썼으면 다시 붙이지 않는다.
+
+    모델이 문장을 "~에서" 로 시작했으면 "~에서" 를 두 번 붙이지 않는다 (10-28 QA).
+    - 장소 이름이 그 낱말로 끝나면 그 자리를 바꾼다 — "도서관에서 …" → "○○도서관에서 …"
+    - 아니면 그 앞에 장소 이름만 둔다 — "놀이터에서 …" → "○○공원 놀이터에서 …"
+    """
     if place is None or normalize_activity(place) in normalize_activity(content):
         return content
-    return f"{place}에서 {content}"
+    first, _, rest = content.strip().partition(" ")
+    where = normalize_activity(first.removesuffix("에서"))
+    if not rest or not first.endswith("에서") or not where:
+        return f"{place}에서 {content}"
+    if normalize_activity(place).endswith(where):
+        return f"{place}에서 {rest}"
+    return f"{place} {content}"
 
 
 def _lookup(seen: Seen, docs: Docs, raw_id: str) -> RankedEvidence | ActivityDocRow | None:

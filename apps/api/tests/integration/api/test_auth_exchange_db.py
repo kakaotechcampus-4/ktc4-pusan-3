@@ -34,14 +34,14 @@ OTHER_BIND = "B" * 43
 KAKAO_USER_ID = "1234567890"
 NICKNAME = "테스트 보호자"
 """가입 화면의 "부르는 이름". 실제 사람 이름을 픽스처에 넣지 않는다 (루트 CLAUDE.md §9)."""
-POLICY = "draft-2"
+POLICY = "2026-11-03"
 """계정 동의 둘(service_terms · privacy_account)의 지금 버전 — 약관 draft-2 (#221).
 
 가입은 GET /policies 가 지금 보여 주는 버전만 받는다 (#91). 새 약관을 등록하면 이 상수를
 함께 바꾼다 — 한쪽만 바꾸면 이 파일의 가입 테스트가 전부 400 으로 그 사실을 잡는다.
 """
 
-LOCATION_POLICY = "draft-1"
+LOCATION_POLICY = "2026-11-03"
 """위치(선택 동의)의 지금 버전. draft-2 가 위치를 이어받지 않아 draft-1 이 그대로다 (#221)."""
 
 UNREGISTERED_POLICY = "2026-09-01"

@@ -694,6 +694,8 @@ async def _suggestions_response(
     scarcity = None
     general_agents = {str(item.agent) for item in general}
     if general_agents:
+        # 호환 필드라 일반 추천을 낸 Agent별 기록 수를 합산한다. 정상 화면 문구는 합계가 아니라
+        # general[].record_count를 Agent별로 쓴다 (#662).
         count = sum([await records(a) for a in sorted(general_agents)])
         # 질문을 낸 Agent 로 id 를 단다 — 답(#246)이 그 Agent 로 간다 (#433 리뷰 ⑤)
         asked = next(

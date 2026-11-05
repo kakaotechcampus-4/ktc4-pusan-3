@@ -55,6 +55,13 @@ export default defineConfig({
       NEXT_PUBLIC_API_BASE_URL: "http://localhost:8000",
       NEXT_PUBLIC_API_MOCKING: "enabled",
       NEXT_TELEMETRY_DISABLED: "1",
+      // 🚨 웹 푸시를 끈 채 돈다 (#609). 비워 두지 않으면 각자 `.env.local` 의 Firebase 값이 들어와
+      //    로컬과 CI 가 다른 화면을 본다 — 실제 FCM 은 e2e 로 확인할 수 없다 (`docs/web/web-push-v1.md`).
+      NEXT_PUBLIC_FIREBASE_API_KEY: "",
+      NEXT_PUBLIC_FIREBASE_PROJECT_ID: "",
+      NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: "",
+      NEXT_PUBLIC_FIREBASE_APP_ID: "",
+      NEXT_PUBLIC_FIREBASE_VAPID_KEY: "",
     },
   },
 });

@@ -8,11 +8,13 @@
     event_requests     저장 안 함 — 초안 payload, 제출 시 저장         Health
     needs_observation  저장 안 함 — 화면이 한 줄로 묻는다              전부
     medication_drafts  저장 안 함 — 제출 시 백엔드가 INSERT/UPDATE     Health
+    pending            저장 안 함 — 되묻고 멈춘 자리. run 사이에 보관    Health · Growth
 
 `status` 와 근거 모드(`personalized`/`general`)는 **직교한다.** 날씨 조회는 실패했지만
 개인화 근거는 있는 run 이 `degraded` + `personalized` 다.
 """
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal
@@ -66,6 +68,24 @@ class MedicationDraft:
 
 
 @dataclass(frozen=True)
+class DomainPending:
+    """되묻고 멈춘 자리. pipeline 이 run 사이에 보관했다가 다음 입력(reply_to)에서
+    같은 Agent 에 돌려준다.
+
+    답을 받는 run 은 이 맥락만으로 이어 간다 — 같은 질문을 다시 묻지 않고, 원문을 다시 읽지 않는다.
+    """
+
+    agent: str
+    # health: "medication_stop" · "medication_which" · "dose_timing"
+    # growth: "ask.routine_current" · "ask.habit_trigger"
+    kind: str
+    question: str
+    # JSON 으로 바뀌는 값만. 대상 id · 화면에 나갈 값 · 이어서 처리할 칸(검증을 통과한 span).
+    # 발화 원문 전체는 담지 않는다
+    payload: Mapping[str, Any]
+
+
+@dataclass(frozen=True)
 class DomainAgentResult:
     agent: str
     task_type: str | None
@@ -75,9 +95,13 @@ class DomainAgentResult:
     event_requests: tuple[EventRequest, ...] = ()
     needs_observation: tuple[str, ...] = field(default_factory=tuple)
     medication_drafts: tuple[MedicationDraft, ...] = ()
+    pending: DomainPending | None = None
     model_calls: int = 0  # Agent 진입 수 — 0(게이트 닫힘) · 1 · 2(안전 필터 후 재호출)
 
     def __post_init__(self) -> None:
         if len(self.needs_observation) > 1:
             # 되묻기는 한 번에 하나. 후보가 여럿이면 순위가 가장 높은 하나만 낸다
             raise ValueError(f"되묻기는 하나만 낸다. 받은 것: {len(self.needs_observation)}개")
+        if self.pending is not None and self.needs_observation != (self.pending.question,):
+            # 화면이 묻는 문장과 다음 run 이 이어받는 문장이 같아야 한다
+            raise ValueError("pending 이 있으면 needs_observation 은 그 질문 하나여야 한다")

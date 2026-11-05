@@ -19,6 +19,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from app.agents.entrypoint import (
+    AgentQuestion,
     AgentResult,
     Event,
     EventDrafts,
@@ -83,11 +84,26 @@ def to_reply(event: Event) -> ChatReply | None:
                 )
                 for readout in event.readouts
             ],
-            question=event.question,
+            question=None,
             suggestion_ids=list(event.suggestion_ids),
             kind=event.kind,
             reason=event.reason,
             record_count=event.record_count,
+        )
+    if isinstance(event, AgentQuestion):
+        # 질문은 마지막 agent_result 한 장으로 남긴다. `awaits_reply` 까지 남겨야 지난 대화가
+        # 열린 질문을 다시 고른다 (화면 `askedQuestion`)
+        return AgentResultReply(
+            agent=event.agent,
+            task_type=event.task_type,
+            status="completed",
+            readouts=[],
+            question=event.text,
+            awaits_reply=event.awaits_reply,
+            suggestion_ids=[],
+            kind=None,
+            reason=None,
+            record_count=None,
         )
     if isinstance(event, Partial):
         return PartialReply(

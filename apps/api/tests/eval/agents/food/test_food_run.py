@@ -430,6 +430,43 @@ def j_c30(ran: Ran) -> Verdict:
     return verdict
 
 
+def evidence_counts(ran: Ran) -> dict[str, int]:
+    """식단 추천 한 번의 근거 건수(#662). 선조회가 인용으로 이어졌는지 PR 에 그대로 붙인다."""
+    state = ran.world.context.state
+    drafts = ran.result.suggestions
+    cited = {
+        citation.ref.id
+        for draft in drafts
+        for citation in draft.citations
+        if citation.ref.is_child_record
+    }
+    return {
+        "prefetched": len(state.prefetched_evidence_ids),
+        "seen": len(state.seen_evidence),
+        "cited": len(cited),
+        "personalized": sum(1 for draft in drafts if draft.kind == "personalized"),
+        "general": sum(1 for draft in drafts if draft.kind == "general"),
+        "model_search": state.memory_search_calls,
+    }
+
+
+def j_prefetch(ran: Ran) -> Verdict:
+    """기록이 쌓인 아이 — 모델을 부르기 전에 기본 기억 검색이 돌았다(#662).
+
+    선조회를 했는지는 코드의 일이라 어기면 실패다. 선조회 근거를 하나도 인용하지 않은 것은 모델의
+    판단이라 실패로 끊지 않고 참고로만 남긴다 — 후보와 무관한 기록이면 일반 추천이 맞다.
+    """
+    verdict = merged(exact3(ran), common(ran))
+    state, counts = ran.world.context.state, evidence_counts(ran)
+    if not state.memory_prefetched:
+        verdict.failures.append("모델을 부르기 전에 기본 기억 검색을 하지 않았다")
+    if counts["prefetched"] == 0:
+        verdict.failures.append("최근 기록이 있는 아이인데 선조회 결과가 0건이다")
+    if counts["prefetched"] and counts["cited"] == 0:
+        verdict.notes.append("선조회 근거를 하나도 인용하지 않았다 — 반복되면 재요청을 검토한다")
+    return verdict
+
+
 def j_empty(ran: Ran) -> Verdict:
     verdict = merged(exact3(ran), common(ran))
     for draft in ran.result.suggestions:
@@ -441,6 +478,10 @@ def j_empty(ran: Ran) -> Verdict:
             verdict.failures.append("일반 추천에 근거가 있다")
     if ran.result.needs_observation:
         verdict.failures.append("기록 0건인데 되묻기가 있다")
+    if not ran.world.context.state.memory_prefetched:
+        verdict.failures.append("기록이 0건이어도 기본 기억 검색은 해야 한다")
+    if evidence_counts(ran)["prefetched"]:
+        verdict.failures.append("기록 0건인데 선조회 결과가 있다")
     return verdict
 
 
@@ -888,6 +929,14 @@ CASES: tuple[Case, ...] = (
         j_c30,
     ),
     Case(
+        "P662/C48",
+        "오늘 저녁 뭐 먹이면 좋을까?",
+        M,
+        "C48",
+        "모델 호출 전 선조회 · 근거 건수 기록 (#662)",
+        j_prefetch,
+    ),
+    Case(
         "T01/C48-empty",
         "오늘 저녁 뭐 먹이면 좋을까?",
         M,
@@ -1217,6 +1266,9 @@ def test_food_run(case: Case, expect: Callable[..., None], monkeypatch: pytest.M
             f"    status={result.status} 모델 {result.model_calls}회 {elapsed_ms}ms "
             f"추천 {len(result.suggestions)}개 {_names(ran)}"
         )
+        counts = evidence_counts(ran) if case.task == M else None
+        if counts is not None:
+            _say("    근거 " + " ".join(f"{key}={value}" for key, value in counts.items()))
         for readout in result.readouts:
             _say(f"    · {readout.body}")
         if result.needs_observation:
@@ -1240,6 +1292,7 @@ def test_food_run(case: Case, expect: Callable[..., None], monkeypatch: pytest.M
                 "tools": [name for name, _ in recorder.tool_calls],
                 "tool_args": [raw for _, raw in recorder.tool_calls],
                 "question": list(result.needs_observation),
+                "evidence": counts,
                 "failures": verdict.failures,
                 "gaps": verdict.gaps,
                 "notes": verdict.notes,

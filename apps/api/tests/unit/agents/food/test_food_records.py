@@ -10,7 +10,7 @@ from app.agents.food.result import ErrorCode
 from app.agents.food.schemas.common import MealPeriod
 from app.agents.food.schemas.records import SearchFoodMemoryArgs
 from app.agents.food.store import InMemoryFoodMemory
-from app.agents.food.tools.records import search_food_memory
+from app.agents.food.tools.records import prefetch_food_memory, search_food_memory
 from tests.unit.agents.food.support import CHILD, TODAY, affinity, context, observation
 
 
@@ -185,3 +185,70 @@ async def test_이번_주는_월요일부터_오늘까지다() -> None:
     result = await search_food_memory(ctx, SearchFoodMemoryArgs(period=MealPeriod.THIS_WEEK))
 
     assert [r["label"] for r in result.data["records"]] == ["월요일"]
+
+
+# ── prefetch_food_memory — 모델을 부르기 전 기본 검색 ─────────────────────
+async def test_선조회는_도구와_같은_근거를_같은_순서로_고른다() -> None:
+    liked = affinity("딸기", state="confirmed")
+    meal = observation("계란말이", days_ago=0)
+    old = observation("보름전", days_ago=15)
+    ctx = context(memory=memory(affinities=[liked], observations=[meal, old]))
+    by_tool = context(memory=memory(affinities=[liked], observations=[meal, old]))
+
+    found = await prefetch_food_memory(ctx)
+    result = await search_food_memory(by_tool, SearchFoodMemoryArgs())
+
+    assert [str(item.ref.id) for item in found] == [r["id"] for r in result.data["records"]]
+    assert [item.ref.id for item in found] == [liked.id, meal.id]
+
+
+async def test_선조회한_근거는_seen_evidence_와_선조회_표에_남는다() -> None:
+    liked = affinity("딸기")
+    meal = observation("계란말이")
+    ctx = context(memory=memory(affinities=[liked], observations=[meal]))
+
+    await prefetch_food_memory(ctx)
+
+    assert ctx.state.memory_prefetched
+    assert ctx.state.prefetched_evidence_ids == {liked.id, meal.id}
+    assert set(ctx.state.seen_evidence) == {liked.id, meal.id}
+
+
+async def test_기록이_없어도_선조회를_했다고_남기고_빈_결과를_돌려준다() -> None:
+    ctx = context(memory=memory())
+
+    found = await prefetch_food_memory(ctx)
+
+    assert found == ()
+    assert ctx.state.memory_prefetched
+    assert ctx.state.prefetched_evidence_ids == set()
+    assert ctx.state.seen_evidence == {}
+
+
+async def test_누적이_많아도_최근_14일_밖이고_관심도_없으면_선조회는_비어_있다() -> None:
+    names = [f"음식{chr(0xAC00 + i)}" for i in range(22)]
+    rows = [observation(name, days_ago=20 + i) for i, name in enumerate(names)]
+    ctx = context(memory=memory(observations=rows))
+
+    found = await prefetch_food_memory(ctx)
+
+    assert found == ()
+
+
+async def test_최근_관찰이_없어도_유효한_확정_관심은_선조회에_들어온다() -> None:
+    liked = affinity("딸기", state="confirmed", days_ago=40)
+    ctx = context(memory=memory(affinities=[liked]))
+
+    found = await prefetch_food_memory(ctx)
+
+    assert [item.ref.id for item in found] == [liked.id]
+
+
+async def test_선조회는_모델이_도구를_불렀다는_횟수에_세지_않는다() -> None:
+    ctx = context(memory=memory(affinities=[affinity("딸기")]))
+
+    await prefetch_food_memory(ctx)
+    assert ctx.state.memory_search_calls == 0
+
+    await search_food_memory(ctx, SearchFoodMemoryArgs())
+    assert ctx.state.memory_search_calls == 1

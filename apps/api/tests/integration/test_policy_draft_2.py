@@ -35,6 +35,10 @@ PREVIOUS = {
 }
 
 
+LAST_MOMENT = datetime(2026, 11, 2, 14, 59, 59, tzinfo=UTC)
+"""2026-11-03 판이 시작하기 1초 전. 날짜가 지나도 이 판의 기간을 보도록 시각을 고정한다."""
+
+
 async def version_row(session, scope: ConsentScope, version: str) -> PolicyVersion | None:
     return await session.scalar(
         select(PolicyVersion).where(PolicyVersion.scope == scope, PolicyVersion.version == version)
@@ -42,19 +46,18 @@ async def version_row(session, scope: ConsentScope, version: str) -> PolicyVersi
 
 
 async def current_versions(session) -> dict[ConsentScope, str]:
-    rows = await find_active_versions(session, now=datetime.now(UTC))
+    rows = await find_active_versions(session, now=LAST_MOMENT)
     return {row.scope: row.version for row in rows}
 
 
 @pytest.mark.parametrize("scope", REGISTERED, ids=lambda s: s.value)
 async def test_draft_2_is_the_current_version(session, scope):
-    """① 동의 화면(GET /policies)이 지금 보여 주는 버전이 draft-2 다."""
+    """① 2026-11-03 판이 시작하기 전까지 동의 화면(GET /policies)이 보여 주는 버전이 draft-2 다."""
     assert (await current_versions(session))[scope] == "draft-2"
 
 
-async def test_location_stays_on_draft_1(session):
-    """① 위치는 이어받지 않는다 — 첫 빌드에서 화면이 묻지 않고, draft-1 이 그대로 유효하다."""
-    assert (await current_versions(session))[ConsentScope.LOCATION] == "draft-1"
+async def test_location_was_not_in_this_version(session):
+    """① 위치는 이어받지 않았다 — 첫 빌드에서 화면이 묻지 않았다. 다음 글은 2026-11-03 판이다."""
     assert await version_row(session, ConsentScope.LOCATION, "draft-2") is None
 
 
@@ -62,7 +65,7 @@ async def test_location_stays_on_draft_1(session):
 async def test_draft_2_is_the_committed_text_page_and_title(session, scope):
     """② DB 본문 · 해시 · 정본 HTML · 제목 · 법적 근거 = 저장소 파일.
 
-    등록 뒤에 파일을 고치면 여기서 깨진다. 고치려면 draft-3 폴더와 새 마이그레이션을 만든다.
+    등록 뒤에 파일을 고치면 여기서 깨진다. 고치려면 새 판 폴더와 새 마이그레이션을 만든다.
     """
     row = await version_row(session, scope, "draft-2")
     text = (TEXTS / f"{scope.value}.md").read_text(encoding="utf-8")

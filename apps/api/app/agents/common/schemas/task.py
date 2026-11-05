@@ -30,3 +30,9 @@ class DomainTask:
     # pipeline 이 이 task 를 돌리는 run 의 마감 시각(`time.perf_counter` 기준). 없으면 마감이 없다.
     # Growth 는 재호출이 마감에 걸리면 처음 통과한 후보를 지키려고 이 값을 본다
     deadline: float | None = None
+    # 되물은 질문에 보호자가 답한 뒤 같은 요청을 이어서 도는 task 다 (pipeline 의 이어받기).
+    # 답을 받은 행동의 저장 이름이다. 그 행동은 수준을 못 읽어도 다시 묻지 않는다
+    answered_subject: str | None = None
+    # 그 답의 원문. 코드 판정(닫힘 · 요청 행동)만 읽고 모델에게는 보내지 않는다 — Memory 가 저장하지
+    # 않은 말까지 외부 모델로 가지 않게 한다. Growth 는 저장된 기록을 조회로 읽는다
+    answer_texts: tuple[str, ...] = ()
