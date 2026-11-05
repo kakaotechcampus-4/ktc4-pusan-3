@@ -117,6 +117,12 @@ services:
     # 호스트 포트를 열지 않는다 — Caddy 가 리버스 프록시한다.
     expose:
       - "8000"
+    # 🚨 고정 주소다. 서버 방화벽이 이 주소의 상자만 EC2 메타데이터(서버 역할의 S3 열쇠)에 닿게 한다
+    #    (deploy/scripts/imds-firewall.sh). 바꾸면 그 스크립트의 API_IP 도 같이 바꾼다.
+    #    다른 상자는 .2 부터 차례로 받아서 .20 과 겹치지 않는다
+    networks:
+      default:
+        ipv4_address: 172.30.0.20
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')\""]
       interval: 30s
