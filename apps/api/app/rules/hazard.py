@@ -21,17 +21,33 @@
 되묻기 답으로 와도 같다 (pipeline `_handle_continuation`).
 그래도 남는 오탐이 있어 안내는 "아이가 그랬다면" 으로 시작한다.
 
+거는 이름 · 섭취 동사 목록은 `hazard_rules.py` 에 있고 여기는 판정 방법만 둔다.
+
 순수 함수. LLM·DB·외부 I/O 없음 — 표준 라이브러리만 쓴다 (apps/api/CLAUDE.md 레이어 경계).
 """
 
 import re
 from bisect import bisect_right
 from collections.abc import Iterator, Sequence
-from typing import Literal
 
+from app.rules.hazard_rules import (
+    DEFAULT_RULES,
+    FOOD_NAME_TERMS,
+    HAZARD_KINDS,
+    PLAY_NAME_TERMS,
+    HazardKind,
+    HazardRules,
+)
 from app.rules.term_match import Term, match_spans, match_terms, split_words
 
-HazardKind = Literal["drug", "alcohol", "tobacco", "chemical", "object"]
+__all__ = [
+    "FOOD_NAME_TERMS",
+    "PLAY_NAME_TERMS",
+    "HazardKind",
+    "HazardRules",
+    "find_hazards",
+    "hazard_names",
+]
 
 # 이름이 든 낱말부터 동사가 든 낱말까지의 거리. "락스를 한 모금 마셨어" 가 3이다
 INTAKE_WORDS = 3
@@ -65,193 +81,19 @@ _CHILDREN = ("아이", "애", "우리애", "딸", "아들", "아기")
 # 뒤 낱말을 꾸미는 동사의 끝 — "마시는" · "마시던" · "먹은" · "마신" · "피운" · "삼킨" · "맛본"
 _MODIFIER_ENDINGS = ("는", "던", "은", "신", "운", "킨", "본")
 
-_DRUG = Term(
-    "drug",
-    (
-        "필로폰",
-        "히로뽕",
-        "메스암페타민",
-        "메트암페타민",
-        "코카인",
-        "헤로인",
-        "엑스터시",
-        "케타민",
-        "펜타닐",
-        "대마초",
-        "마리화나",
-        "마약을",
-        "마약했",
-        "마약하",
-        "마약해",
-    ),
-)
-# 마약 이름은 놀이 · 배움 기록의 대상 이름에도 나오면 안 된다. 예방 교육은 남긴다
-_DRUG_NAME = Term(
-    "drug",
-    (*_DRUG.aliases, "마약"),
-    guards=(
-        "마약예방",
-        "마약퇴치",
-        "마약김밥",
-        "마약떡볶이",
-        "마약옥수수",
-        "마약계란",
-        "마약달걀",
-        "마약토스트",
-        "마약빵",
-        "마약소스",
-        "마약치킨",
-        "마약만두",
-        "마약핫도그",
-        "마약간장",
-    ),
-)
-_ALCOHOL = Term(
-    "alcohol",
-    ("술", "소주", "맥주", "와인", "막걸리", "양주", "위스키", "보드카", "고량주", "사케"),
-    guards=(
-        "술래",
-        "술빵",
-        "술떡",
-        "미술",
-        "기술",
-        "마술",
-        "수술",
-        "예술",
-        "요술",
-        "무술",
-        "학술",
-        "술술",
-        "단술",
-        "맛술",
-        "입술",
-        "사케동",
-        "술안주",
-        "무알콜맥주",
-        "무알콜와인",
-        # 숟가락 수. 띄어쓰기를 지우고 보므로 "두 술" 도 "두술" 이다
-        "한술",
-        "두술",
-        "세술",
-        "네술",
-        "몇술",
-        "반술",
-        "첫술",
-        "다섯술",
-        "여섯술",
-        "일곱술",
-        "여덟술",
-        "아홉술",
-        "열술",
-        "서너술",
-        "여러술",
-        "두어술",
-        "댓술",  # 네댓 · 너댓
-    ),
-)
-_TOBACCO = Term("tobacco", ("담배", "담뱃", "꽁초", "니코틴"))
-_CHEMICAL = Term(
-    "chemical",
-    (
-        "세제",
-        "락스",
-        "표백제",
-        "세정제",
-        "유연제",
-        "농약",
-        "살충제",
-        "제초제",
-        "쥐약",
-        "모기약",
-        "부동액",
-        "소독제",
-        "방향제",
-        "탈취제",
-        "아세톤",
-        "리무버",
-        "휘발유",
-        "등유",
-        "신너",
-        "시너",
-    ),
-    guards=("세제곱", "등유치원", "무농약", "저농약"),
-)
-_OBJECT = Term(
-    "object",
-    (
-        "건전지",
-        "단추전지",
-        "코인전지",
-        "배터리",
-        "동전",
-        "자석",
-        "구슬",
-        "바둑알",
-        "압정",
-        "옷핀",
-        "비비탄",
-        "워터비즈",
-        "개구리알",
-        "레고",
-        "단추",
-    ),
-)
-
-_INTAKE = Term(
-    "intake",
-    (
-        "먹",
-        "마시",
-        "마셨",
-        "마신",
-        "마셔",
-        "마심",
-        "맛보",
-        "맛봤",
-        "맛본",
-        "맛을보",
-        "맛을봤",
-        "맛을본",
-        "핥",
-        "삼키",
-        "삼켰",
-        "삼킨",
-        "삼켜",
-        "삼킴",
-        "씹",
-        "빨아",
-        "빨았",
-        "피우",
-        "피웠",
-        "피운",
-        "피움",
-        "흡입",
-        "들이마",
-        "입에넣",
-        "입에물",
-        "입에대",
-    ),
-    guards=("마시멜로", "먹물", "먹구름"),
-)
-_SWALLOW = Term("swallow", ("삼키", "삼켰", "삼킨", "삼켜", "삼킴", "입에넣", "입에물", "목에걸"))
-
-_WITH_INTAKE = (_ALCOHOL, _TOBACCO, _CHEMICAL)
-_SUBSTANCES = (_DRUG, *_WITH_INTAKE, _OBJECT)
-_KINDS: tuple[HazardKind, ...] = ("drug", "alcohol", "tobacco", "chemical", "object")
-
-# 저장 게이트가 관찰 대상 이름에서 보는 것. 물건은 놀잇감 이름이기도 해서 보지 않는다
-FOOD_NAME_TERMS = (_DRUG_NAME, _ALCOHOL, _TOBACCO, _CHEMICAL)
-PLAY_NAME_TERMS = (_DRUG_NAME,)
-
 _Span = tuple[str, int, int]
 
 
-def find_hazards(text: str) -> tuple[HazardKind, ...]:
-    """글에서 걸린 위험 종류. 순서는 `_KINDS`. 없으면 빈 튜플."""
+def find_hazards(text: str, *, rules: HazardRules = DEFAULT_RULES) -> tuple[HazardKind, ...]:
+    """글에서 걸린 위험 종류. 순서는 `HAZARD_KINDS`. 없으면 빈 튜플.
+
+    사전을 바꿔 끼울 때는 `rules=` 로 넘긴다. 기본값은 정의할 때 묶이므로 `DEFAULT_RULES` 를
+    monkeypatch 해도 바뀌지 않는다.
+    """
     found: set[str] = set()
-    for words in _clauses(text):
-        found.update(_clause_hazards(words))
-    return tuple(kind for kind in _KINDS if kind in found)
+    for words in _clauses(text, rules.substances):
+        found.update(_clause_hazards(words, rules))
+    return tuple(kind for kind in HAZARD_KINDS if kind in found)
 
 
 def hazard_names(names: Sequence[str], terms: Sequence[Term]) -> tuple[str, ...]:
@@ -266,20 +108,20 @@ def hazard_names(names: Sequence[str], terms: Sequence[Term]) -> tuple[str, ...]
     return tuple(dict.fromkeys(term.key for term in terms if term.key in hits))
 
 
-def _clauses(text: str) -> Iterator[list[str]]:
+def _clauses(text: str, substances: Sequence[Term]) -> Iterator[list[str]]:
     """마디마다 `normalize` 한 낱말들."""
     for sentence in _SENTENCE_BREAK.split(text):
         clause: list[str] = []
         for word in split_words(sentence):
             clause.append(word)
-            if word.endswith(_CLAUSE_ENDINGS) and not match_spans(word, _SUBSTANCES):
+            if word.endswith(_CLAUSE_ENDINGS) and not match_spans(word, substances):
                 yield clause  # "레고" 처럼 이름이 "고" 로 끝나도 끊지 않는다
                 clause = []
         if clause:
             yield clause
 
 
-def _clause_hazards(words: list[str]) -> set[str]:
+def _clause_hazards(words: list[str], rules: HazardRules) -> set[str]:
     joined = "".join(words)
     starts = [0]
     for word in words[:-1]:
@@ -291,10 +133,13 @@ def _clause_hazards(words: list[str]) -> set[str]:
     def child_did(span: _Span) -> bool:
         return not _not_done(joined, span) and not _modifies_adult(words, word_at(span[1]))
 
-    found = {key for key, _, _ in match_spans(joined, (_DRUG,))}
-    intake = [span for span in match_spans(joined, (_INTAKE,)) if child_did(span)]
-    swallow = [span for span in match_spans(joined, (_SWALLOW,)) if child_did(span)]
-    for terms, verbs in ((_WITH_INTAKE, intake), ((_OBJECT,), swallow)):
+    found = {key for key, _, _ in match_spans(joined, rules.named)}
+    intake = [span for span in match_spans(joined, (rules.intake,)) if child_did(span)]
+    swallow = [span for span in match_spans(joined, (rules.swallow,)) if child_did(span)]
+    for terms, verbs in (
+        (rules.with_intake, intake),
+        (rules.with_swallow, swallow),
+    ):
         for key, start, end in match_spans(joined, terms):
             name_word = word_at(start)
             if _adult_subject(words[:name_word]):
