@@ -9,6 +9,7 @@
 import base64
 import json
 import logging
+import time
 from dataclasses import dataclass
 from typing import TypeVar
 
@@ -16,6 +17,7 @@ from openai import OpenAI
 from openai.lib._pydantic import to_strict_json_schema
 from pydantic import ValidationError
 
+from app.core import llm_usage
 from app.core.config import Settings
 from app.core.notice_extract import ImageNoticeExtract, NoticeExtract
 from app.providers.streaming import collect
@@ -132,6 +134,7 @@ class NoticeExtractor:
         timeout_s: float = 120.0,
     ) -> None:
         self._client = OpenAI(base_url=base_url, api_key=api_key, timeout=timeout_s, max_retries=1)
+        self._provider = llm_usage.provider_of(base_url)
         self.model = model
         self._effort = reasoning_effort
         self._max_calls = max_calls
@@ -180,6 +183,7 @@ class NoticeExtractor:
         if self.calls >= self._max_calls:
             raise RuntimeError(f"호출 상한 {self._max_calls}회 도달 — 예산 보호를 위해 중단")
         self.calls += 1
+        started = time.perf_counter()
         # 게이트웨이는 스트리밍이 아닌 요청의 출력을 2,000 토큰으로 막는다 (2026-11-01 실측)
         stream = self._client.chat.completions.create(
             model=self.model,
@@ -200,6 +204,17 @@ class NoticeExtractor:
                 self.model,
                 usage.prompt_tokens,
                 usage.completion_tokens,
+            )
+            # 잘리거나 거절된 응답도 과금되므로 아래 검사보다 앞에 둔다 (image_ocr.py 와 같다)
+            llm_usage.record(
+                role="notice_ocr",
+                provider=self._provider,
+                model=reply.model or self.model,
+                prompt_tokens=reply.prompt_tokens,
+                cached_prompt_tokens=reply.cached_prompt_tokens,
+                completion_tokens=reply.completion_tokens,
+                reasoning_tokens=reply.reasoning_tokens,
+                latency_ms=int((time.perf_counter() - started) * 1000),
             )
         if reply.finish_reason == "length":
             raise RuntimeError("응답이 출력 상한에서 잘림")

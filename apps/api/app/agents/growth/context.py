@@ -97,6 +97,14 @@ class GrowthRunState:
     closing: str | None = None
     # 되묻기 한 줄 (needs_observation)
     question: str | None = None
+    # 자립 카테고리별 단계 사슬. 사슬 찾기 · 자료 없음 판정 · 저장 이름이 같은 것을 다시 읽지 않는다
+    chains: dict[str, dict[str, tuple[GrowthDocRow, ...]]] = field(default_factory=dict)
+    # 되묻기를 낸 자리 (되묻기 키, 저장 이름, 카테고리). 답을 이어받는 Memory 가 어느 행동의 어느
+    # 칸에 저장할지 코드가 알게 한다
+    asked: tuple[str, str, str] | None = None
+    # 되묻기에 답을 받고 이어서 도는 run 이면 그 행동의 저장 이름. 그 행동은 수준을 못 읽어도
+    # 다시 묻지 않는다
+    answered_subject: str | None = None
 
     # ── 관측 로그 (agent.run 이 끝날 때 한 줄) ──
     # 추천 없이 끝낸 코드 문구 키 — closed.* · blocked.safety · doc.no_row · rhythm.no_row …

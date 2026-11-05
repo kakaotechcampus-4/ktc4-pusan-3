@@ -21,12 +21,13 @@ Owner: 고태영 (프론트 리드)
 | 05 · 07 · 08 · 09 · 11-1 · 11-2 화면, 라우트를 더하거나 시트를 라우트로 바꿀 때 | [`screen-rules-v1.md`](../../docs/web/screen-rules-v1.md) |
 | 04 대화 · `stores/conversation.ts` · `hooks/use-run-stream.ts` · `lib/api/sse.ts` · `components/run-result.tsx` · 지난 대화(`lib/chat-history.ts` · `hooks/use-chat-history.ts`) | [`chat-run-v1.md`](../../docs/web/chat-run-v1.md) |
 | `components/` · `components/ui/` · `globals.css` · 아이콘 · 서체 · 10 설정 하위 화면(고객센터 · 탈퇴 · 문제 알리기) | [`components-v1.md`](../../docs/web/components-v1.md) |
-| `lib/auth/` · `stores/session.ts` · `/auth/*` · 01 · 02 · 동의(`lib/consent.ts`) | [`auth-consent-v1.md`](../../docs/web/auth-consent-v1.md) |
+| `lib/auth/` · `stores/session.ts` · `/auth/*` · 01 · 02 · 동의(`lib/consent.ts`) · 위치(`lib/location.ts` · `lib/native/location.ts`) | [`auth-consent-v1.md`](../../docs/web/auth-consent-v1.md) |
 | `lib/api/` · 뮤테이션 · 에러 코드 처리 · `error.tsx` · `AppErrorBoundary` | [`api-client-v1.md`](../../docs/web/api-client-v1.md) |
 | 화면 투어(`components/screen-tour.tsx` · `lib/tour/` · `stores/tour.ts`) · 화면의 `data-tour` · ? 버튼 | [`screen-tour-v1.md`](../../docs/web/screen-tour-v1.md) |
 | `mocks/` · `*.test.ts` · `e2e/` · `contract/` | [`mock-and-tests-v1.md`](../../docs/web/mock-and-tests-v1.md) |
 | 복약 초안 카드 · 11-3 복약 · `stores/medication-draft.ts` · `lib/medication.ts` (#537) | [`medication-v1.md`](../../docs/web/medication-v1.md) |
 | `package.json` 의 버전 · `eslint.config.mjs` · `ci-web.yml` · `Dockerfile` · 배포 | [`toolchain-deploy-v1.md`](../../docs/web/toolchain-deploy-v1.md) |
+| 웹 푸시 — `lib/push/` · `lib/native/push.ts`(앱 셸 창구) · `public/push-sw.js` · `WebPushBridge` · `ReminderField` 의 권한 묻기 · `NEXT_PUBLIC_FIREBASE_*` | [`web-push-v1.md`](../../docs/web/web-push-v1.md) |
 
 🚨 **같은 규칙이 이 파일의 요약과 `docs/web/` 원문 두 곳에 있으면 원문이 정본이다.** 규칙을 바꾸면 같은 PR 에서 둘 다 고친다.
 
@@ -78,7 +79,10 @@ Owner: 고태영 (프론트 리드)
   질문이 그대로 들어 있다) · `stores/medication-draft.ts`(**복약 초안** — 약 이름 · 복용 이유) 도 같다.
   다섯 다 로그아웃에서 `clearAll()` 로 놓는다 (`stores/session.ts`).
   대화 스토어는 로그아웃에서 **도는 스트림도 끊는다**
-- `public/mockServiceWorker.js` 는 msw 가 생성한 파일이다. 손으로 고치지 않고 lint·prettier 대상에서 빼 뒀다
+- `public/mockServiceWorker.js` 는 msw 가 생성한 파일이다. 손으로 고치지 않고 lint·prettier 대상에서 빼 뒀다.
+  같은 자리의 `public/push-sw.js`(웹 푸시 · #609)는 **손으로 쓴 파일**이라 lint·prettier 대상이다
+- `src/app/icon.svg` · `favicon.ico` · `apple-icon.png`(파비콘 · #695)은 생성물이다. 손으로 고치지 않고
+  `apps/mobile/scripts/build-icons.py` 로 앱 아이콘과 함께 다시 만든다 (원본 로고가 `apps/mobile/assets/logo.svg` 하나라서)
 
 화면을 붙일 때 요청 · 응답 모양은 **Swagger(`/docs`)** 를 기준으로 잡는다. [`docs/api/api-interface-v1.html`](../../docs/api/api-interface-v1.html) 은 갱신하지 않는 초안이라, 그 **화면 → 호출** 표는 어느 화면이 무엇을 부르는지 훑는 용도로만 본다.
 
@@ -254,7 +258,7 @@ run 상태는 서버 상태도 클라이언트 상태도 아니다 (구독형). 
 
 최상위 §2 가 프론트에 떨어지는 지점만 추렸다. 어기면 서비스가 성립하지 않는다.
 
-- 🚨 **일반 추천과 개인화 추천을 한 컴포넌트로 그리지 않는다.** 일반 추천에는 "또래 기준 일반 추천" 을 **화면에 명시**하고 쌓인 기록 건수를 그대로 보여준다. 되물을 때 질문은 **1개**.
+- 🚨 **일반 추천과 개인화 추천을 한 컴포넌트로 그리지 않는다.** 일반 추천은 **"일반 추천"이라고 표시**하고, 선택 기준은 카드의 `basis`로 설명하며, 기록 수는 Agent별 `general[].record_count`로 보여 준다. 라벨에 "또래 기준" 을 붙이지 않는다 — 놀이를 정해 물은 요청이면 그 요청을 바탕으로 고르고, 기준은 서버 `basis` 가 말한다 (#597). 되물을 때 질문은 **1개**.
   ⚠️ **둘이 한 화면에 같이 선다** — 같은 Agent 안에서도 후보마다 아이 기록 근거로 `kind` 가 갈린다 (#512 리뷰). 그래도 컴포넌트는 나누고, 고르기 · 채택 · 묶음 안내만 05 가 합친다. 05 는 일반 추천이 위, 되묻는 질문이 아래다.
 - 🚨 **"근거 없음" 상태를 만들지 않는다.** `evidence` 가 빈 suggestion 은 서버가 버리고 `scarcity` 로 내린다. 그 상태를 화면에 그리면 버그를 UI 로 덮는 것이다.
 - 🚨 **`is_stale` 인 근거를 단독으로 보여주지 않는다** (6개월 · NF-08).

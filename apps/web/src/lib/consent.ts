@@ -16,7 +16,7 @@
  */
 
 import { API_BASE_URL } from "@/lib/env";
-import type { Policy } from "@/lib/api/types";
+import type { ConsentRequest, Policy } from "@/lib/api/types";
 
 export const CONSENT_SCOPES = [
   "service_terms",
@@ -160,13 +160,13 @@ export function consentChoices(
 /**
  * 서버가 내주지만 **지금은 묻지 않는** 동의 (#221).
  *
- * 위치 기능이 첫 빌드에 없다. 개인정보 처리방침(2026-10-15 판)이 "기기의 위치 정보를 읽는 기능은
- * 두지 않는다" 고 알리는데, 가입 화면에 위치 동의가 서 있으면 두 글이 서로 다른 말을 한다.
+ * 비어 있다. 위치(`location`)를 한동안 여기 두었다가 위치 기능을 켜면서 뺐다 (#593) — 그 PR 은 위치기반서비스
+ * 신고 · 위치 약관 새 판이 끝난 뒤 머지한다 (#166).
  *
- * 🚨 **임시 예외다.** 무엇을 물을지는 원래 서버(`GET /policies`)가 정한다 (이 파일 머리말).
- *    위치 기능을 켤 때 이 목록을 비우고, 그때 서버 쪽도 위치 약관 새 판 · 신고를 마친다.
+ * 🚨 **임시 예외 자리다.** 무엇을 물을지는 원래 서버(`GET /policies`)가 정한다 (이 파일 머리말).
+ *    서버가 내주는데 화면 기능이 아직 없는 동의가 생기면 여기 넣는다.
  */
-const NOT_ASKED_YET: ReadonlySet<string> = new Set(["location"]);
+const NOT_ASKED_YET: ReadonlySet<string> = new Set<string>();
 
 /**
  * 화면에 세울 동의만 — `NOT_ASKED_YET` 을 뺀다. 가입 화면과 10 설정이 같은 기준을 쓴다.
@@ -242,6 +242,25 @@ export function consentPayload(
   return choices
     .filter(({ policy }) => isConsentChecked(policy, checked))
     .map(({ policy }) => ({ scope: policy.scope, policy_version: policy.version }));
+}
+
+/**
+ * 10 설정과 04 대화(위치 안 쓸래요 · #638 리뷰)가 같이 쓰는 `POST /consents` 본문.
+ *
+ * 🚨 버전은 지금 화면이 받은 약관의 것이다 — 상수가 아니다 (#90).
+ * 🚨 **어느 쪽인지는 서버가 말한다** (`target` · #190). 아이 스코프만 `child_id` 와 법정대리인 확인을 싣는다 (계약서 §04).
+ */
+export function consentRequestBody(
+  policy: Policy,
+  action: "granted" | "withdrawn",
+  childId: string,
+): ConsentRequest {
+  return {
+    scope: policy.scope,
+    action,
+    policy_version: policy.version,
+    ...(policy.target === "child" ? { child_id: childId, guardian_attested: true } : {}),
+  };
 }
 
 /**

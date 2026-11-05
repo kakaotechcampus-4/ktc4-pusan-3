@@ -15,6 +15,11 @@ pipeline 은 진행 상황을 파이썬 객체(`Step` · `Failed` …)로 내보
 🚨 화면에 보낼 것만 번역하고, 나머지는 None(보내지 않음)이다.
    - `DomainRouted` · `Unwritten` · `Rerouted` — 로그·지표용이다. 도메인 Agent 결과 중
      화면에 갈 것은 바로 뒤에 오는 `AgentResult`(agent_result, #227)가 싣는다.
+
+🚨 되묻기는 카드가 아니라 `AgentQuestion` 이 싣는다 (#615). 화면이 이미 아는 `agent_result` 한
+   장으로 보낸다(readouts · 추천 칸이 빈 카드, `question` 이 찬 것). 카드의 `question` 은 키만
+   남기고 늘 null 이다. 답할 수 있는 질문인지는 `awaits_reply` 가 말한다.
+   새 이벤트 이름은 화면이 정한 뒤에 바꾼다.
    - `PendingReply` — 조각 원문이 들어 있다. API 의 pending store 로만 간다(runner.py).
    - `RetryContext` · `EmptyResult` — 05 추천 엔드포인트의 보관함(suggestion_retry.py)으로만 간다.
      `RetryContext` 에는 요청 원문 조각이 들어 있다.
@@ -31,6 +36,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from app.agents.entrypoint import (
+    AgentQuestion,
     AgentResult,
     Done,
     Emit,
@@ -38,6 +44,8 @@ from app.agents.entrypoint import (
     EventDrafts,
     Failed,
     Guidance,
+    MedicationDraft,
+    MedicationDrafts,
     MemoryNote,
     Partial,
     Saved,
@@ -48,6 +56,9 @@ from app.api.runs import sse
 from app.api.runs.registry import RunChannel
 
 log = logging.getLogger(__name__)
+
+_SCREEN_REF_KINDS = frozenset({"medication_schedule"})
+"""readout 근거 중 화면으로 보내는 종류. 화면이 `Ref.kind` 로 받기로 한 것만이다."""
 
 SavedRows = Mapping[tuple[str, str], Any]
 """(kind, id) → 러너가 commit 뒤에 읽어 둔 화면 모양 행(`observation_outs`). model_dump 만 쓴다."""
@@ -89,6 +100,10 @@ def to_sse(event: Event, *, saved_rows: SavedRows | None = None) -> sse.SseEvent
         # 초안 모양은 app/core/event_draft.py 가 정하고 to_payload 가 그 모델로 직렬화한다.
         # 여기서 다시 적지 않는다
         return "event_draft", {"drafts": [draft.to_payload() for draft in event.drafts]}
+    if isinstance(event, MedicationDrafts):
+        # 복약 초안은 일정 초안과 같은 한 프레임이지만 이름이 다르다 — 제출이 다른 게이트(건강 기록
+        # 확정)라서 화면이 다른 카드로 그린다. 저장은 보호자가 제출할 때 백엔드가 한다
+        return "medication_draft", {"drafts": [_medication_payload(d) for d in event.drafts]}
     if isinstance(event, MemoryNote):
         # kind=question 이면 화면이 "이어서 적기" 를 연다.
         return "note", {"text": event.text, "kind": event.kind}
@@ -97,8 +112,10 @@ def to_sse(event: Event, *, saved_rows: SavedRows | None = None) -> sse.SseEvent
         return "unavailable", {"agents": list(event.agents)}
     if isinstance(event, AgentResult):
         # 도메인 Agent 결과 한 건 = 화면 블록 하나. 도착한 순서대로 그리고 재정렬하지 않는다 (#215)
-        # readout의 source_refs는 싣지 않는다 — 근거 종류(child_growth_log · growth_doc …)가 화면
-        # Ref에 아직 없어서, 보내면 타입이 안 맞는다 (apps/web/src/lib/api/types.ts 의 REF_KINDS)
+        # readout의 source_refs는 화면이 받기로 한 종류만 싣는다 — 지금은 복약 코스 하나다. 웹의
+        # REF_KINDS(apps/web/src/lib/api/types.ts)에 이 종류를 더하는 것은 FE 몫이고, 그 전에는
+        # 화면이 이 키를 읽지 않는다. 나머지 근거 종류(child_growth_log · growth_doc …)는 보내면
+        # 타입이 안 맞는다. 키는 늘 있다
         # question과 readout의 code는 없어도 키를 남긴다 (guidance의 deeplink와 같은 이유)
         # code는 개수 안내(fewer · empty)를 같은 kind="notice"인 날씨 안내와 가르는 값이다 (#249)
         return "agent_result", {
@@ -112,10 +129,16 @@ def to_sse(event: Event, *, saved_rows: SavedRows | None = None) -> sse.SseEvent
                     "body": readout.body,
                     "authored_by": readout.authored_by,
                     "code": readout.code,
+                    "source_refs": [
+                        ref.to_payload()
+                        for ref in readout.source_refs
+                        if ref.kind in _SCREEN_REF_KINDS
+                    ],
                 }
                 for readout in event.readouts
             ],
-            "question": event.question,
+            "question": None,
+            "awaits_reply": False,
             # 저장(commit)이 끝난 추천의 id. 추천 순서 그대로다. 추천이 없으면 [] — 키는 늘 있다
             "suggestion_ids": list(event.suggestion_ids),
             # 추천 묶음 한 줄 (#227). 개인화 · 일반 · 없음(null). 이유는 코드 문구다(모델 아님).
@@ -123,6 +146,20 @@ def to_sse(event: Event, *, saved_rows: SavedRows | None = None) -> sse.SseEvent
             "kind": event.kind,
             "reason": event.reason,
             "record_count": event.record_count,
+        }
+    if isinstance(event, AgentQuestion):
+        # run 의 되묻기 하나. 카드와 같은 모양의 마지막 agent_result 로 간다
+        return "agent_result", {
+            "agent": event.agent,
+            "task_type": event.task_type,
+            "status": "completed",
+            "readouts": [],
+            "question": event.text,
+            "awaits_reply": event.awaits_reply,
+            "suggestion_ids": [],
+            "kind": None,
+            "reason": None,
+            "record_count": None,
         }
     if isinstance(event, Partial):
         # 끝 신호가 아니다. 뒤에 done 이 오고, 화면은 그때 "부분 결과" 로 닫는다.
@@ -137,6 +174,28 @@ def to_sse(event: Event, *, saved_rows: SavedRows | None = None) -> sse.SseEvent
             "retryable": list(event.retryable),
         }
     return None
+
+
+def _medication_payload(draft: MedicationDraft) -> dict[str, Any]:
+    """복약 초안 하나를 화면 모양으로. 키는 웹의 `MedicationDraft` 와 같다.
+
+    `schedule_id` · `before` 는 수정(update) 초안에만 있다 — 등록(create) 초안에는 키 자체를 두지
+    않는다. null 을 실으면 화면이 이 키로 등록과 수정을 가르는 곳에서 수정으로 읽는다. 초안 값
+    (`schedule` · `doses` · `before`)은 `core/medication_draft.py` 가 JSON 으로 바꿔 둔 것이다.
+    """
+    payload: dict[str, Any] = {
+        "draft_id": draft.draft_id,
+        "op": draft.op,
+        "source": draft.source,
+        "schedule": draft.schedule,
+        "doses": list(draft.doses),
+        "notice_times": list(draft.notice_times),
+        "missing": list(draft.missing),
+    }
+    if draft.op == "update":
+        payload["schedule_id"] = str(draft.schedule_id)
+        payload["before"] = draft.before
+    return payload
 
 
 def relay(channel: RunChannel, *, saved_rows: SavedRows | None = None) -> Emit:

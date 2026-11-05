@@ -1,0 +1,84 @@
+# 국가예방접종 표준접종 시기 — 0~155개월(만 12세까지) (Health `compute_vaccine_schedule`). 기준 연도 2026.
+#
+# 출처: 질병관리청 고시 「예방접종의 실시기준 및 방법」 [별표 1] "국가예방접종 대상 및 표준접종시기".
+#   고시는 저작권법 제7조의 보호받지 못하는 저작물이라 값을 그대로 옮겨도 된다. 이 표의 월령은 전부
+#   별표 1 의 "표준접종시기" 에서 왔고, 고시가 월령 대신 간격만 적은 칸은 아래 "계산한 칸" 에 따로 적었다.
+#   법제처에서 받은 별표 1 PDF 에는 시행일 · 고시번호가 없다 — 아는 사람이 `version` 에 채운다.
+#
+# 단위: 개월. first_month · last_month 둘 다 포함하고, "N개월" 은 N개월 생일부터 N+1개월 생일 전날까지다
+#   (예: 2개월 = 생후 2개월이 되는 날부터 3개월 생일 전날까지). BCG "생후 1개월 이내" 는 1개월 생일 전까지
+#   라 0개월 칸이다. B형간염 "생후 0개월" 도 0개월이다.
+#
+# 고시가 개정되면 값을 별표 1 과 한 번 더 대조하고 PR 에 대조 기록을 남긴다. 기준 연도를 바꿀 때는 새
+# 파일 `vaccine_<연도>.yaml` 을 만들고 `reference.py` 의 `vaccine_table()` 이 읽는 파일 이름을 바꾼다.
+#
+# 검진은 71개월에 끝나지만 접종은 계속된다. 만 4~6세 칸(DTaP · IPV · MMR)은 83개월까지이고,
+# 만 6세 일본뇌염 4차 · 만 11~12세 Tdap · 만 12세 HPV · 일본뇌염 5차까지 표에 둔다. 156개월(만 13세)
+# 부터는 이 표에 정해진 접종이 없다.
+#
+# 계산한 칸 (고시가 월령이 아니라 간격으로 적은 것)
+#   - A형간염 2차 : 1차 12~23개월 뒤 6~12개월에 2차 → 18~35개월
+#   - 일본뇌염 생백신 2차 : 1차 12~23개월 뒤 12개월에 2차 → 24~35개월
+# 고시의 단서를 그대로 월령 칸으로 둔 것
+#   - IPV 3차 : 표준은 6개월이고 18개월까지 접종 가능하다고 적는다 → 6~18개월
+#
+# 이 표에 없는 것 (일부러 뺐다)
+#   - 인플루엔자 · 코로나19 : 고시가 월령이 아니라 "매년 사업 시기 내 1회" 로 적는다
+#   - 장티푸스 · 신증후군출혈열 : 위험요인이 있는 사람에게 제한적으로 접종하는 항목이다
+#   - HPV 2차(0개월 뒤 6개월) · 만 13세 이후 HPV 시작 : 간격 계산을 하지 않는다
+# HPV 는 고시가 "12세 남성 · 12~26세 여성" 으로 시작 대상을 정한다. 성별은 수집하지 않으므로 만 12세
+# 칸 하나로만 안내한다.
+source: "질병관리청 고시 「예방접종의 실시기준 및 방법」 [별표 1] 국가예방접종 대상 및 표준접종시기"
+version: "별표 1"
+fetched_at: "2026-10-19"
+year: 2026
+
+doses:
+  - { vaccine: BCG, dose: "1회", first_month: 0, last_month: 0 }
+
+  - { vaccine: B형간염, dose: "1차", first_month: 0, last_month: 0 }
+  - { vaccine: B형간염, dose: "2차", first_month: 1, last_month: 1 }
+  - { vaccine: B형간염, dose: "3차", first_month: 6, last_month: 6 }
+
+  - { vaccine: DTaP, dose: "1차", first_month: 2, last_month: 2 }
+  - { vaccine: DTaP, dose: "2차", first_month: 4, last_month: 4 }
+  - { vaccine: DTaP, dose: "3차", first_month: 6, last_month: 6 }
+  - { vaccine: DTaP, dose: "4차", first_month: 15, last_month: 18 }
+  - { vaccine: DTaP, dose: "5차", first_month: 48, last_month: 83 }
+
+  - { vaccine: IPV, dose: "1차", first_month: 2, last_month: 2 }
+  - { vaccine: IPV, dose: "2차", first_month: 4, last_month: 4 }
+  - { vaccine: IPV, dose: "3차", first_month: 6, last_month: 18 }
+  - { vaccine: IPV, dose: "4차", first_month: 48, last_month: 83 }
+
+  - { vaccine: Hib, dose: "1차", first_month: 2, last_month: 2 }
+  - { vaccine: Hib, dose: "2차", first_month: 4, last_month: 4 }
+  - { vaccine: Hib, dose: "3차", first_month: 6, last_month: 6 }
+  - { vaccine: Hib, dose: "추가", first_month: 12, last_month: 15 }
+
+  - { vaccine: 폐렴구균, dose: "1차", first_month: 2, last_month: 2 }
+  - { vaccine: 폐렴구균, dose: "2차", first_month: 4, last_month: 4 }
+  - { vaccine: 폐렴구균, dose: "3차", first_month: 6, last_month: 6 }
+  - { vaccine: 폐렴구균, dose: "추가", first_month: 12, last_month: 15 }
+
+  - { vaccine: 로타바이러스, dose: "1차", first_month: 2, last_month: 2 }
+  - { vaccine: 로타바이러스, dose: "2차", first_month: 4, last_month: 4 }
+  - { vaccine: 로타바이러스, dose: "3차(RV5)", first_month: 6, last_month: 6 }
+
+  - { vaccine: MMR, dose: "1차", first_month: 12, last_month: 15 }
+  - { vaccine: MMR, dose: "2차", first_month: 48, last_month: 83 }
+
+  - { vaccine: 수두, dose: "1회", first_month: 12, last_month: 15 }
+
+  - { vaccine: A형간염, dose: "1차", first_month: 12, last_month: 23 }
+  - { vaccine: A형간염, dose: "2차", first_month: 18, last_month: 35 }
+
+  - { vaccine: "일본뇌염(불활성화)", dose: "1~2차", first_month: 12, last_month: 23 }
+  - { vaccine: "일본뇌염(불활성화)", dose: "3차", first_month: 24, last_month: 35 }
+  - { vaccine: "일본뇌염(불활성화)", dose: "4차", first_month: 72, last_month: 83 }
+  - { vaccine: "일본뇌염(불활성화)", dose: "5차", first_month: 144, last_month: 155 }
+  - { vaccine: "일본뇌염(생백신)", dose: "1차", first_month: 12, last_month: 23 }
+  - { vaccine: "일본뇌염(생백신)", dose: "2차", first_month: 24, last_month: 35 }
+
+  - { vaccine: Tdap, dose: "추가", first_month: 132, last_month: 155 }
+  - { vaccine: HPV, dose: "1차", first_month: 144, last_month: 155 }

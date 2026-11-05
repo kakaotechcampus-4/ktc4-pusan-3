@@ -20,6 +20,7 @@ import {
   updateMedicationDraft,
   photoFormData,
   submitOnboarding,
+  updateEventDraft,
   updateHealthSafety,
   uploadPhoto,
 } from "@/lib/api/operations";
@@ -74,6 +75,7 @@ import type {
   HealthSafety,
   HealthSafetyListResponse,
   MyDiary,
+  NotificationSettings,
   Observation,
   ObservationDetailResponse,
   ObservationsResponse,
@@ -89,6 +91,7 @@ import type {
   EventDraft,
   EventItem,
   EventItemUpdateResponse,
+  ReminderResponse,
   SubmitEventBody,
   SuggestionsRequest,
   SuggestionsResponse,
@@ -625,6 +628,22 @@ describe("05 묶음 안내 · 일반 추천 근거 (#249)", () => {
     expect((data.prechecks ?? []).some((p) => ids.has(p.suggestion_id!))).toBe(true);
   });
 
+  it("🚨 장소 확인 문구는 장소가 붙은 추천에만 문장과 따로 칸으로 온다 (#516)", async () => {
+    const body: SuggestionsRequest = { agents: ["food", "activity"] };
+    const plain = await fetchWith("default", body);
+    // 장소가 없는 추천은 키가 있고 값이 null 이다 (서버 `place_notice: str | None = None`)
+    for (const s of plain.suggestions) expect(s.place_notice, s.id).toBeNull();
+
+    const data = await fetchWith("suggest_place", body);
+    const noticed = [...data.suggestions, ...(data.general ?? [])].filter((s) => s.place_notice);
+    expect(noticed.map((s) => s.kind).sort()).toEqual(["general", "personalized"]);
+    for (const s of noticed) {
+      expect(s.agent).toBe("activity");
+      // 문구는 문장에 섞여 오지 않는다 — 장소 이름만 문장 앞에 붙는다
+      expect(s.content).not.toContain(s.place_notice!);
+    }
+  });
+
   it("🚨 0개로 끝난 Agent 도 묶음이 오고 안내가 실린다 — 실패가 아니다", async () => {
     const data = await fetchWith("suggest_counts", { agents: ["food", "activity"] });
 
@@ -658,6 +677,20 @@ describe("05 묶음 안내 · 일반 추천 근거 (#249)", () => {
     }
   });
 
+  it("🚨 놀이를 정해 물은 일반 추천은 문서 근거가 비어 오고 기준 문구를 단다 (#597)", async () => {
+    const data = await fetchWith("suggest_requested", { agents: ["activity"] });
+
+    const general = data.general ?? [];
+    expect(general.length).toBeGreaterThan(0);
+    for (const item of general) {
+      // 🚨 종류는 그대로 general 이다 — 요청 기반인지 가르는 칸은 응답에 없다
+      expect(item.kind).toBe("general");
+      expect(item.evidence).toEqual([]);
+      expect(item.basis).not.toBe("");
+    }
+    expect(data.suggestions).toEqual([]);
+  });
+
   it("🚨 묶음마다 확인 문구 칸이 늘 있고, 식품 아닌 알레르기는 놀이 묶음에 문구가 온다", async () => {
     const plain = await fetchWith("default", { agents: ["food", "activity"] });
     for (const group of plain.groups ?? []) expect(Array.isArray(group.cautions)).toBe(true);
@@ -670,6 +703,16 @@ describe("05 묶음 안내 · 일반 추천 근거 (#249)", () => {
   it("🚨 일반 추천은 카드마다 그 도메인의 기록 수를 싣는다", async () => {
     const data = await fetchWith("empty", { agents: ["food", "activity"] });
     for (const item of data.general ?? []) expect(typeof item.record_count).toBe("number");
+  });
+
+  it("🚨 Agent 둘의 기록 수는 카드별로 남고 scarcity.count만 호환 합계다 (#662)", async () => {
+    const data = await fetchWith("suggest_multi_general", { agents: ["food", "activity"] });
+
+    expect((data.general ?? []).map(({ agent, record_count }) => [agent, record_count])).toEqual([
+      ["food", 22],
+      ["activity", 8],
+    ]);
+    expect(data.scarcity?.count).toBe(30);
   });
 
   it("🚨 05 의 하루 한도는 429 daily_input_limit 이다", async () => {
@@ -2160,6 +2203,201 @@ describe("㉕ 준비물 체크 — 서버 #335 와 같은 계약 (#367)", () => 
     const failure = await patchItem("i_missing", true).catch((error: unknown) => error);
     expect(isApiError(failure, "not_found")).toBe(true);
     expect((failure as ApiError).status).toBe(404);
+  });
+});
+
+describe("㉘ 일정 알림 — 서버 #603 과 같은 계약 (#609)", () => {
+  /** 오늘에서 며칠 뒤 서울 기준 그 시각. 🚨 지난 시각이면 알림이 422 라서 늘 앞날로 만든다. */
+  function laterOn(days: number, time = "10:00"): string {
+    return `${daysAgo(-days)}T${time}:00+09:00`;
+  }
+
+  function eventBody(over: Partial<SubmitEventBody> & { allDay?: boolean } = {}): SubmitEventBody {
+    const { allDay = false, ...rest } = over;
+    return {
+      event: {
+        title: "지어낸 일정",
+        starts_at: allDay ? laterOn(10, "00:00") : laterOn(10),
+        ends_at: null,
+        all_day: allDay,
+        event_type: "episodic",
+        category: "activity",
+      },
+      items: [],
+      ...rest,
+    };
+  }
+
+  async function myReminderOnDay() {
+    const eventDay = await findEventDay();
+    const day = await api.get<CalendarDayResponse>(`/children/c1/calendar/${eventDay.date}`);
+    return day.events[0];
+  }
+
+  it("제출에 실은 알림이 응답에 그대로 선다 — 안 실으면 null", async () => {
+    const withReminder = await submitEventDraft(
+      "c1",
+      eventBody({ reminder: { lead: "1h" } }),
+      newIdempotencyKey(),
+    );
+    const without = await submitEventDraft("c1", eventBody(), newIdempotencyKey());
+
+    expect(withReminder.event.reminder).toEqual({ lead: "1h" });
+    expect(without.event.reminder).toBeNull();
+  });
+
+  it("🚨 종류가 맞지 않거나 지난 알림은 422 이고 일정도 넣지 않는다", async () => {
+    const wrongKind = await submitEventDraft(
+      "c1",
+      eventBody({ allDay: true, reminder: { lead: "1h" } }),
+      newIdempotencyKey(),
+    ).catch((error: unknown) => error);
+    // 시작 이틀 전 알림인데 시작이 내일이다.
+    const past = await submitEventDraft(
+      "c1",
+      {
+        ...eventBody({ reminder: { lead: "2d" } }),
+        event: { ...eventBody().event, starts_at: laterOn(1) },
+      },
+      newIdempotencyKey(),
+    ).catch((error: unknown) => error);
+
+    expect(isApiError(wrongKind, "invalid_reminder")).toBe(true);
+    expect((wrongKind as ApiError).status).toBe(422);
+    expect(isApiError(past, "invalid_reminder")).toBe(true);
+  });
+
+  it("🚨 422 뒤에 알림만 바꿔 다시 보내도 같은 키에 갇히지 않는다", async () => {
+    // 저장되지 않은 실패는 재생하지 않는다 — 고친 본문으로 다시 누르는 길이 열려 있어야 한다.
+    const key = newIdempotencyKey();
+    await expect(
+      submitEventDraft("c1", eventBody({ allDay: true, reminder: { lead: "1h" } }), key),
+    ).rejects.toSatisfy((error) => isApiError(error, "invalid_reminder"));
+
+    const fixed = await submitEventDraft(
+      "c1",
+      eventBody({ allDay: true, reminder: { lead: "day_of_9am" } }),
+      key,
+    );
+    expect(fixed.event.reminder).toEqual({ lead: "day_of_9am" });
+  });
+
+  it("09 에서 건 내 알림이 하루 보기에 남고, 지우면 null 이다", async () => {
+    expect((await myReminderOnDay())?.reminder).toBeNull();
+    const event = await myReminderOnDay();
+
+    const put = await api.put<ReminderResponse>(`/children/c1/events/${event?.id}/reminder`, {
+      lead: "30m",
+    });
+    expect(put.reminder).toEqual({ lead: "30m" });
+    expect((await myReminderOnDay())?.reminder).toEqual({ lead: "30m" });
+
+    await api.delete<void>(`/children/c1/events/${event?.id}/reminder`);
+    expect((await myReminderOnDay())?.reminder).toBeNull();
+    // 🚨 없어도 204 다 — 두 번 눌러도 결과가 같다.
+    await expect(
+      api.delete<void>(`/children/c1/events/${event?.id}/reminder`),
+    ).resolves.not.toThrow();
+  });
+
+  it("🚨 수정은 서버처럼 알림을 따라가게 한다 — 시작만 옮기면 남기고, 종류가 바뀌어 지나면 지운다", async () => {
+    // 목의 저장된 일정(e_3)은 이틀 뒤 오전 10시 · 시간 있는 일정이다. 고친 일정을 들고 있지 않아서
+    // 수정은 늘 그 원본에서 출발한다.
+    const event = await myReminderOnDay();
+    const reminderPath = `/children/c1/events/${event?.id}/reminder`;
+    const patch = async (starts_at: string, all_day: boolean, title = event?.title ?? "") => {
+      const res = await updateEventDraft(
+        "c1",
+        event?.id ?? "",
+        { event: { ...eventBody().event, title, starts_at, all_day }, items: [] },
+        newIdempotencyKey(),
+      );
+      return res.event.reminder;
+    };
+
+    await api.put<ReminderResponse>(reminderPath, { lead: "1d" });
+    // 시작도 종류도 그대로 — 제목만 고치면 건드리지 않는다.
+    expect(await patch(event?.starts_at ?? "", false, "제목만 고침")).toEqual({ lead: "1d" });
+    // 시작만 세 시간 뒤로 당겨 하루 전 알림이 지났다 — 값은 그대로 남는다.
+    const soon = new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString();
+    expect(await patch(soon, false)).toEqual({ lead: "1d" });
+    // 종일로 바꾸면 날 수를 지켜 옮긴다.
+    expect(await patch(laterOn(5, "00:00"), true)).toEqual({ lead: "1d_9am" });
+
+    // 종일로 바꿨는데 옮긴 값(어제 오전 9시)이 이미 지났으면 그 알림만 지운다.
+    await api.put<ReminderResponse>(reminderPath, { lead: "1d" });
+    expect(await patch(`${daysAgo(0)}T00:00:00+09:00`, true)).toBeNull();
+  });
+
+  it("PUT 은 없는 일정이면 404, 목록 밖 값이면 400, 종류가 맞지 않으면 422 다", async () => {
+    const event = await myReminderOnDay();
+    const put = (eid: string, lead: string) =>
+      api
+        .put<ReminderResponse>(`/children/c1/events/${eid}/reminder`, { lead })
+        .catch((error: unknown) => error);
+
+    expect(isApiError(await put("e_missing", "1h"), "not_found")).toBe(true);
+    expect(isApiError(await put(event?.id ?? "", "3h"), "validation_failed")).toBe(true);
+    expect(isApiError(await put(event?.id ?? "", "day_of_9am"), "invalid_reminder")).toBe(true);
+  });
+});
+
+describe("㉙ 10 설정 알림 스위치 — 서버 #605 와 같은 계약 (#609)", () => {
+  const path = "/me/notification-settings";
+
+  it("바꾼 적 없으면 기본값이고, 두 칸을 보내면 그 값이 남는다", async () => {
+    expect(await api.get<NotificationSettings>(path)).toEqual({
+      schedule_enabled: true,
+      medication_enabled: true,
+    });
+
+    const saved = await api.put<NotificationSettings>(path, {
+      schedule_enabled: false,
+      medication_enabled: true,
+    });
+
+    expect(saved).toEqual({ schedule_enabled: false, medication_enabled: true });
+    expect(await api.get<NotificationSettings>(path)).toEqual(saved);
+  });
+
+  it("🚨 한 칸만 보내거나 다른 칸이 끼면 400 이고 값은 그대로다", async () => {
+    const oneField = await api
+      .put<NotificationSettings>(path, { schedule_enabled: false })
+      .catch((error: unknown) => error);
+    const extraField = await api
+      .put<NotificationSettings>(path, {
+        schedule_enabled: false,
+        medication_enabled: true,
+        device_enabled: false,
+      })
+      .catch((error: unknown) => error);
+
+    expect(isApiError(oneField, "validation_failed")).toBe(true);
+    expect((oneField as ApiError).status).toBe(400);
+    expect(isApiError(extraField, "validation_failed")).toBe(true);
+    expect((await api.get<NotificationSettings>(path)).schedule_enabled).toBe(true);
+  });
+});
+
+describe("㉚ 푸시 기기 등록 — 서버 #605 와 같은 계약 (#609)", () => {
+  const path = "/me/push-device";
+  const put = (body: unknown) => api.put<void>(path, body).catch((error: unknown) => error);
+
+  it("토큰과 기기 종류를 맡기면 204 이고, 지우기는 없어도 204 다", async () => {
+    await expect(put({ token: "fcm-token", platform: "web" })).resolves.toBeUndefined();
+    await expect(api.delete<void>(path)).resolves.toBeUndefined();
+    await expect(api.delete<void>(path)).resolves.toBeUndefined();
+  });
+
+  it("🚨 공백뿐인 토큰, 목록 밖 기기 종류, 다른 칸은 400 이다", async () => {
+    const blank = await put({ token: "   ", platform: "web" });
+    const platform = await put({ token: "fcm-token", platform: "desktop" });
+    const extra = await put({ token: "fcm-token", platform: "web", enabled: true });
+
+    for (const failure of [blank, platform, extra]) {
+      expect(isApiError(failure, "validation_failed")).toBe(true);
+      expect((failure as ApiError).status).toBe(400);
+    }
   });
 });
 

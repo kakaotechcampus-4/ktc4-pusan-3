@@ -163,7 +163,7 @@ describe("어느 화면이 묻는가 — 서버가 말한다", () => {
 });
 
 describe("지금은 묻지 않는 동의 (#221)", () => {
-  it("위치 동의는 빼고 나머지는 응답 순서대로 남긴다", () => {
+  it("🚨 위치 동의를 다시 묻는다 — 선택 동의로 응답 순서대로 선다 (#593)", () => {
     const choices = consentChoices([
       policy("service_terms"),
       policy("privacy_account"),
@@ -172,6 +172,7 @@ describe("지금은 묻지 않는 동의 (#221)", () => {
     expect(askedChoices(choices).map((c) => c.policy.scope)).toEqual([
       "service_terms",
       "privacy_account",
+      "location",
     ]);
   });
 
