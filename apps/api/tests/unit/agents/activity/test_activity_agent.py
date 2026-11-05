@@ -16,6 +16,7 @@ from zoneinfo import ZoneInfo
 from app.agents.activity import agent as agent_module
 from app.agents.activity.agent import MAX_STEPS, run
 from app.agents.activity.context import ActivityContext
+from app.agents.activity.prompt import RECALL_HINT
 from app.agents.activity.schemas.common import (
     ActivitySetting,
     CaregiverRole,
@@ -619,3 +620,88 @@ class TestArea:
             task("해운대 가서 뭐 하고 놀까"), self.area_context(weather=broken), client=llm
         )
         assert result.status == "degraded"
+
+
+# ── 음식 칸 · 재호출 힌트 · 요청한 음식 안내 (#582) ───────────────────────────────────
+
+
+def _allergic(label: str, born=BORN_40_MONTHS) -> ActivityContext:
+    safety = InMemorySafety([SafetyEntry(kind="allergy", label=label, status="active")])
+    return ActivityContext(
+        child_id=CHILD,
+        run_id="run-1",
+        now=NOW,
+        timezone=UTC,
+        ports=in_memory_ports(CHILD, born, safety=safety, docs=InMemoryActivityDocs([DEFAULT_DOC])),
+    )
+
+
+def _food(content: str, *foods: str) -> dict[str, Any]:
+    return {**candidate(content), "involves_food": True, "foods": list(foods)}
+
+
+def _propose_foods(*items: dict[str, Any]) -> LLMResponse:
+    return _tools(("propose_activity_candidates", {"candidates": list(items)}))
+
+
+class TestFoods:
+    async def test_재호출_힌트는_빠진_이유와_상관없이_같다(self):
+        """알레르기로 빠졌을 때만 힌트를 주면 그 자체가 사유다 (Tool_공통 §5-2 · #582)."""
+        hazard = FakeLLM(
+            propose("구슬 꿰기", "그림자놀이", "색종이 접기"),
+            propose("까꿍 놀이", "공 굴리기", "컵 쌓기"),
+        )
+        await run(task(), context(BORN_20_MONTHS), client=hazard)
+        allergy = FakeLLM(
+            _propose_foods(
+                _food("쿠키 굽기", "쿠키"), candidate("그림자놀이"), candidate("컵 쌓기")
+            ),
+            propose("까꿍 놀이", "공 굴리기", "색종이 접기"),
+        )
+        await run(task(), _allergic("밀"), client=allergy)
+
+        first, second = hazard.seen[1][-1]["content"], allergy.seen[1][-1]["content"]
+        assert RECALL_HINT in first and RECALL_HINT in second
+        assert "알레르기" not in second and "밀" not in second
+
+    async def test_요청한_음식이_막히면_보호자가_쓴_말로_빼고_골랐다고_안내한다(self):
+        """등록한 알레르기 이름이 아니라 보호자가 쓴 어절을 싣는다 — Food 요청 안내와 같다."""
+        llm = FakeLLM(propose("그림자놀이", "색종이 접기", "까꿍 놀이"))
+
+        result = await run(task("땅콩버터 샌드위치 만들기 하자"), _allergic("땅콩"), client=llm)
+
+        (notice,) = [r for r in result.readouts if "요청하신" in r.body]
+        assert notice.body == (
+            "요청하신 땅콩버터에는 등록해 두신 알레르기와 겹치는 것이 있어서 그런 놀이는 빼고 "
+            "골랐어요."
+        )
+        assert (notice.kind, notice.authored_by) == ("notice", "code")
+
+    async def test_빼_달라고_한_음식은_안내하지_않는다(self):
+        llm = FakeLLM(propose("그림자놀이", "색종이 접기", "까꿍 놀이"))
+
+        result = await run(task("땅콩 빼고 놀 거리 알려 줘"), _allergic("땅콩"), client=llm)
+
+        assert not [r for r in result.readouts if "요청하신" in r.body]
+
+    async def test_연령으로_막힌_음식도_보호자가_쓴_말로_안내한다(self):
+        llm = FakeLLM(propose("그림자놀이", "색종이 접기", "까꿍 놀이"))
+
+        result = await run(
+            task("꿀 넣은 요거트 맛보기 해 볼까"), context(date(2025, 12, 1)), client=llm
+        )
+
+        (notice,) = [r for r in result.readouts if "요청하신" in r.body]
+        assert notice.body == "요청하신 꿀은 12개월 전에는 먹이지 않아서 그런 놀이는 빼고 골랐어요."
+
+    async def test_다_빠지면_예시로_채우지_않고_안내만_낸다(self):
+        """[예시] 행으로 채우면 요청과 상관없는 추천이 나간다 (#582 실험) — 정직하게 0개."""
+        peanut = [_food(f"땅콩버터 놀이 {n}", "땅콩버터") for n in range(1, 4)]
+        llm = FakeLLM(_propose_foods(*peanut), _propose_foods(*peanut))
+
+        result = await run(task("땅콩버터로 놀고 싶어"), _allergic("땅콩"), client=llm)
+
+        assert (result.status, result.suggestions, result.model_calls) == ("completed", (), 2)
+        codes = [r.code for r in result.readouts]
+        assert "empty" in codes
+        assert any("요청하신 땅콩버터" in r.body for r in result.readouts)

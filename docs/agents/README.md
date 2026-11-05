@@ -173,8 +173,8 @@ app/agents/activity/
 | `common/ports.py` · `common/gate.py` | 생일 · 동의 포트 · `SafetyLookupError` · `Gate` · `read_safety_basis()` |
 | `common/evidence.py` | `rank_evidence()` |
 | `common/suggestion.py` · `common/readout.py` | `SuggestionDraft` · `Readout` |
-| `common/food_safety.py` | 음식 이름 · 메뉴 행의 알레르기 · 연령 판정(`filter_food_safety` · `resolve_safety` · `menu_codes`). Food 와 Growth(스캔)가 쓰고, Activity 는 `foods` 칸을 붙일 때 쓴다(도헌님, #582). 행 · 등록은 Protocol(`MenuRow` · `SafetyRow`)로 받는다 |
-| `common/food_words.py` | 글에 든 음식 낱말을 등록 알레르기 · 연령 규칙과 대조(`check_foods` · `mentions_blocked_food`). Food 의 섭취 확인 · 추천 이유 검사와 Growth 음식 용어 스캔이 쓴다. Activity 용 규칙(`ITEM` · `SENTENCE`)은 아직 부르는 곳이 없다 — `foods` 칸이 올라오면 쓴다 (#582) |
+| `common/food_safety.py` | 음식 이름 · 메뉴 행의 알레르기 · 연령 판정(`filter_food_safety` · `resolve_safety` · `menu_codes`). Food 와 Growth(스캔)가 쓰고, Activity 는 `foods` 칸의 알레르기 항목 표시(`menu_codes`)에 쓴다(#582). 행 · 등록은 Protocol(`MenuRow` · `SafetyRow`)로 받는다 |
+| `common/food_words.py` | 글에 든 음식 낱말을 등록 알레르기 · 연령 규칙과 대조(`check_foods` · `mentions_blocked_food`). Food 의 섭취 확인 · 추천 이유 검사와 Growth 음식 용어 스캔이 쓴다. Activity 는 `foods` 칸(`ITEM`) · 음식 활동 문장(`SENTENCE`) · 개인화 이유 검사 · 요청 글 안내에 쓴다 (#582) |
 
 `ToolResult`와 `ErrorCode`는 [shared/Tool_공통.md](shared/Tool_공통.md) §1의 어휘 하나로 통일돼 있다. Agent 전용 코드가 필요하면 `common` 것을 상속해서 얹는다 — `memory/result.py`가 선례다.
 

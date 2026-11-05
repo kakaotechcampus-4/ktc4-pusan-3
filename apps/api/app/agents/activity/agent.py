@@ -32,6 +32,7 @@ from app.agents.activity.result import ToolResult
 from app.agents.activity.rules import normalize_activity
 from app.agents.activity.schemas.task import task_type_of
 from app.agents.activity.tools.docs import search_activity_doc
+from app.agents.activity.tools.filters import request_notices
 from app.agents.activity.tools.outing import check_weather, days_of
 from app.agents.activity.weather import (
     INDOOR_ONLY,
@@ -122,6 +123,11 @@ async def run(
     # 위험 경고는 추천 하나에 붙는 문구라 그 초안의 warnings 칸에 이미 있다 (#402)
     context.state.suggestions = drafts
     notice = count_notice(len(drafts))
+    # 요청한 음식이 이 아이에게 막혔으면 보호자가 쓴 말로 빼고 골랐다고 알린다 — 0개여도 왜 없는지
+    # 이 줄이 말한다. 등록한 알레르기 이름은 싣지 않는다 (#582)
+    requested_foods = request_notices(
+        task.request_texts, context.state.safety_entries or (), months=gate.stage.months
+    )
     attempted = checks_weather(gate)
     if context.state.area is not None:
         # 보호자가 말한 지역을 찾았다. 장소 조회가 보호자 위치의 판정을 비웠으니 오늘도 그 지역
@@ -137,6 +143,7 @@ async def run(
         suggestions=drafts,
         readouts=(
             *(_caution(text) for text in context.state.cautions),
+            *requested_foods,
             *(READOUTS.render(key) for key in _weather_notices(weather, drafts, context)),
             *((READOUTS.render(PLACE_AREA_UNKNOWN),) if context.state.area_missed else ()),
             *((notice,) if notice else ()),

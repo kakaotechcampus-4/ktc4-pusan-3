@@ -14,5 +14,8 @@ PLACE_NOTICE_UNDATED = "place.notice_undated"
 PLACE_NOTICE_FACILITY = "place.notice_facility"
 # 보호자가 말한 지역을 못 찾아 장소 없이 골랐다 (`areas.py`)
 PLACE_AREA_UNKNOWN = "place.area_unknown"
+# 보호자가 요청에 쓴 음식이 막혀 그런 놀이는 빼고 골랐다 — 알레르기 · 연령 (#582)
+REQUEST_FOOD_CONFLICT = "request.food_conflict"
+REQUEST_FOOD_AGE_BLOCK = "request.food_age_block"
 
 READOUTS = ReadoutCatalog.from_yaml(Path(__file__).with_name("activity.readout.yaml"))

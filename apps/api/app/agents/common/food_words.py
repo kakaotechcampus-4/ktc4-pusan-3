@@ -1,6 +1,6 @@
 """글에 든 음식 낱말을 아이의 등록 알레르기 · 연령 규칙과 대조한다 (#582).
 
-Food 와 Growth 가 이 판정 하나를 같이 쓰고 Activity `foods` 칸도 쓸 예정이다. Food 는 섭취
+Food · Growth · Activity(`foods` 칸 · 음식 활동 문장)가 이 판정 하나를 같이 쓴다. Food 는 섭취
 확인("땅콩소스 먹여도 될까?")과 식단 추천의 요청 글 안내, 추천 이유(reason)에 막힌 음식이 들어갔는지
 보는 사후 검사에 쓴다. 모델을 부르지 않는다 — 음식 낱말도 사전으로 찾는다. 등록 행은 `SafetyRow`
 모양이면 되고 Agent 의 포트를 import 하지 않는다(docs/agents/README.md §6). 보호자에게 하는 말
