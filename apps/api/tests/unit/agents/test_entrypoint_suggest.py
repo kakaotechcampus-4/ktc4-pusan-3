@@ -67,6 +67,7 @@ def test_추천_task_라벨():
     assert entrypoint.recommendation_task_type("food") == "meal_recommendation"
     assert entrypoint.recommendation_task_type("activity") is None
     assert entrypoint.SUGGESTION_AGENTS == {"food", "activity", "growth"}
+    assert "health" not in entrypoint.SUGGESTION_AGENTS
     # Growth 는 추천 라벨이 셋이라 05 처음 요청으로 돌 라벨을 못 고른다 (결정 C)
     assert entrypoint.FIRST_REQUEST_AGENTS == {"food", "activity"}
 

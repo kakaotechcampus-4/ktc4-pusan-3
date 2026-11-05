@@ -80,7 +80,10 @@ class PipelinePhase(Enum):
         트랜잭션: RECORD 와 같다
         실패 시: RECORD 와 같다
         모델 호출: 포함 (Memory Agent). 상태 전환 단위가 아님
-        비고: 이어받기 run. Supervisor · 도메인 Agent 를 타지 않고 RECORD_EMIT -> FINALIZE 로 간다
+        비고: 이어받기 run. Supervisor 를 타지 않고 RECORD_EMIT -> FINALIZE 로 간다. 도메인 Agent 도
+              타지 않는다. 도메인 Agent 가 물은 질문의 답(`PendingMemoryContext.resume`)을
+              저장했으면 그 task 하나만 DOMAIN 단계를 다시 돈다. 남은 시간은 입력 시각부터 센
+              같은 20초다
 
     FINALIZE
         DB 성격: none

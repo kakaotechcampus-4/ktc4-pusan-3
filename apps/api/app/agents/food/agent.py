@@ -21,7 +21,7 @@ from collections.abc import Collection
 from dataclasses import dataclass
 from typing import Any
 
-from app.agents.common.evidence import pick_followup
+from app.agents.common.evidence import RankedEvidence, pick_followup
 from app.agents.common.llm_client import LLMClient
 from app.agents.common.readout import Readout
 from app.agents.common.result import AgentStatus, DomainAgentResult
@@ -51,6 +51,7 @@ from app.agents.food.schemas.task import task_type_of
 from app.agents.food.store.ports import MenuCatalogRow
 from app.agents.food.tools.docs import search_food_doc
 from app.agents.food.tools.nutrition import appearance_report
+from app.agents.food.tools.records import memory_record, prefetch_food_memory
 from app.agents.food.tools.safety import filter_food_safety
 from app.rules.age import Stage
 
@@ -190,9 +191,15 @@ async def _recommend(task: DomainTask, context: FoodContext, llm: LLMClient) -> 
     )
     # 프롬프트에 실은 행만 근거로 달 수 있다. 재호출도 같은 system 프롬프트라 그대로 쓴다
     context.state.seen_docs = {row.id: row for row in examples}
+    # 기억 조회를 건너뛰지 않아 전부 일반 추천이 되는 문제를 막는다(#662).
+    # 결과는 seen_evidence 에도 적혀서 모델이 인용한 id 를 출력 검증이 같은 표로 대조한다
+    records = _shown_records(context, await prefetch_food_memory(context))
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": build_system_prompt(context, task_type, examples)},
-        {"role": "user", "content": request_message(task.request_texts, _rows(sample))},
+        {
+            "role": "user",
+            "content": request_message(task.request_texts, _rows(sample), records=records),
+        },
     ]
     allowed = tools_for(task_type, gate)
     if not await _converse(llm, messages, context, allowed, task_type):
@@ -212,6 +219,7 @@ async def _recommend(task: DomainTask, context: FoodContext, llm: LLMClient) -> 
                 # 아니라 모델이 실패한 것이다 — 1~2개가 남았으면 그것을 낸다
                 return _failed(task_type, model_calls=2)
 
+    _log_evidence(context, picks)
     return _recommendation(
         task_type,
         picks,
@@ -220,6 +228,78 @@ async def _recommend(task: DomainTask, context: FoodContext, llm: LLMClient) -> 
         followup=await _followup(context),
         notices=notices,
     )
+
+
+def _shown_records(context: FoodContext, found: tuple[RankedEvidence, ...]) -> list[dict[str, Any]]:
+    """선조회 근거 중 안전 필터를 통과한 것만 모델에게 보인다.
+
+    등록 알레르기와 같은 음식의 선호 기록이 남아 있어도(알레르기를 나중에 등록한 아이) 그 이름을
+    외부 모델로 내보내지 않는다. 모델이 부르지 않아도 항상 나가는 경로라 코드가 거른다 —
+    `_followup` 이 되묻는 후보를 거르는 것과 같은 방식이다. 거른 근거는 모델이 못 본 것이므로
+    `seen_evidence` 에서도 뺀다 — 인용하면 `EVIDENCE_REQUIRED` 로 거절된다.
+    """
+    gate = context.state.gate
+    assert gate is not None  # run() 이 build_gate 를 먼저 부른다
+    verdict = filter_food_safety(
+        [
+            MenuCatalogRow(
+                menu_key=str(item.ref.id),
+                display_name=item.label,
+                source="manual",
+                resolved=True,
+                synced_at=context.now,
+                ingredients=(item.label,),
+            )
+            for item in found
+        ],
+        require_safety(context),
+        gate.stage.stage,
+        months=gate.stage.months,
+    )
+    passed = {row.menu_key for row in verdict.passed}
+    shown = [item for item in found if str(item.ref.id) in passed]
+    for item in found:
+        if str(item.ref.id) not in passed:
+            context.state.seen_evidence.pop(item.ref.id, None)
+            context.state.prefetched_evidence_ids.discard(item.ref.id)
+    return [memory_record(item, context.today) for item in shown]
+
+
+def _log_evidence(context: FoodContext, picks: tuple[MealPick, ...]) -> None:
+    """추천 한 번의 근거 건수. 선조회가 실제 인용으로 이어졌는지 라이브 eval 과 운영 로그에서 센다.
+
+    건수와 run_id 만 남긴다 — 기록 label · 음식 이름 · 알레르기 이름 · 원문은 싣지 않는다.
+    선조회 결과가 있는데 아이 기록을 하나도 인용하지 않은 일반 추천이 섞였으면 경고로 센다. 그래도
+    개인화를 강제하지 않는다 — 후보와 무관한 기록이면 일반 추천이 맞다.
+    """
+    state = context.state
+    kinds = [pick.draft.kind for pick in picks]
+    cited = {
+        citation.ref.id
+        for pick in picks
+        for citation in pick.draft.citations
+        if citation.ref.is_child_record
+    }
+    personalized = kinds.count("personalized")
+    general = kinds.count("general")
+    logger.info(
+        "Food 추천 근거 run_id=%s prefetched=%d seen=%d cited=%d personalized=%d general=%d "
+        "model_search=%s",
+        context.run_id,
+        len(state.prefetched_evidence_ids),
+        len(state.seen_evidence),
+        len(cited),
+        personalized,
+        general,
+        state.memory_search_calls > 0,
+    )
+    if state.prefetched_evidence_ids and not cited and general:
+        logger.warning(
+            "Food 가 선조회한 아이 기록 근거를 쓰지 않았다 run_id=%s prefetched=%d general=%d",
+            context.run_id,
+            len(state.prefetched_evidence_ids),
+            general,
+        )
 
 
 def _recommendation(

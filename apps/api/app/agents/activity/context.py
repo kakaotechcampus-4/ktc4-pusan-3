@@ -12,6 +12,7 @@ from datetime import date, datetime, tzinfo
 from functools import partial
 from uuid import UUID
 
+from app.agents.activity.areas import Area
 from app.agents.activity.schemas.common import DayLabel
 from app.agents.activity.store.ports import (
     ActivityDocRow,
@@ -41,13 +42,21 @@ class ActivityRunState:
 
     seen_evidence: dict[UUID, RankedEvidence] = field(default_factory=dict)
     seen_places: dict[str, PlaceRow] = field(default_factory=dict)  # 이름 → 장소
+    # 보호자 요청 글. run() 이 모델을 부르기 전에 채운다. 모델이 지어낸 값을 받지 않으려고 이 글과
+    # 대조한다 — 장소 조회의 `area`(`areas.said`), 출력 tool 의 requested_play(#597 리뷰)
+    request_texts: tuple[str, ...] = ()
+    # 보호자가 말한 지역(`areas.find_area`). 장소 조회가 찾으면 넣는다. 있으면 이 run 의 장소 ·
+    # 날씨는 그 지역 대표 지점 기준이다(`ActivityContext.outing_location`). 한 run 에 한 지역이다
+    area: Area | None = None
+    # 그 지역에서 찾은 장소 이름. 보호자가 그 자리에 있지 않아서 출력 검증이 "근처" 를 막는다
+    area_places: set[str] = field(default_factory=set)
+    # 지역 이름을 받았는데 못 찾았다. 결과에 한 줄 안내를 붙인다 — 뒤에 찾으면 거둔다
+    area_missed: bool = False
     # 프롬프트 [예시]에 실은 문서 행. run() 이 모델을 부르기 전에 채운다. 일반 추천은 이 행을
     # 근거로 단다 — 아이 기록이 아니라 개인화로 세지 않는다 (루트 §2)
     seen_docs: dict[UUID, ActivityDocRow] = field(default_factory=dict)
     # [예시]의 짧은 id(예1 …) → 문서 행 id. 프롬프트에는 짧은 id 만 싣는다 (`prompt.example_ids`)
     example_ids: dict[str, UUID] = field(default_factory=dict)
-    # 이번 run 의 보호자 요청 글. 출력 tool 이 requested_play 가 이 안에 있는지 본다 (#597 리뷰)
-    request_texts: tuple[str, ...] = ()
     gate: Gate | None = None
     # build_gate 가 읽은 health_safety 행. 출력 검증의 안전 필터는 이 값만 쓰고 다시 읽지 않는다.
     # None 은 아직 안 읽었다(build_gate 전)는 뜻이고, 동의가 없으면 빈 튜플이다
@@ -85,9 +94,17 @@ class ActivityContext:
         return today_of(self.now, self.timezone)
 
     @property
+    def outing_location(self) -> CoarseLocation | None:
+        """장소 · 날씨 · 일몰의 기준점. 보호자가 지역을 말했으면 그 지역 대표 지점, 아니면 보호자
+        위치다. 둘 다 없으면 None."""
+        area = self.state.area
+        return area.location if area is not None else self.location
+
+    @property
     def grid(self) -> WeatherGrid | None:
-        """날씨 포트에 넘길 기상청 격자. 좌표 대신 이것만 밖으로 나간다."""
-        return self.location.grid if self.location is not None else None
+        """날씨 포트에 넘길 기상청 격자(`outing_location` 의). 좌표 대신 이것만 밖으로 나간다."""
+        location = self.outing_location
+        return location.grid if location is not None else None
 
     def for_task(self) -> "ActivityContext":
         """task 하나 몫의 context. run state 만 새로 만든다.

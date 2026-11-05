@@ -44,10 +44,10 @@ from app.rules.term_match import normalize
 
 AGENT = "growth"
 # 아이 기록 근거가 0행이면 build() 가 reason 을 이 문구로 덮어쓴다 (kind="general", 루트 §2)
-GENERAL_REASON = "쌓인 배움 기록이 아직 적어서, 이 나이 아이들에게 많이 권하는 활동으로 골랐어요."
+GENERAL_REASON = "이 나이 아이들에게 많이 권하는 활동으로 골랐어요."
 # 도서 일반 추천의 이유 — 아이 기록 근거가 0행이면 build() 가 reason 을 이 문구로 덮어쓴다.
 # 무엇으로 골랐는지(월령에 맞는 형태)만 말한다 — 재지 않은 인기 · 대출 수를 말하지 않는다
-BOOK_GENERAL_REASON = "쌓인 배움 기록이 아직 적어서, 이 나이에 맞는 형태의 책 중에서 골랐어요."
+BOOK_GENERAL_REASON = "이 나이에 맞는 형태의 책 중에서 골랐어요."
 # 책 근거 행의 note. 코드 문구라 금지 표현 검사가 필요 없다. 비울 수 없는 칸이다
 # (Food 메뉴 근거의 `core/recipe_source.RECIPE_SOURCE_INFO[...].note` 와 같은 자리)
 BOOK_EVIDENCE_NOTE = "도서관 정보나루 검색 결과에 있는 책이에요."

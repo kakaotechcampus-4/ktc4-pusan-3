@@ -234,6 +234,22 @@ Asia/Seoul 이면 `0 4 * * *` 로 `crontab -e`:
 넣은 뒤 같은 명령을 한 번 손으로 돌려 `만료된 로그인 행 정리: session N건 …` 줄이 찍히면 된다.
 로컬에서는 개발 DB 를 상대로 `uv run python -m app.workers.cleanup`.
 
+### 기억 상태 다시 계산 (하루 한 번)
+
+기억의 상태(확인됨 · 후보 · 보관됨)는 "오늘 기준 최근 14일 · 21일" 로 정해져서, 새 기록이 없어도 날짜가
+지나면 바뀌어야 한다. 관찰이 들어올 때만 다시 계산하므로, 서버의 cron 이 하루 한 번
+[`app/workers/profile_recompute.py`](app/workers/profile_recompute.py) 를 돌려 날짜로 바뀐 상태를 맞춘다 (#636).
+같은 날 두 번 돌아도 결과가 같다. 실패하면 Discord 알림으로 온다.
+
+cleanup(19시) 과 겹치지 않게 UTC 20시(= 한국 05시), 서버 시계가 Asia/Seoul 이면 `0 5 * * *`:
+
+```
+0 20 * * * docker exec ktc4-api uv run --no-sync python -m app.workers.profile_recompute >> /var/tmp/ktc4-profile-recompute.log 2>&1
+```
+
+넣은 뒤 같은 명령을 한 번 손으로 돌려 `기억 상태 다시 계산: 아이 N명 · 기억 N건 · 바뀜 N건 …` 줄이 찍히면 된다.
+처음 한 번은 그동안 밀린 만큼 "바뀜" 이 크게 나온다.
+
 ### 일정 알림 발송 (1분마다)
 
 서버의 cron 이 1분마다 [`app/workers/reminder_dispatch.py`](app/workers/reminder_dispatch.py) 를 api 컨테이너

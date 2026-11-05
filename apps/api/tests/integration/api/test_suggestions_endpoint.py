@@ -870,7 +870,9 @@ async def test_일반_추천은_그_도메인의_기록_수를_싣는다(
 
     counts = {g["agent"]: g["record_count"] for g in data["general"]}
     assert counts == {"food": 2, "activity": 1}
-    assert data["scarcity"]["count"] == 3  # 질문 카드의 "이 주제" 는 합 그대로
+    # 호환 필드는 일반 추천을 낸 Agent별 수의 합이다.
+    # 화면의 정상 문구는 general[].record_count를 쓴다.
+    assert data["scarcity"]["count"] == 3
 
 
 async def test_한도에_걸려도_다른_Agent_재생은_보인다(
@@ -1244,7 +1246,7 @@ async def test_Growth_도서_일반_추천은_그_책을_정보나루_출처로_
         agent="growth",
         kind="general",
         content="공룡 기차(가나다)",
-        reason="쌓인 배움 기록이 아직 적어서, 이 나이에 맞는 형태의 책 중에서 골랐어요.",
+        reason="이 나이에 맞는 형태의 책 중에서 골랐어요.",
         citations=(
             EvidenceCitation(
                 ref=Ref(kind="book_catalog", id=book),

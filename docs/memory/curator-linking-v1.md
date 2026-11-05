@@ -23,7 +23,7 @@
 | 세지 않는 것 | 판정기 오류 · 후보 목록에 없는 답 |
 | 보류 기록 | 별도 테이블 `observation_link_hold`. 관찰이 연결되면 지우고 관찰이 지워지면 같이 지워진다 |
 | 판단이 갈리는 쌍 | 다른 대상으로 본다 (딸기–딸기잼) |
-| 밖으로 나가는 것 | Jev(OpenRouter 경유)에 관찰 대상 이름 · 도메인 · 후보 Profile 이름만. 원문 · 아이 id 는 보내지 않는다 |
+| 밖으로 나가는 것 | Jev(Elice ML API 경유)에 관찰 대상 이름 · 도메인 · 후보 Profile 이름만. 원문 · 아이 id 는 보내지 않는다 |
 | 이번 범위 밖 | `last_observed_on` 갱신 · DB `CuratorStore` 구현 · 실행 흐름 연결 |
 
 코드: [`apps/api/app/agents/curator/embedding/link_step.py`](../../apps/api/app/agents/curator/embedding/link_step.py) (규칙) ·
@@ -107,7 +107,7 @@
 
 ## 6. 밖으로 나가는 것
 
-Jev 는 OpenRouter 를 거쳐 부른다. 보내는 값은 셋뿐이다.
+Jev 는 Elice ML API 를 거쳐 부른다 (#686 — 처음엔 OpenRouter 였다. 다른 모델과 호출 경로 · 비용 관리를 한 곳으로 모았다). 보내는 값은 셋뿐이다.
 
 | 보내는 것 | 보내지 않는 것 |
 | --- | --- |
@@ -115,7 +115,7 @@ Jev 는 OpenRouter 를 거쳐 부른다. 보내는 값은 셋뿐이다.
 
 반대 방향 확인도 같은 값을 자리만 바꿔 보낸다.
 
-🔶 **개인정보 처리방침에 반영해야 한다.** OpenRouter · Jev 와 보내는 항목을 추가해야 한다. 초안의 6장(위탁) · 7장(국외 이전)에는 엘리스와 AWS 만 있다 — PM 에게 요청 (루트 CLAUDE.md §10 "외부 LLM 전달 범위").
+🔶 **개인정보 처리방침에 반영해야 한다.** Jev 는 가중치가 공개되지 않은 API 전용 모델이라 Elice 도 TypeSafe(미국)로 넘기는 것으로 본다. 처리방침의 OpenRouter 행을 TypeSafe 로 바꾸는 일은 #687 (PM). 그 이슈가 끝나기 전에는 배포 `.env` 를 Elice 로 바꾸지 않는다.
 
 ## 7. 이번 범위 밖
 
