@@ -21,6 +21,7 @@ from uuid import UUID
 import pytest
 
 from app.agents import pipeline
+from app.agents.common.datetime_rules import DateRange
 from app.agents.common.llm_client import LLMResponse
 from app.agents.common.result import (
     DomainAgentResult,
@@ -547,6 +548,87 @@ async def test_증상은_저장하고_약만_걸러지면_Memory_말은_그대�
 
     assert _of(events, Saved)
     assert [n.text for n in _of(events, MemoryNote)] == ["열 기록을 남겼어요."]
+
+
+async def test_등록_약_거절과_다른_실패가_섞이면_Memory_말은_그대로_낸다(
+    events: list[Any],
+) -> None:
+    """등록 약은 체크 안내가 맡아도 다른 기록이 저장되지 않았다는 되묻기는 Memory 말뿐이다.
+
+    지우면 보호자는 그 기록이 저장되지 않은 것을 모른다.
+    """
+    raw = "해열 시럽 먹였어. 어제 점심에 이상한 걸 먹었어"
+    asked = "점심 기록은 내용이 부족해 저장하지 못했어요. 무엇을 먹었는지 알려 주세요."
+    memory_llm = FakeLLM(
+        calls(
+            ("create_observation_health", _given("해열 시럽", "해열 시럽 먹였어")),
+            ("create_observation_food", {"raw_text": "어제 점심에 이상한 걸 먹었어"}),
+        ),
+        _memory_says(asked),
+    )
+
+    await _handle(
+        raw,
+        _supervisor(
+            {"text": "해열 시럽 먹였어", "kind": "record", "work": "observe"},
+            {"text": "어제 점심에 이상한 걸 먹었어", "kind": "record", "work": "observe"},
+        ),
+        _world("해열 시럽"),
+        events,
+        memory_llm=memory_llm,
+    )
+
+    assert not _of(events, Saved)
+    [checked] = _medication_results(events)
+    assert checked.readouts[0].kind == "notice"
+    assert [n.text for n in _of(events, MemoryNote)] == [asked]
+
+
+async def test_등록_약_거절과_기록_고치기가_같이_오면_Memory_말은_그대로_낸다(
+    events: list[Any],
+) -> None:
+    """고친 기록은 `Saved` 로 나가지 않는다. 고쳤다는 것을 알리는 것은 Memory 말뿐이다."""
+    memory_context = _memory_context()
+    await memory_context.store.create_observation(
+        domain="food",
+        child_id=memory_context.child_id,
+        source_writer=memory_context.source_writer,
+        raw_text="딸기 좋아해",
+        observed_on=TODAY,
+        observed_range=DateRange(start=TODAY, end=TODAY + timedelta(days=1)),
+        fields={"subject": "딸기", "reaction": "좋아했다"},
+    )
+    [row] = await memory_context.store.query_observations(domain="food", child_id=CHILD)
+    raw = "해열 시럽 먹였어. 딸기는 싫어했다로 고쳐 줘"
+    fixed = "딸기 기록을 싫어했다로 고쳤어요."
+    memory_llm = FakeLLM(
+        calls(
+            ("create_observation_health", _given("해열 시럽", "해열 시럽 먹였어")),
+            ("update_observation_food", {"observation_id": row.id, "reaction": "싫어했다"}),
+        ),
+        _memory_says(fixed),
+    )
+
+    await handle_input(
+        raw,
+        memory_context,
+        {"health": _world("해열 시럽")},
+        run_id=RUN_ID,
+        supervisor_client=_supervisor(
+            {"text": "해열 시럽 먹였어", "kind": "record", "work": "observe"},
+            {"text": "딸기는 싫어했다로 고쳐 줘", "kind": "record", "work": "lookup_edit"},
+        ),
+        memory_client=memory_llm,
+        emit=events.append,
+        commit=_no_commit,
+        save_suggestions=InMemorySuggestions(),
+    )
+
+    [after] = await memory_context.store.query_observations(domain="food", child_id=CHILD)
+    assert after.fields["reaction"] == "싫어했다"
+    assert not _of(events, Saved)
+    assert _medication_results(events)
+    assert [n.text for n in _of(events, MemoryNote)] == [fixed]
 
 
 class _Elsewhere:

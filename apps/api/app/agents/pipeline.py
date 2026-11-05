@@ -1409,9 +1409,14 @@ def _refused_medicines(memory: MemoryAgentResult | None) -> tuple[str, ...]:
     return tuple(
         name
         for call in memory.calls
-        if call.result.get("error", {}).get("code") == ErrorCode.REGISTERED_MEDICINE
+        if _refused_medicine(call)
         and (name := str(call.arguments.get("medication_given") or "").strip())
     )
+
+
+def _refused_medicine(call: ToolCallRecord) -> bool:
+    """저장 게이트가 등록된 약이라 거절한 호출인가."""
+    return call.result.get("error", {}).get("code") == ErrorCode.REGISTERED_MEDICINE
 
 
 def _medication_room(routing: Routing) -> bool:
@@ -2204,8 +2209,16 @@ def _refused_doses_checked(routing: Routing, memory: MemoryAgentResult) -> bool:
     """Memory 가 한 일이 등록 약 거절뿐이고, 그 약 문장이 이 run 의 복약 조각에 실렸는가.
 
     둘 다 참일 때만 Memory 말을 지운다. Agent 자리가 없어 복약 조각이 못 생겼으면 거짓이다.
+    "한 일이 거절뿐" 은 호출이 전부 등록 약 거절이거나 성공한 조회라는 뜻이다. 다른 이유로 실패한
+    호출(되묻기)이나 성공한 쓰기(저장 · 고치기 · 지우기 · 일정 초안)가 있으면 거짓이다 — 고친 것과
+    지운 것은 `Saved` 로 나가지 않고, 되묻기도 Memory 말로만 나가서 지우면 보호자가 모른다.
     """
-    if not memory.refused(ErrorCode.REGISTERED_MEDICINE) or _saved_refs(memory):
+    if not memory.refused(ErrorCode.REGISTERED_MEDICINE) or memory.drafts:
+        return False
+    if not all(
+        _refused_medicine(call) or (call.success and not call.name.startswith(MUTATING_PREFIXES))
+        for call in memory.calls
+    ):
         return False
     refused = _refused_medicines(memory)
     texts = [
