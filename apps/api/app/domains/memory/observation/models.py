@@ -123,7 +123,9 @@ class ObservationCommon:
     source_writer: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("parent.id", ondelete="SET NULL"), nullable=True
     )
-    source_notice_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    source_notice_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("notice.id", ondelete="SET NULL"), nullable=True
+    )
 
 
 class Promotable:
@@ -207,7 +209,9 @@ class ObservationHealth(Base, UUIDPk, Timestamps):
     source_writer: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("parent.id", ondelete="SET NULL"), nullable=True
     )
-    source_notice_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    source_notice_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("notice.id", ondelete="SET NULL"), nullable=True
+    )
     symptom: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False)
     severity: Mapped[HealthSeverity | None] = mapped_column(
         enum_col_py(HealthSeverity, name="health_severity"),

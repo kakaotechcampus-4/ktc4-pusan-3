@@ -31,6 +31,7 @@ from app.api.v1.routers import (
     me,
     notifications,
     observations,
+    photos,
     policies,
     privacy_policy,
     reminders,
@@ -61,6 +62,7 @@ protected_router.include_router(invites.router)
 protected_router.include_router(me.router)
 protected_router.include_router(notifications.router)
 protected_router.include_router(observations.router)
+protected_router.include_router(photos.router)
 protected_router.include_router(affinities.router)
 protected_router.include_router(corrections.router)
 protected_router.include_router(home.router)
