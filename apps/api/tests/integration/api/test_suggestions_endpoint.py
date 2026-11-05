@@ -3,7 +3,7 @@
 import uuid
 from contextlib import asynccontextmanager
 from dataclasses import replace
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import get_args
 
 import pytest
@@ -40,6 +40,8 @@ from app.domains.suggestion.models import (
 
 DOC_ID = uuid.UUID("00000000-0000-5000-8000-0000000000aa")
 DOC_CARD = entrypoint.DocCard("블록 쌓기", "교육부", "표준보육과정", None)
+# 아래 autouse 가 테스트마다 갈아 끼우는 원본 — 공개용 출처 투영까지 거치는 실제 색인을 볼 때 쓴다
+REAL_DOC_INDEX = entrypoint._doc_index
 
 
 @pytest.fixture(autouse=True)
@@ -1047,6 +1049,113 @@ async def test_Food_메뉴_근거의_소스가_출처_표에_없으면_다른_�
 
     assert resp.status_code == 200
     assert resp.json()["general"] == []
+
+
+async def test_문서_근거는_라이선스_표시를_마친_공개용_출처로_나가고_NHS_이름은_없다(
+    db_client, bearer, cid, agents, monkeypatch
+):
+    """#510 — OGL 문장 · CC BY 변경 표시는 기존 `source_title` 칸으로 낸다. NHS 자료는 기관 · 제목 ·
+    주소가 OGL 안내로 바뀐다 (NHS 약관 3.6(b)). 색인을 대신하지 않고 시드 → 05 응답을 지난다."""
+    from app.agents.common.reference_docs import (
+        CC_BY_URL,
+        NHS_PUBLIC_ORG,
+        OGL_STATEMENT,
+        OGL_URL,
+        doc_row_id,
+    )
+    from app.agents.food import doc_seed as food_seed
+
+    base = {
+        "row_type": "feeding_tip",
+        "body": "가짜 문장이다.",
+        "min_month": 24,
+        "max_month": 72,
+        "tags": ["test"],
+        "source_year": 2025,
+        "source_locator": "(테스트) 내부 추적용 위치 7쪽",
+        "status": "approved",
+        "authored_by": "writer-a",
+        "reviewed_by": "reviewer-b",
+        "reviewed_at": date(2026, 11, 3),
+        "version": 1,
+    }
+    sources = {
+        "food.test.nhs": (
+            "NHS (테스트)",
+            "(테스트) 가짜 NHS 문서 제목",
+            "https://www.nhs.uk/x",
+            "ogl_3",
+        ),
+        "food.test.dfe": (
+            "Department for Education (테스트)",
+            "(테스트) 가짜 DfE 문서",
+            "https://www.gov.uk/x",
+            "ogl_3",
+        ),
+        "food.test.nz": (
+            "Ministry of Health (New Zealand)",
+            "(테스트) 가짜 뉴질랜드 지침",
+            "https://www.health.govt.nz/x",
+            "cc_by",
+        ),
+    }
+    entries = food_seed.parse_food_doc(
+        {
+            "rows": [
+                {
+                    **base,
+                    "doc_key": key,
+                    "title": f"행 {key}",
+                    "source_org": org,
+                    "source_title": title,
+                    "source_url": url,
+                    "license_basis": basis,
+                }
+                for key, (org, title, url, basis) in sources.items()
+            ]
+        }
+    )
+    monkeypatch.setattr(food_seed, "food_doc_seed", lambda: entries)
+    REAL_DOC_INDEX.cache_clear()
+    monkeypatch.setattr(entrypoint, "_doc_index", REAL_DOC_INDEX)
+
+    plan, _ = agents
+    headers, _ = bearer
+    ids = {key: doc_row_id("food_doc", key) for key in sources}
+    plan["food"] = (
+        "drafts",
+        [
+            SuggestionDraft(
+                agent="food",
+                kind="general",
+                content="두부조림",
+                reason="또래 기준",
+                citations=tuple(
+                    EvidenceCitation(ref=Ref(kind="food_doc", id=doc_id), note="참고")
+                    for doc_id in ids.values()
+                ),
+            )
+        ],
+    )
+    try:
+        resp = await _post(db_client, cid, headers, agents=["food"])
+    finally:
+        REAL_DOC_INDEX.cache_clear()
+
+    assert resp.status_code == 200
+    by_id = {e["ref"]["id"]: e for e in resp.json()["general"][0]["evidence"]}
+    nhs, dfe, nz = (by_id[str(ids[key])] for key in sources)
+    assert (nhs["source_org"], nhs["source_url"]) == (NHS_PUBLIC_ORG, OGL_URL)
+    assert nhs["source_title"] == f"{OGL_STATEMENT} ({OGL_URL})"
+    assert dfe["source_org"] == "Department for Education (테스트)"
+    assert dfe["source_title"].startswith("(테스트) 가짜 DfE 문서")
+    assert f"{OGL_STATEMENT} ({OGL_URL})" in dfe["source_title"]
+    assert nz["source_title"].startswith("(테스트) 가짜 뉴질랜드 지침")
+    assert "번역·재구성함" in nz["source_title"] and CC_BY_URL in nz["source_title"]
+    assert nz["source_url"] == "https://www.health.govt.nz/x"
+    leaked = repr(nhs).lower()
+    for text in ("nhs (", "nhs.uk", "가짜 nhs 문서 제목", "내부 추적용"):
+        assert text not in leaked, text
 
 
 def test_근거_카드_응답_칸은_그대로다():
