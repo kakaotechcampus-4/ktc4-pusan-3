@@ -425,3 +425,129 @@ def test_스캔_규칙은_19종_별칭을_곁의_말이_아니라_guard_로_가�
     (#582 리뷰)."""
     assert find_food_words("종이로 돼지 저금통 만들기", SCAN) == ()
     assert find_food_words("돼지국밥 그림 그리기", SCAN) == ("돼지",)
+
+
+# ── 흔한 재료 — 사전이 몰라서 "확인 못 함" 이던 항목 (#582 리뷰) ──────────────────────
+COMMON = [
+    "김", "귤", "오이", "배", "감", "브로콜리", "시금치", "양배추", "미역", "블루베리",
+    "소금", "설탕", "물", "얼음", "배추", "대파",
+]  # fmt: skip
+
+
+@pytest.mark.parametrize("item", COMMON)
+def test_항목_규칙은_흔한_재료를_막히지_않은_판정으로_낸다(item):
+    """땅콩만 등록한 아이에게서 귤 · 오이 활동이 "확인 못 함" 으로 다 빠졌다 — 사전이 알레르기 ·
+    연령 규칙에 걸리는 음식 위주라 흔한 재료를 몰랐다. 빈 튜플이 아니라 겹침 없는 판정이 나와야
+    한다."""
+    [verdict] = check_foods(item, [entry("땅콩")], stage="preschool", months=40, rules=ITEM)
+    assert verdict.word == item
+    assert not verdict.blocked
+
+
+@pytest.mark.parametrize("item", ["귤", "오이", "배", "감", "김", "브로콜리"])
+def test_항목_규칙은_흔한_재료도_등록한_아이에게는_막는다(item):
+    verdicts = check_foods(item, [entry(item)], stage="preschool", months=40, rules=ITEM)
+    assert any(v.conflicts for v in verdicts)
+
+
+def test_배추는_배_알레르기로_막지_않는다():
+    """한 글자 이름의 guard(배추 · 배달)가 흔한 재료 판정에서도 그대로 지켜진다."""
+    [verdict] = check_foods("배추", [entry("배")], stage="preschool", months=40, rules=ITEM)
+    assert not verdict.blocked
+
+
+@pytest.mark.parametrize("item", ["미역국", "김치", "호박죽", "오이무침", "전복죽", "밤죽"])
+def test_조합_음식은_흔한_재료로_막히지_않은_판정을_내지_않는다(item):
+    """목록은 이름이 통째로 같을 때만 쓴다. 미역국의 미역이 알려졌다고 국 전체가 괜찮은 게 아니다 —
+    김치는 젓갈, 호박죽은 쌀이 든다. 안에 든 재료를 몰라서 "확인 못 함" 으로 둔다."""
+    assert check_foods(item, [entry("땅콩")], stage="preschool", months=40, rules=ITEM) == ()
+
+
+@pytest.mark.parametrize(
+    ("label", "item"),
+    [
+        ("과일", "귤"),
+        ("과일", "블루베리"),
+        ("채소", "오이"),
+        ("채소 알레르기", "시금치"),
+        ("감귤류", "귤"),
+        ("해조류", "김"),
+        ("해조류", "미역"),
+        ("먼지", "귤"),  # 식품 아닌 알레르기 표에 없는 이름은 음식일 수 있어서 읽지 못한 걸로 본다
+    ],
+)
+def test_분류_이름으로_등록한_아이에게는_흔한_재료도_확인_못_함이다(label, item):
+    """ "과일" · "채소" 는 보호자가 넓게 막으려고 쓰는 묶음 이름이다. 사전이 읽지 못하는 알레르기가
+    있으면 귤이 그 묶음에 드는지 알 수 없어서 막히지 않았다고 말하지 않는다(전처럼 빈 튜플)."""
+    assert check_foods(item, [entry(label)], stage="preschool", months=40, rules=ITEM) == ()
+
+
+@pytest.mark.parametrize(
+    ("labels", "item"),
+    [
+        (["땅콩"], "귤"),
+        (["땅콩", "우유"], "오이"),
+        (["배"], "귤"),  # 흔한 재료 하나의 이름이다 — 다른 재료로 넓히지 않는다
+        (["귤"], "오이"),
+        (["땅콩, 귤"], "오이"),
+        ([], "귤"),
+    ],
+)
+def test_사전이_읽는_알레르기만_등록했으면_흔한_재료는_막히지_않는다(labels, item):
+    entries = [entry(label) for label in labels]
+    [verdict] = check_foods(item, entries, stage="preschool", months=40, rules=ITEM)
+    assert not verdict.blocked
+
+
+@pytest.mark.parametrize(
+    "labels",
+    [
+        ["땅콩", "꽃가루"],
+        ["꽃가루"],
+        ["라텍스"],
+        ["고양이털"],
+        ["땅콩, 꽃가루"],
+        ["우유", "동물털"],
+    ],
+)
+def test_식품이_아닌_알레르기를_같이_등록해도_흔한_재료는_막히지_않는다(labels):
+    """꽃가루 · 라텍스 · 동물털은 음식 묶음 이름이 아니다. Activity 가 음식 알레르기를 가를 때 쓰는
+    식품 아닌 알레르기 표(`allergy_related_terms.yaml`)와 같은 기준이라, 땅콩과 꽃가루를 같이
+    등록한 아이도 귤 활동이 빠지지 않는다 (#743 과 합쳐 보고 어긋난 것)."""
+    entries = [entry(label) for label in labels]
+    [verdict] = check_foods("귤", entries, stage="preschool", months=40, rules=ITEM)
+    assert not verdict.blocked
+
+
+def test_알레르기가_아닌_등록은_흔한_재료_판정을_막지_않는다():
+    """환경 · 질환 등록(kind 가 allergy 가 아니다)은 읽을 수 없어도 음식 묶음 이름이 아니다."""
+    entries = [entry("천식", kind="chronic_disease"), entry("꽃가루", kind="environmental")]
+    [verdict] = check_foods("귤", entries, stage="preschool", months=40, rules=ITEM)
+    assert not verdict.blocked
+
+
+def test_참기름은_참깨_알레르기로_계속_막는다():
+    """이 목록에 참기름 같은 가공 재료를 넣지 않는 이유다 — 사전이 이미 참깨로 안다."""
+    verdicts = check_foods("참기름", [entry("참깨")], stage="preschool", months=40, rules=ITEM)
+    assert any(v.conflicts for v in verdicts)
+
+
+def test_흔한_재료_목록은_항목_규칙만_읽는다():
+    """모든 아이의 후보에서 빼는 Growth 스캔이 읽으면 귤 까기 · 오이 썰기가 전원 손실이 된다.
+    섭취 확인 · 추천 이유 · 문장 규칙도 읽지 않는다 — 문구가 달라지는 일이라 이번 범위가 아니다."""
+    for item in COMMON:
+        assert find_food_words(item, SCAN) == ()
+    assert check_foods("귤 먹여도 돼?", [entry("땅콩")], stage="preschool", months=40) == ()
+    assert check_foods("귤", [entry("땅콩")], stage="preschool", months=40, rules=SENTENCE) == ()
+
+
+def test_흔한_재료는_사전이_이미_아는_이름이_아니다():
+    """사전이 아는 이름(감자 · 양파 · 쌀 …)을 목록에 또 적으면 두 곳이 어긋난다. 사전이 아는 이름 ·
+    그 이름이 든 이름(계란빵 · 땅콩쿠키 …)도 넣지 않는다."""
+    from app.agents.common.food_words import WordRules
+    from app.agents.common.reference import known_foods
+
+    dictionary_only = WordRules(False, None, (), False, True)  # known 을 읽지 않는 항목 규칙
+    names = known_foods()
+    assert names
+    assert [name for name in names if find_food_words(name, dictionary_only)] == []
