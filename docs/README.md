@@ -125,6 +125,7 @@
 ## 안전 · 개인정보
 
 - [safety/retention-v1.md](safety/retention-v1.md) — **개인정보 보관 · 삭제 기준.** 아이에 묶인 기록은 아이와 함께 · 근거 글은 원문 그대로 · 서버 로그 3개월 · 동의 증빙 1년 · 백업 30일 이내 · 대화 기록(#228) 규칙 (10-14 PM)
+- [safety/hazard-rules-v1.md](safety/hazard-rules-v1.md) — **위험 물질 규칙 목록과 판정 분리.** 이름 · 동사 · 예외 표기는 `hazard_rules.py`, 판정은 `hazard.py` · 값만 바뀌면 목록, 판정도 바뀌면 코드 · 지금은 코드 상수 + `find_hazards(rules=)` 교체 지점 · 외부로 옮길 때 정할 것 (#731)
 - [safety/consent-texts-v1.md](safety/consent-texts-v1.md) — **약관 · 동의문 작성 메모.** 본문은 `apps/api/alembic/policy_texts/` 에 있고 DB 에 그대로 들어간다 · 초안마다 무엇을 왜 바꿨는지 · 배포 전에 만들어야 사실이 되는 문장 · 위치는 요약 + 위치기반서비스 이용약관 한 글에 체크 하나 (#172)
 
 그 밖에 *아직 문서 없음.* 가드레일 7개, 법정대리인 동의 절차, 외부 LLM 전달 범위. → [지금 열려 있는 결정](#지금-열려-있는-결정-기한-있음)
