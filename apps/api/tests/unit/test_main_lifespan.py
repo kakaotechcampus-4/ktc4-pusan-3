@@ -1,25 +1,52 @@
-"""서버 시작 때 만드는 외부 어댑터 (main.lifespan). 부르지 않는다 — 만들고 닫히는지만 본다."""
+"""서버 시작 · 종료 때 프로세스에 하나씩 두는 클라이언트 (#380 · #713).
 
-import pytest
+날씨 · 병원 어댑터는 공공데이터포털 키가 있을 때만 만들고, 종료할 때 닫는다. 키가 없으면 None 이라
+Activity 는 날씨를 묻지 않고 실내 전용으로 돌고, Health 병원 찾기는 `place.unavailable` 로 닫힌다.
+"""
+
+from fastapi import FastAPI
 
 from app import main
-from app.core.config import settings
 from app.integrations.hospital.client import NmcHospitals
+from app.integrations.weather.source import PublicWeather
 
 
-async def test_공공데이터_키가_있으면_병원_어댑터를_만든다(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(settings, "DATA_GO_KR_SERVICE_KEY", "test-key")
+async def test_키가_없으면_날씨_어댑터를_만들지_않는다(monkeypatch):
+    monkeypatch.setattr(main.settings, "DATA_GO_KR_SERVICE_KEY", "")
+    app = FastAPI()
 
-    async with main.lifespan(main.app):
-        assert isinstance(main.app.state.health_places, NmcHospitals)
+    async with main.lifespan(app):
+        assert app.state.activity_weather is None
+        assert app.state.health_places is None
 
 
-@pytest.mark.parametrize("key", ["", "   "])
-async def test_공공데이터_키가_없으면_병원_어댑터는_None_이다(
-    monkeypatch: pytest.MonkeyPatch, key: str
-) -> None:
-    # 키 없이 만들면 부를 때마다 UpstreamUnavailable 이라 결과는 같지만, 날씨와 같은 규칙으로 둔다
-    monkeypatch.setattr(settings, "DATA_GO_KR_SERVICE_KEY", key)
+async def test_키가_있으면_만들고_종료할_때_닫는다(monkeypatch):
+    monkeypatch.setattr(main.settings, "DATA_GO_KR_SERVICE_KEY", "test-key")
+    closed: list[bool] = []
 
-    async with main.lifespan(main.app):
-        assert main.app.state.health_places is None
+    async def fake_aclose(self) -> None:
+        closed.append(True)
+
+    monkeypatch.setattr(PublicWeather, "aclose", fake_aclose)
+    app = FastAPI()
+
+    async with main.lifespan(app):
+        assert isinstance(app.state.activity_weather, PublicWeather)
+        assert closed == []
+    assert closed == [True]
+
+
+async def test_키가_있으면_병원_어댑터도_만들고_종료할_때_닫는다(monkeypatch):
+    monkeypatch.setattr(main.settings, "DATA_GO_KR_SERVICE_KEY", "test-key")
+    closed: list[bool] = []
+
+    async def fake_aclose(self) -> None:
+        closed.append(True)
+
+    monkeypatch.setattr(NmcHospitals, "aclose", fake_aclose)
+    app = FastAPI()
+
+    async with main.lifespan(app):
+        assert isinstance(app.state.health_places, NmcHospitals)
+        assert closed == []
+    assert closed == [True]
