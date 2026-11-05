@@ -6,7 +6,7 @@
 - 탈퇴 · 아이 삭제와 함께 지운다 (parent_id · child_id CASCADE).
 
 Revision ID: d5e8a1c4b937
-Revises: a3f9c2d17b40
+Revises: dff7c4ee929d
 Create Date: 2026-11-03
 """
 
@@ -18,7 +18,7 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision: str = "d5e8a1c4b937"
-down_revision: Union[str, Sequence[str], None] = "a3f9c2d17b40"
+down_revision: Union[str, Sequence[str], None] = "dff7c4ee929d"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
