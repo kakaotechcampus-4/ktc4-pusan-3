@@ -210,6 +210,8 @@ DB 권한: Agent role에 **`daycare_meal` UPDATE/DELETE**(INSERT는 비부여) �
 | `allergen_codes` | smallint[] | 제목 · 본문에 나오는 19종 코드를 다 적는다 — 조회 후 `filter_food_safety` 통과 |
 
 - 시드는 `apps/api/reference/food_doc.yaml`, 로더는 `app/agents/food/doc_seed.py`, 내용 검사는 `tests/unit/agents/food/test_food_doc_seed.py` 다. 소스 기준은 RAG_plan §3 (#337).
+- 🚨 YAML 의 `source_org` · `source_title` · `source_url` 은 실제 원문이다(내부 추적용). Agent 입력(`FoodDocRow.source_org`)과 05 응답(`DocCard`)에는 `common/reference_docs.public_doc_source` 가 만든 공개용 출처만 나간다 — CC BY 는 변경 표시와 주소, OGL 은 필수 영문 문장과 주소를 붙이고, NHS 를 번역 · 각색한 행은 기관 · 제목 · 주소를 OGL 안내로 바꾼다(NHS 약관 3.6(b)). `source_locator` 는 어디로도 나가지 않는다 (#510).
+- 신규 행(#510 — `meal_pattern` 30행 · NHS 기반 `feeding_tip` 8행)은 `status: draft` 다. 작성자와 다른 사람이 원문을 확인한 뒤 행마다 `approved` 로 올린다. 올리기 전에는 화면에 나오지 않는다.
 - 조회는 `status='approved'`만. 단계·`row_type` 필터 → 의미 검색 top-3.
 - 이유기(4–11개월)는 `profile_affinity`가 구조적으로 0행이라 **이 테이블이 곧 추천 품질**이다.
 
