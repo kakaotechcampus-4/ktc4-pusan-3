@@ -3,7 +3,8 @@
 import uuid
 from contextlib import asynccontextmanager
 from dataclasses import replace
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
+from typing import get_args
 
 import pytest
 from sqlalchemy import delete, func, select
@@ -38,6 +39,8 @@ from app.domains.suggestion.models import (
 
 DOC_ID = uuid.UUID("00000000-0000-5000-8000-0000000000aa")
 DOC_CARD = entrypoint.DocCard("블록 쌓기", "교육부", "표준보육과정", None)
+# 아래 autouse 가 테스트마다 갈아 끼우는 원본 — 공개용 출처 투영까지 거치는 실제 색인을 볼 때 쓴다
+REAL_DOC_INDEX = entrypoint._doc_index
 
 
 @pytest.fixture(autouse=True)
@@ -1047,67 +1050,111 @@ async def test_Food_메뉴_근거의_소스가_출처_표에_없으면_다른_�
     assert resp.json()["general"] == []
 
 
-async def test_레시피_행이_지워진_뒤에도_05_는_오류_없이_근거_카드만_뺀다(
-    db_client, session, bearer, cid, agents
+async def test_문서_근거는_라이선스_표시를_마친_공개용_출처로_나가고_NHS_이름은_없다(
+    db_client, bearer, cid, agents, monkeypatch
 ):
-    """#510 A4 — downgrade 는 `nics_recipe` 행을 지운다. `suggestion_evidence.source_id` 는 FK 가
-    아니라 그 근거 행은 남는데, 그 근거로 05 를 불러도 오류 없이 카드(와 그 메뉴만 근거였던 일반
-    추천)만 빠지고, 다시 적재하면 같은 id 로 돌아온다."""
-    from app.domains.food import repository as food_repository
-    from app.domains.food.models import RecipeCatalog
-    from app.domains.suggestion.repository import save_agent_suggestions
-    from app.rules.menu_evidence import menu_evidence_id
+    """#510 — OGL 문장 · CC BY 변경 표시는 기존 `source_title` 칸으로 낸다. NHS 자료는 기관 · 제목 ·
+    주소가 OGL 안내로 바뀐다 (NHS 약관 3.6(b)). 색인을 대신하지 않고 시드 → 05 응답을 지난다."""
+    from app.agents.common.reference_docs import (
+        CC_BY_URL,
+        NHS_PUBLIC_ORG,
+        OGL_STATEMENT,
+        OGL_URL,
+        doc_row_id,
+    )
+    from app.agents.food import doc_seed as food_seed
 
-    headers, _ = bearer
-    recipe = {
-        "source": "nics_recipe",
-        "source_id": "7",
-        "menu_key": "두부조림",
-        "display_name": "두부조림",
-        "ingredients": ["두부"],
-        "resolved": True,
-        "synced_at": datetime.now(UTC),
+    base = {
+        "row_type": "feeding_tip",
+        "body": "가짜 문장이다.",
+        "min_month": 24,
+        "max_month": 72,
+        "tags": ["test"],
+        "source_year": 2025,
+        "source_locator": "(테스트) 내부 추적용 위치 7쪽",
+        "status": "approved",
+        "authored_by": "writer-a",
+        "reviewed_by": "reviewer-b",
+        "reviewed_at": date(2026, 11, 3),
+        "version": 1,
     }
-    await food_repository.upsert_recipes(session, rows=[recipe])
-    menu = menu_evidence_id("nics_recipe", "7")
-    draft = SuggestionDraft(
-        agent="food",
-        kind="general",
-        content="두부조림",
-        reason="또래 아이들이 많이 먹는 메뉴예요.",
-        citations=(
-            EvidenceCitation(
-                ref=Ref(kind="recipe_catalog", id=menu), note="재료가 검수된 메뉴예요."
-            ),
+    sources = {
+        "food.test.nhs": (
+            "NHS (테스트)",
+            "(테스트) 가짜 NHS 문서 제목",
+            "https://www.nhs.uk/x",
+            "ogl_3",
         ),
+        "food.test.dfe": (
+            "Department for Education (테스트)",
+            "(테스트) 가짜 DfE 문서",
+            "https://www.gov.uk/x",
+            "ogl_3",
+        ),
+        "food.test.nz": (
+            "Ministry of Health (New Zealand)",
+            "(테스트) 가짜 뉴질랜드 지침",
+            "https://www.health.govt.nz/x",
+            "cc_by",
+        ),
+    }
+    entries = food_seed.parse_food_doc(
+        {
+            "rows": [
+                {
+                    **base,
+                    "doc_key": key,
+                    "title": f"행 {key}",
+                    "source_org": org,
+                    "source_title": title,
+                    "source_url": url,
+                    "license_basis": basis,
+                }
+                for key, (org, title, url, basis) in sources.items()
+            ]
+        }
     )
-    await save_agent_suggestions(
-        session, child_id=cid, run_id="run-1", payloads=[draft.to_payload()], now=datetime.now(UTC)
+    monkeypatch.setattr(food_seed, "food_doc_seed", lambda: entries)
+    REAL_DOC_INDEX.cache_clear()
+    monkeypatch.setattr(entrypoint, "_doc_index", REAL_DOC_INDEX)
+
+    plan, _ = agents
+    headers, _ = bearer
+    ids = {key: doc_row_id("food_doc", key) for key in sources}
+    plan["food"] = (
+        "drafts",
+        [
+            SuggestionDraft(
+                agent="food",
+                kind="general",
+                content="두부조림",
+                reason="또래 기준",
+                citations=tuple(
+                    EvidenceCitation(ref=Ref(kind="food_doc", id=doc_id), note="참고")
+                    for doc_id in ids.values()
+                ),
+            )
+        ],
     )
+    try:
+        resp = await _post(db_client, cid, headers, agents=["food"])
+    finally:
+        REAL_DOC_INDEX.cache_clear()
 
-    shown = await _post(db_client, cid, headers, agents=["food"], run_id="run-1")
-    [evidence] = shown.json()["general"][0]["evidence"]
-    assert evidence["ref"]["id"] == str(menu)
-
-    # downgrade 가 하는 일 — 그 소스의 행을 지운다. 근거 행은 FK 가 아니라 남는다
-    await session.execute(delete(RecipeCatalog).where(RecipeCatalog.source == "nics_recipe"))
-    kept = await session.scalar(
-        select(func.count())
-        .select_from(SuggestionEvidence)
-        .where(SuggestionEvidence.source_id == menu)
-    )
-    assert kept == 1
-
-    after = await _post(db_client, cid, headers, agents=["food"], run_id="run-1")
-    assert after.status_code == 200
-    assert after.json()["general"] == []  # 보여 줄 근거가 없으면 일반 추천도 내지 않는다
-
-    # 다시 올리고 재적재하면 같은 (source, source_id) 라 같은 근거 id 로 이어진다
-    await food_repository.upsert_recipes(session, rows=[recipe])
-    again = await _post(db_client, cid, headers, agents=["food"], run_id="run-1")
-    [evidence] = again.json()["general"][0]["evidence"]
-    assert evidence["ref"]["id"] == str(menu)
-    assert evidence["source_org"] == "농촌진흥청 국립식량과학원"
+    assert resp.status_code == 200
+    by_id = {e["ref"]["id"]: e for e in resp.json()["general"][0]["evidence"]}
+    nhs, dfe, nz = (by_id[str(ids[key])] for key in sources)
+    assert (nhs["source_org"], nhs["source_url"]) == (NHS_PUBLIC_ORG, OGL_URL)
+    assert nhs["source_title"] == f"{OGL_STATEMENT} ({OGL_URL})"
+    assert dfe["source_org"] == "Department for Education (테스트)"
+    assert dfe["source_title"].startswith("(테스트) 가짜 DfE 문서")
+    assert f"{OGL_STATEMENT} ({OGL_URL})" in dfe["source_title"]
+    assert nz["source_title"].startswith("(테스트) 가짜 뉴질랜드 지침")
+    assert "번역·재구성함" in nz["source_title"] and CC_BY_URL in nz["source_title"]
+    assert nz["source_url"] == "https://www.health.govt.nz/x"
+    leaked = repr(nhs).lower()
+    for text in ("nhs (", "nhs.uk", "가짜 nhs 문서 제목", "내부 추적용"):
+        assert text not in leaked, text
 
 
 def test_근거_카드_응답_칸은_그대로다():
