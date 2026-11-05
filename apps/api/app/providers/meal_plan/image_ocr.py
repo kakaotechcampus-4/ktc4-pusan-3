@@ -11,6 +11,7 @@
 import base64
 import json
 import logging
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -18,6 +19,7 @@ from openai import OpenAI
 from openai.lib._pydantic import to_strict_json_schema
 from pydantic import BaseModel, ConfigDict, ValidationError
 
+from app.core import llm_usage
 from app.core.config import Settings
 from app.providers.meal_plan.schema import (
     MealDay,
@@ -205,6 +207,7 @@ class ImageOcrMealPlanReader:
     ) -> None:
         self._client = OpenAI(base_url=base_url, api_key=api_key, timeout=timeout_s, max_retries=1)
         self.model = model
+        self._provider = llm_usage.provider_of(base_url)
         self._effort = reasoning_effort
         self._max_calls = max_calls
         self._cache_write = cache_write
@@ -245,6 +248,7 @@ class ImageOcrMealPlanReader:
         self.calls += 1
 
         extra_body = {"cache_write": self._cache_write} if self._cache_write else None
+        started = time.perf_counter()
         response = self._client.chat.completions.create(
             model=self.model,
             messages=build_messages(image_bytes, mime_type, day_range),  # type: ignore[arg-type]
@@ -269,6 +273,20 @@ class ImageOcrMealPlanReader:
                 self.last_usage.prompt_tokens,
                 self.last_usage.completion_tokens,
                 self.last_usage.cached_prompt_tokens,
+            )
+            # 🚨 finish_reason · refusal 검사보다 앞이다 — 잘리거나 거절된 응답도 과금된다.
+            #    보호자는 라우트가 건 귀속(core/llm_usage)에서 온다. 호출은 asyncio.to_thread 로
+            details = getattr(response.usage, "completion_tokens_details", None)
+            served = getattr(response, "model", None)
+            llm_usage.record(
+                role="meal_ocr",
+                provider=self._provider,
+                model=served if isinstance(served, str) and served else self.model,
+                prompt_tokens=self.last_usage.prompt_tokens,
+                cached_prompt_tokens=self.last_usage.cached_prompt_tokens,
+                completion_tokens=self.last_usage.completion_tokens,
+                reasoning_tokens=getattr(details, "reasoning_tokens", None),
+                latency_ms=int((time.perf_counter() - started) * 1000),
             )
 
         choice = response.choices[0]
