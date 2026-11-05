@@ -75,6 +75,8 @@ const ENTRY_KIND_LABEL: Record<PhotoEntry["kind"], string> = {
   event: "일정",
   supply: "준비물",
   meal: "급식",
+  todo: "할 일",
+  info: "안내",
 };
 
 /**

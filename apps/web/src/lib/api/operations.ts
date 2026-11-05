@@ -29,6 +29,7 @@ import type {
   PhotoCommitRequest,
   PhotoCommitResponse,
   PhotoLane,
+  PhotoUploadTicket,
   SubmitEventBody,
   SubmitEventResponse,
   UpdateHealthSafetyRequest,
@@ -115,16 +116,64 @@ export function uploadPhoto(
  *    ⚠️ 이 필드도 계약서에 없다. 👉 `apps/api` Owner 협의 대상.
  */
 export function photoFormData(
-  file: File,
+  photo: File | { uploadKey: string },
   { lane, date }: { lane: PhotoLane; date?: string },
 ): FormData {
   const form = new FormData();
-  form.append("file", file);
+  // S3 에 이미 올렸으면 사진 대신 열쇠만 보낸다 (`sendPhoto`)
+  if (photo instanceof File) form.append("file", photo);
+  else form.append("upload_key", photo.uploadKey);
   form.append("lane", lane);
   // 🚨 날짜를 프론트가 계산하지 않는다. 캘린더에서 고른 날이 있을 때만 그 값을 그대로 싣고,
   //    없으면 아예 보내지 않는다 — "오늘" 로 채우는 것은 서버가 할 일이다 (CLAUDE.md §3).
   if (date) form.append("date", date);
   return form;
+}
+
+/** 사진을 어디로 올릴지 받는다. 아무것도 저장하지 않고 하루 한도도 쓰지 않는다. */
+export function createPhotoUpload(childId: string): Promise<PhotoUploadTicket> {
+  return api.post(`/children/${childId}/photos/uploads`);
+}
+
+/**
+ * S3 업로드 주소에 사진을 올린다.
+ *
+ * 🚨 **`api` 클라이언트를 쓰지 않는다.** 우리 서버가 아니라서 인증 헤더 · 쿠키가 S3 로 새면 안 된다.
+ *    S3 는 주소에 든 서명으로 확인한다.
+ * 🚨 `file` 은 **맨 마지막**에 붙인다. S3 는 `file` 뒤의 폼 값을 무시한다.
+ */
+export async function putPhotoToS3(
+  ticket: Pick<PhotoUploadTicket, "url" | "fields">,
+  file: File,
+): Promise<void> {
+  if (!ticket.url) throw new Error("사진을 올릴 곳을 받지 못했어요.");
+  const form = new FormData();
+  for (const [name, value] of Object.entries(ticket.fields ?? {})) form.append(name, value);
+  form.append("file", file);
+  const response = await fetch(ticket.url, { method: "POST", body: form, credentials: "omit" });
+  if (!response.ok) throw new Error("사진을 보내지 못했어요.");
+}
+
+/**
+ * 사진을 서버가 읽을 수 있게 보낸다 — 사진 화면이 부르는 **한 자리**.
+ *
+ * 서버에 S3 버킷이 있으면 사진은 S3 로 가고 서버에는 열쇠만 간다. 서버는 내려받자마자 S3 에서
+ * 지운다(원본을 남기지 않는다). 버킷이 없는 로컬 개발이면 지금처럼 사진을 서버에 보낸다.
+ * 🚨 재시도는 같은 `idempotencyKey` 로 온다. 업로드 주소는 재시도마다 새로 받는다 — 5분이면 끝난다.
+ */
+export async function sendPhoto(
+  childId: string,
+  file: File,
+  options: { lane: PhotoLane; date?: string },
+  idempotencyKey: IdempotencyKey,
+): Promise<{ run_id: string }> {
+  const ticket = await createPhotoUpload(childId);
+  if (ticket.mode === "direct") {
+    return uploadPhoto(childId, photoFormData(file, options), idempotencyKey);
+  }
+  if (!ticket.key) throw new Error("사진을 올릴 곳을 받지 못했어요.");
+  await putPhotoToS3(ticket, file);
+  return uploadPhoto(childId, photoFormData({ uploadKey: ticket.key }, options), idempotencyKey);
 }
 
 /*
