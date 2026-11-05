@@ -10,6 +10,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from app.agents.common.evidence import RankedEvidence
+from app.agents.common.food_safety import filter_food_safety
 from app.agents.common.refs import Ref
 from app.agents.food.context import FoodContext
 from app.agents.food.meal_pool import build_pool
@@ -19,7 +20,6 @@ from app.agents.food.schemas.common import EvidenceRef
 from app.agents.food.schemas.recommend import MealCandidate, ProposeMealCandidatesArgs
 from app.agents.food.store import InMemoryRecipeCatalog, MenuCatalogRow, SafetyEntry
 from app.agents.food.tools.recommend import propose_meal_candidates
-from app.agents.food.tools.safety import filter_food_safety
 from app.rules.menu_evidence import menu_evidence_id
 from tests.unit.agents.food.support import MEAL_DOC, context, day, doc_row, menu_row
 
