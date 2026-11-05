@@ -724,8 +724,8 @@ def _schedule_undone(calls: list[ToolCallRecord]) -> list[str]:
     """실패한 뒤 같은 tool 이 끝내 성공하지 못한 일정 쪽 호출의 문장.
 
     모델은 실패하면 인자를 고쳐 다시 부르는 일이 많아, 뒤에 같은 tool 이 성공했으면 말하지 않는다.
-    호출과 대상을 짝짓지 않아서 같은 tool 로 두 대상을 다루다 하나만 실패하면 놓친다 — 조각 단위
-    판정은 후속 이슈다.
+    호출과 대상을 짝짓지 않아서 같은 tool 로 두 대상을 다루다 하나만 실패하면 놓친다 — 실제 문제가
+    확인될 때까지 보류한 한계다(memory-agent-v1.md "조각과 호출을 짝짓지 않는 한계").
     """
     said: list[str] = []
     for index, call in enumerate(calls):
