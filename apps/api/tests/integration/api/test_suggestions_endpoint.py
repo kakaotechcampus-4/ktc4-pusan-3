@@ -7,7 +7,7 @@ from datetime import UTC, date, datetime, timedelta
 from typing import get_args
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import Range
 
 from app.agents import entrypoint
@@ -20,7 +20,6 @@ from app.api import agent_ports, quota
 from app.api.runs import suggestion_retry
 from app.api.v1.schemas.suggestions import DocEvidenceOut
 from app.core.config import settings
-from app.core.recipe_source import RecipeSource
 from app.domains.memory.observation.models import (
     ConfidenceSource,
     ObservationActivity,
@@ -1176,10 +1175,59 @@ def test_근거_카드의_source_title_설명은_라이선스_표시를_말한�
     assert "라이선스" in description
 
 
-def test_메뉴_출처_표는_RecipeSource_와_같은_소스를_다룬다():
-    from app.api.v1.routers.suggestions import MENU_SOURCES
+async def test_합친_메뉴의_대표_레시피가_내려가도_다른_소스_근거로_추천이_남는다(
+    db_client, session, bearer, cid, agents
+):
+    """같은 이름을 합친 메뉴는 합쳐진 레시피를 모두 근거로 단다. 대표(농식품정보원)가 후보 풀에서
+    내려가도 농촌진흥청 레시피가 남아 있으면 그 근거로 05 에 나온다."""
+    from app.domains.food import repository as food_repository
+    from app.domains.suggestion.repository import save_agent_suggestions
+    from app.rules.menu_evidence import menu_evidence_id
 
-    assert set(MENU_SOURCES) == set(get_args(RecipeSource))
+    headers, _ = bearer
+
+    def recipe(source: str, source_id: str, *, resolved: bool = True) -> dict:
+        return {
+            "source": source,
+            "source_id": source_id,
+            "menu_key": "열무김치",
+            "display_name": "열무김치",
+            "ingredients": ["열무"],
+            "resolved": resolved,
+            "synced_at": datetime.now(UTC),
+        }
+
+    await food_repository.upsert_recipes(
+        session, rows=[recipe("mafra_recipe", "9"), recipe("nics_recipe", "3")]
+    )
+    mafra, nics = menu_evidence_id("mafra_recipe", "9"), menu_evidence_id("nics_recipe", "3")
+    draft = SuggestionDraft(
+        agent="food",
+        kind="general",
+        content="열무김치",
+        reason="또래 아이들이 많이 먹는 메뉴예요.",
+        citations=tuple(
+            EvidenceCitation(
+                ref=Ref(kind="recipe_catalog", id=menu), note="재료가 검수된 메뉴예요."
+            )
+            for menu in (mafra, nics)
+        ),
+    )
+    await save_agent_suggestions(
+        session, child_id=cid, run_id="run-1", payloads=[draft.to_payload()], now=datetime.now(UTC)
+    )
+
+    # 농식품정보원이 9 번을 내렸다(적재가 resolved=false 로)
+    await food_repository.upsert_recipes(
+        session, rows=[recipe("mafra_recipe", "9", resolved=False)]
+    )
+    resp = await _post(db_client, cid, headers, agents=["food"], run_id="run-1")
+
+    assert resp.status_code == 200
+    [general] = resp.json()["general"]
+    [evidence] = general["evidence"]
+    assert evidence["ref"]["id"] == str(nics)
+    assert evidence["source_org"] == "농촌진흥청 국립식량과학원"
 
 
 # ── Growth 도서 추천의 책 근거 ───────────────────────────────────────────

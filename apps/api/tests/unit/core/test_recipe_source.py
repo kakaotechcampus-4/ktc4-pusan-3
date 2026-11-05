@@ -2,7 +2,7 @@
 
 from typing import get_args
 
-from app.core.recipe_source import RecipeSource
+from app.core.recipe_source import RECIPE_SOURCE_INFO, RecipeSource
 from app.domains.food.models import RECIPE_SOURCE_CHECK, RecipeCatalog
 
 
@@ -31,3 +31,11 @@ def test_모델의_CHECK_가_상수를_쓴다():
     )
 
     assert str(check.sqltext) == RECIPE_SOURCE_CHECK
+
+
+def test_소스_정보_표는_RecipeSource_를_빠짐없이_다룬다():
+    # 05 근거 카드(기관 · 제목 · 주소)와 Agent 의 메뉴 근거 문구가 이 표 하나를 읽는다
+    assert set(RECIPE_SOURCE_INFO) == set(get_args(RecipeSource))
+    for info in RECIPE_SOURCE_INFO.values():
+        assert info.org and info.title and info.note
+        assert info.url.startswith("https://")
