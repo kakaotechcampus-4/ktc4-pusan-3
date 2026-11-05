@@ -35,8 +35,15 @@ from zoneinfo import ZoneInfo
 import pytest
 from pydantic import ValidationError
 
+from app.agents.common.result import EventRequest
 from app.agents.memory.context import AgentContext
-from app.agents.memory.drafts import DraftBook, DraftItem, EventDraft, EventSnapshot
+from app.agents.memory.drafts import (
+    DraftBook,
+    DraftItem,
+    EventDraft,
+    EventSnapshot,
+    draft_from_request,
+)
 from app.agents.memory.registry import execute_tool
 from app.agents.memory.result import ErrorCode
 from app.agents.memory.schemas.common import EventCategory, EventType
@@ -1012,3 +1019,20 @@ async def test_tool_이_만든_초안은_JSON_왕복_뒤에도_같은_모양이�
         loaded = json.loads(json.dumps(draft.to_payload()))
         model = CreateEventDraft if loaded["op"] == "create" else UpdateEventDraft
         assert model.model_validate(loaded).model_dump(mode="json") == loaded
+
+
+def test_검진_알림_요청은_새_일정_초안이다() -> None:
+    at = datetime(2026, 10, 7, tzinfo=KST)
+    draft = draft_from_request(
+        EventRequest(title="영유아 건강검진 4차", starts_at=at, category="health", all_day=True)
+    )
+
+    assert (draft.op, draft.event_id, draft.event_type, draft.category, draft.items) == (
+        "create",
+        None,
+        "episodic",
+        "health",
+        (),
+    )
+    assert (draft.title, draft.starts_at, draft.all_day) == ("영유아 건강검진 4차", at, True)
+    assert draft.draft_id is None  # DraftBook 에 넣을 때 붙는다

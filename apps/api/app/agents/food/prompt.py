@@ -15,9 +15,12 @@ tool이 못 막는 것을 막는 자리다. 코드로 막을 수 있는 것은 r
 
 식단 추천의 후보 목록은 system 이 아니라 user 메시지에 싣는다 — 샘플이 run 마다 바뀌어서 system 에
 두면 [예시] 앞이 캐시에서 빠진다. 재호출은 같은 대화에 user 메시지를 더해 새 목록을 준다.
+아이 기록 후보(`[아이 기록 후보]`, 모델 호출 전 선조회 결과)도 같은 user 메시지에 싣는다 — 재호출은
+앞의 대화에 이미 있어서 다시 싣지 않는다.
 """
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from typing import Any
 
 from app.agents.food.context import FoodContext
 from app.agents.food.schemas.common import FoodTaskType
@@ -91,6 +94,14 @@ def _instructions(task_type: FoodTaskType) -> str:
             "- 보호자가 알레르기나 피할 음식을 말했어도 reason 에는 그 이름이나 "
             "'알레르기를 고려해' 같은 말을 쓰지 않는다. 고른 메뉴가 왜 지금 맞는지만 쓴다."
         )
+        lines.append(
+            "- [아이 기록 후보] 에서 그 메뉴를 고른 이유가 된 기록만 evidence 에 단다. 관련 없는 "
+            "기록을 채우려고 달지 않고, 한 기록을 모든 후보에 복사하지 않는다."
+        )
+        lines.append(
+            "- 후보와 관련된 음식이 [아이 기록 후보] 에 없으면 search_food_memory 의 keywords 로 "
+            "다시 찾는다. 그래도 관련 기록이 없으면 evidence 를 비운다."
+        )
     if task_type == FoodTaskType.NUTRIENT_ANALYSIS:
         lines.append(
             "- findings 의 주어는 아이가 아니라 먹은 식사다. '기록된 식사를 보면 …' · "
@@ -142,9 +153,39 @@ def _request(request_texts: Sequence[str]) -> str:
     return "\n".join(texts) if texts else "오늘 아이에게 먹일 식단을 추천해 줘."
 
 
-def request_message(request_texts: Sequence[str], sample: Sequence[MenuCatalogRow]) -> str:
-    """식단 추천의 처음 user 메시지 — 보호자의 요청 그대로와 코드가 뽑은 후보 목록."""
-    return f"{_request(request_texts)}\n\n{candidate_list(sample)}"
+def memory_candidates(records: Sequence[Mapping[str, Any]]) -> str:
+    """모델에게 보여 줄 아이 기록 후보. 선조회가 고른 근거의 정해진 칸만 싣는다.
+
+    원문 · 양 표현은 없다. 인용하려면 kind 와 id 가 필요해서 둘을 그대로 싣는다. 0건이면 없다고
+    말한다 — 빈 구획을 두면 조회를 안 한 것과 구별되지 않는다.
+    """
+    if not records:
+        return "[아이 기록 후보]\n(인용 가능한 최근 기록 없음)"
+    lines = ["[아이 기록 후보] 고른 이유가 된 것만 evidence 에 단다."]
+    for record in records:
+        stale = "낡음(6개월 지남)" if record["is_stale"] else "최근"
+        lines.append(
+            f"- {record['kind']} · id {record['id']} · {record['label']} · "
+            f"polarity {record['polarity']} · {record['observed_on']} · {stale}"
+        )
+    return "\n".join(lines)
+
+
+def request_message(
+    request_texts: Sequence[str],
+    sample: Sequence[MenuCatalogRow],
+    *,
+    records: Sequence[Mapping[str, Any]] | None = None,
+) -> str:
+    """식단 추천의 처음 user 메시지 — 보호자의 요청 그대로와 코드가 뽑은 후보 목록.
+
+    `records` 는 선조회한 아이 기록이다(`prefetch_food_memory`). 안 주면(None) 그 구획을 만들지
+    않는다 — 빈 목록은 "기록 없음" 이라고 말한다.
+    """
+    parts = [_request(request_texts), candidate_list(sample)]
+    if records is not None:
+        parts.append(memory_candidates(records))
+    return "\n\n".join(parts)
 
 
 def recall_message(

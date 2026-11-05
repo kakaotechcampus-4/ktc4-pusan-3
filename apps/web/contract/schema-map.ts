@@ -49,6 +49,9 @@ export const SCHEMA_MAP: Record<string, MapValue> = {
   ConsentOut: "ConsentResponse.consent",
   ConsentHistoryEntry: "ConsentHistoryEntry",
   ConsentsResponse: "ConsentsResponse",
+  NotificationSettings: "NotificationSettings",
+  PushDeviceIn: "PushDeviceRequest",
+  PushPlatform: "PushPlatform",
 
   /* ── 아이 · 보호자 · 초대 ── */
   CreateChildRequest: "CreateChildRequest",
@@ -88,12 +91,28 @@ export const SCHEMA_MAP: Record<string, MapValue> = {
   UpdateHealthSafetyRequest: "UpdateHealthSafetyRequest",
   UpdateHealthSafetyResponse: "UpdateHealthSafetyResponse",
 
+  /* ── 복약 — 초안 제출 · 수정 · 진행 중 코스 · 회차 체크 (#537) ── */
+  SubmitMedicationRequest: "SubmitMedicationBody",
+  ReviseMedicationRequest: "ReviseMedicationBody",
+  MedicationScheduleIn: "SubmitMedicationBody.schedule",
+  MedicationDoseIn: "SubmitMedicationBody.doses[]",
+  MedicationSource: "SubmitMedicationBody.source",
+  TimingAnchor: "TimingAnchor",
+  MedicationStorage: "MedicationStorage",
+  MedicationForm: "MedicationForm",
+  SubmitMedicationResponse: "SubmitMedicationResponse",
+  MedicationsResponse: "MedicationsResponse",
+  MedicationCourseOut: "MedicationCourse",
+  MedicationDoseOut: "MedicationDose",
+  CheckDoseRequest: "CheckDoseRequest",
+
   /* ── 03 홈 · 04 한 줄 입력 · 지난 대화 ── */
   HomeResponse: "HomeResponse",
   HighlightOut: "HomeResponse.highlight",
   AgentPromptOut: "HomeResponse.agent_prompts[]",
   TodayEventOut: "HomeResponse.today[]<kind=event>",
   CreateInputRequest: "CreateInputRequest",
+  InputLocation: "InputLocation",
   CreateInputResponse: "CreateInputResponse",
   ChatDayResponse: "ChatDayResponse",
   ChatTurnOut: "ChatTurnOut",
@@ -102,13 +121,7 @@ export const SCHEMA_MAP: Record<string, MapValue> = {
   UnavailableReply: "ChatReply<type=unavailable>",
   SavedOut: "ChatReply<type=saved>",
   EventDraftReply: "ChatReply<type=event_draft>",
-  AgentResultOut: {
-    web: "ChatReply<type=agent_result>",
-    allow: {
-      awaits_reply:
-        "지난 대화의 질문에는 답할 수 없다 — 되묻기 맥락은 15분 동안 서버 메모리에만 있어 지난 대화 응답에는 싣지 않는다. 웹은 없으면 false 로 읽는다 (sse.ts · #537)",
-    },
-  },
+  AgentResultOut: "ChatReply<type=agent_result>",
   PartialReply: "ChatReply<type=partial>",
   DoneReply: "ChatReply<type=done>",
   StoredReadout: "AgentReadout",
@@ -218,6 +231,8 @@ export const SCHEMA_MAP: Record<string, MapValue> = {
   EventItemOut: "EventItem",
   ReminderOut: "Reminder",
   ReminderLead: "ReminderLead",
+  ReminderIn: "ReminderRequest",
+  ReminderResponse: "ReminderResponse",
   EventItemUpdateRequest: "EventItemUpdateRequest",
   EventItemUpdateResponse: "EventItemUpdateResponse",
   MyDiaryOut: "MyDiary",
@@ -251,13 +266,7 @@ export const NOT_MAPPED: Record<string, string> = {
   HTTPValidationError:
     "FastAPI 가 자동으로 붙이는 422 모양. 서버는 실제로 ErrorEnvelope 로 바꿔 보낸다 (app/api/errors.py · #438)",
   ValidationError: "HTTPValidationError 안쪽",
-  InputLocation:
-    "웹이 아직 위치를 보내지 않는다. 위치 동의를 묻지 않고 있다 (lib/consent.ts 의 NOT_ASKED_YET)",
   LinkedAffinityOut: "웹이 ObservationOut.affinity 를 읽지 않는다",
   AnswerResponse: "05 가 되묻기 답의 응답 본문을 읽지 않는다",
-  ReminderIn: "웹 미사용 — FE 후속 #594 (일정 알림 칸 · 내 알림 걸기)",
-  ReminderResponse: "웹 미사용 — FE 후속 #594 (PUT …/events/{eid}/reminder 응답)",
-  PushDeviceIn: "웹 미사용 — FE 후속 #594 (PUT /me/push-device — 푸시 토큰 등록)",
-  PushPlatform: "웹 미사용 — FE 후속 #594 (PushDeviceIn.platform)",
-  NotificationSettings: "웹 미사용 — FE 후속 #594 (설정 탭 일정 · 복약 알림 스위치)",
+  SeenTours: "웹 미사용 — FE 후속 (#696 머지 뒤 lib/tour/seen.ts 를 서버 호출로 바꿀 때)",
 };

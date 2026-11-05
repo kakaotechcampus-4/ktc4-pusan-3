@@ -650,9 +650,11 @@ async def _suggestions_response(
                 if (out := _general_evidence_out(e, cards, menus, book_title=row.content))
                 is not None
             ]
-            if not basis:
+            if not basis and (not row.requested or general_ev.get(row.id)):
                 # 일반 추천의 근거는 문서 행(Food 는 메뉴 행도)이다 — 검수가 풀린 문서 · 후보 풀에서
-                # 빠진 메뉴만 남았으면 보여 줄 근거가 없어서 내지 않는다
+                # 빠진 메뉴만 남았으면 보여 줄 근거가 없어서 내지 않는다. 보호자가 놀이를 정해 물은
+                # Activity 추천은 그 요청이 기준이라 문서 없이도 낸다 — 단 문서를 달았다가 그 문서가
+                # 빠졌으면 그 문서를 바탕으로 만든 추천이라 같이 내지 않는다 (#597 리뷰)
                 continue
             general.append(_general_out(row, basis, await records(str(row.agent))))
         prechecks.extend(
@@ -691,6 +693,8 @@ async def _suggestions_response(
     scarcity = None
     general_agents = {str(item.agent) for item in general}
     if general_agents:
+        # 호환 필드라 일반 추천을 낸 Agent별 기록 수를 합산한다. 정상 화면 문구는 합계가 아니라
+        # general[].record_count를 Agent별로 쓴다 (#662).
         count = sum([await records(a) for a in sorted(general_agents)])
         # 질문을 낸 Agent 로 id 를 단다 — 답(#246)이 그 Agent 로 간다 (#433 리뷰 ⑤)
         asked = next(

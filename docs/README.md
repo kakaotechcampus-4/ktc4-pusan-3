@@ -91,6 +91,9 @@
 
 - [event/event-draft-flow-v1.md](event/event-draft-flow-v1.md) — 승인 전 `event` 행을 두지 않기로 하면서 생긴 초안 계약 · `op`(create/update) 두 모양 · `items` 는 최종 목록(빠진 `item_id` 는 삭제) · `before` 는 원본 전체이고 `changed` 는 뺌 · `draft_id` 는 화면 전용 키 · `is_prepared` 는 초안이 읽지 않음
 
+## 복약 (medication)
+
+- [medication/medication-tables-v1.md](medication/medication-tables-v1.md) — 회차 1번 = 1행이고 체크 칸이 곧 복용 기록(로그 표 없음) · 그래서 `ends_on` 필수 · `status` 는 `active`/`stopped` 둘, 진행 중은 `in_progress(today)` 한 곳 · 회차에 `created_at`·`updated_at` 없음 · 오프셋 범위가 자정 넘김을 막음 · DB 가 못 막아 제출 API 가 막을 것(체크된 회차는 지우지 않음) · core 기준 시각(`ANCHOR_TIMES`)과 생성 식 대조 테스트는 `test_medication_tables.py` (#537)
 ## 알림 (notification)
 
 - [notification/reminder-v1.md](notification/reminder-v1.md) — **일정 알림.** 일정마다 보호자 개인 알림 1개(고정 목록 · 종일은 KST 오전 9시) · 울릴 시각이 아니라 `lead` 를 저장하고 보낼 때 계산 · 기기는 로그인에 묶여 로그아웃 · 만료 때 함께 지워짐 · 스위치 2개(보호자 단위, 행 없으면 코드 기본값) · 1분 배치가 보내기 전에 `sent_at` 을 찍음(두 번 울리느니 한 번 빠짐) · 10분 넘게 지난 알림은 안 보냄 · 문구에 일정 제목 없음 · 🔶 문구 · 토큰 동의 · 기본값은 PM 결정 대기 (#594)
@@ -118,6 +121,7 @@
 - [web/api-client-v1.md](web/api-client-v1.md) — `fetch` 직접 호출 금지와 예외 · 되돌릴 수 없는 5곳은 `operations.ts` 로만 · 키 수명(`rotate` 는 성공 뒤) · 에러 코드별 "다시 시도" 금지 · 게이트에 낙관적 업데이트 금지 · 에러 바운더리 표
 - [web/medication-v1.md](web/medication-v1.md) — 복약 확인 카드는 **게이트 ㉡ 안의 메서드**(새 게이트 아님) · 알림 시각을 반드시 보여 주고 고치지 않음 · 비어 온 기간을 채우기 전엔 잠금 · 복약 초안은 건강 정보라 메모리 전용 · 회차 체크는 11-3 이고 게이트 아님 · `awaits_reply` 인 Agent 질문만 답하기 · 서류는 body 그대로 + 복사 · ⚠️ 제출 · 조회 · 체크 경로와 SSE 이름은 잠정 (#537)
 - [web/mock-and-tests-v1.md](web/mock-and-tests-v1.md) — 목 시나리오 표 · 목 규칙(타입 강제 · `withIdempotency` · 핸들러 순서) · Vitest 와 Playwright 가 거는 것 · 테스트 전용 핸들러 금지 · 목 상태 리셋
+- [web/web-push-v1.md](web/web-push-v1.md) — 일정 알림을 브라우저로 받기 · Firebase 값 다섯 개를 다 넣으면 켜지고 다 비우면 꺼짐 · 서비스 워커는 Firebase 없이 직접(클릭 가로채기 때문) · 권한은 처음 알림을 고를 때 · 로그인이 살아날 때마다 기기 등록 · 누르면 그날 09
 - [web/toolchain-deploy-v1.md](web/toolchain-deploy-v1.md) — 스택 버전과 TS 7 을 안 쓰는 이유 · `make web-build` 를 PR 전에 · CI 단계 · API 주소는 빌드 인자 · `.dockerignore` 의 `.env*` · standalone 복사
 
 *아직 문서 없음.* 화면 01~10, 입력 · 진행 오버레이 · 저장 확인 · 제안 · 승인 · 기록 고치기의 **설계 문서**. 이미 만든 화면의 구현 규칙은 위 `screen-rules` · `chat-run` · `auth-consent` 에 있다.
@@ -137,6 +141,7 @@
 
 - [ops/alembic-collaboration-v1.md](ops/alembic-collaboration-v1.md) — 마이그레이션 협업 규칙 · make 명령어 치트시트 · autogenerate 한계 · revision 충돌 해결법 확정
 - [ops/logging-alerts-v1.md](ops/logging-alerts-v1.md) — 서버 로그 적재(docker journald) · ERROR 알림(Discord 웹훅) 결정과 근거 · 알림이 못 잡는 것 (멘토 #267 2번 · PR #302)
+- [ops/llm-usage-v1.md](ops/llm-usage-v1.md) — LLM 토큰 사용량을 보호자 · run · 모델별로 남기는 방법 (BM 산정) · 새 호출 지점 규칙 · OCR 담당 계약 · 서버 고려
 
 그 밖에 *아직 문서 없음.* 배포, 보안 5종 체크, 모델 호출·토큰 비용 실측.
 

@@ -129,9 +129,27 @@ export interface ObservationHealth extends ObservationBase {
      * `formatTimeOfDay` 로 시각만 그린다 (#485). 몇 시인지 모르면 키를 빼지 않고 `null` 로 온다.
      */
     observed_time?: string | null;
+    /**
+     * 보호자가 말한 체온 숫자(℃) 그대로 (#551). 화면은 숫자를 옮기기만 한다 — 정상 범위 ·
+     * 높다/낮다 · 색으로 평가하지 않는다 (최상위 CLAUDE.md §2).
+     */
+    temperature?: number | null;
+    /** 체온을 잰 ISO 시각. `observed_time` 과 다르다. */
+    measured_at?: string | null;
+    measure_site?: MeasureSite | null;
+    /**
+     * 🚨 이 값이 있으면 **먹인 약 행**이다 (#551) — 한 행 = 한 사건이라 `symptom` 이 비어 온다.
+     * 보호자가 말한 약 이름 그대로이고, 이 행의 `observed_time` 은 먹인 시각이다.
+     */
+    medication_given?: string | null;
+    /** 같은 말에서 함께 기록된 증상 행 id. 묶음 표시일 뿐 "때문에" 가 아니다. */
+    linked_symptom_id?: string | null;
     [key: string]: unknown;
   };
 }
+
+/** 체온을 잰 부위. */
+export type MeasureSite = "ear" | "forehead" | "armpit" | "oral" | "rectal";
 
 export type Observation = ObservationPromotable | ObservationHealth;
 
@@ -285,6 +303,15 @@ export interface Suggestion {
    * 🚨 **`null` 이 온다** (서버 `SuggestionOut.reason: str | None`). 비면 라벨도 세우지 않는다.
    */
   reason: string | null;
+  /**
+   * 장소가 붙은 추천에만 오는 확인 문구 한 문장 ("공공데이터 기준 2026년 6월이에요. 가기 전에 운영 여부를
+   * 확인해 주세요."). **서버 코드 문구 그대로** 제안 문장 아래 한 줄로 세운다 (#516). 장소가 없으면 `null`.
+   *
+   * 🚨 **근거가 아니다.** "사용한 기록" 목록에 넣지 않고 건수에도 세지 않는다 — 장소는 아이 기록이 아니라서,
+   *    거기 들어가면 기록이 늘어 보인다. 서버도 `evidence` 에 싣지 않는다.
+   * 🚨 **장소 이름은 여기가 아니라 `content` 에 있다** ("○○공원에서 모래성 쌓기"). 화면이 이름을 따로 꺼내지 않는다.
+   */
+  place_notice: string | null;
   status: SuggestionStatus;
   /** 생성 +24h. 승인 없는 draft 는 여기서 만료된다 (NF-07). */
   expires_at: string;
@@ -295,15 +322,16 @@ export interface Suggestion {
 }
 
 /**
- * 또래 기준 일반 추천. 근거 Memory 가 부족한 후보는 개인화 **대신** 이것으로 나간다 (CLAUDE.md §2).
+ * 일반 추천. 근거 Memory 가 부족한 후보는 개인화 **대신** 이것으로 나간다 (CLAUDE.md §2).
  * ⚠️ 후보마다 정해지므로 한 응답에 `suggestions` 와 같이 실릴 수 있다 (#512 리뷰).
  *
  * 🚨 **`Suggestion` 과 별도 타입이고 응답에서도 별도 필드다.** 같은 배열에 플래그로 섞으면
  *    언젠가 근거 0건인 것이 개인화로 그려진다 (디자인 시스템 §7). 여기에는 `evidence` ·
  *    `source_refs` 필드가 **아예 없어서**, 개인화 목록(`SuggestionList`)에 넘기면 타입이 막는다.
  *
- * 🚨 **`basis` 는 서버 문구다.** "또래 기준" 이라는 말을 프론트가 지어내지 않는다 —
- *    무엇을 기준으로 골랐는지는 만든 쪽만 안다.
+ * 🚨 **`basis` 는 서버 문구다.** 무엇을 기준으로 골랐는지는 만든 쪽만 안다 — 막연한 요청이면
+ *    또래 기준이고, 보호자가 놀이를 정해 물었으면 그 요청에 맞춘 것이다 (#597). 응답에는 둘을 가르는
+ *    칸이 없어서 화면은 라벨에 "또래 기준" 을 붙이지 않고 이 문구를 그대로 보인다.
  */
 export interface GeneralSuggestion {
   id: string;
@@ -311,7 +339,9 @@ export interface GeneralSuggestion {
   agent: Agent;
   kind: "general";
   content: string;
-  /** "36개월 또래가 자주 찾는 놀이예요" 처럼 무엇을 기준으로 골랐는지. 서버가 만든다. */
+  /** 장소가 붙은 추천의 확인 문구. 개인화와 같은 칸이다 (`Suggestion.place_notice`). 장소가 없으면 `null`. */
+  place_notice: string | null;
+  /** "36개월 또래가 자주 찾는 놀이예요" · "요청하신 놀이를 바탕으로 골랐어요" 처럼 무엇을 기준으로 골랐는지. 서버가 만든다. */
   basis: string;
   status: SuggestionStatus;
   /** 생성 +24h. 개인화 추천과 같다. */
@@ -319,8 +349,10 @@ export interface GeneralSuggestion {
   /** 그 Agent 도메인에 쌓인 기록 수 (04 `record_count` 와 같은 표). 🚨 카드의 "기록 N건" 은 이 값이다 — 0 도 그린다. */
   record_count: number;
   /**
-   * 🚨 **문서 행 근거다** (#249 · 최상위 §2 "일반은 문서 행을 근거로 단다"). 비어 오지 않는다 —
-   *    문서 근거가 없는 일반 추천은 서버가 만들지도 내보내지도 않는다.
+   * 🚨 **문서 행 근거다** (#249 · 최상위 §2 "일반은 문서 행을 근거로 단다").
+   * ⚠️ **비어 올 수 있다** (#597). 보호자가 놀이를 정해 물은 Activity 일반 추천은 그 요청이 기준이라
+   *    문서 행이 없어도 된다. 화면은 출처 줄 없이 `basis` 만 그린다 — 근거 0건을 개인화로 그릴 길은
+   *    여전히 없다 (`Suggestion` 과 타입이 다르다).
    *    아이 기록 근거(`Suggestion.evidence`)와 필드 이름까지 같지만 **다른 타입**이다.
    */
   evidence: DocEvidence[];
@@ -381,6 +413,19 @@ export type ReminderLead =
 /** 내 알림. 보호자 개인 것이라 다른 보호자의 알림은 오지 않는다 (#594). */
 export interface Reminder {
   lead: ReminderLead;
+}
+
+/**
+ * `PUT /children/{cid}/events/{eid}/reminder` — 이 일정에 **내** 알림을 걸거나 바꾼다 (#594 · #609).
+ * 함께 보는 다른 보호자가 각자 거는 길이다. 지우기는 같은 주소의 `DELETE` (없어도 204).
+ * 🚨 승인 게이트가 아니다 (개인 설정). 최종 상태를 보내는 요청이라 Idempotency-Key 가 없다.
+ */
+export interface ReminderRequest {
+  lead: ReminderLead;
+}
+
+export interface ReminderResponse {
+  reminder: Reminder;
 }
 
 /**
@@ -454,6 +499,19 @@ export interface CreateInputRequest {
   source: "home_input" | "photo" | (string & {});
   /** 🔶 되묻기에 대한 답일 때만. 그 질문이 나온 `run_id` (#158 리뷰 · 서버 #175). 못 찾으면 400. */
   reply_to?: string;
+  /** 흐린 위치. 위치 동의가 있고 휴대폰이 허용했을 때만 싣는다 (#593 · `InputLocation`). */
+  location?: InputLocation;
+}
+
+/**
+ * 휴대폰이 약 1km 로 흐려 보낸 좌표 (서버 `InputLocation` · #380). 소수점 둘째 자리다.
+ *
+ * 🚨 **`lib/location.ts` 의 `coarseLocation` 을 거친 값만 싣는다.** 서버도 한 번 더 줄이고, 위치 동의가
+ *    granted 가 아니면 버린다. 저장하지 않고 로그에도 남기지 않는다 — 웹도 같다.
+ */
+export interface InputLocation {
+  lat: number;
+  lon: number;
 }
 
 /**
@@ -510,7 +568,7 @@ export interface Guard {
  * "질문은 한 개까지만 드려요" 를 타입으로 못 박은 자리다 (CLAUDE.md §2).
  */
 export interface Scarcity {
-  /** 쌓인 기록 건수. 화면에 그대로 보여준다 — 숨기지 않는다. */
+  /** 일반 추천을 낸 Agent별 `record_count`의 합. 호환 필드이며 정상 안내 문구는 `general[].record_count`를 쓴다. */
   count: number;
   /**
    * Agent 가 되물었을 때만 있다. 🚨 **답하는 길(#246) 전에는 `options` 가 비어 온다** — 화면은
@@ -589,7 +647,7 @@ export interface SuggestionsResponse {
    */
   groups?: SuggestionGroup[] | null;
   /**
-   * 또래 기준 일반 추천. `scarcity` 가 있을 때만 채워진다. 근거가 부족한 후보가 개인화 **대신**
+   * 일반 추천. `scarcity` 가 있을 때만 채워진다. 근거가 부족한 후보가 개인화 **대신**
    * 나간 것이고, 후보마다 정해져서 `suggestions` 와 같이 채워질 수 있다 (#512 리뷰).
    * 서버 DTO 에서 optional 이라 `null` 이 올 수 있다.
    */
@@ -736,6 +794,11 @@ export interface SubmitEventBody {
    * ⚠️ 키 이름과 모양이 미정이다 (§6 · #122 에서 "제안 경로 PR 에서 정한다" 로 남은 자리).
    */
   suggestion_ids?: string[];
+  /**
+   * 제출한 보호자 본인의 알림 (#594). 다른 보호자에게는 걸리지 않는다. 빼거나 `null` 이면 알림 없음.
+   * 🚨 수정(`PATCH`)에는 싣지 않는다 — 칸이 없으면 서버가 걸린 알림을 그대로 둔다 (`updateEventDraft`).
+   */
+  reminder?: Reminder | null;
 }
 
 /* ── 06 승인 ─────────────────────────────────────────────────────────── */
@@ -851,8 +914,7 @@ export interface SubmitEventResponse {
 /**
  * 🚨 **초안 모양만 확정이다.** 정본은 `apps/api/app/core/medication_draft.py` 의 `MedicationDraft.to_payload()`
  *    (#544). 제출 · 조회 · 체크 · 수정 경로와 본문은 서버 API(#520 · `app/api/v1/routers/medications.py`)와
- *    맞췄다. 계약 대응표(`contract/schema-map.ts`)의 복약 절은 서버 스키마와 같이 #520 이 더한다 —
- *    서버에 없는 스키마를 대응표에 두면 계약 검사가 실패한다.
+ *    맞췄다 — 짝은 `contract/schema-map.ts` 의 복약 절이고 계약 검사가 본다.
  *
  * 🚨 **시각을 화면이 계산하지 않는다.** `scheduled_time` · `notice_times` 는 서버가 기준 시각 + 오프셋으로 만든
  *    값이다 (저녁 기준이 17:00 에서 19:00 으로 바뀐 것처럼 기준은 서버 상수다 · #546). 그래서 카드는 회차
@@ -1176,7 +1238,7 @@ export interface ReceivedGeneralSuggestion extends Pick<
   kind: "general";
 }
 
-/** 07 피드백 목록 한 줄. 🚨 **`kind` 로 가른다** — 일반 추천은 "또래 기준 일반 추천" 을 화면에 적는다. */
+/** 07 피드백 목록 한 줄. 🚨 **`kind` 로 가른다** — 일반 추천은 "일반 추천" 을 화면에 적는다. */
 export type ReceivedSuggestion = Suggestion | ReceivedGeneralSuggestion;
 
 /**
@@ -2018,6 +2080,38 @@ export interface ConsentsResponse {
 }
 
 /* ── 10 설정 ─────────────────────────────────────────────────────────── */
+
+/** 푸시를 받는 기기의 종류 (#605). ⚠️ `ios` 는 서버에 남아 있지만 쓰지 않는다 — iOS 는 하지 않는다. */
+export type PushPlatform = "web" | "android" | "ios";
+
+/**
+ * `PUT /me/push-device` — 이 로그인의 기기로 FCM 토큰을 맡긴다 (#605 · #609). 204.
+ *
+ * 🚨 **기기는 로그인 1건에 묶인다.** 로그아웃 · 세션 만료 · 탈퇴 때 서버가 함께 지운다. 그래서 앱을 켤 때 ·
+ *    로그인 직후 · 토큰이 바뀔 때마다 다시 부른다 (`lib/push/web-push.ts`). 로그아웃 때 따로 지우지 않는다.
+ * 🚨 토큰은 본문으로만 보낸다 — 주소에 실으면 접근 로그에 남는다. 웹 코드는 웹 저장소에도 두지 않는다
+ *    (Firebase SDK 가 IndexedDB 에 두는 것은 `docs/web/web-push-v1.md` "토큰이 남는 곳").
+ *    키가 없다 — 같은 토큰을 여러 번 보내도 결과가 같다.
+ */
+export interface PushDeviceRequest {
+  token: string;
+  platform: PushPlatform;
+}
+
+/**
+ * `GET` / `PUT /me/notification-settings` — 10 설정의 알림 스위치 (#594 · #609).
+ *
+ * 🚨 **보호자 단위다.** 아이마다가 아니고, 내 모든 기기에 함께 적용된다. 기기 하나만 끄는 것은
+ *    휴대폰의 알림 권한이 한다 (#605 — 기기별 끄기 칸을 지웠다).
+ * 🚨 **끄면 발송만 멈춘다.** 걸어 둔 알림은 남아서, 다시 켜면 아직 오지 않은 것부터 울린다.
+ * 🚨 **`PUT` 은 두 칸을 함께 보낸다.** 한 칸만 보내면 400 이다 — 바꾸지 않는 칸은 받은 값을 그대로 싣는다.
+ *    바꾼 적 없으면 서버 기본값이 온다. 승인 게이트가 아니라 Idempotency-Key 가 없다.
+ */
+export interface NotificationSettings {
+  schedule_enabled: boolean;
+  /** ⚠️ 복약 알림 발송은 아직 없다 (#594 범위 밖). 화면이 이 칸을 그리지 않는다. */
+  medication_enabled: boolean;
+}
 
 /**
  * GET /children/{cid}/parents (계약서 §07). "함께 보는 보호자".

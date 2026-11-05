@@ -135,7 +135,12 @@ run 상태는 **서버 상태도 클라이언트 상태도 아니다.** 구독�
     중복을 만든다 — 앞 이야기가 이미 저장돼 있다는 것을 같이 알린다
   - 🚨 **Idempotency-Key 를 `text` 에만 묶지 않는다** (`keyPayload`). 서버는 본문 **전체**로 같은
     요청인지 보므로, 같은 답("네")을 다른 질문에 보내면 "같은 키 · 다른 본문" 이라 422 다.
-    본문에 필드를 더하면 `keyPayload` 에도 같이 더한다
+    본문에 필드를 더하면 `keyPayload` 에도 같이 더한다.
+    ⚠️ **예외는 보낼 때 읽는 값이다 — 위치(`location` · #593).** 보낼 때마다 다시 읽으면 달라져서 `keyPayload` 에 넣으면
+    다시 시도마다 같은 키에 다른 본문이 나간다. 그래서 키에서 빼고, 키가 처음 나갈 때 읽은 값을 그 키에 붙든다
+    (`sentLocations` · [`auth-consent-v1.md`](auth-consent-v1.md) "위치"). `failed` 뒤 새 키(`forgetFailedKey`)는 새로 읽는다.
+    위치 동의는 켜져 있는데 위치 없이 나간 줄은 `ChatTurn.withoutLocation` 이고, 그 줄의 놀이 추천 아래에 `LocationOffNote` 가
+    선다(지금 줄만, 지난 턴은 아니다 · `auth-consent-v1.md` "위치")
 - 🚨 **`agent_result` 는 도메인 Agent 결과 한 건 = 답 묶음 안의 블록 하나다** (#227 · 서버 #276).
   도착한 순서대로 붙이고 재정렬하지 않는다. 같은 Agent 가 두 번 올 수 있고(task 둘) 묶지 않는다.
   보일 것이 없는 결과(쓰는 task)는 블록을 세우지 않는다 (`visibleAgentResults`).
@@ -145,13 +150,16 @@ run 상태는 **서버 상태도 클라이언트 상태도 아니다.** 구독�
     들고 있지 않아서 `reply_to` 로 보내면 400 이다 (#246) — 안내 문장으로만 선다. 답을 받는 질문은 **run 당 하나**다:
     Memory 질문이 먼저, 그다음이 `awaits_reply` 인 Agent 질문의 첫째다 (`lib/agent-result.ts` 의 `askedQuestion`).
     답하는 길은 Memory 질문과 같다 — 원문 없이 `reply_to`. 규칙 원문은 [`medication-v1.md`](medication-v1.md) §4
-  - 🚨 **한 run 에서 `question` 이 있는 `agent_result` 는 하나다.** 서버가 먼저 끝난 결과의 질문만 보낸다
-    (`Agent_공통규약` 되묻기). 화면이 따로 걸러 규칙을 두 곳에 두지 않는다
+  - 🚨 **한 run 에서 `question` 이 있는 `agent_result` 는 하나다.** 서버가 결과를 다 본 뒤 하나만 골라 **마지막
+    `agent_result` 한 장**(readouts · 추천이 빈 장)으로 보낸다 — 카드의 `question` 은 늘 `null` 이다 (`Agent_공통규약`
+    되묻기 · 서버 #615). 질문 장은 부분 결과(`partial`) 앞에 온다. 화면이 따로 걸러 규칙을 두 곳에 두지 않는다.
+    이미 저장된 지난 대화의 카드 안 질문은 그대로 읽는다. 새 이벤트 이름과 질문을 답 묶음 맨 아래로 옮기는 일은 #616
   - 🚨 **추천이 든 결과는 "후보 N개" · 이유 한 문장 · "후보 보기" 가 블록에 선다** (#227 3단계). 링크는 그 블록의
     Agent 하나와 그 run 을 싣는다(`?agents=<agent>&run=<run_id>`) — 05 가 그 run 의 추천을 되살린다 (#249).
     후보가 있으면 개수 안내(`code`)는 "후보 N개" 가 대신해 그리지 않고, `code` 가 없는 readout(날씨 안내)은 그대로
     그린다 (`lib/agent-result.ts`)
-  - 🚨 **일반 묶음(`kind: "general"`)은 "또래 기준 일반 추천" 과 쌓인 기록 수를 그대로 적는다.** 0건도 적는다.
+  - 🚨 **일반 묶음(`kind: "general"`)은 "일반 추천" 과 쌓인 기록 수를 그대로 적는다.** 0건도 적는다.
+    "또래 기준" 은 붙이지 않는다 — 놀이를 정해 물은 요청이면 그 요청을 바탕으로 고르고, 기준은 서버 `reason` 이 말한다 (#597).
     서버가 세지 못했으면(`record_count: null`) 건수만 빼고 라벨은 남긴다. 색으로 가르지 않는다
   - ⚠️ 개인화 · 일반이 섞인 묶음은 `kind: "personalized"` 로 온다 — 섞인 일반 추천은 05 가 따로 보여 준다
   - 🚨 **부분 실패 카드의 "다시 준비하기" 는 `partial.retryable` 의 Agent 만 싣는다** — 화면이 `failed` 에서 고르지

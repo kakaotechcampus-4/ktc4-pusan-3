@@ -38,7 +38,7 @@ test.describe("로그인한 채로", () => {
 
     await page.reload();
 
-    await expect(page.getByRole("button", { name: "카카오로 시작하기" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "카카오로 시작하기" }).first()).toBeVisible();
   });
 });
 
@@ -83,7 +83,7 @@ test.describe("로그아웃이 서버에 닿지 못했을 때", () => {
     await sheet.getByRole("button", { name: "로그아웃" }).click();
 
     await expect(page).toHaveURL(/\/$/);
-    await expect(page.getByRole("button", { name: "카카오로 시작하기" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "카카오로 시작하기" }).first()).toBeVisible();
   });
 });
 
@@ -93,7 +93,7 @@ test.describe("로그인 전", () => {
   test("/ 는 로그인 화면이다", async ({ page }) => {
     await page.goto("/");
 
-    await expect(page.getByRole("button", { name: "카카오로 시작하기" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "카카오로 시작하기" }).first()).toBeVisible();
   });
 });
 

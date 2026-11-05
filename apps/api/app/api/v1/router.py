@@ -29,6 +29,7 @@ from app.api.v1.routers import (
     home,
     invites,
     me,
+    medications,
     notifications,
     observations,
     photos,
@@ -38,6 +39,7 @@ from app.api.v1.routers import (
     reports,
     runs,
     suggestions,
+    tours,
 )
 
 public_router = APIRouter()
@@ -58,6 +60,7 @@ protected_router.include_router(child_parents.router)
 protected_router.include_router(client_errors.router)
 protected_router.include_router(consents.router)
 protected_router.include_router(health_safety.router)
+protected_router.include_router(medications.router)
 protected_router.include_router(invites.router)
 protected_router.include_router(me.router)
 protected_router.include_router(notifications.router)
@@ -74,6 +77,7 @@ protected_router.include_router(reminders.router)
 protected_router.include_router(reports.router)
 protected_router.include_router(runs.router)
 protected_router.include_router(suggestions.router)
+protected_router.include_router(tours.router)
 # refresh 가 provider_router 보다 먼저다 — 늦으면 /auth/refresh 가 provider="refresh" 로 잡힌다.
 public_router.include_router(auth.refresh_router)
 public_router.include_router(auth.provider_router)

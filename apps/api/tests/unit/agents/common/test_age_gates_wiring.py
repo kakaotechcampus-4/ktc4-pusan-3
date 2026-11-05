@@ -26,6 +26,11 @@ WIRED = [
     ("app.agents.growth.gating", "MANNER_MIN_MONTH", lambda g: g.manner_min_month),
     ("app.agents.growth.gating", "HABIT_MIN_MONTH", lambda g: g.habit_min_month),
     ("app.agents.common.reference_docs", "DOC_MONTH_LIMIT", lambda g: g.v1_month_limit),
+    (
+        "app.agents.health.tools.timing",
+        "INFANT_BEDTIME_BELOW_MONTH",
+        lambda g: g.infant_bedtime_below_month,
+    ),
 ]
 
 

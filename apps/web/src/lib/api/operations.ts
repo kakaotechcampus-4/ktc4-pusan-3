@@ -31,6 +31,7 @@ import type {
   PhotoLane,
   PhotoUploadTicket,
   SubmitEventBody,
+  InputLocation,
   SubmitEventResponse,
   UpdateHealthSafetyRequest,
   UpdateHealthSafetyResponse,
@@ -55,6 +56,11 @@ export interface InputRequest {
    * ⚠️ #175 머지 전 서버는 **모르는 필드라 무시한다** — 먼저 보내도 깨지지 않는다.
    */
   reply_to?: string;
+  /**
+   * 흐린 위치 (#593 · `CreateInputRequest.location`). 🚨 **보내기 직전에 붙인다** — 말풍선의 본문(`ChatTurn.body`)
+   * 에는 없다. 다시 시도가 같은 좌표로 나가도록 키마다 붙든다 (`stores/conversation.ts` 의 `sentLocations`).
+   */
+  location?: InputLocation;
 }
 
 /**
@@ -326,11 +332,14 @@ export function submitEventDraft(
  *    `event_id` 하나로는 남의 아이 일정인지 가릴 수 없다.
  * 🚨 본문은 `submitEventDraft` 와 같은 **최종 목록**이다 (`items` 에서 빠진 `item_id` 는 삭제).
  *    `suggestion_ids` 는 싣지 않는다 — 제안 ↔ 일정 연결은 create 에서만 생긴다.
+ * 🚨 `reminder` 도 싣지 않는다 (#609). 계약은 받지만, 칸이 없어야 서버가 걸린 알림을 그대로 두고
+ *    시각 · 종일이 바뀔 때 알아서 옮긴다. 같은 값을 다시 보내면 시작을 옮긴 경우 그 값이 지나
+ *    `422 invalid_reminder` 로 수정까지 막힌다. 걸린 알림은 09 하루 패널이 `PUT …/reminder` 로 바꾼다.
  */
 export function updateEventDraft(
   childId: string,
   eventId: string,
-  body: Omit<SubmitEventBody, "suggestion_ids">,
+  body: Omit<SubmitEventBody, "suggestion_ids" | "reminder">,
   idempotencyKey: IdempotencyKey,
 ): Promise<SubmitEventResponse> {
   return api.patch(idempotentPath.updateEvent(childId, eventId), body, { idempotencyKey });

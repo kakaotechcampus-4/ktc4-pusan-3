@@ -576,6 +576,7 @@ _GATE_KEYS = (
     "step_min_month",
     "manner_min_month",
     "habit_min_month",
+    "infant_bedtime_below_month",
 )
 
 
@@ -594,6 +595,7 @@ class AgeGates:
     step_min_month: int  # Growth — 루틴이 다음 단계 제안으로 넘어간다
     manner_min_month: int  # Growth — 예절 카테고리
     habit_min_month: int  # Growth — 습관 교정 카테고리
+    infant_bedtime_below_month: int  # Health — 이 월령 미만은 자기 전을 고정 시각으로
 
 
 @cache

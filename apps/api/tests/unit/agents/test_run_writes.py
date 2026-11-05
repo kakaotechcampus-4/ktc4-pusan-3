@@ -12,7 +12,9 @@ from app.agents.food.store import (
     MenuCatalogRow,
     in_memory_ports,
 )
-from app.agents.run_writes import RunWrites, record_food_writes
+from app.agents.health.store.inmemory import InMemoryMedicationStore, course_with_doses
+from app.agents.health.store.ports import DoseSlot
+from app.agents.run_writes import RunWrites, record_food_writes, record_medication_writes
 
 CHILD = UUID(int=1)
 DAY = date(2026, 9, 9)
@@ -96,3 +98,33 @@ def test_쓰기_포트가_아닌_포트는_그대로_둔다() -> None:
     # 메뉴 카탈로그 저장 포트는 감싸지 않는다
     assert recorded.catalog is original.catalog
     assert recorded.daycare is not original.daycare
+
+
+def _medication(writes: RunWrites) -> tuple[object, UUID]:
+    course, rows = course_with_doses("항생제", (DoseSlot.of("breakfast", 30),), DAY, DAY)
+    store = InMemoryMedicationStore([course], list(rows))
+    return record_medication_writes(store, writes), course.id
+
+
+async def test_복약_중단이_되면_표시가_남는다() -> None:
+    writes = RunWrites()
+    writer, course_id = _medication(writes)
+
+    outcome = await writer.stop_course(
+        child_id=CHILD, schedule_id=course_id, stopped_at=datetime(2026, 9, 9, tzinfo=timezone.utc)
+    )
+
+    assert outcome == "stopped" and writes.wrote
+
+
+async def test_이미_멈췄거나_없는_코스면_표시가_없다() -> None:
+    writes = RunWrites()
+    writer, _ = _medication(writes)
+
+    outcome = await writer.stop_course(
+        child_id=CHILD,
+        schedule_id=UUID(int=404),
+        stopped_at=datetime(2026, 9, 9, tzinfo=timezone.utc),
+    )
+
+    assert outcome == "missing" and not writes.wrote

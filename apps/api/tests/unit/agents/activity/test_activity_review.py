@@ -18,11 +18,16 @@ from app.agents.activity.review import (
     GENERAL_REASON,
     GUIDANCE,
     MIN_AVOIDED_LABEL,
+    REQUESTED_REASON,
     RejectReason,
     explain,
     review_candidates,
 )
-from app.agents.activity.rules import is_recent_duplicate, normalize_activity
+from app.agents.activity.rules import (
+    is_recent_duplicate,
+    normalize_activity,
+    said_in_request,
+)
 from app.agents.activity.schemas.common import (
     ActivitySetting,
     CaregiverRole,
@@ -124,6 +129,8 @@ def review(
     safety=(),
     outdoor=None,
     docs=DOCS,
+    area_places=(),
+    requested=False,
 ):
     return review_candidates(
         candidates,
@@ -134,7 +141,9 @@ def review(
         safety=safety_terms(safety),
         outdoor=outdoor,
         docs=docs,
+        area_places=area_places,
         today=TODAY,
+        requested=requested,
     )
 
 
@@ -157,6 +166,7 @@ class TestPass:
         (draft,) = review(candidate(evidence=[DOC_PICK])).drafts
         assert draft.kind == "general"
         assert draft.reason == GENERAL_REASON
+        assert "기록이 아직 적어서" not in draft.reason
 
     def test_인용이_하나도_없으면_거절한다(self):
         """일반 추천의 근거는 문서 행이다. 아이 기록도 문서도 없는 후보는 나가지 않는다."""
@@ -205,6 +215,41 @@ class TestEvidence:
         """지어낸 근거로 개인화인 척하지 못한다."""
         result = review(candidate(evidence=[{"id": raw, "note": "모래놀이를 했어요"}]))
         assert reason_of(result) is RejectReason.UNKNOWN_EVIDENCE
+
+
+class TestRequested:
+    """보호자가 놀이를 정해 물었으면("물놀이 뭐 하지?") 그 요청에 맞춰 만든다. 아이 기록이 없으면
+    일반 추천이고, 문서 행 근거가 없어도 된다 — 기준이 이번 요청이다."""
+
+    def test_기록이_없으면_문서_근거_없이_일반_추천이고_요청_문구를_단다(self):
+        result = review(candidate(content="욕조에서 컵으로 물 옮기기", evidence=[]), requested=True)
+        (draft,) = result.drafts
+        assert draft.kind == "general"
+        assert draft.reason == REQUESTED_REASON
+        assert "기록이 아직 적어서" not in draft.reason
+        assert draft.citations == ()
+
+    def test_예시를_참고했으면_그_문서도_근거로_남는다(self):
+        (draft,) = review(candidate(evidence=[DOC_PICK]), requested=True).drafts
+        assert draft.kind == "general"
+        assert draft.reason == REQUESTED_REASON
+        assert [c.ref.id for c in draft.citations] == [TOWER_DOC.id]
+
+    def test_기록이_있으면_요청이어도_개인화다(self):
+        (draft,) = review(candidate(), requested=True).drafts
+        assert draft.kind == "personalized"
+
+    def test_막연한_요청은_지금처럼_문서_근거가_있어야_한다(self):
+        assert reason_of(review(candidate(evidence=[]), requested=False)) is RejectReason.BUILD
+
+    def test_요청_기반도_안전_필터는_그대로다(self):
+        result = review(
+            candidate(content="밀가루 반죽 주무르기", materials=["밀가루"], evidence=[]),
+            requested=True,
+            safety=[SafetyEntry(kind="allergy", label="밀", status="active")],
+        )
+        assert result.drafts == ()
+        assert len(result.removed) == 1
 
 
 class TestDocEvidence:
@@ -364,6 +409,20 @@ class TestPlace:
         assert reason_of(result) is RejectReason.UNKNOWN_PLACE
         assert "해운대" not in explain(result.rejections)  # 장소 이름은 로그로 흘러가지 않는다
 
+    @pytest.mark.parametrize(
+        "text",
+        [
+            {"reason": "근처 공원에서 모래를 만져요 오늘 오후가 비어 있어요"},
+            {"content": "근처 공원에서 모래성 쌓기"},
+        ],
+    )
+    def test_말한_지역에서_찾은_장소에는_근처를_쓰지_않는다(self, text):
+        """보호자는 그 지역에 있지 않다. 대표 지점에서 찾아서 "그 구 안" 도 단정하지 않는다."""
+        near = candidate(**{"content": "모래성 쌓기", "place_name": PARK, **text})
+        assert reason_of(review(near, area_places={PARK})) is RejectReason.NEARBY_WORDING
+        # 보호자 위치에서 찾은 곳이면 맞는 말이다
+        assert reason_of(review(near)) is None
+
     def test_띄어쓰기만_다르면_같은_곳이고_조회_결과의_이름을_붙인다(self):
         (draft,) = review(candidate(content="모래성 쌓기", place_name="사직 어린이공원")).drafts
         assert draft.content == "사직어린이공원에서 모래성 쌓기"
@@ -372,6 +431,24 @@ class TestPlace:
         content = "사직어린이공원 모래놀이터에서 모래성 쌓기"
         (draft,) = review(candidate(content=content, place_name=PARK)).drafts
         assert draft.content == content
+
+    @pytest.mark.parametrize("content", ["공원에서 모래성 쌓기", "어린이공원에서 모래성 쌓기"])
+    def test_장소_이름이_그_낱말로_끝나면_그_자리를_장소_이름으로_바꾼다(self, content):
+        """앞에 붙이기만 하면 "사직어린이공원에서 공원에서 …" 가 된다 (10-28 QA)."""
+        (draft,) = review(candidate(content=content, place_name=PARK)).drafts
+        assert draft.content == "사직어린이공원에서 모래성 쌓기"
+
+    @pytest.mark.parametrize(
+        "content, expected",
+        [
+            ("놀이터에서 모래성 쌓기", "사직어린이공원 놀이터에서 모래성 쌓기"),
+            ("모래밭에서 모래성 쌓기", "사직어린이공원 모래밭에서 모래성 쌓기"),
+        ],
+    )
+    def test_어디서를_먼저_썼으면_그_앞에_장소_이름만_붙인다(self, content, expected):
+        """ "~에서" 가 두 번 붙지 않게 — 공원 안의 놀이터 · 모래밭이다."""
+        (draft,) = review(candidate(content=content, place_name=PARK)).drafts
+        assert draft.content == expected
 
     @pytest.mark.parametrize("place_name", [None, "", "  "])
     def test_장소가_없으면_문장을_그대로_둔다(self, place_name):
@@ -443,10 +520,13 @@ class TestSafety:
         result = review(candidate(content="밀가루 점토 놀이", evidence=[]), safety=[entry])
         assert result.removed[0].hits == ("health_safety",)
 
-    def test_경고_문구는_초안과_같은_순서로_짝짓는다(self):
+    def test_경고_문구는_그_초안에_싣는다(self):
+        """추천 하나에 붙는 문구라 결과 안내(readouts)가 아니라 초안 칸이다 (#402)."""
         result = review(candidate(), candidate(content="구슬 꿰기", evidence=[DOC_PICK]), months=40)
         small_parts = hazard_terms().axes["small_parts"].warning_text
-        assert result.warnings == ((), (small_parts,))
+        assert [draft.warnings for draft in result.drafts] == [(), (small_parts,)]
+        assert result.drafts[1].to_payload()["warnings"] == [small_parts]
+        assert result.drafts[0].to_payload()["warnings"] == []
 
     def test_allergens_와_items_를_코드가_채운다(self):
         """#232 — 승인 때 알레르기 안내와 일정 준비물에 쓴다. 모델이 고르지 않는다."""
@@ -558,9 +638,12 @@ class TestOutputTool:
         assert result.data["kinds"] == ["personalized", "general", "general"]
         assert len(ctx.state.suggestions) == 3
 
-    @pytest.mark.parametrize("written", ["예1", " 예1 ", "[예1]", "예 1", "예시1"])
+    @pytest.mark.parametrize(
+        "written",
+        ["예1", " 예1 ", "[예1]", "예 1", "예시1", "(예1)", "예１"],  # 전각 1
+    )
     async def test_예시의_짧은_id_는_문서_행_근거가_된다(self, written):
-        """[예시]는 짧은 id 로 보여 준다. 띄어쓰기 · 괄호만 다르게 써도 같은 행이다."""
+        """[예시]는 짧은 id 로 보여 준다. 띄어쓰기 · 괄호 · 전각 숫자만 달라도 같은 행이다(#606)."""
         ctx = await self.context()
         ctx.state.example_ids = {"예1": TOWER_DOC.id}
         pick = {"id": written, "note": "종이컵 탑 쌓기 예시를 참고했어요"}
@@ -733,3 +816,44 @@ class TestOutputTool:
         ctx.state.safety_entries = None
         with pytest.raises(RuntimeError):
             await propose_activity_candidates(ctx, self.args(candidate(), candidate(), candidate()))
+
+
+class TestSaidInRequest:
+    """requested_play 는 보호자가 이번 요청에서 한 말에 있어야 한다 (#597 리뷰)."""
+
+    @pytest.mark.parametrize(
+        ("play", "said"),
+        [
+            ("물놀이", "물놀이 뭐 하지?"),
+            ("티니핑", "티니핑으로 놀고 싶대"),
+            ("공놀이", "공 굴리기 놀이"),  # "놀이" 를 떼면 "공" — 낱말이 같다
+            ("전래놀이", "전래놀이 해보고 싶어"),
+            ("쿠키 만들기", "아이랑 쿠키 만들기 하고 싶어"),
+            # 정한 놀이 옆의 때 · 일반 표현은 빼고 본다
+            ("물놀이 추천", "물놀이 추천해줘"),
+            ("주말 물놀이", "주말에 물놀이 하려는데"),
+        ],
+    )
+    def test_보호자_말에_있으면_요청이다(self, play, said):
+        assert said_in_request(play, [said]) is True
+
+    @pytest.mark.parametrize(
+        ("play", "said"),
+        [
+            ("블록놀이", "오늘 뭐 하고 놀까?"),  # 막연한 요청에 모델이 지어 넣은 놀이
+            ("놀이", "놀이 추천해줘"),  # "놀이" 만으로는 정한 게 아니다
+            ("공", "공룡 그림책 읽고 할 놀이"),  # 한 글자는 낱말이 같아야 한다
+            # 언제 · 어디서 · 날씨 · 일반 표현만 남으면 막연한 요청이다 (#597 리뷰)
+            ("놀이 추천", "놀이 추천해줘"),
+            ("오늘", "오늘 뭐 하고 놀까?"),
+            ("주말", "주말에 뭐 하고 놀까?"),
+            ("실내 놀이", "비 오는 날 실내 놀이 추천해줘"),
+            ("비 오는 날 놀이", "비 오는 날 놀 거 추천해줘"),
+            # 낱말 하나만 겹쳐서는 안 된다 — 남은 낱말이 모두 보호자 말에 있어야 한다
+            ("실내 블록놀이", "비 오는 날 실내 놀이 추천해줘"),
+            (None, "물놀이 뭐 하지?"),
+            ("", "물놀이 뭐 하지?"),
+        ],
+    )
+    def test_보호자_말에_없으면_요청이_아니다(self, play, said):
+        assert said_in_request(play, [said]) is False
