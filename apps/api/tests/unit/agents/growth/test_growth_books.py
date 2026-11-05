@@ -595,6 +595,7 @@ class TestProposeTool:
         assert [d.items for d in drafts] == [("책1(가)",), ("책2(가)",), ("책3(가)",)]
         assert {d.kind for d in drafts} == {"general"}
         assert drafts[0].reason == BOOK_GENERAL_REASON
+        assert "기록이 아직 적어서" not in drafts[0].reason
         assert [(c.ref.kind, c.ref.id) for c in drafts[0].citations] == [
             ("book_catalog", book_evidence_id(isbn(1)))
         ]

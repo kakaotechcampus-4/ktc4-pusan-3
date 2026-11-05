@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+from app.agents.common.schemas.task import DomainTask
 from app.agents.food.schemas.common import FoodTaskType
 from app.agents.food.schemas.task import task_type_of
 from app.agents.memory.schemas.task import WorkType
@@ -27,12 +28,15 @@ from tests.eval.agents.routing_cases import (
     GR_ALWAYS_GROWTH,
     GR_CASES,
     GR_NEVER_REQUEST,
+    HR_CASES,
+    HR_NEVER_HEALTH,
     UNCLEAR_CASES,
     RoutingCase,
     SplitScore,
     answer_output,
     covered_by,
     growth_violations,
+    health_violations,
     score_split,
     sum_scores,
 )
@@ -828,3 +832,96 @@ def test_FC_케이스의_정답_출력이_섭취_확인으로_간다() -> None:
     routing = _route_case("FC01")
     assert [(t.agent, t.task_type) for t in routing.domain_tasks] == [("food", "food_check")]
     assert routing.domain_tasks[0].request_texts == ("땅콩소스 먹여도 될까?",)
+
+
+def _health(text: str, label: str | None) -> dict[str, Any]:
+    segment: dict[str, Any] = {"text": text, "kind": "request", "agent": "health"}
+    if label is not None:
+        segment["health_task"] = label
+    return segment
+
+
+def test_health_조각은_라벨째_DomainTask_로() -> None:
+    raw = "아까 약 먹였어"
+    routing = route(
+        raw,
+        SupervisorResult(output=_output(_health(raw, "medication"))),
+        run_id=RUN_ID,
+    )
+    assert routing.domain_tasks == (
+        DomainTask(
+            run_id=RUN_ID,
+            agent="health",
+            task_type="medication",
+            request_texts=("아까 약 먹였어",),
+            record_texts=(),
+        ),
+    )
+    assert routing.unavailable_agents == ()
+
+
+def test_라벨_없는_health_조각은_task_type_None() -> None:
+    raw = "약"
+    routing = route(raw, SupervisorResult(output=_output(_health(raw, None))), run_id=RUN_ID)
+    (task,) = routing.domain_tasks
+    assert (task.agent, task.task_type) == ("health", None)
+
+
+# ── HR01~HR11 — Health 경계 (정답 출력이 routing 을 지나는 길) ─────────
+@pytest.mark.parametrize("case", HR_CASES, ids=[case.case_id for case in HR_CASES])
+def test_HR_정답_출력은_적어_둔_라벨_밖으로_안_가고_0건_규칙을_지킨다(case) -> None:
+    """정답 표의 오타 · 0건 규칙 검사기의 오판을 라이브 전에 잡는다."""
+    wanted = {
+        (str(span.agent), str(span.health_task) if span.health_task else None)
+        for span in case.spans
+        if span.kind == SegmentKind.REQUEST
+    }
+    routing = _route_case(case.case_id)
+
+    assert {(t.agent, t.task_type) for t in routing.domain_tasks} <= wanted
+    assert health_violations(case.case_id, answer_output(case)) == []
+
+
+def test_HR_Health_로_오지_않는_말은_health_조각을_만들지_않는다() -> None:
+    for case_id in HR_NEVER_HEALTH:
+        routing = _route_case(case_id)
+        assert not [t for t in routing.domain_tasks if t.agent == "health"], case_id
+
+
+def test_HR_키_값은_검진에서_쟀어도_growth_record_안내다() -> None:
+    routing = _route_case("HR04")
+
+    assert routing.domain_tasks == ()
+    assert [g.code for g in routing.guidance] == ["growth_record"]
+
+
+def test_HR_health_violations_는_health_요청을_잡는다() -> None:
+    bad = SupervisorOutput.model_validate(
+        {
+            "segments": [
+                {
+                    "text": "검진 받았는데 키 95cm래",
+                    "kind": "request",
+                    "agent": "health",
+                    "health_task": "schedule_check",
+                }
+            ]
+        }
+    )
+
+    assert health_violations("HR04", bad)
+    assert health_violations("HR03", bad) == []  # 0건 규칙 밖의 케이스는 보지 않는다
+    assert health_violations("HR04", None) == []
+
+
+def test_HR_Health_요청은_라벨째_task_type_으로_간다() -> None:
+    tasks = {
+        case.case_id: [(t.agent, t.task_type) for t in _route_case(case.case_id).domain_tasks]
+        for case in HR_CASES
+    }
+
+    assert tasks["HR01"] == [("health", "medication")]
+    assert tasks["HR03"] == [("health", "schedule_check")]
+    assert tasks["HR06"] == [("health", "care_handoff")]
+    assert tasks["HR07"] == [("health", "visit_summary")]
+    assert tasks["HR09"] == [("health", "place_lookup")]

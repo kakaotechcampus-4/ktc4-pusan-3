@@ -25,7 +25,7 @@ import logging
 import re
 from collections import Counter
 from collections.abc import Collection, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
 from pydantic import ValidationError
@@ -53,6 +53,7 @@ from app.agents.memory.schemas.task import (
     WorkType,
 )
 from app.rules.hazard import FOOD_NAME_TERMS, PLAY_NAME_TERMS, hazard_names
+from app.rules.medicine_name import is_generic_medicine, same_medicine
 from app.rules.safety_term import mentions_safety
 from app.rules.term_match import Term
 
@@ -149,6 +150,14 @@ _SAFETY_RECORD = (
     "관찰로 옮겨 저장하지 않는다. 발화에 증상이 따로 있으면 병명을 뺀 증상만 저장하고, "
     "아이에게 해 준 일이 있으면 건강 관찰의 symptom 에 병명 없이 그 일을, action_taken 에 "
     "발화 그대로 적는다. 둘 다 없으면 저장하지 않았다고 한 줄로만 알린다."
+)
+
+# 진행 중 복약 일정에 있는 약이다. 먹인 것은 보호자가 복약 화면에서 체크하고, 같은 약을 먹인 약
+# 행으로도 적으면 투약이 두 번 남는다. 체크 안내는 pipeline 이 Health 로 따로 낸다
+_MEDICINE_REGISTERED = (
+    "이 약은 진행 중인 복약 일정에 있다. 먹인 것은 보호자가 복약 화면에서 체크한다. "
+    "medication_given 을 빼고 증상만 있으면 증상만 다시 부르고, 증상도 없으면 "
+    "저장하지 않았다고 한 줄로만 알린다."
 )
 
 # 고쳐 말하는 조각(lookup_edit)인데 조회 없이 새로 저장. "할머니 말고 할아버지랑 산책했어" 처럼
@@ -285,6 +294,12 @@ _ALREADY_DONE = (
     "같은 작업을 이미 했다. 다시 부르지 않는다. "
     "같은 날 같은 대상은 한 건으로 합치고, 내용을 더할 거면 update로 고친다."
 )
+# 로그로 흘러가는 메시지라 증상 · 약 이름을 싣지 않는다
+_HALF_DONE = (
+    "이 증상이나 이 먹인 약 중 하나는 이미 저장했다. 이미 저장한 쪽은 빼고 남은 쪽만 넣어 "
+    "create_observation_health 를 다시 부른다. 증상이 이미 저장됐으면 symptom 과 증상 칸을 비우고 "
+    "medication_given · given_time 만, 약이 이미 저장됐으면 medication_given · given_time 을 뺀다."
+)
 # 물은 질문의 답은 그 행동의 기록 한 건이다. 두 번째 루틴 기록은 행동 이름을 물은 행동으로 덮이면
 # 다른 행동의 수준이 그 행동의 것으로 저장되고, 같은 날 같은 이름이라 먼저 저장한 것과 겹친다
 _RESUME_ONE_RECORD = (
@@ -376,6 +391,7 @@ async def run(
         )
     elif task is not None and task.raw_text != raw_text:
         raise ValueError("task.raw_text와 raw_text가 다르다")
+    context = replace(context, utterance=_utterance(raw_text, continuation))
 
     shown = await _reread(continuation.found, context) if continuation is not None else []
     llm = client or LLMClient(role="memory")
@@ -619,6 +635,18 @@ async def run(
         ended_by="max_steps",
         drafts=context.drafts.all(),
     )
+
+
+def _utterance(raw_text: str, continuation: PendingMemoryContext | None) -> str:
+    """보호자가 실제로 한 말만 잇는다. tool 이 "말한 그대로" 를 대조하는 기준이다 (#551).
+
+    이어받기는 앞 조각과 보호자 답들, 이번 답이다. transcript 는 (질문, 답) 순으로 쌓이고
+    질문은 모델이 쓴 글이라 뺀다 — "타이레놀이었어요?" "응" 으로 약 이름이 생기지 않게.
+    """
+    if continuation is None:
+        return raw_text
+    answers = continuation.transcript[1::2]
+    return "\n".join((continuation.hint_text, *answers, raw_text))
 
 
 def _user_message(raw_text: str, task: MemoryTask | None) -> str:
@@ -933,6 +961,12 @@ async def _reread(
     return shown
 
 
+_SAVED_FEVER_HEADER = (
+    "[이미 저장한 기록 — 새로 만들지 않고, "
+    "답에 체온이 있으면 찾은 행에 update 로 temperature 만 넣는다]"
+)
+
+
 def _continuation_message(
     answer: str,
     pending: PendingMemoryContext,
@@ -953,7 +987,13 @@ def _continuation_message(
         found = f"{_FOUND_HEADER}\n{lines}\n\n"
     resuming = pending.resume is not None
     header = _RESUME_HEADER if resuming else _CONTINUATION_HEADER
-    label = "[보호자의 요청]" if resuming else "[아직 저장하지 못한 조각]"
+    if resuming:
+        label = "[보호자의 요청]"
+    elif pending.asks_temperature:
+        # 체온을 되묻는 자리는 조각이 이미 저장됐다. 저장 못 했다고 하면 새로 만들거나 또 묻는다
+        label = _SAVED_FEVER_HEADER
+    else:
+        label = "[아직 저장하지 못한 조각]"
     asked = ""
     if pending.asked is not None:
         subject = pending.asked.payload.get("subject")
@@ -1048,6 +1088,7 @@ def _pending(
             transcript=(*continuation.transcript, continuation.question, answer),
             whole=continuation.whole,
             found=found,
+            asks_temperature=continuation.asks_temperature,
             resume=continuation.resume,
             asked=continuation.asked,
         )
@@ -1130,6 +1171,8 @@ async def _execute(
         return _failed(name, arguments, ErrorCode.HAZARD, _HAZARD)
     if _safety_named(name, arguments):
         return _failed(name, arguments, ErrorCode.SAFETY_RECORD, _SAFETY_RECORD)
+    if _registered_medicine(name, arguments, context):
+        return _failed(name, arguments, ErrorCode.REGISTERED_MEDICINE, _MEDICINE_REGISTERED)
     if task is not None and task.unclear_only and name.startswith("update_observation_"):
         # 아이 기록이 아닌 말로 이미 저장된 아이 기록을 고치지 않는다
         return _failed(name, arguments, ErrorCode.NOT_CHILD_RECORD, _NOT_CHILD_RECORD_ALONE)
@@ -1153,13 +1196,17 @@ async def _execute(
     arguments = _pinned(name, arguments, asked)
     if _hazard(name, arguments):
         return _failed(name, arguments, ErrorCode.HAZARD, _HAZARD)
-    key = _dedup_key(name, arguments)
-    if key is not None and key in succeeded:
+    keys = _dedup_keys(name, arguments)
+    done = [key in succeeded for key in keys]
+    if keys and all(done):
         return _failed(name, arguments, ErrorCode.INVALID_ARGS, _ALREADY_DONE)
+    if any(done):
+        # health 의 증상 · 약 중 한쪽만 이미 저장했다. 통째로 다시 저장하면 그쪽이 두 행이 된다
+        return _failed(name, arguments, ErrorCode.INVALID_ARGS, _HALF_DONE)
 
     result = await execute_tool(name, arguments, context, allowed=allowed)
-    if key is not None and result.success:
-        succeeded.add(key)  # 실패한 호출은 고쳐서 다시 부를 수 있어야 한다
+    if result.success:
+        succeeded.update(keys)  # 실패한 호출은 고쳐서 다시 부를 수 있어야 한다
     return ToolCallRecord(name=name, arguments=arguments, result=result.to_payload())
 
 
@@ -1227,6 +1274,22 @@ def _safety_named(name: str, arguments: dict[str, Any]) -> bool:
     return any(mentions_safety(str(symptom)) for symptom in arguments.get("symptom") or ())
 
 
+def _registered_medicine(name: str, arguments: dict[str, Any], context: AgentContext) -> bool:
+    """먹인 약 행을 만드는 호출이 진행 중 복약 일정의 약(또는 이름 없는 "약")을 가리키는가.
+
+    정정(update)은 보지 않는다 — 이미 저장된 행을 고치는 길이다. 코스를 모르면(비어 있으면)
+    막지 않는다.
+    """
+    if name != "create_observation_health" or not context.registered_medicines:
+        return False
+    given = str(arguments.get("medication_given") or "")
+    if not given:
+        return False
+    return is_generic_medicine(given) or any(
+        same_medicine(given, title) for title in context.registered_medicines
+    )
+
+
 def _in_unclear(arguments: dict[str, Any], task: MemoryTask) -> bool:
     """이 관찰이 Supervisor 가 unclear 로 본 조각의 기록인가.
 
@@ -1291,20 +1354,48 @@ def _parse_arguments(raw: str | None) -> dict[str, Any] | None:
     return parsed if isinstance(parsed, dict) else None
 
 
-def _dedup_key(name: str, arguments: dict[str, Any]) -> tuple[str, str] | None:
-    """같은 run에서 두 번 하면 안 되는 작업인지 가른다.
+# 건강 관찰에서 같은 증상 · 같은 날이어도 다른 사건을 가르는 칸 — 증상 행에 들어가는 칸만
+_SYMPTOM_REPEATS = ("temperature", "measured_at", "observed_time")
+
+
+def _dedup_keys(name: str, arguments: dict[str, Any]) -> tuple[tuple[str, str], ...]:
+    """같은 run에서 두 번 하면 안 되는 작업인지 가른다. 비어 있으면 반복해도 되는 호출이다.
 
     관찰 저장은 인자가 아니라 대상으로 센다. 인자 전체로 비교하면 raw_text를 한 글자만
     다르게 준 두 호출이 다 통과해 같은 관찰이 두 행으로 남는다.
+
+    health 는 호출 한 번이 증상 행과 약 행을 만들 수 있어서 둘을 따로 센다 (#551). 하나로 세면
+    "발열 38.5" 뒤에 같은 인자 + 해열제로 다시 부른 호출이 통과해 증상 행이 두 번 남는다.
     """
     if not name.startswith(MUTATING_PREFIXES):
-        return None  # 분리·조회는 반복 호출해도 상태 안 바뀜
+        return ()  # 분리·조회는 반복 호출해도 상태 안 바뀜
+    if name == "create_observation_health":
+        return _health_keys(name, arguments)
     if name.startswith("create_observation_"):
         target = arguments.get("subject") or arguments.get("symptom") or arguments.get("raw_text")
-        return name, json.dumps(
-            [target, arguments.get("observed_on")], sort_keys=True, ensure_ascii=False
-        )
-    return name, json.dumps(arguments, sort_keys=True, ensure_ascii=False)
+        return ((name, _dumps([target, arguments.get("observed_on")])),)
+    return ((name, json.dumps(arguments, sort_keys=True, ensure_ascii=False)),)
+
+
+def _health_keys(name: str, arguments: dict[str, Any]) -> tuple[tuple[str, str], ...]:
+    """(증상 몫, 약 몫) 중 인자에 있는 것. 둘 다 없으면 원문으로 센다(스키마가 거절한다).
+
+    체온 · 먹인 약은 한 말에서 여러 번 나온다("8시에 38.2도, 9시에 39.1도") — 값이나 시각이
+    다르면 다른 관찰이다. 막으면 모델이 첫 체온을 update 로 덮어쓴다.
+    """
+    day = arguments.get("observed_on")
+    keys: list[tuple[str, str]] = []
+    if arguments.get("symptom"):
+        symptom = [arguments["symptom"], day, *(arguments.get(f) for f in _SYMPTOM_REPEATS)]
+        keys.append((f"{name}:symptom", _dumps(symptom)))
+    if arguments.get("medication_given") is not None:
+        medicine = [arguments["medication_given"], day, arguments.get("given_time")]
+        keys.append((f"{name}:medication", _dumps(medicine)))
+    return tuple(keys) or ((name, _dumps([arguments.get("raw_text"), day])),)
+
+
+def _dumps(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, ensure_ascii=False, default=str)
 
 
 def _failed(name: str, arguments: dict[str, Any], code: str, message: str) -> ToolCallRecord:

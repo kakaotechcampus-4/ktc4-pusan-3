@@ -166,7 +166,7 @@ export const suggestionHandlers = [
             : { code: "empty", message: "조건에 맞는 추천이 없어요." },
           cautions: [],
         })),
-        // 카드의 기록 수는 그 Agent 도메인 수다 (#433 리뷰 ⑥) — 질문 카드의 scarcity.count 와 같은 값을 싣는다
+        // 카드의 기록 수는 그 Agent 도메인 수다 (#433 리뷰 ⑥). 단일 Agent 목이라 합계와 우연히 같다.
         general: withStatus(general.map((g) => ({ ...g, record_count: count }))),
         looked_at: "",
         guards: [],
@@ -179,6 +179,34 @@ export const suggestionHandlers = [
           },
         },
         // 🚨 일반 추천도 고르고 채택하므로 알레르기 사전검사가 걸린다 (#509 · 게이트 ㉡)
+        prechecks: prechecksFor(general),
+      });
+    }
+
+    // Agent 둘이 모두 일반 추천을 낸 응답. `scarcity.count`는 호환용 합계이고 화면은 각 카드의
+    // `record_count`를 응답 Agent 순서대로 따로 말해야 한다 (#662).
+    if (scenario === "suggest_multi_general") {
+      const recordCounts: Partial<Record<Agent, number>> = { food: 22, activity: 8 };
+      const order = asked.agents ?? ["food", "activity"];
+      const general = order.flatMap((agent) => {
+        const item = generalSuggestions.find((suggestion) => suggestion.agent === agent);
+        return item ? [{ ...item, record_count: recordCounts[agent] ?? 0 }] : [];
+      });
+      const generalAgents = new Set(general.map((item) => item.agent));
+      return HttpResponse.json({
+        suggestions: [],
+        groups: order.map((agent) => ({
+          agent,
+          merges_into_one: agent === "food",
+          notice: generalAgents.has(agent)
+            ? null
+            : { code: "empty", message: "조건에 맞는 추천이 없어요." },
+          cautions: [],
+        })),
+        general: withStatus(general),
+        looked_at: "",
+        guards: [],
+        scarcity: { count: 30, question: null },
         prechecks: prechecksFor(general),
       });
     }

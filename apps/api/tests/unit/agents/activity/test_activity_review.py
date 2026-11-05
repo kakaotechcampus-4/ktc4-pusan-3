@@ -166,6 +166,7 @@ class TestPass:
         (draft,) = review(candidate(evidence=[DOC_PICK])).drafts
         assert draft.kind == "general"
         assert draft.reason == GENERAL_REASON
+        assert "기록이 아직 적어서" not in draft.reason
 
     def test_인용이_하나도_없으면_거절한다(self):
         """일반 추천의 근거는 문서 행이다. 아이 기록도 문서도 없는 후보는 나가지 않는다."""
@@ -225,6 +226,7 @@ class TestRequested:
         (draft,) = result.drafts
         assert draft.kind == "general"
         assert draft.reason == REQUESTED_REASON
+        assert "기록이 아직 적어서" not in draft.reason
         assert draft.citations == ()
 
     def test_예시를_참고했으면_그_문서도_근거로_남는다(self):

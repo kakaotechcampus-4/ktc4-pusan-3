@@ -26,6 +26,7 @@ from app.agents.entrypoint import (
     EventDrafts,
     Failed,
     Guidance,
+    MedicationDrafts,
     MemoryNote,
     Partial,
     PendingReply,
@@ -64,6 +65,9 @@ SKIPPED = {
     DomainRouted,  # 로그 · 지표용
     Unwritten,
     Rerouted,
+    # 복약 초안을 지난 대화에 남길지는 아직 정해지지 않았다.
+    # 화면은 이 앱에서 보낸 줄에만 카드를 세운다
+    MedicationDrafts,
 }
 
 

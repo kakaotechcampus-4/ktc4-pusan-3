@@ -265,7 +265,7 @@ async function* agentResultScript(
             suggestion_ids: [generalSuggestions[0].id],
             kind: "general",
             // 서버 activity/review.py 의 GENERAL_REASON 과 같은 글자
-            reason: "쌓인 놀이 기록이 아직 적어서, 이 나이 아이들에게 많이 권하는 놀이로 골랐어요.",
+            reason: "이 나이 아이들에게 많이 권하는 놀이로 골랐어요.",
             record_count: 1,
           },
         ]

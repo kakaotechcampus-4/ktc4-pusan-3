@@ -116,6 +116,46 @@ test.describe("홈 버튼에서 들어오면 (#286)", () => {
   });
 });
 
+test.describe("들어온 곳으로 돌아가기 (#683)", () => {
+  test("홈 버튼에서 왔으면 위 화살표가 홈으로 간다", async ({ page }) => {
+    await page.goto(`/child/${CHILD}/home`);
+    await page.getByRole("button", { name: /저녁 추천해드릴까요/ }).click();
+    await expect(page.getByText("사용한 기록", { exact: false }).first()).toBeVisible();
+
+    await expect(page.getByRole("link", { name: "대화로 돌아가기" })).toHaveCount(0);
+    await page.getByRole("link", { name: "홈으로 돌아가기" }).click();
+    await expect(page).toHaveURL(new RegExp(`/child/${CHILD}/home$`));
+  });
+
+  test("대화에서 왔으면 위 화살표가 대화로 가고, 스크롤해도 화면 위에 남는다", async ({ page }) => {
+    // 04 "후보 보기" 는 run 을 싣고, "이것도 도와드릴까요?" 는 영역만 싣는다 — 둘 다 대화다
+    for (const path of [`${SUGGESTIONS}&run=r1`, SUGGESTIONS]) {
+      await page.goto(path);
+      await expect(page.getByText("사용한 기록", { exact: false }).first()).toBeVisible();
+      const back = page.getByRole("link", { name: "대화로 돌아가기" });
+      await expect(back).toHaveAttribute("href", `/child/${CHILD}/chat`);
+      await expect(page.getByRole("link", { name: "홈으로 돌아가기" })).toHaveCount(0);
+
+      // 🚨 나가는 길이 본문에 있으면 후보 셋을 지나 한참 내려가야 한다 — 맨 아래에서도 보여야 한다
+      await page.getByRole("link", { name: "홈으로", exact: true }).scrollIntoViewIfNeeded();
+      await expect(back).toBeInViewport();
+    }
+
+    await page.getByRole("link", { name: "대화로 돌아가기" }).click();
+    await expect(page).toHaveURL(new RegExp(`/child/${CHILD}/chat$`));
+  });
+
+  test("맨 아래 홈으로는 버튼이 아니라 링크다", async ({ page }) => {
+    await page.goto(SUGGESTIONS);
+    await expect(page.getByText("사용한 기록", { exact: false }).first()).toBeVisible();
+    await expect(page.getByRole("button", { name: "홈으로", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("link", { name: "홈으로", exact: true })).toHaveAttribute(
+      "href",
+      `/child/${CHILD}/home`,
+    );
+  });
+});
+
 test.describe("근거가 부족하면 일반 추천 (§2 기억)", () => {
   test.describe("scarcity — 기록 1건", () => {
     test.use({ scenario: "scarcity" });
@@ -133,11 +173,20 @@ test.describe("근거가 부족하면 일반 추천 (§2 기억)", () => {
       await expect(page.getByText("또래 기준", { exact: false })).toHaveCount(0);
 
       await expect(
-        page.getByRole("heading", { name: "다음엔 우리 아이 기준으로 골라 드릴게요" }),
+        page.getByRole("heading", { name: "이번에는 일반 추천으로 골랐어요" }),
       ).toBeVisible();
+      await expect(page.getByText("놀이 기록은 1건 있어요.", { exact: false })).toBeVisible();
       await expect(
-        page.getByText("이 주제로 쌓인 기록이 1건뿐이에요.", { exact: false }),
+        page.getByText(
+          "이번 추천에 직접 사용한 아이 기록이 없어 추천 아래 적힌 기준으로 골랐어요.",
+          {
+            exact: false,
+          },
+        ),
       ).toBeVisible();
+      // 🚨 누적 건수를 "적다" 고 단정하거나 쌓이면 달라진다고 약속하지 않는다 (#662)
+      await expect(page.getByText("뿐이에요", { exact: false })).toHaveCount(0);
+      await expect(page.getByText("더 쌓이면", { exact: false })).toHaveCount(0);
       // 🚨 되물을 때는 최소 질문 1개 (복수 금지).
       await expect(page.getByText("요즘 실내와 야외 중 어디를 더 찾나요?")).toHaveCount(1);
       await expect(page.getByText("질문은 한 개까지만 드려요.")).toBeVisible();
@@ -186,7 +235,7 @@ test.describe("근거가 부족하면 일반 추천 (§2 기억)", () => {
       await page.goto(SUGGESTIONS);
       const card = page.locator("li").filter({ has: page.getByText("일반 추천", { exact: true }) });
       const question = page.getByRole("heading", {
-        name: "다음엔 우리 아이 기준으로 골라 드릴게요",
+        name: "이번에는 일반 추천으로 골랐어요",
       });
       const cardBox = (await card.boundingBox())!;
       const questionBox = (await question.boundingBox())!;
@@ -235,7 +284,7 @@ test.describe("근거가 부족하면 일반 추천 (§2 기억)", () => {
       await expect(cards).toHaveCount(2);
       for (const card of await cards.all()) await expect(card).toContainText("기록 0건");
       await expect(
-        page.getByText("이 주제로 쌓인 기록이 아직 없어요.", { exact: false }),
+        page.getByText("놀이와 식사 기록은 아직 없어요.", { exact: false }),
       ).toBeVisible();
       await expect(page.getByText("질문은 한 개까지만 드려요.")).toHaveCount(1);
       await expect(page.getByText(/^사용한 기록/)).toHaveCount(0);
@@ -251,6 +300,33 @@ test.describe("근거가 부족하면 일반 추천 (§2 기억)", () => {
       await expect(sheet.getByText("처음 보는 재료가 있어요")).toBeVisible();
       await expect(sheet.getByText("참깨")).toBeVisible();
       expect(writes(calls, "POST", /\/suggestions\/approve$/)).toEqual([]);
+    });
+  });
+
+  test.describe("Agent 둘의 일반 추천 — 기록 수를 합치지 않는다 (#662)", () => {
+    test.use({ scenario: "suggest_multi_general" });
+
+    test("식사와 놀이 기록을 Agent별로 보여 주고 합계 30건은 쓰지 않는다", async ({ page }) => {
+      await page.goto(SUGGESTIONS);
+
+      const food = page
+        .locator("li")
+        .filter({ has: page.getByText("국물 없이 집어 먹는 반찬을 한 가지 곁들여 보세요") });
+      const activity = page
+        .locator("li")
+        .filter({ has: page.getByText("블록 쌓기처럼 손을 많이 쓰는 놀이를 15분쯤 해 보세요") });
+      await expect(food.getByText("일반 추천", { exact: true })).toBeVisible();
+      await expect(activity.getByText("일반 추천", { exact: true })).toBeVisible();
+      await expect(food).toContainText("기록 22건");
+      await expect(activity).toContainText("기록 8건");
+
+      await expect(
+        page.getByRole("heading", { name: "이번에는 일반 추천으로 골랐어요" }),
+      ).toBeVisible();
+      await expect(page.getByText("영역별 기록은 식사 22건 · 놀이 8건이에요.")).toBeVisible();
+      for (const banned of ["30건", "이 주제로", "또래 기준", "다음부터 달라져요"]) {
+        await expect(page.getByText(banned, { exact: false })).toHaveCount(0);
+      }
     });
   });
 });
@@ -275,6 +351,35 @@ test.describe("개인화와 일반이 같은 Agent 에 섞여 오면 (#512 리�
     await expect(notice).toHaveText("식사에서 고른 3가지는 일정 하나로 묶여요.");
   });
 
+  test("개인화 후보와 일반 추천의 제안 문장은 같은 글씨다 (#683)", async ({ page }) => {
+    await page.goto(SUGGESTIONS);
+    const font = (text: string) =>
+      page.getByText(text, { exact: true }).evaluate((el) => {
+        const style = getComputedStyle(el);
+        return { size: style.fontSize, weight: style.fontWeight };
+      });
+
+    const personal = await font("계란말이에 시금치를 조금 섞어 보세요");
+    const general = await font("국물 없이 집어 먹는 반찬을 한 가지 곁들여 보세요");
+    // 🚨 개인화만 크고 굵으면 더 중요한 추천처럼 읽힌다 — 가르는 것은 라벨 · 점선 · 근거다
+    expect(personal).toEqual(general);
+
+    // 묶음 질문은 후보보다 크고, 화면 제목보다는 작다 — 층이 셋으로 갈린다.
+    // 🚨 좁은 폰(360)에서도 본다 — 화면 제목이 380 미만에서 한 단계 내려가서, 질문도 같이 내려야 한다.
+    const px = (value: string) => Number.parseFloat(value);
+    const size = (heading: string) =>
+      page
+        .getByRole("heading", { name: heading, exact: true })
+        .evaluate((el) => getComputedStyle(el).fontSize);
+    for (const width of [390, 360]) {
+      await page.setViewportSize({ width, height: 844 });
+      const candidate = px((await font("계란말이에 시금치를 조금 섞어 보세요")).size);
+      const prompt = px(await size("오늘 저녁 뭐 차려 줄까요"));
+      expect(prompt, `${width} 폭`).toBeGreaterThan(candidate);
+      expect(prompt, `${width} 폭`).toBeLessThan(px(await size("제안 후보")));
+    }
+  });
+
   test("묶음 건수 줄은 개인화만 셌다는 것을 글자로 말한다", async ({ page }) => {
     await page.goto(SUGGESTIONS);
     // 아래 일반 카드까지 식사 후보는 넷이다 — "3가지 중에서" 만 쓰면 숫자가 어긋난다
@@ -291,21 +396,21 @@ test.describe("개인화와 일반이 같은 Agent 에 섞여 오면 (#512 리�
     ).toHaveCount(1);
 
     await expect(page.getByText("위 추천은", { exact: false })).toHaveCount(0);
-    // 🚨 제목도 "다음엔 우리 아이 기준으로" 가 아니다 — 위에 우리 아이 기준 추천이 이미 서 있다
+    // 🚨 제목이 위에 선 개인화까지 일반이라고 부르지 않는다 — "일부는" 이다
     await expect(
-      page.getByRole("heading", { name: "다음엔 우리 아이 기준으로 골라 드릴게요" }),
+      page.getByRole("heading", { name: "이번에는 일반 추천으로 골랐어요" }),
     ).toHaveCount(0);
     await expect(
-      page.getByRole("heading", { name: "기록이 더 쌓이면 모두 우리 아이 기준으로 골라 드릴게요" }),
+      page.getByRole("heading", { name: "일부는 일반 추천으로 골랐어요" }),
     ).toBeVisible();
     await expect(
-      page.getByText(
-        "일반 추천이라고 적힌 것은 우리 아이 기록 대신 추천 아래 적힌 기준으로 골랐어요",
-        {
-          exact: false,
-        },
-      ),
+      page.getByText("일반 추천이라고 적힌 것에는 직접 연결한 아이 기록이 없어요", {
+        exact: false,
+      }),
     ).toBeVisible();
+    // 🚨 누적 건수를 "적다" 고 단정하거나 쌓이면 달라진다고 약속하지 않는다 (#662)
+    await expect(page.getByText("뿐이에요", { exact: false })).toHaveCount(0);
+    await expect(page.getByText("더 쌓이면", { exact: false })).toHaveCount(0);
   });
 });
 
@@ -690,18 +795,20 @@ test.describe("0개 · 이어서 할 수 없음은 실패가 아니다 (#249)", 
       const card = page.locator("li").filter({ has: page.getByText("일반 추천", { exact: true }) });
       await expect(card).toHaveCount(1);
       await expect(card).toContainText("기록 0건");
-      await expect(card).toContainText(
-        "쌓인 놀이 기록이 아직 적어서, 요청하신 놀이에 맞춰 골랐어요.",
-      );
+      await expect(card).toContainText("요청하신 놀이를 바탕으로 골랐어요.");
       // 🚨 요청이 기준이라 문서 행이 없다 — 출처 줄을 지어내지 않는다
       await expect(card.getByText(/^참고/)).toHaveCount(0);
       // 🚨 요청에 맞춰 고른 것을 또래 기준이라고 부르지 않는다 (카드 · 질문 카드 둘 다)
       await expect(page.getByText("또래", { exact: false })).toHaveCount(0);
       await expect(
-        page.getByText("그래서 위 추천은 우리 아이 기록 대신 추천 아래 적힌 기준으로 골랐어요.", {
-          exact: false,
-        }),
+        page.getByText(
+          "이번 추천에 직접 사용한 아이 기록이 없어 추천 아래 적힌 기준으로 골랐어요.",
+          {
+            exact: false,
+          },
+        ),
       ).toBeVisible();
+      await expect(page.getByText("기록이 아직 적어서", { exact: false })).toHaveCount(0);
       // 아이 기록 근거도 없다 — 개인화로 그려지지 않는다
       await expect(page.getByText(/^사용한 기록/)).toHaveCount(0);
     });

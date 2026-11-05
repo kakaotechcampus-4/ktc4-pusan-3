@@ -209,6 +209,7 @@ def agent_job(
                         **agent_ports.growth_book_ports(),
                         growth_log=agent_ports.growth_log_reader(),
                         affinity_reader=agent_ports.affinity_reader(),
+                        **agent_ports.health_ports(),
                     )
             except TimeoutError:
                 log.warning(
