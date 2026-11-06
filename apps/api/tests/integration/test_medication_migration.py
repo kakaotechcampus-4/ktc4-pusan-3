@@ -1,6 +1,6 @@
 """복약 두 표 마이그레이션 — 격리된 스키마에서 왕복하고, 모델과 어긋나지 않는지 본다.
 
-#537 두 표를 만드는 것과 #749 체크한 보호자 칸을 더하는 것을 각각 왕복한다.
+#537 두 표를 만드는 것과 #749 체크한 보호자 칸 · 알림 구독 표를 더하는 것을 각각 왕복한다.
 """
 
 from datetime import UTC, date, datetime
@@ -21,7 +21,9 @@ from app.infra.db.base import Base
 VERSIONS = Path(__file__).resolve().parents[2] / "alembic" / "versions"
 MIGRATION = VERSIONS / "c6e2a8d41f93_add_medication_tables.py"
 CHECKED_BY = VERSIONS / "361f26c96b2e_add_medication_dose_checked_by.py"
+SUBSCRIPTION = VERSIONS / "885b03bd5b61_add_medication_notice_subscription.py"
 TABLES = ("medication_schedule", "medication_dose")
+COMPARED = (*TABLES, "medication_notice_subscription")
 
 
 def _exists(conn, schema: str, table: str) -> bool:
@@ -77,14 +79,14 @@ async def test_모델과_마이그레이션이_어긋나지_않는다(session):
     registry 에 모델이 빠져 표 자체를 못 보는 경우를 잡는다.
     """
     # 모델도 표도 없으면 diff 가 비어 통과해 버린다 — registry 에 올라왔는지부터 본다
-    assert set(TABLES) <= Base.metadata.tables.keys()
+    assert set(COMPARED) <= Base.metadata.tables.keys()
     connection = await session.connection()
 
     def diff(conn):
         return compare_metadata(MigrationContext.configure(conn), Base.metadata)
 
     diffs = await connection.run_sync(diff)
-    assert [d for d in diffs if any(t in repr(d) for t in TABLES)] == []
+    assert [d for d in diffs if any(t in repr(d) for t in COMPARED)] == []
 
 
 async def test_체크한_보호자_칸을_올리고_내려도_기존_체크_기록은_남는다(session):
@@ -136,5 +138,27 @@ async def test_체크한_보호자_칸을_올리고_내려도_기존_체크_기�
             assert conn.execute(text("SELECT checked_at FROM medication_dose")).scalar_one() == (
                 checked_at
             )
+
+    await connection.run_sync(verify)
+
+
+async def test_알림_구독_표를_올리고_내린다(session):
+    """#749 — 두 표와 체크한 보호자 칸 위에 구독 표를 만들고 지운다."""
+    connection = await session.connection()
+
+    def verify(conn):
+        schema = f"medication_migration_{uuid4().hex}"
+        conn.execute(text(f'CREATE SCHEMA "{schema}"'))
+        # child · parent 는 public 에 있다 — FK 가 search_path 로 찾는다
+        conn.execute(text(f'SET LOCAL search_path TO "{schema}", public'))
+        steps = [run_path(str(m)) for m in (MIGRATION, CHECKED_BY, SUBSCRIPTION)]
+        with Operations.context(MigrationContext.configure(conn)):
+            for step in steps:
+                step["upgrade"]()
+            assert _exists(conn, schema, "medication_notice_subscription")
+
+            steps[-1]["downgrade"]()
+            assert not _exists(conn, schema, "medication_notice_subscription")
+            assert all(_exists(conn, schema, t) for t in TABLES)
 
     await connection.run_sync(verify)

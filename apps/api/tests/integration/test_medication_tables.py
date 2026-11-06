@@ -16,6 +16,7 @@ from app.domains.child.models import Child
 from app.domains.identity.models import Parent
 from app.domains.medication.models import (
     MedicationDose,
+    MedicationNoticeSubscription,
     MedicationSchedule,
     MedicationStatus,
     TimingAnchor,
@@ -356,6 +357,42 @@ async def test_체크한_보호자가_지워지면_그_칸만_비고_복용_기�
         )
     ).one()
     assert row == (checked_at, None)
+
+
+# ── 4-2. 알림 구독 (#749) ─────────────────────────────────────────────────
+
+
+async def subscribe(session, schedule_id, parent_id) -> None:
+    session.add(
+        MedicationNoticeSubscription(
+            schedule_id=schedule_id, parent_id=parent_id, subscribed_at=datetime.now(UTC)
+        )
+    )
+    await session.flush()
+
+
+async def test_한_보호자는_한_코스에_구독_하나(session, child):
+    schedule_id = await insert_schedule(session, child)
+    await subscribe(session, schedule_id, child.owner_parent_id)
+    with pytest.raises(IntegrityError):
+        await subscribe(session, schedule_id, child.owner_parent_id)
+
+
+async def test_코스를_지우거나_보호자가_탈퇴하면_구독이_함께_지워진다(session, child):
+    helper = Parent()
+    session.add(helper)
+    await session.flush()
+    first, second = await insert_schedule(session, child), await insert_schedule(session, child)
+    await subscribe(session, first, child.owner_parent_id)
+    await subscribe(session, second, helper.id)
+
+    await session.execute(text("DELETE FROM medication_schedule WHERE id = :id"), {"id": first})
+    await session.execute(text("DELETE FROM parent WHERE id = :id"), {"id": helper.id})
+
+    for schedule_id in (first, second):
+        assert (
+            await count(session, "medication_notice_subscription", "schedule_id", schedule_id) == 0
+        )
 
 
 # ── 5. 진행 중 코스 ───────────────────────────────────────────────────────

@@ -1,4 +1,4 @@
-"""복약 — `POST /children/{cid}/medications` (#577).
+"""복약 — `POST /children/{cid}/medications` (#577) · 내 복약 알림 켜기 · 끄기 (#749).
 
 🚨 코스 등록은 승인 게이트 ㉡ 이다 — 보호자가 복약 카드에서 확인한 것만 저장한다.
    Agent 는 초안까지만 만들고 코스도 회차도 직접 쓰지 않는다. Idempotency-Key 가 필수다.
@@ -10,7 +10,7 @@ from typing import Annotated
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Header, Request
+from fastapi import APIRouter, Header, Request, Response
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -43,12 +43,16 @@ from app.domains.medication.service import (
     DoseNotDue,
     DoseNotFound,
     DosePattern,
+    NotLinked,
     checker_nicknames,
     course_views,
     create_course,
     list_in_progress,
+    my_subscriptions,
     revise_course,
     set_dose_checked,
+    subscribe,
+    unsubscribe,
 )
 
 router = APIRouter()
@@ -92,7 +96,10 @@ def _dose_out(dose: MedicationDose, names: dict[UUID, str]) -> MedicationDoseOut
     )
 
 
-def _course_out(view: CourseView, names: dict[UUID, str]) -> MedicationCourseOut:
+def _course_out(
+    view: CourseView, names: dict[UUID, str], subscribed: set[UUID]
+) -> MedicationCourseOut:
+    """`subscribed` 는 요청한 보호자가 알림을 켜 둔 코스 id 다 (`my_subscriptions`)."""
     course = view.course
     return MedicationCourseOut(
         id=course.id,
@@ -101,14 +108,23 @@ def _course_out(view: CourseView, names: dict[UUID, str]) -> MedicationCourseOut
         starts_on=course.starts_on,
         ends_on=course.ends_on,
         notice_times=view.notice_times,
+        notice_enabled=course.id in subscribed,
         doses=[_dose_out(d, names) for d in view.doses],
     )
 
 
-async def _courses_out(session: AsyncSession, views: list[CourseView]) -> list[MedicationCourseOut]:
-    """코스들을 응답으로 — 체크한 보호자의 이름은 모든 코스의 회차를 모아 한 번에 읽는다."""
+async def _courses_out(
+    session: AsyncSession, views: list[CourseView], *, parent_id: UUID
+) -> list[MedicationCourseOut]:
+    """코스들을 응답으로 — 체크한 보호자의 이름과 내 알림 구독은 모든 코스를 모아 한 번에 읽는다.
+
+    `parent_id` 는 요청한 보호자다. `notice_enabled` 는 그 보호자 본인의 것이다.
+    """
     names = await checker_nicknames(session, [d for v in views for d in v.doses])
-    return [_course_out(v, names) for v in views]
+    subscribed = await my_subscriptions(
+        session, parent_id=parent_id, courses=[v.course for v in views]
+    )
+    return [_course_out(v, names, subscribed) for v in views]
 
 
 @router.get(
@@ -122,7 +138,9 @@ async def _courses_out(session: AsyncSession, views: list[CourseView]) -> list[M
         },
     },
 )
-async def read_medications(child: AccessibleChild, session: SessionDep) -> MedicationsResponse:
+async def read_medications(
+    child: AccessibleChild, parent: CurrentParent, session: SessionDep
+) -> MedicationsResponse:
     """그 아이의 **진행 중인 복약 코스**와 코스마다 **오늘까지의 회차**를 돌려준다.
 
     - `today` 는 서버의 한국 날짜다. 화면은 오늘을 따로 구하지 않고 이 값을 쓴다.
@@ -132,6 +150,7 @@ async def read_medications(child: AccessibleChild, session: SessionDep) -> Medic
     - 코스마다 `notice_times`(하루에 울릴 시각, 오름차순)와 **오늘까지**의 회차를 (날짜, 시각)
       순으로 싣는다. 아직 오지 않은 날의 회차는 싣지 않는다. 긴 코스는 회차가 많다
       (90일 × 하루 3번 = 270).
+    - 코스마다 `notice_enabled` 는 **요청한 보호자 본인이** 그 코스의 알림을 받는지다.
     - 읽기라 `Idempotency-Key` 가 필요 없고, 건강정보 동의도 확인하지 않는다
       (동의 확인은 쓰기에서만).
 
@@ -139,7 +158,8 @@ async def read_medications(child: AccessibleChild, session: SessionDep) -> Medic
     """
     today = kst_today()
     views = await list_in_progress(session, child_id=child.child_id, today=today)
-    return MedicationsResponse(today=today, courses=await _courses_out(session, views))
+    courses = await _courses_out(session, views, parent_id=parent.parent_id)
+    return MedicationsResponse(today=today, courses=courses)
 
 
 @router.post(
@@ -209,10 +229,15 @@ async def register_medication(
       시각이어도 만든다. 기간 전체가 이미 지났으면 400 이다.
     - 응답의 `course.doses` 는 **오늘까지**의 회차만 싣는다. 내일부터 먹는 약은 빈 목록이다.
     - 약 이름 · 칸 값은 **보낸 그대로** 저장한다(빈 문자열인 선택 칸만 null).
+    - **등록한 보호자는 이 코스의 복약 알림을 받는다**(응답 `notice_enabled: true`, #749). 켠 시각은
+      지금이라 오늘 회차 중 이미 지난 시각은 울리지 않는다. 함께 보는 다른 보호자는 꺼진 채로
+      시작하고 각자 `PUT …/notice` 로 켠다.
 
     오류 (순서대로): 403 `child_access_denied` → 400 `validation_failed`(본문 형식) →
     400 `idempotency_key_required` → (같은 키면 처음 응답 재생) → 403 `consent_required` →
-    400 `validation_failed`(내용) → 409 `already_exists`. 앞에서 걸리면 아무것도 저장하지 않는다.
+    400 `validation_failed`(내용) →
+    403 `child_access_denied`(확인 뒤 그사이 연결이 끊기거나 탈퇴함) → 409 `already_exists`.
+    앞에서 걸리면 아무것도 저장하지 않는다.
 
     진행 중인 코스 조회와 회차 체크는 이 API 에 없다. 코스를 멈추는 것은 대화에서 한 번 되물은 뒤
     Agent 가 처리해서 화면에서 부르는 중단 API 도 없다.
@@ -243,11 +268,12 @@ async def register_medication(
             {"scopes": [ConsentScope.CHILD_HEALTH.value]},
         )
 
-    today = kst_today()
+    now, today = _clock()
     try:
         course = await create_course(
             session,
             child_id=child.child_id,
+            parent_id=parent.parent_id,
             data=CourseInput(
                 title=body.schedule.title,
                 starts_on=body.schedule.starts_on,
@@ -264,16 +290,19 @@ async def register_medication(
                 note=body.schedule.note,
             ),
             today=today,
+            now=now,
         )
     except CourseInvalid as exc:
         raise ApiError(
             400, "validation_failed", "입력한 복약 정보를 확인해 주세요", {"fields": exc.fields}
         ) from exc
+    except NotLinked as exc:  # 접근 확인 뒤 그사이 연결이 끊겼다 (#427 · reminders 와 같다)
+        raise ApiError(403, "child_access_denied", "이 아이에 접근할 수 없어요") from exc
     except CourseAlreadyExists as exc:
         raise ApiError(409, "already_exists", "이미 등록된 복약이에요") from exc
 
     views = await course_views(session, [course], today=today)
-    (out,) = await _courses_out(session, views)
+    (out,) = await _courses_out(session, views, parent_id=parent.parent_id)
     response = SubmitMedicationResponse(course=out).model_dump(mode="json")
     await session.commit()
     idempotency.remember(**scope, replay=response)
@@ -514,8 +543,101 @@ async def revise_medication(
         raise ApiError(409, "already_exists", "이미 등록된 복약이에요") from exc
 
     views = await course_views(session, [course], today=today)
-    (out,) = await _courses_out(session, views)
+    (out,) = await _courses_out(session, views, parent_id=parent.parent_id)
     response = SubmitMedicationResponse(course=out).model_dump(mode="json")
     await session.commit()
     idempotency.remember(**scope, replay=response)
     return JSONResponse(status_code=200, content=response)
+
+
+_NOTICE_PATH = "/children/{cid}/medications/{sid}/notice"
+
+
+@router.put(
+    _NOTICE_PATH,
+    status_code=204,
+    summary="내 복약 알림 켜기",
+    responses={
+        403: {
+            "model": ErrorEnvelope,
+            "description": (
+                "`child_access_denied` — 내 아이가 아니다. 또는 `consent_required` — 아이의 "
+                "건강정보 동의(`child_health`)가 없다"
+            ),
+        },
+        404: {
+            "model": ErrorEnvelope,
+            "description": (
+                "`not_found` — 알림을 켤 수 있는 그 아이의 코스가 아니다. 없는 코스 · 남의 아이 "
+                "코스 · **멈춘 코스** · **이미 끝난 코스**(마지막 날이 지남)가 모두 같은 404 다. "
+                "아직 시작하지 않은 코스는 켤 수 있다"
+            ),
+        },
+    },
+)
+async def put_my_medication_notice(
+    child: AccessibleChild, sid: UUID, parent: CurrentParent, session: SessionDep
+) -> Response:
+    """이 코스의 복약 알림을 **나도** 받는다 (#749). 본문은 없다.
+
+    - 알림은 **보호자 개인 것**이다(일정 알림 `PUT …/events/{eid}/reminder` 와 같다). 다른 보호자의
+      알림은 바뀌지 않는다. 울리는 시각은 코스의 `notice_times` 다 — 따로 정하지 않는다.
+    - **켠 시각부터** 울린다. 켜는 순간 이미 지난 회차는 울리지 않는다.
+    - 켤 수 있는 코스에 **이미 켜져 있으면 그대로 204** 다. 처음 켠 시각이 남는다 — 두 번 눌러도
+      결과가 같다.
+    - **아직 시작하지 않은 코스도 켤 수 있다.** 다만 조회(`GET …/medications`)가 시작 전 코스를
+      싣지 않아서, 화면에서는 첫날 코스가 보인 뒤에야 켜고 끌 수 있다(알려진 한계 — 보호자 모두
+      같다). 그때 이미 지난 회차는 울리지 않는다.
+    - 승인 게이트가 아니고, 최종 상태를 보내는 요청이라 `Idempotency-Key` 를 받지 않는다.
+    - 아이의 건강정보로 알림을 보내는 것이라 **건강정보 동의**를 확인한다. 끄기는 확인하지 않는다.
+
+    오류 (순서대로): 403 `child_access_denied` → 403 `consent_required` →
+    403 `child_access_denied`(확인 뒤 그사이 연결이 끊기거나 탈퇴함) → 404 `not_found`.
+    """
+    granted = await latest_action(session, scope=ConsentScope.CHILD_HEALTH, child_id=child.child_id)
+    if granted is not ConsentAction.GRANTED:
+        raise ApiError(
+            403,
+            "consent_required",
+            "건강 정보 동의가 필요해요",
+            {"scopes": [ConsentScope.CHILD_HEALTH.value]},
+        )
+    now, today = _clock()
+    try:
+        await subscribe(
+            session,
+            child_id=child.child_id,
+            course_id=sid,
+            parent_id=parent.parent_id,
+            today=today,
+            now=now,
+        )
+    except NotLinked as exc:  # 접근 확인 뒤 그사이 연결이 끊겼다 (#427 · reminders 와 같다)
+        raise ApiError(403, "child_access_denied", "이 아이에 접근할 수 없어요") from exc
+    except CourseNotFound as exc:
+        raise ApiError(404, "not_found", "그 복약을 찾지 못했어요") from exc
+    await session.commit()
+    return Response(status_code=204)
+
+
+@router.delete(
+    _NOTICE_PATH,
+    status_code=204,
+    summary="내 복약 알림 끄기",
+    responses={
+        403: {"model": ErrorEnvelope, "description": "`child_access_denied` — 내 아이가 아니다"},
+    },
+)
+async def delete_my_medication_notice(
+    child: AccessibleChild, sid: UUID, parent: CurrentParent, session: SessionDep
+) -> Response:
+    """이 코스의 **내** 복약 알림을 끈다 (#749). 꺼져 있어도 204 — 두 번 눌러도 결과가 같다.
+
+    - 다른 보호자의 알림은 그대로다. 등록한 보호자도 끌 수 있다.
+    - 멈춘 · 끝난 코스도 끌 수 있다. 없는 코스 · 남의 아이 코스는 지울 것이 없어 그대로 204 다.
+    - 다시 켜면 그때부터 울린다.
+    - **동의를 확인하지 않는다.** 알림을 그만 받는 것은 언제나 할 수 있어야 한다.
+    """
+    await unsubscribe(session, child_id=child.child_id, course_id=sid, parent_id=parent.parent_id)
+    await session.commit()
+    return Response(status_code=204)

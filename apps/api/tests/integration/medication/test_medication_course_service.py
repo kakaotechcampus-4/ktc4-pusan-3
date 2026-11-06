@@ -63,7 +63,15 @@ def course(**over) -> CourseInput:
 
 
 async def create(session, child, *, today: date = TODAY, **over) -> MedicationSchedule:
-    return await create_course(session, child_id=child.id, data=course(**over), today=today)
+    """아이를 등록한 보호자가 등록한다. 구독을 켠 시각은 그날 한국 시간 09:40 이다."""
+    return await create_course(
+        session,
+        child_id=child.id,
+        parent_id=child.owner_parent_id,
+        data=course(**over),
+        today=today,
+        now=datetime.combine(today, time(0, 40), tzinfo=UTC),
+    )
 
 
 async def count(session, model) -> int:

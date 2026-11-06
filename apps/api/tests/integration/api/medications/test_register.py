@@ -105,7 +105,16 @@ async def test_응답은_계약의_칸만_싣는다(db_client, bearer, consented
 
     course = (await post(db_client, headers, consented, payload)).json()["course"]
 
-    assert set(course) == {"id", "title", "dosage", "starts_on", "ends_on", "notice_times", "doses"}
+    assert set(course) == {
+        "id",
+        "title",
+        "dosage",
+        "starts_on",
+        "ends_on",
+        "notice_times",
+        "notice_enabled",
+        "doses",
+    }
     assert set(course["doses"][0]) == {
         "id",
         "dose_date",

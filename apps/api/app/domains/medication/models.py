@@ -183,6 +183,43 @@ class MedicationDose(Base, UUIDPk):
     )
 
 
+class MedicationNoticeSubscription(Base, UUIDPk):
+    """보호자 한 명이 코스 하나의 복약 알림을 받는다 (#749). 행이 있으면 받고, 끄면 지운다.
+
+    복약 코스와 회차는 공동 기록이지만 알림을 받을지는 보호자 개인 것이다 — 일정 알림
+    (`schedule.Reminder`)과 같다. 등록한 보호자는 등록할 때 함께 만들어지고, 다른 보호자는
+    각자 켠다. 알림 시각은 따로 두지 않고 회차의 예정 시각에 울린다.
+
+    - `subscribed_at` 은 켠 시각이다. 이보다 예정 시각이 앞선 회차는 보내지 않는다 — 켜는 순간 이미
+      지난 회차가 울리지 않게. 끄고 다시 켜면 행을 새로 만들어 새 시각이 된다.
+    - 코스를 지우면(아이 삭제 포함) 함께 지워지고, 보호자가 탈퇴해도 함께 지워진다(CASCADE) —
+      받을 사람 없는 개인 설정은 의미가 없다. 연결 끊기는 DB 가 지우지 않아서
+      `unlink_parent` 가 지운다.
+    - (schedule_id, parent_id) 유니크 — 보호자 한 명은 코스 하나에 구독 1개.
+    """
+
+    __tablename__ = "medication_notice_subscription"
+    __table_args__ = (
+        UniqueConstraint(
+            "schedule_id",
+            "parent_id",
+            name="uq_medication_notice_subscription_schedule_id_parent_id",
+        ),
+        # 연결 끊기 · 탈퇴가 보호자로 행을 찾는다
+        Index("ix_medication_notice_subscription_parent_id", "parent_id"),
+    )
+
+    schedule_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("medication_schedule.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    parent_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("parent.id", ondelete="CASCADE"), nullable=False
+    )
+    subscribed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 def in_progress(today: date) -> ColumnElement[bool]:
     """진행 중인 코스. 끝남을 저장하지 않으니 판정은 이 조건 한 곳에서 한다.
 

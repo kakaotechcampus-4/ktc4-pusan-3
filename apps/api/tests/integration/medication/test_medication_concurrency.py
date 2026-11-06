@@ -4,21 +4,25 @@
 다른 세션의 commit 전 쓰기를 못 보는 것이 문제의 핵심이다. 그래서 이 파일은 **별도 세션으로 실제로
 commit 하고**, 끝나면 만든 보호자 · 아이를 지운다 (코스 · 회차는 아이를 따라 ON DELETE CASCADE).
 
-겹치는 순간은 sleep 으로 만들고, 기대 결과는 어느 쪽이 먼저 가든 같게 적는다.
+겹치는 순간은 sleep 으로 만들거나, 상대가 실제로 잠금에서 기다리는지 DB 로 본다
+(`wait_for_lock_wait`). 기대 결과는 어느 쪽이 먼저 가든 같게 적는다.
 """
 
 import asyncio
+import contextlib
 from datetime import UTC, date, datetime, time, timedelta
 
 import pytest
 from sqlalchemy import delete, func, select
 
-from app.domains.child.models import Child
+from app.domains.child.models import Child, ParentChild, ParentChildRelation
+from app.domains.child.parents import unlink_parent
 from app.domains.identity.models import Parent
 from app.domains.identity.withdraw import withdraw_parent
 from app.domains.medication import service
 from app.domains.medication.models import (
     MedicationCreatedBy,
+    MedicationNoticeSubscription,
     MedicationSchedule,
     MedicationSource,
     TimingAnchor,
@@ -35,6 +39,7 @@ from app.domains.medication.service import (
     set_dose_checked,
 )
 from app.infra.db.session import async_session_factory
+from tests.integration.api.conftest import backend_pid, wait_for_lock_wait
 
 TODAY = date(2026, 10, 27)
 
@@ -46,6 +51,10 @@ async def _new_child() -> tuple:
         await s.flush()
         child = Child(owner_parent_id=owner.id, nickname="test", birth_date=date(2023, 1, 1))
         s.add(child)
+        await s.flush()
+        s.add(
+            ParentChild(parent_id=owner.id, child_id=child.id, relation=ParentChildRelation.OTHER)
+        )
         await s.commit()
         return owner.id, child.id
 
@@ -92,7 +101,14 @@ async def register(child_id, *, hold: float = 0.3) -> str:
     """등록하고, 검사와 commit 사이에 다른 요청이 끼어들 틈(hold)을 준 뒤 commit 한다."""
     async with async_session_factory() as s:
         try:
-            await create_course(s, child_id=child_id, data=course_input(), today=TODAY)
+            await create_course(
+                s,
+                child_id=child_id,
+                parent_id=await owner_of(child_id),
+                data=course_input(),
+                today=TODAY,
+                now=NOW,
+            )
         except CourseAlreadyExists:
             await s.rollback()
             return "중복"
@@ -122,11 +138,26 @@ async def test_세_요청이_동시에_와도_하나만_저장된다(make_child)
 async def test_다른_아이의_등록은_서로_기다리지_않는다(make_child):
     first, second = await make_child(), await make_child()
     async with async_session_factory() as s1, async_session_factory() as s2:
-        await create_course(s1, child_id=first, data=course_input(), today=TODAY)  # commit 전
+        await create_course(
+            s1,
+            child_id=first,
+            parent_id=await owner_of(first),
+            data=course_input(),
+            today=TODAY,
+            now=NOW,
+        )  # commit 전
 
         # 다른 아이라면 잠금이 겹치지 않아야 한다 — 기다리면 시간 초과다
         await asyncio.wait_for(
-            create_course(s2, child_id=second, data=course_input(), today=TODAY), timeout=3
+            create_course(
+                s2,
+                child_id=second,
+                parent_id=await owner_of(second),
+                data=course_input(),
+                today=TODAY,
+                now=NOW,
+            ),
+            timeout=3,
         )
         await s1.commit()
         await s2.commit()
@@ -329,6 +360,8 @@ async def test_두_코스를_동시에_같은_이름_기간으로_수정하면_�
             course = await create_course(
                 s,
                 child_id=child_id,
+                parent_id=await owner_of(child_id),
+                now=NOW,
                 data=CourseInput(
                     title=title,
                     starts_on=data.starts_on,
@@ -424,3 +457,118 @@ async def test_체크가_회차를_잡은_사이에_같은_보호자가_탈퇴�
     assert results == [None, None]
     async with async_session_factory() as s:
         assert await s.get(Parent, owner_id) is None  # 탈퇴가 체크 뒤에 지나갔다
+
+
+# ── 등록 · 연결 끊기가 같은 보호자를 두고 겹칠 때 (#749) ───────────────
+
+
+async def _settle(task: asyncio.Task | None) -> None:
+    """기다리던 상대 작업을 정리한다 — 단언이 먼저 실패해도 세션을 닫기 전에 끝나게."""
+    if task is None or task.done():
+        return
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError, Exception):
+        await task
+
+
+async def test_등록이_연결을_잡은_사이에_끊기가_오면_구독까지_지워진다(make_child):
+    """함께 보는 보호자가 등록하는 중에 그 보호자의 연결이 끊긴다 (등록 보호자는 끊을 수 없다).
+
+    등록은 연결을 먼저 잡고 등록한 보호자의 구독을 만든다. 끊기가 겹치면 등록 커밋을
+    기다렸다가 그 구독까지 지운다 — 잡지 않으면 끊기가 아직 안 보이는 구독을 지나쳐 끊긴 보호자의
+    구독이 남는다.
+    """
+    child_id = await make_child()
+    async with async_session_factory() as s:
+        helper = Parent()
+        s.add(helper)
+        await s.flush()
+        s.add(
+            ParentChild(parent_id=helper.id, child_id=child_id, relation=ParentChildRelation.OTHER)
+        )
+        await s.commit()
+        helper_id = helper.id
+    s1, s2 = async_session_factory(), async_session_factory()
+    task = None
+    try:
+        await create_course(
+            s1,
+            child_id=child_id,
+            parent_id=helper_id,
+            data=course_input(),
+            today=TODAY,
+            now=NOW,
+        )  # 아직 commit 전
+
+        async def unlink() -> None:
+            assert await unlink_parent(s2, child_id=child_id, parent_id=helper_id)
+            await s2.commit()
+
+        task = asyncio.create_task(unlink())
+        # 끊기가 등록이 잡은 연결 앞에서 실제로 기다리는지 DB 로 본다 — 잡지 않으면 끊기가 기다리지
+        # 않고 먼저 끝나 여기서 시간이 다 된다
+        await wait_for_lock_wait(blocker=await backend_pid(s1))
+        await s1.commit()
+        await asyncio.wait_for(task, timeout=5)
+
+        async with async_session_factory() as s:
+            left = await s.scalar(
+                select(func.count())
+                .select_from(MedicationNoticeSubscription)
+                .where(MedicationNoticeSubscription.parent_id == helper_id)
+            )
+        assert left == 0
+    finally:
+        await _settle(task)
+        await s1.close()
+        await s2.close()
+        async with async_session_factory() as s:
+            await s.execute(delete(Parent).where(Parent.id == helper_id))
+            await s.commit()
+
+
+async def test_등록하는_사이_같은_보호자가_탈퇴하면_등록_커밋을_기다렸다가_코스와_구독까지_지운다(
+    make_child,
+):
+    """탈퇴는 보호자 → 아이를 FOR UPDATE 로 잡는데, 등록이 이미 쥔 KEY SHARE 를 기다린다.
+
+    등록 커밋 뒤에 지나가 아이와 함께 코스 · 구독까지 지운다. 순서를 증명하는 테스트는 아니다 —
+    `lock_link` 가 없어도 코스 · 구독 INSERT 의 FK 검사가 같은 행을 잡아 이 겹침에서는 결과가 같다.
+    여기서는 이번에 등록 경로에 생긴 잠금이 탈퇴와 겹쳐도 멈추지 않고 남는 것이 없다는 것을 본다.
+    """
+    child_id = await make_child()
+    owner_id = await owner_of(child_id)
+    s1, s2 = async_session_factory(), async_session_factory()
+    task = None
+    try:
+        await create_course(
+            s1,
+            child_id=child_id,
+            parent_id=owner_id,
+            data=course_input(),
+            today=TODAY,
+            now=NOW,
+        )  # 아직 commit 전
+
+        async def withdraw() -> None:
+            await withdraw_parent(s2, parent_id=owner_id, now=NOW)
+            await s2.commit()
+
+        task = asyncio.create_task(withdraw())
+        await wait_for_lock_wait(blocker=await backend_pid(s1))  # 탈퇴가 등록을 기다린다
+        await s1.commit()
+        await asyncio.wait_for(task, timeout=5)
+    finally:
+        await _settle(task)
+        await s1.close()
+        await s2.close()
+
+    async with async_session_factory() as s:
+        assert await s.get(Parent, owner_id) is None
+        assert await saved_courses(child_id) == 0
+        left = await s.scalar(
+            select(func.count())
+            .select_from(MedicationNoticeSubscription)
+            .where(MedicationNoticeSubscription.parent_id == owner_id)
+        )
+    assert left == 0
