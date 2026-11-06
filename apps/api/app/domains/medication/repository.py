@@ -535,12 +535,13 @@ async def claim_due_doses(
 
 
 async def still_due_for(session: AsyncSession, *, dose_id: uuid.UUID, parent_id: uuid.UUID) -> bool:
-    """보내기 바로 직전에 다시 본다 — 그 보호자가 아직 이 코스를 구독하고, 회차가 아직 체크되지
-    않았고, 코스가 멈추지 않았나 (#749).
+    """보내기 바로 직전에 다시 본다 — 그 보호자가 아직 이 코스를 **예정 시각 전부터** 구독하고,
+    회차가 아직 체크되지 않았고, 코스가 멈추지 않았나 (#749).
 
     맡은 뒤 보내는 사이 알림을 끄거나 · 연결을 끊거나(구독이 지워진다) · 다른 보호자가 체크하거나 ·
-    코스가 멈출 수 있다. 기기 · 로그인 · 스위치는 `notification.still_medication_target` 이 본다.
-    켠 시각은 다시 보지 않는다 — 그 몇 초 사이 껐다 다시 켜면 그 회차는 그대로 간다.
+    코스가 멈출 수 있다. 껐다 다시 켜면 새 구독의 켠 시각이 예정 시각보다 늦어 빠진다 — 맡을 때와
+    같은 조건(`subscribed_at` ≤ 예정 시각)이다. 기기 · 로그인 · 스위치는
+    `notification.still_medication_target` 이 본다.
     """
     found = await session.scalar(
         select(MedicationDose.id)
@@ -554,6 +555,7 @@ async def still_due_for(session: AsyncSession, *, dose_id: uuid.UUID, parent_id:
             MedicationDose.checked_at.is_(None),
             MedicationSchedule.status == MedicationStatus.ACTIVE,
             MedicationNoticeSubscription.parent_id == parent_id,
+            MedicationNoticeSubscription.subscribed_at <= _scheduled_at,
         )
     )
     return found is not None

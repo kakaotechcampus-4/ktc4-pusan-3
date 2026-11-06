@@ -127,7 +127,10 @@ async def test_창이_자정을_걸치면_전날_회차도_맡는다(session, ch
     assert (due.dose_id, due.dose_date) == (dose.id, date(2026, 10, 27))
 
 
-async def test_보내기_직전에_구독이_지워졌거나_체크됐으면_보내지_않는다(session, child):
+async def test_보내기_직전에_구독이_지워졌거나_다시_켜졌거나_체크됐으면_보내지_않는다(
+    session, child
+):
+    """껐다 다시 켜면 새 켠 시각이 예정 시각보다 늦다 — 맡을 때처럼 이미 지난 회차는 빠진다."""
     course, [dose] = await course_at(session, child, NOW - timedelta(minutes=1))
     helper = await helper_of(session, child)
     for parent_id in (child.owner_parent_id, helper.id):
@@ -138,6 +141,9 @@ async def test_보내기_직전에_구독이_지워졌거나_체크됐으면_보
     await delete_subscription(
         session, child_id=child.id, schedule_id=course.id, parent_id=helper.id
     )
+    assert not await still_due_for(session, dose_id=dose.id, parent_id=helper.id)
+
+    await subscribe(session, course, helper.id, NOW)  # 다시 켰다 — 예정 시각보다 늦다
     assert not await still_due_for(session, dose_id=dose.id, parent_id=helper.id)
 
     await session.execute(
