@@ -80,7 +80,17 @@ if "${COMPOSE[@]}" up -d --no-build --pull never --wait --wait-timeout 240; then
   log "배포 성공 $SHA"
   if [ "$TARGET" = prod ]; then
     # Caddyfile 은 up 만으로 다시 읽히지 않는다 (Caddy 설정이 그대로면 컨테이너를 다시 안 만든다).
-    docker exec ktc4-caddy caddy reload --config /etc/caddy/Caddyfile >/dev/null ||
+    # 이번 up 이 Caddy 를 새로 만들었으면 관리 포트(2019)가 몇 초 늦게 열린다 — 리허설에서 바로 부르면
+    # connection refused 였다. 몇 번 다시 해 본다.
+    reloaded=0
+    for _ in 1 2 3 4 5; do
+      if docker exec ktc4-caddy caddy reload --config /etc/caddy/Caddyfile >/dev/null 2>&1; then
+        reloaded=1
+        break
+      fi
+      sleep 3
+    done
+    [ "$reloaded" = 1 ] ||
       log "⚠️ Caddy reload 실패 — 서비스는 떠 있다. 서버에서 docker logs ktc4-caddy 로 본다"
   fi
   # 지금 것과 직전 것만 남기고 이 환경의 옛 태그 이미지를 지운다. 정리가 실패해도 배포는 성공이다.
