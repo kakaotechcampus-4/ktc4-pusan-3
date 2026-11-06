@@ -561,6 +561,7 @@ async def create_input(
         child_health_granted=health_consent,
         location=location,
         activity_weather=getattr(request.app.state, "activity_weather", None),
+        activity_events=getattr(request.app.state, "activity_events", None),
         parent_id=parent.parent_id,
         raw_text=body.text,
         continuation=continuation,

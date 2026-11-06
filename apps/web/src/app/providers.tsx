@@ -10,6 +10,7 @@ import { WebPushBridge } from "@/components/web-push-bridge";
 import { setUnauthenticatedHandler } from "@/lib/api/client";
 import { currentPath, rememberReturnPath } from "@/lib/auth";
 import { getQueryClient } from "@/lib/query-client";
+import { installUncaughtErrorReporting } from "@/lib/report-uncaught-error";
 import { startMocks } from "@/mocks/start";
 import { useSessionStore } from "@/stores/session";
 
@@ -39,6 +40,16 @@ export function Providers({ children }: { children: ReactNode }) {
     if (!mocksReady) return;
     void useSessionStore.persist.rehydrate();
     void useSessionStore.getState().restore();
+  }, [mocksReady]);
+
+  /**
+   * 렌더 밖에서 난 예외(이벤트 핸들러 · 처리 안 된 rejection)를 서버로 보낸다 (#732).
+   * 바운더리가 못 잡는 것이라 앱 전체에 한 번 건다. 🚨 **목이 뜬 뒤에 건다** — 워커보다 먼저 나간
+   * 보고는 목을 지나쳐 실서버로 간다.
+   */
+  useEffect(() => {
+    if (!mocksReady) return;
+    return installUncaughtErrorReporting();
   }, [mocksReady]);
 
   /**

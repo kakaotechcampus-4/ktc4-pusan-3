@@ -36,6 +36,11 @@ export const REF_KINDS = [
   "health_safety",
   "event",
   "suggestion",
+  /**
+   * 복약 코스 (#713). 04 Health readout 의 근거로만 온다 — 체크 안내 · 회차 현황이 어느 코스를 말하는지다.
+   * 서버는 readout 근거 중 이 종류만 화면으로 보낸다 (`apps/api/app/api/runs/translate.py` 의 `_SCREEN_REF_KINDS` · PR #716).
+   */
+  "medication_schedule",
 ] as const;
 export type RefKind = (typeof REF_KINDS)[number];
 
@@ -312,6 +317,15 @@ export interface Suggestion {
    * 🚨 **장소 이름은 여기가 아니라 `content` 에 있다** ("○○공원에서 모래성 쌓기"). 화면이 이름을 따로 꺼내지 않는다.
    */
   place_notice: string | null;
+  /**
+   * 그 추천에 주의할 요소가 있을 때만 오는 위험 경고 문구 ("작은 부품은 삼킬 수 있어요. …"). 위험 용어 사전
+   * (`apps/api/reference/hazard_terms.yaml`)의 `warning_text` 상수라 **서버 코드 문구 그대로** 보인다 (#402 · #672).
+   * 한 추천에 둘 이상 올 수 있고, 없으면 `[]` 다 (`null` 로 오지 않는다).
+   *
+   * 🚨 **근거가 아니다.** `place_notice` 와 같은 이유로 "사용한 기록" 에 넣지 않고 건수에도 세지 않는다.
+   * 🚨 **`caution` · `danger` 색을 입히지 않는다** — 둘 다 승인 게이트와 알레르기 차단 전용이다.
+   */
+  warnings: string[];
   status: SuggestionStatus;
   /** 생성 +24h. 승인 없는 draft 는 여기서 만료된다 (NF-07). */
   expires_at: string;
@@ -341,6 +355,8 @@ export interface GeneralSuggestion {
   content: string;
   /** 장소가 붙은 추천의 확인 문구. 개인화와 같은 칸이다 (`Suggestion.place_notice`). 장소가 없으면 `null`. */
   place_notice: string | null;
+  /** 위험 경고 문구. 개인화와 같은 칸이다 (`Suggestion.warnings`). 없으면 `[]`. */
+  warnings: string[];
   /** "36개월 또래가 자주 찾는 놀이예요" · "요청하신 놀이를 바탕으로 골랐어요" 처럼 무엇을 기준으로 골랐는지. 서버가 만든다. */
   basis: string;
   status: SuggestionStatus;

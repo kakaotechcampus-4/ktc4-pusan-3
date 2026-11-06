@@ -21,9 +21,10 @@
 #
 # 검수: 696항목 전부 사람이 봤다. 초안이 unknown 후보로 표시한 육수 · 상표 양념 · 소스 28항목은 unknown 이다.
 #
-# 다시 만들기: uv run python -m scripts.draft_recipe_ingredients --fetch  (있는 항목은 덮지 않는다)
+# 다시 만들기: uv run python -m scripts.draft_recipe_ingredients --fetch [--source nics]  (있는 항목은 덮지 않는다)
+#   농식품정보원(mafra)과 농촌진흥청 이달의 식재료(nics) 두 레시피 소스가 이 표를 공유한다 (#510)
 
-source: "농식품정보원 레시피 재료정보 — 재료 이름별 정리 (초안 스크립트 + 사람 검수)"
+source: "농식품정보원 · 농촌진흥청 이달의 식재료 레시피 재료 — 재료 이름별 정리 (초안 스크립트 + 사람 검수)"
 version: "2026.1"
 fetched_at: 2026-10-11
 

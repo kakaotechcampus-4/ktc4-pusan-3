@@ -12,6 +12,8 @@ import {
   suggestionAllergens,
   suggestionGroups,
   suggestions,
+  warnedGeneralSuggestion,
+  warnedSuggestion,
 } from "../fixtures";
 import { currentScenario } from "../scenario";
 import type {
@@ -339,6 +341,24 @@ export const suggestionHandlers = [
     if (scenario === "suggest_place") {
       const shown = alive.map((s) => (s.id === "s_4" ? placeSuggestion : s));
       const general = [placeGeneralSuggestion].filter(notBlocked);
+      return HttpResponse.json({
+        suggestions: withStatus(shown),
+        groups: suggestionGroups.filter((g) => shown.some((s) => s.agent === g.agent)),
+        general: withStatus(general),
+        looked_at: "",
+        guards: [],
+        scarcity: { count: 3, question: null },
+        prechecks: prechecksFor([...shown, ...general]),
+      });
+    }
+
+    /**
+     * 위험 경고가 붙은 놀이 추천 (#402 · #672). 개인화 하나(실내 물놀이장 자리)에 경고 하나, 일반 하나에 경고 둘.
+     * 🚨 경고는 근거가 아니라서 `evidence` 는 그대로다. 나머지 추천은 `warnings: []` 로 온다 — 빈 줄이 서면 안 된다.
+     */
+    if (scenario === "suggest_warnings") {
+      const shown = alive.map((s) => (s.id === "s_4" ? warnedSuggestion : s));
+      const general = [warnedGeneralSuggestion].filter(notBlocked);
       return HttpResponse.json({
         suggestions: withStatus(shown),
         groups: suggestionGroups.filter((g) => shown.some((s) => s.agent === g.agent)),

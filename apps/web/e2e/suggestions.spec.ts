@@ -465,6 +465,73 @@ test.describe("장소가 붙은 추천의 확인 문구 (#516)", () => {
   });
 });
 
+test.describe("추천별 위험 경고 (#402 · #672)", () => {
+  test.use({ scenario: "suggest_warnings" });
+
+  // 글자는 서버 `apps/api/reference/hazard_terms.yaml` 의 `warning_text` 와 같다 (목 `hazardWarnings`)
+  const WATER =
+    "물놀이는 아이에게서 팔이 닿는 거리에서 한순간도 눈을 떼지 말아 주세요. 깊이 5cm 에서도 사고가 납니다.";
+  const SMALL_PARTS =
+    "작은 부품은 삼킬 수 있어요. 아이 입에 들어가지 않는 크기인지 먼저 확인해 주세요.";
+  const BALLOON =
+    "터진 풍선 조각과 비닐은 입에 넣거나 얼굴에 쓰지 않게 지켜봐 주세요. 놀이가 끝나면 손이 닿지 않는 곳에 치워 주세요.";
+
+  test("개인화 줄은 제안 문장 아래, 이유보다 위에 세우고 사용한 기록에는 넣지 않는다", async ({
+    page,
+  }) => {
+    await page.goto(SUGGESTIONS);
+    await page.getByRole("tab", { name: "놀이 3가지" }).click();
+    const panel = page.getByRole("tabpanel");
+    const row = panel.locator(":scope > ul > li").filter({ hasText: "실내 물놀이장" });
+    await expect(row).toHaveCount(1);
+
+    const warnings = row.getByRole("list", { name: "주의할 점" });
+    await expect(warnings.getByRole("listitem")).toHaveCount(1);
+    const warning = warnings.getByText(WATER, { exact: true });
+    await expect(warning).toBeVisible();
+    // 🚨 고르는 칸의 이름은 제안 문장뿐이다
+    await expect(
+      row.getByRole("checkbox", { name: "주말에 실내 물놀이장은 어떨까요", exact: true }),
+    ).toBeVisible();
+    const reasonLabel = row.getByText("추천 이유", { exact: true });
+    expect((await warning.boundingBox())!.y).toBeLessThan((await reasonLabel.boundingBox())!.y);
+
+    // 🚨 경고는 근거가 아니다 — 근거 목록 안에 없고, 건수는 근거 줄 수 그대로다
+    const label = row.getByText(/^사용한 기록 \d+건$/);
+    const list = label.locator("xpath=following-sibling::ul[1]");
+    const count = Number((await label.innerText()).match(/\d+/)![0]);
+    await expect(list.locator("li")).toHaveCount(count);
+    await expect(list.getByText(/눈을 떼지/)).toHaveCount(0);
+
+    // 경고가 없는 줄에는 목록이 서지 않는다
+    await expect(panel.getByRole("list", { name: "주의할 점" })).toHaveCount(1);
+  });
+
+  test("일반 카드는 경고 둘을 다 세우고, 기준 문구보다 위에 둔다", async ({ page }) => {
+    await page.goto(SUGGESTIONS);
+    const card = page.locator("li").filter({ hasText: "풍선 안에 작은 구슬을" });
+    await expect(card).toHaveCount(1);
+    await expect(card.getByText("일반 추천", { exact: true })).toBeVisible();
+    // 기록 건수는 그 Agent 도메인 수 그대로다 — 경고가 붙어도 늘지 않는다
+    await expect(card).toContainText("기록 3건");
+
+    const warnings = card.getByRole("list", { name: "주의할 점" });
+    await expect(warnings.getByRole("listitem")).toHaveCount(2);
+    await expect(warnings.getByText(SMALL_PARTS, { exact: true })).toBeVisible();
+    await expect(warnings.getByText(BALLOON, { exact: true })).toBeVisible();
+    await expect(
+      card.getByRole("checkbox", {
+        name: "풍선 안에 작은 구슬을 넣고 흔들며 소리를 들어 보세요",
+        exact: true,
+      }),
+    ).toBeVisible();
+
+    const basis = card.getByText("36개월 또래가 자주 찾는 놀이예요", { exact: true });
+    const last = warnings.getByText(BALLOON, { exact: true });
+    expect((await last.boundingBox())!.y).toBeLessThan((await basis.boundingBox())!.y);
+  });
+});
+
 test.describe("알레르기 정보가 없으면 식사 제안을 만들지 않는다 (§2 안전)", () => {
   test.use({ scenario: "stale" });
 

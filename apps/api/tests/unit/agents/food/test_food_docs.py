@@ -233,3 +233,37 @@ async def test_0행이면_빈_튜플이다() -> None:
     )
 
     assert rows == ()
+
+
+@pytest.mark.parametrize("months", [12, 24, 35, 36, 50, 71])
+async def test_meal_pattern_예시는_두_월령_구간_모두에서_검색된다(months: int) -> None:
+    """승인 뒤 Food 일반 추천의 [예시] 가 두 구간 행을 받는지 — draft 로 먼저 본다 (#510 D5)."""
+    docs = InMemoryFoodDocs.from_seed(include_draft=True)
+
+    rows = await docs.search(months=months, row_types=("meal_pattern",), limit=50)
+
+    assert len(rows) == 15
+    assert all(row.min_month <= months < row.max_month for row in rows)
+
+
+@pytest.mark.parametrize("months", [30, 50])
+async def test_참깨_알레르기가_있으면_후무스가_든_문서_행은_나가지_않는다(
+    months: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """후무스는 타히니(참깨)로 만든다. 참깨는 19종 밖이라 `allergen_codes` 에 못 적고
+    사전(참깨 별칭)이 아는 이름만 거른다. 사전이 후무스를 모르는 동안은 행에 쓰지 않는다 (#510).
+
+    `DOC_LIMIT` 을 풀어 시드의 모든 해당 행이 필터를 지나가게 본다 — 위쪽 3행만 보면 뒤쪽 행의
+    누수가 가려진다."""
+    monkeypatch.setattr("app.agents.food.tools.docs.DOC_LIMIT", 1000)
+    docs = InMemoryFoodDocs.from_seed(include_draft=True)
+    sesame = [SafetyEntry(kind="allergy", label="참깨", status="active")]
+    row_types = ("meal_pattern", "feeding_tip")
+
+    everything = await search_food_doc(docs, months=months, row_types=row_types, safety=[])
+    served = await search_food_doc(docs, months=months, row_types=row_types, safety=sesame)
+
+    assert len(everything) > 10  # 상한을 풀었으니 구간의 행이 다 보인다
+    assert [
+        row.title for row in served if "후무스" in row.body or "hummus" in row.body.lower()
+    ] == []

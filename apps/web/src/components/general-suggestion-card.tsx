@@ -1,4 +1,5 @@
 import { DomainChip } from "@/components/domain-chip";
+import { SuggestionWarnings } from "@/components/suggestion-warnings";
 import { Checkbox } from "@/components/ui/checkbox";
 import { CountChip } from "@/components/ui/chip";
 import type { GeneralSuggestion } from "@/lib/api/types";
@@ -86,6 +87,10 @@ export function GeneralSuggestionCard({
         {/* 장소 확인 문구는 제안 문장에 딸린 말이라 바로 아래, 기준 문구보다 위다 (#516).
             기준 문구는 아래 출처와 한 묶음이다. 개인화 줄과 같은 글씨다. */}
         {placeNotice ? <p className="text-caption text-ink-muted mt-1">{placeNotice}</p> : null}
+        {/* 위험 경고는 개인화 줄과 같은 조각 · 같은 자리다 (#402 · #672). 기준 문구보다 위 — 고르기 전에 읽게.
+            기준 문구와 한 덩어리로 붙어 읽히지 않게 사이 12 는 조각의 아래 여백이 진다 — 기준 문구의 위 4 와는
+            세로 여백이 겹쳐 큰 쪽만 남는다. 그릴지를 조각 하나가 정하므로, 카드가 경고 개수를 다시 보지 않는다. */}
+        <SuggestionWarnings warnings={suggestion.warnings} className="mt-2 mb-3" />
         <p className="text-body-sm text-ink-muted mt-1">{suggestion.basis}</p>
 
         {/* 🚨 일반 추천의 근거는 **문서 행**이다 (최상위 §2). 출처를 같이 적는다 — CC BY 문서는 출처

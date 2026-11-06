@@ -83,7 +83,9 @@ def test_레시피_이름이_영양DB_와_같을_때만_영양값을_붙인다()
 
     made = {
         row.source_id: row
-        for row in recipe_catalog_rows(recipes, TABLE, now=NOW, nutrition=nutrition)
+        for row in recipe_catalog_rows(
+            recipes, TABLE, now=NOW, source="mafra_recipe", nutrition=nutrition
+        )
     }
 
     assert made["1"].food_code == "D101" and made["1"].nutrients

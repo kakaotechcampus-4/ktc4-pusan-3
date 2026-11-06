@@ -12,7 +12,7 @@
 모르는 채 내놓는 조언은 어느 집에나 해당하는 일반론이다. 대신 되묻는다 (Growth_Agent_명세.md §6).
 """
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from datetime import date, timedelta
 from uuid import UUID
@@ -69,21 +69,39 @@ def check_routine_category(category: str, months: int) -> str | None:
     return None
 
 
+SameBehavior = Callable[[RoutineObservation], bool]
+
+
 def routine_evidence(
-    cited: Sequence[RoutineObservation], *, category: str, today: date
+    cited: Sequence[RoutineObservation],
+    *,
+    category: str,
+    today: date,
+    same: SameBehavior | None = None,
 ) -> tuple[RoutineObservation, ...]:
     """근거로 세는 루틴 관찰 — **선언한 카테고리와 같고 최근 14일 안**인 것만.
 
     창은 공통 티어 3(`rank_evidence`)과 같다. affinity 는 관심사를 잇는 데만 쓰고
-    여기에 넣지 않는다.
+    여기에 넣지 않는다. `same` 이 있으면 요청한 행동의 관찰만이다 — 양치를 물었는데 같은
+    카테고리의 손 씻기 기록이 근거가 되지 않게. 없으면 카테고리만 본다.
     """
     window_start = today - timedelta(days=OBSERVATION_WINDOW_DAYS)
     return tuple(
-        obs for obs in cited if obs.routine_category == category and obs.observed_on >= window_start
+        obs
+        for obs in cited
+        if obs.routine_category == category
+        and obs.observed_on >= window_start
+        and (same is None or same(obs))
     )
 
 
-def routine_gap(cited: Sequence[RoutineObservation], *, category: str, today: date) -> str | None:
+def routine_gap(
+    cited: Sequence[RoutineObservation],
+    *,
+    category: str,
+    today: date,
+    same: SameBehavior | None = None,
+) -> str | None:
     """되물어야 하면 `ask.*` 키, 근거가 충분하면 None. 한 번에 질문 하나만 나간다.
 
     - 근거 0 → 습관은 `ask.habit_current`, 그 밖은 `ask.routine_current`
@@ -91,7 +109,7 @@ def routine_gap(cited: Sequence[RoutineObservation], *, category: str, today: da
     - 습관인데 근거 관찰에 `trigger` 가 하나도 없음 → `ask.habit_trigger`
       언제 나오는 행동인지 모르면 교정안이 아이와 상관없는 일반론이 된다
     """
-    evidence = routine_evidence(cited, category=category, today=today)
+    evidence = routine_evidence(cited, category=category, today=today, same=same)
     if category == "habit":
         if not evidence:
             return ASK_HABIT_CURRENT

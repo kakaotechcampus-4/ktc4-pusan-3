@@ -329,7 +329,7 @@ def _card(*readouts: Readout) -> AgentResult:
 def _notice(*refs: EvidenceRef) -> Readout:
     return Readout(
         kind="notice",
-        body="복용 체크는 복약 화면에서 해 주세요.",
+        body="복용 체크는 홈이나 복약 화면에서 해 주세요.",
         authored_by="code",
         source_refs=refs,
     )
