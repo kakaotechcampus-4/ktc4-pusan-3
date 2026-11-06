@@ -2087,12 +2087,9 @@ async def test_관찰_조각을_저장된_기록_수정으로_끝내도_관찰�
         unclear=("바꿔줘",),
     )
     updated = ToolCallRecord("update_observation_food", {}, {"success": True})
-    deleted = ToolCallRecord("update_observation_food", {"status": "deleted"}, {"success": True})
 
     assert task.open_lookup_edit
     assert _missing_work(task, [updated]) == ()
-    # 지우기도 update 로 오지만 기록을 남긴 게 아니다
-    assert _missing_work(task, [deleted]) == (WorkType.OBSERVE,)
 
 
 @pytest.mark.parametrize(

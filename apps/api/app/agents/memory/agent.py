@@ -259,8 +259,8 @@ _ADMITS_UNSAVED = re.compile(
     r"|못\s?(남|했|넣|만들|적)|안\s?(남|했|만들|넣|적)"
 )
 # 관찰을 해낸 것으로 보는 쓰기. 수정도 센다 — 관찰 조각에 unclear 가 섞이면 수정 tool 이
-# 열리고, "~를 ~로 바꿔줘" 는 저장된 기록을 고치는 게 맞다 (#678 리뷰). 지우기는 update 의
-# status=deleted 로 오지만 세지 않는다(_observe_done) — 기록을 남긴 게 아니다.
+# 열리고, "~를 ~로 바꿔줘" 는 저장된 기록을 고치는 게 맞다 (#678 리뷰). 지우기는 update 로
+# 오지 않는다 — 삭제 제안 tool 만 있고 실제로 지우는 건 보호자의 버튼이다 (#535).
 # WRITES_FOR 는 조기 종료가 조각 수만큼 새로 만들었는지 세는 데도 쓰여 따로 둔다
 _OBSERVE_DONE_BY: tuple[str, ...] = (*WRITES_FOR[WorkType.OBSERVE], "update_observation_")
 # 일정 쪽 tool 이 끝내 성공하지 못했을 때의 문장. 해낸 쪽은 _schedule_done 이 결과를 보고 정한다
@@ -705,12 +705,8 @@ def _missing_work(task: MemoryTask | None, calls: list[ToolCallRecord]) -> tuple
 
 
 def _observe_done(call: ToolCallRecord) -> bool:
-    """관찰을 남기거나 고친 호출인가. 지운 것(update 의 status=deleted)은 남긴 게 아니다."""
-    return (
-        call.success
-        and call.name.startswith(_OBSERVE_DONE_BY)
-        and call.arguments.get("status") != "deleted"
-    )
+    """관찰을 남기거나 고친 호출인가."""
+    return call.success and call.name.startswith(_OBSERVE_DONE_BY)
 
 
 def _schedule_done(call: ToolCallRecord) -> tuple[str, ...]:
