@@ -151,9 +151,9 @@ CuratorTrigger = Callable[[UUID, date], None]
 # 카드에 실을 행을 미리 읽어 두게 하는 러너 콜백 (#535). pipeline 은 `FoundTabs` · `DeleteProposed`
 # 를 보내기 직전에 그 카드의 ref 로 await 한다 — emit 은 sync 라 번역기가 DB 를 읽을 수 없어서,
 # 저장 카드(`Saved`)가 commit 뒤에 읽어 두는 것과 같은 자리를 하나 더 둔다. 못 읽은 행은 카드에서
-# 빠질 뿐 run 을 실패로 만들지 않는다(러너 몫).
-# 🚨 Memory commit 뒤에만 부른다 — 러너가 읽기에 실패하면 run 세션을 되감는다. commit 전에
-#    부르면 아직 확정하지 않은 기록까지 같이 사라진다.
+# 빠질 뿐 run 을 실패로 만들지 않는다(러너 몫). 러너는 읽기만 SAVEPOINT 로 되감아서 부르는
+# 순서와 상관없이 이 run 의 기록을 건드리지 않는다. 그래도 Memory commit 뒤에 부른다 — 카드의
+# 버튼이 가리키는 제안이 확정된 뒤에 카드를 내야 한다.
 LoadCards = Callable[[tuple["Ref", ...]], Awaitable[None]]
 
 # 일반 추천 블록의 "쌓인 기록 N건" 을 세는 함수 (#227). 러너가 짧은 DB 세션으로 만든다

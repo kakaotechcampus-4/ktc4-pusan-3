@@ -312,6 +312,9 @@ async def _read_cards(
 
     🚨 읽기가 실패해도 run 을 실패로 만들지 않는다 — 카드에서 행이 빠질 뿐이다. 삭제 제안은 이미
        저장돼 있고 지난 대화에서 다시 읽힌다. `_read_saved` 와 같이 ERROR 로그만 남긴다(원문 없이).
+    🚨 읽기는 SAVEPOINT 안에서 한다 — 실패하면 읽기만 되감는다. run 세션을 통째로 rollback 하면
+       Memory commit 전에 불렸을 때 이 run 의 기록 · 제안까지 사라지고, run 은 성공으로 끝나며
+       화면에는 누르면 404 인 카드가 남는다. 부르는 순서에 기대지 않으려고 여기서 막는다.
     """
     from app.api.quota import today_kst
     from app.api.v1.card_rows import read_card_rows
@@ -319,13 +322,14 @@ async def _read_cards(
     if not refs:
         return {}
     try:
-        return await read_card_rows(
-            session,
-            child_id=child_id,
-            parent_id=parent_id,
-            refs=[(ref.kind, ref.id) for ref in refs],
-            today=today_kst(),
-        )
+        async with session.begin_nested():
+            return await read_card_rows(
+                session,
+                child_id=child_id,
+                parent_id=parent_id,
+                refs=[(ref.kind, ref.id) for ref in refs],
+                today=today_kst(),
+            )
     except Exception as exc:
         log.error(
             "run %s 의 카드 행을 읽지 못했다 (%s) — 카드에서 뺀다\n%s",
@@ -333,12 +337,6 @@ async def _read_cards(
             type(exc).__name__,
             "".join(traceback.format_tb(exc.__traceback__)),
         )
-        try:
-            await session.rollback()
-        except Exception as rollback_exc:
-            log.warning(
-                "run %s 의 rollback 도 실패했다 (%s)", channel.run_id, type(rollback_exc).__name__
-            )
         return {}
 
 
