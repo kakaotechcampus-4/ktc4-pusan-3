@@ -82,7 +82,7 @@ def new_upload(parent_id: uuid.UUID, *, max_bytes: int) -> UploadTicket:
 
 def owns(key: str, parent_id: uuid.UUID) -> bool:
     """이 보호자가 받은 업로드 주소의 열쇠인가."""
-    m = _KEY.match(key)
+    m = _KEY.fullmatch(key)  # match 의 $ 는 끝 줄바꿈 앞에서도 맞는다
     return m is not None and m["parent"] == str(parent_id)
 
 

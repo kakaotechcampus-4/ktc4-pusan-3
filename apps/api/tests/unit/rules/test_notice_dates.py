@@ -345,3 +345,10 @@ def test_시각_범위는_오전에서_오후로_이어진다():
 def test_명시한_시각이_거꾸로면_고치지_않는다():
     when = parse_notice_when("11월 6일 14:00~10:00", anchor=ANCHOR)
     assert (when.start_time, when.end_time) == (time(14, 0), time(10, 0))
+
+
+def test_끝이_분명하면_7시대_시작도_하나로_읽는다():
+    # "7:30 ~ 19:30" 의 시작은 19:30 일 수 없다 — 끝보다 이른 쪽 하나만 남는다 (#726 리뷰)
+    when = parse_notice_when("11월 6일 7:30 ~ 19:30", anchor=ANCHOR)
+    assert (when.start_time, when.end_time) == (time(7, 30), time(19, 30))
+    assert when.vague_time is False

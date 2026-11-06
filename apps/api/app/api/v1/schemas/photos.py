@@ -1,10 +1,19 @@
 import datetime as dt
 import uuid
 from typing import Literal
+from zoneinfo import ZoneInfo
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from app.core.event_draft import MAX_ITEM_NAME
 
 PhotoLane = Literal["document", "activity"]
+
+# 한 번에 저장하는 항목 수. 한 달치 식단표(끼니 셋 × 31일)에 공지 항목을 더해도 넉넉하다
+MAX_COMMIT_ENTRIES = 200
+# 보호자가 고친 날짜가 이 범위를 벗어나면 받지 않는다. 연간 계획 · 지난 공지를 다 담는다
+DATE_WINDOW_YEARS = 3
+_KST = ZoneInfo("Asia/Seoul")
 
 
 class PhotoUploadResponse(BaseModel):
@@ -71,11 +80,39 @@ class PhotoEntry(BaseModel):
         ),
     )
 
+    @field_validator("title")
+    @classmethod
+    def _title_not_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("제목이 비어 있어요")
+        return value.strip()
+
+    @field_validator("items")
+    @classmethod
+    def _items_are_names(cls, value: list[str]) -> list[str]:
+        names = [name.strip() for name in value]
+        if any(not name or len(name) > MAX_ITEM_NAME for name in names):
+            raise ValueError(f"준비물은 1~{MAX_ITEM_NAME}자예요")
+        return names
+
+    @field_validator("date")
+    @classmethod
+    def _date_in_window(cls, value: dt.date | None) -> dt.date | None:
+        # 0001-01-01 은 시간대를 붙이다 OverflowError 로 500 이 났다 (#726 리뷰)
+        if value is None:
+            return value
+        today = dt.datetime.now(_KST).date()
+        if abs(value.year - today.year) > DATE_WINDOW_YEARS:
+            raise ValueError(f"날짜는 앞뒤 {DATE_WINDOW_YEARS}년 안이어야 해요")
+        return value
+
 
 class PhotoCommitRequest(BaseModel):
     lane: PhotoLane
     entries: list[PhotoEntry] = Field(
-        default_factory=list, description="보호자가 확인한 항목만 온다"
+        default_factory=list,
+        max_length=MAX_COMMIT_ENTRIES,
+        description="보호자가 확인한 항목만 온다. 같은 id 를 두 번 보내면 422",
     )
     selected_tags: list[str] = Field(default_factory=list)
     attach_to_calendar: bool = False

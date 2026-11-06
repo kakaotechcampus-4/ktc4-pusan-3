@@ -29,6 +29,7 @@ from app.api.v1.schemas.photos import (
     PhotoUploadTicket,
 )
 from app.core.config import settings
+from app.domains.child.repository import find_accessible_child
 from app.domains.daycare_meal.repository import insert_daycare_meals
 from app.domains.notice.repository import save_notice
 from app.domains.schedule.repository import link_notice_items
@@ -185,9 +186,25 @@ async def commit_photo(
         raise ApiError(404, "not_found", "저장할 사진이 없어요")
     if run.response is not None:
         return JSONResponse(status_code=201, content=run.response)  # 다시 보내도 두 번 넣지 않는다
+    # 읽은 뒤 30분 안에 아이와의 연결이 끊겼을 수 있다. 저장 주소에 아이가 없어서 여기서 다시 본다
+    if (
+        await find_accessible_child(session, child_id=run.child_id, parent_id=parent.parent_id)
+        is None
+    ):
+        raise ApiError(403, "child_access_denied", "이 아이에 접근할 수 없어요")
     if body.lane != "document":
         raise ApiError(422, "lane_not_supported", "지금은 문서 사진만 저장할 수 있어요")
 
+    ids = [entry.id for entry in body.entries]
+    if len(ids) != len(set(ids)):
+        # 같은 항목을 되풀이해 보내면 그 수만큼 저장됐다 (#726 리뷰)
+        raise ApiError(
+            422, "validation_failed", "같은 항목을 두 번 보냈어요", detail={"field": "entries"}
+        )
+
+    # 확인 필요 표시는 서버가 붙이고, 보호자가 시트에서 확인하면 화면이 false 로 바꿔 보낸다.
+    # 그래서 여기서는 화면이 보낸 값을 본다 — run 의 값을 보면 보호자가 확인한 항목도 막힌다.
+    # 남의 run 은 위에서 이미 막았으니, 이 값을 바꿔 보내는 사람은 보호자 본인이다
     unchecked = [entry.id for entry in body.entries if entry.needs_review]
     if unchecked:
         # 화면이 빼고 보내야 하는데 서버까지 왔다 — 조용히 저장하지 않는다
@@ -220,8 +237,16 @@ async def commit_photo(
                 )
             )
         elif entry.id in run.meals:
-            if row := photo_run.meal_row(run.meals[entry.id], title=entry.title, day=entry.date):
-                meals.append(row)
+            row = photo_run.meal_row(run.meals[entry.id], title=entry.title, day=entry.date)
+            if row is None:
+                # 메뉴를 다 지운 끼니를 저장하라고 보냈다. 조용히 버리면 저장된 줄 안다
+                raise ApiError(
+                    422,
+                    "validation_failed",
+                    "메뉴를 적어 주세요",
+                    detail={"field": "entries", "ids": [entry.id]},
+                )
+            meals.append(row)
         elif not entry.id.startswith("pe_meal_unread_"):
             raise ApiError(
                 422,
@@ -242,10 +267,7 @@ async def commit_photo(
             session,
             child_id=run.child_id,
             notice_id=saved.notice_id,
-            links={
-                event_id: saved.item_ids[index] if saved.created else None
-                for event_id, index in item_of_event.items()
-            },
+            links={event_id: saved.item_ids[index] for event_id, index in item_of_event.items()},
         )
         if missed:
             # 그 사이 지운 일정일 수 있다. 공지 저장까지 막을 일은 아니다

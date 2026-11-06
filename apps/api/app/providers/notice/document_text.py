@@ -228,8 +228,11 @@ def normalize_image(data: bytes) -> tuple[bytes, str]:
     except (UnidentifiedImageError, OSError, Image.DecompressionBombError) as e:
         raise UnreadableDocument("이미지를 열 수 없어요") from e
     if converted.width > MAX_IMAGE_WIDTH:
-        height = round(converted.height * MAX_IMAGE_WIDTH / converted.width)
+        # 아주 가로로 긴 그림은 높이가 0 이 되어 resize 가 실패했다 — 1 픽셀은 남긴다
+        height = max(1, round(converted.height * MAX_IMAGE_WIDTH / converted.width))
         converted = converted.resize((MAX_IMAGE_WIDTH, height))
+    # 그림을 다시 그려도 info 에 남은 JPEG 주석(COM) 같은 값은 저장할 때 따라간다. 비우고 저장한다
+    converted.info.clear()
     buffer = io.BytesIO()
     if fmt == "JPEG":
         converted.save(buffer, format="JPEG", quality=95)

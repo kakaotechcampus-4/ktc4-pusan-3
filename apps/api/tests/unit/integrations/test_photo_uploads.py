@@ -89,6 +89,7 @@ def test_지우기가_실패해도_읽은_사진은_돌려준다(s3, monkeypatch
         f"photos/{PARENT}/../{uuid.uuid4().hex}",
         f"other/{PARENT}/{uuid.uuid4().hex}",
         f"photos/{PARENT}/{uuid.uuid4().hex}/more",
+        f"photos/{PARENT}/{uuid.uuid4().hex}\n",  # re.match 의 $ 는 끝 줄바꿈 앞에서도 맞는다
         "",
     ],
 )
