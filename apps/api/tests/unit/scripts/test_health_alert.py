@@ -10,6 +10,7 @@ docker 와 curl 을 가짜로 바꿔 돈다 — 가짜 docker 는 환경변수�
 
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -28,7 +29,10 @@ def box(tmp_path: Path):
     (bin_dir / "docker").write_text(
         "#!/bin/sh\n"
         'case "$1" in\n'
-        '  compose) printf "%s\\n" $FAKE_IDS ;;\n'
+        '  compose) case " $* " in\n'
+        '    *" exec "*) [ -n "$FAKE_READY" ] && printf "%s\\n" "$FAKE_READY" || exit 1 ;;\n'
+        '    *) printf "%s\\n" $FAKE_IDS ;;\n'
+        "  esac ;;\n"
         '  inspect) printf "%b" "$FAKE_INSPECT" ;;\n'
         "esac\n"
     )
@@ -48,6 +52,7 @@ def box(tmp_path: Path):
         ids: str = "id1 id2",
         curl_code: str = "200",
         alert_env: str | None = "prod",
+        ready: str = "",
     ) -> subprocess.CompletedProcess:
         env = {
             **os.environ,
@@ -56,6 +61,7 @@ def box(tmp_path: Path):
             "FAKE_INSPECT": inspect,
             "FAKE_CURL_LOG": str(tmp_path / "curl.log"),
             "FAKE_CURL_CODE": curl_code,
+            "FAKE_READY": ready,  # 비우면 api 컨테이너 exec 가 실패한다(unreachable)
             "STATE_FILE": str(tmp_path / "state"),
             "ENV_FILE": str(env_file),
         }
@@ -172,3 +178,127 @@ def test_dry_run_never_calls_curl(box):
     box(HEALTHY, "--dry-run")
 
     assert not box.curl_log.exists()
+
+
+# ---------------------------------------------------------------------------
+# api 의존성 (#671) — docker healthcheck 는 /health(프로세스)만 봐서 DB · Redis 장애를 모른다
+# ---------------------------------------------------------------------------
+
+WITH_API = "/ktc4-api running healthy\\n/ktc4-web running healthy\\n"
+
+
+def test_api_가_있으면_ready_한_줄을_같이_본다(box):
+    lines = _lines(box(WITH_API, "--dry-run", ready="ready"))
+
+    assert lines == [
+        "🟢 [prod] ktc4-api: 없음 → running healthy",
+        "🟢 [prod] ktc4-api-ready: 없음 → ready",
+        "🟢 [prod] ktc4-web: 없음 → running healthy",
+    ]
+
+
+def test_api_는_살아_있는데_Redis_가_죽으면_그것만_알린다(box):
+    box(WITH_API, "--dry-run", ready="ready")
+    lines = _lines(box(WITH_API, "--dry-run", ready="not-ready:redis"))
+
+    assert lines == ["🔴 [prod] ktc4-api-ready: ready → not-ready:redis"]
+
+
+def test_api_에_닿지_못하면_unreachable(box):
+    box(WITH_API, "--dry-run", ready="ready")
+    lines = _lines(box(WITH_API, "--dry-run"))
+
+    assert lines == ["🔴 [prod] ktc4-api-ready: ready → unreachable"]
+
+
+def test_unhealthy_는_빨강이다(box):
+    """*healthy 패턴이 unhealthy 끝에도 맞아 죽은 컨테이너를 🟢 로 알리던 버그 (#671 에서 발견)."""
+    box(HEALTHY, "--dry-run")
+    lines = _lines(
+        box("/ktc4-redis-deploy running healthy\\n/ktc4-web running unhealthy\\n", "--dry-run")
+    )
+
+    assert lines == ["🔴 [prod] ktc4-web: running healthy → running unhealthy"]
+
+
+# ---------------------------------------------------------------------------
+# api 컨테이너 안에서 도는 python 한 토막 — 가짜 docker 는 이걸 실행하지 않으므로 따로 돌린다
+# ---------------------------------------------------------------------------
+
+
+def _ready_probe() -> str:
+    """스크립트에 박힌 python 을 꺼낸다. 스크립트가 바뀌면 여기서 바로 깨진다."""
+    text = SCRIPT.read_text()
+    start = text.index("python -c '") + len("python -c '")
+    return text[start : text.index("' 2>/dev/null", start)]
+
+
+@pytest.fixture
+def ready_server():
+    """/health/ready 흉내 — 정해 둔 상태 코드와 본문을 돌려준다."""
+    import http.server
+    import json
+    import threading
+
+    answer: dict = {}
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            body = json.dumps(answer["body"]).encode()
+            self.send_response(answer["status"])
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+
+    def probe(status: int, checks: dict) -> str:
+        answer.update(status=status, body={"status": "x", "checks": checks})
+        code = _ready_probe().replace(
+            "http://127.0.0.1:8000", f"http://127.0.0.1:{server.server_port}"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", code], capture_output=True, text=True, timeout=10
+        )
+        assert result.returncode == 0, result.stderr
+        return result.stdout.strip()
+
+    yield probe
+    server.shutdown()
+
+
+def test_ready_probe_는_200_이면_ready(ready_server):
+    assert ready_server(200, {"db": "ok", "redis": "ok"}) == "ready"
+
+
+def test_ready_probe_는_503_이면_실패한_구성요소만_붙인다(ready_server):
+    assert ready_server(503, {"db": "ok", "redis": "fail"}) == "not-ready:redis"
+    assert ready_server(503, {"db": "fail", "redis": "fail"}) == "not-ready:db,redis"
+
+
+def test_ready_probe_는_응답이_없으면_상한에서_끊는다():
+    """api 가 멈춰 /health/ready 가 답하지 않아도 cron 이 매달리지 않고 unreachable 로 알린다
+    (#671 리뷰).
+
+    상한을 짧게 바꿔 돌린다 — 상한이 빠지면 바꿀 것이 없어 끝까지 기다리다 여기서 깨진다.
+    """
+    import socket
+
+    server = socket.socket()
+    server.bind(("127.0.0.1", 0))
+    server.listen()  # 연결은 받고 답하지 않는다
+    probe = _ready_probe()
+    code = probe.replace("timeout=5", "timeout=0.3").replace(
+        "http://127.0.0.1:8000", f"http://127.0.0.1:{server.getsockname()[1]}"
+    )
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", code], capture_output=True, text=True, timeout=3
+        )
+    finally:
+        server.close()
+    assert result.returncode != 0  # 스크립트는 `|| echo unreachable` 로 받는다

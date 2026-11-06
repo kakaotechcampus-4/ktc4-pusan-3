@@ -3,6 +3,7 @@ import { afterAll, afterEach, beforeAll } from "vitest";
 import { resetAuthState } from "@/mocks/handlers/auth";
 import { resetCalendarState } from "@/mocks/handlers/calendar";
 import { resetChatState } from "@/mocks/handlers/chat";
+import { resetDeleteProposals } from "@/mocks/handlers/delete-proposals";
 import { resetInviteState } from "@/mocks/handlers/invites";
 import { resetMedicationState } from "@/mocks/handlers/medications";
 import { resetMembership } from "@/mocks/handlers/membership";
@@ -41,6 +42,7 @@ afterEach(() => {
   resetCalendarState();
   resetMedicationState();
   resetChatState();
+  resetDeleteProposals();
   resetPhotoRuns();
   resetSubmittedInputs();
   resetProfileState();

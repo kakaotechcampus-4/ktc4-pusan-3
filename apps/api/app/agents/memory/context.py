@@ -11,7 +11,23 @@ from uuid import UUID
 from app.agents.common.datetime_rules import today_of
 from app.agents.common.guardrail import Guardrail, StaticRuleGuardrail
 from app.agents.memory.drafts import DraftBook
-from app.agents.memory.store.ports import MemoryStore
+from app.agents.memory.store.ports import DeleteCandidates, MemoryStore
+
+
+@dataclass(frozen=True)
+class FoundRows:
+    """조회 한 번의 결과 id(조회 순서)와 MAX_ROWS 에서 잘렸는지."""
+
+    ids: tuple[str, ...]
+    truncated: bool
+
+
+@dataclass(frozen=True)
+class Proposal:
+    """저장한 삭제 제안 — id 와 탭(후보 · 고른 것)."""
+
+    id: str
+    tabs: tuple[DeleteCandidates, ...]
 
 
 @dataclass(frozen=True)
@@ -29,6 +45,14 @@ class AgentContext:
     # 이 아이의 진행 중 복약 코스 이름. pipeline 이 기록 단계 전에 채운다. 코스를 못 읽었으면 비어
     # 있고, 그러면 먹인 약을 평소처럼 기록한다 — 투약이 두 번 남는 쪽이 기록이 사라지는 쪽보다 낫다
     registered_medicines: tuple[str, ...] = ()
+    # 이 run 의 id. 삭제 제안이 run 하나에 하나인지를 store 가 이 값으로 막는다 (#535)
+    run_id: str = ""
+    # 종류(`observation_food` … · `event`)별 마지막 조회 결과 (#535). 조회 tool 이 채우고,
+    # 같은 종류를 다시 조회하면 0건이어도 덮는다 — 좁힌 조회 밖의 기록이 후보로 남지 않게.
+    # 삭제 제안의 후보이고 조회 카드의 탭이다. 모델이 고르지 않는다
+    found: dict[str, "FoundRows"] = field(default_factory=dict)
+    # 이 run 이 남긴 삭제 제안. 한 run 에 많아야 하나다. pipeline 이 commit 뒤 카드로 내보낸다
+    proposals: list["Proposal"] = field(default_factory=list)
     # 위험 물질 검사 (#731). pipeline 의 안전 사전검사와 이 Agent 의 저장 게이트가 이 인스턴스
     # 하나를 같이 쓴다 — 바꿔 끼우면 두 곳이 함께 바뀐다. 안 넘기면 코드 규칙으로 검사한다
     guardrail: Guardrail = field(default_factory=StaticRuleGuardrail)

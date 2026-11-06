@@ -61,6 +61,8 @@ from app.agents.memory.schemas.task import (
     PendingMemoryContext,
     WorkType,
 )
+from app.agents.memory.store.ports import DeleteCandidates
+from app.agents.memory.tools.proposal import candidate_tabs
 from app.agents.run_writes import RunWrites
 from app.agents.suggestion_save import SaveSuggestions, SuggestionBatch
 from app.agents.supervisor.agent import SupervisorResult
@@ -148,6 +150,14 @@ Commit = Callable[[], Awaitable[None]]
 # 기준일은 memory_context.today 다 — 러너가 서비스 시간대를 따로 알지 않아도 된다
 CuratorTrigger = Callable[[UUID, date], None]
 
+# 카드에 실을 행을 미리 읽어 두게 하는 러너 콜백 (#535). pipeline 은 `FoundTabs` · `DeleteProposed`
+# 를 보내기 직전에 그 카드의 ref 로 await 한다 — emit 은 sync 라 번역기가 DB 를 읽을 수 없어서,
+# 저장 카드(`Saved`)가 commit 뒤에 읽어 두는 것과 같은 자리를 하나 더 둔다. 못 읽은 행은 카드에서
+# 빠질 뿐 run 을 실패로 만들지 않는다(러너 몫). 러너는 읽기만 SAVEPOINT 로 되감아서 부르는
+# 순서와 상관없이 이 run 의 기록을 건드리지 않는다. 그래도 Memory commit 뒤에 부른다 — 카드의
+# 버튼이 가리키는 제안이 확정된 뒤에 카드를 내야 한다.
+LoadCards = Callable[[tuple["Ref", ...]], Awaitable[None]]
+
 # 일반 추천 블록의 "쌓인 기록 N건" 을 세는 함수 (#227). 러너가 짧은 DB 세션으로 만든다
 # (`api/agent_ports.record_counter`). 없으면(테스트 · eval) 건수 칸이 비고 결과는 그대로 나간다
 CountRecords = Callable[[str], Awaitable[int]]
@@ -230,8 +240,17 @@ class _EmergencyOnce:
 # 복약은 중단 확인 · 대상 약 · 복용 시점을 묻는다. 답은 기록이 아니라 Health 가 코드 표로 가르는
 # 값이라 Memory 를 거치지 않고 Health 로 바로 간다(`_handle_health_reply`).
 _RESUMED_BY_ANSWER: dict[str, frozenset[str]] = {
-    DomainAgentName.GROWTH.value: frozenset({GrowthTaskType.ROUTINE_COACHING.value}),
+    DomainAgentName.GROWTH.value: frozenset(
+        {GrowthTaskType.ROUTINE_COACHING.value, GrowthTaskType.LEARNING_SUGGESTION.value}
+    ),
     DomainAgentName.HEALTH.value: frozenset({HealthTaskType.MEDICATION.value}),
+}
+
+# 추천에 질문이 덧붙어도 그 답을 이어받는 task. 추천을 이미 냈으면 보통 다시 돌 일이 없어 이어받지
+# 않지만, Growth 교육은 일반 추천을 낸 뒤 "해 본 적이 있나요?" 를 묻고 답이 기록이 되면 같은 요청을
+# 개인화로 다시 낸다 (#702). Food 의 덧붙는 질문은 이어받지 않는다
+_RESUMED_WITH_SUGGESTIONS: dict[str, frozenset[str]] = {
+    DomainAgentName.GROWTH.value: frozenset({GrowthTaskType.LEARNING_SUGGESTION.value}),
 }
 
 # 질문을 낸 결과와, 그 질문에 답하면 다시 돌릴 task(답을 받지 않는 질문이면 None)
@@ -259,6 +278,45 @@ class Ref:
 @dataclass(frozen=True)
 class Saved:
     refs: tuple[Ref, ...]  # 화면용 변환은 app/api에서 처리
+
+
+@dataclass(frozen=True)
+class CardTab:
+    """카드의 탭 하나 = 조회 tool 하나 (#535). kind 는 `Ref.kind` 와 같다 (`observation_food` …).
+
+    ids 는 모델이 그 종류를 마지막으로 조회해 본 행(최대 40건)이고, truncated 는 더 있었는지다.
+    picked 는 삭제 제안에서만 — AI 가 고른 것(기본 체크)이다.
+    """
+
+    kind: str
+    truncated: bool
+    ids: tuple[str, ...]
+    picked: tuple[str, ...] = ()
+
+    def refs(self) -> tuple[Ref, ...]:
+        return tuple(Ref(self.kind, oid) for oid in self.ids)
+
+
+@dataclass(frozen=True)
+class FoundTabs:
+    """조회 답변 · 수정 후보 카드 (#535). SSE 이름은 found_tabs. 보기 전용이다.
+
+    id 만 싣는다 — 화면 모양 행은 러너가 `LoadCards` 로 읽어 두고 번역기가 꺼낸다.
+    """
+
+    tabs: tuple[CardTab, ...]
+
+
+@dataclass(frozen=True)
+class DeleteProposed:
+    """삭제 제안 카드 (#535). SSE 이름은 delete_proposal.
+
+    제안은 Memory commit 으로 이미 저장됐다(`delete_proposal` 표). 보호자가 버튼으로 확정해야
+    지워진다 — 이 이벤트는 카드를 그리게 할 뿐 아무것도 지우지 않는다.
+    """
+
+    proposal_id: str
+    tabs: tuple[CardTab, ...]
 
 
 @dataclass(frozen=True)
@@ -459,6 +517,8 @@ class Done:
 Event = (
     Step
     | Saved
+    | FoundTabs
+    | DeleteProposed
     | EventDrafts
     | MedicationDrafts
     | DomainRouted
@@ -563,6 +623,7 @@ async def handle_input(
     writes: RunWrites | None = None,
     curator_trigger: CuratorTrigger | None = None,
     count_records: CountRecords | None = None,
+    load_cards: LoadCards | None = None,
     child_months: int | None = None,
 ) -> PipelineResult:
     """사용자 입력 한 건을 처리한다.
@@ -634,6 +695,7 @@ async def handle_input(
             domain_clients=domain_clients,
             save_suggestions=save_suggestions,
             count_records=count_records,
+            load_cards=load_cards,
         )
 
     send(Step(1, _TOTAL_STEPS, _LABELS[0]))
@@ -670,6 +732,7 @@ async def handle_input(
     hooked: DomainOutcome | None = None
     # Memory 가 답할 수 있는 질문(note)을 냈는가. 그러면 도메인 Agent 질문은 보내지 않는다
     memory_asked = False
+    doses_routed = False  # 복약 조각 조정(`_routed_doses`)을 이미 했는가
     # 기록할 조각이 있으면 Memory를 부른다. 원문이 전부 요청·안내 조각이면 건너뛴다
     if routing.memory_task is not None:
         send(Step(2, _TOTAL_STEPS, _LABELS[1]))
@@ -703,6 +766,11 @@ async def handle_input(
             # 저장된 것과 제출을 기다리는 것을 한 run에서 같이 내보낸다
             if memory.drafts:
                 send(EventDrafts(memory.drafts))
+            # 복약 조각을 Memory 말보다 먼저 정한다 — 거절된 약 문장이 체크 안내로 실렸는지를 보고
+            # Memory 말을 지울지 정해야 한다. 자리가 없어 못 실렸는데 지우면 아무 말도 없는 run 이
+            # 된다
+            routing = _routed_doses(routing, memory, memory_context, run_id=run_id)
+            doses_routed = True
             memory_asked = _send_reply(
                 memory,
                 run_id=run_id,
@@ -710,6 +778,14 @@ async def handle_input(
                 once=once,
                 child_months=child_months,
                 routing=routing,
+                checked_by_health=_refused_doses_checked(routing, memory),
+            )
+            await _send_cards(
+                memory,
+                memory_context,
+                lookup=_lookup_task(routing.memory_task),
+                load_cards=load_cards,
+                send=send,
             )
             unwritten = _unwritten(routing.memory_task, memory)
             if unwritten is not None:
@@ -718,13 +794,8 @@ async def handle_input(
                 # 사전검사 · Supervisor 가 놓치고 저장 게이트가 막은 경우. 같은 안내를 낸다
                 send(HAZARD_GUIDANCE)
 
-    # Memory 가 먹인 약 행을 남긴 문장은 체크 안내에서 뺀다. 등록 안 된 약은 기록만 남긴다
-    if failed is None:
-        routing = _without_recorded_doses(
-            routing, _given_medicines(memory), memory_context.registered_medicines
-        )
-        # 저장 게이트가 등록된 약으로 거절한 문장은 체크 안내가 맡는다
-        routing = _with_refused_doses(routing, memory, _dose_texts(routing), run_id=run_id)
+    if failed is None and not doses_routed:
+        routing = _routed_doses(routing, memory, memory_context, run_id=run_id)
 
     # Supervisor 가 놓친 알레르기 · 만성질환 언급도 같은 안내로 잇는다. "적지 않은 기록" 이 아니라
     # 막은 것이라 다시 나누지 않는다 — 다시 물으면 Supervisor 호출만 하나 더 쓴다
@@ -1000,6 +1071,7 @@ def _send_reply(
     child_months: int | None,
     routing: Routing | None = None,
     resuming: bool = False,
+    checked_by_health: bool = False,
 ) -> bool:
     """Memory 의 말과 되묻기 맥락을 낸다. 보호자가 답할 수 있는 질문을 냈으면 True.
 
@@ -1027,6 +1099,10 @@ def _send_reply(
         and _request_only(memory, routing)
     ):
         note = MemoryNote(REQUEST_ONLY_NOTE, "message")
+    elif note is not None and note.kind == "message" and checked_by_health:
+        # 등록된 약이라 저장하지 않은 것밖에 없고, 그 문장이 같은 run 의 체크 안내로 실렸다 —
+        # Memory 의 말까지 나가면 같은 안내가 두 번이다
+        note = None
     pending = memory.pending
     fever = _unmeasured_fever(memory) if pending is None and not once.shown else None
     raw_text = "" if fever is None else str(fever.arguments["raw_text"])
@@ -1168,6 +1244,7 @@ async def _handle_continuation(
     domain_clients: Mapping[str, LLMClient] | None,
     save_suggestions: SaveSuggestions,
     count_records: CountRecords | None,
+    load_cards: LoadCards | None = None,
 ) -> PipelineResult:
     """이전 run의 되묻기를 이어받는다. 도메인 Agent를 타지 않는다. 도메인 Agent가 물은 질문에
     답해 그 요청을 이어서 돌리는 경우(`continuation.resume`)만 뺀다.
@@ -1230,6 +1307,15 @@ async def _handle_continuation(
             once=once,
             child_months=child_months,
             resuming=_resumes(continuation, memory),
+        )
+        # 앞 턴이 찾은 행을 보였으면(found) 조회 카드를 다시 붙이지 않는다. 앞 턴이 아무것도 못 찾고
+        # 물었으면("어느 날이요?") 이 답 run 이 처음 찾은 것이라 보여 준다. 삭제 제안은 늘 낸다
+        await _send_cards(
+            memory,
+            memory_context,
+            lookup=continuation.work is WorkType.LOOKUP_EDIT and not continuation.found,
+            load_cards=load_cards,
+            send=send,
         )
         if memory.refused(ErrorCode.HAZARD):
             # Supervisor 가 놓치고 저장 게이트가 막은 경우 일반 run과 같은 안내
@@ -1402,9 +1488,14 @@ def _refused_medicines(memory: MemoryAgentResult | None) -> tuple[str, ...]:
     return tuple(
         name
         for call in memory.calls
-        if call.result.get("error", {}).get("code") == ErrorCode.REGISTERED_MEDICINE
+        if _refused_medicine(call)
         and (name := str(call.arguments.get("medication_given") or "").strip())
     )
+
+
+def _refused_medicine(call: ToolCallRecord) -> bool:
+    """저장 게이트가 등록된 약이라 거절한 호출인가."""
+    return call.result.get("error", {}).get("code") == ErrorCode.REGISTERED_MEDICINE
 
 
 def _medication_room(routing: Routing) -> bool:
@@ -1950,6 +2041,49 @@ def _ms_since(started: float) -> int:
     return int((time.perf_counter() - started) * 1000)
 
 
+def _lookup_task(task: MemoryTask | None) -> bool:
+    """조회 · 수정 조각이 있는 run 인가. 조회 카드는 이런 run 에만 붙는다."""
+    return task is not None and any(hint.work == WorkType.LOOKUP_EDIT for hint in task.hints)
+
+
+def _card_tabs(tabs: Sequence[DeleteCandidates]) -> tuple[CardTab, ...]:
+    """후보 탭 → 이벤트의 탭. 조회 카드에서는 picked 가 늘 비어 있다."""
+    return tuple(CardTab(t.kind, t.truncated, t.ids, t.picked) for t in tabs)
+
+
+async def _send_cards(
+    memory: MemoryAgentResult,
+    memory_context: AgentContext,
+    *,
+    lookup: bool,
+    load_cards: LoadCards | None,
+    send: Emit,
+) -> None:
+    """조회 카드 · 삭제 카드를 낸다 (#535). 🚨 Memory commit 뒤에만 부른다.
+
+    `load_cards` 가 읽다 실패하면 run 세션을 rollback 한다 — commit 전에 부르면 그 run 의 기록이
+    사라진다. 그래서 commit 뒤 이 자리 한 곳에서만 부른다.
+
+    - 삭제 카드: 이 run 이 제안을 남겼으면. 제안은 commit 으로 이미 저장됐다
+    - 조회 카드: 조회 · 수정 조각이 있고(`lookup`), 제안도 쓰기도 없이 조회만 하고 끝났고, 찾은 행이
+      있을 때. 수정 대상을 되묻는 run 에도 후보를 보여 준다. 탭은 종류마다 마지막 조회 결과다
+    """
+    cards: list[FoundTabs | DeleteProposed] = []
+    if memory_context.proposals:
+        proposal = memory_context.proposals[0]
+        cards.append(DeleteProposed(proposal.id, _card_tabs(proposal.tabs)))
+    elif lookup and not _memory_wrote(memory):  # 일정 초안도 쓰기로 센다
+        found = _card_tabs(candidate_tabs(memory_context))
+        if found:
+            cards.append(FoundTabs(found))
+    if not cards:
+        return
+    if load_cards is not None:
+        await load_cards(tuple(ref for card in cards for tab in card.tabs for ref in tab.refs()))
+    for card in cards:
+        send(card)
+
+
 async def _commit_record(memory: MemoryAgentResult, commit: Commit) -> bool:
     """기록 단계를 확정한다. DB 에 실제로 쓴 것이 있으면 True.
 
@@ -2043,10 +2177,15 @@ def _resumable(outcome: DomainOutcome, tasks: tuple[DomainTask, ...]) -> DomainT
     """이 결과의 질문에 답하면 다시 돌릴 task. 답을 받지 않는 질문이면 None.
 
     Agent 가 물은 자리(`pending`)를 싣고 pipeline 표(`_RESUMED_BY_ANSWER`)에 있는 task 여야 하고,
-    추천에 덧붙은 질문은 이어받지 않는다 — 이미 낸 추천을 두고 다시 돌 일이 없다.
+    추천에 덧붙은 질문은 이어받지 않는다 — 이미 낸 추천을 두고 다시 돌 일이 없다. 단
+    `_RESUMED_WITH_SUGGESTIONS` 의 task 는 덧붙은 질문도 받는다.
     """
     label = _task_label(outcome.task_type)
-    if outcome.pending is None or outcome.suggestions or not outcome.needs_observation:
+    if outcome.pending is None or not outcome.needs_observation:
+        return None
+    if outcome.suggestions and label not in _RESUMED_WITH_SUGGESTIONS.get(
+        outcome.agent, frozenset()
+    ):
         return None
     if label not in _RESUMED_BY_ANSWER.get(outcome.agent, frozenset()):
         return None
@@ -2180,6 +2319,42 @@ async def _save(
 def _label(agent: str, task_type: object) -> str:
     """로그용 이름. 라벨이 없는 Agent 는 이름만."""
     return agent if task_type is None else f"{agent}:{task_type}"
+
+
+def _routed_doses(
+    routing: Routing, memory: MemoryAgentResult | None, memory_context: AgentContext, *, run_id: str
+) -> Routing:
+    """먹인 약 문장을 복약 조각과 Memory 로 나눈 결과.
+
+    Memory 가 먹인 약 행을 남긴 문장은 체크 안내에서 빼고(등록 안 된 약은 기록만 남는다),
+    저장 게이트가 등록된 약으로 거절한 문장은 체크 안내가 맡는다.
+    """
+    routing = _without_recorded_doses(
+        routing, _given_medicines(memory), memory_context.registered_medicines
+    )
+    return _with_refused_doses(routing, memory, _dose_texts(routing), run_id=run_id)
+
+
+def _refused_doses_checked(routing: Routing, memory: MemoryAgentResult) -> bool:
+    """Memory 가 한 일이 등록 약 거절뿐이고, 그 약 문장이 이 run 의 복약 조각에 실렸는가.
+
+    둘 다 참일 때만 Memory 말을 지운다. Agent 자리가 없어 복약 조각이 못 생겼으면 거짓이다.
+    "한 일이 거절뿐" 은 호출이 전부 등록 약 거절이거나 성공한 조회라는 뜻이다. 다른 이유로 실패한
+    호출(되묻기)이나 성공한 쓰기(저장 · 고치기 · 지우기 · 일정 초안)가 있으면 거짓이다 — 고친 것과
+    지운 것은 `Saved` 로 나가지 않고, 되묻기도 Memory 말로만 나가서 지우면 보호자가 모른다.
+    """
+    if not memory.refused(ErrorCode.REGISTERED_MEDICINE) or memory.drafts:
+        return False
+    if not all(
+        _refused_medicine(call) or (call.success and not call.name.startswith(MUTATING_PREFIXES))
+        for call in memory.calls
+    ):
+        return False
+    refused = _refused_medicines(memory)
+    texts = [
+        text for task in routing.domain_tasks if _is_medication(task) for text in task.request_texts
+    ]
+    return any(mentions_medicine(text, name) for text in texts for name in refused)
 
 
 def _request_only(memory: MemoryAgentResult, routing: Routing) -> bool:

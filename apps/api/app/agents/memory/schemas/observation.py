@@ -1,6 +1,6 @@
 """observation 5테이블(food / health / education / activity / routine)의 tool argument 스키마.
 
-각 테이블마다 create / query / update 3종 = 15개. 삭제는 update 의 status=deleted 다.
+create / query / update 3종 × 5 = 15개. 지우는 칸은 없다 — 삭제는 `propose_delete` 다 (#535).
 LLM 이 채우지 않는 필드(id · child_id · source_writer · observed_range 등)는 노출하지 않는다.
 """
 

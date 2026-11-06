@@ -93,7 +93,7 @@ async def read_health_safety(
     status_code=201,
     # JSONResponse 를 돌려줘도 Swagger 에 201 의 모양이 나오게 (suggestions.py 의 일정 제출과 같다)
     response_model=CreateHealthSafetyResponse,
-    responses={status: {"model": ErrorEnvelope} for status in (400, 403, 409)},
+    responses={status: {"model": ErrorEnvelope} for status in (400, 403, 409, 503)},
 )
 async def register_health_safety(
     child: AccessibleChild,
@@ -122,7 +122,7 @@ async def register_health_safety(
         "path": request.url.path,
         "key": idempotency_key,
     }
-    replayed = idempotency.recall(**scope)
+    replayed = await idempotency.recall(**scope)
     if isinstance(replayed, dict):
         return JSONResponse(status_code=201, content=replayed)
 
@@ -170,7 +170,7 @@ async def register_health_safety(
     nickname = None if writer is None else writer.nickname
     response = CreateHealthSafetyResponse(safety=_out(row, nickname)).model_dump(mode="json")
     await session.commit()
-    idempotency.remember(**scope, replay=response)
+    await idempotency.remember(**scope, replay=response)
     return JSONResponse(status_code=201, content=response)
 
 
@@ -178,7 +178,7 @@ async def register_health_safety(
     "/children/{cid}/health-safety/{safety_id}",
     # JSONResponse 를 돌려줘도 Swagger 에 200 의 모양이 나오게 (등록과 같다)
     response_model=UpdateHealthSafetyResponse,
-    responses={status: {"model": ErrorEnvelope} for status in (400, 403, 404)},
+    responses={status: {"model": ErrorEnvelope} for status in (400, 403, 404, 503)},
 )
 async def revise_health_safety(
     child: AccessibleChild,
@@ -211,7 +211,7 @@ async def revise_health_safety(
         "path": request.url.path,
         "key": idempotency_key,
     }
-    replayed = idempotency.recall(**scope)
+    replayed = await idempotency.recall(**scope)
     if isinstance(replayed, dict):
         return JSONResponse(status_code=200, content=replayed)
 
@@ -254,7 +254,7 @@ async def revise_health_safety(
     nickname = None if writer is None else writer.nickname
     response = UpdateHealthSafetyResponse(safety=_out(row, nickname)).model_dump(mode="json")
     await session.commit()
-    idempotency.remember(**scope, replay=response)
+    await idempotency.remember(**scope, replay=response)
     return JSONResponse(status_code=200, content=response)
 
 

@@ -15,16 +15,51 @@ function turn(page: Page, text: string) {
   return page.getByRole("listitem").filter({ hasText: text }).first();
 }
 
+/** 대화 목록 요청의 쿼리. 첫 장(오늘)은 빈 문자열이다. */
+function recordChatRequests(page: Page): string[] {
+  const searches: string[] = [];
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (url.pathname === `/api/v1/children/${CHILD}/chat`) searches.push(url.search);
+  });
+  return searches;
+}
+
+/**
+ * 그 한 줄이 붙을 때까지 더 이른 대화를 받는다. 열자마자 미리 받는 장이 몇 장일지는 화면 높이에 달려 있어서
+ * (#707), 문이 서 있고 누를 수 있을 때만 누른다. 🚨 문이 없을 때 기다리지 않는다 — 미리 받기가 이미 끝까지
+ * 받았으면 문이 사라진다.
+ */
+async function loadHistoryUntil(page: Page, text: string) {
+  const more = page.getByRole("button", { name: "이전 대화 보기" });
+  await expect(async () => {
+    if ((await more.count()) > 0 && (await more.isEnabled({ timeout: 500 }).catch(() => false))) {
+      await more.click({ timeout: 1000 });
+    }
+    await expect(turn(page, text)).toBeVisible({ timeout: 1000 });
+  }).toPass();
+}
+
+/** 오늘부터 연 대화에 사흘 전까지 다 붙인다. */
+async function openAllHistory(page: Page) {
+  await page.goto(`/child/${CHILD}/chat`);
+  await loadHistoryUntil(page, "블록 놀이를 오래 했어");
+  await expect(page.getByRole("button", { name: "이전 대화 보기" })).toHaveCount(0);
+}
+
 test.describe("앱을 다시 켜도 오늘 대화가 보인다", () => {
   test.use({ scenario: "chat_history" });
 
-  test("대화 화면은 서버에 남은 오늘 대화를 그리고, 지난 날은 올려야 붙는다", async ({ page }) => {
+  test("대화 화면은 서버에 남은 오늘 대화를 그리고, 열자마자 전날을 미리 붙인다 (#707)", async ({
+    page,
+  }) => {
     await page.goto(`/child/${CHILD}/chat`);
 
     await expect(turn(page, "아침에 계란을 잘 먹었어")).toContainText("기록 2건 저장됨");
-    // 🚨 열자마자 지난 날을 줄줄이 받지 않는다 — 올리거나 눌러야 붙는다.
-    await expect(page.getByText("주말에 물놀이 가기로 했어")).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "이전 대화 보기" })).toBeVisible();
+    // 오늘이 두 줄뿐이라 올려 볼 것이 없다 — 올리기 전에 어제가 위에 붙어 있다.
+    await expect(turn(page, "주말에 물놀이 가기로 했어")).toBeAttached();
+    // 🚨 붙는 동안 바닥에 머문다 — 마지막 한 줄이 보인다.
+    await expect(page.getByText("낮잠을 짧게 잤어")).toBeInViewport();
   });
 
   test("03 홈은 서버에 오늘 대화가 있으면 대화로 가는 문을 세운다 — 열린 질문이 있으면 그 이름으로", async ({
@@ -42,11 +77,7 @@ test.describe("지난 턴에는 지금 누르면 막다른 버튼이 없다", ()
   test.use({ scenario: "chat_history" });
 
   test.beforeEach(async ({ page }) => {
-    await page.goto(`/child/${CHILD}/chat`);
-    await page.getByRole("button", { name: "이전 대화 보기" }).click();
-    await expect(turn(page, "주말에 물놀이 가기로 했어")).toBeVisible();
-    await page.getByRole("button", { name: "이전 대화 보기" }).click();
-    await expect(turn(page, "블록 놀이를 오래 했어")).toBeVisible();
+    await openAllHistory(page);
   });
 
   test("날짜 구분선이 서고, 다 받으면 더 부르는 문이 사라진다", async ({ page }) => {
@@ -143,7 +174,7 @@ test.describe("탭이 살아 있으면 지난 턴의 초안도 이어서 넣는�
 
     // 새로고침 — 대화 스토어와 목은 비지만 초안 보관함(sessionStorage)은 남는다.
     await page.reload();
-    await page.getByRole("button", { name: "이전 대화 보기" }).click();
+    await loadHistoryUntil(page, "주말에 물놀이 가기로 했어");
     const pool = turn(page, "주말에 물놀이 가기로 했어");
     await pool.getByRole("button", { name: "확인하고 넣기" }).click();
     // 제목은 입력칸 값이라 준비물로 같은 초안인지 본다.
@@ -151,21 +182,101 @@ test.describe("탭이 살아 있으면 지난 턴의 초안도 이어서 넣는�
   });
 });
 
-test.describe("위로 올리면 더 이른 대화가 붙는다", () => {
-  test.use({ scenario: "chat_history" });
+test.describe("열자마자 올려 볼 만큼 미리 받고, 그 뒤는 올리면 붙는다 (#707)", () => {
+  test.use({ scenario: "chat_history_long" });
 
-  test("붙는 동안 보던 줄이 제자리에 있다", async ({ page }) => {
+  test("🚨 이전 장은 세 장까지만 미리 받는다 — 날마다 한 줄이어도 열흘을 다 받지 않는다", async ({
+    page,
+  }) => {
+    const chatRequests = recordChatRequests(page);
     await page.goto(`/child/${CHILD}/chat`);
-    await page.getByRole("button", { name: "이전 대화 보기" }).click();
-    const cough = page.getByText("요즘 기침을 해");
-    await expect(cough).toBeVisible();
 
-    await cough.scrollIntoViewIfNeeded();
+    await expect(turn(page, "3일 전 이야기")).toBeAttached();
+    await page.waitForLoadState("networkidle");
+    // 오늘 한 장 + 이전 세 장. 높이가 화면 두 장을 못 채워도 여기서 멈춘다.
+    expect(chatRequests).toHaveLength(4);
+    await expect(page.getByText("4일 전 이야기")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "이전 대화 보기" })).toBeVisible();
+    // 🚨 붙는 동안 바닥(오늘)에 머문다.
+    await expect(page.getByText("오늘 이야기")).toBeInViewport();
+  });
+
+  test("지난 날부터 열어도 그날 위로 미리 받고, 그날 자리에 머문다", async ({ page }) => {
+    const day = browserDaysAgo(5);
+    const chatRequests = recordChatRequests(page);
+    await page.goto(`/child/${CHILD}/chat?date=${day}`);
+
+    await expect(turn(page, "8일 전 이야기")).toBeAttached();
+    await page.waitForLoadState("networkidle");
+    // 그날 한 장 + 이전 세 장. 아래 다음 날은 내려야 붙는다.
+    expect(chatRequests).toHaveLength(4);
+    expect(chatRequests[0]).toBe(`?date=${day}`);
+    await expect(page.getByText("9일 전 이야기")).toHaveCount(0);
+    await expect(page.getByText("4일 전 이야기")).toHaveCount(0);
+    await expect(page.getByText("5일 전 이야기")).toBeInViewport();
+  });
+
+  test("올리는 도중 맨 위에 닿기 전에 더 이른 날을 부른다", async ({ page }) => {
+    await page.goto(`/child/${CHILD}/chat`);
+    await expect(turn(page, "3일 전 이야기")).toBeAttached();
+    await page.waitForLoadState("networkidle");
+    // 바닥에 있다 — 맨 위까지는 화면 한 장이 안 남았지만 맨 위에 닿은 것은 아니다.
+    expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(300);
+
     await page.mouse.move(200, 400);
-    await page.mouse.wheel(0, -5000);
-    await expect(page.getByText("블록 놀이를 오래 했어")).toBeAttached();
-    // 🚨 위에 사흘 전 대화가 붙었어도 보던 줄은 화면 안에 그대로 있다 — 맨 위로 튀지 않는다.
-    await expect(page.getByText("요즘 기침을 해")).toBeInViewport();
+    await page.mouse.wheel(0, -100);
+    await expect(page.getByText("4일 전 이야기")).toBeAttached();
+  });
+
+  test("🚨 붙는 동안 보던 줄이 제자리에 있다 — 붙은 높이만큼 위로 밀리지 않는다", async ({
+    page,
+  }) => {
+    await page.goto(`/child/${CHILD}/chat`);
+    const seen = page.getByText("3일 전 이야기");
+    await expect(seen).toBeAttached();
+    await page.waitForLoadState("networkidle");
+
+    const more = page.getByRole("button", { name: "이전 대화 보기" });
+    await more.scrollIntoViewIfNeeded();
+    const before = (await seen.boundingBox())?.y;
+    await more.click();
+    await expect(page.getByText("4일 전 이야기")).toBeAttached();
+    const after = (await seen.boundingBox())?.y;
+    expect(before).toBeDefined();
+    expect(Math.abs((after ?? 0) - (before ?? 0))).toBeLessThan(2);
+  });
+});
+
+test.describe("코드가 내린 스크롤은 올린 것이 아니다 (#707 리뷰)", () => {
+  // 🚨 내용이 화면 한 장과 두 장 사이다 — 바닥에 내려도 맨 위까지 화면 한 장이 안 남는다. 이때 바닥으로 내리는
+  //    스크롤을 올린 것으로 읽으면 사람이 올리지 않았는데 이전 장을 받는다.
+  test.use({ scenario: "chat_history_long", viewport: { width: 390, height: 1000 } });
+
+  test("🚨 한 줄 보내도 사람이 올리지 않았으면 더 받지 않는다 — 바닥으로 내리는 스크롤은 올린 것이 아니다", async ({
+    page,
+  }) => {
+    await page.goto(`/child/${CHILD}/chat`);
+    await expect(turn(page, "3일 전 이야기")).toBeAttached();
+    await page.waitForLoadState("networkidle");
+
+    // 전제 — 바닥이 맨 위에서 화면 한 장 안이다. 그래야 보낸 뒤 바닥으로 내리는 스크롤이 문턱 안에서 일어난다.
+    //    카드 높이가 바뀌어 이게 깨지면 이 테스트는 아무것도 못 보므로 여기서 실패로 드러낸다.
+    const [scrollY, innerHeight] = await page.evaluate(() => [window.scrollY, window.innerHeight]);
+    expect(scrollY).toBeGreaterThan(0);
+    expect(scrollY).toBeLessThan(innerHeight);
+
+    const chatRequests = recordChatRequests(page);
+    const box = page.getByRole("textbox", { name: "오늘 있었던 일" });
+    await box.fill("블록 놀이 했어");
+    // 키보드는 걸기만 한다 — 입력창에서 키를 누른 상태로 보낸다.
+    await box.press("End");
+    await page.getByRole("button", { name: "이 이야기 남기기" }).click();
+    await expect(turn(page, "블록 놀이 했어")).toContainText("이렇게 저장했어요");
+    await page.waitForLoadState("networkidle");
+
+    // 오늘 장(쿼리 없음)만 다시 받는다. 전날 장은 부르지 않는다.
+    expect(chatRequests.filter((search) => search !== "")).toEqual([]);
+    await expect(page.getByText("4일 전 이야기")).toHaveCount(0);
   });
 });
 
@@ -175,11 +286,7 @@ test.describe("09 캘린더 하루 보기에서 그날 대화로 들어간다", 
   test("🚨 그날 한 장만 받아 연다 — 오늘부터 하루씩 이어 받지 않는다", async ({ page }) => {
     const day = browserDaysAgo(3);
     await page.goto(`/child/${CHILD}/calendar?date=${day}`);
-    const chatRequests: string[] = [];
-    page.on("request", (request) => {
-      const url = new URL(request.url());
-      if (url.pathname === `/api/v1/children/${CHILD}/chat`) chatRequests.push(url.search);
-    });
+    const chatRequests = recordChatRequests(page);
     await page.getByRole("link", { name: "대화 3개 보기" }).click();
     await page.waitForURL(`**/child/${CHILD}/chat?date=${day}`);
 
@@ -303,6 +410,23 @@ test.describe("오늘 대화가 없는 날 캘린더에서 지난 날로 들어�
       await page.evaluate(() => (window as unknown as { emptyShown?: boolean }).emptyShown),
     ).toBe(undefined);
   });
+
+  test("🚨 오늘이 비어도 빈 상태 대신 전날을 미리 받아 세운다 (#707)", async ({ page }) => {
+    await page.addInitScript(() => {
+      const seen = () => {
+        if ((document.body?.textContent ?? "").includes("여기서 이어져요")) {
+          (window as unknown as { emptyShown: boolean }).emptyShown = true;
+        }
+      };
+      new MutationObserver(seen).observe(document, { childList: true, subtree: true });
+    });
+    await page.goto(`/child/${CHILD}/chat`);
+
+    await expect(turn(page, "주말에 물놀이 가기로 했어")).toBeVisible();
+    expect(
+      await page.evaluate(() => (window as unknown as { emptyShown?: boolean }).emptyShown),
+    ).toBe(undefined);
+  });
 });
 
 test.describe("run 이 끝나면 대화 목록은 오늘 장만 다시 받는다 (#228 리뷰)", () => {
@@ -311,17 +435,10 @@ test.describe("run 이 끝나면 대화 목록은 오늘 장만 다시 받는다
   test("🚨 올려 둔 지난 날을 다시 받지 않는다 — 무한 목록을 통째로 무효화하면 받아 둔 장을 전부 다시 받는다", async ({
     page,
   }) => {
-    await page.goto(`/child/${CHILD}/chat`);
-    await page.getByRole("button", { name: "이전 대화 보기" }).click();
-    await expect(turn(page, "주말에 물놀이 가기로 했어")).toBeVisible();
-    await page.getByRole("button", { name: "이전 대화 보기" }).click();
-    await expect(turn(page, "블록 놀이를 오래 했어")).toBeVisible();
+    await openAllHistory(page);
+    await page.waitForLoadState("networkidle");
 
-    const chatRequests: string[] = [];
-    page.on("request", (request) => {
-      const url = new URL(request.url());
-      if (url.pathname === `/api/v1/children/${CHILD}/chat`) chatRequests.push(url.search);
-    });
+    const chatRequests = recordChatRequests(page);
     await page.getByRole("textbox", { name: "오늘 있었던 일" }).fill("블록 놀이 했어");
     await page.getByRole("button", { name: "이 이야기 남기기" }).click();
     await expect(turn(page, "블록 놀이 했어")).toContainText("이렇게 저장했어요");

@@ -12,6 +12,7 @@ import pytest
 from app.agents.common.allergy import (
     SINGLE_CHAR_NAMES,
     Restriction,
+    for_sentences,
     make_book,
     non_food_allergies,
     non_food_names,
@@ -324,3 +325,61 @@ def test_non_food_allergies_keeps_the_label_as_written() -> None:
 )
 def test_split_particle_은_받침이_맞는_조사만_뗀다(word, pairs) -> None:
     assert split_particle(word) == pairs
+
+
+@pytest.mark.parametrize(
+    ("aliases", "scope", "kept"),
+    [
+        # 등록한 아이에게는 외래어 · 라틴 문자 별칭도 막는다(content · items).
+        # 아이와 상관없이 뺄 때(scan)만 외래어 · 라틴 문자 별칭을 뺀다
+        (("땅콩", "피넛"), "content", ("땅콩", "피넛")),
+        (("땅콩", "피넛"), "scan", ("땅콩",)),
+        (("돼지고기", "pork"), "content", ("돼지고기", "pork")),
+        (("돼지고기", "pork"), "scan", ("돼지고기",)),
+        # 다른 뜻이 흔한 별칭(오리 · 포크)은 content · scan 에서 뺀다. 준비물(items)은 그 식품이라
+        # 오리는 남기고, 포크는 준비물이어도 뺀다. 돼지 · 전복은 빼지 않는다 — 전복죽 · 돼지국밥이
+        # 그 식품이다. 다른 뜻(돼지저금통 · 전복 모양)은 guard 가 덮는다
+        (("오리", "오리고기"), "content", ("오리고기",)),
+        (("오리", "오리고기"), "items", ("오리", "오리고기")),
+        (("오리", "오리고기"), "scan", ("오리고기",)),
+        (("돼지고기", "돼지", "포크"), "content", ("돼지고기", "돼지")),
+        (("돼지고기", "돼지", "포크"), "items", ("돼지고기", "돼지")),
+        (("돼지고기", "돼지", "포크"), "scan", ("돼지고기", "돼지")),
+        # 한 글자는 허용 목록만 — 밀 · 게 · 개는 문장에서 거의 다른 뜻이다
+        (("밀", "밀가루"), "content", ("밀가루",)),
+        (("밀", "밀가루"), "scan", ("밀가루",)),
+        (("콩", "대두"), "content", ("콩", "대두")),
+        (("콩", "대두"), "scan", ("콩", "대두")),
+        (("쑥", "쑥떡"), "content", ("쑥", "쑥떡")),
+        (("쑥", "쑥떡"), "scan", ("쑥떡",)),  # 아이와 상관없이 빼는 쪽은 콩 · 잣만 본다
+    ],
+)
+def test_for_sentences_는_scope_마다_별칭을_거른다(aliases, scope, kept) -> None:
+    term = for_sentences(Term(key="k", aliases=aliases), scope=scope)
+    assert term is not None
+    assert term.aliases == kept
+
+
+@pytest.mark.parametrize("scope", ["content", "items", "scan"])
+@pytest.mark.parametrize("aliases", [("포크",), ("개",), ("에그", "밀크")])
+def test_for_sentences_는_남는_별칭이_없으면_None(aliases, scope) -> None:
+    assert for_sentences(Term(key="k", aliases=aliases), scope=scope) is None
+
+
+def test_for_sentences_는_다른_뜻인_자리를_guard_로_더한다() -> None:
+    apple = for_sentences(Term(key="사과", aliases=("사과",), guards=("사과즙",)), scope="content")
+    assert apple is not None
+    assert {"사과즙", "사과하기", "사과했"} <= set(apple.guards)
+    # 한 글자 허용 목록의 guard — 콩콩 · 콩닥 · 콩쥐는 콩이 아니다(Growth 스캔 목록을 합친 것)
+    bean = for_sentences(Term(key="대두", aliases=("콩",)), scope="content")
+    assert bean is not None
+    assert {"콩콩", "콩닥", "콩당", "콩쥐"} <= set(bean.guards)
+
+
+def test_for_sentences_는_돼지_전복의_다른_뜻을_guard_로_덮는다() -> None:
+    """별칭을 통째로 빼면 전복죽 · 돼지국밥이 통과한다. 다른 뜻의 자리만 덮는다 (#582 리뷰)."""
+    pig = for_sentences(Term(key="돼지고기", aliases=("돼지",)), scope="content")
+    abalone = for_sentences(Term(key="조개류", aliases=("전복",)), scope="content")
+    assert pig is not None and abalone is not None
+    assert {"돼지저금통", "돼지 삼형제", "아기 돼지"} <= set(pig.guards)
+    assert "전복 모양" in abalone.guards

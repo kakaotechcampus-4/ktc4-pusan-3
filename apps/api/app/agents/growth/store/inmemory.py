@@ -148,6 +148,7 @@ class InMemoryGrowthDocs:
         query: str,
         limit: int,
         areas: tuple[str, ...] = (),
+        tags: tuple[str, ...] = (),
     ) -> list[GrowthDocRow]:
         rows = [
             r
@@ -157,6 +158,7 @@ class InMemoryGrowthDocs:
             and (routine_category is None or r.routine_category == routine_category)
             and (not trigger_tags or set(trigger_tags) & set(r.trigger_tags))
             and (not areas or r.area in areas)
+            and (not tags or set(tags) & set(r.tags))
         ]
         return rows[:limit]
 

@@ -19,7 +19,9 @@ import type {
   ApproveSuggestionsResponse,
   CreateEventDraftsRequest,
   CreateEventDraftsResponse,
+  ConfirmDeleteProposalRequest,
   CreateInputResponse,
+  DeleteProposalResponse,
   HealthSafety,
   ReviseMedicationBody,
   SubmitMedicationBody,
@@ -294,4 +296,36 @@ export function updateEventDraft(
   idempotencyKey: IdempotencyKey,
 ): Promise<SubmitEventResponse> {
   return api.patch(idempotentPath.updateEvent(childId, eventId), body, { idempotencyKey });
+}
+
+/* ── 04 대화의 삭제 확정 (#535) ───────────────────────────────────────── */
+
+/**
+ * 🚨 **체크한 기록 · 일정을 지운다** — 되살릴 수 없다. 대화 카드에서 두 번 누른 뒤에만 부른다.
+ *
+ * 서버는 **제안 후보 안의 체크한 것만** 한 트랜잭션에서 지운다. 하나라도 후보 밖이면 422 `not_in_proposal`
+ * 이고 아무것도 지우지 않는다. 24시간이 지났으면 409 `proposal_expired`, 이미 끝난 제안이면 409 `proposal_closed`.
+ * 🚨 키는 **체크한 id 목록에 묶는다** (`current(payload)`) — 실패한 뒤 체크를 바꿔 다시 누르면 다른 본문이다.
+ */
+export function confirmDeleteProposal(
+  childId: string,
+  proposalId: string,
+  body: ConfirmDeleteProposalRequest,
+  idempotencyKey: IdempotencyKey,
+) {
+  return api.post<DeleteProposalResponse>(
+    idempotentPath.confirmDeleteProposal(childId, proposalId),
+    body,
+    { idempotencyKey },
+  );
+}
+
+/**
+ * 삭제 제안을 아무것도 지우지 않고 닫는다. 키가 없다 — 지우지 않아서 다시 보내도 같은 응답이 온다.
+ * 이미 지운 제안이면 409 `proposal_closed`, 24시간이 지났으면 409 `proposal_expired`.
+ */
+export function cancelDeleteProposal(childId: string, proposalId: string) {
+  return api.post<DeleteProposalResponse>(
+    `/children/${childId}/delete-proposals/${proposalId}/cancel`,
+  );
 }

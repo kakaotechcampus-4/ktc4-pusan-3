@@ -45,6 +45,14 @@ class PlaceCategory(StrEnum):
     EXPERIENCE_CENTER = "experience_center"
 
 
+class EventKind(StrEnum):
+    """행사 종류(TourAPI 분류 lclsSystm2). 모델에는 이 글자로 준다 (`events.py`)."""
+
+    FESTIVAL = "축제"
+    PERFORMANCE = "공연"
+    EVENT = "행사"
+
+
 class DayLabel(StrEnum):
     """조회 날짜 라벨. 모델은 라벨만 고르고 날짜는 코드가 계산한다."""
 

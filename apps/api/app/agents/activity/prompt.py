@@ -34,7 +34,12 @@ from collections.abc import Sequence
 from uuid import UUID
 
 from app.agents.activity.context import ActivityContext
-from app.agents.activity.gating import checks_weather, finds_places, weather_checked
+from app.agents.activity.gating import (
+    checks_weather,
+    finds_events,
+    finds_places,
+    weather_checked,
+)
 from app.agents.activity.store.ports import ActivityDocRow
 from app.agents.activity.weather import WeatherBrief
 from app.agents.common.gate import Gate
@@ -242,6 +247,13 @@ def _conditions(weather: WeatherBrief, *, checked: bool, gate: Gate) -> str:
     if labels:
         lines.append(f"날씨: {labels}")
     lines.append(place)
+    if finds_events(gate):
+        lines.append(
+            "그날 열리는 축제 · 공연 · 행사는 search_events 로 찾을 수 있다. 결과에 있는 "
+            "이름만 place_name 에 쓰고 day 는 결과의 open_days 에 있는 날로 쓴다. 보호자가 지역을 "
+            "말했으면 area 에 그 이름을 쓴 그대로 넣는다. 시 · 도만 말해도(부산) 행사는 그 시 · 도 "
+            "전체에서 찾는다."
+        )
     return "\n".join(lines)
 
 
@@ -250,7 +262,9 @@ def _conditions(weather: WeatherBrief, *, checked: bool, gate: Gate) -> str:
 _AREA_ONLY = (
     "area 는 보호자가 그 지역에 가거나 그 지역에서 놀려고 말했을 때만 쓴다. "
     "지역 이름과 글자가 같은 물건 · 다른 뜻의 낱말(양산 챙겨서 · 화성에서 온 · 장수풍뎅이)은 "
-    "지역이 아니라 비운다."
+    "지역이 아니라 비운다. area 에는 지역 이름만 넣는다 — 보호자가 명소로 말했으면(○○해수욕장 · "
+    "○○역 · ○○읍) 그 앞의 지역 이름을 넣는다. 다만 그 명소가 정말 그 지역에 있을 때만이다 — "
+    "지역 이름으로 시작해도 다른 곳에 있는 명소(김해공항은 부산에 있다)면 비운다."
 )
 
 
