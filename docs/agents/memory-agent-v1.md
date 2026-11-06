@@ -80,7 +80,9 @@ update 가 status 로 여는 값은 `deleted` 하나다. `stand_alone` · `inact
 | 새 일정 + 준비물 | `create_event(items=[...])` 한 번. 준비물을 따로 부르지 않는다 |
 | 기존 일정에 준비물 추가 | `query_event` → `create_event_item` 을 준비물마다 |
 | 준비물 이름 변경 | `update_event_item(item_name=...)` — 수정 초안으로 간다 |
-| 준비물 챙김 표시 | `update_event_item(is_prepared=...)` — 초안 없이 바로 쓴다 |
+| 준비물 챙김 표시 | `update_event_item(is_prepared=...)` — 초안 없이 바로 쓴다. 반복 일정이어도 `scope` 없이 그날 회차 하나 |
+| 요일마다 되풀이되는 일정 | `create_event(repeat_weekdays, repeat_until)` 한 번. 끝 날짜를 안 말했으면 만들지 않고 묻는다 (#738) |
+| 반복 일정을 고침 · 준비물 | `scope` 를 정한다 — 날짜를 집어 말했으면 `one`, 반복 일정 자체를 말했으면 `series`. 정해지지 않으면 묻는다 |
 
 ---
 
@@ -220,7 +222,10 @@ reasoning 을 유지하려면 `/v1/responses` 로 옮겨야 하는데, 그때 �
 | `DATE_UNPARSEABLE` | 날짜·시각 표현을 고치거나 비움 |
 | `TARGET_REQUIRED` | 고쳐 말하는 조각(lookup_edit)을 조회 없이 새로 저장하려 함 — 조회 결과를 본 뒤 고치거나 저장 (D14) |
 | `NOT_CHILD_RECORD` | Supervisor 가 unclear 로 본 조각을 관찰로 저장·수정하려 함 — 묻지 않고 저장하지 않았다고 알림 (D13) |
-| `AMBIGUOUS_TARGET` · `OUT_OF_SCOPE` | 선언만 해 뒀고 아직 쓰는 자리가 없다 |
+| `REPEAT_UNTIL_REQUIRED` | 반복 일정의 끝 날짜를 안 말했다 — 만들지 않고 "언제까지 반복할까요?" 하나만 묻는다 (#738) |
+| `SCOPE_REQUIRED` | 반복 일정의 회차를 고치거나 지우는데 `scope` 가 없다 — 발화로 `one`/`series` 를 정하거나 묻는다 (#738) |
+| `OUT_OF_SCOPE` | 반복 일정을 만들려는데 store 가 반복 묶음을 지원하지 않는다 — 반복으로 만들지 않고 아직 지원하지 않는다고 알린다 (#738) |
+| `AMBIGUOUS_TARGET` | 선언만 해 뒀고 아직 쓰는 자리가 없다 |
 
 ### D5. 모든 스키마 필드에 description
 

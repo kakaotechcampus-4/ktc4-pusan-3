@@ -35,7 +35,7 @@ from app.agents.common.datetime_rules import DateRange
 from app.agents.common.llm_client import LLMClient
 from app.agents.memory.agent import MemoryAgentResult, run
 from app.agents.memory.context import AgentContext
-from app.agents.memory.drafts import EventDraft
+from app.agents.memory.drafts import AnyEventDraft
 from app.agents.memory.schemas.task import MemoryTask
 from app.agents.memory.store import InMemoryStore
 from app.agents.memory.store.ports import EventItemRow, ObservationRow
@@ -133,7 +133,7 @@ class Snapshot:
 
     result: MemoryAgentResult
     observations: dict[str, list[ObservationRow]]
-    drafts: tuple[EventDraft, ...]  # 일정은 저장되지 않으니 제출 전 초안을 본다
+    drafts: tuple[AnyEventDraft, ...]  # 일정은 저장되지 않으니 제출 전 초안을 본다
     stored_items: list[EventItemRow]  # 승인 없이 바로 쓰는 것(is_prepared)을 볼 곳
 
     def count(self, tool: str) -> int:
@@ -150,11 +150,18 @@ class Snapshot:
 
     def starts_at(self) -> str:
         first = self.drafts[0] if self.drafts else None
-        return first.starts_at.astimezone(KST).isoformat() if first else ""
+        # 묶음 초안(SeriesDraft)은 날짜가 없다 — 하루의 시각만 들고 있다
+        starts = getattr(first, "starts_at", None)
+        return starts.astimezone(KST).isoformat() if starts else ""
 
     @property
     def item_names(self) -> list[str]:
-        return [item.item_name for draft in self.drafts for item in draft.items]
+        # 묶음 초안의 준비물은 이름(str)이고, 일정 초안의 준비물은 DraftItem 이다
+        return [
+            item if isinstance(item, str) else item.item_name
+            for draft in self.drafts
+            for item in draft.items
+        ]
 
     @property
     def wrote_anything(self) -> bool:
