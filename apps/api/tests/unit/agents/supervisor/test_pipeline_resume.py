@@ -30,6 +30,8 @@ class Outcome:
     readouts: tuple[Readout, ...] = ()
     needs_observation: tuple[str, ...] = ()
     suggestions: tuple[SuggestionDraft, ...] = ()
+    medication_drafts: tuple[Any, ...] = ()
+    event_requests: tuple[Any, ...] = ()
     pending: DomainPending | None = None
 
 
