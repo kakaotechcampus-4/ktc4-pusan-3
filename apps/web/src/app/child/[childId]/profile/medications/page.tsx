@@ -3,7 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { ChevronLeft, Pill } from "lucide-react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useRef } from "react";
 
 import { AuthGate } from "@/components/auth-gate";
@@ -29,6 +29,7 @@ import {
 } from "@/lib/api";
 import { formatDay } from "@/lib/format";
 import { timesLabel } from "@/lib/medication";
+import { MEDICATION_ENABLED } from "@/lib/store-policy";
 import { BACK } from "@/lib/view-transition";
 
 /**
@@ -49,6 +50,8 @@ import { BACK } from "@/lib/view-transition";
  *    다른 약의 오늘 회차도 같은 화면에서 체크해야 한다. 목록에 없는 코스(끝났거나 멈춘 코스)면 그냥 처음부터 보인다.
  */
 export default function MedicationsPage() {
+  // 🚨 스토어 선언 때문에 꺼 둔 동안은 주소로 바로 와도 화면을 세우지 않는다 (`lib/store-policy.ts`).
+  if (!MEDICATION_ENABLED) return <BackToProfile />;
   return (
     // 🚨 `useSearchParams()` 는 Suspense 경계 안에 있어야 한다 (04 대화와 같은 이유).
     <Suspense fallback={null}>
@@ -59,6 +62,16 @@ export default function MedicationsPage() {
       </AuthGate>
     </Suspense>
   );
+}
+
+/** 꺼 둔 동안 이 주소로 온 보호자를 프로필로 보낸다. 기록에 남지 않게 `replace` 다 — 뒤로 가기로 다시 오지 않는다. */
+function BackToProfile() {
+  const childId = useChildId();
+  const router = useRouter();
+  useEffect(() => {
+    router.replace(`/child/${childId}/profile`);
+  }, [childId, router]);
+  return null;
 }
 
 function MedicationsScreen() {
