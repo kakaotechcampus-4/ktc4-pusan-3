@@ -10,6 +10,7 @@ import { useEventDraftStore } from "@/stores/event-draft";
 import {
   chatQuery,
   newerPageParam,
+  olderPageCount,
   olderPageParam,
   pastTurnsOf,
   refreshAfterRun,
@@ -115,6 +116,20 @@ describe("다음 장", () => {
       date: "2026-10-15",
     });
     expect(newerPageParam(page("2026-10-16"))).toBeUndefined();
+  });
+
+  it("🚨 미리 받는 상한은 연 날보다 이른 장만 센다 — 아래로 붙인 다음 날은 세지 않는다 (#707)", () => {
+    // 오늘부터 연 목록: 첫 장(null) 말고는 전부 이른 장이다. 같은 날 앞부분(커서)도 한 장이다.
+    expect(olderPageCount([null], null)).toBe(0);
+    expect(olderPageCount([null, { cursor: "c" }, { date: "2026-10-15" }], null)).toBe(2);
+    // 지난 날부터 연 목록: 그날 장과 더 늦은 장(다음 날)은 빼고 센다.
+    expect(
+      olderPageCount(
+        [{ date: "2026-10-16" }, { date: "2026-10-13" }, { date: "2026-10-12" }],
+        "2026-10-13",
+      ),
+    ).toBe(1);
+    expect(olderPageCount([{ date: "2026-10-13" }, { cursor: "c" }], "2026-10-13")).toBe(1);
   });
 
   it("🚨 커서만 보낸다 — 날짜를 같이 보내 어긋나면 400 이다", () => {
