@@ -81,6 +81,7 @@ def agent_job(
     child_health_granted: bool | None = None,
     location: entrypoint.CoarseLocation | None = None,
     activity_weather: entrypoint.WeatherSource | None = None,
+    activity_events: entrypoint.EventSource | None = None,
     continuation: entrypoint.PendingMemoryContext | None = None,
     reply_to: str | None = None,
     on_event: Callable[[entrypoint.Event], None] | None = None,
@@ -106,6 +107,8 @@ def agent_job(
     - `location` 은 창구가 위치정보 동의를 확인한 흐린 좌표, `activity_weather` 는 서버 시작 때 만든
       날씨 어댑터다(#380). 둘 다 그대로 진입점에 넘긴다. None 이면 Activity 는 실내 전용이다.
       장소 어댑터는 `agent_ports.place_source` 로 연다 — 좌표가 없으면 진입점 쪽에서 닫힌다.
+      `activity_events` 는 서버 시작 때 만든 행사 어댑터(TourAPI)다. 그대로 넘긴다 — None 이면
+      Activity 는 행사를 찾지 않는다.
     - Agent 가 스스로 낸 실패(Failed)는 예외가 아니라 이벤트로 온다. 뒤따르는 Done 은 채널이 버린다.
     - continuation 이 있으면 이전 되묻기를 이어받는 run 이다. Supervisor 를 타지 않는다.
     - 되묻기로 끝나면 PendingReply 가 이벤트로 온다. 화면에 보내지 않고 pending store 에 넣는다 —
@@ -207,6 +210,7 @@ def agent_job(
                         location=location,
                         activity_weather=activity_weather,
                         activity_places=agent_ports.place_source(),
+                        activity_events=activity_events,
                         run_id=channel.run_id,
                         emit=emit,
                         continuation=continuation,
@@ -224,6 +228,7 @@ def agent_job(
                         **agent_ports.growth_book_ports(),
                         growth_log=agent_ports.growth_log_reader(),
                         affinity_reader=agent_ports.affinity_reader(),
+                        **agent_ports.health_ports(),
                     )
             except TimeoutError:
                 log.warning(
@@ -311,6 +316,9 @@ async def _read_cards(
 
     🚨 읽기가 실패해도 run 을 실패로 만들지 않는다 — 카드에서 행이 빠질 뿐이다. 삭제 제안은 이미
        저장돼 있고 지난 대화에서 다시 읽힌다. `_read_saved` 와 같이 ERROR 로그만 남긴다(원문 없이).
+    🚨 읽기는 SAVEPOINT 안에서 한다 — 실패하면 읽기만 되감는다. run 세션을 통째로 rollback 하면
+       Memory commit 전에 불렸을 때 이 run 의 기록 · 제안까지 사라지고, run 은 성공으로 끝나며
+       화면에는 누르면 404 인 카드가 남는다. 부르는 순서에 기대지 않으려고 여기서 막는다.
     """
     from app.api.quota import today_kst
     from app.api.v1.card_rows import read_card_rows
@@ -318,13 +326,14 @@ async def _read_cards(
     if not refs:
         return {}
     try:
-        return await read_card_rows(
-            session,
-            child_id=child_id,
-            parent_id=parent_id,
-            refs=[(ref.kind, ref.id) for ref in refs],
-            today=today_kst(),
-        )
+        async with session.begin_nested():
+            return await read_card_rows(
+                session,
+                child_id=child_id,
+                parent_id=parent_id,
+                refs=[(ref.kind, ref.id) for ref in refs],
+                today=today_kst(),
+            )
     except Exception as exc:
         log.error(
             "run %s 의 카드 행을 읽지 못했다 (%s) — 카드에서 뺀다\n%s",
@@ -332,12 +341,6 @@ async def _read_cards(
             type(exc).__name__,
             "".join(traceback.format_tb(exc.__traceback__)),
         )
-        try:
-            await session.rollback()
-        except Exception as rollback_exc:
-            log.warning(
-                "run %s 의 rollback 도 실패했다 (%s)", channel.run_id, type(rollback_exc).__name__
-            )
         return {}
 
 

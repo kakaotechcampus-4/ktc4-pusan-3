@@ -76,3 +76,8 @@ ask.habit_current:
 ask.routine_current:
   kind: ask
   template: "{subject}은(는) 요즘 어느 정도까지 혼자 하나요?"
+# 교육 요청의 주제 기록이 없을 때 추천에 덧붙이는 질문 하나. 한 문장에 묻는 것은 해 본 경험이고,
+# 어려워한 점은 말하고 싶을 때만 덧붙이는 자리다
+ask.learning_current:
+  kind: ask
+  template: "{subject}은(는) 집에서 해 본 적이 있나요? 어려워한 점이 있으면 같이 알려 주세요."

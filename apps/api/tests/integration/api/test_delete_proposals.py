@@ -5,6 +5,7 @@
     ③ 제안한 보호자만 누른다 — 같은 아이의 다른 보호자에게는 없는 제안(404)
     ④ 만료된 제안 · 취소한 제안으로는 지울 수 없다 (409)
     ⑤ 같은 키로 다시 보내면 처음 응답을 그대로 돌려준다 — 두 번 지우지 않는다
+    ⑥ run 의 카드 행 읽기가 실패해도 그 run 이 쓴 기록 · 제안은 남는다 — 읽기만 되감는다
 
 발화 · 아이 정보는 전부 가짜 값이다 (루트 CLAUDE.md §9).
 """
@@ -14,11 +15,15 @@ from datetime import UTC, date, datetime, timedelta
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agents import entrypoint
 from app.agents.common.datetime_rules import DateRange
 from app.api import idempotency
+from app.api.runs import runner
+from app.api.runs.registry import RunChannel
+from app.api.v1 import card_rows
 from app.api.v1.routers import delete_proposals
 from app.domains.delete_proposal.models import DeleteProposal
 from app.domains.delete_proposal.repository import PROPOSAL_TTL, ProposalTab, add_proposal
@@ -247,3 +252,29 @@ async def test_expiring_while_waiting_for_the_lock_cannot_delete(
 
     assert (resp.status_code, resp.json()["error"]["code"]) == (409, "proposal_expired")
     assert await _status(session, lunch) is not ObservationStatus.DELETED
+
+
+async def test_failed_card_read_keeps_what_the_run_wrote(
+    session: AsyncSession, bearer: Bearer, cid: uuid.UUID, monkeypatch
+):
+    """카드 읽기가 DB 오류로 실패해도 같은 run 세션의 아직 commit 하지 않은 기록 · 제안은
+    그대로다. run 세션을 통째로 되감으면 run 은 성공으로 끝나는데 기록이 사라지고, 카드의
+    [삭제] 는 404 가 된다. 부르는 순서(Memory commit 뒤)에 기대지 않고 읽기만 SAVEPOINT 로
+    되감는지 본다."""
+    _, pid = bearer
+    meal = await _meal(session, cid, pid, "rice")
+    proposal = await _propose(
+        session, cid, pid, [ProposalTab("observation_food", False, (meal,), (meal,))]
+    )
+
+    async def broken_read(db, **_kwargs):
+        await db.execute(text("SELECT 1 / 0"))
+
+    monkeypatch.setattr(card_rows, "read_card_rows", broken_read)
+    refs = (entrypoint.Ref("observation_food", uuid.UUID(meal)),)
+
+    rows = await runner._read_cards(session, cid, pid, refs, RunChannel("run-card-read", pid))
+
+    assert rows == {}
+    assert await session.get(ObservationFood, uuid.UUID(meal), populate_existing=True) is not None
+    assert await session.get(DeleteProposal, proposal, populate_existing=True) is not None

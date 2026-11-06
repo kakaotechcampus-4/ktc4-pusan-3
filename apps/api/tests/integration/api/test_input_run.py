@@ -14,6 +14,7 @@ Idempotency 는 계약서 §01 "헤더가 없으면 400" 에 더해 docs/api/ide
 """
 
 import asyncio
+import time
 import uuid
 from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime
@@ -22,6 +23,8 @@ from unittest.mock import ANY
 import pytest
 from sqlalchemy import select
 
+from app.agents.common.result import DomainPending
+from app.agents.common.schemas.task import DomainTask
 from app.agents.entrypoint import PendingMemoryContext
 from app.agents.memory.schemas.task import WorkType
 from app.api import idempotency, quota
@@ -130,6 +133,7 @@ async def test_inputs_hand_the_line_to_the_agents(db_client, bearer, agent_calls
             "reply_to": None,
             "location": None,
             "activity_weather": None,
+            "activity_events": None,
             "on_event": ANY,  # 대화 기록(#228) — test_finished_run_is_kept_as_a_chat_turn
         }
     ]
@@ -635,6 +639,106 @@ async def test_맥락_없는_reply_to_는_한도를_쓰지_않는다(
 
     assert rejected.status_code == 400
     assert accepted.status_code == 202
+
+
+# ── reply_to — Health 가 물은 것에 대한 답 ──────────────────────
+# 보관함은 맥락 종류를 가리지 않는다. 같은 15분 · 임자 · 아이 · 사용 중 확인이 Health 맥락에도
+# 걸리는지 본다. 맥락에는 발화 원문이 없다(`hint_text` · 요청 조각이 비어 있다).
+_STOP_Q = "항생제 복약 알림을 멈출까요? 먹인 기록은 그대로 남아요."
+_HEALTH_PENDING = PendingMemoryContext(
+    hint_text="",
+    question=_STOP_Q,
+    work=WorkType.OBSERVE,
+    resume=DomainTask(run_id="r-prev", agent="health", task_type="medication", request_texts=()),
+    asked=DomainPending(
+        "health",
+        "medication_stop",
+        _STOP_Q,
+        {"schedule_id": str(uuid.uuid4()), "title": "항생제"},
+    ),
+)
+_HEALTH_ANSWER = {"text": "응", "source": "home_input"}
+
+
+async def test_Health_질문에_reply_to_로_답하면_맥락이_agent_로_넘어간다(
+    db_client, bearer, agent_calls, cid
+):
+    headers, parent_id = bearer
+    pending_reply.put(run_id="r-health", parent_id=parent_id, child_id=cid, context=_HEALTH_PENDING)
+
+    response = await db_client.post(
+        INPUTS.format(cid=cid),
+        json={**_HEALTH_ANSWER, "reply_to": "r-health"},
+        headers=with_key(headers),
+    )
+
+    assert response.status_code == 202
+    assert agent_calls[0]["continuation"] == _HEALTH_PENDING
+    assert agent_calls[0]["continuation"].asked.kind == "medication_stop"
+
+
+async def test_15분이_지난_Health_맥락은_400(db_client, bearer, agent_calls, cid):
+    headers, parent_id = bearer
+    pending_reply.put(
+        run_id="r-health",
+        parent_id=parent_id,
+        child_id=cid,
+        context=_HEALTH_PENDING,
+        now=time.monotonic() - pending_reply.TTL_SECONDS - 1,
+    )
+
+    response = await db_client.post(
+        INPUTS.format(cid=cid),
+        json={**_HEALTH_ANSWER, "reply_to": "r-health"},
+        headers=with_key(headers),
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "reply_context_unavailable"
+    assert agent_calls == []
+
+
+async def test_다른_보호자는_Health_질문에_답할_수_없다(db_client, bearer, agent_calls, cid):
+    headers, _ = bearer
+    pending_reply.put(
+        run_id="r-health", parent_id=uuid.uuid4(), child_id=cid, context=_HEALTH_PENDING
+    )
+
+    response = await db_client.post(
+        INPUTS.format(cid=cid),
+        json={**_HEALTH_ANSWER, "reply_to": "r-health"},
+        headers=with_key(headers),
+    )
+
+    assert response.status_code == 400 and agent_calls == []
+
+
+async def test_다른_아이의_Health_질문은_이어받지_못한다(db_client, bearer, agent_calls, cid):
+    headers, parent_id = bearer
+    pending_reply.put(
+        run_id="r-health", parent_id=parent_id, child_id=uuid.uuid4(), context=_HEALTH_PENDING
+    )
+
+    response = await db_client.post(
+        INPUTS.format(cid=cid),
+        json={**_HEALTH_ANSWER, "reply_to": "r-health"},
+        headers=with_key(headers),
+    )
+
+    assert response.status_code == 400 and agent_calls == []
+
+
+async def test_같은_Health_질문의_두_번째_답은_400(db_client, bearer, agent_calls, cid):
+    # 중단 확인에 "응" 이 두 번 가면 같은 코스를 두 번 멈추려는 것과 같다
+    headers, parent_id = bearer
+    pending_reply.put(run_id="r-health", parent_id=parent_id, child_id=cid, context=_HEALTH_PENDING)
+    body = {**_HEALTH_ANSWER, "reply_to": "r-health"}
+
+    first = await db_client.post(INPUTS.format(cid=cid), json=body, headers=with_key(headers))
+    second = await db_client.post(INPUTS.format(cid=cid), json=body, headers=with_key(headers))
+
+    assert first.status_code == 202 and second.status_code == 400
+    assert len(agent_calls) == 1
 
 
 # ── 9단계 — 아이 주소는 연결된 보호자만 ─────────────────────────────

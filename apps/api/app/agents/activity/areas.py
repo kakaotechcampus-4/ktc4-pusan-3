@@ -1,10 +1,10 @@
 """보호자가 말한 지역 이름 → 그 지역의 대표 지점. 장소와 날씨를 그 지점 기준으로 본다.
 
 "해운대 가서 놀 곳" 처럼 보호자가 지역을 말하면, 모델이 그 이름을 `search_nearby_places` 의
-`area` 로 넘기고 여기서 코드가 시군구로 바꾼다. 모델은 보호자가 쓴 말을 옮겨 적는다 —
-"해운대해수욕장" · "기장읍" 처럼 통째로 넘겨도 앞쪽의 지역 이름으로 찾고(`named_area`), 보호자가
-쓴 글자 안에 없으면 받지 않는다(`said`). 지역 뜻으로 썼는지는 모델이 문장을 보고 정한다 — 코드는
-조사를 따지지 않는다 (#657 리뷰).
+`area` 로 넘기고 여기서 코드가 시군구로 바꾼다. 모델은 보호자가 쓴 글자에서 **지역 이름만** 옮겨
+적는다(`named_area`) — 보호자가 쓴 글자 안에 없으면 받지 않는다(`said`). 지역 뜻으로 썼는지,
+명소가 그 지역에 있는지는 모델이 문장을 보고 정한다 — 코드는 조사를 따지지 않고, 명소 이름 앞의
+지역 이름을 떼어 쓰지도 않는다. "세종문화회관" 은 세종에 있지 않다 (#657 머지 뒤 엣지 케이스).
 
 대표 지점은 기상청 격자 · 위경도 표의 시군구 행이다(대개 시군구청 자리, `areas_data.py`).
 장소는 이 지점에서 가까운 순으로 찾아서, 시군구 경계 너머의 곳이 섞일 수 있다 — 그래서 이유
@@ -16,10 +16,12 @@
   2. 구 · 군 · 시를 붙여도 떼도 찾는다("해운대구" · "해운대"). 뗀 이름이 한 글자면 받지 않는다
      ("중구" → "중")
   3. 구가 있는 시(수원시장안구)는 구 이름("장안구" · "장안")으로도, 시 이름("수원")으로도 찾는다.
-     시 이름이면 그 구들의 대표 지점 가운데다
+     시 이름이면 그 구들의 대표 지점 가운데다. 동 · 서로 나뉜 구의 앞 이름(일산동구 · 일산서구 →
+     "일산")과 통합으로 시도 이름에서 빠진 옛 광역시(광주광역시 → 다섯 구)도 같다
   4. 여러 곳이면(중구 · 고성) 보호자 위치에서 가장 가까운 곳이다. 위치가 없으면 찾지 않는다
   5. 시도만 말하면(서울 · 부산) 넓어서 찾지 않는다. 시군구가 하나뿐인 시도(세종)는 그곳이고,
-     시도 안에 같은 이름의 시가 있으면(제주 → 제주시) 그 시다
+     같은 이름의 시가 있으면(제주 → 제주시) 그 시다. 그런 시가 여럿이면(광주 → 경기 광주시 ·
+     옛 광주광역시) 4 와 같다
 
 🚨 못 찾으면 None 이다. 비슷한 곳으로 짐작하지 않는다 — tool 이 "장소 없이" 로 가고 화면에 한 줄
    안내가 붙는다. 옛 이름(인천 중구)은 표를 새로 구울 때 따라가지 않으면 못 찾는다.
@@ -37,8 +39,8 @@ from app.agents.activity.areas_data import DISTRICTS
 from app.agents.activity.store.ports import CoarseLocation
 
 # 격자 표의 시도 이름 → 보호자가 부르는 이름. 표에 없는 시도가 나오면 굽기가 멈춘다
-# (`scripts/bake_activity_areas.py`). 옛 광주광역시는 2026 년 전남과 통합됐다 — "광주시" 는 경기
-# 광주시와 겹쳐서 시도로도 보고, 둘이 갈리지 않으면 찾지 않는다
+# (`scripts/bake_activity_areas.py`). 옛 광주광역시는 2026 년 전남과 통합됐다 — "광주" · "광주시"
+# 는 경기 광주시와 겹쳐서 보호자 위치로 가르고(`_MERGED_CITIES`), 위치가 없으면 찾지 않는다
 PROVINCE_ALIASES: dict[str, tuple[str, ...]] = {
     "서울특별시": ("서울", "서울시"),
     "부산광역시": ("부산", "부산시"),
@@ -58,8 +60,18 @@ PROVINCE_ALIASES: dict[str, tuple[str, ...]] = {
     "제주특별자치도": ("제주", "제주도"),
 }
 
+# 통합으로 시도 이름에서 빠진 옛 광역시 — 그 시도의 이 구들을 시 하나로 묶는다(구들, 부르는 이름)
+_MERGED_CITIES: dict[tuple[str, str], tuple[tuple[str, ...], tuple[str, ...]]] = {
+    ("전남광주통합특별시", "광주"): (
+        ("동구", "서구", "남구", "북구", "광산구"),
+        ("광주", "광주시", "광주광역시"),
+    ),
+}
+
 # 뗄 수 있는 끝 글자
 _SUFFIXES = ("구", "군", "시")
+# 동 · 서로 나뉜 구 — "고양시일산동구" 의 "일산"
+_SPLIT_GU = re.compile(r"^(.{2,})[동서남북]구$")
 # 구가 있는 시의 구 — "수원시장안구" → 수원시 · 장안구
 _CITY_GU = re.compile(r"^(.+시)(.+구)$")
 # 지역 이름을 낱말로 나눌 때. 문장부호 · 띄어쓰기는 낱말 사이다
@@ -79,6 +91,8 @@ class Area:
     province: str
     lat: float
     lon: float
+    # 시 · 도 전체(`find_province`). 행사만 그 시 · 도에서 찾고 장소는 넓어서 찾지 않는다
+    whole_province: bool = False
 
     @property
     def location(self) -> CoarseLocation:
@@ -97,7 +111,7 @@ def find_area(text: str, *, near: CoarseLocation | None = None) -> Area | None:
             continue
         rest = key[len(alias) :]
         if not rest:
-            return _province_only(key, province)
+            return _province_only(key, province, near)
         found = [area for area in index.get(rest, ()) if area.province == province]
         if found:
             return _pick(found, near)
@@ -119,18 +133,26 @@ def said(area: str, request_texts: Iterable[str]) -> bool:
 
 
 def named_area(text: str, request_texts: Iterable[str]) -> str | None:
-    """모델이 넘긴 글자 앞쪽에서 보호자가 말한 지역 이름을 찾는다. 없으면 None.
+    """모델이 넘긴 지역 이름을 보호자가 쓴 꼴로. 지역 이름이 아니거나 보호자가 쓰지 않았으면 None.
 
-    모델은 "해운대해수욕장" · "기장읍" 처럼 보호자가 쓴 말을 통째로 넘긴다(라이브 비교). 앞에서
-    시작하는 지역 이름을 긴 것부터 보고 보호자 글에 있는 첫 이름을 준다 — 모델이 "해운대구" 로 고쳐
-    써도 보호자가 "해운대" 라고 했으면 "해운대" 다.
+    지역 이름만 받는다. 모델이 구 · 군 · 시를 붙여 고쳐 써도("해운대구") 보호자가 "해운대" 라고
+    했으면 "해운대" 다. 명소 이름("해운대해수욕장" · "세종문화회관")은 받지 않는다 — 앞의 지역
+    이름을 떼어 쓰면 그 지역에 있지 않은 명소(세종문화회관)에서 엉뚱한 곳을 찾는다. 그런 말은
+    `_origin` 이 지역 이름만 다시 쓰라고 돌려보낸다(`leads_with_area`).
     """
     key = "".join(_WORD.findall(text))
-    for length in range(min(_MAX_NAME, len(key)), 1, -1):
-        name = key[:length]
-        if _is_name(name) and said(name, request_texts):
+    for name in (key, *(key[: -len(s)] for s in _SUFFIXES if key.endswith(s))):
+        if len(name) >= 2 and _is_name(name) and said(name, request_texts):
             return name
     return None
+
+
+def leads_with_area(text: str) -> bool:
+    """지역 이름으로 시작하는 다른 말인가 — "해운대해수욕장" · "세종문화회관" · "기장읍"."""
+    key = "".join(_WORD.findall(text))
+    return not _is_name(key) and any(
+        _is_name(key[:length]) for length in range(min(_MAX_NAME, len(key) - 1), 1, -1)
+    )
 
 
 def _said_in(key: str, text: str) -> bool:
@@ -159,10 +181,38 @@ def _is_name(key: str) -> bool:
     )
 
 
-def _province_only(key: str, province: str) -> Area | None:
-    in_province = [area for area in _index().get(key, ()) if area.province == province]
-    if len(in_province) == 1:
-        return in_province[0]  # 제주 → 제주시
+def find_province(text: str) -> Area | None:
+    """시 · 도 이름만이면 그 시 · 도 전체. 대표 지점은 시군구 대표 지점들의 가운데다(날씨 · 정렬).
+
+    `find_area` 가 넓어서 찾지 않는 "부산" 같은 이름이다. 행사 조회만 쓴다 — 축제 · 공연은 시 · 도
+    단위로 찾는 게 자연스럽고, 장소는 시 · 도 가운데에서 가까운 곳이 그 시 · 도를 대표하지 않는다.
+    행사 조회는 `find_area` 보다 먼저 부른다 — 제주(→ 제주시) · 세종(→ 그곳)도 시 · 도 전체다.
+    다른 시도의 시군구와 이름이 겹치면(광주 · 광주시 ↔ 경기 광주시) 모호해서 None 이다 (#668 리뷰).
+    통합으로 시도 이름에서 빠진 옛 광역시(광주광역시)도 None 이다 — 시도 전체가 아니라 그 시다
+    (`find_area` 가 옛 광주 다섯 구의 가운데로 찾는다).
+    """
+    key = re.sub(r"\s+", "", text)
+    province = next((p for alias, p in _aliases() if key == alias), None)
+    if (
+        province is None
+        or any(key in names for _, names in _MERGED_CITIES.values())
+        or any(area.province != province for area in _index().get(key, ()))
+    ):
+        return None
+    districts = _districts_of(province)
+    return Area(
+        province,
+        province,
+        fmean(area.lat for area in districts),
+        fmean(area.lon for area in districts),
+        whole_province=True,
+    )
+
+
+def _province_only(key: str, province: str, near: CoarseLocation | None) -> Area | None:
+    named = _index().get(key, ())
+    if named:
+        return _pick(named, near)  # 제주 → 제주시, 광주 → 경기 광주시 · 옛 광주 중 가까운 곳
     districts = _districts_of(province)
     return districts[0] if len(districts) == 1 else None  # 세종은 그곳, 서울은 넓다
 
@@ -204,11 +254,18 @@ def _districts_of(province: str) -> tuple[Area, ...]:
     )
 
 
+def _center(name: str, province: str, areas: Iterable[Area]) -> Area:
+    """구들의 대표 지점 가운데."""
+    areas = tuple(areas)
+    return Area(name, province, fmean(a.lat for a in areas), fmean(a.lon for a in areas))
+
+
 @cache
 def _index() -> dict[str, tuple[Area, ...]]:
     """부르는 이름 → 지역들. 시도는 여기 없다 — `find_area` 가 먼저 뗀다."""
     index: dict[str, dict[str, Area]] = {}
     cities: dict[tuple[str, str], list[Area]] = {}
+    merged: dict[tuple[str, str], list[Area]] = {}
 
     def add(names: Iterable[str], area: Area) -> None:
         for name in names:
@@ -216,20 +273,26 @@ def _index() -> dict[str, tuple[Area, ...]]:
 
     for province, district, lat, lon in DISTRICTS:
         area = Area(f"{province} {district}", province, lat, lon)
+        for (merged_province, city), (gu_names, _) in _MERGED_CITIES.items():
+            if province == merged_province and district in gu_names:
+                merged.setdefault((province, city), []).append(area)
         city_gu = _CITY_GU.match(district)
         if city_gu is None:
             add(_stems(district), area)
             continue
         city, gu = city_gu.groups()
-        add((district, f"{city[:-1]}{gu}", *_stems(gu)), area)  # 수원장안구 · 장안구 · 장안
+        # 수원시장안구 · 수원장안구 · 장안구 · 장안 · 수원시장안 · 수원장안
+        gu_names = _stems(gu)
+        add((district, *(f"{c}{g}" for c in (city, city[:-1]) for g in gu_names), *gu_names), area)
         cities.setdefault((province, city), []).append(area)
+        if split := _SPLIT_GU.match(gu):
+            cities.setdefault((province, f"{city}{split[1]}"), []).append(area)
 
     for (province, city), gu_areas in cities.items():
-        center = Area(
-            f"{province} {city}",
-            province,
-            fmean(area.lat for area in gu_areas),
-            fmean(area.lon for area in gu_areas),
-        )
-        add(_stems(city), center)
+        if city.endswith("시"):
+            add(_stems(city), _center(f"{province} {city}", province, gu_areas))  # 수원
+        elif len(gu_areas) > 1:  # 동 · 서 짝이 있을 때만 — 일산동구 · 일산서구 → 일산
+            add((city.split("시", 1)[1],), _center(f"{province} {city}", province, gu_areas))
+    for (province, city), gu_areas in merged.items():
+        add(_MERGED_CITIES[(province, city)][1], _center(f"{province} {city}", province, gu_areas))
     return {name: tuple(areas.values()) for name, areas in index.items()}

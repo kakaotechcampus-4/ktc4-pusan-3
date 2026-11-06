@@ -4,6 +4,7 @@
     ② 결정 전이라도 24시간이 지나면 만료다 (저장하지 않고 읽을 때 판정)
     ③ 끝난 제안 · 만료된 제안은 끝낼 수 없다 — 두 번 눌러도 한 번만, 만료 뒤에는 못 지운다
     ④ AI 가 고른 id 는 후보 안에 있어야 한다
+    ⑤ 탭 하나의 후보는 TAB_MAX_IDS 건까지다 — 확정 요청의 id 상한이 이 값을 믿는다
 
 아이 정보는 전부 가짜 값이다 (루트 CLAUDE.md §9).
 """
@@ -17,6 +18,7 @@ from app.domains.child.models import Child, ParentChild, ParentChildRelation
 from app.domains.delete_proposal.models import DeleteProposalStatus
 from app.domains.delete_proposal.repository import (
     PROPOSAL_TTL,
+    TAB_MAX_IDS,
     ProposalTab,
     add_proposal,
     effective_status,
@@ -124,3 +126,22 @@ async def test_picked_must_be_candidate(session, family):
             tabs=[_tab("a", picked=("b",))],
             now=NOW,
         )
+
+
+async def test_tab_holds_at_most_max_ids(session, family):
+    owner, _, child = family
+    ids = tuple(str(uuid.uuid4()) for _ in range(TAB_MAX_IDS + 1))
+
+    async def propose(tab_ids):
+        return await add_proposal(
+            session,
+            parent_id=owner,
+            child_id=child,
+            run_id=uuid.uuid4().hex,
+            tabs=[_tab(*tab_ids)],
+            now=NOW,
+        )
+
+    await propose(ids[:TAB_MAX_IDS])
+    with pytest.raises(ValueError):
+        await propose(ids)

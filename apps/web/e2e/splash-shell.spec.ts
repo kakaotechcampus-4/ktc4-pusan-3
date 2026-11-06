@@ -70,7 +70,7 @@ test.describe("로그인하지 않은 채로", () => {
     page,
   }) => {
     await page.goto("/");
-    await expect(page.getByRole("button", { name: "카카오로 시작하기" })).toBeEnabled();
+    await expect(page.getByRole("button", { name: "카카오로 시작하기" }).first()).toBeEnabled();
 
     await expect.poll(() => splashSent(page)).toHaveLength(1);
     expect(await splashSent(page)).toEqual([{ path: "/", checking: false, loginDisabled: false }]);

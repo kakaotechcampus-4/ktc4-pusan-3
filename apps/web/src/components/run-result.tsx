@@ -31,12 +31,12 @@ import {
   askedQuestion,
   blockCandidates,
   blockReadouts,
+  medicationHref,
   partialRetryHref,
   visibleAgentResults,
   type BlockCandidates,
 } from "@/lib/agent-result";
 import { cn } from "@/lib/cn";
-import { PENDING_SERVER_FEATURES } from "@/lib/features";
 import { CONFIDENCE_LABEL } from "@/lib/confidence";
 import type { RunState } from "@/hooks/use-run-stream";
 import type {
@@ -56,6 +56,7 @@ import {
   type StoredRef,
 } from "@/lib/api/types";
 import { formatEventTime, formatTimeOfDay } from "@/lib/format";
+import { healthMoment, healthTitle, temperatureLabel } from "@/lib/health-observation";
 import { FORWARD } from "@/lib/view-transition";
 
 /**
@@ -528,7 +529,7 @@ export function partialMessage(partial: PartialEvent, savedSomething: boolean): 
  * 🚨 **전달 서류(`med_notice_form` · `emergency_card`)는 body 그대로 + 복사 버튼이다.** 우리가 대신 보내지 않는다 —
  *    복사해서 보호자가 직접 전한다. 응급 카드의 "불러오지 못했어요" 줄을 "없음" 처럼 바꾸지 않는다 (body 를 다시 쓰지 않는다).
  * 🚨 **`dose_status` 는 사실만 나가는 칸이다.** 먹여도 된다는 뜻으로 읽힐 표시(초록 체크 · 색)를 붙이지 않는다 —
- *    체크하는 곳(복약 화면)으로 가는 길만 둔다.
+ *    체크하는 곳(복약 화면)으로 가는 길만 둔다. "먹였어" 의 체크 안내에도 같은 길이 선다 (`medicationHref` · #713).
  */
 function AgentResultCard({
   childId,
@@ -547,8 +548,7 @@ function AgentResultCard({
   } | null;
 }) {
   const readouts = blockReadouts(result);
-  // 🚨 복약 화면이 실서버에 생기기 전에는 링크를 세우지 않는다 (`lib/features.ts` · #537).
-  const showsDoseStatus = readouts.some((readout) => readout.kind === "dose_status");
+  const medicationLink = medicationHref(childId, readouts);
   return (
     <Card>
       <div className="flex items-start gap-3">
@@ -581,10 +581,10 @@ function AgentResultCard({
               {COPYABLE_READOUTS.has(readout.kind) ? <CopyReadout readout={readout} /> : null}
             </div>
           ))}
-          {/* 복용 체크는 복약 화면에서만 한다 — 기록이 생기는 곳이 한 곳이다 (#537). */}
-          {showsDoseStatus && PENDING_SERVER_FEATURES.medications ? (
+          {/* 복용 체크는 복약 화면에서만 한다 — 기록이 생기는 곳이 한 곳이다 (#537). 가리키는 코스가 하나면 그 코스로 (#713). */}
+          {medicationLink ? (
             <ButtonLink
-              href={`/child/${childId}/profile/medications`}
+              href={medicationLink}
               variant="secondary"
               size="compact"
               className="mt-3"
@@ -1108,11 +1108,14 @@ const NO_REFS: readonly StoredRef[] = [];
  */
 function ObservationRow({ observation }: { observation: Observation }) {
   const wrong = observation.status === "inactive";
+  // 먹인 약 행은 증상이 비어 온다 — 약 이름이 제목을 받는다 (#551). 체온은 숫자만 옮기고,
+  // 시각은 본 시각이 없으면 잰 시각으로 받친다(`healthMoment`)
+  const moment = isHealthObservation(observation) ? healthMoment(observation.domain_fields) : null;
   const detail = isHealthObservation(observation)
     ? [
-        observation.domain_fields.symptom?.join(", "),
-        observation.domain_fields.observed_time &&
-          formatTimeOfDay(observation.domain_fields.observed_time),
+        healthTitle(observation.domain_fields),
+        temperatureLabel(observation.domain_fields),
+        moment && formatTimeOfDay(moment),
       ]
         .filter(Boolean)
         .join(", ")

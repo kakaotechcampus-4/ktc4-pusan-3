@@ -38,6 +38,12 @@ class AgentContext:
     store: MemoryStore
     # 일정 초안 버퍼(frozen이어도 안의 내용을 tool이 채움)
     drafts: DraftBook = field(default_factory=DraftBook)
+    # 이번 run 에서 보호자가 실제로 한 말. run() 이 채운다 — 만드는 쪽은 넘기지 않는다.
+    # tool 인자의 raw_text 는 모델이 옮겨 적은 글이라 "말한 그대로" 의 기준이 못 된다 (#551)
+    utterance: str | None = None
+    # 이 아이의 진행 중 복약 코스 이름. pipeline 이 기록 단계 전에 채운다. 코스를 못 읽었으면 비어
+    # 있고, 그러면 먹인 약을 평소처럼 기록한다 — 투약이 두 번 남는 쪽이 기록이 사라지는 쪽보다 낫다
+    registered_medicines: tuple[str, ...] = ()
     # 이 run 의 id. 삭제 제안이 run 하나에 하나인지를 store 가 이 값으로 막는다 (#535)
     run_id: str = ""
     # 종류(`observation_food` … · `event`)별 마지막 조회 결과 (#535). 조회 tool 이 채우고,

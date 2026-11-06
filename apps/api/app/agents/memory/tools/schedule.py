@@ -355,7 +355,10 @@ async def update_event_item(context: AgentContext, args: EventItemUpdate) -> Too
             return _gone_after_check(args.item_id)
         # 이름이 그대로면 결과는 챙김만 한 호출과 같다. 이름 쪽의 changed=[] 를 내면
         # 모델이 방금 한 체크를 "이미 되어 있었다"로 읽는다
-        return checked if renamed.data.get("changed") == [] else renamed
+        if renamed.data.get("changed") == []:
+            return checked
+        # 이름 초안에도 챙김 전 값을 싣는다. 없으면 방금 한 체크가 결과에서 사라진다
+        return ok("update", EVENT_ITEM, **renamed.data, was_prepared=checked.data["was_prepared"])
     return await _rename_event_item(context, current, args)
 
 
@@ -387,7 +390,16 @@ async def _check_event_item(
     if row is None:
         return fail("update", EVENT_ITEM, ErrorCode.TARGET_NOT_FOUND, _item_not_found())
     _sync_checked(context, row)
-    return ok("update", EVENT_ITEM, draft=False, item_id=row.item_id, is_prepared=row.is_prepared)
+    # 챙김 전 값도 싣는다. 이미 체크된 것을 다시 체크했는지를 보호자에게 갈 말을 정할 때 본다
+    # (#678 리뷰)
+    return ok(
+        "update",
+        EVENT_ITEM,
+        draft=False,
+        item_id=row.item_id,
+        is_prepared=row.is_prepared,
+        was_prepared=current.is_prepared,
+    )
 
 
 def _sync_checked(context: AgentContext, row: EventItemRow) -> None:
