@@ -7,10 +7,11 @@
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from typing import Literal
+from zoneinfo import ZoneInfo
 
-from sqlalchemy import ColumnElement, and_, delete, exists, func, or_, select, update
+from sqlalchemy import ColumnElement, and_, delete, exists, func, or_, select, tuple_, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -194,11 +195,17 @@ async def stop_schedule(
     return "already" if exists is not None else "missing"
 
 
-# 멈춘 코스에서 멈추기 전에 예정된 회차 (`dose_date` + `scheduled_time` 은 한국 시간이다)
+_KST = ZoneInfo("Asia/Seoul")
+
+# 회차의 예정 시각(timestamptz). `dose_date` + `scheduled_time` 은 한국 시간이다
+_scheduled_at = func.timezone(
+    "Asia/Seoul", MedicationDose.dose_date + MedicationDose.scheduled_time
+)
+
+# 멈춘 코스에서 멈추기 전에 예정된 회차
 _before_stop = and_(
     MedicationSchedule.status == MedicationStatus.STOPPED,
-    func.timezone("Asia/Seoul", MedicationDose.dose_date + MedicationDose.scheduled_time)
-    <= MedicationSchedule.updated_at,
+    _scheduled_at <= MedicationSchedule.updated_at,
 )
 
 
@@ -434,3 +441,118 @@ async def existing_dose_keys(
         )
     )
     return {(row.dose_date, row.scheduled_time) for row in rows}
+
+
+def _kst_slot(at: datetime) -> tuple[date, time]:
+    """한국 (날짜, 시각) — 회차의 (`dose_date`, `scheduled_time`) 와 비교한다."""
+    kst = at.astimezone(_KST)
+    return kst.date(), kst.time()
+
+
+@dataclass(frozen=True)
+class DueDose:
+    """지금 울릴 회차 1개와 받을 보호자. 발송(`workers/medication_dispatch`)이 기기를 고른다.
+
+    🚨 약 이름 · 용량은 싣지 않는다 — 푸시 문구에 넣지 않는다(#577).
+    """
+
+    dose_id: uuid.UUID
+    child_id: uuid.UUID
+    dose_date: date
+    """한국 날짜 — 알림을 누르면 여는 화면의 날짜다."""
+    parent_ids: tuple[uuid.UUID, ...]
+    """예정 시각 전에 알림을 켠 구독자. 기기 · 스위치는 아직 보지 않았다."""
+
+
+async def claim_due_doses(
+    session: AsyncSession, *, now: datetime, stale_after: timedelta
+) -> list[DueDose]:
+    """예정 시각이 (now - stale_after, now] 인 회차를 맡고 `notice_sent_at` 을 찍는다 (#749).
+
+    창은 한국 (날짜, 시각) 의 행 비교로 건다 — 자정을 걸쳐도 맞고, 인덱스
+    (`medication_dose_notice_due_idx`)의 범위 조건이 된다. 한국 시간은 서머타임이 없어 예정 시각
+    (`_scheduled_at`)으로 비교하는 것과 같다. 커밋은 부르는 쪽이 한다.
+
+    맡는 회차는 모두 만족한다.
+    - 코스가 멈추지 않았다(`active`). 멈추기 전에 예정된 회차는 이미 지나 창 밖이다
+    - 아직 체크하지 않았고, 아직 맡지 않았다
+    - **예정 시각 전에 알림을 켠 구독자가 한 명 이상** 있다. 없으면 맡지 않는다 — 그 뒤에 누가
+      켜도 켠 시각보다 앞선 회차라 울리지 않는다
+
+    - 보내기 **전에** 찍는다. 보내다 죽어도 다시 보내지 않는다 — 두 번 울리느니 한 번 빠진다
+      (일정 알림 `claim_due_reminders` 와 같다).
+    - `SKIP LOCKED` — 배치가 겹쳐도 한 회차를 둘이 맡지 않고, 체크 · 수정이 쥔 회차는 기다리지
+      않고 넘긴다. 체크 중이던 회차는 다음 차례에 체크됐으면 빠진다.
+    """
+    start, end = _kst_slot(now - stale_after), _kst_slot(now)
+    subscribed_before = (
+        select(MedicationNoticeSubscription.id)
+        .where(
+            MedicationNoticeSubscription.schedule_id == MedicationDose.schedule_id,
+            MedicationNoticeSubscription.subscribed_at <= _scheduled_at,
+        )
+        .exists()
+    )
+    rows = (
+        await session.execute(
+            select(MedicationDose.id, MedicationSchedule.child_id, MedicationDose.dose_date)
+            .join(MedicationSchedule, MedicationSchedule.id == MedicationDose.schedule_id)
+            .where(
+                MedicationDose.notice_sent_at.is_(None),
+                tuple_(MedicationDose.dose_date, MedicationDose.scheduled_time) > start,
+                tuple_(MedicationDose.dose_date, MedicationDose.scheduled_time) <= end,
+                MedicationDose.checked_at.is_(None),
+                MedicationSchedule.status == MedicationStatus.ACTIVE,
+                subscribed_before,
+            )
+            .with_for_update(of=MedicationDose, skip_locked=True)
+        )
+    ).all()
+    if not rows:
+        return []
+    ids = [r.id for r in rows]
+    await session.execute(
+        update(MedicationDose).where(MedicationDose.id.in_(ids)).values(notice_sent_at=now)
+    )
+    subscribers: dict[uuid.UUID, list[uuid.UUID]] = {i: [] for i in ids}
+    for dose_id, parent_id in await session.execute(
+        select(MedicationDose.id, MedicationNoticeSubscription.parent_id)
+        .join(
+            MedicationNoticeSubscription,
+            MedicationNoticeSubscription.schedule_id == MedicationDose.schedule_id,
+        )
+        .where(
+            MedicationDose.id.in_(ids),
+            MedicationNoticeSubscription.subscribed_at <= _scheduled_at,
+        )
+        .order_by(MedicationNoticeSubscription.parent_id)
+    ):
+        subscribers[dose_id].append(parent_id)
+    return [
+        DueDose(dose_id, child_id, dose_date, tuple(subscribers[dose_id]))
+        for dose_id, child_id, dose_date in rows
+    ]
+
+
+async def still_due_for(session: AsyncSession, *, dose_id: uuid.UUID, parent_id: uuid.UUID) -> bool:
+    """보내기 바로 직전에 다시 본다 — 그 보호자가 아직 이 코스를 구독하고, 회차가 아직 체크되지
+    않았고, 코스가 멈추지 않았나 (#749).
+
+    맡은 뒤 보내는 사이 알림을 끄거나 · 연결을 끊거나(구독이 지워진다) · 다른 보호자가 체크하거나 ·
+    코스가 멈출 수 있다. 기기 · 로그인 · 스위치는 `notification.still_medication_target` 이 본다.
+    """
+    found = await session.scalar(
+        select(MedicationDose.id)
+        .join(MedicationSchedule, MedicationSchedule.id == MedicationDose.schedule_id)
+        .join(
+            MedicationNoticeSubscription,
+            MedicationNoticeSubscription.schedule_id == MedicationDose.schedule_id,
+        )
+        .where(
+            MedicationDose.id == dose_id,
+            MedicationDose.checked_at.is_(None),
+            MedicationSchedule.status == MedicationStatus.ACTIVE,
+            MedicationNoticeSubscription.parent_id == parent_id,
+        )
+    )
+    return found is not None

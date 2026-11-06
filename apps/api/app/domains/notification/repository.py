@@ -151,17 +151,28 @@ async def schedule_push_targets(
     - 로그인이 만료된 기기는 뺀다. 만료된 로그인은 하루 한 번 정리 배치가 지우는데, 그 전까지
       남아 있는 기기로 보내지 않는다 (인증 판정과 같은 경계 `<=`).
     """
+    return await _push_targets(session, _schedule_targets(now), parent_ids=parent_ids)
+
+
+async def medication_push_targets(
+    session: AsyncSession, *, parent_ids: list[uuid.UUID], now: datetime
+) -> dict[uuid.UUID, list[tuple[uuid.UUID, str]]]:
+    """복약 알림을 받을 기기 (#749). `schedule_push_targets` 와 같고 스위치만 복약 알림이다."""
+    return await _push_targets(session, _medication_targets(now), parent_ids=parent_ids)
+
+
+async def _push_targets(
+    session: AsyncSession, targets: Select, *, parent_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, list[tuple[uuid.UUID, str]]]:
     if not parent_ids:
         return {}
-    stmt = (
-        _schedule_targets(now)
-        .where(PushDevice.parent_id.in_(parent_ids))
-        .order_by(PushDevice.parent_id, PushDevice.id)
+    stmt = targets.where(PushDevice.parent_id.in_(parent_ids)).order_by(
+        PushDevice.parent_id, PushDevice.id
     )
-    targets: dict[uuid.UUID, list[tuple[uuid.UUID, str]]] = {}
+    found: dict[uuid.UUID, list[tuple[uuid.UUID, str]]] = {}
     for parent_id, device_id, token in await session.execute(stmt):
-        targets.setdefault(parent_id, []).append((device_id, token))
-    return targets
+        found.setdefault(parent_id, []).append((device_id, token))
+    return found
 
 
 async def still_schedule_target(
@@ -179,10 +190,48 @@ async def still_schedule_target(
     계정으로 로그인한 공용 기기에 앞 보호자의 알림(아이 · 일정 id)이 간다. 이 확인과 발송 사이의
     짧은 틈은 남는다 — 보내는 동안 행을 잡으면 로그아웃이 FCM 응답을 기다리게 돼서 잡지 않는다.
     """
-    stmt = _schedule_targets(now).where(
+    return await _still_target(
+        session,
+        _schedule_targets(now),
+        parent_id=parent_id,
+        device_id=device_id,
+        token=device_token,
+    )
+
+
+async def still_medication_target(
+    session: AsyncSession,
+    *,
+    parent_id: uuid.UUID,
+    device_id: uuid.UUID,
+    device_token: str,
+    now: datetime,
+) -> bool:
+    """`still_schedule_target` 의 복약 알림 판 (#749) — 스위치만 복약 알림이다.
+
+    구독 · 회차는 여기서 보지 않는다(`medication.still_due_for`).
+    """
+    return await _still_target(
+        session,
+        _medication_targets(now),
+        parent_id=parent_id,
+        device_id=device_id,
+        token=device_token,
+    )
+
+
+async def _still_target(
+    session: AsyncSession,
+    targets: Select,
+    *,
+    parent_id: uuid.UUID,
+    device_id: uuid.UUID,
+    token: str,
+) -> bool:
+    stmt = targets.where(
         PushDevice.id == device_id,
         PushDevice.parent_id == parent_id,
-        PushDevice.device_token == device_token,
+        PushDevice.device_token == token,
     )
     return (await session.execute(stmt)).first() is not None
 
@@ -190,6 +239,19 @@ async def still_schedule_target(
 def _schedule_targets(now: datetime) -> Select:
     """일정 알림을 받을 수 있는 기기 — 로그인이 살아 있고 그 보호자의 일정 알림이 켜져 있다."""
     enabled = func.coalesce(NotificationSetting.schedule_enabled, DEFAULT_SETTING.schedule_enabled)
+    return _live_devices(now, enabled)
+
+
+def _medication_targets(now: datetime) -> Select:
+    """복약 알림을 받을 수 있는 기기 — 로그인이 살아 있고 그 보호자의 복약 알림이 켜져 있다."""
+    enabled = func.coalesce(
+        NotificationSetting.medication_enabled, DEFAULT_SETTING.medication_enabled
+    )
+    return _live_devices(now, enabled)
+
+
+def _live_devices(now: datetime, enabled) -> Select:
+    """로그인이 살아 있고 `enabled` 스위치가 켜진 보호자의 기기."""
     return (
         select(PushDevice.parent_id, PushDevice.id, PushDevice.device_token)
         .join(AuthSession, AuthSession.id == PushDevice.session_id)
