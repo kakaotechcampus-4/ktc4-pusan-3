@@ -489,7 +489,19 @@ export const suggestionHandlers = [
         items: Array<{ item_id: string | null; item_name: string }>;
         suggestion_ids?: string[];
         reminder?: { lead: unknown } | null;
+        repeat?: { weekdays?: number[]; until?: string; label?: string };
       };
+
+      // 🚨 반복 일정(#738)은 요일과 끝 날짜가 다 있어야 한다. 문구는 서버 값이라 되돌려 받지 않는다 (`RepeatRequest`).
+      //    ⚠️ 서버 계약 전이다 — 회차로 펼치는 것은 실서버 몫이라 목은 첫 회차 한 건만 돌려준다.
+      if (
+        body.repeat &&
+        (!body.repeat.weekdays?.length || !body.repeat.until || "label" in body.repeat)
+      ) {
+        return apiError(400, "validation_failed", "요청 형식이 올바르지 않아요", {
+          fields: ["repeat"],
+        });
+      }
 
       // 🚨 일자 없이 제출되면 안 된다. 화면이 막지만 계약도 막는다 (규칙은 코드가 진다).
       //    실서버는 스키마가 `starts_at` 을 필수로 걸어 공통 검증 오류로 낸다.

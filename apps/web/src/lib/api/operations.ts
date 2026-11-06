@@ -32,6 +32,9 @@ import type {
   SubmitEventBody,
   InputLocation,
   SubmitEventResponse,
+  SubmitRepeatEventBody,
+  UpdateSeriesBody,
+  UpdateSeriesResponse,
   UpdateHealthSafetyRequest,
   UpdateHealthSafetyResponse,
 } from "./types";
@@ -265,7 +268,8 @@ export function createEventDrafts(
  */
 export function submitEventDraft(
   childId: string,
-  body: SubmitEventBody,
+  /** 🚨 반복 일정(#738)도 같은 경로다 — `repeat` 가 실리면 서버가 회차마다 펼친다. */
+  body: SubmitEventBody | SubmitRepeatEventBody,
   idempotencyKey: IdempotencyKey,
 ): Promise<SubmitEventResponse> {
   return api.post(idempotentPath.submitEvent(childId), body, { idempotencyKey });
@@ -294,4 +298,20 @@ export function updateEventDraft(
   idempotencyKey: IdempotencyKey,
 ): Promise<SubmitEventResponse> {
   return api.patch(idempotentPath.updateEvent(childId, eventId), body, { idempotencyKey });
+}
+
+/**
+ * 반복 묶음 고치기 초안을 반영한다 (#738). 🚨 **캘린더 쓰기라 게이트 ㉠ 이고, 키를 받는다** — 같은 게이트의 다른 메서드다.
+ *
+ * 🚨 오늘 이후 회차에만 적용되고, 서버는 `before` 와 달라진 값만 바꾼다 (`UpdateSeriesBody`).
+ * 🚨 `reminder` 를 싣지 않는다 — 수정 초안(`updateEventDraft`)과 같다. 걸린 알림은 회차마다 서버가 옮긴다.
+ * ⚠️ 경로와 본문은 서버 계약 전이다 (`idempotentPath.updateEventSeries`).
+ */
+export function updateEventSeries(
+  childId: string,
+  seriesId: string,
+  body: UpdateSeriesBody,
+  idempotencyKey: IdempotencyKey,
+): Promise<UpdateSeriesResponse> {
+  return api.patch(idempotentPath.updateEventSeries(childId, seriesId), body, { idempotencyKey });
 }

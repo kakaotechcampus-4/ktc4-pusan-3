@@ -187,6 +187,8 @@ export const SCHEMA_MAP: Record<string, MapValue> = {
         "웹 타입은 04 SSE 초안(app/core/event_draft.py)과 같이 쓴다. 이 응답은 create 초안만이라 서버가 싣지 않고, 화면은 없으면 비교를 안 그린다 (event-draft-card.tsx)",
       needs_review: "웹이 제안한 칸이고 서버는 아직 보내지 않는다 (types.ts 의 EventDraft 주석)",
       review_reason: "needs_review 와 같다",
+      repeat:
+        "04 SSE 반복 초안(#738 · core/event_draft.py 의 CreateRepeatEventDraft)에만 있다. 이 응답은 제안 초안이라 반복이 없다",
     },
   },
   EventBodyOut: "EventDraftFields",
@@ -216,7 +218,13 @@ export const SCHEMA_MAP: Record<string, MapValue> = {
   CalendarMonthResponse: "CalendarMonthResponse",
   CalendarDayOut: "CalendarDay",
   CalendarDayResponse: "CalendarDayResponse",
-  CalendarEventOut: "CalendarEvent",
+  CalendarEventOut: {
+    web: "CalendarEvent",
+    allow: {
+      series:
+        "반복 묶음의 회차 (#738). BE 가 캘린더 응답에 싣기 전이라 서버에 없다 — 실으면 이 줄을 뺀다 (types.ts 의 CalendarEvent.series)",
+    },
+  },
   EventItemOut: "EventItem",
   ReminderOut: "Reminder",
   ReminderLead: "ReminderLead",

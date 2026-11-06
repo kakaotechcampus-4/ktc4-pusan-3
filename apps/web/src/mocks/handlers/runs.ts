@@ -11,6 +11,7 @@ import {
   healthObservation,
   observations,
   routineObservation,
+  repeatRunDrafts,
   runEventDrafts,
   suggestions,
 } from "../fixtures";
@@ -795,7 +796,11 @@ async function* runScript(runId: string): AsyncGenerator<Uint8Array> {
    *    운동회는 5시로 옮겨줘"). 화면이 op 로 엔드포인트를 가르는지 여기서 확인된다.
    * ⚠️ 프레임 이름이 계약에 없다 — `sse.ts` 의 `DRAFT_EVENT_NAMES` 참고 (#151).
    */
-  if (intent !== "record") {
+  if (scenario === "event_repeat") {
+    // 🚨 반복 새 일정과 묶음 고치기가 한 프레임에 섞인다 (#738) — 카드가 `op` 로 갈리는지 본다.
+    yield frame("event_draft", { drafts: repeatRunDrafts() });
+    await sleep(300);
+  } else if (intent !== "record") {
     // 🚨 `event` 는 새 일정 한 장만, `both` 는 create·update 두 장이다 — 한 장일 때와
     //    여러 장일 때 화면이 다르다(넘기는 줄이 서는가). 둘 다 확인할 수 있어야 한다.
     yield frame("event_draft", {
