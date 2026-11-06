@@ -66,6 +66,7 @@ def test_정해진_필드만_노출한다() -> None:
         "agent",
         "food_task",
         "growth_task",
+        "health_task",
         "guard",
     }
 
@@ -452,3 +453,41 @@ def test_food_check_조각을_받고_route_스펙에도_있다() -> None:
     )
     assert segment.food_task == "food_check"
     assert "food_check" in json.dumps(ROUTE_TOOL_SPEC, ensure_ascii=False)
+
+
+def test_health_조각은_라벨을_그대로_둔다() -> None:
+    parsed = _output(
+        {
+            "text": "아까 약 먹였어",
+            "kind": "request",
+            "agent": "health",
+            "health_task": "medication",
+        }
+    ).segments[0]
+    assert (parsed.agent, parsed.health_task) == ("health", "medication")
+
+
+def test_health_라벨이_비어도_거절하지_않고_채우지도_않는다() -> None:
+    # 엉뚱한 라벨을 채우면 복약 쓰기 경로가 열린다. 비워 두면 Health 가 unsupported 로 닫는다
+    segment = Segment.model_validate({"text": "약", "kind": "request", "agent": "health"})
+    assert segment.health_task is None
+
+
+def test_health_가_아닌_조각의_health_task_는_지운다() -> None:
+    parsed = _output(
+        {
+            "text": "간식 추천해줘",
+            "kind": "request",
+            "agent": "food",
+            "food_task": "meal_recommendation",
+            "health_task": "medication",
+        }
+    ).segments[0]
+    assert parsed.health_task is None
+
+
+def test_모르는_health_task_는_지운다() -> None:
+    parsed = _output(
+        {"text": "병원 찾아줘", "kind": "request", "agent": "health", "health_task": "hospital"}
+    ).segments[0]
+    assert (parsed.agent, parsed.health_task) == ("health", None)

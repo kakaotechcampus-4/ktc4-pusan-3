@@ -20,6 +20,7 @@ Activity는 쓰기 포트가 없다 — 기록은 Memory가, 추천 저장은 �
 | ActivityDocReader | activity_doc — 월령 슬라이스 + 의미 검색 |
 | WeatherSource | 기상청 단기예보 · 에어코리아 · 생활기상지수 · 기상특보 |
 | PlaceSource | 적재한 place 테이블 — 공원 · 어린이놀이시설 · 도서관. 외부 API 없음 (D9) |
+| EventSource | 한국관광공사 TourAPI 축제공연행사 — 전국 목록 · 소개정보. 위치를 받지 않는다 |
 """
 
 from dataclasses import dataclass, field
@@ -30,6 +31,7 @@ from uuid import UUID
 from app.agents.activity.schemas.common import (
     ActivitySetting,
     CaregiverRole,
+    EventKind,
     Intensity,
     PlaceCategory,
 )
@@ -39,6 +41,7 @@ from app.agents.common.ports import (
     ConsentReader,
     SafetyLookupError,
 )
+from app.core.event_raw import RawEvent, RawEventIntro
 from app.core.weather_raw import RawAdvisories, RawAir, RawForecast, WeatherGrid
 from app.core.weather_raw import RawAdvisoryRow as RawAdvisoryRow  # 다시 내보낸다
 
@@ -201,6 +204,30 @@ class PlaceRow:
     data_date: date | None
 
 
+# 행사도 장소와 같은 반경에서 가까운 순으로 몇 건만 준다 (잠정 — eval 로 조정한다). 관람 연령을
+# 보려고 소개정보를 묻는 것은 가까운 것부터 `EVENT_INTRO_LIMIT` 건까지다 — 연령으로 빠지는 행사가
+# 있어도 몇 건은 남게 넉넉히 묻고, 한 번에 수십 건을 부르지 않게 끊는다
+EVENT_MAX_RADIUS_M = PLACE_MAX_RADIUS_M
+EVENT_TOP_K = 5
+EVENT_INTRO_LIMIT = EVENT_TOP_K * 2
+
+
+@dataclass(frozen=True)
+class EventRow:
+    """행사 한 건. 화이트리스트 필드만 — 요금 · 연락처 · 링크 · 이미지는 싣지 않는다.
+
+    `distance_m` 은 행사 좌표와 기준점 사이를 서버가 계산한 값이다. 🚨 모델에는 주지 않는다 —
+    tool 결과는 이름 · 종류 · 기간 · 장소뿐이다(`tools/outing.py`).
+    """
+
+    name: str
+    kind: EventKind
+    starts_on: date
+    ends_on: date
+    place: str  # 행사 장소 원문(eventplace). 비어 있을 수 있다
+    distance_m: int
+
+
 class SafetyReader(Protocol):
     async def activity_safety(self, *, child_id: UUID) -> list[SafetyEntry]:
         """`allergy` · `environmental` 행을 status 무관하게 돌려준다. 거르는 것은 호출부다.
@@ -298,6 +325,22 @@ class PlaceSource(Protocol):
         ...
 
 
+class EventSource(Protocol):
+    """TourAPI 축제공연행사. 어댑터는 호출 · 캐시까지만 하고 값은 원문 그대로 넘긴다.
+
+    🚨 위치를 받지 않는다. 전국 목록을 넘기고 거리 계산 · 거르기는 Activity(`events.py`)가 한다 —
+    보호자 위치가 외부 API 로 나가지 않는다 (4-3). 실패는 각자 UpstreamUnavailable.
+    """
+
+    async def events(self, *, ending_on_or_after: date) -> list[RawEvent]:
+        """그날 이후에 끝나는 전국 행사(진행 중인 것 포함)."""
+        ...
+
+    async def intro(self, *, content_id: str) -> RawEventIntro:
+        """행사 하나의 관람 연령 · 장소."""
+        ...
+
+
 @dataclass(frozen=True)
 class ActivityPorts:
     """Activity Agent 가 요청 하나를 처리하는 동안 쥐는 포트 묶음."""
@@ -310,3 +353,4 @@ class ActivityPorts:
     docs: ActivityDocReader
     weather: WeatherSource | None = None  # None 이면 조회 실패와 같다 — 실내만
     places: PlaceSource | None = None  # None 이면 장소가 필요 없는 활동만
+    events: EventSource | None = None  # None 이면 행사를 찾지 않는다

@@ -46,14 +46,14 @@
 
 [배치 · 매일 새벽] 식약처 식품영양성분DB 품목대표 전체 ──▶ menu_catalog   (요청 중 조회와 같은 행 고르기, §0-7)
 
-[배치] 농식품정보원 레시피 기본 · 재료정보 ──▶ 재료명 정리 표(사람 검수) ──▶ recipe_catalog (추천 후보만)
+[배치] 농식품정보원 레시피 · 농촌진흥청 이달의 식재료 레시피 ──▶ 재료명 정리 표(사람 검수) ──▶ recipe_catalog (추천 후보만)
           재료 → 알레르기 19종 코드 (코드 사전 + 정리 표). 검수 전 재료가 있으면 resolved=false
           식품분류 → 6개 식품군 (영양DB 행: `reference/food_groups.yaml` 의 메뉴 이름 · 대분류 이름 · 원재료성 코드 줄, 없으면 이름이 같은 레시피의 주재료 식품군 — #459 · #420. 레시피 행: 재료 정리 표의 주재료 칸 — #396)
 ```
 
 **두 표를 뗀다**(10-11, #326 리뷰). `menu_catalog` 는 급식 · 기록 · 영양 판정용이고 레시피 재료를 싣지 않는다. 레시피는 추천 후보용 `recipe_catalog` 에만 있다 — 레시피 재료로 급식 메뉴를 판정하면 어린이집이 실제로 넣은 재료를 표준 레시피가 "없음" 으로 덮는다([`food_agent_own_table.md`](food_agent_own_table.md) §1-1).
 
-레시피 DB 는 요청 중에 부르지 않는다 — 호출 한도(농식품정보원 하루 1,000회)가 서비스 전체 상한이 된다. 식약처 COOKRCP01 은 재료가 자유 텍스트라 파싱 · 검수 비용이 커서 보류했다(10-11).
+레시피 DB 는 요청 중에 부르지 않는다 — 호출 한도(농식품정보원 하루 1,000회 · 농촌진흥청 개발 계정 하루 10,000건)가 서비스 전체 상한이 된다. 식약처 COOKRCP01 은 재료가 자유 텍스트라 파싱 · 검수 비용이 커서 보류했다(10-11).
 
 ### 0-3. `menu_catalog` (메뉴 카탈로그)
 
@@ -61,7 +61,7 @@
 | --- | --- |
 | `menu_key` | 정규화 메뉴명 (공백·괄호·알레르기 번호 제거, 동의어 치환) · PK. 번호는 떼기만 하고 읽지 않는다 — 떼지 않으면 "카레라이스(2.5.6)" 가 카탈로그에서 안 찾아져 영양 계산에서 빠진다 |
 | `food_code` | 식약처 식품코드 (없으면 NULL) |
-| `source` | `mfds_nutri` · `center_standard` · `manual`. 레시피(`mafra_recipe` · 보류한 COOKRCP01)는 `recipe_catalog` 에 둔다 |
+| `source` | `mfds_nutri` · `center_standard` · `manual`. 레시피(`mafra_recipe` · `nics_recipe` · 보류한 COOKRCP01)는 `recipe_catalog` 에 둔다 |
 | `serving_g` | 1인분 중량 — **성인 기준**. 영양DB 원재료성 · 가공식품 품목대표는 대부분 비어 있다(우유 · 두유 · 백김치 — 10-11 측정). 비면 모르는 양이고 100g 으로 가정하지 않는다 — 그 메뉴는 영양 합계에서 빼고 식품군 계산에만 쓴다(1차 배포, [`영양소_계산_설계.md`](영양소_계산_설계.md) §4) |
 | `nutrients` | jsonb — 100g 기준. 에너지 · 단백질 · 지방 · 탄수화물 · 칼슘 · 철 · 나트륨은 다 차야 해석하고, 당류 · 포화지방은 있으면 싣는다(10-11). 식품영양성분DB 에서만 채운다 |
 | `ingredients` | text[] — 사람이 확인한 재료만(`manual`). 영양DB 행은 비어 있다. 레시피 재료는 싣지 않는다 |
@@ -115,6 +115,7 @@ recipe_catalog  (resolved · 재료 있는 행만 — menu_catalog 가 아니다
   걸러진 menu_key를 풀에서 빼고 재샘플링 → 모델 재호출 1회 (이 경우에만)
 ```
 
+- **기억은 모델을 부르기 전에 코드가 먼저 읽는다**(#662). 후보 목록 곁에 `[아이 기록 후보]` 로 `search_food_memory` 와 같은 규칙의 기본 검색 결과(최근 14일 관찰 + 유효한 선호, 상위 10건 — `kind` · `id` · `tier` · `label` · `polarity` · 날짜 · `is_stale`, 원문 없음)를 싣고 `seen_evidence` 에 적는다. 등록 알레르기 · 연령 금지와 겹치는 이름의 기록(알레르기를 나중에 등록한 아이의 옛 선호 기록)은 `filter_food_safety` 로 걸러 모델에게 보이지도 `seen_evidence` 에 적지도 않는다 — 인용하면 `EVIDENCE_REQUIRED` 다. 0건이면 `(인용 가능한 최근 기록 없음)` 이라고 적는다. 모델이 검색 도구를 불러야만 인용할 수 있던 때는 첫 응답이 곧바로 `propose_meal_candidates` 면 기록이 있어도 전부 일반 추천이 됐다. 개인화 여부는 그대로 **모델이 인용한 아이 기록**으로 정한다 — 누적 건수로 정하지 않고, 선조회 결과가 있어도 후보와 무관하면 일반 추천이며, 코드가 근거를 대신 붙이지 않는다. 선조회 근거가 있는데 하나도 인용하지 않은 일반 추천은 로그(`Food 추천 근거` — prefetched · seen · cited · personalized · general · model_search 건수만, run_id 외 이름 · 원문 없음)와 경고로 센다.
 - **기피는 풀에서 빼지 않는다.** 기피는 가중치를 낮추고 `reason`을 쓰는 값이지 후보를 지우는 값이 아니다. 풀에서 빼는 것은 §3 음식 안전 수칙이 막거나(`blocked`) 확인하지 못한(`unchecked`) 메뉴뿐이다. 막힌 메뉴 중 제품마다 다른 성분 때문에만 막힌 것(`needs_check`)은 식단 추천을 구현할 때 확인 필요로 내보낸다(§3 의 5). 질식 주의 식품은 빼지 않고 문구도 달지 않는다(10-13 결정 — 어른이 곁에서 지켜본다는 전제). 섭취 확인(`food_check`) 답만 한 줄 낸다(#575 PM 결정, §1).
 - **부족 식품군은 기피보다 세다.** `evaluate_nutrient_bands`가 `low`로 판정한 식품군은 기피 가중치를 상쇄하고 풀 상단에 남는다. 채소 기피 아이에게 채소가 부족하면 채소가 든 메뉴가 후보에 올라와야 하고, 모델은 그중 선호(계란 등)와 겹치는 형태를 고른다 — [`Food_Agent_명세.md`](Food_Agent_명세.md) §6.
 - 모델은 **풀 밖 메뉴를 낼 수 없다** (`menu_key` 검증). F-1 해소: 재료는 모델이 아니라 카탈로그에서 온다.
@@ -133,6 +134,7 @@ recipe_catalog  (resolved · 재료 있는 행만 — menu_catalog 가 아니다
 | 식약처 **식품영양성분DB정보** (`FoodNtrCpntDbInfo03`) — data.go.kr/data/15127578 | 음식 · 가공식품 · 원재료성 331,212행 — 식품코드 · 분류 · 100g 기준 영양 · 식품중량 | `menu_catalog.nutrients` · `serving_g` — 매일 새벽 배치(품목대표 전체) + 요청 중 캐시 미스 | 이용허락 제한 없음. 클라이언트 `app/integrations/mfds/` · 키 `DATA_GO_KR_SERVICE_KEY`. 이름은 **포함 검색**이라 `DB_CLASS_NM=품목대표` 필터를 걸고 정확히 같은 이름만 고른다(§0-7) |
 | 식약처 **K-FIND** 식품영양성분 DB | 동일 DB 검색 서비스 (130여 종 성분) | 수동 검수 | 2026-07 출범 |
 | **농식품정보원 레시피** 기본 · 재료정보 — data.mafra.go.kr | 레시피 537건 · 재료 6,104행(재료명 · 용량 · 주재료/부재료/양념, `RECIPE_ID` 로 이어짐) | `recipe_catalog`(추천 후보)의 재료 · 알레르기 — **배치로만** | 클라이언트 `app/integrations/mafra/` · 키 `MAFRA_RECIPE_API_KEY`(호출 서버 IP 등록). 평문 HTTP · 키가 주소 경로에 들어가서 배치 한 곳에서만 부른다. 이용 조건 답 받음 — 상업 이용 · 변경 가능. 정리 표를 저장소에 두고 운영에 적재한다. 재료는 정리 표로 읽는다(own_table §1-1) |
+| **농촌진흥청 「농식품 이달의 식재료」 레시피** — data.go.kr/data/15168024 | 레시피 612건(12달 목록의 고유 `recipeSn`, 2026-11-04 호출. 10-18 에는 598건이었고 새 레시피가 늘고 있다). 재료는 `▶구간 : 재료, 재료` 한 줄 문자열(`matrlInfo`) | `recipe_catalog`(추천 후보)의 재료 · 알레르기 — **배치로만** (#510) | 클라이언트 `app/integrations/nics/` · 재료 문자열 파서 `app/core/recipe_materials.py` · 키 `NICS_RECIPE_API_KEY`(Decoding 키. 비면 그 소스를 건너뛰지만, 그 소스 레시피가 후보 풀에 있으면 적재가 멈춘다). 재료 문자열이 깨진 레시피는 그 레시피만 후보에서 뺀다. 월별 `recipeList` 12회 + 레시피별 `recipeCont`. 이용허락 제한 없음 · 개발 계정 하루 10,000건. 영양 · 조리법 · 이미지는 받지 않는다. 정리 표는 농식품정보원과 공유한다(own_table §1-1). 응답 모양은 2026-11-02 실호출로 확인했다(`response.body`, 성공 코드 `"200"`, 목록 `items.item`). 호출은 요청 간격 0.25초 · 동시 2개이고 429 · 연결 끊김은 같이 쉬었다 다시 부른다(NICS 만 162초) |
 | 식약처 **조리식품 레시피 DB** (COOKRCP01) — foodsafetykorea.go.kr | 레시피 1,156건(10-06 받은 CSV 기준) — 재료가 자유 텍스트 | **보류(10-11)** | 재료 파싱(FT-7) · 검수 비용이 커서 쓰지 않는다. 메뉴명도 변형 레시피 이름이다(FT-17). 농식품정보원이 거절되거나 후보 풀이 모자라면 다시 본다 |
 | 식약처 알레르기 표시 대상 19종 | 알류·우유·메밀·땅콩·대두·밀·고등어·게·새우·돼지고기·복숭아·토마토·아황산류·호두·닭고기·쇠고기·오징어·조개류·잣 | `ALLERGEN_CODES` 상수 | 번호 = 이 순서 |
 | 급식표 읽기 (사진 OCR · 센터 배포 엑셀) | 끼니별 메뉴 이름 | `daycare_meal` (급식의 유일한 경로) | 파이프라인 산출물(`MealPlanJSON.name`) 읽기만. 메뉴명에 붙은 알레르기 번호는 읽지 않는다 — 기관이 아이의 알레르기를 관리하고 보호자에게 미리 알린다. 저장 직후 대체·제외 메뉴 확인 안내. NEIS 는 쓰지 않는다(10-09) |
@@ -212,7 +214,7 @@ Health 는 다르다 — 거기는 건강 그 자체라 동의 없이 전 라벨
 
 | Tool | 입력 | 출력 | 규칙 |
 | --- | --- | --- | --- |
-| `search_food_memory` | `keywords[]?`, `period?: today·yesterday·last_3_days·this_week·last_7_days` | 섭취 기록 + food affinity 를 `rank_evidence` 순서로 상위 10개 — `kind` · `id` · `tier` · `label` · `polarity` · 날짜 · `is_stale`. 돌려준 것만 run state(`seen_evidence`)에 적는다 | 기간 라벨만, 날짜 직접 지정 불가. 비우면 최근 14일 관찰 + 선호 전체. 같은 음식의 관찰은 가장 최근 1건. 마지막 관찰이 6개월 넘은 선호는 `is_stale`. `raw_text` 없음. 0행이면 `NO_RECORDS` |
+| `search_food_memory` | `keywords[]?`, `period?: today·yesterday·last_3_days·this_week·last_7_days` | 섭취 기록 + food affinity 를 `rank_evidence` 순서로 상위 10개 — `kind` · `id` · `tier` · `label` · `polarity` · 날짜 · `is_stale`. 돌려준 것만 run state(`seen_evidence`)에 적는다 | 기간 라벨만, 날짜 직접 지정 불가. 비우면 최근 14일 관찰 + 선호 전체. 같은 음식의 관찰은 가장 최근 1건. 마지막 관찰이 6개월 넘은 선호는 `is_stale`. `raw_text` 없음. 0행이면 `NO_RECORDS`. 식단 추천은 모델 호출 전에 같은 검색을 인자 없이 한 번 먼저 한다(`prefetch_food_memory`) — 모델은 이 도구를 `keywords` 로 좁혀 선조회 목록 밖의 음식을 다시 찾는 데 쓴다 |
 | `analyze_meal_records` | `period`(같은 라벨), `meal_slots[]?` | 날짜별 `recorded` · `meals[]`(`source` home·daycare · `slot` · `menu` · `left`) · **기록 행 수** | `observation_food` + `daycare_meal`(오늘 이전)을 영양 판정과 같은 코드(`read_meal_records`)로 합쳐 읽는다 — 그날 급식이 있으면 기관 출처 관찰은 뺀다(N-10). 양은 숫자로 싣지 않고 남겼는지만 준다. 끼니 슬롯이 없으므로 "결측 끼니"를 세지 않고, 기록 없는 날은 `recorded=false` 로 남긴다. `meal_slots` 를 고르면 끼니를 아는 급식만 남기고 걸러 낸 집 기록 수를 `unslotted_omitted` 로 알린다 |
 | `check_repeated_menus` | `period` | 반복 메뉴 `{menu, days, last_on, sources}` · **기록 행 수** | 두 테이블을 합쳐 **서로 다른 날** 수를 센다(`REPEATED_MIN_DAYS = 3`, 코드 상수). 같은 날 두 번은 하루. 메뉴마다 집·기관 어느 쪽이었는지 표시. 반복 주재료는 아직 없다 |
 | `lookup_daycare_menu` | `day: yesterday·today·tomorrow` | 끼니별 `slot` · `origin` · `caregiver_checked` · `menus[]`(`menu_key` · **`allergy`: ok·blocked·unchecked**) · `allergy_checked: bool` — 걸린 알레르기 항목 이름 · 사유는 싣지 않는다 | 내부에서 `filter_food_safety` 호출 — 메뉴 이름 · 재료로 본다. 급식표에 인쇄된 알레르기 번호는 읽지 않는다. `menu_catalog` 만 본다 — 같은 이름 레시피의 재료로 판정하지 않는다. `health_safety` 조회 실패 → `allergy_checked=False` 와 전 메뉴 `unchecked`. 메뉴를 해석하지 못하거나 재료를 모르면(`unchecked`) 그 메뉴는 "확인 못 함"(통과가 아니다). 질식 주의 문구는 싣지 않는다. 대체·제외는 이미 `menu_keys`에 반영돼 있다. `caregiver_checked=False`면 "대체식 확인 전" · `origin='center_standard'`면 "참고 식단" 표시. **미래를 보는 유일한 읽기 tool** |
@@ -235,7 +237,8 @@ Health 는 다르다 — 거기는 건강 그 자체라 동의 없이 전 라벨
 | `resolve_menu` | 모든 메뉴 문자열 처리 전 | `name` → `MenuCatalogRow \| Unresolved` | 캐시 미스면 영양DB 를 정확한 이름으로 조회(§0-7, 레시피는 찾지 않는다). 못 찾거나 API 실패 → `unresolved`, 카탈로그에 남기지 않는다. 판정 한 번의 외부 조회 상한 · 호출별 timeout · 못 찾은 이름 기억 — [`food_agent_own_table.md`](food_agent_own_table.md) §1. 구현 `menu_resolver.py` |
 | `filter_food_safety` | 모델 호출 전(풀) · 후(출력) · 급식 조회 | `menus`, `health_safety`, `stage`, `months`, `purpose`(recommend · daycare, 기본 recommend) → `(passed, blocked, unchecked)` + `needs_check`(blocked 의 일부) · `cautions` · `allergens` · `checks` — §3 음식 안전 수칙 | `health_safety` 조회 실패 → `SAFETY_UNAVAILABLE` (식단 추천 중단) · 사전(yaml)을 못 읽으면 예외 — 잡아서 통과시키지 않는다 |
 | `check_foods` | 섭취 확인 답(`food_check`) · 식단 추천의 요청 글 안내 · 추천 `reason` 사후 검사 | `text`, `health_safety`, `stage`, `months` → 글에서 사전으로 찾은 음식 낱말마다 `FoodVerdict`(`conflicts` 등록 알레르기와 겹침 · `age_block` 막는 연령 규칙 · `caution` 질식 주의). 낱말을 보호자 등록 이름 사전(`read_label`)으로 펼쳐 대조하고(견과류 등록 ↔ 땅콩 · 호두 · 잣, 땅콩 등록 ↔ 견과류), 낱말이 든 어절(조사를 뗀 것)을 메뉴 행처럼 `filter_food_safety` 에 등록 행과 같이 걸어 합친다 — 메뉴 필터가 막는 이름은 여기서도 겹친다. 사전 낱말이 없는 어절은 먹이는 말 바로 앞일 때만 같은 필터로 본다. 연령도 같은 어절을 `filter_food_safety` 로 본다. 구현 `food_check.py` | 모델을 부르지 않는다. 못 찾음(사전에 없는 음식 · 조합 음식의 재료)은 괜찮다는 뜻이 아니다 — 호출부가 재료 확인 안내를 붙인다. 질식 주의는 섭취 확인 답에만 문구를 낸다(#575). 추천 이유 검사는 빗댄 말("꿀처럼")을 연령 규칙으로 막지 않는다 |
-| `rank_evidence` | `search_food_memory` 내부 | [`Tool_공통.md`](../shared/Tool_공통.md) §4 | – |
+| `rank_evidence` | `search_food_memory` · `prefetch_food_memory` 내부 | [`Tool_공통.md`](../shared/Tool_공통.md) §4 | – |
+| `prefetch_food_memory` | 식단 추천 모델 호출 전(후보 풀이 비면 부르지 않는다) | §0-5 — 구현 `tools/records.py`. 인자 없는 `search_food_memory` 와 같은 검색(`_find`)이라 기간 · 정렬 · 같은 음식 최신 1건 · 상위 10건이 갈라지지 않는다. 돌려준 것은 `seen_evidence` 와 `prefetched_evidence_ids` 에 적고 `memory_prefetched` 를 참으로 한다 | 0건이어도 `memory_prefetched` 는 참이다. 근거를 후보에 대신 붙이지 않는다. 모델이 도구로 부른 횟수(`memory_search_calls`)에는 세지 않는다 |
 | `build_candidate_pool` | 식단 추천 모델 호출 전 | §0-5 — 구현 `meal_pool.build_pool`. 이름이 같은 레시피는 하나로 묶고(알레르기 · 재료 합집합, 단계는 늦은 쪽), 막힌 것 · 확인 못 한 것(`needs_check` 포함) · 최근 3일 추천한 메뉴 · 단계가 안 맞는 것을 뺀다 | 풀 0개 → 일반 추천 템플릿 없이 "조건에 맞는 메뉴가 없어요". **기피로는 아무것도 빼지 않는다** — 빠지는 것은 알레르기·연령 금지 재료뿐 |
 | `select_kdri_group` | `compare_diet_balance` 내부 | `age_months` → `"1-2y"\|"3-5y"` (`nutrient_reference.age_group`과 같은 값) | – |
 | `compute_energy_target` | `compare_diet_balance` 내부 | `age_months` + 최근 `height`·`weight` → 권장 열량(내부 전용) | 측정 없음 → 연령군 일반값. 성별 입력 없음. 계산식 미정(성별 없는 식 선정 필요) |

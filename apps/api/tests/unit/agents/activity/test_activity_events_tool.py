@@ -1,0 +1,390 @@
+"""행사 조회 tool — 그날 열리는 행사를 가까운 순으로 몇 건만 · 바깥이 어려운 날은 찾지 않는다.
+
+- 어댑터는 위치를 받지 않는다. 전국 목록을 받아 거리는 서버가 계산한다.
+- 관람 연령은 가까운 것부터 상세를 물어 아이 월령으로 거른다. 상세를 못 읽은 행사는 뺀다.
+- 돌려준 행사는 run state 에 남는다. 출력 검증이 place_name 을 이 표와 대조한다.
+"""
+
+from datetime import UTC, date, datetime, timedelta, timezone
+from uuid import UUID
+
+import pytest
+
+from app.agents.activity.areas import find_area, find_province
+from app.agents.activity.context import ActivityContext, build_gate
+from app.agents.activity.result import ErrorCode
+from app.agents.activity.schemas.common import DayLabel, PlaceCategory
+from app.agents.activity.schemas.outing import SearchEventsArgs, SearchNearbyPlacesArgs
+from app.agents.activity.store.inmemory import InMemoryEvents, in_memory_ports
+from app.agents.activity.store.ports import EVENT_TOP_K, CoarseLocation
+from app.agents.activity.tools.outing import days_of, search_events, search_nearby_places
+from app.agents.activity.weather import WeatherBrief
+from app.core.event_raw import RawEvent, RawEventIntro
+
+CHILD = UUID(int=1)
+# 2026-11-02 월요일. 이번 주말은 11-07(토) · 11-08(일)
+NOW = datetime(2026, 11, 2, 10, tzinfo=UTC)
+LOCATION = CoarseLocation(lat=35.18, lon=129.08)
+# 위도 1도 ≈ 111.2km
+KM_PER_DEGREE = 111.2
+
+
+def raw(
+    cid: str,
+    title: str,
+    *,
+    km: float = 1.0,
+    start="20261101",
+    end="20261109",
+    near=LOCATION,
+    region="26",
+):
+    return RawEvent(
+        content_id=cid,
+        title=title,
+        start=start,
+        end=end,
+        mapx=f"{near.lon}",
+        mapy=f"{near.lat + km / KM_PER_DEGREE:.6f}",
+        kind_code="EV01",
+        progress="",
+        region_code=region,
+    )
+
+
+async def context(events: InMemoryEvents, *, outdoor_ok=True, birth=date(2023, 6, 1)):
+    ctx = ActivityContext(
+        child_id=CHILD,
+        run_id="run-1",
+        now=NOW,
+        timezone=UTC,
+        ports=in_memory_ports(CHILD, birth, events=events),
+        location=LOCATION,
+    )
+    ctx.state.gate = await build_gate(ctx, outdoor_ok=outdoor_ok)
+    # 날씨 포트가 없는 context 라 판정을 미리 넣어 둔다 — 행사 조회는 그날 판정을 읽는다
+    for label in DayLabel:
+        for day in days_of(label, ctx.today):
+            ctx.state.weather[day] = WeatherBrief(outdoor_ok=outdoor_ok)
+    return ctx
+
+
+def names(result) -> list[str]:
+    return [event["name"] for event in result.data["events"]]
+
+
+class SpyEvents(InMemoryEvents):
+    """어느 날 기준으로 목록을 물었는지 남긴다."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.cutoffs: list[date] = []
+
+    async def events(self, *, ending_on_or_after):
+        self.cutoffs.append(ending_on_or_after)
+        return await super().events(ending_on_or_after=ending_on_or_after)
+
+
+class TestNearest:
+    async def test_가까운_순으로_몇_건만_준다(self):
+        rows = [raw(str(i), f"축제{i}", km=10 - i) for i in range(8)]
+        ctx = await context(InMemoryEvents(rows))
+
+        result = await search_events(ctx, SearchEventsArgs(day=DayLabel.TODAY))
+
+        assert result.success is True
+        assert names(result) == ["축제7", "축제6", "축제5", "축제4", "축제3"]
+        assert len(names(result)) == EVENT_TOP_K
+
+    async def test_최대_반경_밖은_찾지_않는다(self):
+        rows = [raw("1", "가까운 축제", km=3), raw("2", "먼 축제", km=25)]
+
+        result = await search_events(
+            await context(InMemoryEvents(rows)), SearchEventsArgs(day=DayLabel.TODAY)
+        )
+
+        assert names(result) == ["가까운 축제"]
+
+    async def test_이름_종류_기간_장소만_주고_거리는_주지_않는다(self):
+        rows = [raw("1", "바다 축제")]
+        intros = {"1": RawEventIntro(age_limit="전 연령", place="광안리해수욕장 일원")}
+
+        result = await search_events(
+            await context(InMemoryEvents(rows, intros)), SearchEventsArgs(day=DayLabel.TODAY)
+        )
+
+        assert result.data["events"] == [
+            {
+                "name": "바다 축제",
+                "kind": "축제",
+                "period": "2026-11-01 ~ 2026-11-09",
+                "place": "광안리해수욕장 일원",
+            }
+        ]
+
+    async def test_어댑터에는_위치를_주지_않고_오늘_이후에_끝나는_목록을_묻는다(self):
+        spy = SpyEvents([raw("1", "바다 축제")])
+
+        await search_events(await context(spy), SearchEventsArgs(day=DayLabel.TOMORROW))
+
+        assert spy.cutoffs == [date(2026, 11, 2)]
+
+    async def test_없으면_빈_목록이다(self):
+        result = await search_events(
+            await context(InMemoryEvents()), SearchEventsArgs(day=DayLabel.TODAY)
+        )
+
+        assert result.success is True
+        assert result.data["events"] == []
+
+
+class TestDay:
+    async def test_그날_열리는_행사만_찾는다(self):
+        rows = [
+            raw("1", "오늘 끝나는 축제", start="20261025", end="20261102"),
+            raw("2", "내일 여는 축제", start="20261103", end="20261110"),
+        ]
+        ctx = await context(InMemoryEvents(rows))
+
+        today = await search_events(ctx, SearchEventsArgs(day=DayLabel.TODAY))
+        tomorrow = await search_events(ctx, SearchEventsArgs(day=DayLabel.TOMORROW))
+
+        assert names(today) == ["오늘 끝나는 축제"]
+        assert names(tomorrow) == ["내일 여는 축제"]
+
+    async def test_바깥_활동이_어려운_날은_찾지_않는다(self):
+        spy = SpyEvents([raw("1", "바다 축제")])
+
+        result = await search_events(
+            await context(spy, outdoor_ok=False), SearchEventsArgs(day=DayLabel.TODAY)
+        )
+
+        assert result.success is False
+        assert result.error["code"] == ErrorCode.INVALID_ARGS
+        assert spy.cutoffs == []
+
+    async def test_주말은_바깥이_되는_날에_열리는_행사만_찾는다(self):
+        rows = [
+            raw("1", "토요일 축제", start="20261107", end="20261107"),
+            raw("2", "일요일 축제", start="20261108", end="20261108"),
+        ]
+        ctx = await context(InMemoryEvents(rows))
+        # 토요일 비, 일요일 맑음
+        ctx.state.weather[date(2026, 11, 7)] = WeatherBrief(outdoor_ok=False)
+
+        result = await search_events(ctx, SearchEventsArgs(day=DayLabel.THIS_WEEKEND))
+
+        assert names(result) == ["일요일 축제"]
+
+
+class TestAge:
+    async def test_아이보다_높은_관람_연령은_뺀다(self):
+        rows = [raw("1", "청소년 축제", km=1), raw("2", "가족 축제", km=2)]
+        intros = {"1": RawEventIntro(age_limit="만 13세 이상", place="")}
+
+        result = await search_events(
+            await context(InMemoryEvents(rows, intros)), SearchEventsArgs(day=DayLabel.TODAY)
+        )
+
+        assert names(result) == ["가족 축제"]
+
+    async def test_상세를_못_읽은_행사는_뺀다(self):
+        rows = [raw("1", "모르는 축제", km=1), raw("2", "가족 축제", km=2)]
+
+        result = await search_events(
+            await context(InMemoryEvents(rows, fail_intro={"1"})),
+            SearchEventsArgs(day=DayLabel.TODAY),
+        )
+
+        assert names(result) == ["가족 축제"]
+
+    async def test_상세는_가까운_것부터_정해진_수까지만_묻는다(self):
+        rows = [raw(str(i), f"축제{i}", km=1 + i) for i in range(30)]
+        events = InMemoryEvents(rows)
+
+        await search_events(await context(events), SearchEventsArgs(day=DayLabel.TODAY))
+
+        assert events.intro_calls == [str(i) for i in range(EVENT_TOP_K * 2)]
+
+
+class TestFailure:
+    async def test_조회_실패는_빈_목록으로_숨기지_않는다(self):
+        result = await search_events(
+            await context(InMemoryEvents(fail=True)), SearchEventsArgs(day=DayLabel.TODAY)
+        )
+
+        assert result.success is False
+        assert result.error["code"] == ErrorCode.UPSTREAM_ERROR
+
+
+class TestSeen:
+    async def test_돌려준_행사만_run_state_에_남는다(self):
+        rows = [raw(str(i), f"축제{i}", km=1 + i) for i in range(7)]
+        ctx = await context(InMemoryEvents(rows))
+
+        await search_events(ctx, SearchEventsArgs(day=DayLabel.TODAY))
+
+        assert set(ctx.state.seen_events) == {f"축제{i}" for i in range(EVENT_TOP_K)}
+        row = ctx.state.seen_events["축제0"]
+        assert (row.starts_on, row.ends_on) == (date(2026, 11, 1), date(2026, 11, 9))
+
+
+# 보호자가 지역을 말한 요청
+REQUEST = ("주말에 해운대 축제 가볼까",)
+HAEUNDAE = find_area("해운대")
+KST = timezone(timedelta(hours=9))
+DAYTIME = datetime(2026, 11, 2, 10, tzinfo=KST)
+# 해운대에서 20km 밖인 보호자 위치(서울)
+HOME = CoarseLocation(lat=37.57, lon=126.98)
+
+
+async def area_context(events: InMemoryEvents, *, location=None):
+    ctx = ActivityContext(
+        child_id=CHILD,
+        run_id="run-1",
+        now=DAYTIME,
+        timezone=KST,
+        ports=in_memory_ports(CHILD, date(2023, 6, 1), events=events),
+        location=location,
+    )
+    ctx.state.gate = await build_gate(ctx, outdoor_ok=True)
+    ctx.state.request_texts = REQUEST
+    return ctx
+
+
+class TestArea:
+    async def test_보호자가_말한_지역에서_찾고_근처_금지_목록에_넣는다(self):
+        rows = [
+            raw("1", "해운대 모래축제", near=HAEUNDAE.location),
+            raw("2", "우리 동네 축제", near=HOME),
+        ]
+        ctx = await area_context(InMemoryEvents(rows), location=HOME)
+
+        result = await search_events(ctx, SearchEventsArgs(day=DayLabel.TODAY, area="해운대"))
+
+        assert names(result) == ["해운대 모래축제"]
+        assert ctx.state.area == HAEUNDAE
+        assert ctx.state.area_places == {"해운대 모래축제"}
+
+    async def test_위치도_지역도_없으면_지역을_말해야_찾는다(self):
+        ctx = await area_context(InMemoryEvents([raw("1", "바다 축제")]))
+
+        result = await search_events(ctx, SearchEventsArgs(day=DayLabel.TODAY))
+
+        assert result.success is False
+        assert result.error["code"] == ErrorCode.INVALID_ARGS
+
+    async def test_지역으로_바꾸면_보호자_위치에서_찾은_행사는_버린다(self):
+        rows = [
+            raw("1", "해운대 모래축제", near=HAEUNDAE.location),
+            raw("2", "우리 동네 축제", near=HOME),
+        ]
+        ctx = await area_context(InMemoryEvents(rows), location=HOME)
+
+        await search_events(ctx, SearchEventsArgs(day=DayLabel.TODAY))
+        assert set(ctx.state.seen_events) == {"우리 동네 축제"}
+        await search_events(ctx, SearchEventsArgs(day=DayLabel.TODAY, area="해운대"))
+
+        assert set(ctx.state.seen_events) == {"해운대 모래축제"}
+
+
+BUSAN = find_province("부산")
+
+
+class TestProvince:
+    """시 · 도만 말해도 행사는 그 시 · 도 전체에서 찾는다 — "부산 놀러 갈 건데 행사 추천해줘"."""
+
+    async def province_context(self, events):
+        ctx = await area_context(events)
+        ctx.state.request_texts = ("부산 놀러 갈 건데 행사 추천해줘",)
+        return ctx
+
+    async def test_그_시도의_행사를_대표_지점에서_가까운_순으로_준다(self):
+        center = BUSAN.location
+        rows = [
+            raw("1", "부산 먼 축제", km=25, near=center),  # 20km 밖이어도 부산이다
+            raw("2", "경남 가까운 축제", km=5, near=center, region="48"),  # 가까워도 경남이다
+            raw("3", "부산 가까운 축제", km=3, near=center),
+        ]
+        ctx = await self.province_context(InMemoryEvents(rows))
+
+        result = await search_events(ctx, SearchEventsArgs(day=DayLabel.TODAY, area="부산"))
+
+        assert names(result) == ["부산 가까운 축제", "부산 먼 축제"]
+        assert ctx.state.area == BUSAN
+        assert ctx.state.area_places == {"부산 가까운 축제", "부산 먼 축제"}
+
+    async def test_장소는_시도_전체에서_찾지_않고_안내를_남긴다(self):
+        """장소는 넓어서 찾지 않는다 — 행사로 시도를 정한 뒤에도 같다."""
+        ctx = await self.province_context(
+            InMemoryEvents([raw("3", "부산 축제", near=BUSAN.location)])
+        )
+        await search_events(ctx, SearchEventsArgs(day=DayLabel.TODAY, area="부산"))
+
+        result = await search_nearby_places(
+            ctx, SearchNearbyPlacesArgs(day=DayLabel.TODAY, category=PlaceCategory.PARK)
+        )
+
+        assert result.error["code"] == ErrorCode.NOT_FOUND
+        assert ctx.state.area_missed is True
+
+    @pytest.mark.parametrize(
+        ("area", "region", "province"),
+        [("제주", "50", "제주특별자치도"), ("세종", "36110", "세종특별자치시")],
+    )
+    async def test_시도_이름이_그_시도의_시와_같아도_시도_전체에서_찾는다(
+        self, area, region, province
+    ):
+        """제주 · 세종은 장소 조회에서는 제주시 · 그곳이지만 행사는 시 · 도 코드로 찾는다 (#668)."""
+        center = find_province(area).location
+        ctx = await self.province_context(
+            InMemoryEvents([raw("1", "먼 축제", km=30, near=center, region=region)])
+        )
+        ctx.state.request_texts = (f"{area} 놀러 갈 건데 행사 추천해줘",)
+
+        result = await search_events(ctx, SearchEventsArgs(day=DayLabel.TODAY, area=area))
+
+        assert names(result) == ["먼 축제"]  # 20km 밖이어도 그 시 · 도다
+        assert ctx.state.area.whole_province and ctx.state.area.province == province
+
+    async def test_다른_시도의_시와_겹치는_이름은_모호해서_찾지_않는다(self):
+        """광주시는 경기 광주시와 겹친다 — 전남광주 전체 행사를 내지 않는다 (#668 리뷰)."""
+        ctx = await self.province_context(
+            InMemoryEvents([raw("1", "광주 축제", near=BUSAN.location, region="12")])
+        )
+        ctx.state.request_texts = ("광주시 놀러 갈 건데 행사 추천해줘",)
+
+        result = await search_events(ctx, SearchEventsArgs(day=DayLabel.TODAY, area="광주시"))
+
+        assert result.error["code"] == ErrorCode.NOT_FOUND
+        assert ctx.state.area is None and ctx.state.area_missed is True
+
+    async def test_옛_광역시_이름은_시도_전체가_아니라_그_시에서_찾는다(self):
+        """광주광역시는 통합 뒤 시도 이름이 아니다 — 전남 행사까지 넓히지 않는다 (#676)."""
+        city = find_area("광주광역시")
+        ctx = await self.province_context(
+            InMemoryEvents(
+                [
+                    raw("1", "광주 축제", km=3, near=city.location, region="12"),
+                    raw("2", "먼 전남 축제", km=60, near=city.location, region="12"),
+                ]
+            )
+        )
+        ctx.state.request_texts = ("광주광역시 놀러 갈 건데 행사 추천해줘",)
+
+        result = await search_events(ctx, SearchEventsArgs(day=DayLabel.TODAY, area="광주광역시"))
+
+        assert names(result) == ["광주 축제"]
+        assert ctx.state.area == city and not ctx.state.area.whole_province
+
+    async def test_명소_이름을_통째로_넘기면_지역_이름만_다시_쓰라고_돌려보낸다(self):
+        ctx = await self.province_context(InMemoryEvents([raw("1", "바다 축제")]))
+        ctx.state.request_texts = ("해운대해수욕장 가는데 행사 추천해줘",)
+
+        result = await search_events(
+            ctx, SearchEventsArgs(day=DayLabel.TODAY, area="해운대해수욕장")
+        )
+
+        assert result.error["code"] == ErrorCode.INVALID_ARGS
+        assert result.resource == "search_events"
+        assert "지역 이름만" in result.error["message"]

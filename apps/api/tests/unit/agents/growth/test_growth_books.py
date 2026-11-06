@@ -595,10 +595,22 @@ class TestProposeTool:
         assert [d.items for d in drafts] == [("책1(가)",), ("책2(가)",), ("책3(가)",)]
         assert {d.kind for d in drafts} == {"general"}
         assert drafts[0].reason == BOOK_GENERAL_REASON
+        assert "기록이 아직 적어서" not in drafts[0].reason
         assert [(c.ref.kind, c.ref.id) for c in drafts[0].citations] == [
             ("book_catalog", book_evidence_id(isbn(1)))
         ]
         assert ctx.state.capacity == 3 and ctx.state.excluded == ()
+
+    async def test_run_이_요청_기반으로_서도_도서_일반_추천은_요청_기반이_아니다(self):
+        """요청 기반 면제는 Growth 교육만이다. 저장 검사(`_REQUESTED_AGENTS`)는 Agent 이름 단위라
+        도서 초안에 `requested` 가 실리면 막지 못한다 — 도서 출력 tool 이 넘기지 않는다."""
+        ctx = await searched(30, [book(n, "picture", author="가") for n in range(1, 4)])
+        ctx.state.requested = True
+        result = await propose_books_tool(ctx, books_of(pick(1), pick(2), pick(3)))
+        assert result.success
+        drafts = ctx.state.suggestions
+        assert {(d.kind, d.requested) for d in drafts} == {("general", False)}
+        assert drafts[0].reason == BOOK_GENERAL_REASON
 
     async def test_개인화_도서는_아이_기록만_근거고_책_근거는_0행이다(self):
         # 책 근거는 코드가 general_basis 로만 넘기고 개인화면 build() 가 버린다 (Food #442 와 같다)
@@ -700,3 +712,146 @@ class TestProposeTool:
         )
         assert result.error["code"] == "CANDIDATE_REJECTED"
         assert "tier 1" in result.error["message"]
+
+
+BEAR_OBS = RankedEvidence(
+    ref=Ref(kind="observation_education", id=UUID(int=902)),
+    tier=3,
+    label="곰 인형으로 역할놀이",
+    polarity=1,
+    observed_on=TODAY - timedelta(days=2),
+    subject="곰 인형",
+)
+BEAR_OLD = RankedEvidence(
+    ref=Ref(kind="profile_affinity", id=UUID(int=903)),
+    tier=1,
+    label="곰",
+    polarity=1,
+    observed_on=TODAY - timedelta(days=200),
+    subject="곰",
+)
+
+
+class TestTopicEvidence:
+    """요청한 낱말(곰)의 기록이 있을 때만 개인화다 — 다른 주제 관심만으로는 일반 추천이다."""
+
+    async def _ctx(self, *seen: RankedEvidence):
+        ctx = await searched(30, [book(n, "picture", author="가") for n in range(1, 4)])
+        ctx.state.asked_book_words = frozenset({"곰"})
+        for evidence in seen:
+            ctx.state.seen_evidence[evidence.ref.id] = evidence
+        return ctx
+
+    @staticmethod
+    def _cite(*evidence: RankedEvidence) -> list[dict]:
+        return [{"id": str(e.ref.id), "note": "기록을 참고했어요"} for e in evidence]
+
+    async def test_곰_요청에_공룡_관심만_달면_일반_추천이다(self):
+        ctx = await self._ctx(DINO)
+        cite = self._cite(DINO)
+        result = await propose_books_tool(
+            ctx, books_of(*(pick(n, evidence=cite) for n in (1, 2, 3)))
+        )
+        assert result.success and len(ctx.state.suggestions) == 3
+        for n, draft in enumerate(ctx.state.suggestions, start=1):
+            assert draft.kind == "general" and draft.reason == BOOK_GENERAL_REASON
+            assert [(c.ref.kind, c.ref.id) for c in draft.citations] == [
+                ("book_catalog", book_evidence_id(isbn(n)))
+            ]
+
+    async def test_곰_기록을_달면_개인화다(self):
+        ctx = await self._ctx(DINO, BEAR_OBS)
+        cite = self._cite(BEAR_OBS, DINO)
+        await propose_books_tool(ctx, books_of(*(pick(n, evidence=cite) for n in (1, 2, 3))))
+        for draft in ctx.state.suggestions:
+            assert draft.kind == "personalized"
+            assert {c.ref.id for c in draft.citations} == {BEAR_OBS.ref.id, DINO.ref.id}
+
+    async def test_6개월_지난_곰_기록은_주제_기록이_아니다(self):
+        ctx = await self._ctx(DINO, BEAR_OLD)
+        cite = self._cite(BEAR_OLD, DINO)
+        await propose_books_tool(ctx, books_of(*(pick(n, evidence=cite) for n in (1, 2, 3))))
+        assert {d.kind for d in ctx.state.suggestions} == {"general"}
+
+    async def test_요청한_낱말이_없으면_지금과_같다(self):
+        ctx = await self._ctx(DINO)
+        ctx.state.asked_book_words = frozenset()
+        cite = self._cite(DINO)
+        await propose_books_tool(ctx, books_of(*(pick(n, evidence=cite) for n in (1, 2, 3))))
+        assert {d.kind for d in ctx.state.suggestions} == {"personalized"}
+
+
+class TestGrowthGuard:
+    """도서는 모델이 쓴 이유 · 근거 메모만 본다 — 책 이름은 정보나루 원문이다."""
+
+    async def test_보이는_이유에_가드에_걸리는_말이_있으면_빼고_책_이름을_제외_목록에_남긴다(self):
+        # 이유가 보이는 것은 개인화 추천이다 — 일반 추천의 이유는 코드 문구로 덮인다
+        ctx = await searched(30, [book(n, "picture", author="가") for n in range(1, 4)])
+        ctx.state.seen_evidence[DINO.ref.id] = DINO
+        cite = [{"id": str(DINO.ref.id), "note": "공룡 그림을 오래 봤어요"}]
+        result = await propose_books_tool(
+            ctx,
+            books_of(
+                pick(1, evidence=cite, reason="ADHD 아이에게 좋은 책이에요"),
+                pick(2, evidence=cite),
+                pick(3, evidence=cite),
+            ),
+        )
+        assert result.success
+        assert [d.content for d in ctx.state.suggestions] == ["책2(가)", "책3(가)"]
+        assert ctx.state.excluded == ("책1(가)",)
+
+    async def test_일반_추천의_덮어쓰이는_이유로는_빼지_않는다(self):
+        ctx = await searched(30, [book(n, "picture", author="가") for n in range(1, 4)])
+        await propose_books_tool(
+            ctx, books_of(pick(1, reason="ADHD 아이에게 좋은 책이에요"), pick(2), pick(3))
+        )
+        assert len(ctx.state.suggestions) == 3 and ctx.state.excluded == ()
+        assert {d.reason for d in ctx.state.suggestions} == {BOOK_GENERAL_REASON}
+
+    async def test_책_이름에_가드_낱말이_있어도_빼지_않는다(self):
+        rows = [
+            BookRow(isbn=isbn(1), title="치료 이야기", form="picture"),
+            book(2, "picture"),
+            book(3, "picture"),
+        ]
+        ctx = await searched(30, rows)
+        await propose_books_tool(ctx, books_of(pick(1), pick(2), pick(3)))
+        assert [d.content for d in ctx.state.suggestions] == ["치료 이야기", "책2", "책3"]
+
+
+BABY_DINO = RankedEvidence(
+    ref=Ref(kind="observation_education", id=UUID(int=904)),
+    tier=3,
+    label="공룡 그림을 오래 봤다",
+    polarity=1,
+    observed_on=TODAY - timedelta(days=2),
+    subject="공룡",
+)
+BEAR_ONE = RankedEvidence(
+    ref=Ref(kind="profile_affinity", id=UUID(int=905)),
+    tier=1,
+    label="곰",
+    polarity=1,
+    observed_on=TODAY - timedelta(days=2),
+    subject="곰",
+)
+
+
+class TestAskedWordLength:
+    """보호자가 말한 낱말이 기록 이름보다 길어도 같은 주제다 — 한 글자 이름은 맞추지 않는다."""
+
+    async def _kinds(self, asked: str, evidence: RankedEvidence) -> set[str]:
+        ctx = await searched(30, [book(n, "picture", author="가") for n in range(1, 4)])
+        ctx.state.asked_book_words = frozenset({asked})
+        ctx.state.seen_evidence[evidence.ref.id] = evidence
+        cite = [{"id": str(evidence.ref.id), "note": "기록을 참고했어요"}]
+        await propose_books_tool(ctx, books_of(*(pick(n, evidence=cite) for n in (1, 2, 3))))
+        return {d.kind for d in ctx.state.suggestions}
+
+    async def test_더_긴_낱말을_물어도_두_글자_기록은_주제_기록이다(self):
+        assert await self._kinds("아기공룡", BABY_DINO) == {"personalized"}
+
+    async def test_한_글자_기록은_더_긴_낱말과_맞추지_않는다(self):
+        # "공" 이 "공룡" 에 걸리듯 한 글자는 다른 낱말에 걸린다 — 개인화를 덜 하는 쪽으로 둔다
+        assert await self._kinds("곰돌이", BEAR_ONE) == {"general"}

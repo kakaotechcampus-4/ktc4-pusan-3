@@ -109,6 +109,7 @@ class TestQuery:
             "routine_category",
             "trigger_tags",
             "areas",  # 코드가 요청 · 기록 조각에서 읽은 영역 키다 — 발화를 받는 칸이 아니다
+            "tags",  # 주제 사전이 정한 문서 행 태그다 — 발화를 받는 칸이 아니다
             "rotation",  # 코드가 "아이 | 날짜" 로 만든다 — 발화를 받는 칸이 아니다
             "blocked",  # 대응표 낱말이다 — 포트 · 쿼리로 가지 않고 돌려받은 행을 거르기만 한다
         }
@@ -474,3 +475,73 @@ class TestAreas:
         )
         assert rows
         assert {r.area for r in rows} == {"art"}
+
+
+def _screen_rows() -> list[GrowthDocRow]:
+    return [
+        doc_row("p0", area="physical_health", tags=("physical_health", "rule")),
+        doc_row("p1", area="physical_health", tags=("physical_health", "screen", "rule")),
+        *(doc_row(f"p{n}", area="physical_health", tags=("physical_health",)) for n in range(2, 6)),
+        doc_row("c0", area="communication", tags=("communication",)),
+    ]
+
+
+class TestTags:
+    """주제 사전이 정한 태그가 있으면 그 영역 안에서도 그 태그 행만 [예시]가 된다."""
+
+    async def test_태그가_있으면_그_태그_행만_돌려_준다(self):
+        hits = await search_growth_doc(
+            SpyDocs(_screen_rows()),
+            task_type=LEARNING,
+            months=20,
+            areas=("physical_health",),
+            tags=("screen",),
+        )
+        assert [h.row.doc_key for h in hits] == ["p1"]
+
+    async def test_태그가_없으면_영역_행을_다_고른다(self):
+        hits = await search_growth_doc(
+            SpyDocs(_screen_rows()), task_type=LEARNING, months=20, areas=("physical_health",)
+        )
+        assert len(hits) == DOC_LIMIT
+
+    async def test_태그_행이_없으면_예시가_없다(self):
+        rows = [r for r in _screen_rows() if r.doc_key != "p1"]
+        hits = await search_growth_doc(
+            SpyDocs(rows),
+            task_type=LEARNING,
+            months=20,
+            areas=("physical_health",),
+            tags=("screen",),
+        )
+        assert hits == ()
+
+    async def test_태그는_포트와_쿼리에_키로만_간다(self):
+        spy = SpyDocs(_screen_rows())
+        await search_growth_doc(
+            spy, task_type=LEARNING, months=20, areas=("physical_health",), tags=("screen",)
+        )
+        assert spy.calls[0]["query"].split()[-2:] == ["physical_health", "screen"]
+        assert spy.calls[0]["tags"] == ("screen",)
+        assert spy.calls[0]["areas"] == ("physical_health",)
+
+    async def test_메모리_포트도_태그로_거른다(self):
+        rows = await InMemoryGrowthDocs(_screen_rows()).search(
+            months=20,
+            row_type="learning_activity",
+            routine_category=None,
+            trigger_tags=(),
+            query="",
+            limit=DOC_POOL,
+            areas=("physical_health",),
+            tags=("screen",),
+        )
+        assert [r.doc_key for r in rows] == ["p1"]
+
+    async def test_태그는_영문_식별자만_받는다(self):
+        spy = SpyDocs(_screen_rows())
+        with pytest.raises(ValueError, match="tags"):
+            await search_growth_doc(
+                spy, task_type=LEARNING, months=20, tags=("방금 게임을 했어요",)
+            )
+        assert spy.calls == []

@@ -8,8 +8,10 @@ import * as WebBrowser from "expo-web-browser";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Animated,
   AppState,
   BackHandler,
+  Image,
   Keyboard,
   Linking,
   Platform,
@@ -52,6 +54,7 @@ import {
   shouldAskPermission,
 } from "./src/native/push";
 import { SAFE_AREA_SCRIPT, safeAreaScript, shellInsets } from "./src/native/safe-area";
+import { SPLASH_AFTER_LOAD_MS, SPLASH_MAX_MS, splashBridgeScript } from "./src/native/splash";
 import {
   SPEECH_LANG,
   type SpeechEvent,
@@ -69,10 +72,15 @@ import {
  *    여기 있는 것은 페이지가 뜨기 전·연결이 실패했을 때만 보이는 **사본**이다 —
  *    두 값이 어긋나면 로딩 순간에 색이 한 번 튄다. 바뀌면 같은 PR 에서 같이 고친다.
  */
-const CANVAS = "#fbf9f5"; // --color-canvas
-const BRAND = "#2f6f4e"; // --color-brand
-const INK = "#1a1a17"; // --color-ink
-const INK_MUTED = "#6b6b63"; // --color-ink-muted
+const CANVAS = "#fbf9f5"; // --color-canvas · 🚨 `app.json` 스플래시 `backgroundColor` 와도 같다
+const BRAND = "#3a6b52"; // --color-brand
+const INK = "#221f1b"; // --color-ink
+const INK_MUTED = "#605a52"; // --color-ink-muted
+
+/** 스플래시 그림 — `app.json` 의 `expo-splash-screen` 과 같은 파일이다 (`scripts/build-splash.py`). */
+const SPLASH_IMAGE = require("./assets/splash-icon.png") as number;
+/** 🚨 `app.json` 의 `expo-splash-screen` `imageWidth` 와 같아야 한다 (`splash.test.ts` 가 묶는다). */
+const SPLASH_IMAGE_DP = 192;
 
 /** 웹 쪽에서 네이티브임을 알아볼 수 있게 붙인다 (예: 웹뷰에서만 다른 UI). */
 const USER_AGENT_SUFFIX = `IcatchApp/${Constants.expoConfig?.version ?? "0.0.0"}`;
@@ -153,6 +161,12 @@ function Shell() {
   const exitHintAtRef = useRef<number | null>(null);
 
   const [loading, setLoading] = useState(true);
+  /**
+   * 스플래시 덮개를 아직 덮고 있는가 (#690 · `SplashCover`). 웹의 첫 화면(`done`), 실패, 시간 초과에서 내린다.
+   * 🚨 웹의 `done` 말고도 실패로 가는 모든 길에서 내린다 — 빼면 연결 실패 화면이 덮개 뒤에 숨는다.
+   */
+  const [covered, setCovered] = useState(true);
+  const uncover = useCallback(() => setCovered(false), []);
   const [failed, setFailed] = useState(false);
 
   /**
@@ -255,6 +269,23 @@ function Shell() {
     setLoading(true);
     webViewRef.current?.reload();
   }, []);
+
+  /**
+   * 덮개를 내리는 시간 초과 둘 (`src/native/splash.ts`). 보통은 웹의 `done` 이 먼저 온다.
+   * 문서가 뜬 뒤의 기다림은 **첫 문서에서 한 번만** 건다 — Android 는 웹 안의 화면 이동에도 `onLoadEnd` 를 부른다.
+   */
+  const afterLoadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const waitWebFirstScreen = useCallback(() => {
+    if (afterLoadTimerRef.current !== null) return;
+    afterLoadTimerRef.current = setTimeout(uncover, SPLASH_AFTER_LOAD_MS);
+  }, [uncover]);
+  useEffect(() => {
+    const timer = setTimeout(uncover, SPLASH_MAX_MS);
+    return () => {
+      clearTimeout(timer);
+      if (afterLoadTimerRef.current !== null) clearTimeout(afterLoadTimerRef.current);
+    };
+  }, [uncover]);
 
   useEffect(() => {
     if (Platform.OS !== "android") return;
@@ -538,6 +569,10 @@ function Shell() {
         void answerLocation(request.action);
         return;
       }
+      if (request.kind === "splash") {
+        uncover();
+        return;
+      }
       if (request.action === "start") {
         void startListening();
         return;
@@ -545,7 +580,7 @@ function Shell() {
       stopRequestedRef.current = true;
       SpeechRecognizer?.stop();
     },
-    [answerLocation, handOverPushToken, sendPush, startListening],
+    [answerLocation, handOverPushToken, sendPush, startListening, uncover],
   );
 
   /**
@@ -628,20 +663,27 @@ function Shell() {
             // ⚠️ Android 는 웹의 주소 이동(`pushState`)에도 이것을 부른다(`onNavigationStateChange` 주석) — 그래서 알림의
             //    `ready` 는 여기서 내리지 않는다 (`pushReadyRef`).
             onLoadStart={abortListening}
-            onLoadEnd={() => setLoading(false)}
+            // 첫 문서가 떴다. 스플래시는 아직 내리지 않고 웹의 첫 화면(`done`)을 기다린다 (`waitWebFirstScreen`).
+            onLoadEnd={() => {
+              setLoading(false);
+              waitWebFirstScreen();
+            }}
             onError={() => {
+              uncover();
               onDocumentGone();
               setLoading(false);
               setFailed(true);
             }}
             onHttpError={({ nativeEvent }) => {
               if (nativeEvent.statusCode < 500) return;
+              uncover();
               onDocumentGone();
               setFailed(true);
             }}
             // 🚨 웹뷰 렌더 프로세스가 죽으면 마이크를 끊고 연결 실패 화면으로 간다. 이 처리가 없으면 앱이 같이 죽고,
             //    죽은 웹뷰는 다시 쓸 수 없어서 "다시 시도" 가 새 웹뷰를 띄운다 (`failed` 가 웹뷰를 내린다).
             onRenderProcessGone={() => {
+              uncover();
               onDocumentGone();
               setLoading(false);
               setFailed(true);
@@ -664,16 +706,17 @@ function Shell() {
               void openExternal(request.url);
               return false;
             }}
-            // 페이지가 뜨기 전에 상태바·제스처바가 먹는 자리와 말로 적기 · 알림 · 위치 창구를 꽂는다
-            // (`src/native/safe-area.ts` · `src/native/speech.ts` · `src/native/push.ts` · `src/native/location.ts`).
+            // 페이지가 뜨기 전에 상태바·제스처바가 먹는 자리와 말로 적기 · 알림 · 위치 · 스플래시 창구를 꽂는다
+            // (`src/native/safe-area.ts` · `speech.ts` · `push.ts` · `location.ts` · `splash.ts`).
             injectedJavaScriptBeforeContentLoaded={
               SAFE_AREA_SCRIPT +
               safeAreaScript(webInsets) +
               speechBridgeScript(SPEECH_AVAILABLE) +
               pushBridgeScript(PUSH_AVAILABLE) +
-              locationBridgeScript(Location !== null)
+              locationBridgeScript(Location !== null) +
+              splashBridgeScript()
             }
-            // 🚨 웹의 부탁은 말로 적기(시작 · 멈춤)와 알림(준비 · 토큰 · 권한), 위치(읽기 · 묻기) 뿐이다. 보낸 쪽 주소와 모양을
+            // 🚨 웹의 부탁은 말로 적기(시작 · 멈춤)와 알림(준비 · 토큰 · 권한), 위치(읽기 · 묻기), 스플래시(첫 화면) 뿐이다. 보낸 쪽 주소와 모양을
             //    검사한 것만 받는다 (`parseWebRequest` · CLAUDE.md §4).
             onMessage={onMessage}
             // 🚨 `geolocationEnabled` 를 켜지 않는다 (#593). 웹의 `navigator.geolocation` 을 정밀 위치 권한으로만
@@ -696,7 +739,52 @@ function Shell() {
           ) : null}
         </SafeAreaView>
       )}
+
+      <SplashCover covered={covered} />
     </View>
+  );
+}
+
+/** 덮개가 흐려지는 시간. `expo-splash-screen` 이 네이티브 스플래시를 내릴 때와 같은 값이다. */
+const SPLASH_FADE_MS = 400;
+
+/**
+ * 스플래시 덮개 — 네이티브 스플래시와 **같은 그림을 같은 자리에** 둔다 (#690). 셸의 첫 그림이 이것이라, 네이티브
+ * 스플래시가 내려가도 보호자 눈에는 스플래시가 그대로다. 웹의 첫 화면이 서면 흐려지며 걷힌다.
+ *
+ * 🚨 **네이티브 스플래시를 웹까지 들고 있지 않는 이유** — 들고 있는 동안 Android 는 앱 화면을 그리지 않는다
+ *    (`expo-splash-screen` 이 그리기를 막는다). 그러면 웹뷰도 프레임을 내지 못해서, 프레임을 기다리는 웹의 화면
+ *    전환(로그인한 보호자가 홈으로 옮겨 가는 View Transition)이 멈추고 웹은 첫 화면을 세우지 못한다. 셸은 웹을,
+ *    웹은 프레임을 기다리다 시간 초과로만 내려갔다 (에뮬레이터 Android 17 확인). 덮개 아래에서는 웹뷰가 그려진다.
+ * 🚨 **덮고 있는 동안은 누름을 막는다** — 안 보이는 페이지의 버튼이 눌리면 안 된다. 걷히는 동안부터 통과시킨다.
+ * 🚨 그림 크기는 `app.json` 의 `imageWidth`(192dp)와 같다. 네이티브는 그 크기로 화면 가운데에 그린다 — 다르면 내려갈 때 그림이 튄다.
+ * 이것은 화면이 아니라 로딩 표시다 (셸의 연결 대기 스피너와 같은 자리 · CLAUDE.md §1).
+ */
+function SplashCover({ covered }: { covered: boolean }) {
+  const opacity = useRef(new Animated.Value(1)).current;
+  const [gone, setGone] = useState(false);
+
+  useEffect(() => {
+    if (covered) return;
+    const fade = Animated.timing(opacity, {
+      toValue: 0,
+      duration: SPLASH_FADE_MS,
+      useNativeDriver: true,
+    });
+    fade.start(() => setGone(true));
+    return () => fade.stop();
+  }, [covered, opacity]);
+
+  if (gone) return null;
+  return (
+    <Animated.View
+      style={[styles.cover, { opacity }]}
+      pointerEvents={covered ? "auto" : "none"}
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+    >
+      <Image source={SPLASH_IMAGE} style={styles.coverImage} resizeMode="contain" />
+    </Animated.View>
   );
 }
 
@@ -718,6 +806,13 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: CANVAS,
   },
+  cover: {
+    ...StyleSheet.absoluteFill,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: CANVAS,
+  },
+  coverImage: { width: SPLASH_IMAGE_DP, height: SPLASH_IMAGE_DP },
   center: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24, gap: 12 },
   errorTitle: { fontSize: 18, fontWeight: "700", color: INK },
   errorBody: { fontSize: 14, lineHeight: 21, color: INK_MUTED, textAlign: "center" },

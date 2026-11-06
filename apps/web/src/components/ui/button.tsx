@@ -48,17 +48,22 @@ const VARIANT: Record<ButtonVariant, string> = {
 };
 
 /**
- * 🚨 **크기는 두 단계뿐이다.** `default`(높이 `button` 48)는 화면이 소유한 행동,
+ * 🚨 **크기는 두 단계다.** `default`(높이 `button` 48)는 화면이 소유한 행동,
  *    `compact`(높이 `touch` 44)는 **카드 안**의 행동이다. 카드 본문이 12~14px 인데 48px 짜리
  *    상자가 들어가면 버튼이 내용보다 커 보인다 — 실제로 그렇게 보였다.
  *    44 는 터치 타깃 최소값이라(문서 §9) 더 줄이지 않는다.
  *    `approve` 는 이 축을 보지 않는다 — 승인 버튼은 항상 제일 크다.
+ *
+ * ⚠️ `field`(높이 `field` 52)는 서열이 아니라 **입력칸 바로 옆에 붙는 버튼**의 자리다 (#679).
+ *    입력칸이 52 라서 `compact` 를 붙이면 바닥은 맞고 위가 8px 비어 한 줄로 안 읽혔다.
+ *    입력칸과 한 줄로 서는 버튼에만 쓴다.
  */
-export type ButtonSize = "default" | "compact";
+export type ButtonSize = "default" | "compact" | "field";
 
 const SIZE: Record<ButtonSize, string> = {
   default: "min-h-button px-5",
   compact: "min-h-touch px-4",
+  field: "min-h-field px-4",
 };
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {

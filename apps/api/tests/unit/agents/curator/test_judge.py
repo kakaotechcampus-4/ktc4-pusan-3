@@ -32,7 +32,7 @@ from app.agents.curator.embedding.judge import (
 )
 from tests.eval.agents.curator.exp3_flow import PROMPT as EXPERIMENT_PROMPT
 
-BASE = "https://judge.invalid/api/alpha"
+BASE = "https://judge.invalid/v1"
 
 
 def _settings(**overrides: str) -> AgentSettings:
@@ -51,7 +51,7 @@ def _ok(choice: str, **answer: Any) -> httpx.Response:
         json={
             "model": "typesafe/jev-1.13-20260917",
             "answers": {"identity": {"type": "choice", "choice": choice, **answer}},
-            "usage": {"cost": 0.00002},
+            "usage": {"input_tokens": 395, "output_tokens": 0},
         },
     )
 

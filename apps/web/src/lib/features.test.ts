@@ -24,7 +24,6 @@ describe("PENDING_SERVER_FEATURES", () => {
     expect(await loadFeatures("development", "enabled")).toEqual({
       photoEntry: true,
       safetyScan: true,
-      medications: true,
     });
   });
 
@@ -32,7 +31,6 @@ describe("PENDING_SERVER_FEATURES", () => {
     expect(await loadFeatures("development", "disabled")).toEqual({
       photoEntry: false,
       safetyScan: false,
-      medications: false,
     });
   });
 
@@ -40,7 +38,6 @@ describe("PENDING_SERVER_FEATURES", () => {
     expect(await loadFeatures("production", "enabled")).toEqual({
       photoEntry: false,
       safetyScan: false,
-      medications: false,
     });
   });
 
@@ -48,7 +45,6 @@ describe("PENDING_SERVER_FEATURES", () => {
     expect(await loadFeatures("test", "enabled")).toEqual({
       photoEntry: false,
       safetyScan: false,
-      medications: false,
     });
   });
 });

@@ -506,6 +506,7 @@ function personalized(
   content: string,
   reason: string | null,
   evidence: Evidence[],
+  items: string[] = [],
 ): Suggestion {
   return {
     id,
@@ -517,6 +518,8 @@ function personalized(
     place_notice: null,
     event_starts_on: null,
     event_ends_on: null,
+    warnings: [],
+    items,
     status: "draft",
     expires_at: hoursFromNow(24),
     feedback: null,
@@ -535,6 +538,8 @@ export const suggestions: Suggestion[] = [
     // 🚨 **근거는 제안마다 다르다.** 같은 배열을 셋에 복사하면 화면이 "근거가 제안마다 다르다" 를
     //    한 번도 그려 보지 않고 통과한다 — 건수도 종류도 갈라 둔다.
     [evidenceFrom(affinities[0]), mealEvidence, observationEvidence],
+    // 🚨 **넷을 넘긴다** — "N개 더 보기" 는 다섯 개부터 선다 (#659). 서버처럼 주재료만 싣는다 (#474).
+    ["계란", "시금치", "양파", "당근", "애호박"],
   ),
   personalized(
     "s_2",
@@ -542,6 +547,7 @@ export const suggestions: Suggestion[] = [
     "두부를 부쳐서 한 조각 곁들여 보세요",
     "두부 반찬을 남기지 않았고, 오늘 급식과 겹치지 않아요.",
     [evidenceFrom(affinities[0]), observationEvidence],
+    ["두부"],
   ),
   personalized(
     "s_3",
@@ -549,6 +555,7 @@ export const suggestions: Suggestion[] = [
     "멸치볶음을 간을 약하게 해서 조금만",
     "짠 반찬은 한 번에 조금씩 먹었고, 이번 주에는 멸치 반찬이 없었어요.",
     [mealEvidence],
+    ["멸치"],
   ),
   // 주말 놀이 3가지.
   personalized(
@@ -557,6 +564,8 @@ export const suggestions: Suggestion[] = [
     "주말에 실내 물놀이장은 어떨까요",
     "물놀이에서 오래 머물렀고, 이번 주말 일정이 비어 있어요.",
     [evidenceFrom(affinities[1])],
+    // 🚨 띄어쓰기 없는 긴 이름 — 전역 `keep-all` 이라 칩 안에서 글자 단위로 줄을 바꾸는지 여기서 본다
+    ["수영복", "수건", "유아용일회용방수기저귀겸수영팬티세트와여벌속옷두벌"],
   ),
   personalized(
     "s_5",
@@ -565,6 +574,7 @@ export const suggestions: Suggestion[] = [
     "놀이터에 땅콩버터 쿠키를 간식으로 챙겨 가 보세요",
     "바깥 놀이 뒤에 잘 잤고, 이번 주말 일정이 비어 있어요.",
     [evidenceFrom(affinities[1]), evidenceFrom(affinities[0])],
+    ["땅콩버터 쿠키", "돗자리", "물티슈"],
   ),
   personalized(
     "s_6",
@@ -573,6 +583,7 @@ export const suggestions: Suggestion[] = [
     // 🚨 **이유가 비어 오는 줄.** 서버 `reason` 은 `str | None` 이다 — 라벨만 선 줄을 그리지
     //    않는다는 규칙(#475)은 빈 값이 목에 하나라도 있어야 돈다.
     null,
+    // 🚨 **준비물도 비어 오는 줄** (#659). 라벨만 선 빈 영역을 그리지 않는지 여기서 본다.
     [evidenceFrom(affinities[1])],
   ),
 ];
@@ -606,7 +617,7 @@ export const suggestionGroups: SuggestionGroup[] = [
 ];
 
 /**
- * 근거가 부족할 때 개인화 **대신** 나가는 또래 기준 일반 추천 (CLAUDE.md §2).
+ * 근거가 부족할 때 개인화 **대신** 나가는 일반 추천 (CLAUDE.md §2).
  *
  * 🚨 `evidence` 는 **아이 기록이 아니라 문서 행**이다 (`DocEvidence`) — 일반 추천은 아이 기록 근거 0행이
  *    정상이고, 그래서 개인화와 **타입이 다르다.** 막연한 요청의 일반 추천은 문서 행을 단다.
@@ -623,7 +634,9 @@ export const generalSuggestions: GeneralSuggestion[] = [
     place_notice: null,
     event_starts_on: null,
     event_ends_on: null,
+    warnings: [],
     basis: "36개월 또래가 자주 찾는 놀이예요",
+    items: ["크기가 다른 블록", "바구니"],
     status: "draft",
     expires_at: hoursFromNow(24),
     record_count: 1,
@@ -647,7 +660,9 @@ export const generalSuggestions: GeneralSuggestion[] = [
     place_notice: null,
     event_starts_on: null,
     event_ends_on: null,
+    warnings: [],
     basis: "36개월 또래의 식사에서 흔한 형태예요",
+    items: ["애호박", "두부", "당근"],
     status: "draft",
     expires_at: hoursFromNow(24),
     record_count: 1,
@@ -696,7 +711,9 @@ export const placeGeneralSuggestion: GeneralSuggestion = {
   place_notice: "가기 전에 운영 여부를 확인해 주세요.",
   event_starts_on: null,
   event_ends_on: null,
+  warnings: [],
   basis: "36개월 또래가 자주 찾는 놀이예요",
+  items: [],
   status: "draft",
   expires_at: hoursFromNow(24),
   record_count: 3,
@@ -748,7 +765,9 @@ export const eventGeneralSuggestion: GeneralSuggestion = {
   place_notice: EVENT_NOTICE,
   event_starts_on: "2026-11-07",
   event_ends_on: "2026-11-07",
+  warnings: [],
   basis: "36개월 또래가 자주 찾는 놀이예요",
+  items: [],
   status: "draft",
   expires_at: hoursFromNow(24),
   record_count: 3,
@@ -756,6 +775,58 @@ export const eventGeneralSuggestion: GeneralSuggestion = {
     {
       ref: { kind: "activity_doc", id: "doc_4" },
       title: "인형극 함께 보기",
+      source_org: "교육부",
+      source_title: "표준보육과정",
+      source_url: null,
+      note: "또래 놀이 자료",
+    },
+  ],
+};
+
+/**
+ * 위험 경고 문구 (`suggest_warnings` 시나리오 · #402 · #672). 🚨 **글자는 서버 `apps/api/reference/hazard_terms.yaml`
+ * 의 `warning_text` 와 같다** — 모델이 쓰지 않는 코드 상수라 화면도 고치지 않고 그대로 그린다.
+ */
+export const hazardWarnings = {
+  smallParts: "작은 부품은 삼킬 수 있어요. 아이 입에 들어가지 않는 크기인지 먼저 확인해 주세요.",
+  water:
+    "물놀이는 아이에게서 팔이 닿는 거리에서 한순간도 눈을 떼지 말아 주세요. 깊이 5cm 에서도 사고가 납니다.",
+  balloon:
+    "터진 풍선 조각과 비닐은 입에 넣거나 얼굴에 쓰지 않게 지켜봐 주세요. 놀이가 끝나면 손이 닿지 않는 곳에 치워 주세요.",
+} as const;
+
+/**
+ * 경고가 붙은 개인화 놀이 추천. 실내 물놀이장 자리(`s_4`)에 물놀이 경고 하나가 온다.
+ * 🚨 경고는 근거가 아니라서 `evidence` 는 그대로다 — 화면이 "사용한 기록" 에 넣거나 세면 안 된다.
+ */
+export const warnedSuggestion: Suggestion = {
+  ...suggestions.find((s) => s.id === "s_4")!,
+  warnings: [hazardWarnings.water],
+};
+
+/**
+ * 경고가 둘 붙는 일반 놀이 추천. 한 추천에 축이 둘 걸리면 둘 다 온다 (서버 `filters.py` 가 축마다 하나씩 모은다).
+ * 🚨 둘 다 보여야 한다 — 고르기 전에 읽는 말이라 접지 않는다.
+ */
+export const warnedGeneralSuggestion: GeneralSuggestion = {
+  id: "g_warn_1",
+  child_id: CHILD_ID,
+  agent: "activity",
+  kind: "general",
+  content: "풍선 안에 작은 구슬을 넣고 흔들며 소리를 들어 보세요",
+  place_notice: null,
+  event_starts_on: null,
+  event_ends_on: null,
+  warnings: [hazardWarnings.smallParts, hazardWarnings.balloon],
+  basis: "36개월 또래가 자주 찾는 놀이예요",
+  items: [],
+  status: "draft",
+  expires_at: hoursFromNow(24),
+  record_count: 3,
+  evidence: [
+    {
+      ref: { kind: "activity_doc", id: "doc_4" },
+      title: "소리 탐색 놀이",
       source_org: "교육부",
       source_title: "표준보육과정",
       source_url: null,
@@ -780,7 +851,9 @@ export const requestedGeneralSuggestion: GeneralSuggestion = {
   place_notice: null,
   event_starts_on: null,
   event_ends_on: null,
-  basis: "쌓인 놀이 기록이 아직 적어서, 요청하신 놀이에 맞춰 골랐어요.",
+  warnings: [],
+  basis: "요청하신 놀이를 바탕으로 골랐어요.",
+  items: ["큰 종이", "물감", "물티슈"],
   status: "draft",
   expires_at: hoursFromNow(24),
   record_count: 0,
@@ -862,9 +935,16 @@ export const runEventDrafts: EventDraft[] = [
       category: "activity",
     },
     before: null,
+    // 준비물이 여럿이고 이름이 길 때의 배치를 보려고 둔다 (#679 — 두 열 그리드, 09 의 `confirmedEvent` 와 같은 구성).
     items: [
       { item_id: null, item_name: "수영복" },
       { item_id: null, item_name: "여벌옷" },
+      { item_id: null, item_name: "수건" },
+      { item_id: null, item_name: "물안경" },
+      { item_id: null, item_name: "모자" },
+      { item_id: null, item_name: "선크림" },
+      { item_id: null, item_name: "물통" },
+      { item_id: null, item_name: "갈아입을속옷과양말한켤레" },
     ],
   },
   {

@@ -9,7 +9,8 @@ app/agents/common/config.py의 AgentSettings.
 
 🚨 보호자가 쓴 글이 이 주소들로 나간다. 처리방침은 받는 곳을 회사 단위로 적었다 —
    대화 · 임베딩은 OpenAI · Google · Anthropic (엘리스를 거치거나 직접),
-   같은 대상 판정은 OpenRouter.
+   같은 대상 판정은 OpenRouter — 호출은 엘리스로 옮겼고(#686), 처리방침을 TypeSafe 로
+   고치는 중이다(#687). 처리방침이 바뀌기 전에는 배포 BASE_URL 을 엘리스로 바꾸지 않는다.
    BASE_URL · MODEL 을 이 밖의 회사로 바꾸면 처리방침과 동의부터 고친다
    (docs/safety/consent-texts-v1.md). .env 만 바뀌어서 리뷰 · CI 가 잡지 못한다.
 """
@@ -69,7 +70,7 @@ class AgentLLMSettings(BaseSettings):
     EMBEDDING_BASE_URL: str = ""
     EMBEDDING_MODEL: str = ""
 
-    # Curator 동일 대상 판정 (OpenRouter Decisions API · Jev). 대화 모델이 아니라 AgentRole 밖
+    # Curator 동일 대상 판정 (Elice ML API 의 Decisions API · Jev). 대화 모델이 아니라 AgentRole 밖
     # 비어 있어도 서버는 뜬다 — 판정이 필요한 관찰만 연결을 미룬다
     CURATOR_JUDGE_API_KEY: str = ""
     CURATOR_JUDGE_BASE_URL: str = ""
