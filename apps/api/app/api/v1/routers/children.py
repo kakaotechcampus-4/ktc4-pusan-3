@@ -291,7 +291,7 @@ async def submit_onboarding(
         "path": request.url.path,
         "key": idempotency_key,
     }
-    replayed = idempotency.recall(**scope)
+    replayed = await idempotency.recall(**scope)
     if isinstance(replayed, dict):
         return JSONResponse(status_code=200, content=replayed)
 
@@ -329,7 +329,7 @@ async def submit_onboarding(
         growth=None if growth is None else _growth_out(growth, today),
     )
     await session.commit()
-    idempotency.remember(**scope, replay=response.model_dump(mode="json"))
+    await idempotency.remember(**scope, replay=response.model_dump(mode="json"))
     return response
 
 
@@ -466,7 +466,7 @@ async def create_input(
         "path": request.url.path,
         "key": idempotency_key,
     }
-    replayed = idempotency.recall(**scope)
+    replayed = await idempotency.recall(**scope)
     if replayed is not None:
         previous = registry.get(replayed)
         if previous is None:
@@ -540,7 +540,7 @@ async def create_input(
 
     channel = registry.open_run(parent_id=parent.parent_id)
     try:
-        idempotency.remember(**scope, replay=channel.run_id)
+        await idempotency.remember(**scope, replay=channel.run_id, strict=True)
     except Exception:
         # 러너가 안 떠서 이 채널은 아무도 닫지 않는다. 닫아야 지울 예약이 걸린다 (#536 리뷰)
         channel.close()

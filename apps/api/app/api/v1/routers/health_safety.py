@@ -122,7 +122,7 @@ async def register_health_safety(
         "path": request.url.path,
         "key": idempotency_key,
     }
-    replayed = idempotency.recall(**scope)
+    replayed = await idempotency.recall(**scope)
     if isinstance(replayed, dict):
         return JSONResponse(status_code=201, content=replayed)
 
@@ -170,7 +170,7 @@ async def register_health_safety(
     nickname = None if writer is None else writer.nickname
     response = CreateHealthSafetyResponse(safety=_out(row, nickname)).model_dump(mode="json")
     await session.commit()
-    idempotency.remember(**scope, replay=response)
+    await idempotency.remember(**scope, replay=response)
     return JSONResponse(status_code=201, content=response)
 
 
@@ -211,7 +211,7 @@ async def revise_health_safety(
         "path": request.url.path,
         "key": idempotency_key,
     }
-    replayed = idempotency.recall(**scope)
+    replayed = await idempotency.recall(**scope)
     if isinstance(replayed, dict):
         return JSONResponse(status_code=200, content=replayed)
 
@@ -254,7 +254,7 @@ async def revise_health_safety(
     nickname = None if writer is None else writer.nickname
     response = UpdateHealthSafetyResponse(safety=_out(row, nickname)).model_dump(mode="json")
     await session.commit()
-    idempotency.remember(**scope, replay=response)
+    await idempotency.remember(**scope, replay=response)
     return JSONResponse(status_code=200, content=response)
 
 

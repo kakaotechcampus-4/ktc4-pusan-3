@@ -24,11 +24,12 @@ TIMEOUT_S = 1.0
 OPEN_S = 10.0
 """차단기. 연결 · 시간 초과 오류가 한 번 나면 이 시간 동안 Redis 를 부르지 않고 바로 ConnectionError
 — 장애 중에 호출마다 상한을 기다리지 않는다. idempotency 는 503, 도서 검색어 캐시는 건너뛴다.
-동기 클라이언트라 루프에서 부르는 곳(러너의 forget_run · 도서 캐시)은 기다리는 동안 루프가 멈춘다."""
+동기 클라이언트라 루프에서 부르는 곳(러너의 forget_run · 도서 캐시)은 기다리는 동안 루프가
+멈춘다 — 차단기가 열린 뒤로는 기다리지 않는다."""
 
 
 class _Breaker(redis.Redis):
-    # ponytail: 파이프라인은 거치지 않는다 — 지금 쓰는 곳(idempotency.remember)은 앞의 recall 이 막는다
+    # 파이프라인은 여기를 거치지 않는다 — 쓰지 말 것
     _open_until = 0.0
 
     def execute_command(self, *args, **options):

@@ -850,3 +850,41 @@ async def test_Redis_가_죽으면_일정_등록은_503_이고_아무것도_저�
     assert resp.status_code == 503
     assert resp.json()["error"]["code"] == "temporarily_unavailable"
     assert (await session.scalars(select(Event).where(Event.child_id == cid))).all() == []
+
+
+async def test_Redis_가_쓰기만_거절해도_같은_키로_일정이_두_번_생기지_않는다(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID, monkeypatch
+):
+    """#671 리뷰 — RDB 저장 실패(MISCONF)면 GET 은 되고 SET 만 거절된다. GET 만 보고 통과시키면
+    저장 · commit 뒤 키를 못 남겨 같은 키 재시도가 일정을 하나 더 만든다."""
+    from app.domains.schedule.models import Event
+    from tests.unit.api.test_idempotency_redis import WriteRefused
+
+    idempotency.clear()
+    monkeypatch.setattr(idempotency, "get_redis", lambda: WriteRefused())
+    headers, _ = bearer
+    body = {
+        "event": {
+            "title": "쓰기 거절 중 일정",
+            "starts_at": "2026-10-10T15:00:00+09:00",
+            "ends_at": None,
+            "all_day": False,
+            "event_type": "episodic",
+            "category": "activity",
+        },
+        "items": [],
+    }
+
+    codes = [
+        (
+            await db_client.post(
+                f"/api/v1/children/{cid}/events",
+                json=body,
+                headers={**headers, "Idempotency-Key": "misconf-1"},
+            )
+        ).status_code
+        for _ in range(2)
+    ]
+
+    assert codes == [503, 503]
+    assert (await session.scalars(select(Event).where(Event.child_id == cid))).all() == []

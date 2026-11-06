@@ -159,6 +159,13 @@ async def read_medications(child: AccessibleChild, session: SessionDep) -> Medic
                 "이미 있다. 멈춘 코스는 세지 않는다"
             ),
         },
+        503: {
+            "model": ErrorEnvelope,
+            "description": (
+                "`temporarily_unavailable` — 같은 요청을 알아보는 저장소(Redis)에 닿지 않는다. "
+                "아무것도 처리하지 않았으니 같은 키로 다시 보내면 된다 (#671)"
+            ),
+        },
     },
 )
 async def register_medication(
@@ -211,7 +218,7 @@ async def register_medication(
         "path": request.url.path,
         "key": idempotency_key,
     }
-    replayed = idempotency.recall(**scope)
+    replayed = await idempotency.recall(**scope)
     if isinstance(replayed, dict):
         return JSONResponse(status_code=201, content=replayed)
 
@@ -257,7 +264,7 @@ async def register_medication(
     (view,) = await course_views(session, [course], today=today)
     response = SubmitMedicationResponse(course=_course_out(view)).model_dump(mode="json")
     await session.commit()
-    idempotency.remember(**scope, replay=response)
+    await idempotency.remember(**scope, replay=response)
     return JSONResponse(status_code=201, content=response)
 
 
@@ -393,6 +400,13 @@ async def check_dose(
                 "끝일이 모두 같아진다. 자기 자신 · 멈춘 코스와는 같아도 된다"
             ),
         },
+        503: {
+            "model": ErrorEnvelope,
+            "description": (
+                "`temporarily_unavailable` — 같은 요청을 알아보는 저장소(Redis)에 닿지 않는다. "
+                "아무것도 처리하지 않았으니 같은 키로 다시 보내면 된다 (#671)"
+            ),
+        },
     },
 )
 async def revise_medication(
@@ -440,7 +454,7 @@ async def revise_medication(
         "path": request.url.path,
         "key": idempotency_key,
     }
-    replayed = idempotency.recall(**scope)
+    replayed = await idempotency.recall(**scope)
     if isinstance(replayed, dict):
         return JSONResponse(status_code=200, content=replayed)
 
@@ -488,5 +502,5 @@ async def revise_medication(
     (view,) = await course_views(session, [course], today=today)
     response = SubmitMedicationResponse(course=_course_out(view)).model_dump(mode="json")
     await session.commit()
-    idempotency.remember(**scope, replay=response)
+    await idempotency.remember(**scope, replay=response)
     return JSONResponse(status_code=200, content=response)

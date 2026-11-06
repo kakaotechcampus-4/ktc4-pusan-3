@@ -281,7 +281,8 @@ def test_ready_probe_는_503_이면_실패한_구성요소만_붙인다(ready_se
 
 
 def test_ready_probe_는_응답이_없으면_상한에서_끊는다():
-    """api 가 멈춰 /health/ready 가 답하지 않아도 cron 이 매달리지 않고 unreachable 로 알린다 (#671 리뷰).
+    """api 가 멈춰 /health/ready 가 답하지 않아도 cron 이 매달리지 않고 unreachable 로 알린다
+    (#671 리뷰).
 
     상한을 짧게 바꿔 돌린다 — 상한이 빠지면 바꿀 것이 없어 끝까지 기다리다 여기서 깨진다.
     """

@@ -223,9 +223,12 @@ class TestCache:
         rows = await books(handler, cache=FakeCache(fail=True)).search(keyword="공룡", limit=10)
         assert len(seen) == 1 and rows
 
-    async def test_캐시가_응답_없이_멈춰도_검색마다_기다리지_않는다(self, monkeypatch, hung_redis_url):
+    async def test_캐시가_응답_없이_멈춰도_검색마다_기다리지_않는다(
+        self, monkeypatch, hung_redis_url
+    ):
         """Growth 는 검색어를 여러 개 돌린다. 검색마다 GET · SETEX 상한을 다 기다리면 루프가 그만큼
-        멈춘다 — 실제 클라이언트(`get_redis()`)의 차단기가 첫 시간 초과 뒤로는 바로 넘긴다 (#671 리뷰)."""
+        멈춘다 — 실제 클라이언트(`get_redis()`)의 차단기가 첫 시간 초과 뒤로는 바로 넘긴다
+        (#671 리뷰)."""
         import time
 
         from app.infra import redis as infra_redis
