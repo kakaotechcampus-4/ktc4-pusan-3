@@ -223,6 +223,24 @@ class TestCache:
         rows = await books(handler, cache=FakeCache(fail=True)).search(keyword="공룡", limit=10)
         assert len(seen) == 1 and rows
 
+    async def test_캐시가_응답_없이_멈춰도_검색마다_기다리지_않는다(self, monkeypatch, hung_redis_url):
+        """Growth 는 검색어를 여러 개 돌린다. 검색마다 GET · SETEX 상한을 다 기다리면 루프가 그만큼
+        멈춘다 — 실제 클라이언트(`get_redis()`)의 차단기가 첫 시간 초과 뒤로는 바로 넘긴다 (#671 리뷰)."""
+        import time
+
+        from app.infra import redis as infra_redis
+
+        monkeypatch.setattr(infra_redis.settings, "REDIS_URL", hung_redis_url)
+        monkeypatch.setattr(infra_redis, "_client", None)
+        handler, seen = recording()
+        client = books(handler, cache=infra_redis.get_redis())
+
+        started = time.monotonic()
+        for word in ("공룡", "곰", "기차", "바다", "별", "비"):
+            assert await client.search(keyword=word, limit=10)
+        assert time.monotonic() - started < infra_redis.TIMEOUT_S * 2
+        assert len(seen) == 6
+
     async def test_칸이_바뀐_옛_캐시는_버리고_다시_받는다(self):
         cache = FakeCache()
         cache.values[CACHE_PREFIX + "공룡"] = json.dumps([{"isbn": "x"}])
