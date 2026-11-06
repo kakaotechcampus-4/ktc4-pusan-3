@@ -295,8 +295,8 @@ async def register_medication(
         401: {
             "model": ErrorEnvelope,
             "description": (
-                "`unauthenticated` — 인증을 확인한 뒤 그사이 탈퇴했다(드물다). 체크하지 않는다. "
-                "다른 401 과 같이 처리하면 된다"
+                "`unauthenticated` — 인증 실패(Bearer 없음 · 만료), 또는 인증을 확인한 뒤 그사이 "
+                "탈퇴했다(드물다). 체크하지 않는다. 다른 401 과 같이 처리하면 된다"
             ),
         },
         403: {
