@@ -239,7 +239,7 @@ Memory 가 뽑은 문장이라 보호자 말 그대로라고 보장하지 못해
 | `med.ask_prescriber` | 용량 · 간격은 처방한 병원이나 약국에 확인해 주세요. |
 | `emergency` | 지금 바로 119에 연락하거나 가까운 응급실로 가세요. |
 | `dose.status` | 마지막 체크 {last} 회차 · 다음 예정 {next} · 오늘 체크 {checked}/{planned}회 |
-| `dose.check_on_screen` | 복용 체크는 복약 화면에서 해 주세요. |
+| `dose.check_on_screen` | 복용 체크는 홈이나 복약 화면에서 해 주세요. |
 | `fever.no_record` | 체온 기록이 없어요. 재실 때 남겨 두시면 정리해 드릴게요. |
 | `fever.line` | {time} {temperature}℃{site} |
 | `fever.peak` | 가장 높았던 체온 {temperature}℃ ({time}) |

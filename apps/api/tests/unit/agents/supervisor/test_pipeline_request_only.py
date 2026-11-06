@@ -90,7 +90,9 @@ def test_저장한_run_은_Memory_문장_그대로다() -> None:
 
 
 async def test_도메인_task_가_없으면_Memory_문장_그대로다() -> None:
-    memory = FakeLLM(memory_says("저장할 내용이 없어요.", answering=False))
+    # 관찰 조각인데 쓰기 없이 끝나 한 번 다시 쓰게 한다 (#667). 다시 쓴 답도 같다
+    said = memory_says("저장할 내용이 없어요.", answering=False)
+    memory = FakeLLM(said, said)
 
     (note,) = await notes(memory, supervisor=route(with_request=False))
 
@@ -143,6 +145,8 @@ async def test_저장을_시도했다_실패한_run_은_Memory_문장_그대로�
     """시도하지 않은 것과 시도했다 못 한 것은 다르다. 실패 이유를 담은 말은 덮지 않는다."""
     memory = FakeLLM(
         call("create_observation_activity", {"raw_text": "오늘 그림 그렸어"}),
+        memory_says("저장하지 못했어요. 다시 적어 주세요.", answering=False),
+        # 실패한 쓰기는 성공이 아니라 한 번 다시 쓰게 한다 (#667)
         memory_says("저장하지 못했어요. 다시 적어 주세요.", answering=False),
     )
 

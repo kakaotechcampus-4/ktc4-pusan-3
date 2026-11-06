@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import date
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -49,6 +50,25 @@ class SuggestionOut(BaseModel):
             "장소가 붙은 추천에만 오는 확인 문구 한 문장(공공데이터 기준일 · 운영 여부 확인). "
             "서버 코드 문구다. 근거가 아니어서 evidence 에 들어가지 않는다. 장소가 없으면 null"
         ),
+    )
+    warnings: list[str] = Field(
+        default_factory=list,
+        description=(
+            "그 추천에 주의할 요소가 있을 때만 오는 위험 경고 문구(예: 작은 부품 · 물놀이). "
+            "서버 코드 문구라 글자 그대로 보여 준다. 근거가 아니어서 evidence 에 들어가지 않는다. "
+            "없으면 빈 배열"
+        ),
+    )
+    event_starts_on: date | None = Field(
+        default=None,
+        description=(
+            "행사가 붙은 추천에만 오는 행사 시작일(YYYY-MM-DD). 화면이 place_notice 줄에 기간으로 "
+            "세운다. 근거가 아니다. 행사가 없으면 null"
+        ),
+    )
+    event_ends_on: date | None = Field(
+        default=None,
+        description="행사가 붙은 추천에만 오는 행사 종료일(YYYY-MM-DD). 행사가 없으면 null",
     )
     reason: str | None = Field(
         default=None,
@@ -147,6 +167,25 @@ class GeneralSuggestionOut(BaseModel):
             "장소가 붙은 추천에만 오는 확인 문구 한 문장(공공데이터 기준일 · 운영 여부 확인). "
             "서버 코드 문구다. 근거가 아니어서 evidence 에 들어가지 않는다. 장소가 없으면 null"
         ),
+    )
+    warnings: list[str] = Field(
+        default_factory=list,
+        description=(
+            "그 추천에 주의할 요소가 있을 때만 오는 위험 경고 문구(예: 작은 부품 · 물놀이). "
+            "서버 코드 문구라 글자 그대로 보여 준다. 근거가 아니어서 evidence 에 들어가지 않는다. "
+            "없으면 빈 배열"
+        ),
+    )
+    event_starts_on: date | None = Field(
+        default=None,
+        description=(
+            "행사가 붙은 추천에만 오는 행사 시작일(YYYY-MM-DD). 화면이 place_notice 줄에 기간으로 "
+            "세운다. 근거가 아니다. 행사가 없으면 null"
+        ),
+    )
+    event_ends_on: date | None = Field(
+        default=None,
+        description="행사가 붙은 추천에만 오는 행사 종료일(YYYY-MM-DD). 행사가 없으면 null",
     )
     basis: str = Field(description="코드 템플릿 문구. 모델이 쓴 문장이 아니다")
     status: str

@@ -55,6 +55,15 @@ WITH_PLACES = (
     "propose_activity_candidates",
 )
 
+WITH_EVENTS = (
+    "search_activity_memory",
+    "lookup_weather",
+    "lookup_schedule",
+    "search_nearby_places",
+    "search_events",
+    "propose_activity_candidates",
+)
+
 
 def gate(months: int, **kwargs) -> Gate:
     stage = LifeStage(
@@ -94,6 +103,13 @@ class TestToolsFor:
 
     def test_위치도_장소_어댑터도_없으면_장소_조회가_닫힌다(self):
         assert tools_for(TASK, gate(40, has_location=False, data=DataReady())) == BASE
+
+    def test_행사_조회는_행사_어댑터가_있을_때만_열린다(self):
+        """위치가 없어도 열린다 — 보호자가 말한 지역으로 찾는다. 월령으로는 닫지 않는다."""
+        ready = DataReady(places=True, weather=True, events=True)
+        assert "search_events" not in tools_for(TASK, gate(40))
+        assert tools_for(TASK, gate(0, data=ready)) == WITH_EVENTS
+        assert "search_events" in tools_for(TASK, gate(40, has_location=False, data=ready))
 
     def test_좌표가_있어도_어댑터가_없으면_그_tool_은_닫힌다(self):
         """부르면 늘 실패만 돌려주고 왕복 하나를 쓴다 (#359 리뷰)."""
@@ -154,8 +170,8 @@ class TestCodeTools:
         assert spec_names.isdisjoint(CODE_TOOLS)
         assert set(TOOL_HANDLERS).isdisjoint(CODE_TOOLS)
 
-    def test_모델_tool_은_다섯_개다(self):
-        assert [spec["function"]["name"] for spec in TOOL_SPECS] == list(WITH_PLACES)
+    def test_모델_tool_은_여섯_개다(self):
+        assert [spec["function"]["name"] for spec in TOOL_SPECS] == list(WITH_EVENTS)
 
 
 class TestExecuteTool:

@@ -12,6 +12,8 @@ CAUTION_NON_FOOD_ALLERGY = "caution.non_food_allergy"
 PLACE_NOTICE = "place.notice"
 PLACE_NOTICE_UNDATED = "place.notice_undated"
 PLACE_NOTICE_FACILITY = "place.notice_facility"
+# 행사(TourAPI)가 붙은 추천의 확인 문구. 출처를 밝히고 일정 · 관람 연령을 확인해 달라고 한다
+PLACE_NOTICE_EVENT = "place.notice_event"
 # 보호자가 말한 지역을 못 찾아 장소 없이 골랐다 (`areas.py`)
 PLACE_AREA_UNKNOWN = "place.area_unknown"
 # 보호자가 요청에 쓴 음식이 막혀 그런 놀이는 빼고 골랐다 — 알레르기 · 연령 (#582)

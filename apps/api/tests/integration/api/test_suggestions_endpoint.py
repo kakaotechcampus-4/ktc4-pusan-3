@@ -4,7 +4,6 @@ import uuid
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
-from typing import get_args
 
 import pytest
 from sqlalchemy import delete, func, select
@@ -106,7 +105,9 @@ def agents(monkeypatch):
     return plan, calls
 
 
-def _general(agent="activity", content="블록 쌓기", place_notice=None) -> SuggestionDraft:
+def _general(
+    agent="activity", content="블록 쌓기", place_notice=None, warnings=()
+) -> SuggestionDraft:
     doc = EvidenceCitation(ref=Ref(kind="activity_doc", id=DOC_ID), note="또래 놀이 자료")
     return SuggestionDraft(
         agent=agent,
@@ -115,6 +116,7 @@ def _general(agent="activity", content="블록 쌓기", place_notice=None) -> Su
         reason="또래 아이들이 많이 하는 놀이예요.",
         citations=(doc,),
         place_notice=place_notice,
+        warnings=warnings,
     )
 
 
@@ -182,6 +184,7 @@ async def test_홈_요청은_Agent_마다_묶음과_안내를_싣는다(db_clien
     assert food["evidence"][0]["label"] == "계란말이"
     assert food["evidence"][0]["is_stale"] is False
     assert food["place_notice"] is None  # 장소가 없는 추천
+    assert food["warnings"] == []
     groups = {g["agent"]: g for g in data["groups"]}
     assert groups["food"]["notice"] == {
         "code": "fewer",
@@ -520,6 +523,8 @@ async def test_일반_추천은_문서_근거와_기록_건수를_싣는다(db_c
     ]
     assert data["scarcity"] == {"count": 0, "question": None}
     assert general["place_notice"] is None  # 장소가 없는 추천
+    assert general["warnings"] == []
+    assert (general["event_starts_on"], general["event_ends_on"]) == (None, None)
 
 
 async def test_장소가_붙은_추천은_확인_문구를_칸으로_싣는다(db_client, bearer, cid, agents):
@@ -551,6 +556,28 @@ async def test_개인화_추천도_확인_문구를_싣는다(db_client, session
 
     [activity] = data["suggestions"]
     assert activity["place_notice"] == notice
+    assert (activity["event_starts_on"], activity["event_ends_on"]) == (None, None)
+
+
+async def test_행사가_붙은_추천은_기간을_날짜_칸으로_싣는다(
+    db_client, session, bearer, cid, agents
+):
+    """화면이 확인 문구 줄에 "9월 29일 ~ 10월 1일" 로 세운다 (#516 FE 합의)."""
+    plan, _ = agents
+    headers, parent_id = bearer
+    period = {"event_starts_on": date(2026, 9, 29), "event_ends_on": date(2026, 10, 1)}
+    general = replace(_general(content="광안리 가을 축제에서 축제 구경"), **period)
+    personal = replace(
+        await _personal(session, cid, parent_id, agent="activity", content="축제 구경"), **period
+    )
+    plan["activity"] = ("drafts", [personal, general])
+
+    data = (await _post(db_client, cid, headers, agents=["activity"])).json()
+
+    [activity] = data["suggestions"]
+    [general_out] = data["general"]
+    for out in (activity, general_out):
+        assert (out["event_starts_on"], out["event_ends_on"]) == ("2026-09-29", "2026-10-01")
 
 
 async def test_문서_행을_읽을_수_없으면_일반_추천을_내지_않는다(
@@ -1157,6 +1184,69 @@ async def test_문서_근거는_라이선스_표시를_마친_공개용_출처�
     leaked = repr(nhs).lower()
     for text in ("nhs (", "nhs.uk", "가짜 nhs 문서 제목", "내부 추적용"):
         assert text not in leaked, text
+
+
+async def test_레시피_행이_지워진_뒤에도_05_는_오류_없이_근거_카드만_뺀다(
+    db_client, session, bearer, cid, agents
+):
+    """#510 A4 — downgrade 는 `nics_recipe` 행을 지운다. `suggestion_evidence.source_id` 는 FK 가
+    아니라 그 근거 행은 남는데, 그 근거로 05 를 불러도 오류 없이 카드(와 그 메뉴만 근거였던 일반
+    추천)만 빠지고, 다시 적재하면 같은 id 로 돌아온다."""
+    from app.domains.food import repository as food_repository
+    from app.domains.food.models import RecipeCatalog
+    from app.domains.suggestion.repository import save_agent_suggestions
+    from app.rules.menu_evidence import menu_evidence_id
+
+    headers, _ = bearer
+    recipe = {
+        "source": "nics_recipe",
+        "source_id": "7",
+        "menu_key": "두부조림",
+        "display_name": "두부조림",
+        "ingredients": ["두부"],
+        "resolved": True,
+        "synced_at": datetime.now(UTC),
+    }
+    await food_repository.upsert_recipes(session, rows=[recipe])
+    menu = menu_evidence_id("nics_recipe", "7")
+    draft = SuggestionDraft(
+        agent="food",
+        kind="general",
+        content="두부조림",
+        reason="또래 아이들이 많이 먹는 메뉴예요.",
+        citations=(
+            EvidenceCitation(
+                ref=Ref(kind="recipe_catalog", id=menu), note="재료가 검수된 메뉴예요."
+            ),
+        ),
+    )
+    await save_agent_suggestions(
+        session, child_id=cid, run_id="run-1", payloads=[draft.to_payload()], now=datetime.now(UTC)
+    )
+
+    shown = await _post(db_client, cid, headers, agents=["food"], run_id="run-1")
+    [evidence] = shown.json()["general"][0]["evidence"]
+    assert evidence["ref"]["id"] == str(menu)
+
+    # downgrade 가 하는 일 — 그 소스의 행을 지운다. 근거 행은 FK 가 아니라 남는다
+    await session.execute(delete(RecipeCatalog).where(RecipeCatalog.source == "nics_recipe"))
+    kept = await session.scalar(
+        select(func.count())
+        .select_from(SuggestionEvidence)
+        .where(SuggestionEvidence.source_id == menu)
+    )
+    assert kept == 1
+
+    after = await _post(db_client, cid, headers, agents=["food"], run_id="run-1")
+    assert after.status_code == 200
+    assert after.json()["general"] == []  # 보여 줄 근거가 없으면 일반 추천도 내지 않는다
+
+    # 다시 올리고 재적재하면 같은 (source, source_id) 라 같은 근거 id 로 이어진다
+    await food_repository.upsert_recipes(session, rows=[recipe])
+    again = await _post(db_client, cid, headers, agents=["food"], run_id="run-1")
+    [evidence] = again.json()["general"][0]["evidence"]
+    assert evidence["ref"]["id"] == str(menu)
+    assert evidence["source_org"] == "농촌진흥청 국립식량과학원"
 
 
 def test_근거_카드_응답_칸은_그대로다():

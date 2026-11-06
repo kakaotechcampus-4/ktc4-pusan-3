@@ -116,6 +116,9 @@ def _suggestion_out(s, views: Sequence[EvidenceView] = ()) -> SuggestionOut:
         kind=str(s.kind),
         content=s.content,
         place_notice=s.place_notice,
+        warnings=list(s.warnings),
+        event_starts_on=s.event_starts_on,
+        event_ends_on=s.event_ends_on,
         reason=s.reason,
         status=str(s.status),
         expires_at=s.expires_at.isoformat(),
@@ -278,7 +281,7 @@ async def create_event_drafts(
     ),
     status_code=201,
     response_model=SubmitEventResponse,
-    responses={status: {"model": ErrorEnvelope} for status in (400, 404, 409, 422)},
+    responses={status: {"model": ErrorEnvelope} for status in (400, 404, 409, 422, 503)},
 )
 async def submit_event(
     child: AccessibleChild,
@@ -299,7 +302,7 @@ async def submit_event(
         "path": request.url.path,
         "key": idempotency_key,
     }
-    replayed = idempotency.recall(**scope)
+    replayed = await idempotency.recall(**scope)
     if replayed is not None and isinstance(replayed, dict):
         return JSONResponse(status_code=201, content=replayed)
 
@@ -407,7 +410,7 @@ async def submit_event(
     )
 
     response_dict = response_data.model_dump(mode="json")
-    idempotency.remember(**scope, replay=response_dict)
+    await idempotency.remember(**scope, replay=response_dict)
     return JSONResponse(status_code=201, content=response_dict)
 
 
@@ -653,9 +656,10 @@ async def _suggestions_response(
             ]
             if not basis and (not row.requested or general_ev.get(row.id)):
                 # 일반 추천의 근거는 문서 행(Food 는 메뉴 행도)이다 — 검수가 풀린 문서 · 후보 풀에서
-                # 빠진 메뉴만 남았으면 보여 줄 근거가 없어서 내지 않는다. 보호자가 놀이를 정해 물은
-                # Activity 추천은 그 요청이 기준이라 문서 없이도 낸다 — 단 문서를 달았다가 그 문서가
-                # 빠졌으면 그 문서를 바탕으로 만든 추천이라 같이 내지 않는다 (#597 리뷰)
+                # 빠진 메뉴만 남았으면 보여 줄 근거가 없어서 내지 않는다. 보호자가 놀이 · 주제를
+                # 정해 물은 Activity · Growth 추천은 그 요청이 기준이라 문서 없이도 낸다 — 단
+                # 문서를 달았다가 그 문서가 빠졌으면 그 문서를 바탕으로 만든 추천이라 같이 내지
+                # 않는다 (#597 리뷰)
                 continue
             general.append(_general_out(row, basis, await records(str(row.agent))))
         prechecks.extend(
@@ -827,6 +831,9 @@ def _general_out(row, docs: list[DocEvidenceOut], record_count: int) -> GeneralS
         agent=str(row.agent),
         content=row.content,
         place_notice=row.place_notice,
+        warnings=list(row.warnings),
+        event_starts_on=row.event_starts_on,
+        event_ends_on=row.event_ends_on,
         basis=row.reason or "",
         status=str(row.status),
         expires_at=row.expires_at.isoformat(),
@@ -960,7 +967,7 @@ async def set_suggestion_feedback(
     ),
     status_code=200,
     response_model=SubmitEventResponse,
-    responses={status: {"model": ErrorEnvelope} for status in (400, 404, 409, 422)},
+    responses={status: {"model": ErrorEnvelope} for status in (400, 404, 409, 422, 503)},
 )
 async def update_event(
     child: AccessibleChild,
@@ -982,7 +989,7 @@ async def update_event(
         "path": request.url.path,
         "key": idempotency_key,
     }
-    replayed = idempotency.recall(**scope)
+    replayed = await idempotency.recall(**scope)
     if replayed is not None and isinstance(replayed, dict):
         return JSONResponse(status_code=200, content=replayed)
 
@@ -1091,5 +1098,5 @@ async def update_event(
     )
 
     response_dict = response_data.model_dump(mode="json")
-    idempotency.remember(**scope, replay=response_dict)
+    await idempotency.remember(**scope, replay=response_dict)
     return JSONResponse(status_code=200, content=response_dict)

@@ -20,6 +20,18 @@ export const chatTour: TourDefinition = {
       body: "무엇을 기록으로 남겼는지 보여 드려요. 잘못 알아들었으면 기록과 기억 화면에서 고칠 수 있어요.",
     },
     {
+      target: "found-tabs",
+      within: "turn",
+      title: "찾은 기록과 일정",
+      body: "물어본 기록과 일정을 종류별로 보여 드려요. 여기서는 보기만 하고 아무것도 바꾸지 않아요.",
+    },
+    {
+      target: "delete-proposal",
+      within: "turn",
+      title: "지울 것 고르기",
+      body: "대화로는 지워지지 않아요. 체크한 것만, 삭제하기를 두 번 눌러야 지워요. 지운 기록은 되살릴 수 없어요.",
+    },
+    {
       target: "promoted",
       within: "turn",
       title: "기억이 자랐어요",

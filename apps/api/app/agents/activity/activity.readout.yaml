@@ -38,6 +38,11 @@ place.notice_undated:
 place.notice_facility:
   kind: notice
   template: 공공데이터에 있는 시설이에요. 가기 전에 운영 여부와 이용료를 확인해 주세요.
+# 행사(한국관광공사 TourAPI 축제공연행사). 출처를 밝힌다 — 왜 이 행사가 나왔는지 안 보이면
+# 광고처럼 읽힌다(#600 PM). 기간 · 관람 연령은 주최 측이 바꾸므로 가기 전에 확인해 달라고 한다
+place.notice_event:
+  kind: notice
+  template: 한국관광공사 행사 정보예요. 일정과 관람 연령이 바뀔 수 있으니 가기 전에 확인해 주세요.
 # 보호자가 말한 지역을 못 찾았다(모르는 이름 · 여러 곳인데 위치가 없음 · 시도만). 비슷한 곳으로
 # 짐작하지 않고 장소 없이 골랐다고 알린다. run 에 한 줄이다 (`areas.py`)
 place.area_unknown:

@@ -14,6 +14,7 @@ import logging
 from app.agents.common.gate import Gate
 from app.agents.common.suggestion import MAX_SUGGESTIONS, check_count
 from app.agents.growth.context import GrowthContext, GrowthRunState
+from app.agents.growth.doc_seed import chain_key
 from app.agents.growth.readouts import (
     ASK_HABIT_CURRENT,
     ASK_ROUTINE_CURRENT,
@@ -41,12 +42,14 @@ from app.agents.growth.tools.docs import (
     MIN_CHAIN_MATCH,
     chain_name,
     match_chain,
+    matching_chains,
     related_names,
     strategy_rows,
 )
 from app.agents.growth.tools.memory import SELF_RELIANCE, category_chains
 from app.agents.growth.tools.routine import (
     PickedStep,
+    SameBehavior,
     ask_question,
     check_routine_category,
     routine_gap,
@@ -84,6 +87,11 @@ async def propose_learning_activity(
         docs=state.seen_docs,
         today=context.today,
         topic=state.strict_topic,
+        basis_topic=state.topic,
+        basis_words=state.routine_words,
+        requested=state.requested,
+        # 보호자가 한 말과 프롬프트의 [월령] 이 아는 수치. 이 밖의 시간 · 횟수 · 나이는 근거가 없다
+        grounds=(*state.said_texts, f"{gate.stage.months}개월"),
     )
     if review.rejections:
         usable = (*state.seen_evidence, *state.seen_docs)
@@ -136,7 +144,8 @@ async def propose_routine_plan(context: GrowthContext, args: ProposeRoutinePlanA
         return ok("propose", _ROUTINE, closed=True)
 
     observed = tuple(state.seen_routine.values())
-    gap = routine_gap(observed, category=args.category, today=today)
+    same = await _behavior(context, args.category, requested)
+    gap = routine_gap(observed, category=args.category, today=today, same=same)
     if gap is not None:
         return await _ask(
             context, gap, _subject(context, args.category, args.subject), args.category
@@ -184,6 +193,7 @@ async def propose_routine_plan(context: GrowthContext, args: ProposeRoutinePlanA
         rules=rules,
         seen=state.seen_evidence,
         today=today,
+        same=same,
     )
     if review.rejections:
         return fail(
@@ -233,7 +243,11 @@ async def propose_books_tool(context: GrowthContext, args: ProposeBooksArgs) -> 
         state.closing = BOOK_NO_TOPIC
         return ok("propose", _BOOKS, closed=True)
     review = review_books(
-        args.items, picked.accepted, seen=state.seen_evidence, today=context.today
+        args.items,
+        picked.accepted,
+        seen=state.seen_evidence,
+        today=context.today,
+        asked=state.asked_book_words,
     )
     if review.rejections:
         return fail(
@@ -281,6 +295,12 @@ def _requested(state: GrowthRunState, subject: str) -> tuple[str, bool]:
     한 번이라도 보이면 물은 행동을 모델이 맞게 적은 것으로 믿는다("손은 어떻게 씻겨?" 의
     "손 씻기"). 애매하면 모델을 믿는다 — 기록한 행동이 없던 때와 같은 판정이다.
     """
+    answered = state.answered_subject
+    if answered and not related_names(normalize(subject), normalize(answered)):
+        # 되묻기에 답하고 다시 도는 run 이다 — 물은 행동이 요청 행동이다. 모델이 이름을 바꿔 적어도
+        # (손가락 빨기 → 손가락 빠는 것) 답한 기록을 다른 행동으로 보고 같은 질문을 되풀이하지
+        # 않는다
+        return answered, True
     if not state.recorded_subjects:
         return subject, False
     said = normalize(" ".join(state.said_texts))
@@ -288,6 +308,26 @@ def _requested(state: GrowthRunState, subject: str) -> tuple[str, bool]:
     if any(head and head in said for head in heads):
         return subject, False
     return state.recorded_subjects[0], True
+
+
+async def _behavior(context: GrowthContext, category: str, requested: str) -> SameBehavior | None:
+    """요청한 행동의 기록만 근거로 세는 판정. 카테고리만으로 판정해야 하는 요청이면 None.
+
+    자립은 요청 행동과 맞는 사슬이 있을 때 그 사슬의 관찰이다 — 같은 행동을 "양치" · "양치하기" 로
+    달리 적어도 한 사슬이다. 예절 · 습관은 행동 이름이 맞는 관찰이다. "아침 씻기" 처럼 행동이 묶여
+    사슬이 안 맞는 요청은 카테고리 판정 그대로다.
+    """
+    if category in SELF_RELIANCE:
+        matched = matching_chains(await category_chains(context, category), requested)
+        if not matched:
+            return None
+        # 행동이 둘("양치하고 손 씻기")이면 두 사슬의 관찰이 다 근거다
+        keyed = {chain_key(chain[0].doc_key): chain for chain in matched}
+        return lambda obs: any(
+            match_chain({key: chain}, obs.subject) is not None for key, chain in keyed.items()
+        )
+    wanted = normalize(requested)
+    return lambda obs: related_names(normalize(obs.subject), wanted)
 
 
 def _subject(context: GrowthContext, category: str, fallback: str) -> str:

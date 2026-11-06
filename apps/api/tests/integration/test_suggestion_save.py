@@ -167,6 +167,8 @@ async def test_추천을_draft_로_저장하고_id_를_순서대로_돌려준다
     assert {row.expires_at for row in rows} == {NOW + SUGGESTION_TTL}
     assert (rows[0].allergens, rows[0].items) == (["난류"], ["계란"])
     assert {row.place_notice for row in rows} == {None}  # payload 에 키가 없으면 비운다
+    assert [row.warnings for row in rows] == [[], []]
+    assert {(row.event_starts_on, row.event_ends_on) for row in rows} == {(None, None)}
     assert await counts(session, child.id) == (2, 2)  # 아이 기록 근거 1행 + 문서 근거 1행
 
 
@@ -221,7 +223,53 @@ async def test_장소가_붙은_추천의_확인_문구를_저장한다(session,
 
     row = await session.get(Suggestion, row_id)
     assert row.place_notice == notice
+    assert (row.event_starts_on, row.event_ends_on) == (None, None)  # 장소는 기간이 없다
     assert await counts(session, child.id) == (1, 1)  # 장소는 근거가 아니다
+
+
+async def test_추천의_위험_경고를_저장한다(session, kids):
+    """위험 용어 사전의 축 문구를 그 추천의 칸으로 싣는다 (#402). 근거 행은 늘지 않는다."""
+    _, child, _ = kids
+    warning = "작은 부품은 삼킬 수 있어요. 아이 입에 들어가지 않는 크기인지 먼저 확인해 주세요."
+    draft = SuggestionDraft(
+        agent="activity",
+        kind="general",
+        content="구슬 꿰기",
+        reason="이유",
+        citations=(EvidenceCitation(ref=Ref(kind="activity_doc", id=DOC_ID), note="놀이 자료"),),
+        warnings=(warning,),
+    )
+
+    [row_id] = await save_agent_suggestions(
+        session, child_id=child.id, run_id=RUN, now=NOW, payloads=[draft.to_payload()]
+    )
+
+    row = await session.get(Suggestion, row_id)
+    assert row.warnings == [warning]
+    assert await counts(session, child.id) == (1, 1)  # 경고는 근거가 아니다
+
+
+async def test_행사가_붙은_추천의_기간을_저장한다(session, kids):
+    """행사 이름만 나가면 지난 행사인지 알 수 없다 — 화면이 기간을 날짜로 세운다 (#516)."""
+    _, child, _ = kids
+    draft = SuggestionDraft(
+        agent="activity",
+        kind="general",
+        content="광안리 가을 축제에서 축제 구경",
+        reason="이유",
+        citations=(EvidenceCitation(ref=Ref(kind="activity_doc", id=DOC_ID), note="놀이 자료"),),
+        place_notice="한국관광공사 행사 정보예요.",
+        event_starts_on=date(2026, 9, 29),
+        event_ends_on=date(2026, 10, 1),
+    )
+
+    [row_id] = await save_agent_suggestions(
+        session, child_id=child.id, run_id=RUN, now=NOW, payloads=[draft.to_payload()]
+    )
+
+    row = await session.get(Suggestion, row_id)
+    assert (row.event_starts_on, row.event_ends_on) == (date(2026, 9, 29), date(2026, 10, 1))
+    assert await counts(session, child.id) == (1, 1)  # 행사는 근거가 아니다
 
 
 async def test_문서_행_근거는_대상_테이블_없이_저장한다(session, kids):
@@ -332,7 +380,34 @@ async def test_보호자가_정한_요청에_맞춘_일반_추천은_문서_근�
     assert (await session.get(Suggestion, suggestion_id)).requested is True
 
 
-async def test_요청_기반은_Activity_일반_추천만_행에_남긴다(session, kids):
+async def test_Growth_요청_기반_일반_추천을_문서_근거_없이_저장한다(session, kids):
+    """보호자가 주제를 정해 물었고 그 주제의 문서 행이 없으면 요청이 기준이다 (#702)."""
+    _, child, _ = kids
+    [suggestion_id] = await save_agent_suggestions(
+        session,
+        child_id=child.id,
+        run_id=RUN,
+        payloads=[payload(kind="general", requested=True, agent="growth")],
+        now=NOW,
+    )
+    assert await counts(session, child.id) == (1, 0)
+    assert (await session.get(Suggestion, suggestion_id)).requested is True
+
+
+async def test_Growth_요청_기반이_아니면_문서_근거가_필요하다(session, kids):
+    _, child, _ = kids
+    with pytest.raises(SuggestionEvidenceError, match="문서 행 근거가 없다"):
+        await save_agent_suggestions(
+            session,
+            child_id=child.id,
+            run_id=RUN,
+            payloads=[payload(kind="general", agent="growth")],
+            now=NOW,
+        )
+    assert await counts(session, child.id) == (0, 0)
+
+
+async def test_요청_기반은_Activity_와_Growth_일반_추천만_행에_남긴다(session, kids):
     """Food 가 requested 를 보내도 요청 기반으로 남지 않는다 — 05 에서 문서 근거가 사라지면
     다른 일반 추천처럼 빠진다. 막연한 요청의 Activity 일반 추천도 남기지 않는다."""
     _, child, _ = kids
@@ -355,7 +430,7 @@ async def test_요청_기반은_Activity_일반_추천만_행에_남긴다(sessi
     assert (await session.get(Suggestion, activity)).requested is False
 
 
-async def test_요청_기반_면제는_Activity_만이다(session, kids):
+async def test_Food_는_요청_기반이어도_문서_근거를_본다(session, kids):
     """Food 는 레시피북 밖 메뉴가 나가면 안 된다 — requested 가 와도 문서 근거를 본다."""
     _, child, _ = kids
     with pytest.raises(SuggestionEvidenceError, match="문서 행 근거가 없다"):
