@@ -201,7 +201,8 @@ async def test_Redis_가_응답_없이_매달려도_1초_남짓에_503(hung):
     assert elapsed < hung.TIMEOUT_S * 3
 
 
-async def test_Redis_가_매달려도_이벤트_루프는_멈추지_않는다(hung):
+@pytest.mark.parametrize("op", ["recall", "remember"])
+async def test_Redis_가_매달려도_이벤트_루프는_멈추지_않는다(hung, op):
     """동기 클라이언트를 루프에서 부르면 기다리는 동안 다른 요청 · SSE 가 다 멈춘다 (#671 리뷰)."""
     import asyncio
     import time
@@ -217,6 +218,11 @@ async def test_Redis_가_매달려도_이벤트_루프는_멈추지_않는다(hu
             last = now
 
     async def call() -> None:
+        if op == "remember":  # 기본은 오류를 삼킨다
+            await idempotency.remember(
+                parent_id=PID, method="POST", path="/h", key="loop", replay="run-x"
+            )
+            return
         with pytest.raises(ApiError):
             await idempotency.recall(parent_id=PID, method="POST", path="/h", key="loop")
 

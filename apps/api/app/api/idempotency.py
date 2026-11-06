@@ -114,6 +114,10 @@ async def remember(
     except RedisError as exc:
         _warn(exc, "키를 남기지 못했다")
         if strict:
+            # 적고 나서 응답만 늦은 것일 수 있다 — 같은 키 재시도가 처리 안 된 이 run 을 재생하지
+            # 않게 버린 run 으로 둔다 (#729 리뷰)
+            if isinstance(replay, str):
+                _forgotten.add(replay)
             raise _unavailable() from None
 
 
