@@ -15,6 +15,7 @@ from collections.abc import Sequence
 from app.agents.growth.context import GrowthContext
 from app.agents.growth.schemas.task import GrowthTaskType
 from app.agents.growth.tools.docs import DocHit
+from app.rules.growth_topic import SCREEN
 
 # 같은 입력의 기록 조각을 요청과 가르는 머리말
 RECORD_HEADER = "[보호자가 같이 한 말]"
@@ -43,6 +44,46 @@ _LEARNING = """
 - 관심사가 있으면 활동에 잇는다. 예시는 결을 보여주는 것이다. 그대로 베끼지 않는다.
 - 요청이나 [보호자가 같이 한 말]에 주제(국어 · 숫자 같은 낱말)가 있으면 search_education_memory 의
   keywords 에 그 낱말을 넣는다.
+""".strip()
+
+# 코드가 요청 주제를 읽었을 때만 싣는다. 주제를 못 읽은 요청("열매 관찰")에 실으면 모델이 스스로
+# 주제가 있다고 보고 [예시] id 를 더 옮겨 적다 한 글자씩 틀려 제출이 되풀이됐다
+_LEARNING_TOPIC = """
+- 요청에 주제가 있으면 그 주제의 기록만 개인화 근거다. 관심 기록(공룡 등)은 주제 기록과 같이 달 때만
+  남는다. 주제의 기록이 없으면 [예시] id 를 근거로 단다.
+- 요청 주제의 기록이 어려워한 것(polarity −1)이면 도울 대상이다. reason 에 그 기록의 subject 와
+  어떻게 돕는지 쓴다. 주제 밖에서 싫어한 기록을 근거로 달면 무엇을 피했는지 reason 에 쓴다.
+""".strip()
+
+# 요청 기반 run(`state.requested`)의 주제 줄. [예시]가 없으니 [예시] id 를 달라는 말을 뺀다
+_LEARNING_TOPIC_REQUESTED = """
+- 요청에 주제가 있으면 그 주제의 기록만 개인화 근거다. 관심 기록(공룡 등)은 주제 기록과 같이 달 때만
+  남는다.
+- 요청 주제의 기록이 어려워한 것(polarity −1)이면 도울 대상이다. reason 에 그 기록의 subject 와
+  어떻게 돕는지 쓴다. 주제 밖에서 싫어한 기록을 근거로 달면 무엇을 피했는지 reason 에 쓴다.
+""".strip()
+
+# 요청 기반 run 에만 싣는다. 코드가 요청 주제를 읽었는데 그 주제의 [예시] 행이 없다
+_LEARNING_REQUESTED = """
+- 이번 요청의 주제는 [예시]가 없다. 요청에 맞춰 후보를 낸다. 요청 주제의 아이 기록을 조회해서
+  있으면 evidence 에 달고, 없으면 evidence 를 비운다. 지어낸 id 를 달지 않는다.
+- 시간 · 횟수 · 나이 숫자는 보호자가 말한 것만 쓴다. 하루 몇 시간까지 같은 기준을 만들지 않는다.
+""".strip()
+
+# 되묻기에 답을 받고 이어서 도는 교육 run(`state.answered_subject`)에만 싣는다. 방금 저장한 기록을
+# 조회까지 하고도 [예시] id 만 달아 일반 추천으로 끝나는 경우가 있었다(라이브 9회 중 4회)
+_LEARNING_ANSWERED = """
+- 보호자가 주제 '{subject}' 에 대해 집에서 해 본 일을 방금 답해서 아이 기록 한 건으로 저장했다.
+  search_education_memory 로 조회하면 observed_on 이 오늘인 교육 기록이 그 답이다. 기록 이름이
+  '{subject}' 와 달라도("받아쓰기") 그 답의 기록이니, 후보마다 evidence 에 달고 그 기록의 내용을
+  reason 에 반영한다.
+""".strip()
+
+# 화면 · 게임 고민(`state.topic` 에 screen)일 때만 싣는다
+_LEARNING_SCREEN = """
+- 화면 · 게임 이야기면 search_activity_memory 와 search_routine_memory 로 그 기록을 찾는다. 화면을
+  더 보게 하는 활동이 아니라 화면 보는 약속이나 끝낸 뒤 할 놀이를 낸다.
+- 중독 같은 말로 행동을 부르지 않는다.
 """.strip()
 
 _ROUTINE = """
@@ -80,6 +121,8 @@ _BOOK = """
 - 책 내용을 지어내지 않는다. reason 은 조회한 기록과 제목 · 형태에서 알 수 있는 것으로만 쓴다.
 - evidence 에는 search_book_interests 결과에 있던 id 만 쓴다. 근거로 쓴 기록이 없으면 비운다.
   책 자체는 코드가 근거로 단다.
+- 요청에 주제 낱말이 있으면 그 낱말의 기록만 개인화 근거다. 다른 주제의 관심(공룡 등)만 달면 일반
+  추천이 된다.
 """.strip()
 
 _LABEL_SECTIONS: dict[GrowthTaskType, str] = {
@@ -88,13 +131,15 @@ _LABEL_SECTIONS: dict[GrowthTaskType, str] = {
     GrowthTaskType.BOOK_SUGGESTION: _BOOK,
 }
 
+# 요청 기반 run 에는 [예시]가 없어 이 줄을 뺀다 (`_EVIDENCE` 의 `{example_line}` 자리)
+_EXAMPLE_LINE = "- 기억 근거가 없는 교육 활동은 가장 가까운 [예시] id 를 단다.\n"
+
 _EVIDENCE = """
 [근거]
 - evidence 에는 조회 결과나 [예시]에 있던 id 만 쓴다. 지어내지 않는다. 근거마다 note 를 짧게 쓴다 —
   원문을 옮기지 않는다.
 - 근거 id 는 한 글자도 바꾸지 않고 그대로 복사한다. 옮겨 적다 한 글자라도 틀리면 그 후보는 거절된다.
-- 기억 근거가 없는 교육 활동은 가장 가까운 [예시] id 를 단다.
-- 생활 루틴은 그 루틴 기록을 근거로 단다.
+{example_line}- 생활 루틴은 그 루틴 기록을 근거로 단다.
 - 싫어한 기록을 근거로 달면 무엇을 피했는지 reason 에 쓴다. 그 기록의 subject(행동 이름)를
   reason 에 그대로 넣는다.
 """.strip()
@@ -117,10 +162,22 @@ def build_system_prompt(
     if gate is None:
         raise RuntimeError("Gate 없이 프롬프트를 만들었다 — run() 이 build_gate 를 먼저 부른다")
     label = _LABEL_SECTIONS[task_type]
+    requested = task_type is GrowthTaskType.LEARNING_SUGGESTION and context.state.requested
+    if task_type is GrowthTaskType.LEARNING_SUGGESTION:
+        topic = context.state.topic
+        if topic:
+            label = f"{label}\n{_LEARNING_TOPIC_REQUESTED if requested else _LEARNING_TOPIC}"
+        if answered := context.state.answered_subject:
+            label = f"{label}\n{_LEARNING_ANSWERED.format(subject=answered)}"
+        if requested:
+            label = f"{label}\n{_LEARNING_REQUESTED}"
+        if SCREEN in topic:
+            label = f"{label}\n{_LEARNING_SCREEN}"
+    evidence = _EVIDENCE.format(example_line="" if requested else _EXAMPLE_LINE)
     dynamic = [f"[월령]\n아이는 {gate.stage.months}개월이다.", _now(context)]
     if task_type is not GrowthTaskType.BOOK_SUGGESTION:
         dynamic.insert(0, _examples(examples))
-    return "\n\n".join([_ROLE, _DONT, label, _EVIDENCE, _OUTPUT, *dynamic])
+    return "\n\n".join([_ROLE, _DONT, label, evidence, _OUTPUT, *dynamic])
 
 
 def request_message(request_texts: Sequence[str], record_texts: Sequence[str] = ()) -> str:

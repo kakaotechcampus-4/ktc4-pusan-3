@@ -8,7 +8,8 @@ row.fields["subject"], row.fields["status"] 등으로 읽기 때문이다.
 """
 
 import logging
-from datetime import date, datetime, time, timedelta, timezone
+from collections.abc import Sequence
+from datetime import UTC, date, datetime, time, timedelta, timezone
 from time import monotonic
 from typing import Any
 from uuid import UUID
@@ -19,11 +20,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.common.datetime_rules import DateRange
 from app.agents.memory.store.ports import (
+    DeleteCandidates,
     EventItemRow,
     EventRow,
     ObservationDomain,
     ObservationRow,
+    check_candidates,
 )
+from app.domains.delete_proposal.repository import PROPOSAL_TTL, ProposalTab, add_proposal
 from app.domains.memory.observation.models import (
     ObservationActivity,
     ObservationEducation,
@@ -165,6 +169,10 @@ class DbMemoryStore:
         runner 가 commit 뒤에 이 행들을 읽어 화면에 `saved` 로 보낸다 (#471)."""
         self._stale_profiles: set[UUID] = set()
         """고치기 · 지우기로 다시 계산할 기억. `flush_profiles` 가 commit 직전에 비운다 (#717)."""
+        self.proposal_id: UUID | None = None
+        # 카드의 expires_at — 러너가 SSE delete_proposal 에 싣는다 (#535)
+        self.proposal_expires_at: datetime | None = None
+        """이 run 이 남긴 삭제 제안 (#535). runner 가 commit 뒤에 후보 행을 읽어 화면에 보낸다."""
 
     def _today(self) -> date:
         """Profile 재계산 기준일. 안 넘기면 서비스 시간대(KST)의 오늘."""
@@ -443,15 +451,15 @@ class DbMemoryStore:
         uid = _parse_uuid(event_id)
         if uid is None:
             return False
-        orm = await self._session.scalar(
-            select(Event).where(Event.id == uid, Event.child_id == self._child_id)
+        # 🚨 DELETE … RETURNING 으로 실제로 지웠는지 본다. 읽고 나서 ORM 으로 지우면, 같은 일정을
+        #    다른 트랜잭션이 먼저 지웠을 때 0행 삭제가 경고로만 끝나 True 가 된다 — 버튼 확정이
+        #    지운 건수를 두 번 센다 (#535). 준비물 · 알림 · 추천 연결은 DB 의 ON DELETE CASCADE 다
+        deleted = await schedule_repository.delete_event(
+            self._session, child_id=self._child_id, event_id=uid
         )
-        if orm is None:
-            return False
-        await self._session.delete(orm)
-        await self._session.flush()
-        self.wrote = True
-        return True
+        if deleted:
+            self.wrote = True
+        return deleted
 
     # ── event_item ──────────────────────────────────────────────
 
@@ -512,3 +520,25 @@ class DbMemoryStore:
         await self._session.flush()
         self.wrote = True
         return True
+
+    # ── delete proposal (#535) ──────────────────────────────────
+
+    async def propose_delete(
+        self, *, parent_id: UUID, run_id: str, tabs: Sequence[DeleteCandidates]
+    ) -> str:
+        if self.proposal_id is not None:
+            raise ValueError("한 run 에 제안은 하나다")
+        check_candidates(tabs)
+        now = datetime.now(UTC)
+        self.proposal_id = await add_proposal(
+            self._session,
+            parent_id=parent_id,
+            child_id=self._child_id,
+            run_id=run_id,
+            tabs=[ProposalTab(tab.kind, tab.truncated, tab.ids, tab.picked) for tab in tabs],
+            now=now,
+        )
+        self.proposal_expires_at = now + PROPOSAL_TTL
+        # 제안도 commit 해야 남는 쓰기다 — 뒤에서 터져도 run 을 done 으로 닫아 키를 지킨다
+        self.wrote = True
+        return str(self.proposal_id)

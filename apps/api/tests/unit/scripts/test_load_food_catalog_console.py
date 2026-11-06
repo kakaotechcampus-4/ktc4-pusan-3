@@ -6,7 +6,7 @@
 
 import pytest
 
-from scripts.load_food_catalog import Loaded, build_parser, summary
+from scripts.load_food_catalog import Loaded, SourceLoaded, build_parser, summary
 
 
 @pytest.mark.parametrize("dry_run", [True, False])
@@ -48,3 +48,48 @@ def test_요약은_식품군이_있는_메뉴_수를_같이_보여준다():
 
     text.encode("cp949")
     assert "식품군 있음 1300행" in text
+
+
+def test_요약은_소스별_건수를_보여주고_건너뛴_소스를_말한다():
+    # 두 소스를 합친 숫자 하나만 보이면 어느 소스가 비었는지 모른다. 키가 없어 건너뛴 소스도 보인다
+    loaded = Loaded(
+        recipe_rows=537,
+        resolved_recipes=31,
+        retired_recipes=2,
+        sources=(SourceLoaded("mafra_recipe", rows=537, resolved=31, retired=2, without_main=3),),
+        skipped=("nics_recipe",),
+    )
+
+    text = summary(loaded, dry_run=False)
+
+    text.encode("cp949")
+    assert "mafra_recipe 537행(후보 풀 31 · 내린 것 2 · 주재료 없음 3)" in text
+    assert "건너뜀 nics_recipe" in text
+
+
+def test_요약은_두_소스를_따로_보여준다():
+    loaded = Loaded(
+        recipe_rows=1135,
+        resolved_recipes=40,
+        sources=(
+            SourceLoaded("mafra_recipe", rows=537, resolved=31, retired=0, without_main=3),
+            SourceLoaded("nics_recipe", rows=598, resolved=9, retired=0, without_main=32),
+        ),
+    )
+
+    text = summary(loaded, dry_run=True)
+
+    text.encode("cp949")
+    assert "mafra_recipe 537행" in text and "nics_recipe 598행(후보 풀 9" in text
+    assert "주재료 없음 32" in text
+    assert "건너뜀" not in text
+
+
+def test_요약은_주소나_키를_싣지_않는다():
+    loaded = Loaded(
+        sources=(SourceLoaded("nics_recipe", rows=598, resolved=9, retired=0, without_main=32),)
+    )
+
+    text = summary(loaded, dry_run=False)
+
+    assert "http" not in text and "serviceKey" not in text and "apis.data.go.kr" not in text

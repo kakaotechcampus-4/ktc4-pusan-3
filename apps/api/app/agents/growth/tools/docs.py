@@ -98,12 +98,14 @@ def build_doc_query(
     interest_keys: Sequence[str],
     routine_category: str | None,
     areas: Sequence[str] = (),
+    tags: Sequence[str] = (),
 ) -> str:
     """의미 검색 쿼리. 코드가 아는 값만 이어 붙인다 — 보호자 원문은 들어올 길이 없다."""
     parts = [task_type.value, stage_of(months), *interest_keys]
     if routine_category:
         parts.append(routine_category)
     parts.extend(areas)
+    parts.extend(tags)
     return " ".join(parts)
 
 
@@ -116,6 +118,7 @@ async def search_growth_doc(
     routine_category: str | None = None,
     trigger_tags: Sequence[str] = (),
     areas: Sequence[str] = (),
+    tags: Sequence[str] = (),
     rotation: str = "",
     blocked: Sequence[Term] = (),
 ) -> tuple[DocHit, ...]:
@@ -132,6 +135,10 @@ async def search_growth_doc(
     영역의 행에서만 고른다 — 국어를 물었는데 자연탐구 행이 [예시]로 가지 않게. `OTHER`(영어 같은
     영역 밖 주제)는 행이 없어 비어 돌아간다. 모르는 영역 키는 `ValueError`.
 
+    `tags` 는 주제 사전이 정한 문서 행 태그다(`rules/growth_topic.doc_tags`). 있으면 그 태그가 달린
+    행만 돌려 고른다 — 화면 고민에 신체운동 · 건강 영역의 다른 행이 [예시]로 가지 않게. 영문
+    식별자만 받는다.
+
     `blocked` 는 식품 아닌 알레르기의 대응표 낱말이다. 제목 · 본문 · 준비물 중 한 칸이라도 걸린
     행은 돌려 고르기 전에 뺀다 — 막힐 예시를 보이면 모델이 베껴 재호출만 는다.
     """
@@ -141,6 +148,8 @@ async def search_growth_doc(
         raise ValueError("trigger_tags 는 영문 소문자 식별자만 받는다")
     if set(areas) - AREAS - {OTHER}:
         raise ValueError("areas 가 정해진 영역 키가 아니다")
+    if not all(_TRIGGER_TAG.fullmatch(tag) for tag in tags):
+        raise ValueError("tags 는 영문 소문자 식별자만 받는다")
 
     row_type = doc_row_type(task_type, months, routine_category)
     rows = await docs.search(
@@ -149,12 +158,15 @@ async def search_growth_doc(
         routine_category=routine_category,
         trigger_tags=tuple(trigger_tags),
         areas=tuple(areas),
-        query=build_doc_query(task_type, months, interest_keys, routine_category, areas),
+        tags=tuple(tags),
+        query=build_doc_query(task_type, months, interest_keys, routine_category, areas, tags),
         limit=DOC_POOL,
     )
     served = [r for r in rows if r.row_type == row_type and r.min_month <= months < r.max_month]
     if areas:
         served = [r for r in served if r.area in areas]
+    if tags:
+        served = [r for r in served if set(tags) & set(r.tags)]
     if blocked:
         served = [r for r in served if not match_fields((r.title, r.body, *r.materials), blocked)]
     if rotation:
@@ -281,15 +293,22 @@ def match_chain(
     같을 때만 맞는다. 둘 이상 맞으면 이름이 긴 쪽이다. 없으면 None — 호출부는 `doc.no_row` 로
     닫는다(단계를 지어내지 않는다).
     """
-    wanted = normalize(subject)
-    found = [
-        chain
-        for chain in chains.values()
-        if any(related_names(name, wanted) for name in _chain_names(chain))
-    ]
+    found = matching_chains(chains, subject)
     if not found:
         return None
     return max(found, key=lambda chain: len(chain_name(chain)))
+
+
+def matching_chains(
+    chains: Mapping[str, tuple[GrowthDocRow, ...]], subject: str
+) -> tuple[tuple[GrowthDocRow, ...], ...]:
+    """행동 이름에 맞는 사슬 전부. "양치하고 손 씻기" 처럼 행동이 둘이면 둘 다다."""
+    wanted = normalize(subject)
+    return tuple(
+        chain
+        for chain in chains.values()
+        if any(related_names(name, wanted) for name in _chain_names(chain))
+    )
 
 
 def _chain_names(chain: Sequence[GrowthDocRow]) -> tuple[str, ...]:
