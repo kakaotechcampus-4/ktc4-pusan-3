@@ -3,7 +3,8 @@
 import { useState } from "react";
 
 import { domainBar, domainField, domainLabel } from "@/components/domain-chip";
-import { itemNames, SuggestionItems } from "@/components/suggestion-items";
+import { SuggestionItems } from "@/components/suggestion-items";
+import { SuggestionWarnings } from "@/components/suggestion-warnings";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DOMAIN_ICON } from "@/components/ui/icon";
 import { IconTile } from "@/components/ui/icon-tile";
@@ -31,6 +32,9 @@ import { useEnterMotion } from "@/lib/motion";
  *
  * 🚨 **줄을 끌고 가는 것은 제안 문장이다.** `body-sm` 회색으로 앉히면 목록에서 제일 약한 것이
  *    목록의 내용이 된다.
+ * 🚨 **제안 문장은 일반 추천 카드와 같은 `body`(16) 다** (#683). 한동안 `title`(20 · 700)이었는데, 두 카드가
+ *    한 화면에 같이 서면서 개인화 쪽만 크고 굵어 **더 중요한 추천**처럼 읽혔다 — 둘은 같은 결정의 대안이고,
+ *    가르는 것은 크기가 아니라 라벨 · 점선 · 근거 목록이다 (CLAUDE.md §2 · 디자인 시스템 §7).
  *
  * 🚨 **근거를 접지 않는다.** 근거를 달고 나간다는 것이 이 제품의 유일한 차별점이라
  *    (PRODUCT.md), 그것을 "+N" 뒤에 두면 구조가 약속을 깬다.
@@ -169,9 +173,14 @@ export function SuggestionList({
       >
         {/* 🚨 머리줄은 **무엇을 정하는 중인가**를 말한다. 문구는 서버가 주고(`prompt`) —
             질문을 화면이 지어내지 않는다.
-            🚨 **질문이 후보보다 커야 한다** (`display` 24 > `title` 20). 이 셋이 **무엇에 대한
+            🚨 **질문이 후보보다 커야 한다** (`title` 20 > `body` 16). 이 셋이 **무엇에 대한
             답인지**가 답보다 작게 서면 위계가 뒤집힌다. 손글씨는 굵기 대비가 원래 약해서
             (§4 에서 굵기가 실물이 된 지금도 그렇다) 위계를 지는 것은 거의 크기뿐이다.
+            ⚠️ 한동안 `display`(24)였다 — 화면 제목(`h1`)과 같은 크기라 층이 둘인데 하나로 보였다.
+            후보 제목을 `body` 로 내리면서(#683) 한 단계 같이 내렸다.
+            🚨 **좁은 폰(< 380px)에서는 `section`(17 · 600)이다.** 화면 제목이 거기서 `title` 로 내려가서
+            (`PageTitle` · 디자인 시스템 §9), 같이 두면 질문과 화면 제목이 같은 크기가 된다. 세 층
+            (화면 제목 20 > 질문 17 > 후보 16)을 좁은 폰에서도 지킨다.
             🚨 **`h2` 다** — 화면 제목(`h1`) 바로 아래 층이다. `h3` 로 두면 화면에서 제일 큰
             글자가 건너뛴 층에 앉는다.
             🚨 **도메인 색은 아이콘 타일 하나까지다** (문서 §3 예외 ㉡ 와 같은 값·같은 이유).
@@ -182,7 +191,9 @@ export function SuggestionList({
         <div className="flex items-center gap-3">
           <IconTile icon={DOMAIN_ICON[agent]} tone="plain" className={domainField(agent)} />
           <div className="min-w-0">
-            {group?.prompt ? <h2 className="text-display text-ink">{group.prompt}</h2> : null}
+            {group?.prompt ? (
+              <h2 className="text-section min-[380px]:text-title text-ink">{group.prompt}</h2>
+            ) : null}
             {/* 🚨 탭이 있으면 이름·건수를 여기서 다시 말하지 않는다 — 탭이 "놀이 3가지" 로
                 이미 말해서 60px 안에 같은 말이 두 번 선다. 탭이 없을 때(묶음 하나)만 선다. */}
             {/* 🚨 **같은 영역의 일반 추천이 같이 서면 무엇을 셌는지 말한다** (#512 리뷰). 건수는 개인화
@@ -285,8 +296,6 @@ function SuggestionRow({
    */
   const reason = suggestion.reason?.trim();
   const placeNotice = suggestion.place_notice?.trim();
-  /** 근거 선의 위 간격만 가른다. 무엇을 그릴지는 `SuggestionItems` 와 같은 판정이다. */
-  const hasItems = itemNames(suggestion.agent, suggestion.items).length > 0;
 
   return (
     <div className="px-4 py-4">
@@ -302,12 +311,13 @@ function SuggestionRow({
           (있던 "안 할래요" 는 서버로 아무것도 보내지 않고 화면에서만 접었다). 제안에 대한
           평가는 07 피드백이 **해 보고 나서** 받는다. */}
       {isHealth ? (
-        <p className="text-title text-ink">{suggestion.content}</p>
+        <p className="text-body text-ink">{suggestion.content}</p>
       ) : (
+        // 라벨 글씨는 체크박스 기본(`body`/`ink`) 그대로다 — 일반 추천 카드와 같은 값이다 (#683).
         <Checkbox
           checked={selected}
           onChange={() => !busy && onToggleSelect()}
-          label={<span className="text-title text-ink">{suggestion.content}</span>}
+          label={suggestion.content}
           className="py-0"
         />
       )}
@@ -319,25 +329,28 @@ function SuggestionRow({
             근거가 아니라서 선 아래 "사용한 기록" 에 넣지 않는다 — 넣으면 기록이 늘어 보인다. */}
         {placeNotice ? <p className="text-caption text-ink-muted mt-1">{placeNotice}</p> : null}
 
+        {/* 🚨 위험 경고도 제안 문장에 딸린 말이다 (#402 · #672). 장소 문구 아래, 이유보다 위 — 고르기 전에 읽게.
+            근거가 아니라서 선 아래 "사용한 기록" 에 넣지 않는다. */}
+        <SuggestionWarnings warnings={suggestion.warnings} className="mt-2" />
+
         {reason ? (
-          <Reason className="mt-4" term={isHealth ? "무엇을 봤나" : "추천 이유"} value={reason} />
+          <Reason className="mt-2" term={isHealth ? "무엇을 봤나" : "추천 이유"} value={reason} />
         ) : null}
 
         {/* 필요한 재료 · 준비물은 이유 다음, 근거 선 위다 (#659). 제안에 딸린 내용이라 선 위에 두고,
-            근거가 아니라서 "사용한 기록" 에 섞지 않는다. 이유가 없으면 제안 문장과의 사이를 이유 자리(16)로 둔다. */}
+            근거가 아니라서 "사용한 기록" 에 섞지 않는다. 이유가 없으면 제안 문장과의 사이를 이유 자리(8)로 둔다. */}
         <SuggestionItems
           agent={suggestion.agent}
           items={suggestion.items}
-          className={reason ? "mt-3" : "mt-4"}
+          className={reason ? "mt-3" : "mt-2"}
         />
 
         {/* 🚨 **근거는 선 아래에 둔다.** 제안·이유와 같은 무게로 쌓으면 이 제품의 차별점인
             근거가 본문에 묻힌다. 나누는 것은 카드 속 카드가 아니라 **가는 선 하나**다.
-            이유도 준비물도 없으면 선이 제안 문장 바로 아래로 올라오니, 제안과의 사이를 이유 자리(16)로 둔다. */}
-        <div
-          data-tour="evidence"
-          className={cn("border-line border-t pt-3", reason || hasItems ? "mt-3" : "mt-4")}
-        >
+            이유가 없으면 선이 제안 문장 바로 아래로 올라오니, 제안과의 사이를 선 위 여백(12)으로 둔다.
+            ⚠️ 제안 → 이유는 8 이다 (#683). 제안 문장이 `title` 이던 때는 16 이었는데, `body` 로 내리자
+            이유가 제안에서 떨어져 나간 다른 덩어리처럼 보였다 — 일반 카드의 제안 → 기준 문구(4)와 가깝게 붙인다. */}
+        <div data-tour="evidence" className="border-line mt-3 border-t pt-3">
           <EvidenceList evidence={suggestion.evidence} />
         </div>
 
@@ -433,7 +446,11 @@ export function SuggestionListSkeleton({ tabs }: { tabs: boolean }) {
       <div className="flex flex-col gap-2">
         <div className="flex items-center gap-3">
           <SkeletonTile />
-          <SkeletonText size="display" width="2/3" className="min-w-0 flex-1" />
+          <SkeletonText
+            size="section"
+            width="2/3"
+            className="min-[380px]:text-title min-w-0 flex-1"
+          />
         </div>
         <ul className="flex flex-col gap-3">
           {/* 셋이다 — 한 묶음의 후보는 최대 셋이고, 그만큼 잡아 둬야 아래 "홈으로" 가 처음부터 화면 밖에 선다. */}
@@ -441,9 +458,9 @@ export function SuggestionListSkeleton({ tabs }: { tabs: boolean }) {
             <li key={i} className="rounded-card bg-surface border-line flex overflow-hidden border">
               <span className="bg-line w-1.5 shrink-0" />
               <div className="min-w-0 flex-1 px-4 py-4">
-                <SkeletonText size="title" width="3/4" />
+                <SkeletonText size="body" width="3/4" />
                 <div className="pl-8">
-                  <SkeletonText size="body-sm" className="mt-4" />
+                  <SkeletonText size="body-sm" className="mt-2" />
                   <SkeletonText size="body-sm" width="2/3" />
                   <div className="border-line mt-3 border-t pt-3">
                     <SkeletonText size="label" width="1/4" />

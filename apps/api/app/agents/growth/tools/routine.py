@@ -2,7 +2,7 @@
 
     check_routine_category   연령 허용표. 불허면 해당 readout 으로 교체한다
     routine_gap              근거(같은 카테고리 · 14일)가 없거나 습관 `trigger` 가 비면 되묻는다
-    current_assistance_level 14일 창 안 관찰에서 지금 도움 수준을 고른다
+    routine_level            14일 창 안 관찰에서 지금 도움 수준을 고른다. 비면 수행 결과까지 본다
     pick_next_step           `next_step_of` 사슬에서 **바로 다음 칸**을 고른다
 
 모델은 `pick_next_step` 이 고른 행을 집 상황에 맞춰 문장으로 옮길 뿐이다 — 단계를 고르지 않는다.
@@ -12,8 +12,8 @@
 모르는 채 내놓는 조언은 어느 집에나 해당하는 일반론이다. 대신 되묻는다 (Growth_Agent_명세.md §6).
 """
 
-from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, replace
 from datetime import date, timedelta
 from uuid import UUID
 
@@ -29,7 +29,7 @@ from app.agents.growth.readouts import (
     READOUTS,
 )
 from app.agents.growth.store.ports import GrowthDocRow, RoutineObservation
-from app.rules.term_match import normalize
+from app.rules.particle import topic_particle
 
 # 도움이 많이 필요한 쪽 → 혼자 하는 쪽. 사슬은 이 순서로 나아간다
 ASSISTANCE_ORDER: tuple[str, ...] = (
@@ -40,6 +40,12 @@ ASSISTANCE_ORDER: tuple[str, ...] = (
 )
 # growth_doc 의 자립 단계 행이 어느 도움 수준에 해당하는지 `tags` 에 `assistance:<수준>` 으로 적는다
 ASSISTANCE_TAG_PREFIX = "assistance:"
+# ask.* 문구의 주제 조사 자리. 받침을 아는 이름이면 "은" · "는" 으로 바꾼다
+_TOPIC_MARK = "은(는)"
+# 일부만 해냈다는 기록은 나머지에 도움이 필요하다는 말이다. "앞니만 닦고 말아" 는 누가 도왔는지
+# 말하지 않아서 Memory 가 도움 수준을 비운다. 비었다고 다시 물으면 답한 보호자에게 같은 질문이
+# 돌아간다
+COMPLETION_LEVEL: dict[str, str] = {"partial": "partial_assist"}
 
 
 class ChainError(ValueError):
@@ -63,21 +69,39 @@ def check_routine_category(category: str, months: int) -> str | None:
     return None
 
 
+SameBehavior = Callable[[RoutineObservation], bool]
+
+
 def routine_evidence(
-    cited: Sequence[RoutineObservation], *, category: str, today: date
+    cited: Sequence[RoutineObservation],
+    *,
+    category: str,
+    today: date,
+    same: SameBehavior | None = None,
 ) -> tuple[RoutineObservation, ...]:
     """근거로 세는 루틴 관찰 — **선언한 카테고리와 같고 최근 14일 안**인 것만.
 
     창은 공통 티어 3(`rank_evidence`)과 같다. affinity 는 관심사를 잇는 데만 쓰고
-    여기에 넣지 않는다.
+    여기에 넣지 않는다. `same` 이 있으면 요청한 행동의 관찰만이다 — 양치를 물었는데 같은
+    카테고리의 손 씻기 기록이 근거가 되지 않게. 없으면 카테고리만 본다.
     """
     window_start = today - timedelta(days=OBSERVATION_WINDOW_DAYS)
     return tuple(
-        obs for obs in cited if obs.routine_category == category and obs.observed_on >= window_start
+        obs
+        for obs in cited
+        if obs.routine_category == category
+        and obs.observed_on >= window_start
+        and (same is None or same(obs))
     )
 
 
-def routine_gap(cited: Sequence[RoutineObservation], *, category: str, today: date) -> str | None:
+def routine_gap(
+    cited: Sequence[RoutineObservation],
+    *,
+    category: str,
+    today: date,
+    same: SameBehavior | None = None,
+) -> str | None:
     """되물어야 하면 `ask.*` 키, 근거가 충분하면 None. 한 번에 질문 하나만 나간다.
 
     - 근거 0 → 습관은 `ask.habit_current`, 그 밖은 `ask.routine_current`
@@ -85,7 +109,7 @@ def routine_gap(cited: Sequence[RoutineObservation], *, category: str, today: da
     - 습관인데 근거 관찰에 `trigger` 가 하나도 없음 → `ask.habit_trigger`
       언제 나오는 행동인지 모르면 교정안이 아이와 상관없는 일반론이 된다
     """
-    evidence = routine_evidence(cited, category=category, today=today)
+    evidence = routine_evidence(cited, category=category, today=today, same=same)
     if category == "habit":
         if not evidence:
             return ASK_HABIT_CURRENT
@@ -97,28 +121,30 @@ def routine_gap(cited: Sequence[RoutineObservation], *, category: str, today: da
 
 def ask_question(key: str, subject: str) -> str:
     """`ask.*` 키를 되묻기 한 줄로. `subject` 는 코드가 만든 행동 이름이어야 한다."""
-    return READOUTS.render(key, subject=subject).body
+    body = READOUTS.render(key, subject=subject).body
+    return body.replace(f"{subject}{_TOPIC_MARK}", f"{subject}{topic_particle(subject)}")
 
 
-def current_assistance_level(
-    observations: Sequence[RoutineObservation],
-    *,
-    category: str,
-    subject: str | None,
-    today: date,
+def routine_level(
+    observations: Sequence[RoutineObservation], *, category: str, today: date
 ) -> str | None:
-    """14일 창 안, 같은 카테고리(와 같은 행동 이름)의 관찰에서 **가장 최근** 도움 수준을 고른다.
+    """다음 칸을 고를 지금 수준. 모르면 None 이고 호출부는 되묻는다.
 
-    `assistance_level` 이 비어 있는 관찰은 건너뛴다 — 추정하지 않는다. 하나도 없으면 None 이고
-    호출부는 `ask.routine_current` 로 되묻는다. 오래된 수준으로 단계를 고르면 이미 넘어선 단계를
-    시킬 수 있다. 같은 날 둘이면 도움이 더 필요한 쪽을 고른다 — 건너뛰지 않는 쪽이다.
+    수행 결과(`completion_status`)가 일부만이면 도움 수준이 비었거나 혼자라고 적혀 있어도 읽을 수
+    있다(`_with_completion`). 그래도 없으면 짚지 않는다 — 기록에 없는 수준을 근거로 추천을 내면
+    개인화 추천이 아니다. 14일 창 밖 기록으로는 읽지 않는다.
     """
-    candidates = [
-        obs
-        for obs in routine_evidence(observations, category=category, today=today)
-        if obs.assistance_level in ASSISTANCE_ORDER
-        and (subject is None or normalize(obs.subject) == normalize(subject))
-    ]
+    evidence = routine_evidence(observations, category=category, today=today)
+    return _latest_level(tuple(_with_completion(obs) for obs in evidence))
+
+
+def _latest_level(evidence: Sequence[RoutineObservation]) -> str | None:
+    """창 안으로 이미 거른 관찰에서 가장 최근 수준. 같은 날이면 도움이 더 필요한 쪽.
+
+    `assistance_level` 이 비어 있는 관찰은 건너뛴다. 오래된 수준으로 단계를 고르면 이미 넘어선
+    단계를 시킬 수 있고, 같은 날 둘이면 건너뛰지 않는 쪽을 고른다.
+    """
+    candidates = [obs for obs in evidence if obs.assistance_level in ASSISTANCE_ORDER]
     if not candidates:
         return None
     latest = max(obs.observed_on for obs in candidates)
@@ -127,6 +153,22 @@ def current_assistance_level(
         (obs.assistance_level for obs in same_day if obs.assistance_level),
         key=ASSISTANCE_ORDER.index,
     )
+
+
+def _with_completion(obs: RoutineObservation) -> RoutineObservation:
+    """일부만 해낸 관찰의 도움 수준을 채운다.
+
+    비었으면 `COMPLETION_LEVEL` 의 칸이다. 혼자 했다고 적혔는데 일부만 해냈다면 "이미 혼자 잘
+    하고 있어요" 로 닫히지 않게 한 칸 내려 말로 알려 주면 하는 칸으로 읽는다.
+    """
+    level = COMPLETION_LEVEL.get(obs.completion_status or "")
+    if level is None:
+        return obs
+    if obs.assistance_level is None:
+        return replace(obs, assistance_level=level)
+    if obs.assistance_level == ASSISTANCE_ORDER[-1]:
+        return replace(obs, assistance_level=ASSISTANCE_ORDER[-2])
+    return obs
 
 
 @dataclass(frozen=True)

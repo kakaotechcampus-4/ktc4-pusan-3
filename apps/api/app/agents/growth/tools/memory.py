@@ -52,11 +52,11 @@ from app.agents.growth.tools.routine import (
     ChainError,
     NextStep,
     PickedStep,
-    current_assistance_level,
     pick_next_step,
+    routine_level,
 )
 from app.agents.growth.tools.triggers import trigger_tags
-from app.rules.growth_topic import expand_keywords
+from app.rules.growth_topic import expand_keywords, record_on_topic
 from app.rules.staleness import is_stale
 from app.rules.term_match import normalize
 
@@ -69,7 +69,7 @@ MIN_KEYWORD_MATCH = 2
 # 자립 단계 사슬이 있는 카테고리. 예절 · 습관은 단계가 아니라 전략 행이다
 SELF_RELIANCE = frozenset({"self_care", "mealtime", "household_task", "transition"})
 
-_NO_RECORDS = "기록이 없다. 기억 근거 없이 [예시]를 바탕으로 낸다. 보호자에게 되묻지 않는다."
+_NO_RECORDS = "기록이 없다. 기억 근거 없이 [예시]를 바탕으로 낸다. 되묻기는 코드가 한다."
 _NO_ROUTINE = (
     "생활 루틴 기록이 없다. propose_routine_plan 을 items 를 비우고 category · subject 만 넣어 "
     "부른다 — 코드가 보호자에게 되묻는다."
@@ -131,13 +131,11 @@ def _remember(context: GrowthContext, ranked: Sequence[RankedEvidence]) -> list[
     ]
 
 
-async def has_citable_memory(context: GrowthContext) -> bool:
-    """교육 대화가 근거로 달 수 있는 아이 기록이 하나라도 있는가. 모델에게 보이지 않는다.
+async def _citable(context: GrowthContext) -> tuple[RankedEvidence, ...]:
+    """교육 대화가 근거로 달 수 있는 아이 기록 전부를 줄 세운 것. 모델에게 보이지 않는다.
 
-    [예시]가 빈 교육 run 은 이게 없으면 모델 전에 닫는다(`doc.no_row`). 문서 행도 아이 기록도
-    못 달면 build() 가 모든 후보를 거절해, 모델이 왕복 상한까지 돌고 failed 로 끝난다.
-    범위는 교육에 열린 조회 tool 넷과 같다 — 교육 · 놀이 · 루틴 관찰 14일과 education ·
-    activity 관심. 순위는 `rank_evidence`, 6개월 판정은 build() 와 같은 `is_stale` 이다.
+    범위는 교육에 열린 조회 tool 넷과 같다 — 교육 · 놀이 · 루틴 관찰 14일과 education · activity
+    관심. 순위는 `rank_evidence` 다.
     """
     _require_gate(context)
     start, today = _window(context)
@@ -148,25 +146,49 @@ async def has_citable_memory(context: GrowthContext) -> bool:
     activities = await memory.activities(child_id=child_id, date_from=start, date_to=today)
     routine = await memory.routine(child_id=child_id, date_from=start, date_to=today)
     rows = [
-        *(("observation_education", row) for row in education),
-        *(("observation_activity", row) for row in activities),
-        *(("observation_routine", row) for row in routine),
+        *(("observation_education", row.topic, row) for row in education),
+        *(("observation_activity", row.activity, row) for row in activities),
+        *(("observation_routine", "", row) for row in routine),
     ]
-    ranked = rank_evidence(
+    return rank_evidence(
         tuple(affinities),
         tuple(
             ObservationRow(
                 id=row.id,
                 kind=kind,
                 subject=row.subject,
+                label=label,
                 polarity=row.polarity,
                 observed_on=row.observed_on,
             )
-            for kind, row in rows
+            for kind, label, row in rows
         ),
         today=today,
     )
-    return any(not is_stale(item.observed_on, today) for item in ranked)
+
+
+async def has_citable_memory(context: GrowthContext) -> bool:
+    """교육 대화가 근거로 달 수 있는 아이 기록이 하나라도 있는가.
+
+    [예시]가 빈 교육 run 은 이게 없으면 모델 전에 닫는다(`doc.no_row`). 문서 행도 아이 기록도
+    못 달면 build() 가 모든 후보를 거절해, 모델이 왕복 상한까지 돌고 failed 로 끝난다.
+    6개월 판정은 build() 와 같은 `is_stale` 이다.
+    """
+    today = context.today
+    return any(not is_stale(item.observed_on, today) for item in await _citable(context))
+
+
+async def has_topic_memory(context: GrowthContext, areas: Sequence[str]) -> bool:
+    """요청 주제(`areas`)의 아이 기록이 근거로 달 수 있게 있는가. 6개월이 지난 기록은 세지 않는다.
+
+    주제가 있는 요청은 이 기록이나 그 주제의 [예시] 행이 있어야 후보를 낼 근거가 선다 — 다른 주제의
+    기록만으로는 개인화가 아니다(`review.topic_citations`). 둘 다 없으면 호출부가 모델 전에 닫는다.
+    """
+    today = context.today
+    return any(
+        not is_stale(item.observed_on, today) and record_on_topic((item.subject, item.label), areas)
+        for item in await _citable(context)
+    )
 
 
 async def search_education_memory(
@@ -308,6 +330,24 @@ async def search_routine_memory(
     )
 
 
+async def category_chains(
+    context: GrowthContext, category: str
+) -> dict[str, tuple[GrowthDocRow, ...]]:
+    """이 아이 월령의 자립 단계 사슬. run 안에서 카테고리마다 한 번만 읽는다.
+
+    조회(`_pick_steps`)와 되묻기 쪽(저장 이름 · 자료 없음 판정)이 같은 사슬을 쓴다. 되묻는 길에서
+    문서 포트를 다시 부르면 20초 안의 왕복이 는다.
+    """
+    cached = context.state.chains.get(category)
+    if cached is None:
+        gate = context.state.gate
+        assert gate is not None
+        months = gate.stage.months
+        cached = await routine_chains(context.ports.docs, months=months, category=category)
+        context.state.chains[category] = cached
+    return cached
+
+
 async def _pick_steps(context: GrowthContext, rows: Sequence[RoutineObservation]) -> None:
     """관찰마다가 아니라 **사슬마다** 한 번 고른다.
 
@@ -318,18 +358,13 @@ async def _pick_steps(context: GrowthContext, rows: Sequence[RoutineObservation]
     """
     gate = context.state.gate
     assert gate is not None
-    months, today = gate.stage.months, context.today
+    today = context.today
     steps = context.state.steps
-    chains_by_category: dict[str, dict[str, tuple[GrowthDocRow, ...]]] = {}
     for row in rows:
         category = row.routine_category
         if category not in SELF_RELIANCE:
             continue
-        if category not in chains_by_category:
-            chains_by_category[category] = await routine_chains(
-                context.ports.docs, months=months, category=category
-            )
-        chain = match_chain(chains_by_category[category], row.subject)
+        chain = match_chain(await category_chains(context, category), row.subject)
         if chain is None:
             unmatched = f"{category}|{normalize(row.subject)}"
             if unmatched not in steps:
@@ -345,7 +380,7 @@ async def _pick_steps(context: GrowthContext, rows: Sequence[RoutineObservation]
             for obs in rows
             if obs.routine_category == category and match_chain({key: chain}, obs.subject)
         ]
-        level = current_assistance_level(same, category=category, subject=None, today=today)
+        level = routine_level(same, category=category, today=today)
         latest = max(same, key=lambda obs: obs.observed_on)
         try:
             step = pick_next_step(chain, assistance_level=level)

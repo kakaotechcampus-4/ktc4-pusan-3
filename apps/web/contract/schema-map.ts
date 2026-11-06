@@ -98,6 +98,21 @@ export const SCHEMA_MAP: Record<string, MapValue> = {
   UpdateHealthSafetyRequest: "UpdateHealthSafetyRequest",
   UpdateHealthSafetyResponse: "UpdateHealthSafetyResponse",
 
+  /* ── 복약 — 초안 제출 · 수정 · 진행 중 코스 · 회차 체크 (#537) ── */
+  SubmitMedicationRequest: "SubmitMedicationBody",
+  ReviseMedicationRequest: "ReviseMedicationBody",
+  MedicationScheduleIn: "SubmitMedicationBody.schedule",
+  MedicationDoseIn: "SubmitMedicationBody.doses[]",
+  MedicationSource: "SubmitMedicationBody.source",
+  TimingAnchor: "TimingAnchor",
+  MedicationStorage: "MedicationStorage",
+  MedicationForm: "MedicationForm",
+  SubmitMedicationResponse: "SubmitMedicationResponse",
+  MedicationsResponse: "MedicationsResponse",
+  MedicationCourseOut: "MedicationCourse",
+  MedicationDoseOut: "MedicationDose",
+  CheckDoseRequest: "CheckDoseRequest",
+
   /* ── 03 홈 · 04 한 줄 입력 · 지난 대화 ── */
   HomeResponse: "HomeResponse",
   HighlightOut: "HomeResponse.highlight",
@@ -113,16 +128,16 @@ export const SCHEMA_MAP: Record<string, MapValue> = {
   UnavailableReply: "ChatReply<type=unavailable>",
   SavedOut: "ChatReply<type=saved>",
   EventDraftReply: "ChatReply<type=event_draft>",
-  AgentResultOut: {
-    web: "ChatReply<type=agent_result>",
-    allow: {
-      awaits_reply:
-        "지난 대화의 질문에는 답할 수 없다 — 되묻기 맥락은 15분 동안 서버 메모리에만 있어 지난 대화 응답에는 싣지 않는다. 웹은 없으면 false 로 읽는다 (sse.ts · #537)",
-    },
-  },
+  AgentResultOut: "ChatReply<type=agent_result>",
   PartialReply: "ChatReply<type=partial>",
   DoneReply: "ChatReply<type=done>",
-  StoredReadout: "AgentReadout",
+  StoredReadout: {
+    web: "AgentReadout",
+    allow: {
+      source_refs:
+        "SSE 에만 온다 (#713). 지난 대화에는 readout 근거를 싣지 않아서 웹은 선택 칸으로 받는다",
+    },
+  },
   SuggestionStateOut: "AgentResultEvent.suggestions[]",
   StoredRef: "StoredRef",
 
@@ -256,4 +271,5 @@ export const NOT_MAPPED: Record<string, string> = {
   ValidationError: "HTTPValidationError 안쪽",
   LinkedAffinityOut: "웹이 ObservationOut.affinity 를 읽지 않는다",
   AnswerResponse: "05 가 되묻기 답의 응답 본문을 읽지 않는다",
+  SeenTours: "웹 미사용 — FE 후속 (#696 머지 뒤 lib/tour/seen.ts 를 서버 호출로 바꿀 때)",
 };

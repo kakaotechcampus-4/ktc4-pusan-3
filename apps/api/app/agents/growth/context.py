@@ -8,7 +8,7 @@ LLM이 만들면 안 되는 값(child_id, 월령, 동의)과 날짜 계산의 �
 """
 
 from collections.abc import Callable
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, fields, replace
 from datetime import date, datetime, tzinfo
 from uuid import UUID
 
@@ -70,6 +70,9 @@ class GrowthRunState:
     seen_routine: dict[UUID, RoutineObservation] = field(default_factory=dict)
     # 프롬프트 [예시]에 실은 문서 행. 일반 추천은 이 행을 근거로 단다 (루트 §2)
     seen_docs: dict[UUID, GrowthDocRow] = field(default_factory=dict)
+    # 보호자가 주제를 정해 물었는데 그 주제의 [예시] 행이 없는 교육 run. 코드가 [예시]를 고른 직후
+    # 한 번 정한다. 이때 일반 추천은 문서 행이 아니라 그 요청이 기준이다(`review_learning`)
+    requested: bool = False
     # 요청 · 같은 입력의 기록 조각에서 코드가 읽은 주제 영역 키(`rules/growth_topic`).
     # 모델이 정하지 않는다. [예시]를 고르고 기억 조회를 넓히는 데 쓴다. 비면 주제가 없는 요청이다
     topic: tuple[str, ...] = ()
@@ -79,6 +82,9 @@ class GrowthRunState:
     # 보호자가 말한 루틴 카테고리 키(`rules/growth_topic.routine_scope`). 모델이 다른 카테고리의
     # 단계를 내지 못하게 한다. 비면 범위를 정하지 않는다
     routine_scope: tuple[str, ...] = ()
+    # 보호자가 말한 루틴 낱말(`rules/growth_topic.routine_words`). 행이 없는 루틴 행동을 교육
+    # 활동으로 낼 때(`agent._run` 의 `from_routine`) 개인화 근거를 이름으로 맞춘다. 평소엔 비어 있다
+    routine_words: tuple[str, ...] = ()
     # 보호자가 이 입력에서 한 말(요청 조각 + 같은 입력의 기록 조각)과, 같은 run 에서 Memory 가
     # 저장한 루틴 관찰의 행동 이름. 쪼개진 요청에서 보호자가 말한 행동을 코드가 알아
     # 모델이 다른 행동을 적는 것을 막는다
@@ -97,12 +103,30 @@ class GrowthRunState:
     closing: str | None = None
     # 되묻기 한 줄 (needs_observation)
     question: str | None = None
+    # 자립 카테고리별 단계 사슬. 사슬 찾기 · 자료 없음 판정 · 저장 이름이 같은 것을 다시 읽지 않는다
+    chains: dict[str, dict[str, tuple[GrowthDocRow, ...]]] = field(default_factory=dict)
+    # 되묻기를 낸 자리 (되묻기 키, 저장 이름, 카테고리). 답을 이어받는 Memory 가 어느 행동의 어느
+    # 칸에 저장할지 코드가 알게 한다
+    asked: tuple[str, str, str] | None = None
+    # 되묻기에 답을 받고 이어서 도는 run 이면 그 행동의 저장 이름. 그 행동은 수준을 못 읽어도
+    # 다시 묻지 않는다
+    answered_subject: str | None = None
 
     # ── 관측 로그 (agent.run 이 끝날 때 한 줄) ──
     # 추천 없이 끝낸 코드 문구 키 — closed.* · blocked.safety · doc.no_row · rhythm.no_row …
     closed_reason: str | None = None
     # 시작한 대화 수. 20초에 끊겨 결과가 없을 때 몇 번째 대화에서 끊겼는지 남긴다
     model_calls: int = 0
+    # 이 run 이 실제로 돈 라벨. 화면 고민은 루틴 라벨로 와도 교육으로 돈다(`agent._run`)
+    task_type: str | None = None
+
+    def reset(self) -> None:
+        """모든 칸을 처음 값으로 돌린다. 루틴 대화가 자료 없음으로 끝나 교육 흐름으로 넘어갈 때,
+        루틴이 채운 근거 · 단계 · 닫힘 키가 교육 판정에 섞이지 않게 한다. 호출부가 남길 값(시작한
+        대화 수)은 먼저 따로 챙긴다."""
+        fresh = GrowthRunState()
+        for item in fields(self):
+            setattr(self, item.name, getattr(fresh, item.name))
 
 
 @dataclass(frozen=True)

@@ -18,6 +18,7 @@ import pytest
 from app.agents import entrypoint
 from app.agents.common.suggestion import SuggestionDraft
 from app.agents.entrypoint import (
+    AgentQuestion,
     Done,
     EmptyResult,
     EventDrafts,
@@ -33,6 +34,8 @@ from app.agents.entrypoint import (
 from app.agents.memory.schemas.task import WorkType
 from app.api import agent_ports, idempotency
 from app.api.runs import pending_reply, registry, runner, suggestion_retry
+from app.domains.child.agent_reader import DbChildBasicReader
+from app.domains.medication.agent_reader import DbMedicationStore
 from app.domains.memory.profile.agent_reader import DbAffinityReader
 from app.domains.place.agent_reader import DbPlaceSource
 from app.domains.safety.agent_reader import DbSafetyReader
@@ -99,6 +102,7 @@ async def test_agent_job_좌표와_날씨_어댑터를_진입점에_그대로_�
     monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
     channel = registry.open_run(parent_id=PARENT)
     location, weather = entrypoint.CoarseLocation(lat=35.18, lon=129.08), object()
+    events = object()
 
     job = runner.agent_job(
         child_id=CHILD,
@@ -106,11 +110,13 @@ async def test_agent_job_좌표와_날씨_어댑터를_진입점에_그대로_�
         raw_text=RAW_TEXT,
         location=location,
         activity_weather=weather,
+        activity_events=events,
     )
     await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
 
     assert seen["location"] is location
     assert seen["activity_weather"] is weather
+    assert seen["activity_events"] is events  # 서버 시작 때 만든 행사 어댑터
     # 장소는 적재한 place 표를 읽는 어댑터다. 좌표가 없는 run 에서는 tool 이 닫혀 부르지 않는다
     assert isinstance(seen["activity_places"], DbPlaceSource)
 
@@ -133,6 +139,26 @@ async def test_agent_job_안전_어댑터를_Food_Activity_Growth_에_넘긴다(
     assert isinstance(seen["food_safety"], DbSafetyReader)
     assert seen["activity_safety"] is seen["food_safety"]
     assert seen["growth_safety"] is seen["food_safety"]
+
+
+async def test_agent_job_Health_포트를_진입점에_넘긴다(monkeypatch):
+    """복약 어댑터는 읽기와 중단 쓰기가 한 객체다. 안 넘기면 Health 는 읽을 때 실패로 닫힌다."""
+    seen: dict = {}
+
+    async def fake_handle_input(**kwargs):
+        seen.update(kwargs)
+        kwargs["emit"](Done(kwargs["run_id"], 1))
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+
+    job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    assert isinstance(seen["health_safety"], DbSafetyReader)
+    assert isinstance(seen["health_medication"], DbMedicationStore)
+    assert seen["health_medication_writer"] is seen["health_medication"]
+    assert isinstance(seen["health_child"], DbChildBasicReader)
 
 
 @pytest.mark.parametrize("key", ["test-auth-key", ""])
@@ -430,6 +456,38 @@ async def test_되묻기로_끝난_run_의_맥락은_채널이_아니라_store_�
     assert names(channel) == ["note", "done"]
     stored = pending_reply.get(run_id=channel.run_id, parent_id=PARENT, child_id=CHILD)
     assert stored == _PENDING
+    pending_reply.clear()
+
+
+async def test_답을_받는_질문은_보내기_전에_맥락이_들어간다(monkeypatch):
+    """질문 카드가 화면에 보일 때 답(reply_to)이 바로 올 수 있다 — 맥락이 없으면 400 이다."""
+    pending_reply.clear()
+    seen: list[bool] = []
+
+    async def fake_handle_input(**kwargs):
+        emit = kwargs["emit"]
+        emit(PendingReply(kwargs["run_id"], _PENDING))
+        emit(AgentQuestion("growth", "routine_coaching", "언제부터였어요?", awaits_reply=True))
+        emit(Done(kwargs["run_id"], 2))
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+    publish = channel.publish
+
+    def checking_publish(event):
+        if event[0] == "agent_result":
+            stored = pending_reply.get(run_id=channel.run_id, parent_id=PARENT, child_id=CHILD)
+            seen.append(stored == _PENDING)
+        return publish(event)
+
+    monkeypatch.setattr(channel, "publish", checking_publish)
+
+    job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    assert seen == [True]
+    (payload,) = [p for n, p in channel.events if n == "agent_result"]
+    assert (payload["question"], payload["awaits_reply"]) == ("언제부터였어요?", True)
     pending_reply.clear()
 
 

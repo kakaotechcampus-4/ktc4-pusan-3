@@ -14,10 +14,13 @@ import logging
 from app.agents.common.gate import Gate
 from app.agents.common.suggestion import MAX_SUGGESTIONS, check_count
 from app.agents.growth.context import GrowthContext, GrowthRunState
+from app.agents.growth.doc_seed import chain_key
 from app.agents.growth.readouts import (
+    ASK_HABIT_CURRENT,
     ASK_ROUTINE_CURRENT,
     BOOK_NO_TOPIC,
     DOC_NO_ROW,
+    LEVEL_UNREAD,
     NEXT_STEP_CHAIN_END,
 )
 from app.agents.growth.result import ErrorCode, ToolResult, fail, ok
@@ -35,10 +38,18 @@ from app.agents.growth.schemas.routine import ProposeRoutinePlanArgs
 from app.agents.growth.tools.books import book_label, propose_books
 from app.agents.growth.tools.books import explain as explain_books
 from app.agents.growth.tools.closures import closure_key
-from app.agents.growth.tools.docs import MIN_CHAIN_MATCH, chain_name, related_names
-from app.agents.growth.tools.memory import SELF_RELIANCE
+from app.agents.growth.tools.docs import (
+    MIN_CHAIN_MATCH,
+    chain_name,
+    match_chain,
+    matching_chains,
+    related_names,
+    strategy_rows,
+)
+from app.agents.growth.tools.memory import SELF_RELIANCE, category_chains
 from app.agents.growth.tools.routine import (
     PickedStep,
+    SameBehavior,
     ask_question,
     check_routine_category,
     routine_gap,
@@ -76,6 +87,11 @@ async def propose_learning_activity(
         docs=state.seen_docs,
         today=context.today,
         topic=state.strict_topic,
+        basis_topic=state.topic,
+        basis_words=state.routine_words,
+        requested=state.requested,
+        # 보호자가 한 말과 프롬프트의 [월령] 이 아는 수치. 이 밖의 시간 · 횟수 · 나이는 근거가 없다
+        grounds=(*state.said_texts, f"{gate.stage.months}개월"),
     )
     if review.rejections:
         usable = (*state.seen_evidence, *state.seen_docs)
@@ -122,11 +138,18 @@ async def propose_routine_plan(context: GrowthContext, args: ProposeRoutinePlanA
             "그 카테고리의 기록을 다시 조회한다.",
         )
 
+    if not args.items and await _no_material(context, args.category, requested):
+        # 물어서 수준을 알아도 낼 단계가 없다. 묻고 나서 자료 없음으로 끝나지 않게 먼저 닫는다
+        state.closing = DOC_NO_ROW
+        return ok("propose", _ROUTINE, closed=True)
+
     observed = tuple(state.seen_routine.values())
-    gap = routine_gap(observed, category=args.category, today=today)
+    same = await _behavior(context, args.category, requested)
+    gap = routine_gap(observed, category=args.category, today=today, same=same)
     if gap is not None:
-        state.question = ask_question(gap, _subject(context, args.category, args.subject))
-        return ok("propose", _ROUTINE, asked=True)
+        return await _ask(
+            context, gap, _subject(context, args.category, args.subject), args.category
+        )
 
     # 자립은 사슬의 다음 칸, 예절 · 습관은 전략 행이다.
     # 어느 쪽이든 search_routine_memory 가 코드로 골라 둔 행만 쓴다
@@ -141,16 +164,17 @@ async def propose_routine_plan(context: GrowthContext, args: ProposeRoutinePlanA
         # 보호자가 말한 행동을 코드가 안다 — 모델이 적은 다른 행동의 단계로 채우지 않는다
         picked = []
     elif picked and not args.items:
-        state.question = ask_question(ASK_ROUTINE_CURRENT, args.subject.strip())
-        return ok("propose", _ROUTINE, asked=True)
+        return await _ask(context, _ask_key(args.category), args.subject.strip(), args.category)
     rows = {p.step.row.id: p.step.row for p in picked if p.step.row is not None}
     if not rows:
         keys = {p.step.readout_key for p in picked}
         if args.category in SELF_RELIANCE and (ASK_ROUTINE_CURRENT in keys or not picked):
-            state.question = ask_question(
-                ASK_ROUTINE_CURRENT, _subject(context, args.category, requested)
+            return await _ask(
+                context,
+                ASK_ROUTINE_CURRENT,
+                _subject(context, args.category, requested),
+                args.category,
             )
-            return ok("propose", _ROUTINE, asked=True)
         # 맞는 사슬 · 전략 행이 없다. 모델이 단계 · 전략을 지어내지 않게 코드 문구로 닫는다
         state.closing = NEXT_STEP_CHAIN_END if NEXT_STEP_CHAIN_END in keys else DOC_NO_ROW
         return ok("propose", _ROUTINE, closed=True)
@@ -169,6 +193,7 @@ async def propose_routine_plan(context: GrowthContext, args: ProposeRoutinePlanA
         rules=rules,
         seen=state.seen_evidence,
         today=today,
+        same=same,
     )
     if review.rejections:
         return fail(
@@ -218,7 +243,11 @@ async def propose_books_tool(context: GrowthContext, args: ProposeBooksArgs) -> 
         state.closing = BOOK_NO_TOPIC
         return ok("propose", _BOOKS, closed=True)
     review = review_books(
-        args.items, picked.accepted, seen=state.seen_evidence, today=context.today
+        args.items,
+        picked.accepted,
+        seen=state.seen_evidence,
+        today=context.today,
+        asked=state.asked_book_words,
     )
     if review.rejections:
         return fail(
@@ -266,6 +295,12 @@ def _requested(state: GrowthRunState, subject: str) -> tuple[str, bool]:
     한 번이라도 보이면 물은 행동을 모델이 맞게 적은 것으로 믿는다("손은 어떻게 씻겨?" 의
     "손 씻기"). 애매하면 모델을 믿는다 — 기록한 행동이 없던 때와 같은 판정이다.
     """
+    answered = state.answered_subject
+    if answered and not related_names(normalize(subject), normalize(answered)):
+        # 되묻기에 답하고 다시 도는 run 이다 — 물은 행동이 요청 행동이다. 모델이 이름을 바꿔 적어도
+        # (손가락 빨기 → 손가락 빠는 것) 답한 기록을 다른 행동으로 보고 같은 질문을 되풀이하지
+        # 않는다
+        return answered, True
     if not state.recorded_subjects:
         return subject, False
     said = normalize(" ".join(state.said_texts))
@@ -273,6 +308,26 @@ def _requested(state: GrowthRunState, subject: str) -> tuple[str, bool]:
     if any(head and head in said for head in heads):
         return subject, False
     return state.recorded_subjects[0], True
+
+
+async def _behavior(context: GrowthContext, category: str, requested: str) -> SameBehavior | None:
+    """요청한 행동의 기록만 근거로 세는 판정. 카테고리만으로 판정해야 하는 요청이면 None.
+
+    자립은 요청 행동과 맞는 사슬이 있을 때 그 사슬의 관찰이다 — 같은 행동을 "양치" · "양치하기" 로
+    달리 적어도 한 사슬이다. 예절 · 습관은 행동 이름이 맞는 관찰이다. "아침 씻기" 처럼 행동이 묶여
+    사슬이 안 맞는 요청은 카테고리 판정 그대로다.
+    """
+    if category in SELF_RELIANCE:
+        matched = matching_chains(await category_chains(context, category), requested)
+        if not matched:
+            return None
+        # 행동이 둘("양치하고 손 씻기")이면 두 사슬의 관찰이 다 근거다
+        keyed = {chain_key(chain[0].doc_key): chain for chain in matched}
+        return lambda obs: any(
+            match_chain({key: chain}, obs.subject) is not None for key, chain in keyed.items()
+        )
+    wanted = normalize(requested)
+    return lambda obs: related_names(normalize(obs.subject), wanted)
 
 
 def _subject(context: GrowthContext, category: str, fallback: str) -> str:
@@ -286,6 +341,61 @@ def _subject(context: GrowthContext, category: str, fallback: str) -> str:
         if row.routine_category == category and related_names(normalize(row.subject), wanted):
             return row.subject
     return fallback.strip()
+
+
+def _ask_key(category: str) -> str:
+    """습관은 상황 · 지금도 하는지를 묻고, 그 밖은 얼마나 혼자 하는지를 묻는다."""
+    return ASK_HABIT_CURRENT if category == "habit" else ASK_ROUTINE_CURRENT
+
+
+async def _no_material(context: GrowthContext, category: str, subject: str) -> bool:
+    """물어도 낼 단계가 없는 행동인가. 자립은 맞는 사슬이, 예절은 맞는 전략 행이 없을 때다.
+
+    습관은 판정하지 않는다 — 전략 행은 trigger 태그로 고르는데 묻기 전에는 trigger 를 모른다.
+    """
+    gate = context.state.gate
+    assert gate is not None
+    if category in SELF_RELIANCE:
+        return match_chain(await category_chains(context, category), subject) is None
+    if category == "social_manner":
+        rows = await strategy_rows(
+            context.ports.docs, months=gate.stage.months, category=category, subject=subject
+        )
+        return not rows
+    return False
+
+
+async def _ask(context: GrowthContext, key: str, subject: str, category: str) -> ToolResult:
+    """되묻기 한 줄과 그 답이 갈 자리를 정한다.
+
+    답을 받고 이어서 도는 run 이 같은 행동의 수준을 또 못 읽으면 되묻지 않고 안내로 닫는다 —
+    같은 질문을 되풀이하지 않고, 기록에 없는 수준을 짚지도 않는다.
+    """
+    state = context.state
+    saved = await _saved_name(context, category, subject)
+    answered = state.answered_subject
+    if (
+        key == ASK_ROUTINE_CURRENT
+        and answered is not None
+        and related_names(normalize(saved), normalize(answered))
+    ):
+        state.closing = LEVEL_UNREAD
+        return ok("propose", _ROUTINE, closed=True)
+    state.question = ask_question(key, subject)
+    state.asked = (key, saved, category)
+    return ok("propose", _ROUTINE, asked=True)
+
+
+async def _saved_name(context: GrowthContext, category: str, subject: str) -> str:
+    """답을 저장할 행동 이름. 자립 카테고리에서 사슬이 맞으면 사슬 이름이다.
+
+    모델이 적은 "칫솔질" 로 저장하면 다음 요청의 `match_chain` 이 빗나갈 수 있다. 사슬 이름은
+    코드가 가진 값이라 100% 맞아야 하는 쪽이다(루트 §3).
+    """
+    if category not in SELF_RELIANCE or context.state.gate is None:
+        return subject
+    chain = match_chain(await category_chains(context, category), subject)
+    return chain_name(chain) if chain else subject
 
 
 def _same_behavior(picked: PickedStep, subject: str) -> bool:

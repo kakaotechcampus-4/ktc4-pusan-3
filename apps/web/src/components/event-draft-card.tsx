@@ -119,7 +119,13 @@ export function EventDraftCard({
    *    서버가 보낸 `draft` 를 다시 읽지 않는다 (`photo-review.tsx` 와 같은 구조).
    */
   const [event, setEvent] = useState<EventDraftFields>(() => draft.event);
-  const [items, setItems] = useState<EventDraftItem[]>(() => draft.items);
+  /**
+   * 카드가 처음 받은 준비물 — "새로 더한 것" 을 가르는 기준이다 (`ItemList`).
+   * 🚨 `draft.items` 를 직접 쓰지 않는다. 그릇이 같은 초안을 새 객체로 다시 넘기면 같은 항목이
+   *    다른 참조가 되어 전부 "새로 더한 것" 이 된다 — 처음 받은 배열을 붙잡아 둔다.
+   */
+  const [originalItems] = useState<readonly EventDraftItem[]>(() => draft.items);
+  const [items, setItems] = useState<EventDraftItem[]>(() => [...originalItems]);
   const [newItem, setNewItem] = useState("");
   /**
    * 🚨 **넣은 뒤에 보여줄 것은 로컬 값이 아니라 보낸 값이다.** 제출이 나가는 동안에도 칸은
@@ -297,7 +303,7 @@ export function EventDraftCard({
           />
         ) : null}
 
-        <ItemList items={items} disabled={busy} onChange={setItems} />
+        <ItemList items={items} original={originalItems} disabled={busy} onChange={setItems} />
 
         {/* 🚨 `TextInput` 의 `className` 은 래퍼가 아니라 `<input>` 으로 간다 — 폭은 바깥에서 준다. */}
         <div className="flex items-end gap-2">
@@ -314,9 +320,10 @@ export function EventDraftCard({
               }}
             />
           </div>
+          {/* 입력칸(`min-h-field`)과 한 줄로 서는 버튼이라 `field` 크기다 (디자인 시스템 §7). */}
           <Button
             variant="secondary"
-            size="compact"
+            size="field"
             disabled={busy || newItem.trim() === ""}
             onClick={addItem}
           >
@@ -411,13 +418,28 @@ export function EventDraftCard({
 /**
  * 준비물 목록. 🚨 **지우기가 있어야 계약이 성립한다** — `items` 가 최종 목록이라
  * 배열에서 빠지는 것이 삭제를 표현하는 유일한 방법이다 (#122).
+ *
+ * 카드 폭이 넉넉하면 **두 열로 선다** (#679 · 09 일정 카드 #568 과 같은 방식). 기준과 이유는
+ * `docs/web/event-draft-ui-v1.md` §3-5.
+ * ⚠️ 기준 폭은 09 의 `@2xs`(18rem) 가 아니라 `@3xs`(16rem) 다. 시트 여백과 카드 안쪽 여백을 빼면
+ *    360 폭 폰에서 칸이 286px 라 18rem 에 2px 모자라 한 열로 섰다.
+ *
+ * 🚨 **"N개 더 보기" 로 접지 않는다.** 이 카드는 승인 게이트라 접힌 항목도 제출에 실려
+ *    캘린더에 들어간다 — 보호자가 보지 않은 것이 저장된다.
  */
 function ItemList({
   items,
+  original,
   disabled,
   onChange,
 }: {
   items: EventDraftItem[];
+  /**
+   * 카드가 처음 받은 준비물. 🚨 **"새로 더한 것" 은 `item_id === null` 이 아니라 여기에 없는 항목이다.**
+   *    새 일정 초안은 서버가 찾아 준 준비물도 전부 `item_id: null` 이라(아직 행이 없다), `null` 로
+   *    가르면 보호자가 더하지 않은 것까지 전부 "새로 더한 것" 이 된다 (#679).
+   */
+  original: readonly EventDraftItem[];
   disabled: boolean;
   onChange: (next: EventDraftItem[]) => void;
 }) {
@@ -426,18 +448,23 @@ function ItemList({
   }
 
   return (
-    <div>
+    <div className="@container">
       <p className="text-label text-ink-muted">준비물</p>
-      <ul className="mt-1.5 flex flex-col gap-1.5">
+      <ul className="mt-1.5 grid grid-cols-1 gap-1.5 @3xs:grid-cols-2">
         {items.map((item, index) => (
           <li
             key={item.item_id ?? `new-${index}-${item.item_name}`}
-            className="border-line rounded-field flex items-center gap-2 border px-3 py-2"
+            className="border-line rounded-field flex min-w-0 items-center gap-1 border py-2 pr-1 pl-3"
           >
-            <span className="text-body-sm text-ink flex-1">{item.item_name}</span>
-            {item.item_id === null ? (
-              <span className="text-caption text-ink-subtle">새로 더한 것</span>
-            ) : null}
+            {/* 🚨 `wrap-anywhere` · `min-w-0` — 칸이 좁아져서 띄어쓰기 없는 긴 이름이 칸 밖으로 넘친다.
+                전역이 `keep-all` 이라 끊을 자리가 없고, `break-words` 는 최소 폭을 줄이지 못한다. */}
+            <div className="min-w-0 flex-1">
+              <p className="text-body-sm text-ink wrap-anywhere">{item.item_name}</p>
+              {/* 좁은 칸에서 이름과 한 줄에 두면 이름이 서너 글자씩 꺾여서 아래 줄로 내렸다. */}
+              {!original.includes(item) ? (
+                <p className="text-caption text-ink-subtle">새로 더한 것</p>
+              ) : null}
+            </div>
             <button
               type="button"
               disabled={disabled}

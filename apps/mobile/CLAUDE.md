@@ -30,7 +30,9 @@ Owner: 고태영 (프론트 리드)
 | expo-dev-client | 57.0.20 | 개발 빌드 런처 — Expo Go 로는 로그인 복귀(`icatch://`)를 못 받는다 (아래) |
 | expo-web-browser | 57.0.3 | 카카오 로그인 인증 세션 (Android = Custom Tabs, iOS = `ASWebAuthenticationSession`) · 외부 링크 in-app 브라우저 |
 | expo-notifications | ~57.0.24 | 일정 알림 FCM 토큰 · 알림 채널 · 알림 누르기 (#609). `expo install` 이 골랐다. 함께 `expo-constants` 를 SDK 기대값 57.0.22 로 맞췄다 (두 벌이 되지 않게) |
+| expo-splash-screen | ~57.0.10 | 네이티브 스플래시 그림 (#690). JS 에서는 부르지 않는다 — 웹까지 이어 주는 것은 셸의 덮개다. `expo install` 이 골랐다 |
 | expo-location | ~57.0.22 | 놀이 추천의 근처 장소용 대략 위치 (#593). `expo install` 이 골랐다 |
+| expo-build-properties | ~57.0.22 | 릴리스 빌드의 R8(코드 축소 · 난독화)과 리소스 축소를 켠다 (#692). 설정만 하는 플러그인이라 앱 코드에서 부르지 않는다. `expo install` 이 골랐다 |
 | expo-speech-recognition | 57.1.1 | 말로 적기의 기기 안 음성인식 (#595). Expo 가 고르는 묶음 밖이라 메이저를 SDK 에 맞춰 고정했다 (57.x = SDK 57) |
 | TypeScript | 6.0.3 | |
 
@@ -52,7 +54,7 @@ Expo autolinking 이 pnpm 의 격리된 심볼릭 링크 구조에서 네이티�
 ## 3. 구조
 
 ```
-App.tsx                      웹뷰 셸 (로딩 · 실패 · 뒤로가기 · 외부 링크 · 주입 배선)
+App.tsx                      웹뷰 셸 (스플래시 덮개 · 로딩 · 실패 · 뒤로가기 · 외부 링크 · 주입 배선)
 index.ts                     registerRootComponent
 src/config.ts                WEB_URL · 허용 출처 판정
 src/native/safe-area.ts      상태바·제스처바 크기를 CSS 변수로 웹에 넘긴다 (키보드가 열리면 아래는 0)
@@ -64,10 +66,19 @@ src/native/cookie-flush.ts   백그라운드로 갈 때 쿠키 flush 판단 (#46
 src/native/speech.ts         말로 적기 — 웹 부탁 검사(`parseWebRequest` · 알림 부탁도 여기서) · 기기 안 인식 조건 · 오류 → 이유 · 웹에 넣는 창구와 이벤트 (#595)
 src/native/push.ts           일정 알림 — 알림 data → 화면 주소 · 권한 창을 띄울지 · 웹에 넣는 창구와 이벤트 (#609)
 src/native/location.ts       흐린 위치 — 좌표를 둘째 자리로 줄이기 · 권한 응답 → 상태 · 웹에 넣는 창구와 이벤트 (#593)
+src/native/splash.ts         스플래시 — 웹의 첫 화면 알림 창구 · 덮개를 걷는 시간 초과 (#690)
 app.config.ts                app.json 위에 빌드 때만 정해지는 것 — `google-services.json` 경로 (#609) · FCM auto-init 끄기(매니페스트). Node 에서 돌아서 tsconfig.test.json 이 본다
 modules/cookie-flush/        로컬 Expo 모듈 (Android 만) — `CookieManager.flush()` 하나. 🚨 `android/` 가 생성물이 아니라 소스다
-app.json                     Expo 설정 (name · scheme · bundle id · 막는 권한)
+app.json                     Expo 설정 (name · scheme · bundle id · 막는 권한 · 스플래시)
+assets/logo.svg              로고 원본 (글자 없음). 스플래시 그림의 입력
+assets/splash-logo.svg       로고 + "아이캐치" 글자(외곽선). 🚨 생성물 — `scripts/build-splash.py` 가 만든다
+assets/splash-icon.png       스플래시 그림 (1024 투명 PNG). 🚨 생성물 — 같은 스크립트
 eas.json                     EAS 빌드 프로필 (배포 웹 주소 · versionCode 관리)
+assets/logo.svg              로고 원본 (글자 없음). 앱 아이콘 · 웹 파비콘의 입력
+assets/icon.png              앱 아이콘 (iOS · Android 7 이하). 🚨 생성물 — `scripts/build-icons.py` 가 만든다
+assets/android-icon-*.png    적응형 아이콘 전경 · 테마 아이콘 실루엣. 🚨 생성물 — 같은 스크립트
+assets/notification-icon.png 알림 아이콘 (흰 실루엣). 🚨 생성물 — 같은 스크립트
+store/play-icon.png          Play 등록 정보 아이콘 (빌드 밖 · 손으로 올린다). 🚨 생성물 — 같은 스크립트
 ```
 
 ### 🚨 마이크 권한은 말로 적기 하나에만 쓴다 (#595)
@@ -154,7 +165,10 @@ eas.json                     EAS 빌드 프로필 (배포 웹 주소 · versionC
   (`eas env:create --name GOOGLE_SERVICES_JSON --type file --visibility secret`), 로컬은 이 폴더의 파일. 없으면 알림만 꺼진 빌드다 (`app.config.ts`)
 - 🚨 **패키지를 import 하지 않고 모듈이 있을 때만 불러온다** (`App.tsx` 의 `Notifications`). 하위 모듈이 전부 `requireNativeModule` 이라,
   이 패키지를 넣기 전에 만든 개발 빌드에서 import 하면 셸이 뜨지 않는다
-- ⚠️ **알림 아이콘이 없다.** `assets/android-icon-monochrome.png` 는 Expo 템플릿의 기본 그림이라 쓰지 않았다(런처의 테마 아이콘에도 이 그림이 쓰이고 있다). 아이콘을 정하면 플러그인 `icon` 에 넣는다
+- 🚨 **알림 아이콘은 플러그인 `icon`(`assets/notification-icon.png`) · `color`(로고 초록 `#266746`)다** (#695). 플러그인이 FCM 과 Expo 의
+  기본 알림 아이콘 · 색(매니페스트 `default_notification_icon` · `default_notification_color`)으로 넣어서, 서버 FCM 이 아이콘을 따로 정하지 않아도
+  이 그림이 뜬다. 🚨 서버(`reminder_dispatch.py`)에서 `android.notification.icon` 을 정하지 않는다 — 정하면 그 값이 이 기본값을 덮는다.
+  그림은 테마 아이콘과 같은 실루엣을 24dp 칸에 맞춰 키운 것이다 (아래 "앱 아이콘 · 웹 파비콘" 절)
 - ⚠️ **알림을 켜기 전에** 개인정보 처리방침 제10장 ③("알림 권한을 요청하지 않습니다")을 고친 새 판이 먼저 나가야 하고 (#166 · 말로 적기의 마이크 문구와 한 판으로),
   Play Console 데이터 보안에 기기 ID(FCM 토큰) 수집은 **웹 Firebase 값을 넣는 날** 적는다 (#618 리뷰). auto-init 을 꺼서 그 전까지는 이 빌드를 올려도 기기를 등록하지 않는다.
   순서는 [`docs/web/web-push-v1.md`](../../docs/web/web-push-v1.md) "켜는 순서"
@@ -188,6 +202,43 @@ eas.json                     EAS 빌드 프로필 (배포 웹 주소 · versionC
   (대략 위치로만 받기)는 넣어 두었다. 셸이 둘째 자리로 줄이는 것은 플랫폼과 무관하다
 - ⚠️ **머지 조건** — 위치기반서비스 신고 · 위치 이용 사실 확인자료 · 위치 약관 새 판이 끝난 뒤 머지한다 (#166 · #593)
 
+### 스플래시 (#690)
+
+앱을 켜면 `canvas`(`#fbf9f5`) 바탕에 로고와 "아이캐치" 글자가 뜨고, **웹의 첫 화면이 서면 흐려지며 걷힌다.**
+두 겹이다 — OS 가 그리는 네이티브 스플래시(`expo-splash-screen`)와, 셸의 첫 그림인 **같은 그림의 덮개**(`App.tsx` 의 `SplashCover`).
+네이티브는 셸이 처음 그릴 때 내려가고, 그 자리에 똑같은 덮개가 있어서 보호자 눈에는 하나로 보인다.
+덮개는 화면이 아니라 로딩 표시다 (셸의 연결 대기 스피너와 같은 자리 · §1).
+
+- 🚨 **그림은 손으로 고치지 않고 스크립트로 다시 만든다.** 로고(`assets/logo.svg`)와 웹의 학교안심 날개 700 으로
+  글자를 외곽선으로 바꿔 붙인다. 글자를 바꾸거나 로고가 바뀌면 이것만 돌린다.
+  ```bash
+  uv run --no-project --with "fonttools[woff]" --with resvg-py python scripts/build-splash.py
+  ```
+- 🚨 **그림 전체가 정사각형의 내접원 안에 있어야 한다.** Android 12+ 는 스플래시 아이콘을 원으로 잘라 그린다
+  (288dp 칸 가운데 지름 192dp). 플러그인은 그림을 `imageWidth`(dp) 정사각형으로 놓으므로 `imageWidth: 192` 와
+  내접원 배치가 한 짝이다. 하나만 바꾸면 글자 끝이나 주황 점이 잘린다. 스크립트가 외곽선 점으로 크기를 잡는다.
+- 🚨 **네이티브와 덮개는 바탕색 · 그림 · 크기 · 자리가 같아야 한다** — 다르면 네이티브가 내려갈 때 색이나 그림이 튄다.
+  바탕은 `app.json` 플러그인 `backgroundColor` = 셸 `CANVAS` = 웹 `--color-canvas`, 그림 크기는 `imageWidth` = `SPLASH_IMAGE_DP`(192),
+  자리는 둘 다 화면 한가운데다. 값은 `splash.test.ts` 가 묶는다.
+- 🚨 **네이티브 스플래시를 웹까지 들고 있지 않는다** (`preventAutoHideAsync` 를 부르지 않는다). 들고 있는 동안 Android 는
+  앱을 그리지 않아서 웹뷰도 프레임을 내지 못하고, 프레임을 기다리는 웹의 화면 전환(로그인한 보호자가 홈으로 옮겨 가는
+  View Transition)이 멈춘다. 셸은 웹을, 웹은 프레임을 기다리다 시간 초과로만 내려갔다 (에뮬레이터 Android 17 확인).
+  덮개 아래에서는 웹뷰가 그려진다.
+- 🚨 **덮개는 웹이 알리면 걷는다** (`src/native/splash.ts`). 문서가 뜬 것(`onLoadEnd`)에서 걷으면 로그인한 보호자는 웹의
+  "불러오는 중…"(세션 확인)을 한 번 더 본다. 그래서 웹의 공통 `Screen` 이 처음 서면 `window.icatch.splash.done()` 으로
+  알린다 (웹 쪽 짝 `apps/web/src/lib/native/splash.ts` · 기다리는 화면 `SessionChecking` 과 버튼 상태를 받는 중인
+  00 로그인은 `waiting` 으로 빠진다).
+  웹이 안 알려도 갇히지 않게 셋을 더 둔다.
+  - 문서가 뜬 뒤 `SPLASH_AFTER_LOAD_MS`(3초) — 이 창구를 모르는 웹, 알리기 전에 멈춘 화면. 그 뒤는 웹의 "불러오는 중…" 이다
+  - 앱을 켠 뒤 `SPLASH_MAX_MS`(8초) — 문서조차 오지 않는 느린 망. 그 뒤는 셸의 연결 대기 스피너다
+  - 실패로 가는 모든 길 (`onError` · 5xx · `onRenderProcessGone`) — 바로 걷는다.
+    🚨 **실패 경로에서 빼지 않는다** — 빼면 연결 실패 화면이 덮개 뒤에 숨는다
+- 🚨 **덮고 있는 동안은 누름을 막는다** — 안 보이는 페이지의 버튼이 눌리면 안 된다. 걷히는 동안부터 통과시킨다.
+- 뒤로가기로 앱을 끝낸 뒤 다시 켜도(프로세스는 남아 있다) 덮개가 다시 선다 — 셸 컴포넌트가 새로 붙기 때문이다.
+  네이티브 스플래시만 잠깐 뜨고 내려간다.
+- ⚠️ 홈은 뼈대(스켈레톤)가 첫 화면이다. 덮개는 뼈대에서 걷히고, 홈 데이터는 화면 안에서 채워진다.
+- ⚠️ iOS 는 설정만 들어가 있고 기기 확인 전이다.
+
 ### 🚨 사진 권한을 받지 않는다 (#408)
 
 사진 권한은 받지 않는다. 사진을 고르는 길은 웹의
@@ -209,6 +260,40 @@ iOS 첫 빌드 때 08 시트의 촬영과 앨범을 확인하고, 필요하면 `
 - `app.json` 의 `android.blockedPermissions` 는 Expo 템플릿이 기본으로 넣는 저장소 · 오버레이 · 진동
   권한과, `expo-notifications` 가 붙이는 런처 배지 · 부팅 수신 · 설치 경로 권한을 막는다 (위 "알림 권한" 절). 셸이 쓰는 곳이 없다. 권한을 더하는 패키지를 넣으면 릴리스 매니페스트를 다시 확인한다
   (`./gradlew :app:processReleaseMainManifest` 뒤 `app/build/intermediates/merged_manifest/release/`).
+
+### 앱 아이콘 · 웹 파비콘 (#695)
+
+전부 로고 한 장(`assets/logo.svg`)에서 스크립트로 만든다. 🚨 로고가 바뀌면 스플래시 그림(`scripts/build-splash.py` · #690)도 같이 다시 만든다 — 같은 원본을 읽는다.
+
+```bash
+uv run --no-project --with resvg-py==0.5.0 --with pillow==13.0.0 python scripts/build-icons.py
+```
+
+- 이 스크립트는 **웹 파일도 쓴다** (`apps/web/src/app/`). 웹과 셸은 코드를 나누지 않지만(최상위 CLAUDE.md §6), 로고 원본이 한 장이라
+  생성을 한 곳에 둔다. 웹은 결과 파일만 갖고 이 폴더를 읽지 않는다 — 웹 배포 이미지는 셸 폴더 없이 그대로 굽힌다.
+
+| 파일 | 쓰는 곳 | 모양 |
+| --- | --- | --- |
+| `assets/icon.png` | iOS · Android 7 이하 | 1024 흰 바탕을 꽉 채운 **불투명** PNG |
+| `assets/android-icon-foreground.png` | Android 8+ 적응형 아이콘 전경 | 1024 투명. 배경은 `app.json` 의 `backgroundColor`(흰색) |
+| `assets/android-icon-monochrome.png` | Android 13+ 테마 아이콘 | 전경과 같은 자리의 한 색 실루엣. 볼(분홍)은 뺐다 |
+| `assets/favicon.png` | Expo `web.favicon` (쓰지 않지만 템플릿 그림을 남기지 않게) | 48 흰 둥근 사각형 |
+| `assets/notification-icon.png` | 알림 아이콘 (`expo-notifications` 플러그인 `icon`) | 96 흰 실루엣. 플러그인이 24dp 밀도별로 줄인다 |
+| `store/play-icon.png` | Play Console 등록 정보 아이콘 (빌드에 안 들어간다) | 512 흰 바탕을 꽉 채운 그림. 모서리 · 그림자는 Play 가 입힌다 |
+| `apps/web/src/app/icon.svg` · `favicon.ico` · `apple-icon.png` | 웹 탭 · iOS 홈 화면 추가. Next 가 파일 이름으로 `<link>` 를 단다 | 흰 둥근 사각형(`apple-icon` 은 꽉 채운 불투명 180) |
+
+- 🚨 **적응형 아이콘의 로고는 지름 66dp 원 안에 있어야 한다.** 런처는 108dp 그림을 원 · 둥근 사각형 같은 제 모양으로 자르고,
+  어떤 모양이든 남는 것이 가운데 66dp 원이다. 스크립트는 bbox 가 아니라 로고 외곽선 점을 전부 담는 원으로 크기와 가운데를 잡는다
+  (`ADAPTIVE_RADIUS`). 그래서 주황 점 쪽으로 무게가 실려 C 가 살짝 왼쪽 아래에 앉는다 — 키우면 원형 런처에서 주황 점이 먼저 잘린다.
+- 🚨 **알림 아이콘은 흰색 하나에 투명 바탕이다.** Android 는 알파만 보고 플러그인 `color` 로 칠하지만, 흰색이 아니면 그대로 그리는 제조사 · 옛 버전이 있다.
+  얼굴은 비워 둔다(눈 · 입 · 윤곽만 흰색) — 채우면 24dp 에서 C 옆의 동그라미가 되고, 세부를 빼면 아기가 사라진다.
+  크기는 24dp 칸 안쪽 20dp 원(`NOTIFICATION_RADIUS`)이다.
+- 🚨 **`icon.png` 와 `apple-icon.png` 는 투명 픽셀이 없어야 한다.** App Store 가 알파 채널이 있는 아이콘을 받지 않는다. 스크립트가 RGB 로 저장한다.
+- 파비콘은 흰 바탕 위에 둔다. 투명으로 두면 어두운 탭에서 로고 초록(`#266746`)이 묻힌다. 16px 에서는 얼굴 세부가 뭉개지지만
+  세부를 뺀 단순형은 32px 에서 얼굴이 사라져 덩어리로 보여서 한 그림으로 갔다.
+- 아이콘은 네이티브 리소스라 바꾼 뒤에는 prebuild 부터 다시 빌드해야 런처에 보인다.
+- Play 등록 정보 아이콘(`store/play-icon.png`)은 Play Console 에 손으로 올린다. 🚨 Play 는 32비트 PNG 만 받아서 이 파일만 알파 채널을 둔다(전부 불투명).
+  🚨 둥근 모서리나 그림자를 그려 넣지 않는다 — Play 가 입혀서 두 겹이 된다.
 
 ### 🚨 Expo Go 로는 로그인을 끝낼 수 없다 — 개발 빌드가 필요하다
 
@@ -237,7 +322,8 @@ pnpm android          # = expo run:android — prebuild + gradle + 설치까지 
   ⚠️ Mobile CI 는 Kotlin 을 컴파일하지 않는다. `modules/` 를 고치면 `./gradlew assembleDebug` 로 직접 빌드해 본다.
 - **`cacheEnabled={false}`** 는 SSE(`/runs/{rid}/events`) 때문이다. 켜면 진행 이벤트가 버퍼링돼서 04 오버레이가 멈춘 것처럼 보인다.
 - 🚨 **웹에서 오는 메시지(`onMessage`)는 `parseWebRequest` 를 통과한 것만 받는다** (#595). 지금 웹의 부탁은
-  말로 적기 시작 · 멈춤과 일정 알림 준비 · 토큰 · 권한(`kind: "push"` · #609), 위치 확인 · 묻기 · 읽기 · 설정 열기(`kind: "location"` · #593)다. 🚨 **종류(`kind`)부터 가른다** —
+  말로 적기 시작 · 멈춤과 일정 알림 준비 · 토큰 · 권한(`kind: "push"` · #609), 위치 확인 · 묻기 · 읽기 · 설정 열기(`kind: "location"` · #593),
+  첫 화면이 섰다는 알림(`kind: "splash"` · #690)이다. 🚨 **종류(`kind`)부터 가른다** —
   "말로 적기 시작이 아니면 멈춤" 으로 두면 알림 부탁이 마이크를 끈다. 보낸 쪽 주소(`event.nativeEvent.url`)를 먼저 보고, 모양을 검사한 값으로만
   네이티브를 부른다 — 모양이 어긋난 메시지 하나로 셸이 죽으면 안 된다. 부탁을 더하면 같은 함수에
   `kind` 를 더하고 테스트를 단다.
@@ -277,12 +363,12 @@ pnpm start           # Expo 개발 서버 (Expo Go / 개발 빌드)
 pnpm android         # Android 로 열기
 pnpm ios             # iOS 로 열기 (macOS 필요)
 pnpm typecheck       # tsc --noEmit (앱 + 테스트 두 벌)
-pnpm test            # Node 내장 러너 — 로그인 · 외부 링크 · 웹뷰 안 주소 · 뒤로가기 · safe area · 쿠키 flush · 말로 적기 · 일정 알림 · 흐린 위치 판정 (src/native/*.test.ts)
+pnpm test            # Node 내장 러너 — 로그인 · 외부 링크 · 웹뷰 안 주소 · 뒤로가기 · safe area · 쿠키 flush · 말로 적기 · 일정 알림 · 흐린 위치 · 스플래시 판정 (src/native/*.test.ts)
 pnpm deps:check      # expo install --check — SDK 와 어긋난 패키지 버전 확인
 pnpm doctor          # expo-doctor 전체 점검
 ```
 
-PR 에서는 [`.github/workflows/ci-mobile.yml`](../../.github/workflows/ci-mobile.yml) 이 `typecheck` · `test` 와 말로 적기 로그 패치 검사를 다시 돈다 (`apps/mobile/**` 를 바꾼 PR 만).
+PR 에서는 [`.github/workflows/ci-mobile.yml`](../../.github/workflows/ci-mobile.yml) 이 `typecheck` · `test` 와 말로 적기 로그 패치 검사를 다시 돈다 (`apps/mobile/**` 와 웹의 `globals.css` 를 바꾼 PR 만 · 스플래시 바탕색 검사 #690).
 네이티브 빌드는 CI 가 하지 않는다 — 개발 빌드는 기기에서 확인한다.
 
 **최초 세팅** — `cp .env.example .env.local`.
@@ -342,7 +428,7 @@ npx eas-cli@latest build -p android --profile preview       # apk — 설치 링
 - 🚨 **배포 빌드의 웹 주소는 `eas.json` 의 `env` 가 정한다.** `.env.local` 은 `.gitignore` 라 EAS 서버로
   올라가지 않는다. 주소를 바꾸면 `eas.json` 을 고친다 — `EXPO_PUBLIC_*` 는 번들에 박히므로 다시 빌드해야 한다.
 - 🚨 **`versionCode` 는 EAS 가 올린다** (`appVersionSource: remote` + `autoIncrement`). `app.json` 에 손으로 적지 않는다.
-  사용자에게 보이는 `version`(지금 `0.1.0`)만 `app.json` 에서 올린다.
+  사용자에게 보이는 `version`(지금 `1.0.0`)만 `app.json` 에서 올린다.
 - 🚨 **업로드 키는 EAS 가 만들어 `truedoc` 조직 자격 증명에 보관한다** (2026-10-14 결정). 키 파일을 팀원 PC 에
   두지 않는다 — 누가 빌드하든 같은 키로 서명된다. 한 번 올린 업로드 키는 Play Console 에 재설정을 요청해야 바뀌므로,
   `eas credentials` 에서 키를 지우거나 새로 만들지 않는다. 백업이 필요하면 조직 Owner 가 `eas credentials` 로 내려받는다.
@@ -351,6 +437,12 @@ npx eas-cli@latest build -p android --profile preview       # apk — 설치 링
   EAS 자격 증명은 applicationId 별로 저장돼서, 10-14 에 만든 `kr.ac.pusan.ktc4.icatch` 용 키는 쓰이지 않고
   `kr.ai.icatch` 용 키가 첫 `production` 빌드 때 한 번 새로 만들어진다. 그 뒤로는 위 규칙대로 건드리지 않는다.
   옛 식별자로 깔아 둔 앱은 덮어써지지 않고 따로 남아 둘 다 `icatch://` 를 받는다 — 로그인 복귀 때 앱 선택 창이 뜨니 지운다.
+- 🚨 **릴리스 빌드는 R8 로 코드를 줄이고 난독화한다** (`app.json` 의 `expo-build-properties` · #692). 꺼 두면 Play Console 이
+  "난독화 비율 1%" 로 경고한다 — `android/` 는 생성물이라 `build.gradle` 을 직접 고치면 prebuild 때 사라진다.
+  debug 빌드와 개발 빌드는 그대로이고 `preview` · `production` 만 바뀐다. 매핑 파일은 aab 안에 같이 들어가 Play 가 크래시를 풀 때 쓴다.
+  ⚠️ R8 은 리플렉션으로만 닿는 클래스를 지울 수 있어서, 빌드가 통과해도 앱을 켜거나 기능을 쓸 때 죽을 수 있다.
+  네이티브 패키지를 더하거나 `modules/` 를 고치면 `preview` 빌드로 로그인 · 앱 재실행 뒤 로그인 유지(`cookie-flush`) ·
+  말로 적기 · 일정 알림 · 위치를 한 번씩 확인한다. Expo 모듈은 `expo-modules-core` 의 keep 규칙(`Module` 하위 클래스)이 지킨다.
 - EAS 없이 aab 가 만들어지는지만 볼 때는 로컬 gradle 로 굽는다. 서명은 디버그 키이고 `versionCode` 는 늘 1 이라
   스토어에는 못 올린다. 🚨 **두 줄을 같이 돌린다.** 셸에서 준 주소가 `.env.local` 보다 앞서는데, `prebuild --clean`
   없이 둘째 줄만 다른 주소로 다시 돌리면 gradle 이 번들 작업을 건너뛰어 옛 주소가 남을 수 있다.

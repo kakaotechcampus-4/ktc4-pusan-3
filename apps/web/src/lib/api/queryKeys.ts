@@ -43,7 +43,7 @@ export const qk = {
    */
   childProfile: (childId: string) => [...qk.child(childId), "profile"] as const,
   /**
-   * 복약 화면의 진행 중 코스 · 회차 (`GET /children/{cid}/medications` · #537 · 잠정). 아이 스코프 아래라
+   * 복약 화면의 진행 중 코스 · 회차 (`GET /children/{cid}/medications` · #537). 아이 스코프 아래라
    * 복약을 제출하면 `qk.child` 무효화에 같이 걸린다.
    */
   medications: (childId: string) => [...qk.child(childId), "medications"] as const,

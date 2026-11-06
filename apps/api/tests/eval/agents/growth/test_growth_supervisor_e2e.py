@@ -37,6 +37,7 @@ from app.agents.growth.readouts import (
     CLOSED_INFANT_LEARNING,
     CLOSED_MEDICAL_ROUTINE,
     CLOSED_SYMPTOM_HABIT,
+    DOC_NO_ROW,
     READOUTS,
 )
 from app.agents.growth.store.inmemory import (
@@ -45,7 +46,7 @@ from app.agents.growth.store.inmemory import (
     InMemorySafety,
 )
 from app.agents.growth.tools.books import MAX_BOOKS, SEARCH_POOL
-from app.agents.pipeline import AgentResult, PipelineResult, Unavailable
+from app.agents.pipeline import AgentQuestion, AgentResult, PipelineResult, Unavailable
 from app.agents.suggestion_save import InMemorySuggestions
 from app.core.config import settings
 from app.integrations.data4library.client import Data4LibraryBooks
@@ -101,6 +102,11 @@ class Observed:
     @property
     def growth_events(self) -> list[AgentResult]:
         return [e for e in self.events if isinstance(e, AgentResult) and e.agent == "growth"]
+
+    @property
+    def growth_questions(self) -> list[AgentQuestion]:
+        """질문은 카드에 실리지 않고 run 끝에 하나만 나간다 (#615)."""
+        return [e for e in self.events if isinstance(e, AgentQuestion) and e.agent == "growth"]
 
     @property
     def growth_outcomes(self) -> list[Any]:
@@ -179,7 +185,7 @@ def j_routine(*, need_suggestion: bool) -> Judge:
             return
         if event.status == "failed":
             o.failures.append("루틴 결과를 못 냈다")
-        asked = bool(event.question)
+        asked = any(question.task_type == ROUTINE for question in o.growth_questions)
         if need_suggestion and not event.suggestion_ids:
             o.failures.append("루틴 추천이 없다")
         if not need_suggestion and not (event.suggestion_ids or asked or event.readouts):
@@ -187,6 +193,66 @@ def j_routine(*, need_suggestion: bool) -> Judge:
         o.notes.append(f"추천 {len(event.suggestion_ids)}개 · 되묻기 {asked}")
 
     return judge
+
+
+def j_screen_concern(o: Observed) -> None:
+    """게임 고민 — Supervisor 가 어느 라벨로 보내든 교육 흐름으로 돌아 추천이 저장된다.
+
+    Memory 가 게임 기록을 남겼는지는 모델이 정한다 — 기록이 있으면 개인화, 없으면 화면 약속 행
+    근거의 일반 추천이다. 어느 쪽이든 자료 없음(`doc.no_row`)이 아니다.
+    """
+    if len(o.growth_events) != 1:
+        o.failures.append(f"Growth agent_result {len(o.growth_events)}개 (1개여야 한다)")
+        return
+    event = o.growth_events[0]
+    if event.task_type != LEARN:
+        o.failures.append(f"교육 흐름으로 돌지 않았다 (task_type={event.task_type})")
+    if any(r.body == READOUTS.get(DOC_NO_ROW).template for r in event.readouts):
+        o.failures.append("자료 없음(doc.no_row)으로 닫혔다")
+    if event.status != "completed" or not event.suggestion_ids:
+        o.failures.append(f"추천이 없다 (status={event.status})")
+    o.notes.append(f"추천 {len(event.suggestion_ids)}개 · {event.kind} · 저장 {o.growth_saved}")
+
+
+def j_fallback(o: Observed) -> None:
+    """단계 행이 없는 루틴 행동(등원) — 루틴 모델 없이 바로 교육으로 열렸으면 추천이, 시간이
+    모자라거나 교육 대화가 마감 1초 전에 끊겼으면 루틴의 자료 없음 안내가 나간다. 어느 쪽이든
+    Growth 가 실패로 세지지 않고 20초 안에 끝나며, 모델은 교육 · 재호출 두 번을 넘지 않는다
+    (#708 리뷰)."""
+    if len(o.growth_events) != 1:
+        o.failures.append(f"Growth agent_result {len(o.growth_events)}개 (1개여야 한다)")
+        return
+    event = o.growth_events[0]
+    calls = [out.model_calls for out in o.growth_outcomes]
+    if event.task_type == LEARN:
+        if event.status != "completed" or not event.suggestion_ids:
+            o.failures.append(f"넘겼는데 추천이 없다 (status={event.status})")
+        if any(count > 2 for count in calls):
+            o.failures.append(f"루틴 모델을 거쳤다 — 모델 {calls}회 (2회 이하여야 한다)")
+        o.notes.append(f"넘김 · 추천 {len(event.suggestion_ids)}개 · {event.kind} · 모델 {calls}")
+    else:
+        if not any(r.body == READOUTS.get(DOC_NO_ROW).template for r in event.readouts):
+            o.failures.append(
+                f"넘기지 않았는데 자료 없음 안내가 없다 (task_type={event.task_type})"
+            )
+        o.notes.append(f"안 넘김 · {event.status} · 모델 {calls}")
+    if o.elapsed_ms > 20_000:
+        o.failures.append(f"run {o.elapsed_ms}ms — 20초를 넘겼다")
+
+
+def j_asks_once(o: Observed) -> None:
+    """기록이 없는 아이에게 루틴을 물으면 카드가 먼저 나가고 되묻기는 run 끝에 하나 나간다."""
+    event = _ran(o, ROUTINE)
+    if event is None:
+        return
+    if len(o.growth_questions) != 1:
+        o.failures.append(f"되묻기 {len(o.growth_questions)}개 (run 에 하나여야 한다)")
+        return
+    if o.events.index(o.growth_questions[0]) < o.events.index(event):
+        o.failures.append("질문이 카드보다 먼저 나갔다")
+    if event.suggestion_ids:
+        o.failures.append("기록이 없는데 추천이 나갔다")
+    o.notes.append(f"되묻기: {o.growth_questions[0].text}")
 
 
 def j_review(o: Observed) -> None:
@@ -316,6 +382,20 @@ CASES: tuple[Case, ...] = (
         "양치 → routine 추천 저장",
         j_routine(need_suggestion=True),
     ),
+    Case(
+        "ASK2/C48-empty-mixed",
+        "양치를 아직 잘 못해서 걱정이야. 어떻게 가르치지?",
+        "C48-empty",
+        "기록 + 요청 혼합 → 저장 먼저, 그다음 되묻거나 추천 (어느 쪽이든 죽지 않는다)",
+        j_routine(need_suggestion=False),
+    ),
+    Case(
+        "ASK1/C48-empty",
+        "양치 혼자 하게 하고 싶어",
+        "C48-empty",
+        "기록 없는 루틴 요청 → 되묻기 하나 · 카드 뒤",
+        j_asks_once,
+    ),
     Case("T24/C48", INPUTS["T24"], "C48", "키 · 몸무게 추이 → growth_review · 모델 0", j_review),
     Case("T27/C48", INPUTS["T27"], "C48", "잘 크고 있어? → growth_review", j_review),
     Case(
@@ -400,6 +480,34 @@ CASES: tuple[Case, ...] = (
         "8개월 → 보드북만 · 일반 추천",
         j_book_recommended,
         books=True,
+    ),
+    Case(
+        "GAME/C48",
+        "아이가 요새 게임만 자꾸 하려고 하는데 어떻게 해야해?",
+        "C48",
+        "게임 고민 → 교육 흐름 · 자료 없음 아님 · 추천 저장",
+        j_screen_concern,
+    ),
+    Case(
+        "GAME/C48-empty",
+        "아이가 요새 게임만 자꾸 하려고 하는데 어떻게 해야해?",
+        "C48-empty",
+        "기록 없는 아이의 게임 고민 → 화면 약속 행 근거 일반 추천",
+        j_screen_concern,
+    ),
+    Case(
+        "FALLBACK/C48-empty",
+        "아침에 등원 준비가 너무 오래 걸려. 어떻게 하지?",
+        "C48-empty",
+        "등원(전환 사슬 없음) → 교육 활동으로 넘기거나 자료 없음 · 20초 안",
+        j_fallback,
+    ),
+    Case(
+        "FALLBACK/C48",
+        "아침에 등원 준비가 너무 오래 걸려. 어떻게 하지?",
+        "C48",
+        "기록이 있는 아이의 등원 → 교육 활동으로 넘기거나 자료 없음 · 20초 안",
+        j_fallback,
     ),
     Case(
         "T01/C11",
@@ -497,7 +605,7 @@ def _record(o: Observed, attempt: int) -> dict[str, Any]:
                 "suggestions": len(e.suggestion_ids),
                 "kind": e.kind,
                 "readouts": [r.body[:40] for r in e.readouts],
-                "asked": bool(e.question),
+                "asked": any(q.task_type == e.task_type for q in o.growth_questions),
             }
             for e in o.growth_events
         ],

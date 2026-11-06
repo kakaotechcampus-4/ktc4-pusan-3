@@ -11,12 +11,16 @@
 순수 함수. LLM·DB·외부 I/O 없음 — 표준 라이브러리만 쓴다 (apps/api/CLAUDE.md 레이어 경계).
 """
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
-from app.rules.term_match import Term, match_fields, match_terms
+from app.rules.term_match import Term, match_fields, match_spans, match_terms, normalize
 
 # 문서 행에 영역이 없는 주제. 영역 키로는 남기지만 [예시] 행은 없다
 OTHER = "other"
+# 화면 · 게임 고민. 문서 행에는 이 이름의 영역이 없고 신체운동 · 건강 영역의 `screen` 태그 행이다
+SCREEN = "screen"
+# 주제 키 → (문서 행 영역, 문서 행 태그). 여기 있는 주제는 그 영역 안에서도 그 태그 행만 근거다
+TOPIC_DOC: Mapping[str, tuple[str, str]] = {SCREEN: ("physical_health", "screen")}
 
 # 순서가 판정 순서다. 낱말은 "읽어" 같은 활용형까지 적는다 — "그림책 읽어 주기" 가 의사소통이다
 TOPIC_TERMS: tuple[Term, ...] = (
@@ -40,6 +44,51 @@ TOPIC_TERMS: tuple[Term, ...] = (
     Term("art", ("그림", "그려", "그리기", "미술", "색칠", "만들기", "음악", "노래")),
     Term("physical_health", ("몸", "운동", "체육")),
     Term("social", ("친구", "나누기", "차례")),
+    # 놀이 이름의 게임(카드 · 보드 · 숫자 게임)과 영상 통화는 화면 고민이 아니다
+    Term(
+        SCREEN,
+        (
+            "게임",
+            "스마트폰",
+            "휴대폰",
+            "핸드폰",
+            "태블릿",
+            "유튜브",
+            "영상",
+            "동영상",
+            "티비",
+            "TV",
+            "텔레비전",
+            "화면",
+        ),
+        guards=(
+            "카드 게임",
+            "카드게임",
+            "보드 게임",
+            "보드게임",
+            "숫자 게임",
+            "낱말 게임",
+            "게임판",
+            "영상 통화",
+            "영상통화",
+            # 디지털이 아닌 놀이 이름. 이름 없이 "게임" 만 말한 고민이 화면 고민이다
+            "퍼즐 게임",
+            "퍼즐게임",
+            "빙고 게임",
+            "빙고게임",
+            "끝말잇기 게임",
+            "끝말잇기게임",
+            "스무고개 게임",
+            "숨바꼭질 게임",
+            "도미노 게임",
+            "주사위 게임",
+            "짝 맞추기 게임",
+            "기억력 게임",
+            "몸 게임",
+            "말 게임",
+            "팀 게임",
+        ),
+    ),
     Term(OTHER, ("영어", "알파벳")),
 )
 
@@ -92,6 +141,8 @@ ACTIVITY_TERMS: dict[str, tuple[str, ...]] = {
         "넣고 꺼내",
         "개수",
     ),
+    # 화면 고민의 활동은 화면을 끄거나 약속을 정하는 글이다. 화면 낱말 없이 약속만 써도 맞다
+    SCREEN: ("끄고", "끄기", "약속", "끝나", "모래시계", "타이머"),
 }
 HARD_AREAS = frozenset(ACTIVITY_TERMS)
 
@@ -121,6 +172,35 @@ def request_topic(request_texts: Sequence[str], record_texts: Sequence[str]) -> 
     return tuple(area for area in topic_areas(record_texts) if area != OTHER)
 
 
+# 질문 문장에 그대로 넣으면 어색한 활용형 낱말. 같은 요청의 다음 주제 낱말을 쓴다
+_CONJUGATED = frozenset({"읽어", "말해", "세어", "그려"})
+
+
+def topic_word(request_texts: Sequence[str], record_texts: Sequence[str]) -> str | None:
+    """보호자가 말한 주제 낱말 하나(별칭 그대로). 질문 문장에 넣는다("국어는 집에서 해 본 적이…").
+
+    요청 조각이 먼저고, 요청에 주제가 없을 때만 기록 조각을 읽는다. `TOPIC_TERMS` 순서에서 처음
+    걸린 명사 별칭이다 — 활용형(읽어 · 말해 · 세어 · 그려)은 건너뛴다. 기록 조각의 `OTHER`(영어)는
+    읽지 않는다(`request_topic` 과 같은 기준). 주제 낱말이 없으면 None 이고 호출부는 묻지 않는다.
+    """
+    return _first_word(request_texts, skip_other=False) or _first_word(
+        record_texts, skip_other=True
+    )
+
+
+def _first_word(texts: Sequence[str], *, skip_other: bool) -> str | None:
+    for term in TOPIC_TERMS:
+        if skip_other and term.key == OTHER:
+            continue
+        for alias in term.aliases:
+            if alias in _CONJUGATED:
+                continue
+            single = Term(term.key, (alias,), term.guards)
+            if match_fields(tuple(texts), (single,), cross_spaces=False):
+                return alias
+    return None
+
+
 def routine_scope(request_texts: Sequence[str], record_texts: Sequence[str]) -> tuple[str, ...]:
     """보호자가 말한 루틴 카테고리 키. 요청 조각이 먼저고, 없을 때만 같은 입력의 기록 조각을 읽는다.
 
@@ -128,6 +208,27 @@ def routine_scope(request_texts: Sequence[str], record_texts: Sequence[str]) -> 
     카테고리(손 씻기)를 골라도 이 범위 밖이면 낼 수 없다. 비면 범위를 정하지 않는다.
     """
     return _routine_keys(request_texts) or _routine_keys(record_texts)
+
+
+def routine_words(request_texts: Sequence[str], record_texts: Sequence[str]) -> tuple[str, ...]:
+    """보호자가 말한 루틴 낱말(정규화한 별칭). 요청 조각이 먼저고, 없을 때만 기록 조각을 읽는다.
+
+    "아침에 등원 준비가 너무 오래 걸려" 는 `("등원",)` 이다. `routine_scope` 가 카테고리 키를 주는
+    것과 달리 이 낱말은 아이 기록의 이름에 그 낱말이 있는지 볼 때 쓴다 — 행이 없는 루틴 행동을
+    교육 활동으로 낼 때 "등원 준비" 기록만 개인화 근거로 세려는 것이다. 판정에만 쓰고 문서 쿼리 ·
+    로그에는 보내지 않는다.
+    """
+    return _routine_spans(request_texts) or _routine_spans(record_texts)
+
+
+def _routine_spans(texts: Sequence[str]) -> tuple[str, ...]:
+    words: list[str] = []
+    for text in texts:
+        normalized = normalize(text)
+        for _, start, end in match_spans(normalized, ROUTINE_TERMS):
+            if (word := normalized[start:end]) not in words:
+                words.append(word)
+    return tuple(words)
 
 
 def _routine_keys(texts: Sequence[str]) -> tuple[str, ...]:
@@ -145,11 +246,59 @@ def on_topic(texts: Sequence[str], areas: Sequence[str]) -> bool:
     if not areas:
         return True
     terms = tuple(
-        Term(term.key, (*term.aliases, *ACTIVITY_TERMS.get(term.key, ())))
+        Term(term.key, (*term.aliases, *ACTIVITY_TERMS.get(term.key, ())), term.guards)
         for term in TOPIC_TERMS
         if term.key in areas
     )
     return bool(match_fields(texts, terms, cross_spaces=False))
+
+
+def record_on_topic(names: Sequence[str], areas: Sequence[str]) -> bool:
+    """아이 기록의 이름(subject · 라벨)이 주제 영역의 낱말인가. 주제가 없으면 늘 True.
+
+    후보 글을 보는 `on_topic` 과 달리 활동 낱말(`ACTIVITY_TERMS` — 약속 · 규칙 · 끄기 · 순서 …)은
+    쓰지 않는다. 그 낱말은 후보 문장에서 주제를 알아보려는 것이라, 기록 이름에 쓰면 "약속 지키기"
+    같은 사회 기록이 화면 주제의 근거가 된다.
+    """
+    if not areas:
+        return True
+    terms = tuple(term for term in TOPIC_TERMS if term.key in areas)
+    return bool(match_fields(tuple(names), terms, cross_spaces=False))
+
+
+def screen_use(request_texts: Sequence[str], record_texts: Sequence[str]) -> bool:
+    """화면 · 게임 고민인데 루틴 행동(양치 · 밥 먹기 …)이 같이 말해지지 않았는가.
+
+    루틴 낱말이 있으면 그 행동이 물은 것이다("양치할 때 유튜브 틀어 줘야 해"). 없으면 루틴 단계를 낼
+    사슬이 없으니 호출부가 교육 흐름으로 돌린다. 닫힘(의료 처치 · 증상)과 월령은 호출부가 먼저 본다.
+    """
+    return SCREEN in request_topic(request_texts, record_texts) and not routine_scope(
+        request_texts, record_texts
+    )
+
+
+def doc_areas(topic: Sequence[str]) -> tuple[str, ...]:
+    """주제 키를 문서 행 `area` 키로. 화면은 신체운동 · 건강 영역이다. 겹치지 않게 순서대로."""
+    return tuple(dict.fromkeys(TOPIC_DOC[key][0] if key in TOPIC_DOC else key for key in topic))
+
+
+def doc_tags(topic: Sequence[str]) -> tuple[str, ...]:
+    """[예시]를 그 태그 행으로 좁히는 태그. 주제가 전부 태그가 있는 주제일 때만이다.
+
+    태그가 없는 주제가 섞이면 좁히지 않는다 — 그 주제의 영역 행이 빠진다.
+    """
+    if not topic or not all(key in TOPIC_DOC for key in topic):
+        return ()
+    return tuple(dict.fromkeys(TOPIC_DOC[key][1] for key in topic))
+
+
+def row_on_topic(area: str | None, tags: Sequence[str], topic: Sequence[str]) -> bool:
+    """문서 행(영역 · 태그)이 주제 영역의 행인가. 태그가 있는 주제는 그 태그까지 맞아야 한다."""
+    for key in topic:
+        doc_area, doc_tag = TOPIC_DOC.get(key, (key, None))
+        if area == doc_area and (doc_tag is None or doc_tag in tags):
+            return True
+    return False
 
 
 def strict_topic(request_texts: Sequence[str], record_texts: Sequence[str]) -> tuple[str, ...]:

@@ -1,29 +1,37 @@
 """실제 Jev 판정기로 연결 → 승격 → 감쇠 전체 흐름.
 
-실행: OPENROUTER_API_KEY=sk-or-... uv run pytest -v -m live
-      tests/integration/test_curator_live_scenario.py
-키 없으면 전부 skip.
+실행: uv run pytest -v -m live tests/integration/test_curator_live_scenario.py
+판정기 설정은 서버와 같은 CURATOR_JUDGE_* (apps/api/.env 또는 환경변수, Elice ML API).
+키 · 주소 · 모델 중 하나라도 비면 전부 skip.
 
 임베딩은 가짜 (벡터는 연결 판단에 안 쓰임). 판정만 실제 Jev.
 날짜를 조작해 승격·감쇠·부활을 한 테스트에서 추적한다.
 """
 
-import os
 from datetime import date, timedelta
 from uuid import UUID
 
 import pytest
 from sqlalchemy.dialects.postgresql import Range
 
+from app.agents.common.config import AgentSettings
 from app.domains.child.models import Child
 from app.domains.identity.models import Parent
 from app.domains.memory.observation.models import ConfidenceSource, ObservationFood
 from app.domains.memory.profile.models import ProfileAffinity, ProfileState
 from app.rules.profile import STRENGTH_DEFAULT
 
-_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
+_SETTINGS = AgentSettings()
+_READY = all(
+    value.strip()
+    for value in (
+        _SETTINGS.CURATOR_JUDGE_API_KEY,
+        _SETTINGS.CURATOR_JUDGE_BASE_URL,
+        _SETTINGS.CURATOR_JUDGE_MODEL,
+    )
+)
 live = pytest.mark.live
-pytestmark = pytest.mark.skipif(not _API_KEY, reason="OPENROUTER_API_KEY 없음")
+pytestmark = pytest.mark.skipif(not _READY, reason="CURATOR_JUDGE_* 미설정")
 
 
 class _FakeEmbedder:
@@ -32,17 +40,10 @@ class _FakeEmbedder:
 
 
 def _make_judge():
-    """실제 JevJudge. 환경변수에서 키를 읽는다."""
-    from app.agents.common.config import AgentSettings
-
-    settings = AgentSettings(
-        CURATOR_JUDGE_API_KEY=_API_KEY,
-        CURATOR_JUDGE_BASE_URL="https://openrouter.ai/api/alpha",
-        CURATOR_JUDGE_MODEL="typesafe/jev-1.13",
-    )
+    """실제 JevJudge. 서버와 같은 설정(CURATOR_JUDGE_*)을 쓴다."""
     from app.agents.curator.embedding.jev import JevJudge
 
-    return JevJudge(settings)
+    return JevJudge(_SETTINGS)
 
 
 @pytest.fixture

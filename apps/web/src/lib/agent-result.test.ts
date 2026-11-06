@@ -7,6 +7,7 @@ import {
   askedQuestion,
   blockCandidates,
   blockReadouts,
+  medicationHref,
   partialRetryHref,
   visibleAgentResults,
 } from "./agent-result";
@@ -186,5 +187,79 @@ describe("askedQuestion — run 이 답을 기다리는 질문 (#537)", () => {
     expect(
       askedQuestion({ note: { text: "기록해 두었어요.", kind: "message" }, agentResults: [] }),
     ).toBeNull();
+  });
+
+  // 서버는 run 의 되묻기를 카드가 아니라 마지막 `agent_result` 한 장으로 보낸다 (#615). 같은 Agent 의
+  // 안내 카드가 앞에 이미 서 있어도 그 질문 장이 답을 받는다.
+  describe("run 끝에 온 질문 장", () => {
+    const ASK = "양치는 요즘 어느 정도까지 혼자 하나요?";
+    const growth = (over: Partial<AgentResultEvent>) =>
+      result({ agent: "growth", task_type: "routine_coaching", ...over });
+    const guide = growth({
+      readouts: [notice("지금 어떤지 알아야 맞는 방법을 고를 수 있어요.", "empty")],
+    });
+    const asking = growth({ question: ASK, awaits_reply: true });
+
+    it("앞의 안내 카드가 아니라 질문 장이 답을 받는다", () => {
+      const asked = askedQuestion({ note: null, agentResults: [result(), guide, asking] });
+      expect(asked?.text).toBe(ASK);
+      expect(asked?.result).toBe(asking);
+    });
+
+    it("질문 장은 추천도 안내도 없어도 보인다 — 질문이 곧 내용이다", () => {
+      expect(visibleAgentResults([guide, asking])).toEqual([guide, asking]);
+    });
+
+    it("🚨 답을 받지 않는 질문 장(`awaits_reply: false`)은 문장으로만 선다", () => {
+      const sentence = growth({ question: ASK, awaits_reply: false });
+      expect(askedQuestion({ note: null, agentResults: [guide, sentence] })).toBeNull();
+      expect(visibleAgentResults([sentence])).toEqual([sentence]);
+    });
+  });
+});
+
+describe("medicationHref — 복약 화면 열기가 갈 곳 (#713)", () => {
+  const readout = (kind: string, courses?: string[]): AgentReadout => ({
+    kind,
+    title: "",
+    body: "지어낸 안내",
+    authored_by: "code",
+    code: null,
+    ...(courses
+      ? { source_refs: courses.map((id) => ({ kind: "medication_schedule" as const, id })) }
+      : {}),
+  });
+  const base = "/child/c1/profile/medications";
+
+  it("복약과 상관없는 블록에는 서지 않는다", () => {
+    expect(medicationHref("c1", [WEATHER, readout("notice", [])])).toBeNull();
+  });
+
+  it("체크 안내가 코스 하나를 가리키면 그 코스를 연다", () => {
+    expect(medicationHref("c1", [readout("notice", ["ms_1"])])).toBe(`${base}?course=ms_1`);
+  });
+
+  it("같은 코스를 여러 readout 이 가리켜도 그 코스 하나다", () => {
+    expect(
+      medicationHref("c1", [readout("dose_status", ["ms_1"]), readout("notice", ["ms_1"])]),
+    ).toBe(`${base}?course=ms_1`);
+  });
+
+  it("코스가 둘 이상이면 어느 약인지 고르지 않고 복약 화면 처음으로 간다", () => {
+    expect(
+      medicationHref("c1", [readout("dose_status", ["ms_1"]), readout("dose_status", ["ms_2"])]),
+    ).toBe(base);
+  });
+
+  it("지난 대화의 회차 현황은 근거가 없어도 복약 화면 처음으로 간다", () => {
+    expect(medicationHref("c1", [readout("dose_status")])).toBe(base);
+  });
+
+  it("복약 코스가 아닌 근거는 세지 않는다", () => {
+    const other: AgentReadout = {
+      ...readout("notice"),
+      source_refs: [{ kind: "observation_health", id: "o_1" }],
+    };
+    expect(medicationHref("c1", [other])).toBeNull();
   });
 });

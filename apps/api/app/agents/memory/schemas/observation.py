@@ -4,9 +4,10 @@
 LLM 이 채우지 않는 필드(id · child_id · source_writer · observed_range 등)는 노출하지 않는다.
 """
 
-from typing import Annotated, Any, ClassVar
+from decimal import Decimal
+from typing import Annotated, Any, ClassVar, Literal, Self
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from app.agents.memory.schemas.common import (
     MAX_DURATION_MIN,
@@ -62,27 +63,125 @@ class ObservationFoodUpdate(ObservationUpdateArgs):
     reaction: Annotated[str | None, Field(default=None, description="바꿀 reaction")]
 
 
-class ObservationHealthCreate(ObservationCreateArgs):
-    """증상과 컨디션 기록. 진단하지 않는다."""
+# 체온 — 보호자가 말한 숫자 그대로(℃). 범위 밖은 저장하지 않고 되묻는다. DB CHECK 와 같은 범위
+_TEMPERATURE = Field(
+    default=None,
+    ge=Decimal("30.0"),
+    le=Decimal("45.0"),
+    decimal_places=1,
+    description=(
+        "체온 숫자만. 예: 38.5. 말한 숫자를 바꾸거나 단위를 바꾸지 않는다. "
+        "30.0~45.0 밖이면 넣지 않고 보호자에게 되묻는다"
+    ),
+)
+MeasureSite = Literal["ear", "forehead", "armpit", "oral", "rectal"]
+_MEASURE_SITE = _optional(
+    "잰 부위. 귀 ear / 이마 forehead / 겨드랑이 armpit / 입 oral / 항문 rectal. "
+    "말에 부위가 있을 때만"
+)
+_MEASURED_AT = _optional("체온을 잰 시각. 예: 밤 11시. 증상을 본 시각(observed_time)과 다르다")
+_MEDICATION_GIVEN = Field(
+    default=None,
+    min_length=1,
+    description=(
+        "이미 먹인 약 이름을 raw_text 에 있는 글자 그대로. 예: 해열제, 타이레놀. "
+        "성분명이나 다른 이름으로 바꾸지 않는다"
+    ),
+)
 
-    symptom: Annotated[list[str], Field(min_length=1, description="증상. 예: 발열, 콧물, 두드러기")]
+# 증상 행에만 있는 칸. 약만 말했으면 얹을 증상 행이 없다.
+# 수정 tool 도 이 표로 약 행에 증상 칸을 얹는지 본다(observed_time 은 약 행에선 먹인 시각이라 뺀다)
+SYMPTOM_ONLY = (
+    "severity",
+    "body_part",
+    "suspected_trigger",
+    "action_taken",
+    "observed_time",
+    "temperature",
+    "measured_at",
+    "measure_site",
+)
+
+
+class ObservationHealthCreate(ObservationCreateArgs):
+    """증상과 컨디션, 이미 먹인 약 기록. 진단하지 않는다.
+
+    한 번 호출에 증상과 먹인 약을 같이 받는다. 저장할 때 코드가 증상 행과 약 행으로 나누고
+    약 행에 증상 행을 잇는다 — 잇는 id 는 인자에 없다.
+    """
+
+    symptom: Annotated[
+        list[str],
+        Field(
+            default_factory=list,
+            description="증상. 예: 발열, 콧물, 두드러기. 먹인 약만 말했으면 비운다",
+        ),
+    ]
     severity: Annotated[Severity | None, _optional("추측하지 않고 정도가 드러날 때만")]
     body_part: Annotated[str | None, _optional("예: 얼굴 / 팔. 발화에 드러날 때만")]
     suspected_trigger: Annotated[str | None, _optional("예: 우유 먹은 뒤. 발화에 드러날 때만")]
-    action_taken: Annotated[str | None, _optional("병원 / 해열제 등. 발화에 드러날 때만")]
+    action_taken: Annotated[
+        str | None, _optional("병원 / 찜질 등. 발화에 드러날 때만. 먹인 약은 medication_given")
+    ]
     observed_time: Annotated[str | None, _optional("증상을 본 시각만. 예: 오전 8시, 15:30")]
+    temperature: Annotated[Decimal | None, _TEMPERATURE]
+    measured_at: Annotated[str | None, _MEASURED_AT]
+    measure_site: Annotated[MeasureSite | None, _MEASURE_SITE]
+    medication_given: Annotated[str | None, _MEDICATION_GIVEN]
+    given_time: Annotated[str | None, _optional("약을 먹인 시각. 예: 새벽 3시. 말했을 때만")]
+
+    @model_validator(mode="after")
+    def _symptom_or_medication(self) -> Self:
+        if not self.symptom and self.medication_given is None:
+            raise ValueError(
+                "symptom 과 medication_given 이 둘 다 비었다. 말한 증상을 symptom 에, "
+                "이미 먹인 약을 medication_given 에 넣는다. 둘 다 없으면 이 tool 을 부르지 않는다"
+            )
+        if self.given_time is not None and self.medication_given is None:
+            raise ValueError("given_time 은 먹인 약 시각이다. medication_given 과 같이 넣는다")
+        filled = [name for name in SYMPTOM_ONLY if getattr(self, name) is not None]
+        if not self.symptom and filled:
+            raise ValueError(
+                f"{', '.join(filled)} 는 증상 기록의 칸이다. 증상 없이 먹인 약만 말했으면 비운다. "
+                "먹인 시각은 given_time 에 넣는다"
+            )
+        return self
 
 
 class ObservationHealthUpdate(ObservationUpdateArgs):
     CLEARABLE: ClassVar[frozenset[str]] = frozenset(
-        {"severity", "body_part", "suspected_trigger", "action_taken", "observed_time"}
+        {
+            "severity",
+            "body_part",
+            "suspected_trigger",
+            "action_taken",
+            "observed_time",
+            "temperature",
+            "measured_at",
+            "measure_site",
+        }
     )
-    symptom: Annotated[list[str] | None, Field(default=None, description="바꿀 증상 목록")]
+    symptom: Annotated[
+        list[str] | None, Field(default=None, min_length=1, description="바꿀 증상 목록")
+    ]
     body_part: Annotated[str | None, Field(default=None, description="바꿀 신체 부위")]
     suspected_trigger: Annotated[str | None, _optional("바꿀 계기")]
     severity: Annotated[Severity | None, Field(default=None, description="바꿀 정도")]
     action_taken: Annotated[str | None, Field(default=None, description="바꿀 조치")]
-    observed_time: Annotated[str | None, _optional("바꿀 시각. 예: 오전 8시, 15:30")]
+    observed_time: Annotated[
+        str | None, _optional("바꿀 시각. 예: 오전 8시, 15:30. 먹인 약 기록이면 먹인 시각")
+    ]
+    temperature: Annotated[Decimal | None, _TEMPERATURE]
+    measured_at: Annotated[str | None, _optional("바꿀 잰 시각. 예: 밤 11시")]
+    measure_site: Annotated[MeasureSite | None, _optional("바꿀 잰 부위")]
+    medication_given: Annotated[
+        str | None,
+        Field(
+            default=None,
+            min_length=1,
+            description="먹인 약 기록의 약 이름을 고칠 때만. 증상 기록에 약을 덧붙이지 않는다",
+        ),
+    ]
 
 
 class ObservationEducationCreate(PromotableCreateArgs):
