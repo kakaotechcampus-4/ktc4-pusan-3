@@ -156,6 +156,8 @@ async def confirm_delete_proposal(
             result[kind] = result.get(kind, 0) + 1
     await finish(session, row, status=DeleteProposalStatus.DELETED, result=result, now=now)
     response = DeleteProposalResponse(proposal=_out(row, now)).model_dump(mode="json")
+    # 지운 관찰의 기억은 여기서 한꺼번에 계산한다 — 정정과 잠금 순서가 안 섞이게 (#717)
+    await store.flush_profiles()
     await session.commit()
     idempotency.remember(**scope, replay=response)
     if any(kind != "event" for kind in result):
