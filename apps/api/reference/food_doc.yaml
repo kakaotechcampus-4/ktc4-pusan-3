@@ -996,7 +996,7 @@ rows:
     max_month: 36
     tags: [meal_pattern, example, snack]
     food_groups: [grains, vegetables, dairy]
-    allergen_codes: [2, 6]
+    allergen_codes: [1, 2, 6]
     <<: [*dfe, *draft]
     source_locator: "Table 4 — Example meals and snacks for children aged 1-5 years, Snacks (p.25)"
 

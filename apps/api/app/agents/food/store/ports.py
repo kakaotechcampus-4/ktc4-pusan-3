@@ -330,7 +330,7 @@ class MenuSource(Protocol):
     추정하지 않는다 — 받은 결과가 그대로 카탈로그에 쌓여서다(food_agent_own_table §1).
 
     unresolved · 재료 없음은 알레르기 "확인 못 함"이다 — 안전한 것으로 보지 않는다
-    (`tools/safety.py` 의 unchecked).
+    (`common/food_safety.py` 의 unchecked).
     """
 
     async def nutrition_rows(self, *, name: str) -> tuple[RawNutriRow, ...]:

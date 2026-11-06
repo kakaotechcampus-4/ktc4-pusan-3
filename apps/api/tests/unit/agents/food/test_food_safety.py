@@ -1,4 +1,4 @@
-"""app/agents/food/tools/safety.py — filter_food_safety.
+"""app/agents/common/food_safety.py — filter_food_safety.
 
 알레르기를 거르는 가장 안전 민감한 코드 경로. Food_Tool_명세.md §3 의 판정 순서를
 그대로 검증한다. 실제 DB 없음 — MenuCatalogRow·SafetyEntry 를 직접 구성한다.
@@ -11,15 +11,15 @@ from datetime import datetime, timezone
 import pytest
 
 from app.agents.common import allergy, reference
-from app.agents.food.store.ports import MenuCatalogRow, SafetyEntry
-from app.agents.food.tools import safety
-from app.agents.food.tools.safety import (
+from app.agents.common import food_safety as safety
+from app.agents.common.food_safety import (
     IngredientCheck,
     Purpose,
     filter_food_safety,
     menu_codes,
     resolve_safety,
 )
+from app.agents.food.store.ports import MenuCatalogRow, SafetyEntry
 
 NOW = datetime(2026, 9, 27, tzinfo=timezone.utc)
 
@@ -728,3 +728,11 @@ def test_술과_카페인은_메뉴명에서만_본다() -> None:
 
     assert result.passed == (cake, steak)
     assert result.blocked == (coffee,)
+
+
+def test_연령_규칙은_key_로_찾는다():
+    """Food 의 섭취 확인이 규칙 label 로 바로 찾는다 — 같은 표를 두 번 만들지 않는다 (#582)."""
+    rules = safety.age_rules_by_key()
+    assert rules["꿀"].below_month == 12
+    assert set(rules) == {rule.term.key for rule in reference.food_safety_terms().age_rules}
+    assert safety.age_rules_by_key() is rules

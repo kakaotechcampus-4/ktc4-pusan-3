@@ -10,6 +10,7 @@ from typing import Any, get_args, get_type_hints
 
 import pytest
 
+from app.agents.common.food_safety import filter_food_safety
 from app.agents.food.recipe_catalog import (
     IngredientEntry,
     build_recipe_row,
@@ -20,7 +21,6 @@ from app.agents.food.recipe_catalog import (
 )
 from app.agents.food.store import NutritionFacts, SafetyEntry, in_memory_ports
 from app.agents.food.store.ports import RECIPE_SOURCES, MenuCatalogRow
-from app.agents.food.tools.safety import filter_food_safety
 from app.core.mafra_recipe_raw import RawIngredient, RawRecipe
 from app.core.recipe_materials import split_materials
 from app.core.recipe_source import RECIPE_SOURCE_INFO, RecipeSource
