@@ -112,6 +112,71 @@ test.describe("event_repeat — 반복 일정 초안", () => {
   });
 });
 
+/**
+ * 다가오는 일요일 오전 9시(KST). 목의 첫 회차는 그다음 날(월) 08:30 이라 23시간 30분 남는다 —
+ * "1일 전" 알림은 첫 회차로는 이미 지났지만 둘째 회차부터는 울릴 수 있는 시각이다.
+ */
+function sundayMorning(): Date {
+  const kst = new Date(Date.now() + 9 * 60 * 60 * 1000);
+  const ahead = (7 - kst.getUTCDay()) % 7 || 7;
+  return new Date(Date.UTC(kst.getUTCFullYear(), kst.getUTCMonth(), kst.getUTCDate() + ahead, 0));
+}
+
+test.describe("event_repeat — 반복 일정의 알림 (#746 리뷰)", () => {
+  test.use({ scenario: "event_repeat" });
+
+  test("🚨 첫 회차의 알림 시각이 지났어도 고를 수 있고 제출이 잠기지 않는다 — 지난 회차는 서버가 건너뛴다", async ({
+    page,
+  }) => {
+    await page.clock.setFixedTime(sundayMorning());
+    const calls = recordApi(page);
+    const sheet = await openDrafts(page);
+    await expect(sheet.getByText("2건 중 1번째")).toBeVisible();
+
+    const card = sheet.locator("div:not([hidden]) > *").filter({ hasText: "새 반복 일정" });
+    await expect(
+      card.getByText("나에게만 회차마다 울려요. 이미 지난 회차는 건너뛰어요."),
+    ).toBeVisible();
+    // 첫 회차 하나로 거르면 "1일 전" 이 목록에서 빠진다.
+    await card.getByRole("combobox", { name: "알림" }).click();
+    await page.getByRole("option", { name: "1일 전", exact: true }).click();
+
+    await expect(card.getByText(/알림 시각이 이미 지났어요/)).toHaveCount(0);
+    const submit = card.getByRole("button", { name: "확인했어요, 캘린더에 넣을게요" });
+    await expect(submit).toBeEnabled();
+    await submit.click();
+    await expect(card.getByText("넣었어요", { exact: true })).toBeVisible();
+
+    const submitted = writes(calls, "POST", /\/children\/c1\/events$/);
+    expect(submitted).toHaveLength(1);
+    expect((submitted[0].body as { reminder: unknown }).reminder).toEqual({ lead: "1d" });
+  });
+});
+
+test.describe("repeat_invalid — 카드에서 고칠 수 없는 반복 오류", () => {
+  test.use({ scenario: "repeat_invalid" });
+
+  test("🚨 invalid_repeat 면 서버 문구 아래에 대화로 다시 말하라는 안내가 선다 — 새 반복 일정 · 묶음 고치기 둘 다", async ({
+    page,
+  }) => {
+    const sheet = await openDrafts(page);
+    const hint = "반복하는 요일이나 날짜를 바꾸려면 대화로 다시 말해 주세요.";
+
+    await sheet.getByRole("button", { name: "확인했어요, 캘린더에 넣을게요" }).click();
+    await expect(
+      sheet.getByText("반복은 첫 회차부터 90일까지만 돼요").filter({ visible: true }),
+    ).toBeVisible();
+    await expect(sheet.getByText(hint).filter({ visible: true })).toBeVisible();
+
+    await sheet.getByRole("button", { name: "다음" }).click();
+    await sheet.getByRole("button", { name: "확인했어요, 앞으로 전부 바꿀게요" }).click();
+    await expect(
+      sheet.getByText("오늘 이후에 남는 회차가 없어요").filter({ visible: true }),
+    ).toBeVisible();
+    await expect(sheet.getByText(hint).filter({ visible: true })).toBeVisible();
+  });
+});
+
 test.describe("event_repeat — 09 캘린더", () => {
   test.use({ scenario: "event_repeat" });
 
