@@ -118,8 +118,31 @@ async def test_agent_job_좌표와_날씨_어댑터를_진입점에_그대로_�
     assert seen["location"] is location
     assert seen["activity_weather"] is weather
     assert seen["activity_events"] is events  # 서버 시작 때 만든 행사 어댑터
+    # 🚨 위치 동의는 판을 보지 않고 확인했다 — 날씨 · 놀이 목적의 이전 판에만 동의했어도 같은
+    #    좌표다. 병원 찾기 목적이 든 판을 확인하기 전에는 Health 에 위치를 넘기지 않는다 (#586)
+    assert seen.get("health_location") is None
     # 장소는 적재한 place 표를 읽는 어댑터다. 좌표가 없는 run 에서는 tool 이 닫혀 부르지 않는다
     assert isinstance(seen["activity_places"], DbPlaceSource)
+
+
+async def test_agent_job_병원_어댑터를_진입점에_그대로_넘긴다(monkeypatch):
+    """서버 시작 때 만든 국립중앙의료원 어댑터 — 날씨 어댑터와 같은 길이다."""
+    seen: dict = {}
+
+    async def fake_handle_input(**kwargs):
+        seen.update(kwargs)
+        kwargs["emit"](Done(kwargs["run_id"], 1))
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+    hospitals = object()
+
+    job = runner.agent_job(
+        child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT, health_places=hospitals
+    )
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    assert seen["health_places"] is hospitals
 
 
 async def test_agent_job_안전_어댑터를_Food_Activity_Growth_에_넘긴다(monkeypatch):

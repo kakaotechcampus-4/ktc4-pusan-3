@@ -566,6 +566,9 @@ async def create_input(
         location=location,
         activity_weather=getattr(request.app.state, "activity_weather", None),
         activity_events=getattr(request.app.state, "activity_events", None),
+        # 병원 어댑터만 넘긴다. 좌표는 Health 에 넘기지 않는다 — 위 위치 동의 확인이 약관의 판을
+        # 보지 않아서다(runner.agent_job · #586)
+        health_places=getattr(request.app.state, "health_places", None),
         parent_id=parent.parent_id,
         raw_text=body.text,
         continuation=continuation,
