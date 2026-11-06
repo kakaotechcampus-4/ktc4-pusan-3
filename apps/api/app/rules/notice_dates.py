@@ -209,9 +209,14 @@ def _time_span(text: str) -> tuple[time | None, time | None, bool, bool]:
         return None, None, False, False
     first, *rest = times
     if rest and _RANGE_SEP.fullmatch(text[first.end : rest[0].start]):
+        start, end = first.at, rest[0].at
+        if first.vague and not rest[0].vague:
+            # "7:30 ~ 19:30" — 끝이 분명하면 시작은 끝보다 이른 쪽 하나로만 읽힌다
+            fits = [t for t in (start, start.replace(hour=start.hour + 12)) if t < end]
+            if len(fits) == 1:
+                return fits[0], end, False, False
         if first.vague:
             return None, None, False, True
-        start, end = first.at, rest[0].at
         if (first.guessed or rest[0].vague) and end <= start and end.hour < 12:
             # 끝이 시작보다 이를 수는 없다 — "6시 30분 ~ 8시 30분" · "10시 ~ 7시" 는 저녁에 끝난다
             return start, end.replace(hour=end.hour + 12), False, False

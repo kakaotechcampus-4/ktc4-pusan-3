@@ -101,3 +101,26 @@ def test_화소가_너무_많은_그림은_열기_전에_거절한다(monkeypatc
     monkeypatch.setattr(document_text, "MAX_IMAGE_PIXELS", 40 * 30 - 1)
     with pytest.raises(UnreadableDocument, match="너무 커요"):
         normalize_image(_image("PNG"))
+
+
+def test_JPEG_주석_칸도_모델로_보내지_않는다():
+    # EXIF · XMP 는 빠지는데 주석(COM)은 Pillow 가 다시 저장할 때 들고 갔다 (#726 리뷰)
+    buffer = io.BytesIO()
+    Image.new("RGB", (40, 30), "white").save(buffer, format="JPEG", comment=b"37.5665N 126.9780E")
+
+    out, _ = normalize_image(buffer.getvalue())
+
+    assert b"37.5665N" not in out
+    with Image.open(io.BytesIO(out)) as image:
+        assert "comment" not in image.info
+
+
+def test_아주_가로로_긴_그림도_서버_오류로_끝나지_않는다():
+    # 폭을 2,000 으로 줄이면 높이가 0 이 되어 resize 가 ValueError 를 냈다 (#726 리뷰)
+    buffer = io.BytesIO()
+    Image.new("RGB", (40_000, 1), "white").save(buffer, format="PNG")
+
+    out, _ = normalize_image(buffer.getvalue())
+
+    with Image.open(io.BytesIO(out)) as image:
+        assert image.size == (2_000, 1)

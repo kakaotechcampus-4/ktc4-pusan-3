@@ -11,13 +11,14 @@ from datetime import UTC, date, datetime
 from zoneinfo import ZoneInfo
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents import entrypoint
 from app.api.runs import photo_run
 from app.core.config import settings
 from app.core.notice_extract import ExtractedItem, ItemDetail, NoticeExtract
+from app.domains.child.models import ParentChild
 from app.domains.daycare_meal.models import DaycareMeal
 from app.domains.notice.assemble import assemble
 from app.domains.notice.models import Notice, NoticeInputFormat, NoticeItem
@@ -627,3 +628,136 @@ async def test_글자를_못_찾으면_실패로_끝난다(db_client, bearer, ci
     await asyncio.wait_for(channel.task, 5)
     assert channel.ended_with == "failed"
     assert channel.events[-1][1]["reason"] == "unparsable"
+
+
+# ── 11-05 명성님 적대적 검증 (#726) ─────────────────────────────────────────
+
+
+async def _commit(db_client, headers, run_id, entries):
+    return await db_client.post(
+        COMMIT.format(rid=run_id),
+        json={"lane": "document", "entries": entries, "attach_to_calendar": False},
+        headers=headers,
+    )
+
+
+async def test_같은_항목을_되풀이해_보내면_422다(
+    db_client, session, bearer, cid, key_set, monkeypatch
+):
+    headers, _ = bearer
+    run_id, parsed = await _upload(db_client, headers, cid, monkeypatch, _reading())
+    entry = parsed["entries"][0]
+
+    # 500개면 개수 상한(400)에 먼저 걸린다. 상한 안에서 되풀이하는 경우를 본다
+    response = await _commit(db_client, headers, run_id, [entry, entry])
+
+    assert response.status_code == 422
+    assert await _count(session, NoticeItem) == 0
+
+
+async def test_항목이_너무_많으면_받지_않는다(
+    db_client, session, bearer, cid, key_set, monkeypatch
+):
+    headers, _ = bearer
+    run_id, parsed = await _upload(db_client, headers, cid, monkeypatch, _reading())
+    entries = [{**parsed["entries"][0], "id": f"pe_{i}"} for i in range(201)]
+
+    response = await _commit(db_client, headers, run_id, entries)
+
+    assert response.status_code == 400
+    assert await _count(session, Notice) == 0
+
+
+@pytest.mark.parametrize("day", ["0001-01-01", "1900-01-01", "9999-12-31"])
+async def test_말이_안_되는_날짜는_받지_않는다(
+    db_client, session, bearer, cid, key_set, monkeypatch, day
+):
+    # 0001-01-01 은 시간대를 붙이다 OverflowError 로 500 이 났다
+    headers, _ = bearer
+    run_id, parsed = await _upload(db_client, headers, cid, monkeypatch, _reading())
+
+    response = await _commit(db_client, headers, run_id, [{**parsed["entries"][0], "date": day}])
+
+    assert response.status_code == 400
+    assert await _count(session, Notice) == 0
+
+
+async def test_아이와_연결이_끊긴_보호자는_저장할_수_없다(
+    db_client, session, bearer, cid, key_set, monkeypatch
+):
+    headers, parent_id = bearer
+    run_id, parsed = await _upload(db_client, headers, cid, monkeypatch, _reading())
+    await session.execute(
+        delete(ParentChild).where(ParentChild.parent_id == parent_id, ParentChild.child_id == cid)
+    )
+
+    response = await _commit(db_client, headers, run_id, parsed["entries"][:1])
+
+    assert response.status_code == 403
+    assert await _count(session, Notice) == 0
+
+
+async def test_같은_공지를_나눠_저장하면_뒤의_항목을_이어_붙인다(
+    db_client, session, bearer, cid, key_set, monkeypatch
+):
+    headers, _ = bearer
+    first_run, first = await _upload(db_client, headers, cid, monkeypatch, _reading())
+    assert (await _commit(db_client, headers, first_run, first["entries"][:1])).status_code == 201
+
+    # 같은 사진을 다시 읽어 나머지를 저장한다. 앞에서 저장한 항목을 또 보내도 두 벌이 되지 않는다
+    second_run, second = await _upload(db_client, headers, cid, monkeypatch, _reading())
+    response = await _commit(db_client, headers, second_run, second["entries"][:2])
+
+    assert response.status_code == 201
+    titles = sorted((await session.scalars(select(NoticeItem.title))).all())
+    assert titles == ["숲 체험", "참가 동의서 회신"]
+    assert await _count(session, Notice) == 1
+
+
+async def test_다시_읽은_공지의_항목도_일정과_잇는다(
+    db_client, session, bearer, cid, key_set, monkeypatch
+):
+    headers, _ = bearer
+    first_run, first = await _upload(db_client, headers, cid, monkeypatch, _reading())
+    await _commit(db_client, headers, first_run, first["entries"][:1])
+    event = await _event(session, cid)
+
+    second_run, second = await _upload(db_client, headers, cid, monkeypatch, _reading())
+    entry = {**second["entries"][0], "event_id": str(event.id)}
+    await _commit(db_client, headers, second_run, [entry])
+
+    item = await session.scalar(select(NoticeItem).where(NoticeItem.title == "숲 체험"))
+    await session.refresh(event)
+    assert event.source_notice_item_id == item.id
+
+
+@pytest.mark.parametrize(
+    "change",
+    [{"title": "   "}, {"items": [""]}, {"items": ["x" * 101]}],
+    ids=["빈 제목", "빈 준비물", "너무 긴 준비물"],
+)
+async def test_빈_제목과_이상한_준비물은_받지_않는다(
+    db_client, session, bearer, cid, key_set, monkeypatch, change
+):
+    headers, _ = bearer
+    run_id, parsed = await _upload(db_client, headers, cid, monkeypatch, _reading())
+
+    response = await _commit(db_client, headers, run_id, [{**parsed["entries"][0], **change}])
+
+    assert response.status_code == 400
+    assert await _count(session, Notice) == 0
+
+
+async def test_메뉴를_다_지운_끼니는_조용히_버리지_않는다(
+    db_client, session, bearer, cid, key_set, monkeypatch
+):
+    headers, _ = bearer
+    run_id, parsed = await _upload(
+        db_client, headers, cid, monkeypatch, _reading(meal_plan=_meal_plan())
+    )
+    meal = next(e for e in parsed["entries"] if e["kind"] == "meal" and not e["needs_review"])
+
+    response = await _commit(db_client, headers, run_id, [{**meal, "title": " , ,"}])
+
+    assert response.status_code == 422
+    assert await _count(session, DaycareMeal) == 0
