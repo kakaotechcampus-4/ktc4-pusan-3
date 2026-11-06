@@ -33,6 +33,10 @@ KINDS = frozenset(
 """제안에 담을 수 있는 종류 — 조회 tool 하나 = 탭 하나 (#535). `Saved` 의 ref 와 같은 이름이다.
 알레르기 · 만성질환(`health_safety`)은 없다 — 대화로 지우는 대상이 아니다 (루트 §2 ㉡)."""
 
+TAB_MAX_IDS = 40
+"""탭 하나의 후보 수 상한. 확정 요청의 id 상한(`schemas/delete_proposals.MAX_CONFIRM_IDS`)이 이
+값에서 나온다. agents 의 `DELETE_TAB_MAX_IDS` 와 같은 값이다."""
+
 
 @dataclass(frozen=True)
 class ProposalTab:
@@ -90,6 +94,8 @@ def _check(tabs: Sequence[ProposalTab]) -> None:
     for tab in tabs:
         if not tab.ids:
             raise ValueError("후보가 없는 탭은 넣지 않는다")
+        if len(tab.ids) > TAB_MAX_IDS:
+            raise ValueError(f"탭의 후보는 {TAB_MAX_IDS}건까지다")
         if len(set(tab.ids)) != len(tab.ids) or len(set(tab.picked)) != len(tab.picked):
             raise ValueError("한 탭 안에 같은 id 가 두 번 있다")
         if not set(tab.picked) <= set(tab.ids):

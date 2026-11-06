@@ -96,7 +96,8 @@ class DeleteCandidates:
     """삭제 제안의 한 종류(탭 하나) (#535).
 
     kind 는 `Saved` 의 ref 와 같은 값이다 — 관찰은 표 이름(`observation_food` …), 일정은 `event`.
-    ids 는 모델이 그 run 에서 조회해 본 행(최대 40건), picked 는 그중 요청에 맞는 것(기본 체크).
+    ids 는 모델이 그 run 에서 조회해 본 행(최대 DELETE_TAB_MAX_IDS 건), picked 는 그중 요청에 맞는
+    것(기본 체크).
     truncated 는 조회가 잘려 더 있었는지 — 화면이 "더 있어요" 를 알린다.
     """
 
@@ -119,6 +120,11 @@ DELETE_KINDS = frozenset(
 """제안에 담을 수 있는 종류 — 조회 tool 하나 = 탭 하나. DB 쪽도 같은 목록으로 한 번 더 막는다
 (`domains/delete_proposal/repository.KINDS`)."""
 
+DELETE_TAB_MAX_IDS = 40
+"""탭 하나에 담을 수 있는 후보 수. 확정 요청의 id 상한(종류 수 × 이 값)이 이 값을 믿는다 — 넘게
+담으면 "전부 체크" 확정이 후보 안의 id 인데도 거절된다. DB 쪽도 같은 값으로 한 번 더 막는다
+(`domains/delete_proposal/repository.TAB_MAX_IDS`)."""
+
 
 def check_candidates(tabs: Sequence[DeleteCandidates]) -> None:
     """제안 모양을 막는다 — 두 store 가 같은 규칙으로 거르게 여기 둔다. 어기면 ValueError.
@@ -131,6 +137,8 @@ def check_candidates(tabs: Sequence[DeleteCandidates]) -> None:
     for tab in tabs:
         if not tab.ids or len(set(tab.ids)) != len(tab.ids):
             raise ValueError("탭의 후보가 비었거나 같은 id 가 두 번 있다")
+        if len(tab.ids) > DELETE_TAB_MAX_IDS:
+            raise ValueError(f"탭의 후보는 {DELETE_TAB_MAX_IDS}건까지다")
         if len(set(tab.picked)) != len(tab.picked) or not set(tab.picked) <= set(tab.ids):
             raise ValueError("고른 id 가 겹치거나 후보 밖이다")
 

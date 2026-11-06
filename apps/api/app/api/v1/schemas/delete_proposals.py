@@ -10,8 +10,11 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, StringConstraints
 
-# 탭 수(6) × 탭당 최대 40건. 이보다 많으면 제안 후보 밖이 섞인 것이다
-MAX_CONFIRM_IDS = 240
+from app.domains.delete_proposal.repository import KINDS, TAB_MAX_IDS
+
+# 탭 수 × 탭당 최대 건수(240). 이보다 많으면 제안 후보 밖이 섞인 것이다. 탭당 건수는 제안을
+# 저장할 때 막으므로 "전부 체크" 확정은 이 안에 든다
+MAX_CONFIRM_IDS = len(KINDS) * TAB_MAX_IDS
 
 DeleteProposalState = Literal["pending", "deleted", "cancelled", "expired"]
 
