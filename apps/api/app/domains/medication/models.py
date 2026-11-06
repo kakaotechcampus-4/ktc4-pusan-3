@@ -133,8 +133,9 @@ class MedicationSchedule(Base, UUIDPk, Timestamps):
 class MedicationDose(Base, UUIDPk):
     """회차 1번 = 1행. 3일 × 하루 3번이면 9행이고, 체크 칸이 곧 복용 기록이다.
 
-    created_at · updated_at 이 없다 — 제출 때 한꺼번에 만들어지고 바뀌는 건 체크뿐인데,
-    그 시각은 `checked_at` 에, 누른 보호자는 `checked_by` 에 남는다.
+    created_at · updated_at 이 없다 — 제출 때 한꺼번에 만들어지고 바뀌는 건 체크와 알림 처리
+    표시뿐인데, 체크 시각은 `checked_at` 에, 누른 보호자는 `checked_by` 에, 알림을 맡은 시각은
+    `notice_sent_at` 에 남는다.
     """
 
     __tablename__ = "medication_dose"
@@ -156,6 +157,13 @@ class MedicationDose(Base, UUIDPk):
         ),
         # 탈퇴 때 SET NULL 이 이 칸으로 행을 찾는다
         Index("medication_dose_checked_by_idx", "checked_by"),
+        # 발송 배치가 1분마다 아직 맡지 않은 회차를 날짜 · 시각으로 찾는다 (#749)
+        Index(
+            "medication_dose_notice_due_idx",
+            "dose_date",
+            "scheduled_time",
+            postgresql_where=text("notice_sent_at IS NULL"),
+        ),
     )
 
     schedule_id: Mapped[uuid.UUID] = mapped_column(
@@ -181,6 +189,9 @@ class MedicationDose(Base, UUIDPk):
     checked_by: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("parent.id", ondelete="SET NULL"), nullable=True
     )
+    # 복약 알림 발송 배치가 이 회차를 맡은 시각 (#749). 보내기 **전에** 찍는다 — 성공 여부가 아니다.
+    # 일정 알림의 `Reminder.sent_at` 과 같다. 회차마다 하나라 구독한 보호자 전원에게 한 번만 간다
+    notice_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class MedicationNoticeSubscription(Base, UUIDPk):
