@@ -111,6 +111,7 @@ async def test_응답은_계약의_칸만_싣는다(db_client, bearer, consented
         "dose_date",
         "scheduled_time",
         "checked_at",
+        "checked_by",
         "checkable",
     }
 

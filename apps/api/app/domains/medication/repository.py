@@ -248,6 +248,18 @@ async def lock_checker(session: AsyncSession, *, parent_id: uuid.UUID) -> bool:
     return locked is not None
 
 
+async def parent_nicknames(
+    session: AsyncSession, *, parent_ids: Sequence[uuid.UUID]
+) -> dict[uuid.UUID, str]:
+    """보호자의 부르는 이름을 한 번에 읽는다. 이름이 비었거나 없는 보호자는 키가 없다."""
+    if not parent_ids:
+        return {}
+    rows = await session.execute(
+        select(Parent.id, Parent.nickname).where(Parent.id.in_(set(parent_ids)))
+    )
+    return {pid: name for pid, name in rows if name}
+
+
 async def write_dose_check(
     session: AsyncSession,
     *,

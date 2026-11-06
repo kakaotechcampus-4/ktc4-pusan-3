@@ -42,6 +42,7 @@ from app.domains.medication.repository import (
     list_doses,
     lock_checker,
     lock_doses,
+    parent_nicknames,
     write_dose_check,
 )
 from app.rules.medication_course import course_field_errors, dose_dates, pattern_day
@@ -239,6 +240,19 @@ async def course_views(
         )
         for c in courses
     ]
+
+
+async def checker_nicknames(
+    session: AsyncSession, doses: Sequence[MedicationDose]
+) -> dict[uuid.UUID, str]:
+    """회차를 체크한 보호자의 부르는 이름 — {보호자 id: 이름}. 회차마다 따로 읽지 않는다 (#749).
+
+    키가 없으면 이름을 보여 주지 않는다: 이 칸이 생기기 전의 체크 · 탈퇴(SET NULL) · 이름이 빈
+    계정. 연결을 끊은 보호자는 남는다 — 체크는 아이의 공동 기록이다.
+    """
+    return await parent_nicknames(
+        session, parent_ids=[d.checked_by for d in doses if d.checked_by is not None]
+    )
 
 
 async def list_in_progress(

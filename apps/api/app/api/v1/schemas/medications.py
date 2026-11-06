@@ -16,6 +16,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator
 
+from app.api.v1.schemas.health_safety import WrittenBy
 from app.core.medication_draft import ClockTime
 from app.domains.medication.models import (
     MedicationForm,
@@ -204,6 +205,13 @@ class MedicationDoseOut(BaseModel):
     )
     checked_at: datetime | None = Field(
         description="보호자가 체크한 시각. null 이면 아직 안 먹인 것(미체크)이다"
+    )
+    checked_by: WrittenBy | None = Field(
+        description=(
+            "체크한 보호자. 그 아이의 보호자 누가 조회해도 같은 값이다. 미체크면 null 이고, "
+            "체크했어도 누른 보호자를 알 수 없으면 null 이다 — 이 칸이 생기기 전의 체크 · 탈퇴한 "
+            "보호자 · 부르는 이름이 없는 계정. 아이와 연결을 끊은 보호자는 그대로 보인다(공동 기록)"
+        )
     )
     checkable: bool = Field(
         description=(
