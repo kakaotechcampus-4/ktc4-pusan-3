@@ -148,6 +148,14 @@ Commit = Callable[[], Awaitable[None]]
 # 기준일은 memory_context.today 다 — 러너가 서비스 시간대를 따로 알지 않아도 된다
 CuratorTrigger = Callable[[UUID, date], None]
 
+# 카드에 실을 행을 미리 읽어 두게 하는 러너 콜백 (#535). pipeline 은 `FoundTabs` · `DeleteProposed`
+# 를 보내기 직전에 그 카드의 ref 로 await 한다 — emit 은 sync 라 번역기가 DB 를 읽을 수 없어서,
+# 저장 카드(`Saved`)가 commit 뒤에 읽어 두는 것과 같은 자리를 하나 더 둔다. 못 읽은 행은 카드에서
+# 빠질 뿐 run 을 실패로 만들지 않는다(러너 몫). 러너는 읽기만 SAVEPOINT 로 되감아서 부르는
+# 순서와 상관없이 이 run 의 기록을 건드리지 않는다. 그래도 Memory commit 뒤에 부른다 — 카드의
+# 버튼이 가리키는 제안이 확정된 뒤에 카드를 내야 한다.
+LoadCards = Callable[[tuple["Ref", ...]], Awaitable[None]]
+
 # 일반 추천 블록의 "쌓인 기록 N건" 을 세는 함수 (#227). 러너가 짧은 DB 세션으로 만든다
 # (`api/agent_ports.record_counter`). 없으면(테스트 · eval) 건수 칸이 비고 결과는 그대로 나간다
 CountRecords = Callable[[str], Awaitable[int]]
@@ -268,6 +276,45 @@ class Ref:
 @dataclass(frozen=True)
 class Saved:
     refs: tuple[Ref, ...]  # 화면용 변환은 app/api에서 처리
+
+
+@dataclass(frozen=True)
+class CardTab:
+    """카드의 탭 하나 = 조회 tool 하나 (#535). kind 는 `Ref.kind` 와 같다 (`observation_food` …).
+
+    ids 는 모델이 그 종류를 마지막으로 조회해 본 행(최대 40건)이고, truncated 는 더 있었는지다.
+    picked 는 삭제 제안에서만 — AI 가 고른 것(기본 체크)이다.
+    """
+
+    kind: str
+    truncated: bool
+    ids: tuple[str, ...]
+    picked: tuple[str, ...] = ()
+
+    def refs(self) -> tuple[Ref, ...]:
+        return tuple(Ref(self.kind, oid) for oid in self.ids)
+
+
+@dataclass(frozen=True)
+class FoundTabs:
+    """조회 답변 · 수정 후보 카드 (#535). SSE 이름은 found_tabs. 보기 전용이다.
+
+    id 만 싣는다 — 화면 모양 행은 러너가 `LoadCards` 로 읽어 두고 번역기가 꺼낸다.
+    """
+
+    tabs: tuple[CardTab, ...]
+
+
+@dataclass(frozen=True)
+class DeleteProposed:
+    """삭제 제안 카드 (#535). SSE 이름은 delete_proposal.
+
+    제안은 Memory commit 으로 이미 저장됐다(`delete_proposal` 표). 보호자가 버튼으로 확정해야
+    지워진다 — 이 이벤트는 카드를 그리게 할 뿐 아무것도 지우지 않는다.
+    """
+
+    proposal_id: str
+    tabs: tuple[CardTab, ...]
 
 
 @dataclass(frozen=True)
@@ -468,6 +515,8 @@ class Done:
 Event = (
     Step
     | Saved
+    | FoundTabs
+    | DeleteProposed
     | EventDrafts
     | MedicationDrafts
     | DomainRouted
@@ -572,6 +621,7 @@ async def handle_input(
     writes: RunWrites | None = None,
     curator_trigger: CuratorTrigger | None = None,
     count_records: CountRecords | None = None,
+    load_cards: LoadCards | None = None,
     child_months: int | None = None,
 ) -> PipelineResult:
     """사용자 입력 한 건을 처리한다.

@@ -10,7 +10,7 @@ DB 도 LLM 도 없이 객체만 넣어 본다.
 
 import logging
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import get_args
 from zoneinfo import ZoneInfo
 
@@ -26,12 +26,15 @@ from app.agents.common.result import MedicationDraft
 from app.agents.entrypoint import (
     AgentQuestion,
     AgentResult,
+    CardTab,
+    DeleteProposed,
     DomainRouted,
     Done,
     EmptyResult,
     EventDraft,
     EventDrafts,
     Failed,
+    FoundTabs,
     Guidance,
     MedicationDrafts,
     MemoryNote,
@@ -51,7 +54,12 @@ from app.agents.entrypoint import (
 # 레이어 경계(api는 진입점만) 밖이다. 화면으로 가는 모양은 app/core/event_draft.py가 정한다.
 from app.agents.memory.drafts import DraftItem, EventSnapshot
 from app.agents.memory.schemas.task import WorkType
+from app.agents.memory.store.ports import DELETE_KINDS
 from app.api.runs import registry, sse, translate
+from app.api.v1.card_rows import in_kind_order
+from app.api.v1.schemas.cards import KIND_ORDER
+from app.api.v1.schemas.suggestions import CalendarEventOut
+from app.domains.delete_proposal.repository import KINDS
 
 KST = ZoneInfo("Asia/Seoul")
 PARENT = uuid.UUID(int=1)
@@ -69,6 +77,8 @@ SENT = {
     AgentResult,
     AgentQuestion,
     Saved,
+    FoundTabs,
+    DeleteProposed,
 }
 """화면으로 보내는 것."""
 HELD = {PendingReply, DomainRouted, Unwritten, Rerouted, RetryContext, EmptyResult}
@@ -713,3 +723,93 @@ def test_partial_carries_retryable_agents():
     )
 
     assert translate.to_sse(event)[1]["retryable"] == ["activity"]
+
+
+def _event_row(eid: str) -> CalendarEventOut:
+    return CalendarEventOut(
+        id=eid,
+        title="synthetic",
+        event_type="episodic",
+        starts_at="2026-10-28T10:00:00+09:00",
+        ends_at=None,
+        all_day=False,
+        category="activity",
+        created_by="caregiver",
+        source_notice_id=None,
+        source_refs=[],
+        items=[],
+    )
+
+
+def test_found_tabs_keep_order_and_drop_missing_rows():
+    """#535 — 탭 순서 · 행 순서 그대로. 못 읽은 행 · 행이 없는 탭은 빼고, 다 없으면 안 보낸다."""
+    rows = {("event", "e2"): _event_row("e2"), ("event", "e1"): _event_row("e1")}
+    event = FoundTabs(
+        (
+            CardTab("observation_food", False, ("gone",)),
+            CardTab("event", True, ("e1", "missing", "e2")),
+        )
+    )
+
+    name, payload = translate.to_sse(event, card_rows=rows)
+
+    assert name == "found_tabs"
+    [tab] = payload["tabs"]
+    assert (tab["kind"], tab["truncated"], tab["records"]) == ("event", True, [])
+    assert [row["id"] for row in tab["events"]] == ["e1", "e2"]
+    assert translate.to_sse(FoundTabs((CardTab("event", False, ("x",)),)), card_rows={}) is None
+
+
+def test_delete_proposal_is_sent_even_without_rows():
+    """#535 — 제안은 이미 저장됐다. 행을 못 읽어도 보내야 보호자가 취소할 수 있다.
+    기본 체크는 남아 있는 후보 안에서만."""
+    expires = (translate.PROPOSAL_KIND, "p1")
+    rows = {("event", "e1"): _event_row("e1"), expires: datetime(2026, 10, 28, 3, tzinfo=UTC)}
+    event = DeleteProposed("p1", (CardTab("event", False, ("e1", "e2"), ("e1", "e2")),))
+
+    name, payload = translate.to_sse(event, card_rows=rows)
+    assert name == "delete_proposal"
+    assert (payload["proposal_id"], payload["status"], payload["result"]) == ("p1", "pending", None)
+    assert payload["expires_at"] == "2026-10-28T03:00:00Z"
+    [tab] = payload["tabs"]
+    assert tab["picked_ids"] == ["e1"]
+    assert translate.to_sse(event, card_rows={expires: rows[expires]})[1]["tabs"] == []
+
+
+def test_tabs_follow_screen_order_not_query_order():
+    """#535 (#714 리뷰) — 모델이 조회한 순서가 화면 배치를 정하지 않는다. SSE 의 탭은 식사 · 건강 ·
+    교육 · 놀이 · 생활습관 · 일정 순서다. 모르는 종류의 탭은 터뜨리지 않고 뺀다."""
+    rows = {("event", "e1"): _event_row("e1"), ("event", "e2"): _event_row("e2")}
+    expires = (translate.PROPOSAL_KIND, "p1")
+    found = FoundTabs(
+        (
+            CardTab("observation_unknown", False, ("x1",)),
+            CardTab("event", False, ("e1",)),
+        )
+    )
+    proposed = DeleteProposed(
+        "p1",
+        (CardTab("event", False, ("e2",), ("e2",)), CardTab("health_safety", False, ("y",))),
+    )
+
+    assert [tab["kind"] for tab in translate.to_sse(found, card_rows=rows)[1]["tabs"]] == ["event"]
+    sent = translate.to_sse(
+        proposed, card_rows={**rows, expires: datetime(2026, 11, 6, tzinfo=UTC)}
+    )
+    assert [tab["kind"] for tab in sent[1]["tabs"]] == ["event"]
+    tabs = (
+        CardTab("event", False, ("e1",)),
+        CardTab("observation_activity", False, ("a1",)),
+        CardTab("observation_food", False, ("f1",)),
+    )
+    assert [tab.kind for tab in in_kind_order(tabs)] == [
+        "observation_food",
+        "observation_activity",
+        "event",
+    ]
+
+
+def test_kind_lists_agree():
+    """탭 순서 · DB 가 받는 종류 · Agent 가 담는 종류가 같다 — 하나만 늘리면 카드가 깨진다."""
+    assert set(KIND_ORDER) == set(DELETE_KINDS)
+    assert set(KIND_ORDER) == KINDS

@@ -12,6 +12,7 @@ ORM 어댑터가 여기서 변환한다 —
 JSON 직렬화는 ToolResult를 만들 때만 한다. 저장 경로에서는 하지 않는다.
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, Protocol
@@ -88,6 +89,58 @@ class EventRow:
             "all_day": self.all_day,
             "items": [item.to_summary() for item in (items or [])],
         }
+
+
+@dataclass(frozen=True)
+class DeleteCandidates:
+    """삭제 제안의 한 종류(탭 하나) (#535).
+
+    kind 는 `Saved` 의 ref 와 같은 값이다 — 관찰은 표 이름(`observation_food` …), 일정은 `event`.
+    ids 는 모델이 그 run 에서 조회해 본 행(최대 DELETE_TAB_MAX_IDS 건), picked 는 그중 요청에 맞는
+    것(기본 체크).
+    truncated 는 조회가 잘려 더 있었는지 — 화면이 "더 있어요" 를 알린다.
+    """
+
+    kind: str
+    truncated: bool
+    ids: tuple[str, ...]
+    picked: tuple[str, ...]
+
+
+DELETE_KINDS = frozenset(
+    {
+        "observation_food",
+        "observation_health",
+        "observation_education",
+        "observation_activity",
+        "observation_routine",
+        "event",
+    }
+)
+"""제안에 담을 수 있는 종류 — 조회 tool 하나 = 탭 하나. DB 쪽도 같은 목록으로 한 번 더 막는다
+(`domains/delete_proposal/repository.KINDS`)."""
+
+DELETE_TAB_MAX_IDS = 40
+"""탭 하나에 담을 수 있는 후보 수. 확정 요청의 id 상한(종류 수 × 이 값)이 이 값을 믿는다 — 넘게
+담으면 "전부 체크" 확정이 후보 안의 id 인데도 거절된다. DB 쪽도 같은 값으로 한 번 더 막는다
+(`domains/delete_proposal/repository.TAB_MAX_IDS`)."""
+
+
+def check_candidates(tabs: Sequence[DeleteCandidates]) -> None:
+    """제안 모양을 막는다 — 두 store 가 같은 규칙으로 거르게 여기 둔다. 어기면 ValueError.
+
+    후보 id 가 정말 이 아이의 행인지는 여기서 보지 않는다. 지울 때 서버가 아이로 다시 거른다.
+    """
+    kinds = [tab.kind for tab in tabs]
+    if not tabs or len(set(kinds)) != len(kinds) or not set(kinds) <= DELETE_KINDS:
+        raise ValueError("후보가 없거나, 종류가 겹치거나, 담을 수 없는 종류다")
+    for tab in tabs:
+        if not tab.ids or len(set(tab.ids)) != len(tab.ids):
+            raise ValueError("탭의 후보가 비었거나 같은 id 가 두 번 있다")
+        if len(tab.ids) > DELETE_TAB_MAX_IDS:
+            raise ValueError(f"탭의 후보는 {DELETE_TAB_MAX_IDS}건까지다")
+        if len(set(tab.picked)) != len(tab.picked) or not set(tab.picked) <= set(tab.ids):
+            raise ValueError("고른 id 가 겹치거나 후보 밖이다")
 
 
 class MemoryStore(Protocol):
@@ -182,3 +235,14 @@ class MemoryStore(Protocol):
         ...
 
     async def delete_event_item(self, *, item_id: str) -> bool: ...
+
+    # delete proposal (#535)
+    async def propose_delete(
+        self, *, parent_id: UUID, run_id: str, tabs: Sequence[DeleteCandidates]
+    ) -> str:
+        """지울 후보를 제안으로 남기고 id 를 돌려준다. 아무것도 지우지 않는다.
+
+        보호자가 화면 버튼으로 확정하면 서버가 후보 안의 체크한 것만 지운다. 한 run 에 하나다 —
+        같은 run 에서 다시 부르면 ValueError. 빈 후보 · 후보 밖의 picked 도 ValueError 다.
+        """
+        ...
