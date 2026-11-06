@@ -37,6 +37,7 @@ from app.domains.medication.service import (
     set_dose_checked,
 )
 from app.infra.db.session import async_session_factory
+from tests.integration.api.conftest import backend_pid, wait_for_lock_wait
 
 TODAY = date(2026, 10, 27)
 
@@ -492,8 +493,9 @@ async def test_등록이_연결을_잡은_사이에_끊기가_오면_구독까�
             await s2.commit()
 
         task = asyncio.create_task(unlink())
-        await asyncio.sleep(0.4)  # 끊기가 등록이 잡은 연결 앞에서 기다릴 틈
-        assert not task.done()  # 끊기가 실제로 기다리고 있다
+        # 끊기가 등록이 잡은 연결 앞에서 실제로 기다리는지 DB 로 본다 — 잡지 않으면 끊기가 기다리지
+        # 않고 먼저 끝나 여기서 시간이 다 된다
+        await wait_for_lock_wait(blocker=await backend_pid(s1))
         await s1.commit()
         await asyncio.wait_for(task, timeout=5)
 
@@ -510,3 +512,43 @@ async def test_등록이_연결을_잡은_사이에_끊기가_오면_구독까�
         async with async_session_factory() as s:
             await s.execute(delete(Parent).where(Parent.id == helper_id))
             await s.commit()
+
+
+async def test_등록이_보호자를_잡은_사이에_같은_보호자가_탈퇴해도_교착이_없다(make_child):
+    """등록은 보호자 → 아이 → 연결을 먼저 잡고(`lock_link`) 아이별 등록 잠금을 잡는다. 탈퇴도
+    보호자 → 아이 순이라 등록 커밋을 기다렸다가 아이와 함께 코스 · 구독을 지운다.
+    """
+    child_id = await make_child()
+    owner_id = await owner_of(child_id)
+    s1, s2 = async_session_factory(), async_session_factory()
+    try:
+        await create_course(
+            s1,
+            child_id=child_id,
+            parent_id=owner_id,
+            data=course_input(),
+            today=TODAY,
+            now=NOW,
+        )  # 아직 commit 전
+
+        async def withdraw() -> None:
+            await withdraw_parent(s2, parent_id=owner_id, now=NOW)
+            await s2.commit()
+
+        task = asyncio.create_task(withdraw())
+        await wait_for_lock_wait(blocker=await backend_pid(s1))  # 탈퇴가 등록을 기다린다
+        await s1.commit()
+        await asyncio.wait_for(task, timeout=5)
+    finally:
+        await s1.close()
+        await s2.close()
+
+    async with async_session_factory() as s:
+        assert await s.get(Parent, owner_id) is None
+        assert await saved_courses(child_id) == 0
+        left = await s.scalar(
+            select(func.count())
+            .select_from(MedicationNoticeSubscription)
+            .where(MedicationNoticeSubscription.parent_id == owner_id)
+        )
+    assert left == 0

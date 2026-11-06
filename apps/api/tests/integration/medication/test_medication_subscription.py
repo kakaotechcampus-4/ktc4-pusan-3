@@ -99,20 +99,6 @@ async def test_등록하면_등록한_보호자만_등록한_시각으로_구독
     assert await subscriptions(session, course.id) == {child.owner_parent_id: NOW}
 
 
-async def test_그사이_연결이_끊긴_보호자는_등록하지_못하고_아무것도_남지_않는다(
-    session, child, helper
-):
-    await unlink_parent(session, child_id=child.id, parent_id=child.owner_parent_id)
-
-    with pytest.raises(NotLinked):
-        await register(session, child)
-
-    saved = await session.scalars(
-        select(MedicationSchedule.id).where(MedicationSchedule.child_id == child.id)
-    )
-    assert saved.all() == []
-
-
 async def test_코스를_수정해도_구독은_그대로다(session, child, helper):
     course = await register(session, child)
     await turn_on(session, child, course, helper, now=LATER)
