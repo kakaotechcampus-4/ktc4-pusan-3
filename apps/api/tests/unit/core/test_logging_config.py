@@ -169,7 +169,7 @@ def test_app_code_never_logs_exception_messages():
     app 코드는 logging_config.log_error_without_message 로 종류 · 위치만 남긴다. 거름망
     (_HideExceptionMessage)이 붙은 곳은 uvicorn.error 하나뿐이라 app.* 는 막아 주지 않는다.
     """
-    pattern = re.compile(r"\.exception\(\s*[\"']|\bexc_info=(?!=)")
+    pattern = re.compile(r"\.exception\((?!\))|\bexc_info=(?!=)")  # future.exception() 만 뺀다
     offenders = [
         f"{path.relative_to(APP)}:{n}"
         for path in APP.rglob("*.py")
