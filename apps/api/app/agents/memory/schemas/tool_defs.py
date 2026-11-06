@@ -27,6 +27,11 @@ from app.agents.memory.schemas.schedule import (
     EventUpdate,
 )
 
+_SCOPE_NOTE = (
+    "대상이 반복 일정(query_event 결과에 series 가 있는 일정)이면 scope 를 정한다. "
+    "날짜를 집어 말했으면 one, 날짜 없이 그 반복 일정 자체를 말했으면 series 이고, "
+    "찾은 결과를 보고도 정해지지 않으면 묻는다."
+)
 _NEEDS_QUERY = "대상 id 를 모르면 먼저 조회 tool을 부른다. id를 지어내지 않는다."
 _CAN_DELETE = "기록 한 건을 통째로 지울 때도 이 tool 이다. status=deleted 만 넣는다."
 
@@ -139,6 +144,9 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
             "앞으로의 일정을 초안으로 만든다. 운동회·병원·참관수업처럼 날짜가 있는 예정에 쓴다. "
             "챙길 준비물이 같이 나오면 items 에 모두 넣는다. 이 tool 한 번으로 끝내고 "
             "준비물을 따로 부르지 않는다. "
+            "요일마다 되풀이되면 repeat_weekdays 와 repeat_until(끝 날짜)을 "
+            "같이 넣어 한 번에 만든다. "
+            "끝 날짜를 말하지 않았으면 부르지 말고 먼저 묻는다. "
             "이미 지난 일을 기록하는 건 observation이다."
         ),
         args=EventCreate,
@@ -155,7 +163,8 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
         name="update_event",
         description=(
             "이미 저장된 일정을 고친 초안을 만든다. 보호자가 확인해야 반영된다. "
-            f'끝나는 시각을 없애려면 clear=["ends_at"]을 쓴다. {_NEEDS_QUERY}'
+            f'끝나는 시각을 없애려면 clear=["ends_at"]을 쓴다. {_NEEDS_QUERY} '
+            f"{_SCOPE_NOTE} scope=series 는 오늘 이후 회차 전체를 고치는 초안이다."
         ),
         args=EventUpdate,
     ),
@@ -170,7 +179,8 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
         description=(
             "이미 있는 일정에 챙길 준비물을 하나 추가한다. "
             "새 일정이면 create_event의 items를 쓴다. "
-            f"준비물이 여러 개면 준비물마다 따로 부르되, 한 응답에 모두 부른다. {_NEEDS_QUERY}"
+            f"준비물이 여러 개면 준비물마다 따로 부르되, 한 응답에 모두 부른다. {_NEEDS_QUERY} "
+            f"{_SCOPE_NOTE}"
         ),
         args=EventItemCreate,
     ),
@@ -178,13 +188,17 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
         name="update_event_item",
         description=(
             "준비물 이름을 고치거나 챙김 여부를 표시한다. "
-            f"이름을 고치면 보호자 확인을 거치고, 챙김 표시는 바로 반영된다. {_NEEDS_QUERY}"
+            f"이름을 고치면 보호자 확인을 거치고, 챙김 표시는 바로 반영된다. {_NEEDS_QUERY} "
+            f"{_SCOPE_NOTE} 챙김 표시는 늘 그날 회차 하나라 scope 를 넣지 않는다."
         ),
         args=EventItemUpdate,
     ),
     ToolDefinition(
         name="delete_event_item",
-        description=f"준비물 한 개를 목록에서 뺀다. {_NEEDS_QUERY}",
+        description=(
+            f"준비물 한 개를 목록에서 뺀다. {_NEEDS_QUERY} {_SCOPE_NOTE} "
+            "scope=series 는 묶음 초안에서 그 준비물을 빼는 것이라 보호자가 확인해야 반영된다."
+        ),
         args=EventItemRef,
     ),
 ]

@@ -35,6 +35,10 @@ class ErrorCode(CommonErrorCode):
     HAZARD = "HAZARD"  # 음식이 아닌 위험 물질. 저장하지 않고 상태 확인 안내 (#626)
     REGISTERED_MEDICINE = "REGISTERED_MEDICINE"  # 진행 중 복약 일정의 약. 체크는 복약 화면이 한다
     SAFETY_RECORD = "SAFETY_RECORD"  # 알레르기 · 만성질환 이름. 저장하지 않고 안내는 pipeline 이
+    REPEAT_UNTIL_REQUIRED = (
+        "REPEAT_UNTIL_REQUIRED"  # 반복 일정의 끝 날짜를 보호자에게 묻는다 (#738)
+    )
+    SCOPE_REQUIRED = "SCOPE_REQUIRED"  # 반복 일정의 한 회차인지 전체인지 정한다 (#738)
 
 
 def ok(operation: Operation, resource: str, **data: Any) -> ToolResult:

@@ -89,6 +89,29 @@ class EventCategory(StrEnum):
     ETC = "etc"
 
 
+class Weekday(StrEnum):
+    """반복 요일. 모델은 이름으로 말하고, ISO 숫자로 바꾸는 것은 코드다 (#738)."""
+
+    MON = "mon"
+    TUE = "tue"
+    WED = "wed"
+    THU = "thu"
+    FRI = "fri"
+    SAT = "sat"
+    SUN = "sun"
+
+
+WEEKDAY_ISO: dict[Weekday, int] = {
+    Weekday.MON: 1,
+    Weekday.TUE: 2,
+    Weekday.WED: 3,
+    Weekday.THU: 4,
+    Weekday.FRI: 5,
+    Weekday.SAT: 6,
+    Weekday.SUN: 7,
+}
+
+
 # 날짜·시각은 원문 표현으로 받고 실제 계산은 common/datetime_rules.py에서 수행
 DateExpr = Annotated[
     str,

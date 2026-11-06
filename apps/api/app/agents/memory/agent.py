@@ -34,7 +34,7 @@ from app.agents.common.llm_client import LLMClient
 from app.agents.common.result import DomainPending
 from app.agents.memory.bundles import MUTATING_PREFIXES, WRITES_FOR, tools_for
 from app.agents.memory.context import AgentContext
-from app.agents.memory.drafts import EventDraft
+from app.agents.memory.drafts import AnyEventDraft
 from app.agents.memory.prompt import build_system_prompt
 from app.agents.memory.registry import TOOL_SPECS, execute_tool, specs_for
 from app.agents.memory.result import ErrorCode, fail
@@ -271,7 +271,7 @@ class MemoryAgentResult:
     # unclear: unclear 뿐인 입력이 쓰기 없이 끝나 코드가 정한 문구(_UNCLEAR_REPLY)를 냄 (#642)
     # max_steps: 끝내지 못함
     ended_by: EndedBy = "model"
-    drafts: tuple[EventDraft, ...] = ()  # 보호자 제출을 기다리는 일정 초안
+    drafts: tuple[AnyEventDraft, ...] = ()  # 보호자 제출을 기다리는 일정 초안 (묶음 초안 포함)
     pending: PendingMemoryContext | None = None  # 되묻고 멈춘 조각. kind=question 일 때만
     leftover: bool = False  # 이어받기에서 답에 섞인 다른 기록·요청을 처리하지 않고 남겼는지.
     # 재질문 상한에 닿아 또 물으려던 질문을 맥락 없이 끝냈는지.

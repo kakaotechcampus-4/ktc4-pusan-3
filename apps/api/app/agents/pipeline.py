@@ -50,7 +50,7 @@ from app.agents.memory.agent import MemoryAgentResult, ToolCallRecord
 from app.agents.memory.agent import run as run_memory
 from app.agents.memory.bundles import MUTATING_PREFIXES, WRITES_FOR
 from app.agents.memory.context import AgentContext
-from app.agents.memory.drafts import DraftBook, EventDraft, draft_from_request
+from app.agents.memory.drafts import AnyEventDraft, DraftBook, draft_from_request
 from app.agents.memory.result import ErrorCode
 from app.agents.memory.schemas.reply import ReplyKind
 from app.agents.memory.schemas.task import (
@@ -280,7 +280,7 @@ class EventDrafts:
     #   초안만 내고 제출은 한 엔드포인트로 모아야 승인 시트를 하나로 유지 가능)
     """
 
-    drafts: tuple[EventDraft, ...]
+    drafts: tuple[AnyEventDraft, ...]
 
 
 @dataclass(frozen=True)
