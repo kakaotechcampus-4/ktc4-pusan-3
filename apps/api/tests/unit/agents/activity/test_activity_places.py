@@ -320,16 +320,34 @@ class TestArea:
         assert ctx.state.weather[tomorrow].outdoor_ok is True
 
     @pytest.mark.parametrize(
-        ("written", "texts", "expected"),
+        ("written", "texts"),
         [
-            ("해운대해수욕장", ("해운대해수욕장 가서 놀 곳",), "해운대"),
-            ("기장읍", ("기장읍에서 놀 곳",), "기장"),
+            ("해운대해수욕장", ("해운대해수욕장 가서 놀 곳",)),
+            ("기장읍", ("기장읍에서 놀 곳",)),
+            ("세종문화회관", ("세종문화회관 가서 공연 보고 놀 곳",)),
         ],
     )
-    async def test_보호자가_쓴_말을_통째로_넘겨도_앞의_지역_이름으로_찾는다(
-        self, written, texts, expected
+    async def test_명소_이름을_통째로_넘기면_지역_이름만_다시_쓰라고_돌려보낸다(
+        self, written, texts
     ):
-        """모델은 보호자가 쓴 말을 통째로 넘긴다 — 라이브 비교에서 조사 목록 방식이 놓친 경우."""
+        """세종문화회관은 세종에 있지 않다 — 앞의 지역 이름을 떼어 쓰면 엉뚱한 곳에서 찾는다.
+        그 명소가 그 지역에 있는지는 모델이 안다. 코드는 지역 이름만 받는다.
+        """
+        ctx = await area_context([park("○○공원", 500)], request=texts)
+        result = await search_nearby_places(ctx, area_args(PlaceCategory.PARK, written))
+        assert result.error["code"] == ErrorCode.INVALID_ARGS
+        assert "지역 이름만" in result.error["message"]
+        assert ctx.ports.places.locations == []
+        assert ctx.state.area is None and ctx.state.area_missed is False
+
+    @pytest.mark.parametrize(
+        ("written", "texts", "expected"),
+        [
+            ("해운대", ("해운대해수욕장 가서 놀 곳",), "해운대"),
+            ("기장", ("기장읍에서 놀 곳",), "기장"),
+        ],
+    )
+    async def test_다시_쓴_지역_이름으로_찾는다(self, written, texts, expected):
         ctx = await area_context([park("○○공원", 500)], request=texts)
         result = await search_nearby_places(ctx, area_args(PlaceCategory.PARK, written))
         assert result.success is True

@@ -106,7 +106,9 @@ def agents(monkeypatch):
     return plan, calls
 
 
-def _general(agent="activity", content="블록 쌓기", place_notice=None) -> SuggestionDraft:
+def _general(
+    agent="activity", content="블록 쌓기", place_notice=None, warnings=()
+) -> SuggestionDraft:
     doc = EvidenceCitation(ref=Ref(kind="activity_doc", id=DOC_ID), note="또래 놀이 자료")
     return SuggestionDraft(
         agent=agent,
@@ -115,6 +117,7 @@ def _general(agent="activity", content="블록 쌓기", place_notice=None) -> Su
         reason="또래 아이들이 많이 하는 놀이예요.",
         citations=(doc,),
         place_notice=place_notice,
+        warnings=warnings,
     )
 
 
@@ -182,6 +185,7 @@ async def test_홈_요청은_Agent_마다_묶음과_안내를_싣는다(db_clien
     assert food["evidence"][0]["label"] == "계란말이"
     assert food["evidence"][0]["is_stale"] is False
     assert food["place_notice"] is None  # 장소가 없는 추천
+    assert food["warnings"] == []
     groups = {g["agent"]: g for g in data["groups"]}
     assert groups["food"]["notice"] == {
         "code": "fewer",
@@ -520,6 +524,7 @@ async def test_일반_추천은_문서_근거와_기록_건수를_싣는다(db_c
     ]
     assert data["scarcity"] == {"count": 0, "question": None}
     assert general["place_notice"] is None  # 장소가 없는 추천
+    assert general["warnings"] == []
 
 
 async def test_장소가_붙은_추천은_확인_문구를_칸으로_싣는다(db_client, bearer, cid, agents):

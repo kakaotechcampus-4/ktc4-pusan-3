@@ -17,7 +17,12 @@ from app.agents.activity.context import ActivityContext
 from app.agents.activity.store.inmemory import InMemoryConsent as ActivityConsent
 from app.agents.activity.store.inmemory import InMemoryProfile as ActivityProfile
 from app.agents.activity.store.inmemory import unwired_ports as activity_unwired_ports
-from app.agents.activity.store.ports import CoarseLocation, PlaceSource, WeatherSource
+from app.agents.activity.store.ports import (
+    CoarseLocation,
+    EventSource,
+    PlaceSource,
+    WeatherSource,
+)
 from app.agents.activity.store.ports import SafetyReader as ActivitySafetyReader
 from app.agents.common.allergy import allergen_states, shared_book
 from app.agents.common.child_values import ChildValues
@@ -155,6 +160,7 @@ __all__ = [
     "PendingMemoryContext",
     "PendingReply",
     "PipelineResult",
+    "EventSource",
     "PlaceSource",
     "RawBookSearch",
     "Readout",
@@ -231,6 +237,7 @@ async def handle_input(
     location: CoarseLocation | None = None,
     activity_weather: WeatherSource | None = None,
     activity_places: PlaceSource | None = None,
+    activity_events: EventSource | None = None,
     emit: Emit | None = None,
     store: MemoryStore | None = None,
     continuation: PendingMemoryContext | None = None,
@@ -268,6 +275,8 @@ async def handle_input(
       실내 전용이다.
     - activity_weather 는 api 가 서버 시작 때 만든 날씨 어댑터다. agents 는 integrations 를
       import 하지 않아서 api 가 넘긴다. None 이면 날씨를 묻지 않고 실내 전용이다.
+    - activity_events 는 api 가 서버 시작 때 만든 행사 어댑터(TourAPI)다. None 이면 행사 조회가
+      닫힌다. 어댑터는 위치를 받지 않는다 — 거리는 Activity 가 서버 안에서 계산한다.
     - activity_places 는 api 가 넘긴 장소 어댑터(적재한 `place` 표)다. None 이거나 좌표가 없으면
       장소 조회가 닫혀 장소가 필요 없는 활동만 나간다.
     - store를 넘기면 그것에 쓴다.
@@ -333,6 +342,7 @@ async def handle_input(
         location=location,
         activity_weather=activity_weather,
         activity_places=activity_places,
+        activity_events=activity_events,
         domain_store=domain_store,
         food_catalog=food_catalog,
         food_recipes=food_recipes,
@@ -554,6 +564,7 @@ def _domain_contexts(
     activity_weather: WeatherSource | None,
     domain_store: StoreOpener | None,
     activity_places: PlaceSource | None = None,
+    activity_events: EventSource | None = None,
     food_catalog: MenuCatalogStore | None = None,
     food_recipes: RecipeCatalogStore | None = None,
     food_suggestions: SuggestionHistoryReader | None = None,
@@ -651,6 +662,7 @@ def _domain_contexts(
             ),
             weather=activity_weather,
             places=activity_places,
+            events=activity_events,
             safety=activity_safety,
         ),
         location=location,

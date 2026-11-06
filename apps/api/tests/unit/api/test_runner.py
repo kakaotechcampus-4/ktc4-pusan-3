@@ -102,6 +102,7 @@ async def test_agent_job_좌표와_날씨_어댑터를_진입점에_그대로_�
     monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
     channel = registry.open_run(parent_id=PARENT)
     location, weather = entrypoint.CoarseLocation(lat=35.18, lon=129.08), object()
+    events = object()
 
     job = runner.agent_job(
         child_id=CHILD,
@@ -109,11 +110,13 @@ async def test_agent_job_좌표와_날씨_어댑터를_진입점에_그대로_�
         raw_text=RAW_TEXT,
         location=location,
         activity_weather=weather,
+        activity_events=events,
     )
     await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
 
     assert seen["location"] is location
     assert seen["activity_weather"] is weather
+    assert seen["activity_events"] is events  # 서버 시작 때 만든 행사 어댑터
     # 장소는 적재한 place 표를 읽는 어댑터다. 좌표가 없는 run 에서는 tool 이 닫혀 부르지 않는다
     assert isinstance(seen["activity_places"], DbPlaceSource)
 

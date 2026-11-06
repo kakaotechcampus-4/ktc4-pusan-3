@@ -18,6 +18,7 @@ from app.core.config import settings
 from app.core.constants import API_V1_PREFIX
 from app.core.logging_config import configure_logging
 from app.integrations import discord
+from app.integrations.tour.events import TourEvents
 from app.integrations.weather.source import PublicWeather
 
 # 앱 로그(app.*)를 시간 · 레벨 · 이름과 함께 찍는다. uvicorn 은 자기 로거만 설정해서, 이게
@@ -38,14 +39,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     날씨 어댑터(#380) — 발표분 · 측정소 · 특보 캐시가 프로세스 메모리에 있어 하나를 같이 쓴다
     (`--workers 1` 전제, #134). 입력 창구가 run 마다 Activity 에 넘긴다. 공공데이터포털 키가
     없으면 만들지 않는다 — Activity 는 날씨를 묻지 않고 실내 전용으로 돈다.
+
+    행사 어댑터(TourAPI)도 같다 — 하루치 전국 목록 · 소개정보 캐시가 프로세스 메모리에 있다.
+    같은 공공데이터포털 키를 쓰고, 없으면 Activity 는 행사를 찾지 않는다.
     """
-    weather = PublicWeather() if settings.DATA_GO_KR_SERVICE_KEY.strip() else None
+    has_key = bool(settings.DATA_GO_KR_SERVICE_KEY.strip())
+    weather = PublicWeather() if has_key else None
+    events = TourEvents() if has_key else None
     app.state.activity_weather = weather
+    app.state.activity_events = events
     try:
         yield
     finally:
-        if weather is not None:
-            await weather.aclose()
+        for client in (weather, events):
+            if client is not None:
+                await client.aclose()
 
 
 app = FastAPI(title=settings.APP_NAME, lifespan=lifespan)

@@ -124,7 +124,13 @@ export const SCHEMA_MAP: Record<string, MapValue> = {
   AgentResultOut: "ChatReply<type=agent_result>",
   PartialReply: "ChatReply<type=partial>",
   DoneReply: "ChatReply<type=done>",
-  StoredReadout: "AgentReadout",
+  StoredReadout: {
+    web: "AgentReadout",
+    allow: {
+      source_refs:
+        "SSE 에만 온다 (#713). 지난 대화에는 readout 근거를 싣지 않아서 웹은 선택 칸으로 받는다",
+    },
+  },
   SuggestionStateOut: "AgentResultEvent.suggestions[]",
   StoredRef: "StoredRef",
 
