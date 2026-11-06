@@ -36,8 +36,8 @@ const DRAFT_BODY: SubmitEventBody = {
 describe("되돌릴 수 없는 경로 판정", () => {
   const operations = Object.keys(idempotentPath) as IdempotentOperation[];
 
-  it("표의 줄을 전부 그 메서드로 요구한다 — 5곳 · 초안 제출 · 알레르기 기록 · 복약 제출은 각각 두 줄", () => {
-    expect(operations).toHaveLength(9);
+  it("표의 줄을 전부 그 메서드로 요구한다 — 5곳 · 초안 제출은 세 줄 · 알레르기 기록 · 복약 제출은 각각 두 줄", () => {
+    expect(operations).toHaveLength(10);
     for (const operation of operations) {
       const path = idempotentPath[operation]("x1", "x2");
       expect(requiresIdempotencyKey(idempotentMethod[operation], path), operation).toBe(true);
@@ -47,6 +47,12 @@ describe("되돌릴 수 없는 경로 판정", () => {
   it("🚨 수정 초안 반영(PATCH)도 키가 필요하다 (#316)", () => {
     expect(requiresIdempotencyKey("PATCH", "/children/c1/events/e1")).toBe(true);
     expect(requiresIdempotencyKey("patch", "/children/c1/events/e1")).toBe(true);
+  });
+
+  it("🚨 반복 묶음 고치기(PATCH)도 게이트 ㉠ 이라 키가 필요하다 (#738)", () => {
+    expect(requiresIdempotencyKey("PATCH", "/children/c1/event-series/series_1")).toBe(true);
+    // 아이 스코프 밖의 경로는 표에 없다 — 남의 아이 묶음을 가릴 수 없어서 쓰지 않는다.
+    expect(requiresIdempotencyKey("PATCH", "/event-series/series_1")).toBe(false);
   });
 
   it("🚨 알레르기 고치기(PATCH)도 키가 필요하다 — 고치면 새 기록이라 재시도가 404 가 된다 (#375)", () => {
