@@ -46,6 +46,7 @@ from app.domains.medication.repository import (
     lock_checker,
     lock_doses,
     parent_nicknames,
+    subscribed_schedule_ids,
     write_dose_check,
 )
 from app.domains.schedule.repository import lock_link
@@ -312,6 +313,15 @@ async def checker_nicknames(
     """
     return await parent_nicknames(
         session, parent_ids=[d.checked_by for d in doses if d.checked_by is not None]
+    )
+
+
+async def my_subscriptions(
+    session: AsyncSession, *, parent_id: uuid.UUID, courses: Sequence[MedicationSchedule]
+) -> set[uuid.UUID]:
+    """그 보호자가 알림을 켜 둔 코스 id (#749). 응답의 `notice_enabled` 가 이것이다."""
+    return await subscribed_schedule_ids(
+        session, parent_id=parent_id, schedule_ids=[c.id for c in courses]
     )
 
 

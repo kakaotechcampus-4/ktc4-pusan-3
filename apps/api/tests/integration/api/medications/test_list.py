@@ -123,5 +123,6 @@ async def test_조회_응답은_계약의_칸만_싣는다(db_client, session, b
         "starts_on",
         "ends_on",
         "notice_times",
+        "notice_enabled",
         "doses",
     }

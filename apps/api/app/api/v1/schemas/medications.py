@@ -233,6 +233,13 @@ class MedicationCourseOut(BaseModel):
     notice_times: list[str] = Field(
         description="하루에 알림이 울릴 시각 `HH:MM`, 오름차순. 예: `['08:30','12:30','19:30']`"
     )
+    notice_enabled: bool = Field(
+        description=(
+            "**요청한 보호자 본인이** 이 코스의 복약 알림을 받는가. 보호자마다 다르다 — 코스를 "
+            "등록한 보호자는 등록할 때 켜지고, 함께 보는 다른 보호자는 꺼진 채로 시작한다. "
+            "켜기 `PUT …/notice` · 끄기 `DELETE …/notice`"
+        )
+    )
     doses: list[MedicationDoseOut] = Field(
         description=(
             "**오늘까지**의 회차, (날짜, 시각) 순. 아직 오지 않은 날의 회차는 싣지 않는다 — "

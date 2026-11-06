@@ -45,7 +45,16 @@ async def test_수정하면_200_과_고친_코스를_돌려준다(db_client, ses
     data = response.json()["course"]
     assert data["id"] == str(course.id)
     assert (data["title"], data["dosage"]) == ("타이레놀", "3ml")
-    assert set(data) == {"id", "title", "dosage", "starts_on", "ends_on", "notice_times", "doses"}
+    assert set(data) == {
+        "id",
+        "title",
+        "dosage",
+        "starts_on",
+        "ends_on",
+        "notice_times",
+        "notice_enabled",
+        "doses",
+    }
 
 
 async def test_수정한_값이_모두_저장된다(db_client, session, bearer, consented):

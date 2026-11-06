@@ -314,6 +314,21 @@ async def delete_subscription(
     )
 
 
+async def subscribed_schedule_ids(
+    session: AsyncSession, *, parent_id: uuid.UUID, schedule_ids: Sequence[uuid.UUID]
+) -> set[uuid.UUID]:
+    """그 보호자가 알림을 켜 둔 코스 id. 코스마다 따로 읽지 않는다."""
+    if not schedule_ids:
+        return set()
+    rows = await session.scalars(
+        select(MedicationNoticeSubscription.schedule_id).where(
+            MedicationNoticeSubscription.parent_id == parent_id,
+            MedicationNoticeSubscription.schedule_id.in_(set(schedule_ids)),
+        )
+    )
+    return set(rows)
+
+
 async def write_dose_check(
     session: AsyncSession,
     *,
