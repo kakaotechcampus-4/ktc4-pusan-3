@@ -163,6 +163,8 @@ class DbMemoryStore:
         self.created: list[tuple[str, UUID]] = []
         """이 run 에서 새로 만든 관찰 (도메인, id) — 만든 순서대로. 고치기 · 지우기는 넣지 않는다.
         runner 가 commit 뒤에 이 행들을 읽어 화면에 `saved` 로 보낸다 (#471)."""
+        self._stale_profiles: set[UUID] = set()
+        """고치기 · 지우기로 다시 계산할 기억. `flush_profiles` 가 commit 직전에 비운다 (#717)."""
 
     def _today(self) -> date:
         """Profile 재계산 기준일. 안 넘기면 서비스 시간대(KST)의 오늘."""
@@ -188,8 +190,27 @@ class DbMemoryStore:
             (monotonic() - started) * 1000,
         )
 
-    async def _refresh_profile(self, affinity_id: UUID | None) -> None:
+    def _mark_profile_stale(self, affinity_id: UUID | None) -> None:
+        """다시 계산할 기억을 적어만 둔다 — 잠그는 건 `flush_profiles` 가 commit 직전에 한다 (#717).
+
+        고칠 때마다 바로 계산하면 "관찰 X → 기억 A → 관찰 Y" 로 잠금 순서가 섞여, 같은 기억의
+        다른 관찰을 정정하는 쪽("관찰 Y → 기억 A")과 서로를 기다린다. 기억을 맨 끝에 몰아서 잠그면
+        run 도 "관찰 → 기억" 이라 순환이 없다. Curator 가 `recompute_after_linking` 으로 기억을
+        마지막에 몰아 계산하는 것과 같은 순서다.
+        """
         if affinity_id is not None:
+            self._stale_profiles.add(affinity_id)
+
+    async def flush_profiles(self) -> None:
+        """모아 둔 기억을 id 순으로 한 번씩 다시 계산한다. 러너가 `session.commit()` 직전에 부른다.
+
+        기억 행 잠금은 커밋까지 쥔다. 그래서 관찰 수정이 다 끝난 뒤에, 같은 아이의 다른 run ·
+        Curator 와 같은 id 순서로 잠근다. 도메인 Agent 는 commit 뒤에 검색하므로 "저장이 검색보다
+        먼저"(CLAUDE.md §4)는 그대로다. 비우고 나가서 다시 불려도 두 번 계산하지 않는다.
+        """
+        stale = sorted(self._stale_profiles)
+        self._stale_profiles.clear()
+        for affinity_id in stale:
             await refresh_profile(self._session, profile_id=affinity_id, today=self._today())
 
     async def _clear_link_hold(self, domain: ObservationDomain, observation_id: UUID) -> None:
@@ -346,7 +367,7 @@ class DbMemoryStore:
             # 옛 subject · polarity 로 쌓인 보류 기록은 다시 연결할 때 쓸모가 없다
             await self._clear_link_hold(domain, uid)
         if changed:
-            await self._refresh_profile(affinity_id)
+            self._mark_profile_stale(affinity_id)
         return _row_from_orm(domain, orm)
 
     async def delete_observation(self, *, domain: ObservationDomain, observation_id: str) -> bool:
@@ -377,7 +398,7 @@ class DbMemoryStore:
             affinity_id = await self._session.scalar(
                 select(model.affinity_id).where(model.id == uid)
             )
-            await self._refresh_profile(affinity_id)
+            self._mark_profile_stale(affinity_id)
         return True
 
     # ── event ───────────────────────────────────────────────────

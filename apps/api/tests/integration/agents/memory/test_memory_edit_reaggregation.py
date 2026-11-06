@@ -144,7 +144,8 @@ async def test_subject_polarity_를_고치면_벡터와_연결을_비워_Curator
         .where(ObservationLinkHold.observation_id == UUID(edited))
     )
     assert holds == 0  # 옛 subject 로 쌓인 보류 기록도 지운다
-    # 빠진 관찰 몫을 원래 Profile 에서 다시 계산한다
+    # 빠진 관찰 몫을 원래 Profile 에서 다시 계산한다 — 러너가 commit 직전에 하는 일 (#717)
+    await store.flush_profiles()
     assert await _last_observed_on(session, profile) == EARLY
 
 
@@ -167,6 +168,7 @@ async def test_날짜만_고치면_연결은_두고_원래_Profile_을_다시_�
 
     row = await _food(session, edited)
     assert row.embedding is not None and row.affinity_id == profile.id
+    await store.flush_profiles()  # 러너가 commit 직전에 하는 일 (#717)
     assert await _last_observed_on(session, profile) == EARLY
 
 
@@ -211,6 +213,7 @@ async def test_지우면_원래_Profile_을_다시_계산한다(
 
     assert await store.delete_observation(domain="food", observation_id=deleted)
 
+    await store.flush_profiles()  # 러너가 commit 직전에 하는 일 (#717)
     assert await _last_observed_on(session, profile) == EARLY
 
 
