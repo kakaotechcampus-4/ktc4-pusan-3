@@ -32,10 +32,13 @@ from app.domains.medication.repository import (
     NewDose,
     add_course,
     add_doses,
+    add_subscription,
     delete_future_unchecked,
+    delete_subscription,
     existing_dose_keys,
     find_course,
     find_dose,
+    find_noticeable_course,
     has_active_duplicate,
     has_kept_outside,
     list_courses,
@@ -45,6 +48,7 @@ from app.domains.medication.repository import (
     parent_nicknames,
     write_dose_check,
 )
+from app.domains.schedule.repository import lock_link
 from app.rules.medication_course import course_field_errors, dose_dates, pattern_day
 
 
@@ -162,14 +166,32 @@ def _validate(data: CourseFields, *, today: date, known_codes: Sequence[str] = (
         raise CourseInvalid(["schedule.ends_on"])
 
 
-async def create_course(
-    session: AsyncSession, *, child_id: uuid.UUID, data: CourseInput, today: date
-) -> MedicationSchedule:
-    """코스 1행과 회차 행을 저장한다. `today` 는 KST 오늘이다.
+class NotLinked(Exception):
+    """보호자가 그 아이와 연결돼 있지 않다 — 접근 확인 뒤 그사이 연결이 끊겼다."""
 
-    검사 순서는 칸 → 기간 전체가 과거인지 → 중복이다. 칸이 틀렸으면 중복은 묻지 않는다.
+
+async def create_course(
+    session: AsyncSession,
+    *,
+    child_id: uuid.UUID,
+    parent_id: uuid.UUID,
+    data: CourseInput,
+    today: date,
+    now: datetime,
+) -> MedicationSchedule:
+    """코스 1행과 회차 행을 저장하고, 등록한 보호자의 알림 구독을 만든다 (#749).
+
+    `today` 는 KST 오늘, `now` 는 구독을 켠 시각이다 — 오늘 회차 중 지금보다 앞선 것은
+    울리지 않는다.
+    검사 순서는 칸 → 연결 → 기간 전체가 과거인지 → 중복이다. 칸이 틀렸으면 중복은 묻지 않는다.
+
+    🚨 보호자 → 아이 → 연결을 먼저 잡는다(`lock_link`). 연결 끊기가 겹치면 끊긴 보호자의 구독이
+       남는다 — 잡아 두면 끊기가 이 커밋을 기다렸다가 구독까지 지운다. 아이별 등록 잠금보다 앞이다
+       (탈퇴가 보호자 → 아이 순으로 잡는다).
     """
     _validate(data, today=today)
+    if not await lock_link(session, child_id=child_id, parent_id=parent_id):
+        raise NotLinked
     await _lock_child_courses(session, child_id)  # 틀린 요청은 잠금 없이 위에서 걸러진다
     if await has_active_duplicate(
         session,
@@ -180,7 +202,7 @@ async def create_course(
     ):
         raise CourseAlreadyExists
 
-    return await add_course(
+    course = await add_course(
         session,
         child_id=child_id,
         title=data.title,
@@ -199,6 +221,44 @@ async def create_course(
             for day in dose_dates(data.starts_on, data.ends_on, today=today)
             for p in data.doses
         ],
+    )
+    await add_subscription(session, schedule_id=course.id, parent_id=parent_id, now=now)
+    return course
+
+
+async def subscribe(
+    session: AsyncSession,
+    *,
+    child_id: uuid.UUID,
+    course_id: uuid.UUID,
+    parent_id: uuid.UUID,
+    today: date,
+    now: datetime,
+) -> None:
+    """그 보호자가 이 코스의 알림을 받게 한다 (#749). 이미 켜져 있으면 처음 켠 시각이 남는다.
+
+    켤 수 있는 코스는 멈추지 않았고 마지막 날이 지나지 않은 것이다(시작 전 포함) — 아니면
+    `CourseNotFound`. 연결 → 코스 순으로 본다. 연결은 `create_course` 와 같은 이유로 잠근다.
+    """
+    if not await lock_link(session, child_id=child_id, parent_id=parent_id):
+        raise NotLinked
+    course = await find_noticeable_course(
+        session, child_id=child_id, course_id=course_id, today=today
+    )
+    if course is None:
+        raise CourseNotFound
+    await add_subscription(session, schedule_id=course.id, parent_id=parent_id, now=now)
+
+
+async def unsubscribe(
+    session: AsyncSession, *, child_id: uuid.UUID, course_id: uuid.UUID, parent_id: uuid.UUID
+) -> None:
+    """그 보호자의 이 코스 알림을 끈다(구독 행을 지운다). 켜져 있지 않아도 오류가 아니다.
+
+    다시 켜면 새로 켠 시각이 된다. 다른 보호자의 구독은 건드리지 않는다.
+    """
+    await delete_subscription(
+        session, child_id=child_id, schedule_id=course_id, parent_id=parent_id
     )
 
 

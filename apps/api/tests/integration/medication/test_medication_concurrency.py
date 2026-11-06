@@ -13,12 +13,14 @@ from datetime import UTC, date, datetime, time, timedelta
 import pytest
 from sqlalchemy import delete, func, select
 
-from app.domains.child.models import Child
+from app.domains.child.models import Child, ParentChild, ParentChildRelation
+from app.domains.child.parents import unlink_parent
 from app.domains.identity.models import Parent
 from app.domains.identity.withdraw import withdraw_parent
 from app.domains.medication import service
 from app.domains.medication.models import (
     MedicationCreatedBy,
+    MedicationNoticeSubscription,
     MedicationSchedule,
     MedicationSource,
     TimingAnchor,
@@ -46,6 +48,10 @@ async def _new_child() -> tuple:
         await s.flush()
         child = Child(owner_parent_id=owner.id, nickname="test", birth_date=date(2023, 1, 1))
         s.add(child)
+        await s.flush()
+        s.add(
+            ParentChild(parent_id=owner.id, child_id=child.id, relation=ParentChildRelation.OTHER)
+        )
         await s.commit()
         return owner.id, child.id
 
@@ -92,7 +98,14 @@ async def register(child_id, *, hold: float = 0.3) -> str:
     """등록하고, 검사와 commit 사이에 다른 요청이 끼어들 틈(hold)을 준 뒤 commit 한다."""
     async with async_session_factory() as s:
         try:
-            await create_course(s, child_id=child_id, data=course_input(), today=TODAY)
+            await create_course(
+                s,
+                child_id=child_id,
+                parent_id=await owner_of(child_id),
+                data=course_input(),
+                today=TODAY,
+                now=NOW,
+            )
         except CourseAlreadyExists:
             await s.rollback()
             return "중복"
@@ -122,11 +135,26 @@ async def test_세_요청이_동시에_와도_하나만_저장된다(make_child)
 async def test_다른_아이의_등록은_서로_기다리지_않는다(make_child):
     first, second = await make_child(), await make_child()
     async with async_session_factory() as s1, async_session_factory() as s2:
-        await create_course(s1, child_id=first, data=course_input(), today=TODAY)  # commit 전
+        await create_course(
+            s1,
+            child_id=first,
+            parent_id=await owner_of(first),
+            data=course_input(),
+            today=TODAY,
+            now=NOW,
+        )  # commit 전
 
         # 다른 아이라면 잠금이 겹치지 않아야 한다 — 기다리면 시간 초과다
         await asyncio.wait_for(
-            create_course(s2, child_id=second, data=course_input(), today=TODAY), timeout=3
+            create_course(
+                s2,
+                child_id=second,
+                parent_id=await owner_of(second),
+                data=course_input(),
+                today=TODAY,
+                now=NOW,
+            ),
+            timeout=3,
         )
         await s1.commit()
         await s2.commit()
@@ -329,6 +357,8 @@ async def test_두_코스를_동시에_같은_이름_기간으로_수정하면_�
             course = await create_course(
                 s,
                 child_id=child_id,
+                parent_id=await owner_of(child_id),
+                now=NOW,
                 data=CourseInput(
                     title=title,
                     starts_on=data.starts_on,
@@ -424,3 +454,45 @@ async def test_체크가_회차를_잡은_사이에_같은_보호자가_탈퇴�
     assert results == [None, None]
     async with async_session_factory() as s:
         assert await s.get(Parent, owner_id) is None  # 탈퇴가 체크 뒤에 지나갔다
+
+
+# ── 등록 · 연결 끊기가 같은 보호자를 두고 겹칠 때 (#749) ───────────────
+
+
+async def test_등록이_연결을_잡은_사이에_끊기가_오면_구독까지_지워진다(make_child):
+    """등록은 연결을 먼저 잡고 등록한 보호자의 구독을 만든다. 끊기가 겹치면 등록 커밋을
+    기다렸다가 그 구독까지 지운다 — 잡지 않으면 끊기가 아직 안 보이는 구독을 지나쳐 끊긴 보호자의
+    구독이 남는다.
+    """
+    child_id = await make_child()
+    owner_id = await owner_of(child_id)
+    s1, s2 = async_session_factory(), async_session_factory()
+    try:
+        await create_course(
+            s1,
+            child_id=child_id,
+            parent_id=owner_id,
+            data=course_input(),
+            today=TODAY,
+            now=NOW,
+        )  # 아직 commit 전
+
+        async def unlink() -> None:
+            assert await unlink_parent(s2, child_id=child_id, parent_id=owner_id)
+            await s2.commit()
+
+        task = asyncio.create_task(unlink())
+        await asyncio.sleep(0.4)  # 끊기가 등록이 잡은 연결 앞에서 기다릴 틈
+        await s1.commit()
+        await asyncio.wait_for(task, timeout=5)
+    finally:
+        await s1.close()
+        await s2.close()
+
+    async with async_session_factory() as s:
+        left = await s.scalar(
+            select(func.count())
+            .select_from(MedicationNoticeSubscription)
+            .where(MedicationNoticeSubscription.parent_id == owner_id)
+        )
+    assert left == 0

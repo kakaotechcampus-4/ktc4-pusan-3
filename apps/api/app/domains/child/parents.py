@@ -5,7 +5,9 @@
    개인 기록은 여기서 직접 지운다 (노션 삭제 정책 정본 §9 · 재형님 결정 10-06).
    - 지운다: 일기(diary_entry) · 이 아이 일정에 건 개인 알림(reminder) · 대화 기록(chat_turn, #228)
      · 그 대화에서 나온 삭제 제안(delete_proposal, #535 — 대화가 지워지면 카드도 없다)
-   - 남긴다: 관찰 · 건강 · 함께 보는 사진 · 고치기 이력과 그 "적은 사람" 칸 — 아이의 공동 기록이다
+     · 이 아이 복약 코스의 알림 구독(medication_notice_subscription, #749)
+   - 남긴다: 관찰 · 건강 · 함께 보는 사진 · 고치기 이력과 그 "적은 사람" 칸 — 아이의 공동 기록이다.
+     복약 회차의 체크한 보호자(`checked_by`)도 남는다
 """
 
 import uuid
@@ -19,6 +21,7 @@ from app.domains.chat.models import ChatTurn
 from app.domains.child.models import ParentChild, ParentChildRelation
 from app.domains.delete_proposal.models import DeleteProposal
 from app.domains.identity.models import Parent
+from app.domains.medication.models import MedicationNoticeSubscription, MedicationSchedule
 from app.domains.schedule.models import DiaryEntry, Event, Reminder
 
 
@@ -78,6 +81,15 @@ async def unlink_parent(
         delete(Reminder).where(
             Reminder.parent_id == parent_id,
             Reminder.event_id.in_(select(Event.id).where(Event.child_id == child_id)),
+        )
+    )
+    # 구독에도 아이 칸이 없다 — 이 아이의 복약 코스에 건 것만 고른다
+    await session.execute(
+        delete(MedicationNoticeSubscription).where(
+            MedicationNoticeSubscription.parent_id == parent_id,
+            MedicationNoticeSubscription.schedule_id.in_(
+                select(MedicationSchedule.id).where(MedicationSchedule.child_id == child_id)
+            ),
         )
     )
     return True

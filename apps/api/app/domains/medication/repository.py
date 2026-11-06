@@ -11,6 +11,7 @@ from datetime import date, datetime, time
 from typing import Literal
 
 from sqlalchemy import ColumnElement, and_, delete, exists, func, or_, select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domains.identity.models import Parent
@@ -18,6 +19,7 @@ from app.domains.medication.models import (
     MedicationCreatedBy,
     MedicationDose,
     MedicationForm,
+    MedicationNoticeSubscription,
     MedicationSchedule,
     MedicationSource,
     MedicationStatus,
@@ -258,6 +260,58 @@ async def parent_nicknames(
         select(Parent.id, Parent.nickname).where(Parent.id.in_(set(parent_ids)))
     )
     return {pid: name for pid, name in rows if name}
+
+
+async def find_noticeable_course(
+    session: AsyncSession, *, child_id: uuid.UUID, course_id: uuid.UUID, today: date
+) -> MedicationSchedule | None:
+    """알림을 켤 수 있는 그 아이의 코스 — 멈추지 않았고 마지막 날이 지나지 않았다 (#749).
+
+    아직 시작하지 않은 코스도 켤 수 있다 — 첫날 첫 회차부터 받으려면 시작 전에 켜야 한다.
+    잠그지 않는다. 구독 INSERT 의 FK 검사가 코스 행을 KEY SHARE 로 잡아서 그사이 코스가 지워지지
+    않는다. 그사이 멈추면 구독은 남지만 발송이 멈춘 코스를 빼서 울리지 않는다.
+    """
+    return await session.scalar(
+        select(MedicationSchedule).where(
+            MedicationSchedule.id == course_id,
+            MedicationSchedule.child_id == child_id,
+            MedicationSchedule.status == MedicationStatus.ACTIVE,
+            MedicationSchedule.ends_on >= today,
+        )
+    )
+
+
+async def add_subscription(
+    session: AsyncSession, *, schedule_id: uuid.UUID, parent_id: uuid.UUID, now: datetime
+) -> None:
+    """그 보호자가 이 코스의 알림을 받게 한다. 이미 받고 있으면 처음 켠 시각을 그대로 둔다.
+
+    켠 시각을 새로 찍으면 그사이 예정 시각이 지난 회차가 빠질 수 있다 — 이미 켜져 있었으니
+    그 회차도 받아야 한다. 연결 확인(`lock_link`)은 부르는 쪽이 먼저 한다.
+    """
+    await session.execute(
+        pg_insert(MedicationNoticeSubscription)
+        .values(schedule_id=schedule_id, parent_id=parent_id, subscribed_at=now)
+        .on_conflict_do_nothing(
+            constraint="uq_medication_notice_subscription_schedule_id_parent_id"
+        )
+    )
+
+
+async def delete_subscription(
+    session: AsyncSession, *, child_id: uuid.UUID, schedule_id: uuid.UUID, parent_id: uuid.UUID
+) -> None:
+    """그 보호자 본인의 이 코스 구독만 지운다. 없거나 다른 아이의 코스면 아무것도 하지 않는다."""
+    await session.execute(
+        delete(MedicationNoticeSubscription).where(
+            MedicationNoticeSubscription.parent_id == parent_id,
+            MedicationNoticeSubscription.schedule_id.in_(
+                select(MedicationSchedule.id).where(
+                    MedicationSchedule.id == schedule_id, MedicationSchedule.child_id == child_id
+                )
+            ),
+        )
+    )
 
 
 async def write_dose_check(

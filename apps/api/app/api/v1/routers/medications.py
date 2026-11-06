@@ -43,6 +43,7 @@ from app.domains.medication.service import (
     DoseNotDue,
     DoseNotFound,
     DosePattern,
+    NotLinked,
     checker_nicknames,
     course_views,
     create_course,
@@ -243,11 +244,12 @@ async def register_medication(
             {"scopes": [ConsentScope.CHILD_HEALTH.value]},
         )
 
-    today = kst_today()
+    now, today = _clock()
     try:
         course = await create_course(
             session,
             child_id=child.child_id,
+            parent_id=parent.parent_id,
             data=CourseInput(
                 title=body.schedule.title,
                 starts_on=body.schedule.starts_on,
@@ -264,11 +266,14 @@ async def register_medication(
                 note=body.schedule.note,
             ),
             today=today,
+            now=now,
         )
     except CourseInvalid as exc:
         raise ApiError(
             400, "validation_failed", "입력한 복약 정보를 확인해 주세요", {"fields": exc.fields}
         ) from exc
+    except NotLinked as exc:  # 접근 확인 뒤 그사이 연결이 끊겼다 (#427 · reminders 와 같다)
+        raise ApiError(403, "child_access_denied", "이 아이에 접근할 수 없어요") from exc
     except CourseAlreadyExists as exc:
         raise ApiError(409, "already_exists", "이미 등록된 복약이에요") from exc
 
