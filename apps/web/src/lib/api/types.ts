@@ -1332,22 +1332,11 @@ export interface PhotoEntry {
   /**
    * 이 항목으로 넣은 일정. 화면이 채워 보내는 유일한 칸이다 — 시트에서 `submitEventDraft` 가
    * 돌려준 `event.id` 를 commit 때 실어 보내면, 서버가 그 일정에 이 항목을 출처로 단다.
+   * 🚨 **아직 시트가 보내지 않는다** — 시트 연결은 #723. 그전까지는 일정과 공지 항목이 이어지지 않는다.
    */
   event_id?: string | null;
 }
 
-/**
- * `POST /photo-runs/{rid}/commit` — 🚨 **사진 흐름에서 저장이 일어나는 유일한 지점.**
- * 여기 오기 전까지는 아무것도 저장되지 않는다.
- *
- * 🚨 **승인 게이트가 아니다.** 문서 lane 이 만드는 `event` 는 `draft` 고, 캘린더에 쓰는
- *    되돌릴 수 없는 지점은 여전히 `POST /events/{eid}/confirm` 하나다 (CLAUDE.md §2 —
- *    승인 게이트를 늘리지도 줄이지도 않는다). 그래서 이 화면은 `btn-approve` 도 `caution` 도 쓰지 않는다.
- *
- * ⚠️ 계약서 §01 의 Idempotency 목록에 이 엔드포인트가 없다. 관찰을 만드는 쓰기라 두 번 보내면
- *    두 번 쌓일 수 있다 — 화면은 보내는 동안 버튼을 잠그지만 네트워크 재시도까지 막지는 못한다.
- *    👉 `apps/api` Owner 협의 대상 (최상위 CLAUDE.md §8).
- */
 /**
  * `POST /children/{cid}/photos/uploads` — 사진을 어디로 올릴지.
  *
@@ -1364,6 +1353,18 @@ export interface PhotoUploadTicket {
   expires_in?: number | null;
 }
 
+/**
+ * `POST /photo-runs/{rid}/commit` — 🚨 **사진 흐름에서 저장이 일어나는 유일한 지점.**
+ * 여기 오기 전까지는 아무것도 저장되지 않는다.
+ *
+ * 🚨 **승인 게이트가 아니다.** 문서 lane 이 만드는 `event` 는 `draft` 고, 캘린더에 쓰는
+ *    되돌릴 수 없는 지점은 여전히 `POST /events/{eid}/confirm` 하나다 (CLAUDE.md §2 —
+ *    승인 게이트를 늘리지도 줄이지도 않는다). 그래서 이 화면은 `btn-approve` 도 `caution` 도 쓰지 않는다.
+ *
+ * ⚠️ 계약서 §01 의 Idempotency 목록에 이 엔드포인트가 없다. 관찰을 만드는 쓰기라 두 번 보내면
+ *    두 번 쌓일 수 있다 — 화면은 보내는 동안 버튼을 잠그지만 네트워크 재시도까지 막지는 못한다.
+ *    👉 `apps/api` Owner 협의 대상 (최상위 CLAUDE.md §8).
+ */
 export interface PhotoCommitRequest {
   lane: PhotoLane;
   /**

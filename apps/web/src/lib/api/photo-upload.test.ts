@@ -100,4 +100,56 @@ describe("08 사진 — S3 로 올리기", () => {
       setScenario("default");
     }
   });
+
+  it("활동 사진은 S3 에 올리지 않는다 (서버가 아직 받지 않는 아이 사진)", async () => {
+    let ticketAsked = false;
+    let sentFile = false;
+    server.use(
+      http.post(url("/children/:cid/photos/uploads"), () => {
+        ticketAsked = true;
+        return HttpResponse.json(
+          { mode: "s3", url: S3_URL, fields: {}, key: KEY },
+          { status: 201 },
+        );
+      }),
+      http.post(url("/children/:cid/photos"), async ({ request }) => {
+        sentFile = (await request.formData()).get("file") !== null;
+        return HttpResponse.json({ run_id: "pr_activity" }, { status: 202 });
+      }),
+    );
+
+    await sendPhoto("c1", photo(), { lane: "activity" }, newIdempotencyKey());
+
+    expect(ticketAsked).toBe(false);
+    expect(sentFile).toBe(true);
+  });
+
+  it("같은 사진의 재시도는 S3 에 다시 올리지 않고 처음 열쇠를 보낸다", async () => {
+    let s3Posts = 0;
+    let photoPosts = 0;
+    const keysSent: (FormDataEntryValue | null)[] = [];
+    server.use(
+      s3Ticket(),
+      http.post(S3_URL, () => {
+        s3Posts += 1;
+        return new HttpResponse(null, { status: 204 });
+      }),
+      http.post(url("/children/:cid/photos"), async ({ request }) => {
+        photoPosts += 1;
+        keysSent.push((await request.formData()).get("upload_key"));
+        // 처음은 응답이 끊긴다 (서버는 받았을 수도 있다)
+        return photoPosts === 1
+          ? HttpResponse.error()
+          : HttpResponse.json({ run_id: "pr_retry" }, { status: 202 });
+      }),
+    );
+    const key = newIdempotencyKey();
+
+    await expect(sendPhoto("c1", photo(), { lane: "document" }, key)).rejects.toThrow();
+    const res = await sendPhoto("c1", photo(), { lane: "document" }, key);
+
+    expect(res.run_id).toBe("pr_retry");
+    expect(s3Posts).toBe(1);
+    expect(keysSent).toEqual([KEY, KEY]);
+  });
 });

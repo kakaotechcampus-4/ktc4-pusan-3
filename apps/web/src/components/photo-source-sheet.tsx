@@ -211,7 +211,7 @@ export function PhotoSourceSheet({
       <input
         ref={cameraRef}
         type="file"
-        accept="image/*"
+        accept="image/*,.heic,.heif"
         capture="environment"
         className="sr-only"
         tabIndex={-1}
@@ -221,7 +221,7 @@ export function PhotoSourceSheet({
       <input
         ref={albumRef}
         type="file"
-        accept="image/*"
+        accept="image/*,.heic,.heif"
         className="sr-only"
         tabIndex={-1}
         aria-hidden
