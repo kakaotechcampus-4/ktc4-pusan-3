@@ -89,7 +89,7 @@ class RepeatPayload(DraftBase):
 
 
 class CreateRepeatEventDraft(CreateEventDraft):
-    """반복 일정의 새 초안. POST 본문의 `event.repeat` 로 간다.
+    """반복 일정의 새 초안. POST 본문 최상위의 `repeat` 로 간다 (`event` 와 같은 높이, 문구는 뺀다).
 
     `event.starts_at` 은 첫 회차의 시각이다. 반복이 아닌 초안에는 `repeat` 키가 없다 —
     항상 null 인 키는 싣지 않는다는 규칙이라 모델을 따로 둔다.
@@ -121,7 +121,7 @@ class SeriesBefore(SeriesEventBody):
 
 
 class UpdateSeriesDraft(DraftBase):
-    """`PATCH /event-series/{sid}` 로 간다. 오늘 이후 회차만 고쳐진다."""
+    """`PATCH /children/{cid}/event-series/{sid}` 로 간다. 오늘 이후 회차만 고쳐진다."""
 
     draft_id: str | None
     op: Literal["update_series"]
