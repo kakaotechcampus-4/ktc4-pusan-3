@@ -9,7 +9,7 @@ import { CHILD, expect, expectNoGate, recordApi, test, writes } from "./fixtures
  * - AI 는 지우지 않는다 — 카드가 뜬 것만으로는 쓰기가 0건이다. 두 번 눌러야 확정이 나간다
  * - 지우는 것은 **체크한 것만**이고 확정에는 Idempotency-Key 가 붙는다
  * - 한 줄 요약은 체크한 수가 아니라 응답의 `result` 로 말한다
- * - 승인 게이트 표식(approve · caution)이 서지 않는다 — 게이트 문구는 별도 문서 PR 에서 고친다
+ * - 게이트 ㉢ 이지만 표식(approve · caution)이 서지 않는다 — 표식은 ㉠ ㉡ 전용이다 (최상위 §2 · #754)
  *
  * 목의 제안 (`mocks/handlers/delete-proposals.ts`)
  * - `delete_proposal` — 식사 40건(잘림 · 간식 13건은 AI 가 안 고름) · 놀이 12건. 기본 체크는 식사 27건 + 놀이 12건 = 39건이다
