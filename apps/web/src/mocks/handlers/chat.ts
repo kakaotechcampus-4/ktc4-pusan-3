@@ -95,9 +95,19 @@ function toReply(event: string, data: Record<string, unknown>): ChatReply | null
     case "agent_result": {
       // 서버는 조회할 때 추천의 지금 상태를 채운다. 목의 추천은 고르기 전이라 draft 다.
       const ids = (data.suggestion_ids as string[] | undefined) ?? [];
+      const result = data as Omit<
+        Extract<ChatReply, { type: "agent_result" }>,
+        "type" | "suggestions"
+      >;
       return {
         type: "agent_result",
-        ...(data as Omit<Extract<ChatReply, { type: "agent_result" }>, "type" | "suggestions">),
+        ...result,
+        // 🚨 서버는 지난 대화에 readout 근거를 싣지 않는다 (#713 · SSE 에만 온다). 목도 떼고 남긴다.
+        readouts: result.readouts.map((readout) => {
+          const stored = { ...readout };
+          delete stored.source_refs;
+          return stored;
+        }),
         suggestions: ids.map((id) => ({ id, status: "draft" as const })),
       };
     }
@@ -341,6 +351,29 @@ function historyTurns(childId: string): StoredTurn[] {
   ];
 }
 
+/**
+ * `chat_history_long` — 오늘부터 열흘 전까지 날마다 한 줄 (#707). 🚨 실제 발화가 아니다 (최상위 §9).
+ * 높이가 화면 두 장을 못 채워야 미리 받기의 상한이 보인다 — 답 묶음을 크게 키우지 않는다.
+ */
+const LONG_HISTORY_DAYS = 10;
+
+function longHistoryTurns(childId: string): StoredTurn[] {
+  return Array.from({ length: LONG_HISTORY_DAYS }, (_, n) => {
+    const day = daysAgo(n);
+    return {
+      childId,
+      day,
+      turn: {
+        run_id: `r_long_${n}`,
+        raw_text: n === 0 ? "오늘 이야기" : `${n}일 전 이야기`,
+        reply_to: null,
+        created_at: `${day}T19:00:00+09:00`,
+        replies: [{ type: "saved", observations: [observations[0]], deleted: [] }, done],
+      },
+    };
+  });
+}
+
 /** `chat_history` 에서 아직 답할 수 있는 질문. */
 const OPEN_QUESTION_RUN = "r_hist_nap";
 
@@ -358,7 +391,9 @@ function turnsOf(childId: string): StoredTurn[] {
       : // 오늘 대화가 없는 날 — 캘린더에서 지난 날로 들어올 때 첫 장이 비어 온다.
         scenario === "chat_history_past"
         ? historyTurns(childId).filter((t) => t.day !== daysAgo(0))
-        : [];
+        : scenario === "chat_history_long"
+          ? longHistoryTurns(childId)
+          : [];
   return [
     ...base,
     ...recorded.filter((t) => t.childId === childId && !hiddenRuns.has(t.turn.run_id)),

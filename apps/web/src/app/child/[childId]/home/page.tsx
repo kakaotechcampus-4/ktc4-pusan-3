@@ -39,6 +39,7 @@ import { phaseOf, Swap } from "@/components/ui/swap";
 import { SkeletonGroup, SkeletonText, SkeletonTile } from "@/components/ui/skeleton";
 import { useTodayChat } from "@/hooks/use-chat-history";
 import { useChildId } from "@/hooks/use-child-id";
+import { useLocationConsent } from "@/hooks/use-consents";
 import { hasOpenQuestion, isBusy, sendLine, useConversation } from "@/stores/conversation";
 import { useDraftStore, useDraftText } from "@/stores/draft";
 import { usePhotoDraftStore } from "@/stores/photo-draft";
@@ -52,7 +53,6 @@ import {
 } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { homeEmptyTour, homeTour } from "@/lib/tour/screens/home";
-import { PENDING_SERVER_FEATURES } from "@/lib/features";
 import { FORWARD } from "@/lib/view-transition";
 
 /**
@@ -80,6 +80,8 @@ export default function HomePage() {
 
 function HomeScreen() {
   const childId = useChildId();
+  /** 위치 동의가 켜져 있으면 입력에 흐린 위치를 싣는다 (#593 · `lib/location.ts`). */
+  const shareLocation = useLocationConsent(childId);
   const router = useRouter();
 
   // 🚨 `useState` 가 아니다 — 네비로 다녀와도 쓰던 글이 살아 있어야 한다 (위 주석 · stores/draft.ts).
@@ -117,15 +119,11 @@ function HomeScreen() {
   /**
    * 오늘 먹일 약 (#563 리뷰). 🚨 **홈 쿼리와 같이 시작한다** — 구역 안에서 부르면 홈 응답을 받은 뒤에야 나가서, 뜬 화면
    *    한가운데에 구역이 뒤늦게 끼어들며 아래 카드를 밀었다 (디자인 시스템 §8). 홈은 둘 다 끝난 뒤 한 번에 그린다.
-   * 실서버에 복약 API 가 생기기 전에는 부르지 않는다 (`lib/features.ts`).
    */
   const medications = useQuery({
     queryKey: qk.medications(childId),
     queryFn: () => api.get<MedicationsResponse>(`/children/${childId}/medications`),
-    enabled: PENDING_SERVER_FEATURES.medications,
   });
-  // 🚨 꺼진 쿼리도 `isPending` 이 참으로 남는다 — 켜져 있을 때만 기다린다.
-  const medicationsPending = PENDING_SERVER_FEATURES.medications && medications.isPending;
 
   // 🚨 이름은 스토어에 캐시하지 않는다. 개인정보는 화면이 필요할 때 Query 로 가져온다 (§3).
   const me = useQuery({ queryKey: qk.me(), queryFn: () => api.get<Me>("/me") });
@@ -138,7 +136,7 @@ function HomeScreen() {
    */
   function send() {
     const line = text;
-    if (!sendLine(childId, line, { asReply: false, source: "home_input" })) return;
+    if (!sendLine(childId, line, { asReply: false, source: "home_input", shareLocation })) return;
     // 셋이 한 번에 그려진다 — 입력창은 막 보낸 글자를 든 채로 대화 화면으로 넘어간다.
     setLeaving(line);
     clearDraft(childId);
@@ -221,8 +219,8 @@ function HomeScreen() {
         </header>
 
         {/* 스켈레톤 → 내용은 같은 자리의 교체다 (디자인 시스템 §8). */}
-        <Swap id={medicationsPending ? "pending" : phaseOf(home)}>
-          {home.isPending || medicationsPending ? (
+        <Swap id={medications.isPending ? "pending" : phaseOf(home)}>
+          {home.isPending || medications.isPending ? (
             <HomeBodySkeleton />
           ) : consentBlocked ? (
             // 🚨 403 consent_required 를 일반 실패로 그리면 "다시 시도" 만 누르게 된다 — 다시 시도해도
@@ -248,7 +246,7 @@ function HomeScreen() {
             <HomeBody
               data={home.data}
               medications={
-                !PENDING_SERVER_FEATURES.medications ? null : medications.isError ? (
+                medications.isError ? (
                   <Section label="오늘 먹일 약">
                     <TodayMedicationsFailed onRetry={() => void medications.refetch()} />
                   </Section>

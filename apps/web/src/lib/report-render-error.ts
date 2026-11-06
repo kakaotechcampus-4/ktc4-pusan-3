@@ -65,7 +65,7 @@ export function platformSummary(userAgent: string, isApp: boolean): string {
   return `other ${kind}`;
 }
 
-function browserEnvironment(): ClientEnvironment | null {
+export function browserEnvironment(): ClientEnvironment | null {
   if (typeof window === "undefined" || typeof navigator === "undefined") return null;
   return {
     pathname: window.location.pathname,
@@ -74,12 +74,25 @@ function browserEnvironment(): ClientEnvironment | null {
   };
 }
 
+/**
+ * 서버가 받는 이름 모양(`^[A-Za-z0-9_$.-]{1,80}$`)으로 맞춘다 — `safePath` 와 같은 이유다. 렌더 밖
+ * 경로(#732)에서는 라이브러리가 아무 객체나 reject 할 수 있어서, 공백 · 빈 문자열 · 긴 이름이 오면
+ * 보고가 422 로 조용히 버려진다. 비면 `typeof` 값으로 둔다.
+ */
+function safeName(name: string, fallback: string): string {
+  return name.replace(/[^A-Za-z0-9_$.-]/g, "_").slice(0, 80) || fallback;
+}
+
 /** 예외에서 꺼내도 되는 두 가지 — 생성자 이름과 digest. 메시지는 꺼내지 않는다. */
 export function describeRenderError(error: unknown): { name: string; digest: string | null } {
   const thrown = error as { name?: unknown; digest?: unknown } | null | undefined;
   return {
-    name: typeof thrown?.name === "string" ? thrown.name : typeof error,
-    digest: typeof thrown?.digest === "string" ? thrown.digest : null,
+    name: safeName(typeof thrown?.name === "string" ? thrown.name : "", typeof error),
+    // 서버 모양(`^[A-Za-z0-9_-]{1,64}$`)이 아니면 버린다 — Next 의 digest 는 늘 맞고, 아무 객체에 붙은 것만 걸린다.
+    digest:
+      typeof thrown?.digest === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(thrown.digest)
+        ? thrown.digest
+        : null,
   };
 }
 
@@ -112,16 +125,20 @@ export async function sendClientError(report: ClientErrorReport): Promise<void> 
   }
 }
 
+/** 예외 하나와 화면 정보로 서버에 보낼 본문을 만든다. 렌더 밖 오류(`lib/report-uncaught-error.ts`)도 이걸 쓴다. */
+export function buildClientErrorReport(error: unknown, env: ClientEnvironment): ClientErrorReport {
+  return {
+    ...describeRenderError(error),
+    path: safePath(env.pathname),
+    platform: platformSummary(env.userAgent, env.isApp),
+  };
+}
+
 export function reportRenderError(
   error: unknown,
   env: ClientEnvironment | null = browserEnvironment(),
 ): void {
-  const described = describeRenderError(error);
-  console.error("[render-error]", described);
+  console.error("[render-error]", describeRenderError(error));
   if (!env) return;
-  void sendClientError({
-    ...described,
-    path: safePath(env.pathname),
-    platform: platformSummary(env.userAgent, env.isApp),
-  });
+  void sendClientError(buildClientErrorReport(error, env));
 }

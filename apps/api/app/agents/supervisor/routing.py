@@ -14,11 +14,12 @@
   - DomainTask
       구현된 agent 로 간 REQUEST 조각을 agent × task_type 당 하나로 묶는다.
       task_type 은 Supervisor 라벨 문자열 그대로다. enum 변환은 각 Agent 의 task_type_of 가 한다.
-      라벨이 없는 Agent(activity)는 None 이다.
+      라벨이 없는 Agent(activity)는 None 이다. Health 라벨이 비어 있어도 채우지 않고 None 으로
+      넘긴다 — Health 가 unsupported 로 닫는다.
       Growth 추천 라벨은 run 당 하나 — 처음 것이되 늘 닫히는 도서는 다른 추천 라벨에 자리를 내준다.
 
   - 미구현 Agent 처리
-      activity / growth / health 로 라우팅된 조각은
+      구현된 Agent 가 아닌 곳(`IMPLEMENTED_AGENTS` 밖)으로 라우팅된 조각은
       대상 Agent 정보만 남기고 실제 호출은 하지 않는다.
 
   - Agent 호출 상한
@@ -63,7 +64,12 @@ logger = logging.getLogger(__name__)
 IntentType = Literal["record", "request", "mixed"]
 
 IMPLEMENTED_AGENTS: frozenset[str] = frozenset(
-    {DomainAgentName.FOOD.value, DomainAgentName.ACTIVITY.value, DomainAgentName.GROWTH.value}
+    {
+        DomainAgentName.FOOD.value,
+        DomainAgentName.ACTIVITY.value,
+        DomainAgentName.GROWTH.value,
+        DomainAgentName.HEALTH.value,
+    }
 )
 
 
@@ -307,14 +313,17 @@ def _kept_recommendations(segments: list) -> dict[str, str]:
 
 
 def _task_label(segment) -> str | None:
-    """Supervisor 가 agent 별로 붙이는 라벨. food 와 growth 만 있다 — activity 는 라벨이 없다.
+    """Supervisor 가 agent 별로 붙이는 라벨. activity 는 라벨이 없다.
 
-    TODO: Health 라벨이 Supervisor 스키마에 생기면 여기만 늘린다.
+    health 는 라벨이 비어 있을 수 있다. 채우지 않고 None 으로 넘겨 Health 가 unsupported 로 닫게
+    한다 — 짐작한 라벨이 복약 쓰기 경로를 열면 안 된다.
     """
     if segment.agent == DomainAgentName.FOOD:
         return str(segment.food_task)
     if segment.agent == DomainAgentName.GROWTH:
         return str(segment.growth_task)
+    if segment.agent == DomainAgentName.HEALTH:
+        return None if segment.health_task is None else str(segment.health_task)
     return None
 
 

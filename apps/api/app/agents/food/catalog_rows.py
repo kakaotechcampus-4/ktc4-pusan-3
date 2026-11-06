@@ -14,6 +14,7 @@ from app.agents.food.store.ports import MenuCatalogRow
 from app.core.mafra_recipe_raw import RecipeSync
 from app.core.mfds_nutri_raw import RawNutriRow
 from app.core.nutrition_pick import SOURCE_VERSION, NutritionFacts, nutrition_facts_by_key
+from app.core.recipe_source import RecipeSource
 from app.rules.menu_key import normalize_menu_key
 
 
@@ -40,13 +41,20 @@ def recipe_catalog_rows(
     table: Mapping[str, IngredientEntry],
     *,
     now: datetime,
+    source: RecipeSource,
     nutrition: Mapping[str, NutritionFacts],
 ) -> list[MenuCatalogRow]:
-    """레시피 전체 → `recipe_catalog` 행. 영양값은 레시피 이름이 영양DB 와 정확히 같을 때만
-    붙인다(`build_recipe_row` 의 약속 — 키가 같은지는 `normalize_menu_key` 로 본다)."""
+    """레시피 전체 → `recipe_catalog` 행. `source` 는 그 레시피들을 받은 소스다(기본값 없음).
+
+    영양값은 레시피 이름이 영양DB 와 정확히 같을 때만 붙인다(`build_recipe_row` 의 약속 — 키가
+    같은지는 `normalize_menu_key` 로 본다)."""
     return [
         build_recipe_row(
-            recipe, table, now=now, nutrition=nutrition.get(normalize_menu_key(recipe.name))
+            recipe,
+            table,
+            now=now,
+            source=source,
+            nutrition=nutrition.get(normalize_menu_key(recipe.name)),
         )
         for recipe in sync.recipes
     ]

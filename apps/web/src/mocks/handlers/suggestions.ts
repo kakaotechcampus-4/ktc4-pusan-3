@@ -12,6 +12,8 @@ import {
   suggestionAllergens,
   suggestionGroups,
   suggestions,
+  warnedGeneralSuggestion,
+  warnedSuggestion,
 } from "../fixtures";
 import { currentScenario } from "../scenario";
 import type {
@@ -19,7 +21,9 @@ import type {
   ApproveSuggestionsRequest,
   ApproveSuggestionsResponse,
   Precheck,
+  Reminder,
 } from "@/lib/api/types";
+import { isReminderLead, refuseReminder } from "./calendar";
 import { allergyStatus } from "./children";
 import { apiError, consentRequired, networkDelay, url } from "./helpers";
 import { withIdempotency } from "./idempotency";
@@ -164,7 +168,7 @@ export const suggestionHandlers = [
             : { code: "empty", message: "조건에 맞는 추천이 없어요." },
           cautions: [],
         })),
-        // 카드의 기록 수는 그 Agent 도메인 수다 (#433 리뷰 ⑥) — 질문 카드의 scarcity.count 와 같은 값을 싣는다
+        // 카드의 기록 수는 그 Agent 도메인 수다 (#433 리뷰 ⑥). 단일 Agent 목이라 합계와 우연히 같다.
         general: withStatus(general.map((g) => ({ ...g, record_count: count }))),
         looked_at: "",
         guards: [],
@@ -177,6 +181,34 @@ export const suggestionHandlers = [
           },
         },
         // 🚨 일반 추천도 고르고 채택하므로 알레르기 사전검사가 걸린다 (#509 · 게이트 ㉡)
+        prechecks: prechecksFor(general),
+      });
+    }
+
+    // Agent 둘이 모두 일반 추천을 낸 응답. `scarcity.count`는 호환용 합계이고 화면은 각 카드의
+    // `record_count`를 응답 Agent 순서대로 따로 말해야 한다 (#662).
+    if (scenario === "suggest_multi_general") {
+      const recordCounts: Partial<Record<Agent, number>> = { food: 22, activity: 8 };
+      const order = asked.agents ?? ["food", "activity"];
+      const general = order.flatMap((agent) => {
+        const item = generalSuggestions.find((suggestion) => suggestion.agent === agent);
+        return item ? [{ ...item, record_count: recordCounts[agent] ?? 0 }] : [];
+      });
+      const generalAgents = new Set(general.map((item) => item.agent));
+      return HttpResponse.json({
+        suggestions: [],
+        groups: order.map((agent) => ({
+          agent,
+          merges_into_one: agent === "food",
+          notice: generalAgents.has(agent)
+            ? null
+            : { code: "empty", message: "조건에 맞는 추천이 없어요." },
+          cautions: [],
+        })),
+        general: withStatus(general),
+        looked_at: "",
+        guards: [],
+        scarcity: { count: 30, question: null },
         prechecks: prechecksFor(general),
       });
     }
@@ -309,6 +341,24 @@ export const suggestionHandlers = [
     if (scenario === "suggest_place") {
       const shown = alive.map((s) => (s.id === "s_4" ? placeSuggestion : s));
       const general = [placeGeneralSuggestion].filter(notBlocked);
+      return HttpResponse.json({
+        suggestions: withStatus(shown),
+        groups: suggestionGroups.filter((g) => shown.some((s) => s.agent === g.agent)),
+        general: withStatus(general),
+        looked_at: "",
+        guards: [],
+        scarcity: { count: 3, question: null },
+        prechecks: prechecksFor([...shown, ...general]),
+      });
+    }
+
+    /**
+     * 위험 경고가 붙은 놀이 추천 (#402 · #672). 개인화 하나(실내 물놀이장 자리)에 경고 하나, 일반 하나에 경고 둘.
+     * 🚨 경고는 근거가 아니라서 `evidence` 는 그대로다. 나머지 추천은 `warnings: []` 로 온다 — 빈 줄이 서면 안 된다.
+     */
+    if (scenario === "suggest_warnings") {
+      const shown = alive.map((s) => (s.id === "s_4" ? warnedSuggestion : s));
+      const general = [warnedGeneralSuggestion].filter(notBlocked);
       return HttpResponse.json({
         suggestions: withStatus(shown),
         groups: suggestionGroups.filter((g) => shown.some((s) => s.agent === g.agent)),
@@ -458,6 +508,7 @@ export const suggestionHandlers = [
         event: { title: string; starts_at: string | null; all_day: boolean };
         items: Array<{ item_id: string | null; item_name: string }>;
         suggestion_ids?: string[];
+        reminder?: { lead: unknown } | null;
       };
 
       // 🚨 일자 없이 제출되면 안 된다. 화면이 막지만 계약도 막는다 (규칙은 코드가 진다).
@@ -466,6 +517,20 @@ export const suggestionHandlers = [
         return apiError(400, "validation_failed", "요청 형식이 올바르지 않아요", {
           fields: ["event.starts_at"],
         });
+      }
+
+      // 🚨 알림이 틀리면 **일정도 넣지 않는다** — 서버는 저장 전에 검사한다 (#603).
+      let reminder: Reminder | null = null;
+      if (body.reminder) {
+        const { lead } = body.reminder;
+        if (!isReminderLead(lead)) {
+          return apiError(400, "validation_failed", "요청 형식이 올바르지 않아요", {
+            fields: ["reminder.lead"],
+          });
+        }
+        const wrong = refuseReminder(lead, body.event.starts_at, body.event.all_day);
+        if (wrong) return wrong;
+        reminder = { lead };
       }
 
       const sids = [...new Set(body.suggestion_ids ?? [])];
@@ -497,6 +562,8 @@ export const suggestionHandlers = [
           is_prepared: false,
           prepared_at: null,
         })),
+        // 🚨 제출한 보호자 본인의 알림만 걸린다 — 응답도 그것만 싣는다.
+        reminder,
       });
 
       // 🚨 제안의 `status` 를 싣지 않는다 — 제출은 상태를 바꾸지 않는다 (#206).

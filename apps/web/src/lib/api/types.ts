@@ -36,6 +36,11 @@ export const REF_KINDS = [
   "health_safety",
   "event",
   "suggestion",
+  /**
+   * 복약 코스 (#713). 04 Health readout 의 근거로만 온다 — 체크 안내 · 회차 현황이 어느 코스를 말하는지다.
+   * 서버는 readout 근거 중 이 종류만 화면으로 보낸다 (`apps/api/app/api/runs/translate.py` 의 `_SCREEN_REF_KINDS` · PR #716).
+   */
+  "medication_schedule",
 ] as const;
 export type RefKind = (typeof REF_KINDS)[number];
 
@@ -129,9 +134,27 @@ export interface ObservationHealth extends ObservationBase {
      * `formatTimeOfDay` 로 시각만 그린다 (#485). 몇 시인지 모르면 키를 빼지 않고 `null` 로 온다.
      */
     observed_time?: string | null;
+    /**
+     * 보호자가 말한 체온 숫자(℃) 그대로 (#551). 화면은 숫자를 옮기기만 한다 — 정상 범위 ·
+     * 높다/낮다 · 색으로 평가하지 않는다 (최상위 CLAUDE.md §2).
+     */
+    temperature?: number | null;
+    /** 체온을 잰 ISO 시각. `observed_time` 과 다르다. */
+    measured_at?: string | null;
+    measure_site?: MeasureSite | null;
+    /**
+     * 🚨 이 값이 있으면 **먹인 약 행**이다 (#551) — 한 행 = 한 사건이라 `symptom` 이 비어 온다.
+     * 보호자가 말한 약 이름 그대로이고, 이 행의 `observed_time` 은 먹인 시각이다.
+     */
+    medication_given?: string | null;
+    /** 같은 말에서 함께 기록된 증상 행 id. 묶음 표시일 뿐 "때문에" 가 아니다. */
+    linked_symptom_id?: string | null;
     [key: string]: unknown;
   };
 }
+
+/** 체온을 잰 부위. */
+export type MeasureSite = "ear" | "forehead" | "armpit" | "oral" | "rectal";
 
 export type Observation = ObservationPromotable | ObservationHealth;
 
@@ -294,6 +317,15 @@ export interface Suggestion {
    * 🚨 **장소 이름은 여기가 아니라 `content` 에 있다** ("○○공원에서 모래성 쌓기"). 화면이 이름을 따로 꺼내지 않는다.
    */
   place_notice: string | null;
+  /**
+   * 그 추천에 주의할 요소가 있을 때만 오는 위험 경고 문구 ("작은 부품은 삼킬 수 있어요. …"). 위험 용어 사전
+   * (`apps/api/reference/hazard_terms.yaml`)의 `warning_text` 상수라 **서버 코드 문구 그대로** 보인다 (#402 · #672).
+   * 한 추천에 둘 이상 올 수 있고, 없으면 `[]` 다 (`null` 로 오지 않는다).
+   *
+   * 🚨 **근거가 아니다.** `place_notice` 와 같은 이유로 "사용한 기록" 에 넣지 않고 건수에도 세지 않는다.
+   * 🚨 **`caution` · `danger` 색을 입히지 않는다** — 둘 다 승인 게이트와 알레르기 차단 전용이다.
+   */
+  warnings: string[];
   status: SuggestionStatus;
   /** 생성 +24h. 승인 없는 draft 는 여기서 만료된다 (NF-07). */
   expires_at: string;
@@ -323,7 +355,9 @@ export interface GeneralSuggestion {
   content: string;
   /** 장소가 붙은 추천의 확인 문구. 개인화와 같은 칸이다 (`Suggestion.place_notice`). 장소가 없으면 `null`. */
   place_notice: string | null;
-  /** "36개월 또래가 자주 찾는 놀이예요" · "요청하신 놀이에 맞춰 골랐어요" 처럼 무엇을 기준으로 골랐는지. 서버가 만든다. */
+  /** 위험 경고 문구. 개인화와 같은 칸이다 (`Suggestion.warnings`). 없으면 `[]`. */
+  warnings: string[];
+  /** "36개월 또래가 자주 찾는 놀이예요" · "요청하신 놀이를 바탕으로 골랐어요" 처럼 무엇을 기준으로 골랐는지. 서버가 만든다. */
   basis: string;
   status: SuggestionStatus;
   /** 생성 +24h. 개인화 추천과 같다. */
@@ -398,6 +432,19 @@ export interface Reminder {
 }
 
 /**
+ * `PUT /children/{cid}/events/{eid}/reminder` — 이 일정에 **내** 알림을 걸거나 바꾼다 (#594 · #609).
+ * 함께 보는 다른 보호자가 각자 거는 길이다. 지우기는 같은 주소의 `DELETE` (없어도 204).
+ * 🚨 승인 게이트가 아니다 (개인 설정). 최종 상태를 보내는 요청이라 Idempotency-Key 가 없다.
+ */
+export interface ReminderRequest {
+  lead: ReminderLead;
+}
+
+export interface ReminderResponse {
+  reminder: Reminder;
+}
+
+/**
  * 🚨 **`status` 가 없다** (#118). `event` 테이블에는 보호자가 제출한 행만 들어가서
  *    `draft` 와 `confirmed` 를 가를 일이 없다. 초안은 `EventDraft` 로 따로 오고 행이 아니다.
  */
@@ -468,6 +515,19 @@ export interface CreateInputRequest {
   source: "home_input" | "photo" | (string & {});
   /** 🔶 되묻기에 대한 답일 때만. 그 질문이 나온 `run_id` (#158 리뷰 · 서버 #175). 못 찾으면 400. */
   reply_to?: string;
+  /** 흐린 위치. 위치 동의가 있고 휴대폰이 허용했을 때만 싣는다 (#593 · `InputLocation`). */
+  location?: InputLocation;
+}
+
+/**
+ * 휴대폰이 약 1km 로 흐려 보낸 좌표 (서버 `InputLocation` · #380). 소수점 둘째 자리다.
+ *
+ * 🚨 **`lib/location.ts` 의 `coarseLocation` 을 거친 값만 싣는다.** 서버도 한 번 더 줄이고, 위치 동의가
+ *    granted 가 아니면 버린다. 저장하지 않고 로그에도 남기지 않는다 — 웹도 같다.
+ */
+export interface InputLocation {
+  lat: number;
+  lon: number;
 }
 
 /**
@@ -524,7 +584,7 @@ export interface Guard {
  * "질문은 한 개까지만 드려요" 를 타입으로 못 박은 자리다 (CLAUDE.md §2).
  */
 export interface Scarcity {
-  /** 쌓인 기록 건수. 화면에 그대로 보여준다 — 숨기지 않는다. */
+  /** 일반 추천을 낸 Agent별 `record_count`의 합. 호환 필드이며 정상 안내 문구는 `general[].record_count`를 쓴다. */
   count: number;
   /**
    * Agent 가 되물었을 때만 있다. 🚨 **답하는 길(#246) 전에는 `options` 가 비어 온다** — 화면은
@@ -750,6 +810,11 @@ export interface SubmitEventBody {
    * ⚠️ 키 이름과 모양이 미정이다 (§6 · #122 에서 "제안 경로 PR 에서 정한다" 로 남은 자리).
    */
   suggestion_ids?: string[];
+  /**
+   * 제출한 보호자 본인의 알림 (#594). 다른 보호자에게는 걸리지 않는다. 빼거나 `null` 이면 알림 없음.
+   * 🚨 수정(`PATCH`)에는 싣지 않는다 — 칸이 없으면 서버가 걸린 알림을 그대로 둔다 (`updateEventDraft`).
+   */
+  reminder?: Reminder | null;
 }
 
 /* ── 06 승인 ─────────────────────────────────────────────────────────── */
@@ -865,8 +930,7 @@ export interface SubmitEventResponse {
 /**
  * 🚨 **초안 모양만 확정이다.** 정본은 `apps/api/app/core/medication_draft.py` 의 `MedicationDraft.to_payload()`
  *    (#544). 제출 · 조회 · 체크 · 수정 경로와 본문은 서버 API(#520 · `app/api/v1/routers/medications.py`)와
- *    맞췄다. 계약 대응표(`contract/schema-map.ts`)의 복약 절은 서버 스키마와 같이 #520 이 더한다 —
- *    서버에 없는 스키마를 대응표에 두면 계약 검사가 실패한다.
+ *    맞췄다 — 짝은 `contract/schema-map.ts` 의 복약 절이고 계약 검사가 본다.
  *
  * 🚨 **시각을 화면이 계산하지 않는다.** `scheduled_time` · `notice_times` 는 서버가 기준 시각 + 오프셋으로 만든
  *    값이다 (저녁 기준이 17:00 에서 19:00 으로 바뀐 것처럼 기준은 서버 상수다 · #546). 그래서 카드는 회차
@@ -1992,6 +2056,38 @@ export interface ConsentsResponse {
 }
 
 /* ── 10 설정 ─────────────────────────────────────────────────────────── */
+
+/** 푸시를 받는 기기의 종류 (#605). ⚠️ `ios` 는 서버에 남아 있지만 쓰지 않는다 — iOS 는 하지 않는다. */
+export type PushPlatform = "web" | "android" | "ios";
+
+/**
+ * `PUT /me/push-device` — 이 로그인의 기기로 FCM 토큰을 맡긴다 (#605 · #609). 204.
+ *
+ * 🚨 **기기는 로그인 1건에 묶인다.** 로그아웃 · 세션 만료 · 탈퇴 때 서버가 함께 지운다. 그래서 앱을 켤 때 ·
+ *    로그인 직후 · 토큰이 바뀔 때마다 다시 부른다 (`lib/push/web-push.ts`). 로그아웃 때 따로 지우지 않는다.
+ * 🚨 토큰은 본문으로만 보낸다 — 주소에 실으면 접근 로그에 남는다. 웹 코드는 웹 저장소에도 두지 않는다
+ *    (Firebase SDK 가 IndexedDB 에 두는 것은 `docs/web/web-push-v1.md` "토큰이 남는 곳").
+ *    키가 없다 — 같은 토큰을 여러 번 보내도 결과가 같다.
+ */
+export interface PushDeviceRequest {
+  token: string;
+  platform: PushPlatform;
+}
+
+/**
+ * `GET` / `PUT /me/notification-settings` — 10 설정의 알림 스위치 (#594 · #609).
+ *
+ * 🚨 **보호자 단위다.** 아이마다가 아니고, 내 모든 기기에 함께 적용된다. 기기 하나만 끄는 것은
+ *    휴대폰의 알림 권한이 한다 (#605 — 기기별 끄기 칸을 지웠다).
+ * 🚨 **끄면 발송만 멈춘다.** 걸어 둔 알림은 남아서, 다시 켜면 아직 오지 않은 것부터 울린다.
+ * 🚨 **`PUT` 은 두 칸을 함께 보낸다.** 한 칸만 보내면 400 이다 — 바꾸지 않는 칸은 받은 값을 그대로 싣는다.
+ *    바꾼 적 없으면 서버 기본값이 온다. 승인 게이트가 아니라 Idempotency-Key 가 없다.
+ */
+export interface NotificationSettings {
+  schedule_enabled: boolean;
+  /** ⚠️ 복약 알림 발송은 아직 없다 (#594 범위 밖). 화면이 이 칸을 그리지 않는다. */
+  medication_enabled: boolean;
+}
 
 /**
  * GET /children/{cid}/parents (계약서 §07). "함께 보는 보호자".
