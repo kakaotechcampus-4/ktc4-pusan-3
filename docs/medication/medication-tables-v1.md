@@ -3,15 +3,16 @@
 문서 목적: 복약 코스(`medication_schedule`) · 회차(`medication_dose`) · 알림 구독(`medication_notice_subscription`) 세 표의 모양과 그 이유를 고정한다.
 제출 API · 회차 체크 API · 알림 켜기 · 끄기 API · DB 어댑터가 이 표 위에 올라간다. 그쪽이 지켜야 할 것(§5)도 여기 적는다.
 
-작성일: 2026-10-21 · 담당: 김명성 · 갱신: 2026-11-06 체크한 보호자 `checked_by` · 알림 구독 표 ([#749](https://github.com/kakaotechcampus-4/ktc4-pusan-3/issues/749))
+작성일: 2026-10-21 · 담당: 김명성 · 갱신: 2026-11-06 체크한 보호자 `checked_by` · 알림 구독 표 · 알림 처리 시각 `notice_sent_at` ([#749](https://github.com/kakaotechcampus-4/ktc4-pusan-3/issues/749))
 선행: 이슈 [#537](https://github.com/kakaotechcampus-4/ktc4-pusan-3/issues/537) 본문 DDL과 코멘트 결정 · [`event/event-draft-flow-v1.md`](../event/event-draft-flow-v1.md) · 루트 [`CLAUDE.md`](../../CLAUDE.md) §2 실행(게이트 ㉡)
 근거: `apps/api/app/domains/medication/models.py` · `alembic/versions/c6e2a8d41f93_add_medication_tables.py` ·
 `alembic/versions/361f26c96b2e_add_medication_dose_checked_by.py` ·
 `alembic/versions/885b03bd5b61_add_medication_notice_subscription.py` ·
+`alembic/versions/5c6e32685af8_add_medication_dose_notice_sent_at.py` ·
 `tests/integration/test_medication_tables.py` · `tests/integration/test_medication_migration.py` ·
 `tests/integration/medication/test_medication_subscription.py`
 
-**이 문서에 없는 것** — 초안 제출 API, 회차 체크 API, SSE 번역, 되묻기 맥락, 알림 발송, `prescription_draft`.
+**이 문서에 없는 것** — 초안 제출 API, 회차 체크 API, SSE 번역, 되묻기 맥락, 알림 발송 흐름([`notification/reminder-v1.md`](../notification/reminder-v1.md) "복약 알림 발송"), `prescription_draft`.
 
 ---
 
@@ -44,7 +45,8 @@
 | `scheduled_time` | `GENERATED ALWAYS ... STORED` | 기준 시각 + 오프셋, `fixed` 면 `fixed_time`. 쓰기 쪽이 계산하지 않는다 — ORM · raw SQL 모두 이 칸에 값을 넣으면 DB 가 거절한다(`GeneratedAlwaysError`, 확인함) |
 | `checked_at` | timestamptz, nullable | NULL = 미체크. 체크 · 해제는 이 칸과 `checked_by` 만 바꾼다 |
 | `checked_by` | uuid, nullable, `parent` FK `ON DELETE SET NULL` | 체크한 보호자(#749). 같은 아이의 다른 보호자도 누가 먹였는지 본다. 체크 API 가 로그인 보호자로 쓰고 해제하면 함께 비운다. **NULL 이어도 체크일 수 있다** — 이 칸이 생기기 전의 체크와 탈퇴한 보호자의 체크다. 탈퇴는 이 칸만 비우고 복용 기록은 남긴다(공동 기록의 "적은 사람" 과 같다). 연결 끊기는 지우지 않는다 |
-| `created_at` · `updated_at` | **없음** | 제출 때 한꺼번에 만들어져 코스의 시각으로 알 수 있고, 바뀌는 건 체크뿐인데 그 시각은 `checked_at` 에, 누른 보호자는 `checked_by` 에 남는다 |
+| `notice_sent_at` | timestamptz, nullable | 복약 알림 발송 배치가 이 회차를 **맡은** 시각(#749). 보내기 전에 찍는다 — 성공 여부가 아니다(일정 알림 `reminder.sent_at` 과 같다). 회차마다 하나라 구독한 보호자 전원에게 한 번만 간다. 누가 받았는지는 남기지 않는다. 기존 회차는 채우지 않는다 |
+| `created_at` · `updated_at` | **없음** | 제출 때 한꺼번에 만들어져 코스의 시각으로 알 수 있고, 바뀌는 건 체크와 알림 처리 표시뿐이다. 체크 시각은 `checked_at` 에, 누른 보호자는 `checked_by` 에, 알림을 맡은 시각은 `notice_sent_at` 에 남는다 |
 
 기준 시각: 기상 07:30 · 아침 08:00 · 점심 12:00 · 저녁 19:00 · 취침 20:30. 저녁은 #537 본문의 17:00 에서 19:00 으로 바꿨다 — 퇴근 시간대를 고려한 저녁 식사 시각(#546 코멘트, 이시하).
 
@@ -111,7 +113,10 @@
 구독은 UNIQUE 의 `(schedule_id, parent_id)` 가 코스별 조회(응답의 `notice_enabled` · 발송)를 받고,
 `ix_medication_notice_subscription_parent_id` 가 연결 끊기 · 탈퇴 때 그 보호자의 구독을 찾는다.
 
-발송용 인덱스(`scheduled_time` 등)는 알림 발송이 범위 밖이라 두지 않는다. 발송을 만들 때 그 쿼리를 보고 단다.
+`medication_dose_notice_due_idx` — `(dose_date, scheduled_time) WHERE notice_sent_at IS NULL AND checked_at IS NULL`. 발송 배치가 1분마다
+지난 10분 안의 회차를 `(dose_date, scheduled_time)` 행 비교로 찾는다 — 한국 자정을 걸쳐도 한 범위 조건이다. 맡았거나 체크한 회차는 빠지고,
+맡지 않고 지나간 회차(구독자 없음 · 멈춘 코스 · 창을 놓침)는 남지만 앞 칸이 날짜라 배치는 하루 이틀 범위만 읽는다.
+🚨 조건(`postgresql_where`)은 autogenerate 비교가 보지 않는다 — 모델과 마이그레이션을 함께 고치고, 왕복 테스트가 `pg_indexes` 로 본다.
 
 ## 5. DB 가 못 막는 것 — API · 서비스가 막는다
 
@@ -145,7 +150,8 @@
     구독이 남는다 — 잡아 두면 끊기가 이 커밋을 기다렸다가 구독까지 지운다. 등록에서는 아이별 등록 잠금보다 앞이다
     (탈퇴가 보호자 → 아이 순으로 잡는다). 그사이 끊겼으면 403 이다.
   - 🚨 **멈추기 · 끝나기는 구독을 지우지 않는다.** 멈춘 코스 · 마지막 날이 지난 코스에도 구독 행이 남을 수 있다.
-    발송(아직 없음)이 `status = 'active'` · `ends_on` · `subscribed_at` 으로 걸러야 한다.
+    발송(`claim_due_doses`)은 `status = 'active'` 인 코스의 회차만, **예정 시각 전에 켠** 구독자에게만 보낸다(`subscribed_at` ≤ 예정 시각).
+    끝난 코스는 남은 회차가 없어 따로 거르지 않는다.
 
 ### 시간대 — 표를 쓰는 코드가 지킬 것
 
