@@ -2,8 +2,9 @@
 재현 가능한 테스트를 위해 id는 도메인별 순번(observation_food-1)으로 만든다.
 """
 
+from collections.abc import Iterable
 from dataclasses import replace
-from datetime import date, datetime, timezone
+from datetime import date, datetime, time, timezone, tzinfo
 from typing import Any
 from uuid import UUID
 
@@ -13,7 +14,9 @@ from app.agents.memory.store.ports import (
     EventRow,
     ObservationDomain,
     ObservationRow,
+    SeriesRow,
 )
+from app.rules.recurrence import occurrence_dates
 
 
 def _is_deleted(row: ObservationRow) -> bool:
@@ -23,12 +26,15 @@ def _is_deleted(row: ObservationRow) -> bool:
 class InMemoryStore:
     """MemoryStore Protocol 구현. 한 인스턴스가 한 테스트/한 run의 저장소를 의미한다."""
 
+    supports_series = True  # 반복 묶음을 읽고 지운다 (`supports_series()` 참고)
+
     def __init__(self, now: datetime | None = None) -> None:
         # created_at 을 고정할 수 있어야 조회 결과 검증 가능
         self._now = now or datetime.now(timezone.utc)
         self._observations: dict[str, ObservationRow] = {}
         self._events: dict[str, EventRow] = {}
         self._items: dict[str, EventItemRow] = {}
+        self._series: dict[str, SeriesRow] = {}
         self._counters: dict[str, int] = {}
 
     def _next_id(self, prefix: str) -> str:
@@ -191,6 +197,7 @@ class InMemoryStore:
             ends_at=when.ends_at if when is not None else row.ends_at,
             all_day=when.all_day if when is not None else row.all_day,
             fields={**row.fields, **changes},
+            series=row.series,
         )
         self._events[row.id] = updated
         return updated
@@ -202,6 +209,60 @@ class InMemoryStore:
         # ON DELETE CASCADE(일정이 사라지면 준비물도 같이 정리)
         self._items = {key: item for key, item in self._items.items() if item.event_id != event_id}
         return True
+
+    # ── 반복 묶음 ───────────────────────────────────────────────
+    async def create_series(
+        self,
+        *,
+        child_id: UUID,
+        title: str,
+        weekdays: Iterable[int],
+        starts_on: date,
+        until: date,
+        start_time: time,
+        end_time: time | None,
+        tz: tzinfo,
+        fields: dict[str, Any],
+        item_names: Iterable[str] = (),
+    ) -> tuple[SeriesRow, list[EventRow]]:
+        """테스트 시드 전용. 회차마다 일정 행과 준비물 행을 만든다 (DB 의 제출 경로와 같은 모양)."""
+        days = occurrence_dates(starts_on, weekdays, until)
+        series = SeriesRow(
+            id=self._next_id("series"),
+            weekdays=tuple(sorted(set(weekdays))),
+            starts_on=days[0],
+            until=until,
+        )
+        self._series[series.id] = series
+        events: list[EventRow] = []
+        for day in days:
+            row = EventRow(
+                id=self._next_id("event"),
+                title=title,
+                starts_at=datetime.combine(day, start_time, tzinfo=tz),
+                ends_at=datetime.combine(day, end_time, tzinfo=tz) if end_time else None,
+                all_day=False,
+                fields={**fields, "child_id": str(child_id)},
+                series=series,
+            )
+            self._events[row.id] = row
+            events.append(row)
+            for name in item_names:
+                await self.create_event_item(event_id=row.id, item_name=name)
+        return series, events
+
+    async def get_series(self, *, series_id: str) -> SeriesRow | None:
+        return self._series.get(series_id)
+
+    async def list_series_events(self, *, series_id: str, date_from: date) -> list[EventRow]:
+        rows = [
+            row
+            for row in self._events.values()
+            if row.series is not None
+            and row.series.id == series_id
+            and row.starts_at.date() >= date_from
+        ]
+        return sorted(rows, key=lambda row: (row.starts_at, row.id))
 
     # event_item
     async def create_event_item(self, *, event_id: str, item_name: str) -> EventItemRow:
