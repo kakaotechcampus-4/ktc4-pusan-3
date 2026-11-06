@@ -1,4 +1,4 @@
-"""날씨 · 일정 · 장소 조회 인자.
+"""날씨 · 일정 · 장소 · 행사 조회 인자.
 
 날짜는 DayLabel 라벨로만 받는다. 모델이 날짜를 계산하지 않는다.
 위치는 인자에 없다 — 좌표는 요청 바디로만 받아 격자로 뭉갠 뒤 context 가 들고 있다 (4-3).
@@ -15,6 +15,21 @@ from app.agents.activity.schemas.common import DayLabel, PlaceCategory, ToolArgs
 Day = Annotated[
     DayLabel,
     Field(default=DayLabel.TODAY, description="today / tomorrow / this_weekend 중 하나"),
+]
+
+
+Area = Annotated[
+    str | None,
+    Field(
+        default=None,
+        max_length=30,
+        description=(
+            "보호자가 말한 지역 이름을 쓴 글자 그대로(예: 해운대, 부산 중구, 기장군). "
+            "지역을 말하지 않았으면 비운다 — 보호자 위치 근처에서 찾는다. "
+            "지역 이름과 같은 물건 · 다른 뜻의 낱말(양산 챙겨서)도 비운다. 지역 이름만 넣고 "
+            "명소 이름(…해수욕장 · …역)은 넣지 않는다"
+        ),
+    ),
 ]
 
 
@@ -41,16 +56,11 @@ class SearchNearbyPlacesArgs(ToolArgs):
             ),
         ),
     ]
-    area: Annotated[
-        str | None,
-        Field(
-            default=None,
-            max_length=30,
-            description=(
-                "보호자가 말한 지역 이름을 쓴 글자 그대로(예: 해운대, 부산 중구, 기장군). "
-                "지역을 말하지 않았으면 비운다 — 보호자 위치 근처에서 찾는다. "
-                "지역 이름과 같은 물건 · 다른 뜻의 낱말(양산 챙겨서)도 비운다. 지역 이름만 넣고 "
-                "명소 이름(…해수욕장 · …역)은 넣지 않는다"
-            ),
-        ),
-    ]
+    area: Area
+
+
+class SearchEventsArgs(ToolArgs):
+    """종류는 받지 않는다 — 그날 열리는 축제 · 공연 · 행사를 가까운 순으로 준다."""
+
+    day: Day  # 그날 열리는 행사만 · 그날 바깥이 어려우면 찾지 않는다
+    area: Area
