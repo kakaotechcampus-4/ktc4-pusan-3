@@ -1,4 +1,4 @@
-"""일정 알림 발송 배치 — 서버 cron 이 1분마다 부른다 (#594)
+"""일정 알림 발송 배치 — 서버 cron 이 1분마다 부른다 (#594). 복약 알림(#749)도 여기서 함께 돈다.
 
 한 번 돌 때 하는 일:
   1. 울릴 시각이 지난 10분 안인 알림을 맡아 `sent_at` 을 찍고 커밋한다 (`claim_due_reminders`).
@@ -11,6 +11,9 @@
 🚨 문구에 일정 제목을 싣는다 — 알림만 보고 무슨 일정인지 알게 (10-29 PM 결정, #605). 푸시는
    Google(FCM)을 거쳐 잠금 화면에 뜨고, 처리방침의 Google 전달 항목에 알림 배달을 적는다(#166).
    복약 알림은 약 이름을 싣지 않는다(#577) — 약 이름은 늘 건강 정보라 일정 제목과 다르게 둔다.
+
+복약 알림은 `medication_dispatch.run_medication_dispatch` 가 같은 실행 안에서 일정 알림 다음에 돈다.
+cron 은 이 한 줄 그대로다. 둘은 세션을 따로 쓰고, 한쪽이 실패해도 다른 쪽은 돈다(`_main`).
 
   서버 cron 한 줄과 확인 방법은 apps/api/README.md "일정 알림 발송".
   로컬 한 번: cd apps/api && uv run python -m app.workers.reminder_dispatch
@@ -37,6 +40,7 @@ from app.infra.db.session import async_session_factory, engine
 from app.integrations import discord
 from app.integrations.fcm import FcmClient, Message, SendResult
 from app.rules.reminder import ReminderLead
+from app.workers.medication_dispatch import run_medication_dispatch
 
 # __name__ 이 아니다 — `python -m` 으로 돌면 "__main__" 이 되어 app 로거 밖으로 빠진다
 # (cleanup.py 와 같다)
@@ -157,18 +161,31 @@ async def run_dispatch(session: AsyncSession, *, now: datetime, fcm: FcmClient) 
     return result
 
 
+_RUNS = (("일정 알림", run_dispatch), ("복약 알림", run_medication_dispatch))
+"""한 실행에서 차례로 돈다. 🚨 한쪽이 실패해도 다른 쪽은 돈다 — 세션도 따로 연다(실패한 세션은
+다시 쓸 수 없다). 실패는 로그(ERROR → Discord)로 알리고 실행은 1 로 끝난다."""
+
+
 async def _main() -> None:
     if not settings.FCM_SERVICE_ACCOUNT_FILE:
         # 맡지도 않는다 — 설정을 넣으면 그때부터 지난 10분 안의 알림이 나간다
-        log.warning("FCM_SERVICE_ACCOUNT_FILE 이 비어 있어 일정 알림을 보내지 않는다")
+        log.warning("FCM_SERVICE_ACCOUNT_FILE 이 비어 있어 일정 · 복약 알림을 보내지 않는다")
         return
     fcm = FcmClient.from_file(settings.FCM_SERVICE_ACCOUNT_FILE)
+    failed = False
     try:
-        async with async_session_factory() as session:
-            await run_dispatch(session, now=datetime.now(UTC), fcm=fcm)
+        for name, run in _RUNS:
+            try:
+                async with async_session_factory() as session:
+                    await run(session, now=datetime.now(UTC), fcm=fcm)
+            except Exception:
+                log.exception("%s 발송 실패", name)
+                failed = True
     finally:
         await fcm.aclose()
         await engine.dispose()
+    if failed:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":
@@ -178,6 +195,6 @@ if __name__ == "__main__":
         configure_alerts(discord.webhook_sender(settings.alert_webhook_url), env=settings.APP_ENV)
     try:
         asyncio.run(_main())
-    except Exception:
-        log.exception("일정 알림 발송 실패")
+    except Exception:  # FCM 키 읽기처럼 두 발송 밖에서 난 실패
+        log.exception("알림 발송 배치 실패")
         raise SystemExit(1) from None
