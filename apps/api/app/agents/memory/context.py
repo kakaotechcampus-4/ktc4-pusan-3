@@ -9,6 +9,7 @@ from datetime import date, datetime, tzinfo
 from uuid import UUID
 
 from app.agents.common.datetime_rules import today_of
+from app.agents.common.guardrail import Guardrail, StaticRuleGuardrail
 from app.agents.memory.drafts import DraftBook
 from app.agents.memory.store.ports import MemoryStore
 
@@ -28,6 +29,9 @@ class AgentContext:
     # 이 아이의 진행 중 복약 코스 이름. pipeline 이 기록 단계 전에 채운다. 코스를 못 읽었으면 비어
     # 있고, 그러면 먹인 약을 평소처럼 기록한다 — 투약이 두 번 남는 쪽이 기록이 사라지는 쪽보다 낫다
     registered_medicines: tuple[str, ...] = ()
+    # 위험 물질 검사 (#731). pipeline 의 안전 사전검사와 이 Agent 의 저장 게이트가 이 인스턴스
+    # 하나를 같이 쓴다 — 바꿔 끼우면 두 곳이 함께 바뀐다. 안 넘기면 코드 규칙으로 검사한다
+    guardrail: Guardrail = field(default_factory=StaticRuleGuardrail)
 
     @property
     def today(self) -> date:
