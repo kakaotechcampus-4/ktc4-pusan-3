@@ -644,6 +644,67 @@ describe("05 묶음 안내 · 일반 추천 근거 (#249)", () => {
     }
   });
 
+  it("🚨 행사 기간은 행사가 붙은 추천에만 두 날짜가 같이 온다 (#681)", async () => {
+    const body: SuggestionsRequest = { agents: ["food", "activity"] };
+    // 장소 추천과 장소가 없는 추천은 키가 있고 둘 다 null 이다 (서버 `date | None = None`)
+    for (const scenario of ["default", "suggest_place"] as const) {
+      const data = await fetchWith(scenario, body);
+      for (const s of [...data.suggestions, ...(data.general ?? [])]) {
+        expect([s.event_starts_on, s.event_ends_on], `${scenario} ${s.id}`).toEqual([null, null]);
+      }
+    }
+
+    const data = await fetchWith("suggest_event", body);
+    const all = [...data.suggestions, ...(data.general ?? [])];
+    const dated = all.filter((s) => s.event_starts_on !== null || s.event_ends_on !== null);
+    expect(dated.map((s) => s.kind).sort()).toEqual(["general", "personalized"]);
+    for (const s of dated) {
+      expect(s.agent).toBe("activity");
+      // 한쪽만 오지 않는다 — 화면은 반쪽 기간을 그리지 않는다
+      expect(s.event_starts_on).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      expect(s.event_ends_on).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      // 행사에는 확인 문구도 붙는다. 기간은 문장에도 문구에도 섞여 오지 않는다
+      expect(s.place_notice).toBeTruthy();
+      for (const text of [s.content, s.place_notice!]) {
+        expect(text).not.toContain(s.event_starts_on!);
+        expect(text).not.toMatch(/\d+월 \d+일/);
+      }
+    }
+    // 하루짜리 행사와 여러 날 행사를 둘 다 그려 보게 한다
+    expect(dated.some((s) => s.event_starts_on === s.event_ends_on)).toBe(true);
+    expect(dated.some((s) => s.event_starts_on !== s.event_ends_on)).toBe(true);
+  });
+
+  it("🚨 위험 경고는 늘 배열로 오고, 붙은 추천에만 문장과 따로 칸으로 온다 (#402 · #672)", async () => {
+    const body: SuggestionsRequest = { agents: ["food", "activity"] };
+    const plain = await fetchWith("default", body);
+    // 경고가 없는 추천은 키가 있고 빈 배열이다 (서버 `warnings: list[str] = []` · `null` 로 오지 않는다)
+    for (const s of [...plain.suggestions, ...(plain.general ?? [])]) {
+      expect(s.warnings, s.id).toEqual([]);
+    }
+
+    const data = await fetchWith("suggest_warnings", body);
+    const all = [...data.suggestions, ...(data.general ?? [])];
+    for (const s of all) expect(Array.isArray(s.warnings), s.id).toBe(true);
+    const warned = all.filter((s) => s.warnings.length > 0);
+    // 개인화 하나 · 일반 하나. 일반 쪽은 경고가 둘이다 — 화면이 둘 다 그려 보도록
+    expect(warned.map((s) => [s.kind, s.warnings.length]).sort()).toEqual([
+      ["general", 2],
+      ["personalized", 1],
+    ]);
+    for (const s of warned) {
+      expect(s.agent).toBe("activity");
+      // 문구는 문장에 섞여 오지 않는다
+      for (const w of s.warnings) expect(s.content).not.toContain(w);
+    }
+    // 🚨 경고는 근거가 아니다 — 개인화 추천의 근거 메모에도 섞이지 않는다
+    for (const s of data.suggestions) {
+      for (const w of s.warnings) {
+        expect(s.evidence.some((e) => JSON.stringify(e).includes(w))).toBe(false);
+      }
+    }
+  });
+
   it("🚨 0개로 끝난 Agent 도 묶음이 오고 안내가 실린다 — 실패가 아니다", async () => {
     const data = await fetchWith("suggest_counts", { agents: ["food", "activity"] });
 

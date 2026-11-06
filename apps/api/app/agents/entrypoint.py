@@ -91,9 +91,11 @@ from app.agents.pipeline import (
     RECOMMENDING_TASKS,
     AgentQuestion,
     AgentResult,
+    CardTab,
     Commit,
     CountRecords,
     CuratorTrigger,
+    DeleteProposed,
     DomainContext,
     DomainRouted,
     Done,
@@ -102,6 +104,8 @@ from app.agents.pipeline import (
     Event,
     EventDrafts,
     Failed,
+    FoundTabs,
+    LoadCards,
     MedicationDrafts,
     MemoryNote,
     Partial,
@@ -133,10 +137,12 @@ __all__ = [
     "AgentQuestion",
     "AgentResult",
     "AllergenCheck",
+    "CardTab",
     "CoarseLocation",
     "Commit",
     "CountRecords",
     "CuratorTrigger",
+    "DeleteProposed",
     "DocCard",
     "DomainRouted",
     "Done",
@@ -148,11 +154,13 @@ __all__ = [
     "MedicationDraft",
     "MedicationDrafts",
     "Failed",
+    "FoundTabs",
     "Guidance",
     "GrowthLogReader",
     "InMemoryStore",
     "InMemorySuggestions",
     "IssuedBookReader",
+    "LoadCards",
     "MemoryNote",
     "MemoryReply",
     "MemoryStore",
@@ -246,6 +254,7 @@ async def handle_input(
     curator_trigger: CuratorTrigger | None = None,
     domain_store: StoreOpener | None = None,
     count_records: CountRecords | None = None,
+    load_cards: LoadCards | None = None,
     food_catalog: MenuCatalogStore | None = None,
     food_recipes: RecipeCatalogStore | None = None,
     food_suggestions: SuggestionHistoryReader | None = None,
@@ -304,6 +313,8 @@ async def handle_input(
       run 의 store 를 그대로 읽는다(테스트 · eval 의 InMemoryStore).
     - count_records 를 넘기면 일반 추천 블록의 쌓인 기록 수를 센다. 러너가
       `agent_ports.record_counter` 로 만든다. 안 넘기면(테스트 · eval) 그 칸이 빈다.
+    - load_cards 는 조회 · 삭제 제안 카드(`FoundTabs` · `DeleteProposed`)에 실을 행을 러너가 미리
+      읽어 두게 하는 콜백이다 (#535). 안 넘기면(테스트 · eval) 읽지 않는다.
     - food_catalog · food_recipes · food_suggestions 는 api 가 넘긴 Food 카탈로그 · 추천 이력
       어댑터다(`domains/food` · `domains/suggestion` 의 `agent_reader`). 안 넘기면(테스트 · eval)
       빈 InMemory 다. 문서 행은 어댑터가 아니라 yaml 의 검수된 시드를 항상 읽는다.
@@ -330,6 +341,7 @@ async def handle_input(
         now=now,
         timezone=KST,
         store=store,
+        run_id=run_id,
     )
 
     contexts, writes = _domain_contexts(
@@ -372,6 +384,7 @@ async def handle_input(
         writes=writes,
         curator_trigger=curator_trigger,
         count_records=count_records,
+        load_cards=load_cards,
         child_months=(
             None if birth_date is None else months_between(birth_date, today_of(now, KST))
         ),

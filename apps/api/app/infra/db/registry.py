@@ -13,6 +13,7 @@ from app.domains.chat import models as chat  # noqa: F401
 from app.domains.child import models as child  # noqa: F401
 from app.domains.consent import models as consent  # noqa: F401
 from app.domains.correction import models as correction  # noqa: F401
+from app.domains.delete_proposal import models as delete_proposal  # noqa: F401
 from app.domains.food import models as food  # noqa: F401
 from app.domains.identity import models as identity  # noqa: F401
 from app.domains.medication import models as medication  # noqa: F401
