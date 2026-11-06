@@ -43,6 +43,7 @@ from app.domains.safety.agent_reader import DbSafetyReader
 PARENT = uuid.UUID(int=1)
 """채널은 만든 보호자를 반드시 안다. 여기서는 누구인지가 중요하지 않다."""
 CHILD = uuid.UUID(int=2)
+PROPOSAL = uuid.UUID(int=3)
 RAW_TEXT = "계란말이 또 찾아요"
 
 
@@ -1195,3 +1196,33 @@ async def test_추천_저장이_실패하면_확정된_저장으로_세지_않�
     assert channel.suggestions_saved is False
     assert channel.ended_with == "failed"
     assert idempotency.recall(**scope) is None
+
+
+async def test_화면에_안_나간_조회_카드는_대화에도_남기지_않는다(monkeypatch):
+    """#535 — 카드 행을 못 읽어 found_tabs 가 안 나갔으면 대화 기록에도 넘기지 않는다. 안 그러면
+    보지 못한 카드가 지난 대화에만 생긴다. 삭제 카드는 행이 없어도 나가고 남는다."""
+    recorded: list = []
+
+    async def no_rows(*_args, **_kwargs):
+        return {}
+
+    async def fake_handle_input(**kwargs):
+        store = kwargs["store"]  # Memory 가 제안을 저장하고 commit 한 뒤라고 친다
+        store.proposal_id, store.proposal_expires_at = PROPOSAL, datetime(2026, 10, 28, tzinfo=UTC)
+        tab = entrypoint.CardTab("event", False, ("e1",), ("e1",))
+        await kwargs["load_cards"](tab.refs())
+        kwargs["emit"](entrypoint.FoundTabs((tab,)))
+        kwargs["emit"](entrypoint.DeleteProposed(str(PROPOSAL), (tab,)))
+        kwargs["emit"](Done(kwargs["run_id"], 1))
+
+    monkeypatch.setattr(runner, "_read_cards", no_rows)
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+
+    job = runner.agent_job(
+        child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT, on_event=recorded.append
+    )
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    assert names(channel) == ["delete_proposal", "done"]
+    assert [type(event).__name__ for event in recorded] == ["DeleteProposed", "Done"]

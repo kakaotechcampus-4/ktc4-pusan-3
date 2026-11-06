@@ -566,6 +566,26 @@ class TestEvent:
             candidate(content="모래성 쌓기", place_name=PARK), events={PARK: same}
         ).drafts
         assert draft.place_notice.startswith("공공데이터 기준")
+        assert draft.event_starts_on is None and draft.event_ends_on is None
+
+    def test_행사는_기간을_칸으로_싣는다(self):
+        """화면이 확인 문구 줄에 "9월 29일 ~ 10월 1일" 로 세운다 — 날짜 없이 이름만 나가면 지난
+        행사인지 알 수 없다 (#516 FE 합의). 문장 · 확인 문구에는 섞지 않는다."""
+        (draft,) = review(candidate(content="축제 구경", place_name=FEST)).drafts
+        assert (draft.event_starts_on, draft.event_ends_on) == (
+            date(2026, 9, 29),
+            date(2026, 10, 1),
+        )
+        payload = draft.to_payload()
+        assert (payload["event_starts_on"], payload["event_ends_on"]) == (
+            "2026-09-29",
+            "2026-10-01",
+        )
+
+    def test_장소_추천에는_기간이_없다(self):
+        (draft,) = review(candidate(content="모래성 쌓기", place_name=PARK)).drafts
+        payload = draft.to_payload()
+        assert (payload["event_starts_on"], payload["event_ends_on"]) == (None, None)
 
 
 EVENT_NOTICE = (
@@ -708,6 +728,8 @@ class TestEventName:
             candidate(content="정원문화박람회에서 꽃 모양 찾기", place_name=None), events=EVENTS
         ).drafts
         assert draft.place_notice == EVENT_NOTICE
+        assert draft.event_starts_on == EXPO_ROW.starts_on
+        assert draft.event_ends_on == EXPO_ROW.ends_on
 
     @pytest.mark.parametrize(
         ("day", "outdoor", "expected"),

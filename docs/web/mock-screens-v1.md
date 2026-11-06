@@ -95,6 +95,7 @@ location.replace("/");
 | 05 · 알레르기 확인 문구 | `/child/c1/suggestions?agents=food,activity&scenario=suggest_cautions` — 놀이 확인 문구가 목록 위에 선다 |
 | 05 · 개인화와 일반이 섞인 묶음 | `/child/c1/suggestions?agents=food,activity&scenario=suggest_mixed` — 식사 개인화 하나와 식사 일반 하나를 고르면 "식사에서 고른 2가지는 일정 하나로 묶여요" 가 뜬다 (#512 리뷰) |
 | 05 · 장소가 붙은 놀이 | `/child/c1/suggestions?agents=food,activity&scenario=suggest_place` — 놀이 탭의 "햇살어린이공원에서 모래성 쌓기" 아래와 일반 카드 "별빛작은도서관에서 그림책 고르기" 아래에 확인 문구가 한 줄씩 선다. 🚨 "사용한 기록" 목록 안에는 없어야 한다 (#516) |
+| 05 · 행사가 붙은 놀이 | `/child/c1/suggestions?agents=food,activity&scenario=suggest_event` — 놀이 탭의 "들꽃마을 가을 축제에서 꽃 이름 맞히기" 아래에 "2026년 10월 30일부터 11월 1일까지 열려요", 일반 카드 "솔숲 어린이 인형극 한마당에서 인형극 보기" 아래에 "2026년 11월 7일에 열려요" 가 확인 문구 바로 위에 선다. 🚨 "사용한 기록" 목록 안에는 없어야 한다 (#681) |
 | 05 · 위험 경고가 붙은 놀이 | `/child/c1/suggestions?agents=food,activity&scenario=suggest_warnings` — 놀이 탭의 "주말에 실내 물놀이장은 어떨까요" 아래에 물놀이 경고 하나, 일반 카드 "풍선 안에 작은 구슬을…" 아래에 경고 둘이 선다. 🚨 `caution` · `danger` 색이 아니어야 하고, "사용한 기록" 목록 안에는 없어야 한다 (#672) |
 | 05 제안 후보 | `/child/c1/suggestions?agents=food,activity` |
 | 05 · 홈 버튼에서 | 03 홈의 "민준이가 먹을 저녁 추천해드릴까요?" — 주소가 `?agents=food&prompt=dinner` 로 바뀐다. 🚨 추천 요청 본문에 **`prompt_key: "dinner"` 가 실려야 하고 문장은 없어야 한다** (#286) |

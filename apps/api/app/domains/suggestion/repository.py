@@ -2,7 +2,7 @@
 
 import uuid
 from collections.abc import Mapping, Sequence
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import exists, func, select, update
@@ -47,6 +47,7 @@ async def create_suggestion(
     run_id: str | None = None,
     place_notice: str | None = None,
     warnings: Sequence[str] = (),
+    event_period: tuple[date, date] | None = None,
     requested: bool = False,
 ) -> Suggestion:
     """Agent 결과 저장. 일반/개인화 판정과 근거 필수 여부는 호출 계층에서 검증한다.
@@ -56,6 +57,7 @@ async def create_suggestion(
     `run_id` 는 그 추천을 만든 입력 run 이다. run 밖에서 만들면 None.
     `place_notice` 는 장소가 붙은 추천의 확인 문구다(코드 문구). 장소가 없으면 None.
     `warnings` 는 그 추천의 위험 경고 문구다(코드 문구). 경고가 없으면 비어 있다.
+    `event_period` 는 행사가 붙은 추천의 (시작일, 종료일)이다. 행사가 없으면 None.
     `requested` 는 보호자가 놀이 · 주제를 정해 물은 일반 추천인지다(`_requested` 가 정한다).
     """
     row = Suggestion(
@@ -71,6 +73,8 @@ async def create_suggestion(
         run_id=run_id,
         place_notice=place_notice,
         warnings=list(warnings),
+        event_starts_on=event_period[0] if event_period else None,
+        event_ends_on=event_period[1] if event_period else None,
         requested=requested,
     )
     session.add(row)
@@ -291,10 +295,19 @@ async def save_agent_suggestions(
             place_notice=item.get("place_notice"),
             # 경고가 없는 추천은 빈 목록이다. 이 칸 전에 만든 payload 에는 키가 없다
             warnings=item.get("warnings", ()),
+            event_period=_event_period(item),
             requested=_requested(item),
         )
         ids.append(row.id)
     return ids
+
+
+def _event_period(payload: Mapping[str, Any]) -> tuple[date, date] | None:
+    """payload 의 행사 기간(ISO 날짜 두 칸). 행사가 없는 추천 · 이 칸 전에 만든 payload 는 None."""
+    starts, ends = payload.get("event_starts_on"), payload.get("event_ends_on")
+    if starts is None or ends is None:
+        return None
+    return date.fromisoformat(starts), date.fromisoformat(ends)
 
 
 async def _checked_citations(
