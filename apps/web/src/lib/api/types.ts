@@ -36,6 +36,11 @@ export const REF_KINDS = [
   "health_safety",
   "event",
   "suggestion",
+  /**
+   * 복약 코스 (#713). 04 Health readout 의 근거로만 온다 — 체크 안내 · 회차 현황이 어느 코스를 말하는지다.
+   * 서버는 readout 근거 중 이 종류만 화면으로 보낸다 (`apps/api/app/api/runs/translate.py` 의 `_SCREEN_REF_KINDS` · PR #716).
+   */
+  "medication_schedule",
 ] as const;
 export type RefKind = (typeof REF_KINDS)[number];
 
@@ -312,6 +317,36 @@ export interface Suggestion {
    * 🚨 **장소 이름은 여기가 아니라 `content` 에 있다** ("○○공원에서 모래성 쌓기"). 화면이 이름을 따로 꺼내지 않는다.
    */
   place_notice: string | null;
+  /**
+   * 행사가 붙은 추천에만 오는 행사 시작일 (`YYYY-MM-DD`, #681). 장소 추천과 장소가 없는 추천은 `null`.
+   * 화면이 확인 문구 바로 위에 기간 한 줄로 세운다 — 날짜 없이 행사 이름만 나가면 지난 행사인지 알 수 없다.
+   *
+   * 🚨 **근거가 아니다** (`place_notice` 와 같다). 🚨 날짜를 더하고 빼지 않는다 — "3일 남았어요" 같은 말을
+   *    만들지 않고 두 날짜를 그대로 적는다 (`docs/web/screen-rules-v1.md` §2).
+   */
+  event_starts_on: string | null;
+  /** 행사 종료일 (`YYYY-MM-DD`). 시작일과 같이 오고 같이 빈다. 하루짜리 행사면 시작일과 같다. */
+  event_ends_on: string | null;
+  /**
+   * 그 추천에 주의할 요소가 있을 때만 오는 위험 경고 문구 ("작은 부품은 삼킬 수 있어요. …"). 위험 용어 사전
+   * (`apps/api/reference/hazard_terms.yaml`)의 `warning_text` 상수라 **서버 코드 문구 그대로** 보인다 (#402 · #672).
+   * 한 추천에 둘 이상 올 수 있고, 없으면 `[]` 다 (`null` 로 오지 않는다).
+   *
+   * 🚨 **근거가 아니다.** `place_notice` 와 같은 이유로 "사용한 기록" 에 넣지 않고 건수에도 세지 않는다.
+   * 🚨 **`caution` · `danger` 색을 입히지 않는다** — 둘 다 승인 게이트와 알레르기 차단 전용이다.
+   */
+  warnings: string[];
+  /**
+   * 해 보는 데 필요한 것 (#659). Food 는 **필요한 재료**, Activity · Growth 는 **준비물**이고 Growth 도서는
+   * "제목(저자)" 한 항목이다. 서버가 일정 초안의 준비물을 만드는 것과 **같은 원본**(`suggestion.items`)이라,
+   * 고르기 전에 보는 것과 일정에 붙는 것이 어긋나지 않는다. 화면은 `SuggestionItems` 하나로 그린다.
+   *
+   * 🚨 **읽기 전용이다.** 여기서 "준비했어요" 를 체크하지 않는다 — 준비 상태는 일정이 생긴 뒤 캘린더의
+   *    `EventItem.is_prepared` 다. 추천 단계에 체크박스를 두면 추천을 고르는 체크박스와 섞인다.
+   * 🚨 **서버가 아직 이 칸을 내리지 않는다** (#674 · `contract/schema-map.ts` 의 `allow`). 그때까지 실서버
+   *    응답에서는 빠져 오고, 화면은 빈 배열과 같게 영역을 세우지 않는다. 서버에 칸이 생기면 늘 배열이다.
+   */
+  items: string[];
   status: SuggestionStatus;
   /** 생성 +24h. 승인 없는 draft 는 여기서 만료된다 (NF-07). */
   expires_at: string;
@@ -341,8 +376,15 @@ export interface GeneralSuggestion {
   content: string;
   /** 장소가 붙은 추천의 확인 문구. 개인화와 같은 칸이다 (`Suggestion.place_notice`). 장소가 없으면 `null`. */
   place_notice: string | null;
+  /** 행사가 붙은 추천의 기간. 개인화와 같은 칸이다 (`Suggestion.event_starts_on`). 행사가 없으면 `null`. */
+  event_starts_on: string | null;
+  event_ends_on: string | null;
+  /** 위험 경고 문구. 개인화와 같은 칸이다 (`Suggestion.warnings`). 없으면 `[]`. */
+  warnings: string[];
   /** "36개월 또래가 자주 찾는 놀이예요" · "요청하신 놀이를 바탕으로 골랐어요" 처럼 무엇을 기준으로 골랐는지. 서버가 만든다. */
   basis: string;
+  /** 필요한 재료 · 준비물. 개인화와 같은 칸 · 같은 원본이다 (`Suggestion.items` · #659). */
+  items: string[];
   status: SuggestionStatus;
   /** 생성 +24h. 개인화 추천과 같다. */
   expires_at: string;

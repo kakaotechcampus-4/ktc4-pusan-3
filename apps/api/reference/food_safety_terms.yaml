@@ -333,7 +333,7 @@ age_rules:
     aliases: [꿀, 벌꿀, 허니, honey]
     guards: []
     exact: []
-    source: 영아 보툴리누스증 — 1세 미만에게 꿀을 먹이지 않는다(질병관리청 · AAP)
+    source: 영아 보툴리누스증 — 1세 미만에게 꿀을 먹이지 않는다(질병관리청 · DfE EYFS nutrition guidance 2025 "Foods to avoid" p.10)
   - label: 생우유
     below_month: 12
     action: block
@@ -342,7 +342,7 @@ age_rules:
     guards: []
     exact: [우유]
     ends: [우유]
-    source: 마시는 우유는 돌 이후에 준다 — 요리에 든 우유는 이 규칙이 아니다(대한소아청소년과학회 · AAP)
+    source: 마시는 우유는 돌 이후에 준다 — 요리에 든 우유는 이 규칙이 아니다(대한소아청소년과학회 · DfE EYFS nutrition guidance 2025 Table 2 음료 p.16)
   - label: 질식 위험 식품
     below_month: 48
     action: block
@@ -350,7 +350,7 @@ age_rules:
     aliases: [팝콘, 사탕, 캔디, 껌, 젤리, 구미, gummy, 마시멜로, 마시멜로우, 머시멜로]
     guards: [솜사탕, 사탕수수, 로열젤리]
     exact: []
-    source: 자르거나 갈아서 안전하게 만들 수 없는 것 — AAP 2010 Prevention of Choking Among Children · 식약처 곤약젤리 수입 금지
+    source: 자르거나 갈아서 안전하게 만들 수 없는 것 — 식약처 곤약젤리 수입 금지 · 팝콘은 DfE EYFS nutrition guidance 2025(p.10)와 뉴질랜드 보건부 0–2세 지침 2021(p.44)이 함께 질식 위험으로 든다. 사탕류는 뉴질랜드 지침(lollies), 젤리는 DfE(raw jelly cubes)
   - label: 떡
     below_month: 48
     action: block
@@ -361,7 +361,7 @@ age_rules:
     aliases: [떡, 인절미, 송편, 경단, 증편, 백설기, 절편]
     guards: [떡갈비, 떡뻥]
     exact: []
-    source: 끈적해서 잘라도 목에 붙을 수 있다 — 한국소비자원 떡 질식 사고 주의 · AAP 2010 Prevention of Choking Among Children
+    source: 끈적해서 잘라도 목에 붙을 수 있다 — 한국소비자원 떡 질식 사고 주의
   - label: 질식 주의 식품
     below_month: 48
     action: caution
@@ -370,7 +370,7 @@ age_rules:
     # 갈거나 즙을 낸 것은 통째가 아니다(땅콩가루 · 포도잼). 땅콩버터 · 건포도는 주의 그대로다
     guards: [포도당, 포도씨유, 포도잼, 포도주스, 포도즙, 밤고구마, 밤호박, 땅콩호박, 땅콩가루, 땅콩소스, 아몬드가루, 아몬드우유, 아몬드밀크, 호두가루, 잣가루, 잣죽, 잣소스]
     exact: []
-    source: 통째로 먹으면 질식할 수 있고 잘게 잘라도 위험이 남아 먹는 동안 곁에서 지켜본다 — AAP 2010 Prevention of Choking Among Children
+    source: 통째로 먹으면 질식할 수 있고 잘게 잘라도 위험이 남아 먹는 동안 곁에서 지켜본다 — DfE EYFS nutrition guidance 2025(둥근 모양은 길게 잘라 낸다 p.10) · 뉴질랜드 보건부 0–2세 지침 2021(작고 둥근 음식 · 소시지 · 통째 견과, 앉아서 먹고 곁에서 지켜본다 p.44)
   - label: 날음식
     below_month: null
     action: block

@@ -4,7 +4,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { setAuthToken } from "@/lib/api/client";
 import { url } from "@/mocks/handlers/helpers";
 import { server } from "@/mocks/server";
-import { platformSummary, reportRenderError, sendClientError } from "@/lib/report-render-error";
+import {
+  describeRenderError,
+  platformSummary,
+  reportRenderError,
+  sendClientError,
+} from "@/lib/report-render-error";
 
 /**
  * 화면 오류를 서버로 보낸다 (멘토 #267 2번 · #166). 그 전엔 console.error 뿐이라 보호자 폰의 콘솔에만
@@ -153,5 +158,31 @@ describe("reportRenderError", () => {
     reportRenderError(new Error("x"), null);
 
     expect(called).toBe(false);
+  });
+});
+
+describe("describeRenderError — 서버가 받는 모양으로 (#732)", () => {
+  it.each([
+    [Object.assign(new Error("x"), { name: "Bad Name!" }), "Bad_Name_"],
+    [Object.assign(new Error("x"), { name: "" }), "object"],
+    [Object.assign(new Error("x"), { name: "A".repeat(100) }), "A".repeat(80)],
+    [{ name: 42 }, "object"],
+    ["x", "string"],
+  ])("이름 %#", (error, expected) => {
+    const { name } = describeRenderError(error);
+    expect(name).toBe(expected);
+    expect(name).toMatch(/^[A-Za-z0-9_$.-]{1,80}$/);
+  });
+
+  it("digest 는 서버 모양일 때만 — 아니면 null", () => {
+    expect(describeRenderError(Object.assign(new Error("x"), { digest: "1234567" })).digest).toBe(
+      "1234567",
+    );
+    expect(describeRenderError(Object.assign(new Error("x"), { digest: "has space" })).digest).toBe(
+      null,
+    );
+    expect(
+      describeRenderError(Object.assign(new Error("x"), { digest: "9".repeat(65) })).digest,
+    ).toBe(null);
   });
 });

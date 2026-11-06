@@ -86,3 +86,71 @@ def test_05_는_검수된_시드_행의_출처를_카드로_싣는다() -> None:
 
     assert set(cards) == set(refs)  # 근거로 달린 행이 05 에서 조용히 사라지지 않는다
     assert all(card.source_org and card.source_title for card in cards.values())
+
+
+@pytest.mark.parametrize("domain", sorted(SEEDS))
+def test_일본_자료가_보류된_동안_pdl_1_행은_없다(domain: str) -> None:
+    """`pdl_1` 은 값 계약에만 있다 (#510 Part F). 일본 가이드 원본이 404 라 행을 만들지 않는다."""
+    rows = [e.meta.doc_key for e in SEEDS[domain]() if e.meta.license_basis == "pdl_1"]
+
+    assert rows == []
+
+
+def test_NHS_행의_이름은_Agent_입력과_05_카드_어디에도_나가지_않는다(monkeypatch) -> None:
+    """실제 NHS 기관 · 제목 · 주소는 DocMeta(YAML)에만 남는다 (#510 Part C, NHS 약관 3.6(b)).
+
+    `source_locator` 도 공개 칸이 아니다 — 모델 입력과 05 응답 어디에도 없다.
+    """
+    from dataclasses import fields
+    from datetime import date
+
+    from app.agents.common.reference_docs import doc_row_id
+    from app.agents.food import doc_seed as food_seed
+    from app.agents.food.doc_seed import parse_food_doc
+    from app.agents.food.store import InMemoryFoodDocs
+
+    locator = "(테스트) 내부 추적용 위치 7쪽"
+    entries = parse_food_doc(
+        {
+            "rows": [
+                {
+                    "doc_key": "food.test.nhs",
+                    "row_type": "feeding_tip",
+                    "title": "(테스트) 행",
+                    "body": "가짜 문장이다.",
+                    "min_month": 24,
+                    "max_month": 72,
+                    "tags": ["test"],
+                    "source_title": "(테스트) 가짜 NHS 문서 제목",
+                    "source_org": "NHS (테스트)",
+                    "source_year": 2025,
+                    "source_locator": locator,
+                    "source_url": "https://www.nhs.uk/test/fake-page/",
+                    "license_basis": "ogl_3",
+                    "status": "approved",
+                    "authored_by": "writer-a",
+                    "reviewed_by": "reviewer-b",
+                    "reviewed_at": date(2026, 11, 3),
+                    "version": 1,
+                }
+            ]
+        }
+    )
+    monkeypatch.setattr(food_seed, "food_doc_seed", lambda: entries)
+    entrypoint._doc_index.cache_clear()
+    try:
+        [row] = InMemoryFoodDocs.from_seed()._rows
+        [card] = entrypoint.describe_docs(
+            [("food_doc", doc_row_id("food_doc", "food.test.nhs"))]
+        ).values()
+    finally:
+        entrypoint._doc_index.cache_clear()
+
+    public = repr((row, card)).lower()
+    for leaked in ("nhs", "nhs.uk", "가짜 nhs 문서 제목", locator.lower()):
+        assert leaked not in public, leaked
+    assert row.source_org == card.source_org == "영국 정부 공공 정보"
+    assert "source_locator" not in {f.name for f in fields(row)} | {f.name for f in fields(card)}
+    # 내부 추적 정보는 시드에 그대로 있다
+    assert entries[0].meta.source_org == "NHS (테스트)"
+    assert entries[0].meta.source_url == "https://www.nhs.uk/test/fake-page/"

@@ -14,7 +14,7 @@ from uuid import UUID
 
 from app.agents.common.evidence import AffinityRow
 from app.agents.common.reference import load_reference
-from app.agents.common.reference_docs import doc_row_id
+from app.agents.common.reference_docs import doc_row_id, public_doc_source
 from app.agents.food.store.ports import (
     RECIPE_SOURCES,
     DaycareMealRow,
@@ -276,7 +276,8 @@ def _seed_row(entry: "FoodDocEntry", *, written_at: datetime) -> FoodDocRow:
         texture=entry.texture,
         food_groups=frozenset(entry.food_groups),
         allergen_codes=entry.allergen_codes | allergen_codes_in(entry),
-        source_org=entry.meta.source_org,
+        # Agent 의 [예시] 기관명도 05 와 같은 공개용 출처다 — NHS 이름이 모델로 새지 않게 (#510)
+        source_org=public_doc_source(entry.meta).source_org,
         written_at=written_at,
     )
 

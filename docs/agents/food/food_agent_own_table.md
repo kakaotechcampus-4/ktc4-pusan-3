@@ -88,7 +88,7 @@ DB 권한: Agent role에 **`daycare_meal` UPDATE/DELETE**(INSERT는 비부여) �
 | `menu_key` | text | **PK.** 정규화 메뉴명 (공백·괄호·급식 알레르기 번호 제거, 동의어 치환) |
 | `display_name` | text | NOT NULL. 화면에 쓰는 이름 |
 | `food_code` | text | nullable. 식약처 식품코드 |
-| `source` | varchar(16) | `mfds_nutri` / `center_standard` / `manual`. 레시피(농식품정보원 `mafra_recipe` · 보류한 COOKRCP01)는 `recipe_catalog` 에 둔다(§1-1, #326 리뷰). `center_standard` 는 센터별 이용 조건을 확인한 뒤 들어올 때 다시 본다 |
+| `source` | varchar(16) | `mfds_nutri` / `center_standard` / `manual`. 레시피(농식품정보원 `mafra_recipe` · 농촌진흥청 `nics_recipe` · 보류한 COOKRCP01)는 `recipe_catalog` 에 둔다(§1-1, #326 리뷰 · #510). `center_standard` 는 센터별 이용 조건을 확인한 뒤 들어올 때 다시 본다 |
 | `serving_g` | numeric(7,1) | nullable. 1인분 중량 — **성인 기준**. 영양DB 원재료성 · 가공식품 품목대표는 대부분 비어 있다(10-11). 비면 모르는 양이다 — 그 메뉴는 영양 합계에서 빼고 식품군 계산에만 쓴다(1차 배포, [`영양소_계산_설계.md`](영양소_계산_설계.md) §4 · N-15) |
 | `nutrients` | jsonb | NOT NULL, default `'{}'`. 100g 기준. **식품영양성분DB 에서만 채운다.** 에너지 · 단백질 · 지방 · 탄수화물 · 칼슘 · 철 · 나트륨은 다 차야 하고, 당류 · 포화지방은 있으면 싣는다(10-11). 사람이 넣은 행은 비어 있을 수 있고, 비면 영양 판정은 그 메뉴를 unresolved 로 센다 |
 | `ingredients` | text[] | NOT NULL, default `'{}'`. 사람이 확인한 재료(`manual`)만. 영양DB 행은 비어 있다 — 알레르기는 메뉴명 사전으로 보고 나머지는 "확인 못 함". 레시피 재료는 싣지 않는다(§1-1) |
@@ -109,12 +109,14 @@ DB 권한: Agent role에 **`daycare_meal` UPDATE/DELETE**(INSERT는 비부여) �
 
 **식단 추천 후보 풀은 이 표에서만 고른다. `menu_catalog`(§1)와 떼어 둔다**(10-11, #326 리뷰). 급식 · 기록 · 영양 판정은 이 표를 읽지 않는다 — 레시피 재료로 급식 메뉴를 판정하면, 어린이집이 실제로 넣은 재료(바지락)를 표준 레시피(멸치 육수)가 "없음" 으로 덮는다. 떼어 두면 영양DB 배치와 레시피 배치가 같은 `menu_key` 를 두고 순서를 다툴 일도, 있는 행을 고치는 UPDATE 도 필요 없다.
 
-후보 풀은 재료가 있는 행만 쓴다. 그 재료를 농식품정보원 레시피에서 **배치로만** 채운다 — 요청 중에는 부르지 않는다.
+후보 풀은 재료가 있는 행만 쓴다. 그 재료를 농식품정보원 · 농촌진흥청 「농식품 이달의 식재료」 레시피에서 **배치로만** 채운다 — 요청 중에는 부르지 않는다.
+
+**레시피 소스는 둘이다(#510).** 재료명 정리 표(`reference/recipe_ingredients.yaml`)는 두 소스가 공유한다 — 이미 검수한 이름을 다시 보지 않는다. 적재는 두 소스를 다 받은 뒤 한 트랜잭션으로 쓰고, 어느 소스든 받기에 실패하거나 0건이면 아무 소스도 쓰지 않는다. 후보 풀에서 내리는 것은 소스마다 그 소스의 번호로만 한다. NICS 키(`NICS_RECIPE_API_KEY`)가 비면 그 소스는 건너뛴다 — 단 그 소스 레시피가 이미 후보 풀에 있으면 적재를 멈춘다. 건너뛴 소스의 행은 다시 만들 수 없어서, 정리 표에서 알레르기 코드를 고쳐도 옛 판정으로 후보 풀에 남기 때문이다. 재료 문자열이 깨진 NICS 레시피는 그 레시피만 이름 없는 재료로 둬서 후보에서 뺀다(나머지는 그대로 싣는다). 이름이 같은 레시피를 후보 풀에서 하나로 합칠 때 대표 행(출처 · 메뉴 근거 id 를 정한다)은 `(source, source_id)` 순 첫 행이다 — 입력 순서로 고르면 같은 메뉴의 근거 id 가 run 마다 바뀐다.
 
 | 필드 | 타입 | 비고 |
 | --- | --- | --- |
-| `source` | varchar(16) | **PK (`source`, `source_id`).** `mafra_recipe`. COOKRCP01 을 들이면 `mfds_recipe` 도 여기다 |
-| `source_id` | text | 소스의 레시피 번호(농식품정보원 `RECIPE_ID`) |
+| `source` | varchar(16) | **PK (`source`, `source_id`).** `mafra_recipe` · `nics_recipe`. COOKRCP01 을 들이면 `mfds_recipe` 도 여기다(CHECK 는 처음부터 세 값을 받는다) |
+| `source_id` | text | 소스의 레시피 번호(농식품정보원 `RECIPE_ID` · 농촌진흥청 `recipeSn`) |
 | `menu_key` | text | NOT NULL, **UNIQUE 아님**. 레시피 이름을 `normalize_menu_key` 로 바꾼 것. 이름이 같은 레시피도 따로 행을 갖는다(아래) |
 | `display_name` | text | NOT NULL. 레시피 이름 |
 | `food_code` · `serving_g` · `nutrients` | | 레시피 이름이 영양DB 와 정확히 같을 때만 채운다(§1 규칙). 아니면 비우고, 영양 가중에 쓰지 않는다 |
@@ -210,6 +212,8 @@ DB 권한: Agent role에 **`daycare_meal` UPDATE/DELETE**(INSERT는 비부여) �
 | `allergen_codes` | smallint[] | 제목 · 본문에 나오는 19종 코드를 다 적는다 — 조회 후 `filter_food_safety` 통과 |
 
 - 시드는 `apps/api/reference/food_doc.yaml`, 로더는 `app/agents/food/doc_seed.py`, 내용 검사는 `tests/unit/agents/food/test_food_doc_seed.py` 다. 소스 기준은 RAG_plan §3 (#337).
+- 🚨 YAML 의 `source_org` · `source_title` · `source_url` 은 실제 원문이다(내부 추적용). Agent 입력(`FoodDocRow.source_org`)과 05 응답(`DocCard`)에는 `common/reference_docs.public_doc_source` 가 만든 공개용 출처만 나간다 — CC BY 는 변경 표시와 주소, OGL 은 필수 영문 문장과 주소를 붙이고, NHS 를 번역 · 각색한 행은 기관 · 제목 · 주소를 OGL 안내로 바꾼다(NHS 약관 3.6(b)). `source_locator` 는 어디로도 나가지 않는다 (#510).
+- 신규 행(#510 — `meal_pattern` 30행 · NHS 기반 `feeding_tip` 8행)은 `status: draft` 다. 작성자와 다른 사람이 원문을 확인한 뒤 행마다 `approved` 로 올린다. 올리기 전에는 화면에 나오지 않는다.
 - 조회는 `status='approved'`만. 단계·`row_type` 필터 → 의미 검색 top-3.
 - 이유기(4–11개월)는 `profile_affinity`가 구조적으로 0행이라 **이 테이블이 곧 추천 품질**이다.
 

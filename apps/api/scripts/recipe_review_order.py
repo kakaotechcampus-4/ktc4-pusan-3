@@ -1,7 +1,13 @@
 """레시피 재료 정리 표 검수 순서 — 가장 적게 검수해서 레시피를 가장 많이 푸는 순서 (FT-18).
 
     uv run python -m scripts.recipe_review_order --fetch --target 50 --output review_order.txt
+    uv run python -m scripts.recipe_review_order --fetch --source nics --target 300 \
+        --output order.txt
     uv run python -m scripts.recipe_review_order --input SYNC.json --target 50
+
+`--source` 는 `--fetch` 가 어느 레시피 소스를 받을지 고른다(기본 mafra, nics 는
+`NICS_RECIPE_API_KEY` 가 필요하다). 정리 표는 두 소스가 공유해서 계산은 같다. `--input` 과는 함께
+쓰지 않는다 — 저장해 둔 결과는 소스가 이미 정해져 있다.
 
 남은 재료(정리 표에 없거나 `draft`)가 가장 적은 레시피부터 고르고, 그 레시피의 남은 재료를 순서에
 더한다. `unknown` 이거나 이름이 빈 재료가 든 레시피, 재료가 하나도 없는 레시피는 검수해도 풀리지
@@ -21,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from app.agents.food.recipe_catalog import IngredientEntry, ingredient_key, ingredient_table
+from scripts import recipe_fetch
 
 # `recipe_catalog._SETTLED` 와 같은 값이다 — 이 둘만 정리된 것으로 센다. 어긋나면 순서가 약속한
 # 레시피 수와 실제 `resolved` 수가 달라져서, 둘이 같은지 테스트가 `build_recipe_row` 로 맞춰 본다
@@ -77,13 +84,8 @@ def _recipes_from(sync: dict[str, Any]) -> list[list[str | None]]:
     ]
 
 
-async def _fetch() -> dict[str, Any]:
-    from app.core.config import settings
-    from app.integrations.mafra.client import MafraRecipeClient, mafra_recipe_http
-
-    async with mafra_recipe_http() as http:
-        client = MafraRecipeClient(api_key=settings.MAFRA_RECIPE_API_KEY, http=http)
-        return dataclasses.asdict(await client.recipes_with_ingredients())
+async def _fetch(source: str) -> dict[str, Any]:
+    return dataclasses.asdict(await recipe_fetch.fetch(recipe_fetch.SOURCE_NAMES[source]))
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -94,8 +96,14 @@ def build_parser() -> argparse.ArgumentParser:
         "원문 이름과 그 재료까지 봤을 때 풀리는 레시피 누계를 낸다. status 는 바꾸지 않는다."
     )
     source = parser.add_mutually_exclusive_group(required=True)
-    source.add_argument("--fetch", action="store_true", help="농식품정보원에서 받는다")
+    source.add_argument("--fetch", action="store_true", help="--source 의 레시피를 받는다")
     source.add_argument("--input", type=Path, help="받아 둔 동기화 결과(JSON)")
+    parser.add_argument(
+        "--source",
+        choices=tuple(recipe_fetch.SOURCE_NAMES),
+        help="--fetch 로 받을 소스. mafra 는 농식품정보원, nics 는 농촌진흥청 이달의 식재료 "
+        "(기본 mafra). --input 과는 쓰지 않는다",
+    )
     parser.add_argument("--target", type=int, default=50, help="풀고 싶은 레시피 수")
     parser.add_argument(
         "--output",
@@ -108,10 +116,16 @@ def build_parser() -> argparse.ArgumentParser:
 def main(
     argv: list[str] | None = None, *, table: Mapping[str, IngredientEntry] | None = None
 ) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.input and args.source:
+        # 받아 둔 결과는 소스가 이미 정해져 있다 — 붙여도 계산은 같고 무시된다
+        parser.error("--source 는 --fetch 와만 쓴다")
 
     sync = (
-        asyncio.run(_fetch()) if args.fetch else json.loads(args.input.read_text(encoding="utf-8"))
+        asyncio.run(_fetch(args.source or "mafra"))
+        if args.fetch
+        else json.loads(args.input.read_text(encoding="utf-8"))
     )
     entries = ingredient_table() if table is None else table
     lines = [
