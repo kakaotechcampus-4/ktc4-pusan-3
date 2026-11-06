@@ -13,9 +13,10 @@ from app.domains.child.parents import unlink_parent
 from app.domains.identity.models import Parent
 from app.domains.medication import service as medication_service
 from app.domains.medication.models import MedicationDose
+from app.domains.medication.repository import list_doses
 
 from ..conftest import issue_bearer, link_child
-from .helpers import NOW, dose_of, get_courses, put_check
+from .helpers import NOW, TODAY, dose_of, get_courses, patch, put_check, revise_body, seed_course
 
 
 async def name(session, parent_id, nickname: str) -> None:
@@ -80,6 +81,22 @@ async def test_해제하면_체크한_보호자도_비고_다른_보호자가_�
 
     assert unchecked.json()["checked_by"] is None
     assert rechecked.json()["checked_by"] == {"parent_id": str(helper), "nickname": "보호자둘"}
+
+
+async def test_코스를_수정해도_남은_체크_회차는_처음_보호자를_싣는다(
+    db_client, session, bearer, consented
+):
+    headers, _ = bearer
+    helper_headers, helper = await helper_of(session, consented)
+    course = await seed_course(session, consented, starts=-1, ends=1)
+    doses = await list_doses(session, schedule_ids=[course.id])
+    dinner = next(d for d in doses if d.dose_date == TODAY and d.scheduled_time.hour == 19)
+    await put_check(db_client, helper_headers, consented, dinner.id, {"checked": True})
+
+    response = await patch(db_client, headers, consented, course.id, revise_body())
+
+    kept = next(d for d in response.json()["course"]["doses"] if d["id"] == str(dinner.id))
+    assert kept["checked_by"] == {"parent_id": str(helper), "nickname": "보호자둘"}
 
 
 async def test_체크한_보호자를_알_수_없으면_시각만_있고_체크한_보호자는_null(
