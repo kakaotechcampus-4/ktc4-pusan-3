@@ -47,6 +47,7 @@ import type {
 import type { QuestionState } from "@/stores/conversation";
 import type { Agent, EventDraft, MedicationDraft, StoredRef } from "@/lib/api/types";
 import { formatEventTime } from "@/lib/format";
+import { MEDICATION_ENABLED } from "@/lib/store-policy";
 import { FORWARD } from "@/lib/view-transition";
 
 /**
@@ -233,7 +234,8 @@ export function RunReply({
     run.guidance.length > 0 ||
     run.note !== null ||
     agentResults.length > 0 ||
-    run.medicationDrafts.length > 0 ||
+    // 꺼 둔 동안은 초안 카드가 서지 않으니 답으로 세지 않는다 (`lib/store-policy.ts`).
+    (MEDICATION_ENABLED && run.medicationDrafts.length > 0) ||
     // 🚨 조회 · 삭제 카드도 답이다 (#535). 찾거나 지우려던 한 줄은 저장할 관찰이 없는 것이 정상이다.
     run.foundTabs.length > 0 ||
     run.deleteProposal !== null;
@@ -403,8 +405,9 @@ export function RunReply({
       ) : null}
 
       {/* 복약 초안 (#537). 🚨 일정 초안과 다른 카드다 — 게이트가 다르다(㉡ 건강 기록 확정). 지난 턴은 초안이
-          보관함에 없으면 넣는 길이 없다 (`stores/medication-draft.ts` 는 메모리 전용이다). */}
-      {run.medicationDrafts.length > 0 ? (
+          보관함에 없으면 넣는 길이 없다 (`stores/medication-draft.ts` 는 메모리 전용이다).
+          🚨 스토어 선언 때문에 꺼 둔 동안은 서버가 초안을 보내도 카드를 세우지 않는다 (`lib/store-policy.ts`). */}
+      {MEDICATION_ENABLED && run.medicationDrafts.length > 0 ? (
         <MedicationDraftsCard
           drafts={run.medicationDrafts}
           remaining={remainingMedicationDrafts}
@@ -552,7 +555,8 @@ function AgentResultCard({
   } | null;
 }) {
   const readouts = blockReadouts(result);
-  const medicationLink = medicationHref(childId, readouts);
+  // 꺼 둔 동안은 갈 곳(11-3)이 없다 (`lib/store-policy.ts`).
+  const medicationLink = MEDICATION_ENABLED ? medicationHref(childId, readouts) : null;
   return (
     <Card>
       <div className="flex items-start gap-3">
