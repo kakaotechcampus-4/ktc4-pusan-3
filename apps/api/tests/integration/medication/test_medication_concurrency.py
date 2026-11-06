@@ -460,39 +460,53 @@ async def test_체크가_회차를_잡은_사이에_같은_보호자가_탈퇴�
 
 
 async def test_등록이_연결을_잡은_사이에_끊기가_오면_구독까지_지워진다(make_child):
-    """등록은 연결을 먼저 잡고 등록한 보호자의 구독을 만든다. 끊기가 겹치면 등록 커밋을
+    """함께 보는 보호자가 등록하는 중에 그 보호자의 연결이 끊긴다 (등록 보호자는 끊을 수 없다).
+
+    등록은 연결을 먼저 잡고 등록한 보호자의 구독을 만든다. 끊기가 겹치면 등록 커밋을
     기다렸다가 그 구독까지 지운다 — 잡지 않으면 끊기가 아직 안 보이는 구독을 지나쳐 끊긴 보호자의
     구독이 남는다.
     """
     child_id = await make_child()
-    owner_id = await owner_of(child_id)
+    async with async_session_factory() as s:
+        helper = Parent()
+        s.add(helper)
+        await s.flush()
+        s.add(
+            ParentChild(parent_id=helper.id, child_id=child_id, relation=ParentChildRelation.OTHER)
+        )
+        await s.commit()
+        helper_id = helper.id
     s1, s2 = async_session_factory(), async_session_factory()
     try:
         await create_course(
             s1,
             child_id=child_id,
-            parent_id=owner_id,
+            parent_id=helper_id,
             data=course_input(),
             today=TODAY,
             now=NOW,
         )  # 아직 commit 전
 
         async def unlink() -> None:
-            assert await unlink_parent(s2, child_id=child_id, parent_id=owner_id)
+            assert await unlink_parent(s2, child_id=child_id, parent_id=helper_id)
             await s2.commit()
 
         task = asyncio.create_task(unlink())
         await asyncio.sleep(0.4)  # 끊기가 등록이 잡은 연결 앞에서 기다릴 틈
+        assert not task.done()  # 끊기가 실제로 기다리고 있다
         await s1.commit()
         await asyncio.wait_for(task, timeout=5)
+
+        async with async_session_factory() as s:
+            left = await s.scalar(
+                select(func.count())
+                .select_from(MedicationNoticeSubscription)
+                .where(MedicationNoticeSubscription.parent_id == helper_id)
+            )
+        assert left == 0
     finally:
         await s1.close()
         await s2.close()
-
-    async with async_session_factory() as s:
-        left = await s.scalar(
-            select(func.count())
-            .select_from(MedicationNoticeSubscription)
-            .where(MedicationNoticeSubscription.parent_id == owner_id)
-        )
-    assert left == 0
+        async with async_session_factory() as s:
+            await s.execute(delete(Parent).where(Parent.id == helper_id))
+            await s.commit()
