@@ -34,6 +34,7 @@ from app.agents.common.config import AgentSettings
 from app.agents.common.datetime_rules import DateRange
 from app.agents.common.llm_client import LLMClient
 from app.agents.memory.agent import MemoryAgentResult, run
+from app.agents.memory.bundles import MUTATING_PREFIXES
 from app.agents.memory.context import AgentContext
 from app.agents.memory.drafts import EventDraft
 from app.agents.memory.schemas.task import MemoryTask
@@ -84,7 +85,7 @@ CHILD = UUID("00000000-0000-7000-8000-000000000001")
 WRITER = UUID("00000000-0000-7000-8000-0000000000ff")
 
 DOMAINS = ("food", "health", "education", "activity", "routine")
-MUTATING = "쓰기"  # forbidden_tools 에 넣으면 create/update/delete 전부를 금지한다
+MUTATING = "쓰기"  # forbidden_tools 에 넣으면 create/update/delete · 삭제 제안 전부를 금지한다
 
 # solo — task 없이 전체 tool 로. task — Supervisor 정답 출력으로 만든 MemoryTask 로.
 # task 모드는 "Supervisor 가 완벽하다고 가정한 Memory 만의 성적" 이다 (supervisor_plan Step 7)
@@ -198,9 +199,9 @@ async def _seed_block_play(context: AgentContext) -> None:
 
 
 async def _seed_today_two_domains(context: AgentContext) -> None:
-    """T15 — "오늘 기록 다 지워줘" 가 모호하려면 오늘 기록이 여럿 있어야 한다.
+    """T15 — "오늘 기록 다 지워줘" 로 여러 종류를 조회해 제안하는지 보려면 오늘 기록이 여럿이다.
 
-    어제 것만 있으면 "오늘 지울 기록이 없다" 가 맞는 답이라 되묻기를 잴 수 없다 (실측).
+    어제 것만 있으면 "오늘 지울 기록이 없다" 가 맞는 답이라 제안을 잴 수 없다 (실측).
     """
     await context.store.create_observation(
         domain="food",
@@ -478,14 +479,13 @@ CASES: list[EvalCase] = [
         "T10",
         "어제 사과 먹었다고 저장한 기록 지워줘.",
         seed=_seed_apple,
-        # 조회 결과가 한 건이어도 바로 지우지 않는다. 지운 기록은 보호자가 되살릴 수 없어서
-        # 무엇을 지울지 짚어 한 번 확인한다. 확인에 답한 뒤 지우는 테스트는 test_delete_confirm
-        required_tools={"query_observation_food": 1},
+        # 모델은 지우지 않고 제안만 남긴다 — 보호자가 카드의 버튼으로 확정한다 (#535).
+        # 무엇을 골랐는지 자세히 보는 것은 test_delete_confirm
+        required_tools={"query_observation_food": 1, "propose_delete": 1},
         forbidden_tools={"create_observation_food", "update_observation_food"},
-        expect_clarification=True,
         checks=(
-            ("아직 지우지 않았다", lambda s: len(s.rows("food")) == 1),
-            ("지울 기록을 짚어 물었다", lambda s: s.said(("사과",))),
+            ("지우지 않았다", lambda s: len(s.rows("food")) == 1),
+            ("되묻지 않고 끝냈다", lambda s: s.result.pending is None),
         ),
     ),
     EvalCase(
@@ -546,13 +546,18 @@ CASES: list[EvalCase] = [
         "T15",
         "오늘 기록 다 지워줘.",
         seed=_seed_today_two_domains,
-        forbidden_tools={MUTATING},
-        expect_clarification=True,
+        # 기간이 있으니 묻지 않고 오늘 기록을 조회해 제안한다. 지우는 것은 보호자의 버튼이다 (#535)
+        required_tools={"propose_delete": 1},
+        # MUTATING 은 제안까지 막는다 — 저장 · 수정만 막는다
+        forbidden_tools={
+            f"{op}_observation_{domain}" for op in ("create", "update") for domain in DOMAINS
+        },
         checks=(
             (
                 "아무것도 지우지 않았다",
                 lambda s: (len(s.rows("food")), len(s.rows("activity"))) == (1, 1),
             ),
+            ("되묻지 않고 끝냈다", lambda s: s.result.pending is None),
         ),
     ),
     EvalCase(
@@ -1070,7 +1075,7 @@ def _judge(case: EvalCase, snapshot: Snapshot) -> list[str]:
             used = [
                 call.name
                 for call in snapshot.result.calls
-                if call.name.startswith(("create_", "update_", "delete_"))
+                if call.name.startswith(MUTATING_PREFIXES)
             ]
         else:
             used = [call.name for call in snapshot.result.calls if call.name == tool]
@@ -1133,7 +1138,7 @@ def _expected_text(case: EvalCase) -> str:
         )
     if case.forbidden_tools:
         names = sorted(
-            "쓰기 전부(create·update·delete)" if tool == MUTATING else tool
+            "쓰기 전부(create·update·delete·propose)" if tool == MUTATING else tool
             for tool in case.forbidden_tools
         )
         parts.append(f"금지 {' · '.join(names)}")

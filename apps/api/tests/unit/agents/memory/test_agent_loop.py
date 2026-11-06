@@ -6,7 +6,7 @@ tests/unit/agents/supervisor 에 있다.
 
 import json
 from dataclasses import replace
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
@@ -20,8 +20,8 @@ from app.agents.memory.agent import (
     _FOUND_HEADER,
     _UNCLEAR_REPLY,
     _UNSAVED_FALLBACK,
-    MAX_FOUND,
     MAX_QUESTIONS,
+    PROPOSED_REPLY,
     MemoryReply,
     ToolCallRecord,
     _claims_saved,
@@ -30,7 +30,8 @@ from app.agents.memory.agent import (
     run,
 )
 from app.agents.memory.context import AgentContext
-from app.agents.memory.result import ErrorCode
+from app.agents.memory.registry import execute_tool
+from app.agents.memory.result import MAX_ROWS, ErrorCode
 from app.agents.memory.schemas.task import (
     FoundRef,
     MemoryHint,
@@ -1494,8 +1495,8 @@ _JUK_DELETE = MemoryTask(
 )
 
 
-async def _seed_juk(context: AgentContext, raw_text: str = _JUK) -> str:
-    today = NOW.date()
+async def _seed_juk(context: AgentContext, raw_text: str = _JUK, *, day: date | None = None) -> str:
+    today = day or NOW.date()
     row = await context.store.create_observation(
         domain="food",
         child_id=context.child_id,
@@ -1545,33 +1546,67 @@ async def test_일정을_조회하고_되물으면_일정_id를_남긴다(contex
     assert result.pending.found == (FoundRef("event", event.id),)
 
 
-async def test_찾은_기록이_상한과_같으면_모두_남긴다(context: AgentContext) -> None:
-    for index in range(MAX_FOUND):
-        await _seed_juk(context, f"전복죽 {index}")
+async def _seed_juk_days(context: AgentContext, count: int) -> list[str]:
+    """하루에 한 건씩, 오래된 것부터. 조회 결과가 날짜순이라 마지막이 가장 최근이다."""
+    return [
+        await _seed_juk(context, f"전복죽 {back}일 전", day=NOW.date() - timedelta(days=back))
+        for back in range(count, 0, -1)
+    ]
+
+
+async def _query_juk(context: AgentContext) -> dict:
     llm = FakeLLM(
         _tools(_call("q1", "query_observation_food", {"raw_text_query": "전복죽"})),
-        _answer({"text": "전복죽 기록을 모두 삭제할까요?", "kind": "question"}),
+        _answer({"text": "전복죽 기록을 찾았어요.", "kind": "message"}),
     )
-
     result = await run(_JUK_DELETE.raw_text, context, client=llm, task=_JUK_DELETE)
-
-    assert result.pending is not None
-    assert len(result.pending.found) == MAX_FOUND
+    return result.calls[0].result["data"]
 
 
-async def test_찾은_기록이_상한을_넘으면_하나도_남기지_않는다(context: AgentContext) -> None:
-    # 일부만 남기면 "전부 지워줘" 에 "응" 했을 때 일부만 지워진다
-    for index in range(MAX_FOUND + 1):
-        await _seed_juk(context, f"전복죽 {index}")
-    llm = FakeLLM(
-        _tools(_call("q1", "query_observation_food", {"raw_text_query": "전복죽"})),
-        _answer({"text": "전복죽 기록을 모두 삭제할까요?", "kind": "question"}),
-    )
+async def test_조회가_상한과_같으면_잘렸다는_표시가_없다(context: AgentContext) -> None:
+    # 잘리지 않은 결과는 예전과 같은 모양이다 — 늘 싣으면 모델 행동이 흔들렸다(D02)
+    await _seed_juk_days(context, MAX_ROWS)
 
-    result = await run(_JUK_DELETE.raw_text, context, client=llm, task=_JUK_DELETE)
+    data = await _query_juk(context)
 
-    assert result.pending is not None
-    assert result.pending.found == ()
+    assert data["count"] == MAX_ROWS
+    assert "truncated" not in data and "notice" not in data
+
+
+async def test_조회가_상한을_넘으면_최근_것만_돌려주고_잘렸다고_알린다(
+    context: AgentContext,
+) -> None:
+    # 카드에 실리는 것과 모델이 본 것이 같아야 한다 — 보이지 않던 기록은 삭제 후보가 아니다 (#535)
+    ids = await _seed_juk_days(context, MAX_ROWS + 1)
+
+    data = await _query_juk(context)
+
+    assert data["count"] == MAX_ROWS and data["truncated"] is True
+    assert [row["id"] for row in data["records"]] == ids[1:]
+
+
+async def test_일정_조회가_상한을_넘으면_오늘에_가까운_것을_남긴다(context: AgentContext) -> None:
+    # 일정은 시작 시각 오름차순이라 뒤에서 자르면 먼 미래만 남고 이번 주 일정이 빠진다
+    days = [*range(-5, 0), *range(1, MAX_ROWS + 1)]  # 지난 5일 + 앞으로 40일
+    ids = {}
+    for offset in days:
+        row = await context.store.create_event(
+            child_id=context.child_id,
+            title="수영",
+            starts_at=NOW + timedelta(days=offset),
+            ends_at=None,
+            all_day=False,
+            fields={"event_type": "recurring", "category": "activity"},
+        )
+        ids[offset] = row.id
+
+    result = await execute_tool("query_event", {"title_query": "수영"}, context)
+
+    data = result.to_payload()["data"]
+    assert data["truncated"] is True and "가까운" in data["notice"]
+    # 가까운 40건 = 지난 5일 + 앞으로 35일. 먼 5일(36~40일 뒤)이 빠진다
+    kept = [ids[offset] for offset in days if offset <= MAX_ROWS - 5]
+    assert [event["id"] for event in data["events"]] == kept
 
 
 async def test_실패한_조회는_찾은_기록으로_세지_않는다(context: AgentContext) -> None:
@@ -1617,13 +1652,13 @@ async def test_이어받기는_찾은_기록을_다시_읽어_보여준다(conte
     juk = await _seed_juk(context)
     llm = FakeLLM(
         _tools(
-            _call("u1", "update_observation_food", {"observation_id": juk, "status": "deleted"})
+            _call("u1", "update_observation_food", {"observation_id": juk, "reaction": "좋아함"})
         ),
-        _cont_answer({"text": "삭제했어요.", "kind": "message"}),
+        _cont_answer({"text": "고쳤어요.", "kind": "message"}),
     )
 
     result = await run(
-        "응 지워줘.",
+        "응 그거 좋아했다고 고쳐줘.",
         context,
         client=llm,
         continuation=_asked_delete(FoundRef("observation_food", juk)),
@@ -1633,7 +1668,6 @@ async def test_이어받기는_찾은_기록을_다시_읽어_보여준다(conte
     assert _FOUND_HEADER in sent and juk in sent and _JUK in sent
     assert sent.index(_FOUND_HEADER) < sent.index("[직전에 물은 것]")
     assert result.calls[0].success is True
-    assert await context.store.get_observation(domain="food", observation_id=juk) is None
 
 
 async def test_그새_지워진_기록은_보여주지_않는다(context: AgentContext) -> None:
@@ -1706,24 +1740,6 @@ async def test_이어받기가_보여주는_일정에는_준비물이_담긴다(
 
     sent = llm.seen[0][1]["content"]
     assert _FOUND_HEADER in sent and "보험증" in sent
-
-
-async def test_일정_이어받기는_조회_없이_그_일정을_지운다(context: AgentContext) -> None:
-    event_id = await _seed_pediatric_event(context)
-    llm = FakeLLM(
-        _tools(_call("d1", "delete_event", {"event_id": event_id})),
-        _cont_answer({"text": "삭제했어요.", "kind": "message"}),
-    )
-
-    result = await run(
-        "응",
-        context,
-        client=llm,
-        continuation=_asked_delete(FoundRef("event", event_id)),
-    )
-
-    assert result.tool_names == ["delete_event"] and result.calls[0].success is True
-    assert await context.store.get_event(event_id=event_id) is None
 
 
 async def test_일정만_보여준_이어받기는_관찰_새_저장을_막는다(context: AgentContext) -> None:
@@ -2071,12 +2087,9 @@ async def test_관찰_조각을_저장된_기록_수정으로_끝내도_관찰�
         unclear=("바꿔줘",),
     )
     updated = ToolCallRecord("update_observation_food", {}, {"success": True})
-    deleted = ToolCallRecord("update_observation_food", {"status": "deleted"}, {"success": True})
 
     assert task.open_lookup_edit
     assert _missing_work(task, [updated]) == ()
-    # 지우기도 update 로 오지만 기록을 남긴 게 아니다
-    assert _missing_work(task, [deleted]) == (WorkType.OBSERVE,)
 
 
 @pytest.mark.parametrize(
@@ -2290,3 +2303,110 @@ def test_먹인_약_정정은_막지_않는다(context: AgentContext) -> None:
         _given("해열 시럽", "해열 시럽 먹였어"),
         _syrup_registered(context),
     )
+
+
+# ── 삭제 제안 뒤의 되묻기 (#535) ──────────────────────────────────
+_DELETE_AND_SNACK = MemoryTask(
+    raw_text=f'아까 "{_JUK}" 기록 지워주고, 오늘 간식도 먹었어',
+    hints=(
+        MemoryHint(text=f'아까 "{_JUK}" 기록 지워줘', work=WorkType.LOOKUP_EDIT),
+        MemoryHint(text="오늘 간식도 먹었어", work=WorkType.OBSERVE),
+    ),
+)
+
+
+def _propose_then_ask(juk: str, pending_hint: str | None) -> FakeLLM:
+    return FakeLLM(
+        _tools(_call("q1", "query_observation_food", {"raw_text_query": "전복죽"})),
+        _tools(_call("p1", "propose_delete", {"ids": [juk]})),
+        _answer(
+            {"text": "전복죽 기록을 삭제할까요?", "kind": "question", "pending_hint": pending_hint}
+        ),
+    )
+
+
+async def test_삭제_제안_뒤_그_삭제를_물으면_고정_안내로_끝낸다(context: AgentContext) -> None:
+    juk = await _seed_juk(context)
+
+    result = await run(
+        _JUK_DELETE.raw_text, context, client=_propose_then_ask(juk, None), task=_JUK_DELETE
+    )
+
+    assert result.reply == MemoryReply(text=PROPOSED_REPLY, kind="message")
+    assert result.pending is None
+
+
+async def test_삭제_제안_뒤에도_다른_조각을_묻는_질문은_살린다(context: AgentContext) -> None:
+    # 섞인 입력에서 간식 조각을 묻는 질문까지 끊으면 그 조각이 답할 곳 없이 사라진다
+    juk = await _seed_juk(context)
+    llm = FakeLLM(
+        _tools(_call("q1", "query_observation_food", {"raw_text_query": "전복죽"})),
+        _tools(_call("p1", "propose_delete", {"ids": [juk]})),
+        _answer(
+            {
+                "text": "어떤 간식을 먹었나요?",
+                "kind": "question",
+                "pending_hint": "오늘 간식도 먹었어",
+            }
+        ),
+    )
+
+    result = await run(_DELETE_AND_SNACK.raw_text, context, client=llm, task=_DELETE_AND_SNACK)
+
+    assert result.reply is not None and result.reply.kind == "question"
+    assert result.pending is not None and result.pending.work is WorkType.OBSERVE
+
+
+async def test_삭제_제안_뒤에도_다른_수정_조각을_묻는_질문은_살린다(context: AgentContext) -> None:
+    # 삭제도 수정도 lookup_edit 이다 — 수정 쪽 질문까지 막으면 그 조각이 답할 곳 없이 사라진다
+    juk = await _seed_juk(context)
+    task = MemoryTask(
+        raw_text=f'아까 "{_JUK}" 기록 지워줘. 병원 일정 시간을 바꿔줘',
+        hints=(
+            MemoryHint(text=f'아까 "{_JUK}" 기록 지워줘', work=WorkType.LOOKUP_EDIT),
+            MemoryHint(text="병원 일정 시간을 바꿔줘", work=WorkType.LOOKUP_EDIT),
+        ),
+    )
+    llm = FakeLLM(
+        _tools(_call("q1", "query_observation_food", {"raw_text_query": "전복죽"})),
+        _tools(_call("p1", "propose_delete", {"ids": [juk]})),
+        _answer(
+            {
+                "text": "병원 일정을 몇 시로 바꿀까요?",
+                "kind": "question",
+                "pending_hint": "병원 일정 시간을 바꿔줘",
+            }
+        ),
+    )
+
+    result = await run(task.raw_text, context, client=llm, task=task)
+
+    assert result.reply == MemoryReply(text="병원 일정을 몇 시로 바꿀까요?", kind="question")
+    assert result.pending is not None and result.pending.hint_text == "병원 일정 시간을 바꿔줘"
+
+
+async def test_수정_삭제_조각이_하나면_그_조각을_되묻는_질문은_막는다(
+    context: AgentContext,
+) -> None:
+    # 말투로 가르지 않는다 — "취소해줘" 도 삭제다. 조각이 하나면 제안한 그 삭제를 묻는 것이다
+    juk = await _seed_juk(context)
+    task = MemoryTask(
+        raw_text="점심 전복죽 기록 취소해줘",
+        hints=(MemoryHint(text="점심 전복죽 기록 취소해줘", work=WorkType.LOOKUP_EDIT),),
+    )
+    llm = FakeLLM(
+        _tools(_call("q1", "query_observation_food", {"raw_text_query": "전복죽"})),
+        _tools(_call("p1", "propose_delete", {"ids": [juk]})),
+        _answer(
+            {
+                "text": "전복죽 기록을 삭제할까요?",
+                "kind": "question",
+                "pending_hint": "점심 전복죽 기록 취소해줘",
+            }
+        ),
+    )
+
+    result = await run(task.raw_text, context, client=llm, task=task)
+
+    assert result.reply == MemoryReply(text=PROPOSED_REPLY, kind="message")
+    assert result.pending is None
