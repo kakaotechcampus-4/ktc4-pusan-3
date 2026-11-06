@@ -186,6 +186,8 @@ def agent_job(
             store = DbMemoryStore(session, child_id=child_id)
 
             async def commit() -> None:
+                # 고친 관찰의 기억은 여기서 한꺼번에 계산한다 — 정정과 잠금 순서가 안 섞이게 (#717)
+                await store.flush_profiles()
                 await session.commit()
                 if store.wrote:
                     channel.memory_committed = True
