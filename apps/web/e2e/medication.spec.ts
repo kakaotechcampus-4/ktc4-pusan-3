@@ -259,10 +259,17 @@ test.describe("11-3 복약 — 회차 체크 (게이트가 아니다)", () => {
     const today = page
       .locator("section")
       .filter({ has: page.getByRole("heading", { name: /^오늘 · / }) });
+    // 🚨 누가 체크했는지 보인다 (#749). 보호자를 모르는 체크(`checked_by: null`)는 이름 없이 시각만 —
+    //    `exact` 라서 이름 자리에 무엇이 붙어도("undefined님이" · 지어낸 이름) 깨진다.
+    await expect(page.getByText("현우님이 오전 8:30에 체크했어요")).toBeVisible();
+    await expect(page.getByText("오후 12:30에 체크했어요", { exact: true })).toBeVisible();
+
     await today.getByText("08:30").first().click();
     await expect(page.getByText("오늘 체크 1/3회")).toBeVisible();
+    await expect(today.getByText(/^지은님이 .+에 체크했어요$/)).toBeVisible();
     await today.getByText("08:30").first().click();
     await expect(page.getByText("오늘 체크 0/3회")).toBeVisible();
+    await expect(today.getByText(/체크했어요$/)).toHaveCount(0);
 
     // 화면은 바로 바뀌고 요청은 줄을 서서 나간다 (`lib/serial-queue.ts`) — 두 번째 요청을 기다린다.
     const checksOf = () => writes(calls, "PUT", /\/medication-doses\/.+\/check$/);
