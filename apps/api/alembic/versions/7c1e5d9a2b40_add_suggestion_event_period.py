@@ -5,7 +5,7 @@ Activity 가 행사를 붙인 추천의 행사 기간이다. 날짜 없이 행�
 nullable — 행사가 없는 추천과 이 칸이 생기기 전의 행은 비어 있다.
 
 Revision ID: 7c1e5d9a2b40
-Revises: 23b12754714a
+Revises: 1de43098440d
 """
 
 from typing import Sequence, Union
@@ -14,7 +14,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "7c1e5d9a2b40"
-down_revision: Union[str, Sequence[str], None] = "23b12754714a"
+down_revision: Union[str, Sequence[str], None] = "1de43098440d"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
