@@ -11,8 +11,9 @@ import { CHILD, expect, expectNoGate, recordApi, test, writes } from "./fixtures
  * - 한 줄 요약은 체크한 수가 아니라 응답의 `result` 로 말한다
  * - 승인 게이트 표식(approve · caution)이 서지 않는다 — 게이트 문구는 별도 문서 PR 에서 고친다
  *
- * 목의 제안 (`mocks/handlers/delete-proposals.ts`): 식사 40건(잘림 · 간식 13건은 AI 가 안 고름) · 놀이 12건 ·
- * 일정 2건(하나도 안 고름). 기본 체크는 식사 27건 + 놀이 12건 = 39건이다.
+ * 목의 제안 (`mocks/handlers/delete-proposals.ts`)
+ * - `delete_proposal` — 식사 40건(잘림 · 간식 13건은 AI 가 안 고름) · 놀이 12건. 기본 체크는 식사 27건 + 놀이 12건 = 39건이다
+ * - `delete_proposal_unpicked` — AI 가 하나도 못 고른 제안. 식사 · 놀이 · 일정 모두 체크 없이 온다
  */
 
 async function sendFromHome(page: Page, text: string) {
@@ -69,16 +70,14 @@ test.describe("삭제 카드 — 체크한 것만 버튼으로 지운다 (§2 �
     await sendFromHome(page, SAID);
     const reply = turn(page, SAID);
 
-    await expect(reply.getByRole("heading", { name: "지울 기록과 일정 고르기" })).toBeVisible();
-    const tabs = reply.getByRole("tablist", { name: "지울 기록과 일정 종류" });
+    await expect(reply.getByRole("heading", { name: "지울 기록 고르기" })).toBeVisible();
+    const tabs = reply.getByRole("tablist", { name: "지울 기록 종류" });
     // 🚨 "27/40" 이 아니라 "40건 중 27건 고름" 으로 읽힌다 (탭의 `countLabel`).
-    for (const name of [
-      "식사 40건 중 27건 고름",
-      "놀이 12건 중 12건 고름",
-      "일정 2건 중 0건 고름",
-    ]) {
+    for (const name of ["식사 40건 중 27건 고름", "놀이 12건 중 12건 고름"]) {
       await expect(tabs.getByRole("tab", { name, exact: true })).toBeVisible();
     }
+    // 🚨 서버는 AI 가 하나도 안 고른 종류를 탭으로 보내지 않는다 (#712).
+    await expect(tabs.getByRole("tab")).toHaveCount(2);
     await expect(tabs.getByRole("tab", { name: /식사/ })).toContainText("27/40");
     await expect(reply.getByText(/최근 40건만 보여드렸어요/)).toBeVisible();
     await expect(reply.getByText("요청에 맞는 기록 27건")).toBeVisible();
@@ -123,22 +122,22 @@ test.describe("삭제 카드 — 체크한 것만 버튼으로 지운다 (§2 �
       reply.getByRole("tab", { name: "식사 40건 중 26건 고름", exact: true }),
     ).toBeVisible();
 
-    // AI 가 안 고른 탭은 나머지가 처음부터 펼쳐져 있다.
-    await reply.getByRole("tab", { name: /일정/ }).click();
-    await expect(reply.getByRole("button", { name: "나머지 일정 2건 접기" })).toBeVisible();
-    await reply.getByRole("checkbox", { name: /소아과 예약/ }).check({ force: true });
+    // 접힌 "나머지" 에서 체크해도 그 행은 나머지에 남는다.
+    await reply.getByRole("button", { name: "나머지 기록 13건 보기" }).click();
+    await reply.getByRole("checkbox", { name: /간식으로 요거트 \(3\)/ }).check({ force: true });
+    await expect(reply.getByRole("button", { name: "나머지 기록 13건 접기" })).toBeVisible();
 
     await reply.getByRole("button", { name: "39건 삭제하기" }).click();
     await reply
       .getByRole("group", { name: "삭제 확인" })
       .getByRole("button", { name: "삭제" })
       .click();
-    await expect(reply.getByText("식사 26건, 놀이 12건, 일정 1건을 삭제했어요.")).toBeVisible();
+    await expect(reply.getByText("식사 27건, 놀이 12건을 삭제했어요.")).toBeVisible();
 
     const [confirmed] = writes(calls, "POST", /\/confirm$/);
     const ids = (confirmed!.body as { ids: string[] }).ids;
     expect(ids).not.toContain("dp_f1");
-    expect(ids).toContain("dp_ev1");
+    expect(ids).toContain("dp_f3");
   });
 
   test("다 풀면 버튼이 막히고 이유를 말한다 · 취소는 아무것도 지우지 않는다", async ({ page }) => {
@@ -180,6 +179,39 @@ test.describe("삭제 카드 — 체크한 것만 버튼으로 지운다 (§2 �
     await expect(again.getByRole("checkbox")).toHaveCount(0);
     await expect(again.getByRole("button", { name: /삭제하기/ })).toHaveCount(0);
     expect(writes(calls, "POST", /\/confirm$/)).toHaveLength(1);
+  });
+});
+
+test.describe("삭제 카드 — AI 가 하나도 못 고른 제안", () => {
+  test.use({ scenario: "delete_proposal_unpicked" });
+
+  test("모든 탭이 체크 없이 나머지를 펼쳐 두고, 고를 때까지 버튼이 막힌다", async ({ page }) => {
+    const calls = recordApi(page);
+    const said = "저번주 기록 좀 정리해줘";
+    await sendFromHome(page, said);
+    const reply = turn(page, said);
+
+    const tabs = reply.getByRole("tablist", { name: "지울 기록과 일정 종류" });
+    for (const name of ["식사 40건 중 0건 고름", "놀이 12건 중 0건 고름", "일정 2건 중 0건 고름"]) {
+      await expect(tabs.getByRole("tab", { name, exact: true })).toBeVisible();
+    }
+    await expect(reply.getByRole("button", { name: "나머지 기록 40건 접기" })).toBeVisible();
+    await expect(reply.getByRole("button", { name: "고른 것이 없어요" })).toBeDisabled();
+
+    await reply.getByRole("tab", { name: /일정/ }).click();
+    await expect(reply.getByRole("button", { name: "나머지 일정 2건 접기" })).toBeVisible();
+    await reply.getByRole("checkbox", { name: /소아과 예약/ }).check({ force: true });
+
+    await reply.getByRole("button", { name: "1건 삭제하기" }).click();
+    const ask = reply.getByRole("group", { name: "삭제 확인" });
+    await expect(ask.getByText("일정 1건을 지울까요?")).toBeVisible();
+    // 🚨 지워도 대화에 쓴 말은 남는다 (#748).
+    await expect(ask.getByText("대화에 적은 말은 지난 대화에 그대로 남아요.")).toBeVisible();
+    await ask.getByRole("button", { name: "삭제" }).click();
+    await expect(reply.getByText("일정 1건을 삭제했어요.")).toBeVisible();
+
+    const [confirmed] = writes(calls, "POST", /\/confirm$/);
+    expect((confirmed!.body as { ids: string[] }).ids).toEqual(["dp_ev1"]);
   });
 });
 
