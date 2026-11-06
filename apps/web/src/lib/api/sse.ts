@@ -69,6 +69,8 @@ export interface PartialEvent {
  *
  * ⚠️ `reason` 을 화면이 갈라 그리지 않는다 — 부모가 할 수 있는 일이 넷 다 같다(다시 시도 ·
  *    고쳐 쓰기). 여기 적어 두는 것은 **서버가 보낼 수 있는 값을 알아보게** 하기 위해서다 (#141).
+ *    🚨 **`not_document` 하나만 예외다** — 같은 사진을 다시 읽어도 결과가 같아서 보호자가 할 일이
+ *    "다른 사진 고르기" 로 다르다 (08 사진 화면).
  */
 export interface FailedEvent {
   reason:

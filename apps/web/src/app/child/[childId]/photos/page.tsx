@@ -106,7 +106,7 @@ function PhotosScreen() {
 
   /**
    * 🚨 재시도할 때 키를 새로 만들지 않는다 — 같은 사진을 다시 올리는 것이 재시도다.
-   *    **다른 사진으로 바꿀 때만** 돌린다(`resetToPicker`). 같은 키에 다른 본문을 보내면
+   *    **다른 사진으로 바꿀 때만** 돌린다(아래 시트의 `onPick`). 같은 키에 다른 본문을 보내면
    *    422 idempotency_key_reuse 다 (03 홈의 `closeRun` 과 같은 규칙).
    */
   const idempotencyKey = useIdempotencyKey();
@@ -296,6 +296,9 @@ function PhotosScreen() {
         onClose={() => setSheetOpen(false)}
         onPick={({ file, lane }) => {
           setSheetOpen(false);
+          // 🚨 다른 사진이다 — 키를 돌린다. "다른 사진 고르기"(not_document) 뒤에 앞 사진의 키로
+          //    보내면 422 idempotency_key_reuse 에 갇힌다 (#727 리뷰).
+          idempotencyKey.rotate();
           // 🚨 이벤트 핸들러라 여기서 만들어도 된다. 만드는 것도 해제하는 것도 스토어가
           //    한 곳에서 맡는다 — 올리는 것은 위의 effect 다 (사진 한 장당 한 번).
           setPhoto(usePhotoDraftStore.getState().adoptPhoto(file, lane));

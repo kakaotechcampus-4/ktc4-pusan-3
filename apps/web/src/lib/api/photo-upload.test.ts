@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 
 import { newIdempotencyKey } from "@/lib/api/idempotency";
 import { sendPhoto } from "@/lib/api/operations";
+import { streamRunEvents } from "@/lib/api/sse";
 import { url } from "@/mocks/handlers/helpers";
+import { setScenario } from "@/mocks/scenario";
 import { server } from "@/mocks/server";
 
 /**
@@ -16,8 +18,8 @@ import { server } from "@/mocks/server";
 const S3_URL = "https://s3.example.test/upload";
 const KEY = "photos/p1/k1";
 
-function photo(): File {
-  return new File([new Uint8Array([1, 2, 3])], "notice.heic", { type: "image/heic" });
+function photo(name = "notice.heic", size = 3): File {
+  return new File([new Uint8Array(size)], name, { type: "image/heic" });
 }
 
 function s3Ticket() {
@@ -80,5 +82,22 @@ describe("08 사진 — S3 로 올리기", () => {
     // 목 서버의 기본 답이 `direct` 다
     const res = await sendPhoto("c1", photo(), { lane: "document" }, newIdempotencyKey());
     expect(res.run_id).toMatch(/^pr_/);
+  });
+
+  it("공지가 아닌 사진으로 실패한 run 의 키는 목도 잊는다 (서버와 같다)", async () => {
+    // 화면은 다른 사진을 고르면 키를 돌린다. 목도 실패한 run 의 키를 놓아야 서버와 같게 행동한다
+    const key = newIdempotencyKey();
+    setScenario("photo_not_document");
+    try {
+      const first = await sendPhoto("c1", photo("a.heic"), { lane: "document" }, key);
+      const seen: string[] = [];
+      for await (const event of streamRunEvents(first.run_id)) seen.push(event.type);
+      expect(seen.at(-1)).toBe("failed");
+
+      const second = await sendPhoto("c1", photo("b.jpg", 10), { lane: "document" }, key);
+      expect(second.run_id).not.toBe(first.run_id);
+    } finally {
+      setScenario("default");
+    }
   });
 });

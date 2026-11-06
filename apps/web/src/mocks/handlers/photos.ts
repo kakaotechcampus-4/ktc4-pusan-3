@@ -13,7 +13,7 @@ import { PHOTO_LANES } from "@/lib/api/types";
 import { CHILD_ID, daysAgo } from "../fixtures";
 import { currentScenario } from "../scenario";
 import { apiError, networkDelay, url } from "./helpers";
-import { withIdempotency } from "./idempotency";
+import { forgetRun, withIdempotency } from "./idempotency";
 
 /**
  * 08 사진으로 적기 — 업로드 · 다시 읽기 · 저장.
@@ -228,6 +228,8 @@ export async function* photoRunScript(runId: string): AsyncGenerator<Uint8Array>
 
   if (run.failure) {
     // 🚨 실패는 200 + 빈 배열이 아니다. 여기서 스트림이 끝나고 저장된 것은 없다.
+    //    서버처럼 실패한 run 의 키는 잊는다 (photos.py 의 `ended_with != "failed"`) — 한 줄 입력 목과 같다.
+    forgetRun(runId);
     yield frame("failed", { reason: run.failure, raw_text: "" });
     return;
   }
