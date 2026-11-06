@@ -421,3 +421,161 @@ async def test_관찰을_고치는_run_은_Curator_가_끝날_때까지_기다�
     # 기다린 시간이 로그에 남는다 — 20초 예산에서 빠진 몫을 운영에서 잴 수 있게
     waited = re.search(rf"Memory 아이 잠금 child_id={child_id} wait_ms=(\d+)", caplog.text)
     assert waited and int(waited.group(1)) >= 250
+
+
+@pytest.fixture
+async def shared_profile():
+    """기억 A 하나에 관찰 X · Y 가 함께 묶여 있다 — run 이 둘을 고치는 사이 정정이 Y 를 건드린다."""
+    async with AsyncSession(engine, expire_on_commit=False) as setup:
+        owner = Parent()
+        setup.add(owner)
+        await setup.flush()
+        child = await create_child(
+            setup,
+            owner_parent_id=owner.id,
+            nickname="공유",
+            birth_date=date(2023, 1, 1),
+            relation=ParentChildRelation.MOTHER,
+        )
+        profile = ProfileAffinity(
+            child_id=child.id,
+            merge_key="공유",
+            domain=MemoryDomain.FOOD,
+            state=ProfileState.CANDIDATE,
+            polarity=1,
+            last_observed_on=TODAY,
+        )
+        setup.add(profile)
+        await setup.flush()
+        obs = []
+        for _ in ("X", "Y"):
+            row = ObservationFood(
+                child_id=child.id,
+                raw_text="test",
+                subject="공유",
+                polarity=1,
+                confidence_source=ConfidenceSource.PARENT_DIRECT,
+                observed_range=Range(TODAY, TODAY + timedelta(days=1)),
+                affinity_id=profile.id,
+            )
+            setup.add(row)
+            await setup.flush()
+            obs.append(row.id)
+        await setup.commit()
+    try:
+        yield child.id, profile.id, obs[0], obs[1]
+    finally:
+        async with AsyncSession(engine) as cleanup:
+            await cleanup.execute(delete(Child).where(Child.id == child.id))
+            await cleanup.execute(delete(Parent).where(Parent.id == owner.id))
+            await cleanup.commit()
+
+
+async def test_run_이_관찰_둘을_고치는_사이_정정이_Y_를_먼저_잡아도_run_이_끊기지_않는다(
+    shared_profile,
+):
+    """#717 — run 이 X 를 고친 직후 기억 A 를 잠그면 "관찰 → 기억 → 관찰" 순서가 섞인다.
+
+    정정은 Y → A 순서로 잠근다. run 이 A 를 쥔 채 Y 를 기다리고 정정이 Y 를 쥔 채 A 를 기다리면
+    Postgres 가 run 을 끊고, 기록 단계가 한 트랜잭션이라 새 관찰까지 롤백된다.
+    기억 재계산을 commit 직전으로 미루면 run 은 관찰 → 기억 순서가 돼서 정정과 순환이 없다.
+    """
+    from app.domains.memory.observation.models import ObservationStatus
+    from app.domains.memory.observation.repository import ObservationDomain, set_observation_status
+    from app.domains.memory.store.db_store import DbMemoryStore
+
+    child_id, profile_id, obs_x, obs_y = shared_profile
+    edited_day = TODAY - timedelta(days=3)
+    async with (
+        AsyncSession(engine, expire_on_commit=False) as run_s,
+        AsyncSession(engine, expire_on_commit=False) as corr_s,
+    ):
+        # 정정 — Y 를 "잘못된 기록" 으로 바꿔 Y 행 잠금을 쥔다 (커밋 전)
+        await set_observation_status(
+            corr_s,
+            domain=ObservationDomain.FOOD,
+            child_id=child_id,
+            observation_id=obs_y,
+            status=ObservationStatus.INACTIVE,
+        )
+
+        store = DbMemoryStore(run_s, child_id=child_id, today=TODAY)
+
+        async def run():  # runner.commit() 과 같은 순서 — 기억 재계산 → 커밋
+            for oid in (obs_x, obs_y):
+                await store.update_observation(
+                    domain=ObservationDomain.FOOD,
+                    observation_id=str(oid),
+                    fields={},
+                    observed_on=edited_day,
+                )
+            await store.flush_profiles()
+            await run_s.commit()
+
+        run_task = asyncio.create_task(run())
+        try:
+            await asyncio.sleep(0.3)  # run 이 X 를 고치고 Y 에서 정정을 기다리는 상태
+            assert not run_task.done()
+
+            # 정정 — 기억 A 를 다시 계산하고 커밋한다. 고치기 전에는 A 를 run 이 쥐어 여기서 교착
+            await service.refresh_profile(corr_s, profile_id=profile_id, today=TODAY)
+            await corr_s.commit()
+            await asyncio.wait_for(run_task, timeout=5)  # 교착이면 DeadlockDetected
+        finally:
+            run_task.cancel()
+
+    async with AsyncSession(engine) as check:
+        status_y = await check.scalar(
+            select(ObservationFood.status).where(ObservationFood.id == obs_y)
+        )
+        last_observed = await check.scalar(
+            select(ProfileAffinity.last_observed_on).where(ProfileAffinity.id == profile_id)
+        )
+    assert status_y == ObservationStatus.INACTIVE  # 정정 결과가 run 에 덮이지 않았다
+    # A 는 정정 · run 수정이 둘 다 반영된 뒤 계산됐다 (X 만 active 로 남는다)
+    assert last_observed == edited_day
+
+
+async def test_관찰을_고치는_동안_기억은_잠그지_않고_commit_직전에_한_번만_계산한다(
+    shared_profile, monkeypatch
+):
+    from app.domains.memory.observation.repository import ObservationDomain
+    from app.domains.memory.store import db_store
+    from app.domains.memory.store.db_store import DbMemoryStore
+
+    child_id, profile_id, obs_x, obs_y = shared_profile
+    calls = []
+    real = db_store.refresh_profile
+
+    async def spy(session, *, profile_id, today):
+        calls.append(profile_id)
+        await real(session, profile_id=profile_id, today=today)
+
+    monkeypatch.setattr(db_store, "refresh_profile", spy)
+
+    async with (
+        AsyncSession(engine, expire_on_commit=False) as run_s,
+        AsyncSession(engine) as other_s,
+    ):
+        store = DbMemoryStore(run_s, child_id=child_id, today=TODAY)
+        for oid in (obs_x, obs_y):
+            await store.update_observation(
+                domain=ObservationDomain.FOOD,
+                observation_id=str(oid),
+                fields={},
+                observed_on=TODAY - timedelta(days=3),
+            )
+        assert calls == []  # 고치는 동안은 계산하지 않는다
+        # 다른 세션이 기억 A 를 바로 잠글 수 있다 — run 이 아직 쥐고 있지 않다
+        await other_s.execute(
+            select(ProfileAffinity.id)
+            .where(ProfileAffinity.id == profile_id)
+            .with_for_update(nowait=True)
+        )
+        await other_s.rollback()
+
+        await store.flush_profiles()
+        assert calls == [profile_id]  # 관찰이 둘이어도 기억당 한 번
+        await store.flush_profiles()
+        assert calls == [profile_id]  # 비웠으니 다시 계산하지 않는다
+        await run_s.commit()
