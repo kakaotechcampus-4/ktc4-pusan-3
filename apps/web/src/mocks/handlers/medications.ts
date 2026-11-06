@@ -14,6 +14,7 @@ import { toSeoulDateKey } from "@/lib/format";
 import { currentScenario } from "../scenario";
 import { apiError, networkDelay, url } from "./helpers";
 import { withIdempotency } from "./idempotency";
+import { currentMe } from "./membership";
 
 /**
  * 복약 — 진행 중 코스 · 회차 체크 · 초안 제출 (#537).
@@ -67,12 +68,22 @@ function dosesFor(
         dose_date: day,
         scheduled_time: time,
         checked_at: null,
+        checked_by: null,
         checkable: true,
       });
     }
   }
   return doses;
 }
+
+/**
+ * 어제 회차를 체크한 보호자 (#749). 🚨 **두 경우를 다 둔다** — 다른 보호자(설정 목의 `p2` 현우)가 체크한 회차와,
+ * 체크했는데 보호자가 `null` 인 회차(이 칸이 생기기 전의 체크 · 탈퇴 · 이름 없는 계정). 화면이 둘을 다르게 그린다.
+ */
+const SEED_CHECKERS: Record<string, MedicationDose["checked_by"]> = {
+  "08:30": { parent_id: "p2", nickname: "현우" },
+  "12:30": null,
+};
 
 /** 기본 상태 — 어제 시작해 내일 끝나는 시럽 하나. 어제 회차는 둘을 체크해 뒀다. */
 function seeded(): MedicationCourse[] {
@@ -82,8 +93,12 @@ function seeded(): MedicationCourse[] {
   const times = ["08:30", "12:30", "19:30"];
   const id = "ms_seed";
   const doses = dosesFor(id, yesterday, today, times).map((dose) =>
-    dose.dose_date === yesterday && dose.scheduled_time !== "19:30"
-      ? { ...dose, checked_at: `${yesterday}T${dose.scheduled_time}:00+09:00` }
+    dose.dose_date === yesterday && dose.scheduled_time in SEED_CHECKERS
+      ? {
+          ...dose,
+          checked_at: `${yesterday}T${dose.scheduled_time}:00+09:00`,
+          checked_by: SEED_CHECKERS[dose.scheduled_time],
+        }
       : dose,
   );
   return [
@@ -236,6 +251,8 @@ export const medicationHandlers = [
   /**
    * 회차 체크 · 해제. 🚨 **게이트가 아니다** — `withIdempotency` 로 감싸지 않는다(같은 상태를 두 번 보내도 같다).
    * 🚨 이미 체크된 회차를 다시 체크하면 처음 시각을 그대로 둔다 (09 준비물 체크와 같은 규칙).
+   * 🚨 체크한 보호자는 로그인 보호자다 — 본문으로 받지 않는다. 다시 체크해도 **처음 보호자**가 남고, 해제하면 같이 비운다 (#749).
+   *    부르는 이름이 없는 계정이면 서버처럼 통째로 `null` 이다.
    */
   http.put(url("/children/:cid/medication-doses/:did/check"), async ({ params, request }) => {
     await networkDelay();
@@ -248,9 +265,13 @@ export const medicationHandlers = [
       return apiError(422, "validation_failed", "아직 체크할 수 없는 회차예요");
     }
     const { checked } = (await request.json()) as CheckDoseRequest;
+    const me = currentMe();
+    const checker = me.nickname ? { parent_id: me.id, nickname: me.nickname } : null;
+    const keep = checked && found.checked_at !== null;
     const next: MedicationDose = {
       ...found,
-      checked_at: checked ? (found.checked_at ?? new Date().toISOString()) : null,
+      checked_at: keep ? found.checked_at : checked ? new Date().toISOString() : null,
+      checked_by: keep ? found.checked_by : checked ? checker : null,
     };
     courses.set(
       childId,
