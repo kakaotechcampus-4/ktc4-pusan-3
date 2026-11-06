@@ -215,9 +215,10 @@ def j_screen_concern(o: Observed) -> None:
 
 
 def j_fallback(o: Observed) -> None:
-    """단계 행이 없는 루틴 행동(등원) — 교육으로 넘겼으면 추천이, 시간이 모자라 넘기지 않았거나 넘긴
-    대화가 마감 1초 전에 끊겼으면 루틴의 자료 없음 안내가 나간다. 어느 쪽이든 Growth 가 실패로
-    세지지 않고 20초 안에 끝난다 (#708 리뷰)."""
+    """단계 행이 없는 루틴 행동(등원) — 루틴 모델 없이 바로 교육으로 열렸으면 추천이, 시간이
+    모자라거나 교육 대화가 마감 1초 전에 끊겼으면 루틴의 자료 없음 안내가 나간다. 어느 쪽이든
+    Growth 가 실패로 세지지 않고 20초 안에 끝나며, 모델은 교육 · 재호출 두 번을 넘지 않는다
+    (#708 리뷰)."""
     if len(o.growth_events) != 1:
         o.failures.append(f"Growth agent_result {len(o.growth_events)}개 (1개여야 한다)")
         return
@@ -226,6 +227,8 @@ def j_fallback(o: Observed) -> None:
     if event.task_type == LEARN:
         if event.status != "completed" or not event.suggestion_ids:
             o.failures.append(f"넘겼는데 추천이 없다 (status={event.status})")
+        if any(count > 2 for count in calls):
+            o.failures.append(f"루틴 모델을 거쳤다 — 모델 {calls}회 (2회 이하여야 한다)")
         o.notes.append(f"넘김 · 추천 {len(event.suggestion_ids)}개 · {event.kind} · 모델 {calls}")
     else:
         if not any(r.body == READOUTS.get(DOC_NO_ROW).template for r in event.readouts):

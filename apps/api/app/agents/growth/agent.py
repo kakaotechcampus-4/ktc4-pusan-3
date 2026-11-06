@@ -66,7 +66,12 @@ from app.agents.growth.store.ports import UpstreamUnavailable
 from app.agents.growth.tools.closures import closure_key
 from app.agents.growth.tools.delta import asks_judgement, compute_growth_delta
 from app.agents.growth.tools.docs import DocHit, search_growth_doc
-from app.agents.growth.tools.memory import has_citable_memory, has_topic_memory
+from app.agents.growth.tools.memory import (
+    SELF_RELIANCE,
+    category_chains,
+    has_citable_memory,
+    has_topic_memory,
+)
 from app.agents.growth.tools.routine import ask_question
 from app.rules.growth_topic import (
     SCREEN,
@@ -188,6 +193,23 @@ async def _run(
         and routine_mode(gate.stage.months, None) == "rhythm_info"
     ):
         return _result(task_type, "completed", readouts=(await _rhythm(context),))
+
+    if (
+        task_type is GrowthTaskType.ROUTINE_COACHING
+        and not from_routine
+        and gate.stage.months >= EDUCATION_MIN_MONTH
+        and await _no_step_rows(context)
+    ):
+        # 보호자가 말한 행동의 카테고리에 단계 사슬이 하나도 없다(등원 · 외출) — 모델이 어떤 행동
+        # 이름을 골라도 `doc.no_row` 로 끝난다. 루틴 모델을 건너뛰고 그 닫힘에서 넘기는 것과 같은
+        # 교육 흐름으로 바로 연다. 시간이 모자라거나 교육 대화가 끝을 못 내도 그 닫힘(`doc.no_row`)
+        # 으로 끝난다
+        context.state.closing = DOC_NO_ROW
+        if _time_left(task) < FALLBACK_MIN_S:
+            return _ended(task_type, context)
+        return await _fall_back_to_education(
+            task, context, client=client or LLMClient(role="growth")
+        )
 
     examples: tuple[DocHit, ...] = ()
     if task_type is GrowthTaskType.LEARNING_SUGGESTION:
@@ -384,6 +406,24 @@ def _no_row_in_routine(
         and state.closing == DOC_NO_ROW
         and bool(state.routine_scope)
     )
+
+
+async def _no_step_rows(context: GrowthContext) -> bool:
+    """보호자가 말한 루틴 행동의 카테고리에 이 월령의 단계 사슬이 하나도 없는가.
+
+    코드가 행동을 읽었고(`routine_scope`) 그 카테고리가 모두 자립 사슬을 쓰는 것(`SELF_RELIANCE`)
+    이며 문서에 사슬이 없을 때만이다. 카테고리에 사슬이 있으면 그 행동의 사슬이 있는지는 모델이
+    고른 이름으로 맞춰 봐야 알아서 루틴 모델이 돈다. 행 수는 상수가 아니라 문서에서 읽는다 —
+    사슬이 들어오면 저절로 루틴 모델로 되돌아간다. 같은 사슬 조회라 루틴 대화로 가도 문서를 다시
+    읽지 않는다.
+    """
+    scope = context.state.routine_scope
+    if not scope or not set(scope) <= SELF_RELIANCE:
+        return False
+    for category in scope:
+        if await category_chains(context, category):
+            return False
+    return True
 
 
 def _time_left(task: DomainTask) -> float:
