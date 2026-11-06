@@ -116,6 +116,7 @@ export function EventDraftCard({
   draft,
   state = "idle",
   error,
+  errorHint,
   blocked = false,
   lockReason,
   onSubmit,
@@ -124,6 +125,11 @@ export function EventDraftCard({
   state?: DraftSubmitState;
   /** 제출이 실패한 이유. `state === "failed"` 일 때만 쓴다. */
   error?: string;
+  /**
+   * 실패 문구 아래에 덧붙일 다음 할 일. 🚨 **카드에서 고칠 수 없는 실패일 때만** 그릇이 넘긴다 —
+   *    반복 규칙 오류(`invalid_repeat`)는 요일 · 끝 날짜 · 첫 회차를 고칠 칸이 없어서 대화로 다시 말해야 한다.
+   */
+  errorHint?: string;
   /**
    * 🚨 알레르기가 확인돼 이 초안은 넣지 않는다. 그릇이 판정한다 —
    *    사전검사에 답하는 자리는 카드 밖(승인 시트)이고, 여기는 결과만 받는다.
@@ -192,6 +198,10 @@ export function EventDraftCard({
    */
   const reminderPast =
     creating &&
+    // 🚨 반복 일정은 첫 회차 하나로 판정하지 않는다 (#746 리뷰). 첫 회차의 알림 시각이 지났어도 다음 회차부터는
+    //    울릴 수 있고, 회차 날짜는 화면이 계산하지 않아 둘째 회차를 볼 수 없다. 지난 회차 건너뛰기와 전 회차가
+    //    다 지난 경우의 422 는 서버가 진다 (#761).
+    !repeat &&
     reminder !== NO_REMINDER &&
     event.starts_at !== null &&
     isPast(reminder, event.starts_at, event.all_day);
@@ -329,10 +339,12 @@ export function EventDraftCard({
 
         {creating ? (
           <ReminderField
-            startsAt={event.starts_at}
+            // 🚨 반복이면 첫 회차로 지난 선택지를 거르지 않는다 — 위 `reminderPast` 와 같은 이유다.
+            startsAt={repeat ? null : event.starts_at}
             allDay={event.all_day}
             value={reminder}
             onChange={setReminder}
+            hint={repeat ? "나에게만 회차마다 울려요. 이미 지난 회차는 건너뛰어요." : undefined}
           />
         ) : null}
 
@@ -374,6 +386,7 @@ export function EventDraftCard({
         <CardFailed className="mt-4">
           <p>{error}</p>
           <p className="mt-1">아직 아무것도 넣지 않았어요.</p>
+          {errorHint ? <p className="mt-1">{errorHint}</p> : null}
         </CardFailed>
       ) : null}
 
@@ -652,11 +665,14 @@ export function SeriesDraftCard({
   draft,
   state = "idle",
   error,
+  errorHint,
   onSubmit,
 }: {
   draft: SeriesDraft;
   state?: DraftSubmitState;
   error?: string;
+  /** 실패 문구 아래에 덧붙일 다음 할 일 (`EventDraftCard` 의 `errorHint` 와 같다). */
+  errorHint?: string;
   onSubmit: () => void;
 }) {
   const done = state === "submitted";
@@ -706,6 +722,7 @@ export function SeriesDraftCard({
             <CardFailed className="mt-4">
               <p>{error}</p>
               <p className="mt-1">아직 아무것도 바꾸지 않았어요.</p>
+              {errorHint ? <p className="mt-1">{errorHint}</p> : null}
             </CardFailed>
           ) : null}
 

@@ -502,6 +502,11 @@ export const suggestionHandlers = [
           fields: ["repeat"],
         });
       }
+      // 🚨 반복 규칙이 성립하지 않으면 서버는 422 `invalid_repeat` 다 (#761). 카드에서 고칠 수 없는 실패라
+      //    화면이 "대화로 다시 말해 주세요" 를 붙이는지 보려고 시나리오로 만든다.
+      if (body.repeat && currentScenario() === "repeat_invalid") {
+        return apiError(422, "invalid_repeat", "반복은 첫 회차부터 90일까지만 돼요");
+      }
 
       // 🚨 일자 없이 제출되면 안 된다. 화면이 막지만 계약도 막는다 (규칙은 코드가 진다).
       //    실서버는 스키마가 `starts_at` 을 필수로 걸어 공통 검증 오류로 낸다.
@@ -520,8 +525,12 @@ export const suggestionHandlers = [
             fields: ["reminder.lead"],
           });
         }
-        const wrong = refuseReminder(lead, body.event.starts_at, body.event.all_day);
-        if (wrong) return wrong;
+        // 🚨 반복 일정은 첫 회차 하나로 거절하지 않는다 (#761). 서버는 지난 회차만 건너뛰고 전 회차가 다 지났을 때만
+        //    422 다 — 목은 회차를 펼치지 않아서 반복이면 시각 검사를 하지 않는다 (종류 검사는 위에서 했다).
+        if (!body.repeat) {
+          const wrong = refuseReminder(lead, body.event.starts_at, body.event.all_day);
+          if (wrong) return wrong;
+        }
         reminder = { lead };
       }
 

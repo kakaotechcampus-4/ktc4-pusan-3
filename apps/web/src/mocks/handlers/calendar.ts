@@ -307,6 +307,10 @@ export const calendarHandlers = [
       if (String(params.sid) !== calendarSeries().id) {
         return apiError(404, "not_found", "반복 일정을 찾을 수 없어요");
       }
+      // 서버는 다시 펼친 뒤 오늘 이후 회차가 남지 않으면 422 `invalid_repeat` 다 (#761).
+      if (currentScenario() === "repeat_invalid") {
+        return apiError(422, "invalid_repeat", "오늘 이후에 남는 회차가 없어요");
+      }
       return HttpResponse.json({ series_id: String(params.sid) });
     }),
   ),

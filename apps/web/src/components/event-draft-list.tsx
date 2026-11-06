@@ -13,6 +13,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
 import {
+  isApiError,
   qk,
   submitEventDraft,
   updateEventDraft,
@@ -268,6 +269,8 @@ function DraftRow(props: {
  * 초안 한 장의 제출. 🚨 **카드마다 이 훅이 하나씩**이라 `useIdempotencyKey()` 도 하나씩이다 —
  * 하나로 묶으면 두 번째 제출이 "같은 키 · 다른 본문" 이라 422 다.
  */
+const REPEAT_FIX_HINT = "반복하는 요일이나 날짜를 바꾸려면 대화로 다시 말해 주세요.";
+
 function useDraftSubmit<Body>(
   childId: string,
   draftId: string,
@@ -308,7 +311,13 @@ function useDraftSubmit<Body>(
       : fallbackError
     : undefined;
 
-  return { state, error, mutate: submit.mutate };
+  /**
+   * 🚨 반복 규칙 오류는 카드에서 고칠 수 없다 (`invalid_repeat` · #761). 요일 · 끝 날짜 · 첫 회차를 고칠 칸이 없어서
+   *    같은 초안으로 다시 눌러도 같은 422 다 — 어떻게 하면 되는지를 서버 문구 아래에 붙인다.
+   */
+  const errorHint = isApiError(submit.error, "invalid_repeat") ? REPEAT_FIX_HINT : undefined;
+
+  return { state, error, errorHint, mutate: submit.mutate };
 }
 
 function EventDraftRow({
@@ -324,7 +333,7 @@ function EventDraftRow({
   lockReason?: string;
   onSubmitted: (draftId: string) => void;
 }) {
-  const { state, error, mutate } = useDraftSubmit<DraftSubmitFinal>(
+  const { state, error, errorHint, mutate } = useDraftSubmit<DraftSubmitFinal>(
     childId,
     draft.draft_id,
     onSubmitted,
@@ -356,6 +365,7 @@ function EventDraftRow({
       blocked={blocked}
       lockReason={lockReason}
       error={error}
+      errorHint={errorHint}
       onSubmit={(final) => mutate(final)}
     />
   );
@@ -374,7 +384,7 @@ function SeriesDraftRow({
   draft: SeriesDraft;
   onSubmitted: (draftId: string) => void;
 }) {
-  const { state, error, mutate } = useDraftSubmit<SeriesDraft>(
+  const { state, error, errorHint, mutate } = useDraftSubmit<SeriesDraft>(
     childId,
     draft.draft_id,
     onSubmitted,
@@ -383,6 +393,12 @@ function SeriesDraftRow({
   );
 
   return (
-    <SeriesDraftCard draft={draft} state={state} error={error} onSubmit={() => mutate(draft)} />
+    <SeriesDraftCard
+      draft={draft}
+      state={state}
+      error={error}
+      errorHint={errorHint}
+      onSubmit={() => mutate(draft)}
+    />
   );
 }
