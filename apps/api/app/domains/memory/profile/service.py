@@ -21,7 +21,7 @@ from app.domains.correction.models import CorrectionTargetKind, CorrectionVerdic
 from app.domains.correction.repository import append_correction
 from app.domains.memory.observation.models import ObservationStatus
 from app.domains.memory.observation.repository import ObservationDomain, set_observation_status
-from app.domains.memory.profile.models import MemoryDomain, ProfileAffinity
+from app.domains.memory.profile.models import ProfileAffinity
 from app.domains.memory.profile.repository import (
     count_active_in_window,
     count_wrong_in_window,
@@ -136,8 +136,17 @@ async def refresh_profile(
 
     active 관찰이 하나도 안 남으면(latest=None) last_observed_on 은 건드리지 않는다 —
     recompute 가 O=0 으로 상태를 정하고, 시간이 지나면 archived 로 내려간다.
+
+    🚨 기억 행을 먼저 잠그고 나서 마지막 관찰일을 센다. 거꾸로 하면 run 과 정정이 같은 기억의
+    관찰을 하나씩 뺄 때 둘 다 상대가 커밋하기 전 관찰로 세고, 나중에 커밋하는 쪽이 빠진 관찰의
+    날짜로 덮어쓴다. 잠근 뒤에 세면 나중 쪽은 앞쪽이 커밋한 뒤에 센다 (#745).
     """
-    profile = await session.get(ProfileAffinity, profile_id)
+    profile = await session.scalar(
+        select(ProfileAffinity)
+        .where(ProfileAffinity.id == profile_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
     if profile is None:
         return
     latest = await get_latest_active_observed_on(
@@ -199,22 +208,11 @@ async def handle_observation_correction(
         )
     )
 
-    # 3. last_observed_on 재계산 — 교정으로 최신 관찰이 빠졌을 수 있다
+    # 3. last_observed_on · 상태 재계산 — 교정으로 최신 관찰이 빠졌을 수 있다.
+    #    기억을 잠근 뒤에 센다 — 같은 기억을 고치는 run 과 겹쳐도 낡은 날짜로 덮지 않게 (#745)
     affinity_id = record.fields.get("affinity_id")
     if affinity_id is not None:
-        latest = await get_latest_active_observed_on(
-            session,
-            affinity_id=affinity_id,
-            domain=MemoryDomain(domain),
-        )
-        if latest is not None:
-            profile = await session.get(ProfileAffinity, affinity_id)
-            if profile is not None:
-                profile.last_observed_on = latest
-                await session.flush()
-
-        # 4. profile 상태 재계산
-        await recompute_profile(session, profile_id=affinity_id, today=today)
+        await refresh_profile(session, profile_id=affinity_id, today=today)
 
 
 async def handle_profile_correction(
