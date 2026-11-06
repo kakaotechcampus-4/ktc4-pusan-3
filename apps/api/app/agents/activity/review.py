@@ -493,8 +493,8 @@ def _build(
     일반 추천으로 나가고 이유는 `REQUESTED_REASON` 이다 — 막연한 요청만 [예시]를 근거로 단다.
 
     allergens 는 상태(없음/모름)를 담지 않는다 — 승인할 때 서버가 health_safety 를 다시 읽는다.
-    장소가 붙으면 확인 문구를, 위험 용어에 걸리면 그 축의 경고 문구를 칸으로 싣는다 — 문장에
-    섞으면 화면이 따로 세울 수 없다 (#516 · #402).
+    장소가 붙으면 확인 문구를(행사면 기간도), 위험 용어에 걸리면 그 축의 경고 문구를 칸으로
+    싣는다 — 문장에 섞으면 화면이 따로 세울 수 없다 (#516 · #402).
     """
     draft = build(
         agent="activity",
@@ -507,9 +507,12 @@ def _build(
         requested=requested,
         today=today,
     )
+    event = place if isinstance(place, EventRow) else None
     return replace(
         draft,
         place_notice=place_notice(place) if place is not None else None,
+        event_starts_on=event.starts_on if event else None,
+        event_ends_on=event.ends_on if event else None,
         warnings=warnings,
     )
 
