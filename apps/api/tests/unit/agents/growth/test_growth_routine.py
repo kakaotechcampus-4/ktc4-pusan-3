@@ -184,6 +184,42 @@ class TestEvidence:
         assert ask_question("ask.habit_trigger", "손톱 물어뜯기").startswith("손톱 물어뜯기")
 
 
+class TestBehaviorEvidence:
+    """요청한 행동(`same`)이 있으면 같은 카테고리의 다른 행동 기록은 근거가 아니다."""
+
+    @staticmethod
+    def brushing(observation: RoutineObservation) -> bool:
+        return "양치" in observation.subject
+
+    def test_요청_행동의_기록만_근거로_센다(self):
+        brush, wash = obs(1, 2, subject="양치하기"), obs(2, 2, subject="손 씻기")
+        assert routine_evidence(
+            [brush, wash], category="self_care", today=TODAY, same=self.brushing
+        ) == (brush,)
+        assert routine_evidence([brush, wash], category="self_care", today=TODAY) == (brush, wash)
+
+    def test_요청_행동의_기록이_없으면_같은_카테고리여도_되묻는다(self):
+        wash = obs(1, 2, subject="손 씻기")
+        assert (
+            routine_gap([wash], category="self_care", today=TODAY, same=self.brushing)
+            == "ask.routine_current"
+        )
+        assert routine_gap([wash], category="self_care", today=TODAY) is None
+
+    def test_요청_행동의_기록이_있으면_되묻지_않는다(self):
+        cited = [obs(1, 2, subject="양치하기"), obs(2, 2, subject="손 씻기")]
+        assert routine_gap(cited, category="self_care", today=TODAY, same=self.brushing) is None
+
+    def test_습관은_다른_습관_기록만_있으면_요즘도_하는지_묻는다(self):
+        nails = obs(1, 2, "habit", subject="손톱 물어뜯기", trigger="긴장할 때")
+        assert (
+            routine_gap(
+                [nails], category="habit", today=TODAY, same=lambda o: "손가락" in o.subject
+            )
+            == "ask.habit_current"
+        )
+
+
 class TestAssistanceLevel:
     def level(self, observations, **kwargs):
         defaults = dict(category="self_care", today=TODAY)

@@ -1,15 +1,15 @@
 # 복약 화면 v1
 
-문서 목적: Health 복약(#537)의 FE 몫인 네 가지(복약 확인 카드 · 회차 체크 · 되묻기에 답하기 · 새 readout)를 화면이 어떻게 다루는지와, **서버보다 먼저 잡은 잠정 계약**을 고정한다.
+문서 목적: Health 복약(#537)의 FE 몫인 네 가지(복약 확인 카드 · 회차 체크 · 되묻기에 답하기 · 새 readout)를 화면이 어떻게 다루는지와, **서버보다 먼저 잡고 서버가 받은 계약**을 고정한다.
 
-기준 브랜치: `feat/fe-537-medication-draft-card`
-작성일: 2026-10-23
+기준 브랜치: `feat/fe-537-medication-draft-card` · 실서버 연결 `feat/fe-713-medication-server` (#713)
+작성일: 2026-10-23 · 갱신 2026-11-04
 담당: 고태영
 선행 문서: 이슈 [#537](https://github.com/kakaotechcampus-4/ktc4-pusan-3/issues/537) · `apps/api/app/core/medication_draft.py`(초안 모양 정본 · #544) · [`docs/medication/medication-tables-v1.md`](../medication/medication-tables-v1.md)(두 표와 제출 · 체크 API 가 막을 것 · #546) · [`event-draft-ui-v1.md`](event-draft-ui-v1.md)(같은 규칙을 먼저 정한 일정 초안)
 
-> ⚠️ **초안 모양만 확정이다.** 위 둘은 아직 develop 밖(`feat/ai-519-health-skeleton` · PR #520)에 있고, 제출 API · 회차 체크 API ·
-> SSE 번역 · 되묻기 표시는 BE 몫인데 아직 없다. 화면은 §5 의 잠정 계약으로 목 위에서 먼저 만들었다. 서버가 생기면
-> Swagger 에 맞춰 §5 표의 "고칠 곳" 만 고친다.
+> ✅ **계약이 서버에 붙었다** (#713). 제출 · 조회 · 회차 체크 API(PR #520)와 SSE 번역 · 되묻기 이어받기 · readout 근거(PR #716 ·
+> 2026-11-04 머지)가 `feat/ai-519-health-skeleton` 을 거쳐 develop 에 들어갔다(#520 머지). 화면이 목 위에서 먼저 잡은 §5 의 이름과
+> 모양을 서버가 그대로 받았다.
 
 ---
 
@@ -55,9 +55,12 @@
 
 `app/child/[childId]/profile/medications/page.tsx`. 11 아이 프로필의 "복약" 구역이 입구다 (`MedicationSection` · 이름만 한 줄씩).
 
-⚠️ **실서버에는 아직 `GET /children/{cid}/medications` 가 없다.** 그래서 목이 뜨지 않는 빌드에서는 11 의 "복약" 구역과 04 회차 현황의 "복약 화면 열기" 를 숨긴다 (`PENDING_SERVER_FEATURES.medications` · #409 와 같은 처리). 안 숨기면 11 에 "복약을 불러오지 못했어요" 가 늘 선다. 라우트와 목은 그대로다. 서버가 생기면 그 항목을 지운다.
+입구를 숨기던 `PENDING_SERVER_FEATURES.medications` 는 #713 에서 지웠다 — 11 의 "복약" 구역 · 03 홈 "오늘 먹일 약" · 04 의 "복약 화면 열기" 가 실서버 빌드에도 선다.
+🚨 복약은 건강정보 동의 2026-11-03 판의 항목이다. 실서버에 여는 날은 그 판의 처리방침 공개와 기존 테스터의 다시 동의 뒤여야 한다 ([`consent-texts-v1.md`](../safety/consent-texts-v1.md) "기존 회원 다시 묻기").
 
-- 🚨 **복용 기록은 여기서만 생긴다.** 대화에서 "먹였어" 라고 적어도 서버는 아무것도 쓰지 않고 이 화면으로 안내한다 (Health `dose.check_on_screen`). 04 의 회차 현황(`dose_status`) 블록에는 이 화면으로 가는 링크가 선다.
+- 🚨 **복용 기록은 여기서만 생긴다.** 대화에서 "먹였어" 라고 적어도 서버는 아무것도 쓰지 않고 이 화면으로 안내한다 (Health `dose.check_on_screen`). 04 의 회차 현황(`dose_status`) 블록과 그 체크 안내 블록에는 이 화면으로 가는 링크("복약 화면 열기")가 선다 (`lib/agent-result.ts` 의 `medicationHref`).
+- **그 코스로 연다** (#713). 서버가 readout 근거(`source_refs`)로 복약 코스(`medication_schedule`)를 싣는다 — 체크 안내는 발화에 이름이 든 약, 없으면 진행 중 코스 전부다. 🚨 블록이 가리키는 코스가 **하나일 때만** `?course=<id>` 로 그 코스 카드를 맨 위로 올리고 포커스를 옮긴다. 둘 이상이면 화면이 어느 약인지 고르지 않고 처음으로 간다. 🚨 목록을 거르거나 순서를 바꾸지 않는다 — 다른 약의 오늘 회차도 같은 화면에서 체크한다. 지난 대화에는 근거가 남지 않아(서버가 싣지 않는다) 회차 현황이면 처음으로 간다. ⚠️ **체크 안내는 지난 대화에서 링크가 없다** — `kind: "notice"` 라 날씨 안내와 가를 수 없어서다. 지난 대화에도 근거를 남길지는 서버와 정한다 (§6).
+- 🚨 **코스가 하나뿐이면 스크롤하지 않는다** — 맨 위 카드라 이미 보이고, 회차가 길면 머리말("아이 프로필" · 제목)만 화면 밖으로 밀린다. 포커스는 옮긴다.
 - 🚨 **게이트가 아니다.** 체크는 되돌릴 수 있다 — `btn-approve` · `caution` 을 쓰지 않는다 (`no-extra-gates.spec.ts`). 키도 달지 않는다.
 - 되돌릴 수 있는 토글이라 **낙관적 업데이트 + 회차마다 줄 세우기**다 — 09 준비물 체크와 같은 패턴이다 (`lib/serial-queue.ts`).
 - 🚨 **날짜를 계산하지 않는다.** 진행 중인 코스, 서버의 오늘(`today`), 체크할 수 있는 회차(`checkable`)는 서버가 정한다. 화면은 오늘 줄을 `today` 와 같은 글자인지로만 가르고, 날짜 묶음은 서버 순서를 뒤집기만 한다(최근이 위).
@@ -72,8 +75,8 @@
 - 🚨 **복약 쿼리는 홈 화면이 홈 쿼리와 같이 시작하고, 둘 다 끝난 뒤 한 번에 그린다.** 구역 안에서 부르면 홈 응답을 받은 뒤에야 요청이 나가서, 뜬 화면 한가운데에 구역이 뒤늦게 끼어들며 아래 카드를 밀었다 (#563 재리뷰 · 디자인 시스템 §8). 복약만 실패하면 그 구역에서만 말하고 홈은 그대로 선다.
 - 체크 줄은 11-3 과 **같은 컴포넌트**다 (`components/medication-dose-check.tsx` 의 `DoseCheck`). 같은 쿼리(`qk.medications`)를 고쳐서 한쪽에서 체크하면 다른 쪽도 같다.
 - 지난 날짜와 코스 전체는 "지난 날짜와 전체 일정 보기" 로 11-3 이 진다.
-- 게이트 표식 · 도메인 색 · "지금 먹이세요" 같은 판단이 없다 (11-3 과 같은 규칙). `checkable` · `PENDING_SERVER_FEATURES.medications` 도 그대로 따른다.
-- ⚠️ Health 의 "먹였어" 안내(`dose.check_on_screen`)는 "복약 화면에서 해 주세요" 라서 홈과 어긋난다 — 문구는 AI 몫이다 (§6).
+- 게이트 표식 · 도메인 색 · "지금 먹이세요" 같은 판단이 없다 (11-3 과 같은 규칙). `checkable` 도 그대로 따른다.
+- Health 의 "먹였어" 안내(`dose.check_on_screen`)는 "복용 체크는 홈이나 복약 화면에서 해 주세요." 로 바꾼다 — 체크하는 곳이 두 곳이라서다 (§6 8번). ⚠️ 목은 새 문구를 먼저 쓰고, 서버는 아직 옛 문구("복약 화면에서")다.
 
 ---
 
@@ -85,15 +88,18 @@ Health 는 세 자리에서 되묻고 멈춘다 — 중단 확인 · 어느 약 
 - 🚨 **run 당 답을 받는 질문은 하나다** (`lib/agent-result.ts` 의 `askedQuestion`). Memory 질문이 먼저고, 그다음이 `awaits_reply` 인 Agent 질문의 첫째다 (#563 리뷰에서 AI 와 합의 — 한 run 에 둘이 같이 오는 경우의 서버 쪽 보관은 Supervisor 연결 이슈에서 한다). 답은 `reply_to` = 그 run 하나로 가고, 서버가 이어받는 맥락도 run 당 하나라서 둘을 다 열면 보호자가 고른 질문과 서버가 이어받는 질문이 어긋날 수 있다.
 - 답하는 길은 Memory 질문과 **같다** — 입력창이 그 질문을 대상으로 잡고, 원문을 다시 보내지 않고, 내려놓아도 질문은 열린 채 남는다 (`chat-run-v1.md` §3).
 - 🚨 **답은 짧은 글로 받는다** ("네" · 약 이름 · "저녁 8시"). 버튼으로 답을 미리 깔지 않았다 — 서버가 글자로 받고, 버튼을 두면 "어느 약" 처럼 선택지가 서버 값인 질문마다 모양이 갈린다. (이슈의 "같이 정하고 싶은 것" 둘째 — §6)
+- **이어받은 run 이 또 묻는다** (#713). 약이 둘이면 "어느 약 말씀이세요?" → 약 이름 → "멈출까요?" 로 세 턴이다. 다시 묻는 질문도 `awaits_reply` 라서 화면은 따로 할 일이 없다 — 같은 길로 그 질문을 잡는다.
+- **답에 섞인 다른 말은 반영하지 않는다** (#713). 서버가 알아채면 `note`(`kind: "message"`)로 "반영하지 않았어요" 를 알린다. 🚨 질문이 아니라 알림이라 입력창이 잡지 않는다 — 다시 묻는 run 이면 문구가 "이 질문에 먼저 답한 뒤 따로 보내 달라" 다.
 
 ---
 
-## 5. 잠정 계약 — 서버가 정하면 고칠 곳
+## 5. 계약 — 목에서 먼저 잡고 서버가 그대로 받은 것 (PR #716 머지로 확정)
 
-| | 잠정 | 고칠 곳 |
+| | 계약 | 화면의 자리 |
 | --- | --- | --- |
-| SSE 복약 초안 프레임 | 이름 `medication_draft` 하나 (#563 리뷰에서 AI 와 맞춤 · 일정 초안 `event_draft` 와 같은 단수형). 모양 `{ drafts: MedicationDraft[] }` 한 프레임 | `lib/api/sse.ts` 의 `MEDICATION_DRAFT_EVENT` · 목 |
-| 답을 받는 질문 표시 | `agent_result.awaits_reply: boolean` (없으면 `false`). 이름 확정 · Health 결과에 `pending` 이 있을 때 `true` (#563 리뷰) | `sse.ts` 의 `AgentResultEvent` · `askedQuestion` |
+| SSE 복약 초안 프레임 | 이름 `medication_draft` 하나 (#563 리뷰에서 AI 와 맞춤 · 일정 초안 `event_draft` 와 같은 단수형). 모양 `{ drafts: MedicationDraft[] }` 한 프레임. 🚨 등록 초안에는 `schedule_id` · `before` 키가 없다. 서버 `translate.py` (#716) | `lib/api/sse.ts` 의 `MEDICATION_DRAFT_EVENT` · 목 |
+| 답을 받는 질문 표시 | `agent_result.awaits_reply: boolean` (없으면 `false`). Health 질문이 답을 받을 때 `true` (#563 리뷰 · PR #716) | `sse.ts` 의 `AgentResultEvent` · `askedQuestion` |
+| readout 근거 | `agent_result.readouts[].source_refs` — 서버는 `medication_schedule` 만 싣는다. SSE 에서는 키가 늘 있고 지난 대화에는 없다 (PR #716) | `AgentReadout.source_refs` · `REF_KINDS` · `medicationHref` |
 | 등록 (게이트 ㉡) | `POST /children/{cid}/medications` · Idempotency-Key 필수 · 본문 `{ schedule, doses, source }` · 201 `{ course }` | `idempotentPath.submitMedication` · `SubmitMedicationBody` |
 | 수정 (게이트 ㉡) | `PATCH /children/{cid}/medications/{sid}` · 키 필수 · 본문 `{ schedule, doses }` | `idempotentPath.updateMedication` |
 | 진행 중 코스 | `GET /children/{cid}/medications` → `{ today, courses[] }`. 코스마다 `notice_times` 와 **오늘까지의** 회차 | `MedicationsResponse` · 11-3 · 11 |
@@ -107,12 +113,13 @@ Health 는 세 자리에서 되묻고 멈춘다 — 중단 확인 · 어느 약 
 
 ## 6. 정해야 하는 것
 
-1. **위 §5 의 경로 · 이름 전부** — BE 가 Swagger 로 정하면 화면이 따라간다. 특히 회차 체크를 `PUT …/check` 한 경로로 둘지(체크 · 해제가 같은 상태 설정이라 키가 필요 없다), `POST`/`DELETE` 둘로 나눌지.
-2. **`GET` 이 어느 회차까지 싣는가** — 지금은 "오늘까지" 로 잡았다. 아직 오지 않은 날까지 싣는다면 `checkable: false` 로 와야 화면이 날짜를 견주지 않는다.
+1. ~~**위 §5 의 경로 · 이름 전부**~~ — ✅ 서버가 그대로 받았다 (#520 · PR #716). 회차 체크는 `PUT …/check` 한 경로다.
+2. ~~**`GET` 이 어느 회차까지 싣는가**~~ — ✅ 오늘까지다. 아직 오지 않은 날은 싣지 않는다 (서버 `routers/medications.py` 의 조회 설명).
 3. **되묻기 답을 버튼으로도 받을지** — 지금은 짧은 글만. 중단 확인("네 / 아니요")만 버튼을 더할지는 서버가 글자로 받으니 화면만의 결정이다.
 4. **제출 거절 코드** — 중단된 코스 수정 · 기간 위반 · 동의 없음을 서버가 어떤 코드로 낼지. 화면은 지금 `consent_required` · `not_found` · `validation_failed` 만 가른다 (§2).
-5. **`notice.no_active_med` 의 kind** — "지금 등록된 복약 일정이 없어요." 도 `kind: med_notice_form` 이라 복사 버튼이 선다. 서류가 아닌 안내라 kind 를 나눠 달라고 할지, 화면이 그대로 둘지.
+5. ~~**`notice.no_active_med` 의 kind**~~ — ✅ 서버가 `medication_notice` 로 옮겨 복사 버튼이 서지 않는다 (PR #716).
 6. **제출 키를 본문에 묶은 것** — 실패 뒤 칸을 고쳐 넣으면 422 에 갇히지 않는다. 대신 응답을 못 받은 제출 뒤 칸을 고쳐 넣으면 새 키라 코스가 둘 생길 수 있다. 서버가 같은 내용 중복을 막아 줄지.
 7. **복약 중단이 게이트 밖이다** — Health 가 한 번 묻고 "네" 면 다음 run 에서 `stopped` 가 된다 (#537 AI 설계). 중단된 코스는 다시 고칠 수 없어 되돌리기 어렵다 — 최상위 §2 의 게이트 ㉡ 로 볼지 팀 결정이 필요하다.
-8. **"먹였어" 안내 문구** — `dose.check_on_screen` 이 "복용 체크는 복약 화면에서 해 주세요." 다. 체크하는 곳이 03 홈에도 생겨서 "홈이나 복약 화면에서" 로 바꿀지 AI 와 정한다.
-9. **Health readout 문구의 줄표(`—`)** — `med.confirm` 등 코드 문구에 줄표가 있다. 화면은 서버 문구를 그대로 그리는데, 화면 글자에 줄표를 쓰지 않는다는 규칙(apps/web CLAUDE §5)과 부딪힌다. 문구 쪽에서 고칠지 묻는다.
+8. **"먹였어" 안내 문구** — "복용 체크는 홈이나 복약 화면에서 해 주세요." 로 정했다 (#713 · 03 홈에서도 체크한다). ⚠️ 서버 문구(`health.readout.yaml`)는 AI 파트 파일이라 그쪽에 부탁했는데, PR #716 은 이 줄을 바꾸지 않고 머지됐다. 서버 문구가 바뀌면 이 항목을 닫는다.
+9. ~~**Health readout 문구의 줄표(`—`)**~~ — ✅ 서버가 `med.confirm` · `med.notice` 의 줄표를 뺐다 (PR #716).
+10. **지난 대화의 readout 근거** — 서버는 지난 대화(`StoredReadout`)에 `source_refs` 를 남기지 않는다. 그래서 앱을 다시 켜면 체크 안내 아래 "복약 화면 열기" 가 없다(회차 현황은 kind 로 알아봐 남는다). 받아들일 한계로 둘지, 서버에 남겨 달라고 할지.
