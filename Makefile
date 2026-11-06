@@ -9,7 +9,14 @@
 
 # 로컬 개발 DB 와 배포는 compose 파일이 다르다. .env 는 한 곳(deploy/docker/.env)을 같이 쓴다.
 COMPOSE_DEV    := docker compose -f deploy/docker/docker-compose.yml --env-file deploy/docker/.env
-COMPOSE_DEPLOY := docker compose -f deploy/docker/docker-compose.deploy.yml --env-file deploy/docker/.env
+# 배포 이미지 태그는 마지막으로 배포에 성공한 커밋 sha 다 (deploy/scripts/deploy.sh 가 적는다). 서버에서 make 로
+# 띄우거나 적재할 때도 지금 서비스 중인 그 이미지를 쓴다 — :local 을 쓰면 옛 이미지로 조용히 돌아가거나,
+# 없으면 그 자리에서 다시 굽는다. 로컬은 파일이 없어 local 이다.
+DEPLOYED_TAG   := $(shell cat deploy/docker/.deployed-tag 2>/dev/null || echo local)
+COMPOSE_DEPLOY := env API_IMAGE_TAG=$(DEPLOYED_TAG) WEB_IMAGE_TAG=$(DEPLOYED_TAG) docker compose -f deploy/docker/docker-compose.deploy.yml --env-file deploy/docker/.env
+# 적재는 배포와 같은 잠금을 잡는다 — 4GB 서버에서 빌드와 겹치지 않게. 맥에는 flock 이 없어 그냥 돈다.
+# (COMPOSE_DEPLOY 가 `env` 로 시작하는 이유 — flock 뒤에 오는 첫 단어는 명령이어야 해서 VAR=값 을 못 받는다)
+DEPLOY_LOCK    := $(shell command -v flock >/dev/null 2>&1 && echo flock -w 1200 /var/lock/ktc4-deploy.lock)
 
 help:
 	@echo "사용 가능한 명령"
@@ -203,7 +210,9 @@ web-down:
 web-logs:
 	$(COMPOSE_DEPLOY) logs -f web
 
+# ktc4-edge 는 dev · prod 가 같이 쓰는 바깥 네트워크다 (deploy.sh 와 같은 값). 로컬에서 처음 띄울 때도 있어야 한다.
 deploy-up:
+	docker network inspect ktc4-edge >/dev/null 2>&1 || docker network create --subnet 172.30.0.0/24 --ip-range 172.30.0.128/25 ktc4-edge
 	$(COMPOSE_DEPLOY) up -d
 
 deploy-down:
@@ -215,15 +224,15 @@ deploy-migrate:
 # Food 카탈로그 적재 (FT-19). 배포된 api 이미지 안의 스크립트를 프로세스로 돌린다 — 정리 표 ·
 # 식품군 대응표는 이미지에 구워진 것을 쓴다. 출력은 건수뿐이다.
 deploy-load-food-dry:
-	$(COMPOSE_DEPLOY) run --rm api uv run --no-sync python -m scripts.load_food_catalog --all --dry-run
+	$(DEPLOY_LOCK) $(COMPOSE_DEPLOY) run --rm api uv run --no-sync python -m scripts.load_food_catalog --all --dry-run
 
 deploy-load-food:
-	$(COMPOSE_DEPLOY) run --rm api uv run --no-sync python -m scripts.load_food_catalog --all
+	$(DEPLOY_LOCK) $(COMPOSE_DEPLOY) run --rm api uv run --no-sync python -m scripts.load_food_catalog --all
 
 # 장소 적재 (#516). 공원 · 도서관 표준데이터와 어린이놀이시설(화이트리스트)을 place 로 싣는다.
 # 출력은 건수뿐이다.
 deploy-load-places-dry:
-	$(COMPOSE_DEPLOY) run --rm api uv run --no-sync python -m scripts.load_places --all --dry-run
+	$(DEPLOY_LOCK) $(COMPOSE_DEPLOY) run --rm api uv run --no-sync python -m scripts.load_places --all --dry-run
 
 deploy-load-places:
-	$(COMPOSE_DEPLOY) run --rm api uv run --no-sync python -m scripts.load_places --all
+	$(DEPLOY_LOCK) $(COMPOSE_DEPLOY) run --rm api uv run --no-sync python -m scripts.load_places --all

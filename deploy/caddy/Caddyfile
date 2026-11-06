@@ -1,7 +1,22 @@
+# prod 프로젝트의 Caddy 하나가 두 환경을 다 받는다 — 80/443 은 서버에 하나뿐이다 (docs/ops/deploy-v1.md).
+# 주소는 컨테이너 이름이다. 두 프로젝트의 web · api 가 같이 붙은 ktc4-edge 네트워크에서 찾는다.
+# 🚨 이 파일은 prod checkout 의 것이 쓰인다 — dev 주소를 바꿔도 main 배포가 성공해야 반영된다
+#    (deploy.sh 가 prod 배포 성공 뒤 caddy reload 한다. up 만으로는 다시 읽지 않는다).
+
+# prod (main)
 icatch.ai.kr {
-	reverse_proxy web:3000
+	reverse_proxy ktc4-web:3000
 }
 
 api.icatch.ai.kr {
-	reverse_proxy api:8000
+	reverse_proxy ktc4-api:8000
+}
+
+# dev (develop)
+dev.icatch.ai.kr {
+	reverse_proxy ktc4-dev-web:3000
+}
+
+api.dev.icatch.ai.kr {
+	reverse_proxy ktc4-dev-api:8000
 }
