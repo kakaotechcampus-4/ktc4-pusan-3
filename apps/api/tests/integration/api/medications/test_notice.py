@@ -94,29 +94,19 @@ async def test_동의가_없으면_켤_수_없지만_끌_수는_있다(db_client
     assert await enabled(db_client, bearer[0], cid) == {str(course.id): False}
 
 
-async def test_멈추거나_끝났거나_없는_코스는_켤_수_없다(db_client, session, bearer, consented):
-    stopped = await seed_course(session, consented, title="멈춘 약")
+async def test_켤_수_없는_코스는_404(db_client, session, bearer, consented):
+    """어떤 코스를 켤 수 없는지는 서비스 테스트가 본다. 여기는 404 매핑만."""
+    course = await seed_course(session, consented)
     await session.execute(
         update(MedicationSchedule)
-        .where(MedicationSchedule.id == stopped.id)
+        .where(MedicationSchedule.id == course.id)
         .values(status=MedicationStatus.STOPPED)
     )
-    ended = await seed_course(session, consented, title="끝난 약", starts=-3, ends=-1)
-    _, stranger = await issue_bearer(session, token="test-token-stranger")
-    others = await seed_course(session, await link_child(session, parent_id=stranger))
-
-    for course_id in (stopped.id, ended.id, others.id):
-        response = await db_client.put(notice_url(consented, course_id), headers=bearer[0])
-        assert response.status_code == 404, course_id
-        assert response.json()["error"]["code"] == "not_found"
-
-
-async def test_시작_전_코스는_켤_수_있다(db_client, session, bearer, consented):
-    course = await seed_course(session, consented, starts=1, ends=2)
 
     response = await db_client.put(notice_url(consented, course.id), headers=bearer[0])
 
-    assert response.status_code == 204
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "not_found"
 
 
 async def test_내_아이가_아니면_켜지도_끄지도_못한다(db_client, session, bearer, consented):

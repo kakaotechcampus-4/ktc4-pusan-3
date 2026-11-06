@@ -574,12 +574,16 @@ async def put_my_medication_notice(
     - 알림은 **보호자 개인 것**이다(일정 알림 `PUT …/events/{eid}/reminder` 와 같다). 다른 보호자의
       알림은 바뀌지 않는다. 울리는 시각은 코스의 `notice_times` 다 — 따로 정하지 않는다.
     - **켠 시각부터** 울린다. 켜는 순간 이미 지난 회차는 울리지 않는다.
-    - **이미 켜져 있으면 그대로 204** 다. 처음 켠 시각이 남는다 — 두 번 눌러도 결과가 같다.
+    - 켤 수 있는 코스에 **이미 켜져 있으면 그대로 204** 다. 처음 켠 시각이 남는다 — 두 번 눌러도
+      결과가 같다.
+    - **아직 시작하지 않은 코스도 켤 수 있다.** 다만 조회(`GET …/medications`)가 시작 전 코스를
+      싣지 않아서, 함께 보는 보호자는 첫날 코스가 보인 뒤에야 켤 수 있다(알려진 한계). 그때 이미
+      지난 회차는 울리지 않는다.
     - 승인 게이트가 아니고, 최종 상태를 보내는 요청이라 `Idempotency-Key` 를 받지 않는다.
     - 아이의 건강정보로 알림을 보내는 것이라 **건강정보 동의**를 확인한다. 끄기는 확인하지 않는다.
 
     오류 (순서대로): 403 `child_access_denied` → 403 `consent_required` →
-    403 `child_access_denied`(확인 뒤 그사이 연결이 끊김) → 404 `not_found`.
+    403 `child_access_denied`(확인 뒤 그사이 연결이 끊기거나 탈퇴함) → 404 `not_found`.
     """
     granted = await latest_action(session, scope=ConsentScope.CHILD_HEALTH, child_id=child.child_id)
     if granted is not ConsentAction.GRANTED:

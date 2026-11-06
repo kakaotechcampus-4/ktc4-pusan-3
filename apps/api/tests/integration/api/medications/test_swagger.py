@@ -107,3 +107,14 @@ def test_수정의_설명은_체크했거나_이미_지난_회차가_기간_밖�
 
     assert all("체크했거나 이미 지난 회차" in text for text in texts)
     assert all("체크한 회차가" not in text for text in texts)
+
+
+@pytest.mark.parametrize(
+    ("method", "codes"), [("put", {"204", "403", "404"}), ("delete", {"204", "403"})]
+)
+def test_알림_켜기_끄기_엔드포인트에_요약_설명_상태_코드가_적혀_있다(method, codes):
+    operation = app.openapi()["paths"]["/api/v1/children/{cid}/medications/{sid}/notice"][method]
+
+    assert operation["summary"].strip()
+    assert len(operation["description"].strip()) > 50
+    assert codes <= set(operation["responses"])

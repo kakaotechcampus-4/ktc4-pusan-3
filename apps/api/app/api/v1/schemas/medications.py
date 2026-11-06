@@ -237,6 +237,7 @@ class MedicationCourseOut(BaseModel):
         description=(
             "**요청한 보호자 본인이** 이 코스의 복약 알림을 받는가. 보호자마다 다르다 — 코스를 "
             "등록한 보호자는 등록할 때 켜지고, 함께 보는 다른 보호자는 꺼진 채로 시작한다. "
+            "이 칸이 생기기 전에 등록된 코스는 누가 등록했는지 몰라 모두 꺼져 있다. "
             "켜기 `PUT …/notice` · 끄기 `DELETE …/notice`"
         )
     )
