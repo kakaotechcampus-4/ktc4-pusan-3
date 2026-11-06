@@ -14,6 +14,7 @@ from app.agents.common.tool_runtime import ErrorCode as CommonErrorCode
 from app.agents.common.tool_runtime import ToolResult
 from app.agents.common.tool_runtime import fail as _fail
 from app.agents.common.tool_runtime import ok as _ok
+from app.agents.memory.store.ports import DELETE_TAB_MAX_IDS
 
 Operation = Literal["parse", "create", "query", "update", "delete"]
 
@@ -30,8 +31,9 @@ __all__ = [
 ]
 
 # 조회 tool 이 종류마다 돌려주는 행 수의 상한 (#535). 조회 · 삭제 카드의 탭 하나에 실리는 양이고,
-# 보호자가 한 화면에서 보고 판단할 수 있는 양이다. 보이지 않던 기록은 삭제 후보가 아니다
-MAX_ROWS = 40
+# 보호자가 한 화면에서 보고 판단할 수 있는 양이다. 보이지 않던 기록은 삭제 후보가 아니다.
+# 삭제 제안 탭의 후보 상한과 같은 값이다 — 더 크면 많이 조회한 run 의 제안이 store 에서 거절된다
+MAX_ROWS = DELETE_TAB_MAX_IDS
 
 # 잘린 조회 결과에만 싣는다. 잘리지 않은 결과는 이전과 같은 모양이다 — 프롬프트에 규칙을 더하거나
 # 늘 truncated 를 실으면 "아니, 그냥 둬" 에도 update 를 부르는 일이 생겼다(라이브 D02, 16번 중 3번)
