@@ -1,0 +1,367 @@
+"""요일 반복 묶음 (#738) — 회차 펼치기와 묶음 고치기.
+
+회차는 날짜마다 따로인 `event` 행이다. 어느 날이 회차인지는 `app/rules/recurrence.py` 가 정하고,
+여기서는 그 날짜에 행을 만들고 고친다.
+
+🚨 "오늘" 은 서버가 정한다 — 부르는 쪽이 서버 시계의 KST 날짜를 넘긴다. 묶음 고치기는
+   오늘(그날 포함) 이후 회차만 바꾸고 지난 회차는 그대로 둔다. Agent 가 초안의 기준 값(`before`)을
+   만들 때 읽는 범위(`list_series_events(date_from=today)`)와 같은 기준이라, 초안과 제출이 같은
+   회차를 본다.
+"""
+
+import uuid
+from dataclasses import dataclass
+from datetime import date, datetime, time, timedelta
+from zoneinfo import ZoneInfo
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.domains.schedule import repository as schedule_repo
+from app.domains.schedule.models import (
+    Event,
+    EventCategory,
+    EventCreatedBy,
+    EventItem,
+    EventSeries,
+    EventType,
+    Reminder,
+)
+from app.rules.recurrence import occurrence_dates
+from app.rules.reminder import ReminderLead, for_kind, remind_at
+
+KST = ZoneInfo("Asia/Seoul")
+
+MAX_OCCURRENCE_LENGTH = timedelta(days=1)
+"""한 회차는 하루 안에서 끝난다 (종일은 다음 날 00:00 까지)."""
+
+
+@dataclass(frozen=True)
+class SeriesValues:
+    """묶음 고치기의 한 벌 값. 시각은 KST 벽시계이고 종일이면 둘 다 None."""
+
+    title: str
+    starts_time: time | None
+    ends_time: time | None
+    all_day: bool
+    event_type: EventType
+    category: EventCategory
+
+    def clock(self) -> tuple[time | None, time | None, bool]:
+        """시각 · 종일을 한 칸으로. 종일이면 시각은 뜻이 없어 버린다."""
+        if self.all_day:
+            return None, None, True
+        return self.starts_time, self.ends_time, False
+
+    def when(self, day: date) -> tuple[datetime, datetime | None]:
+        if self.all_day:
+            return midnight(day), None
+        starts = datetime.combine(day, self.starts_time or time.min, tzinfo=KST)
+        ends = datetime.combine(day, self.ends_time, tzinfo=KST) if self.ends_time else None
+        return starts, ends
+
+
+def midnight(day: date) -> datetime:
+    return datetime.combine(day, time.min, tzinfo=KST)
+
+
+def kst_day(moment: datetime) -> date:
+    return moment.astimezone(KST).date()
+
+
+# ── 읽기 ──────────────────────────────────────────────────────────────────
+
+
+async def find_series(
+    session: AsyncSession, *, child_id: uuid.UUID, series_id: uuid.UUID, lock: bool = False
+) -> EventSeries | None:
+    stmt = select(EventSeries).where(EventSeries.child_id == child_id, EventSeries.id == series_id)
+    if lock:
+        stmt = stmt.with_for_update().execution_options(populate_existing=True)
+    return await session.scalar(stmt)
+
+
+async def series_by_id(
+    session: AsyncSession, *, series_ids: set[uuid.UUID | None]
+) -> dict[uuid.UUID, EventSeries]:
+    """일정 여러 건의 묶음을 한 번에. 반복이 아닌 일정(None)은 건너뛴다."""
+    ids = {sid for sid in series_ids if sid is not None}
+    if not ids:
+        return {}
+    rows = await session.scalars(select(EventSeries).where(EventSeries.id.in_(ids)))
+    return {row.id: row for row in rows}
+
+
+async def list_series_events(
+    session: AsyncSession,
+    *,
+    child_id: uuid.UUID,
+    series_id: uuid.UUID,
+    date_from: date,
+    lock: bool = False,
+) -> list[Event]:
+    """`date_from`(KST, 그날 포함) 이후 회차를 날짜순으로."""
+    stmt = (
+        select(Event)
+        .where(
+            Event.child_id == child_id,
+            Event.series_id == series_id,
+            Event.starts_at >= midnight(date_from),
+        )
+        .order_by(Event.starts_at, Event.id)
+    )
+    if lock:
+        stmt = stmt.with_for_update().execution_options(populate_existing=True)
+    return list((await session.scalars(stmt)).all())
+
+
+# ── 만들기 ────────────────────────────────────────────────────────────────
+
+
+Occurrence = tuple[datetime, datetime | None]
+"""회차 하나의 (시작, 끝)."""
+
+
+def plan_occurrences(
+    *, starts_at: datetime, ends_at: datetime | None, weekdays: list[int], until: date
+) -> list[Occurrence]:
+    """첫 회차의 시각(KST 벽시계)과 길이를 모든 회차에 쓴다. 쓰기 전에 검사할 수 있게 DB 를 안 본다.
+
+    회차 날짜가 성립하지 않으면 `RepeatError`, 한 회차가 하루를 넘으면 ValueError.
+    """
+    first = starts_at.astimezone(KST)
+    length = ends_at - starts_at if ends_at is not None else None
+    if length is not None and length > MAX_OCCURRENCE_LENGTH:
+        msg = "반복 일정의 한 회차는 하루 안에서 끝나야 해요"
+        raise ValueError(msg)
+    plan = []
+    for day in occurrence_dates(first.date(), weekdays, until):
+        starts = datetime.combine(day, first.time(), tzinfo=KST)
+        plan.append((starts, starts + length if length is not None else None))
+    return plan
+
+
+async def create_series(
+    session: AsyncSession,
+    *,
+    child_id: uuid.UUID,
+    plan: list[Occurrence],
+    weekdays: list[int],
+    until: date,
+    title: str,
+    event_type: EventType,
+    all_day: bool,
+    category: EventCategory,
+    created_by: EventCreatedBy,
+) -> tuple[EventSeries, list[Event]]:
+    """`plan_occurrences` 의 회차마다 일정 행을 만든다."""
+    series = EventSeries(
+        child_id=child_id,
+        weekdays=sorted(set(weekdays)),
+        starts_on=kst_day(plan[0][0]),
+        until=until,
+    )
+    session.add(series)
+    await session.flush()
+    events = [
+        await schedule_repo.create_event(
+            session,
+            child_id=child_id,
+            title=title,
+            event_type=event_type,
+            starts_at=starts,
+            ends_at=ends,
+            all_day=all_day,
+            category=category,
+            created_by=created_by,
+            series_id=series.id,
+        )
+        for starts, ends in plan
+    ]
+    return series, events
+
+
+async def put_reminders(
+    session: AsyncSession,
+    *,
+    child_id: uuid.UUID,
+    parent_id: uuid.UUID,
+    events: list[Event],
+    lead: ReminderLead,
+    now: datetime,
+) -> dict[uuid.UUID, Reminder]:
+    """회차마다 같은 알림을 건다. 울릴 시각이 `now` 이전인 회차는 건너뛴다 (지난 알림은 못 울린다).
+
+    lead 가 회차 종류에 맞는지는 부르는 쪽이 본다 (`check_reminder`).
+    """
+    put: dict[uuid.UUID, Reminder] = {}
+    for event in events:
+        if remind_at(lead, starts_at=event.starts_at, all_day=event.all_day) <= now:
+            continue
+        row = await schedule_repo.put_reminder(
+            session, child_id=child_id, event_id=event.id, parent_id=parent_id, lead=lead
+        )
+        if row is not None:
+            put[event.id] = row
+    return put
+
+
+# ── 묶음 고치기 ───────────────────────────────────────────────────────────
+
+
+async def update_series(
+    session: AsyncSession,
+    *,
+    series: EventSeries,
+    values: SeriesValues,
+    weekdays: list[int],
+    until: date,
+    before: SeriesValues | None,
+    before_items: list[str] | None,
+    items: list[str],
+    today: date,
+    now: datetime,
+) -> int:
+    """오늘(그날 포함) 이후 회차를 고친다. 지난 회차는 건드리지 않는다.
+
+    고친 뒤 오늘 이후 회차 수를 낸다.
+    - `before` 와 달라진 칸만 쓴다 — 한 회차만 따로 고쳐 둔 다른 칸이 "전부 고치기" 에 덮이지
+      않는다. `before` 가 None 이면 기준을 몰라 모든 칸을 쓴다. 시각 · 종일은 한 칸으로 본다.
+    - 요일 · 끝 날짜가 바뀌면 다시 펼친다: 새 규칙에 없는 날의 회차는 지우고, 없던 날엔 새 회차를
+      만든다.
+      90일은 묶음의 첫 회차(`starts_on`)에서 센다. 성립하지 않으면 `RepeatError`.
+    - 준비물은 이름으로 맞춘다. 남는 이름은 그 회차의 챙김 표시를 지킨다.
+    부르는 쪽이 묶음 행을 잠가(`find_series(lock=True)`) 넘긴다.
+    """
+    events = await list_series_events(
+        session, child_id=series.child_id, series_id=series.id, date_from=today, lock=True
+    )
+    keep = list(dict.fromkeys(items))
+
+    new_events: list[Event] = []
+    rule = (sorted(set(weekdays)), until)
+    if rule != (sorted(series.weekdays), series.until):
+        target = [
+            day for day in occurrence_dates(series.starts_on, weekdays, until) if day >= today
+        ]
+        wanted = set(target)
+        for event in [e for e in events if kst_day(e.starts_at) not in wanted]:
+            await session.delete(event)
+            events.remove(event)
+        have = {kst_day(e.starts_at) for e in events}
+        new_events = await _add_occurrences(
+            session, series, values, [d for d in target if d not in have], keep, now
+        )
+        series.weekdays, series.until = rule
+        await session.flush()
+
+    when_changed = before is None or before.clock() != values.clock()
+    fields = [
+        name
+        for name in ("title", "event_type", "category")
+        if before is None or getattr(before, name) != getattr(values, name)
+    ]
+    for event in events:
+        if when_changed or fields:
+            starts, ends = (
+                values.when(kst_day(event.starts_at))
+                if when_changed
+                else (event.starts_at, event.ends_at)
+            )
+            await schedule_repo.update_event(
+                session,
+                child_id=series.child_id,
+                event_id=event.id,
+                title=values.title if "title" in fields else event.title,
+                event_type=values.event_type if "event_type" in fields else event.event_type,
+                starts_at=starts,
+                ends_at=ends,
+                all_day=values.all_day if when_changed else event.all_day,
+                category=values.category if "category" in fields else event.category,
+                now=now,
+            )
+    await _match_items(session, [e.id for e in events], keep, before_items)
+    return len(events) + len(new_events)
+
+
+async def _add_occurrences(
+    session: AsyncSession,
+    series: EventSeries,
+    values: SeriesValues,
+    days: list[date],
+    items: list[str],
+    now: datetime,
+) -> list[Event]:
+    """새 규칙으로 생긴 날에 회차를 만든다.
+
+    알림은 보호자마다 이 묶음의 가장 늦은 회차 값을 따른다.
+    """
+    if not days:
+        return []
+    template = await session.execute(
+        select(Reminder.parent_id, Reminder.lead)
+        .join(Event, Event.id == Reminder.event_id)
+        .where(Event.series_id == series.id)
+        .order_by(Reminder.parent_id, Event.starts_at.desc())
+        .distinct(Reminder.parent_id)
+    )
+    leads = [(parent_id, for_kind(lead, all_day=values.all_day)) for parent_id, lead in template]
+    created = []
+    for day in days:
+        starts, ends = values.when(day)
+        event = await schedule_repo.create_event(
+            session,
+            child_id=series.child_id,
+            title=values.title,
+            event_type=values.event_type,
+            starts_at=starts,
+            ends_at=ends,
+            all_day=values.all_day,
+            category=values.category,
+            created_by=EventCreatedBy.CAREGIVER,
+            series_id=series.id,
+        )
+        session.add_all(EventItem(event_id=event.id, item_name=name) for name in items)
+        created.append(event)
+    for parent_id, lead in leads:
+        # ponytail: 다른 보호자의 연결을 일정 행 잠금 뒤에 잡는다 — 그 보호자의 끊기와 겹치면 교착을
+        # Postgres 가 끊어 한쪽이 실패한다. 드물어서 재시도에 맡긴다
+        await put_reminders(
+            session,
+            child_id=series.child_id,
+            parent_id=parent_id,
+            events=created,
+            lead=lead,
+            now=now,
+        )
+    await session.flush()
+    return created
+
+
+async def _match_items(
+    session: AsyncSession,
+    event_ids: list[uuid.UUID],
+    items: list[str],
+    before_items: list[str] | None,
+) -> None:
+    """회차마다 준비물을 이름으로 맞춘다.
+
+    `before_items` 에만 있는 이름은 빼고, `items` 에만 있는 이름은 더한다. 기준을 모르면(None)
+    `items` 에 없는 이름은 전부 뺀다. 양쪽에 있는 이름은 행을 그대로 둬 챙김 표시가 남는다.
+    """
+    wanted = set(items)
+    dropped = None if before_items is None else set(before_items) - wanted
+    added = items if before_items is None else [n for n in items if n not in set(before_items)]
+    current = await schedule_repo.list_items_by_event(session, event_ids=event_ids)
+    for event_id in event_ids:
+        have: set[str] = set()
+        for item in current.get(event_id, []):
+            drop = item.item_name not in wanted if dropped is None else item.item_name in dropped
+            if drop:
+                await session.delete(item)
+            else:
+                have.add(item.item_name)
+        session.add_all(
+            EventItem(event_id=event_id, item_name=name) for name in added if name not in have
+        )
+    await session.flush()

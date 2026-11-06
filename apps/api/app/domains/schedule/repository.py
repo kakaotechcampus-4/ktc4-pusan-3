@@ -85,9 +85,11 @@ async def create_event(
     created_by: EventCreatedBy,
     source_notice_id: uuid.UUID | None = None,
     source_refs: list[dict] | None = None,
+    series_id: uuid.UUID | None = None,
 ) -> Event:
     """승인된 일정만 저장한다. 초안과 승인 판정은 이 함수의 책임이 아니다."""
     row = Event(
+        series_id=series_id,
         child_id=child_id,
         title=title,
         event_type=EventType(event_type),

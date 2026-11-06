@@ -31,14 +31,14 @@ from app.api.v1.schemas.calendar import (
     MyDiaryOut,
     SharedPhotoOut,
 )
-from app.api.v1.schemas.suggestions import CalendarEventOut, EventItemOut
+from app.api.v1.schemas.suggestions import CalendarEventOut, EventItemOut, EventSeriesOut
 from app.domains.chat.repository import count_turns
 from app.domains.memory.observation.repository import (
     ObservationRecord,
     count_observations_by_day,
     page_observations,
 )
-from app.domains.schedule.models import Event, EventItem, Reminder
+from app.domains.schedule.models import Event, EventItem, EventSeries, Reminder
 from app.domains.schedule.repository import (
     find_diary,
     list_diary_dates,
@@ -48,6 +48,7 @@ from app.domains.schedule.repository import (
     list_shared_photo_dates,
     list_shared_photos,
 )
+from app.domains.schedule.series import series_by_id
 
 router = APIRouter()
 
@@ -129,6 +130,7 @@ async def get_calendar_day(
     reminders = await list_my_reminders(
         session, parent_id=parent.parent_id, event_ids=[e.id for e in events]
     )
+    series = await series_by_id(session, series_ids={e.series_id for e in events})
     records = await _observations_on(session, child_id=child.child_id, day=date)
     chats = await count_turns(
         session, parent_id=parent.parent_id, child_id=child.child_id, day=date
@@ -140,7 +142,10 @@ async def get_calendar_day(
             SharedPhotoOut(id=str(p.id), image_url=p.image_url, created_at=p.created_at)
             for p in photos
         ],
-        events=[_event_out(e, items.get(e.id, []), reminders.get(e.id)) for e in events],
+        events=[
+            _event_out(e, items.get(e.id, []), reminders.get(e.id), series.get(e.series_id))
+            for e in events
+        ],
         observations=await to_observation_outs(session, records, today=today_kst()),
         chat_count=chats,
     )
@@ -181,7 +186,12 @@ async def _observations_on(
         cursor = page.next_cursor
 
 
-def _event_out(event: Event, items: list[EventItem], reminder: Reminder | None) -> CalendarEventOut:
+def _event_out(
+    event: Event,
+    items: list[EventItem],
+    reminder: Reminder | None,
+    series: EventSeries | None,
+) -> CalendarEventOut:
     return CalendarEventOut(
         id=str(event.id),
         title=event.title,
@@ -203,4 +213,5 @@ def _event_out(event: Event, items: list[EventItem], reminder: Reminder | None) 
             for i in items
         ],
         reminder=reminder_out(reminder),
+        series=EventSeriesOut.of(series),
     )

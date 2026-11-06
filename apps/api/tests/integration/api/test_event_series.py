@@ -1,0 +1,390 @@
+"""요일 반복 일정 — 회차 펼치기 · 묶음 고치기 · 캘린더 표시 (#738).
+
+"오늘" 은 서버 시계의 KST 날짜다. 날짜는 전부 오늘에서 상대로 잡는다 — 지난 회차 · 오늘 이후 회차를
+가르는 것이 이 기능의 핵심이라 고정 날짜(2099 등)로는 지난 회차를 만들 수 없다.
+"""
+
+import uuid
+from datetime import date, datetime, time, timedelta
+from zoneinfo import ZoneInfo
+
+from httpx import AsyncClient
+from sqlalchemy import func, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.api import idempotency
+from app.domains.memory.store.db_store import DbMemoryStore
+from app.domains.schedule.models import Event, EventItem, Reminder
+from tests.integration.api.conftest import Bearer
+
+KST = ZoneInfo("Asia/Seoul")
+EVERY_DAY = [1, 2, 3, 4, 5, 6, 7]
+
+
+def _today() -> date:
+    return datetime.now(KST).date()
+
+
+def _day(offset: int) -> date:
+    return _today() + timedelta(days=offset)
+
+
+def _at(offset: int, clock: str) -> str:
+    return datetime.combine(_day(offset), time.fromisoformat(clock), tzinfo=KST).isoformat()
+
+
+EVENT = {
+    "title": "등원",
+    "ends_at": None,
+    "all_day": False,
+    "event_type": "core",
+    "category": "institution",
+}
+
+
+async def _submit(
+    client: AsyncClient, cid: uuid.UUID, headers: dict, *, first: int, until: int, **extra
+):
+    idempotency.clear()
+    return await client.post(
+        f"/api/v1/children/{cid}/events",
+        json={
+            "event": {**EVENT, "starts_at": _at(first, "08:30")},
+            "items": [{"item_id": None, "item_name": "물통"}],
+            "repeat": {"weekdays": EVERY_DAY, "until": _day(until).isoformat()},
+            **extra,
+        },
+        headers={**headers, "Idempotency-Key": uuid.uuid4().hex},
+    )
+
+
+async def _patch(client: AsyncClient, cid: uuid.UUID, sid: str, headers: dict, body: dict):
+    idempotency.clear()
+    return await client.patch(
+        f"/api/v1/children/{cid}/event-series/{sid}",
+        json=body,
+        headers={**headers, "Idempotency-Key": uuid.uuid4().hex},
+    )
+
+
+def _series_body(*, until: int, weekdays=EVERY_DAY, items=("물통",), **event) -> dict:
+    values = {
+        "title": "등원",
+        "starts_time": "08:30",
+        "ends_time": None,
+        "all_day": False,
+        "event_type": "core",
+        "category": "institution",
+    }
+    return {
+        **values,
+        **event,
+        "repeat_": {"weekdays": weekdays, "until": _day(until).isoformat()},
+        "items_": list(items),
+    }
+
+
+def _patch_body(before: dict, after: dict) -> dict:
+    def split(values: dict) -> tuple[dict, dict, list]:
+        rest = {k: v for k, v in values.items() if k not in ("repeat_", "items_")}
+        return rest, values["repeat_"], values["items_"]
+
+    event, repeat, items = split(after)
+    b_event, b_repeat, b_items = split(before)
+    return {
+        "event": event,
+        "repeat": repeat,
+        "before": {**b_event, "repeat": b_repeat, "items": b_items},
+        "items": items,
+    }
+
+
+async def _occurrences(session: AsyncSession, series_id: str) -> dict[date, Event]:
+    rows = await session.scalars(
+        select(Event)
+        .where(Event.series_id == uuid.UUID(series_id))
+        .execution_options(populate_existing=True)
+    )
+    return {row.starts_at.astimezone(KST).date(): row for row in rows}
+
+
+async def _items(session: AsyncSession, event_id: uuid.UUID) -> dict[str, bool]:
+    rows = await session.scalars(
+        select(EventItem)
+        .where(EventItem.event_id == event_id)
+        .execution_options(populate_existing=True)
+    )
+    return {row.item_name: row.is_prepared for row in rows}
+
+
+async def _seed(client, session, cid, headers, *, first=-3, until=6, **extra) -> str:
+    resp = await _submit(client, cid, headers, first=first, until=until, **extra)
+    assert resp.status_code == 201, resp.text
+    return resp.json()["event"]["series"]["id"]
+
+
+# ── 만들기 ────────────────────────────────────────────────────────────────
+
+
+async def test_repeat_expands_to_one_row_per_day_with_own_items_and_reminders(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    """회차마다 일정 · 준비물 · 알림 행이 따로 생긴다. 울릴 시각이 지난 회차의 알림은 건너뛴다."""
+    headers, _ = bearer
+    resp = await _submit(db_client, cid, headers, first=-7, until=6, reminder={"lead": "1h"})
+
+    assert resp.status_code == 201, resp.text
+    event = resp.json()["event"]
+    assert event["starts_at"] == _at(-7, "08:30")  # 응답은 첫 회차
+    assert event["series"]["weekdays"] == EVERY_DAY
+    assert event["series"]["label"].endswith("매일")
+    assert event["reminder"] is None  # 첫 회차는 이미 지나 알림을 걸지 않았다
+
+    occurrences = await _occurrences(session, event["series"]["id"])
+    assert sorted(occurrences) == [_day(n) for n in range(-7, 7)]
+    assert {e.starts_at.astimezone(KST).time() for e in occurrences.values()} == {time(8, 30)}
+    for row in occurrences.values():
+        assert await _items(session, row.id) == {"물통": False}
+    reminded = set(
+        await session.scalars(
+            select(Reminder.event_id).where(
+                Reminder.event_id.in_([e.id for e in occurrences.values()])
+            )
+        )
+    )
+    assert all(occurrences[_day(n)].id not in reminded for n in range(-7, 0))
+    assert all(occurrences[_day(n)].id in reminded for n in range(1, 7))
+
+
+async def test_repeat_is_always_core(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    """반복 일정은 일상이라 core 다. episodic 이 와도 서버가 정한다 — 만들 때도, 고칠 때도."""
+    headers, _ = bearer
+    idempotency.clear()
+    resp = await db_client.post(
+        f"/api/v1/children/{cid}/events",
+        json={
+            "event": {**EVENT, "event_type": "episodic", "starts_at": _at(1, "08:30")},
+            "repeat": {"weekdays": EVERY_DAY, "until": _day(3).isoformat()},
+        },
+        headers={**headers, "Idempotency-Key": uuid.uuid4().hex},
+    )
+    assert resp.status_code == 201, resp.text
+    sid = resp.json()["event"]["series"]["id"]
+    before = _series_body(until=3)
+
+    await _patch(
+        db_client, cid, sid, headers, _patch_body(before, {**before, "event_type": "episodic"})
+    )
+
+    assert {str(e.event_type) for e in (await _occurrences(session, sid)).values()} == {"core"}
+
+
+async def test_repeat_longer_than_90_days_is_refused(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    headers, _ = bearer
+    resp = await _submit(db_client, cid, headers, first=1, until=91)
+
+    assert resp.status_code == 422
+    assert resp.json()["error"]["code"] == "invalid_repeat"
+    assert await session.scalar(select(func.count()).select_from(Event)) == 0
+
+
+async def test_repeat_with_only_past_reminders_is_refused(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    """회차 전부의 알림이 이미 지났으면 단건 제출처럼 422 — 걸리는 알림이 하나도 없다."""
+    headers, _ = bearer
+    resp = await _submit(db_client, cid, headers, first=-5, until=-2, reminder={"lead": "1h"})
+
+    assert resp.status_code == 422
+    assert resp.json()["error"]["code"] == "invalid_reminder"
+    assert await session.scalar(select(func.count()).select_from(Event)) == 0
+
+
+# ── 묶음 고치기 ───────────────────────────────────────────────────────────
+
+
+async def test_time_change_applies_from_today_and_leaves_past_occurrences(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    headers, _ = bearer
+    sid = await _seed(db_client, session, cid, headers)
+    before = _series_body(until=6)
+
+    resp = await _patch(
+        db_client, cid, sid, headers, _patch_body(before, {**before, "starts_time": "09:00"})
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["occurrence_count"] == 7  # 오늘 포함 7회
+    occurrences = await _occurrences(session, sid)
+    for offset in range(-3, 7):
+        expected = time(8, 30) if offset < 0 else time(9, 0)
+        assert occurrences[_day(offset)].starts_at.astimezone(KST).time() == expected, offset
+
+
+async def test_only_fields_that_differ_from_before_are_written(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    """제목만 바꾸면 그 회차만 10시로 옮겨 둔 시각은 그대로다 — 기준과 같은 칸은 건드리지 않는다."""
+    headers, _ = bearer
+    sid = await _seed(db_client, session, cid, headers)
+    moved = (await _occurrences(session, sid))[_day(2)]
+    await session.execute(
+        update(Event)
+        .where(Event.id == moved.id)
+        .values(starts_at=datetime.combine(_day(2), time(10), tzinfo=KST))
+    )
+    before = _series_body(until=6)
+
+    resp = await _patch(
+        db_client, cid, sid, headers, _patch_body(before, {**before, "title": "어린이집 등원"})
+    )
+
+    assert resp.status_code == 200, resp.text
+    occurrences = await _occurrences(session, sid)
+    assert occurrences[_day(2)].starts_at.astimezone(KST).time() == time(10)
+    assert occurrences[_day(2)].title == "어린이집 등원"
+    assert occurrences[_day(-1)].title == "등원"
+
+
+async def test_items_match_by_name_and_keep_prepared_marks(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    headers, _ = bearer
+    sid = await _seed(db_client, session, cid, headers)
+    tomorrow = (await _occurrences(session, sid))[_day(1)]
+    await session.execute(
+        update(EventItem).where(EventItem.event_id == tomorrow.id).values(is_prepared=True)
+    )
+    before = _series_body(until=6)
+
+    resp = await _patch(
+        db_client,
+        cid,
+        sid,
+        headers,
+        _patch_body(before, {**before, "items_": ["물통", "실내화"]}),
+    )
+
+    assert resp.status_code == 200, resp.text
+    occurrences = await _occurrences(session, sid)
+    assert await _items(session, occurrences[_day(1)].id) == {"물통": True, "실내화": False}
+    assert await _items(session, occurrences[_day(2)].id) == {"물통": False, "실내화": False}
+    assert await _items(session, occurrences[_day(-1)].id) == {"물통": False}
+
+
+async def test_repeat_change_re_expands_only_future_days(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    """요일을 빼면 오늘 이후 그 요일 회차만 지워지고, 끝 날짜를 늘리면 늘어난 날에 회차 · 준비물 ·
+    알림이 생긴다. 지난 회차는 빠진 요일이어도 남는다."""
+    headers, parent_id = bearer
+    sid = await _seed(db_client, session, cid, headers, first=-7, reminder={"lead": "1h"})
+    dropped = _day(1).isoweekday()
+    weekdays = [d for d in EVERY_DAY if d != dropped]
+    before = _series_body(until=6)
+
+    resp = await _patch(
+        db_client,
+        cid,
+        sid,
+        headers,
+        _patch_body(before, _series_body(until=9, weekdays=weekdays)),
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["series"]["weekdays"] == weekdays
+    assert resp.json()["series"]["until"] == _day(9).isoformat()
+    occurrences = await _occurrences(session, sid)
+    expected = [_day(n) for n in range(-7, 10) if n < 0 or _day(n).isoweekday() != dropped]
+    assert sorted(occurrences) == expected
+    assert _day(-6) in occurrences  # 빠진 요일이지만 지난 회차라 남는다
+    for offset in (7, 8, 9):
+        if _day(offset).isoweekday() == dropped:
+            continue
+        added = occurrences[_day(offset)]
+        assert await _items(session, added.id) == {"물통": False}
+        lead = await session.scalar(
+            select(Reminder.lead).where(
+                Reminder.event_id == added.id, Reminder.parent_id == parent_id
+            )
+        )
+        assert lead == "1h"
+
+
+async def test_all_day_change_ignores_clock_times(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    """종일로 바꾸면 시각이 같이 와도 버리고 그날 00:00 으로 둔다 — 422 로 막지 않는다."""
+    headers, _ = bearer
+    sid = await _seed(db_client, session, cid, headers)
+    before = _series_body(until=6)
+
+    resp = await _patch(
+        db_client, cid, sid, headers, _patch_body(before, {**before, "all_day": True})
+    )
+
+    assert resp.status_code == 200, resp.text
+    tomorrow = (await _occurrences(session, sid))[_day(1)]
+    assert tomorrow.all_day is True
+    assert tomorrow.starts_at.astimezone(KST).time() == time(0)
+
+
+async def test_series_of_unknown_id_is_not_found(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    headers, _ = bearer
+    before = _series_body(until=6)
+    resp = await _patch(db_client, cid, str(uuid.uuid4()), headers, _patch_body(before, before))
+    assert resp.status_code == 404
+
+
+async def test_series_patch_requires_idempotency_key(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    headers, _ = bearer
+    sid = await _seed(db_client, session, cid, headers)
+    before = _series_body(until=6)
+    resp = await db_client.patch(
+        f"/api/v1/children/{cid}/event-series/{sid}",
+        json=_patch_body(before, before),
+        headers=headers,
+    )
+    assert resp.status_code == 400
+
+
+# ── 읽기 ──────────────────────────────────────────────────────────────────
+
+
+async def test_calendar_and_memory_store_see_the_series(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    headers, _ = bearer
+    sid = await _seed(db_client, session, cid, headers)
+
+    day = await db_client.get(f"/api/v1/children/{cid}/calendar/{_day(1)}", headers=headers)
+    [event] = day.json()["events"]
+    assert event["series"]["id"] == sid
+    assert event["series"]["label"].endswith("매일")
+
+    plain = await db_client.post(
+        f"/api/v1/children/{cid}/events",
+        json={"event": {**EVENT, "starts_at": _at(1, "15:00")}, "items": []},
+        headers={**headers, "Idempotency-Key": uuid.uuid4().hex},
+    )
+    assert "series" not in plain.json()["event"]  # 반복이 아니면 키가 없다 (웹 `series?`)
+    day = await db_client.get(f"/api/v1/children/{cid}/calendar/{_day(1)}", headers=headers)
+    assert ["series" in e for e in day.json()["events"]] == [True, False]
+
+    store = DbMemoryStore(session, child_id=cid)
+    rows = await store.list_series_events(series_id=sid, date_from=_today())
+    assert [r.starts_at.date() for r in rows] == [_day(n) for n in range(0, 7)]
+    got = await store.get_event(event_id=rows[0].id)
+    assert got is not None and got.series is not None
+    assert got.series == await store.get_series(series_id=sid)
+    assert got.series.starts_on == _day(-3)
+    assert await store.get_series(series_id="not-a-uuid") is None

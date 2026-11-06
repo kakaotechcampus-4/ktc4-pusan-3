@@ -23,6 +23,7 @@ from app.agents.memory.store.ports import (
     EventRow,
     ObservationDomain,
     ObservationRow,
+    SeriesRow,
 )
 from app.domains.memory.observation.models import (
     ObservationActivity,
@@ -36,7 +37,8 @@ from app.domains.memory.observation.models import (
 )
 from app.domains.memory.profile.service import lock_child_memory, refresh_profile
 from app.domains.schedule import repository as schedule_repository
-from app.domains.schedule.models import Event, EventItem
+from app.domains.schedule import series as series_repository
+from app.domains.schedule.models import Event, EventItem, EventSeries
 
 logger = logging.getLogger(__name__)
 
@@ -124,7 +126,13 @@ def _enum_val(v: Any) -> Any:
     return v.value if hasattr(v, "value") else str(v)
 
 
-def _event_row(orm: Event) -> EventRow:
+def _series_row(orm: EventSeries) -> SeriesRow:
+    return SeriesRow(
+        id=str(orm.id), weekdays=tuple(orm.weekdays), starts_on=orm.starts_on, until=orm.until
+    )
+
+
+def _event_row(orm: Event, series: EventSeries | None = None) -> EventRow:
     return EventRow(
         id=str(orm.id),
         title=orm.title,
@@ -137,6 +145,7 @@ def _event_row(orm: Event) -> EventRow:
             "category": _enum_val(orm.category),
             "created_by": _enum_val(orm.created_by),
         },
+        series=_series_row(series) if series is not None else None,
     )
 
 
@@ -152,6 +161,8 @@ def _event_item_row(orm: EventItem) -> EventItemRow:
 
 class DbMemoryStore:
     """MemoryStore Protocol 구현. 세션 하나가 run 하나를 의미한다."""
+
+    supports_series = True  # 반복 묶음을 읽는다 (#738 · `ports.supports_series()`)
 
     def __init__(self, session: AsyncSession, *, child_id: UUID, today: date | None = None) -> None:
         self._session = session
@@ -402,7 +413,13 @@ class DbMemoryStore:
             stmt = stmt.where(Event.title.contains(title_query, autoescape=True))
         stmt = stmt.order_by(Event.starts_at, Event.id)
         rows = (await self._session.scalars(stmt)).all()
-        return [_event_row(r) for r in rows]
+        return await self._event_rows(rows)
+
+    async def _event_rows(self, rows: Any) -> list[EventRow]:
+        series = await series_repository.series_by_id(
+            self._session, series_ids={r.series_id for r in rows}
+        )
+        return [_event_row(r, series.get(r.series_id)) for r in rows]
 
     async def get_event(self, *, event_id: str) -> EventRow | None:
         uid = _parse_uuid(event_id)
@@ -411,7 +428,27 @@ class DbMemoryStore:
         orm = await self._session.scalar(
             select(Event).where(Event.id == uid, Event.child_id == self._child_id)
         )
-        return _event_row(orm) if orm is not None else None
+        return (await self._event_rows([orm]))[0] if orm is not None else None
+
+    # ── 반복 묶음 (#738) ────────────────────────────────────────
+
+    async def get_series(self, *, series_id: str) -> SeriesRow | None:
+        uid = _parse_uuid(series_id)
+        if uid is None:
+            return None
+        orm = await series_repository.find_series(
+            self._session, child_id=self._child_id, series_id=uid
+        )
+        return _series_row(orm) if orm is not None else None
+
+    async def list_series_events(self, *, series_id: str, date_from: date) -> list[EventRow]:
+        uid = _parse_uuid(series_id)
+        if uid is None:
+            return []
+        rows = await series_repository.list_series_events(
+            self._session, child_id=self._child_id, series_id=uid, date_from=date_from
+        )
+        return await self._event_rows(rows)
 
     async def delete_event(self, *, event_id: str) -> bool:
         uid = _parse_uuid(event_id)
