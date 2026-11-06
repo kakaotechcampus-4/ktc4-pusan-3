@@ -36,6 +36,11 @@ export const REF_KINDS = [
   "health_safety",
   "event",
   "suggestion",
+  /**
+   * 복약 코스 (#713). 04 Health readout 의 근거로만 온다 — 체크 안내 · 회차 현황이 어느 코스를 말하는지다.
+   * 서버는 readout 근거 중 이 종류만 화면으로 보낸다 (`apps/api/app/api/runs/translate.py` 의 `_SCREEN_REF_KINDS` · PR #716).
+   */
+  "medication_schedule",
 ] as const;
 export type RefKind = (typeof REF_KINDS)[number];
 
