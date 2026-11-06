@@ -99,6 +99,27 @@ async def test_등록하면_등록한_보호자만_등록한_시각으로_구독
     assert await subscriptions(session, course.id) == {child.owner_parent_id: NOW}
 
 
+async def test_연결되지_않은_보호자는_등록하지_못한다(session, child, helper):
+    """접근 확인 뒤 그사이 연결이 끊긴 경우 — 저장 전에 `NotLinked` 다(API 는 403)."""
+    await unlink_parent(session, child_id=child.id, parent_id=helper.id)
+
+    with pytest.raises(NotLinked):
+        await create_course(
+            session,
+            child_id=child.id,
+            parent_id=helper.id,
+            data=CourseInput(
+                title="약",
+                starts_on=TODAY,
+                ends_on=TODAY,
+                source=MedicationSource.UTTERANCE,
+                doses=DOSES,
+            ),
+            today=TODAY,
+            now=NOW,
+        )
+
+
 async def test_코스를_수정해도_구독은_그대로다(session, child, helper):
     course = await register(session, child)
     await turn_on(session, child, course, helper, now=LATER)

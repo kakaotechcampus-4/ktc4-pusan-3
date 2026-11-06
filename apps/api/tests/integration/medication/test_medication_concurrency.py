@@ -4,10 +4,12 @@
 다른 세션의 commit 전 쓰기를 못 보는 것이 문제의 핵심이다. 그래서 이 파일은 **별도 세션으로 실제로
 commit 하고**, 끝나면 만든 보호자 · 아이를 지운다 (코스 · 회차는 아이를 따라 ON DELETE CASCADE).
 
-겹치는 순간은 sleep 으로 만들고, 기대 결과는 어느 쪽이 먼저 가든 같게 적는다.
+겹치는 순간은 sleep 으로 만들거나, 상대가 실제로 잠금에서 기다리는지 DB 로 본다
+(`wait_for_lock_wait`). 기대 결과는 어느 쪽이 먼저 가든 같게 적는다.
 """
 
 import asyncio
+import contextlib
 from datetime import UTC, date, datetime, time, timedelta
 
 import pytest
@@ -460,6 +462,15 @@ async def test_체크가_회차를_잡은_사이에_같은_보호자가_탈퇴�
 # ── 등록 · 연결 끊기가 같은 보호자를 두고 겹칠 때 (#749) ───────────────
 
 
+async def _settle(task: asyncio.Task | None) -> None:
+    """기다리던 상대 작업을 정리한다 — 단언이 먼저 실패해도 세션을 닫기 전에 끝나게."""
+    if task is None or task.done():
+        return
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError, Exception):
+        await task
+
+
 async def test_등록이_연결을_잡은_사이에_끊기가_오면_구독까지_지워진다(make_child):
     """함께 보는 보호자가 등록하는 중에 그 보호자의 연결이 끊긴다 (등록 보호자는 끊을 수 없다).
 
@@ -478,6 +489,7 @@ async def test_등록이_연결을_잡은_사이에_끊기가_오면_구독까�
         await s.commit()
         helper_id = helper.id
     s1, s2 = async_session_factory(), async_session_factory()
+    task = None
     try:
         await create_course(
             s1,
@@ -507,6 +519,7 @@ async def test_등록이_연결을_잡은_사이에_끊기가_오면_구독까�
             )
         assert left == 0
     finally:
+        await _settle(task)
         await s1.close()
         await s2.close()
         async with async_session_factory() as s:
@@ -514,13 +527,19 @@ async def test_등록이_연결을_잡은_사이에_끊기가_오면_구독까�
             await s.commit()
 
 
-async def test_등록이_보호자를_잡은_사이에_같은_보호자가_탈퇴해도_교착이_없다(make_child):
-    """등록은 보호자 → 아이 → 연결을 먼저 잡고(`lock_link`) 아이별 등록 잠금을 잡는다. 탈퇴도
-    보호자 → 아이 순이라 등록 커밋을 기다렸다가 아이와 함께 코스 · 구독을 지운다.
+async def test_등록하는_사이_같은_보호자가_탈퇴하면_등록_커밋을_기다렸다가_코스와_구독까지_지운다(
+    make_child,
+):
+    """탈퇴는 보호자 → 아이를 FOR UPDATE 로 잡는데, 등록이 이미 쥔 KEY SHARE 를 기다린다.
+
+    등록 커밋 뒤에 지나가 아이와 함께 코스 · 구독까지 지운다. 순서를 증명하는 테스트는 아니다 —
+    `lock_link` 가 없어도 코스 · 구독 INSERT 의 FK 검사가 같은 행을 잡아 이 겹침에서는 결과가 같다.
+    여기서는 이번에 등록 경로에 생긴 잠금이 탈퇴와 겹쳐도 멈추지 않고 남는 것이 없다는 것을 본다.
     """
     child_id = await make_child()
     owner_id = await owner_of(child_id)
     s1, s2 = async_session_factory(), async_session_factory()
+    task = None
     try:
         await create_course(
             s1,
@@ -540,6 +559,7 @@ async def test_등록이_보호자를_잡은_사이에_같은_보호자가_탈�
         await s1.commit()
         await asyncio.wait_for(task, timeout=5)
     finally:
+        await _settle(task)
         await s1.close()
         await s2.close()
 
