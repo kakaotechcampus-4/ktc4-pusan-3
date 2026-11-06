@@ -35,6 +35,7 @@ import httpx
 import pytest
 from pydantic import BaseModel
 
+from app.agents.common.food_safety import filter_food_safety
 from app.agents.food.menu_resolver import (
     LOOKUP_TIMEOUT_S,
     MAX_LOOKUPS_PER_EVALUATION,
@@ -45,7 +46,6 @@ from app.agents.food.menu_resolver import (
 )
 from app.agents.food.store import InMemoryMenuCatalog
 from app.agents.food.store.ports import MenuCatalogRow, SafetyEntry
-from app.agents.food.tools.safety import filter_food_safety
 from app.core.config import Settings
 from app.core.mfds_nutri_raw import CORE_NUTRIENT_KEYS, RawNutriRow
 from app.integrations.mfds.client import MfdsNutriClient, mfds_nutri_http

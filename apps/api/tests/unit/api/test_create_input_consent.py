@@ -260,6 +260,15 @@ async def test_날씨_어댑터가_없으면_None_이다(client, agent_calls, co
     assert agent_calls[0]["activity_weather"] is None
 
 
+async def test_서버가_만든_행사_어댑터를_러너에_넘긴다(client, agent_calls, consent_reads):
+    events = object()
+    client._transport.app.state.activity_events = events
+
+    await client.post(URL, json=BODY, headers=_key())
+
+    assert agent_calls[0]["activity_events"] is events
+
+
 async def test_서버가_만든_병원_어댑터를_러너에_넘긴다(client, agent_calls, consent_reads):
     hospitals = object()
     client._transport.app.state.health_places = hospitals

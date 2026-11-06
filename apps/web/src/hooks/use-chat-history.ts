@@ -10,6 +10,7 @@ import {
   olderPageParam,
   pastTurnsOf,
   type ChatPageParam,
+  type ChatPages,
   type PastTurn,
 } from "@/lib/chat-history";
 
@@ -23,11 +24,17 @@ import {
  * 🚨 `throwOnError` 를 켜지 않는다 — 지난 대화를 못 받아도 지금 보낸 줄은 그려야 한다 (NF-06).
  */
 export function useChatHistory(childId: string, from: string | null) {
-  const query = useInfiniteQuery({
+  const query = useInfiniteQuery<
+    ChatDayResponse,
+    Error,
+    ChatPages,
+    ReturnType<typeof qk.chatList>,
+    ChatPageParam | null
+  >({
     queryKey: qk.chatList(childId, from),
     queryFn: ({ pageParam }) =>
       api.get<ChatDayResponse>(`/children/${childId}/chat`, { query: chatQuery(pageParam) }),
-    initialPageParam: (from === null ? null : { date: from }) as ChatPageParam | null,
+    initialPageParam: from === null ? null : { date: from },
     getNextPageParam: olderPageParam,
     getPreviousPageParam: newerPageParam,
   });

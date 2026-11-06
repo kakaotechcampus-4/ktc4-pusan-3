@@ -42,7 +42,7 @@
 | `source_title` · `source_org` · `source_year` | text · text · smallint | NOT NULL |
 | `source_locator` | text | 쪽 · 조항 · 절. "p.42" / "제3장 2절" |
 | `source_url` | text | nullable |
-| `license_basis` | varchar + CHECK | `public_law`(법령·고시) · `kogl_1`~`kogl_4`(공공누리) · `fact_rewrite`(사실만 추출해 재작성) · `permission`(허락 받음) |
+| `license_basis` | varchar + CHECK | `public_law`(법령·고시) · `kogl_1`~`kogl_4`(공공누리) · `fact_rewrite`(사실만 추출해 재작성) · `permission`(허락 받음) · `cc_by`(CC BY 4.0) · `ogl_3`(영국 Open Government Licence v3.0) · `pdl_1`(일본 PDL 1.0) · `cc0`. 뒤 네 값은 #510 에서 더했다 — `pdl_1` · `cc0` 은 값만 있고 행은 없다. 값마다 응답에 붙는 표시 문구는 `common/reference_docs.public_doc_source` 가 정한다(§ 소스 아래) |
 | `status` | varchar + CHECK | `draft` · `approved` · `retired`. **조회는 `approved`만** |
 | `authored_by` · `reviewed_by` | text | 작성자 · 검수자 (서로 달라야 함, CHECK). **GitHub 아이디로 적는다** — 이름과 아이디가 섞이면 같은 사람을 다른 사람으로 본다. 로더는 앞뒤 공백을 지운 뒤 비교한다 |
 | `reviewed_at` | date | `approved`면 NOT NULL |
@@ -105,12 +105,14 @@ CHECK (status <> 'approved' OR reviewed_at IS NOT NULL)
 
 | 소스 | 쓸 곳 | 라이선스 |
 | --- | --- | --- |
-| 뉴질랜드 보건부 「Healthy Eating Guidelines for New Zealand Babies and Toddlers (0–2 years old)」 2021 | `weaning_stage` · `weaning_ingredient` · `feeding_tip` | CC BY 4.0 — 값 집합에 CC BY 가 없어 `fact_rewrite` 로 적고 시드 머리말에 라이선스를 적는다 |
+| 뉴질랜드 보건부 「Healthy Eating Guidelines for New Zealand Babies and Toddlers (0–2 years old)」 2021 | `weaning_stage` · `weaning_ingredient` · `feeding_tip` · `meal_pattern`(12–35개월) | CC BY 4.0 (`cc_by`, #510 에서 값에 더했다 — 처음엔 `fact_rewrite` 로 적었다). 05 응답이 원래 기관 · 제목 뒤에 "번역·재구성함 · CC BY 4.0 (주소)" 를 붙인다 |
+| 영국 교육부(DfE) 「Early Years Foundation Stage nutrition guidance」 2025년 5월 | `meal_pattern` | Open Government Licence v3.0 (`ogl_3`). 05 응답이 원래 기관 · 제목 뒤에 필수 영문 문장과 라이선스 주소를 붙인다 |
+| 영국 NHS 웹사이트 「Fussy eaters」 · 「Young children and food: common questions」 | `feeding_tip` 8행 | OGL v3.0 (`ogl_3`). 🚨 번역 · 각색이라 NHS 약관 3.6(b) 에 따라 NHS 를 출처로 밝히지 않는다 — YAML 에는 실제 원문 출처를 남기고, 05 응답 · Agent 입력에는 기관 "영국 정부 공공 정보" 와 표준 OGL 문장만 나간다(`public_doc_source`) |
 | 한국소비자원 「영유아 이유식 안전실태조사」 2023 붙임4 | 시작 시기(4~6개월) · 한 가지씩 · 먹이는 태도 | 공공누리 제1유형 (`kogl_1`) |
 | 표준보육과정 · 누리과정 고시 | `feeding_tip` (연령별 식사 태도) | 고시 (`public_law`) — 국가법령정보센터 본문 |
 | CDC · USDA WIC · 미국 식생활지침 | 대조용 (행 출처 아님) | 미국 연방 저작물 |
 
-뺀 소스와 이유(식생활 영양정보 · 2025 한국인 영양소 섭취기준 · 국가건강정보포털 · 학회 자료 · 급식관리지원센터 · WHO 등)는 #337 에 있다. 이 기준을 만족하는 한국 식단 구성 자료를 아직 못 찾아서 `meal_pattern` · `nutrient_note` 는 비어 있다.
+뺀 소스와 이유(식생활 영양정보 · 2025 한국인 영양소 섭취기준 · 국가건강정보포털 · 학회 자료 · 급식관리지원센터 · WHO 등)는 #337 에 있다. 한국 식단 구성 자료는 이 기준을 만족하는 것을 못 찾아, `meal_pattern` 은 DfE 2025 · 뉴질랜드 0–2세 지침(#510)으로 12–35개월 · 36–71개월 각 15행을 `draft` 로 두었고 `nutrient_note` 는 비어 있다. 뉴질랜드 2–18세 지침(2012)은 원문을 열지 못했고 개정 중이라 쓰지 않았다. 일본 가이드는 원본 URL 이 404 라 행이 없다(`pdl_1` 은 값만 있다).
 
 ### 행 예시
 
@@ -133,7 +135,7 @@ CHECK (status <> 'approved' OR reviewed_at IS NOT NULL)
 | 순위 | 유형 | 목표 행 |
 | --- | --- | --- |
 | P0 | `weaning_stage` · `weaning_ingredient` | 30 (공식 API가 없는 유일한 영역. 재료별이 아니라 식품군 단위로 써서 45 → 30, #337) |
-| P1 | `meal_pattern` | 30 (12–35 · 36+ 각 15) — 소스를 찾은 뒤 |
+| P1 | `meal_pattern` | 30 (12–35 · 36–71 각 15) — #510 에서 `draft` 로 작성, 검수 뒤 `approved` |
 | P1 | `nutrient_note` | 20 — 필요한지부터 따로 정한다 (#337) |
 | P2 | `feeding_tip` | 10 (#337) |
 

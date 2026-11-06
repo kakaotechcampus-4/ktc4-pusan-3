@@ -31,6 +31,7 @@ from datetime import date, timedelta
 
 from app.agents.common.age import first_month_of, life_stage
 from app.agents.common.evidence import OBSERVATION_WINDOW_DAYS, ObservationRow, rank_evidence
+from app.agents.common.food_safety import filter_food_safety
 from app.agents.common.suggestion import MAX_SUGGESTIONS
 from app.agents.food.context import FoodContext, require_safety
 from app.agents.food.matching import related
@@ -41,7 +42,6 @@ from app.agents.food.nutrition_eval import (
     read_meal_records,
 )
 from app.agents.food.store.ports import MenuCatalogRow
-from app.agents.food.tools.safety import filter_food_safety
 from app.rules.age import Stage
 from app.rules.menu_key import normalize_menu_key
 
@@ -163,12 +163,17 @@ def _merge_same_name(rows: Sequence[MenuCatalogRow]) -> list[MenuCatalogRow]:
 
     둘 다 두면 같은 이름이 후보에 두 번 나오고, 하나만 고르면 다른 쪽 알레르기를 놓친다. 단계는
     더 높은(늦은) 쪽을 따른다 — 어느 한쪽이라도 아직 이르면 이른 것이다.
+
+    묶음의 대표 행(출처 · 근거 id 를 정한다)은 `(source, source_id)` 순 첫 행이다. 입력 순서로
+    고르면 같은 메뉴의 근거 id 가 run 마다 달라진다. 나머지 행의 (source, source_id) 는
+    `merged_from` 에 남겨 메뉴 근거가 합쳐진 레시피를 모두 가리키게 한다.
     """
     groups: dict[str, list[MenuCatalogRow]] = {}
     for row in rows:
         groups.setdefault(row.menu_key, []).append(row)
     merged: list[MenuCatalogRow] = []
     for same in groups.values():
+        same = sorted(same, key=lambda row: (row.source, row.source_id or ""))
         first = same[0]
         if len(same) == 1:
             merged.append(first)
@@ -181,6 +186,7 @@ def _merge_same_name(rows: Sequence[MenuCatalogRow]) -> list[MenuCatalogRow]:
                 allergen_codes=frozenset().union(*(row.allergen_codes for row in same)),
                 food_groups=frozenset().union(*(row.food_groups for row in same)),
                 stage_min=max((row.stage_min or "toddler" for row in same), key=first_month_of),
+                merged_from=tuple((row.source, row.source_id) for row in same[1:] if row.source_id),
             )
         )
     return merged

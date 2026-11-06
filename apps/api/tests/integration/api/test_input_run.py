@@ -133,6 +133,7 @@ async def test_inputs_hand_the_line_to_the_agents(db_client, bearer, agent_calls
             "reply_to": None,
             "location": None,
             "activity_weather": None,
+            "activity_events": None,
             "health_places": None,
             "on_event": ANY,  # 대화 기록(#228) — test_finished_run_is_kept_as_a_chat_turn
         }

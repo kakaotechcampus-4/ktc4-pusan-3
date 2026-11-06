@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import date
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -57,6 +58,17 @@ class SuggestionOut(BaseModel):
             "서버 코드 문구라 글자 그대로 보여 준다. 근거가 아니어서 evidence 에 들어가지 않는다. "
             "없으면 빈 배열"
         ),
+    )
+    event_starts_on: date | None = Field(
+        default=None,
+        description=(
+            "행사가 붙은 추천에만 오는 행사 시작일(YYYY-MM-DD). 화면이 place_notice 줄에 기간으로 "
+            "세운다. 근거가 아니다. 행사가 없으면 null"
+        ),
+    )
+    event_ends_on: date | None = Field(
+        default=None,
+        description="행사가 붙은 추천에만 오는 행사 종료일(YYYY-MM-DD). 행사가 없으면 null",
     )
     reason: str | None = Field(
         default=None,
@@ -126,7 +138,12 @@ class DocEvidenceOut(BaseModel):
     )
     title: str
     source_org: str
-    source_title: str
+    source_title: str = Field(
+        description=(
+            "원문 제목. 라이선스가 요구하는 표시 문구와 URL 이 제목 뒤에 붙을 수 있다 "
+            "(CC BY 의 변경 표시 · OGL 의 출처 문장)"
+        )
+    )
     source_url: str | None = None
     note: str = Field(description="이 문서를 어떻게 참고했는지 한 줄")
 
@@ -158,6 +175,17 @@ class GeneralSuggestionOut(BaseModel):
             "서버 코드 문구라 글자 그대로 보여 준다. 근거가 아니어서 evidence 에 들어가지 않는다. "
             "없으면 빈 배열"
         ),
+    )
+    event_starts_on: date | None = Field(
+        default=None,
+        description=(
+            "행사가 붙은 추천에만 오는 행사 시작일(YYYY-MM-DD). 화면이 place_notice 줄에 기간으로 "
+            "세운다. 근거가 아니다. 행사가 없으면 null"
+        ),
+    )
+    event_ends_on: date | None = Field(
+        default=None,
+        description="행사가 붙은 추천에만 오는 행사 종료일(YYYY-MM-DD). 행사가 없으면 null",
     )
     basis: str = Field(description="코드 템플릿 문구. 모델이 쓴 문장이 아니다")
     status: str

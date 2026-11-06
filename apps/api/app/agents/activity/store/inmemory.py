@@ -1,11 +1,11 @@
 """Activity 포트의 인메모리 구현. 테스트·eval이 DB·외부 API 없이 ActivityPorts를 주입할 때 쓴다.
 
 아이 기록 포트(memory · schedule)는 행이 `child_id`로 나뉘도록 딕셔너리로 둔다.
-`child_id`가 없는 공용 데이터 포트(docs · weather · places)는 한 인스턴스가 한 시나리오 몫의
-데이터만 쥔다고 본다. 실패를 흉내 낼 때는 `fail=True` — 빈 결과와 구분해야 한다 (루트 §2).
+`child_id`가 없는 공용 데이터 포트(docs · weather · places · events)는 한 인스턴스가 한 시나리오
+몫의 데이터만 쥔다고 본다. 실패를 흉내 낼 때는 `fail=True` — 빈 결과와 구분해야 한다 (루트 §2).
 """
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from datetime import date
 from uuid import UUID
 
@@ -19,6 +19,7 @@ from app.agents.activity.store.ports import (
     ChildProfileReader,
     CoarseLocation,
     ConsentReader,
+    EventSource,
     PlaceRow,
     PlaceSource,
     RawAdvisories,
@@ -34,6 +35,7 @@ from app.agents.activity.store.ports import (
     WeatherSource,
 )
 from app.agents.common.evidence import AffinityRow
+from app.core.event_raw import RawEvent, RawEventIntro
 
 
 class InMemoryProfile:
@@ -191,6 +193,40 @@ class InMemoryPlaces:
         ]
 
 
+class InMemoryEvents:
+    """전국 행사 목록 원문과 소개정보. 위치를 받지 않는다 — 어댑터와 같다.
+
+    소개정보가 없는 행사는 연령 제한 · 장소가 빈 행사로 돌려준다. `fail_intro` 의 id 는 소개정보
+    조회가 실패한다. `intro_calls` 에 물은 순서를 남긴다.
+    """
+
+    def __init__(
+        self,
+        rows: Sequence[RawEvent] = (),
+        intros: Mapping[str, RawEventIntro] | None = None,
+        *,
+        fail: bool = False,
+        fail_intro: Collection[str] = (),
+    ) -> None:
+        self._rows = list(rows)
+        self._intros = dict(intros or {})
+        self._fail = fail
+        self._fail_intro = frozenset(fail_intro)
+        self.intro_calls: list[str] = []
+
+    async def events(self, *, ending_on_or_after: date) -> list[RawEvent]:
+        if self._fail:
+            raise UpstreamUnavailable("행사 조회 실패 (테스트 주입)")
+        cutoff = ending_on_or_after.strftime("%Y%m%d")
+        return [row for row in self._rows if row.end >= cutoff]
+
+    async def intro(self, *, content_id: str) -> RawEventIntro:
+        self.intro_calls.append(content_id)
+        if content_id in self._fail_intro:
+            raise UpstreamUnavailable("행사 소개정보 조회 실패 (테스트 주입)")
+        return self._intros.get(content_id, RawEventIntro(age_limit="", place=""))
+
+
 def in_memory_ports(
     child_id: UUID,
     birth_date: date,
@@ -202,8 +238,10 @@ def in_memory_ports(
     docs: InMemoryActivityDocs | None = None,
     weather: InMemoryWeather | None = None,
     places: InMemoryPlaces | None = None,
+    events: InMemoryEvents | None = None,
 ) -> ActivityPorts:
-    """아이 하나 몫의 포트 묶음. 안 넘긴 포트는 빈 데이터, weather · places 는 None(키 없음)이다."""
+    """아이 하나 몫의 포트 묶음. 안 넘긴 포트는 빈 데이터, weather · places · events 는
+    None(키 없음)이다."""
     return ActivityPorts(
         profile=InMemoryProfile({child_id: birth_date}),
         consent=InMemoryConsent({child_id: consent}),
@@ -213,6 +251,7 @@ def in_memory_ports(
         docs=docs or InMemoryActivityDocs(),
         weather=weather,
         places=places,
+        events=events,
     )
 
 
@@ -223,6 +262,7 @@ def unwired_ports(
     memory: ActivityMemoryReader,
     weather: WeatherSource | None = None,
     places: PlaceSource | None = None,
+    events: EventSource | None = None,
     safety: SafetyReader | None = None,
 ) -> ActivityPorts:
     """실제 포트가 아직 안 붙은 run 의 기본값 (entrypoint 가 쓴다). 안전 조회가 실패한다.
@@ -234,6 +274,7 @@ def unwired_ports(
     - 문서 행은 `reference/activity_doc.yaml` 의 `approved` 행이다. 테이블은 아직 없다.
     - 장소는 api 가 넘긴 `place` 표 어댑터다(`domains/place/agent_reader.py`). 안 넘어오면 None 이라
       장소 조회가 닫힌다. 좌표가 없는 run 도 닫힌다(`Gate.has_location`).
+    - 행사는 api 가 서버 시작 때 만든 TourAPI 어댑터다. 안 넘어오면 None 이라 행사 조회가 닫힌다.
     """
     return ActivityPorts(
         profile=profile,
@@ -244,4 +285,5 @@ def unwired_ports(
         docs=InMemoryActivityDocs.from_seed(),
         weather=weather,
         places=places,
+        events=events,
     )

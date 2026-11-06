@@ -19,9 +19,9 @@ from datetime import UTC, datetime
 from functools import cache
 from typing import Any
 
+from app.agents.common.food_safety import filter_food_safety
 from app.agents.common.reference import food_safety_terms, load_reference
 from app.agents.food.store.ports import MenuCatalogRow, SafetyEntry
-from app.agents.food.tools.safety import filter_food_safety
 from app.rules.age import Stage
 from app.rules.allergen import ALLERGEN_NAMES
 from app.rules.nutrition import NutrientBand

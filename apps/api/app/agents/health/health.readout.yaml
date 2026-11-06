@@ -123,7 +123,7 @@ dose.status:
 # "먹였어" · "못 먹였어" — 아무것도 쓰지 않는다. 복용 기록은 보호자가 화면에서 회차마다 체크한다
 dose.check_on_screen:
   kind: notice
-  template: "복용 체크는 복약 화면에서 해 주세요."
+  template: "복용 체크는 홈이나 복약 화면에서 해 주세요."
 
 # ── 열 · 응급 ──
 fever.no_record:
