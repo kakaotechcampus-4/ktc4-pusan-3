@@ -1,13 +1,15 @@
 # 복약 테이블 v1
 
-문서 목적: 복약 코스(`medication_schedule`)와 회차(`medication_dose`) 두 표의 모양과 그 이유를 고정한다.
-제출 API · 회차 체크 API · DB 어댑터가 이 표 위에 올라간다. 그쪽이 지켜야 할 것(§5)도 여기 적는다.
+문서 목적: 복약 코스(`medication_schedule`) · 회차(`medication_dose`) · 알림 구독(`medication_notice_subscription`) 세 표의 모양과 그 이유를 고정한다.
+제출 API · 회차 체크 API · 알림 켜기 · 끄기 API · DB 어댑터가 이 표 위에 올라간다. 그쪽이 지켜야 할 것(§5)도 여기 적는다.
 
-작성일: 2026-10-21 · 담당: 김명성 · 갱신: 2026-11-06 체크한 보호자 `checked_by` ([#749](https://github.com/kakaotechcampus-4/ktc4-pusan-3/issues/749))
+작성일: 2026-10-21 · 담당: 김명성 · 갱신: 2026-11-06 체크한 보호자 `checked_by` · 알림 구독 표 ([#749](https://github.com/kakaotechcampus-4/ktc4-pusan-3/issues/749))
 선행: 이슈 [#537](https://github.com/kakaotechcampus-4/ktc4-pusan-3/issues/537) 본문 DDL과 코멘트 결정 · [`event/event-draft-flow-v1.md`](../event/event-draft-flow-v1.md) · 루트 [`CLAUDE.md`](../../CLAUDE.md) §2 실행(게이트 ㉡)
 근거: `apps/api/app/domains/medication/models.py` · `alembic/versions/c6e2a8d41f93_add_medication_tables.py` ·
 `alembic/versions/361f26c96b2e_add_medication_dose_checked_by.py` ·
-`tests/integration/test_medication_tables.py` · `tests/integration/test_medication_migration.py`
+`alembic/versions/885b03bd5b61_add_medication_notice_subscription.py` ·
+`tests/integration/test_medication_tables.py` · `tests/integration/test_medication_migration.py` ·
+`tests/integration/medication/test_medication_subscription.py`
 
 **이 문서에 없는 것** — 초안 제출 API, 회차 체크 API, SSE 번역, 되묻기 맥락, 알림 발송, `prescription_draft`.
 
@@ -46,6 +48,19 @@
 
 기준 시각: 기상 07:30 · 아침 08:00 · 점심 12:00 · 저녁 19:00 · 취침 20:30. 저녁은 #537 본문의 17:00 에서 19:00 으로 바꿨다 — 퇴근 시간대를 고려한 저녁 식사 시각(#546 코멘트, 이시하).
 
+### `medication_notice_subscription` (#749)
+
+보호자 한 명이 코스 하나의 복약 알림을 받는다는 행이다. **행이 있으면 받고, 끄면 지운다.** 일정 알림(`reminder`)과 같은 모양이다 —
+코스와 회차는 공동 기록이지만 알림을 받을지는 보호자 개인 것이다.
+
+| 칸 | 결정 | 이유 |
+| --- | --- | --- |
+| `schedule_id` | uuid, NOT NULL, 코스 FK `ON DELETE CASCADE` | 코스(아이 삭제 포함)가 지워지면 받을 알림도 없다 |
+| `parent_id` | uuid, NOT NULL, `parent` FK `ON DELETE CASCADE` | 탈퇴하면 받을 사람이 없다 — 개인 설정이라 `checked_by` 와 달리 남기지 않는다 |
+| `subscribed_at` | timestamptz, NOT NULL, **DEFAULT 없음** | 켠 시각. 이보다 예정 시각이 앞선 회차는 보내지 않는다 — 켜는 순간 이미 지난 회차가 울리지 않게. 앱이 서버 시계(`utc_now`)로 쓴다. 이미 켜져 있으면 처음 시각을 그대로 두고, 끄고 다시 켜면 새 행 · 새 시각이다 |
+| 알림 시각 칸 | **없음** | 회차의 `scheduled_time` 에 울린다. 일정 알림의 `lead` 같은 선택지가 없다 |
+| `on/off` 칸 | **없음** | 끄면 행을 지운다. 꺼진 행을 남기면 발송 쿼리와 정리 규칙이 둘이 된다 |
+
 ### enum
 
 다른 표와 같이 `enum_col_py`(VARCHAR(32) + CHECK, `native_enum=False`)로 만든다. 이유는 `app/infra/db/types.py` docstring —
@@ -78,6 +93,8 @@
 | enum CHECK | 목록 밖 값, 대소문자 변형('Active'), `completed` |
 | FK CASCADE | 아이를 지우면 코스와 회차가, 코스를 지우면 회차가 함께 지워진다(보관 기준 [`safety/retention-v1.md`](../safety/retention-v1.md) "아이에 묶인 기록은 아이와 함께") |
 | FK SET NULL (`checked_by`) | 체크한 보호자가 탈퇴해도 복용 기록이 지워지는 것 |
+| `UNIQUE (schedule_id, parent_id)` (구독) | 보호자 한 명이 한 코스를 두 번 구독하는 것 — 켜기가 겹쳐도 한 행(`ON CONFLICT DO NOTHING`) |
+| FK CASCADE (구독) | 코스 · 아이가 지워지거나 보호자가 탈퇴했는데 구독이 남는 것 |
 
 `scheduled_time` 은 이슈 DDL 대로 NOT NULL 을 달지 않았다. NULL 이 되는 입력은 위 CHECK 와 NOT NULL(`timing_anchor` · `offset_minutes`)이 전부 막는다
 — UPDATE 로 `fixed_time` 만 지우거나 `timing_anchor` 만 바꾸는 경우도 거절되는 것을 확인했다.
@@ -90,6 +107,9 @@
 - 코스의 회차(오늘 회차 n/m · 체크 · 수정 시 재생성) — UNIQUE 의 `(schedule_id, dose_date, scheduled_time)` 앞부분.
 
 `medication_dose_checked_by_idx`(`checked_by`)는 조회용이 아니다. 탈퇴 때 SET NULL 이 그 보호자가 체크한 회차를 찾는다.
+
+구독은 UNIQUE 의 `(schedule_id, parent_id)` 가 코스별 조회(응답의 `notice_enabled` · 발송)를 받고,
+`ix_medication_notice_subscription_parent_id` 가 연결 끊기 · 탈퇴 때 그 보호자의 구독을 찾는다.
 
 발송용 인덱스(`scheduled_time` 등)는 알림 발송이 범위 밖이라 두지 않는다. 발송을 만들 때 그 쿼리를 보고 단다.
 
@@ -111,6 +131,16 @@
   - `starts_on` 을 과거로 당겨도 **지난 날짜의 회차는 만들지 않는다.**
 - **중단 UPDATE 는 `updated_at = now()` 를 직접 쓴다.** `Timestamps` 의 `onupdate` 는 ORM update 때만 채워진다(`EventItem` docstring 과 같은 함정).
 - `stopped` 코스 수정 거절.
+- **알림 구독** (#749):
+  - **등록한 보호자는 등록할 때 함께 구독한다**(켠 시각 = 등록 시각). 함께 보는 다른 보호자는 꺼진 채로 시작해 각자 켠다.
+    코스를 수정해도 구독은 그대로다.
+  - **켤 수 있는 코스**는 멈추지 않았고 마지막 날이 지나지 않은 것이다(시작 전 포함). 끄기는 어느 코스든 된다.
+    켜기만 건강정보 동의를 확인한다 — 그만 받는 것은 언제나 할 수 있어야 한다.
+  - **연결 끊기는 DB 가 지우지 않아서 `unlink_parent` 가 지운다** — 그 보호자의 이 아이 코스 구독만.
+  - 🚨 **등록 · 켜기는 보호자 → 아이 → 연결을 먼저 잡는다**(`lock_link`, 일정 알림과 같다). 연결 끊기가 겹치면 끊긴 보호자의
+    구독이 남는다 — 잡아 두면 끊기가 이 커밋을 기다렸다가 구독까지 지운다. 등록에서는 아이별 등록 잠금보다 앞이다
+    (탈퇴가 보호자 → 아이 순으로 잡는다). 그사이 끊겼으면 403 이다.
+  - 켜는 사이 코스가 멈추면 구독은 남지만 발송이 멈춘 코스를 빼서 울리지 않는다.
 
 ### 시간대 — 표를 쓰는 코드가 지킬 것
 
