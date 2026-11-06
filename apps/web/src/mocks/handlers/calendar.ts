@@ -19,6 +19,7 @@ import { fitsKind, forKind, isPast, NO_REMINDER } from "@/lib/reminder";
 import {
   calendarEventDates,
   calendarEventsOn,
+  calendarSeries,
   confirmedEvent,
   deleteMyDiary,
   myDiaryDates,
@@ -80,6 +81,8 @@ function withPrepared(date: string) {
     ...event,
     items: event.items.map((item) => ({ ...item, ...preparedItems.get(item.item_id) })),
     reminder: myReminders.get(event.id) ?? null,
+    // 🚨 반복 묶음의 회차 (#738). 실서버가 아직 싣지 않는 칸이라 시나리오에서만 붙인다 (`CalendarEvent.series`).
+    ...(currentScenario() === "event_repeat" ? { series: calendarSeries() } : {}),
   }));
 }
 
@@ -273,6 +276,40 @@ export const calendarHandlers = [
     deleteMyDiary(date);
     return new HttpResponse(null, { status: 204 });
   }),
+
+  /**
+   * 🚨 **반복 묶음 고치기의 제출. 승인 게이트 ㉠ 이다** (#738 · 같은 게이트의 다른 메서드).
+   * ⚠️ 서버 계약 전이다 — 경로와 본문은 `lib/api/idempotency.ts` 의 `updateEventSeries` 를 따른다.
+   *
+   * 🚨 **`before` 가 있어야 한다.** 서버는 `before` 와 달라진 값만 오늘 이후 회차에 적용한다 — 화면이 빼먹으면
+   *    한 회차만 따로 고쳐 둔 값까지 덮인다. 목은 회차를 들고 있지 않아서 모양만 검사한다.
+   */
+  http.patch(
+    url("/children/:cid/event-series/:sid"),
+    withIdempotency(async ({ params, request }) => {
+      await networkDelay();
+      const body = (await request.json()) as {
+        event?: { title?: string };
+        repeat?: { weekdays?: number[]; until?: string; label?: string };
+        before?: unknown;
+        items?: unknown;
+      };
+      const wrong: string[] = [];
+      if (!body.event?.title) wrong.push("event.title");
+      if (!body.repeat?.weekdays?.length || !body.repeat.until) wrong.push("repeat");
+      // 🚨 문구는 화면에 그리는 서버 값이라 되돌려 보내지 않는다 (`RepeatRequest`).
+      if (body.repeat && "label" in body.repeat) wrong.push("repeat.label");
+      if (!("before" in body)) wrong.push("before");
+      if (!Array.isArray(body.items)) wrong.push("items");
+      if (wrong.length > 0) {
+        return apiError(400, "validation_failed", "요청 형식이 올바르지 않아요", { fields: wrong });
+      }
+      if (String(params.sid) !== calendarSeries().id) {
+        return apiError(404, "not_found", "반복 일정을 찾을 수 없어요");
+      }
+      return HttpResponse.json({ series_id: String(params.sid) });
+    }),
+  ),
 
   /**
    * 🚨 **수정 초안의 제출. 승인 게이트 ㉠ 이다** — create 는 `POST`, update 는 `PATCH` 로

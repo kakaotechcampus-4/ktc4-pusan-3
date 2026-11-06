@@ -24,7 +24,7 @@ import {
   type StepEvent,
   type UnavailableEvent,
 } from "@/lib/api/sse";
-import type { Agent, EventDraft, MedicationDraft, Observation } from "@/lib/api/types";
+import type { Agent, AnyEventDraft, MedicationDraft, Observation } from "@/lib/api/types";
 
 /**
  * 04 대화 · 08 사진 분석 — run 이벤트 스트림 상태.
@@ -102,8 +102,9 @@ export interface RunState {
   /**
    * Agent 가 만든 일정 초안 묶음. 🚨 **아직 저장된 것이 아니다** — 보호자가 카드에서 제출해야
    *    캘린더에 들어간다 (승인 게이트 ㉠). 08 사진 run 에서는 늘 빈 배열이다.
+   *    반복 묶음 고치기(#738)가 섞여 온다 — `op` 로 가른다.
    */
-  drafts: EventDraft[];
+  drafts: AnyEventDraft[];
   /**
    * Health 가 만든 복약 초안 (#537). 🚨 **일정 초안과 다른 칸이다** — 제출이 게이트 ㉡(건강 기록 확정)이고
    *    모양도 다르다. 한 배열에 섞으면 카드가 게이트를 갈라야 한다. 08 사진 run 에서는 늘 빈 배열이다.
