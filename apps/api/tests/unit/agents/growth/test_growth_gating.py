@@ -16,7 +16,8 @@ from app.agents.growth.doc_seed import growth_doc_seed
 from app.agents.growth.readouts import READOUTS
 from app.agents.growth.store.inmemory import InMemoryGrowthDocs, InMemorySafety
 from app.agents.growth.store.ports import GrowthDocRow
-from tests.unit.agents.growth.support import birth_for, context, task
+from app.agents.growth.tools.routine import ask_question
+from tests.unit.agents.growth.support import GREETING, birth_for, context, fixture_docs, task
 from tests.unit.agents.growth.test_growth_agent import FakeLLM, call
 
 _EXAMPLE_ID = re.compile(r"^- id ([0-9a-f-]{36}) ·", re.M)
@@ -43,7 +44,7 @@ def examples(llm: FakeLLM) -> list[GrowthDocRow]:
 
 
 def ask(key: str, subject: str) -> tuple[str, ...]:
-    return (READOUTS.render(key, subject=subject).body,)
+    return (ask_question(key, subject),)
 
 
 class TestEducationAt12:
@@ -100,12 +101,22 @@ class TestMannerAt24:
         assert result.readouts == (READOUTS.render("closed.manner_under24"),)
 
     async def test_24개월_예절은_닫히지_않고_지금_수준을_되묻는다(self):
+        # 맞는 전략 행(인사하기)이 있어야 묻는다. 없으면 묻지 않고 자료 없음으로 닫는다
+        ctx = context(birth_for(24), docs=fixture_docs(GREETING))
         result = await run(
-            task("routine_coaching", self.REQUEST), at(24), client=says("social_manner", "인사하기")
+            task("routine_coaching", self.REQUEST), ctx, client=says("social_manner", "인사하기")
         )
         assert result.status == "completed"
         assert [readout.code for readout in result.readouts] == ["empty"]  # 되묻기 + 안내 한 줄
         assert result.needs_observation == ask("ask.routine_current", "인사하기")
+
+    async def test_24개월_예절도_맞는_전략_행이_없으면_묻지_않고_자료_없음으로_닫는다(self):
+        ctx = context(birth_for(24), docs=fixture_docs())
+        result = await run(
+            task("routine_coaching", self.REQUEST), ctx, client=says("social_manner", "인사하기")
+        )
+        assert result.needs_observation == ()
+        assert result.readouts == (READOUTS.render("doc.no_row"),)
 
 
 class TestHabitAt36:

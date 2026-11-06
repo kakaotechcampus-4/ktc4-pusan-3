@@ -1,0 +1,18 @@
+# 병원 찾기(place_lookup) 문구 — 코드 문구다. 모델을 거치지 않는다 (Health_Tool_명세 · 고정 문구).
+# 🚨 평가 · 추천 표현을 넣지 않는다 ("좋은", "추천") — 거리와 운영 여부만 말한다 (명세 6-4).
+
+place.list:
+  kind: place_list
+  template: "가까운 {what} 목록이에요. 가기 전에 전화로 진료 중인지 확인해 주세요.\n{lines}"
+
+place.empty:
+  kind: notice
+  template: 근처에서 지금 찾을 수 있는 병원이 없어요. 응급 시 119에 연락하세요.
+
+place.no_location:
+  kind: notice
+  template: 위치를 허용하시면 가까운 병원을 찾아드려요.
+
+place.unavailable:
+  kind: notice
+  template: 병원 정보를 불러오지 못했어요. 응급 시 119에 연락하세요.

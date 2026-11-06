@@ -71,6 +71,18 @@ async def has_child_link(session: AsyncSession, *, parent_id: uuid.UUID) -> bool
     return bool(await session.scalar(select(exists().where(ParentChild.parent_id == parent_id))))
 
 
+async def find_child(session: AsyncSession, *, child_id: uuid.UUID) -> Child | None:
+    """접근 권한을 보지 않는 조회. 이미 확인을 거친 run 이 별명 · 생일을 읽을 때 쓴다.
+
+    삭제된 아이는 없는 것으로 본다 — run 이 접수된 뒤 지워졌으면 그 아이의 값을 내보내지 않는다.
+    """
+    return await session.scalar(
+        select(Child)
+        .where(Child.id == child_id, Child.deleted_at.is_(None))
+        .execution_options(populate_existing=True)
+    )
+
+
 async def find_accessible_child(
     session: AsyncSession, *, child_id: uuid.UUID, parent_id: uuid.UUID
 ) -> Child | None:

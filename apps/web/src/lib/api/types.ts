@@ -36,6 +36,11 @@ export const REF_KINDS = [
   "health_safety",
   "event",
   "suggestion",
+  /**
+   * 복약 코스 (#713). 04 Health readout 의 근거로만 온다 — 체크 안내 · 회차 현황이 어느 코스를 말하는지다.
+   * 서버는 readout 근거 중 이 종류만 화면으로 보낸다 (`apps/api/app/api/runs/translate.py` 의 `_SCREEN_REF_KINDS` · PR #716).
+   */
+  "medication_schedule",
 ] as const;
 export type RefKind = (typeof REF_KINDS)[number];
 
@@ -129,9 +134,27 @@ export interface ObservationHealth extends ObservationBase {
      * `formatTimeOfDay` 로 시각만 그린다 (#485). 몇 시인지 모르면 키를 빼지 않고 `null` 로 온다.
      */
     observed_time?: string | null;
+    /**
+     * 보호자가 말한 체온 숫자(℃) 그대로 (#551). 화면은 숫자를 옮기기만 한다 — 정상 범위 ·
+     * 높다/낮다 · 색으로 평가하지 않는다 (최상위 CLAUDE.md §2).
+     */
+    temperature?: number | null;
+    /** 체온을 잰 ISO 시각. `observed_time` 과 다르다. */
+    measured_at?: string | null;
+    measure_site?: MeasureSite | null;
+    /**
+     * 🚨 이 값이 있으면 **먹인 약 행**이다 (#551) — 한 행 = 한 사건이라 `symptom` 이 비어 온다.
+     * 보호자가 말한 약 이름 그대로이고, 이 행의 `observed_time` 은 먹인 시각이다.
+     */
+    medication_given?: string | null;
+    /** 같은 말에서 함께 기록된 증상 행 id. 묶음 표시일 뿐 "때문에" 가 아니다. */
+    linked_symptom_id?: string | null;
     [key: string]: unknown;
   };
 }
+
+/** 체온을 잰 부위. */
+export type MeasureSite = "ear" | "forehead" | "armpit" | "oral" | "rectal";
 
 export type Observation = ObservationPromotable | ObservationHealth;
 
@@ -334,7 +357,7 @@ export interface GeneralSuggestion {
   place_notice: string | null;
   /** 위험 경고 문구. 개인화와 같은 칸이다 (`Suggestion.warnings`). 없으면 `[]`. */
   warnings: string[];
-  /** "36개월 또래가 자주 찾는 놀이예요" · "요청하신 놀이에 맞춰 골랐어요" 처럼 무엇을 기준으로 골랐는지. 서버가 만든다. */
+  /** "36개월 또래가 자주 찾는 놀이예요" · "요청하신 놀이를 바탕으로 골랐어요" 처럼 무엇을 기준으로 골랐는지. 서버가 만든다. */
   basis: string;
   status: SuggestionStatus;
   /** 생성 +24h. 개인화 추천과 같다. */
@@ -561,7 +584,7 @@ export interface Guard {
  * "질문은 한 개까지만 드려요" 를 타입으로 못 박은 자리다 (CLAUDE.md §2).
  */
 export interface Scarcity {
-  /** 쌓인 기록 건수. 화면에 그대로 보여준다 — 숨기지 않는다. */
+  /** 일반 추천을 낸 Agent별 `record_count`의 합. 호환 필드이며 정상 안내 문구는 `general[].record_count`를 쓴다. */
   count: number;
   /**
    * Agent 가 되물었을 때만 있다. 🚨 **답하는 길(#246) 전에는 `options` 가 비어 온다** — 화면은
@@ -907,8 +930,7 @@ export interface SubmitEventResponse {
 /**
  * 🚨 **초안 모양만 확정이다.** 정본은 `apps/api/app/core/medication_draft.py` 의 `MedicationDraft.to_payload()`
  *    (#544). 제출 · 조회 · 체크 · 수정 경로와 본문은 서버 API(#520 · `app/api/v1/routers/medications.py`)와
- *    맞췄다. 계약 대응표(`contract/schema-map.ts`)의 복약 절은 서버 스키마와 같이 #520 이 더한다 —
- *    서버에 없는 스키마를 대응표에 두면 계약 검사가 실패한다.
+ *    맞췄다 — 짝은 `contract/schema-map.ts` 의 복약 절이고 계약 검사가 본다.
  *
  * 🚨 **시각을 화면이 계산하지 않는다.** `scheduled_time` · `notice_times` 는 서버가 기준 시각 + 오프셋으로 만든
  *    값이다 (저녁 기준이 17:00 에서 19:00 으로 바뀐 것처럼 기준은 서버 상수다 · #546). 그래서 카드는 회차

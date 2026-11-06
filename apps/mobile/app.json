@@ -4,7 +4,7 @@
     "slug": "icatch",
     "owner": "truedoc",
     "scheme": "icatch",
-    "version": "0.1.0",
+    "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -18,9 +18,8 @@
     "android": {
       "package": "kr.ai.icatch",
       "adaptiveIcon": {
-        "backgroundColor": "#E7F1EA",
+        "backgroundColor": "#FFFFFF",
         "foregroundImage": "./assets/android-icon-foreground.png",
-        "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
@@ -58,6 +57,24 @@
     "plugins": [
       "expo-web-browser",
       [
+        "expo-build-properties",
+        {
+          "android": {
+            "enableMinifyInReleaseBuilds": true,
+            "enableShrinkResourcesInReleaseBuilds": true
+          }
+        }
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 192,
+          "resizeMode": "contain",
+          "backgroundColor": "#fbf9f5"
+        }
+      ],
+      [
         "expo-speech-recognition",
         {
           "microphonePermission": "아이 이야기를 말로 남길 때 마이크를 써요. 음성은 휴대폰 안에서 글자로 바뀌고 밖으로 보내지 않아요.",
@@ -67,7 +84,9 @@
       [
         "expo-notifications",
         {
-          "defaultChannel": "schedule"
+          "defaultChannel": "schedule",
+          "icon": "./assets/notification-icon.png",
+          "color": "#266746"
         }
       ],
       [

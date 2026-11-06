@@ -735,6 +735,16 @@ describe("05 묶음 안내 · 일반 추천 근거 (#249)", () => {
     for (const item of data.general ?? []) expect(typeof item.record_count).toBe("number");
   });
 
+  it("🚨 Agent 둘의 기록 수는 카드별로 남고 scarcity.count만 호환 합계다 (#662)", async () => {
+    const data = await fetchWith("suggest_multi_general", { agents: ["food", "activity"] });
+
+    expect((data.general ?? []).map(({ agent, record_count }) => [agent, record_count])).toEqual([
+      ["food", 22],
+      ["activity", 8],
+    ]);
+    expect(data.scarcity?.count).toBe(30);
+  });
+
   it("🚨 05 의 하루 한도는 429 daily_input_limit 이다", async () => {
     await expect(fetchWith("daily_limit", { agents: ["food"] })).rejects.toSatisfy(
       (e: unknown) => isApiError(e, "daily_input_limit") && (e as ApiError).status === 429,
@@ -1007,6 +1017,7 @@ describe("⑦-2 도메인 Agent 결과 (#227)", () => {
           "body",
           "code",
           "kind",
+          "source_refs",
           "title",
         ]);
       }
@@ -4369,6 +4380,17 @@ function chatDay(query: Record<string, string> = {}) {
 describe("지난 대화 — 서버처럼 끝난 run 만 남긴다 (#228)", () => {
   afterEach(() => setScenario("default"));
 
+  it("🚨 readout 의 근거(source_refs)는 SSE 에만 오고 지난 대화에는 남지 않는다 (#713)", async () => {
+    setScenario("med_check");
+    await runChatToEnd("약 먹였어");
+    const today = await chatDay();
+    const results = today.turns[0].replies.filter((r) => r.type === "agent_result");
+    expect(results).not.toHaveLength(0);
+    for (const reply of results) {
+      for (const readout of reply.readouts) expect(readout).not.toHaveProperty("source_refs");
+    }
+  });
+
   it("done 으로 끝난 run 은 오늘 대화에 남고, 하루 보기의 대화 수와 같다", async () => {
     const runId = await runChatToEnd("오늘 블록 놀이 했어");
 
@@ -4569,7 +4591,9 @@ describe("복약 — 승인 게이트 ㉡ 제출 · 회차 체크 (#537)", () =>
 });
 
 describe("복약 run 대본 (#537)", () => {
-  async function medicationEvents(scenario: "med_draft" | "med_question" | "med_handoff") {
+  async function medicationEvents(
+    scenario: "med_draft" | "med_question" | "med_handoff" | "med_check" | "med_which",
+  ) {
     setScenario(scenario);
     try {
       const { run_id } = await submitInput(
@@ -4628,5 +4652,90 @@ describe("복약 run 대본 (#537)", () => {
     expect(result.readouts.find((r) => r.kind === "med_notice_form")?.body).toContain(
       "보호자 확인 후 서명해 주세요.",
     );
+    // 회차 현황은 그 코스를 가리킨다 (#713). 서류에는 근거가 없다.
+    expect(result.readouts.map((r) => r.source_refs)).toEqual([
+      [{ kind: "medication_schedule", id: "ms_seed" }],
+      [],
+      [],
+    ]);
+  });
+
+  it("med_check — 아무것도 쓰지 않고, 체크 안내가 진행 중인 코스를 가리킨다 (#713)", async () => {
+    const { events } = await medicationEvents("med_check");
+    expect(events.map((e) => e.type)).not.toContain("saved");
+    const result = events.find((e) => e.type === "agent_result")?.data as AgentResultEvent;
+    expect(result.readouts).toEqual([
+      expect.objectContaining({
+        kind: "notice",
+        body: "복용 체크는 홈이나 복약 화면에서 해 주세요.",
+        source_refs: [{ kind: "medication_schedule", id: "ms_seed" }],
+      }),
+    ]);
+    // 🚨 가리킨 코스는 복약 화면 목록에 있다 — 화면이 열 수 있는 코스만 가리킨다.
+    const { courses } = await api.get<MedicationsResponse>("/children/c1/medications");
+    expect(courses.map((c) => c.id)).toContain("ms_seed");
+  });
+
+  describe("med_which — 어느 약 → 멈출까요 → 네 (#713 세 턴)", () => {
+    async function answer(replyTo: string, text: string) {
+      const { run_id } = await submitInput(
+        "c1",
+        { text, source: "chat", reply_to: replyTo },
+        newIdempotencyKey(),
+      );
+      const events = await eventsOf(run_id);
+      return {
+        runId: run_id,
+        events,
+        results: events
+          .filter((e) => e.type === "agent_result")
+          .map((e) => e.data as AgentResultEvent),
+      };
+    }
+
+    it("약 이름으로 답하면 이어받은 run 이 멈출지를 다시 묻고, 그 질문에도 답할 수 있다", async () => {
+      const first = await medicationEvents("med_which");
+      const asked = first.events.find((e) => e.type === "agent_result")?.data as AgentResultEvent;
+      expect(asked).toMatchObject({ awaits_reply: true });
+      expect(asked.question).toContain("어느 약");
+
+      const second = await answer(first.runId, "해열 시럽이요");
+      expect(second.results.at(-1)).toMatchObject({ awaits_reply: true });
+      expect(second.results.at(-1)?.question).toContain("멈출까요");
+      // 다른 내용을 붙이지 않았으면 안내가 없다.
+      expect(second.events.map((e) => e.type)).not.toContain("note");
+
+      const third = await answer(second.runId, "네");
+      expect(third.results[0]?.readouts[0]?.body).toContain("멈췄어요");
+      const { courses } = await api.get<MedicationsResponse>("/children/c1/medications");
+      expect(courses.map((c) => c.id)).not.toContain("ms_seed");
+    });
+
+    it("🚨 답에 다른 내용을 붙이면 반영하지 않았다고 알린다 — 다시 묻는 run 이면 질문에 먼저 답하라고", async () => {
+      const first = await medicationEvents("med_which");
+      const second = await answer(first.runId, "해열 시럽이요 그리고 오늘 열이 났어요");
+      const note = second.events.find((e) => e.type === "note")?.data as NoteEvent;
+      // 🚨 질문이 아니라 알림이다 — 질문으로 잡히면 다음 한 줄이 엉뚱한 답이 된다.
+      expect(note).toEqual({
+        text: "적어 주신 다른 내용은 반영하지 않았어요. 이 질문에 먼저 답한 뒤 따로 한 줄로 보내 주세요.",
+        kind: "message",
+      });
+
+      const third = await answer(second.runId, "네 그리고 오늘 열이 났어요");
+      expect(third.results[0]?.readouts[0]?.body).toContain("멈췄어요");
+      expect(third.events.find((e) => e.type === "note")?.data).toEqual({
+        text: "답변과 함께 적은 다른 내용은 반영하지 않았어요. 따로 한 줄로 보내 주세요.",
+        kind: "message",
+      });
+    });
+
+    it("못 가린 답은 아무것도 바꾸지 않고 다시 묻지도 않는다", async () => {
+      const first = await medicationEvents("med_which");
+      const second = await answer(first.runId, "글쎄요");
+      expect(second.results.every((r) => r.question === null)).toBe(true);
+      expect(second.results[0]?.readouts[0]?.body).toContain("알아듣지 못했어요");
+      const { courses } = await api.get<MedicationsResponse>("/children/c1/medications");
+      expect(courses.map((c) => c.id)).toContain("ms_seed");
+    });
   });
 });

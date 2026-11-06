@@ -22,6 +22,7 @@ from app.agents.common.refs import (
 )
 from app.agents.common.result import (
     DomainAgentResult,
+    DomainPending,
     EventRequest,
     MedicationDraft,
 )
@@ -159,12 +160,12 @@ class TestSuggestionBuild:
             content="욕조에서 컵으로 물 붓고 옮기기",
             reason="모델이 쓴 문장",
             citations=(),
-            general_reason="요청하신 놀이에 맞춰 골랐어요.",
+            general_reason="요청하신 놀이를 바탕으로 골랐어요.",
             requested=True,
             today=TODAY,
         )
         assert draft.kind == "general"
-        assert draft.reason == "요청하신 놀이에 맞춰 골랐어요."
+        assert draft.reason == "요청하신 놀이를 바탕으로 골랐어요."
         assert draft.citations == ()
         assert draft.requested is True
         assert draft.to_payload()["requested"] is True
@@ -189,7 +190,7 @@ class TestSuggestionBuild:
             content="욕조에서 컵으로 물 붓기",
             reason="지난주에 물 붓기를 좋아해서요",
             citations=(citation(),),
-            general_reason="요청하신 놀이에 맞춰 골랐어요.",
+            general_reason="요청하신 놀이를 바탕으로 골랐어요.",
             requested=True,
             today=TODAY,
         )
@@ -601,7 +602,39 @@ class TestDomainAgentResult:
         assert result.suggestions == ()
         assert result.readouts == ()
         assert result.medication_drafts == ()
+        assert result.pending is None
         assert result.model_calls == 0
+
+    def test_pending_이면_needs_observation_이_같은_질문이다(self):
+        pending = DomainPending(
+            agent="health",
+            kind="medication_stop",
+            question="항생제 복약 알림을 멈출까요?",
+            payload={"schedule_id": "s1"},
+        )
+
+        result = DomainAgentResult(
+            agent="health",
+            task_type="medication",
+            status="completed",
+            needs_observation=(pending.question,),
+            pending=pending,
+        )
+
+        assert result.pending is pending
+
+    @pytest.mark.parametrize("asked", [(), ("다른 질문이에요",)])
+    def test_pending_의_질문과_되묻기가_다르면_거절(self, asked):
+        pending = DomainPending(agent="health", kind="dose_timing", question="언제요?", payload={})
+
+        with pytest.raises(ValueError, match="pending"):
+            DomainAgentResult(
+                agent="health",
+                task_type="medication",
+                status="completed",
+                needs_observation=asked,
+                pending=pending,
+            )
 
     def test_채널을_섞어_담을_수_있다(self):
         result = DomainAgentResult(

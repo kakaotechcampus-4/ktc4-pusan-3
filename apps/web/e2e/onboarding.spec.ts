@@ -3,6 +3,7 @@ import { CHILD, expect, recordApi, test, writes } from "./fixtures";
 /**
  * 02 아이 정보 — 서버 구현(PR #353)에 맞춘 것. 범위 밖 숫자는 보내기 전에 칸에 붙이고,
  * 값을 고쳐 다시 보내면 새 Idempotency-Key 가 나간다.
+ * 02 성별 칸으로 공통 `ChoiceField` 의 라벨 연결(`for`/`id`)도 건다 (#685).
  */
 
 const ONBOARDING = `/child/${CHILD}/onboarding`;
@@ -45,4 +46,27 @@ test.describe("응답을 못 받은 뒤 다시 보내기", () => {
     // 🚨 키가 그대로면 서버는 처음 응답을 재생해서 고친 값이 버려진다 (서버 PR #353).
     expect(edited).not.toBe(first);
   });
+});
+
+test("성별 라디오는 감싼 라벨과 for/id 로도 이어진다", async ({ page }) => {
+  await page.goto(ONBOARDING);
+  const radios = page.getByRole("group", { name: "성별" }).getByRole("radio");
+  await expect(radios).toHaveCount(3);
+
+  // 🚨 감싸기만으로는 접근성 검사(KWCAG)가 "레이블과 연결되지 않았다" 로 잡는다 (#685).
+  const links = await radios.evaluateAll((inputs) =>
+    inputs.map((input) => ({
+      id: input.id,
+      labelFor: input.closest("label")?.htmlFor ?? null,
+    })),
+  );
+  for (const { id, labelFor } of links) {
+    expect(id).not.toBe("");
+    expect(labelFor).toBe(id);
+  }
+  // 그룹끼리 id 가 겹치지 않는 것은 접두어 `useId()` 가 보장한다 — 02 에는 그룹이 하나뿐이다.
+
+  // 이어 둔 뒤에도 글자를 눌러 고를 수 있다.
+  await page.locator("label", { hasText: "여자아이" }).click();
+  await expect(page.getByRole("radio", { name: "여자아이" })).toBeChecked();
 });

@@ -18,7 +18,7 @@ from app.agents.activity.context import build_gate as build_activity_gate
 from app.agents.activity.registry import closed_readout_key as activity_closed_key
 from app.agents.activity.schemas.memory import SearchActivityMemoryArgs
 from app.agents.activity.schemas.task import ActivityTaskType
-from app.agents.activity.store.inmemory import InMemoryPlaces, InMemoryWeather
+from app.agents.activity.store.inmemory import InMemoryEvents, InMemoryPlaces, InMemoryWeather
 from app.agents.activity.tools.memory import search_activity_memory
 from app.agents.common.age import life_stage
 from app.agents.common.datetime_rules import build_observed_range
@@ -93,8 +93,9 @@ async def test_컨텍스트를_만들어_pipeline_에_넘긴다(monkeypatch: pyt
     assert memory.now == food.now  # 기준일이 두 Agent 사이에서 갈리지 않게
     assert memory.timezone is food.timezone is entrypoint.KST
     assert memory.now.tzinfo is entrypoint.KST
-    # 구현된 Agent 마다 context 가 있어야 pipeline 이 찾는다
-    assert set(seen["contexts"]) == routing.IMPLEMENTED_AGENTS
+    # 구현된 Agent 마다 context 가 있어야 pipeline 이 찾는다. Health 는 배선만 되어 있고 라우팅이
+    # 아직 부르지 않아서 구현 목록 밖이다
+    assert set(seen["contexts"]) == routing.IMPLEMENTED_AGENTS | {"health"}
 
 
 def test_이벤트_타입이_전부_밖으로_나간다() -> None:
@@ -638,6 +639,7 @@ async def test_Activity_는_Food_와_같은_생일_기준일_store_를_쓴다(
     assert activity.now == food.now and activity.timezone is food.timezone
     assert isinstance(activity.ports.memory, StoreActivityMemory)
     assert activity.ports.places is None  # 장소 어댑터를 넘기지 않으면 장소 조회가 닫힌다
+    assert activity.ports.events is None  # 행사도 같다
 
 
 async def test_좌표와_날씨_어댑터를_넘기면_Activity_가_받는다(
@@ -667,6 +669,15 @@ async def test_장소_어댑터를_넘기면_Activity_가_받는다(monkeypatch:
     assert activity.ports.places is places
     gate = await build_activity_gate(activity, outdoor_ok=True)
     assert gate.data.places is True and gate.has_location is True
+
+
+async def test_행사_어댑터를_넘기면_Activity_가_받는다(monkeypatch: pytest.MonkeyPatch) -> None:
+    events = InMemoryEvents()
+    activity = (await _activity_of(monkeypatch, activity_events=events))["contexts"]["activity"]
+
+    assert activity.ports.events is events
+    gate = await build_activity_gate(activity, outdoor_ok=True)
+    assert gate.data.events is True
 
 
 async def test_좌표를_안_넘기면_Activity_는_실내_전용이다(monkeypatch: pytest.MonkeyPatch) -> None:

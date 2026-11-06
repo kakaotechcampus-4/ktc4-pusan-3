@@ -43,7 +43,7 @@ export function GeneralSuggestionCard({
   busy,
 }: {
   suggestion: GeneralSuggestion;
-  /** 이 주제로 쌓인 기록 건수. `Scarcity.count` 를 그대로 받는다 — 숨기지 않는다. */
+  /** 이 Agent 도메인에 쌓인 기록 건수. `general[].record_count` 를 그대로 받는다 — 0도 숨기지 않는다. */
   recordCount: number;
   selected: boolean;
   onToggleSelect: () => void;
@@ -94,7 +94,7 @@ export function GeneralSuggestionCard({
         <p className="text-body-sm text-ink-muted mt-1">{suggestion.basis}</p>
 
         {/* 🚨 일반 추천의 근거는 **문서 행**이다 (최상위 §2). 출처를 같이 적는다 — CC BY 문서는 출처
-          표시가 이용 조건이고, 무엇을 보고 골랐는지가 "또래 기준" 의 근거다. "사용한 기록 N건" 으로
+          표시가 이용 조건이고, 무엇을 보고 골랐는지가 `basis`의 근거다. "사용한 기록 N건" 으로
           세지 않는다 (아이 기록이 아니다).
           ⚠️ 비어 올 수 있다 — 보호자가 놀이를 정해 물은 일반 추천은 그 요청이 기준이라 문서 행을
           달지 않기도 한다 (#597). 그때는 출처 줄 없이 `basis` 만 선다. */}
