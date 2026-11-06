@@ -157,12 +157,13 @@ class MedicationDose(Base, UUIDPk):
         ),
         # 탈퇴 때 SET NULL 이 이 칸으로 행을 찾는다
         Index("medication_dose_checked_by_idx", "checked_by"),
-        # 발송 배치가 1분마다 아직 맡지 않은 회차를 날짜 · 시각으로 찾는다 (#749)
+        # 발송 배치가 1분마다 아직 맡지 않은 미체크 회차를 날짜 · 시각으로 찾는다 (#749).
+        # 🚨 조건은 autogenerate 비교가 보지 않는다 — 마이그레이션과 함께 고친다(왕복 테스트가 본다)
         Index(
             "medication_dose_notice_due_idx",
             "dose_date",
             "scheduled_time",
-            postgresql_where=text("notice_sent_at IS NULL"),
+            postgresql_where=text("notice_sent_at IS NULL AND checked_at IS NULL"),
         ),
     )
 

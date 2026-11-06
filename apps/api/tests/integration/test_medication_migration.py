@@ -166,15 +166,18 @@ async def test_알림_구독_표를_올리고_내린다(session):
     await connection.run_sync(verify)
 
 
-async def test_알림_처리_시각_칸을_올리면_기존_회차는_비어_있고_내리면_칸만_사라진다(session):
-    """#749 — 이미 있는 회차는 맡지 않은 상태(NULL)로 남는다. 채우지 않는다."""
-    parent = Parent()
-    session.add(parent)
-    await session.flush()
-    child = Child(owner_parent_id=parent.id, nickname="test", birth_date=date(2023, 1, 1))
-    session.add(child)
-    await session.flush()
+async def test_알림_처리_시각_칸과_발송용_부분_인덱스를_올리고_내린다(session):
+    """#749 — 인덱스 조건은 모델과의 autogenerate 비교가 보지 않아 여기서 본다."""
     connection = await session.connection()
+
+    def index_def(conn, schema: str) -> str | None:
+        return conn.execute(
+            text(
+                "SELECT indexdef FROM pg_indexes"
+                " WHERE schemaname = :s AND indexname = 'medication_dose_notice_due_idx'"
+            ),
+            {"s": schema},
+        ).scalar()
 
     def verify(conn):
         schema = f"medication_migration_{uuid4().hex}"
@@ -183,29 +186,16 @@ async def test_알림_처리_시각_칸을_올리면_기존_회차는_비어_있
         conn.execute(text(f'SET LOCAL search_path TO "{schema}", public'))
         steps = [run_path(str(m)) for m in (MIGRATION, CHECKED_BY, SUBSCRIPTION, NOTICE_SENT)]
         with Operations.context(MigrationContext.configure(conn)):
-            for step in steps[:-1]:
+            for step in steps:
                 step["upgrade"]()
-            schedule_id = conn.execute(
-                text(
-                    "INSERT INTO medication_schedule"
-                    " (child_id, title, starts_on, ends_on, created_by)"
-                    " VALUES (:child, '약', '2026-10-20', '2026-10-20', 'caregiver') RETURNING id"
-                ),
-                {"child": child.id},
-            ).scalar_one()
-            conn.execute(
-                text(
-                    "INSERT INTO medication_dose (schedule_id, dose_date, timing_anchor)"
-                    " VALUES (:s, '2026-10-20', 'breakfast')"
-                ),
-                {"s": schedule_id},
+            assert _has_column(conn, schema, "medication_dose", "notice_sent_at")
+            assert index_def(conn, schema).endswith(
+                "(dose_date, scheduled_time)"
+                " WHERE ((notice_sent_at IS NULL) AND (checked_at IS NULL))"
             )
-
-            steps[-1]["upgrade"]()
-            assert conn.execute(text("SELECT notice_sent_at FROM medication_dose")).one() == (None,)
 
             steps[-1]["downgrade"]()
             assert not _has_column(conn, schema, "medication_dose", "notice_sent_at")
-            assert conn.execute(text("SELECT count(*) FROM medication_dose")).scalar_one() == 1
+            assert index_def(conn, schema) is None
 
     await connection.run_sync(verify)

@@ -6,8 +6,10 @@
   10분 창 밖이라 맡지 않는다).
 - 보내기 **전에** 찍는다. 성공 여부가 아니라 "배치가 맡았다" 는 뜻이다 — 일정 알림의
   `reminder.sent_at` 과 같다.
-- 부분 인덱스 `(dose_date, scheduled_time) WHERE notice_sent_at IS NULL` — 배치가 1분마다 아직 맡지
-  않은 회차를 날짜 · 시각으로 찾는다. 맡은 회차는 인덱스에서 빠진다.
+- 부분 인덱스 `(dose_date, scheduled_time) WHERE notice_sent_at IS NULL AND checked_at IS NULL` —
+  배치가 1분마다 아직 맡지 않은 미체크 회차를 날짜 · 시각으로 찾는다. 맡았거나 체크한 회차는
+  빠진다. 맡지 않고 지나간 회차(구독자 없음 · 멈춘 코스 · 창을 놓침)는 남지만 앞 칸이 날짜라
+  배치는 하루 이틀 범위만 읽는다.
 
 Revision ID: 5c6e32685af8
 Revises: 885b03bd5b61
@@ -33,7 +35,7 @@ def upgrade() -> None:
         "medication_dose_notice_due_idx",
         "medication_dose",
         ["dose_date", "scheduled_time"],
-        postgresql_where=sa.text("notice_sent_at IS NULL"),
+        postgresql_where=sa.text("notice_sent_at IS NULL AND checked_at IS NULL"),
     )
 
 
