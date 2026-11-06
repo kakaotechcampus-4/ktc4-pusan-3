@@ -235,7 +235,9 @@ async def register_medication(
 
     오류 (순서대로): 403 `child_access_denied` → 400 `validation_failed`(본문 형식) →
     400 `idempotency_key_required` → (같은 키면 처음 응답 재생) → 403 `consent_required` →
-    400 `validation_failed`(내용) → 409 `already_exists`. 앞에서 걸리면 아무것도 저장하지 않는다.
+    400 `validation_failed`(내용) →
+    403 `child_access_denied`(확인 뒤 그사이 연결이 끊기거나 탈퇴함) → 409 `already_exists`.
+    앞에서 걸리면 아무것도 저장하지 않는다.
 
     진행 중인 코스 조회와 회차 체크는 이 API 에 없다. 코스를 멈추는 것은 대화에서 한 번 되물은 뒤
     Agent 가 처리해서 화면에서 부르는 중단 API 도 없다.
@@ -577,8 +579,8 @@ async def put_my_medication_notice(
     - 켤 수 있는 코스에 **이미 켜져 있으면 그대로 204** 다. 처음 켠 시각이 남는다 — 두 번 눌러도
       결과가 같다.
     - **아직 시작하지 않은 코스도 켤 수 있다.** 다만 조회(`GET …/medications`)가 시작 전 코스를
-      싣지 않아서, 함께 보는 보호자는 첫날 코스가 보인 뒤에야 켤 수 있다(알려진 한계). 그때 이미
-      지난 회차는 울리지 않는다.
+      싣지 않아서, 화면에서는 첫날 코스가 보인 뒤에야 켜고 끌 수 있다(알려진 한계 — 보호자 모두
+      같다). 그때 이미 지난 회차는 울리지 않는다.
     - 승인 게이트가 아니고, 최종 상태를 보내는 요청이라 `Idempotency-Key` 를 받지 않는다.
     - 아이의 건강정보로 알림을 보내는 것이라 **건강정보 동의**를 확인한다. 끄기는 확인하지 않는다.
 

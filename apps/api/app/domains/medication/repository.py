@@ -269,7 +269,7 @@ async def find_noticeable_course(
 
     아직 시작하지 않은 코스도 켤 수 있다 — 첫날 첫 회차부터 받으려면 시작 전에 켜야 한다.
     잠그지 않는다. 구독 INSERT 의 FK 검사가 코스 행을 KEY SHARE 로 잡아서 그사이 코스가 지워지지
-    않는다. 그사이 멈추면 구독은 남지만 발송이 멈춘 코스를 빼서 울리지 않는다.
+    않는다. 그사이 멈춰도 구독은 남는다 — 멈추기 · 끝나기는 구독을 지우지 않으니 발송이 걸러야 한다.
     """
     return await session.scalar(
         select(MedicationSchedule).where(
