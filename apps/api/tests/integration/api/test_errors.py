@@ -91,6 +91,7 @@ async def test_처리되지_않은_예외는_종류와_위치만_로그에_남�
     assert response.json()["error"]["code"] == "internal_error"
     assert SECRET not in response.text
     assert "ValueError" in caplog.text
+    assert "KeyError" in caplog.text  # 연결된 예외는 종류만
     assert "in boom" in caplog.text  # 어디서 났는지는 남는다
     assert SECRET not in caplog.text  # 연결된 예외(KeyError)의 메시지도
 

@@ -39,6 +39,10 @@ try:
     probe_route()
 except ValueError:
     logging.getLogger("uvicorn.error").error("Exception in ASGI application\\n", exc_info=True)
+try:
+    raise ExceptionGroup("SECRET-GROUP-MESSAGE", [TypeError("SECRET-INNER-MESSAGE")])
+except ExceptionGroup:
+    logging.getLogger("uvicorn.error").error("Exception in ASGI group\\n", exc_info=True)
 logging.getLogger("httpx").info("https://open.example.test/hub?KEY=secret-key")
 
 access = logging.getLogger("uvicorn.access")
@@ -146,3 +150,30 @@ def test_uvicorn_exception_log_keeps_type_and_place_but_not_message(output):
     assert "in probe_route" in output  # 어디서 났는지는 남는다
     assert "SECRET-EXC-MESSAGE" not in output
     assert "SECRET-CAUSE-MESSAGE" not in output
+
+
+def test_uvicorn_exception_log_keeps_chained_and_grouped_types_without_messages(output):
+    """연결된 예외 · 묶음 안의 예외는 종류 이름만 덧붙인다 — 디버깅에 필요하고 값이 아니다."""
+    assert re.search(r"Exception in ASGI application ValueError\b.*KeyError", output)
+    assert re.search(r"Exception in ASGI group ExceptionGroup\b.*TypeError", output)
+    assert "SECRET-GROUP-MESSAGE" not in output
+    assert "SECRET-INNER-MESSAGE" not in output
+
+
+APP = API_ROOT / "app"
+
+
+def test_app_code_never_logs_exception_messages():
+    """🚨 log.exception · exc_info 는 예외 메시지(입력 원문이 섞일 수 있다)를 찍는다 (#670).
+
+    app 코드는 logging_config.log_error_without_message 로 종류 · 위치만 남긴다. 거름망
+    (_HideExceptionMessage)이 붙은 곳은 uvicorn.error 하나뿐이라 app.* 는 막아 주지 않는다.
+    """
+    pattern = re.compile(r"\.exception\(\s*[\"']|\bexc_info=(?!=)")
+    offenders = [
+        f"{path.relative_to(APP)}:{n}"
+        for path in APP.rglob("*.py")
+        for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+        if not line.lstrip().startswith("#") and pattern.search(line)
+    ]
+    assert offenders == []
