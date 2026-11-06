@@ -700,19 +700,23 @@ async function* runScript(runId: string): AsyncGenerator<Uint8Array> {
   if (
     scenario === "delete_proposal" ||
     scenario === "delete_proposal_expiring" ||
-    scenario === "delete_proposal_emptied"
+    scenario === "delete_proposal_emptied" ||
+    scenario === "delete_proposal_unpicked"
   ) {
+    const unpicked = scenario === "delete_proposal_unpicked";
     yield frame("step", { index: 2, total: 3, label: "지울 기록을 찾고 있어요" });
     await sleep(500);
     yield frame("note", {
-      text: "저번주 식사 기록과 놀이 기록을 찾았어요. 간식은 빼고 체크해 두었어요. 지울 것을 확인하고 골라 주세요.",
+      text: unpicked
+        ? "저번주 기록과 일정을 찾았어요. 어느 것을 지울지 몰라 체크하지 않았어요. 지울 것을 골라 주세요."
+        : "저번주 식사 기록과 놀이 기록을 찾았어요. 간식은 빼고 체크해 두었어요. 지울 것을 확인하고 골라 주세요.",
       kind: "message",
     });
     // 🚨 `delete_proposal_expiring` 은 30초 뒤 닫힌다 — 띄워 둔 카드를 화면이 `expires_at` 으로 닫는지 본다.
-    const card = proposeDelete(
-      input?.childId ?? CHILD_ID,
-      scenario === "delete_proposal_expiring" ? 30_000 : undefined,
-    );
+    const card = proposeDelete(input?.childId ?? CHILD_ID, {
+      expiresInMs: scenario === "delete_proposal_expiring" ? 30_000 : undefined,
+      unpicked,
+    });
     // `delete_proposal_emptied` — 후보가 그사이 다 지워진 카드. 서버는 빈 탭을 빼고 카드는 그대로 보낸다 (#712 `translate.py`).
     yield frame(
       "delete_proposal",

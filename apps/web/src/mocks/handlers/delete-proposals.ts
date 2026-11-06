@@ -147,13 +147,19 @@ const MEALS = [
 const PLAYS = ["블록 쌓기", "그네 타기", "공 던지기", "색칠놀이", "퍼즐 맞추기", "모래놀이"];
 
 /**
- * `delete_proposal` 시나리오 — "저번주 식사랑 놀이 기록 중에 간식은 빼고 지워줘".
+ * 🚨 **서버는 제안을 만들 때 AI 가 하나라도 고른 종류의 탭만 남긴다** (#712). 한 대화에 다른 요청이 섞이면 수정하려고
+ *    조회한 일정이 체크 없는 탭으로 붙어 잘못 누른 한 번에 지워질 수 있어서다. AI 가 하나도 못 고른 제안만 조회한 종류가
+ *    모두 오고, 그때는 모든 탭의 `picked_ids` 가 비어 있다. 그래서 목은 섞인 카드를 처음부터 만들지 않는다.
+ *    ⚠️ 다만 SSE 와 지난 대화는 행을 지금 상태로 다시 읽고 `picked_ids` 를 남은 행으로 줄인다. 그사이 고른 행이 다
+ *    지워진 탭은 체크 없이 다른 탭과 섞여 올 수 있다 — 화면의 "탭마다 고른 것이 없으면 나머지를 펼친다" 는 그대로 필요하다.
  *
+ * `delete_proposal` — "저번주 식사랑 놀이 기록 중에 간식은 빼고 지워줘".
  * - 식사 40건(잘림) · 간식은 AI 가 고르지 않았다 → "나머지" 로 접혀 선다
  * - 놀이 12건 · 전부 골랐다
- * - 일정 2건 · 하나도 안 골랐다 → "나머지" 가 처음부터 펼쳐진다
+ *
+ * `delete_proposal_unpicked` — AI 가 하나도 못 고른 제안. 식사 · 놀이 · 일정 모두 "나머지" 가 처음부터 펼쳐진다.
  */
-function proposalTabs(): ProposalTab[] {
+function proposalTabs(unpicked: boolean): ProposalTab[] {
   const food = Array.from({ length: 40 }, (_, i) =>
     record(
       `dp_f${i + 1}`,
@@ -173,6 +179,13 @@ function proposalTabs(): ProposalTab[] {
     ),
   );
   const events = [event("dp_ev1", "소아과 예약", -8, []), event("dp_ev2", "문화센터", -9, [])];
+  if (unpicked) {
+    return [
+      { kind: "observation_food", truncated: true, records: food, events: [], picked_ids: [] },
+      { kind: "observation_activity", truncated: false, records: play, events: [], picked_ids: [] },
+      { kind: "event", truncated: false, records: [], events, picked_ids: [] },
+    ];
+  }
   return [
     {
       kind: "observation_food",
@@ -188,7 +201,6 @@ function proposalTabs(): ProposalTab[] {
       events: [],
       picked_ids: play.map((r) => r.id),
     },
-    { kind: "event", truncated: false, records: [], events, picked_ids: [] },
   ];
 }
 
@@ -213,10 +225,11 @@ export function resetDeleteProposals(): void {
 /**
  * run 이 제안을 남긴다 — 서버는 Memory commit 때 `delete_proposal` 한 행을 같이 저장한다.
  * @param expiresInMs 만료까지. 기본 24시간. `delete_proposal_expiring` 은 몇십 초로 줄여 화면이 닫는 것을 본다.
+ * @param unpicked AI 가 하나도 못 고른 제안 (`delete_proposal_unpicked`).
  */
 export function proposeDelete(
   childId: string,
-  expiresInMs = 24 * 60 * 60 * 1000,
+  { expiresInMs = 24 * 60 * 60 * 1000, unpicked = false } = {},
 ): DeleteProposalCard {
   seq += 1;
   const card: DeleteProposalCard = {
@@ -224,7 +237,7 @@ export function proposeDelete(
     status: "pending",
     expires_at: new Date(Date.now() + expiresInMs).toISOString(),
     result: null,
-    tabs: proposalTabs(),
+    tabs: proposalTabs(unpicked),
   };
   proposals.set(card.proposal_id, { childId, card, status: "pending", result: null });
   return card;

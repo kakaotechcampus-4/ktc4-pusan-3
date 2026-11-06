@@ -510,6 +510,10 @@ function ProposalPicker({
             🚨 **한 번 더 묻는다** — 지운 기록은 되살릴 수 없다. 묻는 문장은 **체크한 수**로 말한다(아직 지우기 전이다).
                지운 뒤의 요약은 응답의 `result` 로만 말한다 — 그사이 다른 경로로 지워진 행은 세지 않는다.
             🚨 확인 띠는 카드 바닥의 띠다 (09 일기 지우기와 같은 모양 · 카드 안에 카드를 겹치지 않는다).
+            🚨 **대화에 적은 말이 남는다는 것을 말한다** (#748). 서버는 기록을 `deleted` 로 표시만 하고, 보호자가 쓴 문장은
+               지난 대화 말풍선(`chat_turn`)에 그대로 남는다. 안 말하면 대화에 쓴 말까지 사라진다고 읽힌다.
+               09 일기 지우기처럼 한 줄로 줄이지 않는 이유 — 여러 건을 한 번에 지우고, 지운 뒤 남는 것이 있다.
+               기록 탭의 삭제 확인(#736) · 고객센터(#750)와 같은 말을 쓴다.
           */
           <div
             ref={confirmRef}
@@ -520,7 +524,11 @@ function ProposalPicker({
             <div>
               <p className="text-body text-ink">{checkedPhrase}을 지울까요?</p>
               <p className="text-body-sm text-ink-muted mt-1">
-                지운 것은 되살릴 수 없어요. 체크하지 않은 것은 그대로 둬요.
+                지운 것은 되살릴 수 없고, 앞으로 제안에도 쓰지 않아요. 체크하지 않은 것은 그대로
+                둬요.
+              </p>
+              <p className="text-body-sm text-ink-muted mt-1">
+                대화에 적은 말은 지난 대화에 그대로 남아요.
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
