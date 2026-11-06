@@ -87,6 +87,7 @@ from app.agents.memory_bridge import (
     StoreHealthMemory,
     StoreOpener,
 )
+from app.agents.notice_ocr import PhotoReading, UnreadablePhoto, read_photo
 from app.agents.pipeline import (
     RECOMMENDING_TASKS,
     AgentQuestion,
@@ -126,6 +127,9 @@ from app.rules.age import months_between
 # api가 이 파일만 보면 되도록 진행 이벤트 타입도 여기서 내보냄
 # pipeline에 이벤트를 추가하면 여기에도 작성
 __all__ = [
+    "PhotoReading",
+    "UnreadablePhoto",
+    "read_photo",
     "MAX_SUGGESTIONS",
     "FIRST_REQUEST_AGENTS",
     "SUGGESTION_AGENTS",

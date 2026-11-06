@@ -35,6 +35,8 @@ PRICE_USD_PER_MILLION: dict[str, tuple[float, float]] = {
     "anthropic/claude-opus-5": (5.0, 25.0),
     "claude-sonnet-5": (2.0, 10.0),
     "anthropic/claude-sonnet-5": (2.0, 10.0),
+    "gemini-4-argon": (2.0, 10.0),  # 2026-11-30 까지의 입문가. 12월부터 구글은 (4.0, 20.0)
+    "google/gemini-4-argon": (2.0, 10.0),
     "gemini-3.1-pro-preview": (2.0, 12.0),
     "google/gemini-3.1-pro-preview": (2.0, 12.0),
 }

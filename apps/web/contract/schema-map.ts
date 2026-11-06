@@ -272,4 +272,12 @@ export const NOT_MAPPED: Record<string, string> = {
   LinkedAffinityOut: "웹이 ObservationOut.affinity 를 읽지 않는다",
   AnswerResponse: "05 가 되묻기 답의 응답 본문을 읽지 않는다",
   SeenTours: "웹 미사용 — FE 후속 (#696 머지 뒤 lib/tour/seen.ts 를 서버 호출로 바꿀 때)",
+  // 08 사진 API (#725). BE PR #726 이 먼저 머지된다 — FE PR #727 이 웹 타입을 붙이고 이 줄들을 뺀다
+  PhotoUploadTicket: "웹 미사용 — FE 후속 #727",
+  PhotoUploadResponse: "웹 미사용 — FE 후속 #727",
+  PhotoEntry: "웹 미사용 — FE 후속 #727",
+  PhotoEntryDetail: "웹 미사용 — FE 후속 #727",
+  PhotoCommitRequest: "웹 미사용 — FE 후속 #727",
+  PhotoCommitResponse: "웹 미사용 — FE 후속 #727",
+  Body_upload_photo_api_v1_children__cid__photos_post: "웹 미사용 — FE 후속 #727",
 };

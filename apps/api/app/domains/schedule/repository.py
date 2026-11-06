@@ -104,6 +104,36 @@ async def create_event(
     return row
 
 
+async def link_notice_items(
+    session: AsyncSession,
+    *,
+    child_id: uuid.UUID,
+    notice_id: uuid.UUID,
+    links: dict[uuid.UUID, uuid.UUID | None],
+) -> set[uuid.UUID]:
+    """사진 공지에서 넣은 일정에 출처를 단다. `links` 는 {일정 id: 공지 항목 id}.
+
+    보호자가 이미 승인한 일정에 출처만 적는다 — 캘린더에 보이는 값은 바꾸지 않는다.
+    다른 아이의 일정 · 이미 다른 항목에 이어진 일정은 건너뛰고, 잇지 못한 일정 id 를 돌려준다.
+    항목 id 가 None 이면 같은 공지가 이미 있던 경우라 공지만 잇는다.
+    """
+    linked: set[uuid.UUID] = set()
+    for event_id, item_id in links.items():
+        stmt = (
+            update(Event)
+            .where(
+                Event.id == event_id,
+                Event.child_id == child_id,
+                Event.source_notice_item_id.is_(None),
+            )
+            .values(source_notice_id=notice_id, source_notice_item_id=item_id)
+            .returning(Event.id)
+        )
+        if (await session.execute(stmt)).scalar_one_or_none() is not None:
+            linked.add(event_id)
+    return set(links) - linked
+
+
 async def update_event(
     session: AsyncSession,
     *,

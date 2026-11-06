@@ -205,6 +205,8 @@ web-logs:
 
 deploy-up:
 	$(COMPOSE_DEPLOY) up -d
+	@# api 상자만 EC2 메타데이터(S3 열쇠)에 닿게 한다 — 서버 재부팅 뒤에도 걸리게 등록까지. 맥은 건너뛴다
+	@if [ "$$(uname -s)" = Linux ]; then sudo -n deploy/scripts/imds-firewall.sh --install; fi
 
 deploy-down:
 	$(COMPOSE_DEPLOY) down

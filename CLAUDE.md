@@ -118,6 +118,7 @@
 | **Observation Memory**             | 관찰 **1건**. 도메인별 5계층 테이블                                                                       | `observation_food` · `_health` · `_education` · `_activity` · `_routine` |
 | **Child Memory**                   | 관찰이 쌓여 만들어진 아이 프로필                                                                          | `profile_affinity` · `health_safety` |
 | **Fact / Observation / Inference** | 3분류. 부모 발화는 `caregiver_observation` — 아이의 fact 로 승격 금지                                     | 관찰의 `type`                                                |
+| **notice**                         | 기관에서 온 **원문** 1건(알림장 · 가정통신문 · 식단표). 알림이 아니다 — 일정 알림은 `reminder`. 원문에서 뽑은 할 일 · 알 일은 `notice_item` | `notice` · `notice_item` |
 | **Curator**                        | 중복 병합 · 반복 집계 · 승격/강등/감쇠를 **규칙으로** 수행                                                | AI 파트                                                      |
 | **승격 (promotion)**               | `candidate → confirmed → archived`                                                                        | `profile_state`                                              |
 | **감쇠 (decay)**                   | 오래된 기억을 근거에서 빼는 것. `profile_safety` 는 **감쇠 없음** (보호자만 `retracted`)                  | 규칙                                                         |
