@@ -41,7 +41,9 @@ class World:
     plain_item: EventItemRow
 
 
-async def _build(*, weekdays: tuple[int, ...], until: date) -> World:
+async def _build(
+    *, weekdays: tuple[int, ...], until: date, item_names: tuple[str, ...] = ("물통",)
+) -> World:
     store = InMemoryStore(now=NOW)
     series, events = await store.create_series(
         child_id=CHILD,
@@ -53,7 +55,7 @@ async def _build(*, weekdays: tuple[int, ...], until: date) -> World:
         end_time=None,
         tz=KST,
         fields={"event_type": "core", "category": "institution"},
-        item_names=("물통",),
+        item_names=item_names,
     )
     plain = await store.create_event(
         child_id=CHILD,
@@ -721,3 +723,107 @@ def test_draft_book_drop_series():
     book.drop_series("series-1")
 
     assert book.get_series("series-1") is None and book.all() == ()
+
+
+# ── PR #744 리뷰: 기준 값은 항목마다 따로 센다 ───────────────────────
+# 6개 값을 한 표로 세면 제목 하나만 달라도 표가 쪼개져 소수 값이 기준이 된다. 시각(시작 · 끝 ·
+# 종일)은 "종일인데 8:30" 같은 조합이 나오지 않게 한 묶음으로 센다.
+
+
+def _at(day: date, hour: int, minute: int = 0) -> datetime:
+    return datetime(day.year, day.month, day.day, hour, minute, tzinfo=KST)
+
+
+async def _first_series_draft(world: World) -> SeriesDraft:
+    """준비물만 하나 더해 묶음 초안을 연다. 기준 값(before)을 보려는 것이다."""
+    result = await _call(
+        world, "create_event_item", event_id=world.events[-1].id, item_name="실내화", scope="series"
+    )
+    assert result.success is True, result.error
+    return _series_draft(world)
+
+
+async def test_common_values_are_counted_per_field_when_titles_differ():
+    # 오늘 이후 (등원,8:30) (등원 A,8:30) (등원 B,8:30) (등원,9:00) (등원,9:00)
+    world = await _build(weekdays=(1,), until=date(2026, 12, 14))
+    future = world.events[1:]  # 11/16 · 11/23 · 11/30 · 12/7 · 12/14
+    await _edit_one(world, future[1], title="등원 A")
+    await _edit_one(world, future[2], title="등원 B")
+    await _edit_one(world, future[3], starts_at=_at(date(2026, 12, 7), 9))
+    await _edit_one(world, future[4], starts_at=_at(date(2026, 12, 14), 9))
+
+    draft = await _first_series_draft(world)
+
+    assert draft.before.title == "등원"
+    assert draft.before.starts_time == time(8, 30)
+    assert draft.changed == ("items",)
+
+
+async def test_common_values_follow_the_majority_of_each_field():
+    # 오늘 이후 (등원,8:30) (등원,9:00) (등원2,9:00) — 제목은 등원, 시각은 9:00 이 흔하다
+    world = await _build(weekdays=(1,), until=date(2026, 11, 30))
+    future = world.events[1:]  # 11/16 · 11/23 · 11/30
+    await _edit_one(world, future[1], starts_at=_at(date(2026, 11, 23), 9))
+    await _edit_one(world, future[2], title="등원2", starts_at=_at(date(2026, 11, 30), 9))
+
+    draft = await _first_series_draft(world)
+
+    assert draft.before.title == "등원"
+    assert draft.before.starts_time == time(9, 0)
+
+
+# ── PR #744 리뷰: 준비물은 이름 집합으로 바뀜을 본다 ──────────────────
+
+_THREE = ("물통", "도시락", "색연필")
+
+
+async def _three_items_world() -> World:
+    return await _build(weekdays=(1, 3), until=date(2026, 11, 18), item_names=_THREE)
+
+
+async def _item_id(world: World, name: str) -> str:
+    return next(i.item_id for i in await _items(world, world.events[2]) if i.item_name == name)
+
+
+async def _remove(world: World, name: str) -> None:
+    result = await _call(
+        world, "delete_event_item", item_id=await _item_id(world, name), scope="series"
+    )
+    assert result.success is True, result.error
+
+
+async def _add(world: World, name: str):
+    return await _call(
+        world, "create_event_item", event_id=world.events[2].id, item_name=name, scope="series"
+    )
+
+
+@pytest.mark.parametrize(
+    ("removed", "added"),
+    [
+        (["물통"], ["물통"]),
+        (["도시락"], ["도시락"]),
+        (["색연필"], ["색연필"]),
+        (list(_THREE), list(_THREE)),
+        (list(_THREE), list(reversed(_THREE))),
+    ],
+)
+async def test_removing_and_adding_back_items_in_any_order_is_no_change(removed, added):
+    world = await _three_items_world()
+    for name in removed:
+        await _remove(world, name)
+    for name in added:
+        result = await _add(world, name)
+
+    assert result.success is True, result.error
+    assert result.data["draft"] is False
+    assert world.ctx.drafts.all() == ()
+
+
+async def test_a_real_item_change_is_still_a_draft():
+    world = await _three_items_world()
+
+    await _remove(world, "도시락")
+
+    assert _series_draft(world).changed == ("items",)
+    assert _series_draft(world).items == ("물통", "색연필")

@@ -263,29 +263,38 @@ def _clock_of(row: EventRow, tz: tzinfo) -> tuple[time | None, time | None]:
     return row.starts_at.astimezone(tz).time(), ends
 
 
-def _row_key(row: EventRow, tz: tzinfo) -> tuple[Any, ...]:
-    """회차끼리 값이 같은지 가르는 열쇠. 묶음의 기준값을 정할 때 쓴다."""
+def _row_values(row: EventRow, tz: tzinfo) -> tuple[Any, ...]:
+    """회차의 값을 항목별로 (제목, 시각, 종류, 카테고리). 시각은 (시작, 끝, 종일) 한 묶음이다 —
+    따로 세면 "종일인데 8:30" 같은 어느 회차에도 없는 조합이 나온다."""
     starts, ends = _clock_of(row, tz)
     return (
         row.title,
-        starts,
-        ends,
-        row.all_day,
+        (starts, ends, row.all_day),
         str(row.fields.get("event_type", EventType.CORE)),
         str(row.fields.get("category", EventCategory.ETC)),
     )
 
 
-def _common_row(rows: list[EventRow], tz: tzinfo) -> EventRow:
-    """오늘 이후 회차 중 값이 가장 흔한 회차. 같은 수면 먼저 오는 쪽.
-
-    첫 회차를 기준으로 삼으면 그 회차만 따로 고쳐 둔 값(시각 · 제목)이 묶음의 기준이 된다.
-    그러면 준비물만 더하는 초안도 그 값을 들고 가서, 제출할 때 나머지 회차에 번진다.
-    """
-    keys = [_row_key(row, tz) for row in rows]
-    counts = Counter(keys)
+def _most_common[T](values: list[T]) -> T:
+    """가장 흔한 값. 같은 수면 먼저 나온 쪽."""
+    counts = Counter(values)
     top = max(counts.values())
-    return next(row for row, key in zip(rows, keys, strict=True) if counts[key] == top)
+    return next(value for value in values if counts[value] == top)
+
+
+def _common_values(rows: list[EventRow], tz: tzinfo) -> tuple[tuple[Any, ...], EventRow]:
+    """오늘 이후 회차에서 항목마다 가장 흔한 값과, 준비물을 읽을 회차.
+
+    첫 회차를 기준으로 삼으면 그 회차만 따로 고쳐 둔 값이 묶음의 기준이 되어, 준비물만 더하는 초안도
+    그 값을 들고 가 제출할 때 나머지 회차에 번진다. 회차 전체를 한 표로 세면 제목 하나만 달라도
+    표가 쪼개져 소수 값이 뽑혀서 항목마다 따로 센다 (#744 리뷰).
+    준비물은 회차마다 따로 읽어야 해서, 흔한 값과 가장 많이 맞는 회차(같으면 먼저 오는 쪽)의
+    준비물을 쓴다.
+    """
+    values = [_row_values(row, tz) for row in rows]
+    common = tuple(_most_common([value[i] for value in values]) for i in range(len(values[0])))
+    matches = [sum(a == b for a, b in zip(value, common, strict=True)) for value in values]
+    return common, rows[matches.index(max(matches))]
 
 
 async def _series_base(
@@ -298,16 +307,17 @@ async def _series_base(
     rows = await context.store.list_series_events(series_id=series.id, date_from=context.today)
     if not rows:
         return fail(operation, resource, ErrorCode.TARGET_NOT_FOUND, _SERIES_NO_FUTURE)
-    frame = _common_row(rows, context.timezone)
+    (title, (starts, ends, all_day), event_type, category), frame = _common_values(
+        rows, context.timezone
+    )
     items = await context.store.list_event_items(event_id=frame.id)
-    starts, ends = _clock_of(frame, context.timezone)
     before = SeriesSnapshot(
-        title=frame.title,
+        title=title,
         starts_time=starts,
         ends_time=ends,
-        all_day=frame.all_day,
-        event_type=str(frame.fields.get("event_type", EventType.CORE)),
-        category=str(frame.fields.get("category", EventCategory.ETC)),
+        all_day=all_day,
+        event_type=event_type,
+        category=category,
         repeat=RepeatRule(weekdays=series.weekdays, until=series.until),
         items=tuple(item.item_name for item in items),
     )
@@ -326,11 +336,21 @@ async def _series_base(
 
 
 def _series_changed(draft: SeriesDraft) -> tuple[str, ...]:
-    """원본(`before`)과 달라진 필드. 고쳤다가 되돌린 값은 바뀐 것으로 치지 않는다."""
+    """원본(`before`)과 달라진 필드. 고쳤다가 되돌린 값은 바뀐 것으로 치지 않는다.
+
+    준비물은 이름 집합으로 본다 — 새로 넣은 이름은 맨 뒤에 붙어서, 뺐다가 다시 넣으면 내용이 같아도
+    순서가 달라진다 (#744 리뷰). 초안에 싣는 순서는 그대로 둔다.
+    """
     before = draft.before
     if before is None:
         return draft.changed
-    return tuple(name for name in _SERIES_FIELDS if getattr(draft, name) != getattr(before, name))
+    return tuple(name for name in _SERIES_FIELDS if not _same_field(name, draft, before))
+
+
+def _same_field(name: str, draft: SeriesDraft, before: SeriesSnapshot) -> bool:
+    if name == "items":
+        return set(draft.items) == set(before.items)
+    return getattr(draft, name) == getattr(before, name)
 
 
 def _put_series(
