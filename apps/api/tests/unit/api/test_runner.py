@@ -43,6 +43,7 @@ from app.domains.safety.agent_reader import DbSafetyReader
 PARENT = uuid.UUID(int=1)
 """채널은 만든 보호자를 반드시 안다. 여기서는 누구인지가 중요하지 않다."""
 CHILD = uuid.UUID(int=2)
+PROPOSAL = uuid.UUID(int=3)
 RAW_TEXT = "계란말이 또 찾아요"
 
 
@@ -220,14 +221,14 @@ async def test_agent_job_stops_a_run_past_the_deadline(monkeypatch):
     monkeypatch.setattr(runner, "RUN_DEADLINE_SECONDS", 0.05)
     channel = registry.open_run(parent_id=PARENT)
     scope = {"parent_id": PARENT, "method": "POST", "path": "/inputs", "key": "k1"}
-    idempotency.remember(**scope, replay=channel.run_id)
+    await idempotency.remember(**scope, replay=channel.run_id)
 
     job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
     await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
 
     assert names(channel) == ["step", "failed"]
     assert channel.events[-1][1] == {"reason": "timeout", "raw_text": RAW_TEXT}
-    assert idempotency.recall(**scope) is None
+    assert await idempotency.recall(**scope) is None
 
 
 async def test_job_that_returns_without_an_end_signal_ends_with_failed():
@@ -269,14 +270,14 @@ async def test_untranslatable_event_fails_the_run_loudly(monkeypatch, caplog):
     monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
     channel = registry.open_run(parent_id=PARENT)
     scope = {"parent_id": PARENT, "method": "POST", "path": "/inputs", "key": "k1"}
-    idempotency.remember(**scope, replay=channel.run_id)
+    await idempotency.remember(**scope, replay=channel.run_id)
 
     job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
     await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
 
     assert names(channel) == ["step", "failed"]
     assert channel.events[-1][1] == {"reason": "internal_error", "raw_text": RAW_TEXT}
-    assert idempotency.recall(**scope) is None
+    assert await idempotency.recall(**scope) is None
     assert "ValueError" in caplog.text
     assert secret not in caplog.text
 
@@ -295,13 +296,13 @@ async def test_failed_from_the_agents_releases_the_key(monkeypatch):
     monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
     channel = registry.open_run(parent_id=PARENT)
     scope = {"parent_id": PARENT, "method": "POST", "path": "/inputs", "key": "k1"}
-    idempotency.remember(**scope, replay=channel.run_id)
+    await idempotency.remember(**scope, replay=channel.run_id)
 
     job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
     await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
 
     assert names(channel) == ["failed"]
-    assert idempotency.recall(**scope) is None
+    assert await idempotency.recall(**scope) is None
 
 
 async def test_부분_결과는_done_으로_끝나고_키를_놓지_않는다(monkeypatch):
@@ -316,14 +317,14 @@ async def test_부분_결과는_done_으로_끝나고_키를_놓지_않는다(mo
     monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
     channel = registry.open_run(parent_id=PARENT)
     scope = {"parent_id": PARENT, "method": "POST", "path": "/inputs", "key": "k1"}
-    idempotency.remember(**scope, replay=channel.run_id)
+    await idempotency.remember(**scope, replay=channel.run_id)
 
     job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
     await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
 
     assert names(channel) == ["step", "partial", "done"]
     assert channel.ended_with == "done"
-    assert idempotency.recall(**scope) == channel.run_id
+    assert await idempotency.recall(**scope) == channel.run_id
 
 
 async def test_키_놓기가_터져도_채널은_닫힌다(monkeypatch):
@@ -677,7 +678,7 @@ async def test_commit_후_예외가_나도_키를_풀지_않는다(monkeypatch):
     monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
     channel = registry.open_run(parent_id=PARENT)
     scope = {"parent_id": PARENT, "method": "POST", "path": "/inputs", "key": "k-commit"}
-    idempotency.remember(**scope, replay=channel.run_id)
+    await idempotency.remember(**scope, replay=channel.run_id)
 
     job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
     await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
@@ -686,7 +687,7 @@ async def test_commit_후_예외가_나도_키를_풀지_않는다(monkeypatch):
     assert channel.ended_with == "done"
     assert names(channel) == ["step", "done"]
     # 키가 풀리지 않는다 — 같은 키로 재시도하면 기존 run 이 재생된다
-    assert idempotency.recall(**scope) == channel.run_id
+    assert await idempotency.recall(**scope) == channel.run_id
     assert channel.closed
 
 
@@ -755,14 +756,14 @@ async def test_timeout이_commit_뒤에_걸려도_done으로_끝난다(monkeypat
     monkeypatch.setattr(runner, "RUN_DEADLINE_SECONDS", 0.1)
     channel = registry.open_run(parent_id=PARENT)
     scope = {"parent_id": PARENT, "method": "POST", "path": "/inputs", "key": "k-timeout-commit"}
-    idempotency.remember(**scope, replay=channel.run_id)
+    await idempotency.remember(**scope, replay=channel.run_id)
 
     job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
     await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=2)
 
     assert channel.ended_with == "done"
     # 키가 풀리지 않는다 — commit 된 run 이니까
-    assert idempotency.recall(**scope) == channel.run_id
+    assert await idempotency.recall(**scope) == channel.run_id
     assert channel.closed
 
 
@@ -776,13 +777,13 @@ async def test_commit_전_timeout은_failed로_끝나고_키가_풀린다(monkey
     monkeypatch.setattr(runner, "RUN_DEADLINE_SECONDS", 0.1)
     channel = registry.open_run(parent_id=PARENT)
     scope = {"parent_id": PARENT, "method": "POST", "path": "/inputs", "key": "k-timeout-pre"}
-    idempotency.remember(**scope, replay=channel.run_id)
+    await idempotency.remember(**scope, replay=channel.run_id)
 
     job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
     await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=2)
 
     assert channel.ended_with == "failed"
-    assert idempotency.recall(**scope) is None  # 키 풀림
+    assert await idempotency.recall(**scope) is None  # 키 풀림
     assert channel.closed
 
 
@@ -849,14 +850,14 @@ async def test_저장_안_한_run의_commit_후_예외는_failed로_끝난다(mo
     monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
     channel = registry.open_run(parent_id=PARENT)
     scope = {"parent_id": PARENT, "method": "POST", "path": "/inputs", "key": "k-no-write"}
-    idempotency.remember(**scope, replay=channel.run_id)
+    await idempotency.remember(**scope, replay=channel.run_id)
 
     job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
     await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
 
     assert channel.ended_with == "failed"
     # 키가 풀려야 한다 — 저장한 게 없으니 재시도해도 안전하다
-    assert idempotency.recall(**scope) is None
+    assert await idempotency.recall(**scope) is None
 
 
 async def test_임베딩_키가_있으면_Curator_트리거를_만들어_진입점에_넘긴다(monkeypatch):
@@ -1145,13 +1146,13 @@ async def test_추천_저장_뒤_예외가_나도_done_이고_키를_풀지_않�
     monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
     channel = registry.open_run(parent_id=PARENT)
     scope = {"parent_id": PARENT, "method": "POST", "path": "/inputs", "key": "k-saved"}
-    idempotency.remember(**scope, replay=channel.run_id)
+    await idempotency.remember(**scope, replay=channel.run_id)
 
     job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
     await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
 
     assert channel.ended_with == "done"
-    assert idempotency.recall(**scope) == channel.run_id
+    assert await idempotency.recall(**scope) == channel.run_id
 
 
 async def test_추천_저장_뒤_시간_안전망에_걸려도_done_이다(monkeypatch):
@@ -1166,13 +1167,13 @@ async def test_추천_저장_뒤_시간_안전망에_걸려도_done_이다(monke
     monkeypatch.setattr(runner, "RUN_DEADLINE_SECONDS", 0.1)
     channel = registry.open_run(parent_id=PARENT)
     scope = {"parent_id": PARENT, "method": "POST", "path": "/inputs", "key": "k-saved-timeout"}
-    idempotency.remember(**scope, replay=channel.run_id)
+    await idempotency.remember(**scope, replay=channel.run_id)
 
     job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
     await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=2)
 
     assert channel.ended_with == "done"
-    assert idempotency.recall(**scope) == channel.run_id
+    assert await idempotency.recall(**scope) == channel.run_id
 
 
 async def test_추천_저장이_실패하면_확정된_저장으로_세지_않는다(monkeypatch):
@@ -1187,11 +1188,41 @@ async def test_추천_저장이_실패하면_확정된_저장으로_세지_않�
     monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
     channel = registry.open_run(parent_id=PARENT)
     scope = {"parent_id": PARENT, "method": "POST", "path": "/inputs", "key": "k-save-failed"}
-    idempotency.remember(**scope, replay=channel.run_id)
+    await idempotency.remember(**scope, replay=channel.run_id)
 
     job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
     await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
 
     assert channel.suggestions_saved is False
     assert channel.ended_with == "failed"
-    assert idempotency.recall(**scope) is None
+    assert await idempotency.recall(**scope) is None
+
+
+async def test_화면에_안_나간_조회_카드는_대화에도_남기지_않는다(monkeypatch):
+    """#535 — 카드 행을 못 읽어 found_tabs 가 안 나갔으면 대화 기록에도 넘기지 않는다. 안 그러면
+    보지 못한 카드가 지난 대화에만 생긴다. 삭제 카드는 행이 없어도 나가고 남는다."""
+    recorded: list = []
+
+    async def no_rows(*_args, **_kwargs):
+        return {}
+
+    async def fake_handle_input(**kwargs):
+        store = kwargs["store"]  # Memory 가 제안을 저장하고 commit 한 뒤라고 친다
+        store.proposal_id, store.proposal_expires_at = PROPOSAL, datetime(2026, 10, 28, tzinfo=UTC)
+        tab = entrypoint.CardTab("event", False, ("e1",), ("e1",))
+        await kwargs["load_cards"](tab.refs())
+        kwargs["emit"](entrypoint.FoundTabs((tab,)))
+        kwargs["emit"](entrypoint.DeleteProposed(str(PROPOSAL), (tab,)))
+        kwargs["emit"](Done(kwargs["run_id"], 1))
+
+    monkeypatch.setattr(runner, "_read_cards", no_rows)
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+
+    job = runner.agent_job(
+        child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT, on_event=recorded.append
+    )
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    assert names(channel) == ["delete_proposal", "done"]
+    assert [type(event).__name__ for event in recorded] == ["DeleteProposed", "Done"]

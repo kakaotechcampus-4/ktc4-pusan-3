@@ -71,3 +71,31 @@ async def db_client(client: AsyncClient, session: AsyncSession):
     app.dependency_overrides[get_session] = lambda: session
     yield client
     app.dependency_overrides.pop(get_session, None)
+
+
+@pytest.fixture
+def hung_redis_url():
+    """연결은 받고 아무 말도 안 하는 서버의 주소 — Redis 가 응답 없이 멈춘 것처럼 (#671).
+
+    연결 거부(즉시 실패)와 달리 응답 상한이 있어야 끝난다. 받은 연결은 닫지 않고 쥐고 있는다.
+    """
+    import socket
+    import threading
+
+    server = socket.socket()
+    server.bind(("127.0.0.1", 0))
+    server.listen()
+    held: list[socket.socket] = []
+
+    def accept() -> None:
+        while True:
+            try:
+                held.append(server.accept()[0])
+            except OSError:
+                return
+
+    threading.Thread(target=accept, daemon=True).start()
+    yield f"redis://127.0.0.1:{server.getsockname()[1]}/0"
+    server.close()
+    for conn in held:
+        conn.close()

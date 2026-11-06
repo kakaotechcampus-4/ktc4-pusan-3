@@ -131,6 +131,14 @@ export const SCHEMA_MAP: Record<string, MapValue> = {
   AgentResultOut: "ChatReply<type=agent_result>",
   PartialReply: "ChatReply<type=partial>",
   DoneReply: "ChatReply<type=done>",
+  // 조회 · 삭제 카드 (#535). 탭 모양은 SSE `found_tabs` · `delete_proposal` 과 같다.
+  FoundTabsOut: "ChatReply<type=found_tabs>",
+  DeleteProposalCardOut: "ChatReply<type=delete_proposal>",
+  CardTabOut: "CardTab",
+  ProposalTabOut: "ProposalTab",
+  ConfirmDeleteProposalRequest: "ConfirmDeleteProposalRequest",
+  DeleteProposalOut: "DeleteProposal",
+  DeleteProposalResponse: "DeleteProposalResponse",
   StoredReadout: {
     web: "AgentReadout",
     allow: {
@@ -140,6 +148,8 @@ export const SCHEMA_MAP: Record<string, MapValue> = {
   },
   SuggestionStateOut: "AgentResultEvent.suggestions[]",
   StoredRef: "StoredRef",
+  // readout 근거 중 화면이 받는 종류만(지금은 복약 코스) — 웹 `Ref` 의 kind 목록 안이다
+  StoredScreenRef: "Ref",
 
   /* ── 07 기록 · 기억 · 고치기 ── */
   Ref: "Ref",

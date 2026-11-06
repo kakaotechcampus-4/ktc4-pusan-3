@@ -3,7 +3,9 @@ import { NetworkError } from "./errors";
 import type {
   Affinity,
   Agent,
+  DeleteProposalCard,
   EventDraft,
+  FoundTabs,
   MedicationDraft,
   Observation,
   PhotoEntry,
@@ -374,6 +376,9 @@ export type RunEvent =
   | { type: "note"; data: NoteEvent }
   | { type: "unavailable"; data: UnavailableEvent }
   | { type: "agent_result"; data: AgentResultEvent }
+  // 조회 · 삭제 카드 (#535). 지난 대화의 `ChatReply` 와 같은 칸이다 (`types.ts` 의 `FoundTabs` · `DeleteProposalCard`).
+  | { type: "found_tabs"; data: FoundTabs }
+  | { type: "delete_proposal"; data: DeleteProposalCard }
   | { type: "ping"; data: PingEvent }
   | { type: "partial"; data: PartialEvent }
   | { type: "failed"; data: FailedEvent }

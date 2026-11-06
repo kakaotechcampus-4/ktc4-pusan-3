@@ -20,6 +20,8 @@ from pydantic import BaseModel
 from sqlalchemy.exc import DBAPIError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from app.core.logging_config import log_error_without_message
+
 log = logging.getLogger(__name__)
 
 
@@ -200,7 +202,10 @@ def register_error_handlers(app: FastAPI) -> None:
         #
         # 🚨 예외 메시지를 응답에 넣지 않는다 — 쿼리·토큰·카카오 인가 코드가 섞여
         #    나간다 (명세 §7-5).
+        # 🚨 로그에도 예외 메시지를 싣지 않는다 (#670 · 루트 §2). 메시지에는 입력 원문이 섞일 수
+        #    있다 — ValueError(f"... {text}") 처럼. DB 오류 처리기와 같이 종류와 코드 위치만 남긴다.
         # 참고: Starlette 은 이 응답을 보낸 뒤 예외를 다시 raise 한다. 테스트에서는
-        #      예외가 그대로 올라오고(정상), 운영에서는 uvicorn 이 로그만 남긴다.
-        log.exception("처리되지 않은 예외")
+        #      예외가 그대로 올라오고(정상), 운영에서는 uvicorn 이 "Exception in ASGI application"
+        #      으로 한 번 더 찍는다 — 그 줄의 메시지는 logging_config._HideExceptionMessage 가 뺀다.
+        log_error_without_message(log, "처리되지 않은 예외", exc)
         return envelope(500, "internal_error", "잠시 후 다시 시도해 주세요")

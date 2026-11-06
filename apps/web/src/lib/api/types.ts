@@ -1497,6 +1497,87 @@ export interface StoredRef {
   id: string;
 }
 
+/* ── 조회 · 삭제 카드 (#535) ─────────────────────────────────────────────
+ * 대화로 기록 · 일정을 찾거나 지울 때 답 아래 붙는 탭 카드. run 화면(SSE `found_tabs` · `delete_proposal`)과
+ * 지난 대화가 같은 모양이다. 흐름과 이유는 서버 `docs/api/delete-proposal-v1.md`, 화면 규칙은
+ * `docs/web/chat-run-v1.md` §5.
+ */
+
+/** 탭 하나 = 조회 tool 하나. 순서는 서버가 정한 그대로 그린다 (식사 · 건강 · 교육 · 놀이 · 생활습관 · 일정). */
+export type CardTabKind = ObservationKind | "event";
+
+/**
+ * 🚨 **`records` 와 `events` 는 늘 둘 다 있다.** 관찰 탭이면 `events` 가, 일정 탭이면 `records` 가 빈 배열이다.
+ *    그사이 지워진 행은 빠진 채로 오고, 행이 하나도 없는 탭은 통째로 빠진다.
+ */
+export interface CardTab {
+  kind: CardTabKind;
+  /** 최근 40건만 실었다. 🚨 전체 건수는 오지 않는다 — "더 있어요" 만 말한다. */
+  truncated: boolean;
+  /** 조회 순서(오래된 순). 관찰 탭의 `observation_health` 는 건강 모양이다. */
+  records: Observation[];
+  events: CalendarEvent[];
+}
+
+export interface ProposalTab extends CardTab {
+  /**
+   * AI 가 요청에 맞아 고른 id — 기본 체크. 🚨 **탭 안 두 묶음("요청에 맞는" · "나머지")을 가르는 기준이다.**
+   *    체크를 바꿔도 묶음은 이 값으로 고정한다 (행이 묶음 사이를 옮겨 다니지 않는다).
+   */
+  picked_ids: string[];
+}
+
+/** 조회 답변 · 수정 후보 카드. 🚨 보기 전용이다 — 준비물 체크도 이 카드에서는 바꾸지 않는다. */
+export interface FoundTabs {
+  tabs: CardTab[];
+}
+
+/**
+ * 삭제 제안의 상태. 🚨 `expired` 는 지난 대화에서만 온다 — run 화면의 카드는 늘 `pending` 이라
+ * 화면이 `expires_at` 으로 닫는다.
+ */
+export type DeleteProposalStatus = "pending" | "deleted" | "cancelled" | "expired";
+
+/**
+ * 삭제 제안 카드. 버튼은 `POST …/delete-proposals/{proposal_id}/confirm · cancel`.
+ *
+ * 🚨 **AI 는 지우지 않는다.** 보호자가 체크를 고치고 두 번 눌러야 서버가 **후보 안의 체크한 것만** 지운다.
+ * 🚨 끝난 제안은 `tabs: []` 와 `status` · `result` 만 온다 — 지운 원문을 다시 보이지 않는다.
+ */
+export interface DeleteProposalCard {
+  proposal_id: string;
+  status: DeleteProposalStatus;
+  /** 이 시각이 지나면 누를 수 없다(만든 뒤 24시간). 누르면 409 `proposal_expired` 다. */
+  expires_at: string;
+  /**
+   * 종류별 **실제로 지운** 건수 (`{ observation_food: 30, event: 1 }`). `deleted` 가 아니면 `null`.
+   * 🚨 한 줄 요약은 체크한 수가 아니라 이 값으로 그린다 — 그사이 다른 경로로 지워진 행은 세지 않아서 더 적을 수 있다.
+   */
+  result: Record<string, number> | null;
+  tabs: ProposalTab[];
+}
+
+/** `POST /children/{cid}/delete-proposals/{pid}/confirm` 의 본문. 🚨 `Idempotency-Key` 가 필수다. */
+export interface ConfirmDeleteProposalRequest {
+  /** 체크한 행의 id. 🚨 **후보 안의 것만** — 하나라도 밖이면 422 `not_in_proposal` 이고 아무것도 안 지운다. */
+  ids: string[];
+}
+
+/** 서버 `MAX_CONFIRM_IDS`(탭 6 × 40건)와 같은 값이다. 한쪽만 바꾸지 않는다. */
+export const CONFIRM_DELETE_MAX_IDS = 240;
+
+export interface DeleteProposal {
+  id: string;
+  status: DeleteProposalStatus;
+  expires_at: string;
+  result: Record<string, number> | null;
+}
+
+/** 확정 · 취소의 응답. 🚨 카드는 이 `proposal` 로 접는다 — 체크한 수로 요약을 만들지 않는다. */
+export interface DeleteProposalResponse {
+  proposal: DeleteProposal;
+}
+
 /**
  * 지난 턴의 답 하나. 🚨 **run 화면(SSE)과 같은 이름 · 같은 칸이다** — `type` 을 떼어 `data` 로 감싸면
  * 그대로 `RunEvent` 가 되어 `runReducer` 에 흘릴 수 있다 (`lib/chat-history.ts`).
@@ -1505,6 +1586,8 @@ export interface StoredRef {
  * - `saved` — 관찰은 **지금 모습**으로 온다(건강 기록 포함). 보호자가 지운 기록은 내용 없이 `deleted` 에 id 만 온다.
  * - `event_draft` — 🚨 **그때 만든 내용 그대로다.** 초안은 서버에 남지 않아서 지금 상태가 없다 — 읽기 전용으로만 그린다.
  * - `agent_result` — 추천의 **지금 상태**(`suggestions`)가 같이 온다. 고를 수 있는 것이 없으면 "후보 보기" 를 세우지 않는다.
+ * - `found_tabs` — 서버는 (종류, id) 만 남기고 지금 상태로 다시 읽어 준다. 그사이 지운 기록은 빠진다 (#535).
+ * - `delete_proposal` — 결정 전이면 후보와 기본 체크를 그대로, 끝났으면 `tabs: []` 와 `status` · `result` 만 (#535).
  * - `done` — `completed` 만 온다. 늘 마지막이다.
  * - 오지 않는 것 — `step` · `ping` · `offer` · `promoted` · `failed`(실패한 run 은 남기지 않는다).
  */
@@ -1513,6 +1596,8 @@ export type ChatReply =
   | ({ type: "guidance" } & GuidanceEvent)
   | ({ type: "unavailable" } & UnavailableEvent)
   | ({ type: "saved"; deleted: StoredRef[] } & SavedEvent)
+  | ({ type: "found_tabs" } & FoundTabs)
+  | ({ type: "delete_proposal" } & DeleteProposalCard)
   | ({ type: "event_draft" } & EventDraftsEvent)
   | ({ type: "agent_result" } & AgentResultEvent & Required<Pick<AgentResultEvent, "suggestions">>)
   | ({ type: "partial" } & PartialEvent)

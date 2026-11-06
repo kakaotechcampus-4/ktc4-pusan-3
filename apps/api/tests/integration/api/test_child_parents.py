@@ -14,6 +14,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api import idempotency
 from app.domains.chat.models import ChatTurn
 from app.domains.child.models import ParentChild, ParentChildRelation
+from app.domains.delete_proposal.models import DeleteProposal
+from app.domains.delete_proposal.repository import ProposalTab, add_proposal
 from app.domains.identity.models import Parent
 from app.domains.schedule.models import (
     DiaryEntry,
@@ -46,7 +48,7 @@ async def _member(
 
 
 async def _personal_records(session: AsyncSession, cid: uuid.UUID, pid: uuid.UUID) -> None:
-    """그 보호자가 이 아이에 남기는 개인 기록 — 일기 1 · 알림 1 · 대화 1."""
+    """그 보호자가 이 아이에 남기는 개인 기록 — 일기 1 · 알림 1 · 대화 1 · 삭제 제안 1."""
     event = await create_event(
         session,
         child_id=cid,
@@ -72,6 +74,14 @@ async def _personal_records(session: AsyncSession, cid: uuid.UUID, pid: uuid.UUI
             replies=[],
             created_at=AT,
         )
+    )
+    await add_proposal(
+        session,
+        parent_id=pid,
+        child_id=cid,
+        run_id=uuid.uuid4().hex,
+        tabs=[ProposalTab("event", False, (str(event.id),), (str(event.id),))],
+        now=AT,
     )
     await session.flush()
 
@@ -141,7 +151,7 @@ async def test_who_can_unlink_whom(
 async def test_unlink_deletes_only_their_personal_records(
     db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
 ):
-    """끊긴 보호자의 일기 · 알림 · 대화만 지운다.
+    """끊긴 보호자의 일기 · 알림 · 대화 · 삭제 제안만 지운다.
 
     다른 보호자의 것과 공동 기록의 "적은 사람"은 남는다."""
     owner_headers, owner = bearer
@@ -167,6 +177,8 @@ async def test_unlink_deletes_only_their_personal_records(
     assert list(reminders) == [owner]
     chats = await session.scalars(select(ChatTurn.parent_id))
     assert list(chats) == [owner]
+    proposals = await session.scalars(select(DeleteProposal.parent_id))
+    assert list(proposals) == [owner]
     await session.refresh(photo)
     assert photo.uploader_parent_id == member
 

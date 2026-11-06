@@ -281,7 +281,7 @@ async def create_event_drafts(
     ),
     status_code=201,
     response_model=SubmitEventResponse,
-    responses={status: {"model": ErrorEnvelope} for status in (400, 404, 409, 422)},
+    responses={status: {"model": ErrorEnvelope} for status in (400, 404, 409, 422, 503)},
 )
 async def submit_event(
     child: AccessibleChild,
@@ -302,7 +302,7 @@ async def submit_event(
         "path": request.url.path,
         "key": idempotency_key,
     }
-    replayed = idempotency.recall(**scope)
+    replayed = await idempotency.recall(**scope)
     if replayed is not None and isinstance(replayed, dict):
         return JSONResponse(status_code=201, content=replayed)
 
@@ -410,7 +410,7 @@ async def submit_event(
     )
 
     response_dict = response_data.model_dump(mode="json")
-    idempotency.remember(**scope, replay=response_dict)
+    await idempotency.remember(**scope, replay=response_dict)
     return JSONResponse(status_code=201, content=response_dict)
 
 
@@ -967,7 +967,7 @@ async def set_suggestion_feedback(
     ),
     status_code=200,
     response_model=SubmitEventResponse,
-    responses={status: {"model": ErrorEnvelope} for status in (400, 404, 409, 422)},
+    responses={status: {"model": ErrorEnvelope} for status in (400, 404, 409, 422, 503)},
 )
 async def update_event(
     child: AccessibleChild,
@@ -989,7 +989,7 @@ async def update_event(
         "path": request.url.path,
         "key": idempotency_key,
     }
-    replayed = idempotency.recall(**scope)
+    replayed = await idempotency.recall(**scope)
     if replayed is not None and isinstance(replayed, dict):
         return JSONResponse(status_code=200, content=replayed)
 
@@ -1098,5 +1098,5 @@ async def update_event(
     )
 
     response_dict = response_data.model_dump(mode="json")
-    idempotency.remember(**scope, replay=response_dict)
+    await idempotency.remember(**scope, replay=response_dict)
     return JSONResponse(status_code=200, content=response_dict)
