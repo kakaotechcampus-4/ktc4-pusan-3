@@ -355,7 +355,34 @@ async def test_보호자가_정한_요청에_맞춘_일반_추천은_문서_근�
     assert (await session.get(Suggestion, suggestion_id)).requested is True
 
 
-async def test_요청_기반은_Activity_일반_추천만_행에_남긴다(session, kids):
+async def test_Growth_요청_기반_일반_추천을_문서_근거_없이_저장한다(session, kids):
+    """보호자가 주제를 정해 물었고 그 주제의 문서 행이 없으면 요청이 기준이다 (#702)."""
+    _, child, _ = kids
+    [suggestion_id] = await save_agent_suggestions(
+        session,
+        child_id=child.id,
+        run_id=RUN,
+        payloads=[payload(kind="general", requested=True, agent="growth")],
+        now=NOW,
+    )
+    assert await counts(session, child.id) == (1, 0)
+    assert (await session.get(Suggestion, suggestion_id)).requested is True
+
+
+async def test_Growth_요청_기반이_아니면_문서_근거가_필요하다(session, kids):
+    _, child, _ = kids
+    with pytest.raises(SuggestionEvidenceError, match="문서 행 근거가 없다"):
+        await save_agent_suggestions(
+            session,
+            child_id=child.id,
+            run_id=RUN,
+            payloads=[payload(kind="general", agent="growth")],
+            now=NOW,
+        )
+    assert await counts(session, child.id) == (0, 0)
+
+
+async def test_요청_기반은_Activity_와_Growth_일반_추천만_행에_남긴다(session, kids):
     """Food 가 requested 를 보내도 요청 기반으로 남지 않는다 — 05 에서 문서 근거가 사라지면
     다른 일반 추천처럼 빠진다. 막연한 요청의 Activity 일반 추천도 남기지 않는다."""
     _, child, _ = kids
@@ -378,7 +405,7 @@ async def test_요청_기반은_Activity_일반_추천만_행에_남긴다(sessi
     assert (await session.get(Suggestion, activity)).requested is False
 
 
-async def test_요청_기반_면제는_Activity_만이다(session, kids):
+async def test_Food_는_요청_기반이어도_문서_근거를_본다(session, kids):
     """Food 는 레시피북 밖 메뉴가 나가면 안 된다 — requested 가 와도 문서 근거를 본다."""
     _, child, _ = kids
     with pytest.raises(SuggestionEvidenceError, match="문서 행 근거가 없다"):

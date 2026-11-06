@@ -105,6 +105,8 @@ _RESUME_HEADER = """[이어서 처리할 것]
 혼자 한다고 읽지 않는다. 해냈는지가 드러나면 completion_status 에 적는다(싫어하면 refused,
 일부만 하면 partial).
 [물은 칸]이 trigger 면 상황을 그대로 적는다.
+[물은 칸]이 topic 이면 [물은 행동]의 주제를 집에서 해 본 일을 교육 기록 한 건으로 남긴다.
+어려워했다고 하면 polarity 를 -1 로 둔다. 해 본 적이 없다는 답은 저장 없이 끝낸다.
 저장할 말이 전혀 없을 때만 저장 없이 끝낸다.
 답에 다른 기록이나 요청이 섞여 있으면 그 부분은 저장하지 말고 leftover 를 true 로 둔다.
 따로 보내 달라는 안내는 따로 붙으니 text 에 쓰지 않는다."""
@@ -586,6 +588,9 @@ async def run(
                 asked=continuation.asked if continuation is not None else None,
                 routine_saved=any(
                     done.success and done.name == "create_observation_routine" for done in calls
+                ),
+                education_saved=any(
+                    done.success and done.name == "create_observation_education" for done in calls
                 ),
             )
             calls.append(record)
@@ -1161,6 +1166,7 @@ async def _execute(
     shown: Sequence[tuple[FoundRef, dict[str, Any]]] = (),
     asked: DomainPending | None = None,
     routine_saved: bool = False,
+    education_saved: bool = False,
 ) -> ToolCallRecord:
     name = call.function.name
     arguments = _parse_arguments(call.function.arguments)
@@ -1191,6 +1197,8 @@ async def _execute(
 
     if asked is not None and routine_saved and name == "create_observation_routine":
         return _failed(name, arguments, ErrorCode.INVALID_ARGS, _RESUME_ONE_RECORD)
+    if _outside_topic_answer(name, asked, education_saved):
+        return _failed(name, arguments, ErrorCode.INVALID_ARGS, _RESUME_ONE_RECORD)
     # 위험 물질 · 안전 판정을 지난 뒤에 고정한다 — 거절할 이름을 물은 행동으로 덮어 저장하지 않는다.
     # 고정한 이름은 Growth 모델이 적은 값이라 같은 판정을 한 번 더 건다
     arguments = _pinned(name, arguments, asked)
@@ -1210,13 +1218,32 @@ async def _execute(
     return ToolCallRecord(name=name, arguments=arguments, result=result.to_payload())
 
 
-def _pinned(name: str, arguments: dict[str, Any], asked: DomainPending | None) -> dict[str, Any]:
-    """답을 받는 이어받기의 루틴 관찰은 물은 행동 · 카테고리로 저장한다.
+def _outside_topic_answer(name: str, asked: DomainPending | None, education_saved: bool) -> bool:
+    """주제를 물은 답(`ask.learning_current`)에서 허용하지 않는 저장인가.
 
-    모델이 행동 이름을 바꿔("손 잡기") 적으면 다음 요청의 사슬 찾기가 빗나가 같은 질문이 되풀이된다.
-    100% 맞아야 하는 값이라 프롬프트가 아니라 코드가 정한다(루트 §3). 일반 이어받기(`asked` 없음)는
-    건드리지 않는다.
+    답은 그 주제의 교육 기록 한 건이다. 교육 밖 관찰은 저장하지 않고, 교육 기록도 두 번째는 받지
+    않는다 — 두 번째는 이름이 물은 주제로 덮여 먼저 저장한 것과 겹친다.
     """
+    if asked is None or asked.payload.get("field") != "topic":
+        return False
+    if not name.startswith(WRITES_FOR[WorkType.OBSERVE]):
+        return False
+    return name != "create_observation_education" or education_saved
+
+
+def _pinned(name: str, arguments: dict[str, Any], asked: DomainPending | None) -> dict[str, Any]:
+    """답을 받는 이어받기의 관찰은 물은 이름으로 저장한다.
+
+    루틴은 물은 행동 · 카테고리로, 교육(주제를 물은 답)은 물은 주제로 `subject` 를 둔다. 모델이
+    이름을 바꿔("손 잡기" · "받아쓰기") 적으면 다음 요청의 사슬 · 주제 판정이 빗나가 같은 질문이
+    되풀이된다. 100% 맞아야 하는 값이라 프롬프트가 아니라 코드가 정한다(루트 §3). 일반
+    이어받기(`asked` 없음)는 건드리지 않는다.
+    """
+    if asked is not None and name == "create_observation_education":
+        subject = asked.payload.get("subject")
+        if asked.payload.get("field") == "topic" and subject:
+            return {**arguments, "subject": subject}
+        return arguments
     if asked is None or name != "create_observation_routine":
         return arguments
     subject, category = asked.payload.get("subject"), asked.payload.get("category")
