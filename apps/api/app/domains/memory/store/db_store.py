@@ -204,9 +204,14 @@ class DbMemoryStore:
     async def flush_profiles(self) -> None:
         """모아 둔 기억을 id 순으로 한 번씩 다시 계산한다. 러너가 `session.commit()` 직전에 부른다.
 
-        기억 행 잠금은 커밋까지 쥔다. 그래서 관찰 수정이 다 끝난 뒤에, 같은 아이의 다른 run ·
-        Curator 와 같은 id 순서로 잠근다. 도메인 Agent 는 commit 뒤에 검색하므로 "저장이 검색보다
-        먼저"(CLAUDE.md §4)는 그대로다. 비우고 나가서 다시 불려도 두 번 계산하지 않는다.
+        기억 행 잠금은 커밋까지 쥐므로 관찰 수정이 다 끝난 뒤에 잡는다. 같은 아이의 다른 run ·
+        Curator · 배치와는 기억을 잠그는 순서가 아니라 공통 아이 잠금(`_lock_child`)으로 차례가
+        정해진다. id 순으로 도는 건 결과를 재현 가능하게 하려는 것뿐이다. 도메인 Agent 는 commit
+        뒤에 검색하므로 "저장이 검색보다 먼저"(CLAUDE.md §4)는 그대로다. 비우고 나가서 다시 불려도
+        두 번 계산하지 않는다.
+
+        run 안에서 상태가 내려갔다 돌아와도 strength 보정은 최종 관찰 상태로 한 번만 한다 — 중간
+        상태는 커밋되지 않아 아무도 보지 못한다 (#745 리뷰).
         """
         stale = sorted(self._stale_profiles)
         self._stale_profiles.clear()

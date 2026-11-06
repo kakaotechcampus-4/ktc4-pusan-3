@@ -254,3 +254,35 @@ async def test_고친_관찰은_다음_Curator_실행에서_새_Profile_로_연�
     assert created is not None and created.merge_key == "바나나"
     assert result.created_profile_ids == (str(row.affinity_id),)
     assert (await _food(session, kept)).affinity_id == profile.id
+
+
+async def test_한_run_에서_상태가_내려갔다_돌아와도_strength_는_최종_상태로_한_번만_보정한다(
+    session: AsyncSession,
+    family: tuple[Parent, Child],
+    profile: ProfileAffinity,
+    store: DbMemoryStore,
+) -> None:
+    """#717 리뷰 — 재계산을 commit 직전에 한 번만 하면 run 안의 중간 전이는 보정에 안 들어간다.
+
+    확인됨(14일 창 안 3일) 기억의 관찰 하나를 창 밖으로 옮겼다(→ 후보)
+    다시 창 안으로 돌린다(→ 확인됨). 고칠 때마다 계산하던 예전에는 0.90 · 1.10 이 둘 다 곱해져
+    strength 가 깎였다. 중간 상태는 커밋되지 않아 아무도 못 보므로, 최종 관찰 상태로 한 번만
+    계산해 전이 없음(strength 그대로)이 맞다.
+    """
+    profile.state = ProfileState.CONFIRMED
+    moved = await _linked(session, store, family, profile, date(2026, 10, 3))
+    await _linked(session, store, family, profile, date(2026, 10, 4))
+    await _linked(session, store, family, profile, LATE)
+
+    await store.update_observation(
+        domain="food", observation_id=moved, fields={}, observed_on=date(2026, 9, 1)
+    )
+    await store.update_observation(
+        domain="food", observation_id=moved, fields={}, observed_on=date(2026, 10, 2)
+    )
+    await store.flush_profiles()
+
+    await session.refresh(profile)
+    assert profile.state == ProfileState.CONFIRMED
+    assert profile.strength == STRENGTH_DEFAULT
+    assert profile.last_transition_at is None
