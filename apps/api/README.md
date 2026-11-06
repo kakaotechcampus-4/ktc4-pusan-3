@@ -253,15 +253,17 @@ cleanup(19시) 과 겹치지 않게 UTC 20시(= 한국 05시), 서버 시계가 
 ### 일정 알림 발송 (1분마다)
 
 서버의 cron 이 1분마다 [`app/workers/reminder_dispatch.py`](app/workers/reminder_dispatch.py) 를 api 컨테이너
-안에서 돌린다 — 울릴 시각이 지난 10분 안인 일정 알림을 FCM 으로 보낸다. 겹쳐 돌아도 같은 알림을 두 번 보내지
-않는다. 결정 · FCM 키 준비는 [`docs/notification/reminder-v1.md`](../../docs/notification/reminder-v1.md).
+안에서 돌린다 — 울릴 시각이 지난 10분 안인 일정 알림을 FCM 으로 보낸다. 같은 실행 안에서 **복약 알림**(#749,
+[`app/workers/medication_dispatch.py`](app/workers/medication_dispatch.py))도 보낸다 — cron 을 따로 걸지 않는다.
+겹쳐 돌아도 같은 알림을 두 번 보내지 않는다. 결정 · FCM 키 준비는 [`docs/notification/reminder-v1.md`](../../docs/notification/reminder-v1.md).
 
 ```
 * * * * * docker exec ktc4-api uv run --no-sync python -m app.workers.reminder_dispatch >> /var/tmp/ktc4-reminder.log 2>&1
 ```
 
-보낼 알림이 있었던 회차에만 `일정 알림 발송: 맡음 N · 보냄 N …` 한 줄이 찍힌다(건수만). `FCM_SERVICE_ACCOUNT_FILE` 이
-비어 있으면 매번 경고 한 줄만 남기고 아무것도 맡지 않는다.
+보낼 알림이 있었던 실행에만 `일정 알림 발송: 맡음 N · 보냄 N …` · `복약 알림 발송: 맡은 회차 N · 받을 보호자 N …` 한 줄씩이
+찍힌다(건수만). 한쪽이 실패하면 `일정 알림 발송 실패` · `복약 알림 발송 실패` 오류가 남고 다른 쪽은 그대로 돈다.
+`FCM_SERVICE_ACCOUNT_FILE` 이 비어 있으면 매번 경고 한 줄만 남기고 아무것도 맡지 않는다.
 
 ---
 
