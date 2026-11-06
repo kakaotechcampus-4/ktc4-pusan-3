@@ -47,9 +47,10 @@ RUN_DEADLINE_SECONDS = 60.0
 다 써도 25초 안팎이다(09-23 실측). 서버가 안 끊으면 10초마다 나가는 ping 이 화면의 20초 타이머를
 계속 되살려서 진행 화면이 몇 분씩 돈다.
 
-⏰ 이건 §2 "20초 초과 시 부분 결과로 전환"(NF-06)이 아니다. 20초에 잘라 실패로 만들면 긴 입력이
-   매번 실패한다 — 규칙의 뜻은 "된 것까지 보여 줘라"이고, 어느 Agent 가 끝났는지 아는 pipeline 이
-   `partial` 을 내야 한다. 도메인 Agent(식사 추천 등)가 실제로 붙을 때 이시하님과 넣는다.
+⏰ 이건 §2 "20초 초과 시 부분 결과로 전환"(NF-06)이 아니다. 그건 pipeline 이 한다 —
+   입력부터 20초(`agents/pipeline.py` RUN_DEADLINE_S) 중 Supervisor · Memory 가 쓰고 남은 시간만
+   도메인 Agent 에 주고, 넘기면 그 Agent 를 끊어 `partial` 을 낸다.
+   Supervisor · Memory 는 저장이 반만 남지 않게 끊지 않는다.
 """
 
 
@@ -393,8 +394,9 @@ async def _guarded(
                 channel.publish(done)
             else:
                 channel.publish(sse.failed_event("internal_error", raw_text))
-        # 🚨 닫기가 키 놓기보다 먼저다. forget_run 은 Redis 를 부르고 예외를 삼키지 않는다 —
-        #    거기서 터지면 close 가 안 불려 원문이 실린 failed 채널이 지워지지 않는다 (#536 리뷰).
+        # 🚨 닫기가 키 놓기보다 먼저다. forget_run 은 Redis 오류는 삼키지만(#671) 다른 예외까지
+        #    막지는 않는다 — 거기서 터지면 close 가 안 불려 원문이 실린 failed 채널이 지워지지
+        #    않는다 (#536 리뷰).
         channel.close()
         # 실패로 끝난 run 만 키를 놓아준다 — 같은 키로 "다시 시도" 하면 새 run 이 떠야 한다.
         # 🚨 done 으로 끝난 run 은 저장이 끝났다. 뒤에서 터졌어도 놓으면 재시도가 두 번 저장한다.
