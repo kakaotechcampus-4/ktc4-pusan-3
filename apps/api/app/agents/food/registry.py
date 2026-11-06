@@ -38,7 +38,6 @@ from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
-from app.agents.common.food_safety import filter_food_safety
 from app.agents.common.gate import Gate
 from app.agents.common.tool_schema import ToolDefinition, build_tool_specs
 from app.agents.food.context import FoodContext
@@ -64,6 +63,7 @@ from app.agents.food.tools.records import (
     check_repeated_menus,
     search_food_memory,
 )
+from app.agents.food.tools.safety import filter_food_safety
 
 ToolHandler = Callable[[FoodContext, Any], Awaitable[ToolResult]]
 

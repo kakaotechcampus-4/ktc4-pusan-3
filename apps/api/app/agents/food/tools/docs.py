@@ -7,9 +7,9 @@
 from collections.abc import Sequence
 
 from app.agents.common.age import stage_of
-from app.agents.common.food_safety import filter_food_safety
 from app.agents.food.doc_seed import ROW_TYPES
 from app.agents.food.store.ports import FoodDocReader, FoodDocRow, MenuCatalogRow, SafetyEntry
+from app.agents.food.tools.safety import filter_food_safety
 
 # 프롬프트 [예시] · 이유식 안내에 싣는 행 수 (RAG_plan Food 절)
 DOC_LIMIT = 3

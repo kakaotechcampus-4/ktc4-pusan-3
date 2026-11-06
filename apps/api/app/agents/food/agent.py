@@ -22,7 +22,6 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.agents.common.evidence import RankedEvidence, pick_followup
-from app.agents.common.food_safety import filter_food_safety
 from app.agents.common.llm_client import LLMClient
 from app.agents.common.readout import Readout
 from app.agents.common.result import AgentStatus, DomainAgentResult
@@ -53,6 +52,7 @@ from app.agents.food.store.ports import MenuCatalogRow
 from app.agents.food.tools.docs import search_food_doc
 from app.agents.food.tools.nutrition import appearance_report
 from app.agents.food.tools.records import memory_record, prefetch_food_memory
+from app.agents.food.tools.safety import filter_food_safety
 from app.rules.age import Stage
 
 logger = logging.getLogger(__name__)

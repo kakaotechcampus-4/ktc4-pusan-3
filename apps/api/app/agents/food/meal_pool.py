@@ -31,7 +31,6 @@ from datetime import date, timedelta
 
 from app.agents.common.age import first_month_of, life_stage
 from app.agents.common.evidence import OBSERVATION_WINDOW_DAYS, ObservationRow, rank_evidence
-from app.agents.common.food_safety import filter_food_safety
 from app.agents.common.suggestion import MAX_SUGGESTIONS
 from app.agents.food.context import FoodContext, require_safety
 from app.agents.food.matching import related
@@ -42,6 +41,7 @@ from app.agents.food.nutrition_eval import (
     read_meal_records,
 )
 from app.agents.food.store.ports import MenuCatalogRow
+from app.agents.food.tools.safety import filter_food_safety
 from app.rules.age import Stage
 from app.rules.menu_key import normalize_menu_key
 

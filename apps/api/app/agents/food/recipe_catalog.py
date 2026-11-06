@@ -37,10 +37,10 @@ from datetime import datetime
 from functools import cache
 from typing import Any, Literal
 
-from app.agents.common.food_safety import menu_codes
 from app.agents.common.reference import load_reference
 from app.agents.food.food_groups import FOOD_GROUPS
 from app.agents.food.store.ports import MenuCatalogRow, NutritionFacts
+from app.agents.food.tools.safety import menu_codes
 from app.core.mafra_recipe_raw import RawIngredient, RawRecipe
 from app.core.recipe_source import RecipeSource
 from app.rules.age import Stage

@@ -1,10 +1,5 @@
 """알레르기 · 연령 · 아이 금지 식품을 거르는 내부 safety tool.
 
-Food 가 쓰고, 글에서 음식 낱말을 찾는 판정(`common/food_words`)이 이 필터에 어절을 건다 (#582).
-Activity `foods` 칸도 이 판정을 쓸 예정이다. 메뉴 행과 등록 행은 구조적으로 맞는
-Protocol(`MenuRow` · `SafetyRow`)로 받는다 — Agent 패키지의 포트를 import 하지 않는다
-(docs/agents/README.md §6).
-
 코드가 모델 호출 전에 후보 풀에서 위험한 것을 빼고,
 모델이 답을 낸 후에 다시 한 번 거른다. 급식 조회도 같은 함수를 쓴다.
 제품마다 다른 성분(간장의 밀)도 지금은 막되, 그것 때문에만 막힌 메뉴를 needs_check 로 표시한다.
@@ -23,14 +18,13 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from functools import cache
 from types import MappingProxyType
-from typing import Literal, Protocol
+from typing import Literal
 
 from app.agents.common.age import first_month_of
 from app.agents.common.allergy import (
     LabelBook,
     NameRule,
     Restriction,
-    SafetyRow,
     make_book,
     read_label,
     shared_name_rules,
@@ -42,6 +36,7 @@ from app.agents.common.reference import (
     chronic_restriction_terms,
     food_safety_terms,
 )
+from app.agents.food.store.ports import MenuCatalogRow, SafetyEntry
 from app.rules.age import Stage
 from app.rules.allergen import ALLERGEN_NAMES, strip_allergen_marks
 from app.rules.term_match import PreparedFields, Term, TermMatcher, normalize, prepare_fields
@@ -52,28 +47,6 @@ INACTIVE_STATUSES = frozenset({"retracted", "none"})
 
 # 추천인지 급식 조회인지. 급식은 기관이 이미 잘라서 주는 떡을 막지 않고 문구 없이 표시한다
 Purpose = Literal["recommend", "daycare"]
-
-
-class MenuRow(Protocol):
-    """필터가 메뉴 한 행에서 읽는 칸. Food 의 `MenuCatalogRow` 가 이 모양이고, 글에서 찾은 음식
-    낱말을 메뉴처럼 거를 때(`common/food_words`)는 가짜 행을 만든다. 필터는 행을 고치지 않고
-    그대로 돌려준다."""
-
-    @property
-    def menu_key(self) -> str: ...
-
-    @property
-    def display_name(self) -> str: ...
-
-    @property
-    def ingredients(self) -> tuple[str, ...]: ...
-
-    @property
-    def allergen_codes(self) -> frozenset[int]: ...
-
-    @property
-    def resolved(self) -> bool: ...
-
 
 # 연령 규칙의 exact 는 메뉴명에서 급식표의 알레르기 번호 · 괄호 · 양을 뗀 뒤 비교한다
 # ("우유 2,5" · "우유(2)" · "우유(200ml)" · "우유 한 컵" 은 마시는 우유다)
@@ -87,13 +60,9 @@ _AMOUNT = re.compile(r"(?:\d+(?:\.\d+)?|한|두|반)\s*(?:ml|cc|l|g|컵|잔|팩|
 # 그 목록의 글자(잣 · 콩 · 깨 · 쑥 · 쌀 · 팥 · 꽃)도 Food 는 다 막는다(잣 · 콩 · 깨 · 쌀 · 팥은 사전
 # 이름, 쑥 · 꽃은 아래 목록).
 #
-# 밤은 이 목록이 아니라 사전(extra_allergens)에 있다 — 붙은 이름(군밤 · 알밤)으로 놀이 문장도
-# 막으려고 옮겼고 guard 는 같다(밤나무 · 밤꽃만 더했다 — 꽃가루 이름에 든 밤이다)(#582).
-#
-# 아래 한 글자는 사전(food_safety_terms.yaml)에 넣지 않는다. 사전의 이름은 보호자가 적은 다른 이름
-# 안의 글자를 찾을 때와 메뉴의 알레르기 이름 표에도 쓰여서, 흔한 한 글자를 넣으면 "알레르기 비염" 이
-# 난류로 · "설파제" 가 파로 읽히고 대파가 든 메뉴마다 이름 표에 "파" 가 붙는다(#305 PR 의
-# 비교).
+# 사전(food_safety_terms.yaml)에 넣지 않는다. 사전의 이름은 보호자가 적은 다른 이름 안의 글자를 찾을
+# 때와 메뉴의 알레르기 이름 표에도 쓰여서, 흔한 한 글자를 넣으면 "알레르기 비염" 이 난류로 ·
+# "설파제" 가 파로 읽히고 대파가 든 메뉴마다 이름 표에 "파" 가 붙는다(#305 PR 의 비교).
 #
 # 목록은 레시피 재료(식약처 COOKRCP01 · 농식품정보원)의 한 글자 낱말에서 골랐다. 소 · 양 · 알은
 # 음식 뜻(소고기 · 양고기 · 메추리알)이 있어 넣었다 — 빼면 지금 글자 그대로 막히는 그 메뉴가
@@ -142,6 +111,7 @@ SINGLE_CHAR_FOODS: Mapping[str, tuple[str, ...]] = MappingProxyType(
             "무른",
             "우무",
         ),
+        "밤": ("밤참", "밤새", "밤고구마", "밤호박", "물밤"),
         "갓": ("쑥갓", "갓 구운", "갓 지은"),
         "마": (
             "마늘",
@@ -304,16 +274,15 @@ class IngredientCheck:
 
 
 @dataclass(frozen=True)
-class SafetyVerdict[R: MenuRow]:
+class SafetyVerdict:
     """`filter_food_safety` 한 번 호출의 결과. 행마다 passed · blocked · unchecked 중 하나다.
 
     needs_check 는 blocked 의 일부다 — 제품 확인으로 풀 수 있는 행을 표시해 둔 것이다.
-    행은 받은 타입 그대로 돌려준다(`R`).
     """
 
-    passed: tuple[R, ...]
-    blocked: tuple[R, ...]
-    unchecked: tuple[R, ...]  # 해석 실패거나 재료 모름 — 추천하지 않는다
+    passed: tuple[MenuCatalogRow, ...]
+    blocked: tuple[MenuCatalogRow, ...]
+    unchecked: tuple[MenuCatalogRow, ...]  # 해석 실패거나 재료 모름 — 추천하지 않는다
     hits: dict[str, tuple[str, ...]]  # menu_key → 걸린 key. 로그에 싣지 않음
     # menu_key → 주의 규칙 label. 막지 않는다. 화면에 문구를 내지 않는다(어른이 곁에서 지켜본다는
     # 전제) — 판정만 계속 계산해 둔다. 나뉜 묶음과 따로 본다 — passed 행에도 붙는다
@@ -327,7 +296,7 @@ class SafetyVerdict[R: MenuRow]:
     # blocked 중 제품마다 다른 성분 때문에만 막힌 행 — 재료를 알고, 확실한 성분 · 글자 ·
     # 연령 규칙에는 안 걸렸다. 지금은 막는다(#264 PM 결정). 식단 추천을 구현할 때 `checks` 를
     # 실어 "확인 필요" 로 내보낸다 — 확인 전에는 채택하지 않는다(#267 멘토 리뷰)
-    needs_check: tuple[R, ...] = ()
+    needs_check: tuple[MenuCatalogRow, ...] = ()
     # menu_key → 그 메뉴의 제품마다 다른 성분(코드 순 · 이름 순).
     # passed · needs_check 행에 붙는다. passed 행에도 싣는다 — 추천이 사는 24시간 안에
     # 보호자가 그 알레르기를 등록할 수 있다
@@ -342,14 +311,14 @@ class SafetyRules:
     terms: tuple[Term, ...]  # 글자로 막을 것 — 19종 밖 알레르기 · 묶음의 19종 밖 식품 · 질환
 
 
-def filter_food_safety[R: MenuRow](
-    rows: Sequence[R],
-    entries: Sequence[SafetyRow],
+def filter_food_safety(
+    rows: Sequence[MenuCatalogRow],
+    entries: Sequence[SafetyEntry],
     stage: Stage,
     *,
     months: int | None = None,
     purpose: Purpose = "recommend",
-) -> SafetyVerdict[R]:
+) -> SafetyVerdict:
     """행마다 판정 순서대로 거른다.
 
     1. health_safety 행을 `resolve_safety` 로 읽어 막을 19종 코드와 글자 Term 을 만든다.
@@ -389,10 +358,10 @@ def filter_food_safety[R: MenuRow](
         age_name=TermMatcher([r.term for r in age_rules if r.scope == "name"]),
     )
 
-    passed: list[R] = []
-    blocked: list[R] = []
-    unchecked: list[R] = []
-    needs_check: list[R] = []
+    passed: list[MenuCatalogRow] = []
+    blocked: list[MenuCatalogRow] = []
+    unchecked: list[MenuCatalogRow] = []
+    needs_check: list[MenuCatalogRow] = []
     hits: dict[str, tuple[str, ...]] = {}
     cautions: dict[str, tuple[str, ...]] = {}
     allergens: dict[str, tuple[str, ...]] = {}
@@ -449,7 +418,7 @@ def filter_food_safety[R: MenuRow](
     )
 
 
-def resolve_safety(entries: Sequence[SafetyRow]) -> SafetyRules:
+def resolve_safety(entries: Sequence[SafetyEntry]) -> SafetyRules:
     """health_safety 행들을 막을 것으로 바꾼다.
 
     - `retracted` · `none` 이 아닌 행을 다 읽는다.
@@ -552,7 +521,7 @@ class _Matchers:
 
 
 def _row_hits(
-    row: MenuRow,
+    row: MenuCatalogRow,
     prepared: PreparedFields,
     rules: SafetyRules,
     age_rules: tuple[AgeRule, ...],
@@ -591,12 +560,6 @@ def _row_hits(
         if name in rule.exact or name.endswith(tuple(rule.ends)) or rule.term.key in age_hits:
             add(blocked if rule.action == "block" else cautions, rule.term.key)
     return tuple(blocked), tuple(cautions), row_codes, tuple(sorted(varies))
-
-
-@cache
-def age_rules_by_key() -> Mapping[str, AgeRule]:
-    """연령 규칙을 label(`rule.term.key`)로 찾는 표. 판정 결과(`hits` · `cautions`)가 싣는 key."""
-    return MappingProxyType({rule.term.key: rule for rule in food_safety_terms().age_rules})
 
 
 def _for_purpose(rule: AgeRule, purpose: Purpose) -> AgeRule:

@@ -11,6 +11,7 @@ from app.agents.activity.rules import is_recent_duplicate
 from app.agents.activity.schemas.recommend import ActivityCandidate
 from app.agents.activity.store.ports import SafetyEntry
 from app.agents.common.allergy import (
+    SINGLE_CHAR_NAMES,
     allergy_book,
     for_sentences,
     non_food_allergies,
@@ -18,12 +19,17 @@ from app.agents.common.allergy import (
 )
 from app.agents.common.reference import allergen_terms, hazard_terms
 from app.rules.allergen import ALLERGEN_NAMES
-from app.rules.term_match import Term, match_fields
+from app.rules.term_match import Term, match_fields, normalize
 
 # 알레르기 사전(allergen_terms.yaml)은 메뉴 이름용이라 놀이 문장에 그대로 대조하면 다른 뜻으로
-# 걸린다. 대조할 때만 `common/allergy.for_sentences` 로 거르고 문장용 guard 를 더해 쓴다 — 보호자가
-# 적은 이름을 읽을 때는 사전을 그대로 쓴다("에그" 로 등록하면 난류다). 한 글자는 허용 목록
-# (`SINGLE_CHAR_NAMES` — 잣 · 콩 · 깨 · 쑥 · 쌀 · 팥 · 꽃)만 쓴다. Growth 의 등록 이름 대조와 같다.
+# 걸린다. Activity 는 대조할 때만 아래 두 규칙으로 걸러 쓴다 — 보호자가 적은 이름을 읽을 때는
+# 사전을 그대로 쓴다("에그" 로 등록하면 난류다).
+#
+# 한 글자 이름은 허용 목록(`common/allergy.SINGLE_CHAR_NAMES` — 잣 · 콩 · 깨 · 쑥 · 쌀 · 팥 · 꽃)만
+# 그 guard 와 함께 쓴다. Growth 의 등록 이름 대조와 같은 목록이다.
+# 두 글자 이상이어도 놀이 문장에서 다른 뜻으로 읽히는 별칭 (#261 리뷰 — "플라스틱 포크" ·
+# "에그 쉐이커" · "밀크 카톤" · "피치색 물감" · "전복 모양" · "돼지저금통")
+EXCLUDED_ALIASES = frozenset({"포크", "에그", "밀크", "피치", "전복", "돼지"})
 
 # 로그와 사유에 남기는 이름. 알레르기 이름 · 활동명은 남기지 않는다
 HEALTH_SAFETY = "health_safety"
@@ -58,9 +64,9 @@ def safety_terms(entries: Sequence[SafetyEntry]) -> SafetyTerms:
       도 걸린다.
     - 사전에 없는 조각(키위 · 꽃가루)은 그 글자 그대로 대조한다. 허용 목록의 한 글자(쌀)는 그
       guard 와 함께 대조한다 — "쌀쌀한 날씨" 는 걸리지 않는다.
-    - 대조에 쓰는 이름은 `for_sentences` 로 거른다 — 한 글자는 `SINGLE_CHAR_NAMES`, 다른 뜻이 흔한
-      별칭(포크 · 돼지)은 뺀다. 19종 밖 식품(`allergy_book()` 의 별칭 표)과 글자 그대로 대조하는
-      이름은 문장용 guard 도 더한다("은행" 으로 등록해도 "은행놀이" 는 통과). 문장에서 다른 뜻이
+    - 대조에 쓰는 이름은 `SINGLE_CHAR_NAMES` · `EXCLUDED_ALIASES` 로 거른다. 19종 밖 식품
+      (`allergy_book()` 의 별칭 표)과 글자 그대로 대조하는 이름은 `for_sentences` 로 문장용 guard 를
+      더한다("은행" 으로 등록해도 "은행놀이" 는 통과). 문장에서 다른 뜻이
       더 흔한 별칭(오리)은 content 에서만 빼고 materials 에서는 막는다 — "오리처럼 걷기" 는
       통과하고, 준비물에 "오리" 를 적은 활동은 막힌다.
     """
@@ -84,11 +90,11 @@ def safety_terms(entries: Sequence[SafetyEntry]) -> SafetyTerms:
         foods = (*named.terms, *literal)
         if entry.kind == "allergy":
             for term in literal:
-                add(registered, for_sentences(term))
+                add(registered, _for_activity(for_sentences(term)))
         if entry.status == "active":
-            for term in (*coded, *(for_sentences(t) for t in foods)):
+            for term in (*coded, *(_for_activity(for_sentences(t)) for t in foods)):
                 add(blocking, term)
-            for term in (*coded, *(for_sentences(t, scope="items") for t in foods)):
+            for term in (*coded, *(_for_activity(for_sentences(t, items=True)) for t in foods)):
                 add(blocking_items, term)
     return SafetyTerms(
         blocking=tuple(blocking),
@@ -193,7 +199,20 @@ def _canonical_allergens() -> dict[str, Term]:
     result: dict[str, Term] = {}
     for term in allergen_terms():
         name = ALLERGEN_NAMES[int(term.key)]
-        usable = for_sentences(Term(key=name, aliases=term.aliases, guards=term.guards))
+        usable = _for_activity(Term(key=name, aliases=term.aliases, guards=term.guards))
         if usable is not None:
             result[term.key] = usable
     return result
+
+
+def _for_activity(term: Term) -> Term | None:
+    """놀이 문장 대조에 쓸 별칭만 남긴다. 남는 게 없으면 None — 그 이름으로는 대조하지 않는다."""
+    excluded = {normalize(alias) for alias in EXCLUDED_ALIASES}
+    aliases = tuple(
+        alias
+        for alias in term.aliases
+        if (key := normalize(alias)) not in excluded and (len(key) >= 2 or key in SINGLE_CHAR_NAMES)
+    )
+    if not aliases:
+        return None
+    return Term(key=term.key, aliases=aliases, guards=term.guards)

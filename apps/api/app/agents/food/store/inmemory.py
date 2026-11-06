@@ -236,8 +236,7 @@ class InMemoryFoodDocs:
         임시 스위치다(`InMemoryActivityDocs.from_seed` 와 같다). 시드 행은 아직 전부 draft 라서 이
         스위치 없이는 비어 있다. 서비스 경로는 쓰지 않는다. TODO: 시드 검수가 끝나면 지운다.
         """
-        # 호출할 때 읽는다 — 테스트가 `doc_seed.food_doc_seed` 를 바꿔 끼운다. 위쪽에서 import 하면
-        # import 시점의 함수를 붙잡아 그 교체가 안 보인다
+        # 위쪽에서 import 하면 순환한다 — doc_seed → tools.safety → store → inmemory → doc_seed
         from app.agents.food.doc_seed import SEED_FILE, food_doc_seed
 
         fetched = load_reference(SEED_FILE)["fetched_at"]

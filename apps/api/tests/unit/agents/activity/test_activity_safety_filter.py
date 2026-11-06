@@ -155,80 +155,6 @@ class TestHealthSafety:
         assert check(content, entries=[allergy(label)]).blocked is True
 
     @pytest.mark.parametrize(
-        ("label", "content"),
-        [
-            ("조개류", "전복죽 끓이기"),
-            ("전복", "전복구이 그림 그리기"),
-            ("돼지고기", "돼지국밥 만들기"),
-            ("돼지고기", "돼지껍데기 굽기"),
-        ],
-    )
-    def test_다른_뜻이_흔한_별칭도_음식_이름의_일부면_막는다(self, label, content):
-        """돼지 · 전복을 통째로 빼면 전복죽 · 돼지국밥이 그 식품인데 통과한다 (#582 리뷰)."""
-        assert check(content, entries=[allergy(label)]).blocked is True
-
-    @pytest.mark.parametrize(
-        ("label", "content"),
-        [
-            ("돼지고기", "아기 돼지 삼형제 동화 읽기"),
-            ("돼지고기", "돼지저금통 만들기"),
-            ("조개류", "전복 모양 종이 접기"),
-            ("돼지고기", "돼지 그림 색칠하기"),
-            ("돼지고기", "돼지 흉내 내며 걷기"),
-            ("조개류", "전복 껍데기 만져 보기"),
-        ],
-    )
-    def test_돼지_전복의_다른_뜻은_통과한다(self, label, content):
-        assert check(content, entries=[allergy(label)]).blocked is False
-
-    def test_돼지_인형은_준비물이어도_통과한다(self):
-        assert check("인형극 하기", ("돼지 인형",), entries=[allergy("돼지고기")]).blocked is False
-
-    @pytest.mark.parametrize("label", ["밤나무 꽃가루", "밤꽃 알레르기"])
-    def test_밤나무_밤꽃은_밤이_아니라_꽃가루라_확인_문구를_낸다(self, label):
-        """밤을 사전에 넣으면 "밤나무" 안의 밤이 식품으로 읽혀 꽃가루 확인 문구가 사라진다
-        (#582 리뷰)."""
-        assert allergy_cautions([allergy(label)]) != ()
-
-    @pytest.mark.parametrize("label", ["콩", "대두"])
-    @pytest.mark.parametrize(
-        "content", ["콩콩 뛰기 놀이", "콩닥콩닥 심장 소리 듣기", "콩쥐 동화 읽기"]
-    )
-    def test_콩이_아닌_뜻의_콩콩_콩닥_콩쥐는_막지_않는다(self, label, content):
-        """Growth 스캔이 먼저 쓰던 콩 guard 를 합쳤다 (#582). 콩주머니 · 콩 고르기는 계속 막는다."""
-        assert check(content, entries=[allergy(label)]).blocked is False
-
-    @pytest.mark.parametrize(
-        ("label", "content"),
-        [
-            ("밤", "군밤 까서 맛보기"),
-            ("밤", "알밤 줍기"),
-            ("견과류", "군밤 까서 맛보기"),
-            ("견과류", "도토리 줍기"),
-            ("도토리", "도토리 줍기"),
-        ],
-    )
-    def test_밤_도토리를_막는다(self, label, content):
-        """ "밤" 한 글자는 문장에서 다른 뜻이라 대조하지 않고 붙은 이름(군밤 · 알밤)으로 막는다
-        (#582). 도토리는 밤과 같은 참나뭇과라 견과류 묶음에 넣는다 — 애매하면 막는다."""
-        assert check(content, entries=[allergy(label)]).blocked is True
-
-    @pytest.mark.parametrize("content", ["오늘 밤 별 보기", "밤하늘 그리기", "밤에 불 끄고 자기"])
-    def test_밤으로_등록해도_밤_시간_놀이는_통과한다(self, content):
-        assert check(content, entries=[allergy("밤")]).blocked is False
-
-    @pytest.mark.parametrize(
-        ("label", "content"),
-        [
-            # 스캔처럼 외래어 별칭을 빼면 놓치는 문장 — 두 목록을 합집합으로 못 합치는 이유
-            ("땅콩", "피넛버터 바르기"),
-            ("호두", "월넛 쿠키 굽기"),
-        ],
-    )
-    def test_등록한_아이에게는_외래어_별칭도_막는다(self, label, content):
-        assert check(content, entries=[allergy(label)]).blocked is True
-
-    @pytest.mark.parametrize(
         ("label", "content", "blocked"),
         [
             ("쌀", "쌀쌀한 날씨에 산책", False),
@@ -428,7 +354,7 @@ class TestExtraAllergenAliases:
     def test_그_식품을_다루거나_띄어_쓴_다른_뜻은_막는다(self, label, content):
         assert check(content, entries=[allergy(label)]).blocked
 
-    @pytest.mark.parametrize("label", ["버섯류", "키위", "귀리", "오리", "밤"])
+    @pytest.mark.parametrize("label", ["버섯류", "키위", "귀리", "오리"])
     def test_19종_밖_식품에는_확인_문구를_내지_않는다(self, label):
         """식품은 이름 대조가 후보를 뺀다 — "식품 아닌 알레르기" 로 보면 결과마다 문구가 붙는다."""
         assert allergy_cautions([allergy(label)]) == ()

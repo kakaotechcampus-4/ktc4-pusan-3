@@ -269,13 +269,6 @@ def test_확인_필요로_옮긴_음식은_이것뿐이다() -> None:
         ("1", "두부전"),
         ("1", "버섯전"),
         ("1", "푸딩"),
-        # 쿠키 · 도넛 · 스콘 · 타르트의 달걀(#582). 달걀 없이 만든 제품이 흔해서 확실 칸이 아니라
-        # 이 칸이다 — 난류 아이에게 지금까지 통과하던 음식을 새로 막는 것이다
-        ("1", "쿠키"),
-        ("1", "도넛"),
-        ("1", "도너츠"),
-        ("1", "스콘"),
-        ("1", "타르트"),
     }
     wheat = next(term for term in food.code_terms if term.key == "6")
     assert {"짜장", "자장", "춘장"} <= set(wheat.aliases)
@@ -472,44 +465,3 @@ def test_chronic_restriction_terms_empty_foods_raises(tmp_path, monkeypatch) -> 
 
     with pytest.raises(ValueError, match="foods"):
         reference.chronic_restriction_terms.__wrapped__()
-
-
-def test_흔한_재료_목록을_읽는다() -> None:
-    from app.agents.common.reference import known_foods
-
-    names = known_foods()
-    assert {"귤", "오이", "배", "감", "김", "소금", "물"} <= set(names)
-    assert len(names) == len({normalize(name) for name in names})
-
-
-def test_흔한_재료_목록은_가공_조리한_것을_넣지_않는다() -> None:
-    """안에 든 재료를 모르는 이름은 막히지 않은 판정을 낼 수 없다 — 김치(젓갈) · 참기름(참깨) ·
-    죽 · 국."""
-    from app.agents.common.reference import known_foods
-
-    assert not {"김치", "단무지", "참기름", "식용유", "호박죽", "미역국", "곤약", "당면"} & set(
-        known_foods()
-    )
-
-
-def test_흔한_재료_목록은_같은_이름을_두_번_적으면_실패한다() -> None:
-    from app.agents.common.reference import parse_known_foods
-
-    with pytest.raises(ValueError, match="두 번"):
-        parse_known_foods({"foods": {"채소": ["오이", "무"], "과일": ["귤", "오이"]}})
-
-
-@pytest.mark.parametrize(
-    "data",
-    [
-        {"foods": []},
-        {"foods": {"채소": []}},
-        {"foods": {"채소": ["오이", ""]}},
-        {"foods": {"채소": "오이"}},
-    ],
-)
-def test_흔한_재료_목록은_모양이_틀리면_실패한다(data) -> None:
-    from app.agents.common.reference import parse_known_foods
-
-    with pytest.raises(ValueError):
-        parse_known_foods(data)

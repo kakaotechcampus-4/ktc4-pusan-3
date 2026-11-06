@@ -33,18 +33,18 @@ from typing import Any
 import pytest
 
 from app.agents.common.age import life_stage
-from app.agents.common.food_safety import filter_food_safety
-from app.agents.common.food_words import mentions_blocked_food
 from app.agents.common.llm_client import LLMClient, LLMConfigError
 from app.agents.common.result import DomainAgentResult
 from app.agents.common.schemas.task import DomainTask
 from app.agents.food import agent as food_agent
 from app.agents.food.agent import run
+from app.agents.food.food_check import mentions_blocked_food
 from app.agents.food.meal_dates import resolve_meal_date
 from app.agents.food.meal_pool import PoolItem
 from app.agents.food.meal_review import GENERAL_REASON
 from app.agents.food.readouts import READOUTS
 from app.agents.food.store import DaycareMealRow, SafetyEntry
+from app.agents.food.tools.safety import filter_food_safety
 from tests.eval.agents.food.generate import require_food_model
 from tests.eval.agents.food.world import (
     _EGG_ONLY,

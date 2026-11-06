@@ -22,11 +22,10 @@ from enum import StrEnum
 from uuid import UUID
 
 from app.agents.common.evidence import RankedEvidence, cite, unseen
-from app.agents.common.food_safety import filter_food_safety
-from app.agents.common.food_words import mentions_blocked_food
 from app.agents.common.refs import EvidenceCitation, Ref
 from app.agents.common.suggestion import SuggestionRejected, build
 from app.agents.food.context import MealPick
+from app.agents.food.food_check import mentions_blocked_food
 from app.agents.food.nutrient_wording import wording_problem
 from app.agents.food.preparation_items import preparation_items
 from app.agents.food.readouts import GENERAL_REASON_TODDLER, GENERAL_REASON_WEANING, READOUTS
@@ -34,6 +33,7 @@ from app.agents.food.result import ErrorCode
 from app.agents.food.schemas.common import EvidenceRef, MealSlot
 from app.agents.food.schemas.recommend import MealCandidate
 from app.agents.food.store.ports import RECIPE_SOURCES, FoodDocRow, MenuCatalogRow, SafetyEntry
+from app.agents.food.tools.safety import filter_food_safety
 from app.core.recipe_source import RECIPE_SOURCE_INFO
 from app.rules.age import Stage
 from app.rules.menu_evidence import menu_evidence_id

@@ -65,13 +65,12 @@ NameRule = tuple[str, Restriction, tuple[str, ...]]
 # 값은 그 글자가 다른 뜻으로 나오는 자리(guard)다. 보호자가 적은 이름을 글자 그대로 대조할 때
 # 붙인다 — 사전 이름(잣 · 콩)은 사전의 guard 를 쓴다. 그 글자가 든 같은 것(찹쌀 · 꽃가루)은
 # guard 에 넣지 않는다(막는 쪽). 쌀의 좁쌀 · 보리쌀은 Food 사전(food_safety_terms.yaml)의 쌀과 같다.
-# 메뉴를 보는 Food 는 자기 목록(`common/food_safety.SINGLE_CHAR_FOODS`)을 쓰고, 이 글자들도
+# 메뉴를 보는 Food 는 자기 목록(`food/tools/safety.SINGLE_CHAR_FOODS`)을 쓰고, 이 글자들도
 # 다 막는다(잣 · 콩 · 깨 · 쌀 · 팥은 Food 사전 이름, 쑥 · 꽃은 그 목록).
 SINGLE_CHAR_NAMES: Mapping[str, tuple[str, ...]] = MappingProxyType(
     {
         "잣": (),
-        # 콩콩 뛰기 · 콩닥콩닥 · 콩쥐팥쥐 — Growth 의 문장 스캔이 먼저 쓰던 guard 다 (#582)
-        "콩": ("콩콩", "콩닥", "콩당", "콩쥐"),
+        "콩": (),
         "깨": (
             "깨끗",
             "깨우",
@@ -177,7 +176,7 @@ def allergy_book() -> LabelBook:
 # 아이도 문장에는 이 별칭으로 대조하지 않는다 — 고기 알레르기의 오리 · 염소 · 사슴은 동물 놀이로,
 # 생태(명태)는 "생태 관찰" 로, 미음(쌀죽)은 한글 자음으로, 동부(콩)는 방향으로 나온다.
 # 같은 식품의 다른 별칭(오리고기 · 명태 · 현미)은 그대로 막는다. 준비물 칸("오리" · "미음")은
-# 그 식품이라 이 별칭으로도 막는다(`for_sentences(scope="items")`). 메뉴를 보는 Food 는 쓰지 않는다.
+# 그 식품이라 이 별칭으로도 막는다(`for_sentences(items=True)`). 메뉴를 보는 Food 는 쓰지 않는다.
 SENTENCE_EXCLUDED_ALIASES = frozenset(
     {"오리", "칠면조", "사슴", "염소", "흑염소", "생태", "미음", "동부"}
 )
@@ -194,34 +193,7 @@ SENTENCE_GUARDS: Mapping[str, tuple[str, ...]] = MappingProxyType(
         "대구": ("대구광역시", "대구시"),
         # 은행나무는 덮지 않는다 — 그 열매가 은행이다 (#556 3차 리뷰)
         "은행": ("은행놀이", "은행원", "은행잎"),
-        "카카오": ("카카오톡", "카카오맵", "카카오프렌즈", "카카오 프렌즈"),
-        # 돼지 · 전복은 별칭을 남기고(전복죽 · 돼지국밥) 음식이 아닌 말만 덮는다
-        "돼지": (
-            "돼지저금통",
-            "돼지 저금통",
-            "돼지 삼형제",
-            "아기 돼지",
-            "새끼 돼지",
-            "돼지띠",
-            "돼지 그림",
-            "돼지 흉내",
-            "돼지 인형",
-        ),
-        "전복": ("전복 모양", "전복 껍데기"),
-        # 글자만 든 다른 낱말 — 파이팅 · 선크림 · 고기잡이 · 허니비 (스캔에서 걸렸다)
-        "파이": ("파이팅",),
-        "고기": ("고기잡이",),
-        "허니": ("허니비",),
-        "크림": ("크림색", "선크림", "썬크림", "핸드크림"),
-        "커피": ("커피색",),
-        "초콜릿": ("초콜릿색",),
-        # 음식 어휘를 아이와 상관없이 문장에 대조할 때(`scan`) 다른 뜻으로 나오는 자리 (#582) —
-        # 빵빵 경적 · 빵점 · 빵 터지다 · 떡잎 · 양지바른 곳 · 갈비뼈 · 비지땀
-        "빵": ("빵빵", "빵점", "빵터"),
-        "떡": ("떡잎",),
-        "양지": ("양지바른", "양지쪽"),
-        "갈비": ("갈비뼈",),
-        "비지": ("비지땀",),
+        "카카오": ("카카오톡", "카카오맵", "카카오프렌즈"),
         "오렌지": ("오렌지색",),
         "조기": ("조기교육", "조기축구"),
         "방어": ("방어하기", "방어하는", "방어해", "방어막"),
@@ -243,70 +215,19 @@ SENTENCE_GUARDS: Mapping[str, tuple[str, ...]] = MappingProxyType(
 )
 
 
-# 놀이 · 교육 문장에서 다른 뜻으로 더 자주 나오는 별칭 — 어느 칸에서도 대조하지 않는다 (#261 리뷰 —
-# "플라스틱 포크" · "에그 쉐이커" · "밀크 카톤" · "피치색 물감"). 그 이름으로 등록해도 같다.
-# 같은 식품의 다른 별칭(돼지고기 · 달걀)은 그대로 막는다. 돼지 · 전복은 여기 넣지 않는다 — 전복죽 ·
-# 돼지국밥이 그 식품이다. 다른 뜻("돼지저금통" · "전복 모양")은 `SENTENCE_GUARDS` 가 덮는다
-OTHER_MEANING_ALIASES = frozenset({"포크", "에그", "밀크", "피치"})
-
-# 영어 이름을 한글로 옮긴 별칭. 공용 사전에는 검사지 이름을 읽으려고 있지만(#264) 아이와 상관없이
-# 문장을 훑을 때(`scan`)는 다른 뜻으로 더 자주 나와서 뺀다 — 포크(식사 도구) · 피치(음높이) · 에그
-# 셰이커 · 크랩 워크 · 비프 소리. 보호자가 이 이름으로 등록한 아이에게는 막는다 — 땅콩 아이의
-# "피넛버터 바르기" · 호두 아이의 "월넛 쿠키 굽기" (#582)
-LOANWORD_ALIASES = frozenset(
-    {"에그", "밀크", "피넛", "크랩", "쉬림프", "포크", "피치", "월넛", "비프", "파인넛"}
-)
-
-# 아이와 상관없이 문장을 훑을 때(`scan`) 보는 한 글자 식품 — 놀이 문장에서도 거의 그 식품이다
-# ("콩으로 숫자 세기" · "잣 까기" · "빵 가게 놀이" · "떡 만들기"). 밀 · 게 · 닭 · 굴은 다른
-# 뜻("공 밀기" · "카드 게임")으로 더 자주 나와 보지 않는다. 그 글자가 식품이 아닌 자리는
-# `SINGLE_CHAR_NAMES` · `SENTENCE_GUARDS` 의 guard 가 덮는다
-SCAN_SINGLE_CHARS = frozenset({"콩", "잣", "빵", "떡"})
-
-# 아이와 상관없이 문장을 훑을 때(`scan`)는 곁에 다루는 말이 있어야 음식으로 보는 낱말이다 —
-# 사과(사과하고 화해하기 · 사과 편지)와 물고기 · 소라 · 가재(동물) · 새싹(식물)은 문장에서
-# 다른 뜻이 더 흔하다. 모든 아이의 후보에서 빼는 검사라 오탐이 곧 전원 손실이다. 등록한 이름을
-# 찾는 쪽(content · items)은 계속 강하게 본다
-SCAN_WEAK_ALIASES = frozenset({"사과", "물고기", "소라", "가재", "새싹"})
-
-# 별칭을 문장에 대조하는 세 자리 — 보호자가 적은 이름이 후보 문장 · 준비물에 나오는가(content ·
-# items)와, 아이와 상관없이 음식 용어를 빼는 스캔(scan)이다
-SentenceScope = Literal["content", "items", "scan"]
-
-
-def for_sentences(term: Term, *, scope: SentenceScope = "content") -> Term | None:
-    """별칭 표의 Term 을 놀이 · 교육 문장 대조용으로 (#437 · #556 리뷰 · #582). Activity · Growth 가
-    같이 쓴다. 남는 별칭이 없으면 None — 호출부가 대조하지 않는다.
+def for_sentences(term: Term, *, items: bool = False) -> Term:
+    """`allergy_book()` 의 Term 을 놀이 · 교육 문장 대조용으로 (#437 · #556 리뷰).
 
     별칭 표의 guard 는 메뉴 이름용이라 문장의 다른 뜻을 덮지 못한다 — "친구에게 사과하기" ·
     "대구 여행" · "잠 깨우기" 가 걸린다. 다른 뜻이 나오는 자리를 guard 로 더하고(`SENTENCE_GUARDS` ·
-    한 글자는 `SINGLE_CHAR_NAMES`) 별칭을 거른다. 대조는 띄어쓰기를 넘지 않게 한다
-    (`match_fields(cross_spaces=False)`).
-
-    - `content` — 보호자가 적은 이름을 후보 문장에서 찾는다. 다른 뜻이 흔한 별칭
-      (`OTHER_MEANING_ALIASES` · `SENTENCE_EXCLUDED_ALIASES`)과 허용 목록 밖 한 글자만 뺀다.
-      외래어 · 라틴 문자 별칭은 둔다 — 그 아이에게는 막는 쪽이 이긴다.
-    - `items` — 준비물 칸. `content` 와 같되 `SENTENCE_EXCLUDED_ALIASES` 도 둔다. 준비물로 적은
-      "오리" 는 그 식품이다.
-    - `scan` — 아이와 상관없이 음식 용어를 뺀다. 오탐이 모든 아이에게 가서 더 뺀다 — 외래어 ·
-      라틴 문자 별칭과, 한 글자는 `SCAN_SINGLE_CHARS` 밖을 뺀다.
+    한 글자는 `SINGLE_CHAR_NAMES`), 문장에서 다른 뜻이 더 흔한 별칭은 뺀다
+    (`SENTENCE_EXCLUDED_ALIASES`). `items=True` 면 준비물 칸이라 별칭을 빼지 않는다 — 준비물로 적은
+    "오리" 는 그 식품이다. 별칭이 다 빠지면 aliases 가 빈 Term — 호출부가 대조하지 않는다.
+    대조는 띄어쓰기를 넘지 않게 한다(`match_fields(cross_spaces=False)`).
     """
-    dropped = OTHER_MEANING_ALIASES
-    if scope != "items":
-        dropped = dropped | SENTENCE_EXCLUDED_ALIASES
-    if scope == "scan":
-        dropped = dropped | LOANWORD_ALIASES
-    singles = SCAN_SINGLE_CHARS if scope == "scan" else SINGLE_CHAR_NAMES.keys()
-
-    def usable(alias: str) -> bool:
-        key = normalize(alias)
-        if key in dropped or (len(key) < 2 and key not in singles):
-            return False
-        return not (scope == "scan" and any("a" <= ch <= "z" for ch in key))
-
-    aliases = tuple(a for a in term.aliases if usable(a))
-    if not aliases:
-        return None
+    aliases = tuple(
+        a for a in term.aliases if items or normalize(a) not in SENTENCE_EXCLUDED_ALIASES
+    )
     extra = [
         guard
         for alias in aliases
@@ -317,48 +238,6 @@ def for_sentences(term: Term, *, scope: SentenceScope = "content") -> Term | Non
         if guard not in term.guards
     ]
     return Term(key=term.key, aliases=aliases, guards=(*term.guards, *dict.fromkeys(extra)))
-
-
-# ── 보호자의 글(질문 · 추천 이유)에서 음식 낱말을 찾을 때 (`common/food_words`) ──────────────
-# 놀이 · 교육 문장(`SENTENCE_*`)과 같은 낱말을 다르게 다루는 목록이다. 한 곳에 모아 두고
-# 한쪽을 고칠 때 다른 쪽을 같이 본다 — 두 규칙이 갈라지면 한쪽이 조용히 되살아난다.
-
-# 이름만으로는 음식인지 알 수 없는 낱말 — 어절 전체이고 먹이는 말이 곁에 있을 때만 음식으로 본다.
-# 문장에서 어떻게 · 먹게 · 비밀 · 깨고 · 오늘 밤 · 대하여 · 안심하고 · 구미에 · 대게(대개) 가
-# 음식으로 잡힌 낱말들이다. 보호자가 등록한 한 글자 이름(배 · 감 · 마 …)도 같은 규칙을 받는다.
-# 밥 · 빵 · 떡 · 닭 · 쌀 같은 한 글자 *음식* 은 넣지 않는다 — 식빵 · 꿀떡 · 닭강정처럼 합성어에서
-# 겹침을 잡는 쪽이 더 안전하다. 그 대신 일상어 합성어는 `QUESTION_GUARDS` 가 막는다
-AMBIGUOUS_ALIASES = frozenset(
-    {
-        "게", "밀", "깨", "밤", "굴",
-        "구미", "대하", "미소", "사태", "조기", "포크", "에그", "밀크", "피치", "은행", "전복",
-        "돼지", "자장", "중하", "안심", "대구", "방어", "전란", "대합", "대게",
-    }
-)  # fmt: skip
-# 철자가 틀린 별칭 — 문장에서는 늘 "잦은" 으로 읽힌다
-MISSPELLED_ALIASES = frozenset({"잦"})
-# 낱말 그대로 훑는 별칭에 더하는 guard — 일상어 합성어. guard 는 그 자리를 덮을 때만 막는다
-QUESTION_GUARDS: Mapping[str, tuple[str, ...]] = MappingProxyType(
-    {
-        "꿀": (
-            "꿀잠", "꿀팁", "꿀맛", "꿀템", "꿀벌", "꿀꿀", "꿀잼", "꿀피부", "꿀조합", "꿀알바",
-        ),
-        "쌀": ("쌀쌀",),
-        "껌": ("껌딱지", "껌값"),
-        "새싹": ("새싹반", "새싹어린이집", "새싹유치원", "새싹교실"),
-        "소주": ("소주제",),
-        "사과": ("사과했", "사과하", "사과해", "사과문", "사과드", "사과받"),
-        "닭": ("닭살",),
-        "잣": ("잣대",),
-        "떡": ("떡잎",),
-        "빵": ("빵빵", "빵점", "빵터"),
-        "콘": ("콘센트", "콘서트", "콘텐츠", "리모콘", "콘테스트"),
-        "햄": ("햄스터",),
-        "램": ("램프",),
-        "백미": ("백미러",),
-        "콩": ("콩닥",),
-    }
-)  # fmt: skip
 
 
 # 한 칸에 여러 이름을 적은 경우("우유, 땅콩" · "우유(유제품)")를 나눈다.
