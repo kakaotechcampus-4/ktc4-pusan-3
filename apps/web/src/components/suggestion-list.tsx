@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import { domainBar, domainField, domainLabel } from "@/components/domain-chip";
+import { EventPeriod } from "@/components/event-period";
 import { SuggestionItems } from "@/components/suggestion-items";
 import { SuggestionWarnings } from "@/components/suggestion-warnings";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -326,7 +327,9 @@ function SuggestionRow({
           health 줄은 체크박스가 없으니 들여쓰지 않는다. */}
       <div className={isHealth ? "" : "pl-8"}>
         {/* 🚨 장소 확인 문구는 제안 문장에 딸린 한 줄이다 (#516). 서버 문구 그대로, 이유보다 위에 둔다.
-            근거가 아니라서 선 아래 "사용한 기록" 에 넣지 않는다 — 넣으면 기록이 늘어 보인다. */}
+            근거가 아니라서 선 아래 "사용한 기록" 에 넣지 않는다 — 넣으면 기록이 늘어 보인다.
+            행사면 그 기간이 문구 바로 위에 한 줄 더 선다 (#681). 같은 이유로 근거 밖이다. */}
+        <EventPeriod startsOn={suggestion.event_starts_on} endsOn={suggestion.event_ends_on} />
         {placeNotice ? <p className="text-caption text-ink-muted mt-1">{placeNotice}</p> : null}
 
         {/* 🚨 위험 경고도 제안 문장에 딸린 말이다 (#402 · #672). 장소 문구 아래, 이유보다 위 — 고르기 전에 읽게.

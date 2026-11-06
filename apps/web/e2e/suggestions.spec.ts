@@ -467,6 +467,66 @@ test.describe("장소가 붙은 추천의 확인 문구 (#516)", () => {
   });
 });
 
+test.describe("행사가 붙은 추천의 기간 (#681)", () => {
+  test.use({ scenario: "suggest_event" });
+
+  const NOTICE =
+    "한국관광공사 행사 정보예요. 일정과 관람 연령이 바뀔 수 있으니 가기 전에 확인해 주세요.";
+
+  test("개인화 줄은 확인 문구 바로 위에 기간을 세우고, 사용한 기록에는 넣지 않는다", async ({
+    page,
+  }) => {
+    await page.goto(SUGGESTIONS);
+    await page.getByRole("tab", { name: "놀이 3가지" }).click();
+    const panel = page.getByRole("tabpanel");
+    const row = panel.locator(":scope > ul > li").filter({ hasText: "들꽃마을 가을 축제에서" });
+    await expect(row).toHaveCount(1);
+
+    const period = row.getByText("2026년 10월 30일부터 11월 1일까지 열려요", { exact: true });
+    await expect(period).toBeVisible();
+    // 🚨 고르는 칸의 이름은 제안 문장뿐이다
+    await expect(
+      row.getByRole("checkbox", { name: "들꽃마을 가을 축제에서 꽃 이름 맞히기", exact: true }),
+    ).toBeVisible();
+    // 제안 문장 아래, 확인 문구 바로 위다
+    const label = row.getByText("들꽃마을 가을 축제에서 꽃 이름 맞히기", { exact: true });
+    const notice = row.getByText(NOTICE, { exact: true });
+    const y = async (l: typeof period) => (await l.boundingBox())!.y;
+    expect(await y(label)).toBeLessThan(await y(period));
+    expect(await y(period)).toBeLessThan(await y(notice));
+
+    // 🚨 기간은 근거가 아니다 — 근거 목록 안에 없고, 건수는 근거 줄 수 그대로다
+    const used = row.getByText(/^사용한 기록 \d+건$/);
+    const list = used.locator("xpath=following-sibling::ul[1]");
+    const count = Number((await used.innerText()).match(/\d+/)![0]);
+    await expect(list.locator("li")).toHaveCount(count);
+    await expect(list.getByText(/열려요/)).toHaveCount(0);
+
+    // 행사가 없는 줄에는 서지 않는다
+    await expect(panel.getByText(/열려요$/)).toHaveCount(1);
+  });
+
+  test("일반 카드는 하루짜리 행사를 날짜 하나로 적고, 기준 문구보다 위에 세운다", async ({
+    page,
+  }) => {
+    await page.goto(SUGGESTIONS);
+    const card = page.locator("li").filter({ hasText: "솔숲 어린이 인형극 한마당에서" });
+    await expect(card).toHaveCount(1);
+    await expect(card.getByText("일반 추천", { exact: true })).toBeVisible();
+    // 🚨 기록 건수는 그 Agent 도메인 수 그대로다
+    await expect(card).toContainText("기록 3건");
+
+    const period = card.getByText("2026년 11월 7일에 열려요", { exact: true });
+    await expect(period).toBeVisible();
+    // 🚨 기호로 잇지 않는다 (디자인 시스템 §4)
+    await expect(card.getByText(/~/)).toHaveCount(0);
+    const notice = card.getByText(NOTICE, { exact: true });
+    const basis = card.getByText("36개월 또래가 자주 찾는 놀이예요", { exact: true });
+    expect((await period.boundingBox())!.y).toBeLessThan((await notice.boundingBox())!.y);
+    expect((await notice.boundingBox())!.y).toBeLessThan((await basis.boundingBox())!.y);
+  });
+});
+
 test.describe("필요한 재료 · 준비물 (#659)", () => {
   /** 05 개인화 줄 하나. 제안 문장으로 찾는다 — 탭을 먼저 골라야 그 묶음의 줄이 선다. */
   const personalRow = (page: Page, text: string) =>

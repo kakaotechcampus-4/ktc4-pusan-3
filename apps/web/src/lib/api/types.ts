@@ -318,6 +318,16 @@ export interface Suggestion {
    */
   place_notice: string | null;
   /**
+   * 행사가 붙은 추천에만 오는 행사 시작일 (`YYYY-MM-DD`, #681). 장소 추천과 장소가 없는 추천은 `null`.
+   * 화면이 확인 문구 바로 위에 기간 한 줄로 세운다 — 날짜 없이 행사 이름만 나가면 지난 행사인지 알 수 없다.
+   *
+   * 🚨 **근거가 아니다** (`place_notice` 와 같다). 🚨 날짜를 더하고 빼지 않는다 — "3일 남았어요" 같은 말을
+   *    만들지 않고 두 날짜를 그대로 적는다 (`docs/web/screen-rules-v1.md` §2).
+   */
+  event_starts_on: string | null;
+  /** 행사 종료일 (`YYYY-MM-DD`). 시작일과 같이 오고 같이 빈다. 하루짜리 행사면 시작일과 같다. */
+  event_ends_on: string | null;
+  /**
    * 그 추천에 주의할 요소가 있을 때만 오는 위험 경고 문구 ("작은 부품은 삼킬 수 있어요. …"). 위험 용어 사전
    * (`apps/api/reference/hazard_terms.yaml`)의 `warning_text` 상수라 **서버 코드 문구 그대로** 보인다 (#402 · #672).
    * 한 추천에 둘 이상 올 수 있고, 없으면 `[]` 다 (`null` 로 오지 않는다).
@@ -366,6 +376,9 @@ export interface GeneralSuggestion {
   content: string;
   /** 장소가 붙은 추천의 확인 문구. 개인화와 같은 칸이다 (`Suggestion.place_notice`). 장소가 없으면 `null`. */
   place_notice: string | null;
+  /** 행사가 붙은 추천의 기간. 개인화와 같은 칸이다 (`Suggestion.event_starts_on`). 행사가 없으면 `null`. */
+  event_starts_on: string | null;
+  event_ends_on: string | null;
   /** 위험 경고 문구. 개인화와 같은 칸이다 (`Suggestion.warnings`). 없으면 `[]`. */
   warnings: string[];
   /** "36개월 또래가 자주 찾는 놀이예요" · "요청하신 놀이를 바탕으로 골랐어요" 처럼 무엇을 기준으로 골랐는지. 서버가 만든다. */
