@@ -3,9 +3,10 @@
 문서 목적: 복약 코스(`medication_schedule`)와 회차(`medication_dose`) 두 표의 모양과 그 이유를 고정한다.
 제출 API · 회차 체크 API · DB 어댑터가 이 표 위에 올라간다. 그쪽이 지켜야 할 것(§5)도 여기 적는다.
 
-작성일: 2026-10-21 · 담당: 김명성
+작성일: 2026-10-21 · 담당: 김명성 · 갱신: 2026-11-06 체크한 보호자 `checked_by` ([#749](https://github.com/kakaotechcampus-4/ktc4-pusan-3/issues/749))
 선행: 이슈 [#537](https://github.com/kakaotechcampus-4/ktc4-pusan-3/issues/537) 본문 DDL과 코멘트 결정 · [`event/event-draft-flow-v1.md`](../event/event-draft-flow-v1.md) · 루트 [`CLAUDE.md`](../../CLAUDE.md) §2 실행(게이트 ㉡)
 근거: `apps/api/app/domains/medication/models.py` · `alembic/versions/c6e2a8d41f93_add_medication_tables.py` ·
+`alembic/versions/361f26c96b2e_add_medication_dose_checked_by.py` ·
 `tests/integration/test_medication_tables.py` · `tests/integration/test_medication_migration.py`
 
 **이 문서에 없는 것** — 초안 제출 API, 회차 체크 API, SSE 번역, 되묻기 맥락, 알림 발송, `prescription_draft`.
@@ -15,7 +16,7 @@
 ## 1. 회차 1번 = 1행
 
 `medication_dose` 는 시각 패턴이 아니라 **실제 먹일 회차 하나**가 한 행이다. 하루 세 번 × 3일이면 9행이다.
-행마다 `checked_at` 이 있고, **이 체크 칸이 곧 복용 기록**이다. 따로 로그 테이블(`medication_dose_log`)을 두지 않는다.
+행마다 `checked_at` 이 있고, **이 체크 칸이 곧 복용 기록**이다. 누가 눌렀는지는 `checked_by` 에 같이 남는다. 따로 로그 테이블(`medication_dose_log`)을 두지 않는다.
 날짜별 체크가 행에 그대로 남아서 며칠치 기록도 이 표 하나로 본다.
 
 대가 — 행을 기간만큼 미리 만들어야 한다. 그래서 **`ends_on` 이 NOT NULL** 이고 무기한 코스는 없다.
@@ -39,8 +40,9 @@
 | --- | --- | --- |
 | `dose_date` | date, NOT NULL | KST 날짜 |
 | `scheduled_time` | `GENERATED ALWAYS ... STORED` | 기준 시각 + 오프셋, `fixed` 면 `fixed_time`. 쓰기 쪽이 계산하지 않는다 — ORM · raw SQL 모두 이 칸에 값을 넣으면 DB 가 거절한다(`GeneratedAlwaysError`, 확인함) |
-| `checked_at` | timestamptz, nullable | NULL = 미체크. 체크 · 해제는 이 칸만 바꾼다 |
-| `created_at` · `updated_at` | **없음** | 제출 때 한꺼번에 만들어져 코스의 시각으로 알 수 있고, 바뀌는 건 체크뿐인데 그 시각은 `checked_at` 에 남는다 |
+| `checked_at` | timestamptz, nullable | NULL = 미체크. 체크 · 해제는 이 칸과 `checked_by` 만 바꾼다 |
+| `checked_by` | uuid, nullable, `parent` FK `ON DELETE SET NULL` | 체크한 보호자(#749). 같은 아이의 다른 보호자도 누가 먹였는지 본다. 체크 API 가 로그인 보호자로 쓰고 해제하면 함께 비운다. **NULL 이어도 체크일 수 있다** — 이 칸이 생기기 전의 체크와 탈퇴한 보호자의 체크다. 탈퇴는 이 칸만 비우고 복용 기록은 남긴다(공동 기록의 "적은 사람" 과 같다). 연결 끊기는 지우지 않는다 |
+| `created_at` · `updated_at` | **없음** | 제출 때 한꺼번에 만들어져 코스의 시각으로 알 수 있고, 바뀌는 건 체크뿐인데 그 시각은 `checked_at` 에, 누른 보호자는 `checked_by` 에 남는다 |
 
 기준 시각: 기상 07:30 · 아침 08:00 · 점심 12:00 · 저녁 19:00 · 취침 20:30. 저녁은 #537 본문의 17:00 에서 19:00 으로 바꿨다 — 퇴근 시간대를 고려한 저녁 식사 시각(#546 코멘트, 이시하).
 
@@ -71,9 +73,11 @@
 | `CHECK ((timing_anchor = 'fixed') = (fixed_time IS NOT NULL))` | `fixed` 인데 시각이 없거나, 기준 시점인데 `fixed_time` 이 남은 행 — 생성 컬럼이 NULL 이 되거나 어느 시각이 맞는지 모호해지는 것 |
 | `CHECK (timing_anchor <> 'fixed' OR offset_minutes = 0)` | `fixed` 에 붙은 오프셋 — 계산에 쓰이지 않는 값이 남아 화면과 어긋난다 |
 | `CHECK (offset_minutes BETWEEN -120 AND 180)` | 알림 시각이 05:30 ~ 23:30 밖으로 나가는 것. **`time + interval` 은 자정을 넘으면 조용히 돌아간다**(20:30 + 240분 = 00:30). 이 범위면 넘지 않아서 `dose_date` 가 그 회차의 실제 날짜로 맞게 남는다 |
+| `CHECK (checked_by IS NULL OR checked_at IS NOT NULL)` | 체크하지 않은 회차에 보호자만 남는 것. 반대(체크했는데 보호자 없음)는 위 `checked_by` 의 두 경우라 막지 않는다 |
 | `UNIQUE (schedule_id, dose_date, scheduled_time)` | 같은 코스 같은 날 같은 시각 두 번. 기준이 달라도 시각이 같으면 막힌다(아침 +30 과 `fixed` 08:30) |
 | enum CHECK | 목록 밖 값, 대소문자 변형('Active'), `completed` |
 | FK CASCADE | 아이를 지우면 코스와 회차가, 코스를 지우면 회차가 함께 지워진다(보관 기준 [`safety/retention-v1.md`](../safety/retention-v1.md) "아이에 묶인 기록은 아이와 함께") |
+| FK SET NULL (`checked_by`) | 체크한 보호자가 탈퇴해도 복용 기록이 지워지는 것 |
 
 `scheduled_time` 은 이슈 DDL 대로 NOT NULL 을 달지 않았다. NULL 이 되는 입력은 위 CHECK 와 NOT NULL(`timing_anchor` · `offset_minutes`)이 전부 막는다
 — UPDATE 로 `fixed_time` 만 지우거나 `timing_anchor` 만 바꾸는 경우도 거절되는 것을 확인했다.
@@ -85,6 +89,8 @@
 - 아이의 진행 중 코스 — `(child_id, status)`. `ends_on` 은 아이 한 명의 코스 몇 개 안에서 거른다.
 - 코스의 회차(오늘 회차 n/m · 체크 · 수정 시 재생성) — UNIQUE 의 `(schedule_id, dose_date, scheduled_time)` 앞부분.
 
+`medication_dose_checked_by_idx`(`checked_by`)는 조회용이 아니다. 탈퇴 때 SET NULL 이 그 보호자가 체크한 회차를 찾는다.
+
 발송용 인덱스(`scheduled_time` 등)는 알림 발송이 범위 밖이라 두지 않는다. 발송을 만들 때 그 쿼리를 보고 단다.
 
 ## 5. DB 가 못 막는 것 — 제출 · 체크 API 가 막는다
@@ -92,6 +98,12 @@
 - **`title` 빈 문자열.** NOT NULL 은 `''` 를 통과시킨다.
 - **`dose_date ∈ [starts_on, ends_on]`.** 다른 표의 칸이라 CHECK 로 못 건다.
 - **아직 오지 않은 날의 회차 체크.** 체크 API 가 KST 오늘과 비교해 막는다.
+- **체크한 보호자는 서버가 정한다** (#749). 로그인 보호자로 쓰고 요청 본문으로 받지 않는다. 이미 체크된 회차에 또 체크해도
+  처음 시각과 처음 보호자가 남는다(`checked_at IS NULL` 일 때만 쓴다).
+  - 🚨 **보호자 행을 회차보다 먼저 잡는다**(`FOR KEY SHARE`). 탈퇴는 보호자를 잠근 뒤 회차를 지우거나(등록한 아이) 비운다(SET NULL).
+    회차를 먼저 잡고 `checked_by` 를 쓰면 FK 검사가 보호자를 기다려 순서가 뒤집히고, 같은 보호자의 탈퇴와 체크가 겹칠 때 교착이 난다.
+    그사이 탈퇴했으면 401 이다.
+  - 응답의 `checked_by` 는 `{parent_id, nickname}` 이고, 이름을 알 수 없으면(위 NULL 두 경우 · 이름 없는 계정) 통째로 null 이다.
 - **수정 때 회차 재생성 규칙** (event-draft-flow §4-3 `is_prepared` 와 같은 선례 — 보호자가 남긴 표시는 초안이 덮지 않는다):
   - 체크된 회차(`checked_at IS NOT NULL`)는 **절대 지우지 않는다.**
   - 지우고 다시 만드는 건 **미체크 · 아직 오지 않은 회차만.**
