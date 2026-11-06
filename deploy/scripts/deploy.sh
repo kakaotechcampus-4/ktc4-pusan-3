@@ -33,15 +33,24 @@ envval() { grep -E "^$1=" "$ENV_FILE" | tail -n 1 | cut -d= -f2- | tr -d "\"' " 
 PROJECT="$(envval COMPOSE_PROJECT_NAME)"
 SUFFIX="$(envval STACK_SUFFIX)"
 API_URL="$(envval NEXT_PUBLIC_API_BASE_URL)"
+PROFILES="$(envval COMPOSE_PROFILES)"
+APPENV="$(envval APP_ENV)"
 case "$TARGET" in
   # 🚨 프로젝트 이름이 비면 compose 파일의 name(ktc4-deploy) = 운영 DB 볼륨으로 떨어진다.
-  dev) [ "$PROJECT" = ktc4-dev ] && [ "$SUFFIX" = -dev ] && [[ "$API_URL" == *//api.dev.* ]] ;;
+  # profile 이 남으면 dev 가 운영 Caddy(ktc4-caddy) 이름으로 부딪힌다. APP_ENV 는 compose 가 api · web 에
+  # 직접 넣어(${APP_ENV:-prod}) apps/api/.env 를 덮는다 — 비면 dev 알림이 [prod] 로 온다.
+  dev) [ "$PROJECT" = ktc4-dev ] && [ "$SUFFIX" = -dev ] && [[ "$API_URL" == *//api.dev.* ]] &&
+    [ -z "$PROFILES" ] && [ "$APPENV" = dev ] ;;
   # web 이미지는 API 주소를 번들에 굽는다 — prod 가 dev API 를 굽거나 그 반대면 막는 건 CORS 하나뿐이다 (#747).
-  prod) { [ -z "$PROJECT" ] || [ "$PROJECT" = ktc4-deploy ]; } && [ -z "$SUFFIX" ] && [[ "$API_URL" != *//api.dev.* ]] ;;
+  # edge 가 빠지면 Caddy 를 compose 가 못 본다 — 첫 전환의 down 이 Caddy · 옛 네트워크를 남겨
+  # ktc4-edge 를 못 만들고, 운영이 내려간 채 멈춘다.
+  prod) { [ -z "$PROJECT" ] || [ "$PROJECT" = ktc4-deploy ]; } && [ -z "$SUFFIX" ] && [[ "$API_URL" != *//api.dev.* ]] &&
+    [ "$PROFILES" = edge ] ;;
   *) false ;;
 esac || {
-  log "🔴 $TARGET 배포인데 $ENV_FILE 이 맞지 않는다 — COMPOSE_PROJECT_NAME='$PROJECT' STACK_SUFFIX='$SUFFIX' NEXT_PUBLIC_API_BASE_URL='$API_URL'"
-  log "   dev: ktc4-dev · -dev · https://api.dev.… / prod: 비움(또는 ktc4-deploy) · 비움 · api.dev 아님 (docs/ops/deploy-v1.md)"
+  log "🔴 $TARGET 배포인데 $ENV_FILE 이 맞지 않는다 — COMPOSE_PROJECT_NAME='$PROJECT' STACK_SUFFIX='$SUFFIX' NEXT_PUBLIC_API_BASE_URL='$API_URL' COMPOSE_PROFILES='$PROFILES' APP_ENV='$APPENV'"
+  log "   dev: ktc4-dev · -dev · https://api.dev.… · profile 비움 · APP_ENV=dev"
+  log "   prod: 비움(또는 ktc4-deploy) · 비움 · api.dev 아님 · COMPOSE_PROFILES=edge (docs/ops/deploy-v1.md)"
   exit 1
 }
 
@@ -68,6 +77,19 @@ PREV="$(cat "$TAG_FILE" 2>/dev/null || echo local)"
 log "$TARGET: 직전 $PREV → 새 $SHA"
 
 export API_IMAGE_TAG="$SHA" WEB_IMAGE_TAG="$SHA"
+# 굽지 않는 이미지(caddy · db · redis)가 이 커밋에서 바뀌었으면 여기서 받는다. up 은 --pull never 라,
+# 없으면 up 이 새 api · web 을 만든 뒤 멈추고 롤백도 같은 자리에서 멈춘다 (#753 리뷰).
+# missing — 이미 있는 태그(redis:7-alpine 같은)는 다시 받지 않는다. 받으면 운영 redis 가 바뀐다.
+log "빠진 이미지 받기"
+"${COMPOSE[@]}" pull --quiet --ignore-buildable --policy missing
+if [ "$TARGET" = prod ]; then
+  # 깨진 Caddyfile 은 reload 가 거부해도 다음 Caddy 재시작에 dev · 운영을 같이 내린다. 굽기 전에 막는다.
+  CADDY_IMAGE="$("${COMPOSE[@]}" config --images | grep '^caddy:' | head -n 1)"
+  log "Caddyfile 검사 ($CADDY_IMAGE)"
+  docker run --rm -v "$PWD/deploy/caddy:/etc/caddy:ro" "$CADDY_IMAGE" \
+    caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile ||
+    { log "🔴 Caddyfile 이 깨졌다 — 아무것도 올리지 않았다"; exit 1; }
+fi
 log "이미지 빌드"
 # 진행 로그를 끈다 — SSM 은 출력 앞부분만 돌려줘서, 빌드 로그가 alembic · up 의 에러를 밀어낸다.
 "${COMPOSE[@]}" build --quiet api web
@@ -84,14 +106,18 @@ if "${COMPOSE[@]}" up -d --no-build --pull never --wait --wait-timeout 240; then
     # connection refused 였다. 몇 번 다시 해 본다.
     reloaded=0
     for _ in 1 2 3 4 5; do
-      if docker exec ktc4-caddy caddy reload --config /etc/caddy/Caddyfile >/dev/null 2>&1; then
+      if out="$(docker exec ktc4-caddy caddy reload --config /etc/caddy/Caddyfile 2>&1)"; then
         reloaded=1
         break
       fi
       sleep 3
     done
-    [ "$reloaded" = 1 ] ||
-      log "⚠️ Caddy reload 실패 — 서비스는 떠 있다. 서버에서 docker logs ktc4-caddy 로 본다"
+    # 초록불로 끝내면 아무도 모른다 — Caddy 는 옛 설정으로 돌지만 다음 재시작에 새 파일을 읽는다.
+    [ "$reloaded" = 1 ] || {
+      log "🔴 Caddy reload 실패 — 새 버전은 떠 있고 Caddy 는 옛 설정이다. 서버에서 docker logs ktc4-caddy 로 본다"
+      echo "$out"
+      exit 1
+    }
   fi
   # 지금 것과 직전 것만 남기고 이 환경의 옛 태그 이미지를 지운다. 정리가 실패해도 배포는 성공이다.
   for repo in "ktc4${SUFFIX}-api" "ktc4${SUFFIX}-web"; do

@@ -8,8 +8,8 @@
 #   make deploy-down        전체 중지
 #
 # Caddy 가 HTTPS 종단 + 리버스 프록시를 맡는다.
-#   icatch.ai.kr       → web:3000
-#   api.icatch.ai.kr   → api:8000
+#   icatch.ai.kr       → ktc4-web:3000   (주소는 컨테이너 이름이다 — ktc4-edge 에서 서비스 이름 web · api 는
+#   api.icatch.ai.kr   → ktc4-api:8000    dev · 운영 둘 다로 풀린다. deploy/caddy/Caddyfile)
 # web · api 는 호스트 포트를 열지 않는다 — Caddy 만 80/443 을 낸다.
 # 🚨 api 는 --workers 1 이다. run 진행 상황이 프로세스 메모리에 있어서 (#134)
 #    둘 이상이면 POST 받은 프로그램과 GET 받은 프로그램이 갈려 조용히 404 가 난다.
@@ -46,11 +46,9 @@ services:
       - ../../deploy/caddy:/etc/caddy:ro
       - ktc4-caddy-data:/data
       - ktc4-caddy-config:/config
-    depends_on:
-      web:
-        condition: service_healthy
-      api:
-        condition: service_healthy
+    # 🚨 depends_on(api · web) 을 두지 않는다. 있으면 compose 가 api · web 을 새로 만들 때마다 Caddy 를 먼저
+    #    멈춰서, 운영 배포마다 dev 도 같이 끊기고 실패하면 롤백 내내 Caddy 가 꺼져 있다 (#753).
+    #    Caddy 는 요청마다 이름을 찾으므로 api · web 이 늦게 떠도 그동안 502 일 뿐이다.
     networks:
       edge:
         ipv4_address: 172.30.0.10
