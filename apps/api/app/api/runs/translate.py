@@ -12,6 +12,12 @@ pipeline 은 진행 상황을 파이썬 객체(`Step` · `Failed` …)로 내보
    🚨 pipeline 은 commit 이 끝난 뒤에 `Saved` 를 낸다. 받은 순서대로 보내기만 하고 앞당기지 않는다 —
       화면이 "저장됐어요"로 본 기록은 DB에 있어야 한다.
 
+🚨 `FoundTabs` · `DeleteProposed`(#535)도 id 만 싣고 온다. pipeline 이 보내기 직전에 러너의
+   `load_cards` 를 await 해서 `card_rows` 에 화면 모양 행을 넣어 두고, 여기서는 탭 순서 · 행 순서
+   그대로 꺼내 싣기만 한다. 그사이 지워졌거나 못 읽은 행은 빼고, 행이 하나도 없는 탭도 뺀다.
+   조회 카드는 탭이 하나도 없으면 보내지 않는다. 삭제 카드는 보낸다 — 제안이 이미 저장돼 있어
+   보호자가 취소할 수 있어야 한다.
+
 🚨 화면에 보낼 것만 번역하고, 나머지는 None(보내지 않음)이다.
    - `DomainRouted` · `Unwritten` · `Rerouted` — 로그·지표용이다. 도메인 Agent 결과 중
      화면에 갈 것은 바로 뒤에 오는 `AgentResult`(agent_result, #227)가 싣는다.
@@ -32,17 +38,18 @@ agents 는 진입점(`app.agents.entrypoint`) 하나로만 본다 (apps/api/CLAU
 """
 
 import logging
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from app.agents.entrypoint import (
     AgentQuestion,
     AgentResult,
+    DeleteProposed,
     Done,
-    Emit,
     Event,
     EventDrafts,
     Failed,
+    FoundTabs,
     Guidance,
     MedicationDraft,
     MedicationDrafts,
@@ -55,6 +62,8 @@ from app.agents.entrypoint import (
 from app.api.chat_replies import SCREEN_REF_KINDS
 from app.api.runs import sse
 from app.api.runs.registry import RunChannel
+from app.api.v1.card_rows import card_tabs, proposal_tabs
+from app.api.v1.schemas.cards import DeleteProposalCardOut
 
 log = logging.getLogger(__name__)
 
@@ -62,8 +71,39 @@ SavedRows = Mapping[tuple[str, str], Any]
 """(kind, id) → 러너가 commit 뒤에 읽어 둔 화면 모양 행(`observation_outs`). model_dump 만 쓴다."""
 
 
-def to_sse(event: Event, *, saved_rows: SavedRows | None = None) -> sse.SseEvent | None:
+CardRows = Mapping[tuple[str, str], Any]
+"""(kind, id) → 러너가 `load_cards` 로 읽어 둔 화면 모양 행(`card_rows.read_card_rows`).
+
+삭제 제안은 `(PROPOSAL_KIND, proposal_id)` → 만료 시각(datetime)도 같이 둔다 — 카드의 expires_at.
+"""
+
+PROPOSAL_KIND = "delete_proposal"
+
+
+def to_sse(
+    event: Event,
+    *,
+    saved_rows: SavedRows | None = None,
+    card_rows: CardRows | None = None,
+) -> sse.SseEvent | None:
     """이벤트 하나를 화면용 (이름, 내용) 으로. 화면에 보낼 게 아니면 None."""
+    if isinstance(event, FoundTabs):
+        rows = card_rows or {}
+        found = [out.model_dump(mode="json") for out in card_tabs(event.tabs, rows)]
+        return ("found_tabs", {"tabs": found}) if found else None
+    if isinstance(event, DeleteProposed):
+        rows = card_rows or {}
+        # 지난 대화와 같은 모양(`DeleteProposalCardOut`)으로 만든다. 상태는 늘 pending 이다 — 방금
+        # 저장한 제안이다. 확정 · 취소 · 만료는 버튼 응답과 지난 대화가 지금 상태로 알린다.
+        # 만료 시각이 없으면 터진다 — 제안을 저장하지 않고 카드를 낸 코드 버그다
+        card = DeleteProposalCardOut(
+            proposal_id=event.proposal_id,
+            status="pending",
+            expires_at=rows[(PROPOSAL_KIND, event.proposal_id)],
+            result=None,
+            tabs=proposal_tabs(event.tabs, rows),
+        )
+        return "delete_proposal", card.model_dump(mode="json", exclude={"type"})
     if isinstance(event, Saved):
         rows = saved_rows or {}
         keys = [(ref.kind, ref.id) for ref in event.refs]
@@ -196,10 +236,19 @@ def _medication_payload(draft: MedicationDraft) -> dict[str, Any]:
     return payload
 
 
-def relay(channel: RunChannel, *, saved_rows: SavedRows | None = None) -> Emit:
+def relay(
+    channel: RunChannel,
+    *,
+    saved_rows: SavedRows | None = None,
+    card_rows: CardRows | None = None,
+) -> Callable[[Event], bool]:
     """pipeline 에 넘길 emit 을 만든다. 번역해서 채널에 넣는다.
 
     saved_rows — 러너의 commit 이 채우는 dict. `Saved` 가 올 때 읽는다 (#471).
+    card_rows — 러너의 `load_cards` 가 채우는 dict. `FoundTabs` · `DeleteProposed` 가 올 때 읽는다.
+
+    돌려준 emit 은 채널에 실제로 넣었는지를 돌려준다 — 러너가 화면에 안 나간 조회 카드를 대화
+    기록에서 빼는 데 쓴다. pipeline 에 넘길 때는 `Emit`(돌려준 값을 안 본다)으로 그대로 쓴다.
 
     sync 다 — pipeline 은 emit 을 기다리지(await) 않고, 채널의 publish 도 sync 라 그대로 이어진다.
     끝 신호 뒤에 오는 것(pipeline 이 Failed 뒤에 보내는 Done 등)은 채널이 버린다.
@@ -214,11 +263,12 @@ def relay(channel: RunChannel, *, saved_rows: SavedRows | None = None) -> Emit:
        보낸 뒤 스트림 중간에 끊기고, 다시 붙어도 같은 자리에서 또 끊긴다 — 넣기 전에 터뜨린다.
     """
 
-    def emit(event: Event) -> None:
-        translated = to_sse(event, saved_rows=saved_rows)
+    def emit(event: Event) -> bool:
+        translated = to_sse(event, saved_rows=saved_rows, card_rows=card_rows)
         if translated is None:
-            return
+            return False
         sse.frame(*translated)  # JSON 으로 못 바뀌면 여기서 터진다 — 채널에 넣기 전에
         channel.publish(translated)
+        return True
 
     return emit

@@ -21,8 +21,10 @@ from zoneinfo import ZoneInfo
 from app.agents.entrypoint import (
     AgentQuestion,
     AgentResult,
+    DeleteProposed,
     Event,
     EventDrafts,
+    FoundTabs,
     Guidance,
     MemoryNote,
     Partial,
@@ -34,8 +36,10 @@ from app.api.chat_replies import (
     SCREEN_REF_KINDS,
     AgentResultReply,
     ChatReply,
+    DeleteProposalReply,
     DoneReply,
     EventDraftReply,
+    FoundTabsReply,
     GuidanceReply,
     NoteReply,
     PartialReply,
@@ -43,6 +47,7 @@ from app.api.chat_replies import (
     StoredReadout,
     StoredRef,
     StoredScreenRef,
+    StoredTab,
     UnavailableReply,
 )
 from app.api.deps.db import background_session
@@ -69,6 +74,15 @@ def to_reply(event: Event) -> ChatReply | None:
         return UnavailableReply(agents=list(event.agents))
     if isinstance(event, Saved):
         return SavedReply(refs=[StoredRef(kind=ref.kind, id=str(ref.id)) for ref in event.refs])
+    if isinstance(event, FoundTabs):
+        return FoundTabsReply(
+            tabs=[
+                StoredTab(kind=tab.kind, truncated=tab.truncated, ids=list(tab.ids))
+                for tab in event.tabs
+            ]
+        )
+    if isinstance(event, DeleteProposed):
+        return DeleteProposalReply(proposal_id=event.proposal_id)
     if isinstance(event, EventDrafts):
         return EventDraftReply(drafts=[draft.to_payload() for draft in event.drafts])
     if isinstance(event, AgentResult):
