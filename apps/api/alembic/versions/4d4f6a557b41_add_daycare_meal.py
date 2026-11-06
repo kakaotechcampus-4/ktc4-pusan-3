@@ -5,7 +5,7 @@ snack_am · snack_pm), 같은 아이 · 같은 날 · 같은 끼니는 한 행, 
 급식표에 인쇄된 알레르기 번호는 칸이 없다 (10-09 — 저장하지 않는다).
 
 Revision ID: 4d4f6a557b41
-Revises: 58dabbe0a491
+Revises: d5e8a1c4b937
 Create Date: 2026-10-10
 """
 
@@ -16,7 +16,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = "4d4f6a557b41"
-down_revision: Union[str, Sequence[str], None] = "58dabbe0a491"
+down_revision: Union[str, Sequence[str], None] = "d5e8a1c4b937"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

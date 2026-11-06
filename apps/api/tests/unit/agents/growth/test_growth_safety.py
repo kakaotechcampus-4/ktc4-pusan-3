@@ -378,6 +378,153 @@ class TestDefaultRules:
     @pytest.mark.parametrize(
         ("label", "text", "blocked"),
         [
+            ("밤", "알밤 줍기", True),
+            ("밤", "군밤 까서 맛보기", True),
+            ("견과류", "도토리 줍기", True),
+            ("밤", "오늘 밤 별 보기", False),
+            ("밤", "밤하늘 그리기", False),
+        ],
+    )
+    def test_밤_도토리를_막는다(self, rules, label, text, blocked):
+        """ "밤" 한 글자는 문장에서 대조하지 않고 붙은 이름으로 막는다 — Activity 와 같다 (#582)."""
+        entries = [SafetyEntry("allergy", label, "active")]
+        assert bool(rules.registered_names(text, entries)) is blocked
+
+    @pytest.mark.parametrize(
+        ("label", "text", "blocked"),
+        [
+            ("땅콩", "피넛버터 바르기", True),
+            ("호두", "월넛 쿠키 굽기", True),
+            ("돼지고기", "아기 돼지 삼형제 동화 읽기", False),
+            ("조개류", "전복 모양 스티커 붙이기", False),
+            ("조개류", "전복죽 맛보기", True),
+            ("전복", "전복구이 그림 그리기", True),
+            ("돼지고기", "돼지국밥 그림 그리기", True),
+            ("돼지고기", "돼지껍데기 구이 그림", True),
+            ("돼지고기", "돼지 바비큐 그림", True),
+            ("콩", "콩콩 뛰기 놀이", False),
+            ("콩", "콩주머니 던지기", True),
+        ],
+    )
+    def test_등록_이름_대조는_Activity_와_같은_판정이다(self, rules, label, text, blocked):
+        """등록한 아이에게는 외래어 별칭도 막고, 다른 뜻이 흔한 별칭(돼지 · 전복)은 뺀다 (#582).
+        아이와 상관없이 빼는 음식 용어 스캔만 외래어를 뺀다."""
+        entries = [SafetyEntry("allergy", label, "active")]
+        assert bool(rules.registered_names(text, entries)) is blocked
+
+    def test_외래어는_아이와_상관없는_스캔에서만_뺀다(self, rules):
+        assert rules.food_terms("월넛 그림 카드 고르기") == ()
+        assert rules.food_terms("피넛 그림 카드 고르기") == ()
+
+    @pytest.mark.parametrize("text", ["아기 돼지 삼형제 동화 읽기", "전복 모양 스티커 붙이기"])
+    def test_문장에서_다른_뜻인_별칭은_스캔에서도_뺀다(self, rules, text):
+        assert rules.food_terms(text) == ()
+
+    @pytest.mark.parametrize(
+        "text", ["전복죽 맛보기", "돼지국밥 그림 그리기", "돼지껍데기 구이 그림"]
+    )
+    def test_돼지_전복이_든_음식_이름은_스캔에서_뺀다(self, rules, text):
+        """HEAD 의 스캔이 막던 것이다 — 단독으로 쓴 다른 뜻만 풀고 음식 이름은 계속 뺀다."""
+        assert rules.food_terms(text) != ()
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "쿠키 반죽 빚어 굽기",
+            "국수 가락 세어 보기",
+            "빵 가게 역할놀이",
+            "소시지 꼬치 만들기",
+            "떡 만들기 놀이",
+            "사과 깎아 먹기",  # 헷갈리는 낱말도 다루는 말이 곁에 있으면 음식이다
+            "물고기 구워 먹기",
+            "대구 구워 먹기",
+            "은행 구워 먹기",
+            "소라 구워 먹기",
+            "가재 삶아 먹기",
+        ],
+    )
+    def test_요리_이름도_음식_용어로_뺀다(self, rules, text):
+        """19종 별칭과 질식 위험 음식만 보던 스캔이 쿠키 · 빵 · 국수를 놓쳤다 — "쿠키 반죽 빚어
+        굽기" 가 밀로 등록해도 통과했다. Food 음식 어휘를 더한다 (#582)."""
+        assert rules.food_terms(text) != ()
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "새 우산 쓰고 산책하기",  # 새우 — 띄어쓰기를 넘지 않는다. 오탐이 모든 아이에게 간다
+            "거울 보고 미소 짓기",  # 미소(된장) — 헷갈리는 낱말, 곁에 다루는 말이 없다
+            "친구에게 사과하기",
+            "양지바른 곳에서 쉬기",  # 양지(소고기)
+            "갈비뼈 만져 보기",  # 갈비
+            "비지땀 흘리며 달리기",  # 비지
+            "빵빵 경적 소리 흉내 내기",
+            "떡잎이 나는 모습 관찰하기",
+            "낮과 밤 나눠 주기",  # 밤 — 시드의 낮 · 밤 놀이. "주기" 는 먹이는 말이 아니다
+            "새싹반 친구들과 인사하기",  # 새싹 — 어린이집 반 이름
+            "소주제 정해서 이야기 나누기",
+            "종이로 게 만들기",  # 한 글자는 곁에 만들기가 있어도 음식으로 보지 않는다
+            "종이로 돼지 저금통 만들기",
+            "은행 저금 놀이",  # 은행 · 대구 · 조기 · 방어는 놀이 문장 규칙에서는 강하게 찾지만
+            "은행에 가요 역할놀이",  # 모든 아이에게서 빼는 스캔에서는 곁의 말이 있을 때만 본다
+            "은행나무 잎 줍기",
+            "대구 여행 이야기",
+            "조기 축구",
+            "공 방어 연습",
+            "사과하고 화해하기",
+            "사과할 때 쓰는 말",
+            "사과 편지 쓰기",
+            "물고기 그리기",
+            "물고기 세기 놀이",
+            "크림색 종이 접기",
+            "커피색 크레파스",
+            "초콜릿색 물감",
+            "카카오 프렌즈 스티커",
+            "귤",  # 준비물 칸처럼 낱말 하나 — 흔한 재료 목록(known_foods)은 항목 규칙만 읽는다.
+            "오이",  # 스캔이 읽으면 이 준비물이 든 교육 후보가 모든 아이에게서 빠진다
+            "미역",
+            "블루베리",
+            "종이로 물고기 만들기",  # 만들기 · 부치기는 다루는 말이 아니다 — 가장 흔한 공작 동사
+            "친구에게 줄 사과 카드 만들기",
+            "대구 지도 만들기",
+            "미소 그림 만들기",
+            "물고기 먹이 주기",  # 먹이는 먹는 말이 아니다(동물에게 주는 것)
+            "사과 편지 부치기",
+            "파이팅 외치기",  # 파이 · 크림 · 고기 · 허니 — 글자만 든 다른 낱말
+            "선크림 바르기",
+            "핸드크림 바르기",
+            "고기잡이 배 그리기",
+            "허니비 그림 그리기",
+            "소라 껍데기 줍기",  # 소라 · 가재 · 새싹은 동물 · 식물이다
+            "가재 관찰하기",
+            "새싹 관찰 일기 쓰기",
+        ],
+    )
+    def test_다른_뜻의_낱말은_음식_용어로_보지_않는다(self, rules, text):
+        """모든 아이의 후보에서 빼는 스캔이라 오탐이 곧 전원 손실이다. 시드에 없는 말은 시드 전수가
+        못 잡아서 낱말로 고정한다 (#582)."""
+        assert rules.food_terms(text) == ()
+
+    @pytest.mark.parametrize("text", ["핫 도그 놀이", "마시 멜로 쌓기", "팝 콘 터뜨리기"])
+    def test_질식_위험_음식은_띄어_써도_뺀다(self, rules, text):
+        """위험 용어는 띄어쓰기를 넘는다 — "물 놀이" 도 물놀이다. 띄어쓰기를 넘지 않는 규칙은
+        알레르기 이름에만 쓴다("새 우산" 이 새우가 아니다). 같이 묶으면 질식 위험 음식이 통과한다
+        (#582 리뷰)."""
+        assert rules.food_terms(text) != ()
+
+    def test_교육_시드는_음식_용어_스캔에_걸리지_않는다(self, rules):
+        """Food 음식 어휘를 더하면 시드 문장의 다른 뜻("낮과 밤")이 걸릴 수 있다 — 시드 전수."""
+        rows = [entry.to_row() for entry in growth_doc_seed()]
+        found = [
+            (row.doc_key, text)
+            for row in rows
+            for text in (row.title, row.body, *row.materials)
+            if rules.food_terms(text)
+        ]
+        assert found == []
+
+    @pytest.mark.parametrize(
+        ("label", "text", "blocked"),
+        [
             ("쌀", "쌀 촉감놀이", True),
             ("팥", "팥 주머니 던지기", True),
             ("꽃", "꽃과 풀 가까이서 보기", True),
@@ -475,7 +622,8 @@ class TestLoanwordAliases:
         assert rules.food_terms(text) == ()
 
     def test_한국어_이름은_그대로_찾는다(self, rules):
-        assert rules.food_terms("돈육 그림 카드") == ("10",)
+        # 같은 음식이 Food 음식 어휘(돈육)로도 잡힌다 — 비었는지만 본다
+        assert "10" in rules.food_terms("돈육 그림 카드")
 
     def test_외래어로_등록한_이름도_한국어_별칭으로_찾는다(self, rules):
         """보호자가 검사지 영어 이름(pork)으로 적었으면 그 항목의 한국어 별칭으로 본다."""
@@ -511,6 +659,23 @@ class TestRulesUnavailable:
         monkeypatch.setattr("app.agents.growth.tools.safety.allergy_book", broken)
         with pytest.raises(SafetyRulesUnavailable):
             load_safety_rules()
+
+    def test_음식_어휘를_못_읽어도_같다(self, monkeypatch):
+        """음식 어휘(`common/food_words`)는 첫 스캔에서 느리게 만들어진다 — 그때 터지면 교육이
+        닫히지 않고 예외가 그대로 나간다. 게이트에서 먼저 읽어 같은 길로 닫는다 (#582 리뷰)."""
+        from app.agents.common import food_words
+
+        def broken():
+            raise OSError("chronic_restriction.yaml 없음")
+
+        food_words._static_scan.cache_clear()
+        monkeypatch.setattr("app.agents.common.food_words.chronic_restriction_terms", broken)
+        try:
+            with pytest.raises(SafetyRulesUnavailable):
+                load_safety_rules()
+        finally:
+            monkeypatch.undo()
+            food_words._static_scan.cache_clear()
 
     def test_원인을_잃지_않는다(self, monkeypatch):
         monkeypatch.setattr(

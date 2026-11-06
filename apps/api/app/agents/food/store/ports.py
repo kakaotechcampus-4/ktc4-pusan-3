@@ -49,7 +49,7 @@ INSERT는 Food의 권한 밖으로, 식사 기록은 Memory, 급식 원본은 OC
 
 from dataclasses import dataclass, field
 from datetime import date, datetime
-from typing import Literal, Protocol
+from typing import Literal, Protocol, get_args
 from uuid import UUID
 
 from app.agents.common.evidence import AffinityRow
@@ -62,6 +62,7 @@ from app.core.mfds_nutri_raw import RawNutriRow
 from app.core.nutrition_pick import (
     NutritionFacts,  # noqa: F401 — store/__init__.py 가 여기서 가져간다
 )
+from app.core.recipe_source import RecipeSource
 from app.rules.age import Stage
 
 # 영양소 구간. 한 번 low 였던 항목은 EAR 의 1.1배를 넘어야 ok 로 돌아간다(히스테리시스,
@@ -135,8 +136,10 @@ class Measurement:
 
 
 # 레시피 소스. 이 행들은 `recipe_catalog`(추천 후보)에만 들어가고 `menu_catalog` 에는 넣지 않는다.
-# 레시피 재료가 실리면 급식의 같은 이름 메뉴가 그 재료로 판정된다(own_table §1-1)
-RECIPE_SOURCES: frozenset[str] = frozenset({"mafra_recipe"})
+# 레시피 재료가 실리면 급식의 같은 이름 메뉴가 그 재료로 판정된다(own_table §1-1).
+# 값은 `core/recipe_source.RecipeSource` 와 같다 — 소스 정보 표(`RECIPE_SOURCE_INFO`, 05 출처 ·
+# 근거 문구)의 키와 같은지 테스트가 묶는다
+RECIPE_SOURCES: frozenset[RecipeSource] = frozenset(get_args(RecipeSource))
 
 
 @dataclass(frozen=True)
@@ -149,9 +152,10 @@ class MenuCatalogRow:
 
     menu_key: str
     display_name: str
-    # menu_catalog: mfds_nutri · center_standard · manual / recipe_catalog: mafra_recipe.
+    # menu_catalog: mfds_nutri · center_standard · manual
+    # recipe_catalog: `RecipeSource`(core) 그대로.
     # COOKRCP01(mfds_recipe)은 보류라 뺀다. 들이면 레시피라 recipe_catalog 쪽에 들어간다
-    source: Literal["mfds_nutri", "mafra_recipe", "center_standard", "manual"]
+    source: Literal["mfds_nutri", "center_standard", "manual"] | RecipeSource
     resolved: bool
     synced_at: datetime
     food_code: str | None = None
@@ -168,6 +172,9 @@ class MenuCatalogRow:
     # recipe_catalog 의 PK 일부(source, source_id). menu_catalog 행은 쓰지 않는다 — menu_key 가
     # 이미 PK 다(own_table §1-1)
     source_id: str | None = None
+    # 후보 풀에서 이름이 같은 레시피를 이 행으로 합쳤을 때, 대표가 아닌 쪽의 (source, source_id).
+    # 메뉴 근거가 합쳐진 레시피를 모두 가리키게 한다(`meal_review._menu_basis`). 저장하지 않는다
+    merged_from: tuple[tuple[str, str], ...] = ()
 
 
 DaycareSlot = Literal["lunch", "snack_am", "snack_pm"]
@@ -323,7 +330,7 @@ class MenuSource(Protocol):
     추정하지 않는다 — 받은 결과가 그대로 카탈로그에 쌓여서다(food_agent_own_table §1).
 
     unresolved · 재료 없음은 알레르기 "확인 못 함"이다 — 안전한 것으로 보지 않는다
-    (`tools/safety.py` 의 unchecked).
+    (`common/food_safety.py` 의 unchecked).
     """
 
     async def nutrition_rows(self, *, name: str) -> tuple[RawNutriRow, ...]:

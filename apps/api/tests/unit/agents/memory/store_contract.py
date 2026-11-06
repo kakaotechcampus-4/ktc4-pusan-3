@@ -136,9 +136,10 @@ _MODES = ["키_없음", "null", "clear"]
 _TIMED = {"starts_time": "오후 3시", "ends_time": "오후 5시"}
 _MULTI_DAY = {"starts_time": "오전 9시", "ends_on": "2026-09-19", "ends_time": "오후 5시"}
 
-# ── 관찰 삭제 = update 의 status=deleted (soft delete) ─────────────
+# ── 관찰 삭제 = store 의 soft delete ─────────────────────────────
 # 행은 store 에 남고 status 만 deleted 로 바뀐다. 지운 행은 조회·수정 대상에서 빠진다.
-# status 로 열리는 값은 deleted 하나고, 지우는 호출에는 다른 수정을 섞지 않는다.
+# 모델에게는 지우는 tool 이 없다 — 삭제 제안을 보호자가 버튼으로 확정하면 서버가 store 로 지운다
+# (#535). update 로는 status 를 쓸 수 없다.
 _MINIMAL_ARGS: dict[str, dict[str, Any]] = {
     "food": {"subject": "김밥"},
     "health": {"symptom": ["발열"]},
@@ -146,7 +147,7 @@ _MINIMAL_ARGS: dict[str, dict[str, Any]] = {
     "activity": {"subject": "레고", "activity": "레고로 성 만들기"},
     "routine": {"subject": "양치하기", "routine_category": "self_care"},
 }
-# 지우는 호출에 섞으면 안 되는 수정 하나씩
+# 지운 기록에 시도할 수정 하나씩
 _ANOTHER_CHANGE: dict[str, dict[str, Any]] = {
     "food": {"reaction": "좋아함"},
     "health": {"body_part": "이마"},
@@ -188,12 +189,8 @@ async def _event(h: Harness, event_id: str) -> EventRow | EventDraft:
     return row
 
 
-async def _delete(h: Harness, domain: str, observation_id: str) -> Any:
-    return await execute_tool(
-        f"update_observation_{domain}",
-        {"observation_id": observation_id, "status": "deleted"},
-        h.context,
-    )
+async def _delete(h: Harness, domain: str, observation_id: str) -> bool:
+    return await h.context.store.delete_observation(domain=domain, observation_id=observation_id)
 
 
 # ── 관찰: 세 갈래 ─────────────────────────────────────────────────
@@ -420,13 +417,10 @@ async def 일정은_ends_at_말고는_비울_수_없다(h: Harness, *, name: str
 
 
 # ── 관찰 삭제 ───────────────────────────────────────────────────
-async def status_deleted_로_지우면_행은_남고_조회에서_빠진다(h: Harness, *, domain: str) -> None:
+async def store_로_지우면_행은_남고_조회에서_빠진다(h: Harness, *, domain: str) -> None:
     observation_id = await _create_observation(h, domain, _MINIMAL_ARGS[domain])
 
-    result = await _delete(h, domain, observation_id)
-
-    assert result.success is True, result.error
-    assert result.data == {"id": observation_id, "status": "deleted"}
+    assert await _delete(h, domain, observation_id) is True
     # store 안에는 행이 남아 있다
     assert await h.stored(domain, observation_id) == ("deleted", "원문")
     # 조회·단건 조회에서는 빠진다
@@ -447,33 +441,13 @@ async def 지운_기록은_다시_지우거나_고칠_수_없다(h: Harness, *, 
         h.context,
     )
 
-    assert again.success is False
-    assert again.error["code"] == ErrorCode.TARGET_NOT_FOUND
+    assert again is False
     assert edit.success is False
     assert edit.error["code"] == ErrorCode.TARGET_NOT_FOUND
 
 
-async def 지우는_호출에_다른_수정을_섞으면_거절한다(h: Harness, *, domain: str, mixed: str) -> None:
-    observation_id = await _create_observation(h, domain, _MINIMAL_ARGS[domain])
-    extra: dict[str, Any] = {
-        "field": _ANOTHER_CHANGE[domain],
-        "observed_on": {"observed_on": "어제"},
-        "clear": {"clear": list(_ANOTHER_CHANGE[domain])},
-    }[mixed]
-
-    result = await execute_tool(
-        f"update_observation_{domain}",
-        {"observation_id": observation_id, "status": "deleted", **extra},
-        h.context,
-    )
-
-    assert result.success is False
-    assert result.error["code"] == ErrorCode.INVALID_ARGS
-    row = await h.context.store.get_observation(domain=domain, observation_id=observation_id)
-    assert row is not None and row.fields["status"] == "active"
-
-
-async def update_로는_deleted_말고_다른_status_를_쓸_수_없다(h: Harness, *, status: str) -> None:
+async def update_로는_status_를_쓸_수_없다(h: Harness, *, status: str) -> None:
+    """deleted 도 막는다 — 지우는 것은 보호자가 버튼으로 확정하는 제안뿐이다 (#535)."""
     observation_id = await _create_observation(h, "food", _MINIMAL_ARGS["food"])
 
     result = await execute_tool(
@@ -484,6 +458,8 @@ async def update_로는_deleted_말고_다른_status_를_쓸_수_없다(h: Harne
 
     assert result.success is False
     assert result.error["code"] == ErrorCode.INVALID_ARGS
+    row = await h.context.store.get_observation(domain="food", observation_id=observation_id)
+    assert row is not None and row.fields["status"] == "active"
 
 
 # ── 준비물 챙김 ─────────────────────────────────────────────────
@@ -578,16 +554,11 @@ CASES = [
         _case(일정은_ends_at_말고는_비울_수_없다, n, name=n)
         for n in ("ends_time", "ends_on", "title")
     ),
-    *(_case(status_deleted_로_지우면_행은_남고_조회에서_빠진다, d, domain=d) for d in DOMAINS),
+    *(_case(store_로_지우면_행은_남고_조회에서_빠진다, d, domain=d) for d in DOMAINS),
     *(_case(지운_기록은_다시_지우거나_고칠_수_없다, d, domain=d) for d in DOMAINS),
     *(
-        _case(지우는_호출에_다른_수정을_섞으면_거절한다, f"{d}-{x}", domain=d, mixed=x)
-        for d in DOMAINS
-        for x in ("field", "observed_on", "clear")
-    ),
-    *(
-        _case(update_로는_deleted_말고_다른_status_를_쓸_수_없다, s, status=s)
-        for s in ("active", "stand_alone", "inactive")
+        _case(update_로는_status_를_쓸_수_없다, s, status=s)
+        for s in ("deleted", "active", "stand_alone", "inactive")
     ),
     _case(store_의_챙김_시각은_처음_체크한_때를_지킨다),
     _case(없는_준비물을_챙기면_None_이다),
