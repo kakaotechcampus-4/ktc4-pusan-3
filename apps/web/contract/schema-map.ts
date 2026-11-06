@@ -280,4 +280,12 @@ export const NOT_MAPPED: Record<string, string> = {
   ProposalTabOut: "웹 미사용 — FE 후속 (#535)",
   FoundTabsOut: "웹 미사용 — FE 후속 (#535 지난 대화의 조회 카드)",
   DeleteProposalCardOut: "웹 미사용 — FE 후속 (#535 지난 대화의 삭제 카드)",
+  // 요일 반복 (#738). 웹 타입은 #746 이 만든다 — 그 PR 이 SCHEMA_MAP 으로 옮긴다
+  // (EventSeriesRef · RepeatRequest · SeriesDraftFields · UpdateSeriesBody.before · UpdateSeriesBody)
+  EventSeriesOut: "웹 타입이 #746 에서 생긴다 (EventSeriesRef)",
+  RepeatIn: "웹 타입이 #746 에서 생긴다 (RepeatRequest)",
+  SeriesEventIn: "웹 타입이 #746 에서 생긴다 (SeriesDraftFields)",
+  SeriesBeforeIn: "웹 타입이 #746 에서 생긴다 (UpdateSeriesBody.before)",
+  UpdateSeriesRequest: "웹 타입이 #746 에서 생긴다 (UpdateSeriesBody)",
+  UpdateSeriesResponse: "웹 타입이 #746 에서 생긴다. 화면은 성공 여부만 쓴다",
 };
