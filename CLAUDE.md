@@ -205,7 +205,9 @@
 ├── deploy/
 │   ├── docker/                compose 두 벌 — docker-compose.yml 은 로컬 개발 DB(Postgres+pgvector)+Redis,
 │   │                          docker-compose.deploy.yml 은 배포(db+redis+api+web+caddy). .env 는 한 곳을 같이 쓴다
-│   ├── caddy/                  Caddyfile — HTTPS 종단 + 리버스 프록시 (icatch.ai.kr → web, api.icatch.ai.kr → api)
+│   ├── caddy/                  Caddyfile — HTTPS 종단 + 리버스 프록시 (icatch.ai.kr → web, api.icatch.ai.kr → api, dev.· 는 dev 환경)
+│   │                          🚨 한 EC2 에 prod(main) · dev(develop) 두 벌이 뜬다. CI 통과 후에만 배포, 헬스 실패면 직전 이미지로 자동 롤백 —
+│   │                          DB 는 안 되돌리므로 마이그레이션은 expand-only ([`docs/ops/deploy-v1.md`](docs/ops/deploy-v1.md))
 │   └── nginx/, scripts/       (비어 있음) 배포용
 └── .github/                  ⚠️ §8 참고 — 손대면 안 되는 파일이 있다
 ```
