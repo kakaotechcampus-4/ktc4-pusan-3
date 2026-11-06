@@ -229,7 +229,6 @@ async def _expand_repeat(
 
 
 # ── 반복 묶음 (#738) ────────────────────────────────────────────
-_SERIES_SHOWN = 5  # 조회에서 묶음 하나가 보여 주는 앞으로의 회차 수. 나머지는 날짜를 집어 다시 조회
 
 
 def _weekday_numbers(names: Iterable[str]) -> tuple[int, ...]:
@@ -554,34 +553,6 @@ async def _delete_series_item(
     )
 
 
-def _limit_series(
-    rows: list[EventRow], context: AgentContext
-) -> tuple[list[EventRow], dict[str, int]]:
-    """긴 묶음은 앞으로의 몇 회차만 남긴다. 묶음마다 빠진 회차 수를 함께 돌려준다.
-
-    한 묶음이 회차마다 한 행이라 조회 하나가 최대 90행이 된다. 앞으로의 회차를 먼저 보이고,
-    남은 회차가 없으면 가장 최근 몇 회차를 보인다. 다른 날짜의 회차는 날짜를 집어 다시 조회한다.
-    """
-    groups: dict[str, list[EventRow]] = {}
-    for row in rows:
-        if row.series is not None:
-            groups.setdefault(row.series.id, []).append(row)
-    keep = {row.id for row in rows if row.series is None}
-    omitted: dict[str, int] = {}
-    for series_id, group in groups.items():
-        shown = group
-        if len(group) > _SERIES_SHOWN:
-            upcoming = [
-                row
-                for row in group
-                if row.starts_at.astimezone(context.timezone).date() >= context.today
-            ]
-            shown = upcoming[:_SERIES_SHOWN] if upcoming else group[-_SERIES_SHOWN:]
-            omitted[series_id] = len(group) - len(shown)
-        keep.update(row.id for row in shown)
-    return [row for row in rows if row.id in keep], omitted
-
-
 async def _event_summary(context: AgentContext, row: EventRow) -> dict[str, Any]:
     """준비물을 함께 실어 보낸다. 조회 tool 이 없어서 여기서만 볼 수 있다."""
     return row.to_summary(items=await context.store.list_event_items(event_id=row.id))
@@ -659,14 +630,11 @@ async def query_event(context: AgentContext, args: EventQuery) -> ToolResult:
     rows = await context.store.query_events(
         child_id=context.child_id, title_query=args.title_query, **bounds
     )
-    shown, omitted = _limit_series(rows, context)
     return ok(
         "query",
         EVENT,
-        count=len(shown),
-        events=[await _event_summary(context, row) for row in shown],
-        # 묶음마다 빠진 회차 수. 그 회차는 날짜를 집어 (date_from · date_to) 다시 조회한다
-        **({"omitted_occurrences": omitted} if omitted else {}),
+        count=len(rows),
+        events=[await _event_summary(context, row) for row in rows],
     )
 
 

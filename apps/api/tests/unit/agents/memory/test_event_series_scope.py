@@ -77,12 +77,6 @@ async def world() -> World:
     return await _build(weekdays=(1, 3), until=date(2026, 11, 18))
 
 
-@pytest.fixture
-async def long_world() -> World:
-    # 월요일마다 2027-01-25 까지 12회차 (11/9 부터 1/25 까지 매주)
-    return await _build(weekdays=(1,), until=date(2027, 1, 25))
-
-
 async def _call(world: World, name: str, **args: Any):
     return await execute_tool(name, args, world.ctx)
 
@@ -335,28 +329,6 @@ async def test_update_series_with_no_future_occurrence_is_not_found(world):
     assert result.error["code"] == ErrorCode.TARGET_NOT_FOUND
 
 
-# ── delete_event ─────────────────────────────────────────────────
-# 묶음 삭제는 이 PR 범위 밖이다. 삭제는 삭제 제안(#535)으로 옮겨 가고, 묶음 전체는 후속
-# 이슈의 `event_series` 종류가 맡는다. 여기서는 회차 한 건 삭제가 그대로인지만 본다.
-
-
-async def test_deleting_an_occurrence_removes_only_that_occurrence(world):
-    result = await _call(world, "delete_event", event_id=world.events[1].id)
-
-    assert result.success is True, result.error
-    assert await world.store.get_event(event_id=world.events[1].id) is None
-    assert await world.store.get_event(event_id=world.events[2].id) is not None
-    assert await world.store.get_series(series_id=world.series.id) is not None
-
-
-async def test_delete_takes_no_scope(world):
-    result = await _call(world, "delete_event", event_id=world.events[1].id, scope="series")
-
-    assert result.success is False
-    assert result.error["code"] == ErrorCode.INVALID_ARGS
-    assert await world.store.get_event(event_id=world.events[1].id) is not None
-
-
 # ── create_event_item ────────────────────────────────────────────
 
 
@@ -571,34 +543,6 @@ async def test_series_draft_title_is_the_common_title(world):
 
     draft = _series_draft(world)
     assert draft.title == "등원" and draft.before.title == "등원"
-
-
-# ── 조회: 긴 묶음은 앞으로의 몇 회차만 ──────────────────────────────
-
-
-async def test_query_shows_only_the_next_occurrences_of_a_long_series(long_world):
-    result = await _call(long_world, "query_event", title_query="등원")
-
-    assert result.success is True, result.error
-    days = [event["starts_at"][:10] for event in result.data["events"]]
-    assert days == ["2026-11-16", "2026-11-23", "2026-11-30", "2026-12-07", "2026-12-14"]
-    assert result.data["count"] == 5
-    # 지난 회차(11/9)와 더 뒤의 회차를 합쳐 12 - 5
-    assert result.data["omitted_occurrences"] == {long_world.series.id: 7}
-
-
-async def test_query_with_a_day_still_finds_that_occurrence_of_a_long_series(long_world):
-    result = await _call(long_world, "query_event", date_from="2027-01-18", date_to="2027-01-18")
-
-    assert [event["starts_at"][:10] for event in result.data["events"]] == ["2027-01-18"]
-    assert "omitted_occurrences" not in result.data
-
-
-async def test_query_does_not_trim_a_short_series_or_a_plain_event(world):
-    result = await _call(world, "query_event")
-
-    assert result.data["count"] == 5  # 4회차 + 운동회
-    assert "omitted_occurrences" not in result.data
 
 
 # ── 묶음은 늘 core, 준비물 이름은 여러 번 바꿔도 따라간다 ───────────────

@@ -66,8 +66,6 @@ _ROUTING = """
   repeat_weekdays · repeat_until 로 바꾼다. 준비물을 묶음에 더하거나 빼거나 이름을 바꿀 때도 같다.
   묶음의 준비물을 고치는 것은 전부 초안이라 보호자가 확인해야 반영된다.
   준비물 챙김 표시(is_prepared)는 늘 그날 회차 하나라 scope 를 넣지 않는다.
-  반복 일정은 앞으로의 5회차까지만 조회 결과에 보이고 나머지는 omitted_occurrences 로 알려 준다.
-  특정 날짜의 회차를 집어 고치거나 지울 때는 그 날짜로 date_from · date_to 를 넣어 다시 조회한다.
 """.strip()
 
 _CORRECTION = """
