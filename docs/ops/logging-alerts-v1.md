@@ -57,7 +57,7 @@ api 안의 알림은 **api 프로세스 안의 `app.*` 로거**에만 달린다.
 
 - 부팅 실패 · 컨테이너 죽음 · 재시작 반복 — api 안의 알림은 api 가 살아 있을 때만 말할 수 있다. 그래서 밖에서 본다: 서버 cron 이 1분마다 `deploy/scripts/health-alert.sh` 로 compose 컨테이너 전부의 healthcheck 결과를 읽어 **달라진 것만** 같은 웹훅으로 보낸다 (복구도). 웹훅 전송이 실패하면 상태를 저장하지 않아 다음 분에 다시 보낸다. 죽어 있는 동안 매분 울리지 않는다. docker 의 healthcheck 는 판정만 하고 통보는 안 하기 때문에 이 한 겹이 필요하다. 서버에 cron 한 줄 등록은 Session Manager 로 (README)
 - `uvicorn` · `asyncio` · `sqlalchemy` 로거 — 대상이 아니다. `uvicorn.error` 의 "Exception in ASGI application" 은 `errors.py` 의 마지막 그물이 이미 ERROR 로 찍은 같은 예외라 일부러 뺐다
-- 다른 프로세스 — `alembic upgrade`, `scripts/*`, 앞으로의 `app/workers/*` 는 `app.main` 을 불러오지 않아 알림이 없다
+- 다른 프로세스 — `alembic upgrade`, `scripts/*` 는 `app.main` 을 불러오지 않아 알림이 없다. `app/workers/*`(cleanup · reminder_dispatch · profile_recompute)는 `app.main` 과 같은 순서로 `configure_alerts` 를 직접 달아 **알림이 간다** — 카드는 위와 같이 종류 이름만이고, 서버 로그에도 예외 메시지 없이 종류 · 위치만 남긴다 (`log_error_without_message` · #670)
 - 프로세스를 fork 하는 실행기(gunicorn `--preload` 등) — 알림 스레드가 자식으로 넘어가지 않는다. uvicorn 단일 프로세스 전제다
 - 로그인 전 화면(로그인 · 동의)의 브라우저 오류 — 인증 없는 창구를 두지 않아서다. 아무나 그 주소로 팀 채널을 울려 진짜 알림을 묻을 수 있다. 두 화면뿐이라 감수한다. 기기 요약(운영체제 · 주요 버전 · 앱/브라우저)을 로그에 남기므로 처리방침 ⑥ 에 한 구절을 더한다 (#166)
 
