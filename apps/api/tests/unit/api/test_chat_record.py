@@ -42,7 +42,7 @@ from app.agents.entrypoint import (
     Unwritten,
 )
 from app.agents.memory.drafts import DraftItem
-from app.api.chat_replies import CHAT_REPLIES
+from app.api.chat_replies import CHAT_REPLIES, SCREEN_REF_KINDS
 from app.api.runs.chat_record import to_reply
 
 KST = ZoneInfo("Asia/Seoul")
@@ -145,10 +145,10 @@ def test_recorded_events_survive_the_jsonb_round_trip(event):
     assert CHAT_REPLIES.validate_python(stored) == [reply]
 
 
-def test_readouts_keep_the_sentence_and_drop_source_refs():
+def test_readouts_keep_the_sentence_and_drop_refs_the_screen_lacks():
     """readout 은 기록 값이 들어 있어도 문장 그대로다 — 그날 오간 말은 고치지 않는다 (#228 10-16).
 
-    근거(`source_refs`)는 담지 않는다. 다시 그리는 길이 생기면 그때 칸을 늘린다.
+    근거는 화면이 받는 종류(복약 코스)만 남긴다. 성장 기록 같은 다른 근거는 담지 않는다.
     """
     readout = Readout(
         kind="notice",
@@ -166,7 +166,76 @@ def test_readouts_keep_the_sentence_and_drop_source_refs():
         "body": readout.body,
         "authored_by": "code",
         "code": None,
+        "source_refs": [],
     }
+
+
+def test_체크_안내의_복약_코스_근거는_지난_대화에도_남는다():
+    """앱을 다시 켜 그린 대화에서도 체크 안내 아래 "복약 화면 열기" 가 그 코스로 간다.
+
+    체크 안내는 kind 가 notice 라 날씨 안내와 가를 수 없어서, 화면은 이 근거로 알아본다.
+    """
+    course = uuid.UUID(int=0xC0)
+    readout = Readout(
+        kind="notice",
+        body="복용 체크는 홈이나 복약 화면에서 해 주세요.",
+        authored_by="code",
+        source_refs=(
+            EvidenceRef(kind="medication_schedule", id=course),
+            EvidenceRef(kind="observation_health", id=uuid.UUID(int=1)),
+        ),
+    )
+    event = AgentResult(
+        agent="health", task_type="medication", status="completed", readouts=(readout,)
+    )
+
+    [stored] = CHAT_REPLIES.dump_python([to_reply(event)], mode="json")[0]["readouts"]
+
+    assert stored["source_refs"] == [{"kind": "medication_schedule", "id": str(course)}]
+
+
+def test_readout_근거의_kind_는_스키마에서도_복약_코스만이다():
+    """Swagger 에도 "복약 코스만 온다" 는 약속이 남는다. 다른 종류를 넣으면 검증에서 막힌다."""
+    from app.api.chat_replies import StoredReadout
+
+    schema = StoredReadout.model_json_schema()
+    ref = schema["$defs"][schema["properties"]["source_refs"]["items"]["$ref"].split("/")[-1]]
+    kind = ref["properties"]["kind"]
+    # 종류가 하나면 const, 둘 이상이면 enum 으로 나온다
+    assert kind.get("enum", [kind.get("const")]) == sorted(SCREEN_REF_KINDS)
+    with pytest.raises(ValueError):
+        StoredReadout.model_validate(
+            {
+                "kind": "notice",
+                "title": "",
+                "body": "안내",
+                "authored_by": "code",
+                "code": None,
+                "source_refs": [{"kind": "child_growth_log", "id": "x"}],
+            }
+        )
+
+
+def test_근거_칸이_없던_예전_행은_빈_근거로_읽는다():
+    """이 칸이 생기기 전에 쌓인 대화가 그대로 읽혀야 한다."""
+    old = {
+        "type": "agent_result",
+        "agent": "health",
+        "task_type": "medication",
+        "status": "completed",
+        "readouts": [
+            {"kind": "notice", "title": "", "body": "안내", "authored_by": "code", "code": None}
+        ],
+        "question": None,
+        "suggestion_ids": [],
+        "kind": None,
+        "reason": None,
+        "record_count": None,
+    }
+
+    [reply] = CHAT_REPLIES.validate_python([old])
+
+    assert reply.readouts[0].source_refs == []
 
 
 def test_질문은_agent_result_답으로_남고_답할_수_있는지도_남는다():

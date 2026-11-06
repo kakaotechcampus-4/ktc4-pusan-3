@@ -732,6 +732,7 @@ async def handle_input(
     hooked: DomainOutcome | None = None
     # Memory 가 답할 수 있는 질문(note)을 냈는가. 그러면 도메인 Agent 질문은 보내지 않는다
     memory_asked = False
+    doses_routed = False  # 복약 조각 조정(`_routed_doses`)을 이미 했는가
     # 기록할 조각이 있으면 Memory를 부른다. 원문이 전부 요청·안내 조각이면 건너뛴다
     if routing.memory_task is not None:
         send(Step(2, _TOTAL_STEPS, _LABELS[1]))
@@ -765,6 +766,11 @@ async def handle_input(
             # 저장된 것과 제출을 기다리는 것을 한 run에서 같이 내보낸다
             if memory.drafts:
                 send(EventDrafts(memory.drafts))
+            # 복약 조각을 Memory 말보다 먼저 정한다 — 거절된 약 문장이 체크 안내로 실렸는지를 보고
+            # Memory 말을 지울지 정해야 한다. 자리가 없어 못 실렸는데 지우면 아무 말도 없는 run 이
+            # 된다
+            routing = _routed_doses(routing, memory, memory_context, run_id=run_id)
+            doses_routed = True
             memory_asked = _send_reply(
                 memory,
                 run_id=run_id,
@@ -772,6 +778,7 @@ async def handle_input(
                 once=once,
                 child_months=child_months,
                 routing=routing,
+                checked_by_health=_refused_doses_checked(routing, memory),
             )
             await _send_cards(
                 memory,
@@ -787,13 +794,8 @@ async def handle_input(
                 # 사전검사 · Supervisor 가 놓치고 저장 게이트가 막은 경우. 같은 안내를 낸다
                 send(HAZARD_GUIDANCE)
 
-    # Memory 가 먹인 약 행을 남긴 문장은 체크 안내에서 뺀다. 등록 안 된 약은 기록만 남긴다
-    if failed is None:
-        routing = _without_recorded_doses(
-            routing, _given_medicines(memory), memory_context.registered_medicines
-        )
-        # 저장 게이트가 등록된 약으로 거절한 문장은 체크 안내가 맡는다
-        routing = _with_refused_doses(routing, memory, _dose_texts(routing), run_id=run_id)
+    if failed is None and not doses_routed:
+        routing = _routed_doses(routing, memory, memory_context, run_id=run_id)
 
     # Supervisor 가 놓친 알레르기 · 만성질환 언급도 같은 안내로 잇는다. "적지 않은 기록" 이 아니라
     # 막은 것이라 다시 나누지 않는다 — 다시 물으면 Supervisor 호출만 하나 더 쓴다
@@ -1069,6 +1071,7 @@ def _send_reply(
     child_months: int | None,
     routing: Routing | None = None,
     resuming: bool = False,
+    checked_by_health: bool = False,
 ) -> bool:
     """Memory 의 말과 되묻기 맥락을 낸다. 보호자가 답할 수 있는 질문을 냈으면 True.
 
@@ -1096,6 +1099,10 @@ def _send_reply(
         and _request_only(memory, routing)
     ):
         note = MemoryNote(REQUEST_ONLY_NOTE, "message")
+    elif note is not None and note.kind == "message" and checked_by_health:
+        # 등록된 약이라 저장하지 않은 것밖에 없고, 그 문장이 같은 run 의 체크 안내로 실렸다 —
+        # Memory 의 말까지 나가면 같은 안내가 두 번이다
+        note = None
     pending = memory.pending
     fever = _unmeasured_fever(memory) if pending is None and not once.shown else None
     raw_text = "" if fever is None else str(fever.arguments["raw_text"])
@@ -1481,9 +1488,14 @@ def _refused_medicines(memory: MemoryAgentResult | None) -> tuple[str, ...]:
     return tuple(
         name
         for call in memory.calls
-        if call.result.get("error", {}).get("code") == ErrorCode.REGISTERED_MEDICINE
+        if _refused_medicine(call)
         and (name := str(call.arguments.get("medication_given") or "").strip())
     )
+
+
+def _refused_medicine(call: ToolCallRecord) -> bool:
+    """저장 게이트가 등록된 약이라 거절한 호출인가."""
+    return call.result.get("error", {}).get("code") == ErrorCode.REGISTERED_MEDICINE
 
 
 def _medication_room(routing: Routing) -> bool:
@@ -2304,6 +2316,42 @@ async def _save(
 def _label(agent: str, task_type: object) -> str:
     """로그용 이름. 라벨이 없는 Agent 는 이름만."""
     return agent if task_type is None else f"{agent}:{task_type}"
+
+
+def _routed_doses(
+    routing: Routing, memory: MemoryAgentResult | None, memory_context: AgentContext, *, run_id: str
+) -> Routing:
+    """먹인 약 문장을 복약 조각과 Memory 로 나눈 결과.
+
+    Memory 가 먹인 약 행을 남긴 문장은 체크 안내에서 빼고(등록 안 된 약은 기록만 남는다),
+    저장 게이트가 등록된 약으로 거절한 문장은 체크 안내가 맡는다.
+    """
+    routing = _without_recorded_doses(
+        routing, _given_medicines(memory), memory_context.registered_medicines
+    )
+    return _with_refused_doses(routing, memory, _dose_texts(routing), run_id=run_id)
+
+
+def _refused_doses_checked(routing: Routing, memory: MemoryAgentResult) -> bool:
+    """Memory 가 한 일이 등록 약 거절뿐이고, 그 약 문장이 이 run 의 복약 조각에 실렸는가.
+
+    둘 다 참일 때만 Memory 말을 지운다. Agent 자리가 없어 복약 조각이 못 생겼으면 거짓이다.
+    "한 일이 거절뿐" 은 호출이 전부 등록 약 거절이거나 성공한 조회라는 뜻이다. 다른 이유로 실패한
+    호출(되묻기)이나 성공한 쓰기(저장 · 고치기 · 지우기 · 일정 초안)가 있으면 거짓이다 — 고친 것과
+    지운 것은 `Saved` 로 나가지 않고, 되묻기도 Memory 말로만 나가서 지우면 보호자가 모른다.
+    """
+    if not memory.refused(ErrorCode.REGISTERED_MEDICINE) or memory.drafts:
+        return False
+    if not all(
+        _refused_medicine(call) or (call.success and not call.name.startswith(MUTATING_PREFIXES))
+        for call in memory.calls
+    ):
+        return False
+    refused = _refused_medicines(memory)
+    texts = [
+        text for task in routing.domain_tasks if _is_medication(task) for text in task.request_texts
+    ]
+    return any(mentions_medicine(text, name) for text in texts for name in refused)
 
 
 def _request_only(memory: MemoryAgentResult, routing: Routing) -> bool:

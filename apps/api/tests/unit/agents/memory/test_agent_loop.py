@@ -2251,6 +2251,9 @@ async def test_진행_중_코스의_약은_먹인_약_행으로_쓰지_않는다
 
     assert result.refused(ErrorCode.REGISTERED_MEDICINE)
     assert await _health_rows(context) == []
+    # 체크 안내는 같은 run 의 Health 카드가 낸다. 모델에게 같은 말을 시키면 안내가 두 번 나간다
+    message = result.calls[0].result["error"]["message"]
+    assert "체크" not in message and "복약 화면" not in message
 
 
 async def test_등록_약이_있으면_이름_없는_약도_쓰지_않는다(context: AgentContext) -> None:
