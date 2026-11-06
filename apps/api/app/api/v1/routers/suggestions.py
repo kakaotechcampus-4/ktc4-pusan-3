@@ -385,6 +385,7 @@ async def submit_event(
             plan = series_repo.plan_occurrences(
                 starts_at=fields.pop("starts_at"),
                 ends_at=fields.pop("ends_at"),
+                all_day=body.event.all_day,
                 weekdays=body.repeat.weekdays,
                 until=body.repeat.until,
             )
@@ -1252,6 +1253,8 @@ async def update_event_series(
         )
     except RepeatError as exc:
         raise _invalid_repeat(exc) from exc
+    except series_repo.NoFutureOccurrence as exc:
+        raise ApiError(422, "invalid_repeat", str(exc)) from exc
     await session.commit()
 
     response_dict = UpdateSeriesResponse(

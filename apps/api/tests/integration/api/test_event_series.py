@@ -43,7 +43,14 @@ EVENT = {
 
 
 async def _submit(
-    client: AsyncClient, cid: uuid.UUID, headers: dict, *, first: int, until: int, **extra
+    client: AsyncClient,
+    cid: uuid.UUID,
+    headers: dict,
+    *,
+    first: int,
+    until: int,
+    weekdays=EVERY_DAY,
+    **extra,
 ):
     idempotency.clear()
     return await client.post(
@@ -51,7 +58,7 @@ async def _submit(
         json={
             "event": {**EVENT, "starts_at": _at(first, "08:30")},
             "items": [{"item_id": None, "item_name": "물통"}],
-            "repeat": {"weekdays": EVERY_DAY, "until": _day(until).isoformat()},
+            "repeat": {"weekdays": weekdays, "until": _day(until).isoformat()},
             **extra,
         },
         headers={**headers, "Idempotency-Key": uuid.uuid4().hex},
@@ -117,8 +124,10 @@ async def _items(session: AsyncSession, event_id: uuid.UUID) -> dict[str, bool]:
     return {row.item_name: row.is_prepared for row in rows}
 
 
-async def _seed(client, session, cid, headers, *, first=-3, until=6, **extra) -> str:
-    resp = await _submit(client, cid, headers, first=first, until=until, **extra)
+async def _seed(
+    client, session, cid, headers, *, first=-3, until=6, weekdays=EVERY_DAY, **extra
+) -> str:
+    resp = await _submit(client, cid, headers, first=first, until=until, weekdays=weekdays, **extra)
     assert resp.status_code == 201, resp.text
     return resp.json()["event"]["series"]["id"]
 
@@ -332,6 +341,151 @@ async def test_all_day_change_ignores_clock_times(
     tomorrow = (await _occurrences(session, sid))[_day(1)]
     assert tomorrow.all_day is True
     assert tomorrow.starts_at.astimezone(KST).time() == time(0)
+
+
+async def test_rule_change_replacing_every_future_occurrence_keeps_reminders(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    """요일을 통째로 바꿔 오늘 이후 회차가 전부 새 회차가 돼도 알림이 따라간다.
+
+    옛 회차를 지우면 그 알림도 지워지므로, 걸어 둔 값을 지우기 전에 읽어야 한다 (#761 리뷰).
+    """
+    headers, parent_id = bearer
+    old_day, new_day = _day(1).isoweekday(), _day(2).isoweekday()
+    sid = await _seed(
+        db_client,
+        session,
+        cid,
+        headers,
+        first=1,
+        until=21,
+        weekdays=[old_day],
+        reminder={"lead": "1h"},
+    )
+    before = _series_body(until=21, weekdays=[old_day])
+
+    resp = await _patch(
+        db_client,
+        cid,
+        sid,
+        headers,
+        _patch_body(before, _series_body(until=21, weekdays=[new_day])),
+    )
+
+    assert resp.status_code == 200, resp.text
+    occurrences = await _occurrences(session, sid)
+    assert sorted(occurrences) == [_day(2), _day(9), _day(16)]
+    leads = list(
+        await session.scalars(
+            select(Reminder.lead).where(
+                Reminder.event_id.in_([e.id for e in occurrences.values()]),
+                Reminder.parent_id == parent_id,
+            )
+        )
+    )
+    assert leads == ["1h", "1h", "1h"]
+
+
+async def test_overnight_repeat_is_refused_but_all_day_is_not(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    """자정을 넘는 회차는 만들지 않는다 — 묶음 고치기가 "끝 > 시작" 인 하루 시각만 받아서
+    만들어 두면 영영 고칠 수 없다 (#761 리뷰). 종일의 다음 날 00:00 끝은 된다."""
+    headers, _ = bearer
+
+    async def post(event: dict):
+        idempotency.clear()
+        return await db_client.post(
+            f"/api/v1/children/{cid}/events",
+            json={
+                "event": {**EVENT, **event},
+                "items": [],
+                "repeat": {"weekdays": EVERY_DAY, "until": _day(3).isoformat()},
+            },
+            headers={**headers, "Idempotency-Key": uuid.uuid4().hex},
+        )
+
+    overnight = await post({"starts_at": _at(1, "23:00"), "ends_at": _at(2, "01:00")})
+    assert overnight.status_code == 422
+    assert overnight.json()["error"]["code"] == "invalid_repeat"
+    assert await session.scalar(select(func.count()).select_from(Event)) == 0
+
+    all_day = await post(
+        {"starts_at": _at(1, "00:00"), "ends_at": _at(2, "00:00"), "all_day": True}
+    )
+    assert all_day.status_code == 201, all_day.text
+
+
+async def test_re_expansion_does_not_revive_moved_or_deleted_occurrences(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    """끝 날짜를 늘리면 늘어난 날에만 회차가 생긴다. 한 회차를 다른 날로 옮겼거나 지워 둔 날은
+    옛 규칙에 있던 날이라 되살리지 않는다 (#761 리뷰)."""
+    headers, _ = bearer
+    sid = await _seed(db_client, session, cid, headers, first=-1, until=4)
+    occurrences = await _occurrences(session, sid)
+    await session.execute(
+        update(Event)
+        .where(Event.id == occurrences[_day(2)].id)
+        .values(starts_at=datetime.combine(_day(3), time(10), tzinfo=KST))
+    )
+    await session.delete(occurrences[_day(4)])
+    await session.flush()
+    before = _series_body(until=4)
+
+    resp = await _patch(db_client, cid, sid, headers, _patch_body(before, _series_body(until=6)))
+
+    assert resp.status_code == 200, resp.text
+    rows = await session.scalars(
+        select(Event.starts_at)
+        .where(Event.series_id == uuid.UUID(sid))
+        .execution_options(populate_existing=True)
+    )
+    days = sorted(r.astimezone(KST).date() for r in rows)
+    assert days == [_day(-1), _day(0), _day(1), _day(3), _day(3), _day(5), _day(6)]
+
+
+async def test_rule_leaving_no_future_occurrence_is_refused(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    """끝 날짜를 어제로 당겨 오늘 이후 회차가 남지 않으면 422 — 묶음을 지우는 길은 삭제
+    제안이고, 묶음 고치기로 일괄 삭제를 하지 않는다 (#761 리뷰). 회차는 그대로다."""
+    headers, _ = bearer
+    sid = await _seed(db_client, session, cid, headers)
+    before = _series_body(until=6)
+
+    resp = await _patch(db_client, cid, sid, headers, _patch_body(before, _series_body(until=-1)))
+
+    assert resp.status_code == 422
+    assert resp.json()["error"]["code"] == "invalid_repeat"
+    assert len(await _occurrences(session, sid)) == 10
+
+
+async def test_90_days_count_from_the_first_day_matching_the_new_weekdays(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    """다시 펼칠 때 90일은 첫 회차(starts_on) 뒤 새 요일과 처음 맞는 날부터 센다 — Agent 가
+    쓰는 `occurrence_dates` 와 같은 기준이다 (event-draft-flow §4-6)."""
+    headers, _ = bearer
+    sid = await _seed(db_client, session, cid, headers, first=1, until=8)
+    weekdays = [d for d in EVERY_DAY if d != _day(1).isoweekday()]
+    before = _series_body(until=8)
+
+    ok = await _patch(
+        db_client, cid, sid, headers, _patch_body(before, _series_body(until=91, weekdays=weekdays))
+    )
+    assert ok.status_code == 200, ok.text  # 처음 맞는 날(day 2)부터 90일째
+
+    too_long = await _patch(
+        db_client,
+        cid,
+        sid,
+        headers,
+        _patch_body(
+            _series_body(until=91, weekdays=weekdays), _series_body(until=92, weekdays=weekdays)
+        ),
+    )
+    assert too_long.status_code == 422
 
 
 async def test_series_of_unknown_id_is_not_found(

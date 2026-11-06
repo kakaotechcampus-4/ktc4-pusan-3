@@ -32,8 +32,9 @@ from app.rules.reminder import ReminderLead, for_kind, remind_at
 
 KST = ZoneInfo("Asia/Seoul")
 
-MAX_OCCURRENCE_LENGTH = timedelta(days=1)
-"""한 회차는 하루 안에서 끝난다 (종일은 다음 날 00:00 까지)."""
+
+class NoFutureOccurrence(ValueError):
+    """고친 규칙으로는 오늘 이후 회차가 하나도 남지 않는다."""
 
 
 @dataclass(frozen=True)
@@ -123,16 +124,27 @@ Occurrence = tuple[datetime, datetime | None]
 
 
 def plan_occurrences(
-    *, starts_at: datetime, ends_at: datetime | None, weekdays: list[int], until: date
+    *,
+    starts_at: datetime,
+    ends_at: datetime | None,
+    all_day: bool,
+    weekdays: list[int],
+    until: date,
 ) -> list[Occurrence]:
-    """첫 회차의 시각(KST 벽시계)과 길이를 모든 회차에 쓴다. 쓰기 전에 검사할 수 있게 DB 를 안 본다.
+    """첫 회차의 시각(KST 벽시계)과 길이를 모든 회차에 쓴다. 쓰기 전에 검사하게 DB 를 안 본다.
 
-    회차 날짜가 성립하지 않으면 `RepeatError`, 한 회차가 하루를 넘으면 ValueError.
+    회차 날짜가 성립하지 않으면 `RepeatError`, 한 회차가 그날(KST) 안에서 끝나지 않으면 ValueError.
+    🚨 자정을 넘는 회차(23:00 ~ 다음 날 01:00)는 받지 않는다 — 묶음 고치기는 하루의 시각만
+       (`starts_time` · `ends_time`, 끝 > 시작) 말해서, 만들 수는 있어도 영영 고칠 수 없게 된다.
+       종일 일정만 다음 날 00:00 끝을 허용한다 (고치기에서 종일은 시각을 보지 않는다).
     """
     first = starts_at.astimezone(KST)
     length = ends_at - starts_at if ends_at is not None else None
-    if length is not None and length > MAX_OCCURRENCE_LENGTH:
-        msg = "반복 일정의 한 회차는 하루 안에서 끝나야 해요"
+    next_day = midnight(first.date() + timedelta(days=1))
+    if ends_at is not None and not (
+        kst_day(ends_at) == first.date() or (all_day and ends_at == next_day)
+    ):
+        msg = "반복 일정의 한 회차는 그날 안에서 끝나야 해요"
         raise ValueError(msg)
     plan = []
     for day in occurrence_dates(first.date(), weekdays, until):
@@ -227,9 +239,11 @@ async def update_series(
     고친 뒤 오늘 이후 회차 수를 낸다.
     - `before` 와 달라진 칸만 쓴다 — 한 회차만 따로 고쳐 둔 다른 칸이 "전부 고치기" 에 덮이지
       않는다. `before` 가 None 이면 기준을 몰라 모든 칸을 쓴다. 시각 · 종일은 한 칸으로 본다.
-    - 요일 · 끝 날짜가 바뀌면 다시 펼친다: 새 규칙에 없는 날의 회차는 지우고, 없던 날엔 새 회차를
-      만든다.
-      90일은 묶음의 첫 회차(`starts_on`)에서 센다. 성립하지 않으면 `RepeatError`.
+    - 요일 · 끝 날짜가 바뀌면 다시 펼친다: 새 규칙에 없는 날의 회차는 지우고, **옛 규칙에 없던 날**
+      에만 새 회차를 만든다 — 한 회차만 옮기거나 지워 둔 날이 되살아나지 않는다.
+      90일은 `starts_on` 이후 새 요일과 처음 맞는 날에서 센다(`occurrence_dates`, Agent 와 같다).
+      성립하지 않으면 `RepeatError`, 오늘 이후 회차가 남지 않으면 `NoFutureOccurrence` —
+      묶음을 지우는 길은 삭제 제안이다 (event-draft-flow §6).
     - 준비물은 이름으로 맞춘다. 남는 이름은 그 회차의 챙김 표시를 지킨다.
     부르는 쪽이 묶음 행을 잠가(`find_series(lock=True)`) 넘긴다.
     """
@@ -244,13 +258,26 @@ async def update_series(
         target = [
             day for day in occurrence_dates(series.starts_on, weekdays, until) if day >= today
         ]
+        if not target:
+            msg = "오늘 이후에 남는 회차가 없어요"
+            raise NoFutureOccurrence(msg)
+        old = set(occurrence_dates(series.starts_on, series.weekdays, series.until))
+        # 🚨 회차를 지우기 전에 읽는다 — 지우면 그 회차의 알림도 같이 지워져, 오늘 이후 회차가
+        #    전부 바뀌는 요일 변경에서 새 회차에 걸 알림이 사라진다
+        leads = await _reminder_leads(session, series.id, all_day=values.all_day)
         wanted = set(target)
         for event in [e for e in events if kst_day(e.starts_at) not in wanted]:
             await session.delete(event)
             events.remove(event)
         have = {kst_day(e.starts_at) for e in events}
         new_events = await _add_occurrences(
-            session, series, values, [d for d in target if d not in have], keep, now
+            session,
+            series,
+            values,
+            [d for d in target if d not in old and d not in have],
+            keep,
+            leads,
+            now,
         )
         series.weekdays, series.until = rule
         await session.flush()
@@ -284,28 +311,32 @@ async def update_series(
     return len(events) + len(new_events)
 
 
+async def _reminder_leads(
+    session: AsyncSession, series_id: uuid.UUID, *, all_day: bool
+) -> list[tuple[uuid.UUID, ReminderLead]]:
+    """보호자마다 이 묶음의 가장 늦은 회차에 건 알림 값. 새 회차에 그대로 건다."""
+    rows = await session.execute(
+        select(Reminder.parent_id, Reminder.lead)
+        .join(Event, Event.id == Reminder.event_id)
+        .where(Event.series_id == series_id)
+        .order_by(Reminder.parent_id, Event.starts_at.desc())
+        .distinct(Reminder.parent_id)
+    )
+    return [(parent_id, for_kind(lead, all_day=all_day)) for parent_id, lead in rows]
+
+
 async def _add_occurrences(
     session: AsyncSession,
     series: EventSeries,
     values: SeriesValues,
     days: list[date],
     items: list[str],
+    leads: list[tuple[uuid.UUID, ReminderLead]],
     now: datetime,
 ) -> list[Event]:
-    """새 규칙으로 생긴 날에 회차를 만든다.
-
-    알림은 보호자마다 이 묶음의 가장 늦은 회차 값을 따른다.
-    """
+    """새 규칙으로 생긴 날에 회차를 만든다. 알림은 `_reminder_leads` 값을 건다."""
     if not days:
         return []
-    template = await session.execute(
-        select(Reminder.parent_id, Reminder.lead)
-        .join(Event, Event.id == Reminder.event_id)
-        .where(Event.series_id == series.id)
-        .order_by(Reminder.parent_id, Event.starts_at.desc())
-        .distinct(Reminder.parent_id)
-    )
-    leads = [(parent_id, for_kind(lead, all_day=values.all_day)) for parent_id, lead in template]
     created = []
     for day in days:
         starts, ends = values.when(day)
