@@ -278,3 +278,26 @@ def test_ready_probe_는_200_이면_ready(ready_server):
 def test_ready_probe_는_503_이면_실패한_구성요소만_붙인다(ready_server):
     assert ready_server(503, {"db": "ok", "redis": "fail"}) == "not-ready:redis"
     assert ready_server(503, {"db": "fail", "redis": "fail"}) == "not-ready:db,redis"
+
+
+def test_ready_probe_는_응답이_없으면_상한에서_끊는다():
+    """api 가 멈춰 /health/ready 가 답하지 않아도 cron 이 매달리지 않고 unreachable 로 알린다 (#671 리뷰).
+
+    상한을 짧게 바꿔 돌린다 — 상한이 빠지면 바꿀 것이 없어 끝까지 기다리다 여기서 깨진다.
+    """
+    import socket
+
+    server = socket.socket()
+    server.bind(("127.0.0.1", 0))
+    server.listen()  # 연결은 받고 답하지 않는다
+    probe = _ready_probe()
+    code = probe.replace("timeout=5", "timeout=0.3").replace(
+        "http://127.0.0.1:8000", f"http://127.0.0.1:{server.getsockname()[1]}"
+    )
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", code], capture_output=True, text=True, timeout=3
+        )
+    finally:
+        server.close()
+    assert result.returncode != 0  # 스크립트는 `|| echo unreachable` 로 받는다
