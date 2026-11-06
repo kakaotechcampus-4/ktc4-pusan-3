@@ -540,6 +540,7 @@ async def still_due_for(session: AsyncSession, *, dose_id: uuid.UUID, parent_id:
 
     맡은 뒤 보내는 사이 알림을 끄거나 · 연결을 끊거나(구독이 지워진다) · 다른 보호자가 체크하거나 ·
     코스가 멈출 수 있다. 기기 · 로그인 · 스위치는 `notification.still_medication_target` 이 본다.
+    켠 시각은 다시 보지 않는다 — 그 몇 초 사이 껐다 다시 켜면 그 회차는 그대로 간다.
     """
     found = await session.scalar(
         select(MedicationDose.id)

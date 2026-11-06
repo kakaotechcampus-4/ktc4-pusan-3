@@ -7,9 +7,11 @@
 from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select, update
+import pytest
+from sqlalchemy import delete, select, update
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from app.domains.child.models import ParentChild, ParentChildRelation
+from app.domains.child.models import Child, ParentChild, ParentChildRelation
 from app.domains.identity.models import Parent
 from app.domains.medication.models import (
     MedicationCreatedBy,
@@ -28,6 +30,7 @@ from app.domains.medication.repository import (
     list_doses,
     still_due_for,
 )
+from app.infra.db.session import engine
 
 KST = ZoneInfo("Asia/Seoul")
 NOW = datetime(2026, 10, 27, 9, 35, tzinfo=KST).astimezone(UTC)
@@ -143,3 +146,35 @@ async def test_보내기_직전에_구독이_지워졌거나_체크됐으면_보
         .values(checked_at=NOW, checked_by=child.owner_parent_id)
     )
     assert not await still_due_for(session, dose_id=dose.id, parent_id=child.owner_parent_id)
+
+
+# 배치가 겹쳐 돌 때. 한 트랜잭션 안의 `session` 으로는 겹칠 수 없어 커밋하는 세션을 따로 연다.
+
+
+@pytest.fixture
+async def committed_due_dose():
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with factory() as setup:
+        owner = Parent()
+        setup.add(owner)
+        await setup.flush()
+        kid = Child(owner_parent_id=owner.id, nickname="overlap", birth_date=date(2023, 1, 1))
+        setup.add(kid)
+        await setup.flush()
+        course, [dose] = await course_at(setup, kid, NOW - timedelta(minutes=2))
+        await subscribe(setup, course, owner.id, NOW - timedelta(days=1))
+        await setup.commit()
+    yield factory, dose
+    async with factory() as cleanup:  # 코스 · 회차 · 구독은 CASCADE
+        await cleanup.execute(delete(Child).where(Child.id == kid.id))
+        await cleanup.execute(delete(Parent).where(Parent.id == owner.id))
+        await cleanup.commit()
+
+
+async def test_겹쳐_돌아도_한_회차는_한_배치만_맡는다(committed_due_dose):
+    """앞 배치가 맡고 커밋하기 전에 다음 배치가 돌아도, 다음 배치는 기다리지 않고 건너뛴다."""
+    factory, dose = committed_due_dose
+    async with factory() as first, factory() as second:
+        [claimed] = await claim_due_doses(first, now=NOW, stale_after=WINDOW)
+        assert claimed.dose_id == dose.id
+        assert await claim_due_doses(second, now=NOW, stale_after=WINDOW) == []

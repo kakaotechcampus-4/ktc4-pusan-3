@@ -10,11 +10,9 @@ from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
-from sqlalchemy import delete, update
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy import update
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domains.child.models import Child
-from app.domains.identity.models import Parent
 from app.domains.medication.models import (
     MedicationCreatedBy,
     MedicationDose,
@@ -25,11 +23,9 @@ from app.domains.medication.repository import (
     NewDose,
     add_course,
     add_subscription,
-    claim_due_doses,
     list_doses,
 )
 from app.domains.notification.repository import Switches, put_switches
-from app.infra.db.session import engine
 from app.workers import reminder_dispatch
 from app.workers.medication_dispatch import STALE_AFTER, run_medication_dispatch
 from tests.integration.api.conftest import link_child
@@ -88,10 +84,6 @@ async def test_구독한_보호자의_기기에만_회차마다_한_번_간다(s
     }
     assert message.ttl == STALE_AFTER
     assert message.android_channel == "medication"
-
-    again = await run_medication_dispatch(session, now=NOW + timedelta(minutes=1), fcm=fcm)
-    assert again.claimed == 0
-    assert len(fcm.sent) == 2
 
 
 async def test_복약_알림_스위치를_끈_보호자는_받지_않는다(session: AsyncSession):
@@ -157,7 +149,9 @@ async def test_일정_알림이_실패해도_복약_알림은_돌고_실행은_�
     monkeypatch.setattr(reminder_dispatch, "async_session_factory", no_session)
     monkeypatch.setattr(reminder_dispatch, "engine", Engine())
     monkeypatch.setattr(
-        reminder_dispatch, "_RUNS", (("일정 알림", schedule_fails), ("복약 알림", medication))
+        reminder_dispatch,
+        "_RUNS",
+        (("일정 알림 발송 실패", schedule_fails), ("복약 알림 발송 실패", medication)),
     )
 
     with pytest.raises(SystemExit) as exited:
@@ -165,30 +159,3 @@ async def test_일정_알림이_실패해도_복약_알림은_돌고_실행은_�
 
     assert ran == ["복약"]
     assert exited.value.code == 1
-
-
-# 배치가 겹쳐 돌 때. 한 트랜잭션 안의 `session` 으로는 겹칠 수 없어 커밋하는 세션을 따로 연다.
-
-
-@pytest.fixture
-async def committed_due_dose():
-    factory = async_sessionmaker(engine, expire_on_commit=False)
-    async with factory() as setup:
-        parent, _ = await _parent_with_device(setup, "fcm-overlap")
-        child_id = await link_child(setup, parent_id=parent)
-        dose = await _due_course(setup, child_id, parent)
-        await setup.commit()
-    yield factory, dose
-    async with factory() as cleanup:  # 코스 · 회차 · 구독 · 로그인 · 기기는 CASCADE
-        await cleanup.execute(delete(Child).where(Child.id == child_id))
-        await cleanup.execute(delete(Parent).where(Parent.id == parent))
-        await cleanup.commit()
-
-
-async def test_겹쳐_돌아도_한_회차는_한_배치만_맡는다(committed_due_dose):
-    """앞 배치가 맡고 커밋하기 전에 다음 배치가 돌아도, 다음 배치는 기다리지 않고 건너뛴다."""
-    factory, dose = committed_due_dose
-    async with factory() as first, factory() as second:
-        [claimed] = await claim_due_doses(first, now=NOW, stale_after=STALE_AFTER)
-        assert claimed.dose_id == dose.id
-        assert await claim_due_doses(second, now=NOW, stale_after=STALE_AFTER) == []

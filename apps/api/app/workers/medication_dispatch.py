@@ -89,7 +89,7 @@ async def run_medication_dispatch(
         session, parent_ids=list({p for d in due for p in d.parent_ids}), now=now
     )
     recipients = delivered = no_device = dropped = failed = 0
-    gone: list[tuple] = []
+    gone: list[tuple] = []  # 같은 보호자가 같은 시각의 회차 여럿을 받으면 한 기기가 여러 번 나온다
     for dose in due:
         message = medication_message(dose)
         for parent_id in dose.parent_ids:
@@ -100,6 +100,8 @@ async def run_medication_dispatch(
                 continue
             sent_any = False
             for device_id, token in devices:
+                if (device_id, token) in gone:  # 앞 회차에서 무효라고 들은 기기 — 같은 시각 회차 둘
+                    continue
                 if not (
                     await still_due_for(session, dose_id=dose.dose_id, parent_id=parent_id)
                     and await still_medication_target(

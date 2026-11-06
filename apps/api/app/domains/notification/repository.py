@@ -4,7 +4,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import Select, delete, func, select, text
+from sqlalchemy import ColumnElement, Select, delete, func, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -250,7 +250,7 @@ def _medication_targets(now: datetime) -> Select:
     return _live_devices(now, enabled)
 
 
-def _live_devices(now: datetime, enabled) -> Select:
+def _live_devices(now: datetime, enabled: ColumnElement[bool]) -> Select:
     """로그인이 살아 있고 `enabled` 스위치가 켜진 보호자의 기기."""
     return (
         select(PushDevice.parent_id, PushDevice.id, PushDevice.device_token)

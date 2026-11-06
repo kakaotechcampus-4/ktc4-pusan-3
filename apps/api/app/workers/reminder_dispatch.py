@@ -161,9 +161,15 @@ async def run_dispatch(session: AsyncSession, *, now: datetime, fcm: FcmClient) 
     return result
 
 
-_RUNS = (("일정 알림", run_dispatch), ("복약 알림", run_medication_dispatch))
-"""한 실행에서 차례로 돈다. 🚨 한쪽이 실패해도 다른 쪽은 돈다 — 세션도 따로 연다(실패한 세션은
-다시 쓸 수 없다). 실패는 로그(ERROR → Discord)로 알리고 실행은 1 로 끝난다."""
+_RUNS = (
+    ("일정 알림 발송 실패", run_dispatch),
+    ("복약 알림 발송 실패", run_medication_dispatch),
+)
+"""(실패했을 때의 로그 글귀, 발송) — 한 실행에서 차례로 돈다.
+
+🚨 한쪽이 실패해도 다른 쪽은 돈다 — 세션도 따로 연다(실패한 세션은 다시 쓸 수 없다). 실패는
+   로그(ERROR → Discord)로 알리고 실행은 1 로 끝난다. 글귀를 통째로 둔 것은 Discord 카드가 `%s` 를
+   채우지 않고 글귀(record.msg)만 싣기 때문이다 — 어느 쪽이 실패했는지 카드에서 보이게."""
 
 
 async def _main() -> None:
@@ -174,12 +180,12 @@ async def _main() -> None:
     fcm = FcmClient.from_file(settings.FCM_SERVICE_ACCOUNT_FILE)
     failed = False
     try:
-        for name, run in _RUNS:
+        for failure, run in _RUNS:
             try:
                 async with async_session_factory() as session:
                     await run(session, now=datetime.now(UTC), fcm=fcm)
             except Exception:
-                log.exception("%s 발송 실패", name)
+                log.exception(failure)
                 failed = True
     finally:
         await fcm.aclose()
