@@ -4,6 +4,7 @@
 """
 
 import uuid
+from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Literal
@@ -50,6 +51,18 @@ async def list_events(
         .order_by(Event.starts_at, Event.id)
     )
     return list((await session.scalars(stmt)).all())
+
+
+async def find_events(
+    session: AsyncSession, *, child_id: uuid.UUID, event_ids: Collection[uuid.UUID]
+) -> dict[uuid.UUID, Event]:
+    """여러 일정을 한 번에. 없는 · 다른 아이의 것은 결과에 없다 (#535 카드)."""
+    if not event_ids:
+        return {}
+    rows = await session.scalars(
+        select(Event).where(Event.id.in_(set(event_ids)), Event.child_id == child_id)
+    )
+    return {row.id: row for row in rows}
 
 
 async def find_event(

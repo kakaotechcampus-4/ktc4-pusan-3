@@ -272,6 +272,14 @@ export const NOT_MAPPED: Record<string, string> = {
   LinkedAffinityOut: "웹이 ObservationOut.affinity 를 읽지 않는다",
   AnswerResponse: "05 가 되묻기 답의 응답 본문을 읽지 않는다",
   SeenTours: "웹 미사용 — FE 후속 (#696 머지 뒤 lib/tour/seen.ts 를 서버 호출로 바꿀 때)",
+  ConfirmDeleteProposalRequest: "웹 미사용 — FE 후속 (#535 삭제 카드 버튼, BE 머지 뒤 요청)",
+  DeleteProposalOut: "웹 미사용 — FE 후속 (#535)",
+  DeleteProposalResponse: "웹 미사용 — FE 후속 (#535)",
+  CardTabOut:
+    "웹 미사용 — FE 후속 (#535 조회 · 삭제 카드의 탭, SSE found_tabs · delete_proposal 과 같은 모양)",
+  ProposalTabOut: "웹 미사용 — FE 후속 (#535)",
+  FoundTabsOut: "웹 미사용 — FE 후속 (#535 지난 대화의 조회 카드)",
+  DeleteProposalCardOut: "웹 미사용 — FE 후속 (#535 지난 대화의 삭제 카드)",
   // 요일 반복 (#738). 웹 타입은 #746 이 만든다 — 그 PR 이 SCHEMA_MAP 으로 옮긴다
   // (EventSeriesRef · RepeatRequest · SeriesDraftFields · UpdateSeriesBody.before · UpdateSeriesBody)
   EventSeriesOut: "웹 타입이 #746 에서 생긴다 (EventSeriesRef)",

@@ -3,7 +3,7 @@
 요일 반복 묶음. 회차는 날짜마다 따로인 event 행이고, 묶음 행은 규칙(요일 · 첫 회차 · 끝 날짜)만 든다.
 
 Revision ID: a7d3e9b1c246
-Revises: 7c1e5d9a2b40
+Revises: d5e8a1c4b937
 Create Date: 2026-11-06 12:00:00.000000
 
 """
@@ -14,7 +14,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "a7d3e9b1c246"
-down_revision: Union[str, Sequence[str], None] = "7c1e5d9a2b40"
+down_revision: Union[str, Sequence[str], None] = "d5e8a1c4b937"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

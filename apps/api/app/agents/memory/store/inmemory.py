@@ -2,7 +2,7 @@
 재현 가능한 테스트를 위해 id는 도메인별 순번(observation_food-1)으로 만든다.
 """
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import replace
 from datetime import date, datetime, time, timezone, tzinfo
 from typing import Any
@@ -10,11 +10,13 @@ from uuid import UUID
 
 from app.agents.common.datetime_rules import DateRange, EventWhen
 from app.agents.memory.store.ports import (
+    DeleteCandidates,
     EventItemRow,
     EventRow,
     ObservationDomain,
     ObservationRow,
     SeriesRow,
+    check_candidates,
 )
 from app.rules.recurrence import occurrence_dates
 
@@ -36,6 +38,8 @@ class InMemoryStore:
         self._items: dict[str, EventItemRow] = {}
         self._series: dict[str, SeriesRow] = {}
         self._counters: dict[str, int] = {}
+        # 이 run 의 삭제 제안 (id, 탭들). 테스트가 무엇을 제안했는지 읽는다
+        self.proposal: tuple[str, tuple[DeleteCandidates, ...]] | None = None
 
     def _next_id(self, prefix: str) -> str:
         self._counters[prefix] = self._counters.get(prefix, 0) + 1
@@ -303,3 +307,13 @@ class InMemoryStore:
 
     async def delete_event_item(self, *, item_id: str) -> bool:
         return self._items.pop(item_id, None) is not None
+
+    # delete proposal
+    async def propose_delete(
+        self, *, parent_id: UUID, run_id: str, tabs: Sequence[DeleteCandidates]
+    ) -> str:
+        if self.proposal is not None:
+            raise ValueError("한 run 에 제안은 하나다")
+        check_candidates(tabs)
+        self.proposal = (self._next_id("delete_proposal"), tuple(tabs))
+        return self.proposal[0]

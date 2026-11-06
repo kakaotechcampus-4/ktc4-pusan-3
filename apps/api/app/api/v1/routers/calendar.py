@@ -21,8 +21,8 @@ from app.api.deps.child import AccessibleChild
 from app.api.deps.db import SessionDep
 from app.api.errors import ErrorEnvelope
 from app.api.quota import KST, today_kst
+from app.api.v1.card_rows import event_out
 from app.api.v1.observation_outs import to_observation_outs
-from app.api.v1.reminder_check import reminder_out
 from app.api.v1.routers.observations import LISTED_STATUSES, VISIBLE_DOMAINS
 from app.api.v1.schemas.calendar import (
     CalendarDayOut,
@@ -31,14 +31,13 @@ from app.api.v1.schemas.calendar import (
     MyDiaryOut,
     SharedPhotoOut,
 )
-from app.api.v1.schemas.suggestions import CalendarEventOut, EventItemOut, EventSeriesOut
 from app.domains.chat.repository import count_turns
 from app.domains.memory.observation.repository import (
     ObservationRecord,
     count_observations_by_day,
     page_observations,
 )
-from app.domains.schedule.models import Event, EventItem, EventSeries, Reminder
+from app.domains.schedule.models import Event
 from app.domains.schedule.repository import (
     find_diary,
     list_diary_dates,
@@ -143,7 +142,7 @@ async def get_calendar_day(
             for p in photos
         ],
         events=[
-            _event_out(e, items.get(e.id, []), reminders.get(e.id), series.get(e.series_id))
+            event_out(e, items.get(e.id, []), reminders.get(e.id), series.get(e.series_id))
             for e in events
         ],
         observations=await to_observation_outs(session, records, today=today_kst()),
@@ -184,34 +183,3 @@ async def _observations_on(
         if page.next_cursor is None:
             return records
         cursor = page.next_cursor
-
-
-def _event_out(
-    event: Event,
-    items: list[EventItem],
-    reminder: Reminder | None,
-    series: EventSeries | None,
-) -> CalendarEventOut:
-    return CalendarEventOut(
-        id=str(event.id),
-        title=event.title,
-        event_type=str(event.event_type),
-        starts_at=event.starts_at.isoformat(),
-        ends_at=event.ends_at.isoformat() if event.ends_at else None,
-        all_day=event.all_day,
-        category=str(event.category),
-        created_by=str(event.created_by),
-        source_notice_id=str(event.source_notice_id) if event.source_notice_id else None,
-        source_refs=event.source_refs or [],
-        items=[
-            EventItemOut(
-                item_id=str(i.item_id),
-                item_name=i.item_name,
-                is_prepared=i.is_prepared,
-                prepared_at=i.prepared_at.isoformat() if i.prepared_at else None,
-            )
-            for i in items
-        ],
-        reminder=reminder_out(reminder),
-        series=EventSeriesOut.of(series),
-    )
