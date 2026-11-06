@@ -20,9 +20,9 @@ from dataclasses import dataclass
 from functools import cache
 from typing import Any
 
+from app.agents.common.food_safety import menu_codes
 from app.agents.common.reference import allergen_terms, food_safety_terms, load_reference
 from app.agents.common.reference_docs import DocMeta, check_unique_doc_keys, parse_doc_meta
-from app.agents.food.tools.safety import menu_codes
 from app.rules.allergen import ALLERGEN_NAMES
 from app.rules.term_match import TermMatcher, prepare_fields
 
