@@ -8,7 +8,7 @@
 - 인덱스 — 탈퇴 때 SET NULL 이 이 칸으로 행을 찾는다.
 
 Revision ID: 361f26c96b2e
-Revises: 7c1e5d9a2b40
+Revises: d5e8a1c4b937
 """
 
 from typing import Sequence, Union
@@ -18,7 +18,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = "361f26c96b2e"
-down_revision: Union[str, Sequence[str], None] = "7c1e5d9a2b40"
+down_revision: Union[str, Sequence[str], None] = "d5e8a1c4b937"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
