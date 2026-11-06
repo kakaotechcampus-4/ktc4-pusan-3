@@ -30,6 +30,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from app.agents import pipeline
+from app.agents.common.guardrail import GuardContext, GuardrailUnavailableError, GuardResult
 from app.agents.common.llm_client import LLMResponse, LLMUnavailableError
 from app.agents.common.readout import Readout
 from app.agents.common.refs import EvidenceCitation
@@ -975,6 +976,108 @@ async def test_Supervisor_의_hazard_라벨이면_Memory_를_부르지_않는다
     assert memory_llm.calls == 0
     assert [guidance.code for guidance in _of(events, Guidance)] == ["hazard"]
     assert result.domain == () and result.failed is None
+
+
+# ── 바꿔 끼운 Guardrail (#731) ──────────────────────────────────
+_STRAWBERRY = {"raw_text": "딸기 먹었어", "observed_on": "오늘", "subject": "딸기", "polarity": 1}
+
+
+class _FakeGuard:
+    """`blocks` 의 검사는 막고 `fails` 의 검사는 못 한 것으로 친다. 받은 검사를 순서대로 남긴다."""
+
+    def __init__(
+        self, *, blocks: frozenset[str] = frozenset(), fails: frozenset[str] = frozenset()
+    ) -> None:
+        self.blocks = blocks
+        self.fails = fails
+        self.calls: list[tuple[str, str]] = []
+
+    async def check(self, text: str, context: GuardContext) -> GuardResult:
+        self.calls.append((text, context))
+        if context in self.fails:
+            raise GuardrailUnavailableError("가짜 장애")
+        return GuardResult(("chemical",) if context in self.blocks else ())
+
+
+async def test_바꿔_끼운_Guardrail_이_사전검사에서_막는다(
+    memory_context: AgentContext, food_context: FoodContext, events: list[Any]
+) -> None:
+    guard = _FakeGuard(blocks=frozenset({"input"}))
+    supervisor_llm, memory_llm = FakeLLM(), FakeLLM()
+    await _handle_text(
+        "딸기 먹었어",
+        memory_llm=memory_llm,
+        supervisor_llm=supervisor_llm,
+        memory_context=replace(memory_context, guardrail=guard),
+        food_context=food_context,
+        events=events,
+    )
+
+    assert supervisor_llm.calls == 0 and memory_llm.calls == 0
+    assert [guidance.code for guidance in _of(events, Guidance)] == ["hazard"]
+    assert guard.calls == [("딸기 먹었어", "input")]
+
+
+async def test_바꿔_끼운_Guardrail_이_저장_게이트에서도_막는다(
+    memory_context: AgentContext, food_context: FoodContext, events: list[Any]
+) -> None:
+    # 사전검사는 지나고 이름 칸에서 막는 가짜 — 두 곳이 같은 인스턴스를 쓰는지도 본다
+    guard = _FakeGuard(blocks=frozenset({"food_name"}))
+    memory_llm = FakeLLM(
+        _tools(_call("a", "create_observation_food", _STRAWBERRY)), _reply("기록하지 않았어요.")
+    )
+    await _handle_text(
+        "딸기 먹었어",
+        memory_llm=memory_llm,
+        supervisor_llm=FakeLLM(LLMUnavailableError("망")),
+        memory_context=replace(memory_context, guardrail=guard),
+        food_context=food_context,
+        events=events,
+    )
+
+    assert await memory_context.store.query_observations(domain="food", child_id=CHILD) == []
+    assert [guidance.code for guidance in _of(events, Guidance)] == ["hazard"]
+    assert guard.calls == [("딸기 먹었어", "input"), ("딸기", "food_name")]
+
+
+async def test_사전검사를_못_하면_run_을_멈추고_모델을_부르지_않는다(
+    memory_context: AgentContext, food_context: FoodContext, events: list[Any]
+) -> None:
+    # fail-closed — 검사를 못 한 입력을 "걸린 것 없음" 으로 넘기지 않는다
+    supervisor_llm, memory_llm = FakeLLM(), FakeLLM()
+    guard = _FakeGuard(fails=frozenset({"input"}))
+    with pytest.raises(GuardrailUnavailableError):
+        await _handle_text(
+            "딸기 먹었어",
+            memory_llm=memory_llm,
+            supervisor_llm=supervisor_llm,
+            memory_context=replace(memory_context, guardrail=guard),
+            food_context=food_context,
+            events=events,
+        )
+
+    assert supervisor_llm.calls == 0 and memory_llm.calls == 0
+
+
+async def test_저장_게이트가_검사를_못_하면_저장하지_않고_run_을_멈춘다(
+    memory_context: AgentContext, food_context: FoodContext, events: list[Any]
+) -> None:
+    memory_llm = FakeLLM(
+        _tools(_call("a", "create_observation_food", _STRAWBERRY)), _reply("기록했어요.")
+    )
+    guard = _FakeGuard(fails=frozenset({"food_name"}))
+    with pytest.raises(GuardrailUnavailableError):
+        await _handle_text(
+            "딸기 먹었어",
+            memory_llm=memory_llm,
+            supervisor_llm=FakeLLM(LLMUnavailableError("망")),
+            memory_context=replace(memory_context, guardrail=guard),
+            food_context=food_context,
+            events=events,
+        )
+
+    assert await memory_context.store.query_observations(domain="food", child_id=CHILD) == []
+    assert not _of(events, Saved)
 
 
 # ── 먹인 약 (#626 PM 리뷰) ──────────────────────────────────────
