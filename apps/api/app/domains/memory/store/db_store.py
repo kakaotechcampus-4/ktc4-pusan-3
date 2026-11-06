@@ -7,7 +7,10 @@ InMemoryStore 와 동일한 fields 매핑을 유지한다 -- Memory Agent 도구
 row.fields["subject"], row.fields["status"] 등으로 읽기 때문이다.
 """
 
-from datetime import date, datetime, time, timedelta, timezone
+import logging
+from collections.abc import Sequence
+from datetime import UTC, date, datetime, time, timedelta, timezone
+from time import monotonic
 from typing import Any
 from uuid import UUID
 
@@ -17,11 +20,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.common.datetime_rules import DateRange
 from app.agents.memory.store.ports import (
+    DeleteCandidates,
     EventItemRow,
     EventRow,
     ObservationDomain,
     ObservationRow,
+    check_candidates,
 )
+from app.domains.delete_proposal.repository import PROPOSAL_TTL, ProposalTab, add_proposal
 from app.domains.memory.observation.models import (
     ObservationActivity,
     ObservationEducation,
@@ -32,9 +38,11 @@ from app.domains.memory.observation.models import (
     ObservationStatus,
     Promotable,
 )
-from app.domains.memory.profile.service import refresh_profile
+from app.domains.memory.profile.service import lock_child_memory, refresh_profile
 from app.domains.schedule import repository as schedule_repository
 from app.domains.schedule.models import Event, EventItem
+
+logger = logging.getLogger(__name__)
 
 _KST = timezone(timedelta(hours=9))
 
@@ -159,10 +167,34 @@ class DbMemoryStore:
         self.created: list[tuple[str, UUID]] = []
         """이 run 에서 새로 만든 관찰 (도메인, id) — 만든 순서대로. 고치기 · 지우기는 넣지 않는다.
         runner 가 commit 뒤에 이 행들을 읽어 화면에 `saved` 로 보낸다 (#471)."""
+        self.proposal_id: UUID | None = None
+        # 카드의 expires_at — 러너가 SSE delete_proposal 에 싣는다 (#535)
+        self.proposal_expires_at: datetime | None = None
+        """이 run 이 남긴 삭제 제안 (#535). runner 가 commit 뒤에 후보 행을 읽어 화면에 보낸다."""
 
     def _today(self) -> date:
         """Profile 재계산 기준일. 안 넘기면 서비스 시간대(KST)의 오늘."""
         return self._fixed_today or datetime.now(_KST).date()
+
+    async def _lock_child(self) -> None:
+        """관찰을 고치거나 지우기 **전에** 아이 잠금을 잡는다 (#636).
+
+        Curator · 하루 배치와 같은 잠금이다. 순서가 아이 잠금 → 관찰 행 → 기억 행으로 같아야
+        교착이 없다 — run 트랜잭션은 고친 관찰 · 기억의 행 잠금을 커밋까지 쥐는데, 그사이
+        Curator 가 아이 잠금을 쥔 채 같은 행을 기다리면 둘이 서로를 기다린다.
+        연결 안 된 관찰을 고칠 때도 잡는다 — Curator 가 바로 그 관찰을 연결하려 할 수 있다.
+        새 관찰 저장은 잡지 않는다 — 커밋 전에는 Curator 에게 보이지 않아 겹치지 않는다.
+        같은 트랜잭션은 다시 잡아도 기다리지 않는다.
+        """
+        started = monotonic()
+        await lock_child_memory(self._session, self._child_id)
+        # 기다린 시간 — 직전 입력의 Curator 가 쥐고 있으면 그만큼 20초 예산에서 빠진다 (#636).
+        # 같은 run 의 두 번째 수정부터는 이미 쥐고 있어 0 이다
+        logger.info(
+            "Memory 아이 잠금 child_id=%s wait_ms=%d",
+            self._child_id,
+            (monotonic() - started) * 1000,
+        )
 
     async def _refresh_profile(self, affinity_id: UUID | None) -> None:
         if affinity_id is not None:
@@ -197,6 +229,9 @@ class DbMemoryStore:
             for k, v in fields.items()
             if k not in {"child_id", "source_writer", "observed_range", "status"}
         }
+        if isinstance(col_fields.get("linked_symptom_id"), str):
+            # tool 은 앞서 만든 증상 행의 문자열 id 를 그대로 넘긴다 (#551)
+            col_fields["linked_symptom_id"] = UUID(col_fields["linked_symptom_id"])
         orm = model(
             child_id=child_id,
             source_writer=source_writer,
@@ -268,6 +303,7 @@ class DbMemoryStore:
         uid = _parse_uuid(observation_id)
         if uid is None:
             return None
+        await self._lock_child()
         model = _MODEL_BY_DOMAIN[domain]
         values: dict[str, Any] = {}
         for k, v in fields.items():
@@ -325,6 +361,7 @@ class DbMemoryStore:
         uid = _parse_uuid(observation_id)
         if uid is None:
             return False
+        await self._lock_child()
         model = _MODEL_BY_DOMAIN[domain]
         values: dict[str, Any] = {"status": ObservationStatus.DELETED}
         if issubclass(model, Promotable):
@@ -388,15 +425,15 @@ class DbMemoryStore:
         uid = _parse_uuid(event_id)
         if uid is None:
             return False
-        orm = await self._session.scalar(
-            select(Event).where(Event.id == uid, Event.child_id == self._child_id)
+        # 🚨 DELETE … RETURNING 으로 실제로 지웠는지 본다. 읽고 나서 ORM 으로 지우면, 같은 일정을
+        #    다른 트랜잭션이 먼저 지웠을 때 0행 삭제가 경고로만 끝나 True 가 된다 — 버튼 확정이
+        #    지운 건수를 두 번 센다 (#535). 준비물 · 알림 · 추천 연결은 DB 의 ON DELETE CASCADE 다
+        deleted = await schedule_repository.delete_event(
+            self._session, child_id=self._child_id, event_id=uid
         )
-        if orm is None:
-            return False
-        await self._session.delete(orm)
-        await self._session.flush()
-        self.wrote = True
-        return True
+        if deleted:
+            self.wrote = True
+        return deleted
 
     # ── event_item ──────────────────────────────────────────────
 
@@ -457,3 +494,25 @@ class DbMemoryStore:
         await self._session.flush()
         self.wrote = True
         return True
+
+    # ── delete proposal (#535) ──────────────────────────────────
+
+    async def propose_delete(
+        self, *, parent_id: UUID, run_id: str, tabs: Sequence[DeleteCandidates]
+    ) -> str:
+        if self.proposal_id is not None:
+            raise ValueError("한 run 에 제안은 하나다")
+        check_candidates(tabs)
+        now = datetime.now(UTC)
+        self.proposal_id = await add_proposal(
+            self._session,
+            parent_id=parent_id,
+            child_id=self._child_id,
+            run_id=run_id,
+            tabs=[ProposalTab(tab.kind, tab.truncated, tab.ids, tab.picked) for tab in tabs],
+            now=now,
+        )
+        self.proposal_expires_at = now + PROPOSAL_TTL
+        # 제안도 commit 해야 남는 쓰기다 — 뒤에서 터져도 run 을 done 으로 닫아 키를 지킨다
+        self.wrote = True
+        return str(self.proposal_id)

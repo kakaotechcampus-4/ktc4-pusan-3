@@ -20,10 +20,12 @@ Agent는 이 상태를 모르며 entrypoint가 쓰기 포트를 감싸서 관리
 """
 
 from dataclasses import replace
-from datetime import date
+from datetime import date, datetime
+from typing import Literal
 from uuid import UUID
 
 from app.agents.food.store.ports import DaycareMealRow, DaycareMealStore, FoodPorts
+from app.agents.health.store.ports import MedicationWriter
 
 
 class RunWrites:
@@ -59,3 +61,24 @@ class _RecordedDaycareMeals:
 def record_food_writes(ports: FoodPorts, writes: RunWrites) -> FoodPorts:
     """Food 에서 보호자 말을 반영한 쓰기 포트(급식)만 감싼다."""
     return replace(ports, daycare=_RecordedDaycareMeals(ports.daycare, writes))
+
+
+class _RecordedMedicationWriter:
+    def __init__(self, inner: MedicationWriter, writes: RunWrites) -> None:
+        self._inner = inner
+        self._writes = writes
+
+    async def stop_course(
+        self, *, child_id: UUID, schedule_id: UUID, stopped_at: datetime
+    ) -> Literal["stopped", "already", "missing"]:
+        outcome = await self._inner.stop_course(
+            child_id=child_id, schedule_id=schedule_id, stopped_at=stopped_at
+        )
+        if outcome == "stopped":  # 이미 멈췄거나 없는 코스는 이번 run 이 바꾼 것이 없다
+            self._writes.mark()
+        return outcome
+
+
+def record_medication_writes(writer: MedicationWriter, writes: RunWrites) -> MedicationWriter:
+    """Health 가 쓰는 유일한 것(보호자가 확인한 복약 중단)을 감싼다."""
+    return _RecordedMedicationWriter(writer, writes)

@@ -209,6 +209,47 @@ async def test_곰_코끼리_요청은_제목에_낱말이_든_책만_나간다(
     only_asked(result, rows, ("곰", "코끼리"), months=30)
 
 
+async def test_곰_코끼리_요청에_공룡_기록만_있으면_개인화가_붙지_않는다(llm, auth_key):
+    dino = EducationObservation(
+        id=UUID(int=902),
+        child_id=CHILD,
+        observed_on=TODAY - timedelta(days=3),
+        subject="공룡",
+        topic="공룡 그림을 오래 봤다",
+        polarity=1,
+    )
+    result, rows = await play(
+        llm,
+        auth_key,
+        "bear-dino-only",
+        "곰이랑 코끼리 관련된 책을 추천해줘",
+        months=30,
+        education=[dino],
+    )
+    only_asked(result, rows, ("곰", "코끼리"), months=30)
+    assert {d.kind for d in result.suggestions} <= {"general"}
+
+
+async def test_아기공룡_요청에_공룡_기록이_있으면_주제_기록이다(llm, auth_key):
+    """말한 낱말(아기공룡)이 기록 이름(공룡)보다 길어도 같은 주제다."""
+    dino = EducationObservation(
+        id=UUID(int=903),
+        child_id=CHILD,
+        observed_on=TODAY - timedelta(days=3),
+        subject="공룡",
+        topic="공룡 그림을 오래 봤다",
+        polarity=1,
+    )
+    result, rows = await play(
+        llm, auth_key, "baby-dino", "아기공룡 책 추천해줘", months=30, education=[dino]
+    )
+    if result.status == "blocked":
+        pytest.skip("정보나루에 이 나이에 맞는 아기공룡 책이 없다")
+    # 모델이 검색어를 "아기공룡" 으로 하든 "공룡" 으로 하든 요청에 있는 낱말이라 제목 필터가 된다
+    only_asked(result, rows, ("아기공룡", "공룡"), months=30)
+    assert any(d.kind == "personalized" for d in result.suggestions)
+
+
 async def test_돼지_요청은_제목에_돼지가_든_책만_나간다(llm, auth_key):
     result, rows = await play(llm, auth_key, "pig", "돼지 관련된 책을 추천해줘", months=30)
     only_asked(result, rows, ("돼지",), months=30)

@@ -53,10 +53,11 @@ RUN_DEADLINE_SECONDS = 60.0
 """
 
 
-def _curator_trigger() -> entrypoint.CuratorTrigger | None:
+def curator_trigger() -> entrypoint.CuratorTrigger | None:
     """Memory commit 직후 Curator 를 띄우는 콜백. 임베딩 키가 없으면 None — pipeline 이 건너뛴다.
 
     store · commit 과 같이 러너가 만든다. DB 세션을 여는 곳을 러너 한 곳에 모으려는 것이다 (#257).
+    버튼으로 관찰을 지운 삭제 제안 확정(`routers/delete_proposals.py`, #535)도 이것을 쓴다.
     콜백은 별도 세션에서 백그라운드 task 로 돈다 — run 은 Curator 를 기다리지 않는다.
     """
     from app.domains.memory.curator.trigger import trigger_curator_background
@@ -80,6 +81,7 @@ def agent_job(
     child_health_granted: bool | None = None,
     location: entrypoint.CoarseLocation | None = None,
     activity_weather: entrypoint.WeatherSource | None = None,
+    activity_events: entrypoint.EventSource | None = None,
     continuation: entrypoint.PendingMemoryContext | None = None,
     reply_to: str | None = None,
     on_event: Callable[[entrypoint.Event], None] | None = None,
@@ -94,7 +96,7 @@ def agent_job(
       연다(#227). Growth 의 성장 기록 어댑터도 같은 곳에서 연다 — 안 넘기면 성장 추이가 "측정
       0건" 으로 읽힌다. 도서 어댑터(`growth_book_ports`)도 같다 — 키가 없으면 넘기지 않아 도서가
       닫힌다.
-    - Curator 트리거도 여기서 만든다(`_curator_trigger`). 진입점은 받은 것을 pipeline 에
+    - Curator 트리거도 여기서 만든다(`curator_trigger`). 진입점은 받은 것을 pipeline 에
       넘기기만 한다.
     - 생일은 창구가 확인한 아이의 것을 넘긴다 (9단계). 식이 단계(12개월 경계)는 진입점이 계산한다.
       None 이면 진입점의 기본값을 쓴다.
@@ -105,6 +107,8 @@ def agent_job(
     - `location` 은 창구가 위치정보 동의를 확인한 흐린 좌표, `activity_weather` 는 서버 시작 때 만든
       날씨 어댑터다(#380). 둘 다 그대로 진입점에 넘긴다. None 이면 Activity 는 실내 전용이다.
       장소 어댑터는 `agent_ports.place_source` 로 연다 — 좌표가 없으면 진입점 쪽에서 닫힌다.
+      `activity_events` 는 서버 시작 때 만든 행사 어댑터(TourAPI)다. 그대로 넘긴다 — None 이면
+      Activity 는 행사를 찾지 않는다.
     - Agent 가 스스로 낸 실패(Failed)는 예외가 아니라 이벤트로 온다. 뒤따르는 Done 은 채널이 버린다.
     - continuation 이 있으면 이전 되묻기를 이어받는 run 이다. Supervisor 를 타지 않는다.
     - 되묻기로 끝나면 PendingReply 가 이벤트로 온다. 화면에 보내지 않고 pending store 에 넣는다 —
@@ -126,7 +130,9 @@ def agent_job(
     async def job(channel: RunChannel) -> None:
         # commit 이 채우고 Saved 가 꺼내 쓴다 — 이 run 이 만든 관찰의 화면 모양 (#471)
         saved_rows: dict[tuple[str, str], Any] = {}
-        relay = translate.relay(channel, saved_rows=saved_rows)
+        # load_cards 가 채우고 FoundTabs · DeleteProposed 가 꺼내 쓴다 — 카드의 화면 모양 행 (#535)
+        card_rows: dict[tuple[str, str], Any] = {}
+        relay = translate.relay(channel, saved_rows=saved_rows, card_rows=card_rows)
 
         def emit(event: entrypoint.Event) -> None:
             # 끝 신호 뒤의 이벤트는 채널이 버린다 — 화면에 안 나간 것은 대화에도 남기지 않는다
@@ -160,9 +166,13 @@ def agent_job(
                     message=event.message,
                 )
                 return
-            relay(event)
+            sent = relay(event)
             # 번역이 끝난 뒤에 넘긴다 — 번역이 터진 이벤트는 화면에 안 나갔다. 위에서 돌아간
             # 셋(PendingReply 등)은 대화에도 남기지 않는 것이라 여기까지 오지 않아도 된다
+            # 조회 카드는 행을 못 읽어 안 나갔으면 남기지 않는다 — 안 그러면 보지 못한 카드가 지난
+            # 대화에만 생긴다 (#535). 삭제 카드는 늘 나간다
+            if isinstance(event, entrypoint.FoundTabs) and not sent:
+                return
             if on_event is not None and live:
                 on_event(event)
 
@@ -182,6 +192,13 @@ def agent_job(
                 # pipeline 은 이 commit 뒤에 Saved 를 낸다 — 그때 화면에 실을 행을 읽어 둔다
                 saved_rows.update(await _read_saved(session, child_id, store.created, channel))
 
+            async def load_cards(refs: tuple[entrypoint.Ref, ...]) -> None:
+                card_rows.update(await _read_cards(session, child_id, parent_id, refs, channel))
+                # 삭제 카드의 expires_at. Memory commit 뒤에 불리므로 제안은 이미 저장돼 있다
+                if store.proposal_id is not None:
+                    key = (translate.PROPOSAL_KIND, str(store.proposal_id))
+                    card_rows[key] = store.proposal_expires_at
+
             try:
                 async with asyncio.timeout(RUN_DEADLINE_SECONDS):
                     await entrypoint.handle_input(
@@ -193,6 +210,7 @@ def agent_job(
                         location=location,
                         activity_weather=activity_weather,
                         activity_places=agent_ports.place_source(),
+                        activity_events=activity_events,
                         run_id=channel.run_id,
                         emit=emit,
                         continuation=continuation,
@@ -202,13 +220,15 @@ def agent_job(
                             child_id, on_commit=mark_saved
                         ),
                         count_records=agent_ports.record_counter(child_id),
-                        curator_trigger=_curator_trigger(),
+                        load_cards=load_cards,
+                        curator_trigger=curator_trigger(),
                         domain_store=agent_ports.domain_store_opener(child_id),
                         **agent_ports.food_stores(),
                         **agent_ports.safety_readers(),
                         **agent_ports.growth_book_ports(),
                         growth_log=agent_ports.growth_log_reader(),
                         affinity_reader=agent_ports.affinity_reader(),
+                        **agent_ports.health_ports(),
                     )
             except TimeoutError:
                 log.warning(
@@ -283,6 +303,45 @@ async def _read_saved(
         return {}
     deleted = {(f"observation_{domain}", str(oid)): None for domain, oid in created}
     return deleted | {(out.kind, out.id): out for out in outs}
+
+
+async def _read_cards(
+    session: Any,
+    child_id: UUID,
+    parent_id: UUID,
+    refs: tuple[entrypoint.Ref, ...],
+    channel: RunChannel,
+) -> dict[tuple[str, str], Any]:
+    """조회 · 삭제 제안 카드의 행을 화면 모양으로 읽는다 (#535).
+
+    🚨 읽기가 실패해도 run 을 실패로 만들지 않는다 — 카드에서 행이 빠질 뿐이다. 삭제 제안은 이미
+       저장돼 있고 지난 대화에서 다시 읽힌다. `_read_saved` 와 같이 ERROR 로그만 남긴다(원문 없이).
+    🚨 읽기는 SAVEPOINT 안에서 한다 — 실패하면 읽기만 되감는다. run 세션을 통째로 rollback 하면
+       Memory commit 전에 불렸을 때 이 run 의 기록 · 제안까지 사라지고, run 은 성공으로 끝나며
+       화면에는 누르면 404 인 카드가 남는다. 부르는 순서에 기대지 않으려고 여기서 막는다.
+    """
+    from app.api.quota import today_kst
+    from app.api.v1.card_rows import read_card_rows
+
+    if not refs:
+        return {}
+    try:
+        async with session.begin_nested():
+            return await read_card_rows(
+                session,
+                child_id=child_id,
+                parent_id=parent_id,
+                refs=[(ref.kind, ref.id) for ref in refs],
+                today=today_kst(),
+            )
+    except Exception as exc:
+        log.error(
+            "run %s 의 카드 행을 읽지 못했다 (%s) — 카드에서 뺀다\n%s",
+            channel.run_id,
+            type(exc).__name__,
+            "".join(traceback.format_tb(exc.__traceback__)),
+        )
+        return {}
 
 
 async def fake_job(channel: RunChannel, *, step_delay: float | None = None) -> None:

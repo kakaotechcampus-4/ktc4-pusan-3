@@ -24,6 +24,7 @@ import pytest
 
 from app.agents.food import agent as food_agent
 from app.agents.food import registry as food_registry
+from app.agents.health import agent as health_agent
 from app.agents.memory import agent as memory_agent
 from app.agents.memory import registry as memory_registry
 from app.agents.supervisor import agent as supervisor_agent
@@ -124,6 +125,7 @@ def _tool_failures(calls: list[Any]) -> list[str]:
 _memory_run = memory_agent.run
 _supervisor_run = supervisor_agent.run
 _food_run = food_agent.run
+_health_run = health_agent.run
 
 
 @functools.wraps(_memory_run)
@@ -234,6 +236,25 @@ async def _food_wrapper(*args: Any, **kwargs: Any) -> Any:
     return result
 
 
+@functools.wraps(_health_run)
+async def _health_wrapper(*args: Any, **kwargs: Any) -> Any:
+    task = args[0] if args else kwargs.get("task")
+    question = " / ".join(getattr(task, "request_texts", ()) or ())
+    try:
+        result = await _health_run(*args, **kwargs)
+    except Exception as exc:
+        _add(AgentCall("health", question, answer=f"(예외 {type(exc).__name__})"))
+        raise
+    summary = (
+        f"{result.task_type} → {result.status} · 모델 {result.model_calls}회 · "
+        f"초안 {len(result.medication_drafts)}장"
+    )
+    said = " / ".join(readout.body for readout in result.readouts)
+    answer = f"{said} ({summary})" if said else summary
+    _add(AgentCall("health", question, result.model_calls, [], answer))
+    return result
+
+
 def _segments(result: Any) -> str:
     """Supervisor 의 답은 조각과 라벨이다."""
     if result.output is None:
@@ -254,6 +275,7 @@ def _segments(result: Any) -> str:
 memory_agent.run = _memory_wrapper
 supervisor_agent.run = _supervisor_wrapper
 food_agent.run = _food_wrapper
+health_agent.run = _health_wrapper
 
 
 # tool 을 직접 부르는 테스트(오류 주입 · registry 계열)도 "사용한 tool" 을 남긴다.
@@ -429,7 +451,7 @@ def _continued(title: str, values: list[str]) -> list[str]:
 
 def _agents(calls: list[AgentCall]) -> str:
     parts = []
-    for agent in ("supervisor", "memory", "food"):
+    for agent in ("supervisor", "memory", "food", "health"):
         runs = [call for call in calls if call.agent == agent]
         if runs:
             models = sum(call.model_calls for call in runs)

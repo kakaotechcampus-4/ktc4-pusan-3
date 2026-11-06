@@ -21,6 +21,7 @@ from app.agents.common.result import DomainPending
 from app.agents.common.schemas.task import DomainTask
 from app.agents.growth.readouts import (
     ASK_HABIT_TRIGGER,
+    ASK_LEARNING_CURRENT,
     ASK_ROUTINE_CURRENT,
     LEVEL_UNREAD,
     READOUTS,
@@ -137,12 +138,14 @@ async def run_events(
     memory_llm: Any | None = None,
     supervisor_llm: Any | None = None,
     continuation: PendingMemoryContext | None = None,
+    growth_safety: Any | None = None,
 ) -> list[Any]:
     events: list[Any] = []
+    extra = {} if growth_safety is None else {"growth_safety": growth_safety}
     await pipeline.handle_input(
         raw,
         AgentContext(child_id=CHILD, source_writer=PARENT, now=NOW, timezone=KST, store=store),
-        built_contexts(store),
+        built_contexts(store, **extra),
         run_id="run-2" if continuation is not None else "run-1",
         supervisor_client=supervisor_llm or FakeLLM(),
         memory_client=memory_llm or FakeLLM(),
@@ -701,3 +704,225 @@ async def test_고정한_행동_이름도_위험_물질이면_거절한다():
     )
 
     assert await stored_routine(store) == []
+
+
+# ── 교육 되묻기 — 추천에 덧붙은 질문의 답도 이어받는다 ──
+EDU_REQUEST = "국어 공부 어떻게 시켜?"
+EDU_QUESTION = ask_question(ASK_LEARNING_CURRENT, "국어")
+EDU_PENDING = DomainPending(
+    "growth",
+    ASK_LEARNING_CURRENT,
+    EDU_QUESTION,
+    {"subject": "국어", "category": None, "field": "topic"},
+)
+EDU_RESUME = DomainTask("run-1", "growth", "learning_suggestion", (EDU_REQUEST,))
+EDU_ASKED = PendingMemoryContext(
+    EDU_REQUEST, EDU_QUESTION, WorkType.OBSERVE, resume=EDU_RESUME, asked=EDU_PENDING
+)
+EDU_TITLES = ("글자 찾기", "이야기 이어 말하기", "낱말 카드 놀이")
+
+
+class NoSafetyRows:
+    """등록한 알레르기가 없는 아이의 `health_safety` 어댑터. 교육 게이트는 어댑터를 요구한다."""
+
+    async def growth_safety(self, *, child_id: UUID) -> list[Any]:
+        return []
+
+
+NO_SAFETY_ROWS = NoSafetyRows()
+
+
+def saves_education(
+    subject: str = "받아쓰기", topic: str = "받아쓰기가 어려워요", polarity: int = -1
+) -> LLMResponse:
+    return saves("create_observation_education", subject=subject, topic=topic, polarity=polarity)
+
+
+async def stored_education(store: InMemoryStore) -> list[Any]:
+    return await store.query_observations(domain="education", child_id=CHILD)
+
+
+def education_items(evidence: list[dict[str, str]], *, reason: str) -> dict[str, Any]:
+    return {
+        "items": [
+            {
+                "title": title,
+                "steps": ["카드를 보며 같이 읽어 본다"],
+                "materials": [],
+                "evidence": evidence,
+                "reason": reason,
+            }
+            for title in EDU_TITLES
+        ]
+    }
+
+
+class ReadsEducationResult:
+    """이어서 도는 교육 run 의 Growth 모델 가짜. 같은 run 에서 Memory 가 방금 저장한 교육 기록의
+    id 는 미리 알 수 없어서 첫 호출의 tool 결과에서 꺼내 인용한다."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+        self.system = ""
+
+    async def chat(self, messages, **kwargs) -> LLMResponse:
+        self.calls += 1
+        if self.calls == 1:
+            self.system = messages[0]["content"]
+            return call("search_education_memory", {})
+        result = json.loads(next(m for m in reversed(messages) if m["role"] == "tool")["content"])
+        record = result["data"]["records"][0]
+        return call(
+            "propose_learning_activity",
+            education_items(
+                [{"id": record["id"], "note": "방금 말한 국어 기록이에요"}],
+                reason="국어를 어려워해서 카드를 같이 읽는 것부터 해 봐요",
+            ),
+        )
+
+
+class ProposesFromExamples:
+    """첫 요청의 Growth 모델 가짜. 프롬프트의 [예시] id 를 그대로 근거로 달아 일반 추천을 낸다."""
+
+    async def chat(self, messages, **kwargs) -> LLMResponse:
+        system = messages[0]["content"]
+        doc_id = system.split("- id ", 1)[1].split(" ", 1)[0]
+        return call(
+            "propose_learning_activity",
+            education_items(
+                [{"id": doc_id, "note": "이 나이 예시를 참고했어요"}],
+                reason="이 나이에 많이 하는 활동이에요",
+            ),
+        )
+
+
+async def test_교육_질문은_추천과_함께_나가고_답을_받는_맥락이_남는다():
+    events = await run_events(
+        EDU_REQUEST,
+        InMemoryStore(now=NOW),
+        growth_llm=ProposesFromExamples(),
+        supervisor_llm=route(EDU_REQUEST, "learning_suggestion"),
+        growth_safety=NO_SAFETY_ROWS,
+    )
+
+    (card,) = of(events, pipeline.AgentResult)
+    assert (card.status, len(card.suggestion_ids), card.kind) == ("completed", 3, "general")
+    (reply,) = of(events, pipeline.PendingReply)
+    assert reply.context.asked is not None
+    assert reply.context.asked.kind == "ask.learning_current"
+    assert reply.context.asked.payload == {"subject": "국어", "category": None, "field": "topic"}
+    assert reply.context.resume is not None and reply.context.resume.record_texts == ()
+    (question,) = of(events, pipeline.AgentQuestion)
+    assert (question.agent, question.awaits_reply) == ("growth", True)
+    assert question.text == EDU_QUESTION
+
+
+async def test_Memory_는_교육_답의_물은_칸과_주제를_받는다():
+    memory = SeesMessages(saves_education(), memory_says("기록해 둘게요."))
+
+    await run_events(
+        "받아쓰기가 어려워요",
+        InMemoryStore(now=NOW),
+        growth_llm=ReadsEducationResult(),
+        memory_llm=memory,
+        continuation=EDU_ASKED,
+        growth_safety=NO_SAFETY_ROWS,
+    )
+
+    message = memory.seen[0][-1]["content"]
+    assert "[물은 행동]" + chr(10) + "국어" in message
+    assert "[물은 칸]" + chr(10) + "topic" in message
+    assert "교육 기록" in message
+
+
+async def test_교육_답은_물은_주제_이름으로_저장한다():
+    """모델이 "받아쓰기" 로 적어도 저장 이름은 물은 주제다. 그래야 주제 판정이 그 기록을 잡는다."""
+    store = InMemoryStore(now=NOW)
+
+    await run_events(
+        "받아쓰기가 어려워요",
+        store,
+        growth_llm=ReadsEducationResult(),
+        memory_llm=FakeLLM(saves_education(subject="받아쓰기"), memory_says("기록해 둘게요.")),
+        continuation=EDU_ASKED,
+        growth_safety=NO_SAFETY_ROWS,
+    )
+
+    (row,) = await stored_education(store)
+    assert row.fields["subject"] == "국어"
+    assert row.fields["topic"] == "받아쓰기가 어려워요"
+
+
+async def test_교육_기록은_답_하나에_한_건만_저장한다():
+    store = InMemoryStore(now=NOW)
+    memory = SeesMessages(
+        saves_education(subject="받아쓰기"),
+        saves_education(subject="글쓰기", topic="글쓰기는 좋아해요", polarity=1),
+        memory_says("기록해 둘게요."),
+    )
+
+    await run_events(
+        "받아쓰기는 어렵고 글쓰기는 좋아해요",
+        store,
+        growth_llm=ReadsEducationResult(),
+        memory_llm=memory,
+        continuation=EDU_ASKED,
+        growth_safety=NO_SAFETY_ROWS,
+    )
+
+    (row,) = await stored_education(store)
+    assert row.fields["subject"] == "국어"
+    assert "한 건만 저장한다" in str(memory.seen[-1])
+
+
+async def test_교육_답이면_교육_밖_관찰은_저장하지_않는다():
+    store = InMemoryStore(now=NOW)
+    memory = SeesMessages(saves_routine(subject="양치"), memory_says("기록하지 않았어요."))
+
+    await run_events(
+        "양치는 혼자 해요",
+        store,
+        growth_llm=ReadsEducationResult(),
+        memory_llm=memory,
+        continuation=EDU_ASKED,
+        growth_safety=NO_SAFETY_ROWS,
+    )
+
+    assert await stored_routine(store) == []
+    assert "한 건만 저장한다" in str(memory.seen[-1])
+
+
+async def test_루틴_답은_교육_기록을_막지_않는다():
+    """루틴 되묻기의 한 건 규칙은 루틴 기록에만 걸린다 — 교육 칸의 규칙이 번지지 않는다."""
+    store = InMemoryStore(now=NOW)
+
+    await run_events(
+        "칫솔질은 혼자 해",
+        store,
+        growth_llm=ReadsToolResult(),
+        memory_llm=FakeLLM(saves_routine(assistance_level="partial_assist"), memory_says("ok")),
+        continuation=ASKED,
+    )
+
+    assert len(await stored_routine(store)) == 1
+
+
+async def test_교육_답을_저장하면_그_답을_근거로_개인화_추천을_낸다():
+    growth = ReadsEducationResult()
+
+    events = await run_events(
+        "받아쓰기가 어려워요",
+        InMemoryStore(now=NOW),
+        growth_llm=growth,
+        memory_llm=FakeLLM(saves_education(), memory_says("기록해 둘게요.")),
+        continuation=EDU_ASKED,
+        growth_safety=NO_SAFETY_ROWS,
+    )
+
+    (card,) = of(events, pipeline.AgentResult)
+    assert (card.status, len(card.suggestion_ids), card.kind) == ("completed", 3, "personalized")
+    # 이어서 도는 run 은 또 묻지 않고 맥락도 다시 만들지 않는다
+    assert of(events, pipeline.PendingReply) == [] and of(events, pipeline.AgentQuestion) == []
+    assert isinstance(events[-1], pipeline.Done)
+    # 맥락에는 요청 조각만 남았는데도 물은 주제로 [예시]가 다시 선다
+    assert "[교육 활동]" in growth.system and "- id " in growth.system

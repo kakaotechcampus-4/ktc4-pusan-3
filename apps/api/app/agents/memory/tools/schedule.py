@@ -33,9 +33,9 @@ from app.agents.common.datetime_rules import (
     check_when,
     resolve_when,
 )
-from app.agents.memory.context import AgentContext
+from app.agents.memory.context import AgentContext, FoundRows
 from app.agents.memory.drafts import DraftItem, EventDraft, EventSnapshot
-from app.agents.memory.result import ErrorCode, Operation, ToolResult, fail, ok
+from app.agents.memory.result import ErrorCode, Operation, ToolResult, cut, fail, nearest, ok
 from app.agents.memory.schemas.common import EventCategory, EventType
 from app.agents.memory.schemas.schedule import (
     EventCreate,
@@ -43,7 +43,6 @@ from app.agents.memory.schemas.schedule import (
     EventItemRef,
     EventItemUpdate,
     EventQuery,
-    EventRef,
     EventUpdate,
 )
 from app.agents.memory.store.ports import EventItemRow, EventRow
@@ -155,11 +154,14 @@ async def query_event(context: AgentContext, args: EventQuery) -> ToolResult:
     rows = await context.store.query_events(
         child_id=context.child_id, title_query=args.title_query, **bounds
     )
+    kept, truncated = nearest(rows, lambda row: abs((row.starts_at - context.now).total_seconds()))
+    context.found[EVENT] = FoundRows(tuple(row.id for row in kept), truncated)
     return ok(
         "query",
         EVENT,
-        count=len(rows),
-        events=[await _event_summary(context, row) for row in rows],
+        count=len(kept),
+        events=[await _event_summary(context, row) for row in kept],
+        **cut(truncated, event=True),
     )
 
 
@@ -300,15 +302,6 @@ def _resolve_when(
     return when
 
 
-async def delete_event(context: AgentContext, args: EventRef) -> ToolResult:
-    # 준비물도 함께 사라진다 (ON DELETE CASCADE)
-    if not await context.store.delete_event(event_id=args.event_id):
-        return fail("delete", EVENT, ErrorCode.UNKNOWN_EVENT, _UNKNOWN_EVENT)
-    # 같은 run 에서 고쳤다가 지운 일정이면 초안도 뺀다. 없는 일정의 초안을 승인 화면에 올리지 않는다
-    context.drafts.drop(args.event_id)
-    return ok("delete", EVENT, id=args.event_id)
-
-
 # ── event_item ──────────────────────────────────────────────────
 async def create_event_item(context: AgentContext, args: EventItemCreate) -> ToolResult:
     """이미 있는 일정에 준비물을 붙인다. 새 일정의 준비물은 create_event 의 items 로 간다."""
@@ -362,7 +355,10 @@ async def update_event_item(context: AgentContext, args: EventItemUpdate) -> Too
             return _gone_after_check(args.item_id)
         # 이름이 그대로면 결과는 챙김만 한 호출과 같다. 이름 쪽의 changed=[] 를 내면
         # 모델이 방금 한 체크를 "이미 되어 있었다"로 읽는다
-        return checked if renamed.data.get("changed") == [] else renamed
+        if renamed.data.get("changed") == []:
+            return checked
+        # 이름 초안에도 챙김 전 값을 싣는다. 없으면 방금 한 체크가 결과에서 사라진다
+        return ok("update", EVENT_ITEM, **renamed.data, was_prepared=checked.data["was_prepared"])
     return await _rename_event_item(context, current, args)
 
 
@@ -394,7 +390,16 @@ async def _check_event_item(
     if row is None:
         return fail("update", EVENT_ITEM, ErrorCode.TARGET_NOT_FOUND, _item_not_found())
     _sync_checked(context, row)
-    return ok("update", EVENT_ITEM, draft=False, item_id=row.item_id, is_prepared=row.is_prepared)
+    # 챙김 전 값도 싣는다. 이미 체크된 것을 다시 체크했는지를 보호자에게 갈 말을 정할 때 본다
+    # (#678 리뷰)
+    return ok(
+        "update",
+        EVENT_ITEM,
+        draft=False,
+        item_id=row.item_id,
+        is_prepared=row.is_prepared,
+        was_prepared=current.is_prepared,
+    )
 
 
 def _sync_checked(context: AgentContext, row: EventItemRow) -> None:
@@ -496,7 +501,6 @@ SCHEDULE_HANDLERS = {
     "create_event": create_event,
     "query_event": query_event,
     "update_event": update_event,
-    "delete_event": delete_event,
     "create_event_item": create_event_item,
     "update_event_item": update_event_item,
     "delete_event_item": delete_event_item,

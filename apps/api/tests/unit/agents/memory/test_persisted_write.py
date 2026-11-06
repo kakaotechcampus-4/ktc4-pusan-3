@@ -30,11 +30,9 @@ def _call(
 CASES: list[tuple[str, dict[str, Any], dict[str, Any], bool]] = [
     *((f"create_observation_{domain}", _SAVED, {}, True) for domain in _DOMAINS),
     *((f"update_observation_{domain}", _SAVED, {}, True) for domain in _DOMAINS),
-    ("update_observation_food", {"id": "obs-1", "status": "deleted"}, {}, True),
     ("create_event", {"draft": True, "title": "운동회"}, {}, False),
     ("update_event", {"id": "event-1", "draft": True, "changed": ["title"]}, {}, False),
     ("update_event", {"id": "event-1", "draft": False, "changed": []}, {}, False),
-    ("delete_event", {"id": "event-1"}, {}, True),
     ("create_event_item", {"draft": True, "added": True}, {}, False),
     ("create_event_item", {"draft": False, "added": False}, {}, False),
     ("update_event_item", {"draft": False, "item_id": "item-1"}, {"is_prepared": True}, True),
@@ -53,6 +51,8 @@ CASES: list[tuple[str, dict[str, Any], dict[str, Any], bool]] = [
         False,
     ),
     ("delete_event_item", {"item_id": "item-1"}, {}, True),
+    # 삭제 제안은 지우지 않지만 DB 에 남는다 — 저장된 run 으로 닫아 키를 지킨다 (#535)
+    ("propose_delete", {"id": "proposal-1", "picked": 1, "candidates": 2}, {}, True),
 ]
 
 

@@ -15,7 +15,14 @@ from datetime import date
 import pytest
 
 from app.agents.common.reference import food_safety_terms
-from app.agents.common.reference_docs import DOC_MONTH_LIMIT
+from app.agents.common.reference_docs import (
+    CC_BY_URL,
+    DOC_MONTH_LIMIT,
+    NHS_PUBLIC_ORG,
+    OGL_STATEMENT,
+    OGL_URL,
+    public_doc_source,
+)
 from app.agents.food.doc_seed import (
     FOOD_GROUPS,
     ROW_TYPES,
@@ -31,12 +38,13 @@ from app.rules.term_match import TermMatcher, prepare_fields
 
 SEED = food_doc_seed()
 
-# 행 출처로 쓸 수 있는 곳과 그 license_basis (#337). 미국 연방기관 자료는 대조용이라 여기 없다.
-# 뉴질랜드 지침은 CC BY 4.0 인데 값 집합에 CC BY 가 없어서 fact_rewrite 로 적는다
+# 행 출처로 쓸 수 있는 곳과 그 license_basis (#337). 미국 연방기관 자료는 대조용이라 여기 없다
 ALLOWED_SOURCES = {
-    "Ministry of Health (New Zealand)": "fact_rewrite",
+    "Ministry of Health (New Zealand)": "cc_by",
     "한국소비자원": "kogl_1",
     "교육부": "public_law",
+    "Department for Education (England)": "ogl_3",  # EYFS 영양 지침 2025 (#510)
+    "NHS": "ogl_3",  # 번역 · 각색이라 공개 출처에서는 가려진다 (public_doc_source)
 }
 
 WEANING_START, WEANING_END = 4, 12  # 이유기 행의 월령 — 4개월 이상 12개월 미만
@@ -57,7 +65,7 @@ def raw(**overrides) -> dict:
         "source_org": "Ministry of Health (New Zealand)",
         "source_year": 2021,
         "source_locator": "(테스트) 쪽",
-        "license_basis": "fact_rewrite",
+        "license_basis": "cc_by",
         "status": "draft",
         "authored_by": "writer-a",
         "version": 1,
@@ -172,6 +180,231 @@ def uncovered_months(entries: Sequence[FoodDocEntry], *, approved_only: bool) ->
 
 def test_시드_파일을_읽는다():
     assert isinstance(SEED, tuple)
+
+
+NZ_ORG = "Ministry of Health (New Zealand)"
+
+
+def test_뉴질랜드_행은_전부_cc_by_로_읽힌다():
+    """CC BY 4.0 이다. 처음엔 값 집합에 없어 fact_rewrite 로 적었다 (#510 Part C)."""
+    nz = [e for e in SEED if e.meta.source_org == NZ_ORG]
+
+    assert nz
+    assert {e.meta.license_basis for e in nz} == {"cc_by"}
+
+
+def test_뉴질랜드_행의_공개_출처에는_변경_표시와_라이선스_주소가_붙고_원문_정보는_그대로다():
+    for entry in (e for e in SEED if e.meta.source_org == NZ_ORG):
+        meta, public = entry.meta, public_doc_source(entry.meta)
+
+        assert public.source_org == meta.source_org, meta.doc_key
+        assert public.source_title.startswith(meta.source_title), meta.doc_key
+        assert "번역·재구성함" in public.source_title, meta.doc_key
+        assert CC_BY_URL in public.source_title, meta.doc_key
+        assert public.source_url == meta.source_url, meta.doc_key
+
+
+# ── #510 신규 행 — meal_pattern 30행 · NHS feeding_tip 8행 ─────────────────────────
+
+DFE_ORG = "Department for Education (England)"
+BANDS = {"12–35개월": (12, 36), "36–71개월": (36, 72)}
+# 구간마다 행 수 — 끼니 구성 3 · 간식 구성 2 · 식품군 고루 5 · 마실 것 1 · 예시 식사 4
+MEAL_GROUPS = {"meals": 3, "snack_pattern": 2, "groups": 5, "drink": 1, "example": 4}
+NHS_TIP_KEYS = {
+    "food.tip.eat_together_model",
+    "food.tip.small_portion_praise",
+    "food.tip.before_too_tired",
+    "food.tip.slow_eater_wait",
+    "food.tip.no_food_reward",
+    "food.tip.change_form",
+    "food.tip.snack_ideas",
+    "food.tip.reduce_sweet_drinks",
+}
+_NHS_WORD = re.compile(r"(?<![A-Za-z])nhs(?![A-Za-z])|nhs\.uk", re.IGNORECASE)
+
+
+def meal_rows() -> list[FoodDocEntry]:
+    return [e for e in SEED if e.meta.row_type == "meal_pattern"]
+
+
+def nhs_rows() -> list[FoodDocEntry]:
+    return [e for e in SEED if e.meta.source_org == "NHS"]
+
+
+def test_meal_pattern_은_두_월령_구간에_각각_15행이다():
+    for band, (lo, hi) in BANDS.items():
+        rows = [e for e in meal_rows() if (e.meta.min_month, e.meta.max_month) == (lo, hi)]
+        assert len(rows) == 15, band
+    assert len(meal_rows()) == 30  # 다른 월령 구간은 만들지 않는다
+
+
+def test_meal_pattern_묶음별_행_수():
+    for band, (lo, hi) in BANDS.items():
+        rows = [e for e in meal_rows() if (e.meta.min_month, e.meta.max_month) == (lo, hi)]
+        counts = {group: sum(group in e.meta.tags for e in rows) for group in MEAL_GROUPS}
+        assert counts == MEAL_GROUPS, band
+
+
+def test_meal_pattern_행은_구간_안에서_doc_key_와_제목이_겹치지_않는다():
+    for lo, hi in BANDS.values():
+        rows = [e.meta for e in meal_rows() if (e.meta.min_month, e.meta.max_month) == (lo, hi)]
+        assert len({m.title for m in rows}) == len(rows)
+
+
+def test_meal_pattern_출처는_DfE_와_뉴질랜드_0_2_지침만이다():
+    """뉴질랜드 2–18 지침(2012)은 원문을 열지 못했고 개정 중이라 쓰지 않았다 (#510 D1)."""
+    sources = {e.meta.source_org for e in meal_rows()}
+
+    assert sources <= {DFE_ORG, NZ_ORG}
+    assert DFE_ORG in sources
+    # 36–71개월 행은 0–2세 지침을 근거로 달지 않는다
+    older = [e for e in meal_rows() if e.meta.min_month == 36]
+    assert {e.meta.source_org for e in older} == {DFE_ORG}
+
+
+def test_meal_pattern_예시_식사는_음식_양을_쓰지_않고_구성만_쓴다():
+    for entry in (e for e in meal_rows() if "example" in e.meta.tags):
+        assert not _NUTRITION_NUMBER.search(entry.meta.body), entry.meta.doc_key
+        assert entry.food_groups, entry.meta.doc_key  # 구성에 든 식품군을 코드 값으로 적는다
+
+
+def test_NHS_기반_feeding_tip_은_8행이고_원문_정보가_YAML_에_남는다():
+    rows = nhs_rows()
+
+    assert {e.meta.doc_key for e in rows} == NHS_TIP_KEYS
+    for entry in rows:
+        meta = entry.meta
+        assert meta.row_type == "feeding_tip", meta.doc_key
+        assert (meta.min_month, meta.max_month) == (24, 72), meta.doc_key
+        assert meta.license_basis == "ogl_3", meta.doc_key
+        assert meta.source_url and meta.source_url.startswith("https://www.nhs.uk/"), meta.doc_key
+        assert meta.source_title and meta.source_locator, meta.doc_key
+
+
+def test_NHS_행의_공개_출처에는_NHS_이름과_주소가_없다():
+    for entry in nhs_rows():
+        public = public_doc_source(entry.meta)
+
+        assert public.source_org == NHS_PUBLIC_ORG, entry.meta.doc_key
+        assert public.source_title == f"{OGL_STATEMENT} ({OGL_URL})", entry.meta.doc_key
+        assert public.source_url == OGL_URL, entry.meta.doc_key
+        assert not _NHS_WORD.search(repr(public)), entry.meta.doc_key
+        assert entry.meta.source_title not in public.source_title
+
+
+def test_우리가_쓴_제목과_본문에는_NHS_표시가_없다():
+    """ "NHS 에 따르면" 같은 기관 표시를 쓰지 않는다 — 약관 3.6(b)."""
+    for entry in SEED:
+        assert not any(_NHS_WORD.search(text) for text in _texts(entry)), entry.meta.doc_key
+
+
+def test_DfE_행은_원래_기관과_제목_뒤에_OGL_문장이_붙는다():
+    rows = [e for e in SEED if e.meta.source_org == DFE_ORG]
+
+    assert rows
+    for entry in rows:
+        public = public_doc_source(entry.meta)
+        assert public.source_org == DFE_ORG
+        assert public.source_title.startswith(entry.meta.source_title)
+        assert f"{OGL_STATEMENT} ({OGL_URL})" in public.source_title
+        assert public.source_url == entry.meta.source_url
+
+
+_CUT_WORDS = re.compile(r"썬|썰|자른|잘라|갈래|반으로|으깬|갈아")
+# 작고 둥근 음식 — DfE(p.10) · 뉴질랜드 지침(p.44)이 질식 위험으로 든다. 사전은 포도 · 방울토마토만
+_SMALL_ROUND = re.compile(r"딸기|블루베리|베리|포도|방울토마토")
+
+
+def test_작고_둥근_과일이_든_행은_자르는_방법을_같이_쓴다():
+    """원문 예시 식사는 "quartered tomatoes" · "sliced strawberries" · "halved blueberries" 다.
+    자르는 말을 빼면 월령 규칙(질식 주의 식품)이 못 잡는 과일이 통째로 권해진다."""
+    new = [*meal_rows(), *nhs_rows()]
+    hits = [e for e in new if _SMALL_ROUND.search(e.meta.body)]
+
+    assert hits
+    for entry in hits:
+        assert _CUT_WORDS.search(entry.meta.body), entry.meta.doc_key
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "food.meal_pattern.m12_35.example_breakfast",  # 토마토를 곁들인 접시
+        "food.meal_pattern.m12_35.example_side",
+        "food.meal_pattern.m36_71.example_side",
+    ],
+)
+def test_원문이_자르라고_한_예시는_자르는_말이_남아_있다(key):
+    [entry] = [e for e in SEED if e.meta.doc_key == key]
+
+    assert _CUT_WORDS.search(entry.meta.body), key
+
+
+def test_가족_음식을_내라는_행은_소금_간_주의를_같이_쓴다():
+    """원문(뉴질랜드 0–2 지침)은 가족 음식도 나트륨이 적고 소금 · 설탕이 없는 것으로 고르라고 한다.
+    그 말 없이 "가족 음식을 으깨 준다"만 남으면 간이 센 한식을 먹이라는 안내가 된다."""
+    rows = [e for e in meal_rows() if "family_meal" in e.meta.tags]
+
+    assert rows
+    for entry in rows:
+        assert "소금" in entry.meta.body, entry.meta.doc_key
+        assert entry.meta.source_org == NZ_ORG, entry.meta.doc_key  # 이 말이 있는 쪽
+
+
+def test_생당근_막대를_권하는_행은_없다():
+    """뉴질랜드 지침(p.44)은 생당근을 질식 위험으로 든다 — 다른 출처와 어긋나는 권유는 뺀다."""
+    for entry in [*meal_rows(), *nhs_rows()]:
+        assert "생채소" not in entry.meta.body, entry.meta.doc_key
+        assert "생당근" not in entry.meta.body, entry.meta.doc_key
+
+
+def test_신규_행은_전부_검수_전_draft_이고_임시_승인을_끌어오지_않는다():
+    new = [*meal_rows(), *nhs_rows()]
+
+    assert len(new) == 38
+    for entry in new:
+        meta = entry.meta
+        assert meta.status == "draft", meta.doc_key
+        assert (meta.reviewed_by, meta.reviewed_at) == (None, None), meta.doc_key
+        assert meta.authored_by != "admin", meta.doc_key
+        assert meta.source_locator.strip(), meta.doc_key
+
+
+def test_일본_자료와_이유기_구간_변경은_없다():
+    """Part F — 이유기 단계는 4–6 · 6–8 · 8–12 그대로이고 pdl_1 행은 없다."""
+    assert {e.meta.license_basis for e in SEED} <= {
+        "public_law",
+        "kogl_1",
+        "cc_by",
+        "ogl_3",
+    }
+    assert uncovered_months(SEED, approved_only=False) == []
+
+
+# ── 연령 규칙의 출처 (#510 Part D4) ────────────────────────────────────────────
+# `source` 는 문서용 칸이라 코드 어디서도 출력하지 않는다. 동작 값(aliases · guards · below_month ·
+# action · scope · exact · ends)은 건드리지 않았다 — test_food_choking.py 가 경계를 그대로 본다.
+
+AGE_RULE_SOURCES = {
+    "꿀": ("질병관리청", "DfE"),
+    "생우유": ("대한소아청소년과학회", "DfE"),
+    "질식 위험 식품": ("식약처", "DfE", "뉴질랜드"),
+    "떡": ("한국소비자원",),
+    "질식 주의 식품": ("DfE", "뉴질랜드"),
+}
+
+
+def test_연령_규칙의_출처에_AAP_가_없다():
+    for rule in food_safety_terms().age_rules:
+        assert "AAP" not in rule.source, rule.term.key
+
+
+@pytest.mark.parametrize(("label", "expected"), sorted(AGE_RULE_SOURCES.items()))
+def test_연령_규칙의_국내_출처는_남기고_DfE_뉴질랜드_자료로_보강한다(label, expected):
+    [rule] = [r for r in food_safety_terms().age_rules if r.term.key == label]
+
+    for name in expected:
+        assert name in rule.source, (label, name)
 
 
 def test_시드의_검수_전_행도_로더가_읽는다():

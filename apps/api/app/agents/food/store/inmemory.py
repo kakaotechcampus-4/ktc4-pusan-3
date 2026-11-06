@@ -14,7 +14,7 @@ from uuid import UUID
 
 from app.agents.common.evidence import AffinityRow
 from app.agents.common.reference import load_reference
-from app.agents.common.reference_docs import doc_row_id
+from app.agents.common.reference_docs import doc_row_id, public_doc_source
 from app.agents.food.store.ports import (
     RECIPE_SOURCES,
     DaycareMealRow,
@@ -236,7 +236,8 @@ class InMemoryFoodDocs:
         임시 스위치다(`InMemoryActivityDocs.from_seed` 와 같다). 시드 행은 아직 전부 draft 라서 이
         스위치 없이는 비어 있다. 서비스 경로는 쓰지 않는다. TODO: 시드 검수가 끝나면 지운다.
         """
-        # 위쪽에서 import 하면 순환한다 — doc_seed → tools.safety → store → inmemory → doc_seed
+        # 호출할 때 읽는다 — 테스트가 `doc_seed.food_doc_seed` 를 바꿔 끼운다. 위쪽에서 import 하면
+        # import 시점의 함수를 붙잡아 그 교체가 안 보인다
         from app.agents.food.doc_seed import SEED_FILE, food_doc_seed
 
         fetched = load_reference(SEED_FILE)["fetched_at"]
@@ -276,7 +277,8 @@ def _seed_row(entry: "FoodDocEntry", *, written_at: datetime) -> FoodDocRow:
         texture=entry.texture,
         food_groups=frozenset(entry.food_groups),
         allergen_codes=entry.allergen_codes | allergen_codes_in(entry),
-        source_org=entry.meta.source_org,
+        # Agent 의 [예시] 기관명도 05 와 같은 공개용 출처다 — NHS 이름이 모델로 새지 않게 (#510)
+        source_org=public_doc_source(entry.meta).source_org,
         written_at=written_at,
     )
 
