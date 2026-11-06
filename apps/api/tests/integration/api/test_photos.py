@@ -503,6 +503,7 @@ def s3_bucket(monkeypatch):
 
     monkeypatch.setattr(photo_uploads, "take", take)
     monkeypatch.setattr(photo_uploads, "new_upload", new_upload)
+    monkeypatch.setattr(photo_uploads, "discard", lambda key: stored.pop(key, None))
     return stored
 
 
@@ -761,3 +762,46 @@ async def test_메뉴를_다_지운_끼니는_조용히_버리지_않는다(
 
     assert response.status_code == 422
     assert await _count(session, DaycareMeal) == 0
+
+
+async def test_읽지_않고_돌려보내도_올라온_사진은_지운다(
+    db_client, session, bearer, cid, key_set, s3_bucket
+):
+    # 활동 사진은 아직 받지 않는다(422). 그래도 S3 에 올라온 아이 사진이 하루 남으면 안 된다
+    headers, _ = bearer
+    key = (await db_client.post(UPLOADS.format(cid=cid), headers=headers)).json()["key"]
+    s3_bucket[key] = b"child-photo"
+
+    response = await db_client.post(
+        PHOTOS.format(cid=cid),
+        data={"lane": "activity", "upload_key": key},
+        headers={**headers, "Idempotency-Key": str(uuid.uuid4())},
+    )
+
+    assert response.status_code == 422
+    assert s3_bucket == {}
+
+
+async def test_같은_요청을_다시_보내면_새로_올린_사진은_지우고_앞_결과를_준다(
+    db_client, session, bearer, cid, key_set, s3_bucket, monkeypatch
+):
+    headers, _ = bearer
+    monkeypatch.setattr(entrypoint, "read_photo", lambda data, *, received_at: _reading())
+    idem = {**headers, "Idempotency-Key": str(uuid.uuid4())}
+    first_key = (await db_client.post(UPLOADS.format(cid=cid), headers=headers)).json()["key"]
+    s3_bucket[first_key] = b"photo"
+    first = await db_client.post(
+        PHOTOS.format(cid=cid), data={"lane": "document", "upload_key": first_key}, headers=idem
+    )
+    from app.api.runs import registry
+
+    await registry.get(first.json()["run_id"]).task
+    # 응답을 못 받은 화면이 다시 올리고 같은 키로 보낸다
+    second_key = (await db_client.post(UPLOADS.format(cid=cid), headers=headers)).json()["key"]
+    s3_bucket[second_key] = b"photo"
+    second = await db_client.post(
+        PHOTOS.format(cid=cid), data={"lane": "document", "upload_key": second_key}, headers=idem
+    )
+
+    assert second.json()["run_id"] == first.json()["run_id"]
+    assert s3_bucket == {}

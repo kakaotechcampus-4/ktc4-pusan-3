@@ -123,48 +123,63 @@ async def upload_photo(
     upload_key: Annotated[str | None, Form()] = None,
     idempotency_key: Annotated[str | None, Header()] = None,
 ) -> PhotoUploadResponse:
-    if not idempotency_key:
-        raise ApiError(
-            400, "idempotency_key_required", "요청을 처리할 수 없어요. 다시 시도해 주세요"
-        )
-    _require_photo_reading()
-    if lane != "document":
-        raise ApiError(422, "lane_not_supported", "지금은 문서 사진만 읽을 수 있어요")
-
-    scope = {
-        "parent_id": parent.parent_id,
-        "method": request.method,
-        "path": request.url.path,
-        "key": idempotency_key,
-    }
-    replayed = idempotency.recall(**scope)
-    if replayed is not None:
-        previous = registry.get(replayed)
-        if previous is not None and previous.ended_with != "failed":
-            return PhotoUploadResponse(run_id=replayed)
-        idempotency.forget_run(replayed)
-
-    data = await _photo_bytes(file, upload_key, parent.parent_id)
-    if not data:
-        raise ApiError(400, "validation_failed", _PICK_AGAIN)
-
-    if not quota.consume(
-        parent_id=parent.parent_id, today=quota.today_kst(), limit=settings.INPUT_DAILY_LIMIT
-    ):
-        raise ApiError(429, "daily_input_limit", "오늘은 더 적을 수 없어요. 내일 다시 적어 주세요.")
-
-    channel = registry.open_run(parent_id=parent.parent_id)
-    try:
-        idempotency.remember(**scope, replay=channel.run_id)
-    except Exception:
-        channel.close()  # 러너가 안 떠서 아무도 닫지 않는다
-        raise
-    run = photo_run.open_photo_run(
-        run_id=channel.run_id, parent_id=parent.parent_id, child_id=child.child_id
+    # S3 에 올라온 사진을 읽지 않고 돌려보내는 길(스위치 · 활동 사진 · 키 재생 · 형식 오류)에서도
+    # 원본을 남기지 않는다. 남의 열쇠는 건드리지 않는다 (#726 적대적 리뷰)
+    own_key = bool(
+        settings.PHOTO_UPLOAD_BUCKET
+        and upload_key
+        and photo_uploads.owns(upload_key, parent.parent_id)
     )
-    job = photo_run.photo_job(run, data=data, received_at=datetime.now(UTC), declared_lane=lane)
-    runner.start(channel, job, raw_text="")
-    return PhotoUploadResponse(run_id=channel.run_id)
+    taken = False
+    try:
+        if not idempotency_key:
+            raise ApiError(
+                400, "idempotency_key_required", "요청을 처리할 수 없어요. 다시 시도해 주세요"
+            )
+        _require_photo_reading()
+        if lane != "document":
+            raise ApiError(422, "lane_not_supported", "지금은 문서 사진만 읽을 수 있어요")
+
+        scope = {
+            "parent_id": parent.parent_id,
+            "method": request.method,
+            "path": request.url.path,
+            "key": idempotency_key,
+        }
+        replayed = idempotency.recall(**scope)
+        if replayed is not None:
+            previous = registry.get(replayed)
+            if previous is not None and previous.ended_with != "failed":
+                return PhotoUploadResponse(run_id=replayed)
+            idempotency.forget_run(replayed)
+
+        data = await _photo_bytes(file, upload_key, parent.parent_id)
+        taken = True  # 내려받기에서 이미 지웠다 — 실패했어도 지운다
+        if not data:
+            raise ApiError(400, "validation_failed", _PICK_AGAIN)
+
+        if not quota.consume(
+            parent_id=parent.parent_id, today=quota.today_kst(), limit=settings.INPUT_DAILY_LIMIT
+        ):
+            raise ApiError(
+                429, "daily_input_limit", "오늘은 더 적을 수 없어요. 내일 다시 적어 주세요."
+            )
+
+        channel = registry.open_run(parent_id=parent.parent_id)
+        try:
+            idempotency.remember(**scope, replay=channel.run_id)
+        except Exception:
+            channel.close()  # 러너가 안 떠서 아무도 닫지 않는다
+            raise
+        run = photo_run.open_photo_run(
+            run_id=channel.run_id, parent_id=parent.parent_id, child_id=child.child_id
+        )
+        job = photo_run.photo_job(run, data=data, received_at=datetime.now(UTC), declared_lane=lane)
+        runner.start(channel, job, raw_text="")
+        return PhotoUploadResponse(run_id=channel.run_id)
+    finally:
+        if own_key and not taken:
+            await asyncio.to_thread(photo_uploads.discard, upload_key)
 
 
 @router.post(

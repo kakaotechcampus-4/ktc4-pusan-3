@@ -106,3 +106,11 @@ def take(key: str, *, max_bytes: int) -> bytes:
         except (BotoCoreError, ClientError) as e:
             # 지우기만 실패했다. 사진은 버킷 수명 규칙이 하루 안에 지운다
             log.warning("photo upload delete failed: %s", type(e).__name__)
+
+
+def discard(key: str) -> None:
+    """읽지 않고 지운다. 서버가 요청을 돌려보낼 때 쓴다. 실패해도 수명 규칙이 하루 안에 지운다."""
+    try:
+        _client().delete_object(Bucket=settings.PHOTO_UPLOAD_BUCKET, Key=key)
+    except (BotoCoreError, ClientError) as e:
+        log.warning("photo upload discard failed: %s", type(e).__name__)

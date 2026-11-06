@@ -95,3 +95,12 @@ def test_지우기가_실패해도_읽은_사진은_돌려준다(s3, monkeypatch
 )
 def test_남의_열쇠나_모양이_다른_열쇠는_내_것이_아니다(key):
     assert photo_uploads.owns(key, PARENT) is False
+
+
+def test_읽지_않고_지우기(s3):
+    key = photo_uploads.new_upload(PARENT, max_bytes=LIMIT).key
+    s3.put_object(Bucket=BUCKET, Key=key, Body=b"photo")
+
+    photo_uploads.discard(key)
+
+    assert _keys(s3) == []
