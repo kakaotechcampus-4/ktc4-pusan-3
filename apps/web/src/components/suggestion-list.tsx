@@ -3,6 +3,9 @@
 import { useState } from "react";
 
 import { domainBar, domainField, domainLabel } from "@/components/domain-chip";
+import { EventPeriod } from "@/components/event-period";
+import { SuggestionItems } from "@/components/suggestion-items";
+import { SuggestionWarnings } from "@/components/suggestion-warnings";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DOMAIN_ICON } from "@/components/ui/icon";
 import { IconTile } from "@/components/ui/icon-tile";
@@ -324,12 +327,26 @@ function SuggestionRow({
           health 줄은 체크박스가 없으니 들여쓰지 않는다. */}
       <div className={isHealth ? "" : "pl-8"}>
         {/* 🚨 장소 확인 문구는 제안 문장에 딸린 한 줄이다 (#516). 서버 문구 그대로, 이유보다 위에 둔다.
-            근거가 아니라서 선 아래 "사용한 기록" 에 넣지 않는다 — 넣으면 기록이 늘어 보인다. */}
+            근거가 아니라서 선 아래 "사용한 기록" 에 넣지 않는다 — 넣으면 기록이 늘어 보인다.
+            행사면 그 기간이 문구 바로 위에 한 줄 더 선다 (#681). 같은 이유로 근거 밖이다. */}
+        <EventPeriod startsOn={suggestion.event_starts_on} endsOn={suggestion.event_ends_on} />
         {placeNotice ? <p className="text-caption text-ink-muted mt-1">{placeNotice}</p> : null}
+
+        {/* 🚨 위험 경고도 제안 문장에 딸린 말이다 (#402 · #672). 장소 문구 아래, 이유보다 위 — 고르기 전에 읽게.
+            근거가 아니라서 선 아래 "사용한 기록" 에 넣지 않는다. */}
+        <SuggestionWarnings warnings={suggestion.warnings} className="mt-2" />
 
         {reason ? (
           <Reason className="mt-2" term={isHealth ? "무엇을 봤나" : "추천 이유"} value={reason} />
         ) : null}
+
+        {/* 필요한 재료 · 준비물은 이유 다음, 근거 선 위다 (#659). 제안에 딸린 내용이라 선 위에 두고,
+            근거가 아니라서 "사용한 기록" 에 섞지 않는다. 이유가 없으면 제안 문장과의 사이를 이유 자리(8)로 둔다. */}
+        <SuggestionItems
+          agent={suggestion.agent}
+          items={suggestion.items}
+          className={reason ? "mt-3" : "mt-2"}
+        />
 
         {/* 🚨 **근거는 선 아래에 둔다.** 제안·이유와 같은 무게로 쌓으면 이 제품의 차별점인
             근거가 본문에 묻힌다. 나누는 것은 카드 속 카드가 아니라 **가는 선 하나**다.

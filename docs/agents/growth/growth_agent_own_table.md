@@ -192,7 +192,8 @@ CREATE TABLE growth_doc (
     source_url       text,
     license_basis    varchar(16) NOT NULL
                      CHECK (license_basis IN ('public_law','kogl_1','kogl_2','kogl_3','kogl_4',
-                                              'fact_rewrite','permission')),
+                                              'fact_rewrite','permission',
+                                              'cc_by','ogl_3','pdl_1','cc0')),
     status           varchar(16) NOT NULL DEFAULT 'draft'
                      CHECK (status IN ('draft','approved','retired')),
     authored_by      text        NOT NULL,

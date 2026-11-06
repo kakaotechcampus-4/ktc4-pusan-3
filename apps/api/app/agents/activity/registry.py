@@ -3,9 +3,10 @@
 어떤 tool을 열지는 모델이 아니라 여기 코드가 정한다. 값은 gating.py 에 있다.
 
   라벨: activity_recommendation (하나뿐)
-    전 월령   memory · (weather) · schedule · (places) · propose
+    전 월령   memory · (weather) · schedule · (places) · (events) · propose
 
-- `(weather)` · `(places)` 는 좌표와 그 어댑터가 둘 다 있을 때만 열린다(`gating.opens`).
+- `(weather)` 는 좌표와 날씨 어댑터가 둘 다 있을 때, `(places)` · `(events)` 는 그 어댑터가
+  있을 때 열린다 — 위치가 없으면 보호자가 말한 지역으로 찾는다(`gating.opens`).
   월령으로는 닫지 않는다.
   날씨가 나쁘면(`outdoor_ok=False`) 닫지 않고 tool 이 실내 종류로 좁힌다 (3-2).
 - **월령 · 위치 · 날씨로 닫히는 조합은 없다.** 어느 월령에서도 출력 tool 이 열린다.
@@ -33,6 +34,7 @@ from app.agents.activity.tools.memory import search_activity_memory
 from app.agents.activity.tools.outing import (
     lookup_schedule,
     lookup_weather,
+    search_events,
     search_nearby_places,
 )
 from app.agents.activity.tools.recommend import propose_activity_candidates
@@ -46,6 +48,7 @@ TOOL_HANDLERS: dict[str, ToolHandler] = {
     "lookup_weather": lookup_weather,
     "lookup_schedule": lookup_schedule,
     "search_nearby_places": search_nearby_places,
+    "search_events": search_events,
     "propose_activity_candidates": propose_activity_candidates,
 }
 

@@ -35,8 +35,15 @@ from zoneinfo import ZoneInfo
 import pytest
 from pydantic import ValidationError
 
+from app.agents.common.result import EventRequest
 from app.agents.memory.context import AgentContext
-from app.agents.memory.drafts import DraftBook, DraftItem, EventDraft, EventSnapshot
+from app.agents.memory.drafts import (
+    DraftBook,
+    DraftItem,
+    EventDraft,
+    EventSnapshot,
+    draft_from_request,
+)
 from app.agents.memory.registry import execute_tool
 from app.agents.memory.result import ErrorCode
 from app.agents.memory.schemas.common import EventCategory, EventType
@@ -709,6 +716,20 @@ async def test_체크만_한_run_은_수정_초안을_만들지_않는다(contex
     assert stored is not None and stored.is_prepared is True
 
 
+@pytest.mark.parametrize("name", [None, "체육복 상의"], ids=["챙김만", "이름과_같이"])
+async def test_챙김_결과에_챙김_전_값을_싣는다(context: AgentContext, name: str | None) -> None:
+    # 이미 체크된 것을 다시 체크했는지는 이 값으로만 안다 — 보호자에게 갈 말이 달라진다 (#678 리뷰)
+    await _seed_event(context, "체육복")
+    check = {"item_id": "event_item-1", "is_prepared": True}
+    await execute_tool("update_event_item", check, context)
+
+    args = check if name is None else {**check, "item_name": name}
+    result = await execute_tool("update_event_item", args, context)
+
+    assert result.success is True, result.error
+    assert (result.data["was_prepared"], result.data["is_prepared"]) == (True, True)
+
+
 async def test_수정_뒤_체크해도_준비물이_바뀐_것으로_잡히지_않는다(context: AgentContext) -> None:
     # _sync_checked 가 버퍼를 안 맞추면 changed 에 items 가 붙는다
     event_id = await _seed_event(context, "체육복")
@@ -960,7 +981,12 @@ async def test_원래_이름으로_챙김만_하면_이미_되어_있다고_알�
 
     assert result.success is True, result.error
     assert "changed" not in result.data
-    assert result.data == {"draft": False, "item_id": "event_item-1", "is_prepared": True}
+    assert result.data == {
+        "draft": False,
+        "item_id": "event_item-1",
+        "is_prepared": True,
+        "was_prepared": False,
+    }
 
 
 def test_공통_스키마는_계약_밖의_키를_거부한다() -> None:
@@ -1012,3 +1038,20 @@ async def test_tool_이_만든_초안은_JSON_왕복_뒤에도_같은_모양이�
         loaded = json.loads(json.dumps(draft.to_payload()))
         model = CreateEventDraft if loaded["op"] == "create" else UpdateEventDraft
         assert model.model_validate(loaded).model_dump(mode="json") == loaded
+
+
+def test_검진_알림_요청은_새_일정_초안이다() -> None:
+    at = datetime(2026, 10, 7, tzinfo=KST)
+    draft = draft_from_request(
+        EventRequest(title="영유아 건강검진 4차", starts_at=at, category="health", all_day=True)
+    )
+
+    assert (draft.op, draft.event_id, draft.event_type, draft.category, draft.items) == (
+        "create",
+        None,
+        "episodic",
+        "health",
+        (),
+    )
+    assert (draft.title, draft.starts_at, draft.all_day) == ("영유아 건강검진 4차", at, True)
+    assert draft.draft_id is None  # DraftBook 에 넣을 때 붙는다

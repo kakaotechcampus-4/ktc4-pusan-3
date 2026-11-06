@@ -9,6 +9,7 @@ from datetime import date
 
 import pytest
 
+from app.agents.common.food_safety import filter_food_safety
 from app.agents.common.reference import food_safety_terms
 from app.agents.food import readouts
 from app.agents.food.meal_pool import build_pool
@@ -24,7 +25,6 @@ from app.agents.food.store import (
 )
 from app.agents.food.tools.menu import lookup_daycare_menu
 from app.agents.food.tools.recommend import propose_meal_candidates
-from app.agents.food.tools.safety import filter_food_safety
 from tests.unit.agents.food.support import MEAL_DOC, context, daycare, menu_row
 
 _RULES = food_safety_terms().age_rules

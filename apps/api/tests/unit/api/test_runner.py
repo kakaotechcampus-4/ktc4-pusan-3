@@ -34,6 +34,8 @@ from app.agents.entrypoint import (
 from app.agents.memory.schemas.task import WorkType
 from app.api import agent_ports, idempotency
 from app.api.runs import pending_reply, registry, runner, suggestion_retry
+from app.domains.child.agent_reader import DbChildBasicReader
+from app.domains.medication.agent_reader import DbMedicationStore
 from app.domains.memory.profile.agent_reader import DbAffinityReader
 from app.domains.place.agent_reader import DbPlaceSource
 from app.domains.safety.agent_reader import DbSafetyReader
@@ -41,6 +43,7 @@ from app.domains.safety.agent_reader import DbSafetyReader
 PARENT = uuid.UUID(int=1)
 """채널은 만든 보호자를 반드시 안다. 여기서는 누구인지가 중요하지 않다."""
 CHILD = uuid.UUID(int=2)
+PROPOSAL = uuid.UUID(int=3)
 RAW_TEXT = "계란말이 또 찾아요"
 
 
@@ -100,6 +103,7 @@ async def test_agent_job_좌표와_날씨_어댑터를_진입점에_그대로_�
     monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
     channel = registry.open_run(parent_id=PARENT)
     location, weather = entrypoint.CoarseLocation(lat=35.18, lon=129.08), object()
+    events = object()
 
     job = runner.agent_job(
         child_id=CHILD,
@@ -107,11 +111,13 @@ async def test_agent_job_좌표와_날씨_어댑터를_진입점에_그대로_�
         raw_text=RAW_TEXT,
         location=location,
         activity_weather=weather,
+        activity_events=events,
     )
     await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
 
     assert seen["location"] is location
     assert seen["activity_weather"] is weather
+    assert seen["activity_events"] is events  # 서버 시작 때 만든 행사 어댑터
     # 장소는 적재한 place 표를 읽는 어댑터다. 좌표가 없는 run 에서는 tool 이 닫혀 부르지 않는다
     assert isinstance(seen["activity_places"], DbPlaceSource)
 
@@ -134,6 +140,26 @@ async def test_agent_job_안전_어댑터를_Food_Activity_Growth_에_넘긴다(
     assert isinstance(seen["food_safety"], DbSafetyReader)
     assert seen["activity_safety"] is seen["food_safety"]
     assert seen["growth_safety"] is seen["food_safety"]
+
+
+async def test_agent_job_Health_포트를_진입점에_넘긴다(monkeypatch):
+    """복약 어댑터는 읽기와 중단 쓰기가 한 객체다. 안 넘기면 Health 는 읽을 때 실패로 닫힌다."""
+    seen: dict = {}
+
+    async def fake_handle_input(**kwargs):
+        seen.update(kwargs)
+        kwargs["emit"](Done(kwargs["run_id"], 1))
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+
+    job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    assert isinstance(seen["health_safety"], DbSafetyReader)
+    assert isinstance(seen["health_medication"], DbMedicationStore)
+    assert seen["health_medication_writer"] is seen["health_medication"]
+    assert isinstance(seen["health_child"], DbChildBasicReader)
 
 
 @pytest.mark.parametrize("key", ["test-auth-key", ""])
@@ -1170,3 +1196,33 @@ async def test_추천_저장이_실패하면_확정된_저장으로_세지_않�
     assert channel.suggestions_saved is False
     assert channel.ended_with == "failed"
     assert idempotency.recall(**scope) is None
+
+
+async def test_화면에_안_나간_조회_카드는_대화에도_남기지_않는다(monkeypatch):
+    """#535 — 카드 행을 못 읽어 found_tabs 가 안 나갔으면 대화 기록에도 넘기지 않는다. 안 그러면
+    보지 못한 카드가 지난 대화에만 생긴다. 삭제 카드는 행이 없어도 나가고 남는다."""
+    recorded: list = []
+
+    async def no_rows(*_args, **_kwargs):
+        return {}
+
+    async def fake_handle_input(**kwargs):
+        store = kwargs["store"]  # Memory 가 제안을 저장하고 commit 한 뒤라고 친다
+        store.proposal_id, store.proposal_expires_at = PROPOSAL, datetime(2026, 10, 28, tzinfo=UTC)
+        tab = entrypoint.CardTab("event", False, ("e1",), ("e1",))
+        await kwargs["load_cards"](tab.refs())
+        kwargs["emit"](entrypoint.FoundTabs((tab,)))
+        kwargs["emit"](entrypoint.DeleteProposed(str(PROPOSAL), (tab,)))
+        kwargs["emit"](Done(kwargs["run_id"], 1))
+
+    monkeypatch.setattr(runner, "_read_cards", no_rows)
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+
+    job = runner.agent_job(
+        child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT, on_event=recorded.append
+    )
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    assert names(channel) == ["delete_proposal", "done"]
+    assert [type(event).__name__ for event in recorded] == ["DeleteProposed", "Done"]

@@ -23,12 +23,14 @@ from app.api.v1.routers import (
     client_errors,
     consents,
     corrections,
+    delete_proposals,
     diary,
     event_items,
     health_safety,
     home,
     invites,
     me,
+    medications,
     notifications,
     observations,
     policies,
@@ -58,12 +60,14 @@ protected_router.include_router(child_parents.router)
 protected_router.include_router(client_errors.router)
 protected_router.include_router(consents.router)
 protected_router.include_router(health_safety.router)
+protected_router.include_router(medications.router)
 protected_router.include_router(invites.router)
 protected_router.include_router(me.router)
 protected_router.include_router(notifications.router)
 protected_router.include_router(observations.router)
 protected_router.include_router(affinities.router)
 protected_router.include_router(corrections.router)
+protected_router.include_router(delete_proposals.router)
 protected_router.include_router(home.router)
 protected_router.include_router(calendar.router)
 protected_router.include_router(chat.router)

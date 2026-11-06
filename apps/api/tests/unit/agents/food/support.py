@@ -28,7 +28,7 @@ from app.agents.food.store import (
     SafetyEntry,
     in_memory_ports,
 )
-from app.agents.food.store.ports import ConfidenceSource, DaycareSlot
+from app.agents.food.store.ports import RECIPE_SOURCES, ConfidenceSource, DaycareSlot
 
 KST = ZoneInfo("Asia/Seoul")
 CHILD = UUID(int=1)
@@ -144,7 +144,7 @@ def menu_row(
     ingredients: tuple[str, ...] = ("가짜재료",),
     **overrides: object,
 ) -> MenuCatalogRow:
-    """`menu_catalog` / `recipe_catalog` 행 하나. 레시피 행은 `source="mafra_recipe"` 로 넘긴다."""
+    """`menu_catalog` / `recipe_catalog` 행 하나. 레시피 행은 `RECIPE_SOURCES` 의 소스로 넘긴다."""
     fields: dict[str, object] = {
         "menu_key": menu_key,
         "display_name": menu_key,
@@ -153,7 +153,7 @@ def menu_row(
         "synced_at": NOW,
         "ingredients": ingredients,
     }
-    if source == "mafra_recipe":
+    if source in RECIPE_SOURCES:
         fields["source_id"] = menu_key
     fields.update(overrides)
     return MenuCatalogRow(**fields)  # type: ignore[arg-type]

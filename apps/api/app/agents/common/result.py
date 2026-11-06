@@ -77,7 +77,7 @@ class DomainPending:
 
     agent: str
     # health: "medication_stop" · "medication_which" · "dose_timing"
-    # growth: "ask.routine_current" · "ask.habit_trigger"
+    # growth: "ask.routine_current" · "ask.habit_trigger" · "ask.learning_current"
     kind: str
     question: str
     # JSON 으로 바뀌는 값만. 대상 id · 화면에 나갈 값 · 이어서 처리할 칸(검증을 통과한 span).

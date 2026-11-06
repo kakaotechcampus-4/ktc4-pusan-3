@@ -59,7 +59,10 @@ class ActivityCandidate(ToolArgs):
         str | None,
         Field(
             default=None,
-            description="search_nearby_places 결과에 있는 이름만. 없으면 비운다. 지어내지 않는다",
+            description=(
+                "search_nearby_places · search_events 결과에 있는 이름만. 없으면 비운다. "
+                "지어내지 않는다"
+            ),
         ),
     ]
     duration_min: Annotated[int | None, Field(default=None, ge=1, description="대략 몇 분")]

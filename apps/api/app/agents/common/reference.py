@@ -388,6 +388,38 @@ def parse_food_safety_terms(
 
 
 @cache
+def known_foods() -> tuple[str, ...]:
+    """`known_foods.yaml` — 사전이 몰라서 "확인 못 함" 이던 흔한 식재료 이름. 읽지 못하면 예외를
+    그대로 올린다. 항목 하나가 이 이름과 통째로 같을 때만 `check_foods(rules=ITEM)` 가 쓴다
+    (#582)."""
+    return parse_known_foods(load_reference("known_foods.yaml"))
+
+
+def parse_known_foods(data: Mapping[str, Any]) -> tuple[str, ...]:
+    """`foods`(분류 → 이름 목록)를 이름 순서 그대로 편다. 모양이 틀리거나 같은 이름이 두 번이면
+    실패한다."""
+    foods = data.get("foods")
+    if not isinstance(foods, Mapping) or not foods:
+        raise ValueError("known_foods.yaml foods 는 분류별 이름 목록이어야 한다")
+    names: list[str] = []
+    seen: dict[str, str] = {}
+    for category, raw in foods.items():
+        if not isinstance(raw, list) or not raw:
+            raise ValueError(f"known_foods.yaml {category!r}: 이름 목록이 비었다")
+        for name in raw:
+            key = normalize(name) if isinstance(name, str) else ""
+            if not key:
+                raise ValueError(f"known_foods.yaml {category!r}: 이름이 빈 글자다 — {name!r}")
+            if key in seen:
+                raise ValueError(
+                    f"known_foods.yaml {name!r} 이 두 번 적혀 있다 ({seen[key]} · {category})"
+                )
+            seen[key] = str(category)
+            names.append(name)
+    return tuple(names)
+
+
+@cache
 def chronic_restriction_terms() -> dict[str, tuple[Term, ...]]:
     """`chronic_restriction.yaml` 을 정규화한 질환 라벨 → 제한 식품 `Term` 으로.
 
@@ -576,6 +608,7 @@ _GATE_KEYS = (
     "step_min_month",
     "manner_min_month",
     "habit_min_month",
+    "infant_bedtime_below_month",
 )
 
 
@@ -594,6 +627,7 @@ class AgeGates:
     step_min_month: int  # Growth — 루틴이 다음 단계 제안으로 넘어간다
     manner_min_month: int  # Growth — 예절 카테고리
     habit_min_month: int  # Growth — 습관 교정 카테고리
+    infant_bedtime_below_month: int  # Health — 이 월령 미만은 자기 전을 고정 시각으로
 
 
 @cache

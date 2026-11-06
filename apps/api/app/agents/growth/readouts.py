@@ -37,6 +37,7 @@ LEVEL_UNREAD = "next_step.level_unread"
 ASK_HABIT_TRIGGER = "ask.habit_trigger"
 ASK_HABIT_CURRENT = "ask.habit_current"
 ASK_ROUTINE_CURRENT = "ask.routine_current"
+ASK_LEARNING_CURRENT = "ask.learning_current"
 # 되묻기와 같이 나가는 0개 안내 (code="empty")
 ASK_NEED_LEVEL = "ask.need_level"
 # 되묻기 키 → 보호자의 답이 채울 관찰 칸. 이어받는 Memory 가 이 칸에 답을 옮긴다.
@@ -45,6 +46,7 @@ ASK_NEED_LEVEL = "ask.need_level"
 ASKED_FIELD: dict[str, str] = {
     ASK_ROUTINE_CURRENT: "assistance_level",
     ASK_HABIT_TRIGGER: "trigger",
+    ASK_LEARNING_CURRENT: "topic",
 }
 
 READOUTS = ReadoutCatalog.from_yaml(Path(__file__).with_name("growth.readout.yaml"))

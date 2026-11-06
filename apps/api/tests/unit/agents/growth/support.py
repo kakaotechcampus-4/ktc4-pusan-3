@@ -261,6 +261,14 @@ def fixture_docs(*extra: GrowthDocRow) -> InMemoryGrowthDocs:
     return InMemoryGrowthDocs([*(entry.to_row() for entry in entries), *extra])
 
 
+def chain_rows(
+    category: str, chain: str, name: str, materials: tuple[str, ...] = ()
+) -> list[GrowthDocRow]:
+    """`fixture_docs` 에 더하는 사슬 하나 — 카테고리에 사슬이 없던 자리에 생기는 경우를 만든다."""
+    entries = parse_growth_doc({"rows": _chain_rows(category, chain, name, materials)})
+    return [entry.to_row() for entry in entries]
+
+
 def strategy_row(
     key: str, title: str, *, lo: int, hi: int = 72, trigger_tags: tuple[str, ...] = ()
 ) -> GrowthDocRow:

@@ -22,11 +22,13 @@ from app.agents.common.refs import (
 )
 from app.agents.common.result import (
     DomainAgentResult,
+    DomainPending,
     EventRequest,
     MedicationDraft,
 )
 from app.agents.common.suggestion import (
     MAX_SUGGESTIONS,
+    REQUESTED_AGENTS,
     BundleSummary,
     SuggestionDraft,
     SuggestionRejected,
@@ -169,7 +171,37 @@ class TestSuggestionBuild:
         assert draft.requested is True
         assert draft.to_payload()["requested"] is True
 
-    def test_요청_기반_면제는_Activity_만이다(self):
+    def test_Growth_요청_기반_일반_추천은_문서_근거가_없어도_된다(self):
+        """보호자가 주제를 정해 물었고 그 주제의 문서 행이 없으면 그 요청이 기준이다 (#702)."""
+        draft = build(
+            agent="growth",
+            content="영어 그림 카드 놀이\n1. 카드를 본다",
+            reason="모델이 쓴 문장",
+            citations=(),
+            general_reason="요청하신 내용을 바탕으로 골랐어요.",
+            requested=True,
+            today=TODAY,
+        )
+        assert draft.kind == "general"
+        assert draft.reason == "요청하신 내용을 바탕으로 골랐어요."
+        assert draft.citations == ()
+        assert draft.requested is True
+
+    def test_요청이_아니면_Growth_도_문서_근거가_필요하다(self):
+        with pytest.raises(SuggestionRejected, match="문서 행 근거가 없다"):
+            build(
+                agent="growth",
+                content="영어 그림 카드 놀이",
+                reason="이유",
+                citations=(),
+                general_reason="또래 기준",
+                today=TODAY,
+            )
+
+    def test_요청_기반을_여는_Agent_는_Activity_와_Growth_다(self):
+        assert REQUESTED_AGENTS == frozenset({"activity", "growth"})
+
+    def test_Food_는_요청_기반이어도_문서_근거를_본다(self):
         """Food 는 레시피북 밖 메뉴가 나가면 안 된다 — requested 로 근거를 면제하지 않는다."""
         with pytest.raises(SuggestionRejected, match="문서 행 근거가 없다"):
             build(
@@ -601,7 +633,39 @@ class TestDomainAgentResult:
         assert result.suggestions == ()
         assert result.readouts == ()
         assert result.medication_drafts == ()
+        assert result.pending is None
         assert result.model_calls == 0
+
+    def test_pending_이면_needs_observation_이_같은_질문이다(self):
+        pending = DomainPending(
+            agent="health",
+            kind="medication_stop",
+            question="항생제 복약 알림을 멈출까요?",
+            payload={"schedule_id": "s1"},
+        )
+
+        result = DomainAgentResult(
+            agent="health",
+            task_type="medication",
+            status="completed",
+            needs_observation=(pending.question,),
+            pending=pending,
+        )
+
+        assert result.pending is pending
+
+    @pytest.mark.parametrize("asked", [(), ("다른 질문이에요",)])
+    def test_pending_의_질문과_되묻기가_다르면_거절(self, asked):
+        pending = DomainPending(agent="health", kind="dose_timing", question="언제요?", payload={})
+
+        with pytest.raises(ValueError, match="pending"):
+            DomainAgentResult(
+                agent="health",
+                task_type="medication",
+                status="completed",
+                needs_observation=asked,
+                pending=pending,
+            )
 
     def test_채널을_섞어_담을_수_있다(self):
         result = DomainAgentResult(
