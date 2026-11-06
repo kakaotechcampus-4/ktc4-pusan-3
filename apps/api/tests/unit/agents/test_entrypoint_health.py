@@ -7,6 +7,7 @@ from uuid import UUID
 import pytest
 
 from app.agents import entrypoint
+from app.agents.activity.store.ports import CoarseLocation
 from app.agents.common.child_values import ChildValues
 from app.agents.common.ports import SafetyLookupError
 from app.agents.health.context import HealthContext
@@ -163,3 +164,85 @@ async def test_Health_중단_쓰기는_run_의_쓰기_표시에_남는다() -> N
     )
 
     assert writes.wrote
+
+
+# ── 병원 찾기 위치 · 병원 어댑터 (#713 후속) ─────────────────────────────────────────
+
+# 지어낸 좌표 — 실제 보호자 위치가 아니다
+SOMEWHERE = CoarseLocation(lat=35.18, lon=129.08)
+
+
+class _Hospitals:
+    """`FacilitySource` 자리 — 부르지 않는다. 넘긴 객체가 그대로 가는지만 본다."""
+
+    async def facilities(self, **_: object) -> list[object]:
+        return []
+
+
+async def _contexts_of(monkeypatch: pytest.MonkeyPatch, **kwargs: Any) -> dict[str, Any]:
+    """`handle_input` 이 pipeline 에 넘긴 도메인 context."""
+    seen: dict[str, Any] = {}
+
+    async def capture(raw_text: str, memory_context: Any, contexts: Any, **_: Any) -> None:
+        seen.update(contexts)
+
+    async def no_commit() -> None:
+        """호출되지 않는다 — pipeline 을 바꿔 끼웠다."""
+
+    monkeypatch.setattr(entrypoint, "_handle_input", capture)
+    await entrypoint.handle_input(
+        child_id=CHILD,
+        parent_id=UUID(int=2),
+        raw_text="지금 문 연 소아과 있어?",
+        run_id="r",
+        commit=no_commit,
+        save_suggestions=InMemorySuggestions(),
+        **kwargs,
+    )
+    return seen
+
+
+def test_병원_어댑터와_Health_위치를_넘기면_Health_가_받는다() -> None:
+    hospitals = _Hospitals()
+
+    context = _health(health_places=hospitals, health_location=SOMEWHERE)
+
+    assert context.ports.places is hospitals
+    assert context.location is SOMEWHERE
+
+
+def test_병원_어댑터와_위치를_안_넘기면_둘_다_없다() -> None:
+    # 없으면 병원 찾기가 place.no_location · place.unavailable 로 닫힌다 — 지어낸 값으로 열지 않는다
+    context = _health()
+
+    assert context.ports.places is None
+    assert context.location is None
+
+
+async def test_handle_input_이_Health_위치와_병원_어댑터를_넘긴다(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hospitals = _Hospitals()
+
+    contexts = await _contexts_of(monkeypatch, health_location=SOMEWHERE, health_places=hospitals)
+
+    assert contexts["health"].location is SOMEWHERE
+    assert contexts["health"].ports.places is hospitals
+
+
+async def test_Activity_위치는_Health_로_넘어가지_않는다(monkeypatch: pytest.MonkeyPatch) -> None:
+    """🚨 위치 약관은 판마다 목적이 다르다 — 날씨 · 놀이 목적의 이전 판에만 동의한 보호자의 위치를
+    병원 찾기에 쓰지 않게, Health 위치는 Activity 위치와 따로 받는다(#586 · 위치 약관 제2조 ④⑤)."""
+    contexts = await _contexts_of(monkeypatch, location=SOMEWHERE)
+
+    assert contexts["activity"].location is SOMEWHERE
+    assert contexts["health"].location is None
+
+
+def test_task_마다_새로_연_context_도_위치와_병원_어댑터를_그대로_갖는다() -> None:
+    hospitals = _Hospitals()
+
+    context = _health(health_places=hospitals, health_location=SOMEWHERE).for_task()
+
+    assert context.location is SOMEWHERE
+    assert context.ports.places is hospitals

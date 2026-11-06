@@ -2,6 +2,7 @@
 
 - 못 읽는 행은 빼고, 온라인 · 술 행사는 아이와 갈 곳으로 내지 않는다.
 - 관람 연령이 아이보다 높으면 뺀다. 보호자와 함께 들어갈 수 있으면 둔다. 못 읽는 조건은 뺀다.
+- 기간으로 먼저 거르고, 열리는 날 · 그날 장소는 일정(`EventSchedule`)으로 본다.
 """
 
 from datetime import date
@@ -15,11 +16,20 @@ from app.agents.activity.events import (
     age_allows,
     core_name,
     distance_m,
+    every_day,
+    in_period,
     in_province,
     open_on,
+    places_on,
     read_event,
+    schedule_days,
 )
-from app.agents.activity.store.ports import CoarseLocation
+from app.agents.activity.store.ports import (
+    EVENT_SCHEDULE_DAYS,
+    CoarseLocation,
+    EventRow,
+    EventSchedule,
+)
 from app.core.event_raw import RawEvent
 
 
@@ -107,19 +117,89 @@ class TestReadEvent:
         assert read_event(raw(title=title)) is not None
 
 
-class TestOpenOn:
-    def test_그날이_기간_안이면_열린다(self):
+class TestInPeriod:
+    """조회 앞에서 기간으로 먼저 거른다 — 열리는 날은 일정을 읽은 뒤에 본다(`open_on`)."""
+
+    def test_그날이_기간_안이면_된다(self):
         event = read_event(raw(start="20261101", end="20261109"))
 
-        assert open_on(event, [date(2026, 11, 1)])
-        assert open_on(event, [date(2026, 11, 9)])
-        assert not open_on(event, [date(2026, 11, 10)])
+        assert in_period(event, [date(2026, 11, 1)])
+        assert in_period(event, [date(2026, 11, 9)])
+        assert not in_period(event, [date(2026, 11, 10)])
 
-    def test_여러_날_중_하루라도_열리면_열린다(self):
+    def test_여러_날_중_하루라도_기간_안이면_된다(self):
         event = read_event(raw(start="20261108", end="20261108"))
 
-        assert open_on(event, [date(2026, 11, 7), date(2026, 11, 8)])
-        assert not open_on(event, [date(2026, 11, 7)])
+        assert in_period(event, [date(2026, 11, 7), date(2026, 11, 8)])
+        assert not in_period(event, [date(2026, 11, 7)])
+
+
+def row(schedule: EventSchedule, *, place: str = "바람숲공원 / 모래섬 해변") -> EventRow:
+    return EventRow(
+        name="달빛 체조 교실",
+        kind=EventKind.EVENT,
+        starts_on=date(2026, 10, 1),
+        ends_on=date(2026, 11, 30),
+        place=place,
+        distance_m=1_000,
+        schedule=schedule,
+    )
+
+
+class TestOpenOn:
+    """기간 안이어도 일정에 없는 날은 닫혀 있다 — "매주 토요일" 행사는 화요일에 없다."""
+
+    def test_일정에_있는_날만_열린다(self):
+        saturday = row(EventSchedule(open_days=frozenset({date(2026, 11, 7)})))
+
+        assert open_on(saturday, [date(2026, 11, 6), date(2026, 11, 7)])
+        assert not open_on(saturday, [date(2026, 11, 3)])
+
+    def test_일정을_모르면_어느_날도_열리지_않는다(self):
+        assert not open_on(row(EventSchedule(open_days=frozenset())), [date(2026, 11, 7)])
+
+
+class TestPlacesOn:
+    def test_장소가_날마다_다르면_그날_장소다(self):
+        moving = row(
+            EventSchedule(
+                open_days=frozenset({date(2026, 11, 7)}),
+                day_places=((date(2026, 10, 31), "바람숲공원"), (date(2026, 11, 7), "모래섬 해변")),
+            )
+        )
+        assert places_on(moving, [date(2026, 11, 7)]) == ("모래섬 해변",)
+
+    def test_날마다_다르지_않으면_행사_장소다(self):
+        fixed = row(EventSchedule(open_days=frozenset({date(2026, 11, 7)})), place="바람숲공원")
+        assert places_on(fixed, [date(2026, 11, 7)]) == ("바람숲공원",)
+
+    def test_여러_날이면_날짜순으로_한_번씩_준다(self):
+        moving = row(
+            EventSchedule(
+                open_days=frozenset({date(2026, 11, 7), date(2026, 11, 8)}),
+                day_places=(
+                    (date(2026, 11, 7), "모래섬 해변"),
+                    (date(2026, 11, 7), "바람숲공원"),
+                    (date(2026, 11, 8), "모래섬 해변"),
+                ),
+            )
+        )
+        days = [date(2026, 11, 8), date(2026, 11, 7)]
+        assert places_on(moving, days) == ("모래섬 해변", "바람숲공원")
+
+
+class TestEveryDay:
+    """일정 낱말이 없는 행사 — 오늘부터 읽는 창 안에서 기간 안의 날이 다 열린다."""
+
+    def test_오늘부터_창_안에서_기간_안의_날이다(self):
+        today = date(2026, 11, 2)
+        event = read_event(raw(start="20261101", end="20261105"))
+
+        assert len(schedule_days(today)) == EVENT_SCHEDULE_DAYS
+        assert schedule_days(today)[0] == today
+        assert every_day(event, today) == EventSchedule(
+            open_days=frozenset(date(2026, 11, d) for d in range(2, 6))
+        )
 
 
 class TestCoreName:

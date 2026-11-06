@@ -130,7 +130,8 @@ async def build_gate(context: ActivityContext, *, outdoor_ok: bool) -> Gate:
       이 값이면 registry 가 Activity 를 통째로 닫는다 — 모델 0회 (D7).
     - `has_location` 은 좌표가 있는가. 장소 · 날씨 · 행사 어댑터가 주입됐는지는 `data.places` ·
       `data.weather` · `data.events` 다 — 좌표만 있고 어댑터가 없을 때 tool 을 열면 늘
-      실패한다. 둘 다 있어야 그 tool 이 열린다 (`gating.opens`).
+      실패한다. 둘 다 있어야 그 tool 이 열린다 (`gating.opens`). 행사는 일정 포트까지 있어야
+      한다 — 열리는 날을 모르면 기간으로 메우지 않는다.
     - `outdoor_ok` 는 호출부가 날씨를 먼저 조회해 넘긴다. 장소 조회가 실내 종류로
       좁혀지는지가 이 값에 걸려 있어서다 (3-2).
     """
@@ -158,6 +159,6 @@ async def build_gate(context: ActivityContext, *, outdoor_ok: bool) -> Gate:
         data=DataReady(
             places=ports.places is not None,
             weather=ports.weather is not None,
-            events=ports.events is not None,
+            events=ports.events is not None and ports.event_schedules is not None,
         ),
     )
