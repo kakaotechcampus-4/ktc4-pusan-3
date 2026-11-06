@@ -135,7 +135,10 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 15s
+      # 120s — 이 동안의 실패는 세지 않고, 한 번 통과하면 바로 healthy 다(평소 배포는 안 느려진다).
+      # deploy.sh 의 up --wait 가 이 판정으로 롤백을 정한다. 서버는 평소 9초에 뜨지만 dev · prod 빌드가 겹쳐
+      # swap 을 쓸 때는 훨씬 느리다 — 15s 면 멀쩡한 배포가 롤백된다 (#747 로컬 리허설에서 2분 20초를 봤다).
+      start_period: 120s
 
   web:
     build:
