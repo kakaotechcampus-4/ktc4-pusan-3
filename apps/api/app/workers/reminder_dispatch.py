@@ -26,7 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.alerts import configure_alerts
 from app.core.config import settings
-from app.core.logging_config import configure_logging
+from app.core.logging_config import configure_logging, log_error_without_message
 from app.domains.notification.repository import (
     forget_devices,
     schedule_push_targets,
@@ -178,6 +178,6 @@ if __name__ == "__main__":
         configure_alerts(discord.webhook_sender(settings.alert_webhook_url), env=settings.APP_ENV)
     try:
         asyncio.run(_main())
-    except Exception:
-        log.exception("일정 알림 발송 실패")
+    except Exception as exc:
+        log_error_without_message(log, "일정 알림 발송 실패", exc)
         raise SystemExit(1) from None

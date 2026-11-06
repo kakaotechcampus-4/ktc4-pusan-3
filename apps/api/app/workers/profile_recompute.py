@@ -31,7 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.alerts import configure_alerts
 from app.core.config import settings
-from app.core.logging_config import configure_logging
+from app.core.logging_config import configure_logging, log_error_without_message
 from app.domains.child.models import Child
 from app.domains.memory.profile.models import ProfileAffinity, ProfileState
 from app.domains.memory.profile.service import lock_child_memory, recompute_profile
@@ -98,10 +98,10 @@ async def run_recompute(session: AsyncSession, *, today: date) -> RecomputeResul
             done, moved = await _recompute_child(session, child_id, profile_ids, today=today)
             profiles += done
             changed += moved
-        except Exception:
+        except Exception as exc:
             await session.rollback()
             failed += 1
-            log.exception("기억 상태 다시 계산 실패 (아이 1명)")
+            log_error_without_message(log, "기억 상태 다시 계산 실패 (아이 1명)", exc)
     log.info(
         "기억 상태 다시 계산: 아이 %d명 · 기억 %d건 · 바뀜 %d건 · 실패 아이 %d명",
         len(targets),
@@ -129,7 +129,7 @@ if __name__ == "__main__":
         configure_alerts(discord.webhook_sender(settings.alert_webhook_url), env=settings.APP_ENV)
     try:
         code = asyncio.run(_main())
-    except Exception:
-        log.exception("기억 상태 다시 계산 실패")
+    except Exception as exc:
+        log_error_without_message(log, "기억 상태 다시 계산 실패", exc)
         raise SystemExit(1) from None
     raise SystemExit(code)
