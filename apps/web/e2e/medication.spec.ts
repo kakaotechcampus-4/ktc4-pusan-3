@@ -194,6 +194,57 @@ test.describe("med_handoff — 회차 현황 · 전달 서류", () => {
   });
 });
 
+test.describe("med_check — 체크 안내에서 그 코스로 (#713)", () => {
+  test.use({ scenario: "med_check" });
+
+  test("안내 아래 '복약 화면 열기' 가 그 코스를 열고, 체크는 거기서 한다", async ({ page }) => {
+    const calls = recordApi(page);
+    await sendFromHome(page, "약 먹였어");
+    const reply = turn(page, "약 먹였어");
+    await expect(reply.getByText("복용 체크는 홈이나 복약 화면에서 해 주세요.")).toBeVisible();
+    // 🚨 대화에서 체크하지 않는다 — 기록이 생기는 곳은 복약 화면 하나다.
+    await expect(reply.getByRole("checkbox")).toHaveCount(0);
+
+    await reply.getByRole("link", { name: "복약 화면 열기" }).click();
+    await page.waitForURL(`**/child/${CHILD}/profile/medications?course=ms_seed`);
+    // 그 코스 카드로 포커스가 온다 — 목록을 거르지는 않는다.
+    await expect(page.locator(":focus")).toContainText("해열 시럽");
+    expect(writes(calls, "PUT", /\/check$/)).toEqual([]);
+  });
+});
+
+test.describe("med_which — 어느 약 → 멈출까요 (#713 세 턴)", () => {
+  test.use({ scenario: "med_which" });
+
+  test("이어받은 run 이 다시 물어도 그 질문에 답할 수 있고, 붙인 다른 말은 반영하지 않았다고 알린다", async ({
+    page,
+  }) => {
+    await sendFromHome(page, "약 하나 그만 먹일래");
+    await expect(
+      turn(page, "약 하나 그만 먹일래").getByText("어느 약 말씀이세요?", { exact: false }),
+    ).toBeVisible();
+    const input = page.getByRole("textbox", { name: "오늘 있었던 일" });
+
+    await input.fill("해열 시럽이요 그리고 오늘 열이 났어요");
+    await page.getByRole("button", { name: "이 이야기 남기기" }).click();
+    const second = turn(page, "해열 시럽이요 그리고 오늘 열이 났어요");
+    await expect(
+      second.getByText("해열 시럽 복약 알림을 멈출까요?", { exact: false }),
+    ).toBeVisible();
+    await expect(
+      second.getByText("이 질문에 먼저 답한 뒤 따로 한 줄로 보내 주세요.", { exact: false }),
+    ).toBeVisible();
+    // 🚨 안내는 질문이 아니다 — 입력창이 잡는 것은 Health 의 질문이다.
+    await expect(page.getByText("위 질문에 답하는 중")).toBeVisible();
+
+    await input.fill("네");
+    await page.getByRole("button", { name: "이 이야기 남기기" }).click();
+    await expect(
+      turn(page, "네").getByText("해열 시럽 복약 알림을 멈췄어요. 먹인 기록은 그대로 남아요."),
+    ).toBeVisible();
+  });
+});
+
 test.describe("11-3 복약 — 회차 체크 (게이트가 아니다)", () => {
   test("체크하면 기록되고 풀 수 있다 · 게이트 표식이 없다 · 키를 달지 않는다", async ({ page }) => {
     const calls = recordApi(page);

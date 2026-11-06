@@ -43,7 +43,7 @@ export const handlers = [
   ...suggestionHandlers,
   ...memoryHandlers,
   ...calendarHandlers,
-  // 복약 (#537 · 잠정 경로). 아이 스코프 아래 `/medications` · `/medication-doses` 라 겹치는 경로가 없다.
+  // 복약 (#537 · 서버 `routers/medications.py` 와 같은 경로). 아이 스코프 아래 `/medications` · `/medication-doses` 라 겹치는 경로가 없다.
   ...medicationHandlers,
   // 04 지난 대화 (#228). 끝난 입력 run 을 `runHandlers` 가 이리로 남긴다 (`recordingTurn`).
   ...chatHandlers,

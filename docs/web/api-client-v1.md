@@ -125,6 +125,7 @@ const mutation = useMutation({
 | 루트 레이아웃이 터짐 | `app/global-error.tsx` | 문서 전체를 대체 (Providers 없음) |
 | 없는 주소 | `app/not-found.tsx` | 404 로 응답한다 |
 | 한 구역만 터짐 | `components/app-error-boundary.tsx` | 그 구역만 `CardFailed` |
+| 렌더 밖에서 터짐 (이벤트 핸들러 · 타이머 · 처리 안 된 rejection) | `lib/report-uncaught-error.ts` (`window` 의 `error` · `unhandledrejection`) | 화면은 그대로, 서버에 보고만 (#732) |
 
 - 🚨 **`throwOnError` 를 켜서 쿼리 실패를 바운더리로 올리지 않는다.** 부분 실패가 화면 전체 교체가
   되어 "Agent 2개 중 1개만 성공해도 그 화면을 보여준다"(NF-06)가 깨진다.
@@ -133,6 +134,17 @@ const mutation = useMutation({
   있다 (최상위 §2).
   ⚠️ **React 자체가 잡힌 예외를 콘솔에 한 번 찍는 것은 우리가 못 막는다.** 그래서 규칙은
   "로그를 조심한다" 가 아니라 **`new Error()` 에 사용자 입력을 넣지 않는다** 다.
+- **렌더 밖 오류는 보고만 하고 화면을 바꾸지 않는다** (#732). 렌더 오류와 같은 창구(`POST /client-errors`)와
+  같은 모양(이름 · digest · 경로 · 기기 요약)이다. 바운더리가 잡은 오류는 Next 가 `window` 로 다시 던지지
+  않아 두 번 보고되지 않는다.
+  - ⚠️ 하이드레이션 불일치처럼 Next 가 "복구 가능한 오류" 로 보는 것도 `window.reportError` 를 거쳐 이 경로로
+    온다 (`onRecoverableError`). 이름은 보통 `Error` 다. 화면은 스스로 복구했지만 서버와 브라우저의 그림이
+    어긋났다는 신호라 받는다. 브라우저 확장 · 자동 번역이 DOM 을 바꿔도 생기니, 한 번 뜬 것만으로 버그라고 보지 않는다
+  - 🚨 보내지 않는 것 — `ApiError`(api 가 자기 5xx 를 이미 알린다 · 4xx 는 업무 응답), `NetworkError`,
+    `AbortError`, 예외 객체가 없는 `error` 이벤트(다른 출처의 "Script error." · ResizeObserver), 우리 출처가
+    아닌 파일(브라우저 확장)에서 난 예외
+  - 🚨 같은 오류(이름 + 경로)는 페이지를 연 동안 한 번, 전체 5건까지 — 핸들러 예외는 누를 때마다 또 난다
+  - ⚠️ Discord 에서는 렌더 오류와 같은 `browser-alert` 로 보인다. 둘을 가르려면 서버 스키마에 칸을 더해야 한다(BE)
 - 🚨 **승인 게이트 2곳에 `AppErrorBoundary` 를 붙이지 않는다.** 승인 시트가 조용히 작은 회색 카드로
   바뀌면 보호자가 "확정됐다 / 안 됐다" 를 구분할 수 없다. 되돌릴 수 없는 것 앞에서는 화면째
   실패하는 편이 안전하다.

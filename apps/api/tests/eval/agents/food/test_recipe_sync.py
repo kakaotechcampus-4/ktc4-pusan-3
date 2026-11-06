@@ -139,13 +139,18 @@ async def test_검수_전에는_후보_풀이_비어_있다(expect: Callable[...
     )
     sync = await _sync()
     _, table = _draft_table(sync)
-    rows = [build_recipe_row(recipe, table, now=NOW) for recipe in sync.recipes]
+    rows = [
+        build_recipe_row(recipe, table, now=NOW, source="mafra_recipe") for recipe in sync.recipes
+    ]
     # 초안을 그대로 받아들인다면 풀릴 수 있는 레시피 — 검수 뒤 풀 크기의 위쪽 한계로만 남긴다
     accepted = {
         key: dataclasses.replace(entry, status="ok" if entry.names else "not_food")
         for key, entry in table.items()
     }
-    could = sum(build_recipe_row(recipe, accepted, now=NOW).resolved for recipe in sync.recipes)
+    could = sum(
+        build_recipe_row(recipe, accepted, now=NOW, source="mafra_recipe").resolved
+        for recipe in sync.recipes
+    )
     resolved = sum(row.resolved for row in rows)
     _record("pool", {"recipes": len(rows), "resolved": resolved, "if_draft_accepted": could})
     assert resolved == 0, f"검수 전인데 후보 풀에 들어가는 레시피가 {resolved}개다"

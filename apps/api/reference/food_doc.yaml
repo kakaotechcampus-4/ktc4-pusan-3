@@ -7,14 +7,33 @@
 #
 # 출처 기준 (#337): 상업적 이용과 변경(다시 쓰기)이 둘 다 허락된 것만 행 출처로 쓴다.
 #   Ministry of Health (New Zealand)   「Healthy Eating Guidelines for New Zealand Babies and Toddlers
-#                                       (0–2 years old)」 2021. CC BY 4.0
+#                                       (0–2 years old)」 2021. CC BY 4.0 (license_basis: cc_by)
 #                                       https://creativecommons.org/licenses/by/4.0/ — 원문을 줄이고
-#                                       한국어로 다시 썼다(변경 표시). license_basis 는 값 집합에 CC BY 가
-#                                       없어서 fact_rewrite 로 적는다
+#                                       한국어로 다시 썼다(변경 표시). 표시는 05 응답이 한다: 원래 기관 ·
+#                                       제목 뒤에 "번역·재구성함 · CC BY 4.0 (주소)" 가 붙고(public_doc_source),
+#                                       원문 링크는 source_url 칸으로 나간다
 #   한국소비자원                        「영유아 이유식 안전실태조사」 2023 붙임4. 공공누리 제1유형 (kogl_1)
 #   교육부                              2024 개정 표준보육과정(교육부고시 제2024-23호) · 2019 개정
 #                                       누리과정(교육부 고시 제2019-189호). 고시 (public_law) —
 #                                       국가법령정보센터 본문
+#   Department for Education (England) 「Early Years Foundation Stage nutrition guidance」 2025년 5월 (#510).
+#                                       Open Government Licence v3.0 (license_basis: ogl_3). 표시는 05 응답이 한다:
+#                                       원래 기관 · 제목 뒤에 필수 영문 문장과 라이선스 주소가 붙는다(public_doc_source).
+#                                       meal_pattern 에 쓴다. 외부 사이트 레시피 · 로고 · 제3자 자료는 쓰지 않는다
+#   NHS (영국) 웹사이트 「Fussy eaters」 · 「Young children and food: common questions」 (#510).
+#                                       OGL v3.0 (license_basis: ogl_3). feeding_tip 에만 쓴다.
+#                                       🚨 우리가 번역 · 각색한 글이라 NHS 이용 약관 3.6(b) 가 적용된다 — 표준 OGL 문장만 쓰고
+#                                       NHS 를 출처로 밝히지 않는다. 그래서 YAML 의 source_org · source_title · source_url 에는
+#                                       실제 원문을 남기고(내부 추적용), 05 응답과 Agent 입력에는 표준 문장만 나간다
+#                                       (public_doc_source). 제목 · 본문에도 "NHS 에 따르면" 같은 표시를 쓰지 않는다.
+#                                       확인일 2026-11-04: 3.6(b) 는 그대로다. 약관 페이지가 아직 "Next review due 12 January
+#                                       2024" 로 적혀 있어 행을 쓸 때 다시 읽었다. 3.10 — NHS 콘텐츠 접근에 따로 요금을 매기지
+#                                       않는다(이 서비스는 NHS 문장 이용에 별도 요금을 붙이지 않는다). 로고 · 이미지 · 상표는
+#                                       OGL 밖이라 쓰지 않는다. 원문 페이지 검토 예정일 Fussy eaters 2026-11-13 — 그 뒤 원문이
+#                                       바뀌었는지 검수자가 다시 본다
+# 뉴질랜드 2–18세 지침(2012, 2015 개정)은 행 출처로 쓰지 않았다 — health.govt.nz 가 자동 내려받기를 막아 원문을 열지
+# 못했고, 검색 결과로는 보건부가 이 지침을 재검토 중이라 최신성을 확인할 수 없었다. 확인되면 36–71개월 행의 교차 확인으로 더한다.
+# 일본 가이드는 행을 만들지 않았다 (원본 URL 404, #510 Part F) — pdl_1 값만 있다.
 # 미국 연방기관 자료(CDC · USDA WIC · 미국 식생활지침)는 검수 대조용이라 행 출처로 달지 않는다.
 #
 # 행 칸 — 공통 칸은 RAG_plan §1, Food 칸은 own_table §4.
@@ -41,16 +60,28 @@
 #     sha256 7f890b302dc5c0133765dcf67e7d2a658808aea02d32a4a40e2ee9b9b2f6b237 — 판권면 2쪽
 #   한국소비자원 보고서 PDF (상세 페이지 첨부, 2026-10-12 받음)
 #     sha256 1236ac7f6adb7f837ffb28bab8dc64f73076b2fa6fb190efc461f54148130d11 — 붙임4 는 PDF 26쪽(인쇄 22쪽)
+#   DfE EYFS nutrition guidance PDF (위 source_url, 2025년 5월판, 2026-11-04 받음)
+#     sha256 1e156c5e87e7e5200c9dfbbc7e2f1a9a9c463145427370dee6fe507da722da97 — 인쇄 쪽과 PDF 쪽이 같다.
+#     라이선스 표시(OGL v3.0, Crown copyright 2025)는 39쪽
+#   NHS 웹페이지 (2026-11-04 받은 HTML — 페이지가 바뀌면 해시도 달라진다)
+#     Fussy eaters (Page last reviewed 13 November 2023)
+#       sha256 08bca3eb19141c0956a2544dc62206956b7aab44bd220d5123d6b2f9d99d5aed
+#     Young children and food: common questions (Page last reviewed 28 April 2026)
+#       sha256 d154bf10dcac4d3b04ee490397362f047dcd2178c4a159f39cf796ddc2231705
+#     이용 약관 https://www.nhs.uk/our-policies/terms-and-conditions/ — 3.6(b) · 3.10
+#       sha256 accea34ff5bf2283fde877d8245d614511bad0c05a495689da6832ab230d53a9
 #
 # 행마다 테스트가 보는 것 (tests/unit/agents/food/test_food_doc_seed.py)
 # - allergen_codes 가 제목 · 본문을 Food 사전으로 훑은 코드를 다 덮는다
 # - 행의 min_month 에서 연령 규칙(food_safety_terms.yaml) 중 block 에 걸리지 않는다 (caution 은 통과)
 # - 평가 표현 · 발달 이정표 · 영양 수치 · 처방 표현 없음
 # - row_type 별 칸과 월령 (이유기 4–12, meal_pattern · nutrient_note 12+, texture · nutrients 는 정해진 행만)
-# - 출처가 위 세 곳 중 하나이고 license_basis 가 맞다
+# - 출처가 위 다섯 곳 중 하나이고 license_basis 가 맞다
+# - meal_pattern 은 12–35개월 · 36–71개월 구간마다 15행(끼니 3 · 간식 2 · 식품군 5 · 마실 것 1 · 예시 식사 4),
+#   신규 행은 전부 draft 이고 source_locator 가 있다. NHS 행은 공개 출처에서 이름 · 주소가 가려진다
 # - weaning_stage 가 4–11개월을 빈틈없이 덮는다
 
-source: Ministry of Health (New Zealand) 2021 (CC BY 4.0) · 한국소비자원 2023 (공공누리 제1유형) · 교육부 고시 — 행마다 source_* 칸
+source: Ministry of Health (New Zealand) 2021 (CC BY 4.0) · 한국소비자원 2023 (공공누리 제1유형) · 교육부 고시 · DfE 2025 (OGL v3.0) · NHS (OGL v3.0, 공개 출처 비공개) — 행마다 source_* 칸
 version: "2026.1-draft"
 fetched_at: 2026-10-12
 
@@ -62,13 +93,37 @@ origins:
     source_org: Ministry of Health (New Zealand)
     source_year: 2021
     source_url: https://www.health.govt.nz/system/files/2021-09/healthy-eating-guidelines-for-new-zealand-babies-and-toddlers-nov21-v3.pdf
-    license_basis: fact_rewrite  # CC BY 4.0 — 머리말 참고
+    license_basis: cc_by  # CC BY 4.0 — 머리말 참고
   kca: &kca
     source_title: 영유아 이유식 안전실태조사
     source_org: 한국소비자원
     source_year: 2023
     source_url: https://www.kca.go.kr/smartconsumer/sub.do?cate=00000056&menukey=7301&mode=view&no=1003447270
     license_basis: kogl_1
+  dfe: &dfe
+    source_title: Early Years Foundation Stage nutrition guidance
+    source_org: Department for Education (England)
+    source_year: 2025
+    source_url: https://assets.publishing.service.gov.uk/media/6839b752210698b3364e86fc/Early_years_foundation_stage_nutrition_guidance.pdf
+    license_basis: ogl_3
+  # NHS 두 앵커의 값은 내부 추적용이다. 05 응답과 Agent 입력에는 나가지 않는다 (public_doc_source)
+  nhs_fussy: &nhs_fussy
+    source_title: Fussy eaters
+    source_org: NHS
+    source_year: 2023
+    source_url: https://www.nhs.uk/baby/weaning-and-feeding/fussy-eaters/
+    license_basis: ogl_3
+  nhs_questions: &nhs_questions
+    source_title: "Young children and food: common questions"
+    source_org: NHS
+    source_year: 2026
+    source_url: https://www.nhs.uk/baby/weaning-and-feeding/young-children-and-food-common-questions/
+    license_basis: ogl_3
+  # 신규 행(#510)은 검수 전이다 — 작성자와 다른 사람이 원문을 펴 놓고 확인한 뒤 행마다 approved 로 올린다
+  draft: &draft
+    status: draft
+    authored_by: nnhhlee
+    version: 1
   # TEMP(#434): 임시 검수자. 이 앵커를 쓰는 행이 전부 approved 다 — 실제 검수가 끝나면 행마다 고친다
   temp_admin: &temp_admin
     status: approved
@@ -750,3 +805,480 @@ rows:
     tags: [seasoning, salt, sugar]
     <<: [*nz, *temp_admin]
     source_locator: Eating Statement 4 — Key points (p.48) · Reasons for the recommendations (p.49)
+
+  # ── meal_pattern — 12–35개월 · 36–71개월 식사 구성 (#510) ──────────────────────
+
+  - doc_key: food.meal_pattern.m12_35.day_rhythm
+    row_type: meal_pattern
+    title: 하루 식사 흐름
+    body: >-
+      하루를 아침 · 점심 · 저녁 세 끼로 잡고, 끼니 사이에 간식을 두세 번 넣어 규칙적으로 먹는 흐름을 만든다.
+    min_month: 12
+    max_month: 36
+    tags: [meal_pattern, meals, rhythm, snack]
+    <<: [*dfe, *draft]
+    source_locator: "Menu planning — What to think about when planning menus, 1. Nutrition (p.19)"
+
+  - doc_key: food.meal_pattern.m12_35.two_dishes
+    row_type: meal_pattern
+    title: 점심 · 저녁은 두 가지 음식으로
+    body: >-
+      점심과 저녁은 주된 요리 하나에 곁들임 하나를 더해 두 가지로 차린다. 곁들임은 수프, 채소 반찬, 과일이나 무가당 요거트 같은 두 번째 음식 가운데서 고른다.
+    min_month: 12
+    max_month: 36
+    tags: [meal_pattern, meals, lunch, dinner, side_dish]
+    food_groups: [vegetables, fruits, dairy]
+    allergen_codes: [2]
+    <<: [*dfe, *draft]
+    source_locator: "Menu planning — What to think about when planning menus, 1. Nutrition (p.19)"
+
+  - doc_key: food.meal_pattern.m12_35.family_meal
+    row_type: meal_pattern
+    title: 가족 음식을 작게 썰어 내기
+    body: >-
+      아이 몫을 따로 만들 필요 없이 가족이 먹는 음식을 아이 입에 맞게 작게 썰어 낸다. 소금이나 설탕을 더하지 않아 나트륨이 적은 음식으로 고른다.
+    min_month: 12
+    max_month: 36
+    tags: [meal_pattern, meals, family_meal, texture]
+    <<: [*nz, *draft]
+    source_locator: "Eating Statement 2 — 10–12 months (p.29)"
+
+  - doc_key: food.meal_pattern.m12_35.snack_basics
+    row_type: meal_pattern
+    title: 간식에 과일 · 채소와 곡류 넣기
+    body: >-
+      간식 가운데 일부에는 과일이나 채소를 넣고, 하루에 한 번 이상은 간을 하지 않은 곡류 간식을 둔다. 간 없는 크래커나 쌀과자가 그런 예다.
+    min_month: 12
+    max_month: 36
+    tags: [meal_pattern, snack_pattern, snack, fruit, vegetable, grains]
+    food_groups: [fruits, vegetables, grains]
+    allergen_codes: [6]
+    <<: [*dfe, *draft]
+    source_locator: "Table 2 — Food and drink guidelines, Fruit and vegetables · Starchy carbohydrates (p.14)"
+
+  - doc_key: food.meal_pattern.m12_35.snack_ideas
+    row_type: meal_pattern
+    title: 간식으로 낼 수 있는 음식
+    body: >-
+      부드럽게 익힌 당근, 바나나, 아보카도, 치즈, 으깬 달걀, 설탕을 넣지 않은 요거트를 간식으로 낼 수 있다.
+    min_month: 12
+    max_month: 36
+    tags: [meal_pattern, snack_pattern, snack, snack_ideas]
+    food_groups: [vegetables, fruits, dairy, meat_fish_egg_legumes]
+    allergen_codes: [1, 2]
+    <<: [*nz, *draft]
+    source_locator: "Eating Statement 4 — Food ideas for babies and toddlers, Some healthy snacks (p.52)"
+
+  - doc_key: food.meal_pattern.m12_35.four_groups
+    row_type: meal_pattern
+    title: 하루에 네 가지 식품군 고루
+    body: >-
+      하루 식사에는 채소 · 과일, 밥 · 빵 · 국수 같은 곡류, 우유 · 요거트 · 치즈 같은 유제품, 콩 · 생선 · 달걀 · 고기 같은 단백질 식품이 두루 들어가게 짠다.
+    min_month: 12
+    max_month: 36
+    tags: [meal_pattern, groups, variety]
+    food_groups: [vegetables, fruits, grains, dairy, meat_fish_egg_legumes]
+    allergen_codes: [1, 2, 5, 6]
+    <<: [*nz, *draft]
+    source_locator: "Eating Statement 3 — introduction and Key points (p.37)"
+
+  - doc_key: food.meal_pattern.m12_35.veg_fruit_each_meal
+    row_type: meal_pattern
+    title: 끼니마다 채소나 과일
+    body: >-
+      아침 · 점심 · 저녁 끼니마다 채소나 과일을 한 가지 이상 넣는다. 하루 안에서도, 한 주 동안에도 여러 가지 채소와 과일이 돌아가며 나오게 한다.
+    min_month: 12
+    max_month: 36
+    tags: [meal_pattern, groups, vegetable, fruit]
+    food_groups: [vegetables, fruits]
+    <<: [*dfe, *draft]
+    source_locator: "Table 2 — Food and drink guidelines, Fruit and vegetables (p.14)"
+
+  - doc_key: food.meal_pattern.m12_35.starch_each_meal
+    row_type: meal_pattern
+    title: 끼니마다 곡류 한 가지
+    body: >-
+      아침 · 점심 · 저녁 끼니마다 밥, 빵, 국수, 감자 같은 곡류 음식을 한 가지씩 넣는다. 한 주 동안 곡류의 종류가 여러 가지로 돌아가게 한다.
+    min_month: 12
+    max_month: 36
+    tags: [meal_pattern, groups, grains]
+    food_groups: [grains]
+    allergen_codes: [6]
+    <<: [*dfe, *draft]
+    source_locator: "Table 2 — Food and drink guidelines, Starchy carbohydrates (p.14)"
+
+  - doc_key: food.meal_pattern.m12_35.protein_lunch_dinner
+    row_type: meal_pattern
+    title: 점심 · 저녁의 단백질 식품
+    body: >-
+      점심과 저녁에는 단백질 식품을 한 가지씩 넣고, 한 주 사이에 콩, 생선, 달걀, 고기가 번갈아 나오게 한다. 점심 한 번과 저녁 한 번은 콩류를 주된 단백질로 쓴다.
+    min_month: 12
+    max_month: 36
+    tags: [meal_pattern, groups, protein]
+    food_groups: [meat_fish_egg_legumes]
+    allergen_codes: [1, 5]
+    <<: [*dfe, *draft]
+    source_locator: "Table 2 — Food and drink guidelines, Proteins (p.15)"
+
+  - doc_key: food.meal_pattern.m12_35.dairy_three
+    row_type: meal_pattern
+    title: 우유 · 유제품은 하루 세 번
+    body: >-
+      우유와 무가당 유제품을 하루 세 번에 나눠 낸다. 요거트는 단맛을 더하지 않은 것을 고른다.
+    min_month: 12
+    max_month: 36
+    tags: [meal_pattern, groups, dairy]
+    food_groups: [dairy]
+    allergen_codes: [2]
+    <<: [*dfe, *draft]
+    source_locator: "Table 2 — Food and drink guidelines, Dairy and plain, fortified plant-based alternatives (p.15)"
+
+  - doc_key: food.meal_pattern.m12_35.drinks
+    row_type: meal_pattern
+    title: 마실 것은 물과 우유
+    body: >-
+      마실 것은 물과 우유로 짠다. 물은 하루 내내 곁에 두고 끼니와 간식 때마다 권한다. 우유를 마시지 않으면 칼슘을 더한 무가당 식물성 음료로 바꾼다.
+    min_month: 12
+    max_month: 36
+    tags: [meal_pattern, drink, water, milk]
+    food_groups: [dairy]
+    allergen_codes: [2]
+    <<: [*dfe, *draft]
+    source_locator: "Table 2 — Food and drink guidelines, Drinks (p.16)"
+
+  - doc_key: food.meal_pattern.m12_35.example_breakfast
+    row_type: meal_pattern
+    title: 아침 구성 예시
+    body: >-
+      아침은 곡류 음식에 과일을 곁들이고 달걀을 더하는 구성이 있다. 바나나와 딸기를 넣은 귀리죽, 달걀과 토스트 조각에 토마토를 곁들인 접시가 그런 예다. 딸기나 토마토처럼 작고 둥근
+      것은 길게 네 갈래로 잘라서 낸다.
+    min_month: 12
+    max_month: 36
+    tags: [meal_pattern, example, breakfast]
+    food_groups: [grains, fruits, vegetables, meat_fish_egg_legumes]
+    allergen_codes: [1, 6, 12]
+    <<: [*dfe, *draft]
+    source_locator: "Table 4 — Example meals and snacks for children aged 1-5 years, Breakfast (p.24)"
+
+  - doc_key: food.meal_pattern.m12_35.example_main
+    row_type: meal_pattern
+    title: 점심 · 저녁 주된 요리 구성 예시
+    body: >-
+      점심이나 저녁의 주된 요리는 곡류에 단백질 식품과 채소를 함께 얹는 틀이 기본이다. 병아리콩을 넣은 밥 요리, 렌틸콩과 브로콜리를 넣은 파스타, 닭고기와 채소를 싼 통밀 랩이 그런
+      예다.
+    min_month: 12
+    max_month: 36
+    tags: [meal_pattern, example, lunch, dinner, main_dish]
+    food_groups: [grains, meat_fish_egg_legumes, vegetables]
+    allergen_codes: [6, 15]
+    <<: [*dfe, *draft]
+    source_locator: "Table 4 — Example meals and snacks for children aged 1-5 years, Lunch or tea · Main dish (p.25)"
+
+  - doc_key: food.meal_pattern.m12_35.example_side
+    row_type: meal_pattern
+    title: 곁들임 구성 예시
+    body: >-
+      곁들임은 채소나 과일에 달걀이나 유제품을 짝지어 낸다. 채소 수프, 삶은 달걀과 익힌 당근, 무가당 요거트와 바나나, 치즈와 얇게 썬 딸기가 그런 예다.
+    min_month: 12
+    max_month: 36
+    tags: [meal_pattern, example, side_dish]
+    food_groups: [vegetables, fruits, dairy, meat_fish_egg_legumes]
+    allergen_codes: [1, 2]
+    <<: [*dfe, *draft]
+    source_locator: "Table 4 — Example meals and snacks for children aged 1-5 years, Lunch or tea · Starter, side dish or second dish (p.25)"
+
+  - doc_key: food.meal_pattern.m12_35.example_snack
+    row_type: meal_pattern
+    title: 간식 구성 예시
+    body: >-
+      간식 하나에 곡류와 채소와 유제품이 함께 들어가는 조합도 있다. 치즈를 올린 머핀에 오이를 곁들이는 식이다.
+    min_month: 12
+    max_month: 36
+    tags: [meal_pattern, example, snack]
+    food_groups: [grains, vegetables, dairy]
+    allergen_codes: [2, 6]
+    <<: [*dfe, *draft]
+    source_locator: "Table 4 — Example meals and snacks for children aged 1-5 years, Snacks (p.25)"
+
+  - doc_key: food.meal_pattern.m36_71.day_rhythm
+    row_type: meal_pattern
+    title: 세 끼와 간식, 점심 · 저녁은 두 가지
+    body: >-
+      세 살이 넘어서도 아침 · 점심 · 저녁 세 끼 사이에 간식을 두세 번 넣는 흐름을 이어 간다. 점심과 저녁은 주된 요리 하나에 곁들임 하나를 더해 두 가지로 차린다.
+    min_month: 36
+    max_month: 72
+    tags: [meal_pattern, meals, rhythm, snack, side_dish]
+    <<: [*dfe, *draft]
+    source_locator: "Menu planning — What to think about when planning menus, 1. Nutrition (p.19)"
+
+  - doc_key: food.meal_pattern.m36_71.eat_together
+    row_type: meal_pattern
+    title: 함께 앉아 같은 음식 먹기
+    body: >-
+      가족이 함께 앉아 같은 음식을 먹는다. 집에서는 손도 대지 않던 채소를 다른 사람이 먹는 모습을 보고 먹어 보는 일이 있다.
+    min_month: 36
+    max_month: 72
+    tags: [meal_pattern, meals, eat_together]
+    <<: [*dfe, *draft]
+    source_locator: "Guidance for children aged 1 to 5 years — A healthy plate (p.13)"
+
+  - doc_key: food.meal_pattern.m36_71.week_variety
+    row_type: meal_pattern
+    title: 한 주 단위로 돌려 가며 짜기
+    body: >-
+      식단을 한 주 단위로 훑어 보고, 맛 · 질감 · 색이 다른 음식이 고르게 돌아가게 한다. 같은 음식이 같은 요일마다 겹치지 않게 짠다.
+    min_month: 36
+    max_month: 72
+    tags: [meal_pattern, meals, weekly_plan, variety]
+    <<: [*dfe, *draft]
+    source_locator: "Menu planning — 2. Varied and balanced diet across the week · 3. Plan menus lasting at least a week (p.19–20)"
+
+  - doc_key: food.meal_pattern.m36_71.snack_basics
+    row_type: meal_pattern
+    title: 간식 구성의 기본
+    body: >-
+      간식 가운데 일부에는 과일이나 채소를 넣는다. 설탕과 소금을 넣지 않은 쌀과자나 옥수수과자, 간 없는 크래커 같은 곡류 간식은 하루 간식 중 한 번 이상 낸다.
+    min_month: 36
+    max_month: 72
+    tags: [meal_pattern, snack_pattern, snack, fruit, vegetable, grains]
+    food_groups: [fruits, vegetables, grains]
+    allergen_codes: [6]
+    <<: [*dfe, *draft]
+    source_locator: "Table 2 — Food and drink guidelines, Fruit and vegetables · Starchy carbohydrates (p.14)"
+
+  - doc_key: food.meal_pattern.m36_71.setting_home_timing
+    row_type: meal_pattern
+    title: 기관 식사와 집 식사 맞추기
+    body: >-
+      어린이집이나 유치원에서 끼니와 간식을 언제 먹었는지 알아 두고, 집에서 같은 끼니를 한 번 더 주지 않도록 간식과 저녁 시간을 맞춘다.
+    min_month: 36
+    max_month: 72
+    tags: [meal_pattern, snack_pattern, snack, daycare, timing]
+    <<: [*dfe, *draft]
+    source_locator: "Menu planning — 6. Share menus with parents and/or carers (p.20)"
+
+  - doc_key: food.meal_pattern.m36_71.four_groups
+    row_type: meal_pattern
+    title: 하루에 네 가지 식품군 고루
+    body: >-
+      채소 · 과일, 감자 · 빵 · 밥 · 국수 같은 곡류, 우유 · 요거트 · 치즈 같은 유제품, 콩 · 생선 · 달걀 · 고기 같은 단백질 식품을 날마다 끼니와 간식에 나눠
+      담는다.
+    min_month: 36
+    max_month: 72
+    tags: [meal_pattern, groups, variety]
+    food_groups: [vegetables, fruits, grains, dairy, meat_fish_egg_legumes]
+    allergen_codes: [1, 2, 5, 6]
+    <<: [*dfe, *draft]
+    source_locator: "Guidance for children aged 1 to 5 years — A healthy plate, The 4 food groups (p.13)"
+
+  - doc_key: food.meal_pattern.m36_71.veg_fruit_variety
+    row_type: meal_pattern
+    title: 채소와 과일은 여러 가지로 돌려 내기
+    body: >-
+      채소와 과일은 하루 안에서도 한 주 안에서도 여러 가지가 돌아가게 낸다. 색이 다른 채소와 과일을 섞으면 종류를 바꾸기 쉽다.
+    min_month: 36
+    max_month: 72
+    tags: [meal_pattern, groups, vegetable, fruit, variety]
+    food_groups: [vegetables, fruits]
+    <<: [*dfe, *draft]
+    source_locator: "Table 2 — Food and drink guidelines, Fruit and vegetables (p.14) · Menu planning (p.19)"
+
+  - doc_key: food.meal_pattern.m36_71.starch_variety
+    row_type: meal_pattern
+    title: 곡류는 종류를 돌려 가며
+    body: >-
+      곡류 음식은 한 주 동안 여러 종류로 돌려 낸다. 흰 곡류와 통곡류를 섞고, 아침 · 점심 · 저녁에 한 번씩은 통곡류를 쓴다.
+    min_month: 36
+    max_month: 72
+    tags: [meal_pattern, groups, grains, wholegrain]
+    food_groups: [grains]
+    <<: [*dfe, *draft]
+    source_locator: "Table 2 — Food and drink guidelines, Starchy carbohydrates (p.14)"
+
+  - doc_key: food.meal_pattern.m36_71.protein_variety
+    row_type: meal_pattern
+    title: 단백질 식품은 돌려 가며
+    body: >-
+      점심과 저녁에는 단백질 식품을 한 가지씩 넣는다. 고기, 생선, 달걀, 콩류를 돌려 쓰고, 고기를 먹지 않는 집은 콩류와 대체 단백질 식품을 여러 가지로 쓴다.
+    min_month: 36
+    max_month: 72
+    tags: [meal_pattern, groups, protein, variety]
+    food_groups: [meat_fish_egg_legumes]
+    allergen_codes: [1, 5]
+    <<: [*dfe, *draft]
+    source_locator: "Table 2 — Food and drink guidelines, Proteins (p.15)"
+
+  - doc_key: food.meal_pattern.m36_71.dairy_three
+    row_type: meal_pattern
+    title: 우유 · 유제품은 하루 세 번
+    body: >-
+      우유와 무가당 유제품을 하루 세 번에 나눠 낸다. 치즈나 요거트도 유제품에 든다. 요거트는 단맛을 더하지 않은 것을 고른다.
+    min_month: 36
+    max_month: 72
+    tags: [meal_pattern, groups, dairy]
+    food_groups: [dairy]
+    allergen_codes: [2]
+    <<: [*dfe, *draft]
+    source_locator: "Table 2 — Food and drink guidelines, Dairy and plain, fortified plant-based alternatives (p.15)"
+
+  - doc_key: food.meal_pattern.m36_71.drinks
+    row_type: meal_pattern
+    title: 마실 것은 물과 우유
+    body: >-
+      물은 하루 내내 마실 수 있게 곁에 두고, 우유나 칼슘을 더한 무가당 식물성 음료를 곁들인다. 마실 것은 이 둘로 짠다.
+    min_month: 36
+    max_month: 72
+    tags: [meal_pattern, drink, water, milk]
+    food_groups: [dairy]
+    allergen_codes: [2]
+    <<: [*dfe, *draft]
+    source_locator: "Table 2 — Food and drink guidelines, Drinks (p.16)"
+
+  - doc_key: food.meal_pattern.m36_71.example_breakfast
+    row_type: meal_pattern
+    title: 아침 구성 예시
+    body: >-
+      빵이나 토스트를 곡류로 하고 바나나나 달걀을 곁들인다. 계피를 뿌린 바나나 토스트, 달걀과 버섯을 구워 빵 조각과 함께 내는 접시가 그런 예다.
+    min_month: 36
+    max_month: 72
+    tags: [meal_pattern, example, breakfast]
+    food_groups: [grains, fruits, vegetables, meat_fish_egg_legumes]
+    allergen_codes: [1, 6]
+    <<: [*dfe, *draft]
+    source_locator: "Table 4 — Example meals and snacks for children aged 1-5 years, Breakfast (p.24)"
+
+  - doc_key: food.meal_pattern.m36_71.example_main
+    row_type: meal_pattern
+    title: 점심 · 저녁 주된 요리 구성 예시
+    body: >-
+      점심이나 저녁의 주된 요리는 곡류에 단백질과 채소가 함께 오르도록 짠다. 가지와 토마토 카레에 차파티를 곁들이거나, 검은콩과 렌틸콩 완자에 쿠스쿠스를 곁들이거나, 여러 가지 콩을
+      넣은 칠리에 나초를 곁들이는 식이다.
+    min_month: 36
+    max_month: 72
+    tags: [meal_pattern, example, lunch, dinner, main_dish]
+    food_groups: [grains, meat_fish_egg_legumes, vegetables]
+    allergen_codes: [5, 6, 12]
+    <<: [*dfe, *draft]
+    source_locator: "Table 4 — Example meals and snacks for children aged 1-5 years, Lunch or tea · Main dish (p.25)"
+
+  - doc_key: food.meal_pattern.m36_71.example_side
+    row_type: meal_pattern
+    title: 곁들임 구성 예시
+    body: >-
+      곁들임으로는 채소 수프, 아보카도를 으깬 딥에 파프리카, 감자와 양배추를 볶은 요리, 무가당 쌀 푸딩에 반으로 자른 블루베리를 올린 것이 있다.
+    min_month: 36
+    max_month: 72
+    tags: [meal_pattern, example, side_dish]
+    food_groups: [vegetables, fruits, grains, dairy]
+    allergen_codes: [1, 2]
+    <<: [*dfe, *draft]
+    source_locator: "Table 4 — Example meals and snacks for children aged 1-5 years, Lunch or tea · Starter, side dish or second dish (p.25)"
+
+  - doc_key: food.meal_pattern.m36_71.example_snack
+    row_type: meal_pattern
+    title: 간식 구성 예시
+    body: >-
+      참치 딥에 통밀 피타를 곁들이는 간식도 한 가지 구성이다. 곡류와 단백질 식품이 간식 하나에 함께 들어간다.
+    min_month: 36
+    max_month: 72
+    tags: [meal_pattern, example, snack]
+    food_groups: [grains, meat_fish_egg_legumes]
+    allergen_codes: [6]
+    <<: [*dfe, *draft]
+    source_locator: "Table 4 — Example meals and snacks for children aged 1-5 years, Snacks (p.25)"
+
+  # ── feeding_tip — 식사 태도 (#510). 공개 출처는 public_doc_source 가 가린다 ───────
+
+  - doc_key: food.tip.eat_together_model
+    row_type: feeding_tip
+    title: 함께 먹는 모습 보여 주기
+    body: >-
+      아이는 어른이 먹는 모습을 따라 하며 새 음식을 익힌다. 가능한 한 자주 아이와 같은 자리에서 같은 음식을 함께 먹는다.
+    min_month: 24
+    max_month: 72
+    tags: [feeding, modeling, fussy]
+    <<: [*nhs_fussy, *draft]
+    source_locator: "Fussy eaters — Tips for parents of fussy eaters, 2nd tip (2026-11-04 확인)"
+
+  - doc_key: food.tip.small_portion_praise
+    row_type: feeding_tip
+    title: 적게 담고 먹은 것을 칭찬하기
+    body: >-
+      처음에는 적은 양을 담아 주고, 조금밖에 먹지 못해도 먹었다는 점을 칭찬한다.
+    min_month: 24
+    max_month: 72
+    tags: [feeding, praise, portion, fussy]
+    <<: [*nhs_fussy, *draft]
+    source_locator: "Fussy eaters — Tips for parents of fussy eaters, 3rd tip (2026-11-04 확인)"
+
+  - doc_key: food.tip.before_too_tired
+    row_type: feeding_tip
+    title: 지치기 전에 식사하기
+    body: >-
+      아이가 너무 배고프거나 피곤해질 때까지 식사를 미루지 않는다. 지치기 전에 식사 시간을 잡는다.
+    min_month: 24
+    max_month: 72
+    tags: [feeding, timing, fussy]
+    <<: [*nhs_fussy, *draft]
+    source_locator: "Fussy eaters — Tips for parents of fussy eaters, 5th tip (2026-11-04 확인)"
+
+  - doc_key: food.tip.slow_eater_wait
+    row_type: feeding_tip
+    title: 천천히 먹어도 기다리기
+    body: >-
+      먹는 데 시간이 오래 걸리는 아이도 있다. 재촉하지 않고 느긋하게 기다린다.
+    min_month: 24
+    max_month: 72
+    tags: [feeding, patience, fussy]
+    <<: [*nhs_fussy, *draft]
+    source_locator: "Fussy eaters — Tips for parents of fussy eaters, 6th tip (2026-11-04 확인)"
+
+  - doc_key: food.tip.no_food_reward
+    row_type: feeding_tip
+    title: 단 음식을 보상으로 쓰지 않기
+    body: >-
+      단 음식을 보상으로 주면 아이가 단 음식은 좋은 것, 채소는 싫은 것으로 여기기 쉽다. 보상은 공원에 가거나 함께 놀아 주는 약속으로 바꾼다.
+    min_month: 24
+    max_month: 72
+    tags: [feeding, reward, sweets, fussy]
+    <<: [*nhs_fussy, *draft]
+    source_locator: "Fussy eaters — Tips for parents of fussy eaters, 8th tip (2026-11-04 확인)"
+
+  - doc_key: food.tip.change_form
+    row_type: feeding_tip
+    title: 같은 재료의 조리 형태 바꿔 보기
+    body: >-
+      익힌 당근은 거부해도 날것을 갈아 낸 당근은 먹는 아이가 있다. 같은 재료를 날것, 익힌 것, 간 것으로 바꿔 내 본다.
+    min_month: 24
+    max_month: 72
+    tags: [feeding, preparation, fussy]
+    food_groups: [vegetables]
+    <<: [*nhs_fussy, *draft]
+    source_locator: "Fussy eaters — Tips for parents of fussy eaters, last tip (2026-11-04 확인)"
+
+  - doc_key: food.tip.snack_ideas
+    row_type: feeding_tip
+    title: 간식 구성 예시
+    body: >-
+      간식으로는 얇게 썬 오이 같은 채소, 과일 한 조각, 무가당 요거트에 바나나를 썰어 넣은 것, 치즈 스프레드를 바른 토스트, 간 없는 크래커나 쌀과자에 치즈와 얇게 썬 채소를
+      곁들인 것, 무가당 시리얼에 우유를 부은 것을 낼 수 있다.
+    min_month: 24
+    max_month: 72
+    tags: [feeding, snack, snack_ideas]
+    food_groups: [vegetables, fruits, dairy, grains]
+    allergen_codes: [2, 6]
+    <<: [*nhs_questions, *draft]
+    source_locator: "Young children and food: common questions — What are healthy snacks for young children? (2026-11-04 확인)"
+
+  - doc_key: food.tip.reduce_sweet_drinks
+    row_type: feeding_tip
+    title: 단 음료를 서서히 줄이기
+    body: >-
+      단 음료만 마시려는 아이는 습관을 바꾸는 데 시간이 걸린다. 음료에 물을 타서 물의 비율을 조금씩 늘리거나 당이 적은 제품으로 바꿔 차이가 크게 느껴지지 않게 한 뒤, 물이나
+      우유로 옮겨 간다.
+    min_month: 24
+    max_month: 72
+    tags: [feeding, drinks, sweet_drinks]
+    allergen_codes: [2]
+    <<: [*nhs_questions, *draft]
+    source_locator: "Young children and food: common questions — My child will only drink sugary drinks. What can I do? (2026-11-04 확인)"

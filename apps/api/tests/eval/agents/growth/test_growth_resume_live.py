@@ -21,7 +21,12 @@ from typing import Any
 import pytest
 
 from app.agents import entrypoint
-from app.agents.growth.readouts import LEVEL_UNREAD, NEXT_STEP_CHAIN_END, READOUTS
+from app.agents.growth.readouts import (
+    ASK_LEARNING_CURRENT,
+    LEVEL_UNREAD,
+    NEXT_STEP_CHAIN_END,
+    READOUTS,
+)
 from app.agents.growth.store.inmemory import InMemoryGrowthLog, InMemorySafety
 from app.agents.memory.schemas.task import PendingMemoryContext
 from app.agents.pipeline import AgentQuestion, AgentResult, PendingReply
@@ -152,6 +157,81 @@ async def test_되묻기에_답하면_추천까지_잇고_같은_질문을_되�
             f"\n[{answer[:16]} #{attempt}] {'FAIL' if failures else 'PASS'} {elapsed}ms "
             f"2턴 카드={shown} 3턴 되묻기={asked_again}"
         )
+        for failure in failures:
+            print(f"    실패: {failure}")
+        broken += [f"#{attempt} {item}" for item in failures]
+    assert not broken, f"{answer}: " + " / ".join(broken)
+
+
+# ── 교육 되묻기 — 국어 3턴 (#702) ──
+EDU_REQUEST = "국어 공부 어떻게 시켜?"
+EDU_ANSWERS = (
+    "받아쓰기를 어려워해서 힘들어해",
+    "책 읽는 건 좋아하는데 글씨 쓰기는 싫어해",
+    "그림책을 읽어 주면 따라 읽으려고 해",
+)
+
+
+@pytest.mark.live
+@pytest.mark.parametrize("answer", EDU_ANSWERS)
+async def test_교육_주제를_물으면_일반_추천과_질문_하나_답하면_개인화_다시_요청하면_질문_없음(
+    answer: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    now = datetime.now(KST)
+    monkeypatch.setattr(world_module, "NOW", now)
+    monkeypatch.setattr(world_module, "TODAY", now.date())
+    spec = WORLDS["C48-unrelated"]
+    broken: list[str] = []
+    for attempt in range(1, TEST_REPEAT + 1):
+        store = await seed_store(spec)
+        failures: list[str] = []
+
+        first = await _turn(
+            EDU_REQUEST, store=store, spec=spec, run_id=f"e1-{attempt}", continuation=None
+        )
+        cards = _of(first, AgentResult)
+        questions = _of(first, AgentQuestion)
+        pending = _of(first, PendingReply)
+        if not cards or not cards[0].suggestion_ids:
+            failures.append("1턴: 추천이 없다")
+        elif cards[0].kind != "general":
+            failures.append(f"1턴: 국어 기록이 없는데 {cards[0].kind} 추천이다")
+        if len(questions) != 1 or not questions[0].awaits_reply or len(pending) != 1:
+            failures.append(f"1턴: 답을 받는 질문이 하나가 아니다 ({len(questions)}개)")
+        elif pending[0].context.asked is None or (
+            pending[0].context.asked.kind != ASK_LEARNING_CURRENT
+        ):
+            failures.append("1턴: 물은 자리가 교육 질문이 아니다")
+        if failures:
+            broken += [f"#{attempt} {item}" for item in failures]
+            continue
+
+        second = await _turn(
+            answer,
+            store=store,
+            spec=spec,
+            run_id=f"e2-{attempt}",
+            continuation=pending[0].context,
+        )
+        cards2 = _of(second, AgentResult)
+        if _of(second, AgentQuestion):
+            failures.append("2턴: 질문이 또 나갔다")
+        if not cards2 or not cards2[0].suggestion_ids:
+            failures.append("2턴: 이어서 돌지 않았거나 추천이 없다")
+        elif cards2[0].kind != "personalized":
+            failures.append(f"2턴: 답을 저장했는데 {cards2[0].kind} 추천이다")
+        rows = await store.query_observations(domain="education", child_id=CHILD)
+        saved = [row.fields.get("subject") for row in rows if row.fields.get("subject") == "국어"]
+        if len(saved) != 1:
+            failures.append(f"2턴: 국어 이름으로 저장한 교육 기록이 {len(saved)}건이다")
+
+        third = await _turn(
+            EDU_REQUEST, store=store, spec=spec, run_id=f"e3-{attempt}", continuation=None
+        )
+        if _of(third, AgentQuestion):
+            failures.append("3턴: 같은 요청에 질문이 또 나왔다")
+
+        print(f"\n[{answer[:16]} #{attempt}] {'FAIL' if failures else 'PASS'}")
         for failure in failures:
             print(f"    실패: {failure}")
         broken += [f"#{attempt} {item}" for item in failures]

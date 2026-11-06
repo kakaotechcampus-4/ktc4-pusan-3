@@ -3,10 +3,11 @@
 import uuid
 from contextlib import asynccontextmanager
 from dataclasses import replace
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
+from typing import get_args
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import Range
 
 from app.agents import entrypoint
@@ -17,6 +18,7 @@ from app.agents.common.suggestion import SuggestionDraft
 from app.agents.suggestion_save import SuggestionBatch
 from app.api import agent_ports, quota
 from app.api.runs import suggestion_retry
+from app.api.v1.schemas.suggestions import DocEvidenceOut
 from app.core.config import settings
 from app.domains.memory.observation.models import (
     ConfidenceSource,
@@ -37,6 +39,8 @@ from app.domains.suggestion.models import (
 
 DOC_ID = uuid.UUID("00000000-0000-5000-8000-0000000000aa")
 DOC_CARD = entrypoint.DocCard("블록 쌓기", "교육부", "표준보육과정", None)
+# 아래 autouse 가 테스트마다 갈아 끼우는 원본 — 공개용 출처 투영까지 거치는 실제 색인을 볼 때 쓴다
+REAL_DOC_INDEX = entrypoint._doc_index
 
 
 @pytest.fixture(autouse=True)
@@ -102,7 +106,9 @@ def agents(monkeypatch):
     return plan, calls
 
 
-def _general(agent="activity", content="블록 쌓기", place_notice=None) -> SuggestionDraft:
+def _general(
+    agent="activity", content="블록 쌓기", place_notice=None, warnings=()
+) -> SuggestionDraft:
     doc = EvidenceCitation(ref=Ref(kind="activity_doc", id=DOC_ID), note="또래 놀이 자료")
     return SuggestionDraft(
         agent=agent,
@@ -111,6 +117,7 @@ def _general(agent="activity", content="블록 쌓기", place_notice=None) -> Su
         reason="또래 아이들이 많이 하는 놀이예요.",
         citations=(doc,),
         place_notice=place_notice,
+        warnings=warnings,
     )
 
 
@@ -178,6 +185,7 @@ async def test_홈_요청은_Agent_마다_묶음과_안내를_싣는다(db_clien
     assert food["evidence"][0]["label"] == "계란말이"
     assert food["evidence"][0]["is_stale"] is False
     assert food["place_notice"] is None  # 장소가 없는 추천
+    assert food["warnings"] == []
     groups = {g["agent"]: g for g in data["groups"]}
     assert groups["food"]["notice"] == {
         "code": "fewer",
@@ -516,6 +524,8 @@ async def test_일반_추천은_문서_근거와_기록_건수를_싣는다(db_c
     ]
     assert data["scarcity"] == {"count": 0, "question": None}
     assert general["place_notice"] is None  # 장소가 없는 추천
+    assert general["warnings"] == []
+    assert (general["event_starts_on"], general["event_ends_on"]) == (None, None)
 
 
 async def test_장소가_붙은_추천은_확인_문구를_칸으로_싣는다(db_client, bearer, cid, agents):
@@ -547,6 +557,28 @@ async def test_개인화_추천도_확인_문구를_싣는다(db_client, session
 
     [activity] = data["suggestions"]
     assert activity["place_notice"] == notice
+    assert (activity["event_starts_on"], activity["event_ends_on"]) == (None, None)
+
+
+async def test_행사가_붙은_추천은_기간을_날짜_칸으로_싣는다(
+    db_client, session, bearer, cid, agents
+):
+    """화면이 확인 문구 줄에 "9월 29일 ~ 10월 1일" 로 세운다 (#516 FE 합의)."""
+    plan, _ = agents
+    headers, parent_id = bearer
+    period = {"event_starts_on": date(2026, 9, 29), "event_ends_on": date(2026, 10, 1)}
+    general = replace(_general(content="광안리 가을 축제에서 축제 구경"), **period)
+    personal = replace(
+        await _personal(session, cid, parent_id, agent="activity", content="축제 구경"), **period
+    )
+    plan["activity"] = ("drafts", [personal, general])
+
+    data = (await _post(db_client, cid, headers, agents=["activity"])).json()
+
+    [activity] = data["suggestions"]
+    [general_out] = data["general"]
+    for out in (activity, general_out):
+        assert (out["event_starts_on"], out["event_ends_on"]) == ("2026-09-29", "2026-10-01")
 
 
 async def test_문서_행을_읽을_수_없으면_일반_추천을_내지_않는다(
@@ -964,6 +996,268 @@ async def test_Food_일반_추천은_고른_메뉴를_근거로_보여_준다(
     assert evidence["ref"] == {"kind": "recipe_catalog", "id": str(menu)}
     assert evidence["title"] == "두부조림"
     assert evidence["source_org"] and evidence["note"] == "재료가 검수된 메뉴예요."
+
+
+async def _post_food_menu(db_client, session, bearer, cid, agents, *, source: str):
+    """후보 풀에 `source` 의 레시피 한 행을 넣고, 그 메뉴를 근거로 단 Food 일반 추천을 받는다."""
+    from app.domains.food import repository as food_repository
+    from app.rules.menu_evidence import menu_evidence_id
+
+    plan, _ = agents
+    headers, _ = bearer
+    await food_repository.upsert_recipes(
+        session,
+        rows=[
+            {
+                "source": source,
+                "source_id": "7",
+                "menu_key": "두부조림",
+                "display_name": "두부조림",
+                "ingredients": ["두부"],
+                "resolved": True,
+                "synced_at": datetime.now(UTC),
+            }
+        ],
+    )
+    menu = menu_evidence_id(source, "7")
+    plan["food"] = (
+        "drafts",
+        [
+            SuggestionDraft(
+                agent="food",
+                kind="general",
+                content="두부조림",
+                reason="또래 아이들이 많이 먹는 메뉴예요.",
+                citations=(
+                    EvidenceCitation(
+                        ref=Ref(kind="recipe_catalog", id=menu), note="재료가 검수된 메뉴예요."
+                    ),
+                ),
+            )
+        ],
+    )
+    return await _post(db_client, cid, headers, agents=["food"])
+
+
+async def test_Food_메뉴_근거는_농식품정보원_레시피를_그_출처로_보여_준다(
+    db_client, session, bearer, cid, agents
+):
+    """#510 — 소스별 표로 바꿔도 기존 농식품정보원 카드의 응답은 그대로다."""
+    resp = await _post_food_menu(db_client, session, bearer, cid, agents, source="mafra_recipe")
+
+    assert resp.status_code == 200
+    [evidence] = resp.json()["general"][0]["evidence"]
+    assert (evidence["source_org"], evidence["source_title"], evidence["source_url"]) == (
+        "농식품정보원",
+        "농림축산식품 공공데이터포털 레시피 기본 · 재료정보",
+        "https://data.mafra.go.kr",
+    )
+
+
+async def test_Food_메뉴_근거는_농촌진흥청_레시피를_그_출처로_보여_준다(
+    db_client, session, bearer, cid, agents
+):
+    resp = await _post_food_menu(db_client, session, bearer, cid, agents, source="nics_recipe")
+
+    assert resp.status_code == 200
+    [evidence] = resp.json()["general"][0]["evidence"]
+    assert evidence["title"] == "두부조림"
+    assert (evidence["source_org"], evidence["source_title"], evidence["source_url"]) == (
+        "농촌진흥청 국립식량과학원",
+        "농식품 이달의 식재료 목록정보",
+        "https://www.data.go.kr/data/15168024/openapi.do",
+    )
+
+
+async def test_Food_메뉴_근거의_소스가_출처_표에_없으면_다른_기관으로_대신하지_않는다(
+    db_client, session, bearer, cid, agents
+):
+    """DB 는 받지만 운영에서 받지 않는 소스(mfds_recipe)다. 농식품정보원 카드로 바꿔 내면 틀린
+    출처다 — 보여 줄 근거가 없으면 일반 추천도 내지 않는다."""
+    resp = await _post_food_menu(db_client, session, bearer, cid, agents, source="mfds_recipe")
+
+    assert resp.status_code == 200
+    assert resp.json()["general"] == []
+
+
+async def test_문서_근거는_라이선스_표시를_마친_공개용_출처로_나가고_NHS_이름은_없다(
+    db_client, bearer, cid, agents, monkeypatch
+):
+    """#510 — OGL 문장 · CC BY 변경 표시는 기존 `source_title` 칸으로 낸다. NHS 자료는 기관 · 제목 ·
+    주소가 OGL 안내로 바뀐다 (NHS 약관 3.6(b)). 색인을 대신하지 않고 시드 → 05 응답을 지난다."""
+    from app.agents.common.reference_docs import (
+        CC_BY_URL,
+        NHS_PUBLIC_ORG,
+        OGL_STATEMENT,
+        OGL_URL,
+        doc_row_id,
+    )
+    from app.agents.food import doc_seed as food_seed
+
+    base = {
+        "row_type": "feeding_tip",
+        "body": "가짜 문장이다.",
+        "min_month": 24,
+        "max_month": 72,
+        "tags": ["test"],
+        "source_year": 2025,
+        "source_locator": "(테스트) 내부 추적용 위치 7쪽",
+        "status": "approved",
+        "authored_by": "writer-a",
+        "reviewed_by": "reviewer-b",
+        "reviewed_at": date(2026, 11, 3),
+        "version": 1,
+    }
+    sources = {
+        "food.test.nhs": (
+            "NHS (테스트)",
+            "(테스트) 가짜 NHS 문서 제목",
+            "https://www.nhs.uk/x",
+            "ogl_3",
+        ),
+        "food.test.dfe": (
+            "Department for Education (테스트)",
+            "(테스트) 가짜 DfE 문서",
+            "https://www.gov.uk/x",
+            "ogl_3",
+        ),
+        "food.test.nz": (
+            "Ministry of Health (New Zealand)",
+            "(테스트) 가짜 뉴질랜드 지침",
+            "https://www.health.govt.nz/x",
+            "cc_by",
+        ),
+    }
+    entries = food_seed.parse_food_doc(
+        {
+            "rows": [
+                {
+                    **base,
+                    "doc_key": key,
+                    "title": f"행 {key}",
+                    "source_org": org,
+                    "source_title": title,
+                    "source_url": url,
+                    "license_basis": basis,
+                }
+                for key, (org, title, url, basis) in sources.items()
+            ]
+        }
+    )
+    monkeypatch.setattr(food_seed, "food_doc_seed", lambda: entries)
+    REAL_DOC_INDEX.cache_clear()
+    monkeypatch.setattr(entrypoint, "_doc_index", REAL_DOC_INDEX)
+
+    plan, _ = agents
+    headers, _ = bearer
+    ids = {key: doc_row_id("food_doc", key) for key in sources}
+    plan["food"] = (
+        "drafts",
+        [
+            SuggestionDraft(
+                agent="food",
+                kind="general",
+                content="두부조림",
+                reason="또래 기준",
+                citations=tuple(
+                    EvidenceCitation(ref=Ref(kind="food_doc", id=doc_id), note="참고")
+                    for doc_id in ids.values()
+                ),
+            )
+        ],
+    )
+    try:
+        resp = await _post(db_client, cid, headers, agents=["food"])
+    finally:
+        REAL_DOC_INDEX.cache_clear()
+
+    assert resp.status_code == 200
+    by_id = {e["ref"]["id"]: e for e in resp.json()["general"][0]["evidence"]}
+    nhs, dfe, nz = (by_id[str(ids[key])] for key in sources)
+    assert (nhs["source_org"], nhs["source_url"]) == (NHS_PUBLIC_ORG, OGL_URL)
+    assert nhs["source_title"] == f"{OGL_STATEMENT} ({OGL_URL})"
+    assert dfe["source_org"] == "Department for Education (테스트)"
+    assert dfe["source_title"].startswith("(테스트) 가짜 DfE 문서")
+    assert f"{OGL_STATEMENT} ({OGL_URL})" in dfe["source_title"]
+    assert nz["source_title"].startswith("(테스트) 가짜 뉴질랜드 지침")
+    assert "번역·재구성함" in nz["source_title"] and CC_BY_URL in nz["source_title"]
+    assert nz["source_url"] == "https://www.health.govt.nz/x"
+    leaked = repr(nhs).lower()
+    for text in ("nhs (", "nhs.uk", "가짜 nhs 문서 제목", "내부 추적용"):
+        assert text not in leaked, text
+
+
+def test_근거_카드_응답_칸은_그대로다():
+    """#510 — 출처 표시 문구는 기존 `source_title` 칸에 붙는다. 칸을 더하거나 빼지 않는다."""
+    assert set(DocEvidenceOut.model_json_schema()["properties"]) == {
+        "ref",
+        "title",
+        "source_org",
+        "source_title",
+        "source_url",
+        "note",
+    }
+
+
+def test_근거_카드의_source_title_설명은_라이선스_표시를_말한다():
+    description = DocEvidenceOut.model_json_schema()["properties"]["source_title"]["description"]
+
+    assert "라이선스" in description
+
+
+async def test_합친_메뉴의_대표_레시피가_내려가도_다른_소스_근거로_추천이_남는다(
+    db_client, session, bearer, cid, agents
+):
+    """같은 이름을 합친 메뉴는 합쳐진 레시피를 모두 근거로 단다. 대표(농식품정보원)가 후보 풀에서
+    내려가도 농촌진흥청 레시피가 남아 있으면 그 근거로 05 에 나온다."""
+    from app.domains.food import repository as food_repository
+    from app.domains.suggestion.repository import save_agent_suggestions
+    from app.rules.menu_evidence import menu_evidence_id
+
+    headers, _ = bearer
+
+    def recipe(source: str, source_id: str, *, resolved: bool = True) -> dict:
+        return {
+            "source": source,
+            "source_id": source_id,
+            "menu_key": "열무김치",
+            "display_name": "열무김치",
+            "ingredients": ["열무"],
+            "resolved": resolved,
+            "synced_at": datetime.now(UTC),
+        }
+
+    await food_repository.upsert_recipes(
+        session, rows=[recipe("mafra_recipe", "9"), recipe("nics_recipe", "3")]
+    )
+    mafra, nics = menu_evidence_id("mafra_recipe", "9"), menu_evidence_id("nics_recipe", "3")
+    draft = SuggestionDraft(
+        agent="food",
+        kind="general",
+        content="열무김치",
+        reason="또래 아이들이 많이 먹는 메뉴예요.",
+        citations=tuple(
+            EvidenceCitation(
+                ref=Ref(kind="recipe_catalog", id=menu), note="재료가 검수된 메뉴예요."
+            )
+            for menu in (mafra, nics)
+        ),
+    )
+    await save_agent_suggestions(
+        session, child_id=cid, run_id="run-1", payloads=[draft.to_payload()], now=datetime.now(UTC)
+    )
+
+    # 농식품정보원이 9 번을 내렸다(적재가 resolved=false 로)
+    await food_repository.upsert_recipes(
+        session, rows=[recipe("mafra_recipe", "9", resolved=False)]
+    )
+    resp = await _post(db_client, cid, headers, agents=["food"], run_id="run-1")
+
+    assert resp.status_code == 200
+    [general] = resp.json()["general"]
+    [evidence] = general["evidence"]
+    assert evidence["ref"]["id"] == str(nics)
+    assert evidence["source_org"] == "농촌진흥청 국립식량과학원"
 
 
 # ── Growth 도서 추천의 책 근거 ───────────────────────────────────────────

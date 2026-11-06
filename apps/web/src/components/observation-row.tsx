@@ -5,6 +5,7 @@ import { CONFIDENCE_LABEL } from "@/lib/confidence";
 import { cn } from "@/lib/cn";
 import { isHealthObservation, type Observation } from "@/lib/api/types";
 import { formatTimeOfDay } from "@/lib/format";
+import { healthMoment, healthTitle, temperatureLabel } from "@/lib/health-observation";
 
 /**
  * 저장된 기록 한 줄. 🚨 **지난 대화에서는 고친 기록도 온다** (#228 리뷰) — 교정은 기록을 지우지 않고 상태만
@@ -50,17 +51,19 @@ export function ObservationRow({ observation }: { observation: Observation }) {
 }
 
 /**
- * 기록 한 건의 짧은 꼬리표 — 건강은 증상 · 시각, 나머지는 대상(`subject`). 🚨 health 는 `subject` 키가 없어서
+ * 기록 한 건의 짧은 꼬리표 — 건강은 증상(먹인 약이면 약 이름) · 체온 · 시각, 나머지는 대상(`subject`). 🚨 health 는 `subject` 키가 없어서
  * `isHealthObservation()` 으로 가른다 (apps/web/CLAUDE.md §4).
  */
 export function observationDetail(observation: Observation): string {
-  return isHealthObservation(observation)
-    ? [
-        observation.domain_fields.symptom?.join(", "),
-        observation.domain_fields.observed_time &&
-          formatTimeOfDay(observation.domain_fields.observed_time),
-      ]
-        .filter(Boolean)
-        .join(", ")
-    : observation.subject;
+  if (!isHealthObservation(observation)) return observation.subject;
+  // 먹인 약 행은 증상이 비어 온다 — 약 이름이 제목을 받는다 (#551). 체온은 숫자만 옮기고,
+  // 시각은 본 시각이 없으면 잰 시각으로 받친다(`healthMoment`)
+  const moment = healthMoment(observation.domain_fields);
+  return [
+    healthTitle(observation.domain_fields),
+    temperatureLabel(observation.domain_fields),
+    moment && formatTimeOfDay(moment),
+  ]
+    .filter(Boolean)
+    .join(", ");
 }

@@ -23,6 +23,7 @@ from app.agents.common.llm_client import (
     LLMRateLimitError,
     LLMUnavailableError,
 )
+from app.core import llm_usage
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +59,7 @@ class Embedder:
             raise LLMConfigError(f"{' / '.join(missing)} 가 비어 있다. apps/api/.env 를 확인한다.")
 
         self._model = model
+        self._provider = llm_usage.provider_of(base_url)
         # 테스트는 embeddings.create 만 있는 가짜를 넣는다
         self._client = client or AsyncOpenAI(
             base_url=base_url,
@@ -96,6 +98,19 @@ class Embedder:
         except APIError as exc:
             raise LLMError(f"임베딩 호출 실패: {exc}") from exc
 
+        tokens = getattr(response.usage, "total_tokens", None)
+        latency_ms = int((time.perf_counter() - started) * 1000)
+        # 🚨 개수 · 차원 검사보다 앞에서 기록한다 — 검사에 걸려 버려도 토큰은 이미 과금됐다
+        if isinstance(tokens, int):  # 셀 값이 없는 응답은 0 토큰 행을 만들지 않는다
+            served = getattr(response, "model", None)
+            llm_usage.record(
+                role="embedding",
+                provider=self._provider,
+                model=served if isinstance(served, str) and served else self._model,
+                prompt_tokens=tokens,
+                latency_ms=latency_ms,
+            )
+
         # 응답 순서가 입력 순서라는 보장은 index 로만 한다
         data = sorted(response.data, key=lambda item: item.index)
         if len(data) != len(texts):
@@ -113,7 +128,7 @@ class Embedder:
             "embedding call model=%s inputs=%d tokens=%s latency_ms=%d",
             self._model,
             len(texts),
-            getattr(response.usage, "total_tokens", None),
-            int((time.perf_counter() - started) * 1000),
+            tokens,
+            latency_ms,
         )
         return vectors
