@@ -15,6 +15,7 @@ from sqlalchemy import delete, func, select
 
 from app.domains.child.models import Child
 from app.domains.identity.models import Parent
+from app.domains.identity.withdraw import withdraw_parent
 from app.domains.medication import service
 from app.domains.medication.models import (
     MedicationCreatedBy,
@@ -156,6 +157,12 @@ async def seed_evening_dose(child_id) -> tuple:
         return course.id, dose.id
 
 
+async def owner_of(child_id):
+    """아이를 등록한 보호자 — 체크하는 보호자로 쓴다."""
+    async with async_session_factory() as s:
+        return await s.scalar(select(Child.owner_parent_id).where(Child.id == child_id))
+
+
 async def dose_rows(course_id) -> list[tuple[time, bool]]:
     async with async_session_factory() as s:
         doses = await list_doses(s, schedule_ids=[course_id])
@@ -184,7 +191,13 @@ async def test_체크하는_동안_수정이_그_회차를_지우면_체크는_�
         async def check() -> str:
             try:
                 await set_dose_checked(
-                    s2, child_id=child_id, dose_id=dose_id, checked=True, today=TODAY, now=NOW
+                    s2,
+                    child_id=child_id,
+                    dose_id=dose_id,
+                    parent_id=await owner_of(child_id),
+                    checked=True,
+                    today=TODAY,
+                    now=NOW,
                 )
                 await s2.commit()
                 return "체크됨"
@@ -210,7 +223,13 @@ async def test_체크가_먼저_회차를_잡았으면_수정은_그_회차를_�
     s1, s2 = async_session_factory(), async_session_factory()
     try:
         await set_dose_checked(
-            s1, child_id=child_id, dose_id=dose_id, checked=True, today=TODAY, now=NOW
+            s1,
+            child_id=child_id,
+            dose_id=dose_id,
+            parent_id=await owner_of(child_id),
+            checked=True,
+            today=TODAY,
+            now=NOW,
         )  # 아직 commit 전
 
         task = asyncio.create_task(
@@ -272,7 +291,13 @@ async def test_수정이_남는_회차를_검사하는_사이에_체크가_끼�
         await in_gap.wait()
         try:
             await set_dose_checked(
-                s2, child_id=child_id, dose_id=dose_id, checked=True, today=TODAY, now=NOW
+                s2,
+                child_id=child_id,
+                dose_id=dose_id,
+                parent_id=await owner_of(child_id),
+                checked=True,
+                today=TODAY,
+                now=NOW,
             )
             await s2.commit()
             return "체크됨"
@@ -342,3 +367,60 @@ async def test_두_코스를_동시에_같은_이름_기간으로_수정하면_�
     results = await asyncio.gather(rename(ids[0]), rename(ids[1]))
 
     assert sorted(results) == ["수정", "중복"]
+
+
+# ── 체크 · 탈퇴가 같은 보호자를 두고 겹칠 때 (#749) ─────────────────────
+
+
+async def test_체크가_회차를_잡은_사이에_같은_보호자가_탈퇴해도_교착이_없다(
+    make_child, monkeypatch
+):
+    """탈퇴는 보호자 → 회차 순으로 잠근다(보호자를 잡고 아이 · 회차를 지운다).
+
+    체크가 회차를 먼저 잡고 `checked_by` 를 쓰면 FK 검사가 보호자를 기다려 순서가 뒤집힌다. 체크는
+    보호자를 먼저 잡으므로, 회차를 잡은 체크가 끝날 때까지 탈퇴가 기다렸다가 지나간다.
+    """
+    child_id = await make_child()
+    _, dose_id = await seed_evening_dose(child_id)
+    owner_id = await owner_of(child_id)
+    real = service.find_dose
+    holding = asyncio.Event()
+
+    async def slow(*args, **kwargs):
+        dose = await real(*args, **kwargs)
+        holding.set()
+        await asyncio.sleep(0.5)  # 회차를 잡은 채로 탈퇴가 들어올 틈
+        return dose
+
+    monkeypatch.setattr(service, "find_dose", slow)
+    s1, s2 = async_session_factory(), async_session_factory()
+
+    async def check() -> None:
+        await set_dose_checked(
+            s1,
+            child_id=child_id,
+            dose_id=dose_id,
+            parent_id=owner_id,
+            checked=True,
+            today=TODAY,
+            now=NOW,
+        )
+        await s1.commit()
+
+    async def withdraw() -> None:
+        await holding.wait()
+        await withdraw_parent(s2, parent_id=owner_id, now=NOW)
+        await s2.commit()
+
+    try:
+        # 교착이면 PG 가 한쪽을 실패시킨다 — 예외를 모아 두 쪽이 다 끝난 뒤에 본다
+        results = await asyncio.wait_for(
+            asyncio.gather(check(), withdraw(), return_exceptions=True), timeout=10
+        )
+    finally:
+        await s1.close()
+        await s2.close()
+
+    assert results == [None, None]
+    async with async_session_factory() as s:
+        assert await s.get(Parent, owner_id) is None  # 탈퇴가 체크 뒤에 지나갔다

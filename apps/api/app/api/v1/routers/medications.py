@@ -30,6 +30,7 @@ from app.api.v1.schemas.medications import (
 from app.domains.consent.models import ConsentAction, ConsentScope
 from app.domains.consent.repository import latest_action
 from app.domains.medication.service import (
+    CheckerGone,
     CourseAlreadyExists,
     CourseFields,
     CourseInput,
@@ -301,6 +302,7 @@ async def check_dose(
     child: AccessibleChild,
     did: UUID,
     body: CheckDoseRequest,
+    parent: CurrentParent,
     session: SessionDep,
 ) -> MedicationDoseOut:
     """회차 1번을 체크(먹였다)하거나 해제한다. **체크한 칸이 곧 복용 기록이다.**
@@ -336,10 +338,13 @@ async def check_dose(
             session,
             child_id=child.child_id,
             dose_id=did,
+            parent_id=parent.parent_id,
             checked=body.checked,
             today=today,
             now=now,
         )
+    except CheckerGone as exc:  # 확인한 뒤 탈퇴했다 — 인증 실패와 같게 본다
+        raise ApiError(401, "unauthenticated", "다시 로그인해 주세요") from exc
     except DoseNotFound as exc:
         raise ApiError(404, "not_found", "그 복약 회차를 찾지 못했어요") from exc
     except DoseNotDue as exc:

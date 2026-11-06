@@ -40,6 +40,7 @@ from app.domains.medication.repository import (
     has_kept_outside,
     list_courses,
     list_doses,
+    lock_checker,
     lock_doses,
     write_dose_check,
 )
@@ -259,26 +260,43 @@ class DoseNotDue(Exception):
     """아직 오지 않은 날의 회차다. 체크도 해제도 못 한다."""
 
 
+class CheckerGone(Exception):
+    """체크하는 보호자가 인증 확인 뒤에 탈퇴했다 — 부르는 쪽은 인증 실패와 같게 본다."""
+
+
 async def set_dose_checked(
     session: AsyncSession,
     *,
     child_id: uuid.UUID,
     dose_id: uuid.UUID,
+    parent_id: uuid.UUID,
     checked: bool,
     today: date,
     now: datetime,
 ) -> MedicationDose:
     """회차를 체크하거나 해제한다. `today` 는 KST 오늘, `now` 는 체크 시각이다.
 
+    `parent_id` 는 인증된 보호자다 — 체크하면 체크한 보호자로 남는다 (#749). 요청 본문의 보호자는
+    받지 않는다. 해제하면 체크 시각과 함께 비운다.
+
     되돌릴 수 있어서 승인 게이트가 아니다. 같은 상태를 두 번 보내도 결과가 같고, 이미 체크된
-    회차에 또 체크하면 처음 시각이 남는다. 찾지 못함 → 아직 오지 않음 순서로 검사한다.
+    회차에 또 체크하면 처음 시각과 처음 보호자가 남는다.
+    보호자 → 찾지 못함 → 아직 오지 않음 순서로 검사한다. 보호자를 회차보다 먼저 잠근다
+    (`lock_checker` — 탈퇴와 같은 순서).
     """
+    if not await lock_checker(session, parent_id=parent_id):
+        raise CheckerGone
     dose = await find_dose(session, child_id=child_id, dose_id=dose_id)
     if dose is None:
         raise DoseNotFound
     if dose.dose_date > today:
         raise DoseNotDue
-    await write_dose_check(session, dose_id=dose.id, checked_at=now if checked else None)
+    await write_dose_check(
+        session,
+        dose_id=dose.id,
+        checked_at=now if checked else None,
+        checked_by=parent_id if checked else None,
+    )
     await session.refresh(dose)
     return dose
 
