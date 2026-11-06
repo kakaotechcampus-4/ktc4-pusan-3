@@ -1196,7 +1196,8 @@ def _series_values(body: SeriesEventIn) -> series_repo.SeriesValues:
     "/children/{cid}/event-series/{sid}",
     summary="반복 일정 전부 고치기 (승인 게이트 ㉠)",
     description=(
-        "오늘(서버 KST 날짜, 그날 포함) 이후 회차만 고친다. 지난 회차는 그대로다. "
+        "아직 시작하지 않은 회차만 고친다 — 시간 일정은 시작이 지금(서버 시계) 이후인 회차, "
+        "종일 일정은 오늘(KST, 그날 포함) 이후 회차. 지난 회차는 그대로다. "
         "before 와 달라진 칸만 쓰고, 요일 · 끝 날짜가 바뀌면 회차를 다시 펼친다. "
         "준비물은 이름으로 맞춰 챙김 표시를 지킨다. Idempotency-Key 필수."
     ),

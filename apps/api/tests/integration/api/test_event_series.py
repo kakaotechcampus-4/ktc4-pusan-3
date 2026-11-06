@@ -8,11 +8,13 @@ import uuid
 from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
+import pytest
 from httpx import AsyncClient
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api import idempotency
+from app.api.v1.routers import suggestions as suggestions_router
 from app.domains.memory.store.db_store import DbMemoryStore
 from app.domains.schedule.models import Event, EventItem, Reminder
 from tests.integration.api.conftest import Bearer
@@ -31,6 +33,25 @@ def _day(offset: int) -> date:
 
 def _at(offset: int, clock: str) -> str:
     return datetime.combine(_day(offset), time.fromisoformat(clock), tzinfo=KST).isoformat()
+
+
+def _clock(clock: str) -> datetime:
+    return datetime.combine(_today(), time.fromisoformat(clock), tzinfo=KST)
+
+
+@pytest.fixture(autouse=True)
+def now(monkeypatch) -> dict:
+    """서버 시계를 오늘 00:00:01 로 둔다 — 오늘 08:30 회차가 늘 아직 시작 전이라, 테스트를 돌리는
+    시각에 결과가 달라지지 않는다. 시작이 지난 오늘 회차를 볼 때는 `now["at"]` 을 옮긴다."""
+    frozen = {"at": _clock("00:00:01")}
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return frozen["at"].astimezone(tz)
+
+    monkeypatch.setattr(suggestions_router, "datetime", Clock)
+    return frozen
 
 
 EVENT = {
@@ -443,6 +464,180 @@ async def test_re_expansion_does_not_revive_moved_or_deleted_occurrences(
     )
     days = sorted(r.astimezone(KST).date() for r in rows)
     assert days == [_day(-1), _day(0), _day(1), _day(3), _day(3), _day(5), _day(6)]
+
+
+async def test_occurrence_moved_off_the_rule_survives_extending_until(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    """두 요일 반복에서 한 회차를 규칙 밖 요일로 옮겨 두고 끝 날짜만 늘려도 그 회차가 남는다.
+
+    지우는 대상은 규칙에서 빠진 날 · 새 끝 날짜 뒤뿐이다 (#761 리뷰). 옮기기 전 날은 옛 규칙에
+    있던 날이라 되살리지 않는다.
+    """
+    headers, _ = bearer
+    weekdays = sorted({_day(1).isoweekday(), _day(3).isoweekday()})
+    sid = await _seed(db_client, session, cid, headers, first=1, until=10, weekdays=weekdays)
+    occurrences = await _occurrences(session, sid)
+    assert sorted(occurrences) == [_day(1), _day(3), _day(8), _day(10)]
+    await session.execute(
+        update(Event)
+        .where(Event.id == occurrences[_day(3)].id)
+        .values(starts_at=datetime.combine(_day(4), time(8, 30), tzinfo=KST))
+    )
+    before = _series_body(until=10, weekdays=weekdays)
+
+    after = _series_body(until=17, weekdays=weekdays, title="수영", starts_time="09:00")
+
+    resp = await _patch(db_client, cid, sid, headers, _patch_body(before, after))
+
+    assert resp.status_code == 200, resp.text
+    occurrences = await _occurrences(session, sid)
+    assert sorted(occurrences) == [_day(1), _day(4), _day(8), _day(10), _day(15), _day(17)]
+    moved = occurrences[_day(4)]  # 옮긴 날 그대로, 바뀐 제목 · 시각은 따라간다
+    assert moved.title == "수영"
+    assert moved.starts_at.astimezone(KST).time() == time(9)
+    assert await _items(session, moved.id) == {"물통": False}
+
+
+async def test_today_occurrence_that_already_started_is_left_alone(
+    db_client: AsyncClient,
+    session: AsyncSession,
+    bearer: Bearer,
+    cid: uuid.UUID,
+    now: dict,
+):
+    """시간 일정은 시작이 지난 오늘 회차를 지난 회차로 본다 — 옮기면 그 회차 알림이 다시 울린다
+    (#761 리뷰). 다시 펼칠 때도 오늘 이미 지난 시각에 새 회차를 만들지 않는다."""
+    headers, _ = bearer
+    sid = await _seed(db_client, session, cid, headers)
+    now["at"] = _clock("12:00")
+    before = _series_body(until=6)
+
+    resp = await _patch(
+        db_client, cid, sid, headers, _patch_body(before, {**before, "starts_time": "18:00"})
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["occurrence_count"] == 6  # 내일부터 6회
+    occurrences = await _occurrences(session, sid)
+    assert occurrences[_day(0)].starts_at.astimezone(KST).time() == time(8, 30)
+    assert occurrences[_day(1)].starts_at.astimezone(KST).time() == time(18)
+
+    today = _day(0).isoweekday()
+    others = [d for d in EVERY_DAY if d != today]
+    # 첫 회차가 오늘보다 앞이어야 오늘이 새 규칙의 회차 날짜가 된다
+    other_sid = await _seed(db_client, session, cid, headers, first=-3, until=13, weekdays=others)
+    other_before = _series_body(until=13, weekdays=others)
+    resp = await _patch(
+        db_client,
+        cid,
+        other_sid,
+        headers,
+        _patch_body(other_before, _series_body(until=13, weekdays=EVERY_DAY)),
+    )
+    assert resp.status_code == 200, resp.text
+    days = await _occurrences(session, other_sid)
+    assert _day(0) not in days  # 08:30 은 이미 지났다
+    assert _day(7) in days
+
+
+async def test_shortening_until_removes_occurrences_after_it_even_if_moved(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    """끝 날짜를 당기면 새 끝 날짜 뒤 회차를 지운다. 옛 끝 날짜보다 뒤로 옮겨 둔 회차는 규칙에서
+    빠진 날이 아니라서, 이 조건으로만 지워진다."""
+    headers, _ = bearer
+    sid = await _seed(db_client, session, cid, headers)
+    await session.execute(
+        update(Event)
+        .where(Event.id == (await _occurrences(session, sid))[_day(2)].id)
+        .values(starts_at=datetime.combine(_day(8), time(8, 30), tzinfo=KST))
+    )
+    before = _series_body(until=6)
+
+    resp = await _patch(db_client, cid, sid, headers, _patch_body(before, _series_body(until=4)))
+
+    assert resp.status_code == 200, resp.text
+    days = sorted(await _occurrences(session, sid))
+    assert days == [_day(n) for n in (-3, -2, -1, 0, 1, 3, 4)]
+
+
+async def test_today_occurrence_that_already_started_survives_dropping_its_weekday(
+    db_client: AsyncClient,
+    session: AsyncSession,
+    bearer: Bearer,
+    cid: uuid.UUID,
+    now: dict,
+):
+    """오늘 요일을 빼도 시작이 지난 오늘 회차는 지난 회차라 남는다. 다음 주 같은 요일은 지운다."""
+    headers, _ = bearer
+    sid = await _seed(db_client, session, cid, headers, until=13)
+    now["at"] = _clock("12:00")
+    weekdays = [d for d in EVERY_DAY if d != _day(0).isoweekday()]
+    before = _series_body(until=13)
+
+    resp = await _patch(
+        db_client, cid, sid, headers, _patch_body(before, _series_body(until=13, weekdays=weekdays))
+    )
+
+    assert resp.status_code == 200, resp.text
+    occurrences = await _occurrences(session, sid)
+    assert occurrences[_day(0)].starts_at.astimezone(KST).time() == time(8, 30)
+    assert _day(7) not in occurrences
+
+
+async def test_rule_leaving_only_started_occurrences_is_refused(
+    db_client: AsyncClient,
+    session: AsyncSession,
+    bearer: Bearer,
+    cid: uuid.UUID,
+    now: dict,
+):
+    """남는 회차 판정도 시각 기준이다 — 12시에 끝 날짜를 오늘로 당기면 오늘 08:30 은 이미 지나서
+    남는 회차가 없다. 422 이고 회차는 그대로다."""
+    headers, _ = bearer
+    sid = await _seed(db_client, session, cid, headers)
+    now["at"] = _clock("12:00")
+    before = _series_body(until=6)
+
+    resp = await _patch(db_client, cid, sid, headers, _patch_body(before, _series_body(until=0)))
+
+    assert resp.status_code == 422
+    assert resp.json()["error"]["code"] == "invalid_repeat"
+    assert len(await _occurrences(session, sid)) == 10
+
+
+async def test_all_day_series_still_changes_today(
+    db_client: AsyncClient,
+    session: AsyncSession,
+    bearer: Bearer,
+    cid: uuid.UUID,
+    now: dict,
+):
+    """종일 일정은 오늘이 끝나기 전까지 오늘 회차도 고친다."""
+    headers, _ = bearer
+    idempotency.clear()
+    resp = await db_client.post(
+        f"/api/v1/children/{cid}/events",
+        json={
+            "event": {**EVENT, "starts_at": _at(-1, "00:00"), "all_day": True},
+            "repeat": {"weekdays": EVERY_DAY, "until": _day(3).isoformat()},
+        },
+        headers={**headers, "Idempotency-Key": uuid.uuid4().hex},
+    )
+    assert resp.status_code == 201, resp.text
+    sid = resp.json()["event"]["series"]["id"]
+    now["at"] = _clock("12:00")
+    before = _series_body(until=3, all_day=True, starts_time=None)
+
+    resp = await _patch(
+        db_client, cid, sid, headers, _patch_body(before, {**before, "title": "소풍"})
+    )
+
+    assert resp.status_code == 200, resp.text
+    occurrences = await _occurrences(session, sid)
+    assert occurrences[_day(0)].title == "소풍"
+    assert occurrences[_day(-1)].title == "등원"
 
 
 async def test_rule_leaving_no_future_occurrence_is_refused(

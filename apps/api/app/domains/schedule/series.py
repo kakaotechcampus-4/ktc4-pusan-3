@@ -3,10 +3,10 @@
 회차는 날짜마다 따로인 `event` 행이다. 어느 날이 회차인지는 `app/rules/recurrence.py` 가 정하고,
 여기서는 그 날짜에 행을 만들고 고친다.
 
-🚨 "오늘" 은 서버가 정한다 — 부르는 쪽이 서버 시계의 KST 날짜를 넘긴다. 묶음 고치기는
-   오늘(그날 포함) 이후 회차만 바꾸고 지난 회차는 그대로 둔다. Agent 가 초안의 기준 값(`before`)을
-   만들 때 읽는 범위(`list_series_events(date_from=today)`)와 같은 기준이라, 초안과 제출이 같은
-   회차를 본다.
+🚨 "오늘" 은 서버가 정한다 — 부르는 쪽이 서버 시계의 KST 날짜와 지금 시각을 넘긴다. 묶음 고치기는
+   아직 시작하지 않은 회차만 바꾸고 지난 회차는 그대로 둔다. 시간 일정은 시작이 지금 이후인 회차,
+   종일 일정은 오늘(그날 포함) 이후 회차다 (#761). Agent 가 초안의 기준 값(`before`)을 만들 때 읽는
+   범위도 이 기준이어야 초안과 제출이 같은 회차를 본다.
 """
 
 import uuid
@@ -247,16 +247,21 @@ async def update_series(
     - 준비물은 이름으로 맞춘다. 남는 이름은 그 회차의 챙김 표시를 지킨다.
     부르는 쪽이 묶음 행을 잠가(`find_series(lock=True)`) 넘긴다.
     """
-    events = await list_series_events(
+    from_today = await list_series_events(
         session, child_id=series.child_id, series_id=series.id, date_from=today, lock=True
     )
+    # 🚨 시간 일정은 시작이 지난 오늘 회차를 뺀다 — 옮기면 `_follow_event` 가 `sent_at` 을 비워
+    #    이미 다녀온 회차의 알림이 다시 울린다. 종일은 오늘 회차까지 고친다
+    events = [e for e in from_today if e.all_day or e.starts_at > now]
     keep = list(dict.fromkeys(items))
 
     new_events: list[Event] = []
     rule = (sorted(set(weekdays)), until)
     if rule != (sorted(series.weekdays), series.until):
         target = [
-            day for day in occurrence_dates(series.starts_on, weekdays, until) if day >= today
+            day
+            for day in occurrence_dates(series.starts_on, weekdays, until)
+            if day > today or (day == today and (values.all_day or values.when(day)[0] > now))
         ]
         if not target:
             msg = "오늘 이후에 남는 회차가 없어요"
@@ -265,11 +270,18 @@ async def update_series(
         # 🚨 회차를 지우기 전에 읽는다 — 지우면 그 회차의 알림도 같이 지워져, 오늘 이후 회차가
         #    전부 바뀌는 요일 변경에서 새 회차에 걸 알림이 사라진다
         leads = await _reminder_leads(session, series.id, all_day=values.all_day)
-        wanted = set(target)
-        for event in [e for e in events if kst_day(e.starts_at) not in wanted]:
+        # 규칙에서 빠진 날 · 새 끝 날짜 뒤만 지운다 — 규칙 밖 요일로 옮겨 둔 회차는 남긴다 (#761)
+        # ponytail: 회차의 원래 날짜를 저장하지 않아, 빠진 요일로 옮겨 둔 회차도 지워진다.
+        #           문제가 되면 event 에 원래 날짜 컬럼을 둔다
+        dropped = old - set(target)
+        for event in [
+            e for e in events if kst_day(e.starts_at) in dropped or kst_day(e.starts_at) > until
+        ]:
             await session.delete(event)
             events.remove(event)
-        have = {kst_day(e.starts_at) for e in events}
+            from_today.remove(event)
+        # 시작이 지난 오늘 회차도 센다 — 그날에 회차를 하나 더 만들지 않는다
+        have = {kst_day(e.starts_at) for e in from_today}
         new_events = await _add_occurrences(
             session,
             series,
