@@ -28,7 +28,7 @@ from app.agents.common.allergy import allergen_states, shared_book
 from app.agents.common.child_values import ChildValues
 from app.agents.common.datetime_rules import today_of
 from app.agents.common.readout import Readout
-from app.agents.common.reference_docs import doc_row_id
+from app.agents.common.reference_docs import doc_row_id, public_doc_source
 from app.agents.common.result import MedicationDraft
 from app.agents.common.schemas.task import DomainTask
 from app.agents.common.suggestion import (
@@ -538,7 +538,11 @@ def _doc_index() -> dict[tuple[str, UUID], DocCard]:
             if meta.status != "approved":
                 continue
             key = (kind, doc_row_id(kind, meta.doc_key))
-            index[key] = DocCard(meta.title, meta.source_org, meta.source_title, meta.source_url)
+            # YAML 의 원문 출처가 아니라 라이선스 표시를 마친 공개용 출처가 나간다 (#510)
+            source = public_doc_source(meta)
+            index[key] = DocCard(
+                meta.title, source.source_org, source.source_title, source.source_url
+            )
     return index
 
 

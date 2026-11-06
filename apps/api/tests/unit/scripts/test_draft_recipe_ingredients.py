@@ -8,16 +8,25 @@
 재료 이름은 일반 식재료 낱말이고 레시피는 가짜다.
 """
 
+import json
+from collections import Counter
+from pathlib import Path
 from typing import Any
 
 import pytest
 import yaml
 
 from app.agents.food.recipe_catalog import parse_ingredient_table
+from app.core.config import settings
+from app.core.mafra_recipe_raw import RawIngredient, RawRecipe, RecipeSync
+from app.integrations.nics.client import NicsApiError
+from scripts import recipe_fetch
 from scripts.draft_recipe_ingredients import (
     EXTRA_CODES,
     build_draft,
+    build_parser,
     draft_entry,
+    main,
     merge_entries,
     render_yaml,
 )
@@ -211,3 +220,177 @@ def test_쓴_파일은_정리_표_로더로_그대로_읽힌다() -> None:
     assert table["돼기고기"].names == ("돼지고기",)
     assert table["소금후추"].names == ("소금", "후추")
     assert "검수" in text  # 머리 주석에 검수 규칙이 있다
+
+
+# ── 정리 표를 다시 써도 기존 항목이 바뀌지 않는다 (#510) ───────────────────
+REAL_TABLE = Path(__file__).resolve().parents[3] / "reference" / "recipe_ingredients.yaml"
+
+
+def test_food_group_도_그대로_다시_쓴다() -> None:
+    entries = [
+        {
+            "raw": "설탕",
+            "names": ["설탕"],
+            "codes": [],
+            "status": "ok",
+            "food_group": "fats_sugars",
+            "rows": 217,
+        },
+        {"raw": "소금", "names": ["소금"], "codes": [], "status": "ok", "rows": 346},
+    ]
+
+    text = render_yaml(entries, fetched_at="2026-11-02")
+
+    assert yaml.safe_load(text)["ingredients"] == entries
+    assert parse_ingredient_table(yaml.safe_load(text))["설탕"].food_group == "fats_sugars"
+
+
+def test_실제_정리_표를_다시_써도_항목이_하나도_바뀌지_않는다() -> None:
+    """초안 스크립트는 검수한 값을 덮지 않는다. 다시 쓸 때 칸 하나를 빠뜨리면(`food_group`) 사람이
+    정한 식품군이 조용히 사라진다 — 지금 파일을 그대로 한 번 돌려서 본다."""
+    original = yaml.safe_load(REAL_TABLE.read_text(encoding="utf-8"))
+
+    rewritten = yaml.safe_load(
+        render_yaml(original["ingredients"], fetched_at="2026-11-02", version=original["version"])
+    )
+
+    assert rewritten["ingredients"] == original["ingredients"]
+    counts = Counter(entry["status"] for entry in original["ingredients"])
+    assert Counter(entry["status"] for entry in rewritten["ingredients"]) == counts
+    grouped = sum(1 for entry in original["ingredients"] if "food_group" in entry)
+    assert sum(1 for entry in rewritten["ingredients"] if "food_group" in entry) == grouped > 0
+
+
+# ── --source 와 파일 갱신 ─────────────────────────────────────────────
+def _write_sync(tmp_path: Path, *recipes: list[str | None]) -> Path:
+    path = tmp_path / "sync.json"
+    path.write_text(json.dumps(sync(*recipes), ensure_ascii=False), encoding="utf-8")
+    return path
+
+
+EXISTING = """\
+# 손으로 고친 머리말 — 이 줄은 다시 써도 남는다
+# 🚨 검수 기록은 사람만 바꾼다
+
+source: "농식품정보원 레시피 재료정보 — 재료 이름별 정리 (초안 스크립트 + 사람 검수)"
+version: "2026.1"
+fetched_at: 2026-10-11
+
+ingredients:
+  - raw: "설탕"
+    names: ["설탕"]
+    codes: []
+    status: ok
+    food_group: fats_sugars
+    rows: 217
+  - raw: "안심"
+    names: ["쇠고기"]
+    codes: [16]
+    status: ok
+    food_group: meat_fish_egg_legumes
+    note: "소 안심"
+    rows: 3
+"""
+
+
+def raw_sync(*names: str) -> RecipeSync:
+    """받기 결과(RecipeSync) — 공용 받기 모듈(`scripts/recipe_fetch`)이 돌려주는 모양."""
+    return RecipeSync(
+        recipes=(RawRecipe("1", "가짜", ingredients=tuple(RawIngredient(n) for n in names)),),
+        recipe_rows=1,
+        ingredient_rows=len(names),
+        orphan_ingredient_rows=0,
+        unnamed_ingredient_rows=0,
+    )
+
+
+@pytest.fixture
+def fetchers(monkeypatch):
+    calls: list[str] = []
+
+    async def fake_mafra():
+        calls.append("mafra")
+        return raw_sync("가짜마파")
+
+    async def fake_nics():
+        calls.append("nics")
+        return raw_sync("가짜닉스")
+
+    monkeypatch.setattr(recipe_fetch, "fetch_mafra", fake_mafra)
+    monkeypatch.setattr(recipe_fetch, "fetch_nics", fake_nics)
+    return calls
+
+
+def test_source_는_정해진_이름만_받는다() -> None:
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["--fetch", "--source", "unknown"])
+
+
+def test_source_없이_받으면_농식품정보원이다(tmp_path, fetchers) -> None:
+    main(["--fetch", "--output", str(tmp_path / "table.yaml")])
+
+    assert fetchers == ["mafra"]
+
+
+def test_받아_둔_결과에는_source_를_붙일_수_없다(tmp_path, fetchers) -> None:
+    # 받아 둔 결과는 이미 소스가 정해져 있다 — 붙여도 무시되고 "소스: ..." 만 틀리게 찍힌다
+    with pytest.raises(SystemExit):
+        main(
+            ["--input", str(_write_sync(tmp_path, ["소금"])), "--source", "nics"]
+            + ["--output", str(tmp_path / "table.yaml")]
+        )
+    assert fetchers == []
+
+
+def test_다시_돌려도_머리말과_version_과_검수한_항목은_그대로고_새_이름만_끝에_붙는다(
+    tmp_path,
+) -> None:
+    out = tmp_path / "table.yaml"
+    out.write_text(EXISTING, encoding="utf-8")
+    before = yaml.safe_load(EXISTING)["ingredients"]
+
+    code = main(["--input", str(_write_sync(tmp_path, ["안심", "새재료"])), "--output", str(out)])
+
+    text = out.read_text(encoding="utf-8")
+    data = yaml.safe_load(text)
+    assert code == 0
+    assert text.startswith("# 손으로 고친 머리말")  # 머리말은 갈아엎지 않는다
+    assert data["version"] == "2026.1"
+    assert data["ingredients"][: len(before)] == before  # 검수한 항목 · food_group 그대로
+    [added] = data["ingredients"][len(before) :]
+    assert (added["raw"], added["status"]) == ("새재료", "draft")
+    assert "농촌진흥청" in data["source"] and "농식품정보원" in data["source"]
+
+
+def test_파일이_없으면_새로_만든다(tmp_path) -> None:
+    out = tmp_path / "new.yaml"
+
+    main(["--input", str(_write_sync(tmp_path, ["소금"])), "--output", str(out)])
+
+    data = yaml.safe_load(out.read_text(encoding="utf-8"))
+    assert [e["status"] for e in data["ingredients"]] == ["draft"]
+    parse_ingredient_table(data)
+
+
+def test_nics_로_받으면_NICS_클라이언트만_쓴다(tmp_path, fetchers) -> None:
+    out = tmp_path / "table.yaml"
+
+    main(["--fetch", "--source", "nics", "--output", str(out)])
+
+    assert fetchers == ["nics"]
+    assert [e["raw"] for e in yaml.safe_load(out.read_text(encoding="utf-8"))["ingredients"]] == [
+        "가짜닉스"
+    ]
+
+
+def test_nics_로_받는데_키가_없으면_부르지_않고_멈춘다(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(settings, "NICS_RECIPE_API_KEY", "")
+
+    with pytest.raises(NicsApiError):
+        main(["--fetch", "--source", "nics", "--output", str(tmp_path / "table.yaml")])
+
+    assert not (tmp_path / "table.yaml").exists()  # 받지 못했으면 파일을 만들지 않는다
+
+
+def test_도움말은_cp949_콘솔에서도_찍힌다() -> None:
+    build_parser().format_help().encode("cp949")
