@@ -1,6 +1,7 @@
 """행사 원문 계약. 행사 어댑터(`app/integrations/`)가 싣고 Activity 가 읽는 모양.
 
-한국관광공사 TourAPI 축제공연행사(`searchFestival2`)와 소개정보(`detailIntro2`)다.
+한국관광공사 TourAPI 축제공연행사(`searchFestival2`) · 소개정보(`detailIntro2`) · 공통정보의 개요
+(`detailCommon2`)다.
 `app/integrations/` 는 core 만 import 할 수 있어서 어댑터와 Agent 가 함께 보는 모양은 여기
 둔다(`weather_raw.py` 와 같은 자리). 값은 전부 API 원문 문자열이다 — 날짜 · 좌표 · 관람 연령을
 읽고 거르는 것은 Activity `events.py` 가 테스트와 함께 맡는다.
@@ -36,3 +37,7 @@ class RawEventIntro:
 
     age_limit: str  # agelimit — "전 연령" · "만 13세 이상" · "" 처럼 자유 문장이다
     place: str  # eventplace — 행사 장소. 비어 있을 수 있다
+    # 열리는 날을 읽는 칸 — 시작일 · 종료일은 전체 기간이라 "매주 토요일" · "월요일 휴무" 는 여기와
+    # 개요에만 있다 (Activity `event_schedule.py`)
+    playtime: str = ""  # playtime — 운영 시간. "(토) 19:00" · "화~일 10:00~18:00" 같은 자유 문장
+    program: str = ""  # program — 행사 프로그램. 장소마다 날짜가 다른 행사는 여기 적는다

@@ -3,7 +3,8 @@
 고정하는 것
 - 위치를 보내지 않고 그날 이후에 끝나는 전국 목록을 받는다 · 날짜마다 한 번만 부른다
 - 원문은 core 모양의 칸만 옮긴다(요금 · 전화번호 · 이미지는 나가지 않는다) · 빈 목록은 "" 로 온다
-- 소개정보는 관람 연령 · 장소만 · 행사마다 캐시 · 없는 행사는 실패
+- 소개정보는 관람 연령 · 장소 · 일정 칸만 · 행사마다 캐시 · 없는 행사는 실패
+- 개요는 개요 칸만 · 행사마다 그날 하루 캐시 · 없는 행사는 실패
 - 실패는 UpstreamUnavailable 이고 메시지 · 로그에 인증키와 주소가 없다
 """
 
@@ -162,12 +163,24 @@ class TestIntro:
             [{"contentid": "3360113", "agelimit": "전 연령", "eventplace": "벡스코", **item}]
         )
 
-    async def test_관람_연령과_장소만_옮긴다(self):
-        recorder = Recorder(self.intro(usetimefestival="무료", sponsor1tel="02-000-0000"))
+    async def test_관람_연령_장소_일정_칸만_옮긴다(self):
+        recorder = Recorder(
+            self.intro(
+                playtime="매주 토요일 19:00",
+                program="1. 바람숲공원 - 11.7.(토)",
+                usetimefestival="무료",
+                sponsor1tel="02-000-0000",
+            )
+        )
 
         intro = await source(recorder).intro(content_id="3360113")
 
-        assert intro == RawEventIntro(age_limit="전 연령", place="벡스코")
+        assert intro == RawEventIntro(
+            age_limit="전 연령",
+            place="벡스코",
+            playtime="매주 토요일 19:00",
+            program="1. 바람숲공원 - 11.7.(토)",
+        )
         assert recorder.params()["contentId"] == ["3360113"]
         assert recorder.params()["contentTypeId"] == ["15"]
 
@@ -189,6 +202,55 @@ class TestIntro:
     async def test_없는_행사는_실패다(self):
         with pytest.raises(UpstreamUnavailable):
             await source(Recorder(page([]))).intro(content_id="1")
+
+
+class TestOverview:
+    """일정을 개요에만 적은 행사가 있다("매주 토요일 저녁 2회") — 일정을 읽으려고 개요도 묻는다."""
+
+    def common(self, **item):
+        return page(
+            [
+                {
+                    "contentid": "3360113",
+                    "title": "부산 바다 축제",
+                    "overview": "매주 토요일 저녁에 열린다.",
+                    "tel": "051-000-0000",
+                    "homepage": "http://example.invalid",
+                    **item,
+                }
+            ]
+        )
+
+    async def test_개요_칸만_옮긴다(self):
+        recorder = Recorder(self.common())
+
+        overview = await source(recorder).overview(content_id="3360113")
+
+        assert overview == "매주 토요일 저녁에 열린다."
+        assert urlparse(str(recorder.requests[-1].url)).path.endswith("/detailCommon2")
+        assert recorder.params()["contentId"] == ["3360113"]
+
+    async def test_빈_개요는_빈_글자다(self):
+        overview = await source(Recorder(self.common(overview=None))).overview(content_id="1")
+        assert overview == ""
+
+    async def test_행사마다_하루에_한_번만_부르고_날이_바뀌면_다시_부른다(self):
+        recorder = Recorder(self.common())
+        now = [NOW]
+        src = TourEvents(transport=httpx.MockTransport(recorder), now=lambda: now[0])
+        _OPENED.append(src)
+
+        await src.overview(content_id="3360113")
+        await src.overview(content_id="3360113")
+        assert len(recorder.requests) == 1
+
+        now[0] = datetime(2026, 11, 3, 9, tzinfo=KST)
+        await src.overview(content_id="3360113")
+        assert len(recorder.requests) == 2
+
+    async def test_없는_행사는_실패다(self):
+        with pytest.raises(UpstreamUnavailable):
+            await source(Recorder(page([]))).overview(content_id="1")
 
 
 class TestFailure:
@@ -213,4 +275,4 @@ class TestFailure:
 
 def test_Activity_포트_모양이다():
     src: EventSource = TourEvents()
-    assert callable(src.events) and callable(src.intro)
+    assert callable(src.events) and callable(src.intro) and callable(src.overview)

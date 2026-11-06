@@ -10,6 +10,8 @@ from datetime import date
 from uuid import UUID
 
 from app.agents.activity.doc_seed import activity_doc_seed
+from app.agents.activity.event_schedule import SHARED_CACHE, ReadEventSchedules
+from app.agents.activity.events import Event, every_day
 from app.agents.activity.schemas.common import PlaceCategory
 from app.agents.activity.store.ports import (
     ActivityDocRow,
@@ -19,6 +21,8 @@ from app.agents.activity.store.ports import (
     ChildProfileReader,
     CoarseLocation,
     ConsentReader,
+    EventSchedule,
+    EventScheduleSource,
     EventSource,
     PlaceRow,
     PlaceSource,
@@ -194,10 +198,10 @@ class InMemoryPlaces:
 
 
 class InMemoryEvents:
-    """전국 행사 목록 원문과 소개정보. 위치를 받지 않는다 — 어댑터와 같다.
+    """전국 행사 목록 원문과 소개정보 · 개요. 위치를 받지 않는다 — 어댑터와 같다.
 
-    소개정보가 없는 행사는 연령 제한 · 장소가 빈 행사로 돌려준다. `fail_intro` 의 id 는 소개정보
-    조회가 실패한다. `intro_calls` 에 물은 순서를 남긴다.
+    소개정보가 없는 행사는 연령 제한 · 장소가 빈 행사로, 개요가 없는 행사는 빈 개요로 돌려준다.
+    `fail_intro` · `fail_overview` 의 id 는 그 조회가 실패한다. `intro_calls` 에 물은 순서를 남긴다.
     """
 
     def __init__(
@@ -205,13 +209,17 @@ class InMemoryEvents:
         rows: Sequence[RawEvent] = (),
         intros: Mapping[str, RawEventIntro] | None = None,
         *,
+        overviews: Mapping[str, str] | None = None,
         fail: bool = False,
         fail_intro: Collection[str] = (),
+        fail_overview: Collection[str] = (),
     ) -> None:
         self._rows = list(rows)
         self._intros = dict(intros or {})
+        self._overviews = dict(overviews or {})
         self._fail = fail
         self._fail_intro = frozenset(fail_intro)
+        self._fail_overview = frozenset(fail_overview)
         self.intro_calls: list[str] = []
 
     async def events(self, *, ending_on_or_after: date) -> list[RawEvent]:
@@ -226,6 +234,26 @@ class InMemoryEvents:
             raise UpstreamUnavailable("행사 소개정보 조회 실패 (테스트 주입)")
         return self._intros.get(content_id, RawEventIntro(age_limit="", place=""))
 
+    async def overview(self, *, content_id: str) -> str:
+        if content_id in self._fail_overview:
+            raise UpstreamUnavailable("행사 개요 조회 실패 (테스트 주입)")
+        return self._overviews.get(content_id, "")
+
+
+class InMemoryEventSchedules:
+    """행사 id → 일정. 없는 행사는 기간 안 매일이다 — 원문에 요일 · 날짜 제한이 없는 행사처럼.
+
+    일정 원문을 읽는 길(`ReadEventSchedules`)은 따로 테스트한다. `calls` 에 물은 행사를 남긴다.
+    """
+
+    def __init__(self, schedules: Mapping[str, EventSchedule] | None = None) -> None:
+        self._schedules = dict(schedules or {})
+        self.calls: list[str] = []
+
+    async def schedule_of(self, event: Event, *, today: date) -> EventSchedule:
+        self.calls.append(event.content_id)
+        return self._schedules.get(event.content_id) or every_day(event, today)
+
 
 def in_memory_ports(
     child_id: UUID,
@@ -239,9 +267,10 @@ def in_memory_ports(
     weather: InMemoryWeather | None = None,
     places: InMemoryPlaces | None = None,
     events: InMemoryEvents | None = None,
+    event_schedules: EventScheduleSource | None = None,
 ) -> ActivityPorts:
     """아이 하나 몫의 포트 묶음. 안 넘긴 포트는 빈 데이터, weather · places · events 는
-    None(키 없음)이다."""
+    None(키 없음)이다. events 를 넘기고 일정을 안 넘기면 모든 행사가 기간 안 매일이다."""
     return ActivityPorts(
         profile=InMemoryProfile({child_id: birth_date}),
         consent=InMemoryConsent({child_id: consent}),
@@ -252,6 +281,9 @@ def in_memory_ports(
         weather=weather,
         places=places,
         events=events,
+        event_schedules=(
+            (event_schedules or InMemoryEventSchedules()) if events is not None else None
+        ),
     )
 
 
@@ -275,6 +307,8 @@ def unwired_ports(
     - 장소는 api 가 넘긴 `place` 표 어댑터다(`domains/place/agent_reader.py`). 안 넘어오면 None 이라
       장소 조회가 닫힌다. 좌표가 없는 run 도 닫힌다(`Gate.has_location`).
     - 행사는 api 가 서버 시작 때 만든 TourAPI 어댑터다. 안 넘어오면 None 이라 행사 조회가 닫힌다.
+      열리는 날은 그 어댑터의 일정 원문을 run 안에서 읽는다 — 캐시는 프로세스에 하나다
+      (`event_schedule.SHARED_CACHE`).
     """
     return ActivityPorts(
         profile=profile,
@@ -286,4 +320,7 @@ def unwired_ports(
         weather=weather,
         places=places,
         events=events,
+        event_schedules=(
+            ReadEventSchedules(events, cache=SHARED_CACHE) if events is not None else None
+        ),
     )

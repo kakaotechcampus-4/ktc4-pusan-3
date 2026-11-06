@@ -1,11 +1,13 @@
-"""TourAPI 축제공연행사(`searchFestival2`) · 소개정보(`detailIntro2`) — Activity `EventSource` 구현.
+"""TourAPI 축제공연행사(`searchFestival2`) · 소개정보(`detailIntro2`) · 개요(`detailCommon2`) —
+Activity `EventSource` 구현.
 
 하는 일 (Activity D8 · D9 행사)
   1. 그날 이후에 끝나는 전국 행사(진행 중 포함)를 받는다. 위치를 보내지 않는다 — 행사 쪽으로는
      위치 파생값이 하나도 나가지 않는다. 위치기반 조회(`locationBasedList2`)는 좌표를 보내므로
      쓰지 않는다. 받은 목록은 모든 사용자가 같이 쓰므로 그날 하루 프로세스에 하나만 둔다
      (`--workers 1` 전제, #134)
-  2. 소개정보는 Activity 가 가까운 행사만 묻는다. 행사마다 그날 하루 둔다
+  2. 소개정보 · 개요는 Activity 가 가까운 행사만 묻는다. 행사마다 그날 하루 둔다 — 개요는 일정을
+     개요에만 적은 행사가 있어서 묻는다(Activity `event_schedule.py`)
 
 원문 문자열을 `core/event_raw.py` 모양에 옮겨 담기만 한다 — 모양에 없는 칸(요금 · 전화번호 ·
 홈페이지 · 이미지)은 밖으로 나가지 않는다. 거리 · 거르기 · 관람 연령 읽기는 Activity `events.py` 다.
@@ -54,7 +56,8 @@ class TourEvents:
         self._now = now or (lambda: datetime.now(KST))
         self._events: tuple[date, tuple[RawEvent, ...]] | None = None
         self._intros: dict[str, RawEventIntro] = {}
-        self._intro_day: date | None = None
+        self._overviews: dict[str, str] = {}
+        self._detail_day: date | None = None
         self._lock = asyncio.Lock()
 
     async def aclose(self) -> None:
@@ -68,12 +71,8 @@ class TourEvents:
             return list(self._events[1])
 
     async def intro(self, *, content_id: str) -> RawEventIntro:
-        """행사 하나의 관람 연령 · 장소. 없는 행사는 UpstreamUnavailable."""
-        today = self._now().astimezone(KST).date()
-        if self._intro_day != today:
-            # 하루가 지나면 비운다 — 주최 측이 고친 연령 · 장소를 다음 날에는 다시 읽는다
-            self._intros.clear()
-            self._intro_day = today
+        """행사 하나의 관람 연령 · 장소 · 일정 칸. 없는 행사는 UpstreamUnavailable."""
+        self._roll_day()
         if (cached := self._intros.get(content_id)) is not None:
             return cached
         payload = await get_json(
@@ -87,10 +86,40 @@ class TourEvents:
             raise UpstreamUnavailable("행사 소개정보가 없다")
         item = items[0]
         intro = RawEventIntro(
-            age_limit=_text(item.get("agelimit")), place=_text(item.get("eventplace"))
+            age_limit=_text(item.get("agelimit")),
+            place=_text(item.get("eventplace")),
+            playtime=_text(item.get("playtime")),
+            program=_text(item.get("program")),
         )
         self._intros[content_id] = intro
         return intro
+
+    async def overview(self, *, content_id: str) -> str:
+        """행사 하나의 개요 원문. 없는 행사는 UpstreamUnavailable."""
+        self._roll_day()
+        if (cached := self._overviews.get(content_id)) is not None:
+            return cached
+        payload = await get_json(
+            self._client,
+            f"{BASE_URL}/detailCommon2",
+            {**_COMMON, "contentId": content_id},
+            what="행사 개요",
+        )
+        items = _items(payload, what="행사 개요")
+        if not items:
+            raise UpstreamUnavailable("행사 개요가 없다")
+        overview = _text(items[0].get("overview"))
+        self._overviews[content_id] = overview
+        return overview
+
+    def _roll_day(self) -> None:
+        """하루가 지나면 소개정보 · 개요를 비운다 — 주최 측이 고친 연령 · 장소 · 일정을 다음 날에는
+        다시 읽는다."""
+        today = self._now().astimezone(KST).date()
+        if self._detail_day != today:
+            self._intros.clear()
+            self._overviews.clear()
+            self._detail_day = today
 
     async def _fetch(self, day: date) -> tuple[RawEvent, ...]:
         rows: list[RawEvent] = []
