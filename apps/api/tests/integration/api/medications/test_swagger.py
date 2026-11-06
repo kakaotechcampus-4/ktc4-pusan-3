@@ -74,7 +74,7 @@ def test_체크_엔드포인트와_요청_응답의_모든_칸에_설명이_있�
 
     assert operation["summary"].strip()
     assert len(operation["description"].strip()) > 50
-    assert {"200", "400", "403", "404", "422"} <= set(operation["responses"])
+    assert {"200", "400", "401", "403", "404", "422"} <= set(operation["responses"])
     for name in CHECK_REQUEST_SCHEMAS:
         schema = spec["components"]["schemas"][name]
         assert schema.get("description", "").strip(), f"{name} 에 설명이 없다"

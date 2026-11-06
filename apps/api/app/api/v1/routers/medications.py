@@ -292,6 +292,13 @@ async def register_medication(
                 "`error.detail.fields` 에 칸 이름이 온다"
             ),
         },
+        401: {
+            "model": ErrorEnvelope,
+            "description": (
+                "`unauthenticated` — 인증을 확인한 뒤 그사이 탈퇴했다(드물다). 체크하지 않는다. "
+                "다른 401 과 같이 처리하면 된다"
+            ),
+        },
         403: {
             "model": ErrorEnvelope,
             "description": (
