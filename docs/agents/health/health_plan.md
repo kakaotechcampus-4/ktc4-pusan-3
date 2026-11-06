@@ -318,7 +318,7 @@ H-1 · H-8 · H-9 · H-11 · H-13 ([`Health_Agent_명세.md`](Health_Agent_명�
 - **`event_requests`**(검진 알림) → Memory 일정 tool 을 코드로 불러 초안 payload
 - **hook** — Memory 가 `observation_health` 를 저장한 직후 `check_symptom_repetition` 을 동기 호출
 - **복약 DB 어댑터 · 배선** — `domains/health/agent_reader.py`(Agent 포트를 테이블로) · `apps/api/CLAUDE.md` 저장 계약 예외 표 · `entrypoint._domain_contexts` · `api/agent_ports.py`
-- **병원 찾기 위치** — pipeline 에서 `find_pediatric_places(location=…)` 로 위치를 넘기는 길. `now` 는 KST 벽시계로 바꿔 넘긴다. PM 확인(위치 약관 목적 추가 · 다시 동의)이 먼저다
+- **병원 찾기 위치** — `HealthContext.location` · `HealthPorts.places` 와 `entrypoint.handle_input(health_location=…, health_places=…)` 까지 섰다(#713 후속). 🚨 위치는 Activity 의 `location` 과 따로 받는다 — 위치 약관은 판마다 목적이 달라서, 병원 찾기 목적이 든 판(2026-11-03)에 동의한 보호자의 위치만 넘긴다. 남은 것: 라벨 실행기가 `find_pediatric_places(location=context.location, source=context.ports.places, now=…)` 로 부르기(`now` 는 KST 벽시계) · api 가 동의한 판을 확인해 `health_location` 을 넘기기(지금 `location_granted` 는 판을 보지 않는다)
 
 **BE/FE 와 같이 하는 것** — pipeline 이벤트가 생겨야 끝까지 확인할 수 있어서 연결 이슈에 둔다
 
