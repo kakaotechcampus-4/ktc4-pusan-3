@@ -471,9 +471,9 @@ def test_프로브_파일은_설계와_같은_모양이다() -> None:
     assert len(cases) == 30
     assert Counter(c.ability for c in cases) == {
         "이해": 6,
-        "기록": 6,
+        "기록": 7,  # 증상 기록(P-REC-07) — Health 는 기록만 (eval-v1 §13-6)
         "기억": 3,
-        "행동": 8,
+        "행동": 7,
         "공지": 1,
         "주입": 6,
     }
