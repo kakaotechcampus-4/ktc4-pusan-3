@@ -200,10 +200,15 @@ export function RunReply({
   }
 
   if (run.failure) {
+    /**
+     * 🚨 **첫 줄은 서버 `message` 를 그대로 그린다** (#768 · chat-run-v1.md §3). 이유마다 부모가 할 말이
+     *    달라서(잠시 뒤 다시 / 바꿔서 다시) 서버가 정하고, 화면은 `reason` 으로 문구를 만들지 않는다.
+     *    둘째 줄은 이유와 상관없이 참인 것만 말한다 — `failed` 는 서버가 "저장 없음" 을 보장한 끝이다.
+     */
     return (
       <CardFailed>
-        <p className="text-body text-ink">읽지 못했어요</p>
-        <p className="mt-1">잘못 저장하지 않으려고 아무것도 저장하지 않았어요.</p>
+        <p className="text-body text-ink">{run.failure.message || "읽지 못했어요"}</p>
+        <p className="mt-1">아무것도 저장하지 않았어요.</p>
         <RetryActions onRetry={onRetry} onRewrite={onRewrite} rewriteBlocked={rewriteBlocked} />
       </CardFailed>
     );

@@ -221,6 +221,7 @@ export async function* photoRunScript(runId: string): AsyncGenerator<Uint8Array>
 
   if (run.unreadable) {
     // 🚨 실패는 200 + 빈 배열이 아니다. 여기서 스트림이 끝나고 저장된 것은 없다.
+    // `message`(#768)는 싣지 않는다 — 08 은 그 문구를 쓰지 않고 자기 카드를 그린다 (chat-run-v1.md §3)
     yield frame("failed", { reason: "unparsable", raw_text: "" });
     return;
   }
