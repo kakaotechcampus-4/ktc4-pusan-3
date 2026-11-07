@@ -124,10 +124,22 @@ async def test_run_이_좌표를_넘기면_기록이_1건_커밋된다(session, 
 
 
 async def test_그새_위치_동의가_꺼졌으면_좌표를_버리고_기록하지_않는다(
-    session, bearer, cid, handed
+    db_client, session, bearer, cid, handed
 ):
-    """창구가 동의를 읽은 뒤 run 이 뜨기 전에 철회된 경우. run 은 위치 없이 끝까지 돈다."""
-    _, parent_id = bearer
+    """창구가 동의를 읽은 뒤 run 이 뜨기 전에 철회된 경우. run 은 위치 없이 끝까지 돈다.
+
+    한 번도 안 켠 보호자가 아니라 켰다가 끈 보호자다 — "켠 적이 있으면 허용" 으로 잘못 읽어도
+    여기서 멈춘다.
+    """
+    headers, parent_id = bearer
+    await grant_location(session, parent_id)
+    _, version = await location_version(session)
+    withdrawn = await db_client.post(
+        CONSENTS,
+        json={"scope": "location", "action": "withdrawn", "policy_version": version},
+        headers=headers,
+    )
+    assert withdrawn.status_code == 201
 
     channel = await run_with_coords(cid, parent_id)
 
@@ -166,6 +178,29 @@ async def test_하루_한도에_걸린_입력은_기록하지_않는다(db_clien
     assert response.status_code == 429
     assert handed == []
     assert await logs_of(session, parent_id) == []
+
+
+async def test_입력_한_번은_기록_한_번이다_같은_키를_다시_보내도(
+    db_client, session, bearer, cid, handed
+):
+    """창구(POST /inputs)부터 러너까지 실제 길로 간다. 같은 Idempotency-Key 를 다시 보내면 처음
+    응답을 재생할 뿐 run 이 다시 뜨지 않으니, 기록도 늘지 않는다."""
+    headers, parent_id = bearer
+    await grant_location(session, parent_id)
+    url = INPUTS.format(cid=cid)
+    body = {"text": RAW_TEXT, "source": "home_input", "location": {"lat": 35.18, "lon": 129.08}}
+    keyed = {**headers, "Idempotency-Key": str(uuid.uuid4())}
+
+    first = await db_client.post(url, json=body, headers=keyed)
+    assert first.status_code == 202
+    await asyncio.wait_for(registry.get(first.json()["run_id"]).task, timeout=5)
+    again = await db_client.post(url, json=body, headers=keyed)
+    await session.rollback()  # 커밋이 빠졌다면 여기서 행이 사라진다
+
+    assert again.json()["run_id"] == first.json()["run_id"]
+    assert len(handed) == 1
+    assert handed[0] is not None
+    assert len(await logs_of(session, parent_id)) == 1
 
 
 # ── 철회 ───────────────────────────────────────────────────────────
