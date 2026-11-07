@@ -1,3 +1,8 @@
+# prod 프로젝트의 Caddy 하나가 두 환경을 다 받는다 — 80/443 은 서버에 하나뿐이다 (docs/ops/deploy-v1.md).
+# 주소는 컨테이너 이름이다. 두 프로젝트의 web · api 가 같이 붙은 ktc4-edge 네트워크에서 찾는다.
+# 🚨 이 파일은 prod checkout 의 것이 쓰인다 — dev 주소를 바꿔도 main 배포가 성공해야 반영된다
+#    (deploy.sh 가 prod 배포 성공 뒤 caddy reload 한다. up 만으로는 다시 읽지 않는다).
+
 # HSTS — 브라우저가 이 주소를 정해진 기간 동안 https 로만 연다 (#670).
 #   http 로 먼저 여는 첫 요청이 사라져, 그 순간을 가로채 https 로 못 가게 붙잡는 공격을 막는다.
 #   🚨 한 번 보낸 기간은 보호자 브라우저에 남아 서버에서 되돌릴 수 없다 — 그 기간에 https 가
@@ -5,18 +10,30 @@
 #      단계마다 1~2주 문제없이 돌면 늘린다 — 1일 → 1주 → 1달 → 1년(31536000).
 #      includeSubDomains 는 dev 사이트가 https 로 뜨는 걸 확인한 뒤(1주 단계쯤). preload 는 걸지 않는다 —
 #      브라우저 목록에서 빼는 데 몇 달이 걸려 되돌리기 어렵다.
-#   사이트를 더하면(dev 등) 그 블록에도 import hsts 를 붙인다.
+#   사이트를 더하면 그 블록에도 import hsts 를 붙인다.
 #   🚨 web · api 앱은 이 헤더를 붙이지 않는다 — 둘 다 붙이면 응답에 두 줄이 나가고 브라우저는 앞의 것만 따른다.
 (hsts) {
 	header Strict-Transport-Security "max-age=86400"
 }
 
+# prod (main)
 icatch.ai.kr {
 	import hsts
-	reverse_proxy web:3000
+	reverse_proxy ktc4-web:3000
 }
 
 api.icatch.ai.kr {
 	import hsts
-	reverse_proxy api:8000
+	reverse_proxy ktc4-api:8000
+}
+
+# dev (develop)
+dev.icatch.ai.kr {
+	import hsts
+	reverse_proxy ktc4-dev-web:3000
+}
+
+api.dev.icatch.ai.kr {
+	import hsts
+	reverse_proxy ktc4-dev-api:8000
 }
