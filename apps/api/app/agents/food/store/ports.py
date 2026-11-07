@@ -52,6 +52,9 @@ from datetime import date, datetime
 from typing import Literal, Protocol, get_args
 from uuid import UUID
 
+from app.agents.common.errors import (
+    MenuSourceError as MenuSourceError,  # 다시 내보낸다 (#768)
+)
 from app.agents.common.evidence import AffinityRow
 from app.agents.common.ports import (
     ChildProfileReader,
@@ -74,14 +77,6 @@ NutrientBand = Literal["low", "ok", "high"]
 # observation_food.confidence_source 값(memory/schemas/common.py 와 같은 값).
 # 보호자 말은 Memory Agent 가 저장할 때 고르고, OCR 분석이 쓰는 관찰은 그 경로가 따로 정한다.
 ConfidenceSource = Literal["institution_notice", "parent_direct", "parent_hedged", "parent_hearsay"]
-
-
-class MenuSourceError(Exception):
-    """외부 영양성분·레시피 API 호출 실패.
-
-    결과가 0건인 것(정말 없음)과 다르다. 호출부는 이 예외를 카탈로그에 없는 것
-    (캐시 미스)처럼 뭉개지 않는다.
-    """
 
 
 # health_safety 10/4 확정안(app/domains/safety/models.py)과 같은 값. Agent 마다 필요한 칸이

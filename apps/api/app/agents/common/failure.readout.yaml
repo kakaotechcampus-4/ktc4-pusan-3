@@ -1,0 +1,37 @@
+# run 이 실패했을 때 화면에 그대로 나가는 첫 줄 (#768). 이유(`FailReason`)마다 하나.
+# 테스트가 글자 단위로 비교하고, FailReason 값과 키가 같은지도 본다. 문구를 바꾸면
+# docs/api/run-failure-v1.md 도 같이 고친다.
+# failed 는 "저장 없음" 이 보장된 끝이다 — 둘째 줄("아무것도 저장하지 않았어요")은 화면이 붙이므로
+# 여기서 기록 여부를 다시 말하지 않는다.
+
+failure.timeout:
+  kind: failure
+  template: 시간 안에 답을 만들지 못했어요. 잠시 뒤 다시 보내 주세요.
+
+failure.llm_unavailable:
+  kind: failure
+  template: 지금은 답을 만들 수 없어요. 잠시 뒤 다시 보내 주세요.
+
+failure.llm_rate_limited:
+  kind: failure
+  template: 지금 요청이 많아요. 잠시 뒤 다시 보내 주세요.
+
+failure.llm_misconfigured:
+  kind: failure
+  template: 서비스 쪽 문제로 지금은 처리할 수 없어요. 다시 보내도 같을 수 있어요.
+
+failure.guard_unavailable:
+  kind: failure
+  template: 안전 확인을 하지 못했어요. 잠시 뒤 다시 보내 주세요.
+
+failure.lookup_unavailable:
+  kind: failure
+  template: 필요한 정보를 불러오지 못했어요. 잠시 뒤 다시 보내 주세요.
+
+failure.unparsable:
+  kind: failure
+  template: 말씀을 정리하지 못했어요. 조금 바꿔서 다시 적어 주세요.
+
+failure.internal_error:
+  kind: failure
+  template: 처리하다 문제가 생겼어요. 다시 보내 주세요.
