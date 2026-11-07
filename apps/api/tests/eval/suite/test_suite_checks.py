@@ -468,9 +468,9 @@ def test_read_run_은_Memory_되묻기를_질문으로_센다() -> None:
 
 def test_프로브_파일은_설계와_같은_모양이다() -> None:
     cases = load_probes()
-    assert len(cases) == 30
+    assert len(cases) == 31
     assert Counter(c.ability for c in cases) == {
-        "이해": 6,
+        "이해": 7,  # 무관 질문(P-UND-07) — 노션 9번 "아이와 무관한 입력"
         "기록": 7,  # 증상 기록(P-REC-07) — Health 는 기록만 (eval-v1 §13-6)
         "기억": 3,
         "행동": 7,
