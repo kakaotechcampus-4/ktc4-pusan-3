@@ -8,7 +8,7 @@
 #     멈춘 것을 가리지 못하게 daily 만 따로 본다. 복원 점검은 그래도 끝까지 한다.
 #     cron 에서 backup.sh daily 다음에 prod 만 돌린다 — 백업이 실패해도 이건 돈다 (backup.sh 머리말).
 #     성공은 로그에만, 실패만 알린다.
-#     ⚠️ cron 자체가 멈추면 이것도 안 돈다. 그건 서버 밖에서 봐야 한다 (#758).
+#     cron 자체가 멈추면 이것도 안 돈다 — 그건 서버 밖의 .github/workflows/backup-watch.yml 이 본다.
 #
 #   로컬 시험: bash deploy/scripts/restore-check.sh --local <폴더>   그 폴더의 가장 새 .dump 로
 #
