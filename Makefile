@@ -17,6 +17,9 @@ COMPOSE_DEPLOY := env API_IMAGE_TAG=$(DEPLOYED_TAG) WEB_IMAGE_TAG=$(DEPLOYED_TAG
 # 적재는 배포와 같은 잠금을 잡는다 — 4GB 서버에서 빌드와 겹치지 않게. 맥에는 flock 이 없어 그냥 돈다.
 # (COMPOSE_DEPLOY 가 `env` 로 시작하는 이유 — flock 뒤에 오는 첫 단어는 명령이어야 해서 VAR=값 을 못 받는다)
 DEPLOY_LOCK    := $(shell command -v flock >/dev/null 2>&1 && echo flock -w 1200 /var/lock/ktc4-deploy.lock)
+# 떠 있는 스택 · 배포 DB 를 건드리는 타깃은 .env 가 dev · prod 중 하나와 통째로 맞는지 먼저 본다 (deploy.sh 와 같은 검사).
+# dev .env 에서 COMPOSE_PROJECT_NAME 한 줄만 빠져도 운영 프로젝트(ktc4-deploy) · 운영 DB 로 떨어지기 때문이다.
+DEPLOY_GUARD   := bash deploy/scripts/deploy.sh --check-env
 
 help:
 	@echo "사용 가능한 명령"
@@ -187,9 +190,11 @@ api-image:
 	$(COMPOSE_DEPLOY) build api
 
 api-up:
+	@$(DEPLOY_GUARD)
 	$(COMPOSE_DEPLOY) up -d api
 
 api-down:
+	@$(DEPLOY_GUARD)
 	$(COMPOSE_DEPLOY) down api
 
 api-logs:
@@ -202,9 +207,11 @@ web-image:
 	$(COMPOSE_DEPLOY) build web
 
 web-up:
+	@$(DEPLOY_GUARD)
 	$(COMPOSE_DEPLOY) up -d web
 
 web-down:
+	@$(DEPLOY_GUARD)
 	$(COMPOSE_DEPLOY) down web
 
 web-logs:
@@ -212,27 +219,34 @@ web-logs:
 
 # ktc4-edge 는 dev · prod 가 같이 쓰는 바깥 네트워크다 (deploy.sh 와 같은 값). 로컬에서 처음 띄울 때도 있어야 한다.
 deploy-up:
+	@$(DEPLOY_GUARD)
 	docker network inspect ktc4-edge >/dev/null 2>&1 || docker network create --subnet 172.30.0.0/24 --ip-range 172.30.0.128/25 ktc4-edge
 	$(COMPOSE_DEPLOY) up -d
 
 deploy-down:
+	@$(DEPLOY_GUARD)
 	$(COMPOSE_DEPLOY) down
 
 deploy-migrate:
+	@$(DEPLOY_GUARD)
 	$(COMPOSE_DEPLOY) run --rm api uv run --no-sync alembic upgrade heads
 
 # Food 카탈로그 적재 (FT-19). 배포된 api 이미지 안의 스크립트를 프로세스로 돌린다 — 정리 표 ·
 # 식품군 대응표는 이미지에 구워진 것을 쓴다. 출력은 건수뿐이다.
 deploy-load-food-dry:
+	@$(DEPLOY_GUARD)
 	$(DEPLOY_LOCK) $(COMPOSE_DEPLOY) run --rm api uv run --no-sync python -m scripts.load_food_catalog --all --dry-run
 
 deploy-load-food:
+	@$(DEPLOY_GUARD)
 	$(DEPLOY_LOCK) $(COMPOSE_DEPLOY) run --rm api uv run --no-sync python -m scripts.load_food_catalog --all
 
 # 장소 적재 (#516). 공원 · 도서관 표준데이터와 어린이놀이시설(화이트리스트)을 place 로 싣는다.
 # 출력은 건수뿐이다.
 deploy-load-places-dry:
+	@$(DEPLOY_GUARD)
 	$(DEPLOY_LOCK) $(COMPOSE_DEPLOY) run --rm api uv run --no-sync python -m scripts.load_places --all --dry-run
 
 deploy-load-places:
+	@$(DEPLOY_GUARD)
 	$(DEPLOY_LOCK) $(COMPOSE_DEPLOY) run --rm api uv run --no-sync python -m scripts.load_places --all

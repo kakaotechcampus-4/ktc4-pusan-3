@@ -3,6 +3,8 @@
 # deploy.yml 이 SSM 으로 부른다. 흐름 · 규칙은 docs/ops/deploy-v1.md.
 #
 #   사용: cd <checkout> && bash deploy/scripts/deploy.sh <커밋 sha> <dev|prod>
+#         bash deploy/scripts/deploy.sh --check-env   .env 검사만 한다 (Makefile 배포 타깃이 먼저 부른다).
+#           대상은 COMPOSE_PROJECT_NAME 으로 정한다 — ktc4-dev 면 dev, 아니면 prod. 둘 중 하나와 통째로 맞아야 한다.
 #     두 번째 인자는 "이 checkout 이 어느 환경이어야 하는가" 다. deploy/docker/.env 가 그와 맞지 않으면
 #     아무것도 하지 않고 멈춘다 — dev .env 에서 한 줄만 빠져도 develop 마이그레이션이 운영 DB 에 걸리기 때문이다.
 #     DEPLOY_LOCK  두 환경이 동시에 빌드하지 않게 거는 잠금 파일. 기본값 /var/lock/ktc4-deploy.lock
@@ -18,15 +20,21 @@
 
 set -euo pipefail
 
-SHA="${1:?사용법: deploy.sh <커밋 sha> <dev|prod>}"
-TARGET="${2:?사용법: deploy.sh <커밋 sha> <dev|prod>}"
 ENV_FILE="deploy/docker/.env"
 COMPOSE=(docker compose -f deploy/docker/docker-compose.deploy.yml --env-file "$ENV_FILE")
 TAG_FILE="deploy/docker/.deployed-tag"
 EDGE_NET="ktc4-edge"
 
 log() { echo "[deploy $(date '+%H:%M:%S')] $*"; }
-envval() { grep -E "^$1=" "$ENV_FILE" | tail -n 1 | cut -d= -f2- | tr -d "\"' " || true; }
+envval() { grep -E "^$1=" "$ENV_FILE" 2>/dev/null | tail -n 1 | cut -d= -f2- | tr -d "\"' " || true; }
+
+if [ "${1:-}" = --check-env ]; then
+  CHECK_ONLY=1
+  if [ "$(envval COMPOSE_PROJECT_NAME)" = ktc4-dev ]; then TARGET=dev; else TARGET=prod; fi
+else
+  SHA="${1:?사용법: deploy.sh <커밋 sha> <dev|prod>}"
+  TARGET="${2:?사용법: deploy.sh <커밋 sha> <dev|prod>}"
+fi
 
 # ── 이 checkout 이 정말 그 환경인가 — 잠금 · git 보다 먼저, 아무것도 바꾸기 전에 본다 ──
 # .env 는 git 밖이라 reset 으로 바뀌지 않는다.
@@ -54,6 +62,7 @@ esac || {
   log "   prod: 비움(또는 ktc4-deploy) · 비움 · api.dev 아님 · COMPOSE_PROFILES=edge (docs/ops/deploy-v1.md)"
   exit 1
 }
+[ -z "${CHECK_ONLY:-}" ] || { log "$ENV_FILE = $TARGET 설정과 맞다"; exit 0; }
 
 # 4GB 서버에서 dev · prod 가 동시에 이미지를 구우면 메모리가 넘친다. 다른 환경 배포가 끝날 때까지 기다린다.
 # 20분 = 다른 쪽 최악(빌드 ~10분 + up 4분 + 롤백 4분). (맥에는 flock 이 없다 — 로컬 시험에서는 잠그지 않는다)

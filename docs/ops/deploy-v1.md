@@ -65,8 +65,11 @@ healthy 가 될 때까지 기다리고, 안 되면(최대 240초) 실패로 본�
    environment 없이 develop ref 로 역할을 받는다.
    배포 job 이 `environment:` 를 쓰면 sub 가 브랜치가 아니라 환경 이름이 된다. 빠지면 배포가 인증에서 멈춘다.
 2. **GitHub Environments** `dev` · `prod` — 변수 `DEPLOY_DIR` (위 표의 checkout 경로).
-   🚨 **배포 브랜치 규칙** — `prod` 는 `main` 만, `dev` 는 `develop` 만 (11-06 걸어 둠). IAM 신뢰 정책이 `:*` 라서
-   이 규칙이 없으면 아무 브랜치의 워크플로나 `environment: prod` 로 운영 EC2 에 root 명령을 보낼 수 있다. 빼지 않는다.
+   🚨 **배포 브랜치 규칙** — `prod` 는 `main` 만, `dev` 는 `develop` 만 (11-06 걸어 둠). 빼지 않는다.
+   🚨 **이 규칙만으로는 막히지 않는다.** 규칙은 `environment:` 를 쓴 job 에만 걸린다. 신뢰 정책이 `:*` 인 동안은
+   쓰기 권한이 있는 누구나 아무 브랜치에서 `environment:` 없는 워크플로를 만들어 dispatch 하면 역할을 받아
+   운영 EC2 에 SSM 으로 root 명령을 보낼 수 있다 — "main 머지 = 운영" 을 우회한다 (#753 리뷰).
+   막으려면 sub 를 `environment:dev` · `environment:prod` · `ref:refs/heads/develop`(적재 · `oidc-test`) 셋으로 좁힌다 — 후속.
    `AWS_ACCOUNT_ID` · `EC2_INSTANCE_ID` 는 저장소 변수 그대로다. prod 에 승인자를 걸지는 않는다 — main 머지가 이미 멘토 리뷰다.
 3. **DNS** — `dev.icatch.ai.kr` · `api.dev.icatch.ai.kr` A 레코드를 같은 EC2 로.
 4. **서버**

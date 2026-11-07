@@ -94,6 +94,7 @@ def box(tmp_path: Path):
         )
 
     run.tag_file = tag_file  # type: ignore[attr-defined]
+    run.path = f"{bin_dir}:{os.environ['PATH']}"  # type: ignore[attr-defined]
     run.env_file = env_file  # type: ignore[attr-defined]
     run.calls = lambda: log.read_text().splitlines() if log.exists() else []  # type: ignore[attr-defined]
     return run
@@ -310,3 +311,31 @@ def test_first_deploy_and_same_sha_redeploy_skip_the_age_check(box, prev):
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert not any(c.startswith("git merge-base") for c in box.calls())
+
+
+@pytest.mark.parametrize(
+    ("env", "ok"),
+    [
+        (DEV_ENV, True),
+        (PROD_ENV, True),
+        # dev .env 에서 프로젝트 이름만 빠졌다 → prod 로 보고 검사 → 꼬리 · 주소가 안 맞아 막힌다
+        (DEV_ENV.replace("COMPOSE_PROJECT_NAME=ktc4-dev", "COMPOSE_PROJECT_NAME="), False),
+        (DEV_ENV.replace("APP_ENV=dev\n", ""), False),
+        (PROD_ENV.replace("COMPOSE_PROFILES=edge", "COMPOSE_PROFILES="), False),
+    ],
+)
+def test_check_env_only_inspects_env_file(box, env, ok):
+    """Makefile 배포 타깃이 먼저 부른다. git · docker 는 부르지 않는다."""
+    box.env_file.write_text(env)
+
+    result = subprocess.run(
+        ["bash", str(SCRIPT), "--check-env"],
+        cwd=box.env_file.parents[2],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PATH": box.path},
+        timeout=30,
+    )
+
+    assert (result.returncode == 0) is ok, result.stdout + result.stderr
+    assert box.calls() == []
