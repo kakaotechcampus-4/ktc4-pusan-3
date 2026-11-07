@@ -15,6 +15,7 @@
 import json
 import logging
 import os
+import subprocess
 from collections.abc import Iterator
 from datetime import datetime
 
@@ -28,13 +29,14 @@ from app.core import llm_usage
 from app.main import app
 from tests.eval.suite.report import RAW_DIR
 from tests.eval.suite.schema import WeekCase, load_weeks
-from tests.eval.suite.test_probes_live import GIT
 from tests.eval.suite.verdict import judge_check, judge_step, record_week
 from tests.eval.suite.week_runner import (
     ContainsJudge,
     HashEmbedder,
     WeekDriver,
+    drop_recipes,
     reset_process_state,
+    seed_recipes,
     seed_world,
     simulation_monday,
     step_day,
@@ -49,6 +51,26 @@ MAX_TOKENS = int(os.getenv("EVAL_MAX_TOKENS", "3000000"))
 RAW_PATH = RAW_DIR / f"week-{TIER}-{datetime.now(KST):%Y%m%d-%H%M%S}.jsonl"
 _HEAVY_RAIN = RawForecast(sky="4", pcp="30.0~50.0mm", pop="90")
 _spent = {"tokens": 0}
+
+
+def _git() -> dict[str, object]:
+    """결과가 어느 코드에서 나왔는지 — 실행 시점에 한 번 적는다 (test_probes_live 와 같다)."""
+
+    def run(*args: str) -> str:
+        done = subprocess.run(["git", *args], capture_output=True, text=True, check=False)
+        if done.returncode != 0:
+            raise RuntimeError(args)
+        return done.stdout.strip()
+
+    try:
+        sha = run("rev-parse", "--short", "HEAD")
+        dirty = bool(run("status", "--porcelain", "--untracked-files=no"))
+    except (OSError, RuntimeError):
+        return {"sha": "unknown", "dirty": None}
+    return {"sha": sha, "dirty": dirty}
+
+
+GIT = _git()
 
 
 def _selected() -> list[WeekCase]:
@@ -109,6 +131,7 @@ async def test_week(
     app.state.activity_events = None
     app.state.health_places = None
     failures: list[str] = []
+    seeded_recipes = await seed_recipes()
     try:
         child_id, logins, _seed_ids, stale = await seed_world(case, monday)
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -161,6 +184,7 @@ async def test_week(
                     reason = [str(v) for v in verdict.violations] + list(verdict.misses)
                     failures.append(f"{step.tag}: {reason[0]}")
     finally:
+        await drop_recipes(seeded_recipes)
         for key, value in old_state.items():
             setattr(app.state, key, value)
     assert not failures, f"{case.id} 실패 {len(failures)}단계 — {failures[:5]}"

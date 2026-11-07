@@ -555,6 +555,34 @@ async def seed_world(
     return child_id, logins, seed_ids, frozenset(stale)
 
 
+async def seed_recipes() -> list[tuple[str, str]]:
+    """Food 후보 풀 — 레시피 카탈로그가 비어 있으면 Food 가 추천을 못 낸다. Food eval 세계의
+    레시피를 심고, 새로 넣은 행의 (source, source_id) 를 돌려준다(`drop_recipes` 가 지운다)."""
+    from app.domains.food import repository as food_repo
+    from app.domains.food.agent_reader import recipe_values
+    from tests.eval.agents.food.world import build_world
+
+    rows = build_world("C48", now=datetime.now(KST)).recipes
+    async with async_session_factory() as session:
+        existing = {(r.source, r.source_id) for r in await food_repo.list_resolved_recipes(session)}
+        fresh = [row for row in rows if (row.source, row.source_id) not in existing]
+        if fresh:
+            await food_repo.upsert_recipes(session, rows=[recipe_values(row) for row in fresh])
+            await session.commit()
+    return [(row.source, str(row.source_id)) for row in fresh]
+
+
+async def drop_recipes(keys: Sequence[tuple[str, str]]) -> None:
+    """`seed_recipes` 가 넣은 행만 지운다 — 다른 통합 테스트가 빈 카탈로그를 가정할 수 있다."""
+    async with async_session_factory() as session:
+        for source, source_id in keys:
+            await session.execute(
+                text("delete from recipe_catalog where source=:s and source_id=:i"),
+                {"s": source, "i": source_id},
+            )
+        await session.commit()
+
+
 def reset_process_state() -> None:
     from app.api.runs import registry
 

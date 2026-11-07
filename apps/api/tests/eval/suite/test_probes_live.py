@@ -60,6 +60,8 @@ GIT = _git()
 
 def _selected() -> list[ProbeCase]:
     cases = load_probes()
+    if ONLY and ONLY.startswith("W-"):  # W 케이스를 지정했다 — P 는 돌지 않는다
+        return []
     if ONLY:
         picked = [case for case in cases if case.id == ONLY]
         if not picked:
