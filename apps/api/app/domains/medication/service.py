@@ -40,7 +40,9 @@ from app.domains.medication.repository import (
     has_kept_outside,
     list_courses,
     list_doses,
+    lock_checker,
     lock_doses,
+    parent_nicknames,
     write_dose_check,
 )
 from app.rules.medication_course import course_field_errors, dose_dates, pattern_day
@@ -240,6 +242,19 @@ async def course_views(
     ]
 
 
+async def checker_nicknames(
+    session: AsyncSession, doses: Sequence[MedicationDose]
+) -> dict[uuid.UUID, str]:
+    """회차를 체크한 보호자의 부르는 이름 — {보호자 id: 이름}. 회차마다 따로 읽지 않는다 (#749).
+
+    키가 없으면 이름을 보여 주지 않는다: 이 칸이 생기기 전의 체크 · 탈퇴(SET NULL) · 이름이 빈
+    계정. 연결을 끊은 보호자는 남는다 — 체크는 아이의 공동 기록이다.
+    """
+    return await parent_nicknames(
+        session, parent_ids=[d.checked_by for d in doses if d.checked_by is not None]
+    )
+
+
 async def list_in_progress(
     session: AsyncSession, *, child_id: uuid.UUID, today: date
 ) -> list[CourseView]:
@@ -259,26 +274,43 @@ class DoseNotDue(Exception):
     """아직 오지 않은 날의 회차다. 체크도 해제도 못 한다."""
 
 
+class CheckerGone(Exception):
+    """체크하는 보호자가 인증 확인 뒤에 탈퇴했다 — 부르는 쪽은 인증 실패와 같게 본다."""
+
+
 async def set_dose_checked(
     session: AsyncSession,
     *,
     child_id: uuid.UUID,
     dose_id: uuid.UUID,
+    parent_id: uuid.UUID,
     checked: bool,
     today: date,
     now: datetime,
 ) -> MedicationDose:
     """회차를 체크하거나 해제한다. `today` 는 KST 오늘, `now` 는 체크 시각이다.
 
+    `parent_id` 는 인증된 보호자다 — 체크하면 체크한 보호자로 남는다 (#749). 요청 본문의 보호자는
+    받지 않는다. 해제하면 체크 시각과 함께 비운다.
+
     되돌릴 수 있어서 승인 게이트가 아니다. 같은 상태를 두 번 보내도 결과가 같고, 이미 체크된
-    회차에 또 체크하면 처음 시각이 남는다. 찾지 못함 → 아직 오지 않음 순서로 검사한다.
+    회차에 또 체크하면 처음 시각과 처음 보호자가 남는다.
+    보호자 → 찾지 못함 → 아직 오지 않음 순서로 검사한다. 보호자를 회차보다 먼저 잠근다
+    (`lock_checker` — 탈퇴와 같은 순서).
     """
+    if not await lock_checker(session, parent_id=parent_id):
+        raise CheckerGone
     dose = await find_dose(session, child_id=child_id, dose_id=dose_id)
     if dose is None:
         raise DoseNotFound
     if dose.dose_date > today:
         raise DoseNotDue
-    await write_dose_check(session, dose_id=dose.id, checked_at=now if checked else None)
+    await write_dose_check(
+        session,
+        dose_id=dose.id,
+        checked_at=now if checked else None,
+        checked_by=parent_id if checked else None,
+    )
     await session.refresh(dose)
     return dose
 

@@ -134,7 +134,7 @@ class MedicationDose(Base, UUIDPk):
     """회차 1번 = 1행. 3일 × 하루 3번이면 9행이고, 체크 칸이 곧 복용 기록이다.
 
     created_at · updated_at 이 없다 — 제출 때 한꺼번에 만들어지고 바뀌는 건 체크뿐인데,
-    그 시각은 `checked_at` 에 남는다.
+    그 시각은 `checked_at` 에, 누른 보호자는 `checked_by` 에 남는다.
     """
 
     __tablename__ = "medication_dose"
@@ -149,6 +149,13 @@ class MedicationDose(Base, UUIDPk):
         # 기준 시각 05:30 ~ 23:30 안에 머물러 time + interval 이 자정을 넘지 않는다
         CheckConstraint("offset_minutes BETWEEN -120 AND 180", name="medication_dose_offset_range"),
         UniqueConstraint("schedule_id", "dose_date", "scheduled_time"),
+        # 체크하지 않은 회차에 누른 보호자만 남지 않게. 반대(체크했는데 보호자 없음)는 된다 —
+        # 이 칸이 생기기 전의 체크와 탈퇴한 보호자의 체크다
+        CheckConstraint(
+            "checked_by IS NULL OR checked_at IS NOT NULL", name="medication_dose_checked_by"
+        ),
+        # 탈퇴 때 SET NULL 이 이 칸으로 행을 찾는다
+        Index("medication_dose_checked_by_idx", "checked_by"),
     )
 
     schedule_id: Mapped[uuid.UUID] = mapped_column(
@@ -169,6 +176,11 @@ class MedicationDose(Base, UUIDPk):
         Time, Computed(SCHEDULED_TIME_SQL, persisted=True)
     )
     checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # 체크한 보호자 (#749). 체크 API 가 인증된 보호자로 쓰고, 해제하면 `checked_at` 과 함께 비운다.
+    # 🚨 탈퇴하면 비우고(SET NULL) 복용 기록은 남긴다 — 공동 기록이다. 연결 끊기는 지우지 않는다
+    checked_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("parent.id", ondelete="SET NULL"), nullable=True
+    )
 
 
 def in_progress(today: date) -> ColumnElement[bool]:

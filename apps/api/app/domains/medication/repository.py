@@ -13,6 +13,7 @@ from typing import Literal
 from sqlalchemy import ColumnElement, and_, delete, exists, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domains.identity.models import Parent
 from app.domains.medication.models import (
     MedicationCreatedBy,
     MedicationDose,
@@ -231,18 +232,52 @@ async def find_dose(
     return await session.scalar(stmt)
 
 
-async def write_dose_check(
-    session: AsyncSession, *, dose_id: uuid.UUID, checked_at: datetime | None
-) -> None:
-    """체크 시각을 쓴다. `None` 이면 비운다(해제).
+async def lock_checker(session: AsyncSession, *, parent_id: uuid.UUID) -> bool:
+    """체크하는 보호자 행을 FOR KEY SHARE 로 잡고 아직 있는지 돌려준다 (#749).
 
-    체크는 **아직 비어 있을 때만** 쓴다 — 이미 체크된 회차에 또 체크해도 처음 시각이 남는다.
-    조건을 UPDATE 에 걸어서 동시에 온 두 요청도 먼저 쓴 쪽이 이긴다.
+    🚨 회차보다 먼저 잡는다. 탈퇴(`withdraw_parent`)는 보호자를 잠근 뒤 회차를 지우거나
+       (등록한 아이 CASCADE) 체크한 보호자 칸을 비운다(SET NULL) — 보호자 → 회차 순서다.
+       회차를 먼저 잡고 `checked_by` 를 쓰면 FK 검사가 보호자 행을 기다려 순서가 뒤집히고,
+       같은 보호자의 탈퇴와 체크가 겹칠 때 교착이 된다.
+    인증 확인은 잠그지 않아서 그 뒤에 탈퇴가 커밋할 수 있다 — 그러면 False 다
+    (`notification.put_switches` 와 같다).
+    """
+    locked = await session.scalar(
+        select(Parent.id).where(Parent.id == parent_id).with_for_update(read=True, key_share=True)
+    )
+    return locked is not None
+
+
+async def parent_nicknames(
+    session: AsyncSession, *, parent_ids: Sequence[uuid.UUID]
+) -> dict[uuid.UUID, str]:
+    """보호자의 부르는 이름을 한 번에 읽는다. 이름이 비었거나 없는 보호자는 키가 없다."""
+    if not parent_ids:
+        return {}
+    rows = await session.execute(
+        select(Parent.id, Parent.nickname).where(Parent.id.in_(set(parent_ids)))
+    )
+    return {pid: name for pid, name in rows if name}
+
+
+async def write_dose_check(
+    session: AsyncSession,
+    *,
+    dose_id: uuid.UUID,
+    checked_at: datetime | None,
+    checked_by: uuid.UUID | None,
+) -> None:
+    """체크 시각과 체크한 보호자를 함께 쓴다. 시각이 `None` 이면 둘 다 비운다(해제).
+
+    체크는 **아직 비어 있을 때만** 쓴다 — 이미 체크된 회차에 또 체크해도 처음 시각과 처음
+    보호자가 남는다. 조건을 UPDATE 에 걸어서 동시에 온 두 요청도 먼저 쓴 쪽이 이긴다.
     """
     stmt = update(MedicationDose).where(MedicationDose.id == dose_id)
-    if checked_at is not None:
+    if checked_at is None:
+        checked_by = None  # 체크하지 않은 회차에 보호자만 남지 않게 (DB CHECK 도 막는다)
+    else:
         stmt = stmt.where(MedicationDose.checked_at.is_(None))
-    await session.execute(stmt.values(checked_at=checked_at))
+    await session.execute(stmt.values(checked_at=checked_at, checked_by=checked_by))
 
 
 async def find_course(

@@ -311,6 +311,53 @@ async def test_코스를_지우면_회차가_함께_지워진다(session, child)
     assert await count(session, "medication_dose", "schedule_id", schedule_id) == 0
 
 
+# ── 4-1. 체크한 보호자 (#749) ─────────────────────────────────────────────
+
+
+async def insert_checked_dose(session, schedule_id, *, checked_at, checked_by):
+    sql = text(
+        "INSERT INTO medication_dose"
+        " (schedule_id, dose_date, timing_anchor, checked_at, checked_by)"
+        " VALUES (:schedule_id, :dose_date, 'breakfast', :checked_at, :checked_by) RETURNING id"
+    )
+    params = {
+        "schedule_id": schedule_id,
+        "dose_date": STARTS,
+        "checked_at": checked_at,
+        "checked_by": checked_by,
+    }
+    return (await session.execute(sql, params)).scalar_one()
+
+
+async def test_체크하지_않은_회차에_체크한_보호자만_남을_수_없다(session, child):
+    schedule_id = await insert_schedule(session, child)
+    with pytest.raises(IntegrityError):
+        await insert_checked_dose(
+            session, schedule_id, checked_at=None, checked_by=child.owner_parent_id
+        )
+
+
+async def test_체크한_보호자가_지워지면_그_칸만_비고_복용_기록은_남는다(session, child):
+    helper = Parent()
+    session.add(helper)
+    await session.flush()
+    schedule_id = await insert_schedule(session, child)
+    checked_at = datetime(2026, 10, 20, 8, 5, tzinfo=KST)
+    dose_id = await insert_checked_dose(
+        session, schedule_id, checked_at=checked_at, checked_by=helper.id
+    )
+
+    await session.execute(text("DELETE FROM parent WHERE id = :id"), {"id": helper.id})
+
+    row = (
+        await session.execute(
+            text("SELECT checked_at, checked_by FROM medication_dose WHERE id = :id"),
+            {"id": dose_id},
+        )
+    ).one()
+    assert row == (checked_at, None)
+
+
 # ── 5. 진행 중 코스 ───────────────────────────────────────────────────────
 
 

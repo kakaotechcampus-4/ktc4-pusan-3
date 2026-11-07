@@ -12,12 +12,14 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Header, Request
 from fastapi.responses import JSONResponse
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api import idempotency
 from app.api.deps.auth import CurrentParent
 from app.api.deps.child import AccessibleChild
 from app.api.deps.db import SessionDep
 from app.api.errors import ApiError, ErrorEnvelope
+from app.api.v1.schemas.health_safety import WrittenBy
 from app.api.v1.schemas.medications import (
     CheckDoseRequest,
     MedicationCourseOut,
@@ -29,7 +31,9 @@ from app.api.v1.schemas.medications import (
 )
 from app.domains.consent.models import ConsentAction, ConsentScope
 from app.domains.consent.repository import latest_action
+from app.domains.medication.models import MedicationDose
 from app.domains.medication.service import (
+    CheckerGone,
     CourseAlreadyExists,
     CourseFields,
     CourseInput,
@@ -39,6 +43,7 @@ from app.domains.medication.service import (
     DoseNotDue,
     DoseNotFound,
     DosePattern,
+    checker_nicknames,
     course_views,
     create_course,
     list_in_progress,
@@ -71,7 +76,23 @@ def _clock() -> tuple[datetime, date]:
     return now, now.astimezone(KST).date()
 
 
-def _course_out(view: CourseView) -> MedicationCourseOut:
+def _dose_out(dose: MedicationDose, names: dict[UUID, str]) -> MedicationDoseOut:
+    """`names` 는 `checker_nicknames` 가 읽은 체크한 보호자의 이름이다."""
+    name = names.get(dose.checked_by) if dose.checked_by is not None else None
+    return MedicationDoseOut(
+        id=dose.id,
+        dose_date=dose.dose_date,
+        scheduled_time=dose.scheduled_time,
+        checked_at=dose.checked_at,
+        # 이름이 없으면 통째로 null — 화면이 "null님이 체크" 를 그리지 않게 (health_safety 와 같다)
+        checked_by=None if name is None else WrittenBy(parent_id=dose.checked_by, nickname=name),
+        # 응답에는 오늘까지의 회차만 싣는다 — 싣는 것은 모두 지금 체크할 수 있다. 체크 응답도
+        # 아직 안 온 날은 그 전에 막혔다
+        checkable=True,
+    )
+
+
+def _course_out(view: CourseView, names: dict[UUID, str]) -> MedicationCourseOut:
     course = view.course
     return MedicationCourseOut(
         id=course.id,
@@ -80,17 +101,14 @@ def _course_out(view: CourseView) -> MedicationCourseOut:
         starts_on=course.starts_on,
         ends_on=course.ends_on,
         notice_times=view.notice_times,
-        doses=[
-            MedicationDoseOut(
-                id=d.id,
-                dose_date=d.dose_date,
-                scheduled_time=d.scheduled_time,
-                checked_at=d.checked_at,
-                checkable=True,  # 오늘까지의 회차만 싣는다 — 싣는 것은 모두 지금 체크할 수 있다
-            )
-            for d in view.doses
-        ],
+        doses=[_dose_out(d, names) for d in view.doses],
     )
+
+
+async def _courses_out(session: AsyncSession, views: list[CourseView]) -> list[MedicationCourseOut]:
+    """코스들을 응답으로 — 체크한 보호자의 이름은 모든 코스의 회차를 모아 한 번에 읽는다."""
+    names = await checker_nicknames(session, [d for v in views for d in v.doses])
+    return [_course_out(v, names) for v in views]
 
 
 @router.get(
@@ -121,7 +139,7 @@ async def read_medications(child: AccessibleChild, session: SessionDep) -> Medic
     """
     today = kst_today()
     views = await list_in_progress(session, child_id=child.child_id, today=today)
-    return MedicationsResponse(today=today, courses=[_course_out(v) for v in views])
+    return MedicationsResponse(today=today, courses=await _courses_out(session, views))
 
 
 @router.post(
@@ -261,8 +279,9 @@ async def register_medication(
     except CourseAlreadyExists as exc:
         raise ApiError(409, "already_exists", "이미 등록된 복약이에요") from exc
 
-    (view,) = await course_views(session, [course], today=today)
-    response = SubmitMedicationResponse(course=_course_out(view)).model_dump(mode="json")
+    views = await course_views(session, [course], today=today)
+    (out,) = await _courses_out(session, views)
+    response = SubmitMedicationResponse(course=out).model_dump(mode="json")
     await session.commit()
     await idempotency.remember(**scope, replay=response)
     return JSONResponse(status_code=201, content=response)
@@ -278,6 +297,13 @@ async def register_medication(
             "description": (
                 "`validation_failed` — `checked` 가 없거나 boolean 이 아니거나 모르는 칸이 있다. "
                 "`error.detail.fields` 에 칸 이름이 온다"
+            ),
+        },
+        401: {
+            "model": ErrorEnvelope,
+            "description": (
+                "`unauthenticated` — 인증 실패(Bearer 없음 · 만료), 또는 인증을 확인한 뒤 그사이 "
+                "탈퇴했다(드물다). 체크하지 않는다. 다른 401 과 같이 처리하면 된다"
             ),
         },
         403: {
@@ -308,14 +334,18 @@ async def check_dose(
     child: AccessibleChild,
     did: UUID,
     body: CheckDoseRequest,
+    parent: CurrentParent,
     session: SessionDep,
 ) -> MedicationDoseOut:
     """회차 1번을 체크(먹였다)하거나 해제한다. **체크한 칸이 곧 복용 기록이다.**
 
     - **승인 게이트가 아니다.** 해제로 되돌릴 수 있어서 `Idempotency-Key` 를 받지 않는다.
-    - **같은 상태를 두 번 보내도 결과가 같다.** 이미 체크된 회차에 `true` 를 또 보내도 체크 시각은
-      **처음 시각 그대로**다. 해제(`false`) 뒤 다시 체크하면 새 시각이 된다. 체크하지 않은 회차를
-      해제해도 오류가 아니다.
+    - **체크한 보호자(`checked_by`)는 이 요청의 로그인 보호자다** (#749). 본문으로 받지 않는다.
+      해제하면 체크 시각과 함께 비운다. 응답의 `checked_by` 는 조회와 같은 규칙이다(이름을 알 수
+      없으면 null).
+    - **같은 상태를 두 번 보내도 결과가 같다.** 이미 체크된 회차에 `true` 를 또 보내도 체크 시각과
+      체크한 보호자는 **처음 그대로**다 — 다른 보호자가 보내도 같다. 해제(`false`) 뒤 다시 체크하면
+      새 시각 · 새 보호자가 된다. 체크하지 않은 회차를 해제해도 오류가 아니다.
     - **아직 오지 않은 날의 회차는 서버가 막는다**(422 `dose_not_due`). 화면이 날짜를 계산하지 않고
       조회 응답의 `checkable` 과 이 응답으로 판단한다. 오늘과 지난 날의 회차는 체크할 수 있다.
     - **멈추지 않은 코스**의 회차는 모두 다룬다. **마지막 날이 지난 코스의 회차도 날짜를 보지 않아서
@@ -327,7 +357,8 @@ async def check_dose(
     - 쓰기라 아이의 **건강정보 동의**를 확인한다.
 
     오류 (순서대로): 403 `child_access_denied` → 400 `validation_failed`(본문) →
-    403 `consent_required` → 404 `not_found` → 422 `dose_not_due`. 앞에서 걸리면 저장하지 않는다.
+    403 `consent_required` → 401 `unauthenticated`(인증 확인 뒤 그사이 탈퇴) → 404 `not_found` →
+    422 `dose_not_due`. 앞에서 걸리면 저장하지 않는다.
     """
     granted = await latest_action(session, scope=ConsentScope.CHILD_HEALTH, child_id=child.child_id)
     if granted is not ConsentAction.GRANTED:
@@ -343,21 +374,18 @@ async def check_dose(
             session,
             child_id=child.child_id,
             dose_id=did,
+            parent_id=parent.parent_id,
             checked=body.checked,
             today=today,
             now=now,
         )
+    except CheckerGone as exc:  # 확인한 뒤 탈퇴했다 — 인증 실패와 같게 본다
+        raise ApiError(401, "unauthenticated", "다시 로그인해 주세요") from exc
     except DoseNotFound as exc:
         raise ApiError(404, "not_found", "그 복약 회차를 찾지 못했어요") from exc
     except DoseNotDue as exc:
         raise ApiError(422, "dose_not_due", "아직 오지 않은 날의 회차예요") from exc
-    response = MedicationDoseOut(
-        id=dose.id,
-        dose_date=dose.dose_date,
-        scheduled_time=dose.scheduled_time,
-        checked_at=dose.checked_at,
-        checkable=True,  # 오늘까지의 회차만 여기까지 온다 — 아직 안 온 날은 위에서 막혔다
-    )
+    response = _dose_out(dose, await checker_nicknames(session, [dose]))
     await session.commit()
     return response
 
@@ -499,8 +527,9 @@ async def revise_medication(
     except CourseAlreadyExists as exc:
         raise ApiError(409, "already_exists", "이미 등록된 복약이에요") from exc
 
-    (view,) = await course_views(session, [course], today=today)
-    response = SubmitMedicationResponse(course=_course_out(view)).model_dump(mode="json")
+    views = await course_views(session, [course], today=today)
+    (out,) = await _courses_out(session, views)
+    response = SubmitMedicationResponse(course=out).model_dump(mode="json")
     await session.commit()
     await idempotency.remember(**scope, replay=response)
     return JSONResponse(status_code=200, content=response)

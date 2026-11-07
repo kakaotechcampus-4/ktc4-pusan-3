@@ -1,7 +1,8 @@
-"""회차 체크 · 해제 — `service.set_dose_checked` (#577).
+"""회차 체크 · 해제 — `service.set_dose_checked` (#577 · 체크한 보호자 #749).
 
-체크 칸(`checked_at`)이 곧 복용 기록이다. 해제로 되돌릴 수 있어서 승인 게이트가 아니고, 같은 상태를
-두 번 보내도 결과가 같다 — 이미 체크된 회차에 다시 체크해도 **처음 체크 시각이 남는다**.
+체크 칸(`checked_at`)이 곧 복용 기록이고, 누른 보호자가 `checked_by` 에 함께 남는다. 해제로
+되돌릴 수 있어서 승인 게이트가 아니고, 같은 상태를 두 번 보내도 결과가 같다 — 이미 체크된 회차에
+다시 체크해도 **처음 체크 시각과 보호자가 남는다**.
 아직 오지 않은 날의 회차는 서버가 막는다(화면이 날짜를 계산하지 않는다). commit 은 부르는 쪽이 한다.
 """
 
@@ -11,6 +12,7 @@ from zoneinfo import ZoneInfo
 import pytest
 from sqlalchemy import select
 
+from app.domains.identity.models import Parent
 from app.domains.medication.models import (
     MedicationCreatedBy,
     MedicationDose,
@@ -18,7 +20,12 @@ from app.domains.medication.models import (
     TimingAnchor,
 )
 from app.domains.medication.repository import NewDose, add_course, list_doses, stop_schedule
-from app.domains.medication.service import DoseNotDue, DoseNotFound, set_dose_checked
+from app.domains.medication.service import (
+    CheckerGone,
+    DoseNotDue,
+    DoseNotFound,
+    set_dose_checked,
+)
 
 TODAY = date(2026, 10, 27)
 NOW = datetime(2026, 10, 27, 0, 40, tzinfo=UTC)  # 한국 시간 09:40
@@ -48,9 +55,25 @@ async def make_dose(session, child, *, days_from_today=0, anchor=TimingAnchor.BR
     return course, dose
 
 
-async def check(session, child, dose, checked=True, *, now=NOW, today=TODAY):
+@pytest.fixture
+async def helper(session, child):
+    """같은 아이를 함께 보는 다른 보호자. 연결은 라우터가 보므로 여기선 보호자 행만 있으면 된다."""
+    parent = Parent()
+    session.add(parent)
+    await session.flush()
+    return parent
+
+
+async def check(session, child, dose, checked=True, *, now=NOW, today=TODAY, by=None):
+    """`by` 를 주지 않으면 아이를 등록한 보호자가 누른다."""
     return await set_dose_checked(
-        session, child_id=child.id, dose_id=dose.id, checked=checked, today=today, now=now
+        session,
+        child_id=child.id,
+        dose_id=dose.id,
+        parent_id=by or child.owner_parent_id,
+        checked=checked,
+        today=today,
+        now=now,
     )
 
 
@@ -63,16 +86,24 @@ async def stored(session, dose_id) -> datetime | None:
     return row
 
 
+async def stored_by(session, dose_id):
+    return await session.scalar(
+        select(MedicationDose.checked_by)
+        .where(MedicationDose.id == dose_id)
+        .execution_options(populate_existing=True)
+    )
+
+
 # ── 1. 체크 · 해제 ───────────────────────────────────────────────────────
 
 
-async def test_체크하면_체크_시각이_지금으로_기록된다(session, child):
+async def test_체크하면_체크_시각이_지금으로_누른_보호자와_함께_기록된다(session, child, helper):
     _, dose = await make_dose(session, child)
 
-    result = await check(session, child, dose)
+    result = await check(session, child, dose, by=helper.id)
 
     assert result.id == dose.id
-    assert result.checked_at == NOW
+    assert (result.checked_at, result.checked_by) == (NOW, helper.id)
     assert await stored(session, dose.id) == NOW
 
 
@@ -82,28 +113,41 @@ async def test_해제하면_체크_시각이_비워진다(session, child):
 
     result = await check(session, child, dose, checked=False)
 
-    assert result.checked_at is None
+    assert (result.checked_at, result.checked_by) == (None, None)
     assert await stored(session, dose.id) is None
 
 
-async def test_해제한_뒤_다시_체크하면_새_시각이다(session, child):
+async def test_해제한_뒤_다시_체크하면_새_시각과_새_보호자다(session, child, helper):
     _, dose = await make_dose(session, child)
     await check(session, child, dose)
     await check(session, child, dose, checked=False)
 
-    result = await check(session, child, dose, now=LATER)
+    result = await check(session, child, dose, now=LATER, by=helper.id)
 
-    assert result.checked_at == LATER
+    assert (result.checked_at, result.checked_by) == (LATER, helper.id)
 
 
-async def test_이미_체크된_회차에_다시_체크해도_처음_시각이_남는다(session, child):
+async def test_이미_체크된_회차에_다른_보호자가_체크해도_처음_시각과_보호자가_남는다(
+    session, child, helper
+):
     _, dose = await make_dose(session, child)
     await check(session, child, dose, now=NOW)
 
-    result = await check(session, child, dose, now=LATER)
+    result = await check(session, child, dose, now=LATER, by=helper.id)
 
-    assert result.checked_at == NOW
+    assert (result.checked_at, result.checked_by) == (NOW, child.owner_parent_id)
     assert await stored(session, dose.id) == NOW
+
+
+async def test_탈퇴해_없는_보호자는_체크하지_못하고_값을_바꾸지_않는다(session, child, helper):
+    _, dose = await make_dose(session, child)
+    await session.delete(helper)
+    await session.flush()
+
+    with pytest.raises(CheckerGone):
+        await check(session, child, dose, by=helper.id)
+
+    assert (await stored(session, dose.id), await stored_by(session, dose.id)) == (None, None)
 
 
 async def test_체크하지_않은_회차를_해제해도_오류가_아니다(session, child):

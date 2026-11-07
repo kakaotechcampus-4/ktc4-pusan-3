@@ -36,7 +36,14 @@ async def test_체크하면_200_과_회차를_돌려준다(db_client, session, b
 
     assert response.status_code == 200
     data = response.json()
-    assert set(data) == {"id", "dose_date", "scheduled_time", "checked_at", "checkable"}
+    assert set(data) == {
+        "id",
+        "dose_date",
+        "scheduled_time",
+        "checked_at",
+        "checked_by",
+        "checkable",
+    }
     assert data["id"] == str(dose.id)
     assert (data["dose_date"], data["scheduled_time"]) == (TODAY.isoformat(), "08:30")
     assert datetime.fromisoformat(data["checked_at"]) == NOW
