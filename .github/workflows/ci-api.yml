@@ -1,0 +1,118 @@
+name: API CI
+
+on:
+  pull_request:
+    branches:
+      - develop
+      - main
+  push:
+    branches:
+      - develop
+
+concurrency:
+  group: >-
+    ${{ github.ref == 'refs/heads/develop'
+        && format('{0}-{1}', github.workflow, github.sha)
+        || format('{0}-{1}', github.workflow, github.ref) }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/develop' }}
+
+jobs:
+  lint-and-unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Sync dependencies
+        run: cd apps/api && uv sync
+
+      - name: Run ruff check
+        run: cd apps/api && uv run ruff check .
+
+      - name: Run ruff format check
+        run: cd apps/api && uv run ruff format --check .
+
+      - name: Run unit tests (without live marker)
+        env:
+          DB_HOST: dummy
+          DB_PORT: 5432
+          DB_USER: dummy
+          DB_PASSWORD: dummy
+          DB_NAME: dummy
+          AUTH_RETURN_URL_WEB: http://localhost:3000/auth/callback
+          AUTH_RETURN_URL_APP: icatch://auth
+        run: cd apps/api && uv run pytest tests/unit -m "not live"
+
+  integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.6-pg18
+        env:
+          POSTGRES_USER: ci_user
+          POSTGRES_PASSWORD: ci_password
+          POSTGRES_DB: ci_db
+        options: >-
+          --health-cmd "pg_isready -U ci_user -d ci_db"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+        ports:
+          - 5432:5432
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Sync dependencies
+        run: cd apps/api && uv sync
+
+      - name: Run Alembic upgrade heads
+        env:
+          DB_HOST: localhost
+          DB_PORT: 5432
+          DB_USER: ci_user
+          DB_PASSWORD: ci_password
+          DB_NAME: ci_db
+        run: cd apps/api && uv run alembic upgrade heads
+
+      - name: Run Alembic check
+        env:
+          DB_HOST: localhost
+          DB_PORT: 5432
+          DB_USER: ci_user
+          DB_PASSWORD: ci_password
+          DB_NAME: ci_db
+        run: cd apps/api && uv run alembic check
+
+      - name: Check Alembic heads uniqueness
+        run: make db-heads-check
+
+      - name: Run integration tests (without live marker)
+        env:
+          DB_HOST: localhost
+          DB_PORT: 5432
+          DB_USER: ci_user
+          DB_PASSWORD: ci_password
+          DB_NAME: ci_db
+          AUTH_RETURN_URL_WEB: http://localhost:3000/auth/callback
+          AUTH_RETURN_URL_APP: icatch://auth
+        run: cd apps/api && uv run pytest tests/integration -m "not live"
