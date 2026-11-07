@@ -4,7 +4,7 @@
 🚨 downgrade 하면 표와 함께 확인자료가 사라진다. 운영에서는 내리지 않는다.
 
 Revision ID: e4b19c07d2a6
-Revises: c7d18f3ae5b2
+Revises: d5e8a1c4b937
 Create Date: 2026-11-03 12:00:00.000000
 
 """
@@ -16,7 +16,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "e4b19c07d2a6"
-down_revision: Union[str, Sequence[str], None] = "c7d18f3ae5b2"
+down_revision: Union[str, Sequence[str], None] = "d5e8a1c4b937"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
