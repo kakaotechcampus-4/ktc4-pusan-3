@@ -9,6 +9,7 @@
 - 코드가 기대와 다르게 움직이는 칸은 `xfail(strict=True)` 로 걸고 이슈 초안을 [`faults-issues.md`](faults-issues.md) 에 둔다. 이 점검이 고치지는 않는다.
 
 상태 — ✅ 판정하는 테스트가 있다 · 🕳️ 구멍 (판정 테스트 없음, F 번호가 메운다) · ⚠️ 기대와 달라 xfail 로 걸어 둠
+✅ (구조) — 그 칸만 따로 멈추는 테스트는 없고, 같은 코드 길(20초 상한 · partial)을 다른 칸의 테스트가 판정한다
 
 ## 행 — 부품 10개
 
@@ -31,7 +32,7 @@
 
 ## 한눈에
 
-**이 점검 뒤: ✅ 38 · ⚠️ 1 · 🕳️ 1** (11-08 조사 때는 ✅ 29 · 🕳️ 11 — 스펙의 "약 31칸" 보다 둘 적었다. 아래 "조사하며 바로잡은 것")
+**이 점검 뒤: ✅ 38 (그중 구조 1) · ⚠️ 1 · 🕳️ 1** (11-08 조사 때는 ✅ 29 · 🕳️ 11 — 스펙의 "약 31칸" 보다 둘 적었다. 아래 "조사하며 바로잡은 것")
 
 | | A 예외 | B 멈춤 | C 형식 깨짐 | D 맞는데 틀림 |
 | --- | --- | --- | --- | --- |
@@ -39,7 +40,7 @@
 | MEM | ✅ F1 | ✅ F2 | ✅ | ✅ |
 | DOM | ✅ F3 | ✅ | ✅ | ✅ |
 | CUR | ✅ | 🕳️ F8 | ✅ | ✅ |
-| SAFE | ✅ | ✅ | ✅ | ✅ |
+| SAFE | ✅ | ✅ (구조) | ✅ | ✅ |
 | SRCH | ✅ F4 | ✅ | ✅ | ✅ |
 | EXT | ✅ | ✅ | ✅ | ✅ |
 | SAVE | ✅ | ✅ | ✅ F6 | ✅ |
@@ -101,7 +102,7 @@
 | 칸 | 기대 동작 | 코드 | 판정하는 테스트 | 상태 |
 | --- | --- | --- | --- | --- |
 | SAFE-A | 기본값으로 넘기지 않는다 — 조회가 실패하면(`SafetyLookupError`) Food · Activity 는 모델을 0번 부르고 `blocked.safety` 로 닫는다. 빈 목록과 실패를 가른다 (루트 §2) | `app/agents/common/gate.py:129-137` · `app/agents/food/registry.py:138-139` | `tests/unit/agents/food/test_food_agent.py::test_안전_조회_실패는_blocked_safety_로_닫는다` · `tests/unit/agents/activity/test_activity_context.py::TestClosedRun::test_알레르기_조회에_실패하면_모델을_부르지_않고_닫는다` · `tests/unit/agents/test_entrypoint.py::test_안전_어댑터가_못_읽으면_둘_다_닫힌다` · `tests/unit/domains/test_safety_agent_reader.py::TestFailure::test_DB_를_못_읽으면_빈_목록이_아니라_SafetyLookupError` · `::TestFailure::test_연결이_안_돼도_SafetyLookupError` | ✅ |
-| SAFE-B | 조회는 도메인 Agent 실행 안(`build_gate`)에서 돌아 Agent 와 같이 20초에 끊긴다 → `partial`. DB 쿼리 상한은 ISSUE-F8-a | `app/agents/food/agent.py:82` · `app/agents/pipeline.py:1916` | 구조로 같은 길 — 실행 함수 전체를 `wait_for` 로 감싸서 안에서 무엇이 멈춰도 같다: `tests/unit/agents/supervisor/test_pipeline.py::test_RC16_20초를_넘긴_Agent_는_끊고_나머지로_끝낸다` | ✅ |
+| SAFE-B | 조회는 도메인 Agent 실행 안(`build_gate`)에서 돌아 Agent 와 같이 20초에 끊긴다 → `partial`. DB 쿼리 상한은 ISSUE-F8-a | `app/agents/food/agent.py:82` · `app/agents/pipeline.py:1916` | 구조로 같은 길 — 실행 함수 전체를 `wait_for` 로 감싸서 안에서 무엇이 멈춰도 같다: `tests/unit/agents/supervisor/test_pipeline.py::test_RC16_20초를_넘긴_Agent_는_끊고_나머지로_끝낸다` | ✅ (구조) |
 | SAFE-C | 다른 이름으로 적은 알레르기도 같은 항목으로 본다. 0행과 실패를 가른다. 코드 버그는 조회 실패로 숨기지 않고 올린다 | `app/agents/common/allergy.py:688` · `app/agents/common/gate.py:129-137` | `tests/unit/agents/common/test_allergy_states.py::test_다른_이름으로_적어도_같은_항목이다` · `tests/unit/agents/activity/test_activity_context.py::TestBuildGate::test_조회_실패는_0행과_다르다` · `tests/unit/domains/test_safety_agent_reader.py::TestFailure::test_버그는_조회_실패로_바꾸지_않는다` | ✅ |
 | SAFE-D | 모델이 알레르기 식품을 후보로 내도 코드 필터가 뺀다(모델에게 묻지 않는다). 모자라면 재호출로 채운다 | `app/agents/common/food_safety.py:345` · `app/agents/activity/tools/filters.py:147` | `tests/unit/agents/food/test_food_meal_run.py::test_알레르기_메뉴는_풀에서_빠져_모델에게_보이지_않는다` · `::test_사후_필터로_빠져_3개_미만이면_재호출해_빈자리를_채운다` · `tests/unit/agents/activity/test_activity_safety_filter.py::TestAllergens::test_재료에서도_찾는다` · `tests/unit/agents/activity/test_activity_agent.py::TestRecall::test_안전_필터로_빠지면_한_번_더_불러_빈자리만_채운다` | ✅ |
 

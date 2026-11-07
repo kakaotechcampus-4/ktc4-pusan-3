@@ -19,7 +19,7 @@
 **현재 문제**
 - `app/api/idempotency.py:83` 이 Redis 값을 `json.loads` 로 바로 읽는다. 값이 깨져 있으면 `JSONDecodeError` 가 그대로 올라가 마지막 그물(`app/api/errors.py:199-209`)이 500 `internal_error` 를 낸다.
 - 키 TTL 이 24시간(`_TTL_SECONDS`)이라 그동안 그 보호자가 같은 키로 다시 보내면 매번 500 이다. 화면은 같은 키로 재시도한다.
-- 부르는 창구: `app/api/v1/routers/children.py:294` · `:469` (한 줄 입력), `delete_proposals.py:130` · `:140`, `health_safety.py:125` · `:214`.
+- 부르는 창구: `app/api/v1/routers/children.py:294` · `:469` (한 줄 입력), `delete_proposals.py:130` · `:140`, `health_safety.py:125` · `:214` · `medications.py:221` · `:457` · `suggestions.py:305` · `:992` (`grep -rn "recall(" apps/api/app/api` 로 확인한 전부).
 - 깨진 값이 생기는 길 — 값 형식을 바꾼 배포 · 수동 편집 · 다른 프로그램이 같은 키 이름을 쓴 경우. 흔하지 않지만 생기면 24시간 막힌다.
 
 **작업 범위** — 깨진 값을 어떻게 답할지 정하고 `recall` 에 반영한다. 두 안 중 하나:
