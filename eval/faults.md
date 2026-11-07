@@ -36,7 +36,7 @@
 | | A 예외 | B 멈춤 | C 형식 깨짐 | D 맞는데 틀림 |
 | --- | --- | --- | --- | --- |
 | SUP | ✅ | 🕳️ F2 | ✅ | ✅ |
-| MEM | 🕳️ F1 | 🕳️ F2 | ✅ | ✅ |
+| MEM | ✅ F1 | 🕳️ F2 | ✅ | ✅ |
 | DOM | 🕳️ F3 | ✅ | ✅ | ✅ |
 | CUR | ✅ | 🕳️ F8 | ✅ | ✅ |
 | SAFE | ✅ | ✅ | ✅ | ✅ |
@@ -44,7 +44,7 @@
 | EXT | ✅ | ✅ | ✅ | ✅ |
 | SAVE | ✅ | ✅ | 🕳️ F6 | ✅ |
 | IDEM | ✅ | ✅ | 🕳️ F7 | 🕳️ F5 |
-| RUN | 🕳️ F1 | 🕳️ F1 | ✅ | ✅ |
+| RUN | ✅ F1 | ✅ F1 | ✅ | ✅ |
 
 ## 칸마다 공통으로 보는 것
 
@@ -73,7 +73,7 @@
 
 | 칸 | 기대 동작 | 코드 | 판정하는 테스트 | 상태 |
 | --- | --- | --- | --- | --- |
-| MEM-A | 기본값으로 대체하지 않고 `failed(llm_unavailable)` — 원문은 화면으로 돌려준다. commit 없음 · 도메인 Agent 안 부름. 로그에 원문 · 제공처 오류 메시지(400 이 원문을 되돌려 줄 수 있다, `app/agents/common/llm_client.py:166-168`)가 없다 | `app/agents/pipeline.py:740-747` · `app/agents/memory/agent.py:438-440` | `tests/unit/agents/supervisor/test_pipeline.py::test_Memory_가_죽으면_입력을_그대로_돌려준다` · `::test_Memory_가_쓰다가_죽으면_commit_하지_않고_failed_로_끝난다` · `::test_이어받기에서_memory_가_실패하면_failed_로_끝난다` — 동작은 보지만 로그는 안 본다 · F 테스트: `tests/eval/faults/test_f1_log_leak.py::test_F1_Memory_모델_오류의_원문_되돌림이_로그에_없다` | 🕳️ F1 |
+| MEM-A | 기본값으로 대체하지 않고 `failed(llm_unavailable)` — 원문은 화면으로 돌려준다. commit 없음 · 도메인 Agent 안 부름. 로그에 원문 · 제공처 오류 메시지(400 이 원문을 되돌려 줄 수 있다, `app/agents/common/llm_client.py:166-168`)가 없다 | `app/agents/pipeline.py:740-747` · `app/agents/memory/agent.py:438-440` | `tests/unit/agents/supervisor/test_pipeline.py::test_Memory_가_죽으면_입력을_그대로_돌려준다` · `::test_Memory_가_쓰다가_죽으면_commit_하지_않고_failed_로_끝난다` · `::test_이어받기에서_memory_가_실패하면_failed_로_끝난다` — 동작은 보지만 로그는 안 본다 · F 테스트: `tests/eval/faults/test_f1_log_leak.py::test_F1_Memory_모델_오류의_원문_되돌림이_로그에_없다` | ✅ F1 |
 | MEM-B | SUP-B 와 같다 — 20초에 끊지 않고 러너 60초 안전망이 `failed(timeout)` 으로 끝낸다. commit 없음 · 키 풀림 | `app/agents/pipeline.py:97-100` · `app/api/runs/runner.py:242-253` | F 테스트: `tests/eval/faults/test_f2_stuck_supervisor_memory.py::test_F2_멈춘_Supervisor_Memory_는_러너_안전망이_failed_로_끝내고_키를_푼다[memory]` | 🕳️ F2 |
 | MEM-C | 깨진 tool 인자는 실행하지 않고 모델에게 돌려준다. 빈 턴은 한 번 다시 묻는다. 7바퀴 상한이면 commit 없이 `failed(unparsable)`. tool 없이 "저장했어요" 라고만 하면 표시(Unwritten)한다 | `app/agents/memory/agent.py:636-644` · `app/agents/pipeline.py:750-754` · `:790-792` | `tests/unit/agents/memory/test_agent_loop.py::test_JSON_이_깨져도_루프가_죽지_않는다` · `::test_MAX_STEPS_를_넘기면_미완료로_알린다` · `::test_스키마와_맞지_않는_답은_message_로_둔다` · `tests/unit/agents/supervisor/test_pipeline.py::test_Memory_가_반복_상한에_걸리면_commit_하지_않고_failed_로_끝난다` · `::test_저장했다고_답하고_tool_을_안_부르면_표시한다` | ✅ |
 | MEM-D | 알레르기 · 만성질환 · 아이 기록이 아닌 말 · 위험 물질은 저장 게이트(코드)가 거절한다. 알레르기는 LLM 이 쓰지 않고 등록 안내로 잇는다 (루트 §2) | `app/agents/memory/agent.py:1207` · `:1214-1218` · `:1236` · `app/agents/pipeline.py:800-805` | `tests/unit/agents/memory/test_agent_loop.py::test_알레르기_만성질환은_건강_관찰로_저장하지_않는다` · `::test_unclear_조각만_있으면_관찰_저장을_거절하고_이유를_돌려준다` · `tests/unit/agents/supervisor/test_pipeline.py::test_Supervisor_가_죽어도_위험_물질_관찰은_저장_게이트가_막는다` | ✅ |
@@ -145,8 +145,8 @@
 
 | 칸 | 기대 동작 | 코드 | 판정하는 테스트 | 상태 |
 | --- | --- | --- | --- | --- |
-| RUN-A | job 이 죽으면 `failed(internal_error)` 하나(원문은 화면으로)로 채널을 닫고, 저장 없는 실패면 키를 푼다. done 뒤에 터지면 failed 를 덧붙이지 않는다. 로그엔 예외 종류와 위치만 | `app/api/runs/runner.py:371-412` | `tests/unit/api/test_runner.py::test_job_exception_ends_with_failed_only_and_channel_closes` · `::test_job_exception_log_keeps_type_and_place_but_not_message` · `::test_failed_from_the_agents_releases_the_key` — 가짜 진입점으로만 · F 테스트(진짜 진입점 · pipeline 을 지난 로그): `tests/eval/faults/test_f1_log_leak.py::test_F1_러너부터_pipeline_까지_모델_오류의_원문_되돌림이_로그에_없다` | 🕳️ F1 |
-| RUN-B | 60초에 끊는다. commit 전이면 `failed(timeout)` + 키 풀기, commit 뒤면 done. 조용한 동안 10초마다 ping. 로그에 원문이 없다 | `app/api/runs/runner.py:45` · `:211` · `:242-253` · `app/api/runs/sse.py:36` | `tests/unit/api/test_runner.py::test_agent_job_stops_a_run_past_the_deadline` · `::test_commit_전_timeout은_failed로_끝나고_키가_풀린다` · `tests/unit/api/test_sse_frame.py::test_stream_sends_ping_while_channel_is_quiet_then_ends_on_close` — 로그는 안 본다 · F 테스트: `tests/eval/faults/test_f1_log_leak.py::test_F1_러너_시간_초과_로그에_원문이_없다` | 🕳️ F1 |
+| RUN-A | job 이 죽으면 `failed(internal_error)` 하나(원문은 화면으로)로 채널을 닫고, 저장 없는 실패면 키를 푼다. done 뒤에 터지면 failed 를 덧붙이지 않는다. 로그엔 예외 종류와 위치만 | `app/api/runs/runner.py:371-412` | `tests/unit/api/test_runner.py::test_job_exception_ends_with_failed_only_and_channel_closes` · `::test_job_exception_log_keeps_type_and_place_but_not_message` · `::test_failed_from_the_agents_releases_the_key` — 가짜 진입점으로만 · F 테스트(진짜 진입점 · pipeline 을 지난 로그): `tests/eval/faults/test_f1_log_leak.py::test_F1_러너부터_pipeline_까지_모델_오류의_원문_되돌림이_로그에_없다` | ✅ F1 |
+| RUN-B | 60초에 끊는다. commit 전이면 `failed(timeout)` + 키 풀기, commit 뒤면 done. 조용한 동안 10초마다 ping. 로그에 원문이 없다 | `app/api/runs/runner.py:45` · `:211` · `:242-253` · `app/api/runs/sse.py:36` | `tests/unit/api/test_runner.py::test_agent_job_stops_a_run_past_the_deadline` · `::test_commit_전_timeout은_failed로_끝나고_키가_풀린다` · `tests/unit/api/test_sse_frame.py::test_stream_sends_ping_while_channel_is_quiet_then_ends_on_close` — 로그는 안 본다 · F 테스트: `tests/eval/faults/test_f1_log_leak.py::test_F1_러너_시간_초과_로그에_원문이_없다` | ✅ F1 |
 | RUN-C | 번역이 터지면 조용히 빠지지 않고 run 이 failed 로 끝난다(로그엔 종류만). SSE 프레임은 값에 줄바꿈이 있어도 한 줄이다 | `app/api/runs/translate.py:239-274` · `app/api/runs/sse.py:21` | `tests/unit/api/test_runner.py::test_untranslatable_event_fails_the_run_loudly` · `tests/unit/api/test_sse_frame.py::test_frame_data_stays_on_one_line_even_if_value_has_newline` | ✅ |
 | RUN-D | 끝 신호 없이 돌아온 job 에 failed 를 붙인다. 끝 신호는 하나 — 그 뒤 이벤트는 채널이 버린다. 부분 결과는 done 이고 키를 놓지 않는다 | `app/api/runs/runner.py:395-402` · `app/api/runs/registry.py:59-73` | `tests/unit/api/test_runner.py::test_job_that_returns_without_an_end_signal_ends_with_failed` · `::test_exception_after_done_keeps_done_as_the_only_end` · `tests/unit/api/test_run_registry.py::test_events_after_an_end_signal_are_dropped` · `tests/unit/api/test_runner.py::test_부분_결과는_done_으로_끝나고_키를_놓지_않는다` | ✅ |
 
