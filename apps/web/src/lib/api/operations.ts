@@ -13,6 +13,7 @@
  */
 
 import { api } from "./client";
+import { NetworkError } from "./errors";
 import { idempotentPath, type IdempotencyKey } from "./idempotency";
 import type {
   ApproveSuggestionsRequest,
@@ -176,6 +177,10 @@ const S3_UPLOAD_TIMEOUT_MS = 60_000;
  * 재시도마다 새로 올리면 ① 앞 요청이 서버에서 이미 성공했을 때 새 사본이 버킷에 남고
  * ② 같은 Idempotency-Key 에 본문(upload_key)이 달라진다. 서버는 이미 지운 열쇠가 다시 와도
  * 키 재생으로 앞 결과를 돌려준다.
+ * 🚨 기억하는 것은 **응답을 못 받은 실패**(`NetworkError`)까지다. 응답이 왔으면 오류여도 버린다 —
+ *    그 열쇠는 서버가 지웠을 수 있고(아래 `sendPhoto`), 그 뒤 재시도는 새로 올린 다른 열쇠를 같은
+ *    Idempotency-Key 로 보낸다. 서버와 목은 **성공한 요청만** 기억해서 이것이 422 가 되지 않는다
+ *    (`api/idempotency.py` · `mocks/handlers/idempotency.ts`).
  */
 const uploadedFor = new Map<IdempotencyKey, string>();
 
@@ -204,9 +209,19 @@ export async function sendPhoto(
     uploadKey = ticket.key;
     uploadedFor.set(idempotencyKey, uploadKey);
   }
-  const res = await uploadPhoto(childId, photoFormData({ uploadKey }, options), idempotencyKey);
-  uploadedFor.delete(idempotencyKey);
-  return res;
+  try {
+    const res = await uploadPhoto(childId, photoFormData({ uploadKey }, options), idempotencyKey);
+    uploadedFor.delete(idempotencyKey);
+    return res;
+  } catch (error) {
+    // 🚨 응답이 왔으면(오류여도) 열쇠를 버린다. 서버는 핸들러 안에서 사진을 읽지 않고 돌려보낼 때
+    //    S3 원본을 지운다(503 스위치 · 429 한도 · 400 …). 그 열쇠로 다시 보내면 매번 "사진을 다시
+    //    골라 주세요" 다 (#727 리뷰). 핸들러 앞에서 끝난 오류(401 · 403 남의 아이 · 프록시 502)는 원본을
+    //    못 지우지만, 새로 올리면 되고 남은 원본은 버킷 수명 규칙이 지운다.
+    //    응답을 못 받았을 때(`NetworkError`)만 남긴다 — 서버가 받았는지 모른다.
+    if (!(error instanceof NetworkError)) uploadedFor.delete(idempotencyKey);
+    throw error;
+  }
 }
 
 /*
