@@ -3,16 +3,25 @@
 판정기가 틀리면 eval 전체가 거짓말을 한다.
 """
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 import pytest
 from pydantic import ValidationError
 
 from tests.eval.suite.expect import check_expect
 from tests.eval.suite.invariants import check_invariants
-from tests.eval.suite.schema import Expect, RouteExpect, SavedExpect, load_probes_text
+from tests.eval.suite.schema import (
+    Expect,
+    RouteExpect,
+    SavedExpect,
+    SeedAffinity,
+    SeedObservation,
+    World,
+    load_probes_text,
+)
 from tests.eval.suite.trace import CitationView, SavedRow, SuggestionView, Trace
 from tests.eval.suite.verdict import case_passed, required_passes
+from tests.eval.suite.world import CHILD, KST, build_probe_world, observation_rows
 
 _ONE = """
 - id: P-SUBJ-02
@@ -248,3 +257,74 @@ def test_케이스_합격_기준() -> None:
     assert case_passed("quality", [True, False, True], 3)
     assert not case_passed("safety", [True, True, False], 3)
     assert not case_passed("safety", [False], 3)  # 첫 실패에서 멈춘 경우
+
+
+_NOW = datetime(2026, 11, 9, 19, 0, tzinfo=KST)
+
+
+async def test_세계는_관찰과_관심을_날짜대로_심는다() -> None:
+    world = World(
+        months=60,
+        allergies=("땅콩",),
+        observations=(
+            SeedObservation(
+                domain="activity",
+                days_ago=2,
+                fields={"subject": "블록", "activity": "블록놀이", "polarity": 1},
+            ),
+            SeedObservation(domain="education", days_ago=200, fields={"subject": "공룡"}),
+        ),
+        affinities=(
+            SeedAffinity(
+                domain="activity",
+                merge_key="공룡",
+                state="confirmed",
+                last_days_ago=200,
+                observed_days=4,
+            ),
+        ),
+    )
+    built = await build_probe_world(world, now=_NOW)
+    rows = await observation_rows(built.store.inner)
+    assert {row.observed_on for row in rows.values()} == {
+        date(2026, 11, 7),
+        date(2026, 4, 23),  # 2026-11-09 − 200일
+    }
+    # 200일 전 관찰 1 + 관심 1 이 낡은 기록이다
+    assert len(built.stale_ids) == 2
+    assert built.ports["birth_date"] == date(2021, 11, 9)
+    assert built.ports["child_health_granted"] is True
+    assert "location" not in built.ports
+
+
+async def test_기록기는_읽힌_id_만_모은다() -> None:
+    world = World(
+        observations=(
+            SeedObservation(
+                domain="food", days_ago=1, fields={"subject": "브로콜리", "polarity": 1}
+            ),
+        ),
+        affinities=(
+            SeedAffinity(
+                domain="food",
+                merge_key="브로콜리",
+                state="candidate",
+                last_days_ago=1,
+                observed_days=2,
+            ),
+        ),
+    )
+    built = await build_probe_world(world, now=_NOW)
+    assert built.searched == frozenset()
+    rows = await built.store.query_observations(domain="food", child_id=CHILD)
+    found = await built.affinity.affinities(child_id=CHILD, domains=("activity",))
+    assert found == []
+    await built.affinity.affinities(child_id=CHILD, domains=("food",))
+    assert built.searched == frozenset({rows[0].id, *built.affinity.seen})
+    assert len(built.searched) == 2
+
+
+async def test_비_오는_세계는_날씨와_위치를_넘긴다() -> None:
+    built = await build_probe_world(World(rain=True), now=_NOW)
+    assert built.ports["location"] is not None
+    assert built.ports["activity_weather"] is not None
