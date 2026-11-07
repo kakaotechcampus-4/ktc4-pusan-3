@@ -1,7 +1,7 @@
 """W · 일주일 시나리오 — 실제 모델로 앱을 API 로 돌린다 (docs/eval/eval-v1.md §5).
 
     EVAL_ONLY=W-C make eval            # 가끔 쓰는 집 (4 입력)
-    make eval                          # P 와 함께 A · C 를 돈다 (W-A ≈ 16 입력)
+    make eval-week                     # A · C 를 돈다 (W-A ≈ 16 입력) — DB_NAME=icatch_it 로
 
 케이스마다 1회다 — 반복(k)은 아이 k 명을 같은 시각에 나란히 돌리는 방식인데 이번엔 k=1 이다.
 `EVAL_TIER=smoke` 는 W 를 건너뛴다(EVAL_ONLY 로 케이스를 지정하면 돈다).
@@ -26,6 +26,7 @@ from app.agents.activity.store.inmemory import InMemoryWeather
 from app.agents.activity.store.ports import RawForecast
 from app.api.runs import runner
 from app.core import llm_usage
+from app.core.config import settings
 from app.main import app
 from tests.eval.suite.report import RAW_DIR
 from tests.eval.suite.schema import WeekCase, load_weeks
@@ -90,7 +91,18 @@ def _append(row: dict[str, object]) -> None:
 
 
 @pytest.fixture(scope="module", autouse=True)
-def _usage_capture() -> Iterator[None]:
+def _it_db_only() -> None:
+    """W 는 보호자 · 아이 · 토큰 · 관찰을 쓰고 레시피를 넣고 지운다 — 개발 DB 에 닿으면 안 된다."""
+    if settings.DB_NAME != "icatch_it":
+        pytest.fail(
+            f"W 는 통합 테스트 DB(icatch_it)에서만 돈다 — 지금 DB_NAME={settings.DB_NAME!r}. "
+            "itenv 도우미로 돌리거나 DB_NAME=icatch_it 를 주고 실행할 것 (make eval-week)",
+            pytrace=False,
+        )
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _usage_capture(_it_db_only: None) -> Iterator[None]:
     llm_usage.enable()
     llm_usage.drain(limit=100_000)
     yield
@@ -123,17 +135,17 @@ async def test_week(
     reset_process_state()
     monday = simulation_monday(datetime.now(KST).date())
     rainy = {step_day(monday, f"{day} 00:00"): _HEAVY_RAIN for day in case.world.rain_days}
-    old_state = {
-        k: getattr(app.state, k, None)
-        for k in ("activity_weather", "activity_events", "health_places")
-    }
+    state_keys = ("activity_weather", "activity_events", "health_places")
+    missing = object()
+    old_state = {k: getattr(app.state, k, missing) for k in state_keys}
     app.state.activity_weather = InMemoryWeather(forecasts=rainy, uv="4")
     app.state.activity_events = None
     app.state.health_places = None
     failures: list[str] = []
-    seeded_recipes = await seed_recipes()
+    seeded_recipes: list[tuple[str, str]] = []
     try:
-        child_id, logins, _seed_ids, stale = await seed_world(case, monday)
+        seeded_recipes = await seed_recipes()
+        child_id, logins, _, stale = await seed_world(case, monday)
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             driver = WeekDriver(
                 case=case,
@@ -185,7 +197,13 @@ async def test_week(
                     reason = [str(v) for v in verdict.violations] + list(verdict.misses)
                     failures.append(f"{step.tag}: {reason[0]}")
     finally:
-        await drop_recipes(seeded_recipes)
-        for key, value in old_state.items():
-            setattr(app.state, key, value)
+        try:
+            for key, value in old_state.items():
+                if value is missing:
+                    if hasattr(app.state, key):
+                        delattr(app.state, key)
+                else:
+                    setattr(app.state, key, value)
+        finally:
+            await drop_recipes(seeded_recipes)
     assert not failures, f"{case.id} 실패 {len(failures)}단계 — {failures[:5]}"

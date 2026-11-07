@@ -5,7 +5,8 @@ W 는 앱을 API 로 돌려 `GET /runs/{rid}/events` 의 글자를 읽는다. �
 
 프레임 모양은 `app/api/runs/translate.py` · `sse.py` 가 정한다(프론트 `lib/api/sse.ts` 와 같다).
 SSE 에는 의도(intent) · 라우팅이 직접 오지 않는다. 그래서 화면에 나간 것으로 거꾸로 읽는다.
-- 도메인 Agent(food · activity · growth · health)의 `agent_result` · `unavailable` → route
+- 도메인 Agent(food · activity · growth · health)의 `agent_result` (성공 status 만) → route.
+  `unavailable` 은 route 에 더하지 않는다(요청은 있었다는 표시만 남겨 intent 에 쓴다)
 - `saved` 가 있고 route 가 있으면 mixed, 저장만 있으면 record, route 만 있으면 request
 """
 
@@ -17,6 +18,9 @@ from tests.eval.suite.trace import Trace
 
 DOMAIN_AGENTS = ("food", "activity", "growth", "health")
 Frame = tuple[str, dict[str, Any]]
+# agent_result 의 status 중 Agent 가 결과를 낸 값 (app/agents/common/result.py AgentStatus).
+# `failed` 는 서버가 프레임을 내지 않지만(Partial.failed 로만 알린다) 오더라도 세지 않는다
+SUCCESS_STATUSES = frozenset({"completed", "degraded", "blocked", "unsupported"})
 
 
 def parse_sse(text: str) -> list[Frame]:
@@ -60,6 +64,7 @@ def apply_frames(trace: Trace, frames: list[Frame]) -> FrameInfo:
     agent_texts: list[str] = []
     health_texts: list[str] = []
     saw_saved = False
+    saw_unavailable = False
     for name, data in frames:
         if name == "saved":
             saw_saved = True
@@ -73,10 +78,10 @@ def apply_frames(trace: Trace, frames: list[Frame]) -> FrameInfo:
         elif name == "note":
             trace.memory_text = data.get("text")
             if data.get("kind") == "question" and data.get("text"):
-                questions.append(str(data["text"]))
+                _add_question(questions, str(data["text"]))
                 info.awaits_reply = True
         elif name == "unavailable":
-            route += [a for a in data.get("agents", []) if a not in route]
+            saw_unavailable = True
         elif name == "partial":
             trace.partial = True
         elif name == "failed":
@@ -91,7 +96,7 @@ def apply_frames(trace: Trace, frames: list[Frame]) -> FrameInfo:
     trace.health_texts = tuple(health_texts)
     trace.route = tuple(route)
     trace.event_drafts = len(info.drafts)
-    request = bool(route)
+    request = bool(route) or saw_unavailable
     trace.intent = (
         "mixed"
         if saw_saved and request
@@ -115,8 +120,10 @@ def _agent_result(
 ) -> None:
     agent = str(data.get("agent", ""))
     if data.get("question"):
-        questions.append(str(data["question"]))
+        _add_question(questions, str(data["question"]))
         info.awaits_reply = info.awaits_reply or bool(data.get("awaits_reply"))
+        return
+    if str(data.get("status", "completed")) not in SUCCESS_STATUSES:
         return
     if agent in DOMAIN_AGENTS and agent not in route:
         route.append(agent)
@@ -125,3 +132,9 @@ def _agent_result(
     info.suggestion_ids += [str(s) for s in data.get("suggestion_ids", [])]
     texts = [t for r in data.get("readouts", []) for t in (r.get("title"), r.get("body")) if t]
     (health_texts if agent == "health" else agent_texts).extend(texts)
+
+
+def _add_question(questions: list[str], text: str) -> None:
+    """note(question) 과 agent 질문이 같은 글로 두 번 오면 한 번만 센다 (I11 이중 집계)."""
+    if text not in questions:
+        questions.append(text)

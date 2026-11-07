@@ -22,7 +22,8 @@
 | --- | --- | --- |
 | `make test` | 판정기 단위 테스트 (모델 안 부름) | 0 |
 | `make eval-smoke` | `smoke: true` 케이스 1회 | ~15 |
-| `make eval` | 전체 3회 | ~90 |
+| `make eval` | P 전체 3회 (W 는 안 돈다) | ~90 |
+| `make eval-week` | W 일주일 시나리오 · `DB_NAME=icatch_it` 로 돈다 | ~20 |
 | `make eval-report` | 가장 최근 결과 → `results/raw/<같은 이름>.md` (커밋 안 함) | 0 |
 
 - 한 케이스만: `EVAL_ONLY=P-REC-02 make eval`
@@ -39,7 +40,8 @@ EVAL_TIER=full EVAL_ONLY=W-C PYTEST_ADDOPTS= uv run pytest tests/eval/suite/test
 EVAL_TIER=full EVAL_ONLY=W-A PYTEST_ADDOPTS= uv run pytest tests/eval/suite/test_week_live.py -m live -q   # 보통 (16 단계)
 ```
 
-- `make eval` 은 P 와 함께 W-A · W-C 를 돈다. `make eval-smoke` 는 W 를 건너뛴다(`EVAL_ONLY=W-C` 로 지정하면 돈다)
+- `make eval-week` 가 W-A · W-C 를 돈다(`EVAL_ONLY=W-C make eval-week` 로 하나만). `make eval` 은 P 만 돈다. `make eval-smoke` 는 W 를 건너뛴다(`EVAL_ONLY=W-C` 로 지정하면 돈다)
+- 🚨 W 는 `DB_NAME` 이 `icatch_it` 가 아니면 시작 전에 실패한다. 실행마다 시험 보호자 · 아이 · 토큰 · 관찰 행을 `icatch_it` 에 쓰고 **지우지 않는다** — 지우는 것은 심은 레시피 행뿐이다. 개발 DB 에는 닿지 않는다
 - 케이스마다 1회다. 주(D) = 실행일 뒤 7일 이상 지난 첫 월요일. 실행마다 새 보호자 · 아이를 만든다
 - 결과는 `results/raw/week-<tier>-<시각>.jsonl`. 단계 하나가 한 줄이고, 끝 상태 점검(`kind: check`)도 한 줄이다. `make eval-report` 가 "W · 일주일 시나리오" 절(케이스별 단계 통과 · 끝 상태 점검 · 하루 입력 한도 분석)을 더해 그린다
 - W 는 하루 입력 한도를 끄고 돈다. 대신 보호자 · 날짜별 입력 수를 세어 한도 N=5 · 8 · 10 에서 막히는 수를 표로 낸다

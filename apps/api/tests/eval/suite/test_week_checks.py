@@ -1,6 +1,7 @@
 """W 하네스 자체의 단위 테스트 — 모델 · DB 를 부르지 않는다."""
 
 import asyncio
+import json
 from datetime import date
 
 import pytest
@@ -210,6 +211,42 @@ def test_실패_프레임과_메모_되묻기() -> None:
     )
     assert trace.questions == ("몇 시였어요?",) and info.awaits_reply is True
     assert trace.failed == "timeout" and trace.memory_text == "몇 시였어요?"
+
+
+def _agent_frame(agent: str, status: str, question: str | None = None) -> str:
+    return (
+        f'event: agent_result\ndata: {{"agent":"{agent}","task_type":"t","status":"{status}",'
+        f'"readouts":[],"question":{json.dumps(question, ensure_ascii=False)},'
+        '"awaits_reply":false,"suggestion_ids":[],"kind":"personalized","reason":null,'
+        '"record_count":null}\n\n'
+    )
+
+
+def test_실패한_Agent_는_route_와_bundle_kinds_에_안_센다() -> None:
+    trace = Trace(case_id="x", attempt=0, event_level="sse")
+    apply_frames(
+        trace, parse_sse(_agent_frame("food", "completed") + _agent_frame("health", "failed"))
+    )
+    assert trace.route == ("food",)
+    assert trace.bundle_kinds == {"food": "personalized"}
+
+
+def test_unavailable_프레임은_route_에_안_더한다() -> None:
+    trace = Trace(case_id="x", attempt=0, event_level="sse")
+    apply_frames(trace, parse_sse('event: unavailable\ndata: {"agents":["growth"]}\n\n'))
+    assert trace.route == ()
+
+
+def test_같은_글의_note_와_agent_질문은_한_번만_센다() -> None:
+    trace = Trace(case_id="x", attempt=0, event_level="sse")
+    apply_frames(
+        trace,
+        parse_sse(
+            'event: note\ndata: {"text":"언제였어요?","kind":"question"}\n\n'
+            + _agent_frame("food", "completed", "언제였어요?")
+        ),
+    )
+    assert trace.questions == ("언제였어요?",)
 
 
 # ── 판정 · 결과 한 줄 ──────────────────────────────────────────────────────────

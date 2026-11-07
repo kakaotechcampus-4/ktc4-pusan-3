@@ -6,7 +6,7 @@
         web-typecheck web-check web-contract web-image web-up web-down web-logs \
         api-image api-up api-down api-logs deploy-up deploy-down deploy-migrate \
         deploy-load-food-dry deploy-load-food deploy-load-places-dry deploy-load-places \
-        eval-smoke eval eval-report
+        eval-smoke eval eval-week eval-report
 
 # 로컬 개발 DB 와 배포는 compose 파일이 다르다. .env 는 한 곳(deploy/docker/.env)을 같이 쓴다.
 COMPOSE_DEV    := docker compose -f deploy/docker/docker-compose.yml --env-file deploy/docker/.env
@@ -23,6 +23,7 @@ help:
 	@echo "  make fmt          코드 포맷팅 (ruff)"
 	@echo "  make eval-smoke   AI 품질 점검 스모크 (실제 모델 · ~15 입력 · 크레딧 사용)"
 	@echo "  make eval         AI 품질 점검 전체 (실제 모델 · ~90 입력 · 크레딧 사용)"
+	@echo "  make eval-week    W 일주일 시나리오 (실제 모델 · icatch_it 에 시험 행을 씀 · 크레딧 사용)"
 	@echo "  make eval-report  가장 최근 eval 결과를 요약 md 로 (eval/results/raw/ · 커밋 안 함)"
 	@echo ""
 	@echo "── 프론트 (apps/web) ──"
@@ -97,7 +98,11 @@ eval-smoke:
 	cd apps/api && PYTEST_ADDOPTS= EVAL_TIER=smoke uv run pytest tests/eval/suite -m live -q
 
 eval:
-	cd apps/api && PYTEST_ADDOPTS= EVAL_TIER=full uv run pytest tests/eval/suite -m live -q
+	cd apps/api && PYTEST_ADDOPTS= EVAL_TIER=full uv run pytest tests/eval/suite -m live -q --deselect tests/eval/suite/test_week_live.py
+
+# W 는 보호자 · 아이 · 토큰 · 관찰을 DB 에 쓴다 — 통합 테스트 DB 에서만 돈다 (DB_NAME 이 다르면 시작 전에 실패)
+eval-week:
+	cd apps/api && PYTEST_ADDOPTS= EVAL_TIER=full DB_NAME=icatch_it uv run pytest tests/eval/suite/test_week_live.py -m live -q
 
 eval-report:
 	cd apps/api && uv run python -m tests.eval.suite.report
