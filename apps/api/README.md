@@ -57,6 +57,10 @@ make dev
 # 다른 터미널에서 health 확인
 curl http://localhost:8000/health
 # 예상 응답: {"status":"ok","env":"local"}
+
+# DB · Redis 까지 닿는지 (하나라도 안 되면 503)
+curl http://localhost:8000/health/ready
+# 예상 응답: {"status":"ok","checks":{"db":"ok","redis":"ok"}}
 ```
 
 > 헬스체크는 `/api/v1` **밖**에 있습니다. API 계약서 §01이 "경로는 모두 `/api/v1` 하위 ·
@@ -181,6 +185,10 @@ cd apps/api && APP_ENV=dev uv run python -c "import logging, app.main; logging.g
 실패하면 다음 분에 다시 보낸다. 1분마다 돌아도 `docker inspect` 몇 밀리초라 부담이 없다 (healthcheck
 자체가 이미 5~30초마다 돈다).
 
+docker healthcheck 는 api 의 `/health`(프로세스)만 본다 — DB 가 죽었다고 api 를 재시작해 봐야 재시작만
+반복하니까. 그래서 api 가 DB · Redis 에 닿는지는 api 컨테이너 안에서 `/health/ready` 를 불러
+`ktc4-api-ready` 한 줄로 같이 본다 — `[prod] ktc4-api-ready: ready → not-ready:redis` (#671).
+
 서버 준비 — `deploy/docker/.env` 에 `ALERT_WEBHOOK_URL=` (api 의 `.env` 와 같은 값) 을 넣고 `crontab -e`:
 
 ```
@@ -233,6 +241,22 @@ Asia/Seoul 이면 `0 4 * * *` 로 `crontab -e`:
 
 넣은 뒤 같은 명령을 한 번 손으로 돌려 `만료된 로그인 행 정리: session N건 …` 줄이 찍히면 된다.
 로컬에서는 개발 DB 를 상대로 `uv run python -m app.workers.cleanup`.
+
+### 기억 상태 다시 계산 (하루 한 번)
+
+기억의 상태(확인됨 · 후보 · 보관됨)는 "오늘 기준 최근 14일 · 21일" 로 정해져서, 새 기록이 없어도 날짜가
+지나면 바뀌어야 한다. 관찰이 들어올 때만 다시 계산하므로, 서버의 cron 이 하루 한 번
+[`app/workers/profile_recompute.py`](app/workers/profile_recompute.py) 를 돌려 날짜로 바뀐 상태를 맞춘다 (#636).
+같은 날 두 번 돌아도 결과가 같다. 실패하면 Discord 알림으로 온다.
+
+cleanup(19시) 과 겹치지 않게 UTC 20시(= 한국 05시), 서버 시계가 Asia/Seoul 이면 `0 5 * * *`:
+
+```
+0 20 * * * docker exec ktc4-api uv run --no-sync python -m app.workers.profile_recompute >> /var/tmp/ktc4-profile-recompute.log 2>&1
+```
+
+넣은 뒤 같은 명령을 한 번 손으로 돌려 `기억 상태 다시 계산: 아이 N명 · 기억 N건 · 바뀜 N건 …` 줄이 찍히면 된다.
+처음 한 번은 그동안 밀린 만큼 "바뀜" 이 크게 나온다.
 
 ### 일정 알림 발송 (1분마다)
 

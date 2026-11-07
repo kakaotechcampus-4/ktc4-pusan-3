@@ -3,6 +3,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { ChevronLeft, Pill } from "lucide-react";
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useRef } from "react";
 
 import { AuthGate } from "@/components/auth-gate";
 import { DoseCheck } from "@/components/medication-dose-check";
@@ -27,6 +29,7 @@ import {
 } from "@/lib/api";
 import { formatDay } from "@/lib/format";
 import { timesLabel } from "@/lib/medication";
+import { MEDICATION_ENABLED } from "@/lib/store-policy";
 import { BACK } from "@/lib/view-transition";
 
 /**
@@ -43,19 +46,37 @@ import { BACK } from "@/lib/view-transition";
  *
  * 🚨 **11-1 처럼 11 아래 라우트다.** 대화 · 초안 카드에서도 들어오지만 돌아가는 길은 프로필로 고정한다 —
  *    `router.back()` 은 주소로 바로 들어오면 앱 밖으로 나간다 (`profile/growth` 와 같은 이유).
+ * 🚨 **`?course=` 로 열면 그 코스 카드를 맨 위로 올린다** (04 체크 안내 · #713). 목록을 거르거나 순서를 바꾸지 않는다 —
+ *    다른 약의 오늘 회차도 같은 화면에서 체크해야 한다. 목록에 없는 코스(끝났거나 멈춘 코스)면 그냥 처음부터 보인다.
  */
 export default function MedicationsPage() {
+  // 🚨 스토어 선언 때문에 꺼 둔 동안은 주소로 바로 와도 화면을 세우지 않는다 (`lib/store-policy.ts`).
+  if (!MEDICATION_ENABLED) return <BackToProfile />;
   return (
-    <AuthGate>
-      <ScreenTransition>
-        <MedicationsScreen />
-      </ScreenTransition>
-    </AuthGate>
+    // 🚨 `useSearchParams()` 는 Suspense 경계 안에 있어야 한다 (04 대화와 같은 이유).
+    <Suspense fallback={null}>
+      <AuthGate>
+        <ScreenTransition>
+          <MedicationsScreen />
+        </ScreenTransition>
+      </AuthGate>
+    </Suspense>
   );
+}
+
+/** 꺼 둔 동안 이 주소로 온 보호자를 프로필로 보낸다. 기록에 남지 않게 `replace` 다 — 뒤로 가기로 다시 오지 않는다. */
+function BackToProfile() {
+  const childId = useChildId();
+  const router = useRouter();
+  useEffect(() => {
+    router.replace(`/child/${childId}/profile`);
+  }, [childId, router]);
+  return null;
 }
 
 function MedicationsScreen() {
   const childId = useChildId();
+  const openCourse = useSearchParams().get("course");
   const medications = useQuery({
     queryKey: qk.medications(childId),
     queryFn: () => api.get<MedicationsResponse>(`/children/${childId}/medications`),
@@ -115,6 +136,8 @@ function MedicationsScreen() {
                 childId={childId}
                 course={course}
                 today={medications.data.today}
+                opened={course.id === openCourse}
+                alone={courses.length === 1}
               />
             ))}
           </div>
@@ -139,49 +162,76 @@ function CourseCard({
   childId,
   course,
   today,
+  opened,
+  alone,
 }: {
   childId: string;
   course: MedicationCourse;
   today: string;
+  /** 주소(`?course=`)가 가리킨 코스. 처음 그려질 때 한 번 맨 위로 올리고 포커스를 옮긴다. */
+  opened: boolean;
+  /** 코스가 이것 하나뿐이다. 맨 위 카드라 스크롤하지 않는다 — 회차가 길면 머리말만 화면 밖으로 밀린다. */
+  alone: boolean;
 }) {
   const days = byDay(course.doses);
   const todays = course.doses.filter((dose) => dose.dose_date === today);
   const checkedToday = todays.filter((dose) => dose.checked_at !== null).length;
 
+  // 🚨 **처음 그려질 때 한 번만** 옮긴다. 체크하다 다시 그려질 때마다 끌어올리면 보던 자리를 잃는다.
+  //    포커스도 같이 옮겨서 화면 읽기 프로그램이 어느 약으로 왔는지 읽는다.
+  const anchor = useRef<HTMLDivElement>(null);
+  const openedOnMount = useRef({ opened, alone });
+  useEffect(() => {
+    if (!openedOnMount.current.opened) return;
+    if (!openedOnMount.current.alone) anchor.current?.scrollIntoView({ block: "start" });
+    anchor.current?.focus({ preventScroll: true });
+  }, []);
+  const titleId = `course-${course.id}`;
+
   return (
-    <Card>
-      <p className="text-body text-ink">
-        {course.title}
-        {course.dosage ? <span className="text-ink-muted"> {course.dosage}</span> : null}
-      </p>
-      <p className="text-body-sm text-ink-muted mt-1">매일 {timesLabel(course.notice_times)}</p>
-      <p className="text-caption text-ink-subtle mt-1">
-        {formatDay(course.starts_on)}부터 {formatDay(course.ends_on)}까지
-      </p>
-
-      {/* 🚨 **사실만 센다** — 오늘 회차 중 체크한 수다. 다 했다고 축하하거나 색을 바꾸지 않는다. */}
-      {todays.length > 0 ? (
-        <p className="text-body-sm text-ink-muted mt-3">
-          오늘 체크 {checkedToday}/{todays.length}회
+    <div
+      ref={anchor}
+      tabIndex={opened ? -1 : undefined}
+      // 화면 읽기 프로그램은 카드 전체가 아니라 약 이름을 읽는다. 키보드로 온 포커스는 체크 칸과 같은 링으로 보인다.
+      // 🚨 이름은 role 이 있어야 붙는다 — role 없는 div(generic)에 단 이름은 ARIA 가 금지하고 읽기 프로그램이 무시한다.
+      role={opened ? "group" : undefined}
+      aria-labelledby={opened ? titleId : undefined}
+      className="rounded-card focus-visible:outline-brand scroll-mt-4 outline-none focus-visible:outline-2 focus-visible:outline-offset-2"
+    >
+      <Card>
+        <p id={titleId} className="text-body text-ink">
+          {course.title}
+          {course.dosage ? <span className="text-ink-muted"> {course.dosage}</span> : null}
         </p>
-      ) : null}
+        <p className="text-body-sm text-ink-muted mt-1">매일 {timesLabel(course.notice_times)}</p>
+        <p className="text-caption text-ink-subtle mt-1">
+          {formatDay(course.starts_on)}부터 {formatDay(course.ends_on)}까지
+        </p>
 
-      <div className="mt-2 flex flex-col">
-        {days.map(([day, doses]) => (
-          <section key={day} className="border-line border-t pt-2 first:border-t-0 first:pt-0">
-            <h3 className="text-label text-ink-muted mt-2">
-              {day === today ? `오늘 · ${formatDay(day)}` : formatDay(day)}
-            </h3>
-            <ul>
-              {doses.map((dose) => (
-                <li key={dose.id}>
-                  <DoseCheck childId={childId} dose={dose} />
-                </li>
-              ))}
-            </ul>
-          </section>
-        ))}
-      </div>
-    </Card>
+        {/* 🚨 **사실만 센다** — 오늘 회차 중 체크한 수다. 다 했다고 축하하거나 색을 바꾸지 않는다. */}
+        {todays.length > 0 ? (
+          <p className="text-body-sm text-ink-muted mt-3">
+            오늘 체크 {checkedToday}/{todays.length}회
+          </p>
+        ) : null}
+
+        <div className="mt-2 flex flex-col">
+          {days.map(([day, doses]) => (
+            <section key={day} className="border-line border-t pt-2 first:border-t-0 first:pt-0">
+              <h3 className="text-label text-ink-muted mt-2">
+                {day === today ? `오늘 · ${formatDay(day)}` : formatDay(day)}
+              </h3>
+              <ul>
+                {doses.map((dose) => (
+                  <li key={dose.id}>
+                    <DoseCheck childId={childId} dose={dose} />
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ))}
+        </div>
+      </Card>
+    </div>
   );
 }

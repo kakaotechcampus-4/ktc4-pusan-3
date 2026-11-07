@@ -118,7 +118,9 @@ def test_같은_이름_레시피의_식품군이_다르면_빌려주지_않는�
 
 # ── 완료 기준 ─────────────────────────────────────────────────────────
 async def test_찌개_나물_쌀밥만_먹은_7일도_식품군_출현_문장이_나온다() -> None:
-    lent = borrowable_food_groups([build_recipe_row(DOENJANG, TABLE, now=NOW)])
+    lent = borrowable_food_groups(
+        [build_recipe_row(DOENJANG, TABLE, now=NOW, source="mafra_recipe")]
+    )
     rows = nutrition_catalog_rows(
         [
             dish("된장찌개", "찌개 및 전골류", "06"),

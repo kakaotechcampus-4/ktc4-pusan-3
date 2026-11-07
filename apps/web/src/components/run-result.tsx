@@ -18,10 +18,10 @@ import {
 } from "lucide-react";
 
 import { AgentPrompts } from "@/components/agent-prompts";
-import { CORRECTED_OBSERVATION } from "@/components/correction-buttons";
-import { CorrectedMark } from "@/components/observation-list";
+import { ObservationRow } from "@/components/observation-row";
+import { DeleteProposalCard, FoundTabsCard } from "@/components/record-tabs-card";
 import { RewriteButton } from "@/components/rewrite-button";
-import { domainLabel, ObservationIcon, observationLabel } from "@/components/domain-chip";
+import { domainLabel } from "@/components/domain-chip";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
 import { DOMAIN_ICON, ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
@@ -31,13 +31,11 @@ import {
   askedQuestion,
   blockCandidates,
   blockReadouts,
+  medicationHref,
   partialRetryHref,
   visibleAgentResults,
   type BlockCandidates,
 } from "@/lib/agent-result";
-import { cn } from "@/lib/cn";
-import { PENDING_SERVER_FEATURES } from "@/lib/features";
-import { CONFIDENCE_LABEL } from "@/lib/confidence";
 import type { RunState } from "@/hooks/use-run-stream";
 import type {
   AgentReadout,
@@ -47,15 +45,9 @@ import type {
   PartialEvent,
 } from "@/lib/api/sse";
 import type { QuestionState } from "@/stores/conversation";
-import {
-  isHealthObservation,
-  type Agent,
-  type EventDraft,
-  type MedicationDraft,
-  type Observation,
-  type StoredRef,
-} from "@/lib/api/types";
-import { formatEventTime, formatTimeOfDay } from "@/lib/format";
+import type { Agent, EventDraft, MedicationDraft, StoredRef } from "@/lib/api/types";
+import { formatEventTime } from "@/lib/format";
+import { MEDICATION_ENABLED } from "@/lib/store-policy";
 import { FORWARD } from "@/lib/view-transition";
 
 /**
@@ -242,7 +234,11 @@ export function RunReply({
     run.guidance.length > 0 ||
     run.note !== null ||
     agentResults.length > 0 ||
-    run.medicationDrafts.length > 0;
+    // 꺼 둔 동안은 초안 카드가 서지 않으니 답으로 세지 않는다 (`lib/store-policy.ts`).
+    (MEDICATION_ENABLED && run.medicationDrafts.length > 0) ||
+    // 🚨 조회 · 삭제 카드도 답이다 (#535). 찾거나 지우려던 한 줄은 저장할 관찰이 없는 것이 정상이다.
+    run.foundTabs.length > 0 ||
+    run.deleteProposal !== null;
   /**
    * 이 run 이 답을 기다리는 질문 (#537). Memory 질문이거나 `awaits_reply` 인 Agent 질문 하나다 — 답하기 버튼은
    * 그 자리에만 선다 (`askedQuestion`).
@@ -295,6 +291,17 @@ export function RunReply({
           question={question}
           answeringNow={answeringNow}
           onAnswer={onAnswer}
+        />
+      ) : null}
+
+      {/* 조회 · 삭제 카드 (#535). 🚨 **AI 의 말 바로 아래에 둔다** — "찾았어요 · 골라 주세요" 라고 말한 그 행들이다.
+          삭제 카드는 AI 가 지운 것이 아니라 제안이다 — 지우는 것은 보호자의 두 번 누름이다 (`record-tabs-card.tsx`). */}
+      {run.foundTabs.length > 0 ? <FoundTabsCard tabs={run.foundTabs} /> : null}
+      {run.deleteProposal ? (
+        <DeleteProposalCard
+          key={run.deleteProposal.proposal_id}
+          childId={childId}
+          card={run.deleteProposal}
         />
       ) : null}
 
@@ -398,8 +405,9 @@ export function RunReply({
       ) : null}
 
       {/* 복약 초안 (#537). 🚨 일정 초안과 다른 카드다 — 게이트가 다르다(㉡ 건강 기록 확정). 지난 턴은 초안이
-          보관함에 없으면 넣는 길이 없다 (`stores/medication-draft.ts` 는 메모리 전용이다). */}
-      {run.medicationDrafts.length > 0 ? (
+          보관함에 없으면 넣는 길이 없다 (`stores/medication-draft.ts` 는 메모리 전용이다).
+          🚨 스토어 선언 때문에 꺼 둔 동안은 서버가 초안을 보내도 카드를 세우지 않는다 (`lib/store-policy.ts`). */}
+      {MEDICATION_ENABLED && run.medicationDrafts.length > 0 ? (
         <MedicationDraftsCard
           drafts={run.medicationDrafts}
           remaining={remainingMedicationDrafts}
@@ -528,7 +536,7 @@ export function partialMessage(partial: PartialEvent, savedSomething: boolean): 
  * 🚨 **전달 서류(`med_notice_form` · `emergency_card`)는 body 그대로 + 복사 버튼이다.** 우리가 대신 보내지 않는다 —
  *    복사해서 보호자가 직접 전한다. 응급 카드의 "불러오지 못했어요" 줄을 "없음" 처럼 바꾸지 않는다 (body 를 다시 쓰지 않는다).
  * 🚨 **`dose_status` 는 사실만 나가는 칸이다.** 먹여도 된다는 뜻으로 읽힐 표시(초록 체크 · 색)를 붙이지 않는다 —
- *    체크하는 곳(복약 화면)으로 가는 길만 둔다.
+ *    체크하는 곳(복약 화면)으로 가는 길만 둔다. "먹였어" 의 체크 안내에도 같은 길이 선다 (`medicationHref` · #713).
  */
 function AgentResultCard({
   childId,
@@ -547,8 +555,8 @@ function AgentResultCard({
   } | null;
 }) {
   const readouts = blockReadouts(result);
-  // 🚨 복약 화면이 실서버에 생기기 전에는 링크를 세우지 않는다 (`lib/features.ts` · #537).
-  const showsDoseStatus = readouts.some((readout) => readout.kind === "dose_status");
+  // 꺼 둔 동안은 갈 곳(11-3)이 없다 (`lib/store-policy.ts`).
+  const medicationLink = MEDICATION_ENABLED ? medicationHref(childId, readouts) : null;
   return (
     <Card>
       <div className="flex items-start gap-3">
@@ -581,10 +589,10 @@ function AgentResultCard({
               {COPYABLE_READOUTS.has(readout.kind) ? <CopyReadout readout={readout} /> : null}
             </div>
           ))}
-          {/* 복용 체크는 복약 화면에서만 한다 — 기록이 생기는 곳이 한 곳이다 (#537). */}
-          {showsDoseStatus && PENDING_SERVER_FEATURES.medications ? (
+          {/* 복용 체크는 복약 화면에서만 한다 — 기록이 생기는 곳이 한 곳이다 (#537). 가리키는 코스가 하나면 그 코스로 (#713). */}
+          {medicationLink ? (
             <ButtonLink
-              href={`/child/${childId}/profile/medications`}
+              href={medicationLink}
               variant="secondary"
               size="compact"
               className="mt-3"
@@ -1099,54 +1107,3 @@ function NoteCard({
 }
 
 const NO_REFS: readonly StoredRef[] = [];
-
-/**
- * 저장된 기록 한 줄. 🚨 **지난 대화에서는 고친 기록도 온다** (#228 리뷰) — 교정은 기록을 지우지 않고 상태만
- * 바꿔서, 서버가 지금 모습(`status`)으로 싣는다. 방금 저장한 run 에서는 늘 `active` 라 예전엔 볼 필요가 없었다.
- * 07 기록 탭과 같은 고친 표시를 달고, 잘못된 기록(`inactive`)은 글자를 물린다 — 근거에서도 빠진 기록이다.
- * 색만으로 가르지 않는다 — 무엇으로 고쳤는지가 글자로 선다.
- */
-function ObservationRow({ observation }: { observation: Observation }) {
-  const wrong = observation.status === "inactive";
-  const detail = isHealthObservation(observation)
-    ? [
-        observation.domain_fields.symptom?.join(", "),
-        observation.domain_fields.observed_time &&
-          formatTimeOfDay(observation.domain_fields.observed_time),
-      ]
-        .filter(Boolean)
-        .join(", ")
-    : observation.subject;
-
-  return (
-    <div className="py-3 first:pt-0 last:pb-0">
-      {/* 🚨 여기서는 **도메인 색을 쓰지 않는다** (`DomainChip` 이 아니다). 한 화면에 도메인 색은
-          2개까지인데(문서 §3), 한 줄이 관찰 3건으로 갈리면 4색이 다 뜰 수 있다. 그리고 도메인 색은
-          "어느 Agent 의 결과인가" 신호라(05 제안) 저장된 관찰에 쓰면 그 뜻이 흐려진다.
-          모양은 아이콘이, 뜻은 라벨이 진다. */}
-      <div className="text-label text-ink-muted flex flex-wrap items-center gap-1.5">
-        <ObservationIcon kind={observation.kind} className="text-ink-subtle" />
-        {observationLabel(observation.kind)}
-        {observation.observed_label ? (
-          <span className="text-caption text-ink-subtle">· {observation.observed_label}</span>
-        ) : null}
-      </div>
-
-      <p className={cn("text-body mt-2", wrong ? "text-ink-muted" : "text-ink")}>
-        {observation.raw_text}
-      </p>
-
-      <div className="text-caption text-ink-subtle mt-1.5 flex flex-wrap items-center gap-x-1.5">
-        {detail ? <span>{detail}</span> : null}
-        {detail ? <span aria-hidden>·</span> : null}
-        <span>{CONFIDENCE_LABEL[observation.confidence_source]}</span>
-      </div>
-
-      {observation.status !== "active" ? (
-        <div className="mt-1.5">
-          <CorrectedMark label={CORRECTED_OBSERVATION[observation.status].label} />
-        </div>
-      ) : null}
-    </div>
-  );
-}

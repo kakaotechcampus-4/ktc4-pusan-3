@@ -31,9 +31,9 @@ from openai.lib._pydantic import to_strict_json_schema
 from pydantic import BaseModel
 
 from app.agents.common.config import AgentSettings
+from app.agents.common.food_safety import filter_food_safety
 from app.agents.common.llm_client import LLMClient
 from app.agents.food.store.ports import MenuCatalogRow, SafetyEntry
-from app.agents.food.tools.safety import filter_food_safety
 
 pytestmark = pytest.mark.live
 

@@ -692,3 +692,23 @@ def test_Swagger_에_고치기_응답_모양이_나온다():
     assert ok["200"]["content"]["application/json"]["schema"]["$ref"].endswith(
         "/UpdateHealthSafetyResponse"
     )
+
+
+async def test_Redis_가_죽으면_건강_기록_등록은_503_이고_저장하지_않는다(
+    db_client, session, bearer, consented, monkeypatch
+):
+    """승인 게이트 ㉡ — 메모리로 넘어가면 장애 직전 키가 안 보여 재시도가 새 요청이 된다 (#671)."""
+    import redis
+
+    down = redis.Redis(host="127.0.0.1", port=1, socket_connect_timeout=0.2)
+    monkeypatch.setattr(idempotency, "get_redis", lambda: down)
+    headers, _ = bearer
+
+    response = await db_client.post(
+        safety_url(consented), json={"type": "allergy", "label": "우유"}, headers=with_key(headers)
+    )
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "temporarily_unavailable"
+    await session.rollback()
+    assert await rows_of(session, consented) == []

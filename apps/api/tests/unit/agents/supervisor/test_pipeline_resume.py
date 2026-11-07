@@ -30,6 +30,8 @@ class Outcome:
     readouts: tuple[Readout, ...] = ()
     needs_observation: tuple[str, ...] = ()
     suggestions: tuple[SuggestionDraft, ...] = ()
+    medication_drafts: tuple[Any, ...] = ()
+    event_requests: tuple[Any, ...] = ()
     pending: DomainPending | None = None
 
 
@@ -46,6 +48,7 @@ EMPTY = Readout(
     code="empty",
 )
 GROWTH_Q = "양치는 요즘 어느 정도까지 혼자 하나요?"
+LEARNING_Q = "국어는 집에서 해 본 적이 있나요? 어려워한 점이 있으면 같이 알려 주세요."
 FOOD_Q = "브로콜리는 좋아하는 편인가요?"
 
 
@@ -70,6 +73,7 @@ def food_asks() -> Outcome:
 
 FOOD_TASK = DomainTask("run-1", "food", "meal_recommendation", ("반찬 추천",), record_texts=("a",))
 GROWTH_TASK = DomainTask("run-1", "growth", "routine_coaching", ("양치 가르치기",))
+LEARNING_TASK = DomainTask("run-1", "growth", "learning_suggestion", ("국어 공부 어떻게 시켜?",))
 TASKS = (FOOD_TASK, GROWTH_TASK)
 
 
@@ -112,6 +116,62 @@ class TestPickQuestion:
         )
 
         asked = pipeline._pick_question([growth], (GROWTH_TASK,), can_resume=True)
+
+        assert asked == (growth, None)
+
+    def test_교육_질문은_추천에_덧붙어도_답을_받는다(self):
+        growth = Outcome(
+            "growth",
+            "learning_suggestion",
+            needs_observation=(LEARNING_Q,),
+            pending=DomainPending(
+                "growth",
+                "ask.learning_current",
+                LEARNING_Q,
+                {"subject": "국어", "category": None, "field": "topic"},
+            ),
+            suggestions=(_draft("글자 찾기"),),
+        )
+
+        asked = pipeline._pick_question([growth], (LEARNING_TASK,), can_resume=True)
+
+        assert asked == (growth, LEARNING_TASK)
+
+    def test_교육_질문도_추천이_있으면_맥락을_못_만드는_run_은_받지_않는다(self):
+        growth = Outcome(
+            "growth",
+            "learning_suggestion",
+            needs_observation=(LEARNING_Q,),
+            pending=DomainPending("growth", "ask.learning_current", LEARNING_Q, {}),
+            suggestions=(_draft("글자 찾기"),),
+        )
+
+        asked = pipeline._pick_question([growth], (LEARNING_TASK,), can_resume=False)
+
+        assert asked == (growth, None)
+
+    def test_Food_의_덧붙은_질문은_여전히_이어받지_않는다(self):
+        food = Outcome(
+            "food",
+            "meal_recommendation",
+            needs_observation=(FOOD_Q,),
+            pending=pending_of(FOOD_Q, "food"),
+            suggestions=(_draft("계란말이"),),
+        )
+
+        asked = pipeline._pick_question([food], (FOOD_TASK,), can_resume=True)
+
+        assert asked == (food, None)
+
+    def test_교육_질문은_pending_이_없으면_받지_않는다(self):
+        growth = Outcome(
+            "growth",
+            "learning_suggestion",
+            needs_observation=(LEARNING_Q,),
+            suggestions=(_draft("글자 찾기"),),
+        )
+
+        asked = pipeline._pick_question([growth], (LEARNING_TASK,), can_resume=True)
 
         assert asked == (growth, None)
 

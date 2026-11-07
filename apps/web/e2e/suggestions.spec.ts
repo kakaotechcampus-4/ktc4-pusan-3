@@ -1,3 +1,5 @@
+import type { Page } from "@playwright/test";
+
 import {
   CHILD,
   asOtherCaregiver,
@@ -113,6 +115,46 @@ test.describe("홈 버튼에서 들어오면 (#286)", () => {
     await page.goto(`/child/${CHILD}/suggestions?agents=food&prompt=midnight_snack`);
     await expect(page.getByText("사용한 기록", { exact: false }).first()).toBeVisible();
     expect(suggestionsBody(calls)).toEqual([{ agents: ["food"] }]);
+  });
+});
+
+test.describe("들어온 곳으로 돌아가기 (#683)", () => {
+  test("홈 버튼에서 왔으면 위 화살표가 홈으로 간다", async ({ page }) => {
+    await page.goto(`/child/${CHILD}/home`);
+    await page.getByRole("button", { name: /저녁 추천해드릴까요/ }).click();
+    await expect(page.getByText("사용한 기록", { exact: false }).first()).toBeVisible();
+
+    await expect(page.getByRole("link", { name: "대화로 돌아가기" })).toHaveCount(0);
+    await page.getByRole("link", { name: "홈으로 돌아가기" }).click();
+    await expect(page).toHaveURL(new RegExp(`/child/${CHILD}/home$`));
+  });
+
+  test("대화에서 왔으면 위 화살표가 대화로 가고, 스크롤해도 화면 위에 남는다", async ({ page }) => {
+    // 04 "후보 보기" 는 run 을 싣고, "이것도 도와드릴까요?" 는 영역만 싣는다 — 둘 다 대화다
+    for (const path of [`${SUGGESTIONS}&run=r1`, SUGGESTIONS]) {
+      await page.goto(path);
+      await expect(page.getByText("사용한 기록", { exact: false }).first()).toBeVisible();
+      const back = page.getByRole("link", { name: "대화로 돌아가기" });
+      await expect(back).toHaveAttribute("href", `/child/${CHILD}/chat`);
+      await expect(page.getByRole("link", { name: "홈으로 돌아가기" })).toHaveCount(0);
+
+      // 🚨 나가는 길이 본문에 있으면 후보 셋을 지나 한참 내려가야 한다 — 맨 아래에서도 보여야 한다
+      await page.getByRole("link", { name: "홈으로", exact: true }).scrollIntoViewIfNeeded();
+      await expect(back).toBeInViewport();
+    }
+
+    await page.getByRole("link", { name: "대화로 돌아가기" }).click();
+    await expect(page).toHaveURL(new RegExp(`/child/${CHILD}/chat$`));
+  });
+
+  test("맨 아래 홈으로는 버튼이 아니라 링크다", async ({ page }) => {
+    await page.goto(SUGGESTIONS);
+    await expect(page.getByText("사용한 기록", { exact: false }).first()).toBeVisible();
+    await expect(page.getByRole("button", { name: "홈으로", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("link", { name: "홈으로", exact: true })).toHaveAttribute(
+      "href",
+      `/child/${CHILD}/home`,
+    );
   });
 });
 
@@ -311,6 +353,35 @@ test.describe("개인화와 일반이 같은 Agent 에 섞여 오면 (#512 리�
     await expect(notice).toHaveText("식사에서 고른 3가지는 일정 하나로 묶여요.");
   });
 
+  test("개인화 후보와 일반 추천의 제안 문장은 같은 글씨다 (#683)", async ({ page }) => {
+    await page.goto(SUGGESTIONS);
+    const font = (text: string) =>
+      page.getByText(text, { exact: true }).evaluate((el) => {
+        const style = getComputedStyle(el);
+        return { size: style.fontSize, weight: style.fontWeight };
+      });
+
+    const personal = await font("계란말이에 시금치를 조금 섞어 보세요");
+    const general = await font("국물 없이 집어 먹는 반찬을 한 가지 곁들여 보세요");
+    // 🚨 개인화만 크고 굵으면 더 중요한 추천처럼 읽힌다 — 가르는 것은 라벨 · 점선 · 근거다
+    expect(personal).toEqual(general);
+
+    // 묶음 질문은 후보보다 크고, 화면 제목보다는 작다 — 층이 셋으로 갈린다.
+    // 🚨 좁은 폰(360)에서도 본다 — 화면 제목이 380 미만에서 한 단계 내려가서, 질문도 같이 내려야 한다.
+    const px = (value: string) => Number.parseFloat(value);
+    const size = (heading: string) =>
+      page
+        .getByRole("heading", { name: heading, exact: true })
+        .evaluate((el) => getComputedStyle(el).fontSize);
+    for (const width of [390, 360]) {
+      await page.setViewportSize({ width, height: 844 });
+      const candidate = px((await font("계란말이에 시금치를 조금 섞어 보세요")).size);
+      const prompt = px(await size("오늘 저녁 뭐 차려 줄까요"));
+      expect(prompt, `${width} 폭`).toBeGreaterThan(candidate);
+      expect(prompt, `${width} 폭`).toBeLessThan(px(await size("제안 후보")));
+    }
+  });
+
   test("묶음 건수 줄은 개인화만 셌다는 것을 글자로 말한다", async ({ page }) => {
     await page.goto(SUGGESTIONS);
     // 아래 일반 카드까지 식사 후보는 넷이다 — "3가지 중에서" 만 쓰면 숫자가 어긋난다
@@ -393,6 +464,258 @@ test.describe("장소가 붙은 추천의 확인 문구 (#516)", () => {
     await expect(notice).toBeVisible();
     const basis = card.getByText("36개월 또래가 자주 찾는 놀이예요", { exact: true });
     expect((await notice.boundingBox())!.y).toBeLessThan((await basis.boundingBox())!.y);
+  });
+});
+
+test.describe("행사가 붙은 추천의 기간 (#681)", () => {
+  test.use({ scenario: "suggest_event" });
+
+  const NOTICE =
+    "한국관광공사 행사 정보예요. 일정과 관람 연령이 바뀔 수 있으니 가기 전에 확인해 주세요.";
+
+  test("개인화 줄은 확인 문구 바로 위에 기간을 세우고, 사용한 기록에는 넣지 않는다", async ({
+    page,
+  }) => {
+    await page.goto(SUGGESTIONS);
+    await page.getByRole("tab", { name: "놀이 3가지" }).click();
+    const panel = page.getByRole("tabpanel");
+    const row = panel.locator(":scope > ul > li").filter({ hasText: "들꽃마을 가을 축제에서" });
+    await expect(row).toHaveCount(1);
+
+    const period = row.getByText("2026년 10월 30일부터 11월 1일까지 열려요", { exact: true });
+    await expect(period).toBeVisible();
+    // 🚨 고르는 칸의 이름은 제안 문장뿐이다
+    await expect(
+      row.getByRole("checkbox", { name: "들꽃마을 가을 축제에서 꽃 이름 맞히기", exact: true }),
+    ).toBeVisible();
+    // 제안 문장 아래, 확인 문구 바로 위다
+    const label = row.getByText("들꽃마을 가을 축제에서 꽃 이름 맞히기", { exact: true });
+    const notice = row.getByText(NOTICE, { exact: true });
+    const y = async (l: typeof period) => (await l.boundingBox())!.y;
+    expect(await y(label)).toBeLessThan(await y(period));
+    expect(await y(period)).toBeLessThan(await y(notice));
+
+    // 🚨 기간은 근거가 아니다 — 근거 목록 안에 없고, 건수는 근거 줄 수 그대로다
+    const used = row.getByText(/^사용한 기록 \d+건$/);
+    const list = used.locator("xpath=following-sibling::ul[1]");
+    const count = Number((await used.innerText()).match(/\d+/)![0]);
+    await expect(list.locator("li")).toHaveCount(count);
+    await expect(list.getByText(/열려요/)).toHaveCount(0);
+
+    // 행사가 없는 줄에는 서지 않는다
+    await expect(panel.getByText(/열려요$/)).toHaveCount(1);
+  });
+
+  test("일반 카드는 하루짜리 행사를 날짜 하나로 적고, 기준 문구보다 위에 세운다", async ({
+    page,
+  }) => {
+    await page.goto(SUGGESTIONS);
+    const card = page.locator("li").filter({ hasText: "솔숲 어린이 인형극 한마당에서" });
+    await expect(card).toHaveCount(1);
+    await expect(card.getByText("일반 추천", { exact: true })).toBeVisible();
+    // 🚨 기록 건수는 그 Agent 도메인 수 그대로다
+    await expect(card).toContainText("기록 3건");
+
+    const period = card.getByText("2026년 11월 7일에 열려요", { exact: true });
+    await expect(period).toBeVisible();
+    // 🚨 기호로 잇지 않는다 (디자인 시스템 §4)
+    await expect(card.getByText(/~/)).toHaveCount(0);
+    const notice = card.getByText(NOTICE, { exact: true });
+    const basis = card.getByText("36개월 또래가 자주 찾는 놀이예요", { exact: true });
+    expect((await period.boundingBox())!.y).toBeLessThan((await notice.boundingBox())!.y);
+    expect((await notice.boundingBox())!.y).toBeLessThan((await basis.boundingBox())!.y);
+  });
+});
+
+test.describe("필요한 재료 · 준비물 (#659)", () => {
+  /** 05 개인화 줄 하나. 제안 문장으로 찾는다 — 탭을 먼저 골라야 그 묶음의 줄이 선다. */
+  const personalRow = (page: Page, text: string) =>
+    page.getByRole("tabpanel").locator(":scope > ul > li").filter({ hasText: text });
+
+  test("식사는 필요한 재료, 놀이는 준비물로 이유 다음 · 근거 선 위에 서고, 비어 오면 영역이 없다", async ({
+    page,
+  }) => {
+    await page.goto(SUGGESTIONS);
+
+    await page.getByRole("tab", { name: "식사 3가지" }).click();
+    const tofu = personalRow(page, "두부를 부쳐서");
+    await expect(tofu).toHaveCount(1);
+    const ingredients = tofu.getByRole("list", { name: "필요한 재료" });
+    await expect(ingredients.getByRole("listitem")).toHaveText(["두부"]);
+    // 🚨 읽기 전용이다 — 재료마다 체크박스가 없고, 고르는 칸은 제안 하나뿐이다
+    await expect(tofu.getByRole("checkbox")).toHaveCount(1);
+    await expect(
+      tofu.getByRole("checkbox", { name: "두부를 부쳐서 한 조각 곁들여 보세요", exact: true }),
+    ).toBeVisible();
+    // 이유 다음, 근거 선 위다 — 근거가 아니라서 "사용한 기록" 목록에 섞이지 않는다
+    const reasonY = (await tofu.getByText("추천 이유", { exact: true }).boundingBox())!.y;
+    const itemsY = (await tofu.getByText("필요한 재료", { exact: true }).boundingBox())!.y;
+    const evidence = tofu.getByText(/^사용한 기록 \d+건$/);
+    expect(reasonY).toBeLessThan(itemsY);
+    expect(itemsY).toBeLessThan((await evidence.boundingBox())!.y);
+    await expect(
+      evidence.locator("xpath=following-sibling::ul[1]").getByText("두부", { exact: true }),
+    ).toHaveCount(0);
+
+    await page.getByRole("tab", { name: "놀이 3가지" }).click();
+    const pool = personalRow(page, "실내 물놀이장");
+    await expect(pool.getByRole("list", { name: "준비물" }).getByRole("listitem")).toHaveCount(3);
+    await expect(pool.getByText("필요한 재료", { exact: true })).toHaveCount(0);
+
+    // 🚨 비어 온 줄은 라벨만 선 빈 영역이 없다
+    const blocks = personalRow(page, "블록으로 높이 쌓기");
+    await expect(blocks).toHaveCount(1);
+    await expect(blocks.getByText(/^(준비물|필요한 재료)$/)).toHaveCount(0);
+  });
+
+  test("다섯 개부터 넷만 보이고, 펼치고 접어도 고른 상태는 그대로다", async ({ page }) => {
+    await page.goto(SUGGESTIONS);
+    await page.getByRole("tab", { name: "식사 3가지" }).click();
+    const row = personalRow(page, "계란말이에 시금치를");
+    const items = row.getByRole("list", { name: "필요한 재료" }).getByRole("listitem");
+    const pick = row.getByRole("checkbox");
+    await expect(items).toHaveCount(4);
+
+    const more = row.getByRole("button", { name: "1개 더 보기" });
+    await expect(more).toHaveAttribute("aria-expanded", "false");
+    await more.click();
+    await expect(items).toHaveCount(5);
+    await expect(items.last()).toHaveText("애호박");
+    const fold = row.getByRole("button", { name: "접기" });
+    await expect(fold).toHaveAttribute("aria-expanded", "true");
+    // 🚨 펼치기는 고르기가 아니다
+    await expect(pick).not.toBeChecked();
+    await expect(page.getByRole("button", { name: /가지로 할게요$/ })).toHaveCount(0);
+
+    // 체크박스 표식은 숨긴 input 이라 라벨(제안 문장)을 누른다 — 보호자가 누르는 자리다
+    await row.getByText("계란말이에 시금치를 조금 섞어 보세요", { exact: true }).click();
+    await fold.click();
+    await expect(items).toHaveCount(4);
+    await expect(pick).toBeChecked();
+    await expect(page.getByRole("button", { name: "이 1가지로 할게요" })).toBeVisible();
+  });
+
+  test("긴 준비물 이름은 칩 안에서 줄을 바꾸고 화면이 가로로 넘치지 않는다", async ({ page }) => {
+    await page.setViewportSize({ width: 320, height: 720 });
+    await page.goto(SUGGESTIONS);
+    await page.getByRole("tab", { name: "놀이 3가지" }).click();
+    const row = personalRow(page, "실내 물놀이장");
+    const long = row
+      .getByRole("listitem")
+      .filter({ hasText: "유아용일회용방수기저귀겸수영팬티세트와여벌속옷두벌" });
+    await expect(long).toBeVisible();
+
+    const card = (await row.boundingBox())!;
+    const chip = (await long.boundingBox())!;
+    expect(chip.x + chip.width).toBeLessThanOrEqual(card.x + card.width);
+    // 🚨 칩 상자는 `max-w-full` 로 카드 안에 들어도 글자가 상자 밖으로 나갈 수 있다 (카드가 `overflow-hidden` 이라
+    //    문서 폭도 안 는다). 글자가 칩 안에 있고, 그러려고 칩이 두 줄이 됐는지를 본다
+    const fits = await long.evaluate((el) => ({
+      overflow: el.scrollWidth - el.clientWidth,
+      lines: el.getBoundingClientRect().height / parseFloat(getComputedStyle(el).lineHeight),
+    }));
+    expect(fits.overflow).toBeLessThanOrEqual(0);
+    // 한 줄 칩도 `min-h-chip`(28) 이라 caption 한 줄(16.8)의 1.67 배다 — 두 줄이어야 2 를 넘는다
+    expect(fits.lines).toBeGreaterThanOrEqual(2);
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth),
+    ).toBeLessThanOrEqual(0);
+  });
+
+  test.describe("일반 추천", () => {
+    test.use({ scenario: "empty" });
+
+    test("일반 식사 · 놀이도 같은 모양으로 기준 문구 다음 · 출처 위에 선다", async ({ page }) => {
+      await page.goto(SUGGESTIONS);
+      const meal = page
+        .locator("li")
+        .filter({ hasText: "국물 없이 집어 먹는 반찬을 한 가지 곁들여 보세요" })
+        .filter({ has: page.getByText("일반 추천", { exact: true }) });
+      await expect(meal).toHaveCount(1);
+      await expect(
+        meal.getByRole("list", { name: "필요한 재료" }).getByRole("listitem"),
+      ).toHaveText(["애호박", "두부", "당근"]);
+      const basisY = (await meal.getByText("36개월 또래의 식사에서 흔한 형태예요").boundingBox())!
+        .y;
+      const itemsY = (await meal.getByText("필요한 재료", { exact: true }).boundingBox())!.y;
+      const sourceY = (await meal.getByText(/^참고 · /).boundingBox())!.y;
+      expect(basisY).toBeLessThan(itemsY);
+      expect(itemsY).toBeLessThan(sourceY);
+
+      const play = page
+        .locator("li")
+        .filter({ hasText: "블록 쌓기처럼 손을 많이 쓰는 놀이" })
+        .filter({ has: page.getByText("일반 추천", { exact: true }) });
+      await expect(play.getByRole("list", { name: "준비물" }).getByRole("listitem")).toHaveCount(2);
+      await expect(play.getByRole("checkbox")).toHaveCount(1);
+    });
+  });
+});
+
+test.describe("추천별 위험 경고 (#402 · #672)", () => {
+  test.use({ scenario: "suggest_warnings" });
+
+  // 글자는 서버 `apps/api/reference/hazard_terms.yaml` 의 `warning_text` 와 같다 (목 `hazardWarnings`)
+  const WATER =
+    "물놀이는 아이에게서 팔이 닿는 거리에서 한순간도 눈을 떼지 말아 주세요. 깊이 5cm 에서도 사고가 납니다.";
+  const SMALL_PARTS =
+    "작은 부품은 삼킬 수 있어요. 아이 입에 들어가지 않는 크기인지 먼저 확인해 주세요.";
+  const BALLOON =
+    "터진 풍선 조각과 비닐은 입에 넣거나 얼굴에 쓰지 않게 지켜봐 주세요. 놀이가 끝나면 손이 닿지 않는 곳에 치워 주세요.";
+
+  test("개인화 줄은 제안 문장 아래, 이유보다 위에 세우고 사용한 기록에는 넣지 않는다", async ({
+    page,
+  }) => {
+    await page.goto(SUGGESTIONS);
+    await page.getByRole("tab", { name: "놀이 3가지" }).click();
+    const panel = page.getByRole("tabpanel");
+    const row = panel.locator(":scope > ul > li").filter({ hasText: "실내 물놀이장" });
+    await expect(row).toHaveCount(1);
+
+    const warnings = row.getByRole("list", { name: "주의할 점" });
+    await expect(warnings.getByRole("listitem")).toHaveCount(1);
+    const warning = warnings.getByText(WATER, { exact: true });
+    await expect(warning).toBeVisible();
+    // 🚨 고르는 칸의 이름은 제안 문장뿐이다
+    await expect(
+      row.getByRole("checkbox", { name: "주말에 실내 물놀이장은 어떨까요", exact: true }),
+    ).toBeVisible();
+    const reasonLabel = row.getByText("추천 이유", { exact: true });
+    expect((await warning.boundingBox())!.y).toBeLessThan((await reasonLabel.boundingBox())!.y);
+
+    // 🚨 경고는 근거가 아니다 — 근거 목록 안에 없고, 건수는 근거 줄 수 그대로다
+    const label = row.getByText(/^사용한 기록 \d+건$/);
+    const list = label.locator("xpath=following-sibling::ul[1]");
+    const count = Number((await label.innerText()).match(/\d+/)![0]);
+    await expect(list.locator("li")).toHaveCount(count);
+    await expect(list.getByText(/눈을 떼지/)).toHaveCount(0);
+
+    // 경고가 없는 줄에는 목록이 서지 않는다
+    await expect(panel.getByRole("list", { name: "주의할 점" })).toHaveCount(1);
+  });
+
+  test("일반 카드는 경고 둘을 다 세우고, 기준 문구보다 위에 둔다", async ({ page }) => {
+    await page.goto(SUGGESTIONS);
+    const card = page.locator("li").filter({ hasText: "풍선 안에 작은 구슬을" });
+    await expect(card).toHaveCount(1);
+    await expect(card.getByText("일반 추천", { exact: true })).toBeVisible();
+    // 기록 건수는 그 Agent 도메인 수 그대로다 — 경고가 붙어도 늘지 않는다
+    await expect(card).toContainText("기록 3건");
+
+    const warnings = card.getByRole("list", { name: "주의할 점" });
+    await expect(warnings.getByRole("listitem")).toHaveCount(2);
+    await expect(warnings.getByText(SMALL_PARTS, { exact: true })).toBeVisible();
+    await expect(warnings.getByText(BALLOON, { exact: true })).toBeVisible();
+    await expect(
+      card.getByRole("checkbox", {
+        name: "풍선 안에 작은 구슬을 넣고 흔들며 소리를 들어 보세요",
+        exact: true,
+      }),
+    ).toBeVisible();
+
+    const basis = card.getByText("36개월 또래가 자주 찾는 놀이예요", { exact: true });
+    const last = warnings.getByText(BALLOON, { exact: true });
+    expect((await last.boundingBox())!.y).toBeLessThan((await basis.boundingBox())!.y);
   });
 });
 

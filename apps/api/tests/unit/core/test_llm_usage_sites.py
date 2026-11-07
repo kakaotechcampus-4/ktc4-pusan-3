@@ -1,0 +1,81 @@
+"""LLM 을 부르는 파일은 사용량을 기록해야 한다 (BM 산정 — 보호자별 토큰이 새지 않게).
+
+새 LLM 호출 지점이 `llm_usage.record(` 없이 들어오면 이 테스트가 실패한다. 호출 지점을 찾는 눈이
+먼저 믿을 만한지(#179 의 교훈) — 일부러 기록을 빼 먹은 파일을 잡는지, 지금 아는 호출 지점을 실제로
+보는지 — 를 같이 확인한다.
+
+새 호출 지점을 만들었다면: 응답의 usage 를 읽어 `llm_usage.record(...)` 를 부르고, 그 지점을 부르는
+창구에서 `llm_usage.attribute(...)` 를 건다 (docs/ops/llm-usage-v1.md).
+"""
+
+import re
+from pathlib import Path
+
+APP = Path(__file__).resolve().parents[3] / "app"
+
+# LLM 을 부르거나 부를 클라이언트를 만드는 흔적. 주석 · 독스트링 말고 코드에 있는 모양만 센다.
+_CALL_MARKERS = re.compile(
+    r"""
+    \.(?:completions|embeddings|responses)\.create\(   # openai SDK 호출
+    | \b(?:Async)?OpenAI\(                              # openai 클라이언트 생성
+    | ["']/decisions["']                                # Curator 판정 (httpx 직접 호출)
+    """,
+    re.VERBOSE,
+)
+_RECORD = "llm_usage.record("
+
+# 이 파일들은 지금 LLM 을 부른다 — 위 정규식이 이 파일들을 못 보면 검사 도구가 눈이 먼 것이다
+KNOWN_CALL_SITES = {
+    "agents/common/llm_client.py",
+    "agents/curator/embedding/embedder.py",
+    "agents/curator/embedding/jev.py",
+    "providers/meal_plan/image_ocr.py",
+}
+
+
+def _code_lines(text: str) -> str:
+    """주석 줄은 뺀다. 독스트링은 못 걸러내므로 마커는 코드에서만 쓰는 모양으로 골랐다."""
+    return "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
+
+
+def call_sites(root: Path) -> set[str]:
+    return {
+        path.relative_to(root).as_posix()
+        for path in root.rglob("*.py")
+        if _CALL_MARKERS.search(_code_lines(path.read_text(encoding="utf-8")))
+    }
+
+
+def unrecorded(root: Path) -> set[str]:
+    return {
+        site
+        for site in call_sites(root)
+        if _RECORD not in (root / site).read_text(encoding="utf-8")
+    }
+
+
+def test_검사_도구가_기록을_빼_먹은_파일을_잡는다(tmp_path: Path) -> None:
+    (tmp_path / "forgot.py").write_text(
+        "async def ask(client):\n    return await client.chat.completions.create(model='x')\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "records.py").write_text(
+        "from app.core import llm_usage\n"
+        "async def ask(client):\n"
+        "    response = await client.embeddings.create(model='x')\n"
+        "    llm_usage.record(role='x', provider='p', model='m', prompt_tokens=1)\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "unrelated.py").write_text(
+        "# client.chat.completions.create( 는 주석\n", encoding="utf-8"
+    )
+
+    assert unrecorded(tmp_path) == {"forgot.py"}
+
+
+def test_검사_도구가_지금_아는_호출_지점을_실제로_본다() -> None:
+    assert KNOWN_CALL_SITES <= call_sites(APP)
+
+
+def test_LLM_을_부르는_모든_파일이_사용량을_기록한다() -> None:
+    assert unrecorded(APP) == set()

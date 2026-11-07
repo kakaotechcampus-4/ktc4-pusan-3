@@ -36,8 +36,8 @@ const DRAFT_BODY: SubmitEventBody = {
 describe("되돌릴 수 없는 경로 판정", () => {
   const operations = Object.keys(idempotentPath) as IdempotentOperation[];
 
-  it("표의 줄을 전부 그 메서드로 요구한다 — 5곳 · 초안 제출 · 알레르기 기록 · 복약 제출은 각각 두 줄", () => {
-    expect(operations).toHaveLength(9);
+  it("표의 줄을 전부 그 메서드로 요구한다 — 5곳 · 초안 제출 · 알레르기 기록 · 복약 제출은 각각 두 줄 · 대화의 삭제 확정 (#535)", () => {
+    expect(operations).toHaveLength(10);
     for (const operation of operations) {
       const path = idempotentPath[operation]("x1", "x2");
       expect(requiresIdempotencyKey(idempotentMethod[operation], path), operation).toBe(true);
@@ -209,5 +209,12 @@ describe("응답 유실 → 본문 수정 → 재전송", () => {
     await expect(submitInput("c1", edited, holder.current(edited.text))).resolves.toHaveProperty(
       "run_id",
     );
+  });
+});
+
+describe("대화의 삭제 확정 (#535)", () => {
+  it("🚨 확정은 키가 필요하고, 취소는 아무것도 지우지 않아 키가 없다", () => {
+    expect(requiresIdempotencyKey("POST", "/children/c1/delete-proposals/dp_1/confirm")).toBe(true);
+    expect(requiresIdempotencyKey("POST", "/children/c1/delete-proposals/dp_1/cancel")).toBe(false);
   });
 });

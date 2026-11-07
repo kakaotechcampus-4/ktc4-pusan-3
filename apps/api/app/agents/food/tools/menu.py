@@ -5,6 +5,7 @@ from datetime import date, timedelta
 
 from app.agents.common.age import life_stage
 from app.agents.common.datetime_rules import DateParseError
+from app.agents.common.food_safety import SafetyVerdict, filter_food_safety
 from app.agents.food.amount_rules import amount_of, is_amount_text
 from app.agents.food.context import FoodContext
 from app.agents.food.daycare_intent import is_question, is_uncertain, says_absence
@@ -38,7 +39,6 @@ from app.agents.food.store.ports import (
     MenuCatalogRow,
     SafetyEntry,
 )
-from app.agents.food.tools.safety import SafetyVerdict, filter_food_safety
 from app.rules.allergen import ALLERGEN_NAMES
 from app.rules.menu_key import normalize_menu_key
 

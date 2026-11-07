@@ -28,7 +28,7 @@
 - `components/ui/` — 토큰만 아는 primitive. 도메인 타입(`Suggestion` 등)을 import 하지 않는다
 - `components/` — 도메인을 아는 조합
 - 지금 있는 것 (`components/ui/`) — `Screen`(최대 폭·좌우 여백·**상하 여백+safe area**) · `PageTitle` ·
-  `Button`(§7 6변형) · `TextInput`(검색칸은 `leading` · `trailing` · `labelHidden` · 🚨 브라우저 search × 숨김) · `TextArea` · `DateField` · `DateRangeField`(기간 한 칸 · 범위 달력 · 한 날이면 그날 하루) · `TimeField` · `Checkbox` · `Chip`/`ChipRow` · `RemovableChip`(걸린 조건 · 누르면 풀린다) ·
+  `Button`(§7 6변형) · `TextInput`(검색칸은 `leading` · `trailing` · `labelHidden` · 🚨 브라우저 search × 숨김) · `TextArea` · `DateField` · `DateRangeField`(기간 한 칸 · 범위 달력 · 한 날이면 그날 하루) · `TimeField` · `Checkbox`(🚨 label 이 `relative` — 숨긴 input 이 스크롤 칸 밖으로 나가 문서를 늘리지 않게 · #535) · `Chip`/`ChipRow` · `RemovableChip`(걸린 조건 · 누르면 풀린다) ·
   `EvidenceChip`/`CountChip`/`EvidenceRow` · `Card`(`accent`)/`CardFailed` · `Banner` · `Spinner` ·
   `IconButton`/`IconButtonLink`/`IconButtonPlaceholder`(받는 동안 버튼 자리) · `IconTile` · `ProgressSteps` · `EmptyState`/`EmptyStateSkeleton` ·
   `Skeleton`/`SkeletonText`/`SkeletonTile`/`SkeletonGroup`(🚨 받은 내용과 같은 상자 · 디자인 시스템 §7 "빈 상태 · 스켈레톤") ·
@@ -39,8 +39,8 @@
 - 움직임 (`lib/motion.ts`) — `useEnterMotion`(데이터가 바꾸는 교체 · 단계 넘김) · `useMotionCue`(누른 것만) ·
   `useReveal`(펼침) · `useFlip`(자리 옮김) · `playEnter`. 화면 전환은 `components/route-transition.tsx` 의 `ScreenTransition` 과
   `lib/view-transition.ts` 의 `FORWARD` · `BACK`. 쓰는 자리와 규칙은 디자인 시스템 §8
-- 도메인을 아는 조합 (`components/`) — `DomainChip`/`DomainMeta`/`ObservationMeta` · `AgentPrompts` · `ChildNav` · `SuggestionList` ·
-  `HomeComposer`/`VoiceLevelMeter`(말로 적기 듣는 동안의 음량 막대 · 셸 `volume` 이벤트를 직접 구독) · `GeneralSuggestionCard` · `ChatThread` · `RunReply` · `SafetyCheckSheet`(게이트 ㉡) · `ApprovalSheet`(게이트 ㉠) · `ConsentRequiredCard` ·
+- 도메인을 아는 조합 (`components/`) — `DomainChip`/`DomainMeta`/`ObservationMeta` · `AgentPrompts` · `ChildNav` · `SuggestionList` · `SuggestionWarnings`(05 개인화 줄과 일반 카드가 같이 쓰는 위험 경고 목록 · #672) ·
+  `HomeComposer`/`VoiceLevelMeter`(말로 적기 듣는 동안의 음량 막대 · 셸 `volume` 이벤트를 직접 구독) · `GeneralSuggestionCard` · `EventPeriod`(행사 기간 한 줄 · 개인화 줄과 일반 카드가 같이 쓴다 · #681) · `SuggestionItems`(필요한 재료 · 준비물 · 두 추천 카드가 이 조각만 같이 쓴다 · 읽기 전용 · #659) · `ChatThread` · `RunReply` · `ObservationRow`(04 답 묶음의 기록 한 줄) · `FoundTabsCard`/`DeleteProposalCard`(04 조회 · 삭제 카드 · `btn-danger` · 게이트 표식 없음 · #535) · `SafetyCheckSheet`(게이트 ㉡) · `ApprovalSheet`(게이트 ㉠) · `ConsentRequiredCard` ·
   `AuthGate`/`SessionChecking`/`SessionUnreachable` · `WebPushBridge`(그리는 것 없음 · 로그인이 살아나면 기기 등록, 앱이면 셸이 넘긴 토큰 등록, 알림을 누르면 그 화면으로 · #609) · `ChildScope` · `ObservationList` · `AffinityList` · `CorrectionButtons` · `MemoryDetailSheet` ·
   `SuggestionFeedbackList` · `MonthGrid`/`DayMarkLegend` · `CalendarDayPanel` ·
   `SettingsGroup`/`SettingsLinkRow`/`SettingsInfoRow` · `StartBackLink`(01 · 초대 → 00-1) · `ConsentSection`/`LegalDocumentSection` · `LocationPermissionNote`(10 설정 · 위치 동의는 켜졌는데 휴대폰이 허용 안 했을 때만 · #593) · `LocationOffNote`(04 놀이 추천 아래 · 같은 어긋남 · 하루 한 번 · #638 리뷰) ·
@@ -57,9 +57,14 @@
   `AffinityListSkeleton` · `SuggestionFeedbackListSkeleton` · `SuggestionListSkeleton` · `CalendarDayPanelSkeleton` · `ConsentChecklistSkeleton`.
   🚨 진짜 컴포넌트의 여백 · 줄을 바꾸면 옆의 스켈레톤도 같은 PR 에서 바꾼다 (`e2e/layout-shift.spec.ts` 는 아래가 통째로 밀리는 큰 어긋남만 잡는다 · 모양은 받는 중 화면을 직접 보고 맞춘다 · [`mock-and-tests-v1.md`](mock-and-tests-v1.md) §3-1)
 
-- 🚨 **화면 위 · 아래 고정 바는 `Screen` 의 `topBar` · `bottomBar` · `nav` 로 넘긴다.** `topBar` 는 위 safe area + 여백을 대신 받는다 (04 대화의 머리 — 대화가 자라도 돌아가는 화살표가 밀려나지 않게). 화면이 직접 `sticky` 를 붙이면
+- 🚨 **화면 위 · 아래 고정 바는 `Screen` 의 `topBar` · `bottomBar` · `nav` 로 넘긴다.** `topBar` 는 위 safe area + 여백을 대신 받는다 (04 대화 · 05 제안 후보의 머리 — 화면이 아래로 길어져도 돌아가는 화살표가 밀려나지 않게 · #683). 화면이 직접 `sticky` 를 붙이면
   아래 여백을 0 으로 되돌려야 하는데, 그게 상하 여백을 두 번 죽인 바로 그 조작이다.
   둘 다 넘기면 채팅바가 위·네비가 아래로 한 덩어리가 되고 **safe area 는 제일 아래 것만** 받는다
+- 🚨 **앱 셸의 스플래시는 `Screen` 이 내린다** (#690). 앱을 켠 뒤 처음 선 `Screen` 이 `SplashDone` 으로
+  셸에 알린다 (`lib/native/splash.ts` · 셸 쪽 짝 `apps/mobile/src/native/splash.ts`). `waiting` 을 넘기는 곳은 둘뿐이다 —
+  화면을 **기다리는** 자리(`SessionChecking`)와, 첫 모습을 정하는 값을 받는 동안의 00 로그인(`status.isPending` · 버튼이
+  회색이었다가 노랑으로 바뀌는 순간이 걷힐 때 보였다). 🚨 끝나지 않을 수 있는 조건을 `waiting` 으로 넘기지 않고, `Screen` 없이
+  `<main>` 을 직접 그리지 않는다 — 그 화면에서 앱을 켜면 스플래시가 셸의 시간 초과(문서 뒤 3초)까지 남는다
 - 🚨 **하단 네비(`ChildNav`)는 가는 곳 네 화면과 설정에만 붙인다** (홈·캘린더·기록/기억·아이). 04 대화·05 제안 후보처럼
   흐름 중인 화면에 붙이면 고르는 도중에 새는 길이 생겨 그 화면이 끝나지 않는다 (디자인 시스템 §7).
   설정의 하위 화면 셋이 이 기준으로 갈린다 — **고객센터는 읽는 화면이라 붙이고, 탈퇴는 절차가
@@ -213,7 +218,7 @@ Next 16 기본 `optimizePackageImports` 목록에 있어서 배럴 임포트를 
   🚨 **화면이 처음 뜰 때 · 스크롤할 때는 움직이지 않는다.** 하루에 여러 번 지친 상태로 여는 화면이라, 처음엔 살아 있어
   보여도 100번째엔 매번 기다려야 하는 것이 된다. `lib/motion.ts` 의 훅과 `Swap` 은 전부 첫 렌더를 건너뛴다 — 직접
   `animate()` 를 부르지 말고 그것을 쓴다. 🚨 승인 게이트 안에는 색 변화 말고 넣지 않는다. 게이트를 담은 시트 자체는 다른 시트와 같이 열리고 닫힌다 (#490).
-- 🚨 **도메인 4색을 한 화면에 다 쓰지 않는다** (최대 2개 · 디자인 시스템 §3). 예외는 **로그인 전 소개 화면 하나뿐**이다 — 거기엔 추천이 없어서 도메인 색이 "어느 Agent 결과인가" 신호로 쓰이지 않는다.
+- 🚨 **도메인 4색을 한 화면에 다 쓰지 않는다** (최대 2개 · 디자인 시스템 §3). 예외는 **로그인 전 소개 화면 하나뿐**이다 — 거기엔 실제 추천이 없어서(예시 카드는 고를 수 없는 모양 설명이다 · #704) 도메인 색이 "어느 Agent 결과인가" 신호로 쓰이지 않는다.
 - **모바일 우선.** 이 화면은 대부분 [`apps/mobile`](../../apps/mobile) 웹뷰 안에서 보인다. 데스크톱 레이아웃을 먼저 잡지 않는다.
 - 노치·상태바·홈 인디케이터는 `Screen` 이 상하 여백과 **함께 calc 로** 먹는다. 값의 출처는 둘이다 — 웹뷰 안에서는 네이티브 셸이 꽂아 주는 `--shell-inset-*`, 모바일 브라우저 직접 접속에서는 `env(safe-area-inset-*)`. 🚨 **셸이 그 자리를 대신 칠하게 두지 않는다** — 화면마다 아래 색이 달라서(네비 · 시트 · 그냥 화면) 셸이 한 색으로 칠하면 흰 띠가 남는다 (#133).
   `pt-safe` / `pb-safe` 유틸은 **safe area 만** 필요한 곳(하단 고정 바 등)에 남겨 뒀다 — 여백과 같이 주려면 위 §3 의 경고를 볼 것.

@@ -28,7 +28,6 @@ import { phaseOf, Swap } from "@/components/ui/swap";
 import { useChildId } from "@/hooks/use-child-id";
 import { useSheetTarget } from "@/hooks/use-sheet-target";
 import { EARLIEST_BIRTH_DATE } from "@/lib/date-bounds";
-import { PENDING_SERVER_FEATURES } from "@/lib/features";
 import {
   api,
   qk,
@@ -38,6 +37,7 @@ import {
   type MedicationsResponse,
 } from "@/lib/api";
 import { timesLabel } from "@/lib/medication";
+import { MEDICATION_ENABLED } from "@/lib/store-policy";
 import { FORWARD } from "@/lib/view-transition";
 import { profileTour } from "@/lib/tour/screens/profile";
 
@@ -73,8 +73,7 @@ function ChildProfileScreen() {
         <div className="min-w-0 flex-1">
           <PageTitle>아이 프로필</PageTitle>
           <p className="text-body-sm text-ink-muted mt-2">
-            {/* 복약 구역이 숨은 빌드에서는 말하지 않는다 (`PENDING_SERVER_FEATURES.medications`). */}
-            {PENDING_SERVER_FEATURES.medications
+            {MEDICATION_ENABLED
               ? "기본 정보와 키·몸무게, 복약, 알레르기를 여기서 관리해요."
               : "기본 정보와 키·몸무게, 알레르기를 여기서 관리해요."}
           </p>
@@ -86,8 +85,8 @@ function ChildProfileScreen() {
 
       <GrowthSection childId={childId} query={growth} />
 
-      {/* 실서버에 복약 API 가 생기기 전에는 구역을 세우지 않는다 — 늘 "불러오지 못했어요" 가 선다 (#537). */}
-      {PENDING_SERVER_FEATURES.medications ? <MedicationSection childId={childId} /> : null}
+      {/* 🚨 스토어 선언 때문에 꺼 둔 동안은 칸도 조회도 없다 (`lib/store-policy.ts`). 투어의 복약 단계는 비출 칸이 없어 저절로 빠진다. */}
+      {MEDICATION_ENABLED ? <MedicationSection childId={childId} /> : null}
 
       <SafetySection childId={childId} />
 
@@ -246,6 +245,7 @@ function MedicationSection({ childId }: { childId: string }) {
 
   return (
     <Section
+      data-tour="medications"
       title="복약"
       description="지금 먹이는 약이에요. 눌러서 먹인 회차를 체크할 수 있어요."
       count={courses.length > 0 ? courses.length : undefined}

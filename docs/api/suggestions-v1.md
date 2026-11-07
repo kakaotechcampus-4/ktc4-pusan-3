@@ -42,8 +42,9 @@
 | `groups` | 결과를 낸 Agent 마다 하나(0개 포함). 실패한 Agent 는 없다 — 화면이 실패 카드를 그린다. `notice` 는 보이는 개수로 다시 만든다(알레르기 · 근거로 빠진 것이 있으면 Agent 의 안내와 다르다) |
 | `guards` | `blocked` → `safety_unknown`(Growth 는 안전 문구일 때만, 월령 · 동의 · 포트 · 문서 행 없음으로 닫히면 `closed`), `unsupported` → `unsupported`, 아직 없는 Agent · Growth 처음 요청 → `not_ready` |
 | `suggestions` | 개인화. 보이는 아이 기록 근거가 0행이면 뺀다(지운 기록은 근거로 다시 보여 주지 않는다) |
-| `general` | 일반 추천. 근거는 문서 행이고 출처 기관 · 출처 제목을 싣는다. Growth 도서는 고른 책(`book_catalog`)이 근거고 출처는 국립중앙도서관 · 도서관 정보나루, 제목은 그 추천의 "제목(저자)" 다. 문서 근거 0행인 일반 추천은 Agent 와 저장이 둘 다 거절한다 — 보호자가 놀이를 정해 물은 Activity 추천(`suggestion.requested`)만 예외라 `evidence` 가 비고 기준은 `basis` 문구다. 검수가 풀린 문서만 남은 일반 추천은 내지 않는다(요청 기반이어도 문서를 달았으면 같다) |
+| `general` | 일반 추천. 근거는 문서 행이고 출처 기관 · 출처 제목을 싣는다. Growth 도서는 고른 책(`book_catalog`)이 근거고 출처는 국립중앙도서관 · 도서관 정보나루, 제목은 그 추천의 "제목(저자)" 다. 문서 근거 0행인 일반 추천은 Agent 와 저장이 둘 다 거절한다 — 보호자가 놀이 · 교육 주제를 정해 물은 Activity · Growth 추천(`suggestion.requested`)만 예외라 `evidence` 가 비고 기준은 `basis` 문구다. 검수가 풀린 문서만 남은 일반 추천은 내지 않는다(요청 기반이어도 문서를 달았으면 같다) |
 | `scarcity` | 일반 추천이 있을 때만. `count` 는 일반 추천을 낸 Agent별 `record_count`의 합인 호환 필드다. 정상 화면 문구는 이 합계를 쓰지 않고 `general[].record_count`를 Agent별로 쓴다. `question` 은 Agent 가 되물을 때만(답하는 길은 #246) |
+| `suggestions[].warnings` · `general[].warnings` | 그 추천의 위험 경고 문구(위험 용어 사전의 축 문구 — 작은 부품 · 물놀이 등). Agent 가 코드로 싣고 서버는 저장한 그대로 낸다. 근거가 아니어서 `evidence` 에 없다. 없으면 `[]` (#402) |
 | `groups[].cautions` | 식품 아닌 알레르기 확인 문구. `health_safety` 에서 코드로 다시 만든다(Activity 와 같은 함수) — 재생해도 같다. 동의가 없으면 `[]` |
 | `general[].record_count` | 그 Agent 도메인에 남아 있는 관찰 수. 04 `agent_result.record_count` 와 같은 표(`agent_ports.RECORD_KINDS`) |
 | `groups[].notice.code = "daily_limit"` | 하루 한도라 그 Agent 는 돌리지 않았다. 같은 응답에 보여 줄 다른 결과가 없으면 지금처럼 429 |
@@ -64,7 +65,6 @@ Agent 를 실제로 새로 돌릴 때만 `/inputs` 와 같은 하루 한도에�
   그 run 에 겹칠 draft 가 없다. Food 의 이력 포트는 DB 어댑터가 붙을 때 같이 연결한다.
 - `looked_at` · `groups[].prompt` 문구 — Agent 가 무엇을 봤는지 아직 내지 않는다.
 - 날씨 안내 — 04 대화(agent_result)로만 나간다. 알레르기 확인 문구는 `cautions` 로 05 에도 나간다.
-- 추천별 위험 경고 — #402.
 
 ## 6. 알아 둘 것
 

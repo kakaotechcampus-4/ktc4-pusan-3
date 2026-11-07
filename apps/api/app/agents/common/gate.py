@@ -38,6 +38,7 @@ class DataReady:
     book_api: bool = True  # 도서 API 가용 — Growth 의 도서 라벨
     places: bool = False  # 장소 어댑터가 주입됐나 — Activity 의 search_nearby_places
     weather: bool = False  # 날씨 어댑터가 주입됐나 — Activity 의 lookup_weather
+    events: bool = False  # 행사 어댑터가 주입됐나 — Activity 의 search_events
 
 
 @dataclass(frozen=True)

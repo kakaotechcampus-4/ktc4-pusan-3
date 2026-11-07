@@ -11,6 +11,8 @@
   일정 초안은 DB 에 쓰지 않아서(9/17) id 로 지금 상태를 찾을 곳이 없다 — 내용을 담고, 지난
   대화에서는 "넣기" 없이 읽기 전용으로만 그린다.
 - `{kind, id}` 만 — `saved` 의 관찰, `agent_result` 의 추천 id. 관찰 표가 5개라 종류도 담는다.
+  조회 카드(`found_tabs`, #535)도 탭마다 (종류, id) 만 담는다. 삭제 제안 카드(`delete_proposal`)는
+  제안 id 하나만 — 후보와 결과는 `delete_proposal` 표에 있고, 조회할 때 지금 상태로 그린다.
   관찰은 조회할 때 지금 상태로 채운다 — 지운 관찰은 내용 없이 "지웠어요" 로(`v1/schemas/chat.py`).
   추천은 id 그대로 둔다 — 블록은 "후보 보기" 만 세우고, 채택 · 만료는 05 가 지금 상태로 거른다.
 - 저장하지 않음 — `step`(진행 중에만 의미가 있다), 되묻기 조각 원문(`PendingReply`), 05 보관함
@@ -25,9 +27,17 @@
    하루치를 한 번에 검증하면 답 하나 때문에 그날 대화 전체가 500 이 된다.
 """
 
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
+
+ScreenRefKind = Literal["medication_schedule"]
+SCREEN_REF_KINDS: frozenset[str] = frozenset(get_args(ScreenRefKind))
+"""readout 근거 중 화면으로 보내는 종류. 화면이 `Ref.kind` 로 받기로 한 것만이다.
+
+SSE(`runs/translate.py`)와 지난 대화(`StoredReadout`)가 같은 기준을 쓴다 — 실시간 화면과 다시 그린
+화면에서 같은 버튼이 서야 한다.
+"""
 
 
 class _Reply(BaseModel):
@@ -38,6 +48,13 @@ class StoredRef(_Reply):
     """가리키는 행. 관찰이면 `observation_food` 처럼 표 이름이 kind 다."""
 
     kind: str
+    id: str
+
+
+class StoredScreenRef(_Reply):
+    """readout 이 가리키는 행 중 화면이 받는 종류. 스키마에도 그 종류만 남긴다."""
+
+    kind: ScreenRefKind
     id: str
 
 
@@ -71,6 +88,28 @@ class SavedReply(_Reply):
     refs: list[StoredRef]
 
 
+class StoredTab(_Reply):
+    """조회 카드의 탭 하나. 내용은 담지 않는다 — 지난 대화를 열 때 지금 상태로 읽는다."""
+
+    kind: str
+    truncated: bool
+    ids: list[str]
+
+
+class FoundTabsReply(_Reply):
+    """조회 답변 · 수정 후보 카드 (#535)."""
+
+    type: Literal["found_tabs"] = "found_tabs"
+    tabs: list[StoredTab]
+
+
+class DeleteProposalReply(_Reply):
+    """삭제 제안 카드 (#535). 후보 · 상태 · 지운 건수는 `delete_proposal` 표가 들고 있다."""
+
+    type: Literal["delete_proposal"] = "delete_proposal"
+    proposal_id: str
+
+
 class EventDraftReply(_Reply):
     """일정 초안 내용(`core/event_draft.py` 의 payload 그대로). 지난 대화에서는 읽기 전용이다."""
 
@@ -82,8 +121,8 @@ class StoredReadout(_Reply):
     """`agent_result` 의 readout 한 덩어리. 종류와 상관없이 문장 그대로 담는다.
 
     알레르기 확인 문구 · 성장 추이처럼 아이 기록 값이 문장에 들어 있어도 그날 오간 말로 둔다
-    (입력 원문 · `note` 와 같다). 근거(`source_refs`)는 담지 않는다 — 근거로 문장을 다시 그리는
-    길이 생기면 그때 기본값이 있는 칸으로 늘린다.
+    (입력 원문 · `note` 와 같다). 근거는 화면이 받는 종류(`SCREEN_REF_KINDS`)만 담는다 — 체크 안내
+    아래 "복약 화면 열기" 가 다시 그린 대화에서도 그 코스로 가게 한다. 값은 id 뿐이다.
     """
 
     kind: str
@@ -91,6 +130,13 @@ class StoredReadout(_Reply):
     body: str
     authored_by: Literal["code", "model"]
     code: str | None
+    source_refs: list[StoredScreenRef] = Field(
+        default_factory=list,
+        description=(
+            "이 readout 이 가리키는 복약 코스(`medication_schedule`). 다른 근거 종류는 "
+            "싣지 않는다. 이 칸이 없던 때 쌓인 행은 빈 목록이다."
+        ),
+    )
 
 
 class AgentResultReply(_Reply):
@@ -143,6 +189,8 @@ ChatReply = Annotated[
     | GuidanceReply
     | UnavailableReply
     | SavedReply
+    | FoundTabsReply
+    | DeleteProposalReply
     | EventDraftReply
     | AgentResultReply
     | PartialReply

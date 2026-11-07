@@ -17,18 +17,17 @@ from app.agents.memory.schemas.observation import (
     ObservationRoutineCreate,
     ObservationRoutineUpdate,
 )
+from app.agents.memory.schemas.proposal import ProposeDeleteArgs
 from app.agents.memory.schemas.schedule import (
     EventCreate,
     EventItemCreate,
     EventItemRef,
     EventItemUpdate,
     EventQuery,
-    EventRef,
     EventUpdate,
 )
 
 _NEEDS_QUERY = "대상 id 를 모르면 먼저 조회 tool을 부른다. id를 지어내지 않는다."
-_CAN_DELETE = "기록 한 건을 통째로 지울 때도 이 tool 이다. status=deleted 만 넣는다."
 
 TOOL_DEFINITIONS: list[ToolDefinition] = [
     # observation_food
@@ -47,26 +46,31 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
     ),
     ToolDefinition(
         name="update_observation_food",
-        description=f"이미 저장된 음식 기록의 내용을 고친다. {_CAN_DELETE} {_NEEDS_QUERY}",
+        description=f"이미 저장된 음식 기록의 내용을 고친다. {_NEEDS_QUERY}",
         args=ObservationFoodUpdate,
     ),
     # observation_health
     ToolDefinition(
         name="create_observation_health",
         description=(
-            "관찰된 증상이나 컨디션을 기록한다. 발화에 드러난 것만 담고 원인을 추정하지 않는다. "
+            "관찰된 증상이나 컨디션, 이미 먹인 약을 기록한다. 발화에 드러난 것만 담고 원인을 "
+            "추정하지 않는다. 증상과 먹인 약을 같이 말했으면 이 tool 한 번에 같이 넣는다. "
             "알레르기·만성질환 등록에는 쓰지 않는다 — 그건 보호자가 직접 입력한다."
         ),
         args=ObservationHealthCreate,
     ),
     ToolDefinition(
         name="query_observation_health",
-        description=f"저장된 증상 기록을 날짜나 키워드로 찾는다. {_NEEDS_QUERY}",
+        description=(
+            "저장된 증상 · 먹인 약 기록을 날짜나 키워드로 찾는다. "
+            "결과의 kind 가 symptom 이면 증상, medication 이면 먹인 약 기록이다. "
+            f"{_NEEDS_QUERY}"
+        ),
         args=ObservationQueryArgs,
     ),
     ToolDefinition(
         name="update_observation_health",
-        description=f"이미 저장된 증상 기록을 고친다. {_CAN_DELETE} {_NEEDS_QUERY}",
+        description=f"이미 저장된 증상 기록을 고친다. {_NEEDS_QUERY}",
         args=ObservationHealthUpdate,
     ),
     # observation_education
@@ -85,7 +89,7 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
     ),
     ToolDefinition(
         name="update_observation_education",
-        description=f"이미 저장된 학습 기록을 고친다. {_CAN_DELETE} {_NEEDS_QUERY}",
+        description=f"이미 저장된 학습 기록을 고친다. {_NEEDS_QUERY}",
         args=ObservationEducationUpdate,
     ),
     # observation_activity
@@ -104,7 +108,7 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
     ),
     ToolDefinition(
         name="update_observation_activity",
-        description=f"이미 저장된 활동 기록을 고친다. {_CAN_DELETE} {_NEEDS_QUERY}",
+        description=f"이미 저장된 활동 기록을 고친다. {_NEEDS_QUERY}",
         args=ObservationActivityUpdate,
     ),
     # observation_routine
@@ -124,7 +128,7 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
     ),
     ToolDefinition(
         name="update_observation_routine",
-        description=f"이미 저장된 생활 행동 기록을 고친다. {_CAN_DELETE} {_NEEDS_QUERY}",
+        description=f"이미 저장된 생활 행동 기록을 고친다. {_NEEDS_QUERY}",
         args=ObservationRoutineUpdate,
     ),
     # event
@@ -142,7 +146,7 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
         name="query_event",
         description=(
             "일정을 날짜 범위나 이름으로 찾는다. 준비물도 함께 돌려준다. "
-            "일정 수정·삭제, 준비물 추가 전에 id 를 얻으려면 먼저 이 tool 을 부른다."
+            "일정 수정 · 삭제 제안, 준비물 추가 전에 id 를 얻으려면 먼저 이 tool 을 부른다."
         ),
         args=EventQuery,
     ),
@@ -153,11 +157,6 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
             f'끝나는 시각을 없애려면 clear=["ends_at"]을 쓴다. {_NEEDS_QUERY}'
         ),
         args=EventUpdate,
-    ),
-    ToolDefinition(
-        name="delete_event",
-        description=f"일정 한 건을 지운다. 연결된 준비물도 함께 삭제한다. {_NEEDS_QUERY}",
-        args=EventRef,
     ),
     # event_item
     ToolDefinition(
@@ -181,5 +180,17 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
         name="delete_event_item",
         description=f"준비물 한 개를 목록에서 뺀다. {_NEEDS_QUERY}",
         args=EventItemRef,
+    ),
+    # 삭제 제안 (#535)
+    ToolDefinition(
+        name="propose_delete",
+        description=(
+            "기록 · 일정을 지워 달라는 요청에 부른다. 지우지 않고 제안만 남긴다. "
+            "고른 것이 미리 체크되고, 같은 종류의 나머지 조회 결과도 체크 없이 카드에 보인다. "
+            "종류 전부는 all_kinds, 그중 빼기는 except_ids, 하나씩은 ids 로 고른다. "
+            "보호자가 카드에서 체크를 고치고 삭제 버튼을 눌러야 지워진다. "
+            "조회 tool 을 먼저 부른다. run 에 한 번만 부른다."
+        ),
+        args=ProposeDeleteArgs,
     ),
 ]

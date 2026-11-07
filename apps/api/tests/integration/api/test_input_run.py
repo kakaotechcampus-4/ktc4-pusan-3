@@ -14,14 +14,18 @@ Idempotency 는 계약서 §01 "헤더가 없으면 400" 에 더해 docs/api/ide
 """
 
 import asyncio
+import time
 import uuid
 from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime
 from unittest.mock import ANY
 
 import pytest
+import redis
 from sqlalchemy import select
 
+from app.agents.common.result import DomainPending
+from app.agents.common.schemas.task import DomainTask
 from app.agents.entrypoint import PendingMemoryContext
 from app.agents.memory.schemas.task import WorkType
 from app.api import idempotency, quota
@@ -130,6 +134,8 @@ async def test_inputs_hand_the_line_to_the_agents(db_client, bearer, agent_calls
             "reply_to": None,
             "location": None,
             "activity_weather": None,
+            "activity_events": None,
+            "health_places": None,
             "on_event": ANY,  # 대화 기록(#228) — test_finished_run_is_kept_as_a_chat_turn
         }
     ]
@@ -637,6 +643,106 @@ async def test_맥락_없는_reply_to_는_한도를_쓰지_않는다(
     assert accepted.status_code == 202
 
 
+# ── reply_to — Health 가 물은 것에 대한 답 ──────────────────────
+# 보관함은 맥락 종류를 가리지 않는다. 같은 15분 · 임자 · 아이 · 사용 중 확인이 Health 맥락에도
+# 걸리는지 본다. 맥락에는 발화 원문이 없다(`hint_text` · 요청 조각이 비어 있다).
+_STOP_Q = "항생제 복약 알림을 멈출까요? 먹인 기록은 그대로 남아요."
+_HEALTH_PENDING = PendingMemoryContext(
+    hint_text="",
+    question=_STOP_Q,
+    work=WorkType.OBSERVE,
+    resume=DomainTask(run_id="r-prev", agent="health", task_type="medication", request_texts=()),
+    asked=DomainPending(
+        "health",
+        "medication_stop",
+        _STOP_Q,
+        {"schedule_id": str(uuid.uuid4()), "title": "항생제"},
+    ),
+)
+_HEALTH_ANSWER = {"text": "응", "source": "home_input"}
+
+
+async def test_Health_질문에_reply_to_로_답하면_맥락이_agent_로_넘어간다(
+    db_client, bearer, agent_calls, cid
+):
+    headers, parent_id = bearer
+    pending_reply.put(run_id="r-health", parent_id=parent_id, child_id=cid, context=_HEALTH_PENDING)
+
+    response = await db_client.post(
+        INPUTS.format(cid=cid),
+        json={**_HEALTH_ANSWER, "reply_to": "r-health"},
+        headers=with_key(headers),
+    )
+
+    assert response.status_code == 202
+    assert agent_calls[0]["continuation"] == _HEALTH_PENDING
+    assert agent_calls[0]["continuation"].asked.kind == "medication_stop"
+
+
+async def test_15분이_지난_Health_맥락은_400(db_client, bearer, agent_calls, cid):
+    headers, parent_id = bearer
+    pending_reply.put(
+        run_id="r-health",
+        parent_id=parent_id,
+        child_id=cid,
+        context=_HEALTH_PENDING,
+        now=time.monotonic() - pending_reply.TTL_SECONDS - 1,
+    )
+
+    response = await db_client.post(
+        INPUTS.format(cid=cid),
+        json={**_HEALTH_ANSWER, "reply_to": "r-health"},
+        headers=with_key(headers),
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "reply_context_unavailable"
+    assert agent_calls == []
+
+
+async def test_다른_보호자는_Health_질문에_답할_수_없다(db_client, bearer, agent_calls, cid):
+    headers, _ = bearer
+    pending_reply.put(
+        run_id="r-health", parent_id=uuid.uuid4(), child_id=cid, context=_HEALTH_PENDING
+    )
+
+    response = await db_client.post(
+        INPUTS.format(cid=cid),
+        json={**_HEALTH_ANSWER, "reply_to": "r-health"},
+        headers=with_key(headers),
+    )
+
+    assert response.status_code == 400 and agent_calls == []
+
+
+async def test_다른_아이의_Health_질문은_이어받지_못한다(db_client, bearer, agent_calls, cid):
+    headers, parent_id = bearer
+    pending_reply.put(
+        run_id="r-health", parent_id=parent_id, child_id=uuid.uuid4(), context=_HEALTH_PENDING
+    )
+
+    response = await db_client.post(
+        INPUTS.format(cid=cid),
+        json={**_HEALTH_ANSWER, "reply_to": "r-health"},
+        headers=with_key(headers),
+    )
+
+    assert response.status_code == 400 and agent_calls == []
+
+
+async def test_같은_Health_질문의_두_번째_답은_400(db_client, bearer, agent_calls, cid):
+    # 중단 확인에 "응" 이 두 번 가면 같은 코스를 두 번 멈추려는 것과 같다
+    headers, parent_id = bearer
+    pending_reply.put(run_id="r-health", parent_id=parent_id, child_id=cid, context=_HEALTH_PENDING)
+    body = {**_HEALTH_ANSWER, "reply_to": "r-health"}
+
+    first = await db_client.post(INPUTS.format(cid=cid), json=body, headers=with_key(headers))
+    second = await db_client.post(INPUTS.format(cid=cid), json=body, headers=with_key(headers))
+
+    assert first.status_code == 202 and second.status_code == 400
+    assert len(agent_calls) == 1
+
+
 # ── 9단계 — 아이 주소는 연결된 보호자만 ─────────────────────────────
 
 
@@ -725,3 +831,80 @@ async def test_막힌_요청은_하루_횟수를_쓰지_않는다(db_client, bea
 
     assert denied.status_code == 403
     assert accepted.status_code == 202
+
+
+async def test_Redis_가_죽으면_입력은_503_이고_Agent_를_부르지_않는다(
+    db_client, bearer, agent_calls, monkeypatch, cid
+):
+    """#671 — 메모리로 받으면 장애 직전에 적힌 키가 안 보여 같은 한 줄이 두 번 저장된다.
+
+    서버를 늘리면 다른 서버로 간 재시도도 못 막는다. 다시 보내면 되는 503 으로 막는다.
+    """
+    down = redis.Redis(host="127.0.0.1", port=1, socket_connect_timeout=0.2)
+    monkeypatch.setattr(idempotency, "get_redis", lambda: down)
+    headers, _ = bearer
+
+    response = await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=with_key(headers))
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "temporarily_unavailable"
+    assert agent_calls == []
+
+
+async def test_키를_못_남기면_입력은_503_이고_Agent_를_부르지_않는다(
+    db_client, bearer, agent_calls, monkeypatch, cid
+):
+    """#671 리뷰 — 한 줄 입력은 키를 러너보다 먼저 적는다. 아직 아무것도 저장하지 않았으니 키를
+    못 남기면 503 으로 끝내야 한다. 삼키고 러너를 띄우면 같은 키 재시도가 두 번 저장된다."""
+    import fakeredis
+
+    store = fakeredis.FakeRedis(decode_responses=True)
+    monkeypatch.setattr(idempotency, "get_redis", lambda: store)
+    real_set = store.set
+
+    def refuse_reply_write(name, value, *args, **kwargs):
+        if str(name).startswith("idem:"):
+            raise redis.ConnectionError("down")
+        return real_set(name, value, *args, **kwargs)
+
+    monkeypatch.setattr(store, "set", refuse_reply_write)
+    headers, _ = bearer
+
+    response = await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=with_key(headers))
+    await asyncio.sleep(0.05)
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "temporarily_unavailable"
+    assert agent_calls == []
+
+
+async def test_키를_적은_뒤_응답을_못_받아_503_이면_같은_키_재시도는_새로_처리한다(
+    db_client, bearer, agent_calls, monkeypatch, cid
+):
+    """#729 리뷰 — 키를 적은 뒤 응답만 늦어 TimeoutError 면 첫 요청은 503 인데 키는 남는다.
+
+    웹은 같은 문장을 같은 키로 다시 보낸다. 그 키가 처리되지 않은 run 을 재생하면 입력이 사라진다.
+    """
+    import fakeredis
+
+    store = fakeredis.FakeRedis(decode_responses=True)
+    monkeypatch.setattr(idempotency, "get_redis", lambda: store)
+    real_set = store.set
+    late = {"once": True}
+
+    def write_then_time_out(name, value, *args, **kwargs):
+        done = real_set(name, value, *args, **kwargs)
+        if str(name).startswith("idem:") and late.pop("once", False):
+            raise redis.TimeoutError("late")
+        return done
+
+    monkeypatch.setattr(store, "set", write_then_time_out)
+    headers = with_key(bearer[0])
+
+    first = await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=headers)
+    retry = await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=headers)
+    await asyncio.sleep(0.05)
+
+    assert first.status_code == 503
+    assert retry.status_code == 202
+    assert len(agent_calls) == 1  # 재시도가 실제로 처리됐다

@@ -1,0 +1,693 @@
+"""기억을 다시 계산하는 경로들이 같은 기억을 동시에 고칠 때 (#636)
+
+경로는 넷이다 — Curator 연결 · Correction · Memory 의 관찰 수정/삭제 · 하루 배치.
+  · 기억 행 — recompute_profile 이 FOR UPDATE 로 잠그고 DB 값으로 다시 읽는다. 아니면 한쪽이 읽은
+    낡은 strength 로 다른 쪽이 커밋한 값을 덮어써 보호자 정정의 감소분이 사라진다(lost update).
+  · 아이 잠금 — 기억 여러 개를 잠그는 쪽(Curator · Memory 수정/삭제 · 배치)은 lock_child_memory 를
+    먼저 잡는다. 아니면 서로 반대 순서로 잠가 Postgres 가 한쪽을 DeadlockDetected 로 죽인다.
+
+트랜잭션 둘이 실제로 겹쳐야 해서 롤백 픽스처(session)를 쓰지 않는다 — test_invite_concurrency 와
+같다. 배치 전체(run_recompute)는 DB 의 모든 기억을 커밋하므로, 아이 한 명 몫(_recompute_child)만
+돌린다. 심은 행은 끝에 직접 지운다(아이를 지우면 기억 · 관찰 · Correction 은 CASCADE).
+"""
+
+import asyncio
+import logging
+import re
+from datetime import date, timedelta
+
+import pytest
+from sqlalchemy import delete, select
+from sqlalchemy.dialects.postgresql import Range
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.domains.child.models import Child, ParentChildRelation
+from app.domains.child.repository import create_child
+from app.domains.identity.models import Parent
+from app.domains.memory.observation.models import ConfidenceSource, ObservationFood
+from app.domains.memory.profile import service
+from app.domains.memory.profile.models import MemoryDomain, ProfileAffinity, ProfileState
+from app.infra.db.session import engine
+from app.workers.profile_recompute import _recompute_child
+
+TODAY = date(2026, 9, 26)
+START = 0.55  # 승격 보너스가 붙은 확인됨
+
+
+@pytest.fixture
+async def seeded():
+    """확인됨 기억 하나 — 14일 창 안에 관찰이 하루만 남아 배치가 후보로 내린다."""
+    async with AsyncSession(engine, expire_on_commit=False) as setup:
+        owner = Parent()
+        setup.add(owner)
+        await setup.flush()
+        child = await create_child(
+            setup,
+            owner_parent_id=owner.id,
+            nickname="동시",
+            birth_date=date(2023, 1, 1),
+            relation=ParentChildRelation.MOTHER,
+        )
+        profile = ProfileAffinity(
+            child_id=child.id,
+            merge_key="동시성",
+            domain=MemoryDomain.FOOD,
+            state=ProfileState.CONFIRMED,
+            polarity=1,
+            strength=START,
+            last_observed_on=TODAY - timedelta(days=13),
+        )
+        setup.add(profile)
+        await setup.flush()
+        for ago in (15, 14, 13):
+            day = TODAY - timedelta(days=ago)
+            setup.add(
+                ObservationFood(
+                    child_id=child.id,
+                    raw_text="test",
+                    subject="동시성",
+                    polarity=1,
+                    confidence_source=ConfidenceSource.PARENT_DIRECT,
+                    observed_range=Range(day, day + timedelta(days=1)),
+                    affinity_id=profile.id,
+                )
+            )
+        await setup.commit()
+    try:
+        yield owner.id, child.id, profile.id
+    finally:
+        async with AsyncSession(engine) as cleanup:
+            await cleanup.execute(delete(Child).where(Child.id == child.id))
+            await cleanup.execute(delete(Parent).where(Parent.id == owner.id))
+            await cleanup.commit()
+
+
+async def test_배치가_읽은_뒤_Correction_이_커밋돼도_정정의_감소분이_남는다(seeded, monkeypatch):
+    parent_id, child_id, profile_id = seeded
+    batch_read = asyncio.Event()  # 배치가 기억을 읽었다
+    release = asyncio.Event()  # 배치를 이어서 쓰게 한다
+    real_count = service.count_active_in_window
+
+    async with (
+        AsyncSession(engine, expire_on_commit=False) as batch_s,
+        AsyncSession(engine, expire_on_commit=False) as correction_s,
+    ):
+
+        async def pause_batch_after_read(session, **kw):
+            # recompute_profile 이 기억을 읽은 직후 · 쓰기 전. 배치 쪽 세션만 멈춘다
+            if session is batch_s and not batch_read.is_set():
+                batch_read.set()
+                await release.wait()
+            return await real_count(session, **kw)
+
+        monkeypatch.setattr(service, "count_active_in_window", pause_batch_after_read)
+
+        batch = asyncio.create_task(_recompute_child(batch_s, child_id, [profile_id], today=TODAY))
+        await batch_read.wait()
+
+        async def correct():
+            await service.handle_profile_correction(
+                correction_s,
+                child_id=child_id,
+                profile_id=profile_id,
+                verdict="wrong",
+                parent_id=parent_id,
+                today=TODAY,
+            )
+            await correction_s.commit()
+
+        correction = asyncio.create_task(correct())
+        await asyncio.sleep(0.3)  # 잠금이 없으면 이 사이에 Correction 이 먼저 커밋한다
+        release.set()
+        await asyncio.wait_for(asyncio.gather(batch, correction), timeout=5)
+
+    async with AsyncSession(engine) as check:
+        state, strength = (
+            await check.execute(
+                select(ProfileAffinity.state, ProfileAffinity.strength).where(
+                    ProfileAffinity.id == profile_id
+                )
+            )
+        ).one()
+
+    # 어느 쪽이 먼저든 차례로 돌면 같은 값이다 — 강등 ×0.90 과 wrong ×0.93 이 둘 다 붙는다
+    # 배치가 덮어쓰면 START × 0.90 = 0.495 로 남는다 (wrong 감소분이 사라짐)
+    assert state == ProfileState.CANDIDATE
+    assert strength == pytest.approx(START * 0.90 * 0.93)
+
+
+async def test_Curator_가_같은_아이를_잡고_있으면_배치가_기다린다(seeded):
+    """Curator 는 관찰을 붙이고 재계산하는 동안 아이 단위 advisory lock 을 쥔다(trigger.py).
+
+    배치가 이 잠금을 같은 (namespace, key) 로 잡지 않으면, Curator 가 읽은 낡은 상태로 배치의
+    전이를 덮어쓸 수 있다. 잠금을 쥔 Curator 대역을 세우고, 배치가 그동안 끝나지 않는지 본다.
+    """
+    _, child_id, profile_id = seeded
+    async with (
+        AsyncSession(engine) as curator_s,
+        AsyncSession(engine, expire_on_commit=False) as batch_s,
+    ):
+        await service.lock_child_memory(
+            curator_s, child_id
+        )  # trigger.py `_run_curator` 와 같은 잠금
+        batch = asyncio.create_task(_recompute_child(batch_s, child_id, [profile_id], today=TODAY))
+        await asyncio.sleep(0.3)
+        assert not batch.done()  # Curator 가 쥐고 있는 동안은 기다린다
+
+        await curator_s.commit()  # xact 잠금이 풀린다
+        assert await asyncio.wait_for(batch, timeout=5) == (1, 1)
+
+
+async def test_Curator_가_미리_읽은_뒤_Correction_이_커밋돼도_정정의_감소분이_남는다(
+    seeded, monkeypatch
+):
+    """Curator 경로(refresh_profile)가 기억을 읽고 있으면 Correction 은 그 커밋을 기다렸다가 얹는다.
+
+    예전에는 refresh_profile 이 잠그기 전에 읽어 그 틈에 Correction 이 먼저 커밋할 수 있었고,
+    잠근 뒤 DB 값으로 다시 채우지 않으면 낡은 strength 로 감소분을 덮어썼다. 이제 잠근 뒤에
+    읽으므로(#745) 틈이 없고, 정정의 감소분은 Curator 결과 위에 그대로 남아야 한다.
+    """
+    parent_id, child_id, profile_id = seeded
+    curator_read = asyncio.Event()
+    release = asyncio.Event()
+    real_latest = service.get_latest_active_observed_on
+
+    async with (
+        AsyncSession(engine, expire_on_commit=False) as curator_s,
+        AsyncSession(engine, expire_on_commit=False) as correction_s,
+    ):
+
+        async def pause_after_unlocked_read(session, **kw):
+            # refresh_profile 이 기억을 잠그고 마지막 관찰일을 세는 중
+            if session is curator_s and not curator_read.is_set():
+                curator_read.set()
+                await release.wait()
+            return await real_latest(session, **kw)
+
+        monkeypatch.setattr(service, "get_latest_active_observed_on", pause_after_unlocked_read)
+
+        async def curator():
+            await service.refresh_profile(curator_s, profile_id=profile_id, today=TODAY)
+            await curator_s.commit()
+
+        curator_task = asyncio.create_task(curator())
+        await curator_read.wait()
+
+        async def correction():
+            await service.handle_profile_correction(
+                correction_s,
+                child_id=child_id,
+                profile_id=profile_id,
+                verdict="wrong",
+                parent_id=parent_id,
+                today=TODAY,
+            )
+            await correction_s.commit()
+
+        correction_task = asyncio.create_task(correction())
+        try:
+            await asyncio.sleep(0.3)
+            assert not correction_task.done()  # Curator 가 기억을 쥐고 있어 기다린다
+            release.set()
+            await asyncio.wait_for(curator_task, timeout=5)
+            await asyncio.wait_for(correction_task, timeout=5)
+        finally:
+            release.set()
+            correction_task.cancel()
+
+    assert await _stored(profile_id) == (ProfileState.CANDIDATE, pytest.approx(START * 0.90 * 0.93))
+
+
+async def _stored(profile_id):
+    async with AsyncSession(engine) as check:
+        row = (
+            await check.execute(
+                select(ProfileAffinity.state, ProfileAffinity.strength).where(
+                    ProfileAffinity.id == profile_id
+                )
+            )
+        ).one()
+    return row.state, row.strength
+
+
+@pytest.fixture
+async def two_linked():
+    """기억 둘(A · B) — 각각 묶인 관찰 하나. Memory run 이 그 관찰들을 지운다."""
+    async with AsyncSession(engine, expire_on_commit=False) as setup:
+        owner = Parent()
+        setup.add(owner)
+        await setup.flush()
+        child = await create_child(
+            setup,
+            owner_parent_id=owner.id,
+            nickname="교착",
+            birth_date=date(2023, 1, 1),
+            relation=ParentChildRelation.MOTHER,
+        )
+        pairs = []
+        for key in ("A", "B"):
+            profile = ProfileAffinity(
+                child_id=child.id,
+                merge_key=key,
+                domain=MemoryDomain.FOOD,
+                state=ProfileState.CANDIDATE,
+                polarity=1,
+                last_observed_on=TODAY,
+            )
+            setup.add(profile)
+            await setup.flush()
+            obs = ObservationFood(
+                child_id=child.id,
+                raw_text="test",
+                subject=key,
+                polarity=1,
+                confidence_source=ConfidenceSource.PARENT_DIRECT,
+                observed_range=Range(TODAY, TODAY + timedelta(days=1)),
+                affinity_id=profile.id,
+            )
+            setup.add(obs)
+            await setup.flush()
+            pairs.append((profile.id, obs.id))
+        await setup.commit()
+    try:
+        yield child.id, pairs
+    finally:
+        async with AsyncSession(engine) as cleanup:
+            await cleanup.execute(delete(Child).where(Child.id == child.id))
+            await cleanup.execute(delete(Parent).where(Parent.id == owner.id))
+            await cleanup.commit()
+
+
+async def test_Memory_run_과_Curator_가_기억_둘을_반대_순서로_고쳐도_교착하지_않는다(two_linked):
+    """Memory run 은 관찰을 고칠 때마다 그 기억을 다시 계산하고, 행 잠금을 커밋까지 쥔다.
+
+    run 이 B → A 순서로 고치는 사이에 앞 run 의 Curator 가 A → B 로 다시 계산하면, 아이 잠금이
+    없을 때 run 이 B 를 · Curator 가 A 를 쥔 채 서로를 기다려 Postgres 가 한쪽을
+    DeadlockDetected 로 죽인다. run 쪽이 지면 보호자 입력이 저장되지 않는다.
+    Memory 도 아이 잠금을 먼저 잡아 차례로 돌아야 한다.
+    """
+    from app.domains.memory.observation.repository import ObservationDomain
+    from app.domains.memory.store.db_store import DbMemoryStore
+
+    child_id, [(profile_a, obs_a), (profile_b, obs_b)] = two_linked
+    async with (
+        AsyncSession(engine, expire_on_commit=False) as run_s,
+        AsyncSession(engine, expire_on_commit=False) as curator_s,
+    ):
+        store = DbMemoryStore(run_s, child_id=child_id, today=TODAY)
+        # run — B 의 관찰을 지운다. 커밋 전이라 B 기억 행 잠금을 쥐고 있다
+        assert await store.delete_observation(
+            domain=ObservationDomain.FOOD, observation_id=str(obs_b)
+        )
+
+        async def curator():  # trigger.py 와 같은 순서 — 아이 잠금 → 연결된 기억들 재계산 → 커밋
+            await service.lock_child_memory(curator_s, child_id)
+            for pid in (profile_a, profile_b):
+                await service.refresh_profile(curator_s, profile_id=pid, today=TODAY)
+            await curator_s.commit()
+
+        curator_task = asyncio.create_task(curator())
+        await asyncio.sleep(0.3)  # 아이 잠금이 없으면 Curator 가 이 사이 A 를 잠그고 B 를 기다린다
+
+        # run — 이어서 A 의 관찰을 지운다
+        assert await store.delete_observation(
+            domain=ObservationDomain.FOOD, observation_id=str(obs_a)
+        )
+        await run_s.commit()
+        await asyncio.wait_for(curator_task, timeout=5)  # 교착이면 여기서 DeadlockDetected
+
+    # 둘 다 끝났다 — 묶인 관찰이 없어진 기억은 O=0 이라 후보 그대로
+    assert (await _stored(profile_a))[0] == ProfileState.CANDIDATE
+    assert (await _stored(profile_b))[0] == ProfileState.CANDIDATE
+
+
+async def test_run_이_연결_안_된_관찰을_고친_뒤_Curator_가_그걸_연결하려_해도_교착하지_않는다(
+    two_linked,
+):
+    """연결 안 된 관찰을 고칠 때는 다시 계산할 기억이 없다 — 그래도 아이 잠금을 먼저 잡아야 한다.
+
+    run 이 연결 안 된 X 를 고쳐 X 의 행 잠금을 쥔 사이, Curator 가 아이 잠금을 쥐고 X 를 연결하려
+    X 를 기다린다. 그 뒤 run 이 연결된 Y 를 고치며 아이 잠금을 기다리면 둘이 서로를 기다린다.
+    """
+    from sqlalchemy import update
+
+    from app.domains.memory.observation.repository import ObservationDomain
+    from app.domains.memory.store.db_store import DbMemoryStore
+
+    child_id, [(profile_a, obs_x), (_, obs_y)] = two_linked
+    async with AsyncSession(engine) as unlink:  # X 를 "Curator 가 아직 연결 안 한 관찰" 로 만든다
+        await unlink.execute(
+            update(ObservationFood).where(ObservationFood.id == obs_x).values(affinity_id=None)
+        )
+        await unlink.commit()
+
+    async with (
+        AsyncSession(engine, expire_on_commit=False) as run_s,
+        AsyncSession(engine, expire_on_commit=False) as curator_s,
+    ):
+        store = DbMemoryStore(run_s, child_id=child_id, today=TODAY)
+        # run — 연결 안 된 X 를 지운다. 커밋 전이라 X 행 잠금을 쥐고 있다
+        assert await store.delete_observation(
+            domain=ObservationDomain.FOOD, observation_id=str(obs_x)
+        )
+
+        async def curator():  # 아이 잠금 → 연결 안 된 X 를 기억 A 에 연결 → 커밋
+            await service.lock_child_memory(curator_s, child_id)
+            await curator_s.execute(
+                update(ObservationFood)
+                .where(ObservationFood.id == obs_x)
+                .values(affinity_id=profile_a)
+            )
+            await curator_s.commit()
+
+        curator_task = asyncio.create_task(curator())
+        await asyncio.sleep(0.3)
+
+        # run — 이어서 연결된 Y 를 지운다 (기억 재계산 → 아이 잠금)
+        assert await store.delete_observation(
+            domain=ObservationDomain.FOOD, observation_id=str(obs_y)
+        )
+        await run_s.commit()
+        await asyncio.wait_for(curator_task, timeout=5)
+
+
+async def test_새_기록_저장은_Curator_를_기다리지_않는다(two_linked):
+    """아이 잠금은 관찰을 고치거나 지울 때만 잡는다 — 새 관찰 저장까지 잡으면, 보호자가 연달아
+    입력할 때마다 앞 입력의 Curator(임베딩 호출 몇 초)를 기다려 기록 단계가 느려진다.
+    """
+    from app.agents.common.datetime_rules import DateRange
+    from app.domains.memory.store.db_store import DbMemoryStore
+
+    child_id, _ = two_linked
+    async with (
+        AsyncSession(engine) as curator_s,
+        AsyncSession(engine, expire_on_commit=False) as run_s,
+    ):
+        await service.lock_child_memory(curator_s, child_id)  # Curator 가 도는 중
+        store = DbMemoryStore(run_s, child_id=child_id, today=TODAY)
+        create = store.create_observation(
+            domain="food",
+            child_id=child_id,
+            source_writer=None,
+            raw_text="test",
+            observed_on=TODAY,
+            observed_range=DateRange(start=TODAY, end=TODAY + timedelta(days=1)),
+            fields={"subject": "새것", "polarity": 1, "confidence_source": "parent_direct"},
+        )
+        await asyncio.wait_for(create, timeout=1)  # 아이 잠금을 기다리면 여기서 시간 초과
+        await run_s.rollback()
+        await curator_s.rollback()
+
+
+@pytest.mark.parametrize("change", ["update", "delete"])
+async def test_관찰을_고치는_run_은_Curator_가_끝날_때까지_기다린다(two_linked, change, caplog):
+    """위의 짝 — 고치기 · 지우기는 아이 잠금을 기다린다.
+
+    이게 없으면 교착 테스트가 타이밍 때문에 우연히 통과해도 알 수 없다.
+    """
+    from app.domains.memory.observation.repository import ObservationDomain
+    from app.domains.memory.store.db_store import DbMemoryStore
+
+    child_id, [(_, obs_a), _] = two_linked
+    async with (
+        AsyncSession(engine) as curator_s,
+        AsyncSession(engine, expire_on_commit=False) as run_s,
+    ):
+        await service.lock_child_memory(curator_s, child_id)  # Curator 가 도는 중
+        store = DbMemoryStore(run_s, child_id=child_id, today=TODAY)
+        target = {"domain": ObservationDomain.FOOD, "observation_id": str(obs_a)}
+        pending = asyncio.create_task(
+            store.update_observation(**target, fields={"subject": "바뀜"})
+            if change == "update"
+            else store.delete_observation(**target)
+        )
+        await asyncio.sleep(0.3)
+        assert not pending.done()  # Curator 가 쥐고 있는 동안은 기다린다
+
+        with caplog.at_level(logging.INFO, logger="app.domains.memory.store.db_store"):
+            await curator_s.commit()  # Curator 끝 — 잠금이 풀린다
+            assert await asyncio.wait_for(pending, timeout=5)
+        await run_s.rollback()
+
+    # 기다린 시간이 로그에 남는다 — 20초 예산에서 빠진 몫을 운영에서 잴 수 있게
+    waited = re.search(rf"Memory 아이 잠금 child_id={child_id} wait_ms=(\d+)", caplog.text)
+    assert waited and int(waited.group(1)) >= 250
+
+
+@pytest.fixture
+async def shared_profile():
+    """기억 A 하나에 관찰 X · Y 가 함께 묶여 있다 — run 이 둘을 고치는 사이 정정이 Y 를 건드린다."""
+    async with AsyncSession(engine, expire_on_commit=False) as setup:
+        owner = Parent()
+        setup.add(owner)
+        await setup.flush()
+        child = await create_child(
+            setup,
+            owner_parent_id=owner.id,
+            nickname="공유",
+            birth_date=date(2023, 1, 1),
+            relation=ParentChildRelation.MOTHER,
+        )
+        profile = ProfileAffinity(
+            child_id=child.id,
+            merge_key="공유",
+            domain=MemoryDomain.FOOD,
+            state=ProfileState.CANDIDATE,
+            polarity=1,
+            last_observed_on=TODAY,
+        )
+        setup.add(profile)
+        await setup.flush()
+        obs = []
+        for _ in ("X", "Y"):
+            row = ObservationFood(
+                child_id=child.id,
+                raw_text="test",
+                subject="공유",
+                polarity=1,
+                confidence_source=ConfidenceSource.PARENT_DIRECT,
+                observed_range=Range(TODAY, TODAY + timedelta(days=1)),
+                affinity_id=profile.id,
+            )
+            setup.add(row)
+            await setup.flush()
+            obs.append(row.id)
+        await setup.commit()
+    try:
+        yield child.id, profile.id, obs[0], obs[1]
+    finally:
+        async with AsyncSession(engine) as cleanup:
+            await cleanup.execute(delete(Child).where(Child.id == child.id))
+            await cleanup.execute(delete(Parent).where(Parent.id == owner.id))
+            await cleanup.commit()
+
+
+async def test_run_이_관찰_둘을_고치는_사이_정정이_Y_를_먼저_잡아도_run_이_끊기지_않는다(
+    shared_profile,
+):
+    """#717 — run 이 X 를 고친 직후 기억 A 를 잠그면 "관찰 → 기억 → 관찰" 순서가 섞인다.
+
+    정정은 Y → A 순서로 잠근다. run 이 A 를 쥔 채 Y 를 기다리고 정정이 Y 를 쥔 채 A 를 기다리면
+    Postgres 가 run 을 끊고, 기록 단계가 한 트랜잭션이라 새 관찰까지 롤백된다.
+    기억 재계산을 commit 직전으로 미루면 run 은 관찰 → 기억 순서가 돼서 정정과 순환이 없다.
+    """
+    from app.domains.memory.observation.models import ObservationStatus
+    from app.domains.memory.observation.repository import ObservationDomain, set_observation_status
+    from app.domains.memory.store.db_store import DbMemoryStore
+
+    child_id, profile_id, obs_x, obs_y = shared_profile
+    edited_day = TODAY - timedelta(days=3)
+    async with (
+        AsyncSession(engine, expire_on_commit=False) as run_s,
+        AsyncSession(engine, expire_on_commit=False) as corr_s,
+    ):
+        # 정정 — Y 를 "잘못된 기록" 으로 바꿔 Y 행 잠금을 쥔다 (커밋 전)
+        await set_observation_status(
+            corr_s,
+            domain=ObservationDomain.FOOD,
+            child_id=child_id,
+            observation_id=obs_y,
+            status=ObservationStatus.INACTIVE,
+        )
+
+        store = DbMemoryStore(run_s, child_id=child_id, today=TODAY)
+
+        async def run():  # runner.commit() 과 같은 순서 — 기억 재계산 → 커밋
+            for oid in (obs_x, obs_y):
+                await store.update_observation(
+                    domain=ObservationDomain.FOOD,
+                    observation_id=str(oid),
+                    fields={},
+                    observed_on=edited_day,
+                )
+            await store.flush_profiles()
+            await run_s.commit()
+
+        run_task = asyncio.create_task(run())
+        try:
+            await asyncio.sleep(0.3)  # run 이 X 를 고치고 Y 에서 정정을 기다리는 상태
+            assert not run_task.done()
+
+            # 정정 — 기억 A 를 다시 계산하고 커밋한다. 고치기 전에는 A 를 run 이 쥐어 여기서 교착
+            await service.refresh_profile(corr_s, profile_id=profile_id, today=TODAY)
+            await corr_s.commit()
+            await asyncio.wait_for(run_task, timeout=5)  # 교착이면 DeadlockDetected
+        finally:
+            run_task.cancel()
+
+    async with AsyncSession(engine) as check:
+        status_y = await check.scalar(
+            select(ObservationFood.status).where(ObservationFood.id == obs_y)
+        )
+        last_observed = await check.scalar(
+            select(ProfileAffinity.last_observed_on).where(ProfileAffinity.id == profile_id)
+        )
+    assert status_y == ObservationStatus.INACTIVE  # 정정 결과가 run 에 덮이지 않았다
+    # A 는 정정 · run 수정이 둘 다 반영된 뒤 계산됐다 (X 만 active 로 남는다)
+    assert last_observed == edited_day
+
+
+async def test_관찰을_고치는_동안_기억은_잠그지_않고_commit_직전에_한_번만_계산한다(
+    shared_profile, monkeypatch
+):
+    from app.domains.memory.observation.repository import ObservationDomain
+    from app.domains.memory.store import db_store
+    from app.domains.memory.store.db_store import DbMemoryStore
+
+    child_id, profile_id, obs_x, obs_y = shared_profile
+    calls = []
+    real = db_store.refresh_profile
+
+    async def spy(session, *, profile_id, today):
+        calls.append(profile_id)
+        await real(session, profile_id=profile_id, today=today)
+
+    monkeypatch.setattr(db_store, "refresh_profile", spy)
+
+    async with (
+        AsyncSession(engine, expire_on_commit=False) as run_s,
+        AsyncSession(engine) as other_s,
+    ):
+        store = DbMemoryStore(run_s, child_id=child_id, today=TODAY)
+        for oid in (obs_x, obs_y):
+            await store.update_observation(
+                domain=ObservationDomain.FOOD,
+                observation_id=str(oid),
+                fields={},
+                observed_on=TODAY - timedelta(days=3),
+            )
+        assert calls == []  # 고치는 동안은 계산하지 않는다
+        # 다른 세션이 기억 A 를 바로 잠글 수 있다 — run 이 아직 쥐고 있지 않다
+        await other_s.execute(
+            select(ProfileAffinity.id)
+            .where(ProfileAffinity.id == profile_id)
+            .with_for_update(nowait=True)
+        )
+        await other_s.rollback()
+
+        await store.flush_profiles()
+        assert calls == [profile_id]  # 관찰이 둘이어도 기억당 한 번
+        await store.flush_profiles()
+        assert calls == [profile_id]  # 비웠으니 다시 계산하지 않는다
+        await run_s.commit()
+
+
+@pytest.fixture
+async def three_days():
+    """기억 A 에 관찰 셋 — X(오늘) · Y(어제) · Z(8일 전). run 이 X 를, 정정이 Y 를 뺀다."""
+    async with AsyncSession(engine, expire_on_commit=False) as setup:
+        owner = Parent()
+        setup.add(owner)
+        await setup.flush()
+        child = await create_child(
+            setup,
+            owner_parent_id=owner.id,
+            nickname="날짜",
+            birth_date=date(2023, 1, 1),
+            relation=ParentChildRelation.MOTHER,
+        )
+        profile = ProfileAffinity(
+            child_id=child.id,
+            merge_key="날짜",
+            domain=MemoryDomain.FOOD,
+            state=ProfileState.CANDIDATE,
+            polarity=1,
+            last_observed_on=TODAY,
+        )
+        setup.add(profile)
+        await setup.flush()
+        obs = []
+        for ago in (0, 1, 8):
+            day = TODAY - timedelta(days=ago)
+            row = ObservationFood(
+                child_id=child.id,
+                raw_text="test",
+                subject="날짜",
+                polarity=1,
+                confidence_source=ConfidenceSource.PARENT_DIRECT,
+                observed_range=Range(day, day + timedelta(days=1)),
+                affinity_id=profile.id,
+            )
+            setup.add(row)
+            await setup.flush()
+            obs.append(row.id)
+        await setup.commit()
+    try:
+        yield owner.id, child.id, profile.id, *obs
+    finally:
+        async with AsyncSession(engine) as cleanup:
+            await cleanup.execute(delete(Child).where(Child.id == child.id))
+            await cleanup.execute(delete(Parent).where(Parent.id == owner.id))
+            await cleanup.commit()
+
+
+@pytest.mark.parametrize("first", ["correction", "run"])
+async def test_run_과_정정이_같은_기억의_관찰을_하나씩_빼도_마지막_관찰일이_맞다(three_days, first):
+    """둘 다 상대가 커밋하기 전 관찰로 last_observed_on 을 셈하면, 나중에 커밋하는 쪽이 낡은 날짜로
+    덮어쓴다. X · Y 가 다 빠졌으니 남은 건 Z(8일 전)다. 어느 쪽이 먼저 기억을 잡든 같아야 한다.
+    """
+    from app.domains.memory.observation.repository import ObservationDomain
+    from app.domains.memory.store.db_store import DbMemoryStore
+
+    parent_id, child_id, profile_id, obs_x, obs_y, _ = three_days
+    async with (
+        AsyncSession(engine, expire_on_commit=False) as run_s,
+        AsyncSession(engine, expire_on_commit=False) as corr_s,
+    ):
+        store = DbMemoryStore(run_s, child_id=child_id, today=TODAY)
+
+        async def run():
+            await store.delete_observation(domain=ObservationDomain.FOOD, observation_id=str(obs_x))
+            await store.flush_profiles()
+
+        async def correct():
+            await service.handle_observation_correction(
+                corr_s,
+                domain="food",
+                child_id=child_id,
+                observation_id=obs_y,
+                verdict="wrong",
+                parent_id=parent_id,
+                today=TODAY,
+            )
+
+        (first_s, first_job), (second_s, second_job) = (
+            [(corr_s, correct), (run_s, run)]
+            if first == "correction"
+            else [(run_s, run), (corr_s, correct)]
+        )
+        await first_job()  # 먼저 온 쪽이 기억을 쥔 채 커밋 전
+        second = asyncio.create_task(second_job())
+        try:
+            await asyncio.sleep(0.3)  # 나중 쪽이 기억에서 기다린다
+            await first_s.commit()
+            await asyncio.wait_for(second, timeout=5)
+            await second_s.commit()
+        finally:
+            second.cancel()
+
+    async with AsyncSession(engine) as check:
+        last = await check.scalar(
+            select(ProfileAffinity.last_observed_on).where(ProfileAffinity.id == profile_id)
+        )
+    assert last == TODAY - timedelta(days=8)

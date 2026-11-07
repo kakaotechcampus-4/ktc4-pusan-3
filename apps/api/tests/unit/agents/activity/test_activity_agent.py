@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo
 
 from app.agents.activity import agent as agent_module
 from app.agents.activity.agent import MAX_STEPS, run
+from app.agents.activity.areas import find_area
 from app.agents.activity.context import ActivityContext
 from app.agents.activity.schemas.common import (
     ActivitySetting,
@@ -24,6 +25,7 @@ from app.agents.activity.schemas.common import (
 )
 from app.agents.activity.store.inmemory import (
     InMemoryActivityDocs,
+    InMemoryEvents,
     InMemoryPlaces,
     InMemorySafety,
     InMemoryWeather,
@@ -34,6 +36,7 @@ from app.agents.activity.weather import WEATHER_NOT_ASKED
 from app.agents.common.llm_client import LLMResponse
 from app.agents.common.reference import hazard_terms
 from app.agents.common.schemas.task import DomainTask
+from app.core.event_raw import RawEvent
 from app.core.weather_raw import RawAdvisories, RawAdvisoryRow, RawForecast
 
 CHILD = UUID(int=1)
@@ -619,3 +622,63 @@ class TestArea:
             task("해운대 가서 뭐 하고 놀까"), self.area_context(weather=broken), client=llm
         )
         assert result.status == "degraded"
+
+
+class TestEvents:
+    """행사 어댑터가 있으면 search_events 가 열리고, 찾은 행사는 장소처럼 이름이 붙는다."""
+
+    HAEUNDAE = find_area("해운대")
+    FEST = RawEvent(
+        content_id="1",
+        title="해운대 모래축제",
+        start="20261001",
+        end="20261012",
+        mapx=f"{HAEUNDAE.location.lon}",
+        mapy=f"{HAEUNDAE.location.lat}",
+        kind_code="EV01",
+        progress="",
+    )
+
+    def events_context(self) -> ActivityContext:
+        return ActivityContext(
+            child_id=CHILD,
+            run_id="run-1",
+            now=NOW,
+            timezone=KST,
+            ports=in_memory_ports(
+                CHILD,
+                BORN_40_MONTHS,
+                docs=InMemoryActivityDocs([DEFAULT_DOC]),
+                events=InMemoryEvents([self.FEST]),
+            ),
+        )
+
+    async def test_행사_어댑터가_있으면_행사를_찾을_수_있다고_알린다(self):
+        llm = FakeLLM(propose("종이컵 탑 쌓기", "그림자놀이", "색종이 접기"))
+        await run(task(), self.events_context(), client=llm)
+        assert "search_events" in llm.seen[0][0]["content"]
+
+    async def test_행사_어댑터가_없으면_행사_이야기를_하지_않는다(self):
+        llm = FakeLLM(propose("종이컵 탑 쌓기", "그림자놀이", "색종이 접기"))
+        await run(task(), context(), client=llm)
+        assert "search_events" not in llm.seen[0][0]["content"]
+
+    async def test_말한_지역의_행사를_붙이고_행사_확인_문구를_싣는다(self):
+        fest = {
+            **candidate("모래 조각 구경하기", setting="outdoor"),
+            "place_name": "해운대 모래축제",
+        }
+        llm = FakeLLM(
+            _tools(("search_events", {"area": "해운대"})),
+            _tools(
+                (
+                    "propose_activity_candidates",
+                    {"candidates": [fest, candidate("그림자놀이"), candidate("색종이 접기")]},
+                )
+            ),
+        )
+        result = await run(task("해운대 축제 가볼까"), self.events_context(), client=llm)
+        assert contents(result)[0] == "해운대 모래축제에서 모래 조각 구경하기"
+        assert result.suggestions[0].place_notice.startswith("한국관광공사 행사 정보예요.")
+        # 행사는 근거가 아니다 — [예시] 문서 행만 남는다
+        assert {c.ref.kind for c in result.suggestions[0].citations} == {"activity_doc"}

@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.alerts import configure_alerts
 from app.core.config import settings
-from app.core.logging_config import configure_logging
+from app.core.logging_config import configure_logging, log_error_without_message
 from app.domains.consent.location_log import purge_expired_location_logs
 from app.infra.db.session import async_session_factory, engine
 from app.integrations import discord
@@ -73,6 +73,6 @@ if __name__ == "__main__":
         configure_alerts(discord.webhook_sender(settings.alert_webhook_url), env=settings.APP_ENV)
     try:
         asyncio.run(_main())
-    except Exception:
-        log.exception("만료된 값 정리 실패")
+    except Exception as exc:
+        log_error_without_message(log, "만료된 값 정리 실패", exc)
         raise SystemExit(1) from None

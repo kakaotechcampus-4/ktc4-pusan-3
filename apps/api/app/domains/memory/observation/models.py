@@ -1,6 +1,7 @@
 import enum
 import uuid
 from datetime import date, datetime
+from decimal import Decimal
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
@@ -9,6 +10,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    Numeric,
     SmallInteger,
     String,
     Text,
@@ -190,10 +192,44 @@ class ObservationRoutine(Base, UUIDPk, Timestamps, ObservationCommon):
 
 
 class ObservationHealth(Base, UUIDPk, Timestamps):
-    """승격 파이프라인 밖. ObservationCommon 을 상속하지 않는다."""
+    """승격 파이프라인 밖. ObservationCommon 을 상속하지 않는다.
+
+    한 행 = 한 사건이다 — 증상 행이거나 먹인 약 행이다(#551). 약 행은 `symptom` 이 비고
+    `observed_time` 이 먹인 시각이다. `linked_symptom_id` 는 같은 말에서 함께 기록된 증상 행이고,
+    Memory 의 코드가 채운다(모델이 id 를 골라 잇지 않는다).
+
+    🚨 CHECK 는 마이그레이션 `e5b1d7c3a9f2` 와 같은 글자다.
+       autogenerate 는 CHECK 를 비교하지 않는다.
+    """
 
     __tablename__ = "observation_health"
-    __table_args__ = (Index("ix_observation_health_child_status", "child_id", "status"),)
+    __table_args__ = (
+        Index("ix_observation_health_child_status", "child_id", "status"),
+        CheckConstraint(
+            "temperature IS NULL OR temperature BETWEEN 30.0 AND 45.0",
+            name="observation_health_temperature_range",
+        ),
+        CheckConstraint(
+            "measure_site IN ('ear', 'forehead', 'armpit', 'oral', 'rectal')",
+            name="observation_health_measure_site",
+        ),
+        # 증상과 약이 한 행에 같이 있지 않다. "둘 다 없다" 는 DB 가 아니라 Memory 스키마가 막는다 —
+        # 증상이 빈 옛 행이 있어서 DB 에서 막으면 그 행의 soft delete · Correction 이 실패한다
+        CheckConstraint(
+            "cardinality(symptom) = 0 OR medication_given IS NULL",
+            name="observation_health_symptom_not_with_medication",
+        ),
+        CheckConstraint(
+            "linked_symptom_id IS NULL OR medication_given IS NOT NULL",
+            name="observation_health_link_needs_medication",
+        ),
+        # 약 행에는 체온이 없다 — 있으면 열 타임라인이 그 행을 체온 줄과 먹인 약 줄로 두 번 낸다
+        CheckConstraint(
+            "medication_given IS NULL OR "
+            "(temperature IS NULL AND measured_at IS NULL AND measure_site IS NULL)",
+            name="observation_health_medication_no_temperature",
+        ),
+    )
 
     child_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("child.id", ondelete="CASCADE"), nullable=False
@@ -208,7 +244,9 @@ class ObservationHealth(Base, UUIDPk, Timestamps):
         UUID(as_uuid=True), ForeignKey("parent.id", ondelete="SET NULL"), nullable=True
     )
     source_notice_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
-    symptom: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False)
+    # 약 행은 비어 있다(CHECK observation_health_symptom_not_with_medication).
+    # 증상 행은 1개 이상 — Memory 스키마가 막는다(옛 행에는 빈 것이 있을 수 있다)
+    symptom: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False, server_default="{}")
     severity: Mapped[HealthSeverity | None] = mapped_column(
         enum_col_py(HealthSeverity, name="health_severity"),
         nullable=True,
@@ -217,6 +255,17 @@ class ObservationHealth(Base, UUIDPk, Timestamps):
     suspected_trigger: Mapped[str | None] = mapped_column(Text, nullable=True)
     action_taken: Mapped[str | None] = mapped_column(Text, nullable=True)
     observed_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # 체온 세 칸 — 보호자가 말한 숫자 그대로(℃). 잰 시각은 observed_time 과 다르다
+    temperature: Mapped[Decimal | None] = mapped_column(Numeric(3, 1), nullable=True)
+    measured_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    measure_site: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # 먹인 약 두 칸 — 약 이름은 보호자가 말한 그대로
+    medication_given: Mapped[str | None] = mapped_column(Text, nullable=True)
+    linked_symptom_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("observation_health.id", ondelete="SET NULL"),
+        nullable=True,
+    )
 
 
 class ObservationLinkHold(Base, UUIDPk, Timestamps):
