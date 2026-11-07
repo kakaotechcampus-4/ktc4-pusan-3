@@ -96,6 +96,53 @@ Memory Agent 가 돌 일도 없다. **각자 만들되 `app/core/event_draft.py`
 }
 ```
 
+### create (요일 반복)
+
+요일마다 되풀이되는 일정(#738)은 초안 **한 장**이다. create 모양에 `repeat` 만 더한다. 반복이 아닌 초안에는
+`repeat` 키가 없다 — 항상 null 인 키는 싣지 않는 규칙이라 모델을 따로 뒀다(`CreateRepeatEventDraft`).
+
+```json
+{
+  "draft_id": "…", "op": "create",
+  "event": { "title": "등원", "starts_at": "2026-11-09T08:30:00+09:00", "ends_at": null,
+             "all_day": false, "event_type": "core", "category": "institution" },
+  "items": [ { "item_id": null, "item_name": "물통" } ],
+  "repeat": { "weekdays": [1, 3], "until": "2026-12-20", "label": "12월 20일까지 매주 월, 수" }
+}
+```
+
+`event.starts_at` 은 **첫 회차**의 시각이다 (말한 시작일이 그 요일이 아니면 다음 해당 요일로 옮긴다).
+`weekdays` 는 ISO 요일(1=월 … 7=일), `until` 은 마지막 날(포함)이다. `label` 은 화면이 그대로 그린다 — 프론트는
+날짜를 계산하지 않는다. 제출하면 백엔드가 회차마다 일정 행으로 펼친다. 기간은 **첫 회차부터 90일**(첫 회차 포함)이 상한이다. 세는 첫 날은 묶음에 저장되는 첫 회차 날짜다.
+
+### update_series (묶음 전체 고치기)
+
+반복 묶음을 **오늘 이후 회차 전체**에 고치는 초안이다 (`UpdateSeriesDraft`, `PATCH /event-series/{sid}` 로 간다).
+날짜가 없다 — 회차 날짜는 반복 규칙이 정한다. 시각은 KST `"HH:MM"` 이고 종일이면 null 이다.
+
+```json
+{
+  "draft_id": "…", "op": "update_series", "series_id": "series-1",
+  "event":  { "title": "등원", "starts_time": "09:00", "ends_time": null,
+              "all_day": false, "event_type": "core", "category": "institution" },
+  "repeat": { "weekdays": [1, 3], "until": "2026-12-20", "label": "12월 20일까지 매주 월, 수" },
+  "before": { "title": "등원", "starts_time": "08:30", "ends_time": null, "all_day": false,
+              "event_type": "core", "category": "institution",
+              "repeat": { "weekdays": [1, 3], "until": "2026-12-20", "label": "12월 20일까지 매주 월, 수" },
+              "items": ["물통"] },
+  "items": ["물통", "실내화"]
+}
+```
+
+`items` 는 준비물 **이름**이다 — 회차마다 `item_id` 가 달라서 이름으로 맞추고, 같은 이름은 그 회차의 챙김
+표시를 지킨다. `event_id` 는 없다. 한 회차만 고칠 때는 이 모양이 아니라 보통 update 초안이다.
+
+**제출 API 는 `before` 와 달라진 값만 오늘 이후 회차에 적용한다.** 값이 같은 칸은 건드리지 않는다 —
+개별로 고쳐 둔 회차(그 날만 10시로 옮긴 것)의 다른 값이 "전부 고치기" 에 덮이지 않는다.
+`before.event` 의 값은 오늘 이후 회차에서 **가장 흔한 값**이다 (첫 회차가 아니다). 준비물은 이름으로
+비교한다: `before.items` 에만 있으면 뺀다, `items` 에만 있으면 더한다, 양쪽에 있으면 그 회차의
+챙김 표시를 지킨다. 이름을 바꾸면 빼고 더하는 것과 같다.
+
 ### 필드의 의미
 
 | 필드 | 뜻 | 근거 |
@@ -194,7 +241,8 @@ payload 를 만드는 코드가 늘어난다. 저장하는 쪽에서 한 번 더
 - 준비물 삭제 (`delete_event_item`)
 
 삭제는 되돌릴 수 없는데 게이트 밖이다. 9/17 에 그렇게 정했고, 대상이 모호하거나 범위가 넓으면
-되묻는 규칙이 유일한 안전장치다.
+되묻는 규칙이 유일한 안전장치다. 반복 묶음의 회차도 일정 한 건이라 같은 규칙이다 — 묶음 전체를
+한 번에 지우는 길은 없다 (#738, §6).
 
 ### 5-3. 초안의 수명
 
@@ -211,6 +259,40 @@ Agent 가 조사를 떼고 사물 이름만 넣는다. `"수영복이랑 여벌�
 `"체육복을 물통으로 바꿔줘"` 인데 물통이 이미 있으면 같은 이름 두 행이 된다. 보호자가 명시적으로 시킨
 변경이라 막지 않았고, 중복 합치기는 백엔드가 맡기로 했다.
 
+### 5-5. 반복 일정과 범위 (#738)
+
+**만들기.** 요일마다 되풀이되면 날짜마다 따로 부르지 않고 `create_event` 한 번에 `repeat_weekdays`(`mon`…`sun`) ·
+`repeat_until` 을 넣는다. 반복 일정은 `core` 로 만들어진다 (모델이 `episodic` 을 줘도 코드가 정한다).
+어느 날이 회차인지는 모델이 아니라 `app/rules/recurrence.py` 가 정한다.
+
+- **끝 날짜를 안 말했으면 만들지 않는다.** `REPEAT_UNTIL_REQUIRED` 로 돌려보내 "언제까지 반복할까요?" 하나만 묻는다. 기본값으로 채우지 않는다
+- **store 가 반복 묶음을 지원할 때만 만든다.** `store.supports_series` 가 참이어야 한다 (`store/ports.py` 의 `supports_series()`).
+  DB 어댑터(`DbMemoryStore`)는 BE 가 묶음을 구현한 뒤 `supports_series = True` 를 단다. 그 전에는 `OUT_OF_SCOPE`
+  로 돌려보내 "아직 반복 일정은 만들 수 없다" 고 알린다 — 제출할 곳이 없어 반복으로 말한 일정이 하나만
+  만들어지는 일을 막는다
+- **"계속"·"쭉"** 이라고 해도 90일까지만 된다고 알리고 끝 날짜를 묻는다 (`DATE_UNPARSEABLE`)
+- 반복에 `ends_on`(다른 날 끝)을 같이 받지 않는다. 한 회차는 하루 안에서 끝난다
+
+**고치기 · 지우기.** `query_event` 결과에 `series` 가 붙은 일정(반복 묶음의 회차)을 고치거나 지울 때는 `scope` 를 정한다.
+
+| `scope` | 뜻 | 결과 |
+| --- | --- | --- |
+| `one` | 날짜를 집어 말했다 — 그 회차 하나 | 보통 update 초안 / 그 회차만 삭제 |
+| `series` | 날짜 없이 그 반복 일정 자체를 말했다 | `update_series` 초안(오늘 이후 회차) |
+| 없음 | — | `SCOPE_REQUIRED` — 한 회차만 고치는 쪽으로 정하지 않고 모델이 범위를 정하거나 되묻는다 |
+
+- 반복이 아닌 일정에 `scope=series` 는 `INVALID_ARGS` 다. `repeat_*` 인자는 `scope=series` 에서만 받는다
+- `scope=series` 는 날짜(`starts_on` · `ends_on`)를 받지 않는다. 요일 · 끝 날짜는 `repeat_*` 로 바꾸고, 90일은 **묶음의 첫 회차**에서 센다
+- 묶음 초안은 **오늘 이후** 회차에만 적용된다. 지난 회차는 그대로다
+- 준비물: `create_event_item` · `update_event_item(item_name)` · `delete_event_item` 의 `scope=series` 는 전부 묶음 초안의 `items` 를 고친다. 저장은 보호자가 확인하고 제출한 뒤에 된다. 같은 준비물을 한 run 에서 두 번 고쳐도 처음 이름에서 지금 이름을 따라간다
+- `scope` 는 고치기와 준비물에만 있다. `delete_event` 는 범위를 받지 않고 지금처럼 일정 한 건(회차 하나)을 지운다. 묶음 전체 삭제는 §6
+- 묶음 초안의 기준 값(`before`)은 아직 시작하지 않은 회차에서 가장 흔한 값이다. 첫 회차를 쓰지 않는 것은 그 회차만 따로 고쳐 둔 값이 묶음 전체로 번지지 않게 하려는 것이다
+  - "아직 시작하지 않은 회차" 는 서버 `update_series` 가 고치는 회차와 같다 — 시간 일정은 시작이 지금 이후, 종일은 오늘(그날 포함) 이후다. 시작이 지난 오늘 회차까지 세면 `before` 가 서버가 고치는 회차의 값과 달라진다 (#761)
+  - 남은 회차가 없으면 초안을 만들지 않는다 — 묶음 그대로면 `TARGET_NOT_FOUND`, 바꾼 규칙이면 `DATE_UNPARSEABLE`. 바꾼 규칙의 오늘 회차는 고친 뒤의 시각으로 본다
+- 묶음의 `event_type` 은 늘 core 다. `scope=series` 로 바꾸려 하면 `INVALID_ARGS` 다
+- **챙김 표시(`is_prepared`)는 `scope` 를 받지 않는다** — 늘 그날 회차 하나다. `scope=series` 와 같이 오면 `INVALID_ARGS`
+- 고쳤다가 원래 값으로 되돌리면 바뀐 게 없으니 묶음 초안을 뺀다 (`changed` 는 `before` 와 비교한 값이다)
+
 ---
 
 ## 6. 아직 안 정한 것
@@ -222,6 +304,8 @@ Agent 가 조사를 떼고 사물 이름만 넣는다. `"수영복이랑 여벌�
 | 유령 `item_id` | 초안이 나간 뒤 준비물이 지워지면 없는 `item_id` 가 제출에 실려 올 수 있다. `before.items` 와 현재 행을 맞춰보면 감지는 가능하다. 구현 시 고려사항 |
 | `check_when` 위치 | `app/agents/common/` → `app/rules/` 이전. 제출 API 가 재검증에 써야 해서 공용이 맞다. 공동 소유 폴더라 양쪽 리뷰 필요 |
 | SSE 계약서 | `docs/api/api-interface-v1.html` §03 의 이벤트 목록에 `event_draft` 와 `note` 가 없다. 9/21 에 갱신을 보류하기로 했다. |
+| 묶음 전체 삭제 | 이 문서 범위 밖이다. 일정 삭제가 삭제 제안 카드(#535, `docs/api/delete-proposal-v1.md`)로 옮겨 가서, 묶음 전체는 그 제안에 `event_series` 종류를 더해 지운다 (후속 이슈 · BE · AI · FE). 회차를 `event` 탭에 담는 것만으로는 탭당 40건 상한에 걸리고 묶음 행이 남는다 |
+| 묶음 초안 · 제출 API | `op=update_series` 의 제출(`PATCH /event-series/{sid}`)과 `POST /events` 의 `repeat` 는 BE 몫이다. 이 문서의 payload 가 계약이고, 제출은 `before` 와 달라진 값만 적용한다(§3). BE 가 `DbMemoryStore.supports_series = True` 를 달아야 Agent 가 반복 일정을 만든다 |
 | create 초안 중복 | 같은 일정을 두 번 말하면 카드가 두 장 남는다. 제목·시각이 같아도 다른 일정일 수 있어 서버·화면 모두 합칠 근거가 없다. 보호자가 한 장만 내는 것에 기댄다 |
 
 ---
@@ -233,6 +317,7 @@ Agent 가 조사를 떼고 사물 이름만 넣는다. `"수영복이랑 여벌�
 | 초안 payload 스키마 | `apps/api/app/core/event_draft.py` |
 | 초안 모델 (Memory 조립용) | `apps/api/app/agents/memory/drafts.py` |
 | 일정 tool 7개 | `apps/api/app/agents/memory/tools/schedule.py` |
+| 반복 회차 날짜 · 90일 · 문구 | `apps/api/app/rules/recurrence.py` (`occurrence_dates` · `repeat_label`) |
 | SSE 이벤트 `EventDrafts` | `apps/api/app/agents/pipeline.py` |
 | ORM | `apps/api/app/domains/schedule/models.py` (`Event` · `EventItem`) |
 | 시각 규칙 | `apps/api/app/agents/common/datetime_rules.py` (`resolve_when` · `check_when`) — §6 대로 `app/rules/` 로 옮기면 이 줄도 같이 고친다 |
