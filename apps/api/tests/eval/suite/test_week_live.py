@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import subprocess
+import uuid
 from collections.abc import Iterator
 from datetime import datetime
 
@@ -34,8 +35,10 @@ from tests.eval.suite.verdict import judge_check, judge_step, record_week
 from tests.eval.suite.week_runner import (
     ContainsJudge,
     HashEmbedder,
+    Login,
     WeekDriver,
     drop_recipes,
+    drop_world,
     reset_process_state,
     seed_recipes,
     seed_world,
@@ -143,9 +146,11 @@ async def test_week(
     app.state.health_places = None
     failures: list[str] = []
     seeded_recipes: list[tuple[str, str]] = []
+    world: tuple[uuid.UUID, dict[str, Login]] | None = None
     try:
         seeded_recipes = await seed_recipes()
         child_id, logins, _, stale = await seed_world(case, monday)
+        world = (child_id, logins)
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             driver = WeekDriver(
                 case=case,
@@ -205,5 +210,9 @@ async def test_week(
                 else:
                     setattr(app.state, key, value)
         finally:
-            await drop_recipes(seeded_recipes)
+            try:
+                await drop_recipes(seeded_recipes)
+            finally:
+                if world is not None:
+                    await drop_world(*world)
     assert not failures, f"{case.id} 실패 {len(failures)}단계 — {failures[:5]}"

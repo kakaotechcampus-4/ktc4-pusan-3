@@ -35,6 +35,7 @@ from app.core import llm_usage
 from app.domains.child.models import Child, ParentChild, ParentChildRelation
 from app.domains.consent.models import ConsentAction, ConsentScope
 from app.domains.consent.repository import record_consent
+from app.domains.consent.retention import purge_child, purge_parent
 from app.domains.identity.models import Parent
 from app.domains.memory.curator import trigger
 from app.domains.memory.observation import models as obs
@@ -580,6 +581,26 @@ async def drop_recipes(keys: Sequence[tuple[str, str]]) -> None:
                 text("delete from recipe_catalog where source=:s and source_id=:i"),
                 {"s": source, "i": source_id},
             )
+        await session.commit()
+
+
+async def drop_world(child_id: uuid.UUID, logins: dict[str, Login]) -> None:
+    """`seed_world` 가 만든 보호자 · 아이와 그 아래 행을 전부 지운다 — 실행마다 쌓이면 전역으로
+    세는 통합 테스트가 깨진다. 제품의 삭제 경로(`purge_child` · `purge_parent`)를 타고, 그 경로가
+    일부러 남기는 동의 증빙(`consent_retention`)은 시험 DB 라서 같이 지운다. 아이 → 보호자 순 —
+    아이의 소유자 FK 때문이다. 나머지는 FK CASCADE 가 따라온다."""
+    now = datetime.now(UTC)
+    parent_ids = [lg.parent_id for lg in logins.values()]
+    async with async_session_factory() as session:
+        await purge_child(session, child_id=child_id, now=now)
+        for parent_id in parent_ids:
+            await purge_parent(session, parent_id=parent_id, now=now)
+        await session.execute(
+            text(
+                "delete from consent_retention where child_ref = :c or subject_parent_ref = any(:p)"
+            ),
+            {"c": child_id, "p": parent_ids},
+        )
         await session.commit()
 
 
