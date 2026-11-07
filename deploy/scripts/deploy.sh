@@ -7,6 +7,7 @@
 #     아무것도 하지 않고 멈춘다 — dev .env 에서 한 줄만 빠져도 develop 마이그레이션이 운영 DB 에 걸리기 때문이다.
 #     DEPLOY_LOCK  두 환경이 동시에 빌드하지 않게 거는 잠금 파일. 기본값 /var/lock/ktc4-deploy.lock
 #                  (적재 make 타깃도 같은 잠금을 쓴다 — Makefile)
+#     ALLOW_OLD=1  지금 떠 있는 것보다 옛 커밋을 일부러 올릴 때 (아래 "옛 커밋" 검사를 건너뛴다)
 #
 # 🚨 down 을 먼저 하지 않는다. 빌드 · 마이그레이션이 실패하면 옛 컨테이너가 그대로 서비스한다.
 # 🚨 DB 는 되돌리지 않는다. 이미지만 직전 태그로 되돌린다 — 그래서 마이그레이션은 직전 코드도 돌 수 있게
@@ -63,6 +64,18 @@ if command -v flock >/dev/null; then
 fi
 
 git fetch --quiet origin
+
+PREV="$(cat "$TAG_FILE" 2>/dev/null || echo local)"
+# 옛 run 을 Actions 에서 Re-run 하면 그 run 의 sha 가 그대로 온다 — 더 새 버전이 나간 뒤면 운영이 옛 코드로
+# 조용히 돌아간다(스키마는 새 것 그대로). 지금 떠 있는 커밋의 조상이면 거부한다. 같은 sha 재배포 · 첫 배포(local)는 통과.
+# (브랜치 끝 커밋만 받으면 더 단순하지만, 뒤 커밋의 CI 가 깨졌을 때 멀쩡한 앞 커밋까지 막힌다.)
+if [ "$PREV" != local ] && [ "$PREV" != "$SHA" ] && [ "${ALLOW_OLD:-}" != 1 ] &&
+  git merge-base --is-ancestor "$SHA" "$PREV" 2>/dev/null; then
+  log "🔴 $SHA 는 지금 떠 있는 $PREV 보다 옛 커밋이다 — 옛 run 의 Re-run? 아무것도 바꾸지 않았다"
+  log "   정말 옛 커밋으로 돌릴 거면 서버에서 ALLOW_OLD=1 bash deploy/scripts/deploy.sh $SHA $TARGET"
+  exit 1
+fi
+
 git reset --hard "$SHA"
 
 # Caddy 가 두 환경의 web · api 에 닿는 공용 네트워크. Caddy 고정 IP(172.30.0.10) 가 여기 있다 —
@@ -73,7 +86,6 @@ if ! docker network inspect "$EDGE_NET" >/dev/null 2>&1; then
   docker network create --subnet 172.30.0.0/24 --ip-range 172.30.0.128/25 "$EDGE_NET" >/dev/null
 fi
 
-PREV="$(cat "$TAG_FILE" 2>/dev/null || echo local)"
 log "$TARGET: 직전 $PREV → 새 $SHA"
 
 export API_IMAGE_TAG="$SHA" WEB_IMAGE_TAG="$SHA"

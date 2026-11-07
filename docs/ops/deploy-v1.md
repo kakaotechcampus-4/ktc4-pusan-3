@@ -37,6 +37,7 @@ healthy 가 될 때까지 기다리고, 안 되면(최대 240초) 실패로 본�
 | 굽지 않는 이미지(caddy · db · redis) 받기 · Caddyfile 검사(prod) | 여기서 멈춘다. 아무것도 바꾸지 않았다 |
 | 이미지 빌드 · 마이그레이션 | 여기서 멈춘다. `down` 을 먼저 하지 않으므로 **옛 컨테이너가 그대로 서비스한다** (db · redis 이미지가 바뀐 커밋이면 마이그레이션 `run` 이 그 둘을 먼저 새로 띄운다) |
 | Caddy reload (prod) | 새 버전은 떠 있고 Caddy 는 옛 설정이다. 워크플로는 빨간불 — 서버에서 고친다 |
+| 지금 떠 있는 것보다 옛 커밋 (옛 run 의 Re-run) | 아무것도 바꾸지 않고 멈춘다. 일부러 되돌릴 때만 서버에서 `ALLOW_OLD=1` |
 | 새 컨테이너 헬스 | 직전에 성공한 태그(`deploy/docker/.deployed-tag`)로 다시 `up --wait`. 워크플로는 빨간불 |
 
 - 이미지 태그는 **커밋 sha** 다. 지금 것과 직전 것 두 개만 남기고 나머지는 지운다.
@@ -103,6 +104,7 @@ healthy 가 될 때까지 기다리고, 안 되면(최대 240초) 실패로 본�
    bash deploy/scripts/deploy.sh $SHA prod
    ```
    끝나면 실패해 있던 dev 배포를 Actions 에서 다시 돌린다(Re-run).
+   Re-run 은 **그 run 의 커밋**을 그대로 올린다. 이미 더 새 커밋이 떠 있으면 `deploy.sh` 가 거부한다 — 그때는 Re-run 이 아니라 새 run(`workflow_dispatch`)을 돌린다.
 
 ## 남은 것
 

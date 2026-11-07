@@ -11,6 +11,9 @@ docker · git · sleep 을 가짜로 바꿔 돈다. docker · git 은 받은 인
     FAKE_NO_NET        network inspect (ktc4-edge 없음)
     FAKE_CADDY_INVALID docker run … caddy validate
     FAKE_RELOAD_FAIL   docker exec ktc4-caddy caddy reload
+
+가짜 git 의 `merge-base --is-ancestor` 는 FAKE_OLD 가 있을 때만 참이다
+(새 sha 가 지금 떠 있는 것의 조상).
 """
 
 import os
@@ -58,7 +61,10 @@ def box(tmp_path: Path):
     bin_dir.mkdir()
     log = tmp_path / "calls.log"
     (bin_dir / "docker").write_text(FAKE_DOCKER)
-    (bin_dir / "git").write_text('#!/bin/sh\necho "git $*" >> "$FAKE_LOG"\n')
+    (bin_dir / "git").write_text(
+        '#!/bin/sh\necho "git $*" >> "$FAKE_LOG"\n'
+        'case "$*" in "merge-base"*) [ -n "$FAKE_OLD" ] ;; esac\n'
+    )
     (bin_dir / "sleep").write_text("#!/bin/sh\n")  # reload 재시도가 15초를 쓰지 않게
     for f in bin_dir.iterdir():
         f.chmod(0o755)
@@ -69,9 +75,10 @@ def box(tmp_path: Path):
     tag_file = work / "deploy" / "docker" / ".deployed-tag"
     tag_file.write_text("prev\n")
 
-    def run(target: str = "dev", **fail: str) -> subprocess.CompletedProcess:
+    def run(target: str = "dev", allow_old: str = "", **fail: str) -> subprocess.CompletedProcess:
         env = {
             **os.environ,
+            "ALLOW_OLD": allow_old,
             "PATH": f"{bin_dir}:{os.environ['PATH']}",
             "FAKE_LOG": str(log),
             "DEPLOY_LOCK": str(tmp_path / "lock"),
@@ -272,3 +279,34 @@ def test_failed_caddy_reload_turns_the_deploy_red(box):
     assert "Caddy reload 실패" in result.stdout
     assert box.tag_file.read_text().strip() == "new"
     assert sum(c.startswith("docker exec ktc4-caddy caddy reload") for c in box.calls()) == 5
+
+
+def test_older_commit_than_the_running_one_is_refused(box):
+    """옛 run 의 Re-run — 그 run 의 sha 가 그대로 와서,
+    막지 않으면 운영이 옛 코드로 조용히 돌아간다."""
+    result = box(old="1")
+
+    assert result.returncode == 1
+    assert "옛 커밋이다" in result.stdout
+    calls = box.calls()
+    assert "git merge-base --is-ancestor new prev" in calls
+    assert not any(c.startswith("git reset") or c.startswith("docker") for c in calls)
+    assert box.tag_file.read_text().strip() == "prev"
+
+
+def test_allow_old_deploys_an_older_commit_on_purpose(box):
+    result = box(old="1", allow_old="1")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert box.tag_file.read_text().strip() == "new"
+
+
+@pytest.mark.parametrize("prev", ["local", "new"])
+def test_first_deploy_and_same_sha_redeploy_skip_the_age_check(box, prev):
+    """첫 배포(local)는 비교할 커밋이 없고, 같은 sha 는 다시 올려도 된다."""
+    box.tag_file.write_text(f"{prev}\n")
+
+    result = box(old="1")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not any(c.startswith("git merge-base") for c in box.calls())
