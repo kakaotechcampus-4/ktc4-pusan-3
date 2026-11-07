@@ -136,18 +136,16 @@ class DeleteCandidates:
     picked: tuple[str, ...]
 
 
-DELETE_KINDS = frozenset(
-    {
-        "observation_food",
-        "observation_health",
-        "observation_education",
-        "observation_activity",
-        "observation_routine",
-        "event",
-    }
+DELETE_KINDS = (
+    "observation_food",
+    "observation_health",
+    "observation_education",
+    "observation_activity",
+    "observation_routine",
+    "event",
 )
-"""제안에 담을 수 있는 종류 — 조회 tool 하나 = 탭 하나. DB 쪽도 같은 목록으로 한 번 더 막는다
-(`domains/delete_proposal/repository.KINDS`)."""
+"""제안에 담을 수 있는 종류 — 조회 tool 하나 = 탭 하나. 이 순서가 화면의 탭 순서다. DB 쪽도 같은
+목록으로 한 번 더 막는다 (`domains/delete_proposal/repository.KINDS`)."""
 
 DELETE_TAB_MAX_IDS = 40
 """탭 하나에 담을 수 있는 후보 수. 확정 요청의 id 상한(종류 수 × 이 값)이 이 값을 믿는다 — 넘게
@@ -161,7 +159,7 @@ def check_candidates(tabs: Sequence[DeleteCandidates]) -> None:
     후보 id 가 정말 이 아이의 행인지는 여기서 보지 않는다. 지울 때 서버가 아이로 다시 거른다.
     """
     kinds = [tab.kind for tab in tabs]
-    if not tabs or len(set(kinds)) != len(kinds) or not set(kinds) <= DELETE_KINDS:
+    if not tabs or len(set(kinds)) != len(kinds) or not set(kinds) <= set(DELETE_KINDS):
         raise ValueError("후보가 없거나, 종류가 겹치거나, 담을 수 없는 종류다")
     for tab in tabs:
         if not tab.ids or len(set(tab.ids)) != len(tab.ids):
@@ -196,7 +194,9 @@ class MemoryStore(Protocol):
         date_from: date | None = None,
         date_to: date | None = None,
         raw_text_query: str | None = None,
-    ) -> list[ObservationRow]: ...
+    ) -> list[ObservationRow]:
+        """관찰한 날 오래된 순. 조회 tool 이 뒤에서 최근 40건을 자른다 (`result.recent`)."""
+        ...
 
     async def get_observation(
         self, *, domain: ObservationDomain, observation_id: str
@@ -237,7 +237,9 @@ class MemoryStore(Protocol):
         date_from: date | None = None,
         date_to: date | None = None,
         title_query: str | None = None,
-    ) -> list[EventRow]: ...
+    ) -> list[EventRow]:
+        """시작 시각 오름차순. 조회 tool 이 오늘에 가까운 40건을 남긴다 (`result.nearest`)."""
+        ...
 
     async def get_event(self, *, event_id: str) -> EventRow | None: ...
 

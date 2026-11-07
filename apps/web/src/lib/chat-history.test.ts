@@ -250,3 +250,36 @@ describe("run 이 끝난 뒤 — 오늘 장만 갈아 끼운다 (#228 리뷰)", 
     });
   });
 });
+
+describe("지난 대화의 조회 · 삭제 카드 (#535)", () => {
+  it("서버가 남긴 카드도 같은 리듀서로 되살아난다 — 끝난 삭제 카드는 상태와 건수만 있다", () => {
+    const { run } = toPastRun([
+      { type: "note", text: "지울 것을 골라 주세요.", kind: "message" },
+      {
+        type: "delete_proposal",
+        proposal_id: "dp_1",
+        status: "deleted",
+        expires_at: "2026-11-05T03:00:00Z",
+        result: { observation_food: 30 },
+        tabs: [],
+      },
+      done,
+    ]);
+    expect(run.deleteProposal).toMatchObject({ status: "deleted", tabs: [] });
+    expect(run.observations).toEqual([]);
+    expect(run.status).toBe("done");
+  });
+
+  it("조회 카드는 지금 모습의 행 그대로 탭에 들어간다", () => {
+    const tabs = [
+      {
+        kind: "observation_food" as const,
+        truncated: false,
+        records: [observations[0]!],
+        events: [],
+      },
+    ];
+    const { run } = toPastRun([{ type: "found_tabs", tabs }, done]);
+    expect(run.foundTabs).toEqual(tabs);
+  });
+});

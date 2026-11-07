@@ -68,9 +68,6 @@ MAX_COMPLETION_TOKENS = 1400
 # 맥락을 만들지 않고 끝낸다(`ask_limit_reached`).
 MAX_QUESTIONS = 4
 
-# 되묻기 맥락에 남기는 조회 결과 행 수의 상한. 넘으면 하나도 남기지 않는다
-MAX_FOUND = 40
-
 # 조기 종료: 모든 힌트에 대해 성공한 쓰기가 run 전체에서 그 수 이상이면 요약 호출 없이 끝냄
 EARLY_STOP = True
 
@@ -155,11 +152,13 @@ _SAFETY_RECORD = (
 )
 
 # 진행 중 복약 일정에 있는 약이다. 먹인 것은 보호자가 복약 화면에서 체크하고, 같은 약을 먹인 약
-# 행으로도 적으면 투약이 두 번 남는다. 체크 안내는 pipeline 이 Health 로 따로 낸다
+# 행으로도 적으면 투약이 두 번 남는다. 체크 안내는 pipeline 이 Health 로 따로 낸다 — 모델에게 그
+# 안내를 알려 주면 그대로 옮겨 말해서 같은 run 에 안내가 두 번 나간다. 그래서 여기서는 말하지 않는다
 _MEDICINE_REGISTERED = (
-    "이 약은 진행 중인 복약 일정에 있다. 먹인 것은 보호자가 복약 화면에서 체크한다. "
-    "medication_given 을 빼고 증상만 있으면 증상만 다시 부르고, 증상도 없으면 "
-    "저장하지 않았다고 한 줄로만 알린다."
+    "이 약은 진행 중인 복약 일정에 있어 먹인 약으로 저장하지 않는다. "
+    "이 약에 대한 안내는 화면이 따로 내므로 말에 넣지 않는다. "
+    "medication_given 을 빼고 증상만 있으면 증상만 다시 부르고, "
+    "증상도 없으면 저장하지 않았다고 한 줄로만 알린다."
 )
 
 # 고쳐 말하는 조각(lookup_edit)인데 조회 없이 새로 저장. "할머니 말고 할아버지랑 산책했어" 처럼
@@ -262,8 +261,8 @@ _ADMITS_UNSAVED = re.compile(
     r"|못\s?(남|했|넣|만들|적)|안\s?(남|했|만들|넣|적)"
 )
 # 관찰을 해낸 것으로 보는 쓰기. 수정도 센다 — 관찰 조각에 unclear 가 섞이면 수정 tool 이
-# 열리고, "~를 ~로 바꿔줘" 는 저장된 기록을 고치는 게 맞다 (#678 리뷰). 지우기는 update 의
-# status=deleted 로 오지만 세지 않는다(_observe_done) — 기록을 남긴 게 아니다.
+# 열리고, "~를 ~로 바꿔줘" 는 저장된 기록을 고치는 게 맞다 (#678 리뷰). 지우기는 update 로
+# 오지 않는다 — 삭제 제안 tool 만 있고 실제로 지우는 건 보호자의 버튼이다 (#535).
 # WRITES_FOR 는 조기 종료가 조각 수만큼 새로 만들었는지 세는 데도 쓰여 따로 둔다
 _OBSERVE_DONE_BY: tuple[str, ...] = (*WRITES_FOR[WorkType.OBSERVE], "update_observation_")
 # 일정 쪽 tool 이 끝내 성공하지 못했을 때의 문장. 해낸 쪽은 _schedule_done 이 결과를 보고 정한다
@@ -481,6 +480,11 @@ async def run(
                     if at_limit
                     else _pending(replied, parsed.pending_hint, task, continuation, raw_text, calls)
                 )
+                if _asks_after_proposal(context, replied, pending, task):
+                    # 삭제 제안을 남긴 run 은 그 삭제를 되묻지 않는다 (#535). 맥락을 넘기면 다음
+                    # 채팅의 "응" 이 제안을 이어받는 것처럼 읽힌다 — 지우는 것은 카드의 버튼뿐이다.
+                    # 모델 문장("삭제할까요?")은 답할 곳이 없는 질문이라 고정 안내로 바꾼다
+                    replied, pending = MemoryReply(text=PROPOSED_REPLY, kind="message"), None
                 misnamed = (
                     replied.kind == "question"
                     and pending is None
@@ -703,12 +707,8 @@ def _missing_work(task: MemoryTask | None, calls: list[ToolCallRecord]) -> tuple
 
 
 def _observe_done(call: ToolCallRecord) -> bool:
-    """관찰을 남기거나 고친 호출인가. 지운 것(update 의 status=deleted)은 남긴 게 아니다."""
-    return (
-        call.success
-        and call.name.startswith(_OBSERVE_DONE_BY)
-        and call.arguments.get("status") != "deleted"
-    )
+    """관찰을 남기거나 고친 호출인가."""
+    return call.success and call.name.startswith(_OBSERVE_DONE_BY)
 
 
 def _schedule_done(call: ToolCallRecord) -> tuple[str, ...]:
@@ -1058,6 +1058,37 @@ def _parse_reply(content: str, model: type[ReplyOutput] = ReplyOutput) -> ReplyO
         return None
 
 
+PROPOSED_REPLY = "지울 기록을 카드에 담았어요. 확인하고 삭제 버튼을 눌러 주세요."
+
+
+def _asks_after_proposal(
+    context: AgentContext,
+    reply: MemoryReply,
+    pending: PendingMemoryContext | None,
+    task: MemoryTask | None,
+) -> bool:
+    """삭제 제안을 남긴 뒤 그 삭제를 되묻는 것이 확실한가. 확실할 때만 막는다.
+
+    제안이 어느 조각을 위한 것인지 코드는 모른다. 그래서 이렇게 가른다.
+    - 이어 붙일 조각을 못 고른 질문 → 막는다
+    - 기록 저장 등 다른 작업 조각을 묻는 질문 → 살린다
+    - 수정 · 삭제 조각이 하나뿐인 run 에서 그 조각을 묻는 질문 → 제안한 그 삭제다. 막는다
+    - 수정 · 삭제 조각이 둘 이상이면 → 살린다. "병원 일정 몇 시로 바꿀까요?" 를 막으면 그 조각이
+      답할 곳 없이 사라진다. 삭제를 되물은 것이었어도 다음 "응" 은 새 카드를 낼 뿐 지우지 않는다
+    단어("지워" 등)로 가르지 않는다 — "지우" 는 흔한 이름이고 "취소해줘" 처럼 말이 여럿이다.
+    """
+    if not context.proposals or reply.kind != "question":
+        return False
+    if pending is None:
+        return True
+    if pending.work is not WorkType.LOOKUP_EDIT:
+        return False
+    if task is None:  # 이어받기 run — 이어받은 조각 하나다
+        return True
+    edits = sum(1 for hint in task.hints if hint.work == WorkType.LOOKUP_EDIT)
+    return edits <= 1
+
+
 def _pending(
     reply: MemoryReply,
     named: str | None,
@@ -1136,7 +1167,7 @@ def _found(calls: list[ToolCallRecord], carried: tuple[FoundRef, ...] = ()) -> t
     질문은 마지막 조회를 보고 나온다. 앞선 넓은 조회까지 남기면 질문과 무관한 행이 같이 보인다.
     이번 run에 행이 나온 조회가 없으면 앞 맥락의 것을 그대로 넘긴다.
     id는 tool 결과에서 코드가 옮긴다. 실패한 조회는 data가 없어 들어오지 않는다.
-    MAX_FOUND를 넘으면 하나도 남기지 않는다.
+    조회 tool 이 종류마다 MAX_ROWS 건까지만 돌려주므로 따로 자르지 않는다.
     """
     refs = list(carried)
     for call in reversed(calls):
@@ -1152,7 +1183,7 @@ def _found(calls: list[ToolCallRecord], carried: tuple[FoundRef, ...] = ()) -> t
         if rows:
             refs = list(dict.fromkeys(FoundRef(resource, str(row["id"])) for row in rows))
             break
-    return tuple(refs) if len(refs) <= MAX_FOUND else ()
+    return tuple(refs)
 
 
 async def _execute(

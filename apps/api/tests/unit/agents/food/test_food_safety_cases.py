@@ -18,14 +18,14 @@ from datetime import datetime, timezone
 import pytest
 
 from app.agents.common.allergy import SINGLE_CHAR_NAMES
-from app.agents.food.store.ports import MenuCatalogRow, SafetyEntry
-from app.agents.food.tools.safety import (
+from app.agents.common.food_safety import (
     SINGLE_CHAR_FOODS,
     IngredientCheck,
     filter_food_safety,
     food_book,
     resolve_safety,
 )
+from app.agents.food.store.ports import MenuCatalogRow, SafetyEntry
 
 NOW = datetime(2026, 10, 7, tzinfo=timezone.utc)
 OLDER = 60  # 영아 규칙 · 질식 주의가 끼지 않는 월령
@@ -442,6 +442,19 @@ MUST_BLOCK = [
     ("대두", "낫토 덮밥", ()),
     ("돼지고기", "앞다릿살 수육", ()),  # 사이시옷 표기 — 앞다리살과 같은 부위 (라이브 eval)
     ("돼지고기", "뒷다릿살 볶음", ()),
+    # 케이크류는 반죽에 달걀이 늘 든다 — 케이크가 밀에만 있고 난류에는 없어서 통과했다 (#582)
+    ("난류", "단호박 케이크", ("단호박", "밀가루")),
+    ("난류", "바나나 머핀", ("바나나", "밀가루")),
+    ("난류", "미니 팬케이크", ("밀가루", "우유")),
+    ("난류", "핫케이크", ("밀가루", "우유")),
+    ("난류", "와플", ("밀가루", "버터")),
+    ("난류", "크레페", ("밀가루", "우유")),
+    ("난류", "마들렌", ("밀가루", "버터")),
+    ("난류", "초코 브라우니", ("초콜릿", "밀가루")),
+    # 밤 · 도토리는 견과류 묶음이다. 도토리는 밤과 같은 참나뭇과라 애매하면 막는다
+    ("견과류", "도토리묵 무침", ("도토리묵", "오이")),
+    ("견과류", "군밤", ("밤",)),
+    ("밤", "알밤 조림", ("알밤", "설탕")),
 ]
 
 
@@ -484,6 +497,11 @@ MUST_CHECK = [
     ("난류", "두부부침", ("두부", "부침가루"), (("부침", "난류"),)),
     ("난류", "동태전", ("동태", "밀가루"), (("동태전", "난류"),)),
     ("난류", "우유푸딩", ("우유", "설탕"), (("푸딩", "난류"),)),
+    # 쿠키 · 도넛 · 스콘 · 타르트 — 달걀 없이 만드는 제품이 흔하다 (#582)
+    ("난류", "초코칩 쿠키", ("밀가루", "버터"), (("쿠키", "난류"),)),
+    ("난류", "미니 도넛", ("밀가루", "설탕"), (("도넛", "난류"),)),
+    ("난류", "치즈 스콘", ("밀가루", "치즈"), (("스콘", "난류"),)),
+    ("난류", "과일 타르트", ("밀가루", "딸기"), (("타르트", "난류"),)),
 ]
 
 
@@ -979,3 +997,10 @@ def test_한_글자_식품은_사전에_없는_이름이다() -> None:
     book = food_book()
     assert all(len(char) == 1 for char in SINGLE_CHAR_FOODS)
     assert [char for char in SINGLE_CHAR_FOODS if char in book.names] == []
+
+
+def test_밤나무_꽃가루를_등록해도_밤_메뉴는_막지_않는다() -> None:
+    """밤을 사전에 넣으면 "밤나무" 안의 밤이 식품 이름으로 읽혀 꽃가루 알레르기 아이의 밤죽이 막힌다
+    (#582 리뷰). 밤나무 · 밤꽃은 guard 가 덮는다."""
+    assert _judge(_entries("밤나무 꽃가루"), _menu("밤죽", "밤", "쌀")) == "passed"
+    assert _judge(_entries("밤꽃 알레르기"), _menu("군밤", "밤")) == "passed"

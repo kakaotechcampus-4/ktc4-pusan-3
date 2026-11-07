@@ -33,6 +33,7 @@ from app.agents.entrypoint import (
 )
 from app.api.chat_replies import (
     CHAT_REPLIES,
+    SCREEN_REF_KINDS,
     AgentResultReply,
     ChatReply,
     DeleteProposalReply,
@@ -45,6 +46,7 @@ from app.api.chat_replies import (
     SavedReply,
     StoredReadout,
     StoredRef,
+    StoredScreenRef,
     StoredTab,
     UnavailableReply,
 )
@@ -95,6 +97,11 @@ def to_reply(event: Event) -> ChatReply | None:
                     body=readout.body,
                     authored_by=readout.authored_by,
                     code=readout.code,
+                    source_refs=[
+                        StoredScreenRef(kind=ref.kind, id=str(ref.id))
+                        for ref in readout.source_refs
+                        if ref.kind in SCREEN_REF_KINDS
+                    ],
                 )
                 for readout in event.readouts
             ],
