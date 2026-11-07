@@ -27,6 +27,7 @@ from tests.eval.suite.verdict import case_passed
 
 RAW_DIR = CASES_DIR.parent / "results" / "raw"
 KST = ZoneInfo("Asia/Seoul")
+RULE_OF_THREE_MIN = 30  # 이보다 작은 표본에서 "실패율 < 3/n" 은 말이 안 된다 (n=1 → 300%)
 
 
 def wilson(passed: int, n: int, z: float = 1.96) -> tuple[float, float]:
@@ -62,9 +63,14 @@ class CaseResult:
         return case_passed(self.severity, self.passes, self.repeat)
 
 
+def _scored(rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    """건너뛴 행(토큰 상한 등)은 점수 · 비용에서 뺀다."""
+    return [row for row in rows if "skipped" not in row]
+
+
 def summarize(rows: Sequence[dict[str, Any]]) -> dict[str, CaseResult]:
     cases: dict[str, CaseResult] = {}
-    for row in rows:
+    for row in _scored(rows):
         result = cases.setdefault(
             row["case"],
             CaseResult(
@@ -77,50 +83,104 @@ def summarize(rows: Sequence[dict[str, Any]]) -> dict[str, CaseResult]:
     return cases
 
 
+def _cell(text: object) -> str:
+    """md 표 칸에 넣을 글자 — | 와 줄바꿈이 표를 깨지 않게 한다."""
+    return " ".join(str(text).replace("|", "\\|").split())
+
+
 def _rate(passed: int, n: int) -> str:
     low, high = wilson(passed, n)
-    if passed == n:
+    if passed == n and n >= RULE_OF_THREE_MIN:
         return f"{passed}/{n} | 실패율 < {3 / n:.0%} (3의 규칙) |"
     return f"{passed}/{n} | {low:.0%} ~ {high:.0%} |"
 
 
+def _inputs(row: dict[str, Any]) -> list[tuple[str, dict[str, int]]]:
+    """run 하나(여러 턴일 수 있다)를 입력 단위로 쪼갠다. 마지막 턴만 input_kind, 앞은 "앞 턴"."""
+    trace = row["trace"]
+    order: list[str] = []
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for u in trace["usage"]:
+        rid = str(u.get("run_id", ""))
+        if rid not in groups:
+            order.append(rid)
+        groups.setdefault(rid, []).append(u)
+    if not order:
+        order, groups = [""], {"": []}
+    out: list[tuple[str, dict[str, int]]] = []
+    for i, rid in enumerate(order):
+        usage = groups[rid]
+        last = i == len(order) - 1
+        out.append(
+            (
+                row["input_kind"] if last else "앞 턴",
+                {
+                    "calls": len(usage),
+                    "prompt": sum(u["prompt_tokens"] for u in usage),
+                    "cached": sum(int(u.get("cached_prompt_tokens", 0)) for u in usage),
+                    "completion": sum(u["completion_tokens"] for u in usage),
+                    "latency": int(trace["latency_ms"])
+                    if last
+                    else sum(int(u.get("latency_ms", 0)) for u in usage),
+                },
+            )
+        )
+    return out
+
+
 def _cost(rows: Sequence[dict[str, Any]]) -> list[str]:
-    by_kind: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    rows = _scored(rows)
+    by_kind: dict[str, list[dict[str, int]]] = defaultdict(list)
     for row in rows:
-        by_kind[row["input_kind"]].append(row["trace"])
+        for kind, numbers in _inputs(row):
+            by_kind[kind].append(numbers)
     lines = [
-        "| 입력 종류 | run | API 호출 p50/p95 | 입력 토큰 p50/p95 | 출력 토큰 p50/p95 "
-        "| 지연 ms p50/p95 |",
-        "| --- | --- | --- | --- | --- | --- |",
+        "| 입력 종류 | run | API 호출 p50/p95 | 입력 토큰 p50/p95 | 캐시 토큰 p50/p95 "
+        "| 출력 토큰 p50/p95 | 지연 ms p50/p95 |",
+        "| --- | --- | --- | --- | --- | --- | --- |",
     ]
-    total = 0
-    for kind, traces in sorted(by_kind.items()):
-        calls = [len(t["usage"]) for t in traces]
-        prompt = [sum(u["prompt_tokens"] for u in t["usage"]) for t in traces]
-        completion = [sum(u["completion_tokens"] for u in t["usage"]) for t in traces]
-        latency = [int(t["latency_ms"]) for t in traces]
-        total += sum(prompt) + sum(completion)
+    total = cached_total = 0
+    for kind, items in sorted(by_kind.items()):
+
+        def pair(key: str, items: list[dict[str, int]] = items) -> str:
+            values = [item[key] for item in items]
+            return f"{percentile(values, 0.5)}/{percentile(values, 0.95)}"
+
+        total += sum(i["prompt"] + i["completion"] for i in items)
+        cached_total += sum(i["cached"] for i in items)
         lines.append(
-            f"| {kind} | {len(traces)} | {percentile(calls, 0.5)}/{percentile(calls, 0.95)} "
-            f"| {percentile(prompt, 0.5)}/{percentile(prompt, 0.95)} "
-            f"| {percentile(completion, 0.5)}/{percentile(completion, 0.95)} "
-            f"| {percentile(latency, 0.5)}/{percentile(latency, 0.95)} |"
+            f"| {kind} | {len(items)} | {pair('calls')} | {pair('prompt')} | {pair('cached')} "
+            f"| {pair('completion')} | {pair('latency')} |"
         )
     partial = sum(1 for row in rows if row["trace"]["partial"])
-    lines += ["", f"- 토큰 합계 {total:,} · 부분 결과 {partial}/{len(rows)} run"]
+    lines += [
+        "",
+        f"- 토큰 합계 {total:,} (캐시 {cached_total:,}) · 부분 결과 {partial}/{len(rows)} run",
+    ]
     models = sorted({f"{u['role']}={u['model']}" for r in rows for u in r["trace"]["usage"]})
     lines.append(f"- 역할별 모델: {', '.join(models) or '기록 없음'}")
     return lines
 
 
+def _commit_label(rows: Sequence[dict[str, Any]], fallback: str) -> str:
+    git = next((row["git"] for row in rows if row.get("git")), None)
+    if git is None:
+        return f"`{fallback}`"
+    dirty = " (커밋 안 된 변경 있음)" if git.get("dirty") is True else ""
+    return f"`{git.get('sha', 'unknown')}`{dirty}"
+
+
 def render(rows: Sequence[dict[str, Any]], *, source: str, sha: str, day: str) -> str:
+    skipped = [row for row in rows if "skipped" in row]
+    scored = _scored(rows)
     cases = summarize(rows)
-    repeat = max((row["repeat"] for row in rows), default=0)
+    repeat = max((row["repeat"] for row in scored), default=0)
     headline = sorted((c for c in cases.values() if c.headline), key=lambda c: c.headline or 0)
     lines = [
         f"# eval 결과 {day}",
         "",
-        f"- 커밋 `{sha}` · 원본 `{source}` · 반복 {repeat} · 케이스 {len(cases)} · run {len(rows)}",
+        f"- 커밋 {_commit_label(rows, sha)} · 원본 `{source}` · 반복 {repeat} "
+        f"· 케이스 {len(cases)} · run {len(scored)} · 건너뜀 {len(skipped)}",
         "",
         f"## 헤드라인 {sum(c.passed for c in headline)}/{len(headline)}",
         "",
@@ -136,19 +196,44 @@ def render(rows: Sequence[dict[str, Any]], *, source: str, sha: str, day: str) -
     ]
     violations = [(c.case, v) for c in cases.values() for v in c.violations]
     lines += [f"- {case}: {v}" for case, v in violations] or ["- 없음"]
-    lines += ["", "## 능력별", "", "| 능력 | 통과 케이스 | 95% 구간 |", "| --- | --- | --- |"]
+    lines += [
+        "",
+        "## 능력별",
+        "",
+        "| 능력 | 통과 케이스 | 95% 구간 | run 통과 |",
+        "| --- | --- | --- | --- |",
+    ]
     abilities: dict[str, list[CaseResult]] = defaultdict(list)
     for c in cases.values():
         abilities[c.ability].append(c)
     for ability, group in abilities.items():
-        lines.append(f"| {ability} | {_rate(sum(c.passed for c in group), len(group))}")
-    failing = [c for c in cases.values() if not c.passed]
-    lines += ["", "## 실패한 케이스", "", "| 케이스 | 통과 | 첫 이유 |", "| --- | --- | --- |"]
+        attempts = [ok for c in group for ok in c.passes]
+        lines.append(
+            f"| {ability} | {_rate(sum(c.passed for c in group), len(group))} "
+            f"{sum(attempts)}/{len(attempts)} |"
+        )
     lines += [
-        f"| {c.case} | {sum(c.passes)}/{c.repeat} | {(c.violations + c.misses or ['-'])[0]} |"
+        "",
+        "run 통과율은 safety 케이스의 첫 실패 조기 종료로 낮게 치우친다 — "
+        "회귀 비교는 케이스별 짝 비교(§9)를 먼저 본다",
+    ]
+    failing = [c for c in cases.values() if not c.passed]
+    lines += [
+        "",
+        "## 실패한 케이스",
+        "",
+        "| 케이스 | 통과 | §2 위반 수 | 기대 미달 수 | 첫 이유 |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    lines += [
+        f"| {c.case} | {sum(c.passes)}/{c.repeat} | {len(c.violations)} | {len(c.misses)} "
+        f"| {_cell((c.violations + c.misses or ['-'])[0])} |"
         for c in failing
-    ] or ["| 없음 | | |"]
-    lines += ["", "## 비용 · 지연", "", *_cost(rows), ""]
+    ] or ["| 없음 | | | | |"]
+    if skipped:
+        lines += ["", "## 실행하지 않은 케이스", "", "| 케이스 | 이유 |", "| --- | --- |"]
+        lines += [f"| {_cell(row['case'])} | {_cell(row['skipped'])} |" for row in skipped]
+    lines += ["", "## 비용 · 지연", "", *_cost(scored), ""]
     lines += [
         "## 실패 분석",
         "",
