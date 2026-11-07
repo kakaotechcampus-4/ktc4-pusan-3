@@ -5,7 +5,8 @@ tests/unit/agents/supervisor 에 있다.
 """
 
 import json
-from datetime import datetime, timedelta
+from dataclasses import replace
+from datetime import date, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
@@ -14,17 +15,23 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from app.agents.common.datetime_rules import DateRange
-from app.agents.common.llm_client import LLMResponse
+from app.agents.common.llm_client import LLMResponse, LLMUnavailableError
 from app.agents.memory.agent import (
     _FOUND_HEADER,
+    _UNCLEAR_REPLY,
     _UNSAVED_FALLBACK,
-    MAX_FOUND,
     MAX_QUESTIONS,
+    PROPOSED_REPLY,
+    MemoryReply,
+    ToolCallRecord,
     _claims_saved,
+    _missing_work,
+    _partial_reply,
     run,
 )
 from app.agents.memory.context import AgentContext
-from app.agents.memory.result import ErrorCode
+from app.agents.memory.registry import execute_tool
+from app.agents.memory.result import MAX_ROWS, ErrorCode
 from app.agents.memory.schemas.task import (
     FoundRef,
     MemoryHint,
@@ -768,6 +775,8 @@ async def test_이어받기에서_저장_없이_말로_끝내면_한_번_다시_
 
     assert len(llm.seen) == 2
     assert "아무것도 저장하지 않았고" in llm.seen[1][-1]["content"]
+    # 이어받기는 처음 run 문구(이유를 말해도 된다)를 쓰지 않는다 — 저장할 조각이 이미 정해져 있다
+    assert "그 이유를 짧게 말한다" not in llm.seen[1][-1]["content"]
     assert result.reply is not None and result.reply.kind == "question"
     assert result.pending is not None
 
@@ -1001,6 +1010,11 @@ async def test_조회에_일정이_섞이면_저장했다는_말을_다시_확�
         "기록해놨어요.",
         "저장해 드렸어요.",
         "저장하겠습니다.",
+        # 저장 없이 이렇게 끝낸 라이브 답 (#643)
+        "며칠 전 수영 기록을 남겼어요.",
+        "며칠 전 수영 기록을 남길게요.",
+        "딸기 기록 남겼어요.",
+        "기록으로 남겨 둘게요.",
     ],
 )
 def test_저장했다는_말을_알아본다(text: str) -> None:
@@ -1017,6 +1031,8 @@ def test_저장했다는_말을_알아본다(text: str) -> None:
         "이대로 기록할까요?",
         "알림은 등록된 일정 기준으로 자동으로 가요.",
         "날짜를 몰라 기록하지 못했어요.",
+        "이 기록을 남길까요?",
+        "날짜를 몰라 기록을 남기지 못했어요.",
     ],
 )
 def test_저장하지_않았거나_조회한_말은_저장했다는_말이_아니다(text: str) -> None:
@@ -1172,13 +1188,110 @@ _BLOCK = {
     "activity": "블록놀이",
 }
 _UNCLEAR_ONLY = MemoryTask(raw_text="딸기 맛있다.", unclear=("딸기 맛있다",), unclear_only=True)
-_UNCLEAR_PENDING = PendingMemoryContext(
-    "딸기 맛있다.", "아이가 딸기를 맛있다고 했나요?", WorkType.OBSERVE, whole=True, unclear=True
-)
 
 
 async def _foods(context: AgentContext) -> list[Any]:
     return await context.store.query_observations(domain="food", child_id=context.child_id)
+
+
+_GENERAL = "공룡은 아주 오래전 살았던 파충류예요."
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        _answer({"text": _GENERAL, "kind": "message"}),
+        _answer({"text": "아이의 음식 취향으로 기록할까요?", "kind": "question"}),
+        _reply(_GENERAL),
+        _answer({"text": "", "kind": "message"}),
+    ],
+    ids=["일반_답변", "되묻기", "평문", "빈_답"],
+)
+async def test_unclear_만_있으면_모델_말_대신_고정_문구를_낸다(
+    context: AgentContext, response: LLMResponse
+) -> None:
+    llm = FakeLLM(response)
+
+    result = await run(_UNCLEAR_ONLY.raw_text, context, client=llm, task=_UNCLEAR_ONLY)
+
+    assert result.reply == MemoryReply(_UNCLEAR_REPLY, "message")
+    assert result.ended_by == "unclear"  # 모델이 끝낸 것과 로그에서 갈린다
+    assert result.pending is None
+    assert len(llm.seen) == 1  # 재확인 · 빈 턴 재질문을 타지 않는다
+
+
+async def test_unclear_만_있으면_조회하고_답해도_고정_문구를_낸다(context: AgentContext) -> None:
+    llm = FakeLLM(
+        _tools(_call("q1", "query_observation_food", {"date_from": "오늘"})),
+        _answer({"text": _GENERAL, "kind": "message"}),
+    )
+
+    result = await run(_UNCLEAR_ONLY.raw_text, context, client=llm, task=_UNCLEAR_ONLY)
+
+    assert result.reply == MemoryReply(_UNCLEAR_REPLY, "message")
+
+
+async def test_unclear_만_있으면_저장을_거절당한_뒤_모델을_다시_부르지_않는다(
+    context: AgentContext,
+) -> None:
+    # 거절 뒤 모델이 쓸 알림은 어차피 버려진다 — 한 번 더 불러 비용만 쓰지 않는다 (#642)
+    llm = FakeLLM(_tools(_call("c1", "create_observation_food", _STRAWBERRY)))
+
+    result = await run(_UNCLEAR_ONLY.raw_text, context, client=llm, task=_UNCLEAR_ONLY)
+
+    assert len(llm.seen) == 1
+    assert result.calls[0].result["error"]["code"] == ErrorCode.NOT_CHILD_RECORD
+    assert result.reply == MemoryReply(_UNCLEAR_REPLY, "message")
+    assert result.ended_by == "unclear"
+    assert result.steps == 1
+
+
+_EVENT = {"title": "운동회", "starts_on": "모레", "starts_time": "오전 9시"}
+
+
+async def test_unclear_만_있으면_거절_뒤_일정_초안은_만들지_않는다(context: AgentContext) -> None:
+    # 거절 직후 끝내므로 다음 응답에서 부르려던 create_event 는 기회가 없다 (D13 의 예외)
+    llm = FakeLLM(
+        _tools(_call("c1", "create_observation_food", _STRAWBERRY)),
+        _tools(_call("c2", "create_event", _EVENT)),
+    )
+
+    result = await run(_UNCLEAR_ONLY.raw_text, context, client=llm, task=_UNCLEAR_ONLY)
+
+    assert len(llm.seen) == 1
+    assert result.drafts == ()
+    assert result.ended_by == "unclear"
+
+
+async def test_unclear_만_있어도_같은_응답의_일정_초안은_남는다(context: AgentContext) -> None:
+    said = "운동회 일정을 만들었어요. 승인하면 캘린더에 들어가요."
+    llm = FakeLLM(
+        _tools(
+            _call("c1", "create_observation_food", _STRAWBERRY),
+            _call("c2", "create_event", _EVENT),
+        ),
+        _answer({"text": said, "kind": "message"}),
+    )
+
+    result = await run(_UNCLEAR_ONLY.raw_text, context, client=llm, task=_UNCLEAR_ONLY)
+
+    assert [call.success for call in result.calls] == [False, True]
+    assert len(result.drafts) == 1
+    assert result.final_message == said
+    assert result.ended_by == "model"
+
+
+async def test_unclear_만_있어도_일정_초안을_만들면_모델_말을_낸다(context: AgentContext) -> None:
+    event = {"title": "운동회", "starts_on": "모레", "starts_time": "오전 9시"}
+    said = "운동회 일정을 만들었어요. 승인하면 캘린더에 들어가요."
+    llm = FakeLLM(
+        _tools(_call("c1", "create_event", event)),
+        _answer({"text": said, "kind": "message"}),
+    )
+
+    result = await run(_UNCLEAR_ONLY.raw_text, context, client=llm, task=_UNCLEAR_ONLY)
+
+    assert result.final_message == said
 
 
 async def test_unclear_조각만_있으면_관찰_저장을_거절하고_이유를_돌려준다(
@@ -1197,21 +1310,10 @@ async def test_unclear_조각만_있으면_관찰_저장을_거절하고_이유�
     # 묻지 않는다: 물으면 "아니" 라는 답에도 저장한 적이 있다
     assert "묻지 않고" in result.calls[0].result["error"]["message"]
     assert result.pending is None
+    assert result.reply == MemoryReply(_UNCLEAR_REPLY, "message")
     assert await _foods(context) == []
     names = {spec["function"]["name"] for spec in llm.seen_tools[0]}
     assert "create_observation_food" in names  # 묶음은 그대로라 캐시도 그대로
-
-
-async def test_다시_확인해도_물으면_unclear_맥락을_남긴다(context: AgentContext) -> None:
-    # 안전망 — 다시 확인한 뒤에도 물으면 이어받기가 "아니" 를 받을 수 있게 맥락을 남긴다
-    ask = _answer({"text": "아이가 딸기를 맛있다고 했나요?", "kind": "question"})
-    llm = FakeLLM(ask, ask)
-
-    result = await run(_UNCLEAR_ONLY.raw_text, context, client=llm, task=_UNCLEAR_ONLY)
-
-    assert result.pending is not None
-    assert result.pending.hint_text == "딸기 맛있다"  # 원문이 아니라 unclear 조각
-    assert result.pending.unclear is True
 
 
 async def test_기록과_섞이면_unclear_조각만_거절하고_기록은_저장한다(context: AgentContext) -> None:
@@ -1247,34 +1349,6 @@ async def test_원문을_길게_적어도_기록_조각과_겹치면_막지_않�
     result = await run(task.raw_text, context, client=llm, task=task)
 
     assert result.calls[0].success is True
-
-
-async def test_unclear_맥락을_이어받으면_저장할_수_있다(context: AgentContext) -> None:
-    llm = FakeLLM(
-        _tools(_call("c1", "create_observation_food", _STRAWBERRY)),
-        _answer({"text": "딸기를 기록했어요.", "kind": "message", "leftover": False}),
-    )
-
-    result = await run("응 애가 그랬어", context, client=llm, continuation=_UNCLEAR_PENDING)
-
-    assert result.calls[0].success is True
-    assert len(await _foods(context)) == 1
-
-
-async def test_unclear_맥락의_이어받기는_아니라는_답을_받을_수_있게_안내한다(
-    context: AgentContext,
-) -> None:
-    no = {"text": "아이 기록이 아니라서 남기지 않았어요.", "kind": "message", "leftover": False}
-    llm = FakeLLM(_answer(no))
-
-    result = await run("아니", context, client=llm, continuation=_UNCLEAR_PENDING)
-
-    user = llm.seen[0][1]["content"]
-    assert "아이 얘기라고 답했을 때만" in user
-    assert "나누지 못한 원문 전체다" not in user
-    # 저장 없이 끝난 게 정상이라 재확인을 부르지 않는다. 재확인이 같은 질문을 다시 부를 수 있다
-    assert len(llm.seen) == 1
-    assert result.pending is None
 
 
 # ── 고쳐 말하기 (#483) — lookup_edit 조각은 찾아보고 나서 만든다 ─────────
@@ -1413,23 +1487,6 @@ async def test_관찰_조각에도_들어가는_원문은_조회를_강제하지
     assert result.calls[0].success is True
 
 
-async def test_unclear_만_있는_입력의_되묻기는_한_번_다시_확인한다(context: AgentContext) -> None:
-    # "나 딸기 좋아해" 에 tool 없이 "아이 취향으로 기록할까요?" 라고 물었다 — 보호자 얘기를 아이에게
-    # 옮기는 질문이라 다시 확인하게 하고, 알림으로 바뀌면 되묻기 맥락을 남기지 않는다
-    task = MemoryTask(raw_text="나 딸기 좋아해.", unclear=("나 딸기 좋아해",), unclear_only=True)
-    llm = FakeLLM(
-        _answer({"text": "아이의 음식 취향으로 기록할까요?", "kind": "question"}),
-        _answer({"text": "아이 기록이 아니라서 저장하지 않았어요.", "kind": "message"}),
-    )
-
-    result = await run(task.raw_text, context, client=llm, task=task)
-
-    assert len(llm.seen) == 2
-    assert "보호자에게 보이지 않는 확인" in llm.seen[1][-1]["content"]
-    assert result.reply is not None and result.reply.kind == "message"
-    assert result.pending is None
-
-
 # ── 찾은 기록 이어받기 (#529) ───────────────────────────────────
 _JUK = "점심으로는 전복죽 먹었어."
 _JUK_DELETE = MemoryTask(
@@ -1438,8 +1495,8 @@ _JUK_DELETE = MemoryTask(
 )
 
 
-async def _seed_juk(context: AgentContext, raw_text: str = _JUK) -> str:
-    today = NOW.date()
+async def _seed_juk(context: AgentContext, raw_text: str = _JUK, *, day: date | None = None) -> str:
+    today = day or NOW.date()
     row = await context.store.create_observation(
         domain="food",
         child_id=context.child_id,
@@ -1489,33 +1546,67 @@ async def test_일정을_조회하고_되물으면_일정_id를_남긴다(contex
     assert result.pending.found == (FoundRef("event", event.id),)
 
 
-async def test_찾은_기록이_상한과_같으면_모두_남긴다(context: AgentContext) -> None:
-    for index in range(MAX_FOUND):
-        await _seed_juk(context, f"전복죽 {index}")
+async def _seed_juk_days(context: AgentContext, count: int) -> list[str]:
+    """하루에 한 건씩, 오래된 것부터. 조회 결과가 날짜순이라 마지막이 가장 최근이다."""
+    return [
+        await _seed_juk(context, f"전복죽 {back}일 전", day=NOW.date() - timedelta(days=back))
+        for back in range(count, 0, -1)
+    ]
+
+
+async def _query_juk(context: AgentContext) -> dict:
     llm = FakeLLM(
         _tools(_call("q1", "query_observation_food", {"raw_text_query": "전복죽"})),
-        _answer({"text": "전복죽 기록을 모두 삭제할까요?", "kind": "question"}),
+        _answer({"text": "전복죽 기록을 찾았어요.", "kind": "message"}),
     )
-
     result = await run(_JUK_DELETE.raw_text, context, client=llm, task=_JUK_DELETE)
-
-    assert result.pending is not None
-    assert len(result.pending.found) == MAX_FOUND
+    return result.calls[0].result["data"]
 
 
-async def test_찾은_기록이_상한을_넘으면_하나도_남기지_않는다(context: AgentContext) -> None:
-    # 일부만 남기면 "전부 지워줘" 에 "응" 했을 때 일부만 지워진다
-    for index in range(MAX_FOUND + 1):
-        await _seed_juk(context, f"전복죽 {index}")
-    llm = FakeLLM(
-        _tools(_call("q1", "query_observation_food", {"raw_text_query": "전복죽"})),
-        _answer({"text": "전복죽 기록을 모두 삭제할까요?", "kind": "question"}),
-    )
+async def test_조회가_상한과_같으면_잘렸다는_표시가_없다(context: AgentContext) -> None:
+    # 잘리지 않은 결과는 예전과 같은 모양이다 — 늘 싣으면 모델 행동이 흔들렸다(D02)
+    await _seed_juk_days(context, MAX_ROWS)
 
-    result = await run(_JUK_DELETE.raw_text, context, client=llm, task=_JUK_DELETE)
+    data = await _query_juk(context)
 
-    assert result.pending is not None
-    assert result.pending.found == ()
+    assert data["count"] == MAX_ROWS
+    assert "truncated" not in data and "notice" not in data
+
+
+async def test_조회가_상한을_넘으면_최근_것만_돌려주고_잘렸다고_알린다(
+    context: AgentContext,
+) -> None:
+    # 카드에 실리는 것과 모델이 본 것이 같아야 한다 — 보이지 않던 기록은 삭제 후보가 아니다 (#535)
+    ids = await _seed_juk_days(context, MAX_ROWS + 1)
+
+    data = await _query_juk(context)
+
+    assert data["count"] == MAX_ROWS and data["truncated"] is True
+    assert [row["id"] for row in data["records"]] == ids[1:]
+
+
+async def test_일정_조회가_상한을_넘으면_오늘에_가까운_것을_남긴다(context: AgentContext) -> None:
+    # 일정은 시작 시각 오름차순이라 뒤에서 자르면 먼 미래만 남고 이번 주 일정이 빠진다
+    days = [*range(-5, 0), *range(1, MAX_ROWS + 1)]  # 지난 5일 + 앞으로 40일
+    ids = {}
+    for offset in days:
+        row = await context.store.create_event(
+            child_id=context.child_id,
+            title="수영",
+            starts_at=NOW + timedelta(days=offset),
+            ends_at=None,
+            all_day=False,
+            fields={"event_type": "recurring", "category": "activity"},
+        )
+        ids[offset] = row.id
+
+    result = await execute_tool("query_event", {"title_query": "수영"}, context)
+
+    data = result.to_payload()["data"]
+    assert data["truncated"] is True and "가까운" in data["notice"]
+    # 가까운 40건 = 지난 5일 + 앞으로 35일. 먼 5일(36~40일 뒤)이 빠진다
+    kept = [ids[offset] for offset in days if offset <= MAX_ROWS - 5]
+    assert [event["id"] for event in data["events"]] == kept
 
 
 async def test_실패한_조회는_찾은_기록으로_세지_않는다(context: AgentContext) -> None:
@@ -1561,13 +1652,13 @@ async def test_이어받기는_찾은_기록을_다시_읽어_보여준다(conte
     juk = await _seed_juk(context)
     llm = FakeLLM(
         _tools(
-            _call("u1", "update_observation_food", {"observation_id": juk, "status": "deleted"})
+            _call("u1", "update_observation_food", {"observation_id": juk, "reaction": "좋아함"})
         ),
-        _cont_answer({"text": "삭제했어요.", "kind": "message"}),
+        _cont_answer({"text": "고쳤어요.", "kind": "message"}),
     )
 
     result = await run(
-        "응 지워줘.",
+        "응 그거 좋아했다고 고쳐줘.",
         context,
         client=llm,
         continuation=_asked_delete(FoundRef("observation_food", juk)),
@@ -1577,7 +1668,6 @@ async def test_이어받기는_찾은_기록을_다시_읽어_보여준다(conte
     assert _FOUND_HEADER in sent and juk in sent and _JUK in sent
     assert sent.index(_FOUND_HEADER) < sent.index("[직전에 물은 것]")
     assert result.calls[0].success is True
-    assert await context.store.get_observation(domain="food", observation_id=juk) is None
 
 
 async def test_그새_지워진_기록은_보여주지_않는다(context: AgentContext) -> None:
@@ -1652,24 +1742,6 @@ async def test_이어받기가_보여주는_일정에는_준비물이_담긴다(
     assert _FOUND_HEADER in sent and "보험증" in sent
 
 
-async def test_일정_이어받기는_조회_없이_그_일정을_지운다(context: AgentContext) -> None:
-    event_id = await _seed_pediatric_event(context)
-    llm = FakeLLM(
-        _tools(_call("d1", "delete_event", {"event_id": event_id})),
-        _cont_answer({"text": "삭제했어요.", "kind": "message"}),
-    )
-
-    result = await run(
-        "응",
-        context,
-        client=llm,
-        continuation=_asked_delete(FoundRef("event", event_id)),
-    )
-
-    assert result.tool_names == ["delete_event"] and result.calls[0].success is True
-    assert await context.store.get_event(event_id=event_id) is None
-
-
 async def test_일정만_보여준_이어받기는_관찰_새_저장을_막는다(context: AgentContext) -> None:
     # 보여 준 행과 같은 종류의 관찰만 조회한 것으로 본다. 일정을 봤다고 관찰 조회를 건너뛰지 않는다
     event_id = await _seed_pediatric_event(context)
@@ -1716,3 +1788,628 @@ async def test_알_수_없는_종류의_id는_보여주지_않는다(context: Ag
     )
 
     assert _FOUND_HEADER not in llm.seen[0][1]["content"]
+
+
+# ── 처음 run: 저장이 필요한 작업은 말투가 아니라 쓰기 성공으로 본다 (#667) ─────
+# "기록을 남겼어요" 처럼 말투 패턴에 없는 말로 저장 없이 끝낸 것이 그대로 나갔다
+# (#643 400번 중 20번). Supervisor 가 관찰 · 일정으로 나눈 run 은 그 종류의 쓰기 성공이 없으면
+# 말투와 상관없이 다시 확인한다
+_SWIM = _task(("며칠 전에 수영 했어", "observe"))
+_OBS_AND_EVENT = _task(("사과 먹었어", "observe"), ("모레 운동회 일정 넣어줘", "schedule"))
+
+
+def _recheck_prompt_of(llm: FakeLLM) -> str:
+    return llm.seen[1][-1]["content"]
+
+
+async def test_관찰_조각이_쓰기_없이_패턴에_없는_말로_끝나도_다시_확인한다(
+    context: AgentContext,
+) -> None:
+    llm = FakeLLM(
+        _answer({"text": "수영한 거 적어 뒀어요.", "kind": "message"}),
+        _answer({"text": "수영한 날이 언제였어요?", "kind": "question"}),
+    )
+
+    result = await run(_SWIM.raw_text, context, client=llm, task=_SWIM)
+
+    assert not _claims_saved("수영한 거 적어 뒀어요.")  # 패턴으로는 못 잡는 말투다
+    assert len(llm.seen) == 2
+    assert "아무것도 저장하지 않았고" in _recheck_prompt_of(llm)
+    # 처음 run 은 저장하지 않는 게 맞는 입력에도 걸려서 이유를 말하는 답을 허용한다
+    assert "그 이유를 짧게 말한다" in _recheck_prompt_of(llm)
+    assert result.reply is not None and result.reply.kind == "question"
+
+
+async def test_다시_확인하는_차례에는_tool_을_쓰지_않게_한다(context: AgentContext) -> None:
+    llm = FakeLLM(
+        _answer({"text": "수영한 거 적어 뒀어요.", "kind": "message"}),
+        _answer({"text": "수영한 날이 언제였어요?", "kind": "question"}),
+    )
+
+    await run(_SWIM.raw_text, context, client=llm, task=_SWIM)
+
+    assert llm.seen_kwargs[0]["tool_choice"] == "auto"
+    assert llm.seen_kwargs[1]["tool_choice"] == "none"
+
+
+async def test_다시_확인하는_차례에_tool_을_불러도_실행하지_않는다(context: AgentContext) -> None:
+    # tool_choice=none 을 무시하는 provider 대비. 확인에 밀려 저장하는 일이 없어야 한다.
+    # 확인 전 답은 저장한 척을 의심해 다시 묻던 답이라 내보내지 않는다
+    swim = {"raw_text": "수영 했어", "observed_on": "오늘", "subject": "수영"}
+    llm = FakeLLM(
+        _answer({"text": "수영 적어 뒀어요.", "kind": "message"}),
+        _tools(_call("c1", "create_observation_activity", swim)),
+    )
+
+    result = await run(_SWIM.raw_text, context, client=llm, task=_SWIM)
+
+    assert result.calls == []
+    assert result.final_message == _UNSAVED_FALLBACK
+    rows = await context.store.query_observations(domain="activity", child_id=context.child_id)
+    assert rows == []
+
+
+# ── 다시 확인이 끝나지 못해도 run 을 실패로 올리지 않는다 (#678 리뷰) ─────────
+# 실패로 올리면 pipeline 이 commit 하지 않아 그 run 의 저장이 되돌려진다.
+# 다시 확인은 저장 0건 run 에만 하므로 고정 문구("아무것도 저장하지 않았어요")가 사실이다
+class _FailOn(FakeLLM):
+    """n 번째(1부터) 호출에서 LLM 오류를 낸다."""
+
+    def __init__(self, n: int, *responses: LLMResponse) -> None:
+        super().__init__(*responses)
+        self._n = n
+
+    async def chat(self, messages: list[dict[str, Any]], **kwargs: Any) -> LLMResponse:
+        if len(self.seen) + 1 == self._n:
+            self.seen.append([dict(message) for message in messages])
+            raise LLMUnavailableError("timeout")
+        return await super().chat(messages, **kwargs)
+
+
+async def test_다시_확인_호출이_실패하면_고정_문구로_정상_종료한다(context: AgentContext) -> None:
+    llm = _FailOn(2, _answer({"text": "수영 적어 뒀어요.", "kind": "message"}))
+
+    result = await run(_SWIM.raw_text, context, client=llm, task=_SWIM)
+
+    assert result.completed
+    assert result.final_message == _UNSAVED_FALLBACK
+    assert result.ended_by == "unsaved_fallback"
+
+
+async def test_다시_확인이_아닌_호출의_실패는_그대로_올린다(context: AgentContext) -> None:
+    # 기록하는 중의 실패는 기록 실패다. pipeline 이 되돌리는 게 맞다
+    llm = _FailOn(1)
+
+    with pytest.raises(LLMUnavailableError):
+        await run(_SWIM.raw_text, context, client=llm, task=_SWIM)
+
+
+async def test_마지막_차례에서는_다시_확인하지_않고_고정_문구로_끝낸다(
+    context: AgentContext,
+) -> None:
+    llm = FakeLLM(_answer({"text": "수영 적어 뒀어요.", "kind": "message"}))
+
+    result = await run(_SWIM.raw_text, context, client=llm, task=_SWIM, max_steps=1)
+
+    assert len(llm.seen) == 1
+    assert result.completed
+    assert result.final_message == _UNSAVED_FALLBACK
+
+
+async def test_다시_쓴_답이_스키마와_맞지_않으면_고정_문구로_끝낸다(context: AgentContext) -> None:
+    # 평문은 확인 결과인지 알 수 없다
+    llm = FakeLLM(
+        _answer({"text": "수영 적어 뒀어요.", "kind": "message"}), _reply("수영은 적어 뒀어요.")
+    )
+
+    result = await run(_SWIM.raw_text, context, client=llm, task=_SWIM)
+
+    assert len(llm.seen) == 2
+    assert result.final_message == _UNSAVED_FALLBACK
+
+
+async def test_다시_쓴_답이_비면_한_번_더_묻는다(context: AgentContext) -> None:
+    # 거짓 첫 답에 다시 쓰게 하면 빈 답이 자주 왔고, 한 번 더 물으면 날짜를 되물었다 (#678 라이브)
+    llm = FakeLLM(
+        _answer({"text": "수영 적어 뒀어요.", "kind": "message"}),
+        _answer({"text": "", "kind": "message"}),
+        _answer({"text": "수영한 날이 언제였어요?", "kind": "question"}),
+    )
+
+    result = await run(_SWIM.raw_text, context, client=llm, task=_SWIM)
+
+    assert len(llm.seen) == 3
+    assert llm.seen_kwargs[2]["tool_choice"] == "none"
+    assert result.final_message == "수영한 날이 언제였어요?"
+
+
+@pytest.mark.parametrize(
+    ("max_steps", "answers"),
+    [(7, 2), (2, 1)],
+    ids=["또_빈_답", "더_물을_차례가_없음"],
+)
+async def test_다시_쓴_답이_비었는데_더_물을_수_없으면_고정_문구로_끝낸다(
+    context: AgentContext, max_steps: int, answers: int
+) -> None:
+    empty = _answer({"text": "", "kind": "message"})
+    llm = FakeLLM(_answer({"text": "수영 적어 뒀어요.", "kind": "message"}), *[empty] * answers)
+
+    result = await run(_SWIM.raw_text, context, client=llm, task=_SWIM, max_steps=max_steps)
+
+    assert len(llm.seen) == 1 + answers
+    assert result.completed
+    assert result.final_message == _UNSAVED_FALLBACK
+
+
+# ── 일부만 저장했으면 다시 확인하지 않고 코드가 판정한다 (#678 리뷰) ─────────
+@pytest.mark.parametrize(
+    ("call", "expected"),
+    [
+        (
+            _call("e1", "create_event", _EVENT),
+            "일정 초안은 만들었어요. 기록은 남기지 않았어요.",
+        ),
+        (
+            _call("o1", "create_observation_food", _APPLE),
+            "식사 기록은 남겼어요. 일정 초안은 만들지 않았어요.",
+        ),
+    ],
+    ids=["일정만_성공", "관찰만_성공"],
+)
+async def test_일부만_저장하고_다_했다고_하면_tool_기록대로_코드가_말한다(
+    context: AgentContext, call: SimpleNamespace, expected: str
+) -> None:
+    llm = FakeLLM(_tools(call), _answer({"text": "다 기록했어요.", "kind": "message"}))
+
+    result = await run(_OBS_AND_EVENT.raw_text, context, client=llm, task=_OBS_AND_EVENT)
+
+    assert len(llm.seen) == 2  # 다시 확인 호출이 없다 — 그 실패가 저장을 되돌릴 수 있다
+    assert result.final_message == expected
+
+
+async def test_아이_이야기의_부정은_못_한_것을_말한_것으로_보지_않는다(
+    context: AgentContext,
+) -> None:
+    # "편식하지 않고" 는 저장에 대한 말이 아니다. 걸리면 다 했다고만 한 답이 그대로 나간다
+    text = "사과랑 운동회 다 기록했어요. 편식하지 않고 잘 먹었네요!"
+    llm = FakeLLM(
+        _tools(_call("e1", "create_event", _EVENT)), _answer({"text": text, "kind": "message"})
+    )
+
+    result = await run(_OBS_AND_EVENT.raw_text, context, client=llm, task=_OBS_AND_EVENT)
+
+    assert result.final_message == "일정 초안은 만들었어요. 기록은 남기지 않았어요."
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "운동회 초안을 만들었어요. 사과는 먹을 예정이라 안 남겼어요.",
+        # 한 것을 "기록했어요" 로 말해도 못 한 것을 같이 말하면 정직한 답이다 (#678 라이브)
+        "사과는 기록했어요. 운동회는 날짜를 몰라 일정으로 넣지 않았어요.",
+    ],
+    ids=["저장_말투_없음", "한_것과_못_한_것을_같이_말함"],
+)
+async def test_일부만_저장하고_못_한_것을_말하면_모델_답을_그대로_둔다(
+    context: AgentContext, text: str
+) -> None:
+    llm = FakeLLM(
+        _tools(_call("e1", "create_event", _EVENT)), _answer({"text": text, "kind": "message"})
+    )
+
+    result = await run(_OBS_AND_EVENT.raw_text, context, client=llm, task=_OBS_AND_EVENT)
+
+    assert len(llm.seen) == 2
+    assert result.final_message == text
+
+
+def _checked(prepared: bool, *, was: bool) -> dict[str, Any]:
+    return {"draft": False, "is_prepared": prepared, "was_prepared": was}
+
+
+def _rec(name: str, data: dict[str, Any] | None = None, **arguments: Any) -> ToolCallRecord:
+    result = {"success": True, "data": data or {}} if data is not None else {"success": False}
+    return ToolCallRecord(name, arguments, result)
+
+
+@pytest.mark.parametrize(
+    ("calls", "expected"),
+    [
+        (
+            [_rec("create_event_item", {"added": True})],
+            "준비물은 일정 초안에 더했어요. 기록은 남기지 않았어요.",
+        ),
+        (
+            [_rec("update_event_item", _checked(True, was=False))],
+            "준비물 챙김은 표시했어요. 기록은 남기지 않았어요.",
+        ),
+        (
+            [_rec("update_event_item", _checked(False, was=True))],
+            "준비물 챙김 표시는 풀었어요. 기록은 남기지 않았어요.",
+        ),
+        # 고친 것은 남긴 것과 따로 말한다
+        (
+            [_rec("update_observation_food", {}), _rec("create_event", {"draft": True})],
+            "식사 기록은 고쳤어요. 일정 초안은 만들었어요.",
+        ),
+        # 바뀐 게 없는 성공은 실패가 아니라 할 일이 없었던 것이다 (#678 리뷰)
+        (
+            [_rec("update_event_item", _checked(True, was=True))],
+            "준비물은 이미 챙김 표시돼 있어요. 기록은 남기지 않았어요.",
+        ),
+        (
+            [_rec("create_event_item", {"added": False})],
+            "준비물은 이미 일정에 있어요. 기록은 남기지 않았어요.",
+        ),
+        (
+            [_rec("update_event", {"draft": False, "changed": []})],
+            "일정은 이미 그렇게 되어 있어요. 기록은 남기지 않았어요.",
+        ),
+        # 끝내 성공하지 못한 일정 쪽 호출도 말한다. 고쳐 다시 불러 성공했으면 말하지 않는다
+        (
+            [_rec("create_event", {"draft": True}), _rec("create_event_item")],
+            "일정 초안은 만들었어요. 기록은 남기지 않았어요. 준비물은 더하지 않았어요.",
+        ),
+        (
+            [
+                _rec("create_event", {"draft": True}),
+                _rec("create_event_item"),
+                _rec("create_event_item", {"added": True}),
+            ],
+            "일정 초안은 만들었어요. 준비물은 일정 초안에 더했어요. 기록은 남기지 않았어요.",
+        ),
+    ],
+    ids=[
+        "준비물_추가",
+        "챙김_표시",
+        "챙김_해제",
+        "관찰_수정",
+        "이미_챙긴_준비물",
+        "이미_있는_준비물",
+        "바뀐_것_없는_수정",
+        "준비물_실패",
+        "실패_뒤_성공",
+    ],
+)
+def test_일부_저장_답은_일정_쪽_호출마다_한_일과_하지_않은_일을_말한다(
+    calls: list[ToolCallRecord], expected: str
+) -> None:
+    missing = _missing_work(_OBS_AND_EVENT, calls)
+
+    assert _partial_reply(_OBS_AND_EVENT, missing, calls).text == expected
+
+
+async def test_관찰_조각을_저장된_기록_수정으로_끝내도_관찰을_한_것으로_본다() -> None:
+    # 관찰 조각에 unclear 가 섞이면 수정 tool 이 열린다. "~를 ~로 바꿔줘" 는 고치는 게 맞다
+    task = MemoryTask(
+        raw_text="아까 바나나 먹었다고 한 거 사과로 바꿔줘",
+        hints=(MemoryHint(text="사과 먹었어", work=WorkType.OBSERVE),),
+        unclear=("바꿔줘",),
+    )
+    updated = ToolCallRecord("update_observation_food", {}, {"success": True})
+
+    assert task.open_lookup_edit
+    assert _missing_work(task, [updated]) == ()
+
+
+@pytest.mark.parametrize(
+    ("call", "code"),
+    [
+        (
+            _call("c1", "create_observation_food", {**_APPLE, "subject": "세제"}),
+            ErrorCode.HAZARD,
+        ),
+        (_call("c1", "create_observation_health", _health("아토피")), ErrorCode.SAFETY_RECORD),
+    ],
+    ids=["위험_물질", "알레르기_만성질환"],
+)
+async def test_저장_게이트가_막은_run_은_다시_확인하지_않는다(
+    context: AgentContext, call: SimpleNamespace, code: str
+) -> None:
+    # "한 줄로만 알린다" 는 규칙과 다시 확인 문구가 부딪친다. 안내는 pipeline 이 따로 낸다
+    task = _task(("먹었어", "observe"))
+    llm = FakeLLM(_tools(call), _answer({"text": "기록하지 않았어요.", "kind": "message"}))
+
+    result = await run(task.raw_text, context, client=llm, task=task)
+
+    assert result.refused(code)
+    assert len(llm.seen) == 2
+    assert result.final_message == "기록하지 않았어요."
+
+
+async def test_필요한_종류가_모두_성공했으면_다시_확인하지_않는다(context: AgentContext) -> None:
+    # 조회가 섞이면 조기 종료하지 않아 모델이 말로 끝낸다
+    llm = FakeLLM(
+        _tools(
+            _call("q1", "query_event", {}),
+            _call("o1", "create_observation_food", _APPLE),
+            _call("e1", "create_event", _EVENT),
+        ),
+        _answer({"text": "사과와 운동회를 넣었어요.", "kind": "message"}),
+    )
+
+    await run(_OBS_AND_EVENT.raw_text, context, client=llm, task=_OBS_AND_EVENT)
+
+    assert len(llm.seen) == 2
+
+
+async def test_실패한_쓰기는_성공으로_세지_않는다(context: AgentContext) -> None:
+    llm = FakeLLM(
+        _tools(_call("o1", "create_observation_food", {**_APPLE, "observed_on": "모름"})),
+        _answer({"text": "사과를 남겨 뒀어요.", "kind": "message"}),
+        _answer({"text": "사과는 언제 먹었어요?", "kind": "question"}),
+    )
+    task = _task(("사과 먹었어", "observe"))
+
+    result = await run(task.raw_text, context, client=llm, task=task)
+
+    assert result.calls[0].success is False
+    assert len(llm.seen) == 3
+    assert "아무것도 저장하지 않았고" in llm.seen[2][-1]["content"]
+
+
+async def test_같은_종류_조각이_여럿이어도_그_종류_성공_1건이면_다시_확인하지_않는다(
+    context: AgentContext,
+) -> None:
+    # 조각과 호출을 짝짓지 않는다(#667 범위 밖). 조각별 검증은 하지 않는다는 것을 고정한다
+    task = _task(("사과 먹었어", "observe"), ("요즘 기침해", "observe"))
+    llm = FakeLLM(
+        _tools(_call("o1", "create_observation_food", _APPLE)),
+        _answer({"text": "사과를 기록했어요.", "kind": "message"}),
+    )
+
+    await run(task.raw_text, context, client=llm, task=task)
+
+    assert len(llm.seen) == 2
+
+
+async def test_다시_확인은_run_당_한_번이다(context: AgentContext) -> None:
+    said = {"text": "날짜를 몰라 수영은 남기지 못했어요.", "kind": "message"}
+    llm = FakeLLM(_answer(said), _answer(said))
+
+    result = await run(_SWIM.raw_text, context, client=llm, task=_SWIM)
+
+    assert len(llm.seen) == 2
+    assert result.final_message == said["text"]
+
+
+async def test_조회_수정_조각만_있으면_쓰기_없이_끝나도_다시_확인하지_않는다(
+    context: AgentContext,
+) -> None:
+    task = _task(("어제 뭐 먹었지", "lookup_edit"))
+    llm = FakeLLM(
+        _tools(_call("q1", "query_observation_food", {"date_from": "어제"})),
+        _answer({"text": "어제는 사과를 먹었어요.", "kind": "message"}),
+    )
+
+    await run(task.raw_text, context, client=llm, task=task)
+
+    assert len(llm.seen) == 2
+
+
+async def test_되묻기로_끝나면_쓰기가_없어도_다시_확인하지_않는다(context: AgentContext) -> None:
+    llm = FakeLLM(_answer({"text": "수영한 날이 언제였어요?", "kind": "question"}))
+
+    await run(_SWIM.raw_text, context, client=llm, task=_SWIM)
+
+    assert len(llm.seen) == 1
+
+
+async def test_알림을_해_달라는_일정_조각은_쓰기_없이_끝나도_다시_확인하지_않는다(
+    context: AgentContext,
+) -> None:
+    # 알림 요청은 초안 없이 안내로 끝나는 게 정상이고, 다시 확인해도 답이 그대로였다 (#667 라이브)
+    task = _task(("모레 운동회 전날 저녁 8시에 알려줘", "schedule"))
+    llm = FakeLLM(_answer({"text": "일정이 있으면 전날 알림이 가요.", "kind": "message"}))
+
+    await run(task.raw_text, context, client=llm, task=task)
+
+    assert len(llm.seen) == 1
+
+
+@pytest.mark.parametrize(
+    "text", ["알림장에 내일 소풍 간대", "키즈노트 알림 왔는데 금요일 현장학습이래"]
+)
+def test_기관_공지_이야기는_알림_요청이_아니라_일정_조각으로_본다(text: str) -> None:
+    # 기관 공지를 옮긴 말이다. 초안이 없으면 일정을 못 한 것으로 본다 (#678 리뷰)
+    task = _task((text, "schedule"))
+
+    assert _missing_work(task, []) == (WorkType.SCHEDULE,)
+
+
+async def test_새_일정과_알림_요청이_한_조각이면_시각을_되물은_답을_그대로_낸다(
+    context: AgentContext,
+) -> None:
+    # 알림 요청이라 판정에서는 빠지지만, 새 일정은 일정 규칙대로 시각을 묻는다
+    # (#678 리뷰 · 라이브 10/10)
+    task = _task(("다음 주 수요일 병원 예약 있어. 전날 밤 9시에 알려줘", "schedule"))
+    asked = "병원 예약이 몇 시인가요?"
+    llm = FakeLLM(_answer({"text": asked, "kind": "question"}))
+
+    result = await run(task.raw_text, context, client=llm, task=task)
+
+    assert len(llm.seen) == 1
+    assert result.reply == MemoryReply(text=asked, kind="question")
+
+
+# ── 등록된 약 — 먹인 약 행으로 쓰지 않는다 ────────────────────────────
+def _given(medicine: str, raw: str) -> dict[str, Any]:
+    return {"raw_text": raw, "observed_on": "오늘", "medication_given": medicine}
+
+
+def _syrup_registered(context: AgentContext) -> AgentContext:
+    return replace(context, registered_medicines=("해열 시럽",))
+
+
+async def test_진행_중_코스의_약은_먹인_약_행으로_쓰지_않는다(context: AgentContext) -> None:
+    llm = FakeLLM(
+        _tools(_call("c1", "create_observation_health", _given("해열 시럽", "해열 시럽 먹였어"))),
+        _answer({"text": "복약 화면에서 체크해 주세요.", "kind": "message"}),
+    )
+
+    result = await run("해열 시럽 먹였어", _syrup_registered(context), client=llm)
+
+    assert result.refused(ErrorCode.REGISTERED_MEDICINE)
+    assert await _health_rows(context) == []
+    # 체크 안내는 같은 run 의 Health 카드가 낸다. 모델에게 같은 말을 시키면 안내가 두 번 나간다
+    message = result.calls[0].result["error"]["message"]
+    assert "체크" not in message and "복약 화면" not in message
+
+
+async def test_등록_약이_있으면_이름_없는_약도_쓰지_않는다(context: AgentContext) -> None:
+    llm = FakeLLM(
+        _tools(_call("c1", "create_observation_health", _given("약", "약 먹였어"))),
+        _answer({"text": "복약 화면에서 체크해 주세요.", "kind": "message"}),
+    )
+
+    result = await run("약 먹였어", _syrup_registered(context), client=llm)
+
+    assert result.refused(ErrorCode.REGISTERED_MEDICINE)
+    assert await _health_rows(context) == []
+
+
+async def test_등록되지_않은_약은_그대로_쓴다(context: AgentContext) -> None:
+    llm = FakeLLM(
+        _tools(_call("c1", "create_observation_health", _given("해열제", "해열제 먹였어"))),
+        _answer({"text": "해열제 먹인 것을 기록했어요.", "kind": "message"}),
+    )
+
+    result = await run("해열제 먹였어", _syrup_registered(context), client=llm)
+
+    assert not result.refused(ErrorCode.REGISTERED_MEDICINE)
+    assert len(await _health_rows(context)) == 1
+
+
+async def test_코스를_모르면_이름_없는_약도_쓴다(context: AgentContext) -> None:
+    # 투약이 두 번 남는 쪽이 기록이 사라지는 쪽보다 낫다 — 코스를 못 읽었으면 평소처럼 기록한다
+    llm = FakeLLM(
+        _tools(_call("c1", "create_observation_health", _given("약", "약 먹였어"))),
+        _answer({"text": "약 먹인 것을 기록했어요.", "kind": "message"}),
+    )
+
+    result = await run("약 먹였어", context, client=llm)
+
+    assert not result.refused(ErrorCode.REGISTERED_MEDICINE)
+    assert len(await _health_rows(context)) == 1
+
+
+def test_먹인_약_정정은_막지_않는다(context: AgentContext) -> None:
+    from app.agents.memory.agent import _registered_medicine
+
+    arguments = {"id": "00000000-0000-0000-0000-000000000000", "medication_given": "해열 시럽"}
+
+    assert not _registered_medicine(
+        "update_observation_health", arguments, _syrup_registered(context)
+    )
+    assert _registered_medicine(
+        "create_observation_health",
+        _given("해열 시럽", "해열 시럽 먹였어"),
+        _syrup_registered(context),
+    )
+
+
+# ── 삭제 제안 뒤의 되묻기 (#535) ──────────────────────────────────
+_DELETE_AND_SNACK = MemoryTask(
+    raw_text=f'아까 "{_JUK}" 기록 지워주고, 오늘 간식도 먹었어',
+    hints=(
+        MemoryHint(text=f'아까 "{_JUK}" 기록 지워줘', work=WorkType.LOOKUP_EDIT),
+        MemoryHint(text="오늘 간식도 먹었어", work=WorkType.OBSERVE),
+    ),
+)
+
+
+def _propose_then_ask(juk: str, pending_hint: str | None) -> FakeLLM:
+    return FakeLLM(
+        _tools(_call("q1", "query_observation_food", {"raw_text_query": "전복죽"})),
+        _tools(_call("p1", "propose_delete", {"ids": [juk]})),
+        _answer(
+            {"text": "전복죽 기록을 삭제할까요?", "kind": "question", "pending_hint": pending_hint}
+        ),
+    )
+
+
+async def test_삭제_제안_뒤_그_삭제를_물으면_고정_안내로_끝낸다(context: AgentContext) -> None:
+    juk = await _seed_juk(context)
+
+    result = await run(
+        _JUK_DELETE.raw_text, context, client=_propose_then_ask(juk, None), task=_JUK_DELETE
+    )
+
+    assert result.reply == MemoryReply(text=PROPOSED_REPLY, kind="message")
+    assert result.pending is None
+
+
+async def test_삭제_제안_뒤에도_다른_조각을_묻는_질문은_살린다(context: AgentContext) -> None:
+    # 섞인 입력에서 간식 조각을 묻는 질문까지 끊으면 그 조각이 답할 곳 없이 사라진다
+    juk = await _seed_juk(context)
+    llm = FakeLLM(
+        _tools(_call("q1", "query_observation_food", {"raw_text_query": "전복죽"})),
+        _tools(_call("p1", "propose_delete", {"ids": [juk]})),
+        _answer(
+            {
+                "text": "어떤 간식을 먹었나요?",
+                "kind": "question",
+                "pending_hint": "오늘 간식도 먹었어",
+            }
+        ),
+    )
+
+    result = await run(_DELETE_AND_SNACK.raw_text, context, client=llm, task=_DELETE_AND_SNACK)
+
+    assert result.reply is not None and result.reply.kind == "question"
+    assert result.pending is not None and result.pending.work is WorkType.OBSERVE
+
+
+async def test_삭제_제안_뒤에도_다른_수정_조각을_묻는_질문은_살린다(context: AgentContext) -> None:
+    # 삭제도 수정도 lookup_edit 이다 — 수정 쪽 질문까지 막으면 그 조각이 답할 곳 없이 사라진다
+    juk = await _seed_juk(context)
+    task = MemoryTask(
+        raw_text=f'아까 "{_JUK}" 기록 지워줘. 병원 일정 시간을 바꿔줘',
+        hints=(
+            MemoryHint(text=f'아까 "{_JUK}" 기록 지워줘', work=WorkType.LOOKUP_EDIT),
+            MemoryHint(text="병원 일정 시간을 바꿔줘", work=WorkType.LOOKUP_EDIT),
+        ),
+    )
+    llm = FakeLLM(
+        _tools(_call("q1", "query_observation_food", {"raw_text_query": "전복죽"})),
+        _tools(_call("p1", "propose_delete", {"ids": [juk]})),
+        _answer(
+            {
+                "text": "병원 일정을 몇 시로 바꿀까요?",
+                "kind": "question",
+                "pending_hint": "병원 일정 시간을 바꿔줘",
+            }
+        ),
+    )
+
+    result = await run(task.raw_text, context, client=llm, task=task)
+
+    assert result.reply == MemoryReply(text="병원 일정을 몇 시로 바꿀까요?", kind="question")
+    assert result.pending is not None and result.pending.hint_text == "병원 일정 시간을 바꿔줘"
+
+
+async def test_수정_삭제_조각이_하나면_그_조각을_되묻는_질문은_막는다(
+    context: AgentContext,
+) -> None:
+    # 말투로 가르지 않는다 — "취소해줘" 도 삭제다. 조각이 하나면 제안한 그 삭제를 묻는 것이다
+    juk = await _seed_juk(context)
+    task = MemoryTask(
+        raw_text="점심 전복죽 기록 취소해줘",
+        hints=(MemoryHint(text="점심 전복죽 기록 취소해줘", work=WorkType.LOOKUP_EDIT),),
+    )
+    llm = FakeLLM(
+        _tools(_call("q1", "query_observation_food", {"raw_text_query": "전복죽"})),
+        _tools(_call("p1", "propose_delete", {"ids": [juk]})),
+        _answer(
+            {
+                "text": "전복죽 기록을 삭제할까요?",
+                "kind": "question",
+                "pending_hint": "점심 전복죽 기록 취소해줘",
+            }
+        ),
+    )
+
+    result = await run(task.raw_text, context, client=llm, task=task)
+
+    assert result.reply == MemoryReply(text=PROPOSED_REPLY, kind="message")
+    assert result.pending is None

@@ -6,6 +6,7 @@
 - 알레르기 조회에 실패하면 Activity 가 닫힌다 (D7).
 """
 
+from dataclasses import replace
 from datetime import UTC, date, datetime
 from uuid import UUID
 from zoneinfo import ZoneInfo
@@ -15,7 +16,12 @@ import pytest
 from app.agents.activity.agent import run
 from app.agents.activity.context import ActivityContext, build_gate
 from app.agents.activity.readouts import READOUTS
-from app.agents.activity.store.inmemory import InMemoryPlaces, InMemorySafety, in_memory_ports
+from app.agents.activity.store.inmemory import (
+    InMemoryEvents,
+    InMemoryPlaces,
+    InMemorySafety,
+    in_memory_ports,
+)
 from app.agents.activity.store.ports import (
     CoarseLocation,
     SafetyEntry,
@@ -119,6 +125,14 @@ class TestBuildGate:
         assert (gate.data.places, gate.data.weather) == (False, False)
         gate = await build_gate(context(places=InMemoryPlaces()), outdoor_ok=True)
         assert gate.data.places is True
+
+    async def test_행사는_일정_포트까지_있어야_연다(self):
+        """열리는 날을 모르면 기간으로 메우지 않는다 — 행사 조회를 닫는다."""
+        ctx = context(events=InMemoryEvents())
+        assert (await build_gate(ctx, outdoor_ok=True)).data.events is True
+
+        no_schedules = replace(ctx, ports=replace(ctx.ports, event_schedules=None))
+        assert (await build_gate(no_schedules, outdoor_ok=True)).data.events is False
 
 
 class TestClosedRun:

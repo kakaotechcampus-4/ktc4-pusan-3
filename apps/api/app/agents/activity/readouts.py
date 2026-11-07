@@ -8,5 +8,13 @@ from app.agents.common.readout import ReadoutCatalog
 BLOCKED_SAFETY = "blocked.safety"
 # 식품 사전에 없는 알레르기 이름(꽃가루 · 라텍스)이 있다 (D7)
 CAUTION_NON_FOOD_ALLERGY = "caution.non_food_allergy"
+# 장소가 붙은 추천의 확인 문구 — 기준일자가 있는 출처 · 없는 출처 (#516)
+PLACE_NOTICE = "place.notice"
+PLACE_NOTICE_UNDATED = "place.notice_undated"
+PLACE_NOTICE_FACILITY = "place.notice_facility"
+# 행사(TourAPI)가 붙은 추천의 확인 문구. 출처를 밝히고 일정 · 관람 연령을 확인해 달라고 한다
+PLACE_NOTICE_EVENT = "place.notice_event"
+# 보호자가 말한 지역을 못 찾아 장소 없이 골랐다 (`areas.py`)
+PLACE_AREA_UNKNOWN = "place.area_unknown"
 
 READOUTS = ReadoutCatalog.from_yaml(Path(__file__).with_name("activity.readout.yaml"))

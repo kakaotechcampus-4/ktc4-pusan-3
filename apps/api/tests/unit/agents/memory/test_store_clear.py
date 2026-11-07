@@ -91,6 +91,11 @@ def test_스키마의_허용_목록은_D3_와_같다(domain: str) -> None:
     assert _UPDATE_SCHEMAS[domain].CLEARABLE == _CLEARABLE[domain]
 
 
+# nullable 이지만 비우면 안 되는 칸. 약 행의 약 이름은 비우면 증상도 약도 없는 행이 되고(#551 —
+# DB 가 아니라 Memory 스키마가 막는 모양이다), 증상 행에는 처음부터 없다
+_NULLABLE_NOT_CLEARABLE: dict[str, set[str]] = {"health": {"medication_given"}}
+
+
 @pytest.mark.parametrize("domain", list(_CLEARABLE))
 def test_관찰의_허용_목록은_tool_에_열린_nullable_컬럼과_같다(domain: str) -> None:
     table = Base.metadata.tables.get(f"observation_{domain}")
@@ -100,7 +105,7 @@ def test_관찰의_허용_목록은_tool_에_열린_nullable_컬럼과_같다(do
     exposed = [name for name in _UPDATE_SCHEMAS[domain].model_fields if name in table.columns]
     nullable = {name for name in exposed if table.columns[name].nullable}
 
-    assert _CLEARABLE[domain] == nullable
+    assert _CLEARABLE[domain] == nullable - _NULLABLE_NOT_CLEARABLE.get(domain, set())
 
 
 def test_일정의_허용_목록은_nullable_컬럼_ends_at_하나다() -> None:

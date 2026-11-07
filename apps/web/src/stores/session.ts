@@ -4,6 +4,7 @@ import { persist, createJSONStorage } from "zustand/middleware";
 import { refreshSession, setAuthToken, setSessionRefreshedHandler } from "@/lib/api/client";
 import { useConversationStore } from "@/stores/conversation";
 import { useDraftStore } from "@/stores/draft";
+import { useMedicationDraftStore } from "@/stores/medication-draft";
 import { usePhotoDraftStore } from "@/stores/photo-draft";
 import { useSafetyScanDraftStore } from "@/stores/safety-scan-draft";
 import { useEventDraftStore } from "./event-draft";
@@ -88,6 +89,8 @@ export const useSessionStore = create<SessionState>()(
         // 🚨 아직 제출하지 않은 일정 초안도 지운다 (`stores/event-draft.ts`). 서버에 없는 값이라
         //    여기서 안 비우면 다음 사람이 같은 탭에서 남의 아이 일정을 본다.
         useEventDraftStore.getState().clearAll();
+        // 🚨 복약 초안은 약 이름 · 복용 이유가 든 건강 정보다 (`stores/medication-draft.ts` · #537).
+        useMedicationDraftStore.getState().clearAll();
         set({ token: null, expiresAt: null, activeChildId: null });
       },
       setActiveChild: (activeChildId) => set({ activeChildId }),

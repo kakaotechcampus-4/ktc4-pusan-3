@@ -7,21 +7,21 @@ grep 으로 직접 `.state =` 대입이 이 함수 밖에 없어야 한다.
   - correction 핸들러 (handle_observation_correction, handle_profile_correction)
   - Curator 연결 후 (curator/recompute.recompute_after_linking)
   - Memory Agent 가 관찰을 고치거나 지운 뒤 (memory/store/db_store.py, #257)
-TODO(#149-followup): 시간 경과에 의한 상태 변화(21일 무관찰 → archived)를
-  반영하는 배치 호출이 아직 없다. Agent 가 DB 의 state 를 그대로 읽으므로
-  오래 전에 confirmed 된 성향이 배치 전까지 개인화 근거로 남을 수 있다.
+  - 하루 한 번 배치 (workers/profile_recompute.py, #636) — 새 기록 없이 날짜만 지나
+    바뀌는 상태(14일 O 이탈 강등 · 21일 W 이탈 재승격 · 21일 무관찰 archived)를 맞춘다
 """
 
 import uuid
 from datetime import date, datetime, timezone
 
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domains.correction.models import CorrectionTargetKind, CorrectionVerdict
 from app.domains.correction.repository import append_correction
 from app.domains.memory.observation.models import ObservationStatus
 from app.domains.memory.observation.repository import ObservationDomain, set_observation_status
-from app.domains.memory.profile.models import MemoryDomain, ProfileAffinity
+from app.domains.memory.profile.models import ProfileAffinity
 from app.domains.memory.profile.repository import (
     count_active_in_window,
     count_wrong_in_window,
@@ -47,6 +47,26 @@ _VERDICT_TO_OBS_STATUS: dict[str, ObservationStatus] = {
 }
 
 
+CHILD_MEMORY_LOCK_NS = 1
+"""`pg_advisory_xact_lock(int4, int4)` 의 첫 번째 인자 — 아이 한 명의 기억을 고치는 쪽이 같이 쓴다.
+다른 기능이 advisory lock 을 쓸 때는 다른 값을 준다 (notification 은 2)."""
+
+
+async def lock_child_memory(session: AsyncSession, child_id: uuid.UUID) -> None:
+    """아이 한 명의 기억을 고치는 쪽을 차례로 돌게 한다.
+
+    트랜잭션이 끝나면 풀린다. 같은 트랜잭션은 다시 잡아도 기다리지 않는다.
+
+    기억 여러 개를 잠그는 쪽은 기억 행을 잠그기 **전에** 이것부터 잡는다. 순서가 아이 잠금 →
+    관찰 행 → 기억 행으로 같아야 교착이 없다 (#636 — 둘이 기억 둘을 반대 순서로 잠그면 Postgres 가
+    한쪽을 DeadlockDetected 로 죽인다). 기억 하나만 잠그는 Correction 은 잡지 않아도 된다.
+    """
+    await session.execute(
+        text("SELECT pg_advisory_xact_lock(:ns, :key)"),
+        {"ns": CHILD_MEMORY_LOCK_NS, "key": child_id.int % (2**31)},
+    )
+
+
 async def recompute_profile(
     session: AsyncSession,
     *,
@@ -57,8 +77,19 @@ async def recompute_profile(
 
     멱등: 같은 입력으로 여러 번 호출해도 상태·strength 가 동일하다.
     전이 보너스는 상태가 실제로 바뀔 때만 1회 적용된다.
+
+    🚨 행을 잠그고 DB 값으로 다시 읽는다. 여러 경로(Curator · Correction · 관찰 수정 · 하루 배치)가
+    같은 기억을 동시에 다시 계산할 수 있는데, 잠그지 않으면 한쪽이 읽은 낡은 strength 로 다른
+    쪽이 커밋한 값을 덮어쓴다(#636 에서 재현). 잠금은 호출자 트랜잭션이 끝날 때 풀린다.
+      · populate_existing — 호출자가 이 행을 잠그기 전에 이미 읽어 뒀어도(refresh_profile)
+        잠근 뒤의 값으로 다시 채운다. 아직 안 쓴 변경은 autoflush 가 먼저 DB 에 쓴다.
     """
-    profile = await session.get(ProfileAffinity, profile_id)
+    profile = await session.scalar(
+        select(ProfileAffinity)
+        .where(ProfileAffinity.id == profile_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
     if profile is None:
         raise ValueError(f"프로필을 찾을 수 없다: {profile_id}")
 
@@ -105,8 +136,17 @@ async def refresh_profile(
 
     active 관찰이 하나도 안 남으면(latest=None) last_observed_on 은 건드리지 않는다 —
     recompute 가 O=0 으로 상태를 정하고, 시간이 지나면 archived 로 내려간다.
+
+    🚨 기억 행을 먼저 잠그고 나서 마지막 관찰일을 센다. 거꾸로 하면 run 과 정정이 같은 기억의
+    관찰을 하나씩 뺄 때 둘 다 상대가 커밋하기 전 관찰로 세고, 나중에 커밋하는 쪽이 빠진 관찰의
+    날짜로 덮어쓴다. 잠근 뒤에 세면 나중 쪽은 앞쪽이 커밋한 뒤에 센다 (#745).
     """
-    profile = await session.get(ProfileAffinity, profile_id)
+    profile = await session.scalar(
+        select(ProfileAffinity)
+        .where(ProfileAffinity.id == profile_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
     if profile is None:
         return
     latest = await get_latest_active_observed_on(
@@ -168,22 +208,11 @@ async def handle_observation_correction(
         )
     )
 
-    # 3. last_observed_on 재계산 — 교정으로 최신 관찰이 빠졌을 수 있다
+    # 3. last_observed_on · 상태 재계산 — 교정으로 최신 관찰이 빠졌을 수 있다.
+    #    기억을 잠근 뒤에 센다 — 같은 기억을 고치는 run 과 겹쳐도 낡은 날짜로 덮지 않게 (#745)
     affinity_id = record.fields.get("affinity_id")
     if affinity_id is not None:
-        latest = await get_latest_active_observed_on(
-            session,
-            affinity_id=affinity_id,
-            domain=MemoryDomain(domain),
-        )
-        if latest is not None:
-            profile = await session.get(ProfileAffinity, affinity_id)
-            if profile is not None:
-                profile.last_observed_on = latest
-                await session.flush()
-
-        # 4. profile 상태 재계산
-        await recompute_profile(session, profile_id=affinity_id, today=today)
+        await refresh_profile(session, profile_id=affinity_id, today=today)
 
 
 async def handle_profile_correction(

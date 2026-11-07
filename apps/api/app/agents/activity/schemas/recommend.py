@@ -59,7 +59,10 @@ class ActivityCandidate(ToolArgs):
         str | None,
         Field(
             default=None,
-            description="search_nearby_places 결과에 있는 이름만. 없으면 비운다. 지어내지 않는다",
+            description=(
+                "search_nearby_places · search_events 결과에 있는 이름만. 없으면 비운다. "
+                "지어내지 않는다"
+            ),
         ),
     ]
     duration_min: Annotated[int | None, Field(default=None, ge=1, description="대략 몇 분")]
@@ -96,3 +99,13 @@ class ProposeActivityCandidatesArgs(ToolArgs):
             description=f"놀이 후보 {MAX_SUGGESTIONS}개",
         ),
     ]
+    requested_play: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description=(
+                "보호자가 이번 요청에서 정한 놀이 종류 · 소재 · 주제를 짧게(예: 물놀이, 공놀이, "
+                "티니핑). 언제 · 어디서 · 얼마나만 말했거나 막연하면 비운다"
+            ),
+        ),
+    ] = None

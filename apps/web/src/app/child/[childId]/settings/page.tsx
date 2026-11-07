@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, Flag, LifeBuoy, Plus } from "lucide-react";
+import { ArrowLeft, CircleHelp, Flag, LifeBuoy, Plus } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
 import { AccountSection } from "@/components/account-section";
@@ -9,8 +9,11 @@ import { AuthGate } from "@/components/auth-gate";
 import { ScreenTransition } from "@/components/route-transition";
 import { ChildNav } from "@/components/child-nav";
 import { ConsentSection, LegalDocumentSection } from "@/components/consent-section";
+import { NotificationSection } from "@/components/notification-section";
 import { ParentSection } from "@/components/parent-section";
-import { SettingsGroup, SettingsLinkRow } from "@/components/settings-row";
+import { ScreenTour, TourHelpButton } from "@/components/screen-tour";
+import { SettingsGroup, SettingsInfoRow, SettingsLinkRow } from "@/components/settings-row";
+import { Button } from "@/components/ui/button";
 import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
 import { IconButton, IconButtonLink, IconButtonPlaceholder } from "@/components/ui/icon-button";
 import { PageTitle } from "@/components/ui/page-title";
@@ -19,6 +22,8 @@ import { useChildId } from "@/hooks/use-child-id";
 import { usePolicies } from "@/hooks/use-policies";
 import { api, qk, type Me } from "@/lib/api";
 import { askedChoices, consentChoices } from "@/lib/consent";
+import { settingsTour } from "@/lib/tour/screens/settings";
+import { useResetTours } from "@/lib/tour/seen";
 import { BACK, FORWARD } from "@/lib/view-transition";
 
 /**
@@ -31,8 +36,9 @@ import { BACK, FORWARD } from "@/lib/view-transition";
  * 🚨 **맨 위에 현황 요약을 두지 않는다.** 한동안 `card-accent` 한 장에 모아 뒀는데, 그 값들이
  *    바로 아래 구역들이 이미 말하는 것이라 **같은 사실을 두 번** 적는 꼴이었다.
  *
- * 🚨 **위에서 아래로 "손대는 것 → 읽는 것 → 나가는 것" 이다.** 지금 켜고 끌 수 있는 동의가
- *    위에 서고, 읽기만 하는 약관 목록이 그 아래, 계정(로그아웃·탈퇴)이 마지막이다.
+ * 🚨 **위에서 아래로 "손대는 것 → 읽는 것 → 나가는 것" 이다.** 함께 보는 보호자, 알림, 지금 켜고
+ *    끌 수 있는 동의가 위에 서고, 읽기만 하는 약관 목록이 그 아래, 계정(로그아웃·탈퇴)이 마지막이다.
+ *    알림(#609)은 날마다 손대는 쪽이라 동의보다 위다.
  *    손댈 수 없는 넷이 손댈 수 있는 하나보다 위에서 자리를 먹지 않게 한다.
  *
  * 🚨 **아이 정보를 여기서 다루지 않는다.** 이름·생일·알레르기는 11 아이 프로필이 소유하고,
@@ -77,14 +83,18 @@ function SettingsScreen() {
    */
   const me = useQuery({ queryKey: qk.me(), queryFn: () => api.get<Me>("/me") });
   /**
-   * 🚨 **켜고 끌 선택 동의가 없으면 "동의" 구역을 세우지 않는다.** 지금은 유일한 선택 동의(위치)를
-   *    묻지 않는다 (`askedChoices` · #221). 빈 구역에 "지금 켜고 끌 수 있는 것이에요" 를 달면
-   *    아무것도 없는 목록을 설명하는 화면이 된다. 위치를 다시 물으면 저절로 돌아온다.
+   * 🚨 **켜고 끌 선택 동의가 없으면 "동의" 구역을 세우지 않는다.** 서버가 내주는 선택 동의를 화면이
+   *    묻지 않는 동안(`askedChoices` · `NOT_ASKED_YET`) 빈 구역에 "지금 켜고 끌 수 있는 것이에요" 를 달면
+   *    아무것도 없는 목록을 설명하는 화면이 된다. 지금은 위치(#593)가 서서 구역이 있다.
    */
   const policies = usePolicies();
-  const hasOptionalConsent = askedChoices(consentChoices(policies.data)).some(
-    ({ policy }) => !policy.required,
-  );
+  /**
+   * 🚨 **약관을 받는 동안에도 구역을 세워 둔다** (그 안은 `ConsentSection` 의 스켈레톤). 받은 뒤에야 세우면 아래 고객센터 ·
+   *    약관 구역이 한 번 밀려난다 (`layout-shift.spec.ts` · #593 에서 위치 동의가 다시 서며 드러났다).
+   */
+  const hasOptionalConsent =
+    policies.isPending ||
+    askedChoices(consentChoices(policies.data)).some(({ policy }) => !policy.required);
   const role = me.data?.children.find((child) => child.child_id === childId)?.role;
   const inviteNote =
     role === "owner"
@@ -106,17 +116,19 @@ function SettingsScreen() {
           <IconButtonLink href={`/child/${childId}/home`} label="홈으로 돌아가기" {...BACK}>
             <ArrowLeft aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
           </IconButtonLink>
-          <PageTitle>설정</PageTitle>
+          <PageTitle className="min-w-0 flex-1">설정</PageTitle>
+          <TourHelpButton tour={settingsTour} />
         </div>
         {/* 아래 "동의" 구역과 같은 값으로 고른다 — 없는 구역을 안내하지 않는다 */}
         <p className="text-body-sm text-ink-muted mt-2">
           {hasOptionalConsent
-            ? "함께 보는 사람과 동의를 여기서 관리해요."
-            : "함께 보는 사람과 계정을 여기서 관리해요."}
+            ? "함께 보는 사람과 알림, 동의를 여기서 관리해요."
+            : "함께 보는 사람과 알림, 계정을 여기서 관리해요."}
         </p>
       </header>
 
       <Section
+        tour="parents"
         title="함께 보는 보호자"
         description={`같은 아이를 함께 보는 사람이에요.${inviteNote}`}
         action={
@@ -142,8 +154,13 @@ function SettingsScreen() {
         />
       </Section>
 
+      <Section title="알림" description="내 계정에만 적용돼요. 함께 보는 보호자는 각자 정해요.">
+        <NotificationSection />
+      </Section>
+
       {hasOptionalConsent ? (
         <Section
+          tour="consents"
           title="동의"
           description="지금 켜고 끌 수 있는 것이에요. 바꾸기 전에 무엇이 달라지는지 먼저 보여드리고, 이름을 누르면 전문을 볼 수 있어요."
         >
@@ -152,6 +169,7 @@ function SettingsScreen() {
       ) : null}
 
       <Section
+        tour="support"
         title="고객센터"
         description="자주 묻는 것과 이 서비스의 기본 정보, 그리고 문제를 알리는 곳이에요."
       >
@@ -173,6 +191,7 @@ function SettingsScreen() {
             status="AI 답 · 공동 기록 · 앱 오류"
             {...FORWARD}
           />
+          <TourResetRow />
         </SettingsGroup>
       </Section>
 
@@ -190,6 +209,9 @@ function SettingsScreen() {
       <Section title="계정" description="로그인에 쓰는 정보와 나가는 길이에요.">
         <AccountSection childId={childId} />
       </Section>
+
+      {/* 🚨 곁가지 화면이라 저절로 뜨지 않는다 (`settingsTour.auto`). ? 로만 연다. */}
+      <ScreenTour tour={settingsTour} ready />
     </Screen>
   );
 }
@@ -199,19 +221,56 @@ function SettingsScreen() {
  * `secondary` 의 실루엣이 목록 상자와 같아서 둥근 사각형이 연달아 서고, 구역이 넷이라
  * 그것만으로 화면이 상자의 나열이 된다.
  */
+/**
+ * 고객센터의 "화면 설명 다시 보기" (#632 · `docs/web/screen-tour-v1.md` §1). 각 화면의 ? 는 그 화면만
+ * 다시 보여 주고, 이 줄은 모든 화면의 처음 설명을 다시 켠다 — 지금 바로 띄우지 않고 다음에 들어갈 때 뜬다.
+ * 🚨 되돌릴 수 있는 일이라 확인 단계를 두지 않는다.
+ */
+function TourResetRow() {
+  const tours = useResetTours();
+  return (
+    <SettingsInfoRow
+      data-tour="replay"
+      icon={CircleHelp}
+      title="화면 설명 다시 보기"
+      status={
+        <span role="status">
+          {tours.done
+            ? "다시 켰어요. 각 화면에 들어가면 다시 보여 드려요."
+            : "처음 들어왔을 때 보던 설명을 모든 화면에서 다시 켜요."}
+        </span>
+      }
+      action={
+        <Button
+          variant="tertiary"
+          size="compact"
+          className="shrink-0"
+          disabled={!tours.ready || tours.done}
+          onClick={tours.reset}
+        >
+          다시 켜기
+        </Button>
+      }
+    />
+  );
+}
+
 function Section({
   title,
   description,
   action,
+  tour,
   children,
 }: {
   title: string;
   description: string;
   action?: ReactNode;
+  /** 화면 투어가 비추는 자리 (`lib/tour/screens/settings.ts`). */
+  tour?: string;
   children: ReactNode;
 }) {
   return (
-    <section className="flex flex-col gap-3">
+    <section data-tour={tour} className="flex flex-col gap-3">
       <div>
         {/* 🚨 `items-center` 다. 버튼이 있는 줄에서 `items-baseline` 을 쓰면 버튼 상자가
             글자 기준선에 매달려 라벨보다 아래로 처진다. */}

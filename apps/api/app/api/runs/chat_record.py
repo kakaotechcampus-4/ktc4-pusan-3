@@ -19,9 +19,12 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from app.agents.entrypoint import (
+    AgentQuestion,
     AgentResult,
+    DeleteProposed,
     Event,
     EventDrafts,
+    FoundTabs,
     Guidance,
     MemoryNote,
     Partial,
@@ -30,16 +33,21 @@ from app.agents.entrypoint import (
 )
 from app.api.chat_replies import (
     CHAT_REPLIES,
+    SCREEN_REF_KINDS,
     AgentResultReply,
     ChatReply,
+    DeleteProposalReply,
     DoneReply,
     EventDraftReply,
+    FoundTabsReply,
     GuidanceReply,
     NoteReply,
     PartialReply,
     SavedReply,
     StoredReadout,
     StoredRef,
+    StoredScreenRef,
+    StoredTab,
     UnavailableReply,
 )
 from app.api.deps.db import background_session
@@ -66,6 +74,15 @@ def to_reply(event: Event) -> ChatReply | None:
         return UnavailableReply(agents=list(event.agents))
     if isinstance(event, Saved):
         return SavedReply(refs=[StoredRef(kind=ref.kind, id=str(ref.id)) for ref in event.refs])
+    if isinstance(event, FoundTabs):
+        return FoundTabsReply(
+            tabs=[
+                StoredTab(kind=tab.kind, truncated=tab.truncated, ids=list(tab.ids))
+                for tab in event.tabs
+            ]
+        )
+    if isinstance(event, DeleteProposed):
+        return DeleteProposalReply(proposal_id=event.proposal_id)
     if isinstance(event, EventDrafts):
         return EventDraftReply(drafts=[draft.to_payload() for draft in event.drafts])
     if isinstance(event, AgentResult):
@@ -80,14 +97,34 @@ def to_reply(event: Event) -> ChatReply | None:
                     body=readout.body,
                     authored_by=readout.authored_by,
                     code=readout.code,
+                    source_refs=[
+                        StoredScreenRef(kind=ref.kind, id=str(ref.id))
+                        for ref in readout.source_refs
+                        if ref.kind in SCREEN_REF_KINDS
+                    ],
                 )
                 for readout in event.readouts
             ],
-            question=event.question,
+            question=None,
             suggestion_ids=list(event.suggestion_ids),
             kind=event.kind,
             reason=event.reason,
             record_count=event.record_count,
+        )
+    if isinstance(event, AgentQuestion):
+        # 질문은 마지막 agent_result 한 장으로 남긴다. `awaits_reply` 까지 남겨야 지난 대화가
+        # 열린 질문을 다시 고른다 (화면 `askedQuestion`)
+        return AgentResultReply(
+            agent=event.agent,
+            task_type=event.task_type,
+            status="completed",
+            readouts=[],
+            question=event.text,
+            awaits_reply=event.awaits_reply,
+            suggestion_ids=[],
+            kind=None,
+            reason=None,
+            record_count=None,
         )
     if isinstance(event, Partial):
         return PartialReply(

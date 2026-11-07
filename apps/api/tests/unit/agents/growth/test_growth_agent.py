@@ -3,23 +3,57 @@
 모델은 정해 둔 응답을 순서대로 내는 가짜다 (Activity test_activity_agent.py 와 같은 모양).
 """
 
+import asyncio
 import json
+import logging
+import re
+import time
+from dataclasses import replace
 from datetime import timedelta
 from types import SimpleNamespace
 from typing import Any
-from uuid import UUID
+from uuid import NAMESPACE_URL, UUID, uuid5
 
+import pytest
+
+from app.agents.common.evidence import AffinityRow
 from app.agents.common.llm_client import LLMResponse
+from app.agents.common.refs import Ref
+from app.agents.common.schemas.task import DomainTask
 from app.agents.growth.agent import run
+from app.agents.growth.readouts import READOUTS, RHYTHM_NO_ROW
+from app.agents.growth.review import BOOK_GENERAL_REASON, REQUESTED_REASON
+from app.agents.growth.schemas.task import GrowthTaskType
 from app.agents.growth.store.inmemory import (
+    InMemoryBooks,
     InMemoryGrowthDocs,
     InMemoryGrowthMemory,
+    InMemoryIssuedBooks,
     InMemorySafety,
 )
-from app.agents.growth.store.ports import RoutineObservation, SafetyEntry
-from app.agents.growth.tools.docs import match_chain, routine_chains
+from app.agents.growth.store.ports import (
+    ActivityObservation,
+    BookRow,
+    EducationObservation,
+    GrowthDocRow,
+    RoutineObservation,
+    SafetyEntry,
+    UpstreamUnavailable,
+)
+from app.agents.growth.tools.docs import match_chain, routine_chains, search_growth_doc
 from app.agents.growth.tools.routine import pick_next_step
-from tests.unit.agents.growth.support import CHILD, TODAY, birth_for, context, task
+from app.rules.book_evidence import book_evidence_id
+from tests.unit.agents.growth.support import (
+    CALM,
+    CHILD,
+    REST,
+    TODAY,
+    birth_for,
+    chain_rows,
+    context,
+    fixture_docs,
+    task,
+)
 
 
 class FakeLLM:
@@ -64,7 +98,7 @@ def learning(*titles: str, doc_id: str) -> LLMResponse:
 
 
 def docs_ctx(months=30, **kwargs):
-    return context(birth_for(months), docs=InMemoryGrowthDocs.from_seed(), **kwargs)
+    return context(birth_for(months), docs=fixture_docs(), **kwargs)
 
 
 async def example_id() -> str:
@@ -99,6 +133,17 @@ class TestLearning:
         recall = llm.seen[1][-1]["content"]
         assert "땅콩 세기" in recall and "땅콩" not in llm.seen[1][0]["content"]
 
+    async def test_같은_제목을_내면_거절되고_고쳐_낸_것이_나간다(self):
+        doc_id = await example_id()
+        llm = FakeLLM(
+            learning("블록 세기", "블록 세기", "블록 세기", doc_id=doc_id),
+            learning("블록 세기", "색깔 찾기", "모양 맞추기", doc_id=doc_id),
+        )
+        result = await run(task("learning_suggestion"), docs_ctx(), client=llm)
+        assert result.status == "completed" and result.model_calls == 1
+        titles = [d.content.split("\n")[0] for d in result.suggestions]
+        assert titles == ["블록 세기", "색깔 찾기", "모양 맞추기"]
+
     async def test_말로_끝내면_failed_다(self):
         result = await run(task("learning_suggestion"), docs_ctx(), client=FakeLLM())
         assert result.status == "failed" and result.suggestions == ()
@@ -108,6 +153,184 @@ class TestLearning:
         llm = FakeLLM()
         await run(task("learning_suggestion"), docs_ctx(safety=safety), client=llm)
         assert "라텍스" not in json.dumps(llm.seen, ensure_ascii=False)
+
+    async def test_꽃가루_아이의_예시에는_표_낱말이_든_행이_없다(self):
+        safety = InMemorySafety([SafetyEntry(kind="allergy", label="꽃가루", status="active")])
+        probe = FakeLLM()
+        await run(task("learning_suggestion"), docs_ctx(months=13, safety=safety), client=probe)
+        system = probe.seen[0][0]["content"]
+        assert system.count("- id ") == 3
+        for title in ("걷다가 멈춰서 구경하기", "나뭇잎 만져 보기", "꽃과 풀 가까이서 보기"):
+            assert title not in system
+        assert "꽃가루" not in system
+
+    async def test_확인_문구_readout_을_내지_않는다(self):
+        doc_id = await example_id()
+        safety = InMemorySafety([SafetyEntry(kind="allergy", label="라텍스", status="active")])
+        llm = FakeLLM(learning("블록 세기", "색깔 찾기", "모양 맞추기", doc_id=doc_id))
+        result = await run(task("learning_suggestion"), docs_ctx(safety=safety), client=llm)
+        assert result.status == "completed" and result.readouts == ()
+
+    async def test_콩이_든_후보는_빠지고_재호출로_채운다(self):
+        """C48-food — 모델 후보 하나에 음식 재료.
+
+        재호출 1회 뒤 음식 용어 없는 3개 (test_expected T04).
+        """
+        doc_id = await example_id()
+        llm = FakeLLM(
+            learning("콩으로 숫자 세기", "색깔 찾기", "모양 맞추기", doc_id=doc_id),
+            learning("소리 듣기", "그림자 놀이", "블록 세기", doc_id=doc_id),
+        )
+        result = await run(
+            task("learning_suggestion", "숫자 놀이 뭐 없어?"), docs_ctx(), client=llm
+        )
+        assert result.model_calls == 2
+        titles = [d.content.split("\n")[0] for d in result.suggestions]
+        assert titles == ["색깔 찾기", "모양 맞추기", "소리 듣기"]
+
+
+def empty_docs_ctx(**kwargs):
+    """[예시]가 빈 월령 — 문서 검수에서 draft 로 돌아간 행이 생기면 실제로 온다."""
+    return context(birth_for(30), docs=InMemoryGrowthDocs(), **kwargs)
+
+
+class TestLearningWithoutExamples:
+    async def test_예시도_기록도_없으면_모델_없이_doc_no_row_로_닫는다(self):
+        llm = FakeLLM()
+        result = await run(task("learning_suggestion"), empty_docs_ctx(), client=llm)
+        assert (result.status, result.model_calls) == ("blocked", 0)
+        assert result.readouts == (READOUTS.render("doc.no_row"),)
+        assert llm.seen == []
+        # 추천 없이 닫히는 자리라 "알려드려요" 라고 하지 않는다 (#452 리뷰)
+        assert result.readouts[0].body == "이 시기에 맞는 자료가 아직 없어서 준비하지 못했어요."
+
+    async def test_시드에_교육_행이_없는_72개월_이상도_모델_없이_닫는다(self):
+        ctx = context(birth_for(80), docs=InMemoryGrowthDocs.from_seed())
+        # 시드의 교육 행은 72개월 미만까지다. 행이 생기면 이 테스트의 월령을 옮긴다
+        assert not await search_growth_doc(
+            ctx.ports.docs, task_type=GrowthTaskType.LEARNING_SUGGESTION, months=80
+        )
+        llm = FakeLLM()
+        result = await run(task("learning_suggestion"), ctx, client=llm)
+        assert result.readouts == (READOUTS.render("doc.no_row"),) and llm.seen == []
+
+    async def test_6개월_지난_관심만_있어도_닫는다(self):
+        """오래된 관심은 build() 가 근거에서 빼서 개인화도 일반 추천도 못 된다 (루트 §2)."""
+        old = AffinityRow(
+            id=UUID(int=901),
+            merge_key="숫자",
+            state="confirmed",
+            polarity=1,
+            strength=0.9,
+            last_observed_on=TODAY - timedelta(days=200),
+            observed_days=3,
+        )
+        ctx = empty_docs_ctx(memory=InMemoryGrowthMemory(affinities=[("education", old)]))
+        llm = FakeLLM()
+        result = await run(task("learning_suggestion"), ctx, client=llm)
+        assert result.readouts == (READOUTS.render("doc.no_row"),) and llm.seen == []
+
+
+def _nature_rows(count: int) -> list[GrowthDocRow]:
+    return [
+        GrowthDocRow(
+            id=uuid5(NAMESPACE_URL, f"topic.nature.{n}"),
+            doc_key=f"growth.learn.topic.nature{n}",
+            row_type="learning_activity",
+            title=f"숫자 블록 세기 {n}",
+            body="블록을 하나씩 세어 본다.",
+            min_month=24,
+            max_month=36,
+            area="nature",
+        )
+        for n in range(count)
+    ]
+
+
+class TestExamplesByTopic:
+    async def test_국어_요청은_의사소통_예시만_받는다(self):
+        """고정 행은 의사소통 5행 · 자연탐구 20행 — 주제 없이 고르면 자연탐구가 섞인다."""
+        ctx = context(birth_for(30), docs=fixture_docs(*_nature_rows(20)))
+        await run(
+            _task(
+                "learning_suggestion",
+                "어떻게 도와줘야 좋을까?",
+                records=("아이가 국어 공부를 어려워하는데",),
+            ),
+            ctx,
+            client=FakeLLM(),
+        )
+        assert len(ctx.state.seen_docs) == 3
+        assert {row.area for row in ctx.state.seen_docs.values()} == {"communication"}
+
+    async def test_기록_조각의_다른_주제는_요청_주제의_예시를_바꾸지_않는다(self):
+        ctx = context(birth_for(30), docs=fixture_docs(*_nature_rows(20)))
+        await run(
+            _task(
+                "learning_suggestion",
+                "한글 놀이 추천해줘",
+                records=("오늘 어린이집에서 숫자 블록 배웠대",),
+            ),
+            ctx,
+            client=FakeLLM(),
+        )
+        assert {row.area for row in ctx.state.seen_docs.values()} == {"communication"}
+
+    async def test_기록_조각에만_영어가_있으면_모델_전에_닫지_않는다(self):
+        ctx = docs_ctx()
+        llm = FakeLLM()
+        result = await run(
+            _task(
+                "learning_suggestion", "집에서 뭐 하면 좋을까?", records=("영어 유치원 다니는데",)
+            ),
+            ctx,
+            client=llm,
+        )
+        assert result.model_calls == 1 and llm.seen
+        assert ctx.state.topic == ()
+
+    async def test_영어만_물었고_기록도_없으면_닫지_않고_요청_기반으로_부른다(self):
+        ctx = docs_ctx()
+        llm = FakeLLM()
+        await run(task("learning_suggestion", "영어 공부 어떻게 시켜?"), ctx, client=llm)
+        assert ctx.state.seen_docs == {} and ctx.state.requested is True
+        assert llm.seen
+
+    @pytest.mark.parametrize(
+        "memory",
+        [
+            InMemoryGrowthMemory(
+                education=[
+                    EducationObservation(
+                        id=UUID(int=902),
+                        child_id=CHILD,
+                        observed_on=TODAY - timedelta(days=1),
+                        subject="숫자",
+                        topic="숫자 세기",
+                        polarity=1,
+                    )
+                ]
+            ),
+            InMemoryGrowthMemory(
+                activities=[
+                    ActivityObservation(
+                        id=UUID(int=903),
+                        child_id=CHILD,
+                        observed_on=TODAY - timedelta(days=1),
+                        subject="블록",
+                        activity="블록 쌓기",
+                        polarity=1,
+                    )
+                ]
+            ),
+        ],
+        ids=["교육_기록", "놀이_기록"],
+    )
+    async def test_달_수_있는_기록이_있으면_모델까지_간다(self, memory):
+        llm = FakeLLM()
+        result = await run(task("learning_suggestion"), empty_docs_ctx(memory=memory), client=llm)
+        assert llm.seen  # 말로 끝내는 가짜라 failed 지만 모델을 불렀다
+        assert result.status == "failed"
 
 
 class TestRoutine:
@@ -125,7 +348,78 @@ class TestRoutine:
         )
         result = await run(task("routine_coaching", "양치 혼자 하게"), docs_ctx(), client=llm)
         assert result.status == "completed" and result.model_calls == 1
-        assert result.needs_observation == ("양치은(는) 요즘 어느 정도까지 혼자 하나요?",)
+        assert result.needs_observation == ("양치는 요즘 어느 정도까지 혼자 하나요?",)
+        # #452 리뷰 — 질문 자리를 못 받아도 카드가 혼자 서는 안내 한 줄. 0개 안내라 05 묶음
+        # 안내(`empty_notice`)도 이 문장이다
+        (notice,) = result.readouts
+        assert (notice.code, notice.authored_by) == ("empty", "code")
+        # 습관(상황 · 지금도 하는지)을 물을 때도 붙어서 "다음 단계" 라고 하지 않는다
+        assert notice.body == "지금 어떤지 알아야 맞는 방법을 고를 수 있어요."
+
+    async def test_되묻기_결과에_물은_자리가_실린다(self):
+        llm = FakeLLM(
+            call("propose_routine_plan", {"category": "self_care", "subject": "양치", "items": []})
+        )
+        result = await run(task("routine_coaching", "양치 혼자 하게"), docs_ctx(), client=llm)
+        pending = result.pending
+        assert pending is not None
+        assert (pending.agent, pending.kind) == ("growth", "ask.routine_current")
+        assert pending.payload == {
+            "subject": "양치",
+            "category": "self_care",
+            "field": "assistance_level",
+        }
+        assert result.needs_observation == (pending.question,)
+
+    async def test_사슬_이름과_다른_말로_물어도_저장_이름은_사슬_이름이다(self):
+        llm = FakeLLM(
+            call(
+                "propose_routine_plan", {"category": "self_care", "subject": "칫솔질", "items": []}
+            )
+        )
+        result = await run(task("routine_coaching", "칫솔질 혼자 하게"), docs_ctx(), client=llm)
+        assert result.pending is not None
+        assert result.pending.payload["subject"] == "양치"
+
+    async def test_예_아니오_습관_질문은_이어받을_자리가_없다(self):
+        """ "요즘도 손가락 빨기 하나요?" 의 답은 어느 칸에도 옮길 값이 없다."""
+        llm = FakeLLM(
+            call(
+                "propose_routine_plan",
+                {"category": "habit", "subject": "손가락 빨기", "items": []},
+            )
+        )
+        result = await run(
+            task("routine_coaching", "손가락 빨기 고치고 싶어"), docs_ctx(months=40), client=llm
+        )
+        assert result.needs_observation == ("요즘도 손가락 빨기 하나요?",)
+        assert result.pending is None
+
+    async def test_습관_상황을_묻는_질문은_trigger_칸을_싣는다(self):
+        obs = RoutineObservation(
+            id=UUID(int=702),
+            child_id=CHILD,
+            observed_on=TODAY - timedelta(days=1),
+            subject="손가락 빨기",
+            routine_category="habit",
+            polarity=0,
+        )
+        ctx = docs_ctx(months=40, memory=InMemoryGrowthMemory(routine=[obs]))
+        llm = FakeLLM(
+            call("search_routine_memory", {}),
+            call(
+                "propose_routine_plan",
+                {"category": "habit", "subject": "손가락 빨기", "items": []},
+            ),
+        )
+        result = await run(task("routine_coaching", "손가락 빨기 고치고 싶어"), ctx, client=llm)
+        assert result.pending is not None
+        assert result.pending.kind == "ask.habit_trigger"
+        assert result.pending.payload["field"] == "trigger"
+
+    async def test_닫힌_결과에는_물은_자리가_없다(self):
+        result = await run(task("routine_coaching", "약 먹이기"), docs_ctx(), client=FakeLLM())
+        assert result.pending is None
 
     async def test_고른_단계로_개인화_추천_하나와_개수_안내다(self):
         obs = RoutineObservation(
@@ -219,7 +513,7 @@ class TestRoutine:
         def propose(*items: dict) -> LLMResponse:
             return call(
                 "propose_routine_plan",
-                {"category": "self_care", "subject": "양치", "items": list(items)},
+                {"category": "self_care", "subject": "아침 씻기", "items": list(items)},
             )
 
         llm = FakeLLM(
@@ -227,12 +521,1570 @@ class TestRoutine:
             propose(item("양치", 0, "어른 손을 포개요"), item("손 씻기", 1, "땅콩 크림을 발라요")),
             propose(item("손 씻기", 1, "비누 거품을 같이 내요")),
         )
-        result = await run(task("routine_coaching", "양치 혼자 하게"), ctx, client=llm)
+        # 여러 행동을 한 번에 묻는 요청 —
+        # 요청 행동과 맞는 단계가 없고 모델이 단계를 냈으니 전부 낸다
+        result = await run(task("routine_coaching", "아침에 씻는 걸 혼자 하게"), ctx, client=llm)
         assert result.model_calls == 2 and len(result.suggestions) == 2
         assert [r.code for r in result.readouts] == ["fewer"]  # 단계가 둘뿐이라 개수 안내가 붙는다
+
+    async def test_습관은_trigger_와_맞는_대응_행으로_개인화_추천_하나다(self):
+        obs = RoutineObservation(
+            id=UUID(int=720),
+            child_id=CHILD,
+            observed_on=TODAY - timedelta(days=1),
+            subject="손톱 물어뜯기",
+            routine_category="habit",
+            polarity=0,
+            trigger="긴장할 때",
+        )
+        ctx = context(
+            birth_for(40),
+            docs=fixture_docs(CALM, REST),
+            memory=InMemoryGrowthMemory(routine=[obs]),
+        )
+        llm = FakeLLM(
+            call("search_routine_memory", {}),
+            call(
+                "propose_routine_plan",
+                {
+                    "category": "habit",
+                    "subject": "손톱 물어뜯기",
+                    "items": [
+                        {
+                            "step_id": str(CALM.id),
+                            "next_step": "긴장한 마음을 말로 먼저 붙여 줘요",
+                            "how": "손을 잡고 지금 마음을 한 낱말로 같이 말해요",
+                            "evidence": [{"id": str(obs.id), "note": "긴장할 때 물었어요"}],
+                            "reason": "긴장할 때 나오는 행동이라 마음을 먼저 다뤄요",
+                        }
+                    ],
+                },
+            ),
+        )
+        result = await run(task("routine_coaching", "긴장하면 손톱을 물어뜯어"), ctx, client=llm)
+        assert result.status == "completed" and result.model_calls == 1
+        assert [d.kind for d in result.suggestions] == ["personalized"]
+        assert [r.code for r in result.readouts] == ["fewer"]
+
+    async def test_같은_입력의_기록_조각이_약이면_모델_없이_닫는다(self):
+        llm = FakeLLM()
+        growth_task = DomainTask(
+            run_id="run-1",
+            agent="growth",
+            task_type="routine_coaching",
+            request_texts=("어떻게 하지?",),
+            record_texts=("약 먹기 싫어해",),
+        )
+        result = await run(growth_task, docs_ctx(), client=llm)
+        assert (result.status, result.model_calls, llm.seen) == ("blocked", 0, [])
+        assert result.readouts == (READOUTS.render("closed.medical_routine"),)
+
+
+def book(n: int, form: str = "picture") -> BookRow:
+    return BookRow(isbn=f"978890000{n:04d}", title=f"책{n}", form=form, author="가")
+
+
+def pick(
+    n: int, *, evidence: list | None = None, reason: str = "공룡이 나오는 그림책이에요"
+) -> dict:
+    return {"isbn": f"978890000{n:04d}", "evidence": evidence or [], "reason": reason}
+
+
+def books_ctx(months: int = 30, rows=(), *, issued=(), fail: bool = False, **kwargs):
+    return context(
+        birth_for(months),
+        books=InMemoryBooks(list(rows), fail=fail),
+        issued_books=InMemoryIssuedBooks(issued),
+        **kwargs,
+    )
+
+
+class FailsSecondSearch(InMemoryBooks):
+    """첫 검색은 답하고 두 번째부터 실패한다 — 재호출에서 다시 찾다가 장애가 난 경우."""
+
+    def __init__(self, rows) -> None:
+        super().__init__(rows)
+        self.searches = 0
+
+    async def search(self, *, keywords, limit, title_words=()):
+        self.searches += 1
+        if self.searches > 1:
+            raise UpstreamUnavailable("도서 조회 실패 (테스트 주입)")
+        return await super().search(keywords=keywords, limit=limit, title_words=title_words)
+
+
+def rhythm_row(key: str, lo: int, hi: int) -> GrowthDocRow:
+    return GrowthDocRow(
+        id=uuid5(NAMESPACE_URL, key),
+        doc_key=key,
+        row_type="rhythm_info",
+        title=f"{key} — 제목",
+        body=f"{key} 본문",
+        min_month=lo,
+        max_month=hi,
+    )
+
+
+class TestRhythm:
+    """0–11개월 루틴은 모델 없이 리듬 안내 행 하나다 (Growth_Tool_명세 §2 "0–11개월")."""
+
+    async def test_리듬_행이_있으면_모델_없이_그_행이_출처와_함께_나간다(self):
+        row = rhythm_row("growth.rhythm.m6_9.order", 6, 9)
+        ctx = context(birth_for(8), docs=fixture_docs(row))
+        llm = FakeLLM()
+        result = await run(task("routine_coaching", "밤잠 재우기"), ctx, client=llm)
+        assert (result.status, result.model_calls, result.suggestions) == ("completed", 0, ())
+        (readout,) = result.readouts
+        assert (readout.kind, readout.title, readout.body) == ("rhythm_info", row.title, row.body)
+        assert readout.source_refs == (Ref(kind="growth_doc", id=row.id),)
+        assert llm.seen == []
+
+    async def test_월령_밖_리듬_행은_읽지_않고_준비_못_한_안내다(self):
+        ctx = context(birth_for(8), docs=fixture_docs(rhythm_row("growth.rhythm.m0_3.order", 0, 3)))
+        result = await run(task("routine_coaching"), ctx, client=FakeLLM())
+        assert result.readouts == (READOUTS.render(RHYTHM_NO_ROW),)
+
+    async def test_한_구간에_행이_여럿이면_아이와_날짜로_돌려_고른다(self):
+        rows = [rhythm_row(f"growth.rhythm.m6_9.r{n}", 6, 9) for n in range(6)]
+        docs = fixture_docs(*rows)
+        expected = await search_growth_doc(
+            docs,
+            task_type=GrowthTaskType.ROUTINE_COACHING,
+            months=8,
+            rotation=f"{CHILD}|{TODAY.isoformat()}",
+        )
+        assert expected[0].row != rows[0]  # 포트 순서 그대로면 이 테스트가 돌려 고르기를 못 본다
+        result = await run(
+            task("routine_coaching"), context(birth_for(8), docs=docs), client=FakeLLM()
+        )
+        assert result.readouts[0].body == expected[0].row.body
 
 
 class TestBook:
     async def test_도서_포트가_없으면_닫힌다(self):
         result = await run(task("book_suggestion", "공룡 책"), docs_ctx(), client=FakeLLM())
         assert result.status == "blocked" and result.model_calls == 0
+
+    async def test_검색한_책_3권을_일반_추천으로_낸다(self):
+        llm = FakeLLM(
+            call("search_books", {"keywords": ["공룡"]}),
+            call("propose_books", {"items": [pick(1), pick(2), pick(3)]}),
+        )
+        rows = [book(n) for n in range(1, 6)]
+        result = await run(task("book_suggestion", "책 추천해줘"), books_ctx(rows=rows), client=llm)
+
+        assert result.status == "completed" and result.model_calls == 1
+        assert [d.content for d in result.suggestions] == ["책1(가)", "책2(가)", "책3(가)"]
+        assert {d.kind for d in result.suggestions} == {"general"}
+        assert all(d.reason == BOOK_GENERAL_REASON for d in result.suggestions)
+        assert [(c.ref.kind, c.ref.id) for c in result.suggestions[0].citations] == [
+            ("book_catalog", book_evidence_id(book(1).isbn))
+        ]
+        assert result.readouts == ()
+
+    async def test_배움_기록을_인용하면_개인화고_근거는_그_기록뿐이다(self):
+        edu = EducationObservation(
+            id=UUID(int=901),
+            child_id=CHILD,
+            observed_on=TODAY - timedelta(days=2),
+            subject="공룡",
+            topic="공룡 그림을 오래 봤다",
+            polarity=1,
+        )
+        cite = [{"id": str(edu.id), "note": "공룡 그림을 오래 봤어요"}]
+        llm = FakeLLM(
+            call("search_book_interests", {}),
+            call("search_books", {"keywords": ["공룡"]}),
+            call("propose_books", {"items": [pick(n, evidence=cite) for n in (1, 2, 3)]}),
+        )
+        ctx = books_ctx(
+            rows=[book(n) for n in range(1, 4)], memory=InMemoryGrowthMemory(education=[edu])
+        )
+        result = await run(task("book_suggestion", "책 추천해줘"), ctx, client=llm)
+
+        assert {d.kind for d in result.suggestions} == {"personalized"}
+        for draft in result.suggestions:
+            # 책 근거는 일반 추천에만 붙는다 — 개인화 도서의 book_catalog 근거는 0행
+            # (Food #442 와 같다)
+            assert [(c.ref.kind, c.ref.id) for c in draft.citations] == [
+                ("observation_education", edu.id)
+            ]
+
+    async def test_힘들어하는_생활_행동도_주제가_되고_reason_에_그_행동을_쓰면_개인화다(self):
+        brush = RoutineObservation(
+            id=UUID(int=902),
+            child_id=CHILD,
+            observed_on=TODAY - timedelta(days=1),
+            subject="양치하기",
+            routine_category="self_care",
+            polarity=-1,
+            assistance_level="full_assist",
+        )
+        cite = [{"id": str(brush.id), "note": "양치를 힘들어한 기록이 있어요"}]
+        reason = "양치하기를 힘들어해서 양치 이야기를 담은 그림책이에요"
+        llm = FakeLLM(
+            call("search_book_interests", {}),
+            call("search_books", {"keywords": ["양치"]}),
+            call(
+                "propose_books",
+                {"items": [pick(n, evidence=cite, reason=reason) for n in (1, 2, 3)]},
+            ),
+        )
+        ctx = books_ctx(
+            rows=[book(n) for n in range(1, 4)], memory=InMemoryGrowthMemory(routine=[brush])
+        )
+        result = await run(task("book_suggestion", "책 추천해줘"), ctx, client=llm)
+
+        assert result.status == "completed"
+        assert {d.kind for d in result.suggestions} == {"personalized"}
+        assert [c.ref.kind for c in result.suggestions[0].citations] == ["observation_routine"]
+
+    async def test_힘들어하는_행동을_reason_에_안_쓰면_그_후보는_거절된다(self):
+        brush = RoutineObservation(
+            id=UUID(int=902),
+            child_id=CHILD,
+            observed_on=TODAY - timedelta(days=1),
+            subject="양치하기",
+            routine_category="self_care",
+            polarity=-1,
+            assistance_level="full_assist",
+        )
+        cite = [{"id": str(brush.id), "note": "양치를 힘들어한 기록이 있어요"}]
+        llm = FakeLLM(
+            call("search_book_interests", {}),
+            call("search_books", {"keywords": ["양치"]}),
+            call("propose_books", {"items": [pick(n, evidence=cite) for n in (1, 2, 3)]}),
+        )
+        ctx = books_ctx(
+            rows=[book(n) for n in range(1, 4)], memory=InMemoryGrowthMemory(routine=[brush])
+        )
+        result = await run(task("book_suggestion", "책 추천해줘"), ctx, client=llm)
+
+        assert result.status == "failed"  # 거절만 받고 끝났다 — 개인화인 척 나가지 않는다
+
+    async def test_교육_놀이_관심이_함께_모여_점수_순_주제가_모델에게_간다(self):
+        edu = EducationObservation(
+            id=UUID(int=903),
+            child_id=CHILD,
+            observed_on=TODAY - timedelta(days=2),
+            subject="공룡",
+            topic="공룡 이름 말하기",
+            polarity=1,
+        )
+        play = ActivityObservation(
+            id=UUID(int=904),
+            child_id=CHILD,
+            observed_on=TODAY - timedelta(days=1),
+            subject="공룡 인형",
+            activity="공룡 인형 놀이",
+            polarity=1,
+        )
+        llm = FakeLLM(call("search_book_interests", {}))
+        ctx = books_ctx(
+            rows=[book(1)], memory=InMemoryGrowthMemory(education=[edu], activities=[play])
+        )
+        await run(task("book_suggestion", "책 추천해줘"), ctx, client=llm)
+
+        tool_result = next(m for m in llm.seen[-1] if m.get("role") == "tool")
+        assert "공룡" in tool_result["content"] and "놀이 기록" in tool_result["content"]
+        assert "교육 기록" in tool_result["content"]
+
+    async def test_검색이_실패하면_closed_book_api_로_닫는다(self):
+        llm = FakeLLM(call("search_books", {"keywords": ["공룡"]}))
+        result = await run(
+            task("book_suggestion"), books_ctx(rows=[book(1)], fail=True), client=llm
+        )
+
+        assert result.status == "blocked" and result.model_calls == 1
+        assert result.suggestions == ()
+        assert [r.body for r in result.readouts] == [READOUTS.render("closed.book_api").body]
+
+    async def test_도서_검색_실패_경고에_사유와_모델_호출_수가_남고_검색어는_없다(self, caplog):
+        caplog.set_level(logging.WARNING, logger="app.agents.growth.agent")
+        llm = FakeLLM(call("search_books", {"keywords": ["공룡"]}))
+        await run(task("book_suggestion"), books_ctx(rows=[book(1)], fail=True), client=llm)
+
+        lines = [r.getMessage() for r in caplog.records if "도서 검색 실패" in r.getMessage()]
+        assert len(lines) == 1
+        assert "reason=도서 조회 실패 (테스트 주입)" in lines[0] and "model_calls=1" in lines[0]
+        assert "공룡" not in lines[0]
+
+    async def test_도서_재검색_실패_경고에도_사유와_모델_호출_수가_남는다(self, caplog):
+        caplog.set_level(logging.WARNING, logger="app.agents.growth.agent")
+        llm = FakeLLM(
+            call("search_books", {"keywords": ["공룡"]}),
+            call(
+                "propose_books",
+                {"items": [pick(1, reason="숫자에 재능이 있어서 골랐어요"), pick(2), pick(3)]},
+            ),
+            call("search_books", {"keywords": ["기차"]}),
+        )
+        rows = [book(n) for n in range(1, 6)]
+        await run(
+            task("book_suggestion"),
+            context(
+                birth_for(30), books=FailsSecondSearch(rows), issued_books=InMemoryIssuedBooks()
+            ),
+            client=llm,
+        )
+
+        lines = [r.getMessage() for r in caplog.records if "도서 재검색 실패" in r.getMessage()]
+        assert len(lines) == 1
+        assert "reason=도서 조회 실패 (테스트 주입)" in lines[0] and "model_calls=2" in lines[0]
+
+    async def test_도서_프롬프트는_요청_낱말을_모두_넣고_책_종류는_주제가_아니라고_한다(self):
+        llm = FakeLLM()
+        await run(task("book_suggestion", "곰 책 추천해줘"), books_ctx(rows=[book(1)]), client=llm)
+        system = llm.seen[0][0]["content"]
+        assert "책 종류는 주제가 아니다" in system
+        assert "기록 주제는 섞지 않는다" in system
+        # 책 종류를 주제 예시로 들지 않는다
+        assert "공룡 · 그림책 · 잠자리" not in system
+
+    async def test_8개월은_보드북만_나가고_모자라면_개수_안내가_붙는다(self):
+        rows = [book(1), book(2, "board"), book(3)]
+        llm = FakeLLM(
+            call("search_books", {"keywords": ["동물"]}),
+            call("propose_books", {"items": [pick(2)]}),
+        )
+        result = await run(task("book_suggestion"), books_ctx(8, rows), client=llm)
+
+        assert [d.content for d in result.suggestions] == ["책2(가)"]
+        assert [r.code for r in result.readouts] == ["fewer"]
+
+    async def test_맞는_책이_없으면_빈_제출로_0개_안내다(self):
+        llm = FakeLLM(
+            call("search_books", {"keywords": ["동물"]}),
+            call("propose_books", {"items": []}),
+        )
+        result = await run(task("book_suggestion"), books_ctx(8, [book(1)]), client=llm)
+
+        assert result.status == "completed" and result.suggestions == ()
+        assert [r.code for r in result.readouts] == ["empty"]
+
+    async def test_요청한_주제의_책이_없으면_book_no_topic_으로_닫는다(self):
+        llm = FakeLLM(
+            call("search_books", {"keywords": ["곰"]}),
+            call("propose_books", {"items": []}),
+        )
+        result = await run(
+            task("book_suggestion", "곰 책 추천해줘"), books_ctx(8, [book(1)]), client=llm
+        )
+
+        assert (result.status, result.model_calls) == ("blocked", 1)
+        assert result.suggestions == ()
+        assert result.readouts == (READOUTS.render("book.no_topic"),)
+
+    async def test_금지_표현으로_빠지면_재호출에서_다른_책으로_빈자리만_채운다(self):
+        llm = FakeLLM(
+            call("search_books", {"keywords": ["공룡"]}),
+            call(
+                "propose_books",
+                {"items": [pick(1, reason="숫자에 재능이 있어서 골랐어요"), pick(2), pick(3)]},
+            ),
+            call("propose_books", {"items": [pick(2), pick(4), pick(5)]}),  # 처음 고른 책2 → 거절
+            call("propose_books", {"items": [pick(4), pick(5)]}),
+        )
+        result = await run(
+            task("book_suggestion"), books_ctx(rows=[book(n) for n in range(1, 6)]), client=llm
+        )
+
+        assert result.model_calls == 2
+        assert [d.content for d in result.suggestions] == ["책2(가)", "책3(가)", "책4(가)"]
+        recall = llm.seen[2][-1]["content"]
+        assert "책1(가)" in recall and "책2(가)" in recall
+
+    async def test_재호출에서_검색이_실패하면_처음_고른_책만_낸다(self):
+        ctx = context(
+            birth_for(30),
+            books=FailsSecondSearch([book(n) for n in range(1, 4)]),
+            issued_books=InMemoryIssuedBooks(),
+        )
+        llm = FakeLLM(
+            call("search_books", {"keywords": ["공룡"]}),
+            call(
+                "propose_books",
+                {"items": [pick(1, reason="숫자에 재능이 있어서 골랐어요"), pick(2), pick(3)]},
+            ),
+            call("search_books", {"keywords": ["기차"]}),
+        )
+        result = await run(task("book_suggestion"), ctx, client=llm)
+
+        assert result.status == "completed" and result.model_calls == 2
+        assert [d.content for d in result.suggestions] == ["책2(가)", "책3(가)"]
+        assert [r.code for r in result.readouts] == ["fewer"]
+
+    async def test_도서_프롬프트는_도서_구획이고_예시가_없다(self):
+        llm = FakeLLM()
+        await run(task("book_suggestion"), books_ctx(rows=[book(1)]), client=llm)
+
+        system = llm.seen[0][0]["content"]
+        assert "[도서]" in system and "[교육 활동]" not in system
+        # [근거] 구획의 글에도 "[예시]" 가 나온다 — 문서 행 예시 블록(머리줄 · 항목)이 없는지 본다
+        assert not any(line.startswith("[예시]") for line in system.splitlines())
+        assert "- id " not in system
+        assert str(CHILD) not in system
+
+
+class TestObserve:
+    """run 하나에 관측 한 줄 — 원문 · 활동 이름이 없다 (growth_plan §11-5)."""
+
+    @staticmethod
+    def line(caplog) -> str:
+        lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("growth run ")]
+        assert len(lines) == 1
+        return lines[0]
+
+    async def test_교육_추천은_단계_근거_모드_문서_행_수를_남기고_원문은_없다(self, caplog):
+        doc_id = await example_id()
+        caplog.set_level(logging.INFO, logger="app.agents.growth.agent")
+        caplog.clear()  # example_id() 가 돌린 run 의 줄은 세지 않는다
+        llm = FakeLLM(learning("블록 세기", "색깔 찾기", "모양 맞추기", doc_id=doc_id))
+        await run(
+            task("learning_suggestion", "공룡으로 숫자 놀이 추천해줘"), docs_ctx(), client=llm
+        )
+
+        line = self.line(caplog)
+        assert "stage=toddler task_type=learning_suggestion status=completed model_calls=1" in line
+        assert "evidence_mode=general" in line and "closed_reason=None" in line
+        assert re.search(r"doc_hit=[1-9]", line)
+        assert "공룡" not in line and "블록 세기" not in line
+
+    async def test_닫히면_코드_문구_키를_남기고_모델은_0회다(self, caplog):
+        caplog.set_level(logging.INFO, logger="app.agents.growth.agent")
+        await run(task("book_suggestion", "공룡 책"), docs_ctx(), client=FakeLLM())
+
+        line = self.line(caplog)
+        assert "status=blocked model_calls=0" in line
+        assert "closed_reason=closed.book_api" in line
+
+    async def test_20초에_끊겨도_몇_번째_대화였는지_한_줄을_남긴다(self, caplog):
+        class Hangs:
+            async def chat(self, messages, **kwargs):
+                await asyncio.sleep(10)
+
+        caplog.set_level(logging.INFO, logger="app.agents.growth.agent")
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(
+                run(task("learning_suggestion"), docs_ctx(), client=Hangs()), 0.05
+            )
+
+        assert "status=cancelled model_calls=1" in self.line(caplog)
+
+
+def _task(label: str, text: str, *, records: tuple[str, ...] = ()) -> DomainTask:
+    return DomainTask(
+        run_id="run-1",
+        agent="growth",
+        task_type=label,
+        request_texts=(text,),
+        record_texts=records,
+    )
+
+
+class TestTopic:
+    async def test_기록_조각은_요청_다음에_따로_실린다(self):
+        llm = FakeLLM()
+        ctx = docs_ctx()
+        await run(
+            _task(
+                "learning_suggestion",
+                "어떻게 도와줘야 좋을까?",
+                records=("아이가 국어 공부를 어려워하는데",),
+            ),
+            ctx,
+            client=llm,
+        )
+        assert llm.seen[0][1]["content"] == (
+            "어떻게 도와줘야 좋을까?\n\n[보호자가 같이 한 말]\n아이가 국어 공부를 어려워하는데"
+        )
+        assert ctx.state.topic == ("communication",)
+
+    async def test_기록_조각이_없으면_요청만_실린다(self):
+        llm = FakeLLM()
+        ctx = docs_ctx()
+        await run(task("learning_suggestion", "한글 놀이 추천해줘"), ctx, client=llm)
+        assert llm.seen[0][1]["content"] == "한글 놀이 추천해줘"
+        assert ctx.state.topic == ("communication",)
+
+    async def test_주제가_없는_요청은_주제_키가_비어_있다(self):
+        ctx = docs_ctx()
+        await run(task("learning_suggestion", "놀이 추천해줘"), ctx, client=FakeLLM())
+        assert ctx.state.topic == ()
+
+
+class TestOffTopicRecall:
+    async def test_주제_밖_후보가_빠지면_재호출로_채운다(self):
+        text = "한글 놀이 추천해줘"
+        probe = FakeLLM()
+        await run(task("learning_suggestion", text), docs_ctx(), client=probe)
+        doc_id = probe.seen[0][0]["content"].split("- id ", 1)[1].split(" ", 1)[0]
+        first = call(
+            "propose_learning_activity",
+            {
+                "items": [
+                    {
+                        "title": title,
+                        "steps": ["하나씩 해 본다"],
+                        "materials": [],
+                        "evidence": evidence,
+                        "reason": "이 나이에 많이 하는 활동이에요",
+                    }
+                    for title, evidence in (
+                        ("공룡 이름 짝맞추기", []),
+                        ("한글 자음 찾기", [{"id": doc_id, "note": "이 나이 예시를 참고했어요"}]),
+                        (
+                            "이야기 이어 말하기",
+                            [{"id": doc_id, "note": "이 나이 예시를 참고했어요"}],
+                        ),
+                    )
+                ]
+            },
+        )
+        # 재호출은 후보 세 개를 다시 내고, 앞에서 통과한 둘은 그대로 두고 빈자리만 채운다
+        llm = FakeLLM(
+            first, learning("글자 카드 놀이", "낱말 이어 말하기", "한글 소리 놀이", doc_id=doc_id)
+        )
+        result = await run(task("learning_suggestion", text), docs_ctx(), client=llm)
+        assert result.status == "completed" and result.model_calls == 2
+        titles = [d.content.split("\n")[0] for d in result.suggestions]
+        assert titles == ["한글 자음 찾기", "이야기 이어 말하기", "글자 카드 놀이"]
+        assert "공룡 이름 짝맞추기" in llm.seen[1][-1]["content"]
+
+
+class SlowSecondCall:
+    """첫 대화는 정해 둔 응답, 둘째 대화부터는 오래 걸리는 모델 가짜."""
+
+    def __init__(self, first: LLMResponse, delay: float) -> None:
+        self._first = first
+        self._delay = delay
+        self.calls = 0
+
+    async def chat(self, messages, **kwargs) -> LLMResponse:
+        self.calls += 1
+        if self.calls == 1:
+            return self._first
+        await asyncio.sleep(self._delay)
+        return LLMResponse(
+            message=SimpleNamespace(content="끝", tool_calls=None), usage={}, latency_ms=1
+        )
+
+
+class SlowCall:
+    """모든 대화가 오래 걸리는 모델 가짜."""
+
+    def __init__(self, delay: float) -> None:
+        self._delay = delay
+        self.calls = 0
+
+    async def chat(self, messages, **kwargs) -> LLMResponse:
+        self.calls += 1
+        await asyncio.sleep(self._delay)
+        return LLMResponse(
+            message=SimpleNamespace(content="끝", tool_calls=None), usage={}, latency_ms=1
+        )
+
+
+def _with_deadline(text: str, seconds: float) -> DomainTask:
+    return DomainTask(
+        run_id="run-1",
+        agent="growth",
+        task_type="learning_suggestion",
+        request_texts=(text,),
+        deadline=time.perf_counter() + seconds,
+    )
+
+
+class TestRecallDeadline:
+    """안전 필터로 빠져 재호출하다 run 마감(20초)에 걸려도 처음 통과한 후보는 지킨다."""
+
+    async def test_재호출이_마감에_걸리면_처음_통과한_후보로_완료한다(self, monkeypatch):
+        monkeypatch.setattr("app.agents.growth.agent.RECALL_MARGIN_S", 0.0)
+        doc_id = await example_id()
+        first = learning("땅콩 세기", "색깔 찾기", "모양 맞추기", doc_id=doc_id)
+        llm = SlowSecondCall(first, delay=3.0)
+        started = time.perf_counter()
+        result = await run(_with_deadline("숫자 놀이 추천해줘", 0.5), docs_ctx(), client=llm)
+        assert time.perf_counter() - started < 2.0
+        assert result.status == "completed" and len(result.suggestions) == 2
+        assert [r.code for r in result.readouts] == ["fewer"]
+
+    async def test_재호출_전에_마감이_지났으면_재호출하지_않는다(self):
+        doc_id = await example_id()
+        llm = FakeLLM(learning("땅콩 세기", "색깔 찾기", "모양 맞추기", doc_id=doc_id))
+        result = await run(_with_deadline("숫자 놀이 추천해줘", -1.0), docs_ctx(), client=llm)
+        assert result.status == "completed" and len(result.suggestions) == 2
+        assert result.model_calls == 1 and len(llm.seen) == 1
+
+    async def test_마감이_없으면_지금처럼_재호출한다(self):
+        doc_id = await example_id()
+        llm = FakeLLM(
+            learning("땅콩 세기", "색깔 찾기", "모양 맞추기", doc_id=doc_id),
+            learning("색깔 찾기", "소리 듣기", "그림자 놀이", doc_id=doc_id),
+        )
+        result = await run(
+            task("learning_suggestion", "숫자 놀이 추천해줘"), docs_ctx(), client=llm
+        )
+        assert result.model_calls == 2 and len(result.suggestions) == 3
+
+
+class TestEvidencePrompt:
+    async def test_근거_id_는_한_글자도_바꾸지_말고_그대로_옮기라고_말한다(self):
+        llm = FakeLLM()
+        await run(task("learning_suggestion", "한글 놀이 추천해줘"), docs_ctx(), client=llm)
+        assert "한 글자도 바꾸지 않고 그대로 복사" in llm.seen[0][0]["content"]
+
+
+SCREEN_CONCERN = ("아이가 요새 게임만 자꾸 하려고 하는데",)
+
+
+def _screen_rows() -> list[GrowthDocRow]:
+    def row(key: str, title: str, tags: tuple[str, ...]) -> GrowthDocRow:
+        return GrowthDocRow(
+            id=uuid5(NAMESPACE_URL, key),
+            doc_key=key,
+            row_type="learning_activity",
+            title=title,
+            body="가족이 함께 정한 약속을 그림으로 붙여 둔다.",
+            min_month=36,
+            max_month=72,
+            area="physical_health",
+            tags=tags,
+        )
+
+    return [
+        row(
+            "growth.learn.screen.promise",
+            "화면 보는 약속 그림으로 정하기",
+            ("physical_health", "screen"),
+        ),
+        row("growth.learn.walk.tape", "테이프 선 위 걷기", ("physical_health",)),
+    ]
+
+
+class TestScreenConcern:
+    """게임 · 영상 고민은 코드가 읽는다 — 모델이 고른 루틴 칸에 따라 결과가 갈리지 않는다."""
+
+    def _ctx(self, months=48):
+        return context(birth_for(months), docs=fixture_docs(*_screen_rows()))
+
+    async def test_게임_고민은_루틴이_아니라_교육으로_돈다(self):
+        ctx = self._ctx()
+        screen_id = str(uuid5(NAMESPACE_URL, "growth.learn.screen.promise"))
+        llm = FakeLLM(
+            learning(
+                "약속 그림 그리기", "끝난 뒤 할 일 정하기", "모래시계 맞추기", doc_id=screen_id
+            )
+        )
+        result = await run(
+            _task("routine_coaching", "어떻게 해야해?", records=SCREEN_CONCERN), ctx, client=llm
+        )
+        assert result.task_type == "learning_suggestion" and result.status == "completed"
+        assert len(result.suggestions) == 3
+        assert {d.kind for d in result.suggestions} == {"general"}
+        system = llm.seen[0][0]["content"]
+        assert "[교육 활동]" in system and "화면 보는 약속 그림으로 정하기" in system
+        assert "중독 같은 말" in system
+
+    async def test_화면_주제는_화면_태그_행만_예시로_싣는다(self):
+        ctx = self._ctx()
+        await run(
+            _task("learning_suggestion", "어떻게 해야해?", records=SCREEN_CONCERN),
+            ctx,
+            client=FakeLLM(),
+        )
+        assert [row.doc_key for row in ctx.state.seen_docs.values()] == [
+            "growth.learn.screen.promise"
+        ]
+
+    async def test_화면_행이_없는_월령은_예시가_없고_요청_기반이다(self):
+        ctx = self._ctx(months=30)
+        llm = FakeLLM()
+        await run(
+            _task("learning_suggestion", "어떻게 해야해?", records=SCREEN_CONCERN), ctx, client=llm
+        )
+        assert ctx.state.seen_docs == {} and ctx.state.requested is True
+        assert llm.seen
+
+    async def test_닫힘_낱말이_있으면_화면이어도_루틴_닫힘이다(self):
+        for record, key in (
+            ("게임할 때 눈을 자꾸 깜빡여", "closed.symptom_habit"),
+            ("게임하다 연고 바르는 걸 싫어해", "closed.medical_routine"),
+        ):
+            llm = FakeLLM()
+            result = await run(
+                _task("routine_coaching", "어떻게 고쳐?", records=(record,)),
+                self._ctx(),
+                client=llm,
+            )
+            assert result.task_type == "routine_coaching" and result.model_calls == 0, record
+            assert result.readouts == (READOUTS.render(key),) and llm.seen == [], record
+
+    async def test_돌_전은_흐름을_바꾸지_않는다(self):
+        llm = FakeLLM()
+        result = await run(
+            _task("routine_coaching", "어떻게 해야해?", records=SCREEN_CONCERN),
+            self._ctx(months=8),
+            client=llm,
+        )
+        assert result.task_type == "routine_coaching" and result.model_calls == 0
+        assert llm.seen == []
+
+    async def test_루틴_낱말이_있으면_루틴으로_돈다(self):
+        result = await run(
+            _task("routine_coaching", "양치할 때 유튜브 틀어 줘야 해"),
+            self._ctx(),
+            client=FakeLLM(),
+        )
+        assert result.task_type == "routine_coaching"
+
+    async def test_교육이_아닌_다른_라벨은_바꾸지_않는다(self):
+        result = await run(
+            _task("book_suggestion", "게임 좋아하는데 책 추천해줘"), self._ctx(), client=FakeLLM()
+        )
+        assert result.task_type == "book_suggestion"
+
+    async def test_관측_줄에는_바뀐_라벨이_남는다(self, caplog):
+        caplog.set_level(logging.INFO, logger="app.agents.growth.agent")
+        await run(
+            _task("routine_coaching", "어떻게 해야해?", records=SCREEN_CONCERN),
+            self._ctx(),
+            client=FakeLLM(),
+        )
+        lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("growth run")]
+        assert "task_type=learning_suggestion" in lines[-1]
+
+
+class TestRequestedWhenTopicHasNoRows:
+    """주제를 읽었는데 그 주제의 [예시] 행이 없으면 닫지 않는다 — 보호자가 정한 요청이 기준이다."""
+
+    def _memory(self, *, activities=()):
+        like = AffinityRow(
+            id=UUID(int=950),
+            merge_key="공룡",
+            state="confirmed",
+            polarity=1,
+            strength=0.9,
+            last_observed_on=TODAY - timedelta(days=3),
+            observed_days=3,
+        )
+        return InMemoryGrowthMemory(affinities=[("education", like)], activities=list(activities))
+
+    async def test_화면_행이_없는_월령에_공룡_기록뿐이어도_모델을_부른다(self):
+        ctx = context(birth_for(30), docs=fixture_docs(*_screen_rows()), memory=self._memory())
+        llm = FakeLLM()
+        await run(
+            _task("learning_suggestion", "어떻게 해야해?", records=SCREEN_CONCERN), ctx, client=llm
+        )
+        assert llm.seen and ctx.state.requested is True and ctx.state.seen_docs == {}
+
+    async def test_영어를_물었는데_공룡_기록뿐이어도_모델을_부른다(self):
+        ctx = context(birth_for(48), docs=fixture_docs(), memory=self._memory())
+        llm = FakeLLM()
+        await run(task("learning_suggestion", "영어 공부 어떻게 시켜?"), ctx, client=llm)
+        assert llm.seen and ctx.state.requested is True
+
+    async def test_주제_예시가_있으면_요청_기반이_아니다(self):
+        ctx = docs_ctx(30)
+        await run(task("learning_suggestion", "국어 공부 어떻게 시켜?"), ctx, client=FakeLLM())
+        assert ctx.state.seen_docs and ctx.state.requested is False
+
+    async def test_주제를_못_읽은_요청은_요청_기반이_아니다(self):
+        ctx = docs_ctx(30)
+        await run(task("learning_suggestion", "놀이 추천해줘"), ctx, client=FakeLLM())
+        assert ctx.state.topic == () and ctx.state.requested is False
+
+    async def test_막연한_요청은_기록도_예시도_없으면_닫는다(self):
+        ctx = context(birth_for(80), docs=fixture_docs())
+        llm = FakeLLM()
+        result = await run(task("learning_suggestion", "뭐 가르칠까?"), ctx, client=llm)
+        assert (result.status, result.model_calls) == ("blocked", 0)
+        assert result.readouts == (READOUTS.render("doc.no_row"),) and llm.seen == []
+        assert ctx.state.requested is False
+
+    async def test_주제_기록이_있으면_모델을_부른다(self):
+        game = ActivityObservation(
+            id=UUID(int=951),
+            child_id=CHILD,
+            observed_on=TODAY - timedelta(days=1),
+            subject="게임",
+            activity="휴대폰 게임",
+            polarity=1,
+        )
+        ctx = context(
+            birth_for(30),
+            docs=fixture_docs(*_screen_rows()),
+            memory=self._memory(activities=[game]),
+        )
+        llm = FakeLLM()
+        await run(
+            _task("learning_suggestion", "어떻게 해야해?", records=SCREEN_CONCERN), ctx, client=llm
+        )
+        assert llm.seen
+
+    async def test_주제가_없으면_공룡_기록만으로_모델을_부른다(self):
+        ctx = context(birth_for(48), docs=fixture_docs(), memory=self._memory())
+        llm = FakeLLM()
+        await run(task("learning_suggestion", "놀이 추천해줘"), ctx, client=llm)
+        assert llm.seen
+
+
+def free_learning(*titles: str, steps=("그림 카드를 보며 이름을 말해요",)) -> LLMResponse:
+    """[예시]가 없는 run 에서 모델이 근거 없이 내는 후보."""
+    items = [
+        {
+            "title": t,
+            "steps": list(steps),
+            "materials": [],
+            "evidence": [],
+            "reason": "모델이 쓴 이유",
+        }
+        for t in titles
+    ]
+    return call("propose_learning_activity", {"items": items})
+
+
+class TestRequestedGeneralRun:
+    TITLES = ("영어 그림 카드 놀이", "알파벳 찾기 놀이", "영어 노래 따라 하기")
+
+    async def test_영어_요청은_예시_없이_요청_기반으로_낸다(self):
+        ctx = docs_ctx(48)
+        llm = FakeLLM(free_learning(*self.TITLES))
+        result = await run(task("learning_suggestion", "영어 어떻게 가르쳐?"), ctx, client=llm)
+        assert result.status == "completed" and result.model_calls == 1
+        assert len(result.suggestions) == 3
+        for draft in result.suggestions:
+            assert (draft.kind, draft.requested) == ("general", True)
+            assert draft.reason == REQUESTED_REASON and draft.citations == ()
+        assert ctx.state.seen_docs == {}
+
+    async def test_주제_예시가_있으면_문서_근거_없는_후보는_거절된다(self):
+        ctx = docs_ctx(30)
+        llm = FakeLLM(free_learning("글자 찾기", "이야기 이어 말하기", "낱말 카드 놀이"))
+        await run(task("learning_suggestion", "국어 공부 어떻게 시켜?"), ctx, client=llm)
+        assert ctx.state.requested is False and ctx.state.suggestions == ()
+
+    async def test_지어낸_시간_수치가_든_후보는_빠진다(self):
+        ctx = docs_ctx(48)
+        llm = FakeLLM(
+            free_learning(*self.TITLES, steps=("하루 1시간까지 카드를 본다",)),
+            free_learning(*self.TITLES, steps=("하루 1시간까지 카드를 본다",)),
+        )
+        result = await run(task("learning_suggestion", "영어 어떻게 가르쳐?"), ctx, client=llm)
+        assert result.suggestions == ()
+        assert all("1시간" not in d.content for d in result.suggestions)
+
+    async def test_보호자가_말한_수치는_그대로_나간다(self):
+        ctx = docs_ctx(48)
+        llm = FakeLLM(free_learning(*self.TITLES, steps=("30분 안에 카드를 본다",)))
+        result = await run(
+            task("learning_suggestion", "영어 노래를 30분 틀어 주는데 어떻게 가르쳐?"),
+            ctx,
+            client=llm,
+        )
+        assert len(result.suggestions) == 3
+
+    async def test_요청_기반_프롬프트는_예시_id_를_달라고_하지_않는다(self):
+        ctx = docs_ctx(48)
+        llm = FakeLLM(free_learning(*self.TITLES))
+        await run(task("learning_suggestion", "영어 어떻게 가르쳐?"), ctx, client=llm)
+        system = llm.seen[0][0]["content"]
+        assert "[예시]\n이 월령의 예시는 아직 없다." in system
+        assert "가장 가까운 [예시] id 를 단다" not in system
+        assert "시간 · 횟수 · 나이 숫자는 보호자가 말한 것만 쓴다" in system
+
+
+class TestRoutineFallsBackToEducation:
+    """루틴 모델이 단계 · 전략 행이 없다고 닫은 행동은 교육 흐름의 활동 제안으로 넘긴다.
+
+    루틴 단계는 행에서만 나온다. 사슬이 카테고리째 없는 등원 · 외출은 모델 없이 바로 교육으로
+    열려서 여기 오지 않는다(`TestNoStepCategoryOpensEducationDirectly`). 여기는 카테고리에 사슬이
+    있어서 모델이 행동 이름으로 맞춰 봐야 아는 경우다 — 옷 입기는 자립 카테고리(`self_care`)에
+    사슬이 있지만 그 행동의 사슬은 없다.
+    """
+
+    TEXT = "옷 혼자 입는 연습을 시키고 싶어."
+    TITLES = ("옷 고르기 놀이", "옷 접기 놀이", "인형 옷 입히기")
+
+    def _empty_plan(self) -> LLMResponse:
+        return call(
+            "propose_routine_plan", {"category": "self_care", "subject": "옷 입기", "items": []}
+        )
+
+    def _record(self, subject="옷 입기") -> RoutineObservation:
+        return RoutineObservation(
+            id=UUID(int=960),
+            child_id=CHILD,
+            observed_on=TODAY - timedelta(days=1),
+            subject=subject,
+            routine_category="self_care",
+            polarity=0,
+            assistance_level=None,
+            trigger=None,
+        )
+
+    async def test_사슬이_없는_행동은_교육_흐름의_활동으로_넘긴다(self):
+        ctx = docs_ctx(36)
+        llm = FakeLLM(self._empty_plan(), free_learning(*self.TITLES))
+        result = await run(task("routine_coaching", self.TEXT), ctx, client=llm)
+        assert result.task_type == "learning_suggestion"
+        assert (result.status, result.model_calls) == ("completed", 2)
+        assert len(result.suggestions) == 3
+        for draft in result.suggestions:
+            assert (draft.kind, draft.requested) == ("general", True)
+            assert draft.reason == REQUESTED_REASON
+        assert ctx.state.task_type == "learning_suggestion" and ctx.state.seen_docs == {}
+
+    async def test_넘긴_교육_흐름의_프롬프트는_루틴_구획이_아니다(self):
+        llm = FakeLLM(self._empty_plan(), free_learning(*self.TITLES))
+        await run(task("routine_coaching", self.TEXT), docs_ctx(36), client=llm)
+        routine_system, education_system = llm.seen[0][0]["content"], llm.seen[1][0]["content"]
+        assert "[생활 루틴]" in routine_system and "[생활 루틴]" not in education_system
+        assert "[교육 활동]" in education_system
+        assert "[예시]\n이 월령의 예시는 아직 없다." in education_system
+
+    async def test_그_행동_기록이_있으면_개인화다(self):
+        ctx = docs_ctx(36, memory=InMemoryGrowthMemory(routine=[self._record()]))
+        evidence = [{"id": str(UUID(int=960)), "note": "옷 입기 기록을 참고했어요"}]
+        items = [
+            {
+                "title": t,
+                "steps": ["그림 순서판을 보며 옷을 입는다"],
+                "materials": [],
+                "evidence": evidence,
+                "reason": "옷 입기를 어려워한다고 해서 눈으로 보며 연습하게 했어요",
+            }
+            for t in self.TITLES
+        ]
+        llm = FakeLLM(
+            self._empty_plan(),
+            call("search_routine_memory", {}),
+            call("propose_learning_activity", {"items": items}),
+        )
+        result = await run(task("routine_coaching", self.TEXT), ctx, client=llm)
+        assert result.task_type == "learning_suggestion" and len(result.suggestions) == 3
+        assert {d.kind for d in result.suggestions} == {"personalized"}
+
+    async def test_다른_행동_기록만_달면_일반_추천이다(self):
+        ctx = docs_ctx(36, memory=InMemoryGrowthMemory(routine=[self._record("손 씻기")]))
+        evidence = [{"id": str(UUID(int=960)), "note": "손 씻기 기록을 참고했어요"}]
+        items = [
+            {
+                "title": t,
+                "steps": ["그림 순서판을 보며 옷을 입는다"],
+                "materials": [],
+                "evidence": evidence,
+                "reason": "손 씻기를 잘해서 골랐어요",
+            }
+            for t in self.TITLES
+        ]
+        llm = FakeLLM(
+            self._empty_plan(),
+            call("search_routine_memory", {}),
+            call("propose_learning_activity", {"items": items}),
+        )
+        result = await run(task("routine_coaching", self.TEXT), ctx, client=llm)
+        assert len(result.suggestions) == 3
+        assert {(d.kind, d.requested) for d in result.suggestions} == {("general", True)}
+
+    async def test_시간이_모자라면_넘기지_않고_자료_없음이다(self):
+        short = DomainTask(
+            run_id="run-1",
+            agent="growth",
+            task_type="routine_coaching",
+            request_texts=(self.TEXT,),
+            deadline=time.perf_counter() + 5.0,
+        )
+        llm = FakeLLM(self._empty_plan(), free_learning(*self.TITLES))
+        result = await run(short, docs_ctx(36), client=llm)
+        assert (result.task_type, result.status, result.model_calls) == (
+            "routine_coaching",
+            "blocked",
+            1,
+        )
+        assert result.readouts == (READOUTS.render("doc.no_row"),)
+
+    async def test_넘긴_교육_대화가_마감에_걸리면_루틴의_자료_없음으로_끝낸다(self, monkeypatch):
+        """pipeline 의 20초에 걸리면 Growth 가 통째로 실패로 세져 자료 없음 안내까지 사라진다 —
+        넘기기 전보다 나빠지지 않게 마감 전에 넘기기 전 결과로 돌아간다."""
+        monkeypatch.setattr("app.agents.growth.agent.FALLBACK_MIN_S", 0.0)
+        monkeypatch.setattr("app.agents.growth.agent.FALLBACK_MARGIN_S", 0.0)
+        ctx = docs_ctx(36)
+        slow = DomainTask(
+            run_id="run-1",
+            agent="growth",
+            task_type="routine_coaching",
+            request_texts=(self.TEXT,),
+            deadline=time.perf_counter() + 0.5,
+        )
+        started = time.perf_counter()
+        result = await run(slow, ctx, client=SlowSecondCall(self._empty_plan(), delay=3.0))
+        assert time.perf_counter() - started < 2.0
+        # 교육 대화는 시작했으니 호출 수에 센다
+        assert (result.task_type, result.status, result.model_calls) == (
+            "routine_coaching",
+            "blocked",
+            2,
+        )
+        assert result.readouts == (READOUTS.render("doc.no_row"),)
+        assert (ctx.state.task_type, ctx.state.closed_reason) == ("routine_coaching", "doc.no_row")
+
+    async def test_넘긴_교육_대화가_결과를_못_내면_루틴의_자료_없음으로_끝낸다(self):
+        """교육 대화가 출력 tool 없이 끝나면 Growth 가 실패로 세져 안내가 사라진다 — 마감과 같다."""
+        ctx = docs_ctx(36)
+        llm = FakeLLM(self._empty_plan())  # 교육 대화는 말로 끝난다
+        result = await run(task("routine_coaching", self.TEXT), ctx, client=llm)
+        assert (result.task_type, result.status, result.model_calls) == (
+            "routine_coaching",
+            "blocked",
+            2,
+        )
+        assert result.readouts == (READOUTS.render("doc.no_row"),)
+        assert (ctx.state.task_type, ctx.state.closed_reason) == ("routine_coaching", "doc.no_row")
+
+    async def test_코드가_행동을_못_읽으면_넘기지_않는다(self):
+        ctx = docs_ctx(36)
+        llm = FakeLLM(
+            call(
+                "propose_routine_plan",
+                {"category": "transition", "subject": "놀이 끝내기", "items": []},
+            ),
+            free_learning(*self.TITLES),
+        )
+        result = await run(
+            task("routine_coaching", "놀이 끝내자고 하면 매번 울어"), ctx, client=llm
+        )
+        assert (result.task_type, result.status, result.model_calls) == (
+            "routine_coaching",
+            "blocked",
+            1,
+        )
+
+    async def test_닫힘과_되묻기는_넘기지_않는다(self):
+        asked = FakeLLM(
+            call("propose_routine_plan", {"category": "self_care", "subject": "양치", "items": []}),
+            free_learning(*self.TITLES),
+        )
+        result = await run(task("routine_coaching", "양치 혼자 하게"), docs_ctx(), client=asked)
+        assert result.task_type == "routine_coaching" and result.needs_observation
+        closed = FakeLLM()
+        result = await run(task("routine_coaching", "약 먹기 싫어해"), docs_ctx(), client=closed)
+        assert (result.task_type, result.model_calls) == ("routine_coaching", 0)
+        assert closed.seen == []
+
+    async def test_넘기기_전의_모델_호출은_합쳐_센다(self):
+        ctx = docs_ctx(36)
+        llm = FakeLLM(self._empty_plan(), free_learning(*self.TITLES))
+        result = await run(task("routine_coaching", self.TEXT), ctx, client=llm)
+        assert result.model_calls == ctx.state.model_calls == 2
+
+
+class TestNoStepCategoryOpensEducationDirectly:
+    """단계 사슬이 카테고리째 없는 행동(등원 · 외출)은 루틴 모델을 거치지 않고 바로 교육으로 연다.
+
+    모델이 어떤 행동 이름을 골라도 `doc.no_row` 로 끝날 걸 코드가 먼저 안다 — 모델 호출이 최대 3번
+    (루틴 · 교육 · 재호출)에서 2번으로 준다(#702 PM 리뷰).
+    """
+
+    TEXT = "아침에 등원 준비가 너무 오래 걸려."
+    TITLES = ("등원 가방 챙기기 놀이", "아침 순서 그림 보기", "신발 신기 노래")
+
+    def _record(self, subject="등원 준비") -> RoutineObservation:
+        return RoutineObservation(
+            id=UUID(int=961),
+            child_id=CHILD,
+            observed_on=TODAY - timedelta(days=1),
+            subject=subject,
+            routine_category="transition",
+            polarity=0,
+            assistance_level=None,
+            trigger=None,
+        )
+
+    async def test_루틴_모델_없이_교육_모델_한_번으로_일반_추천을_낸다(self):
+        ctx = docs_ctx(36)
+        llm = FakeLLM(free_learning(*self.TITLES))
+        result = await run(task("routine_coaching", self.TEXT), ctx, client=llm)
+        assert result.task_type == "learning_suggestion"
+        assert (result.status, result.model_calls) == ("completed", 1)
+        assert len(llm.seen) == 1
+        for draft in result.suggestions:
+            assert (draft.kind, draft.requested) == ("general", True)
+            assert draft.reason == REQUESTED_REASON
+        assert ctx.state.seen_docs == {} and ctx.state.requested is True
+
+    async def test_모델에는_교육_구획만_간다(self):
+        llm = FakeLLM(free_learning(*self.TITLES))
+        await run(task("routine_coaching", self.TEXT), docs_ctx(36), client=llm)
+        system = llm.seen[0][0]["content"]
+        assert "[교육 활동]" in system and "[생활 루틴]" not in system
+        assert "[예시]\n이 월령의 예시는 아직 없다." in system
+
+    @pytest.mark.parametrize(
+        "text",
+        ["하원하면 자꾸 짜증을 내", "외출 준비만 하면 버텨", "나갈 준비를 안 하려고 해"],
+    )
+    async def test_하원_외출_나갈_준비도_같다(self, text):
+        llm = FakeLLM(free_learning(*self.TITLES))
+        result = await run(task("routine_coaching", text), docs_ctx(36), client=llm)
+        assert (result.task_type, result.model_calls) == ("learning_suggestion", 1), text
+        assert len(result.suggestions) == 3, text
+
+    async def test_교육으로_열어도_질문은_덧붙이지_않는다(self):
+        result = await run(
+            task("routine_coaching", "수학 학원 등원 준비가 너무 오래 걸려."),
+            docs_ctx(36),
+            client=FakeLLM(free_learning(*self.TITLES)),
+        )
+        assert len(result.suggestions) == 3
+        assert result.needs_observation == () and result.pending is None
+
+    async def test_그_행동_기록이_있으면_개인화다(self):
+        ctx = docs_ctx(36, memory=InMemoryGrowthMemory(routine=[self._record()]))
+        evidence = [{"id": str(UUID(int=961)), "note": "등원 준비 기록을 참고했어요"}]
+        items = [
+            {
+                "title": t,
+                "steps": ["그림 순서판을 보며 준비한다"],
+                "materials": [],
+                "evidence": evidence,
+                "reason": "등원 준비가 오래 걸린다고 해서 순서를 눈으로 보게 했어요",
+            }
+            for t in self.TITLES
+        ]
+        llm = FakeLLM(
+            call("search_routine_memory", {}), call("propose_learning_activity", {"items": items})
+        )
+        result = await run(task("routine_coaching", self.TEXT), ctx, client=llm)
+        assert result.task_type == "learning_suggestion" and len(result.suggestions) == 3
+        assert {d.kind for d in result.suggestions} == {"personalized"}
+
+    async def test_다른_행동_기록만_달면_일반_추천이다(self):
+        ctx = docs_ctx(36, memory=InMemoryGrowthMemory(routine=[self._record("손 씻기")]))
+        evidence = [{"id": str(UUID(int=961)), "note": "손 씻기 기록을 참고했어요"}]
+        items = [
+            {
+                "title": t,
+                "steps": ["그림 순서판을 보며 준비한다"],
+                "materials": [],
+                "evidence": evidence,
+                "reason": "손 씻기를 잘해서 골랐어요",
+            }
+            for t in self.TITLES
+        ]
+        llm = FakeLLM(
+            call("search_routine_memory", {}), call("propose_learning_activity", {"items": items})
+        )
+        result = await run(task("routine_coaching", self.TEXT), ctx, client=llm)
+        assert {(d.kind, d.requested) for d in result.suggestions} == {("general", True)}
+
+    async def test_다른_카테고리가_섞이면_루틴_모델부터_돈다(self):
+        # 옷 입기는 자립 카테고리에 사슬이 있어서 그 행동의 사슬이 있는지는 모델이 이름으로 맞춘다
+        llm = FakeLLM(
+            call(
+                "propose_routine_plan", {"category": "self_care", "subject": "옷 입기", "items": []}
+            ),
+            free_learning(*self.TITLES),
+        )
+        result = await run(
+            task("routine_coaching", "옷 입고 등원 준비하는 데 너무 오래 걸려"),
+            docs_ctx(36),
+            client=llm,
+        )
+        assert "[생활 루틴]" in llm.seen[0][0]["content"]
+        assert (result.task_type, result.model_calls) == ("learning_suggestion", 2)
+
+    async def test_카테고리에_사슬이_생기면_루틴_모델로_돈다(self):
+        """'단계 행이 없다' 는 문서 행으로 읽는다 — 등원 사슬이 들어오면 루틴 모델로 되돌아간다."""
+        ctx = context(
+            birth_for(36),
+            docs=fixture_docs(*chain_rows("transition", "leave_home", "등원 준비")),
+        )
+        llm = FakeLLM(
+            call(
+                "propose_routine_plan",
+                {"category": "transition", "subject": "등원 준비", "items": []},
+            )
+        )
+        result = await run(task("routine_coaching", self.TEXT), ctx, client=llm)
+        assert "[생활 루틴]" in llm.seen[0][0]["content"]
+        assert result.task_type == "routine_coaching" and result.needs_observation
+
+    async def test_닫힘이_먼저다(self):
+        llm = FakeLLM(free_learning(*self.TITLES))
+        result = await run(
+            task("routine_coaching", "등원 전에 약 먹기 싫어해"), docs_ctx(36), client=llm
+        )
+        assert (result.task_type, result.model_calls) == ("routine_coaching", 0)
+        assert llm.seen == []
+
+    async def test_돌_전은_루틴_리듬_안내다(self):
+        llm = FakeLLM(free_learning(*self.TITLES))
+        result = await run(task("routine_coaching", self.TEXT), docs_ctx(8), client=llm)
+        assert (result.task_type, result.model_calls) == ("routine_coaching", 0)
+        assert llm.seen == []
+
+    async def test_시간이_모자라면_모델_없이_자료_없음이다(self):
+        short = DomainTask(
+            run_id="run-1",
+            agent="growth",
+            task_type="routine_coaching",
+            request_texts=(self.TEXT,),
+            deadline=time.perf_counter() + 5.0,
+        )
+        llm = FakeLLM(free_learning(*self.TITLES))
+        result = await run(short, docs_ctx(36), client=llm)
+        assert (result.task_type, result.status, result.model_calls) == (
+            "routine_coaching",
+            "blocked",
+            0,
+        )
+        assert result.readouts == (READOUTS.render("doc.no_row"),)
+        assert llm.seen == []
+
+    async def test_교육_대화가_마감에_걸리면_자료_없음으로_끝낸다(self, monkeypatch):
+        """pipeline 의 20초에 걸리면 Growth 가 통째로 실패로 세져 자료 없음 안내까지 사라진다."""
+        monkeypatch.setattr("app.agents.growth.agent.FALLBACK_MIN_S", 0.0)
+        monkeypatch.setattr("app.agents.growth.agent.FALLBACK_MARGIN_S", 0.0)
+        ctx = docs_ctx(36)
+        slow = DomainTask(
+            run_id="run-1",
+            agent="growth",
+            task_type="routine_coaching",
+            request_texts=(self.TEXT,),
+            deadline=time.perf_counter() + 0.5,
+        )
+        started = time.perf_counter()
+        result = await run(slow, ctx, client=SlowCall(delay=3.0))
+        assert time.perf_counter() - started < 2.0
+        assert (result.task_type, result.status, result.model_calls) == (
+            "routine_coaching",
+            "blocked",
+            1,
+        )
+        assert result.readouts == (READOUTS.render("doc.no_row"),)
+        assert (ctx.state.task_type, ctx.state.closed_reason) == ("routine_coaching", "doc.no_row")
+
+    async def test_교육_대화가_결과를_못_내면_자료_없음으로_끝낸다(self):
+        ctx = docs_ctx(36)
+        result = await run(task("routine_coaching", self.TEXT), ctx, client=FakeLLM())
+        assert (result.task_type, result.status, result.model_calls) == (
+            "routine_coaching",
+            "blocked",
+            1,
+        )
+        assert result.readouts == (READOUTS.render("doc.no_row"),)
+        assert (ctx.state.task_type, ctx.state.closed_reason) == ("routine_coaching", "doc.no_row")
+
+
+async def topic_example_id(text: str, months: int, **ctx_kwargs) -> str:
+    """같은 아이 · 같은 날 · 같은 요청은 같은 [예시]를 받는다 — 빈 모델로 돌려 id 를 읽는다."""
+    probe = FakeLLM()
+    await run(task("learning_suggestion", text), docs_ctx(months, **ctx_kwargs), client=probe)
+    return probe.seen[0][0]["content"].split("- id ", 1)[1].split(" ", 1)[0]
+
+
+class TestEducationAsk:
+    """주제의 아이 기록이 없으면 추천에 질문 하나를 덧붙인다 — 답이 기록이 되어 개인화로 이어진다"""
+
+    TEXT = "국어 공부 어떻게 시켜?"
+    TITLES = ("글자 찾기", "이야기 이어 말하기", "낱말 카드 놀이")
+    QUESTION = "국어는 집에서 해 본 적이 있나요? 어려워한 점이 있으면 같이 알려 주세요."
+
+    def _reading(self) -> EducationObservation:
+        return EducationObservation(
+            id=UUID(int=970),
+            child_id=CHILD,
+            observed_on=TODAY - timedelta(days=2),
+            subject="국어",
+            topic="글 읽기",
+            polarity=-1,
+        )
+
+    async def _run(self, text=None, *, answered=None, months=30, **ctx_kwargs):
+        text = text or self.TEXT
+        doc_id = await topic_example_id(text, months, **ctx_kwargs)
+        ctx = docs_ctx(months, **ctx_kwargs)
+        llm = FakeLLM(learning(*self.TITLES, doc_id=doc_id))
+        picked = DomainTask(
+            run_id="run-1",
+            agent="growth",
+            task_type="learning_suggestion",
+            request_texts=(text,),
+            answered_subject=answered,
+        )
+        return await run(picked, ctx, client=llm), ctx
+
+    async def test_주제_기록이_없으면_일반_추천에_질문_하나를_붙인다(self):
+        result, _ = await self._run()
+        assert result.status == "completed" and len(result.suggestions) == 3
+        assert {d.kind for d in result.suggestions} == {"general"}
+        assert result.needs_observation == (self.QUESTION,)
+        pending = result.pending
+        assert pending is not None
+        assert (pending.agent, pending.kind) == ("growth", "ask.learning_current")
+        assert pending.question == self.QUESTION
+        assert pending.payload == {"subject": "국어", "category": None, "field": "topic"}
+
+    async def test_주제_기록이_있으면_묻지_않는다(self):
+        memory = InMemoryGrowthMemory(education=[self._reading()])
+        result, _ = await self._run(memory=memory)
+        assert result.needs_observation == () and result.pending is None
+
+    async def test_6개월_지난_주제_기록은_없는_것으로_본다(self):
+        old = replace(self._reading(), observed_on=TODAY - timedelta(days=200))
+        result, _ = await self._run(memory=InMemoryGrowthMemory(education=[old]))
+        assert result.needs_observation == (self.QUESTION,)
+
+    async def test_주제가_없는_요청은_묻지_않는다(self):
+        doc_id = await example_id()
+        llm = FakeLLM(learning("블록 세기", "색깔 찾기", "모양 맞추기", doc_id=doc_id))
+        result = await run(task("learning_suggestion", "놀이 추천해줘"), docs_ctx(), client=llm)
+        assert len(result.suggestions) == 3 and result.needs_observation == ()
+
+    async def test_답한_run_은_묻지_않는다(self):
+        result, _ = await self._run(answered="국어")
+        assert len(result.suggestions) == 3
+        assert result.needs_observation == () and result.pending is None
+
+    async def test_후보가_하나도_남지_않으면_묻지_않는다(self):
+        doc_id = await topic_example_id(self.TEXT, 30)
+        blocked = call(
+            "propose_learning_activity",
+            {
+                "items": [
+                    {
+                        "title": title,
+                        "steps": ["학습 앱을 결제해 보세요"],
+                        "materials": [],
+                        "evidence": [{"id": doc_id, "note": "이 나이 예시를 참고했어요"}],
+                        "reason": "이 나이에 많이 하는 활동이에요",
+                    }
+                    for title in self.TITLES
+                ]
+            },
+        )
+        llm = FakeLLM(blocked, blocked)
+        result = await run(task("learning_suggestion", self.TEXT), docs_ctx(30), client=llm)
+        assert result.suggestions == () and result.needs_observation == ()
+
+    async def test_화면_주제는_묻지_않는다(self):
+        titles = (
+            "화면 끄기 약속 정하기",
+            "모래시계로 끝내는 시간 정하기",
+            "끝나면 할 놀이 정하기",
+        )
+        ctx = docs_ctx(30)
+        llm = FakeLLM(free_learning(*titles))
+        result = await run(
+            _task("learning_suggestion", "어떻게 해야해?", records=SCREEN_CONCERN), ctx, client=llm
+        )
+        assert len(result.suggestions) == 3 and ctx.state.requested is True
+        assert result.needs_observation == () and result.pending is None
+
+    async def test_루틴에서_넘어온_run_은_묻지_않는다(self):
+        text = "수학 학원 옷 갈아입는 연습을 시키고 싶어."
+        empty = call(
+            "propose_routine_plan", {"category": "self_care", "subject": "옷 입기", "items": []}
+        )
+        titles = ("옷 고르기 놀이", "옷 접기 놀이", "인형 옷 입히기")
+        llm = FakeLLM(empty, free_learning(*titles))
+        result = await run(task("routine_coaching", text), docs_ctx(36), client=llm)
+        assert result.task_type == "learning_suggestion" and len(result.suggestions) == 3
+        assert result.needs_observation == () and result.pending is None
+
+    async def test_이어받은_교육_run_은_물은_주제를_다시_읽는다(self):
+        ctx = docs_ctx(30)
+        await run(
+            DomainTask(
+                run_id="run-1",
+                agent="growth",
+                task_type="learning_suggestion",
+                request_texts=("어떻게 도와줘야 좋을까?",),
+                answered_subject="국어",
+                answer_texts=("글 읽기를 어려워해요",),
+            ),
+            ctx,
+            client=FakeLLM(),
+        )
+        assert ctx.state.topic == ("communication",)
+        assert ctx.state.seen_docs
+        assert {row.area for row in ctx.state.seen_docs.values()} == {"communication"}
+
+    async def test_루틴_라벨의_답한_행동은_교육_주제로_읽지_않는다(self):
+        ctx = docs_ctx(30)
+        await run(
+            DomainTask(
+                run_id="run-1",
+                agent="growth",
+                task_type="routine_coaching",
+                request_texts=("혼자 하게 하고 싶어",),
+                answered_subject="양치",
+            ),
+            ctx,
+            client=FakeLLM(),
+        )
+        assert ctx.state.topic == ()
+
+
+class TestRunStateReset:
+    def test_모든_칸이_처음_값으로_돌아간다(self):
+        from app.agents.growth.context import GrowthRunState
+
+        state = GrowthRunState(topic=("screen",), requested=True, closing="doc.no_row")
+        state.seen_docs[UUID(int=1)] = None  # type: ignore[assignment]
+        state.model_calls = 3
+        state.reset()
+        assert state == GrowthRunState()
+        assert state.seen_docs == {}
+
+    def test_되돌린_뒤_쓴_표는_다른_객체다(self):
+        from app.agents.growth.context import GrowthRunState
+
+        state = GrowthRunState()
+        before = state.seen_docs
+        state.reset()
+        assert state.seen_docs is not before
+
+
+class TestBasisLookupIsLazy:
+    """[예시]가 있으면 근거로 달 기억 범위를 따로 읽지 않는다 — 교육 run 마다 조회가 늘지 않게."""
+
+    @pytest.mark.parametrize("text", ["놀이 추천해줘", "한글 놀이 추천해줘"])
+    async def test_예시가_있으면_기억_범위를_읽지_않는다(self, monkeypatch, text):
+        async def boom(*args, **kwargs):
+            raise AssertionError("[예시]가 있는데 기억 범위를 읽었다")
+
+        monkeypatch.setattr("app.agents.growth.agent.has_citable_memory", boom)
+        ctx = docs_ctx()
+        await run(task("learning_suggestion", text), ctx, client=FakeLLM())
+        assert ctx.state.seen_docs
+
+
+class TestScreenGate:
+    """화면 고민을 교육으로 돌려도 프로필 · 동의는 한 번만 읽는다.
+
+    돌 전만 루틴 게이트로 되돌리느라 다시 읽는다.
+    """
+
+    @staticmethod
+    def _count_profile(ctx):
+        reads: list[int] = []
+        real = ctx.ports.profile.birth_date
+
+        async def counting(**kwargs):
+            reads.append(1)
+            return await real(**kwargs)
+
+        ctx.ports.profile.birth_date = counting
+        return reads
+
+    async def test_교육으로_돌아도_프로필을_한_번만_읽는다(self):
+        ctx = context(birth_for(48), docs=fixture_docs(*_screen_rows()))
+        reads = self._count_profile(ctx)
+        await run(
+            _task("routine_coaching", "어떻게 해야해?", records=SCREEN_CONCERN),
+            ctx,
+            client=FakeLLM(),
+        )
+        assert ctx.state.task_type == "learning_suggestion" and len(reads) == 1
+
+    async def test_루틴으로_남는_고민은_프로필을_한_번만_읽는다(self):
+        ctx = context(birth_for(48), docs=fixture_docs(*_screen_rows()))
+        reads = self._count_profile(ctx)
+        await run(_task("routine_coaching", "양치 어떻게 가르쳐?"), ctx, client=FakeLLM())
+        assert ctx.state.task_type == "routine_coaching" and len(reads) == 1
+
+
+class TestPromptScope:
+    """주제 근거 · 화면 안내는 코드가 그 주제를 읽었을 때만, 교육 프롬프트에만 실린다.
+
+    주제를 못 읽은 요청에 실으면 모델이 스스로 주제가 있다고 보고 [예시] id 를 더 옮겨 적다 한
+    글자씩 틀려 같은 제출이 되풀이됐다(라이브 20회 중 3회 failed).
+    """
+
+    TOPIC_MARK = "주제의 기록이 없으면 [예시] id 를 근거로 단다"
+    SCREEN_MARK = "화면 · 게임 이야기면"
+    DONT_MARK = "중독 같은 말"
+
+    REQUESTED_MARK = "이번 요청의 주제는 [예시]가 없다"
+    EXAMPLE_MARK = "가장 가까운 [예시] id 를 단다"
+
+    ANSWERED_MARK = "방금 답해서 아이 기록 한 건으로 저장했다"
+
+    async def _prompt(
+        self,
+        label: GrowthTaskType,
+        topic: tuple[str, ...] = (),
+        *,
+        requested: bool = False,
+        answered: str | None = None,
+    ) -> str:
+        from app.agents.growth.context import build_gate
+        from app.agents.growth.prompt import build_system_prompt
+
+        ctx = context(birth_for(48), docs=fixture_docs(), books=InMemoryBooks())
+        ctx.state.gate = await build_gate(ctx, label)
+        ctx.state.topic = topic
+        ctx.state.requested = requested
+        ctx.state.answered_subject = answered
+        return build_system_prompt(ctx, label, ())
+
+    async def test_주제를_읽었을_때만_교육_프롬프트에_주제_안내가_있다(self):
+        learning = GrowthTaskType.LEARNING_SUGGESTION
+        assert self.TOPIC_MARK in await self._prompt(learning, ("communication",))
+        assert self.TOPIC_MARK not in await self._prompt(learning, ())
+
+    @pytest.mark.parametrize(
+        "label", [GrowthTaskType.ROUTINE_COACHING, GrowthTaskType.BOOK_SUGGESTION]
+    )
+    async def test_도서와_루틴_프롬프트에는_주제가_있어도_없다(self, label):
+        prompt = await self._prompt(label, ("communication", "screen"))
+        assert self.TOPIC_MARK not in prompt and self.SCREEN_MARK not in prompt
+
+    async def test_요청_기반_줄은_요청_기반_run_에만_싣는다(self):
+        learning = GrowthTaskType.LEARNING_SUGGESTION
+        plain = await self._prompt(learning, ("communication",))
+        assert self.REQUESTED_MARK not in plain and self.EXAMPLE_MARK in plain
+        assert self.TOPIC_MARK in plain
+        asked = await self._prompt(learning, ("other",), requested=True)
+        assert self.REQUESTED_MARK in asked and self.EXAMPLE_MARK not in asked
+        # [예시] id 를 달라는 주제 줄은 [예시]가 없는 run 에서 빠진다
+        assert self.TOPIC_MARK not in asked
+        none = await self._prompt(learning, ())
+        assert self.REQUESTED_MARK not in none and self.EXAMPLE_MARK in none
+
+    @pytest.mark.parametrize(
+        "label", [GrowthTaskType.ROUTINE_COACHING, GrowthTaskType.BOOK_SUGGESTION]
+    )
+    async def test_도서와_루틴_프롬프트에는_요청_기반_줄이_없다(self, label):
+        prompt = await self._prompt(label, ("other",), requested=True)
+        assert self.REQUESTED_MARK not in prompt and self.EXAMPLE_MARK in prompt
+
+    async def test_답을_받고_이어서_도는_교육_run_에만_방금_답한_기록_안내가_있다(self):
+        learning = GrowthTaskType.LEARNING_SUGGESTION
+        resumed = await self._prompt(learning, ("communication",), answered="국어")
+        assert self.ANSWERED_MARK in resumed
+        # 조회 결과에는 모델이 쓴 주제("받아쓰기")만 보인다 — 물은 주제와 오늘 기록이라는 단서
+        assert "'국어'" in resumed and "observed_on 이 오늘" in resumed
+        for plain in (
+            await self._prompt(learning, ("communication",)),
+            await self._prompt(learning, ()),
+            await self._prompt(learning, ("other",), requested=True),
+        ):
+            assert self.ANSWERED_MARK not in plain
+
+    @pytest.mark.parametrize(
+        "label", [GrowthTaskType.ROUTINE_COACHING, GrowthTaskType.BOOK_SUGGESTION]
+    )
+    async def test_루틴과_도서_프롬프트에는_방금_답한_기록_안내가_없다(self, label):
+        prompt = await self._prompt(label, (), answered="양치")
+        assert self.ANSWERED_MARK not in prompt
+
+    async def test_화면_안내와_중독_금지는_화면_주제에만_있다(self):
+        learning = GrowthTaskType.LEARNING_SUGGESTION
+        screen = await self._prompt(learning, ("screen",))
+        assert self.SCREEN_MARK in screen and self.DONT_MARK in screen
+        for topic in ((), ("communication",)):
+            other = await self._prompt(learning, topic)
+            assert self.SCREEN_MARK not in other and self.DONT_MARK not in other

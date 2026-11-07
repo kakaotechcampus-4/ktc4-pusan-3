@@ -13,20 +13,27 @@ from uuid import UUID
 import pytest
 
 from app.agents.activity.context import ActivityContext, build_gate
+from app.agents.activity.events import schedule_days
 from app.agents.activity.result import ErrorCode
 from app.agents.activity.review import (
     GENERAL_REASON,
     GUIDANCE,
     MIN_AVOIDED_LABEL,
+    REQUESTED_REASON,
     RejectReason,
     explain,
     review_candidates,
 )
-from app.agents.activity.rules import is_recent_duplicate, normalize_activity, overstates
+from app.agents.activity.rules import (
+    is_recent_duplicate,
+    normalize_activity,
+    said_in_request,
+)
 from app.agents.activity.schemas.common import (
     ActivitySetting,
     CaregiverRole,
     DayLabel,
+    EventKind,
     Intensity,
     PlaceCategory,
 )
@@ -39,12 +46,14 @@ from app.agents.activity.store.inmemory import (
 from app.agents.activity.store.ports import (
     ActivityDocRow,
     ActivityObservation,
+    EventRow,
+    EventSchedule,
     PlaceRow,
     SafetyEntry,
 )
 from app.agents.activity.tools.filters import safety_terms
 from app.agents.activity.tools.recommend import propose_activity_candidates
-from app.agents.common.evidence import RankedEvidence
+from app.agents.common.evidence import RankedEvidence, overstates
 from app.agents.common.reference import hazard_terms
 from app.agents.common.refs import Ref
 
@@ -88,6 +97,31 @@ def candidate(**kwargs) -> ActivityCandidate:
 
 
 PARK = "사직어린이공원"  # 이번 run 에 장소 조회가 돌려준 곳
+PARK_ROW = PlaceRow(
+    name=PARK,
+    category=PlaceCategory.PARK,
+    distance_m=800,
+    source="city_park",
+    data_date=date(2026, 6, 30),
+)
+
+
+def daily(starts_on: date, ends_on: date) -> EventSchedule:
+    """기간 안 매일 열리는 일정 — 일정 원문에 요일 · 날짜 제한이 없는 행사."""
+    days = schedule_days(TODAY)
+    return EventSchedule(open_days=frozenset(day for day in days if starts_on <= day <= ends_on))
+
+
+FEST = "광안리 가을 축제"  # 이번 run 에 행사 조회가 돌려준 행사. TODAY(09-29 화) 부터 10-01 까지
+FEST_ROW = EventRow(
+    name=FEST,
+    kind=EventKind.FESTIVAL,
+    starts_on=date(2026, 9, 29),
+    ends_on=date(2026, 10, 1),
+    place="광안리해수욕장 일원",
+    distance_m=3_000,
+    schedule=daily(date(2026, 9, 29), date(2026, 10, 1)),
+)
 
 
 TOWER_DOC = ActivityDocRow(
@@ -113,21 +147,29 @@ def review(
     months=40,
     seen=SEEN,
     recent=(),
-    places=(PARK,),
+    places=None,
+    events=None,
     safety=(),
     outdoor=None,
+    outdoor_days=None,
     docs=DOCS,
+    area_places=(),
+    requested=False,
 ):
     return review_candidates(
         candidates,
         months=months,
         seen=seen,
         recent_activities=recent,
-        places=places,
+        places={PARK: PARK_ROW} if places is None else places,
+        events={FEST: FEST_ROW} if events is None else events,
         safety=safety_terms(safety),
         outdoor=outdoor,
+        outdoor_days=outdoor_days,
         docs=docs,
+        area_places=area_places,
         today=TODAY,
+        requested=requested,
     )
 
 
@@ -150,6 +192,7 @@ class TestPass:
         (draft,) = review(candidate(evidence=[DOC_PICK])).drafts
         assert draft.kind == "general"
         assert draft.reason == GENERAL_REASON
+        assert "기록이 아직 적어서" not in draft.reason
 
     def test_인용이_하나도_없으면_거절한다(self):
         """일반 추천의 근거는 문서 행이다. 아이 기록도 문서도 없는 후보는 나가지 않는다."""
@@ -198,6 +241,41 @@ class TestEvidence:
         """지어낸 근거로 개인화인 척하지 못한다."""
         result = review(candidate(evidence=[{"id": raw, "note": "모래놀이를 했어요"}]))
         assert reason_of(result) is RejectReason.UNKNOWN_EVIDENCE
+
+
+class TestRequested:
+    """보호자가 놀이를 정해 물었으면("물놀이 뭐 하지?") 그 요청에 맞춰 만든다. 아이 기록이 없으면
+    일반 추천이고, 문서 행 근거가 없어도 된다 — 기준이 이번 요청이다."""
+
+    def test_기록이_없으면_문서_근거_없이_일반_추천이고_요청_문구를_단다(self):
+        result = review(candidate(content="욕조에서 컵으로 물 옮기기", evidence=[]), requested=True)
+        (draft,) = result.drafts
+        assert draft.kind == "general"
+        assert draft.reason == REQUESTED_REASON
+        assert "기록이 아직 적어서" not in draft.reason
+        assert draft.citations == ()
+
+    def test_예시를_참고했으면_그_문서도_근거로_남는다(self):
+        (draft,) = review(candidate(evidence=[DOC_PICK]), requested=True).drafts
+        assert draft.kind == "general"
+        assert draft.reason == REQUESTED_REASON
+        assert [c.ref.id for c in draft.citations] == [TOWER_DOC.id]
+
+    def test_기록이_있으면_요청이어도_개인화다(self):
+        (draft,) = review(candidate(), requested=True).drafts
+        assert draft.kind == "personalized"
+
+    def test_막연한_요청은_지금처럼_문서_근거가_있어야_한다(self):
+        assert reason_of(review(candidate(evidence=[]), requested=False)) is RejectReason.BUILD
+
+    def test_요청_기반도_안전_필터는_그대로다(self):
+        result = review(
+            candidate(content="밀가루 반죽 주무르기", materials=["밀가루"], evidence=[]),
+            requested=True,
+            safety=[SafetyEntry(kind="allergy", label="밀", status="active")],
+        )
+        assert result.drafts == ()
+        assert len(result.removed) == 1
 
 
 class TestDocEvidence:
@@ -350,12 +428,26 @@ class TestPlace:
         (draft,) = review(candidate(content="모래성 쌓기", place_name=PARK)).drafts
         assert draft.content == "사직어린이공원에서 모래성 쌓기"
 
-    @pytest.mark.parametrize("places", [(PARK,), ()])
+    @pytest.mark.parametrize("places", [{PARK: PARK_ROW}, {}])
     def test_조회_결과에_없는_장소는_거절(self, places):
         """장소를 조회하지 않았거나 결과에 없는 이름이면 지어낸 것으로 본다."""
         result = review(candidate(place_name="해운대 키즈파크"), places=places)
         assert reason_of(result) is RejectReason.UNKNOWN_PLACE
         assert "해운대" not in explain(result.rejections)  # 장소 이름은 로그로 흘러가지 않는다
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            {"reason": "근처 공원에서 모래를 만져요 오늘 오후가 비어 있어요"},
+            {"content": "근처 공원에서 모래성 쌓기"},
+        ],
+    )
+    def test_말한_지역에서_찾은_장소에는_근처를_쓰지_않는다(self, text):
+        """보호자는 그 지역에 있지 않다. 대표 지점에서 찾아서 "그 구 안" 도 단정하지 않는다."""
+        near = candidate(**{"content": "모래성 쌓기", "place_name": PARK, **text})
+        assert reason_of(review(near, area_places={PARK})) is RejectReason.NEARBY_WORDING
+        # 보호자 위치에서 찾은 곳이면 맞는 말이다
+        assert reason_of(review(near)) is None
 
     def test_띄어쓰기만_다르면_같은_곳이고_조회_결과의_이름을_붙인다(self):
         (draft,) = review(candidate(content="모래성 쌓기", place_name="사직 어린이공원")).drafts
@@ -366,10 +458,428 @@ class TestPlace:
         (draft,) = review(candidate(content=content, place_name=PARK)).drafts
         assert draft.content == content
 
+    @pytest.mark.parametrize("content", ["공원에서 모래성 쌓기", "어린이공원에서 모래성 쌓기"])
+    def test_장소_이름이_그_낱말로_끝나면_그_자리를_장소_이름으로_바꾼다(self, content):
+        """앞에 붙이기만 하면 "사직어린이공원에서 공원에서 …" 가 된다 (10-28 QA)."""
+        (draft,) = review(candidate(content=content, place_name=PARK)).drafts
+        assert draft.content == "사직어린이공원에서 모래성 쌓기"
+
+    @pytest.mark.parametrize(
+        "content, expected",
+        [
+            ("놀이터에서 모래성 쌓기", "사직어린이공원 놀이터에서 모래성 쌓기"),
+            ("모래밭에서 모래성 쌓기", "사직어린이공원 모래밭에서 모래성 쌓기"),
+        ],
+    )
+    def test_어디서를_먼저_썼으면_그_앞에_장소_이름만_붙인다(self, content, expected):
+        """ "~에서" 가 두 번 붙지 않게 — 공원 안의 놀이터 · 모래밭이다."""
+        (draft,) = review(candidate(content=content, place_name=PARK)).drafts
+        assert draft.content == expected
+
     @pytest.mark.parametrize("place_name", [None, "", "  "])
     def test_장소가_없으면_문장을_그대로_둔다(self, place_name):
         (draft,) = review(candidate(place_name=place_name)).drafts
         assert draft.content == "큰 블록으로 탑 쌓기"
+        assert draft.place_notice is None
+
+    def test_장소가_붙으면_기준일과_확인_문구를_칸으로_싣는다(self):
+        """문장에 섞지 않는다 — 화면이 제안 문장 아래 한 줄로 세운다 (#516)."""
+        (draft,) = review(candidate(content="모래성 쌓기", place_name=PARK)).drafts
+        assert draft.content == "사직어린이공원에서 모래성 쌓기"
+        assert draft.place_notice == (
+            "공공데이터 기준 2026년 6월이에요. 가기 전에 운영 여부를 확인해 주세요."
+        )
+        assert draft.to_payload()["place_notice"] == draft.place_notice
+
+    def test_놀이시설은_이용료도_확인해_달라고_한다(self):
+        cafe = PlaceRow(
+            name="시험키즈카페",
+            category=PlaceCategory.INDOOR_PLAYGROUND,
+            distance_m=900,
+            source="kids_play_facility",
+            data_date=None,
+        )
+        (draft,) = review(
+            candidate(content="볼풀에서 공 던지기", place_name="시험키즈카페"),
+            places={"시험키즈카페": cafe},
+        ).drafts
+        # 출처가 안 보이면 왜 이 가게가 나왔는지 몰라 광고처럼 읽힌다 — 날짜 없이 출처만 (#600 PM)
+        assert draft.place_notice == (
+            "공공데이터에 있는 시설이에요. 가기 전에 운영 여부와 이용료를 확인해 주세요."
+        )
+
+    def test_기준일자가_없는_장소는_운영_여부_확인만(self):
+        undated = replace(PARK_ROW, data_date=None)
+        (draft,) = review(
+            candidate(content="모래성 쌓기", place_name=PARK), places={PARK: undated}
+        ).drafts
+        assert draft.place_notice == "가기 전에 운영 여부를 확인해 주세요."
+
+
+class TestEvent:
+    """행사는 장소처럼 place_name 으로 붙는다. 그날 열려야 하고, 바깥 나들이로 본다."""
+
+    def test_조회한_행사는_이름을_문장_앞에_붙이고_확인_문구를_칸으로_싣는다(self):
+        (draft,) = review(candidate(content="모래 조각 구경하기", place_name=FEST)).drafts
+        assert draft.content == "광안리 가을 축제에서 모래 조각 구경하기"
+        assert draft.place_notice == (
+            "한국관광공사 행사 정보예요. 일정과 관람 연령이 바뀔 수 있으니 가기 전에 확인해 주세요."
+        )
+
+    def test_행사는_근거에_넣지_않는다(self):
+        (draft,) = review(candidate(content="모래 조각 구경하기", place_name=FEST)).drafts
+        assert [c.ref.id for c in draft.citations] == [BLOCKS]
+
+    @pytest.mark.parametrize("day", [DayLabel.TOMORROW, DayLabel.THIS_WEEKEND])
+    def test_그날_열리지_않는_행사는_거절(self, day):
+        """10-01 에 끝나서 주말(10-03 · 04)에는 없다. 내일(09-30)은 열린다."""
+        result = review(candidate(content="축제 구경", place_name=FEST, day=day))
+        expected = None if day == DayLabel.TOMORROW else RejectReason.EVENT_CLOSED
+        assert reason_of(result) is expected
+        assert "광안리" not in explain(result.rejections)
+
+    def test_행사는_바깥_나들이라_바깥이_어려운_날이면_거절(self):
+        """실내 공연이어도 오가는 길과 줄이 바깥이다 — setting 이 indoor 여도 막는다."""
+        indoor = candidate(content="공연 보기", setting="indoor", place_name=FEST)
+        result = review(indoor, outdoor={DayLabel.TODAY: False})
+        assert reason_of(result) is RejectReason.OUTDOOR_CLOSED
+
+    @pytest.mark.parametrize(
+        ("ends_on", "saturday_ok", "rejected"),
+        [
+            (date(2026, 10, 3), False, True),  # 토요일에만 열리고 토요일은 비 · 일요일은 맑음
+            (date(2026, 10, 3), True, False),
+            (date(2026, 10, 4), False, False),  # 일요일에도 열리고 일요일이 맑다
+        ],
+    )
+    def test_주말은_행사가_열리는_날과_바깥이_되는_날이_같아야_한다(
+        self, ends_on, saturday_ok, rejected
+    ):
+        """주말은 하루라도 맑으면 열리지만 행사는 그 맑은 날에 열려야 한다 (#668 리뷰)."""
+        weekend = replace(
+            FEST_ROW,
+            starts_on=date(2026, 10, 3),
+            ends_on=ends_on,
+            schedule=daily(date(2026, 10, 3), ends_on),
+        )
+        result = review(
+            candidate(content="축제 구경", place_name=FEST, day=DayLabel.THIS_WEEKEND),
+            events={FEST: weekend},
+            outdoor={DayLabel.THIS_WEEKEND: True},
+            outdoor_days={date(2026, 10, 3): saturday_ok, date(2026, 10, 4): True},
+        )
+        assert reason_of(result) is (RejectReason.OUTDOOR_CLOSED if rejected else None)
+
+    @pytest.mark.parametrize(
+        ("day", "closed"), [(DayLabel.TODAY, True), (DayLabel.TOMORROW, False)]
+    )
+    def test_기간_안이어도_일정에_없는_날이면_거절(self, day, closed):
+        """수요일(09-30)에만 여는 행사 — 화요일(오늘)은 기간 안이어도 닫혀 있다."""
+        wednesday = replace(
+            FEST_ROW, schedule=EventSchedule(open_days=frozenset({date(2026, 9, 30)}))
+        )
+        result = review(
+            candidate(content="축제 구경", place_name=FEST, day=day), events={FEST: wednesday}
+        )
+        assert reason_of(result) is (RejectReason.EVENT_CLOSED if closed else None)
+
+    def test_말한_지역에서_찾은_행사에는_근처를_쓰지_않는다(self):
+        near = candidate(content="근처 축제 구경", place_name=FEST)
+        assert reason_of(review(near, area_places={FEST})) is RejectReason.NEARBY_WORDING
+
+    def test_장소_이름과_같으면_장소로_본다(self):
+        """조회한 장소와 행사 이름이 겹치면 장소 문구가 붙는다 — 상설 시설이 먼저다."""
+        same = replace(FEST_ROW, name=PARK)
+        (draft,) = review(
+            candidate(content="모래성 쌓기", place_name=PARK), events={PARK: same}
+        ).drafts
+        assert draft.place_notice.startswith("공공데이터 기준")
+        assert draft.event_starts_on is None and draft.event_ends_on is None
+
+    def test_행사는_기간을_칸으로_싣는다(self):
+        """화면이 확인 문구 줄에 "9월 29일 ~ 10월 1일" 로 세운다 — 날짜 없이 이름만 나가면 지난
+        행사인지 알 수 없다 (#516 FE 합의). 문장 · 확인 문구에는 섞지 않는다."""
+        (draft,) = review(candidate(content="축제 구경", place_name=FEST)).drafts
+        assert (draft.event_starts_on, draft.event_ends_on) == (
+            date(2026, 9, 29),
+            date(2026, 10, 1),
+        )
+        payload = draft.to_payload()
+        assert (payload["event_starts_on"], payload["event_ends_on"]) == (
+            "2026-09-29",
+            "2026-10-01",
+        )
+
+    def test_장소_추천에는_기간이_없다(self):
+        (draft,) = review(candidate(content="모래성 쌓기", place_name=PARK)).drafts
+        payload = draft.to_payload()
+        assert (payload["event_starts_on"], payload["event_ends_on"]) == (None, None)
+
+
+EVENT_NOTICE = (
+    "한국관광공사 행사 정보예요. 일정과 관람 연령이 바뀔 수 있으니 가기 전에 확인해 주세요."
+)
+EXPO = "2026 대한민국 정원문화박람회"  # 모델은 "정원문화박람회" 로 줄여 쓴다
+EXPO_ROW = replace(FEST_ROW, name=EXPO, place="바람숲공원 일원")
+TOUR = "골목 작품투어 (시민예술프로젝트)"  # 괄호를 떼고 "골목 작품투어" 로 쓴다
+TOUR_ROW = replace(FEST_ROW, name=TOUR, place="예술공원 파빌리온")
+EVENTS = {FEST: FEST_ROW, EXPO: EXPO_ROW, TOUR: TOUR_ROW}
+# 문장에 "전통시장 박람회" · "드론 라이트쇼" 처럼 이름의 뒤쪽만 쓴다
+MARKET_ROW = replace(FEST_ROW, name="2026 이웃 전통시장 박람회", place="바람숲공원 다솜광장")
+DRONE_ROW = replace(FEST_ROW, name="모래섬 M(Magic) 드론 라이트쇼", place="모래섬 해변 일원")
+
+
+class TestEventName:
+    """모델이 행사를 가리키는 방식 그대로 붙인다 — 행사 이름이 문장에 나가면 반드시 붙어서 검증된다.
+
+    11-03 실측(실제 TourAPI · 실제 모델): 첫 시도의 place_name 은 대부분 개최 장소였고, 거절되면
+    place_name 을 비우고 문장에 줄인 행사 이름만 남겨 검증 없이 나갔다.
+    """
+
+    def test_개최_장소를_써도_그_행사로_붙는다(self):
+        (draft,) = review(
+            candidate(content="꽃 모양 찾기", place_name="바람숲공원 일원"), events=EVENTS
+        ).drafts
+        assert draft.content == "2026 대한민국 정원문화박람회에서 꽃 모양 찾기"
+        assert draft.place_notice == EVENT_NOTICE
+
+    def test_같은_곳에서_열리는_행사가_여럿이면_문장의_행사_이름으로_고른다(self):
+        twin = replace(TOUR_ROW, name="골목 인형극", place=EXPO_ROW.place)
+        events = {EXPO: EXPO_ROW, twin.name: twin}
+        unnamed = candidate(content="꽃 모양 찾기", place_name="바람숲공원 일원")
+        assert reason_of(review(unnamed, events=events)) is RejectReason.UNKNOWN_PLACE
+        named = candidate(content="골목 인형극 보기", place_name="바람숲공원 일원")
+        (draft,) = review(named, events=events).drafts
+        assert draft.place_notice == EVENT_NOTICE
+
+    def test_개최_장소를_여럿_적은_행사는_그중_한_곳만_써도_문장의_행사로_붙는다(self):
+        """TourAPI 개최 장소는 "○○해수욕장, △△, □□ 일원" 처럼 여럿일 때가 있고, 모델은 그중 한 곳을
+        쓴다 — 거절하면 한 바퀴를 더 돈다 (11-03 실측)."""
+        dance = replace(
+            FEST_ROW, name="달빛 체조 챌린지", place="시민공원 다솜광장 / 북항공원 잔디광장"
+        )
+        (draft,) = review(
+            candidate(content="달빛 체조 챌린지 구경하기", place_name="북항공원 잔디광장"),
+            events={dance.name: dance},
+        ).drafts
+        assert draft.place_notice == EVENT_NOTICE
+
+    def test_개최_장소의_한_곳만_쓰고_문장에_행사가_없으면_붙이지_않는다(self):
+        """그곳에서 하는 다른 활동(잔디밭 공놀이)일 수 있다 — 행사 문구가 잘못 붙는다."""
+        dance = replace(
+            FEST_ROW, name="달빛 체조 챌린지", place="시민공원 다솜광장 / 북항공원 잔디광장"
+        )
+        result = review(
+            candidate(content="잔디밭에서 공 굴리기", place_name="북항공원 잔디광장"),
+            events={dance.name: dance},
+        )
+        assert reason_of(result) is RejectReason.UNKNOWN_PLACE
+
+    @pytest.mark.parametrize("place_name", ["대한민국 정원문화박람회", "정원문화박람회"])
+    def test_줄여_쓴_행사_이름으로도_붙는다(self, place_name):
+        """연도를 뗀 이름, 그 안의 긴 낱말(6자 이상)로도 알아본다."""
+        (draft,) = review(
+            candidate(content="꽃 모양 찾기", place_name=place_name), events=EVENTS
+        ).drafts
+        assert draft.place_notice == EVENT_NOTICE
+
+    @pytest.mark.parametrize(
+        ("content", "place_name"),
+        [
+            ("골목 작품투어에서 작품 찾아보기", TOUR),
+            ("정원문화박람회에서 꽃 모양 찾기", "바람숲공원 일원"),
+        ],
+    )
+    def test_줄여_쓴_이름이_문장에_있으면_긴_이름을_다시_붙이지_않는다(self, content, place_name):
+        """ "골목 작품투어 (시민예술프로젝트)에서 골목 작품투어에서 …" 가 되지 않게 (11-03 실측)."""
+        (draft,) = review(candidate(content=content, place_name=place_name), events=EVENTS).drafts
+        assert draft.content == content
+
+    @pytest.mark.parametrize(
+        ("content", "expected"),
+        [
+            ("귤 축제에서 본 색 찾기", "바닷가 귤 축제에서 본 색 찾기"),
+            ("축제에서 본 색 찾기", "바닷가 귤 축제에서 본 색 찾기"),
+            ("귤 따기 체험하기", "바닷가 귤 축제에서 귤 따기 체험하기"),
+        ],
+    )
+    def test_행사_이름의_뒷부분으로_시작하면_그_자리를_행사_이름으로_바꾼다(
+        self, content, expected
+    ):
+        """앞에 붙이기만 하면 "바닷가 귤 축제에서 귤 축제에서 …" 가 된다 (11-03 실측)."""
+        tangerine = replace(FEST_ROW, name="바닷가 귤 축제")
+        (draft,) = review(
+            candidate(content=content, place_name=tangerine.name),
+            events={tangerine.name: tangerine},
+        ).drafts
+        assert draft.content == expected
+
+    @pytest.mark.parametrize(
+        ("event", "content", "expected"),
+        [
+            (
+                MARKET_ROW,
+                "바람숲공원에서 전통시장 박람회 구경하기",
+                "바람숲공원에서 2026 이웃 전통시장 박람회 구경하기",
+            ),
+            (
+                DRONE_ROW,
+                "모래섬에서 드론 라이트쇼와 바다 풍경 보기",
+                "모래섬에서 모래섬 M(Magic) 드론 라이트쇼와 바다 풍경 보기",
+            ),
+            (
+                DRONE_ROW,
+                "모래섬에서 드론라이트쇼 보기",
+                "모래섬에서 모래섬 M(Magic) 드론 라이트쇼 보기",
+            ),
+        ],
+    )
+    def test_행사_이름의_뒤쪽_두_낱말_이상을_문장에_썼으면_그_자리를_행사_이름으로_바꾼다(
+        self, event, content, expected
+    ):
+        """앞에 붙이면 "○○ 전통시장 박람회 바람숲공원에서 전통시장 박람회 …" 가 된다
+        (11-03 실측, 행사를 묻지 않은 나들이 요청)."""
+        (draft,) = review(
+            candidate(content=content, place_name=event.place), events={event.name: event}
+        ).drafts
+        assert draft.content == expected
+
+    def test_줄인_이름이_다른_낱말의_일부면_바꾸지_않는다(self):
+        """ "늦가을 축제" 의 "가을 축제" 를 바꾸면 "늦광안리 가을 축제" 가 된다."""
+        (draft,) = review(
+            candidate(content="늦가을 축제 분위기 느끼기", place_name=FEST), events=EVENTS
+        ).drafts
+        assert draft.content == "광안리 가을 축제에서 늦가을 축제 분위기 느끼기"
+
+    def test_place_name_을_비워도_문장에_행사가_있으면_붙인다(self):
+        (draft,) = review(
+            candidate(content="정원문화박람회에서 꽃 모양 찾기", place_name=None), events=EVENTS
+        ).drafts
+        assert draft.place_notice == EVENT_NOTICE
+        assert draft.event_starts_on == EXPO_ROW.starts_on
+        assert draft.event_ends_on == EXPO_ROW.ends_on
+
+    @pytest.mark.parametrize(
+        ("day", "outdoor", "expected"),
+        [
+            (DayLabel.THIS_WEEKEND, None, RejectReason.EVENT_CLOSED),  # 10-01 에 끝난다
+            (DayLabel.TODAY, {DayLabel.TODAY: False}, RejectReason.OUTDOOR_CLOSED),
+        ],
+    )
+    def test_문장에만_쓴_행사도_그날_열리는지_바깥이_되는지_본다(self, day, outdoor, expected):
+        """거절된 뒤 place_name 만 비우고 행사를 문장에 남겨도 검증을 빠져나가지 못한다."""
+        only_text = candidate(content="정원문화박람회 구경하기", setting="indoor", day=day)
+        assert reason_of(review(only_text, events=EVENTS, outdoor=outdoor)) is expected
+
+    @pytest.mark.parametrize("content", ["크리스마스 카드 만들기", "놀이터에서 미끄럼틀 타기"])
+    def test_행사_이름의_짧은_낱말은_행사로_보지_않는다(self, content):
+        """흔한 말이라 행사가 아닌 후보에 행사가 붙는다. 6자보다 짧은 낱말은 이름 전체로만 본다."""
+        tree = replace(FEST_ROW, name="해운대 크리스마스 놀이터")
+        (draft,) = review(candidate(content=content), events={tree.name: tree}).drafts
+        assert draft.place_notice is None
+
+    @pytest.mark.parametrize(
+        ("content", "place_name"),
+        [
+            ("정원문화박람회에서 꽃 보기", FEST),  # 붙인 행사와 문장의 행사가 다르다
+            ("정원문화박람회 보고 골목 작품투어 하기", None),  # 문장에 행사가 둘이다
+            ("정원문화박람회 보고 모래성 쌓기", PARK),  # 장소를 붙였는데 다른 곳 행사를 썼다
+        ],
+    )
+    def test_한_후보에_장소나_행사가_둘이면_거절(self, content, place_name):
+        """하나만 붙일 수 있다 — 나머지는 검증 없이 나간다."""
+        result = review(candidate(content=content, place_name=place_name), events=EVENTS)
+        assert reason_of(result) is RejectReason.MIXED_PLACES
+        assert "박람회" not in explain(result.rejections)
+
+    def test_장소를_붙였는데_그_장소에서_열리는_행사를_쓰면_행사로_붙는다(self):
+        concert = replace(FEST_ROW, name="사직 별빛 음악회", place="사직어린이공원 일원")
+        (draft,) = review(
+            candidate(content="사직 별빛 음악회 듣기", place_name=PARK),
+            events={concert.name: concert},
+        ).drafts
+        assert draft.place_notice == EVENT_NOTICE
+
+    def test_조회한_장소_이름은_행사를_알아보는_이름으로_쓰지_않는다(self):
+        """행사 이름이 장소 이름과 같으면 장소가 먼저다 — 문장에 장소 이름을 써도 장소다."""
+        same = replace(FEST_ROW, name=PARK)
+        (draft,) = review(
+            candidate(content="사직어린이공원에서 모래성 쌓기", place_name=PARK),
+            events={PARK: same},
+        ).drafts
+        assert draft.place_notice.startswith("공공데이터 기준")
+
+    @pytest.mark.parametrize(
+        "reason",
+        [
+            RejectReason.UNKNOWN_PLACE,
+            RejectReason.EVENT_CLOSED,
+            RejectReason.EVENT_PLACE,
+            RejectReason.OUTDOOR_CLOSED,
+        ],
+    )
+    def test_place_name_만_비우라고_안내하지_않는다(self, reason):
+        """비울 때는 문장에서도 뺀다 — 비우기만 하면 행사가 문장에 남는다 (11-03 실측)."""
+        assert "문장에서도" in GUIDANCE[reason]
+
+
+# 날마다 장소를 옮겨 가며 여는 행사. 오늘(09-29 화)은 바람숲공원, 토요일(10-03)은 모래섬 해변이다
+MOVING = "달빛 체조 교실"
+MOVING_ROW = replace(
+    FEST_ROW,
+    name=MOVING,
+    place="바람숲공원 잔디광장 / 모래섬 해변",
+    schedule=EventSchedule(
+        open_days=frozenset({date(2026, 9, 29), date(2026, 10, 3)}),
+        day_places=((date(2026, 9, 29), "바람숲공원 잔디광장"), (date(2026, 10, 3), "모래섬 해변")),
+    ),
+)
+
+
+class TestEventPlaceOfDay:
+    """한 행사가 날마다 다른 곳에서 열린다 — 그날이 아닌 날의 장소를 쓰면 보호자가 엉뚱한 곳에
+    간다."""
+
+    @pytest.mark.parametrize(
+        ("content", "day", "expected"),
+        [
+            ("모래섬 해변에서 달빛 체조 교실 함께하기", DayLabel.TODAY, RejectReason.EVENT_PLACE),
+            ("모래섬에서 달빛 체조 교실 함께하기", DayLabel.TODAY, RejectReason.EVENT_PLACE),
+            ("모래섬 해변에서 달빛 체조 교실 함께하기", DayLabel.THIS_WEEKEND, None),
+            ("바람숲공원에서 달빛 체조 교실 함께하기", DayLabel.TODAY, None),
+        ],
+    )
+    def test_그날이_아닌_날의_장소를_쓰면_거절(self, content, day, expected):
+        result = review(
+            candidate(content=content, setting="outdoor", place_name=MOVING, day=day),
+            events={MOVING: MOVING_ROW},
+        )
+        assert reason_of(result) is expected
+        assert "모래섬" not in explain(result.rejections)
+
+    def test_그날_장소를_place_name_에_쓰면_그_행사로_붙는다(self):
+        (draft,) = review(
+            candidate(
+                content="체조 따라 하기",
+                setting="outdoor",
+                place_name="모래섬 해변",
+                day=DayLabel.THIS_WEEKEND,
+            ),
+            events={MOVING: MOVING_ROW},
+        ).drafts
+        assert draft.place_notice == EVENT_NOTICE
+
+    def test_다른_날_장소를_place_name_에_쓰면_그날_장소가_아니라고_거절(self):
+        result = review(
+            candidate(
+                content="체조 따라 하기",
+                setting="outdoor",
+                place_name="바람숲공원 잔디광장",
+                day=DayLabel.THIS_WEEKEND,
+            ),
+            events={MOVING: MOVING_ROW},
+        )
+        assert reason_of(result) is RejectReason.EVENT_PLACE
 
 
 class TestSafety:
@@ -402,10 +912,13 @@ class TestSafety:
         result = review(candidate(content="밀가루 점토 놀이", evidence=[]), safety=[entry])
         assert result.removed[0].hits == ("health_safety",)
 
-    def test_경고_문구는_초안과_같은_순서로_짝짓는다(self):
+    def test_경고_문구는_그_초안에_싣는다(self):
+        """추천 하나에 붙는 문구라 결과 안내(readouts)가 아니라 초안 칸이다 (#402)."""
         result = review(candidate(), candidate(content="구슬 꿰기", evidence=[DOC_PICK]), months=40)
         small_parts = hazard_terms().axes["small_parts"].warning_text
-        assert result.warnings == ((), (small_parts,))
+        assert [draft.warnings for draft in result.drafts] == [(), (small_parts,)]
+        assert result.drafts[1].to_payload()["warnings"] == [small_parts]
+        assert result.drafts[0].to_payload()["warnings"] == []
 
     def test_allergens_와_items_를_코드가_채운다(self):
         """#232 — 승인 때 알레르기 안내와 일정 준비물에 쓴다. 모델이 고르지 않는다."""
@@ -439,6 +952,36 @@ class TestOutdoor:
         weekend = candidate(setting="outdoor", day="this_weekend")
         result = review(weekend, outdoor=self.RAIN_TODAY)
         assert reason_of(result) is RejectReason.OUTDOOR_CLOSED
+
+    def test_either_여도_공원이_붙으면_그날_날씨를_받는다(self):
+        """오늘로 찾은 공원을 비 오는 날 either 활동에 붙이면 막는다 (#600 리뷰)."""
+        either_park = candidate(content="모래성 쌓기", setting="either", place_name=PARK)
+        result = review(either_park, outdoor=self.RAIN_TODAY)
+        assert reason_of(result) is RejectReason.OUTDOOR_CLOSED
+
+    def test_실내_놀이시설이_붙은_either_는_통과(self):
+        cafe = PlaceRow(
+            name="시험키즈카페",
+            category=PlaceCategory.INDOOR_PLAYGROUND,
+            distance_m=900,
+            source="kids_play_facility",
+            data_date=None,
+        )
+        either_cafe = candidate(
+            content="볼풀에서 공 던지기", setting="either", place_name="시험키즈카페"
+        )
+        result = review(either_cafe, outdoor=self.RAIN_TODAY, places={"시험키즈카페": cafe})
+        assert result.rejections == ()
+        assert result.outdoor == frozenset()
+
+    def test_공원이_붙은_either_는_바깥_활동으로_센다(self):
+        """날씨를 묻지 않은 날의 안내("날씨는 확인하지 않았어요")가 이 추천에도 붙는다 (#515)."""
+        either_park = candidate(
+            content="모래성 쌓기", setting="either", place_name=PARK, day="tomorrow"
+        )
+        result = review(either_park, outdoor=self.RAIN_TODAY)
+        (draft,) = result.drafts
+        assert result.outdoor == {(normalize_activity(draft.content), DayLabel.TOMORROW)}
 
 
 class TestOutputTool:
@@ -487,9 +1030,12 @@ class TestOutputTool:
         assert result.data["kinds"] == ["personalized", "general", "general"]
         assert len(ctx.state.suggestions) == 3
 
-    @pytest.mark.parametrize("written", ["예1", " 예1 ", "[예1]", "예 1", "예시1"])
+    @pytest.mark.parametrize(
+        "written",
+        ["예1", " 예1 ", "[예1]", "예 1", "예시1", "(예1)", "예１"],  # 전각 1
+    )
     async def test_예시의_짧은_id_는_문서_행_근거가_된다(self, written):
-        """[예시]는 짧은 id 로 보여 준다. 띄어쓰기 · 괄호만 다르게 써도 같은 행이다."""
+        """[예시]는 짧은 id 로 보여 준다. 띄어쓰기 · 괄호 · 전각 숫자만 달라도 같은 행이다(#606)."""
         ctx = await self.context()
         ctx.state.example_ids = {"예1": TOWER_DOC.id}
         pick = {"id": written, "note": "종이컵 탑 쌓기 예시를 참고했어요"}
@@ -523,13 +1069,7 @@ class TestOutputTool:
 
     async def test_장소_조회가_돌려준_곳을_붙여서_담는다(self):
         ctx = await self.context()
-        ctx.state.seen_places[PARK] = PlaceRow(
-            name=PARK,
-            category=PlaceCategory.PARK,
-            distance_m=800,
-            source="city_park",
-            data_date=None,
-        )
+        ctx.state.seen_places[PARK] = PARK_ROW
         await propose_activity_candidates(
             ctx,
             self.args(
@@ -539,6 +1079,22 @@ class TestOutputTool:
             ),
         )
         assert ctx.state.suggestions[1].content == "사직어린이공원에서 모래성 쌓기"
+        assert ctx.state.suggestions[1].place_notice is not None
+        assert ctx.state.suggestions[0].place_notice is None
+
+    async def test_행사_조회가_돌려준_행사를_붙여서_담는다(self):
+        ctx = await self.context()
+        ctx.state.seen_events[FEST] = FEST_ROW
+        result = await propose_activity_candidates(
+            ctx,
+            self.args(
+                candidate(),
+                candidate(content="모래 조각 구경하기", evidence=[DOC_PICK], place_name=FEST),
+                candidate(content="종이컵 탑 쌓기", evidence=[DOC_PICK]),
+            ),
+        )
+        assert result.success is True
+        assert ctx.state.suggestions[1].content == "광안리 가을 축제에서 모래 조각 구경하기"
 
     async def test_하나라도_걸리면_사유를_돌려주고_아무것도_담지_않는다(self):
         ctx = await self.context()
@@ -666,3 +1222,44 @@ class TestOutputTool:
         ctx.state.safety_entries = None
         with pytest.raises(RuntimeError):
             await propose_activity_candidates(ctx, self.args(candidate(), candidate(), candidate()))
+
+
+class TestSaidInRequest:
+    """requested_play 는 보호자가 이번 요청에서 한 말에 있어야 한다 (#597 리뷰)."""
+
+    @pytest.mark.parametrize(
+        ("play", "said"),
+        [
+            ("물놀이", "물놀이 뭐 하지?"),
+            ("티니핑", "티니핑으로 놀고 싶대"),
+            ("공놀이", "공 굴리기 놀이"),  # "놀이" 를 떼면 "공" — 낱말이 같다
+            ("전래놀이", "전래놀이 해보고 싶어"),
+            ("쿠키 만들기", "아이랑 쿠키 만들기 하고 싶어"),
+            # 정한 놀이 옆의 때 · 일반 표현은 빼고 본다
+            ("물놀이 추천", "물놀이 추천해줘"),
+            ("주말 물놀이", "주말에 물놀이 하려는데"),
+        ],
+    )
+    def test_보호자_말에_있으면_요청이다(self, play, said):
+        assert said_in_request(play, [said]) is True
+
+    @pytest.mark.parametrize(
+        ("play", "said"),
+        [
+            ("블록놀이", "오늘 뭐 하고 놀까?"),  # 막연한 요청에 모델이 지어 넣은 놀이
+            ("놀이", "놀이 추천해줘"),  # "놀이" 만으로는 정한 게 아니다
+            ("공", "공룡 그림책 읽고 할 놀이"),  # 한 글자는 낱말이 같아야 한다
+            # 언제 · 어디서 · 날씨 · 일반 표현만 남으면 막연한 요청이다 (#597 리뷰)
+            ("놀이 추천", "놀이 추천해줘"),
+            ("오늘", "오늘 뭐 하고 놀까?"),
+            ("주말", "주말에 뭐 하고 놀까?"),
+            ("실내 놀이", "비 오는 날 실내 놀이 추천해줘"),
+            ("비 오는 날 놀이", "비 오는 날 놀 거 추천해줘"),
+            # 낱말 하나만 겹쳐서는 안 된다 — 남은 낱말이 모두 보호자 말에 있어야 한다
+            ("실내 블록놀이", "비 오는 날 실내 놀이 추천해줘"),
+            (None, "물놀이 뭐 하지?"),
+            ("", "물놀이 뭐 하지?"),
+        ],
+    )
+    def test_보호자_말에_없으면_요청이_아니다(self, play, said):
+        assert said_in_request(play, [said]) is False

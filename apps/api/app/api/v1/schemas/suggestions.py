@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import uuid
+from datetime import date
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.api.v1.schemas.common import Ref
+from app.api.v1.schemas.reminders import ReminderIn, ReminderOut
 from app.core.event_draft import (
     MAX_DRAFT_ITEMS,
     MAX_ITEM_NAME,
@@ -42,6 +44,32 @@ class SuggestionOut(BaseModel):
         )
     )
     content: str
+    place_notice: str | None = Field(
+        default=None,
+        description=(
+            "장소가 붙은 추천에만 오는 확인 문구 한 문장(공공데이터 기준일 · 운영 여부 확인). "
+            "서버 코드 문구다. 근거가 아니어서 evidence 에 들어가지 않는다. 장소가 없으면 null"
+        ),
+    )
+    warnings: list[str] = Field(
+        default_factory=list,
+        description=(
+            "그 추천에 주의할 요소가 있을 때만 오는 위험 경고 문구(예: 작은 부품 · 물놀이). "
+            "서버 코드 문구라 글자 그대로 보여 준다. 근거가 아니어서 evidence 에 들어가지 않는다. "
+            "없으면 빈 배열"
+        ),
+    )
+    event_starts_on: date | None = Field(
+        default=None,
+        description=(
+            "행사가 붙은 추천에만 오는 행사 시작일(YYYY-MM-DD). 화면이 place_notice 줄에 기간으로 "
+            "세운다. 근거가 아니다. 행사가 없으면 null"
+        ),
+    )
+    event_ends_on: date | None = Field(
+        default=None,
+        description="행사가 붙은 추천에만 오는 행사 종료일(YYYY-MM-DD). 행사가 없으면 null",
+    )
     reason: str | None = Field(
         default=None,
         description=(
@@ -98,26 +126,34 @@ class DocEvidenceOut(BaseModel):
     """일반 추천의 근거인 문서 행. CC BY 행은 출처 표시가 조건이라 기관 · 제목을 같이 싣는다.
 
     Food 일반 추천은 고른 메뉴(레시피 카탈로그 행)도 이 모양으로 싣는다(#442) — `title` 은 메뉴
-    이름, 출처는 그 레시피를 받아 온 공개 데이터다.
+    이름, 출처는 그 레시피를 받아 온 공개 데이터다. Growth 일반 도서 추천도 고른
+    책(`book_catalog`)을 싣는다 — `title` 은 그 추천의 "제목(저자)", 출처는 도서관 정보나루다.
     """
 
     ref: Ref = Field(
         description=(
-            "kind 는 food_doc · activity_doc · growth_doc, "
-            "또는 recipe_catalog(Food 일반 추천의 메뉴 근거)"
+            "kind 는 food_doc · activity_doc · growth_doc, 또는 recipe_catalog(Food 일반 추천의 "
+            "메뉴 근거) · book_catalog(Growth 일반 도서 추천의 책 근거)"
         )
     )
     title: str
     source_org: str
-    source_title: str
+    source_title: str = Field(
+        description=(
+            "원문 제목. 라이선스가 요구하는 표시 문구와 URL 이 제목 뒤에 붙을 수 있다 "
+            "(CC BY 의 변경 표시 · OGL 의 출처 문장)"
+        )
+    )
     source_url: str | None = None
     note: str = Field(description="이 문서를 어떻게 참고했는지 한 줄")
 
 
 class GeneralSuggestionOut(BaseModel):
-    """또래 기준 일반 추천. 아이 기록이 아니라 문서 행을 근거로 단다 (루트 §2).
+    """일반 추천. 아이 기록이 아니라 문서 행을 근거로 단다 (루트 §2).
 
-    Food 는 고른 메뉴(레시피 카탈로그 행)만으로도 된다(#442).
+    Food 는 고른 메뉴(레시피 카탈로그 행)만으로도 된다(#442). Growth 도서는 고른 책(정보나루
+    서지 행)이 근거다. 보호자가 놀이를 정해 물은 Activity 추천("물놀이 뭐 하지?")은 그 요청이
+    기준이라 `evidence` 가 비어 올 수 있다 — 그때 기준은 `basis` 문구다 (#597).
     """
 
     id: str
@@ -125,6 +161,32 @@ class GeneralSuggestionOut(BaseModel):
     agent: str
     kind: Literal["general"] = "general"
     content: str
+    place_notice: str | None = Field(
+        default=None,
+        description=(
+            "장소가 붙은 추천에만 오는 확인 문구 한 문장(공공데이터 기준일 · 운영 여부 확인). "
+            "서버 코드 문구다. 근거가 아니어서 evidence 에 들어가지 않는다. 장소가 없으면 null"
+        ),
+    )
+    warnings: list[str] = Field(
+        default_factory=list,
+        description=(
+            "그 추천에 주의할 요소가 있을 때만 오는 위험 경고 문구(예: 작은 부품 · 물놀이). "
+            "서버 코드 문구라 글자 그대로 보여 준다. 근거가 아니어서 evidence 에 들어가지 않는다. "
+            "없으면 빈 배열"
+        ),
+    )
+    event_starts_on: date | None = Field(
+        default=None,
+        description=(
+            "행사가 붙은 추천에만 오는 행사 시작일(YYYY-MM-DD). 화면이 place_notice 줄에 기간으로 "
+            "세운다. 근거가 아니다. 행사가 없으면 null"
+        ),
+    )
+    event_ends_on: date | None = Field(
+        default=None,
+        description="행사가 붙은 추천에만 오는 행사 종료일(YYYY-MM-DD). 행사가 없으면 null",
+    )
     basis: str = Field(description="코드 템플릿 문구. 모델이 쓴 문장이 아니다")
     status: str
     expires_at: str
@@ -133,7 +195,12 @@ class GeneralSuggestionOut(BaseModel):
             "그 Agent 도메인에 쌓인 기록 수 (남아 있는 관찰만). 04 블록의 record_count 와 같은 표"
         )
     )
-    evidence: list[DocEvidenceOut]
+    evidence: list[DocEvidenceOut] = Field(
+        description=(
+            "문서 · 메뉴 · 책 근거 카드. 보호자가 놀이를 정해 물은 Activity 추천은 비어 올 수 "
+            "있다 — 그때는 basis 만 보여 준다"
+        )
+    )
 
 
 class GroupNoticeOut(BaseModel):
@@ -184,7 +251,12 @@ class ScarcityQuestionOut(BaseModel):
 
 
 class ScarcityOut(BaseModel):
-    count: int = Field(description="그 Agent 도메인에 쌓인 기록 건수 (남아 있는 관찰만)")
+    count: int = Field(
+        description=(
+            "일반 추천을 낸 Agent별 record_count의 합(남아 있는 관찰만). 호환 필드이며 화면의 "
+            "정상 일반 추천 문구는 general[].record_count를 Agent별로 쓴다"
+        )
+    )
     question: ScarcityQuestionOut | None = Field(
         default=None, description="Agent 가 되물은 한 줄. 없으면 null — 최대 1개"
     )
@@ -205,12 +277,13 @@ class SuggestionsResponse(BaseModel):
         description="결과를 낸 Agent 마다 하나. 실패한 Agent 는 없다 — 화면이 실패 카드를 그린다"
     )
     general: list[GeneralSuggestionOut] = Field(
-        description="또래 기준 일반 추천. 근거는 문서 행이다. Agent 마다 0~3개"
+        description="일반 추천. 근거는 문서 행이다. Agent 마다 0~3개"
     )
     looked_at: str
     guards: list[GuardOut]
     scarcity: ScarcityOut | None = Field(
-        default=None, description="일반 추천이 있을 때만. 쌓인 기록 건수 · 질문은 최대 1개"
+        default=None,
+        description="일반 추천이 있을 때만. Agent별 기록 수 합계인 호환 필드 · 질문은 최대 1개",
     )
     prechecks: list[PrecheckOut] = Field(
         description="채택 전에 물을 알레르기 항목. active 에 걸린 추천은 응답에서 빠진다"
@@ -273,6 +346,14 @@ class UpdateEventBody(BaseModel):
 class UpdateEventRequest(BaseModel):
     event: UpdateEventBody
     items: list[DraftItemPayload] = Field(default=[], max_length=MAX_DRAFT_ITEMS)
+    reminder: ReminderIn | None = Field(
+        default=None,
+        description=(
+            "요청한 보호자 본인의 알림. 칸을 빼거나 저장된 값과 같으면 그대로 두고, null 이면 "
+            "지운다. 종일 여부를 바꾸면 이 일정에 걸린 알림은 날 수를 지켜 가까운 값으로 옮겨진다"
+            "(시간 있는 일정의 1h → 종일의 day_of_9am 등). 옮긴 값의 울릴 시각이 지났으면 지워진다"
+        ),
+    )
 
     @model_validator(mode="after")
     def _item_name_length(self) -> UpdateEventRequest:
@@ -341,6 +422,10 @@ class SubmitEventRequest(BaseModel):
     event: SubmitEventBody
     items: list[DraftItemPayload] = Field(default=[], max_length=MAX_DRAFT_ITEMS)
     suggestion_ids: list[uuid.UUID] | None = Field(default=None, max_length=20)
+    reminder: ReminderIn | None = Field(
+        default=None,
+        description="제출한 보호자 본인의 알림. 다른 보호자에게는 걸리지 않는다. 기본값은 없음",
+    )
 
     @model_validator(mode="after")
     def _item_name_length(self) -> SubmitEventRequest:
@@ -370,7 +455,10 @@ class CalendarEventOut(BaseModel):
     source_notice_id: str | None
     source_refs: list[Ref]
     items: list[EventItemOut]
-    reminders: list = []
+    reminder: ReminderOut | None = Field(
+        default=None,
+        description="요청한 보호자 본인의 알림. 다른 보호자의 알림은 싣지 않는다",
+    )
 
 
 class SubmitEventResponse(BaseModel):

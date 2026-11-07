@@ -260,6 +260,30 @@ async def test_날씨_어댑터가_없으면_None_이다(client, agent_calls, co
     assert agent_calls[0]["activity_weather"] is None
 
 
+async def test_서버가_만든_행사_어댑터를_러너에_넘긴다(client, agent_calls, consent_reads):
+    events = object()
+    client._transport.app.state.activity_events = events
+
+    await client.post(URL, json=BODY, headers=_key())
+
+    assert agent_calls[0]["activity_events"] is events
+
+
+async def test_서버가_만든_병원_어댑터를_러너에_넘긴다(client, agent_calls, consent_reads):
+    hospitals = object()
+    client._transport.app.state.health_places = hospitals
+
+    await client.post(URL, json=BODY, headers=_key())
+
+    assert agent_calls[0]["health_places"] is hospitals
+
+
+async def test_병원_어댑터가_없으면_None_이다(client, agent_calls, consent_reads):
+    await client.post(URL, json=BODY, headers=_key())
+
+    assert agent_calls[0]["health_places"] is None
+
+
 async def test_키_기억이_실패하면_되묻기_맥락의_표시를_푼다(
     client, agent_calls, consent_reads, monkeypatch
 ):

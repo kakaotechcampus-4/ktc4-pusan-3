@@ -109,6 +109,11 @@ services:
     env_file:
       - path: ../../apps/api/.env
         required: false
+    volumes:
+      # FCM 서비스 계정 키 (#594) — 서버에 둔 파일을 읽기 전용으로 붙인다. 키를 이미지 · 저장소에
+      # 넣지 않으려는 것이다. FCM_KEY_PATH 를 비우면 빈 파일이 붙는다 — apps/api/.env 의
+      # FCM_SERVICE_ACCOUNT_FILE 도 비워 두면 알림 발송 배치만 돌지 않는다.
+      - ${FCM_KEY_PATH:-/dev/null}:/run/secrets/fcm-service-account.json:ro
     # 호스트 포트를 열지 않는다 — Caddy 가 리버스 프록시한다.
     expose:
       - "8000"
@@ -126,6 +131,12 @@ services:
         # 🚨 이 값은 빌드 시점에 번들에 박힌다. 바꾸면 컨테이너 재시작이 아니라 재빌드다
         #    (apps/web/Dockerfile 머리말).
         NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL}
+        # 웹 푸시 (#609). 비어 있으면 웹 푸시가 꺼진 이미지가 된다 (deploy/docker/.env.example).
+        NEXT_PUBLIC_FIREBASE_API_KEY: ${NEXT_PUBLIC_FIREBASE_API_KEY:-}
+        NEXT_PUBLIC_FIREBASE_PROJECT_ID: ${NEXT_PUBLIC_FIREBASE_PROJECT_ID:-}
+        NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: ${NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID:-}
+        NEXT_PUBLIC_FIREBASE_APP_ID: ${NEXT_PUBLIC_FIREBASE_APP_ID:-}
+        NEXT_PUBLIC_FIREBASE_VAPID_KEY: ${NEXT_PUBLIC_FIREBASE_VAPID_KEY:-}
     image: ktc4-web:${WEB_IMAGE_TAG:-local}
     container_name: ktc4-web
     restart: unless-stopped

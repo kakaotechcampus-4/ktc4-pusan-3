@@ -11,6 +11,8 @@ from typing import Annotated, ClassVar
 from pydantic import Field, field_validator
 
 from app.agents.memory.schemas.common import (
+    AnchorEvent,
+    AnchorOn,
     ClearableUpdateArgs,
     DateExpr,
     Direction,
@@ -29,6 +31,8 @@ class EventCreate(ToolArgs):
 
     title: Annotated[str, Field(description="일정 이름. 예: 운동회, 물놀이")]
     starts_on: DateExpr
+    anchor_event: AnchorEvent
+    anchor_on: AnchorOn
     starts_time: Annotated[
         str,
         Field(
@@ -107,6 +111,8 @@ class EventQuery(ToolArgs):
     ]
     date_from: Annotated[DateExpr | None, Field(default=None, description="조회 시작 날짜 표현")]
     date_to: Annotated[DateExpr | None, Field(default=None, description="조회 종료 날짜 표현")]
+    anchor_event: AnchorEvent
+    anchor_on: AnchorOn
     title_query: Annotated[str | None, Field(default=None, description="일정 이름에 포함된 키워드")]
 
 
@@ -117,16 +123,14 @@ class EventUpdate(ClearableUpdateArgs):
     event_id: EventId
     title: Annotated[str | None, Field(default=None, description="바꿀 이름")]
     starts_on: Annotated[DateExpr | None, Field(default=None, description="바꿀 시작 날짜 표현")]
+    anchor_event: AnchorEvent
+    anchor_on: AnchorOn
     starts_time: TimeExpr
     ends_on: Annotated[DateExpr | None, Field(default=None, description="바꿀 종료 날짜 표현")]
     ends_time: TimeExpr
     temporal_direction: Direction
     event_type: Annotated[EventType | None, Field(default=None, description="바꿀 일정 유형")]
     category: Annotated[EventCategory | None, Field(default=None, description="바꿀 일정 분류")]
-
-
-class EventRef(ToolArgs):
-    event_id: EventId
 
 
 class EventItemCreate(ToolArgs):

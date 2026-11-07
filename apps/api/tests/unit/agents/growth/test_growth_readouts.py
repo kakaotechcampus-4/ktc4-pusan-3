@@ -35,6 +35,24 @@ class TestDocParity:
         assert rest == "" or _NOTE.match(rest), f"{key}: 문구 뒤에 괄호 주석 말고 다른 글자가 있다"
 
 
+class TestLearningAsk:
+    def test_교육_되묻기는_해_본_경험_하나만_묻는다(self):
+        from app.agents.growth.tools.routine import ask_question
+
+        question = ask_question("ask.learning_current", "국어")
+        assert question == "국어는 집에서 해 본 적이 있나요? 어려워한 점이 있으면 같이 알려 주세요."
+        assert question.count("?") == 1
+
+    def test_받침_있는_낱말은_조사가_바뀐다(self):
+        from app.agents.growth.tools.routine import ask_question
+
+        assert ask_question("ask.learning_current", "숫자").startswith("숫자는 ")
+        assert ask_question("ask.learning_current", "한글").startswith("한글은 ")
+
+    def test_답을_옮길_칸은_주제다(self):
+        assert readouts.ASKED_FIELD[readouts.ASK_LEARNING_CURRENT] == "topic"
+
+
 class TestCatalog:
     def test_코드_상수는_전부_yaml_에_있다(self):
         keys = {
@@ -57,9 +75,6 @@ class TestCatalog:
         )
         assert READOUTS.render("ask.routine_current", subject="양치하기").body == (
             "양치하기은(는) 요즘 어느 정도까지 혼자 하나요?"
-        )
-        assert READOUTS.render("caution.non_food_allergy", label="꽃가루").body == (
-            "등록된 알레르기(꽃가루)가 있어요. 장소랑 재료를 한 번 확인해 주세요."
         )
 
     def test_모르는_키는_바로_실패한다(self):

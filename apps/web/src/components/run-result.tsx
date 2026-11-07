@@ -1,12 +1,15 @@
 "use client";
 
 import { josa } from "es-hangul";
+import { useState } from "react";
 import {
   CalendarPlus,
+  Copy,
   Hand,
   Hourglass,
   Info,
   MessageCircleQuestion,
+  Pill,
   Ruler,
   ShieldCheck,
   Sprout,
@@ -15,35 +18,36 @@ import {
 } from "lucide-react";
 
 import { AgentPrompts } from "@/components/agent-prompts";
-import { CORRECTED_OBSERVATION } from "@/components/correction-buttons";
-import { CorrectedMark } from "@/components/observation-list";
+import { ObservationRow } from "@/components/observation-row";
+import { DeleteProposalCard, FoundTabsCard } from "@/components/record-tabs-card";
 import { RewriteButton } from "@/components/rewrite-button";
-import { domainLabel, ObservationIcon, observationLabel } from "@/components/domain-chip";
+import { domainLabel } from "@/components/domain-chip";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
-import { DOMAIN_ICON } from "@/components/ui/icon";
+import { DOMAIN_ICON, ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
 import { IconTile } from "@/components/ui/icon-tile";
 import { ProgressSteps } from "@/components/ui/progress-steps";
 import {
+  askedQuestion,
   blockCandidates,
   blockReadouts,
+  medicationHref,
   partialRetryHref,
   visibleAgentResults,
   type BlockCandidates,
 } from "@/lib/agent-result";
-import { cn } from "@/lib/cn";
-import { CONFIDENCE_LABEL } from "@/lib/confidence";
 import type { RunState } from "@/hooks/use-run-stream";
-import type { AgentResultEvent, GuidanceEvent, NoteEvent, PartialEvent } from "@/lib/api/sse";
+import type {
+  AgentReadout,
+  AgentResultEvent,
+  GuidanceEvent,
+  NoteEvent,
+  PartialEvent,
+} from "@/lib/api/sse";
 import type { QuestionState } from "@/stores/conversation";
-import {
-  isHealthObservation,
-  type Agent,
-  type EventDraft,
-  type Observation,
-  type StoredRef,
-} from "@/lib/api/types";
-import { formatEventTime, formatTimeOfDay } from "@/lib/format";
+import type { Agent, EventDraft, MedicationDraft, StoredRef } from "@/lib/api/types";
+import { formatEventTime } from "@/lib/format";
+import { MEDICATION_ENABLED } from "@/lib/store-policy";
 import { FORWARD } from "@/lib/view-transition";
 
 /**
@@ -72,12 +76,15 @@ export function RunReply({
   answeringNow,
   remainingDrafts,
   draftsReplaced,
+  remainingMedicationDrafts = 0,
+  medicationDraftsReplaced = false,
   followUp,
   onRetry,
   onRewrite,
   rewriteBlocked,
   onAnswer,
   onOpenDrafts,
+  onOpenMedicationDrafts,
   onPickOffer,
   archived = false,
   deleted = NO_REFS,
@@ -96,6 +103,10 @@ export function RunReply({
   remainingDrafts: number;
   /** 뒤 run 이 같은 초안을 다시 냈다 — 남은 것이 0 이어도 "넣었다" 가 아니다. */
   draftsReplaced: boolean;
+  /** 이 run 이 낸 복약 초안 중 아직 안 넣은 것 (#537 · `stores/medication-draft.ts`). */
+  remainingMedicationDrafts?: number;
+  /** 뒤 run 이 같은 코스의 복약 초안을 다시 냈다 — 남은 것이 0 이어도 "넣었다" 가 아니다. */
+  medicationDraftsReplaced?: boolean;
   /** 이어받기 run 의 답이다 (질문에 대한 답을 보낸 줄). */
   followUp: boolean;
   /** 🚨 같은 자리에서 다시 보낼 수 없으면 `undefined` — 버튼을 세우지 않는다. */
@@ -106,6 +117,8 @@ export function RunReply({
   rewriteBlocked: boolean;
   onAnswer: () => void;
   onOpenDrafts: () => void;
+  /** 복약 초안 시트를 연다 (#537). 없으면 "확인하고 넣기" 를 세우지 않는다. */
+  onOpenMedicationDrafts?: () => void;
   onPickOffer: (agents: Agent[]) => void;
   /**
    * 서버가 남긴 지난 턴이다 (#228 · `lib/chat-history.ts`). 🚨 **그날 화면과 같게 그리되, 지금 누르면 막다른
@@ -217,7 +230,20 @@ export function RunReply({
    *    답이 Agent 블록(성장 추이)뿐이다 — 그 아래에 "기록을 찾지 못했어요" 를 세우면 답을 받은 보호자가
    *    실패한 줄 안다.
    */
-  const noticedWhy = run.guidance.length > 0 || run.note !== null || agentResults.length > 0;
+  const noticedWhy =
+    run.guidance.length > 0 ||
+    run.note !== null ||
+    agentResults.length > 0 ||
+    // 꺼 둔 동안은 초안 카드가 서지 않으니 답으로 세지 않는다 (`lib/store-policy.ts`).
+    (MEDICATION_ENABLED && run.medicationDrafts.length > 0) ||
+    // 🚨 조회 · 삭제 카드도 답이다 (#535). 찾거나 지우려던 한 줄은 저장할 관찰이 없는 것이 정상이다.
+    run.foundTabs.length > 0 ||
+    run.deleteProposal !== null;
+  /**
+   * 이 run 이 답을 기다리는 질문 (#537). Memory 질문이거나 `awaits_reply` 인 Agent 질문 하나다 — 답하기 버튼은
+   * 그 자리에만 선다 (`askedQuestion`).
+   */
+  const asked = askedQuestion(run);
   /** Memory 가 답을 기다리는 중. 🚨 `kind` 를 모르면 질문으로 보지 않는다 (`NoteCard`). */
   const askingMore = run.note?.kind === "question";
   /**
@@ -268,13 +294,26 @@ export function RunReply({
         />
       ) : null}
 
+      {/* 조회 · 삭제 카드 (#535). 🚨 **AI 의 말 바로 아래에 둔다** — "찾았어요 · 골라 주세요" 라고 말한 그 행들이다.
+          삭제 카드는 AI 가 지운 것이 아니라 제안이다 — 지우는 것은 보호자의 두 번 누름이다 (`record-tabs-card.tsx`). */}
+      {run.foundTabs.length > 0 ? <FoundTabsCard tabs={run.foundTabs} /> : null}
+      {run.deleteProposal ? (
+        <DeleteProposalCard
+          key={run.deleteProposal.proposal_id}
+          childId={childId}
+          card={run.deleteProposal}
+        />
+      ) : null}
+
       {/* 🚨 **partial 바로 위에 둔다** — 한 Agent 가 해낸 것과 다른 Agent 가 못 한 것이 붙어 있어야
           "성공과 실패를 한 화면에" 가 한눈에 읽힌다 (NF-06). 도착한 순서 그대로다 (#215). */}
       {agentResults.map((result, index) => (
         <AgentResultCard
           key={`${result.agent}:${result.task_type ?? ""}:${index}`}
+          childId={childId}
           result={result}
           candidates={blockCandidates(result, { childId, runId })}
+          reply={asked?.result === result ? { question, answeringNow, onAnswer } : null}
         />
       ))}
 
@@ -315,7 +354,7 @@ export function RunReply({
           </CardFailed>
         )
       ) : (
-        <section>
+        <section data-tour="saved">
           <h3 className="text-label text-brand">기록 {savedCount}건 저장됨</h3>
           {/* 🚨 관찰마다 카드를 한 장씩 주면 흰 상자가 줄줄이 서서 무엇이 한 덩어리인지 사라진다.
               한 장 안에 가는 선으로 나눈다 — 03 홈의 "오늘" 카드와 같은 방식이다. */}
@@ -337,7 +376,7 @@ export function RunReply({
       )}
 
       {run.promoted.length > 0 ? (
-        <section className="flex flex-col gap-2">
+        <section data-tour="promoted" className="flex flex-col gap-2">
           <h3 className="text-label text-brand">기억이 자랐어요</h3>
           {run.promoted.map((change) => (
             <Card key={change.ref.id}>
@@ -362,6 +401,18 @@ export function RunReply({
           remaining={remainingDrafts}
           replaced={draftsReplaced}
           onOpen={onOpenDrafts}
+        />
+      ) : null}
+
+      {/* 복약 초안 (#537). 🚨 일정 초안과 다른 카드다 — 게이트가 다르다(㉡ 건강 기록 확정). 지난 턴은 초안이
+          보관함에 없으면 넣는 길이 없다 (`stores/medication-draft.ts` 는 메모리 전용이다).
+          🚨 스토어 선언 때문에 꺼 둔 동안은 서버가 초안을 보내도 카드를 세우지 않는다 (`lib/store-policy.ts`). */}
+      {MEDICATION_ENABLED && run.medicationDrafts.length > 0 ? (
+        <MedicationDraftsCard
+          drafts={run.medicationDrafts}
+          remaining={remainingMedicationDrafts}
+          replaced={medicationDraftsReplaced}
+          onOpen={archived && remainingMedicationDrafts === 0 ? undefined : onOpenMedicationDrafts}
         />
       ) : null}
 
@@ -471,7 +522,7 @@ export function partialMessage(partial: PartialEvent, savedSomething: boolean): 
 
 /**
  * 도메인 Agent 결과 한 블록 (#227 · 서버 #276). readout · 되묻기 · 추천 묶음(후보 N개 · 이유 · 일반이면
- * 또래 기준과 쌓인 기록 수 · 후보 보기)을 싣는다 (#227).
+ * 일반 추천 라벨과 쌓인 기록 수 · 후보 보기)을 싣는다 (#227).
  *
  * 🚨 **도메인 색을 쓰지 않는다** (`ObservationRow` 와 같은 이유). 대화는 하루치 답이 위아래로 이어져서
  *    Agent 블록마다 도메인 색 타일을 주면 한 화면에 도메인 색 2개 규칙(문서 §3)을 넘는다. 어느 Agent 인지는
@@ -480,17 +531,32 @@ export function partialMessage(partial: PartialEvent, savedSomething: boolean): 
  * 🚨 **readout `body` 를 그대로 그린다.** 성장 추이는 코드가 만든 문장이고, 화면이 줄이거나 색을 입히면
  *    평가로 읽힌다 (최상위 §2 키 · 몸무게). 여러 줄이라 줄바꿈을 살린다 (`whitespace-pre-line`).
  * 🚨 **모델이 쓴 readout 도 HTML 로 그리지 않는다** (apps/web/CLAUDE.md §4). `{}` 로 넣는다.
- * 🚨 **되묻기에 답하기 버튼을 세우지 않는다.** Memory 질문(`NoteCard`)과 달리 이어서 답할 길이 서버에 아직
- *    없다 — `reply_to` 로 보내면 400 이다 (`AgentResultEvent.question` · #246).
+ * 🚨 **답하기 버튼은 답을 받는 질문(`awaits_reply`)에만 세운다** (#537). 아닌 질문은 이어서 답할 길이 서버에
+ *    없다 — `reply_to` 로 보내면 400 이다 (`AgentResultEvent.question` · #246). 그 질문은 안내 문장으로만 선다.
+ * 🚨 **전달 서류(`med_notice_form` · `emergency_card`)는 body 그대로 + 복사 버튼이다.** 우리가 대신 보내지 않는다 —
+ *    복사해서 보호자가 직접 전한다. 응급 카드의 "불러오지 못했어요" 줄을 "없음" 처럼 바꾸지 않는다 (body 를 다시 쓰지 않는다).
+ * 🚨 **`dose_status` 는 사실만 나가는 칸이다.** 먹여도 된다는 뜻으로 읽힐 표시(초록 체크 · 색)를 붙이지 않는다 —
+ *    체크하는 곳(복약 화면)으로 가는 길만 둔다. "먹였어" 의 체크 안내에도 같은 길이 선다 (`medicationHref` · #713).
  */
 function AgentResultCard({
+  childId,
   result,
   candidates,
+  reply,
 }: {
+  childId: string;
   result: AgentResultEvent;
   candidates: BlockCandidates | null;
+  /** 이 블록의 질문이 run 의 답을 받는 질문이면 그 처지. 아니면 `null` — 답하기 버튼이 서지 않는다. */
+  reply: {
+    question: QuestionState | null;
+    answeringNow: boolean;
+    onAnswer: () => void;
+  } | null;
 }) {
   const readouts = blockReadouts(result);
+  // 꺼 둔 동안은 갈 곳(11-3)이 없다 (`lib/store-policy.ts`).
+  const medicationLink = MEDICATION_ENABLED ? medicationHref(childId, readouts) : null;
   return (
     <Card>
       <div className="flex items-start gap-3">
@@ -500,13 +566,14 @@ function AgentResultCard({
           {candidates ? (
             <div className="mt-1">
               <p className="text-body text-ink">후보 {candidates.count}개</p>
-              {/* 🚨 일반 묶음은 "또래 기준" 과 쌓인 기록 수를 그대로 적는다 — 0건도 적는다 (최상위 §2).
-                  색으로 가르지 않는다 — 라벨과 건수가 본체다 (apps/web CLAUDE §5). */}
+              {/* 🚨 일반 묶음은 "일반 추천" 과 쌓인 기록 수를 그대로 적는다 — 0건도 적는다 (최상위 §2).
+                  색으로 가르지 않는다 — 라벨과 건수가 본체다 (apps/web CLAUDE §5).
+                  "또래 기준" 은 붙이지 않는다 — 요청에 맞춰 고른 일반 추천도 있다 (#597). 기준은 아래 `reason` 이 말한다. */}
               {candidates.general ? (
                 <p className="text-caption text-ink-muted mt-1">
                   {candidates.recordCount === null
-                    ? "또래 기준 일반 추천"
-                    : `또래 기준 일반 추천 · 쌓인 기록 ${candidates.recordCount}건`}
+                    ? "일반 추천"
+                    : `일반 추천 · 쌓인 기록 ${candidates.recordCount}건`}
                 </p>
               ) : null}
               {/* 🚨 서버 코드 문구다 — 줄이거나 다시 쓰지 않는다. */}
@@ -519,9 +586,24 @@ function AgentResultCard({
             <div key={index} className="mt-1">
               {readout.title ? <p className="text-label text-ink-muted">{readout.title}</p> : null}
               <p className="text-body text-ink whitespace-pre-line">{readout.body}</p>
+              {COPYABLE_READOUTS.has(readout.kind) ? <CopyReadout readout={readout} /> : null}
             </div>
           ))}
-          {result.question ? (
+          {/* 복용 체크는 복약 화면에서만 한다 — 기록이 생기는 곳이 한 곳이다 (#537). 가리키는 코스가 하나면 그 코스로 (#713). */}
+          {medicationLink ? (
+            <ButtonLink
+              href={medicationLink}
+              variant="secondary"
+              size="compact"
+              className="mt-3"
+              transitionTypes={FORWARD.transitionTypes}
+            >
+              복약 화면 열기
+            </ButtonLink>
+          ) : null}
+          {reply && result.question ? (
+            <AgentQuestion text={result.question} {...reply} />
+          ) : result.question ? (
             <p
               className={
                 readouts.length > 0 || candidates
@@ -554,6 +636,144 @@ function AgentResultCard({
   );
 }
 
+/** body 를 그대로 복사해 가는 전달 서류 (#537). 🚨 우리가 대신 보내지 않는다 — 보호자가 붙여 넣어 전한다. */
+const COPYABLE_READOUTS = new Set<AgentReadout["kind"]>(["med_notice_form", "emergency_card"]);
+
+/**
+ * 서류 한 장의 복사 버튼. 🚨 **body 를 고치지 않고 그대로 복사한다** — 서명 문구 · 조회 실패 줄까지다.
+ * 🚨 토스트를 쓰지 않는다 — 성공은 조용한 실패가 아니다(문서 §7). 결과는 버튼 옆 한 줄이 말한다.
+ */
+function CopyReadout({ readout }: { readout: AgentReadout }) {
+  const [copied, setCopied] = useState<"idle" | "copied" | "failed">("idle");
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+      <Button
+        variant="secondary"
+        size="compact"
+        onClick={() => {
+          void navigator.clipboard
+            .writeText(readout.body)
+            .then(() => setCopied("copied"))
+            .catch(() => setCopied("failed"));
+        }}
+      >
+        <Copy aria-hidden size={ICON_SIZE.sm} strokeWidth={ICON_STROKE} />
+        복사하기
+      </Button>
+      <p role="status" className="text-caption text-ink-subtle">
+        {copied === "copied"
+          ? "복사했어요. 필요한 곳에 붙여 넣어 전해 주세요."
+          : copied === "failed"
+            ? "복사하지 못했어요. 글을 길게 눌러 복사해 주세요."
+            : null}
+      </p>
+    </div>
+  );
+}
+
+/**
+ * Agent 가 답을 기다리는 질문 (#537 · `awaits_reply`). 🚨 **Memory 질문(`NoteCard`)과 같은 길이다** — 입력창이 이
+ * 질문을 대상으로 잡고, 답은 `reply_to` 로 이 run 을 가리킨다. 답을 강요하지 않고, 내려놓아도 열린 채 남는다.
+ * 🚨 **답은 짧은 글로 받는다** — "네" · 약 이름 · "저녁 8시". 버튼으로 미리 답을 깔지 않는다(서버가 글자로 받는다).
+ */
+function AgentQuestion({
+  text,
+  question,
+  answeringNow,
+  onAnswer,
+}: {
+  text: string;
+  question: QuestionState | null;
+  answeringNow: boolean;
+  onAnswer: () => void;
+}) {
+  return (
+    <div className="border-line mt-3 border-t pt-3">
+      <p className="text-body text-ink">{text}</p>
+      {question === "open" ? (
+        answeringNow ? (
+          <p className="text-caption text-ink-muted mt-2">아래 입력창에서 답하는 중이에요.</p>
+        ) : (
+          <Button variant="secondary" size="compact" className="mt-3" onClick={onAnswer}>
+            이 질문에 답하기
+          </Button>
+        )
+      ) : question === "answered" ? (
+        <p className="text-caption text-ink-subtle mt-2">아래에 답해 주셨어요.</p>
+      ) : question === "dropped" ? (
+        <p className="text-caption text-ink-subtle mt-2">이 질문은 더 이어서 답할 수 없어요.</p>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * 복약 초안 (#537). 🚨 **저장 결과가 아니다** — 넣어야 등록된다 (승인 게이트 ㉡). 일정 초안(`DraftsCard`)과 같은 자리
+ * 같은 모양이지만 **다른 카드**다 — 넣는 곳이 다른 게이트라 한 카드에서 세면 무엇을 넣는지 흐려진다.
+ * 🚨 대화에는 카드만 두고 넣는 것은 시트에서 한다 (`DraftsCard` 와 같은 이유).
+ */
+function MedicationDraftsCard({
+  drafts,
+  remaining,
+  replaced,
+  onOpen,
+}: {
+  drafts: readonly MedicationDraft[];
+  remaining: number;
+  replaced: boolean;
+  /** 없으면 넣을 길이 없다 — 지난 턴인데 보관함에 없는 초안이다. */
+  onOpen?: () => void;
+}) {
+  const found = drafts.length;
+  return (
+    <section>
+      <h3 className="text-label text-brand">복약 일정으로 넣을까요?</h3>
+      <Card className="mt-2">
+        <div className="flex items-start gap-3">
+          <IconTile icon={Pill} tone={onOpen && remaining > 0 ? "brand" : "neutral"} />
+          <div className="min-w-0">
+            {remaining > 0 && onOpen ? (
+              <>
+                <p className="text-body text-ink">
+                  적어주신 말에서 복약 {found}건을 찾았어요.
+                  {remaining < found ? ` 아직 넣지 않은 것은 ${remaining}건이에요.` : null}
+                </p>
+                <p className="text-body-sm text-ink-muted mt-1">
+                  넣기 전까지는 등록되지 않아요. 알려드릴 시각을 확인하고 넣어 주세요.
+                </p>
+                <Button variant="secondary" size="compact" className="mt-3" onClick={onOpen}>
+                  확인하고 넣기
+                </Button>
+              </>
+            ) : remaining > 0 || !onOpen ? (
+              // 🚨 복약 초안은 메모리에만 있어서(건강 정보) 새로고침하면 사라진다. 넣었는지 모르니 "넣었어요" 라고 하지 않는다.
+              <>
+                <ul className="flex flex-col gap-1">
+                  {drafts.map((draft) => (
+                    <li key={draft.draft_id} className="text-body text-ink">
+                      {draft.schedule.title ?? "이름 없는 약"}
+                    </li>
+                  ))}
+                </ul>
+                <p className="text-body-sm text-ink-muted mt-2">
+                  여기서는 더 넣을 수 없어요. 넣은 복약은 복약 화면에서 볼 수 있어요.
+                </p>
+              </>
+            ) : (
+              <p className="text-body text-ink">
+                {/* 🚨 뒤 답이 같은 코스의 초안을 다시 냈으면 "넣었다" 고 하지 않는다 — 넣은 적이 없다. */}
+                {replaced
+                  ? "이 복약 초안은 아래 답에서 다시 찾은 초안으로 바뀌었어요."
+                  : "남은 복약 초안이 없어요. 넣은 복약은 복약 화면에서 볼 수 있어요."}
+              </p>
+            )}
+          </div>
+        </div>
+      </Card>
+    </section>
+  );
+}
+
 /**
  * 일정 초안 — 🚨 **저장 결과가 아니다.** 위의 관찰·기억은 이미 저장된 것이고, 이건 **보호자가
  * 넣어야 들어가는 것**이다 (승인 게이트 ㉠). 한 덩어리로 섞으면 "이렇게 저장했어요" 라는 첫 줄이
@@ -575,7 +795,7 @@ function DraftsCard({
   onOpen: () => void;
 }) {
   return (
-    <section>
+    <section data-tour="drafts">
       <h3 className="text-label text-brand">일정으로 만들까요?</h3>
       <Card className="mt-2">
         <div className="flex items-start gap-3">
@@ -851,7 +1071,7 @@ function NoteCard({
   }
 
   return (
-    <Card>
+    <Card data-tour="question">
       <div className="flex items-start gap-3">
         <IconTile icon={MessageCircleQuestion} />
         <div className="min-w-0">
@@ -887,54 +1107,3 @@ function NoteCard({
 }
 
 const NO_REFS: readonly StoredRef[] = [];
-
-/**
- * 저장된 기록 한 줄. 🚨 **지난 대화에서는 고친 기록도 온다** (#228 리뷰) — 교정은 기록을 지우지 않고 상태만
- * 바꿔서, 서버가 지금 모습(`status`)으로 싣는다. 방금 저장한 run 에서는 늘 `active` 라 예전엔 볼 필요가 없었다.
- * 07 기록 탭과 같은 고친 표시를 달고, 잘못된 기록(`inactive`)은 글자를 물린다 — 근거에서도 빠진 기록이다.
- * 색만으로 가르지 않는다 — 무엇으로 고쳤는지가 글자로 선다.
- */
-function ObservationRow({ observation }: { observation: Observation }) {
-  const wrong = observation.status === "inactive";
-  const detail = isHealthObservation(observation)
-    ? [
-        observation.domain_fields.symptom?.join(", "),
-        observation.domain_fields.observed_time &&
-          formatTimeOfDay(observation.domain_fields.observed_time),
-      ]
-        .filter(Boolean)
-        .join(", ")
-    : observation.subject;
-
-  return (
-    <div className="py-3 first:pt-0 last:pb-0">
-      {/* 🚨 여기서는 **도메인 색을 쓰지 않는다** (`DomainChip` 이 아니다). 한 화면에 도메인 색은
-          2개까지인데(문서 §3), 한 줄이 관찰 3건으로 갈리면 4색이 다 뜰 수 있다. 그리고 도메인 색은
-          "어느 Agent 의 결과인가" 신호라(05 제안) 저장된 관찰에 쓰면 그 뜻이 흐려진다.
-          모양은 아이콘이, 뜻은 라벨이 진다. */}
-      <div className="text-label text-ink-muted flex flex-wrap items-center gap-1.5">
-        <ObservationIcon kind={observation.kind} className="text-ink-subtle" />
-        {observationLabel(observation.kind)}
-        {observation.observed_label ? (
-          <span className="text-caption text-ink-subtle">· {observation.observed_label}</span>
-        ) : null}
-      </div>
-
-      <p className={cn("text-body mt-2", wrong ? "text-ink-muted" : "text-ink")}>
-        {observation.raw_text}
-      </p>
-
-      <div className="text-caption text-ink-subtle mt-1.5 flex flex-wrap items-center gap-x-1.5">
-        {detail ? <span>{detail}</span> : null}
-        {detail ? <span aria-hidden>·</span> : null}
-        <span>{CONFIDENCE_LABEL[observation.confidence_source]}</span>
-      </div>
-
-      {observation.status !== "active" ? (
-        <div className="mt-1.5">
-          <CorrectedMark label={CORRECTED_OBSERVATION[observation.status].label} />
-        </div>
-      ) : null}
-    </div>
-  );
-}

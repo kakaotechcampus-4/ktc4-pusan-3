@@ -17,13 +17,19 @@ from app.agents.activity.context import ActivityContext
 from app.agents.activity.store.inmemory import InMemoryConsent as ActivityConsent
 from app.agents.activity.store.inmemory import InMemoryProfile as ActivityProfile
 from app.agents.activity.store.inmemory import unwired_ports as activity_unwired_ports
-from app.agents.activity.store.ports import CoarseLocation, WeatherSource
+from app.agents.activity.store.ports import (
+    CoarseLocation,
+    EventSource,
+    PlaceSource,
+    WeatherSource,
+)
 from app.agents.activity.store.ports import SafetyReader as ActivitySafetyReader
 from app.agents.common.allergy import allergen_states, shared_book
 from app.agents.common.child_values import ChildValues
 from app.agents.common.datetime_rules import today_of
 from app.agents.common.readout import Readout
-from app.agents.common.reference_docs import doc_row_id
+from app.agents.common.reference_docs import doc_row_id, public_doc_source
+from app.agents.common.result import MedicationDraft
 from app.agents.common.schemas.task import DomainTask
 from app.agents.common.suggestion import (
     MAX_SUGGESTIONS,
@@ -41,6 +47,34 @@ from app.agents.food.store.ports import (
     SuggestionHistoryReader,
 )
 from app.agents.food.store.ports import SafetyReader as FoodSafetyReader
+from app.agents.growth.context import GrowthContext
+from app.agents.growth.library import LibraryBooks
+from app.agents.growth.store.inmemory import InMemoryConsent as GrowthConsent
+from app.agents.growth.store.inmemory import InMemoryGrowthDocs, InMemoryGrowthLog
+from app.agents.growth.store.inmemory import InMemoryProfile as GrowthProfile
+from app.agents.growth.store.ports import (
+    GrowthLogReader,
+    GrowthPorts,
+    IssuedBookReader,
+    RawBookSearch,
+)
+from app.agents.growth.store.ports import SafetyReader as GrowthSafetyReader
+from app.agents.growth.store.ports import UnwiredSafety as GrowthUnwiredSafety
+from app.agents.health.context import HealthContext
+from app.agents.health.places.ports import FacilitySource
+from app.agents.health.store.inmemory import InMemoryConsent as HealthConsent
+from app.agents.health.store.inmemory import InMemoryProfile as HealthProfile
+from app.agents.health.store.ports import (
+    ChildBasicReader,
+    HealthPorts,
+    HealthSafetyReader,
+    MedicationReader,
+    MedicationWriter,
+    UnwiredBirthDate,
+    UnwiredChildBasic,
+    UnwiredHealthSafety,
+    UnwiredMedication,
+)
 from app.agents.memory.agent import MemoryReply
 from app.agents.memory.context import AgentContext
 from app.agents.memory.drafts import EventDraft
@@ -50,14 +84,19 @@ from app.agents.memory_bridge import (
     AffinityReader,
     StoreActivityMemory,
     StoreFoodMemory,
+    StoreGrowthMemory,
+    StoreHealthMemory,
     StoreOpener,
 )
 from app.agents.pipeline import (
     RECOMMENDING_TASKS,
+    AgentQuestion,
     AgentResult,
+    CardTab,
     Commit,
     CountRecords,
     CuratorTrigger,
+    DeleteProposed,
     DomainContext,
     DomainRouted,
     Done,
@@ -66,6 +105,9 @@ from app.agents.pipeline import (
     Event,
     EventDrafts,
     Failed,
+    FoundTabs,
+    LoadCards,
+    MedicationDrafts,
     MemoryNote,
     Partial,
     PendingReply,
@@ -81,22 +123,27 @@ from app.agents.pipeline import (
     Unwritten,
 )
 from app.agents.pipeline import handle_input as _handle_input
-from app.agents.run_writes import RunWrites, record_food_writes
+from app.agents.run_writes import RunWrites, record_food_writes, record_medication_writes
 from app.agents.suggestion_save import InMemorySuggestions, SaveSuggestions, SuggestionBatch
 from app.agents.supervisor.routing import Guidance
+from app.rules.age import months_between
 
 # api가 이 파일만 보면 되도록 진행 이벤트 타입도 여기서 내보냄
 # pipeline에 이벤트를 추가하면 여기에도 작성
 __all__ = [
     "MAX_SUGGESTIONS",
+    "FIRST_REQUEST_AGENTS",
     "SUGGESTION_AGENTS",
     "AffinityReader",
+    "AgentQuestion",
     "AgentResult",
     "AllergenCheck",
+    "CardTab",
     "CoarseLocation",
     "Commit",
     "CountRecords",
     "CuratorTrigger",
+    "DeleteProposed",
     "DocCard",
     "DomainRouted",
     "Done",
@@ -105,10 +152,16 @@ __all__ = [
     "Event",
     "EventDraft",
     "EventDrafts",
+    "MedicationDraft",
+    "MedicationDrafts",
     "Failed",
+    "FoundTabs",
     "Guidance",
+    "GrowthLogReader",
     "InMemoryStore",
     "InMemorySuggestions",
+    "IssuedBookReader",
+    "LoadCards",
     "MemoryNote",
     "MemoryReply",
     "MemoryStore",
@@ -116,6 +169,9 @@ __all__ = [
     "PendingMemoryContext",
     "PendingReply",
     "PipelineResult",
+    "EventSource",
+    "PlaceSource",
+    "RawBookSearch",
     "Readout",
     "Ref",
     "Rerouted",
@@ -189,6 +245,8 @@ async def handle_input(
     child_health_granted: bool | None = None,
     location: CoarseLocation | None = None,
     activity_weather: WeatherSource | None = None,
+    activity_places: PlaceSource | None = None,
+    activity_events: EventSource | None = None,
     emit: Emit | None = None,
     store: MemoryStore | None = None,
     continuation: PendingMemoryContext | None = None,
@@ -197,16 +255,28 @@ async def handle_input(
     curator_trigger: CuratorTrigger | None = None,
     domain_store: StoreOpener | None = None,
     count_records: CountRecords | None = None,
+    load_cards: LoadCards | None = None,
     food_catalog: MenuCatalogStore | None = None,
     food_recipes: RecipeCatalogStore | None = None,
     food_suggestions: SuggestionHistoryReader | None = None,
     food_safety: FoodSafetyReader | None = None,
     activity_safety: ActivitySafetyReader | None = None,
+    growth_safety: GrowthSafetyReader | None = None,
+    growth_log: GrowthLogReader | None = None,
+    growth_books: RawBookSearch | None = None,
+    growth_issued_books: IssuedBookReader | None = None,
+    health_safety: HealthSafetyReader | None = None,
+    health_medication: MedicationReader | None = None,
+    health_medication_writer: MedicationWriter | None = None,
+    health_child: ChildBasicReader | None = None,
+    health_location: CoarseLocation | None = None,
+    health_places: FacilitySource | None = None,
     affinity_reader: AffinityReader | None = None,
 ) -> PipelineResult:
     """입력 한 줄을 처리한다. 진행 상황은 emit 으로 나간다.
 
-    - birth_date를 넘기면 Food Agent가 build_gate에서 그 값으로 식이 단계를 계산한다.
+    - birth_date를 넘기면 Food Agent가 build_gate에서 그 값으로 식이 단계를 계산한다. 응급
+      사전검사도 이 값으로 월령을 센다. 없으면 만 2세로 지어내지 않고 말에 적힌 월령만 본다.
     - child_health_granted 는 API 가 run 마다 한 번 읽은 `child_health` 동의의 현재 값이다.
       생일과 같이 값을 감싼 포트(`ChildValues`)로 Food 의 `ConsentReader` 에 들어간다. 읽는 데
       실패하면 API 가 run 을 시작하지 않으므로 여기에는 실패 값이 없다 — None 은 값을 안 넘긴
@@ -217,6 +287,10 @@ async def handle_input(
       실내 전용이다.
     - activity_weather 는 api 가 서버 시작 때 만든 날씨 어댑터다. agents 는 integrations 를
       import 하지 않아서 api 가 넘긴다. None 이면 날씨를 묻지 않고 실내 전용이다.
+    - activity_events 는 api 가 서버 시작 때 만든 행사 어댑터(TourAPI)다. None 이면 행사 조회가
+      닫힌다. 어댑터는 위치를 받지 않는다 — 거리는 Activity 가 서버 안에서 계산한다.
+    - activity_places 는 api 가 넘긴 장소 어댑터(적재한 `place` 표)다. None 이거나 좌표가 없으면
+      장소 조회가 닫혀 장소가 필요 없는 활동만 나간다.
     - store를 넘기면 그것에 쓴다.
     - agents 는 infra 에 직접 닿지 않는다. store · commit · curator_trigger 처럼 DB 에 닿는 것은
       전부 api(러너)가 만들어 넘긴다.
@@ -232,17 +306,35 @@ async def handle_input(
     - curator_trigger 를 넘기면 Memory 가 commit 된 직후 pipeline 이 (child_id, 기준일) 로 한 번
       부른다. 콜백이 별도 세션에서 Curator 를 백그라운드로 띄운다. 러너가 `curator_deps()` 로
       만든다. 안 넘기면(테스트 · eval) Curator 는 돌지 않는다.
+    - growth_books · growth_issued_books 는 api 가 넘긴 도서 어댑터다 — 정보나루 검색(검색어 캐시
+      포함)과 만료 전 Growth 추천의 "제목(저자)". 둘 다 있어야 도서가 열린다. 하나라도 없으면(키
+      없음 · 테스트 · eval) `closed.book_api` 로 닫힌다 — 낸 책을 모르면 같은 책이 다시 나온다.
+    - growth_log 는 러너가 짧은 DB 세션으로 만든 성장 기록 어댑터다. 안 넘기면(테스트 · eval)
+      측정이 없는 것으로 읽힌다.
     - domain_store 를 넘기면 도메인 Agent 의 기억 포트가 호출마다 그것으로 store 를 새로 연다.
       러너가 짧은 DB 세션으로 만든다 — run 세션을 도메인 task 들이 같이 타지 않게. 안 넘기면
       run 의 store 를 그대로 읽는다(테스트 · eval 의 InMemoryStore).
     - count_records 를 넘기면 일반 추천 블록의 쌓인 기록 수를 센다. 러너가
       `agent_ports.record_counter` 로 만든다. 안 넘기면(테스트 · eval) 그 칸이 빈다.
+    - load_cards 는 조회 · 삭제 제안 카드(`FoundTabs` · `DeleteProposed`)에 실을 행을 러너가 미리
+      읽어 두게 하는 콜백이다 (#535). 안 넘기면(테스트 · eval) 읽지 않는다.
     - food_catalog · food_recipes · food_suggestions 는 api 가 넘긴 Food 카탈로그 · 추천 이력
       어댑터다(`domains/food` · `domains/suggestion` 의 `agent_reader`). 안 넘기면(테스트 · eval)
       빈 InMemory 다. 문서 행은 어댑터가 아니라 yaml 의 검수된 시드를 항상 읽는다.
-    - food_safety · activity_safety 는 api 가 넘긴 `health_safety` 어댑터다(`DbSafetyReader`,
-      #405 · #460). 같은 객체여도 Food 는 `food_safety`, Activity 는 `activity_safety` 로 읽는다 —
-      읽는 행이 다르다. 안 넘기면(테스트 · eval) `UnwiredSafety` 라 동의와 상관없이 닫힌다.
+    - food_safety · activity_safety · growth_safety 는 api 가 넘긴 `health_safety` 어댑터다
+      (`DbSafetyReader`, #405 · #460). 같은 객체여도 Food 는 `food_safety`, Activity 는
+      `activity_safety`, Growth 는 `growth_safety` 로 읽는다 — 읽는 행이 다르다. 안 넘기면(테스트 ·
+      eval) `UnwiredSafety` 라 동의와 상관없이 닫힌다 — Growth 는 교육만 닫힌다.
+    - health_safety · health_medication · health_medication_writer · health_child 는 api 가 넘긴
+      Health 어댑터다. 복약 어댑터는 읽기와 중단 쓰기를 한 객체가 한다. 안 넘기면(테스트 · eval)
+      읽을 때 실패로 닫힌다 — 빈 저장소로 열려 복약 · 알레르기가 "없음" 으로 읽히지 않게.
+    - health_location 은 병원 찾기에 쓰는 흐린 좌표다. `location` 과 같은 값이어도 따로 받는다 —
+      위치 약관은 판마다 목적이 달라서, 날씨 · 놀이 목적의 이전 판에만 동의한 보호자의 위치를
+      병원 찾기에 쓰면 안 된다(#586 · 약관 제2조 ④⑤). api 가 병원 찾기 목적이 든 판의 동의를
+      확인한 뒤에만 넘긴다. `location` 이 Health 로 넘어가는 길은 없다. None 이면 병원 찾기가
+      `place.no_location` 이다.
+    - health_places 는 api 가 서버 시작 때 만든 병원 어댑터(국립중앙의료원)다. 없으면(키 없음 ·
+      테스트 · eval) 병원 찾기가 `place.unavailable` 로 닫힌다.
     - affinity_reader 는 api 가 넘긴 `profile_affinity` 어댑터다(`DbAffinityReader`). 기억 포트가 그
       run 의 기준일과 함께 받아, 마지막 관찰 뒤 21일이 지난 관심은 archived 로 읽는다. 안 넘기면
       (테스트 · eval) 관심이 없는 아이로 읽는다.
@@ -259,6 +351,7 @@ async def handle_input(
         now=now,
         timezone=KST,
         store=store,
+        run_id=run_id,
     )
 
     contexts, writes = _domain_contexts(
@@ -270,12 +363,24 @@ async def handle_input(
         child_health_granted=child_health_granted,
         location=location,
         activity_weather=activity_weather,
+        activity_places=activity_places,
+        activity_events=activity_events,
         domain_store=domain_store,
         food_catalog=food_catalog,
         food_recipes=food_recipes,
         food_suggestions=food_suggestions,
         food_safety=food_safety,
         activity_safety=activity_safety,
+        growth_safety=growth_safety,
+        growth_log=growth_log,
+        growth_books=growth_books,
+        growth_issued_books=growth_issued_books,
+        health_safety=health_safety,
+        health_medication=health_medication,
+        health_medication_writer=health_medication_writer,
+        health_child=health_child,
+        health_location=health_location,
+        health_places=health_places,
         affinity_reader=affinity_reader,
     )
 
@@ -291,6 +396,10 @@ async def handle_input(
         writes=writes,
         curator_trigger=curator_trigger,
         count_records=count_records,
+        load_cards=load_cards,
+        child_months=(
+            None if birth_date is None else months_between(birth_date, today_of(now, KST))
+        ),
     )
 
 
@@ -305,10 +414,15 @@ class SuggestTask:
 
 
 SUGGESTION_AGENTS: frozenset[str] = frozenset(RECOMMENDING_TASKS)
+# 05 처음 요청(run_id 없음)으로 돌 수 있는 Agent — 추천 라벨이 하나라 무엇을 돌릴지 정해진다.
+# Growth 는 라벨이 셋이라 처음 요청은 not_ready 다. 홈 버튼을 붙일 때 그 표가 라벨까지 정한다
+FIRST_REQUEST_AGENTS: frozenset[str] = frozenset(
+    agent for agent, labels in RECOMMENDING_TASKS.items() if len(labels) == 1
+)
 
 
 def recommendation_task_type(agent: str) -> str | None:
-    """05 가 처음 요청으로 돌릴 때의 라벨. Agent 마다 추천 task 가 하나다."""
+    """05 가 처음 요청으로 돌릴 때의 라벨. `FIRST_REQUEST_AGENTS` 만 부른다."""
     [label] = RECOMMENDING_TASKS[agent]
     return label
 
@@ -330,6 +444,10 @@ async def suggest(
     food_suggestions: SuggestionHistoryReader | None = None,
     food_safety: FoodSafetyReader | None = None,
     activity_safety: ActivitySafetyReader | None = None,
+    growth_safety: GrowthSafetyReader | None = None,
+    growth_log: GrowthLogReader | None = None,
+    growth_books: RawBookSearch | None = None,
+    growth_issued_books: IssuedBookReader | None = None,
     affinity_reader: AffinityReader | None = None,
 ) -> SuggestRun:
     """05 추천 요청 하나 (#249). 진행 이벤트는 없다 — 응답 하나로 끝난다.
@@ -361,6 +479,10 @@ async def suggest(
         food_suggestions=food_suggestions,
         food_safety=food_safety,
         activity_safety=activity_safety,
+        growth_safety=growth_safety,
+        growth_log=growth_log,
+        growth_books=growth_books,
+        growth_issued_books=growth_issued_books,
         affinity_reader=affinity_reader,
     )
     domain_tasks = tuple(
@@ -441,7 +563,11 @@ def _doc_index() -> dict[tuple[str, UUID], DocCard]:
             if meta.status != "approved":
                 continue
             key = (kind, doc_row_id(kind, meta.doc_key))
-            index[key] = DocCard(meta.title, meta.source_org, meta.source_title, meta.source_url)
+            # YAML 의 원문 출처가 아니라 라이선스 표시를 마친 공개용 출처가 나간다 (#510)
+            source = public_doc_source(meta)
+            index[key] = DocCard(
+                meta.title, source.source_org, source.source_title, source.source_url
+            )
     return index
 
 
@@ -462,14 +588,29 @@ def _domain_contexts(
     location: CoarseLocation | None,
     activity_weather: WeatherSource | None,
     domain_store: StoreOpener | None,
+    activity_places: PlaceSource | None = None,
+    activity_events: EventSource | None = None,
     food_catalog: MenuCatalogStore | None = None,
     food_recipes: RecipeCatalogStore | None = None,
     food_suggestions: SuggestionHistoryReader | None = None,
     food_safety: FoodSafetyReader | None = None,
     activity_safety: ActivitySafetyReader | None = None,
+    growth_safety: GrowthSafetyReader | None = None,
+    growth_log: GrowthLogReader | None = None,
+    growth_books: RawBookSearch | None = None,
+    growth_issued_books: IssuedBookReader | None = None,
+    health_safety: HealthSafetyReader | None = None,
+    health_medication: MedicationReader | None = None,
+    health_medication_writer: MedicationWriter | None = None,
+    health_child: ChildBasicReader | None = None,
+    health_location: CoarseLocation | None = None,
+    health_places: FacilitySource | None = None,
     affinity_reader: AffinityReader | None = None,
 ) -> tuple[dict[str, DomainContext], RunWrites]:
-    """Food · Activity 컨텍스트. 입력 run 과 05 가 같은 값으로 연다 — 포트가 두 벌이 되지 않게."""
+    """Food · Activity · Growth · Health 컨텍스트. 입력 run 과 05 가 같은 값으로 연다.
+
+    포트가 두 벌이 되지 않게 한 곳에서 만든다.
+    """
     # Food 포트는 생일 · 동의만 값으로 연결됐다 (#372). API 가 run 마다 한 번 읽어 넘긴 값을 감싼
     # 포트가 build_gate 의 LifeStage 계산과 동의 확인 자리에 들어가고, 기억 포트는 같은 run 의
     # store 를 읽게 한다. 방금 저장한 관찰이 같은 run 의 추천 근거로 잡혀야 해서다 (루트 §4).
@@ -547,8 +688,79 @@ def _domain_contexts(
                 )
             ),
             weather=activity_weather,
+            places=activity_places,
+            events=activity_events,
             safety=activity_safety,
         ),
         location=location,
     )
-    return {"food": food_context, "activity": activity_context}, writes
+    # Growth 도 같은 생일 · 동의 · 기준일 · store 를 받는다. 안전은 api 가 넘긴 어댑터의
+    # growth_safety 다 — 교육만 읽고, 동의가 없으면 읽지 않는다. 안 넘기면 UnwiredSafety 라
+    # 교육은 동의와 상관없이 blocked.safety 로 닫힌다. 루틴 · 성장 추이는 안전 포트를 읽지 않는다.
+    # 도서는 정보나루 · 이미 낸 책 어댑터를 둘 다 받았을 때만 열린다(아니면 closed.book_api).
+    # 공지 포트는 없다 — lookup_notice 는 빠진다.
+    # 동의 값을 못 받은 호출(테스트 · eval)은 동의 없음으로 읽는다 — 키 · 몸무게를 읽지 않게
+    books = (
+        LibraryBooks(growth_books)
+        if growth_books is not None and growth_issued_books is not None
+        else None
+    )
+    growth_context = GrowthContext(
+        child_id=child_id,
+        run_id=run_id,
+        now=now,
+        timezone=KST,
+        ports=GrowthPorts(
+            profile=activity_child or GrowthProfile({child_id: resolved_birth_date}),
+            consent=activity_child or GrowthConsent({child_id: False}),
+            safety=growth_safety or GrowthUnwiredSafety(),
+            growth_log=growth_log or InMemoryGrowthLog(),
+            memory=(
+                StoreGrowthMemory(store, affinities=affinity_reader, today=today)
+                if domain_store is None
+                else StoreGrowthMemory(opener=domain_store, affinities=affinity_reader, today=today)
+            ),
+            docs=InMemoryGrowthDocs.from_seed(),
+            books=books,
+            issued_books=growth_issued_books if books is not None else None,
+        ),
+    )
+    # Health 도 같은 생일 · 동의 · 기준일 · store 를 받는다. 동의 값을 못 받은 호출(테스트 · eval)은
+    # 동의 없음으로 읽는다 — 건강정보를 읽지 않게. 안전 · 복약 · 아이 기본 정보는 api 가 넘긴
+    # 어댑터이고, 안 넘기면 읽을 때 실패한다(빈 저장소로 열리면 복약 · 알레르기가 "없음" 이 된다).
+    # 복약 어댑터는 읽기와 중단 쓰기를 한 객체가 한다
+    unwired_medication = UnwiredMedication()
+    health_context = HealthContext(
+        child_id=child_id,
+        run_id=run_id,
+        now=now,
+        timezone=KST,
+        ports=HealthPorts(
+            # 생일이 없으면 지어낸 생일로 열지 않는다 — Health 는 나이로 응급을 가른다
+            profile=(
+                UnwiredBirthDate()
+                if birth_date is None
+                else activity_child or HealthProfile({child_id: birth_date})
+            ),
+            consent=activity_child or HealthConsent({child_id: False}),
+            safety=health_safety or UnwiredHealthSafety(),
+            memory=(
+                StoreHealthMemory(store)
+                if domain_store is None
+                else StoreHealthMemory(opener=domain_store)
+            ),
+            medication=health_medication or unwired_medication,
+            medication_writer=record_medication_writes(
+                health_medication_writer or unwired_medication, writes
+            ),
+            child=health_child or UnwiredChildBasic(),
+            places=health_places,
+        ),
+        location=health_location,
+    )
+    return {
+        "food": food_context,
+        "activity": activity_context,
+        "growth": growth_context,
+        "health": health_context,
+    }, writes

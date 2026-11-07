@@ -3,6 +3,8 @@
     Remove-Item Env:PYTEST_ADDOPTS -ErrorAction SilentlyContinue
     uv run pytest tests/eval/agents/supervisor/test.py -m live -k end_to_end -s   # 끝까지
     uv run pytest tests/eval/agents/supervisor/test.py -m live -k split -s        # Supervisor 단독
+    uv run pytest tests/eval/agents/supervisor/test.py -m live -k growth_routing -s  # Growth 경계
+    uv run pytest tests/eval/agents/supervisor/test.py -m live -k health_routing -s  # Health 경계
     uv run pytest tests/eval/agents/supervisor/test.py -m live -s                 # 둘 다
 
 
@@ -38,7 +40,7 @@ from app.agents.common.datetime_rules import ALL_DAY_END, ALL_DAY_START, DateRan
 from app.agents.common.llm_client import LLMClient, LLMConfigError
 from app.agents.food.schemas.common import FoodTaskType
 from app.agents.food.store.ports import DaycareMealRow
-from app.agents.memory.agent import _claims_saved
+from app.agents.memory.agent import _UNCLEAR_REPLY, _claims_saved
 from app.agents.memory.context import AgentContext
 from app.agents.memory.drafts import EventDraft
 from app.agents.memory.schemas.task import WorkType
@@ -61,7 +63,11 @@ from app.rules.age import Stage
 from tests.eval.agents.food.world import build_world
 from tests.eval.agents.routing_cases import (
     CASES_BY_ID,
+    DATE_CASES,
     FC_CASES,
+    GR_CASES,
+    HR_CASES,
+    HR_NEVER_HEALTH,
     RC_CASES,
     T_CASES,
     UNCLEAR_CASES,
@@ -73,10 +79,16 @@ from tests.eval.agents.routing_cases import (
     format_score,
     format_segments,
     format_spans,
+    growth_violations,
+    health_violations,
+    rate,
     score_split,
+    sum_scores,
 )
 
 pytestmark = pytest.mark.live
+
+HR_IDS = frozenset(case.case_id for case in HR_CASES)
 
 # 흔들림(같은 입력에 결과가 바뀌는 것)을 보려면 2 이상으로 올린다
 TEST_REPEAT = int(os.getenv("TEST_REPEAT", "1"))
@@ -131,7 +143,7 @@ RESULT_PATH = Path(
 INPUT_PRICE = float(os.getenv("LLM_INPUT_PRICE_PER_M", "0"))
 OUTPUT_PRICE = float(os.getenv("LLM_OUTPUT_PRICE_PER_M", "0"))
 
-_CASES = (*RC_CASES, *T_CASES, *FC_CASES, *UNCLEAR_CASES)
+_CASES = (*RC_CASES, *T_CASES, *FC_CASES, *UNCLEAR_CASES, *DATE_CASES)
 
 # 앞으로의 계획. unclear 로 가면 일정으로 등록할지 묻지 못한다 (D8 · #624)
 _PLANS = ("T18", "T58")
@@ -139,6 +151,8 @@ _PLANS = ("T18", "T58")
 _RELAYED_EVENTS = ("T60",)
 # 보호자 인상. 저장하거나 값을 되묻는다. 거절하고 끝내면 안 된다
 _IMPRESSIONS = ("T65",)
+# 범위 밖 질문. Supervisor 가 어디로 보내든 Memory 가 쓴 문장은 나가지 않는다 (#642)
+_OFF_TOPIC = ("T66", "T67", "T68", "T69")
 
 
 async def _no_commit() -> None:
@@ -150,6 +164,10 @@ def _client() -> LLMClient:
         return LLMClient(role="supervisor")
     except LLMConfigError as exc:
         pytest.skip(f"Supervisor 설정이 필요합니다: {exc}")
+
+
+# split 합계 — 프롬프트를 고친 전후로 RC · T 가 떨어지지 않았는지 견준다 (supervisor-agent-v1 §4)
+_SPLIT_SCORES: list[SplitScore] = []
 
 
 @pytest.mark.parametrize("case", _CASES, ids=[case.case_id for case in _CASES])
@@ -169,6 +187,7 @@ def test_supervisor_split(case: RoutingCase, expect: Callable[..., None]) -> Non
         result = asyncio.run(supervisor.run(case.text, client=client, keep_rejected=True))
         elapsed_ms = int((time.perf_counter() - started) * 1000)
         score = score_split(case, result.output)
+        _SPLIT_SCORES.append(score)
 
         suffix = f" #{attempt}" if TEST_REPEAT > 1 else ""
         print(f"\n[{case.case_id}{suffix}] {case.watch}")
@@ -183,6 +202,107 @@ def test_supervisor_split(case: RoutingCase, expect: Callable[..., None]) -> Non
         assert result.error is None, (
             f"{case.case_id}: Supervisor 실패 {result.error} ({result.detail})"
         )
+
+
+# ── Growth 경계 (Supervisor 단독) ───────────────────────────────
+# 합격선 — TEST_REPEAT 번 되풀이한 전부로 센다. 보정 규칙은 supervisor-agent-v1 §4
+GROWTH_AGENT_MIN = 0.9
+GROWTH_TASK_MIN = 0.9
+
+
+def test_growth_routing(expect: Callable[..., None]) -> None:
+    """GR01~GR24 — 0건 규칙 위반이 없고 agent · growth 유형 일치율이 합격선 이상이다.
+
+    0건 규칙(routing_cases): 신체 성장 3줄은 growth_review · "배웠대" 는 요청이 아니다 ·
+    약 · 깜빡임은 Growth 로 가거나 같은 입력의 기록 조각에 남는다(Growth 의 코드 닫힘이 본다).
+    """
+    expect(
+        f"0건 규칙 위반 0 · agent ≥ {GROWTH_AGENT_MIN:.0%} · growth 유형 ≥ {GROWTH_TASK_MIN:.0%}"
+    )
+    client = _client()
+    scores: list[SplitScore] = []
+    violations: list[str] = []
+    errors: list[str] = []
+    for case in GR_CASES:
+        for attempt in range(1, TEST_REPEAT + 1):
+            started = time.perf_counter()
+            result = asyncio.run(supervisor.run(case.text, client=client, keep_rejected=True))
+            elapsed_ms = int((time.perf_counter() - started) * 1000)
+            score = score_split(case, result.output)
+            scores.append(score)
+            violations.extend(growth_violations(case.case_id, result.output))
+            if result.error:
+                errors.append(f"{case.case_id}: {result.error}")
+            suffix = f" #{attempt}" if TEST_REPEAT > 1 else ""
+            print(f"\n[{case.case_id}{suffix}] {case.watch}")
+            print(f"    S {result.model_calls}회 {elapsed_ms}ms  {format_segments(result.output)}")
+            print(f"      {format_score(score)}")
+
+    total = sum_scores(scores)
+    agent = rate(total.agent_ok, total.request_spans)
+    growth = rate(total.growth_task_ok, total.growth_spans)
+    print(f"\n══ Growth 경계 합계 — 실행 {len(scores)}회 · {format_score(total)}")
+    print(f"   agent {agent:.0%} · growth 유형 {growth:.0%} · 0건 규칙 위반 {len(violations)}")
+    if violations:
+        print(f"   0건 규칙 위반: {violations}")
+    assert not errors, f"Supervisor 실패: {errors}"
+    assert not violations, f"0건 규칙 위반: {violations}"
+    assert agent >= GROWTH_AGENT_MIN, f"agent {agent:.0%} < {GROWTH_AGENT_MIN:.0%}"
+    assert growth >= GROWTH_TASK_MIN, f"growth 유형 {growth:.0%} < {GROWTH_TASK_MIN:.0%}"
+
+
+# ── Health 경계 (Supervisor 단독) ───────────────────────────────
+# 합격선 — Growth 와 같다. 0건 규칙은 비율과 섞지 않는다
+HEALTH_AGENT_MIN = 0.9
+HEALTH_TASK_MIN = 0.9
+
+
+def test_health_routing(expect: Callable[..., None]) -> None:
+    """HR01~HR11 — 0건 규칙 위반이 없고 agent · health 유형 일치율이 합격선 이상이다.
+
+    0건 규칙(routing_cases): 키 값 · 성장 판정 · 병명 · 약 용량 문의는 health 로 가지 않는다.
+    """
+    expect(
+        f"0건 규칙 위반 0 · agent ≥ {HEALTH_AGENT_MIN:.0%} · health 유형 ≥ {HEALTH_TASK_MIN:.0%}"
+    )
+    client = _client()
+    # 0건 규칙은 HR 밖의 같은 문장 케이스(GR13 · FC06)도 센다. 비율에는 HR 만 넣는다
+    never = [CASES_BY_ID[case_id] for case_id in HR_NEVER_HEALTH if case_id not in HR_IDS]
+    scores: list[SplitScore] = []
+    violations: list[str] = []
+    errors: list[str] = []
+    for case in (*HR_CASES, *never):
+        for attempt in range(1, TEST_REPEAT + 1):
+            started = time.perf_counter()
+            result = asyncio.run(supervisor.run(case.text, client=client, keep_rejected=True))
+            elapsed_ms = int((time.perf_counter() - started) * 1000)
+            if case.case_id in HR_IDS:
+                scores.append(score_split(case, result.output))
+            violations.extend(health_violations(case.case_id, result.output))
+            if result.error:
+                errors.append(f"{case.case_id}: {result.error}")
+            suffix = f" #{attempt}" if TEST_REPEAT > 1 else ""
+            print(f"\n[{case.case_id}{suffix}] {case.watch}")
+            print(f"    S {result.model_calls}회 {elapsed_ms}ms  {format_segments(result.output)}")
+
+    total = sum_scores(scores)
+    agent = rate(total.agent_ok, total.request_spans)
+    health = rate(total.health_task_ok, total.health_spans)
+    print(f"\n══ Health 경계 합계 — 실행 {len(scores)}회 · {format_score(total)}")
+    print(f"   agent {agent:.0%} · health 유형 {health:.0%} · 0건 규칙 위반 {len(violations)}")
+    if violations:
+        print(f"   0건 규칙 위반: {violations}")
+    assert not errors, f"Supervisor 실패: {errors}"
+    assert not violations, f"0건 규칙 위반: {violations}"
+    assert agent >= HEALTH_AGENT_MIN, f"agent {agent:.0%} < {HEALTH_AGENT_MIN:.0%}"
+    assert health >= HEALTH_TASK_MIN, f"health 유형 {health:.0%} < {HEALTH_TASK_MIN:.0%}"
+
+
+def _format_split_totals(scores: list[SplitScore]) -> str:
+    """split 합계 한 줄. 프롬프트를 고친 전후로 이 줄을 견준다."""
+    cases = len({score.case_id for score in scores})
+    total = format_score(sum_scores(scores))
+    return f"\n══ split 합계 — 케이스 {cases}개 / 실행 {len(scores)}회 · {total}"
 
 
 # ── 끝까지 (Step 9) ─────────────────────────────────────────────
@@ -330,9 +450,12 @@ _RECORDS: list[dict[str, Any]] = []
 def _results() -> Iterator[None]:
     RESULT_PATH.unlink(missing_ok=True)
     _RECORDS.clear()
+    _SPLIT_SCORES.clear()
     yield
     if _RECORDS:
         print(_format_summary(_RECORDS))
+    if _SPLIT_SCORES:
+        print(_format_split_totals(_SPLIT_SCORES))
 
 
 @pytest.mark.parametrize("live", _E2E_CASES, ids=[live.label for live in _E2E_CASES])
@@ -401,6 +524,8 @@ def _expected_end_to_end(live: LiveCase) -> tuple[str, ...]:
     if case.rows == 0:
         expected.append("일정 초안이 없고, 저장한 것처럼 답하지 않는다")
         expected.append("아이를 주어로 다시 말해 달라고 하지 않는다")
+    if case.case_id in _OFF_TOPIC:
+        expected.append("Memory 가 쓴 문장이 나가지 않는다 (고정 문구 또는 메모 없음)")
     if case.not_in:
         expected.append(f"{' · '.join(case.not_in)} 관찰이 없다 (말의 내용을 저장하지 않는다)")
     if case.case_id in _PLANS:
@@ -653,6 +778,8 @@ def _judge_rows(observed: Observed) -> None:
             observed.failures.append("저장 없이 저장한 것처럼 답했다")
         if "주어로" in message:
             observed.failures.append("아이를 주어로 다시 말해 달라고 했다")
+    if case.case_id in _OFF_TOPIC and message not in ("", _UNCLEAR_REPLY):
+        observed.failures.append("Memory 가 쓴 문장이 나갔다")
     leaked = [domain for domain in case.not_in if observed.observations[domain]]
     if leaked:
         observed.failures.append(f"말의 내용이 기록으로 샜다 ({leaked})")

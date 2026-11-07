@@ -36,6 +36,11 @@ export const REF_KINDS = [
   "health_safety",
   "event",
   "suggestion",
+  /**
+   * 복약 코스 (#713). 04 Health readout 의 근거로만 온다 — 체크 안내 · 회차 현황이 어느 코스를 말하는지다.
+   * 서버는 readout 근거 중 이 종류만 화면으로 보낸다 (`apps/api/app/api/runs/translate.py` 의 `_SCREEN_REF_KINDS` · PR #716).
+   */
+  "medication_schedule",
 ] as const;
 export type RefKind = (typeof REF_KINDS)[number];
 
@@ -129,9 +134,27 @@ export interface ObservationHealth extends ObservationBase {
      * `formatTimeOfDay` 로 시각만 그린다 (#485). 몇 시인지 모르면 키를 빼지 않고 `null` 로 온다.
      */
     observed_time?: string | null;
+    /**
+     * 보호자가 말한 체온 숫자(℃) 그대로 (#551). 화면은 숫자를 옮기기만 한다 — 정상 범위 ·
+     * 높다/낮다 · 색으로 평가하지 않는다 (최상위 CLAUDE.md §2).
+     */
+    temperature?: number | null;
+    /** 체온을 잰 ISO 시각. `observed_time` 과 다르다. */
+    measured_at?: string | null;
+    measure_site?: MeasureSite | null;
+    /**
+     * 🚨 이 값이 있으면 **먹인 약 행**이다 (#551) — 한 행 = 한 사건이라 `symptom` 이 비어 온다.
+     * 보호자가 말한 약 이름 그대로이고, 이 행의 `observed_time` 은 먹인 시각이다.
+     */
+    medication_given?: string | null;
+    /** 같은 말에서 함께 기록된 증상 행 id. 묶음 표시일 뿐 "때문에" 가 아니다. */
+    linked_symptom_id?: string | null;
     [key: string]: unknown;
   };
 }
+
+/** 체온을 잰 부위. */
+export type MeasureSite = "ear" | "forehead" | "armpit" | "oral" | "rectal";
 
 export type Observation = ObservationPromotable | ObservationHealth;
 
@@ -285,6 +308,45 @@ export interface Suggestion {
    * 🚨 **`null` 이 온다** (서버 `SuggestionOut.reason: str | None`). 비면 라벨도 세우지 않는다.
    */
   reason: string | null;
+  /**
+   * 장소가 붙은 추천에만 오는 확인 문구 한 문장 ("공공데이터 기준 2026년 6월이에요. 가기 전에 운영 여부를
+   * 확인해 주세요."). **서버 코드 문구 그대로** 제안 문장 아래 한 줄로 세운다 (#516). 장소가 없으면 `null`.
+   *
+   * 🚨 **근거가 아니다.** "사용한 기록" 목록에 넣지 않고 건수에도 세지 않는다 — 장소는 아이 기록이 아니라서,
+   *    거기 들어가면 기록이 늘어 보인다. 서버도 `evidence` 에 싣지 않는다.
+   * 🚨 **장소 이름은 여기가 아니라 `content` 에 있다** ("○○공원에서 모래성 쌓기"). 화면이 이름을 따로 꺼내지 않는다.
+   */
+  place_notice: string | null;
+  /**
+   * 행사가 붙은 추천에만 오는 행사 시작일 (`YYYY-MM-DD`, #681). 장소 추천과 장소가 없는 추천은 `null`.
+   * 화면이 확인 문구 바로 위에 기간 한 줄로 세운다 — 날짜 없이 행사 이름만 나가면 지난 행사인지 알 수 없다.
+   *
+   * 🚨 **근거가 아니다** (`place_notice` 와 같다). 🚨 날짜를 더하고 빼지 않는다 — "3일 남았어요" 같은 말을
+   *    만들지 않고 두 날짜를 그대로 적는다 (`docs/web/screen-rules-v1.md` §2).
+   */
+  event_starts_on: string | null;
+  /** 행사 종료일 (`YYYY-MM-DD`). 시작일과 같이 오고 같이 빈다. 하루짜리 행사면 시작일과 같다. */
+  event_ends_on: string | null;
+  /**
+   * 그 추천에 주의할 요소가 있을 때만 오는 위험 경고 문구 ("작은 부품은 삼킬 수 있어요. …"). 위험 용어 사전
+   * (`apps/api/reference/hazard_terms.yaml`)의 `warning_text` 상수라 **서버 코드 문구 그대로** 보인다 (#402 · #672).
+   * 한 추천에 둘 이상 올 수 있고, 없으면 `[]` 다 (`null` 로 오지 않는다).
+   *
+   * 🚨 **근거가 아니다.** `place_notice` 와 같은 이유로 "사용한 기록" 에 넣지 않고 건수에도 세지 않는다.
+   * 🚨 **`caution` · `danger` 색을 입히지 않는다** — 둘 다 승인 게이트와 알레르기 차단 전용이다.
+   */
+  warnings: string[];
+  /**
+   * 해 보는 데 필요한 것 (#659). Food 는 **필요한 재료**, Activity · Growth 는 **준비물**이고 Growth 도서는
+   * "제목(저자)" 한 항목이다. 서버가 일정 초안의 준비물을 만드는 것과 **같은 원본**(`suggestion.items`)이라,
+   * 고르기 전에 보는 것과 일정에 붙는 것이 어긋나지 않는다. 화면은 `SuggestionItems` 하나로 그린다.
+   *
+   * 🚨 **읽기 전용이다.** 여기서 "준비했어요" 를 체크하지 않는다 — 준비 상태는 일정이 생긴 뒤 캘린더의
+   *    `EventItem.is_prepared` 다. 추천 단계에 체크박스를 두면 추천을 고르는 체크박스와 섞인다.
+   * 🚨 **서버가 아직 이 칸을 내리지 않는다** (#674 · `contract/schema-map.ts` 의 `allow`). 그때까지 실서버
+   *    응답에서는 빠져 오고, 화면은 빈 배열과 같게 영역을 세우지 않는다. 서버에 칸이 생기면 늘 배열이다.
+   */
+  items: string[];
   status: SuggestionStatus;
   /** 생성 +24h. 승인 없는 draft 는 여기서 만료된다 (NF-07). */
   expires_at: string;
@@ -295,15 +357,16 @@ export interface Suggestion {
 }
 
 /**
- * 또래 기준 일반 추천. 근거 Memory 가 부족한 후보는 개인화 **대신** 이것으로 나간다 (CLAUDE.md §2).
+ * 일반 추천. 근거 Memory 가 부족한 후보는 개인화 **대신** 이것으로 나간다 (CLAUDE.md §2).
  * ⚠️ 후보마다 정해지므로 한 응답에 `suggestions` 와 같이 실릴 수 있다 (#512 리뷰).
  *
  * 🚨 **`Suggestion` 과 별도 타입이고 응답에서도 별도 필드다.** 같은 배열에 플래그로 섞으면
  *    언젠가 근거 0건인 것이 개인화로 그려진다 (디자인 시스템 §7). 여기에는 `evidence` ·
  *    `source_refs` 필드가 **아예 없어서**, 개인화 목록(`SuggestionList`)에 넘기면 타입이 막는다.
  *
- * 🚨 **`basis` 는 서버 문구다.** "또래 기준" 이라는 말을 프론트가 지어내지 않는다 —
- *    무엇을 기준으로 골랐는지는 만든 쪽만 안다.
+ * 🚨 **`basis` 는 서버 문구다.** 무엇을 기준으로 골랐는지는 만든 쪽만 안다 — 막연한 요청이면
+ *    또래 기준이고, 보호자가 놀이를 정해 물었으면 그 요청에 맞춘 것이다 (#597). 응답에는 둘을 가르는
+ *    칸이 없어서 화면은 라벨에 "또래 기준" 을 붙이지 않고 이 문구를 그대로 보인다.
  */
 export interface GeneralSuggestion {
   id: string;
@@ -311,16 +374,27 @@ export interface GeneralSuggestion {
   agent: Agent;
   kind: "general";
   content: string;
-  /** "36개월 또래가 자주 찾는 놀이예요" 처럼 무엇을 기준으로 골랐는지. 서버가 만든다. */
+  /** 장소가 붙은 추천의 확인 문구. 개인화와 같은 칸이다 (`Suggestion.place_notice`). 장소가 없으면 `null`. */
+  place_notice: string | null;
+  /** 행사가 붙은 추천의 기간. 개인화와 같은 칸이다 (`Suggestion.event_starts_on`). 행사가 없으면 `null`. */
+  event_starts_on: string | null;
+  event_ends_on: string | null;
+  /** 위험 경고 문구. 개인화와 같은 칸이다 (`Suggestion.warnings`). 없으면 `[]`. */
+  warnings: string[];
+  /** "36개월 또래가 자주 찾는 놀이예요" · "요청하신 놀이를 바탕으로 골랐어요" 처럼 무엇을 기준으로 골랐는지. 서버가 만든다. */
   basis: string;
+  /** 필요한 재료 · 준비물. 개인화와 같은 칸 · 같은 원본이다 (`Suggestion.items` · #659). */
+  items: string[];
   status: SuggestionStatus;
   /** 생성 +24h. 개인화 추천과 같다. */
   expires_at: string;
   /** 그 Agent 도메인에 쌓인 기록 수 (04 `record_count` 와 같은 표). 🚨 카드의 "기록 N건" 은 이 값이다 — 0 도 그린다. */
   record_count: number;
   /**
-   * 🚨 **문서 행 근거다** (#249 · 최상위 §2 "일반은 문서 행을 근거로 단다"). 비어 오지 않는다 —
-   *    문서 근거가 없는 일반 추천은 서버가 만들지도 내보내지도 않는다.
+   * 🚨 **문서 행 근거다** (#249 · 최상위 §2 "일반은 문서 행을 근거로 단다").
+   * ⚠️ **비어 올 수 있다** (#597). 보호자가 놀이를 정해 물은 Activity 일반 추천은 그 요청이 기준이라
+   *    문서 행이 없어도 된다. 화면은 출처 줄 없이 `basis` 만 그린다 — 근거 0건을 개인화로 그릴 길은
+   *    여전히 없다 (`Suggestion` 과 타입이 다르다).
    *    아이 기록 근거(`Suggestion.evidence`)와 필드 이름까지 같지만 **다른 타입**이다.
    */
   evidence: DocEvidence[];
@@ -332,8 +406,14 @@ export interface GeneralSuggestion {
  * 🚨 출처(`source_org`)를 함께 보여 준다 — CC BY 문서는 출처 표시가 이용 조건이다.
  */
 export interface DocEvidence {
-  /** 문서 행 · 또는 Food 일반 추천이 고른 메뉴(`recipe_catalog`, #442). 화면은 `id` 만 키로 쓴다. */
-  ref: { kind: "food_doc" | "activity_doc" | "growth_doc" | "recipe_catalog"; id: string };
+  /**
+   * 문서 행 · Food 일반 추천이 고른 메뉴(`recipe_catalog`, #442) · Growth 도서 추천이 고른 책
+   * (`book_catalog` — 도서관 정보나루 서지 행. `title` 은 "제목(저자)"). 화면은 `id` 만 키로 쓴다.
+   */
+  ref: {
+    kind: "food_doc" | "activity_doc" | "growth_doc" | "recipe_catalog" | "book_catalog";
+    id: string;
+  };
   title: string;
   source_org: string;
   source_title: string;
@@ -352,11 +432,42 @@ export interface EventItem {
   prepared_at: string | null;
 }
 
+/**
+ * 얼마나 먼저 울릴지 (#594). 일정 종류마다 고를 수 있는 값이 다르다 — 맞지 않으면 422 invalid_reminder.
+ * 시간 있는 일정은 앞의 10개, 종일 일정은 `_9am` 4개(KST 오전 9시).
+ */
+export type ReminderLead =
+  | "at_start"
+  | "5m"
+  | "10m"
+  | "15m"
+  | "30m"
+  | "1h"
+  | "2h"
+  | "1d"
+  | "2d"
+  | "1w"
+  | "day_of_9am"
+  | "1d_9am"
+  | "2d_9am"
+  | "1w_9am";
+
+/** 내 알림. 보호자 개인 것이라 다른 보호자의 알림은 오지 않는다 (#594). */
 export interface Reminder {
-  id: string;
-  remind_at: string;
-  /** true 면 PATCH·DELETE 모두 409 already_sent. */
-  sent: boolean;
+  lead: ReminderLead;
+}
+
+/**
+ * `PUT /children/{cid}/events/{eid}/reminder` — 이 일정에 **내** 알림을 걸거나 바꾼다 (#594 · #609).
+ * 함께 보는 다른 보호자가 각자 거는 길이다. 지우기는 같은 주소의 `DELETE` (없어도 204).
+ * 🚨 승인 게이트가 아니다 (개인 설정). 최종 상태를 보내는 요청이라 Idempotency-Key 가 없다.
+ */
+export interface ReminderRequest {
+  lead: ReminderLead;
+}
+
+export interface ReminderResponse {
+  reminder: Reminder;
 }
 
 /**
@@ -375,7 +486,8 @@ export interface CalendarEvent {
   source_notice_id: string | null;
   source_refs: Ref[];
   items: EventItem[];
-  reminders: Reminder[];
+  /** 요청한 보호자 본인의 알림. 걸지 않았으면 null. */
+  reminder: Reminder | null;
 }
 
 /* ── 화면 응답 ────────────────────────────────────────────────────────── */
@@ -429,6 +541,19 @@ export interface CreateInputRequest {
   source: "home_input" | "photo" | (string & {});
   /** 🔶 되묻기에 대한 답일 때만. 그 질문이 나온 `run_id` (#158 리뷰 · 서버 #175). 못 찾으면 400. */
   reply_to?: string;
+  /** 흐린 위치. 위치 동의가 있고 휴대폰이 허용했을 때만 싣는다 (#593 · `InputLocation`). */
+  location?: InputLocation;
+}
+
+/**
+ * 휴대폰이 약 1km 로 흐려 보낸 좌표 (서버 `InputLocation` · #380). 소수점 둘째 자리다.
+ *
+ * 🚨 **`lib/location.ts` 의 `coarseLocation` 을 거친 값만 싣는다.** 서버도 한 번 더 줄이고, 위치 동의가
+ *    granted 가 아니면 버린다. 저장하지 않고 로그에도 남기지 않는다 — 웹도 같다.
+ */
+export interface InputLocation {
+  lat: number;
+  lon: number;
 }
 
 /**
@@ -485,7 +610,7 @@ export interface Guard {
  * "질문은 한 개까지만 드려요" 를 타입으로 못 박은 자리다 (CLAUDE.md §2).
  */
 export interface Scarcity {
-  /** 쌓인 기록 건수. 화면에 그대로 보여준다 — 숨기지 않는다. */
+  /** 일반 추천을 낸 Agent별 `record_count`의 합. 호환 필드이며 정상 안내 문구는 `general[].record_count`를 쓴다. */
   count: number;
   /**
    * Agent 가 되물었을 때만 있다. 🚨 **답하는 길(#246) 전에는 `options` 가 비어 온다** — 화면은
@@ -564,7 +689,7 @@ export interface SuggestionsResponse {
    */
   groups?: SuggestionGroup[] | null;
   /**
-   * 또래 기준 일반 추천. `scarcity` 가 있을 때만 채워진다. 근거가 부족한 후보가 개인화 **대신**
+   * 일반 추천. `scarcity` 가 있을 때만 채워진다. 근거가 부족한 후보가 개인화 **대신**
    * 나간 것이고, 후보마다 정해져서 `suggestions` 와 같이 채워질 수 있다 (#512 리뷰).
    * 서버 DTO 에서 optional 이라 `null` 이 올 수 있다.
    */
@@ -614,7 +739,7 @@ export interface AnswerRequest {
  * 🚨 **제출은 건별이다** (9/21 회의). 초안 여러 장을 한 요청으로 묶지 않는다.
  */
 
-/** 초안 안의 일정 본체. `CalendarEvent` 와 달리 `id` · `reminders` 가 없다 — 아직 행이 아니다. */
+/** 초안 안의 일정 본체. `CalendarEvent` 와 달리 `id` · `reminder` 가 없다 — 아직 행이 아니다. */
 export interface EventDraftFields {
   title: string;
   /**
@@ -711,6 +836,11 @@ export interface SubmitEventBody {
    * ⚠️ 키 이름과 모양이 미정이다 (§6 · #122 에서 "제안 경로 PR 에서 정한다" 로 남은 자리).
    */
   suggestion_ids?: string[];
+  /**
+   * 제출한 보호자 본인의 알림 (#594). 다른 보호자에게는 걸리지 않는다. 빼거나 `null` 이면 알림 없음.
+   * 🚨 수정(`PATCH`)에는 싣지 않는다 — 칸이 없으면 서버가 걸린 알림을 그대로 둔다 (`updateEventDraft`).
+   */
+  reminder?: Reminder | null;
 }
 
 /* ── 06 승인 ─────────────────────────────────────────────────────────── */
@@ -819,6 +949,153 @@ export interface CreateEventDraftsResponse {
  */
 export interface SubmitEventResponse {
   event: CalendarEvent;
+}
+
+/* ── 복약 초안 · 회차 (#537) ──────────────────────────────────────────── */
+
+/**
+ * 🚨 **초안 모양만 확정이다.** 정본은 `apps/api/app/core/medication_draft.py` 의 `MedicationDraft.to_payload()`
+ *    (#544). 제출 · 조회 · 체크 · 수정 경로와 본문은 서버 API(#520 · `app/api/v1/routers/medications.py`)와
+ *    맞췄다 — 짝은 `contract/schema-map.ts` 의 복약 절이고 계약 검사가 본다.
+ *
+ * 🚨 **시각을 화면이 계산하지 않는다.** `scheduled_time` · `notice_times` 는 서버가 기준 시각 + 오프셋으로 만든
+ *    값이다 (저녁 기준이 17:00 에서 19:00 으로 바뀐 것처럼 기준은 서버 상수다 · #546). 그래서 카드는 회차
+ *    시각을 고치는 칸을 두지 않는다 — 바꾸려면 대화로 다시 말한다.
+ */
+export type TimingAnchor = "fixed" | "wake_up" | "breakfast" | "lunch" | "dinner" | "bedtime";
+
+/** 보관. 🚨 보호자가 카드에서 고르는 선택 칸이다 — Agent 는 늘 `null` 로 낸다. */
+export type MedicationStorage = "room" | "fridge";
+/** 약 모양. 보관과 같은 선택 칸이다. */
+export type MedicationForm = "liquid" | "powder" | "tablet" | "ointment" | "drops";
+
+/** 하루 시각 패턴 한 칸. 날짜가 없다 — 제출 때 서버가 `starts_on` ~ `ends_on` 의 날마다 펼친다. */
+export interface MedicationDoseDraft {
+  timing_anchor: TimingAnchor;
+  /** 기준 시각에서 몇 분 앞뒤인가 (−120 ~ 180). `fixed` 면 0. */
+  offset_minutes: number;
+  /** `HH:MM`. `fixed` 일 때만 있다. */
+  fixed_time: string | null;
+  /** 실제로 울릴 시각 `HH:MM`. 🚨 서버가 계산한 값이다 — 화면은 그리기만 한다. */
+  scheduled_time: string;
+}
+
+/** 코스 한 건. 값이 없으면 `null` 이고, 필수 칸(`title` · `starts_on` · `ends_on`)이 비면 `missing` 에 실린다. */
+export interface MedicationScheduleDraft {
+  /** 🚨 원문에서 그대로 옮긴 약 이름이다 (모델이 바꾸지 않았는지 서버가 검사했다). 화면도 다듬지 않는다. */
+  title: string | null;
+  /** 용량. 원문 그대로. */
+  dosage: string | null;
+  /** 복약 이유. 원문 그대로. */
+  indication_text: string | null;
+  storage: MedicationStorage | null;
+  med_form: MedicationForm | null;
+  /** 투약의뢰서 특이사항. 보호자가 적는 선택 칸 — Agent 는 비워 둔다. */
+  note: string | null;
+  /** 증상 코드 — 서버가 사전으로 뽑는다. 🚨 화면이 고치지 않고 그대로 되돌려 보낸다. */
+  symptom_codes: string[];
+  /** `YYYY-MM-DD`. */
+  starts_on: string | null;
+  /** `YYYY-MM-DD`. 🚨 **무기한 코스가 없다** — 비면 제출할 수 없다 (회차 행을 기간만큼 미리 만든다). */
+  ends_on: string | null;
+}
+
+/** 수정 전 원본. 카드가 "19:30 → 20:00" 을 그리는 데 쓴다. */
+export interface MedicationSnapshot {
+  schedule: MedicationScheduleDraft;
+  doses: MedicationDoseDraft[];
+}
+
+/**
+ * 복약 초안 한 장. 🚨 **아직 아무것도 저장되지 않았다** — 제출이 승인 게이트 ㉡(건강 기록 확정)이다.
+ *
+ * 🚨 **`missing` 은 초안이 만들어질 때 비어 있던 칸이다.** 카드는 그 칸을 채우게 하고, 제출을 잠글지는
+ *    **지금 칸의 값**으로 정한다 (보호자가 채웠으면 풀린다).
+ */
+export interface MedicationDraft {
+  /** 🚨 화면 전용 키 — 서버는 읽지 않고 제출에도 싣지 않는다 (`EventDraft.draft_id` 와 같다). */
+  draft_id: string;
+  op: "create" | "update";
+  source: "utterance" | "prescription_ocr" | null;
+  schedule: MedicationScheduleDraft;
+  doses: MedicationDoseDraft[];
+  /** 실제로 울릴 시각 `HH:MM` 정렬. 🚨 **카드가 반드시 보여 준다** — 보호자가 승인하는 것이 이 시각이다. */
+  notice_times: string[];
+  /** 비어 있던 필수 칸 이름 (`title` · `starts_on` · `ends_on`). */
+  missing: string[];
+  /** 🚨 `update` 에만 있다. `create` 는 키 자체가 없다. */
+  schedule_id?: string;
+  before?: MedicationSnapshot;
+}
+
+/**
+ * 복약 초안 제출 본문 — 🚨 **승인 게이트 ㉡. 되돌릴 수 없는 지점.** (`docs/web/medication-v1.md` §5)
+ *
+ * 🚨 `op` 에 따라 엔드포인트가 갈린다 — create 는 `POST`, update 는 `PATCH …/{schedule_id}` (일정 초안과 같다).
+ * 🚨 보호자가 확인한 **최종 상태 전체**다. `doses` 는 초안의 시각 패턴을 그대로 되돌려 보낸다 —
+ *    `scheduled_time` 은 싣지 않는다 (서버 생성 컬럼이다).
+ * 🚨 `draft_id` · `notice_times` · `missing` · `before` 를 싣지 않는다 — 화면 전용이거나 서버가 다시 계산한다.
+ */
+export interface SubmitMedicationBody {
+  schedule: Omit<MedicationScheduleDraft, "title" | "starts_on" | "ends_on"> & {
+    title: string;
+    starts_on: string;
+    ends_on: string;
+  };
+  doses: Array<Omit<MedicationDoseDraft, "scheduled_time">>;
+  source: "utterance" | "prescription_ocr";
+}
+
+/** 복약 수정 본문. 🚨 `source` 는 수정에서 바뀌지 않아 싣지 않는다 — 나머지는 등록과 같다. */
+export type ReviseMedicationBody = Omit<SubmitMedicationBody, "source">;
+
+/** 회차 한 번. 🚨 **체크 칸이 곧 복용 기록이다** — 따로 로그가 없다 (`medication_dose` 1행). */
+export interface MedicationDose {
+  id: string;
+  /** 한국 시간 `YYYY-MM-DD`. */
+  dose_date: string;
+  /** `HH:MM`. 서버 생성 컬럼. */
+  scheduled_time: string;
+  /** 보호자가 체크한 시각. `null` 이면 미체크. */
+  checked_at: string | null;
+  /**
+   * 지금 체크 · 해제할 수 있는가. 🚨 **아직 오지 않은 날의 회차는 서버가 막는다** — 화면이 오늘과 비교해
+   *    정하지 않는다 (날짜 계산 · apps/web/CLAUDE.md §4).
+   */
+  checkable: boolean;
+}
+
+/** 진행 중인 코스 하나. 🚨 끝남 · 진행 중은 서버가 정한다 (`in_progress(today)` · #546). */
+export interface MedicationCourse {
+  id: string;
+  title: string;
+  dosage: string | null;
+  starts_on: string;
+  ends_on: string;
+  /** 하루에 울릴 시각 `HH:MM` 정렬. */
+  notice_times: string[];
+  /** 지금까지 온 날의 회차, 날짜 · 시각 순. 아직 오지 않은 날은 싣지 않는다. */
+  doses: MedicationDose[];
+}
+
+/** `GET /children/{cid}/medications`. 진행 중인 코스만 온다. */
+export interface MedicationsResponse {
+  /** 서버의 오늘 (한국 시간 `YYYY-MM-DD`). 🚨 화면이 오늘을 따로 구하지 않는다. */
+  today: string;
+  courses: MedicationCourse[];
+}
+
+/** 제출 · 수정 응답. 만든 · 고친 코스. */
+export interface SubmitMedicationResponse {
+  course: MedicationCourse;
+}
+
+/**
+ * `PUT /children/{cid}/medication-doses/{did}/check`. 체크 · 해제는 같은 상태를 두 번 보내도 결과가
+ * 같아서 Idempotency-Key 를 받지 않는다. 🚨 **승인 게이트가 아니다** — 되돌릴 수 있다.
+ */
+export interface CheckDoseRequest {
+  checked: boolean;
 }
 
 /**
@@ -1003,7 +1280,7 @@ export interface ReceivedGeneralSuggestion extends Pick<
   kind: "general";
 }
 
-/** 07 피드백 목록 한 줄. 🚨 **`kind` 로 가른다** — 일반 추천은 "또래 기준 일반 추천" 을 화면에 적는다. */
+/** 07 피드백 목록 한 줄. 🚨 **`kind` 로 가른다** — 일반 추천은 "일반 추천" 을 화면에 적는다. */
 export type ReceivedSuggestion = Suggestion | ReceivedGeneralSuggestion;
 
 /**
@@ -1220,6 +1497,87 @@ export interface StoredRef {
   id: string;
 }
 
+/* ── 조회 · 삭제 카드 (#535) ─────────────────────────────────────────────
+ * 대화로 기록 · 일정을 찾거나 지울 때 답 아래 붙는 탭 카드. run 화면(SSE `found_tabs` · `delete_proposal`)과
+ * 지난 대화가 같은 모양이다. 흐름과 이유는 서버 `docs/api/delete-proposal-v1.md`, 화면 규칙은
+ * `docs/web/chat-run-v1.md` §5.
+ */
+
+/** 탭 하나 = 조회 tool 하나. 순서는 서버가 정한 그대로 그린다 (식사 · 건강 · 교육 · 놀이 · 생활습관 · 일정). */
+export type CardTabKind = ObservationKind | "event";
+
+/**
+ * 🚨 **`records` 와 `events` 는 늘 둘 다 있다.** 관찰 탭이면 `events` 가, 일정 탭이면 `records` 가 빈 배열이다.
+ *    그사이 지워진 행은 빠진 채로 오고, 행이 하나도 없는 탭은 통째로 빠진다.
+ */
+export interface CardTab {
+  kind: CardTabKind;
+  /** 최근 40건만 실었다. 🚨 전체 건수는 오지 않는다 — "더 있어요" 만 말한다. */
+  truncated: boolean;
+  /** 조회 순서(오래된 순). 관찰 탭의 `observation_health` 는 건강 모양이다. */
+  records: Observation[];
+  events: CalendarEvent[];
+}
+
+export interface ProposalTab extends CardTab {
+  /**
+   * AI 가 요청에 맞아 고른 id — 기본 체크. 🚨 **탭 안 두 묶음("요청에 맞는" · "나머지")을 가르는 기준이다.**
+   *    체크를 바꿔도 묶음은 이 값으로 고정한다 (행이 묶음 사이를 옮겨 다니지 않는다).
+   */
+  picked_ids: string[];
+}
+
+/** 조회 답변 · 수정 후보 카드. 🚨 보기 전용이다 — 준비물 체크도 이 카드에서는 바꾸지 않는다. */
+export interface FoundTabs {
+  tabs: CardTab[];
+}
+
+/**
+ * 삭제 제안의 상태. 🚨 `expired` 는 지난 대화에서만 온다 — run 화면의 카드는 늘 `pending` 이라
+ * 화면이 `expires_at` 으로 닫는다.
+ */
+export type DeleteProposalStatus = "pending" | "deleted" | "cancelled" | "expired";
+
+/**
+ * 삭제 제안 카드. 버튼은 `POST …/delete-proposals/{proposal_id}/confirm · cancel`.
+ *
+ * 🚨 **AI 는 지우지 않는다.** 보호자가 체크를 고치고 두 번 눌러야 서버가 **후보 안의 체크한 것만** 지운다.
+ * 🚨 끝난 제안은 `tabs: []` 와 `status` · `result` 만 온다 — 지운 원문을 다시 보이지 않는다.
+ */
+export interface DeleteProposalCard {
+  proposal_id: string;
+  status: DeleteProposalStatus;
+  /** 이 시각이 지나면 누를 수 없다(만든 뒤 24시간). 누르면 409 `proposal_expired` 다. */
+  expires_at: string;
+  /**
+   * 종류별 **실제로 지운** 건수 (`{ observation_food: 30, event: 1 }`). `deleted` 가 아니면 `null`.
+   * 🚨 한 줄 요약은 체크한 수가 아니라 이 값으로 그린다 — 그사이 다른 경로로 지워진 행은 세지 않아서 더 적을 수 있다.
+   */
+  result: Record<string, number> | null;
+  tabs: ProposalTab[];
+}
+
+/** `POST /children/{cid}/delete-proposals/{pid}/confirm` 의 본문. 🚨 `Idempotency-Key` 가 필수다. */
+export interface ConfirmDeleteProposalRequest {
+  /** 체크한 행의 id. 🚨 **후보 안의 것만** — 하나라도 밖이면 422 `not_in_proposal` 이고 아무것도 안 지운다. */
+  ids: string[];
+}
+
+/** 서버 `MAX_CONFIRM_IDS`(탭 6 × 40건)와 같은 값이다. 한쪽만 바꾸지 않는다. */
+export const CONFIRM_DELETE_MAX_IDS = 240;
+
+export interface DeleteProposal {
+  id: string;
+  status: DeleteProposalStatus;
+  expires_at: string;
+  result: Record<string, number> | null;
+}
+
+/** 확정 · 취소의 응답. 🚨 카드는 이 `proposal` 로 접는다 — 체크한 수로 요약을 만들지 않는다. */
+export interface DeleteProposalResponse {
+  proposal: DeleteProposal;
+}
+
 /**
  * 지난 턴의 답 하나. 🚨 **run 화면(SSE)과 같은 이름 · 같은 칸이다** — `type` 을 떼어 `data` 로 감싸면
  * 그대로 `RunEvent` 가 되어 `runReducer` 에 흘릴 수 있다 (`lib/chat-history.ts`).
@@ -1228,6 +1586,8 @@ export interface StoredRef {
  * - `saved` — 관찰은 **지금 모습**으로 온다(건강 기록 포함). 보호자가 지운 기록은 내용 없이 `deleted` 에 id 만 온다.
  * - `event_draft` — 🚨 **그때 만든 내용 그대로다.** 초안은 서버에 남지 않아서 지금 상태가 없다 — 읽기 전용으로만 그린다.
  * - `agent_result` — 추천의 **지금 상태**(`suggestions`)가 같이 온다. 고를 수 있는 것이 없으면 "후보 보기" 를 세우지 않는다.
+ * - `found_tabs` — 서버는 (종류, id) 만 남기고 지금 상태로 다시 읽어 준다. 그사이 지운 기록은 빠진다 (#535).
+ * - `delete_proposal` — 결정 전이면 후보와 기본 체크를 그대로, 끝났으면 `tabs: []` 와 `status` · `result` 만 (#535).
  * - `done` — `completed` 만 온다. 늘 마지막이다.
  * - 오지 않는 것 — `step` · `ping` · `offer` · `promoted` · `failed`(실패한 run 은 남기지 않는다).
  */
@@ -1236,6 +1596,8 @@ export type ChatReply =
   | ({ type: "guidance" } & GuidanceEvent)
   | ({ type: "unavailable" } & UnavailableEvent)
   | ({ type: "saved"; deleted: StoredRef[] } & SavedEvent)
+  | ({ type: "found_tabs" } & FoundTabs)
+  | ({ type: "delete_proposal" } & DeleteProposalCard)
   | ({ type: "event_draft" } & EventDraftsEvent)
   | ({ type: "agent_result" } & AgentResultEvent & Required<Pick<AgentResultEvent, "suggestions">>)
   | ({ type: "partial" } & PartialEvent)
@@ -1698,7 +2060,8 @@ export interface DevScreeningResponse {
  * 전부 선택이지만 **하나는 있어야 한다** — 빈 본문은 400 이다 (서버 PR #353). 화면은 아무것도
  * 안 적으면 보내지 않고, "건너뛰기" 는 요청 없이 홈으로 간다.
  *
- * 🚨 **키 · 몸무게는 서버가 소수 한 자리로 반올림해 저장한다.** 범위는 `lib/measurement.ts`.
+ * 🚨 **키 · 몸무게는 칸별 범위 밖이거나 소수 둘째 자리부터 적으면 400 이다** (#628).
+ *    범위는 `lib/measurement.ts`.
  *
  * ⚠️ **계약서 §05 의 본문과 달라졌다** (확정 전). 01 등록 화면을 "꼭 필요한 것" 만 남기고
  *    **고를 수 있는 것을 전부 이 화면으로 미루면서** 바뀌었다 —
@@ -1804,6 +2167,38 @@ export interface ConsentsResponse {
 }
 
 /* ── 10 설정 ─────────────────────────────────────────────────────────── */
+
+/** 푸시를 받는 기기의 종류 (#605). ⚠️ `ios` 는 서버에 남아 있지만 쓰지 않는다 — iOS 는 하지 않는다. */
+export type PushPlatform = "web" | "android" | "ios";
+
+/**
+ * `PUT /me/push-device` — 이 로그인의 기기로 FCM 토큰을 맡긴다 (#605 · #609). 204.
+ *
+ * 🚨 **기기는 로그인 1건에 묶인다.** 로그아웃 · 세션 만료 · 탈퇴 때 서버가 함께 지운다. 그래서 앱을 켤 때 ·
+ *    로그인 직후 · 토큰이 바뀔 때마다 다시 부른다 (`lib/push/web-push.ts`). 로그아웃 때 따로 지우지 않는다.
+ * 🚨 토큰은 본문으로만 보낸다 — 주소에 실으면 접근 로그에 남는다. 웹 코드는 웹 저장소에도 두지 않는다
+ *    (Firebase SDK 가 IndexedDB 에 두는 것은 `docs/web/web-push-v1.md` "토큰이 남는 곳").
+ *    키가 없다 — 같은 토큰을 여러 번 보내도 결과가 같다.
+ */
+export interface PushDeviceRequest {
+  token: string;
+  platform: PushPlatform;
+}
+
+/**
+ * `GET` / `PUT /me/notification-settings` — 10 설정의 알림 스위치 (#594 · #609).
+ *
+ * 🚨 **보호자 단위다.** 아이마다가 아니고, 내 모든 기기에 함께 적용된다. 기기 하나만 끄는 것은
+ *    휴대폰의 알림 권한이 한다 (#605 — 기기별 끄기 칸을 지웠다).
+ * 🚨 **끄면 발송만 멈춘다.** 걸어 둔 알림은 남아서, 다시 켜면 아직 오지 않은 것부터 울린다.
+ * 🚨 **`PUT` 은 두 칸을 함께 보낸다.** 한 칸만 보내면 400 이다 — 바꾸지 않는 칸은 받은 값을 그대로 싣는다.
+ *    바꾼 적 없으면 서버 기본값이 온다. 승인 게이트가 아니라 Idempotency-Key 가 없다.
+ */
+export interface NotificationSettings {
+  schedule_enabled: boolean;
+  /** ⚠️ 복약 알림 발송은 아직 없다 (#594 범위 밖). 화면이 이 칸을 그리지 않는다. */
+  medication_enabled: boolean;
+}
 
 /**
  * GET /children/{cid}/parents (계약서 §07). "함께 보는 보호자".

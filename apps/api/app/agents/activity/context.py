@@ -12,11 +12,13 @@ from datetime import date, datetime, tzinfo
 from functools import partial
 from uuid import UUID
 
+from app.agents.activity.areas import Area
 from app.agents.activity.schemas.common import DayLabel
 from app.agents.activity.store.ports import (
     ActivityDocRow,
     ActivityPorts,
     CoarseLocation,
+    EventRow,
     PlaceRow,
     SafetyEntry,
     UnwiredSafety,
@@ -36,11 +38,22 @@ class ActivityRunState:
 
     출력 tool 이 `EvidencePick.id`를 공통 `EvidenceCitation`으로 바꿀 때 이 표를 본다 —
     이번 run 에서 실제로 조회한 것만 인용할 수 있다. 없는 id 는 후보를 거절한다 (D6).
-    `place_name` 도 같다 — `search_nearby_places` 가 돌려준 이름만 쓸 수 있다.
+    `place_name` 도 같다 — `search_nearby_places` · `search_events` 가 돌려준 이름만 쓸 수 있다.
     """
 
     seen_evidence: dict[UUID, RankedEvidence] = field(default_factory=dict)
     seen_places: dict[str, PlaceRow] = field(default_factory=dict)  # 이름 → 장소
+    seen_events: dict[str, EventRow] = field(default_factory=dict)  # 이름 → 행사
+    # 보호자 요청 글. run() 이 모델을 부르기 전에 채운다. 모델이 지어낸 값을 받지 않으려고 이 글과
+    # 대조한다 — 장소 조회의 `area`(`areas.said`), 출력 tool 의 requested_play(#597 리뷰)
+    request_texts: tuple[str, ...] = ()
+    # 보호자가 말한 지역(`areas.find_area`). 장소 조회가 찾으면 넣는다. 있으면 이 run 의 장소 ·
+    # 날씨는 그 지역 대표 지점 기준이다(`ActivityContext.outing_location`). 한 run 에 한 지역이다
+    area: Area | None = None
+    # 그 지역에서 찾은 장소 · 행사 이름. 보호자가 그 자리에 있지 않아서 출력 검증이 "근처" 를 막는다
+    area_places: set[str] = field(default_factory=set)
+    # 지역 이름을 받았는데 못 찾았다. 결과에 한 줄 안내를 붙인다 — 뒤에 찾으면 거둔다
+    area_missed: bool = False
     # 프롬프트 [예시]에 실은 문서 행. run() 이 모델을 부르기 전에 채운다. 일반 추천은 이 행을
     # 근거로 단다 — 아이 기록이 아니라 개인화로 세지 않는다 (루트 §2)
     seen_docs: dict[UUID, ActivityDocRow] = field(default_factory=dict)
@@ -54,9 +67,6 @@ class ActivityRunState:
     weather: dict[date, WeatherBrief] = field(default_factory=dict)
     # 출력 검증을 통과한 추천. run() 이 DomainAgentResult.suggestions 로 넘긴다
     suggestions: tuple[SuggestionDraft, ...] = ()
-    # suggestions 와 같은 순서로 짝지은 위험 용어 경고 문구(사전의 warning_text 상수).
-    # 화면에 어떻게 실을지는 아직 정하지 않았다 — 공통 SuggestionDraft 에 칸이 없다
-    warnings: tuple[tuple[str, ...], ...] = ()
     # 식품 사전에 없는 알레르기 이름(꽃가루 · 라텍스)의 확인 문구 (D7). 후보마다가 아니라 run 에
     # 한 벌이다. 화면 자리는 #249 를 따르므로, 그 전까지 여기에 둔다
     cautions: tuple[str, ...] = ()
@@ -86,9 +96,17 @@ class ActivityContext:
         return today_of(self.now, self.timezone)
 
     @property
+    def outing_location(self) -> CoarseLocation | None:
+        """장소 · 날씨 · 일몰의 기준점. 보호자가 지역을 말했으면 그 지역 대표 지점, 아니면 보호자
+        위치다. 둘 다 없으면 None."""
+        area = self.state.area
+        return area.location if area is not None else self.location
+
+    @property
     def grid(self) -> WeatherGrid | None:
-        """날씨 포트에 넘길 기상청 격자. 좌표 대신 이것만 밖으로 나간다."""
-        return self.location.grid if self.location is not None else None
+        """날씨 포트에 넘길 기상청 격자(`outing_location` 의). 좌표 대신 이것만 밖으로 나간다."""
+        location = self.outing_location
+        return location.grid if location is not None else None
 
     def for_task(self) -> "ActivityContext":
         """task 하나 몫의 context. run state 만 새로 만든다.
@@ -110,9 +128,10 @@ async def build_gate(context: ActivityContext, *, outdoor_ok: bool) -> Gate:
     - 동의가 있는데 조회가 실패하면 `safety_ok=False`. 실패를 빈 목록으로 숨기지 않는다
       (공용 `read_safety_basis()`).
       이 값이면 registry 가 Activity 를 통째로 닫는다 — 모델 0회 (D7).
-    - `has_location` 은 좌표가 있는가. 장소 · 날씨 어댑터가 주입됐는지는 `data.places` ·
-      `data.weather` 다 — 좌표만 있고 어댑터가 없을 때 tool 을 열면 늘 실패한다. 둘 다 있어야
-      그 tool 이 열린다 (`gating.opens`).
+    - `has_location` 은 좌표가 있는가. 장소 · 날씨 · 행사 어댑터가 주입됐는지는 `data.places` ·
+      `data.weather` · `data.events` 다 — 좌표만 있고 어댑터가 없을 때 tool 을 열면 늘
+      실패한다. 둘 다 있어야 그 tool 이 열린다 (`gating.opens`). 행사는 일정 포트까지 있어야
+      한다 — 열리는 날을 모르면 기간으로 메우지 않는다.
     - `outdoor_ok` 는 호출부가 날씨를 먼저 조회해 넘긴다. 장소 조회가 실내 종류로
       좁혀지는지가 이 값에 걸려 있어서다 (3-2).
     """
@@ -137,5 +156,9 @@ async def build_gate(context: ActivityContext, *, outdoor_ok: bool) -> Gate:
         allergy_states=basis.allergy_states,
         has_location=context.location is not None,
         outdoor_ok=outdoor_ok,
-        data=DataReady(places=ports.places is not None, weather=ports.weather is not None),
+        data=DataReady(
+            places=ports.places is not None,
+            weather=ports.weather is not None,
+            events=ports.events is not None and ports.event_schedules is not None,
+        ),
     )

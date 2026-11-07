@@ -319,6 +319,66 @@ async def test_event_drafts_food_items_merged_once(
     assert all(i["item_id"] is None for i in draft["items"])
 
 
+async def test_event_drafts_food_core_items_merged_once(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    """주재료만 남긴 food 둘을 한 끼로 묶어도 핵심 재료는 처음 나온 순서로 한 번씩이다 (#474)."""
+    s1 = await _make_suggestion(
+        session,
+        child_id=cid,
+        agent=SuggestionAgent.FOOD,
+        status=SuggestionStatus.APPROVED,
+        items=["두부", "시금치"],
+    )
+    s2 = await _make_suggestion(
+        session,
+        child_id=cid,
+        agent=SuggestionAgent.FOOD,
+        status=SuggestionStatus.APPROVED,
+        items=["두부", "당근"],
+    )
+    headers, _ = bearer
+    resp = await db_client.post(
+        f"/api/v1/children/{cid}/suggestions/event-drafts",
+        json={"suggestion_ids": [str(s1.id), str(s2.id)]},
+        headers=headers,
+    )
+    assert resp.status_code == 201
+    [draft] = resp.json()["drafts"]
+    assert [i["item_name"] for i in draft["items"]] == ["두부", "시금치", "당근"]
+
+
+async def test_event_drafts_food_without_items_make_empty_draft_items(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    """주재료가 없거나 모두 상비 재료라 items 가 비어도 초안은 만들어지고 준비물만 빈다 (#474).
+
+    Activity 준비물은 그대로이고, food 초안과 섞이지 않는다.
+    """
+    food = await _make_suggestion(
+        session,
+        child_id=cid,
+        agent=SuggestionAgent.FOOD,
+        status=SuggestionStatus.APPROVED,
+        items=[],
+    )
+    activity = await _make_suggestion(
+        session, child_id=cid, status=SuggestionStatus.APPROVED, items=["돗자리", "물통"]
+    )
+    headers, _ = bearer
+    resp = await db_client.post(
+        f"/api/v1/children/{cid}/suggestions/event-drafts",
+        json={"suggestion_ids": [str(food.id), str(activity.id)]},
+        headers=headers,
+    )
+    assert resp.status_code == 201
+    by_suggestion = {
+        tuple(d["suggestion_ids"]): [i["item_name"] for i in d["items"]]
+        for d in resp.json()["drafts"]
+    }
+    assert by_suggestion == {(str(food.id),): [], (str(activity.id),): ["돗자리", "물통"]}
+
+
 async def test_event_drafts_items_stay_with_their_suggestion(
     db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
 ):
@@ -753,3 +813,78 @@ async def test_submit_event_with_items(db_client: AsyncClient, bearer: Bearer, c
     items = resp.json()["event"]["items"]
     assert len(items) == 2
     assert {i["item_name"] for i in items} == {"도시락", "물통"}
+
+
+async def test_Redis_가_죽으면_일정_등록은_503_이고_아무것도_저장하지_않는다(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID, monkeypatch
+):
+    """#671 — 장애 직전에 Redis 에 적힌 키는 장애 동안 안 보여서, 같은 키 재시도가 일정을
+    하나 더 만든다. 되돌릴 수 없는 쓰기(승인 게이트 ㉠)라 메모리로 넘어가지 않고 막는다
+    (docs/api/idempotency-v1.md §3-6).
+    """
+    import redis
+
+    from app.domains.schedule.models import Event
+
+    idempotency.clear()
+    down = redis.Redis(host="127.0.0.1", port=1, socket_connect_timeout=0.2)
+    monkeypatch.setattr(idempotency, "get_redis", lambda: down)
+    headers, _ = bearer
+
+    resp = await db_client.post(
+        f"/api/v1/children/{cid}/events",
+        json={
+            "event": {
+                "title": "장애 중 일정",
+                "starts_at": "2026-10-10T15:00:00+09:00",
+                "ends_at": None,
+                "all_day": False,
+                "event_type": "episodic",
+                "category": "activity",
+            },
+            "items": [],
+        },
+        headers={**headers, "Idempotency-Key": "redis-down-1"},
+    )
+
+    assert resp.status_code == 503
+    assert resp.json()["error"]["code"] == "temporarily_unavailable"
+    assert (await session.scalars(select(Event).where(Event.child_id == cid))).all() == []
+
+
+async def test_Redis_가_쓰기만_거절해도_같은_키로_일정이_두_번_생기지_않는다(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID, monkeypatch
+):
+    """#671 리뷰 — RDB 저장 실패(MISCONF)면 GET 은 되고 SET 만 거절된다. GET 만 보고 통과시키면
+    저장 · commit 뒤 키를 못 남겨 같은 키 재시도가 일정을 하나 더 만든다."""
+    from app.domains.schedule.models import Event
+    from tests.unit.api.test_idempotency_redis import WriteRefused
+
+    idempotency.clear()
+    monkeypatch.setattr(idempotency, "get_redis", lambda: WriteRefused())
+    headers, _ = bearer
+    body = {
+        "event": {
+            "title": "쓰기 거절 중 일정",
+            "starts_at": "2026-10-10T15:00:00+09:00",
+            "ends_at": None,
+            "all_day": False,
+            "event_type": "episodic",
+            "category": "activity",
+        },
+        "items": [],
+    }
+
+    codes = [
+        (
+            await db_client.post(
+                f"/api/v1/children/{cid}/events",
+                json=body,
+                headers={**headers, "Idempotency-Key": "misconf-1"},
+            )
+        ).status_code
+        for _ in range(2)
+    ]
+
+    assert codes == [503, 503]
+    assert (await session.scalars(select(Event).where(Event.child_id == cid))).all() == []

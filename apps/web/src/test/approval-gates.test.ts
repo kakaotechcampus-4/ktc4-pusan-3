@@ -5,10 +5,12 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 /**
- * 승인 게이트가 **딱 2곳**인 것을 코드로 건다 (최상위 CLAUDE.md §2 실행 · #242).
+ * 승인 게이트가 **딱 3곳**인 것을 코드로 건다 (최상위 CLAUDE.md §2 실행 · #242 · #754).
  *
  *   ㉠ 캘린더 쓰기 — 초안 제출 (`submitEventDraft` · `updateEventDraft`)
- *   ㉡ 건강·알레르기 기록 확정 — 등록 `addHealthSafety` · 고치기 `updateHealthSafety`
+ *   ㉡ 건강·알레르기 기록 확정 — 등록 `addHealthSafety` · 고치기 `updateHealthSafety` ·
+ *      복약 초안 제출 `submitMedicationDraft` · `updateMedicationDraft` (#537 — 같은 게이트의 다른 메서드)
+ *   ㉢ 대화로 지울 때의 삭제 확정 — `confirmDeleteProposal` (#535 · 11-03 팀 회의)
  *
  * 브라우저 테스트(`e2e/`)는 "이 화면에서 뜬다" 는 보여도 "다른 곳에서는 안 뜬다" 는 모든 경로를
  * 돌아야 증명된다. 그래서 **어디서 부를 수 있는가**를 파일 목록으로 고정한다.
@@ -16,6 +18,8 @@ import { describe, expect, it } from "vitest";
  * 🚨 이 테스트가 깨졌다면 목록을 고치기 전에 묻는다 — 게이트를 **늘리는** 변경인가?
  *    늘리지도 줄이지도 않는다 (§2). 같은 게이트를 다른 화면으로 옮긴 것이면 목록을 고치고,
  *    그 이유를 PR 에 적는다 (11-2 가 시트에서 화면으로 옮겨 온 것처럼 · apps/web/CLAUDE.md §3).
+ * 🚨 **게이트 표식(`btn-approve` · `caution`)은 ㉠ ㉡ 전용이다** (최상위 §2). ㉢ 은 파괴적 확정이라 `btn-danger` 를 쓰고,
+ *    아래 표식 목록에 그 카드가 없는 것으로 같이 걸린다.
  */
 
 const SRC = fileURLToPath(new URL("..", import.meta.url));
@@ -70,6 +74,22 @@ describe("승인 게이트 ㉡ 건강·알레르기 확정", () => {
   it("고치기는 02/11 의 고치기 시트에서만 부른다 (#375 · 등록과 같은 게이트의 다른 메서드)", () => {
     expect(callers("updateHealthSafety")).toEqual(["components/health-safety-list.tsx"]);
   });
+
+  it("복약 제출은 04 '찾은 복약' 시트의 초안 목록에서만 부른다 (#537 · 같은 게이트의 다른 메서드)", () => {
+    expect(callers("submitMedicationDraft")).toEqual(["components/medication-draft-list.tsx"]);
+    expect(callers("updateMedicationDraft")).toEqual(["components/medication-draft-list.tsx"]);
+  });
+});
+
+/**
+ * 🚨 **게이트 ㉢ 대화의 삭제 확정** (#535). 지운 기록은 되살릴 수 없어 사람이 버튼으로 확정한다 — 채팅 "응" 을 모델이 해석하던
+ *    빈 게이트를 채운 것이다 (11-03 팀 회의 · 최상위 §2 는 #754). 표식(approve · caution)은 ㉠ ㉡ 전용이라 쓰지 않는다 —
+ *    아래 표식 목록에 이 카드가 없는 것으로 같이 걸린다.
+ */
+describe("대화의 삭제 확정 (#535)", () => {
+  it("확정은 04 대화의 삭제 카드에서만 부른다", () => {
+    expect(callers("confirmDeleteProposal")).toEqual(["components/record-tabs-card.tsx"]);
+  });
 });
 
 describe("게이트 표식은 게이트 안에만", () => {
@@ -77,6 +97,7 @@ describe("게이트 표식은 게이트 안에만", () => {
     expect(filesMatching(/variant="approve"/).filter((path) => !DESIGN_SYSTEM.test(path))).toEqual([
       "components/event-draft-card.tsx",
       "components/health-safety-list.tsx",
+      "components/medication-draft-card.tsx",
       "components/photo-entry-sheet.tsx",
       "components/safety-scan-review.tsx",
     ]);
@@ -87,6 +108,7 @@ describe("게이트 표식은 게이트 안에만", () => {
   const CAUTION_ALLOWED = [
     "components/event-draft-card.tsx",
     "components/health-safety-list.tsx",
+    "components/medication-draft-card.tsx",
     "components/photo-entry-sheet.tsx",
     "components/safety-check-sheet.tsx",
     "components/safety-scan-review.tsx",
@@ -98,6 +120,17 @@ describe("게이트 표식은 게이트 안에만", () => {
     expect(filesMatching(CAUTION).filter((path) => !DESIGN_SYSTEM.test(path))).toEqual(
       CAUTION_ALLOWED,
     );
+  });
+
+  /**
+   * 🚨 **복약 회차 체크는 게이트가 아니다** (#537). 되돌릴 수 있는 체크라 게이트 표식이 서면 게이트가 는 것처럼
+   *    읽힌다 — 위 두 목록에 11-3 화면이 없는 것으로도 걸리지만, 이유를 이름으로 남긴다.
+   */
+  it("복약 회차 체크 화면에는 게이트 표식이 없다", () => {
+    const page = "app/child/[childId]/profile/medications/page.tsx";
+    expect(sources.has(page)).toBe(true);
+    expect(filesMatching(/variant="approve"/)).not.toContain(page);
+    expect(filesMatching(CAUTION)).not.toContain(page);
   });
 
   it("approve 높이 토큰은 Button primitive 한 곳에서만 쓴다", () => {

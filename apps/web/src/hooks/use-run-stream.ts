@@ -6,6 +6,7 @@ import { useCallback, useEffect, useReducer, useRef } from "react";
 import { qk } from "@/lib/api/queryKeys";
 import {
   isDraftEvent,
+  isMedicationDraftEvent,
   streamRunEvents,
   type AgentResultEvent,
   type DoneEvent,
@@ -13,6 +14,7 @@ import {
   type FailedEvent,
   type GuidanceEvent,
   type LaneEvent,
+  type MedicationDraftsEvent,
   type NoteEvent,
   type OfferEvent,
   type ParsedEvent,
@@ -22,7 +24,15 @@ import {
   type StepEvent,
   type UnavailableEvent,
 } from "@/lib/api/sse";
-import type { Agent, EventDraft, Observation } from "@/lib/api/types";
+import type {
+  Agent,
+  CardTab,
+  DeleteProposalCard,
+  EventDraft,
+  FoundTabs,
+  MedicationDraft,
+  Observation,
+} from "@/lib/api/types";
 
 /**
  * 04 대화 · 08 사진 분석 — run 이벤트 스트림 상태.
@@ -103,6 +113,22 @@ export interface RunState {
    */
   drafts: EventDraft[];
   /**
+   * Health 가 만든 복약 초안 (#537). 🚨 **일정 초안과 다른 칸이다** — 제출이 게이트 ㉡(건강 기록 확정)이고
+   *    모양도 다르다. 한 배열에 섞으면 카드가 게이트를 갈라야 한다. 08 사진 run 에서는 늘 빈 배열이다.
+   */
+  medicationDrafts: MedicationDraft[];
+  /**
+   * 조회 카드의 탭 (#535 · `found_tabs`). 🚨 **보기 전용이다** — 기록을 찾아 보여 줄 뿐 아무것도 저장하지 않았다.
+   *    run 당 한 장이라 마지막 것이 남는다. 비어 있으면 카드를 세우지 않는다.
+   */
+  foundTabs: CardTab[];
+  /**
+   * 삭제 제안 카드 (#535 · `delete_proposal`). 🚨 **AI 는 지우지 않았다** — 보호자가 카드에서 체크를 고치고 두 번
+   *    눌러야 서버가 지운다. run 화면의 카드는 늘 `pending` 으로 온다 (만료는 화면이 `expires_at` 으로 본다).
+   *    run 당 한 장이라 마지막 것이 남는다.
+   */
+  deleteProposal: DeleteProposalCard | null;
+  /**
    * 🚨 **서버가 `failed` 로 말한 실패만 들어온다.** 연결이 끊긴 경우는 여기 오지 않는다 —
    *    그건 `unconfirmed` 다. 둘을 섞으면 화면이 "아무것도 저장하지 않았어요" 라고 단정한다.
    */
@@ -132,6 +158,9 @@ export const initialRunState: RunState = {
   unavailable: [],
   agentResults: [],
   drafts: [],
+  medicationDrafts: [],
+  foundTabs: [],
+  deleteProposal: null,
   failure: null,
   interrupted: false,
 };
@@ -222,6 +251,13 @@ export function runReducer(state: RunState, action: RunAction): RunState {
             agentResults: [...state.agentResults, action.event.data as AgentResultEvent],
           };
 
+        // 조회 · 삭제 카드 (#535). 🚨 둘 다 **끝이 아니다** — 스트림은 done 까지 이어진다.
+        case "found_tabs":
+          return { ...state, foundTabs: (action.event.data as FoundTabs).tabs };
+
+        case "delete_proposal":
+          return { ...state, deleteProposal: action.event.data as DeleteProposalCard };
+
         // 🚨 **아무것도 하지 않는 것이 맞다** (#140). 조용한 채널의 하트비트라 담을 것이 없고,
         //    20초 타이머는 `pumpRunEvents` 의 `onEvent` 가 이미 되살렸다. 여기서 state 를 새로
         //    만들면 10초마다 04 화면이 통째로 다시 그려진다.
@@ -254,6 +290,11 @@ export function runReducer(state: RunState, action: RunAction): RunState {
           if (isDraftEvent(action.event.type)) {
             const { drafts } = action.event.data as EventDraftsEvent;
             return { ...state, drafts: [...state.drafts, ...drafts] };
+          }
+          // 복약 초안은 일정 초안과 다른 칸에 쌓는다 (#537 · `MEDICATION_DRAFT_EVENT`).
+          if (isMedicationDraftEvent(action.event.type)) {
+            const { drafts } = action.event.data as MedicationDraftsEvent;
+            return { ...state, medicationDrafts: [...state.medicationDrafts, ...drafts] };
           }
           return state;
       }

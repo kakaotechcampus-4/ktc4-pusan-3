@@ -99,6 +99,29 @@ class TestRecomputeProfile:
         assert r2.state == state1
         assert r2.strength == str1
 
+    async def test_호출자가_아직_flush_하지_않은_값을_지우지_않는다(self, session, family):
+        """recompute_profile 은 잠근 뒤 DB 값으로 다시 채운다(populate_existing, #636).
+
+        그 전에 autoflush 가 호출자의 변경을 먼저 써야 한다 — 아니면 Correction 이 깎은 strength
+        같은 값이 조용히 사라진다.
+        """
+        _, child = family
+        today = date(2026, 9, 26)
+        profile = _profile(child.id, last_observed_on=today, state="confirmed")
+        session.add(profile)
+        await session.flush()
+        for i in range(3):
+            session.add(_food_obs(child.id, profile.id, observed_on=today - timedelta(days=i)))
+        await session.flush()
+
+        from app.domains.memory.profile.service import recompute_profile
+
+        profile.strength = 0.8  # flush 하지 않는다
+        result = await recompute_profile(session, profile_id=profile.id, today=today)
+
+        assert result.state == ProfileState.CONFIRMED  # 전이 없음 — 보정 계수가 안 붙는다
+        assert result.strength == pytest.approx(0.8)
+
     async def test_21일_초과면_archived(self, session, family):
         _, child = family
         today = date(2026, 9, 26)

@@ -34,6 +34,7 @@ from app.agents.common.config import AgentSettings
 from app.agents.common.datetime_rules import DateRange
 from app.agents.common.llm_client import LLMClient
 from app.agents.memory.agent import MemoryAgentResult, run
+from app.agents.memory.bundles import MUTATING_PREFIXES
 from app.agents.memory.context import AgentContext
 from app.agents.memory.drafts import EventDraft
 from app.agents.memory.schemas.task import MemoryTask
@@ -84,7 +85,7 @@ CHILD = UUID("00000000-0000-7000-8000-000000000001")
 WRITER = UUID("00000000-0000-7000-8000-0000000000ff")
 
 DOMAINS = ("food", "health", "education", "activity", "routine")
-MUTATING = "쓰기"  # forbidden_tools 에 넣으면 create/update/delete 전부를 금지한다
+MUTATING = "쓰기"  # forbidden_tools 에 넣으면 create/update/delete · 삭제 제안 전부를 금지한다
 
 # solo — task 없이 전체 tool 로. task — Supervisor 정답 출력으로 만든 MemoryTask 로.
 # task 모드는 "Supervisor 가 완벽하다고 가정한 Memory 만의 성적" 이다 (supervisor_plan Step 7)
@@ -198,9 +199,9 @@ async def _seed_block_play(context: AgentContext) -> None:
 
 
 async def _seed_today_two_domains(context: AgentContext) -> None:
-    """T15 — "오늘 기록 다 지워줘" 가 모호하려면 오늘 기록이 여럿 있어야 한다.
+    """T15 — "오늘 기록 다 지워줘" 로 여러 종류를 조회해 제안하는지 보려면 오늘 기록이 여럿이다.
 
-    어제 것만 있으면 "오늘 지울 기록이 없다" 가 맞는 답이라 되묻기를 잴 수 없다 (실측).
+    어제 것만 있으면 "오늘 지울 기록이 없다" 가 맞는 답이라 제안을 잴 수 없다 (실측).
     """
     await context.store.create_observation(
         domain="food",
@@ -251,6 +252,44 @@ async def _seed_sports_day_items(context: AgentContext) -> None:
     await _seed_sports_day(context)
     events = await context.store.query_events(child_id=CHILD)
     await context.store.create_event_item(event_id=events[0].id, item_name="체육복")
+
+
+async def _seed_picnic(context: AgentContext) -> None:
+    """T72 — 그저께 다녀온 소풍. "소풍 전날" 은 이 날짜에서 센다."""
+    await context.store.create_event(
+        child_id=CHILD,
+        title="소풍",
+        starts_at=_at(-2),
+        ends_at=None,
+        all_day=False,
+        fields={"created_by": "caregiver", "category": "institution"},
+    )
+
+
+async def _seed_coming_picnic(context: AgentContext) -> None:
+    """T74 — 모레 가는 소풍. "소풍 사흘 뒤" 는 이 날짜에서 센다."""
+    await context.store.create_event(
+        child_id=CHILD,
+        title="소풍",
+        starts_at=_at(2),
+        ends_at=None,
+        all_day=False,
+        fields={"created_by": "caregiver", "category": "institution"},
+    )
+
+
+async def _seed_curry_last_week(context: AgentContext) -> None:
+    """T75 — 지난주 수요일 카레."""
+    day = TODAY - timedelta(days=TODAY.weekday() + 5)
+    await context.store.create_observation(
+        domain="food",
+        child_id=CHILD,
+        source_writer=WRITER,
+        raw_text="카레 먹었어",
+        observed_on=day,
+        observed_range=DateRange(start=day, end=day + timedelta(days=1)),
+        fields={"subject": "카레", "action": "먹었다"},
+    )
 
 
 def _no_guess(domain: str, key: str) -> Check:
@@ -440,14 +479,13 @@ CASES: list[EvalCase] = [
         "T10",
         "어제 사과 먹었다고 저장한 기록 지워줘.",
         seed=_seed_apple,
-        # 조회 결과가 한 건이어도 바로 지우지 않는다. 지운 기록은 보호자가 되살릴 수 없어서
-        # 무엇을 지울지 짚어 한 번 확인한다. 확인에 답한 뒤 지우는 테스트는 test_delete_confirm
-        required_tools={"query_observation_food": 1},
+        # 모델은 지우지 않고 제안만 남긴다 — 보호자가 카드의 버튼으로 확정한다 (#535).
+        # 무엇을 골랐는지 자세히 보는 것은 test_delete_confirm
+        required_tools={"query_observation_food": 1, "propose_delete": 1},
         forbidden_tools={"create_observation_food", "update_observation_food"},
-        expect_clarification=True,
         checks=(
-            ("아직 지우지 않았다", lambda s: len(s.rows("food")) == 1),
-            ("지울 기록을 짚어 물었다", lambda s: s.said(("사과",))),
+            ("지우지 않았다", lambda s: len(s.rows("food")) == 1),
+            ("되묻지 않고 끝냈다", lambda s: s.result.pending is None),
         ),
     ),
     EvalCase(
@@ -508,13 +546,18 @@ CASES: list[EvalCase] = [
         "T15",
         "오늘 기록 다 지워줘.",
         seed=_seed_today_two_domains,
-        forbidden_tools={MUTATING},
-        expect_clarification=True,
+        # 기간이 있으니 묻지 않고 오늘 기록을 조회해 제안한다. 지우는 것은 보호자의 버튼이다 (#535)
+        required_tools={"propose_delete": 1},
+        # MUTATING 은 제안까지 막는다 — 저장 · 수정만 막는다
+        forbidden_tools={
+            f"{op}_observation_{domain}" for op in ("create", "update") for domain in DOMAINS
+        },
         checks=(
             (
                 "아무것도 지우지 않았다",
                 lambda s: (len(s.rows("food")), len(s.rows("activity"))) == (1, 1),
             ),
+            ("되묻지 않고 끝냈다", lambda s: s.result.pending is None),
         ),
     ),
     EvalCase(
@@ -883,6 +926,63 @@ CASES: list[EvalCase] = [
         "요즘 말이 늘은 것 같아.",
         checks=(("저장하거나 되물었다", lambda s: _total(s) >= 1 or _asked(s)),),
     ),
+    # ── 날짜의 기준점 (#497) ──
+    EvalCase(
+        "T70",
+        "이틀 전에 카레 먹었어.",
+        required_tools={"create_observation_food": 1},
+        checks=(("오늘에서 이틀 전으로 저장됐다", lambda s: s.observed_on("food") == [_date(-2)]),),
+    ),
+    EvalCase(
+        "T71",
+        "일주일 전에 놀이터에서 그네 탔어.",
+        required_tools={"create_observation_activity": 1},
+        checks=(
+            ("오늘에서 일주일 전으로 저장됐다", lambda s: s.observed_on("activity") == [_date(-7)]),
+        ),
+    ),
+    EvalCase(
+        "T72",
+        "소풍 전날 김밥 먹었어.",
+        seed=_seed_picnic,
+        required_tools={"create_observation_food": 1},
+        checks=(
+            ("소풍 날짜에서 하루 전으로 저장됐다", lambda s: s.observed_on("food") == [_date(-3)]),
+        ),
+    ),
+    EvalCase(
+        "T73",
+        "지난주에 카레 먹었어.",
+        expect_clarification=True,
+        checks=(_NOTHING_SAVED,),
+    ),
+    EvalCase(
+        "T74",
+        "소풍 사흘 뒤 오후 2시에 정리하기 일정 잡아줘.",
+        seed=_seed_coming_picnic,
+        required_tools={"create_event": 1},
+        checks=(
+            ("소풍(모레) 사흘 뒤 오후 2시 초안", lambda s: s.starts_at() == _at(5, 14).isoformat()),
+        ),
+    ),
+    EvalCase(
+        "T75",
+        "지난주에 먹은 거 보여줘.",
+        seed=_seed_curry_last_week,
+        required_tools={"query_observation_food": 1},
+        forbidden_tools={MUTATING},
+        # 검색어 칸에 "먹은 거" 를 넣어 0건이 되는 일은 날짜와 별개라 결과 건수는 보지 않는다
+        checks=(
+            ("되묻지 않았다", lambda s: not _asked(s)),
+            (
+                "지난주로 막히지 않고 조회됐다",
+                lambda s: any(
+                    call.name == "query_observation_food" and call.success
+                    for call in s.result.calls
+                ),
+            ),
+        ),
+    ),
 ]
 
 
@@ -955,7 +1055,8 @@ def _task_for(case: EvalCase) -> MemoryTask:
     # 파이프라인은 순수 요청형에서 Memory 를 건너뛴다(SKIP_MEMORY_FOR_PURE_REQUEST).
     # 여기서는 그래도 Memory 를 돌린다 — 불렸을 때 무엇을 하는지가 이 eval 이 재는 것이고,
     # T19("알레르기 등록해줘")처럼 저장하면 안 되는 케이스가 회귀 감시 대상이다.
-    # 힌트는 어차피 비어 있어서 건너뛰기 전과 같은 입력이 된다
+    # 힌트는 어차피 비어 있어서 건너뛰기 전과 같은 입력이 된다. 단 unclear 가 요청 · 안내와 섞여
+    # 건너뛰는 입력(#642)은 unclear 정보가 빠진다 — 이 eval 에 그런 케이스는 없다
     return routing.memory_task or MemoryTask(raw_text=case.text)
 
 
@@ -974,7 +1075,7 @@ def _judge(case: EvalCase, snapshot: Snapshot) -> list[str]:
             used = [
                 call.name
                 for call in snapshot.result.calls
-                if call.name.startswith(("create_", "update_", "delete_"))
+                if call.name.startswith(MUTATING_PREFIXES)
             ]
         else:
             used = [call.name for call in snapshot.result.calls if call.name == tool]
@@ -1037,7 +1138,7 @@ def _expected_text(case: EvalCase) -> str:
         )
     if case.forbidden_tools:
         names = sorted(
-            "쓰기 전부(create·update·delete)" if tool == MUTATING else tool
+            "쓰기 전부(create·update·delete·propose)" if tool == MUTATING else tool
             for tool in case.forbidden_tools
         )
         parts.append(f"금지 {' · '.join(names)}")

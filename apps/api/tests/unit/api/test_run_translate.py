@@ -10,7 +10,7 @@ DB 도 LLM 도 없이 객체만 넣어 본다.
 
 import logging
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import get_args
 from zoneinfo import ZoneInfo
 
@@ -22,15 +22,21 @@ from app.agents import entrypoint
 # 이유로 레이어 경계 밖이다. 번역은 readout 의 칸만 읽어 옮긴다.
 from app.agents.common.readout import Readout
 from app.agents.common.refs import Ref as EvidenceRef
+from app.agents.common.result import MedicationDraft
 from app.agents.entrypoint import (
+    AgentQuestion,
     AgentResult,
+    CardTab,
+    DeleteProposed,
     DomainRouted,
     Done,
     EmptyResult,
     EventDraft,
     EventDrafts,
     Failed,
+    FoundTabs,
     Guidance,
+    MedicationDrafts,
     MemoryNote,
     Partial,
     PendingMemoryContext,
@@ -48,7 +54,12 @@ from app.agents.entrypoint import (
 # 레이어 경계(api는 진입점만) 밖이다. 화면으로 가는 모양은 app/core/event_draft.py가 정한다.
 from app.agents.memory.drafts import DraftItem, EventSnapshot
 from app.agents.memory.schemas.task import WorkType
+from app.agents.memory.store.ports import DELETE_KINDS
 from app.api.runs import registry, sse, translate
+from app.api.v1.card_rows import in_kind_order
+from app.api.v1.schemas.cards import KIND_ORDER
+from app.api.v1.schemas.suggestions import CalendarEventOut
+from app.domains.delete_proposal.repository import KINDS
 
 KST = ZoneInfo("Asia/Seoul")
 PARENT = uuid.UUID(int=1)
@@ -59,11 +70,15 @@ SENT = {
     Done,
     Guidance,
     EventDrafts,
+    MedicationDrafts,
     MemoryNote,
     Unavailable,
     Partial,
     AgentResult,
+    AgentQuestion,
     Saved,
+    FoundTabs,
+    DeleteProposed,
 }
 """화면으로 보내는 것."""
 HELD = {PendingReply, DomainRouted, Unwritten, Rerouted, RetryContext, EmptyResult}
@@ -197,12 +212,11 @@ def _growth_review() -> AgentResult:
                 source_refs=(EvidenceRef(kind="child_growth_log", id=uuid.UUID(int=7)),),
             ),
         ),
-        question=None,
     )
 
 
-def test_agent_result_copies_readouts_without_source_refs():
-    """readout은 칸을 하나씩 옮긴다. 근거 종류(`source_refs`)는 화면 `Ref` 에 아직 없어서 뺀다."""
+def test_agent_result_copies_readouts_and_drops_refs_the_screen_lacks():
+    """readout은 칸을 하나씩 옮긴다. 성장 근거 같은 종류는 화면 `Ref` 에 아직 없어서 뺀다."""
     assert translate.to_sse(_growth_review()) == (
         "agent_result",
         {
@@ -216,15 +230,152 @@ def test_agent_result_copies_readouts_without_source_refs():
                     "body": "3월 2일부터 6월 2일까지 3개월간 키 2.1cm 늘었어요.",
                     "authored_by": "code",
                     "code": None,
+                    "source_refs": [],
                 }
             ],
             "question": None,
+            "awaits_reply": False,
             "suggestion_ids": [],
             "kind": None,
             "reason": None,
             "record_count": None,
         },
     )
+
+
+def test_agent_result_keys_are_ten():
+    """agent_result 의 키는 열 개다. 복약 초안 · 되묻기 맥락은 다른 이벤트의 몫이다."""
+    result = AgentResult(agent="health", task_type="medication", status="completed", readouts=())
+
+    name, payload = translate.to_sse(result)
+
+    assert name == "agent_result"
+    assert set(payload) == {
+        "agent",
+        "task_type",
+        "status",
+        "readouts",
+        "question",
+        "awaits_reply",
+        "suggestion_ids",
+        "kind",
+        "reason",
+        "record_count",
+    }
+
+
+_SCHEDULE_ID = uuid.UUID("11111111-1111-1111-1111-111111111111")
+
+
+def _med_create() -> MedicationDraft:
+    return MedicationDraft(
+        draft_id="m1",
+        op="create",
+        source="utterance",
+        schedule={"title": "항생제", "starts_on": "2026-11-04", "ends_on": None},
+        doses=({"timing_anchor": "breakfast", "offset_minutes": 30},),
+        notice_times=("08:30",),
+        missing=("ends_on",),
+    )
+
+
+def _med_update() -> MedicationDraft:
+    return MedicationDraft(
+        draft_id="m2",
+        op="update",
+        source="utterance",
+        schedule={"title": "항생제", "starts_on": "2026-11-04", "ends_on": "2026-11-08"},
+        doses=({"timing_anchor": "dinner", "offset_minutes": 30},),
+        notice_times=("19:30",),
+        schedule_id=_SCHEDULE_ID,
+        before={"title": "항생제", "notice_times": ["18:30"]},
+    )
+
+
+def test_복약_초안은_medication_draft_프레임_하나():
+    name, data = translate.to_sse(MedicationDrafts((_med_create(), _med_update())))
+
+    assert name == "medication_draft" and len(data["drafts"]) == 2
+    assert set(data["drafts"][0]) == {
+        "draft_id",
+        "op",
+        "source",
+        "schedule",
+        "doses",
+        "notice_times",
+        "missing",
+    }
+    assert data["drafts"][0]["notice_times"] == ["08:30"]
+    assert data["drafts"][0]["missing"] == ["ends_on"]
+
+
+def test_create_초안에는_schedule_id_와_before_키가_없다():
+    _, data = translate.to_sse(MedicationDrafts((_med_create(),)))
+
+    assert "schedule_id" not in data["drafts"][0] and "before" not in data["drafts"][0]
+
+
+def test_update_초안은_schedule_id_문자열과_before_를_싣는다():
+    _, data = translate.to_sse(MedicationDrafts((_med_update(),)))
+
+    assert data["drafts"][0]["schedule_id"] == str(_SCHEDULE_ID)
+    assert data["drafts"][0]["before"] == {"title": "항생제", "notice_times": ["18:30"]}
+
+
+def test_복약_초안_프레임은_JSON_으로_바뀐다():
+    sse.frame(*translate.to_sse(MedicationDrafts((_med_create(), _med_update()))))
+
+
+_COURSE_A = uuid.UUID(int=0xA)
+_COURSE_B = uuid.UUID(int=0xB)
+
+
+def _card(*readouts: Readout) -> AgentResult:
+    return AgentResult(
+        agent="health", task_type="medication", status="completed", readouts=readouts
+    )
+
+
+def _notice(*refs: EvidenceRef) -> Readout:
+    return Readout(
+        kind="notice",
+        body="복용 체크는 홈이나 복약 화면에서 해 주세요.",
+        authored_by="code",
+        source_refs=refs,
+    )
+
+
+def test_readout_ref_는_medication_schedule_만_싣는다():
+    """화면 `Ref.kind` 에 있는 종류만 보낸다 — 지금은 복약 코스 하나다."""
+    readout = _notice(
+        EvidenceRef("medication_schedule", _COURSE_A),
+        EvidenceRef("observation_health", uuid.UUID(int=1)),
+    )
+
+    _, data = translate.to_sse(_card(readout))
+
+    assert data["readouts"][0]["source_refs"] == [
+        {"kind": "medication_schedule", "id": str(_COURSE_A)}
+    ]
+
+
+def test_ref_가_없는_readout_도_source_refs_키가_있다():
+    _, data = translate.to_sse(_card(_notice()))
+
+    assert data["readouts"][0]["source_refs"] == []
+
+
+def test_코스가_여럿이면_순서대로_목록이다():
+    readout = _notice(
+        EvidenceRef("medication_schedule", _COURSE_B), EvidenceRef("medication_schedule", _COURSE_A)
+    )
+
+    _, data = translate.to_sse(_card(readout))
+
+    assert [ref["id"] for ref in data["readouts"][0]["source_refs"]] == [
+        str(_COURSE_B),
+        str(_COURSE_A),
+    ]
 
 
 def test_agent_result_carries_saved_suggestion_ids_in_order():
@@ -234,7 +385,6 @@ def test_agent_result_carries_saved_suggestion_ids_in_order():
         task_type="meal_recommendation",
         status="completed",
         readouts=(),
-        question=None,
         suggestion_ids=("s-1", "s-2"),
     )
 
@@ -250,14 +400,11 @@ def test_agent_result_keeps_the_notice_code():
         task_type="activity_recommendation",
         status="completed",
         readouts=(
-            Readout(
-                kind="notice", body="날씨를 확인하지 못해 실내 놀이만 골랐어요.", authored_by="code"
-            ),
+            Readout(kind="notice", body="해가 져서 실내 놀이만 골랐어요.", authored_by="code"),
             Readout(
                 kind="notice", body="조건에 맞는 추천이 없어요.", authored_by="code", code="empty"
             ),
         ),
-        question=None,
     )
 
     _, payload = translate.to_sse(result)
@@ -265,21 +412,50 @@ def test_agent_result_keeps_the_notice_code():
     assert [readout["code"] for readout in payload["readouts"]] == [None, "empty"]
 
 
-def test_agent_result_carries_the_one_question():
-    """되묻기는 한 번에 하나다. 화면은 이 한 줄을 묻는다."""
+def test_agent_result_cards_carry_no_question():
+    """카드는 질문을 싣지 않는다. 키는 늘 있고 값은 null 이다 — 계약 모양을 그대로 둔다 (#615)."""
     result = AgentResult(
-        agent="growth",
-        task_type="routine_coaching",
-        status="completed",
-        readouts=(),
-        question="양치는 요즘 어느 정도까지 혼자 하나요?",
+        agent="growth", task_type="routine_coaching", status="completed", readouts=()
     )
 
     name, payload = translate.to_sse(result)
 
     assert name == "agent_result"
-    assert payload["readouts"] == []
-    assert payload["question"] == "양치는 요즘 어느 정도까지 혼자 하나요?"
+    assert payload["question"] is None
+    assert payload["awaits_reply"] is False
+
+
+def test_agent_question_goes_out_as_an_agent_result():
+    """run 의 되묻기는 마지막 agent_result 한 장으로 간다. 웹이 이미 아는 이름이라 새 이벤트가
+    필요 없다. 답할 수 있는 질문인지는 `awaits_reply` 가 말한다 (#537)."""
+    question = AgentQuestion(
+        "growth", "routine_coaching", "양치는 요즘 어느 정도까지 혼자 하나요?", awaits_reply=True
+    )
+
+    assert translate.to_sse(question) == (
+        "agent_result",
+        {
+            "agent": "growth",
+            "task_type": "routine_coaching",
+            "status": "completed",
+            "readouts": [],
+            "question": "양치는 요즘 어느 정도까지 혼자 하나요?",
+            "awaits_reply": True,
+            "suggestion_ids": [],
+            "kind": None,
+            "reason": None,
+            "record_count": None,
+        },
+    )
+
+
+def test_agent_question_defaults_to_not_answerable():
+    """맥락을 싣지 않은 질문에 답하면 서버가 400 이다. 기본은 답할 수 없는 질문이다."""
+    _, payload = translate.to_sse(
+        AgentQuestion("food", "meal_recommendation", "브로콜리 좋아해요?")
+    )
+
+    assert payload["awaits_reply"] is False
 
 
 @pytest.mark.parametrize(
@@ -294,6 +470,7 @@ def test_agent_result_carries_the_one_question():
         Unavailable(("activity", "growth")),
         Partial("timeout_20s", ("activity",), ("food",)),
         _growth_review(),
+        AgentQuestion("growth", "routine_coaching", "양치는 요즘 어느 정도까지 혼자 하나요?"),
     ],
     ids=lambda event: type(event).__name__,
 )
@@ -524,7 +701,6 @@ def test_agent_result_carries_bundle_kind_reason_and_record_count():
         task_type=None,
         status="completed",
         readouts=(),
-        question=None,
         suggestion_ids=("s-1",),
         kind="general",
         reason="또래 기준",
@@ -547,3 +723,93 @@ def test_partial_carries_retryable_agents():
     )
 
     assert translate.to_sse(event)[1]["retryable"] == ["activity"]
+
+
+def _event_row(eid: str) -> CalendarEventOut:
+    return CalendarEventOut(
+        id=eid,
+        title="synthetic",
+        event_type="episodic",
+        starts_at="2026-10-28T10:00:00+09:00",
+        ends_at=None,
+        all_day=False,
+        category="activity",
+        created_by="caregiver",
+        source_notice_id=None,
+        source_refs=[],
+        items=[],
+    )
+
+
+def test_found_tabs_keep_order_and_drop_missing_rows():
+    """#535 — 탭 순서 · 행 순서 그대로. 못 읽은 행 · 행이 없는 탭은 빼고, 다 없으면 안 보낸다."""
+    rows = {("event", "e2"): _event_row("e2"), ("event", "e1"): _event_row("e1")}
+    event = FoundTabs(
+        (
+            CardTab("observation_food", False, ("gone",)),
+            CardTab("event", True, ("e1", "missing", "e2")),
+        )
+    )
+
+    name, payload = translate.to_sse(event, card_rows=rows)
+
+    assert name == "found_tabs"
+    [tab] = payload["tabs"]
+    assert (tab["kind"], tab["truncated"], tab["records"]) == ("event", True, [])
+    assert [row["id"] for row in tab["events"]] == ["e1", "e2"]
+    assert translate.to_sse(FoundTabs((CardTab("event", False, ("x",)),)), card_rows={}) is None
+
+
+def test_delete_proposal_is_sent_even_without_rows():
+    """#535 — 제안은 이미 저장됐다. 행을 못 읽어도 보내야 보호자가 취소할 수 있다.
+    기본 체크는 남아 있는 후보 안에서만."""
+    expires = (translate.PROPOSAL_KIND, "p1")
+    rows = {("event", "e1"): _event_row("e1"), expires: datetime(2026, 10, 28, 3, tzinfo=UTC)}
+    event = DeleteProposed("p1", (CardTab("event", False, ("e1", "e2"), ("e1", "e2")),))
+
+    name, payload = translate.to_sse(event, card_rows=rows)
+    assert name == "delete_proposal"
+    assert (payload["proposal_id"], payload["status"], payload["result"]) == ("p1", "pending", None)
+    assert payload["expires_at"] == "2026-10-28T03:00:00Z"
+    [tab] = payload["tabs"]
+    assert tab["picked_ids"] == ["e1"]
+    assert translate.to_sse(event, card_rows={expires: rows[expires]})[1]["tabs"] == []
+
+
+def test_tabs_follow_screen_order_not_query_order():
+    """#535 (#714 리뷰) — 모델이 조회한 순서가 화면 배치를 정하지 않는다. SSE 의 탭은 식사 · 건강 ·
+    교육 · 놀이 · 생활습관 · 일정 순서다. 모르는 종류의 탭은 터뜨리지 않고 뺀다."""
+    rows = {("event", "e1"): _event_row("e1"), ("event", "e2"): _event_row("e2")}
+    expires = (translate.PROPOSAL_KIND, "p1")
+    found = FoundTabs(
+        (
+            CardTab("observation_unknown", False, ("x1",)),
+            CardTab("event", False, ("e1",)),
+        )
+    )
+    proposed = DeleteProposed(
+        "p1",
+        (CardTab("event", False, ("e2",), ("e2",)), CardTab("health_safety", False, ("y",))),
+    )
+
+    assert [tab["kind"] for tab in translate.to_sse(found, card_rows=rows)[1]["tabs"]] == ["event"]
+    sent = translate.to_sse(
+        proposed, card_rows={**rows, expires: datetime(2026, 11, 6, tzinfo=UTC)}
+    )
+    assert [tab["kind"] for tab in sent[1]["tabs"]] == ["event"]
+    tabs = (
+        CardTab("event", False, ("e1",)),
+        CardTab("observation_activity", False, ("a1",)),
+        CardTab("observation_food", False, ("f1",)),
+    )
+    assert [tab.kind for tab in in_kind_order(tabs)] == [
+        "observation_food",
+        "observation_activity",
+        "event",
+    ]
+
+
+def test_kind_lists_agree():
+    """탭 순서 · DB 가 받는 종류 · Agent 가 담는 종류가 같다 — 하나만 늘리면 카드가 깨진다."""
+    assert KIND_ORDER == DELETE_KINDS  # 순서까지 — Agent 가 만드는 탭 순서와 서버 정렬이 같다
+    assert set(KIND_ORDER) == KINDS

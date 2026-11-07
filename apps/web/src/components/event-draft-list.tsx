@@ -4,17 +4,14 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
-import { EventDraftCard, type DraftSubmitState } from "@/components/event-draft-card";
+import {
+  EventDraftCard,
+  type DraftSubmitFinal,
+  type DraftSubmitState,
+} from "@/components/event-draft-card";
 import { Button } from "@/components/ui/button";
 import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
-import {
-  qk,
-  submitEventDraft,
-  updateEventDraft,
-  type EventDraft,
-  type EventDraftFields,
-  type EventDraftItem,
-} from "@/lib/api";
+import { qk, submitEventDraft, updateEventDraft, type EventDraft } from "@/lib/api";
 import { useIdempotencyKey } from "@/lib/api/use-idempotency-key";
 import {
   mergeDrafts,
@@ -157,7 +154,6 @@ export function EventDraftList({
   if (rows.length === 0) return null;
 
   const index = Math.min(page, rows.length - 1);
-  const current = rows[index];
   const done = submittedIds.length;
   const multiple = rows.length > 1;
 
@@ -172,18 +168,23 @@ export function EventDraftList({
         </p>
       </div>
 
-      {/* 🚨 `key` 에 `draft_id` 를 준다. 안 주면 넘길 때 React 가 같은 카드를 재사용해서
-          앞 장에서 고친 값(제목 · 날짜 · 준비물)이 다음 장에 그대로 남는다. */}
-      <DraftRow
-        key={current.draft.draft_id}
-        childId={childId}
-        draft={current.draft}
-        blocked={blockedDraftIds?.includes(current.draft.draft_id) ?? false}
-        lockReason={lockReason}
-        onSubmitted={(draftId) =>
-          setSubmittedIds((prev) => (prev.includes(draftId) ? prev : [...prev, draftId]))
-        }
-      />
+      {/* 🚨 **모든 장을 마운트해 두고 지금 장만 보인다** (#537 리뷰). 지금 장만 그리면 넘길 때 앞 장이 언마운트되면서
+          제출 상태와 키 홀더가 같이 사라졌다 — 넣은 장으로 돌아오면 "아직 저장되지 않았어요" 로 되살아나 **새 키로
+          한 번 더** 넣을 수 있었다(일정 두 건). 결과를 확인하지 못한 제출 뒤 넘겼다 돌아와 다시 누르는 것도 새 키였다.
+          🚨 `key` 는 `draft_id` 다 — 장마다 자기 칸 값(제목 · 날짜 · 준비물)과 자기 키를 든다. */}
+      {rows.map((row, i) => (
+        <div key={row.draft.draft_id} hidden={i !== index}>
+          <DraftRow
+            childId={childId}
+            draft={row.draft}
+            blocked={blockedDraftIds?.includes(row.draft.draft_id) ?? false}
+            lockReason={lockReason}
+            onSubmitted={(draftId) =>
+              setSubmittedIds((prev) => (prev.includes(draftId) ? prev : [...prev, draftId]))
+            }
+          />
+        </div>
+      ))}
 
       {multiple ? (
         <div className="flex flex-col gap-2">
@@ -253,21 +254,23 @@ function DraftRow({
   const [submitted, setSubmitted] = useState(false);
 
   const submit = useMutation({
-    mutationFn: (body: { event: EventDraftFields; items: EventDraftItem[] }) => {
+    mutationFn: (body: DraftSubmitFinal) => {
       /**
        * 🚨 **`op` 에 따라 엔드포인트가 갈린다** (9/21 회의): create 는 `POST`, update 는 `PATCH`.
        *    🚨 **둘 다 같은 키를 쓴다** — PATCH 도 `item_id: null` 인 새 준비물 때문에 멱등이 아니다
        *    (`operations.ts` 의 주석).
        */
       if (draft.op === "update" && draft.event_id) {
-        return updateEventDraft(childId, draft.event_id, body, submitKey.current());
+        // 🚨 수정은 `reminder` 를 싣지 않는다 (`event-draft-card.tsx` 머리말).
+        const update = { event: body.event, items: body.items };
+        return updateEventDraft(childId, draft.event_id, update, submitKey.current());
       }
-      return submitEventDraft(
-        childId,
-        // 🚨 묶인 초안은 여러 제안에서 온다 — 전부 이 일정에 연결돼야 한다 (#206).
-        { ...body, ...(draft.suggestion_ids ? { suggestion_ids: draft.suggestion_ids } : {}) },
-        submitKey.current(),
-      );
+      // 🚨 묶인 초안은 여러 제안에서 온다 — 전부 이 일정에 연결돼야 한다 (#206).
+      const create = {
+        ...body,
+        ...(draft.suggestion_ids ? { suggestion_ids: draft.suggestion_ids } : {}),
+      };
+      return submitEventDraft(childId, create, submitKey.current());
     },
     onSuccess: async () => {
       // 🚨 성공한 뒤에만 다음 키로 넘어간다. 실패 뒤 다시 누르는 것은 재시도라 같은 키여야 한다.

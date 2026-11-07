@@ -11,13 +11,21 @@ import {
 import { isApiError } from "@/lib/api/errors";
 import { newIdempotencyKey, type IdempotencyKey } from "@/lib/api/idempotency";
 import { submitInput, type InputRequest } from "@/lib/api/operations";
-import { isDraftEvent, type EventDraftsEvent } from "@/lib/api/sse";
-import type { CreateInputResponse } from "@/lib/api/types";
+import { askedQuestion } from "@/lib/agent-result";
+import {
+  isDraftEvent,
+  isMedicationDraftEvent,
+  type EventDraftsEvent,
+  type MedicationDraftsEvent,
+} from "@/lib/api/sse";
+import type { CreateInputResponse, InputLocation } from "@/lib/api/types";
 import { refreshAfterRun, refreshTodayChat } from "@/lib/chat-history";
 import { toSeoulDateKey } from "@/lib/format";
+import { readCoarseLocation } from "@/lib/location";
 import { getQueryClient } from "@/lib/query-client";
 import { useDraftStore } from "@/stores/draft";
 import { useEventDraftStore } from "@/stores/event-draft";
+import { useMedicationDraftStore } from "@/stores/medication-draft";
 
 /**
  * 04 대화 — 그날 보낸 한 줄 · 그 한 줄의 run · 답을 기다리는 질문. 아이별로 하나 (#226).
@@ -63,7 +71,11 @@ import { useEventDraftStore } from "@/stores/event-draft";
  *    질문의 답인지, 질문을 언제 닫는지가 도착 순서에 달린다. Claude · ChatGPT 와 같은 방식이다.
  */
 
-/** Memory 가 되물은 질문 하나. 🚨 `runId` 가 본체다 — 위 규칙 1. */
+/**
+ * 되물은 질문 하나. 🚨 `runId` 가 본체다 — 위 규칙 1.
+ * Memory 의 질문이거나, 답을 받는 Agent 질문(`awaits_reply` · #537)이다 — 어느 쪽이든 답은 같은 `reply_to` 로 간다.
+ * run 이 어느 질문을 기다리는지는 `askedQuestion()` 한 곳이 정한다.
+ */
 export interface ChatQuestion {
   /** 화면에 그대로 그린다. 🚨 LLM 이 만든 문장이라 HTML 로 그리지 않는다 (apps/web/CLAUDE.md §4). */
   text: string;
@@ -95,8 +107,18 @@ export interface ChatTurn {
    * 결과도 이 날에 붙는다. 답은 **질문이 나온 날**을 물려받는다 (#226).
    */
   day: string;
-  /** 보낸 본문 그대로. 🚨 다시 시도는 이 값을 그대로 보낸다 — 그때의 입력창이 아니다. */
+  /**
+   * 보낸 본문 그대로. 🚨 다시 시도는 이 값을 그대로 보낸다 — 그때의 입력창이 아니다.
+   * 🚨 **위치는 여기 없다** (#593). 보내기 직전에 붙이고 키에 묶는다 (`sentLocations`).
+   */
   body: InputRequest;
+  /** 보낸 순간에 위치 동의가 켜져 있었는가 (#593). 이 키로 처음 보낼 때만 본다 (`locationFor`). */
+  shareLocation: boolean;
+  /**
+   * 위치 동의는 켜져 있었는데 위치 없이 나갔는가 (#593 · #638 리뷰). 휴대폰이 허용하지 않았거나 못 읽은 경우다.
+   * 놀이 추천 아래 "위치 권한이 꺼져 있어서" 안내가 이 값으로 선다 (`LocationOffNote`). 좌표 자체는 들고 있지 않다.
+   */
+  withoutLocation: boolean;
   /** 이 한 줄이 답한 질문. 400 때 무엇을 물었는지 말풍선 아래에 다시 보여준다. */
   answering: ChatQuestion | null;
   /**
@@ -145,6 +167,7 @@ export const useConversationStore = create<ConversationState>()((set) => ({
     for (const unsubscribe of streams.values()) unsubscribe();
     streams.clear();
     keyBooks.clear();
+    sentLocations.clear();
     seededDrafts.clear();
     set({ byChild: {} });
   },
@@ -166,6 +189,16 @@ const streams = new Map<string, () => void>();
  *    횟수를 두 번으로 센다 (최상위 §2 "한 번의 관찰을 성향으로 확정하지 않는다").
  */
 const keyBooks = new Map<string, Map<string, IdempotencyKey>>();
+
+/**
+ * 키 → 그 키로 보낸 흐린 위치 (`null` = 위치 없이 보냈다) (#593).
+ *
+ * 🚨 **같은 키는 같은 본문이어야 한다** (`422 idempotency_key_reuse`). 위치는 보낼 때마다 다시 읽으면 달라질 수 있어서
+ *    `keyPayload` 에 넣지 않고, 키가 처음 나갈 때 읽은 값을 여기 붙든다. 다시 시도 · 같은 문장을 다시 적어 같은 키가
+ *    나간 줄은 그 값을 그대로 싣는다 — 그 사이 동의를 껐어도 같다(서버가 동의를 읽어 버린다 · #380).
+ * 🚨 **메모리에만 산다.** 키를 놓을 때(`releaseKey`) · 로그아웃(`clearAll`) 때 지운다. 웹 저장소에 두지 않는다.
+ */
+const sentLocations = new Map<IdempotencyKey, InputLocation | null>();
 
 /** 일정 초안을 `stores/event-draft.ts` 에 얹은 적이 있는 `draft_id`. 아래 `seedDrafts` 참고. */
 const seededDrafts = new Set<string>();
@@ -190,7 +223,25 @@ function keyFor(childId: string, payload: string): IdempotencyKey {
 
 /** 이 본문은 끝났다 — 다음에 같은 문장을 보내면 새 동작이라 새 키다. */
 function releaseKey(childId: string, payload: string): void {
-  keyBooks.get(childId)?.delete(payload);
+  const book = keyBooks.get(childId);
+  const key = book?.get(payload);
+  if (key) sentLocations.delete(key);
+  book?.delete(payload);
+}
+
+/**
+ * 이 키로 보낼 위치. 이미 보낸 키면 그때의 값이고, 처음이면 동의가 켜져 있을 때만 휴대폰에서 읽는다.
+ * 🚨 읽는 동안 묻지 않는다 (`readCoarseLocation`). 못 읽으면 위치 없이 보낸다.
+ */
+async function locationFor(turn: ChatTurn): Promise<InputLocation | null> {
+  const fixed = sentLocations.get(turn.key);
+  if (fixed !== undefined) return fixed;
+  const location = turn.shareLocation ? await readCoarseLocation().catch(() => null) : null;
+  // 기다리는 사이 다른 줄이 같은 키로 먼저 정했으면 그 값을 따른다.
+  const settled = sentLocations.get(turn.key);
+  if (settled !== undefined) return settled;
+  sentLocations.set(turn.key, location);
+  return location;
 }
 
 let turnSeq = 0;
@@ -283,7 +334,16 @@ export function keyPayload(body: InputRequest): string {
 export function sendLine(
   childId: string,
   text: string,
-  { asReply, source }: { asReply: boolean; source: InputRequest["source"] },
+  {
+    asReply,
+    source,
+    shareLocation = false,
+  }: {
+    asReply: boolean;
+    source: InputRequest["source"];
+    /** 위치 동의가 지금 켜져 있는가 (`useLocationConsent`). 🚨 모르면 `false` — 위치를 싣지 않는다 (#593). */
+    shareLocation?: boolean;
+  },
 ): string | null {
   const conversation = conversationOf(useConversationStore.getState(), childId);
   const trimmed = text.trim();
@@ -310,6 +370,8 @@ export function sendLine(
     // 🚨 늘 새 키가 아니다 — 같은 본문이면 같은 키라야 응답만 잃은 한 줄을 고쳐 쓰지 않고 그대로
     //    다시 보냈을 때 두 번 저장되지 않는다 (`keyBooks`).
     key: keyFor(childId, keyPayload(body)),
+    shareLocation,
+    withoutLocation: false,
     send: { status: "sending" },
     run: initialRunState,
     question: null,
@@ -393,7 +455,8 @@ export function answerQuestion(
     const asked = c.turns.find(
       (t) => t.question === "open" && t.send.status === "sent" && t.send.runId === runId,
     );
-    if (asked?.run.note) return { ...c, answering: { text: asked.run.note.text, runId } };
+    const text = asked ? askedQuestion(asked.run)?.text : undefined;
+    if (text) return { ...c, answering: { text, runId } };
     if (past) return { ...c, answering: { text: past.text, runId, day: past.day } };
     return c;
   });
@@ -418,7 +481,18 @@ async function submit(childId: string, turnId: string): Promise<void> {
 
   let accepted: CreateInputResponse;
   try {
-    accepted = await submitInput(childId, turn.body, turn.key);
+    const location = await locationFor(turn);
+    // 로그아웃으로 대화가 비워졌으면 보내지 않는다.
+    if (!findTurn(childId, turnId)) return;
+    const withoutLocation = turn.shareLocation && location === null;
+    if (withoutLocation !== turn.withoutLocation) {
+      updateTurn(childId, turnId, (t) => ({ ...t, withoutLocation }));
+    }
+    accepted = await submitInput(
+      childId,
+      location ? { ...turn.body, location } : turn.body,
+      turn.key,
+    );
   } catch (error) {
     // 로그아웃으로 대화가 비워졌으면 쓸 자리가 없다.
     if (!findTurn(childId, turnId)) return;
@@ -465,6 +539,12 @@ async function submit(childId: string, turnId: string): Promise<void> {
     if (!findTurn(childId, turnId)) return;
     if (action.type === "event" && isDraftEvent(action.event.type)) {
       seedDrafts(childId, (action.event.data as EventDraftsEvent).drafts);
+    }
+    // 🚨 복약 초안도 도착하는 순간 한 번만 얹는다 — `seedDrafts` 와 같은 이유 (#537).
+    if (action.type === "event" && isMedicationDraftEvent(action.event.type)) {
+      useMedicationDraftStore
+        .getState()
+        .seed(childId, (action.event.data as MedicationDraftsEvent).drafts);
     }
     updateTurn(childId, turnId, (t) => ({ ...t, run: runReducer(t.run, action) }));
   };
@@ -537,9 +617,11 @@ function settle(childId: string, turnId: string): void {
 
   releaseKey(childId, keyPayload(turn.body));
   const answeredRunId = turn.answering?.runId;
+  // 🚨 Memory 질문만이 아니다 — 답을 받는 Agent 질문도 입력창의 새 대상이 된다 (#537 · `askedQuestion`).
+  const question = askedQuestion(turn.run);
   const asked: ChatQuestion | null =
-    turn.run.note?.kind === "question" && turn.send.status === "sent"
-      ? { text: turn.run.note.text, runId: turn.send.runId }
+    question && turn.send.status === "sent"
+      ? { text: question.text, runId: turn.send.runId }
       : null;
 
   update(childId, (c) => ({

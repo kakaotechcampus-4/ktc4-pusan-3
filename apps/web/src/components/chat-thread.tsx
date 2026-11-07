@@ -6,12 +6,14 @@ import { useMemo } from "react";
 import { Named } from "@/components/ui/named";
 import { Swap } from "@/components/ui/swap";
 import { ConsentRequiredCard } from "@/components/consent-required-card";
+import { LocationOffNote } from "@/components/location-off-note";
 import { RewriteButton } from "@/components/rewrite-button";
 import { RunReply } from "@/components/run-result";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
 import { initialRunState } from "@/hooks/use-run-stream";
 import { api, isApiError, qk, type Agent, type ChatDayResponse } from "@/lib/api";
+import { askedQuestion, visibleAgentResults } from "@/lib/agent-result";
 import { pastTurnsOf, type PastTurn } from "@/lib/chat-history";
 import { formatDay } from "@/lib/format";
 import { VIEW_TRANSITION } from "@/lib/view-transition";
@@ -26,6 +28,7 @@ import {
   type ChatTurn,
 } from "@/stores/conversation";
 import { NO_DRAFTS, useEventDraftStore } from "@/stores/event-draft";
+import { NO_MEDICATION_DRAFTS, useMedicationDraftStore } from "@/stores/medication-draft";
 
 /**
  * 04 대화 — 보낸 한 줄과 그 답을 하루 단위로 쌓는다 (#226).
@@ -48,6 +51,8 @@ import { NO_DRAFTS, useEventDraftStore } from "@/stores/event-draft";
  * 🚨 **지난 줄의 날짜는 서버가 정한 것이다**(`PastTurn.day`). 화면이 접수 시각으로 다시 계산하지 않는다.
  *
  * `onOpenDrafts` 는 일정 초안 시트를 그 답의 초안으로 연다 — `key` 는 시트를 답마다 새로 그리는 값이다.
+ * `onOpenMedicationDrafts` 는 복약 초안 시트다 (#537). 🚨 이 앱에서 보낸 줄에만 있다 — 복약 초안은 메모리에만 있어서
+ * 지난 턴에는 넣을 초안이 남지 않는다 (`stores/medication-draft.ts`).
  */
 export function ChatThread({
   childId,
@@ -55,6 +60,7 @@ export function ChatThread({
   turns,
   answering,
   onOpenDrafts,
+  onOpenMedicationDrafts,
   onPickOffer,
 }: {
   childId: string;
@@ -64,6 +70,7 @@ export function ChatThread({
   /** 입력창이 지금 답하는 질문 — 그 질문의 카드가 "답하는 중" 으로 바뀐다. */
   answering: ChatQuestion | null;
   onOpenDrafts: (key: string, draftIds: string[]) => void;
+  onOpenMedicationDrafts: (key: string, draftIds: string[]) => void;
   onPickOffer: (agents: Agent[]) => void;
 }) {
   const last = turns.at(-1);
@@ -94,7 +101,12 @@ export function ChatThread({
           <ol className="flex flex-col gap-6">
             {entries.map((entry) =>
               entry.kind === "past" ? (
-                <li key={`past:${entry.turn.runId}`} className="flex flex-col gap-3">
+                // 화면 투어는 가장 최근 턴 하나 안에서만 짚는다 (`lib/tour/screens/chat.ts` 의 `within`).
+                <li
+                  key={`past:${entry.turn.runId}`}
+                  data-tour="turn"
+                  className="flex flex-col gap-3"
+                >
                   <PastTurnItem
                     childId={childId}
                     turn={entry.turn}
@@ -113,6 +125,7 @@ export function ChatThread({
                   answered={answered}
                   answering={answering}
                   onOpenDrafts={onOpenDrafts}
+                  onOpenMedicationDrafts={onOpenMedicationDrafts}
                   onPickOffer={onPickOffer}
                 />
               ),
@@ -218,8 +231,8 @@ function PastReply({
   const remainingDrafts = stored.filter(
     (d) => d.origin === "input" && draftIds.includes(d.draft.draft_id),
   ).length;
-  const note = turn.run.note;
-  const asked = note?.kind === "question";
+  // 🚨 Memory 질문만이 아니다 — 답을 받는 Agent 질문도 같은 `reply_open` 으로 연다 (#537 · `askedQuestion`).
+  const asked = askedQuestion(turn.run);
   const question = !asked
     ? null
     : answered.has(turn.runId)
@@ -240,7 +253,7 @@ function PastReply({
       followUp={turn.replyTo !== null}
       rewriteBlocked={false}
       onAnswer={() => {
-        if (note) answerQuestion(childId, turn.runId, { text: note.text, day: turn.day });
+        if (asked) answerQuestion(childId, turn.runId, { text: asked.text, day: turn.day });
       }}
       onOpenDrafts={() => onOpenDrafts(`past:${turn.runId}`, draftIds)}
       onPickOffer={noop}
@@ -260,6 +273,7 @@ function LiveTurnItem({
   answered,
   answering,
   onOpenDrafts,
+  onOpenMedicationDrafts,
   onPickOffer,
 }: {
   childId: string;
@@ -269,10 +283,11 @@ function LiveTurnItem({
   answered: ReadonlySet<string>;
   answering: ChatQuestion | null;
   onOpenDrafts: (key: string, draftIds: string[]) => void;
+  onOpenMedicationDrafts: (key: string, draftIds: string[]) => void;
   onPickOffer: (agents: Agent[]) => void;
 }) {
   return (
-    <li className="flex flex-col gap-3">
+    <li data-tour="turn" className="flex flex-col gap-3">
       <SentBubble text={turn.body.text} answer={turn.answering !== null} named={named} />
       {turn.send.status === "error" ? (
         <SendFailure childId={childId} turn={turn} error={turn.send.error} />
@@ -295,6 +310,12 @@ function LiveTurnItem({
             onOpenDrafts(
               turn.id,
               turn.run.drafts.map((d) => d.draft_id),
+            )
+          }
+          onOpenMedicationDrafts={() =>
+            onOpenMedicationDrafts(
+              turn.id,
+              turn.run.medicationDrafts.map((d) => d.draft_id),
             )
           }
           onPickOffer={(agents) => {
@@ -422,7 +443,7 @@ function groupByDay(entries: Entry[]): Array<[string, Entry[]]> {
 function SentBubble({ text, answer, named }: { text: string; answer: boolean; named: boolean }) {
   const bubble = (
     // 흰 글자 6.2:1 (§2-2 `brand` 행) — 캡션도 같은 흰색이다. 흐리게 낮추면 4.5:1 아래로 내려간다.
-    <div className="bg-brand rounded-card max-w-[85%] px-4 py-3 text-white">
+    <div data-tour="bubble" className="bg-brand rounded-card max-w-[85%] px-4 py-3 text-white">
       {answer ? <p className="text-caption mb-1">질문에 대한 답</p> : null}
       <p className="text-body break-words whitespace-pre-wrap">{text}</p>
     </div>
@@ -441,6 +462,7 @@ function TurnReply({
   later,
   answering,
   onOpenDrafts,
+  onOpenMedicationDrafts,
   onPickOffer,
 }: {
   childId: string;
@@ -449,9 +471,17 @@ function TurnReply({
   later: ChatTurn[];
   answering: ChatQuestion | null;
   onOpenDrafts: () => void;
+  onOpenMedicationDrafts: () => void;
   onPickOffer: (agents: Agent[]) => void;
 }) {
   const runId = turn.send.status === "sent" ? turn.send.runId : null;
+  const storedMedications = useMedicationDraftStore(
+    (s) => s.byChild[childId] ?? NO_MEDICATION_DRAFTS,
+  );
+  const remainingMedicationDrafts = storedMedications.filter((d) =>
+    turn.run.medicationDrafts.some((r) => r.draft_id === d.draft_id),
+  ).length;
+  const medicationsReplaced = medicationsReplacedByLater(turn, later);
   const rewriteBlocked = useRewriteBlocked(childId);
   const stored = useEventDraftStore((s) => s.byChild[childId] ?? NO_DRAFTS);
   const remainingDrafts = stored.filter(
@@ -462,32 +492,62 @@ function TurnReply({
   //    — 다시 시도가 실패해도 "여기까지 받은 기록" 이 남는다 (`stores/conversation.ts` 의 `submit`).
   const run = turn.send.status === "sending" ? SENDING : turn.run;
   const running = run.status === "idle" || run.status === "streaming";
+  /**
+   * 위치 동의는 켜져 있는데 위치 없이 나간 줄에서 놀이 추천이 나왔다 (#593 · #638 리뷰). 권한 상태와 하루 한 번은
+   * 안내가 스스로 본다 (`LocationOffNote`). 🚨 지난 턴에는 세우지 않는다 — 그때 위치가 빠졌는지 모른다.
+   */
+  const locationOff =
+    !running &&
+    turn.withoutLocation &&
+    visibleAgentResults(run.agentResults).some((result) => result.agent === "activity");
 
   return (
-    // 진행 표시 → 결과는 같은 자리의 교체다 (디자인 시스템 §8). 🚨 **말풍선이 붙는 것에는 움직임이 없다** —
-    //    이건 이미 서 있던 진행 카드가 결과로 바뀌는 순간뿐이다 (§8 "하지 않는 것").
-    <Swap id={running ? "progress" : "result"}>
-      <RunReply
-        childId={childId}
-        runId={runId}
-        run={run}
-        question={turn.question}
-        answeringNow={runId !== null && answering?.runId === runId}
-        remainingDrafts={remainingDrafts}
-        draftsReplaced={draftsReplaced}
-        // 이어받기 run 이 또 물은 질문이다 — "한 가지만 더" 를 두 번 말하지 않는다.
-        followUp={turn.answering !== null}
-        onRetry={canRetry(turn) ? () => retryTurn(childId, turn.id) : undefined}
-        checkRecords={turn.replayed}
-        onRewrite={turn.handedBack ? undefined : () => rewriteTurn(childId, turn.id)}
-        rewriteBlocked={rewriteBlocked}
-        onAnswer={() => {
-          if (runId) answerQuestion(childId, runId);
-        }}
-        onOpenDrafts={onOpenDrafts}
-        onPickOffer={onPickOffer}
-      />
-    </Swap>
+    <>
+      {/* 진행 표시 → 결과는 같은 자리의 교체다 (디자인 시스템 §8). 🚨 **말풍선이 붙는 것에는 움직임이 없다** —
+          이건 이미 서 있던 진행 카드가 결과로 바뀌는 순간뿐이다 (§8 "하지 않는 것"). */}
+      <Swap id={running ? "progress" : "result"}>
+        <RunReply
+          childId={childId}
+          runId={runId}
+          run={run}
+          question={turn.question}
+          answeringNow={runId !== null && answering?.runId === runId}
+          remainingDrafts={remainingDrafts}
+          draftsReplaced={draftsReplaced}
+          remainingMedicationDrafts={remainingMedicationDrafts}
+          medicationDraftsReplaced={medicationsReplaced}
+          // 이어받기 run 이 또 물은 질문이다 — "한 가지만 더" 를 두 번 말하지 않는다.
+          followUp={turn.answering !== null}
+          onRetry={canRetry(turn) ? () => retryTurn(childId, turn.id) : undefined}
+          checkRecords={turn.replayed}
+          onRewrite={turn.handedBack ? undefined : () => rewriteTurn(childId, turn.id)}
+          rewriteBlocked={rewriteBlocked}
+          onAnswer={() => {
+            if (runId) answerQuestion(childId, runId);
+          }}
+          onOpenDrafts={onOpenDrafts}
+          onOpenMedicationDrafts={onOpenMedicationDrafts}
+          onPickOffer={onPickOffer}
+        />
+      </Swap>
+      {locationOff ? <LocationOffNote childId={childId} turnId={turn.id} /> : null}
+    </>
+  );
+}
+
+/**
+ * 이 줄의 복약 초안을 뒤 run 이 **같은 코스의 초안으로 다시 냈는가** (#537). 보관함이 같은 `schedule_id` 를 새 장으로
+ * 갈아 끼우므로(`mergeMedicationDrafts`) 이 줄의 남은 초안이 0 이 되는데, 그건 "넣었다" 가 아니다 — 일정 초안과 같다.
+ */
+function medicationsReplacedByLater(turn: ChatTurn, later: ChatTurn[]): boolean {
+  const ids = new Set(turn.run.medicationDrafts.map((d) => d.draft_id));
+  const schedules = new Set(
+    turn.run.medicationDrafts.flatMap((d) => (d.schedule_id ? [d.schedule_id] : [])),
+  );
+  return later.some((t) =>
+    t.run.medicationDrafts.some(
+      (d) => ids.has(d.draft_id) || (d.schedule_id !== undefined && schedules.has(d.schedule_id)),
+    ),
   );
 }
 

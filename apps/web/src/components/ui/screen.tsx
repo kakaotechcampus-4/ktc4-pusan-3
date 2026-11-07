@@ -1,5 +1,6 @@
 import { ViewTransition, type ReactNode, type Ref } from "react";
 
+import { SplashDone } from "@/components/ui/splash-done";
 import { cn } from "@/lib/cn";
 import { TRANSITION_TYPE, VIEW_TRANSITION } from "@/lib/view-transition";
 
@@ -21,7 +22,7 @@ import { TRANSITION_TYPE, VIEW_TRANSITION } from "@/lib/view-transition";
  *    두 번 사고 난 그 조작이다. 둘 다 넘기면 **채팅바가 위, 네비가 아래**로 한 덩어리가 되고
  *    safe area 는 제일 아래 것이 받는다 — 각자 받으면 그만큼 두 번 밀린다.
  *
- * 🚨 **위에 붙는 것도 같다** (`topBar` · 04 대화의 머리). 넘기면 위 여백(safe area + 여백)을
+ * 🚨 **위에 붙는 것도 같다** (`topBar` · 04 대화 · 05 제안 후보의 머리). 넘기면 위 여백(safe area + 여백)을
  *    이 바가 대신 받는다 — 본문과 바가 각자 받으면 노치 아래에 빈 띠가 두 겹 생기고, 바 없이
  *    화면이 직접 `sticky top-0` 을 붙이면 스크롤했을 때 바가 노치 · 상태바 밑으로 들어간다.
  */
@@ -32,6 +33,7 @@ export function Screen({
   bottomBar,
   nav,
   bodyRef,
+  waiting = false,
 }: {
   children: ReactNode;
   className?: string;
@@ -41,7 +43,7 @@ export function Screen({
    */
   bodyRef?: Ref<HTMLDivElement>;
   /**
-   * 스크롤과 무관하게 화면 위에 붙는 머리 (04 대화). 🚨 **아래로 길게 자라는 흐름 화면에만 쓴다** —
+   * 스크롤과 무관하게 화면 위에 붙는 머리 (04 대화 · 05 제안 후보). 🚨 **아래로 길게 자라는 흐름 화면에만 쓴다** —
    * 돌아가는 길이 화면 밖으로 밀리는 곳이다. 짧은 화면에 붙이면 본문 자리만 줄어든다.
    */
   topBar?: ReactNode;
@@ -49,6 +51,13 @@ export function Screen({
   bottomBar?: ReactNode;
   /** 그보다 더 아래에 붙는 화면 이동 바 (`ChildNav`). */
   nav?: ReactNode;
+  /**
+   * 아직 화면이 다 서지 않았다 — 앱 셸의 스플래시를 걷지 않는다 (#690). 화면을 기다리는 자리(`SessionChecking`)와,
+   * 첫 모습을 정하는 값을 받는 동안의 화면(00 로그인의 버튼 상태)이다. 거짓이 되는 순간 셸에 알린다.
+   * 🚨 끝나지 않을 수 있는 조건을 넘기지 않는다 — 그 화면에서 앱을 켜면 스플래시가 셸의 시간 초과까지 남는다.
+   *    실패로도 끝나는 값(`isPending`)을 넘긴다.
+   */
+  waiting?: boolean;
 }) {
   const pinned = Boolean(bottomBar || nav);
 
@@ -80,6 +89,8 @@ export function Screen({
       >
         {children}
       </div>
+      {/* 앱을 켠 뒤 처음 선 화면이면 셸이 스플래시를 내린다 (`lib/native/splash.ts`). */}
+      {waiting ? null : <SplashDone />}
 
       {pinned ? (
         // sticky 라 본문이 짧으면 그냥 아래에 놓이고, 길면 스크롤 위에 떠 있는다.

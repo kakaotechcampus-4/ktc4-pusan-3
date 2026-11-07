@@ -1,5 +1,5 @@
 /**
- * 되돌릴 수 없는 5개 엔드포인트 — **키가 필수 인자인 함수**로만 부른다.
+ * 되돌릴 수 없는 엔드포인트 — **키가 필수 인자인 함수**로만 부른다.
  *
  * 왜 `api.post(...)` 를 그대로 쓰지 않나 —
  * `api.post` 의 `idempotencyKey` 는 선택 인자다. 빠뜨려도 컴파일이 통과하고,
@@ -19,14 +19,20 @@ import type {
   ApproveSuggestionsResponse,
   CreateEventDraftsRequest,
   CreateEventDraftsResponse,
+  ConfirmDeleteProposalRequest,
   CreateInputResponse,
+  DeleteProposalResponse,
   HealthSafety,
+  ReviseMedicationBody,
+  SubmitMedicationBody,
+  SubmitMedicationResponse,
   OnboardingRequest,
   OnboardingResponse,
   PhotoCommitRequest,
   PhotoCommitResponse,
   PhotoLane,
   SubmitEventBody,
+  InputLocation,
   SubmitEventResponse,
   UpdateHealthSafetyRequest,
   UpdateHealthSafetyResponse,
@@ -51,6 +57,11 @@ export interface InputRequest {
    * ⚠️ #175 머지 전 서버는 **모르는 필드라 무시한다** — 먼저 보내도 깨지지 않는다.
    */
   reply_to?: string;
+  /**
+   * 흐린 위치 (#593 · `CreateInputRequest.location`). 🚨 **보내기 직전에 붙인다** — 말풍선의 본문(`ChatTurn.body`)
+   * 에는 없다. 다시 시도가 같은 좌표로 나가도록 키마다 붙든다 (`stores/conversation.ts` 의 `sentLocations`).
+   */
+  location?: InputLocation;
 }
 
 /**
@@ -184,6 +195,36 @@ export function updateHealthSafety(
   return api.patch(idempotentPath.updateHealthSafety(childId, safetyId), body, { idempotencyKey });
 }
 
+/* ── 🚨 승인 게이트 ㉡ — 복약 초안 제출 (#537) ─────────────────────────── */
+
+/**
+ * 복약 초안을 **등록한다.** 코스와 기간만큼의 회차가 생긴다 — 되돌릴 수 없는 지점이다.
+ *
+ * 🚨 **게이트 ㉡ 안의 메서드다** (건강 기록 확정). 새 게이트가 아니다 (`idempotentPath.submitMedication`).
+ * 🚨 본문은 보호자가 카드에서 확인한 최종 상태 전체다. 낙관적 업데이트 금지 · 재시도는 같은 키.
+ * 경로 · 본문 · 응답은 서버 계약(`SubmitMedicationRequest` · `SubmitMedicationResponse`)과 같다.
+ */
+export function submitMedicationDraft(
+  childId: string,
+  body: SubmitMedicationBody,
+  idempotencyKey: IdempotencyKey,
+): Promise<SubmitMedicationResponse> {
+  return api.post(idempotentPath.submitMedication(childId), body, { idempotencyKey });
+}
+
+/**
+ * 복약 수정 초안을 반영한다. 🚨 **이것도 게이트 ㉡ 이고 키를 받는다.** 지난 회차와 그 체크는 서버가 그대로 둔다 —
+ * 화면은 그 규칙을 흉내 내지 않고 본문만 보낸다. 🚨 `source` 는 수정에서 바뀌지 않아 싣지 않는다.
+ */
+export function updateMedicationDraft(
+  childId: string,
+  scheduleId: string,
+  body: ReviseMedicationBody,
+  idempotencyKey: IdempotencyKey,
+): Promise<SubmitMedicationResponse> {
+  return api.patch(idempotentPath.updateMedication(childId, scheduleId), body, { idempotencyKey });
+}
+
 /* ── 05 제안 → 일정 초안 ──────────────────────────────────────────────── */
 
 /**
@@ -244,12 +285,47 @@ export function submitEventDraft(
  *    `event_id` 하나로는 남의 아이 일정인지 가릴 수 없다.
  * 🚨 본문은 `submitEventDraft` 와 같은 **최종 목록**이다 (`items` 에서 빠진 `item_id` 는 삭제).
  *    `suggestion_ids` 는 싣지 않는다 — 제안 ↔ 일정 연결은 create 에서만 생긴다.
+ * 🚨 `reminder` 도 싣지 않는다 (#609). 계약은 받지만, 칸이 없어야 서버가 걸린 알림을 그대로 두고
+ *    시각 · 종일이 바뀔 때 알아서 옮긴다. 같은 값을 다시 보내면 시작을 옮긴 경우 그 값이 지나
+ *    `422 invalid_reminder` 로 수정까지 막힌다. 걸린 알림은 09 하루 패널이 `PUT …/reminder` 로 바꾼다.
  */
 export function updateEventDraft(
   childId: string,
   eventId: string,
-  body: Omit<SubmitEventBody, "suggestion_ids">,
+  body: Omit<SubmitEventBody, "suggestion_ids" | "reminder">,
   idempotencyKey: IdempotencyKey,
 ): Promise<SubmitEventResponse> {
   return api.patch(idempotentPath.updateEvent(childId, eventId), body, { idempotencyKey });
+}
+
+/* ── 04 대화의 삭제 확정 (#535) ───────────────────────────────────────── */
+
+/**
+ * 🚨 **체크한 기록 · 일정을 지운다** — 되살릴 수 없다. 대화 카드에서 두 번 누른 뒤에만 부른다.
+ *
+ * 서버는 **제안 후보 안의 체크한 것만** 한 트랜잭션에서 지운다. 하나라도 후보 밖이면 422 `not_in_proposal`
+ * 이고 아무것도 지우지 않는다. 24시간이 지났으면 409 `proposal_expired`, 이미 끝난 제안이면 409 `proposal_closed`.
+ * 🚨 키는 **체크한 id 목록에 묶는다** (`current(payload)`) — 실패한 뒤 체크를 바꿔 다시 누르면 다른 본문이다.
+ */
+export function confirmDeleteProposal(
+  childId: string,
+  proposalId: string,
+  body: ConfirmDeleteProposalRequest,
+  idempotencyKey: IdempotencyKey,
+) {
+  return api.post<DeleteProposalResponse>(
+    idempotentPath.confirmDeleteProposal(childId, proposalId),
+    body,
+    { idempotencyKey },
+  );
+}
+
+/**
+ * 삭제 제안을 아무것도 지우지 않고 닫는다. 키가 없다 — 지우지 않아서 다시 보내도 같은 응답이 온다.
+ * 이미 지운 제안이면 409 `proposal_closed`, 24시간이 지났으면 409 `proposal_expired`.
+ */
+export function cancelDeleteProposal(childId: string, proposalId: string) {
+  return api.post<DeleteProposalResponse>(
+    `/children/${childId}/delete-proposals/${proposalId}/cancel`,
+  );
 }

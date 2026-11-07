@@ -3,7 +3,10 @@ import { NetworkError } from "./errors";
 import type {
   Affinity,
   Agent,
+  DeleteProposalCard,
   EventDraft,
+  FoundTabs,
+  MedicationDraft,
   Observation,
   PhotoEntry,
   PhotoLane,
@@ -159,7 +162,8 @@ export interface UnavailableEvent {
  *    배포하지 않아도 된다 (`GuidanceEvent.code` 와 같은 이유).
  * 🚨 **개수 안내는 `kind` 가 아니라 `code` 로 찾는다.** Activity 날씨 안내도 `kind: "notice"` 라서, 한 블록에
  *    둘이 같이 오면 `kind` 로는 못 가른다. 문구도 Agent 마다 달라서(Food 의 0개 문구) 문구로 가르면 안 된다.
- * ⚠️ 서버 readout 의 `source_refs` 는 오지 않는다 (#276). 근거 종류가 `Ref.kind` 에 아직 없다.
+ * 🚨 **`source_refs` 는 복약 코스만 온다** (#713 · PR #716). 서버가 화면이 받기로 한 종류만 골라 싣는다 — 성장 기록 같은 다른
+ *    근거 종류는 `Ref.kind` 에 없어서 빼고 보낸다. 지난 대화(`StoredReadout`)에는 싣지 않아 선택 칸이다.
  */
 export interface AgentReadout {
   kind: "growth_delta" | "notice" | "blocked" | "unsupported" | (string & {});
@@ -176,6 +180,12 @@ export interface AgentReadout {
    * ⚠️ `cannot_resume`(이어서 할 수 없음)은 05 추천 엔드포인트만 붙인다 (#249). 04 에는 오지 않는다.
    */
   code: "fewer" | "empty" | null;
+  /**
+   * 이 readout 이 가리키는 복약 코스 (#713). 체크 안내(`dose.check_on_screen`)와 회차 현황(`dose_status`)이 싣는다.
+   * 블록의 "복약 화면 열기" 가 이 값으로 그 코스를 연다 (`lib/agent-result.ts` 의 `medicationHref`).
+   * 🚨 SSE 에서는 키가 늘 있지만 지난 대화에서 다시 그린 블록에는 없다 — 없으면 빈 배열로 읽는다.
+   */
+  source_refs?: Ref[];
 }
 
 /**
@@ -205,11 +215,25 @@ export interface AgentResultEvent {
   /**
    * Agent 가 되묻는 한 줄. 없으면 `null` 이다 (키는 늘 있다).
    *
-   * 🚨 **답할 자리를 열지 않는다.** Memory 의 되묻기(`NoteEvent`)와 답의 쓰임이 달라서, "이 질문에 답하기" 로
-   *    `reply_to` 를 실어 보내면 서버가 400 `reply_context_unavailable` 로 막는다. 답을 받는 길은 #246 에서
-   *    정한다 — 그때까지는 안내 문장으로만 선다.
+   * 🚨 **`awaits_reply` 가 참일 때만 답할 자리를 연다** (#537). 아니면 서버가 맥락을 들고 있지 않아서, "이 질문에
+   *    답하기" 로 `reply_to` 를 실어 보내면 400 `reply_context_unavailable` 이다 (#246) — 안내 문장으로만 선다.
    */
   question: string | null;
+  /**
+   * 이 `question` 이 **답을 받는 질문**인가 (#537 · #563 리뷰에서 AI 와 맞춘 이름). 서버가 그 run 의 되묻기 맥락을 들고 있을 때만
+   * `true` 다. 지금은 Growth 루틴 질문(#654)과 Health 복약 질문(중단 확인, 어느 약, 복용 시점 · #716)이 그렇다.
+   * 없으면 `false` 로 읽는다.
+   * Health 는 이어받은 run 이 또 물을 수 있다 (어느 약 → 멈출까요). 그 질문도 `true` 라 화면은 같은 길로 받는다.
+   *
+   * 🚨 **이 값이 참인 질문만 답할 자리를 연다.** 아닌 질문에 `reply_to` 를 실어 보내면 서버가 400
+   *    `reply_context_unavailable` 로 막는다 (#246). 답은 Memory 질문과 같은 길(`reply_to` = 이 run)로 간다.
+   * 이름은 #563 리뷰에서 AI 와 맞췄다. pipeline 은 `PendingReply` 로 맥락을 먼저 보관한 뒤
+   *    `AgentQuestion(awaits_reply=true)` 을 내므로, 질문 장이 보일 때는 이미 답할 수 있다.
+   *    서버는 키를 늘 싣는다.
+   *    run 의 되묻기는 카드가 아니라 **마지막 `agent_result` 한 장**(readouts · 추천이 빈 장)으로 오고(#615),
+   *    카드는 `false`, 맥락을 보관하지 않은 질문도 `false` 다.
+   */
+  awaits_reply?: boolean;
   /** 저장(commit)이 끝난 추천 id. 추천 순서 그대로다. 없으면 `[]` (키는 늘 있다). */
   suggestion_ids: string[];
   /**
@@ -289,6 +313,24 @@ export function isDraftEvent(type: string): boolean {
   return (DRAFT_EVENT_NAMES as readonly string[]).includes(type);
 }
 
+/**
+ * 04 한 줄 입력 — Health 가 만든 **복약 초안 묶음** (#537).
+ *
+ * 🚨 **아직 아무것도 저장되지 않았다.** 제출이 승인 게이트 ㉡(건강 기록 확정)이다 — 일정 초안(게이트 ㉠)과
+ *    모양도 게이트도 다르다. 같은 카드 · 같은 프레임에 섞지 않는다.
+ * 🚨 **이름은 `medication_draft` 하나다** (#563 리뷰 · AI 와 합의). 일정 초안(`event_draft`)과 같은 단수형이고,
+ *    모양도 같은 `{ drafts: [...] }` 한 프레임이다. 서버는 `apps/api/app/api/runs/translate.py` 가 이 이름으로 낸다 (PR #716).
+ */
+export interface MedicationDraftsEvent {
+  drafts: MedicationDraft[];
+}
+
+export const MEDICATION_DRAFT_EVENT = "medication_draft";
+
+export function isMedicationDraftEvent(type: string): boolean {
+  return type === MEDICATION_DRAFT_EVENT;
+}
+
 /** model_calls 가 4 를 넘으면 서버 알람이다 (NF-01). Agent 진입 1회 + 재시도마다 +1 로 센다. */
 export interface DoneEvent {
   run_id: string;
@@ -329,10 +371,14 @@ export type RunEvent =
   | { type: "offer"; data: OfferEvent }
   | { type: "event_draft"; data: EventDraftsEvent }
   | { type: "event_drafts"; data: EventDraftsEvent }
+  | { type: "medication_draft"; data: MedicationDraftsEvent }
   | { type: "guidance"; data: GuidanceEvent }
   | { type: "note"; data: NoteEvent }
   | { type: "unavailable"; data: UnavailableEvent }
   | { type: "agent_result"; data: AgentResultEvent }
+  // 조회 · 삭제 카드 (#535). 지난 대화의 `ChatReply` 와 같은 칸이다 (`types.ts` 의 `FoundTabs` · `DeleteProposalCard`).
+  | { type: "found_tabs"; data: FoundTabs }
+  | { type: "delete_proposal"; data: DeleteProposalCard }
   | { type: "ping"; data: PingEvent }
   | { type: "partial"; data: PartialEvent }
   | { type: "failed"; data: FailedEvent }

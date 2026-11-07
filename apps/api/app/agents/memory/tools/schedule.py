@@ -21,6 +21,7 @@ created_by / child_id 는 규칙이 채운다.
 
 import logging
 from dataclasses import replace
+from datetime import date
 from typing import Any
 
 from app.agents.common.datetime_rules import (
@@ -30,12 +31,11 @@ from app.agents.common.datetime_rules import (
     MissingStartTime,
     WhenPatch,
     check_when,
-    resolve_query_bound,
     resolve_when,
 )
-from app.agents.memory.context import AgentContext
+from app.agents.memory.context import AgentContext, FoundRows
 from app.agents.memory.drafts import DraftItem, EventDraft, EventSnapshot
-from app.agents.memory.result import ErrorCode, Operation, ToolResult, fail, ok
+from app.agents.memory.result import ErrorCode, Operation, ToolResult, cut, fail, nearest, ok
 from app.agents.memory.schemas.common import EventCategory, EventType
 from app.agents.memory.schemas.schedule import (
     EventCreate,
@@ -43,10 +43,15 @@ from app.agents.memory.schemas.schedule import (
     EventItemRef,
     EventItemUpdate,
     EventQuery,
-    EventRef,
     EventUpdate,
 )
 from app.agents.memory.store.ports import EventItemRow, EventRow
+from app.agents.memory.tools.dates import (
+    check_new_event,
+    date_remedy,
+    resolve_bounds,
+    resolve_event_days,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -69,10 +74,6 @@ _ITEM_GONE_AFTER_CHECK = (
     "챙김 표시를 먼저 반영한 뒤 이름 초안을 만들다 준비물을 찾지 못했다. "
     "query_event 로 준비물이 남아 있는지 확인한다."
 )
-
-
-def _date_remedy(exc: DateParseError) -> str:
-    return f"{exc} 오늘·모레·금요일 같은 원문 표현이나 YYYY-MM-DD 로 넣는다."
 
 
 def _new_items(names: list[str]) -> tuple[DraftItem, ...]:
@@ -101,10 +102,17 @@ async def _event_summary(context: AgentContext, row: EventRow) -> dict[str, Any]
 
 # ── event ───────────────────────────────────────────────────────
 async def create_event(context: AgentContext, args: EventCreate) -> ToolResult:
+    try:
+        # 날짜 규칙은 관찰과 같다(tools/dates.py). 시각은 resolve_when 이 이 날짜에 얹는다
+        starts_on, ends_on = await resolve_event_days(context, args, current_start=None)
+        if starts_on is not None:  # create_event 는 starts_on 이 필수라 늘 있다
+            check_new_event(date.fromisoformat(starts_on), context.today, args)
+    except DateParseError as exc:
+        return fail("create", EVENT, ErrorCode.DATE_UNPARSEABLE, date_remedy(exc))
     patch = WhenPatch(
-        starts_on=args.starts_on,
+        starts_on=starts_on,
         starts_time=args.starts_time,
-        ends_on=args.ends_on,
+        ends_on=ends_on,
         ends_time=args.ends_time,
         direction=args.temporal_direction,
     )
@@ -139,31 +147,21 @@ async def create_event(context: AgentContext, args: EventCreate) -> ToolResult:
 async def query_event(context: AgentContext, args: EventQuery) -> ToolResult:
     try:
         # 날짜 조건은 starts_at 기준
-        bounds = {
-            "date_from": resolve_query_bound(
-                args.date_from,
-                today=context.today,
-                direction=args.temporal_direction,
-                is_end=False,
-            ),
-            "date_to": resolve_query_bound(
-                args.date_to,
-                today=context.today,
-                direction=args.temporal_direction,
-                is_end=True,
-            ),
-        }
+        bounds = await resolve_bounds(context, args, direction=args.temporal_direction)
     except DateParseError as exc:
-        return fail("query", EVENT, ErrorCode.DATE_UNPARSEABLE, _date_remedy(exc))
+        return fail("query", EVENT, ErrorCode.DATE_UNPARSEABLE, date_remedy(exc))
 
     rows = await context.store.query_events(
         child_id=context.child_id, title_query=args.title_query, **bounds
     )
+    kept, truncated = nearest(rows, lambda row: abs((row.starts_at - context.now).total_seconds()))
+    context.found[EVENT] = FoundRows(tuple(row.id for row in kept), truncated)
     return ok(
         "query",
         EVENT,
-        count=len(rows),
-        events=[await _event_summary(context, row) for row in rows],
+        count=len(kept),
+        events=[await _event_summary(context, row) for row in kept],
+        **cut(truncated, event=True),
     )
 
 
@@ -172,10 +170,15 @@ async def update_event(context: AgentContext, args: EventUpdate) -> ToolResult:
     if current is None:
         return fail("update", EVENT, ErrorCode.UNKNOWN_EVENT, _UNKNOWN_EVENT)
 
+    try:
+        current_start = current.starts_at.astimezone(context.timezone).date()
+        starts_on, ends_on = await resolve_event_days(context, args, current_start=current_start)
+    except DateParseError as exc:
+        return fail("update", EVENT, ErrorCode.DATE_UNPARSEABLE, date_remedy(exc))
     patch = WhenPatch(
-        starts_on=args.starts_on,
+        starts_on=starts_on,
         starts_time=args.starts_time,
-        ends_on=args.ends_on,
+        ends_on=ends_on,
         ends_time=args.ends_time,
         direction=args.temporal_direction,
         # ends_at은 컬럼째로만 지움(ends_on·ends_time 두 인자로 나뉘어 들어와서)
@@ -291,21 +294,12 @@ def _resolve_when(
     except MissingEndTime:
         return fail(operation, EVENT, ErrorCode.DATE_UNPARSEABLE, _NEEDS_END_TIME)
     except DateParseError as exc:
-        return fail(operation, EVENT, ErrorCode.DATE_UNPARSEABLE, _date_remedy(exc))
+        return fail(operation, EVENT, ErrorCode.DATE_UNPARSEABLE, date_remedy(exc))
 
     problem = check_when(when, patch)
     if problem is not None:
         return fail(operation, EVENT, ErrorCode.INVALID_ARGS, problem)
     return when
-
-
-async def delete_event(context: AgentContext, args: EventRef) -> ToolResult:
-    # 준비물도 함께 사라진다 (ON DELETE CASCADE)
-    if not await context.store.delete_event(event_id=args.event_id):
-        return fail("delete", EVENT, ErrorCode.UNKNOWN_EVENT, _UNKNOWN_EVENT)
-    # 같은 run 에서 고쳤다가 지운 일정이면 초안도 뺀다. 없는 일정의 초안을 승인 화면에 올리지 않는다
-    context.drafts.drop(args.event_id)
-    return ok("delete", EVENT, id=args.event_id)
 
 
 # ── event_item ──────────────────────────────────────────────────
@@ -361,7 +355,10 @@ async def update_event_item(context: AgentContext, args: EventItemUpdate) -> Too
             return _gone_after_check(args.item_id)
         # 이름이 그대로면 결과는 챙김만 한 호출과 같다. 이름 쪽의 changed=[] 를 내면
         # 모델이 방금 한 체크를 "이미 되어 있었다"로 읽는다
-        return checked if renamed.data.get("changed") == [] else renamed
+        if renamed.data.get("changed") == []:
+            return checked
+        # 이름 초안에도 챙김 전 값을 싣는다. 없으면 방금 한 체크가 결과에서 사라진다
+        return ok("update", EVENT_ITEM, **renamed.data, was_prepared=checked.data["was_prepared"])
     return await _rename_event_item(context, current, args)
 
 
@@ -393,7 +390,16 @@ async def _check_event_item(
     if row is None:
         return fail("update", EVENT_ITEM, ErrorCode.TARGET_NOT_FOUND, _item_not_found())
     _sync_checked(context, row)
-    return ok("update", EVENT_ITEM, draft=False, item_id=row.item_id, is_prepared=row.is_prepared)
+    # 챙김 전 값도 싣는다. 이미 체크된 것을 다시 체크했는지를 보호자에게 갈 말을 정할 때 본다
+    # (#678 리뷰)
+    return ok(
+        "update",
+        EVENT_ITEM,
+        draft=False,
+        item_id=row.item_id,
+        is_prepared=row.is_prepared,
+        was_prepared=current.is_prepared,
+    )
 
 
 def _sync_checked(context: AgentContext, row: EventItemRow) -> None:
@@ -495,7 +501,6 @@ SCHEDULE_HANDLERS = {
     "create_event": create_event,
     "query_event": query_event,
     "update_event": update_event,
-    "delete_event": delete_event,
     "create_event_item": create_event_item,
     "update_event_item": update_event_item,
     "delete_event_item": delete_event_item,

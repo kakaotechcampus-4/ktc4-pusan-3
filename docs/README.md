@@ -84,12 +84,20 @@
 - [api/idempotency-v1.md](api/idempotency-v1.md) — **되돌릴 수 없는 POST 5개의 중복 실행 방지.** 계약서 §01 의 "헤더가 없으면 400" 을 동작까지 채운다 — 같은 키·같은 요청은 **처음 응답 재생**, 다른 요청은 422, 처리 중은 409 · **2xx 만 저장**(403 을 캐시하면 동의 후 재시도가 막힌다) · 키 스코프 `(parent_id, method, path, key)` · 에러 코드 4개 신설 제안 · 클라이언트는 전용 함수의 **필수 인자**로 강제하고 목은 같은 동작을 회귀 테스트로 건다 (#29 리뷰 반영)
 - [api/suggestions-v1.md](api/suggestions-v1.md) — **05 추천 받기의 판단 순서와 다시 시도.** `run_id` 없으면 처음 요청(문장은 홈 버튼 키의 표 문장뿐) · 있으면 Agent 마다 그 run 의 추천 → 0개 기록 → 실패 맥락(15분)으로 다시 만들기 → `cannot_resume` 순서 · 보관함은 프로세스 메모리 · 응답 조립 규칙(`groups[].notice` · 문서 행을 근거로 단 일반 추천 · 알레르기 사전검사) · 새로 돌릴 때만 하루 한도 (#249)
 - [api/chat-v1.md](api/chat-v1.md) — **지난 대화 다시 보기.** run 하나를 대화 한 턴(`chat_turn`)으로 · 쓴 보호자 본인만 보고 탈퇴 · 연결 끊기 · 아이 삭제 때 지운다 · `done` 으로 끝난 run 만 · 말풍선은 그날 오간 말 그대로, 관찰은 id 로 담아 조회 때 지금 상태로(지운 기록은 `deleted`) · 날짜는 접수 KST, 되묻기 답은 질문한 날 · 커서는 날짜를 품는다 (#228)
+- [api/delete-proposal-v1.md](api/delete-proposal-v1.md) — **대화로 지울 때 사람이 버튼으로 확정한다.** AI 는 지우지 않고 제안만 남긴다(후보 · 기본 체크) · 보호자가 체크를 고쳐 버튼을 누르면 서버가 후보 안의 체크한 것만 지운다 · 제안한 보호자만 · 24시간 만료는 읽을 때 판정 · 지난 대화는 제안 id 만 담고 지금 상태로 그린다 (#535)
 
 *아직 문서 없음.* 외부 연동(나이스 급식 · Calendar).
 
 ## 일정 (event)
 
 - [event/event-draft-flow-v1.md](event/event-draft-flow-v1.md) — 승인 전 `event` 행을 두지 않기로 하면서 생긴 초안 계약 · `op`(create/update) 두 모양 · `items` 는 최종 목록(빠진 `item_id` 는 삭제) · `before` 는 원본 전체이고 `changed` 는 뺌 · `draft_id` 는 화면 전용 키 · `is_prepared` 는 초안이 읽지 않음
+
+## 복약 (medication)
+
+- [medication/medication-tables-v1.md](medication/medication-tables-v1.md) — 회차 1번 = 1행이고 체크 칸이 곧 복용 기록(로그 표 없음) · 그래서 `ends_on` 필수 · `status` 는 `active`/`stopped` 둘, 진행 중은 `in_progress(today)` 한 곳 · 회차에 `created_at`·`updated_at` 없음 · 오프셋 범위가 자정 넘김을 막음 · DB 가 못 막아 제출 API 가 막을 것(체크된 회차는 지우지 않음) · core 기준 시각(`ANCHOR_TIMES`)과 생성 식 대조 테스트는 `test_medication_tables.py` (#537)
+## 알림 (notification)
+
+- [notification/reminder-v1.md](notification/reminder-v1.md) — **일정 알림.** 일정마다 보호자 개인 알림 1개(고정 목록 · 종일은 KST 오전 9시) · 울릴 시각이 아니라 `lead` 를 저장하고 보낼 때 계산 · 기기는 로그인에 묶여 로그아웃 · 만료 때 함께 지워짐 · 스위치 2개(보호자 단위, 행 없으면 코드 기본값) · 1분 배치가 보내기 전에 `sent_at` 을 찍음(두 번 울리느니 한 번 빠짐) · 10분 넘게 지난 알림은 안 보냄 · 문구에 일정 제목 없음 · 🔶 문구 · 토큰 동의 · 기본값은 PM 결정 대기 (#594)
 
 ## 급식표 (meal-plan)
 
@@ -102,12 +110,15 @@
 - [web/kakao-login-v1.md](web/kakao-login-v1.md) — 로그인은 API 호출이 아니라 페이지 이동 · 셸은 인앱 인증 세션만 열고 토큰을 안 만짐 · 복귀는 `/auth/callback` 웹앱 공통 · 에러 문구는 프론트가 만듦 · 세션은 access 15분 메모리 + refresh HttpOnly 쿠키 (#465)
 - [web/mock-screens-v1.md](web/mock-screens-v1.md) — 목 서버 화면 확인 조회표 · 시나리오별 주소 · 저장소 둘(sessionStorage/localStorage) 초기화 스니펫 · 목의 refresh 표식
 - [web/event-draft-ui-v1.md](web/event-draft-ui-v1.md) — 초안이 생기는 시점 3곳(한 줄 입력 · 제안 · 사진)과 경로별 흐름 · 그릇은 셋 카드는 한 벌 · 초안 만들기는 게이트가 아니고 **제출만 게이트 ㉠**(`/events/{eid}/confirm` 에서 옮겨옴) · 건별 제출 · 못 읽은 일자를 화면이 안 채움 · 초안은 세션 스토리지에만 · 🔶 `photo-runs/{rid}/commit` 이 게이트인지는 미결
+- [web/screen-tour-v1.md](web/screen-tour-v1.md) — 화면 투어(#632) · 어느 화면에 자동으로 뜨나 · "봤음" 은 서버 별도 테이블(지금은 기기 저장) · 그만 봐도 본 것 · 비출 것이 없으면 단계를 뺀다 · 비춘 요소도 눌리지 않는다 · 화면이 바뀌면 같은 PR 에서 단계를 맞춘다
 - [web/screen-rules-v1.md](web/screen-rules-v1.md) — 04 · 11-1 · 11-2 가 시트가 아니라 라우트인 이유(웹뷰 뒤로가기) · `childId` 정본은 URL · 05 채택과 일정 만들기 분리 · 알레르기 확인이 채택보다 먼저 · 07 기록/기억 이름 · 교정 · 필터 · 08 은 게이트가 아님 · 사진 시트 두 단계 · 09 표식은 모양
-- [web/chat-run-v1.md](web/chat-run-v1.md) — 04 는 라우트 · 보내는 순간 넘어감 · 대화는 하루 하나 · `EventSource` 금지 · `partial` · `interrupted` · `guidance` 는 실패 아님 · `unconfirmed` 분리 · 되묻기는 `reply_to` · 키는 말풍선에
+- [web/chat-run-v1.md](web/chat-run-v1.md) — 04 는 라우트 · 보내는 순간 넘어감 · 대화는 하루 하나 · `EventSource` 금지 · `partial` · `interrupted` · `guidance` 는 실패 아님 · `unconfirmed` 분리 · 되묻기는 `reply_to` · 키는 말풍선에 · 조회 · 삭제 카드(삭제는 두 번 눌러 체크한 것만 · 요약은 응답 건수 · #535)
 - [web/components-v1.md](web/components-v1.md) — 컴포넌트 목록 · `Screen` 고정 바 · 네비는 가는 곳에만 · `IconButtonLink` · `ButtonLink` · 직접 만든 `Select` · 외부 UI 라이브러리 예외 셋 · 토큰 · 높이 · 서체 두 벌 · 호버 변형
 - [web/auth-consent-v1.md](web/auth-consent-v1.md) — 로그인 시작 지점 하나 · `bind` · 복귀 경로 검증 · 가입 동의와 아이 동의를 나눈 이유 · 관계는 02 · "전체 동의" 금지 · 동의 정본은 `GET /policies` · 토큰은 메모리, refresh 는 쿠키 · 확인 실패는 로그아웃이 아님
 - [web/api-client-v1.md](web/api-client-v1.md) — `fetch` 직접 호출 금지와 예외 · 되돌릴 수 없는 5곳은 `operations.ts` 로만 · 키 수명(`rotate` 는 성공 뒤) · 에러 코드별 "다시 시도" 금지 · 게이트에 낙관적 업데이트 금지 · 에러 바운더리 표
+- [web/medication-v1.md](web/medication-v1.md) — 복약 확인 카드는 **게이트 ㉡ 안의 메서드**(새 게이트 아님) · 알림 시각을 반드시 보여 주고 고치지 않음 · 비어 온 기간을 채우기 전엔 잠금 · 복약 초안은 건강 정보라 메모리 전용 · 회차 체크는 11-3 이고 게이트 아님 · `awaits_reply` 인 Agent 질문만 답하기 · 서류는 body 그대로 + 복사 · ⚠️ 제출 · 조회 · 체크 경로와 SSE 이름은 잠정 (#537)
 - [web/mock-and-tests-v1.md](web/mock-and-tests-v1.md) — 목 시나리오 표 · 목 규칙(타입 강제 · `withIdempotency` · 핸들러 순서) · Vitest 와 Playwright 가 거는 것 · 테스트 전용 핸들러 금지 · 목 상태 리셋
+- [web/web-push-v1.md](web/web-push-v1.md) — 일정 알림을 브라우저로 받기 · Firebase 값 다섯 개를 다 넣으면 켜지고 다 비우면 꺼짐 · 서비스 워커는 Firebase 없이 직접(클릭 가로채기 때문) · 권한은 처음 알림을 고를 때 · 로그인이 살아날 때마다 기기 등록 · 누르면 그날 09
 - [web/toolchain-deploy-v1.md](web/toolchain-deploy-v1.md) — 스택 버전과 TS 7 을 안 쓰는 이유 · `make web-build` 를 PR 전에 · CI 단계 · API 주소는 빌드 인자 · `.dockerignore` 의 `.env*` · standalone 복사
 
 *아직 문서 없음.* 화면 01~10, 입력 · 진행 오버레이 · 저장 확인 · 제안 · 승인 · 기록 고치기의 **설계 문서**. 이미 만든 화면의 구현 규칙은 위 `screen-rules` · `chat-run` · `auth-consent` 에 있다.
@@ -115,6 +126,7 @@
 ## 안전 · 개인정보
 
 - [safety/retention-v1.md](safety/retention-v1.md) — **개인정보 보관 · 삭제 기준.** 아이에 묶인 기록은 아이와 함께 · 근거 글은 원문 그대로 · 서버 로그 3개월 · 동의 증빙 1년 · 백업 30일 이내 · 대화 기록(#228) 규칙 (10-14 PM)
+- [safety/hazard-rules-v1.md](safety/hazard-rules-v1.md) — **위험 물질 규칙 목록과 판정 분리.** 이름 · 동사 · 예외 표기는 `hazard_rules.py`, 판정은 `hazard.py` · 값만 바뀌면 목록, 판정도 바뀌면 코드 · 지금은 코드 상수 + `find_hazards(rules=)` 목록 교체 · 검사 방법 교체 자리 `Guardrail`(사전검사 · 저장 게이트가 한 인스턴스, fail-closed) · 외부로 옮길 때 정할 것 (#731)
 - [safety/consent-texts-v1.md](safety/consent-texts-v1.md) — **약관 · 동의문 작성 메모.** 본문은 `apps/api/alembic/policy_texts/` 에 있고 DB 에 그대로 들어간다 · 초안마다 무엇을 왜 바꿨는지 · 배포 전에 만들어야 사실이 되는 문장 · 위치는 요약 + 위치기반서비스 이용약관 한 글에 체크 하나 (#172)
 
 그 밖에 *아직 문서 없음.* 가드레일 7개, 법정대리인 동의 절차, 외부 LLM 전달 범위. → [지금 열려 있는 결정](#지금-열려-있는-결정-기한-있음)
@@ -127,6 +139,8 @@
 
 - [ops/alembic-collaboration-v1.md](ops/alembic-collaboration-v1.md) — 마이그레이션 협업 규칙 · make 명령어 치트시트 · autogenerate 한계 · revision 충돌 해결법 확정
 - [ops/logging-alerts-v1.md](ops/logging-alerts-v1.md) — 서버 로그 적재(docker journald) · ERROR 알림(Discord 웹훅) 결정과 근거 · 알림이 못 잡는 것 (멘토 #267 2번 · PR #302)
+- [ops/llm-usage-v1.md](ops/llm-usage-v1.md) — LLM 토큰 사용량을 보호자 · run · 모델별로 남기는 방법 (BM 산정) · 새 호출 지점 규칙 · OCR 담당 계약 · 서버 고려
+- [ops/encryption-v1.md](ops/encryption-v1.md) — 전송(TLS · HSTS) · 저장(EBS) 구간 암호화가 어디서 지켜지는지와 확인 기록 · E2E 를 하지 않는 이유 · 예외 로그에서 원문 빼기 (#670)
 
 그 밖에 *아직 문서 없음.* 배포, 보안 5종 체크, 모델 호출·토큰 비용 실측.
 
