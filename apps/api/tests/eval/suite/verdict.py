@@ -106,7 +106,9 @@ def record_week(
         "pair": None,
         "repeat": 1,
         "attempt": trace.attempt,
-        "input_kind": "end_state" if step.kind == "check" else (trace.intent or "none"),
+        "input_kind": {"check": "end_state"}.get(step.kind, step.kind)
+        if step.kind in ("check", "approve", "correct")
+        else (trace.intent or "none"),
         "passed": verdict.passed,
         "violations": [str(v) for v in verdict.violations],
         "misses": list(verdict.misses),

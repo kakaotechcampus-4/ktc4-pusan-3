@@ -290,6 +290,17 @@ def test_결과_한_줄은_W_칸을_갖는다() -> None:
     assert row["step_kind"] == "say" and row["by"] == "mom" and row["day"] == "2026-11-16"
     end = _row("W-A", "end", "check", "mom", "2026-11-22")
     assert end["input_kind"] == "end_state" and end["ability"] == "-"
+    spec = {"at": "thu 08:30", "by": "mom", "tag": "ap", "kind": "approve", "approve_of": "x"}
+    approve = record_week(
+        "W-A",
+        Step.model_validate(spec),
+        Trace(case_id="x", attempt=0),
+        judge_check(Trace(case_id="x", attempt=0), misses=[]),
+        persona="p",
+        day=date(2026, 11, 19),
+        input_count=0,
+    )
+    assert approve["input_kind"] == "approve" and approve["step_kind"] == "approve"
 
 
 def test_한도_분석은_보호자_날짜별_입력_수로_N_마다_막히는_수를_센다() -> None:

@@ -130,8 +130,10 @@ def _inputs(row: dict[str, Any]) -> list[tuple[str, dict[str, int]]]:
 
 
 def _cost(rows: Sequence[dict[str, Any]]) -> list[str]:
-    # W 의 끝 상태 점검 단계는 입력이 아니다(run 없음) — 입력 종류 표에서 뺀다
-    rows = [row for row in _scored(rows) if row.get("step_kind") != "check"]
+    # W 의 끝 상태 점검 · 승인 · 정정 단계는 입력이 아니다(run 없음) — 입력 종류 표에서 뺀다
+    rows = [
+        row for row in _scored(rows) if row.get("step_kind") not in ("check", "approve", "correct")
+    ]
     by_kind: dict[str, list[dict[str, int]]] = defaultdict(list)
     for row in rows:
         for kind, numbers in _inputs(row):

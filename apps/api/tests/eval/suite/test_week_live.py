@@ -153,7 +153,8 @@ async def test_week(
                 outcome = await driver.run(step)
                 trace = outcome.trace
                 day = step_day(monday, step.at)
-                if step.kind == "check":
+                if step.kind in ("check", "approve", "correct"):
+                    # run 이 없는 단계 — 끝 이벤트가 없으니 run 불변식(I12 등)은 걸지 않는다
                     verdict = judge_check(trace, misses=outcome.extra_misses)
                 else:
                     verdict = judge_step(
