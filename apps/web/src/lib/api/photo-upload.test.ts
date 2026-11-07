@@ -152,4 +152,41 @@ describe("08 사진 — S3 로 올리기", () => {
     expect(s3Posts).toBe(1);
     expect(keysSent).toEqual([KEY, KEY]);
   });
+
+  it("서버가 오류로 답했으면 재시도는 S3 에 새로 올린다 (서버가 원본을 이미 지웠다)", async () => {
+    let tickets = 0;
+    let s3Posts = 0;
+    const keysSent: (FormDataEntryValue | null)[] = [];
+    server.use(
+      http.post(url("/children/:cid/photos/uploads"), () => {
+        tickets += 1;
+        return HttpResponse.json(
+          { mode: "s3", url: S3_URL, fields: {}, key: `photos/p1/k${tickets}` },
+          { status: 201 },
+        );
+      }),
+      http.post(S3_URL, () => {
+        s3Posts += 1;
+        return new HttpResponse(null, { status: 204 });
+      }),
+      http.post(url("/children/:cid/photos"), async ({ request }) => {
+        keysSent.push((await request.formData()).get("upload_key"));
+        // 처음은 서버가 읽지 않고 돌려보낸다 — 서버는 이때 S3 원본을 지운다 (photos.py `finally`)
+        return keysSent.length === 1
+          ? HttpResponse.json(
+              { error: { code: "photo_unavailable", message: "지금은 사진을 읽을 수 없어요" } },
+              { status: 503 },
+            )
+          : HttpResponse.json({ run_id: "pr_after_error" }, { status: 202 });
+      }),
+    );
+    const key = newIdempotencyKey();
+
+    await expect(sendPhoto("c1", photo(), { lane: "document" }, key)).rejects.toThrow();
+    const res = await sendPhoto("c1", photo(), { lane: "document" }, key);
+
+    expect(res.run_id).toBe("pr_after_error");
+    expect(s3Posts).toBe(2);
+    expect(keysSent).toEqual(["photos/p1/k1", "photos/p1/k2"]);
+  });
 });
