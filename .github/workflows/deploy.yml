@@ -34,6 +34,8 @@ jobs:
             --timeout-seconds 600 \
             --parameters commands='[
               "set -e",
+              "exec 9>/var/lock/ktc4-deploy.lock",
+              "flock -w 300 9",
               "export HOME=/root",
               "cd /home/ubuntu/ktc4-pusan-3",
               "git config --global --get safe.directory /home/ubuntu/ktc4-pusan-3 || git config --global --add safe.directory /home/ubuntu/ktc4-pusan-3",
@@ -42,6 +44,7 @@ jobs:
               "git reset --hard origin/${{ github.ref_name }}",
               "make api-image",
               "make web-image",
+              "bash deploy/scripts/backup.sh predeploy ${{ github.sha }}",
               "make deploy-down || true",
               "make deploy-migrate",
               "make deploy-up",
