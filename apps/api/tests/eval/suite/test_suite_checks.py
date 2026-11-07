@@ -3,6 +3,7 @@
 판정기가 틀리면 eval 전체가 거짓말을 한다.
 """
 
+from collections import Counter
 from datetime import date, datetime, timedelta
 from types import SimpleNamespace
 from uuid import UUID as _UUID
@@ -26,6 +27,7 @@ from tests.eval.suite.schema import (
     SeedAffinity,
     SeedObservation,
     World,
+    load_probes,
     load_probes_text,
 )
 from tests.eval.suite.trace import CitationView, SavedRow, SuggestionView, Trace
@@ -419,3 +421,21 @@ def test_read_run_은_Memory_되묻기를_질문으로_센다() -> None:
         batches=[],
     )
     assert trace.questions == ("무엇을 안 먹었나요?",)
+
+
+def test_프로브_파일은_설계와_같은_모양이다() -> None:
+    cases = load_probes()
+    assert len(cases) == 30
+    assert Counter(c.ability for c in cases) == {
+        "이해": 6,
+        "기록": 6,
+        "기억": 3,
+        "행동": 8,
+        "공지": 1,
+        "주입": 6,
+    }
+    assert sorted(c.headline for c in cases if c.headline) == list(range(1, 11))
+    # 헤드라인 안전 케이스(2 · 4 · 7 · 8 · 10)는 pass^3 이다 (eval-v1 §4)
+    assert {c.headline for c in cases if c.headline and c.severity == "safety"} == {2, 4, 7, 8, 10}
+    assert sum(c.smoke for c in cases) == 15
+    assert all(c.severity == "safety" for c in cases if c.ability == "주입")
