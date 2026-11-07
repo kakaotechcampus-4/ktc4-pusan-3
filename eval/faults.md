@@ -37,7 +37,7 @@
 | --- | --- | --- | --- | --- |
 | SUP | ✅ | ✅ F2 | ✅ | ✅ |
 | MEM | ✅ F1 | ✅ F2 | ✅ | ✅ |
-| DOM | 🕳️ F3 | ✅ | ✅ | ✅ |
+| DOM | ✅ F3 | ✅ | ✅ | ✅ |
 | CUR | ✅ | 🕳️ F8 | ✅ | ✅ |
 | SAFE | ✅ | ✅ | ✅ | ✅ |
 | SRCH | 🕳️ F4 | ✅ | ✅ | ✅ |
@@ -82,7 +82,7 @@
 
 | 칸 | 기대 동작 | 코드 | 판정하는 테스트 | 상태 |
 | --- | --- | --- | --- | --- |
-| DOM-A | 그 Agent 만 빠지고(`partial` agent_error) 나머지 결과는 화면에 나간다. 기록은 남는다. 실패한 추천 task 는 다시 시도 맥락을 남긴다. 로그엔 예외 종류만. 공통 tool 루프는 모델 오류를 삼키지 않는다 | `app/agents/common/tool_loop.py:103-151` · `app/agents/pipeline.py:1847-1857` · `:1881-1889` | 가짜 실행 함수(`RuntimeError`)로만: `tests/unit/agents/supervisor/test_pipeline.py::test_RC16_한_Agent_가_죽어도_나머지_결과는_나간다` · `::test_Agent_예외_메시지는_로그에_남기지_않는다` · F 테스트: `tests/eval/faults/test_f3_real_agent_llm_error.py::test_F3_진짜_Agent_하나가_모델_오류를_내도_나머지_결과는_나간다[food]` · `[activity]` | 🕳️ F3 |
+| DOM-A | 그 Agent 만 빠지고(`partial` agent_error) 나머지 결과는 화면에 나간다. 기록은 남는다. 실패한 추천 task 는 다시 시도 맥락을 남긴다. 로그엔 예외 종류만. 공통 tool 루프는 모델 오류를 삼키지 않는다 | `app/agents/common/tool_loop.py:103-151` · `app/agents/pipeline.py:1847-1857` · `:1881-1889` | 가짜 실행 함수(`RuntimeError`)로만: `tests/unit/agents/supervisor/test_pipeline.py::test_RC16_한_Agent_가_죽어도_나머지_결과는_나간다` · `::test_Agent_예외_메시지는_로그에_남기지_않는다` · F 테스트: `tests/eval/faults/test_f3_real_agent_llm_error.py::test_F3_진짜_Agent_하나가_모델_오류를_내도_나머지_결과는_나간다[food]` · `[activity]` | ✅ F3 |
 | DOM-B | 입력부터 20초 중 남은 몫만 주고 넘으면 끊는다(`partial` timeout_20s). 끊긴 Agent 는 뒤에서 이어 돌지 않는다 | `app/agents/pipeline.py:1698` · `:1916` · `:1835-1840` | `tests/unit/agents/supervisor/test_pipeline.py::test_RC16_20초를_넘긴_Agent_는_끊고_나머지로_끝낸다` · `::test_끊긴_Agent_는_뒤에서_계속_돌지_않는다` · `tests/unit/agents/common/test_tool_loop.py::TestCancel::test_모델을_기다리다_끊기면_결과를_내지_않고_시간_초과로_끝난다` | ✅ |
 | DOM-C | 깨진 인자는 `INVALID_ARGS` 로 모델에게 돌려준다. 말로 끝내거나 왕복 상한이면 `status=failed` → 카드 없이 `partial` 로만 알린다 | `app/agents/common/tool_loop.py:150` · `:116` · `app/agents/pipeline.py:1860-1865` | `tests/unit/agents/common/test_tool_loop.py::TestEnding::test_모델이_tool_없이_말하면_출력_없이_끝난다` · `::TestCalls::test_인자가_JSON_객체가_아니면_실행하지_않고_INVALID_ARGS_로_돌려준다` · `tests/unit/agents/activity/test_activity_agent.py::TestNormal::test_그래도_말로_끝내면_실패다` · `tests/unit/agents/food/test_food_meal_run.py::test_모델이_출력_tool_없이_말로_끝내면_failed_다` · `tests/unit/agents/supervisor/test_pipeline.py::test_status_failed_로_돌아온_Agent_는_예외처럼_partial_로만_알린다` | ✅ |
 | DOM-D | 조회 결과 밖 id · 예시에 없는 문서 id 를 인용한 후보는 `EVIDENCE_REQUIRED` 로 거절한다(근거만 빼고 통과시키지 않는다). 평가 · 단정 표현이 든 후보는 코드가 빼고 다시 부른다(Growth). 알레르기 후보는 SAFE-D | `app/agents/common/evidence.py:188` · `app/agents/common/tool_runtime.py:27` · `app/rules/evaluative.py:116` · `app/agents/growth/review.py:473` | `tests/unit/agents/common/test_tool_loop.py::TestEvidenceRequired::test_조회하지_않은_id_를_인용하면_거절되고_고쳐_내면_끝난다` · `tests/unit/agents/food/test_food_meal_run.py::test_선조회하지_않은_id_를_인용하면_그_후보는_거절된다` · `::test_예시에_없는_문서_id_를_인용하면_그_후보는_거절된다` · `tests/unit/rules/test_evaluative.py::test_평가_표현을_잡는다` · `tests/unit/agents/growth/test_growth_output.py::TestLearning::test_평가_표현은_빼고_재호출_사유로_남긴다` | ✅ |
