@@ -20,7 +20,7 @@
 | **화면 오류** | 오류 바운더리, 그리고 렌더 밖 예외(`window` 의 `error` · `unhandledrejection` · #732) → `POST /client-errors`(로그인한 보호자만) → ERROR 로그 → 같은 알림 | 보호자 폰의 오류는 서버로 오지 않았다. 값은 종류 · digest · 경로 · 기기 요약뿐이고 모양을 서버가 검사한다. DB 에 넣지 않는다 (처리방침 ⑥) |
 | **앱 안 신고** | 설정의 신고 창 → `POST /reports`(로그인한 보호자만) → 오류가 아닌 **ERROR** 로그("신고 접수") → 같은 웹훅에 `report-alert` · 🟡, 바닥글은 조회 SQL. 값은 분류 · 신고 번호뿐 | Play 정책(AI 생성 · 사용자 제작 콘텐츠)이 앱 안 신고를 요구한다 (#487). 보호자가 쓴 글은 `report` 테이블에만 — 알림을 보면 `SELECT category, message FROM report WHERE id = '<번호>'` 로 읽는다. 알림이 분당 한도에 밀려 빠질 수 있으니 처리 안 된 신고는 `WHERE handled_at IS NULL` 로 따로 본다. 보호자당 24시간 10건 상한 — 보호자 행을 잠그고 세서 동시에 보내도 넘치지 않는다. 분당 알림 한도는 오류 알림과 같이 쓴다 |
 | **web 서버 오류** | Next `src/instrumentation.ts` 의 `onRequestError` → 웹훅으로 직접 (`web-alert`). 종류 · digest · 경로 · 라우트만, 분당 상한, 개발 모드는 끔 | Next 서버엔 보호자 토큰이 없어 `/client-errors` 를 못 쓴다. 웹 컨테이너에 `ALERT_WEBHOOK_URL` 을 compose 가 넘긴다 |
-| **컨테이너 감시** | 서버 cron 1분 · `deploy/scripts/health-alert.sh` — docker healthcheck 결과가 **달라졌을 때만** 같은 웹훅으로 | api 가 못 뜨거나 redis 가 죽은 건 api 안의 알림이 말할 수 없다 (§5) |
+| **컨테이너 감시** | 서버 cron 1분 · `deploy/scripts/health-alert.sh` — docker healthcheck 결과와 api 의 `/health/ready`(DB · Redis 에 닿는가)가 **달라졌을 때만** 같은 웹훅으로 | api 가 못 뜨거나 redis 가 죽은 건 api 안의 알림이 말할 수 없다 (§5) |
 | **서버 밖 가동 감시** | UptimeRobot 무료 — 5분마다 api `/health` · web `/` 를 밖에서 찔러 Discord 로 (웹훅은 따로 `uptime-alert`) | 서버 안의 cron 은 EC2 자체가 죽으면 같이 말을 못 한다. 코드 없음 · 보호자 정보 안 감 (응답 코드만). 무료 플랜에 Discord 연동 포함, 비상업 용도 |
 | **SaaS(Sentry 등)** | 안 쓴다 | 요청 본문 · 사용자 정보가 밖으로 가는 도구는 §10 결정 전에는 못 쓴다 |
 
@@ -57,7 +57,7 @@ api 안의 알림은 **api 프로세스 안의 `app.*` 로거**에만 달린다.
 
 - 부팅 실패 · 컨테이너 죽음 · 재시작 반복 — api 안의 알림은 api 가 살아 있을 때만 말할 수 있다. 그래서 밖에서 본다: 서버 cron 이 1분마다 `deploy/scripts/health-alert.sh` 로 compose 컨테이너 전부의 healthcheck 결과를 읽어 **달라진 것만** 같은 웹훅으로 보낸다 (복구도). 웹훅 전송이 실패하면 상태를 저장하지 않아 다음 분에 다시 보낸다. 죽어 있는 동안 매분 울리지 않는다. docker 의 healthcheck 는 판정만 하고 통보는 안 하기 때문에 이 한 겹이 필요하다. 서버에 cron 한 줄 등록은 Session Manager 로 (README)
 - `uvicorn` · `asyncio` · `sqlalchemy` 로거 — 대상이 아니다. `uvicorn.error` 의 "Exception in ASGI application" 은 `errors.py` 의 마지막 그물이 이미 ERROR 로 찍은 같은 예외라 일부러 뺐다
-- 다른 프로세스 — `alembic upgrade`, `scripts/*`, 앞으로의 `app/workers/*` 는 `app.main` 을 불러오지 않아 알림이 없다
+- 다른 프로세스 — `alembic upgrade`, `scripts/*` 는 `app.main` 을 불러오지 않아 알림이 없다. `app/workers/*`(cleanup · reminder_dispatch · profile_recompute)는 `app.main` 과 같은 순서로 `configure_alerts` 를 직접 달아 **알림이 간다** — 카드는 위와 같이 종류 이름만이고, 서버 로그에도 예외 메시지 없이 종류 · 위치만 남긴다 (`log_error_without_message` · #670)
 - 프로세스를 fork 하는 실행기(gunicorn `--preload` 등) — 알림 스레드가 자식으로 넘어가지 않는다. uvicorn 단일 프로세스 전제다
 - 로그인 전 화면(로그인 · 동의)의 브라우저 오류 — 인증 없는 창구를 두지 않아서다. 아무나 그 주소로 팀 채널을 울려 진짜 알림을 묻을 수 있다. 두 화면뿐이라 감수한다. 기기 요약(운영체제 · 주요 버전 · 앱/브라우저)을 로그에 남기므로 처리방침 ⑥ 에 한 구절을 더한다 (#166)
 

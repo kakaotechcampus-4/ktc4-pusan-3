@@ -185,10 +185,6 @@ class EventUpdate(ClearableUpdateArgs):
     ]
 
 
-class EventRef(ToolArgs):
-    event_id: EventId
-
-
 class EventItemCreate(ToolArgs):
     """이미 있는 일정의 준비물 한 개. 여러 개면 item마다 따로 호출한다."""
 

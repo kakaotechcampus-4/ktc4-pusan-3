@@ -6,6 +6,8 @@
   · 로거 이름이 app.* — `python -m` 으로 돌아도 실패 ERROR 가 Discord 알림에 닿는다
 """
 
+import logging
+import uuid
 from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime
 
@@ -84,3 +86,33 @@ async def test_재계산이_터져도_엔진은_정리한다(fake_db, monkeypatc
 
 def test_로거가_app_아래에_있어_알림이_닿는다():
     assert batch.log.name == "app.workers.profile_recompute"
+
+
+async def test_아이_한_명이_실패해도_로그에_예외_메시지는_남기지_않는다(monkeypatch, caplog):
+    """🚨 예외 메시지(DB 오류의 DETAIL 등)에 기억 내용이 섞일 수 있다 — 종류 · 위치만 (#670)."""
+    secret = "SECRET-기억-내용"  # 소스 줄(traceback 에 보인다)에는 값이 아니라 이름만 보이게
+
+    async def targets(session):
+        return {uuid.uuid4(): [uuid.uuid4()]}
+
+    async def boom(session, child_id, profile_ids, *, today):
+        try:
+            raise KeyError(f"원인 {secret}")
+        except KeyError as cause:
+            raise ValueError(f"입력 {secret}") from cause
+
+    class Session:
+        async def rollback(self):
+            pass
+
+    monkeypatch.setattr(batch, "_targets", targets)
+    monkeypatch.setattr(batch, "_recompute_child", boom)
+
+    with caplog.at_level(logging.ERROR, logger=batch.log.name):
+        result = await batch.run_recompute(Session(), today=date(2026, 11, 3))
+
+    assert result.failed_children == 1
+    assert "ValueError" in caplog.text
+    assert "KeyError" in caplog.text  # 연결된 예외의 종류도
+    assert "in boom" in caplog.text  # 어디서 났는지는 남는다
+    assert secret not in caplog.text

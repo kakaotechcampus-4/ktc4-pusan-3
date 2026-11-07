@@ -23,7 +23,7 @@ import logging
 from collections import Counter
 from collections.abc import Iterable
 from dataclasses import replace
-from datetime import date, time, tzinfo
+from datetime import date, datetime, time, tzinfo
 from typing import Any
 
 from app.agents.common.datetime_rules import (
@@ -37,7 +37,7 @@ from app.agents.common.datetime_rules import (
     resolve_time,
     resolve_when,
 )
-from app.agents.memory.context import AgentContext
+from app.agents.memory.context import AgentContext, FoundRows
 from app.agents.memory.drafts import (
     DraftItem,
     EventDraft,
@@ -46,7 +46,7 @@ from app.agents.memory.drafts import (
     SeriesDraft,
     SeriesSnapshot,
 )
-from app.agents.memory.result import ErrorCode, Operation, ToolResult, fail, ok
+from app.agents.memory.result import ErrorCode, Operation, ToolResult, cut, fail, nearest, ok
 from app.agents.memory.schemas.common import WEEKDAY_ISO, EventCategory, EventType, Weekday
 from app.agents.memory.schemas.schedule import (
     EventCreate,
@@ -54,7 +54,6 @@ from app.agents.memory.schemas.schedule import (
     EventItemRef,
     EventItemUpdate,
     EventQuery,
-    EventRef,
     EventUpdate,
 )
 from app.agents.memory.store.ports import EventItemRow, EventRow, SeriesRow, supports_series
@@ -121,10 +120,12 @@ _SERIES_END_BEFORE_START = (
 _SERIES_ALL_DAY_NO_END = "종일 일정에는 끝나는 시각이 없다."
 _SERIES_NEEDS_START = "종일 반복 일정을 시간 있는 일정으로 바꾸려면 starts_time 도 같이 넣는다."
 _SERIES_NO_FUTURE = (
-    "그 반복 일정은 오늘 이후 남은 회차가 없다. 이어서 하려면 새 반복 일정으로 만든다."
+    "그 반복 일정은 아직 시작하지 않은 회차가 없다(이미 시작한 오늘 회차는 고치지 않는다). "
+    "이어서 하려면 새 반복 일정으로 만든다."
 )
 _SERIES_RULE_NO_FUTURE = (
-    "그 요일과 끝 날짜로는 오늘 이후 회차가 하나도 없다. 요일이나 끝 날짜를 보호자에게 다시 묻는다."
+    "그 요일과 끝 날짜로는 아직 시작하지 않은 회차가 하나도 없다. "
+    "요일이나 끝 날짜를 보호자에게 다시 묻는다."
 )
 _CHECK_IS_ONE_DAY = (
     "챙김 표시는 늘 그날 회차 하나다. scope 를 빼고 그 회차의 item_id 로 다시 부른다."
@@ -254,6 +255,26 @@ def _scope_problem(
     return None
 
 
+def _not_started(day: date, starts: time | None, all_day: bool, context: AgentContext) -> bool:
+    """묶음 고치기가 그 날 회차를 고치는지. 종일은 오늘(그날 포함) 이후, 시간 일정은 시작이
+    지금 이후다.
+
+    🚨 서버 `update_series` 와 같은 기준이다 (#761). 시작이 지난 오늘 회차까지 세면 기준 값(before)
+    이 서버가 고치는 회차와 달라지고, 남은 회차가 그것뿐인 묶음에 초안을 만들어 승인해도 고칠
+    게 없다.
+    """
+    if day != context.today:
+        return day > context.today
+    if all_day or starts is None:
+        return True
+    return datetime.combine(day, starts, tzinfo=context.timezone) > context.now
+
+
+def _row_not_started(row: EventRow, context: AgentContext) -> bool:
+    starts = row.starts_at.astimezone(context.timezone)
+    return _not_started(starts.date(), starts.time(), row.all_day, context)
+
+
 def _clock_of(row: EventRow, tz: tzinfo) -> tuple[time | None, time | None]:
     """회차의 하루 시각 (시작, 끝). 종일이면 둘 다 None."""
     if row.all_day:
@@ -282,7 +303,7 @@ def _most_common[T](values: list[T]) -> T:
 
 
 def _common_values(rows: list[EventRow], tz: tzinfo) -> tuple[tuple[Any, ...], EventRow]:
-    """오늘 이후 회차에서 항목마다 가장 흔한 값과, 준비물을 읽을 회차.
+    """아직 시작하지 않은 회차에서 항목마다 가장 흔한 값과, 준비물을 읽을 회차.
 
     첫 회차를 기준으로 삼으면 그 회차만 따로 고쳐 둔 값이 묶음의 기준이 되어, 준비물만 더하는 초안도
     그 값을 들고 가 제출할 때 나머지 회차에 번진다. 회차 전체를 한 표로 세면 제목 하나만 달라도
@@ -299,11 +320,18 @@ def _common_values(rows: list[EventRow], tz: tzinfo) -> tuple[tuple[Any, ...], E
 async def _series_base(
     context: AgentContext, series: SeriesRow, operation: Operation, resource: str
 ) -> SeriesDraft | ToolResult:
-    """묶음 수정의 출발점. 버퍼의 초안이 먼저고, 없으면 오늘 이후 회차의 흔한 값으로 만든다."""
+    """묶음 수정의 출발점. 버퍼의 초안이 먼저고, 없으면 아직 시작하지 않은 회차의 흔한 값으로
+    만든다."""
     buffered = context.drafts.get_series(series.id)
     if buffered is not None:
         return buffered
-    rows = await context.store.list_series_events(series_id=series.id, date_from=context.today)
+    rows = [
+        row
+        for row in await context.store.list_series_events(
+            series_id=series.id, date_from=context.today
+        )
+        if _row_not_started(row, context)
+    ]
     if not rows:
         return fail(operation, resource, ErrorCode.TARGET_NOT_FOUND, _SERIES_NO_FUTURE)
     (title, (starts, ends, all_day), event_type, category), frame = _common_values(
@@ -407,9 +435,17 @@ def _series_times(
 
 
 async def _series_repeat(
-    context: AgentContext, args: EventUpdate, current: RepeatRule, series: SeriesRow
+    context: AgentContext,
+    args: EventUpdate,
+    current: RepeatRule,
+    series: SeriesRow,
+    clock: tuple[time | None, bool],
 ) -> RepeatRule | ToolResult:
-    """바꾼 반복 규칙. 90일은 묶음의 첫 회차에서 센다. 오늘 이후 회차가 남아야 한다."""
+    """바꾼 반복 규칙. 90일은 묶음의 첫 회차에서 센다. 아직 시작하지 않은 회차가 남아야 한다.
+
+    오늘 회차가 시작 전인지는 고친 뒤의 시각(`clock` = 시작, 종일)으로 본다 — 서버도 새 시각으로
+    판정한다.
+    """
     if not args.repeat_weekdays and args.repeat_until is None:
         return current
     weekdays = _weekday_numbers(args.repeat_weekdays) if args.repeat_weekdays else current.weekdays
@@ -424,13 +460,14 @@ async def _series_repeat(
         return fail("update", EVENT, ErrorCode.DATE_UNPARSEABLE, date_remedy(exc))
     except RepeatError as exc:
         return _repeat_failure(exc, "update")
-    if not any(day >= context.today for day in days):
+    starts, all_day = clock
+    if not any(_not_started(day, starts, all_day, context) for day in days):
         return fail("update", EVENT, ErrorCode.DATE_UNPARSEABLE, _SERIES_RULE_NO_FUTURE)
     return RepeatRule(weekdays=weekdays, until=until)
 
 
 async def _update_series(context: AgentContext, args: EventUpdate, series: SeriesRow) -> ToolResult:
-    """묶음 전체(오늘 이후 회차)를 고친 초안. 저장하지 않는다."""
+    """묶음 전체(아직 시작하지 않은 회차)를 고친 초안. 저장하지 않는다."""
     if args.starts_on is not None or args.ends_on is not None:
         return fail("update", EVENT, ErrorCode.INVALID_ARGS, _SERIES_NO_DATES)
     if args.event_type is not None and str(args.event_type) != EventType.CORE:
@@ -442,7 +479,7 @@ async def _update_series(context: AgentContext, args: EventUpdate, series: Serie
     if isinstance(times, ToolResult):
         return times
     starts, ends, all_day = times
-    repeat = await _series_repeat(context, args, base.repeat, series)
+    repeat = await _series_repeat(context, args, base.repeat, series, (starts, all_day))
     if isinstance(repeat, ToolResult):
         return repeat
     updated = replace(
@@ -630,11 +667,14 @@ async def query_event(context: AgentContext, args: EventQuery) -> ToolResult:
     rows = await context.store.query_events(
         child_id=context.child_id, title_query=args.title_query, **bounds
     )
+    kept, truncated = nearest(rows, lambda row: abs((row.starts_at - context.now).total_seconds()))
+    context.found[EVENT] = FoundRows(tuple(row.id for row in kept), truncated)
     return ok(
         "query",
         EVENT,
-        count=len(rows),
-        events=[await _event_summary(context, row) for row in rows],
+        count=len(kept),
+        events=[await _event_summary(context, row) for row in kept],
+        **cut(truncated, event=True),
     )
 
 
@@ -787,15 +827,6 @@ def _resolve_when(
     if problem is not None:
         return fail(operation, EVENT, ErrorCode.INVALID_ARGS, problem)
     return when
-
-
-async def delete_event(context: AgentContext, args: EventRef) -> ToolResult:
-    # 준비물도 함께 사라진다 (ON DELETE CASCADE)
-    if not await context.store.delete_event(event_id=args.event_id):
-        return fail("delete", EVENT, ErrorCode.UNKNOWN_EVENT, _UNKNOWN_EVENT)
-    # 같은 run 에서 고쳤다가 지운 일정이면 초안도 뺀다. 없는 일정의 초안을 승인 화면에 올리지 않는다
-    context.drafts.drop(args.event_id)
-    return ok("delete", EVENT, id=args.event_id)
 
 
 # ── event_item ──────────────────────────────────────────────────
@@ -1025,7 +1056,6 @@ SCHEDULE_HANDLERS = {
     "create_event": create_event,
     "query_event": query_event,
     "update_event": update_event,
-    "delete_event": delete_event,
     "create_event_item": create_event_item,
     "update_event_item": update_event_item,
     "delete_event_item": delete_event_item,

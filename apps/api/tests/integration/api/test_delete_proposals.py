@@ -15,7 +15,7 @@ from datetime import UTC, date, datetime, timedelta
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy import select, text
+from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents import entrypoint
@@ -28,6 +28,7 @@ from app.api.v1.routers import delete_proposals
 from app.domains.delete_proposal.models import DeleteProposal
 from app.domains.delete_proposal.repository import PROPOSAL_TTL, ProposalTab, add_proposal
 from app.domains.memory.observation.models import ObservationFood, ObservationStatus
+from app.domains.memory.profile.models import MemoryDomain, ProfileAffinity, ProfileState
 from app.domains.memory.store.db_store import DbMemoryStore
 from app.domains.schedule.models import Event, EventCategory, EventCreatedBy, EventType
 from app.domains.schedule.repository import create_event
@@ -278,3 +279,45 @@ async def test_failed_card_read_keeps_what_the_run_wrote(
     assert rows == {}
     assert await session.get(ObservationFood, uuid.UUID(meal), populate_existing=True) is not None
     assert await session.get(DeleteProposal, proposal, populate_existing=True) is not None
+
+
+async def test_deleting_observation_recomputes_its_memory(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID, curator_calls
+):
+    """지운 관찰 몫을 기억에서 다시 계산한다 — store 는 flush_profiles 에서 계산한다 (#717)."""
+    headers, pid = bearer
+    earlier = date(2026, 10, 20)
+    latest = await _meal(session, cid, pid, "rice")  # 10-27
+    kept = await DbMemoryStore(session, child_id=cid).create_observation(
+        domain="food",
+        child_id=cid,
+        source_writer=pid,
+        raw_text="synthetic rice",
+        observed_on=earlier,
+        observed_range=DateRange(start=earlier, end=earlier + timedelta(days=1)),
+        fields={"subject": "rice", "polarity": 1, "confidence_source": "parent_direct"},
+    )
+    profile = ProfileAffinity(
+        child_id=cid,
+        domain=MemoryDomain.FOOD,
+        polarity=1,
+        merge_key="rice",
+        state=ProfileState.CANDIDATE,
+        last_observed_on=date(2026, 10, 27),
+    )
+    session.add(profile)
+    await session.flush()
+    await session.execute(
+        update(ObservationFood)
+        .where(ObservationFood.id.in_([uuid.UUID(latest), uuid.UUID(kept.id)]))
+        .values(affinity_id=profile.id)
+    )
+    proposal = await _propose(
+        session, cid, pid, [ProposalTab("observation_food", False, (latest,), (latest,))]
+    )
+
+    resp = await db_client.post(_url(cid, proposal), json={"ids": [latest]}, headers=_key(headers))
+
+    assert resp.status_code == 200
+    await session.refresh(profile)
+    assert profile.last_observed_on == earlier

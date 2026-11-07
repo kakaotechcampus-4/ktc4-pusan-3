@@ -57,7 +57,8 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
             "주말에 갈 만한 곳을 물을 때 부른다. 보호자가 지역을 말했으면 area 에 그 이름을 "
             "넣는다 — 시 · 도만 말해도(부산) 그 시 · 도 전체에서 찾는다. 바깥 활동이 어려운 날은 "
             "찾지 않는다. place_name 에는 이 결과에 있는 이름만 "
-            "쓰고, day 는 그 행사가 열리는 날로 쓴다."
+            "쓰고, day 는 결과의 open_days 에 있는 날로 쓴다. 행사 장소는 결과의 place(그날 "
+            "장소)다."
         ),
         args=SearchEventsArgs,
     ),

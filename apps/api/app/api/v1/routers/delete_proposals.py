@@ -99,7 +99,8 @@ async def _delete(store: DbMemoryStore, kind: str, oid: str) -> bool:
 @router.post(
     "/children/{cid}/delete-proposals/{pid}/confirm",
     response_model=DeleteProposalResponse,
-    responses=_ERRORS,
+    # 503 temporarily_unavailable — Redis 에 닿지 않으면 지우기 전에 막는다 (#671)
+    responses={**_ERRORS, 503: {"model": ErrorEnvelope}},
 )
 async def confirm_delete_proposal(
     child: AccessibleChild,
@@ -126,7 +127,7 @@ async def confirm_delete_proposal(
         "path": request.url.path,
         "key": idempotency_key,
     }
-    replayed = idempotency.recall(**scope)
+    replayed = await idempotency.recall(**scope)
     if isinstance(replayed, dict):
         return JSONResponse(status_code=200, content=replayed)
 
@@ -136,7 +137,7 @@ async def confirm_delete_proposal(
     now = datetime.now(UTC)
     # 같은 키가 동시에 두 번 왔으면 뒤의 것은 앞의 것이 끝날 때까지 잠금에서 기다렸다 — 그 사이
     # 앞의 것이 기억해 둔 응답을 다시 본다. 안 보면 지운 것은 맞는데 화면에 409 가 뜬다
-    replayed = idempotency.recall(**scope)
+    replayed = await idempotency.recall(**scope)
     if isinstance(replayed, dict):
         return JSONResponse(status_code=200, content=replayed)
     _require_pending(row, now)
@@ -156,8 +157,10 @@ async def confirm_delete_proposal(
             result[kind] = result.get(kind, 0) + 1
     await finish(session, row, status=DeleteProposalStatus.DELETED, result=result, now=now)
     response = DeleteProposalResponse(proposal=_out(row, now)).model_dump(mode="json")
+    # 지운 관찰의 기억은 여기서 한꺼번에 계산한다 — 정정과 잠금 순서가 안 섞이게 (#717)
+    await store.flush_profiles()
     await session.commit()
-    idempotency.remember(**scope, replay=response)
+    await idempotency.remember(**scope, replay=response)
     if any(kind != "event" for kind in result):
         _trigger_curator(child.child_id, today)
     return JSONResponse(status_code=200, content=response)

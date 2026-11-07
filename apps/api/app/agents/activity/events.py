@@ -8,16 +8,23 @@
   이 서비스가 아이 나들이로 권하지 않는다 (11-02 결정).
 - 🚨 관람 연령이 아이보다 높으면 뺀다. 보호자와 함께 들어갈 수 있다고 적혀 있으면 둔다 — 이
   서비스의 나들이는 보호자와 간다. 읽을 수 없는 조건은 뺀다(더 막는 쪽).
+- 🚨 그날 열리는지는 기간이 아니라 일정(`EventSchedule`)으로 본다. 기간은 조회 앞에서 먼저 거르는
+  데만 쓴다(`in_period`) — 시작일 · 종료일은 전체 기간이라 "매주 토요일" 을 모른다.
 """
 
 import math
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from app.agents.activity.schemas.common import EventKind
-from app.agents.activity.store.ports import CoarseLocation, EventRow
+from app.agents.activity.store.ports import (
+    EVENT_SCHEDULE_DAYS,
+    CoarseLocation,
+    EventRow,
+    EventSchedule,
+)
 from app.core.event_raw import RawEvent
 
 EARTH_RADIUS_M = 6_371_000
@@ -142,9 +149,38 @@ def core_name(name: str) -> str:
     return core or name.strip()
 
 
-def open_on(event: Event | EventRow, days: Iterable[date]) -> bool:
-    """그날들 중 하루라도 기간 안인가. 시작일 · 종료일을 포함한다."""
+def in_period(event: Event, days: Iterable[date]) -> bool:
+    """그날들 중 하루라도 기간 안인가. 시작일 · 종료일을 포함한다.
+
+    조회 앞에서 먼저 거르는 데만 쓴다 — 기간 안이어도 닫힌 날이 있다(`open_on`).
+    """
     return any(event.starts_on <= day <= event.ends_on for day in days)
+
+
+def open_on(event: EventRow, days: Iterable[date]) -> bool:
+    """그날들 중 하루라도 일정에 열린다고 읽은 날인가. 행사 조회 · 출력 검증이 같이 쓴다."""
+    return any(day in event.schedule.open_days for day in days)
+
+
+def places_on(event: EventRow, days: Iterable[date]) -> tuple[str, ...]:
+    """그날들의 장소, 날짜순으로 한 번씩. 장소가 날마다 다르지 않은 행사는 행사 장소 하나다."""
+    wanted = set(days)
+    places = [place for day, place in event.schedule.day_places if day in wanted]
+    if not places:
+        return (event.place,) if event.place else ()
+    return tuple(dict.fromkeys(places))
+
+
+def schedule_days(today: date) -> tuple[date, ...]:
+    """열리는 날을 읽는 창 — 오늘부터 `EVENT_SCHEDULE_DAYS` 일."""
+    return tuple(today + timedelta(days=offset) for offset in range(EVENT_SCHEDULE_DAYS))
+
+
+def every_day(event: Event, today: date) -> EventSchedule:
+    """기간 안 매일 열리는 일정 — 일정 원문에 요일 · 날짜 제한이 없는 행사."""
+    return EventSchedule(
+        open_days=frozenset(day for day in schedule_days(today) if in_period(event, (day,)))
+    )
 
 
 def in_province(event: Event, province: str) -> bool:

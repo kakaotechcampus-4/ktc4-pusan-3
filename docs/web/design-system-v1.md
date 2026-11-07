@@ -1728,6 +1728,7 @@ React `<ViewTransition>` 이 브라우저 View Transitions 로 그린다. 자식
 | 07 기록 상세 | `is_stale` 근거 | `chip-evidence-stale` |
 | 08 사진 분석 | 승인 전 미저장 | `card-photo` + **중립** 라벨(`surface-muted`/`ink-muted`). 🚨 `caution` 아님 — 여기는 승인 게이트가 아니다 (§7 `card-photo`) |
 | 09 캘린더 | 일정 쓰기 | `bottom-sheet` + `btn-approve` (승인 게이트 ㉠) |
+| 04 대화 | 삭제 카드 확정 (#535) | [N건 삭제하기] `btn-danger` + `btn-secondary`("취소") → 확인 띠 [삭제] `btn-danger` + `btn-tertiary`("그만두기"). 🚨 **`btn-danger` 다** — 일기 한 편과 달리 체크한 기록 · 일정 여러 건을 한 번에 지우고, 관찰을 지우면 기억(Profile)도 다시 계산돼 그 한 건 밖까지 바뀐다 (§7 "데이터 삭제"). 🚨 확인 띠는 09 일기 지우기와 같은 카드 바닥 띠다(`surface-muted`). 🚨 승인 게이트 ㉢ 이지만(11-03 팀 회의 · 최상위 §2 · #754) 표식(`caution` · `btn-approve`)을 쓰지 않는다 — 표식은 ㉠ ㉡ 전용이다 |
 | 09 캘린더 | 일기 지우기 확인 | `btn-secondary` + `btn-tertiary` (11-1 한 줄 지우기와 같다). 🚨 **`btn-primary` 가 아니다** — 읽는 상태에는 화면 primary 가 없어 아래 "인라인 확인과 모달" 만 보면 쓸 수 있지만, 지우는 쪽을 채운 초록으로 두면 브랜드색이 "더 하는 행동" 이 아니라 "없애는 행동" 을 가리킨다. 🚨 **`btn-danger` 가 아니다** — 지운 일기는 되살릴 수 없지만 보호자가 쓴 한 편에서 끝나고 같은 날 다시 쓸 수 있다. 빨강은 그 한 건 밖까지 바뀌는 확정(계정 · 보호자 연결 · 안전 정보)에 남는다 (§7 버튼). 🚨 승인 게이트가 아니다 — `caution` · `btn-approve` 를 쓰지 않는다 |
 | 10 설정 | 함께 보는 보호자 · 초대 | `설정 줄` + 머리줄 아이콘 버튼 + `bottom-sheet`(링크 발행). 🚨 **끊기 버튼은 보는 사람 기준이다** (#336) — owner 는 member 줄마다 연결 끊기, member 는 **자기 줄에만** 나가기, owner 줄에는 누구에게도 없다. 🚨 **관계를 발행할 때 정하지 않는다** — 아이와 어떤 사이인지는 받는 쪽이 고른다 |
 | 10 설정 | 동의 현황 · 전문 | `동의 목록` + `bottom-sheet variant="document"`(줄 이름을 누른다) |
