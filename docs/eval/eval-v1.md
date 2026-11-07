@@ -14,7 +14,7 @@
 | **무엇을 만드나** | 하네스 1개 + 스위트 4개. 모든 실행에 **§2 불변식 14개**를 자동으로 건다 |
 | **P · 단발 프로브** | 능력별 단발 입력 약 30개 (헤드라인 10개 포함). 실제 모델 · 3회 반복 |
 | **W · 일주일 시나리오** | 사용 패턴이 다른 페르소나 3명의 월~일 (약 50 입력). 통합 DB 위에서 시계를 옮겨 가며 Curator 승격까지 실제로 돈다 |
-| **F · 장애 점검표** | 부품 × 장애 40칸. **이미 약 31칸은 기존 테스트가 판정한다** — 지도를 만들고 구멍 8개만 메운다. 가짜 모델로 결정적, `make test` 에 들어간다 |
+| **F · 장애 점검표** | 부품 × 장애 40칸. **이미 29칸은 기존 테스트가 판정한다**([`eval/faults.md`](../../eval/faults.md)) — 지도를 만들고 구멍 8개만 메운다. 가짜 모델로 결정적, `make test` 에 들어간다 |
 | **C · 비용** | 모든 실제 모델 실행에서 토큰 · 호출 수 · 지연을 같이 담는다 → **하루 입력 한도를 정하는 근거**가 된다 |
 | **노션 10개는?** | 구조가 아니라 **보고용 보기**로 남긴다 — 10개 전부 P · W 안의 케이스로 들어가고 "헤드라인 N/10" 으로 따로 센다 (§1) |
 | **마감** | 11-11 (수) 기준선 실행 + 문서 + 이슈. 11-16 동결 전 2차 실행 |
@@ -281,7 +281,7 @@ C(비용)에서 잰 **입력 종류별 토큰**을 넣으면 한도를 계산으
 
 ## 6. 스위트 F — 장애 점검표
 
-**먼저 알게 된 것: 이미 많이 있다.** 부품 10개 × 장애 4종 = 40칸을 develop(7f17ae38) 기준으로 훑었더니 **약 31칸은 기존 단위 · 통합 테스트가 이미 판정한다**(Supervisor 가 죽으면 Memory 만 도는 것, Memory 가 죽으면 commit 없이 `failed`, 20초 넘은 도메인 Agent 를 끊고 `partial`, 조회 안 한 근거 id 를 `EVIDENCE_REQUIRED` 로 거절, 안전 조회 실패 → Food 0회 호출 등). 그래서 F 는 새로 많이 쓰는 일이 아니라 **지도를 만들고 구멍만 메우는 일**이다.
+**먼저 알게 된 것: 이미 많이 있다.** 부품 10개 × 장애 4종 = 40칸을 develop(7f17ae38) 기준으로 훑었더니 **29칸은 기존 단위 · 통합 테스트가 이미 판정한다**(11-08 조사 — 칸별 근거는 `eval/faults.md`. Supervisor 가 죽으면 Memory 만 도는 것, Memory 가 죽으면 commit 없이 `failed`, 20초 넘은 도메인 Agent 를 끊고 `partial`, 조회 안 한 근거 id 를 `EVIDENCE_REQUIRED` 로 거절, 안전 조회 실패 → Food 0회 호출 등). 그래서 F 는 새로 많이 쓰는 일이 아니라 **지도를 만들고 구멍만 메우는 일**이다.
 
 **행 (부품)**: Supervisor · Memory · 도메인 Agent 4종 · Curator(판정 · 임베딩) · 알레르기 조회 · `memory.search` · 외부 API(날씨 · 행사 · 도서 · 식약처 — 병원은 빼고, §13-6) · 저장(commit) · Redis · 한도 · 러너 · SSE
 **열 (장애)**: A 예외(5xx · 429 · 연결 · 인증) · B 멈춤 · 시간 초과 · C 형식 깨짐(JSON · tool 미호출 · 스키마) · D 형식은 맞는데 틀림(없는 근거 id · 알레르기 후보 · 상태 직접 쓰기 · 진단 문구)
@@ -297,7 +297,7 @@ C(비용)에서 잰 **입력 종류별 토큰**을 넣으면 한도를 계산으
 | F3 | **진짜 도메인 Agent 가 LLM 오류를 낼 때** — 지금은 `RuntimeError` 를 던지는 가짜 러너로만 본다 | Agent 2개 중 1개만 성공해도 화면에 나와야 한다 (§2) | 실제 Food · Activity 에 오류 내는 클라이언트를 꽂고 나머지 Agent 결과가 나가는지 | pipeline |
 | F4 | **`memory.search` 저장소가 터질 때** | 근거를 못 읽었는데 개인화 추천이 나가면 안 된다 | 실패하는 store 로 검색 → partial · 개인화 0 | 각 Agent |
 | F5 | **`model_calls` 가 적게 센다** — SDK 재시도는 안 보이고, 예외로 끝난 Agent 는 0, tool 루프 왕복도 안 센다. 상한 초과 경고가 실제로 뜨는지 보는 테스트도 없다 | NF-01 지표가 실제 비용과 다르다 (§12-1) | 경고가 뜨는 경우 · 재시도 포함 수 | pipeline |
-| F6 | 추천 저장이 돌려준 id 개수가 추천 수와 다를 때 (`agents/pipeline.py:2313`) | 실패로 보는 코드는 있는데 테스트가 없다 | 단위 1개 | pipeline |
+| F6 | 추천 저장이 돌려준 id 개수가 추천 수와 다를 때 (`agents/pipeline.py:2313`) | 입력 run 에서 id 가 적은 경우만 판정한다(`test_pipeline.py` `[결과_수가_다름]`). 05 다시 만들기 · id 가 많은 경우는 테스트가 없다 | 단위 1개 (두 갈래) | pipeline |
 | F7 | Redis 에 깨진 재생 값이 있을 때 (`idempotency.py:83` 의 `json.loads`) | 500 으로 터질 수 있다 | 단위 1개 | API(명성) |
 | F8 | DB 쿼리 시간 상한이 없다 (`statement_timeout` 없음) · Curator 가 아이별 잠금을 쥐고 멈추면 상한이 없다 | 안전 조회가 멈추면 Food 는 20초에 끊기지만, Curator 잠금은 다음 run 을 막을 수 있다 | 테스트보다 **이슈** — 설정 결정이 먼저 | 인프라(명성) · Curator(시하) |
 
@@ -354,6 +354,7 @@ eval/                                  ← 데이터 · 결과 (PM · 멘토가 
 │       ├── b-heavy.yaml
 │       └── c-light.yaml
 ├── faults.md                          F 점검표 (칸 → 기대 동작 → 테스트 → 상태)
+├── faults-issues.md                   F 이슈 초안 (올리기 전 · xfail reason 의 ISSUE-… 자리)
 └── results/
     └── 2026-11-11.md                  기준선
     (runners/ 는 지운다 — 코드는 아래로)
@@ -369,6 +370,8 @@ apps/api/tests/eval/suite/             ← 하네스 코드 (같은 uv · pytest
 ├── test_probes_live.py                -m live
 ├── test_week_live.py                  -m live
 └── test_suite_checks.py               판정기 단위 테스트 — 가짜 Trace 로. make test 에 들어간다
+
+apps/api/tests/eval/faults/            ← F 구멍 테스트 (가짜 모델 · make test). 구멍 하나에 파일 하나 + fakes.py
 
 docs/eval/eval-v1.md                   이 문서 (결정 · 근거)
 Makefile                               eval-smoke · eval · eval-demo
