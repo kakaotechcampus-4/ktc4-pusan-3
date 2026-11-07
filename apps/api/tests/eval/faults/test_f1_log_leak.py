@@ -100,6 +100,7 @@ async def test_F1_러너_시간_초과_로그에_원문이_없다(
 
     assert slow.started.is_set()
     assert channel.events[-1] == ("failed", {"reason": "timeout", "raw_text": RAW})
+    assert [name for name, _ in channel.events if name in ("done", "failed")] == ["failed"]
     assert "안에 끝나지 않아 끊었다" in caplog.text
     _assert_no_canary(caplog)
 
@@ -120,8 +121,10 @@ async def test_F1_러너부터_pipeline_까지_모델_오류의_원문_되돌림
     await asyncio.wait_for(runner.start(channel, job, raw_text=RAW), timeout=5)
 
     # Supervisor 는 tool_choice 세 가지를 다 거절당해 강등되고, Memory 가 원문으로 돌다 죽는다
+    # 호출 수(Supervisor 3 · Memory 1)는 의도된 값이다 — fallback 횟수가 바뀌면 여기서 알아챈다
     assert len(supervisor_echo.echoed) == 3 and len(memory_echo.echoed) == 1
     assert channel.events[-1] == ("failed", {"reason": "llm_unavailable", "raw_text": RAW})
+    assert [name for name, _ in channel.events if name in ("done", "failed")] == ["failed"]
     assert [session.commits for session in sessions] == [0]
     assert await idempotency.recall(**scope) is None  # 저장 없는 실패 — 다시 시도할 수 있다
     assert f"pipeline run_id={channel.run_id}" in caplog.text

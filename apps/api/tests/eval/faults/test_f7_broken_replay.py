@@ -31,6 +31,7 @@ async def test_F7_깨진_재생_값은_처리_안_된_예외가_아니다() -> N
     with patch("app.api.idempotency.get_redis", return_value=r):
         try:
             replay = await idempotency.recall(**SCOPE)
+        # ISSUE-F7 을 고친 뒤에야 이 갈래를 탄다 — 그 전에는 strict xfail 이 JSONDecodeError 기대
         except ApiError as exc:
             assert exc.status != 500  # 정해진 오류(예: 503)로 답하면 된다
         else:
