@@ -4,6 +4,7 @@
 되묻기(`memory.pending`)를 다음 턴의 continuation 으로 넘긴다. 판정은 마지막 턴만 한다.
 """
 
+import traceback
 from collections.abc import Callable, Sequence
 from datetime import datetime
 from typing import Any
@@ -147,6 +148,9 @@ async def run_probe(case: ProbeCase, *, attempt: int, logs: Callable[[], Sequenc
                 )
             continuation = result.memory.pending if result.memory is not None else None
             if index < len(case.turns) - 1:
+                if result.failed is not None:
+                    trace.error = f"앞 턴 실패: {result.failed.reason}"
+                    break
                 continue
             after = await observation_rows(world.store.inner)
             trace.run_id = run_id
@@ -164,8 +168,13 @@ async def run_probe(case: ProbeCase, *, attempt: int, logs: Callable[[], Sequenc
                 events=events,
                 batches=saved.batches,
             )
+            if not result.committed:
+                # 확정되지 않은 run 의 쓰기는 운영에서 롤백된다(pipeline 의 commit 결과가
+                # False 면 저장 안 된 것) — InMemory 에 남은 행을 저장으로 세지 않는다
+                trace.saved = ()
     except Exception as exc:  # run 하나의 예외로 케이스 전체를 멈추지 않는다
         trace.error = f"{type(exc).__name__}: {exc}"
+        trace.error_detail = traceback.format_exc()
     trace.usage = tuple(usage_rows(prefix))
     trace.logs = tuple(logs())
     return trace

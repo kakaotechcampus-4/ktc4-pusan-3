@@ -28,14 +28,15 @@ from app.agents.growth.store.ports import SafetyEntry as GrowthSafetyEntry
 from app.agents.health.store.inmemory import InMemoryHealthSafety, InMemoryMedicationStore
 from app.agents.health.store.ports import HealthSafetyEntry
 from app.agents.memory.store import InMemoryStore
+
+# 제품이 InMemory id 를 인용 id 로 바꾸는 방식 그대로(_citation_id) — 바뀌면 여기서 바로
+# 깨지게 복사하지 않고 가져온다
 from app.agents.memory_bridge import _uuid as _citation_id
 from tests.eval.agents.food.world import birth_date_for
 from tests.eval.agents.food.world import build_world as build_food_world
 from tests.eval.suite.schema import World
 from tests.eval.suite.trace import SavedRow
 
-# 제품이 InMemory id 를 인용 id 로 바꾸는 방식 그대로(_citation_id) — 바뀌면 여기서 바로
-# 깨지게 복사하지 않고 가져온다
 KST = ZoneInfo("Asia/Seoul")
 CHILD = UUID("00000000-0000-7000-8000-0000000000e1")  # 지어낸 id
 PARENT = UUID("00000000-0000-7000-8000-0000000000e2")

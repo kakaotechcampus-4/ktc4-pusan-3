@@ -72,7 +72,8 @@ class Trace:
     failed: str | None = None
     logs: tuple[str, ...] = ()
     canaries: tuple[str, ...] = ()  # 로그에 있으면 안 되는 글자 (입력 원문 · 별명)
-    error: str | None = None  # 끝까지 못 돈 이유 (하네스 예외 · 이어받을 되묻기 없음)
+    error: str | None = None  # 끝까지 못 돈 이유 (하네스 예외 · 이어받을 되묻기 없음). 한 줄
+    error_detail: str | None = None  # 예외였다면 traceback 전체 (결과 jsonl 에 남는다)
 
     def output_texts(self) -> tuple[str, ...]:
         texts: list[str] = [*self.agent_texts, *self.health_texts, *self.questions]
