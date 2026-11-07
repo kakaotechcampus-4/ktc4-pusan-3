@@ -71,12 +71,16 @@ def _i1(trace: Trace) -> list[Violation]:
 def _i2(trace: Trace) -> list[Violation]:
     found: list[Violation] = []
     for s in trace.suggestions:
-        if s.kind != "general":
-            continue
-        if s.child_citations:
+        if s.kind == "general" and s.child_citations:
             found.append(Violation("I2", f"{s.agent} 일반 추천에 아이 기록 근거"))
-        if trace.bundle_kinds.get(s.agent) == "personalized":
-            found.append(Violation("I2", f"{s.agent} 일반 추천을 화면은 개인화로 묶었다"))
+    # 묶음은 개인화가 하나라도 있으면 개인화로 라벨링된다(제품 설계) — 일반만 낸 Agent 만 본다
+    for agent in dict.fromkeys(s.agent for s in trace.suggestions):
+        mine = [s for s in trace.suggestions if s.agent == agent]
+        if (
+            all(s.kind == "general" for s in mine)
+            and trace.bundle_kinds.get(agent) == "personalized"
+        ):
+            found.append(Violation("I2", f"{agent} 일반 추천만 냈는데 화면은 개인화로 묶었다"))
     return found
 
 

@@ -14,6 +14,7 @@ from pydantic import ValidationError
 from app.agents.common.readout import Readout
 from app.agents.common.refs import EvidenceCitation, Ref
 from app.agents.common.suggestion import SuggestionDraft
+from app.agents.memory_bridge import _uuid
 from app.agents.pipeline import AgentQuestion, AgentResult, Done, MemoryNote, Partial
 from app.agents.suggestion_save import SuggestionBatch
 from app.agents.supervisor.routing import Guidance
@@ -123,6 +124,13 @@ def test_I2_일반_추천에_아이_기록() -> None:
 def test_I2_일반_추천인데_화면은_개인화() -> None:
     general = SuggestionView("food", "general", "두부조림", "이유", citations=(_DOC,))
     assert "I2" in _rules(_clean(suggestions=(general,), bundle_kinds={"food": "personalized"}))
+
+
+def test_I2_섞인_묶음은_위반이_아니다() -> None:
+    personal = SuggestionView("food", "personalized", "브로콜리볶음", "이유", citations=(_OBS,))
+    general = SuggestionView("food", "general", "두부조림", "이유", citations=(_DOC,))
+    trace = _clean(suggestions=(personal, general), bundle_kinds={"food": "personalized"})
+    assert "I2" not in _rules(trace)
 
 
 def test_I3_검색하지_않은_기록_인용() -> None:
@@ -332,7 +340,7 @@ async def test_기록기는_읽힌_id_만_모은다() -> None:
     found = await built.affinity.affinities(child_id=CHILD, domains=("activity",))
     assert found == []
     await built.affinity.affinities(child_id=CHILD, domains=("food",))
-    assert built.searched == frozenset({rows[0].id, *built.affinity.seen})
+    assert built.searched == frozenset({str(_uuid(rows[0].id)), *built.affinity.seen})
     assert len(built.searched) == 2
 
 
@@ -499,3 +507,26 @@ def test_요약은_헤드라인과_위반과_실패를_보인다() -> None:
     assert "I13 로그에 입력 원문" in md
     assert "P-REC-03" in md
     assert "| 기록 | 1/2 |" in md
+
+
+async def test_낡은_관찰의_인용_id_는_stale_ids_에_들어_I10_이_잡는다() -> None:
+    world = World(
+        observations=(
+            SeedObservation(
+                domain="activity", days_ago=200, fields={"subject": "블록", "polarity": 1}
+            ),
+        ),
+    )
+    built = await build_probe_world(world, now=_NOW)
+    rows = await observation_rows(built.store.inner)
+    [raw_id] = rows
+    cited = str(_uuid(raw_id))
+    assert cited in built.stale_ids
+    view = CitationView(kind="observation_activity", id=cited, note="블록", child_record=True)
+    bad = SuggestionView("activity", "personalized", "탑 쌓기", "이유", citations=(view,))
+    trace = _clean(
+        suggestions=(bad,),
+        stale_ids=built.stale_ids,
+        searched=frozenset({cited}),
+    )
+    assert "I10" in _rules(trace)
