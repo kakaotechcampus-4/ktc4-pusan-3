@@ -42,7 +42,7 @@
 | SAFE | ✅ | ✅ | ✅ | ✅ |
 | SRCH | ✅ F4 | ✅ | ✅ | ✅ |
 | EXT | ✅ | ✅ | ✅ | ✅ |
-| SAVE | ✅ | ✅ | 🕳️ F6 | ✅ |
+| SAVE | ✅ | ✅ | ✅ F6 | ✅ |
 | IDEM | ✅ | ✅ | 🕳️ F7 | ✅ F5 |
 | RUN | ✅ F1 | ✅ F1 | ✅ | ✅ |
 
@@ -129,7 +129,7 @@
 | --- | --- | --- | --- | --- |
 | SAVE-A | Memory commit 이 터지면 저장 안내 · 되묻기 맥락을 내지 않는다. 추천 저장이 터지면 그 Agent 만 `partial` · 카드 없음 · 확정된 저장으로 세지 않는다. 예외 메시지(추천 문장)는 로그에 없다 | `app/agents/pipeline.py:2087-2095` · `:2292-2316` · `app/api/runs/runner.py:185-201` | `tests/unit/agents/supervisor/test_pipeline.py::test_commit_이_실패하면_저장_안내도_되묻기_맥락도_나가지_않는다` · `::test_추천_저장에_실패하면_그_Agent_는_partial_이고_카드가_없다[예외]` · `tests/unit/api/test_runner.py::test_추천_저장이_실패하면_확정된_저장으로_세지_않는다` · `tests/unit/agents/test_run_suggestions.py::test_저장에_실패하면_그_Agent_는_실패다` | ✅ |
 | SAVE-B | 저장은 Agent 의 20초 밖에서 기다린다(중간에 끊으면 들어갔는지 모르는 저장이 남는다). 60초 안전망이 저장 뒤에 걸리면 done · 키 유지, 저장 중이면 취소를 부분 실패로 숨기지 않는다. DB 쿼리 상한은 ISSUE-F8-a | `app/agents/pipeline.py:1909-1910` · `:1926` · `app/api/runs/runner.py:242-253` | `tests/unit/agents/supervisor/test_pipeline.py::test_저장이_느려도_이미_끝난_Agent_는_끊기지_않는다` · `::test_저장_중_취소는_부분_실패로_숨기지_않는다` · `tests/unit/api/test_runner.py::test_추천_저장_뒤_시간_안전망에_걸려도_done_이다` · `::test_timeout이_commit_뒤에_걸려도_done으로_끝난다` | ✅ |
-| SAVE-C | 저장이 돌려준 id 수가 추천 수와 다르면(적든 많든) 카드와 추천의 짝이 어긋난다 — 그 Agent 를 실패로 센다. 입력 run · 05 다시 만들기 둘 다 | `app/agents/pipeline.py:2313-2315` | 입력 run · id 가 적은 경우만: `tests/unit/agents/supervisor/test_pipeline.py::test_추천_저장에_실패하면_그_Agent_는_partial_이고_카드가_없다[결과_수가_다름]` · F 테스트: `tests/eval/faults/test_f6_saved_id_count.py::test_F6_05_다시_만들기도_저장한_id_수가_다르면_그_Agent_는_실패다[적다]` · `[많다]` | 🕳️ F6 |
+| SAVE-C | 저장이 돌려준 id 수가 추천 수와 다르면(적든 많든) 카드와 추천의 짝이 어긋난다 — 그 Agent 를 실패로 센다. 입력 run · 05 다시 만들기 둘 다 | `app/agents/pipeline.py:2313-2315` | 입력 run · id 가 적은 경우만: `tests/unit/agents/supervisor/test_pipeline.py::test_추천_저장에_실패하면_그_Agent_는_partial_이고_카드가_없다[결과_수가_다름]` · F 테스트: `tests/eval/faults/test_f6_saved_id_count.py::test_F6_05_다시_만들기도_저장한_id_수가_다르면_그_Agent_는_실패다[적다]` · `[많다]` | ✅ F6 |
 | SAVE-D | 확정된 저장이 있는 run 은 failed 로 끝내지 않고 키를 놓지 않는다(놓으면 재시도가 두 번 저장한다). 일정 초안만 만든 run 은 확정된 쓰기가 아니다 (I7). commit 했어도 쓴 것이 없으면 failed 가 맞다 | `app/api/runs/runner.py:395-401` · `app/api/runs/registry.py:51-57` · `app/agents/pipeline.py:886` | `tests/unit/api/test_runner.py::test_commit_후_예외가_나도_키를_풀지_않는다` · `::test_저장_안_한_run의_commit_후_예외는_failed로_끝난다` · `tests/unit/agents/supervisor/test_pipeline.py::test_일정_초안만_만든_run_은_commit_된_쓰기가_없다` · `::test_급식을_고친_뒤_죽으면_failed_가_아니라_partial_로_끝난다` | ✅ |
 
 ### IDEM · 접수 창구 (Redis 멱등 키 · 하루 입력 한도 · run 당 모델 호출 상한)
