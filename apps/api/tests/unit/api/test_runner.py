@@ -141,15 +141,17 @@ async def test_agent_job_좌표와_날씨_어댑터를_진입점에_그대로_�
     assert isinstance(seen["activity_places"], DbPlaceSource)
 
 
-async def test_agent_job_위치_기록에_실패하면_Agent_를_부르지_않고_failed(monkeypatch):
-    """기록 없는 사용을 만들지 않는다 (위치정보법 제16조 ②). 좌표만 버리고 넘어가지 않는다."""
-    called: list[dict] = []
+async def test_agent_job_위치_기록에_실패하면_좌표만_버리고_끝까지_돈다(monkeypatch, caplog):
+    """기록 없는 사용을 만들지 않는다 (위치정보법 제16조 ②) — 좌표를 안 넘기면 쓴 것도 없다.
+    run 은 실패시키지 않는다. 보호자가 적은 기록이 위치 표 고장 때문에 사라지면 안 된다."""
+    seen: list = []
 
     async def fake_handle_input(**kwargs):
-        called.append(kwargs)
+        seen.append(kwargs["location"])
+        kwargs["emit"](Done(kwargs["run_id"], 1))
 
     monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
-    _location_logs(monkeypatch, RuntimeError("위치 기록 실패"))
+    _location_logs(monkeypatch, RuntimeError("남기면 안 되는 예외 문구"))
     channel = registry.open_run(parent_id=PARENT)
     job = runner.agent_job(
         child_id=CHILD,
@@ -160,8 +162,12 @@ async def test_agent_job_위치_기록에_실패하면_Agent_를_부르지_않�
 
     await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
 
-    assert called == []
-    assert names(channel) == ["failed"]
+    assert seen == [None]
+    assert names(channel) == ["done"]
+    # 고장은 알아야 한다 — ERROR 는 Discord 로 간다. 예외 문구는 남기지 않는다 (#670)
+    errors = [r for r in caplog.records if r.levelname == "ERROR"]
+    assert len(errors) == 1
+    assert "남기면 안 되는 예외 문구" not in caplog.text
 
 
 async def test_agent_job_병원_어댑터를_진입점에_그대로_넘긴다(monkeypatch):
