@@ -1,7 +1,7 @@
 """W · 일주일 시나리오 — 실제 모델로 앱을 API 로 돌린다 (docs/eval/eval-v1.md §5).
 
     EVAL_ONLY=W-C make eval            # 가끔 쓰는 집 (4 입력)
-    make eval-week                     # A · C 를 돈다 (W-A ≈ 16 입력) — DB_NAME=icatch_it 로
+    make eval-week                     # A · C 를 돈다 (W-A ≈ 39 입력) — DB_NAME=icatch_it 로
 
 케이스마다 1회다 — 반복(k)은 아이 k 명을 같은 시각에 나란히 돌리는 방식인데 이번엔 k=1 이다.
 `EVAL_TIER=smoke` 는 W 를 건너뛴다(EVAL_ONLY 로 케이스를 지정하면 돈다).

@@ -7,7 +7,7 @@
 | 경로 | 무엇 |
 | --- | --- |
 | `cases/probes.yaml` | P · 단발 프로브 31개 (능력 6개 · 헤드라인 10개 · 주입 6개) |
-| `cases/week/` | W · 일주일 페르소나 — `a-typical.yaml`(보통 · 16단계) · `c-light.yaml`(가끔 · 4단계). B(많음)는 아직 없다 |
+| `cases/week/` | W · 일주일 페르소나 — `a-typical.yaml`(보통 · 입력 39 + 승인 · 정정 · 점검) · `c-light.yaml`(가끔 · 4단계). B(많음)는 아직 없다 |
 | `faults.md` | F · 장애 점검표 (계획 3) |
 | `results/<날짜>.md` | 실행 요약 — 커밋한다. 지난 요약과의 diff 가 회귀 신호다 |
 | `results/raw/` | run 마다의 원본 jsonl — 커밋하지 않는다 |
@@ -37,7 +37,7 @@
 ```
 cd apps/api
 EVAL_TIER=full EVAL_ONLY=W-C PYTEST_ADDOPTS= uv run pytest tests/eval/suite/test_week_live.py -m live -q   # 가끔 (4 입력)
-EVAL_TIER=full EVAL_ONLY=W-A PYTEST_ADDOPTS= uv run pytest tests/eval/suite/test_week_live.py -m live -q   # 보통 (16 단계)
+EVAL_TIER=full EVAL_ONLY=W-A PYTEST_ADDOPTS= uv run pytest tests/eval/suite/test_week_live.py -m live -q   # 보통 (입력 39)
 ```
 
 - `make eval-week` 가 W-A · W-C 를 돈다(`EVAL_ONLY=W-C make eval-week` 로 하나만). `make eval` 은 P 만 돈다. `make eval-smoke` 는 W 를 건너뛴다(`EVAL_ONLY=W-C` 로 지정하면 돈다)

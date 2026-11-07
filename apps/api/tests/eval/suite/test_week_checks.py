@@ -35,7 +35,7 @@ def test_두_대본이_스키마를_통과한다() -> None:
     weeks = {w.id: w for w in load_weeks()}
     assert set(weeks) == {"W-A", "W-C"}
     a = weeks["W-A"]
-    assert len([s for s in a.steps if s.kind != "check"]) == 16
+    assert len([s for s in a.steps if s.kind != "check"]) == 41
     assert a.steps[-1].kind == "check"
     assert len(a.world.seeds) == 4
     assert a.world.nickname == "콩이" and a.world.parents == ("mom", "dad")
@@ -44,9 +44,9 @@ def test_두_대본이_스키마를_통과한다() -> None:
 
 def test_A_의_단계는_부록_대본_순서대로다() -> None:
     a = next(w for w in load_weeks() if w.id == "W-A")
-    assert [s.at for s in a.steps][:3] == ["mon 08:10", "mon 19:00", "mon 21:30"]
+    assert [s.at for s in a.steps][:3] == ["mon 07:50", "mon 12:40", "mon 18:20"]
     approve = next(s for s in a.steps if s.kind == "approve")
-    assert approve.approve_of == "tue-notice" and approve.at == "thu 08:30"
+    assert approve.approve_of == "tue-notice" and approve.at == "wed 21:00"
     correct = next(s for s in a.steps if s.kind == "correct")
     assert correct.correct_of == "mon-evening" and correct.verdict == "once_only"
 
