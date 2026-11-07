@@ -211,8 +211,17 @@ export interface HealthSafety {
    * 적은 보호자. 🚨 **빠지지 않고 `null` 로 온다** — 탈퇴했거나 부르는 이름이 없는 계정이면
    *    통째로 `null` 이다 (화면이 "null님이 확인" 을 그리지 않게 서버가 묶어 보낸다).
    */
-  created_by: { parent_id: string; nickname: string } | null;
+  created_by: WrittenBy | null;
   updated_at: string;
+}
+
+/**
+ * 공동 기록에 남는 "적은 보호자" — 서버 `WrittenBy`. 알레르기 · 건강의 `created_by`, 복약 회차의 `checked_by` 가 같은 모양이다.
+ * 🚨 이름을 알 수 없으면 이 객체가 아니라 칸이 통째로 `null` 이다 — `nickname` 은 비어 오지 않는다.
+ */
+export interface WrittenBy {
+  parent_id: string;
+  nickname: string;
 }
 
 /* ── Suggestion ───────────────────────────────────────────────────────── */
@@ -1058,6 +1067,12 @@ export interface MedicationDose {
   scheduled_time: string;
   /** 보호자가 체크한 시각. `null` 이면 미체크. */
   checked_at: string | null;
+  /**
+   * 체크한 보호자 (#749). 그 아이의 보호자 누가 조회해도 같은 값이고, 이미 체크된 회차를 다시 눌러도 **처음 보호자**가 남는다.
+   * 🚨 **`checked_at` 이 있어도 `null` 일 수 있다** — 이 칸이 생기기 전의 체크, 탈퇴한 보호자, 부르는 이름이 없는 계정.
+   *    서버가 셋을 가르지 않는다. 화면은 이름 없이 시각만 그린다.
+   */
+  checked_by: WrittenBy | null;
   /**
    * 지금 체크 · 해제할 수 있는가. 🚨 **아직 오지 않은 날의 회차는 서버가 막는다** — 화면이 오늘과 비교해
    *    정하지 않는다 (날짜 계산 · apps/web/CLAUDE.md §4).

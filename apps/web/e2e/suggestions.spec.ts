@@ -719,14 +719,14 @@ test.describe("추천별 위험 경고 (#402 · #672)", () => {
   });
 });
 
-test.describe("알레르기 정보가 없으면 식사 제안을 만들지 않는다 (§2 안전)", () => {
+test.describe("알레르기 정보를 확인할 수 없으면 식사 제안을 만들지 않는다 (§2 안전)", () => {
   test.use({ scenario: "stale" });
 
   test("막힌 쪽의 제안은 한 줄도 서지 않는다", async ({ page }) => {
     await page.goto(SUGGESTIONS);
     await expect(page.getByText("식사 제안을 만들지 않았어요")).toBeVisible();
     await expect(
-      page.getByText("알레르기 정보가 없어 식사 제안을 안전하게 걸러낼 수 없어요"),
+      page.getByText("알레르기 정보를 확인할 수 없어서 추천을 드릴 수 없어요."),
     ).toBeVisible();
     await expect(page.getByRole("heading", { name: "오늘 저녁 뭐 차려 줄까요" })).toHaveCount(0);
     await expect(page.getByText("두부를 부쳐서 한 조각 곁들여 보세요")).toHaveCount(0);

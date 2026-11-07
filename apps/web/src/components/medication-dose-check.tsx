@@ -9,8 +9,10 @@ import {
   api,
   qk,
   type CheckDoseRequest,
+  type Me,
   type MedicationDose,
   type MedicationsResponse,
+  type WrittenBy,
 } from "@/lib/api";
 import { formatTimeOfDay } from "@/lib/format";
 import { createSerialQueue } from "@/lib/serial-queue";
@@ -39,6 +41,13 @@ export function DoseCheck({ childId, dose }: { childId: string; dose: Medication
     onMutate: async (checked) => {
       await queryClient.cancelQueries({ queryKey: key });
       const previous = queryClient.getQueryData<MedicationsResponse>(key);
+      // 체크한 보호자도 서버가 정한다 (로그인 보호자 · #749). 응답 전까지는 이미 받아 둔 내 이름을 잠시 쓴다 — 없으면
+      // 이름 없이 시각만 보인다. 정본은 응답 뒤 다시 읽은 값이다(`onSettled`) — 다른 보호자가 먼저 체크한 회차였으면
+      // 그때 그 보호자와 처음 시각으로 바뀐다.
+      const me = queryClient.getQueryData<Me>(qk.me());
+      const checker: WrittenBy | null = me?.nickname
+        ? { parent_id: me.id, nickname: me.nickname }
+        : null;
       queryClient.setQueryData<MedicationsResponse>(key, (current) =>
         current
           ? {
@@ -48,7 +57,12 @@ export function DoseCheck({ childId, dose }: { childId: string; dose: Medication
                 doses: course.doses.map((each) =>
                   each.id === dose.id
                     ? // 체크한 시각은 서버가 정한다 — 응답 전까지 잠시 지금 시각을 보여 줄 뿐이다.
-                      { ...each, checked_at: checked ? new Date().toISOString() : null }
+                      {
+                        ...each,
+                        checked_at: checked ? new Date().toISOString() : null,
+                        // 해제하면 시각과 함께 비운다 (서버와 같다)
+                        checked_by: checked ? checker : null,
+                      }
                     : each,
                 ),
               })),
@@ -83,7 +97,17 @@ export function DoseCheck({ childId, dose }: { childId: string; dose: Medication
       checked={dose.checked_at !== null}
       onChange={(checked) => toggle.mutate(checked)}
       label={dose.scheduled_time}
-      description={dose.checked_at ? `${formatTimeOfDay(dose.checked_at)}에 체크했어요` : undefined}
+      description={dose.checked_at ? checkedText(dose.checked_at, dose.checked_by) : undefined}
     />
   );
+}
+
+/**
+ * "지은님이 오전 8:31에 체크했어요". 공동 기록이라 다른 보호자도 누가 먹였는지 본다 (#749).
+ * 🚨 `checked_by` 가 `null` 이면 **이름 자리를 비우고 시각만** 말한다 — 이 칸이 생기기 전의 체크 · 탈퇴 · 이름 없는 계정을
+ *    서버가 가르지 않는다. "알 수 없는 보호자" 처럼 지어 붙이지 않는다 (알레르기의 "적은 사람" 과 같은 처리).
+ */
+function checkedText(checkedAt: string, checkedBy: WrittenBy | null): string {
+  const who = checkedBy ? `${checkedBy.nickname}님이 ` : "";
+  return `${who}${formatTimeOfDay(checkedAt)}에 체크했어요`;
 }

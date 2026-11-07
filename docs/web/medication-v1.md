@@ -3,7 +3,7 @@
 문서 목적: Health 복약(#537)의 FE 몫인 네 가지(복약 확인 카드 · 회차 체크 · 되묻기에 답하기 · 새 readout)를 화면이 어떻게 다루는지와, **서버보다 먼저 잡고 서버가 받은 계약**을 고정한다.
 
 기준 브랜치: `feat/fe-537-medication-draft-card` · 실서버 연결 `feat/fe-713-medication-server` (#713)
-작성일: 2026-10-23 · 갱신 2026-11-04
+작성일: 2026-10-23 · 갱신 2026-11-06 (체크한 보호자 · #749)
 담당: 고태영
 선행 문서: 이슈 [#537](https://github.com/kakaotechcampus-4/ktc4-pusan-3/issues/537) · `apps/api/app/core/medication_draft.py`(초안 모양 정본 · #544) · [`docs/medication/medication-tables-v1.md`](../medication/medication-tables-v1.md)(두 표와 제출 · 체크 API 가 막을 것 · #546) · [`event-draft-ui-v1.md`](event-draft-ui-v1.md)(같은 규칙을 먼저 정한 일정 초안)
 
@@ -31,7 +31,7 @@
 | | 어디 | 게이트 | 쓰는 것 |
 | --- | --- | --- | --- |
 | 복약 확인 카드 | 04 대화의 "복약 일정으로 넣을까요?" → "찾은 복약" 시트 | 🚨 **㉡** (건강 기록 확정) | 코스 1건 + 기간만큼 회차 |
-| 회차 체크 | **03 홈 "오늘 먹일 약"**(오늘 회차) · **11-3 복약** (`/child/{cid}/profile/medications`, 지난 날짜와 코스 전체) | 아니다 | 회차 1행의 `checked_at` |
+| 회차 체크 | **03 홈 "오늘 먹일 약"**(오늘 회차) · **11-3 복약** (`/child/{cid}/profile/medications`, 지난 날짜와 코스 전체) | 아니다 | 회차 1행의 `checked_at` · `checked_by` |
 | 되묻기에 답하기 | 04 대화, Agent 블록 안 | 아니다 | 한 줄 입력(`reply_to`) |
 | 새 readout | 04 대화, Agent 블록 안 | 아니다 | 없음 (읽기 · 복사) |
 
@@ -76,6 +76,11 @@
 - 🚨 **코스가 하나뿐이면 스크롤하지 않는다** — 맨 위 카드라 이미 보이고, 회차가 길면 머리말("아이 프로필" · 제목)만 화면 밖으로 밀린다. 포커스는 옮긴다.
 - 🚨 **게이트가 아니다.** 체크는 되돌릴 수 있다 — `btn-approve` · `caution` 을 쓰지 않는다 (`no-extra-gates.spec.ts`). 키도 달지 않는다.
 - 되돌릴 수 있는 토글이라 **낙관적 업데이트 + 회차마다 줄 세우기**다 — 09 준비물 체크와 같은 패턴이다 (`lib/serial-queue.ts`).
+- **누가 체크했는지 보인다** (#749). 회차 아래에 "현우님이 오전 8:30에 체크했어요" — 공동 기록이라 같은 아이의 다른 보호자도 누가 먹였는지 본다.
+  체크한 보호자(`checked_by`)는 서버가 로그인 보호자로 정하고, 이미 체크된 회차를 다시 눌러도 **처음 보호자와 시각**이 남는다.
+  - 🚨 **`checked_by` 가 `null` 이면 이름 없이 시각만** 말한다. 이 칸이 생기기 전의 체크 · 탈퇴한 보호자 · 부르는 이름이 없는 계정이고, 서버가 셋을 가르지 않는다. "알 수 없는 보호자" 처럼 지어 붙이지 않는다 (알레르기의 "적은 사람" 과 같은 처리).
+  - 낙관적 업데이트는 이미 받아 둔 내 이름(`qk.me`)을 잠시 쓰고, 없으면 시각만 그린다. 응답 뒤 다시 읽은 값이 정본이다 — 오래된 화면에서 다른 보호자가 먼저 체크한 회차를 눌렀으면 그 보호자 이름으로 바뀐다.
+  - 다른 기기 화면에 바로 퍼지지 않는다. 다시 조회할 때 보인다 (#749 범위 밖).
 - 🚨 **날짜를 계산하지 않는다.** 진행 중인 코스, 서버의 오늘(`today`), 체크할 수 있는 회차(`checkable`)는 서버가 정한다. 화면은 오늘 줄을 `today` 와 같은 글자인지로만 가르고, 날짜 묶음은 서버 순서를 뒤집기만 한다(최근이 위).
 - 🚨 **"먹여도 돼요" 로 읽힐 표시를 만들지 않는다.** 체크 칸은 먹였다는 기록일 뿐이다 — 남은 시간이나 "지금 먹이세요" 를 세우지 않는다. "오늘 체크 n/m회" 는 사실만 센다.
 - 11-1 처럼 11 아래 라우트고 네비가 붙는다(가는 곳). 돌아가는 길은 "아이 프로필" 링크다.
@@ -116,7 +121,7 @@ Health 는 세 자리에서 되묻고 멈춘다 — 중단 확인 · 어느 약 
 | 등록 (게이트 ㉡) | `POST /children/{cid}/medications` · Idempotency-Key 필수 · 본문 `{ schedule, doses, source }` · 201 `{ course }` | `idempotentPath.submitMedication` · `SubmitMedicationBody` |
 | 수정 (게이트 ㉡) | `PATCH /children/{cid}/medications/{sid}` · 키 필수 · 본문 `{ schedule, doses }` | `idempotentPath.updateMedication` |
 | 진행 중 코스 | `GET /children/{cid}/medications` → `{ today, courses[] }`. 코스마다 `notice_times` 와 **오늘까지의** 회차 | `MedicationsResponse` · 11-3 · 11 |
-| 회차 체크 | `PUT /children/{cid}/medication-doses/{did}/check` 본문 `{ checked }` → 회차. 키 없음. 회차마다 `checkable` | `CheckDoseRequest` · `MedicationDose` · 11-3 |
+| 회차 체크 | `PUT /children/{cid}/medication-doses/{did}/check` 본문 `{ checked }` → 회차. 키 없음. 회차마다 `checkable` · `checked_by`(`{ parent_id, nickname } \| null` · #749 · PR #757) | `CheckDoseRequest` · `MedicationDose` · `WrittenBy` · 11-3 |
 
 - 본문의 `doses` 는 초안의 시각 패턴(`timing_anchor` · `offset_minutes` · `fixed_time`)을 그대로 되돌려 보낸다. `scheduled_time` 은 싣지 않는다 (DB 생성 컬럼).
 - 수정 때 지난 회차와 체크된 회차를 지우지 않는 규칙은 서버 몫이다 ([`medication-tables-v1.md`](../medication/medication-tables-v1.md) §5). 목은 그 규칙을 흉내 낸다.

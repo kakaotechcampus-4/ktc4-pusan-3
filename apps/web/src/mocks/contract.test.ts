@@ -104,7 +104,7 @@ import { INVITE_CODE_LENGTH, normalizeInviteCode } from "@/lib/invite-code";
 
 import { submittedInput } from "./handlers/runs";
 
-import { daysAgo, suggestionAllergens, suggestions } from "./fixtures";
+import { daysAgo, me, suggestionAllergens, suggestions } from "./fixtures";
 import { setScenario } from "./scenario";
 
 /**
@@ -4609,6 +4609,35 @@ describe("복약 — 승인 게이트 ㉡ 제출 · 회차 체크 (#537)", () =>
     expect(again.checked_at).toBe(first.checked_at);
     const cleared = await api.put<MedicationDose>(path, { checked: false });
     expect(cleared.checked_at).toBeNull();
+  });
+
+  it("🚨 체크한 보호자는 로그인 보호자고, 다시 체크해도 처음 보호자가 남고, 해제하면 비운다 (#749)", async () => {
+    const doses = (await listOf()).courses[0].doses;
+    // 시드는 두 경우를 다 갖는다 — 다른 보호자가 체크한 회차, 체크했는데 보호자를 모르는 회차
+    const byOther = doses.find((d) => d.checked_by?.parent_id === "p2");
+    const unknown = doses.find((d) => d.checked_at !== null && d.checked_by === null);
+    if (!byOther || !unknown) throw new Error("시드에 두 경우가 없다");
+    for (const dose of doses.filter((d) => d.checked_at === null)) {
+      expect(dose.checked_by).toBeNull();
+    }
+
+    // 다른 보호자가 체크한 회차를 내가 또 체크해도 처음 보호자와 시각이 남는다
+    const again = await api.put<MedicationDose>(
+      `/children/c1/medication-doses/${byOther.id}/check`,
+      { checked: true },
+    );
+    expect(again.checked_by).toEqual(byOther.checked_by);
+    expect(again.checked_at).toBe(byOther.checked_at);
+
+    // 해제하면 시각과 보호자가 함께 비고, 다시 체크하면 내가 남는다
+    const path = `/children/c1/medication-doses/${unknown.id}/check`;
+    const cleared = await api.put<MedicationDose>(path, { checked: false });
+    expect(cleared).toMatchObject({ checked_at: null, checked_by: null });
+    const mine = await api.put<MedicationDose>(path, { checked: true });
+    expect(mine.checked_by).toEqual({ parent_id: me.id, nickname: me.nickname });
+    expect((await listOf()).courses[0].doses.find((d) => d.id === unknown.id)?.checked_by).toEqual(
+      mine.checked_by,
+    );
   });
 
   it("`empty` 는 진행 중 복약이 없다", async () => {

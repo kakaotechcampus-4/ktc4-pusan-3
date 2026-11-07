@@ -90,7 +90,7 @@ export const SCHEMA_MAP: Record<string, MapValue> = {
   /* ── 알레르기 · 건강 ── */
   HealthSafetyListResponse: "HealthSafetyListResponse",
   HealthSafetyOut: "HealthSafety",
-  WrittenBy: "HealthSafety.created_by",
+  WrittenBy: "WrittenBy",
   SafetyKind: "CreateHealthSafetyRequest.type",
   SafetySeverity: "CreateHealthSafetyRequest.severity",
   CreateHealthSafetyRequest: "CreateHealthSafetyRequest",
