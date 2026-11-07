@@ -92,6 +92,20 @@ async def test_agent_job_calls_the_agents_entrypoint_and_relays_its_events(monke
     assert channel.closed
 
 
+def _location_logs(monkeypatch, result: bool | Exception = True) -> list[uuid.UUID]:
+    """위치 기록을 가짜로 바꿔 끼운다. 실제 저장은 integration/api/test_location_use_log.py."""
+    logged: list[uuid.UUID] = []
+
+    async def fake_record(session, *, parent_id, purpose):
+        if isinstance(result, Exception):
+            raise result
+        logged.append(parent_id)
+        return result
+
+    monkeypatch.setattr(runner, "record_location_use_if_granted", fake_record)
+    return logged
+
+
 async def test_agent_job_좌표와_날씨_어댑터를_진입점에_그대로_넘긴다(monkeypatch):
     """창구가 위치 동의를 확인한 좌표와 서버 시작 때 만든 날씨 어댑터 (#380)."""
     seen: dict = {}
@@ -101,6 +115,7 @@ async def test_agent_job_좌표와_날씨_어댑터를_진입점에_그대로_�
         kwargs["emit"](Done(kwargs["run_id"], 1))
 
     monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    logged = _location_logs(monkeypatch)
     channel = registry.open_run(parent_id=PARENT)
     location, weather = entrypoint.CoarseLocation(lat=35.18, lon=129.08), object()
     events = object()
@@ -116,6 +131,7 @@ async def test_agent_job_좌표와_날씨_어댑터를_진입점에_그대로_�
     await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
 
     assert seen["location"] is location
+    assert logged == [PARENT]  # 넘기기 전에 쓴 사실을 남겼다 (#693)
     assert seen["activity_weather"] is weather
     assert seen["activity_events"] is events  # 서버 시작 때 만든 행사 어댑터
     # 🚨 위치 동의는 판을 보지 않고 확인했다 — 날씨 · 놀이 목적의 이전 판에만 동의했어도 같은
@@ -123,6 +139,35 @@ async def test_agent_job_좌표와_날씨_어댑터를_진입점에_그대로_�
     assert seen.get("health_location") is None
     # 장소는 적재한 place 표를 읽는 어댑터다. 좌표가 없는 run 에서는 tool 이 닫혀 부르지 않는다
     assert isinstance(seen["activity_places"], DbPlaceSource)
+
+
+async def test_agent_job_위치_기록에_실패하면_좌표만_버리고_끝까지_돈다(monkeypatch, caplog):
+    """기록 없는 사용을 만들지 않는다 (위치정보법 제16조 ②) — 좌표를 안 넘기면 쓴 것도 없다.
+    run 은 실패시키지 않는다. 보호자가 적은 기록이 위치 표 고장 때문에 사라지면 안 된다."""
+    seen: list = []
+
+    async def fake_handle_input(**kwargs):
+        seen.append(kwargs["location"])
+        kwargs["emit"](Done(kwargs["run_id"], 1))
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    _location_logs(monkeypatch, RuntimeError("남기면 안 되는 예외 문구"))
+    channel = registry.open_run(parent_id=PARENT)
+    job = runner.agent_job(
+        child_id=CHILD,
+        parent_id=PARENT,
+        raw_text=RAW_TEXT,
+        location=entrypoint.CoarseLocation(lat=35.18, lon=129.08),
+    )
+
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    assert seen == [None]
+    assert names(channel) == ["done"]
+    # 고장은 알아야 한다 — ERROR 는 Discord 로 간다. 예외 문구는 남기지 않는다 (#670)
+    errors = [r for r in caplog.records if r.levelname == "ERROR"]
+    assert len(errors) == 1
+    assert "남기면 안 되는 예외 문구" not in caplog.text
 
 
 async def test_agent_job_병원_어댑터를_진입점에_그대로_넘긴다(monkeypatch):
