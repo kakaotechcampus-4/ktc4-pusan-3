@@ -13,6 +13,7 @@
     "test:watch": "vitest",
     "test:contract": "vitest run --config vitest.contract.config.mts",
     "test:e2e": "playwright test",
+    "test:e2e-live": "playwright test -c playwright.live.config.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },
