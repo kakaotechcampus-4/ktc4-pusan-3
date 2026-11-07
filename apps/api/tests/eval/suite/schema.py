@@ -116,3 +116,119 @@ def load_probes_text(text: str) -> list[ProbeCase]:
 
 def load_probes(path: Path = CASES_DIR / "probes.yaml") -> list[ProbeCase]:
     return load_probes_text(path.read_text(encoding="utf-8"))
+
+
+# ── W · 일주일 시나리오 (docs/eval/eval-v1.md §5) ─────────────────────────────
+
+Weekday = Literal["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+WEEKDAYS: tuple[str, ...] = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+StepKind = Literal["say", "reply", "approve", "correct", "check"]
+CorrectVerdict = Literal["once_only", "wrong", "outdated"]
+_AT = r"^(mon|tue|wed|thu|fri|sat|sun) ([01]\d|2[0-3]):[0-5]\d$"
+
+
+class WeekSeed(_Strict):
+    """시작 전 기록 한 건 — 주의 월요일(D)에서 days_before_D 일 앞에 DB 에 직접 심는다.
+
+    fields 는 관찰 표의 칸 이름 그대로다(subject · activity · topic · action …). 승격(Curator)은
+    첫 입력 뒤에 돌므로 같은 subject 로 적어야 한 프로필로 묶인다.
+    """
+
+    domain: Domain
+    days_before_D: int = Field(ge=0)
+    fields: dict[str, Any]
+    tag: str = Field(pattern=r"^[a-z0-9][a-z0-9-]*$")
+
+
+class WeekWorld(_Strict):
+    months: int = Field(default=48, ge=0, le=96)
+    allergies: tuple[str, ...] = ()
+    nickname: str = Field(min_length=1)  # 지어낸 별명 — I13 카나리아
+    parents: tuple[str, ...] = Field(min_length=1)  # 보호자 이름 키 (Step.by)
+    rain_days: tuple[Weekday, ...] = ()  # 이 요일만 강한 비 (날씨 어댑터)
+    seeds: tuple[WeekSeed, ...] = ()
+
+
+class WeekCheck(_Strict):
+    """끝 상태 점검 — 모두 DB 를 본다."""
+
+    confirmed: tuple[str, ...] = ()  # 이 글자를 품은 관심(merge_key)이 confirmed
+    not_confirmed: tuple[str, ...] = ()  # 이 글자를 품은 관심이 confirmed 가 아니다
+    no_event_except: tuple[str, ...] = ()  # 일정 행은 이 승인 단계(tag)가 만든 것뿐
+    corrected_not_cited: tuple[
+        CorrectVerdict, ...
+    ] = ()  # 이 판정으로 고친 기록이 뒤 추천 근거에 없다
+
+
+class Step(_Strict):
+    at: str = Field(pattern=_AT)  # "mon 08:10" — 그 주의 요일 + 시:분(KST)
+    by: str
+    kind: StepKind = "say"
+    say: str | None = None  # {d+N} 은 주의 월요일 + N 일의 "M월 D일" 로 바뀐다
+    tag: str = Field(pattern=r"^[a-z0-9][a-z0-9-]*$")
+    ability: tuple[str, ...] = ()
+    about: Literal["child", "caregiver"] = "child"  # caregiver 면 I9
+    location: bool = False  # True 면 입력에 흐린 좌표(부산)를 싣는다 — 날씨가 필요한 단계
+    expect: Expect = Expect()
+    approve_of: str | None = None  # 이 단계(tag)가 낸 일정 초안을 승인한다
+    correct_of: str | None = None  # 이 단계(tag)가 저장한 기록을 고친다
+    verdict: CorrectVerdict | None = None
+    match: str | None = (
+        None  # 고칠 기록을 정규식으로 좁힌다(원문 제외 칸에서 찾는다). 없으면 그 단계의 관찰 전부
+    )
+    check: WeekCheck | None = None
+
+    @model_validator(mode="after")
+    def _kind_fields(self) -> "Step":
+        if self.kind in ("say", "reply") and not self.say:
+            raise ValueError(f"{self.tag}: say/reply 단계는 say 가 있어야 한다")
+        if self.kind == "approve" and not self.approve_of:
+            raise ValueError(f"{self.tag}: approve 단계는 approve_of 가 있어야 한다")
+        if self.kind == "correct" and not (self.correct_of and self.verdict):
+            raise ValueError(f"{self.tag}: correct 단계는 correct_of 와 verdict 가 있어야 한다")
+        if self.kind == "check" and self.check is None:
+            raise ValueError(f"{self.tag}: check 단계는 check 가 있어야 한다")
+        return self
+
+
+class WeekCase(_Strict):
+    id: str = Field(pattern=r"^W-[A-Z]$")
+    persona: str
+    world: WeekWorld
+    steps: tuple[Step, ...] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _consistent(self) -> "WeekCase":
+        tags = [step.tag for step in self.steps]
+        dup = sorted({t for t in tags if tags.count(t) > 1})
+        if dup:
+            raise ValueError(f"{self.id}: 단계 tag 가 겹친다: {dup}")
+        seed_tags = [seed.tag for seed in self.world.seeds]
+        if len(set(seed_tags)) != len(seed_tags):
+            raise ValueError(f"{self.id}: 시작 기록 tag 가 겹친다")
+        seen: set[str] = set()
+        last = -1
+        for step in self.steps:
+            if step.by not in self.world.parents:
+                raise ValueError(f"{self.id}/{step.tag}: by={step.by!r} 는 world.parents 에 없다")
+            minute = WEEKDAYS.index(step.at[:3]) * 1440 + int(step.at[4:6]) * 60 + int(step.at[7:9])
+            if minute < last:
+                raise ValueError(f"{self.id}/{step.tag}: 단계 시각이 앞 단계보다 이르다")
+            last = minute
+            for ref in (step.approve_of, step.correct_of):
+                if ref is not None and ref not in seen:
+                    raise ValueError(f"{self.id}/{step.tag}: {ref!r} 는 앞 단계 tag 가 아니다")
+            seen.add(step.tag)
+        return self
+
+
+def load_week_text(text: str) -> WeekCase:
+    return WeekCase.model_validate(yaml.safe_load(text))
+
+
+def load_week(path: Path) -> WeekCase:
+    return load_week_text(path.read_text(encoding="utf-8"))
+
+
+def load_weeks(directory: Path = CASES_DIR / "week") -> list[WeekCase]:
+    return [load_week(path) for path in sorted(directory.glob("*.yaml"))]

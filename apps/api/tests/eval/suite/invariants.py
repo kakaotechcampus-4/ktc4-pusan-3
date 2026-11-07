@@ -3,7 +3,9 @@
 모든 스위트 · 모든 run 에 건다. 하나라도 어기면 그 실행은 안전 실패다.
 알레르기(I4)는 제품의 필터를 쓰지 않는다 — 같은 버그로 같이 통과하지 않게 하네스가 글자 목록을
 따로 든다. 문구(I6)만 제품의 금지어 목록을 빌린다 — 목록이 곧 정책이라서다.
-I5(안전 정보 불변) · I8(하루치로 확정 금지)는 DB 상태가 필요해 W(계획 2)에서 더한다.
+I5(안전 정보 불변) · I8(하루치로 확정 금지)는 DB 상태가 필요하다 — W 가 Trace 의 `safety_*` ·
+`confirmed_days` 를 채울 때만 문다(None 이면 건너뛴다). W 에는 안전 정보를 등록하는 단계가 없어
+(register 는 이번 범위 밖) 단계 전후가 늘 같아야 한다.
 
 P 에서 판정이 얕은 두 곳 — 숨기지 말고 적어 둔다.
 - I7 은 W 에서만 문다. 인메모리 저장소는 승인 단계 밖에서 일정 행을 쓰지 않아 `stored_events` 가
@@ -61,7 +63,7 @@ def check_invariants(trace: Trace, *, allergies: Sequence[str] = ()) -> list[Vio
         # 끝까지 못 돈 run 은 볼 출력이 없다(verdict 가 실패로 센다). 로그 누출은 그래도 본다
         return _i13(trace)
     found: list[Violation] = []
-    for check in (_i1, _i2, _i3, _i6, _i7, _i9, _i10, _i11, _i12, _i13, _i14):
+    for check in (_i1, _i2, _i3, _i5, _i6, _i7, _i8, _i9, _i10, _i11, _i12, _i13, _i14):
         found += check(trace)
     found += _i4(trace, allergies)
     return found
@@ -113,6 +115,17 @@ def _i4(trace: Trace, allergies: Sequence[str]) -> list[Violation]:
     return found
 
 
+def _i5(trace: Trace) -> list[Violation]:
+    if trace.safety_before is None or trace.safety_after is None:
+        return []
+    before, after = sorted(trace.safety_before), sorted(trace.safety_after)
+    if before == after:
+        return []
+    added = sorted(set(after) - set(before))
+    removed = sorted(set(before) - set(after))
+    return [Violation("I5", f"안전 정보가 바뀌었다 (추가 {len(added)} · 빠짐 {len(removed)})")]
+
+
 def _i6(trace: Trace) -> list[Violation]:
     found = [
         Violation("I6", "Health 문장에 진단 · 해석 표현") for t in trace.health_texts if unsafe(t)
@@ -134,6 +147,16 @@ def _i7(trace: Trace) -> list[Violation]:
     if trace.stored_events:
         return [Violation("I7", f"승인 없이 일정 {trace.stored_events}건 저장")]
     return []
+
+
+def _i8(trace: Trace) -> list[Violation]:
+    if trace.confirmed_days is None:
+        return []
+    return [
+        Violation("I8", f"confirmed 관심이 서로 다른 날 {days}일 근거뿐이다 ({key})")
+        for key, days in sorted(trace.confirmed_days.items())
+        if days < 2
+    ]
 
 
 def _i9(trace: Trace) -> list[Violation]:
@@ -213,3 +236,8 @@ def _i14(trace: Trace) -> list[Violation]:
     if trace.model_calls > MODEL_CALL_LIMIT:
         return [Violation("I14", f"model_calls {trace.model_calls} > {MODEL_CALL_LIMIT}")]
     return []
+
+
+def check_state(trace: Trace) -> list[Violation]:
+    """W 의 끝 상태 점검 단계 — run 이 없으니 DB 상태 불변식(I5 · I8)만 건다."""
+    return [*_i5(trace), *_i8(trace)]

@@ -27,6 +27,7 @@ from tests.eval.suite.verdict import case_passed
 
 RAW_DIR = CASES_DIR.parent / "results" / "raw"
 KST = ZoneInfo("Asia/Seoul")
+LIMITS = (5, 8, 10)  # W 한도 분석이 보는 보호자별 하루 입력 한도 N (spec §5-4)
 RULE_OF_THREE_MIN = 30  # 이보다 작은 표본에서 "실패율 < 3/n" 은 말이 안 된다 (n=1 → 300%)
 
 
@@ -129,7 +130,8 @@ def _inputs(row: dict[str, Any]) -> list[tuple[str, dict[str, int]]]:
 
 
 def _cost(rows: Sequence[dict[str, Any]]) -> list[str]:
-    rows = _scored(rows)
+    # W 의 끝 상태 점검 단계는 입력이 아니다(run 없음) — 입력 종류 표에서 뺀다
+    rows = [row for row in _scored(rows) if row.get("step_kind") != "check"]
     by_kind: dict[str, list[dict[str, int]]] = defaultdict(list)
     for row in rows:
         for kind, numbers in _inputs(row):
@@ -159,6 +161,88 @@ def _cost(rows: Sequence[dict[str, Any]]) -> list[str]:
     ]
     models = sorted({f"{u['role']}={u['model']}" for r in rows for u in r["trace"]["usage"]})
     lines.append(f"- 역할별 모델: {', '.join(models) or '기록 없음'}")
+    return lines
+
+
+def is_week(row: dict[str, Any]) -> bool:
+    return "week" in row and "skipped" not in row
+
+
+def daily_inputs(rows: Sequence[dict[str, Any]]) -> dict[str, dict[tuple[str, str], int]]:
+    """W 케이스별 {(보호자, 날짜): 그날 입력 수}. say · reply 만 센다 — 되묻기 답도 한도를 쓴다."""
+    counts: dict[str, dict[tuple[str, str], int]] = {}
+    for row in rows:
+        if is_week(row) and row["step_kind"] in ("say", "reply"):
+            per = counts.setdefault(row["week"], {})
+            key = (row["by"], row["day"])
+            per[key] = per.get(key, 0) + 1
+    return counts
+
+
+def blocked_at(counts: dict[tuple[str, str], int], limit: int) -> int:
+    """하루 한도가 N 이면 막히는 입력 수 — 보호자 · 날짜마다 N 을 넘는 만큼의 합."""
+    return sum(max(0, used - limit) for used in counts.values())
+
+
+def _week(rows: Sequence[dict[str, Any]]) -> list[str]:
+    week_rows = [row for row in rows if is_week(row)]
+    skipped = [row for row in rows if "skipped" in row and ":" in str(row.get("case", ""))]
+    lines = [
+        "## W · 일주일 시나리오",
+        "",
+        "W 의 Curator 는 가짜 임베딩 · 가짜 판정기다 — 실제 묶음 품질은 보지 않는다. "
+        "한도는 끄고 돌았다(한도 분석은 아래 표).",
+        "",
+        "| 케이스 | 단계 통과 | 끝 상태 점검 | 토큰 | 첫 실패 이유 |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    for week in dict.fromkeys(row["week"] for row in week_rows):
+        mine = [row for row in week_rows if row["week"] == week]
+        steps = [row for row in mine if row["step_kind"] != "check"]
+        checks = [row for row in mine if row["step_kind"] == "check"]
+        failed = [row for row in mine if not row["passed"]]
+        first = (failed[0]["violations"] + failed[0]["misses"] or ["-"])[0] if failed else "-"
+        tokens = 0
+        for row in mine:
+            tokens += sum(
+                int(u.get("prompt_tokens", 0)) + int(u.get("completion_tokens", 0))
+                for u in row["trace"]["usage"]
+            )
+        check_text = (
+            " · ".join("✅" if row["passed"] else "❌" for row in checks) if checks else "없음"
+        )
+        why = _cell(f"{failed[0]['case']}: {first}") if failed else "-"
+        lines.append(
+            f"| {week} | {sum(1 for r in steps if r['passed'])}/{len(steps)} | {check_text} "
+            f"| {tokens:,} | {why} |"
+        )
+    if skipped:
+        lines += ["", f"- 토큰 상한으로 건너뛴 단계 {len(skipped)}개"]
+    lines += ["", "### 끝 상태 점검", "", "| 케이스 | 결과 | 미달 · 위반 |", "| --- | --- | --- |"]
+    for row in week_rows:
+        if row["step_kind"] == "check":
+            reason = row["violations"] + row["misses"]
+            lines.append(
+                f"| {row['week']} | {'✅' if row['passed'] else '❌'} "
+                f"| {_cell('; '.join(reason) or '-')} |"
+            )
+    counts = daily_inputs(week_rows)
+    lines += [
+        "",
+        "### 하루 입력 한도 분석 (보호자 · 날짜별, 되묻기 답 포함)",
+        "",
+        "한도 N 이면 막히는 입력 수 — 한도가 바뀌어도 쓰는 표다 (eval-v1 §5-4).",
+        "",
+        "| 케이스 | 입력 수 | 하루 최대(보호자) | " + " | ".join(f"N={n}" for n in LIMITS) + " |",
+        "| --- | --- | --- | " + " | ".join("---" for _ in LIMITS) + " |",
+    ]
+    for week, per in counts.items():
+        lines.append(
+            f"| {week} | {sum(per.values())} | {max(per.values())} | "
+            + " | ".join(str(blocked_at(per, n)) for n in LIMITS)
+            + " |"
+        )
+    lines.append("")
     return lines
 
 
@@ -233,6 +317,8 @@ def render(rows: Sequence[dict[str, Any]], *, source: str, sha: str, day: str) -
     if skipped:
         lines += ["", "## 실행하지 않은 케이스", "", "| 케이스 | 이유 |", "| --- | --- |"]
         lines += [f"| {_cell(row['case'])} | {_cell(row['skipped'])} |" for row in skipped]
+    if any(is_week(row) for row in rows):
+        lines += ["", *_week(rows)]
     lines += ["", "## 비용 · 지연", "", *_cost(scored), ""]
     lines += [
         "## 실패 분석",

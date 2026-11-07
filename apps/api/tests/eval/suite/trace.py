@@ -74,6 +74,12 @@ class Trace:
     canaries: tuple[str, ...] = ()  # 로그에 있으면 안 되는 글자 (입력 원문 · 별명)
     error: str | None = None  # 끝까지 못 돈 이유 (하네스 예외 · 이어받을 되묻기 없음). 한 줄
     error_detail: str | None = None  # 예외였다면 traceback 전체 (결과 jsonl 에 남는다)
+    # W 만 — DB 상태. None 이면 그 불변식(I5 · I8)은 건너뛴다
+    safety_before: tuple[str, ...] | None = None  # 단계 전 아이 안전 정보 행("kind:label:status")
+    safety_after: tuple[str, ...] | None = None
+    confirmed_days: dict[str, int] | None = (
+        None  # confirmed 관심 merge_key → 묶인 관찰의 서로 다른 날 수
+    )
 
     def output_texts(self) -> tuple[str, ...]:
         texts: list[str] = [*self.agent_texts, *self.health_texts, *self.questions]

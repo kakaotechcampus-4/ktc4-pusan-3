@@ -7,8 +7,8 @@ from datetime import date
 from typing import Any
 
 from tests.eval.suite.expect import check_expect
-from tests.eval.suite.invariants import Violation, check_invariants
-from tests.eval.suite.schema import ProbeCase
+from tests.eval.suite.invariants import Violation, check_invariants, check_state
+from tests.eval.suite.schema import Expect, ProbeCase, Step
 from tests.eval.suite.trace import Trace
 
 
@@ -53,4 +53,69 @@ def record(case: ProbeCase, trace: Trace, verdict: Verdict, *, repeat: int) -> d
         "violations": [str(v) for v in verdict.violations],
         "misses": list(verdict.misses),
         "trace": trace.to_json(),
+    }
+
+
+def judge_step(
+    trace: Trace,
+    expect: Expect,
+    *,
+    allergies: Sequence[str],
+    today: date,
+    extra_misses: Sequence[str] = (),
+) -> Verdict:
+    """W 단계 하나 — P 와 같은 규칙(불변식 + 단계 기대)에 종류별 확인(extra_misses)을 더한다."""
+    violations = tuple(check_invariants(trace, allergies=allergies))
+    misses = [] if trace.error is None else [f"끝까지 못 돌았다: {trace.error}"]
+    misses += extra_misses
+    if trace.error is None:
+        misses += check_expect(trace, expect, today=today)
+    return Verdict(
+        passed=not violations and not misses, violations=violations, misses=tuple(misses)
+    )
+
+
+def judge_check(trace: Trace, *, misses: Sequence[str]) -> Verdict:
+    """W 끝 상태 점검 — run 이 없으니 DB 상태 불변식(I5 · I8)과 점검 항목만 본다."""
+    violations = tuple(check_state(trace))
+    all_misses = [] if trace.error is None else [f"끝까지 못 돌았다: {trace.error}"]
+    all_misses += misses
+    return Verdict(
+        passed=not violations and not all_misses,
+        violations=violations,
+        misses=tuple(all_misses),
+    )
+
+
+def record_week(
+    case_id: str,
+    step: Step,
+    trace: Trace,
+    verdict: Verdict,
+    *,
+    persona: str,
+    day: date,
+    input_count: int,
+) -> dict[str, Any]:
+    """W 결과 jsonl 한 줄 — `record` 와 같은 모양에 W 칸(week · by · day · step_kind)을 더한다."""
+    return {
+        "case": f"{case_id}:{step.tag}",
+        "ability": step.ability[0] if step.ability else "-",
+        "severity": "quality",
+        "headline": None,
+        "pair": None,
+        "repeat": 1,
+        "attempt": trace.attempt,
+        "input_kind": "end_state" if step.kind == "check" else (trace.intent or "none"),
+        "passed": verdict.passed,
+        "violations": [str(v) for v in verdict.violations],
+        "misses": list(verdict.misses),
+        "trace": trace.to_json(),
+        "week": case_id,
+        "persona": persona,
+        "by": step.by,
+        "day": day.isoformat(),
+        "at": step.at,
+        "step_kind": step.kind,
+        "guardian_day_inputs": input_count,
     }

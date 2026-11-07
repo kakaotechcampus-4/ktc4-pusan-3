@@ -706,3 +706,40 @@ def test_결과_한_줄은_케이스에서_요약까지_이어진다() -> None:
     md = render([row], source="raw/x.jsonl", sha="abc", day="2026-11-11")
     assert case.id in md
     assert "헤드라인 1/1" in md and f"| 10 | {case.id} |" in md
+
+
+# ── I5 · I8 (W 가 DB 상태를 Trace 에 채울 때만 문다) ────────────────────────────
+
+
+def _sse_trace(**kwargs) -> Trace:  # type: ignore[no-untyped-def]
+    return Trace(case_id="x", attempt=0, event_level="sse", event_names=("done",), **kwargs)
+
+
+def test_I5_안전_정보가_바뀌면_위반이다() -> None:
+    trace = _sse_trace(
+        safety_before=("allergy:땅콩:active",),
+        safety_after=("allergy:땅콩:active", "allergy:우유:active"),
+    )
+    assert len([v for v in check_invariants(trace) if v.rule == "I5"]) == 1
+
+
+def test_I5_순서만_다르거나_같으면_깨끗하고_None_이면_건너뛴다() -> None:
+    same = _sse_trace(
+        safety_before=("a:1:active", "b:2:active"), safety_after=("b:2:active", "a:1:active")
+    )
+    assert not [v for v in check_invariants(same) if v.rule == "I5"]
+    assert not [v for v in check_invariants(_sse_trace()) if v.rule in ("I5", "I8")]
+
+
+def test_I8_하루_근거로_확정된_관심은_위반이다() -> None:
+    found = [
+        v
+        for v in check_invariants(_sse_trace(confirmed_days={"블록놀이": 3, "퍼즐": 1}))
+        if v.rule == "I8"
+    ]
+    assert len(found) == 1 and "퍼즐" in found[0].detail
+
+
+def test_I8_이틀_이상이면_깨끗하고_확정이_없어도_깨끗하다() -> None:
+    for days in ({"블록놀이": 2}, {}):
+        assert not [v for v in check_invariants(_sse_trace(confirmed_days=days)) if v.rule == "I8"]
