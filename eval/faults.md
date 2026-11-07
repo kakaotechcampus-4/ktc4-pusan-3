@@ -40,7 +40,7 @@
 | DOM | ✅ F3 | ✅ | ✅ | ✅ |
 | CUR | ✅ | 🕳️ F8 | ✅ | ✅ |
 | SAFE | ✅ | ✅ | ✅ | ✅ |
-| SRCH | 🕳️ F4 | ✅ | ✅ | ✅ |
+| SRCH | ✅ F4 | ✅ | ✅ | ✅ |
 | EXT | ✅ | ✅ | ✅ | ✅ |
 | SAVE | ✅ | ✅ | 🕳️ F6 | ✅ |
 | IDEM | ✅ | ✅ | 🕳️ F7 | 🕳️ F5 |
@@ -109,7 +109,7 @@
 
 | 칸 | 기대 동작 | 코드 | 판정하는 테스트 | 상태 |
 | --- | --- | --- | --- | --- |
-| SRCH-A | 근거를 못 읽었으면 개인화 추천을 내지 않는다 — 그 Agent 는 `partial` 로 빠지고 기록은 남는다 (루트 §2) | `app/agents/memory_bridge.py:134-148` (예외를 잡지 않는다) · `app/agents/food/tools/records.py:83-100` · `app/agents/common/tool_loop.py:151` | 기존 없음 · F 테스트: `tests/eval/faults/test_f4_memory_search_failure.py::test_F4_기억을_못_읽으면_개인화_추천이_나가지_않고_partial_로_빠진다` | 🕳️ F4 |
+| SRCH-A | 근거를 못 읽었으면 개인화 추천을 내지 않는다 — 그 Agent 는 `partial` 로 빠지고 기록은 남는다 (루트 §2) | `app/agents/memory_bridge.py:134-148` (예외를 잡지 않는다) · `app/agents/food/tools/records.py:83-100` · `app/agents/common/tool_loop.py:151` | 기존 없음 · F 테스트: `tests/eval/faults/test_f4_memory_search_failure.py::test_F4_기억을_못_읽으면_개인화_추천이_나가지_않고_partial_로_빠진다` | ✅ F4 |
 | SRCH-B | 조회 tool 이 멈추면 Agent 와 같이 20초에 끊긴다 — 늦은 결과를 성공으로 넣지 않는다 | `app/agents/common/tool_loop.py:151` · `app/agents/pipeline.py:1916` | `tests/unit/agents/common/test_tool_loop.py::TestCancel::test_tool_을_실행하다_끊기면_결과를_내지_않고_시간_초과로_끝난다` · `tests/unit/agents/supervisor/test_pipeline.py::test_RC16_20초를_넘긴_Agent_는_끊고_나머지로_끝낸다` | ✅ |
 | SRCH-C | status 가 없거나 inactive · deleted 인 행은 근거로 읽지 않는다 | `app/agents/memory_bridge.py:147` · `:118-124` | `tests/unit/agents/test_memory_bridge.py::test_status_가_없는_관찰은_읽지_않는다` · `::test_Food_는_stand_alone_까지_읽고_inactive_deleted_는_읽지_않는다` | ✅ |
 | SRCH-D | 21일 넘게 관찰이 없는 관심은 archived 로 읽어 근거에서 뺀다. 6개월 지난 기록만 인용하면 일반 추천으로 내린다 (I10). 조회 안 한 id 인용은 DOM-D | `app/agents/memory_bridge.py:101-116` · `app/rules/profile.py:82` · `app/rules/staleness.py:17` | `tests/unit/agents/test_memory_bridge.py::test_마지막_관찰_뒤_21일이_지난_관심은_그날_기준_archived_로_읽는다` · `tests/unit/agents/test_entrypoint.py::test_21일_넘게_관찰이_없는_관심은_근거로_나가지_않는다` · `tests/unit/agents/food/test_food_recommend.py::test_6개월_넘은_관찰만_근거면_일반_추천이다` · `tests/unit/agents/common/test_output_channels.py::TestStaleEvidence::test_6개월_지난_아이_기록만_인용하면_일반_추천이고_그_인용은_빠진다` | ✅ |
