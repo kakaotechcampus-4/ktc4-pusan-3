@@ -4,12 +4,21 @@
 """
 
 from datetime import date, datetime, timedelta
+from types import SimpleNamespace
+from uuid import UUID as _UUID
 
 import pytest
 from pydantic import ValidationError
 
+from app.agents.common.readout import Readout
+from app.agents.common.refs import EvidenceCitation, Ref
+from app.agents.common.suggestion import SuggestionDraft
+from app.agents.pipeline import AgentQuestion, AgentResult, Done, MemoryNote, Partial
+from app.agents.suggestion_save import SuggestionBatch
+from app.agents.supervisor.routing import Guidance
 from tests.eval.suite.expect import check_expect
 from tests.eval.suite.invariants import check_invariants
+from tests.eval.suite.probe_runner import read_run
 from tests.eval.suite.schema import (
     Expect,
     RouteExpect,
@@ -328,3 +337,85 @@ async def test_비_오는_세계는_날씨와_위치를_넘긴다() -> None:
     built = await build_probe_world(World(rain=True), now=_NOW)
     assert built.ports["location"] is not None
     assert built.ports["activity_weather"] is not None
+
+
+_OID = _UUID("00000000-0000-7000-8000-00000000a001")
+
+
+def test_read_run_은_이벤트와_추천을_Trace_로_옮긴다() -> None:
+    draft = SuggestionDraft(
+        agent="food",
+        kind="personalized",
+        content="브로콜리 달걀볶음",
+        reason="브로콜리를 잘 먹은 기록을 봤어요",
+        citations=(EvidenceCitation(ref=Ref("observation_food", _OID), note="브로콜리를 잘 먹음"),),
+        items=("브로콜리", "달걀"),
+    )
+    events = [
+        Guidance(code="out_of_scope", message="안내"),
+        AgentResult(
+            agent="food",
+            task_type="meal_recommendation",
+            status="ok",
+            readouts=(Readout(kind="notice", body="저녁 메뉴예요"),),
+            kind="personalized",
+        ),
+        AgentResult(
+            agent="health",
+            task_type=None,
+            status="ok",
+            readouts=(Readout(kind="symptom_timeline", body="기침 3일"),),
+        ),
+        AgentQuestion(agent="food", task_type=None, text="몇 시에 먹나요?"),
+        MemoryNote(text="기록해 둘게요.", kind="message"),
+        Partial(reason="timeout_20s", succeeded=("food",), failed=("activity",)),
+        Done(run_id="r", model_calls=3),
+    ]
+    routing = SimpleNamespace(
+        intent_type="mixed", domain_tasks=(SimpleNamespace(agent="food"),), degraded=False
+    )
+    trace = Trace(case_id="P-T-01", attempt=0)
+    read_run(
+        trace,
+        routing=routing,
+        drafts=1,
+        model_calls=3,
+        latency_ms=900,
+        partial=True,
+        failed=None,
+        events=events,
+        batches=[
+            SuggestionBatch(
+                run_id="r", agent="food", task_type="meal_recommendation", drafts=(draft,)
+            )
+        ],
+    )
+    assert trace.intent == "mixed" and trace.route == ("food",)
+    assert trace.guidance == ("out_of_scope",)
+    assert trace.bundle_kinds == {"food": "personalized", "health": None}
+    assert trace.agent_texts == ("저녁 메뉴예요",)
+    assert trace.health_texts == ("기침 3일",)
+    assert trace.questions == ("몇 시에 먹나요?",)
+    assert trace.memory_text == "기록해 둘게요."
+    assert trace.event_names[-1] == "Done"
+    [view] = trace.suggestions
+    assert view.items == ("브로콜리", "달걀")
+    assert view.child_citations[0].id == str(_OID)
+    assert trace.partial and trace.event_drafts == 1
+
+
+def test_read_run_은_Memory_되묻기를_질문으로_센다() -> None:
+    routing = SimpleNamespace(intent_type="record", domain_tasks=(), degraded=False)
+    trace = Trace(case_id="P-T-01", attempt=0)
+    read_run(
+        trace,
+        routing=routing,
+        drafts=0,
+        model_calls=1,
+        latency_ms=1,
+        partial=False,
+        failed=None,
+        events=[MemoryNote(text="무엇을 안 먹었나요?", kind="question")],
+        batches=[],
+    )
+    assert trace.questions == ("무엇을 안 먹었나요?",)

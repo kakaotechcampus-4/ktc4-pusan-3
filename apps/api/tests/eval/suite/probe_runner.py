@@ -1,0 +1,169 @@
+"""P · 단발 프로브 러너 (docs/eval/eval-v1.md §3-4).
+
+운영 입구 `entrypoint.handle_input` 을 실제 모델로 부른다. 여러 턴 케이스는 앞 턴의 Memory
+되묻기(`memory.pending`)를 다음 턴의 continuation 으로 넘긴다. 판정은 마지막 턴만 한다.
+"""
+
+from collections.abc import Callable, Sequence
+from datetime import datetime
+from typing import Any
+
+from app.agents import entrypoint
+from app.agents.pipeline import AgentQuestion, AgentResult, MemoryNote
+from app.agents.suggestion_save import InMemorySuggestions, SuggestionBatch
+from app.agents.supervisor.routing import Guidance
+from app.core import llm_usage
+from tests.eval.suite.schema import ProbeCase
+from tests.eval.suite.trace import CitationView, SuggestionView, Trace
+from tests.eval.suite.world import (
+    CHILD,
+    KST,
+    PARENT,
+    build_probe_world,
+    observation_rows,
+    stored_event_count,
+)
+
+
+async def _no_commit() -> None:
+    """InMemoryStore 라 확정할 것이 없다."""
+
+
+def read_run(
+    trace: Trace,
+    *,
+    routing: Any,
+    drafts: int,
+    model_calls: int,
+    latency_ms: int,
+    partial: bool,
+    failed: str | None,
+    events: Sequence[object],
+    batches: Sequence[SuggestionBatch],
+) -> None:
+    trace.intent = routing.intent_type
+    trace.route = tuple(task.agent for task in routing.domain_tasks)
+    trace.degraded = routing.degraded
+    trace.event_drafts = drafts
+    trace.model_calls = model_calls
+    trace.latency_ms = latency_ms
+    trace.partial = partial
+    trace.failed = failed
+    trace.event_names = tuple(type(event).__name__ for event in events)
+    trace.guidance = tuple(e.code for e in events if isinstance(e, Guidance))
+    questions: list[str] = []
+    agent_texts: list[str] = []
+    health_texts: list[str] = []
+    for event in events:
+        if isinstance(event, AgentResult):
+            trace.bundle_kinds[event.agent] = event.kind
+            trace.record_counts[event.agent] = event.record_count
+            texts = [t for r in event.readouts for t in (r.title, r.body) if t]
+            (health_texts if event.agent == "health" else agent_texts).extend(texts)
+        elif isinstance(event, AgentQuestion):
+            questions.append(event.text)
+        elif isinstance(event, MemoryNote):
+            trace.memory_text = event.text
+            if event.kind == "question":
+                questions.append(event.text)
+    trace.questions = tuple(questions)
+    trace.agent_texts = tuple(agent_texts)
+    trace.health_texts = tuple(health_texts)
+    trace.suggestions = tuple(
+        SuggestionView(
+            agent=batch.agent,
+            kind=draft.kind,
+            content=draft.content,
+            reason=draft.reason,
+            items=tuple(draft.items),
+            citations=tuple(
+                CitationView(
+                    kind=c.ref.kind,
+                    id=str(c.ref.id),
+                    note=c.note,
+                    child_record=c.ref.is_child_record,
+                )
+                for c in draft.citations
+            ),
+        )
+        for batch in batches
+        for draft in batch.drafts
+    )
+
+
+def usage_rows(prefix: str) -> list[dict[str, Any]]:
+    """이 케이스 · 반복의 호출만 꺼낸다 (같은 계약 llm_usage — #710 과 세는 방식이 같다)."""
+    return [
+        {
+            "run_id": r.run_id,
+            "role": r.role,
+            "model": r.model,
+            "prompt_tokens": r.prompt_tokens,
+            "cached_prompt_tokens": r.cached_prompt_tokens,
+            "completion_tokens": r.completion_tokens,
+            "reasoning_tokens": r.reasoning_tokens,
+            "latency_ms": r.latency_ms,
+        }
+        for r in llm_usage.drain(limit=10_000)
+        if r.run_id.startswith(prefix)
+    ]
+
+
+async def run_probe(case: ProbeCase, *, attempt: int, logs: Callable[[], Sequence[str]]) -> Trace:
+    now = datetime.now(KST)
+    world = await build_probe_world(case.world, now=now)
+    trace = Trace(
+        case_id=case.id,
+        attempt=attempt,
+        about=case.turns[-1].about,
+        canaries=tuple(turn.say for turn in case.turns),
+        stale_ids=world.stale_ids,
+    )
+    prefix = f"eval-{case.id}-{attempt}-"
+    try:
+        continuation = None
+        for index, turn in enumerate(case.turns):
+            if turn.reply and continuation is None:
+                trace.error = "앞 턴이 되묻지 않아 답 턴을 돌릴 수 없다"
+                break
+            before = await observation_rows(world.store.inner)
+            events_before = await stored_event_count(world.store.inner)
+            events: list[object] = []
+            saved = InMemorySuggestions()
+            run_id = f"{prefix}{index}"
+            with llm_usage.attribute(parent_id=PARENT, run_id=run_id, source="input"):
+                result = await entrypoint.handle_input(
+                    child_id=CHILD,
+                    parent_id=PARENT,
+                    raw_text=turn.say,
+                    run_id=run_id,
+                    emit=events.append,
+                    commit=_no_commit,
+                    save_suggestions=saved,
+                    continuation=continuation if turn.reply else None,
+                    **world.ports,
+                )
+            continuation = result.memory.pending if result.memory is not None else None
+            if index < len(case.turns) - 1:
+                continue
+            after = await observation_rows(world.store.inner)
+            trace.run_id = run_id
+            trace.saved = tuple(row for oid, row in after.items() if oid not in before)
+            trace.stored_events = await stored_event_count(world.store.inner) - events_before
+            trace.searched = world.searched
+            read_run(
+                trace,
+                routing=result.routing,
+                drafts=len(result.memory.drafts) if result.memory is not None else 0,
+                model_calls=result.model_calls,
+                latency_ms=result.latency_ms,
+                partial=result.partial is not None,
+                failed=result.failed.reason if result.failed is not None else None,
+                events=events,
+                batches=saved.batches,
+            )
+    except Exception as exc:  # run 하나의 예외로 케이스 전체를 멈추지 않는다
+        trace.error = f"{type(exc).__name__}: {exc}"
+    trace.usage = tuple(usage_rows(prefix))
+    trace.logs = tuple(logs())
+    return trace
