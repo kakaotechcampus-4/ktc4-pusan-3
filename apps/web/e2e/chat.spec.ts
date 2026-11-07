@@ -19,6 +19,12 @@ async function sendFromHome(page: Page, text: string) {
   await page.waitForURL(`**/child/${CHILD}/chat`);
 }
 
+/**
+ * 실패 카드(`failed`)의 둘째 줄. 첫 줄은 서버가 이유마다 다른 문구를 보내서(#768) 카드가 **안 섰는지**는
+ * 이 줄로 본다 — 첫 줄 글자로 보면 문구가 바뀌는 순간 늘 통과한다.
+ */
+const NOTHING_SAVED = "아무것도 저장하지 않았어요.";
+
 /** 그 한 줄의 답 묶음 (말풍선 하나 = `li` 하나). */
 function turn(page: Page, text: string) {
   return page.getByRole("listitem").filter({ hasText: text }).first();
@@ -103,7 +109,7 @@ test.describe("성공과 실패 · 안내를 한 화면에 (§2 실행 NF-06)", 
       await expect(
         reply.getByText("놀이 쪽은 이번에 처리하지 못했어요. 저장한 기록은 그대로 남아 있어요."),
       ).toBeVisible();
-      await expect(reply.getByText("읽지 못했어요")).toHaveCount(0);
+      await expect(reply.getByText(NOTHING_SAVED, { exact: true })).toHaveCount(0);
     });
 
     test('저장한 것이 없으면 "저장한 기록은 그대로" 라고 말하지 않는다 (PR #215)', async ({
@@ -182,6 +188,23 @@ test.describe("성공과 실패 · 안내를 한 화면에 (§2 실행 NF-06)", 
       await expect(reply.getByText("아래 기록은 그대로 저장했어요.")).toBeVisible();
       await expect(reply.getByText("기록 2건 저장됨")).toBeVisible();
       await expect(reply.getByRole("status").filter({ hasText: "아직 준비 중" })).toHaveCount(0);
+    });
+  });
+
+  test.describe("failed — 저장 없이 끝난 run (#768)", () => {
+    test.use({ scenario: "failed" });
+
+    test("첫 줄은 서버 문구 그대로, 둘째 줄은 저장 없음, 두 길이 선다", async ({ page }) => {
+      await sendFromHome(page, "지어낸 한 줄");
+      const reply = turn(page, "지어낸 한 줄");
+      // 🚨 화면이 `reason` 으로 문구를 만들지 않는다 — 목이 보낸 `message` 의 글자 그대로다
+      await expect(
+        reply.getByText("말씀을 정리하지 못했어요. 조금 바꿔서 다시 적어 주세요.", { exact: true }),
+      ).toBeVisible();
+      await expect(reply.getByText("읽지 못했어요")).toHaveCount(0);
+      await expect(reply.getByText(NOTHING_SAVED, { exact: true })).toBeVisible();
+      await expect(reply.getByRole("button", { name: "다시 시도" })).toBeVisible();
+      await expect(reply.getByRole("button", { name: "고쳐 쓰기" })).toBeVisible();
     });
   });
 });
@@ -284,7 +307,7 @@ test.describe("도메인 Agent 결과는 답 묶음 안의 블록이다 (#227)",
         reply.getByText("놀이 쪽은 이번에 처리하지 못했어요.", { exact: true }),
       ).toBeVisible();
       await expect(reply.getByText("저장한 기록은 그대로", { exact: false })).toHaveCount(0);
-      await expect(reply.getByText("읽지 못했어요")).toHaveCount(0);
+      await expect(reply.getByText(NOTHING_SAVED, { exact: true })).toHaveCount(0);
       // 실패한 추천 Agent 를 그 run 의 처음 맥락으로 다시 준비한다 (#249)
       const retry = reply.getByRole("link", { name: "다시 준비하기" });
       await expect(retry).toHaveAttribute(
@@ -312,7 +335,7 @@ test.describe("저장한 뒤 끊긴 run 은 실패가 아니다 (#271)", () => {
     // 🚨 새 키로 다시 보내면 두 번 저장된다 — 실패 화면의 두 길을 세우지 않는다.
     await expect(reply.getByRole("button", { name: "다시 시도" })).toHaveCount(0);
     await expect(reply.getByRole("button", { name: "고쳐 쓰기" })).toHaveCount(0);
-    await expect(reply.getByText("읽지 못했어요")).toHaveCount(0);
+    await expect(reply.getByText(NOTHING_SAVED, { exact: true })).toHaveCount(0);
   });
 
   test('받은 기록이 없어도 "저장하지 않았어요" 라고 말하지 않는다', async ({ page }) => {

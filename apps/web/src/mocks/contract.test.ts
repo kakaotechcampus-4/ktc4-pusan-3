@@ -30,6 +30,7 @@ import {
   streamRunEvents,
   type AgentResultEvent,
   type EventDraftsEvent,
+  type FailedEvent,
   type GuidanceEvent,
   type LaneEvent,
   type MedicationDraftsEvent,
@@ -950,6 +951,10 @@ describe("⑦ 상태 전이 · SSE 순서", () => {
       const last = events.at(-1);
       expect(last?.type).toBe("failed");
       expect((last?.data as { raw_text: string }).raw_text).toBe(text);
+      // 서버는 모든 `failed` 에 이유별 문구를 싣는다 (#768). SSE 는 OpenAPI 에 없어 계약 비교가 못 잡는다
+      expect((last?.data as FailedEvent).message).toBe(
+        "말씀을 정리하지 못했어요. 조금 바꿔서 다시 적어 주세요.",
+      );
       // 저장된 게 없으니 saved 가 있으면 안 된다 (CLAUDE.md §4 — 다음 칸으로 전파하지 않는다).
       expect(events.map((e) => e.type)).not.toContain("saved");
     } finally {
