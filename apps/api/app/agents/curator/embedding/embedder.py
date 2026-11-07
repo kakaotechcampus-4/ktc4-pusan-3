@@ -8,6 +8,7 @@ from typing import Any
 from openai import (
     APIConnectionError,
     APIError,
+    APITimeoutError,
     AsyncOpenAI,
     AuthenticationError,
     BadRequestError,
@@ -21,6 +22,7 @@ from app.agents.common.llm_client import (
     LLMConfigError,
     LLMError,
     LLMRateLimitError,
+    LLMTimeoutError,
     LLMUnavailableError,
 )
 from app.core import llm_usage
@@ -93,8 +95,11 @@ class Embedder:
             raise LLMBadRequestError(f"임베딩 요청 거절: {exc}") from exc
         except RateLimitError as exc:
             raise LLMRateLimitError("임베딩 rate limit 초과.") from exc
+        except APITimeoutError as exc:
+            # APIConnectionError 의 하위라 먼저 잡는다 — chat 경로(LLMClient)와 같은 분류 (#768)
+            raise LLMTimeoutError("임베딩 응답 시간 초과.") from exc
         except APIConnectionError as exc:
-            raise LLMUnavailableError("임베딩 연결 실패 또는 타임아웃.") from exc
+            raise LLMUnavailableError("임베딩 연결 실패.") from exc
         except APIError as exc:
             raise LLMError(f"임베딩 호출 실패: {exc}") from exc
 

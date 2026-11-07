@@ -16,14 +16,9 @@ from datetime import date
 from typing import Protocol
 from uuid import UUID
 
-
-class SafetyLookupError(Exception):
-    """health_safety 를 읽지 못함. 0행(건강정보 동의 안 함 · 등록한 것 없음)과 다르다.
-
-    빈 목록으로 대신 돌려주지 않는다 (루트 CLAUDE.md §2). 닫는 범위는 Agent 마다 다르다 —
-    Food 는 식단 추천을 닫고 급식 조회는 "알레르기 확인을 못 했어요" 를 붙인다. Activity 는
-    통째로 닫는다(D7). Growth 는 교육 활동만 닫는다(`blocked.safety`).
-    """
+from app.agents.common.errors import (
+    SafetyLookupError as SafetyLookupError,  # 다시 내보낸다 (#768)
+)
 
 
 class ChildProfileReader(Protocol):

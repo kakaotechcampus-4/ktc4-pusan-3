@@ -27,6 +27,8 @@ from app.agents.activity.store.ports import SafetyReader as ActivitySafetyReader
 from app.agents.common.allergy import allergen_states, shared_book
 from app.agents.common.child_values import ChildValues
 from app.agents.common.datetime_rules import today_of
+from app.agents.common.errors import FailReason
+from app.agents.common.failure import failure_message
 from app.agents.common.readout import Readout
 from app.agents.common.reference_docs import doc_row_id, public_doc_source
 from app.agents.common.result import MedicationDraft
@@ -131,6 +133,7 @@ from app.rules.age import months_between
 # api가 이 파일만 보면 되도록 진행 이벤트 타입도 여기서 내보냄
 # pipeline에 이벤트를 추가하면 여기에도 작성
 __all__ = [
+    "FailReason",
     "MAX_SUGGESTIONS",
     "FIRST_REQUEST_AGENTS",
     "SUGGESTION_AGENTS",
@@ -155,6 +158,7 @@ __all__ = [
     "MedicationDraft",
     "MedicationDrafts",
     "Failed",
+    "failure_message",
     "FoundTabs",
     "Guidance",
     "GrowthLogReader",
