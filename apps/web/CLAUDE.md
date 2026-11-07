@@ -190,6 +190,7 @@ Owner: 고태영 (프론트 리드)
 ### API 호출
 
 - `fetch` 를 직접 부르지 않는다. **`src/lib/api` 의 `api.get/post/...` 만** 쓴다 — Bearer 토큰·에러 봉투·Idempotency 처리가 거기 한 곳에 있다.
+  - 예외 하나: S3 업로드(`operations.ts` 의 `putPhotoToS3`)는 `fetch` 를 직접 쓴다. 우리 서버가 아니라서 Bearer 토큰 · 쿠키가 S3 로 새면 안 되기 때문이다. 시간 제한을 걸어 둔다.
   예외(`sendClientError`)와 그 이유는 [`api-client-v1.md`](../../docs/web/api-client-v1.md) §1
 - 토큰은 `useSessionStore.signIn()` 이 `setAuthToken()` 으로 클라이언트에 밀어 넣는다. 컴포넌트에서 헤더를 직접 만들지 않는다.
 

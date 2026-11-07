@@ -13,6 +13,7 @@
  */
 
 import { api } from "./client";
+import { NetworkError } from "./errors";
 import { idempotentPath, type IdempotencyKey } from "./idempotency";
 import type {
   ApproveSuggestionsRequest,
@@ -29,6 +30,7 @@ import type {
   PhotoCommitRequest,
   PhotoCommitResponse,
   PhotoLane,
+  PhotoUploadTicket,
   SubmitEventBody,
   InputLocation,
   SubmitEventResponse,
@@ -121,16 +123,105 @@ export function uploadPhoto(
  *    ⚠️ 이 필드도 계약서에 없다. 👉 `apps/api` Owner 협의 대상.
  */
 export function photoFormData(
-  file: File,
+  photo: File | { uploadKey: string },
   { lane, date }: { lane: PhotoLane; date?: string },
 ): FormData {
   const form = new FormData();
-  form.append("file", file);
+  // S3 에 이미 올렸으면 사진 대신 열쇠만 보낸다 (`sendPhoto`). 모양으로 가른다 —
+  // `instanceof File` 은 다른 실행 환경(iframe · 웹뷰 다리)에서 만든 File 을 못 알아본다
+  if ("uploadKey" in photo) form.append("upload_key", photo.uploadKey);
+  else form.append("file", photo);
   form.append("lane", lane);
   // 🚨 날짜를 프론트가 계산하지 않는다. 캘린더에서 고른 날이 있을 때만 그 값을 그대로 싣고,
   //    없으면 아예 보내지 않는다 — "오늘" 로 채우는 것은 서버가 할 일이다 (CLAUDE.md §3).
   if (date) form.append("date", date);
   return form;
+}
+
+/** 사진을 어디로 올릴지 받는다. 아무것도 저장하지 않고 하루 한도도 쓰지 않는다. */
+export function createPhotoUpload(childId: string): Promise<PhotoUploadTicket> {
+  return api.post(`/children/${childId}/photos/uploads`);
+}
+
+/**
+ * S3 업로드 주소에 사진을 올린다.
+ *
+ * 🚨 **`api` 클라이언트를 쓰지 않는다.** 우리 서버가 아니라서 인증 헤더 · 쿠키가 S3 로 새면 안 된다.
+ *    S3 는 주소에 든 서명으로 확인한다.
+ * 🚨 `file` 은 **맨 마지막**에 붙인다. S3 는 `file` 뒤의 폼 값을 무시한다.
+ * 🚨 시간 제한을 건다. 20초 안전망은 run 스트림만 보고 있어서, 여기서 멈추면 읽는 중에 갇힌다.
+ */
+export async function putPhotoToS3(
+  ticket: Pick<PhotoUploadTicket, "url" | "fields">,
+  file: File,
+): Promise<void> {
+  if (!ticket.url) throw new Error("사진을 올릴 곳을 받지 못했어요.");
+  const form = new FormData();
+  for (const [name, value] of Object.entries(ticket.fields ?? {})) form.append(name, value);
+  form.append("file", file);
+  const response = await fetch(ticket.url, {
+    method: "POST",
+    body: form,
+    credentials: "omit",
+    signal: AbortSignal.timeout(S3_UPLOAD_TIMEOUT_MS),
+  });
+  if (!response.ok) throw new Error("사진을 보내지 못했어요.");
+}
+
+/** 15MB 사진을 느린 휴대폰 망으로 올려도 넉넉한 시간. */
+const S3_UPLOAD_TIMEOUT_MS = 60_000;
+
+/**
+ * 같은 사진의 재시도가 처음 올린 열쇠를 다시 쓰게 기억한다 (키 → S3 열쇠).
+ *
+ * 재시도마다 새로 올리면 ① 앞 요청이 서버에서 이미 성공했을 때 새 사본이 버킷에 남고
+ * ② 같은 Idempotency-Key 에 본문(upload_key)이 달라진다. 서버는 이미 지운 열쇠가 다시 와도
+ * 키 재생으로 앞 결과를 돌려준다.
+ * 🚨 기억하는 것은 **응답을 못 받은 실패**(`NetworkError`)까지다. 응답이 왔으면 오류여도 버린다 —
+ *    그 열쇠는 서버가 지웠을 수 있고(아래 `sendPhoto`), 그 뒤 재시도는 새로 올린 다른 열쇠를 같은
+ *    Idempotency-Key 로 보낸다. 서버와 목은 **성공한 요청만** 기억해서 이것이 422 가 되지 않는다
+ *    (`api/idempotency.py` · `mocks/handlers/idempotency.ts`).
+ */
+const uploadedFor = new Map<IdempotencyKey, string>();
+
+/**
+ * 사진을 서버가 읽을 수 있게 보낸다 — 사진 화면이 부르는 **한 자리**.
+ *
+ * 서버에 S3 버킷이 있으면 사진은 S3 로 가고 서버에는 열쇠만 간다. 서버는 내려받자마자 S3 에서
+ * 지운다(원본을 남기지 않는다). 버킷이 없는 로컬 개발이면 지금처럼 사진을 서버에 보낸다.
+ * 🚨 재시도는 같은 `idempotencyKey` 로 온다. 이미 S3 에 올렸으면 그 열쇠를 다시 보낸다.
+ * 🚨 S3 는 문서 사진만 쓴다. 서버가 아직 받지 않는 활동 사진(아이가 찍힌 사진)을 버킷에 올리지 않는다.
+ */
+export async function sendPhoto(
+  childId: string,
+  file: File,
+  options: { lane: PhotoLane; date?: string },
+  idempotencyKey: IdempotencyKey,
+): Promise<{ run_id: string }> {
+  let uploadKey = uploadedFor.get(idempotencyKey);
+  if (!uploadKey) {
+    const ticket = options.lane === "document" ? await createPhotoUpload(childId) : null;
+    if (!ticket || ticket.mode === "direct") {
+      return uploadPhoto(childId, photoFormData(file, options), idempotencyKey);
+    }
+    if (!ticket.key) throw new Error("사진을 올릴 곳을 받지 못했어요.");
+    await putPhotoToS3(ticket, file);
+    uploadKey = ticket.key;
+    uploadedFor.set(idempotencyKey, uploadKey);
+  }
+  try {
+    const res = await uploadPhoto(childId, photoFormData({ uploadKey }, options), idempotencyKey);
+    uploadedFor.delete(idempotencyKey);
+    return res;
+  } catch (error) {
+    // 🚨 응답이 왔으면(오류여도) 열쇠를 버린다. 서버는 핸들러 안에서 사진을 읽지 않고 돌려보낼 때
+    //    S3 원본을 지운다(503 스위치 · 429 한도 · 400 …). 그 열쇠로 다시 보내면 매번 "사진을 다시
+    //    골라 주세요" 다 (#727 리뷰). 핸들러 앞에서 끝난 오류(401 · 403 남의 아이 · 프록시 502)는 원본을
+    //    못 지우지만, 새로 올리면 되고 남은 원본은 버킷 수명 규칙이 지운다.
+    //    응답을 못 받았을 때(`NetworkError`)만 남긴다 — 서버가 받았는지 모른다.
+    if (!(error instanceof NetworkError)) uploadedFor.delete(idempotencyKey);
+    throw error;
+  }
 }
 
 /*

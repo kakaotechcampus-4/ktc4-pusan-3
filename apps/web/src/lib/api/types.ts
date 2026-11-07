@@ -1290,8 +1290,14 @@ export type PhotoLane = (typeof PHOTO_LANES)[number];
  *    `ParsedEvent.tags` 로 따로 온다 — 모양이 다른 둘을 한 필드에 넣으면 화면이 플래그로
  *    갈라야 하고, 그러면 저장 경로가 섞인다 (일반 추천과 개인화 추천을 안 섞는 것과 같은 규칙).
  */
-export const PHOTO_ENTRY_KINDS = ["event", "supply", "meal"] as const;
+export const PHOTO_ENTRY_KINDS = ["event", "supply", "meal", "todo", "info"] as const;
 export type PhotoEntryKind = (typeof PHOTO_ENTRY_KINDS)[number];
+
+/** 항목에 딸린 정보 한 줄. 🚨 이름이 문서마다 달라서 그대로 그리기만 한다. */
+export interface PhotoEntryDetail {
+  name: string;
+  value: string;
+}
 
 export interface PhotoEntry {
   id: string;
@@ -1310,6 +1316,41 @@ export interface PhotoEntry {
   needs_review: boolean;
   /** 왜 확인이 필요한지. 서버가 만든 문구 — 프론트가 지어내지 않는다. */
   review_reason?: string;
+  /** 내용 이름. "회신" · "체험비". 아래 칸은 서버가 읽어 보내고, 저장할 때 다시 쓰지 않는다. */
+  label?: string | null;
+  /** 누구의 일인가. `conditional` 은 해당하는 아이만이다. */
+  target_scope?: "child" | "class" | "all" | "conditional" | "unknown" | null;
+  /** 읽은 시작 일시. `date` 가 이 날짜다. */
+  starts_at?: string | null;
+  ends_at?: string | null;
+  /** 마감. 🚨 `date` 가 일시인지 마감인지는 `starts_at` · `due_at` 으로 가른다. */
+  due_at?: string | null;
+  /** 금액 · 장소 · 회신 수단. 없으면 빈 배열. */
+  details?: PhotoEntryDetail[];
+  /** 근거 문장. 이름은 가린 글자다. 🚨 OCR 로 들어온 외부 텍스트라 텍스트로만 그린다. */
+  source_quote?: string | null;
+  /**
+   * 이 항목으로 넣은 일정. 화면이 채워 보내는 유일한 칸이다 — 시트에서 `submitEventDraft` 가
+   * 돌려준 `event.id` 를 commit 때 실어 보내면, 서버가 그 일정에 이 항목을 출처로 단다.
+   * 🚨 **아직 시트가 보내지 않는다** — 시트 연결은 #723. 그전까지는 일정과 공지 항목이 이어지지 않는다.
+   */
+  event_id?: string | null;
+}
+
+/**
+ * `POST /children/{cid}/photos/uploads` — 사진을 어디로 올릴지.
+ *
+ * 🚨 `s3` 면 사진 본문이 **우리 서버를 거치지 않는다.** `url` 에 `fields` + `file`(맨 마지막) 을
+ *    POST 하고, 그다음 `POST .../photos` 에 `upload_key` 로 `key` 를 보낸다. 서버는 내려받자마자
+ *    S3 에서 지운다. `direct` 는 버킷이 없는 로컬 개발이라 지금처럼 `file` 을 서버에 보낸다.
+ */
+export interface PhotoUploadTicket {
+  mode: "s3" | "direct";
+  url?: string | null;
+  fields?: Record<string, string>;
+  key?: string | null;
+  /** 업로드 주소가 유효한 초. 5분이다. */
+  expires_in?: number | null;
 }
 
 /**
