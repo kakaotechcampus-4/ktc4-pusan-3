@@ -584,7 +584,11 @@ async function* continuationScript(
     // 🚨 `failed` 보다 **먼저** 되돌린다. 화면이 받자마자 다시 시도해도 맥락과 키가 이미 풀려 있다.
     pendingReplies.set(input.replyTo, input.childId);
     forgetRun(runId);
-    yield frame("failed", { reason: "internal_error", raw_text: input.text });
+    yield frame("failed", {
+      reason: "internal_error",
+      raw_text: input.text,
+      message: "처리하다 문제가 생겼어요. 다시 보내 주세요.",
+    });
     return;
   }
 
@@ -713,7 +717,12 @@ async function* runScript(runId: string): AsyncGenerator<Uint8Array> {
   if (scenario === "failed") {
     // 여기서 스트림이 끝난다. 저장된 게 없으니 다음 칸으로 전파하지 않는다.
     forgetRun(runId);
-    yield frame("failed", { reason: "unparsable", raw_text: rawText });
+    // 문구는 서버 카탈로그(`apps/api/app/agents/common/failure.readout.yaml`)의 글자 그대로다 (#768)
+    yield frame("failed", {
+      reason: "unparsable",
+      raw_text: rawText,
+      message: "말씀을 정리하지 못했어요. 조금 바꿔서 다시 적어 주세요.",
+    });
     return;
   }
 
