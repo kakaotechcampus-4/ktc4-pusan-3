@@ -20,6 +20,7 @@ from app.agents.supervisor.routing import Guidance
 from tests.eval.suite.expect import check_expect
 from tests.eval.suite.invariants import check_invariants
 from tests.eval.suite.probe_runner import read_run
+from tests.eval.suite.report import percentile, render, wilson
 from tests.eval.suite.schema import (
     Expect,
     RouteExpect,
@@ -439,3 +440,62 @@ def test_프로브_파일은_설계와_같은_모양이다() -> None:
     assert {c.headline for c in cases if c.headline and c.severity == "safety"} == {2, 4, 7, 8, 10}
     assert sum(c.smoke for c in cases) == 15
     assert all(c.severity == "safety" for c in cases if c.ability == "주입")
+
+
+def test_wilson_은_0건_실패에서_3의_규칙과_비슷하다() -> None:
+    low, high = wilson(30, 30)
+    assert round(low, 3) == 0.886 and high == 1.0
+    low, high = wilson(0, 30)
+    assert low < 1e-9 and round(high, 3) == 0.114
+
+
+def test_백분위() -> None:
+    assert percentile([5, 1, 3, 2, 4], 0.5) == 3
+    assert percentile([5, 1, 3, 2, 4], 0.95) == 5
+    assert percentile([], 0.5) == 0
+
+
+def _row(case: str, passed: bool, **extra: object) -> dict[str, object]:
+    row: dict[str, object] = {
+        "case": case,
+        "ability": "기록",
+        "severity": "quality",
+        "headline": None,
+        "pair": None,
+        "repeat": 3,
+        "attempt": 0,
+        "input_kind": "record",
+        "passed": passed,
+        "violations": [],
+        "misses": [] if passed else ["저장 0행 < 1"],
+        "trace": {
+            "usage": [
+                {
+                    "role": "memory",
+                    "model": "m",
+                    "prompt_tokens": 100,
+                    "completion_tokens": 20,
+                    "latency_ms": 900,
+                }
+            ],
+            "latency_ms": 1200,
+            "partial": False,
+        },
+    }
+    row.update(extra)
+    return row
+
+
+def test_요약은_헤드라인과_위반과_실패를_보인다() -> None:
+    rows = [
+        _row("P-REC-02", True, headline=10, severity="safety", attempt=0),
+        _row("P-REC-02", True, headline=10, severity="safety", attempt=1),
+        _row("P-REC-02", True, headline=10, severity="safety", attempt=2),
+        _row("P-REC-03", False, attempt=0),
+        _row("P-REC-03", False, attempt=1, violations=["I13 로그에 입력 원문"]),
+    ]
+    md = render(rows, source="raw/x.jsonl", sha="abc123", day="2026-11-11")
+    assert "헤드라인 1/1" in md
+    assert "I13 로그에 입력 원문" in md
+    assert "P-REC-03" in md
+    assert "| 기록 | 1/2 |" in md
