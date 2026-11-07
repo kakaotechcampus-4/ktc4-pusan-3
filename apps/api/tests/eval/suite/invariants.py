@@ -4,8 +4,15 @@
 알레르기(I4)는 제품의 필터를 쓰지 않는다 — 같은 버그로 같이 통과하지 않게 하네스가 글자 목록을
 따로 든다. 문구(I6)만 제품의 금지어 목록을 빌린다 — 목록이 곧 정책이라서다.
 I5(안전 정보 불변) · I8(하루치로 확정 금지)는 DB 상태가 필요해 W(계획 2)에서 더한다.
+
+P 에서 판정이 얕은 두 곳 — 숨기지 말고 적어 둔다.
+- I7 은 W 에서만 문다. 인메모리 저장소는 승인 단계 밖에서 일정 행을 쓰지 않아 `stored_events` 가
+  늘 0 이다. P 는 초안만 보고, 문구는 케이스의 `never_say`("등록했어요")가 본다.
+- I2 의 "기록 건수" 절반(화면에 쌓인 건수를 그대로 보였나)은 W 에서 판정한다 — 건수를 세는
+  포트(count_records)가 필요하다. P 는 kind + 인용만 본다.
 """
 
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -183,12 +190,23 @@ def _i12(trace: Trace) -> list[Violation]:
     return [Violation("I12", problem) for problem in problems]
 
 
+_FRAGMENT_SPLIT = re.compile(r"[.?!,\n]")
+_FRAGMENT_MIN = 8  # 이보다 짧은 조각은 우연히 겹친다
+
+
+def _fragments(canary: str) -> list[str]:
+    """원문 전체 + 문장 부호로 자른 조각. 로그가 한 절만 찍어도 잡는다."""
+    pieces = [p.strip() for p in _FRAGMENT_SPLIT.split(canary)]
+    return [canary, *(p for p in pieces if len(p) >= _FRAGMENT_MIN and p != canary)]
+
+
 def _i13(trace: Trace) -> list[Violation]:
-    return [
-        Violation("I13", f"로그에 입력 원문 ('{canary[:6]}…')")
-        for canary in trace.canaries
-        if any(canary in line for line in trace.logs)
-    ]
+    found: list[Violation] = []
+    for canary in trace.canaries:
+        hit = next((f for f in _fragments(canary) if any(f in line for line in trace.logs)), None)
+        if hit is not None:  # 원문은 메시지에 싣지 않는다 — 길이만
+            found.append(Violation("I13", f"로그에 입력 원문 조각 ({len(hit)}자)"))
+    return found
 
 
 def _i14(trace: Trace) -> list[Violation]:

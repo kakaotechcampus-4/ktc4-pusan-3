@@ -27,7 +27,7 @@
 
 - 한 케이스만: `EVAL_ONLY=P-REC-02 make eval`
 - 기준선 · 정기 실행만 커밋한다: `cd apps/api && uv run python -m tests.eval.suite.report <jsonl> --out ../../eval/results/<날짜>.md`
-- 토큰 상한: `EVAL_MAX_TOKENS` (기본 2,000,000) 를 넘으면 남은 케이스를 건너뛴다
+- 토큰 상한: `EVAL_MAX_TOKENS` (기본 3,000,000 — 입력 하나 ≈22k 토큰, 전체 한 번 ≈2.0M) 를 넘으면 남은 케이스를 건너뛰고, 건너뛴 케이스는 요약의 "실행하지 않은 케이스" 에 나온다
 
 ## 결과 읽는 법
 
@@ -41,3 +41,5 @@
 
 - 문장은 전부 지어낸 것. 실제 사용자 발화 · 아이 정보 금지 (저장소가 public)
 - 칸 이름이 틀리면 실행 전에 실패한다 — `make test` 로 먼저 확인
+- 케이스 수 · 능력별 수 · 헤드라인 · smoke 수는 `apps/api/tests/eval/suite/test_suite_checks.py` 의 모양 테스트가 고정해 둔다 — YAML 을 고치면 그 테스트도 같이 고친다
+- `make eval` 은 케이스가 하나라도 실패하면 0 이 아닌 값으로 끝난다 — 요약은 그 뒤에 `make eval-report` 를 따로 돌린다

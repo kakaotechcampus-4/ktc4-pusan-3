@@ -39,6 +39,10 @@ def check_expect(trace: Trace, expect: Expect, *, today: date) -> list[str]:
                 misses.append(f"{agent} 추천이 나왔다")
         elif not kinds:
             misses.append(f"{agent} 추천 없음")
+        elif want_kind == "personalized":
+            # 묶음은 개인화가 하나라도 있으면 개인화다(제품 bundle_summary) — 섞여도 통과
+            if "personalized" not in kinds:
+                misses.append(f"{agent} 추천 종류 {sorted(kinds)} ≠ personalized")
         elif want_kind != "any" and kinds != {want_kind}:
             misses.append(f"{agent} 추천 종류 {sorted(kinds)} ≠ {want_kind}")
     misses += [f"안내 {code} 없음" for code in expect.guidance if code not in trace.guidance]

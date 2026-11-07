@@ -18,10 +18,11 @@ from app.agents.memory_bridge import _uuid
 from app.agents.pipeline import AgentQuestion, AgentResult, Done, MemoryNote, Partial
 from app.agents.suggestion_save import SuggestionBatch
 from app.agents.supervisor.routing import Guidance
+from tests.eval.suite import probe_runner
 from tests.eval.suite.expect import check_expect
 from tests.eval.suite.invariants import check_invariants
-from tests.eval.suite.probe_runner import read_run
-from tests.eval.suite.report import percentile, render, wilson
+from tests.eval.suite.probe_runner import read_run, run_probe
+from tests.eval.suite.report import _cost, _rate, percentile, render, summarize, wilson
 from tests.eval.suite.schema import (
     Expect,
     RouteExpect,
@@ -33,7 +34,7 @@ from tests.eval.suite.schema import (
     load_probes_text,
 )
 from tests.eval.suite.trace import CitationView, SavedRow, SuggestionView, Trace
-from tests.eval.suite.verdict import case_passed, required_passes
+from tests.eval.suite.verdict import case_passed, judge, record, required_passes
 from tests.eval.suite.world import CHILD, KST, build_probe_world, observation_rows
 
 _ONE = """
@@ -213,6 +214,19 @@ def test_I13_로그에_원문() -> None:
     assert "I13" in _rules(trace)
 
 
+def test_I13_입력의_한_절만_로그에_있어도_잡는다() -> None:
+    canary = "오늘 블록으로 탑을 쌓았어요, 그리고 낮잠도 푹 잤어요"
+    trace = _clean(canaries=(canary,), logs=("run=1 note=그리고 낮잠도 푹 잤어요",))
+    found = check_invariants(trace)
+    assert [v.rule for v in found] == ["I13"]
+    assert "낮잠" not in str(found[0])  # 메시지에 원문을 싣지 않는다
+
+
+def test_I13_무관한_로그는_잡지_않는다() -> None:
+    canary = "오늘 블록으로 탑을 쌓았어요, 그리고 낮잠도 푹 잤어요"
+    assert "I13" not in _rules(_clean(canaries=(canary,), logs=("run=1 status=ok 완료",)))
+
+
 def test_I13_은_하네스_오류여도_본다() -> None:
     trace = _clean(error="boom", canaries=("원문",), logs=("원문",))
     assert _rules(trace) == {"I13"}
@@ -254,6 +268,26 @@ def test_기대_suggestions() -> None:
     assert check_expect(trace, Expect(suggestions={"activity": "general"}), today=_TODAY)
     assert check_expect(trace, Expect(suggestions={"food": "any"}), today=_TODAY)
     assert check_expect(trace, Expect(suggestions={"food": "none"}), today=_TODAY) == []
+
+
+def _mixed() -> Trace:
+    general = SuggestionView("activity", "general", "공원 산책", "또래 자료", citations=(_DOC,))
+    return _clean(suggestions=(*_clean().suggestions, general))
+
+
+def test_기대_personalized_는_섞인_묶음도_통과한다() -> None:
+    want = Expect(suggestions={"activity": "personalized"})
+    assert check_expect(_mixed(), want, today=_TODAY) == []
+
+
+def test_기대_personalized_는_전부_일반이면_실패한다() -> None:
+    general = SuggestionView("activity", "general", "공원 산책", "또래 자료", citations=(_DOC,))
+    trace = _clean(suggestions=(general,), bundle_kinds={"activity": "general"})
+    assert check_expect(trace, Expect(suggestions={"activity": "personalized"}), today=_TODAY)
+
+
+def test_기대_general_은_섞인_묶음이면_실패한다() -> None:
+    assert check_expect(_mixed(), Expect(suggestions={"activity": "general"}), today=_TODAY)
 
 
 def test_기대_글자() -> None:
@@ -530,3 +564,145 @@ async def test_낡은_관찰의_인용_id_는_stale_ids_에_들어_I10_이_잡�
         searched=frozenset({cited}),
     )
     assert "I10" in _rules(trace)
+
+
+def test_rule_of_three_는_표본이_30_이상일_때만() -> None:
+    assert "3의 규칙" in _rate(30, 30)
+    small = _rate(1, 1)
+    assert "3의 규칙" not in small and "300%" not in small and "~" in small
+    assert "~" in _rate(5, 10)
+
+
+def _scored_md(rows: list[dict[str, object]]) -> str:
+    return render(rows, source="raw/x.jsonl", sha="fallback", day="2026-11-11")
+
+
+def test_건너뛴_행은_점수에서_빠지고_따로_나온다() -> None:
+    rows = [
+        _row("P-REC-02", True, headline=10),
+        {"case": "P-REC-03", "skipped": "token_cap", "repeat": 3},
+    ]
+    assert list(summarize(rows)) == ["P-REC-02"]
+    md = _scored_md(rows)
+    assert "건너뜀 1" in md
+    assert "## 실행하지 않은 케이스" in md
+    assert "P-REC-03" in md and "token_cap" in md
+    assert "케이스 1 " in md  # 건너뛴 케이스는 세지 않는다
+
+
+def test_커밋은_행에_적힌_것을_쓴다() -> None:
+    rows = [_row("P-REC-02", True, git={"sha": "abc1234", "dirty": True})]
+    md = _scored_md(rows)
+    assert "abc1234" in md and "커밋 안 된 변경 있음" in md and "fallback" not in md
+    clean = _scored_md([_row("P-REC-02", True, git={"sha": "abc1234", "dirty": False})])
+    assert "커밋 안 된 변경" not in clean
+    assert "fallback" in _scored_md([_row("P-REC-02", True)])
+
+
+def test_비용_표는_캐시_토큰과_턴을_따로_센다() -> None:
+    def call(run_id: str, cached: int) -> dict[str, object]:
+        return {
+            "run_id": run_id,
+            "role": "memory",
+            "model": "m",
+            "prompt_tokens": 100,
+            "cached_prompt_tokens": cached,
+            "completion_tokens": 20,
+            "latency_ms": 500,
+        }
+
+    row = _row("P-REC-06", True, input_kind="reply")
+    row["trace"]["usage"] = [call("r-0", 0), call("r-1", 60)]  # type: ignore[index]
+    text = "\n".join(_cost([row]))
+    assert "캐시 토큰 p50/p95" in text
+    assert "| 앞 턴 | 1 |" in text and "| reply | 1 |" in text
+    assert "캐시 60" in text
+
+
+def test_능력표는_run_통과와_안내를_보인다() -> None:
+    rows = [_row("P-REC-02", True), _row("P-REC-02", False), _row("P-REC-02", True)]
+    md = _scored_md(rows)
+    assert "run 통과" in md and "2/3" in md
+    assert "케이스별 짝 비교(§9)" in md
+
+
+def test_실패_표는_위반과_기대_미달을_나눈다() -> None:
+    rows = [_row("P-REC-03", False, violations=["I13 로그 | 원문"], misses=["a", "b"])]
+    md = _scored_md(rows)
+    assert "| 케이스 | 통과 | §2 위반 수 | 기대 미달 수 | 첫 이유 |" in md
+    assert "| P-REC-03 | 0/3 | 1 | 2 |" in md
+    assert "I13 로그 \\| 원문" in md  # 표 칸 안의 | 는 이스케이프한다
+
+
+def _fake_result(**over: object) -> SimpleNamespace:
+    base: dict[str, object] = {
+        "routing": SimpleNamespace(intent_type="record", domain_tasks=(), degraded=False),
+        "memory": None,
+        "model_calls": 1,
+        "latency_ms": 5,
+        "partial": None,
+        "failed": None,
+        "committed": True,
+    }
+    base.update(over)
+    return SimpleNamespace(**base)
+
+
+def _case(*turns: str):  # type: ignore[no-untyped-def]
+    body = "\n".join(
+        f"    - say: {t}" + ("\n      reply: true" if i else "") for i, t in enumerate(turns)
+    )
+    text = (
+        "- id: P-T-01\n  ability: 기록\n  rule: r\n  severity: quality\n  turns:\n"
+        f"{body}\n  expect: {{}}\n"
+    )
+    return load_probes_text(text)[0]
+
+
+async def test_커밋_안_된_run_의_저장은_저장으로_세지_않는다(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    calls = iter([{}, {"o1": SavedRow("food", "o1", date(2026, 11, 9))}])
+
+    async def rows(_store: object) -> dict[str, SavedRow]:
+        return next(calls)
+
+    async def fake(**_kw: object) -> SimpleNamespace:
+        return _fake_result(committed=False)
+
+    monkeypatch.setattr(probe_runner, "observation_rows", rows)
+    monkeypatch.setattr(probe_runner.entrypoint, "handle_input", fake)
+    trace = await run_probe(_case("오늘 브로콜리를 먹었어요"), attempt=0, logs=lambda: [])
+    assert trace.error is None and trace.saved == ()
+
+
+async def test_앞_턴이_실패하면_멈춘다(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    seen: list[int] = []
+
+    async def fake(**_kw: object) -> SimpleNamespace:
+        seen.append(1)
+        return _fake_result(failed=SimpleNamespace(reason="timeout"))
+
+    monkeypatch.setattr(probe_runner.entrypoint, "handle_input", fake)
+    trace = await run_probe(_case("첫 말이에요", "답이에요"), attempt=0, logs=lambda: [])
+    assert seen == [1]
+    assert trace.error == "앞 턴 실패: timeout"
+
+
+async def test_예외는_한_줄과_상세로_나눠_남긴다(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    async def fake(**_kw: object) -> SimpleNamespace:
+        raise ValueError("boom")
+
+    monkeypatch.setattr(probe_runner.entrypoint, "handle_input", fake)
+    trace = await run_probe(_case("말이에요"), attempt=0, logs=lambda: [])
+    assert trace.error == "ValueError: boom"
+    assert trace.error_detail is not None and "Traceback" in trace.error_detail
+    assert trace.to_json()["error_detail"] == trace.error_detail
+
+
+def test_결과_한_줄은_케이스에서_요약까지_이어진다() -> None:
+    case = load_probes_text(_ONE)[0]
+    trace = Trace(case_id=case.id, attempt=0, about="caregiver", event_names=("Done",))
+    verdict = judge(case, trace, today=_TODAY)
+    row = record(case, trace, verdict, repeat=1)
+    md = render([row], source="raw/x.jsonl", sha="abc", day="2026-11-11")
+    assert case.id in md
+    assert "헤드라인 1/1" in md and f"| 10 | {case.id} |" in md
