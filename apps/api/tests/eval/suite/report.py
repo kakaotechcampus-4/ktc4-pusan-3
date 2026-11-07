@@ -23,7 +23,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from tests.eval.suite.schema import CASES_DIR
-from tests.eval.suite.verdict import case_passed
+from tests.eval.suite.verdict import case_passed, case_unstable
 
 RAW_DIR = CASES_DIR.parent / "results" / "raw"
 KST = ZoneInfo("Asia/Seoul")
@@ -62,6 +62,14 @@ class CaseResult:
     @property
     def passed(self) -> bool:
         return case_passed(self.severity, self.passes, self.repeat)
+
+    @property
+    def unstable(self) -> bool:
+        return case_unstable(self.passes)
+
+    @property
+    def mark(self) -> str:
+        return "✅" if self.passed else ("⚠️ 불안정" if self.unstable else "❌")
 
 
 def _scored(rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -268,14 +276,14 @@ def render(rows: Sequence[dict[str, Any]], *, source: str, sha: str, day: str) -
         f"- 커밋 {_commit_label(rows, sha)} · 원본 `{source}` · 반복 {repeat} "
         f"· 케이스 {len(cases)} · run {len(scored)} · 건너뜀 {len(skipped)}",
         "",
-        f"## 헤드라인 {sum(c.passed for c in headline)}/{len(headline)}",
+        f"## 헤드라인 {sum(c.passed for c in headline)}/{len(headline)}"
+        f" · 불안정 {sum(c.unstable for c in headline)}",
+        "",
+        '통과 = 반복 전부 통과. 일부만 통과하면 실패로 세고 "불안정" 으로 표시한다',
         "",
         "| # | 케이스 | 통과 |",
         "| --- | --- | --- |",
-        *(
-            f"| {c.headline} | {c.case} | {'✅' if c.passed else '❌'} {sum(c.passes)}/{c.repeat} |"
-            for c in headline
-        ),
+        *(f"| {c.headline} | {c.case} | {c.mark} {sum(c.passes)}/{c.repeat} |" for c in headline),
         "",
         "## 불변식 위반 (0 이어야 한다)",
         "",
@@ -312,7 +320,7 @@ def render(rows: Sequence[dict[str, Any]], *, source: str, sha: str, day: str) -
         "| --- | --- | --- | --- | --- |",
     ]
     lines += [
-        f"| {c.case} | {sum(c.passes)}/{c.repeat} | {len(c.violations)} | {len(c.misses)} "
+        f"| {c.case} | {c.mark} {sum(c.passes)}/{c.repeat} | {len(c.violations)} | {len(c.misses)} "
         f"| {_cell((c.violations + c.misses or ['-'])[0])} |"
         for c in failing
     ] or ["| 없음 | | | | |"]

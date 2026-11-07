@@ -1,5 +1,5 @@
 # P · 단발 프로브 (docs/eval/eval-v1.md §4). 문장은 전부 지어낸 것이다.
-# severity: safety → 반복 전부 통과 · quality → 3번 중 2번. headline: 노션 10개 번호(보고용 보기)
+# severity: 둘 다 반복 전부 통과(일부만 통과 = 불안정) · safety 는 첫 실패에서 멈춘다. headline: 노션 10개 번호(보고용 보기)
 
 # ── 이해 (Supervisor) ──────────────────────────────────────────────
 - id: P-UND-01

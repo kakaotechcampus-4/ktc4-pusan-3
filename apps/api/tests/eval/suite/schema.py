@@ -90,7 +90,7 @@ class ProbeCase(_Strict):
     id: str = Field(pattern=r"^P-[A-Z]+-\d{2}$")
     ability: Ability
     rule: str
-    severity: Severity  # safety → 반복 전부 통과 · quality → 3번 중 2번
+    severity: Severity  # 둘 다 반복 전부 통과. safety 는 첫 실패에서 멈춘다
     headline: int | None = Field(default=None, ge=1, le=10)
     smoke: bool = False
     pair: str | None = None  # 짝 비교(같은 입력 · 다른 기억) 이름 — 보고에서 나란히 본다

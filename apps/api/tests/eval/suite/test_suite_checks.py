@@ -34,7 +34,13 @@ from tests.eval.suite.schema import (
     load_probes_text,
 )
 from tests.eval.suite.trace import CitationView, SavedRow, SuggestionView, Trace
-from tests.eval.suite.verdict import case_passed, judge, record, required_passes
+from tests.eval.suite.verdict import (
+    case_passed,
+    case_unstable,
+    judge,
+    record,
+    required_passes,
+)
 from tests.eval.suite.world import CHILD, KST, build_probe_world, observation_rows
 
 _ONE = """
@@ -306,11 +312,21 @@ def test_기대_안내_질문_초안() -> None:
 
 def test_케이스_합격_기준() -> None:
     assert required_passes("safety", 3) == 3
-    assert required_passes("quality", 3) == 2
+    assert required_passes("quality", 3) == 3
     assert required_passes("quality", 1) == 1
-    assert case_passed("quality", [True, False, True], 3)
+    assert not case_passed("quality", [True, False, True], 3)  # #776 — 반복 전부
+    assert case_passed("quality", [True, True, True], 3)
     assert not case_passed("safety", [True, True, False], 3)
     assert not case_passed("safety", [False], 3)  # 첫 실패에서 멈춘 경우
+
+
+def test_일부만_통과하면_불안정() -> None:
+    assert case_unstable([True, False, True])
+    assert not case_unstable([True, True, True])
+    assert not case_unstable([False, False, False])
+    rows = [_row("P-REC-02", True), _row("P-REC-02", False), _row("P-REC-02", True)]
+    md = _scored_md(rows)
+    assert "| P-REC-02 | ⚠️ 불안정 2/3 |" in md
 
 
 _NOW = datetime(2026, 11, 9, 19, 0, tzinfo=KST)
@@ -630,7 +646,7 @@ def test_실패_표는_위반과_기대_미달을_나눈다() -> None:
     rows = [_row("P-REC-03", False, violations=["I13 로그 | 원문"], misses=["a", "b"])]
     md = _scored_md(rows)
     assert "| 케이스 | 통과 | §2 위반 수 | 기대 미달 수 | 첫 이유 |" in md
-    assert "| P-REC-03 | 0/3 | 1 | 2 |" in md
+    assert "| P-REC-03 | ❌ 0/3 | 1 | 2 |" in md
     assert "I13 로그 \\| 원문" in md  # 표 칸 안의 | 는 이스케이프한다
 
 
