@@ -1,17 +1,19 @@
 """놀이 후보 출력 검증 — 설계 3-3 순서.
 
-  1. 안전 필터       위험 용어(월령별 차단 · 경고) · health_safety(active). 걸린 후보는 거절이
-                     아니라 풀에서 뺀다(`removed`) — 모델에게 사유를 돌려주지 않는다 (§5-2)
-  2. 평가 표현       content · reason · note
-  3. Activity 검증   근거 id · 장소 · 행사 이름(문장에만 쓴 행사도 붙인다 · 한 후보에 둘이면
-                     거절) · 그날 열리지 않는 행사(일정으로) · 그날이 아닌 날의 행사 장소 ·
-                     말한 지역의 장소에 "근처" · 바깥 활동이
-                     어려운 날의 야외 후보(행사 포함) · 기피 대상 · note 반복 표현 · 최근 중복 ·
-                     0–17개월 보호자 동반
-  4. build()         6개월이 안 지난 아이 기록 근거 수로 kind 를 정한다. 모델이 고르지 않는다.
+  1. 안전 필터       위험 용어(월령별 차단 · 경고) · health_safety(active) · 음식 칸의 Food 판정.
+                     걸린 후보는 거절이 아니라 풀에서 뺀다(`removed`) — 모델에게 사유를 돌려주지
+                     않는다 (§5-2)
+  2. 음식 칸         음식 활동인데 foods 가 비면 다시 적게 한다 — 코드가 판정할 이름이 없다 (#582)
+  3. 평가 표현       content · reason · note
+  4. Activity 검증   근거 id · 개인화 이유의 막힌 음식 이름 · 장소 · 행사 이름(문장에만 쓴 행사도
+                     붙인다 · 한 후보에 둘이면 거절) · 그날 열리지 않는 행사(일정으로) · 그날이
+                     아닌 날의 행사 장소 · 말한 지역의 장소에 "근처" · 바깥 활동이 어려운 날의
+                     야외 후보(행사 포함) · 기피 대상 · note 반복 표현 · 최근 중복 · 0–17개월
+                     보호자 동반
+  5. build()         6개월이 안 지난 아이 기록 근거 수로 kind 를 정한다. 모델이 고르지 않는다.
                      장소 이름은 코드가 content 앞에 붙이고, 확인 문구(place_notice)를 칸으로
                      싣는다. allergens · items · 위험 경고(warnings)도 코드가 채운다
-  5. check_count()   최대 3개 — 호출부(출력 tool)가 부른다
+  6. check_count()   최대 3개 — 호출부(출력 tool)가 부른다
 
 순서가 결과를 바꾼다. 안전에 걸린 후보가 뒤 검사를 타면 엉뚱한 사유가 나간다.
 걸린 후보는 고치지 않고 통째로 빼거나 거절한다. "물놀이터" 를 "얕은 물놀이터" 로 고쳐 통과시키지
@@ -48,10 +50,13 @@ from app.agents.activity.store.ports import (
     EventRow,
     PlaceRow,
     PlaceSourceName,
+    SafetyEntry,
 )
 from app.agents.activity.tools.filters import SafetyTerms, check_candidate
 from app.agents.activity.tools.outing import INDOOR_CATEGORIES, days_of
+from app.agents.common.age import stage_of
 from app.agents.common.evidence import RankedEvidence, cite, overstates
+from app.agents.common.food_words import mentions_blocked_food
 from app.agents.common.reference import age_gates
 from app.agents.common.refs import EvidenceCitation, Ref
 from app.agents.common.suggestion import SuggestionDraft, SuggestionRejected, build
@@ -96,7 +101,9 @@ Docs = Mapping[UUID, ActivityDocRow]
 
 
 class RejectReason(StrEnum):
+    FOODS_MISSING = "foods_missing"
     EVALUATIVE = "evaluative_expression"
+    FOOD_MENTION = "food_mention"
     UNKNOWN_EVIDENCE = "unknown_evidence"
     AVOIDED = "avoided_activity"
     OVERSTATED_NOTE = "overstated_note"
@@ -113,7 +120,15 @@ class RejectReason(StrEnum):
 
 # 모델에게 돌려줄 설명 — 무엇을 고치면 되는지만. 걸린 낱말은 알려 주지 않는다
 GUIDANCE: dict[RejectReason, str] = {
+    RejectReason.FOODS_MISSING: (
+        "음식 · 식재료를 만지거나 먹는 활동(involves_food)이면 foods 에 그 이름을 하나씩 적는다."
+    ),
     RejectReason.EVALUATIVE: "또래 비교나 발달 판정 표현을 쓰지 않는다.",
+    # Food(`meal_review`)와 같은 기준이다 — 걸린 낱말은 알려 주지 않는다 (#575 ⭐3)
+    RejectReason.FOOD_MENTION: (
+        "reason 에는 고른 놀이와 아이 기록에서 고른 이유만 쓴다. 보호자가 요청에 쓴 음식을 빼거나 "
+        "바꿨다는 말('~ 없이' · '~ 대신')과 '알레르기를 고려해' 같은 말은 쓰지 않는다."
+    ),
     RejectReason.UNKNOWN_EVIDENCE: (
         "evidence 에는 search_activity_memory 결과의 id 나 [예시]의 id(예1 같은)만 그대로 쓴다."
     ),
@@ -242,6 +257,7 @@ def review_candidates(
         reason, citations, place = _check(
             candidate,
             months=months,
+            rows=safety.rows,
             seen=seen,
             docs=docs or {},
             known=known,
@@ -302,6 +318,7 @@ def _check(
     candidate: ActivityCandidate,
     *,
     months: int,
+    rows: Sequence[SafetyEntry] = (),
     seen: Seen,
     docs: Docs,
     known: "_Known",
@@ -314,19 +331,31 @@ def _check(
 ) -> tuple[RejectReason | None, tuple[EvidenceCitation, ...], PlaceRow | EventRow | None]:
     # 1. 안전 필터는 호출부(review_candidates)가 먼저 돌렸다
 
-    # 2. 평가 표현
+    # 2. 음식 활동인데 음식 이름을 안 적었으면 코드가 판정할 것이 없다 — 다시 적게 한다 (#582)
+    if candidate.involves_food and not any(food.strip() for food in candidate.foods):
+        return RejectReason.FOODS_MISSING, (), None
+
+    # 3. 평가 표현
     texts = (candidate.content, candidate.reason)
     notes = tuple(pick.note for pick in candidate.evidence)
     if any(find_evaluative(text) for text in (*texts, *notes)):
         return RejectReason.EVALUATIVE, (), None
 
-    # 3. Activity 검증
+    # 4. Activity 검증
     resolved: list[tuple[EvidencePick, RankedEvidence | ActivityDocRow]] = []
     for pick in candidate.evidence:
         found = _lookup(seen, docs, pick.id)
         if found is None:
             return RejectReason.UNKNOWN_EVIDENCE, (), None
         resolved.append((pick, found))
+
+    # 아이 기록을 인용한 이유만 화면에 그대로 나간다 — 일반 추천은 build() 가 코드 문구로 덮는다.
+    # 빼는 말("땅콩 없이")이어도 막힌 음식 이름이 나오면 다시 쓰게 한다. 피한 것(기피 근거)은
+    # 이유에 적어야 해서 허용한다 (Food 와 같은 기준, #575 ⭐3)
+    if any(isinstance(found, RankedEvidence) for _, found in resolved) and mentions_blocked_food(
+        candidate.reason, rows, stage=stage_of(months), months=months, allow=avoided
+    ):
+        return RejectReason.FOOD_MENTION, (), None
 
     reason, place = _attach(candidate, known)
     if reason is not None:
@@ -517,7 +546,10 @@ def _build(
         citations=citations,
         general_reason=REQUESTED_REASON if requested else GENERAL_REASON,
         allergens=allergens,
-        items=tuple(candidate.materials),
+        # 음식 칸도 준비물이다 — 승인 때 일정 준비물로 쓴다. 재료와 같은 이름은 한 번만
+        items=tuple(
+            dict.fromkeys((*candidate.materials, *(f for f in candidate.foods if f.strip())))
+        ),
         requested=requested,
         today=today,
     )
