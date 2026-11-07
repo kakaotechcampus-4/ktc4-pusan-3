@@ -30,6 +30,7 @@ import { landingPath } from "@/lib/auth/landing";
 import { OAuthUnavailableError, startOAuthLogin } from "@/lib/auth/oauth";
 import { cn } from "@/lib/cn";
 import { PRIVACY_POLICY_HREF } from "@/lib/consent";
+import { MEDICATION_ENABLED } from "@/lib/store-policy";
 import { hasLiveSession, useSessionStore } from "@/stores/session";
 
 /**
@@ -95,7 +96,10 @@ const DOMAINS: Array<{ agent: Agent; label: string; text: string }> = [
     agent: "health",
     label: "건강",
     // 복약은 #713 에서 실서버에 붙었다. 🚨 "알려 드려요" 를 말하지 않는다 — 복약 알림 발송은 아직 없다.
-    text: "증상 기록을 모아 정리해요. 먹일 약과 시간을 적으면 복약 일정을 준비해 두고, 확인한 뒤에 넣어요. 같은 증상이 이어지면 병원 확인을 권하고, 진단은 하지 않아요.",
+    // 🚨 스토어 선언 때문에 꺼 둔 동안은 복약을 말하지 않는다 (`lib/store-policy.ts`).
+    text: MEDICATION_ENABLED
+      ? "증상 기록을 모아 정리해요. 먹일 약과 시간을 적으면 복약 일정을 준비해 두고, 확인한 뒤에 넣어요. 같은 증상이 이어지면 병원 확인을 권하고, 진단은 하지 않아요."
+      : "증상 기록을 모아 정리해요. 같은 증상이 이어지면 병원 확인을 권하고, 진단은 하지 않아요.",
   },
 ];
 

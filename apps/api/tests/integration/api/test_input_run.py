@@ -21,6 +21,7 @@ from datetime import UTC, date, datetime
 from unittest.mock import ANY
 
 import pytest
+import redis
 from sqlalchemy import select
 
 from app.agents.common.result import DomainPending
@@ -134,6 +135,7 @@ async def test_inputs_hand_the_line_to_the_agents(db_client, bearer, agent_calls
             "location": None,
             "activity_weather": None,
             "activity_events": None,
+            "health_places": None,
             "on_event": ANY,  # 대화 기록(#228) — test_finished_run_is_kept_as_a_chat_turn
         }
     ]
@@ -829,3 +831,80 @@ async def test_막힌_요청은_하루_횟수를_쓰지_않는다(db_client, bea
 
     assert denied.status_code == 403
     assert accepted.status_code == 202
+
+
+async def test_Redis_가_죽으면_입력은_503_이고_Agent_를_부르지_않는다(
+    db_client, bearer, agent_calls, monkeypatch, cid
+):
+    """#671 — 메모리로 받으면 장애 직전에 적힌 키가 안 보여 같은 한 줄이 두 번 저장된다.
+
+    서버를 늘리면 다른 서버로 간 재시도도 못 막는다. 다시 보내면 되는 503 으로 막는다.
+    """
+    down = redis.Redis(host="127.0.0.1", port=1, socket_connect_timeout=0.2)
+    monkeypatch.setattr(idempotency, "get_redis", lambda: down)
+    headers, _ = bearer
+
+    response = await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=with_key(headers))
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "temporarily_unavailable"
+    assert agent_calls == []
+
+
+async def test_키를_못_남기면_입력은_503_이고_Agent_를_부르지_않는다(
+    db_client, bearer, agent_calls, monkeypatch, cid
+):
+    """#671 리뷰 — 한 줄 입력은 키를 러너보다 먼저 적는다. 아직 아무것도 저장하지 않았으니 키를
+    못 남기면 503 으로 끝내야 한다. 삼키고 러너를 띄우면 같은 키 재시도가 두 번 저장된다."""
+    import fakeredis
+
+    store = fakeredis.FakeRedis(decode_responses=True)
+    monkeypatch.setattr(idempotency, "get_redis", lambda: store)
+    real_set = store.set
+
+    def refuse_reply_write(name, value, *args, **kwargs):
+        if str(name).startswith("idem:"):
+            raise redis.ConnectionError("down")
+        return real_set(name, value, *args, **kwargs)
+
+    monkeypatch.setattr(store, "set", refuse_reply_write)
+    headers, _ = bearer
+
+    response = await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=with_key(headers))
+    await asyncio.sleep(0.05)
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "temporarily_unavailable"
+    assert agent_calls == []
+
+
+async def test_키를_적은_뒤_응답을_못_받아_503_이면_같은_키_재시도는_새로_처리한다(
+    db_client, bearer, agent_calls, monkeypatch, cid
+):
+    """#729 리뷰 — 키를 적은 뒤 응답만 늦어 TimeoutError 면 첫 요청은 503 인데 키는 남는다.
+
+    웹은 같은 문장을 같은 키로 다시 보낸다. 그 키가 처리되지 않은 run 을 재생하면 입력이 사라진다.
+    """
+    import fakeredis
+
+    store = fakeredis.FakeRedis(decode_responses=True)
+    monkeypatch.setattr(idempotency, "get_redis", lambda: store)
+    real_set = store.set
+    late = {"once": True}
+
+    def write_then_time_out(name, value, *args, **kwargs):
+        done = real_set(name, value, *args, **kwargs)
+        if str(name).startswith("idem:") and late.pop("once", False):
+            raise redis.TimeoutError("late")
+        return done
+
+    monkeypatch.setattr(store, "set", write_then_time_out)
+    headers = with_key(bearer[0])
+
+    first = await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=headers)
+    retry = await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=headers)
+    await asyncio.sleep(0.05)
+
+    assert first.status_code == 503
+    assert retry.status_code == 202
+    assert len(agent_calls) == 1  # 재시도가 실제로 처리됐다

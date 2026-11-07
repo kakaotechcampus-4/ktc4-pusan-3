@@ -264,7 +264,7 @@ async def update_child_profile(
 
 @router.post(
     "/children/{cid}/onboarding",
-    responses={status: {"model": ErrorEnvelope} for status in (400, 403)},
+    responses={status: {"model": ErrorEnvelope} for status in (400, 403, 503)},
 )
 async def submit_onboarding(
     child: AccessibleChild,
@@ -291,7 +291,7 @@ async def submit_onboarding(
         "path": request.url.path,
         "key": idempotency_key,
     }
-    replayed = idempotency.recall(**scope)
+    replayed = await idempotency.recall(**scope)
     if isinstance(replayed, dict):
         return JSONResponse(status_code=200, content=replayed)
 
@@ -329,7 +329,7 @@ async def submit_onboarding(
         growth=None if growth is None else _growth_out(growth, today),
     )
     await session.commit()
-    idempotency.remember(**scope, replay=response.model_dump(mode="json"))
+    await idempotency.remember(**scope, replay=response.model_dump(mode="json"))
     return response
 
 
@@ -432,7 +432,11 @@ async def remove_growth_log(child: AccessibleChild, log_id: UUID, session: Sessi
     return Response(status_code=204)
 
 
-@router.post("/children/{cid}/inputs", status_code=202)
+@router.post(
+    "/children/{cid}/inputs",
+    status_code=202,
+    responses={503: {"model": ErrorEnvelope}},
+)
 async def create_input(
     child: AccessibleChild,
     body: CreateInputRequest,
@@ -462,7 +466,7 @@ async def create_input(
         "path": request.url.path,
         "key": idempotency_key,
     }
-    replayed = idempotency.recall(**scope)
+    replayed = await idempotency.recall(**scope)
     if replayed is not None:
         previous = registry.get(replayed)
         if previous is None:
@@ -477,9 +481,9 @@ async def create_input(
             return CreateInputResponse(run_id=replayed)
         if previous.ended_with != "failed":
             return CreateInputResponse(run_id=replayed)
-        # failed 는 "저장 없음" 이라 러너가 키를 놓는데, 거기서 Redis 오류로 실패하면 키가 남는다.
-        # 여기서 다시 놓고 새 run 으로 받는다. 지난 실패를 재생하면 다시 보내도 같은 실패뿐이다
-        # (#538)
+        # failed 는 "저장 없음" 이라 러너가 키를 놓는데, Redis 장애로 못 지웠으면 키가 남아 있을
+        # 수 있다. 여기서 다시 놓고 새 run 으로 받는다. 지난 실패를 재생하면 다시 보내도 같은
+        # 실패뿐이다 (#538 · #671)
         idempotency.forget_run(replayed)
 
     # 아이 건강정보 동의의 현재 값을 입력 한 번에 한 번 읽어 Agent 까지 값으로 넘긴다 (#372).
@@ -536,7 +540,7 @@ async def create_input(
 
     channel = registry.open_run(parent_id=parent.parent_id)
     try:
-        idempotency.remember(**scope, replay=channel.run_id)
+        await idempotency.remember(**scope, replay=channel.run_id, strict=True)
     except Exception:
         # 러너가 안 떠서 이 채널은 아무도 닫지 않는다. 닫아야 지울 예약이 걸린다 (#536 리뷰)
         channel.close()
@@ -562,6 +566,9 @@ async def create_input(
         location=location,
         activity_weather=getattr(request.app.state, "activity_weather", None),
         activity_events=getattr(request.app.state, "activity_events", None),
+        # 병원 어댑터만 넘긴다. 좌표는 Health 에 넘기지 않는다 — 위 위치 동의 확인이 약관의 판을
+        # 보지 않아서다(runner.agent_job · #586)
+        health_places=getattr(request.app.state, "health_places", None),
         parent_id=parent.parent_id,
         raw_text=body.text,
         continuation=continuation,

@@ -13,6 +13,10 @@ app 로그는 루트로도 올라간다(propagate). pytest 의 caplog 가 루트
 SDK 가 basicConfig 를 부른다.
 
 uvicorn 의 접근 로그(요청마다 한 줄)는 쿼리 문자열과 초대 코드를 가린다 — `_RedactAccessLog`.
+요청 처리 중 예외가 uvicorn 오류 로그에 다시 찍힐 때는 메시지를 빼고 종류 · 코드 위치만 남긴다 —
+`_HideExceptionMessage`. 서버 시작 · 종료(lifespan) 실패는 Starlette 이 traceback 을 글자로 만들어
+exc_info 없이 넘겨 이 거름망을 비켜 간다 — lifespan 에 원문이 들어갈 일이 생기면 따로 막는다.
+app 코드는 log.exception 대신 `log_error_without_message` 로 같은 모양을 남긴다.
 
 모듈 이름이 logging 이 아닌 이유 — 표준 라이브러리 logging 과 헷갈리지 않게.
 """
@@ -20,6 +24,7 @@ uvicorn 의 접근 로그(요청마다 한 줄)는 쿼리 문자열과 초대 �
 import logging
 import logging.config
 import re
+import traceback
 
 _FORMAT = "%(asctime)s %(levelname)s %(name)s %(message)s"
 DATEFMT = "%Y-%m-%d %H:%M:%S%z"
@@ -61,6 +66,64 @@ class _RedactAccessLog(logging.Filter):
         return True
 
 
+def _kinds(exc: BaseException, seen: set[int]) -> str:
+    """종류 이름만 — 묶음 안의 예외는 [ ] 로, 원인(__cause__ · __context__)은 ← 로 잇는다."""
+    seen.add(id(exc))
+    text = type(exc).__name__
+    if isinstance(exc, BaseExceptionGroup):
+        text += f"[{', '.join(_kinds(e, seen) for e in exc.exceptions if id(e) not in seen)}]"
+    cause = exc.__cause__ or (None if exc.__suppress_context__ else exc.__context__)
+    if cause is not None and id(cause) not in seen:
+        text += f" ← {_kinds(cause, seen)}"
+    return text
+
+
+def describe_exception(exc: BaseException) -> str:
+    """예외를 메시지 없이 — 종류(연결된 · 묶인 예외의 종류까지)와 코드 위치 (#670).
+
+    🚨 메시지에는 입력 원문이 섞일 수 있다 — ValueError(f"... {text}") · DB 오류의 DETAIL.
+    코드 위치(format_tb)는 소스 줄이지 그때의 값이 아니다 — 코드는 공개 저장소에 있다.
+    """
+    return f"{_kinds(exc, set())}\n{''.join(traceback.format_tb(exc.__traceback__))}"
+
+
+def log_error_without_message(log: logging.Logger, msg: str, exc: BaseException) -> None:
+    """log.exception 대신 — 예외 메시지 없이 ERROR 한 줄 (#670 · 루트 §2).
+
+    msg 는 코드에 적힌 고정 글귀다(값을 넣지 않는다). Discord 카드 제목은 "msg 예외종류" —
+    exc_info 를 싣지 않아 제목을 직접 준다(core/alerts.py). 위치는 부른 쪽 줄로 남긴다.
+    """
+    log.error(
+        "%s %s",
+        msg,
+        describe_exception(exc),
+        extra={"alert_heading": f"{msg} {type(exc).__name__}"},
+        stacklevel=2,
+    )
+
+
+class _HideExceptionMessage(logging.Filter):
+    """uvicorn 오류 로그의 예외에서 메시지를 빼고 종류와 코드 위치만 남긴다 (#670).
+
+    🚨 처리되지 않은 예외는 API 의 마지막 그물(api/errors.py)이 메시지 없이 찍은 뒤, Starlette 이
+       다시 던져 uvicorn 이 "Exception in ASGI application" 으로 traceback 전체를 한 번 더 찍는다.
+       그 마지막 줄 "ValueError: <메시지>" 에 입력 원문이 섞일 수 있다 (루트 §2 개인정보).
+       연결된 예외(__cause__ · __context__)의 메시지도 같은 이유로 남기지 않는다 — 종류만.
+    🚨 지역 변수를 찍는 traceback(rich 의 show_locals 같은)은 쓰지 않는다. 그때부터 코드가 아니라
+       값이 찍힌다.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.exc_info and record.exc_info[1] is not None:
+            exc = record.exc_info[1]
+            # 다 만든 글로 바꾼다 — args 를 남기면 uvicorn 포매터가 한 번 더 끼워 넣다 깨진다
+            record.msg = f"{record.getMessage().rstrip()} {describe_exception(exc)}"
+            record.args = ()
+            record.exc_info = None
+            record.exc_text = None
+        return True
+
+
 def configure_logging() -> None:
     """app 로거에 처리기를 하나 단다. 여러 번 불러도 처리기는 하나다 (dictConfig 가 갈아 끼운다).
 
@@ -93,6 +156,9 @@ def configure_logging() -> None:
     access = logging.getLogger("uvicorn.access")
     if not any(isinstance(f, _RedactAccessLog) for f in access.filters):
         access.addFilter(_RedactAccessLog())
+    errors = logging.getLogger("uvicorn.error")
+    if not any(isinstance(f, _HideExceptionMessage) for f in errors.filters):
+        errors.addFilter(_HideExceptionMessage())
     # 🚨 httpx 는 INFO 로 요청 주소 전체를 찍는다 — NEIS 의 KEY=, Discord 웹훅의 토큰이 주소에 있다.
     #    루트가 INFO 로 열리는 일(OPENAI_LOG · basicConfig)이 있어도 새지 않게 WARNING 으로 못
     #    박는다.
