@@ -126,6 +126,8 @@ async def run_probe(case: ProbeCase, *, attempt: int, logs: Callable[[], Sequenc
             if turn.reply and continuation is None:
                 trace.error = "앞 턴이 되묻지 않아 답 턴을 돌릴 수 없다"
                 break
+            world.store.seen.clear()  # 읽은 기록은 이 턴 것만 센다 (I3 = 이 run 의 근거)
+            world.affinity.seen.clear()
             before = await observation_rows(world.store.inner)
             events_before = await stored_event_count(world.store.inner)
             events: list[object] = []
