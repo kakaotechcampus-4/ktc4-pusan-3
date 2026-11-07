@@ -5,7 +5,8 @@
 챙김 표시(`is_prepared`)는 늘 그날 회차 하나라 범위를 받지 않는다.
 
 오늘은 2026-11-11(수) 09:00 이다. 묶음은 월 · 수 08:30, 11/9 · 11/11 · 11/16 · 11/18 이고
-준비물은 "물통" 이다. 오늘 이후 회차는 11/11 · 11/16 · 11/18 이다.
+준비물은 "물통" 이다. 오늘 이후 회차는 11/11 · 11/16 · 11/18 인데, 11/11 08:30 은 이미 시작해서
+묶음 고치기가 보는 회차는 11/16 · 11/18 이다 (시각을 따로 옮겨 두면 11/11 도 든다, #761).
 """
 
 from dataclasses import dataclass
@@ -714,6 +715,99 @@ async def test_common_values_follow_the_majority_of_each_field():
 
     assert draft.before.title == "등원"
     assert draft.before.starts_time == time(9, 0)
+
+
+# ── PR #761 리뷰: 시작이 지난 오늘 회차는 묶음 고치기의 대상이 아니다 ─────────
+# 서버(`update_series`)는 시간 일정이면 시작이 지금 이후인 회차, 종일이면 오늘(그날 포함) 이후
+# 회차만 고친다. 기준 값(before)과 "남은 회차가 있나" 판정이 같은 회차를 봐야 승인한 초안이 서버에서
+# 0건 또는 422 가 되지 않는다. 지금은 11/11(수) 09:00 이고 08:30 회차는 이미 시작했다.
+
+
+async def _only_today_world(*, all_day: bool = False) -> World:
+    """11/11(수) 회차 하나뿐인 묶음."""
+    world = await _build(weekdays=(3,), until=date(2026, 11, 11))
+    if all_day:
+        when = EventWhen(starts_at=_at(date(2026, 11, 11), 0), ends_at=None, all_day=True)
+        await world.store.update_event(event_id=world.events[0].id, fields={}, when=when)
+    return world
+
+
+async def test_update_series_whose_last_occurrence_started_today_is_not_found():
+    world = await _only_today_world()
+
+    result = await _call(
+        world, "update_event", event_id=world.events[0].id, scope="series", title="유치원"
+    )
+
+    assert result.success is False
+    assert result.error["code"] == ErrorCode.TARGET_NOT_FOUND
+    assert world.ctx.drafts.all() == ()
+
+
+async def test_series_item_on_a_series_whose_last_occurrence_started_today_is_not_found():
+    world = await _only_today_world()
+
+    result = await _call(
+        world, "create_event_item", event_id=world.events[0].id, item_name="실내화", scope="series"
+    )
+
+    assert result.success is False
+    assert result.error["code"] == ErrorCode.TARGET_NOT_FOUND
+
+
+async def test_an_all_day_occurrence_of_today_is_still_ahead():
+    world = await _only_today_world(all_day=True)
+
+    result = await _call(
+        world, "update_event", event_id=world.events[0].id, scope="series", title="유치원"
+    )
+
+    assert result.success is True, result.error
+    assert _series_draft(world).before.all_day is True
+
+
+async def test_common_values_leave_out_the_started_occurrence_of_today():
+    # 11/11(시작함) · 11/16 은 "등원 준비", 11/18 · 11/23 은 "등원". 11/11 을 세면 2:2 로 먼저 나온
+    # "등원 준비" 가 뽑혀, 서버가 고치는 회차(11/16 · 11/18 · 11/23)의 흔한 값과 달라진다
+    world = await _build(weekdays=(1, 3), until=date(2026, 11, 23))
+    await _edit_one(world, world.events[1], title="등원 준비")
+    await _edit_one(world, world.events[2], title="등원 준비")
+
+    draft = await _first_series_draft(world)
+
+    assert draft.before.title == "등원"
+
+
+async def test_new_rule_left_with_only_the_started_occurrence_of_today_asks(world):
+    result = await _call(
+        world,
+        "update_event",
+        event_id=world.events[2].id,
+        scope="series",
+        repeat_weekdays=["wed"],
+        repeat_until="11월 11일",
+    )
+
+    assert result.success is False
+    assert result.error["code"] == ErrorCode.DATE_UNPARSEABLE
+    assert world.ctx.drafts.all() == ()
+
+
+async def test_new_rule_counts_today_when_the_new_start_is_still_ahead(world):
+    # 같은 규칙이라도 시각을 10시로 같이 옮기면 오늘 회차는 아직 시작 전이다
+    # (서버도 새 시각으로 본다)
+    result = await _call(
+        world,
+        "update_event",
+        event_id=world.events[2].id,
+        scope="series",
+        repeat_weekdays=["wed"],
+        repeat_until="11월 11일",
+        starts_time="오전 10시",
+    )
+
+    assert result.success is True, result.error
+    assert _series_draft(world).repeat == RepeatRule(weekdays=(3,), until=date(2026, 11, 11))
 
 
 # ── PR #744 리뷰: 준비물은 이름 집합으로 바뀜을 본다 ──────────────────
