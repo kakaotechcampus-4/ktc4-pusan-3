@@ -16,6 +16,7 @@ from app.api.deps.child import AccessibleChild
 from app.api.deps.db import SessionDep
 from app.api.errors import ErrorEnvelope
 from app.api.quota import KST
+from app.api.v1.routers.observations import LISTED_STATUSES
 from app.api.v1.schemas.common import Ref
 from app.api.v1.schemas.home import (
     AgentPromptOut,
@@ -24,7 +25,6 @@ from app.api.v1.schemas.home import (
     TodayEventOut,
 )
 from app.domains.child.models import Child
-from app.domains.memory.observation.models import ObservationStatus
 from app.domains.memory.observation.repository import (
     count_active_days_by_affinity,
     count_active_observations,
@@ -40,12 +40,6 @@ from app.rules.profile import CANDIDATE_MIN_DAYS
 router = APIRouter()
 
 _UPCOMING_DAYS = 7
-# 기록 탭 목록과 같은 기준 — 고친 기록도 센다. deleted 만 빠진다.
-_COUNTED_STATUSES = (
-    ObservationStatus.ACTIVE,
-    ObservationStatus.STAND_ALONE,
-    ObservationStatus.INACTIVE,
-)
 
 
 @router.get(
@@ -63,7 +57,7 @@ async def get_home(child: AccessibleChild, session: SessionDep) -> HomeResponse:
         child_id=child.child_id,
         period_start=week_start,
         period_end=week_start + timedelta(days=7),
-        statuses=_COUNTED_STATUSES,
+        statuses=LISTED_STATUSES,  # 기록 탭 목록과 같은 기준 — deleted 만 빠진다
     )
     day_start = datetime.combine(today, datetime.min.time(), tzinfo=KST)
     todays = await list_events(
