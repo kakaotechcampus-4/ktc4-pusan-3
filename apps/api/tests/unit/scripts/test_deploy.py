@@ -7,22 +7,29 @@ docker · git · sleep 을 가짜로 바꿔 돈다. docker · git 은 받은 인
     FAKE_UP_FAIL       up — 그때의 api 태그가 이 목록(공백 구분)에 있으면
     FAKE_RUN_FAIL      compose run (마이그레이션)
     FAKE_PULL_FAIL     compose pull
-    FAKE_NO_PREV       image inspect (직전 이미지 없음)
+    FAKE_NO_PREV       image inspect (직전 이미지 없음 · make 의 배포 이미지 없음)
     FAKE_NO_NET        network inspect (ktc4-edge 없음)
     FAKE_CADDY_INVALID docker run … caddy validate
     FAKE_RELOAD_FAIL   docker exec ktc4-caddy caddy reload
+
+`compose config --format json` 은 FAKE_CONFIG 를 그대로 찍는다
+(compose 가 .env 를 해석한 결과 자리).
+`docker run … caddy validate` 는 물려받은 basic_auth 환경변수도 적는다.
 
 가짜 git 의 `merge-base --is-ancestor` 는 FAKE_OLD 가 있을 때만 참이다
 (새 sha 가 지금 떠 있는 것의 조상).
 """
 
+import json
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
 
-SCRIPT = Path(__file__).resolve().parents[5] / "deploy" / "scripts" / "deploy.sh"
+ROOT = Path(__file__).resolve().parents[5]
+SCRIPT = ROOT / "deploy" / "scripts" / "deploy.sh"
 
 DEV_ENV = (
     "COMPOSE_PROJECT_NAME=ktc4-dev\n"
@@ -30,8 +37,23 @@ DEV_ENV = (
     "NEXT_PUBLIC_API_BASE_URL=https://api.dev.icatch.ai.kr\n"
     "COMPOSE_PROFILES=\n"
     "APP_ENV=dev\n"
+    "API_MEM_LIMIT=768m\n"
+    "WEB_MEM_LIMIT=384m\n"
+    "DB_MEM_LIMIT=512m\n"
+    "REDIS_MEM_LIMIT=128m\n"
     "API_EDGE_IP=172.30.0.21\n"
 )
+# 가짜 bcrypt 해시 (cost 10 · 53자).
+# basic_auth 값은 .env 줄이 아니라 compose 가 해석한 값(FAKE_CONFIG)으로 본다
+AUTH_HASH = "$2y$10$" + ("fake" * 14)[:53]
+
+
+def compose_config(user: str = "team", pw_hash: str = AUTH_HASH, caddy: bool = True) -> str:
+    """compose config --format json 의 모양. 실제 출력처럼 $ 를 $$ 로 적는다."""
+    env = {"DEV_BASIC_AUTH_USER": user, "DEV_BASIC_AUTH_HASH": pw_hash.replace("$", "$$")}
+    return json.dumps({"services": {"caddy": {"environment": env}} if caddy else {"api": {}}})
+
+
 PROD_ENV = (
     "COMPOSE_PROJECT_NAME=\n"
     "STACK_SUFFIX=\n"
@@ -43,12 +65,16 @@ PROD_ENV = (
 FAKE_DOCKER = r"""#!/bin/sh
 echo "docker $* tag=${API_IMAGE_TAG:-} web=${WEB_IMAGE_TAG:-}" >> "$FAKE_LOG"
 case "$*" in
-  "run --rm -v"*) [ -z "$FAKE_CADDY_INVALID" ] ;;
+  "run --rm -e"*)
+    echo "caddy-env $DEV_BASIC_AUTH_USER $DEV_BASIC_AUTH_HASH" >> "$FAKE_LOG"
+    [ -z "$FAKE_CADDY_INVALID" ] ;;
   "exec ktc4-caddy"*) [ -z "$FAKE_RELOAD_FAIL" ] ;;
   "network inspect"*) [ -z "$FAKE_NO_NET" ] ;;
   "image inspect"*) [ -z "$FAKE_NO_PREV" ] ;;
   "image ls ktc4-dev-api"*) printf "old\nprev\nnew\n" ;;
-  *" config --images"*) printf "redis:7-alpine\ncaddy:2.10.0-alpine\n" ;;
+  *" config --format json"*) printf '%s' "$FAKE_CONFIG" ;;
+  *" config --images"*)
+    printf "redis:7-alpine\ncaddy:2.10.0-alpine\nktc4-dev-api:%s\n" "$API_IMAGE_TAG" ;;
   *" pull "*) [ -z "$FAKE_PULL_FAIL" ] ;;
   *" up "*) case " $FAKE_UP_FAIL " in *" $API_IMAGE_TAG "*) exit 1 ;; esac ;;
   *" run "*) [ -z "$FAKE_RUN_FAIL" ] ;;
@@ -67,6 +93,10 @@ def box(tmp_path: Path):
         'case "$*" in "merge-base"*) [ -n "$FAKE_OLD" ] ;; esac\n'
     )
     (bin_dir / "sleep").write_text("#!/bin/sh\n")  # reload 재시도가 15초를 쓰지 않게
+    # make deploy-up 은 Linux 에서 sudo 로 IMDS 방화벽을 건다
+    # — CI(Linux) · 맥 어디서든 같은 길을 가짜로 돈다
+    (bin_dir / "uname").write_text("#!/bin/sh\necho Linux\n")
+    (bin_dir / "sudo").write_text('#!/bin/sh\necho "sudo $*" >> "$FAKE_LOG"\n')
     for f in bin_dir.iterdir():
         f.chmod(0o755)
     work = tmp_path / "repo"
@@ -76,15 +106,17 @@ def box(tmp_path: Path):
     tag_file = work / "deploy" / "docker" / ".deployed-tag"
     tag_file.write_text("prev\n")
 
-    def run(target: str = "dev", allow_old: str = "", **fail: str) -> subprocess.CompletedProcess:
-        env = {
+    def fake_env(**fail: str) -> dict[str, str]:
+        return {
             **os.environ,
-            "ALLOW_OLD": allow_old,
             "PATH": f"{bin_dir}:{os.environ['PATH']}",
             "FAKE_LOG": str(log),
-            "DEPLOY_LOCK": str(tmp_path / "lock"),
+            "FAKE_CONFIG": compose_config(),
             **{f"FAKE_{k.upper()}": v for k, v in fail.items()},
         }
+
+    def run(target: str = "dev", allow_old: str = "", **fail: str) -> subprocess.CompletedProcess:
+        env = {**fake_env(**fail), "ALLOW_OLD": allow_old, "DEPLOY_LOCK": str(tmp_path / "lock")}
         return subprocess.run(
             ["bash", str(SCRIPT), "new", target],
             cwd=work,
@@ -94,8 +126,23 @@ def box(tmp_path: Path):
             timeout=30,
         )
 
+    def make(*targets: str, **fail: str) -> subprocess.CompletedProcess:
+        """이 저장소의 Makefile 을 가짜 docker 로 돈다. 잠금(flock)은 끈다."""
+        (work / "deploy" / "scripts").mkdir(parents=True, exist_ok=True)
+        shutil.copy(SCRIPT, work / "deploy" / "scripts" / "deploy.sh")
+        shutil.copy(ROOT / "Makefile", work / "Makefile")
+        return subprocess.run(
+            ["make", "DEPLOY_LOCK=", *targets],
+            cwd=work,
+            capture_output=True,
+            text=True,
+            env=fake_env(**fail),
+            timeout=30,
+        )
+
+    run.fake_env = fake_env  # type: ignore[attr-defined]
+    run.make = make  # type: ignore[attr-defined]
     run.tag_file = tag_file  # type: ignore[attr-defined]
-    run.path = f"{bin_dir}:{os.environ['PATH']}"  # type: ignore[attr-defined]
     run.env_file = env_file  # type: ignore[attr-defined]
     run.calls = lambda: log.read_text().splitlines() if log.exists() else []  # type: ignore[attr-defined]
     return run
@@ -220,6 +267,10 @@ def test_creates_edge_network_with_caddy_address_reserved(box):
         ),  # prod .env 를 복사하고 안 고쳤다
         ("dev", DEV_ENV.replace("COMPOSE_PROFILES=", "COMPOSE_PROFILES=edge")),  # Caddy 이름 충돌
         ("dev", DEV_ENV.replace("APP_ENV=dev\n", "")),  # dev 알림이 [prod] 로 온다
+        # ${X:-0} 은 빈 값 · 빠진 줄도 0(상한 없음)으로 바꾼다 — dev 상한이 조용히 빠진다
+        ("dev", DEV_ENV.replace("API_MEM_LIMIT=768m", "API_MEM_LIMIT=")),
+        ("dev", DEV_ENV.replace("REDIS_MEM_LIMIT=128m\n", "")),
+        ("dev", DEV_ENV.replace("DB_MEM_LIMIT=512m", "DB_MEM_LIMIT=0")),
         ("prod", PROD_ENV.replace("https://api.", "https://api.dev.")),  # prod 가 dev API 를 굽는다
         ("prod", PROD_ENV.replace("STACK_SUFFIX=", "STACK_SUFFIX=-dev")),
         # 첫 전환의 down 이 Caddy · 옛 네트워크를 남겨 운영이 내려간 채 멈춘다
@@ -252,14 +303,48 @@ def test_prod_validates_caddyfile_and_reloads_caddy(box):
     calls = box.calls()
     validate = _index(calls, "caddy validate")
     assert "caddy:2.10.0-alpine" in calls[validate]
+    # compose 가 Caddy 에 넘기는 값($$ 를 되돌린 것)으로 검사한다.
+    # 값은 환경으로 물려줘 ps 에 안 보인다
+    assert " -e DEV_BASIC_AUTH_USER -e DEV_BASIC_AUTH_HASH -v " in calls[validate]
+    assert AUTH_HASH not in calls[validate]
+    assert f"caddy-env team {AUTH_HASH}" in calls
     assert validate < _index(calls, " build ")
     assert any(c.startswith("docker exec ktc4-caddy caddy reload") for c in calls)
 
 
 def test_dev_does_not_touch_caddy(box):
+    """basic_auth 계정은 prod .env 에만 있다 — dev 는 없어도 된다."""
     box()
 
     assert not any("caddy" in c for c in box.calls())
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        compose_config(user=""),
+        compose_config(pw_hash=""),
+        # .env 에서 따옴표 없이 쓰면 compose 가 해시 속 $Ol… 를 변수로 먹는다 → 늘 401
+        compose_config(pw_hash=AUTH_HASH[:7] + AUTH_HASH[20:]),
+        # 사용자 이름에 공백이 있으면 Caddyfile 에서 칸이 밀린다
+        compose_config(user="te am"),
+        # COMPOSE_PROFILES 에서 edge 가 빠진 것과 같다 — Caddy 가 config 에 없다
+        compose_config(caddy=False),
+    ],
+)
+def test_prod_needs_valid_dev_basic_auth_before_building(box, config):
+    """Caddy 는 prod 에만 뜬다. 값이 없거나 깨지면 Caddyfile 검사에서 prod 배포가 멈추거나
+    dev 에 아무도 못 들어간다. 배포할 커밋의 compose 파일로 읽어야 해서 reset 뒤에 본다."""
+    box.env_file.write_text(PROD_ENV)
+
+    result = box(target="prod", config=config)
+
+    assert result.returncode == 1
+    assert "DEV_BASIC_AUTH" in result.stdout
+    calls = box.calls()
+    assert "git reset --hard new" in calls
+    assert not any(" build " in c or " validate " in c for c in calls)
+    assert _ups(calls) == []
 
 
 def test_broken_caddyfile_stops_prod_before_anything_changes(box):
@@ -318,19 +403,25 @@ def test_first_deploy_and_same_sha_redeploy_skip_the_age_check(box, prev):
     assert not any(c.startswith("git merge-base") for c in box.calls())
 
 
+GOOD = compose_config()
+
+
 @pytest.mark.parametrize(
-    ("env", "ok"),
+    ("env", "config", "ok"),
     [
-        (DEV_ENV, True),
-        (PROD_ENV, True),
+        (DEV_ENV, GOOD, True),
+        (PROD_ENV, GOOD, True),
         # dev .env 에서 프로젝트 이름만 빠졌다 → prod 로 보고 검사 → 꼬리 · 주소가 안 맞아 막힌다
-        (DEV_ENV.replace("COMPOSE_PROJECT_NAME=ktc4-dev", "COMPOSE_PROJECT_NAME="), False),
-        (DEV_ENV.replace("APP_ENV=dev\n", ""), False),
-        (PROD_ENV.replace("COMPOSE_PROFILES=edge", "COMPOSE_PROFILES="), False),
+        (DEV_ENV.replace("COMPOSE_PROJECT_NAME=ktc4-dev", "COMPOSE_PROJECT_NAME="), GOOD, False),
+        (DEV_ENV.replace("APP_ENV=dev\n", ""), GOOD, False),
+        (PROD_ENV.replace("COMPOSE_PROFILES=edge", "COMPOSE_PROFILES="), GOOD, False),
+        (DEV_ENV.replace("WEB_MEM_LIMIT=384m", "WEB_MEM_LIMIT="), GOOD, False),
+        # make deploy-up 이 깨진 계정으로 Caddy 를 다시 만들지 않게
+        (PROD_ENV, compose_config(user=""), False),
     ],
 )
-def test_check_env_only_inspects_env_file(box, env, ok):
-    """Makefile 배포 타깃이 먼저 부른다. git · docker 는 부르지 않는다."""
+def test_check_env_only_reads_env_and_compose_config(box, env, config, ok):
+    """Makefile 배포 타깃이 먼저 부른다. git 은 부르지 않고, docker 는 compose config(읽기)만."""
     box.env_file.write_text(env)
 
     result = subprocess.run(
@@ -338,9 +429,55 @@ def test_check_env_only_inspects_env_file(box, env, ok):
         cwd=box.env_file.parents[2],
         capture_output=True,
         text=True,
-        env={**os.environ, "PATH": box.path},
+        env=box.fake_env(config=config),
         timeout=30,
     )
 
     assert (result.returncode == 0) is ok, result.stdout + result.stderr
+    assert all(" config --format json" in c for c in box.calls())
+
+
+# ── Makefile ─────────────────────────────────────────────────────────
+
+
+def test_make_refuses_to_build_images_on_the_server(box):
+    """.deployed-tag 가 있으면 서버다. 손으로 구우면 지금 소스가 배포된 sha 태그를 덮어
+    롤백할 곳이 사라진다."""
+    for target in ("api-image", "web-image"):
+        result = box.make(target)
+
+        assert result.returncode != 0
+        assert "굽지 않는다" in result.stdout
     assert box.calls() == []
+
+
+def test_make_up_never_builds(box):
+    """api · web 은 compose 에 build: 가 있다. 이미지가 없을 때 up 이 구우면
+    위와 같은 덮어쓰기다."""
+    result = box.make("api-up", "web-up", "deploy-up")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    ups = [c for c in box.calls() if " up " in c]
+    assert len(ups) == 3
+    assert all(" up -d --no-build" in c and c.endswith("tag=prev web=prev") for c in ups)
+    assert "sudo -n deploy/scripts/imds-firewall.sh --install" in box.calls()
+
+
+@pytest.mark.parametrize("target", ["deploy-migrate", "deploy-load-food-dry"])
+def test_make_run_targets_stop_when_the_deployed_image_is_missing(box, target):
+    """compose run 에는 --no-build 가 없다 — 이미지가 없으면 지금 작업 트리를
+    그 sha 이름으로 굽는다."""
+    result = box.make(target, no_prev="1")
+
+    assert result.returncode != 0
+    assert "ktc4-dev-api:prev 이미지가 없다" in result.stdout
+    assert not any(" run " in c for c in box.calls())
+
+
+def test_make_migrate_reads_the_deployed_tag_when_it_runs(box):
+    """make 가 미리 읽은 태그가 아니라, 잠금을 잡은 뒤의 .deployed-tag 를 쓴다."""
+    result = box.make("deploy-migrate")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    run = next(c for c in box.calls() if " run --rm api " in c)
+    assert "alembic upgrade heads" in run and run.endswith("tag=prev web=prev")

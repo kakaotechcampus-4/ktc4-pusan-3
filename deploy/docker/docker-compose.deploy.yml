@@ -17,6 +17,14 @@
 #    함께 로그가 지워진다 — journald 면 OS 에 남고 `docker compose logs` 도 그대로 된다.
 #    이유는 docs/ops/logging-alerts-v1.md (멘토 #267 2번).
 #    로그 설정은 컨테이너를 만들 때 정해진다 — 나중에 바꾸면 다시 올려야 적용된다.
+# 🚨 메모리 상한(mem_limit)은 dev 만 건다 (#780). 상한 없는 dev 가 폭주하면 커널이 운영 postgres 를 죽일 수 있다.
+#    0 = 상한 없음 → prod 는 .env 에 안 써서 지금 그대로다. 값은 deploy/docker/.env.example.
+#    memswap_limit 을 같은 값으로 둔다 — mem_limit 만 두면 Docker 가 swap 을 같은 양만큼 더 줘서(MemorySwap = 2배)
+#    죽지 않고 서버 swap 을 채우며 운영까지 느려진다 (#808 리뷰). 둘 다 0 이면 둘 다 상한 없음이다.
+#    🚨 `${X:-0}` 은 빈 값도 0(상한 없음)으로 바꾼다 — dev 에서 비우면 상한이 조용히 빠져서 deploy.sh 가 dev 배포 전에 막는다.
+#    `compose run`(마이그레이션)에도 걸린다 —
+#    거기서 넘치면 exit 137 로 deploy.sh 가 up 전에 멈추고 옛 컨테이너가 그대로 서비스한다.
+#    이미지 빌드에는 안 걸린다 — 빌드는 deploy.sh 의 flock 이 한 번에 하나로 줄 세운다.
 
 x-logging: &logging
   # 서버(Ubuntu 24.04)는 journald. 맥의 Docker Desktop 에는 journald 가 없어서 배포 compose 를 로컬에서
@@ -49,6 +57,12 @@ services:
     # 🚨 depends_on(api · web) 을 두지 않는다. 있으면 compose 가 api · web 을 새로 만들 때마다 Caddy 를 먼저
     #    멈춰서, 운영 배포마다 dev 도 같이 끊기고 실패하면 롤백 내내 Caddy 가 꺼져 있다 (#753).
     #    Caddy 는 요청마다 이름을 찾으므로 api · web 이 늦게 떠도 그동안 502 일 뿐이다.
+    # dev 사이트를 팀만 열게 하는 basic_auth 계정 (#780, deploy/caddy/Caddyfile). prod .env 에만 둔다 — Caddy 는
+    # prod 프로젝트에만 뜬다. 🚨 해시는 .env 에서 작은따옴표로 감싼다 — 안 감싸면 compose 가 $… 를 변수로 먹어
+    # 늘 401 이다 (deploy.sh 가 prod 배포 전에 확인한다).
+    environment:
+      DEV_BASIC_AUTH_USER: ${DEV_BASIC_AUTH_USER:-}
+      DEV_BASIC_AUTH_HASH: ${DEV_BASIC_AUTH_HASH:-}
     networks:
       edge:
         ipv4_address: 172.30.0.10
@@ -58,6 +72,8 @@ services:
     container_name: ktc4${STACK_SUFFIX:-}-postgres-deploy
     restart: unless-stopped
     logging: *logging
+    mem_limit: ${DB_MEM_LIMIT:-0}
+    memswap_limit: ${DB_MEM_LIMIT:-0}
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -75,6 +91,8 @@ services:
     container_name: ktc4${STACK_SUFFIX:-}-redis-deploy
     restart: unless-stopped
     logging: *logging
+    mem_limit: ${REDIS_MEM_LIMIT:-0}
+    memswap_limit: ${REDIS_MEM_LIMIT:-0}
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -91,6 +109,8 @@ services:
     container_name: ktc4${STACK_SUFFIX:-}-api
     restart: unless-stopped
     logging: *logging
+    mem_limit: ${API_MEM_LIMIT:-0}
+    memswap_limit: ${API_MEM_LIMIT:-0}
     depends_on:
       db:
         condition: service_healthy
@@ -164,6 +184,8 @@ services:
     container_name: ktc4${STACK_SUFFIX:-}-web
     restart: unless-stopped
     logging: *logging
+    mem_limit: ${WEB_MEM_LIMIT:-0}
+    memswap_limit: ${WEB_MEM_LIMIT:-0}
     environment:
       # Next 서버에서 난 오류를 Discord 로 (apps/web/src/instrumentation.ts). 빌드가 아니라 실행 때 읽는다.
       # 비어 있으면 안 보낸다. api · 감시 스크립트와 같은 값 — 브라우저 번들엔 안 들어간다.
