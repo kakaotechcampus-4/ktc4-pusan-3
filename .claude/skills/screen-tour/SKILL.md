@@ -18,7 +18,7 @@ description: apps/web 화면에 구역·카드·버튼을 더하거나 빼거나
 | 단계 정의 (화면당 한 파일) | `apps/web/src/lib/tour/screens/<화면>.ts` |
 | 투어 이름 · 모양 · `TOUR_KEYS` | `apps/web/src/lib/tour/types.ts` |
 | 덮개 · ? 버튼 · 자동 시작 | `apps/web/src/components/screen-tour.tsx` (`ScreenTour` · `TourHelpButton`) |
-| "봤음" 저장 (지금 기기 · 나중에 서버) | `apps/web/src/lib/tour/seen.ts` |
+| "봤음" 저장 (서버 `/me/tours` · #696) | `apps/web/src/lib/tour/seen.ts` |
 | 화면별 결정 표 | `docs/web/screen-tour-v1.md` §1 |
 | e2e | `apps/web/e2e/screen-tour.spec.ts` · 다른 e2e 는 `fixtures.ts` 의 `toursSeen` 으로 다 본 채 시작 |
 

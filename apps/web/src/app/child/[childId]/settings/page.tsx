@@ -224,7 +224,7 @@ function SettingsScreen() {
 /**
  * 고객센터의 "화면 설명 다시 보기" (#632 · `docs/web/screen-tour-v1.md` §1). 각 화면의 ? 는 그 화면만
  * 다시 보여 주고, 이 줄은 모든 화면의 처음 설명을 다시 켠다 — 지금 바로 띄우지 않고 다음에 들어갈 때 뜬다.
- * 🚨 되돌릴 수 있는 일이라 확인 단계를 두지 않는다.
+ * 🚨 되돌릴 수 있는 일이라 확인 단계를 두지 않는다. 서버(#696)가 지운 뒤에만 "다시 켰어요" 라고 말한다.
  */
 function TourResetRow() {
   const tours = useResetTours();
@@ -237,7 +237,9 @@ function TourResetRow() {
         <span role="status">
           {tours.done
             ? "다시 켰어요. 각 화면에 들어가면 다시 보여 드려요."
-            : "처음 들어왔을 때 보던 설명을 모든 화면에서 다시 켜요."}
+            : tours.failed
+              ? "다시 켜지 못했어요. 잠시 뒤에 다시 눌러 주세요."
+              : "처음 들어왔을 때 보던 설명을 모든 화면에서 다시 켜요."}
         </span>
       }
       action={
@@ -245,7 +247,7 @@ function TourResetRow() {
           variant="tertiary"
           size="compact"
           className="shrink-0"
-          disabled={!tours.ready || tours.done}
+          disabled={!tours.ready || tours.pending || tours.done}
           onClick={tours.reset}
         >
           다시 켜기
