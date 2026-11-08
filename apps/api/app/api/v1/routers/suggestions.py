@@ -498,7 +498,14 @@ async def create_suggestions(
                     claimed[a] = task
 
         to_run = fresh + [
-            entrypoint.SuggestTask(a, t.task_type, t.request_texts) for a, t in claimed.items()
+            entrypoint.SuggestTask(
+                a,
+                t.task_type,
+                t.request_texts,
+                original_texts=t.original_texts,
+                prior_texts=t.prior_texts,
+            )
+            for a, t in claimed.items()
         ]
         health_consent = await child_health_granted(session, child_id=child.child_id)
         if to_run:

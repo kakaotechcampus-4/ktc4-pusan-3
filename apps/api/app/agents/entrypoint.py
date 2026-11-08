@@ -429,6 +429,9 @@ class SuggestTask:
     agent: str
     task_type: str | None
     request_texts: tuple[str, ...]
+    # 입력 run 이 앞 대화를 이어 묻는 task 였으면 보호자 원문 · 앞 턴의 말 (`DomainTask` 와 같다)
+    original_texts: tuple[str, ...] = ()
+    prior_texts: tuple[str, ...] = ()
 
 
 SUGGESTION_AGENTS: frozenset[str] = frozenset(RECOMMENDING_TASKS)
@@ -504,7 +507,15 @@ async def suggest(
         affinity_reader=affinity_reader,
     )
     domain_tasks = tuple(
-        DomainTask(request_id, task.agent, task.task_type, task.request_texts) for task in tasks
+        DomainTask(
+            request_id,
+            task.agent,
+            task.task_type,
+            task.request_texts,
+            original_texts=task.original_texts,
+            prior_texts=task.prior_texts,
+        )
+        for task in tasks
     )
     return await pipeline.run_suggestions(
         domain_tasks, contexts, save_run_id=save_run_id, save_suggestions=save_suggestions

@@ -159,7 +159,11 @@ def agent_job(
                     child_id=child_id,
                     agent=event.agent,
                     task=suggestion_retry.RetryTask(
-                        event.task_type, event.request_texts, event.sent_at
+                        event.task_type,
+                        event.request_texts,
+                        event.sent_at,
+                        original_texts=event.original_texts,
+                        prior_texts=event.prior_texts,
                     ),
                 )
                 return

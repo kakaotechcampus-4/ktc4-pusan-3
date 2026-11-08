@@ -1266,3 +1266,41 @@ async def test_화면에_안_나간_조회_카드는_대화에도_남기지_않�
 
     assert names(channel) == ["delete_proposal", "done"]
     assert [type(event).__name__ for event in recorded] == ["DeleteProposed", "Done"]
+
+
+async def test_실패_맥락은_해석과_보호자_원문을_같이_보관한다(monkeypatch):
+    suggestion_retry.clear()
+    sent_at = datetime(2026, 1, 1, tzinfo=UTC)
+
+    async def fake_handle_input(**kwargs):
+        run_id = kwargs["run_id"]
+        kwargs["emit"](
+            RetryContext(
+                run_id,
+                "activity",
+                None,
+                ("블록 쌓기보다 쉬운 놀이 추천",),
+                sent_at,
+                original_texts=("더 쉬운 건 없어?",),
+                prior_texts=("블록 놀이 추천해줘",),
+            )
+        )
+        kwargs["emit"](Done(run_id, 0))
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+
+    job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    claimed = suggestion_retry.claim(
+        run_id=channel.run_id, parent_id=PARENT, child_id=CHILD, agent="activity"
+    )
+    assert claimed == suggestion_retry.RetryTask(
+        None,
+        ("블록 쌓기보다 쉬운 놀이 추천",),
+        sent_at,
+        original_texts=("더 쉬운 건 없어?",),
+        prior_texts=("블록 놀이 추천해줘",),
+    )
+    suggestion_retry.clear()
