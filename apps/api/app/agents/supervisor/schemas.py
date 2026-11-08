@@ -321,7 +321,21 @@ ROUTE_TOOL = ToolDefinition(
     ),
     args=SupervisorOutput,
 )
-ROUTE_TOOL_SPEC = build_tool_spec(ROUTE_TOOL)
+_ROUTE_TOOL_SPEC_FULL = build_tool_spec(ROUTE_TOOL)
+
+
+def _without_resolved(spec: dict[str, Any]) -> dict[str, Any]:
+    copied = deepcopy(spec)
+    item = copied["function"]["parameters"]["properties"]["segments"]["items"]
+    item["properties"].pop("resolved_request")
+    return copied
+
+
+# 앞 대화가 없는 호출 — 앞 대화 기능이 생기기 전과 같은 여덟 칸이다. 단발 요청의 분류가 이 기능
+# 때문에 흔들리지 않게 모델이 보는 것을 늘리지 않는다
+ROUTE_TOOL_SPEC = _without_resolved(_ROUTE_TOOL_SPEC_FULL)
+# 앞 대화가 있는 호출 — `resolved_request` 칸이 더해진다
+ROUTE_TOOL_SPEC_CONTEXT = _ROUTE_TOOL_SPEC_FULL
 
 
 def _strict(spec: dict[str, Any]) -> dict[str, Any]:
@@ -339,6 +353,7 @@ def _strict(spec: dict[str, Any]) -> dict[str, Any]:
 
 
 ROUTE_TOOL_SPEC_STRICT = _strict(ROUTE_TOOL_SPEC)
+ROUTE_TOOL_SPEC_CONTEXT_STRICT = _strict(ROUTE_TOOL_SPEC_CONTEXT)
 
 # 검증 실패 코드 — 모두 "Memory 단독으로 강등" 으로 이어진다 (재시도하지 않는다)
 NOT_SUBSTRING = "NOT_SUBSTRING"

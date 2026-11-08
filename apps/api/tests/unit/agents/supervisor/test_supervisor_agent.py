@@ -27,7 +27,8 @@ from app.agents.supervisor.context import (
     PriorResult,
     PriorTurn,
 )
-from app.agents.supervisor.schemas import NOT_SUBSTRING
+from app.agents.supervisor.prompt import build_system_prompt
+from app.agents.supervisor.schemas import NOT_SUBSTRING, ROUTE_TOOL_SPEC, ROUTE_TOOL_SPEC_CONTEXT
 
 RAW = "오늘 사과를 먹었어. 저녁에는 뭘 먹이면 좋을까?"
 _GOOD = {
@@ -372,7 +373,30 @@ async def test_맥락이_없으면_메시지_구성이_지금과_같다() -> Non
 
     await run(FOLLOW_RAW, client=llm)
 
-    assert [m["role"] for m in llm.calls[0]["messages"]] == ["system", "user"]
+    params = llm.calls[0]
+    assert [m["role"] for m in params["messages"]] == ["system", "user"]
+    # 앞 대화가 없는 호출은 앞 대화 기능이 생기기 전과 같은 system 프롬프트 · tool spec 을 쓴다
+    assert params["messages"][0]["content"] == build_system_prompt()
+    assert "[앞 대화가 올 때]" not in params["messages"][0]["content"]
+    assert params["tools"] == [ROUTE_TOOL_SPEC]
+
+
+async def test_맥락이_있으면_앞_대화_절과_resolved_request_칸이_모델에_간다() -> None:
+    llm = FakeLLM(_route(FOLLOW))
+
+    await run(FOLLOW_RAW, client=llm, context=CTX)
+
+    params = llm.calls[0]
+    assert params["messages"][0]["content"] == build_system_prompt(with_context=True)
+    assert params["tools"] == [ROUTE_TOOL_SPEC_CONTEXT]
+
+
+async def test_빈_맥락도_앞_대화용_프롬프트와_spec_을_쓴다() -> None:
+    llm = FakeLLM(_route(FOLLOW))
+
+    await run(FOLLOW_RAW, client=llm, context=ConversationContext())
+
+    assert llm.calls[0]["tools"] == [ROUTE_TOOL_SPEC_CONTEXT]
 
 
 async def test_로그에_해석_문장과_앞_대화가_없다(caplog: pytest.LogCaptureFixture) -> None:
@@ -382,3 +406,12 @@ async def test_로그에_해석_문장과_앞_대화가_없다(caplog: pytest.Lo
 
     assert "resolved=1" in caplog.text and "turns=1" in caplog.text
     assert "블록 쌓기" not in caplog.text and "실내 놀이" not in caplog.text
+
+
+async def test_빈_맥락에서_온_해석은_지운다() -> None:
+    """이어 볼 앞 대화가 없으면 모델이 쓴 해석은 지어낸 문장이다 — 보호자 요청으로 넘기지 않는다."""
+    result = await run(FOLLOW_RAW, client=FakeLLM(_route(FOLLOW)), context=ConversationContext())
+
+    assert result.output is not None
+    (segment,) = result.output.segments
+    assert segment.resolved_request is None

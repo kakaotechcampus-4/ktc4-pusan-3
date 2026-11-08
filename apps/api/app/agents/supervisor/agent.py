@@ -18,6 +18,8 @@ from app.agents.supervisor.context import ConversationContext
 from app.agents.supervisor.prompt import build_system_prompt
 from app.agents.supervisor.schemas import (
     ROUTE_TOOL_SPEC,
+    ROUTE_TOOL_SPEC_CONTEXT,
+    ROUTE_TOOL_SPEC_CONTEXT_STRICT,
     ROUTE_TOOL_SPEC_STRICT,
     Segment,
     SupervisorOutput,
@@ -45,17 +47,25 @@ _FORCE_ROUTE: dict[str, Any] = {"type": "function", "function": {"name": "route"
 _USE_STRICT = os.getenv("SUPERVISOR_STRICT", "0") == "1"
 
 
-def _attempts(*, strict: bool) -> tuple[tuple[dict[str, Any], Any], ...]:
-    """스펙과 tool_choice 조합을 앞에서부터 시도한다. provider 가 거절하면 다음으로 물러선다."""
+def _attempts(
+    *, strict: bool, with_context: bool = False
+) -> tuple[tuple[dict[str, Any], Any], ...]:
+    """스펙과 tool_choice 조합을 앞에서부터 시도한다. provider 가 거절하면 다음으로 물러선다.
+
+    with_context 는 앞 대화를 같이 보내는 호출이다 — `resolved_request` 칸이 든 스펙을 쓴다.
+    """
+    spec = ROUTE_TOOL_SPEC_CONTEXT if with_context else ROUTE_TOOL_SPEC
+    strict_spec = ROUTE_TOOL_SPEC_CONTEXT_STRICT if with_context else ROUTE_TOOL_SPEC_STRICT
     fallbacks = (
-        (ROUTE_TOOL_SPEC, _FORCE_ROUTE),
-        (ROUTE_TOOL_SPEC, "required"),
-        (ROUTE_TOOL_SPEC, "auto"),
+        (spec, _FORCE_ROUTE),
+        (spec, "required"),
+        (spec, "auto"),
     )
-    return ((ROUTE_TOOL_SPEC_STRICT, _FORCE_ROUTE), *fallbacks) if strict else fallbacks
+    return ((strict_spec, _FORCE_ROUTE), *fallbacks) if strict else fallbacks
 
 
 _ATTEMPTS = _attempts(strict=_USE_STRICT)
+_ATTEMPTS_CONTEXT = _attempts(strict=_USE_STRICT, with_context=True)
 
 
 @dataclass
@@ -96,8 +106,10 @@ async def run(
 
     context 는 후속 질문일 때만 pipeline 이 넘기는 앞 대화다. 이번 문장 앞 user 메시지 하나로 싣고
     (재분기 호출에도 같다), 조각 text 는 언제나 이번 문장에서만 자른다. 앞 대화를 받은 request
-    조각만 `resolved_request` 를 가진다 — 맥락 없이 온 값은 지운다. 빈 맥락도 "없음" 한 줄로
-    싣는다 — 이어 볼 것이 없다는 사실을 모델이 알아야 짐작해서 고르지 않는다.
+    조각만 `resolved_request` 를 가진다 — 맥락이 없거나 턴이 하나도 없으면 지운다. 빈 맥락도
+    "없음" 한 줄로 싣는다 — 이어 볼 것이 없다는 사실을 모델이 알아야 짐작해서 고르지 않는다.
+    🚨 context=None 이면 system 프롬프트 · tool spec · 메시지가 앞 대화 기능이 생기기 전과 같다.
+    앞 대화 절과 `resolved_request` 칸은 앞 대화를 같이 보내는 호출에만 붙는다.
     """
     started = time.perf_counter()
     try:
@@ -105,7 +117,8 @@ async def run(
     except LLMError as exc:
         # SUPERVISOR_* 설정 오류. 입력 실패로 만들지 않고 강등
         return _failed(LLM_UNAVAILABLE, 0, {}, started, detail=type(exc).__name__)
-    messages = [{"role": "system", "content": build_system_prompt()}]
+    with_context = context is not None
+    messages = [{"role": "system", "content": build_system_prompt(with_context=with_context)}]
     if context is not None:
         messages.append({"role": "user", "content": context.render()})
         logger.info("supervisor context turns=%d", len(context.turns))
@@ -116,7 +129,7 @@ async def run(
     usage: dict[str, int] = {}
     calls = 0
     response = None
-    for spec, tool_choice in _ATTEMPTS:
+    for spec, tool_choice in _ATTEMPTS_CONTEXT if with_context else _ATTEMPTS:
         try:
             calls += 1
             response = await llm.chat(
@@ -181,8 +194,9 @@ async def run(
         output = SupervisorOutput(segments=kept)
         broken = [*broken, *(f"조각 {index}:{code}" for index, code in failures)]
 
-    if context is None and any(segment.resolved_request for segment in output.segments):
-        # 앞 대화를 못 받았는데 해석을 냈다 — 지어낸 문장이라 쓰지 않는다
+    no_turns = context is None or not context.turns
+    if no_turns and any(segment.resolved_request for segment in output.segments):
+        # 이어 볼 앞 대화가 없는데 해석을 냈다 — 지어낸 문장이라 쓰지 않는다(빈 맥락 · 조회 실패도)
         output = SupervisorOutput(
             segments=[
                 segment.model_copy(update={"resolved_request": None}) for segment in output.segments

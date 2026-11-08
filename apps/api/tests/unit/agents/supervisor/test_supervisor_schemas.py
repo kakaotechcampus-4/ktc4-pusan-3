@@ -68,17 +68,26 @@ def test_정해진_필드만_노출한다() -> None:
         "growth_task",
         "health_task",
         "guard",
-        "resolved_request",
     }
 
 
-def test_tool_spec_에_resolved_request_가_있다() -> None:
-    from app.agents.supervisor.schemas import ROUTE_TOOL_SPEC_STRICT
+def _segment_item(spec: dict[str, Any]) -> dict[str, Any]:
+    return spec["function"]["parameters"]["properties"]["segments"]["items"]
 
-    item = ROUTE_TOOL_SPEC["function"]["parameters"]["properties"]["segments"]["items"]
-    strict = ROUTE_TOOL_SPEC_STRICT["function"]["parameters"]["properties"]["segments"]["items"]
-    assert "resolved_request" in item["properties"]
-    assert "resolved_request" in strict["required"]
+
+def test_앞_대화가_있을_때만_tool_spec_에_resolved_request_가_있다() -> None:
+    from app.agents.supervisor.schemas import (
+        ROUTE_TOOL_SPEC_CONTEXT,
+        ROUTE_TOOL_SPEC_CONTEXT_STRICT,
+        ROUTE_TOOL_SPEC_STRICT,
+    )
+
+    assert "resolved_request" not in _segment_item(ROUTE_TOOL_SPEC)["properties"]
+    assert "resolved_request" not in _segment_item(ROUTE_TOOL_SPEC_STRICT)["required"]
+    assert "resolved_request" in _segment_item(ROUTE_TOOL_SPEC_CONTEXT)["properties"]
+    assert "resolved_request" in _segment_item(ROUTE_TOOL_SPEC_CONTEXT_STRICT)["required"]
+    base = set(_segment_item(ROUTE_TOOL_SPEC)["properties"])
+    assert set(_segment_item(ROUTE_TOOL_SPEC_CONTEXT)["properties"]) == base | {"resolved_request"}
 
 
 # ── resolved_request ────────────────────────────────────────────
