@@ -104,6 +104,11 @@ def _scored(rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
     return [row for row in rows if "skipped" not in row]
 
 
+def row_status(row: dict[str, Any]) -> str:
+    """run 판정 — status 가 없는 옛 행(11-08 전)은 passed 로 읽는다."""
+    return row.get("status") or ("pass" if row["passed"] else "fail")
+
+
 def summarize(rows: Sequence[dict[str, Any]]) -> dict[str, CaseResult]:
     cases: dict[str, CaseResult] = {}
     for row in _scored(rows):
@@ -113,8 +118,7 @@ def summarize(rows: Sequence[dict[str, Any]]) -> dict[str, CaseResult]:
                 row["case"], row["ability"], row["severity"], row["headline"], row["repeat"]
             ),
         )
-        # status 가 없는 옛 행(11-08 전)은 passed 로 읽는다
-        result.statuses.append(row.get("status") or ("pass" if row["passed"] else "fail"))
+        result.statuses.append(row_status(row))
         result.violations += row["violations"]
         result.misses += row["misses"]
         result.notes += row.get("notes", [])
@@ -259,7 +263,8 @@ def _week(rows: Sequence[dict[str, Any]]) -> list[str]:
         mine = [row for row in week_rows if row["week"] == week]
         steps = [row for row in mine if row["step_kind"] != "check"]
         checks = [row for row in mine if row["step_kind"] == "check"]
-        failed = [row for row in mine if not row["passed"]]
+        failed = [row for row in mine if row_status(row) == "fail"]
+        asked = sum(1 for row in steps if row_status(row) == "untested")
         first = (failed[0]["violations"] + failed[0]["misses"] or ["-"])[0] if failed else "-"
         tokens = 0
         for row in mine:
@@ -272,7 +277,9 @@ def _week(rows: Sequence[dict[str, Any]]) -> list[str]:
         )
         why = _cell(f"{failed[0]['case']}: {first}") if failed else "-"
         lines.append(
-            f"| {week} | {sum(1 for r in steps if r['passed'])}/{len(steps)} | {check_text} "
+            f"| {week} | {sum(1 for r in steps if r['passed'])}/{len(steps)}"
+            + (f" · 판정 못 함 {asked}" if asked else "")
+            + f" | {check_text} "
             f"| {tokens:,} | {why} |"
         )
     if skipped:

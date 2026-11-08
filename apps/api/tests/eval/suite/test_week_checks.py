@@ -502,3 +502,13 @@ async def test_남은_W_행은_표식_보호자와_eval_레시피만_지운다(m
     assert seen["parent_like"] == f"{W_MARK}%"
     assert seen["drop"] == ([child], [parent])
     assert seen["recipes"] == week_runner.recipe_keys() and seen["recipes"]
+
+
+def test_W_요약은_시험_못_한_단계를_실패로_세지_않는다() -> None:
+    asked = _row("W-A", "mon-dinner-ask", "say", "mom", "2026-11-16", passed=False)
+    asked["status"] = "untested"
+    asked["misses"] = ["food 추천 없음"]
+    rows = [_row("W-A", "mon-breakfast", "say", "mom", "2026-11-16"), asked]
+    md = render(rows, source="week.jsonl", sha="abc", day="2026-11-08")
+    assert "| W-A | 1/2 · 판정 못 함 1 | 없음 | " in md
+    assert "W-A:mon-dinner-ask: food" not in md  # 첫 실패 이유로 올리지 않는다
