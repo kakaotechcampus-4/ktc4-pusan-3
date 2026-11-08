@@ -197,7 +197,7 @@ async def _check_allergens_before_approve(session, *, child_id: _uuid.UUID, rows
         raise ApiError(
             409,
             "allergen_blocked",
-            "알레르기로 등록된 식품이 들어 있어 고를 수 없어요",
+            "알레르기로 등록된 항목이 들어 있어 고를 수 없어요",
             {"suggestion_ids": blocked},
         )
 

@@ -7,13 +7,14 @@ import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 
+import pytest
 from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api import idempotency
 from app.domains.safety.models import SafetyKind
-from app.domains.safety.repository import create_safety, retract_safety
+from app.domains.safety.repository import create_safety
 from app.domains.suggestion.models import (
     Suggestion,
     SuggestionAgent,
@@ -208,19 +209,15 @@ async def test_채택_재확인은_목록과_같은_이름_사전으로_맞춘�
     assert resp.json()["error"]["code"] == "allergen_blocked"
 
 
-async def test_알레르기_기록에_없거나_내린_항목은_채택을_막지_않는다(
+async def test_알레르기_기록에_없는_항목은_채택을_막지_않는다(
     db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID, monkeypatch
 ):
-    """막는 것은 active 뿐이다 — 답을 미룬 "모름" 과 내린 기록은 채택된다."""
+    """답을 미룬 "모름"(행 없음)은 막지 않는다 (event-draft-ui-v1.md §3-8)."""
     monkeypatch.setattr("app.api.v1.routers.suggestions.child_health_granted", _granted(True))
-    headers, parent_id = bearer
+    headers, _ = bearer
     row = await _make_suggestion(
-        session, child_id=cid, agent=SuggestionAgent.FOOD, allergens=["잣", "우유"]
+        session, child_id=cid, agent=SuggestionAgent.FOOD, allergens=["잣"]
     )
-    milk = await create_safety(
-        session, child_id=cid, parent_id=parent_id, kind=SafetyKind.ALLERGY, label="우유"
-    )
-    await retract_safety(session, child_id=cid, safety_id=milk.id, parent_id=parent_id)
 
     resp = await _approve(db_client, cid, headers, row)
 
@@ -264,26 +261,73 @@ async def test_건강정보_동의가_없으면_알레르기_항목이_든_추�
     assert row.status == SuggestionStatus.DRAFT
 
 
-async def test_이미_채택한_추천을_다시_보내면_알레르기를_다시_보지_않는다(
+async def test_이미_채택한_추천은_새로_고른_추천과_같이_와도_알레르기를_다시_보지_않는다(
     db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID, monkeypatch
 ):
-    """멱등 재전송은 지금처럼 200 — 채택 뒤에 등록된 알레르기로 지난 채택을 뒤집지 않는다."""
+    """채택 뒤에 등록된 알레르기로 지난 채택을 뒤집지 않는다 — 새로 고른 추천만 다시 본다."""
     monkeypatch.setattr("app.api.v1.routers.suggestions.child_health_granted", _granted(True))
     headers, parent_id = bearer
-    row = await _make_suggestion(
+    earlier = await _make_suggestion(
         session,
         child_id=cid,
         agent=SuggestionAgent.FOOD,
         status=SuggestionStatus.APPROVED,
         allergens=["호두"],
     )
+    fresh = await _make_suggestion(session, child_id=cid, agent=SuggestionAgent.FOOD)
     await create_safety(
         session, child_id=cid, parent_id=parent_id, kind=SafetyKind.ALLERGY, label="호두"
     )
 
-    resp = await _approve(db_client, cid, headers, row)
+    resp = await _approve(db_client, cid, headers, earlier, fresh)
 
     assert resp.status_code == 200
+    assert {s["status"] for s in resp.json()["suggestions"]} == {"approved"}
+    await session.refresh(fresh)
+    assert fresh.status == SuggestionStatus.APPROVED
+
+
+async def test_만료된_추천이_섞이면_알레르기보다_만료를_먼저_알린다(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID, monkeypatch
+):
+    monkeypatch.setattr("app.api.v1.routers.suggestions.child_health_granted", _granted(True))
+    headers, parent_id = bearer
+    walnut = await _make_suggestion(
+        session, child_id=cid, agent=SuggestionAgent.FOOD, allergens=["호두"]
+    )
+    expired = await _make_suggestion(
+        session, child_id=cid, expires_at=datetime.now(UTC) - timedelta(hours=1)
+    )
+    await create_safety(
+        session, child_id=cid, parent_id=parent_id, kind=SafetyKind.ALLERGY, label="호두"
+    )
+
+    resp = await _approve(db_client, cid, headers, walnut, expired)
+
+    assert resp.status_code == 409
+    assert resp.json()["error"]["code"] == "suggestion_expired"
+
+
+async def test_알레르기를_못_읽으면_통과시키지_않고_아무것도_채택하지_않는다(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID, monkeypatch
+):
+    """못 읽었다고 기본값으로 넘기지 않는다 (루트 §2) — 예외가 그대로 올라간다."""
+    monkeypatch.setattr("app.api.v1.routers.suggestions.child_health_granted", _granted(True))
+
+    async def broken(*args, **kwargs):
+        raise RuntimeError("DB 를 읽지 못했다")
+
+    monkeypatch.setattr("app.api.v1.routers.suggestions.list_safety_labels", broken)
+    headers, _ = bearer
+    row = await _make_suggestion(
+        session, child_id=cid, agent=SuggestionAgent.FOOD, allergens=["호두"]
+    )
+
+    with pytest.raises(RuntimeError):
+        await _approve(db_client, cid, headers, row)
+
+    await session.refresh(row)
+    assert row.status == SuggestionStatus.DRAFT
 
 
 # ── 일정 초안 API ─────────────────────────────────────────────────────────

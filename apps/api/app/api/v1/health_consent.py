@@ -1,7 +1,8 @@
 """건강정보 동의(`child_health`)가 없을 때 내는 오류.
 
-알레르기 등록 · 고치기 · 추천 채택이 같이 쓴다.
-봉투가 한 곳에서만 만들어져야 화면이 같은 코드 · 같은 상세로 동의 화면을 연다.
+알레르기 등록 · 고치기 · 추천 채택이 같이 쓴다 — 같은 코드 · 같은 상세(scopes + deeplink)로
+동의 화면을 열게 하려는 것이다. ⚠️ 복약(`routers/medications.py`)은 아직 deeplink 없는 봉투를
+따로 만든다 — 그쪽을 손볼 때 이 함수로 옮긴다.
 """
 
 from app.api.errors import ApiError
