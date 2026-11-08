@@ -374,10 +374,14 @@ test.describe("07 기록 탭은 서버(#266)가 주는 대로 그린다 (#269)",
     const sheet = page.getByRole("dialog", { name: "기록 상세" });
 
     await expect(sheet.getByText("기침", { exact: true }).first()).toBeVisible();
+    // 다른 기록과 같은 자리 · 같은 묻는 줄에 지우기만 선다 — 고친 기록처럼 보이지 않게.
+    await expect(sheet.getByText("이 기록이 어떤가요?")).toBeVisible();
     await expect(sheet.getByRole("button", { name: "기록 지우기" })).toBeVisible();
     // 🚨 서버가 건강 기록 고치기를 400 으로 막는다 — 누르면 실패하는 버튼을 세우지 않는다.
-    await expect(sheet.getByText("이 기록이 어떤가요?")).toHaveCount(0);
     await expect(sheet.getByRole("button", { name: "이번만 그랬어요" })).toHaveCount(0);
+    // 🚨 고칠 수 없는 기록이라 근거에서 "빠졌다" 고 하지 않는다.
+    await expect(sheet.getByText("아직 이 기록을 쓴 추천이 없어요.")).toBeVisible();
+    await expect(sheet.getByText("이 기록은 제안 근거에서 빠져 있어요.")).toHaveCount(0);
     // 고친 기록이 아니다 — 고친 기록 안내를 세우지 않는다.
     await expect(sheet.getByText(/고친 기록이에요/)).toHaveCount(0);
     // 🚨 승인 게이트가 아니다 — `caution` 도 `btn-approve` 도 없다.
