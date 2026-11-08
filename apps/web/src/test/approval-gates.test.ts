@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 /**
  * 승인 게이트가 **딱 3곳**인 것을 코드로 건다 (최상위 CLAUDE.md §2 실행 · #242 · #754).
  *
- *   ㉠ 캘린더 쓰기 — 초안 제출 (`submitEventDraft` · `updateEventDraft`)
+ *   ㉠ 캘린더 쓰기 — 초안 제출 (`submitEventDraft` · `updateEventDraft` · 반복 묶음 고치기 `updateEventSeries` #738)
  *   ㉡ 건강·알레르기 기록 확정 — 등록 `addHealthSafety` · 고치기 `updateHealthSafety` ·
  *      복약 초안 제출 `submitMedicationDraft` · `updateMedicationDraft` (#537 — 같은 게이트의 다른 메서드)
  *   ㉢ 대화로 지울 때의 삭제 확정 — `confirmDeleteProposal` (#535 · 11-03 팀 회의)
@@ -59,6 +59,10 @@ describe("승인 게이트 ㉠ 캘린더 쓰기", () => {
       "components/photo-entry-sheet.tsx",
     ]);
     expect(callers("updateEventDraft")).toEqual(["components/event-draft-list.tsx"]);
+  });
+
+  it("반복 묶음 고치기도 초안 카드 목록에서만 부른다 (#738 · 같은 게이트의 다른 메서드)", () => {
+    expect(callers("updateEventSeries")).toEqual(["components/event-draft-list.tsx"]);
   });
 });
 

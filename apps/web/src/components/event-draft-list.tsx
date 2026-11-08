@@ -6,13 +6,25 @@ import { useEffect, useRef, useState } from "react";
 
 import {
   EventDraftCard,
+  SeriesDraftCard,
   type DraftSubmitFinal,
   type DraftSubmitState,
 } from "@/components/event-draft-card";
 import { Button } from "@/components/ui/button";
 import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
-import { qk, submitEventDraft, updateEventDraft, type EventDraft } from "@/lib/api";
+import {
+  isApiError,
+  qk,
+  submitEventDraft,
+  updateEventDraft,
+  updateEventSeries,
+  type AnyEventDraft,
+  type EventDraft,
+  type IdempotencyKey,
+  type SeriesDraft,
+} from "@/lib/api";
 import { useIdempotencyKey } from "@/lib/api/use-idempotency-key";
+import { isSeriesDraft, seriesSubmitBody } from "@/lib/event-draft";
 import {
   mergeDrafts,
   useEventDraftStore,
@@ -67,7 +79,8 @@ export function EventDraftList({
   transient = false,
 }: {
   childId: string;
-  incoming: EventDraft[];
+  /** 🚨 반복 묶음 고치기(#738)가 섞여 온다 — 장마다 `op` 로 카드를 가른다 (`DraftRow`). */
+  incoming: AnyEventDraft[];
   /**
    * 어느 경로의 목록인가. 🚨 **스토어에서 되읽을 때 이 값으로 거른다** — 한 아이의 초안을
    *    통째로 그리면 04 에서 안 낸 초안이 08 화면에 "사진에서 읽어냈어요" 를 달고 선다.
@@ -156,6 +169,8 @@ export function EventDraftList({
   const index = Math.min(page, rows.length - 1);
   const done = submittedIds.length;
   const multiple = rows.length > 1;
+  /** 🚨 반복 묶음 고치기(#738)가 섞이면 "넣었어요" 가 거짓말이 된다 — 고친 것은 넣은 것이 아니다. */
+  const finished = rows.some((row) => isSeriesDraft(row.draft)) ? "마쳤어요" : "넣었어요";
 
   return (
     <section className="flex flex-col gap-3">
@@ -221,8 +236,8 @@ export function EventDraftList({
           {done > 0 ? (
             <p role="status" className="text-body-sm text-ink-muted text-center">
               {done === rows.length
-                ? `${rows.length}건 전부 넣었어요.`
-                : `${rows.length}건 중 ${done}건 넣었어요.`}
+                ? `${rows.length}건 전부 ${finished}.`
+                : `${rows.length}건 중 ${done}건 ${finished}.`}
             </p>
           ) : null}
         </div>
@@ -232,53 +247,52 @@ export function EventDraftList({
 }
 
 /**
- * 초안 한 장의 제출. 🚨 **카드마다 이 컴포넌트가 하나씩**이라 `useIdempotencyKey()` 도 하나씩이다 —
- * 하나로 묶으면 두 번째 제출이 "같은 키 · 다른 본문" 이라 422 다.
+ * 초안 한 장. 🚨 **`op` 로 카드를 가른다** — 반복 묶음 고치기(#738)는 일정 카드의 모양이 아니다.
+ * 두 갈래 모두 승인 게이트 ㉠ 이고, 제출 · 키 · 성공 뒤 처리는 `useDraftSubmit` 하나가 진다.
  */
-function DraftRow({
-  childId,
-  draft,
-  blocked,
-  lockReason,
-  onSubmitted,
-}: {
+function DraftRow(props: {
   childId: string;
-  draft: EventDraft;
+  draft: AnyEventDraft;
   blocked: boolean;
   lockReason?: string;
   onSubmitted: (draftId: string) => void;
 }) {
+  const { draft } = props;
+  return isSeriesDraft(draft) ? (
+    <SeriesDraftRow {...props} draft={draft} />
+  ) : (
+    <EventDraftRow {...props} draft={draft} />
+  );
+}
+
+/**
+ * 초안 한 장의 제출. 🚨 **카드마다 이 훅이 하나씩**이라 `useIdempotencyKey()` 도 하나씩이다 —
+ * 하나로 묶으면 두 번째 제출이 "같은 키 · 다른 본문" 이라 422 다.
+ */
+const REPEAT_FIX_HINT = "반복하는 요일이나 날짜를 바꾸려면 대화로 다시 말해 주세요.";
+
+function useDraftSubmit<Body>(
+  childId: string,
+  draftId: string,
+  onSubmitted: (draftId: string) => void,
+  send: (body: Body, key: IdempotencyKey) => Promise<unknown>,
+  /** 서버가 이유를 주지 않았을 때의 말. 🚨 묶음 고치기는 "넣지" 가 아니라 "바꾸지" 못한 것이다. */
+  fallbackError = "넣지 못했어요.",
+) {
   const queryClient = useQueryClient();
   const removeDraft = useEventDraftStore((s) => s.removeDraft);
   const submitKey = useIdempotencyKey();
   const [submitted, setSubmitted] = useState(false);
 
   const submit = useMutation({
-    mutationFn: (body: DraftSubmitFinal) => {
-      /**
-       * 🚨 **`op` 에 따라 엔드포인트가 갈린다** (9/21 회의): create 는 `POST`, update 는 `PATCH`.
-       *    🚨 **둘 다 같은 키를 쓴다** — PATCH 도 `item_id: null` 인 새 준비물 때문에 멱등이 아니다
-       *    (`operations.ts` 의 주석).
-       */
-      if (draft.op === "update" && draft.event_id) {
-        // 🚨 수정은 `reminder` 를 싣지 않는다 (`event-draft-card.tsx` 머리말).
-        const update = { event: body.event, items: body.items };
-        return updateEventDraft(childId, draft.event_id, update, submitKey.current());
-      }
-      // 🚨 묶인 초안은 여러 제안에서 온다 — 전부 이 일정에 연결돼야 한다 (#206).
-      const create = {
-        ...body,
-        ...(draft.suggestion_ids ? { suggestion_ids: draft.suggestion_ids } : {}),
-      };
-      return submitEventDraft(childId, create, submitKey.current());
-    },
+    mutationFn: (body: Body) => send(body, submitKey.current()),
     onSuccess: async () => {
       // 🚨 성공한 뒤에만 다음 키로 넘어간다. 실패 뒤 다시 누르는 것은 재시도라 같은 키여야 한다.
       submitKey.rotate();
       setSubmitted(true);
-      onSubmitted(draft.draft_id);
+      onSubmitted(draftId);
       // 🚨 스토어에서 뺀다 — 다음에 열었을 때 이미 넣은 일정이 초안으로 되살아나지 않게.
-      removeDraft(childId, draft.draft_id);
+      removeDraft(childId, draftId);
       // 일정 하나가 홈 카운트·캘린더를 동시에 바꾼다. 아이 스코프를 통째로 무효화한다.
       await queryClient.invalidateQueries({ queryKey: qk.child(childId) });
     },
@@ -291,6 +305,58 @@ function DraftRow({
       : submit.isError
         ? "failed"
         : "idle";
+  const error = submit.isError
+    ? submit.error instanceof Error
+      ? submit.error.message
+      : fallbackError
+    : undefined;
+
+  /**
+   * 🚨 반복 규칙 오류는 카드에서 고칠 수 없다 (`invalid_repeat` · #761). 요일 · 끝 날짜 · 첫 회차를 고칠 칸이 없어서
+   *    같은 초안으로 다시 눌러도 같은 422 다 — 어떻게 하면 되는지를 서버 문구 아래에 붙인다.
+   */
+  const errorHint = isApiError(submit.error, "invalid_repeat") ? REPEAT_FIX_HINT : undefined;
+
+  return { state, error, errorHint, mutate: submit.mutate };
+}
+
+function EventDraftRow({
+  childId,
+  draft,
+  blocked,
+  lockReason,
+  onSubmitted,
+}: {
+  childId: string;
+  draft: EventDraft;
+  blocked: boolean;
+  lockReason?: string;
+  onSubmitted: (draftId: string) => void;
+}) {
+  const { state, error, errorHint, mutate } = useDraftSubmit<DraftSubmitFinal>(
+    childId,
+    draft.draft_id,
+    onSubmitted,
+    (body, key) => {
+      /**
+       * 🚨 **`op` 에 따라 엔드포인트가 갈린다** (9/21 회의): create 는 `POST`, update 는 `PATCH`.
+       *    🚨 **둘 다 같은 키를 쓴다** — PATCH 도 `item_id: null` 인 새 준비물 때문에 멱등이 아니다
+       *    (`operations.ts` 의 주석).
+       */
+      if (draft.op === "update" && draft.event_id) {
+        // 🚨 수정은 `reminder` 를 싣지 않는다 (`event-draft-card.tsx` 머리말).
+        const update = { event: body.event, items: body.items };
+        return updateEventDraft(childId, draft.event_id, update, key);
+      }
+      // 🚨 묶인 초안은 여러 제안에서 온다 — 전부 이 일정에 연결돼야 한다 (#206).
+      // 🚨 반복 일정(#738)은 카드가 넘긴 `repeat` 가 그대로 실린다 — 빠지면 하루짜리 일정 한 건이 된다.
+      const create = {
+        ...body,
+        ...(draft.suggestion_ids ? { suggestion_ids: draft.suggestion_ids } : {}),
+      };
+      return submitEventDraft(childId, create, key);
+    },
+  );
 
   return (
     <EventDraftCard
@@ -298,14 +364,41 @@ function DraftRow({
       state={state}
       blocked={blocked}
       lockReason={lockReason}
-      error={
-        submit.isError
-          ? submit.error instanceof Error
-            ? submit.error.message
-            : "넣지 못했어요."
-          : undefined
-      }
-      onSubmit={(final) => submit.mutate(final)}
+      error={error}
+      errorHint={errorHint}
+      onSubmit={(final) => mutate(final)}
+    />
+  );
+}
+
+/**
+ * 반복 묶음 고치기 한 장 (#738). 🚨 카드가 읽기 전용이라 **초안 값을 그대로** 보낸다 (`seriesSubmitBody`).
+ * 🚨 묶음 초안은 한 줄 입력에서만 온다 — 제안 경로의 알레르기 잠금(`blocked` · `lockReason`)이 걸릴 일이 없다.
+ */
+function SeriesDraftRow({
+  childId,
+  draft,
+  onSubmitted,
+}: {
+  childId: string;
+  draft: SeriesDraft;
+  onSubmitted: (draftId: string) => void;
+}) {
+  const { state, error, errorHint, mutate } = useDraftSubmit<SeriesDraft>(
+    childId,
+    draft.draft_id,
+    onSubmitted,
+    (body, key) => updateEventSeries(childId, body.series_id, seriesSubmitBody(body), key),
+    "바꾸지 못했어요.",
+  );
+
+  return (
+    <SeriesDraftCard
+      draft={draft}
+      state={state}
+      error={error}
+      errorHint={errorHint}
+      onSubmit={() => mutate(draft)}
     />
   );
 }

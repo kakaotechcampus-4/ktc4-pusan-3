@@ -20,6 +20,7 @@ import pytest
 from app.api.v1.routers import auth as auth_router
 from app.core.config import settings
 from app.integrations.kakao.client import KakaoApiError
+from app.main import app
 
 BIND = "A" * 43
 """base64url 43자 = 256비트 (§3-2)."""
@@ -168,11 +169,13 @@ async def test_start_redirects_to_kakao_with_state_cookie(client, configured):
     assert query["response_type"] == ["code"]
 
     cookie = response.headers["set-cookie"]
-    assert "oauth_state=" in cookie
+    assert "__Host-oauth_state=" in cookie
     assert "HttpOnly" in cookie
     assert "Secure" in cookie
     assert "SameSite=lax" in cookie.replace("samesite", "SameSite")
-    assert "Path=/api/v1/auth" in cookie
+    # 🚨 __Host- 접두사의 조건 — 하나라도 어기면 브라우저가 쿠키를 버린다 (#783)
+    assert "Path=/;" in cookie
+    assert "domain" not in cookie.lower()
     # 🚨 bind 원문이 쿠키에 실리면 §7-2 가 무의미해진다. 해시만 담는다.
     assert BIND not in cookie
 
@@ -234,13 +237,49 @@ async def test_callback_with_mismatched_state_never_exchanges(client, configured
 
     response = await client.get(
         "/api/v1/auth/kakao/callback?code=x&state=attacker-state",
-        headers={"Cookie": f"oauth_state={cookie}"},
+        headers={"Cookie": f"__Host-oauth_state={cookie}"},
     )
 
     base, params = redirect_query(response)
     assert base == RETURN_WEB
     assert params["error"] == ["invalid_state"]
     assert fake.calls == []
+    # 쓴 state 쿠키를 지운다. __Host- 라 지울 때도 Path=/ · Secure 가 있어야 브라우저가 받는다
+    expired = response.headers["set-cookie"]
+    assert expired.startswith("__Host-oauth_state=")
+    assert "Max-Age=0" in expired
+    assert "Path=/;" in expired
+    assert "Secure" in expired
+
+
+async def test_callback_ignores_a_bare_legacy_state_cookie(client, configured, monkeypatch):
+    """🚨 __Host-oauth_state 만 센다 — 옛 이름(oauth_state)은 하위 도메인이 심을 수 있다 (#783).
+
+    값이 맞는 state 라도 옛 이름으로 오면 쿠키가 없는 것과 같다 (A-09).
+    """
+    fake = patch_kakao(monkeypatch, FakeKakao())
+    cookie, state = await start_and_take_cookie(client)
+
+    response = await client.get(
+        f"/api/v1/auth/kakao/callback?code=x&state={state}",
+        headers={"Cookie": f"oauth_state={cookie}"},
+    )
+
+    _, params = redirect_query(response)
+    assert params["error"] == ["invalid_state"]
+    assert fake.calls == []
+
+
+def test_auth_cookie_params_are_described_in_swagger():
+    """Swagger 의 쿠키 파라미터에 설명이 있다 (루트 CLAUDE.md §5)."""
+    paths = app.openapi()["paths"]
+    for path, method in [
+        ("/api/v1/auth/{provider}/callback", "get"),
+        ("/api/v1/auth/refresh", "post"),
+    ]:
+        cookies = [p for p in paths[path][method]["parameters"] if p["in"] == "cookie"]
+        assert cookies, path
+        assert all(p.get("description", "").strip() for p in cookies), path
 
 
 async def test_callback_passes_user_cancel_through_as_denied(
@@ -256,7 +295,7 @@ async def test_callback_passes_user_cancel_through_as_denied(
     with caplog.at_level(logging.WARNING, logger=AUTH_LOGGER):
         response = await client.get(
             f"/api/v1/auth/kakao/callback?error=access_denied&state={state}",
-            headers={"Cookie": f"oauth_state={cookie}"},
+            headers={"Cookie": f"__Host-oauth_state={cookie}"},
         )
 
     base, params = redirect_query(response)
@@ -276,7 +315,7 @@ async def test_callback_returns_to_app_scheme(client, configured, monkeypatch):
 
     response = await client.get(
         f"/api/v1/auth/kakao/callback?error=access_denied&state={state}",
-        headers={"Cookie": f"oauth_state={cookie}"},
+        headers={"Cookie": f"__Host-oauth_state={cookie}"},
     )
 
     base, params = redirect_query(response)
@@ -291,7 +330,7 @@ async def test_callback_does_not_fall_back_when_kakao_fails(client, configured, 
 
     response = await client.get(
         f"/api/v1/auth/kakao/callback?code=authorization-code&state={state}",
-        headers={"Cookie": f"oauth_state={cookie}"},
+        headers={"Cookie": f"__Host-oauth_state={cookie}"},
     )
 
     base, params = redirect_query(response)
@@ -310,7 +349,7 @@ async def test_callback_error_never_carries_a_message(client, configured, monkey
 
     response = await client.get(
         f"/api/v1/auth/kakao/callback?code=c&state={state}",
-        headers={"Cookie": f"oauth_state={cookie}"},
+        headers={"Cookie": f"__Host-oauth_state={cookie}"},
     )
 
     _, params = redirect_query(response)
@@ -333,7 +372,7 @@ async def test_callback_logs_why_kakao_failed(client, configured, monkeypatch, c
     with caplog.at_level(logging.WARNING, logger=AUTH_LOGGER):
         response = await client.get(
             f"/api/v1/auth/kakao/callback?code=SECRET-AUTH-CODE&state={state}",
-            headers={"Cookie": f"oauth_state={cookie}"},
+            headers={"Cookie": f"__Host-oauth_state={cookie}"},
         )
 
     _, params = redirect_query(response)
@@ -354,7 +393,7 @@ async def test_callback_logs_kakao_error_param_without_description(
         response = await client.get(
             "/api/v1/auth/kakao/callback"
             f"?error=server_error&error_description=SECRET-DESC&state={state}",
-            headers={"Cookie": f"oauth_state={cookie}"},
+            headers={"Cookie": f"__Host-oauth_state={cookie}"},
         )
 
     _, params = redirect_query(response)
@@ -378,7 +417,7 @@ async def test_callback_log_does_not_copy_a_forged_error_value(
     with caplog.at_level(logging.WARNING, logger=AUTH_LOGGER):
         await client.get(
             f"/api/v1/auth/kakao/callback?error=evil%0AFORGED-LINE&state={state}",
-            headers={"Cookie": f"oauth_state={cookie}"},
+            headers={"Cookie": f"__Host-oauth_state={cookie}"},
         )
 
     assert len(auth_warnings(caplog)) == 1
@@ -398,7 +437,7 @@ async def test_callback_without_code_logs_why(client, configured, monkeypatch, c
     with caplog.at_level(logging.WARNING, logger=AUTH_LOGGER):
         response = await client.get(
             f"/api/v1/auth/kakao/callback?state={state}",
-            headers={"Cookie": f"oauth_state={cookie}"},
+            headers={"Cookie": f"__Host-oauth_state={cookie}"},
         )
 
     _, params = redirect_query(response)
@@ -421,7 +460,7 @@ async def test_callback_after_settings_vanish_logs_why(client, configured, monke
     with caplog.at_level(logging.WARNING, logger=AUTH_LOGGER):
         response = await client.get(
             f"/api/v1/auth/kakao/callback?code=authorization-code&state={state}",
-            headers={"Cookie": f"oauth_state={cookie}"},
+            headers={"Cookie": f"__Host-oauth_state={cookie}"},
         )
 
     _, params = redirect_query(response)
