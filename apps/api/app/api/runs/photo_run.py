@@ -87,7 +87,10 @@ def _item_entry(entry_id: str, item: NewNoticeItem) -> dict:
         "kind": _ENTRY_KIND[item.handling],
         "title": item.title,
         "date": str(day) if (day := _entry_date(item)) else None,
-        "all_day": item.all_day or item.due_all_day,
+        # 🚨 위 칸(`date`)의 하루 종일이다 — 시작을 읽었으면 시작의 것, 마감만 읽었으면 마감의 것.
+        #    둘을 합치면 시각을 읽은 시작이 마감 때문에 하루 종일로 보이고, 화면이 그 시각을 버린 채
+        #    보호자가 못 본 끝 시각을 캘린더에 싣는다 (#723)
+        "all_day": item.all_day if item.starts_at is not None else item.due_all_day,
         "items": list(item.supplies),
         "needs_review": item.needs_review,
         "label": item.label,
