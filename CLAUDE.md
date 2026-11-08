@@ -318,7 +318,7 @@
   - `GET /auth/{provider}/callback`
   - `POST /auth/{provider}`
   - `POST /auth/{provider}/signup`
-  - `POST /auth/refresh` — Bearer 대신 HttpOnly 쿠키(`icatch_rt`)로 인증한다. access 가 만료된 뒤에 부르는 곳이라 Bearer 를 요구할 수 없다 (#466)
+  - `POST /auth/refresh` — Bearer 대신 HttpOnly 쿠키(`__Host-icatch_rt`, #783)로 인증한다. access 가 만료된 뒤에 부르는 곳이라 Bearer 를 요구할 수 없다 (#466)
   - `GET /policies` — 약관은 공개 문서이고, 동의 화면은 계정이 생기기 전에 뜬다 (#91)
   - `GET /policies/{scope}/{version}` — 그 화면의 "전문 보기" 가 여는 약관 정본 HTML (#172)
   - `GET /privacy-policy` · `GET /privacy-policy/{version}` — 개인정보 처리방침 정본 HTML (#221). 누구나 언제든 볼 수 있게 게시해야 하고, 동의 대상이 아니라 동의 목록 밖에 둔다. 스토어에 거는 고정 주소가 앞의 것이다

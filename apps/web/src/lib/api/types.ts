@@ -1822,7 +1822,7 @@ export interface AuthSession {
 }
 
 /**
- * POST /auth/refresh — Bearer 가 아니라 refresh 쿠키(`icatch_rt`, HttpOnly)로 인증한다.
+ * POST /auth/refresh — Bearer 가 아니라 refresh 쿠키(`__Host-icatch_rt`, HttpOnly)로 인증한다 (#783).
  * 성공하면 새 access 토큰을 주고 쿠키를 회전시킨다. 실패는 전부 `401 unauthenticated` 다.
  * 정본은 서버 Swagger 다 (docs/web/auth-consent-v1.md §2).
  */

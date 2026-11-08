@@ -23,7 +23,7 @@
 | `bind` | 클라이언트가 만든 비밀. **1회용 코드가 오가는 홉을 지킨다** (§7-2) |
 | 신규 회원 | 세션 대신 `{ status: "consent_required", consent_code }`. **동의 전에는 `parent` 를 만들지 않는다** (§6-1) |
 | 세션 토큰 | **access + refresh 둘 다 불투명 난수** 256비트, DB 에는 SHA-256 해시. access 15분, refresh 는 30일 안 쓰면 만료 · 로그인부터 최대 90일 (§4-3) |
-| 전달 | access 는 `Authorization: Bearer` — 계약서 §01 그대로. refresh 는 HttpOnly 쿠키 `icatch_rt` (§3-7) |
+| 전달 | access 는 `Authorization: Bearer` — 계약서 §01 그대로. refresh 는 HttpOnly 쿠키 `__Host-icatch_rt` (§3-7) |
 | 신규 테이블 | `session` · `session_access` · `auth_handoff` 3개 (§5-3 · §5-4) |
 | 무인증 엔드포인트 | **6개** — 로그인 5개 + 쿠키로 인증하는 `POST /auth/refresh`. §01 에 예외로 명시해야 한다 (§3) |
 
@@ -84,7 +84,7 @@
         location = start_url + "?client=web&bind=<비밀>"
         ↓
 ③ 서버  bind 형식 검증 · state 난수 생성
-        Set-Cookie: oauth_state   (state · client · bind 해시, 10분)
+        Set-Cookie: __Host-oauth_state (state · client · bind 해시, 10분)
         302 → kauth.kakao.com/oauth/authorize?...&state=<state>
         ↓
 ④ 사용자 카카오 로그인
@@ -95,7 +95,7 @@
         POST kauth/oauth/token 으로 교환 → GET access_token_info 로 회원번호
         카카오 토큰 폐기 (§7-4)
         auth_identity 조회 → auth_handoff 행 생성 (1회용 코드 · bind 해시 · TTL 2분)
-        oauth_state 쿠키 만료
+        __Host-oauth_state 쿠키 만료
         302 → 복귀 URL + "?code=<1회용 코드>"        복귀 URL 은 §2-3
         ↓
 ⑦ FE    복귀 경로에서 code 수신
@@ -204,14 +204,14 @@ AUTH_RETURN_URL_APP=icatch://auth
 | `client` | `web` \| `app` (§2-3) | 아니오 (기본 `web`) |
 | `bind` | base64url 43자 (256비트) | **예** |
 
-서버가 하는 일 — `bind` **형식 검증** → `state` 난수 생성 → `oauth_state` 쿠키 발급 → 카카오로 302.
+서버가 하는 일 — `bind` **형식 검증** → `state` 난수 생성 → `__Host-oauth_state` 쿠키 발급 → 카카오로 302.
 
 🚨 **`bind` 는 길이·문자셋을 검증한다.** "보냈다"만 확인하면 `bind=1` 로도 통과해서 §7-2 가 무의미해진다. 형식이 안 맞으면 **카카오 동의까지 걷게 하지 말고 여기서 거절한다.**
 
 **응답 302** → `https://kauth.kakao.com/oauth/authorize?client_id=…&redirect_uri=…&response_type=code&state=<state>`
 
 ```
-Set-Cookie: oauth_state=<…>; HttpOnly; Secure; SameSite=Lax; Path=/api/v1/auth; Max-Age=600
+Set-Cookie: __Host-oauth_state=<…>; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=600
 ```
 
 ### 3-3. `GET /auth/{provider}/callback` — 카카오가 부른다
@@ -220,11 +220,11 @@ Set-Cookie: oauth_state=<…>; HttpOnly; Secure; SameSite=Lax; Path=/api/v1/auth
 
 서버가 하는 일:
 
-1. `oauth_state` 쿠키와 쿼리 `state` 를 **timing-safe 비교**. 불일치·부재면 **인가 코드 교환 전에 중단**
+1. `__Host-oauth_state` 쿠키와 쿼리 `state` 를 **timing-safe 비교**. 불일치·부재면 **인가 코드 교환 전에 중단**
 2. `POST kauth/oauth/token` 으로 교환 → `GET access_token_info` 로 회원번호
 3. 카카오 토큰 폐기 (§7-4)
 4. `auth_identity` 조회 → `auth_handoff` 행 생성 (§5-4)
-5. `oauth_state` 쿠키 만료
+5. `__Host-oauth_state` 쿠키 만료
 6. 복귀 URL 로 302 (§2-3)
 
 ```
@@ -268,7 +268,7 @@ Cache-Control: no-store
 | `parent.nickname` | `null` 일 수 있다 (§5-2) |
 | `consent_code` | 가입 대기표. §3-5 에서 쓴다. TTL 10분 |
 
-`Cache-Control: no-store`. 세션이 나가는 갈래(기존 회원)는 **refresh 를 `icatch_rt` 쿠키로 함께 심는다** (§3-7).
+`Cache-Control: no-store`. 세션이 나가는 갈래(기존 회원)는 **refresh 를 `__Host-icatch_rt` 쿠키로 함께 심는다** (§3-7).
 
 ### 3-5. `POST /auth/{provider}/signup` — 🔶 신설
 
@@ -312,7 +312,7 @@ Cache-Control: no-store
 
 ### 3-7. `POST /auth/refresh` — 🔶 신설 (#466)
 
-요청 바디 없음. **Bearer 를 받지 않는다** — access 가 만료된 뒤에 부르는 곳이다. `icatch_rt` 쿠키로만 인증한다.
+요청 바디 없음. **Bearer 를 받지 않는다** — access 가 만료된 뒤에 부르는 곳이다. `__Host-icatch_rt` 쿠키로만 인증한다 (옮겨 가는 동안은 옛 `icatch_rt` 도, 아래 **이름 이전**).
 
 **응답 200**
 
@@ -336,13 +336,23 @@ Cache-Control: no-store
 **쿠키**
 
 ```
-Set-Cookie: icatch_rt=<43자>; HttpOnly; Secure; SameSite=Strict; Path=/api/v1/auth; Max-Age=<유휴 만료까지 초>
+Set-Cookie: __Host-icatch_rt=<43자>; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=<유휴 만료까지 초>
 ```
 
 - 🚨 **`Max-Age` 를 빼지 않는다.** 빠지면 세션 쿠키가 되어 앱을 끌 때 사라진다 — `sessionStorage` 때문에 매번 다시 로그인하던 증상이 그대로 돌아온다.
-- `Domain` 을 주지 않는다 — API 호스트에만 저장된다. `Path` 는 `oauth_state` 와 같아 인증 경로에만 실리고 일반 API · SSE 에는 실리지 않는다.
+- 🚨 **이름에 `__Host-` 접두사를 붙인다 (#783).** 막는 것은 쿠키 덮어쓰기(cookie tossing)다 — 접두사가 없으면 `*.icatch.ai.kr` 아래 어디서든(dev 웹의 `document.cookie`, dev API 의 `Set-Cookie`) `Domain=icatch.ai.kr; Path=/api/v1/auth` 로 같은 이름을 심을 수 있다. HttpOnly 는 읽기만 막고 같은 이름을 새로 심는 건 못 막는다. 둘 다 실리면 Starlette 는 같은 이름의 **뒤의 값**을 남겨 심은 쪽이 이긴다 → 운영 강제 로그아웃, 또는 심은 값이 유효한 refresh 면 남의 계정으로 로그인시키기. 브라우저는 `__Host-` 이름에 `Domain` 이 붙거나 `Path=/` · `Secure` 가 빠진 `Set-Cookie` 를 거부한다. `oauth_state` 도 같은 이유로 `__Host-oauth_state` 다 (§5-5).
+- `Domain` 을 주지 않는다 — API 호스트에만 저장된다 (`__Host-` 의 조건이기도 하다).
+- **대가는 `Path=/` 다.** `__Host-` 는 `Path=/` 가 강제라 #466 때 `/api/v1/auth` 로 좁혀 둔 것을 포기하고 **API 호스트의 모든 요청(SSE 포함)에 refresh 쿠키가 실린다.** 일반 API 는 Bearer 만 보니 권한은 늘지 않는다. 🚨 대신 **Cookie 헤더를 로그에 남기면 refresh 가 샌다.** 지금 앱 코드에 Cookie 헤더를 찍는 곳이 없고 Caddyfile 에 `log` 지시어가 없다 — 그대로 둔다.
 - `SameSite=Strict` 여도 웹(`icatch.ai.kr`)이 API(`api.icatch.ai.kr`)를 부를 때는 실린다 — `ai.kr` 이 Public Suffix List 에 있어 둘이 같은 사이트다. 다른 사이트의 요청에는 실리지 않지만, 같은 사이트의 다른 오리진까지 막지는 않는다.
 - 웹은 교환 · 가입 · refresh · 로그아웃 · 탈퇴를 `credentials: "include"` 로 부르고, 서버 CORS 는 `allow_credentials` 를 켠다. 응답을 읽을 수 있는 오리진은 기존 허용 목록 그대로다.
+
+**이름 이전 (#783)** — 배포 전에 로그인한 사람을 로그아웃시키지 않기 위한 기간 한정 동작이다.
+
+- refresh 는 `__Host-icatch_rt` 를 먼저 읽고, 없을 때만 옛 `icatch_rt` 를 읽는다. 새 이름이 있으면 하위 도메인이 옛 이름을 심어도 무시된다.
+- 새 쿠키를 심을 때(회전 · 교환 · 가입)마다 옛 쿠키를 지운다. 실패 · 로그아웃 · 탈퇴는 둘 다 지운다. 🚨 옛 쿠키는 **옛 Path(`/api/v1/auth`)로 지워야** 지워진다.
+- `oauth_state` 는 옛 이름을 읽지 않는다 — 10분짜리라 배포 순간 카카오 왕복 중이던 사람만 한 번 다시 누르면 된다.
+- 배포 후 유휴 만료(`REFRESH_IDLE_TTL`, 30일)가 지나면 옛 이름 읽기 · 지우기를 뺀다 (코드의 `TODO(#783)`).
+- 앱 쿠키 flush(#469)는 이름과 무관하게 전부 디스크에 쓰므로 바꿀 것이 없다.
 
 ---
 
@@ -358,7 +368,7 @@ access 는 `Authorization: Bearer` 로 보낸다. 이 문서가 `token` 을 불�
 
 세션 전체를 쿠키로 옮기면 `client.ts` 와 `sse.ts` 를 둘 다 고치고 모든 API 에 CSRF 방어를 더해야 한다.
 
-> **쿠키는 인증 경로에만 쓴다.** `oauth_state`(§5-5)는 카카오 왕복 동안만 살고, `icatch_rt`(§3-7)는 access 를 다시 받는 데만 쓴다. 둘 다 `Path=/api/v1/auth` 라 일반 API 와 SSE 에는 실리지 않는다.
+> **쿠키는 인증에만 쓴다.** `__Host-oauth_state`(§5-5)는 카카오 왕복 동안만 살고, `__Host-icatch_rt`(§3-7)는 access 를 다시 받는 데만 쓴다. `__Host-` 접두사 때문에 `Path=/` 라 일반 API 와 SSE 요청에도 실리지만(#783), 그쪽은 Bearer 만 보고 쿠키를 읽지 않는다.
 
 ### 4-2. 왜 JWT 가 아닌가
 
@@ -373,7 +383,7 @@ DB 조회 1회가 JWT 의 이점이지만 세션 조회는 PK 인덱스 단건 �
 | 생성 | CSPRNG 256비트 → base64url (43자) | 같음 |
 | DB 저장 | **SHA-256 해시** — `session_access.token_hash` | **SHA-256 해시** — `session.refresh_hash` |
 | 수명 | **15분** (`ACCESS_TTL`). 로그인의 절대 만료를 넘지 않는다 | **30일 안 쓰면 만료**(`REFRESH_IDLE_TTL`, 회전마다 연장) · **로그인부터 최대 90일**(`REFRESH_ABSOLUTE_TTL`, 연장 없음) |
-| 전달 | `Authorization: Bearer` | HttpOnly 쿠키 `icatch_rt` (§3-7) |
+| 전달 | `Authorization: Bearer` | HttpOnly 쿠키 `__Host-icatch_rt` (§3-7) |
 | 클라이언트 저장 | **웹 JS 메모리** (#465). `localStorage` · `sessionStorage` 금지 (§7-7 2번) | 브라우저 · 웹뷰 쿠키 저장소. JS 가 읽지 못한다 |
 | 만료 시 | `401 unauthenticated` → FE 가 refresh 후 원래 요청 1회 재시도 | `401` → FE 가 §2-2 를 다시 탄다 |
 
@@ -399,7 +409,7 @@ DB 조회 1회가 JWT 의 이점이지만 세션 조회는 PK 인덱스 단건 �
 | `bind` | 프론트 | 프론트 `sessionStorage` (§5-6) | `oauth_state` 쿠키 → `auth_handoff.bind_hash` | 없음 |
 | 1회용 코드 | 백엔드 | 복귀 URL 쿼리 (일시) | `auth_handoff.code_hash` | 없음 |
 | access 토큰 | 백엔드 | 프론트 JS 메모리 (§4-3) | `session_access.token_hash` | 없음 |
-| refresh 토큰 | 백엔드 | HttpOnly 쿠키 `icatch_rt` (§3-7) | `session.refresh_hash` · 직전 값은 `session.prev_refresh_hash` | 없음 |
+| refresh 토큰 | 백엔드 | HttpOnly 쿠키 `__Host-icatch_rt` (§3-7) | `session.refresh_hash` · 직전 값은 `session.prev_refresh_hash` | 없음 |
 | 카카오 access token | 카카오 | — | — | 폐기 (§7-4) |
 
 **서버는 어떤 비밀도 원문으로 보관하지 않는다.** 대조가 필요한 값은 받은 값을 그때그때 해시해 저장된 해시와 비교한다. DB 덤프가 유출돼도 살아 있는 자격증명이 되지 않게 하려는 것이다.
@@ -559,10 +569,10 @@ RETURNING *;
 쿠키가 노출돼도 `bind` 원문은 얻을 수 없다 — 해시만 담는다.
 
 ```
-Set-Cookie: oauth_state=<…>; HttpOnly; Secure; SameSite=Lax; Path=/api/v1/auth; Max-Age=600
+Set-Cookie: __Host-oauth_state=<…>; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=600
 ```
 
-`SameSite=Lax` 쿠키는 **크로스 사이트 최상위 GET 이동**에 실린다. 카카오 → 콜백이 그 경우라 정상 동작한다. `Path` 를 `/api/v1/auth` 로 좁혀 다른 요청에 실리지 않게 한다.
+`SameSite=Lax` 쿠키는 **크로스 사이트 최상위 GET 이동**에 실린다. 카카오 → 콜백이 그 경우라 정상 동작한다. 이름은 `__Host-` 접두사라 `Path=/` 다 — 하위 도메인이 같은 이름을 심어 state 를 바꿔치는 것을 막는다 (#783, §3-7).
 
 🚨 **시작과 콜백이 같은 오리진이어야 한다.** 다르면 쿠키가 콜백에 실리지 않는다. `start_url` 을 서버가 `KAKAO_CALLBACK_URL` 에서 파생해 내려주는 이유가 이것이다 (§3-1). **로컬은 포트가 달라도 쿠키가 공유돼 우연히 통과하니 배포 기준으로 확인해야 한다.**
 
@@ -659,7 +669,7 @@ CLAUDE.md 의 "필수 동의가 비어 있으면 그 아래 어떤 저장도 일
 
 ```http
 GET /auth/kakao/callback?code=<카카오 인가 코드>&state=<카카오가 되돌려준 값>
-Cookie: oauth_state=<우리가 ③ 에서 심은 값>
+Cookie: __Host-oauth_state=<우리가 ③ 에서 심은 값>
 ```
 
 쿼리는 **카카오**가 붙였고 `Cookie` 헤더는 **브라우저**가 붙였다. 프론트 코드는 관여하지 않는다.
@@ -824,7 +834,7 @@ icatch://auth?error=oauth_denied
 | A-18 | 저장 확인 | `session`·`auth_handoff` 어디에도 **원문 문자열이 없다** (해시 저장) |
 | A-19 | 탈퇴한 계정의 다른 기기 세션 | `401 unauthenticated` — 세션이 보호자 행과 함께 지워진다. 만료를 기다리지 않는다 (§8-1 · §10 1번 · #379) |
 | A-20 | `ready: false` 환경에서 `/status` | 프로덕션 모드면 **`missing_keys` 가 응답에 없다** (§3-1) |
-| A-21 | 교환 · 가입 응답의 refresh 쿠키 | `icatch_rt` 가 HttpOnly · Secure · SameSite=Strict · Path · **Max-Age** 를 갖고 `Domain` 이 없다. DB 에는 해시만 (§3-7) |
+| A-21 | 교환 · 가입 응답의 refresh 쿠키 | `__Host-icatch_rt` 가 HttpOnly · Secure · SameSite=Strict · `Path=/` · **Max-Age** 를 갖고 `Domain` 이 없다. DB 에는 해시만 (§3-7 · #783) |
 | A-22 | 현재 refresh 로 refresh | 200, 새 access 가 통하고 쿠키가 회전된다. 회전 전 access 도 만료 전까지 통한다 |
 | A-23 | 🚨 **직전 refresh 가 30초 뒤에 옴** | `401`, 세션 삭제 — 그 로그인의 access 도 바로 401. 30초 안이면 200 · 쿠키 그대로 |
 | A-24 | 🚨 **같은 refresh 로 두 요청이 겹침** | 둘 다 200, **회전은 한 번** (`FOR UPDATE`) |
