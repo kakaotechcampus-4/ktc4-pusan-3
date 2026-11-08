@@ -63,6 +63,7 @@ class CaseResult:
     statuses: list[str] = field(default_factory=list)  # run 마다 pass · fail · untested
     violations: list[str] = field(default_factory=list)
     misses: list[str] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
 
     @property
     def passes(self) -> list[bool]:
@@ -116,6 +117,7 @@ def summarize(rows: Sequence[dict[str, Any]]) -> dict[str, CaseResult]:
         result.statuses.append(row.get("status") or ("pass" if row["passed"] else "fail"))
         result.violations += row["violations"]
         result.misses += row["misses"]
+        result.notes += row.get("notes", [])
     return cases
 
 
@@ -422,6 +424,16 @@ def render(
                 f"| {c.case} | {sum(c.passes)}/{c.repeat} | {_cell((c.misses or ['-'])[0])} |"
                 for c in untested
             ),
+        ]
+    notes = [(c.case, n) for c in cases.values() for n in dict.fromkeys(c.notes)]
+    if notes:
+        lines += [
+            "",
+            "## 참고 (판정에 넣지 않는다)",
+            "",
+            "제품이 검사하지 않는 범위에서 본 것 — 필요하면 담당 이슈로 넘긴다",
+            "",
+            *(f"- {case}: {_cell(n)}" for case, n in notes),
         ]
     if skipped:
         lines += ["", "## 실행하지 않은 케이스", "", "| 케이스 | 이유 |", "| --- | --- |"]

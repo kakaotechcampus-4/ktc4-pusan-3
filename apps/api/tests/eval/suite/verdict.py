@@ -17,7 +17,12 @@ from datetime import date
 from typing import Any, Literal
 
 from tests.eval.suite.expect import ASKED_INSTEAD, Miss, check_expect
-from tests.eval.suite.invariants import Violation, check_invariants, check_state
+from tests.eval.suite.invariants import (
+    Violation,
+    check_invariants,
+    check_notes,
+    check_state,
+)
 from tests.eval.suite.schema import Expect, ProbeCase, Step
 from tests.eval.suite.trace import Trace
 
@@ -30,6 +35,7 @@ class Verdict:
     violations: tuple[Violation, ...]
     misses: tuple[str, ...]
     status: Status = "pass"
+    notes: tuple[str, ...] = ()  # 판정에 넣지 않는 참고 (invariants.check_notes)
 
 
 def run_misses(trace: Trace) -> list[Miss]:
@@ -59,6 +65,7 @@ def _verdict(trace: Trace, violations: Sequence[Violation], misses: Sequence[str
         violations=tuple(violations),
         misses=tuple(misses),
         status=status,
+        notes=tuple(check_notes(trace)),
     )
 
 
@@ -115,6 +122,7 @@ def record(case: ProbeCase, trace: Trace, verdict: Verdict, *, repeat: int) -> d
         "status": verdict.status,
         "violations": [str(v) for v in verdict.violations],
         "misses": [str(m) for m in verdict.misses],
+        "notes": list(verdict.notes),
         "trace": trace.to_json(),
     }
 
@@ -168,6 +176,7 @@ def record_week(
         "status": verdict.status,
         "violations": [str(v) for v in verdict.violations],
         "misses": [str(m) for m in verdict.misses],
+        "notes": list(verdict.notes),
         "trace": trace.to_json(),
         "week": case_id,
         "persona": persona,

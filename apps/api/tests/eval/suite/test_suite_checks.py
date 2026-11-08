@@ -20,7 +20,7 @@ from app.agents.suggestion_save import SuggestionBatch
 from app.agents.supervisor.routing import Guidance
 from tests.eval.suite import probe_runner, report
 from tests.eval.suite.expect import check_expect
-from tests.eval.suite.invariants import check_invariants
+from tests.eval.suite.invariants import check_invariants, check_notes
 from tests.eval.suite.probe_runner import read_run, run_probe
 from tests.eval.suite.report import _cost, _rate, percentile, render, summarize, wilson
 from tests.eval.suite.schema import (
@@ -175,6 +175,31 @@ def test_I6_관찰_근거를_성향처럼() -> None:
     note = CitationView("observation_activity", "o1", "블록을 항상 좋아함", True)
     bad = SuggestionView("activity", "personalized", "탑 쌓기", "이유", citations=(note,))
     assert "I6" in _rules(_clean(suggestions=(bad,)))
+    growth = SuggestionView("growth", "personalized", "그림책", "이유", citations=(note,))
+    assert "I6" in _rules(_clean(suggestions=(growth,), bundle_kinds={"growth": "personalized"}))
+
+
+def test_I6_성향_문구는_Food_에서는_참고로만_센다() -> None:
+    # 제품은 이 검사를 Activity · Growth 에만 둔다(app/agents/common/evidence.py overstates)
+    note = CitationView("observation_food", "o1", "바나나를 좋아해서", True)
+    food = SuggestionView("food", "personalized", "바나나 팬케이크", "이유", citations=(note,))
+    trace = _clean(suggestions=(food,), bundle_kinds={"food": "personalized"})
+    assert "I6" not in _rules(trace)
+    assert any("food" in n for n in check_notes(trace))
+    assert check_notes(_clean()) == []
+
+
+def test_참고_줄은_결과와_요약에_따로_나온다() -> None:
+    note = CitationView("observation_food", "o1", "바나나를 좋아해서", True)
+    food = SuggestionView("food", "personalized", "바나나 팬케이크", "이유", citations=(note,))
+    trace = _clean(suggestions=(food,), bundle_kinds={"food": "personalized"})
+    case = _probe()
+    verdict = judge(case, trace, today=_TODAY)
+    assert verdict.passed and verdict.notes
+    row = record(case, trace, verdict, repeat=1)
+    assert row["notes"] == list(verdict.notes)
+    md = render([row], source="x", sha="a", day="d", headlines={})
+    assert "## 참고 (판정에 넣지 않는다)" in md and "P-T-01" in md
 
 
 def test_I6_Health_진단_표현() -> None:

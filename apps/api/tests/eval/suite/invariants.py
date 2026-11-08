@@ -136,12 +136,38 @@ def _i6(trace: Trace) -> list[Violation]:
         words = find_evaluative(text)
         if words:
             found.append(Violation("I6", f"평가 표현 '{words[0]}'"))
-    for s in trace.suggestions:
-        for c in s.child_citations:
-            # 관찰 한 건은 티어 1(confirmed)이 아니다 — 성향처럼 말하면 안 된다
-            if c.kind != "profile_affinity" and overstates(c.note):
-                found.append(Violation("I6", f"{s.agent} 가 관찰 근거를 성향처럼 적었다"))
+    found += [
+        Violation("I6", f"{agent} 가 관찰 근거를 성향처럼 적었다")
+        for agent in _overstating_agents(trace)
+        if agent in OVERSTATES_AGENTS
+    ]
     return found
+
+
+# 관찰 근거를 성향처럼 적는지(overstates)는 제품이 Activity · Growth 에만 건다
+# (app/agents/common/evidence.py). 같은 범위로 판정하고 나머지는 참고 줄로만 남긴다 (리뷰 11-08)
+OVERSTATES_AGENTS = frozenset({"activity", "growth"})
+
+
+def _overstating_agents(trace: Trace) -> list[str]:
+    """관찰 한 건은 티어 1(confirmed)이 아니다 — 성향처럼 말하는 근거 문구를 쓴 Agent (인용마다)."""
+    return [
+        s.agent
+        for s in trace.suggestions
+        for c in s.child_citations
+        if c.kind != "profile_affinity" and overstates(c.note)
+    ]
+
+
+def check_notes(trace: Trace) -> list[str]:
+    """판정에 넣지 않는 참고 — 제품이 검사하지 않는 Agent(Food 등)의 성향 문구."""
+    if trace.error is not None:
+        return []
+    return [
+        f"I6 참고: {agent} 가 관찰 근거를 성향처럼 적었다 (제품 검사 범위 밖)"
+        for agent in dict.fromkeys(_overstating_agents(trace))
+        if agent not in OVERSTATES_AGENTS
+    ]
 
 
 def _i7(trace: Trace) -> list[Violation]:
