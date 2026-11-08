@@ -100,9 +100,15 @@ def _say(text: str) -> LLMResponse:
 
 
 def candidate(
-    content: str, *, setting: str = "indoor", materials=(), day: str = "today"
+    content: str,
+    *,
+    setting: str = "indoor",
+    materials=(),
+    day: str = "today",
+    place_name: str | None = None,
 ) -> dict[str, Any]:
     return {
+        "place_name": place_name,
         "content": content,
         "setting": setting,
         "day": day,
@@ -750,3 +756,39 @@ class TestPlaceFit:
         await run(task("오후에도 몸으로 신나게 놀 데 추천해 줘"), context(), client=llm)
         system = llm.seen[0][0]["content"]
         assert "보호자가 이번 요청에서 원하는 결" in system
+
+
+class TestDarkPlaygroundRun:
+    async def test_내일로_찾은_놀이터를_오늘_후보로_내면_거절하고_안내를_붙인다(self):
+        """장소 조회는 day 마다 막지만, 내일로 찾은 놀이터를 오늘 후보에 붙이는 길을 출력 검증이
+        막는다 (#805 리뷰)."""
+        playground = PlaceRow(
+            name="○○놀이터",
+            category=PlaceCategory.PLAYGROUND,
+            distance_m=300,
+            source="kids_play_facility",
+            data_date=None,
+        )
+        ctx = ActivityContext(
+            child_id=CHILD,
+            run_id="run-1",
+            now=datetime(2026, 10, 7, 21, 0, tzinfo=KST),
+            timezone=KST,
+            ports=in_memory_ports(
+                CHILD,
+                BORN_40_MONTHS,
+                docs=InMemoryActivityDocs([DEFAULT_DOC]),
+                places=InMemoryPlaces([playground]),
+            ),
+            location=CoarseLocation(lat=35.18, lon=129.08),
+        )
+        llm = FakeLLM(
+            _tools(("search_nearby_places", {"category": "playground", "day": "내일"})),
+            propose(
+                "미끄럼틀 타기", "그림자놀이", "색종이 접기", place_name="○○놀이터", day="오늘"
+            ),
+            propose("거실 보물찾기", "그림자놀이", "색종이 접기"),
+        )
+        result = await run(task(), ctx, client=llm)
+        assert "미끄럼틀 타기" not in " ".join(contents(result))
+        assert "지금은 어두워서 놀이터는 뺐어요." in [r.body for r in result.readouts]

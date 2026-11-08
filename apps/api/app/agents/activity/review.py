@@ -40,6 +40,7 @@ from app.agents.activity.schemas.common import (
     ActivitySetting,
     CaregiverRole,
     EvidencePick,
+    PlaceCategory,
 )
 from app.agents.activity.schemas.recommend import ActivityCandidate
 from app.agents.activity.store.ports import (
@@ -108,6 +109,7 @@ class RejectReason(StrEnum):
     OUTDOOR_CLOSED = "outdoor_closed"
     MIXED_PLACES = "mixed_places"
     INVENTED_FACILITY = "invented_facility"
+    DARK_PLAYGROUND = "dark_playground"
     BUILD = "build_rejected"
 
 
@@ -151,6 +153,10 @@ GUIDANCE: dict[RejectReason, str] = {
     RejectReason.INVENTED_FACILITY: (
         "장소 이름만 보고 그 안의 시설을 짐작해 쓰지 않는다. 보호자가 말했거나 기록에 있는 시설만 "
         "쓰고, 아니면 시설 이름 없이 놀이 방법만 쓴다."
+    ),
+    RejectReason.DARK_PLAYGROUND: (
+        "지금은 해가 져서 오늘 놀이터는 내지 않는다. 그 놀이터를 다른 날(day)로 옮기거나, 공원 · "
+        "실내 장소로 바꾼다."
     ),
     RejectReason.BUILD: (
         "아이 기록을 인용하지 않으면 [예시] 문서 행 id 를 하나 이상 인용한다 "
@@ -204,6 +210,7 @@ def review_candidates(
     requested: bool = False,
     ended_today: Collection[str] = (),
     request_texts: Sequence[str] = (),
+    dark_today: bool = False,
 ) -> Review:
     """후보를 3-3 순서로 검사해 통과한 것은 SuggestionDraft 로, 걸린 것은 사유로 돌려준다.
 
@@ -228,6 +235,9 @@ def review_candidates(
     `today` 는 `build()` 의 6개월 판정 기준일이다.
     `request_texts` 는 보호자 요청 글이다 — 장소가 붙은 후보의 시설 낱말이 요청에도 조회한
     기록에도 없으면 지어낸 것으로 거절한다 (#814).
+    `dark_today` 는 지금 해가 졌는지다(`outing.dark_now`) — 오늘 하루에 붙인 놀이터는 거절한다.
+    장소 조회도 오늘 놀이터를 막지만, 다른 날로 조회한 놀이터를 오늘 후보에 붙이는 길이 있다
+    (#805 리뷰).
     `ended_today` 는 오늘 운영 시간이 이미 끝난 행사 이름이다 — 그 행사는 오늘 열리지 않은
     것으로 본다.
     """
@@ -271,6 +281,7 @@ def review_candidates(
             today=today,
             ended_today=ended_today,
             said=said,
+            dark_today=dark_today,
         )
         if reason is None:
             try:
@@ -335,6 +346,7 @@ def _check(
     today: date,
     ended_today: Collection[str] = (),
     said: Sequence[str] = (),
+    dark_today: bool = False,
 ) -> tuple[RejectReason | None, tuple[EvidenceCitation, ...], PlaceRow | EventRow | None]:
     # 1. 안전 필터는 호출부(review_candidates)가 먼저 돌렸다
 
@@ -377,6 +389,14 @@ def _check(
     # 장소 이름만 보고 시설을 지어내지 않는다 — 공공데이터에 시설 칸이 없다 (#814)
     if isinstance(place, PlaceRow) and invented_facilities(texts, said):
         return RejectReason.INVENTED_FACILITY, (), None
+    # 해가 진 뒤 오늘 하루에 붙인 놀이터 — 장소 조회와 같은 기준이다 (#800 · #805 리뷰)
+    if (
+        dark_today
+        and isinstance(place, PlaceRow)
+        and place.category == PlaceCategory.PLAYGROUND
+        and days_of(candidate.day, today) == (today,)
+    ):
+        return RejectReason.DARK_PLAYGROUND, (), None
 
     # 그날 날씨 판정이 야외를 막았다(D8 · #377). 표에 없는 날은 판정하지 않은 날이라 막는다 —
     # 맑다고 가정하지 않는다

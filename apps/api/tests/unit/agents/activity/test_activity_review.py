@@ -156,6 +156,7 @@ def review(
     area_places=(),
     requested=False,
     request_texts=(),
+    dark_today=False,
 ):
     return review_candidates(
         candidates,
@@ -172,6 +173,7 @@ def review(
         today=TODAY,
         requested=requested,
         request_texts=request_texts,
+        dark_today=dark_today,
     )
 
 
@@ -1331,3 +1333,39 @@ class TestInventedFacility:
         assert reason_of(self.run(self.at_cafe("볼 풀에서 공 옮기기"))) is (
             RejectReason.INVENTED_FACILITY
         )
+
+
+class TestDarkPlayground:
+    """해가 진 뒤 오늘 놀이터는 출력 검증에서도 막는다 — 다른 날로 조회한 놀이터를 오늘 후보로
+    내는 길이 있다 (#805 리뷰)."""
+
+    PLAYGROUND = "가상놀이터"
+    ROW = PlaceRow(
+        name=PLAYGROUND,
+        category=PlaceCategory.PLAYGROUND,
+        distance_m=300,
+        source="kids_play_facility",
+        data_date=None,
+    )
+
+    def at_playground(self, day: str) -> ActivityCandidate:
+        return candidate(
+            content="미끄럼틀 타기", setting="outdoor", place_name=self.PLAYGROUND, day=day
+        )
+
+    def run(self, cand, *, dark_today: bool):
+        return review(cand, places={self.PLAYGROUND: self.ROW}, dark_today=dark_today)
+
+    def test_해가_진_뒤_오늘_놀이터는_거절한다(self):
+        result = self.run(self.at_playground("오늘"), dark_today=True)
+        assert reason_of(result) is RejectReason.DARK_PLAYGROUND
+
+    def test_해가_진_뒤라도_내일_놀이터는_통과한다(self):
+        assert reason_of(self.run(self.at_playground("내일"), dark_today=True)) is None
+
+    def test_해가_지기_전이면_오늘_놀이터도_통과한다(self):
+        assert reason_of(self.run(self.at_playground("오늘"), dark_today=False)) is None
+
+    def test_해가_진_뒤라도_오늘_공원은_통과한다(self):
+        park = candidate(content="공원 산책", setting="outdoor", place_name=PARK, day="오늘")
+        assert reason_of(review(park, dark_today=True)) is None

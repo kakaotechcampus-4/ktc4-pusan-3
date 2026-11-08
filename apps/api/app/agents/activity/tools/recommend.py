@@ -9,11 +9,11 @@ from uuid import UUID
 
 from app.agents.activity.context import ActivityContext
 from app.agents.activity.result import ErrorCode, ToolResult, fail, ok
-from app.agents.activity.review import error_code, explain, review_candidates
+from app.agents.activity.review import RejectReason, error_code, explain, review_candidates
 from app.agents.activity.rules import DUPLICATE_WINDOW_DAYS, said_in_request
 from app.agents.activity.schemas.recommend import ActivityCandidate, ProposeActivityCandidatesArgs
 from app.agents.activity.tools.filters import allergy_cautions, safety_terms
-from app.agents.activity.tools.outing import outdoor_on, when_remedy
+from app.agents.activity.tools.outing import dark_now, outdoor_on, when_remedy
 from app.agents.activity.when import PastDay, days_of
 from app.agents.common.datetime_rules import DateParseError
 from app.agents.common.suggestion import check_count
@@ -104,7 +104,11 @@ async def propose_activity_candidates(
         outdoor_days={day: brief.outdoor_ok for day, brief in context.state.weather.items()},
         ended_today=context.state.ended_today,
         request_texts=context.state.request_texts,
+        dark_today=dark_now(context),
     )
+    if any(r.reason is RejectReason.DARK_PLAYGROUND for r in review.rejections):
+        # 결과에 "지금은 어두워서 놀이터는 뺐어요" 를 붙인다 — 장소 조회에서 막힌 것과 같다
+        context.state.dark_skipped = True
     if review.rejections:
         # 거절만 모델에게 돌려준다. 같이 빠진 후보는 말하지 않는다 — 다시 내면 또 빠진다
         code = error_code(review.rejections)
