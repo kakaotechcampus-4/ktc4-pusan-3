@@ -3,8 +3,8 @@ import { NetworkError } from "./errors";
 import type {
   Affinity,
   Agent,
+  AnyEventDraft,
   DeleteProposalCard,
-  EventDraft,
   FoundTabs,
   MedicationDraft,
   Observation,
@@ -308,7 +308,8 @@ export interface ParsedEvent {
  *    👉 `apps/api` Owner 협의 대상 (최상위 CLAUDE.md §8 · #151).
  */
 export interface EventDraftsEvent {
-  drafts: EventDraft[];
+  /** 🚨 반복 묶음 고치기(`op: "update_series"` · #738)가 섞여 온다 — `op` 로 가른다. */
+  drafts: AnyEventDraft[];
 }
 
 /**

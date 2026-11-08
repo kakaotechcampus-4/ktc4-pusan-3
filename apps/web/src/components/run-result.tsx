@@ -36,6 +36,7 @@ import {
   visibleAgentResults,
   type BlockCandidates,
 } from "@/lib/agent-result";
+import { isSeriesDraft } from "@/lib/event-draft";
 import type { RunState } from "@/hooks/use-run-stream";
 import type {
   AgentReadout,
@@ -45,7 +46,7 @@ import type {
   PartialEvent,
 } from "@/lib/api/sse";
 import type { QuestionState } from "@/stores/conversation";
-import type { Agent, EventDraft, MedicationDraft, StoredRef } from "@/lib/api/types";
+import type { Agent, AnyEventDraft, MedicationDraft, StoredRef } from "@/lib/api/types";
 import { formatEventTime } from "@/lib/format";
 import { MEDICATION_ENABLED } from "@/lib/store-policy";
 import { FORWARD } from "@/lib/view-transition";
@@ -835,7 +836,7 @@ function DraftsCard({
  * 적고 캘린더를 가리킨다. 보관함에 남아 있으면 아직 넣지 않은 것이라 이 카드 대신 `DraftsCard` 가 선다.
  * 🚨 지난 턴의 초안을 보관함에 새로 얹지는 않는다 (`lib/chat-history.ts`).
  */
-function ArchivedDraftsCard({ drafts }: { drafts: readonly EventDraft[] }) {
+function ArchivedDraftsCard({ drafts }: { drafts: readonly AnyEventDraft[] }) {
   return (
     <section>
       <h3 className="text-label text-brand">그때 찾은 일정</h3>
@@ -847,11 +848,16 @@ function ArchivedDraftsCard({ drafts }: { drafts: readonly EventDraft[] }) {
               {drafts.map((draft) => (
                 <li key={draft.draft_id}>
                   <p className="text-body text-ink">{draft.event.title}</p>
-                  {/* 🚨 일자를 못 읽은 초안은 비어 온다 — 오늘로 채우지 않는다 (`EventDraftFields.starts_at`). */}
-                  {draft.event.starts_at ? (
+                  {/* 🚨 반복 묶음 고치기(#738)에는 날짜가 없다 — 반복 문구(서버 문구)로 무엇을 고치려 했는지 말한다. */}
+                  {isSeriesDraft(draft) ? (
+                    <p className="text-caption text-ink-subtle">앞으로의 회차 전부 바꾸기</p>
+                  ) : draft.event.starts_at ? (
                     <p className="text-caption text-ink-subtle">
                       {formatEventTime(draft.event.starts_at, draft.event.all_day)}
                     </p>
+                  ) : null}
+                  {draft.repeat ? (
+                    <p className="text-caption text-ink-subtle">{draft.repeat.label}</p>
                   ) : null}
                 </li>
               ))}

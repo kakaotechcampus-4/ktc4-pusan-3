@@ -13,10 +13,25 @@ import { Spinner } from "@/components/ui/spinner";
 import { TextInput } from "@/components/ui/text-input";
 import { TimeField } from "@/components/ui/time-field";
 import { cn } from "@/lib/cn";
-import { moveStart, sameInstant, seoulDate, seoulTime, withSeoulDateTime } from "@/lib/event-draft";
-import { formatEventTime } from "@/lib/format";
+import {
+  moveStart,
+  repeatRequest,
+  sameInstant,
+  seoulDate,
+  seoulTime,
+  seriesTimeLabel,
+  withSeoulDateTime,
+} from "@/lib/event-draft";
+import { formatDay, formatEventTime } from "@/lib/format";
 import { forKind, isPast, NO_REMINDER, reminderLabel, type ReminderChoice } from "@/lib/reminder";
-import type { EventDraft, EventDraftFields, EventDraftItem, Reminder } from "@/lib/api/types";
+import type {
+  EventDraft,
+  EventDraftFields,
+  EventDraftItem,
+  Reminder,
+  RepeatRequest,
+  SeriesDraft,
+} from "@/lib/api/types";
 
 /**
  * 일정 초안 한 장 — **초안이 만들어지는 세 경로가 같이 쓰는 한 벌.**
@@ -68,6 +83,13 @@ import type { EventDraft, EventDraftFields, EventDraftItem, Reminder } from "@/l
  *    싣지 않는다 — 칸이 없으면 서버가 걸린 알림을 그대로 두고 시각 · 종일이 바뀌면 알아서 옮긴다.
  *    수정에서 같은 값을 다시 보내면 시작을 옮긴 경우 그 값이 지나 422 로 일정까지 못 넣는다 (#603).
  *    걸린 알림을 바꾸는 자리는 09 하루 패널이다.
+ *
+ * 🚨 **요일 반복 일정(#738)은 날짜를 잠근다.** 어느 날이 회차인지는 서버 규칙(`recurrence.py`)이 정하고
+ *    화면은 그 문구(`repeat.label`)만 그린다. 첫 회차를 카드에서 옮기면 요일과 어긋나거나 90일 상한을 넘을 수
+ *    있는데, 화면은 날짜를 계산하지 않아 그걸 알 수도 문구를 다시 만들 수도 없다. 시각 · 하루 종일 · 준비물 · 알림은
+ *    회차마다 같은 값이라 그대로 고친다. 요일 · 끝 날짜를 바꾸려면 대화로 다시 말한다.
+ * 🚨 **반복 묶음 고치기(`op: "update_series"`)는 이 카드가 아니라 `SeriesDraftCard` 다** (아래). 날짜 없는 시각과
+ *    이름뿐인 준비물이라 칸이 맞지 않는다.
  */
 
 /** 제출할 때 넘기는 최종 상태. `reminder` 는 새 일정에만 있다 (위 머리말). */
@@ -76,6 +98,8 @@ export interface DraftSubmitFinal {
   items: EventDraftItem[];
   /** 🚨 `null` 은 "알림 없음" 이다. 수정 초안에서는 칸 자체가 없다. */
   reminder?: Reminder | null;
+  /** 요일 반복 일정이면 그 규칙 (#738). 🚨 초안에서 받은 그대로다 — 카드는 요일 · 끝 날짜를 고치지 않는다. */
+  repeat?: RepeatRequest;
 }
 
 /** 게이트를 통과한 뒤. 🚨 보호자의 선택이 아니라 **서버가 저장을 끝냈는가**다. */
@@ -92,6 +116,7 @@ export function EventDraftCard({
   draft,
   state = "idle",
   error,
+  errorHint,
   blocked = false,
   lockReason,
   onSubmit,
@@ -100,6 +125,11 @@ export function EventDraftCard({
   state?: DraftSubmitState;
   /** 제출이 실패한 이유. `state === "failed"` 일 때만 쓴다. */
   error?: string;
+  /**
+   * 실패 문구 아래에 덧붙일 다음 할 일. 🚨 **카드에서 고칠 수 없는 실패일 때만** 그릇이 넘긴다 —
+   *    반복 규칙 오류(`invalid_repeat`)는 요일 · 끝 날짜 · 첫 회차를 고칠 칸이 없어서 대화로 다시 말해야 한다.
+   */
+  errorHint?: string;
   /**
    * 🚨 알레르기가 확인돼 이 초안은 넣지 않는다. 그릇이 판정한다 —
    *    사전검사에 답하는 자리는 카드 밖(승인 시트)이고, 여기는 결과만 받는다.
@@ -137,6 +167,13 @@ export function EventDraftCard({
   const [reminder, setReminder] = useState<ReminderChoice>(NO_REMINDER);
   const creating = draft.op !== "update";
   /**
+   * 🚨 **반복 일정은 날짜를 잠근다** (머리말). 첫 회차가 비어 온 반복 초안은 없어야 하지만(서버 `EventBody.starts_at`
+   *    이 필수다), 비어 오면 잠그지 않는다 — 고를 칸이 없으면 제출이 영영 잠긴다.
+   */
+  const repeat = draft.repeat;
+  const lockDate = repeat !== undefined && draft.event.starts_at !== null;
+  const kind = draft.op === "update" ? "일정 수정" : repeat ? "새 반복 일정" : "새 일정";
+  /**
    * 🚨 **날짜와 시각은 따로 둔다.** `starts_at` 하나로 들면 "날짜는 골랐고 시각은 아직" 을
    *    담을 자리가 없어서, 그 상태가 **자정**으로 접힌다 (그게 이 카드가 냈던 버그다).
    *    두 칸이 각자 살아 있고, `starts_at` 은 둘이 다 차야 생긴다 (`withSeoulDateTime`).
@@ -161,6 +198,10 @@ export function EventDraftCard({
    */
   const reminderPast =
     creating &&
+    // 🚨 반복 일정은 첫 회차 하나로 판정하지 않는다 (#746 리뷰). 첫 회차의 알림 시각이 지났어도 다음 회차부터는
+    //    울릴 수 있고, 회차 날짜는 화면이 계산하지 않아 둘째 회차를 볼 수 없다. 지난 회차 건너뛰기와 전 회차가
+    //    다 지난 경우의 422 는 서버가 진다 (#761).
+    !repeat &&
     reminder !== NO_REMINDER &&
     event.starts_at !== null &&
     isPast(reminder, event.starts_at, event.all_day);
@@ -211,16 +252,16 @@ export function EventDraftCard({
     return (
       <Card>
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-          <span className="text-label text-ink-subtle">
-            {draft.op === "update" ? "일정 수정" : "새 일정"}
-          </span>
+          <span className="text-label text-ink-subtle">{kind}</span>
           <span className="text-caption text-brand-ink bg-brand-soft rounded-field px-2 py-0.5">
             넣었어요
           </span>
         </div>
         <p className="text-body text-ink mt-3">{shown.event.title}</p>
+        {repeat ? <p className="text-body-sm text-ink-muted mt-1">{repeat.label}</p> : null}
         {shown.event.starts_at ? (
           <p className="text-body-sm text-ink-muted mt-1">
+            {repeat ? "첫 회차 " : null}
             {formatEventTime(shown.event.starts_at, shown.event.all_day)}
           </p>
         ) : null}
@@ -236,9 +277,7 @@ export function EventDraftCard({
   return (
     <Card>
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-        <span className="text-label text-ink-subtle">
-          {draft.op === "update" ? "일정 수정" : "새 일정"}
-        </span>
+        <span className="text-label text-ink-subtle">{kind}</span>
         {/* 🚨 아직 아무것도 저장되지 않았다는 것은 경고가 아니라 **사실**이라 중립 면이다
             (`photo-review.tsx` 와 같은 판단 — `caution` 은 누르는 버튼 옆에만 선다). */}
         <span className="text-caption text-ink-muted bg-surface-muted rounded-field px-2 py-0.5">
@@ -269,15 +308,19 @@ export function EventDraftCard({
                사진 경로가 쓰는 순간 제안이 아닌 것을 제안이라고 말한다. 왜 비었는지는 경로를 아는
                쪽(`review_reason`)이 말하고, 여기는 **비었다는 사실만** 말한다. 그것마저 위에 있으면
                같은 말을 두 번 하게 되므로 그때는 아예 뺀다. */}
-        <DateField
-          label="언제"
-          placeholder="날짜를 골라주세요"
-          hint={missingDate && !draft.review_reason ? "이 초안에는 날짜가 없어요." : undefined}
-          value={date}
-          onChange={(next) => setWhen({ date: next })}
-          fromDate={FROM_DATE}
-          toDate={TO_DATE}
-        />
+        {lockDate && repeat ? (
+          <RepeatWhen label={repeat.label} firstDay={date} />
+        ) : (
+          <DateField
+            label="언제"
+            placeholder="날짜를 골라주세요"
+            hint={missingDate && !draft.review_reason ? "이 초안에는 날짜가 없어요." : undefined}
+            value={date}
+            onChange={(next) => setWhen({ date: next })}
+            fromDate={FROM_DATE}
+            toDate={TO_DATE}
+          />
+        )}
 
         <Checkbox
           checked={event.all_day}
@@ -296,10 +339,12 @@ export function EventDraftCard({
 
         {creating ? (
           <ReminderField
-            startsAt={event.starts_at}
+            // 🚨 반복이면 첫 회차로 지난 선택지를 거르지 않는다 — 위 `reminderPast` 와 같은 이유다.
+            startsAt={repeat ? null : event.starts_at}
             allDay={event.all_day}
             value={reminder}
             onChange={setReminder}
+            hint={repeat ? "나에게만 회차마다 울려요. 이미 지난 회차는 건너뛰어요." : undefined}
           />
         ) : null}
 
@@ -341,6 +386,7 @@ export function EventDraftCard({
         <CardFailed className="mt-4">
           <p>{error}</p>
           <p className="mt-1">아직 아무것도 넣지 않았어요.</p>
+          {errorHint ? <p className="mt-1">{errorHint}</p> : null}
         </CardFailed>
       ) : null}
 
@@ -377,7 +423,9 @@ export function EventDraftCard({
               ) : null}
               {canSubmit ? (
                 <p className="text-body-sm">
-                  누르면 캘린더에 들어가요. 함께 보는 보호자에게도 보여요.
+                  {repeat
+                    ? "누르면 반복하는 날마다 캘린더에 들어가요. 함께 보는 보호자에게도 보여요."
+                    : "누르면 캘린더에 들어가요. 함께 보는 보호자에게도 보여요."}
                 </p>
               ) : null}
             </div>
@@ -391,6 +439,7 @@ export function EventDraftCard({
                       event,
                       items,
                       reminder: reminder === NO_REMINDER ? null : { lead: reminder },
+                      ...(repeat ? { repeat: repeatRequest(repeat) } : {}),
                     }
                   : { event, items };
                 setSent(final);
@@ -513,11 +562,31 @@ function Diff({
   const removed = before.items.filter((item) => item.item_id && !keptIds.has(item.item_id));
   const added = items.filter((item) => item.item_id === null);
 
+  return (
+    <DiffList
+      rows={rows}
+      added={added.map((item) => item.item_name)}
+      removed={removed.map((item) => item.item_name)}
+      unchanged="원래 일정과 달라진 것이 없어요."
+    />
+  );
+}
+
+/** 무엇이 달라지는지 그리는 자리. 일정 수정과 반복 묶음 고치기(#738)가 같이 쓴다 — 값을 고르는 것은 부르는 쪽이다. */
+function DiffList({
+  rows,
+  added,
+  removed,
+  unchanged,
+}: {
+  rows: Array<{ term: string; from: string; to: string }>;
+  added: string[];
+  removed: string[];
+  unchanged: string;
+}) {
   if (rows.length === 0 && removed.length === 0 && added.length === 0) {
     return (
-      <p className="text-body-sm text-ink-muted border-line mt-4 border-t pt-3">
-        원래 일정과 달라진 것이 없어요.
-      </p>
+      <p className="text-body-sm text-ink-muted border-line mt-4 border-t pt-3">{unchanged}</p>
     );
   }
 
@@ -543,20 +612,168 @@ function Diff({
         {added.length > 0 ? (
           <div className="flex flex-wrap items-baseline gap-x-2">
             <dt className="text-caption text-ink-subtle w-10 shrink-0">더함</dt>
-            <dd className="text-body-sm text-ink">
-              {added.map((item) => item.item_name).join(", ")}
-            </dd>
+            <dd className="text-body-sm text-ink">{added.join(", ")}</dd>
           </div>
         ) : null}
         {removed.length > 0 ? (
           <div className="flex flex-wrap items-baseline gap-x-2">
             <dt className="text-caption text-ink-subtle w-10 shrink-0">뺌</dt>
-            <dd className="text-body-sm text-ink-muted line-through">
-              {removed.map((item) => item.item_name).join(", ")}
-            </dd>
+            <dd className="text-body-sm text-ink-muted line-through">{removed.join(", ")}</dd>
           </div>
         ) : null}
       </dl>
     </div>
+  );
+}
+
+/**
+ * 반복 일정의 "언제" (#738). 🚨 **고르는 칸이 아니라 읽는 줄이다** — 회차 날짜는 서버 규칙이 정하고, 첫 회차를
+ *    여기서 옮기면 요일 · 90일 상한과 어긋난다 (카드 머리말). 바꾸는 길은 대화로 다시 말하는 것이라 그렇게 적는다.
+ * 🚨 반복 문구는 서버 문구다 — 요일 · 끝 날짜로 화면이 다시 만들지 않는다.
+ */
+function RepeatWhen({ label, firstDay }: { label: string; firstDay: string }) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <span className="text-label text-ink-muted">언제</span>
+      <p className="text-body text-ink">{label}</p>
+      {firstDay !== "" ? (
+        <p className="text-body-sm text-ink-muted">첫 회차는 {formatDay(firstDay)}이에요.</p>
+      ) : null}
+      <p className="text-caption text-ink-subtle">
+        요일이나 끝나는 날을 바꾸려면 대화로 다시 말해 주세요.
+      </p>
+    </div>
+  );
+}
+
+/**
+ * 반복 묶음 전체를 고치는 초안 한 장 (`op: "update_series"` · #738).
+ *
+ * 🚨 **여기도 승인 게이트 ㉠ 이다** — 오늘 이후 회차 전부를 캘린더에서 고친다. 같은 게이트의 다른 메서드라
+ *    `btn-approve` 와 `caution` 을 쓰고, 게이트가 는 것이 아니다 (`EventDraftCard` 머리말과 같은 이유).
+ *
+ * 🚨 **읽기 전용이다** (#738). 바꾸는 값이 날짜 없는 하루 시각 · 요일 · 끝 날짜 · 준비물 이름이라 일정 카드의
+ *    칸(날짜 + 시각)으로 받을 수 없고, 요일 · 끝 날짜를 화면이 고치면 반복 문구를 다시 만들어야 한다(날짜 계산).
+ *    다르게 바꾸고 싶으면 대화로 다시 말한다 — 새 초안이 이 장을 갈아 끼운다 (`draftTarget`).
+ *
+ * 🚨 **범위를 먼저 말한다.** "오늘 이후 회차 전부" 와 "지난 회차는 그대로" 가 이 카드의 본체다 — 한 회차만 고치려던
+ *    보호자가 여기서 멈출 수 있어야 한다 (Agent 가 범위를 잘못 고를 수 있다 · #744 리뷰).
+ * 🚨 **무엇이 달라지는지는 `before` 와 비교한다.** `before` 는 오늘 이후 회차에서 가장 흔한 값이라, 한 회차만 따로
+ *    고쳐 둔 값은 비교에 안 나온다 — 서버도 그 회차를 덮지 않으니 맞는 표시다.
+ */
+export function SeriesDraftCard({
+  draft,
+  state = "idle",
+  error,
+  errorHint,
+  onSubmit,
+}: {
+  draft: SeriesDraft;
+  state?: DraftSubmitState;
+  error?: string;
+  /** 실패 문구 아래에 덧붙일 다음 할 일 (`EventDraftCard` 의 `errorHint` 와 같다). */
+  errorHint?: string;
+  onSubmit: () => void;
+}) {
+  const done = state === "submitted";
+  const busy = state === "submitting";
+
+  return (
+    <Card>
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <span className="text-label text-ink-subtle">반복 일정 수정</span>
+        {done ? (
+          <span className="text-caption text-brand-ink bg-brand-soft rounded-field px-2 py-0.5">
+            바꿨어요
+          </span>
+        ) : (
+          <span className="text-caption text-ink-muted bg-surface-muted rounded-field px-2 py-0.5">
+            아직 저장되지 않았어요
+          </span>
+        )}
+      </div>
+
+      <p className="text-body text-ink mt-3">{draft.event.title}</p>
+      <p className="text-body-sm text-ink-muted mt-1">{draft.repeat.label}</p>
+      <p className="text-body-sm text-ink-muted mt-1">{seriesTimeLabel(draft.event)}</p>
+
+      {done ? null : (
+        <>
+          <p className="text-body-sm text-ink bg-surface-muted rounded-field mt-3 px-3 py-2">
+            오늘 이후 회차가 모두 바뀌어요. 지난 회차는 그대로예요.
+          </p>
+
+          {/* 🚨 **테두리 상자로 그리지 않는다.** 일정 카드의 준비물 칸과 같은 모양이면 눌러서 고치려 한다 —
+              이 카드는 읽기 전용이라 이름을 이은 한 줄이다. */}
+          <div className="mt-4">
+            <p className="text-label text-ink-muted">준비물</p>
+            <p className="text-body-sm text-ink mt-1 wrap-anywhere">
+              {draft.items.length === 0 ? "없어요" : draft.items.join(", ")}
+            </p>
+          </div>
+
+          {draft.before ? <SeriesDiff draft={draft} before={draft.before} /> : null}
+
+          <p className="text-caption text-ink-subtle mt-4">
+            여기서는 고칠 수 없어요. 다르게 바꾸려면 대화로 다시 말해 주세요.
+          </p>
+
+          {error ? (
+            <CardFailed className="mt-4">
+              <p>{error}</p>
+              <p className="mt-1">아직 아무것도 바꾸지 않았어요.</p>
+              {errorHint ? <p className="mt-1">{errorHint}</p> : null}
+            </CardFailed>
+          ) : null}
+
+          <div className="mt-5">
+            {/* 🚨 게이트의 마지막 확인은 버튼 옆 글자 한 덩이다 (`EventDraftCard` 와 같다). */}
+            <p
+              className={cn(
+                "text-body-sm ease-standard mb-3 transition-colors duration-120",
+                busy ? "text-ink-subtle" : "text-caution",
+              )}
+            >
+              누르면 앞으로의 회차가 캘린더에서 모두 바뀌어요. 함께 보는 보호자에게도 보여요.
+            </p>
+            <Button variant="approve" disabled={busy} aria-busy={busy} onClick={onSubmit}>
+              {busy ? <Spinner /> : null}
+              {busy ? "바꾸는 중이에요" : "확인했어요, 앞으로 전부 바꿀게요"}
+            </Button>
+          </div>
+        </>
+      )}
+    </Card>
+  );
+}
+
+/** 묶음 고치기에서 달라지는 것. 🚨 준비물은 이름으로 비교한다 — 회차마다 `item_id` 가 달라서다 (#738). */
+function SeriesDiff({
+  draft,
+  before,
+}: {
+  draft: SeriesDraft;
+  before: NonNullable<SeriesDraft["before"]>;
+}) {
+  const rows: Array<{ term: string; from: string; to: string }> = [];
+  if (before.title !== draft.event.title) {
+    rows.push({ term: "제목", from: before.title, to: draft.event.title });
+  }
+  const fromTime = seriesTimeLabel(before);
+  const toTime = seriesTimeLabel(draft.event);
+  if (fromTime !== toTime) rows.push({ term: "시각", from: fromTime, to: toTime });
+  if (before.repeat.label !== draft.repeat.label) {
+    rows.push({ term: "반복", from: before.repeat.label, to: draft.repeat.label });
+  }
+
+  const now = new Set(draft.items);
+  const was = new Set(before.items);
+  return (
+    <DiffList
+      rows={rows}
+      added={draft.items.filter((name) => !was.has(name))}
+      removed={before.items.filter((name) => !now.has(name))}
+      unchanged="지금 반복 일정과 달라진 것이 없어요."
+    />
   );
 }
