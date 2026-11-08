@@ -11,7 +11,6 @@ import { TextArea } from "@/components/ui/text-area";
 import { VoiceLevelMeter } from "@/components/voice-level-meter";
 import { useVoiceInput } from "@/hooks/use-voice-input";
 import type { HomeResponse } from "@/lib/api/types";
-import { PENDING_SERVER_FEATURES } from "@/lib/features";
 import { SPEECH_ASKING } from "@/lib/native/speech";
 import { VIEW_TRANSITION } from "@/lib/view-transition";
 
@@ -183,18 +182,14 @@ export function HomeComposer({
               </>
             ) : (
               <>
-                {/* 🚨 마이크처럼 비활성으로 세우지 않고 숨긴다 — 이유를 말할 수 있는 미정(음성 방침)이 아니라
-                    서버에 아직 없는 기능이라, 보호자에게 남길 설명이 없다 (`lib/features.ts` · #409). */}
-                {PENDING_SERVER_FEATURES.photoEntry ? (
-                  <IconButton
-                    label="사진으로 적기"
-                    onClick={onPickPhoto}
-                    disabled={locked}
-                    data-tour="photo"
-                  >
-                    <Camera aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
-                  </IconButton>
-                ) : null}
+                <IconButton
+                  label="사진으로 적기"
+                  onClick={onPickPhoto}
+                  disabled={locked}
+                  data-tour="photo"
+                >
+                  <Camera aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
+                </IconButton>
                 {voice.support === "ready" ? (
                   <IconButton
                     ref={micRef}

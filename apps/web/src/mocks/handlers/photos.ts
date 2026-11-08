@@ -113,27 +113,118 @@ function readPhoto(declared: PhotoLane, date: string | null): PhotoRun {
 function noticeText(): string {
   return [
     "9월 넷째 주 알림장",
-    "월요일 도서관 나들이가 있어요. 준비물은 없어요.",
+    "월요일 오전 9시 30분 도서관 나들이가 있어요. 준비물은 없어요.",
     "수요일 원복을 입고 등원해 주세요.",
+    "목요일까지 체험학습 동의서를 회신해 주세요.",
     "금요일 물놀이가 있어요. 준비물: 수건, 수영복, 여벌 옷",
+    "다음 주 월요일부터 금요일까지 독서 주간이에요.",
+    "부모 참여 수업은 오전 10시부터 12시까지예요. 신청은 수요일까지 받아요.",
+    "가정통신문은 화요일 오후 6시까지 회신해 주세요.",
+    "비가 오면 바깥 놀이는 실내 활동으로 바꿔요.",
     "이달 말 생일잔치 날짜는 추후 공지합니다.",
   ].join("\n");
+}
+
+/** 서울 시각 ISO. 🚨 서버처럼 시간대를 달아 보낸다 — 화면이 기기 시간대로 읽지 않는지 보려고. */
+function seoulAt(day: string, time: string): string {
+  return `${day}T${time}:00+09:00`;
 }
 
 /**
  * 알림장 한 장에서 나온 항목들. 🚨 **일부러 못 읽은 것을 섞는다** — 화면이 두 무리로 가르는
  * 것이 이 목의 요점이고, 전부 잘 읽힌 상태만 있으면 "확인이 필요해요" 를 볼 수가 없다.
+ *
+ * 🚨 **서버가 보내는 날짜 칸을 그대로 흉내 낸다** (#723 · `photo_run.py` 의 `_item_entry`) —
+ *    `date` 는 `starts_at ?? due_at` 의 날짜고, 종일 일정의 끝은 그날 23:59 다. 그래서
+ *    시각을 읽은 일정, 여러 날 일정, 마감만 있는 할 일, 날짜 없는 안내가 한 장에 다 있다.
  */
 function noticeEntries(): PhotoEntry[] {
+  const library = daysAgo(-5);
+  const consentDue = daysAgo(-4);
+  const readingFrom = daysAgo(-8);
+  const readingTo = daysAgo(-12);
+  const classDay = daysAgo(-9);
+  const classDue = daysAgo(-3);
+  const letterDue = daysAgo(-2);
   return [
     {
       id: "pe_1",
       kind: "event",
       title: "도서관 나들이",
-      date: daysAgo(-5),
+      date: library,
+      // 🚨 시각을 읽은 일정이다. 시트가 시각 칸을 9:30 으로 채워서 열어야 한다.
+      all_day: false,
+      items: [],
+      needs_review: false,
+      starts_at: seoulAt(library, "09:30"),
+      ends_at: null,
+      due_at: null,
+    },
+    {
+      id: "pe_5",
+      kind: "event",
+      title: "독서 주간",
+      date: readingFrom,
+      // 🚨 여러 날 일정이다. 목록은 기간으로 쓰고, 넣을 때 끝날까지 함께 간다.
       all_day: true,
       items: [],
       needs_review: false,
+      starts_at: seoulAt(readingFrom, "00:00"),
+      ends_at: seoulAt(readingTo, "23:59"),
+      due_at: null,
+    },
+    {
+      id: "pe_6",
+      kind: "todo",
+      title: "체험학습 동의서 회신",
+      // 🚨 마감만 있는 할 일이다. `date` 는 마감일이고, 일정으로 넣을 때 그 날을 시작으로 쓰지 않는다.
+      date: consentDue,
+      all_day: true,
+      items: [],
+      needs_review: false,
+      starts_at: null,
+      ends_at: null,
+      due_at: seoulAt(consentDue, "23:59"),
+    },
+    {
+      id: "pe_8",
+      kind: "event",
+      title: "부모 참여 수업",
+      date: classDay,
+      // 🚨 시각을 읽은 시작에 하루 종일 마감이 붙은 모양이다 (#792 리뷰). `all_day` 는 위 칸(시작)의 것이라
+      //    거짓이다 — 서버가 둘을 합쳐 보내던 때는 하루 종일로 보여 10시가 사라지고 숨은 끝이 들어갔다.
+      all_day: false,
+      items: [],
+      needs_review: false,
+      starts_at: seoulAt(classDay, "10:00"),
+      ends_at: seoulAt(classDay, "12:00"),
+      due_at: seoulAt(classDue, "23:59"),
+    },
+    {
+      id: "pe_9",
+      kind: "todo",
+      title: "가정통신문 회신",
+      date: letterDue,
+      // 🚨 시각을 읽은 마감이다. 목록은 "마감 … 오후 6:00" 이고, 일정으로 넣을 때 시작은 여전히 하루 종일에서 연다.
+      all_day: false,
+      items: [],
+      needs_review: false,
+      starts_at: null,
+      ends_at: null,
+      due_at: seoulAt(letterDue, "18:00"),
+    },
+    {
+      id: "pe_7",
+      kind: "info",
+      title: "비 오는 날 실내 활동",
+      // 🚨 날짜가 없는 안내는 정상이다. "못 읽었어요" 로 보이면 안 된다.
+      date: null,
+      all_day: false,
+      items: [],
+      needs_review: false,
+      starts_at: null,
+      ends_at: null,
+      due_at: null,
     },
     {
       id: "pe_2",
@@ -371,6 +462,14 @@ export const photoHandlers = [
       return apiError(422, "validation_failed", "확인하지 않은 항목이 있어요", {
         field: "entries",
         ids: unchecked.map((e) => e.id),
+      });
+    }
+
+    // 서버(`photos.py` 의 commit)와 같다 — 일정 하나는 항목 하나에만 잇는다 (#723).
+    const linked = entries.flatMap((e) => (e.event_id ? [e.event_id] : []));
+    if (linked.length !== new Set(linked).size) {
+      return apiError(422, "validation_failed", "한 일정을 두 항목에 이었어요", {
+        field: "entries",
       });
     }
 
