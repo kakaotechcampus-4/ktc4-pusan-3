@@ -27,13 +27,33 @@ api.icatch.ai.kr {
 	reverse_proxy ktc4-api:8000
 }
 
-# dev (develop)
+# dev (develop) — 팀만 연다 (#780). 열려 있으면 누구나 카카오로 가입해 실제 보호자 · 아이 정보가
+# 백업 없는 dev DB 에 쌓인다. 계정은 prod deploy/docker/.env 의 DEV_BASIC_AUTH_USER · _HASH (docs/ops/deploy-v1.md).
+# 🚨 하나만 비면 Caddyfile 검사가 실패하고, 둘 다 비면 검사는 통과하지만 계정 없는 basic_auth 가 된다.
+#    어느 쪽이든 deploy.sh 가 prod 배포 전에 막는다 (해시를 작은따옴표로 안 감싼 것도).
+(dev_auth) {
+	basic_auth {
+		{$DEV_BASIC_AUTH_USER} {$DEV_BASIC_AUTH_HASH}
+	}
+}
+
 dev.icatch.ai.kr {
 	import hsts
+	import dev_auth
 	reverse_proxy ktc4-dev-web:3000
 }
 
 api.dev.icatch.ai.kr {
 	import hsts
+	# 로그인 시작(GET /api/v1/auth/kakao)만 막는다 — 웹만 막으면 api.dev 에서 바로 카카오 로그인을 시작해
+	# curl 로 가입까지 끝낼 수 있다. HEAD 도 같은 핸들러(state 쿠키 · 카카오 주소)를 받는다.
+	# 🚨 나머지는 열어 둔다. api 전체를 막으면 CORS preflight(OPTIONS)가 401 이라 dev 화면이 API 를 못 부른다.
+	@login_start {
+		method GET HEAD
+		path /api/v1/auth/kakao
+	}
+	route @login_start {
+		import dev_auth
+	}
 	reverse_proxy ktc4-dev-api:8000
 }

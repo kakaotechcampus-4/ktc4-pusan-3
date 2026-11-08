@@ -62,6 +62,20 @@ esac || {
   log "   prod: 비움(또는 ktc4-deploy) · 비움 · api.dev 아님 · COMPOSE_PROFILES=edge (docs/ops/deploy-v1.md)"
   exit 1
 }
+# dev 사이트 basic_auth 계정 (#780) — 두 환경을 다 받는 Caddy 가 prod 에 있어서 prod .env 에만 둔다.
+# 하나만 비면 Caddyfile 검사가 실패하고, 둘 다 비면 검사를 통과해 계정 없는 basic_auth 가 된다 — 여기서 막는다.
+# 🚨 해시는 작은따옴표로 감싸야 한다. 안 감싸면 compose 가 해시 속 $… 를 변수로 바꿔 Caddy 에 깨진 값이 가고
+#    늘 401 이다 — envval 은 따옴표를 떼서 읽으므로 원래 줄을 본다.
+if [ "$TARGET" = prod ]; then
+  AUTH_USER="$(envval DEV_BASIC_AUTH_USER)"
+  AUTH_HASH="$(envval DEV_BASIC_AUTH_HASH)"
+  AUTH_HASH_RAW="$(grep -E '^DEV_BASIC_AUTH_HASH=' "$ENV_FILE" | tail -n 1 | cut -d= -f2- || true)"
+  if [ -z "$AUTH_USER" ] || [[ "$AUTH_HASH_RAW" != "'\$2"*"'" ]]; then
+    log "🔴 prod 인데 $ENV_FILE 의 DEV_BASIC_AUTH_USER · DEV_BASIC_AUTH_HASH 가 없거나 해시가 작은따옴표로 감싸여 있지 않다"
+    log "   DEV_BASIC_AUTH_HASH='\$2a\$14\$…' 꼴 — docker run --rm caddy:2.10.0-alpine caddy hash-password (docs/ops/deploy-v1.md)"
+    exit 1
+  fi
+fi
 [ -z "${CHECK_ONLY:-}" ] || { log "$ENV_FILE = $TARGET 설정과 맞다"; exit 0; }
 
 # 4GB 서버에서 dev · prod 가 동시에 이미지를 구우면 메모리가 넘친다. 다른 환경 배포가 끝날 때까지 기다린다.
@@ -107,7 +121,10 @@ if [ "$TARGET" = prod ]; then
   # 깨진 Caddyfile 은 reload 가 거부해도 다음 Caddy 재시작에 dev · 운영을 같이 내린다. 굽기 전에 막는다.
   CADDY_IMAGE="$("${COMPOSE[@]}" config --images | grep '^caddy:' | head -n 1)"
   log "Caddyfile 검사 ($CADDY_IMAGE)"
-  docker run --rm -v "$PWD/deploy/caddy:/etc/caddy:ro" "$CADDY_IMAGE" \
+  # basic_auth 값을 같이 넘긴다 — Caddy 컨테이너는 compose 의 environment 로 받는 값이라, 없이 검사하면
+  # 실제와 다른 설정(계정 없는 basic_auth)을 검사하게 된다. 해시의 $ 가 다시 펼쳐지지 않게 변수로 넘긴다.
+  docker run --rm -e DEV_BASIC_AUTH_USER="$AUTH_USER" -e DEV_BASIC_AUTH_HASH="$AUTH_HASH" \
+    -v "$PWD/deploy/caddy:/etc/caddy:ro" "$CADDY_IMAGE" \
     caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile ||
     { log "🔴 Caddyfile 이 깨졌다 — 아무것도 올리지 않았다"; exit 1; }
 fi

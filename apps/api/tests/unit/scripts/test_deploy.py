@@ -31,18 +31,22 @@ DEV_ENV = (
     "COMPOSE_PROFILES=\n"
     "APP_ENV=dev\n"
 )
+# 가짜 bcrypt 해시 — $ 뒤가 글자라 따옴표 없이 두면 compose 가 변수로 먹는 꼴 그대로다
+AUTH_HASH = "$2a$14$OlCfakefakefakefakefakeuQ"
 PROD_ENV = (
     "COMPOSE_PROJECT_NAME=\n"
     "STACK_SUFFIX=\n"
     "NEXT_PUBLIC_API_BASE_URL=https://api.icatch.ai.kr\n"
     "COMPOSE_PROFILES=edge\n"
     "APP_ENV=prod\n"
+    "DEV_BASIC_AUTH_USER=team\n"
+    f"DEV_BASIC_AUTH_HASH='{AUTH_HASH}'\n"
 )
 
 FAKE_DOCKER = r"""#!/bin/sh
 echo "docker $* tag=${API_IMAGE_TAG:-} web=${WEB_IMAGE_TAG:-}" >> "$FAKE_LOG"
 case "$*" in
-  "run --rm -v"*) [ -z "$FAKE_CADDY_INVALID" ] ;;
+  "run --rm -e"*) [ -z "$FAKE_CADDY_INVALID" ] ;;
   "exec ktc4-caddy"*) [ -z "$FAKE_RELOAD_FAIL" ] ;;
   "network inspect"*) [ -z "$FAKE_NO_NET" ] ;;
   "image inspect"*) [ -z "$FAKE_NO_PREV" ] ;;
@@ -247,14 +251,38 @@ def test_prod_validates_caddyfile_and_reloads_caddy(box):
     calls = box.calls()
     validate = _index(calls, "caddy validate")
     assert "caddy:2.10.0-alpine" in calls[validate]
+    # 실제 Caddy 와 같은 값으로 검사한다 — 해시의 $ 가 그대로 가야 한다
+    assert f"-e DEV_BASIC_AUTH_USER=team -e DEV_BASIC_AUTH_HASH={AUTH_HASH} " in calls[validate]
     assert validate < _index(calls, " build ")
     assert any(c.startswith("docker exec ktc4-caddy caddy reload") for c in calls)
 
 
 def test_dev_does_not_touch_caddy(box):
+    """basic_auth 계정은 prod .env 에만 있다 — dev 는 없어도 된다."""
     box()
 
     assert not any("caddy" in c for c in box.calls())
+
+
+@pytest.mark.parametrize(
+    "env",
+    [
+        PROD_ENV.replace("DEV_BASIC_AUTH_USER=team\n", ""),
+        PROD_ENV.replace(f"DEV_BASIC_AUTH_HASH='{AUTH_HASH}'\n", "DEV_BASIC_AUTH_HASH=\n"),
+        # 따옴표가 없으면 compose 가 $OlC… 를 변수로 바꿔 Caddy 에 깨진 해시가 간다 → 늘 401
+        PROD_ENV.replace(f"'{AUTH_HASH}'", AUTH_HASH),
+    ],
+)
+def test_prod_needs_quoted_dev_basic_auth_before_touching_anything(box, env):
+    """Caddy 는 prod 에만 뜬다. 값이 없거나 깨지면 Caddyfile 검사에서 prod 배포가 멈추거나
+    dev 에 아무도 못 들어간다."""
+    box.env_file.write_text(env)
+
+    result = box(target="prod")
+
+    assert result.returncode == 1
+    assert "DEV_BASIC_AUTH" in result.stdout
+    assert box.calls() == []
 
 
 def test_broken_caddyfile_stops_prod_before_anything_changes(box):
@@ -322,6 +350,7 @@ def test_first_deploy_and_same_sha_redeploy_skip_the_age_check(box, prev):
         (DEV_ENV.replace("COMPOSE_PROJECT_NAME=ktc4-dev", "COMPOSE_PROJECT_NAME="), False),
         (DEV_ENV.replace("APP_ENV=dev\n", ""), False),
         (PROD_ENV.replace("COMPOSE_PROFILES=edge", "COMPOSE_PROFILES="), False),
+        (PROD_ENV.replace("DEV_BASIC_AUTH_USER=team\n", ""), False),
     ],
 )
 def test_check_env_only_inspects_env_file(box, env, ok):
