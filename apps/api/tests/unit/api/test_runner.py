@@ -170,6 +170,50 @@ async def test_agent_job_위치_기록에_실패하면_좌표만_버리고_끝�
     assert "남기면 안 되는 예외 문구" not in caplog.text
 
 
+async def test_agent_job_위치_기록_뒤_rollback_까지_실패해도_좌표만_버리고_끝까지_돈다(
+    monkeypatch, caplog
+):
+    """연결이 끊기면 rollback 자체도 예외를 낸다. 그래도 "기록에 실패해도 run 은 계속" 이다
+    (#697 리뷰)."""
+
+    class BrokenSession:
+        async def __aenter__(self) -> "BrokenSession":
+            return self
+
+        async def __aexit__(self, *exc: object) -> None:
+            return None
+
+        async def commit(self) -> None:
+            return None
+
+        async def rollback(self) -> None:
+            raise ConnectionError("끊긴 연결")
+
+    monkeypatch.setattr(runner, "background_session", BrokenSession)
+    seen: list = []
+
+    async def fake_handle_input(**kwargs):
+        seen.append(kwargs["location"])
+        kwargs["emit"](Done(kwargs["run_id"], 1))
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    _location_logs(monkeypatch, RuntimeError("남기면 안 되는 예외 문구"))
+    channel = registry.open_run(parent_id=PARENT)
+    job = runner.agent_job(
+        child_id=CHILD,
+        parent_id=PARENT,
+        raw_text=RAW_TEXT,
+        location=entrypoint.CoarseLocation(lat=35.18, lon=129.08),
+    )
+
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    assert seen == [None]
+    assert names(channel) == ["done"]
+    errors = [r for r in caplog.records if r.levelname == "ERROR"]
+    assert len(errors) == 1
+
+
 async def test_agent_job_병원_어댑터를_진입점에_그대로_넘긴다(monkeypatch):
     """서버 시작 때 만든 국립중앙의료원 어댑터 — 날씨 어댑터와 같은 길이다."""
     seen: dict = {}

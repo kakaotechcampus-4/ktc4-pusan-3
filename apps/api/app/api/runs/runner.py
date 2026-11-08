@@ -19,6 +19,7 @@
 """
 
 import asyncio
+import contextlib
 import logging
 import traceback
 from collections.abc import Awaitable, Callable
@@ -293,7 +294,9 @@ async def _hand_location(
         )
         await session.commit()
     except Exception as exc:
-        await session.rollback()
+        # 연결이 끊겼으면 rollback 도 예외를 낸다. 그래도 run 은 계속 돈다 (#697 리뷰)
+        with contextlib.suppress(Exception):
+            await session.rollback()
         log_error_without_message(log, "위치 이용 기록 실패 — 좌표 없이 계속", exc)
         return None
     return location if granted else None
