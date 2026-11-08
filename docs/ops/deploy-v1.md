@@ -46,6 +46,35 @@ healthy 가 될 때까지 기다리고, 안 되면(최대 240초) 실패로 본�
   - 컬럼 · 테이블 추가, nullable 컬럼 추가 → 한 번에 해도 된다
   - 컬럼 삭제 · 이름 바꾸기 · NOT NULL 로 조이기 → **두 번에 나눈다.** 먼저 코드가 그 컬럼을 안 쓰게 배포하고,
     다음 배포에서 스키마를 바꾼다
+  - **CI 가 막는다** (#782) — `scripts/check_expand_only.py` 가 새 마이그레이션의 `upgrade()` 와 거기서 부르는
+    같은 파일의 함수에서 아래를 찾으면 빨간불. 목록 · 이유의 정본은 스크립트 머리말이다.
+    - `drop_column` · `drop_table` · `rename_table` · `alter_column(new_column_name=… / nullable=False)`
+    - `server_default` 없는(`None` 포함) NOT NULL · `primary_key` `add_column`
+    - NOT NULL 인 게 보이는 컬럼의 `alter_column(server_default=None)` — `nullable=False` · `existing_nullable=False`
+      또는 같은 upgrade 에서 NOT NULL 로 추가한 컬럼. 안 보이면 nullable 일 수 있어 넘긴다
+    - 같은 이름의 `drop_constraint` + `create_check_constraint` (CHECK 교체) — enum 이 CHECK 라 값 빼기 · 바꾸기가
+      이 모양이다. 넓히기(값 더하기)도 걸린다 — 값이 상수 · 헬퍼 인자로 흘러와 코드로 못 가린다
+    - `alter_column(type_=…)` — `VARCHAR(n)` → `VARCHAR(m ≥ n)` · `TEXT` 처럼 넓히기가 확실한 것만 통과
+      (길이는 `String(8)` · `String(length=8)` 둘 다 읽는다. 길이가 상수가 아니면 넓히기로 보지 않는다)
+    - `op.execute` 원문 SQL(상수 · 파일 안 변수 · `sa.text`)의 `DROP TABLE`, `ALTER TABLE` 의
+      `DROP [COLUMN]` · `RENAME` · `ALTER [COLUMN] … TYPE` · `SET NOT NULL`
+    - `drop_index` · `drop_constraint` 만 있는 것은 보지 않는다 (기존 마이그레이션에서 오탐만 나왔다)
+  - 넘기는 표시는 **그 연산 바로 위 줄이나 같은 줄의 주석**이고, 그 연산 하나만 넘긴다. docstring · 문자열 안의 글자는 안 된다.
+    - `# contract: #<앞 배포 PR 번호>` — 두 번째 배포(앞 배포로 코드가 이미 안 쓰는 컬럼을 지우는 것)
+    - `# expand-ok: <이유>` — CHECK 교체 · `type_` 에만. 넓히기라 직전 코드가 그대로 돈다는 것을 사람이 봤다는 뜻이다
+    - 🚨 헬퍼 함수 안 연산에 단 `# expand-ok:` 는 그 헬퍼의 **모든 호출**에 통한다. 넓히기 표시를 단 헬퍼는 넓히기에만
+      쓴다 — 같은 `_swap()` 으로 값 빼기까지 하면 빼기도 같이 넘어간다
+  - 못 보는 것: SQL 을 함수 반환값 · 문자열 덧셈으로 만든 것, 원문 SQL 의 `ADD COLUMN … NOT NULL`(DEFAULT 없음),
+    원문 SQL 로 CHECK 를 지우고 다시 만드는 것(`DROP CONSTRAINT` + `ADD CONSTRAINT … CHECK`). 새 unique 제약처럼
+    의미를 봐야 하는 것도 이 검사 밖이다
+  - 🚨 **contract PR 은 앞 PR 이 prod(main) 에 배포된 뒤에 develop 에 머지한다.** 표시는 배포 순서를 확인하지 못한다.
+    둘이 develop 에 따로 머지돼도 develop → main 한 번에 같이 실리면, prod 헬스 실패 때 앞 PR 이전 이미지로
+    롤백되고 그 이미지는 지운 컬럼을 읽는다.
+  - 대상은 스크립트의 `BASELINE`(`d5e8a1c4b937`)과 그 조상을 뺀 revision 전부다 — BASELINE 앞에서 갈라져 나중에
+    merge 된 revision 도 들어간다. 평소엔 올리지 않는다. **규칙을 넓히는 PR 에서만** prod DB 의 현재 revision
+    (서버 prod checkout 에서 `alembic current`)으로 같이 올린다 — main head 가 아니라 실제 prod DB 기준이다
+    (#753 전에는 prod 가 develop push 로 배포돼 main head 와 다를 수 있다). 배포된 revision 이 새 규칙에 걸려 배포 게이트가 막히지 않게. git diff 를 쓰지 않는 이유는
+    CI checkout 이 depth 1 이고 배포가 부른 실행엔 비교할 base 가 없어서다.
   - 마이그레이션 자체를 되돌려야 하면 사람이 서버에서 `alembic downgrade` 를 한다 (자동으로 하지 않는다 — 데이터가 지워질 수 있다)
 - 롤백은 **새 커밋의 compose 파일**로 옛 이미지를 띄운다. compose 파일을 크게 바꾼 배포가 실패하면 롤백도 실패할 수 있다.
   그때 Actions 출력에 "롤백도 실패" 가 찍힌다.
