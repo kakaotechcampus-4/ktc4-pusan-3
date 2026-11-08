@@ -8,12 +8,14 @@ from datetime import timedelta
 from uuid import UUID
 
 from app.agents.activity.context import ActivityContext
-from app.agents.activity.result import ToolResult, fail, ok
+from app.agents.activity.result import ErrorCode, ToolResult, fail, ok
 from app.agents.activity.review import error_code, explain, review_candidates
 from app.agents.activity.rules import DUPLICATE_WINDOW_DAYS, said_in_request
 from app.agents.activity.schemas.recommend import ActivityCandidate, ProposeActivityCandidatesArgs
 from app.agents.activity.tools.filters import allergy_cautions, safety_terms
-from app.agents.activity.tools.outing import outdoor_on
+from app.agents.activity.tools.outing import outdoor_on, when_remedy
+from app.agents.activity.when import PastDay, days_of
+from app.agents.common.datetime_rules import DateParseError
 from app.agents.common.suggestion import check_count
 
 _NAME = "propose_activity_candidates"
@@ -59,6 +61,24 @@ async def propose_activity_candidates(
         date_from=today - timedelta(days=DUPLICATE_WINDOW_DAYS - 1),
         date_to=today,
     )
+    # 날 표현을 먼저 읽는다 — 못 읽거나 지난 날이면 모델이 고쳐 다시 낸다 (#800)
+    for index, candidate in enumerate(args.candidates):
+        try:
+            days_of(candidate.day, today)
+        except PastDay:
+            return fail(
+                "propose",
+                _NAME,
+                ErrorCode.INVALID_ARGS,
+                f"{index + 1}번 후보: day '{candidate.day}' 는 이미 지난 날이다. 오늘 이후로 쓴다.",
+            )
+        except DateParseError:
+            return fail(
+                "propose",
+                _NAME,
+                ErrorCode.INVALID_ARGS,
+                f"{index + 1}번 후보: {when_remedy(candidate.day)}",
+            )
     candidates = _with_doc_ids(args.candidates, context.state.example_ids)
     # 후보마다 그날 판정으로 야외를 거른다. 판정이 없는 날은 여기서 판정한다 (#377)
     outdoor = {
@@ -82,6 +102,7 @@ async def propose_activity_candidates(
         outdoor=outdoor,
         # outdoor_on 이 위에서 후보의 날을 모두 판정해 넣었다. 행사는 날짜마다 본다 (#668 리뷰)
         outdoor_days={day: brief.outdoor_ok for day, brief in context.state.weather.items()},
+        ended_today=context.state.ended_today,
     )
     if review.rejections:
         # 거절만 모델에게 돌려준다. 같이 빠진 후보는 말하지 않는다 — 다시 내면 또 빠진다
@@ -102,6 +123,7 @@ async def propose_activity_candidates(
         context.state.excluded = ()
     context.state.suggestions = review.drafts
     context.state.outdoor_drafts = context.state.outdoor_drafts | review.outdoor
+    context.state.draft_days = context.state.draft_days | review.days
     context.state.cautions = allergy_cautions(entries)
     return ok("propose", _NAME, count=len(review.drafts), kinds=[d.kind for d in review.drafts])
 

@@ -54,7 +54,7 @@ class EventKind(StrEnum):
 
 
 class DayLabel(StrEnum):
-    """조회 날짜 라벨. 모델은 라벨만 고르고 날짜는 코드가 계산한다."""
+    """예전 날짜 라벨. 지금은 `When`(보호자가 쓴 표현)으로 받는다 — 이 값도 받는다 (#800)."""
 
     TODAY = "today"
     TOMORROW = "tomorrow"
@@ -90,3 +90,18 @@ class EvidencePick(ToolArgs):
             ),
         ),
     ]
+
+
+# 언제 하는 활동인지 — 보호자가 쓴 날 표현 그대로. 날짜는 코드가 푼다(`when.days_of`, #800)
+When = Annotated[
+    str,
+    Field(
+        default="오늘",
+        max_length=30,
+        description=(
+            "보호자가 쓴 날 표현 그대로(예: 오늘, 내일, 이번 주말, 다음 주 주말, 다음 주 토요일, "
+            "11월 20일). 날짜를 계산해 바꿔 쓰지 않는다. 일만 말했으면(20일) 이번 달이나 다음 달 "
+            "중 오지 않은 쪽의 '11월 20일' 꼴로 쓴다. 날을 말하지 않았으면 오늘"
+        ),
+    ),
+]
