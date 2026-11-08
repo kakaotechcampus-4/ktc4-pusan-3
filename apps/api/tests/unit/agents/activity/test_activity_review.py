@@ -1309,20 +1309,50 @@ class TestInventedFacility:
         cand = self.at_cafe("큰 블록으로 탑 쌓기", reason="이곳 볼풀이 넓어서 좋아요")
         assert reason_of(self.run(cand)) is RejectReason.INVENTED_FACILITY
 
-    def test_보호자가_말한_시설이면_통과한다(self):
+    def test_보호자가_말해도_그_장소에_있다고_단정하면_거절한다(self):
+        """요청의 시설은 "원한다" 이지 "그곳에 있다" 가 아니다 (#820 리뷰)."""
         result = self.run(
             self.at_cafe("볼풀에서 공 옮기기"), request_texts=("볼풀 있는 키즈카페 가려는데",)
         )
-        assert reason_of(result) is None
+        assert reason_of(result) is RejectReason.INVENTED_FACILITY
 
-    def test_조회한_기록에_있는_시설이면_통과한다(self):
-        ball_pit = UUID(int=31)
+    def test_싫다고_한_시설도_허용하지_않는다(self):
+        """ "볼풀은 싫어해" 에 볼풀이 들어 있다고 볼풀을 쓰게 하면 안 된다 (#820 리뷰)."""
+        result = self.run(self.at_cafe("볼풀에서 공 옮기기"), request_texts=("볼풀은 싫어해",))
+        assert reason_of(result) is RejectReason.INVENTED_FACILITY
+
+    def test_있는지_확인하라는_문장은_통과한다(self):
+        cand = self.at_cafe(
+            "큰 쿠션 위에서 굴러 보기", reason="볼풀이 있는지는 가기 전에 확인해 주세요"
+        )
+        assert reason_of(self.run(cand)) is None
+
+    def test_그_장소에서_시설을_쓴_기록이면_통과한다(self):
+        visit = UUID(int=31)
         seen = {
             **SEEN,
-            ball_pit: ranked(ball_pit, label="볼풀 놀이", tier=3, polarity=1),
+            visit: ranked(visit, label="가상놀이키즈카페에서 볼풀 놀이", tier=3, polarity=1),
         }
+        assert reason_of(self.run(self.at_cafe("볼풀에서 공 옮기기"), seen=seen)) is None
+
+    def test_장소_없이_시설만_나온_기록은_확인이_아니다(self):
+        ball_pit = UUID(int=31)
+        seen = {**SEEN, ball_pit: ranked(ball_pit, label="볼풀 놀이", tier=3, polarity=1)}
         result = self.run(self.at_cafe("볼풀에서 공 옮기기"), seen=seen)
-        assert reason_of(result) is None
+        assert reason_of(result) is RejectReason.INVENTED_FACILITY
+
+    @pytest.mark.parametrize(
+        ("label", "polarity"),
+        [
+            ("가상놀이키즈카페 볼풀은 싫어함", -1),
+            ("가상놀이키즈카페는 볼풀이 없어서 아쉬웠다", 0),
+        ],
+    )
+    def test_부정하는_기록은_확인이_아니다(self, label, polarity):
+        visit = UUID(int=31)
+        seen = {**SEEN, visit: ranked(visit, label=label, tier=3, polarity=polarity)}
+        result = self.run(self.at_cafe("볼풀에서 공 옮기기"), seen=seen)
+        assert reason_of(result) is RejectReason.INVENTED_FACILITY
 
     def test_장소가_없는_후보는_보지_않는다(self):
         """장소를 붙이지 않은 집 놀이는 그 장소의 시설을 단정하지 않는다."""

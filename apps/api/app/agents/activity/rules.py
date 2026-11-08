@@ -109,8 +109,45 @@ FACILITY_WORDS = (
 )
 
 
-def invented_facilities(texts: Sequence[str], known: Sequence[str]) -> tuple[str, ...]:
-    """texts 에 쓴 시설 낱말 중 known(보호자 요청 · 조회한 기록)에 없는 것."""
-    said = "".join("".join(text.split()) for text in known)
-    written = "".join("".join(text.split()) for text in texts)
-    return tuple(word for word in FACILITY_WORDS if word in written and word not in said)
+# 단정하지 않는 말 — "볼풀이 있는지는 확인해 주세요" 는 시설이 있다고 하는 것이 아니다
+_UNSURE = ("있는지", "확인", "모르", "다를수", "없을수")
+# 부정하는 말 — "볼풀은 싫어해" · "볼풀이 없어서" 는 그곳에 그 시설이 있다는 확인이 아니다
+_NEGATED = ("싫", "무서", "말고", "빼고", "없", "않", "안가", "안좋", "별로", "금지", "피해")
+_CLAUSE = re.compile(r"[.,!?;·\n]")
+
+
+def _clauses(text: str) -> list[str]:
+    return [part for part in ("".join(c.split()) for c in _CLAUSE.split(text)) if part]
+
+
+def invented_facilities(
+    texts: Sequence[str], *, place_name: str, records: Sequence[tuple[str, int]]
+) -> tuple[str, ...]:
+    """texts 가 그 장소에 있다고 쓴 시설 중 확인되지 않은 것 (#814 · #820 리뷰).
+
+    - **언급과 확인을 나눈다.** 확인은 부정이 아닌 기록(polarity ≥ 0) 한 문장에 **그 장소 이름과
+      시설이 같이** 있고 그 문장이 부정이 아닐 때뿐이다 — "가상놀이키즈카페에서 볼풀 놀이".
+      보호자 요청의 시설("볼풀 있는 키즈카페")은 원한다는 말이지 그곳에 있다는 확인이 아니고,
+      장소 없이 시설만 나온 기록("볼풀 놀이")도 그 장소의 확인이 아니다.
+    - 단정하지 않는 문장("볼풀이 있는지 확인해 주세요")은 시설이 있다고 쓴 것이 아니다.
+    """
+    claimed = {
+        word
+        for clause in _clauses(" . ".join(texts))
+        if not any(cue in clause for cue in _UNSURE)
+        for word in FACILITY_WORDS
+        if word in clause
+    }
+    if not claimed:
+        return ()
+    place = "".join(place_name.split())
+    confirmed = {
+        word
+        for text, polarity in records
+        if polarity >= 0
+        for clause in _clauses(text)
+        if place and place in clause and not any(cue in clause for cue in _NEGATED)
+        for word in FACILITY_WORDS
+        if word in clause
+    }
+    return tuple(word for word in FACILITY_WORDS if word in claimed - confirmed)
