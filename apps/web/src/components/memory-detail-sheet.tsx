@@ -234,12 +234,18 @@ export function MemoryDetailSheet({
                 onConfirm={() => remove.mutate(observation)}
                 onCancel={() => askDelete(false)}
               />
-            ) : observationStatus !== null && observationStatus !== "active" ? (
+            ) : observation &&
+              observationStatus !== null &&
+              (observationStatus !== "active" || isHealthObservation(observation)) ? (
               // 🚨 고친 기록에는 고치기 버튼을 세우지 않는다 — 서버가 `active` 기록만 받는다 (#277).
               //    방금 이 시트에서 고쳤으면 아래 결과 줄이 같은 말을 하므로 안내도 겹쳐 세우지 않는다.
-              //    🚨 **지우기는 선다** (#736) — 서버는 `deleted` 가 아닌 기록을 상태와 상관없이 지운다.
+              //    🚨 **건강 기록도 고치기 버튼이 없다** (#764) — 서버가 건강 기록 고치기를 400 으로 막는다.
+              //    "이번만 그랬어요" 는 기억 집계에서 빼는 일인데 건강 기록은 기억에 묶이지 않아서다.
+              //    🚨 **지우기는 선다** (#736) — 서버는 `deleted` 가 아닌 기록을 상태 · 분류와 상관없이 지운다.
               <div className="flex flex-col gap-3">
-                {result ? null : <CorrectedNote status={observationStatus} />}
+                {result || observationStatus === "active" ? null : (
+                  <CorrectedNote status={observationStatus} />
+                )}
                 <Button
                   variant="secondary"
                   size="compact"

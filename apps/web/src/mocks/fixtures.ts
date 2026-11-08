@@ -1074,10 +1074,7 @@ export const routineObservation: ObservationPromotable = {
   strong_signals: [],
 };
 
-/**
- * 다섯 테이블 전부. 목록과 캘린더는 여기서 건강을 빼고 내려주지만(첫 배포 범위 밖 · #259 · #318),
- * 상세는 아직 이 배열에서 찾는다.
- */
+/** 다섯 테이블 전부. 목록 · 상세 · 캘린더가 모두 이 배열에서 찾는다 (건강 포함 · #764). */
 export const allObservations: Observation[] = [
   ...observations,
   educationObservation,

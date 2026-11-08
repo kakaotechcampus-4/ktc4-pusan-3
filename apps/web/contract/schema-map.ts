@@ -166,7 +166,7 @@ export const SCHEMA_MAP: Record<string, MapValue> = {
   TargetRef: {
     web: "CorrectionRequest.target_ref",
     allow: {
-      kind: "웹은 Ref 를 그대로 싣는다. 서버가 받지 않는 건강 기록은 목록 · 상세 · 캘린더에서 빠져서(#259) 고치기 시트까지 오지 않는다",
+      kind: "웹은 Ref 를 그대로 싣는다. 서버가 받지 않는 건강 기록은 상세 시트가 고치기 버튼을 세우지 않아서(#764) 보내지 않는다",
     },
   },
   CorrectionResponse: "CorrectionResponse",
