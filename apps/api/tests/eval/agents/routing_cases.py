@@ -924,6 +924,31 @@ FC_CASES: tuple[RoutingCase, ...] = (
         (QH("지금 또 먹여도 돼?", HealthTaskType.MEDICATION),),
         watch="무엇을 먹일지 없이 시점만 묻는 말 — 약 이야기라 health (Health T11)",
     ),
+    RoutingCase(
+        "FC11",
+        "오이 들어간 음식 추천해줘.",
+        (Q("오이 들어간 음식 추천해줘", FOOD, REC),),
+        watch="재료를 정한 추천 — 섭취 확인(food_check)이 아니다 (Food Q1)",
+    ),
+    RoutingCase(
+        "FC12",
+        "저녁 추천해줘.",
+        (Q("저녁 추천해줘", FOOD, REC),),
+        watch="홈 질문이 보내는 문장 그대로 (Food Q2)",
+    ),
+    # 기대값 미정 — 추천 하나 · 분석 + 추천 · 진단 안내 셋이 다 가능하다. 어디로 가는지 먼저 본다
+    RoutingCase(
+        "FC13",
+        "부족한 영양소 고려해서 추천음식 알려줘.",
+        (Q("부족한 영양소 고려해서 추천음식 알려줘", FOOD, REC, strict=False),),
+        watch="추천/분석/진단 경계 — '부족한 영양소' 가 결핍 판정(diagnosis)으로 가는가 (Food Q3)",
+    ),
+    RoutingCase(
+        "FC14",
+        "모자란 영양소 채울 수 있는 메뉴 추천해줘.",
+        (Q("모자란 영양소 채울 수 있는 메뉴 추천해줘", FOOD, REC, strict=False),),
+        watch="FC13 의 다른 말투 — '채울' 이 처방으로 읽히는가",
+    ),
 )
 
 

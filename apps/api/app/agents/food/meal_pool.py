@@ -289,6 +289,23 @@ def _sparse_groups(verdict: NutrientVerdict) -> frozenset[str]:
     )
 
 
+def explainable_groups(verdict: NutrientVerdict) -> frozenset[str]:
+    """보호자에게 "적게 나왔다" 고 말해도 되는 채소 · 과일.
+
+    가중(`_sparse_groups`)은 확인한 날만 센다. 문장은 식품군을 모르는 메뉴가 낀 날을 전부 "나왔다"
+    고 쳐도 기록된 날의 `MIN_APPEARANCE_SHARE` 미만일 때만 낸다 — 가중은 틀려도 후보를 막지 않지만
+    문장은 틀린 숫자로 읽힌다(N-19). 모르는 날을 더해도 결론이 안 뒤집히는 식품군만 남는다.
+    """
+    if not verdict.appearance_ready:
+        return frozenset()
+    return frozenset(
+        group
+        for group in APPEARANCE_DEFICIT_GROUPS
+        if verdict.food_group_days.get(group, 0) + verdict.group_unknown_days.get(group, 0)
+        < verdict.recorded_days * MIN_APPEARANCE_SHARE
+    )
+
+
 async def _recent_meals(context: FoodContext) -> MealRecords:
     """최근 `RECENT_EATEN_DAYS` 일(오늘 포함)의 집 식사와 급식. 영양 판정과 같은 읽기 코드라 기관
     공지에서 온 관찰이 그날 급식과 겹치면 한 번만 센다(N-10). 오늘 급식은 아직 안 먹었어도 오늘

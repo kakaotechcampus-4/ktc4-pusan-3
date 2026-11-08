@@ -41,9 +41,15 @@ from app.agents.common.schemas.task import DomainTask
 from app.agents.food import agent as food_agent
 from app.agents.food.agent import run
 from app.agents.food.meal_dates import resolve_meal_date
-from app.agents.food.meal_pool import PoolItem
+from app.agents.food.meal_pool import (
+    APPEARANCE_DEFICIT_GROUPS,
+    PoolItem,
+    _sparse_groups,
+    explainable_groups,
+)
 from app.agents.food.meal_review import GENERAL_REASON
-from app.agents.food.readouts import READOUTS
+from app.agents.food.nutrient_wording import APPEARANCE_GROUPS
+from app.agents.food.readouts import MEAL_NUTRIENT_BASIS, READOUTS
 from app.agents.food.store import DaycareMealRow, SafetyEntry
 from tests.eval.agents.food.generate import require_food_model
 from tests.eval.agents.food.world import (
@@ -177,6 +183,17 @@ def common(ran: Ran) -> Verdict:
     if len(result.suggestions) > 3:
         verdict.failures.append(f"추천이 {len(result.suggestions)}개다 (최대 3)")
 
+    if result.task_type == "meal_recommendation":
+        # #739 — 추천이 하나 이상이면 레시피 출처 줄이 한 줄, 하나도 없으면 한 줄도 없다
+        source_lines = [
+            r for r in result.readouts if "공개 레시피 중 재료가 검수된 메뉴예요" in r.body
+        ]
+        expected = 1 if result.suggestions else 0
+        if len(source_lines) != expected:
+            verdict.failures.append(
+                f"출처 줄이 {len(source_lines)}줄이다 ({expected}줄이어야 한다)"
+            )
+
     life = life_stage(world.birth, world.today)
     entries = _active_entries(world)
     for draft in result.suggestions:
@@ -249,7 +266,8 @@ def exact3(ran: Ran) -> Verdict:
         verdict.failures.append(f"추천 {len(ran.result.suggestions)}개 (3개여야 한다)")
     if ran.result.model_calls != 1:
         verdict.failures.append(f"모델 호출 {ran.result.model_calls}회 (재호출 없이 1회여야 한다)")
-    if ran.result.readouts:
+    # 출처 줄·영양 줄은 모든 추천에 붙을 수 있다 — 개수 안내(code 가 있는 줄)만 본다
+    if any(readout.code in ("fewer", "empty") for readout in ran.result.readouts):
         verdict.failures.append("3개를 채웠는데 개수 안내가 붙었다")
     return verdict
 
@@ -793,6 +811,148 @@ def _rows_on(ran: Ran, serve_date: Any) -> list[DaycareMealRow]:
     return [row for row in _rows(ran) if row.serve_date == serve_date]
 
 
+# ── 식단 추천 tool 흐름 (Q1~Q3) ─────────────────────────────────────────
+# 모델이 어떤 tool 을 어떤 순서로 부르는지는 판정하지 않는다 — 조회 tool 은 다 선택이다.
+# 순서는 참고(note)로 콘솔에 찍고, 결과 파일의 tools · tool_args 에도 남는다
+def _tools(ran: Ran) -> list[str]:
+    return [name for name, _ in ran.llm.tool_calls]
+
+
+def _proposed_slots(ran: Ran) -> list[str]:
+    """마지막 propose_meal_candidates 의 끼니. 앞의 호출은 거절된 것이라 보지 않는다."""
+    raws = [raw for name, raw in ran.llm.tool_calls if name == "propose_meal_candidates"]
+    if not raws:
+        return []
+    try:
+        args = json.loads(raws[-1])
+    except ValueError:
+        return []
+    candidates = args.get("candidates", []) if isinstance(args, dict) else []
+    return [str(item.get("meal_slot")) for item in candidates if isinstance(item, dict)]
+
+
+def _has(row: Any, food: str) -> bool:
+    return food in row.display_name or any(food in item for item in row.ingredients)
+
+
+def j_ingredient(food: str) -> Callable[[Ran], Verdict]:
+    """재료를 정한 추천("○○ 들어간 음식 추천해줘"). 샘플에 그 재료 메뉴가 있었는지로 책임을 가른다.
+
+    풀은 요청 글을 읽지 않는다(`build_pool`). 샘플에 없었으면 모델이 아니라 풀의 빈틈이라 gap,
+    샘플에 있었는데 하나도 안 골랐으면 실패다. 샘플에 없는 재료를 이유에 쓰면 프롬프트 위반이다.
+    """
+
+    def judge(ran: Ran) -> Verdict:
+        verdict = merged(exact3(ran), common(ran))
+        shown = ran.world.context.state.sampled.values()
+        sampled = [row.display_name for row in shown if _has(row, food)]
+        picked = [row.display_name for row in _rows_of(ran) if _has(row, food)]
+        if not sampled:
+            verdict.gaps.append(f"후보 목록에 {food} 메뉴가 없었다 — 풀이 요청 재료를 보지 않는다")
+            if any(food in draft.reason for draft in ran.result.suggestions):
+                verdict.failures.append(f"후보에 없는 {food} 를 이유에 썼다")
+        elif not picked:
+            verdict.failures.append(f"후보 목록에 {food} 메뉴가 있었는데 고르지 않았다 {sampled}")
+        verdict.notes.append(f"tool 순서 {_tools(ran)} · 샘플의 {food} 메뉴 {sampled}")
+        return verdict
+
+    return judge
+
+
+def j_dinner(ran: Ran) -> Verdict:
+    """끼니를 정한 추천("저녁 추천해줘"). 코드는 끼니를 읽지 않고 모델이 meal_slot 으로 채운다."""
+    verdict = merged(exact3(ran), common(ran))
+    slots = _proposed_slots(ran)
+    if slots and set(slots) != {"dinner"}:
+        verdict.failures.append(f"저녁을 물었는데 끼니가 {slots} 다")
+    verdict.notes.append(f"tool 순서 {_tools(ran)}")
+    return verdict
+
+
+def _expected_basis_lines(ran: Ran) -> list[str]:
+    """고른 메뉴가 담은 식품군 중 말해도 되는 것(`explainable_groups`)의 안내 줄 문장."""
+    found = ran.world.context.state.nutrient_verdict
+    if found is None:
+        return []
+    labels = dict(APPEARANCE_GROUPS)
+    explainable = explainable_groups(found)
+    rows = _rows_of(ran)
+    return [
+        READOUTS.render(
+            MEAL_NUTRIENT_BASIS,
+            days=found.recorded_days,
+            group=labels[group],
+            count=found.food_group_days.get(group, 0),
+        ).body
+        for group in APPEARANCE_DEFICIT_GROUPS
+        if group in explainable and any(group in row.food_groups for row in rows)
+    ]
+
+
+def j_nutrient(ran: Ran) -> Verdict:
+    """영양을 말한 추천 / 같은 세계의 대조군. 영양 반영이 실제로 도는 세계(C48-veg)에서 본다.
+
+    영양 반영은 모델 앞에서 코드가 끝낸다(부족 식품군 가중). 식단 추천에는 영양 tool 이 열리지
+    않고, 후보 줄에는 이름 · 재료만 있어 모델은 어느 후보가 가중됐는지 모른다.
+    - 세계가 판정을 못 타면 실패 — 픽스처 문제다.
+    - 안내 줄(`meal.nutrient_basis`)은 고른 메뉴가 적게 나온 채소 · 과일을 담았을 때만, 식품군마다
+      한 줄이고 숫자가 영양소 분석과 같아야 한다 — 어긋나면 실패.
+    - 고른 메뉴가 부족 식품군을 담았는지는 가중 샘플링 + 모델 선택이라 참고로만 남긴다.
+    - reason 이 표현 검사(부족 · 챙겨 …)에 걸려 propose 를 다시 불렀으면 참고로 남긴다.
+    """
+    verdict = merged(exact3(ran), common(ran))
+    found = ran.world.context.state.nutrient_verdict
+    if found is None or not found.appearance_ready:
+        verdict.failures.append("세계가 식품군 출현 판정을 못 탔다 — C48-veg 카탈로그를 확인한다")
+        return verdict
+    sparse = _sparse_groups(found)
+    if "vegetables" not in sparse:
+        verdict.failures.append(f"채소가 적게 나온 세계인데 부족 식품군이 {sorted(sparse)} 다")
+    hits = [row.display_name for row in _rows_of(ran) if row.food_groups & sparse]
+    verdict.notes.append(
+        f"기록된 {found.recorded_days}일 · 출현 {found.food_group_days} · 부족 {sorted(sparse)} "
+        f"· 고른 것 중 해당 {hits}"
+    )
+    expected = _expected_basis_lines(ran)
+    actual = [body for body in _bodies(ran) if "더 넣었어요" in body]
+    if actual != expected:
+        verdict.failures.append(f"영양 반영 줄이 {actual} 다 (기대 {expected})")
+    proposes = _tools(ran).count("propose_meal_candidates")
+    if proposes > 1:
+        verdict.notes.append(f"propose_meal_candidates {proposes}회 — 앞의 것이 거절됐다")
+    verdict.notes.append(f"tool 순서 {_tools(ran)}")
+    return verdict
+
+
+def j_basis_unknown(ran: Ran) -> Verdict:
+    """식품군을 모르는 메뉴가 낀 세계(C48-veg-unknown). 가중은 걸리지만 안내 줄은 없어야 한다.
+
+    확인한 날만 보면 채소 · 과일이 적게 나와 가중이 걸린다. 모르는 날을 다 나왔다고 치면 절반
+    이상이라 "적게 나왔다" 는 문장은 틀린 숫자가 될 수 있어 코드가 말하지 않는다(N-19).
+    """
+    verdict = merged(exact3(ran), common(ran))
+    found = ran.world.context.state.nutrient_verdict
+    if found is None or not found.appearance_ready:
+        verdict.failures.append("세계가 식품군 출현 판정을 못 탔다 — C48-veg-unknown 을 확인한다")
+        return verdict
+    if "vegetables" not in _sparse_groups(found):
+        verdict.failures.append(
+            "확인한 날만 보면 채소가 적게 나와야 가중이 걸린다 — 세계를 확인한다"
+        )
+    if explainable_groups(found):
+        verdict.failures.append(
+            f"모르는 날을 더해도 말할 식품군이 {sorted(explainable_groups(found))}"
+        )
+    nutrient = [body for body in _bodies(ran) if "더 넣었어요" in body]
+    if nutrient:
+        verdict.failures.append(f"모르는 날이 낀 세계인데 영양 반영 줄이 나갔다 {nutrient}")
+    verdict.notes.append(
+        f"출현 {found.food_group_days} · 모르는 날 {found.group_unknown_days} "
+        f"· 기록된 {found.recorded_days}일"
+    )
+    return verdict
+
+
 # ── 케이스 ───────────────────────────────────────────────────────────────
 M, D = "meal_recommendation", "daycare_meal"
 CASES: tuple[Case, ...] = (
@@ -943,6 +1103,40 @@ CASES: tuple[Case, ...] = (
         "C48-empty",
         "general · 이유가 코드 문구 · 근거 0행",
         j_empty,
+    ),
+    # 오이 메뉴는 레시피 표에 오이무침 하나다 — 풀이 요청 재료를 보지 않는 빈틈이 잘 드러난다
+    Case(
+        "Q1/C48",
+        "오이 들어간 음식 추천해줘.",
+        M,
+        "C48",
+        "샘플에 오이 메뉴가 있으면 고른다 · 없으면 gap · 없는 재료를 이유에 쓰지 않는다",
+        j_ingredient("오이"),
+    ),
+    Case("Q2/C48", "저녁 추천해줘.", M, "C48", "후보 3개 · 끼니 dinner", j_dinner),
+    Case(
+        "Q3/C48-veg",
+        "부족한 영양소 고려해서 추천음식 알려줘.",
+        M,
+        "C48-veg",
+        "후보 3개 · 진단어 없음 · 부족 가중 · 채소/과일 메뉴를 골랐으면 영양 줄 · 숫자 일치",
+        j_nutrient,
+    ),
+    Case(
+        "Q2/C48-veg",
+        "저녁 추천해줘.",
+        M,
+        "C48-veg",
+        "Q3 대조군 — 같은 세계에서 영양 말이 없을 때 고른 메뉴 · 영양 줄은 같은 조건",
+        j_nutrient,
+    ),
+    Case(
+        "Q2/C48-veg-unknown",
+        "저녁 추천해줘.",
+        M,
+        "C48-veg-unknown",
+        "채소 · 과일 가중은 걸리지만 모르는 날을 더하면 절반 이상이라 영양 줄 0",
+        j_basis_unknown,
     ),
     Case(
         "T01/C48-safetyfail",

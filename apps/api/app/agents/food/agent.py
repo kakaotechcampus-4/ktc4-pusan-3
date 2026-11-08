@@ -29,6 +29,7 @@ from app.agents.common.result import AgentStatus, DomainAgentResult
 from app.agents.common.schemas.task import DomainTask
 from app.agents.common.suggestion import MAX_SUGGESTIONS, count_notice, merge_drafts
 from app.agents.common.tool_loop import run_tool_loop
+from app.agents.food.basis_notice import basis_notices
 from app.agents.food.context import FoodContext, MealPick, build_gate, require_safety
 from app.agents.food.food_check import answer_food_check, request_notices
 from app.agents.food.meal_pool import PoolItem, build_pool, remember_sample, sample_pool
@@ -220,13 +221,15 @@ async def _recommend(task: DomainTask, context: FoodContext, llm: LLMClient) -> 
                 return _failed(task_type, model_calls=2)
 
     _log_evidence(context, picks)
+    # 재호출이 state.sampled 를 덮어써서 처음 고른 메뉴는 샘플로 못 찾는다 — 풀의 행으로 찾는다
+    rows_by_key = {item.row.menu_key: item.row for item in pool}
     return _recommendation(
         task_type,
         picks,
         context,
         model_calls=model_calls,
         followup=await _followup(context),
-        notices=notices,
+        notices=(*notices, *basis_notices(context, picks, rows_by_key)),
     )
 
 

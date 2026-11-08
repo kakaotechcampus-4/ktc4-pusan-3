@@ -57,6 +57,10 @@ CHECK_ASK_FOOD = "check.ask_food"  # 음식 이름이 없을 때 되묻는 한 �
 # 식단 추천 요청 글에 알레르기 · 연령 금지 음식이 있을 때의 안내. 등록한 이름은 싣지 않는다
 MEAL_REQUEST_CONFLICT = "meal.request_conflict"
 MEAL_REQUEST_AGE_BLOCK = "meal.request_age_block"
+# 고른 메뉴가 왜 이렇게 모였는지(영양 반영) · 어디서 온 메뉴인지(레시피 출처). 코드가 만든 값만
+# 문구 자리에 채운다
+MEAL_NUTRIENT_BASIS = "meal.nutrient_basis"
+MEAL_MENU_SOURCE = "meal.menu_source"
 
 # 급식 조회 · 갱신 · 삭제
 DAYCARE_ASK_SUBSTITUTE = "daycare.ask_substitute"

@@ -19,6 +19,7 @@ from app.agents.food import agent as food_agent
 from app.agents.food.agent import run
 from app.agents.food.context import FoodContext
 from app.agents.food.meal_pool import PoolItem
+from app.agents.food.nutrition_eval import NutrientVerdict
 from app.agents.food.readouts import FOLLOWUP_PREFERENCE, POOL_EMPTY, READOUTS
 from app.agents.food.store import (
     InMemoryFoodDocs,
@@ -115,7 +116,8 @@ async def test_식단_추천은_후보를_보여_주고_고른_3개를_추천으
     )
     assert [draft.content for draft in result.suggestions] == ["두부조림", "시금치나물", "미역국"]
     assert result.model_calls == 1
-    assert result.readouts == ()  # 3개를 다 채우면 개수 안내가 없다
+    # 3개를 다 채우면 개수 안내가 없고 출처 줄만 있다
+    assert [readout.body for readout in result.readouts] == [SOURCE_LINE]
     assert result.needs_observation == ()
     first_messages = llm.seen[0]
     shown = "\n".join(str(message["content"]) for message in first_messages)
@@ -368,7 +370,7 @@ async def test_풀이_3개_미만이면_있는_만큼_내고_재호출하지_않
     assert result.status == "completed"
     assert len(result.suggestions) == 2
     assert result.model_calls == 1
-    assert result.readouts[0].code == "fewer"
+    assert result.readouts[-1].code == "fewer"
 
 
 async def test_모델이_출력_tool_없이_말로_끝내면_failed_다() -> None:
@@ -405,7 +407,8 @@ async def test_사후_필터로_빠져_3개_미만이면_재호출해_빈자리�
     assert result.status == "completed"
     assert result.model_calls == 2
     assert [draft.content for draft in result.suggestions] == ["두부조림", "시금치나물", "미역국"]
-    assert result.readouts == ()  # 합쳐서 3개를 채웠다
+    # 합쳐서 3개를 채웠다 — 개수 안내 없이 출처 줄만 있다
+    assert [readout.body for readout in result.readouts] == [SOURCE_LINE]
 
 
 async def test_재호출에는_제외_목록만_붙고_빠진_사유는_없다(
@@ -445,7 +448,7 @@ async def test_재호출_뒤에도_모자라면_있는_만큼_내고_안내를_�
     result = await run(meal_task(), meal_context(safety=EGG), client=llm)
 
     assert [draft.content for draft in result.suggestions] == ["두부조림", "시금치나물"]
-    assert result.readouts[0].code == "fewer"
+    assert result.readouts[-1].code == "fewer"
     assert result.model_calls == 2
 
 
@@ -459,7 +462,7 @@ async def test_풀이_처음부터_3개_미만이면_사후_필터로_빠져도_
 
     assert result.model_calls == 1
     assert [draft.content for draft in result.suggestions] == ["두부조림"]
-    assert result.readouts[0].code == "fewer"
+    assert result.readouts[-1].code == "fewer"
 
 
 async def test_샘플이_3개_미만이면_풀에_후보가_더_있어도_재호출하지_않는다(
@@ -474,7 +477,7 @@ async def test_샘플이_3개_미만이면_풀에_후보가_더_있어도_재호
 
     assert result.model_calls == 1
     assert [draft.content for draft in result.suggestions] == ["두부조림"]
-    assert result.readouts[0].code == "fewer"
+    assert result.readouts[-1].code == "fewer"
 
 
 async def test_재호출이_출력_tool_없이_끝나도_처음_것이_남았으면_그것을_낸다(
@@ -750,7 +753,7 @@ async def test_요청에_등록_알레르기_음식이_있으면_빼고_골랐�
         client=llm,
     )
 
-    assert [readout.body for readout in result.readouts] == [NUT_NOTICE]
+    assert [readout.body for readout in result.readouts] == [NUT_NOTICE, SOURCE_LINE]
     assert [draft.content for draft in result.suggestions] == ["두부조림", "시금치나물", "미역국"]
     assert "호두강정" not in "\n".join(str(m["content"]) for m in llm.seen[0])
 
@@ -766,7 +769,7 @@ async def test_호두만_등록했으면_견과류_요청에서_호두_쪽만_�
         client=llm,
     )
 
-    assert [readout.body for readout in result.readouts] == [NUT_NOTICE]
+    assert [readout.body for readout in result.readouts] == [NUT_NOTICE, SOURCE_LINE]
     shown = "\n".join(str(m["content"]) for m in llm.seen[0])
     assert "땅콩조림" in shown and "호두강정" not in shown
 
@@ -782,7 +785,8 @@ async def test_요청_안내에는_등록한_알레르기_이름이_없다() -> 
 
     bodies = [readout.body for readout in result.readouts]
     assert bodies == [
-        "요청하신 계란에는 등록해 두신 알레르기와 겹치는 것이 있어서 그런 메뉴는 빼고 골랐어요."
+        "요청하신 계란에는 등록해 두신 알레르기와 겹치는 것이 있어서 그런 메뉴는 빼고 골랐어요.",
+        SOURCE_LINE,
     ]
     assert all("달걀" not in body for body in bodies)
 
@@ -846,5 +850,106 @@ async def test_요청_안내는_보호자가_쓴_어절로_말한다() -> None:
     )
 
     assert [readout.body for readout in result.readouts] == [
-        "요청하신 새우깡에는 등록해 두신 알레르기와 겹치는 것이 있어서 그런 메뉴는 빼고 골랐어요."
+        "요청하신 새우깡에는 등록해 두신 알레르기와 겹치는 것이 있어서 그런 메뉴는 빼고 골랐어요.",
+        SOURCE_LINE,
     ]
+
+
+# ── 안내 줄 — 영양 반영 · 레시피 출처 (#739) ──────────────────────────────
+SOURCE_LINE = "추천 메뉴는 농식품정보원 공개 레시피 중 재료가 검수된 메뉴예요."
+GREENS = recipe("시금치무침", "시금치", "참기름", food_groups=frozenset({"vegetables"}))
+VEG_NOTICE = "기록된 6일 중 채소가 나온 날은 2일이라, 채소가 든 메뉴를 더 넣었어요."
+
+
+def sparse_vegetables() -> NutrientVerdict:
+    """기록된 6일 중 채소가 나온 날 2일 — 절반(3일) 미만이다."""
+    return NutrientVerdict(
+        bands={},
+        unscored=(),
+        records=12,
+        resolved_ratio=1.0,
+        insufficient=False,
+        food_groups=frozenset({"vegetables", "fruits"}),
+        food_group_days={"vegetables": 2, "fruits": 6},
+        recorded_days=6,
+        appearance_ready=True,
+    )
+
+
+async def test_추천이_있으면_출처_줄이_한_줄_붙는다() -> None:
+    llm = ScriptedLLM(propose("두부조림", "시금치나물", "미역국"))
+
+    result = await run(meal_task(), meal_context(TOFU, SPINACH, SOUP), client=llm)
+
+    assert [readout.body for readout in result.readouts] == [SOURCE_LINE]
+    assert {readout.kind for readout in result.readouts} == {"notice"}
+
+
+async def test_출처_줄은_개수_안내보다_앞이다(monkeypatch: pytest.MonkeyPatch) -> None:
+    with_pool(monkeypatch, TOFU, SPINACH)  # 풀이 둘뿐이라 3개를 못 채운다
+    llm = ScriptedLLM(propose("두부조림", "시금치나물"))
+
+    result = await run(meal_task(), meal_context(TOFU, SPINACH), client=llm)
+
+    assert [readout.body for readout in result.readouts][0] == SOURCE_LINE
+    assert result.readouts[-1].code == "fewer"
+    assert len(result.readouts) == 2
+
+
+async def test_고른_메뉴에_적게_나온_채소가_들었으면_영양_줄이_출처_줄_앞이다(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with_pool(monkeypatch, TOFU, GREENS, SOUP)
+    context = meal_context(TOFU, GREENS, SOUP)
+    context.state.nutrient_verdict = sparse_vegetables()
+    llm = ScriptedLLM(propose("두부조림", "시금치무침", "미역국"))
+
+    result = await run(meal_task(), context, client=llm)
+
+    assert [readout.body for readout in result.readouts] == [VEG_NOTICE, SOURCE_LINE]
+
+
+async def test_채소_메뉴를_고르지_않았으면_영양_줄이_없다(monkeypatch: pytest.MonkeyPatch) -> None:
+    with_pool(monkeypatch, TOFU, SPINACH, SOUP, GREENS)
+    context = meal_context(TOFU, SPINACH, SOUP, GREENS)
+    context.state.nutrient_verdict = sparse_vegetables()
+    llm = ScriptedLLM(propose("두부조림", "시금치나물", "미역국"))
+
+    result = await run(meal_task(), context, client=llm)
+
+    assert [readout.body for readout in result.readouts] == [SOURCE_LINE]
+
+
+async def test_요청_안내_다음에_영양_줄_출처_줄_순서다(monkeypatch: pytest.MonkeyPatch) -> None:
+    with_pool(monkeypatch, TOFU, GREENS, SOUP)
+    context = meal_context(TOFU, GREENS, SOUP, safety=NUT)
+    context.state.nutrient_verdict = sparse_vegetables()
+    llm = ScriptedLLM(propose("두부조림", "시금치무침", "미역국"))
+
+    result = await run(meal_task("견과류 들어간 메뉴 추천해줘"), context, client=llm)
+
+    assert [readout.body for readout in result.readouts] == [NUT_NOTICE, VEG_NOTICE, SOURCE_LINE]
+
+
+async def test_풀이_비면_영양_줄도_출처_줄도_없다() -> None:
+    result = await run(meal_task(), meal_context(WALNUT_CANDY, safety=NUT), client=ScriptedLLM())
+
+    assert [readout.body for readout in result.readouts] == ["조건에 맞는 메뉴가 없어요."]
+
+
+async def test_영양_줄이_나가도_추천의_근거와_종류는_그대로다(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def evidence(verdict: NutrientVerdict | None) -> list[tuple[str, tuple[str, ...]]]:
+        with_pool(monkeypatch, TOFU, GREENS, SOUP)
+        context = meal_context(TOFU, GREENS, SOUP)
+        context.state.nutrient_verdict = verdict
+        llm = ScriptedLLM(propose("두부조림", "시금치무침", "미역국"))
+        result = await run(meal_task(), context, client=llm)
+        return [
+            (draft.kind, tuple(citation.ref.kind for citation in draft.citations))
+            for draft in result.suggestions
+        ]
+
+    # 영양 판정은 저장하지 않아 가리킬 행이 없다 — 줄만 나가고 근거 행 · 개인화 집계는 안 바뀐다
+    assert await evidence(sparse_vegetables()) == await evidence(None)

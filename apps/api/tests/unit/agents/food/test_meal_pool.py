@@ -17,6 +17,7 @@ from app.agents.food.meal_pool import (
     SAMPLE_MIN,
     PoolItem,
     build_pool,
+    explainable_groups,
     remember_sample,
     sample_pool,
 )
@@ -285,6 +286,7 @@ def verdict(
     group_days: dict[str, int] | None = None,
     recorded_days: int = 7,
     appearance_ready: bool = False,
+    unknown_days: dict[str, int] | None = None,
 ) -> NutrientVerdict:
     return NutrientVerdict(
         bands={nutrient: "low" for nutrient in low},
@@ -295,6 +297,7 @@ def verdict(
         food_groups=frozenset(group_days or ()),
         food_group_days=dict(group_days or {}),
         recorded_days=recorded_days,
+        group_unknown_days=dict(unknown_days or {}),
         appearance_ready=appearance_ready,
     )
 
@@ -712,3 +715,59 @@ async def test_샘플이_세_개_미만이면_처음부터_더_채울_길이가_
 
     assert ctx.state.exhausted is True
     assert len(ctx.state.sampled) == 2
+
+
+# ── 안내 줄에 말해도 되는 식품군 (#739) ─────────────────────────────────────
+# 가중(`_sparse_groups`)은 확인한 날만 센다. 문장은 보호자에게 하는 말이라, 식품군을 모르는 메뉴가
+# 낀 날을 전부 "나왔다" 로 쳐도 절반 미만일 때만 낸다. 기록된 6일이면 절반은 3일이다.
+def test_모르는_날을_다_나왔다고_쳐도_절반_미만이면_말한다() -> None:
+    result = explainable_groups(
+        verdict(
+            group_days={"vegetables": 1, "fruits": 6},
+            recorded_days=6,
+            appearance_ready=True,
+            unknown_days={"vegetables": 1},
+        )
+    )
+
+    assert result == frozenset({"vegetables"})  # 1 + 1 = 2 < 3
+
+
+def test_모르는_날까지_더해_절반이면_말하지_않는다() -> None:
+    result = explainable_groups(
+        verdict(
+            group_days={"vegetables": 2, "fruits": 6},
+            recorded_days=6,
+            appearance_ready=True,
+            unknown_days={"vegetables": 1},
+        )
+    )
+
+    assert result == frozenset()  # 2 + 1 = 3, 절반 미만이 아니다
+
+
+def test_모르는_날이_없으면_가중_기준과_같다() -> None:
+    sparse = verdict(
+        group_days={"vegetables": 2, "fruits": 3}, recorded_days=6, appearance_ready=True
+    )
+
+    assert explainable_groups(sparse) == frozenset({"vegetables"})  # 2 < 3, 3 은 아니다
+
+
+def test_가중은_걸려도_모르는_날_때문에_말하지_않는_식품군이_있다() -> None:
+    # 채소는 확인한 날 2일(< 3)이라 가중이 걸리지만 모르는 날 2일을 더하면 4 라서 문장은 없다
+    sparse = verdict(
+        group_days={"vegetables": 2, "fruits": 6},
+        recorded_days=6,
+        appearance_ready=True,
+        unknown_days={"vegetables": 2},
+    )
+
+    assert meal_pool._sparse_groups(sparse) == frozenset({"vegetables"})
+    assert explainable_groups(sparse) == frozenset()
+
+
+def test_출현을_말할_수_없으면_말할_식품군도_없다() -> None:
+    result = explainable_groups(verdict(group_days={"vegetables": 0}, appearance_ready=False))
+
+    assert result == frozenset()

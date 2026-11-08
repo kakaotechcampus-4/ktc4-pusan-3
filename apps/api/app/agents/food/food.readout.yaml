@@ -147,3 +147,9 @@ meal.request_conflict:
 meal.request_age_block:
   kind: notice
   template: "요청하신 {food}{은는} {when} 먹이지 않아서 빼고 골랐어요."
+meal.nutrient_basis:
+  kind: notice
+  template: "기록된 {days}일 중 {group} 나온 날은 {count}일이라, {group} 든 메뉴를 더 넣었어요."
+meal.menu_source:
+  kind: notice
+  template: "추천 메뉴는 {org} 공개 레시피 중 재료가 검수된 메뉴예요."
