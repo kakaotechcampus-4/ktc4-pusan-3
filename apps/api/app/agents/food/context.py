@@ -85,6 +85,10 @@ class FoodRunState:
     # 요청 글에 이름 · 재료가 나와 샘플 앞에 넣은 레시피(조건 맞는 레시피)의 menu_key. 생성 후보
     # 자리는 3 - (샘플 안에 든 이 수)다. 요리 종류 조건이면 세지 않는다
     requested_keys: frozenset[str] = frozenset()
+    # 조건 불일치(`REQUEST_MISMATCH`)로 거절한 횟수. 모델이 요리 이름을 재료로 적는 등 조건을
+    # 못 맞추면
+    # 거절 루프에 갇혀 0개로 끝난다 — 두 번 거절한 뒤에는 조건 없는 요청으로 본다
+    request_misses: int = 0
     # 사후 안전 필터에 걸려 풀에서 빼야 하는 menu_key. 사유는 모델에게도 로그에도 싣지 않는다
     blocked_keys: set[str] = field(default_factory=set)
     # 더 채울 길이 없다 — 후보 풀이 처음부터 3개 미만이거나 안전 필터 뒤 재호출을 이미 했다.

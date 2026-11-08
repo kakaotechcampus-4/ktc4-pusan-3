@@ -91,9 +91,10 @@ def _instructions(task_type: FoodTaskType) -> str:
             "reason 에 쓰지 않는다. 후보 안에서 가까운 것을 고른다."
         )
         lines.append(
-            "- 보호자가 재료나 요리 종류를 정해 물었으면 requested_food 에 보호자 말 그대로, "
-            "requested_kind 에 재료(ingredient) · 요리 종류(cuisine)를 적는다. 막연한 요청이면 "
-            "둘 다 비운다."
+            "- 보호자가 재료나 요리 종류(나라 · 지역 음식, 특정 요리 이름)를 정해 물었으면 "
+            "후보 목록에 그 조건에 맞는 메뉴가 없어도 반드시 requested_food 에 보호자 말 그대로, "
+            "requested_kind 에 재료(ingredient) · 요리 종류(cuisine)를 적는다. 적어야 조건에 "
+            "맞는 메뉴를 generated 로 채울 수 있다. 막연한 요청이면 둘 다 비운다."
         )
         lines.append(
             "- 후보 목록에서 '요청과 맞음' 이 붙은 메뉴를 먼저 고른다. 그것으로 모자랄 때만 "

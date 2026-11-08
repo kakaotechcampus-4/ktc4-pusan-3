@@ -8,6 +8,7 @@ from app.agents.food.context import FoodContext, require_safety
 from app.agents.food.meal_request import said_in_food_request
 from app.agents.food.meal_review import (
     NO_REQUEST,
+    RejectReason,
     RequestContext,
     error_code,
     explain,
@@ -18,6 +19,9 @@ from app.agents.food.result import ErrorCode, ToolResult, fail, ok
 from app.agents.food.schemas.recommend import ProposeMealCandidatesArgs
 
 _NAME = "propose_meal_candidates"
+
+# 조건 불일치로 이만큼 거절하면 조건을 맞출 수 없는 요청으로 보고 조건 없이 낸다
+MAX_REQUEST_MISSES = 2
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +70,8 @@ async def propose_meal_candidates(
         months=life.months,
         today=context.today,
     )
+    if any(r.reason is RejectReason.REQUEST_MISMATCH for r in review.rejections):
+        state.request_misses += 1
     if review.rejections:
         return fail("propose", _NAME, error_code(review.rejections), explain(review.rejections))
 
@@ -94,6 +100,8 @@ def _request(context: FoodContext, args: ProposeMealCandidatesArgs) -> RequestCo
     막연한 요청("저녁 추천해줘")에 모델이 조건을 지어 넣어도 근거 없는 일반 추천이 통과하지 않는다.
     """
     state = context.state
+    if state.request_misses >= MAX_REQUEST_MISSES:
+        return NO_REQUEST
     if not args.requested_food or not said_in_food_request(
         args.requested_food, state.utterance.splitlines()
     ):

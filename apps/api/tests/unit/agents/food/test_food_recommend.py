@@ -827,3 +827,31 @@ async def test_안전_필터에_걸린_생성_후보는_풀에서_뺀다_사유�
     assert result.success  # 거절이 아니다 — 모델에게 사유를 돌려주지 않는다
     assert ctx.state.blocked_keys == {"파프리카볶음"}
     assert ctx.state.picks == ()
+
+
+async def test_조건_불일치로_두_번_거절되면_조건_없는_요청으로_돌려_레시피북_추천으로_끝낸다() -> (
+    None
+):
+    # 모델이 요리 이름을 재료로 적는 등 조건을 못 맞추면 루프에 갇혀 0개로 끝나지 않게 한다
+    ctx = said(shown(*FULL, exhausted=True), "파프리카 들어간 반찬 추천해줘")
+    wrong = asked(candidates=[pick("두부조림", evidence=[])])
+
+    first = await propose_meal_candidates(ctx, wrong)
+    second = await propose_meal_candidates(ctx, wrong)
+    third = await propose_meal_candidates(ctx, wrong)
+
+    assert not first.success and not second.success
+    assert third.success  # 조건을 지키지 못한 채 요청 기반이라 말하지 않고 지금처럼 낸다
+    (picked,) = ctx.state.picks
+    assert picked.draft.requested is False
+    assert picked.draft.reason != "요청하신 조건을 바탕으로 골랐어요."
+
+
+async def test_조건_불일치가_한_번이면_계속_조건을_건다() -> None:
+    ctx = said(shown(*FULL, exhausted=True), "파프리카 들어간 반찬 추천해줘")
+
+    await propose_meal_candidates(ctx, asked(candidates=[pick("두부조림", evidence=[])]))
+    retry = await propose_meal_candidates(ctx, asked(generated=[generated_meal()]))
+
+    assert retry.success
+    assert ctx.state.picks[0].draft.requested is True

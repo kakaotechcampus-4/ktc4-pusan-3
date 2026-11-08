@@ -251,7 +251,8 @@ def common(ran: Ran) -> Verdict:
         row = world.recipe(draft.content)
         if row is None:
             # 보호자가 조건을 정해 물어 인정됐으면 레시피북 밖 생성 메뉴는 요청 기반이다(#740)
-            if draft.requested and draft.kind == "general" and not draft.citations:
+            # 아이 기록을 인용해 개인화로 나가도 생성 메뉴다 — tool 인자에 있으면 같은 확인을 건다
+            if normalize_menu_key(draft.content) in _generated_args(ran):
                 verdict.failures.extend(_generated_problems(ran, draft.content, entries))
                 continue
             verdict.failures.append(f"공통3 풀 밖 메뉴가 추천에 있다 ({draft.content})")
@@ -930,7 +931,7 @@ def _generated_checks(ran: Ran, verdict: Verdict, *, needs_food: str | None) -> 
         item = args.get(normalize_menu_key(draft.content), {})
         ingredients = [str(part) for part in item.get("ingredients") or []]
         mains = [str(part) for part in item.get("main_ingredients") or []]
-        if draft.reason != GENERAL_REASON_REQUEST:
+        if draft.kind == "general" and draft.reason != GENERAL_REASON_REQUEST:
             verdict.failures.append(f"생성 메뉴 {draft.content} 의 이유가 코드 문구가 아니다")
         if not draft.items:
             verdict.failures.append(f"생성 메뉴 {draft.content} 에 준비물이 없다")
@@ -1319,6 +1320,14 @@ CASES: tuple[Case, ...] = (
         M,
         "C48-soy",
         "필터에 걸린 생성 0 · 재료 확인 줄 · 양념 누락 건수를 note 로 센다",
+        j_generated_allergy,
+    ),
+    Case(
+        "Q9/C48-soy",
+        "파프리카 들어간 반찬 추천해줘.",
+        M,
+        "C48-soy",
+        "Q7 과 같은 판정 — 생성이 확실히 나는 요청으로 양념 누락 건수를 센다",
         j_generated_allergy,
     ),
     Case(
