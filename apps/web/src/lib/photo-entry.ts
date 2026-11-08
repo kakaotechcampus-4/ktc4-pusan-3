@@ -30,6 +30,16 @@ export function entryDateRole(entry: PhotoEntry): "start" | "due" {
 }
 
 /**
+ * 위 날짜 칸의 이름. 🚨 **"마감" 은 일정으로 넣을 수 있는 항목의 마감일 때만이다** (#792 리뷰).
+ *    급식은 `date` 만 오고 `starts_at` · `due_at` 이 없어서 `entryDateRole` 이 `"due"` 가 되고, 날짜 없는
+ *    안내도 그렇다. 판정은 서버 `apply_edits` 와 같은 순서라 그대로 두고 **이름표만** 가린다 —
+ *    급식 날짜를 "마감" 이라고 부르면 그날까지 내야 하는 것으로 읽힌다.
+ */
+export function entryDateLabel(entry: PhotoEntry): "마감" | "언제" {
+  return canBecomeEvent(entry) && entryDateRole(entry) === "due" ? "마감" : "언제";
+}
+
+/**
  * 일정으로 넣을 수 있는 종류인가.
  *
  * 🚨 **급식은 아니다** — 식단표는 전부 날짜가 있지만 일정이 아니다.
@@ -88,7 +98,7 @@ export function readStartTime(entry: PhotoEntry): string {
  *
  * 🚨 **읽은 그대로일 때만 싣는다** — 시작 날짜도, 하루 종일 여부도 읽은 값과 같고, 끝이 시작보다
  *    뒤일 때. 하나라도 바뀌면 `null`(그날 하루)이다. 고친 시작에 읽은 끝을 붙이면 끝이 시작보다
- *    앞서 서버가 422 로 막거나(`SubmitEventBody._ends_after_starts`), 보호자가 고른 적 없는
+ *    앞서 서버가 400 으로 막거나(`SubmitEventBody._ends_after_starts`), 보호자가 고른 적 없는
  *    기간이 들어간다.
  */
 export function carriedEndsAt(
@@ -103,4 +113,23 @@ export function carriedEndsAt(
   const start = Date.parse(pick.startsAt);
   if (Number.isNaN(end) || Number.isNaN(start) || end <= start) return null;
   return ends;
+}
+
+/**
+ * 읽은 끝을 **싣지 못하게 된** 까닭. 보호자가 시작을 고쳐서 끝이 빠졌을 때 시트가 한 줄 말한다 (#792 리뷰).
+ *
+ * - `"span"`: 여러 날 기간이 그날 하루로 줄었다
+ * - `"time"`: 같은 날의 끝나는 시각이 빠졌다 (9:30 ~ 11:00 의 시작을 11:30 으로 고친 경우)
+ *
+ * 🚨 **하루 종일 하루짜리의 끝(그날 23:59)은 끝으로 치지 않는다** — 서버 관례일 뿐 보호자가 읽은 값이 아니다.
+ * 🚨 시작이 아직 비었으면(`startsAt` 이 `null`) 말하지 않는다 — 잠긴 이유가 이미 버튼 위에 선다.
+ */
+export function droppedEnd(
+  entry: PhotoEntry,
+  pick: { startsAt: string | null; endsAt: string | null },
+): "span" | "time" | null {
+  if (pick.startsAt === null || pick.endsAt !== null) return null;
+  if (readSpan(entry) !== null) return "span";
+  if (entryDateRole(entry) !== "start" || entry.all_day !== false || !entry.ends_at) return null;
+  return "time";
 }

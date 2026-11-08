@@ -118,6 +118,8 @@ function noticeText(): string {
     "목요일까지 체험학습 동의서를 회신해 주세요.",
     "금요일 물놀이가 있어요. 준비물: 수건, 수영복, 여벌 옷",
     "다음 주 월요일부터 금요일까지 독서 주간이에요.",
+    "부모 참여 수업은 오전 10시부터 12시까지예요. 신청은 수요일까지 받아요.",
+    "가정통신문은 화요일 오후 6시까지 회신해 주세요.",
     "비가 오면 바깥 놀이는 실내 활동으로 바꿔요.",
     "이달 말 생일잔치 날짜는 추후 공지합니다.",
   ].join("\n");
@@ -141,6 +143,9 @@ function noticeEntries(): PhotoEntry[] {
   const consentDue = daysAgo(-4);
   const readingFrom = daysAgo(-8);
   const readingTo = daysAgo(-12);
+  const classDay = daysAgo(-9);
+  const classDue = daysAgo(-3);
+  const letterDue = daysAgo(-2);
   return [
     {
       id: "pe_1",
@@ -180,6 +185,33 @@ function noticeEntries(): PhotoEntry[] {
       starts_at: null,
       ends_at: null,
       due_at: seoulAt(consentDue, "23:59"),
+    },
+    {
+      id: "pe_8",
+      kind: "event",
+      title: "부모 참여 수업",
+      date: classDay,
+      // 🚨 시각을 읽은 시작에 하루 종일 마감이 붙은 모양이다 (#792 리뷰). `all_day` 는 위 칸(시작)의 것이라
+      //    거짓이다 — 서버가 둘을 합쳐 보내던 때는 하루 종일로 보여 10시가 사라지고 숨은 끝이 들어갔다.
+      all_day: false,
+      items: [],
+      needs_review: false,
+      starts_at: seoulAt(classDay, "10:00"),
+      ends_at: seoulAt(classDay, "12:00"),
+      due_at: seoulAt(classDue, "23:59"),
+    },
+    {
+      id: "pe_9",
+      kind: "todo",
+      title: "가정통신문 회신",
+      date: letterDue,
+      // 🚨 시각을 읽은 마감이다. 목록은 "마감 … 오후 6:00" 이고, 일정으로 넣을 때 시작은 여전히 하루 종일에서 연다.
+      all_day: false,
+      items: [],
+      needs_review: false,
+      starts_at: null,
+      ends_at: null,
+      due_at: seoulAt(letterDue, "18:00"),
     },
     {
       id: "pe_7",

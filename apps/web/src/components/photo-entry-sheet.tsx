@@ -22,8 +22,9 @@ import { formatDayRange, formatEventTime, formatTimeOfDay } from "@/lib/format";
 import {
   canBecomeEvent,
   carriedEndsAt,
+  droppedEnd,
+  entryDateLabel,
   entryDateRole,
-  readSpan,
   readStartTime,
 } from "@/lib/photo-entry";
 import { forKind, isPast, NO_REMINDER, type ReminderChoice } from "@/lib/reminder";
@@ -206,8 +207,8 @@ function EntryForm({
    *    일정이 됐다. 시작을 고쳤으면 읽은 끝을 붙이지 않는다 (`carriedEndsAt`).
    */
   const endsAt = carriedEndsAt(entry, { date: eventDate, allDay, startsAt });
-  /** 읽은 기간이 있었는데 보호자가 시작을 고쳐서 하루로 넣게 된 경우. 조용히 줄이지 않고 말한다. */
-  const spanDropped = readSpan(entry) !== null && endsAt === null;
+  /** 읽은 끝이 있었는데 보호자가 시작을 고쳐서 빠지게 된 경우. 조용히 줄이지 않고 말한다. */
+  const dropped = droppedEnd(entry, { startsAt, endsAt });
   const endText = endsAt !== null && startsAt !== null ? endNote(startsAt, endsAt, allDay) : null;
 
   /** 🚨 한 항목이 사용자 동작 하나다. 재시도는 같은 키로 간다. */
@@ -252,14 +253,18 @@ function EntryForm({
       };
       return submitEventDraft(childId, body, eventKey.current());
     },
-    onSuccess: async (res, { startsAt, endsAt }) => {
+    onSuccess: async (res) => {
       // 🚨 성공한 뒤에만 다음 키로 넘어간다. 실패 뒤 다시 누르는 것은 재시도라 같은 키여야 한다.
       eventKey.rotate();
       onEventAdded(entry.id, {
         event_id: res.event.id,
-        starts_at: startsAt,
-        ends_at: endsAt,
-        all_day: allDay,
+        /**
+         * 🚨 **일시는 응답에서 받는다** (#792 리뷰). 응답을 못 받은 뒤 칸을 고쳐 다시 누르면 같은 키라
+         *    서버는 **처음 넣은 일정**을 돌려준다. 보낸 값을 쓰면 목록이 들어가지 않은 일시를 말한다.
+         */
+        starts_at: res.event.starts_at,
+        ends_at: res.event.ends_at,
+        all_day: res.event.all_day,
         title: title.trim(),
         date,
         // 🚨 급식은 준비물 칸 자체가 없으니 원래 값을 그대로 둔다 (`submit` 과 같은 규칙).
@@ -331,7 +336,7 @@ function EntryForm({
       {/* 🚨 **할 일의 날짜는 마감이다** (#723). "언제" 로 부르면 보호자는 그 날을 일정의 날로 읽고,
           서버는 이 칸을 고치면 마감을 고친다 (`lib/photo-entry.ts`). */}
       <DateField
-        label={role === "due" ? "마감" : "언제"}
+        label={entryDateLabel(entry)}
         hint={dateHint(entry, role)}
         value={date}
         onChange={setDate}
@@ -431,18 +436,22 @@ function EntryForm({
                 label="하루 종일"
               />
 
-              {/* 🚨 **하루 종일이면 칸을 감춘다** (초안 카드와 같은 처리). 알림장에서 읽어낸
-                  것에는 시각이 없어서 이 칸은 늘 비어서 시작한다 — 고르기 전에는 아래 버튼이
-                  잠기고, 왜 잠겼는지는 버튼 위에서 말한다. */}
+              {/* 🚨 **하루 종일이면 칸을 감춘다** (초안 카드와 같은 처리). 읽은 시각이 있으면 채워서
+                  열고(`readStartTime`), 없으면 비어서 연다 — 고르기 전에는 아래 버튼이 잠기고,
+                  왜 잠겼는지는 버튼 위에서 말한다. */}
               {!allDay ? <TimeField label="시작 시간" value={time} onChange={setTime} /> : null}
 
               {/* 🚨 **함께 넣는 끝을 게이트 앞에서 보여준다.** 보이지 않는 값이 캘린더에 들어가면
                   보호자가 확인한 것과 들어간 것이 다르다. 고쳐서 하루로 줄었을 때도 말한다. */}
               {endText !== null ? (
                 <p className="text-body-sm text-ink-muted">{endText}</p>
-              ) : spanDropped ? (
+              ) : dropped === "span" ? (
                 <p className="text-body-sm text-ink-muted">
                   날짜나 하루 종일을 바꿔서 읽은 기간 대신 그날 하루로 넣어요.
+                </p>
+              ) : dropped === "time" ? (
+                <p className="text-body-sm text-ink-muted">
+                  시작이나 하루 종일을 바꿔서 읽은 끝나는 시각 없이 넣어요.
                 </p>
               ) : null}
 

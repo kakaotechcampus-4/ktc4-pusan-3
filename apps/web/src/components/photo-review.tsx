@@ -21,7 +21,13 @@ import {
   formatTimeOfDay,
 } from "@/lib/format";
 import { playEnter, useFlip } from "@/lib/motion";
-import { canBecomeEvent, entryDateRole, readMoment, readSpan } from "@/lib/photo-entry";
+import {
+  canBecomeEvent,
+  entryDateLabel,
+  entryDateRole,
+  readMoment,
+  readSpan,
+} from "@/lib/photo-entry";
 import type { ParsedEvent, PhotoCommitRequest, PhotoEntry, PhotoLane } from "@/lib/api";
 
 /**
@@ -591,10 +597,11 @@ function EntryRow({
       <dl className="mt-3 flex flex-col gap-1">
         {/* 🚨 **날짜가 없는 안내에는 날짜 줄을 세우지 않는다** (#723). 안내는 날짜가 없는 것이
             보통인데 "못 읽었어요" 라고 쓰면 보호자가 없던 날짜를 고치러 들어간다.
-            🚨 **할 일의 날짜는 "마감" 이다** — "언제" 로 부르면 그 날에 하는 일로 읽힌다. */}
+            🚨 **할 일의 날짜는 "마감" 이다** — "언제" 로 부르면 그 날에 하는 일로 읽힌다.
+               급식은 "마감" 이 아니다 (`entryDateLabel` · #792 리뷰). */}
         {entry.kind === "info" && entry.date === null ? null : (
           <EntryMeta
-            term={entryDateRole(entry) === "due" ? "마감" : "언제"}
+            term={entryDateLabel(entry)}
             value={entryWhen(entry)}
             missing={entry.date === null}
           />
