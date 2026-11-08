@@ -119,6 +119,11 @@ class Event(Base, UUIDPk):
     )
     """반복 묶음의 회차이면 그 묶음 (#738). 묶음 행을 지워도 회차는 남는다(SET NULL) —
     묶음 전체 삭제는 후속 이슈가 회차를 먼저 지우는 쪽으로 정한다."""
+    origin_date: Mapped[date | None] = mapped_column(Date)
+    """회차가 처음 만들어진 날(KST) (#790). `series_id` 가 있는 행만 값이 있다. 한 회차만 다른 날로
+    옮겨도(`starts_at` 수정) 바뀌지 않는다 — 묶음 고치기가 "이 회차가 옛 규칙의 어느 날이었나" 를
+    가리는 기준이다. 옛 이미지가 만든 회차는 비어 올 수 있어, 읽는 쪽은 비면
+    `starts_at` 날짜를 쓴다."""
 
 
 class EventItem(Base, Timestamps):
