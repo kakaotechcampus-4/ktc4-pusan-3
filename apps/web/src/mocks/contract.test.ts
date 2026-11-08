@@ -4061,7 +4061,7 @@ describe("⑰ 08 사진 — 읽기와 저장이 갈린다", () => {
     ).resolves.toBeDefined();
   });
 
-  it("일정의 끝은 그대로 돌아오고, 시작보다 앞서면 422 다 (#723)", async () => {
+  it("일정의 끝은 그대로 돌아오고, 시작보다 앞서면 400 이다 (#723)", async () => {
     const body = draftBody();
     const ends = "2026-09-20T23:59:00+09:00";
     const saved = await submitEventDraft(

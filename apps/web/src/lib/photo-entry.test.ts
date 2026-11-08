@@ -4,6 +4,8 @@ import type { PhotoEntry } from "@/lib/api/types";
 import {
   canBecomeEvent,
   carriedEndsAt,
+  droppedEnd,
+  entryDateLabel,
   entryDateRole,
   readMoment,
   readSpan,
@@ -65,6 +67,44 @@ describe("entryDateRole", () => {
   it("일정 항목은 아무것도 못 읽었어도 시작이다 — 서버도 그 날을 시작으로 고친다", () => {
     expect(entryDateRole(entry({ kind: "event" }))).toBe("start");
     expect(entryDateRole(entry({ kind: "todo" }))).toBe("due");
+  });
+});
+
+describe("entryDateLabel", () => {
+  it("일정으로 넣을 수 있는 항목의 마감만 마감이다", () => {
+    expect(entryDateLabel(due)).toBe("마감");
+    expect(entryDateLabel({ ...due, kind: "event" })).toBe("마감");
+    expect(entryDateLabel(timed)).toBe("언제");
+  });
+
+  it("🚨 급식과 안내는 판정이 마감이어도 언제다 (#792 리뷰)", () => {
+    // 급식은 `date` 만 오고 starts_at · due_at 이 없다.
+    const meal = entry({ kind: "meal", date: "2026-11-09" });
+    expect(entryDateRole(meal)).toBe("due");
+    expect(entryDateLabel(meal)).toBe("언제");
+    expect(entryDateLabel(entry({ kind: "info" }))).toBe("언제");
+  });
+});
+
+describe("droppedEnd", () => {
+  it("여러 날 기간이 빠지면 span 이다", () => {
+    expect(droppedEnd(span, { startsAt: "2026-11-24T00:00:00+09:00", endsAt: null })).toBe("span");
+  });
+
+  it("🚨 같은 날 끝나는 시각이 빠져도 말한다 (#792 리뷰)", () => {
+    expect(droppedEnd(timed, { startsAt: "2026-11-23T11:30:00+09:00", endsAt: null })).toBe("time");
+  });
+
+  it("끝을 그대로 싣거나, 시작이 비었거나, 하루 종일 하루짜리면 말하지 않는다", () => {
+    expect(
+      droppedEnd(timed, {
+        startsAt: "2026-11-23T09:30:00+09:00",
+        endsAt: timed.ends_at ?? null,
+      }),
+    ).toBeNull();
+    expect(droppedEnd(timed, { startsAt: null, endsAt: null })).toBeNull();
+    const oneDay = { ...span, ends_at: "2026-11-23T23:59:00+09:00" };
+    expect(droppedEnd(oneDay, { startsAt: "2026-11-23T10:00:00+09:00", endsAt: null })).toBeNull();
   });
 });
 
@@ -174,7 +214,7 @@ describe("carriedEndsAt", () => {
     ).toBeNull();
   });
 
-  it("🚨 고친 시각이 끝보다 늦으면 싣지 않는다 — 서버가 422 로 막는다", () => {
+  it("🚨 고친 시각이 끝보다 늦으면 싣지 않는다 — 서버가 400 으로 막는다", () => {
     expect(
       carriedEndsAt(timed, {
         date: "2026-11-23",
