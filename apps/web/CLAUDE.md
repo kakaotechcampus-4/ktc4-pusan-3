@@ -24,9 +24,9 @@ Owner: 고태영 (프론트 리드)
 | `lib/auth/` · `stores/session.ts` · `/auth/*` · 01 · 02 · 동의(`lib/consent.ts`) · 위치(`lib/location.ts` · `lib/native/location.ts`) | [`auth-consent-v1.md`](../../docs/web/auth-consent-v1.md) |
 | `lib/api/` · 뮤테이션 · 에러 코드 처리 · `error.tsx` · `AppErrorBoundary` | [`api-client-v1.md`](../../docs/web/api-client-v1.md) |
 | 화면 투어(`components/screen-tour.tsx` · `lib/tour/` · `stores/tour.ts`) · 화면의 `data-tour` · ? 버튼 | [`screen-tour-v1.md`](../../docs/web/screen-tour-v1.md) |
-| `mocks/` · `*.test.ts` · `e2e/` · `contract/` | [`mock-and-tests-v1.md`](../../docs/web/mock-and-tests-v1.md) |
+| `mocks/` · `*.test.ts` · `e2e/` · `e2e-live/` · `playwright.live.config.ts` · `contract/` | [`mock-and-tests-v1.md`](../../docs/web/mock-and-tests-v1.md) |
 | 복약 초안 카드 · 11-3 복약 · `stores/medication-draft.ts` · `lib/medication.ts` (#537) | [`medication-v1.md`](../../docs/web/medication-v1.md) |
-| `package.json` 의 버전 · `eslint.config.mjs` · `ci-web.yml` · `Dockerfile` · 배포 | [`toolchain-deploy-v1.md`](../../docs/web/toolchain-deploy-v1.md) |
+| `package.json` 의 버전 · `eslint.config.mjs` · `ci-web.yml` · `ci-e2e-live.yml` · `Dockerfile` · 배포 | [`toolchain-deploy-v1.md`](../../docs/web/toolchain-deploy-v1.md) |
 | 웹 푸시 — `lib/push/` · `lib/native/push.ts`(앱 셸 창구) · `public/push-sw.js` · `WebPushBridge` · `ReminderField` 의 권한 묻기 · `NEXT_PUBLIC_FIREBASE_*` | [`web-push-v1.md`](../../docs/web/web-push-v1.md) |
 
 🚨 **같은 규칙이 이 파일의 요약과 `docs/web/` 원문 두 곳에 있으면 원문이 정본이다.** 규칙을 바꾸면 같은 PR 에서 둘 다 고친다.
@@ -339,6 +339,7 @@ run 상태는 서버 상태도 클라이언트 상태도 아니다 (구독형). 
 pnpm test          # vitest run — 목 계약 · lib · 스토어 · 게이트 정적 검사
 pnpm test:e2e      # Playwright — 목 서버로 띄운 화면에서 화면 규칙 (make web-e2e)
 pnpm test:contract # 웹 API 타입 ↔ 서버 OpenAPI (make web-contract 가 서버 계약 덤프부터 돈다)
+pnpm test:e2e-live # Playwright — 실제 api + DB 위의 행복 경로 (make web-e2e-live · make db-up 먼저)
 ```
 
 무엇을 거는지와 규칙 원문은 [`mock-and-tests-v1.md`](../../docs/web/mock-and-tests-v1.md) §2 다.
@@ -346,7 +347,8 @@ pnpm test:contract # 웹 API 타입 ↔ 서버 OpenAPI (make web-contract 가 �
 - 🚨 **테스트 전용 핸들러를 만들지 않는다.** `src/mocks/server.ts` 는 브라우저 워커와 같은 핸들러를 쓴다
 - 🚨 **목에 프로세스 수명만큼 사는 상태를 더하면 리셋 함수를 `src/test/setup.ts` 의 `afterEach` 에 건다**
 - 🚨 **`src/test/approval-gates.test.ts` 가 깨지면** 목록을 고치기 전에 **게이트를 늘리는 변경인지**부터 본다 (최상위 §2)
-- e2e 는 `next dev` 로만 돈다 · `page.route` 로 응답을 못 바꾼다 (실패를 만들려면 목 시나리오를 더한다)
+- 목 e2e 는 `next dev` 로만 돈다 · `page.route` 로 응답을 못 바꾼다 (실패를 만들려면 목 시나리오를 더한다)
+- 🚨 **실서버 e2e(`e2e-live/`)는 목 e2e 를 대신하지 않는다.** 화면 규칙과 예외는 목에, 저장하고 다시 읽는 행복 경로만 실서버에 건다
 - 🚨 **픽스처·테스트 문자열에 실제 사용자 발화나 아이 정보를 넣지 않는다**
 
 ---

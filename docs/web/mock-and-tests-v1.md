@@ -139,11 +139,12 @@ pnpm test          # vitest run — 목 계약 · lib · 스토어 · 게이트 
 pnpm test:watch
 pnpm test:e2e      # Playwright — 화면 규칙 (make web-e2e)
 pnpm test:contract # 웹 API 타입 ↔ 서버 OpenAPI (make web-contract — 서버 계약 덤프부터 돈다)
+pnpm test:e2e-live # Playwright — 실제 api + DB 위의 행복 경로 (make web-e2e-live — 빌드부터 돈다)
 ```
 
-세 벌이다. **Vitest** 는 node 에서 목 · 스토어를 직접 돌리고, **Playwright** 는 목 서버로 띄운 화면을
-실제 브라우저로 연다 (#242). 실서버 E2E 가 아니다 — 그건 API 가 붙은 뒤 따로 더한다.
-앞의 둘은 웹 타입(`lib/api/types.ts`)을 믿고 도는데, **계약 비교**가 그 타입을 서버 OpenAPI 와 맞춘다 (#559).
+네 벌이다. **Vitest** 는 node 에서 목 · 스토어를 직접 돌리고, **Playwright** 는 목 서버로 띄운 화면을
+실제 브라우저로 연다 (#242). 앞의 둘은 웹 타입(`lib/api/types.ts`)을 믿고 도는데, **계약 비교**가 그 타입을
+서버 OpenAPI 와 맞춘다 (#559). 셋 다 서버의 **동작**은 보지 않는다 — 그건 **실서버 e2e** 가 본다 (#756, 아래).
 
 ### 무엇을 거는가 — Vitest
 
@@ -225,6 +226,36 @@ OpenAPI(`app.openapi()` · Swagger 와 같은 것)와 칸 단위로 맞춘다 (#
   `icatch:speech` 이벤트로 쏜다. ⚠️ 채팅바의 status 줄을 찾을 때 `getByRole("status")` 만 쓰지 않는다 — 토스트 자리도 status 다
   스플래시(`splash-shell.spec.ts` · #690)도 같다 — `window.icatch.splash.done` 이 불린 순간의 주소와 화면 글자를 적어 두고,
   로그인한 채로 `/` 를 열었을 때 세션 확인("불러오는 중…")이 아니라 홈이 선 뒤에 한 번만 알리는지 본다
+
+### 무엇을 거는가 — 실서버 e2e (`e2e-live/` · `make web-e2e-live`)
+
+화면과 서버가 **실제로 이어지는가**를 건다 (#756). 목 e2e 와 역할이 다르다.
+
+| | 목 e2e (`e2e/`) | 실서버 e2e (`e2e-live/`) |
+| --- | --- | --- |
+| 무엇을 | 최상위 §2 화면 규칙과 예외 상황 (실패 · 부분 결과 · 끊김 · 한도 · LLM 결과의 모양) | 행복 경로가 서버에 저장되고 다시 읽히는가 |
+| 서버 | MSW (`next dev`) | uvicorn + 프로덕션 빌드(`next start`) + DB |
+| 상태 | 탭 메모리 — 새로고침하면 사라진다 | DB — 새로고침해도 남는다 |
+| CI | `ci-web.yml` 의 `e2e` job | `ci-e2e-live.yml` (배포 게이트 밖) |
+
+- 🚨 **목 e2e 를 옮기는 것이 아니다.** 실서버로는 만들 수 없는 상태(Agent 1개만 실패 · 20초 초과 · 저장 뒤 끊김 ·
+  되묻기 상한)가 목 시나리오의 대부분이다. 실서버 쪽이 안정적으로 도는 것을 본 뒤에, 목 쪽 행복 경로 중
+  **완전히 겹치는 것만** 지운다. 같은 화면의 실패 · 경계 시나리오는 목에 남긴다
+- **로그인은 시드다.** 카카오 주소가 서버 코드의 상수라 카카오를 거칠 수 없다. 테스트마다
+  `apps/api/scripts/seed_e2e.py` 가 가입 직후 상태(보호자 · 계정 필수 동의 · 로그인 1건)를 넣고 refresh 원문을 낸다.
+  fixture(`e2e-live/fixtures.ts`)가 그 값을 `icatch_rt` 쿠키로 심으면, 화면은 운영처럼 `POST /auth/refresh` 로 access 를 받는다.
+  아이는 시드하지 않는다 — 01 이 아이 동의와 함께 실제 API 로 만든다 (`registerChild`)
+- 🚨 **LLM · 외부 API · 푸시 · 알림 키를 api 와 web 서버 양쪽에서 비운 채 돈다** (`e2e-live/server-env.ts` ·
+  `playwright.live.config.ts` 의 web `env`). 로컬 `apps/api/.env` · `apps/web/.env.local` 에 실제 키가 있어도 덮는다. 1단계는 LLM 을 부르는 화면(04 대화 · 05 제안)을 걸지 않는다 — 가짜 LLM 서버는 2단계다 (#756)
+- 🚨 **두 서버 밖으로 나간 요청이 있으면 실패한다** (fixture 의 `outside`). 브라우저가 외부를 직접 부르기 시작하면
+  CI 가 외부에 기대게 된다
+- 🚨 **호스트는 `localhost` 하나다.** refresh 쿠키가 host-only 라 `127.0.0.1` 과 섞으면 쿠키가 안 실린다.
+  포트는 개발 서버와 겹치지 않게 web 3100 · api 8100 이다 — 개발 서버를 끄지 않고 돌린다
+- **빌드가 api 주소(8100)를 박는다.** `make web-e2e-live` 뒤에 `make web-start` 를 하면 e2e api 를 부른다 — `make web-build` 를 다시 한다.
+  `next start` 가 `output: standalone` 경고를 내지만 그대로 뜬다
+- **DB 는 개발 DB 서버의 다른 DB(`icatch_e2e`)다.** 테스트가 보호자와 아이를 계속 만들어서, 손으로 보는 개발 DB 에 섞지 않는다.
+  `make db-up` 이 먼저다. 지우고 싶으면 그 DB 만 지운다
+- 재시도하지 않는다 (`retries: 0`). 실서버 쪽 흔들림을 재시도로 덮으면 이 스위트를 둔 이유가 없어진다
 
 ### 규칙
 
