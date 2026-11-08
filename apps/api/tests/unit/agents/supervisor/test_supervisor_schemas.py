@@ -68,7 +68,42 @@ def test_정해진_필드만_노출한다() -> None:
         "growth_task",
         "health_task",
         "guard",
+        "resolved_request",
     }
+
+
+def test_tool_spec_에_resolved_request_가_있다() -> None:
+    from app.agents.supervisor.schemas import ROUTE_TOOL_SPEC_STRICT
+
+    item = ROUTE_TOOL_SPEC["function"]["parameters"]["properties"]["segments"]["items"]
+    strict = ROUTE_TOOL_SPEC_STRICT["function"]["parameters"]["properties"]["segments"]["items"]
+    assert "resolved_request" in item["properties"]
+    assert "resolved_request" in strict["required"]
+
+
+# ── resolved_request ────────────────────────────────────────────
+def test_resolved_request_는_request_조각에만_남는다() -> None:
+    record = Segment.model_validate(
+        {"text": "a", "kind": "record", "work": "observe", "resolved_request": "b"}
+    )
+    request = Segment.model_validate(
+        {"text": "a", "kind": "request", "agent": "activity", "resolved_request": "b"}
+    )
+
+    assert record.resolved_request is None
+    assert request.resolved_request == "b"
+
+
+def test_빈_해석은_None_이고_200자를_넘으면_지운다() -> None:
+    from app.agents.supervisor.schemas import MAX_RESOLVED_CHARS
+
+    base = {"text": "a", "kind": "request", "agent": "activity"}
+
+    assert Segment.model_validate({**base, "resolved_request": "  "}).resolved_request is None
+    long = Segment.model_validate({**base, "resolved_request": "가" * (MAX_RESOLVED_CHARS + 1)})
+    assert long.resolved_request is None and long.text == "a"  # 조각은 남는다
+    edge = Segment.model_validate({**base, "resolved_request": "가" * MAX_RESOLVED_CHARS})
+    assert edge.resolved_request == "가" * MAX_RESOLVED_CHARS
 
 
 # ── enum 일치 ───────────────────────────────────────────────────

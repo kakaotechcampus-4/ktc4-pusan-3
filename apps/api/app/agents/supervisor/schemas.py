@@ -22,6 +22,9 @@ from app.agents.memory.schemas.task import WorkType
 
 logger = logging.getLogger(__name__)
 
+# 해석한 요청 한 문장의 상한. 넘으면 해석만 지우고 조각은 남긴다 (`_clean_resolved`)
+MAX_RESOLVED_CHARS = 200
+
 
 class SegmentKind(StrEnum):
     RECORD = "record"  # Memory 몫(저장·조회·수정·삭제 전부)
@@ -123,6 +126,28 @@ def _repair(data: dict[str, Any]) -> dict[str, Any]:
     return data
 
 
+def _clean_resolved(data: dict[str, Any]) -> dict[str, Any]:
+    """resolved_request 는 request 조각의 요청 한 문장일 때만 둔다. 아니면 지우고 조각은 남긴다.
+
+    스키마 `max_length` 로 걸면 조각 전체가 버려진다 — 해석이 틀려도 원문 조각은 쓸 수 있다.
+    로그에는 이유만 남기고 문장은 싣지 않는다.
+    """
+    resolved = data.get("resolved_request")
+    if resolved is None:
+        return data
+    reason = None
+    if data.get("kind") != SegmentKind.REQUEST:
+        reason = "kind"
+    elif not isinstance(resolved, str) or not resolved.strip():
+        reason = "empty"
+    elif len(resolved.strip()) > MAX_RESOLVED_CHARS:
+        reason = "too_long"
+    if reason is not None:
+        logger.info("supervisor 조각에서 resolved_request 를 지움 reason=%s", reason)
+        return {key: value for key, value in data.items() if key != "resolved_request"}
+    return {**data, "resolved_request": resolved.strip()}
+
+
 _REQUIRED_FIELD: dict[SegmentKind, str] = {
     SegmentKind.RECORD: "work",
     SegmentKind.REQUEST: "agent",
@@ -207,6 +232,16 @@ class Segment(_Strict):
             ),
         ),
     ]
+    resolved_request: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description=(
+                "앞 대화를 이어 묻는 request 조각에만. 앞 대화를 몰라도 뜻이 통하는 요청 한 문장"
+                f"({MAX_RESOLVED_CHARS}자 이내). 앞 대화가 없으면 비운다"
+            ),
+        ),
+    ]
 
     @model_validator(mode="before")
     @classmethod
@@ -217,7 +252,7 @@ class Segment(_Strict):
         """
         if not isinstance(data, dict):
             return data
-        data = _repair(dict(data))
+        data = _clean_resolved(_repair(dict(data)))
         try:
             keep = _REQUIRED_FIELD.get(SegmentKind(data.get("kind")))
         except ValueError:
