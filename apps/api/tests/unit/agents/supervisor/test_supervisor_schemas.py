@@ -351,11 +351,12 @@ def test_정답_구간이_원문에_있다() -> None:
     assert check_cases() == []
 
 
-def test_food_유형은_네_가지다() -> None:
+def test_food_유형은_다섯_가지다() -> None:
     assert {member.value for member in FoodTaskType} == {
         "meal_recommendation",
         "nutrient_analysis",
         "daycare_meal",
+        "daycare_lookup",
         "food_check",
     }
 
@@ -453,6 +454,19 @@ def test_food_check_조각을_받고_route_스펙에도_있다() -> None:
     )
     assert segment.food_task == "food_check"
     assert "food_check" in json.dumps(ROUTE_TOOL_SPEC, ensure_ascii=False)
+
+
+def test_daycare_lookup_조각을_받고_route_스펙에도_있다() -> None:
+    segment = Segment.model_validate(
+        {
+            "text": "내일 급식 뭐야?",
+            "kind": "request",
+            "agent": "food",
+            "food_task": "daycare_lookup",
+        }
+    )
+    assert segment.food_task == "daycare_lookup"
+    assert "daycare_lookup" in json.dumps(ROUTE_TOOL_SPEC, ensure_ascii=False)
 
 
 def test_health_조각은_라벨을_그대로_둔다() -> None:

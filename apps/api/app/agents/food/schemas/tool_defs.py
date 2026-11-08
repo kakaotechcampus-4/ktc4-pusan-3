@@ -1,4 +1,4 @@
-"""모델에게 보이는 Food tool 9개의 이름 · 호출 조건 · argument 모델).
+"""모델에게 보이는 Food tool 의 이름 · 호출 조건 · argument 모델).
 
 알레르기 Safety Tool(filter_food_safety)은 코드가 부름.
 영아기 기록 tool 2개(record_feeding · record_ingredient_introduction)는 쓰기 tool 이라
@@ -7,6 +7,7 @@ Memory가 관리.
 
 from app.agents.common.tool_schema import ToolDefinition
 from app.agents.food.schemas.daycare import (
+    DaycareLookupArgs,
     DeleteDaycareMealArgs,
     KeepDaycareMealArgs,
     UpdateDaycareMealArgs,
@@ -90,6 +91,16 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
             "메뉴가 빠졌으면 이 tool 이 아니라 update_daycare_meal 을 부른다(코드가 되묻는다)."
         ),
         args=KeepDaycareMealArgs,
+    ),
+    # daycare_meal — 급식 날짜 조회. 보호자가 급식 메뉴를 물을 때 화면에 보여 주는 출력 tool(읽기만)
+    ToolDefinition(
+        name="show_daycare_meal",
+        description=(
+            "기관 급식 메뉴를 날짜로 찾아 보호자에게 보여 준다. 급식이 뭐였는지 · 뭐 나오는지 "
+            "묻는 말일 때 한 번 부른다. 날짜는 발화 원문의 부분 문자열만 담고 날짜를 말하지 "
+            "않았으면 비운다. 쓰지 않는다."
+        ),
+        args=DaycareLookupArgs,
     ),
     # 유아기 — 식품 영양성분 조회 · Nutrition Lookup
     ToolDefinition(

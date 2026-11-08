@@ -8,8 +8,8 @@
 #   make deploy-down        전체 중지
 #
 # Caddy 가 HTTPS 종단 + 리버스 프록시를 맡는다.
-#   icatch.ai.kr       → web:3000
-#   api.icatch.ai.kr   → api:8000
+#   icatch.ai.kr       → ktc4-web:3000   (주소는 컨테이너 이름이다 — ktc4-edge 에서 서비스 이름 web · api 는
+#   api.icatch.ai.kr   → ktc4-api:8000    dev · 운영 둘 다로 풀린다. deploy/caddy/Caddyfile)
 # web · api 는 호스트 포트를 열지 않는다 — Caddy 만 80/443 을 낸다.
 # 🚨 api 는 --workers 1 이다. run 진행 상황이 프로세스 메모리에 있어서 (#134)
 #    둘 이상이면 POST 받은 프로그램과 GET 받은 프로그램이 갈려 조용히 404 가 난다.
@@ -17,18 +17,31 @@
 #    함께 로그가 지워진다 — journald 면 OS 에 남고 `docker compose logs` 도 그대로 된다.
 #    이유는 docs/ops/logging-alerts-v1.md (멘토 #267 2번).
 #    로그 설정은 컨테이너를 만들 때 정해진다 — 나중에 바꾸면 다시 올려야 적용된다.
+# 🚨 메모리 상한(mem_limit)은 dev 만 건다 (#780). 상한 없는 dev 가 폭주하면 커널이 운영 postgres 를 죽일 수 있다.
+#    0 = 상한 없음 → prod 는 .env 에 안 써서 지금 그대로다. 값은 deploy/docker/.env.example.
+#    memswap_limit 을 같은 값으로 둔다 — mem_limit 만 두면 Docker 가 swap 을 같은 양만큼 더 줘서(MemorySwap = 2배)
+#    죽지 않고 서버 swap 을 채우며 운영까지 느려진다 (#808 리뷰). 둘 다 0 이면 둘 다 상한 없음이다.
+#    🚨 `${X:-0}` 은 빈 값도 0(상한 없음)으로 바꾼다 — dev 에서 비우면 상한이 조용히 빠져서 deploy.sh 가 dev 배포 전에 막는다.
+#    `compose run`(마이그레이션)에도 걸린다 —
+#    거기서 넘치면 exit 137 로 deploy.sh 가 up 전에 멈추고 옛 컨테이너가 그대로 서비스한다.
+#    이미지 빌드에는 안 걸린다 — 빌드는 deploy.sh 의 flock 이 한 번에 하나로 줄 세운다.
 
 x-logging: &logging
   # 서버(Ubuntu 24.04)는 journald. 맥의 Docker Desktop 에는 journald 가 없어서 배포 compose 를 로컬에서
   # 띄워 볼 때만 deploy/docker/.env 에 LOG_DRIVER=json-file 을 둔다 (빌드 `make web-image` 는 상관없다).
   driver: ${LOG_DRIVER:-journald}
 
+# 🚨 prod 는 이 이름 그대로다 — 바꾸면 named volume(DB 데이터) 이름도 바뀌어 빈 DB 가 뜬다.
+#    dev 는 그 checkout 의 .env 에 COMPOSE_PROJECT_NAME=ktc4-dev 를 둬서 덮는다 (.env.example · docs/ops/deploy-v1.md).
 name: ktc4-deploy
 
 services:
   caddy:
     image: caddy:2.10.0-alpine
     container_name: ktc4-caddy
+    # 80/443 은 서버에 하나뿐이라 Caddy 는 prod 프로젝트에만 뜬다 — prod .env 에 COMPOSE_PROFILES=edge.
+    # dev 의 web · api 도 이 Caddy 가 ktc4-edge 네트워크로 받는다 (deploy/caddy/Caddyfile).
+    profiles: [edge]
     restart: unless-stopped
     logging: *logging
     ports:
@@ -36,23 +49,31 @@ services:
       - "443:443"
       - "443:443/udp"
     volumes:
-      - ../../deploy/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # 파일이 아니라 폴더째 붙인다. 파일 하나를 붙이면 git reset 이 파일을 새로 만들 때(inode 교체) 컨테이너는
+      # 옛 파일을 계속 본다. 바꾼 Caddyfile 은 deploy.sh 가 prod 배포 성공 뒤 caddy reload 로 읽힌다.
+      - ../../deploy/caddy:/etc/caddy:ro
       - ktc4-caddy-data:/data
       - ktc4-caddy-config:/config
-    depends_on:
-      web:
-        condition: service_healthy
-      api:
-        condition: service_healthy
+    # 🚨 depends_on(api · web) 을 두지 않는다. 있으면 compose 가 api · web 을 새로 만들 때마다 Caddy 를 먼저
+    #    멈춰서, 운영 배포마다 dev 도 같이 끊기고 실패하면 롤백 내내 Caddy 가 꺼져 있다 (#753).
+    #    Caddy 는 요청마다 이름을 찾으므로 api · web 이 늦게 떠도 그동안 502 일 뿐이다.
+    # dev 사이트를 팀만 열게 하는 basic_auth 계정 (#780, deploy/caddy/Caddyfile). prod .env 에만 둔다 — Caddy 는
+    # prod 프로젝트에만 뜬다. 🚨 해시는 .env 에서 작은따옴표로 감싼다 — 안 감싸면 compose 가 $… 를 변수로 먹어
+    # 늘 401 이다 (deploy.sh 가 prod 배포 전에 확인한다).
+    environment:
+      DEV_BASIC_AUTH_USER: ${DEV_BASIC_AUTH_USER:-}
+      DEV_BASIC_AUTH_HASH: ${DEV_BASIC_AUTH_HASH:-}
     networks:
-      default:
+      edge:
         ipv4_address: 172.30.0.10
 
   db:
     image: pgvector/pgvector:0.8.6-pg18
-    container_name: ktc4-postgres-deploy
+    container_name: ktc4${STACK_SUFFIX:-}-postgres-deploy
     restart: unless-stopped
     logging: *logging
+    mem_limit: ${DB_MEM_LIMIT:-0}
+    memswap_limit: ${DB_MEM_LIMIT:-0}
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -67,9 +88,11 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: ktc4-redis-deploy
+    container_name: ktc4${STACK_SUFFIX:-}-redis-deploy
     restart: unless-stopped
     logging: *logging
+    mem_limit: ${REDIS_MEM_LIMIT:-0}
+    memswap_limit: ${REDIS_MEM_LIMIT:-0}
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -79,10 +102,15 @@ services:
   api:
     build:
       context: ../../apps/api
-    image: ktc4-api:${API_IMAGE_TAG:-local}
-    container_name: ktc4-api
+    # 이름 꼬리(STACK_SUFFIX) — prod 는 비어 있어 지금 이름 그대로, dev 는 -dev. 컨테이너 이름이 곧
+    # Caddy 가 찾는 주소이고 journalctl CONTAINER_NAME= 의 값이다.
+    # 태그는 커밋 sha (deploy/scripts/deploy.sh) — 직전 태그가 롤백할 곳이다.
+    image: ktc4${STACK_SUFFIX:-}-api:${API_IMAGE_TAG:-local}
+    container_name: ktc4${STACK_SUFFIX:-}-api
     restart: unless-stopped
     logging: *logging
+    mem_limit: ${API_MEM_LIMIT:-0}
+    memswap_limit: ${API_MEM_LIMIT:-0}
     depends_on:
       db:
         condition: service_healthy
@@ -114,21 +142,29 @@ services:
       # 넣지 않으려는 것이다. FCM_KEY_PATH 를 비우면 빈 파일이 붙는다 — apps/api/.env 의
       # FCM_SERVICE_ACCOUNT_FILE 도 비워 두면 알림 발송 배치만 돌지 않는다.
       - ${FCM_KEY_PATH:-/dev/null}:/run/secrets/fcm-service-account.json:ro
-    # 호스트 포트를 열지 않는다 — Caddy 가 리버스 프록시한다.
+    # 호스트 포트를 열지 않는다 — Caddy 가 edge 네트워크로 리버스 프록시한다.
     expose:
       - "8000"
-    # 🚨 고정 주소다. 서버 방화벽이 이 주소의 상자만 EC2 메타데이터(서버 역할의 S3 열쇠)에 닿게 한다
-    #    (deploy/scripts/imds-firewall.sh). 바꾸면 그 스크립트의 API_IP 도 같이 바꾼다.
-    #    다른 상자는 .2 부터 차례로 받아서 .20 과 겹치지 않는다
+    # 🚨 ktc4-edge 의 고정 주소다. 서버 방화벽이 172.30.0.20 상자만 EC2 메타데이터(서버 역할의 S3 열쇠)에
+    #    닿게 한다 (deploy/scripts/imds-firewall.sh — 바꾸면 그 스크립트의 API_IP 도 같이).
+    #    prod 는 비워 둬서 .20, dev 는 .env 에 API_EDGE_IP=172.30.0.21 — dev(develop 코드)는 열쇠를 못 받는다.
+    #    deploy.sh 가 dev 에 .20 이 오지 않게 막는다. 자동으로 받는 상자는 .128 위라(--ip-range) .20 · .21 과 안 겹친다.
+    # 🚨 gw_priority — 밖으로 나가는 길을 edge 로 고정한다. 없으면 네트워크 이름 순서(ktc4-deploy_default <
+    #    ktc4-edge)로 default 쪽 아무 주소로 나가서 방화벽에 막히고 사진(S3)이 끊긴다. Docker 28+ (API 1.48).
     networks:
-      default:
-        ipv4_address: 172.30.0.20
+      default: {}
+      edge:
+        ipv4_address: ${API_EDGE_IP:-172.30.0.20}
+        gw_priority: 1
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')\""]
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 15s
+      # 120s — 이 동안의 실패는 세지 않고, 한 번 통과하면 바로 healthy 다(평소 배포는 안 느려진다).
+      # deploy.sh 의 up --wait 가 이 판정으로 롤백을 정한다. 서버는 평소 9초에 뜨지만 dev · prod 빌드가 겹쳐
+      # swap 을 쓸 때는 훨씬 느리다 — 15s 면 멀쩡한 배포가 롤백된다 (#747 로컬 리허설에서 2분 20초를 봤다).
+      start_period: 120s
 
   web:
     build:
@@ -143,19 +179,25 @@ services:
         NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: ${NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID:-}
         NEXT_PUBLIC_FIREBASE_APP_ID: ${NEXT_PUBLIC_FIREBASE_APP_ID:-}
         NEXT_PUBLIC_FIREBASE_VAPID_KEY: ${NEXT_PUBLIC_FIREBASE_VAPID_KEY:-}
-    image: ktc4-web:${WEB_IMAGE_TAG:-local}
-    container_name: ktc4-web
+    # 🚨 web 은 API 주소가 번들에 박힌다 — 같은 커밋이라도 dev · prod 이미지가 따로 있어야 해서 이름을 나눈다.
+    image: ktc4${STACK_SUFFIX:-}-web:${WEB_IMAGE_TAG:-local}
+    container_name: ktc4${STACK_SUFFIX:-}-web
     restart: unless-stopped
     logging: *logging
+    mem_limit: ${WEB_MEM_LIMIT:-0}
+    memswap_limit: ${WEB_MEM_LIMIT:-0}
     environment:
       # Next 서버에서 난 오류를 Discord 로 (apps/web/src/instrumentation.ts). 빌드가 아니라 실행 때 읽는다.
       # 비어 있으면 안 보낸다. api · 감시 스크립트와 같은 값 — 브라우저 번들엔 안 들어간다.
       ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
       # 알림 꼬리표 [prod] · [dev]. 감시 스크립트도 같은 줄을 읽는다 — 시험 서버는 .env 에 APP_ENV=dev.
       APP_ENV: ${APP_ENV:-prod}
-    # 호스트 포트를 열지 않는다 — Caddy 가 리버스 프록시한다.
+    # 호스트 포트를 열지 않는다 — Caddy 가 edge 네트워크로 리버스 프록시한다.
     expose:
       - "3000"
+    networks:
+      - default
+      - edge
     healthcheck:
       # 00 로그인 화면. 서버 렌더만으로 그려져서 API 가 죽어 있어도 200 이 나온다 —
       # 여기서 보려는 것은 "Next 가 떠 있는가" 뿐이다.
@@ -165,11 +207,12 @@ services:
       retries: 3
       start_period: 20s
 
+# default 는 프로젝트마다 따로 생긴다 (db · redis 는 여기만). 고정 subnet 을 두지 않는다 — 두 프로젝트가 겹친다.
+# edge 는 두 프로젝트가 같이 쓰는 바깥 네트워크 (172.30.0.0/24). deploy.sh 가 없으면 만든다.
 networks:
-  default:
-    ipam:
-      config:
-        - subnet: 172.30.0.0/24
+  edge:
+    name: ktc4-edge
+    external: true
 
 volumes:
   ktc4-postgres-deploy-data:

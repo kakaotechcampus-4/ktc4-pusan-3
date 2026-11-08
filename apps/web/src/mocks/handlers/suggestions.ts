@@ -39,6 +39,9 @@ import { withIdempotency } from "./idempotency";
  */
 const linkedSuggestions = new Set<string>();
 
+/** 새로 넣은 일정의 번호. 넣을 때마다 다른 id 를 주려고 센다 (#723). */
+let submittedCount = 0;
+
 /**
  * 채택된 제안. 🚨 **일정과 다른 축이다** — 여기 있다고 캘린더에 들어간 것이 아니다.
  *    실서버는 `suggestion.status` 한 칸이고, 목은 그 칸을 이 집합으로 흉내 낸다.
@@ -48,6 +51,7 @@ const approvedSuggestions = new Set<string>();
 /** 테스트용. 목 서버는 프로세스 수명만큼 살아 있다. */
 export function resetSubmittedEvents(): void {
   linkedSuggestions.clear();
+  submittedCount = 0;
   approvedSuggestions.clear();
 }
 
@@ -538,17 +542,48 @@ export const suggestionHandlers = [
     withIdempotency(async ({ request }) => {
       await networkDelay();
       const body = (await request.json()) as {
-        event: { title: string; starts_at: string | null; all_day: boolean };
+        event: {
+          title: string;
+          starts_at: string | null;
+          ends_at?: string | null;
+          all_day: boolean;
+        };
         items: Array<{ item_id: string | null; item_name: string }>;
         suggestion_ids?: string[];
         reminder?: { lead: unknown } | null;
+        repeat?: { weekdays?: number[]; until?: string; label?: string };
       };
+
+      // 🚨 반복 일정(#738)은 요일과 끝 날짜가 다 있어야 한다. 문구는 서버 값이라 되돌려 받지 않는다 (`RepeatRequest`).
+      //    ⚠️ 서버 계약 전이다 — 회차로 펼치는 것은 실서버 몫이라 목은 첫 회차 한 건만 돌려준다.
+      if (
+        body.repeat &&
+        (!body.repeat.weekdays?.length || !body.repeat.until || "label" in body.repeat)
+      ) {
+        return apiError(400, "validation_failed", "요청 형식이 올바르지 않아요", {
+          fields: ["repeat"],
+        });
+      }
+      // 🚨 반복 규칙이 성립하지 않으면 서버는 422 `invalid_repeat` 다 (#761). 카드에서 고칠 수 없는 실패라
+      //    화면이 "대화로 다시 말해 주세요" 를 붙이는지 보려고 시나리오로 만든다.
+      if (body.repeat && currentScenario() === "repeat_invalid") {
+        return apiError(422, "invalid_repeat", "반복은 첫 회차부터 90일까지만 돼요");
+      }
 
       // 🚨 일자 없이 제출되면 안 된다. 화면이 막지만 계약도 막는다 (규칙은 코드가 진다).
       //    실서버는 스키마가 `starts_at` 을 필수로 걸어 공통 검증 오류로 낸다.
       if (!body.event.starts_at) {
         return apiError(400, "validation_failed", "요청 형식이 올바르지 않아요", {
           fields: ["event.starts_at"],
+        });
+      }
+
+      // 실서버 `SubmitEventBody._ends_after_starts` 와 같다. 08 시트가 읽은 끝을 실어 보낸다 (#723).
+      // 모델 검증이라 실서버는 공통 검증 오류(400 · `fields: ["event"]`)로 낸다 (`api/errors.py`).
+      const endsAt = body.event.ends_at ?? null;
+      if (endsAt !== null && Date.parse(endsAt) <= Date.parse(body.event.starts_at)) {
+        return apiError(400, "validation_failed", "요청 형식이 올바르지 않아요", {
+          fields: ["event"],
         });
       }
 
@@ -561,8 +596,12 @@ export const suggestionHandlers = [
             fields: ["reminder.lead"],
           });
         }
-        const wrong = refuseReminder(lead, body.event.starts_at, body.event.all_day);
-        if (wrong) return wrong;
+        // 🚨 반복 일정은 첫 회차 하나로 거절하지 않는다 (#761). 서버는 지난 회차만 건너뛰고 전 회차가 다 지났을 때만
+        //    422 다 — 목은 회차를 펼치지 않아서 반복이면 시각 검사를 하지 않는다 (종류 검사는 위에서 했다).
+        if (!body.repeat) {
+          const wrong = refuseReminder(lead, body.event.starts_at, body.event.all_day);
+          if (wrong) return wrong;
+        }
         reminder = { lead };
       }
 
@@ -582,9 +621,13 @@ export const suggestionHandlers = [
        *    "확인하고 넣은 것" 과 "들어간 것" 이 달라져 승인 게이트가 거짓말이 된다.
        * 🚨 `items` 는 **최종 목록**이다 — 배열에서 빠진 것은 저장되지 않는다 (#122).
        */
+      submittedCount += 1;
       const event = draftEvent({
+        // 🚨 넣을 때마다 다른 id 다 — 08 은 이 id 를 공지 항목에 잇는데, 같으면 "한 일정을 두 항목에" 로 막힌다.
+        id: `e_new_${submittedCount}`,
         title: body.event.title,
         starts_at: body.event.starts_at,
+        ends_at: endsAt,
         all_day: body.event.all_day,
         // 실서버와 같다 (#241) — 제안에서 온 일정만 `agent` 이고, 출처 참조는 이 경로가 채우지 않는다.
         created_by: sids.length > 0 ? "agent" : "caregiver",

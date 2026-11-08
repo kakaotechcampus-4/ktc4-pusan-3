@@ -11,7 +11,8 @@ from app.agents.common.readout import ReadoutCatalog
 UNSUPPORTED_MILK_MEAL = "unsupported.milk_meal"  # 식단 추천 + 수유기(0–3개월)
 UNSUPPORTED_INFANT_NUTRIENT = "unsupported.infant_nutrient"  # 영양소 분석 + 0–11개월
 BLOCKED_SAFETY = "blocked.safety"  # 안전 조회 실패 — 식단 추천 · 영양소 분석
-CLOSED_NO_DAYCARE = "closed.no_daycare"  # daycare_meal 라벨인데 급식 행이 없음
+# 급식 라벨(daycare_meal · daycare_lookup)인데 급식 행이 없음
+CLOSED_NO_DAYCARE = "closed.no_daycare"
 
 # 식단 추천 후보 풀
 POOL_EMPTY = "pool.empty"
@@ -79,5 +80,9 @@ DAYCARE_OUT_OF_RANGE = "daycare.out_of_range"
 DAYCARE_NOT_FOUND = "daycare.not_found"
 DAYCARE_REPLACED_UNKNOWN = "daycare.replaced_unknown"
 DAYCARE_UNCHANGED = "daycare.unchanged"
+# 급식 날짜 조회(daycare_lookup) — 행마다 한 줄 · 기간에 급식이 없을 때 · 기간이 7일을 넘었을 때
+DAYCARE_LOOKUP_LINE = "daycare.lookup_line"
+DAYCARE_LOOKUP_EMPTY = "daycare.lookup_empty"
+DAYCARE_LOOKUP_TOO_LONG = "daycare.lookup_too_long"
 
 READOUTS = ReadoutCatalog.from_yaml(Path(__file__).with_name("food.readout.yaml"))

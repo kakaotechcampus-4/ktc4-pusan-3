@@ -12,9 +12,11 @@
 import type {
   Affinity,
   Agent,
+  AnyEventDraft,
   CalendarEvent,
   ChildProfile,
   EventDraft,
+  EventSeriesRef,
   Evidence,
   GeneralSuggestion,
   ReceivedSuggestion,
@@ -1002,6 +1004,86 @@ export const runEventDrafts: EventDraft[] = [
     ],
   },
 ];
+
+/**
+ * 요일 반복 묶음 (#738 · `?scenario=event_repeat`). 🚨 **실서버는 아직 반복을 만들지 않는다** — Agent 쪽(#744)은
+ * DB 가 묶음을 지원할 때만 반복 초안을 낸다. 모양은 `core/event_draft.py` 의 `RepeatPayload` 를 따른다.
+ *
+ * 🚨 **문구(`label`)는 서버가 만든다.** 목이 서버 대신 만드는 자리라 여기서 적는다 — 화면은 이 값을 그대로 그린다.
+ */
+function repeatSeries(): EventSeriesRef {
+  const until = new Date(Date.now() + 40 * DAY_MS);
+  return {
+    id: "series_1",
+    weekdays: [1, 3],
+    until: iso(until),
+    label: `${until.getMonth() + 1}월 ${until.getDate()}일까지 매주 월, 수`,
+  };
+}
+
+/** 다가오는 월요일 08:30 (KST) — 반복 새 일정의 첫 회차. 목이 서버(`recurrence.py`) 대신 고른다. */
+function nextMonday(): string {
+  const day = new Date();
+  const ahead = ((8 - day.getDay()) % 7 || 7) * DAY_MS;
+  return `${iso(new Date(day.getTime() + ahead))}T08:30:00+09:00`;
+}
+
+/** 반복이 걸린 캘린더 회차의 묶음 (`?scenario=event_repeat` 에서만 붙는다 · `handlers/calendar.ts`). */
+export function calendarSeries(): EventSeriesRef {
+  return repeatSeries();
+}
+
+/**
+ * 반복 일정 run 이 내는 초안 묶음 (#738). 🚨 **새 반복 일정 + 묶음 전체 고치기가 섞여 있다** — 카드가 `op` 로
+ * 갈리는지(묶음은 읽기 전용 카드) 이 픽스처가 확인한다.
+ */
+export function repeatRunDrafts(): AnyEventDraft[] {
+  const series = repeatSeries();
+  const repeat = { weekdays: series.weekdays, until: series.until, label: series.label };
+  return [
+    {
+      draft_id: "d_repeat",
+      op: "create",
+      event_id: null,
+      event: {
+        title: "등원",
+        starts_at: nextMonday(),
+        ends_at: null,
+        all_day: false,
+        event_type: "core",
+        category: "institution",
+      },
+      items: [{ item_id: null, item_name: "물통" }],
+      repeat,
+    },
+    {
+      draft_id: "d_series",
+      op: "update_series",
+      series_id: series.id,
+      event: {
+        title: "수영",
+        starts_time: "16:00",
+        ends_time: null,
+        all_day: false,
+        event_type: "core",
+        category: "activity",
+      },
+      repeat,
+      /** 🚨 서버가 오늘 이후 회차에서 **가장 흔한 값**으로 만든다 — "오후 3:00 → 오후 4:00" 와 준비물 변화가 보여야 한다. */
+      before: {
+        title: "수영",
+        starts_time: "15:00",
+        ends_time: null,
+        all_day: false,
+        event_type: "core",
+        category: "activity",
+        repeat,
+        items: ["수영복", "수건"],
+      },
+      items: ["수영복", "수건", "물안경"],
+    },
+  ];
+}
 
 /**
  * 식사 제안 여러 건을 **한 끼로 묶은** 초안. 🚨 고른 개수와 초안 개수가 1:1 이 아니라는 것을

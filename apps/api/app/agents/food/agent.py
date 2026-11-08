@@ -66,10 +66,11 @@ logger = logging.getLogger(__name__)
 
 AGENT = "food"
 
-# 모델이 tool 을 꼭 불러야 하는가. 둘 다 required 다(`_converse`)
+# 모델이 tool 을 꼭 불러야 하는가. 셋 다 required 다(`_converse`)
 _TOOL_CHOICE: dict[FoodTaskType, str] = {
     FoodTaskType.MEAL_RECOMMENDATION: "required",
     FoodTaskType.DAYCARE_MEAL: "required",
+    FoodTaskType.DAYCARE_LOOKUP: "required",
 }
 
 # 식단 추천 [예시] 로 보여 주는 문서 행 종류 (RAG_plan Food 절). 이유기는 이유식 단계 · 재료 행이다.
@@ -113,7 +114,7 @@ async def run(
     llm = client or LLMClient(role="food")
     if task_type == FoodTaskType.MEAL_RECOMMENDATION:
         return await _recommend(task, context, llm)
-    return await _update_daycare(task, context, llm)
+    return await _daycare(task_type, context, llm)
 
 
 def _check_foods_result(context: FoodContext) -> DomainAgentResult:
@@ -147,23 +148,24 @@ def _failed(task_type: FoodTaskType, *, model_calls: int) -> DomainAgentResult:
     )
 
 
-async def _update_daycare(
-    task: DomainTask, context: FoodContext, llm: LLMClient
+async def _daycare(
+    task_type: FoodTaskType, context: FoodContext, llm: LLMClient
 ) -> DomainAgentResult:
-    """급식 조회 · 갱신 · 삭제. 모델이 출력 tool(`update_daycare_meal` · `delete_daycare_meal`)을
-    부르면 끝난다. 화면 문구는 tool 이 쓰기가 끝난 뒤에 `state.readouts` 에 담은 코드 문구다."""
+    """급식 조회 · 갱신 · 삭제. 모델이 출력 tool(`show_daycare_meal` · `update_daycare_meal` ·
+    `delete_daycare_meal` · `keep_daycare_meal`)을 부르면 끝난다. 화면 문구는 tool 이
+    `state.readouts` 에 담은 코드 문구다 — 갱신은 쓰기가 끝난 뒤에, 조회는 읽은 행으로 만든 뒤에."""
     gate = context.state.gate
     assert gate is not None  # run() 이 build_gate 를 먼저 부른다
     messages: list[dict[str, Any]] = [
-        {"role": "system", "content": build_system_prompt(context, FoodTaskType.DAYCARE_MEAL)},
+        {"role": "system", "content": build_system_prompt(context, task_type)},
         {"role": "user", "content": context.state.utterance},
     ]
-    allowed = tools_for(FoodTaskType.DAYCARE_MEAL, gate)
-    if not await _converse(llm, messages, context, allowed, FoodTaskType.DAYCARE_MEAL):
-        return _failed(FoodTaskType.DAYCARE_MEAL, model_calls=1)
+    allowed = tools_for(task_type, gate)
+    if not await _converse(llm, messages, context, allowed, task_type):
+        return _failed(task_type, model_calls=1)
     return DomainAgentResult(
         agent=AGENT,
-        task_type=FoodTaskType.DAYCARE_MEAL.value,
+        task_type=task_type.value,
         status="completed",
         readouts=context.state.readouts,
         model_calls=1,

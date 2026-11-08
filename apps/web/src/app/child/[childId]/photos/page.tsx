@@ -8,6 +8,7 @@ import { Suspense, useEffect, useRef, useState } from "react";
 import { AuthGate } from "@/components/auth-gate";
 import { ScreenTransition } from "@/components/route-transition";
 import { ConsentRequiredCard } from "@/components/consent-required-card";
+import { PhotoPreview } from "@/components/photo-preview";
 import { PhotoReview } from "@/components/photo-review";
 import { PhotoSourceSheet } from "@/components/photo-source-sheet";
 import { Button } from "@/components/ui/button";
@@ -362,8 +363,7 @@ function Reading({
   return (
     <div className="flex flex-col gap-4">
       <PhotoCard>
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={previewUrl} alt="읽고 있는 사진" className="h-full w-full object-cover" />
+        <PhotoPreview src={previewUrl} alt="읽고 있는 사진" />
       </PhotoCard>
       <Card>
         <ProgressSteps index={index} total={total} label={label} />

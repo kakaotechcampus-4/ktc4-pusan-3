@@ -40,6 +40,8 @@ INPUT_PATH = Path(__file__).with_name("test_input.txt")
 REC = FoodTaskType.MEAL_RECOMMENDATION
 NUT = FoodTaskType.NUTRIENT_ANALYSIS
 CHECK = FoodTaskType.FOOD_CHECK
+DAYCARE = FoodTaskType.DAYCARE_MEAL
+LOOKUP = FoodTaskType.DAYCARE_LOOKUP
 LEARN = GrowthTaskType.LEARNING_SUGGESTION
 ROUTINE = GrowthTaskType.ROUTINE_COACHING
 BOOK = GrowthTaskType.BOOK_SUGGESTION
@@ -396,8 +398,8 @@ RC_CASES: tuple[RoutingCase, ...] = (
     RoutingCase(
         "RC26",
         "오늘 어린이집 급식 뭐야?",
-        (Q("오늘 어린이집 급식 뭐야?", FOOD, REC, strict=False),),
-        watch="급식 조회 단독 — 두 유형 어디에도 안 맞는다. 관찰만 (열린 결정 6)",
+        (Q("오늘 어린이집 급식 뭐야?", FOOD, LOOKUP),),
+        watch="급식 메뉴를 묻는 말 — 갱신(daycare_meal)도 식단 추천도 아니다 (daycare_lookup)",
     ),
     RoutingCase(
         "RC27",
@@ -960,6 +962,36 @@ FC_CASES: tuple[RoutingCase, ...] = (
         "파프리카 들어간 반찬 추천해줘.",
         (Q("파프리카 들어간 반찬 추천해줘", FOOD, REC),),
         watch="레시피북에 없는 재료를 정한 추천 — FC11 과 같은 꼴이어야 한다 (Food Q4)",
+    ),
+    RoutingCase(
+        "FC17",
+        "모레 어린이집 점심 메뉴 알려줘.",
+        (Q("모레 어린이집 점심 메뉴 알려줘", FOOD, LOOKUP),),
+        watch="급식 조회 — 날짜를 말한 묻는 말. 갱신이 아니다",
+    ),
+    RoutingCase(
+        "FC18",
+        "다음 주 화요일 간식 뭐야?",
+        (Q("다음 주 화요일 간식 뭐야", FOOD, LOOKUP),),
+        watch="기관 신호가 '간식' 하나뿐이다 — 식단 추천(간식 추천)과 가른다",
+    ),
+    RoutingCase(
+        "FC19",
+        "이번 주 유치원 급식 뭐 나와?",
+        (Q("이번 주 유치원 급식 뭐 나와", FOOD, LOOKUP),),
+        watch="기간(이번 주)을 묻는 급식 조회",
+    ),
+    RoutingCase(
+        "FC20",
+        "다음 주 수요일 급식 우유 말고 두유로 바꿔줘.",
+        (Q("다음 주 수요일 급식 우유 말고 두유로 바꿔줘", FOOD, DAYCARE),),
+        watch="급식 변경은 조회와 헷갈려도 갱신이다 — 날짜 · 급식 단어가 같아도 (회귀)",
+    ),
+    RoutingCase(
+        "FC21",
+        "지난주에 뭐 먹었는지 보여줘.",
+        (R("지난주에 뭐 먹었는지 보여줘", LOOKUP_EDIT),),
+        watch="기관 신호가 없다 — 아이가 먹은 기록 보기라 급식 조회가 아니다",
     ),
 )
 

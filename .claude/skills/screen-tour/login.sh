@@ -16,7 +16,7 @@ docker exec ktc4-postgres psql -U dev -d dailyagent -q -c "insert into session(p
 python3 - "$OUT" "$TOKEN" <<'PY'
 import json, sys, time
 out, token = sys.argv[1], sys.argv[2]
-json.dump({"cookies": [{"name": "icatch_rt", "value": token, "domain": "localhost", "path": "/api/v1/auth",
+json.dump({"cookies": [{"name": "__Host-icatch_rt", "value": token, "domain": "localhost", "path": "/",
            "expires": time.time() + 7 * 86400, "httpOnly": True, "secure": True, "sameSite": "Strict"}],
            "origins": []}, open(out, "w"))
 PY
