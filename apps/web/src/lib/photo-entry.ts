@@ -20,8 +20,8 @@ import { seoulDate, seoulTime } from "@/lib/event-draft";
  * 🚨 **일정 항목이어도 마감만 읽었으면 마감이다.** 서버는 "4월 30일까지" 처럼 시작 없는 "까지" 를
  *    마감으로 옮기고 "시작 날짜를 찾지 못했어요" 를 단다(`assemble.py`). 종류만 보고 시작으로 다루면
  *    그 마감일이 시작 칸에 미리 채워져, 고치지 않고 누르면 마감일에 시작하는 일정이 들어간다.
- * ⚠️ 서버 `apply_edits` 는 일정 항목의 날짜를 고치면 그 날을 **시작**으로 쓴다 — 이 경우 화면이 "마감" 칸을
- *    고쳐 보내면 서버는 시작으로 저장한다. 고치지 않으면 어긋나지 않는다. 서버와 맞출 숙제다 (#723 PR).
+ * 🚨 **서버 `apply_edits` 도 이 순서로 고칠 칸을 정한다** (#723 PR) — 이 함수를 바꾸면 서버도 같이 바꾼다.
+ *    어긋나면 화면이 "마감" 이라고 부른 칸을 고쳤는데 서버가 시작으로 저장한다.
  */
 export function entryDateRole(entry: PhotoEntry): "start" | "due" {
   if (entry.starts_at) return "start";
