@@ -98,16 +98,23 @@ def _widens(new: ast.expr | None, old: ast.expr | None) -> bool:
     """VARCHAR(n) → VARCHAR(m ≥ n) · VARCHAR(n) → TEXT 만 넓히기로 본다."""
 
     def parse(t: ast.expr | None) -> tuple[str | None, object]:
+        """(타입 이름, 길이). 길이가 없으면 None, 상수가 아니면 "?" — 넓히기로 보지 않는다."""
         if not isinstance(t, ast.Call):
             return None, None
-        length = t.args[0].value if t.args and isinstance(t.args[0], ast.Constant) else None
-        return _name(t.func), length
+        # 위치 인자 String(8) 와 autogenerate 가 쓰는 키워드 String(length=8) 둘 다
+        kw = {k.arg: k.value for k in t.keywords}
+        node = t.args[0] if t.args else kw.get("length")
+        if node is None:
+            return _name(t.func), None
+        return _name(t.func), node.value if isinstance(node, ast.Constant) else "?"
 
     (new_kind, new_len), (old_kind, old_len) = parse(new), parse(old)
     if old_kind not in _VARCHAR:
         return False
     if new_kind in ("Text", "TEXT"):
         return True
+    if "?" in (new_len, old_len):
+        return False
     return new_kind in _VARCHAR and (
         new_len is None or (old_len is not None and new_len >= old_len)
     )
@@ -135,8 +142,12 @@ def _reached(tree: ast.Module) -> list[ast.FunctionDef]:
 def find_violations(source: str) -> list[tuple[int, str]]:
     """`upgrade()` 쪽에서 직전 코드를 깨는 연산 중 표시로 넘기지 않은 것 (줄, 무엇)."""
     tree = ast.parse(source)
+    reached = _reached(tree)
+    # 모듈 상수와 upgrade 쪽 함수 안의 대입만 — downgrade 의 `sql = "… DROP …"` 가 섞이면 안 된다
     names: dict[str, list[ast.expr]] = {}
-    for n in ast.walk(tree):
+    scopes = [n for n in tree.body if isinstance(n, (ast.Assign, ast.AnnAssign))]
+    scopes += [n for f in reached for n in ast.walk(f)]
+    for n in scopes:
         targets = n.targets if isinstance(n, ast.Assign) else [getattr(n, "target", None)]
         for t in targets:
             if isinstance(t, ast.Name) and getattr(n, "value", None) is not None:
@@ -151,7 +162,7 @@ def find_violations(source: str) -> list[tuple[int, str]]:
 
     calls = [
         (n, {k.arg: k.value for k in n.keywords})
-        for f in _reached(tree)
+        for f in reached
         for n in ast.walk(f)
         if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
     ]

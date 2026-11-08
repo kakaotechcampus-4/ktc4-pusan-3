@@ -37,6 +37,9 @@ def upgrade(body: str, before: str = "") -> str:
         "op.alter_column('t', 'c', type_=sa.String(8), existing_type=sa.String(64))",
         "op.alter_column('t', 'c', type_=sa.Text())",
         "op.alter_column('t', 'c', type_=sa.Integer(), existing_type=sa.String(8))",
+        # autogenerate 가 쓰는 키워드 길이 · 상수가 아닌 길이도 좁히기일 수 있다
+        "op.alter_column('t', 'c', type_=sa.String(length=8), existing_type=sa.VARCHAR(length=64))",
+        "op.alter_column('t', 'c', type_=sa.String(N), existing_type=sa.String(64))",
         # CHECK 교체 — enum 값 빼기 · 바꾸기가 이렇게 생겼다
         "op.drop_constraint('ck', 't', type_='check')\n"
         "op.create_check_constraint('ck', 't', \"k IN ('a')\")",
@@ -73,6 +76,7 @@ def test_직전_코드를_깨는_연산을_찾는다(body):
         "op.alter_column('t', 'c', server_default='x')",
         "op.alter_column('t', 'c', type_=sa.String(32), existing_type=sa.String(6))",
         "op.alter_column('t', 'c', type_=sa.Text(), existing_type=sa.String(6))",
+        "op.alter_column('t', 'c', type_=sa.String(length=32), existing_type=sa.VARCHAR(length=6))",
         "op.drop_index('ix_t_c')",
         "op.drop_constraint('uq_t_c', 't')",
         "op.create_check_constraint('ck_new', 't', 'c > 0')",
@@ -91,6 +95,14 @@ def test_expand_인_연산은_통과한다(body):
 
 def test_downgrade_는_보지_않는다():
     assert find_violations(upgrade("pass")) == []
+
+
+def test_downgrade_의_같은_이름_변수는_upgrade_SQL_로_섞이지_않는다():
+    src = (
+        "def upgrade():\n    sql = 'UPDATE t SET a = 1'\n    op.execute(sql)\n\n"
+        "def downgrade():\n    sql = 'ALTER TABLE t DROP COLUMN a'\n    op.execute(sql)\n"
+    )
+    assert find_violations(src) == []
 
 
 def test_upgrade_가_부르는_같은_파일_함수도_본다():

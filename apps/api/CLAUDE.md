@@ -155,7 +155,8 @@ raw SQL 대상 예시: 승격 판정 집계, observation 4테이블 병합 페�
   `type_` 바꾸기를 막는다. 이런 변경은 배포 두 번에 나누고, 두 번째 마이그레이션의 **그 연산 바로 위 줄**에
   `# contract: #<앞 배포 PR 번호>` 를 적으면 그 연산만 통과한다. CHECK 에 값을 더하기만 하는 것처럼 넓히기면 `# expand-ok: <이유>`.
   🚨 contract PR 은 **앞 PR 이 prod(main) 에 배포된 뒤에** develop 에 머지한다 — 둘이 한 번에 prod 에 실리면 롤백이 깨진다.
-  검사 대상은 스크립트의 `BASELINE` 과 그 조상을 뺀 revision 이다 — 규칙을 넓힐 때만 prod 에 배포된 head 로 올린다.
+  검사 대상은 스크립트의 `BASELINE` 과 그 조상을 뺀 revision 이다 — 규칙을 넓힐 때만 prod DB 의 `alembic current` 로 올린다.
+  헬퍼 안에 단 `# expand-ok:` 는 그 헬퍼의 모든 호출에 통하니, 넓히기 표시를 단 헬퍼는 넓히기에만 쓴다.
   상세: [`docs/ops/deploy-v1.md`](../../docs/ops/deploy-v1.md) 롤백 절.
 
 ---
