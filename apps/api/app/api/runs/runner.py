@@ -230,6 +230,7 @@ def agent_job(
                         ),
                         count_records=agent_ports.record_counter(child_id),
                         load_cards=load_cards,
+                        recent_turns=agent_ports.recent_turns_loader(parent_id, child_id),
                         curator_trigger=curator_trigger(),
                         domain_store=agent_ports.domain_store_opener(child_id),
                         **agent_ports.food_stores(),

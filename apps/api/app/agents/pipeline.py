@@ -67,6 +67,7 @@ from app.agents.run_writes import RunWrites
 from app.agents.suggestion_save import SaveSuggestions, SuggestionBatch
 from app.agents.supervisor.agent import SupervisorResult
 from app.agents.supervisor.agent import run as run_supervisor
+from app.agents.supervisor.context import LoadRecentTurns
 from app.agents.supervisor.emergency import emergency_guidance, infant_fever_age
 from app.agents.supervisor.routing import (
     AGENT_LIMIT,
@@ -624,6 +625,7 @@ async def handle_input(
     curator_trigger: CuratorTrigger | None = None,
     count_records: CountRecords | None = None,
     load_cards: LoadCards | None = None,
+    recent_turns: LoadRecentTurns | None = None,
     child_months: int | None = None,
 ) -> PipelineResult:
     """사용자 입력 한 건을 처리한다.
@@ -641,6 +643,8 @@ async def handle_input(
     eval 은 `InMemorySuggestions()` 를 넘긴다.
     writes는 도메인 쓰기 포트가 성공했는지 남는 표시다. entrypoint가 쓰기 포트를 감싸 넘긴다.
     count_records 를 넘기면 일반 추천 블록의 쌓인 기록 수를 센다(없으면 그 칸이 빈다).
+    recent_turns 는 후속 질문으로 보이는 입력일 때만 부르는 앞 대화 조회 콜백이다. 없으면(테스트 ·
+    eval · 05) 앞 대화 없이 돈다.
     child_months 는 생일로 계산한 월령이다. 응급 사전검사가 말에 적힌 월령과 함께 본다. 저장 뒤
     hook 에 맡기면 동의가 없거나 Memory 가 저장하지 않은 run 에서 안내가 빠진다. 없으면 None.
     """

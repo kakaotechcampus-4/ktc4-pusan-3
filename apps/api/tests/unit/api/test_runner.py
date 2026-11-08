@@ -125,6 +125,23 @@ async def test_agent_job_좌표와_날씨_어댑터를_진입점에_그대로_�
     assert isinstance(seen["activity_places"], DbPlaceSource)
 
 
+async def test_agent_job_최근_대화_포트를_진입점에_넘긴다(monkeypatch):
+    """후속 질문일 때 pipeline 이 부를 앞 대화 조회 — 이 run 의 보호자 · 아이로 묶어 넘긴다."""
+    seen: dict = {}
+
+    async def fake_handle_input(**kwargs):
+        seen.update(kwargs)
+        kwargs["emit"](Done(kwargs["run_id"], 1))
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+
+    job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    assert callable(seen["recent_turns"])
+
+
 async def test_agent_job_병원_어댑터를_진입점에_그대로_넘긴다(monkeypatch):
     """서버 시작 때 만든 국립중앙의료원 어댑터 — 날씨 어댑터와 같은 길이다."""
     seen: dict = {}
