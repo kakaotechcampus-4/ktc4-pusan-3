@@ -93,7 +93,8 @@ def box(tmp_path: Path):
         'case "$*" in "merge-base"*) [ -n "$FAKE_OLD" ] ;; esac\n'
     )
     (bin_dir / "sleep").write_text("#!/bin/sh\n")  # reload 재시도가 15초를 쓰지 않게
-    # make deploy-up 은 Linux 에서 sudo 로 IMDS 방화벽을 건다 — CI(Linux) · 맥 어디서든 같은 길을 가짜로 돈다
+    # make deploy-up 은 Linux 에서 sudo 로 IMDS 방화벽을 건다
+    # — CI(Linux) · 맥 어디서든 같은 길을 가짜로 돈다
     (bin_dir / "uname").write_text("#!/bin/sh\necho Linux\n")
     (bin_dir / "sudo").write_text('#!/bin/sh\necho "sudo $*" >> "$FAKE_LOG"\n')
     for f in bin_dir.iterdir():
