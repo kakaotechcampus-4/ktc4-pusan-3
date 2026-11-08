@@ -88,9 +88,10 @@ class ToolsExpect(_Strict):
     제품이 일부러 Memory 를 건너뛴다. 그래서 must_not 만 적은 기대는 통과하고, must 가 있거나
     memory_ran 이면 실패한다.
 
-    must 는 성공한 호출 수의 최소값이다 — 거절된 호출은 일을 한 것이 아니다. must_not 은
-    시도만 해도 위반이다. `test_memory.py` 의 required_tools · forbidden_tools 와 이름 ·
-    "쓰기" 뜻을 맞췄다. 여러 턴 케이스는 마지막 턴의 호출만 본다(판정은 마지막 턴만).
+    must 는 성공한 호출 수의 최소값이다 — 거절된 호출은 쓰지도 읽지도 못했다. must_not 은
+    시도만 해도 위반이다. tool 이름과 "쓰기" 뜻은 `test_memory.py` 의 required_tools ·
+    forbidden_tools 와 같지만, required_tools 는 시도를 센다는 점이 다르다 — 그쪽은 Memory 가
+    얼마나 헤맸는지(재시도 예산)도 보는 평가다. 여러 턴 케이스는 마지막 턴의 호출만 본다.
     """
 
     must: dict[str, int] = Field(default_factory=dict)  # tool → 성공한 호출 최소 수
