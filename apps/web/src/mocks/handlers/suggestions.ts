@@ -9,6 +9,7 @@ import {
   placeGeneralSuggestion,
   placeSuggestion,
   requestedGeneralSuggestion,
+  seriesRef,
   staleSuggestion,
   suggestionDraft,
   suggestionAllergens,
@@ -545,7 +546,7 @@ export const suggestionHandlers = [
       };
 
       // 🚨 반복 일정(#738)은 요일과 끝 날짜가 다 있어야 한다. 문구는 서버 값이라 되돌려 받지 않는다 (`RepeatRequest`).
-      //    ⚠️ 서버 계약 전이다 — 회차로 펼치는 것은 실서버 몫이라 목은 첫 회차 한 건만 돌려준다.
+      //    회차로 펼치는 것은 실서버 몫이라(#761) 목은 첫 회차 한 건만 돌려준다 — 서버 응답도 `event` 는 첫 회차고 `series` 가 붙는다.
       if (
         body.repeat &&
         (!body.repeat.weekdays?.length || !body.repeat.until || "label" in body.repeat)
@@ -630,6 +631,16 @@ export const suggestionHandlers = [
         })),
         // 🚨 제출한 보호자 본인의 알림만 걸린다 — 응답도 그것만 싣는다.
         reminder,
+        // 반복이면 첫 회차에 묶음이 붙는다 (서버 #761). 반복이 아니면 키 자체가 없다.
+        ...(body.repeat?.weekdays && body.repeat.until
+          ? {
+              series: seriesRef(
+                `series_new_${submittedCount}`,
+                body.repeat.weekdays,
+                body.repeat.until,
+              ),
+            }
+          : {}),
       });
 
       // 🚨 제안의 `status` 를 싣지 않는다 — 제출은 상태를 바꾸지 않는다 (#206).

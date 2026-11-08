@@ -13,6 +13,7 @@ import {
   type ReminderLead,
   type ReminderRequest,
   type ReminderResponse,
+  type UpdateSeriesResponse,
 } from "@/lib/api/types";
 import { fitsKind, forKind, isPast, NO_REMINDER } from "@/lib/reminder";
 
@@ -81,7 +82,7 @@ function withPrepared(date: string) {
     ...event,
     items: event.items.map((item) => ({ ...item, ...preparedItems.get(item.item_id) })),
     reminder: myReminders.get(event.id) ?? null,
-    // 🚨 반복 묶음의 회차 (#738). 실서버가 아직 싣지 않는 칸이라 시나리오에서만 붙인다 (`CalendarEvent.series`).
+    // 🚨 반복 묶음의 회차 (#738 · 서버 #761). 목의 저장된 일정은 반복이 아니라서 시나리오에서만 붙인다 (`CalendarEvent.series`).
     ...(currentScenario() === "event_repeat" ? { series: calendarSeries() } : {}),
   }));
 }
@@ -279,9 +280,9 @@ export const calendarHandlers = [
 
   /**
    * 🚨 **반복 묶음 고치기의 제출. 승인 게이트 ㉠ 이다** (#738 · 같은 게이트의 다른 메서드).
-   * ⚠️ 서버 계약 전이다 — 경로와 본문은 `lib/api/idempotency.ts` 의 `updateEventSeries` 를 따른다.
+   * 경로와 본문은 서버(#761)와 같다 (`lib/api/idempotency.ts` 의 `updateEventSeries`). 응답은 `{ series, occurrence_count }` 다.
    *
-   * 🚨 **`before` 가 있어야 한다.** 서버는 `before` 와 달라진 값만 오늘 이후 회차에 적용한다 — 화면이 빼먹으면
+   * 🚨 **`before` 가 있어야 한다.** 서버는 `before` 와 달라진 값만 아직 시작하지 않은 회차에 적용한다 — 화면이 빼먹으면
    *    한 회차만 따로 고쳐 둔 값까지 덮인다. 목은 회차를 들고 있지 않아서 모양만 검사한다.
    */
   http.patch(
@@ -307,11 +308,14 @@ export const calendarHandlers = [
       if (String(params.sid) !== calendarSeries().id) {
         return apiError(404, "not_found", "반복 일정을 찾을 수 없어요");
       }
-      // 서버는 다시 펼친 뒤 오늘 이후 회차가 남지 않으면 422 `invalid_repeat` 다 (#761).
+      // 서버는 다시 펼친 뒤 남는 회차(아직 시작하지 않은 것)가 없으면 422 `invalid_repeat` 다 (#761).
       if (currentScenario() === "repeat_invalid") {
         return apiError(422, "invalid_repeat", "오늘 이후에 남는 회차가 없어요");
       }
-      return HttpResponse.json({ series_id: String(params.sid) });
+      // 🚨 응답 모양은 서버 `UpdateSeriesResponse` 와 같다 — 화면은 읽지 않지만 계약 테스트가 모양을 본다.
+      //    목은 회차를 들고 있지 않아서 회차 수는 지어낸 값이다.
+      const response: UpdateSeriesResponse = { series: calendarSeries(), occurrence_count: 8 };
+      return HttpResponse.json(response);
     }),
   ),
 

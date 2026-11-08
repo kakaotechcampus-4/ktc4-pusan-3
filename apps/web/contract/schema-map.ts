@@ -220,7 +220,8 @@ export const SCHEMA_MAP: Record<string, MapValue> = {
   },
   EventBodyOut: "EventDraftFields",
   DraftItemPayload: "EventDraftItem",
-  SubmitEventRequest: "SubmitEventBody",
+  // 반복 일정(#738)은 같은 본문에 최상위 `repeat` 를 더한다 — 웹은 두 타입으로 나눠 보낸다
+  SubmitEventRequest: ["SubmitEventBody", "SubmitRepeatEventBody"],
   PhotoEntry: "PhotoEntry",
   PhotoEntryDetail: "PhotoEntryDetail",
   PhotoUploadTicket: "PhotoUploadTicket",
@@ -256,13 +257,15 @@ export const SCHEMA_MAP: Record<string, MapValue> = {
   CalendarMonthResponse: "CalendarMonthResponse",
   CalendarDayOut: "CalendarDay",
   CalendarDayResponse: "CalendarDayResponse",
-  CalendarEventOut: {
-    web: "CalendarEvent",
-    allow: {
-      series:
-        "반복 묶음의 회차 (#738). BE 가 캘린더 응답에 싣기 전이라 서버에 없다 — 실으면 이 줄을 뺀다 (types.ts 의 CalendarEvent.series)",
-    },
-  },
+  CalendarEventOut: "CalendarEvent",
+  EventSeriesOut: "EventSeriesRef",
+
+  /* ── 반복 묶음 고치기 (#738 · 승인 게이트 ㉠) ── */
+  RepeatIn: "RepeatRequest",
+  SeriesEventIn: "SeriesDraftFields",
+  SeriesBeforeIn: "UpdateSeriesBody.before",
+  UpdateSeriesRequest: "UpdateSeriesBody",
+  UpdateSeriesResponse: "UpdateSeriesResponse",
   EventItemOut: "EventItem",
   ReminderOut: "Reminder",
   ReminderLead: "ReminderLead",
@@ -304,12 +307,4 @@ export const NOT_MAPPED: Record<string, string> = {
   LinkedAffinityOut: "웹이 ObservationOut.affinity 를 읽지 않는다",
   AnswerResponse: "05 가 되묻기 답의 응답 본문을 읽지 않는다",
   SeenTours: "웹 미사용 — FE 후속 (#696 머지 뒤 lib/tour/seen.ts 를 서버 호출로 바꿀 때)",
-  // 요일 반복 (#738). 웹 타입은 #746 이 만든다 — 그 PR 이 SCHEMA_MAP 으로 옮긴다
-  // (EventSeriesRef · RepeatRequest · SeriesDraftFields · UpdateSeriesBody.before · UpdateSeriesBody)
-  EventSeriesOut: "웹 타입이 #746 에서 생긴다 (EventSeriesRef)",
-  RepeatIn: "웹 타입이 #746 에서 생긴다 (RepeatRequest)",
-  SeriesEventIn: "웹 타입이 #746 에서 생긴다 (SeriesDraftFields)",
-  SeriesBeforeIn: "웹 타입이 #746 에서 생긴다 (UpdateSeriesBody.before)",
-  UpdateSeriesRequest: "웹 타입이 #746 에서 생긴다 (UpdateSeriesBody)",
-  UpdateSeriesResponse: "웹 타입이 #746 에서 생긴다. 화면은 성공 여부만 쓴다",
 };
