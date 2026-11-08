@@ -1203,7 +1203,7 @@ def _series_values(body: SeriesEventIn) -> series_repo.SeriesValues:
     ),
     status_code=200,
     response_model=UpdateSeriesResponse,
-    responses={status: {"model": ErrorEnvelope} for status in (400, 403, 404, 422)},
+    responses={status: {"model": ErrorEnvelope} for status in (400, 403, 404, 422, 503)},
 )
 async def update_event_series(
     child: AccessibleChild,
@@ -1224,7 +1224,7 @@ async def update_event_series(
         "path": request.url.path,
         "key": idempotency_key,
     }
-    replayed = idempotency.recall(**scope)
+    replayed = await idempotency.recall(**scope)
     if replayed is not None and isinstance(replayed, dict):
         return JSONResponse(status_code=200, content=replayed)
 
@@ -1261,5 +1261,5 @@ async def update_event_series(
     response_dict = UpdateSeriesResponse(
         series=EventSeriesOut.of(series), occurrence_count=count
     ).model_dump(mode="json")
-    idempotency.remember(**scope, replay=response_dict)
+    await idempotency.remember(**scope, replay=response_dict)
     return JSONResponse(status_code=200, content=response_dict)

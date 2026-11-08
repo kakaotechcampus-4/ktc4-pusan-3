@@ -607,6 +607,66 @@ async def test_rule_leaving_only_started_occurrences_is_refused(
     assert len(await _occurrences(session, sid)) == 10
 
 
+async def test_patch_with_only_started_occurrences_left_is_refused(
+    db_client: AsyncClient,
+    session: AsyncSession,
+    bearer: Bearer,
+    cid: uuid.UUID,
+    now: dict,
+):
+    """규칙은 그대로여도 고칠 회차가 없으면 422 — 마지막 회차가 오늘 08:30 인 묶음을 12시에
+    제목 · 준비물만 바꿔도 0건 200 이 나가지 않는다 (#761 리뷰). 회차는 그대로다."""
+    headers, _ = bearer
+    sid = await _seed(db_client, session, cid, headers, until=0)
+    now["at"] = _clock("12:00")
+    before = _series_body(until=0)
+
+    for after in ({**before, "title": "어린이집 등원"}, {**before, "items_": ["물통", "실내화"]}):
+        resp = await _patch(db_client, cid, sid, headers, _patch_body(before, after))
+
+        assert resp.status_code == 422, resp.text
+        assert resp.json()["error"]["code"] == "invalid_repeat"
+    today = (await _occurrences(session, sid))[_day(0)]
+    assert today.title == "등원"
+    assert await _items(session, today.id) == {"물통": False}
+
+
+async def test_re_expansion_does_not_double_a_day_holding_a_started_occurrence(
+    db_client: AsyncClient,
+    session: AsyncSession,
+    bearer: Bearer,
+    cid: uuid.UUID,
+    now: dict,
+):
+    """오늘로 옮겨 둔 회차가 이미 시작했어도 그날의 회차로 센다 — 오늘 요일을 더해도 오늘에 회차를
+    하나 더 만들지 않는다."""
+    headers, _ = bearer
+    others = [d for d in EVERY_DAY if d != _day(0).isoweekday()]
+    sid = await _seed(db_client, session, cid, headers, until=13, weekdays=others)
+    await session.execute(
+        update(Event)
+        .where(Event.id == (await _occurrences(session, sid))[_day(1)].id)
+        .values(starts_at=datetime.combine(_day(0), time(8, 30), tzinfo=KST))
+    )
+    now["at"] = _clock("12:00")
+    before = _series_body(until=13, weekdays=others)
+    after = _series_body(until=13, weekdays=EVERY_DAY, starts_time="18:00")
+
+    resp = await _patch(db_client, cid, sid, headers, _patch_body(before, after))
+
+    assert resp.status_code == 200, resp.text
+    today = list(
+        await session.scalars(
+            select(Event.starts_at).where(
+                Event.series_id == uuid.UUID(sid),
+                Event.starts_at >= datetime.combine(_day(0), time(0), tzinfo=KST),
+                Event.starts_at < datetime.combine(_day(1), time(0), tzinfo=KST),
+            )
+        )
+    )
+    assert [t.astimezone(KST).time() for t in today] == [time(8, 30)]
+
+
 async def test_all_day_series_still_changes_today(
     db_client: AsyncClient,
     session: AsyncSession,
@@ -704,6 +764,31 @@ async def test_series_patch_requires_idempotency_key(
         headers=headers,
     )
     assert resp.status_code == 400
+
+
+async def test_series_patch_with_the_same_key_replays_without_writing_again(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    """같은 키로 다시 보내면 처음 응답을 그대로 돌려주고 회차를 다시 쓰지 않는다."""
+    headers, _ = bearer
+    sid = await _seed(db_client, session, cid, headers)
+    before = _series_body(until=6)
+    body = _patch_body(before, {**before, "title": "어린이집 등원"})
+    keyed = {**headers, "Idempotency-Key": uuid.uuid4().hex}
+    idempotency.clear()
+
+    first = await db_client.patch(
+        f"/api/v1/children/{cid}/event-series/{sid}", json=body, headers=keyed
+    )
+    tomorrow = (await _occurrences(session, sid))[_day(1)]
+    await session.execute(update(Event).where(Event.id == tomorrow.id).values(title="수영"))
+    again = await db_client.patch(
+        f"/api/v1/children/{cid}/event-series/{sid}", json=body, headers=keyed
+    )
+
+    assert first.status_code == again.status_code == 200, again.text
+    assert again.json() == first.json()
+    assert (await _occurrences(session, sid))[_day(1)].title == "수영"
 
 
 # ── 읽기 ──────────────────────────────────────────────────────────────────

@@ -294,6 +294,12 @@ async def update_series(
         series.weekdays, series.until = rule
         await session.flush()
 
+    # 🚨 고칠 회차가 하나도 없으면 200 · 0건이 아니라 422 — 규칙이 그대로여도 마지막 회차가 이미
+    #    시작했으면 여기로 온다 (08:00 초안을 14:00 에 승인). 앞의 쓰기는 부르는 쪽이 commit 하지
+    #    않아 되돌려진다
+    if not events and not new_events:
+        msg = "오늘 이후에 남는 회차가 없어요"
+        raise NoFutureOccurrence(msg)
     when_changed = before is None or before.clock() != values.clock()
     fields = [
         name
