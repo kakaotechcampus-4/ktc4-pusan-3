@@ -17,6 +17,7 @@ CLOSED_NO_DAYCARE = "closed.no_daycare"  # daycare_meal 라벨인데 급식 행�
 POOL_EMPTY = "pool.empty"
 GENERAL_REASON_TODDLER = "general.reason.toddler"
 GENERAL_REASON_WEANING = "general.reason.weaning"
+GENERAL_REASON_REQUESTED = "general.reason.requested"  # 보호자가 정한 조건이 기준인 일반 추천
 FOLLOWUP_PREFERENCE = "followup.preference"
 UNSUPPORTED_MILK_AMOUNT = "unsupported.milk_amount"
 UNSUPPORTED_WEANING_OVER12 = "unsupported.weaning_over12"
@@ -61,6 +62,8 @@ MEAL_REQUEST_AGE_BLOCK = "meal.request_age_block"
 # 문구 자리에 채운다
 MEAL_NUTRIENT_BASIS = "meal.nutrient_basis"
 MEAL_MENU_SOURCE = "meal.menu_source"
+MEAL_MENU_GENERATED = "meal.menu_generated"  # 고른 메뉴가 모두 레시피북에 없는 생성 메뉴
+MEAL_MENU_MIXED = "meal.menu_mixed"  # 레시피북 메뉴와 생성 메뉴가 섞임
 
 # 급식 조회 · 갱신 · 삭제
 DAYCARE_ASK_SUBSTITUTE = "daycare.ask_substitute"

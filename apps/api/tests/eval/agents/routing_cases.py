@@ -949,6 +949,18 @@ FC_CASES: tuple[RoutingCase, ...] = (
         (Q("모자란 영양소 채울 수 있는 메뉴 추천해줘", FOOD, REC, strict=False),),
         watch="FC13 의 다른 말투 — '채울' 이 처방으로 읽히는가",
     ),
+    RoutingCase(
+        "FC15",
+        "태국음식 추천해줘.",
+        (Q("태국음식 추천해줘", FOOD, REC),),
+        watch="요리 종류를 정한 추천 — 일반 정보 질문(info)이나 섭취 확인이 아니다 (Food Q5)",
+    ),
+    RoutingCase(
+        "FC16",
+        "파프리카 들어간 반찬 추천해줘.",
+        (Q("파프리카 들어간 반찬 추천해줘", FOOD, REC),),
+        watch="레시피북에 없는 재료를 정한 추천 — FC11 과 같은 꼴이어야 한다 (Food Q4)",
+    ),
 )
 
 

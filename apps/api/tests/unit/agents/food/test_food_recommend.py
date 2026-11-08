@@ -17,7 +17,11 @@ from app.agents.food.meal_pool import build_pool
 from app.agents.food.readouts import GENERAL_REASON_TODDLER, GENERAL_REASON_WEANING, READOUTS
 from app.agents.food.result import ErrorCode
 from app.agents.food.schemas.common import EvidenceRef
-from app.agents.food.schemas.recommend import MealCandidate, ProposeMealCandidatesArgs
+from app.agents.food.schemas.recommend import (
+    GeneratedMeal,
+    MealCandidate,
+    ProposeMealCandidatesArgs,
+)
 from app.agents.food.store import InMemoryRecipeCatalog, MenuCatalogRow, SafetyEntry
 from app.agents.food.tools.recommend import propose_meal_candidates
 from app.rules.menu_evidence import menu_evidence_id
@@ -704,3 +708,122 @@ async def test_피한_음식을_근거로_달았으면_이유에_그_음식을_�
     )
 
     assert result.success, result.error
+
+
+# ── 보호자가 정한 조건 · 레시피북 밖 생성 후보 (#740) ─────────────────────────
+def generated_meal(name: str = "파프리카볶음", **overrides) -> GeneratedMeal:
+    base = {
+        "name": name,
+        "main_ingredients": ["파프리카"],
+        "ingredients": ["파프리카", "올리브유"],
+        "meal_slot": "dinner",
+        "reason": "요청하신 조건에 맞아서 골랐어요",
+    }
+    return GeneratedMeal.model_validate({**base, **overrides})
+
+
+def asked(
+    *,
+    food: str | None = "파프리카",
+    kind: str | None = "ingredient",
+    generated: list[GeneratedMeal] | None = None,
+    candidates: list[MealCandidate] | None = None,
+) -> ProposeMealCandidatesArgs:
+    return ProposeMealCandidatesArgs(
+        requested_food=food,
+        requested_kind=kind,
+        generated=generated or [],
+        candidates=candidates or [],
+    )
+
+
+def said(ctx: FoodContext, text: str) -> FoodContext:
+    ctx.state.utterance = text
+    return ctx
+
+
+PAPRIKA_STIR = menu_row(
+    "파프리카볶음", source="mafra_recipe", ingredients=("파프리카", "올리브유"),
+    main_ingredients=("파프리카",),
+)  # fmt: skip
+
+
+async def test_보호자가_조건을_말했으면_생성_후보를_요청_기반_일반_추천으로_받는다() -> None:
+    ctx = said(shown(*FULL, exhausted=True), "파프리카 들어간 반찬 추천해줘")
+
+    result = await propose_meal_candidates(ctx, asked(generated=[generated_meal()]))
+
+    assert result.success
+    (picked,) = ctx.state.picks
+    assert picked.draft.content == "파프리카볶음"
+    assert picked.draft.kind == "general" and picked.draft.requested is True
+    assert picked.draft.citations == ()
+
+
+async def test_모델이_조건을_지어냈으면_생성_후보를_받지_않는다() -> None:
+    ctx = said(shown(*FULL), "저녁 뭐 먹일까?")
+
+    result = await propose_meal_candidates(ctx, asked(generated=[generated_meal()]))
+
+    assert not result.success
+    assert result.error is not None
+    assert "1번 후보" in result.error["message"]
+    assert "generated" in result.error["message"]
+    assert ctx.state.picks == ()
+
+
+async def test_조건_맞는_레시피가_샘플에_있으면_그만큼_생성_자리가_준다() -> None:
+    ctx = said(shown(PAPRIKA_STIR, *FULL, exhausted=True), "파프리카 들어간 반찬 추천해줘")
+    ctx.state.requested_keys = frozenset({"파프리카볶음"})  # 샘플 안 조건 맞는 레시피 1개
+    three = [
+        generated_meal("파프리카전"),
+        generated_meal("파프리카무침"),
+        generated_meal("파프리카밥"),
+    ]
+
+    over = await propose_meal_candidates(ctx, asked(generated=three))
+
+    assert not over.success  # 자리는 3 - 1 = 2 개다
+    assert over.error is not None and "1번 후보" not in over.error["message"]
+    assert "3번 후보" in over.error["message"]
+
+    ok = await propose_meal_candidates(
+        ctx, asked(candidates=[pick("파프리카볶음", evidence=[])], generated=three[:2])
+    )
+
+    assert ok.success
+    assert [p.draft.content for p in ctx.state.picks] == [
+        "파프리카볶음",
+        "파프리카전",
+        "파프리카무침",
+    ]
+
+
+async def test_요리_종류_조건은_조건_맞는_레시피를_세지_않는다() -> None:
+    ctx = said(shown(PAPRIKA_STIR, *FULL, exhausted=True), "태국음식 추천해줘")
+    ctx.state.requested_keys = frozenset({"파프리카볶음"})
+
+    result = await propose_meal_candidates(
+        ctx,
+        asked(
+            food="태국음식",
+            kind="cuisine",
+            generated=[generated_meal("팟타이"), generated_meal("똠얌"), generated_meal("카오팟")],
+        ),
+    )
+
+    assert result.success
+    assert len(ctx.state.picks) == 3
+
+
+async def test_안전_필터에_걸린_생성_후보는_풀에서_뺀다_사유를_돌려주지_않는다() -> None:
+    egg = [SafetyEntry(kind="allergy", label="달걀", status="active")]
+    ctx = said(shown(*FULL, safety=egg), "파프리카 들어간 반찬 추천해줘")
+
+    result = await propose_meal_candidates(
+        ctx, asked(generated=[generated_meal(ingredients=["파프리카", "계란"])])
+    )
+
+    assert result.success  # 거절이 아니다 — 모델에게 사유를 돌려주지 않는다
+    assert ctx.state.blocked_keys == {"파프리카볶음"}
+    assert ctx.state.picks == ()

@@ -75,6 +75,16 @@ class FoodRunState:
     # 모델에게 보여 준 후보(menu_key → 카탈로그 행). 출력 tool 이 이 표 밖 menu_key 를 거절하고,
     # 이름 · 재료는 이 행에서 온다 — 모델이 쓰지 않는다
     sampled: dict[str, MenuCatalogRow] = field(default_factory=dict)
+    # 이번 run 의 후보 풀(menu_key → 카탈로그 행)과 레시피북 전체 · 최근 추천한 menu_key.
+    # 보호자가 정한 조건으로 생성 후보를 받을 때(#740) 풀 이름과 같은 생성은 그 레시피 행으로 받고,
+    # 풀 밖 레시피(안전 필터로 막힘 · 최근 추천)와 같은 이름은 막힌 것으로 본다. 최근 추천한 이름은
+    # 거절한다
+    pool_rows: dict[str, MenuCatalogRow] = field(default_factory=dict)
+    recipe_keys: frozenset[str] = frozenset()
+    recent_keys: frozenset[str] = frozenset()
+    # 요청 글에 이름 · 재료가 나와 샘플 앞에 넣은 레시피(조건 맞는 레시피)의 menu_key. 생성 후보
+    # 자리는 3 - (샘플 안에 든 이 수)다. 요리 종류 조건이면 세지 않는다
+    requested_keys: frozenset[str] = frozenset()
     # 사후 안전 필터에 걸려 풀에서 빼야 하는 menu_key. 사유는 모델에게도 로그에도 싣지 않는다
     blocked_keys: set[str] = field(default_factory=set)
     # 더 채울 길이 없다 — 후보 풀이 처음부터 3개 미만이거나 안전 필터 뒤 재호출을 이미 했다.

@@ -47,10 +47,11 @@ from app.agents.food.meal_pool import (
     _sparse_groups,
     explainable_groups,
 )
-from app.agents.food.meal_review import GENERAL_REASON
+from app.agents.food.meal_review import GENERAL_REASON, GENERAL_REASON_REQUEST
 from app.agents.food.nutrient_wording import APPEARANCE_GROUPS
 from app.agents.food.readouts import MEAL_NUTRIENT_BASIS, READOUTS
-from app.agents.food.store import DaycareMealRow, SafetyEntry
+from app.agents.food.store import DaycareMealRow, MenuCatalogRow, SafetyEntry
+from app.rules.menu_key import normalize_menu_key
 from tests.eval.agents.food.generate import require_food_model
 from tests.eval.agents.food.world import (
     _EGG_ONLY,
@@ -143,6 +144,53 @@ class Case:
     narrow: bool = False  # 풀 필터와 사후 필터 사이의 틈을 흉내 낸다(C48-narrow)
 
 
+def _generated_args(ran: "Ran") -> dict[str, dict[str, Any]]:
+    """모델이 `propose_meal_candidates` 로 낸 생성 후보(이름 → 인자). 거절된 호출까지 합친다."""
+    found: dict[str, dict[str, Any]] = {}
+    for name, raw in ran.llm.tool_calls:
+        if name != "propose_meal_candidates":
+            continue
+        try:
+            args = json.loads(raw)
+        except ValueError:
+            continue
+        for item in (args.get("generated") or []) if isinstance(args, dict) else []:
+            if isinstance(item, dict) and isinstance(item.get("name"), str):
+                found[normalize_menu_key(item["name"])] = item
+    return found
+
+
+def _generated_menu(ran: "Ran", name: str) -> MenuCatalogRow | None:
+    """생성 메뉴를 코드가 안전 필터에 건 것과 같은 모양의 행으로. tool 인자에 없으면 None."""
+    item = _generated_args(ran).get(normalize_menu_key(name))
+    if item is None:
+        return None
+    parts = [*(item.get("ingredients") or []), *(item.get("main_ingredients") or [])]
+    return MenuCatalogRow(
+        menu_key=normalize_menu_key(name),
+        display_name=name,
+        source="manual",
+        resolved=True,
+        synced_at=NOW,
+        ingredients=tuple(dict.fromkeys(str(part) for part in parts)),
+        main_ingredients=tuple(str(part) for part in item.get("main_ingredients") or []),
+    )
+
+
+def _generated_problems(ran: "Ran", name: str, entries: list[SafetyEntry]) -> list[str]:
+    row = _generated_menu(ran, name)
+    if row is None:
+        return [f"생성 메뉴 {name} 가 tool 인자에 없다"]
+    life = life_stage(ran.world.birth, ran.world.today)
+    if not filter_food_safety([row], entries, life.stage, months=life.months).passed:
+        return [f"공통2 걸러졌어야 할 생성 메뉴가 추천에 있다 ({name})"]
+    return []
+
+
+def _generated_drafts(ran: "Ran") -> list[Any]:
+    return [d for d in ran.result.suggestions if ran.world.recipe(d.content) is None]
+
+
 # ── 공통 판정 (§0 전 입력 공통 실패 조건) ──────────────────────────────────
 def _suggest_text(result: DomainAgentResult) -> list[str]:
     texts: list[str] = []
@@ -184,9 +232,12 @@ def common(ran: Ran) -> Verdict:
         verdict.failures.append(f"추천이 {len(result.suggestions)}개다 (최대 3)")
 
     if result.task_type == "meal_recommendation":
-        # #739 — 추천이 하나 이상이면 레시피 출처 줄이 한 줄, 하나도 없으면 한 줄도 없다
+        # #739 · #740 — 추천이 하나 이상이면 메뉴 출처 줄이 한 줄(레시피북 메뉴 / 생성 메뉴 / 섞임),
+        # 하나도 없으면 한 줄도 없다
         source_lines = [
-            r for r in result.readouts if "공개 레시피 중 재료가 검수된 메뉴예요" in r.body
+            r
+            for r in result.readouts
+            if "재료가 검수된 메뉴예요" in r.body or "공개 레시피에 없어" in r.body
         ]
         expected = 1 if result.suggestions else 0
         if len(source_lines) != expected:
@@ -199,6 +250,10 @@ def common(ran: Ran) -> Verdict:
     for draft in result.suggestions:
         row = world.recipe(draft.content)
         if row is None:
+            # 보호자가 조건을 정해 물어 인정됐으면 레시피북 밖 생성 메뉴는 요청 기반이다(#740)
+            if draft.requested and draft.kind == "general" and not draft.citations:
+                verdict.failures.extend(_generated_problems(ran, draft.content, entries))
+                continue
             verdict.failures.append(f"공통3 풀 밖 메뉴가 추천에 있다 ({draft.content})")
             continue
         safety = filter_food_safety([row], entries, life.stage, months=life.months)
@@ -836,10 +891,11 @@ def _has(row: Any, food: str) -> bool:
 
 
 def j_ingredient(food: str) -> Callable[[Ran], Verdict]:
-    """재료를 정한 추천("○○ 들어간 음식 추천해줘"). 샘플에 그 재료 메뉴가 있었는지로 책임을 가른다.
+    """재료를 정한 추천("○○ 들어간 음식 추천해줘"), 레시피북에 그 재료 메뉴가 있는 세계.
 
-    풀은 요청 글을 읽지 않는다(`build_pool`). 샘플에 없었으면 모델이 아니라 풀의 빈틈이라 gap,
-    샘플에 있었는데 하나도 안 골랐으면 실패다. 샘플에 없는 재료를 이유에 쓰면 프롬프트 위반이다.
+    요청 글에 이름이나 재료가 나온 레시피는 코드가 풀 상한에 자르지 않고 샘플 앞에 넣는다(#740).
+    그래서 샘플에 없으면 코드의 실패이고, 샘플에 있었는데 하나도 안 골랐으면 모델의 실패다.
+    레시피북의 그 재료 메뉴가 3개보다 적으면 남는 자리는 생성 메뉴로 채운다.
     """
 
     def judge(ran: Ran) -> Verdict:
@@ -848,20 +904,139 @@ def j_ingredient(food: str) -> Callable[[Ran], Verdict]:
         sampled = [row.display_name for row in shown if _has(row, food)]
         picked = [row.display_name for row in _rows_of(ran) if _has(row, food)]
         if not sampled:
-            verdict.gaps.append(f"후보 목록에 {food} 메뉴가 없었다 — 풀이 요청 재료를 보지 않는다")
-            if any(food in draft.reason for draft in ran.result.suggestions):
-                verdict.failures.append(f"후보에 없는 {food} 를 이유에 썼다")
+            verdict.failures.append(f"후보 목록에 {food} 메뉴가 없었다 — 조건 맞는 레시피가 잘렸다")
         elif not picked:
             verdict.failures.append(f"후보 목록에 {food} 메뉴가 있었는데 고르지 않았다 {sampled}")
+        mismatch = [row.display_name for row in _rows_of(ran) if not _has(row, food)]
+        if mismatch:
+            verdict.failures.append(f"재료 조건인데 {food} 가 없는 레시피를 골랐다 {mismatch}")
+        # 레시피북에 그 재료 메뉴가 모자라면 남는 자리는 생성으로 채운다 — 생성이면 같은 확인을 건다
+        _generated_checks(ran, verdict, needs_food=food)
         verdict.notes.append(f"tool 순서 {_tools(ran)} · 샘플의 {food} 메뉴 {sampled}")
         return verdict
 
     return judge
 
 
+GENERATED_NOTICE = "공개 레시피에 없어"
+
+
+def _generated_checks(ran: Ran, verdict: Verdict, *, needs_food: str | None) -> list[Any]:
+    """레시피북 밖 생성 메뉴의 공통 확인 — 요청 기반 일반 추천 · 준비물 · 안내 줄 · 재료 조건."""
+    generated = _generated_drafts(ran)
+    args = _generated_args(ran)
+    shown: list[str] = []
+    for draft in generated:
+        item = args.get(normalize_menu_key(draft.content), {})
+        ingredients = [str(part) for part in item.get("ingredients") or []]
+        mains = [str(part) for part in item.get("main_ingredients") or []]
+        if draft.reason != GENERAL_REASON_REQUEST:
+            verdict.failures.append(f"생성 메뉴 {draft.content} 의 이유가 코드 문구가 아니다")
+        if not draft.items:
+            verdict.failures.append(f"생성 메뉴 {draft.content} 에 준비물이 없다")
+        if needs_food and not any(
+            needs_food in part for part in [draft.content, *ingredients, *mains]
+        ):
+            verdict.failures.append(f"재료 조건인데 {draft.content} 에 {needs_food} 가 없다")
+        shown.append(f"{draft.content}({'/'.join(ingredients)})")
+    if generated and not any(GENERATED_NOTICE in body for body in _bodies(ran)):
+        verdict.failures.append("레시피북 밖 메뉴를 냈는데 공개 레시피에 없다는 안내 줄이 없다")
+    verdict.notes.append("생성 " + ", ".join(shown) if shown else "생성 메뉴 없음")
+    return generated
+
+
+def j_generated_ingredient(food: str) -> Callable[[Ran], Verdict]:
+    """레시피북에 없는 재료를 정한 추천("파프리카 들어간 반찬"). 생성 ≥1 · 모든 후보에 그 재료."""
+
+    def judge(ran: Ran) -> Verdict:
+        verdict = merged(exact3(ran), common(ran))
+        generated = _generated_checks(ran, verdict, needs_food=food)
+        if not generated:
+            verdict.failures.append(f"레시피북에 {food} 메뉴가 없는데 생성 메뉴를 내지 않았다")
+        mismatch = [row.display_name for row in _rows_of(ran) if not _has(row, food)]
+        if mismatch:
+            verdict.failures.append(f"재료 조건인데 {food} 가 없는 레시피를 골랐다 {mismatch}")
+        verdict.notes.append(f"tool 순서 {_tools(ran)}")
+        return verdict
+
+    return judge
+
+
+def j_generated_cuisine(ran: Ran) -> Verdict:
+    """요리 종류를 정한 추천("태국음식"). 억지 조합 · 매운 메뉴는 사람이 읽는다."""
+    verdict = merged(exact3(ran), common(ran))
+    generated = _generated_checks(ran, verdict, needs_food=None)
+    if not generated:
+        verdict.failures.append("레시피북에서 요리 종류를 못 찾는데 생성 메뉴를 내지 않았다")
+    verdict.notes.append("사람이 읽는다 — 흔한 메뉴인가 · 억지 조합 · 매운 메뉴 · 아이 월령")
+    return verdict
+
+
+def j_requested_general(food: str) -> Callable[[Ran], Verdict]:
+    """관련 기록이 없는 아이에게 조건을 정해 물으면 요청 기반 일반 추천이다 — 근거 0행이 정상."""
+
+    def judge(ran: Ran) -> Verdict:
+        verdict = merged(j_generated_ingredient(food)(ran))
+        for draft in ran.result.suggestions:
+            if draft.kind != "general":
+                verdict.failures.append(f"기록이 없는 아이인데 {draft.content} 가 개인화다")
+            elif any(c.ref.is_child_record for c in draft.citations):
+                verdict.failures.append(f"일반 추천에 아이 기록 근거가 있다 ({draft.content})")
+            elif not draft.requested:
+                verdict.failures.append(
+                    f"조건을 정해 물었는데 {draft.content} 가 요청 기반이 아니다"
+                )
+        return verdict
+
+    return judge
+
+
+# 간장 · 된장 같은 양념이 들어가야 하는 요리인데 재료에 안 적은 생성 메뉴를 센다.
+# 누락이 알레르기 필터가 놓칠 수 있는 자리다(PR 에 건수를 붙인다)
+_SAUCE_DISHES = ("떡볶이", "불고기", "조림", "찌개", "국", "볶음", "구이", "덮밥")
+_SOY_SAUCES = ("간장", "된장", "고추장", "굴소스", "쌈장", "춘장", "두부", "콩")
+
+
+def j_generated_allergy(ran: Ran) -> Verdict:
+    """대두 알레르기 아이에게 "떡볶이 같은 간식". 필터에 걸린 생성 0 · 재료 확인 줄 · 양념 누락."""
+    verdict = merged(common(ran))
+    if ran.result.status != "completed":
+        verdict.failures.append(f"status 가 {ran.result.status} 다")
+    args = _generated_args(ran)
+    generated = _generated_checks(ran, verdict, needs_food=None)
+    if generated and not any("성분표" in body for body in _bodies(ran)):
+        verdict.failures.append("알레르기 등록 아이에게 생성 메뉴를 냈는데 재료 확인 줄이 없다")
+    missing = []
+    for draft in generated:
+        item = args.get(normalize_menu_key(draft.content), {})
+        parts = [
+            str(p)
+            for p in [*(item.get("ingredients") or []), *(item.get("main_ingredients") or [])]
+        ]
+        needs_sauce = any(dish in draft.content for dish in _SAUCE_DISHES)
+        if needs_sauce and not any(sauce in part for part in parts for sauce in _SOY_SAUCES):
+            missing.append(draft.content)
+    verdict.notes.append(f"양념 누락 의심 {len(missing)}/{len(generated)}건 {missing}")
+    return verdict
+
+
+def j_no_generation(ran: Ran) -> Verdict:
+    """조건이 없거나 돌 이전이면 생성 메뉴를 내지 않는다 — 레시피북 메뉴만."""
+    verdict = merged(common(ran))
+    if ran.result.status != "completed":
+        verdict.failures.append(f"status 가 {ran.result.status} 다")
+    generated = _generated_drafts(ran)
+    if generated:
+        verdict.failures.append(f"생성 메뉴가 나갔다 {[d.content for d in generated]}")
+    verdict.notes.append(f"추천 {len(ran.result.suggestions)}개 · tool 순서 {_tools(ran)}")
+    return verdict
+
+
 def j_dinner(ran: Ran) -> Verdict:
     """끼니를 정한 추천("저녁 추천해줘"). 코드는 끼니를 읽지 않고 모델이 meal_slot 으로 채운다."""
     verdict = merged(exact3(ran), common(ran))
+    if _generated_drafts(ran):  # 조건 없는 요청에는 지금처럼 레시피북 메뉴만이다
+        verdict.failures.append("조건이 없는 요청인데 생성 메뉴가 나갔다")
     slots = _proposed_slots(ran)
     if slots and set(slots) != {"dinner"}:
         verdict.failures.append(f"저녁을 물었는데 끼니가 {slots} 다")
@@ -1113,7 +1288,47 @@ CASES: tuple[Case, ...] = (
         "샘플에 오이 메뉴가 있으면 고른다 · 없으면 gap · 없는 재료를 이유에 쓰지 않는다",
         j_ingredient("오이"),
     ),
-    Case("Q2/C48", "저녁 추천해줘.", M, "C48", "후보 3개 · 끼니 dinner", j_dinner),
+    Case("Q2/C48", "저녁 추천해줘.", M, "C48", "후보 3개 · 끼니 dinner · 생성 0(회귀)", j_dinner),
+    Case(
+        "Q4/C48",
+        "파프리카 들어간 반찬 추천해줘.",
+        M,
+        "C48",
+        "레시피북에 없다 → 생성 ≥1 · 모든 후보에 파프리카 · 준비물 · 공개 레시피에 없다는 안내 줄",
+        j_generated_ingredient("파프리카"),
+    ),
+    Case(
+        "Q5/C48",
+        "태국음식 추천해줘.",
+        M,
+        "C48",
+        "생성 ≥1 · 흔한 태국 메뉴 · 억지 조합 없음(사람이 읽는다) · 안내 줄",
+        j_generated_cuisine,
+    ),
+    Case(
+        "Q6/C48-empty",
+        "파프리카 들어간 반찬 추천해줘.",
+        M,
+        "C48-empty",
+        "관련 기록 없음 → 요청 기반 일반 추천 · 근거 0행 · 이유는 코드 문구",
+        j_requested_general("파프리카"),
+    ),
+    Case(
+        "Q7/C48-soy",
+        "떡볶이 같은 간식 추천해줘.",
+        M,
+        "C48-soy",
+        "필터에 걸린 생성 0 · 재료 확인 줄 · 양념 누락 건수를 note 로 센다",
+        j_generated_allergy,
+    ),
+    Case(
+        "Q8/C8",
+        "파프리카 들어간 이유식 추천해줘.",
+        M,
+        "C8",
+        "이유기는 생성하지 않는다 — 레시피북 메뉴만",
+        j_no_generation,
+    ),
     Case(
         "Q3/C48-veg",
         "부족한 영양소 고려해서 추천음식 알려줘.",
