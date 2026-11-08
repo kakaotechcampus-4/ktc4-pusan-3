@@ -118,6 +118,7 @@
 | **Observation Memory**             | 관찰 **1건**. 도메인별 5계층 테이블                                                                       | `observation_food` · `_health` · `_education` · `_activity` · `_routine` |
 | **Child Memory**                   | 관찰이 쌓여 만들어진 아이 프로필                                                                          | `profile_affinity` · `health_safety` |
 | **Fact / Observation / Inference** | 3분류. 부모 발화는 `caregiver_observation` — 아이의 fact 로 승격 금지                                     | 관찰의 `type`                                                |
+| **notice**                         | 기관에서 온 **원문** 1건(알림장 · 가정통신문 · 식단표). 알림이 아니다 — 일정 알림은 `reminder`. 원문에서 뽑은 할 일 · 알 일은 `notice_item` | `notice` · `notice_item` |
 | **Curator**                        | 중복 병합 · 반복 집계 · 승격/강등/감쇠를 **규칙으로** 수행                                                | AI 파트                                                      |
 | **승격 (promotion)**               | `candidate → confirmed → archived`                                                                        | `profile_state`                                              |
 | **감쇠 (decay)**                   | 오래된 기억을 근거에서 빼는 것. `profile_safety` 는 **감쇠 없음** (보호자만 `retracted`)                  | 규칙                                                         |
@@ -157,6 +158,7 @@
 │   │   ├── Dockerfile        배포 이미지 (standalone 3단계). 🚨 API 주소는 빌드 인자다 — 런타임에 못 바꾼다
 │   │   ├── .dockerignore     빌드 컨텍스트 제외 목록. `.env*` 를 여기서 막는다
 │   │   ├── e2e/              Playwright 화면 규칙 테스트 (`make web-e2e`) — §2 가 화면에서 지켜지는지를 목 서버로 건다
+│   │   ├── e2e-live/         실서버 e2e (`make web-e2e-live`) — 실제 api + DB 에서 저장하고 다시 읽는 행복 경로. 로그인은 시드(`apps/api/scripts/seed_e2e.py`), LLM 은 안 부른다
 │   │   ├── contract/         웹 API 타입 ↔ 서버 OpenAPI 비교 (`make web-contract`) — 서버 스키마는 전부 대응표에 있어야 한다
 │   │   └── src/
 │   │       ├── app/          App Router — layout · providers · globals.css
@@ -207,7 +209,9 @@
 ├── deploy/
 │   ├── docker/                compose 두 벌 — docker-compose.yml 은 로컬 개발 DB(Postgres+pgvector)+Redis,
 │   │                          docker-compose.deploy.yml 은 배포(db+redis+api+web+caddy). .env 는 한 곳을 같이 쓴다
-│   ├── caddy/                  Caddyfile — HTTPS 종단 + 리버스 프록시 (icatch.ai.kr → web, api.icatch.ai.kr → api)
+│   ├── caddy/                  Caddyfile — HTTPS 종단 + 리버스 프록시 (icatch.ai.kr → web, api.icatch.ai.kr → api, dev.· 는 dev 환경)
+│   │                          🚨 한 EC2 에 prod(main) · dev(develop) 두 벌이 뜬다. CI 통과 후에만 배포, 헬스 실패면 직전 이미지로 자동 롤백 —
+│   │                          DB 는 안 되돌리므로 마이그레이션은 expand-only ([`docs/ops/deploy-v1.md`](docs/ops/deploy-v1.md))
 │   └── nginx/, scripts/       (비어 있음) 배포용
 └── .github/                  ⚠️ §8 참고 — 손대면 안 되는 파일이 있다
 ```
@@ -316,7 +320,7 @@
   - `GET /auth/{provider}/callback`
   - `POST /auth/{provider}`
   - `POST /auth/{provider}/signup`
-  - `POST /auth/refresh` — Bearer 대신 HttpOnly 쿠키(`icatch_rt`)로 인증한다. access 가 만료된 뒤에 부르는 곳이라 Bearer 를 요구할 수 없다 (#466)
+  - `POST /auth/refresh` — Bearer 대신 HttpOnly 쿠키(`__Host-icatch_rt`, #783)로 인증한다. access 가 만료된 뒤에 부르는 곳이라 Bearer 를 요구할 수 없다 (#466)
   - `GET /policies` — 약관은 공개 문서이고, 동의 화면은 계정이 생기기 전에 뜬다 (#91)
   - `GET /policies/{scope}/{version}` — 그 화면의 "전문 보기" 가 여는 약관 정본 HTML (#172)
   - `GET /privacy-policy` · `GET /privacy-policy/{version}` — 개인정보 처리방침 정본 HTML (#221). 누구나 언제든 볼 수 있게 게시해야 하고, 동의 대상이 아니라 동의 목록 밖에 둔다. 스토어에 거는 고정 주소가 앞의 것이다

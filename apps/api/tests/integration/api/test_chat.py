@@ -34,7 +34,8 @@ from app.domains.delete_proposal.repository import (
     finish,
 )
 from app.domains.memory.observation.models import ConfidenceSource
-from app.domains.memory.observation.repository import create_observation, delete_observation
+from app.domains.memory.observation.repository import create_observation
+from app.domains.memory.store.db_store import DbMemoryStore
 from app.domains.suggestion.models import (
     Suggestion,
     SuggestionAgent,
@@ -207,7 +208,9 @@ async def test_saved_records_come_back_as_they_are_now(
     health = await _observation(
         session, domain="health", child_id=cid, writer=me, fields={"symptom": ["기침"]}
     )
-    await delete_observation(session, domain="food", child_id=cid, observation_id=uuid.UUID(erased))
+    assert await DbMemoryStore(session, child_id=cid).delete_observation(
+        domain="food", observation_id=erased
+    )
     saved = {
         "type": "saved",
         "refs": [
@@ -373,7 +376,9 @@ async def test_cards_come_back_as_they_are_now(
         await _observation(session, domain="food", child_id=cid, writer=me, fields={"subject": s})
         for s in ("rice", "soup")
     ]
-    await delete_observation(session, domain="food", child_id=cid, observation_id=uuid.UUID(gone))
+    assert await DbMemoryStore(session, child_id=cid).delete_observation(
+        domain="food", observation_id=gone
+    )
     tab = ProposalTab("observation_food", True, (kept,), (kept,))
     pending = await add_proposal(
         session,

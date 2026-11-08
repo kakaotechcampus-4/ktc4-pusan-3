@@ -8,6 +8,7 @@ from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Literal
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import case, delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -85,6 +86,9 @@ async def find_event(
     return await session.scalar(stmt)
 
 
+KST = ZoneInfo("Asia/Seoul")
+
+
 async def create_event(
     session: AsyncSession,
     *,
@@ -98,9 +102,18 @@ async def create_event(
     created_by: EventCreatedBy,
     source_notice_id: uuid.UUID | None = None,
     source_refs: list[dict] | None = None,
+    series_id: uuid.UUID | None = None,
+    origin_date: date | None = None,
 ) -> Event:
-    """승인된 일정만 저장한다. 초안과 승인 판정은 이 함수의 책임이 아니다."""
+    """승인된 일정만 저장한다. 초안과 승인 판정은 이 함수의 책임이 아니다.
+
+    회차(`series_id`)면 원래 날짜(#790)를 같이 저장한다. 안 넘기면 시작일(KST)이다.
+    """
+    if series_id is not None and origin_date is None:
+        origin_date = starts_at.astimezone(KST).date()
     row = Event(
+        series_id=series_id,
+        origin_date=origin_date if series_id is not None else None,
         child_id=child_id,
         title=title,
         event_type=EventType(event_type),
@@ -115,6 +128,36 @@ async def create_event(
     session.add(row)
     await session.flush()
     return row
+
+
+async def link_notice_items(
+    session: AsyncSession,
+    *,
+    child_id: uuid.UUID,
+    notice_id: uuid.UUID,
+    links: dict[uuid.UUID, uuid.UUID | None],
+) -> set[uuid.UUID]:
+    """사진 공지에서 넣은 일정에 출처를 단다. `links` 는 {일정 id: 공지 항목 id}.
+
+    보호자가 이미 승인한 일정에 출처만 적는다 — 캘린더에 보이는 값은 바꾸지 않는다.
+    다른 아이의 일정 · 이미 다른 항목에 이어진 일정은 건너뛰고, 잇지 못한 일정 id 를 돌려준다.
+    항목 id 가 None 이면 같은 공지가 이미 있던 경우라 공지만 잇는다.
+    """
+    linked: set[uuid.UUID] = set()
+    for event_id, item_id in links.items():
+        stmt = (
+            update(Event)
+            .where(
+                Event.id == event_id,
+                Event.child_id == child_id,
+                Event.source_notice_item_id.is_(None),
+            )
+            .values(source_notice_id=notice_id, source_notice_item_id=item_id)
+            .returning(Event.id)
+        )
+        if (await session.execute(stmt)).scalar_one_or_none() is not None:
+            linked.add(event_id)
+    return set(links) - linked
 
 
 async def update_event(

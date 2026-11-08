@@ -488,6 +488,17 @@ export interface CalendarEvent {
   items: EventItem[];
   /** 요청한 보호자 본인의 알림. 걸지 않았으면 null. */
   reminder: Reminder | null;
+  /**
+   * 요일 반복 묶음의 회차이면 그 묶음 (#738). 반복이 아니면 키가 없다.
+   * ⚠️ **서버가 아직 내지 않는 칸이다** — 모양은 이슈 #738 의 BE 범위(`series` 에 id · 요일 · 끝 날짜 · 문구)를 따랐다.
+   *    BE 가 캘린더 응답에 실으면 계약 검사(`contract/schema-map.ts` 의 `CalendarEventOut`)의 `allow` 를 뺀다.
+   */
+  series?: EventSeriesRef;
+}
+
+/** 일정이 속한 반복 묶음 (#738). 🚨 `label` 은 서버 문구다 — 화면이 요일 · 끝 날짜로 다시 만들지 않는다. */
+export interface EventSeriesRef extends EventRepeat {
+  id: string;
 }
 
 /* ── 화면 응답 ────────────────────────────────────────────────────────── */
@@ -812,7 +823,73 @@ export interface EventDraft {
    *    단수로 두면 묶인 나머지 제안은 일정이 됐다는 사실이 남지 않는다.
    */
   suggestion_ids?: string[];
+  /**
+   * 요일 반복 일정이면 그 규칙 (#738). 🚨 **create 초안에만 있고, 반복이 아니면 키 자체가 없다**
+   *    (`core/event_draft.py` 의 `CreateRepeatEventDraft` — 항상 null 인 키는 싣지 않는다).
+   *    `event.starts_at` 은 **첫 회차**의 시각이다. 회차마다 일정 행으로 펼치는 것은 제출받는 서버다.
+   */
+  repeat?: EventRepeat;
 }
+
+/**
+ * 요일 반복 규칙 (#738). 🚨 **화면은 날짜를 계산하지 않는다** — 어느 날이 회차인지와 90일 상한은
+ * 서버 `app/rules/recurrence.py` 가 정하고, 화면은 `label` 을 그대로 그린다 (최상위 §3).
+ */
+export interface EventRepeat {
+  /** ISO 요일 (1=월 … 7=일). */
+  weekdays: number[];
+  /** 마지막 날 `YYYY-MM-DD` (그날 포함). */
+  until: string;
+  /** "12월 20일까지 매주 월, 수". 🚨 서버 문구다 — 화면이 `weekdays` 로 다시 만들지 않는다. */
+  label: string;
+}
+
+/**
+ * 반복 묶음 고치기에서 바꾸는 값 (#738). 🚨 **날짜가 없다** — 회차 날짜는 반복 규칙이 정하고,
+ * 시각은 하루의 시각(KST `HH:MM`)만 말한다. 종일이면 `null` 이다.
+ */
+export interface SeriesDraftFields {
+  title: string;
+  starts_time: string | null;
+  ends_time: string | null;
+  all_day: boolean;
+  event_type: CalendarEvent["event_type"];
+  category: CalendarEvent["category"];
+}
+
+/** 고치기 전 묶음. 🚨 서버가 **오늘 이후 회차에서 가장 흔한 값**으로 만든다 (첫 회차가 아니다). */
+export interface SeriesDraftBefore extends SeriesDraftFields {
+  repeat: EventRepeat;
+  /** 준비물 **이름**. 회차마다 `item_id` 가 달라 이름으로 맞춘다. */
+  items: string[];
+}
+
+/**
+ * 반복 묶음 전체를 고치는 초안 (`op: "update_series"` · #738). 정본은 `core/event_draft.py` 의 `UpdateSeriesDraft`.
+ *
+ * 🚨 **오늘 이후 회차에만 적용된다.** 지난 회차는 그대로다.
+ * 🚨 **카드는 읽기 전용이다** (#738). 고칠 값이 날짜 없는 시각 · 요일 · 끝 날짜라 일정 카드의 칸(날짜 + 시각)으로
+ *    받을 수 없고, 요일 · 끝 날짜를 화면이 고치면 `label` 을 다시 만들어야 한다(날짜 계산). 다르게 하려면 다시 말한다.
+ * 🚨 `event_id` 가 없다 — 대상은 `series_id` 다. 같은 묶음의 초안은 최신 한 장만 남긴다 (`draftTarget`).
+ */
+export interface SeriesDraft {
+  /** 🚨 화면 전용 키 (`EventDraft.draft_id` 와 같다). */
+  draft_id: string;
+  op: "update_series";
+  series_id: string;
+  event: SeriesDraftFields;
+  repeat: EventRepeat;
+  /** 🚨 `null` 이면 비교를 그리지 않고 바뀐 뒤 값만 보여 준다. */
+  before: SeriesDraftBefore | null;
+  /** 준비물 이름의 **최종 목록**. 같은 이름은 그 회차의 챙김 표시를 지킨다. */
+  items: string[];
+}
+
+/**
+ * SSE 초안 프레임과 대화 기록이 싣는 초안 (#738). 🚨 **`op` 로 가른다** — 묶음 초안은 일정 카드의 모양이 아니다.
+ * 05 제안 초안(`CreateEventDraftsResponse`)은 묶음을 내지 않아 `EventDraft` 그대로다.
+ */
+export type AnyEventDraft = EventDraft | SeriesDraft;
 
 /**
  * 초안 제출 본문 — 🚨 **승인 게이트 ㉠. 되돌릴 수 없는 지점.**
@@ -842,6 +919,43 @@ export interface SubmitEventBody {
    */
   reminder?: Reminder | null;
 }
+
+/**
+ * 반복 규칙을 제출할 때의 모양 (#738). 🚨 `label` 을 싣지 않는다 — 화면에 그리는 서버 문구라 되돌려 보낼 값이 아니다.
+ * ⚠️ **서버 계약 전이다.** `POST /events` 의 `repeat` 와 `PATCH …/event-series/{sid}` 는 BE 몫이고(#738), 이 모양은
+ *    초안 payload(`core/event_draft.py` 의 `RepeatPayload`)에서 문구만 뺀 잠정형이다.
+ */
+export interface RepeatRequest {
+  weekdays: number[];
+  until: string;
+}
+
+/**
+ * 반복 일정 제출 본문 (#738). 회차마다 일정 행으로 펼치는 것은 서버다. `event.starts_at` 은 첫 회차다.
+ * 🚨 알림(`reminder`)은 회차마다 걸린다 — 고르는 것은 한 번이다.
+ */
+export interface SubmitRepeatEventBody extends SubmitEventBody {
+  repeat: RepeatRequest;
+}
+
+/**
+ * 반복 묶음 고치기 제출 본문 — 🚨 **승인 게이트 ㉠ 안의 메서드다** (캘린더 쓰기 · 게이트를 늘린 것이 아니다).
+ *
+ * 🚨 **`before` 를 같이 보낸다.** 서버는 `before` 와 달라진 값만 오늘 이후 회차에 적용한다 — 한 회차만 따로 고쳐 둔
+ *    값이 "전부 바꾸기" 에 덮이지 않게 하는 장치다 (`docs/event/event-draft-flow-v1.md` §3). 초안은 서버에 남지 않아서
+ *    (9/21) 기준 값을 되돌려 보낼 수 있는 것은 화면뿐이다.
+ * 🚨 카드가 읽기 전용이라 초안 값을 그대로 보낸다 (문구만 뺀다).
+ * ⚠️ 서버 계약 전이다 (`RepeatRequest` 와 같다).
+ */
+export interface UpdateSeriesBody {
+  event: SeriesDraftFields;
+  repeat: RepeatRequest;
+  before: (Omit<SeriesDraftBefore, "repeat"> & { repeat: RepeatRequest }) | null;
+  items: string[];
+}
+
+/** ⚠️ 서버 계약 전이다. 화면은 성공 여부만 쓰고 본문을 읽지 않는다 — 캘린더는 무효화로 다시 받는다. */
+export type UpdateSeriesResponse = Record<string, unknown>;
 
 /* ── 06 승인 ─────────────────────────────────────────────────────────── */
 
@@ -1332,8 +1446,14 @@ export type PhotoLane = (typeof PHOTO_LANES)[number];
  *    `ParsedEvent.tags` 로 따로 온다 — 모양이 다른 둘을 한 필드에 넣으면 화면이 플래그로
  *    갈라야 하고, 그러면 저장 경로가 섞인다 (일반 추천과 개인화 추천을 안 섞는 것과 같은 규칙).
  */
-export const PHOTO_ENTRY_KINDS = ["event", "supply", "meal"] as const;
+export const PHOTO_ENTRY_KINDS = ["event", "supply", "meal", "todo", "info"] as const;
 export type PhotoEntryKind = (typeof PHOTO_ENTRY_KINDS)[number];
+
+/** 항목에 딸린 정보 한 줄. 🚨 이름이 문서마다 달라서 그대로 그리기만 한다. */
+export interface PhotoEntryDetail {
+  name: string;
+  value: string;
+}
 
 export interface PhotoEntry {
   id: string;
@@ -1352,6 +1472,41 @@ export interface PhotoEntry {
   needs_review: boolean;
   /** 왜 확인이 필요한지. 서버가 만든 문구 — 프론트가 지어내지 않는다. */
   review_reason?: string;
+  /** 내용 이름. "회신" · "체험비". 아래 칸은 서버가 읽어 보내고, 저장할 때 다시 쓰지 않는다. */
+  label?: string | null;
+  /** 누구의 일인가. `conditional` 은 해당하는 아이만이다. */
+  target_scope?: "child" | "class" | "all" | "conditional" | "unknown" | null;
+  /** 읽은 시작 일시. `date` 가 이 날짜다. */
+  starts_at?: string | null;
+  ends_at?: string | null;
+  /** 마감. 🚨 `date` 가 일시인지 마감인지는 `starts_at` · `due_at` 으로 가른다. */
+  due_at?: string | null;
+  /** 금액 · 장소 · 회신 수단. 없으면 빈 배열. */
+  details?: PhotoEntryDetail[];
+  /** 근거 문장. 이름은 가린 글자다. 🚨 OCR 로 들어온 외부 텍스트라 텍스트로만 그린다. */
+  source_quote?: string | null;
+  /**
+   * 이 항목으로 넣은 일정. 화면이 채워 보내는 유일한 칸이다 — 시트에서 `submitEventDraft` 가
+   * 돌려준 `event.id` 를 commit 때 실어 보내면, 서버가 그 일정에 이 항목을 출처로 단다.
+   * 넣지 않은 항목은 `null` 이다 (`photo-review.tsx` 의 `commit` · #723).
+   */
+  event_id?: string | null;
+}
+
+/**
+ * `POST /children/{cid}/photos/uploads` — 사진을 어디로 올릴지.
+ *
+ * 🚨 `s3` 면 사진 본문이 **우리 서버를 거치지 않는다.** `url` 에 `fields` + `file`(맨 마지막) 을
+ *    POST 하고, 그다음 `POST .../photos` 에 `upload_key` 로 `key` 를 보낸다. 서버는 내려받자마자
+ *    S3 에서 지운다. `direct` 는 버킷이 없는 로컬 개발이라 지금처럼 `file` 을 서버에 보낸다.
+ */
+export interface PhotoUploadTicket {
+  mode: "s3" | "direct";
+  url?: string | null;
+  fields?: Record<string, string>;
+  key?: string | null;
+  /** 업로드 주소가 유효한 초. 5분이다. */
+  expires_in?: number | null;
 }
 
 /**
@@ -1781,7 +1936,7 @@ export interface AuthSession {
 }
 
 /**
- * POST /auth/refresh — Bearer 가 아니라 refresh 쿠키(`icatch_rt`, HttpOnly)로 인증한다.
+ * POST /auth/refresh — Bearer 가 아니라 refresh 쿠키(`__Host-icatch_rt`, HttpOnly)로 인증한다 (#783).
  * 성공하면 새 access 토큰을 주고 쿠키를 회전시킨다. 실패는 전부 `401 unauthenticated` 다.
  * 정본은 서버 Swagger 다 (docs/web/auth-consent-v1.md §2).
  */

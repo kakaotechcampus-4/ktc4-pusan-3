@@ -133,6 +133,37 @@ async def resolve_event_days(
     return starts_on, ends_on
 
 
+async def resolve_repeat_until(
+    context: AgentContext, args: Any, *, start: date, start_name: str = "시작 날짜"
+) -> date:
+    """반복이 끝나는 날(그날 포함). 앞으로의 날짜로 읽고, `start` 보다 앞이면 되묻는다.
+
+    기준(anchor_event / anchor_on)은 시작 날짜와 같은 것을 쓴다. 묶음을 고칠 때는 `start` 가
+    오늘이고, `start_name` 이 그 말을 문구에 싣는다.
+    """
+    anchor = await anchor_span(context, args, direction="future")
+    end = _repeat_end(args.repeat_until, context.today, anchor)
+    if end < start:
+        raise DateNeedsAsking(
+            f"반복 끝 날짜가 {end.isoformat()} 로 {start_name}보다 앞이다. "
+            "언제까지 반복하는지 보호자에게 묻는다."
+        )
+    return end
+
+
+def _repeat_end(expression: str, today: date, anchor: DateRange | None) -> date:
+    """끝 날짜 표현을 푼다. 기준이 있으면 기준에서 센 거리("사흘 뒤")로 먼저 읽고, 절대 날짜
+    ("12월 20일")는 기준 없이 읽는다. 기준에서 세는 말과 헷갈리는 되묻기는 그대로 올린다."""
+    if anchor is not None:
+        try:
+            return resolve_date(expression, today=today, direction="future", anchor=anchor)
+        except DateNeedsAsking:
+            raise
+        except DateParseError:
+            pass  # 기준에서 센 거리가 아니다 — 절대 날짜일 수 있다
+    return resolve_date(expression, today=today, direction="future")
+
+
 async def resolve_bounds(
     context: AgentContext, args: Any, *, direction: TemporalDirection
 ) -> dict[str, date | None]:

@@ -62,6 +62,10 @@ TS 7 (네이티브 컴파일러) 이 최신이지만 **`typescript-eslint` 가 �
 셸은 [`ci-mobile.yml`](../../.github/workflows/ci-mobile.yml) 이 `typecheck` · `test` 를 돈다.
 [`ci-contract.yml`](../../.github/workflows/ci-contract.yml) 은 웹 API 타입을 서버 OpenAPI 와 맞춘다 (`make web-contract` · #559).
 `apps/web/src/lib/api/**` 뿐 아니라 **서버 스키마(`apps/api/app/**`)를 바꾼 PR 에서도** 돈다 — 규칙은 [`mock-and-tests-v1.md`](mock-and-tests-v1.md) §2.
+[`ci-e2e-live.yml`](../../.github/workflows/ci-e2e-live.yml) 은 실서버 e2e(`make web-e2e-live` · #756)를 돈다 — pgvector 서비스 컨테이너에
+마이그레이션을 올리고, api 주소(8100)를 박은 빌드로 api 와 web 을 띄운다. `apps/web/**` · `apps/api/**` 를 바꾼 PR 에서 돈다.
+🚨 `ci-web.yml` 에 넣지 않았다. #747(PR #753)이 머지되면 배포가 `ci-web.yml` 을 게이트로 불러서, 거기 넣으면 첫날부터
+배포를 막는 조건이 된다. 안정적으로 도는 것을 본 뒤에 정한다.
 
 - 🚨 **pnpm · Node 버전을 워크플로에 적지 않는다.** pnpm 은 `package.json` 의 `packageManager` 를 읽고,
   Node 는 `Dockerfile` 의 메이저(24)와 같다 — 베이스 이미지를 올리면 워크플로의 `node-version` 도 같이 올린다

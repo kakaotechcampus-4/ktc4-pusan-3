@@ -26,6 +26,7 @@ import {
 } from "../fixtures";
 import { currentScenario } from "../scenario";
 import { apiError, networkDelay, url } from "./helpers";
+import { withIdempotency } from "./idempotency";
 
 /**
  * 07 기억 · 교정 핸들러.
@@ -45,6 +46,11 @@ const feedbackBySuggestion = new Map<string, SuggestionFeedback>();
  *    화면이 `status` 로 갈라 그린다. 고치기는 `active` 기록만 받는다 — 아니면 409 `already_corrected`.
  */
 const correctedObservations = new Map<string, "stand_alone" | "inactive">();
+/**
+ * 기록 탭에서 지운 기록 (#736 · #779). 서버처럼 행을 없애지 않고 `deleted` 로 내린 것으로 친다 —
+ * 목록 · 상세 · 고치기 · 기억의 기록 수에서 모두 빠진다. 고친 기록(`stand_alone` · `inactive`)도 지운다.
+ */
+const deletedObservations = new Set<string>();
 /** 기록 상세의 `corrections` — 서버처럼 고친 이력을 상세가 돌려준다. */
 const correctionHistory = new Map<string, ObservationDetailResponse["corrections"]>();
 
@@ -143,6 +149,7 @@ function slicePage<T>(rows: T[], page: number, size: number) {
 export function resetMemoryState(): void {
   feedbackBySuggestion.clear();
   correctedObservations.clear();
+  deletedObservations.clear();
   correctionHistory.clear();
   wrongsByAffinity.clear();
   strengthByAffinity.clear();
@@ -166,7 +173,9 @@ function scenarioAffinities(): Affinity[] {
  */
 function currentAffinity(affinity: Affinity): Affinity {
   const activeRefs = affinity.source_refs.filter(
-    (ref) => !correctedObservations.has(`${ref.kind}:${ref.id}`),
+    (ref) =>
+      !correctedObservations.has(`${ref.kind}:${ref.id}`) &&
+      !deletedObservations.has(`${ref.kind}:${ref.id}`),
   );
   const wrongs = wrongsByAffinity.get(affinity.id) ?? 0;
   const strength = strengthByAffinity.get(affinity.id);
@@ -195,11 +204,20 @@ function currentAffinity(affinity: Affinity): Affinity {
  * 고친 값으로 내린다 — 화면이 그 값으로 줄을 갈라 그린다. `total` 도 세 상태를 모두 센다.
  */
 function scenarioObservations(): Observation[] {
+  return scenarioRows()
+    .filter((o) => !isDeleted(o))
+    .map(withCorrectedStatus);
+}
+
+/** 시나리오의 기록 전부 — 지운 것까지. 지우기가 "없는 기록" 과 "이미 지운 기록" 을 가르려고 둔다. */
+function scenarioRows(): Observation[] {
   const scenario = currentScenario();
   if (scenario === "empty") return [];
-  return (scenario === "observations_many" ? manyObservations : allObservations).map(
-    withCorrectedStatus,
-  );
+  return scenario === "observations_many" ? manyObservations : allObservations;
+}
+
+function isDeleted(observation: { kind: string; id: string }): boolean {
+  return deletedObservations.has(`${observation.kind}:${observation.id}`);
 }
 
 /**
@@ -256,7 +274,8 @@ export const memoryHandlers = [
     await networkDelay();
 
     const found = allObservations.find((o) => o.kind === params.kind && o.id === params.id);
-    if (!found) return apiError(404, "not_found", "그 기록을 찾지 못했어요");
+    // 서버처럼 지운 기록은 상세도 404 다.
+    if (!found || isDeleted(found)) return apiError(404, "not_found", "그 기록을 찾지 못했어요");
     const observation = withCorrectedStatus(found);
 
     /** 🚨 `used_in` 이 빈 배열이면 화면은 "제안 근거에서 빠져 있어요" 를 그린다. */
@@ -361,7 +380,7 @@ export const memoryHandlers = [
     const target = allObservations.find(
       (o) => o.kind === body.target_ref.kind && o.id === body.target_ref.id,
     );
-    if (!target) return apiError(404, "not_found", "그 기록을 찾지 못했어요");
+    if (!target || isDeleted(target)) return apiError(404, "not_found", "그 기록을 찾지 못했어요");
     if (body.verdict !== "once_only" && body.verdict !== "wrong") {
       return apiError(400, "validation_failed", "이 대상에는 쓸 수 없는 고치기예요");
     }
@@ -396,6 +415,28 @@ export const memoryHandlers = [
     };
     return HttpResponse.json(response, { status: 201 });
   }),
+
+  /**
+   * 07 기록 상세의 기록 지우기 (#736 · #779). 서버 `DELETE /children/{cid}/observations/{kind}/{oid}` 와 같다.
+   *
+   * - 키가 필수다(`withIdempotency`) — 같은 키로 다시 오면 처음 204 를 재생한다
+   * - `deleted` 가 아닌 기록은 상태와 상관없이 지운다. 다섯 종류 모두 받는다(건강 포함)
+   * - 모르는 종류 · 없는 기록 · 이미 지운 기록은 404 `not_found` 다
+   * 🚨 행을 없애지 않는다 — 서버처럼 `deleted` 로 내린 것으로 친다. 고친 기록 표시도 그대로 둔다(되살리지 않는다).
+   */
+  http.delete(
+    url("/children/:cid/observations/:kind/:id"),
+    withIdempotency(async ({ params }) => {
+      await networkDelay();
+
+      const target = scenarioRows().find((o) => o.kind === params.kind && o.id === params.id);
+      if (!target || isDeleted(target)) {
+        return apiError(404, "not_found", "그 기록을 찾지 못했어요");
+      }
+      deletedObservations.add(`${target.kind}:${target.id}`);
+      return new HttpResponse(null, { status: 204 });
+    }),
+  ),
 
   /**
    * 07 피드백 탭이 평가할 제안 목록 (#284). 개인화와 채택한 일반 추천(#509)이 같이 온다.
