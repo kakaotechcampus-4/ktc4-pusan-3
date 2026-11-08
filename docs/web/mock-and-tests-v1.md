@@ -83,6 +83,7 @@ NEXT_PUBLIC_API_MOCKING=enabled
 | `suggest_counts` | 05 개수 안내 — 식사 2개(`fewer`) · 놀이 0개(`empty`). 🚨 **0개는 실패 카드가 아니다** · 다시 시도가 없어야 한다 (#249) |
 | `cannot_resume` | 05 `run=` 으로 들어왔는데 놀이는 이어서 할 수 없음 — 안내만 서고 **다시 시도가 없어야 한다**, 식사 후보는 그대로 (#249) |
 | `photo_unreadable` | 08 사진에서 읽어낼 게 없음 — `failed` · 저장된 것 없음 |
+| `photo_not_document` | 08 사진이 공지 · 식단표가 아님(영수증 등) — `failed` `not_document` · 다른 사진 고르기 |
 | `photo_lane_mismatch` | 08 에서 고른 종류와 서버가 읽은 종류가 어긋남 — 한 줄로 알리고 **고른 쪽을 유지** |
 | `withdraw_lost` | 10 탈퇴 — 지운 **뒤에** 응답이 사라짐. 🚨 **첫 화면이 아니라 "탈퇴했어요" 로 끝나야 한다** (#389) |
 | `withdraw_unconfirmed` | 10 탈퇴 — 지운 뒤 응답도 첫 확인(`/me`)도 끊김. "확인하지 못했어요" → **다시 누른 탈퇴의 401 이 "탈퇴했어요" 로 끝나야 한다** (#389) |

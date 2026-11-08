@@ -162,7 +162,8 @@ export function PhotoSourceSheet({
     if (!picked) return;
 
     // 🚨 `accept` 는 브라우저가 지켜 주기를 기대하는 값이라 여기서 한 번 더 본다.
-    if (!picked.type.startsWith("image/")) {
+    //    HEIC(갤럭시 고효율 사진)는 기기에 따라 종류가 빈칸으로 와서 확장자로도 본다. 서버가 연다.
+    if (!picked.type.startsWith("image/") && !/\.(heic|heif)$/i.test(picked.name)) {
       setError("사진 파일만 넣을 수 있어요.");
       input.value = "";
       return;
@@ -210,7 +211,7 @@ export function PhotoSourceSheet({
       <input
         ref={cameraRef}
         type="file"
-        accept="image/*"
+        accept="image/*,.heic,.heif"
         capture="environment"
         className="sr-only"
         tabIndex={-1}
@@ -220,7 +221,7 @@ export function PhotoSourceSheet({
       <input
         ref={albumRef}
         type="file"
-        accept="image/*"
+        accept="image/*,.heic,.heif"
         className="sr-only"
         tabIndex={-1}
         aria-hidden
