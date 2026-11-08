@@ -20,6 +20,12 @@ DEPLOY_LOCK    := $(shell command -v flock >/dev/null 2>&1 && echo flock -w 1200
 # 떠 있는 스택 · 배포 DB 를 건드리는 타깃은 .env 가 dev · prod 중 하나와 통째로 맞는지 먼저 본다 (deploy.sh 와 같은 검사).
 # dev .env 에서 COMPOSE_PROJECT_NAME 한 줄만 빠져도 운영 프로젝트(ktc4-deploy) · 운영 DB 로 떨어지기 때문이다.
 DEPLOY_GUARD   := bash deploy/scripts/deploy.sh --check-env
+# 적재용 — 잠금을 잡은 뒤에 .deployed-tag 를 읽는다. make 가 미리 펼친 DEPLOYED_TAG 는 잠금을 기다리는 동안
+# 끝난 배포를 모른다 — 그 사이 지워진 태그면 compose run 이 지금 소스를 그 이름으로 다시 굽는다 (#753 리뷰).
+COMPOSE_DEPLOY_NOW := sh -c 'tag=$$(cat deploy/docker/.deployed-tag 2>/dev/null || echo local); API_IMAGE_TAG=$$tag WEB_IMAGE_TAG=$$tag exec docker compose -f deploy/docker/docker-compose.deploy.yml --env-file deploy/docker/.env "$$@"' compose
+# 🚨 서버(.deployed-tag 가 있는 checkout)에서는 이미지를 손으로 굽지 않는다. 지금 소스를 배포된 sha 태그로
+#    구워 롤백할 이미지를 덮어쓴다. 서버 빌드는 deploy.sh 만 한다 (#753 리뷰).
+NO_SERVER_BUILD := [ ! -f deploy/docker/.deployed-tag ] || { echo "서버에서는 이미지를 손으로 굽지 않는다 — 배포된 sha 태그를 덮어 롤백할 곳이 사라진다. bash deploy/scripts/deploy.sh <sha> <dev|prod> 로 (docs/ops/deploy-v1.md)"; exit 1; }
 
 help:
 	@echo "사용 가능한 명령"
@@ -187,6 +193,7 @@ db-psql:
 # ── 배포 (docker) ────────────────────────────────────────────────────
 
 api-image:
+	@$(NO_SERVER_BUILD)
 	$(COMPOSE_DEPLOY) build api
 
 api-up:
@@ -204,6 +211,7 @@ api-logs:
 #    주소가 바뀌면 web-up 을 다시 하는 게 아니라 web-image 를 다시 굽는다.
 
 web-image:
+	@$(NO_SERVER_BUILD)
 	$(COMPOSE_DEPLOY) build web
 
 web-up:
@@ -235,18 +243,18 @@ deploy-migrate:
 # 식품군 대응표는 이미지에 구워진 것을 쓴다. 출력은 건수뿐이다.
 deploy-load-food-dry:
 	@$(DEPLOY_GUARD)
-	$(DEPLOY_LOCK) $(COMPOSE_DEPLOY) run --rm api uv run --no-sync python -m scripts.load_food_catalog --all --dry-run
+	$(DEPLOY_LOCK) $(COMPOSE_DEPLOY_NOW) run --rm api uv run --no-sync python -m scripts.load_food_catalog --all --dry-run
 
 deploy-load-food:
 	@$(DEPLOY_GUARD)
-	$(DEPLOY_LOCK) $(COMPOSE_DEPLOY) run --rm api uv run --no-sync python -m scripts.load_food_catalog --all
+	$(DEPLOY_LOCK) $(COMPOSE_DEPLOY_NOW) run --rm api uv run --no-sync python -m scripts.load_food_catalog --all
 
 # 장소 적재 (#516). 공원 · 도서관 표준데이터와 어린이놀이시설(화이트리스트)을 place 로 싣는다.
 # 출력은 건수뿐이다.
 deploy-load-places-dry:
 	@$(DEPLOY_GUARD)
-	$(DEPLOY_LOCK) $(COMPOSE_DEPLOY) run --rm api uv run --no-sync python -m scripts.load_places --all --dry-run
+	$(DEPLOY_LOCK) $(COMPOSE_DEPLOY_NOW) run --rm api uv run --no-sync python -m scripts.load_places --all --dry-run
 
 deploy-load-places:
 	@$(DEPLOY_GUARD)
-	$(DEPLOY_LOCK) $(COMPOSE_DEPLOY) run --rm api uv run --no-sync python -m scripts.load_places --all
+	$(DEPLOY_LOCK) $(COMPOSE_DEPLOY_NOW) run --rm api uv run --no-sync python -m scripts.load_places --all
