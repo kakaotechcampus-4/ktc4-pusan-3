@@ -150,10 +150,12 @@ raw SQL 대상 예시: 승격 판정 집계, observation 4테이블 병합 페�
   자동 인식 안 되는 것: `enum`, `CHECK` 제약, `daterange`, `vector` 타입, `GRANT`
 - 첫 revision 에 `CREATE EXTENSION IF NOT EXISTS vector` 를 직접 넣는다.
 - 🚨 **expand-only** — 배포 롤백은 DB 를 안 되돌려서, 직전 코드가 새 스키마에서 돌아야 한다.
-  CI 의 `python -m scripts.check_expand_only` 가 `upgrade()` 의 컬럼 · 테이블 삭제, 이름 바꾸기,
-  NOT NULL 조이기, `server_default` 없는 NOT NULL 컬럼 추가를 막는다. 이런 변경은 배포 두 번에 나누고,
-  두 번째 마이그레이션 파일에 `# contract: #<앞 배포 PR 번호>` 를 적으면 통과한다.
-  검사 대상은 스크립트의 고정 `BASELINE` 뒤 revision 이다 — 출발점이라 올리지 않는다.
+  CI 의 `python -m scripts.check_expand_only` 가 `upgrade()`(와 거기서 부르는 같은 파일 함수)의 컬럼 · 테이블 삭제,
+  이름 바꾸기, NOT NULL 조이기 · 기본값 떼기, `server_default` 없는 NOT NULL 컬럼 추가, CHECK 교체, 넓히기가 아닌
+  `type_` 바꾸기를 막는다. 이런 변경은 배포 두 번에 나누고, 두 번째 마이그레이션의 **그 연산 바로 위 줄**에
+  `# contract: #<앞 배포 PR 번호>` 를 적으면 그 연산만 통과한다. CHECK 에 값을 더하기만 하는 것처럼 넓히기면 `# expand-ok: <이유>`.
+  🚨 contract PR 은 **앞 PR 이 prod(main) 에 배포된 뒤에** develop 에 머지한다 — 둘이 한 번에 prod 에 실리면 롤백이 깨진다.
+  검사 대상은 스크립트의 `BASELINE` 과 그 조상을 뺀 revision 이다 — 규칙을 넓힐 때만 prod 에 배포된 head 로 올린다.
   상세: [`docs/ops/deploy-v1.md`](../../docs/ops/deploy-v1.md) 롤백 절.
 
 ---
