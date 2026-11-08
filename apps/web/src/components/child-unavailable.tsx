@@ -24,13 +24,7 @@ export function ChildUnavailable({ me }: { me: Me }) {
   const hasChild = me.children.length > 0;
   return (
     <ErrorView
-      title={
-        <>
-          볼 수 없는
-          <br />
-          아이예요
-        </>
-      }
+      title="볼 수 없는 아이예요"
       description="주소가 잘못됐거나, 지금은 함께 보고 있지 않은 아이예요."
       action={
         <ButtonLink href={landingPath(me, lastChildId)} block>
