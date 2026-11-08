@@ -75,6 +75,8 @@
 | `suggestions` | Agent · kind(개인화/일반) · 문장 · items · 인용(source 종류 · id) | `SuggestionDraft` |
 | `searched` | Agent 별로 `memory.search` 가 돌려준 id 집합 | 저장소의 search 를 감싸 기록 |
 | `drafts` | 일정 초안 | `PipelineResult` |
+| `draft_items` (P 만) | 일정 초안에 붙은 준비물 이름 — `expect.draft_items` 가 본다 | `PipelineResult.memory.drafts` |
+| `memory_tools` (P 만) | Memory 가 부른 tool 의 이름 · 성공 여부(인자는 원문이 있어 싣지 않는다) — `expect.tools` 가 본다(테크스펙 13-1 경로). Memory 가 안 돌았으면 없음 | `PipelineResult.memory.calls` |
 | `events` | 화면으로 나간 이벤트 순서 (`runs/translate` 를 거친 것) | emit 수집 |
 | `usage` | 호출 1번마다 role · model · 토큰 · 지연 | `llm_usage.drain()` (§8) |
 | `model_calls` · `latency_ms` · `partial` | NF 지표 | `PipelineResult` |
