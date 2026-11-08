@@ -3,6 +3,7 @@
 P(진입점)와 W(API)가 같은 모양을 채운다. 실행 경로를 바꿔도 판정기는 그대로다.
 """
 
+import traceback
 from collections.abc import Container, Mapping
 from dataclasses import asdict, dataclass, field
 from datetime import date
@@ -77,14 +78,19 @@ class Trace:
     failed: str | None = None
     logs: tuple[str, ...] = ()
     canaries: tuple[str, ...] = ()  # 로그에 있으면 안 되는 글자 (입력 원문 · 별명)
-    error: str | None = None  # 끝까지 못 돈 이유 (하네스 예외 · 이어받을 되묻기 없음). 한 줄
-    error_detail: str | None = None  # 예외였다면 traceback 전체 (결과 jsonl 에 남는다)
+    # 끝까지 못 돈 이유 (하네스 예외 · 이어받을 되묻기 없음). 한 줄 — 예외는 클래스 이름만
+    error: str | None = None
+    # 예외였다면 traceback (결과 jsonl 에만 남는다). 마지막 줄의 예외 메시지는 뺀다
+    error_detail: str | None = None
     # W 만 — DB 상태. None 이면 그 불변식(I5 · I8)은 건너뛴다
     safety_before: tuple[str, ...] | None = None  # 단계 전 아이 안전 정보 행("kind:label:status")
     safety_after: tuple[str, ...] | None = None
     confirmed_days: dict[str, int] | None = (
         None  # confirmed 관심 merge_key → 묶인 관찰의 서로 다른 날 수
     )
+    # 여러 턴 케이스의 앞 턴들 — 판정기는 불변식을 턴마다 건다(기대값은 마지막 턴만). 로그와
+    # 카나리아(I13)는 케이스 전체를 마지막 턴(이 Trace)이 한 번에 본다
+    earlier: tuple["Trace", ...] = ()
 
     def output_texts(self) -> tuple[str, ...]:
         texts: list[str] = [*self.agent_texts, *self.health_texts, *self.questions]
@@ -103,7 +109,21 @@ class Trace:
     def to_json(self) -> dict[str, Any]:
         data = _plain(asdict(self))
         data.pop("logs")  # 로그는 결과 파일에 싣지 않는다 — 위반은 violation 으로 남는다
+        for turn in data["earlier"]:
+            turn.pop("logs", None)
         return data
+
+
+def error_text(exc: BaseException) -> str:
+    """결과 md 까지 가는 한 줄 — 예외 클래스 이름만. 메시지에는 입력 일부 · DB 값 · 응답 본문이
+    섞일 수 있다(공개 저장소. 제품도 errors.py 의 마지막 그물에서 메시지를 뺀다)."""
+    return type(exc).__name__
+
+
+def error_trace(exc: BaseException) -> str:
+    """결과 jsonl 에 남기는 traceback — 어느 줄에서 났는지만. 예외 메시지는 뺀다."""
+    frames = "".join(traceback.format_tb(exc.__traceback__))
+    return f"Traceback (most recent call last):\n{frames}{type(exc).__name__}"
 
 
 def removed_rows(

@@ -17,6 +17,7 @@ from tests.eval.suite.week_runner import (
     ContainsJudge,
     HashEmbedder,
     render_say,
+    response_code,
     simulation_monday,
     step_day,
     step_moment,
@@ -375,3 +376,13 @@ def test_리포트는_W_행이_섞여도_그려지고_W_요약을_낸다() -> No
 def test_P_만_있는_결과에는_W_절이_없다() -> None:
     md = render([], source="x", sha="abc", day="2026-11-08")
     assert "일주일 시나리오" not in md
+
+
+def test_실패_응답은_상태_코드와_오류_코드만_남긴다() -> None:
+    import httpx
+
+    body = {"error": {"code": "validation_error", "message": "입력 일부", "detail": {"x": 1}}}
+    coded = httpx.Response(422, json=body)
+    assert response_code(coded) == "422 validation_error"
+    plain = httpx.Response(500, text="본문에 섞인 값")
+    assert response_code(plain) == "500"

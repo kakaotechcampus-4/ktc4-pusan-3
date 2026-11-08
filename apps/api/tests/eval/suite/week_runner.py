@@ -16,7 +16,6 @@ import asyncio
 import hashlib
 import re
 import time
-import traceback
 import uuid
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
@@ -48,6 +47,8 @@ from tests.eval.suite.trace import (
     SavedRow,
     SuggestionView,
     Trace,
+    error_text,
+    error_trace,
     removed_rows,
 )
 from tests.eval.suite.week_frames import apply_frames, parse_sse
@@ -85,6 +86,18 @@ def step_moment(monday: date, at: str) -> datetime:
     """ "tue 18:40" → 그 주 화요일 18:40 KST."""
     day = step_day(monday, at)
     return datetime(day.year, day.month, day.day, int(at[4:6]), int(at[7:9]), tzinfo=KST)
+
+
+def response_code(response: Any) -> str:
+    """실패 응답을 결과에 남길 한 줄 — 상태 코드와 제품 오류 코드(`{"error": {"code"}}`)만.
+    본문 · message 에는 입력 일부 · DB 값이 섞일 수 있다 (공개 저장소, 리뷰 11-08)."""
+    try:
+        body = response.json()
+    except ValueError:
+        body = None
+    error = body.get("error") if isinstance(body, dict) else None
+    code = error.get("code") if isinstance(error, dict) else None
+    return f"{response.status_code} {code}" if isinstance(code, str) else str(response.status_code)
 
 
 def render_say(sentence: str, monday: date) -> str:
@@ -330,8 +343,8 @@ class WeekDriver:
                 trace.safety_after = await safety_snapshot(self.child_id)
                 trace.confirmed_days = await confirmed_days(self.child_id)
             except Exception as exc:  # 단계 하나의 예외로 주 전체를 멈추지 않는다
-                trace.error = f"{type(exc).__name__}: {exc}"
-                trace.error_detail = traceback.format_exc()
+                trace.error = error_text(exc)
+                trace.error_detail = error_trace(exc)
         trace.logs = tuple(self.logs())
         return outcome
 
@@ -359,7 +372,7 @@ class WeekDriver:
         )
         self.inputs.append((self.case.id, step.by, step_day(self.monday, step.at).isoformat()))
         if response.status_code != 202:
-            trace.error = f"입력 접수 {response.status_code}: {response.text[:200]}"
+            trace.error = f"입력 접수 {response_code(response)}"
             return
         run_id = response.json()["run_id"]
         events = await self.client.get(
@@ -401,7 +414,7 @@ class WeekDriver:
         )
         outcome.status_code = response.status_code
         if response.status_code != 201:
-            outcome.extra_misses.append(f"일정 등록 {response.status_code}: {response.text[:160]}")
+            outcome.extra_misses.append(f"일정 등록 {response_code(response)}")
             return
         self.approved.append(step.approve_of or step.tag)
 
@@ -430,7 +443,7 @@ class WeekDriver:
             )
             outcome.status_code = response.status_code
             if response.status_code != 201:
-                outcome.extra_misses.append(f"정정 {response.status_code}: {response.text[:160]}")
+                outcome.extra_misses.append(f"정정 {response_code(response)}")
                 continue
             self.corrections.append((step.verdict or "", row.id, self.index))
         await _wait_curator()

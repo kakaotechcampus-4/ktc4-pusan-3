@@ -69,8 +69,23 @@ def _verdict(trace: Trace, violations: Sequence[Violation], misses: Sequence[str
     )
 
 
+def turn_violations(trace: Trace, *, allergies: Sequence[str]) -> list[Violation]:
+    """여러 턴 케이스의 앞 턴들에도 불변식을 건다 — 앞 턴에서 되묻기를 2개 하거나 §2 를 어겨도
+    잡히게 (리뷰 11-08). 어느 턴인지 상세에 적는다."""
+    found: list[Violation] = []
+    for number, turn in enumerate(trace.earlier, start=1):
+        found += [
+            Violation(v.rule, f"(턴 {number}) {v.detail}")
+            for v in check_invariants(turn, allergies=allergies)
+        ]
+    return found
+
+
 def judge(case: ProbeCase, trace: Trace, *, today: date) -> Verdict:
-    violations = check_invariants(trace, allergies=case.world.allergies)
+    violations = [
+        *turn_violations(trace, allergies=case.world.allergies),
+        *check_invariants(trace, allergies=case.world.allergies),
+    ]
     misses: list[str] = [*run_misses(trace)]
     if trace.error is None:
         misses += check_expect(trace, case.expect, today=today)

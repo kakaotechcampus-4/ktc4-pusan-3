@@ -745,13 +745,47 @@ async def test_앞_턴이_실패하면_멈춘다(monkeypatch) -> None:  # type: 
 
 async def test_예외는_한_줄과_상세로_나눠_남긴다(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     async def fake(**_kw: object) -> SimpleNamespace:
-        raise ValueError("boom")
+        message = "입력 일부가 " + "섞인 메시지"  # traceback 의 소스 줄에는 안 보이게 나눠 둔다
+        raise ValueError(message)
 
     monkeypatch.setattr(probe_runner.entrypoint, "handle_input", fake)
     trace = await run_probe(_case("말이에요"), attempt=0, logs=lambda: [])
-    assert trace.error == "ValueError: boom"
+    # 예외 메시지에는 입력 일부 · DB 값이 섞일 수 있다 — 클래스 이름만 (공개 저장소, 리뷰 11-08)
+    assert trace.error == "ValueError"
     assert trace.error_detail is not None and "Traceback" in trace.error_detail
+    assert "섞인 메시지" not in trace.error_detail
     assert trace.to_json()["error_detail"] == trace.error_detail
+
+
+async def test_여러_턴은_앞_턴에도_불변식을_건다(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    turns = iter(
+        [
+            # 앞 턴: 되묻기 둘 (I11) · 이어받을 되묻기는 남긴다
+            _fake_result(memory=SimpleNamespace(pending=object(), drafts=())),
+            _fake_result(),
+        ]
+    )
+
+    async def fake(**kw: object) -> SimpleNamespace:
+        result = next(turns)
+        if kw["continuation"] is None:
+            emit = kw["emit"]
+            emit(AgentQuestion(agent="food", task_type=None, text="무엇을요?"))  # type: ignore[operator]
+            emit(AgentQuestion(agent="food", task_type=None, text="언제요?"))  # type: ignore[operator]
+        emit_done = kw["emit"]
+        emit_done(Done(run_id="r", model_calls=1))  # type: ignore[operator]
+        return result
+
+    monkeypatch.setattr(probe_runner.entrypoint, "handle_input", fake)
+    case = _case("첫 말이에요", "답이에요")
+    trace = await run_probe(case, attempt=0, logs=lambda: [])
+    assert trace.error is None
+    assert len(trace.earlier) == 1 and len(trace.earlier[0].questions) == 2
+    verdict = judge(case, trace, today=_TODAY)
+    assert any(v.rule == "I11" and "턴 1" in v.detail for v in verdict.violations)
+    assert verdict.status == "fail"
+    data = trace.to_json()
+    assert "logs" not in data["earlier"][0]
 
 
 def test_결과_한_줄은_케이스에서_요약까지_이어진다() -> None:
