@@ -20,6 +20,9 @@
 #   rows    이 이름이 나온 재료 행 수 — 많이 나온 것부터 보면 레시피가 빨리 풀린다
 #
 # 검수: 696항목 전부 사람이 봤다. 초안이 unknown 후보로 표시한 육수 · 상표 양념 · 소스 28항목은 unknown 이다.
+#   NICS 로 더한 850항목 중 초안이 이름을 정리한 220항목은 사람이 아니라 모델 2개가 따로 봤다. 답이 같은
+#   199항목(이름만 다른 1항목은 합침)을 PM 승인으로 반영했다 — note 에 "모델 2중 검토" 로 표시했다(11-07 · 11-08).
+#   답이 갈린 21항목(음식 이름이 든 구간 머리 — "쇠고기 밑간")과 나머지 630항목은 draft 로 남아 있다.
 #
 # 다시 만들기: uv run python -m scripts.draft_recipe_ingredients --fetch [--source nics]  (있는 항목은 덮지 않는다)
 #   농식품정보원(mafra)과 농촌진흥청 이달의 식재료(nics) 두 레시피 소스가 이 표를 공유한다 (#510)
@@ -3971,10 +3974,10 @@ ingredients:
     status: draft
     rows: 4
   - raw: "밑간 양념"
-    names: ["밑간 양념"]
+    names: []
     codes: []
-    status: draft
-    note: "이름 정리: 구간 이름표로 보임 → not_food 후보"
+    status: not_food
+    note: "이름 정리: 구간 이름표로 보임 → not_food 후보 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 4
   - raw: "쇠고기 불고기용"
     names: ["쇠고기 불고기용"]
@@ -3993,9 +3996,9 @@ ingredients:
     rows: 4
   - raw: "불고기 양념"
     names: ["불고기 양념"]
-    codes: [16]
-    status: draft
-    note: "이름 정리: 구간 이름표로 보임 → not_food 후보"
+    codes: []
+    status: unknown
+    note: "이름 정리: 구간 이름표로 보임 → not_food 후보 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 4
   - raw: "검은콩"
     names: ["검은콩"]
@@ -4025,8 +4028,8 @@ ingredients:
   - raw: "케찹"
     names: ["케첩"]
     codes: [12]
-    status: draft
-    note: "이름 정리: 오타"
+    status: ok
+    note: "이름 정리: 오타 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 4
   - raw: "건고추"
     names: ["건고추"]
@@ -4136,8 +4139,8 @@ ingredients:
   - raw: "청·홍·황 파프리카 각각"
     names: ["파프리카"]
     codes: []
-    status: draft
-    note: "묶음 표기를 나눔; 이름 정리: 색 · 크기 구분 없이 한 이름으로"
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 색 · 크기 구분 없이 한 이름으로 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 3
   - raw: "멸치육수"
     names: ["멸치육수"]
@@ -4212,8 +4215,8 @@ ingredients:
   - raw: "청·홍고추 각각"
     names: ["청고추", "홍고추"]
     codes: []
-    status: draft
-    note: "묶음 표기를 나눔; 이름 정리: 묶음 표기를 다시 나눔"
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 묶음 표기를 다시 나눔 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 3
   - raw: "현미식초"
     names: ["현미식초"]
@@ -4274,26 +4277,26 @@ ingredients:
   - raw: "소금약간"
     names: ["소금"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 3
   - raw: "깨소금20g"
     names: ["깨소금"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 3
   - raw: "참기름10g"
     names: ["참기름"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 3
   - raw: "파15g"
     names: ["파"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 3
   - raw: "초당 옥수수"
     names: ["초당 옥수수"]
@@ -4368,8 +4371,8 @@ ingredients:
   - raw: "맵쌀"
     names: ["멥쌀"]
     codes: []
-    status: draft
-    note: "이름 정리: 오타"
+    status: ok
+    note: "이름 정리: 오타 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 2
   - raw: "새우(중하 5마리)"
     names: ["새우(중하)"]
@@ -4395,8 +4398,8 @@ ingredients:
   - raw: "청·홍피망(1/2개 씩)"
     names: ["청피망", "홍피망"]
     codes: []
-    status: draft
-    note: "묶음 표기를 나눔; 이름 정리: 묶음 표기를 다시 나눔; 양 표기 뗌"
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 묶음 표기를 다시 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 2
   - raw: "생강술"
     names: ["생강술"]
@@ -4421,8 +4424,8 @@ ingredients:
   - raw: "후추약간"
     names: ["후추"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 2
   - raw: "닭 다리 살"
     names: ["닭 다리 살"]
@@ -4452,14 +4455,14 @@ ingredients:
   - raw: "나무꼬치"
     names: []
     codes: []
-    status: draft
-    note: "이름 정리: 음식이 아닌 것으로 보임 → not_food 후보"
+    status: not_food
+    note: "이름 정리: 음식이 아닌 것으로 보임 → not_food 후보 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 2
   - raw: "청*홍고추(각 1개씩)"
     names: ["청고추", "홍고추"]
     codes: []
-    status: draft
-    note: "이름 정리: 묶음 표기를 다시 나눔; 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 묶음 표기를 다시 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 2
   - raw: "건크랜베리"
     names: ["건크랜베리"]
@@ -4499,8 +4502,8 @@ ingredients:
   - raw: "물 1/2C"
     names: ["물"]
     codes: []
-    status: draft
-    note: "묶음 표기를 나눔; 이름 정리: 양 표기 뗌"
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 2
   - raw: "등갈비"
     names: ["등갈비"]
@@ -4530,7 +4533,8 @@ ingredients:
   - raw: "주꾸미"
     names: ["주꾸미"]
     codes: []
-    status: draft
+    status: ok
+    note: "모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 2
   - raw: "가다랑어포"
     names: ["가다랑어포"]
@@ -4600,8 +4604,8 @@ ingredients:
   - raw: "식용유(2)"
     names: ["식용유"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 2
   - raw: "고추장아찌"
     names: ["고추장아찌"]
@@ -4626,8 +4630,8 @@ ingredients:
   - raw: "다시마 5X10cm"
     names: ["다시마"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 2
   - raw: "미니 단호박"
     names: ["미니 단호박"]
@@ -4642,20 +4646,20 @@ ingredients:
   - raw: "파프리카(2색, 각 1/2개)"
     names: ["파프리카"]
     codes: []
-    status: draft
-    note: "묶음 표기를 나눔; 이름 정리: 색 · 크기 구분 없이 한 이름으로; 양 표기 뗌"
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 색 · 크기 구분 없이 한 이름으로; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 2
   - raw: "물·식초·설탕 각"
     names: ["물", "식초", "설탕"]
     codes: []
-    status: draft
-    note: "묶음 표기를 나눔; 이름 정리: 묶음 표기를 다시 나눔"
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 묶음 표기를 다시 나눔 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 2
   - raw: "간장 100"
     names: ["간장"]
     codes: [5]
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 2
   - raw: "전분물"
     names: ["전분물"]
@@ -4665,20 +4669,20 @@ ingredients:
   - raw: "양념1"
     names: []
     codes: []
-    status: draft
-    note: "이름 정리: 구간 이름표로 보임 → not_food 후보"
+    status: not_food
+    note: "이름 정리: 구간 이름표로 보임 → not_food 후보 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 2
   - raw: "양념2"
     names: []
     codes: []
-    status: draft
-    note: "이름 정리: 구간 이름표로 보임 → not_food 후보"
+    status: not_food
+    note: "이름 정리: 구간 이름표로 보임 → not_food 후보 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 2
   - raw: "다시마 10×10cm"
     names: ["다시마"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 2
   - raw: "주황 파프리카"
     names: ["주황 파프리카"]
@@ -4698,14 +4702,14 @@ ingredients:
   - raw: "다시마(1장=5cmX5cm)"
     names: ["다시마"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 2
   - raw: "홍고추10g"
     names: ["홍고추"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 2
   - raw: "매실액기스"
     names: ["매실액기스"]
@@ -4721,7 +4725,7 @@ ingredients:
     names: ["고기 양념"]
     codes: []
     status: draft
-    note: "이름 정리: 구간 이름표로 보임 → not_food 후보"
+    note: "이름 정리: 구간 이름표로 보임 → not_food 후보 · 모델 2중 검토 불일치 11-07 — 머리 속 음식이 레시피 다른 줄에 있는지 원문 확인 필요"
     rows: 2
   - raw: "우리통밀"
     names: ["우리통밀"]
@@ -4816,8 +4820,8 @@ ingredients:
   - raw: "두 가지 색 파프리카(1/2개씩)"
     names: ["파프리카"]
     codes: []
-    status: draft
-    note: "묶음 표기를 나눔; 이름 정리: 색 · 크기 구분 없이 한 이름으로; 양 표기 뗌"
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 색 · 크기 구분 없이 한 이름으로; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 2
   - raw: "알배추"
     names: ["알배추"]
@@ -4832,8 +4836,8 @@ ingredients:
   - raw: "<10개 분량>"
     names: []
     codes: []
-    status: draft
-    note: "이름 정리: 만든 양 표기로 보임 → not_food 후보"
+    status: not_food
+    note: "이름 정리: 만든 양 표기로 보임 → not_food 후보 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 2
   - raw: "건고춧잎"
     names: ["건고춧잎"]
@@ -4909,8 +4913,8 @@ ingredients:
   - raw: "황·홍 파프리카 각각"
     names: ["파프리카"]
     codes: []
-    status: draft
-    note: "묶음 표기를 나눔; 이름 정리: 색 · 크기 구분 없이 한 이름으로"
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 색 · 크기 구분 없이 한 이름으로 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 2
   - raw: "통조림 참치"
     names: ["통조림 참치"]
@@ -4964,22 +4968,22 @@ ingredients:
     status: draft
     rows: 1
   - raw: "육수 양념"
-    names: ["육수 양념"]
+    names: []
     codes: []
-    status: draft
-    note: "이름 정리: 구간 이름표로 보임 → not_food 후보"
+    status: not_food
+    note: "이름 정리: 구간 이름표로 보임 → not_food 후보 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "전분물(물1+전분1)"
     names: ["전분", "물"]
     codes: []
-    status: draft
-    note: "이름 정리: 비율 · 배합 표기를 재료로 나눔"
+    status: ok
+    note: "이름 정리: 비율 · 배합 표기를 재료로 나눔 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "다진파(1큰술)          *TIP! 다진 파는 대파의 흰 부분을 사용해요."
-    names: ["다진파"]
+    names: ["다진파", "대파"]
     codes: []
-    status: draft
-    note: "이름 정리: 설명 글을 뗌; 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 설명 글을 뗌; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "옥수수가루"
     names: ["옥수수가루"]
@@ -4994,14 +4998,14 @@ ingredients:
   - raw: "소금(약간, )간장"
     names: ["소금", "간장"]
     codes: [5]
-    status: draft
-    note: "묶음 표기를 나눔; 이름 정리: 묶음 표기를 다시 나눔; 양 표기 뗌"
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 묶음 표기를 다시 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "노랑&주황 파프리카"
     names: ["파프리카"]
     codes: []
-    status: draft
-    note: "이름 정리: 색 · 크기 구분 없이 한 이름으로"
+    status: ok
+    note: "이름 정리: 색 · 크기 구분 없이 한 이름으로 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "자숙문                  어"
     names: ["자숙문어"]
@@ -5039,14 +5043,14 @@ ingredients:
   - raw: "홍합(1컵)                  양파"
     names: ["홍합", "양파"]
     codes: [18]
-    status: draft
-    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "찬물(1½컵)+다시마"
     names: ["찬물", "다시마"]
     codes: []
-    status: draft
-    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "백태"
     names: ["백태"]
@@ -5071,8 +5075,8 @@ ingredients:
   - raw: "설탕(1T)+고춧가루(1T)+다진 마늘(1t)+고추장(2T)+참기름(1t)+식초"
     names: ["설탕", "고춧가루", "다진 마늘", "고추장", "참기름", "식초"]
     codes: [5]
-    status: draft
-    note: "이름 정리: 비율 · 배합 표기를 재료로 나눔; 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 비율 · 배합 표기를 재료로 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "쇠고기(불고기용 200g)"
     names: ["쇠고기(불고기용)"]
@@ -5083,8 +5087,8 @@ ingredients:
   - raw: "빨간색·노란색 파프리카(½개씩)"
     names: ["파프리카"]
     codes: []
-    status: draft
-    note: "묶음 표기를 나눔; 이름 정리: 색 · 크기 구분 없이 한 이름으로; 양 표기 뗌"
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 색 · 크기 구분 없이 한 이름으로; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "콘옥수수"
     names: ["콘옥수수"]
@@ -5134,8 +5138,8 @@ ingredients:
   - raw: "된장(1)"
     names: ["된장"]
     codes: [5]
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "백년초가루"
     names: ["백년초가루"]
@@ -5145,8 +5149,8 @@ ingredients:
   - raw: "맛간장 비율   ☞ 간장"
     names: ["간장"]
     codes: [5]
-    status: draft
-    note: "이름 정리: 설명 글을 뗌"
+    status: ok
+    note: "이름 정리: 설명 글을 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "물:양파:마늘:조청:통후추:다시마:대파:건표고버섯:건고추:무        = 1L:1L:2개:1/2컵:500g:30g:45cm:2대:5개:3개:300g"
     names: ["물", "양파", "마늘", "조청", "통후추", "다시마", "대파", "건표고버섯", "건고추", "무"]
@@ -5157,26 +5161,26 @@ ingredients:
   - raw: "잣15g"
     names: ["잣"]
     codes: [19]
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "꼬치4개"
     names: []
     codes: []
-    status: draft
-    note: "이름 정리: 음식이 아닌 것으로 보임 → not_food 후보"
+    status: not_food
+    note: "이름 정리: 음식이 아닌 것으로 보임 → not_food 후보 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "깨소금약간"
     names: ["깨소금"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "참기름15g"
     names: ["참기름"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "견과류                 (피스타치오, 호두, 아몬드, 땅콩)"
     names: ["피스타치오", "호두", "아몬드", "땅콩"]
@@ -5192,8 +5196,8 @@ ingredients:
   - raw: "후추·파슬리 가루"
     names: ["후추", "파슬리 가루"]
     codes: []
-    status: draft
-    note: "묶음 표기를 나눔"
+    status: ok
+    note: "묶음 표기를 나눔 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "냉동대구"
     names: ["냉동대구"]
@@ -5226,7 +5230,7 @@ ingredients:
     names: ["호박오가리 양념"]
     codes: []
     status: draft
-    note: "이름 정리: 구간 이름표로 보임 → not_food 후보"
+    note: "이름 정리: 구간 이름표로 보임 → not_food 후보 · 모델 2중 검토 불일치 11-07 — 머리 속 음식이 레시피 다른 줄에 있는지 원문 확인 필요"
     rows: 1
   - raw: "쇠고기(사태)"
     names: ["쇠고기(사태)"]
@@ -5243,7 +5247,7 @@ ingredients:
     names: ["찜 양념장"]
     codes: []
     status: draft
-    note: "이름 정리: 구간 이름표일 수 있음 → not_food 후보"
+    note: "이름 정리: 구간 이름표일 수 있음 → not_food 후보 · 모델 2중 검토 불일치 11-07 — 머리 속 음식이 레시피 다른 줄에 있는지 원문 확인 필요"
     rows: 1
   - raw: "불린 콩"
     names: ["불린 콩"]
@@ -5304,8 +5308,8 @@ ingredients:
   - raw: "깐 밤(6개)                    실고추"
     names: ["깐 밤", "실고추"]
     codes: []
-    status: draft
-    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "돼지목살"
     names: ["돼지목살"]
@@ -5313,10 +5317,10 @@ ingredients:
     status: draft
     rows: 1
   - raw: "밑 양념"
-    names: ["밑 양념"]
+    names: []
     codes: []
-    status: draft
-    note: "이름 정리: 구간 이름표로 보임 → not_food 후보"
+    status: not_food
+    note: "이름 정리: 구간 이름표로 보임 → not_food 후보 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "슬라이스 체다치즈"
     names: ["슬라이스 체다치즈"]
@@ -5326,8 +5330,8 @@ ingredients:
   - raw: "청.홍피망    (각 ¼개)"
     names: ["청피망", "홍피망"]
     codes: []
-    status: draft
-    note: "이름 정리: 묶음 표기를 다시 나눔; 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 묶음 표기를 다시 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "라디치오"
     names: ["라디치오"]
@@ -5432,8 +5436,8 @@ ingredients:
   - raw: "밀가루 2C"
     names: ["밀가루"]
     codes: [6]
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "딸기식초"
     names: ["딸기식초"]
@@ -5443,14 +5447,14 @@ ingredients:
   - raw: "부재료 1"
     names: []
     codes: []
-    status: draft
-    note: "이름 정리: 구간 이름표로 보임 → not_food 후보"
+    status: not_food
+    note: "이름 정리: 구간 이름표로 보임 → not_food 후보 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "부재료 2"
     names: []
     codes: []
-    status: draft
-    note: "이름 정리: 구간 이름표로 보임 → not_food 후보"
+    status: not_food
+    note: "이름 정리: 구간 이름표로 보임 → not_food 후보 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "콜라비 말랭이"
     names: ["콜라비 말랭이"]
@@ -5460,8 +5464,8 @@ ingredients:
   - raw: "멥쌀가루 6C"
     names: ["멥쌀가루"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "사각초콜릿"
     names: ["사각초콜릿"]
@@ -5481,8 +5485,8 @@ ingredients:
   - raw: "다시마 3×5cm"
     names: ["다시마"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "보리밥"
     names: ["보리밥"]
@@ -5503,7 +5507,7 @@ ingredients:
     names: ["겨자 양념장"]
     codes: []
     status: draft
-    note: "이름 정리: 구간 이름표일 수 있음 → not_food 후보"
+    note: "이름 정리: 구간 이름표일 수 있음 → not_food 후보 · 모델 2중 검토 불일치 11-07 — 머리 속 음식이 레시피 다른 줄에 있는지 원문 확인 필요"
     rows: 1
   - raw: "불린 목이버섯"
     names: ["불린 목이버섯"]
@@ -5523,14 +5527,14 @@ ingredients:
   - raw: "(700㎖기준)"
     names: []
     codes: []
-    status: draft
-    note: "이름 정리: 만든 양 표기로 보임 → not_food 후보"
+    status: not_food
+    note: "이름 정리: 만든 양 표기로 보임 → not_food 후보 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "(15~16개 분량)"
     names: []
     codes: []
-    status: draft
-    note: "이름 정리: 만든 양 표기로 보임 → not_food 후보"
+    status: not_food
+    note: "이름 정리: 만든 양 표기로 보임 → not_food 후보 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "달걀흰자(2개 분량)"
     names: ["달걀흰자"]
@@ -5558,8 +5562,8 @@ ingredients:
   - raw: "달걀(2개)             미지근한 밥"
     names: ["달걀", "밥"]
     codes: [1]
-    status: draft
-    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "소고기(불고기용 200g)"
     names: ["소고기(불고기용)"]
@@ -5585,32 +5589,32 @@ ingredients:
   - raw: "들깻가루(4)"
     names: ["들깻가루"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "시래기 양념"
     names: ["시래기 양념"]
     codes: []
     status: draft
-    note: "이름 정리: 구간 이름표로 보임 → not_food 후보"
+    note: "이름 정리: 구간 이름표로 보임 → not_food 후보 · 모델 2중 검토 불일치 11-07 — 머리 속 음식이 레시피 다른 줄에 있는지 원문 확인 필요"
     rows: 1
   - raw: "취나물 양념"
     names: ["취나물 양념"]
     codes: []
     status: draft
-    note: "이름 정리: 구간 이름표로 보임 → not_food 후보"
+    note: "이름 정리: 구간 이름표로 보임 → not_food 후보 · 모델 2중 검토 불일치 11-07 — 머리 속 음식이 레시피 다른 줄에 있는지 원문 확인 필요"
     rows: 1
   - raw: "아주까리 양념"
     names: ["아주까리 양념"]
     codes: []
     status: draft
-    note: "이름 정리: 구간 이름표로 보임 → not_food 후보"
+    note: "이름 정리: 구간 이름표로 보임 → not_food 후보 · 모델 2중 검토 불일치 11-07 — 머리 속 음식이 레시피 다른 줄에 있는지 원문 확인 필요"
     rows: 1
   - raw: "연겨자 양념장"
     names: ["연겨자 양념장"]
     codes: []
     status: draft
-    note: "이름 정리: 구간 이름표일 수 있음 → not_food 후보"
+    note: "이름 정리: 구간 이름표일 수 있음 → not_food 후보 · 모델 2중 검토 불일치 11-07 — 머리 속 음식이 레시피 다른 줄에 있는지 원문 확인 필요"
     rows: 1
   - raw: "건가지"
     names: ["건가지"]
@@ -5626,14 +5630,14 @@ ingredients:
   - raw: "소금·후춧가루"
     names: ["소금", "후춧가루"]
     codes: []
-    status: draft
-    note: "묶음 표기를 나눔"
+    status: ok
+    note: "묶음 표기를 나눔 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "쇠고기 양념"
     names: ["쇠고기 양념"]
     codes: [16]
     status: draft
-    note: "이름 정리: 구간 이름표로 보임 → not_food 후보"
+    note: "이름 정리: 구간 이름표로 보임 → not_food 후보 · 모델 2중 검토 불일치 11-07 — 머리 속 음식이 레시피 다른 줄에 있는지 원문 확인 필요"
     rows: 1
   - raw: "와인식초"
     names: ["와인식초"]
@@ -5648,8 +5652,8 @@ ingredients:
   - raw: "식용유약간"
     names: ["식용유"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "쇠고기(부채살)"
     names: ["쇠고기(부채살)"]
@@ -5664,26 +5668,26 @@ ingredients:
   - raw: "홍고추1개"
     names: ["홍고추"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "식초 15g                  다진 마늘"
     names: ["식초", "다진 마늘"]
     codes: []
-    status: draft
-    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "다시마 5×6cm"
     names: ["다시마"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "수삼 3개"
     names: ["수삼"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "발효 겨자"
     names: ["발효 겨자"]
@@ -5693,8 +5697,8 @@ ingredients:
   - raw: "닭가슴살 1쪽"
     names: ["닭가슴살"]
     codes: [15]
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "발아현미"
     names: ["발아현미"]
@@ -5768,7 +5772,7 @@ ingredients:
     names: ["스콘 반죽"]
     codes: [6]
     status: draft
-    note: "이름 정리: 구간 이름표일 수 있음 → not_food 후보"
+    note: "이름 정리: 구간 이름표일 수 있음 → not_food 후보 · 모델 2중 검토 불일치 11-07 — 머리 속 음식이 레시피 다른 줄에 있는지 원문 확인 필요"
     rows: 1
   - raw: "발효생햄(론지노 30g)"
     names: ["발효생햄(론지노)"]
@@ -5787,10 +5791,10 @@ ingredients:
     status: draft
     rows: 1
   - raw: "소 양념"
-    names: ["소 양념"]
+    names: []
     codes: []
-    status: draft
-    note: "이름 정리: 구간 이름표로 보임 → not_food 후보"
+    status: not_food
+    note: "이름 정리: 구간 이름표로 보임 → not_food 후보 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "오징어젓갈"
     names: ["오징어젓갈"]
@@ -5825,8 +5829,8 @@ ingredients:
   - raw: "설탕(3)"
     names: ["설탕"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "오리고기 로스용"
     names: ["오리고기 로스용"]
@@ -5836,8 +5840,8 @@ ingredients:
   - raw: "물엿(2)"
     names: ["물엿"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "토막 낸 오리고기"
     names: ["토막 낸 오리고기"]
@@ -5852,14 +5856,14 @@ ingredients:
   - raw: "소금(½T)+물"
     names: ["소금", "물"]
     codes: []
-    status: draft
-    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "식초(1T)+간장"
     names: ["식초", "간장"]
     codes: [5]
-    status: draft
-    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "불린 녹두"
     names: ["불린 녹두"]
@@ -5885,8 +5889,8 @@ ingredients:
   - raw: "파프리카(1/6개씩)"
     names: ["파프리카"]
     codes: []
-    status: draft
-    note: "묶음 표기를 나눔; 이름 정리: 양 표기 뗌"
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "돼지고기(볶음용 150g)"
     names: ["돼지고기(볶음용)"]
@@ -5942,14 +5946,14 @@ ingredients:
   - raw: "다시마 4×5cm"
     names: ["다시마"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "청·홍고1개"
     names: ["청고추", "홍고추"]
     codes: []
-    status: draft
-    note: "묶음 표기를 나눔; 이름 정리: 묶음 표기를 다시 나눔; 양 표기 뗌; 오타"
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 묶음 표기를 다시 나눔; 양 표기 뗌; 오타 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "캐슈넛"
     names: ["캐슈넛"]
@@ -5959,8 +5963,8 @@ ingredients:
   - raw: "소금 약간 다진파"
     names: ["소금", "다진파"]
     codes: []
-    status: draft
-    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "영계"
     names: ["영계"]
@@ -5975,8 +5979,8 @@ ingredients:
   - raw: "물 2리터"
     names: ["물"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "찰흑미가루"
     names: ["찰흑미가루"]
@@ -6018,14 +6022,14 @@ ingredients:
   - raw: "물 1ℓ"
     names: ["물"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "조림맛간장(물 500g, 간장 200g, 배즙 100g, 마늘 30g, 생강 15g,                   설탕 100g, 다진 파 150g, 통후추 1작은술, 정종 50g)"
     names: ["물", "간장", "배즙", "마늘", "생강", "설탕", "다진 파", "통후추", "정종"]
     codes: [5]
-    status: draft
-    note: "묶음 표기를 나눔; 이름 정리: 비율 · 배합 표기를 재료로 나눔; 양 표기 뗌"
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 비율 · 배합 표기를 재료로 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "조림장에 들어가는 채소"
     names: ["조림장에 들어가는 채소"]
@@ -6047,8 +6051,8 @@ ingredients:
   - raw: "풋고추 5개(청3개, 홍2개)"
     names: ["풋고추"]
     codes: []
-    status: draft
-    note: "묶음 표기를 나눔; 이름 정리: 양 표기 뗌"
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "황태 머리"
     names: ["황태 머리"]
@@ -6063,8 +6067,8 @@ ingredients:
   - raw: "다진 마늘(1작은 술)다진 생강"
     names: ["다진 마늘", "다진 생강"]
     codes: []
-    status: draft
-    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "살사 소스"
     names: ["살사 소스"]
@@ -6114,8 +6118,8 @@ ingredients:
   - raw: "소보로 양념장"
     names: ["소보로 양념장"]
     codes: []
-    status: draft
-    note: "이름 정리: 구간 이름표일 수 있음 → not_food 후보"
+    status: unknown
+    note: "이름 정리: 구간 이름표일 수 있음 → not_food 후보 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "병어"
     names: ["병어"]
@@ -6146,8 +6150,8 @@ ingredients:
   - raw: "죽순(200g?)"
     names: ["죽순"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "참외(1개) 쪽파"
     names: ["참외", "쪽파"]
@@ -6175,8 +6179,8 @@ ingredients:
   - raw: "(각 2인분)"
     names: []
     codes: []
-    status: draft
-    note: "이름 정리: 만든 양 표기로 보임 → not_food 후보"
+    status: not_food
+    note: "이름 정리: 만든 양 표기로 보임 → not_food 후보 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "그린빈스"
     names: ["그린빈스"]
@@ -6186,8 +6190,8 @@ ingredients:
   - raw: "밥 2공기"
     names: ["밥"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "마른 김 8X10cm"
     names: ["마른 김"]
@@ -6229,8 +6233,8 @@ ingredients:
   - raw: "우유 300mL"
     names: ["우유"]
     codes: [2]
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "콩고물"
     names: ["콩고물"]
@@ -6261,8 +6265,8 @@ ingredients:
   - raw: "파·마늘·생강 다진 것 각각"
     names: ["다진 파", "다진 마늘", "다진 생강"]
     codes: []
-    status: draft
-    note: "묶음 표기를 나눔; 이름 정리: 묶음 표기를 다시 나눔"
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 묶음 표기를 다시 나눔 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "돼지고기(갈비살)400g"
     names: ["돼지고기(갈비살)"]
@@ -6273,14 +6277,14 @@ ingredients:
   - raw: "다진마늘·생강"
     names: ["다진마늘", "다진생강"]
     codes: []
-    status: draft
-    note: "묶음 표기를 나눔; 이름 정리: 묶음 표기를 다시 나눔"
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 묶음 표기를 다시 나눔 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "간장·조청·물 각"
     names: ["간장", "조청", "물"]
     codes: [5]
-    status: draft
-    note: "묶음 표기를 나눔; 이름 정리: 묶음 표기를 다시 나눔"
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 묶음 표기를 다시 나눔 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "삶은 죽순"
     names: ["삶은 죽순"]
@@ -6301,50 +6305,50 @@ ingredients:
   - raw: "다진파10g"
     names: ["다진파"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "다진마늘5g"
     names: ["다진마늘"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "설탕10g"
     names: ["설탕"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "깨소금5g"
     names: ["깨소금"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "설탕5g"
     names: ["설탕"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "대나무꼬지"
     names: []
     codes: []
-    status: draft
-    note: "이름 정리: 음식이 아닌 것으로 보임 → not_food 후보"
+    status: not_food
+    note: "이름 정리: 음식이 아닌 것으로 보임 → not_food 후보 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "다진파·마늘"
     names: ["다진파", "다진마늘"]
     codes: []
-    status: draft
-    note: "묶음 표기를 나눔; 이름 정리: 묶음 표기를 다시 나눔"
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 묶음 표기를 다시 나눔 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "참기름·깨소금 각"
     names: ["참기름", "깨소금"]
     codes: []
-    status: draft
-    note: "묶음 표기를 나눔; 이름 정리: 묶음 표기를 다시 나눔"
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 묶음 표기를 다시 나눔 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "멸치(다시용)5마리"
     names: ["멸치(다시용)"]
@@ -6360,8 +6364,8 @@ ingredients:
   - raw: "매실액·참기름 각각10g"
     names: ["매실액", "참기름"]
     codes: []
-    status: draft
-    note: "묶음 표기를 나눔; 이름 정리: 묶음 표기를 다시 나눔; 양 표기 뗌"
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 묶음 표기를 다시 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "애플민트(10g) 핫케이크 가루"
     names: ["애플민트", "핫케이크 가루"]
@@ -6377,8 +6381,8 @@ ingredients:
   - raw: "탄산수(1병=550㎖)"
     names: ["탄산수"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "배 음료"
     names: ["배 음료"]
@@ -6398,8 +6402,8 @@ ingredients:
   - raw: "식초(3큰술)  다진 마늘"
     names: ["식초", "다진 마늘"]
     codes: []
-    status: draft
-    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "소주"
     names: ["소주"]
@@ -6414,8 +6418,8 @@ ingredients:
   - raw: "황설탕 또는 흑설탕"
     names: ["황설탕", "흑설탕"]
     codes: []
-    status: draft
-    note: "이름 정리: '또는' 둘 다 이름으로 둠(더 막는 쪽)"
+    status: ok
+    note: "이름 정리: '또는' 둘 다 이름으로 둠(더 막는 쪽) · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "숏파스타"
     names: ["숏파스타"]
@@ -6425,8 +6429,8 @@ ingredients:
   - raw: "소금(1/2,t)"
     names: ["소금"]
     codes: []
-    status: draft
-    note: "묶음 표기를 나눔; 이름 정리: 양 표기 뗌"
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "돼지등뼈"
     names: ["돼지등뼈"]
@@ -6441,14 +6445,14 @@ ingredients:
   - raw: "물(2L) 청주"
     names: ["물", "청주"]
     codes: []
-    status: draft
-    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "고추장(2T) 다진 마늘"
     names: ["고추장", "다진 마늘"]
     codes: [5]
-    status: draft
-    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "옥수수 알갱이"
     names: ["옥수수 알갱이"]
@@ -6458,8 +6462,8 @@ ingredients:
   - raw: "다시마(1장=5cm×5cm)"
     names: ["다시마"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "주키니호박"
     names: ["주키니호박"]
@@ -6491,8 +6495,8 @@ ingredients:
   - raw: "청주15g"
     names: ["청주"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "녹두가루"
     names: ["녹두가루"]
@@ -6502,8 +6506,8 @@ ingredients:
   - raw: "도라지 30"
     names: ["도라지"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "숙주 30g                  묵은김치"
     names: ["숙주", "묵은김치"]
@@ -6514,8 +6518,8 @@ ingredients:
   - raw: "반 죽"
     names: []
     codes: []
-    status: draft
-    note: "이름 정리: 구간 이름표로 보임 → not_food 후보"
+    status: not_food
+    note: "이름 정리: 구간 이름표로 보임 → not_food 후보 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "좁쌀"
     names: ["좁쌀"]
@@ -6535,32 +6539,32 @@ ingredients:
   - raw: "된장17g"
     names: ["된장"]
     codes: [5]
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "고추장17g"
     names: ["고추장"]
     codes: [5]
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "청고추10g"
     names: ["청고추"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "간장15g"
     names: ["간장"]
     codes: [5]
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "물20g"
     names: ["물"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "양파쨈30g"
     names: ["양파잼"]
@@ -6576,14 +6580,14 @@ ingredients:
   - raw: "물 1.2Kg"
     names: ["물"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "소금물(굵은소금 200g: 물 2Kg)"
     names: ["굵은소금", "물"]
     codes: []
-    status: draft
-    note: "이름 정리: 비율 · 배합 표기를 재료로 나눔; 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 비율 · 배합 표기를 재료로 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "냉국 국물"
     names: ["냉국 국물"]
@@ -6593,14 +6597,14 @@ ingredients:
   - raw: "설탕(4)"
     names: ["설탕"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "소금(1)"
     names: ["소금"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "털복숭아"
     names: ["털복숭아"]
@@ -6620,8 +6624,8 @@ ingredients:
   - raw: "달걀(½개 분량)"
     names: ["달걀"]
     codes: [1]
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "소고기(불고기용 300g)"
     names: ["소고기(불고기용)"]
@@ -6668,8 +6672,8 @@ ingredients:
   - raw: "송송 썬 청*홍고추(각1개씩)"
     names: ["청고추", "홍고추"]
     codes: []
-    status: draft
-    note: "이름 정리: 묶음 표기를 다시 나눔; 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 묶음 표기를 다시 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "또띠아(6 또는 8인치 x 4장)"
     names: ["또띠아"]
@@ -6692,13 +6696,13 @@ ingredients:
     names: ["닭고기 밑간"]
     codes: [15]
     status: draft
-    note: "이름 정리: 구간 이름표일 수 있음 → not_food 후보"
+    note: "이름 정리: 구간 이름표일 수 있음 → not_food 후보 · 모델 2중 검토 불일치 11-07 — 머리 속 음식이 레시피 다른 줄에 있는지 원문 확인 필요"
     rows: 1
   - raw: "토마토 살사 소스 양념"
     names: ["토마토 살사 소스 양념"]
     codes: [12]
     status: draft
-    note: "이름 정리: 구간 이름표로 보임 → not_food 후보"
+    note: "이름 정리: 구간 이름표로 보임 → not_food 후보 · 모델 2중 검토 불일치 11-07 — 머리 속 음식이 레시피 다른 줄에 있는지 원문 확인 필요"
     rows: 1
   - raw: "슈레드 모짜렐라"
     names: ["슈레드 모짜렐라"]
@@ -6724,7 +6728,7 @@ ingredients:
     names: ["새우살 밑간"]
     codes: [9]
     status: draft
-    note: "이름 정리: 구간 이름표일 수 있음 → not_food 후보"
+    note: "이름 정리: 구간 이름표일 수 있음 → not_food 후보 · 모델 2중 검토 불일치 11-07 — 머리 속 음식이 레시피 다른 줄에 있는지 원문 확인 필요"
     rows: 1
   - raw: "떡볶이떡"
     names: ["떡볶이떡"]
@@ -6734,8 +6738,8 @@ ingredients:
   - raw: "단호박(큰 것 1개)"
     names: ["단호박"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "흰살생선(대구 280g)"
     names: ["흰살생선(대구)"]
@@ -6774,8 +6778,8 @@ ingredients:
   - raw: "<8개 분량>"
     names: []
     codes: []
-    status: draft
-    note: "이름 정리: 만든 양 표기로 보임 → not_food 후보"
+    status: not_food
+    note: "이름 정리: 만든 양 표기로 보임 → not_food 후보 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "생막걸리"
     names: ["생막걸리"]
@@ -6805,8 +6809,8 @@ ingredients:
   - raw: "고  명"
     names: []
     codes: []
-    status: draft
-    note: "이름 정리: 구간 이름표로 보임 → not_food 후보"
+    status: not_food
+    note: "이름 정리: 구간 이름표로 보임 → not_food 후보 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "건표고"
     names: ["건표고"]
@@ -6816,8 +6820,8 @@ ingredients:
   - raw: "홍·노랑 파프리카 각각"
     names: ["파프리카"]
     codes: []
-    status: draft
-    note: "묶음 표기를 나눔; 이름 정리: 색 · 크기 구분 없이 한 이름으로"
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 색 · 크기 구분 없이 한 이름으로 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "마늘즙"
     names: ["마늘즙"]
@@ -6827,14 +6831,14 @@ ingredients:
   - raw: "간장50g"
     names: ["간장"]
     codes: [5]
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "파·마늘·생강 각5g"
     names: ["파", "마늘", "생강"]
     codes: []
-    status: draft
-    note: "묶음 표기를 나눔; 이름 정리: 묶음 표기를 다시 나눔; 양 표기 뗌"
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 묶음 표기를 다시 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "옥수수캔"
     names: ["옥수수캔"]
@@ -6844,14 +6848,14 @@ ingredients:
   - raw: "양송이 1개                  모짜렐라 치즈"
     names: ["양송이", "모짜렐라 치즈"]
     codes: [2]
-    status: draft
-    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "소금· 후추·올리브오일"
     names: ["소금", "후추", "올리브오일"]
     codes: []
-    status: draft
-    note: "묶음 표기를 나눔"
+    status: ok
+    note: "묶음 표기를 나눔 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "알옥수수"
     names: ["알옥수수"]
@@ -6862,13 +6866,13 @@ ingredients:
     names: ["장국"]
     codes: []
     status: draft
-    note: "이름 정리: 구간 이름표로 보임 → not_food 후보"
+    note: "이름 정리: 구간 이름표로 보임 → not_food 후보 · 모델 2중 검토 불일치 11-07 — 머리 속 음식이 레시피 다른 줄에 있는지 원문 확인 필요"
     rows: 1
   - raw: "다시마 3*4cm"
     names: ["다시마"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "옥수수알"
     names: ["옥수수알"]
@@ -6878,8 +6882,8 @@ ingredients:
   - raw: "우유200g"
     names: ["우유"]
     codes: [2]
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "수박 흰 부분"
     names: ["수박 흰 부분"]
@@ -6894,14 +6898,14 @@ ingredients:
   - raw: "홍·청고추 각1개"
     names: ["홍고추", "청고추"]
     codes: []
-    status: draft
-    note: "묶음 표기를 나눔; 이름 정리: 묶음 표기를 다시 나눔; 양 표기 뗌"
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 묶음 표기를 다시 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "소금·생강"
     names: ["소금", "생강"]
     codes: []
-    status: draft
-    note: "묶음 표기를 나눔"
+    status: ok
+    note: "묶음 표기를 나눔 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "커피"
     names: ["커피"]
@@ -6937,8 +6941,8 @@ ingredients:
   - raw: "대파(10cm×2대)"
     names: ["대파"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "삶은 메추리알"
     names: ["삶은 메추리알"]
@@ -6964,7 +6968,7 @@ ingredients:
     names: ["참나물생채 양념"]
     codes: []
     status: draft
-    note: "이름 정리: 구간 이름표로 보임 → not_food 후보"
+    note: "이름 정리: 구간 이름표로 보임 → not_food 후보 · 모델 2중 검토 불일치 11-07 — 머리 속 음식이 레시피 다른 줄에 있는지 원문 확인 필요"
     rows: 1
   - raw: "참나물즙"
     names: ["참나물즙"]
@@ -6999,14 +7003,14 @@ ingredients:
   - raw: "감자(작은 것 1개)"
     names: ["감자"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "찹쌀가루(2)"
     names: ["찹쌀가루"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "비름"
     names: ["비름"]
@@ -7046,8 +7050,8 @@ ingredients:
   - raw: "청홍파프리카 각1/4개"
     names: ["파프리카"]
     codes: []
-    status: draft
-    note: "묶음 표기를 나눔; 이름 정리: 색 · 크기 구분 없이 한 이름으로; 양 표기 뗌"
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 색 · 크기 구분 없이 한 이름으로; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "생강채·마늘채"
     names: ["생강채", "마늘채"]
@@ -7069,14 +7073,14 @@ ingredients:
   - raw: "노랑·홍 파프리카 각각"
     names: ["파프리카"]
     codes: []
-    status: draft
-    note: "묶음 표기를 나눔; 이름 정리: 색 · 크기 구분 없이 한 이름으로"
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 색 · 크기 구분 없이 한 이름으로 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "고춧가루 1C"
     names: ["고춧가루"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "다진새우젓"
     names: ["다진새우젓"]
@@ -7086,20 +7090,20 @@ ingredients:
   - raw: "액젓30g"
     names: ["액젓"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "밀가루죽(밀가루:물=30g:200g)"
     names: ["밀가루", "물"]
     codes: [6]
-    status: draft
-    note: "이름 정리: 비율 · 배합 표기를 재료로 나눔; 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 비율 · 배합 표기를 재료로 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "소금·깨소금 약간씩"
     names: ["소금", "깨소금"]
     codes: []
-    status: draft
-    note: "묶음 표기를 나눔; 이름 정리: 묶음 표기를 다시 나눔; 양 표기 뗌"
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 묶음 표기를 다시 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "소고기(우둔)"
     names: ["소고기(우둔)"]
@@ -7110,13 +7114,13 @@ ingredients:
     names: ["밀쌈 반죽"]
     codes: [6]
     status: draft
-    note: "이름 정리: 구간 이름표일 수 있음 → not_food 후보"
+    note: "이름 정리: 구간 이름표일 수 있음 → not_food 후보 · 모델 2중 검토 불일치 11-07 — 머리 속 음식이 레시피 다른 줄에 있는지 원문 확인 필요"
     rows: 1
   - raw: "밀가루 1/2C"
     names: ["밀가루"]
     codes: [6]
-    status: draft
-    note: "묶음 표기를 나눔; 이름 정리: 양 표기 뗌"
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "소고기(불고기감)300g"
     names: ["소고기(불고기감)"]
@@ -7127,14 +7131,14 @@ ingredients:
   - raw: "후추                  다진파"
     names: ["후추", "다진파"]
     codes: []
-    status: draft
-    note: "이름 정리: 붙어 온 재료를 나눔"
+    status: ok
+    note: "이름 정리: 붙어 온 재료를 나눔 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "통깨약간"
     names: ["통깨"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "대두100g(삶은대두 300g)"
     names: ["대두"]
@@ -7166,15 +7170,15 @@ ingredients:
     rows: 1
   - raw: "견과류 1C"
     names: ["견과류"]
-    codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    codes: [4, 14, 19]
+    status: unknown
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "양파즙 1/2C"
     names: ["양파즙"]
     codes: []
-    status: draft
-    note: "묶음 표기를 나눔; 이름 정리: 양 표기 뗌"
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "물전분"
     names: ["물전분"]
@@ -7184,26 +7188,26 @@ ingredients:
   - raw: "날(생)콩가루"
     names: ["날콩가루"]
     codes: [5]
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "참기름·통깨 각15g"
     names: ["참기름", "통깨"]
     codes: []
-    status: draft
-    note: "묶음 표기를 나눔; 이름 정리: 묶음 표기를 다시 나눔; 양 표기 뗌"
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 묶음 표기를 다시 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "촛물(물:간장:식초=1:1:0.7)"
     names: ["물", "간장", "식초"]
     codes: [5]
-    status: draft
-    note: "이름 정리: 비율 · 배합 표기를 재료로 나눔"
+    status: ok
+    note: "이름 정리: 비율 · 배합 표기를 재료로 나눔 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "참기름·통깨 각각"
     names: ["참기름", "통깨"]
     codes: []
-    status: draft
-    note: "묶음 표기를 나눔"
+    status: ok
+    note: "묶음 표기를 나눔 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "백만송이버섯"
     names: ["백만송이버섯"]
@@ -7223,14 +7227,14 @@ ingredients:
   - raw: "밑   간"
     names: []
     codes: []
-    status: draft
-    note: "이름 정리: 구간 이름표로 보임 → not_food 후보"
+    status: not_food
+    note: "이름 정리: 구간 이름표로 보임 → not_food 후보 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "간장(1큰술)                     청주"
     names: ["간장", "청주"]
     codes: [5]
-    status: draft
-    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "버섯 불린 물"
     names: ["버섯 불린 물"]
@@ -7250,8 +7254,8 @@ ingredients:
   - raw: "소금(약간)                       까나리액젓"
     names: ["소금", "까나리액젓"]
     codes: []
-    status: draft
-    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "소금(약간)                        중력분"
     names: ["소금", "중력분"]
@@ -7301,7 +7305,7 @@ ingredients:
     names: ["비빔장 양념"]
     codes: []
     status: draft
-    note: "이름 정리: 구간 이름표로 보임 → not_food 후보"
+    note: "이름 정리: 구간 이름표로 보임 → not_food 후보 · 모델 2중 검토 불일치 11-07 — 머리 속 음식이 레시피 다른 줄에 있는지 원문 확인 필요"
     rows: 1
   - raw: "밀가루(3큰술)                   삶은 옥수수 알갱이(3큰술)(*캔 스위트콘)"
     names: ["밀가루", "옥수수 알갱이(캔 스위트콘)"]
@@ -7356,7 +7360,7 @@ ingredients:
     names: ["고기 밑간"]
     codes: []
     status: draft
-    note: "이름 정리: 구간 이름표일 수 있음 → not_food 후보"
+    note: "이름 정리: 구간 이름표일 수 있음 → not_food 후보 · 모델 2중 검토 불일치 11-07 — 머리 속 음식이 레시피 다른 줄에 있는지 원문 확인 필요"
     rows: 1
   - raw: "삶은 옥수수 알갱이(4큰술)(*캔 스위트콘)"
     names: ["옥수수 알갱이(캔 스위트콘)"]
@@ -7367,44 +7371,44 @@ ingredients:
   - raw: "꿀(1큰술)                                 올리브유"
     names: ["꿀", "올리브유"]
     codes: []
-    status: draft
-    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "소금(0.2)"
     names: ["소금"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "후춧가루(0.1)"
     names: ["후춧가루"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "(지름 12cm×4개)"
     names: []
     codes: []
-    status: draft
-    note: "이름 정리: 만든 양 표기로 보임 → not_food 후보"
+    status: not_food
+    note: "이름 정리: 만든 양 표기로 보임 → not_food 후보 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "(800ml 분량)"
     names: []
     codes: []
-    status: draft
-    note: "이름 정리: 만든 양 표기로 보임 → not_food 후보"
+    status: not_food
+    note: "이름 정리: 만든 양 표기로 보임 → not_food 후보 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "(2인분 분량)"
     names: []
     codes: []
-    status: draft
-    note: "이름 정리: 만든 양 표기로 보임 → not_food 후보"
+    status: not_food
+    note: "이름 정리: 만든 양 표기로 보임 → not_food 후보 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "쌀가루 또는 밀가루(1)"
     names: ["쌀가루", "밀가루"]
     codes: [6]
-    status: draft
-    note: "이름 정리: '또는' 둘 다 이름으로 둠(더 막는 쪽); 양 표기 뗌"
+    status: ok
+    note: "이름 정리: '또는' 둘 다 이름으로 둠(더 막는 쪽); 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "탄산음료"
     names: ["탄산음료"]
@@ -7465,20 +7469,20 @@ ingredients:
   - raw: "고춧가루 1/2C"
     names: ["고춧가루"]
     codes: []
-    status: draft
-    note: "묶음 표기를 나눔; 이름 정리: 양 표기 뗌"
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "다진 파 15g                   다진 마늘"
     names: ["다진 파", "다진 마늘"]
     codes: []
-    status: draft
-    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "다시마(5×5 cm)"
     names: ["다시마"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "부추 다진 것"
     names: ["부추 다진 것"]
@@ -7503,8 +7507,8 @@ ingredients:
   - raw: "쪽파30g"
     names: ["쪽파"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "칼국수면(생면)"
     names: ["칼국수면(생면)"]
@@ -7525,8 +7529,8 @@ ingredients:
   - raw: "달걀노른자(2개 분량)"
     names: ["달걀노른자"]
     codes: [1]
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "연어필렛(120g)                  삶은 메추리알"
     names: ["연어필렛", "삶은 메추리알"]
@@ -7564,8 +7568,8 @@ ingredients:
   - raw: "미니 새송이버섯(2 ½컵)"
     names: ["미니 새송이버섯"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "쇠고기 국거리용"
     names: ["쇠고기 국거리용"]
@@ -7575,8 +7579,8 @@ ingredients:
   - raw: "육수 재료 및 양념"
     names: []
     codes: []
-    status: draft
-    note: "이름 정리: 구간 이름표로 보임 → not_food 후보"
+    status: not_food
+    note: "이름 정리: 구간 이름표로 보임 → not_food 후보 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "기피 들깨가루"
     names: ["거피 들깻가루"]
@@ -7592,8 +7596,8 @@ ingredients:
   - raw: "물(2와½컵)"
     names: ["물"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "돼지 호박 쥬키니"
     names: ["주키니호박"]
@@ -7625,8 +7629,8 @@ ingredients:
   - raw: "고추냉이 또는 연겨자"
     names: ["고추냉이", "연겨자"]
     codes: []
-    status: draft
-    note: "이름 정리: '또는' 둘 다 이름으로 둠(더 막는 쪽)"
+    status: ok
+    note: "이름 정리: '또는' 둘 다 이름으로 둠(더 막는 쪽) · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "볶음용 쇠고기"
     names: ["볶음용 쇠고기"]
@@ -7652,14 +7656,14 @@ ingredients:
   - raw: "물(3)"
     names: ["물"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "간장(3)"
     names: ["간장"]
     codes: [5]
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "얼갈이"
     names: ["얼갈이"]
@@ -7674,20 +7678,20 @@ ingredients:
   - raw: "밀가루(½컵)                   녹말가루"
     names: ["밀가루", "녹말가루"]
     codes: [6]
-    status: draft
-    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "청·홍 피망(1/3개씩)"
     names: ["청피망", "홍피망"]
     codes: []
-    status: draft
-    note: "묶음 표기를 나눔; 이름 정리: 묶음 표기를 다시 나눔; 양 표기 뗌"
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 묶음 표기를 다시 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "연근 1개"
     names: ["연근"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "유자청 시럽"
     names: ["유자청 시럽"]
@@ -7697,8 +7701,8 @@ ingredients:
   - raw: "식용류"
     names: ["식용유"]
     codes: []
-    status: draft
-    note: "이름 정리: 오타"
+    status: ok
+    note: "이름 정리: 오타 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "불린 찹쌀"
     names: ["불린 찹쌀"]
@@ -7728,8 +7732,8 @@ ingredients:
   - raw: "호두(반태)"
     names: ["호두"]
     codes: [14]
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "집간장"
     names: ["집간장"]
@@ -7739,26 +7743,26 @@ ingredients:
   - raw: "튀김옷-튀김가루"
     names: ["튀김가루"]
     codes: [6]
-    status: draft
-    note: "이름 정리: 분류 머리 뗌"
+    status: ok
+    note: "이름 정리: 분류 머리 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "홍·노랑                    파프리카"
     names: ["파프리카"]
     codes: []
-    status: draft
-    note: "묶음 표기를 나눔; 이름 정리: 색 · 크기 구분 없이 한 이름으로"
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 색 · 크기 구분 없이 한 이름으로 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "연근 500g 호박"
     names: ["연근", "호박"]
     codes: []
-    status: draft
-    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "절임액(물 2L, 소금 200g)"
     names: ["물", "소금"]
     codes: []
-    status: draft
-    note: "묶음 표기를 나눔; 이름 정리: 비율 · 배합 표기를 재료로 나눔; 양 표기 뗌"
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 비율 · 배합 표기를 재료로 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "홍갓 700g(또는 돌산갓)"
     names: ["홍갓", "돌산갓"]
@@ -7774,8 +7778,8 @@ ingredients:
   - raw: "물 1Kg"
     names: ["물"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "감자 전분 가루"
     names: ["감자 전분 가루"]
@@ -7796,7 +7800,7 @@ ingredients:
     names: ["무말랭이 양념장"]
     codes: []
     status: draft
-    note: "이름 정리: 구간 이름표일 수 있음 → not_food 후보"
+    note: "이름 정리: 구간 이름표일 수 있음 → not_food 후보 · 모델 2중 검토 불일치 11-07 — 머리 속 음식이 레시피 다른 줄에 있는지 원문 확인 필요"
     rows: 1
   - raw: "찰밀가루"
     names: ["찰밀가루"]
@@ -7811,8 +7815,8 @@ ingredients:
   - raw: "다진 마늘               (1큰 술)"
     names: ["다진 마늘"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "방울토마토(4개)                   슈레드 피자치즈"
     names: ["방울토마토", "슈레드 피자치즈"]
@@ -7835,8 +7839,8 @@ ingredients:
   - raw: "로즈마리                   등"
     names: ["로즈마리"]
     codes: []
-    status: draft
-    note: "이름 정리: '등' 이 붙어 다른 재료가 더 있을 수 있음 → unknown 후보"
+    status: unknown
+    note: "이름 정리: '등' 이 붙어 다른 재료가 더 있을 수 있음 → unknown 후보 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "시판 스테이크소스"
     names: ["시판 스테이크소스"]
@@ -7857,8 +7861,8 @@ ingredients:
   - raw: "맛술(1작은술)                   소금"
     names: ["맛술", "소금"]
     codes: []
-    status: draft
-    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 붙어 온 재료를 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "대패삼겹살"
     names: ["대패삼겹살"]
@@ -7935,8 +7939,8 @@ ingredients:
   - raw: "모시조개 1C"
     names: ["모시조개"]
     codes: [18]
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "돼지고기(다진육)"
     names: ["돼지고기(다진육)"]
@@ -7988,8 +7992,8 @@ ingredients:
   - raw: "감자전분 물(감자전분2큰술+물1큰술)"
     names: ["감자전분", "물"]
     codes: []
-    status: draft
-    note: "이름 정리: 비율 · 배합 표기를 재료로 나눔; 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 비율 · 배합 표기를 재료로 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "밤앙금"
     names: ["밤앙금"]
@@ -7999,8 +8003,8 @@ ingredients:
   - raw: "사과(½)개"
     names: ["사과"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "동치미육수"
     names: ["동치미육수"]
@@ -8015,8 +8019,8 @@ ingredients:
   - raw: "다시마(1장=5X5)"
     names: ["다시마"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "동치미 무청"
     names: ["동치미 무청"]
@@ -8043,7 +8047,7 @@ ingredients:
     names: ["쇠고기 밑간"]
     codes: [16]
     status: draft
-    note: "이름 정리: 구간 이름표일 수 있음 → not_food 후보"
+    note: "이름 정리: 구간 이름표일 수 있음 → not_food 후보 · 모델 2중 검토 불일치 11-07 — 머리 속 음식이 레시피 다른 줄에 있는지 원문 확인 필요"
     rows: 1
   - raw: "관자"
     names: ["관자"]
@@ -8069,7 +8073,7 @@ ingredients:
     names: ["고기 밑간 양념"]
     codes: []
     status: draft
-    note: "이름 정리: 구간 이름표로 보임 → not_food 후보"
+    note: "이름 정리: 구간 이름표로 보임 → not_food 후보 · 모델 2중 검토 불일치 11-07 — 머리 속 음식이 레시피 다른 줄에 있는지 원문 확인 필요"
     rows: 1
   - raw: "도토리 국수"
     names: ["도토리 국수"]
@@ -8084,8 +8088,8 @@ ingredients:
   - raw: "설탕(1 ½컵)"
     names: ["설탕"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "가루 한천"
     names: ["가루 한천"]
@@ -8105,14 +8109,14 @@ ingredients:
   - raw: "(1판 분량)"
     names: []
     codes: []
-    status: draft
-    note: "이름 정리: 만든 양 표기로 보임 → not_food 후보"
+    status: not_food
+    note: "이름 정리: 만든 양 표기로 보임 → not_food 후보 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "(700ml 분량)"
     names: []
     codes: []
-    status: draft
-    note: "이름 정리: 만든 양 표기로 보임 → not_food 후보"
+    status: not_food
+    note: "이름 정리: 만든 양 표기로 보임 → not_food 후보 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "한천가루"
     names: ["한천가루"]
@@ -8127,8 +8131,8 @@ ingredients:
   - raw: "(1.2ℓ 분량)"
     names: []
     codes: []
-    status: draft
-    note: "이름 정리: 만든 양 표기로 보임 → not_food 후보"
+    status: not_food
+    note: "이름 정리: 만든 양 표기로 보임 → not_food 후보 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "마른 표고버섯"
     names: ["마른 표고버섯"]
@@ -8143,8 +8147,8 @@ ingredients:
   - raw: "다시마(10cmX10cm)"
     names: ["다시마"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "찰수수"
     names: ["찰수수"]
@@ -8159,20 +8163,20 @@ ingredients:
   - raw: "양파즙30g"
     names: ["양파즙"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "청·홍고추"
     names: ["청고추", "홍고추"]
     codes: []
-    status: draft
-    note: "묶음 표기를 나눔; 이름 정리: 묶음 표기를 다시 나눔"
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 묶음 표기를 다시 나눔 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "브로콜리150g"
     names: ["브로콜리"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "매실                   발효액"
     names: ["매실 발효액"]
@@ -8187,8 +8191,8 @@ ingredients:
   - raw: "찹쌀가루50g"
     names: ["찹쌀가루"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "소고기(홍두깨살)"
     names: ["소고기(홍두깨살)"]
@@ -8213,8 +8217,8 @@ ingredients:
   - raw: "조림맛장(물 500g, 간장 200g, 배즙 100g, 마늘 30g, 생강 15g,                  설탕 100g, 다진 파 150g, 통후추 10g, 정종 50g)"
     names: ["물", "간장", "배즙", "마늘", "생강", "설탕", "다진 파", "통후추", "정종"]
     codes: [5]
-    status: draft
-    note: "묶음 표기를 나눔; 이름 정리: 비율 · 배합 표기를 재료로 나눔; 양 표기 뗌"
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 비율 · 배합 표기를 재료로 나눔; 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "흑미밥"
     names: ["흑미밥"]
@@ -8222,16 +8226,16 @@ ingredients:
     status: draft
     rows: 1
   - raw: "참기름(1/2큰술)TIP 흑미밥은 백미와 흑미를 8:2로 섞어 만들어요."
-    names: ["참기름"]
+    names: ["참기름", "흑미밥", "백미", "흑미"]
     codes: []
-    status: draft
-    note: "묶음 표기를 나눔; 이름 정리: 설명 글을 뗌; 양 표기 뗌"
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 설명 글을 뗌; 양 표기 뗌 · 모델 2중 검토 이름만 달라 합침 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "브로콜리(한 줌)"
     names: ["브로콜리"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "시판 크림수프"
     names: ["시판 크림수프"]
@@ -8241,8 +8245,8 @@ ingredients:
   - raw: "후춧가루(약간)&quot;"
     names: ["후춧가루"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "차조밥"
     names: ["차조밥"]
@@ -8272,8 +8276,8 @@ ingredients:
   - raw: "후춧가루(1/3작은술)&quot;"
     names: ["후춧가루"]
     codes: []
-    status: draft
-    note: "묶음 표기를 나눔; 이름 정리: 양 표기 뗌"
+    status: ok
+    note: "묶음 표기를 나눔; 이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
   - raw: "핫케이크가루"
     names: ["핫케이크가루"]
@@ -8304,6 +8308,6 @@ ingredients:
   - raw: "새싹 채소(한 줌)"
     names: ["새싹 채소"]
     codes: []
-    status: draft
-    note: "이름 정리: 양 표기 뗌"
+    status: ok
+    note: "이름 정리: 양 표기 뗌 · 모델 2중 검토 일치 11-07 · PM 승인 11-08"
     rows: 1
