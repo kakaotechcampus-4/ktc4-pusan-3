@@ -218,7 +218,13 @@ def apply_edits(item: NewNoticeItem, *, title: str, day: date | None, supplies: 
         )
     start = datetime(day.year, day.month, day.day, tzinfo=KST).astimezone(UTC)
     end = datetime(day.year, day.month, day.day, 23, 59, tzinfo=KST).astimezone(UTC)
-    if item.starts_at is not None or item.handling is NoticeItemHandling.CALENDAR:
+    # 무엇을 고칠지는 화면이 그 칸을 부르는 이름과 같은 순서로 정한다 — 시작을 읽었으면 시작, 마감만
+    # 읽었으면 마감, 둘 다 없으면 종류 (`apps/web/src/lib/photo-entry.ts` 의 `entryDateRole`, #723).
+    # 일정 항목이어도 "4월 30일까지" 처럼 마감만 읽었으면 화면은 "마감" 이라고 부른다 —
+    # 시작으로 쓰면 옛 마감이 그대로 남아 시작이 마감보다 늦은 항목이 된다
+    if item.starts_at is not None or (
+        item.due_at is None and item.handling is NoticeItemHandling.CALENDAR
+    ):
         return replace(item, **changed, starts_at=start, ends_at=end, all_day=True)
     return replace(item, **changed, due_at=end, due_all_day=True)
 
