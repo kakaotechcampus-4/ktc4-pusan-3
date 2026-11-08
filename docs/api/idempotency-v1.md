@@ -191,7 +191,7 @@ UNIQUE (parent_id, method, path, key)
 
 키는 Redis 에 둔다. Redis 가 죽으면 **모든 창구가 `503 temporarily_unavailable` 로 막고 아무것도 처리하지 않는다.** 다시 시도할 수 있는 오류라 같은 키로 다시 보내면 된다.
 
-창구는 Idempotency-Key 를 받는 9개다 — 한 줄 입력 · 온보딩 · 일정 등록/수정(㉠) · 건강 기록 등록/고치기(㉡) · 복약 등록/수정(㉡, #577) · 삭제 확정(㉢, #535). 9개 모두 Swagger `responses` 에 503 이 있다(`tests/unit/api/test_idempotency_redis.py` 가 Idempotency-Key 를 받는 창구마다 확인한다).
+창구는 Idempotency-Key 를 받는 10개다 — 한 줄 입력 · 사진 읽기 · 온보딩 · 일정 등록/수정(㉠) · 건강 기록 등록/고치기(㉡) · 복약 등록/수정(㉡, #577) · 삭제 확정(㉢, #535). 10개 모두 Swagger `responses` 에 503 이 있다(`tests/unit/api/test_idempotency_redis.py` 가 Idempotency-Key 를 받는 창구마다 확인한다).
 
 - **"죽었다" 에는 쓰기만 막힌 Redis 도 든다.** RDB 저장에 실패한 Redis 는 기본 설정상 읽기는 받고 쓰기만 `MISCONF` 로 거절한다. 그래서 처음 보는 키면 재생 확인(recall)에서 쓰기도 한 번 해 보고, 막혔으면 처리하기 전에 503 이다 (#729 리뷰).
 - **Redis 가 응답 없이 멈춰도 서버 전체가 멈추지 않는다.** 재생 확인 · 키 적기는 이벤트 루프 밖(스레드)에서 부르고, 한 번의 상한은 연결 + 명령 각 1초다. 연결 · 시간 초과가 한 번 나면 10초 동안은 Redis 를 부르지 않고 바로 503 이다(차단기 — `app/infra/redis.py`). 도서 검색어 캐시도 같은 차단기를 탄다.
