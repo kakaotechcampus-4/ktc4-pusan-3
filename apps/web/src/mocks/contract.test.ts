@@ -4028,6 +4028,58 @@ describe("⑰ 08 사진 — 읽기와 저장이 갈린다", () => {
     ).rejects.toSatisfy((error: unknown) => isApiError(error, "validation_failed"));
   });
 
+  it("넣은 일정의 id 를 항목에 실어 저장하고, 한 일정을 두 항목에 이으면 422 다 (#723)", async () => {
+    const runId = await upload();
+    const parsed = await parsedOf(runId);
+    const [first, second] = checked(parsed.entries ?? []);
+
+    // 🚨 넣을 때마다 다른 id 다 — 같으면 08 이 일정 두 개를 넣고 저장할 때 막힌다.
+    const a = await submitEventDraft("c1", draftBody(), newIdempotencyKey());
+    const b = await submitEventDraft("c1", draftBody(), newIdempotencyKey());
+    expect(a.event.id).not.toBe(b.event.id);
+
+    await expect(
+      commitPhotoRun(runId, {
+        lane: "document",
+        entries: [
+          { ...first, event_id: a.event.id },
+          { ...second, event_id: a.event.id },
+        ],
+        attach_to_calendar: false,
+      }),
+    ).rejects.toSatisfy((error: unknown) => isApiError(error, "validation_failed"));
+
+    await expect(
+      commitPhotoRun(runId, {
+        lane: "document",
+        entries: [
+          { ...first, event_id: a.event.id },
+          { ...second, event_id: b.event.id },
+        ],
+        attach_to_calendar: false,
+      }),
+    ).resolves.toBeDefined();
+  });
+
+  it("일정의 끝은 그대로 돌아오고, 시작보다 앞서면 422 다 (#723)", async () => {
+    const body = draftBody();
+    const ends = "2026-09-20T23:59:00+09:00";
+    const saved = await submitEventDraft(
+      "c1",
+      { ...body, event: { ...body.event, ends_at: ends } },
+      newIdempotencyKey(),
+    );
+    expect(saved.event.ends_at).toBe(ends);
+
+    await expect(
+      submitEventDraft(
+        "c1",
+        { ...body, event: { ...body.event, ends_at: "2026-09-18T09:00:00+09:00" } },
+        newIdempotencyKey(),
+      ),
+    ).rejects.toSatisfy((error: unknown) => isApiError(error, "validation_failed"));
+  });
+
   it("확인한 항목만 저장된다", async () => {
     const runId = await upload();
     const parsed = await parsedOf(runId);
