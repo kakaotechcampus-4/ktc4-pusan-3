@@ -26,7 +26,7 @@ import sys
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -40,6 +40,7 @@ from app.agents.common.result import DomainAgentResult
 from app.agents.common.schemas.task import DomainTask
 from app.agents.food import agent as food_agent
 from app.agents.food.agent import run
+from app.agents.food.daycare_lookup import SLOT_LABEL, date_label
 from app.agents.food.meal_dates import resolve_meal_date
 from app.agents.food.meal_pool import (
     APPEARANCE_DEFICIT_GROUPS,
@@ -51,6 +52,7 @@ from app.agents.food.meal_review import GENERAL_REASON, GENERAL_REASON_REQUEST
 from app.agents.food.nutrient_wording import APPEARANCE_GROUPS
 from app.agents.food.readouts import MEAL_NUTRIENT_BASIS, READOUTS
 from app.agents.food.store import DaycareMealRow, MenuCatalogRow, SafetyEntry
+from app.agents.food.store.ports import DAYCARE_SLOT_ORDER
 from app.rules.menu_key import normalize_menu_key
 from tests.eval.agents.food.generate import require_food_model
 from tests.eval.agents.food.world import (
@@ -137,7 +139,7 @@ class Ran:
 class Case:
     case_id: str
     text: str
-    task: str  # meal_recommendation | daycare_meal | food_check
+    task: str  # meal_recommendation | daycare_meal | daycare_lookup | food_check
     world: str
     expect: str
     judge: Callable[["Ran"], Verdict]
@@ -852,6 +854,53 @@ def j_inquiry(ran: Ran) -> Verdict:
     return verdict
 
 
+def j_lookup(span: Callable[[date], tuple[date, date] | None]) -> Callable[[Ran], Verdict]:
+    """급식 조회(L1~L5). 코드가 같은 범위로 읽은 행과 답의 줄을 대조한다.
+
+    세계가 실제 오늘 날짜로 만들어져 요일마다 그날 행 유무가 달라진다 — 줄 수를 고정하지 않는다.
+    `span(오늘)` 이 기대 범위(양끝 포함)이고, 한 번에 일주일을 넘는 요청이면 None 이다.
+    읽기만 한다 — 급식 행이 바뀌면 실패다. 알레르기 판정 · 안전 문구는 붙지 않는다.
+    """
+
+    def judge(ran: Ran) -> Verdict:
+        verdict = common(ran)
+        if not _unchanged(ran, ran.before):
+            verdict.failures.append("조회인데 급식 행이 바뀌었다")
+        if ran.result.status != "completed" or ran.result.model_calls != 1:
+            verdict.failures.append(
+                f"조회가 끝나지 않았다 (status={ran.result.status} 모델 {ran.result.model_calls}회)"
+            )
+            return verdict
+        bodies = _bodies(ran)
+        if any(word in _all_text(ran.result) for word in ("알레르기", "괜찮아요", "먹여도")):
+            verdict.failures.append("조회 답에 알레르기 · 안전 판정 문구가 붙었다")
+        bounds = span(ran.world.today)
+        if bounds is None:
+            if bodies != [READOUTS.get("daycare.lookup_too_long").template]:
+                verdict.failures.append(f"일주일을 넘는 조회인데 안내가 아니다: {bodies}")
+            return verdict
+        first, last = bounds
+        rows = sorted(
+            (row for row in ran.before if first <= row[1] <= last and row[3]),
+            key=lambda row: (row[1], DAYCARE_SLOT_ORDER[row[2]]),
+        )
+        if not rows:
+            if len(bodies) != 1 or not bodies[0].endswith("에는 등록된 급식이 없어요."):
+                verdict.failures.append(f"그 기간에 행이 없는데 없다는 안내가 아니다: {bodies}")
+            return verdict
+        want = [f"{date_label(row[1])} {SLOT_LABEL[row[2]]}: {', '.join(row[3])}" for row in rows]
+        got = bodies[0].split(chr(10)) if bodies else []
+        if got != want:
+            verdict.failures.append(f"답의 줄이 읽은 행과 다르다: 기대 {want} / 실제 {got}")
+        return verdict
+
+    return judge
+
+
+def _monday(today: date) -> date:
+    return today - timedelta(days=today.weekday())
+
+
 def j_opened(ran: Ran) -> Verdict:
     """단계 · 동의가 아니라 급식 행으로 여닫는다(이유기 · 동의 철회)."""
     verdict = common(ran)
@@ -1130,7 +1179,7 @@ def j_basis_unknown(ran: Ran) -> Verdict:
 
 
 # ── 케이스 ───────────────────────────────────────────────────────────────
-M, D = "meal_recommendation", "daycare_meal"
+M, D, L = "meal_recommendation", "daycare_meal", "daycare_lookup"
 CASES: tuple[Case, ...] = (
     Case(
         "T01/C48",
@@ -1602,6 +1651,55 @@ CASES: tuple[Case, ...] = (
         "C48",
         "모레의 모든 끼니 삭제 · 내일 행은 그대로",
         j_t43,
+    ),
+    # 급식 조회 (daycare_lookup) — 날짜를 코드가 풀어 그날 행을 그대로 보여 준다. 읽기만 한다
+    Case(
+        "L1/C48",
+        "내일 급식 뭐야?",
+        L,
+        "C48",
+        "내일 행 · 쓰기 0",
+        j_lookup(lambda today: (today + timedelta(days=1),) * 2),
+    ),
+    Case(
+        "L2/C48",
+        "다음 주 화요일 급식 알려줘.",
+        L,
+        "C48",
+        "다음 주 화요일 — 요일만으로 줄이면 다른 날이 나간다",
+        j_lookup(lambda today: (_monday(today) + timedelta(days=8),) * 2),
+    ),
+    Case(
+        "L3/C48",
+        "이번 주 급식 알려줘.",
+        L,
+        "C48",
+        "월~일 일곱 날 · 행이 있는 날만 날짜순",
+        j_lookup(lambda today: (_monday(today), _monday(today) + timedelta(days=6))),
+    ),
+    Case(
+        "L4/C48",
+        "다음 달 급식 알려줘.",
+        L,
+        "C48",
+        "한 번에 일주일을 넘으면 lookup_too_long",
+        j_lookup(lambda today: None),
+    ),
+    Case(
+        "L5/C48",
+        "어제 점심 급식 뭐였어?",
+        L,
+        "C48",
+        "지난 날 · 어제 행",
+        j_lookup(lambda today: (today - timedelta(days=1),) * 2),
+    ),
+    Case(
+        "L6/C48-nodc",
+        "내일 급식 뭐야?",
+        L,
+        "C48-nodc",
+        "급식 행이 없으면 모델 0회 · closed.no_daycare",
+        j_closed("closed.no_daycare", "blocked"),
     ),
 )
 

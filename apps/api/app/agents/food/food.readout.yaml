@@ -108,6 +108,15 @@ daycare.replaced_unknown:
 daycare.unchanged:
   kind: daycare
   template: "급식 기록은 그대로 두었어요."
+daycare.lookup_line:
+  kind: daycare
+  template: "{date} {slot}: {menus}"
+daycare.lookup_empty:
+  kind: daycare
+  template: "{when}에는 등록된 급식이 없어요."
+daycare.lookup_too_long:
+  kind: daycare
+  template: "급식은 한 번에 일주일까지 보여 드려요. 날짜를 좁혀서 물어봐 주세요."
 check.blocked_safety:
   kind: blocked
   template: "알레르기 정보를 확인할 수 없어서 지금은 답을 드릴 수 없어요."

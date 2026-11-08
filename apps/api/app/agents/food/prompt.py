@@ -28,7 +28,7 @@ from app.agents.food.store.ports import FoodDocRow, MenuCatalogRow
 
 _ROLE = """
 [역할]
-너는 Child Memory 의 Food Agent 다. 주어진 task(식단 추천 또는 급식 갱신) 하나만 한다.
+너는 Child Memory 의 Food Agent 다. 주어진 task(식단 추천 · 급식 갱신 · 급식 조회) 하나만 한다.
 """.strip()
 
 _OUT_OF_SCOPE = """
@@ -64,6 +64,7 @@ _OUTPUT_TOOL: dict[FoodTaskType, str] = {
     FoodTaskType.DAYCARE_MEAL: (
         "update_daycare_meal · delete_daycare_meal · keep_daycare_meal 중 하나"
     ),
+    FoodTaskType.DAYCARE_LOOKUP: "show_daycare_meal",
 }
 
 
@@ -142,6 +143,16 @@ def _instructions(task_type: FoodTaskType) -> str:
             "update_daycare_meal 을 부른다. 모르는 것은 코드가 되묻는다 — keep_daycare_meal 로 "
             "끝내지 않는다."
         )
+    if task_type == FoodTaskType.DAYCARE_LOOKUP:
+        lines.append(
+            "- 보호자가 급식 메뉴를 물었다. date_span 에는 날짜를 가리키는 원문 구간만 넣는다. "
+            "예: 내일 · 다음 주 화요일 · 이번 주 · 11월 12일. 날짜를 말하지 않았으면 비운다."
+        )
+        lines.append(
+            "- 날짜 표현은 자르지 않고 원문 그대로 쓴다. '다음 주 화요일' 을 '화요일' 로, "
+            "'내일모레' 를 '내일' 로 줄이지 않는다. 날짜는 계산하지 않는다 — 코드가 푼다."
+        )
+        lines.append("- 메뉴를 만들거나 알레르기를 말하지 않는다. 보여 주는 것은 코드가 한다.")
     lines.append(f"- 마지막에 tool 을 한 번 부른다. 이번 task 의 출력 tool 은 {tool} 다.")
     return "\n".join(lines)
 
