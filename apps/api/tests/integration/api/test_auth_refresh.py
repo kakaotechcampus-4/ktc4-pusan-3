@@ -5,7 +5,7 @@
     ② 직전 refresh 는 회전 후 30초 안이면 access 만, 밖이면 세션째 지운다
     ③ 실패는 사유를 구분하지 않고 전부 401 + 쿠키 삭제
     ④ 같은 refresh 로 두 요청이 동시에 와도 한 번만 회전한다
-    ⑤ #783 이전 이름(icatch_rt)도 받아서 새 이름(__Host-icatch_rt)으로 옮긴다
+    ⑤ 이름은 __Host-icatch_rt 하나만 받는다 — 옛 이름(icatch_rt)도, 같은 이름 두 개도 401 (#783)
 """
 
 import asyncio
@@ -153,9 +153,6 @@ async def test_missing_or_unknown_refresh_is_401(db_client, headers):
     assert response.status_code == 401
     assert response.json()["error"]["code"] == "unauthenticated"
     assert "Max-Age=0" in cookie_header(response, "__Host-icatch_rt")
-    # 옛 이름도 지운다. Path 가 옛 값이어야 브라우저가 지운다 (#783)
-    assert "Path=/api/v1/auth" in cookie_header(response, "icatch_rt")
-    assert "Max-Age=0" in cookie_header(response, "icatch_rt")
 
 
 @pytest.mark.parametrize(
@@ -249,25 +246,53 @@ async def test_rotated_cookie_has_host_prefix_attributes(db_client, session):
     assert "Path=/;" in header
 
 
-async def test_legacy_cookie_still_refreshes_and_is_migrated(db_client, session):
-    """배포 전에 로그인한 사람이 로그아웃되지 않는다 — 옛 쿠키로 회전하고 새 이름으로 옮긴다."""
+async def test_legacy_cookie_alone_is_401(db_client, session):
+    """🚨 옛 이름(icatch_rt)은 읽지 않는다 — 하위 도메인이 Domain= 으로 심을 수 있다 (#783).
+
+    읽으면 __Host- 쿠키가 없는 브라우저(로그아웃 · 새 기기 · 배포 직후)에 심은 값이 회전돼
+    __Host- 세션으로 굳는다. 값이 유효한 refresh 여도 401 이다.
+    """
     await seed_refresh(session)
 
     response = await db_client.post(URL, headers={"Cookie": "icatch_rt=rt-current"})
 
-    assert response.status_code == 200
-    assert cookie_value(response) != "rt-current"
-    legacy = cookie_header(response, "icatch_rt")
-    assert "Max-Age=0" in legacy
-    assert "Path=/api/v1/auth" in legacy  # 🚨 옛 Path 가 아니면 지워지지 않는다
+    assert response.status_code == 401
+    assert "Max-Age=0" in cookie_header(response, "__Host-icatch_rt")
+    # 옛 쿠키는 지우지 않는다 — 이 배포를 되돌리면 옛 코드가 그것으로 로그인을 이어 간다
+    assert cookie_header(response, "icatch_rt") is None
 
 
-async def test_new_cookie_wins_over_a_tossed_legacy_cookie(db_client, session):
-    """하위 도메인이 옛 이름을 심어도 새 이름이 있으면 무시한다."""
+async def test_invalid_host_cookie_does_not_fall_back_to_legacy(db_client, session):
+    """__Host- 쿠키가 무효면 옛 이름이 유효해도 401 — 대체 읽기가 다시 생기면 깨진다."""
     await seed_refresh(session)
 
     response = await db_client.post(
-        URL, headers={"Cookie": "__Host-icatch_rt=rt-current; icatch_rt=tossed"}
+        URL, headers={"Cookie": "__Host-icatch_rt=unknown; icatch_rt=rt-current"}
     )
 
-    assert response.status_code == 200
+    assert response.status_code == 401
+
+
+@pytest.mark.parametrize(
+    "cookie",
+    [
+        "__Host-icatch_rt=tossed; __Host-icatch_rt=rt-current",
+        "__Host-icatch_rt=rt-current; __Host-icatch_rt=rt-current",
+        "__Host-icatch_rt=rt-current;__Host-icatch_rt=x",
+    ],
+)
+async def test_duplicate_refresh_cookie_is_401(db_client, session, cookie):
+    """🚨 같은 이름이 두 번 오면 어느 쪽도 믿지 않는다 (#783 리뷰).
+
+    Starlette 는 중복을 뒤의 값 하나로 접어서, 원본 Cookie 헤더를 직접 센다. __Host- 검사를
+    빠져나간 브라우저 · 웹뷰 버그가 있어도 심은 쪽이 이기지 못한다. 세션은 남긴다 — 어느 값이
+    진짜인지 모르는데 지우면 심는 것만으로 남을 로그아웃시킬 수 있다.
+    """
+    session_id = await seed_refresh(session)
+
+    response = await db_client.post(URL, headers={"Cookie": cookie})
+
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "unauthenticated"
+    assert "Max-Age=0" in cookie_header(response, "__Host-icatch_rt")
+    assert await session.get(AuthSession, session_id) is not None

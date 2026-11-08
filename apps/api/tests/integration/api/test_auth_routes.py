@@ -20,6 +20,7 @@ import pytest
 from app.api.v1.routers import auth as auth_router
 from app.core.config import settings
 from app.integrations.kakao.client import KakaoApiError
+from app.main import app
 
 BIND = "A" * 43
 """base64url 43자 = 256비트 (§3-2)."""
@@ -249,6 +250,36 @@ async def test_callback_with_mismatched_state_never_exchanges(client, configured
     assert "Max-Age=0" in expired
     assert "Path=/;" in expired
     assert "Secure" in expired
+
+
+async def test_callback_ignores_a_bare_legacy_state_cookie(client, configured, monkeypatch):
+    """🚨 __Host-oauth_state 만 센다 — 옛 이름(oauth_state)은 하위 도메인이 심을 수 있다 (#783).
+
+    값이 맞는 state 라도 옛 이름으로 오면 쿠키가 없는 것과 같다 (A-09).
+    """
+    fake = patch_kakao(monkeypatch, FakeKakao())
+    cookie, state = await start_and_take_cookie(client)
+
+    response = await client.get(
+        f"/api/v1/auth/kakao/callback?code=x&state={state}",
+        headers={"Cookie": f"oauth_state={cookie}"},
+    )
+
+    _, params = redirect_query(response)
+    assert params["error"] == ["invalid_state"]
+    assert fake.calls == []
+
+
+def test_auth_cookie_params_are_described_in_swagger():
+    """Swagger 의 쿠키 파라미터에 설명이 있다 (루트 CLAUDE.md §5)."""
+    paths = app.openapi()["paths"]
+    for path, method in [
+        ("/api/v1/auth/{provider}/callback", "get"),
+        ("/api/v1/auth/refresh", "post"),
+    ]:
+        cookies = [p for p in paths[path][method]["parameters"] if p["in"] == "cookie"]
+        assert cookies, path
+        assert all(p.get("description", "").strip() for p in cookies), path
 
 
 async def test_callback_passes_user_cancel_through_as_denied(

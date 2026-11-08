@@ -18,7 +18,7 @@ from typing import Annotated
 from urllib.parse import urlencode, urlparse
 from uuid import UUID
 
-from fastapi import APIRouter, Cookie, Response
+from fastapi import APIRouter, Cookie, Request, Response
 from fastapi.responses import RedirectResponse
 
 from app.api.deps.auth import CurrentParent, hash_token
@@ -39,7 +39,7 @@ from app.api.v1.schemas.auth import (
 )
 from app.api.v1.schemas.common import ErrorEnvelope
 from app.core.config import settings
-from app.core.constants import API_V1_PREFIX, AUTH_COOKIE_PATH, AUTH_PREFIX
+from app.core.constants import API_V1_PREFIX, AUTH_PREFIX
 from app.domains.consent.models import ConsentScope
 from app.domains.consent.repository import (
     ACCOUNT_SCOPES,
@@ -93,11 +93,7 @@ provider_router = APIRouter(prefix=f"{AUTH_PREFIX}/{{provider}}", tags=["auth"])
 """
 
 STATE_COOKIE = "__Host-oauth_state"
-"""카카오 왕복 동안 state · client · bind 해시를 든 쿠키 (§5-5). 이름 규칙은 REFRESH_COOKIE 와 같다.
-
-옛 이름(oauth_state)은 읽지 않는다 — 10분짜리라 배포 순간 로그인 중이던 사람만
-한 번 다시 누르면 된다.
-"""
+"""카카오 왕복 동안 state · client · bind 해시를 든 쿠키 (§5-5). 이름 규칙은 REFRESH_COOKIE."""
 
 REFRESH_COOKIE = "__Host-icatch_rt"
 """refresh 토큰을 싣는 쿠키 (#466). 웹 JS 가 읽지 못하는 HttpOnly 라 앱을 꺼도 남는다.
@@ -107,16 +103,24 @@ REFRESH_COOKIE = "__Host-icatch_rt"
    `Domain=icatch.ai.kr` 로 같은 이름을 심을 수 있고, 둘 다 실리면 Starlette 는 뒤의 값을 남겨
    심은 쪽이 이긴다 — 강제 로그아웃이나 남의 계정으로 로그인시키기. 브라우저는 `__Host-` 이름에
    Domain 이 붙거나 Path=/ · Secure 가 빠진 Set-Cookie 를 거부한다.
-🚨 대가로 Path 를 /api/v1/auth 로 좁힐 수 없어 API 호스트의 모든 요청(SSE 포함)에 실린다.
-   일반 API 는 Bearer 만 보니 권한은 안 늘어나지만, Cookie 헤더를 로그에 남기는 순간 refresh 가
-   새어 나간다. 지금은 앱 코드에 그런 곳이 없고 Caddyfile 에 log 지시어도 없다 — 그대로 둘 것.
+🚨 옛 이름(icatch_rt · oauth_state)은 읽지 않는다. 읽으면 `__Host-` 쿠키가 없는 브라우저마다
+   하위 도메인이 심은 옛 이름이 그대로 통한다. 배포 때 로그인해 있던 사람은 한 번 다시 로그인한다.
+   옛 쿠키는 지우지도 않는다 — 안 읽으니 해가 없고, 이 배포를 되돌리면 옛 코드가 그것으로
+   로그인을 이어 간다. Domain= 으로 심긴 쿠키는 어차피 host-only 삭제로 못 지운다.
+🚨 대가로 Path 를 /api/v1/auth 로 좁힐 수 없다. 운영은 웹과 API 오리진이 달라 일반 fetch 는
+   `credentials: "same-origin"` 이라 실리지 않고, `/auth/*` 호출 · API 주소로의 최상위 이동
+   (약관 정본 HTML 등) · 로컬 localhost 개발에서 실린다. 일반 API 는 Bearer 만 보니 권한은
+   안 늘어나지만, Cookie 헤더를 로그에 남기는 순간 refresh 가 새어 나간다. 지금은 앱 코드에
+   그런 곳이 없고 Caddyfile 에 log 지시어도 없다 — 그대로 둘 것.
 """
 
-LEGACY_REFRESH_COOKIE = "icatch_rt"
-"""#783 이전 이름 (Path=/api/v1/auth). 옮겨 가는 동안 읽기와 지우기에만 쓴다.
+_REFRESH_ATTRS = {"path": "/", "httponly": True, "secure": True, "samesite": "strict"}
+_STATE_ATTRS = {"path": "/", "httponly": True, "secure": True, "samesite": "lax"}
+"""두 쿠키를 심는 곳 · 지우는 곳이 같이 쓰는 속성. Domain 은 주지 않는다.
 
-TODO(#783): 배포 후 유휴 만료(REFRESH_IDLE_TTL, 30일)가 지나면 이 상수, refresh 의 대체 읽기,
-_expire_legacy_refresh 를 함께 뺀다. 그때 AUTH_COOKIE_PATH 도 쓰는 곳이 없어진다.
+🚨 Path=/ · Secure · Domain 없음 중 하나라도 어기면 브라우저가 `__Host-` Set-Cookie 를 버리고,
+   심을 때와 지울 때 속성이 다르면 안 지워진다 — 그래서 한 곳에만 적는다.
+state 만 Lax 인 이유 — 카카오 → 콜백이 크로스 사이트 최상위 GET 이동이라 Strict 면 안 실린다.
 """
 
 _CLIENTS = frozenset({"web", "app"})
@@ -204,12 +208,7 @@ async def start(
         STATE_COOKIE,
         _encode_state(state, target, hash_token(bind)),
         max_age=settings.OAUTH_STATE_TTL,
-        # __Host- 접두사라 Path=/ · Secure · Domain 없음이 강제다 (#783, REFRESH_COOKIE 참조).
-        path="/",
-        httponly=True,
-        secure=True,
-        # Lax 는 크로스 사이트 최상위 GET 이동에 실린다. 카카오 → 콜백이 그 경우다.
-        samesite="lax",
+        **_STATE_ATTRS,
     )
     return response
 
@@ -223,7 +222,13 @@ async def start(
 async def callback(
     provider: AuthProvider,
     session: SessionDep,
-    oauth_state: Annotated[str | None, Cookie(alias=STATE_COOKIE)] = None,
+    oauth_state: Annotated[
+        str | None,
+        Cookie(
+            alias=STATE_COOKIE,
+            description="로그인 시작이 심은 state · client · bind 해시. 브라우저가 붙인다 (§5-5)",
+        ),
+    ] = None,
     code: str | None = None,
     state: str | None = None,
     error: str | None = None,
@@ -347,9 +352,15 @@ async def logout(auth: CurrentParent, session: SessionDep) -> Response:
 @refresh_router.post("/refresh", responses={401: {"model": ErrorEnvelope}})
 async def refresh(
     session: SessionDep,
+    request: Request,
     response: Response,
-    icatch_rt: Annotated[str | None, Cookie(alias=REFRESH_COOKIE)] = None,
-    legacy_rt: Annotated[str | None, Cookie(alias=LEGACY_REFRESH_COOKIE)] = None,
+    icatch_rt: Annotated[
+        str | None,
+        Cookie(
+            alias=REFRESH_COOKIE,
+            description="로그인 · 회전 때 서버가 심은 HttpOnly refresh. 브라우저가 붙인다",
+        ),
+    ] = None,
 ) -> RefreshResponse:
     """refresh 쿠키로 새 access 를 받는다. 현재 refresh 면 회전한다 — #466.
 
@@ -359,16 +370,14 @@ async def refresh(
     | 직전 refresh, 회전 후 유예(30초) 안 | 새 access 만. 쿠키는 이긴 요청이 이미 바꿨다 |
     | 직전 refresh, 유예 밖 | 재사용으로 보고 세션 삭제 → 401 |
     | 없음 · 모르는 값 · 유휴 또는 절대 만료 | 401 (만료면 세션도 삭제) |
+    | 같은 이름이 두 번 | 401. 세션은 남긴다 — 어느 값이 진짜인지 모른다 |
 
     🚨 실패 사유를 구분하지 않는다 — 전부 401 unauthenticated 다 (명세 §8-1).
        실패하면 쿠키도 지운다. 남겨 두면 다음 실행마다 같은 401 을 다시 맞는다.
     🚨 로그에는 토큰도 해시도 남기지 않는다 (§7-5). 재사용 삭제만 세션 id 로 남긴다.
     """
     response.headers["Cache-Control"] = "no-store"
-    # 새 이름이 먼저다. 새 이름이 있으면 하위 도메인이 옛 이름을 심어도 무시된다 (#783).
-    # TODO(#783): 유휴 만료(30일)가 지나면 옛 이름 대체를 뺀다 (LEGACY_REFRESH_COOKIE 참조).
-    icatch_rt = icatch_rt or legacy_rt
-    if not icatch_rt:
+    if not icatch_rt or _cookie_count(request, REFRESH_COOKIE) > 1:
         return _refresh_failed()
 
     presented = hash_token(icatch_rt)
@@ -422,6 +431,16 @@ async def refresh(
     await session.commit()
     _set_refresh(response, rotated, max_age=int((refresh_expires_at - now).total_seconds()))
     return RefreshResponse(token=token, expires_in=expires_in)
+
+
+def _cookie_count(request: Request, name: str) -> int:
+    """원본 Cookie 헤더에서 그 이름이 몇 번 나오는지 센다 (#783 리뷰).
+
+    Starlette 는 같은 이름을 뒤의 값 하나로 접어서 Cookie(...) 로는 중복이 안 보인다.
+    `__Host-` 검사를 빠져나간 브라우저 · 웹뷰 버그로 심은 값이 같이 와도 이기지 못하게 한다.
+    """
+    pairs = "; ".join(request.headers.getlist("cookie")).split(";")
+    return sum(1 for pair in pairs if pair.split("=", 1)[0].strip() == name)
 
 
 def _refresh_failed() -> Response:
@@ -831,9 +850,7 @@ def _set_refresh(response: Response, refresh: str, *, max_age: int) -> None:
 
     🚨 max_age 를 빼지 않는다. 빠지면 세션 쿠키가 되어 앱을 끌 때 같이 사라진다 —
        sessionStorage 때문에 매번 다시 로그인하던 지금 증상이 그대로 돌아온다.
-    🚨 Domain 을 주지 않고 Path=/ · Secure 다 — __Host- 접두사의 조건이라 하나라도 어기면
-       브라우저가 쿠키를 버린다 (#783, REFRESH_COOKIE 참조).
-    옛 이름 쿠키는 여기서 같이 지운다 — 회전 · 로그인 어느 쪽이든 새 이름으로 옮겨 간다.
+    🚨 속성은 _REFRESH_ATTRS 에서만 가져온다 — __Host- 접두사의 조건이다 (#783).
     SameSite=Strict 여도 웹(icatch.ai.kr)이 API(api.icatch.ai.kr)를 부를 때는 실린다 — ai.kr 이
     Public Suffix List 에 있어 둘이 같은 사이트다. 다른 사이트에서 오는 요청에는 실리지 않는다.
     """
@@ -841,40 +858,18 @@ def _set_refresh(response: Response, refresh: str, *, max_age: int) -> None:
         REFRESH_COOKIE,
         refresh,
         max_age=max_age,
-        path="/",
-        httponly=True,
-        secure=True,
-        samesite="strict",
+        **_REFRESH_ATTRS,
     )
-    _expire_legacy_refresh(response)
 
 
 def _expire_refresh(response: Response) -> None:
     """refresh 쿠키를 지운다 — 로그아웃 · 탈퇴 · refresh 실패. 속성이 심을 때와 같아야 지워진다."""
-    response.delete_cookie(REFRESH_COOKIE, path="/", httponly=True, secure=True, samesite="strict")
-    _expire_legacy_refresh(response)
-
-
-def _expire_legacy_refresh(response: Response) -> None:
-    """옛 이름 쿠키를 지운다. 🚨 Path 가 옛 값(/api/v1/auth)이어야 지워진다 (#783).
-
-    TODO(#783): 유휴 만료(30일)가 지나면 이 함수째 뺀다 (LEGACY_REFRESH_COOKIE 참조).
-    """
-    response.delete_cookie(
-        LEGACY_REFRESH_COOKIE,
-        path=AUTH_COOKIE_PATH,
-        httponly=True,
-        secure=True,
-        samesite="strict",
-    )
+    response.delete_cookie(REFRESH_COOKIE, **_REFRESH_ATTRS)
 
 
 def _expire_state(response: RedirectResponse) -> RedirectResponse:
-    """쓴 쿠키는 콜백에서 만료시킨다 (§3-3 5번). 속성이 심을 때와 같아야 지워진다.
-
-    __Host- 이름이라 지울 때도 Secure · Path=/ 가 빠지면 브라우저가 Set-Cookie 를 버린다.
-    """
-    response.delete_cookie(STATE_COOKIE, path="/", httponly=True, secure=True, samesite="lax")
+    """쓴 쿠키는 콜백에서 만료시킨다 (§3-3 5번). 속성이 심을 때와 같아야 지워진다."""
+    response.delete_cookie(STATE_COOKIE, **_STATE_ATTRS)
     return response
 
 
