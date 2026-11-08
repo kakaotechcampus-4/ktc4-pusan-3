@@ -712,3 +712,169 @@ async def test_Redis_가_죽으면_건강_기록_등록은_503_이고_저장하�
     assert response.json()["error"]["code"] == "temporarily_unavailable"
     await session.rollback()
     assert await rows_of(session, consented) == []
+
+
+# ── 괜찮았던 식품 (tolerated · status none) ──────────────────────────────────────
+# 05 확인 시트에서 "먹어봤어요 · 괜찮았어요" 로 답한 식품. 알레르기가 아니라서 목록에서 items 와
+# 따로 싣고, 같은 식품이 알레르기로 있으면 받지 않는다. 알레르기를 등록하면 알레르기가 이긴다.
+
+
+async def tolerate(db_client, headers, child_id, label, key):
+    return await db_client.post(
+        safety_url(child_id),
+        json={"type": "allergy", "label": label, "tolerated": True},
+        headers=with_key(headers, key),
+    )
+
+
+async def test_괜찮았던_식품은_none_으로_저장되고_목록의_tolerated_에만_선다(
+    db_client, session, bearer, consented
+):
+    headers, parent_1 = bearer
+    await create_safety(
+        session, child_id=consented, parent_id=parent_1, kind=SafetyKind.ALLERGY, label="우유"
+    )
+
+    created = await tolerate(db_client, headers, consented, "잣", "key-pine")
+    listed = await db_client.get(safety_url(consented), headers=headers)
+
+    assert created.status_code == 201
+    safety = created.json()["safety"]
+    assert (safety["label"], safety["severity"], safety["reactions"]) == ("잣", None, [])
+    data = listed.json()
+    assert [item["label"] for item in data["items"]] == ["우유"]
+    assert [item["label"] for item in data["tolerated"]] == ["잣"]
+    rows = {row.label: row.status for row in await rows_of(session, consented)}
+    assert rows == {"우유": SafetyStatus.ACTIVE, "잣": SafetyStatus.NONE}
+
+
+@pytest.mark.parametrize(
+    ("extra", "fields"),
+    [
+        ({"type": "chronic_disease"}, ["type"]),
+        ({"severity": "class_2"}, ["severity"]),
+        ({"reactions": ["두드러기"]}, ["reactions"]),
+    ],
+    ids=["알레르기 아님", "심각도", "증상"],
+)
+async def test_괜찮았던_식품에_알레르기가_아니거나_심각도_증상이_오면_400(
+    db_client, session, bearer, consented, extra, fields
+):
+    headers, _ = bearer
+    body = {"type": "allergy", "label": "잣", "tolerated": True, **extra}
+
+    response = await db_client.post(safety_url(consented), json=body, headers=with_key(headers))
+
+    assert response.status_code == 400
+    assert response.json()["error"]["detail"]["fields"] == fields
+    assert await rows_of(session, consented) == []
+
+
+async def test_알레르기로_있는_식품은_괜찮았던_식품으로_받지_않는다(
+    db_client, session, bearer, consented
+):
+    """이름 사전으로 본다 — "견과류" 알레르기가 있으면 "호두" 도 받지 않는다."""
+    headers, parent_1 = bearer
+    await create_safety(
+        session, child_id=consented, parent_id=parent_1, kind=SafetyKind.ALLERGY, label="견과류"
+    )
+
+    response = await tolerate(db_client, headers, consented, "호두", "key-walnut")
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "allergy_exists"
+    assert [row.label for row in await rows_of(session, consented)] == ["견과류"]
+
+
+async def test_같은_이름의_괜찮았던_식품이_있으면_409_already_exists(
+    db_client, session, bearer, consented
+):
+    headers, _ = bearer
+
+    first = await tolerate(db_client, headers, consented, "잣", "key-1")
+    second = await tolerate(db_client, headers, consented, "잣", "key-2")
+
+    assert first.status_code == 201
+    assert second.status_code == 409
+    assert second.json()["error"]["code"] == "already_exists"
+
+
+async def test_동시에_온_같은_괜찮았던_식품은_DB_가_막고_409(
+    db_client, session, bearer, consented, monkeypatch
+):
+    headers, parent_1 = bearer
+    await create_safety(
+        session,
+        child_id=consented,
+        parent_id=parent_1,
+        kind=SafetyKind.ALLERGY,
+        label="잣",
+        status=SafetyStatus.NONE,
+    )
+
+    async def not_yet(*_args, **_kwargs) -> bool:
+        return False
+
+    monkeypatch.setattr(health_safety_router, "has_tolerated_safety", not_yet)
+
+    response = await tolerate(db_client, headers, consented, "잣", "key-race")
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "already_exists"
+    assert [row.status for row in await rows_of(session, consented)] == [SafetyStatus.NONE]
+
+
+async def test_알레르기를_등록하면_그것이_덮는_괜찮았던_식품만_내린다(
+    db_client, session, bearer, consented
+):
+    """알레르기가 이긴다 — "견과류" 를 등록하면 괜찮았던 호두 · 땅콩은 내리고 우유는 그대로다."""
+    headers, parent_1 = bearer
+    for label in ("호두", "땅콩", "우유"):
+        await create_safety(
+            session,
+            child_id=consented,
+            parent_id=parent_1,
+            kind=SafetyKind.ALLERGY,
+            label=label,
+            status=SafetyStatus.NONE,
+        )
+
+    response = await db_client.post(
+        safety_url(consented),
+        json={"type": "allergy", "label": "견과류"},
+        headers=with_key(headers),
+    )
+
+    assert response.status_code == 201
+    listed = (await db_client.get(safety_url(consented), headers=headers)).json()
+    assert [item["label"] for item in listed["items"]] == ["견과류"]
+    assert [item["label"] for item in listed["tolerated"]] == ["우유"]
+    statuses = {row.label: row.status for row in await rows_of(session, consented)}
+    assert (statuses["호두"], statuses["땅콩"]) == (SafetyStatus.RETRACTED, SafetyStatus.RETRACTED)
+
+
+async def test_괜찮았던_식품을_내리면_204_다시_내리면_404_고칠_수는_없다(
+    db_client, session, bearer, consented
+):
+    headers, parent_1 = bearer
+    row = await create_safety(
+        session,
+        child_id=consented,
+        parent_id=parent_1,
+        kind=SafetyKind.ALLERGY,
+        label="잣",
+        status=SafetyStatus.NONE,
+    )
+
+    patched = await db_client.patch(
+        safety_url(consented, row.id), json={"notes": "메모"}, headers=with_key(headers)
+    )
+    first = await db_client.delete(safety_url(consented, row.id), headers=headers)
+    second = await db_client.delete(safety_url(consented, row.id), headers=headers)
+
+    assert patched.status_code == 404
+    assert (first.status_code, second.status_code) == (204, 404)
+    assert (await db_client.get(safety_url(consented), headers=headers)).json()["tolerated"] == []
+    await session.rollback()
+    await session.refresh(row)
+    assert row.status is SafetyStatus.RETRACTED

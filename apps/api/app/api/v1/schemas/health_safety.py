@@ -45,6 +45,16 @@ class CreateHealthSafetyRequest(BaseModel):
         default_factory=list, max_length=20, description="반응 — '두드러기' 등"
     )
     notes: Notes | None = Field(default=None, description="보호자 메모")
+    tolerated: bool = Field(
+        default=False,
+        description=(
+            "true 면 '괜찮았던 식품' — 05 확인 시트에서 '먹어봤어요 · 괜찮았어요' 로 답한 식품으로 "
+            "저장한다(알레르기가 아니다). type 은 allergy 만, severity · reactions 는 "
+            "보내지 않는다(400). "
+            "같은 식품이 알레르기로 있으면 409 allergy_exists, 같은 이름의 괜찮았던 식품이 있으면 "
+            "409 already_exists"
+        ),
+    )
 
 
 class WrittenBy(BaseModel):
@@ -107,9 +117,21 @@ class UpdateHealthSafetyResponse(BaseModel):
 
 
 class HealthSafetyListResponse(BaseModel):
-    """지금 고려 대상(active)인 기록 — 보호자가 확정한 것만 들어 있다 (§2)."""
+    """보호자가 확정한 기록 — 알레르기 · 건강(items)과 괜찮았던 식품(tolerated).
 
-    items: list[HealthSafetyOut]
+    내린 줄은 없다 (§2).
+    """
+
+    items: list[HealthSafetyOut] = Field(
+        description="알레르기 · 건강 기록(active). 식사 제안이 거른다"
+    )
+    tolerated: list[HealthSafetyOut] = Field(
+        default_factory=list,
+        description=(
+            "괜찮았던 식품 — 보호자가 먹어봤고 괜찮았다고 답한 식품. 알레르기가 아니라서 items 와 "
+            "따로 싣는다. severity 는 늘 null, reactions 는 늘 []"
+        ),
+    )
     updated_at: datetime = Field(
         description="목록의 가장 최근 변경 시각. 기록이 없으면 응답한 시각"
     )

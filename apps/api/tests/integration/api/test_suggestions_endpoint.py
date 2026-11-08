@@ -21,6 +21,7 @@ from app.api.runs import suggestion_retry
 from app.api.v1.schemas.suggestions import DocEvidenceOut
 from app.core import llm_usage
 from app.core.config import settings
+from app.domains.consent.models import ConsentAction
 from app.domains.memory.observation.models import (
     ConfidenceSource,
     ObservationActivity,
@@ -492,6 +493,31 @@ async def test_내린_알레르기는_사전검사에서_다시_묻는다(
     data = (await _post(db_client, cid, headers, agents=["food"])).json()
 
     assert [s["content"] for s in data["suggestions"]] == ["호두죽"]
+async def test_괜찮았던_식품으로_저장한_항목은_다시_묻지_않는다(
+    db_client, session, bearer, cid, agents, monkeypatch
+):
+    """05 확인 시트의 "먹어봤어요 · 괜찮았어요" 를 저장하면(tolerated) 다음 사전검사에서 빠진다."""
+    plan, _ = agents
+    headers, parent_id = bearer
+    monkeypatch.setattr("app.api.v1.routers.suggestions.child_health_granted", _granted(True))
+
+    async def granted(*args, **kwargs):
+        return ConsentAction.GRANTED
+
+    monkeypatch.setattr("app.api.v1.routers.health_safety.latest_action", granted)
+    saved = await db_client.post(
+        f"/api/v1/children/{cid}/health-safety",
+        json={"type": "allergy", "label": "잣", "tolerated": True},
+        headers={**headers, "Idempotency-Key": "tolerated-pine"},
+    )
+    assert saved.status_code == 201
+    plan["food"] = (
+        "drafts",
+        [await _personal(session, cid, parent_id, content="잣호두죽", allergens=["잣", "호두"])],
+    )
+
+    data = (await _post(db_client, cid, headers, agents=["food"])).json()
+
     assert [p["item"] for p in data["prechecks"]] == ["호두"]
 
 
