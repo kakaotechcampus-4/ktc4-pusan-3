@@ -7,6 +7,7 @@ tool이 "안 하는 것"을 강제한다.
 계산은 datetime_rules.py 코드가 한다.
 """
 
+from app.agents.common.prompt_fingerprint import fixed_context, register_prompt, tools_text
 from app.agents.memory.context import AgentContext
 
 _ROLE = """
@@ -272,3 +273,16 @@ def build_system_prompt(context: AgentContext) -> str:
     """
     header = f"현재 시각은 {context.now.isoformat()} 이고 timezone 은 {context.timezone} 다."
     return "\n\n".join([*_SECTIONS, header])
+
+
+def _fingerprint_parts() -> tuple[str, ...]:
+    """프롬프트 지문(#770)의 입력 — 고정 시각으로 렌더링한 system 프롬프트와 tool spec."""
+    from app.agents.memory.schemas import tool_defs
+
+    return (
+        build_system_prompt(fixed_context()),  # type: ignore[arg-type]
+        tools_text(tool_defs.TOOL_DEFINITIONS),
+    )
+
+
+register_prompt("memory", _fingerprint_parts)

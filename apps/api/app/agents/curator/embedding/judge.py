@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from app.agents.common.llm_client import LLMAuthError, LLMConfigError, LLMError
+from app.agents.common.prompt_fingerprint import register_prompt
 from app.agents.curator.embedding.ports import CuratorDomain
 
 NONE = "none"
@@ -60,3 +61,6 @@ class IdentityJudge(Protocol):
     ) -> JudgeAnswer:
         """candidates 는 비어 있지 않고, subject 와 이름이 같은 후보는 없다 (연결 단계가 거른다)."""
         ...
+
+
+register_prompt("curator_judge", lambda: (PROMPT,))

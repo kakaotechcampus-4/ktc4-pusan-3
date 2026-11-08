@@ -12,6 +12,12 @@ Activity 처럼 구획 상수를 이어 붙인다. tool 이 못 막는 것을 �
 
 from collections.abc import Sequence
 
+from app.agents.common.prompt_fingerprint import (
+    fixed_context,
+    fixed_gate,
+    register_prompt,
+    tools_text,
+)
 from app.agents.growth.context import GrowthContext
 from app.agents.growth.schemas.task import GrowthTaskType
 from app.agents.growth.tools.docs import DocHit
@@ -220,3 +226,37 @@ def _examples(examples: Sequence[DocHit]) -> str:
 def _now(context: GrowthContext) -> str:
     local = context.now.astimezone(context.timezone)
     return f"현재 시각은 {local.isoformat()} · timezone {context.timezone}."
+
+
+def _fingerprint_parts() -> tuple[str, ...]:
+    """프롬프트 지문(#770)의 입력 — 라벨 · 상태 갈래마다 렌더링한 system 프롬프트와 tool spec."""
+    from app.agents.growth.schemas import tool_defs
+
+    gate = fixed_gate()
+    # 교육 활동은 주제 · 요청 · 답한 주제 · 화면 시간 갈래에 따라 글이 덧붙는다
+    learning_states: tuple[dict[str, object], ...] = (
+        {},
+        {"topic": ("x",)},
+        {"topic": ("x",), "requested": True},
+        {"topic": ("x",), "answered_subject": "예시"},
+        {"topic": ("x", SCREEN)},
+        {"topic": ("x", SCREEN), "requested": True, "answered_subject": "예시"},
+    )
+    rendered = []
+    for task in GrowthTaskType:
+        states = learning_states if task is GrowthTaskType.LEARNING_SUGGESTION else ({},)
+        for extra in states:
+            context = fixed_context(
+                gate=gate,
+                topic=extra.get("topic", ()),
+                requested=extra.get("requested", False),
+                answered_subject=extra.get("answered_subject"),
+            )
+            try:
+                rendered.append(build_system_prompt(context, task, ()))  # type: ignore[arg-type]
+            except KeyError:  # 코드가 답하는 라벨(growth_review)은 프롬프트가 없다
+                break
+    return (*rendered, tools_text(tool_defs.TOOL_DEFINITIONS))
+
+
+register_prompt("growth", _fingerprint_parts)

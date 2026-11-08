@@ -30,6 +30,7 @@ from app.agents.curator.embedding.judge import (
 )
 from app.agents.curator.embedding.ports import CuratorDomain
 from app.core import llm_usage
+from app.core.prompt_hash import fingerprint, short
 
 logger = logging.getLogger(__name__)
 
@@ -109,7 +110,9 @@ class JevJudge:
         # subject · 후보 원문은 남기지 않는다. Elice 응답에는 금액(cost)이 없어 토큰 수를 남긴다
         # (금액은 Elice 콘솔에서 본다). 출력 토큰은 과금되지 않는다
         logger.info(
-            "curator judge model=%s candidates=%d confidence=%s input_tokens=%s latency_ms=%d",
+            "curator judge prompt_name=curator_judge prompt_sha256=%s model=%s candidates=%d "
+            "confidence=%s input_tokens=%s latency_ms=%d",
+            short(fingerprint(self._prompt)),
             answer.model,
             len(options),
             answer.confidence,

@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help install dev test lint fmt db-up db-down db-logs \
+.PHONY: help install dev test test-prompt hooks lint fmt db-up db-down db-logs \
         db-migrate db-rollback db-current db-history db-heads db-check db-revision \
         db-merge db-reset db-psql \
         web-install web-dev web-build web-start web-test web-e2e web-lint web-fmt web-fmt-check \
@@ -18,6 +18,8 @@ help:
 	@echo "  make install      의존성 설치 (클론 직후)"
 	@echo "  make dev          개발 서버 실행  http://localhost:8000"
 	@echo "  make test         테스트 실행"
+	@echo "  make test-prompt  바뀐 프롬프트 · tool spec 의 LLM 없는 테스트와 지문 고정 테스트 (기준 origin/develop)"
+	@echo "  make hooks        push 전에 make test-prompt 를 자동으로 돌리는 선택형 훅 켜기"
 	@echo "  make lint         코드 검사 (ruff check + format --check) — PR 올리기 전"
 	@echo "  make fmt          코드 포맷팅 (ruff)"
 	@echo ""
@@ -80,6 +82,16 @@ dev:
 
 test:
 	cd apps/api && uv run pytest
+
+# 프롬프트 · tool spec 을 바꿨을 때 PR 전에 빠르게 확인한다 (#770). 라이브 eval 은 돌리지 않는다.
+# CI 는 이 타깃을 쓰지 않고 전체 pytest 가 같은 지문 테스트를 돈다.
+test-prompt:
+	cd apps/api && uv run python -m scripts.prompt_scope --run
+
+# 선택형 pre-push 훅. 끄려면 `git config --unset core.hooksPath`
+hooks:
+	git config core.hooksPath .githooks
+	@echo "pre-push 훅을 켰습니다 (.githooks/pre-push). 한 번 건너뛰려면 SKIP_PROMPT_TEST=1 git push"
 
 lint:
 	cd apps/api && uv run ruff check . && uv run ruff format --check .

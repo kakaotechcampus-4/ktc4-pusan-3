@@ -4,6 +4,9 @@
 저장·조회·추천은 하위 에이전트가 한다.
 """
 
+from app.agents.common.prompt_fingerprint import register_prompt
+from app.core.prompt_hash import canonical_json
+
 _ROLE = """
 너는 Child Memory 의 Supervisor 다.
 보호자의 발화를 의미 조각으로 나누고, 각 조각을 어디로 보낼지 라벨을 붙인다.
@@ -242,3 +245,17 @@ _SECTIONS = (_ROLE, _SPLIT, _RECORD, _REQUEST, _GUARDED, _ELSE, _EXAMPLES, _RETR
 def build_system_prompt() -> str:
     """system 메시지 본문. 아이 정보를 담지 않으므로 run마다 같다."""
     return "\n\n".join(_SECTIONS)
+
+
+def _fingerprint_parts() -> tuple[str, ...]:
+    """프롬프트 지문(#770)의 입력 — system 프롬프트와 route tool spec(일반 · strict)."""
+    from app.agents.supervisor import schemas
+
+    return (
+        build_system_prompt(),
+        canonical_json(schemas.ROUTE_TOOL_SPEC),
+        canonical_json(schemas.ROUTE_TOOL_SPEC_STRICT),
+    )
+
+
+register_prompt("supervisor", _fingerprint_parts)

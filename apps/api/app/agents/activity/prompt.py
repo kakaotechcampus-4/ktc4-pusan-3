@@ -30,6 +30,7 @@ tool이 못 막는 것을 막는 자리다. 월령 필터·알레르기·날씨 
 - 예시는 결을 보여주는 것이다. 그대로 베끼지 않는다.
 """
 
+import itertools
 from collections.abc import Sequence
 from uuid import UUID
 
@@ -43,6 +44,12 @@ from app.agents.activity.gating import (
 from app.agents.activity.store.ports import ActivityDocRow
 from app.agents.activity.weather import WeatherBrief
 from app.agents.common.gate import Gate
+from app.agents.common.prompt_fingerprint import (
+    fixed_context,
+    fixed_gate,
+    register_prompt,
+    tools_text,
+)
 
 _ROLE = """
 [역할]
@@ -272,3 +279,24 @@ def _now(context: ActivityContext) -> str:
     local = context.now.astimezone(context.timezone)
     weekday = "월화수목금토일"[local.weekday()]
     return f"현재 시각은 {local.isoformat()} ({weekday}요일) · timezone {context.timezone}."
+
+
+def _fingerprint_parts() -> tuple[str, ...]:
+    """프롬프트 지문(#770)의 입력 — 오늘의 조건 구획이 갈리는 조합마다 렌더링한
+    system 프롬프트와 tool spec."""
+    from app.agents.activity.schemas import tool_defs
+
+    rendered = []
+    # 조건 구획이 갈리는 값: 위치 · 장소 · 날씨 · 행사 어댑터, 오늘 판정, 못 읽음
+    for location, places, weather, events, outdoor_ok, unread in itertools.product(
+        (False, True), repeat=6
+    ):
+        gate = fixed_gate(has_location=location, places=places, weather=weather, events=events)
+        brief = WeatherBrief(outdoor_ok=outdoor_ok, labels={"기온": "적당"}, unread=unread)
+        rendered.append(
+            build_system_prompt(fixed_context(gate=gate), (), weather=brief)  # type: ignore[arg-type]
+        )
+    return (*rendered, tools_text(tool_defs.TOOL_DEFINITIONS))
+
+
+register_prompt("activity", _fingerprint_parts)

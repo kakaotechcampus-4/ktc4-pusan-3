@@ -22,6 +22,7 @@ tool이 못 막는 것을 막는 자리다. 코드로 막을 수 있는 것은 r
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from app.agents.common.prompt_fingerprint import fixed_context, register_prompt, tools_text
 from app.agents.food.context import FoodContext
 from app.agents.food.schemas.common import FoodTaskType
 from app.agents.food.store.ports import FoodDocRow, MenuCatalogRow
@@ -224,3 +225,19 @@ def build_system_prompt(
     """
     header = f"현재 시각은 {context.now.isoformat()} 이고 timezone 은 {context.timezone} 다."
     return "\n\n".join([*_SECTIONS, _instructions(task_type), _examples(examples), header])
+
+
+def _fingerprint_parts() -> tuple[str, ...]:
+    """프롬프트 지문(#770)의 입력 — task 마다 렌더링한 system 프롬프트(예시 없음)와 tool spec."""
+    from app.agents.food.schemas import tool_defs
+
+    rendered = []
+    for task in FoodTaskType:
+        try:
+            rendered.append(build_system_prompt(fixed_context(), task))  # type: ignore[arg-type]
+        except ValueError:  # 코드가 답하는 task 는 프롬프트가 없다
+            continue
+    return (*rendered, tools_text(tool_defs.TOOL_DEFINITIONS))
+
+
+register_prompt("food", _fingerprint_parts)
