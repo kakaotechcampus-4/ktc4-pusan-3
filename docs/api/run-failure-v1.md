@@ -15,9 +15,9 @@ failed { reason, raw_text, message }
 | --- | --- | --- |
 | `timeout` | 러너 60초 · 도메인 20초 마감 · LLM 응답 시간 초과 | 시간 안에 답을 만들지 못했어요. 잠시 뒤 다시 보내 주세요. |
 | `llm_unavailable` | LLM 연결 실패 · 그 밖의 LLM 오류(5xx · 빈 응답) · 도메인 Agent 가 결과 없이 돌아옴 | 지금은 답을 만들 수 없어요. 잠시 뒤 다시 보내 주세요. |
-| `llm_rate_limited` | rate limit | 지금 요청이 많아요. 잠시 뒤 다시 보내 주세요. |
-| `llm_misconfigured` | 인증 · 설정 · 요청 거절 | 서비스 쪽 문제로 지금은 처리할 수 없어요. 다시 보내도 같을 수 있어요. |
-| `guard_unavailable` | 위험 물질 검사를 하지 못함 | 안전 확인을 하지 못했어요. 잠시 뒤 다시 보내 주세요. |
+| `llm_rate_limited` | rate limit | 지금 서비스에 요청이 몰려 있어요. 잠시 뒤 다시 보내 주세요. |
+| `llm_misconfigured` | 인증 · 설정 · 요청 거절 | 서비스 쪽 문제로 지금은 처리할 수 없어요. 잠시 뒤 다시 보내 주세요. |
+| `guard_unavailable` | 위험 물질 검사를 하지 못함 | 안전 확인을 하지 못해서 멈췄어요. 잠시 뒤 다시 보내 주세요. |
 | `lookup_unavailable` | 조회 실패가 Agent 밖으로 샌 경우 (지금 경로 없음) | 필요한 정보를 불러오지 못했어요. 잠시 뒤 다시 보내 주세요. |
 | `unparsable` | Memory 반복 상한 · Health 답을 이어 가지 못함 · 한 일 없음 | 말씀을 정리하지 못했어요. 조금 바꿔서 다시 적어 주세요. |
 | `internal_error` | 그 밖 (계통 밖 예외) | 처리하다 문제가 생겼어요. 다시 보내 주세요. |
@@ -59,7 +59,7 @@ failed { reason, raw_text, message }
 
 task 마다 이유를 모은다: `TimeoutError` → `timeout`, `AgentFailure` → `exc.reason`, 추천 저장 실패 → `internal_error`, 그 밖 예외 → `internal_error`. 결과 없이 돌아온 task(`status="failed"`)는 부른 쪽이 정한다 — 모델을 부르는 Agent 는 모델이 출력하지 못한 것이라 `llm_unavailable`(공통 tool loop 의 "화면은 다시 시도"), 모델을 안 부르는 Health 답은 `unparsable`.
 
-이유가 여럿이면 task 순서가 아니라 아래 순서로 앞의 것을 고른다. 부모가 할 일이 가장 분명한 것이 앞이다 — "다시 보내도 같다" 가 "잠시 뒤" 에 가려지면 안 되고, 서버 쪽 실패가 "바꿔서 다시 적어 주세요" 에 가려지면 보호자가 같은 실패를 되풀이한다.
+이유가 여럿이면 task 순서가 아니라 아래 순서로 앞의 것을 고른다. 서비스 쪽 실패가 "바꿔서 다시 적어 주세요" 에 가려지면 보호자가 말을 바꿔 같은 실패를 되풀이한다.
 
 `llm_misconfigured` → `llm_rate_limited` → `timeout` → `guard_unavailable` → `lookup_unavailable` → `llm_unavailable` → `internal_error` → `unparsable`
 

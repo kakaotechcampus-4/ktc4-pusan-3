@@ -183,11 +183,11 @@ def test_이유마다_문구가_글자까지_같다() -> None:
     assert {reason: failure_message(reason) for reason in get_args(errors.FailReason)} == {
         "timeout": "시간 안에 답을 만들지 못했어요. 잠시 뒤 다시 보내 주세요.",
         "llm_unavailable": "지금은 답을 만들 수 없어요. 잠시 뒤 다시 보내 주세요.",
-        "llm_rate_limited": "지금 요청이 많아요. 잠시 뒤 다시 보내 주세요.",
+        "llm_rate_limited": "지금 서비스에 요청이 몰려 있어요. 잠시 뒤 다시 보내 주세요.",
         "llm_misconfigured": (
-            "서비스 쪽 문제로 지금은 처리할 수 없어요. 다시 보내도 같을 수 있어요."
+            "서비스 쪽 문제로 지금은 처리할 수 없어요. 잠시 뒤 다시 보내 주세요."
         ),
-        "guard_unavailable": "안전 확인을 하지 못했어요. 잠시 뒤 다시 보내 주세요.",
+        "guard_unavailable": "안전 확인을 하지 못해서 멈췄어요. 잠시 뒤 다시 보내 주세요.",
         "lookup_unavailable": "필요한 정보를 불러오지 못했어요. 잠시 뒤 다시 보내 주세요.",
         "unparsable": "말씀을 정리하지 못했어요. 조금 바꿔서 다시 적어 주세요.",
         "internal_error": "처리하다 문제가 생겼어요. 다시 보내 주세요.",

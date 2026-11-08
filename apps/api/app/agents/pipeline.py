@@ -2015,9 +2015,8 @@ def _memory_calls(exc: AgentFailure) -> int:
     return 0 if isinstance(exc, LLMConfigError) else 1
 
 
-# 한 일 없는 run 에서 이유가 여럿이면 앞의 것을 고른다 (#768). 부모가 할 일이 가장 분명한 것이
-# 앞이다 — "다시 보내도 같다"(설정)가 "잠시 뒤"(rate limit · 시간 초과 · 연결)를 가리면 안 되고,
-# 서버 쪽 실패가 "바꿔서 다시 적어 주세요"(unparsable)에 가려지면 보호자가 같은 실패를 되풀이한다
+# 한 일 없는 run 에서 이유가 여럿이면 앞의 것을 고른다 (#768). 서비스 쪽 실패가 "바꿔서 다시
+# 적어 주세요"(unparsable)에 가려지면 보호자가 말을 바꿔 같은 실패를 되풀이한다
 _REASON_PRIORITY: tuple[FailReason, ...] = (
     "llm_misconfigured",
     "llm_rate_limited",

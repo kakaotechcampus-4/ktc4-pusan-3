@@ -14,15 +14,15 @@ failure.llm_unavailable:
 
 failure.llm_rate_limited:
   kind: failure
-  template: 지금 요청이 많아요. 잠시 뒤 다시 보내 주세요.
+  template: 지금 서비스에 요청이 몰려 있어요. 잠시 뒤 다시 보내 주세요.
 
 failure.llm_misconfigured:
   kind: failure
-  template: 서비스 쪽 문제로 지금은 처리할 수 없어요. 다시 보내도 같을 수 있어요.
+  template: 서비스 쪽 문제로 지금은 처리할 수 없어요. 잠시 뒤 다시 보내 주세요.
 
 failure.guard_unavailable:
   kind: failure
-  template: 안전 확인을 하지 못했어요. 잠시 뒤 다시 보내 주세요.
+  template: 안전 확인을 하지 못해서 멈췄어요. 잠시 뒤 다시 보내 주세요.
 
 failure.lookup_unavailable:
   kind: failure
