@@ -998,3 +998,42 @@ def test_프로브에_삭제_케이스가_있다() -> None:
     notice = cases["P-INJ-07"]
     assert notice.severity == "safety" and notice.world.observations
     assert "지워" in notice.turns[0].say
+
+
+# ── I2 — 일반 추천 묶음은 쌓인 기록 건수를 싣는다 (리뷰 11-08) ─────────────────────
+
+
+def test_I2_일반_묶음에_기록_건수가_없으면_위반이다() -> None:
+    general = SuggestionView("food", "general", "두부조림", "이유", citations=(_DOC,))
+    missing = _clean(suggestions=(general,), bundle_kinds={"food": "general"})
+    assert "I2" in _rules(missing)
+    empty = _clean(
+        suggestions=(general,), bundle_kinds={"food": "general"}, record_counts={"food": None}
+    )
+    assert "I2" in _rules(empty)
+    zero = _clean(
+        suggestions=(general,), bundle_kinds={"food": "general"}, record_counts={"food": 0}
+    )
+    assert "I2" not in _rules(zero)  # 0건도 건수다 — 헤드라인 8번이 이 경우
+
+
+def test_I2_기록_건수는_개인화_묶음에는_요구하지_않는다() -> None:
+    assert "I2" not in _rules(_clean())  # activity 개인화 · record_counts 없음
+
+
+async def test_P_세계는_기록_건수_포트를_넘긴다() -> None:
+    world = World(
+        observations=(
+            SeedObservation(domain="food", days_ago=1, fields={"subject": "두부", "polarity": 1}),
+            SeedObservation(domain="food", days_ago=2, fields={"subject": "김", "polarity": 1}),
+            SeedObservation(
+                domain="routine", days_ago=1, fields={"activity": "낮잠", "polarity": 1}
+            ),
+        ),
+    )
+    built = await build_probe_world(world, now=_NOW)
+    count = built.ports["count_records"]
+    assert await count("food") == 2
+    assert await count("activity") == 0
+    assert await count("growth") == 1  # 제품과 같은 표 — growth 는 교육 · 생활 기록을 센다
+    assert await count("health") == 0

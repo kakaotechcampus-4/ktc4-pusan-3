@@ -13,8 +13,8 @@ I5(안전 정보 불변) · I8(하루치로 확정 금지)는 DB 상태가 필�
 P 에서 판정이 얕은 두 곳 — 숨기지 말고 적어 둔다.
 - I7 은 W 에서만 문다. 인메모리 저장소는 승인 단계 밖에서 일정 행을 쓰지 않아 `stored_events` 가
   늘 0 이다. P 는 초안만 보고, 문구는 케이스의 `never_say`("등록했어요")가 본다.
-- I2 의 "기록 건수" 절반(화면에 쌓인 건수를 그대로 보였나)은 W 에서 판정한다 — 건수를 세는
-  포트(count_records)가 필요하다. P 는 kind + 인용만 본다.
+- I2 의 "기록 건수" 는 일반 추천 묶음에 건수가 실렸는지만 본다 — 숫자가 맞는지는 세는 포트
+  (P 는 하네스의 InMemory 포트, W 는 운영 포트)를 믿는다.
 """
 
 import re
@@ -23,6 +23,7 @@ from dataclasses import dataclass
 
 from app.agents.common.evidence import overstates
 from app.agents.health.wording import unsafe
+from app.api.agent_ports import RECORD_KINDS
 from app.rules.evaluative import find_evaluative
 from tests.eval.suite.trace import Trace
 
@@ -91,6 +92,10 @@ def _i2(trace: Trace) -> list[Violation]:
             and trace.bundle_kinds.get(agent) == "personalized"
         ):
             found.append(Violation("I2", f"{agent} 일반 추천만 냈는데 화면은 개인화로 묶었다"))
+    # 일반 추천이면 화면에 쌓인 기록 건수를 그대로 보여 준다 (§2) — 0건도 건수다
+    for agent, kind in trace.bundle_kinds.items():
+        if kind == "general" and agent in RECORD_KINDS and trace.record_counts.get(agent) is None:
+            found.append(Violation("I2", f"{agent} 일반 추천 묶음에 쌓인 기록 건수가 없다"))
     return found
 
 
