@@ -32,16 +32,17 @@ food_agent_own_table §1-1). 행 모양은 `MenuCatalogRow` 를 같이 쓰고 `s
 import re
 import unicodedata
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from functools import cache
 from typing import Any, Literal
 
+from app.agents.common.food_safety import menu_codes
 from app.agents.common.reference import load_reference
 from app.agents.food.food_groups import FOOD_GROUPS
 from app.agents.food.store.ports import MenuCatalogRow, NutritionFacts
-from app.agents.food.tools.safety import menu_codes
-from app.core.mafra_recipe_raw import RawRecipe
+from app.core.mafra_recipe_raw import RawIngredient, RawRecipe
+from app.core.recipe_source import RecipeSource
 from app.rules.age import Stage
 from app.rules.allergen import ALLERGEN_NAMES
 from app.rules.menu_key import normalize_menu_key
@@ -55,8 +56,7 @@ _ENTRY_KEYS = frozenset({"raw", "names", "codes", "status", "note", "rows", "foo
 # 재료 앞의 섹션 머리 — "[쇠고기양념] 간장" 의 "[쇠고기양념]" 은 재료가 아니라 묶음 제목이다
 _SECTION = re.compile(r"^\s*\[[^\]]*\]\s*")
 
-SOURCE_VERSION = "mafra_recipe"
-MAIN_ROLE = "주재료"  # RawIngredient.role(IRDNT_TY_NM) 값. 부재료 · 양념과 가른다
+MAIN_ROLE = "주재료"  # RawIngredient.role(IRDNT_TY_NM · `▶` 구간 머리) 값. 부재료 · 양념과 가른다
 # 식품군이 없는 재료(물 · 소금 · 장류). 칸이 비어 있으면 아직 안 정한 것이라 둘을 가른다
 NO_FOOD_GROUP = "none"
 
@@ -136,10 +136,14 @@ def build_recipe_row(
     table: Mapping[str, IngredientEntry],
     *,
     now: datetime,
+    source: RecipeSource,
     nutrition: NutritionFacts | None = None,
     stage_min: Stage | None = None,
 ) -> MenuCatalogRow:
     """레시피 하나를 카탈로그 행으로. 재료가 다 정리됐을 때만 `resolved=True` 다.
+
+    `source` 는 이 레시피를 받은 소스다. 기본값이 없다 — 빠뜨린 호출이 다른 소스의 행을 조용히
+    `mafra_recipe` 로 만들지 않게 한다. `source_version` 도 같은 값이다.
 
     `nutrition` 은 레시피 이름이 영양DB 와 정확히 같을 때만 넘긴다(호출부가 `resolve_menu` 규칙으로
     찾는다). 없으면 영양을 비워 두고 영양 판정은 unresolved 로 센다.
@@ -153,7 +157,7 @@ def build_recipe_row(
     codes: set[int] = set()
     main_groups: set[str] = set()
     # 주재료가 있고 모두 식품군을 정했을 때만 식품군을 싣는다
-    groups_known = any((item.role or "").strip() == MAIN_ROLE for item in recipe.ingredients)
+    groups_known = has_main_section(recipe)
     settled = bool(recipe.ingredients)
 
     def add(name: str, *, main: bool) -> None:
@@ -165,7 +169,7 @@ def build_recipe_row(
             main_ingredients.append(name)
 
     for item in recipe.ingredients:
-        is_main = (item.role or "").strip() == MAIN_ROLE
+        is_main = _is_main(item)
         if item.name is None:
             settled = False  # 이름 없는 재료 — 무엇이 들었는지 모른다
             groups_known = groups_known and not is_main
@@ -192,20 +196,41 @@ def build_recipe_row(
             add(name, main=is_main)
 
     codes |= menu_codes((recipe.name, *ingredients))
-    return MenuCatalogRow(
+    row = MenuCatalogRow(
         menu_key=menu_key,
         display_name=recipe.name,
-        source="mafra_recipe",
+        source=source,
         resolved=settled,
         synced_at=now,
-        food_code=nutrition.food_code if nutrition else None,
-        serving_g=nutrition.serving_g if nutrition else None,
-        nutrients=dict(nutrition.per_100g) if nutrition else {},
         ingredients=tuple(ingredients),
         main_ingredients=tuple(main_ingredients),
         allergen_codes=frozenset(codes),
         food_groups=frozenset(main_groups) if groups_known else frozenset(),
         stage_min=stage_min,
-        source_version=SOURCE_VERSION,
+        source_version=source,
         source_id=recipe.recipe_id,
     )
+    return with_nutrition(row, nutrition)
+
+
+def with_nutrition(row: MenuCatalogRow, nutrition: NutritionFacts | None) -> MenuCatalogRow:
+    """만든 행에 영양값을 붙인다. 적재는 행을 한 번만 만들고(식품군 빌리기에 먼저 쓴다), 영양DB 를
+    쓴 뒤 이걸로 영양값만 붙인다. 없으면 그대로 둔다."""
+    if nutrition is None:
+        return row
+    return replace(
+        row,
+        food_code=nutrition.food_code,
+        serving_g=nutrition.serving_g,
+        nutrients=dict(nutrition.per_100g),
+    )
+
+
+def has_main_section(recipe: RawRecipe) -> bool:
+    """`주재료` 구간이 있는 레시피인가. 없으면 식품군을 정하지 않는다 — 적재 요약의 "주재료 없음"
+    도 이 함수로 센다."""
+    return any(_is_main(item) for item in recipe.ingredients)
+
+
+def _is_main(item: RawIngredient) -> bool:
+    return (item.role or "").strip() == MAIN_ROLE

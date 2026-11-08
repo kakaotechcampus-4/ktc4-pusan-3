@@ -1,6 +1,7 @@
 """observation 5테이블(food / health / education / activity / routine)의 tool 15개.
 
-create / query / update 3종. 삭제는 update 에 status=deleted 로 온다 (soft delete).
+create / query / update 3종. 지우는 tool 은 없다 — 삭제는 제안(`propose_delete`)을
+보호자가 버튼으로 확정한다 (#535).
 
 각 tool 흐름:
   - 날짜·시각 표현을 datetime_rules 로 확정 -> context 값 주입 -> NOT NULL 기본값 채움
@@ -19,8 +20,8 @@ from app.agents.common.datetime_rules import (
     combine,
     resolve_time,
 )
-from app.agents.memory.context import AgentContext
-from app.agents.memory.result import ErrorCode, ToolResult, fail, ok
+from app.agents.memory.context import AgentContext, FoundRows
+from app.agents.memory.result import ErrorCode, ToolResult, cut, fail, ok, recent
 from app.agents.memory.schemas.observation import (
     SYMPTOM_ONLY,
     ObservationActivityCreate,
@@ -56,7 +57,6 @@ _UPDATE_HANDLED = {
     "anchor_on",
     "temporal_direction",
     "clear",
-    "status",
 }
 
 # 음식 이름이 아니라 끼니 이름
@@ -176,11 +176,14 @@ async def _query(context: AgentContext, args: ObservationQueryArgs, *, domain: s
         raw_text_query=args.raw_text_query,
         **bounds,
     )
+    kept, truncated = recent(rows)
+    context.found[resource] = FoundRows(tuple(row.id for row in kept), truncated)
     return ok(
         "query",
         resource,
-        count=len(rows),
-        records=[row.to_summary() for row in rows],
+        count=len(kept),
+        records=[row.to_summary() for row in kept],
+        **cut(truncated),
     )
 
 
@@ -197,8 +200,6 @@ async def _update(
     행은 여기서 한 번만 읽는다 — 검사와 수정이 같은 행을 본다.
     """
     resource = _resource(domain)
-    if args.status == "deleted":
-        return await _delete(context, args, domain=domain)
     current = await context.store.get_observation(domain=domain, observation_id=args.observation_id)
     if current is None:
         return fail("update", resource, ErrorCode.TARGET_NOT_FOUND, _not_found(domain))
@@ -249,17 +250,6 @@ async def _update(
     # 비운 필드를 필드명만 실어서 모델이 결과로 지워진 걸 확인 가능하게 함
     cleared = {"cleared": sorted(set(args.clear))} if args.clear else {}
     return ok("update", resource, id=row.id, observed_on=row.observed_on.isoformat(), **cleared)
-
-
-async def _delete(context: AgentContext, args: Any, *, domain: str) -> ToolResult:
-    """update 의 status=deleted. 행은 남고 status 만 바뀐다. 이미 지운 행은 없는 행과 같다."""
-    resource = _resource(domain)
-    deleted = await context.store.delete_observation(
-        domain=domain, observation_id=args.observation_id
-    )
-    if not deleted:
-        return fail("update", resource, ErrorCode.TARGET_NOT_FOUND, _not_found(domain))
-    return ok("update", resource, id=args.observation_id, status="deleted")
 
 
 def _not_found(domain: str) -> str:
@@ -394,8 +384,6 @@ async def update_observation_health(
     def kind_check(current: ObservationRow) -> str | None:
         # 한 행 = 한 사건. 증상 행과 약 행을 서로 바꾸면 DB CHECK 에 걸린다 — 그 전에 돌려준다.
         # 약 행에 체온 · 정도 같은 증상 칸을 얹는 것도 같다 — 열 타임라인이 그 행을 두 번 낸다
-        if args.status is not None:
-            return None
         is_medicine = current.fields.get("medication_given") is not None
         symptom_fields = any(getattr(args, name) is not None for name in _SYMPTOM_FIELDS)
         if args.medication_given is not None and not is_medicine:

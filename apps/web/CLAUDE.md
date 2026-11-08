@@ -19,7 +19,7 @@ Owner: 고태영 (프론트 리드)
 | 이걸 만지면 | 먼저 읽을 문서 |
 | --- | --- |
 | 05 · 07 · 08 · 09 · 11-1 · 11-2 화면, 라우트를 더하거나 시트를 라우트로 바꿀 때 | [`screen-rules-v1.md`](../../docs/web/screen-rules-v1.md) |
-| 04 대화 · `stores/conversation.ts` · `hooks/use-run-stream.ts` · `lib/api/sse.ts` · `components/run-result.tsx` · 지난 대화(`lib/chat-history.ts` · `hooks/use-chat-history.ts`) | [`chat-run-v1.md`](../../docs/web/chat-run-v1.md) |
+| 04 대화 · `stores/conversation.ts` · `hooks/use-run-stream.ts` · `lib/api/sse.ts` · `components/run-result.tsx` · `components/record-tabs-card.tsx` · `lib/delete-proposal.ts` · 지난 대화(`lib/chat-history.ts` · `hooks/use-chat-history.ts`) | [`chat-run-v1.md`](../../docs/web/chat-run-v1.md) |
 | `components/` · `components/ui/` · `globals.css` · 아이콘 · 서체 · 10 설정 하위 화면(고객센터 · 탈퇴 · 문제 알리기) | [`components-v1.md`](../../docs/web/components-v1.md) |
 | `lib/auth/` · `stores/session.ts` · `/auth/*` · 01 · 02 · 동의(`lib/consent.ts`) · 위치(`lib/location.ts` · `lib/native/location.ts`) | [`auth-consent-v1.md`](../../docs/web/auth-consent-v1.md) |
 | `lib/api/` · 뮤테이션 · 에러 코드 처리 · `error.tsx` · `AppErrorBoundary` | [`api-client-v1.md`](../../docs/web/api-client-v1.md) |
@@ -70,7 +70,8 @@ Owner: 고태영 (프론트 리드)
 - `mocks/` = MSW 목 서버, **개발 환경 전용** (§7).
   🚨 `mocks/native-bridge.ts` 는 **MSW 가 아니다** — 최근 사진은 API 가 아니라 셸이 꽂는 값이라
   서비스 워커가 가로챌 대상이 없다. 스위치만 목과 같은 것을 쓴다
-- ⚠️ `lib/features.ts` = **실서버에 아직 없는 기능의 진입점** (08 사진으로 적기 · 11-2 검사지 · 11-3 복약 · #409). 목이 뜨는 환경에서만 버튼이 선다. 서버에 엔드포인트가 생기면 그 항목을 지우고 호출부 조건을 걷어낸다
+- ⚠️ `lib/features.ts` = **실서버에 아직 없는 기능의 진입점** (08 사진으로 적기 · 11-2 검사지 · #409. 11-3 복약은 #713 에서 풀었다). 목이 뜨는 환경에서만 버튼이 선다. 서버에 엔드포인트가 생기면 그 항목을 지우고 호출부 조건을 걷어낸다
+- ⚠️ `lib/store-policy.ts` = **스토어 정책 때문에 숨긴 기능** (11-3 복약 · 2026-11-07). 서버에는 있다. 🚨 켜기 전에 Google Play 건강 앱 선언부터 고친다 — 웹뷰라 웹 배포만으로 심사 없이 켜진다
 - `lib/native/` = **네이티브 셸이 꽂아 주는 것의 웹 쪽 약속.** 셸 구현은 `apps/mobile` 이다
 - `stores/` = Zustand, **클라이언트 상태만.** 서버 상태는 TanStack Query (§3).
   🚨 `stores/draft.ts` 는 **메모리 전용**이다 — 아직 안 보낸 발화 원문이라 `persist` 금지.
@@ -198,6 +199,7 @@ Owner: 고태영 (프론트 리드)
 
 `POST /children/{cid}/inputs` · `/onboarding` · `/photos` · `/health-safety`(게이트 ㉡ · 고치기 `PATCH` 포함) · **초안 제출**(게이트 ㉠ · `POST`/`PATCH` events).
 🚨 **복약 초안 제출**(`POST`/`PATCH` medications · #537)도 게이트 ㉡ 안의 메서드다 — 게이트를 늘린 것이 아니다 ([`medication-v1.md`](../../docs/web/medication-v1.md)).
+🚨 **대화의 삭제 확정**(`POST …/delete-proposals/{pid}/confirm` · #535)도 같은 표에 있다 ([`chat-run-v1.md`](../../docs/web/chat-run-v1.md) §5).
 메서드가 둘인 이유와 각 줄의 규칙 원문은 [`api-client-v1.md`](../../docs/web/api-client-v1.md) §2.
 
 **`lib/api/operations.ts` 의 전용 함수로만 부른다.** 키가 필수 인자라 빠뜨리면 `tsc` 가 잡는다.

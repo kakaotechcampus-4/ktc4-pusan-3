@@ -98,7 +98,8 @@ def test_alert_has_timestamp_and_color(attach, sent):
 def test_exception_type_goes_out_but_not_its_message(attach, sent):
     """🚨 log.exception 의 예외 메시지는 싣지 않는다 — 종류 이름만.
 
-    errors.py 의 마지막 그물이 이렇게 찍는다. 예외 메시지에는 입력 원문이 섞일 수 있다.
+    app 코드는 이제 log.exception 을 쓰지 않지만(#670 · logging_config.log_error_without_message),
+    누가 쓰더라도 카드에는 종류만 간다. 예외 메시지에는 입력 원문이 섞일 수 있다.
     """
     log, handler = attach(sent.append)
     try:

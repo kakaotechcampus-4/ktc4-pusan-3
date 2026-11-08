@@ -21,23 +21,42 @@ export function Checkbox({
   onChange,
   label,
   description,
+  disabled = false,
   className,
 }: {
   checked: boolean;
   onChange: (checked: boolean) => void;
   label: ReactNode;
   description?: ReactNode;
+  /**
+   * 잠깐 못 바꾸는 동안 (04 삭제 카드가 지우는 중 · 확인 띠가 열린 동안 · #535). 표식과 글자를 물린다 —
+   * 🚨 체크 여부는 그대로 보인다. 무엇이 지워질지 읽는 중에 체크가 사라지면 안 된다.
+   */
+  disabled?: boolean;
   className?: string;
 }) {
   const id = useId();
   const descriptionId = description ? `${id}-description` : undefined;
 
   return (
-    <label htmlFor={id} className={cn("group min-h-touch flex items-start gap-3 py-2", className)}>
+    /*
+      🚨 `relative` 를 빼지 않는다 (#535). 숨긴 input(`sr-only` = absolute)이 기준을 못 찾으면 페이지에 붙어서,
+         스크롤 칸(`max-h-* overflow-y-auto`) 안 아래쪽 줄의 input 이 칸 밖으로 나가 **문서 높이를 늘린다.**
+         04 삭제 카드에서 문서가 실제 내용의 두 배가 됐고, 대화가 바닥으로 따라 내려가 화면이 통째로 비었다.
+    */
+    <label
+      htmlFor={id}
+      className={cn(
+        "group min-h-touch relative flex items-start gap-3 py-2",
+        disabled && "opacity-60",
+        className,
+      )}
+    >
       <input
         id={id}
         type="checkbox"
         checked={checked}
+        disabled={disabled}
         aria-describedby={descriptionId}
         onChange={(e) => onChange(e.target.checked)}
         className="peer sr-only"

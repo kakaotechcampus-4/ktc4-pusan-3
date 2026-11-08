@@ -146,7 +146,7 @@ async def upload_photo(
             "path": request.url.path,
             "key": idempotency_key,
         }
-        replayed = idempotency.recall(**scope)
+        replayed = await idempotency.recall(**scope)
         if replayed is not None:
             previous = registry.get(replayed)
             if previous is not None and previous.ended_with != "failed":
@@ -167,7 +167,8 @@ async def upload_photo(
 
         channel = registry.open_run(parent_id=parent.parent_id)
         try:
-            idempotency.remember(**scope, replay=channel.run_id)
+            # 아직 아무것도 읽지 않았다 — 키를 못 남기면 접수하지 않고 503 (한 줄 입력과 같다, #671)
+            await idempotency.remember(**scope, replay=channel.run_id, strict=True)
         except Exception:
             channel.close()  # 러너가 안 떠서 아무도 닫지 않는다
             raise

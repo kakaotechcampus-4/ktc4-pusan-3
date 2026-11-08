@@ -30,6 +30,7 @@ import { landingPath } from "@/lib/auth/landing";
 import { OAuthUnavailableError, startOAuthLogin } from "@/lib/auth/oauth";
 import { cn } from "@/lib/cn";
 import { PRIVACY_POLICY_HREF } from "@/lib/consent";
+import { MEDICATION_ENABLED } from "@/lib/store-policy";
 import { hasLiveSession, useSessionStore } from "@/stores/session";
 
 /**
@@ -46,7 +47,7 @@ import { hasLiveSession, useSessionStore } from "@/stores/session";
  *    그래서 기능 목록보다 **기록이 쌓이는 시간**을 보여준다 (#704). 가입 첫날 보게 될 "일반 추천" 을
  *    소개가 먼저 말해 두지 않으면, 첫 경험이 약속과 다르게 읽힌다.
  *
- * 🚨 **실서버에서 동작하는 것만 소개한다.** 사진으로 적기 · 검사지 · 복약처럼 `lib/features.ts` 에
+ * 🚨 **실서버에서 동작하는 것만 소개한다.** 사진으로 적기 · 검사지처럼 `lib/features.ts` 에
  *    걸린 기능은 넣지 않는다 — 소개를 보고 가입한 사람이 그 문을 찾지 못한다. 그 항목이 풀리면
  *    여기에 더한다. 문구의 근거는 고객센터 답(`lib/help.ts`)과 같은 규칙이다.
  *
@@ -94,7 +95,11 @@ const DOMAINS: Array<{ agent: Agent; label: string; text: string }> = [
   {
     agent: "health",
     label: "건강",
-    text: "증상 기록을 모아 정리해요. 같은 증상이 이어지면 병원 확인을 권하고, 진단은 하지 않아요.",
+    // 복약은 #713 에서 실서버에 붙었다. 🚨 "알려 드려요" 를 말하지 않는다 — 복약 알림 발송은 아직 없다.
+    // 🚨 스토어 선언 때문에 꺼 둔 동안은 복약을 말하지 않는다 (`lib/store-policy.ts`).
+    text: MEDICATION_ENABLED
+      ? "증상 기록을 모아 정리해요. 먹일 약과 시간을 적으면 복약 일정을 준비해 두고, 확인한 뒤에 넣어요. 같은 증상이 이어지면 병원 확인을 권하고, 진단은 하지 않아요."
+      : "증상 기록을 모아 정리해요. 같은 증상이 이어지면 병원 확인을 권하고, 진단은 하지 않아요.",
   },
 ];
 

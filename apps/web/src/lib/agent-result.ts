@@ -55,6 +55,30 @@ export function blockReadouts(result: AgentResultEvent): AgentReadout[] {
   );
 }
 
+/**
+ * 블록의 "복약 화면 열기" 가 갈 곳 (#713 · `docs/web/medication-v1.md` §3). 세울 곳이 아니면 `null`.
+ *
+ * - 회차 현황(`dose_status`)이 있거나, readout 이 복약 코스를 가리키면(`source_refs` 의 `medication_schedule`) 선다.
+ *   "먹였어" 의 체크 안내가 뒤쪽이다 — 문구가 "홈이나 복약 화면에서 해 주세요" 라서 갈 길이 같이 있어야 한다.
+ * - 가리키는 코스가 **하나면 그 코스를 연다**(`?course=`). 둘 이상이면 어느 약인지 화면이 고르지 않고 복약 화면
+ *   처음으로 간다. 지난 대화에서 다시 그린 블록은 근거가 없어(`StoredReadout`) 회차 현황일 때 처음으로 간다.
+ * 🚨 체크는 그 화면에서만 한다. 여기서 회차를 체크하는 버튼을 만들지 않는다 (기록이 생기는 곳이 한 곳이다).
+ */
+export function medicationHref(childId: string, readouts: readonly AgentReadout[]): string | null {
+  const courses = new Set(
+    readouts.flatMap((readout) =>
+      (readout.source_refs ?? [])
+        .filter((ref) => ref.kind === "medication_schedule")
+        .map((ref) => ref.id),
+    ),
+  );
+  if (courses.size === 0 && !readouts.some((readout) => readout.kind === "dose_status")) {
+    return null;
+  }
+  const base = `/child/${childId}/profile/medications`;
+  return courses.size === 1 ? `${base}?${new URLSearchParams({ course: [...courses][0] })}` : base;
+}
+
 export interface BlockCandidates {
   count: number;
   /** 서버 코드 문구. 비어 오면 그리지 않는다. */

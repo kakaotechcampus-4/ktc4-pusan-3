@@ -104,6 +104,25 @@ C48_AFFINITY: tuple[tuple[AffinityDomain, str], ...] = (
     ("activity", "농구"),
     ("education", "공룡"),
 )
+# 요청 주제와 무관한 기록만 있는 아이 — 공룡 관심 · 영어 노래 · 블록 · 손 씻기.
+# 국어 · 수학 · 곰 책 · 식사 고민에 개인화가 붙으면 안 된다
+C48_UNRELATED: tuple[Observation, ...] = (
+    ("education", 3, {"subject": "영어", "topic": "영어 노래 따라 부르기", "polarity": 1}),
+    ("activity", 2, {"subject": "블록", "activity": "블록 쌓기", "polarity": 1}),
+    _routine(2, "손 씻기", "self_care", "partial_assist"),
+)
+# 국어 고민의 기록 — 4문장 이상 글 읽기를 어려워한다(polarity −1). 도울 대상이지 피한 근거가 아니다
+C48_READING: tuple[Observation, ...] = (
+    (
+        "education",
+        3,
+        {"subject": "글 읽기", "topic": "4문장 이상 글 읽기 어려움", "polarity": -1},
+    ),
+)
+# 게임 고민의 기록 — 같은 run 에서 Memory 가 남긴 것과 같은 모양(놀이 기록 1건)
+C48_GAME: tuple[Observation, ...] = (
+    ("activity", 1, {"subject": "게임", "activity": "휴대폰 게임", "polarity": 1}),
+)
 _ALLERGY = (
     SafetyEntry(kind="allergy", label="라텍스", status="active"),
     SafetyEntry(kind="allergy", label="꽃가루", status="active"),
@@ -162,6 +181,14 @@ WORLDS: dict[str, WorldSpec] = {
         **_only(_routine(1, "양치하기", "self_care", "full_assist", polarity=-1))
     ),
     "C48-noassist": WorldSpec(**_only(_routine(2, "양치하기", "self_care"))),
+    "C48-unrelated": WorldSpec(observations=C48_UNRELATED, affinities=(("education", "공룡"),)),
+    "C48-reading": WorldSpec(observations=C48_READING, affinities=(("education", "공룡"),)),
+    # 게임 고민인데 사회 기록("약속 지키기")뿐 — 활동 낱말로 읽으면 화면 근거가 된다
+    "C48-promise": WorldSpec(
+        observations=(_routine(1, "약속 지키기", "social_manner", "verbal_prompt"),),
+        affinities=(("education", "공룡"),),
+    ),
+    "C48-game": WorldSpec(observations=C48_GAME, affinities=(("education", "공룡"),)),
     "C48-trigger": WorldSpec(
         **_only(_routine(2, "손톱 물어뜯기", "habit", polarity=-1, trigger="긴장할 때"))
     ),

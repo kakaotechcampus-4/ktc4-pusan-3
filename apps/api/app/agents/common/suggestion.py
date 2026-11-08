@@ -52,6 +52,10 @@ class SuggestionDraft:
     items: tuple[str, ...] = ()
     # 장소가 붙은 추천의 확인 문구(공공데이터 기준일 · 운영 여부). 코드 문구 · 근거 아님 (#516)
     place_notice: str | None = None
+    # 행사가 붙은 추천의 행사 기간. 화면이 확인 문구 줄에 날짜로 세운다 — 날짜 없이 이름만 나가면
+    # 지난 행사인지 알 수 없다. 근거 아님 · 장소 · 행사가 없으면 비어 있다 (#516)
+    event_starts_on: date | None = None
+    event_ends_on: date | None = None
     # 그 추천에 붙는 위험 경고 문구(위험 용어 사전의 축 문구). 코드 문구 · 근거 아님.
     # Activity · Growth 가 같이 쓴다. 경고가 없으면 비어 있다 (#402)
     warnings: tuple[str, ...] = ()
@@ -69,9 +73,22 @@ class SuggestionDraft:
             "allergens": list(self.allergens),
             "items": list(self.items),
             "place_notice": self.place_notice,
+            "event_starts_on": self.event_starts_on and self.event_starts_on.isoformat(),
+            "event_ends_on": self.event_ends_on and self.event_ends_on.isoformat(),
             "warnings": list(self.warnings),
             "requested": self.requested,
         }
+
+
+# 보호자가 정한 요청에 맞춘 일반 추천으로 문서 행 근거를 면제받을 수 있는 Agent (루트 §2).
+# 저장 검사(`domains/suggestion/repository._REQUESTED_AGENTS`)가 같은 값을 따로 갖는다 —
+# 레이어가 달라 서로 import 하지 않고 테스트가 맞춘다.
+# 표는 Agent 이름 단위지만 Growth 는 교육 경로(`review_learning`)만 `requested` 를 넘긴다. 저장 행에
+# task 가 없어 저장 검사가 경로를 가르지 못하니 출력 tool 쪽에서 막는다 — 루틴은 일반 추천을 내지
+# 않고(`general_reason=None`), 도서는 넘기지 않는다. 지키는 테스트:
+# `tests/unit/agents/growth/test_growth_books.py` 의
+# `test_run_이_요청_기반으로_서도_도서_일반_추천은_요청_기반이_아니다`
+REQUESTED_AGENTS: frozenset[str] = frozenset({"activity", "growth"})
 
 
 def build(
@@ -97,10 +114,11 @@ def build(
     낸다(#442). Growth 도서는 고른 책(정보나루 서지 행)을 넘긴다. 넘기지 않는 Agent
     (Activity · Growth 교육)는 지금처럼 문서 행이 있어야 한다.
 
-    `requested` 는 보호자가 이번 요청에서 놀이 · 음식을 정해 물었다는 뜻이다("물놀이 뭐 하지?").
-    아이 기록 근거가 없으면 그 요청에 맞춰 만든 일반 추천이라, 문서 행 근거가 없어도 된다 —
-    기준이 이번 요청이다. 문구(`general_reason`)가 그렇게 밝힌다. 막연한 요청("뭐 하고 놀까?")은
-    지금처럼 문서 행이 있어야 한다. 아이 기록이 있으면 요청과 상관없이 개인화다.
+    `requested` 는 보호자가 이번 요청에서 놀이 · 주제를 정해 물었다는 뜻이다("물놀이 뭐 하지?",
+    "영어 어떻게 가르쳐?"). 아이 기록 근거가 없으면 그 요청에 맞춰 만든 일반 추천이라, 문서 행
+    근거가 없어도 된다 — 기준이 이번 요청이다. 문구(`general_reason`)가 그렇게 밝힌다. 막연한
+    요청("뭐 하고 놀까?")은 지금처럼 문서 행이 있어야 한다. 아이 기록이 있으면 요청과 상관없이
+    개인화다. 이 면제는 `REQUESTED_AGENTS` 만 받는다.
 
     6개월 넘은 아이 기록은 단독 근거가 아니다(루트 §2 · NF-08). 그것만 남으면 일반 추천이고
     그 인용은 뺀다 — 일반 추천에 아이 기록 근거가 붙으면 개인화로 집계된다. 최근 기록과 같이
@@ -116,15 +134,15 @@ def build(
                 f"{agent}: {item.ref.kind} 를 인용했는데 무엇을 근거로 봤는지(note)가 비었다"
             )
 
-    if not any(_fresh(item, today) for item in citations):
+    if not any(fresh_child(item, today) for item in citations):
         if general_reason is None:
             raise SuggestionRejected(
                 f"{agent}: 아이 기록 근거가 0행인데 일반 추천 문구(general_reason)가 없다"
             )
         basis = (*(item for item in citations if not item.ref.is_child_record), *general_basis)
-        # 요청 기반으로 문서 근거를 면제하는 것은 Activity 뿐이다. Food 는 후보가 레시피북에서만
-        # 나와야 해서, 면제하면 책에 없는 메뉴가 나간다 (#597 리뷰)
-        requested = requested and agent == "activity"
+        # 요청 기반으로 문서 근거를 면제하는 Agent 는 `REQUESTED_AGENTS` 뿐이다. Food 는 후보가
+        # 레시피북에서만 나와야 해서, 면제하면 책에 없는 메뉴가 나간다 (#597 리뷰)
+        requested = requested and agent in REQUESTED_AGENTS
         if not basis and not requested:
             # 일반 추천은 문서 행(Food 는 메뉴 행도)이 근거다 (루트 §2). 아이 기록도 문서도 메뉴도
             # 없고 보호자가 정한 요청도 없으면 무엇을 기준으로 골랐는지 보여 줄 것이 없다
@@ -155,7 +173,7 @@ def build(
     )
 
 
-def _fresh(item: EvidenceCitation, today: date) -> bool:
+def fresh_child(item: EvidenceCitation, today: date) -> bool:
     """개인화 근거로 셀 수 있는 아이 기록인가. 날짜를 모르면 낡았는지 알 수 없어 세지 않는다."""
     return (
         item.ref.is_child_record

@@ -9,6 +9,7 @@ from app.agents.activity.schemas.memory import SearchActivityMemoryArgs
 from app.agents.activity.schemas.outing import (
     LookupScheduleArgs,
     LookupWeatherArgs,
+    SearchEventsArgs,
     SearchNearbyPlacesArgs,
 )
 from app.agents.activity.schemas.recommend import ProposeActivityCandidatesArgs
@@ -48,6 +49,18 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
             "place_name 에는 이 결과에 있는 이름만 쓴다."
         ),
         args=SearchNearbyPlacesArgs,
+    ),
+    ToolDefinition(
+        name="search_events",
+        description=(
+            "그날 열리는 축제 · 공연 · 행사를 가까운 순으로 찾는다. 보호자가 축제 · 공연 · 행사나 "
+            "주말에 갈 만한 곳을 물을 때 부른다. 보호자가 지역을 말했으면 area 에 그 이름을 "
+            "넣는다 — 시 · 도만 말해도(부산) 그 시 · 도 전체에서 찾는다. 바깥 활동이 어려운 날은 "
+            "찾지 않는다. place_name 에는 이 결과에 있는 이름만 "
+            "쓰고, day 는 결과의 open_days 에 있는 날로 쓴다. 행사 장소는 결과의 place(그날 "
+            "장소)다."
+        ),
+        args=SearchEventsArgs,
     ),
     ToolDefinition(
         name="propose_activity_candidates",

@@ -97,6 +97,13 @@ export interface PanelTabItem {
   label: string;
   /** 왼쪽에 세울 도메인 아이콘. 🚨 `aria-hidden` 이라 뜻은 옆의 라벨이 진다 (문서 §3). */
   icon?: Agent;
+  /**
+   * 라벨 옆의 작은 숫자 (04 기록 카드의 "3" · "2/40" · #535). 라벨보다 옅게 선다. 🚨 뜻을 숫자 혼자 지지 않는다 —
+   * 무엇의 수인지는 패널 안의 머리말이 글자로 말한다.
+   */
+  count?: string;
+  /** 스크린리더가 `count` 대신 읽는 말 ("40건 중 27건 고름"). 🚨 "27 슬래시 40" 으로 읽히지 않게 둔다. */
+  countLabel?: string;
 }
 
 export function PanelTabs({
@@ -105,6 +112,7 @@ export function PanelTabs({
   onChange,
   label,
   panelId,
+  scroll = false,
 }: {
   items: readonly PanelTabItem[];
   active: string;
@@ -113,6 +121,12 @@ export function PanelTabs({
   label: string;
   /** 이 탭들이 바꾸는 패널의 `id`. 🚨 패널에는 `role="tabpanel"` 과 `aria-labelledby` 를 단다. */
   panelId: string;
+  /**
+   * 탭이 칸을 나눠 갖지 않고 제 폭대로 서서, 넘치면 **탭 줄 안에서** 옆으로 민다 (#535).
+   * 04 기록 카드는 종류가 여섯까지라 360px 에서 칸을 나누면 "생활습관" 이 칸 밖으로 넘친다.
+   * 🚨 화면 전체가 옆으로 밀리지 않는다 — 넘침은 이 줄 하나에 갇힌다.
+   */
+  scroll?: boolean;
 }) {
   function move(from: number, to: number) {
     const next = items[Math.min(items.length - 1, Math.max(0, to))];
@@ -123,7 +137,11 @@ export function PanelTabs({
   }
 
   return (
-    <div role="tablist" aria-label={label} className="border-line flex border-b">
+    <div
+      role="tablist"
+      aria-label={label}
+      className={cn("border-line flex border-b", scroll && "overflow-x-auto overscroll-x-contain")}
+    >
       {items.map((item, index) => {
         const on = item.key === active;
 
@@ -153,8 +171,11 @@ export function PanelTabs({
               }
             }}
             className={cn(
-              "text-label min-h-touch ease-standard flex flex-1 items-center justify-center gap-1.5 px-2 text-center transition-colors duration-120",
-              "-mb-px border-b-2",
+              "text-label min-h-touch ease-standard flex items-center justify-center gap-1.5 text-center transition-colors duration-120",
+              // 🚨 스크롤 줄에서는 밑줄을 경계선에 겹치지 않는다(`-mb-px`) — 넘침이 감춰지는 상자라 겹친 1px 이
+              //    세로 스크롤이 된다. 밑줄은 경계선 바로 위에 선다.
+              scroll ? "shrink-0 px-3 whitespace-nowrap" : "-mb-px flex-1 px-2",
+              "border-b-2",
               "focus-visible:-outline-offset-2",
               on
                 ? "border-brand text-ink"
@@ -163,6 +184,14 @@ export function PanelTabs({
           >
             {item.icon ? <DomainIcon agent={item.icon} size="sm" /> : null}
             {item.label}
+            {item.count !== undefined ? (
+              <span className="text-caption text-ink-subtle">
+                <span aria-hidden={item.countLabel !== undefined}>{item.count}</span>
+                {item.countLabel !== undefined ? (
+                  <span className="sr-only">{` ${item.countLabel}`}</span>
+                ) : null}
+              </span>
+            ) : null}
           </button>
         );
       })}

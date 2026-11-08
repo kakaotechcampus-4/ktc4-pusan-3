@@ -23,6 +23,7 @@ from app.api.v1.routers import (
     client_errors,
     consents,
     corrections,
+    delete_proposals,
     diary,
     event_items,
     health_safety,
@@ -68,6 +69,7 @@ protected_router.include_router(observations.router)
 protected_router.include_router(photos.router)
 protected_router.include_router(affinities.router)
 protected_router.include_router(corrections.router)
+protected_router.include_router(delete_proposals.router)
 protected_router.include_router(home.router)
 protected_router.include_router(calendar.router)
 protected_router.include_router(chat.router)
