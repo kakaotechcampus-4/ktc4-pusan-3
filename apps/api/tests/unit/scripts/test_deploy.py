@@ -30,6 +30,7 @@ DEV_ENV = (
     "NEXT_PUBLIC_API_BASE_URL=https://api.dev.icatch.ai.kr\n"
     "COMPOSE_PROFILES=\n"
     "APP_ENV=dev\n"
+    "API_EDGE_IP=172.30.0.21\n"
 )
 PROD_ENV = (
     "COMPOSE_PROJECT_NAME=\n"
@@ -223,6 +224,10 @@ def test_creates_edge_network_with_caddy_address_reserved(box):
         ("prod", PROD_ENV.replace("STACK_SUFFIX=", "STACK_SUFFIX=-dev")),
         # 첫 전환의 down 이 Caddy · 옛 네트워크를 남겨 운영이 내려간 채 멈춘다
         ("prod", PROD_ENV.replace("COMPOSE_PROFILES=edge", "COMPOSE_PROFILES=")),
+        # dev api 가 prod 주소(.20)를 받으면 EC2 메타데이터(서버 역할 열쇠)에 닿는다
+        ("dev", DEV_ENV.replace("API_EDGE_IP=172.30.0.21\n", "")),
+        ("dev", DEV_ENV.replace("172.30.0.21", "172.30.0.20")),
+        ("prod", PROD_ENV + "API_EDGE_IP=172.30.0.21\n"),
         ("prod", DEV_ENV),  # DEPLOY_DIR 이 dev checkout 을 가리킨다
         ("staging", DEV_ENV),
     ],

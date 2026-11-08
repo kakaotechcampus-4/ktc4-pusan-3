@@ -23,7 +23,7 @@ deploy.sh: 빌드 → 마이그레이션 → up --wait(헬스) ─ 실패 → �
 | checkout | `/home/ubuntu/ktc4-pusan-3` | `/home/ubuntu/ktc4-pusan-3-dev` |
 | compose 프로젝트 | `ktc4-deploy` (이름 유지 — DB 볼륨) | `ktc4-dev` |
 | 컨테이너 | `ktc4-api` · `ktc4-web` · … | `ktc4-dev-api` · `ktc4-dev-web` · … |
-| `deploy/docker/.env` | `COMPOSE_PROFILES=edge` | `COMPOSE_PROJECT_NAME=ktc4-dev` · `STACK_SUFFIX=-dev` · `APP_ENV=dev` |
+| `deploy/docker/.env` | `COMPOSE_PROFILES=edge` | `COMPOSE_PROJECT_NAME=ktc4-dev` · `STACK_SUFFIX=-dev` · `APP_ENV=dev` · `API_EDGE_IP=172.30.0.21` |
 | GitHub Environment | `prod` | `dev` |
 
 ## 롤백 — 무엇이 되돌아가고 무엇이 안 되돌아가나

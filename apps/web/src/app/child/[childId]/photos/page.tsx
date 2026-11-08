@@ -8,6 +8,7 @@ import { Suspense, useEffect, useRef, useState } from "react";
 import { AuthGate } from "@/components/auth-gate";
 import { ScreenTransition } from "@/components/route-transition";
 import { ConsentRequiredCard } from "@/components/consent-required-card";
+import { PhotoPreview } from "@/components/photo-preview";
 import { PhotoReview } from "@/components/photo-review";
 import { PhotoSourceSheet } from "@/components/photo-source-sheet";
 import { Button } from "@/components/ui/button";
@@ -22,14 +23,7 @@ import { Swap } from "@/components/ui/swap";
 import { useChildId } from "@/hooks/use-child-id";
 import { useRunStream } from "@/hooks/use-run-stream";
 import { usePhotoDraftStore, type PendingPhoto } from "@/stores/photo-draft";
-import {
-  commitPhotoRun,
-  isApiError,
-  photoFormData,
-  qk,
-  uploadPhoto,
-  type PhotoCommitRequest,
-} from "@/lib/api";
+import { commitPhotoRun, isApiError, qk, sendPhoto, type PhotoCommitRequest } from "@/lib/api";
 import { useIdempotencyKey } from "@/lib/api/use-idempotency-key";
 import { formatDay, parseISODate, toISODate } from "@/lib/format";
 
@@ -113,7 +107,7 @@ function PhotosScreen() {
 
   /**
    * 🚨 재시도할 때 키를 새로 만들지 않는다 — 같은 사진을 다시 올리는 것이 재시도다.
-   *    **다른 사진으로 바꿀 때만** 돌린다(`resetToPicker`). 같은 키에 다른 본문을 보내면
+   *    **다른 사진으로 바꿀 때만** 돌린다(아래 시트의 `onPick`). 같은 키에 다른 본문을 보내면
    *    422 idempotency_key_reuse 다 (03 홈의 `closeRun` 과 같은 규칙).
    */
   const idempotencyKey = useIdempotencyKey();
@@ -138,12 +132,9 @@ function PhotosScreen() {
 
   const upload = useMutation({
     mutationFn: (picked: PendingPhoto) =>
-      uploadPhoto(
-        childId,
-        // 🚨 부모가 고른 lane 을 함께 싣는다 — 서버가 추측하게 두지 않는다 (operations.ts).
-        photoFormData(picked.file, { lane: picked.lane, date }),
-        idempotencyKey.current(),
-      ),
+      // 🚨 사진 본문은 서버가 S3 버킷을 쓰면 S3 로 바로 간다 — 서버는 열쇠만 받고, 읽자마자 지운다.
+      //    부모가 고른 lane 을 함께 싣는다 — 서버가 추측하게 두지 않는다 (operations.ts).
+      sendPhoto(childId, picked.file, { lane: picked.lane, date }, idempotencyKey.current()),
     onSuccess: (res) => {
       setRunId(res.run_id);
       run.start(res.run_id);
@@ -280,8 +271,17 @@ function PhotosScreen() {
             }
             onGoHome={goHome}
           />
+        ) : // `failed` · 20초 안전망(`partial`) · 스트림 오류가 여기로 온다. 셋 다 읽어낸 것이 없다.
+        // 🚨 공지가 아닌 사진은 같은 사진을 다시 읽어도 같다 — 다시 시도 대신 다른 사진을 고르게 한다.
+        run.state.failure?.reason === "not_document" ? (
+          <Failed
+            title="공지나 식단표를 찾지 못했어요"
+            note="알림장 · 가정통신문 · 식단표처럼 기관에서 받은 문서 사진을 올려 주세요. 아무것도 저장하지 않았어요."
+            retryLabel="다른 사진 고르기"
+            onRetry={() => setSheetOpen(true)}
+            onGoHome={goHome}
+          />
         ) : (
-          // `failed` · 20초 안전망(`partial`) · 스트림 오류가 여기로 온다. 셋 다 읽어낸 것이 없다.
           <Failed
             title="이 사진에서는 읽어낼 게 없었어요"
             note="잘못 저장하지 않으려고 아무것도 저장하지 않았어요. 글자가 더 잘 보이는 사진이면 읽을 수 있어요."
@@ -297,6 +297,9 @@ function PhotosScreen() {
         onClose={() => setSheetOpen(false)}
         onPick={({ file, lane }) => {
           setSheetOpen(false);
+          // 🚨 다른 사진이다 — 키를 돌린다. "다른 사진 고르기"(not_document) 뒤에 앞 사진의 키로
+          //    보내면 422 idempotency_key_reuse 에 갇힌다 (#727 리뷰).
+          idempotencyKey.rotate();
           // 🚨 이벤트 핸들러라 여기서 만들어도 된다. 만드는 것도 해제하는 것도 스토어가
           //    한 곳에서 맡는다 — 올리는 것은 위의 effect 다 (사진 한 장당 한 번).
           setPhoto(usePhotoDraftStore.getState().adoptPhoto(file, lane));
@@ -360,8 +363,7 @@ function Reading({
   return (
     <div className="flex flex-col gap-4">
       <PhotoCard>
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={previewUrl} alt="읽고 있는 사진" className="h-full w-full object-cover" />
+        <PhotoPreview src={previewUrl} alt="읽고 있는 사진" />
       </PhotoCard>
       <Card>
         <ProgressSteps index={index} total={total} label={label} />
@@ -379,11 +381,13 @@ function Reading({
 function Failed({
   title,
   note,
+  retryLabel = "다시 시도",
   onRetry,
   onGoHome,
 }: {
   title: string;
   note: string;
+  retryLabel?: string;
   onRetry: () => void;
   onGoHome: () => void;
 }) {
@@ -394,7 +398,7 @@ function Failed({
         <p className="text-body-sm text-ink-muted mt-2">{note}</p>
       </div>
       <div className="flex flex-wrap gap-2">
-        <Button onClick={onRetry}>다시 시도</Button>
+        <Button onClick={onRetry}>{retryLabel}</Button>
         <Button variant="secondary" onClick={onGoHome}>
           메인으로 돌아가기
         </Button>

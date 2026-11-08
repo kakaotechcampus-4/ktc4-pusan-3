@@ -125,9 +125,17 @@ services:
     # 호스트 포트를 열지 않는다 — Caddy 가 edge 네트워크로 리버스 프록시한다.
     expose:
       - "8000"
+    # 🚨 ktc4-edge 의 고정 주소다. 서버 방화벽이 172.30.0.20 상자만 EC2 메타데이터(서버 역할의 S3 열쇠)에
+    #    닿게 한다 (deploy/scripts/imds-firewall.sh — 바꾸면 그 스크립트의 API_IP 도 같이).
+    #    prod 는 비워 둬서 .20, dev 는 .env 에 API_EDGE_IP=172.30.0.21 — dev(develop 코드)는 열쇠를 못 받는다.
+    #    deploy.sh 가 dev 에 .20 이 오지 않게 막는다. 자동으로 받는 상자는 .128 위라(--ip-range) .20 · .21 과 안 겹친다.
+    # 🚨 gw_priority — 밖으로 나가는 길을 edge 로 고정한다. 없으면 네트워크 이름 순서(ktc4-deploy_default <
+    #    ktc4-edge)로 default 쪽 아무 주소로 나가서 방화벽에 막히고 사진(S3)이 끊긴다. Docker 28+ (API 1.48).
     networks:
-      - default
-      - edge
+      default: {}
+      edge:
+        ipv4_address: ${API_EDGE_IP:-172.30.0.20}
+        gw_priority: 1
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')\""]
       interval: 30s

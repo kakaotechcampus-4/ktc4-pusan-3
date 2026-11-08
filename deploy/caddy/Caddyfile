@@ -16,6 +16,14 @@
 	header Strict-Transport-Security "max-age=86400"
 }
 
+# api 는 인증 · 크기 검사보다 본문을 먼저 끝까지 받는다. 큰 본문은 여기서 자른다(413).
+# 가장 큰 요청은 버킷 없이 직접 받는 사진 15MB 다 (apps/api/app/api/v1/routers/photos.py). dev · prod api 둘 다.
+(body_limit) {
+	request_body {
+		max_size 16MB
+	}
+}
+
 # prod (main)
 icatch.ai.kr {
 	import hsts
@@ -24,6 +32,7 @@ icatch.ai.kr {
 
 api.icatch.ai.kr {
 	import hsts
+	import body_limit
 	reverse_proxy ktc4-api:8000
 }
 
@@ -35,5 +44,6 @@ dev.icatch.ai.kr {
 
 api.dev.icatch.ai.kr {
 	import hsts
+	import body_limit
 	reverse_proxy ktc4-dev-api:8000
 }

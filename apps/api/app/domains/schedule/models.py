@@ -53,6 +53,10 @@ class Event(Base, UUIDPk):
     """
 
     __tablename__ = "event"
+    __table_args__ = (
+        # 공지 항목 하나는 일정 하나가 된다. 같은 항목에 일정이 둘 걸리면 막는다
+        UniqueConstraint("source_notice_item_id", name="uq_event_source_notice_item_id"),
+    )
 
     child_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("child.id", ondelete="CASCADE"), nullable=False
@@ -70,7 +74,14 @@ class Event(Base, UUIDPk):
     created_by: Mapped[EventCreatedBy] = mapped_column(
         enum_col_py(EventCreatedBy, name="event_created_by"), nullable=False
     )
-    source_notice_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    source_notice_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("notice.id", ondelete="SET NULL")
+    )
+    # 공지의 어느 항목으로 만든 일정인가. 일정은 보호자가 확정한 것이라 공지가 지워져도 남긴다.
+    # 공지 저장 때 채운다 — 사진 화면은 공지를 저장하기 전에 일정부터 넣을 수 있다
+    source_notice_item_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("notice_item.id", ondelete="SET NULL")
+    )
     source_refs: Mapped[list | None] = mapped_column(JSONB)
 
 

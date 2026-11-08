@@ -61,6 +61,7 @@ from app.agents.growth.store.ports import (
 from app.agents.growth.store.ports import SafetyReader as GrowthSafetyReader
 from app.agents.growth.store.ports import UnwiredSafety as GrowthUnwiredSafety
 from app.agents.health.context import HealthContext
+from app.agents.health.places.ports import FacilitySource
 from app.agents.health.store.inmemory import InMemoryConsent as HealthConsent
 from app.agents.health.store.inmemory import InMemoryProfile as HealthProfile
 from app.agents.health.store.ports import (
@@ -87,6 +88,7 @@ from app.agents.memory_bridge import (
     StoreHealthMemory,
     StoreOpener,
 )
+from app.agents.notice_ocr import PhotoReading, UnreadablePhoto, read_photo
 from app.agents.pipeline import (
     RECOMMENDING_TASKS,
     AgentQuestion,
@@ -130,6 +132,9 @@ from app.rules.age import months_between
 # api가 이 파일만 보면 되도록 진행 이벤트 타입도 여기서 내보냄
 # pipeline에 이벤트를 추가하면 여기에도 작성
 __all__ = [
+    "PhotoReading",
+    "UnreadablePhoto",
+    "read_photo",
     "MAX_SUGGESTIONS",
     "FIRST_REQUEST_AGENTS",
     "SUGGESTION_AGENTS",
@@ -268,6 +273,8 @@ async def handle_input(
     health_medication: MedicationReader | None = None,
     health_medication_writer: MedicationWriter | None = None,
     health_child: ChildBasicReader | None = None,
+    health_location: CoarseLocation | None = None,
+    health_places: FacilitySource | None = None,
     affinity_reader: AffinityReader | None = None,
 ) -> PipelineResult:
     """입력 한 줄을 처리한다. 진행 상황은 emit 으로 나간다.
@@ -325,6 +332,13 @@ async def handle_input(
     - health_safety · health_medication · health_medication_writer · health_child 는 api 가 넘긴
       Health 어댑터다. 복약 어댑터는 읽기와 중단 쓰기를 한 객체가 한다. 안 넘기면(테스트 · eval)
       읽을 때 실패로 닫힌다 — 빈 저장소로 열려 복약 · 알레르기가 "없음" 으로 읽히지 않게.
+    - health_location 은 병원 찾기에 쓰는 흐린 좌표다. `location` 과 같은 값이어도 따로 받는다 —
+      위치 약관은 판마다 목적이 달라서, 날씨 · 놀이 목적의 이전 판에만 동의한 보호자의 위치를
+      병원 찾기에 쓰면 안 된다(#586 · 약관 제2조 ④⑤). api 가 병원 찾기 목적이 든 판의 동의를
+      확인한 뒤에만 넘긴다. `location` 이 Health 로 넘어가는 길은 없다. None 이면 병원 찾기가
+      `place.no_location` 이다.
+    - health_places 는 api 가 서버 시작 때 만든 병원 어댑터(국립중앙의료원)다. 없으면(키 없음 ·
+      테스트 · eval) 병원 찾기가 `place.unavailable` 로 닫힌다.
     - affinity_reader 는 api 가 넘긴 `profile_affinity` 어댑터다(`DbAffinityReader`). 기억 포트가 그
       run 의 기준일과 함께 받아, 마지막 관찰 뒤 21일이 지난 관심은 archived 로 읽는다. 안 넘기면
       (테스트 · eval) 관심이 없는 아이로 읽는다.
@@ -369,6 +383,8 @@ async def handle_input(
         health_medication=health_medication,
         health_medication_writer=health_medication_writer,
         health_child=health_child,
+        health_location=health_location,
+        health_places=health_places,
         affinity_reader=affinity_reader,
     )
 
@@ -591,6 +607,8 @@ def _domain_contexts(
     health_medication: MedicationReader | None = None,
     health_medication_writer: MedicationWriter | None = None,
     health_child: ChildBasicReader | None = None,
+    health_location: CoarseLocation | None = None,
+    health_places: FacilitySource | None = None,
     affinity_reader: AffinityReader | None = None,
 ) -> tuple[dict[str, DomainContext], RunWrites]:
     """Food · Activity · Growth · Health 컨텍스트. 입력 run 과 05 가 같은 값으로 연다.
@@ -740,7 +758,9 @@ def _domain_contexts(
                 health_medication_writer or unwired_medication, writes
             ),
             child=health_child or UnwiredChildBasic(),
+            places=health_places,
         ),
+        location=health_location,
     )
     return {
         "food": food_context,

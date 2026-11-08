@@ -44,22 +44,24 @@ SUFFIX="$(envval STACK_SUFFIX)"
 API_URL="$(envval NEXT_PUBLIC_API_BASE_URL)"
 PROFILES="$(envval COMPOSE_PROFILES)"
 APPENV="$(envval APP_ENV)"
+EDGE_IP="$(envval API_EDGE_IP)"
 case "$TARGET" in
   # 🚨 프로젝트 이름이 비면 compose 파일의 name(ktc4-deploy) = 운영 DB 볼륨으로 떨어진다.
   # profile 이 남으면 dev 가 운영 Caddy(ktc4-caddy) 이름으로 부딪힌다. APP_ENV 는 compose 가 api · web 에
   # 직접 넣어(${APP_ENV:-prod}) apps/api/.env 를 덮는다 — 비면 dev 알림이 [prod] 로 온다.
+  # API_EDGE_IP — 비면 prod 주소(.20)를 받아 dev 가 EC2 메타데이터(서버 역할 열쇠)에 닿고, prod api 와 주소가 부딪힌다.
   dev) [ "$PROJECT" = ktc4-dev ] && [ "$SUFFIX" = -dev ] && [[ "$API_URL" == *//api.dev.* ]] &&
-    [ -z "$PROFILES" ] && [ "$APPENV" = dev ] ;;
+    [ -z "$PROFILES" ] && [ "$APPENV" = dev ] && [ "$EDGE_IP" = 172.30.0.21 ] ;;
   # web 이미지는 API 주소를 번들에 굽는다 — prod 가 dev API 를 굽거나 그 반대면 막는 건 CORS 하나뿐이다 (#747).
   # edge 가 빠지면 Caddy 를 compose 가 못 본다 — 첫 전환의 down 이 Caddy · 옛 네트워크를 남겨
   # ktc4-edge 를 못 만들고, 운영이 내려간 채 멈춘다.
   prod) { [ -z "$PROJECT" ] || [ "$PROJECT" = ktc4-deploy ]; } && [ -z "$SUFFIX" ] && [[ "$API_URL" != *//api.dev.* ]] &&
-    [ "$PROFILES" = edge ] ;;
+    [ "$PROFILES" = edge ] && { [ -z "$EDGE_IP" ] || [ "$EDGE_IP" = 172.30.0.20 ]; } ;;
   *) false ;;
 esac || {
-  log "🔴 $TARGET 배포인데 $ENV_FILE 이 맞지 않는다 — COMPOSE_PROJECT_NAME='$PROJECT' STACK_SUFFIX='$SUFFIX' NEXT_PUBLIC_API_BASE_URL='$API_URL' COMPOSE_PROFILES='$PROFILES' APP_ENV='$APPENV'"
-  log "   dev: ktc4-dev · -dev · https://api.dev.… · profile 비움 · APP_ENV=dev"
-  log "   prod: 비움(또는 ktc4-deploy) · 비움 · api.dev 아님 · COMPOSE_PROFILES=edge (docs/ops/deploy-v1.md)"
+  log "🔴 $TARGET 배포인데 $ENV_FILE 이 맞지 않는다 — COMPOSE_PROJECT_NAME='$PROJECT' STACK_SUFFIX='$SUFFIX' NEXT_PUBLIC_API_BASE_URL='$API_URL' COMPOSE_PROFILES='$PROFILES' APP_ENV='$APPENV' API_EDGE_IP='$EDGE_IP'"
+  log "   dev: ktc4-dev · -dev · https://api.dev.… · profile 비움 · APP_ENV=dev · API_EDGE_IP=172.30.0.21"
+  log "   prod: 비움(또는 ktc4-deploy) · 비움 · api.dev 아님 · COMPOSE_PROFILES=edge · API_EDGE_IP 비움 (docs/ops/deploy-v1.md)"
   exit 1
 }
 [ -z "${CHECK_ONLY:-}" ] || { log "$ENV_FILE = $TARGET 설정과 맞다"; exit 0; }

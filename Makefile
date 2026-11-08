@@ -2,7 +2,7 @@
 .PHONY: help install dev test lint fmt db-up db-down db-logs \
         db-migrate db-rollback db-current db-history db-heads db-check db-revision \
         db-merge db-reset db-psql \
-        web-install web-dev web-build web-start web-test web-e2e web-lint web-fmt web-fmt-check \
+        web-install web-dev web-build web-start web-test web-e2e web-e2e-live web-lint web-fmt web-fmt-check \
         web-typecheck web-check web-contract web-image web-up web-down web-logs \
         api-image api-up api-down api-logs deploy-up deploy-down deploy-migrate \
         deploy-load-food-dry deploy-load-food deploy-load-places-dry deploy-load-places
@@ -38,6 +38,7 @@ help:
 	@echo "  make web-start      빌드 결과를 로컬에서 실행 (web-build 먼저)"
 	@echo "  make web-test       테스트 실행 (vitest)"
 	@echo "  make web-e2e        화면 규칙 테스트 (Playwright · 목 서버로 개발 서버를 띄운다)"
+	@echo "  make web-e2e-live   실서버 e2e (실제 api + e2e 용 DB · make db-up 먼저 · LLM 은 안 부른다)"
 	@echo "  make web-typecheck  타입 검사 (next typegen + tsc)"
 	@echo "  make web-lint       코드 검사 (eslint)"
 	@echo "  make web-fmt        코드 포맷팅 (prettier)"
@@ -119,6 +120,20 @@ web-test:
 # 개발 서버가 떠 있으면 그것을 쓰고, 없으면 목 모드로 띄웠다 내린다 (playwright.config.ts).
 web-e2e:
 	cd apps/web && pnpm test:e2e
+
+# 실서버 e2e (#756). 실제 api 와 DB 위에서 화면이 이어지는지 본다 (apps/web/playwright.live.config.ts).
+# 개발 DB 서버(make db-up)에 e2e 용 DB 를 따로 만든다 — 테스트가 보호자와 아이를 계속 만들어서다.
+# 🚨 빌드가 api 주소(8100)를 박는다. 이 빌드로 make web-start 를 하면 e2e api 를 부른다 — 다시 web-build 할 것.
+E2E_DB_NAME ?= icatch_e2e
+E2E_LIVE_BUILD_ENV := NEXT_PUBLIC_API_BASE_URL=http://localhost:8100 NEXT_PUBLIC_API_MOCKING=disabled \
+	NEXT_TELEMETRY_DISABLED=1 NEXT_PUBLIC_FIREBASE_API_KEY= NEXT_PUBLIC_FIREBASE_PROJECT_ID= \
+	NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID= NEXT_PUBLIC_FIREBASE_APP_ID= NEXT_PUBLIC_FIREBASE_VAPID_KEY=
+
+web-e2e-live:
+	docker exec ktc4-postgres sh -c 'createdb -U "$$POSTGRES_USER" $(E2E_DB_NAME) 2>/dev/null || true'
+	cd apps/api && DB_NAME=$(E2E_DB_NAME) uv run alembic upgrade heads
+	cd apps/web && $(E2E_LIVE_BUILD_ENV) pnpm build
+	cd apps/web && E2E_DB_NAME=$(E2E_DB_NAME) pnpm test:e2e-live
 
 web-typecheck:
 	cd apps/web && pnpm typecheck
@@ -222,6 +237,8 @@ deploy-up:
 	@$(DEPLOY_GUARD)
 	docker network inspect ktc4-edge >/dev/null 2>&1 || docker network create --subnet 172.30.0.0/24 --ip-range 172.30.0.128/25 ktc4-edge
 	$(COMPOSE_DEPLOY) up -d
+	@# api 상자만 EC2 메타데이터(S3 열쇠)에 닿게 한다 — 서버 재부팅 뒤에도 걸리게 등록까지. 맥은 건너뛴다
+	@if [ "$$(uname -s)" = Linux ]; then sudo -n deploy/scripts/imds-firewall.sh --install; fi
 
 deploy-down:
 	@$(DEPLOY_GUARD)
