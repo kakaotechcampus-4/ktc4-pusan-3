@@ -37,6 +37,13 @@ def memory_tools(memory: Any) -> tuple[ToolCallView, ...] | None:
     return tuple(ToolCallView(call.name, call.success) for call in memory.calls)
 
 
+def draft_items(memory: Any) -> tuple[str, ...]:
+    """Memory 가 만든 일정 초안의 준비물 이름."""
+    if memory is None:
+        return ()
+    return tuple(item.item_name for draft in memory.drafts for item in draft.items)
+
+
 def read_run(
     trace: Trace,
     *,
@@ -176,6 +183,7 @@ async def run_probe(case: ProbeCase, *, attempt: int, logs: Callable[[], Sequenc
                 batches=saved.batches,
             )
             trace.memory_tools = memory_tools(result.memory)
+            trace.draft_items = draft_items(result.memory)
             if not result.committed:
                 # 확정되지 않은 run 의 쓰기는 운영에서 롤백된다(pipeline 의 commit 결과가
                 # False 면 저장 안 된 것) — InMemory 에 남은 행을 저장으로 세지 않는다

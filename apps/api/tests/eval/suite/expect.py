@@ -50,6 +50,12 @@ def check_expect(trace: Trace, expect: Expect, *, today: date) -> list[str]:
     misses += [f"안내 {code} 없음" for code in expect.guidance if code not in trace.guidance]
     if expect.event_drafts_min is not None and trace.event_drafts < expect.event_drafts_min:
         misses.append(f"일정 초안 {trace.event_drafts}건 < {expect.event_drafts_min}")
+    if expect.draft_items is not None:
+        want = expect.draft_items
+        found = [n for n in want.names if any(n in item for item in trace.draft_items)]
+        if len(found) < want.min:
+            got = f"{len(found)}/{len(want.names)}"
+            misses.append(f"초안 준비물 {got} < {want.min} (있음: {found})")
     if expect.questions_max is not None and len(trace.questions) > expect.questions_max:
         misses.append(f"되묻기 {len(trace.questions)}개 > {expect.questions_max}")
     texts = trace.output_texts()

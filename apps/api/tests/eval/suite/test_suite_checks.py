@@ -22,9 +22,10 @@ from app.agents.supervisor.routing import Guidance
 from tests.eval.suite import probe_runner
 from tests.eval.suite.expect import check_expect
 from tests.eval.suite.invariants import check_invariants
-from tests.eval.suite.probe_runner import memory_tools, read_run, run_probe
+from tests.eval.suite.probe_runner import draft_items, memory_tools, read_run, run_probe
 from tests.eval.suite.report import _cost, _rate, percentile, render, summarize, wilson
 from tests.eval.suite.schema import (
+    DraftItemsExpect,
     Expect,
     RouteExpect,
     SavedExpect,
@@ -344,6 +345,42 @@ def test_tools_기대값_모양() -> None:
     assert case.expect.tools == ToolsExpect(
         must={"create_observation_activity": 1}, must_not=("create_event",)
     )
+
+
+def test_기대_draft_items_는_이름을_글자_포함으로_센다() -> None:
+    trace = _clean(draft_items=("점심 도시락", "물병"))
+    want = Expect(draft_items=DraftItemsExpect(names=("도시락", "물병", "돗자리"), min=2))
+    assert check_expect(trace, want, today=_TODAY) == []
+    assert check_expect(_clean(draft_items=("물병",)), want, today=_TODAY) == [
+        "초안 준비물 1/3 < 2 (있음: ['물병'])"
+    ]
+    assert check_expect(_clean(), want, today=_TODAY)  # 준비물 없는 초안
+
+
+def test_draft_items_기대값_모양() -> None:
+    with pytest.raises(ValidationError):
+        DraftItemsExpect(names=("도시락",), min=2)
+    with pytest.raises(ValidationError):
+        DraftItemsExpect(names=())
+
+
+def test_draft_items_는_초안의_준비물_이름을_모은다() -> None:
+    item = SimpleNamespace(item_name="돗자리")
+    memory = SimpleNamespace(drafts=[SimpleNamespace(items=(item,)), SimpleNamespace(items=())])
+    assert draft_items(memory) == ("돗자리",)
+    assert draft_items(None) == ()
+
+
+def test_W_단계는_draft_items_를_적을_수_없다() -> None:
+    spec = {
+        "at": "mon 08:10",
+        "by": "mom",
+        "tag": "mon-a",
+        "say": "다음 주 소풍이래",
+        "expect": {"draft_items": {"names": ["도시락"]}},
+    }
+    with pytest.raises(ValidationError, match="draft_items"):
+        Step.model_validate(spec)
 
 
 def test_W_단계는_tools_를_적을_수_없다() -> None:

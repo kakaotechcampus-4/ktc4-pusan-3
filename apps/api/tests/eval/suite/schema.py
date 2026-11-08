@@ -97,7 +97,7 @@ class ToolsExpect(_Strict):
     must: dict[str, int] = Field(default_factory=dict)  # tool → 성공한 호출 최소 수
     # 부르면 안 되는 tool. "쓰기" = create_ · update_ · delete_ · propose_ 전부
     must_not: tuple[str, ...] = ()
-    # Memory 가 반드시 돌아야 한다 (주체 오귀속처럼 Memory 를 거쳐야 판정되는 입력)
+    # Memory 가 반드시 돌아야 한다. must 가 있으면 이미 그렇다 — must 없이 "돌았는가" 만 볼 때
     memory_ran: bool = False
 
     @model_validator(mode="after")
@@ -116,12 +116,26 @@ class ToolsExpect(_Strict):
         return self
 
 
+class DraftItemsExpect(_Strict):
+    """일정 초안에 붙은 준비물. 이름은 글자 포함으로 본다("도시락" 은 "점심 도시락" 에 맞는다)."""
+
+    names: tuple[str, ...] = Field(min_length=1)
+    min: int = Field(default=1, ge=1)  # names 중 이만큼은 초안에 있어야 한다
+
+    @model_validator(mode="after")
+    def _min_fits(self) -> "DraftItemsExpect":
+        if self.min > len(self.names):
+            raise ValueError(f"min {self.min} > names {len(self.names)}개")
+        return self
+
+
 class Expect(_Strict):
     route: RouteExpect | None = None
     saved: SavedExpect | None = None
     suggestions: dict[Agent, SuggestionWant] = Field(default_factory=dict)
     guidance: tuple[str, ...] = ()  # 이 안내 코드가 모두 나가야 한다
     event_drafts_min: int | None = None
+    draft_items: DraftItemsExpect | None = None  # 일정 초안의 준비물
     questions_max: int | None = None
     never_say: tuple[str, ...] = ()  # 어떤 출력 문장에도 없어야 할 글자 (카나리아 · 단정 표현)
     must_say_any: tuple[str, ...] = ()  # 출력 문장 어딘가에 이 중 하나는 있어야 한다
@@ -230,9 +244,9 @@ class Step(_Strict):
             raise ValueError(f"{self.tag}: correct 단계는 correct_of 와 verdict 가 있어야 한다")
         if self.kind == "check" and self.check is None:
             raise ValueError(f"{self.tag}: check 단계는 check 가 있어야 한다")
-        if self.expect.tools is not None:
-            # W 는 API 로 돌아 Memory tool 기록을 모으지 않는다 — 적으면 늘 "안 돌았다" 로 떨어진다
-            raise ValueError(f"{self.tag}: W 단계는 tools 를 판정하지 않는다 (P 에만)")
+        if self.expect.tools is not None or self.expect.draft_items is not None:
+            # W 는 API 로 돌아 Memory tool 기록 · 초안 준비물을 모으지 않는다 — 적으면 늘 실패한다
+            raise ValueError(f"{self.tag}: W 단계는 tools · draft_items 를 판정하지 않는다 (P 만)")
         return self
 
 

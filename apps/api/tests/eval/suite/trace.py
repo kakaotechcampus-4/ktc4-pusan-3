@@ -67,6 +67,7 @@ class Trace:
     searched: frozenset[str] | None = frozenset()  # 이 케이스에서 읽힌 아이 기록 id. None=안 모음
     stale_ids: frozenset[str] = frozenset()  # 6개월 지난 심은 기록 id
     event_drafts: int = 0
+    draft_items: tuple[str, ...] = ()  # 일정 초안에 붙은 준비물 이름 (P 만 — W 는 모으지 않는다)
     stored_events: int = 0  # 이 run 이 저장소에 만든 일정 행 (승인 단계 제외)
     questions: tuple[str, ...] = ()  # 보호자에게 낸 되묻기 문장
     event_names: tuple[str, ...] = ()
