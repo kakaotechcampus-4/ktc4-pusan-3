@@ -8,18 +8,24 @@ to_payload() 는 SSE로 나갈 JSON 을 만든다. 모양의 정본은 app/core/
 """
 
 from dataclasses import dataclass, replace
-from datetime import datetime
-from typing import Any, Literal
+from datetime import date, datetime, time
+from typing import Any, Literal, TypeVar
 from uuid import uuid4
 
 from app.agents.common.result import EventRequest
 from app.core.event_draft import (
     CreateEventDraft,
+    CreateRepeatEventDraft,
     DraftItemPayload,
     EventBefore,
     EventBody,
+    RepeatPayload,
+    SeriesBefore,
+    SeriesEventBody,
     UpdateEventDraft,
+    UpdateSeriesDraft,
 )
+from app.rules.recurrence import repeat_label
 
 DraftOp = Literal["create", "update"]
 
@@ -38,6 +44,21 @@ class DraftItem:
     필드는 남겨 _diff 가 items를 통째로 비교해 "바뀐 게 없으면 초안을 만들지
     않는다"를 판정하고, _sync_checked가 이 값을 맞춘다.
     """
+
+
+@dataclass(frozen=True)
+class RepeatRule:
+    """요일 반복 규칙 (#738). 어느 날이 회차인지는 `rules/recurrence` 가 이 값으로 정한다."""
+
+    weekdays: tuple[int, ...]  # ISO 요일, 1=월 … 7=일
+    until: date  # 마지막 날 (포함)
+
+    def to_payload(self) -> RepeatPayload:
+        return RepeatPayload(
+            weekdays=list(self.weekdays),
+            until=self.until,
+            label=repeat_label(self.weekdays, self.until),
+        )
 
 
 @dataclass(frozen=True)
@@ -81,6 +102,8 @@ class EventDraft:
     changed: tuple[str, ...] = ()
     before: EventSnapshot | None = None  # create면 None
     draft_id: str | None = None  # DraftBook이 uuid로 채운다. 아이의 모든 초안 사이에서 유일
+    repeat: RepeatRule | None = None
+    """요일 반복. create 에서만 쓴다. starts_at 은 첫 회차의 시각이고, 승인할 때 회차로 펼쳐진다."""
 
     def to_payload(self) -> dict[str, Any]:
         """op에 따라 모양이 갈린다. create는 POST, update는 PATCH.
@@ -97,8 +120,16 @@ class EventDraft:
             category=self.category,
         )
         items = _item_payloads(self.items)
-        draft: CreateEventDraft | UpdateEventDraft
-        if self.op == "create":
+        draft: CreateEventDraft | CreateRepeatEventDraft | UpdateEventDraft
+        if self.op == "create" and self.repeat is not None:
+            draft = CreateRepeatEventDraft(
+                draft_id=self.draft_id,
+                op="create",
+                event=event,
+                items=items,
+                repeat=self.repeat.to_payload(),
+            )
+        elif self.op == "create":
             # TODO: 제안 경로가 일정 초안을 만들 때 source 키 추가. Memory 는 언제나 null
             draft = CreateEventDraft(draft_id=self.draft_id, op="create", event=event, items=items)
         else:
@@ -111,6 +142,88 @@ class EventDraft:
                 items=items,
             )
         return draft.model_dump(mode="json")
+
+
+@dataclass(frozen=True)
+class SeriesSnapshot:
+    """고치기 전 묶음. 화면이 "오전 8:30 → 오전 9:00" 를 보여주는 데 쓴다 (#738)."""
+
+    title: str
+    starts_time: time | None  # 종일이면 None
+    ends_time: time | None
+    all_day: bool
+    event_type: str
+    category: str
+    repeat: RepeatRule
+    items: tuple[str, ...]  # 준비물 이름
+
+
+@dataclass(frozen=True)
+class SeriesDraft:
+    """반복 묶음을 오늘 이후 회차 전체에 고치는 제출 전 상태 (#738).
+
+    일정 하나가 아니라 묶음 하나의 초안이다. 날짜는 없다 — 회차 날짜는 반복 규칙이 정하고,
+    제출하면 백엔드가 오늘 이후 회차에만 적용한다. 준비물은 이름으로 맞춘다.
+    changed 는 `before` 와 달라진 필드 이름이다 (payload 에는 싣지 않는다).
+    """
+
+    series_id: str
+    title: str
+    starts_time: time | None
+    ends_time: time | None
+    all_day: bool
+    event_type: str
+    category: str
+    repeat: RepeatRule
+    items: tuple[str, ...]
+    changed: tuple[str, ...] = ()
+    before: SeriesSnapshot | None = None
+    draft_id: str | None = None  # DraftBook이 uuid로 채운다
+    renames: tuple[tuple[str, str], ...] = ()
+    """준비물 (처음 이름, 지금 이름). payload 에는 싣지 않는다.
+
+    저장된 준비물의 이름은 run 안에서 바뀌지 않아서, 같은 준비물을 두 번 고치려면 처음
+    이름에서 지금 이름을 따라가야 한다.
+    """
+
+    def to_payload(self) -> dict[str, Any]:
+        """모양의 정본은 app/core/event_draft.py 의 UpdateSeriesDraft 다."""
+        return UpdateSeriesDraft(
+            draft_id=self.draft_id,
+            op="update_series",
+            series_id=self.series_id,
+            event=_series_body(self),
+            repeat=self.repeat.to_payload(),
+            before=_series_before(self.before) if self.before is not None else None,
+            items=list(self.items),
+        ).model_dump(mode="json")
+
+
+AnyEventDraft = EventDraft | SeriesDraft
+_D = TypeVar("_D", EventDraft, SeriesDraft)
+
+
+def _clock(value: time | None) -> str | None:
+    return value.strftime("%H:%M") if value is not None else None
+
+
+def _series_body(source: "SeriesDraft | SeriesSnapshot") -> SeriesEventBody:
+    return SeriesEventBody(
+        title=source.title,
+        starts_time=_clock(source.starts_time),
+        ends_time=_clock(source.ends_time),
+        all_day=source.all_day,
+        event_type=source.event_type,
+        category=source.category,
+    )
+
+
+def _series_before(before: SeriesSnapshot) -> SeriesBefore:
+    return SeriesBefore(
+        **_series_body(before).model_dump(),
+        repeat=before.repeat.to_payload(),
+        items=list(before.items),
+    )
 
 
 def _before_payload(before: EventSnapshot) -> EventBefore:
@@ -166,7 +279,7 @@ class DraftBook:
     """
 
     def __init__(self) -> None:
-        self._drafts: dict[tuple[str, str | int], EventDraft] = {}
+        self._drafts: dict[tuple[str, str | int], AnyEventDraft] = {}
         self._creates = 0
 
     def put(self, draft: EventDraft) -> EventDraft:
@@ -177,18 +290,32 @@ class DraftBook:
             key: tuple[str, str | int] = ("create", self._creates)
         else:
             key = ("update", draft.event_id)
+        return self._keep(key, draft)
 
+    def _keep(self, key: tuple[str, str | int], draft: _D) -> _D:
+        """같은 키의 앞선 초안이 있으면 그 draft_id 를 이어받아 대신 넣고, 없으면 uuid 를 붙인다."""
         kept = self._drafts.get(key)
-        draft_id = kept.draft_id if kept is not None else str(uuid4())
-        stored = replace(draft, draft_id=draft_id)
+        stored = replace(draft, draft_id=kept.draft_id if kept is not None else str(uuid4()))
         self._drafts[key] = stored
         return stored
 
     def get(self, event_id: str) -> EventDraft | None:
-        return self._drafts.get(("update", event_id))
+        draft = self._drafts.get(("update", event_id))
+        return draft if isinstance(draft, EventDraft) else None
 
     def drop(self, event_id: str) -> None:
         self._drafts.pop(("update", event_id), None)
 
-    def all(self) -> tuple[EventDraft, ...]:
+    def put_series(self, draft: SeriesDraft) -> SeriesDraft:
+        """묶음 초안을 넣고 draft_id 가 붙은 값을 돌려준다. 같은 묶음이면 앞의 초안을 대신한다."""
+        return self._keep(("series", draft.series_id), draft)
+
+    def get_series(self, series_id: str) -> SeriesDraft | None:
+        draft = self._drafts.get(("series", series_id))
+        return draft if isinstance(draft, SeriesDraft) else None
+
+    def drop_series(self, series_id: str) -> None:
+        self._drafts.pop(("series", series_id), None)
+
+    def all(self) -> tuple[AnyEventDraft, ...]:
         return tuple(self._drafts.values())

@@ -8,6 +8,7 @@ from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Literal
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import case, delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -85,6 +86,9 @@ async def find_event(
     return await session.scalar(stmt)
 
 
+KST = ZoneInfo("Asia/Seoul")
+
+
 async def create_event(
     session: AsyncSession,
     *,
@@ -98,9 +102,18 @@ async def create_event(
     created_by: EventCreatedBy,
     source_notice_id: uuid.UUID | None = None,
     source_refs: list[dict] | None = None,
+    series_id: uuid.UUID | None = None,
+    origin_date: date | None = None,
 ) -> Event:
-    """승인된 일정만 저장한다. 초안과 승인 판정은 이 함수의 책임이 아니다."""
+    """승인된 일정만 저장한다. 초안과 승인 판정은 이 함수의 책임이 아니다.
+
+    회차(`series_id`)면 원래 날짜(#790)를 같이 저장한다. 안 넘기면 시작일(KST)이다.
+    """
+    if series_id is not None and origin_date is None:
+        origin_date = starts_at.astimezone(KST).date()
     row = Event(
+        series_id=series_id,
+        origin_date=origin_date if series_id is not None else None,
         child_id=child_id,
         title=title,
         event_type=EventType(event_type),
