@@ -37,7 +37,7 @@ class AgentPromptOut(BaseModel):
 
 class HomeResponse(BaseModel):
     observation_count: int = Field(
-        description="기록 수. 기록 탭처럼 deleted 만 빼고 센다. 건강 기록은 세지 않는다"
+        description="기록 수. 기록 탭처럼 deleted 만 빼고 센다. 건강 기록도 센다"
     )
     week_count: int = Field(description="이번 주(월요일 시작, 한국 시각)에 일어난 기록 수")
     upcoming_count: int = Field(description="지금부터 7일 안에 있는 일정 수")

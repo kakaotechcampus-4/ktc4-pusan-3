@@ -4,7 +4,7 @@
 확인한다 (deps/child.py). 동의는 요청마다 확인하지 않는다 — 계약이 쓰기에만 걸어 두었고,
 화면은 `GET /me` 의 `consent_required` 로 막는다.
 
-🚨 건강 기록은 첫 배포 범위 밖이라 세지 않는다 (#259).
+건강 기록도 기록 탭처럼 센다 (#764).
 🚨 모델을 부르지 않는다. 하이라이트 문구와 예상 질문은 규칙이다.
 """
 
@@ -63,7 +63,6 @@ async def get_home(child: AccessibleChild, session: SessionDep) -> HomeResponse:
         child_id=child.child_id,
         period_start=week_start,
         period_end=week_start + timedelta(days=7),
-        exclude_health=True,
         statuses=_COUNTED_STATUSES,
     )
     day_start = datetime.combine(today, datetime.min.time(), tzinfo=KST)
