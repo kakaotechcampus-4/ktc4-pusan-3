@@ -38,8 +38,8 @@ from typing import Any
 
 import yaml
 
-from app.agents.food.recipe_catalog import ingredient_key
 from app.agents.common.food_safety import menu_codes
+from app.agents.food.recipe_catalog import ingredient_key
 from app.rules.term_match import normalize
 from scripts import recipe_fetch
 
