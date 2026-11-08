@@ -16,7 +16,7 @@ test("알레르기를 등록하면 새로고침한 뒤에도 목록에 있다", 
   await page.goto(`/child/${childId}/profile`);
   await page.getByRole("button", { name: "알레르기·건강 기록 추가" }).click();
   // 검사지 읽기가 실서버에 없으면(`lib/features.ts` · #409) 고를 것이 직접 적기 하나라 시트가 바로 선다.
-  const sheet = page.getByRole("dialog", { name: "알레르기 · 건강 기록 추가" });
+  const sheet = page.getByRole("dialog", { name: "알레르기·건강 기록 추가" });
   await sheet.evaluate((el) => Promise.all(el.getAnimations().map((a) => a.finished)));
   await sheet.getByLabel("무엇인가요").fill("땅콩");
   await sheet.getByRole("button", { name: "확인했어요, 등록할게요" }).click();
