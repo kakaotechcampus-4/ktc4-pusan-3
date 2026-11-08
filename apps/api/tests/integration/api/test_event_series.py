@@ -499,6 +499,100 @@ async def test_occurrence_moved_off_the_rule_survives_extending_until(
     assert await _items(session, moved.id) == {"물통": False}
 
 
+async def test_occurrence_moved_onto_a_dropped_weekday_survives_dropping_it(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    """월 · 수 반복에서 월 회차를 수요일로 옮겨 두고 규칙에서 수요일을 빼도 그 회차가 남는다.
+
+    지우는 대상은 지금 날짜가 아니라 회차의 원래 날짜(`origin_date`)로 가린다 (#790). 원래 날(월)은
+    새 규칙에 남아 있어 옮긴 회차는 남고, 그 월요일에 새 회차가 하나 더 생기지도 않는다.
+    """
+    headers, _ = bearer
+    mon, wed = _day(1).isoweekday(), _day(3).isoweekday()
+    sid = await _seed(db_client, session, cid, headers, first=1, until=10, weekdays=[mon, wed])
+    occurrences = await _occurrences(session, sid)
+    assert sorted(occurrences) == [_day(1), _day(3), _day(8), _day(10)]
+    await session.execute(
+        update(Event)
+        .where(Event.id == occurrences[_day(1)].id)
+        .values(starts_at=datetime.combine(_day(3), time(8, 30), tzinfo=KST))
+    )
+    before = _series_body(until=10, weekdays=[mon, wed])
+
+    resp = await _patch(
+        db_client, cid, sid, headers, _patch_body(before, _series_body(until=10, weekdays=[mon]))
+    )
+
+    assert resp.status_code == 200, resp.text
+    rows = await session.scalars(
+        select(Event.starts_at)
+        .where(Event.series_id == uuid.UUID(sid))
+        .execution_options(populate_existing=True)
+    )
+    days = sorted(r.astimezone(KST).date() for r in rows)
+    # 옮긴 회차(원래 월)는 _day(3) 에 남고 월요일에 새 회차는 없다. 수요일의 원래 회차는 지운다
+    assert days == [_day(3), _day(8)]
+
+
+async def test_occurrence_whose_origin_date_left_the_rule_is_removed_wherever_it_moved(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    """원래 날짜가 새 규칙에서 빠졌으면 어디로 옮겨 뒀든 지운다. 새 끝 날짜 뒤 원래 날짜도 같다."""
+    headers, _ = bearer
+    mon, wed = _day(1).isoweekday(), _day(3).isoweekday()
+    sid = await _seed(db_client, session, cid, headers, first=1, until=10, weekdays=[mon, wed])
+    occurrences = await _occurrences(session, sid)
+    await session.execute(
+        update(Event)
+        .where(Event.id == occurrences[_day(3)].id)
+        .values(starts_at=datetime.combine(_day(4), time(8, 30), tzinfo=KST))
+    )
+    before = _series_body(until=10, weekdays=[mon, wed])
+
+    resp = await _patch(
+        db_client, cid, sid, headers, _patch_body(before, _series_body(until=9, weekdays=[mon]))
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert sorted(await _occurrences(session, sid)) == [_day(1), _day(8)]
+
+
+async def test_origin_date_is_saved_on_create_and_kept_when_one_occurrence_moves(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    """회차를 만들 때 원래 날짜가 같이 저장되고, 한 회차만 옮겨도(update_event) 바뀌지 않는다.
+    다시 펼쳐 새로 만든 회차도 원래 날짜를 갖는다."""
+    headers, _ = bearer
+    sid = await _seed(db_client, session, cid, headers, first=1, until=4)
+    occurrences = await _occurrences(session, sid)
+    assert {d: e.origin_date for d, e in occurrences.items()} == {d: d for d in occurrences}
+    moved = occurrences[_day(2)]
+    resp = await db_client.patch(
+        f"/api/v1/children/{cid}/events/{moved.id}",
+        json={
+            "event": {**EVENT, "starts_at": _at(8, "08:30")},
+            "items": [{"item_id": None, "item_name": "물통"}],
+        },
+        headers={**headers, "Idempotency-Key": uuid.uuid4().hex},
+    )
+    assert resp.status_code == 200, resp.text
+    await session.refresh(moved)
+    assert moved.origin_date == _day(2)
+    assert moved.starts_at.astimezone(KST).date() == _day(8)
+
+    await _patch(
+        db_client,
+        cid,
+        sid,
+        headers,
+        _patch_body(_series_body(until=4), _series_body(until=6)),
+    )
+
+    occurrences = await _occurrences(session, sid)
+    fresh = [e for d, e in occurrences.items() if d in (_day(5), _day(6))]
+    assert sorted(e.origin_date for e in fresh) == [_day(5), _day(6)]
+
+
 async def test_today_occurrence_that_already_started_is_left_alone(
     db_client: AsyncClient,
     session: AsyncSession,
@@ -544,8 +638,9 @@ async def test_today_occurrence_that_already_started_is_left_alone(
 async def test_shortening_until_removes_occurrences_after_it_even_if_moved(
     db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
 ):
-    """끝 날짜를 당기면 새 끝 날짜 뒤 회차를 지운다. 옛 끝 날짜보다 뒤로 옮겨 둔 회차는 규칙에서
-    빠진 날이 아니라서, 이 조건으로만 지워진다."""
+    """끝 날짜를 당기면 원래 날짜가 새 끝 날짜 뒤인 회차를 지운다. 옮겨 둔 곳이 어디든 같다.
+    원래 날짜(_day(6))가 옛 끝 날짜 안이라 "빠진 날" 로는 안 걸리고, 이 조건으로만 지워진다 (#790).
+    원래 날짜가 새 끝 날짜 안이면 그 뒤로 옮겨 둔 회차도 남는다 — 옮기기 전 날이 규칙에 있다."""
     headers, _ = bearer
     sid = await _seed(db_client, session, cid, headers)
     await session.execute(
@@ -553,13 +648,25 @@ async def test_shortening_until_removes_occurrences_after_it_even_if_moved(
         .where(Event.id == (await _occurrences(session, sid))[_day(2)].id)
         .values(starts_at=datetime.combine(_day(8), time(8, 30), tzinfo=KST))
     )
+    await session.execute(
+        update(Event)
+        .where(Event.id == (await _occurrences(session, sid))[_day(6)].id)
+        .values(starts_at=datetime.combine(_day(1), time(10), tzinfo=KST))
+    )
     before = _series_body(until=6)
 
     resp = await _patch(db_client, cid, sid, headers, _patch_body(before, _series_body(until=4)))
 
     assert resp.status_code == 200, resp.text
-    days = sorted(await _occurrences(session, sid))
-    assert days == [_day(n) for n in (-3, -2, -1, 0, 1, 3, 4)]
+    rows = await session.scalars(
+        select(Event.starts_at)
+        .where(Event.series_id == uuid.UUID(sid))
+        .execution_options(populate_existing=True)
+    )
+    days = sorted(r.astimezone(KST).date() for r in rows)
+    # 원래 _day(2) 회차는 _day(8) 에 남고, 원래 _day(5) · _day(6) 회차는 지운다
+    # (_day(6) 회차를 _day(1) 로 옮겨 뒀어도)
+    assert days == [_day(n) for n in (-3, -2, -1, 0, 1, 3, 4, 8)]
 
 
 async def test_today_occurrence_that_already_started_survives_dropping_its_weekday(
@@ -631,22 +738,36 @@ async def test_patch_with_only_started_occurrences_left_is_refused(
     assert await _items(session, today.id) == {"물통": False}
 
 
-async def test_re_expansion_does_not_double_a_day_holding_a_started_occurrence(
+@pytest.mark.parametrize(
+    ("origin", "expected"),
+    [(0, [time(8, 30)]), (1, [time(8, 30), time(18, 0)])],
+    ids=["origin-is-today", "origin-is-another-day"],
+)
+async def test_re_expansion_counts_a_day_by_the_origin_date_of_its_occurrence(
     db_client: AsyncClient,
     session: AsyncSession,
     bearer: Bearer,
     cid: uuid.UUID,
     now: dict,
+    origin: int,
+    expected: list[time],
 ):
-    """오늘로 옮겨 둔 회차가 이미 시작했어도 그날의 회차로 센다 — 오늘 요일을 더해도 오늘에 회차를
-    하나 더 만들지 않는다."""
+    """같은 날 중복은 회차의 원래 날짜로 막는다 (#790).
+
+    원래 날짜가 오늘인 회차는 이미 시작했어도 오늘의 회차라서, 오늘 요일을 더해도 오늘에 회차를
+    하나 더 만들지 않는다 (원래 날짜가 비어 있던 옛 회차를 마이그레이션이 지금 날짜로 채운 경우).
+    다른 날(_day(1))에서 오늘로 옮겨 온 회차는 오늘의 회차가 아니라서, 오늘 몫의 새 회차가
+    따로 생긴다.
+    """
     headers, _ = bearer
     others = [d for d in EVERY_DAY if d != _day(0).isoweekday()]
     sid = await _seed(db_client, session, cid, headers, until=13, weekdays=others)
     await session.execute(
         update(Event)
         .where(Event.id == (await _occurrences(session, sid))[_day(1)].id)
-        .values(starts_at=datetime.combine(_day(0), time(8, 30), tzinfo=KST))
+        .values(
+            starts_at=datetime.combine(_day(0), time(8, 30), tzinfo=KST), origin_date=_day(origin)
+        )
     )
     now["at"] = _clock("12:00")
     before = _series_body(until=13, weekdays=others)
@@ -657,14 +778,17 @@ async def test_re_expansion_does_not_double_a_day_holding_a_started_occurrence(
     assert resp.status_code == 200, resp.text
     today = list(
         await session.scalars(
-            select(Event.starts_at).where(
+            select(Event.starts_at)
+            .where(
                 Event.series_id == uuid.UUID(sid),
                 Event.starts_at >= datetime.combine(_day(0), time(0), tzinfo=KST),
                 Event.starts_at < datetime.combine(_day(1), time(0), tzinfo=KST),
             )
+            .order_by(Event.starts_at)
+            .execution_options(populate_existing=True)
         )
     )
-    assert [t.astimezone(KST).time() for t in today] == [time(8, 30)]
+    assert [t.astimezone(KST).time() for t in today] == expected
 
 
 async def test_all_day_series_still_changes_today(

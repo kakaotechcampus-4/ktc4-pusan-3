@@ -70,6 +70,11 @@ def kst_day(moment: datetime) -> date:
     return moment.astimezone(KST).date()
 
 
+def origin_day(event: Event) -> date:
+    """회차의 원래 날짜. 옛 이미지가 만들어 비어 있으면 지금 날짜로 본다 (#790)."""
+    return event.origin_date or kst_day(event.starts_at)
+
+
 # ── 읽기 ──────────────────────────────────────────────────────────────────
 
 
@@ -187,6 +192,7 @@ async def create_series(
             category=category,
             created_by=created_by,
             series_id=series.id,
+            origin_date=kst_day(starts),
         )
         for starts, ends in plan
     ]
@@ -239,8 +245,9 @@ async def update_series(
     고친 뒤 오늘 이후 회차 수를 낸다.
     - `before` 와 달라진 칸만 쓴다 — 한 회차만 따로 고쳐 둔 다른 칸이 "전부 고치기" 에 덮이지
       않는다. `before` 가 None 이면 기준을 몰라 모든 칸을 쓴다. 시각 · 종일은 한 칸으로 본다.
-    - 요일 · 끝 날짜가 바뀌면 다시 펼친다: 새 규칙에 없는 날의 회차는 지우고, **옛 규칙에 없던 날**
-      에만 새 회차를 만든다 — 한 회차만 옮기거나 지워 둔 날이 되살아나지 않는다.
+    - 요일 · 끝 날짜가 바뀌면 다시 펼친다: 원래 날짜(`origin_date`)가 새 규칙에 없는 회차는 지우고,
+      **옛 규칙에 없던 날**에만 새 회차를 만든다 — 한 회차만 옮기거나 지워 둔 날이
+      되살아나지 않는다.
       90일은 `starts_on` 이후 새 요일과 처음 맞는 날에서 센다(`occurrence_dates`, Agent 와 같다).
       성립하지 않으면 `RepeatError`, 오늘 이후 회차가 남지 않으면 `NoFutureOccurrence` —
       묶음을 지우는 길은 삭제 제안이다 (event-draft-flow §6).
@@ -270,18 +277,20 @@ async def update_series(
         # 🚨 회차를 지우기 전에 읽는다 — 지우면 그 회차의 알림도 같이 지워져, 오늘 이후 회차가
         #    전부 바뀌는 요일 변경에서 새 회차에 걸 알림이 사라진다
         leads = await _reminder_leads(session, series.id, all_day=values.all_day)
-        # 규칙에서 빠진 날 · 새 끝 날짜 뒤만 지운다 — 규칙 밖 요일로 옮겨 둔 회차는 남긴다 (#761)
-        # ponytail: 회차의 원래 날짜를 저장하지 않아, 빠진 요일로 옮겨 둔 회차도 지워진다.
-        #           문제가 되면 event 에 원래 날짜 컬럼을 둔다
-        dropped = old - set(target)
-        for event in [
-            e for e in events if kst_day(e.starts_at) in dropped or kst_day(e.starts_at) > until
-        ]:
+        # 지울 회차는 지금 날짜가 아니라 원래 날짜로 가린다 (#790) — 원래 날짜가 새 규칙에서
+        # 빠졌거나 새 끝 날짜 뒤인 회차만 지운다. 규칙 밖 · 빠진 요일로 옮겨 둔 회차도 원래
+        # 날짜가 남아 있으면 산다.
+        # 오늘 시작이 지난 날(target 에서 빠진 날)도 규칙에는 있어, 규칙 전체와 견준다.
+        # 옛 규칙에 없던 원래 날짜(마이그레이션이 옮겨 둔 날로 채운 옛 회차 등)는 빠진 날이
+        # 아니라 남긴다 (#761)
+        dropped = old - set(occurrence_dates(series.starts_on, weekdays, until))
+        for event in [e for e in events if origin_day(e) in dropped or origin_day(e) > until]:
             await session.delete(event)
             events.remove(event)
             from_today.remove(event)
-        # 시작이 지난 오늘 회차도 센다 — 그날에 회차를 하나 더 만들지 않는다
-        have = {kst_day(e.starts_at) for e in from_today}
+        # 시작이 지난 오늘 회차도 센다 — 그날에 회차를 하나 더 만들지 않는다. 옮겨 둔 회차는
+        # 원래 날짜로 센다 (#790)
+        have = {origin_day(e) for e in from_today}
         new_events = await _add_occurrences(
             session,
             series,
@@ -369,6 +378,7 @@ async def _add_occurrences(
             category=values.category,
             created_by=EventCreatedBy.CAREGIVER,
             series_id=series.id,
+            origin_date=day,
         )
         session.add_all(EventItem(event_id=event.id, item_name=name) for name in items)
         created.append(event)
