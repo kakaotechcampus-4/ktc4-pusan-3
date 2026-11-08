@@ -1433,13 +1433,13 @@ describe("㉑ 하루 한도는 다시 시도로 풀리지 않는다", () => {
 /* ── 07 기억 · 교정 ──────────────────────────────────────────────────── */
 
 describe("⑧ 관찰과 프로필은 다른 엔드포인트다", () => {
-  it("도메인을 생략하면 건강을 뺀 4개 테이블을 병합해 observed_to DESC 로 내려준다", async () => {
+  it("도메인을 생략하면 건강까지 5개 테이블을 병합해 observed_to DESC 로 내려준다", async () => {
     const page = await api.get<ObservationsResponse>("/children/c1/observations");
 
     const kinds = new Set(page.items.map((item) => item.kind));
     expect(kinds.size).toBeGreaterThan(1);
-    // 🚨 건강 관찰은 첫 배포 범위 밖이다 — 서버(#266)가 목록에서 뺀다 (#259).
-    expect(kinds).not.toContain("observation_health");
+    // 건강 기록도 기록 탭에 나온다 (#764). 서버도 다섯 표를 합친다.
+    expect(kinds).toContain("observation_health");
     expect(page.total).toBe(page.items.length);
 
     const dates = page.items.map((item) => item.observed_to);
@@ -1466,12 +1466,28 @@ describe("⑧ 관찰과 프로필은 다른 엔드포인트다", () => {
     );
   });
 
-  it("health 는 오류가 아니라 빈 목록이다", async () => {
+  it("health 는 건강 테이블만 건강 모양으로 내려준다 (#764)", async () => {
     const page = await api.get<ObservationsResponse>("/children/c1/observations", {
       query: { domain: "health" },
     });
 
-    expect(page).toEqual({ items: [], total: 0, page: 1, size: 20, total_pages: 0 });
+    expect(page.items.length).toBeGreaterThan(0);
+    expect(page.items.every((item) => item.kind === "observation_health")).toBe(true);
+    // 🚨 건강 모양은 주제 · 성향 · 기억 키가 아예 없다 (null 이 아니다). 화면은 `kind` 로 가른다.
+    for (const item of page.items) {
+      expect(["subject", "polarity", "strong_signals", "affinity"].some((key) => key in item)).toBe(
+        false,
+      );
+    }
+  });
+
+  it("건강 기록 상세는 200 이고 고친 이력이 없다 (#764)", async () => {
+    const detail = await api.get<ObservationDetailResponse>(
+      "/children/c1/observations/observation_health/o_h1",
+    );
+
+    expect(detail.observation.kind).toBe("observation_health");
+    expect(detail.corrections).toEqual([]);
   });
 
   it("1쪽부터 total_pages 까지 넘기면 빠지거나 겹치는 기록 없이 끝까지 간다 (#584)", async () => {
@@ -1498,18 +1514,18 @@ describe("⑧ 관찰과 프로필은 다른 엔드포인트다", () => {
     setScenario("observations_many");
     try {
       const first = await api.get<ObservationsResponse>("/children/c1/observations");
-      expect(first).toMatchObject({ total: 25, page: 1, size: 20, total_pages: 2 });
+      expect(first).toMatchObject({ total: 26, page: 1, size: 20, total_pages: 2 });
       expect(first.items).toHaveLength(20);
 
       const second = await api.get<ObservationsResponse>("/children/c1/observations", {
         query: { page: 2 },
       });
-      expect(second.items).toHaveLength(5);
+      expect(second.items).toHaveLength(6);
 
       const beyond = await api.get<ObservationsResponse>("/children/c1/observations", {
         query: { page: 3 },
       });
-      expect(beyond).toMatchObject({ items: [], total: 25, page: 3, total_pages: 2 });
+      expect(beyond).toMatchObject({ items: [], total: 26, page: 3, total_pages: 2 });
     } finally {
       setScenario("default");
     }
@@ -1830,6 +1846,27 @@ describe("⑨ 교정은 지우지 않고 내린다", () => {
     expect((failure as ApiError).status).toBe(400);
   });
 
+  // 🚨 서버는 건강 기록 고치기를 받지 않는다 (#764). 화면은 건강 기록에 고치기 버튼을 세우지 않는다.
+  it.each(["once_only", "wrong"] as const)(
+    "건강 기록에 %s 를 보내면 400 이고 기록은 그대로다",
+    async (verdict) => {
+      const failure = await api
+        .post<CorrectionResponse>("/corrections", {
+          target_ref: { kind: "observation_health", id: "o_h1" },
+          verdict,
+          child_id: "c1",
+        })
+        .catch((error: unknown) => error);
+
+      expect(isApiError(failure, "validation_failed")).toBe(true);
+      expect((failure as ApiError).status).toBe(400);
+      const detail = await api.get<ObservationDetailResponse>(
+        "/children/c1/observations/observation_health/o_h1",
+      );
+      expect(detail.observation.status).toBe("active");
+    },
+  );
+
   it("기록에 기억 판정(need_more_observation)을 보내면 400 이다", async () => {
     const failure = await api
       .post<CorrectionResponse>("/corrections", {
@@ -2097,8 +2134,8 @@ describe("⑪ 일기는 관찰이 아니다", () => {
       onCalendar.push(...detail.observations);
     }
 
-    // 🚨 건강 기록은 첫 배포 범위 밖이다 (#259 · #318). 기록 탭에서도 캘린더에서도 빠진다.
-    expect(onCalendar.some((o) => o.kind === "observation_health")).toBe(false);
+    // 건강 기록도 기록 탭처럼 캘린더에 선다 (#764).
+    expect(onCalendar.some((o) => o.kind === "observation_health")).toBe(true);
     // 고친 기록(`stand_alone`)도 캘린더에 남는다 — 기록 탭이 남기기 때문이다.
     expect(onCalendar.find((o) => o.id === target!.id)?.status).toBe("stand_alone");
 

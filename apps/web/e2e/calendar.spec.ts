@@ -129,14 +129,19 @@ test("그날 나눈 대화는 쓰기 줄과 같은 줄 모양의 링크다 (#503
   expect(linkBox!.height).toBe(writeBox!.height);
 });
 
-test("건강 기록은 캘린더에 서지 않는다 (첫 배포 범위 밖 · #259 · #318)", async ({ page }) => {
-  // 목의 건강 관찰은 어제 날짜다. 서버는 기록 탭과 같은 기준으로 캘린더에서도 뺀다.
-  // ⚠️ 그래서 건강 기록의 상세 시트("진단 · 평가를 하지 않는다")를 여는 화면이 지금은 없다.
-  //    건강이 범위로 돌아오면 그 화면에서 시트 테스트를 다시 건다.
+test("건강 기록도 그날 기록에 서고, 상세는 고치기 버튼 없이 연다 (#764)", async ({ page }) => {
+  // 목의 건강 관찰은 어제 날짜다. 서버는 기록 탭과 같은 기준으로 캘린더에도 싣는다.
   await page.goto(`${CALENDAR}?date=${browserDaysAgo(1)}`);
 
   await expect(page.getByText("저녁에 블록을 한참 쌓다가 무너지니까 웃었다.")).toBeVisible();
-  await expect(page.getByText("자다가 기침을 몇 번 했어요")).toHaveCount(0);
+  const row = page.getByRole("button").filter({ hasText: "자다가 기침을 몇 번 했어요" });
+  await expect(row).toBeVisible();
+
+  await row.click();
+  const sheet = page.getByRole("dialog", { name: "기록 상세" });
+  await expect(sheet.getByRole("button", { name: "기록 지우기" })).toBeVisible();
+  await expect(sheet.getByRole("button", { name: "이번만 그랬어요" })).toHaveCount(0);
+  await expectNoGate(page, "dialog[open]");
 });
 
 test('범례에 "기억 변화" 가 없다 — 근거가 될 이력 표가 없다 (#318)', async ({ page }) => {
