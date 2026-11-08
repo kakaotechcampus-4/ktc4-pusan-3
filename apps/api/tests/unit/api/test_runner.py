@@ -156,6 +156,8 @@ async def test_agent_job_최근_대화_포트를_진입점에_넘긴다(monkeypa
     await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
 
     assert callable(seen["recent_turns"])
+
+
 async def test_agent_job_위치_기록에_실패하면_좌표만_버리고_끝까지_돈다(monkeypatch, caplog):
     """기록 없는 사용을 만들지 않는다 (위치정보법 제16조 ②) — 좌표를 안 넘기면 쓴 것도 없다.
     run 은 실패시키지 않는다. 보호자가 적은 기록이 위치 표 고장 때문에 사라지면 안 된다."""
