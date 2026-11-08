@@ -200,6 +200,7 @@ Owner: 고태영 (프론트 리드)
 `POST /children/{cid}/inputs` · `/onboarding` · `/photos` · `/health-safety`(게이트 ㉡ · 고치기 `PATCH` 포함) · **초안 제출**(게이트 ㉠ · `POST`/`PATCH` events).
 🚨 **복약 초안 제출**(`POST`/`PATCH` medications · #537)도 게이트 ㉡ 안의 메서드다 — 게이트를 늘린 것이 아니다 ([`medication-v1.md`](../../docs/web/medication-v1.md)).
 🚨 **대화의 삭제 확정**(`POST …/delete-proposals/{pid}/confirm` · #535)도 같은 표에 있다 ([`chat-run-v1.md`](../../docs/web/chat-run-v1.md) §5).
+🚨 **07 기록 지우기**(`DELETE …/observations/{kind}/{oid}` · #736)도 같은 표에 있다 — 게이트가 아니라 확인 창이다 ([`screen-rules-v1.md`](../../docs/web/screen-rules-v1.md) §3).
 메서드가 둘인 이유와 각 줄의 규칙 원문은 [`api-client-v1.md`](../../docs/web/api-client-v1.md) §2.
 
 **`lib/api/operations.ts` 의 전용 함수로만 부른다.** 키가 필수 인자라 빠뜨리면 `tsc` 가 잡는다.
