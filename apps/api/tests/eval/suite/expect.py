@@ -63,7 +63,10 @@ def check_expect(trace: Trace, expect: Expect, *, today: date) -> list[str]:
 
 def _check_tools(trace: Trace, want: ToolsExpect) -> list[str]:
     if trace.memory_tools is None:
-        return ["Memory tool 기록이 없다 — Memory 가 돌지 않았다"]
+        # 안 돈 Memory 는 아무것도 부르지 않았다 — 불러야 할 것이 있을 때만 실패
+        if want.must or want.memory_ran:
+            return ["Memory 가 돌지 않았다"]
+        return []
     misses: list[str] = []
     if trace.failed is not None:
         # 실패한 run 은 확정(commit)되지 않는다 — 성공한 호출이 있어도 저장으로 남지 않았다

@@ -306,13 +306,16 @@ def test_기대_tools_쓰기는_쓰기_tool_전부를_막는다() -> None:
         assert check_expect(_tools((name, True)), want, today=_TODAY), name
 
 
-def test_기대_tools_는_Memory_가_돌지_않으면_실패한다() -> None:
-    # must_not 만 적어도 — 안 돈 Memory 는 아무것도 안 불러서 저절로 통과하면 안 된다
-    want = Expect(tools=ToolsExpect(must_not=("쓰기",)))
-    assert check_expect(_clean(memory_tools=None), want, today=_TODAY) == [
-        "Memory tool 기록이 없다 — Memory 가 돌지 않았다"
-    ]
-    assert check_expect(_clean(memory_tools=()), want, today=_TODAY) == []
+def test_기대_tools_는_Memory_가_안_돌면_아무것도_안_부른_것으로_본다() -> None:
+    skipped = _clean(memory_tools=None)
+    # 순수 요청형 · 무관 질문은 제품이 일부러 Memory 를 건너뛴다 — must_not 만 있으면 통과
+    assert check_expect(skipped, Expect(tools=ToolsExpect(must_not=("쓰기",))), today=_TODAY) == []
+    # 불러야 할 것이 있으면 실패
+    must = Expect(tools=ToolsExpect(must={"create_event": 1}))
+    assert check_expect(skipped, must, today=_TODAY) == ["Memory 가 돌지 않았다"]
+    ran = Expect(tools=ToolsExpect(must_not=("쓰기",), memory_ran=True))
+    assert check_expect(skipped, ran, today=_TODAY) == ["Memory 가 돌지 않았다"]
+    assert check_expect(_clean(memory_tools=()), ran, today=_TODAY) == []
 
 
 def test_기대_tools_는_실패한_run_을_통과시키지_않는다() -> None:

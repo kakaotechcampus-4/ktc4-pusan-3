@@ -82,7 +82,11 @@ class SavedExpect(_Strict):
 
 
 class ToolsExpect(_Strict):
-    """Memory 가 부른 tool (테크스펙 13-1 "경로가 맞나"). 적으면 Memory 가 돌아야 판정할 수 있다.
+    """Memory 가 부른 tool (테크스펙 13-1 "경로가 맞나").
+
+    Memory 가 돌지 않은 run 은 아무것도 부르지 않은 것으로 본다 — 순수 요청형 · 무관 질문은
+    제품이 일부러 Memory 를 건너뛴다. 그래서 must_not 만 적은 기대는 통과하고, must 가 있거나
+    memory_ran 이면 실패한다.
 
     must 는 성공한 호출 수의 최소값이다 — 거절된 호출은 일을 한 것이 아니다. must_not 은
     시도만 해도 위반이다. `test_memory.py` 의 required_tools · forbidden_tools 와 이름 ·
@@ -92,6 +96,8 @@ class ToolsExpect(_Strict):
     must: dict[str, int] = Field(default_factory=dict)  # tool → 성공한 호출 최소 수
     # 부르면 안 되는 tool. "쓰기" = create_ · update_ · delete_ · propose_ 전부
     must_not: tuple[str, ...] = ()
+    # Memory 가 반드시 돌아야 한다 (주체 오귀속처럼 Memory 를 거쳐야 판정되는 입력)
+    memory_ran: bool = False
 
     @model_validator(mode="after")
     def _counts_are_positive(self) -> "ToolsExpect":
