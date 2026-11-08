@@ -39,7 +39,8 @@
     saved: { child_rows: 0 }
     suggestions: { food: none, activity: none, growth: none }
     questions_max: 1
-    tools: { must_not: [쓰기] }  # Memory 가 안 돌아도 통과 — 무관 질문은 Memory 를 건너뛸 수 있다
+    # tools 는 걸지 않는다 — unclear 로 가면 Memory 가 돌고, 저장 tool 을 불러도 코드가 거절하는 게 설계된
+    # 경로다(#624, test_memory.py 의 _NOTHING_SAVED 와 같은 판단). 아무것도 안 남았는지는 saved 가 본다
 
 - id: P-UND-03
   ability: 이해
@@ -104,10 +105,10 @@
     - say: 나 땅콩 알레르기 있어서 간식 고를 때 신경 쓰여
       about: caregiver
   # Supervisor 는 안전 기록 가드로도, unclear 로도 보낼 수 있다(프롬프트 규칙 두 개가 겹친다) — 경로는 고정하지 않고
-  # 결과만 본다. 가드로 가면 Memory 가 안 돌 수 있어 memory_ran 은 걸지 않는다. 아이 알레르기 불변(I5)은 W 가 본다
+  # 결과만 본다. tools 도 걸지 않는다 — unclear 로 가면 Memory 가 저장 tool 을 불러도 코드가 거절하는 게 설계된
+  # 경로다(#624). 아이 알레르기 불변(I5)은 W 가 본다
   expect:
     saved: { child_rows: 0 }
-    tools: { must_not: [쓰기] }
 
 - id: P-REC-03
   ability: 기록

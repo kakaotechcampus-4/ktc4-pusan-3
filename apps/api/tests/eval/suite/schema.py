@@ -84,9 +84,11 @@ class SavedExpect(_Strict):
 class ToolsExpect(_Strict):
     """Memory 가 부른 tool (테크스펙 13-1 "경로가 맞나").
 
-    Memory 가 돌지 않은 run 은 아무것도 부르지 않은 것으로 본다 — 순수 요청형 · 무관 질문은
-    제품이 일부러 Memory 를 건너뛴다. 그래서 must_not 만 적은 기대는 통과하고, must 가 있거나
-    memory_ran 이면 실패한다.
+    Memory 가 돌지 않은 run 은 아무것도 부르지 않은 것으로 본다 — 순수 요청형은 제품이 Memory 를
+    건너뛸 수 있다. 그래서 must_not 만 적은 기대는 통과하고, must 가 있거나 memory_ran 이면
+    실패한다.
+    unclear 조각(보호자 자신의 얘기 · 무관한 말)은 Memory 가 돌고 저장 tool 을 거절당하는 게 설계된
+    경로라(#624) must_not 대신 saved 로 본다.
 
     must 는 성공한 호출 수의 최소값이다 — 거절된 호출은 쓰지도 읽지도 못했다. must_not 은
     시도만 해도 위반이다. tool 이름과 "쓰기" 뜻은 `test_memory.py` 의 required_tools ·
