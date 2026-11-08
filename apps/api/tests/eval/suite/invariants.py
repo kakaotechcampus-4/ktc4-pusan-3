@@ -7,6 +7,9 @@ I5(안전 정보 불변) · I8(하루치로 확정 금지)는 DB 상태가 필�
 `confirmed_days` 를 채울 때만 문다(None 이면 건너뛴다). W 에는 안전 정보를 등록하는 단계가 없어
 (register 는 이번 범위 밖) 단계 전후가 늘 같아야 한다.
 
+호출 수(옛 I14, NF-01)는 §2 가 아니라 비용 문제라 여기서 판정하지 않는다 — report 의 비용 절이
+경고로 센다 (리뷰 11-08).
+
 P 에서 판정이 얕은 두 곳 — 숨기지 말고 적어 둔다.
 - I7 은 W 에서만 문다. 인메모리 저장소는 승인 단계 밖에서 일정 행을 쓰지 않아 `stored_events` 가
   늘 0 이다. P 는 초안만 보고, 문구는 케이스의 `never_say`("등록했어요")가 본다.
@@ -22,8 +25,6 @@ from app.agents.common.evidence import overstates
 from app.agents.health.wording import unsafe
 from app.rules.evaluative import find_evaluative
 from tests.eval.suite.trace import Trace
-
-MODEL_CALL_LIMIT = 5  # 정상 4(pipeline.MAX_MODEL_CALLS) + 다시 나누기 1
 
 # 하네스가 검색을 기록하는 근거 종류. 급식 · 공지 · 성장 기록은 다른 저장소라 I3 에서 뺀다
 TRACKED_KINDS = frozenset(
@@ -63,7 +64,7 @@ def check_invariants(trace: Trace, *, allergies: Sequence[str] = ()) -> list[Vio
         # 끝까지 못 돈 run 은 볼 출력이 없다(verdict 가 실패로 센다). 로그 누출은 그래도 본다
         return _i13(trace)
     found: list[Violation] = []
-    for check in (_i1, _i2, _i3, _i5, _i6, _i7, _i8, _i9, _i10, _i11, _i12, _i13, _i14):
+    for check in (_i1, _i2, _i3, _i5, _i6, _i7, _i8, _i9, _i10, _i11, _i12, _i13):
         found += check(trace)
     found += _i4(trace, allergies)
     return found
@@ -230,12 +231,6 @@ def _i13(trace: Trace) -> list[Violation]:
         if hit is not None:  # 원문은 메시지에 싣지 않는다 — 길이만
             found.append(Violation("I13", f"로그에 입력 원문 조각 ({len(hit)}자)"))
     return found
-
-
-def _i14(trace: Trace) -> list[Violation]:
-    if trace.model_calls > MODEL_CALL_LIMIT:
-        return [Violation("I14", f"model_calls {trace.model_calls} > {MODEL_CALL_LIMIT}")]
-    return []
 
 
 def check_state(trace: Trace) -> list[Violation]:

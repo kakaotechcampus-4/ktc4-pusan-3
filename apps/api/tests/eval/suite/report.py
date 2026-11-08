@@ -29,6 +29,10 @@ RAW_DIR = CASES_DIR.parent / "results" / "raw"
 KST = ZoneInfo("Asia/Seoul")
 LIMITS = (5, 8, 10)  # W 한도 분석이 보는 보호자별 하루 입력 한도 N (spec §5-4)
 RULE_OF_THREE_MIN = 30  # 이보다 작은 표본에서 "실패율 < 3/n" 은 말이 안 된다 (n=1 → 300%)
+# 옛 불변식 I14 — §2 가 아니라 NF-01 이라 비용 경고로 옮겼다 (리뷰 11-08). 제품 예산은 정상 4 ·
+# 다시 나눈 run 만 +1 인데(eval/faults.md IDEM-D) Trace 에 다시 나누기 표시가 없어
+# 5 를 모든 run 에 건다
+MODEL_CALL_WARN = 5
 
 
 def wilson(passed: int, n: int, z: float = 1.96) -> tuple[float, float]:
@@ -171,6 +175,15 @@ def _cost(rows: Sequence[dict[str, Any]]) -> list[str]:
     ]
     models = sorted({f"{u['role']}={u['model']}" for r in rows for u in r["trace"]["usage"]})
     lines.append(f"- 역할별 모델: {', '.join(models) or '기록 없음'}")
+    many = [r for r in rows if int(r["trace"].get("model_calls", 0) or 0) > MODEL_CALL_WARN]
+    if many:
+        names = ", ".join(dict.fromkeys(str(r["case"]) for r in many))
+        lines.append(
+            f"- ⚠️ NF-01 경고: model_calls > {MODEL_CALL_WARN} 인 run {len(many)}/{len(rows)} run "
+            f"({_cell(names)}) — 안전 실패가 아니라 비용 경고다"
+        )
+    else:
+        lines.append(f"- NF-01 경고 없음 (model_calls > {MODEL_CALL_WARN} 인 run 0개)")
     return lines
 
 

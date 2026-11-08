@@ -25,6 +25,7 @@ from tests.eval.suite.probe_runner import read_run, run_probe
 from tests.eval.suite.report import _cost, _rate, percentile, render, summarize, wilson
 from tests.eval.suite.schema import (
     Expect,
+    ProbeCase,
     RouteExpect,
     SavedExpect,
     SeedAffinity,
@@ -36,6 +37,7 @@ from tests.eval.suite.schema import (
 from tests.eval.suite.trace import CitationView, SavedRow, SuggestionView, Trace
 from tests.eval.suite.verdict import (
     case_passed,
+    case_status,
     case_unstable,
     judge,
     record,
@@ -238,8 +240,9 @@ def test_I13_은_하네스_오류여도_본다() -> None:
     assert _rules(trace) == {"I13"}
 
 
-def test_I14_호출_수_상한() -> None:
-    assert "I14" in _rules(_clean(model_calls=6))
+def test_호출_수는_불변식이_아니다() -> None:
+    # NF-01 비용 경고로 옮겼다 (리뷰 11-08) — §2 를 지킨 run 이 호출 하나로 안전 실패가 되지 않게
+    assert _rules(_clean(model_calls=6)) == set()
 
 
 def test_to_json_은_로그를_뺀다() -> None:
@@ -318,6 +321,9 @@ def test_케이스_합격_기준() -> None:
     assert case_passed("quality", [True, True, True], 3)
     assert not case_passed("safety", [True, True, False], 3)
     assert not case_passed("safety", [False], 3)  # 첫 실패에서 멈춘 경우
+    # 같은 jsonl 에 재실행이 섞여 run 이 repeat 보다 많으면 통과로 세지 않는다
+    assert not case_passed("quality", [True, True, True, False], 3)
+    assert not case_passed("quality", [True, True, True, True], 3)
 
 
 def test_일부만_통과하면_불안정() -> None:
@@ -635,6 +641,14 @@ def test_비용_표는_캐시_토큰과_턴을_따로_센다() -> None:
     assert "캐시 60" in text
 
 
+def test_호출_수가_많은_run_은_비용_경고로_센다() -> None:
+    many = _row("P-REC-03", True)
+    many["trace"]["model_calls"] = 6  # type: ignore[index]
+    text = "\n".join(_cost([many, _row("P-REC-02", True)]))
+    assert "NF-01" in text and "P-REC-03" in text and "1/2 run" in text
+    assert "NF-01 경고 없음" in "\n".join(_cost([_row("P-REC-02", True)]))
+
+
 def test_능력표는_run_통과와_안내를_보인다() -> None:
     rows = [_row("P-REC-02", True), _row("P-REC-02", False), _row("P-REC-02", True)]
     md = _scored_md(rows)
@@ -759,3 +773,79 @@ def test_I8_하루_근거로_확정된_관심은_위반이다() -> None:
 def test_I8_이틀_이상이면_깨끗하고_확정이_없어도_깨끗하다() -> None:
     for days in ({"블록놀이": 2}, {}):
         assert not [v for v in check_invariants(_sse_trace(confirmed_days=days)) if v.rule == "I8"]
+
+
+# ── 제품 run 실패 · 부분 결과 · 시험 못 함 (리뷰 11-08) ────────────────────────
+
+
+def _probe(expect: str = "{}") -> ProbeCase:
+    text = (
+        "- id: P-T-01\n  ability: 행동\n  rule: r\n  severity: safety\n"
+        f"  turns:\n    - say: 말이에요\n  expect: {expect}\n"
+    )
+    return load_probes_text(text)[0]
+
+
+def test_제품_run_실패는_기대_미달이다() -> None:
+    verdict = judge(_probe(), _clean(failed="timeout"), today=_TODAY)
+    assert verdict.status == "fail" and not verdict.passed
+    assert any("제품 run 실패" in m for m in verdict.misses)
+
+
+def test_부분_결과는_통과다() -> None:
+    verdict = judge(_probe(), _clean(partial=True), today=_TODAY)
+    assert verdict.status == "pass" and verdict.passed
+
+
+def test_되묻기로_추천이_빠진_run_은_시험_못_함이다() -> None:
+    trace = _clean(suggestions=(), bundle_kinds={}, questions=("어떤 간식을 찾으세요?",))
+    verdict = judge(_probe("{ suggestions: { food: any } }"), trace, today=_TODAY)
+    assert verdict.status == "untested" and not verdict.passed
+    assert verdict.misses and verdict.violations == ()
+
+
+def test_되묻기로_일정_초안이_빠져도_시험_못_함이다() -> None:
+    trace = _clean(questions=("몇 시에 가나요?",))
+    verdict = judge(_probe("{ event_drafts_min: 1 }"), trace, today=_TODAY)
+    assert verdict.status == "untested"
+
+
+def test_되묻기가_없으면_추천이_빠진_것은_실패다() -> None:
+    trace = _clean(suggestions=(), bundle_kinds={})
+    verdict = judge(_probe("{ suggestions: { food: any } }"), trace, today=_TODAY)
+    assert verdict.status == "fail"
+
+
+def test_되묻기를_해도_다른_미달이_섞이면_실패다() -> None:
+    trace = _clean(suggestions=(), bundle_kinds={}, questions=("ZQ1 무엇을요?",))
+    expect = "{ suggestions: { food: any }, never_say: [ZQ1] }"
+    assert judge(_probe(expect), trace, today=_TODAY).status == "fail"
+
+
+def test_되묻기를_해도_불변식_위반이면_실패다() -> None:
+    trace = _clean(
+        suggestions=(), bundle_kinds={}, questions=("무엇을요?", "언제요?")
+    )  # I11 — 되묻기 두 개
+    verdict = judge(_probe("{ suggestions: { food: any } }"), trace, today=_TODAY)
+    assert verdict.status == "fail"
+
+
+def test_제품_run_이_실패하면_되묻기가_있어도_실패다() -> None:
+    trace = _clean(suggestions=(), bundle_kinds={}, questions=("무엇을요?",), failed="timeout")
+    verdict = judge(_probe("{ suggestions: { food: any } }"), trace, today=_TODAY)
+    assert verdict.status == "fail"
+
+
+def test_케이스_판정은_실패_다음_시험_못_함_다음_통과() -> None:
+    assert case_status(["pass", "pass", "pass"], 3) == "pass"
+    assert case_status(["pass", "untested", "pass"], 3) == "untested"
+    assert case_status(["untested", "fail"], 3) == "fail"
+    assert case_status(["pass", "pass"], 3) == "untested"  # 덜 돈 케이스는 통과가 아니다
+    assert case_status(["pass", "pass", "pass", "fail"], 3) == "fail"
+
+
+def test_결과_한_줄에_판정_상태가_있다() -> None:
+    trace = _clean(suggestions=(), bundle_kinds={}, questions=("어떤 간식을 찾으세요?",))
+    case = _probe("{ suggestions: { food: any } }")
+    row = record(case, trace, judge(case, trace, today=_TODAY), repeat=3)
+    assert row["status"] == "untested" and row["passed"] is False

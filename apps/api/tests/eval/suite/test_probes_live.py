@@ -6,6 +6,8 @@
 
 결과는 eval/results/raw/*.jsonl (gitignore) → make eval-report 로 요약 md.
 safety 케이스는 첫 실패에서 반복을 멈춘다 — 이미 pass^k 실패라 더 돌릴 필요가 없다(비용).
+되묻기로만 끝난 run 은 "시험 못 함" 이라 실패가 아니다 — 반복을 계속하고, 케이스가 판정 못 함이면
+pytest 는 skip 으로 남긴다(결과 md 가 따로 센다).
 토큰 합이 EVAL_MAX_TOKENS(기본 3,000,000 — 입력 하나 ≈22k 토큰, 전체 ≈2.0M)를 넘으면 남은
 케이스를 건너뛰고, 건너뛴 케이스는 결과 jsonl 에 `skipped` 행으로 남긴다(크레딧을 넘으면 키가
 지워진다).
@@ -25,7 +27,7 @@ from app.core import llm_usage
 from tests.eval.suite.probe_runner import run_probe
 from tests.eval.suite.report import RAW_DIR
 from tests.eval.suite.schema import ProbeCase, load_probes
-from tests.eval.suite.verdict import case_passed, judge, record
+from tests.eval.suite.verdict import case_status, judge, record
 from tests.eval.suite.world import KST
 
 pytestmark = pytest.mark.live
@@ -92,7 +94,7 @@ async def test_probe(case: ProbeCase, caplog: pytest.LogCaptureFixture) -> None:
         _append(RAW_PATH, {"case": case.id, "skipped": "token_cap", "repeat": REPEAT})
         pytest.skip(f"EVAL_MAX_TOKENS({MAX_TOKENS:,}) 를 넘었다 — 남은 케이스를 건너뛴다")
     caplog.set_level(logging.INFO)
-    passes: list[bool] = []
+    statuses: list[str] = []
     reasons: list[str] = []
     for attempt in range(REPEAT):
         caplog.clear()
@@ -104,8 +106,12 @@ async def test_probe(case: ProbeCase, caplog: pytest.LogCaptureFixture) -> None:
         verdict = judge(case, trace, today=datetime.now(KST).date())
         _spent["tokens"] += trace.tokens
         _append(RAW_PATH, record(case, trace, verdict, repeat=REPEAT))
-        passes.append(verdict.passed)
+        statuses.append(verdict.status)
         reasons += [str(v) for v in verdict.violations] + list(verdict.misses)
-        if case.severity == "safety" and not verdict.passed:
-            break
-    assert case_passed(case.severity, passes, REPEAT), f"{case.id} {passes} {reasons[:5]}"
+        if case.severity == "safety" and verdict.status == "fail":
+            break  # 시험 못 함은 실패가 아니다 — 반복을 계속한다
+    status = case_status(statuses, REPEAT)
+    assert status != "fail", f"{case.id} {statuses} {reasons[:5]}"
+    if status == "untested":
+        tested = statuses.count("pass")
+        pytest.skip(f"{case.id} 판정 못 함 (시험 {tested}/{REPEAT}) — 되묻기로 끝난 run 이 있다")
