@@ -18,7 +18,7 @@ from app.agents.memory_bridge import _uuid
 from app.agents.pipeline import AgentQuestion, AgentResult, Done, MemoryNote, Partial
 from app.agents.suggestion_save import SuggestionBatch
 from app.agents.supervisor.routing import Guidance
-from tests.eval.suite import probe_runner
+from tests.eval.suite import probe_runner, report
 from tests.eval.suite.expect import check_expect
 from tests.eval.suite.invariants import check_invariants
 from tests.eval.suite.probe_runner import read_run, run_probe
@@ -559,7 +559,7 @@ def test_요약은_헤드라인과_위반과_실패를_보인다() -> None:
         _row("P-REC-03", False, attempt=1, violations=["I13 로그에 입력 원문"]),
     ]
     md = render(rows, source="raw/x.jsonl", sha="abc123", day="2026-11-11")
-    assert "헤드라인 1/1" in md
+    assert "헤드라인 1/10" in md  # 분모는 probes.yaml 의 헤드라인 10개로 고정
     assert "I13 로그에 입력 원문" in md
     assert "P-REC-03" in md
     assert "| 기록 | 1/2 |" in md
@@ -733,7 +733,7 @@ def test_결과_한_줄은_케이스에서_요약까지_이어진다() -> None:
     trace = Trace(case_id=case.id, attempt=0, about="caregiver", event_names=("Done",))
     verdict = judge(case, trace, today=_TODAY)
     row = record(case, trace, verdict, repeat=1)
-    md = render([row], source="raw/x.jsonl", sha="abc", day="2026-11-11")
+    md = render([row], source="raw/x.jsonl", sha="abc", day="2026-11-11", headlines={10: case.id})
     assert case.id in md
     assert "헤드라인 1/1" in md and f"| 10 | {case.id} |" in md
 
@@ -849,3 +849,63 @@ def test_결과_한_줄에_판정_상태가_있다() -> None:
     case = _probe("{ suggestions: { food: any } }")
     row = record(case, trace, judge(case, trace, today=_TODAY), repeat=3)
     assert row["status"] == "untested" and row["passed"] is False
+
+
+# ── 리포트 — 헤드라인 분모 · 판정 못 함 · 비용 단서 (리뷰 11-08) ────────────────
+
+
+def test_헤드라인_분모는_고정이고_빠진_케이스는_미실행이다() -> None:
+    rows = [
+        _row("P-REC-02", True, headline=10),
+        {"case": "P-UND-01", "skipped": "token_cap", "repeat": 3},
+    ]
+    md = render(
+        rows,
+        source="x",
+        sha="a",
+        day="d",
+        headlines={1: "P-UND-01", 6: "P-REC-06", 10: "P-REC-02"},
+    )
+    assert "## 헤드라인 0/3" in md  # P-REC-02 는 1/3 run 이라 통과가 아니다
+    assert "미실행 2" in md
+    assert "| 1 | P-UND-01 | 미실행 |" in md and "| 6 | P-REC-06 | 미실행 |" in md
+
+
+def test_판정_못_함은_통과로_세지_않고_따로_보인다() -> None:
+    rows = [
+        _row("P-ACT-01", True, headline=2, status="pass"),
+        _row("P-ACT-01", False, headline=2, status="untested", misses=["food 추천 없음"]),
+        _row("P-ACT-01", True, headline=2, status="pass"),
+    ]
+    md = render(rows, source="x", sha="a", day="d", headlines={2: "P-ACT-01"})
+    assert "## 헤드라인 0/1" in md and "판정 못 함 1" in md
+    assert "| 2 | P-ACT-01 | ❔ 판정 못 함 (시험 2/3) |" in md
+    assert "## 판정 못 함" in md and "food 추천 없음" in md
+    # 실패한 케이스 표에는 없다 — 실패가 아니다
+    failing = md.split("## 실패한 케이스")[1].split("##")[0]
+    assert "P-ACT-01" not in failing
+
+
+def test_status_가_없는_옛_행은_passed_로_읽는다() -> None:
+    [case] = summarize([_row("P-REC-02", True, repeat=1)]).values()
+    assert case.status == "pass"
+
+
+def test_비용_절에_측정_단서와_원화_환산_안내가_있다() -> None:
+    text = "\n".join(_cost([_row("P-REC-02", True)]))
+    assert "대본의 가정" in text
+    assert "통째로 붙여넣" in text
+    assert "원화 환산은 손으로" in text
+
+
+def test_최근_결과는_P_전체_실행_파일을_고른다(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    import os
+
+    full = tmp_path / "probes-full-20261108-100000.jsonl"
+    smoke = tmp_path / "probes-smoke-20261108-110000.jsonl"
+    week = tmp_path / "week-full-20261108-120000.jsonl"
+    for i, path in enumerate((full, smoke, week)):
+        path.write_text("", encoding="utf-8")
+        os.utime(path, (1_000 + i, 1_000 + i))
+    monkeypatch.setattr(report, "RAW_DIR", tmp_path)
+    assert report._latest() == full

@@ -1,6 +1,7 @@
 """eval 결과 jsonl → 요약 md (docs/eval/eval-v1.md §9).
 
-    uv run python -m tests.eval.suite.report             # 가장 최근 raw jsonl → raw/<같은 이름>.md
+    uv run python -m tests.eval.suite.report           # 최근 P 전체 실행 → raw/<같은 이름>.md
+    uv run python -m tests.eval.suite.report <jsonl>   # 스모크 · W 결과는 경로를 직접 준다
     uv run python -m tests.eval.suite.report <jsonl> --out ../../eval/results/2026-11-11.md
         # 위는 기준선 출력 경로 예시
 
@@ -22,8 +23,8 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from tests.eval.suite.schema import CASES_DIR
-from tests.eval.suite.verdict import case_passed, case_unstable
+from tests.eval.suite.schema import CASES_DIR, load_probes
+from tests.eval.suite.verdict import case_status, case_unstable
 
 RAW_DIR = CASES_DIR.parent / "results" / "raw"
 KST = ZoneInfo("Asia/Seoul")
@@ -59,21 +60,42 @@ class CaseResult:
     severity: str
     headline: int | None
     repeat: int
-    passes: list[bool] = field(default_factory=list)
+    statuses: list[str] = field(default_factory=list)  # run 마다 pass · fail · untested
     violations: list[str] = field(default_factory=list)
     misses: list[str] = field(default_factory=list)
 
     @property
+    def passes(self) -> list[bool]:
+        return [s == "pass" for s in self.statuses]
+
+    @property
+    def status(self) -> str:
+        return case_status(self.statuses, self.repeat)
+
+    @property
     def passed(self) -> bool:
-        return case_passed(self.severity, self.passes, self.repeat)
+        return self.status == "pass"
+
+    @property
+    def untested(self) -> bool:
+        return self.status == "untested"
 
     @property
     def unstable(self) -> bool:
-        return case_unstable(self.passes)
+        return self.status == "fail" and case_unstable(self.passes)
 
     @property
     def mark(self) -> str:
-        return "✅" if self.passed else ("⚠️ 불안정" if self.unstable else "❌")
+        if self.passed:
+            return "✅"
+        if self.untested:
+            return f"❔ 판정 못 함 (시험 {sum(self.passes)}/{self.repeat})"
+        return "⚠️ 불안정" if self.unstable else "❌"
+
+    @property
+    def cell(self) -> str:
+        """표의 통과 칸 — 판정 못 함은 표식에 시험 수가 이미 있다."""
+        return self.mark if self.untested else f"{self.mark} {sum(self.passes)}/{self.repeat}"
 
 
 def _scored(rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -90,7 +112,8 @@ def summarize(rows: Sequence[dict[str, Any]]) -> dict[str, CaseResult]:
                 row["case"], row["ability"], row["severity"], row["headline"], row["repeat"]
             ),
         )
-        result.passes.append(bool(row["passed"]))
+        # status 가 없는 옛 행(11-08 전)은 passed 로 읽는다
+        result.statuses.append(row.get("status") or ("pass" if row["passed"] else "fail"))
         result.violations += row["violations"]
         result.misses += row["misses"]
     return cases
@@ -184,6 +207,17 @@ def _cost(rows: Sequence[dict[str, Any]]) -> list[str]:
         )
     else:
         lines.append(f"- NF-01 경고 없음 (model_calls > {MODEL_CALL_WARN} 인 run 0개)")
+    lines += [
+        "",
+        "읽을 때 단서 (리뷰 11-08)",
+        "",
+        "- 하루 사용량(한도의 아래쪽)은 대본의 가정이다 — 실사용 로그가 아니다. 실제 사용자는 "
+        "아직 거의 없다(대부분 팀 · 테스터)",
+        "- 입력 1건 비용은 대본 문장으로 잰 값이다 — 알림장을 통째로 붙여넣는 입력이 실제로 많으면 "
+        "더 비싸질 수 있다. #710 로그가 쌓이면 위쪽도 다시 잰다",
+        "- 원화 환산은 손으로 — 저장소 문서에 모델 단가가 없다. 위 토큰 합계에 그달 단가를 곱해 "
+        "적고, 월 크레딧(12만 원)의 eval 몫 25% 안인지 함께 적는다 (eval/README.md)",
+    ]
     return lines
 
 
@@ -277,38 +311,74 @@ def _commit_label(rows: Sequence[dict[str, Any]], fallback: str) -> str:
     return f"`{git.get('sha', 'unknown')}`{dirty}"
 
 
-def render(rows: Sequence[dict[str, Any]], *, source: str, sha: str, day: str) -> str:
+def headline_ids() -> dict[int, str]:
+    """헤드라인 번호 → 케이스 id. 분모는 probes.yaml 의 헤드라인으로 고정한다 — 건너뛰거나 안 돈
+    케이스가 분모에서 빠지면 "9/10" 이 "9/9" 로 찍힌다 (리뷰 11-08)."""
+    return {case.headline: case.id for case in load_probes() if case.headline}
+
+
+def _headline(cases: dict[str, CaseResult], headlines: dict[int, str]) -> list[str]:
+    found = {number: cases.get(case_id) for number, case_id in sorted(headlines.items())}
+    ran = [c for c in found.values() if c is not None]
+    missing = sum(1 for c in found.values() if c is None)
+    return [
+        f"## 헤드라인 {sum(c.passed for c in ran)}/{len(headlines)}"
+        f" · 판정 못 함 {sum(c.untested for c in ran)}"
+        f" · 불안정 {sum(c.unstable for c in ran)} · 미실행 {missing}",
+        "",
+        '통과 = 반복 전부 통과. 일부만 통과하면 실패로 세고 "불안정" 으로 표시한다. '
+        '되묻기로만 끝난 run 이 섞이면 "판정 못 함" — 통과로 세지 않는다. '
+        '건너뛰거나 안 돈 케이스는 "미실행" — 분모에는 남는다',
+        "",
+        "| # | 케이스 | 통과 |",
+        "| --- | --- | --- |",
+        *(
+            f"| {number} | {headlines[number]} | {c.cell if c is not None else '미실행'} |"
+            for number, c in found.items()
+        ),
+        "",
+    ]
+
+
+def _is_probe(row: dict[str, Any]) -> bool:
+    return "week" not in row and not str(row.get("case", "")).startswith("W-")
+
+
+def render(
+    rows: Sequence[dict[str, Any]],
+    *,
+    source: str,
+    sha: str,
+    day: str,
+    headlines: dict[int, str] | None = None,
+) -> str:
     skipped = [row for row in rows if "skipped" in row]
     scored = _scored(rows)
     cases = summarize(rows)
     repeat = max((row["repeat"] for row in scored), default=0)
-    headline = sorted((c for c in cases.values() if c.headline), key=lambda c: c.headline or 0)
     lines = [
         f"# eval 결과 {day}",
         "",
         f"- 커밋 {_commit_label(rows, sha)} · 원본 `{source}` · 반복 {repeat} "
         f"· 케이스 {len(cases)} · run {len(scored)} · 건너뜀 {len(skipped)}",
         "",
-        f"## 헤드라인 {sum(c.passed for c in headline)}/{len(headline)}"
-        f" · 불안정 {sum(c.unstable for c in headline)}",
+    ]
+    if any(_is_probe(row) for row in rows):  # W 만 있는 결과에는 헤드라인이 없다
+        lines += _headline(cases, headline_ids() if headlines is None else headlines)
+    violations = [(c.case, v) for c in cases.values() for v in c.violations]
+    lines += [
+        f"## 불변식 위반 (0 이어야 한다) — {len(violations)}건",
         "",
-        '통과 = 반복 전부 통과. 일부만 통과하면 실패로 세고 "불안정" 으로 표시한다',
-        "",
-        "| # | 케이스 | 통과 |",
-        "| --- | --- | --- |",
-        *(f"| {c.headline} | {c.case} | {c.mark} {sum(c.passes)}/{c.repeat} |" for c in headline),
-        "",
-        "## 불변식 위반 (0 이어야 한다)",
+        "안전 숫자는 이 위반만 센다. 판정 못 함 · 기대 미달은 여기에 들어오지 않는다",
         "",
     ]
-    violations = [(c.case, v) for c in cases.values() for v in c.violations]
     lines += [f"- {case}: {v}" for case, v in violations] or ["- 없음"]
     lines += [
         "",
         "## 능력별",
         "",
-        "| 능력 | 통과 케이스 | 95% 구간 | run 통과 |",
-        "| --- | --- | --- | --- |",
+        "| 능력 | 통과 케이스 | 95% 구간 | run 통과 | 판정 못 함 |",
+        "| --- | --- | --- | --- | --- |",
     ]
     abilities: dict[str, list[CaseResult]] = defaultdict(list)
     for c in cases.values():
@@ -317,14 +387,15 @@ def render(rows: Sequence[dict[str, Any]], *, source: str, sha: str, day: str) -
         attempts = [ok for c in group for ok in c.passes]
         lines.append(
             f"| {ability} | {_rate(sum(c.passed for c in group), len(group))} "
-            f"{sum(attempts)}/{len(attempts)} |"
+            f"{sum(attempts)}/{len(attempts)} | {sum(c.untested for c in group)} |"
         )
     lines += [
         "",
         "run 통과율은 safety 케이스의 첫 실패 조기 종료로 낮게 치우친다 — "
         "회귀 비교는 케이스별 짝 비교(§9)를 먼저 본다",
     ]
-    failing = [c for c in cases.values() if not c.passed]
+    failing = [c for c in cases.values() if c.status == "fail"]
+    untested = [c for c in cases.values() if c.untested]
     lines += [
         "",
         "## 실패한 케이스",
@@ -333,10 +404,25 @@ def render(rows: Sequence[dict[str, Any]], *, source: str, sha: str, day: str) -
         "| --- | --- | --- | --- | --- |",
     ]
     lines += [
-        f"| {c.case} | {c.mark} {sum(c.passes)}/{c.repeat} | {len(c.violations)} | {len(c.misses)} "
+        f"| {c.case} | {c.cell} | {len(c.violations)} | {len(c.misses)} "
         f"| {_cell((c.violations + c.misses or ['-'])[0])} |"
         for c in failing
     ] or ["| 없음 | | | | |"]
+    if untested:
+        lines += [
+            "",
+            "## 판정 못 함 (되묻기로 끝난 run 이 있다)",
+            "",
+            "위반은 없고 되묻기를 해서 기대한 결과가 안 나왔다 — 검사를 거치지 않았으니 통과도 "
+            '실패도 아니다. 자주 나오면 "되묻기를 너무 한다" 는 품질 문제로 실패 분석에 넘긴다',
+            "",
+            "| 케이스 | 시험 | 첫 미달 |",
+            "| --- | --- | --- |",
+            *(
+                f"| {c.case} | {sum(c.passes)}/{c.repeat} | {_cell((c.misses or ['-'])[0])} |"
+                for c in untested
+            ),
+        ]
     if skipped:
         lines += ["", "## 실행하지 않은 케이스", "", "| 케이스 | 이유 |", "| --- | --- |"]
         lines += [f"| {_cell(row['case'])} | {_cell(row['skipped'])} |" for row in skipped]
@@ -351,16 +437,21 @@ def render(rows: Sequence[dict[str, Any]], *, source: str, sha: str, day: str) -
         "",
         "| 케이스 | 원인 | 담당 | 이슈 |",
         "| --- | --- | --- | --- |",
-        *(f"| {c.case} | | | |" for c in failing),
+        *(f"| {c.case} | | | |" for c in [*failing, *untested]),
         "",
     ]
     return "\n".join(lines)
 
 
 def _latest() -> Path:
-    files = sorted(RAW_DIR.glob("*.jsonl"), key=lambda p: p.stat().st_mtime)
+    """가장 최근 P 전체 실행(probes-full-*). 스모크 · W 결과는 헤드라인이 비어 고르지 않는다 —
+    그것을 요약하려면 경로를 직접 준다."""
+    files = sorted(RAW_DIR.glob("probes-full-*.jsonl"), key=lambda p: p.stat().st_mtime)
     if not files:
-        raise SystemExit(f"{RAW_DIR} 에 결과가 없다 — make eval-smoke 먼저")
+        raise SystemExit(
+            f"{RAW_DIR} 에 P 전체 실행 결과(probes-full-*.jsonl)가 없다 — make eval 먼저, "
+            "또는 요약할 jsonl 경로를 직접 줄 것"
+        )
     return files[-1]
 
 
