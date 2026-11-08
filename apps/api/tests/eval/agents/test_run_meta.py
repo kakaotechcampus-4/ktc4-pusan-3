@@ -109,3 +109,28 @@ def test_live_테스트가_안_돌았으면_파일을_쓰지_않는다(tmp_path)
 
     assert write_live_meta([_item("tests/eval/agents/a.py::t", live=False)], path) is None
     assert not path.exists()
+
+
+def test_판정기와_OCR_모델도_남는다():
+    settings = AgentSettings(
+        _env_file=None,
+        MEMORY_API_KEY="k",
+        MEMORY_BASE_URL="https://gw.example.invalid/v1",
+        MEMORY_MODEL="memory-model",
+        CURATOR_JUDGE_MODEL="typesafe/jev-1.13",
+    )
+    models = build_meta(evalset=[], settings=settings, ocr_model="ocr-model")["models"]
+
+    assert models["curator_judge"] == {"model": "typesafe/jev-1.13", "reasoning_effort": None}
+    assert models["meal_ocr"]["model"] == "ocr-model"
+    assert models["notice_ocr"]["model"] == "ocr-model"
+
+
+def test_pytest_밖_스크립트_실행도_명령으로_메타를_남긴다(tmp_path):
+    from tests.eval.agents.run_meta import main
+
+    path = tmp_path / "meta.json"
+
+    assert main(["scripts/meal_ocr_eval.py", "--out", str(path)]) == 0
+    written = json.loads(path.read_text(encoding="utf-8"))
+    assert written["evalset"] == ["scripts/meal_ocr_eval.py"]

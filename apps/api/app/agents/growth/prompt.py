@@ -256,7 +256,15 @@ def _fingerprint_parts() -> tuple[str, ...]:
                 rendered.append(build_system_prompt(context, task, ()))  # type: ignore[arg-type]
             except KeyError:  # 코드가 답하는 라벨(growth_review)은 프롬프트가 없다
                 break
-    return (*rendered, tools_text(tool_defs.TOOL_DEFINITIONS))
+    from app.agents.common import tool_loop
+
+    # user 메시지 틀 — 같이 한 말 머리말 · 재호출 지시도 모델이 읽는 규칙이다
+    messages = (
+        request_message([]),
+        request_message(["요청"], ["같이 한 말"]),
+        recall_message(["요청"], chosen=["고른 것"], excluded=["빠진 것"]),
+    )
+    return (*rendered, *messages, tools_text(tool_defs.TOOL_DEFINITIONS), tool_loop.BAD_JSON)
 
 
 register_prompt("growth", _fingerprint_parts)

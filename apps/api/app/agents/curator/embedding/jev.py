@@ -22,11 +22,11 @@ from app.agents.common.llm_client import (
     LLMUnavailableError,
 )
 from app.agents.curator.embedding.judge import (
-    NONE,
     PROMPT,
-    UNCERTAIN,
     JudgeAnswer,
     JudgeQuotaError,
+    criteria,
+    prompt_parts,
 )
 from app.agents.curator.embedding.ports import CuratorDomain
 from app.core import llm_usage
@@ -79,11 +79,7 @@ class JevJudge:
                 "identity": {
                     "type": "choice",
                     "instructions": self._prompt,
-                    "criteria": {
-                        **{option: f"동일한 대상: {option}" for option in options},
-                        NONE: "동일한 후보가 없다",
-                        UNCERTAIN: "정보 부족 또는 모호하여 판단 불가",
-                    },
+                    "criteria": criteria(options),
                 }
             },
         }
@@ -112,7 +108,7 @@ class JevJudge:
         logger.info(
             "curator judge prompt_name=curator_judge prompt_sha256=%s model=%s candidates=%d "
             "confidence=%s input_tokens=%s latency_ms=%d",
-            short(fingerprint(self._prompt)),
+            short(fingerprint(*prompt_parts(self._prompt))),
             answer.model,
             len(options),
             answer.confidence,

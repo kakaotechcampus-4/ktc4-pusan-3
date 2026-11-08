@@ -128,10 +128,10 @@ def test_알림장_OCR_지문은_provider_가_로그에_쓰는_값과_같다():
     assert pf.prompt_fingerprint("notice_ocr").sha256 == fingerprint(*extractor.prompt_parts())
 
 
-def test_판정기_지문은_판정_기준_문장_하나로_만든다():
-    from app.agents.curator.embedding.judge import PROMPT
+def test_판정기_지문은_판정_기준_문장과_선택지_설명_틀로_만든다():
+    from app.agents.curator.embedding import judge
 
-    assert pf.prompt_fingerprint("curator_judge").sha256 == fingerprint(PROMPT)
+    assert pf.prompt_fingerprint("curator_judge").sha256 == fingerprint(*judge.prompt_parts())
 
 
 def test_growth_는_task_와_상태_구획을_전부_싣는다():
@@ -177,3 +177,70 @@ def test_로그용_지문은_이름마다_한_번만_계산한다(monkeypatch):
     pf.logged_fingerprint("supervisor")
     assert calls == ["supervisor"]
     pf.logged_fingerprint.cache_clear()
+
+
+# ── 리뷰 반영: 모델에 가는 글이 지문 밖에 남지 않는다 ────────────────────────
+
+
+def test_memory_응답_스키마가_바뀌면_지문이_바뀐다(monkeypatch):
+    from app.agents.memory.schemas import reply
+
+    before = pf.prompt_fingerprint("memory")
+    monkeypatch.setattr(reply, "REPLY_FORMAT", {"type": "json_object"})
+    assert pf.prompt_fingerprint("memory") != before
+
+
+def test_memory_이어받기_응답_스키마가_바뀌면_지문이_바뀐다(monkeypatch):
+    from app.agents.memory.schemas import reply
+
+    before = pf.prompt_fingerprint("memory")
+    monkeypatch.setattr(reply, "CONTINUATION_REPLY_FORMAT", {"type": "json_object"})
+    assert pf.prompt_fingerprint("memory") != before
+
+
+@pytest.mark.parametrize("attr", ["_EMPTY_TURN", "_PENDING_RETRY", "_HINT_HEADER", "_HAZARD"])
+def test_memory_가_모델에_보내는_재시도_문구가_바뀌면_지문이_바뀐다(monkeypatch, attr):
+    from app.agents.memory import agent
+
+    before = pf.prompt_fingerprint("memory")
+    monkeypatch.setattr(agent, attr, getattr(agent, attr) + "!")
+    assert pf.prompt_fingerprint("memory") != before
+
+
+def test_판정기_기준_문구가_바뀌면_지문이_바뀐다(monkeypatch):
+    from app.agents.curator.embedding import judge
+
+    before = pf.prompt_fingerprint("curator_judge")
+    monkeypatch.setattr(judge, "CRITERION_NONE", judge.CRITERION_NONE + "!")
+    assert pf.prompt_fingerprint("curator_judge") != before
+
+
+@pytest.mark.parametrize(
+    ("name", "module", "func"),
+    [
+        ("food", "app.agents.food.prompt", "recall_message"),
+        ("food", "app.agents.food.prompt", "request_message"),
+        ("growth", "app.agents.growth.prompt", "recall_message"),
+        ("growth", "app.agents.growth.prompt", "request_message"),
+        ("activity", "app.agents.activity.prompt", "recall_message"),
+        ("activity", "app.agents.activity.prompt", "request_message"),
+        ("supervisor", "app.agents.supervisor.prompt", "reroute_feedback"),
+    ],
+)
+def test_user_메시지_틀이_바뀌면_지문이_바뀐다(monkeypatch, name, module, func):
+    import importlib
+
+    mod = importlib.import_module(module)
+    before = pf.prompt_fingerprint(name)
+    original = getattr(mod, func)
+    monkeypatch.setattr(mod, func, lambda *a, **k: original(*a, **k) + "!")
+    assert pf.prompt_fingerprint(name) != before
+
+
+@pytest.mark.parametrize("name", ["food", "activity", "growth", "health"])
+def test_tool_루프의_재시도_문구가_바뀌면_지문이_바뀐다(monkeypatch, name):
+    from app.agents.common import tool_loop
+
+    before = pf.prompt_fingerprint(name)
+    monkeypatch.setattr(tool_loop, "BAD_JSON", tool_loop.BAD_JSON + "!")
+    assert pf.prompt_fingerprint(name) != before

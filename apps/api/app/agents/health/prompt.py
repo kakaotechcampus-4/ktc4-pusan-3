@@ -103,7 +103,10 @@ def _fingerprint_parts() -> tuple[str, ...]:
             rendered.append(build_system_prompt(fixed_context(), task))  # type: ignore[arg-type]
         except KeyError:  # 모델을 부르지 않는 라벨
             continue
-    return (*rendered, tools_text(tool_defs.TOOL_DEFINITIONS))
+    from app.agents.common import tool_loop
+
+    # user 메시지는 보호자 요청 원문 그대로라 틀이 없다
+    return (*rendered, tools_text(tool_defs.TOOL_DEFINITIONS), tool_loop.BAD_JSON)
 
 
 register_prompt("health", _fingerprint_parts)

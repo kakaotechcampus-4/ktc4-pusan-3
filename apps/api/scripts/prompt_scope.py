@@ -24,20 +24,20 @@ from pathlib import Path
 
 API_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_BASE = "origin/develop"
+# 바뀐 파일을 못 읽었을 때의 종료 코드. pytest 가 쓰는 0~5 와 겹치지 않게 한다 — 훅은 이 값일 때만
+# push 를 막지 않는다(수집 오류는 pytest 의 2 라 그대로 막힌다)
+EXIT_NO_DIFF = 3
 
-# 프롬프트나 tool spec · 응답 스키마를 이루는 파일이 아니라도, 바뀌면 지문 계산이 달라지는 공용 파일
+# 어떤 파일이 바뀌었든 늘 돈다 — 1초 남짓이고, 평가 문서 · 지문 규칙이 바뀐 경우도 여기서 잡힌다
 FINGERPRINT_TESTS: tuple[str, ...] = (
     "tests/unit/agents/common/test_prompt_hash.py",
     "tests/unit/agents/common/test_prompt_fingerprint.py",
     "tests/unit/agents/common/test_prompt_history.py",
 )
-_SHARED = (
-    "apps/api/app/agents/common/prompt_fingerprint.py",
-    "apps/api/app/agents/common/tool_schema.py",
-    "apps/api/app/agents/prompt_registry.py",
-    "apps/api/app/core/prompt_hash.py",
-    "docs/agents/eval/*",
-)
+
+
+# tool 루프의 재시도 문구는 food · activity · growth · health 의 지문에 들어간다
+_TOOL_LOOP = "apps/api/app/agents/common/tool_loop.py"
 
 
 @dataclass(frozen=True)
@@ -67,19 +67,22 @@ SCOPES: tuple[Scope, ...] = (
         ),
         tests=("tests/unit/agents/supervisor", "tests/eval/agents/supervisor"),
     ),
-    _agent("memory"),
-    _agent("food"),
-    _agent("activity"),
+    _agent("memory", "apps/api/app/agents/memory/agent.py"),
+    _agent("food", _TOOL_LOOP),
+    _agent("activity", _TOOL_LOOP),
     Scope(
         name="activity_event_schedule",
         paths=("apps/api/app/agents/activity/event_schedule.py",),
         tests=("tests/unit/agents/activity/test_activity_event_schedule.py",),
     ),
-    _agent("growth"),
-    _agent("health", "apps/api/app/agents/health/labels/*"),
+    _agent("growth", _TOOL_LOOP),
+    _agent("health", "apps/api/app/agents/health/labels/*", _TOOL_LOOP),
     Scope(
         name="curator_judge",
-        paths=("apps/api/app/agents/curator/embedding/judge.py",),
+        paths=(
+            "apps/api/app/agents/curator/embedding/judge.py",
+            "apps/api/app/agents/curator/embedding/jev.py",
+        ),
         tests=("tests/unit/agents/curator", "tests/eval/agents/curator/test_pairs_data.py"),
     ),
     Scope(
@@ -157,7 +160,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     except subprocess.CalledProcessError as exc:
         print(f"git 으로 바뀐 파일을 못 읽었습니다 (기준 {args.base}): {exc.stderr.strip()}")
         print("기준 브랜치를 못 찾았으면 `git fetch origin develop` 뒤 다시 하세요.")
-        return 2
+        return EXIT_NO_DIFF
 
     targets = expand(select_tests(changed))
     if not args.run:

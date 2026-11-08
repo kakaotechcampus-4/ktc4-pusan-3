@@ -20,6 +20,7 @@ tool이 못 막는 것을 막는 자리다. 코드로 막을 수 있는 것은 r
 """
 
 from collections.abc import Mapping, Sequence
+from types import SimpleNamespace
 from typing import Any
 
 from app.agents.common.prompt_fingerprint import fixed_context, register_prompt, tools_text
@@ -229,6 +230,7 @@ def build_system_prompt(
 
 def _fingerprint_parts() -> tuple[str, ...]:
     """프롬프트 지문(#770)의 입력 — task 마다 렌더링한 system 프롬프트(예시 없음)와 tool spec."""
+    from app.agents.common import tool_loop
     from app.agents.food.schemas import tool_defs
 
     rendered = []
@@ -237,7 +239,26 @@ def _fingerprint_parts() -> tuple[str, ...]:
             rendered.append(build_system_prompt(fixed_context(), task))  # type: ignore[arg-type]
         except ValueError:  # 코드가 답하는 task 는 프롬프트가 없다
             continue
-    return (*rendered, tools_text(tool_defs.TOOL_DEFINITIONS))
+    # user 메시지 틀 — 후보 목록 · 아이 기록 후보 · 재호출 지시도 모델이 읽는 규칙이다
+    sample = [SimpleNamespace(menu_key="menu_key", display_name="메뉴", ingredients=("재료",))]
+    records = [
+        {
+            "kind": "kind",
+            "id": "id",
+            "label": "label",
+            "polarity": "like",
+            "observed_on": "2000-01-01",
+            "is_stale": stale,
+        }
+        for stale in (False, True)
+    ]
+    messages = (
+        request_message([], sample),  # type: ignore[arg-type]
+        request_message(["요청"], sample, records=[]),  # type: ignore[arg-type]
+        request_message(["요청"], sample, records=records),  # type: ignore[arg-type]
+        recall_message(["요청"], avoid=["menu_key"], sample=sample),  # type: ignore[arg-type]
+    )
+    return (*rendered, *messages, tools_text(tool_defs.TOOL_DEFINITIONS), tool_loop.BAD_JSON)
 
 
 register_prompt("food", _fingerprint_parts)

@@ -2,16 +2,16 @@
 
 보호자 발화를 조각으로 나누고 조각마다 어디로 보낼지(기록 · 요청 · 도메인 Agent · guarded) 라벨을 붙인다. 틀리면 안전 관련 조각이 일반 기록이나 추천으로 새어 나간다.
 
-프롬프트: `app/agents/supervisor/prompt.py` (`build_system_prompt()`)
+프롬프트: `app/agents/supervisor/prompt.py` (`build_system_prompt()` · 다시 나누기 지시 `reroute_feedback()`)
 tool spec · 응답 스키마: `app/agents/supervisor/schemas.py` (`ROUTE_TOOL_SPEC` · `ROUTE_TOOL_SPEC_STRICT`)
 
-지문은 `apps/api/app/agents/prompt_registry.py` 의 `all_fingerprints()["supervisor"]` 로 확인한다 (문서에는 앞 12자). 고정 입력으로 렌더링한 system 프롬프트 + tool spec · 응답 스키마의 SHA-256 이다 — 모델 · effort 는 지문에 넣지 않고 `조건` 칸에 적는다.
+지문은 `apps/api/app/agents/prompt_registry.py` 의 `all_fingerprints()["supervisor"]` 로 확인한다 (문서에는 앞 12자). 고정 입력으로 렌더링한 system 프롬프트 + user 메시지 틀 · 재시도 문구 + tool spec · 응답 스키마의 SHA-256 이다 — 모델 · effort 는 지문에 넣지 않고 `조건` 칸에 적는다. tool 이 돌려주는 실패 사유 문구는 Memory 것만 들어가고 나머지 Agent 는 아직 지문 밖이다.
 
 ## 0. 기준선
 
 | 측정 조건 | |
 | --- | --- |
-| 코드 | `develop` @ `3e0d3afc` (프롬프트 지문 `839cd8879067`) |
+| 코드 | `develop` @ `3e0d3afc` (프롬프트 지문 `44b092a5d97d`) |
 | 모델 | `SUPERVISOR_MODEL` · `SUPERVISOR_REASONING_EFFORT` (비면 `MEMORY_*` — 기준선이 그 상태) |
 | 실행 | 케이스마다 `TEST_REPEAT` 회 (기존 기준 3회, 이 문서부터 5회) |
 | 평가셋 | `apps/api/tests/eval/agents/routing_cases.py` — 라우팅 케이스 전체(T · RC · GR · FC · HR · UNCLEAR · DATE 묶음), 실행은 `tests/eval/agents/supervisor/test.py` |
@@ -27,11 +27,11 @@ tool spec · 응답 스키마: `app/agents/supervisor/schemas.py` (`ROUTE_TOOL_S
 
 | 버전 | 커밋 | 지문 | 조건 | 무엇을 왜 바꿨나 | C1 | 안정 오답 | 불안정 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| v0 | `3e0d3afc` | `839cd8879067` | 미측정 | 최초 기준선. 합격선만 기존 문서에서 옮김, 수치는 다음 변경 때 전후 두 행으로 잰다 | 미측정 | 미측정 | 미측정 |
+| v0 | `3e0d3afc` | `44b092a5d97d` | 미측정 | 최초 기준선. 합격선만 기존 문서에서 옮김, 수치는 다음 변경 때 전후 두 행으로 잰다 | 미측정 | 미측정 | 미측정 |
 
 - `커밋` 은 재 본 코드. 작업 트리가 더러웠으면 커밋 옆에 `dirty` 를 적는다 (`tests/eval/agents/live_run_meta.json` 의 `dirty`).
-- `C1` 칸은 `a/b` (C1 사례 입력 수 / 전체 입력 수) 또는 `미측정`.
-- 기준선이 `미측정` 인 곳의 프롬프트를 바꿀 때는 **바꾸기 전 프롬프트로 한 행, 바꾼 뒤로 한 행** 을 같은 조건으로 더한다.
+- `C1` 칸은 `a/b` (C1 사례 입력 수 / 전체 입력 수). `미측정` 은 v0 에만 쓴다.
+- 프롬프트를 바꿀 때는 **같은 조건으로 잰 바꾸기 전 행** 이 있어야 한다. 기준선이 `미측정` 이면 바꾸기 전 프롬프트로 한 행, 바꾼 뒤로 한 행을 같은 조건으로 더한다.
 
 ## 2. C1 · 일반 실패 판정 기준
 
@@ -52,8 +52,9 @@ tool spec · 응답 스키마: `app/agents/supervisor/schemas.py` (`ROUTE_TOOL_S
 **반복 · 비교 규칙**
 
 - 같은 입력을 R번 돌려 **한 번이라도 C1 이 나오면 그 입력은 C1 사례**다. 입력별 발생 횟수도 §3 에 적는다. 일부 실행에서만 나온 오류도 불안정하다는 이유로 빼지 않는다.
-- 측정 이력의 `C1` 칸은 `a/b` — a = C1 사례인 입력 수, b = 전체 입력 수. `test_prompt_history.py` 가 같은 `조건` 의 직전 행과 a 를 비교해 늘었으면 실패시킨다.
-- 조건(평가셋 · 모델/effort · 반복 횟수)이 다르면 비교할 수 없다. 조건을 바꿨으면 같은 프롬프트를 새 조건으로 한 번 더 재서 행을 더한다.
+- 측정 이력의 `C1` 칸은 `a/b` — a = C1 사례인 입력 수, b = 전체 입력 수. `test_prompt_history.py` 가 같은 `조건` 의 직전 측정 행과 **비율 a/b** 를 비교해 늘었으면 실패시킨다 (평가셋이 커져 건수만 늘면 통과).
+- 프롬프트를 바꾼 행은 **같은 조건으로 잰 바꾸기 전 행** 이 있어야 한다 — 없으면 실패. 기준선이 `미측정` 이면 바꾸기 전 프롬프트로 한 행, 바꾼 뒤로 한 행을 같은 조건으로 더한다.
+- 조건(평가셋 · 모델/effort · 반복 횟수)을 바꿨으면 바꾸기 전 프롬프트를 새 조건으로 먼저 다시 재서 행을 더한다. 같은 지문으로 조건만 바꿔 다시 잰 행은 비교하지 않는다.
 
 ## 3. 반복해서 같은 오답 · 흔들리는 값
 
@@ -69,4 +70,4 @@ uv run pytest tests/eval/agents/supervisor/test.py -m live -k growth_routing -s 
 uv run pytest tests/eval/agents/supervisor/test.py -m live -k health_routing -s # Health 경계
 ```
 
-실행이 끝나면 `tests/eval/agents/live_run_meta.json`(gitignore)에 커밋 · dirty · 모델 · effort · 반복 횟수 · 프롬프트 지문이 남는다. 그 값으로 §1 에 행을 더한다. 라이브 eval 은 CI 에서 돌리지 않는다.
+pytest 라이브 eval(`-m live`)은 끝나면 `tests/eval/agents/live_run_meta.json`(gitignore)에 커밋 · dirty · 모델 · effort · 반복 횟수 · 프롬프트 지문을 남긴다. pytest 가 아닌 스크립트는 위의 `run_meta` 명령으로 남긴다. 그 값으로 §1 에 행을 더한다. 라이브 eval 은 CI 에서 돌리지 않는다.

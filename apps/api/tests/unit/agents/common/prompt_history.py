@@ -2,6 +2,7 @@
 
 import re
 from dataclasses import dataclass
+from fractions import Fraction
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[6]
@@ -13,6 +14,9 @@ _ROW = re.compile(r"^\|\s*v\d+\s*\|")
 _SHA = re.compile(r"[0-9a-f]{12}")
 _C1 = re.compile(r"(\d+)/(\d+)")
 UNMEASURED = "미측정"
+# C1 정의 자체가 정해지지 않은 프롬프트. 문서에 `<!-- c1: 미결 -->` 이 있을 때만 쓸 수 있다
+UNDECIDED = "미결"
+_UNDECIDED_MARK = re.compile(r"<!--\s*c1:\s*미결\s*-->")
 COLUMNS = 8
 
 
@@ -64,18 +68,32 @@ def parse_history(text: str) -> list[HistoryRow]:
     return rows
 
 
-def _c1_count(row: HistoryRow) -> int | None:
+def _rate(row: HistoryRow) -> Fraction | None:
+    """C1 칸 `a/b` 의 비율. 형식이 아니거나 b 가 0 이거나 a > b 면 None."""
     match = _C1.fullmatch(row.c1)
-    return int(match.group(1)) if match else None
+    if not match:
+        return None
+    count, total = int(match.group(1)), int(match.group(2))
+    if total == 0 or count > total:
+        return None
+    return Fraction(count, total)
 
 
 def check_history(name: str, text: str, current_short: str) -> list[str]:
-    """실패 이유 목록. 비어 있으면 통과."""
+    """실패 이유 목록. 비어 있으면 통과.
+
+    - 마지막 행 지문 == 지금 지문
+    - v0 다음 행은 C1 을 `a/b` 로 잰다 (C1 정의가 미결인 문서만 `미결`)
+    - 프롬프트를 바꾼 행(바로 앞 행과 지문이 다른 마지막 행)은 같은 조건으로 잰
+      바꾸기 전 행이 있어야 하고, 그 행보다 C1 비율이 늘면 안 된다.
+      조건만 바꿔 같은 프롬프트를 다시 잰 행은 비교하지 않는다
+    """
     path = f"docs/agents/eval/{name.upper()}_EVAL.md"
     try:
         rows = parse_history(text)
     except HistoryError as exc:
         return [f"{name}: {exc} ({path})"]
+    undecided_ok = bool(_UNDECIDED_MARK.search(text))
 
     errors: list[str] = []
     for row in rows:
@@ -89,7 +107,13 @@ def check_history(name: str, text: str, current_short: str) -> list[str]:
             errors.append(
                 f"{name}: {row.version} 의 C1 이 미측정입니다 — v0 이후 행은 재서 적습니다 ({path})"
             )
-        elif _c1_count(row) is None:
+        elif row.c1 == UNDECIDED:
+            if not undecided_ok:
+                errors.append(
+                    f"{name}: {row.version} 의 C1 `미결` 은 "
+                    f"`<!-- c1: 미결 -->` 표시가 있는 문서에서만 씁니다 ({path})"
+                )
+        elif _rate(row) is None:
             errors.append(f"{name}: {row.version} 의 C1 `{row.c1}` 이 a/b 형식이 아닙니다 ({path})")
 
     last = rows[-1]
@@ -99,21 +123,30 @@ def check_history(name: str, text: str, current_short: str) -> list[str]:
             f"{current_short} 행을 더하세요 ({path})."
         )
 
-    last_count = _c1_count(last)
-    if last_count is not None:
-        before = next(
-            (
-                row
-                for row in reversed(rows[:-1])
-                if row.condition == last.condition and _c1_count(row) is not None
-            ),
-            None,
-        )
-        before_count = _c1_count(before) if before else None
-        if before is not None and before_count is not None and last_count > before_count:
+    last_rate = _rate(last)
+    if last_rate is None:
+        return errors
+    before = next(
+        (
+            row
+            for row in reversed(rows[:-1])
+            if row.condition == last.condition and _rate(row) is not None
+        ),
+        None,
+    )
+    prompt_changed = len(rows) >= 2 and rows[-2].sha != last.sha
+    if before is None:
+        if prompt_changed:
             errors.append(
-                f"{name}: C1 이 {before_count} → {last_count} 로 늘었습니다 "
-                f"({before.version} → {last.version}, 같은 조건). "
-                f"C1 이 늘어난 프롬프트 변경은 머지하지 않습니다 ({path})."
+                f"{name}: {last.version} 와 같은 조건으로 잰 바꾸기 전 행이 없습니다 — 바꾸기 전 "
+                f"프롬프트를 같은 조건으로 재서 그 행을 먼저 더하세요 ({path})."
             )
+        return errors
+    before_rate = _rate(before)
+    if before_rate is not None and last_rate > before_rate:
+        errors.append(
+            f"{name}: C1 비율이 {before.c1} → {last.c1} 로 늘었습니다 "
+            f"({before.version} → {last.version}, 같은 조건). "
+            f"C1 이 늘어난 프롬프트 변경은 머지하지 않습니다 ({path})."
+        )
     return errors

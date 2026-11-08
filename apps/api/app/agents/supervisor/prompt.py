@@ -247,12 +247,29 @@ def build_system_prompt() -> str:
     return "\n\n".join(_SECTIONS)
 
 
+def reroute_feedback(bounced: tuple[str, ...]) -> str:
+    """Supervisor 에게 돌려줄 실패 원인 (다시 나누기). 모델 입력이라 조각 원문이 들어간다 —
+    로그에는 안 남긴다. 지시 문장은 프롬프트라 지문에 들어간다 (#770)."""
+    listed = "\n".join(f"- {text}" for text in bounced)
+    return (
+        "[다시 나누기] 아래 조각을 record 로 보냈는데 Memory 가 기록하지 않았다.\n"
+        f"{listed}\n"
+        "기록할 사실이 아니라 요청이면 request로 바꾸고 담당 agent와 food 유형을 정한다. "
+        "기록이 맞으면 record로 두고, 둘 다 아니면 unclear로 바꾼다. "
+        "발화 전체를 다시 나눠 route를 부른다."
+    )
+
+
 def _fingerprint_parts() -> tuple[str, ...]:
-    """프롬프트 지문(#770)의 입력 — system 프롬프트와 route tool spec(일반 · strict)."""
+    """프롬프트 지문(#770)의 입력.
+
+    system 프롬프트, 다시 나누기 지시, route tool spec(일반 · strict).
+    """
     from app.agents.supervisor import schemas
 
     return (
         build_system_prompt(),
+        reroute_feedback(("조각",)),
         canonical_json(schemas.ROUTE_TOOL_SPEC),
         canonical_json(schemas.ROUTE_TOOL_SPEC_STRICT),
     )

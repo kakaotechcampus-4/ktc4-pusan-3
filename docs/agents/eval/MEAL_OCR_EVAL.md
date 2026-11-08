@@ -1,11 +1,13 @@
 # 급식표 OCR 프롬프트 평가
 
+<!-- c1: 미결 -->
+
 급식표 사진을 읽어 날짜 · 끼니 · 메뉴로 옮긴다. 읽은 메뉴가 그날 급식 정보가 되어 Food 의 근거가 된다.
 
 프롬프트: `app/providers/meal_plan/image_ocr.py` (`SYSTEM_PROMPT`)
 tool spec · 응답 스키마: `app/providers/meal_plan/image_ocr.py` (`RESPONSE_FORMAT`)
 
-지문은 `apps/api/app/agents/prompt_registry.py` 의 `all_fingerprints()["meal_ocr"]` 로 확인한다 (문서에는 앞 12자). 고정 입력으로 렌더링한 system 프롬프트 + tool spec · 응답 스키마의 SHA-256 이다 — 모델 · effort 는 지문에 넣지 않고 `조건` 칸에 적는다.
+지문은 `apps/api/app/agents/prompt_registry.py` 의 `all_fingerprints()["meal_ocr"]` 로 확인한다 (문서에는 앞 12자). 고정 입력으로 렌더링한 system 프롬프트 + user 메시지 틀 · 재시도 문구 + tool spec · 응답 스키마의 SHA-256 이다 — 모델 · effort 는 지문에 넣지 않고 `조건` 칸에 적는다. tool 이 돌려주는 실패 사유 문구는 Memory 것만 들어가고 나머지 Agent 는 아직 지문 밖이다.
 
 ## 0. 기준선
 
@@ -32,8 +34,8 @@ tool spec · 응답 스키마: `app/providers/meal_plan/image_ocr.py` (`RESPONSE
 | v0 | `3e0d3afc` | `dee1526c3682` | 미측정 | 최초 기준선. 번호 일치 수치는 참고용이며, 번호가 C1 인지는 아래 §2 의 미결 사항 | 미측정 | 미측정 | 미측정 |
 
 - `커밋` 은 재 본 코드. 작업 트리가 더러웠으면 커밋 옆에 `dirty` 를 적는다 (`tests/eval/agents/live_run_meta.json` 의 `dirty`).
-- `C1` 칸은 `a/b` (C1 사례 입력 수 / 전체 입력 수) 또는 `미측정`.
-- 기준선이 `미측정` 인 곳의 프롬프트를 바꿀 때는 **바꾸기 전 프롬프트로 한 행, 바꾼 뒤로 한 행** 을 같은 조건으로 더한다.
+- `C1` 칸은 `a/b` (C1 사례 입력 수 / 전체 입력 수). `미측정` 은 v0 에만 쓴다 — 이 문서는 C1 정의가 미결이라 `미결` 도 쓸 수 있다.
+- 프롬프트를 바꿀 때는 **같은 조건으로 잰 바꾸기 전 행** 이 있어야 한다. 기준선이 `미측정` 이면 바꾸기 전 프롬프트로 한 행, 바꾼 뒤로 한 행을 같은 조건으로 더한다.
 
 ## 2. C1 · 일반 실패 판정 기준
 
@@ -54,20 +56,22 @@ tool spec · 응답 스키마: `app/providers/meal_plan/image_ocr.py` (`RESPONSE
 **반복 · 비교 규칙**
 
 - 같은 입력을 R번 돌려 **한 번이라도 C1 이 나오면 그 입력은 C1 사례**다. 입력별 발생 횟수도 §3 에 적는다. 일부 실행에서만 나온 오류도 불안정하다는 이유로 빼지 않는다.
-- 측정 이력의 `C1` 칸은 `a/b` — a = C1 사례인 입력 수, b = 전체 입력 수. `test_prompt_history.py` 가 같은 `조건` 의 직전 행과 a 를 비교해 늘었으면 실패시킨다.
-- 조건(평가셋 · 모델/effort · 반복 횟수)이 다르면 비교할 수 없다. 조건을 바꿨으면 같은 프롬프트를 새 조건으로 한 번 더 재서 행을 더한다.
+- 측정 이력의 `C1` 칸은 `a/b` — a = C1 사례인 입력 수, b = 전체 입력 수. `test_prompt_history.py` 가 같은 `조건` 의 직전 측정 행과 **비율 a/b** 를 비교해 늘었으면 실패시킨다 (평가셋이 커져 건수만 늘면 통과).
+- 프롬프트를 바꾼 행은 **같은 조건으로 잰 바꾸기 전 행** 이 있어야 한다 — 없으면 실패. 기준선이 `미측정` 이면 바꾸기 전 프롬프트로 한 행, 바꾼 뒤로 한 행을 같은 조건으로 더한다.
+- 조건(평가셋 · 모델/effort · 반복 횟수)을 바꿨으면 바꾸기 전 프롬프트를 새 조건으로 먼저 다시 재서 행을 더한다. 같은 지문으로 조건만 바꿔 다시 잰 행은 비교하지 않는다.
 
 ## 3. 반복해서 같은 오답 · 흔들리는 값
 
-C1 정의가 미결이라 `C1` 칸은 `미측정` 이다. 담당이 주 지표(메뉴 이름 일치 등)를 정하면 `scripts/meal_ocr_eval.py` 의 채점에 그 지표를 더하고 이 절을 고친다.
+C1 정의가 미결이라 v0 의 `C1` 칸은 `미측정` 이고, 그 뒤 행은 `미결` 로 적을 수 있다 (이 문서의 `<!-- c1: 미결 -->` 표시). 담당이 주 지표(메뉴 이름 일치 등)를 정하면 표시를 지우고 `scripts/meal_ocr_eval.py` 의 채점에 그 지표를 더하고 이 절을 고친다.
 
 ## 4. 실행 방법
 
 ```powershell
 uv run python -m scripts.meal_ocr_eval --check   # 접속 · 모델 목록만 (과금 없음)
 uv run python -m scripts.meal_ocr_eval tests/fixtures/meal_plan_2025_01.jpg
+uv run python -m tests.eval.agents.run_meta scripts/meal_ocr_eval.py  # 메타
 ```
 
 스크립트는 1회씩 읽는다. 반복 5회로 재려면 같은 명령을 다섯 번 돌려 입력별 발생 횟수를 합산한다.
 
-실행이 끝나면 `tests/eval/agents/live_run_meta.json`(gitignore)에 커밋 · dirty · 모델 · effort · 반복 횟수 · 프롬프트 지문이 남는다. 그 값으로 §1 에 행을 더한다. 라이브 eval 은 CI 에서 돌리지 않는다.
+pytest 라이브 eval(`-m live`)은 끝나면 `tests/eval/agents/live_run_meta.json`(gitignore)에 커밋 · dirty · 모델 · effort · 반복 횟수 · 프롬프트 지문을 남긴다. pytest 가 아닌 스크립트는 위의 `run_meta` 명령으로 남긴다. 그 값으로 §1 에 행을 더한다. 라이브 eval 은 CI 에서 돌리지 않는다.

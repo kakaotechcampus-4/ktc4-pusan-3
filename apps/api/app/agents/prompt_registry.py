@@ -17,7 +17,7 @@ import app.agents.curator.embedding.judge  # noqa: F401  (curator_judge 등록)
 import app.agents.food.prompt  # noqa: F401  (food 등록)
 import app.agents.growth.prompt  # noqa: F401  (growth 등록)
 import app.agents.health.prompt  # noqa: F401  (health 등록)
-import app.agents.memory.prompt  # noqa: F401  (memory 등록)
+import app.agents.memory.agent  # noqa: F401  (memory 등록 — 재시도 문구가 agent.py 에 있다)
 import app.agents.supervisor.prompt  # noqa: F401  (supervisor 등록)
 from app.agents.common.prompt_fingerprint import PromptPrint, prompt_fingerprint, register_prompt
 from app.providers.meal_plan import image_ocr

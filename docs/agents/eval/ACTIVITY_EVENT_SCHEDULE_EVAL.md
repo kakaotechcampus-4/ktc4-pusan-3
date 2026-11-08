@@ -5,7 +5,7 @@
 프롬프트: `app/agents/activity/event_schedule.py` (`SYSTEM_PROMPT`)
 tool spec · 응답 스키마: `app/agents/activity/event_schedule.py` (`RESPONSE_FORMAT`)
 
-지문은 `apps/api/app/agents/prompt_registry.py` 의 `all_fingerprints()["activity_event_schedule"]` 로 확인한다 (문서에는 앞 12자). 고정 입력으로 렌더링한 system 프롬프트 + tool spec · 응답 스키마의 SHA-256 이다 — 모델 · effort 는 지문에 넣지 않고 `조건` 칸에 적는다.
+지문은 `apps/api/app/agents/prompt_registry.py` 의 `all_fingerprints()["activity_event_schedule"]` 로 확인한다 (문서에는 앞 12자). 고정 입력으로 렌더링한 system 프롬프트 + user 메시지 틀 · 재시도 문구 + tool spec · 응답 스키마의 SHA-256 이다 — 모델 · effort 는 지문에 넣지 않고 `조건` 칸에 적는다. tool 이 돌려주는 실패 사유 문구는 Memory 것만 들어가고 나머지 Agent 는 아직 지문 밖이다.
 
 ## 0. 기준선
 
@@ -33,8 +33,8 @@ tool spec · 응답 스키마: `app/agents/activity/event_schedule.py` (`RESPONS
 | v0 | `3e0d3afc` | `ef40335945bc` | 11-04 정답표 3벌(저장소 밖) · 모델 미기록 · R5 | 최초 기준선. `activity-agent-v1.md` 11-04 실측을 옮김 — 닫힘을 연다고 한 칸 + 모름을 연다고 한 칸 + 장소 틀림이 모두 0 | 0/304 | 미측정 | 미측정 |
 
 - `커밋` 은 재 본 코드. 작업 트리가 더러웠으면 커밋 옆에 `dirty` 를 적는다 (`tests/eval/agents/live_run_meta.json` 의 `dirty`).
-- `C1` 칸은 `a/b` (C1 사례 입력 수 / 전체 입력 수) 또는 `미측정`.
-- 기준선이 `미측정` 인 곳의 프롬프트를 바꿀 때는 **바꾸기 전 프롬프트로 한 행, 바꾼 뒤로 한 행** 을 같은 조건으로 더한다.
+- `C1` 칸은 `a/b` (C1 사례 입력 수 / 전체 입력 수). `미측정` 은 v0 에만 쓴다.
+- 프롬프트를 바꿀 때는 **같은 조건으로 잰 바꾸기 전 행** 이 있어야 한다. 기준선이 `미측정` 이면 바꾸기 전 프롬프트로 한 행, 바꾼 뒤로 한 행을 같은 조건으로 더한다.
 
 ## 2. C1 · 일반 실패 판정 기준
 
@@ -56,8 +56,9 @@ tool spec · 응답 스키마: `app/agents/activity/event_schedule.py` (`RESPONS
 **반복 · 비교 규칙**
 
 - 같은 입력을 R번 돌려 **한 번이라도 C1 이 나오면 그 입력은 C1 사례**다. 입력별 발생 횟수도 §3 에 적는다. 일부 실행에서만 나온 오류도 불안정하다는 이유로 빼지 않는다.
-- 측정 이력의 `C1` 칸은 `a/b` — a = C1 사례인 입력 수, b = 전체 입력 수. `test_prompt_history.py` 가 같은 `조건` 의 직전 행과 a 를 비교해 늘었으면 실패시킨다.
-- 조건(평가셋 · 모델/effort · 반복 횟수)이 다르면 비교할 수 없다. 조건을 바꿨으면 같은 프롬프트를 새 조건으로 한 번 더 재서 행을 더한다.
+- 측정 이력의 `C1` 칸은 `a/b` — a = C1 사례인 입력 수, b = 전체 입력 수. `test_prompt_history.py` 가 같은 `조건` 의 직전 측정 행과 **비율 a/b** 를 비교해 늘었으면 실패시킨다 (평가셋이 커져 건수만 늘면 통과).
+- 프롬프트를 바꾼 행은 **같은 조건으로 잰 바꾸기 전 행** 이 있어야 한다 — 없으면 실패. 기준선이 `미측정` 이면 바꾸기 전 프롬프트로 한 행, 바꾼 뒤로 한 행을 같은 조건으로 더한다.
+- 조건(평가셋 · 모델/effort · 반복 횟수)을 바꿨으면 바꾸기 전 프롬프트를 새 조건으로 먼저 다시 재서 행을 더한다. 같은 지문으로 조건만 바꿔 다시 잰 행은 비교하지 않는다.
 
 ## 3. 반복해서 같은 오답 · 흔들리는 값
 
@@ -67,4 +68,4 @@ tool spec · 응답 스키마: `app/agents/activity/event_schedule.py` (`RESPONS
 
 저장소에 라이브 실행 스크립트가 없다. 프롬프트를 바꾸면 11-04 와 같은 방식(정답을 파서를 모르는 에이전트가 원문만 읽고 붙인 정답표 × 실제 코드 5회)으로 재서 행을 더한다. 정답표를 저장소 안으로 들일지는 행사 원문이 공개 자료인지부터 확인한다(루트 CLAUDE.md §9).
 
-실행이 끝나면 `tests/eval/agents/live_run_meta.json`(gitignore)에 커밋 · dirty · 모델 · effort · 반복 횟수 · 프롬프트 지문이 남는다. 그 값으로 §1 에 행을 더한다. 라이브 eval 은 CI 에서 돌리지 않는다.
+pytest 라이브 eval(`-m live`)은 끝나면 `tests/eval/agents/live_run_meta.json`(gitignore)에 커밋 · dirty · 모델 · effort · 반복 횟수 · 프롬프트 지문을 남긴다. pytest 가 아닌 스크립트는 위의 `run_meta` 명령으로 남긴다. 그 값으로 §1 에 행을 더한다. 라이브 eval 은 CI 에서 돌리지 않는다.

@@ -42,6 +42,9 @@ def test_범위가_가리키는_테스트_경로가_실제로_있다():
         ("app/agents/growth/schemas/books.py", "tests/unit/agents/growth"),
         ("app/agents/health/labels/medication.py", "tests/unit/agents/health"),
         ("app/agents/curator/embedding/judge.py", "tests/unit/agents/curator"),
+        ("app/agents/curator/embedding/jev.py", "tests/unit/agents/curator"),
+        ("app/agents/memory/agent.py", "tests/unit/agents/memory"),
+        ("app/agents/common/tool_loop.py", "tests/unit/agents/food"),
         (
             "app/providers/meal_plan/image_ocr.py",
             "tests/unit/providers/test_meal_plan_image_ocr*.py",
@@ -100,3 +103,29 @@ def test_변경_파일은_커밋_범위와_작업_트리를_합친다(monkeypatc
     monkeypatch.setattr("scripts.prompt_scope._git", fake_git)
 
     assert changed_files("origin/develop") == ["a.py", "b.py", "c.py"]
+
+
+def test_git_을_못_읽으면_종료_코드_3_이다(monkeypatch):
+    """pytest 는 수집 오류에 2 를 낸다.
+
+    훅이 2 를 "못 읽음" 으로 보고 push 를 통과시키면 안 된다.
+    """
+    import subprocess
+
+    from scripts import prompt_scope
+
+    def broken(*_args):
+        raise subprocess.CalledProcessError(128, ["git"], stderr="fatal: bad revision")
+
+    monkeypatch.setattr(prompt_scope, "_git", broken)
+
+    assert prompt_scope.main(["--run"]) == prompt_scope.EXIT_NO_DIFF == 3
+
+
+def test_pytest_종료_코드는_그대로_돌려준다(monkeypatch):
+    from scripts import prompt_scope
+
+    monkeypatch.setattr(prompt_scope, "changed_files", lambda base: [])
+    monkeypatch.setattr(prompt_scope.subprocess, "call", lambda *a, **k: 2)
+
+    assert prompt_scope.main(["--run"]) == 2

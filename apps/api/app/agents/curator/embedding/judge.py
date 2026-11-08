@@ -63,4 +63,33 @@ class IdentityJudge(Protocol):
         ...
 
 
-register_prompt("curator_judge", lambda: (PROMPT,))
+# 판정 요청의 `criteria` — 선택지마다 모델이 읽는 설명이다.
+# `PROMPT` 와 같이 모델 입력이라 지문에 넣는다 (#770)
+CRITERION_SAME = "동일한 대상: {option}"
+CRITERION_NONE = "동일한 후보가 없다"
+CRITERION_UNCERTAIN = "정보 부족 또는 모호하여 판단 불가"
+
+
+def criteria(options: Sequence[str]) -> dict[str, str]:
+    """판정 요청의 선택지 설명. 후보 순서 그대로, 그 뒤에 none · uncertain."""
+    return {
+        **{option: CRITERION_SAME.format(option=option) for option in options},
+        NONE: CRITERION_NONE,
+        UNCERTAIN: CRITERION_UNCERTAIN,
+    }
+
+
+def prompt_parts(prompt: str | None = None) -> tuple[str, ...]:
+    """프롬프트 지문(#770)의 입력 — 판단 기준 문장과 선택지 설명 틀.
+
+    실험이 다른 문장을 넣으면 그 문장으로 만든다.
+    """
+    return (
+        PROMPT if prompt is None else prompt,
+        CRITERION_SAME,
+        CRITERION_NONE,
+        CRITERION_UNCERTAIN,
+    )
+
+
+register_prompt("curator_judge", prompt_parts)

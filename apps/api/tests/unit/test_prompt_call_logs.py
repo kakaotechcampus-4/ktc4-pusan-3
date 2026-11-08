@@ -108,3 +108,26 @@ async def test_알림장_OCR_로그_줄에_지문이_붙는다(caplog) -> None:
     ]
     assert "prompt_name=notice_ocr" in line
     assert f"prompt_sha256={_sha('notice_ocr')}" in line
+
+
+def test_판정기_로그_지문은_기준_문구까지_포함한_등록_지문과_같다() -> None:
+    from app.agents.curator.embedding import judge
+    from app.core.prompt_hash import fingerprint, short
+
+    assert short(fingerprint(*judge.prompt_parts())) == _sha("curator_judge")
+
+
+# 알림장 OCR 의 `PROMPT_VERSION` 판 → 그 판의 지문. 프롬프트 · 응답 스키마를 바꾸면 판을 올리고 여기
+# 한 줄을 더한다.
+NOTICE_PROMPT_VERSIONS = {"2026-11-02.2": "f3239166b835"}
+
+
+def test_알림장_OCR_프롬프트를_바꾸면_PROMPT_VERSION_도_올린다() -> None:
+    """`PROMPT_VERSION` 은 저장된 행 중 다시 뽑을 것을 고르는 캐시 키다. 손으로 올리는 값이라
+    프롬프트만 바꾸고 잊으면 옛 프롬프트로 뽑은 결과가 계속 쓰인다."""
+    from app.providers.notice import extractor
+
+    assert NOTICE_PROMPT_VERSIONS.get(extractor.PROMPT_VERSION) == _sha("notice_ocr"), (
+        "알림장 OCR 프롬프트(또는 응답 스키마)가 바뀌었습니다. extractor.PROMPT_VERSION 을 올리고 "
+        "NOTICE_PROMPT_VERSIONS 에 (새 판, 새 지문)을 더하세요."
+    )

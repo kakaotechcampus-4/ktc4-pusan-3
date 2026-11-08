@@ -18,7 +18,8 @@ cd "$root/apps/api" || exit 0
 uv run python -m scripts.prompt_scope --run
 status=$?
 
-if [ "$status" -eq 2 ]; then
+# 3 = 바뀐 파일을 못 읽음 (scripts/prompt_scope.py EXIT_NO_DIFF). pytest 의 2(수집 오류)는 막는다
+if [ "$status" -eq 3 ]; then
   echo "pre-push: 바뀐 파일을 못 읽어 프롬프트 테스트를 건너뜁니다 (push 는 계속)."
   exit 0
 fi

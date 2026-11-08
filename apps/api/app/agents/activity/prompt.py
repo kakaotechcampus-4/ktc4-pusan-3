@@ -296,7 +296,15 @@ def _fingerprint_parts() -> tuple[str, ...]:
         rendered.append(
             build_system_prompt(fixed_context(gate=gate), (), weather=brief)  # type: ignore[arg-type]
         )
-    return (*rendered, tools_text(tool_defs.TOOL_DEFINITIONS))
+    from app.agents.common import tool_loop
+
+    # user 메시지 틀 — 재호출 지시도 모델이 읽는 규칙이다
+    messages = (
+        request_message([]),
+        request_message(["요청"]),
+        recall_message(["요청"], chosen=["고른 것"], excluded=["빠진 것"]),
+    )
+    return (*rendered, *messages, tools_text(tool_defs.TOOL_DEFINITIONS), tool_loop.BAD_JSON)
 
 
 register_prompt("activity", _fingerprint_parts)

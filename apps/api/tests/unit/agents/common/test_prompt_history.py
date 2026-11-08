@@ -68,7 +68,11 @@ def test_프롬프트가_바뀌었는데_행을_안_더하면_실패하고_현�
 
 
 def test_새_지문_행을_더하면_통과다():
-    doc = _doc(_row(), _row("v1", OTHER, c1="0/10", note="문구를 고침"))
+    doc = _doc(
+        _row(),
+        _row("v1", SHA, c1="0/10", note="바꾸기 전 프롬프트로 잼"),
+        _row("v2", OTHER, c1="0/10", note="문구를 고침"),
+    )
 
     assert check_history("food", doc, OTHER) == []
 
@@ -99,16 +103,16 @@ def test_지문_칸이_12자_16진수가_아니면_실패한다():
 
 
 def test_v0_다음_행의_C1_은_미측정일_수_없다():
-    doc = _doc(_row(), _row("v1", OTHER, c1="미측정"))
+    doc = _doc(_row(), _row("v1", SHA, c1="미측정"))
 
-    [error] = check_history("food", doc, OTHER)
+    [error] = check_history("food", doc, SHA)
     assert "v1" in error and "C1" in error
 
 
 def test_C1_칸은_a_b_형식이어야_한다():
-    doc = _doc(_row(), _row("v1", OTHER, c1="많음"))
+    doc = _doc(_row(), _row("v1", SHA, c1="많음"))
 
-    [error] = check_history("food", doc, OTHER)
+    [error] = check_history("food", doc, SHA)
     assert "a/b" in error
 
 
@@ -116,7 +120,27 @@ def test_같은_조건에서_C1_이_늘면_실패한다():
     doc = _doc(_row("v1", c1="1/10"), _row("v2", OTHER, c1="2/10"))
 
     [error] = check_history("food", doc, OTHER)
-    assert "1 → 2" in error
+    assert "1/10 → 2/10" in error
+
+
+def test_C1_은_비율로_비교한다_분모가_커져_건수만_늘면_통과다():
+    doc = _doc(_row("v1", c1="2/10"), _row("v2", OTHER, c1="3/60"))
+
+    assert check_history("food", doc, OTHER) == []
+
+
+def test_C1_은_비율로_비교한다_분모가_작아져_비율이_늘면_실패다():
+    doc = _doc(_row("v1", c1="2/10"), _row("v2", OTHER, c1="1/2"))
+
+    [error] = check_history("food", doc, OTHER)
+    assert "2/10 → 1/2" in error
+
+
+def test_분모가_0_이면_형식_오류다():
+    doc = _doc(_row(), _row("v1", SHA, c1="0/0"))
+
+    [error] = check_history("food", doc, SHA)
+    assert "a/b" in error
 
 
 def test_같은_조건에서_C1_이_같거나_줄면_통과다():
@@ -127,19 +151,57 @@ def test_같은_조건에서_C1_이_같거나_줄면_통과다():
     assert check_history("food", fewer, OTHER) == []
 
 
-def test_조건이_다르면_비교하지_않는다():
+def test_조건을_바꾸면_바꾸기_전_프롬프트를_새_조건으로_다시_잰_행과_비교한다():
     doc = _doc(
         _row("v1", c1="0/10", cond="셋 · 모델/low · R5"),
-        _row("v2", OTHER, c1="3/10", cond="셋 · 모델/high · R5"),
+        _row("v2", SHA, c1="1/10", cond="셋 · 모델/high · R5", note="조건만 바꿔 다시 잼"),
+        _row("v3", OTHER, c1="1/10", cond="셋 · 모델/high · R5"),
     )
 
     assert check_history("food", doc, OTHER) == []
 
 
-def test_직전_행이_미측정이면_첫_측정은_통과다():
+def test_조건만_바꿔_같은_프롬프트를_다시_잰_행은_비교_대상이_없어도_통과다():
+    doc = _doc(
+        _row("v1", c1="0/10", cond="셋 · 모델/low · R5"),
+        _row("v2", SHA, c1="3/10", cond="셋 · 모델/high · R5", note="조건만 바꿔 다시 잼"),
+    )
+
+    assert check_history("food", doc, SHA) == []
+
+
+def test_기준선이_미측정이면_바꾸기_전_행_없이_새_행만_더하면_실패한다():
     doc = _doc(_row(), _row("v1", OTHER, c1="2/10"))
 
-    assert check_history("food", doc, OTHER) == []
+    [error] = check_history("food", doc, OTHER)
+    assert "바꾸기 전" in error
+
+
+def test_프롬프트를_바꾼_행의_조건이_이전_측정과_다르면_실패한다():
+    doc = _doc(
+        _row("v1", c1="0/10", cond="셋 · 모델/low · R5"),
+        _row("v2", OTHER, c1="0/10", cond="셋 · 모델/high · R5"),
+    )
+
+    [error] = check_history("food", doc, OTHER)
+    assert "바꾸기 전" in error
+
+
+def test_C1_정의가_미결인_문서는_미결_로_적을_수_있다():
+    doc = _doc(
+        _row(),
+        _row("v1", OTHER, c1="미결", note="문구를 고침"),
+        before="# 문서\n\n<!-- c1: 미결 -->\n\n",
+    )
+
+    assert check_history("meal_ocr", doc, OTHER) == []
+
+
+def test_미결_표시가_없는_문서는_미결_을_쓸_수_없다():
+    doc = _doc(_row(), _row("v1", SHA, c1="미결"))
+
+    [error] = check_history("food", doc, SHA)
+    assert "미결" in error
 
 
 def test_비교는_같은_조건의_가장_가까운_측정_행과_한다():
@@ -150,7 +212,7 @@ def test_비교는_같은_조건의_가장_가까운_측정_행과_한다():
     )
 
     [error] = check_history("food", doc, OTHER)
-    assert "0 → 1" in error and "v1 → v3" in error
+    assert "0/10 → 1/10" in error and "v1 → v3" in error
 
 
 def test_측정_이력_밖의_다른_표는_읽지_않는다():
