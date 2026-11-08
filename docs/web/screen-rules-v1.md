@@ -316,16 +316,14 @@ hydrate 직후 그릴 것과 **같은 것**을 둔다. 다른 것을 끼우면 �
 
 ## 4. 08 사진으로 적기 — 게이트가 아니다 · 시트 · lane
 
-- ⚠️ **실서버에는 아직 `POST /children/{cid}/photos` 가 없다.** 그래서 목이 뜨지 않는 빌드에서는 들어가는
-  버튼(03 홈 · 04 대화의 카메라)을 숨긴다 (`lib/features.ts` · #409).
-  화면과 목은 그대로라 목을 켜면 보인다. 서버가 생기면 `PENDING_SERVER_FEATURES.photoEntry` 를 지운다
+- ⚠️ **서버는 생겼지만 아직 켜지 않았다.** `POST /children/{cid}/photos` · `POST /photo-runs/{rid}/commit` 이 있고, 서버 스위치 `PHOTO_UPLOAD_ACCEPT` 가 기본값 꺼짐이다. 처리방침 · 동의가 나가기 전에는 켜지 않는다 ([`docs/notice/notice-ocr-v1.md`](../notice/notice-ocr-v1.md) §7). 그래서 목이 뜨지 않는 빌드에서는 들어가는
+  버튼(03 홈 · 04 대화의 카메라, 09 하루 패널의 "사진으로 적기")을 숨긴 채로 둔다 (`lib/features.ts` · #409). 켤 때 `PENDING_SERVER_FEATURES.photoEntry` 를 지운다.
+  🚨 활동 lane 은 서버에 없다 (422). 문서 lane 만 받는다
 - 🚨 **08 은 승인 게이트가 아니다.** `POST /photo-runs/{rid}/commit` 은 **캘린더에 쓰지 않고**,
   일정은 보호자가 항목의 시트에서 넣는다 (#151) — 화면의 저장 버튼에 `btn-approve` 도
   `caution` 도 쓰지 않는다. 그 둘은 시트의 제출 버튼이 가져간다.
-  ⚠️ **커밋이 무엇을 만드는지는 확정 전이다.** 한동안 여기 "관찰을 만든다" 고 적어 뒀는데,
-  AI 파트 문서(`docs/agents/data_model.md` 2026-09-26)는 기관 문서를 **별도 테이블**로 뒀다 —
-  `notice` · `daycare_meal`. 계약서 §09 의 lane 표(문서 lane → `observation_education 또는 event`)와
-  어긋난다. 🚨 **그래서 문서 lane 화면에서 "기록" 이라고 쓰지 않는다** — 이 제품에서 "기록" 은
+  🚨 **커밋은 관찰을 만들지 않는다.** `notice` · `notice_item` · `daycare_meal` 을 만든다
+  (`docs/notice/notice-ocr-v1.md`). 🚨 **그래서 문서 lane 화면에서 "기록" 이라고 쓰지 않는다** — 이 제품에서 "기록" 은
   관찰을 가리키는 말이라(위 "화면에서 부르는 말"), 기관 문서를 그렇게 부르면 07 기록 탭에
   올라온다고 약속하는 셈이다.
   ⚠️ **`commit` 이 게이트인지는 미결이다** (#121 에서 제기, 답 없음 · PM 최종 결정).

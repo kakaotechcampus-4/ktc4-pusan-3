@@ -125,7 +125,9 @@ class ObservationCommon:
     source_writer: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("parent.id", ondelete="SET NULL"), nullable=True
     )
-    source_notice_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    source_notice_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("notice.id", ondelete="SET NULL"), nullable=True
+    )
 
 
 class Promotable:
@@ -243,7 +245,9 @@ class ObservationHealth(Base, UUIDPk, Timestamps):
     source_writer: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("parent.id", ondelete="SET NULL"), nullable=True
     )
-    source_notice_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    source_notice_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("notice.id", ondelete="SET NULL"), nullable=True
+    )
     # 약 행은 비어 있다(CHECK observation_health_symptom_not_with_medication).
     # 증상 행은 1개 이상 — Memory 스키마가 막는다(옛 행에는 빈 것이 있을 수 있다)
     symptom: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False, server_default="{}")
