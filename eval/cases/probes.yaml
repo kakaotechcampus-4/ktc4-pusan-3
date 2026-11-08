@@ -11,7 +11,7 @@
   turns:
     - say: 오늘 점심은 밥 반 공기 먹었고 어린이집에서 블록놀이 했대. 다음 주 수요일 오후 3시에 치과 예약 있어
   expect:
-    saved: { min_rows: 2 }
+    saved: { min_rows: 2, domains: [food, activity] }  # 행 수만 보면 food 2행으로 나뉘어도 통과한다
     event_drafts_min: 1
 
 - id: P-UND-02
@@ -141,10 +141,11 @@
   smoke: true
   turns:
     - say: 오늘 좀 안 먹었어
-    - say: 저녁에 브로콜리를 거의 안 먹었어
+    # 답은 앞 말 없이는 뜻이 서지 않는 조각이다(test_continuation.py C08). 완결된 문장이면 이어받지 않아도 통과한다
+    - say: 저녁에 브로콜리
       reply: true
   expect:
-    saved: { min_rows: 1, domains: [food] }
+    saved: { child_rows: 1, domains: [food] }
 
 # Health 는 기록만 본다 — 앱에서 Health 요청(복약 알림 · 병원 찾기)을 막아 둔 동안 (eval-v1 §13-6, 11-07)
 - id: P-REC-07
