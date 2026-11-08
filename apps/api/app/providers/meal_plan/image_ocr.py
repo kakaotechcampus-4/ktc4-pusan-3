@@ -27,10 +27,11 @@ from app.providers.meal_plan.schema import (
     MealPlanSource,
     UnparsedCell,
 )
+from app.providers.streaming import collect
 
 log = logging.getLogger(__name__)
 
-DEFAULT_MODEL = "gemini-3.1-pro-preview"
+DEFAULT_MODEL = "gemini-4-argon"
 SUPPORTED_MIME = frozenset({"image/png", "image/jpeg", "image/webp"})
 
 # 게이트웨이가 응답을 6,000 토큰에서 자른다 (실측 2026-09-09). 한 달치 JSON 은 그보다 크므로
@@ -249,20 +250,23 @@ class ImageOcrMealPlanReader:
 
         extra_body = {"cache_write": self._cache_write} if self._cache_write else None
         started = time.perf_counter()
-        response = self._client.chat.completions.create(
+        stream = self._client.chat.completions.create(
             model=self.model,
             messages=build_messages(image_bytes, mime_type, day_range),  # type: ignore[arg-type]
             response_format=RESPONSE_FORMAT,  # type: ignore[arg-type]
             max_completion_tokens=16_000,
             reasoning_effort=self._effort,  # type: ignore[arg-type]  # MLAPI 는 xhigh·max 도 받는다
             extra_body=extra_body,
+            stream=True,
+            stream_options={"include_usage": True},
         )
+        reply = collect(stream)
 
-        if response.usage is not None:
+        if reply.prompt_tokens is not None and reply.completion_tokens is not None:
             self.last_usage = Usage(
-                prompt_tokens=response.usage.prompt_tokens,
-                completion_tokens=response.usage.completion_tokens,
-                cached_prompt_tokens=int(getattr(response.usage, "cached_prompt_tokens", 0) or 0),
+                prompt_tokens=reply.prompt_tokens,
+                completion_tokens=reply.completion_tokens,
+                cached_prompt_tokens=reply.cached_prompt_tokens,
             )
             self.total_usage = self.total_usage + self.last_usage
             log.info(
@@ -276,29 +280,24 @@ class ImageOcrMealPlanReader:
             )
             # 🚨 finish_reason · refusal 검사보다 앞이다 — 잘리거나 거절된 응답도 과금된다.
             #    보호자는 라우트가 건 귀속(core/llm_usage)에서 온다. 호출은 asyncio.to_thread 로
-            details = getattr(response.usage, "completion_tokens_details", None)
-            served = getattr(response, "model", None)
             llm_usage.record(
                 role="meal_ocr",
                 provider=self._provider,
-                model=served if isinstance(served, str) and served else self.model,
+                model=reply.model or self.model,
                 prompt_tokens=self.last_usage.prompt_tokens,
                 cached_prompt_tokens=self.last_usage.cached_prompt_tokens,
                 completion_tokens=self.last_usage.completion_tokens,
-                reasoning_tokens=getattr(details, "reasoning_tokens", None),
+                reasoning_tokens=reply.reasoning_tokens,
                 latency_ms=int((time.perf_counter() - started) * 1000),
             )
 
-        choice = response.choices[0]
-        if choice.finish_reason == "length":
+        if reply.finish_reason == "length":
             raise RuntimeError(
                 "응답이 출력 상한에서 잘림 — day_ranges 를 더 잘게 나누거나 effort 를 낮출 것"
             )
-        if choice.message.refusal:
-            raise RuntimeError(f"모델이 응답을 거절했습니다: {choice.message.refusal}")
-        if not choice.message.content:
+        if not reply.content:
             raise RuntimeError("모델 응답이 비어 있습니다")
-        return parse_output(choice.message.content)
+        return parse_output(reply.content)
 
     def list_models(self) -> list[str]:
         """접속·키 확인용. 과금 없음."""

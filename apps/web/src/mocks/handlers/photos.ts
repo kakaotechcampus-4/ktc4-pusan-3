@@ -6,13 +6,14 @@ import type {
   PhotoCommitResponse,
   PhotoEntry,
   PhotoLane,
+  PhotoUploadTicket,
 } from "@/lib/api/types";
 import { PHOTO_LANES } from "@/lib/api/types";
 
 import { CHILD_ID, daysAgo } from "../fixtures";
 import { currentScenario } from "../scenario";
 import { apiError, networkDelay, url } from "./helpers";
-import { withIdempotency } from "./idempotency";
+import { forgetRun, withIdempotency } from "./idempotency";
 
 /**
  * 08 사진으로 적기 — 업로드 · 다시 읽기 · 저장.
@@ -46,8 +47,11 @@ interface PhotoRun {
    * ⚠️ commit 요청에는 날짜 필드가 없어서(계약서 §09) 서버가 run 에 들고 있어야 한다.
    */
   date: string | null;
-  /** 못 읽은 사진. `failed` 로 끝난다. */
-  unreadable: boolean;
+  /**
+   * `failed` 로 끝나는 사진. `unparsable` 은 글자를 못 찾은 것, `not_document` 는 글자는 읽었는데
+   * 공지 · 식단표가 아닌 것(영수증 · 게임 화면)이다. 실서버와 같은 값이다.
+   */
+  failure: "unparsable" | "not_document" | null;
 }
 
 const photoRuns = new Map<string, PhotoRun>();
@@ -71,10 +75,13 @@ export function isPhotoRun(runId: string): boolean {
  */
 function readPhoto(declared: PhotoLane, date: string | null): PhotoRun {
   const scenario = currentScenario();
-  const base = { declared, guess: declared, confidence: 0.86, date, unreadable: false };
+  const base = { declared, guess: declared, confidence: 0.86, date, failure: null };
 
   if (scenario === "photo_unreadable") {
-    return { ...base, confidence: 0.3, raw_text: "", entries: [], tags: [], unreadable: true };
+    return { ...base, confidence: 0.3, raw_text: "", entries: [], tags: [], failure: "unparsable" };
+  }
+  if (scenario === "photo_not_document") {
+    return { ...base, raw_text: "", entries: [], tags: [], failure: "not_document" };
   }
 
   if (declared === "activity") {
@@ -219,9 +226,11 @@ export async function* photoRunScript(runId: string): AsyncGenerator<Uint8Array>
   yield frame("step", { index: 1, total: 2, label: "사진에서 글자를 찾고 있어요" });
   await sleep(600);
 
-  if (run.unreadable) {
+  if (run.failure) {
     // 🚨 실패는 200 + 빈 배열이 아니다. 여기서 스트림이 끝나고 저장된 것은 없다.
-    yield frame("failed", { reason: "unparsable", raw_text: "" });
+    //    서버처럼 실패한 run 의 키는 잊는다 (photos.py 의 `ended_with != "failed"`) — 한 줄 입력 목과 같다.
+    forgetRun(runId);
+    yield frame("failed", { reason: run.failure, raw_text: "" });
     return;
   }
 
@@ -293,6 +302,14 @@ function activityObservation(tags: string[], when: string | null): Observation {
 
 export const photoHandlers = [
   /**
+   * 목에는 S3 가 없다 — 로컬 개발과 같이 `direct` 로 답해 사진을 아래 `POST /photos` 로 받는다.
+   * S3 쪽(업로드 주소 · `upload_key`)은 서버 테스트(test_photos.py)가 건다.
+   */
+  http.post(url("/children/:cid/photos/uploads"), async () => {
+    await networkDelay();
+    return HttpResponse.json({ mode: "direct" } satisfies PhotoUploadTicket, { status: 201 });
+  }),
+  /**
    * 🚨 키가 없으면 400 이다 — 같은 사진이 두 번 읽히면 모델 호출이 두 배다 (NF-01).
    *    계약서 §01 의 5개 중 하나다.
    */
@@ -303,9 +320,13 @@ export const photoHandlers = [
 
       const form = await request.formData();
       const file = form.get("file");
+      // S3 로 올렸으면 사진 대신 열쇠가 온다 (`sendPhoto`). 둘 중 하나는 있어야 한다
+      const uploadKey = form.get("upload_key");
       // ⚠️ 필드 이름이 계약서에 없어서 화면과 목이 `file` 로 맞춰 뒀다 (operations.ts 의 ⚠️).
       //    목이 이걸 검사해야 이름이 어긋났을 때 조용히 통과하지 않는다.
-      if (!file || typeof file === "string") {
+      const hasFile = file !== null && typeof file !== "string";
+      const hasKey = typeof uploadKey === "string" && uploadKey.length > 0;
+      if (hasFile === hasKey) {
         return apiError(422, "validation_failed", "사진 파일이 없어요", { field: "file" });
       }
 
