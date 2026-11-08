@@ -38,7 +38,9 @@ steps:
     ability: [모름]
     say: 오늘 뭐 하고 놀까
     expect:
-      suggestions: { activity: general }
+      # 수요일 그네 1건은 최근 14일 관찰이라 근거로 인용할 수 있다(Activity D3 티어 3 · 인용은 승격이 아니다).
+      # 그래서 종류는 묻지 않고, 개인화면 아이 기록 근거가 있는지는 I2 · I3 가 본다
+      suggestions: { activity: any }
       never_say: [우리 아이 맞춤]
 
   - at: sun 22:00

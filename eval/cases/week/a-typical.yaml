@@ -100,9 +100,9 @@ steps:
     tag: tue-puzzle
     ability: [갱신, 주체]
     expect:
-      route: { intent: mixed, include: [food] }
-      suggestions: { food: any }
-    say: 오늘은 블록 말고 퍼즐만 했대. 저녁 뭐 해줄까
+      route: { intent: mixed, include: [activity] }
+      suggestions: { activity: any }
+    say: 오늘은 블록 안 하고 퍼즐만 했대. 내일은 뭐 하고 놀아 주지
 
   - at: tue 21:30
     by: mom
