@@ -323,7 +323,13 @@ def test_기대_tools_는_실패한_run_을_통과시키지_않는다() -> None:
     # 확정되지 않은 run 의 성공 호출은 저장으로 남지 않았다
     trace = _clean(memory_tools=(ToolCallView("create_event", True),), failed="memory_failed")
     misses = check_expect(trace, Expect(tools=ToolsExpect(must={"create_event": 1})), today=_TODAY)
-    assert misses == ["run 이 실패해 tool 호출이 저장으로 이어지지 않았다 (memory_failed)"]
+    assert misses == ["run 이 실패해 경로를 판정할 수 없다 (memory_failed)"]
+    # Memory 가 터져 기록이 없는 run 도 — "건너뛴 Memory" 로 must_not 을 통과하면 안 된다
+    crashed = _clean(memory_tools=None, failed="llm_unavailable")
+    want = Expect(tools=ToolsExpect(must_not=("쓰기",)))
+    assert check_expect(crashed, want, today=_TODAY) == [
+        "run 이 실패해 경로를 판정할 수 없다 (llm_unavailable)"
+    ]
 
 
 def test_tools_기대값_모양() -> None:
@@ -362,6 +368,10 @@ def test_draft_items_기대값_모양() -> None:
         DraftItemsExpect(names=("도시락",), min=2)
     with pytest.raises(ValidationError):
         DraftItemsExpect(names=())
+    with pytest.raises(ValidationError):
+        DraftItemsExpect(names=("도시락", ""))
+    with pytest.raises(ValidationError):
+        DraftItemsExpect(names=("도시락", "도시락"), min=2)
 
 
 def test_draft_items_는_초안의_준비물_이름을_모은다() -> None:

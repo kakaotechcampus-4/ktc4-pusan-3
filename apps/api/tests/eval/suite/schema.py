@@ -101,7 +101,7 @@ class ToolsExpect(_Strict):
     memory_ran: bool = False
 
     @model_validator(mode="after")
-    def _counts_are_positive(self) -> "ToolsExpect":
+    def _valid_tools(self) -> "ToolsExpect":
         unknown = sorted(set(self.must) - MEMORY_TOOLS) + sorted(
             set(self.must_not) - MEMORY_TOOLS - {MUTATING}
         )
@@ -124,6 +124,11 @@ class DraftItemsExpect(_Strict):
 
     @model_validator(mode="after")
     def _min_fits(self) -> "DraftItemsExpect":
+        # 빈 이름은 모든 준비물에 맞고, 겹친 이름은 한 품목으로 min 을 채운다
+        if any(not name.strip() for name in self.names):
+            raise ValueError("names 에 빈 이름이 있다")
+        if len(set(self.names)) != len(self.names):
+            raise ValueError(f"names 가 겹친다: {self.names}")
         if self.min > len(self.names):
             raise ValueError(f"min {self.min} > names {len(self.names)}개")
         return self

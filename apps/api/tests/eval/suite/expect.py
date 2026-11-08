@@ -68,15 +68,16 @@ def check_expect(trace: Trace, expect: Expect, *, today: date) -> list[str]:
 
 
 def _check_tools(trace: Trace, want: ToolsExpect) -> list[str]:
+    if trace.failed is not None:
+        # 실패한 run 은 확정(commit)되지 않는다. Memory 가 터져 기록이 없는 run(llm_unavailable)도
+        # 여기서 걸러야 "건너뛴 Memory" 로 통과하지 않는다
+        return [f"run 이 실패해 경로를 판정할 수 없다 ({trace.failed})"]
     if trace.memory_tools is None:
         # 안 돈 Memory 는 아무것도 부르지 않았다 — 불러야 할 것이 있을 때만 실패
         if want.must or want.memory_ran:
             return ["Memory 가 돌지 않았다"]
         return []
     misses: list[str] = []
-    if trace.failed is not None:
-        # 실패한 run 은 확정(commit)되지 않는다 — 성공한 호출이 있어도 저장으로 남지 않았다
-        misses.append(f"run 이 실패해 tool 호출이 저장으로 이어지지 않았다 ({trace.failed})")
     for tool, minimum in want.must.items():
         done = sum(1 for call in trace.memory_tools if call.name == tool and call.success)
         if done < minimum:
