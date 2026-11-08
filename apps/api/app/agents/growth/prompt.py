@@ -11,6 +11,7 @@ Activity 처럼 구획 상수를 이어 붙인다. tool 이 못 막는 것을 �
 """
 
 from collections.abc import Sequence
+from types import SimpleNamespace
 
 from app.agents.common.prompt_fingerprint import (
     fixed_context,
@@ -264,7 +265,19 @@ def _fingerprint_parts() -> tuple[str, ...]:
         request_message(["요청"], ["같이 한 말"]),
         recall_message(["요청"], chosen=["고른 것"], excluded=["빠진 것"]),
     )
-    return (*rendered, *messages, tools_text(tool_defs.TOOL_DEFINITIONS), tool_loop.BAD_JSON)
+    # 예시가 있으면 [예시] 머리말 지시("결만 참고한다 …")가 붙는다
+    # — 고정 더미 행으로 그 갈래도 싣는다
+    example = SimpleNamespace(
+        row=SimpleNamespace(id="id", title="제목", body="본문", materials=("준비물",))
+    )
+    with_example = _examples((example,))  # type: ignore[arg-type]
+    return (
+        *rendered,
+        with_example,
+        *messages,
+        tools_text(tool_defs.TOOL_DEFINITIONS),
+        tool_loop.BAD_JSON,
+    )
 
 
 register_prompt("growth", _fingerprint_parts)

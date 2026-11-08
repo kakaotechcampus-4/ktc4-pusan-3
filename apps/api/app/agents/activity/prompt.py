@@ -32,6 +32,7 @@ tool이 못 막는 것을 막는 자리다. 월령 필터·알레르기·날씨 
 
 import itertools
 from collections.abc import Sequence
+from types import SimpleNamespace
 from uuid import UUID
 
 from app.agents.activity.context import ActivityContext
@@ -304,7 +305,24 @@ def _fingerprint_parts() -> tuple[str, ...]:
         request_message(["요청"]),
         recall_message(["요청"], chosen=["고른 것"], excluded=["빠진 것"]),
     )
-    return (*rendered, *messages, tools_text(tool_defs.TOOL_DEFINITIONS), tool_loop.BAD_JSON)
+    # 예시가 있으면 [예시] 머리말 지시("결만 참고한다 …")가 붙는다
+    # — 고정 더미 행으로 그 갈래도 싣는다
+    example = SimpleNamespace(
+        id="id",
+        title="제목",
+        body="본문",
+        materials=("준비물",),
+        setting=SimpleNamespace(value="indoor"),
+        caregiver_role=SimpleNamespace(value="guide"),
+    )
+    with_example = _examples((example,))  # type: ignore[arg-type]
+    return (
+        *rendered,
+        with_example,
+        *messages,
+        tools_text(tool_defs.TOOL_DEFINITIONS),
+        tool_loop.BAD_JSON,
+    )
 
 
 register_prompt("activity", _fingerprint_parts)

@@ -12,6 +12,8 @@ _SECTION = re.compile(r"^##\s+1\.\s*측정 이력\s*$")
 _NEXT_SECTION = re.compile(r"^##\s")
 _ROW = re.compile(r"^\|\s*v\d+\s*\|")
 _SHA = re.compile(r"[0-9a-f]{12}")
+# 커밋 칸 — 잰 코드의 커밋 해시 7~40자, 작업 트리가 더러웠으면 뒤에 dirty
+_COMMIT = re.compile(r"[0-9a-f]{7,40}( dirty)?")
 _C1 = re.compile(r"(\d+)/(\d+)")
 UNMEASURED = "미측정"
 # C1 정의 자체가 정해지지 않은 프롬프트. 문서에 `<!-- c1: 미결 -->` 이 있을 때만 쓸 수 있다
@@ -61,7 +63,7 @@ def parse_history(text: str) -> list[HistoryRow]:
             raise HistoryError(
                 f"표가 깨졌습니다 — 칸이 {len(cells)}개입니다 ({COLUMNS}개여야 합니다): {line[:60]}"
             )
-        commit, sha = (cell.strip("`") for cell in cells[1:3])
+        commit, sha = (cell.replace("`", "").strip() for cell in cells[1:3])
         rows.append(HistoryRow(cells[0], commit, sha, *cells[3:]))
     if not rows:
         raise HistoryError("측정 이력 표에 `v0` 같은 행이 없습니다")
@@ -77,6 +79,11 @@ def _rate(row: HistoryRow) -> Fraction | None:
     if total == 0 or count > total:
         return None
     return Fraction(count, total)
+
+
+def _measured(row: HistoryRow) -> bool:
+    """잰 행인가 — C1 이 `a/b` 이거나, C1 정의가 미결인 문서의 `미결`."""
+    return _rate(row) is not None or row.c1 == UNDECIDED
 
 
 def check_history(name: str, text: str, current_short: str) -> list[str]:
@@ -101,6 +108,13 @@ def check_history(name: str, text: str, current_short: str) -> list[str]:
             errors.append(
                 f"{name}: {row.version} 의 지문 `{row.sha}` 이 앞 12자 16진수가 아닙니다 ({path})"
             )
+        if not _COMMIT.fullmatch(row.commit):
+            errors.append(
+                f"{name}: {row.version} 의 커밋 `{row.commit}` 이 커밋 해시(7~40자, 더러웠으면 "
+                f"뒤에 dirty)가 아닙니다 ({path})"
+            )
+        if not row.condition or not row.note:
+            errors.append(f"{name}: {row.version} 의 조건 · 무엇을 왜 칸이 비었습니다 ({path})")
         if row.version == "v0":
             continue
         if row.c1 == UNMEASURED:
@@ -123,6 +137,22 @@ def check_history(name: str, text: str, current_short: str) -> list[str]:
             f"{current_short} 행을 더하세요 ({path})."
         )
 
+    # 프롬프트를 바꾼 행이면 C1 이 `미결` 이어도 같은 조건으로 잰 바꾸기 전 행을 요구한다
+    prompt_changed = len(rows) >= 2 and rows[-2].sha != last.sha
+    measured_before = next(
+        (
+            row
+            for row in reversed(rows[:-1])
+            if row.condition == last.condition and row.sha != last.sha and _measured(row)
+        ),
+        None,
+    )
+    if prompt_changed and measured_before is None:
+        errors.append(
+            f"{name}: {last.version} 와 같은 조건으로 잰 바꾸기 전 행이 없습니다 — 바꾸기 전 "
+            f"프롬프트를 같은 조건으로 재서 그 행을 먼저 더하세요 ({path})."
+        )
+
     last_rate = _rate(last)
     if last_rate is None:
         return errors
@@ -134,13 +164,7 @@ def check_history(name: str, text: str, current_short: str) -> list[str]:
         ),
         None,
     )
-    prompt_changed = len(rows) >= 2 and rows[-2].sha != last.sha
     if before is None:
-        if prompt_changed:
-            errors.append(
-                f"{name}: {last.version} 와 같은 조건으로 잰 바꾸기 전 행이 없습니다 — 바꾸기 전 "
-                f"프롬프트를 같은 조건으로 재서 그 행을 먼저 더하세요 ({path})."
-            )
         return errors
     before_rate = _rate(before)
     if before_rate is not None and last_rate > before_rate:

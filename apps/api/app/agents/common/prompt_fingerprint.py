@@ -17,8 +17,12 @@ import 하지 않는다 — common 은 Agent 패키지를 모른다(`test_common
 - task · 상태에 따라 구획이 갈리는 곳은 갈래마다 렌더링해 전부 이어 붙인다.
   어느 갈래의 글이 바뀌어도 지문이 바뀐다.
 - 모델 · reasoning_effort 는 넣지 않는다 (역할별 `.env` 값). 평가 문서의 `조건` 칸에 따로 적는다.
-- 한계: 문서 예시 한 줄의 **서식**(`_examples` 가 행을 글로 만드는 부분)과 사용자 메시지는 지문에
-  들어가지 않는다 — 예시 행 자체가 DB 에서 오기 때문이다.
+- 예시 구획은 "예시 없음" 갈래와 고정 더미 행 하나가 있는 갈래를 둘 다 싣는다
+  — 머리말 지시("결만 참고한다 …")는 예시가 있을 때만 붙는다.
+- 모델에 system 메시지를 보내는 자리는 `tests/unit/agents/common/test_prompt_call_sites.py` 가
+  AST 로 훑는다. 등록한 함수 · 상수 밖의 글을 system 메시지로 보내면 실패한다.
+- 한계: tool 이 돌려주는 실패 사유 문구는 Memory 것만 들어간다.
+  보호자 발화 · DB 에서 온 예시 행 내용은 run 마다 달라 들어가지 않는다.
 """
 
 from collections.abc import Callable

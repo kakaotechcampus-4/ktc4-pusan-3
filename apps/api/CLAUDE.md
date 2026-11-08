@@ -64,7 +64,11 @@ import-linter 로 CI 에서 강제할 예정이다(#79 API CI 와 함께). 설�
 - **허용**: domains, rules, providers, core
   — core 는 역할별 LLM 설정(`core/agent_config.py`), 일정 초안 payload 계약(`core/event_draft.py`),
     날씨 원문 계약(`core/weather_raw.py`), 화면 딥링크 값(`core/deeplinks.py` — api 의 05 guard · 동의 오류와 같이 쓴다),
-    LLM 사용량 기록(`core/llm_usage.py` — 호출은 `record`, 보호자 · run 귀속은 api 가 `attribute`. providers 도 같이 쓴다)을 쓴다
+    LLM 사용량 기록(`core/llm_usage.py` — 호출은 `record`, 보호자 · run 귀속은 api 가 `attribute`. providers 도 같이 쓴다),
+    프롬프트 지문의 해시 규칙(`core/prompt_hash.py` — 표준 라이브러리만. providers 의 OCR 두 곳도 같은 규칙을 써야 해서 core 에 둔다, #770)을 쓴다
+- 🚨 **프롬프트 · tool spec · 응답 스키마를 바꾸면** 그 프롬프트의 평가 문서(`docs/agents/eval/<이름>_EVAL.md`) 측정 이력에
+  바꾸기 전 · 후 행을 더한다. 지문(`agents/common/prompt_fingerprint.py`)이 달라지면 `test_prompt_history.py` 가 실패한다.
+  모델에 system 메시지를 보내는 새 자리를 만들면 `register_prompt` 와 평가 문서, `test_prompt_call_sites.py` 의 표를 같이 더한다
 - **금지**: fastapi, infra 직접 접근
 - ⚠️ **내부 구조는 이시하(AI Owner)가 정한다.** 이 문서는 경계만 정하고 하위 폴더를
   미리 만들지 않았다 (`CLAUDE.md` §8 "기능 내부 기술 결정 → 해당 기능 Owner").
@@ -104,7 +108,8 @@ import-linter 로 CI 에서 강제할 예정이다(#79 API CI 와 함께). 설�
 
 ### `app/providers/`
 - 외부 모델 SDK 전용
-- **허용**: core — 설정(`core/config.py`)은 이미 쓰고 있다. 모델 호출은 `core/llm_usage.py` 의 `record` 로 사용량을 남긴다
+- **허용**: core — 설정(`core/config.py`)은 이미 쓰고 있다. 모델 호출은 `core/llm_usage.py` 의 `record` 로 사용량을 남긴다.
+  호출 로그의 프롬프트 지문은 `core/prompt_hash.py` 로 만든다 — agents 의 지문 등록과 같은 값이어야 한다
 - **금지**: domains, agents import
 
 ### `app/workers/`

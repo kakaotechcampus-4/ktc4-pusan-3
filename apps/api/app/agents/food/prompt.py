@@ -258,7 +258,17 @@ def _fingerprint_parts() -> tuple[str, ...]:
         request_message(["요청"], sample, records=records),  # type: ignore[arg-type]
         recall_message(["요청"], avoid=["menu_key"], sample=sample),  # type: ignore[arg-type]
     )
-    return (*rendered, *messages, tools_text(tool_defs.TOOL_DEFINITIONS), tool_loop.BAD_JSON)
+    # 예시가 있으면 [예시] 머리말 지시("결만 참고한다 …")가 붙는다
+    # — 고정 더미 행으로 그 갈래도 싣는다
+    example = SimpleNamespace(id="id", title="제목", source_org="출처", body="본문")
+    with_example = _examples((example,))  # type: ignore[arg-type]
+    return (
+        *rendered,
+        with_example,
+        *messages,
+        tools_text(tool_defs.TOOL_DEFINITIONS),
+        tool_loop.BAD_JSON,
+    )
 
 
 register_prompt("food", _fingerprint_parts)

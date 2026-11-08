@@ -190,11 +190,23 @@ def test_프롬프트를_바꾼_행의_조건이_이전_측정과_다르면_실�
 def test_C1_정의가_미결인_문서는_미결_로_적을_수_있다():
     doc = _doc(
         _row(),
-        _row("v1", OTHER, c1="미결", note="문구를 고침"),
+        _row("v1", SHA, c1="미결", note="바꾸기 전 프롬프트로 잼"),
+        _row("v2", OTHER, c1="미결", note="문구를 고침"),
         before="# 문서\n\n<!-- c1: 미결 -->\n\n",
     )
 
     assert check_history("meal_ocr", doc, OTHER) == []
+
+
+def test_미결_문서도_프롬프트를_바꾼_행은_바꾸기_전_행이_있어야_한다():
+    doc = _doc(
+        _row(),
+        _row("v1", OTHER, c1="미결", note="문구를 고침"),
+        before="# 문서\n\n<!-- c1: 미결 -->\n\n",
+    )
+
+    [error] = check_history("meal_ocr", doc, OTHER)
+    assert "바꾸기 전" in error
 
 
 def test_미결_표시가_없는_문서는_미결_을_쓸_수_없다():
@@ -225,3 +237,26 @@ def test_CRLF_문서도_읽는다():
     doc = _doc(_row()).replace("\n", "\r\n")
 
     assert check_history("food", doc, SHA) == []
+
+
+@pytest.mark.parametrize("commit", ["nothing", "zzzzzzz", "abc12", "abc1234 깨끗"])
+def test_커밋_칸은_커밋_해시여야_한다(commit):
+    row = f"| v0 | `{commit}` | `{SHA}` | 셋 · 모델/low · R5 | 최초 | 미측정 | 미측정 | 미측정 |"
+
+    [error] = check_history("food", _doc(row), SHA)
+    assert "커밋" in error
+
+
+@pytest.mark.parametrize("commit", ["`abc1234`", "`abc1234` dirty", "`" + "a" * 40 + "`"])
+def test_커밋_칸은_해시와_dirty_표시를_받는다(commit):
+    row = f"| v0 | {commit} | `{SHA}` | 셋 · 모델/low · R5 | 최초 | 미측정 | 미측정 | 미측정 |"
+
+    assert check_history("food", _doc(row), SHA) == []
+
+
+@pytest.mark.parametrize(("cond", "note"), [("", "메모"), ("조건", "")])
+def test_조건과_메모는_비울_수_없다(cond, note):
+    row = f"| v0 | `abc1234` | `{SHA}` | {cond} | {note} | 미측정 | 미측정 | 미측정 |"
+
+    [error] = check_history("food", _doc(row), SHA)
+    assert "비었습니다" in error

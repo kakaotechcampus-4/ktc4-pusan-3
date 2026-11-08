@@ -11,7 +11,7 @@ tool spec · 응답 스키마: `app/agents/activity/schemas/tool_defs.py`
 
 | 측정 조건 | |
 | --- | --- |
-| 코드 | `develop` @ `3e0d3afc` (프롬프트 지문 `c75b4d8aa456`) |
+| 코드 | `develop` @ `3e0d3afc` (프롬프트 지문 `32b9fd332a27`) |
 | 모델 | `ACTIVITY_MODEL` · `ACTIVITY_REASONING_EFFORT` (비면 `MEMORY_*`) |
 | 실행 | 케이스마다 5회 |
 | 평가셋 | `apps/api/tests/eval/agents/activity/test_activity_live.py` (기획서 실패 유도 7종 중 Activity 몫 + 안전 케이스) |
@@ -26,7 +26,7 @@ tool spec · 응답 스키마: `app/agents/activity/schemas/tool_defs.py`
 
 | 버전 | 커밋 | 지문 | 조건 | 무엇을 왜 바꿨나 | C1 | 안정 오답 | 불안정 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| v0 | `3e0d3afc` | `c75b4d8aa456` | 미측정 | 최초 기준선. 수치 없음, 다음 변경 때 전후 두 행으로 잰다 | 미측정 | 미측정 | 미측정 |
+| v0 | `3e0d3afc` | `32b9fd332a27` | 미측정 | 최초 기준선. 수치 없음, 다음 변경 때 전후 두 행으로 잰다 | 미측정 | 미측정 | 미측정 |
 
 - `커밋` 은 재 본 코드. 작업 트리가 더러웠으면 커밋 옆에 `dirty` 를 적는다 (`tests/eval/agents/live_run_meta.json` 의 `dirty`).
 - `C1` 칸은 `a/b` (C1 사례 입력 수 / 전체 입력 수). `미측정` 은 v0 에만 쓴다.

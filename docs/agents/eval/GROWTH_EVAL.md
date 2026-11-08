@@ -11,7 +11,7 @@ tool spec · 응답 스키마: `app/agents/growth/schemas/tool_defs.py`
 
 | 측정 조건 | |
 | --- | --- |
-| 코드 | `develop` @ `3e0d3afc` (프롬프트 지문 `3a4e6840feef`) |
+| 코드 | `develop` @ `3e0d3afc` (프롬프트 지문 `09e143261543`) |
 | 모델 | `GROWTH_MODEL` · `GROWTH_REASONING_EFFORT` (비면 `MEMORY_*`) |
 | 실행 | 케이스마다 5회 (`TEST_REPEAT=5`), 집계는 `tests/eval/agents/growth/report.py` |
 | 평가셋 | `apps/api/tests/eval/agents/growth/test_growth_live.py` · `test_book_live.py` — 기준 `docs/agents/growth/test_expected_growth.md` |
@@ -26,7 +26,7 @@ tool spec · 응답 스키마: `app/agents/growth/schemas/tool_defs.py`
 
 | 버전 | 커밋 | 지문 | 조건 | 무엇을 왜 바꿨나 | C1 | 안정 오답 | 불안정 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| v0 | `3e0d3afc` | `3a4e6840feef` | 미측정 | 최초 기준선. 수치 없음, 다음 변경 때 전후 두 행으로 잰다 | 미측정 | 미측정 | 미측정 |
+| v0 | `3e0d3afc` | `09e143261543` | 미측정 | 최초 기준선. 수치 없음, 다음 변경 때 전후 두 행으로 잰다 | 미측정 | 미측정 | 미측정 |
 
 - `커밋` 은 재 본 코드. 작업 트리가 더러웠으면 커밋 옆에 `dirty` 를 적는다 (`tests/eval/agents/live_run_meta.json` 의 `dirty`).
 - `C1` 칸은 `a/b` (C1 사례 입력 수 / 전체 입력 수). `미측정` 은 v0 에만 쓴다.

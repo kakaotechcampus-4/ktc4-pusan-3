@@ -244,3 +244,35 @@ def test_tool_루프의_재시도_문구가_바뀌면_지문이_바뀐다(monkey
     before = pf.prompt_fingerprint(name)
     monkeypatch.setattr(tool_loop, "BAD_JSON", tool_loop.BAD_JSON + "!")
     assert pf.prompt_fingerprint(name) != before
+
+
+@pytest.mark.parametrize(
+    ("name", "needle"),
+    [
+        ("food", "그대로 베끼지 않는다"),
+        ("growth", "결만 참고한다"),
+        ("activity", "그대로 베끼지 않는다"),
+    ],
+)
+def test_예시_구획은_예시가_있는_갈래도_지문에_싣는다(name, needle):
+    assert needle in "\n".join(pf.prompt_parts(name))
+
+
+@pytest.mark.parametrize(
+    ("name", "module"),
+    [
+        ("food", "app.agents.food.prompt"),
+        ("growth", "app.agents.growth.prompt"),
+        ("activity", "app.agents.activity.prompt"),
+    ],
+)
+def test_예시_머리말이_바뀌면_지문이_바뀐다(monkeypatch, name, module):
+    import importlib
+
+    mod = importlib.import_module(module)
+    before = pf.prompt_fingerprint(name)
+    original = mod._examples
+    monkeypatch.setattr(
+        mod, "_examples", lambda rows: original(rows).replace("결만 참고한다", "그대로 베낀다")
+    )
+    assert pf.prompt_fingerprint(name) != before
