@@ -136,7 +136,7 @@
 
 | | access 토큰 | refresh 토큰 |
 | --- | --- | --- |
-| 어디에 | **JS 메모리만** (`stores/session.ts` · `lib/api/client.ts`) | 서버가 심는 **HttpOnly 쿠키** `icatch_rt` (`Path=/api/v1/auth`) |
+| 어디에 | **JS 메모리만** (`stores/session.ts` · `lib/api/client.ts`) | 서버가 심는 **HttpOnly 쿠키** `__Host-icatch_rt` (`Path=/`, #783) |
 | 수명 | 15분 (`expires_in: 900`) | 유휴 30일(쓸 때마다 연장) · 절대 90일 |
 | 보내는 법 | `Authorization: Bearer` — 일반 API · SSE 전부 | 브라우저가 붙인다. 화면 코드는 읽지도 쓰지도 못한다 |
 | 받는 곳 | 교환 · 가입 응답, `POST /auth/refresh` 응답 | 교환 · 가입 · refresh 가 심고(회전), 로그아웃 · 탈퇴가 지운다 |

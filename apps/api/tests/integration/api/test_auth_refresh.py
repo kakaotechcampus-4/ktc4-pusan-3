@@ -5,6 +5,7 @@
     ② 직전 refresh 는 회전 후 30초 안이면 access 만, 밖이면 세션째 지운다
     ③ 실패는 사유를 구분하지 않고 전부 401 + 쿠키 삭제
     ④ 같은 refresh 로 두 요청이 동시에 와도 한 번만 회전한다
+    ⑤ 이름은 __Host-icatch_rt 하나만 받는다 — 옛 이름(icatch_rt)도, 같은 이름 두 개도 401 (#783)
 """
 
 import asyncio
@@ -29,7 +30,7 @@ ME = "/api/v1/me"
 
 def with_refresh(value: str) -> dict[str, str]:
     """쿠키를 헤더로 직접 싣는다 — Secure 쿠키라 httpx 저장소가 http 테스트 주소로 싣지 않는다."""
-    return {"Cookie": f"icatch_rt={value}"}
+    return {"Cookie": f"__Host-icatch_rt={value}"}
 
 
 def bearer(token: str) -> dict[str, str]:
@@ -37,7 +38,7 @@ def bearer(token: str) -> dict[str, str]:
 
 
 def cookie_value(response) -> str:
-    return cookie_header(response, "icatch_rt").split(";")[0].split("=", 1)[1]
+    return cookie_header(response, "__Host-icatch_rt").split(";")[0].split("=", 1)[1]
 
 
 async def seed_refresh(
@@ -84,7 +85,7 @@ async def test_current_refresh_rotates_and_gives_a_working_access(db_client, ses
     assert body["expires_in"] == 900
     rotated = cookie_value(response)
     assert rotated != refresh
-    assert "Max-Age=2592000" in cookie_header(response, "icatch_rt")
+    assert "Max-Age=2592000" in cookie_header(response, "__Host-icatch_rt")
     # 새 access 가 통하고, 회전 전에 받은 access 도 만료 전까지 통한다 (다른 탭)
     assert (await db_client.get(ME, headers=bearer(body["token"]))).status_code == 200
     assert (await db_client.get(ME, headers=bearer("old-access"))).status_code == 200
@@ -112,7 +113,7 @@ async def test_previous_refresh_within_grace_gets_access_only(db_client, session
     response = await db_client.post(URL, headers=with_refresh("rt-prev"))
 
     assert response.status_code == 200
-    assert cookie_header(response, "icatch_rt") is None
+    assert cookie_header(response, "__Host-icatch_rt") is None
     assert (await db_client.get(ME, headers=bearer(response.json()["token"]))).status_code == 200
 
 
@@ -134,7 +135,7 @@ async def test_previous_refresh_after_grace_ends_the_login(db_client, session, c
 
     assert response.status_code == 401
     assert response.json()["error"]["code"] == "unauthenticated"
-    assert "Max-Age=0" in cookie_header(response, "icatch_rt")
+    assert "Max-Age=0" in cookie_header(response, "__Host-icatch_rt")
     assert await session.get(AuthSession, session_id) is None
     assert (await db_client.get(ME, headers=bearer("live-access"))).status_code == 401
     assert str(session_id) in caplog.text
@@ -151,7 +152,7 @@ async def test_missing_or_unknown_refresh_is_401(db_client, headers):
 
     assert response.status_code == 401
     assert response.json()["error"]["code"] == "unauthenticated"
-    assert "Max-Age=0" in cookie_header(response, "icatch_rt")
+    assert "Max-Age=0" in cookie_header(response, "__Host-icatch_rt")
 
 
 @pytest.mark.parametrize(
@@ -216,7 +217,7 @@ async def test_concurrent_refresh_rotates_once(client, monkeypatch):
             client.post(URL, headers=with_refresh("refresh:race-access")),
         )
         assert (first.status_code, second.status_code) == (200, 200)
-        rotated = [r for r in (first, second) if cookie_header(r, "icatch_rt") is not None]
+        rotated = [r for r in (first, second) if cookie_header(r, "__Host-icatch_rt") is not None]
         assert len(rotated) == 1
         async with factory() as s:
             stored = await s.scalar(
@@ -227,3 +228,71 @@ async def test_concurrent_refresh_rotates_once(client, monkeypatch):
         async with factory() as s:
             await s.execute(delete(Parent).where(Parent.id == parent.id))
             await s.commit()
+
+
+# ── ⑤ 쿠키 이름 이전 (#783) ───────────────────────────────────────────────────
+
+
+async def test_rotated_cookie_has_host_prefix_attributes(db_client, session):
+    """🚨 __Host- 이름은 Path=/ · Secure · Domain 없음이어야 브라우저가 받는다."""
+    await seed_refresh(session)
+
+    response = await db_client.post(URL, headers=with_refresh("rt-current"))
+
+    header = cookie_header(response, "__Host-icatch_rt")
+    attrs = {part.strip().split("=", 1)[0].lower() for part in header.split(";")[1:]}
+    assert {"httponly", "secure", "path", "samesite"} <= attrs
+    assert "domain" not in attrs
+    assert "Path=/;" in header
+
+
+async def test_legacy_cookie_alone_is_401(db_client, session):
+    """🚨 옛 이름(icatch_rt)은 읽지 않는다 — 하위 도메인이 Domain= 으로 심을 수 있다 (#783).
+
+    읽으면 __Host- 쿠키가 없는 브라우저(로그아웃 · 새 기기 · 배포 직후)에 심은 값이 회전돼
+    __Host- 세션으로 굳는다. 값이 유효한 refresh 여도 401 이다.
+    """
+    await seed_refresh(session)
+
+    response = await db_client.post(URL, headers={"Cookie": "icatch_rt=rt-current"})
+
+    assert response.status_code == 401
+    assert "Max-Age=0" in cookie_header(response, "__Host-icatch_rt")
+    # 옛 쿠키는 지우지 않는다 — 이 배포를 되돌리면 옛 코드가 그것으로 로그인을 이어 간다
+    assert cookie_header(response, "icatch_rt") is None
+
+
+async def test_invalid_host_cookie_does_not_fall_back_to_legacy(db_client, session):
+    """__Host- 쿠키가 무효면 옛 이름이 유효해도 401 — 대체 읽기가 다시 생기면 깨진다."""
+    await seed_refresh(session)
+
+    response = await db_client.post(
+        URL, headers={"Cookie": "__Host-icatch_rt=unknown; icatch_rt=rt-current"}
+    )
+
+    assert response.status_code == 401
+
+
+@pytest.mark.parametrize(
+    "cookie",
+    [
+        "__Host-icatch_rt=tossed; __Host-icatch_rt=rt-current",
+        "__Host-icatch_rt=rt-current; __Host-icatch_rt=rt-current",
+        "__Host-icatch_rt=rt-current;__Host-icatch_rt=x",
+    ],
+)
+async def test_duplicate_refresh_cookie_is_401(db_client, session, cookie):
+    """🚨 같은 이름이 두 번 오면 어느 쪽도 믿지 않는다 (#783 리뷰).
+
+    Starlette 는 중복을 뒤의 값 하나로 접어서, 원본 Cookie 헤더를 직접 센다. __Host- 검사를
+    빠져나간 브라우저 · 웹뷰 버그가 있어도 심은 쪽이 이기지 못한다. 세션은 남긴다 — 어느 값이
+    진짜인지 모르는데 지우면 심는 것만으로 남을 로그아웃시킬 수 있다.
+    """
+    session_id = await seed_refresh(session)
+
+    response = await db_client.post(URL, headers={"Cookie": cookie})
+
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "unauthenticated"
+    assert "Max-Age=0" in cookie_header(response, "__Host-icatch_rt")
+    assert await session.get(AuthSession, session_id) is not None

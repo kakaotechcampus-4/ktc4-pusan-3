@@ -275,7 +275,7 @@ class ObservationHealth(Base, UUIDPk, Timestamps):
 class ObservationLinkHold(Base, UUIDPk, Timestamps):
     """Curator 의 uncertain 횟수와 subject 해시를 관찰별로 보관한다.
 
-    아이 삭제는 child_id CASCADE, 관찰 soft delete 는 delete_observation 이 정리한다.
+    아이 삭제는 child_id CASCADE, 관찰 soft delete 는 store 의 delete_observation 이 정리한다.
     관찰 참조는 correction.target_id 처럼 FK 없이 domain 과 observation_id 로 식별한다.
     Profile 에 연결되면 행을 지우며 원문 subject 는 저장하지 않는다.
     """

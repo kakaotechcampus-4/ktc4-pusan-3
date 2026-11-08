@@ -3,9 +3,9 @@
 FastAPI에서는 app/main.py의 include_router(prefix=...)가 모든 v1 라우터 앞에
 이 접두사를 붙인다.
 
-🚨 /api/v1 은 세 곳에서 필요하다 — ① 라우터 마운트 ② oauth_state 쿠키의 Path
-   ③ GET /auth/{provider}/status 가 내려주는 start_url.
-   한 곳만 어긋나면 쿠키가 콜백에 실리지 않고, 에러 없이 로그인만 조용히 깨진다.
+🚨 /api/v1 은 두 곳에서 필요하다 — ① 라우터 마운트 ② GET /auth/{provider}/status 가
+   내려주는 start_url. 한 곳만 어긋나면 에러 없이 로그인만 조용히 깨진다.
+   인증 쿠키는 #783 부터 `__Host-` 이름이라 Path=/ 로 고정이다 (routers/auth.py REFRESH_COOKIE).
    근거: docs/api/auth-kakao-v1.md §3-1 · §5-5 · M-01
 """
 
@@ -18,11 +18,3 @@ API_V1_PREFIX = "/api/v1"
 
 AUTH_PREFIX = "/auth"
 """인증 라우터의 접두사. /api/v1 은 마운트 시점에 붙으므로 여기 넣지 않는다."""
-
-AUTH_COOKIE_PATH = f"{API_V1_PREFIX}{AUTH_PREFIX}"
-"""인증 쿠키 둘(oauth_state · icatch_rt)의 Path (명세 §5-5 · #466).
-
-쿠키를 인증 요청에만 실리게 좁힌다. 일반 API 와 SSE 에는 실리지 않는다 — 그쪽은 Bearer 다.
-이 값을 문자열로 다시 적지 말고 여기서 가져간다 — 마운트 지점을 바꾸면 쿠키 Path 도 함께
-따라와야 한다. 심을 때와 지울 때 Path 가 다르면 지워지지 않는다.
-"""
