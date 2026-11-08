@@ -25,8 +25,8 @@
 # 🚨 S3 에서 지우지 않는다. 버킷의 28일 수명 주기가 지운다 (EC2 역할에는 지우기 권한이 없다).
 # 🚨 비밀번호를 다루지 않는다. pg_dump 는 DB 컨테이너 안에서 그 컨테이너의 POSTGRES_USER 로 돈다
 #    (컨테이너 안 소켓 접속). 버전도 서버 DB 와 같은 pg_dump 가 된다.
-# 🚨 pg_dump · pg_restore 의 stderr 는 화면에 내지 않는다 (backup-lib.sh 의 quiet) — 이 출력은
-#    배포 때 SSM 을 거쳐 GitHub Actions 로그에 남는다.
+# 🚨 pg_dump · pg_restore · aws 의 stderr 는 화면에 내지 않는다 (backup-lib.sh 의 quiet) — 이 출력은
+#    배포 때 SSM 을 거쳐 공개 GitHub Actions 로그에 남는다. aws 오류에는 버킷 이름이 실린다.
 # 복원 시점은 덤프가 시작된 순간의 스냅샷이다. 덤프 뒤 · 배포 down 전 몇 분의 쓰기는 이 백업에 없다.
 
 set -euo pipefail
@@ -81,6 +81,6 @@ if [ -n "$LOCAL_DIR" ]; then
   exit 0
 fi
 
-aws s3 cp "$DUMP" "s3://$BUCKET/$KEY" --sse AES256 --only-show-errors --no-progress ||
+quiet aws s3 cp "$DUMP" "s3://$BUCKET/$KEY" --sse AES256 --only-show-errors --no-progress ||
   fail "S3 업로드 실패 (exit $?) — EC2 역할 · 버킷 정책을 본다"
 log "올림 $KEY ($SIZE bytes · 테이블 $TABLES 개)"

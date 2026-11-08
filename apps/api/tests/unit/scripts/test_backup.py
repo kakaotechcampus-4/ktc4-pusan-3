@@ -14,6 +14,7 @@ docker · aws · curl 을 가짜로 바꿔 돈다. 가짜 docker 는 실패할 �
 """
 
 import os
+import shutil
 import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -21,6 +22,12 @@ from pathlib import Path
 import pytest
 
 SCRIPTS = Path(__file__).resolve().parents[5] / "deploy" / "scripts"
+
+# restore-check.sh 는 서버(Ubuntu)에서만 돈다 — GNU `date -d` 와 `flock` 을 쓴다. 맥에는 둘 다 없다.
+_GNU_DATE = subprocess.run(["date", "-d", "@0"], capture_output=True).returncode == 0
+linux_only = pytest.mark.skipif(
+    not (_GNU_DATE and shutil.which("flock")), reason="GNU date · flock 이 없다 (맥)"
+)
 
 FAKE_DOCKER = r"""#!/bin/sh
 echo "docker $*" >> "$FAKE_LOG"
@@ -170,6 +177,7 @@ def test_환경_짝이_안_맞으면_DB_를_건드리지_않는다(box):
 # ── restore-check.sh ──
 
 
+@linux_only
 def test_복원_오류의_행_내용은_내보내지_않고_테이블만_알린다(box):
     listing = f"{_iso(2)}\tprod/daily/a.dump\n"
     result = box("restore-check.sh", restore_fail=True, listing=listing)
@@ -181,6 +189,7 @@ def test_복원_오류의_행_내용은_내보내지_않고_테이블만_알린�
     assert "docker rm -f -v ktc4-restore-check-" in result.calls  # 실패해도 임시 DB 는 지운다
 
 
+@linux_only
 def test_배포_전_백업이_새것이어도_매일_백업이_밀렸으면_실패다(box):
     listing = f"{_iso(100)}\tprod/daily/old.dump\n{_iso(1)}\tprod/predeploy/new.dump\n"
     result = box("restore-check.sh", listing=listing)
@@ -191,6 +200,7 @@ def test_배포_전_백업이_새것이어도_매일_백업이_밀렸으면_실�
     assert "복원 통과" in result.out
 
 
+@linux_only
 def test_매일_백업이_26시간_안이면_통과한다(box):
     listing = f"{_iso(25.9)}\tprod/daily/a.dump\n"
     result = box("restore-check.sh", listing=listing)
@@ -199,6 +209,7 @@ def test_매일_백업이_26시간_안이면_통과한다(box):
     assert "curl " not in result.calls
 
 
+@linux_only
 def test_잠금_파일은_다른_사용자도_열_수_있게_만든다(box):
     """배포(root)와 cron(ubuntu)이 같은 파일을 연다. umask 077 아래서 0600 으로 만들면 못 연다."""
     box("restore-check.sh", listing=f"{_iso(1)}\tprod/daily/a.dump\n")
