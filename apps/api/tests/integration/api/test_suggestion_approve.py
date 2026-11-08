@@ -12,6 +12,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api import idempotency
+from app.domains.safety.models import SafetyKind
+from app.domains.safety.repository import create_safety, retract_safety
 from app.domains.suggestion.models import (
     Suggestion,
     SuggestionAgent,
@@ -31,6 +33,7 @@ async def _make_suggestion(
     kind: SuggestionKind = SuggestionKind.PERSONALIZED,
     expires_at: datetime | None = None,
     items: Sequence[str] = (),
+    allergens: Sequence[str] = (),
 ) -> Suggestion:
     """테스트용 제안 직접 INSERT."""
     row = Suggestion(
@@ -41,6 +44,7 @@ async def _make_suggestion(
         reason="야외 활동 선호",
         status=status,
         items=list(items),
+        allergens=list(allergens),
         expires_at=expires_at or (datetime.now(UTC) + timedelta(hours=24)),
     )
     session.add(row)
@@ -140,6 +144,146 @@ async def test_approve_other_childs_suggestion(
     )
     assert resp.status_code == 404
     assert resp.json()["error"]["code"] == "not_found"
+
+
+# ── 채택 직전 알레르기 재확인 ─────────────────────────────────────────────────
+
+
+def _granted(value: bool):
+    async def read(session, *, child_id):
+        return value
+
+    return read
+
+
+async def _approve(db_client: AsyncClient, cid: uuid.UUID, headers, *rows: Suggestion):
+    return await db_client.post(
+        f"/api/v1/children/{cid}/suggestions/approve",
+        json={"suggestion_ids": [str(r.id) for r in rows]},
+        headers=headers,
+    )
+
+
+async def test_채택_전에_등록된_알레르기에_걸리면_아무것도_채택하지_않는다(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID, monkeypatch
+):
+    """목록을 받은 뒤 등록된 알레르기 — 걸린 추천만 detail 에 싣고, 같이 보낸 다른 추천도 남긴다."""
+    monkeypatch.setattr("app.api.v1.routers.suggestions.child_health_granted", _granted(True))
+    headers, parent_id = bearer
+    safe = await _make_suggestion(session, child_id=cid, agent=SuggestionAgent.FOOD)
+    walnut = await _make_suggestion(
+        session, child_id=cid, agent=SuggestionAgent.FOOD, allergens=["호두", "잣"]
+    )
+    await create_safety(
+        session, child_id=cid, parent_id=parent_id, kind=SafetyKind.ALLERGY, label="호두"
+    )
+
+    resp = await _approve(db_client, cid, headers, safe, walnut)
+
+    assert resp.status_code == 409
+    error = resp.json()["error"]
+    assert error["code"] == "allergen_blocked"
+    assert error["detail"] == {"suggestion_ids": [str(walnut.id)]}
+    for row in (safe, walnut):
+        await session.refresh(row)
+        assert row.status == SuggestionStatus.DRAFT
+
+
+async def test_채택_재확인은_목록과_같은_이름_사전으로_맞춘다(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID, monkeypatch
+):
+    """견과류로 등록한 알레르기에 호두가 든 추천이 걸린다 — 목록이 빼는 것과 같다."""
+    monkeypatch.setattr("app.api.v1.routers.suggestions.child_health_granted", _granted(True))
+    headers, parent_id = bearer
+    row = await _make_suggestion(
+        session, child_id=cid, agent=SuggestionAgent.FOOD, allergens=["호두"]
+    )
+    await create_safety(
+        session, child_id=cid, parent_id=parent_id, kind=SafetyKind.ALLERGY, label="견과류"
+    )
+
+    resp = await _approve(db_client, cid, headers, row)
+
+    assert resp.status_code == 409
+    assert resp.json()["error"]["code"] == "allergen_blocked"
+
+
+async def test_알레르기_기록에_없거나_내린_항목은_채택을_막지_않는다(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID, monkeypatch
+):
+    """막는 것은 active 뿐이다 — 답을 미룬 "모름" 과 내린 기록은 채택된다."""
+    monkeypatch.setattr("app.api.v1.routers.suggestions.child_health_granted", _granted(True))
+    headers, parent_id = bearer
+    row = await _make_suggestion(
+        session, child_id=cid, agent=SuggestionAgent.FOOD, allergens=["잣", "우유"]
+    )
+    milk = await create_safety(
+        session, child_id=cid, parent_id=parent_id, kind=SafetyKind.ALLERGY, label="우유"
+    )
+    await retract_safety(session, child_id=cid, safety_id=milk.id, parent_id=parent_id)
+
+    resp = await _approve(db_client, cid, headers, row)
+
+    assert resp.status_code == 200
+    assert resp.json()["suggestions"][0]["status"] == "approved"
+
+
+async def test_알레르기_항목이_없는_추천만_채택하면_건강정보를_읽지_않는다(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID, monkeypatch
+):
+    async def must_not_read(*args, **kwargs):
+        raise AssertionError("건강정보를 읽었다")
+
+    monkeypatch.setattr("app.api.v1.routers.suggestions.child_health_granted", must_not_read)
+    monkeypatch.setattr("app.api.v1.routers.suggestions.list_safety_labels", must_not_read)
+    headers, _ = bearer
+    row = await _make_suggestion(session, child_id=cid)
+
+    resp = await _approve(db_client, cid, headers, row)
+
+    assert resp.status_code == 200
+
+
+async def test_건강정보_동의가_없으면_알레르기_항목이_든_추천을_채택하지_않는다(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID, monkeypatch
+):
+    """목록도 동의 없이는 이 추천을 내보내지 않는다 — 동의 없이 건강정보를 읽어 판정하지 않는다."""
+    monkeypatch.setattr("app.api.v1.routers.suggestions.child_health_granted", _granted(False))
+    headers, _ = bearer
+    row = await _make_suggestion(
+        session, child_id=cid, agent=SuggestionAgent.FOOD, allergens=["호두"]
+    )
+
+    resp = await _approve(db_client, cid, headers, row)
+
+    assert resp.status_code == 403
+    error = resp.json()["error"]
+    assert error["code"] == "consent_required"
+    assert error["detail"]["scopes"] == ["child_health"]
+    await session.refresh(row)
+    assert row.status == SuggestionStatus.DRAFT
+
+
+async def test_이미_채택한_추천을_다시_보내면_알레르기를_다시_보지_않는다(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID, monkeypatch
+):
+    """멱등 재전송은 지금처럼 200 — 채택 뒤에 등록된 알레르기로 지난 채택을 뒤집지 않는다."""
+    monkeypatch.setattr("app.api.v1.routers.suggestions.child_health_granted", _granted(True))
+    headers, parent_id = bearer
+    row = await _make_suggestion(
+        session,
+        child_id=cid,
+        agent=SuggestionAgent.FOOD,
+        status=SuggestionStatus.APPROVED,
+        allergens=["호두"],
+    )
+    await create_safety(
+        session, child_id=cid, parent_id=parent_id, kind=SafetyKind.ALLERGY, label="호두"
+    )
+
+    resp = await _approve(db_client, cid, headers, row)
+
+    assert resp.status_code == 200
 
 
 # ── 일정 초안 API ─────────────────────────────────────────────────────────
