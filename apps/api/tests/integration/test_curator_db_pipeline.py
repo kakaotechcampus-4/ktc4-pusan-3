@@ -138,14 +138,11 @@ class TestDbRepositoryToCurator:
             observed_on=today,
         )
 
-        # soft delete
-        from app.domains.memory.observation.repository import delete_observation
+        # soft delete — 지우기는 store 하나로 한다 (#736)
+        from app.domains.memory.store.db_store import DbMemoryStore
 
-        await delete_observation(
-            session,
-            domain=ObservationDomain.FOOD,
-            child_id=child.id,
-            observation_id=record.id,
+        await DbMemoryStore(session, child_id=child.id).delete_observation(
+            domain=ObservationDomain.FOOD, observation_id=str(record.id)
         )
 
         # Curator 실행 — deleted 관찰은 대상이 아님
