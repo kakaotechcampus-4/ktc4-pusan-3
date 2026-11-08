@@ -127,6 +127,7 @@ export function CorrectionButtons({
   onSelect,
   pending,
   onDelete,
+  deleteOnly = false,
 }: {
   /** 무엇을 고치는 중인가. 묻는 것도 문구도 갈린다 — 기록 한 건과 기억은 다른 것이다. */
   targetKind: CorrectionTargetKind;
@@ -139,6 +140,12 @@ export function CorrectionButtons({
    *    확인 띠와 요청은 시트(`MemoryDetailSheet`)가 든다.
    */
   onDelete?: () => void;
+  /**
+   * 판정 없이 "기록 지우기" 만 세운다 — 건강 기록 (#764). 서버가 건강 기록 고치기를 400 으로 막는다.
+   * 🚨 따로 그리지 않고 **같은 자리 · 같은 모양**으로 세운다 — 다른 기록과 버튼 크기 · 묻는 줄이 달라지면
+   *    건강 기록만 고친 기록처럼 읽힌다. `onDelete` 와 같이 준다.
+   */
+  deleteOnly?: boolean;
 }) {
   const [asking, setAsking] = useState<VerdictSpec | null>(null);
   const busy = pending !== null;
@@ -192,7 +199,7 @@ export function CorrectionButtons({
       </p>
       {/* 순서는 교정의 세기 순이고, 한 줄에 둘씩 둬서 좁은 폰에서도 문구가 잘리지 않는다. */}
       <div className="mt-2 grid grid-cols-2 gap-2">
-        {VERDICTS[targetKind].map((spec) => (
+        {(deleteOnly ? [] : VERDICTS[targetKind]).map((spec) => (
           <Button key={spec.verdict} variant="secondary" size="compact" onClick={() => ask(spec)}>
             {spec.label}
           </Button>
