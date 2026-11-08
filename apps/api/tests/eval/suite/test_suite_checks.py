@@ -14,6 +14,7 @@ from pydantic import ValidationError
 from app.agents.common.readout import Readout
 from app.agents.common.refs import EvidenceCitation, Ref
 from app.agents.common.suggestion import SuggestionDraft
+from app.agents.memory.agent import ToolCallRecord
 from app.agents.memory_bridge import _uuid
 from app.agents.pipeline import AgentQuestion, AgentResult, Done, MemoryNote, Partial
 from app.agents.suggestion_save import SuggestionBatch
@@ -21,7 +22,7 @@ from app.agents.supervisor.routing import Guidance
 from tests.eval.suite import probe_runner
 from tests.eval.suite.expect import check_expect
 from tests.eval.suite.invariants import check_invariants
-from tests.eval.suite.probe_runner import read_run, run_probe
+from tests.eval.suite.probe_runner import memory_tools, read_run, run_probe
 from tests.eval.suite.report import _cost, _rate, percentile, render, summarize, wilson
 from tests.eval.suite.schema import (
     Expect,
@@ -29,11 +30,12 @@ from tests.eval.suite.schema import (
     SavedExpect,
     SeedAffinity,
     SeedObservation,
+    ToolsExpect,
     World,
     load_probes,
     load_probes_text,
 )
-from tests.eval.suite.trace import CitationView, SavedRow, SuggestionView, Trace
+from tests.eval.suite.trace import CitationView, SavedRow, SuggestionView, ToolCallView, Trace
 from tests.eval.suite.verdict import (
     case_passed,
     case_unstable,
@@ -274,6 +276,76 @@ def test_기대_suggestions() -> None:
     assert check_expect(trace, Expect(suggestions={"activity": "general"}), today=_TODAY)
     assert check_expect(trace, Expect(suggestions={"food": "any"}), today=_TODAY)
     assert check_expect(trace, Expect(suggestions={"food": "none"}), today=_TODAY) == []
+
+
+def _tools(*calls: tuple[str, bool]) -> Trace:
+    return _clean(memory_tools=tuple(ToolCallView(name, ok) for name, ok in calls))
+
+
+def test_기대_tools_는_성공한_호출만_센다() -> None:
+    want = Expect(tools=ToolsExpect(must={"create_event": 1}))
+    assert check_expect(_tools(("create_event", True)), want, today=_TODAY) == []
+    # 거절된 호출은 일을 한 것이 아니다
+    assert check_expect(_tools(("create_event", False)), want, today=_TODAY) == [
+        "create_event 성공 0회 < 1"
+    ]
+    assert check_expect(_tools(), Expect(tools=ToolsExpect(must={"create_event": 2})), today=_TODAY)
+
+
+def test_기대_tools_must_not_은_시도만_해도_위반이다() -> None:
+    want = Expect(tools=ToolsExpect(must_not=("create_event_item",)))
+    assert check_expect(_tools(("create_event", True)), want, today=_TODAY) == []
+    assert check_expect(_tools(("create_event_item", False)), want, today=_TODAY)
+
+
+def test_기대_tools_쓰기는_쓰기_tool_전부를_막는다() -> None:
+    want = Expect(tools=ToolsExpect(must_not=("쓰기",)))
+    assert check_expect(_tools(("query_event", True)), want, today=_TODAY) == []
+    for name in ("create_observation_food", "update_event", "delete_event_item", "propose_delete"):
+        assert check_expect(_tools((name, True)), want, today=_TODAY), name
+
+
+def test_기대_tools_는_Memory_가_돌지_않으면_실패한다() -> None:
+    # must_not 만 적어도 — 안 돈 Memory 는 아무것도 안 불러서 저절로 통과하면 안 된다
+    want = Expect(tools=ToolsExpect(must_not=("쓰기",)))
+    assert check_expect(_clean(memory_tools=None), want, today=_TODAY) == [
+        "Memory tool 기록이 없다 — Memory 가 돌지 않았다"
+    ]
+    assert check_expect(_clean(memory_tools=()), want, today=_TODAY) == []
+
+
+def test_tools_기대값_모양() -> None:
+    with pytest.raises(ValidationError):
+        ToolsExpect(must={"create_event": 0})
+    with pytest.raises(ValidationError):
+        ToolsExpect(must={"create_event": 1}, must_not=("create_event",))
+    [case] = load_probes_text(
+        "- id: P-T-01\n  ability: 기록\n  rule: r\n  severity: quality\n"
+        "  turns: [{say: 오늘 블록놀이 했어}]\n"
+        "  expect: {tools: {must: {create_observation_activity: 1}, must_not: [create_event]}}\n"
+    )
+    assert case.expect.tools == ToolsExpect(
+        must={"create_observation_activity": 1}, must_not=("create_event",)
+    )
+
+
+def test_memory_tools_는_이름과_성공만_담는다() -> None:
+    memory = SimpleNamespace(
+        calls=[
+            ToolCallRecord("create_event", {"title": "치과 예약"}, {"success": True}),
+            ToolCallRecord("create_event_item", {"name": "물병"}, {"success": False}),
+        ]
+    )
+    views = memory_tools(memory)
+    assert views == (ToolCallView("create_event", True), ToolCallView("create_event_item", False))
+    assert memory_tools(None) is None
+    # 인자(입력 원문)는 결과 파일로 가지 않는다
+    data = _clean(memory_tools=views).to_json()
+    assert data["memory_tools"] == [
+        {"name": "create_event", "success": True},
+        {"name": "create_event_item", "success": False},
+    ]
+    assert "치과" not in str(data)
 
 
 def _mixed() -> Trace:

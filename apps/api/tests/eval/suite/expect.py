@@ -1,12 +1,16 @@
 """케이스가 적은 기대값을 판정한다. 불변식(§2)과 달리 케이스마다 다르다.
 
-무거운 판정은 불변식이 맡고, 여기는 가볍게 — 라우팅 포함/제외 · 저장 도메인 · 추천 종류 · 안내 코드.
+무거운 판정은 불변식이 맡고, 여기는 가볍게 — 라우팅 포함/제외 · 저장 도메인 · 추천 종류 ·
+안내 코드 · Memory 가 부른 tool.
 """
 
 from datetime import date, timedelta
 
-from tests.eval.suite.schema import Expect
+from app.agents.memory.bundles import MUTATING_PREFIXES
+from tests.eval.suite.schema import Expect, ToolsExpect
 from tests.eval.suite.trace import Trace
+
+MUTATING = "쓰기"  # must_not 에 적으면 쓰기 tool 전부 (test_memory.py 의 MUTATING 과 같은 뜻)
 
 
 def check_expect(trace: Trace, expect: Expect, *, today: date) -> list[str]:
@@ -54,4 +58,24 @@ def check_expect(trace: Trace, expect: Expect, *, today: date) -> list[str]:
     misses += [f"'{w}' 가 출력에 있다" for w in expect.never_say if any(w in t for t in texts)]
     if expect.must_say_any and not any(w in t for w in expect.must_say_any for t in texts):
         misses.append(f"출력에 {list(expect.must_say_any)} 중 하나도 없다")
+    if expect.tools is not None:
+        misses += _check_tools(trace, expect.tools)
+    return misses
+
+
+def _check_tools(trace: Trace, want: ToolsExpect) -> list[str]:
+    if trace.memory_tools is None:
+        return ["Memory tool 기록이 없다 — Memory 가 돌지 않았다"]
+    misses: list[str] = []
+    for tool, minimum in want.must.items():
+        done = sum(1 for call in trace.memory_tools if call.name == tool and call.success)
+        if done < minimum:
+            misses.append(f"{tool} 성공 {done}회 < {minimum}")
+    for tool in want.must_not:
+        if tool == MUTATING:
+            used = [c.name for c in trace.memory_tools if c.name.startswith(MUTATING_PREFIXES)]
+        else:
+            used = [c.name for c in trace.memory_tools if c.name == tool]
+        if used:
+            misses.append(f"부르면 안 되는 tool: {sorted(set(used))}")
     return misses

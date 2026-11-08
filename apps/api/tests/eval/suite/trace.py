@@ -35,6 +35,14 @@ class SuggestionView:
 
 
 @dataclass(frozen=True)
+class ToolCallView:
+    """Memory 가 부른 tool 하나. 이름과 성공 여부만 — 인자에는 입력 원문이 들어 있어 싣지 않는다."""
+
+    name: str
+    success: bool
+
+
+@dataclass(frozen=True)
 class SavedRow:
     domain: str
     id: str
@@ -65,6 +73,9 @@ class Trace:
     agent_texts: tuple[str, ...] = ()  # Health 밖 도메인 Agent 의 화면 문장
     health_texts: tuple[str, ...] = ()
     memory_text: str | None = None
+    # Memory 가 부른 tool 순서대로 (테크스펙 13-1 경로).
+    # None = Memory 가 돌지 않았거나, 모으지 않는 경로(W)
+    memory_tools: tuple[ToolCallView, ...] | None = None
     usage: tuple[dict[str, Any], ...] = ()
     model_calls: int = 0
     latency_ms: int = 0

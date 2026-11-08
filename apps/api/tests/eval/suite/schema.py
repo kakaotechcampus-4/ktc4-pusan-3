@@ -75,6 +75,29 @@ class SavedExpect(_Strict):
     days_ago: int | None = None  # 새로 만든 관찰의 observed_on 이 모두 실행일 - N 일
 
 
+class ToolsExpect(_Strict):
+    """Memory 가 부른 tool (테크스펙 13-1 "경로가 맞나"). 적으면 Memory 가 돌아야 판정할 수 있다.
+
+    must 는 성공한 호출 수의 최소값이다 — 거절된 호출은 일을 한 것이 아니다. must_not 은
+    시도만 해도 위반이다. `test_memory.py` 의 required_tools · forbidden_tools 와 이름 ·
+    "쓰기" 뜻을 맞췄다.
+    """
+
+    must: dict[str, int] = Field(default_factory=dict)  # tool → 성공한 호출 최소 수
+    # 부르면 안 되는 tool. "쓰기" = create_ · update_ · delete_ · propose_ 전부
+    must_not: tuple[str, ...] = ()
+
+    @model_validator(mode="after")
+    def _counts_are_positive(self) -> "ToolsExpect":
+        zero = sorted(tool for tool, count in self.must.items() if count < 1)
+        if zero:
+            raise ValueError(f"must 의 횟수는 1 이상 — 안 불러야 하면 must_not 에: {zero}")
+        both = sorted(set(self.must) & set(self.must_not))
+        if both:
+            raise ValueError(f"must 와 must_not 에 같은 tool: {both}")
+        return self
+
+
 class Expect(_Strict):
     route: RouteExpect | None = None
     saved: SavedExpect | None = None
@@ -84,6 +107,7 @@ class Expect(_Strict):
     questions_max: int | None = None
     never_say: tuple[str, ...] = ()  # 어떤 출력 문장에도 없어야 할 글자 (카나리아 · 단정 표현)
     must_say_any: tuple[str, ...] = ()  # 출력 문장 어딘가에 이 중 하나는 있어야 한다
+    tools: ToolsExpect | None = None  # Memory 가 부른 tool
 
 
 class ProbeCase(_Strict):

@@ -15,7 +15,7 @@ from app.agents.suggestion_save import InMemorySuggestions, SuggestionBatch
 from app.agents.supervisor.routing import Guidance
 from app.core import llm_usage
 from tests.eval.suite.schema import ProbeCase
-from tests.eval.suite.trace import CitationView, SuggestionView, Trace
+from tests.eval.suite.trace import CitationView, SuggestionView, ToolCallView, Trace
 from tests.eval.suite.world import (
     CHILD,
     KST,
@@ -28,6 +28,13 @@ from tests.eval.suite.world import (
 
 async def _no_commit() -> None:
     """InMemoryStore 라 확정할 것이 없다."""
+
+
+def memory_tools(memory: Any) -> tuple[ToolCallView, ...] | None:
+    """Memory 가 부른 tool — 이름과 성공 여부만. Memory 가 돌지 않았으면 None."""
+    if memory is None:
+        return None
+    return tuple(ToolCallView(call.name, call.success) for call in memory.calls)
 
 
 def read_run(
@@ -168,6 +175,7 @@ async def run_probe(case: ProbeCase, *, attempt: int, logs: Callable[[], Sequenc
                 events=events,
                 batches=saved.batches,
             )
+            trace.memory_tools = memory_tools(result.memory)
             if not result.committed:
                 # 확정되지 않은 run 의 쓰기는 운영에서 롤백된다(pipeline 의 commit 결과가
                 # False 면 저장 안 된 것) — InMemory 에 남은 행을 저장으로 세지 않는다
