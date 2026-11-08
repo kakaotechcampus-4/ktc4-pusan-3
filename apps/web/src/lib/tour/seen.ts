@@ -5,6 +5,7 @@ import { useMemo } from "react";
 
 import { api, qk, type Me, type SeenTours } from "@/lib/api";
 
+import { withSeen } from "./steps";
 import { TOUR_KEYS, type TourKey } from "./types";
 
 /**
@@ -49,16 +50,24 @@ export function useMarkTourSeen(): (key: TourKey) => void {
   const queryClient = useQueryClient();
   const mutation = useMutation({
     mutationFn: (key: TourKey) => api.put<void>(`/me/tours/${key}`),
-    // 실패했을 때만 서버 값으로 다시 맞춘다. 성공하면 먼저 얹은 캐시가 서버와 같다.
-    onError: () => queryClient.invalidateQueries({ queryKey: qk.tours(parentId ?? "") }),
+    // 실패했으면 서버 값으로 다시 맞춘다. 성공해도 목록이 없으면(첫 읽기를 아래에서 멈췄다) 다시 읽는다.
+    // 🚨 호출 단위 콜백이 아니라 여기 둔다 — 화면을 떠나 훅이 내려가도 돈다 (#815 리뷰).
+    onSettled: (_data, error) => {
+      const queryKey = qk.tours(parentId ?? "");
+      if (error || queryClient.getQueryData(queryKey) === undefined) {
+        void queryClient.invalidateQueries({ queryKey });
+      }
+    },
   });
   return (key) => {
     if (parentId === undefined) return;
+    const queryKey = qk.tours(parentId);
+    // 🚨 읽는 중이면 먼저 멈춘다 — 얹은 값을 늦게 도착한 GET 이 덮으면 같은 투어가 다시 뜬다.
+    //    멈춘 읽기는 PUT 이 끝난 뒤 다시 읽는다 (위 `onSettled`).
+    void queryClient.cancelQueries({ queryKey });
     // 🚨 기다리지 않고 먼저 캐시에 얹는다 — 닫자마자 같은 화면이 다시 그려질 때 투어가 한 번 더 뜨면 안 된다.
-    //    되돌릴 수 있는 값이라 낙관적 업데이트가 허용된다 (승인 게이트가 아니다).
-    queryClient.setQueryData<TourKey[]>(qk.tours(parentId), (old) =>
-      old?.includes(key) ? old : [...(old ?? []), key],
-    );
+    //    되돌릴 수 있는 값이라 낙관적 업데이트가 허용된다 (승인 게이트가 아니다). 목록이 없으면 만들지 않는다 (`withSeen`).
+    queryClient.setQueryData<TourKey[]>(queryKey, (old) => withSeen(old, key));
     mutation.mutate(key);
   };
 }

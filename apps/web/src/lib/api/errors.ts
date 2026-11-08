@@ -89,7 +89,7 @@ export class ApiError extends Error {
 /** 네트워크 자체가 실패했을 때 (서버 봉투가 없음). */
 export class NetworkError extends Error {
   constructor(cause: unknown) {
-    super("서버에 연결하지 못했어요");
+    super("연결하지 못했어요. 인터넷 연결을 확인해 주세요.");
     this.name = "NetworkError";
     this.cause = cause;
   }

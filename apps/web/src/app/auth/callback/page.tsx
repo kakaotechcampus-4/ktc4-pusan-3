@@ -25,6 +25,7 @@ import {
   readProvider,
   rememberConsentCode,
 } from "@/lib/auth";
+import { consentCopy, SERVICE_EMAIL } from "@/lib/consent";
 import { useSessionStore } from "@/stores/session";
 
 /**
@@ -62,6 +63,13 @@ type Outcome =
   /** 기존 회원인데 필수 동의가 남았다. */
   | { kind: "consent_blocked"; scopes: string[] }
   | { kind: "failed"; message: string };
+
+/** 남은 동의의 화면 이름. 스코프 코드는 보호자가 읽을 말이 아니다. */
+function consentLabels(scopes: string[]): string[] {
+  return scopes
+    .map((s) => consentCopy(s)?.shortLabel)
+    .filter((label): label is string => Boolean(label));
+}
 
 export default function AuthCallbackPage() {
   // 🚨 `useSearchParams()` 는 Suspense 경계 안에 있어야 한다 (05·07·09 화면과 같은 이유).
@@ -219,10 +227,25 @@ function AuthCallbackScreen() {
       {outcome.kind === "consent_blocked" ? (
         <Card>
           <p className="text-body text-ink">먼저 동의가 필요해요</p>
-          <p className="text-body-sm text-ink-muted mt-2">남은 동의 {outcome.scopes.length}건</p>
-          <p className="text-caption text-ink-subtle mt-1">{outcome.scopes.join(", ")}</p>
+          <p className="text-body-sm text-ink-muted mt-2">
+            다시 동의해야 할 약관이 {outcome.scopes.length}건 있어요.
+          </p>
+          {/* 🚨 스코프 코드를 그대로 내지 않는다 — 모르는 이름은 뺀다 (`ConsentRequiredCard` 와 같다). */}
+          {consentLabels(outcome.scopes).length > 0 ? (
+            <p className="text-caption text-ink-subtle mt-1">
+              {consentLabels(outcome.scopes).join(", ")}
+            </p>
+          ) : null}
           <p className="text-caption text-ink-subtle mt-2">
-            동의 화면은 아직 없어요 (10 설정). 그때까지 여기서 멈춥니다.
+            지금은 앱에서 다시 동의할 수 없어요. 아래 주소로 알려 주시면 도와드릴게요.
+          </p>
+          <p className="text-caption text-ink-muted mt-1">
+            <a
+              href={`mailto:${SERVICE_EMAIL}`}
+              className="decoration-line-strong -my-3 inline-block py-3 break-all underline decoration-1 underline-offset-4"
+            >
+              {SERVICE_EMAIL}
+            </a>
           </p>
         </Card>
       ) : null}

@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CalendarCheck,
   Camera,
+  ListX,
   MessageCircleQuestionMark,
   Mic,
   Shield,
@@ -81,7 +82,7 @@ const DOMAINS: Array<{ agent: Agent; label: string; text: string }> = [
     agent: "food",
     label: "식사",
     // 🚨 "오늘 급식" 을 말하지 않는다 — 급식은 식단표를 사진으로 적은 집에만 있다(08). 모두에게 약속하지 않는다.
-    text: "등록한 알레르기를 먼저 걸러 낸 뒤 끼니 메뉴를 골라요. 알레르기를 확인하지 못하면 식사 제안을 만들지 않아요.",
+    text: "등록한 알레르기 식품을 먼저 빼고 끼니 메뉴를 골라요. 알레르기를 확인하지 못하면 식사 제안을 만들지 않아요.",
   },
   {
     agent: "activity",
@@ -91,7 +92,7 @@ const DOMAINS: Array<{ agent: Agent; label: string; text: string }> = [
   {
     agent: "growth",
     label: "성장",
-    text: "관심이 향한 쪽으로 함께 읽을 책과 해 볼 만한 것을 골라요.",
+    text: "요즘 관심 있는 것에 맞춰 함께 읽을 책과 해 볼 만한 것을 골라요.",
   },
   {
     agent: "health",
@@ -105,7 +106,7 @@ const DOMAINS: Array<{ agent: Agent; label: string; text: string }> = [
 ];
 
 /**
- * 승인 게이트 2곳 (최상위 CLAUDE.md §2). 🚨 **여기는 게이트가 아니라 게이트의 설명이다** —
+ * 승인 게이트 3곳 (최상위 CLAUDE.md §2). 🚨 **여기는 게이트가 아니라 게이트의 설명이다** —
  * `caution` · `btn-approve` 를 쓰지 않는다. 타일은 브랜드 톤이다 (아이콘 타일은 브랜드가 서는 자리다).
  */
 const GATES: Array<{ icon: LucideIcon; title: string; text: string }> = [
@@ -119,11 +120,16 @@ const GATES: Array<{ icon: LucideIcon; title: string; text: string }> = [
     title: "알레르기와 건강 기록",
     text: "AI가 짐작해서 적지 않아요. 보호자가 적은 것만, 확인한 뒤에 저장해요.",
   },
+  {
+    icon: ListX,
+    title: "대화로 기록 지우기",
+    text: "지울 기록을 AI가 골라 보여 줘도, 보호자가 체크하고 눌러야 지워져요.",
+  },
 ];
 
 /** CLAUDE.md §1 "안 만드는 것" 에서. 무엇을 안 하는지가 이 서비스의 절반이다. */
 const NOT_DOING = [
-  "진단하거나 약을 권하지 않아요. 반복되는 증상은 병원에 가시라고 말해요.",
+  "진단하거나 약을 권하지 않아요. 반복되는 증상은 병원 확인을 권해요.",
   "상품을 추천하거나 광고를 넣지 않아요.",
   // 🚨 처리방침 1장과 같은 범위여야 한다 (최상위 CLAUDE.md §2 개인정보 — 별명 · 생일 · 알레르기와
   //    건강 정보 + 선택 항목 성별 · 키 · 몸무게). 받는 항목이 늘면 이 줄과 처리방침을 같이 고친다.
@@ -258,9 +264,7 @@ function LoginScreen() {
           {error ? <CardFailed>{error}</CardFailed> : null}
           {kakao}
           <p className="text-caption text-ink-subtle text-center">
-            가입하면 약관과 개인정보 처리에 동의하게 돼요.
-            <br />
-            외부 서비스 연결은 요청하지 않아요.
+            가입할 때 약관과 개인정보 동의를 항목마다 따로 받아요.
           </p>
         </div>
       </div>
@@ -309,7 +313,7 @@ function LoginScreen() {
             <IconRow
               icon={MessageCircleQuestionMark}
               title="기록하면서 물어보기"
-              text="기록만 적으면 저장만 하고, '저녁 뭐 먹이지?'처럼 물어보면 그때 제안을 준비해요."
+              text="있었던 일을 적으면 기록하고, ‘저녁 뭐 먹이지?’처럼 물어보면 그때 제안을 준비해요."
             />
           </li>
         </ul>
@@ -317,7 +321,7 @@ function LoginScreen() {
 
       <IntroSection
         title="쌓인 기록으로 네 가지를 준비해요"
-        description="한 번에 두 가지까지만 꺼내요. 매번 네 개를 다 보여주지 않아요."
+        description="한 번에 두 가지까지만 꺼내요. 네 가지를 매번 다 보여 주지 않아요."
       >
         <ul className="flex flex-col gap-4">
           {DOMAINS.map((domain) => (
@@ -329,7 +333,7 @@ function LoginScreen() {
       </IntroSection>
 
       <IntroSection
-        title="직접 확인하는 건 두 가지뿐이에요"
+        title="직접 확인하는 건 세 가지뿐이에요"
         description="되돌릴 수 없는 것만 보호자 앞으로 가져와요. 나머지는 따로 확인받지 않고 정리해요."
       >
         <ul className="flex flex-col gap-4">
@@ -511,7 +515,7 @@ function PersonalizedExample() {
         <div className="min-w-0 flex-1 p-4">
           <p className="text-body text-ink">종이컵으로 탑을 쌓고 누가 더 높이 쌓나 겨뤄 보세요.</p>
           <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3">
-            <dt className="text-caption text-ink-subtle">추천 이유</dt>
+            <dt className="text-caption text-ink-subtle">제안 이유</dt>
             <dd className="text-body-sm text-ink-muted">
               요즘 쌓는 놀이 이야기가 이어지고 있어요.
             </dd>

@@ -154,7 +154,11 @@ function SettingsScreen() {
         />
       </Section>
 
-      <Section title="알림" description="내 계정에만 적용돼요. 함께 보는 보호자는 각자 정해요.">
+      <Section
+        tour="notifications"
+        title="알림"
+        description="내 계정에만 적용돼요. 함께 보는 보호자는 각자 정해요."
+      >
         <NotificationSection />
       </Section>
 
@@ -162,7 +166,7 @@ function SettingsScreen() {
         <Section
           tour="consents"
           title="동의"
-          description="지금 켜고 끌 수 있는 것이에요. 바꾸기 전에 무엇이 달라지는지 먼저 보여드리고, 이름을 누르면 전문을 볼 수 있어요."
+          description="지금 켜고 끌 수 있는 동의예요. 바꾸기 전에 무엇이 달라지는지 먼저 보여 드려요. 이름을 누르면 전문을 볼 수 있어요."
         >
           <ConsentSection childId={childId} />
         </Section>
@@ -178,7 +182,7 @@ function SettingsScreen() {
             href={`/child/${childId}/settings/help`}
             icon={LifeBuoy}
             title="자주 묻는 질문"
-            status="기록 · 제안 · 안전 · 함께 보기"
+            status="기록, 제안, 안전, 함께 보기"
             {...FORWARD}
           />
           {/* 🚨 **앱 안에서 보내는 길이다** (#487). Google Play 정책이 불쾌한 AI 답 · 공동 기록 ·
@@ -188,7 +192,7 @@ function SettingsScreen() {
             href={`/child/${childId}/settings/report`}
             icon={Flag}
             title="문제 알리기"
-            status="AI 답 · 공동 기록 · 앱 오류"
+            status="AI 답, 공동 기록, 앱 오류"
             {...FORWARD}
           />
           <TourResetRow />

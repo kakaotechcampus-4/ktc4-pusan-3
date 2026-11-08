@@ -1,6 +1,5 @@
 "use client";
 
-import { josa } from "es-hangul";
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -33,6 +32,13 @@ export type CorrectionTargetKind = "observation" | "affinity";
 interface VerdictSpec {
   verdict: CorrectionVerdict;
   label: string;
+  /**
+   * 누른 뒤 확인 단계의 질문. 🚨 라벨에 조사를 붙여 묻지 않는다 — "기록이 더 필요해요로 바꿀까요?" 처럼
+   *    문장형 라벨 뒤에 조사가 붙어 어색했다 (#815). 기억 고치기는 의견이라 "바꿀까요" 로 묻지 않는다.
+   */
+  question: string;
+  /** 확인 단계의 실행 버튼. */
+  confirm: string;
   /** 누르면 실제로 무엇이 바뀌는지. 🚨 확실한 것만 적는다. */
   effect: string;
   /**
@@ -73,6 +79,8 @@ const VERDICTS: Record<CorrectionTargetKind, VerdictSpec[]> = {
     {
       verdict: "once_only",
       label: "이번만 그랬어요",
+      question: "이번 한 번만 있던 일로 바꿀까요?",
+      confirm: "바꾸기",
       effect: "이번 한 번만 있던 일로 표시해요. 기록은 목록에 그대로 남아요.",
       after: "아이의 기억으로는 세지 않아요. 한 번 바꾸면 되돌릴 수 없어요.",
     },
@@ -81,18 +89,24 @@ const VERDICTS: Record<CorrectionTargetKind, VerdictSpec[]> = {
     {
       verdict: "need_more_observation",
       label: "기록이 더 필요해요",
+      question: "아직 이르다는 의견을 남길까요?",
+      confirm: "남기기",
       effect: "아직 이르다는 의견을 남겨요. 기억은 목록에 그대로 있어요.",
       after: "기억은 기록이 쌓이는 대로 다시 정해져요.",
     },
     {
       verdict: "outdated",
       label: "지금은 달라요",
+      question: "지금은 다르다는 의견을 남길까요?",
+      confirm: "남기기",
       effect: "지금은 다르다는 의견을 남겨요. 기억은 목록에 그대로 있어요.",
       after: "기억은 기록이 쌓이는 대로 다시 정해져요.",
     },
     {
       verdict: "wrong",
-      label: "잘못된 기록",
+      label: "잘못된 기억",
+      question: "잘못된 기억이라는 의견을 남길까요?",
+      confirm: "남기기",
       effect: "잘못된 기억이라는 의견을 남겨요. 기억은 목록에 그대로 있어요.",
       after: "한동안은 이 기억이 확인되려면 기록이 더 쌓여야 해요.",
     },
@@ -156,9 +170,7 @@ export function CorrectionButtons({
         {/* 🚨 `role="status"` 로 알린다 — 버튼 묶음이 통째로 바뀌는데 눈으로만 알 수 있으면
             스크린리더 사용자는 자기가 무엇을 확인하는 중인지 모른다. */}
         <div role="status">
-          {/* 🚨 라벨에 조사를 박지 않는다. 라벨은 데이터고 조사는 문법이라, 박아 두면 다른
-              문장에서 못 쓴다 — 받침으로 고르는 것은 `josa` 가 한다 (키가 `"으로/로"` 순서다). */}
-          <p className="text-body text-ink">{josa(asking.label, "으로/로")} 바꿀까요?</p>
+          <p className="text-body text-ink">{asking.question}</p>
           <p className="text-body-sm text-ink-muted mt-1">{asking.effect}</p>
           {asking.after ? (
             <p className="text-caption text-ink-subtle mt-2">{asking.after}</p>
@@ -175,7 +187,7 @@ export function CorrectionButtons({
             onClick={() => onSelect(asking.verdict)}
           >
             {busy ? <Spinner /> : null}
-            바꾸기
+            {asking.confirm}
           </Button>
           <Button variant="tertiary" size="compact" disabled={busy} onClick={() => ask(null)}>
             그만두기
