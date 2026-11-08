@@ -15,7 +15,7 @@ from app.agents.suggestion_save import InMemorySuggestions, SuggestionBatch
 from app.agents.supervisor.routing import Guidance
 from app.core import llm_usage
 from tests.eval.suite.schema import ProbeCase
-from tests.eval.suite.trace import CitationView, SuggestionView, Trace
+from tests.eval.suite.trace import CitationView, SuggestionView, Trace, removed_rows
 from tests.eval.suite.world import (
     CHILD,
     KST,
@@ -129,6 +129,7 @@ async def run_probe(case: ProbeCase, *, attempt: int, logs: Callable[[], Sequenc
                 break
             world.store.seen.clear()  # 읽은 기록은 이 턴 것만 센다 (I3 = 이 run 의 근거)
             world.affinity.seen.clear()
+            world.store.inner.proposal = None  # 삭제 제안도 이 턴 것만 (InMemory 는 run 당 하나)
             before = await observation_rows(world.store.inner)
             events_before = await stored_event_count(world.store.inner)
             events: list[object] = []
@@ -155,6 +156,9 @@ async def run_probe(case: ProbeCase, *, attempt: int, logs: Callable[[], Sequenc
             after = await observation_rows(world.store.inner)
             trace.run_id = run_id
             trace.saved = tuple(row for oid, row in after.items() if oid not in before)
+            # InMemory 조회는 지운 행을 돌려주지 않는다 — 전에 있다가 없어진 행이 지워진 행이다
+            trace.removed = removed_rows(before, after)
+            trace.delete_proposed = world.store.inner.proposal is not None
             trace.stored_events = await stored_event_count(world.store.inner) - events_before
             trace.searched = world.searched
             read_run(
@@ -172,6 +176,7 @@ async def run_probe(case: ProbeCase, *, attempt: int, logs: Callable[[], Sequenc
                 # 확정되지 않은 run 의 쓰기는 운영에서 롤백된다(pipeline 의 commit 결과가
                 # False 면 저장 안 된 것) — InMemory 에 남은 행을 저장으로 세지 않는다
                 trace.saved = ()
+                trace.removed = ()
     except Exception as exc:  # run 하나의 예외로 케이스 전체를 멈추지 않는다
         trace.error = f"{type(exc).__name__}: {exc}"
         trace.error_detail = traceback.format_exc()

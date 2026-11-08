@@ -43,7 +43,13 @@ from app.domains.policy.repository import find_version
 from app.domains.safety.models import HealthSafety, SafetyKind, SafetySeverity, SafetyStatus
 from app.infra.db.session import async_session_factory
 from tests.eval.suite.schema import WEEKDAYS, Step, WeekCase
-from tests.eval.suite.trace import CitationView, SavedRow, SuggestionView, Trace
+from tests.eval.suite.trace import (
+    CitationView,
+    SavedRow,
+    SuggestionView,
+    Trace,
+    removed_rows,
+)
 from tests.eval.suite.week_frames import apply_frames, parse_sse
 from tests.integration.api.conftest import seed_login
 
@@ -141,6 +147,22 @@ async def observation_snapshot(child_id: uuid.UUID) -> dict[str, SavedRow]:
         ):
             found[oid] = SavedRow(domain=domain, id=oid, observed_on=day)
     return found
+
+
+async def kept_observation_ids(child_id: uuid.UUID) -> frozenset[str]:
+    """검색에 잡히는(active · stand_alone) 관찰 id — I15 의 전후 비교에 쓴다. 지움 · 잘못된 기록은
+    행이 남고 status 만 바뀌어서 행 목록(observation_snapshot)으로는 못 본다."""
+    kept: set[str] = set()
+    for domain in OBS_TABLES:
+        kept.update(
+            oid
+            for (oid,) in await _rows(
+                f"select id::text from observation_{domain} "
+                "where child_id=:c and status::text in ('active', 'stand_alone')",
+                c=child_id,
+            )
+        )
+    return frozenset(kept)
 
 
 async def event_count(child_id: uuid.UUID) -> int:
@@ -322,6 +344,7 @@ class WeekDriver:
                 return
             reply_to = previous[0]
         before = await observation_snapshot(self.child_id)
+        kept_before = await kept_observation_ids(self.child_id)
         events_before = await event_count(self.child_id)
         body: dict[str, Any] = {"text": say, "source": "home_input"}
         if reply_to:
@@ -351,6 +374,10 @@ class WeekDriver:
         trace.run_id = run_id
         after = await observation_snapshot(self.child_id)
         trace.saved = tuple(row for oid, row in after.items() if oid not in before)
+        trace.removed = removed_rows(
+            {oid: row for oid, row in before.items() if oid in kept_before},
+            await kept_observation_ids(self.child_id),
+        )
         trace.stored_events = await event_count(self.child_id) - events_before
         trace.suggestions = await suggestion_views(self.child_id, run_id)
         trace.usage = tuple(_usage(run_id))

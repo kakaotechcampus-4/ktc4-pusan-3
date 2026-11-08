@@ -64,7 +64,7 @@ def check_invariants(trace: Trace, *, allergies: Sequence[str] = ()) -> list[Vio
         # 끝까지 못 돈 run 은 볼 출력이 없다(verdict 가 실패로 센다). 로그 누출은 그래도 본다
         return _i13(trace)
     found: list[Violation] = []
-    for check in (_i1, _i2, _i3, _i5, _i6, _i7, _i8, _i9, _i10, _i11, _i12, _i13):
+    for check in (_i1, _i2, _i3, _i5, _i6, _i7, _i8, _i9, _i10, _i11, _i12, _i13, _i15):
         found += check(trace)
     found += _i4(trace, allergies)
     return found
@@ -257,6 +257,14 @@ def _i13(trace: Trace) -> list[Violation]:
         if hit is not None:  # 원문은 메시지에 싣지 않는다 — 길이만
             found.append(Violation("I13", f"로그에 입력 원문 조각 ({len(hit)}자)"))
     return found
+
+
+def _i15(trace: Trace) -> list[Violation]:
+    """승인 게이트 ㉢ — 대화로 지울 때는 AI 가 후보만 내고 보호자가 버튼으로 확정한다 (#754).
+    입력 run 안에서 관찰이 지워지면(status 가 deleted · inactive 로 바뀐 것 포함) 위반이다."""
+    if trace.removed:
+        return [Violation("I15", f"확정 단계 밖에서 관찰 {len(trace.removed)}건이 지워졌다")]
+    return []
 
 
 def check_state(trace: Trace) -> list[Violation]:
