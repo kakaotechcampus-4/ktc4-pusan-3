@@ -493,6 +493,8 @@ async def test_내린_알레르기는_사전검사에서_다시_묻는다(
     data = (await _post(db_client, cid, headers, agents=["food"])).json()
 
     assert [s["content"] for s in data["suggestions"]] == ["호두죽"]
+
+
 async def test_괜찮았던_식품으로_저장한_항목은_다시_묻지_않는다(
     db_client, session, bearer, cid, agents, monkeypatch
 ):
@@ -519,6 +521,33 @@ async def test_괜찮았던_식품으로_저장한_항목은_다시_묻지_않�
     data = (await _post(db_client, cid, headers, agents=["food"])).json()
 
     assert [p["item"] for p in data["prechecks"]] == ["호두"]
+
+
+async def test_괜찮았던_식품을_내리면_사전검사에서_다시_묻는다(
+    db_client, session, bearer, cid, agents, monkeypatch
+):
+    """프로필에서 괜찮았던 식품을 빼면 다음 05 에서 그 식품을 다시 묻는다.
+
+    내린 기록을 "모름" 으로 보는 AI 쪽 판정 위에서만 성립한다 — 이 브랜치가 그 위에 쌓인 이유다.
+    """
+    plan, _ = agents
+    headers, parent_id = bearer
+    monkeypatch.setattr("app.api.v1.routers.suggestions.child_health_granted", _granted(True))
+    pine = HealthSafety(child_id=cid, kind=SafetyKind.ALLERGY, label="잣", status=SafetyStatus.NONE)
+    session.add(pine)
+    await session.flush()
+    removed = await db_client.delete(
+        f"/api/v1/children/{cid}/health-safety/{pine.id}", headers=headers
+    )
+    assert removed.status_code == 204
+    plan["food"] = (
+        "drafts",
+        [await _personal(session, cid, parent_id, content="잣죽", allergens=["잣"])],
+    )
+
+    data = (await _post(db_client, cid, headers, agents=["food"])).json()
+
+    assert [p["item"] for p in data["prechecks"]] == ["잣"]
 
 
 async def test_동의가_없으면_알레르기_든_추천을_뺀다(

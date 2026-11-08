@@ -51,7 +51,8 @@ class CreateHealthSafetyRequest(BaseModel):
             "true 면 '괜찮았던 식품' — 05 확인 시트에서 '먹어봤어요 · 괜찮았어요' 로 답한 식품으로 "
             "저장한다(알레르기가 아니다). type 은 allergy 만, severity · reactions 는 "
             "보내지 않는다(400). "
-            "같은 식품이 알레르기로 있으면 409 allergy_exists, 같은 이름의 괜찮았던 식품이 있으면 "
+            "같은 식품이 알레르기 · 건강 기록에 있으면 409 allergy_exists, "
+            "같은 이름의 괜찮았던 식품이 있으면 "
             "409 already_exists"
         ),
     )

@@ -113,9 +113,10 @@ async def register_health_safety(
     400 validation_failed(종류와 맞지 않는 심각도) → 409 already_exists(같은 종류 · 이름의 기록).
 
     괜찮았던 식품(`tolerated: true`)은 동의 뒤 순서가 이렇다: 400 validation_failed(알레르기가
-    아니거나 심각도 · 증상을 같이 보냄) → 409 allergy_exists(그 식품이 알레르기로 있음 · 이름
-    사전) → 409 already_exists(같은 이름의 괜찮았던 식품).
-    알레르기를 등록하면 그 알레르기가 덮는 괜찮았던 식품을 같은 트랜잭션에서 내린다.
+    아니거나 심각도 · 증상을 같이 보냄) → 409 allergy_exists(그 식품이 알레르기 · 건강 기록에
+    있음 · 이름 사전, 모든 종류) → 409 already_exists(같은 이름의 괜찮았던 식품).
+    알레르기 · 건강 기록(종류 무관)을 등록하면 그것이 덮는 괜찮았던 식품을 같은 savepoint 에서
+    내린다 — 05 사전검사도 모든 종류의 active 를 같은 이름 사전으로 보기 때문이다.
     """
     # 검사 순서: 의존성(아이 접근 · 본문) → 키 → 재생 → 동의 → 심각도 → 중복 → 저장 → commit →
     # 응답 기억. 심각도 400 이 중복 409 보다 먼저인 것은 목(children.ts)과 같게 맞춘 것이다.
@@ -246,7 +247,7 @@ async def _register_tolerated(
         )
     labels = await _safety_labels(session, child_id=child.child_id)
     if entrypoint.check_allergens([body.label], labels).blocked:
-        raise ApiError(409, "allergy_exists", "알레르기로 등록된 식품이에요")
+        raise ApiError(409, "allergy_exists", "알레르기 · 건강 기록에 있는 식품이에요")
     if await has_tolerated_safety(session, child_id=child.child_id, label=body.label):
         raise ApiError(409, "already_exists", "이미 등록된 항목이에요")
     try:

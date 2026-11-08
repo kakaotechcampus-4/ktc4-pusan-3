@@ -878,3 +878,65 @@ async def test_괜찮았던_식품을_내리면_204_다시_내리면_404_고칠_
     await session.rollback()
     await session.refresh(row)
     assert row.status is SafetyStatus.RETRACTED
+
+
+async def test_알레르기_등록이_DB_에서_거절되면_괜찮았던_식품도_내려가지_않는다(
+    db_client, session, bearer, consented, monkeypatch
+):
+    """내리기는 등록과 같은 savepoint 다 — 등록이 되감기면 내리기도 되감긴다."""
+    headers, parent_1 = bearer
+    walnut = await create_safety(
+        session,
+        child_id=consented,
+        parent_id=parent_1,
+        kind=SafetyKind.ALLERGY,
+        label="호두",
+        status=SafetyStatus.NONE,
+    )
+    await create_safety(
+        session, child_id=consented, parent_id=parent_1, kind=SafetyKind.ALLERGY, label="견과류"
+    )
+
+    async def not_yet(*_args, **_kwargs) -> bool:
+        return False
+
+    monkeypatch.setattr(health_safety_router, "has_active_safety", not_yet)
+
+    response = await db_client.post(
+        safety_url(consented),
+        json={"type": "allergy", "label": "견과류"},
+        headers=with_key(headers),
+    )
+
+    assert response.status_code == 409
+    await session.refresh(walnut)
+    assert walnut.status is SafetyStatus.NONE
+
+
+async def test_내린_알레르기는_괜찮았던_식품으로_저장하는_것을_막지_않는다(
+    db_client, session, bearer, consented
+):
+    """잘못 등록했다 내린 알레르기 — 다시 물어 "괜찮았어요" 로 답한 길이다."""
+    headers, parent_1 = bearer
+    wrong = await create_safety(
+        session, child_id=consented, parent_id=parent_1, kind=SafetyKind.ALLERGY, label="호두"
+    )
+    wrong.status = SafetyStatus.RETRACTED
+    await session.flush()
+
+    response = await tolerate(db_client, headers, consented, "호두", "key-walnut-again")
+
+    assert response.status_code == 201
+
+
+async def test_괜찮았던_식품도_같은_키로_다시_보내면_처음_응답이고_한_줄이다(
+    db_client, session, bearer, consented
+):
+    headers, _ = bearer
+
+    first = await tolerate(db_client, headers, consented, "잣", "key-same")
+    again = await tolerate(db_client, headers, consented, "잣", "key-same")
+
+    assert (first.status_code, again.status_code) == (201, 201)
+    assert again.json() == first.json()
+    assert len(await rows_of(session, consented)) == 1
