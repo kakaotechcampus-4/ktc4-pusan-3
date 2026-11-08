@@ -1,7 +1,7 @@
 """관찰 목록 · 상세 API — #259.
 
 저장 함수(필터 · 커서 · 삭제 표시)는 `tests/integration/test_observation_repository.py` 가 건다.
-여기는 API 가 더하는 것만 본다: 분류 → 표 매핑, 건강 제외, 응답 조립, 쪽(page · size) · 날짜 · 검색.
+여기는 API 가 더하는 것만 본다: 분류 → 표 매핑, 건강 모양, 응답 조립, 쪽(page · size) · 날짜 · 검색.
 """
 
 import uuid
@@ -20,6 +20,7 @@ from app.domains.identity.models import Parent
 from app.domains.memory.observation.models import (
     ConfidenceSource,
     ObservationFood,
+    ObservationHealth,
     ObservationStatus,
     RoutineCategory,
 )
@@ -78,13 +79,22 @@ async def test_other_childs_observations_are_forbidden(
     assert (listed.status_code, detail.status_code) == (403, 403)
 
 
-async def test_list_maps_agent_to_tables_and_hides_health(
+async def test_list_maps_agent_to_tables_and_shows_health_in_its_shape(
     db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
 ):
-    """growth 는 education · routine 두 표, health 는 빈 목록, 전체에도 건강은 없다."""
+    """growth 는 education · routine 두 표, health 는 건강 표.
+
+    건강 기록은 주제 · 기억 칸이 없는 모양으로 나오고, 지운 건강 기록은 빠진다 (#764).
+    """
     headers, parent_id = bearer
     for domain in _FIELDS:
         await _observe(session, cid, parent_id, domain)
+    deleted = await _observe(session, cid, parent_id, "health", raw_text="지운 건강 기록")
+    await session.execute(
+        update(ObservationHealth)
+        .where(ObservationHealth.id == deleted.id)
+        .values(status=ObservationStatus.DELETED)
+    )
     url = f"/api/v1/children/{cid}/observations"
 
     growth = (await db_client.get(url, params={"domain": "growth"}, headers=headers)).json()
@@ -95,9 +105,12 @@ async def test_list_maps_agent_to_tables_and_hides_health(
         "observation_education",
         "observation_routine",
     }
-    assert health == {"items": [], "total": 0, "page": 1, "size": 20, "total_pages": 0}
-    assert everything["total"] == 4
-    assert "observation_health" not in {i["kind"] for i in everything["items"]}
+    [item] = health["items"]
+    assert item["kind"] == "observation_health"
+    assert item["domain_fields"]["symptom"] == ["기침"]
+    assert {"subject", "polarity", "strong_signals", "affinity"}.isdisjoint(item)
+    assert everything["total"] == 5
+    assert "observation_health" in {i["kind"] for i in everything["items"]}
 
 
 async def test_list_keeps_corrected_observations_but_not_deleted_ones(
@@ -344,15 +357,18 @@ async def test_detail_carries_affinity_writer_usage_and_corrections(
     assert [c["verdict"] for c in body["corrections"]] == ["once_only"]
 
 
-async def test_health_detail_is_not_found(
+async def test_health_detail_is_shown_without_corrections(
     db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
 ):
+    """건강 기록 상세는 200 이다. 고치기를 받지 않아서 corrections 는 빈 배열이다 (#764)."""
     headers, parent_id = bearer
     record = await _observe(session, cid, parent_id, "health")
     resp = await db_client.get(
         f"/api/v1/children/{cid}/observations/observation_health/{record.id}", headers=headers
     )
-    assert resp.status_code == 404
+    assert resp.status_code == 200
+    body = resp.json()
+    assert (body["observation"]["kind"], body["corrections"]) == ("observation_health", [])
 
 
 @pytest.mark.parametrize(
@@ -413,26 +429,6 @@ async def test_q_allows_exactly_100_characters_and_trims_the_edges(
 
     assert longest.status_code == 200
     assert padded["total"] == 1  # 가장자리 공백이 검색어에 남으면 "% 브로콜리 %" 라 안 걸린다
-
-
-async def test_health_domain_echoes_page_and_size_and_still_validates(
-    db_client: AsyncClient, bearer: Bearer, cid: uuid.UUID
-):
-    """건강은 빈 목록이지만 고정 응답이 아니다 — 요청한 page · size 를 되돌리고 검증도 한다."""
-    headers, _ = bearer
-    url = f"/api/v1/children/{cid}/observations"
-
-    empty = (
-        await db_client.get(url, params={"domain": "health", "page": 3, "size": 5}, headers=headers)
-    ).json()
-    invalid = await db_client.get(
-        url,
-        params={"domain": "health", "date_from": "2026-10-31", "date_to": "2026-10-01"},
-        headers=headers,
-    )
-
-    assert empty == {"items": [], "total": 0, "page": 3, "size": 5, "total_pages": 0}
-    assert invalid.status_code == 400
 
 
 async def test_other_childs_list_is_forbidden_whatever_the_query(
