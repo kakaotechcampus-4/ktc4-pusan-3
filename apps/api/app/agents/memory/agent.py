@@ -30,11 +30,12 @@ from typing import Any, Literal
 
 from pydantic import ValidationError
 
-from app.agents.common.llm_client import LLMClient
+from app.agents.common.guardrail import GuardContext, Guardrail
+from app.agents.common.llm_client import LLMClient, LLMError
 from app.agents.common.result import DomainPending
 from app.agents.memory.bundles import MUTATING_PREFIXES, WRITES_FOR, tools_for
 from app.agents.memory.context import AgentContext
-from app.agents.memory.drafts import EventDraft
+from app.agents.memory.drafts import AnyEventDraft
 from app.agents.memory.prompt import build_system_prompt
 from app.agents.memory.registry import TOOL_SPECS, execute_tool, specs_for
 from app.agents.memory.result import ErrorCode, fail
@@ -52,10 +53,8 @@ from app.agents.memory.schemas.task import (
     PendingMemoryContext,
     WorkType,
 )
-from app.rules.hazard import FOOD_NAME_TERMS, PLAY_NAME_TERMS, hazard_names
 from app.rules.medicine_name import is_generic_medicine, same_medicine
 from app.rules.safety_term import mentions_safety
-from app.rules.term_match import Term
 
 logger = logging.getLogger(__name__)
 
@@ -68,9 +67,6 @@ MAX_COMPLETION_TOKENS = 1400
 # 맥락을 만들지 않고 끝낸다(`ask_limit_reached`).
 MAX_QUESTIONS = 4
 
-# 되묻기 맥락에 남기는 조회 결과 행 수의 상한. 넘으면 하나도 남기지 않는다
-MAX_FOUND = 40
-
 # 조기 종료: 모든 힌트에 대해 성공한 쓰기가 run 전체에서 그 수 이상이면 요약 호출 없이 끝냄
 EARLY_STOP = True
 
@@ -81,7 +77,7 @@ _NEEDS_REPLY_CUES = ("알림", "알람")
 # 이 tool을 부른 run은 조기 종료하지 않음(후속 변경이 있을 수 있음)
 _OPEN_ENDED = frozenset({"create_event_item", "update_event_item", "delete_event_item"})
 
-EndedBy = Literal["model", "coverage", "max_steps", "unclear"]
+EndedBy = Literal["model", "coverage", "max_steps", "unclear", "unsaved_fallback"]
 
 _HINT_HEADER = "[먼저 나눠 본 기록 후보 — 빠진 게 있을 수 있다. 발화 전체에서 기록할 것을 찾는다]"
 
@@ -105,6 +101,8 @@ _RESUME_HEADER = """[이어서 처리할 것]
 혼자 한다고 읽지 않는다. 해냈는지가 드러나면 completion_status 에 적는다(싫어하면 refused,
 일부만 하면 partial).
 [물은 칸]이 trigger 면 상황을 그대로 적는다.
+[물은 칸]이 topic 이면 [물은 행동]의 주제를 집에서 해 본 일을 교육 기록 한 건으로 남긴다.
+어려워했다고 하면 polarity 를 -1 로 둔다. 해 본 적이 없다는 답은 저장 없이 끝낸다.
 저장할 말이 전혀 없을 때만 저장 없이 끝낸다.
 답에 다른 기록이나 요청이 섞여 있으면 그 부분은 저장하지 말고 leftover 를 true 로 둔다.
 따로 보내 달라는 안내는 따로 붙으니 text 에 쓰지 않는다."""
@@ -153,11 +151,13 @@ _SAFETY_RECORD = (
 )
 
 # 진행 중 복약 일정에 있는 약이다. 먹인 것은 보호자가 복약 화면에서 체크하고, 같은 약을 먹인 약
-# 행으로도 적으면 투약이 두 번 남는다. 체크 안내는 pipeline 이 Health 로 따로 낸다
+# 행으로도 적으면 투약이 두 번 남는다. 체크 안내는 pipeline 이 Health 로 따로 낸다 — 모델에게 그
+# 안내를 알려 주면 그대로 옮겨 말해서 같은 run 에 안내가 두 번 나간다. 그래서 여기서는 말하지 않는다
 _MEDICINE_REGISTERED = (
-    "이 약은 진행 중인 복약 일정에 있다. 먹인 것은 보호자가 복약 화면에서 체크한다. "
-    "medication_given 을 빼고 증상만 있으면 증상만 다시 부르고, 증상도 없으면 "
-    "저장하지 않았다고 한 줄로만 알린다."
+    "이 약은 진행 중인 복약 일정에 있어 먹인 약으로 저장하지 않는다. "
+    "이 약에 대한 안내는 화면이 따로 내므로 말에 넣지 않는다. "
+    "medication_given 을 빼고 증상만 있으면 증상만 다시 부르고, "
+    "증상도 없으면 저장하지 않았다고 한 줄로만 알린다."
 )
 
 # 고쳐 말하는 조각(lookup_edit)인데 조회 없이 새로 저장. "할머니 말고 할아버지랑 산책했어" 처럼
@@ -213,8 +213,77 @@ _SAVED_CLAIM = re.compile(
     # 것이 400번 중 20번이었다 (#643)
     r"|기록(을|으로|에)?\s?(남겼|남길게|남기겠|남겨\s?(뒀|두었|놨|놓았|둘게|놓을게|드렸|드릴게))"
 )
-# 다시 확인해도 저장한 척하면 그 말 대신 내보낸다. 지켜지지 않을 말을 보호자에게 보내지 않는다
+# 다시 확인해도 저장한 척하면 그 말 대신 내보낸다. 지켜지지 않을 말을 보호자에게 보내지 않는다.
+# 다시 확인이 끝나지 못했을 때(호출 실패 · 남은 차례 없음 · 형식이 깨진 답)도 이 말로 끝낸다.
+# 아무것도 쓰지 않은 run 에만 쓴다 — 일부라도 처리했으면 그걸 부정하는 말이 된다
 _UNSAVED_FALLBACK = "이번에는 아무것도 저장하지 않았어요."
+# Supervisor 가 관찰 · 일정으로 나눈 처음 run 은 말투가 아니라 쓰기 성공으로 본다 (#667).
+# 말투 패턴은 새 말투가 나오면 샌다("기록을 남겼어요" 가 400번 중 20번 그대로 나갔다, #643).
+# 처음 run 의 다시 확인은 이어받기와 달리 저장하지 않는 게 정답인 입력에도 걸린다 —
+# 앞으로의 계획 · 먹고 싶다는 말("아이스크림 먹고 싶대"). 이어받기 문구의
+# "필요한 값이 없으면 그 값을 묻는다" 를 그대로 쓰면 맞게 설명한 답이 "실제로 먹었나요?" ·
+# 장소 · 양을 묻는 질문으로 바뀌었다(#667 라이브).
+# 그래서 이유를 말하는 답을 먼저 허용하고, 꼭 필요한 값이 빠졌을 때만 하나 묻게 한다.
+# "앞의 답이 맞으면 그대로 써도 된다" 는 넣지 않는다 — 거짓 저장 답을 그대로 다시 냈다(100번 중 2번)
+# 예시에 "바람" 을 통째로 넣지 않는다 — 아이의 바람은 관심이라 저장한다("공룡 책 읽어 달래", #624).
+# 저장하지 않는 건 먹고 싶다는 말처럼 그 일이 일어나지 않은 경우다
+_FIRST_RUN_GUIDE = (
+    "저장하지 않는 게 맞는 말(아직 하지 않은 계획, 먹고 싶다는 말처럼 실제로 먹지 않은 것, "
+    "알림 요청 등)이었다면 저장하지 않았다는 것과 "
+    "그 이유를 짧게 말한다. 날짜처럼 저장에 꼭 필요한 값이 빠져 저장하지 못했을 때만 그 값 하나를 "
+    "묻는다. 보호자가 이미 말한 것은 다시 묻지 않는다."
+)
+_FIRST_RUN_UNSAVED_REPLY = (
+    "보호자에게 보이지 않는 확인이다. 여기에 답하지 말고 보호자에게 보낼 말만 다시 쓴다. "
+    "이번에는 아무것도 저장하지 않았고, 이 말을 보내면 처리가 끝나 나중에 기록할 수도 없다. "
+    "저장했다거나 기록하겠다는 말은 넣지 않는다. " + _FIRST_RUN_GUIDE
+)
+# 일부만 처리한 run 에서 코드가 내는 관찰 문장 (처리함, 처리 안 함).
+# {} 에는 남긴 영역(_DOMAIN_NAMES)을 넣는다 — "기록은 남겼어요" 만으로는 모델이 맞게 말한 것
+# ("김밥 먹은 기록과 놀이공원 가고 싶다는 기록을 남겼어요")보다 알려 주는 게 적었다 (#678 라이브).
+# 일정 문장은 호출마다 정한다(_schedule_done)
+_OBSERVE_SAID = ("{}기록은 남겼어요.", "기록은 남기지 않았어요.")
+_DOMAIN_NAMES = {
+    "food": "식사",
+    "health": "건강",
+    "education": "배움",
+    "activity": "놀이",
+    "routine": "생활",
+}
+# 일부만 저장한 run 의 답이 못 한 것도 말하는가. 정직한 답은 한 것과 못 한 것을 같이 말해서
+# ("김밥은 기록했어요. 놀이공원은 기록하지 않았어요") 저장했다는 말투만으로는 거짓과 갈리지 않는다
+# (#678 라이브). 다 했다고만 하는 답("사과도 기록했어요")에는 이 말이 없다.
+# 부정은 저장 동사에 붙은 것만 본다 — "편식하지 않고 잘 먹었네요" 처럼 아이 이야기의 부정이
+# 걸리면 다 했다고만 한 답이 그대로 나간다. 지난 실측 답 608개에서 좁혀서 바뀐 판정은 0건이다
+_ADMITS_UNSAVED = re.compile(
+    r"(기록|저장|남기|남겨|넣|만들|적|등록|추가|초안)[^.!?\n]{0,10}(않았|않을|않고|못\s?했)"
+    r"|못\s?(남|했|넣|만들|적)|안\s?(남|했|만들|넣|적)"
+)
+# 관찰을 해낸 것으로 보는 쓰기. 수정도 센다 — 관찰 조각에 unclear 가 섞이면 수정 tool 이
+# 열리고, "~를 ~로 바꿔줘" 는 저장된 기록을 고치는 게 맞다 (#678 리뷰). 지우기는 update 로
+# 오지 않는다 — 삭제 제안 tool 만 있고 실제로 지우는 건 보호자의 버튼이다 (#535).
+# WRITES_FOR 는 조기 종료가 조각 수만큼 새로 만들었는지 세는 데도 쓰여 따로 둔다
+_OBSERVE_DONE_BY: tuple[str, ...] = (*WRITES_FOR[WorkType.OBSERVE], "update_observation_")
+# 일정 쪽 tool 이 끝내 성공하지 못했을 때의 문장. 해낸 쪽은 _schedule_done 이 결과를 보고 정한다
+_SCHEDULE_UNDONE = {
+    "create_event": "일정 초안은 만들지 않았어요.",
+    "create_event_item": "준비물은 더하지 않았어요.",
+    "update_event": "일정은 고치지 않았어요.",
+    "update_event_item": "준비물은 고치지 않았어요.",
+}
+# 알림을 해 달라는 일정 조각은 판정에서 뺀다. 일정 이름만 나오는 알림 요청은 초안 없이 안내로
+# 끝나는 게 정상이고, 다시 확인해도 답이 그대로라 호출만 늘었다("모레 운동회 전날 저녁 8시에 알려줘"
+# 10번 모두 · 1.4초, #667). 일정을 새로 알려 주면서 알림을 부탁하는 조각도 빠지지만,
+# 그 경우 프롬프트가 일정 규칙을 따르게 해서 시각을 되묻는다
+# (되묻기는 원래 판정 대상이 아니다, 10번 모두 · #678 리뷰).
+# "알림장" 은 알림 요청이 아니다. 조각 문구는 원문 그대로라 "알려줘" 가 많아 _NEEDS_REPLY_CUES 보다
+# 넓게 본다. 일정 조각에만 쓴다 — 조회 조각의 "뭐 먹었는지 알려줘" 는 원래 대상이 아니다.
+# "알림" 은 해 달라는 말이 붙을 때만 본다 — "키즈노트 알림 왔는데 금요일 현장학습이래" 는
+# 새 일정이다
+_REMINDER_REQUEST = re.compile(
+    r"알림(?!장)[^.!?\n]{0,20}?(해|보내|만들어|맞춰|설정해|걸어|켜)\s?(줘|주세요|줄래|달라)"
+    r"|알림\s?(좀\s?)?(줘|주세요)|알람|알려\s?(줘|주세요|줄래|달라)"
+)
 
 # unclear 뿐인 입력이 쓰기 없이 말로 끝나면 모델이 쓴 문장을 보내지 않는다.
 # 프롬프트는 추천만 금지해서 "공룡에 대해 알려줘" · "안녕이라고 말해줘" 에
@@ -270,8 +339,9 @@ class MemoryAgentResult:
     # coverage: 할 일을 다 한 게 확인돼 요약 호출 없이 끝남
     # unclear: unclear 뿐인 입력이 쓰기 없이 끝나 코드가 정한 문구(_UNCLEAR_REPLY)를 냄 (#642)
     # max_steps: 끝내지 못함
+    # unsaved_fallback: 저장 0건 run 의 다시 확인이 끝나지 못해 코드 문구(_UNSAVED_FALLBACK)를 냄
     ended_by: EndedBy = "model"
-    drafts: tuple[EventDraft, ...] = ()  # 보호자 제출을 기다리는 일정 초안
+    drafts: tuple[AnyEventDraft, ...] = ()  # 보호자 제출을 기다리는 일정 초안 (묶음 초안 포함)
     pending: PendingMemoryContext | None = None  # 되묻고 멈춘 조각. kind=question 일 때만
     leftover: bool = False  # 이어받기에서 답에 섞인 다른 기록·요청을 처리하지 않고 남겼는지.
     # 재질문 상한에 닿아 또 물으려던 질문을 맥락 없이 끝냈는지.
@@ -344,6 +414,10 @@ async def run(
     nudged = False  # 빈 턴을 다시 물은 적이 있는지
     nudged_hint = False  # 조각 지목을 다시 물은 적이 있는지
     rechecked = False  # 저장 없이 말로 끝낸 이어받기를 다시 확인하게 한 적이 있는지
+    # 다시 확인하는 차례의 답. 그 차례에는 tool 을 주지 않는다 — 확인에 밀려 저장하지 않게 (#667).
+    # 이 차례는 저장 0건 run 에만 온다. 그래서 끝나지 못해도 잃을 기록이 없고, run 을 실패로
+    # 올리지 않고 코드 문구로 끝낸다 (#678 리뷰)
+    before_recheck: MemoryReply | None = None
     # 이어받기는 답에 다른 말이 섞였는지(leftover)를 더 받는다
     reply_format = CONTINUATION_REPLY_FORMAT if continuation is not None else REPLY_FORMAT
     reply_model: type[ReplyOutput] = (
@@ -351,16 +425,30 @@ async def run(
     )
 
     for step in range(max_steps):
-        response = await llm.chat(
-            messages=messages,
-            tools=tools,
-            max_completion_tokens=MAX_COMPLETION_TOKENS,
-            # 말하는 턴의 content를 스키마 JSON 으로 받는다. tool을 부르는 턴에는 쓰이지 않는다
-            response_format=reply_format,
-        )
+        try:
+            response = await llm.chat(
+                messages=messages,
+                tools=tools,
+                # 다시 확인하는 차례는 답만 받는다
+                tool_choice="none" if before_recheck is not None else "auto",
+                max_completion_tokens=MAX_COMPLETION_TOKENS,
+                # 말하는 턴의 content를 스키마 JSON 으로 받는다. tool을 부르는 턴에는 쓰이지 않는다
+                response_format=reply_format,
+            )
+        except LLMError:
+            if before_recheck is None:
+                raise
+            # 답을 다듬는 호출의 실패를 기록 실패로 올리지 않는다
+            logger.warning("다시 확인 호출이 실패해 코드 문구로 끝낸다 steps=%d", step + 1)
+            return _unsaved_result(step + 1, calls, usage, context)
         _accumulate(usage, response.usage)
 
         tool_calls = getattr(response.message, "tool_calls", None) or []
+        if tool_calls and before_recheck is not None:
+            # tool_choice=none 을 무시한 provider. 실행하지 않는다. 확인 전 답은 저장한 척을 의심해
+            # 다시 묻던 답이라 내보내지 않는다
+            logger.warning("다시 확인하는 차례에 tool 을 불러 실행하지 않는다 steps=%d", step + 1)
+            return _unsaved_result(step + 1, calls, usage, context)
         if not tool_calls:
             if _unclear_unsaved(task, calls):
                 # 모델 응답은 읽지 않는다. 스키마 · 평문 · 빈 턴 어느 쪽이든 같은 문구로 끝낸다
@@ -369,6 +457,14 @@ async def run(
             parsed = _parse_reply(content, reply_model)
             # structured output 이라 빈 턴은 text 가 빈 JSON 으로도 온다 (라이브 RC26)
             spoken = parsed.text.strip() if parsed is not None else content
+            if before_recheck is not None and (
+                parsed is None or (not spoken and (nudged or step == max_steps - 1))
+            ):
+                # 다시 쓴 답이 스키마와 맞지 않거나, 비었는데 다시 물을 수 없다. 확인을 거치지 못한
+                # 말은 내보내지 않는다. 빈 답은 아래에서 한 번 더 묻는다 — 거짓 첫 답에 다시 쓰게
+                # 하면 30번 중 10번이 빈 답이었고, 바로 끝내면 날짜를 되묻지 못했다 (#678 라이브)
+                logger.warning("다시 확인한 답이 비었거나 형식이 깨져 코드 문구로 끝낸다")
+                return _unsaved_result(step + 1, calls, usage, context)
             if not spoken and not nudged:
                 # 빈 턴. 응답 문구는 화면이 지어내지 않으므로 모델에게 한 번 더 묻는다
                 nudged = True
@@ -383,6 +479,11 @@ async def run(
                     if at_limit
                     else _pending(replied, parsed.pending_hint, task, continuation, raw_text, calls)
                 )
+                if _asks_after_proposal(context, replied, pending, task):
+                    # 삭제 제안을 남긴 run 은 그 삭제를 되묻지 않는다 (#535). 맥락을 넘기면 다음
+                    # 채팅의 "응" 이 제안을 이어받는 것처럼 읽힌다 — 지우는 것은 카드의 버튼뿐이다.
+                    # 모델 문장("삭제할까요?")은 답할 곳이 없는 질문이라 고정 안내로 바꾼다
+                    replied, pending = MemoryReply(text=PROPOSED_REPLY, kind="message"), None
                 misnamed = (
                     replied.kind == "question"
                     and pending is None
@@ -407,18 +508,49 @@ async def run(
                 # 실패한 쓰기도 저장이 아니다
                 unsaved = replied.kind == "message" and not _wrote(calls)
                 claimed = unsaved and not _lookup_only(task) and _claims_saved(replied.text)
+                # 처음 run 에서 관찰 · 일정 조각인데 그 종류의 쓰기 성공이 없다. 말투는 보지 않는다
+                missing = (
+                    _missing_work(task, calls)
+                    if continuation is None and replied.kind == "message"
+                    else ()
+                )
+                # 다시 확인은 저장 0건일 때만 한다. 일부라도 저장했으면 확인이 끝나지 못할 때
+                # 그 저장까지 되돌려진다 (#678 리뷰) — 그 run 은 아래 _partial_reply 가 맡는다.
+                # 위험 물질 · 알레르기를 막은 run 은 "한 줄로만" 알리는 규칙과 안내가 따로 있다
+                recheck_missing = bool(missing) and unsaved and not _blocked(calls)
                 asked_again = resuming and replied.kind == "question" and not _wrote(calls)
                 if (
-                    recording and unsaved or continuation is None and claimed or asked_again
+                    (recording and unsaved)
+                    or (continuation is None and claimed)
+                    or recheck_missing
+                    or asked_again
                 ) and not rechecked:
                     # 저장 없이 말로 끝냈다. 저장한 척했을 수 있어 한 번 확인한다
                     rechecked = True
+                    if not resuming and step == max_steps - 1:
+                        # 다시 물을 차례가 없다. 끝내지 못한 run 으로 두지 않는다
+                        return _unsaved_result(step + 1, calls, usage, context)
                     messages.append({"role": "assistant", "content": content})
-                    nudge = _RESUME_UNSAVED if resuming else _UNSAVED_REPLY
-                    messages.append({"role": "user", "content": nudge})
+                    if resuming:
+                        # 물은 질문의 답은 저장이 일이라 확인하는 차례에도 tool 을 준다 (#660)
+                        prompt = _RESUME_UNSAVED
+                    else:
+                        before_recheck = replied
+                        prompt = (
+                            _FIRST_RUN_UNSAVED_REPLY if continuation is None else _UNSAVED_REPLY
+                        )
+                    messages.append({"role": "user", "content": prompt})
                     continue
-                if rechecked and claimed:
-                    replied = MemoryReply(text=_UNSAVED_FALLBACK, kind="message")
+                replied = _settle(replied, calls, claimed=rechecked and claimed)
+                if (
+                    missing
+                    and _wrote(calls)
+                    and _claims_saved(replied.text)
+                    and not _ADMITS_UNSAVED.search(replied.text)
+                ):
+                    # 일부만 저장했는데 저장했다고만 말한다. 어느 종류를 두고 한 말인지 가릴 수
+                    # 없어, 처리한 것과 못 한 것을 tool 기록대로 코드가 말한다
+                    replied = _partial_reply(task, missing, calls)
                 return MemoryAgentResult(
                     reply=replied,
                     completed=True,
@@ -459,6 +591,9 @@ async def run(
                 asked=continuation.asked if continuation is not None else None,
                 routine_saved=any(
                     done.success and done.name == "create_observation_routine" for done in calls
+                ),
+                education_saved=any(
+                    done.success and done.name == "create_observation_education" for done in calls
                 ),
             )
             calls.append(record)
@@ -546,6 +681,158 @@ def _written_texts(calls: list[ToolCallRecord]) -> list[str]:
 def _wrote(calls: list[ToolCallRecord]) -> bool:
     """이번 run 에서 성공한 쓰기가 하나라도 있는지. 일정 초안도 센다."""
     return any(call.success and call.name.startswith(MUTATING_PREFIXES) for call in calls)
+
+
+def _missing_work(task: MemoryTask | None, calls: list[ToolCallRecord]) -> tuple[WorkType, ...]:
+    """Supervisor 가 관찰 · 일정으로 나눈 작업 중 이번 run 에서 해낸 쓰기가 하나도 없는 종류.
+
+    성공은 ToolCallRecord.success 로 본다. 일정은 승인 전 초안이라 초안 생성 성공을 센다.
+    이미 그 상태라 바뀐 게 없는 성공도 처리한 것이다(_schedule_done). 저장된 것을 고친 것도 센다.
+    같은 종류의 조각이 여러 개여도 그 종류의 성공 1건이면 된다 — 조각과 호출을 짝짓지 않는다.
+    조각이 없으면(강등 · Memory 단독) 판단할 근거가 없어 빈 값이다.
+    """
+    if task is None:
+        return ()
+    needed = {
+        WorkType(hint.work)
+        for hint in task.hints
+        if not (hint.work == WorkType.SCHEDULE and _REMINDER_REQUEST.search(hint.text))
+    }
+    done = {
+        WorkType.OBSERVE: any(_observe_done(call) for call in calls),
+        WorkType.SCHEDULE: any(_schedule_done(call) for call in calls),
+    }
+    return tuple(work for work, did in done.items() if work in needed and not did)
+
+
+def _observe_done(call: ToolCallRecord) -> bool:
+    """관찰을 남기거나 고친 호출인가."""
+    return call.success and call.name.startswith(_OBSERVE_DONE_BY)
+
+
+def _schedule_done(call: ToolCallRecord) -> tuple[str, ...]:
+    """일정 쪽 호출 하나가 처리한 일을 보호자에게 갈 문장으로. 처리한 게 없으면(실패) 빈 값.
+
+    tool 마다 하는 일이 달라 "일정 초안은 만들었어요" 하나로 묶으면 준비물만 더했거나 고친 run 이
+    새 일정을 만든 것처럼 들린다. 이미 있는 준비물(`added=False`) · 같은 값으로 고친 수정
+    (`changed=[]`) · 이미 그 상태인 챙김(`was_prepared`)은 실패가 아니라 할 일이 없었던 것이라
+    "이미 ~" 로 말하고 처리한 것으로 본다 (#678 리뷰). 결과 모양은 `tools/schedule.py` 가 정한다.
+    """
+    if not call.success:
+        return ()
+    data = call.result.get("data") or {}
+    if call.name == "create_event":
+        return ("일정 초안은 만들었어요.",)
+    if call.name == "create_event_item":
+        return (
+            ("준비물은 일정 초안에 더했어요.",)
+            if data.get("added")
+            else ("준비물은 이미 일정에 있어요.",)
+        )
+    if call.name == "update_event":
+        if data.get("changed"):
+            return ("일정 수정 초안은 만들었어요.",)
+        return ("일정은 이미 그렇게 되어 있어요.",)
+    if call.name != "update_event_item":
+        return ()
+    said: list[str] = []
+    if data.get("draft"):
+        said.append("준비물 수정 초안은 만들었어요.")
+    if "was_prepared" in data:
+        # 챙김 표시는 초안 없이 바로 쓴다 (persisted_write)
+        prepared = bool(data.get("is_prepared"))
+        if prepared == data["was_prepared"]:
+            said.append(
+                "준비물은 이미 챙김 표시돼 있어요."
+                if prepared
+                else "준비물은 이미 챙김 표시가 없어요."
+            )
+        else:
+            said.append("준비물 챙김은 표시했어요." if prepared else "준비물 챙김 표시는 풀었어요.")
+    return tuple(said) or ("준비물은 이미 그렇게 되어 있어요.",)
+
+
+def _schedule_undone(calls: list[ToolCallRecord]) -> list[str]:
+    """실패한 뒤 같은 tool 이 끝내 성공하지 못한 일정 쪽 호출의 문장.
+
+    모델은 실패하면 인자를 고쳐 다시 부르는 일이 많아, 뒤에 같은 tool 이 성공했으면 말하지 않는다.
+    호출과 대상을 짝짓지 않아서 같은 tool 로 두 대상을 다루다 하나만 실패하면 놓친다 — 실제 문제가
+    확인될 때까지 보류한 한계다(memory-agent-v1.md "조각과 호출을 짝짓지 않는 한계").
+    """
+    said: list[str] = []
+    for index, call in enumerate(calls):
+        if call.success or call.name not in _SCHEDULE_UNDONE:
+            continue
+        if any(later.success and later.name == call.name for later in calls[index + 1 :]):
+            continue
+        if _SCHEDULE_UNDONE[call.name] not in said:
+            said.append(_SCHEDULE_UNDONE[call.name])
+    return said
+
+
+def _partial_reply(
+    task: MemoryTask | None, missing: Sequence[WorkType], calls: list[ToolCallRecord]
+) -> MemoryReply:
+    """일부 종류만 저장한 run 에서 보호자에게 나갈 말. 한 것과 하지 않은 것을 tool 기록대로 적는다.
+
+    한 것을 먼저, 하지 않은 것을 뒤에 둔다. 실패도 "못 했다" 대신 "하지 않았다" 로 말한다
+    (#678 리뷰).
+    """
+    needed = {WorkType(hint.work) for hint in task.hints} if task is not None else set()
+    done: list[str] = []
+    undone: list[str] = []
+    if WorkType.OBSERVE in missing:
+        undone.append(_OBSERVE_SAID[1])
+    elif WorkType.OBSERVE in needed:
+        # 새로 남긴 것과 고친 것을 나눠 말한다 — 고친 run 이 "남겼어요" 라고 하지 않게
+        for operation, said in (("create", _OBSERVE_SAID[0]), ("update", "{}기록은 고쳤어요.")):
+            domains = [
+                name
+                for domain, name in _DOMAIN_NAMES.items()
+                if any(
+                    _observe_done(call) and call.name == f"{operation}_observation_{domain}"
+                    for call in calls
+                )
+            ]
+            if domains:
+                done.append(said.format(f"{' · '.join(domains)} "))
+    if WorkType.SCHEDULE in needed:
+        for phrase in (phrase for call in calls for phrase in _schedule_done(call)):
+            if phrase not in done:
+                done.append(phrase)
+        failed = _schedule_undone(calls)
+        if not failed and WorkType.SCHEDULE in missing:
+            # 실패도 없이 처리한 게 없다(부르지 않았다)
+            failed = [_SCHEDULE_UNDONE["create_event"]]
+        undone += failed
+    return MemoryReply(text=" ".join([*done, *undone]), kind="message")
+
+
+def _unsaved_result(
+    steps: int, calls: list[ToolCallRecord], usage: dict[str, int], context: AgentContext
+) -> MemoryAgentResult:
+    """저장 0건 run 의 다시 확인이 끝나지 못했다. 모델 말 대신 고정 문구로 정상 종료한다."""
+    return MemoryAgentResult(
+        reply=MemoryReply(text=_UNSAVED_FALLBACK, kind="message"),
+        completed=True,
+        steps=steps,
+        calls=calls,
+        usage=usage,
+        ended_by="unsaved_fallback",
+        drafts=context.drafts.all(),
+    )
+
+
+def _blocked(calls: list[ToolCallRecord]) -> bool:
+    """위험 물질 · 알레르기 이름이라 저장 게이트가 막았는가. 안내는 pipeline 이 따로 낸다."""
+    return _refused(calls, ErrorCode.HAZARD) or _refused(calls, ErrorCode.SAFETY_RECORD)
+
+
+def _settle(reply: MemoryReply, calls: list[ToolCallRecord], *, claimed: bool) -> MemoryReply:
+    """다시 확인한 뒤에도 저장한 척하면 대체 문구로. 무엇이든 썼으면 그대로 둔다."""
+    if claimed and not _wrote(calls):
+        return MemoryReply(text=_UNSAVED_FALLBACK, kind="message")
+    return reply
 
 
 def _claims_saved(text: str) -> bool:
@@ -770,6 +1057,37 @@ def _parse_reply(content: str, model: type[ReplyOutput] = ReplyOutput) -> ReplyO
         return None
 
 
+PROPOSED_REPLY = "지울 기록을 카드에 담았어요. 확인하고 삭제 버튼을 눌러 주세요."
+
+
+def _asks_after_proposal(
+    context: AgentContext,
+    reply: MemoryReply,
+    pending: PendingMemoryContext | None,
+    task: MemoryTask | None,
+) -> bool:
+    """삭제 제안을 남긴 뒤 그 삭제를 되묻는 것이 확실한가. 확실할 때만 막는다.
+
+    제안이 어느 조각을 위한 것인지 코드는 모른다. 그래서 이렇게 가른다.
+    - 이어 붙일 조각을 못 고른 질문 → 막는다
+    - 기록 저장 등 다른 작업 조각을 묻는 질문 → 살린다
+    - 수정 · 삭제 조각이 하나뿐인 run 에서 그 조각을 묻는 질문 → 제안한 그 삭제다. 막는다
+    - 수정 · 삭제 조각이 둘 이상이면 → 살린다. "병원 일정 몇 시로 바꿀까요?" 를 막으면 그 조각이
+      답할 곳 없이 사라진다. 삭제를 되물은 것이었어도 다음 "응" 은 새 카드를 낼 뿐 지우지 않는다
+    단어("지워" 등)로 가르지 않는다 — "지우" 는 흔한 이름이고 "취소해줘" 처럼 말이 여럿이다.
+    """
+    if not context.proposals or reply.kind != "question":
+        return False
+    if pending is None:
+        return True
+    if pending.work is not WorkType.LOOKUP_EDIT:
+        return False
+    if task is None:  # 이어받기 run — 이어받은 조각 하나다
+        return True
+    edits = sum(1 for hint in task.hints if hint.work == WorkType.LOOKUP_EDIT)
+    return edits <= 1
+
+
 def _pending(
     reply: MemoryReply,
     named: str | None,
@@ -848,7 +1166,7 @@ def _found(calls: list[ToolCallRecord], carried: tuple[FoundRef, ...] = ()) -> t
     질문은 마지막 조회를 보고 나온다. 앞선 넓은 조회까지 남기면 질문과 무관한 행이 같이 보인다.
     이번 run에 행이 나온 조회가 없으면 앞 맥락의 것을 그대로 넘긴다.
     id는 tool 결과에서 코드가 옮긴다. 실패한 조회는 data가 없어 들어오지 않는다.
-    MAX_FOUND를 넘으면 하나도 남기지 않는다.
+    조회 tool 이 종류마다 MAX_ROWS 건까지만 돌려주므로 따로 자르지 않는다.
     """
     refs = list(carried)
     for call in reversed(calls):
@@ -864,7 +1182,7 @@ def _found(calls: list[ToolCallRecord], carried: tuple[FoundRef, ...] = ()) -> t
         if rows:
             refs = list(dict.fromkeys(FoundRef(resource, str(row["id"])) for row in rows))
             break
-    return tuple(refs) if len(refs) <= MAX_FOUND else ()
+    return tuple(refs)
 
 
 async def _execute(
@@ -878,13 +1196,14 @@ async def _execute(
     shown: Sequence[tuple[FoundRef, dict[str, Any]]] = (),
     asked: DomainPending | None = None,
     routine_saved: bool = False,
+    education_saved: bool = False,
 ) -> ToolCallRecord:
     name = call.function.name
     arguments = _parse_arguments(call.function.arguments)
     if arguments is None:
         # registry는 dict를 전제
         return _failed(name, {}, ErrorCode.INVALID_ARGS, _BAD_JSON)
-    if _hazard(name, arguments):
+    if await _hazard(name, arguments, context.guardrail):
         return _failed(name, arguments, ErrorCode.HAZARD, _HAZARD)
     if _safety_named(name, arguments):
         return _failed(name, arguments, ErrorCode.SAFETY_RECORD, _SAFETY_RECORD)
@@ -908,10 +1227,12 @@ async def _execute(
 
     if asked is not None and routine_saved and name == "create_observation_routine":
         return _failed(name, arguments, ErrorCode.INVALID_ARGS, _RESUME_ONE_RECORD)
+    if _outside_topic_answer(name, asked, education_saved):
+        return _failed(name, arguments, ErrorCode.INVALID_ARGS, _RESUME_ONE_RECORD)
     # 위험 물질 · 안전 판정을 지난 뒤에 고정한다 — 거절할 이름을 물은 행동으로 덮어 저장하지 않는다.
     # 고정한 이름은 Growth 모델이 적은 값이라 같은 판정을 한 번 더 건다
     arguments = _pinned(name, arguments, asked)
-    if _hazard(name, arguments):
+    if await _hazard(name, arguments, context.guardrail):
         return _failed(name, arguments, ErrorCode.HAZARD, _HAZARD)
     keys = _dedup_keys(name, arguments)
     done = [key in succeeded for key in keys]
@@ -927,13 +1248,32 @@ async def _execute(
     return ToolCallRecord(name=name, arguments=arguments, result=result.to_payload())
 
 
-def _pinned(name: str, arguments: dict[str, Any], asked: DomainPending | None) -> dict[str, Any]:
-    """답을 받는 이어받기의 루틴 관찰은 물은 행동 · 카테고리로 저장한다.
+def _outside_topic_answer(name: str, asked: DomainPending | None, education_saved: bool) -> bool:
+    """주제를 물은 답(`ask.learning_current`)에서 허용하지 않는 저장인가.
 
-    모델이 행동 이름을 바꿔("손 잡기") 적으면 다음 요청의 사슬 찾기가 빗나가 같은 질문이 되풀이된다.
-    100% 맞아야 하는 값이라 프롬프트가 아니라 코드가 정한다(루트 §3). 일반 이어받기(`asked` 없음)는
-    건드리지 않는다.
+    답은 그 주제의 교육 기록 한 건이다. 교육 밖 관찰은 저장하지 않고, 교육 기록도 두 번째는 받지
+    않는다 — 두 번째는 이름이 물은 주제로 덮여 먼저 저장한 것과 겹친다.
     """
+    if asked is None or asked.payload.get("field") != "topic":
+        return False
+    if not name.startswith(WRITES_FOR[WorkType.OBSERVE]):
+        return False
+    return name != "create_observation_education" or education_saved
+
+
+def _pinned(name: str, arguments: dict[str, Any], asked: DomainPending | None) -> dict[str, Any]:
+    """답을 받는 이어받기의 관찰은 물은 이름으로 저장한다.
+
+    루틴은 물은 행동 · 카테고리로, 교육(주제를 물은 답)은 물은 주제로 `subject` 를 둔다. 모델이
+    이름을 바꿔("손 잡기" · "받아쓰기") 적으면 다음 요청의 사슬 · 주제 판정이 빗나가 같은 질문이
+    되풀이된다. 100% 맞아야 하는 값이라 프롬프트가 아니라 코드가 정한다(루트 §3). 일반
+    이어받기(`asked` 없음)는 건드리지 않는다.
+    """
+    if asked is not None and name == "create_observation_education":
+        subject = asked.payload.get("subject")
+        if asked.payload.get("field") == "topic" and subject:
+            return {**arguments, "subject": subject}
+        return arguments
     if asked is None or name != "create_observation_routine":
         return arguments
     subject, category = asked.payload.get("subject"), asked.payload.get("category")
@@ -964,23 +1304,33 @@ def _targets(arguments: dict[str, Any]) -> list[str]:
 # 위험 물질을 보는 관찰과 그 대상 이름 칸. 음식 · 생활은 술 · 담배 · 화학제품까지, 놀이 · 배움은
 # 마약류만 — "담배의 해로움" 같은 배움 주제와 "동전 모으기" 같은 놀이는 기록이다.
 # 건강 관찰은 보지 않는다 — 위험 물질 사건을 건강 기록으로 남길지는 PM 결정이다 (#626 범위 밖)
-_HAZARD_FIELDS: dict[str, tuple[tuple[str, ...], tuple[Term, ...]]] = {
-    "observation_food": (("subject",), FOOD_NAME_TERMS),
-    "observation_activity": (("activity", "subject"), PLAY_NAME_TERMS),
-    "observation_education": (("topic", "subject"), PLAY_NAME_TERMS),
+# 어느 칸을 어떤 기준으로 볼지는 Memory 스키마 지식이라 여기서 정하고, 무엇이 위험 물질인지는
+# Guardrail 이 정한다 (#731)
+_HAZARD_FIELDS: dict[str, tuple[tuple[str, ...], GuardContext]] = {
+    "observation_food": (("subject",), "food_name"),
+    "observation_activity": (("activity", "subject"), "play_name"),
+    "observation_education": (("topic", "subject"), "play_name"),
     # 식사에서 거절된 뒤 "소주 마시기" 로 바꿔 저장하는 길을 막는다 (#626 리뷰)
-    "observation_routine": (("subject",), FOOD_NAME_TERMS),
+    "observation_routine": (("subject",), "food_name"),
 }
 
 
-def _hazard(name: str, arguments: dict[str, Any]) -> bool:
-    """관찰 create · update 의 대상 이름이 위험 물질인가. 원문(raw_text)은 보지 않는다."""
+async def _hazard(name: str, arguments: dict[str, Any], guardrail: Guardrail) -> bool:
+    """관찰 create · update 의 대상 이름이 위험 물질인가. 원문(raw_text)은 보지 않는다.
+
+    칸마다 따로 본다(이어 붙이지 않는다). 검사를 못 하면 `GuardrailUnavailableError` 가 그대로
+    올라가 run 이 멈춘다 — 저장하지 않는 쪽으로 닫힌다 (fail-closed).
+    """
     for prefix in ("create_", "update_"):
         found = _HAZARD_FIELDS.get(name.removeprefix(prefix)) if name.startswith(prefix) else None
         if found is not None:
-            fields, terms = found
-            names = [str(arguments[f]) for f in fields if arguments.get(f)]
-            return bool(names) and bool(hazard_names(names, terms))
+            fields, context = found
+            for field_name in fields:
+                if arguments.get(field_name):
+                    result = await guardrail.check(str(arguments[field_name]), context)
+                    if result.blocked:
+                        return True
+            return False
     return False
 
 

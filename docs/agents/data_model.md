@@ -176,6 +176,19 @@
 
 **삭제 순서**: 증빙 복사 → 운영 `consent` 삭제 → 대상 hard delete. 호출자의 단일 트랜잭션 안에서 수행해 중간 실패 시 모두 롤백한다. 만료된 보관 행은 worker가 `purge_at` 기준으로 삭제한다.
 
+### location_use_log
+
+위치를 쓴 사실 1건. 위치정보법 제16조 ② 의 확인자료다 (#693). 🚨 좌표 칸을 두지 않는다.
+
+| **필드** | **타입** | **비고** |
+| --- | --- | --- |
+| id | uuid | PK |
+| parent_id | uuid | FK → `parent.id`, NOT NULL, `ON DELETE CASCADE`. 위치 동의는 계정 동의라 아이를 적지 않는다 |
+| purpose | enum | `location_purpose`, NOT NULL. 값이 가리키는 취득경로 · 방법 · 제공받는 자는 [`retention-v1.md`](../safety/retention-v1.md) |
+| used_at | timestamptz | NOT NULL, default `now()` |
+
+러너가 좌표를 Agent 에 넘기기 직전에 남긴다. 위치 동의를 철회하면 그 보호자의 행을 지우고, 6개월이 지난 행은 worker가 지운다. 남기기와 철회는 `parent` 행 잠금(FOR KEY SHARE / FOR UPDATE)으로 줄을 선다 — 철회 뒤에 행이 남지 않게.
+
 ## Memory/Observation
 
 ### observation 계층 테이블 5개(food/health/education/activity/routine)
@@ -457,6 +470,29 @@
 - 프로필의 `need_more_observation`은 한 단계 강등, `outdated`와 `wrong`은 archived 처리한다. 이 상태 전이 서비스 로직은 후속 구현 범위다.
 - `target_kind + target_id`, `child_id` 조회 인덱스를 둔다.
 
+### delete_proposal (삭제 제안 — 버튼으로 확정할 때까지)
+
+대화로 "지워줘" 하면 Memory 는 지우지 않고 제안 1행을 남긴다. 보호자가 카드에서 체크를 고쳐 버튼을 누르면 서버가 **후보 안의 체크한 것만** 지운다 (#535). 되돌릴 수 없는 삭제를 사람이 승인하는 자리다.
+
+| **필드** | **타입** | **비고** |
+| --- | --- | --- |
+| id | uuid | PK |
+| parent_id | uuid | FK → `parent.id`, NOT NULL, ON DELETE CASCADE. 제안한 보호자 — 이 보호자만 확정 · 취소한다 |
+| child_id | uuid | FK → `child.id`, NOT NULL, ON DELETE CASCADE |
+| run_id | text | NOT NULL, UNIQUE. 제안을 만든 run — 한 run 에 제안은 하나 |
+| tabs | jsonb | NOT NULL. 종류별 후보 `[{kind, truncated, ids, picked}]`. kind 는 `observation_food` … · `event`, `picked` 는 AI 가 고른 id(기본 체크) |
+| status | enum | `pending / deleted / cancelled`, DEFAULT `pending` |
+| result | jsonb | 끝난 뒤 종류별 실제 지운 건수 `{kind: n}`. 지난 대화의 한 줄 요약이 읽는다 |
+| created_at | timestamptz | NOT NULL, DEFAULT now() |
+| expires_at | timestamptz | NOT NULL. 만든 뒤 24시간 |
+| decided_at | timestamptz | 확정 · 취소한 시각 |
+
+- **만료는 저장하지 않는다.** `expires_at` 이 지난 `pending` 이 만료다 — 배치가 늦거나 멈춰도 만료된 제안으로는 지울 수 없다.
+- **원문을 담지 않는다.** (종류, id) 만 두고 카드 내용은 그때마다 다시 읽는다. 지워 달라고 한 내용의 사본을 따로 남기면 삭제가 무의미해진다 (`chat_turn` 과 같은 이유).
+- 다형 참조라 후보 id 에 FK 가 없다. 지울 때 같은 아이의 행인지 서버가 다시 확인한다.
+- 개인 기록이다 — 연결 끊기(`unlink_parent`)가 대화 기록과 함께 지운다.
+- `(parent_id, child_id)` 인덱스를 둔다.
+
 ## Schedule
 
 ### event (보호자가 제출한 일정)
@@ -472,7 +508,8 @@
 | all_day | bool | NOT NULL, DEFAULT false |
 | category | enum | `institution | health | activity | etc`, NOT NULL |
 | created_by | enum | `agent | caregiver`, NOT NULL |
-| source_notice_id | uuid | nullable, 현재 FK 없는 근거 식별자 |
+| source_notice_id | uuid | FK → `notice.id` (NOT VALID), nullable, ON DELETE SET NULL. 기관 공지에서 온 일정 |
+| source_notice_item_id | uuid | FK → `notice_item.id`, nullable, UNIQUE, ON DELETE SET NULL. 사진 공지의 어느 항목으로 만든 일정인가 — 항목 하나는 일정 하나다. 공지 저장(commit) 때 채운다 |
 | source_refs | jsonb | nullable, 근거 참조 |
 - `status`, `expires_at`, `EventStatus`는 제거됐다.
 - DB에는 보호자가 제출한 일정만 저장한다. Agent 초안은 DB에 저장하지 않고 SSE payload로 전달한다 (2026-09-22 확정). **복약 초안도 같은 방식이다** — `medication_schedule`에 `draft` 상태를 두지 않는다.
@@ -646,15 +683,14 @@ Food · Growth · Health 의 `*_agent_own_table.md` "공유 테이블 변경 요
 
 ### 아직 위 표에 없는 것
 
-#### notice (기관 공지) — 테이블 신설
+#### notice · notice_item (기관 원문과 거기서 뽑은 항목)
 
-`observation_*.source_notice_id` 가 이미 이 테이블을 가리키는데 테이블이 없어서 FK 가 안 걸려 있다.
-`suggestion_evidence.source_kind` 의 아이 기록 값이기도 하다.
+정본은 [`docs/notice/notice-ocr-v1.md`](../notice/notice-ocr-v1.md) · `apps/api/app/domains/notice/models.py`.
 
-소유는 Memory · OCR 파이프라인이다. Growth 가 기관 맥락 연결에 읽고, Food 는 `daycare_meal.source_notice_id` 로 건다.
-Growth 는 우선순위 낮음으로 올렸다 — 없어도 핵심 기능은 돈다.
-
-필드는 아직 정하지 않았다. OCR 3갈래 분류에서 "일반 공지" 로 빠지는 것을 담는다.
+- `notice` 는 기관에서 온 원문 1건, `notice_item` 은 거기서 뽑은 보호자가 할 일 · 알 일 N건이다.
+- 처음 계획은 "일반 공지만 담는 표" 였는데, 실제 공지는 한 장에 일정 · 회신 · 비용 · 운영 변경이 섞여 와서 공지 단위로 갈래를 고르면 나머지가 사라진다. 그래서 일정성 공지 · 식단표 원문도 여기 담고, 분류는 항목 단위로 한다.
+- 아이 관찰과 급식 메뉴는 이 표에 없다. 자기 표(`observation_*` · `daycare_meal`)에 들어가 `source_notice_id` 로 원문을 가리킨다.
+- `suggestion_evidence.source_kind` 의 아이 기록 값이기도 하다. 반 전체 공지만 근거로 단 추천을 개인화로 셀지는 아직 정하지 않았다.
 
 #### observation_food.amount — 값 집합 미확정
 
@@ -670,7 +706,6 @@ Growth 는 우선순위 낮음으로 올렸다 — 없어도 핵심 기능은 �
 **테이블이 없다**
 
 - `child_growth_log` — 나중에 도입한다. 이 문서에는 계획만 둔다. `Gate.growth_log_count` 가 이 테이블의 측정 건수를 센다
-- `notice` — `observation_*.source_notice_id` 가 가리키는데 테이블이 없어 FK 를 못 건다. 지금은 plain uuid 다
 - 문서 행 `food_doc` · `growth_doc` · `activity_doc`
 
 **컬럼이 없다**

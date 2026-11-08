@@ -1,10 +1,16 @@
 """레시피 재료 정리 표 초안 — 사람이 검수할 후보를 만든다.
 
-    uv run python -m scripts.draft_recipe_ingredients --fetch           # 농식품정보원에서 받아 초안
-    uv run python -m scripts.draft_recipe_ingredients --input SYNC.json # 저장해 둔 동기화 결과로
+    uv run python -m scripts.draft_recipe_ingredients --fetch                # 농식품정보원
+    uv run python -m scripts.draft_recipe_ingredients --fetch --source nics  # 농촌진흥청
+    uv run python -m scripts.draft_recipe_ingredients --input SYNC.json      # 저장해 둔 결과
 
-출력은 `reference/recipe_ingredients.yaml`(`--output` 으로 바꿈). 이미 있으면 있는 항목은 그대로
-두고 새 이름만 더한다. 사람이 검수한 항목을 덮지 않는다.
+정리 표는 두 레시피 소스가 공유한다 — 이미 검수한 이름을 다시 보지 않는다. `--source` 는
+`--fetch` 가 어느 소스를 받을지 고른다(기본 mafra, nics 는 `NICS_RECIPE_API_KEY` 가 필요하다).
+`--input` 과는 함께 쓰지 않는다 — 저장해 둔 결과는 소스가 이미 정해져 있다.
+
+출력은 `reference/recipe_ingredients.yaml`(`--output` 으로 바꿈). 이미 있으면 있는 항목은 칸 하나
+빠짐없이(`food_group` 포함) 그대로 다시 쓰고 새 이름만 파일 끝에 더한다. 머리말과 `version` 도
+기존 값을 그대로 둔다. 사람이 검수한 항목을 덮지 않는다.
 
 초안이 하는 일은 후보를 채우는 것뿐이다. 모든 항목은 `status: draft`이고, 정리 표가 `draft`인
 재료가 하나라도 있는 레시피는 `resolved=false` 라 후보 풀에 들어가지 않는다.
@@ -32,15 +38,22 @@ from typing import Any
 
 import yaml
 
+from app.agents.common.food_safety import menu_codes
 from app.agents.food.recipe_catalog import ingredient_key
-from app.agents.food.tools.safety import menu_codes
 from app.rules.term_match import normalize
+from scripts import recipe_fetch
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUTPUT = ROOT / "reference" / "recipe_ingredients.yaml"
 
-_SOURCE = "농식품정보원 레시피 재료정보 — 재료 이름별 정리 (초안 스크립트 + 사람 검수)"
+_SOURCE = (
+    "농식품정보원 · 농촌진흥청 이달의 식재료 레시피 재료"
+    " — 재료 이름별 정리 (초안 스크립트 + 사람 검수)"
+)
+_VERSION = "2026.1-draft"  # 파일이 없을 때만 쓴다. 있으면 그 파일의 version 을 그대로 둔다
+
 _SECTION = re.compile(r"^\s*\[[^\]]*\]\s*")
+_SOURCE_LINE = re.compile(r"^source:", re.MULTILINE)
 _SPLIT = re.compile(r"\s*[/,·]\s*")
 _SPACES = re.compile(r"\s+")
 
@@ -210,16 +223,26 @@ def merge_entries(
     return [*existing, *added]
 
 
-def render_yaml(entries: list[dict[str, Any]], *, fetched_at: str) -> str:
-    """정리 표 파일. 값은 JSON 문자열로 적는다(YAML 로 그대로 읽힌다)."""
+def render_yaml(
+    entries: list[dict[str, Any]],
+    *,
+    fetched_at: str,
+    header: str = _HEADER,
+    version: str = _VERSION,
+) -> str:
+    """정리 표 파일. 값은 JSON 문자열로 적는다(YAML 로 그대로 읽힌다).
+
+    칸 순서는 파일이 쓰는 그대로다(status · food_group · note · rows). 칸 하나라도 빠뜨리면 다시 쓸
+    때 사람이 정한 값이 사라진다 — `food_group` 이 그랬다.
+    """
 
     def text(value: Any) -> str:
         return json.dumps(value, ensure_ascii=False)
 
     lines = [
-        _HEADER,
+        header.rstrip("\n") + "\n",
         f"source: {text(_SOURCE)}",
-        'version: "2026.1-draft"',
+        f"version: {text(version)}",
         f"fetched_at: {fetched_at}",
         "",
         "ingredients:",
@@ -229,6 +252,8 @@ def render_yaml(entries: list[dict[str, Any]], *, fetched_at: str) -> str:
         lines.append(f"    names: [{', '.join(text(name) for name in entry.get('names') or [])}]")
         lines.append(f"    codes: [{', '.join(str(code) for code in entry.get('codes') or [])}]")
         lines.append(f"    status: {entry['status']}")
+        if entry.get("food_group"):
+            lines.append(f"    food_group: {entry['food_group']}")
         if entry.get("note"):
             lines.append(f"    note: {text(entry['note'])}")
         if entry.get("rows") is not None:
@@ -236,44 +261,70 @@ def render_yaml(entries: list[dict[str, Any]], *, fetched_at: str) -> str:
     return "\n".join(lines) + "\n"
 
 
-async def _fetch() -> dict[str, Any]:
-    from app.core.config import settings
-    from app.integrations.mafra.client import MafraRecipeClient, mafra_recipe_http
-
-    async with mafra_recipe_http() as http:
-        client = MafraRecipeClient(api_key=settings.MAFRA_RECIPE_API_KEY, http=http)
-        return dataclasses.asdict(await client.recipes_with_ingredients())
+def _header_of(text: str) -> str | None:
+    """있는 파일의 머리말(`source:` 앞 주석). 손으로 고친 머리말을 갈아엎지 않는다."""
+    found = _SOURCE_LINE.search(text)
+    return text[: found.start()] if found else None
 
 
-def main(argv: list[str] | None = None) -> int:
+async def _fetch(source: str) -> dict[str, Any]:
+    return dataclasses.asdict(await recipe_fetch.fetch(recipe_fetch.SOURCE_NAMES[source]))
+
+
+def build_parser() -> argparse.ArgumentParser:
+    # 모듈 docstring 을 쓰지 않는다. `—` · 이모지는 Windows 콘솔(cp949)에서 못 찍어
+    # `--help` 가 죽는다
     parser = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawTextHelpFormatter
+        description="레시피 재료 정리 표 초안. 사람이 검수할 후보(status: draft)만 만들고, "
+        "있는 항목은 그대로 둔 채 새 이름만 파일 끝에 더한다. 두 레시피 소스가 한 표를 공유한다."
     )
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument(
         "--input", type=Path, help="RecipeSync 를 JSON 으로 저장한 파일 (저장소 밖)"
     )
     source.add_argument(
-        "--fetch", action="store_true", help="농식품정보원에서 바로 받는다 (키 필요)"
+        "--fetch", action="store_true", help="--source 의 레시피를 바로 받는다 (키 필요)"
+    )
+    parser.add_argument(
+        "--source",
+        choices=tuple(recipe_fetch.SOURCE_NAMES),
+        help="--fetch 로 받을 소스. mafra 는 농식품정보원, nics 는 농촌진흥청 이달의 식재료 "
+        "(기본 mafra). --input 과는 쓰지 않는다",
     )
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
-    args = parser.parse_args(argv)
+    return parser
 
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.input and args.source:
+        # 받아 둔 결과는 소스가 이미 정해져 있다 — 붙여도 무시되고 출처만 틀리게 찍힌다
+        parser.error("--source 는 --fetch 와만 쓴다")
+
+    source = args.source or "mafra"
     sync = (
-        json.loads(args.input.read_text(encoding="utf-8")) if args.input else asyncio.run(_fetch())
+        json.loads(args.input.read_text(encoding="utf-8"))
+        if args.input
+        else asyncio.run(_fetch(source))
     )
     fresh = build_draft(sync)
     existing: list[dict[str, Any]] = []
+    header, version = _HEADER, _VERSION
     if args.output.exists():
-        existing = list(
-            (yaml.safe_load(args.output.read_text(encoding="utf-8")) or {}).get("ingredients") or []
-        )
+        text = args.output.read_text(encoding="utf-8")
+        loaded = yaml.safe_load(text) or {}
+        existing = list(loaded.get("ingredients") or [])
+        header = _header_of(text) or _HEADER
+        version = str(loaded.get("version") or _VERSION)
     merged = merge_entries(existing, fresh)
     args.output.write_text(
-        render_yaml(merged, fetched_at=date.today().isoformat()), encoding="utf-8"
+        render_yaml(merged, fetched_at=date.today().isoformat(), header=header, version=version),
+        encoding="utf-8",
     )
 
     status = Counter(entry["status"] for entry in merged)
+    print(f"받은 곳: {f'{source} 에서 받음' if args.fetch else '받아 둔 결과 파일'}")
     print(
         f"정리 표: {len(merged)}개 (있던 것 {len(existing)} · 새로 {len(merged) - len(existing)})"
     )

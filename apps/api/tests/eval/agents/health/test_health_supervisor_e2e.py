@@ -256,6 +256,51 @@ def j_false_alarm(o: Observed) -> None:
     _no_emergency(o)
 
 
+def _dose_checked(o: Observed) -> None:
+    """등록된 약을 먹였다는 말 — 체크 안내가 나가고, 먹인 약 행으로는 남지 않는다."""
+    checked = [e for e in o.events if isinstance(e, AgentResult) and e.task_type == "medication"]
+    if not checked:
+        o.failures.append("복약 체크 안내가 없다")
+        o.notes.append(_memory_summary(o))
+    given = [r for r in o.rows["health"] if r.fields.get("medication_given")]
+    if given:
+        o.failures.append(f"등록된 약이 먹인 약 행 {len(given)}개로 남았다 (0개여야 한다)")
+
+
+def _memory_said(o: Observed) -> list[str]:
+    """보호자에게 나간 Memory 말. 되묻기도 질문 문장은 `MemoryNote` 로 나간다."""
+    return [e.text for e in o.events if isinstance(e, MemoryNote)]
+
+
+def j_dose_only(o: Observed) -> None:
+    """등록된 약만 말했다 — 체크 안내 하나로 끝나고 Memory 말이 같은 안내를 한 번 더 하지 않는다."""
+    _dose_checked(o)
+    said = _memory_said(o)
+    if said:
+        o.failures.append(f"체크 안내 말고 Memory 말이 더 나갔다 {said}")
+        o.notes.append(_memory_summary(o))
+
+
+def j_dose_and_unclear_meal(o: Observed) -> None:
+    """등록된 약 + 내용이 부족한 식사 — 체크 안내와 함께, 식사를 저장했거나 되묻는 말이 있다.
+
+    둘 다 없으면 보호자는 식사가 저장되지 않은 것을 모른다.
+    """
+    _dose_checked(o)
+    if "observation_food" not in o.saved_kinds and not _memory_said(o):
+        o.failures.append("식사를 저장하지도, 되묻지도 않았다")
+    # 거절과 다른 실패가 한 run 에 같이 오는지가 이 케이스의 관심사라 통과해도 남긴다
+    o.notes.append(_memory_summary(o))
+
+
+def j_dose_and_meal(o: Observed) -> None:
+    """등록된 약 + 식사 — 체크 안내와 식사 저장이 같이 나간다."""
+    _dose_checked(o)
+    if "observation_food" not in o.saved_kinds:
+        o.failures.append("식사가 저장되지 않았다")
+        o.notes.append(_memory_summary(o))
+
+
 def _case(case_id: str, input_id: str, world: str, expect: str, judge: Judge) -> Case:
     return Case(case_id, INPUTS[input_id], world, expect, judge)
 
@@ -305,6 +350,34 @@ CASES: tuple[Case, ...] = (
         "C48",
         "응급 안내 0 — 아이 상태가 아닌 말은 걸리지 않는다",
         j_false_alarm,
+    ),
+    Case(
+        "E-dose-only",
+        "시럽 먹였어",
+        "C48-2med",
+        "체크 안내 1 · 먹인 약 행 0 · Memory 말 0",
+        j_dose_only,
+    ),
+    Case(
+        "E-dose-named",
+        "해열 시럽 먹였어",
+        "C48-2med",
+        "체크 안내 1 · 먹인 약 행 0 · Memory 말 0",
+        j_dose_only,
+    ),
+    Case(
+        "E-dose-unclear-meal",
+        "해열 시럽 먹였어. 어제 점심에 이상한 걸 먹었어",
+        "C48-2med",
+        "체크 안내 1 · 먹인 약 행 0 · 식사 저장 또는 Memory 말",
+        j_dose_and_unclear_meal,
+    ),
+    Case(
+        "E-dose-meal",
+        "시럽 먹였어. 점심에 김밥 먹었어",
+        "C48-2med",
+        "체크 안내 1 · 먹인 약 행 0 · 식사 저장",
+        j_dose_and_meal,
     ),
 )
 

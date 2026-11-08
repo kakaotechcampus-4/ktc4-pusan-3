@@ -63,6 +63,19 @@ export function newerPageParam(page: ChatDayResponse): ChatPageParam | undefined
   return page.next_date !== null ? { date: page.next_date } : undefined;
 }
 
+/**
+ * 연 날보다 이른 장을 몇 장 받았는가 (#707). 열자마자 미리 받는 장의 상한을 이걸로 센다.
+ * 같은 날의 앞부분(커서)도 한 장이다. 지난 날부터 연 목록에 아래로 붙인 더 늦은 장(다음 날)은 세지 않는다 —
+ * 그쪽은 `newerPageParam` 이 날짜로만 부른다.
+ */
+export function olderPageCount(
+  pageParams: readonly (ChatPageParam | null)[],
+  from: string | null,
+): number {
+  return pageParams.filter((p) => p !== null && ("cursor" in p || from === null || p.date < from))
+    .length;
+}
+
 /** 서버가 남긴 답 묶음을 run 화면의 상태로. */
 export function toPastRun(replies: ChatReply[]): { run: RunState; deleted: StoredRef[] } {
   let run = initialRunState;

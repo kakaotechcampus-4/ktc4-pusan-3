@@ -4,6 +4,8 @@ import type {
   Affinity,
   Agent,
   AnyEventDraft,
+  DeleteProposalCard,
+  FoundTabs,
   MedicationDraft,
   Observation,
   PhotoEntry,
@@ -69,6 +71,8 @@ export interface PartialEvent {
  *
  * ⚠️ `reason` 을 화면이 갈라 그리지 않는다 — 부모가 할 수 있는 일이 넷 다 같다(다시 시도 ·
  *    고쳐 쓰기). 여기 적어 두는 것은 **서버가 보낼 수 있는 값을 알아보게** 하기 위해서다 (#141).
+ *    🚨 **`not_document` 하나만 예외다** — 같은 사진을 다시 읽어도 결과가 같아서 보호자가 할 일이
+ *    "다른 사진 고르기" 로 다르다 (08 사진 화면).
  */
 export interface FailedEvent {
   reason:
@@ -79,6 +83,12 @@ export interface FailedEvent {
     | "timeout"
     /** 서버 쪽 예외 (#147). */
     | "internal_error"
+    /**
+     * 08 사진 — 글자는 읽었는데 저장할 공지 · 식단표가 없다 (영수증 · 게임 화면).
+     * 🚨 위의 넷과 달리 **화면이 갈라 그린다.** 같은 사진을 다시 시도해도 같은 결과라,
+     *    보호자가 할 일이 "다른 사진 고르기" 로 다르다.
+     */
+    | "not_document"
     | (string & {});
   raw_text: string;
 }
@@ -160,7 +170,8 @@ export interface UnavailableEvent {
  *    배포하지 않아도 된다 (`GuidanceEvent.code` 와 같은 이유).
  * 🚨 **개수 안내는 `kind` 가 아니라 `code` 로 찾는다.** Activity 날씨 안내도 `kind: "notice"` 라서, 한 블록에
  *    둘이 같이 오면 `kind` 로는 못 가른다. 문구도 Agent 마다 달라서(Food 의 0개 문구) 문구로 가르면 안 된다.
- * ⚠️ 서버 readout 의 `source_refs` 는 오지 않는다 (#276). 근거 종류가 `Ref.kind` 에 아직 없다.
+ * 🚨 **`source_refs` 는 복약 코스만 온다** (#713 · PR #716). 서버가 화면이 받기로 한 종류만 골라 싣는다 — 성장 기록 같은 다른
+ *    근거 종류는 `Ref.kind` 에 없어서 빼고 보낸다. 지난 대화(`StoredReadout`)에는 싣지 않아 선택 칸이다.
  */
 export interface AgentReadout {
   kind: "growth_delta" | "notice" | "blocked" | "unsupported" | (string & {});
@@ -177,6 +188,12 @@ export interface AgentReadout {
    * ⚠️ `cannot_resume`(이어서 할 수 없음)은 05 추천 엔드포인트만 붙인다 (#249). 04 에는 오지 않는다.
    */
   code: "fewer" | "empty" | null;
+  /**
+   * 이 readout 이 가리키는 복약 코스 (#713). 체크 안내(`dose.check_on_screen`)와 회차 현황(`dose_status`)이 싣는다.
+   * 블록의 "복약 화면 열기" 가 이 값으로 그 코스를 연다 (`lib/agent-result.ts` 의 `medicationHref`).
+   * 🚨 SSE 에서는 키가 늘 있지만 지난 대화에서 다시 그린 블록에는 없다 — 없으면 빈 배열로 읽는다.
+   */
+  source_refs?: Ref[];
 }
 
 /**
@@ -211,14 +228,16 @@ export interface AgentResultEvent {
    */
   question: string | null;
   /**
-   * 이 `question` 이 **답을 받는 질문**인가 (#537 · 잠정 이름). 서버가 그 run 의 되묻기 맥락을 들고 있을 때만
-   * `true` 다. 지금은 Growth 루틴 질문이 그렇다(#654). 없으면 `false` 로 읽는다.
+   * 이 `question` 이 **답을 받는 질문**인가 (#537 · #563 리뷰에서 AI 와 맞춘 이름). 서버가 그 run 의 되묻기 맥락을 들고 있을 때만
+   * `true` 다. 지금은 Growth 루틴 질문(#654)과 Health 복약 질문(중단 확인, 어느 약, 복용 시점 · #716)이 그렇다.
+   * 없으면 `false` 로 읽는다.
+   * Health 는 이어받은 run 이 또 물을 수 있다 (어느 약 → 멈출까요). 그 질문도 `true` 라 화면은 같은 길로 받는다.
    *
    * 🚨 **이 값이 참인 질문만 답할 자리를 연다.** 아닌 질문에 `reply_to` 를 실어 보내면 서버가 400
    *    `reply_context_unavailable` 로 막는다 (#246). 답은 Memory 질문과 같은 길(`reply_to` = 이 run)로 간다.
    * 이름은 #563 리뷰에서 AI 와 맞췄다. pipeline 은 `PendingReply` 로 맥락을 먼저 보관한 뒤
    *    `AgentQuestion(awaits_reply=true)` 을 내므로, 질문 장이 보일 때는 이미 답할 수 있다.
-   *    Health 복약 질문은 #586 연결 뒤 같은 뜻으로 쓴다. 서버는 키를 늘 싣는다.
+   *    서버는 키를 늘 싣는다.
    *    run 의 되묻기는 카드가 아니라 **마지막 `agent_result` 한 장**(readouts · 추천이 빈 장)으로 오고(#615),
    *    카드는 `false`, 맥락을 보관하지 않은 질문도 `false` 다.
    */
@@ -309,7 +328,7 @@ export function isDraftEvent(type: string): boolean {
  * 🚨 **아직 아무것도 저장되지 않았다.** 제출이 승인 게이트 ㉡(건강 기록 확정)이다 — 일정 초안(게이트 ㉠)과
  *    모양도 게이트도 다르다. 같은 카드 · 같은 프레임에 섞지 않는다.
  * 🚨 **이름은 `medication_draft` 하나다** (#563 리뷰 · AI 와 합의). 일정 초안(`event_draft`)과 같은 단수형이고,
- *    모양도 같은 `{ drafts: [...] }` 한 프레임이다. ⚠️ 서버 번역(`translate.py`)은 아직 없다 — BE 가 이 이름으로 낸다.
+ *    모양도 같은 `{ drafts: [...] }` 한 프레임이다. 서버는 `apps/api/app/api/runs/translate.py` 가 이 이름으로 낸다 (PR #716).
  */
 export interface MedicationDraftsEvent {
   drafts: MedicationDraft[];
@@ -366,6 +385,9 @@ export type RunEvent =
   | { type: "note"; data: NoteEvent }
   | { type: "unavailable"; data: UnavailableEvent }
   | { type: "agent_result"; data: AgentResultEvent }
+  // 조회 · 삭제 카드 (#535). 지난 대화의 `ChatReply` 와 같은 칸이다 (`types.ts` 의 `FoundTabs` · `DeleteProposalCard`).
+  | { type: "found_tabs"; data: FoundTabs }
+  | { type: "delete_proposal"; data: DeleteProposalCard }
   | { type: "ping"; data: PingEvent }
   | { type: "partial"; data: PartialEvent }
   | { type: "failed"; data: FailedEvent }

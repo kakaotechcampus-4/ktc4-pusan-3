@@ -6,7 +6,7 @@ created_by · child_id는 규칙이 채운다.
 알림은 Agent가 만들지 않는다. 발송은 등록된 일정을 기준으로 자동이다.
 """
 
-from typing import Annotated, ClassVar
+from typing import Annotated, ClassVar, Literal
 
 from pydantic import Field, field_validator
 
@@ -21,9 +21,25 @@ from app.agents.memory.schemas.common import (
     TemporalDirection,
     TimeExpr,
     ToolArgs,
+    Weekday,
 )
 
 EventId = Annotated[str, Field(description="query_event 가 돌려준 event id")]
+
+# 반복 일정의 범위 (#738). query_event 결과에 series 가 있는 일정을 고칠 때만 정한다
+Scope = Annotated[
+    Literal["one", "series"] | None,
+    Field(
+        default=None,
+        description=(
+            "반복 일정(query_event 결과에 series 가 있는 일정)일 때만. "
+            "날짜를 집어 말했으면 one(그 회차 하나), "
+            "날짜 없이 그 반복 일정 자체를 말했으면 series(오늘 이후 전체). "
+            "반복이 아니면 비운다. "
+            "찾은 결과를 보고도 어느 쪽인지 정해지지 않으면 보호자에게 묻는다"
+        ),
+    ),
+]
 
 
 class EventCreate(ToolArgs):
@@ -73,6 +89,27 @@ class EventCreate(ToolArgs):
         Field(
             default=EventCategory.ETC,
             description="기관 행사 institution, 병원 health, 활동 activity",
+        ),
+    ]
+    repeat_weekdays: Annotated[
+        list[Weekday] | None,
+        Field(
+            default=None,
+            description=(
+                "요일마다 되풀이되는 일정이면 그 요일. '월수마다' → [mon, wed], '평일' → 월~금, "
+                "'매일' → 일곱 요일 전부. 반복이 아니면 비운다. "
+                "날짜마다 따로 부르지 않고 한 번에 만든다"
+            ),
+        ),
+    ]
+    repeat_until: Annotated[
+        DateExpr | None,
+        Field(
+            default=None,
+            description=(
+                "반복이 끝나는 날짜 표현(그날 포함). 보호자가 말하지 않았으면 비운다 — "
+                "지어내거나 기본값을 넣지 않는다. 반복 요일과 같이 넣는다"
+            ),
         ),
     ]
     items: Annotated[
@@ -131,10 +168,21 @@ class EventUpdate(ClearableUpdateArgs):
     temporal_direction: Direction
     event_type: Annotated[EventType | None, Field(default=None, description="바꿀 일정 유형")]
     category: Annotated[EventCategory | None, Field(default=None, description="바꿀 일정 분류")]
-
-
-class EventRef(ToolArgs):
-    event_id: EventId
+    scope: Scope
+    repeat_weekdays: Annotated[
+        list[Weekday] | None,
+        Field(
+            default=None,
+            description="바꿀 반복 요일. scope=series 일 때만. 말하지 않은 요일은 그대로 둔다",
+        ),
+    ]
+    repeat_until: Annotated[
+        DateExpr | None,
+        Field(
+            default=None,
+            description="바꿀 반복 끝 날짜 표현(그날 포함). scope=series 일 때만",
+        ),
+    ]
 
 
 class EventItemCreate(ToolArgs):
@@ -150,6 +198,7 @@ class EventItemCreate(ToolArgs):
             )
         ),
     ]
+    scope: Scope
 
 
 class EventItemUpdate(ToolArgs):
@@ -157,8 +206,13 @@ class EventItemUpdate(ToolArgs):
     item_name: Annotated[
         str | None, Field(default=None, description="바꿀 이름. 조사를 떼고 사물 이름만")
     ]
-    is_prepared: Annotated[bool | None, Field(default=None, description="준비 완료 여부")]
+    is_prepared: Annotated[
+        bool | None,
+        Field(default=None, description="준비 완료 여부. 늘 그날 회차 하나라 scope 를 넣지 않는다"),
+    ]
+    scope: Scope
 
 
 class EventItemRef(ToolArgs):
     item_id: Annotated[str, Field(description="query_event 결과의 items[].item_id")]
+    scope: Scope

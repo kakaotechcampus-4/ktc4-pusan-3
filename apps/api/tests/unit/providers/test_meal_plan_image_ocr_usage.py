@@ -42,6 +42,10 @@ def _response(
     model: str | None = "served-ocr-model",
     usage: Any = "default",
 ) -> Any:
+    """스트리밍 응답 — 글자 조각 · 끝 이유 조각 · 사용량 조각 (게이트웨이가 보내는 순서).
+
+    급식표는 스트리밍으로 받는다 (providers/streaming.py — 비스트리밍은 출력 2,000 토큰에서 잘린다).
+    """
     if usage == "default":
         usage = SimpleNamespace(
             prompt_tokens=900,
@@ -49,14 +53,17 @@ def _response(
             cached_prompt_tokens=300,
             completion_tokens_details=SimpleNamespace(reasoning_tokens=120),
         )
-    message = SimpleNamespace(content=content, refusal=None)
-    fields: dict[str, Any] = {
-        "choices": [SimpleNamespace(finish_reason=finish_reason, message=message)],
-        "usage": usage,
-    }
-    if model is not None:
-        fields["model"] = model
-    return SimpleNamespace(**fields)
+
+    def chunk(choices: list, chunk_usage: Any = None) -> Any:
+        fields: dict[str, Any] = {"choices": choices, "usage": chunk_usage}
+        if model is not None:
+            fields["model"] = model
+        return SimpleNamespace(**fields)
+
+    def choice(text: str | None, reason: str | None) -> Any:
+        return SimpleNamespace(delta=SimpleNamespace(content=text), finish_reason=reason)
+
+    return [chunk([choice(content, None)]), chunk([choice(None, finish_reason)]), chunk([], usage)]
 
 
 class _FakeCompletions:

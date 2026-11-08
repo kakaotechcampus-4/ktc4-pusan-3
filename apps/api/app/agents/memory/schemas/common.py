@@ -2,7 +2,7 @@
 
 from collections.abc import Iterable
 from enum import StrEnum
-from typing import Annotated, ClassVar, Literal, Self
+from typing import Annotated, ClassVar, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -87,6 +87,29 @@ class EventCategory(StrEnum):
     HEALTH = "health"
     ACTIVITY = "activity"
     ETC = "etc"
+
+
+class Weekday(StrEnum):
+    """반복 요일. 모델은 이름으로 말하고, ISO 숫자로 바꾸는 것은 코드다 (#738)."""
+
+    MON = "mon"
+    TUE = "tue"
+    WED = "wed"
+    THU = "thu"
+    FRI = "fri"
+    SAT = "sat"
+    SUN = "sun"
+
+
+WEEKDAY_ISO: dict[Weekday, int] = {
+    Weekday.MON: 1,
+    Weekday.TUE: 2,
+    Weekday.WED: 3,
+    Weekday.THU: 4,
+    Weekday.FRI: 5,
+    Weekday.SAT: 6,
+    Weekday.SUN: 7,
+}
 
 
 # 날짜·시각은 원문 표현으로 받고 실제 계산은 common/datetime_rules.py에서 수행
@@ -258,15 +281,10 @@ class PromotableCreateArgs(SubjectCreateArgs):
 
 
 class ObservationUpdateArgs(ClearableUpdateArgs):
-    """observation update가 공유하는 필드. 날짜도 고칠 수 있고, 기록을 지울 수도 있다.
+    """observation update가 공유하는 필드. 날짜도 고칠 수 있다.
 
-    status로 열리는 값은 deleted 하나다. stand_alone · inactive 는 Correction 결과라
-    모델이 쓰지 않는다. 지우는 호출에는 다른 수정을 섞지 않는다.
+    기록을 지우는 칸은 없다 — 삭제는 제안(`propose_delete`)을 보호자가 버튼으로 확정한다 (#535).
     """
-
-    _NOT_A_CHANGE: ClassVar[frozenset[str]] = frozenset(
-        {"observation_id", "status", "temporal_direction", "clear", "anchor_event", "anchor_on"}
-    )
 
     observation_id: RecordId
     observed_on: Annotated[
@@ -276,33 +294,6 @@ class ObservationUpdateArgs(ClearableUpdateArgs):
     anchor_event: AnchorEvent
     anchor_on: AnchorOn
     temporal_direction: Direction
-    status: Annotated[
-        Literal["deleted"] | None,
-        Field(
-            default=None,
-            description=(
-                "보호자가 기록 한 건을 통째로 지워 달라고 할 때만 deleted. "
-                "이때 다른 필드와 clear 는 모두 비운다. 내용을 고칠 때는 비워 둔다"
-            ),
-        ),
-    ]
-
-    @model_validator(mode="after")
-    def _delete_alone(self) -> Self:
-        if self.status is None:
-            return self
-        changed = [
-            name
-            for name in type(self).model_fields
-            if name not in self._NOT_A_CHANGE and getattr(self, name) is not None
-        ]
-        if changed or self.clear:
-            raise ValueError(
-                "status=deleted 는 기록을 통째로 지운다. "
-                f"{_joined([*changed, *self.clear])} 수정과 한 번에 보내지 않는다. "
-                "지울 거면 status 만, 고칠 거면 status 를 비운다"
-            )
-        return self
 
 
 class ObservationQueryArgs(ToolArgs):

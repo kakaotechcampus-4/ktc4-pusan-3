@@ -3,6 +3,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CalendarCheck,
+  Camera,
   MessageCircleQuestionMark,
   Mic,
   Shield,
@@ -30,6 +31,7 @@ import { landingPath } from "@/lib/auth/landing";
 import { OAuthUnavailableError, startOAuthLogin } from "@/lib/auth/oauth";
 import { cn } from "@/lib/cn";
 import { PRIVACY_POLICY_HREF } from "@/lib/consent";
+import { MEDICATION_ENABLED } from "@/lib/store-policy";
 import { hasLiveSession, useSessionStore } from "@/stores/session";
 
 /**
@@ -46,9 +48,9 @@ import { hasLiveSession, useSessionStore } from "@/stores/session";
  *    그래서 기능 목록보다 **기록이 쌓이는 시간**을 보여준다 (#704). 가입 첫날 보게 될 "일반 추천" 을
  *    소개가 먼저 말해 두지 않으면, 첫 경험이 약속과 다르게 읽힌다.
  *
- * 🚨 **실서버에서 동작하는 것만 소개한다.** 사진으로 적기 · 검사지 · 복약처럼 `lib/features.ts` 에
- *    걸린 기능은 넣지 않는다 — 소개를 보고 가입한 사람이 그 문을 찾지 못한다. 그 항목이 풀리면
- *    여기에 더한다. 문구의 근거는 고객센터 답(`lib/help.ts`)과 같은 규칙이다.
+ * 🚨 **실서버에서 동작하는 것만 소개한다.** 검사지처럼 `lib/features.ts` 에 걸린 기능은 넣지
+ *    않는다 — 소개를 보고 가입한 사람이 그 문을 찾지 못한다. 그 항목이 풀리면 여기에 더한다
+ *    (사진으로 적기는 #723 에서 풀어 "말하듯 남기면 돼요" 에 더했다). 문구의 근거는 고객센터 답(`lib/help.ts`)과 같은 규칙이다.
  *
  * 🚨 **예시는 전부 지어낸 것이다.** 실제 사용자 발화나 아이 정보를 넣지 않는다 (최상위 CLAUDE.md §9).
  *    예시 카드는 서버가 준 근거처럼 읽히지 않게 "예시" 를 명시한다.
@@ -78,7 +80,7 @@ const DOMAINS: Array<{ agent: Agent; label: string; text: string }> = [
   {
     agent: "food",
     label: "식사",
-    // 🚨 "오늘 급식" 을 말하지 않는다 — 급식은 사진으로 적기(08)로 들어오는데 실서버에 아직 없다.
+    // 🚨 "오늘 급식" 을 말하지 않는다 — 급식은 식단표를 사진으로 적은 집에만 있다(08). 모두에게 약속하지 않는다.
     text: "등록한 알레르기를 먼저 걸러 낸 뒤 끼니 메뉴를 골라요. 알레르기를 확인하지 못하면 식사 제안을 만들지 않아요.",
   },
   {
@@ -94,7 +96,11 @@ const DOMAINS: Array<{ agent: Agent; label: string; text: string }> = [
   {
     agent: "health",
     label: "건강",
-    text: "증상 기록을 모아 정리해요. 같은 증상이 이어지면 병원 확인을 권하고, 진단은 하지 않아요.",
+    // 복약은 #713 에서 실서버에 붙었다. 🚨 "알려 드려요" 를 말하지 않는다 — 복약 알림 발송은 아직 없다.
+    // 🚨 스토어 선언 때문에 꺼 둔 동안은 복약을 말하지 않는다 (`lib/store-policy.ts`).
+    text: MEDICATION_ENABLED
+      ? "증상 기록을 모아 정리해요. 먹일 약과 시간을 적으면 복약 일정을 준비해 두고, 확인한 뒤에 넣어요. 같은 증상이 이어지면 병원 확인을 권하고, 진단은 하지 않아요."
+      : "증상 기록을 모아 정리해요. 같은 증상이 이어지면 병원 확인을 권하고, 진단은 하지 않아요.",
   },
 ];
 
@@ -288,6 +294,15 @@ function LoginScreen() {
               icon={Mic}
               title="앱에서는 말로 적기"
               text="지원하는 휴대폰이면 마이크로 말해서 적을 수 있어요. 목소리는 휴대폰 안에서 글자로 바뀌고, 녹음은 보내지 않아요."
+            />
+          </li>
+          <li>
+            {/* 🚨 "확인한 것만" 을 빼지 않는다 — 읽은 것이 바로 저장된다고 읽히면 08 의 확인 화면이 약속과 다르다.
+                사진을 언제 지우는지는 말하지 않는다. 처리방침 문장이 정해지기 전이다 (#724 · #166). */}
+            <IconRow
+              icon={Camera}
+              title="알림장은 사진으로"
+              text="알림장이나 식단표를 찍으면 적힌 일정과 준비물, 급식을 읽어 와요. 확인한 것만 저장하고, 일정은 따로 확인하고 넣어요."
             />
           </li>
           <li>

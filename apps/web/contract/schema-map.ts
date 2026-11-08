@@ -24,6 +24,13 @@ export interface MapEntry {
 /** 서버 스키마 하나를 웹이 둘 이상으로 나눠 받으면 배열로 둘 다 적는다. */
 export type MapValue = string | MapEntry | Array<string | MapEntry>;
 
+/**
+ * 추천의 `items`(필요한 재료 · 준비물 · #659). 웹이 먼저 붙였고 서버는 #674 에서 내린다.
+ * 🚨 **서버에 칸이 생기면 이 `allow` 를 지운다** — 남겨 두면 그 뒤로 칸 이름 · 값 종류가 어긋나도 못 잡는다.
+ */
+const ITEMS_PENDING =
+  "서버 SuggestionOut · GeneralSuggestionOut 에 아직 없다 (#674). 실서버 응답에서는 빠져 오고 SuggestionItems 가 빈 배열처럼 영역을 세우지 않는다";
+
 export const SCHEMA_MAP: Record<string, MapValue> = {
   /* ── 로그인 · 계정 ── */
   AuthProvider: "AuthProvider",
@@ -124,9 +131,25 @@ export const SCHEMA_MAP: Record<string, MapValue> = {
   AgentResultOut: "ChatReply<type=agent_result>",
   PartialReply: "ChatReply<type=partial>",
   DoneReply: "ChatReply<type=done>",
-  StoredReadout: "AgentReadout",
+  // 조회 · 삭제 카드 (#535). 탭 모양은 SSE `found_tabs` · `delete_proposal` 과 같다.
+  FoundTabsOut: "ChatReply<type=found_tabs>",
+  DeleteProposalCardOut: "ChatReply<type=delete_proposal>",
+  CardTabOut: "CardTab",
+  ProposalTabOut: "ProposalTab",
+  ConfirmDeleteProposalRequest: "ConfirmDeleteProposalRequest",
+  DeleteProposalOut: "DeleteProposal",
+  DeleteProposalResponse: "DeleteProposalResponse",
+  StoredReadout: {
+    web: "AgentReadout",
+    allow: {
+      source_refs:
+        "SSE 에만 온다 (#713). 지난 대화에는 readout 근거를 싣지 않아서 웹은 선택 칸으로 받는다",
+    },
+  },
   SuggestionStateOut: "AgentResultEvent.suggestions[]",
   StoredRef: "StoredRef",
+  // readout 근거 중 화면이 받는 종류만(지금은 복약 코스) — 웹 `Ref` 의 kind 목록 안이다
+  StoredScreenRef: "Ref",
 
   /* ── 07 기록 · 기억 · 고치기 ── */
   Ref: "Ref",
@@ -161,16 +184,20 @@ export const SCHEMA_MAP: Record<string, MapValue> = {
   PrecheckOut: "Precheck",
   SuggestionOut: [
     // 07 목록 — 개인화와 채택한 일반 추천이 같이 온다. kind 를 서버 enum 과 그대로 맞춘다
-    "ReceivedSuggestion",
+    {
+      web: "ReceivedSuggestion",
+      allow: { items: ITEMS_PENDING },
+    },
     {
       web: "Suggestion",
       allow: {
         kind: "05 의 개인화 칸(SuggestionsResponse.suggestions)이 같은 서버 스키마를 쓴다. 05 의 일반 추천은 general 칸으로 따로 온다 (#545)",
+        items: ITEMS_PENDING,
       },
     },
   ],
   EvidenceOut: "Evidence",
-  GeneralSuggestionOut: "GeneralSuggestion",
+  GeneralSuggestionOut: { web: "GeneralSuggestion", allow: { items: ITEMS_PENDING } },
   DocEvidenceOut: "DocEvidence",
   AnswerRequest: "AnswerRequest",
   ApproveSuggestionsRequest: "ApproveSuggestionsRequest",
@@ -194,6 +221,17 @@ export const SCHEMA_MAP: Record<string, MapValue> = {
   EventBodyOut: "EventDraftFields",
   DraftItemPayload: "EventDraftItem",
   SubmitEventRequest: "SubmitEventBody",
+  PhotoEntry: "PhotoEntry",
+  PhotoEntryDetail: "PhotoEntryDetail",
+  PhotoUploadTicket: "PhotoUploadTicket",
+  PhotoCommitRequest: "PhotoCommitRequest",
+  PhotoCommitResponse: {
+    web: "PhotoCommitResponse",
+    allow: {
+      observations:
+        "서버는 빈 배열만 보낸다 (관찰을 만들지 않는다). 화면도 이 칸을 읽지 않는다 (#151)",
+    },
+  },
   SubmitEventBody: {
     web: "EventDraftFields",
     allow: {
@@ -257,10 +295,21 @@ export const SCHEMA_MAP: Record<string, MapValue> = {
  * FE 는 그 이슈에서 웹 타입을 붙이고 이 줄을 뺀다 (docs/web/mock-and-tests-v1.md §2 · #560 리뷰).
  */
 export const NOT_MAPPED: Record<string, string> = {
+  PhotoUploadResponse: "웹은 `{ run_id: string }` 을 함수 반환형에 바로 적는다 (uploadPhoto)",
+  Body_upload_photo_api_v1_children__cid__photos_post:
+    "multipart 본문. 웹은 photoFormData 가 FormData 로 만든다",
   HTTPValidationError:
     "FastAPI 가 자동으로 붙이는 422 모양. 서버는 실제로 ErrorEnvelope 로 바꿔 보낸다 (app/api/errors.py · #438)",
   ValidationError: "HTTPValidationError 안쪽",
   LinkedAffinityOut: "웹이 ObservationOut.affinity 를 읽지 않는다",
   AnswerResponse: "05 가 되묻기 답의 응답 본문을 읽지 않는다",
   SeenTours: "웹 미사용 — FE 후속 (#696 머지 뒤 lib/tour/seen.ts 를 서버 호출로 바꿀 때)",
+  // 요일 반복 (#738). 웹 타입은 #746 이 만든다 — 그 PR 이 SCHEMA_MAP 으로 옮긴다
+  // (EventSeriesRef · RepeatRequest · SeriesDraftFields · UpdateSeriesBody.before · UpdateSeriesBody)
+  EventSeriesOut: "웹 타입이 #746 에서 생긴다 (EventSeriesRef)",
+  RepeatIn: "웹 타입이 #746 에서 생긴다 (RepeatRequest)",
+  SeriesEventIn: "웹 타입이 #746 에서 생긴다 (SeriesDraftFields)",
+  SeriesBeforeIn: "웹 타입이 #746 에서 생긴다 (UpdateSeriesBody.before)",
+  UpdateSeriesRequest: "웹 타입이 #746 에서 생긴다 (UpdateSeriesBody)",
+  UpdateSeriesResponse: "웹 타입이 #746 에서 생긴다. 화면은 성공 여부만 쓴다",
 };

@@ -822,12 +822,13 @@ async def test_session_sets_a_refresh_cookie_that_outlives_the_app(db_client, se
         },
     )
 
-    header = cookie_header(response, "icatch_rt")
+    header = cookie_header(response, "__Host-icatch_rt")
     assert header is not None
     attrs = {part.strip().split("=", 1)[0].lower() for part in header.split(";")[1:]}
     assert {"httponly", "secure", "path", "max-age", "samesite"} <= attrs
     assert "domain" not in attrs
-    assert "Path=/api/v1/auth" in header
+    # 🚨 __Host- 접두사의 조건 — Path=/ · Secure · Domain 없음 (#783)
+    assert "Path=/;" in header
     assert "Max-Age=2592000" in header
     assert "SameSite=strict" in header
 
@@ -849,7 +850,7 @@ async def test_logout_invalidates_the_token_immediately(db_client, session):
     after = await db_client.post("/api/v1/auth/logout", headers=headers)
 
     assert logout.status_code == 204
-    assert "Max-Age=0" in cookie_header(logout, "icatch_rt")
+    assert "Max-Age=0" in cookie_header(logout, "__Host-icatch_rt")
     assert after.status_code == 401
     assert after.json()["error"]["code"] == "unauthenticated"
     # 세션 행을 지우면 딸린 access 도 CASCADE 로 같이 사라진다.

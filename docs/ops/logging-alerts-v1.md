@@ -17,10 +17,10 @@
 | **알림 본문** | Discord 카드(embed) 한 장 — 제목(**코드에 적힌 로그 글귀** 또는 예외 **종류 이름**) · 로거:함수:줄 · 환경 · 시각. 값을 내보내려면 `extra={"alert_detail"}`(값 줄) · `extra={"alert_heading"}`(제목) 으로 표시 — 서버가 모양을 검사한 값만 | 값(args) · 원문 · 트레이스백 · 예외 메시지는 밖으로 안 나간다 (§3) |
 | **세기 · 다음 할 일** | 카드 왼쪽 색 막대 + 제목 앞 🔴(지금) · 🟠(오늘) · 🟡(내일) · 🟢(복구), 바닥글에 다음에 칠 명령 | 현업의 심각도 구분 · 런북을 가장 작게. 전부 같은 세기면 알림 피로로 다 무시한다. 🔴 만 `@here` 로 폰을 울릴지는 실사용자 뒤에 정한다 |
 | **구별** | 채널 하나, 보내는 이름이 출처별 — `api-alert` · `browser-alert` · `report-alert` · `infra-alert` (`extra={"alert_source"}`) | 웹훅 · 채널을 늘리지 않는다. 쪼개고 싶으면 그때 URL 을 하나 더 |
-| **화면 오류** | 오류 바운더리 → `POST /client-errors`(로그인한 보호자만) → ERROR 로그 → 같은 알림 | 보호자 폰의 오류는 서버로 오지 않았다. 값은 종류 · digest · 경로 · 기기 요약뿐이고 모양을 서버가 검사한다. DB 에 넣지 않는다 (처리방침 ⑥) |
+| **화면 오류** | 오류 바운더리, 그리고 렌더 밖 예외(`window` 의 `error` · `unhandledrejection` · #732) → `POST /client-errors`(로그인한 보호자만) → ERROR 로그 → 같은 알림 | 보호자 폰의 오류는 서버로 오지 않았다. 값은 종류 · digest · 경로 · 기기 요약뿐이고 모양을 서버가 검사한다. DB 에 넣지 않는다 (처리방침 ⑥) |
 | **앱 안 신고** | 설정의 신고 창 → `POST /reports`(로그인한 보호자만) → 오류가 아닌 **ERROR** 로그("신고 접수") → 같은 웹훅에 `report-alert` · 🟡, 바닥글은 조회 SQL. 값은 분류 · 신고 번호뿐 | Play 정책(AI 생성 · 사용자 제작 콘텐츠)이 앱 안 신고를 요구한다 (#487). 보호자가 쓴 글은 `report` 테이블에만 — 알림을 보면 `SELECT category, message FROM report WHERE id = '<번호>'` 로 읽는다. 알림이 분당 한도에 밀려 빠질 수 있으니 처리 안 된 신고는 `WHERE handled_at IS NULL` 로 따로 본다. 보호자당 24시간 10건 상한 — 보호자 행을 잠그고 세서 동시에 보내도 넘치지 않는다. 분당 알림 한도는 오류 알림과 같이 쓴다 |
 | **web 서버 오류** | Next `src/instrumentation.ts` 의 `onRequestError` → 웹훅으로 직접 (`web-alert`). 종류 · digest · 경로 · 라우트만, 분당 상한, 개발 모드는 끔 | Next 서버엔 보호자 토큰이 없어 `/client-errors` 를 못 쓴다. 웹 컨테이너에 `ALERT_WEBHOOK_URL` 을 compose 가 넘긴다 |
-| **컨테이너 감시** | 서버 cron 1분 · `deploy/scripts/health-alert.sh` — docker healthcheck 결과가 **달라졌을 때만** 같은 웹훅으로 | api 가 못 뜨거나 redis 가 죽은 건 api 안의 알림이 말할 수 없다 (§5) |
+| **컨테이너 감시** | 서버 cron 1분 · `deploy/scripts/health-alert.sh` — docker healthcheck 결과와 api 의 `/health/ready`(DB · Redis 에 닿는가)가 **달라졌을 때만** 같은 웹훅으로 | api 가 못 뜨거나 redis 가 죽은 건 api 안의 알림이 말할 수 없다 (§5) |
 | **서버 밖 가동 감시** | UptimeRobot 무료 — 5분마다 api `/health` · web `/` 를 밖에서 찔러 Discord 로 (웹훅은 따로 `uptime-alert`) | 서버 안의 cron 은 EC2 자체가 죽으면 같이 말을 못 한다. 코드 없음 · 보호자 정보 안 감 (응답 코드만). 무료 플랜에 Discord 연동 포함, 비상업 용도 |
 | **SaaS(Sentry 등)** | 안 쓴다 | 요청 본문 · 사용자 정보가 밖으로 가는 도구는 §10 결정 전에는 못 쓴다 |
 
@@ -57,7 +57,7 @@ api 안의 알림은 **api 프로세스 안의 `app.*` 로거**에만 달린다.
 
 - 부팅 실패 · 컨테이너 죽음 · 재시작 반복 — api 안의 알림은 api 가 살아 있을 때만 말할 수 있다. 그래서 밖에서 본다: 서버 cron 이 1분마다 `deploy/scripts/health-alert.sh` 로 compose 컨테이너 전부의 healthcheck 결과를 읽어 **달라진 것만** 같은 웹훅으로 보낸다 (복구도). 웹훅 전송이 실패하면 상태를 저장하지 않아 다음 분에 다시 보낸다. 죽어 있는 동안 매분 울리지 않는다. docker 의 healthcheck 는 판정만 하고 통보는 안 하기 때문에 이 한 겹이 필요하다. 서버에 cron 한 줄 등록은 Session Manager 로 (README)
 - `uvicorn` · `asyncio` · `sqlalchemy` 로거 — 대상이 아니다. `uvicorn.error` 의 "Exception in ASGI application" 은 `errors.py` 의 마지막 그물이 이미 ERROR 로 찍은 같은 예외라 일부러 뺐다
-- 다른 프로세스 — `alembic upgrade`, `scripts/*`, 앞으로의 `app/workers/*` 는 `app.main` 을 불러오지 않아 알림이 없다
+- 다른 프로세스 — `alembic upgrade`, `scripts/*` 는 `app.main` 을 불러오지 않아 알림이 없다. `app/workers/*`(cleanup · reminder_dispatch · profile_recompute)는 `app.main` 과 같은 순서로 `configure_alerts` 를 직접 달아 **알림이 간다** — 카드는 위와 같이 종류 이름만이고, 서버 로그에도 예외 메시지 없이 종류 · 위치만 남긴다 (`log_error_without_message` · #670)
 - 프로세스를 fork 하는 실행기(gunicorn `--preload` 등) — 알림 스레드가 자식으로 넘어가지 않는다. uvicorn 단일 프로세스 전제다
 - 로그인 전 화면(로그인 · 동의)의 브라우저 오류 — 인증 없는 창구를 두지 않아서다. 아무나 그 주소로 팀 채널을 울려 진짜 알림을 묻을 수 있다. 두 화면뿐이라 감수한다. 기기 요약(운영체제 · 주요 버전 · 앱/브라우저)을 로그에 남기므로 처리방침 ⑥ 에 한 구절을 더한다 (#166)
 
@@ -65,10 +65,10 @@ api 안의 알림은 **api 프로세스 안의 `app.*` 로거**에만 달린다.
 
 - 알림 부착을 import 시점이 아니라 FastAPI lifespan 으로 옮길지 — 지금은 `configure_logging()` 을 다시 부르면 핸들러가 조용히 사라진다(문서로만 막음). lifespan 이면 순서가 보장되고 import 에 부작용이 없지만, README 의 한 줄 확인 명령이 복잡해진다
 - 도메인 (10-10 사기로 함) — 모니터는 IP 가 아니라 도메인으로 등록한다. EC2 를 중지 → 시작하면 공인 IP 가 바뀌는데(고정 IP 불가), 그때 도메인의 A 레코드만 고친다. 도메인이 생기면 HTTPS 를 붙일 수 있고, UptimeRobot 의 "SSL · 도메인 만료" 알림이 그때부터 쓸모 있다
-- ⏰ **시험 서버(dev · staging)를 띄우면** — 10-10 팀에서 얘기 중. 그때 고칠 것:
+- **시험 서버(dev)** — 11-06 띄움 ([deploy-v1.md](deploy-v1.md)). 꼬리표 · 컨테이너 감시 cron 은 거기서 정리했다. 아래는 그때 같이 본 것으로, Discord 채널 · UptimeRobot 은 아직 열려 있다:
   - 알림 꼬리표 — `deploy/docker/.env` 에 `APP_ENV=dev` 한 줄. compose 가 web(Next 서버 알림)에 넘기고 컨테이너 감시도 같은 줄을 읽는다 (10-10 이렇게 바꿈 — 코드 · cron 줄은 안 고친다). api 는 `apps/api/.env` 의 `APP_ENV` 를 읽으니 그쪽도 `dev` 로 — 두 파일 값이 어긋나면 꼬리표가 갈린다. api 가 compose 에 올라갈 때 같은 파일을 읽게 하면 사라지는 문제다
   - api — 카카오 키 부팅 검사가 지금 `prod` 만 막는다 (`app/core/config.py` `_require_kakao_keys_in_prod` — "dev 서버가 생기면 다시 판단" 주석)
   - Discord — 시험 서버 알림을 같은 채널에 섞을지, 채널(웹훅)을 따로 둘지 정한다. 섞으면 꼬리표만으로 가른다
   - UptimeRobot — 시험 서버도 감시할지 (무료 플랜은 모니터 50개라 자리는 있다). 도메인은 하위 이름(예: `dev.<도메인>`)으로
-- 배포 스크립트가 `compose up` 직후 healthcheck 를 기다렸다가 바로 알리는 것 — 지금은 cron 이 1분 안에 잡으므로 있으면 좋은 것 (#166)
+- ~~배포 스크립트가 `compose up` 직후 healthcheck 를 기다렸다가 바로 알리는 것~~ — `deploy.sh` 가 `up --wait` 로 기다리고, 실패하면 롤백 후 워크플로를 빨간불로 끝낸다 ([deploy-v1.md](deploy-v1.md))
 - 처리방침 ⑥ 의 기기 요약 구절과 로그 보관 기간 숫자 (#166, PM) · 법률 검토 때 "자동으로 남는 항목은 고지로 충분한지"

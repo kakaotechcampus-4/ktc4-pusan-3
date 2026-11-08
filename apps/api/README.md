@@ -57,6 +57,10 @@ make dev
 # 다른 터미널에서 health 확인
 curl http://localhost:8000/health
 # 예상 응답: {"status":"ok","env":"local"}
+
+# DB · Redis 까지 닿는지 (하나라도 안 되면 503)
+curl http://localhost:8000/health/ready
+# 예상 응답: {"status":"ok","checks":{"db":"ok","redis":"ok"}}
 ```
 
 > 헬스체크는 `/api/v1` **밖**에 있습니다. API 계약서 §01이 "경로는 모두 `/api/v1` 하위 ·
@@ -181,6 +185,10 @@ cd apps/api && APP_ENV=dev uv run python -c "import logging, app.main; logging.g
 실패하면 다음 분에 다시 보낸다. 1분마다 돌아도 `docker inspect` 몇 밀리초라 부담이 없다 (healthcheck
 자체가 이미 5~30초마다 돈다).
 
+docker healthcheck 는 api 의 `/health`(프로세스)만 본다 — DB 가 죽었다고 api 를 재시작해 봐야 재시작만
+반복하니까. 그래서 api 가 DB · Redis 에 닿는지는 api 컨테이너 안에서 `/health/ready` 를 불러
+`ktc4-api-ready` 한 줄로 같이 본다 — `[prod] ktc4-api-ready: ready → not-ready:redis` (#671).
+
 서버 준비 — `deploy/docker/.env` 에 `ALERT_WEBHOOK_URL=` (api 의 `.env` 와 같은 값) 을 넣고 `crontab -e`:
 
 ```
@@ -221,8 +229,8 @@ Discord 연동이 들어 있고, 보호자 정보는 가지 않는다 (주소를
 
 처리방침이 "로그인 유지 값은 하루 한 번 서버에서 지운다" 고 알린다. 서버의 cron 이 하루 한 번
 [`app/workers/cleanup.py`](app/workers/cleanup.py) 를 api 컨테이너 안에서 돌린다 — 만료된 로그인 세션 ·
-access · 1회용 코드 · 가입 대기표와, 보관 기간(1년)이 끝난 동의 증빙을 지운다. 로그에는 지운 건수만 남고,
-실패하면 위의 Discord 알림으로 온다.
+access · 1회용 코드 · 가입 대기표, 보관 기간(1년)이 끝난 동의 증빙, 6개월이 지난 위치 이용 확인자료를 지운다.
+로그에는 지운 건수만 남고, 실패하면 위의 Discord 알림으로 온다.
 
 서버 준비 — cron 은 서버 시계를 따른다. `timedatectl` 이 UTC 면 아래처럼 19시(= 한국 04시),
 Asia/Seoul 이면 `0 4 * * *` 로 `crontab -e`:

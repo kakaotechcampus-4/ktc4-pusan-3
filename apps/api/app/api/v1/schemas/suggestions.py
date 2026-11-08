@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import uuid
-from typing import Literal
+from datetime import date, time
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.api.v1.schemas.common import Ref
 from app.api.v1.schemas.reminders import ReminderIn, ReminderOut
@@ -17,6 +18,7 @@ from app.core.event_draft import (
     EventTypeValue,
     Moment,
 )
+from app.rules.recurrence import repeat_label
 
 # ── 공통 ──────────────────────────────────────────────────────────────────
 
@@ -57,6 +59,17 @@ class SuggestionOut(BaseModel):
             "서버 코드 문구라 글자 그대로 보여 준다. 근거가 아니어서 evidence 에 들어가지 않는다. "
             "없으면 빈 배열"
         ),
+    )
+    event_starts_on: date | None = Field(
+        default=None,
+        description=(
+            "행사가 붙은 추천에만 오는 행사 시작일(YYYY-MM-DD). 화면이 place_notice 줄에 기간으로 "
+            "세운다. 근거가 아니다. 행사가 없으면 null"
+        ),
+    )
+    event_ends_on: date | None = Field(
+        default=None,
+        description="행사가 붙은 추천에만 오는 행사 종료일(YYYY-MM-DD). 행사가 없으면 null",
     )
     reason: str | None = Field(
         default=None,
@@ -126,7 +139,12 @@ class DocEvidenceOut(BaseModel):
     )
     title: str
     source_org: str
-    source_title: str
+    source_title: str = Field(
+        description=(
+            "원문 제목. 라이선스가 요구하는 표시 문구와 URL 이 제목 뒤에 붙을 수 있다 "
+            "(CC BY 의 변경 표시 · OGL 의 출처 문장)"
+        )
+    )
     source_url: str | None = None
     note: str = Field(description="이 문서를 어떻게 참고했는지 한 줄")
 
@@ -158,6 +176,17 @@ class GeneralSuggestionOut(BaseModel):
             "서버 코드 문구라 글자 그대로 보여 준다. 근거가 아니어서 evidence 에 들어가지 않는다. "
             "없으면 빈 배열"
         ),
+    )
+    event_starts_on: date | None = Field(
+        default=None,
+        description=(
+            "행사가 붙은 추천에만 오는 행사 시작일(YYYY-MM-DD). 화면이 place_notice 줄에 기간으로 "
+            "세운다. 근거가 아니다. 행사가 없으면 null"
+        ),
+    )
+    event_ends_on: date | None = Field(
+        default=None,
+        description="행사가 붙은 추천에만 오는 행사 종료일(YYYY-MM-DD). 행사가 없으면 null",
     )
     basis: str = Field(description="코드 템플릿 문구. 모델이 쓴 문장이 아니다")
     status: str
@@ -390,13 +419,33 @@ class SubmitEventBody(BaseModel):
         return self
 
 
+class RepeatIn(BaseModel):
+    """요일 반복 규칙 (#738). 문구(`label`)는 서버가 만들어 내므로 받지 않는다."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    weekdays: list[int] = Field(min_length=1, max_length=7, description="ISO 요일 (1=월 … 7=일)")
+    until: date = Field(description="마지막 날 (그날 포함). 첫 회차부터 90일 안")
+
+
 class SubmitEventRequest(BaseModel):
     event: SubmitEventBody
     items: list[DraftItemPayload] = Field(default=[], max_length=MAX_DRAFT_ITEMS)
     suggestion_ids: list[uuid.UUID] | None = Field(default=None, max_length=20)
     reminder: ReminderIn | None = Field(
         default=None,
-        description="제출한 보호자 본인의 알림. 다른 보호자에게는 걸리지 않는다. 기본값은 없음",
+        description=(
+            "제출한 보호자 본인의 알림. 다른 보호자에게는 걸리지 않는다. 기본값은 없음. "
+            "반복이면 회차마다 걸고, 울릴 시각이 이미 지난 회차는 건너뛴다"
+        ),
+    )
+    repeat: RepeatIn | None = Field(
+        default=None,
+        description=(
+            "요일 반복 (#738). 있으면 회차마다 일정 · 준비물 · 알림 행을 만든다. "
+            "event.starts_at 은 첫 회차이고, 그 시각(KST)을 모든 회차에 쓴다. "
+            "한 회차는 하루 안에서 끝난다"
+        ),
     )
 
     @model_validator(mode="after")
@@ -415,6 +464,30 @@ class EventItemOut(BaseModel):
     prepared_at: str | None = None
 
 
+class EventSeriesOut(BaseModel):
+    """일정이 속한 반복 묶음 (#738).
+
+    `label` 은 화면이 그대로 그린다 — 화면은 날짜를 계산하지 않는다.
+    """
+
+    id: str
+    weekdays: list[int] = Field(description="ISO 요일 (1=월 … 7=일)")
+    until: date
+    label: str = Field(examples=["12월 20일까지 매주 월, 수"])
+
+    @classmethod
+    def of(cls, series: Any | None) -> EventSeriesOut | None:
+        """`EventSeries` 행에서. 반복이 아니면(None) None."""
+        if series is None:
+            return None
+        return cls(
+            id=str(series.id),
+            weekdays=list(series.weekdays),
+            until=series.until,
+            label=repeat_label(series.weekdays, series.until),
+        )
+
+
 class CalendarEventOut(BaseModel):
     id: str
     title: str
@@ -431,7 +504,83 @@ class CalendarEventOut(BaseModel):
         default=None,
         description="요청한 보호자 본인의 알림. 다른 보호자의 알림은 싣지 않는다",
     )
+    # 🚨 반복이 아니면 키 자체를 싣지 않는다 (null 이 아니다) — 웹 `CalendarEvent.series?` 와
+    #    맞춘다. 타입에 None 을 넣지 않아 OpenAPI 에도 null 이 없다. 기본값 None 은 검증하지 않는다
+    series: EventSeriesOut = Field(  # type: ignore[assignment]
+        default=None,
+        exclude_if=lambda value: value is None,
+        description="반복 묶음의 회차이면 그 묶음. 반복이 아니면 키가 없다",
+    )
+
+    @field_validator("series", mode="wrap")
+    @classmethod
+    def _series_may_be_absent(cls, value: Any, handler: Any) -> EventSeriesOut | None:
+        return None if value is None else handler(value)
 
 
 class SubmitEventResponse(BaseModel):
-    event: CalendarEventOut
+    event: CalendarEventOut = Field(description="만든 일정. 반복이면 첫 회차")
+
+
+# ── 반복 묶음 고치기 (#738, 승인 게이트 ㉠) ────────────────────────────────
+
+
+class SeriesEventIn(BaseModel):
+    """묶음 고치기에서 바꾸는 값. 날짜는 없다 — 회차 날짜는 반복 규칙이 정한다. 시각은 KST."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(max_length=200)
+    starts_time: time | None = Field(description='"HH:MM" (KST). 종일이면 null')
+    ends_time: time | None = None
+    all_day: bool = False
+    event_type: EventTypeValue
+    category: EventCategoryValue
+
+    @model_validator(mode="after")
+    def _times(self) -> SeriesEventIn:
+        # 종일이면 시각은 보지 않는다 (서버가 버린다)
+        if self.all_day:
+            return self
+        if self.starts_time is None:
+            raise ValueError("시작 시각이 필요해요")
+        if self.ends_time is not None and self.ends_time <= self.starts_time:
+            raise ValueError("끝나는 시각이 시작보다 늦어야 해요")
+        return self
+
+
+class SeriesBeforeIn(SeriesEventIn):
+    """초안이 만들어질 때의 묶음 (오늘 이후 회차에서 가장 흔한 값).
+
+    서버는 이것과 달라진 칸만 고친다.
+    """
+
+    repeat: RepeatIn
+    items: list[str] = Field(default=[], max_length=MAX_DRAFT_ITEMS)
+
+
+class UpdateSeriesRequest(BaseModel):
+    event: SeriesEventIn
+    repeat: RepeatIn
+    before: SeriesBeforeIn | None = Field(
+        description="null 이면 기준을 모르는 것으로 보고 모든 칸을 오늘 이후 회차에 쓴다"
+    )
+    items: list[str] = Field(
+        default=[],
+        max_length=MAX_DRAFT_ITEMS,
+        description=(
+            "준비물 이름의 최종 목록. 회차마다 이름으로 맞추고, 같은 이름은 챙김 표시를 지킨다"
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _item_name_length(self) -> UpdateSeriesRequest:
+        if any(len(name) > MAX_ITEM_NAME for name in self.items):
+            msg = f"준비물 이름은 {MAX_ITEM_NAME}자까지예요"
+            raise ValueError(msg)
+        return self
+
+
+class UpdateSeriesResponse(BaseModel):
+    series: EventSeriesOut
+    occurrence_count: int = Field(description="고친 뒤 오늘 이후(오늘 포함) 회차 수")
