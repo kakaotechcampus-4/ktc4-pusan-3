@@ -4,8 +4,8 @@
 확인한다 — 연결된 보호자가 아니면 403 (deps/child.py).
 
 🚨 건강 관찰(`observation_health`)도 목록 · 상세 · 삭제에 나온다 (#764).
-   모양은 `ObservationHealthOut` — 주제 · 성향 · 기억 칸이 없다. 그래서 검색(`q`)은 원문만 보고,
-   기억에 묶이지 않는다.
+   모양은 `ObservationHealthOut` — 주제 · 성향 · 기억 칸이 없다. 검색(`q`)은 주제 대신 화면 줄
+   제목(약 이름 · 증상)을 본다. 기억에는 묶이지 않는다.
    §2 가 막는 것은 LLM 이 건강 정보를 만들거나 고치는 일이지 보호자가 직접 보고 지우는 일이 아니다.
    고치기(`/corrections`)는 건강 기록을 받지 않는다 — 이유는 corrections.py.
 🚨 `growth` 는 표 이름이 아니다. education · routine 두 표를 읽는다 (루트 CLAUDE.md §5).
@@ -89,7 +89,8 @@ async def list_observations(
     """deleted 가 아닌 관찰을 `observed_to` 최신순으로, `page` · `size` 쪽으로 나눠서.
 
     `date_from` · `date_to` 는 관찰 기간이 그 범위와 **겹치면** 포함한다(양 끝 날짜 포함).
-    `q` 는 원문(`raw_text`)과 주제(`subject`)의 부분 일치다 — 건강 기록은 주제가 없어 원문만 본다.
+    `q` 는 원문(`raw_text`)과 주제(`subject`)의 부분 일치다 — 건강 기록은 주제 대신 약 이름 ·
+    증상을 본다(화면 줄 제목과 같은 말).
     필터를 건 건수가 `total` 이다. 항목은 `kind` 로 모양이 갈린다 — `observation_health` 는
     `ObservationHealthOut` 이다.
     status 를 주면 그 상태만, 주지 않으면 세 상태 모두다.

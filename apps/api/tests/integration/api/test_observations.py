@@ -231,6 +231,31 @@ async def test_q_filters_by_raw_text_and_total_counts_only_matches(
     assert (paged["total"], paged["total_pages"], len(paged["items"])) == (2, 2, 1)
 
 
+async def test_q_finds_health_records_by_the_words_on_their_row_title(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    """건강 줄 제목은 증상 · 약 이름이다. 원문에 없는 그 말로도 찾는다 (#764 리뷰)."""
+    headers, parent_id = bearer
+    symptom = await _observe(session, cid, parent_id, "health", 0, raw_text="밤새 콜록거려요")
+    day = today_kst()
+    medication = await create_observation(
+        session,
+        domain="health",
+        child_id=cid,
+        source_writer=parent_id,
+        raw_text="저녁에 약 먹였어요",
+        observed_range=Range(day, day + timedelta(days=1), bounds="[)"),
+        fields={"confidence_source": ConfidenceSource.PARENT_DIRECT, "medication_given": "해열제"},
+    )
+    url = f"/api/v1/children/{cid}/observations"
+
+    by_symptom = (await db_client.get(url, params={"q": "기침"}, headers=headers)).json()
+    by_medicine = (await db_client.get(url, params={"q": "해열제"}, headers=headers)).json()
+
+    assert [i["id"] for i in by_symptom["items"]] == [str(symptom.id)]
+    assert [i["id"] for i in by_medicine["items"]] == [str(medication.id)]
+
+
 async def test_blank_q_means_no_search_and_wildcards_are_plain_characters(
     db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
 ):

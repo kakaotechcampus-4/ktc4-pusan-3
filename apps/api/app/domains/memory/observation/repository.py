@@ -238,7 +238,8 @@ async def page_observations(
     statuses 를 주면 status 대신 그 상태들을 합쳐서 본다. deleted 는 목록 필터로 열지 않는다.
     보호자에게 보이지 않는 상태다.
 
-    q 는 raw_text · subject 부분 일치(대소문자 무시)다. `%` · `_` · `\\` 는 글자 그대로 본다.
+    q 는 raw_text · subject 부분 일치(대소문자 무시)다. 건강 기록은 약 이름 · 증상이 subject 자리다.
+    `%` · `_` · `\\` 는 글자 그대로 본다.
     offset 은 앞에서 건너뛸 건수다 — 번호 쪽(page)을 쓰는 목록 API 가 준다. cursor 와 같이 줄 수
     없다(어느 쪽을 따를지 모호하다). 캘린더처럼 cursor 로 끝까지 도는 호출은 offset 을 안 준다.
     """
