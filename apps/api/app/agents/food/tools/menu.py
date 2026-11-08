@@ -9,7 +9,19 @@ from app.agents.common.food_safety import SafetyVerdict, filter_food_safety
 from app.agents.food.amount_rules import amount_of, is_amount_text
 from app.agents.food.context import FoodContext
 from app.agents.food.daycare_intent import is_question, is_uncertain, says_absence
-from app.agents.food.meal_dates import cut_from_longer_date_word, in_edit_range, resolve_meal_date
+from app.agents.food.daycare_lookup import (
+    LOOKUP_MAX_DAYS,
+    SLOT_LABEL,
+    cut_from_longer_lookup_span,
+    lookup_readouts,
+    resolve_lookup_range,
+)
+from app.agents.food.meal_dates import (
+    EDIT_PAST_DAYS,
+    cut_from_longer_date_word,
+    in_edit_range,
+    resolve_meal_date,
+)
 from app.agents.food.menu_resolver import MenuResolver
 from app.agents.food.readouts import (
     DAYCARE_ABSENT,
@@ -17,6 +29,7 @@ from app.agents.food.readouts import (
     DAYCARE_AMBIGUOUS,
     DAYCARE_AMOUNT_UPDATED,
     DAYCARE_ASK_SUBSTITUTE,
+    DAYCARE_LOOKUP_TOO_LONG,
     DAYCARE_NOT_FOUND,
     DAYCARE_OUT_OF_RANGE,
     DAYCARE_REPLACED_UNKNOWN,
@@ -27,6 +40,7 @@ from app.agents.food.readouts import (
 )
 from app.agents.food.result import ErrorCode, Operation, ToolResult, fail, ok
 from app.agents.food.schemas.daycare import (
+    DaycareLookupArgs,
     DeleteDaycareMealArgs,
     KeepDaycareMealArgs,
     UpdateDaycareMealArgs,
@@ -115,11 +129,6 @@ def _unknown_menu(menu_key: str, context: FoodContext) -> MenuCatalogRow:
 
 
 _RESOURCE = "daycare_meal"
-_SLOT_LABEL: dict[DaycareSlot, str] = {
-    "lunch": "점심",
-    "snack_am": "오전 간식",
-    "snack_pm": "오후 간식",
-}
 # 모델에게 돌려주는 거절 설명. 모델이 쓴 값은 싣지 않는다 — message 는 로그로 흘러간다
 _SPAN_MESSAGE = (
     "date_span · removed_spans · added_spans · amount_span 은 발화 원문에 있는 구간만 쓴다. "
@@ -127,6 +136,14 @@ _SPAN_MESSAGE = (
 )
 _DATE_WORD_MESSAGE = (
     "date_span 은 날짜 낱말을 자르지 않고 원문 그대로 쓴다. 예: 내일모레 를 내일 로 자르지 않는다."
+)
+_LOOKUP_SPAN_MESSAGE = (
+    "date_span 은 발화 원문에 있는 구간만 쓴다. 원문에 없는 말을 지어내거나 바꿔 쓰지 않는다. "
+    "날짜를 말하지 않았으면 비운다."
+)
+_LOOKUP_CUT_MESSAGE = (
+    "date_span 은 날짜 표현을 자르지 않고 원문 그대로 쓴다. 예: 내일모레 를 내일 로, "
+    "다음 주 화요일 을 화요일 로, 지난 화요일 을 화요일 로 자르지 않는다."
 )
 _ABSENCE_MESSAGE = (
     "delete_daycare_meal 은 어린이집 · 유치원을 빠지거나 그 끼니가 없었다는 말일 때만 부른다. "
@@ -224,7 +241,7 @@ async def update_daycare_meal(context: FoodContext, args: UpdateDaycareMealArgs)
             READOUTS.render(
                 DAYCARE_UPDATED,
                 date=_date_label(day),
-                slot=_SLOT_LABEL[row.meal_slot],
+                slot=SLOT_LABEL[row.meal_slot],
                 menu=" · ".join(added_names),
             ),
         )
@@ -232,7 +249,7 @@ async def update_daycare_meal(context: FoodContext, args: UpdateDaycareMealArgs)
         # 메뉴는 그대로고 양만 바꿨다 — 아무 문구도 없으면 보호자는 반영됐는지 알 수 없다
         readouts = (
             READOUTS.render(
-                DAYCARE_AMOUNT_UPDATED, date=_date_label(day), slot=_SLOT_LABEL[row.meal_slot]
+                DAYCARE_AMOUNT_UPDATED, date=_date_label(day), slot=SLOT_LABEL[row.meal_slot]
             ),
         )
     entries = state.safety
@@ -388,3 +405,47 @@ async def keep_daycare_meal(context: FoodContext, args: KeepDaycareMealArgs) -> 
     없는 말도 갱신 · 삭제로 몰린다. 아무것도 쓰지 않고 그대로 뒀다고 한다(`daycare.unchanged`).
     """
     return _stop(context, "update", DAYCARE_UNCHANGED)
+
+
+async def show_daycare_meal(context: FoodContext, args: DaycareLookupArgs) -> ToolResult:
+    """날짜로 급식 행을 찾아 보호자에게 코드 문구로 보여 준다. 읽기만 한다 — 아무것도 쓰지 않는다.
+
+    - `date_span` 은 발화 원문의 부분 문자열이어야 한다. 아니면, 날짜 표현을 잘라 준 것이면
+      (`cut_from_longer_lookup_span` — "다음 주 화요일" 의 "화요일") 모델에게 `INVALID_ARGS` 로
+      돌려준다. 없으면 오늘이다. 날짜는 코드가 푼다(`resolve_lookup_range`) — 풀 수 없으면 짐작하지
+      않고 되묻는다(`daycare.ambiguous`).
+    - 한 번에 `LOOKUP_MAX_DAYS`(7)일까지다. 넘으면 행을 읽지 않고 `daycare.lookup_too_long` 이다.
+      시작일이 과거 `EDIT_PAST_DAYS`(30)일 밖이면 보존 범위 밖이라 `daycare.out_of_range` 다. 앞날은
+      제한이 없다 — 급식표가 한 달 치 들어온다.
+    - 급식은 `daycare_meal` 만 본다. 알레르기 판정 · 영양 · 추천을 붙이지 않는다 — 어린이집이 아이의
+      알레르기를 관리하고, 메뉴마다 "괜찮아요" 를 붙이면 안전을 보장하는 말로 읽힌다.
+    - 화면 문구(`state.readouts`)는 코드 문구다. 못 풀거나 기간이 넘는 경우도 그 문구를 담고
+      성공으로 끝낸다 — 모델이 다시 부를 일이 아니라 보호자에게 되묻는 일이다(`_stop` 과 같다).
+    """
+    state = context.state
+    span = (args.date_span or "").strip()
+    if span and _outside_utterance(state.utterance, (span,)):
+        return fail("query", _RESOURCE, ErrorCode.INVALID_ARGS, _LOOKUP_SPAN_MESSAGE)
+    if span and cut_from_longer_lookup_span(state.utterance, span, today=context.today):
+        return fail("query", _RESOURCE, ErrorCode.INVALID_ARGS, _LOOKUP_CUT_MESSAGE)
+    try:
+        date_from, date_to = resolve_lookup_range(span, today=context.today)
+    except DateParseError:
+        return _stop(context, "query", DAYCARE_AMBIGUOUS)
+    if (date_to - date_from).days + 1 > LOOKUP_MAX_DAYS:
+        return _stop(context, "query", DAYCARE_LOOKUP_TOO_LONG)
+    if date_from < context.today - timedelta(days=EDIT_PAST_DAYS):
+        return _stop(context, "query", DAYCARE_OUT_OF_RANGE)
+
+    rows = await context.ports.daycare.rows(
+        child_id=context.child_id, date_from=date_from, date_to=date_to
+    )
+    state.readouts = lookup_readouts(rows, date_from=date_from, date_to=date_to)
+    return ok(
+        "query",
+        _RESOURCE,
+        status="shown",
+        date_from=date_from.isoformat(),
+        date_to=date_to.isoformat(),
+        rows=len(rows),
+    )
