@@ -521,6 +521,8 @@ async def test_등록된_약만_말해_저장한_것이_없으면_Memory_말은_
     assert not _of(events, MemoryNote)
     [checked] = _medication_results(events)
     assert checked.readouts[0].kind == "notice"
+    # 지울 말이라 다시 확인하지 않는다 (#811)
+    assert len(memory_llm.seen) == 2
 
 
 async def test_증상은_저장하고_약만_걸러지면_Memory_말은_그대로_낸다(events: list[Any]) -> None:
@@ -565,8 +567,8 @@ async def test_등록_약_거절과_다른_실패가_섞이면_Memory_말은_그
             ("create_observation_food", {"raw_text": "어제 점심에 이상한 걸 먹었어"}),
         ),
         _memory_says(asked),
-        # 관찰 조각이 있는데 저장이 0건이라 Memory 가 한 번 다시 확인한다 (#667). 등록 약 거절은
-        # 위험 물질 · 알레르기 막기(_blocked)가 아니어서 확인을 건너뛰지 않는다
+        # 관찰 조각이 있는데 저장이 0건이라 Memory 가 한 번 다시 확인한다 (#667). 점심 조각은
+        # 등록 약 거절이 아니라서 확인을 건너뛰지 않는다 (#811)
         _memory_says(asked),
     )
 
