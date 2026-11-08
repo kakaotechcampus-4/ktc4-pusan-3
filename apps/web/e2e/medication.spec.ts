@@ -1,6 +1,11 @@
 import type { Page } from "@playwright/test";
 
+import { MEDICATION_ENABLED } from "@/lib/store-policy";
+
 import { CHILD, expect, gateMarks, recordApi, test, writes } from "./fixtures";
+
+// 스토어 선언 때문에 꺼 둔 동안은 화면에 복약이 없다 — 꺼진 모습은 `medication-hidden.spec.ts` 가 건다.
+test.skip(!MEDICATION_ENABLED, "복약을 꺼 두었다 (lib/store-policy.ts)");
 
 /**
  * 복약 (#537) — 최상위 §2 가 화면에서 지켜지는가.

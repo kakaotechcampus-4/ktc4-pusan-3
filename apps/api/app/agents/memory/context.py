@@ -9,6 +9,7 @@ from datetime import date, datetime, tzinfo
 from uuid import UUID
 
 from app.agents.common.datetime_rules import today_of
+from app.agents.common.guardrail import Guardrail, StaticRuleGuardrail
 from app.agents.memory.drafts import DraftBook
 from app.agents.memory.store.ports import DeleteCandidates, MemoryStore
 
@@ -52,6 +53,9 @@ class AgentContext:
     found: dict[str, "FoundRows"] = field(default_factory=dict)
     # 이 run 이 남긴 삭제 제안. 한 run 에 많아야 하나다. pipeline 이 commit 뒤 카드로 내보낸다
     proposals: list["Proposal"] = field(default_factory=list)
+    # 위험 물질 검사 (#731). pipeline 의 안전 사전검사와 이 Agent 의 저장 게이트가 이 인스턴스
+    # 하나를 같이 쓴다 — 바꿔 끼우면 두 곳이 함께 바뀐다. 안 넘기면 코드 규칙으로 검사한다
+    guardrail: Guardrail = field(default_factory=StaticRuleGuardrail)
 
     @property
     def today(self) -> date:
