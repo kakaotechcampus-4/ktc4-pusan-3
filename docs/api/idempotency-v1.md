@@ -231,10 +231,10 @@ UNIQUE (parent_id, method, path, key)
 | `idempotency_key_reuse` | 422 | 같은 키인데 요청 지문이 다르다 | 신설 |
 | `idempotency_in_progress` | 409 | 같은 키가 아직 처리 중이다 | 신설 |
 | `already_exists` | 409 | `health_safety` `UNIQUE(child_id, type, label)` 재등록 | 신설 — 계약서 본문에 **"409" 만 있고 코드가 없다** |
-| `allergy_exists` | 409 | 괜찮았던 식품(`tolerated: true`)으로 저장하려는데 같은 식품이 알레르기 · 건강 기록(`active`)으로 있다 — 이름 사전으로 본다. `already_exists` 와 달리 **저장된 것이 아니다** | 서버 구현됨 |
+| `allergy_exists` | 409 | 괜찮았던 식품(`tolerated: true`)으로 저장하려는데 같은 식품이 알레르기 · 건강 기록(`active`)으로 있다 — 이름 사전으로 본다. `already_exists` 와 달리 **저장된 것이 아니다** | 서버 구현됨. 웹 `errors.ts` 에는 아직 없다 (괜찮았던 식품 화면 작업 때 더한다) |
 | `temporarily_unavailable` | 503 | 키 저장소(Redis)가 죽어 Idempotency-Key 를 받는 요청을 처리하지 않는다 (§3-6) | 서버 구현됨 (#671). 웹 `errors.ts` 에는 아직 없다 — 모르는 코드라 서버 문구가 그대로 뜬다 |
 
-넷 다 [`apps/web/src/lib/api/errors.ts`](../../apps/web/src/lib/api/errors.ts) 에 이미 들어가 있다(주석으로 제안임을 표시). **확정 전까지 서버와 다를 수 있는 부분이다.**
+위 넷(`idempotency_key_required` · `idempotency_key_reuse` · `idempotency_in_progress` · `already_exists`)은 [`apps/web/src/lib/api/errors.ts`](../../apps/web/src/lib/api/errors.ts) 에 이미 들어가 있다(주석으로 제안임을 표시). **확정 전까지 서버와 다를 수 있는 부분이다.**
 
 ---
 
