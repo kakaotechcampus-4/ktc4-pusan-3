@@ -14,6 +14,7 @@ from app.agents.activity.review import REQUESTED_REASON
 from app.agents.common.readout import Readout
 from app.agents.common.refs import EvidenceCitation, Ref
 from app.agents.common.suggestion import SuggestionDraft
+from app.agents.food.meal_review import GENERAL_REASON_REQUEST as FOOD_REQUESTED_REASON
 from app.agents.suggestion_save import SuggestionBatch
 from app.api import agent_ports, quota
 from app.api.runs import suggestion_retry
@@ -608,6 +609,34 @@ async def test_요청_기반_일반_추천은_문서_근거_없이도_05_에_선
     assert general["basis"] == REQUESTED_REASON
     assert general["evidence"] == []
     assert data["scarcity"] == {"count": 0, "question": None}
+
+
+async def test_Food_요청_기반_일반_추천은_메뉴_근거_없이도_05_에_선다(
+    db_client, bearer, cid, agents
+):
+    """보호자가 재료를 정해 물어 레시피북에 없는 메뉴를 냈다 — 저장부터 05 응답까지 문서 · 메뉴
+    근거가 비어도 기준 문구만으로 선다 (#740)."""
+    plan, _ = agents
+    headers, _ = bearer
+    plan["food"] = (
+        "drafts",
+        [
+            SuggestionDraft(
+                agent="food",
+                kind="general",
+                content="파프리카볶음",
+                reason=FOOD_REQUESTED_REASON,
+                requested=True,
+            )
+        ],
+    )
+
+    data = (await _post(db_client, cid, headers, agents=["food"])).json()
+
+    [general] = data["general"]
+    assert general["content"] == "파프리카볶음"
+    assert general["basis"] == "요청하신 조건을 바탕으로 골랐어요."
+    assert general["evidence"] == []
 
 
 async def test_요청_기반_일반_추천은_같은_run_으로_다시_열어도_그대로다(

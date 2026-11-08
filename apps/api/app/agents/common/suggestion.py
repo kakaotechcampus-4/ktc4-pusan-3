@@ -81,6 +81,8 @@ class SuggestionDraft:
 
 
 # 보호자가 정한 요청에 맞춘 일반 추천으로 문서 행 근거를 면제받을 수 있는 Agent (루트 §2).
+# Food 는 보호자가 재료 · 요리 종류를 정해 물었을 때만이다(#740) — 막연한 요청은 지금처럼 메뉴 ·
+# 문서 행이 근거다. 조건을 보호자 말에서 확인하는 것은 Food 의 `said_in_food_request` 다.
 # 저장 검사(`domains/suggestion/repository._REQUESTED_AGENTS`)가 같은 값을 따로 갖는다 —
 # 레이어가 달라 서로 import 하지 않고 테스트가 맞춘다.
 # 표는 Agent 이름 단위지만 Growth 는 교육 경로(`review_learning`)만 `requested` 를 넘긴다. 저장 행에
@@ -88,7 +90,7 @@ class SuggestionDraft:
 # 않고(`general_reason=None`), 도서는 넘기지 않는다. 지키는 테스트:
 # `tests/unit/agents/growth/test_growth_books.py` 의
 # `test_run_이_요청_기반으로_서도_도서_일반_추천은_요청_기반이_아니다`
-REQUESTED_AGENTS: frozenset[str] = frozenset({"activity", "growth"})
+REQUESTED_AGENTS: frozenset[str] = frozenset({"activity", "growth", "food"})
 
 
 def build(
@@ -114,8 +116,9 @@ def build(
     낸다(#442). Growth 도서는 고른 책(정보나루 서지 행)을 넘긴다. 넘기지 않는 Agent
     (Activity · Growth 교육)는 지금처럼 문서 행이 있어야 한다.
 
-    `requested` 는 보호자가 이번 요청에서 놀이 · 주제를 정해 물었다는 뜻이다("물놀이 뭐 하지?",
-    "영어 어떻게 가르쳐?"). 아이 기록 근거가 없으면 그 요청에 맞춰 만든 일반 추천이라, 문서 행
+    `requested` 는 보호자가 이번 요청에서 놀이 · 주제 · 재료를 정해 물었다는 뜻이다("물놀이 뭐
+    하지?", "영어 어떻게 가르쳐?", "파프리카 들어간 반찬"). 아이 기록 근거가 없으면 그 요청에 맞춰
+    만든 일반 추천이라, 문서 행
     근거가 없어도 된다 — 기준이 이번 요청이다. 문구(`general_reason`)가 그렇게 밝힌다. 막연한
     요청("뭐 하고 놀까?")은 지금처럼 문서 행이 있어야 한다. 아이 기록이 있으면 요청과 상관없이
     개인화다. 이 면제는 `REQUESTED_AGENTS` 만 받는다.
@@ -140,8 +143,10 @@ def build(
                 f"{agent}: 아이 기록 근거가 0행인데 일반 추천 문구(general_reason)가 없다"
             )
         basis = (*(item for item in citations if not item.ref.is_child_record), *general_basis)
-        # 요청 기반으로 문서 근거를 면제하는 Agent 는 `REQUESTED_AGENTS` 뿐이다. Food 는 후보가
-        # 레시피북에서만 나와야 해서, 면제하면 책에 없는 메뉴가 나간다 (#597 리뷰)
+        # 요청 기반으로 문서 근거를 면제하는 Agent 는 `REQUESTED_AGENTS` 뿐이다. Food 는 보호자가
+        # 재료 · 요리 종류를 정해 물었고 그 말이 확인됐을 때만 넘긴다 — 책에 없는 메뉴는 이
+        # 경로로만 나간다
+        # (#597 리뷰의 "Food 는 레시피북에서만" 을 #740 이 이 조건 안에서 푼다)
         requested = requested and agent in REQUESTED_AGENTS
         if not basis and not requested:
             # 일반 추천은 문서 행(Food 는 메뉴 행도)이 근거다 (루트 §2). 아이 기록도 문서도 메뉴도

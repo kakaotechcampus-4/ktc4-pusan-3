@@ -32,7 +32,13 @@ from app.agents.common.tool_loop import run_tool_loop
 from app.agents.food.basis_notice import basis_notices
 from app.agents.food.context import FoodContext, MealPick, build_gate, require_safety
 from app.agents.food.food_check import answer_food_check, request_notices
-from app.agents.food.meal_pool import PoolItem, build_pool, remember_sample, sample_pool
+from app.agents.food.meal_pool import (
+    PoolItem,
+    build_pool,
+    remember_sample,
+    requested_rows,
+    sample_pool,
+)
 from app.agents.food.prompt import (
     build_system_prompt,
     recall_message,
@@ -178,11 +184,15 @@ async def _recommend(task: DomainTask, context: FoodContext, llm: LLMClient) -> 
     )
 
     pool = await build_pool(context)
+    # 풀의 행과 조건 맞는 레시피를 run state 에 둔다 — 생성 후보 검사(풀 이름 · 자리 수)가 쓴다
+    context.state.pool_rows = {item.row.menu_key: item.row for item in pool}
+    matched = requested_rows(pool, task.request_texts)
+    context.state.requested_keys = frozenset(item.row.menu_key for item in matched)
     if not pool:
         # 안전 · 연령 · 최근 추천으로 다 빠졌다. 모델 없이 추천 없는 안내만 낸다 — 실패가 아니다
         return _recommendation(task_type, (), context, model_calls=0, followup=(), notices=notices)
 
-    sample = sample_pool(pool, seed=f"{context.run_id}:sample")
+    sample = sample_pool(pool, seed=f"{context.run_id}:sample", first=matched)
     remember_sample(context, sample)
     examples = await search_food_doc(
         context.ports.docs,
@@ -199,7 +209,12 @@ async def _recommend(task: DomainTask, context: FoodContext, llm: LLMClient) -> 
         {"role": "system", "content": build_system_prompt(context, task_type, examples)},
         {
             "role": "user",
-            "content": request_message(task.request_texts, _rows(sample), records=records),
+            "content": request_message(
+                task.request_texts,
+                _rows(sample),
+                records=records,
+                requested=context.state.requested_keys,
+            ),
         },
     ]
     allowed = tools_for(task_type, gate)
@@ -358,13 +373,20 @@ async def _recall(
     rest = tuple(item for item in pool if item.row.menu_key not in {*blocked, *chosen})
     if not rest:
         return None
-    sample = sample_pool(rest, seed=f"{context.run_id}:recall")
+    sample = sample_pool(
+        rest,
+        seed=f"{context.run_id}:recall",
+        first=requested_rows(rest, task.request_texts),
+    )
     remember_sample(context, sample, recalled=True)
     messages.append(
         {
             "role": "user",
             "content": recall_message(
-                task.request_texts, avoid=[*chosen, *sorted(blocked)], sample=_rows(sample)
+                task.request_texts,
+                avoid=[*chosen, *sorted(blocked)],
+                sample=_rows(sample),
+                requested=context.state.requested_keys,
             ),
         }
     )
