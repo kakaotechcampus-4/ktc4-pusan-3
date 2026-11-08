@@ -21,6 +21,13 @@ dependencies = [
     "redis[hiredis]>=5.0.0",
     # FCM 발송(app/integrations/fcm.py)의 서비스 계정 JWT 서명. 토큰 교환 · 발송은 httpx 로 한다.
     "google-auth>=2.40",
+    "pypdf>=6.21.4",
+    "olefile>=0.47",
+    "pypdfium2>=5.14.0",
+    "pillow>=13.0.0",
+    "python-multipart>=0.0.33",
+    "pillow-heif>=1.8.1",
+    "boto3>=1.43.123",
 ]
 
 [dependency-groups]
@@ -29,6 +36,7 @@ dev = [
     # 약관 원고(마크다운) → 정본 HTML. 새 약관 버전을 만들 때 scripts/render_policy_html.py 가
     # 한 번 쓰고, 결과 HTML 을 저장소에 커밋한다. 서버는 저장된 HTML 을 내줄 뿐이라 배포에 필요 없다.
     "markdown-it-py>=4.2.0",
+    "moto[s3]>=5.2.5",
     "pytest>=8.3.0",
     "pytest-asyncio>=0.24.0",
     "ruff>=0.8.0",

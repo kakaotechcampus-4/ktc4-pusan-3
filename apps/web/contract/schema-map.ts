@@ -214,11 +214,24 @@ export const SCHEMA_MAP: Record<string, MapValue> = {
         "웹 타입은 04 SSE 초안(app/core/event_draft.py)과 같이 쓴다. 이 응답은 create 초안만이라 서버가 싣지 않고, 화면은 없으면 비교를 안 그린다 (event-draft-card.tsx)",
       needs_review: "웹이 제안한 칸이고 서버는 아직 보내지 않는다 (types.ts 의 EventDraft 주석)",
       review_reason: "needs_review 와 같다",
+      repeat:
+        "04 SSE 반복 초안(#738 · core/event_draft.py 의 CreateRepeatEventDraft)에만 있다. 이 응답은 제안 초안이라 반복이 없다",
     },
   },
   EventBodyOut: "EventDraftFields",
   DraftItemPayload: "EventDraftItem",
   SubmitEventRequest: "SubmitEventBody",
+  PhotoEntry: "PhotoEntry",
+  PhotoEntryDetail: "PhotoEntryDetail",
+  PhotoUploadTicket: "PhotoUploadTicket",
+  PhotoCommitRequest: "PhotoCommitRequest",
+  PhotoCommitResponse: {
+    web: "PhotoCommitResponse",
+    allow: {
+      observations:
+        "서버는 빈 배열만 보낸다 (관찰을 만들지 않는다). 화면도 이 칸을 읽지 않는다 (#151)",
+    },
+  },
   SubmitEventBody: {
     web: "EventDraftFields",
     allow: {
@@ -243,7 +256,13 @@ export const SCHEMA_MAP: Record<string, MapValue> = {
   CalendarMonthResponse: "CalendarMonthResponse",
   CalendarDayOut: "CalendarDay",
   CalendarDayResponse: "CalendarDayResponse",
-  CalendarEventOut: "CalendarEvent",
+  CalendarEventOut: {
+    web: "CalendarEvent",
+    allow: {
+      series:
+        "반복 묶음의 회차 (#738). BE 가 캘린더 응답에 싣기 전이라 서버에 없다 — 실으면 이 줄을 뺀다 (types.ts 의 CalendarEvent.series)",
+    },
+  },
   EventItemOut: "EventItem",
   ReminderOut: "Reminder",
   ReminderLead: "ReminderLead",
@@ -276,10 +295,21 @@ export const SCHEMA_MAP: Record<string, MapValue> = {
  * FE 는 그 이슈에서 웹 타입을 붙이고 이 줄을 뺀다 (docs/web/mock-and-tests-v1.md §2 · #560 리뷰).
  */
 export const NOT_MAPPED: Record<string, string> = {
+  PhotoUploadResponse: "웹은 `{ run_id: string }` 을 함수 반환형에 바로 적는다 (uploadPhoto)",
+  Body_upload_photo_api_v1_children__cid__photos_post:
+    "multipart 본문. 웹은 photoFormData 가 FormData 로 만든다",
   HTTPValidationError:
     "FastAPI 가 자동으로 붙이는 422 모양. 서버는 실제로 ErrorEnvelope 로 바꿔 보낸다 (app/api/errors.py · #438)",
   ValidationError: "HTTPValidationError 안쪽",
   LinkedAffinityOut: "웹이 ObservationOut.affinity 를 읽지 않는다",
   AnswerResponse: "05 가 되묻기 답의 응답 본문을 읽지 않는다",
   SeenTours: "웹 미사용 — FE 후속 (#696 머지 뒤 lib/tour/seen.ts 를 서버 호출로 바꿀 때)",
+  // 요일 반복 (#738). 웹 타입은 #746 이 만든다 — 그 PR 이 SCHEMA_MAP 으로 옮긴다
+  // (EventSeriesRef · RepeatRequest · SeriesDraftFields · UpdateSeriesBody.before · UpdateSeriesBody)
+  EventSeriesOut: "웹 타입이 #746 에서 생긴다 (EventSeriesRef)",
+  RepeatIn: "웹 타입이 #746 에서 생긴다 (RepeatRequest)",
+  SeriesEventIn: "웹 타입이 #746 에서 생긴다 (SeriesDraftFields)",
+  SeriesBeforeIn: "웹 타입이 #746 에서 생긴다 (UpdateSeriesBody.before)",
+  UpdateSeriesRequest: "웹 타입이 #746 에서 생긴다 (UpdateSeriesBody)",
+  UpdateSeriesResponse: "웹 타입이 #746 에서 생긴다. 화면은 성공 여부만 쓴다",
 };

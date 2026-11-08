@@ -8,7 +8,8 @@ DB 가 보장하는 것:
   - 같은 관찰에 보류 기록은 하나다 (UNIQUE(domain, observation_id))
 
 코드가 보장하는 것:
-  - 관찰이 soft delete 되면 보류 기록도 삭제된다 (delete_observation)
+  - 관찰이 soft delete 되면 보류 기록도 삭제된다 (store 의 delete_observation —
+    tests/integration/test_observation_delete_paths.py 가 본다, #736)
 
 세는 규칙은 연결 단계의 단위 테스트(tests/unit/agents/curator/)가 본다.
 """
@@ -29,9 +30,7 @@ from app.domains.memory.observation.models import (
     ObservationEducation,
     ObservationFood,
     ObservationLinkHold,
-    ObservationStatus,
 )
-from app.domains.memory.observation.repository import delete_observation
 
 
 @pytest.fixture
@@ -158,103 +157,6 @@ async def test_domain은_food_activity_education만(session, family, observation
             await session.flush()
 
 
-# ---------------------------------------------------------------------------
-# 코드 보장 — soft delete 시 hold 정리
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize("domain", ["food", "activity", "education"])
-async def test_관찰_soft_delete시_보류_기록도_삭제된다(session, family, observations, domain):
-    """delete_observation() 이 hold 행을 코드로 삭제한다."""
-    _, child = family
-    food = observations[domain]
-
-    session.add(
-        ObservationLinkHold(
-            child_id=child.id,
-            domain=domain,
-            observation_id=food.id,
-            uncertain_count=1,
-            subject_hash="h",
-        )
-    )
-    await session.flush()
-
-    deleted = await delete_observation(
-        session,
-        domain=domain,
-        child_id=child.id,
-        observation_id=food.id,
-    )
-
-    assert deleted is True
-    await session.refresh(food)
-    assert food.status == ObservationStatus.DELETED
-
-    hold = await session.scalar(
-        select(ObservationLinkHold).where(
-            ObservationLinkHold.observation_id == food.id,
-        )
-    )
-    assert hold is None
-
-
-# ---------------------------------------------------------------------------
-# 다른 도메인 관찰의 hold 는 영향 없음
-# ---------------------------------------------------------------------------
-
-
-async def test_다른_도메인_hold는_영향받지_않는다(session, family, observations):
-    _, child = family
-    food, activity = observations["food"], observations["activity"]
-
-    session.add(
-        ObservationLinkHold(
-            child_id=child.id,
-            domain="food",
-            observation_id=food.id,
-            uncertain_count=1,
-            subject_hash="h",
-        )
-    )
-    session.add(
-        ObservationLinkHold(
-            child_id=child.id,
-            domain="activity",
-            observation_id=activity.id,
-            uncertain_count=2,
-            subject_hash="h2",
-        )
-    )
-    await session.flush()
-
-    await delete_observation(
-        session,
-        domain="food",
-        child_id=child.id,
-        observation_id=food.id,
-    )
-
-    # food hold 삭제됨
-    food_hold = await session.scalar(
-        select(ObservationLinkHold).where(
-            ObservationLinkHold.domain == "food",
-            ObservationLinkHold.observation_id == food.id,
-        )
-    )
-    assert food_hold is None
-
-    # activity hold 는 그대로
-    activity_hold = await session.scalar(
-        select(ObservationLinkHold).where(
-            ObservationLinkHold.domain == "activity",
-            ObservationLinkHold.observation_id == activity.id,
-        )
-    )
-    assert activity_hold is not None
-    assert activity_hold.uncertain_count == 2
-
-
 async def test_존재하지_않는_아이의_hold는_저장할_수_없다(session):
     with pytest.raises(IntegrityError):
         async with session.begin_nested():
@@ -268,38 +170,3 @@ async def test_존재하지_않는_아이의_hold는_저장할_수_없다(sessio
                 )
             )
             await session.flush()
-
-
-async def test_다른_아이로_삭제하면_관찰과_hold가_유지된다(session, family, observations):
-    _, child = family
-    food = observations["food"]
-    session.add(
-        ObservationLinkHold(
-            child_id=child.id,
-            domain="food",
-            observation_id=food.id,
-            uncertain_count=1,
-            subject_hash="h",
-        )
-    )
-    await session.flush()
-
-    deleted = await delete_observation(
-        session,
-        domain="food",
-        child_id=uuid4(),
-        observation_id=food.id,
-    )
-
-    assert deleted is False
-    await session.refresh(food)
-    assert food.status == ObservationStatus.ACTIVE
-    assert (
-        await session.scalar(
-            select(ObservationLinkHold.id).where(
-                ObservationLinkHold.domain == "food",
-                ObservationLinkHold.observation_id == food.id,
-            )
-        )
-        is not None
-    )

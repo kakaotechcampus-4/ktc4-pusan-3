@@ -272,6 +272,11 @@ function EventCard({
       <p className="text-caption text-ink-subtle mt-1">
         {formatEventTime(event.starts_at, event.all_day)}
       </p>
+      {/* 요일 반복 묶음의 회차면 그 반복 (#738). 🚨 서버 문구 그대로다 — 요일 · 끝 날짜로 화면이 다시 만들지 않는다.
+          준비물 체크와 알림은 이 회차 하나의 것이라, 반복이라는 사실을 시각 바로 아래에 둬 범위를 헷갈리지 않게 한다. */}
+      {event.series ? (
+        <p className="text-caption text-ink-subtle mt-0.5">{event.series.label}</p>
+      ) : null}
 
       <MyReminder childId={childId} date={date} event={event} titleId={titleId} />
 

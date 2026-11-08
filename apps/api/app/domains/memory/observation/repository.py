@@ -8,7 +8,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import delete, func, select, text, update
+from sqlalchemy import func, select, text, update
 from sqlalchemy.dialects.postgresql import Range
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -423,7 +423,8 @@ def _not_deleted(model: type[Any]) -> Any:
 
 # -- 필드 검증 --
 
-# status 는 set_observation_status(교정)와 delete_observation(삭제)만 쓴다
+# status 는 set_observation_status(교정)와 store 의 delete_observation(삭제)만 쓴다.
+# 지우기는 store 하나다 — 아이 잠금 · 검색 벡터 비우기 · 기억 재계산이 같이 가야 한다 (#736)
 _MANAGED_FIELDS = frozenset(
     {
         "id",
@@ -536,40 +537,6 @@ async def update_observation(
         .returning(model)
     )
     return _to_record(resolved, row) if row is not None else None
-
-
-async def delete_observation(
-    session: AsyncSession,
-    *,
-    domain: ObservationDomain | str,
-    child_id: uuid.UUID,
-    observation_id: uuid.UUID,
-) -> bool:
-    """행과 원문은 남기고 status 만 deleted 로 바꾼다.
-
-    이미 지운 행은 대상이 아니라 False 다.
-    soft delete 라 FK CASCADE 가 발동하지 않으므로, Curator 보류 기록(observation_link_hold)을
-    코드에서 직접 지운다.
-    """
-    resolved = ObservationDomain(domain)
-    model = _MODEL_BY_DOMAIN[resolved]
-    result = await session.scalar(
-        update(model)
-        .where(model.id == observation_id, model.child_id == child_id, _not_deleted(model))
-        .values(status=ObservationStatus.DELETED)
-        .returning(model.id)
-    )
-    if result is not None:
-        # Curator 보류 기록 정리 — soft delete 에서 CASCADE 가 안 먹히므로 코드가 지운다
-        from app.domains.memory.observation.models import ObservationLinkHold
-
-        await session.execute(
-            delete(ObservationLinkHold).where(
-                ObservationLinkHold.domain == resolved.value,
-                ObservationLinkHold.observation_id == observation_id,
-            )
-        )
-    return result is not None
 
 
 _COUNT_ACTIVE_SQL = text(

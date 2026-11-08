@@ -24,9 +24,9 @@ Owner: 고태영 (프론트 리드)
 | `lib/auth/` · `stores/session.ts` · `/auth/*` · 01 · 02 · 동의(`lib/consent.ts`) · 위치(`lib/location.ts` · `lib/native/location.ts`) | [`auth-consent-v1.md`](../../docs/web/auth-consent-v1.md) |
 | `lib/api/` · 뮤테이션 · 에러 코드 처리 · `error.tsx` · `AppErrorBoundary` | [`api-client-v1.md`](../../docs/web/api-client-v1.md) |
 | 화면 투어(`components/screen-tour.tsx` · `lib/tour/` · `stores/tour.ts`) · 화면의 `data-tour` · ? 버튼 | [`screen-tour-v1.md`](../../docs/web/screen-tour-v1.md) |
-| `mocks/` · `*.test.ts` · `e2e/` · `contract/` | [`mock-and-tests-v1.md`](../../docs/web/mock-and-tests-v1.md) |
+| `mocks/` · `*.test.ts` · `e2e/` · `e2e-live/` · `playwright.live.config.ts` · `contract/` | [`mock-and-tests-v1.md`](../../docs/web/mock-and-tests-v1.md) |
 | 복약 초안 카드 · 11-3 복약 · `stores/medication-draft.ts` · `lib/medication.ts` (#537) | [`medication-v1.md`](../../docs/web/medication-v1.md) |
-| `package.json` 의 버전 · `eslint.config.mjs` · `ci-web.yml` · `Dockerfile` · 배포 | [`toolchain-deploy-v1.md`](../../docs/web/toolchain-deploy-v1.md) |
+| `package.json` 의 버전 · `eslint.config.mjs` · `ci-web.yml` · `ci-e2e-live.yml` · `Dockerfile` · 배포 | [`toolchain-deploy-v1.md`](../../docs/web/toolchain-deploy-v1.md) |
 | 웹 푸시 — `lib/push/` · `lib/native/push.ts`(앱 셸 창구) · `public/push-sw.js` · `WebPushBridge` · `ReminderField` 의 권한 묻기 · `NEXT_PUBLIC_FIREBASE_*` | [`web-push-v1.md`](../../docs/web/web-push-v1.md) |
 
 🚨 **같은 규칙이 이 파일의 요약과 `docs/web/` 원문 두 곳에 있으면 원문이 정본이다.** 규칙을 바꾸면 같은 PR 에서 둘 다 고친다.
@@ -70,7 +70,7 @@ Owner: 고태영 (프론트 리드)
 - `mocks/` = MSW 목 서버, **개발 환경 전용** (§7).
   🚨 `mocks/native-bridge.ts` 는 **MSW 가 아니다** — 최근 사진은 API 가 아니라 셸이 꽂는 값이라
   서비스 워커가 가로챌 대상이 없다. 스위치만 목과 같은 것을 쓴다
-- ⚠️ `lib/features.ts` = **실서버에 아직 없는 기능의 진입점** (08 사진으로 적기 · 11-2 검사지 · #409. 11-3 복약은 #713 에서 풀었다). 목이 뜨는 환경에서만 버튼이 선다. 서버에 엔드포인트가 생기면 그 항목을 지우고 호출부 조건을 걷어낸다
+- ⚠️ `lib/features.ts` = **실서버에 아직 없는 기능의 진입점** (11-2 검사지 · #409. 11-3 복약은 #713, 08 사진으로 적기는 #723 에서 풀었다). 목이 뜨는 환경에서만 버튼이 선다. 서버에 엔드포인트가 생기면 그 항목을 지우고 호출부 조건을 걷어낸다
 - ⚠️ `lib/store-policy.ts` = **스토어 정책 때문에 숨긴 기능** (11-3 복약 · 2026-11-07). 서버에는 있다. 🚨 켜기 전에 Google Play 건강 앱 선언부터 고친다 — 웹뷰라 웹 배포만으로 심사 없이 켜진다
 - `lib/native/` = **네이티브 셸이 꽂아 주는 것의 웹 쪽 약속.** 셸 구현은 `apps/mobile` 이다
 - `stores/` = Zustand, **클라이언트 상태만.** 서버 상태는 TanStack Query (§3).
@@ -191,6 +191,7 @@ Owner: 고태영 (프론트 리드)
 ### API 호출
 
 - `fetch` 를 직접 부르지 않는다. **`src/lib/api` 의 `api.get/post/...` 만** 쓴다 — Bearer 토큰·에러 봉투·Idempotency 처리가 거기 한 곳에 있다.
+  - 예외 하나: S3 업로드(`operations.ts` 의 `putPhotoToS3`)는 `fetch` 를 직접 쓴다. 우리 서버가 아니라서 Bearer 토큰 · 쿠키가 S3 로 새면 안 되기 때문이다. 시간 제한을 걸어 둔다.
   예외(`sendClientError`)와 그 이유는 [`api-client-v1.md`](../../docs/web/api-client-v1.md) §1
 - 토큰은 `useSessionStore.signIn()` 이 `setAuthToken()` 으로 클라이언트에 밀어 넣는다. 컴포넌트에서 헤더를 직접 만들지 않는다.
 
@@ -199,6 +200,8 @@ Owner: 고태영 (프론트 리드)
 `POST /children/{cid}/inputs` · `/onboarding` · `/photos` · `/health-safety`(게이트 ㉡ · 고치기 `PATCH` 포함) · **초안 제출**(게이트 ㉠ · `POST`/`PATCH` events).
 🚨 **복약 초안 제출**(`POST`/`PATCH` medications · #537)도 게이트 ㉡ 안의 메서드다 — 게이트를 늘린 것이 아니다 ([`medication-v1.md`](../../docs/web/medication-v1.md)).
 🚨 **대화의 삭제 확정**(`POST …/delete-proposals/{pid}/confirm` · #535)도 같은 표에 있다 ([`chat-run-v1.md`](../../docs/web/chat-run-v1.md) §5).
+🚨 **07 기록 지우기**(`DELETE …/observations/{kind}/{oid}` · #736)도 같은 표에 있다 — 게이트가 아니라 확인 창이다 ([`screen-rules-v1.md`](../../docs/web/screen-rules-v1.md) §3).
+🚨 **반복 묶음 고치기**(`PATCH` event-series · #738)도 게이트 ㉠ 안의 메서드다 ([`event-draft-ui-v1.md`](../../docs/web/event-draft-ui-v1.md) §3-9).
 메서드가 둘인 이유와 각 줄의 규칙 원문은 [`api-client-v1.md`](../../docs/web/api-client-v1.md) §2.
 
 **`lib/api/operations.ts` 의 전용 함수로만 부른다.** 키가 필수 인자라 빠뜨리면 `tsc` 가 잡는다.
@@ -337,6 +340,7 @@ run 상태는 서버 상태도 클라이언트 상태도 아니다 (구독형). 
 pnpm test          # vitest run — 목 계약 · lib · 스토어 · 게이트 정적 검사
 pnpm test:e2e      # Playwright — 목 서버로 띄운 화면에서 화면 규칙 (make web-e2e)
 pnpm test:contract # 웹 API 타입 ↔ 서버 OpenAPI (make web-contract 가 서버 계약 덤프부터 돈다)
+pnpm test:e2e-live # Playwright — 실제 api + DB 위의 행복 경로 (make web-e2e-live · make db-up 먼저)
 ```
 
 무엇을 거는지와 규칙 원문은 [`mock-and-tests-v1.md`](../../docs/web/mock-and-tests-v1.md) §2 다.
@@ -344,7 +348,8 @@ pnpm test:contract # 웹 API 타입 ↔ 서버 OpenAPI (make web-contract 가 �
 - 🚨 **테스트 전용 핸들러를 만들지 않는다.** `src/mocks/server.ts` 는 브라우저 워커와 같은 핸들러를 쓴다
 - 🚨 **목에 프로세스 수명만큼 사는 상태를 더하면 리셋 함수를 `src/test/setup.ts` 의 `afterEach` 에 건다**
 - 🚨 **`src/test/approval-gates.test.ts` 가 깨지면** 목록을 고치기 전에 **게이트를 늘리는 변경인지**부터 본다 (최상위 §2)
-- e2e 는 `next dev` 로만 돈다 · `page.route` 로 응답을 못 바꾼다 (실패를 만들려면 목 시나리오를 더한다)
+- 목 e2e 는 `next dev` 로만 돈다 · `page.route` 로 응답을 못 바꾼다 (실패를 만들려면 목 시나리오를 더한다)
+- 🚨 **실서버 e2e(`e2e-live/`)는 목 e2e 를 대신하지 않는다.** 화면 규칙과 예외는 목에, 저장하고 다시 읽는 행복 경로만 실서버에 건다
 - 🚨 **픽스처·테스트 문자열에 실제 사용자 발화나 아이 정보를 넣지 않는다**
 
 ---

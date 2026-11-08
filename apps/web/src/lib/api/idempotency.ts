@@ -82,9 +82,9 @@ export function createIdempotencyKeyHolder(): IdempotencyKeyHolder {
 /* ── 되돌릴 수 없는 엔드포인트 ────────────────────────────────────────── */
 
 /**
- * 계약서 §01 의 5곳과 대화의 삭제 확정(#535). 승인 게이트 2곳(㉠ 초안 제출 · ㉡ healthSafety · 복약 제출)이 여기 포함된다.
- * 🚨 초안 제출은 create(`submitEvent`)와 update(`updateEvent`) **두 줄**이다 — 한 곳의 두 갈래라
- *    게이트가 늘어난 것이 아니다 (9/21 에 op 별로 엔드포인트를 갈랐다).
+ * 계약서 §01 의 5곳과 대화의 삭제 확정(#535), 기록 탭의 기록 지우기(#736). 승인 게이트 2곳(㉠ 초안 제출 · ㉡ healthSafety · 복약 제출)이 여기 포함된다.
+ * 🚨 초안 제출은 create(`submitEvent`)와 update(`updateEvent`), 반복 묶음 고치기(`updateEventSeries` · #738)
+ *    **세 줄**이다 — 한 곳의 갈래라 게이트가 늘어난 것이 아니다 (9/21 에 op 별로 엔드포인트를 갈랐다).
  *    알레르기 · 건강 기록도 같다 — 등록(`healthSafety`)과 고치기(`updateHealthSafety`) 두 줄이 게이트 ㉡ 하나다.
  *    🚨 **복약 제출(`submitMedication` · `updateMedication`)도 게이트 ㉡ 안의 메서드다** (#537) — 건강 기록을
  *    확정하는 같은 게이트에 메서드가 는 것이지 세 번째 게이트가 아니다 (최상위 §2 — 딱 2곳).
@@ -123,6 +123,15 @@ export const idempotentPath = {
    */
   updateEvent: (childId: string, eventId: string) => `/children/${childId}/events/${eventId}`,
   /**
+   * 🚨 승인 게이트 ㉠ — 반복 묶음 고치기 반영 (#738). 오늘 이후 회차 전부를 한 번에 고친다 — 같은 게이트의
+   *    세 번째 메서드지 게이트가 는 것이 아니다. 새 준비물 이름이 회차마다 행으로 들어가서 `updateEvent` 와 같은
+   *    이유로 키를 단다.
+   * ⚠️ **경로는 잠정이다.** 서버 PR 은 아직이고(#744 는 `PATCH /event-series/{sid}` 로 적었다), 일정 수정과 같이
+   *    아이 스코프 아래에 둔다 — `series_id` 하나로는 남의 아이 묶음인지 가릴 수 없다 (#284 · #316).
+   */
+  updateEventSeries: (childId: string, seriesId: string) =>
+    `/children/${childId}/event-series/${seriesId}`,
+  /**
    * 🚨 승인 게이트 ㉡ — 복약 초안 **제출** (#537). 코스 한 건과 기간만큼의 회차 행을 한 번에 만든다 —
    *    두 번 나가면 같은 약이 두 코스가 되고 알림이 두 번 울린다.
    * 경로는 서버의 `POST /children/{cid}/medications` 와 같다 (Idempotency-Key 를 받는다).
@@ -145,6 +154,14 @@ export const idempotentPath = {
    */
   confirmDeleteProposal: (childId: string, proposalId: string) =>
     `/children/${childId}/delete-proposals/${proposalId}/confirm`,
+  /**
+   * 07 기록 상세의 "기록 지우기" (#736 · #779). 보호자가 직접 누르는 삭제라 **승인 게이트가 아니라 확인 창**이다
+   *    (최상위 §2 — 게이트 ㉢ 은 AI 가 고른 삭제다). 그래도 지운 기록은 되살릴 수 없고 서버도 키가 필수다(없으면 400).
+   *    서버는 이미 지운 기록을 다시 지우면 404 라서, 응답만 잃고 다시 누를 때 처음 204 를 재생하려면 키가 있어야 한다.
+   *    본문이 없어 키는 기록(`kind/id`)에 묶는다 — 다른 기록을 지우면 새 키다.
+   */
+  deleteObservation: (childId: string, kind: string, observationId: string) =>
+    `/children/${childId}/observations/${kind}/${observationId}`,
 } as const satisfies Record<string, (...ids: string[]) => string>;
 
 export type IdempotentOperation = keyof typeof idempotentPath;
@@ -163,10 +180,12 @@ export const idempotentMethod = {
   updateHealthSafety: "PATCH",
   submitEvent: "POST",
   updateEvent: "PATCH",
+  updateEventSeries: "PATCH",
   submitMedication: "POST",
   updateMedication: "PATCH",
   confirmDeleteProposal: "POST",
-} as const satisfies Record<IdempotentOperation, "POST" | "PATCH">;
+  deleteObservation: "DELETE",
+} as const satisfies Record<IdempotentOperation, "POST" | "PATCH" | "DELETE">;
 
 const ID_SLOT = "__ID__";
 
