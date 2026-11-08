@@ -51,6 +51,46 @@ healthy 가 될 때까지 기다리고, 안 되면(최대 240초) 실패로 본�
   그때 Actions 출력에 "롤백도 실패" 가 찍힌다.
 - dev · prod 가 동시에 빌드하면 4GB 가 넘친다. `deploy.sh` 가 `flock` 으로 한 번에 하나만 돌게 하고, 다른 쪽은 최대 20분 기다린다.
 
+## dev 격리 — 메모리 상한 · 팀만 열기 (#780)
+
+한 EC2 에 dev 가 같이 뜨면서 생긴 두 위험을 막는다. dev 가 폭주하면 커널이 운영 postgres 를 죽일 수 있고,
+dev 가 열려 있으면 누구나 카카오로 가입해 실제 보호자 · 아이 정보가 백업 없는 dev DB 에 쌓인다.
+
+**메모리 상한** — compose 의 `mem_limit: ${API_MEM_LIMIT:-0}` 꼴 (api · web · db · redis). 0 = 상한 없음.
+
+| | api | web | db | redis |
+| --- | --- | --- | --- | --- |
+| dev `.env` | `API_MEM_LIMIT=768m` | `WEB_MEM_LIMIT=384m` | `DB_MEM_LIMIT=512m` | `REDIS_MEM_LIMIT=128m` |
+| prod `.env` | 안 쓴다 (상한 없음 — 지금 그대로) | | | |
+
+- 넘치면 그 컨테이너만 죽고 `restart` 로 다시 뜬다. 값은 첫 dev 배포 뒤 `docker stats` 를 보고 고친다.
+- 빈 값 · `-1` 은 compose 가 거부한다. 안 쓸 거면 줄째 지운다.
+- 마이그레이션(`compose run`)에도 걸린다. 거기서 넘치면 exit 137 로 `deploy.sh` 가 up 전에 멈추고 옛 컨테이너가 그대로 서비스한다.
+- 이미지 빌드에는 안 걸린다. 빌드는 `flock` 이 한 번에 하나로 줄 세운다.
+- 확인: `docker inspect ktc4-dev-api --format '{{.HostConfig.Memory}}'` → 바이트, `ktc4-api` → `0`.
+
+**팀만 열기 (basic_auth)** — Caddy 가 막는다 (`deploy/caddy/Caddyfile`).
+
+- `dev.icatch.ai.kr` 는 전체, `api.dev.icatch.ai.kr` 는 로그인 시작(`GET` · `HEAD /api/v1/auth/kakao`)만 막는다.
+  웹만 막으면 api.dev 에서 바로 카카오 로그인을 시작해 curl 로 가입까지 끝낼 수 있다.
+  api 전체를 막으면 CORS preflight(OPTIONS)가 401 이라 dev 화면이 API 를 못 부른다.
+- 그래서 브라우저가 두 번 묻는다 — 화면을 열 때(dev) 한 번, 카카오 로그인을 누를 때(api.dev) 한 번. 같은 계정이다.
+- 계정은 **prod** checkout 의 `deploy/docker/.env` 에 둔다. 두 환경을 다 받는 Caddy 가 prod 프로젝트에 떠 있어서다.
+  ```bash
+  docker run --rm caddy:2.10.0-alpine caddy hash-password    # 비밀번호를 묻고 해시를 찍는다
+  ```
+  ```
+  DEV_BASIC_AUTH_USER=<팀 공용 이름>
+  DEV_BASIC_AUTH_HASH='$2a$14$...'
+  ```
+  🚨 해시는 **작은따옴표로 감싼다.** 안 감싸면 compose 가 해시 속 `$…` 를 변수로 바꿔 Caddy 에 깨진 값이 가고 늘 401 이다.
+  `deploy.sh` 가 prod 배포 전에 두 값이 있는지, 해시가 작은따옴표로 감싸였는지 보고 아니면 아무것도 바꾸지 않고 멈춘다.
+  비밀번호는 저장소 · PR · 이슈에 쓰지 않는다. [미정] 팀에 계정을 나누는 방법 (#780 🙋).
+- 🚨 **순서 — 서버 prod `.env` 에 두 값을 먼저 넣고 main 에 머지한다.** 반대면 main 배포가 `deploy.sh` 의 검사에서 멈춘다(운영은 그대로지만 빨간불).
+- 이 변경이 처음 나가는 prod 배포는 Caddy 의 environment 가 바뀌어 Caddy 를 새로 만든다 — 몇 초 dev · 운영이 같이 끊긴다.
+- 확인: `curl -s -o /dev/null -w '%{http_code}\n' https://dev.icatch.ai.kr` → 401,
+  `https://api.dev.icatch.ai.kr/api/v1/auth/kakao` → 401, `https://api.dev.icatch.ai.kr/health` → 200.
+
 ## CI
 
 - `ci-api.yml` · `ci-web.yml` 은 PR 에서 돌고, 배포 워크플로가 `workflow_call` 로 한 번 더 부른다.
@@ -81,7 +121,10 @@ healthy 가 될 때까지 기다리고, 안 되면(최대 240초) 실패로 본�
    - `NEXT_PUBLIC_API_BASE_URL` 을 prod 값 그대로 두면 `deploy.sh` 가 빌드 전에 멈춘다 — dev 화면이 운영 API 를 부르지 않게
    - dev 의 `apps/api/.env` 를 둔다. `PUSH_DEVICE_ACCEPT=false` · `FCM_SERVICE_ACCOUNT_FILE=` 로 푸시를 끈다. `APP_ENV=dev`, dev 카카오 콜백 · CORS(`https://dev.icatch.ai.kr`)를 넣는다.
      LLM · 외부 API · 카카오 키는 prod 와 같은 값을 쓴다 (11-06 결정 — 카카오는 같은 앱에 dev 콜백만 추가 등록). DB 비밀번호만 새로 만든다.
-   - prod 의 `deploy/docker/.env` 에 `COMPOSE_PROFILES=edge` 를 더한다.
+   - dev 의 `deploy/docker/.env` 에 메모리 상한 네 줄을 넣는다 (위 "dev 격리").
+   - prod 의 `deploy/docker/.env` 에 `COMPOSE_PROFILES=edge` 와 `DEV_BASIC_AUTH_USER` · `DEV_BASIC_AUTH_HASH` 를 더한다 (위 "dev 격리" — main 머지 전에).
+   - 🚨 서버에서 `make api-image` · `web-image` 는 거부된다(`.deployed-tag` 가 있으면). 지금 소스를 배포된 sha 태그로 구워
+     롤백할 이미지를 덮기 때문이다. 서버 빌드는 `deploy.sh` 만 한다.
    - swap 을 확인한다. `free -h` 에서 Swap 이 0이면 2GB 를 만든다 (`fallocate -l 2G /swapfile` …).
    - 🚨 일정 알림 발송 cron(`docker exec ktc4-api … app.workers.reminder_dispatch`)은 **prod 에만** 둔다. dev 에는 등록하지 않는다 (11-06 결정).
      dev 에서 실제 기기로 푸시가 나가지 않게 하려는 것이다. 컨테이너 이름이 `ktc4-api` 로 고정이라 prod 줄은 고치지 않는다
