@@ -155,6 +155,7 @@ def review(
     docs=DOCS,
     area_places=(),
     requested=False,
+    request_texts=(),
 ):
     return review_candidates(
         candidates,
@@ -170,6 +171,7 @@ def review(
         area_places=area_places,
         today=TODAY,
         requested=requested,
+        request_texts=request_texts,
     )
 
 
@@ -500,7 +502,7 @@ class TestPlace:
             data_date=None,
         )
         (draft,) = review(
-            candidate(content="볼풀에서 공 던지기", place_name="시험키즈카페"),
+            candidate(content="큰 쿠션 위에서 굴러 보기", place_name="시험키즈카페"),
             places={"시험키즈카페": cafe},
         ).drafts
         # 출처가 안 보이면 왜 이 가게가 나왔는지 몰라 광고처럼 읽힌다 — 날짜 없이 출처만 (#600 PM)
@@ -968,7 +970,7 @@ class TestOutdoor:
             data_date=None,
         )
         either_cafe = candidate(
-            content="볼풀에서 공 던지기", setting="either", place_name="시험키즈카페"
+            content="큰 쿠션 위에서 굴러 보기", setting="either", place_name="시험키즈카페"
         )
         result = review(either_cafe, outdoor=self.RAIN_TODAY, places={"시험키즈카페": cafe})
         assert result.rejections == ()
@@ -1263,3 +1265,69 @@ class TestSaidInRequest:
     )
     def test_보호자_말에_없으면_요청이_아니다(self, play, said):
         assert said_in_request(play, [said]) is False
+
+
+class TestInventedFacility:
+    """장소 이름만 보고 그 안의 시설을 지어내지 않는다 (#814 · "가상놀이키즈카페에서 볼풀").
+
+    공공데이터에는 시설 칸이 없다. 시설은 보호자가 말했거나 이번 run 에 조회한 기록에 있을
+    때만 쓴다.
+    """
+
+    CAFE = "가상놀이키즈카페"
+    CAFE_ROW = PlaceRow(
+        name=CAFE,
+        category=PlaceCategory.INDOOR_PLAYGROUND,
+        distance_m=900,
+        source="kids_play_facility",
+        data_date=None,
+    )
+
+    def at_cafe(
+        self, content: str, reason: str = "몸을 쓰는 실내 놀이가 맞아요"
+    ) -> ActivityCandidate:
+        return candidate(content=content, reason=reason, place_name=self.CAFE)
+
+    def run(self, *cands, **kwargs):
+        return review(*cands, places={self.CAFE: self.CAFE_ROW}, **kwargs)
+
+    @pytest.mark.parametrize(
+        "content",
+        [
+            "볼풀에서 공 옮기기",
+            "역할놀이존에서 가게 놀이",
+            "블록존에서 탑 쌓기",
+            "키즈풀에서 물장구",
+        ],
+    )
+    def test_요청에도_기록에도_없는_시설은_거절한다(self, content):
+        assert reason_of(self.run(self.at_cafe(content))) is RejectReason.INVENTED_FACILITY
+
+    def test_이유_문장에_써도_거절한다(self):
+        cand = self.at_cafe("큰 블록으로 탑 쌓기", reason="이곳 볼풀이 넓어서 좋아요")
+        assert reason_of(self.run(cand)) is RejectReason.INVENTED_FACILITY
+
+    def test_보호자가_말한_시설이면_통과한다(self):
+        result = self.run(
+            self.at_cafe("볼풀에서 공 옮기기"), request_texts=("볼풀 있는 키즈카페 가려는데",)
+        )
+        assert reason_of(result) is None
+
+    def test_조회한_기록에_있는_시설이면_통과한다(self):
+        ball_pit = UUID(int=31)
+        seen = {
+            **SEEN,
+            ball_pit: ranked(ball_pit, label="볼풀 놀이", tier=3, polarity=1),
+        }
+        result = self.run(self.at_cafe("볼풀에서 공 옮기기"), seen=seen)
+        assert reason_of(result) is None
+
+    def test_장소가_없는_후보는_보지_않는다(self):
+        """장소를 붙이지 않은 집 놀이는 그 장소의 시설을 단정하지 않는다."""
+        cand = candidate(content="거실에 쿠션으로 볼풀 만들기")
+        assert reason_of(review(cand)) is None
+
+    def test_띄어써도_같은_시설이다(self):
+        assert reason_of(self.run(self.at_cafe("볼 풀에서 공 옮기기"))) is (
+            RejectReason.INVENTED_FACILITY
+        )

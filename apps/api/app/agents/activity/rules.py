@@ -5,7 +5,7 @@ LLM · DB · 외부 I/O 없음. 표준 라이브러리만 쓴다.
 
 import re
 import unicodedata
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 
 # 최근 이 기간 안에 한 활동은 다시 추천하지 않는다. 오늘을 포함한 날 수다 — 7이면 오늘과 앞 6일.
 # 잠정값 — eval 로 조정한다
@@ -84,3 +84,33 @@ def said_in_request(requested_play: str | None, request_texts: Iterable[str]) ->
 
 def _not_a_play(word: str) -> bool:
     return any(word.removesuffix(particle) in _NOT_A_PLAY for particle in ("", *_PARTICLES))
+
+
+# 장소마다 있거나 없는 시설 낱말 (#814). 공공데이터에는 시설 칸이 없어서(행안부 기구정보의 76% 는
+# "폐쇄형놀이기구 · 기타" 뿐, 11-08 실측) 모델이 장소 이름만 보고 지어낸다 — "가상놀이키즈카페에서
+# 볼풀". 미끄럼틀 · 그네처럼 어디에나 있는 기구는 넣지 않는다. 띄어쓰기를 뺀 꼴로 대조한다
+FACILITY_WORDS = (
+    "볼풀",
+    "트램펄린",
+    "트램폴린",
+    "방방",
+    "블록존",
+    "레고존",
+    "역할놀이존",
+    "키즈풀",
+    "수영장",
+    "물놀이장",
+    "클라이밍",
+    "암벽",
+    "짚라인",
+    "편백존",
+    "모래놀이장",
+    "키즈키친",
+)
+
+
+def invented_facilities(texts: Sequence[str], known: Sequence[str]) -> tuple[str, ...]:
+    """texts 에 쓴 시설 낱말 중 known(보호자 요청 · 조회한 기록)에 없는 것."""
+    said = "".join("".join(text.split()) for text in known)
+    written = "".join("".join(text.split()) for text in texts)
+    return tuple(word for word in FACILITY_WORDS if word in written and word not in said)

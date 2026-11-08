@@ -103,6 +103,7 @@ async def propose_activity_candidates(
         # outdoor_on 이 위에서 후보의 날을 모두 판정해 넣었다. 행사는 날짜마다 본다 (#668 리뷰)
         outdoor_days={day: brief.outdoor_ok for day, brief in context.state.weather.items()},
         ended_today=context.state.ended_today,
+        request_texts=context.state.request_texts,
     )
     if review.rejections:
         # 거절만 모델에게 돌려준다. 같이 빠진 후보는 말하지 않는다 — 다시 내면 또 빠진다

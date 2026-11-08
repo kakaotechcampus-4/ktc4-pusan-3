@@ -35,7 +35,7 @@ from app.agents.activity.readouts import (
     READOUTS,
 )
 from app.agents.activity.result import ErrorCode
-from app.agents.activity.rules import is_recent_duplicate, normalize_activity
+from app.agents.activity.rules import invented_facilities, is_recent_duplicate, normalize_activity
 from app.agents.activity.schemas.common import (
     ActivitySetting,
     CaregiverRole,
@@ -107,6 +107,7 @@ class RejectReason(StrEnum):
     NEARBY_WORDING = "nearby_wording"
     OUTDOOR_CLOSED = "outdoor_closed"
     MIXED_PLACES = "mixed_places"
+    INVENTED_FACILITY = "invented_facility"
     BUILD = "build_rejected"
 
 
@@ -146,6 +147,10 @@ GUIDANCE: dict[RejectReason, str] = {
     RejectReason.MIXED_PLACES: (
         "한 후보에는 장소나 행사를 하나만 쓴다. 문장에 쓴 행사가 있으면 place_name 에 그 행사 "
         "이름(name)을 쓴다."
+    ),
+    RejectReason.INVENTED_FACILITY: (
+        "장소 이름만 보고 그 안의 시설을 짐작해 쓰지 않는다. 보호자가 말했거나 기록에 있는 시설만 "
+        "쓰고, 아니면 시설 이름 없이 놀이 방법만 쓴다."
     ),
     RejectReason.BUILD: (
         "아이 기록을 인용하지 않으면 [예시] 문서 행 id 를 하나 이상 인용한다 "
@@ -198,6 +203,7 @@ def review_candidates(
     today: date,
     requested: bool = False,
     ended_today: Collection[str] = (),
+    request_texts: Sequence[str] = (),
 ) -> Review:
     """후보를 3-3 순서로 검사해 통과한 것은 SuggestionDraft 로, 걸린 것은 사유로 돌려준다.
 
@@ -220,6 +226,8 @@ def review_candidates(
     `docs` 는 이번 run 의 프롬프트 [예시]에 실은 문서 행이다. 인용하면 `activity_doc` 근거가
     되고, 아이 기록이 아니라 개인화로 세지 않는다 — 문서 행만 단 추천은 `general` 이다.
     `today` 는 `build()` 의 6개월 판정 기준일이다.
+    `request_texts` 는 보호자 요청 글이다 — 장소가 붙은 후보의 시설 낱말이 요청에도 조회한
+    기록에도 없으면 지어낸 것으로 거절한다 (#814).
     `ended_today` 는 오늘 운영 시간이 이미 끝난 행사 이름이다 — 그 행사는 오늘 열리지 않은
     것으로 본다.
     """
@@ -232,6 +240,11 @@ def review_candidates(
         and len(subject := normalize_activity(ranked.subject)) >= MIN_AVOIDED_LABEL
     )
     known = _Known.of(places or {}, events or {})
+    # 시설 낱말을 써도 되는 글 — 보호자 요청 · 이번 run 에 조회한 기록의 이름
+    said = (
+        *request_texts,
+        *(text for ranked in seen.values() for text in (ranked.label, ranked.subject)),
+    )
     far_places = frozenset(normalize_activity(name) for name in area_places)
     drafts: list[SuggestionDraft] = []
     outdoor_drafts: set[tuple[str, str]] = set()
@@ -257,6 +270,7 @@ def review_candidates(
             outdoor_days=outdoor_days,
             today=today,
             ended_today=ended_today,
+            said=said,
         )
         if reason is None:
             try:
@@ -320,6 +334,7 @@ def _check(
     outdoor_days: Mapping[date, bool] | None,
     today: date,
     ended_today: Collection[str] = (),
+    said: Sequence[str] = (),
 ) -> tuple[RejectReason | None, tuple[EvidenceCitation, ...], PlaceRow | EventRow | None]:
     # 1. 안전 필터는 호출부(review_candidates)가 먼저 돌렸다
 
@@ -359,6 +374,9 @@ def _check(
         and any(word in text for text in texts for word in NEARBY_WORDS)
     ):
         return RejectReason.NEARBY_WORDING, (), None
+    # 장소 이름만 보고 시설을 지어내지 않는다 — 공공데이터에 시설 칸이 없다 (#814)
+    if isinstance(place, PlaceRow) and invented_facilities(texts, said):
+        return RejectReason.INVENTED_FACILITY, (), None
 
     # 그날 날씨 판정이 야외를 막았다(D8 · #377). 표에 없는 날은 판정하지 않은 날이라 막는다 —
     # 맑다고 가정하지 않는다

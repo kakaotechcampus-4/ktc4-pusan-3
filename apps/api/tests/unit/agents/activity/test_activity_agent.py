@@ -731,3 +731,15 @@ class TestWhen:
         result = await run(task(), ctx, client=llm)
         assert len(contents(result)) == 3
         assert "지금은 어두워서 놀이터는 뺐어요." in [r.body for r in result.readouts]
+
+
+class TestPlaceFit:
+    """장소는 "이 아이가 지금 어떤 곳이 맞는지" 를 먼저 쓰고, 시설을 지어내지 않는다 (#814)."""
+
+    async def test_프롬프트가_장소를_고른_이유와_시설_금지를_적는다(self):
+        llm = FakeLLM(propose("거실 보물찾기", "그림자놀이", "색종이 접기"))
+        await run(task("키즈카페 갈 만한 데 있어?"), context(), client=llm)
+        system = llm.seen[0][0]["content"]
+        assert "왜 그 종류의 장소인지" in system
+        assert "을 짐작해 쓰지 않는다" in system
+        assert "기록에 장소 이름이 있으면" in system
