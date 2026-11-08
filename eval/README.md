@@ -6,6 +6,7 @@
 
 | 경로 | 무엇 |
 | --- | --- |
+| `cases.md` | 골든셋 — 헤드라인 10개를 입력 · 기대 결과 · 같은 것을 보는 기존 Agent eval 과 한 표로 (판정 정본은 `probes.yaml`) |
 | `cases/probes.yaml` | P · 단발 프로브 31개 (능력 6개 · 헤드라인 10개 · 주입 6개) |
 | `cases/week/` | W · 일주일 페르소나 — `a-typical.yaml`(보통 · 입력 39 + 승인 · 정정 · 점검) · `c-light.yaml`(가끔 · 4단계). B(많음)는 아직 없다 |
 | `faults.md` | F · 장애 점검표 (계획 3) |
@@ -65,6 +66,18 @@ EVAL_TIER=full EVAL_ONLY=W-A PYTEST_ADDOPTS= uv run pytest tests/eval/suite/test
 | 날짜 | 커밋 | 모델 | effort | 반복 | 헤드라인 | 불안정 | 불변식 위반 | 비고 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | (11-10 첫 측정 뒤 채운다) | | | | | | | | |
+
+## 다른 평가가 있는 곳
+
+여기 스위트는 서비스 전체를 지나는 입력을 본다. Agent 하나만 떼어 본 평가와 지난 개선 실험은 각자 자리에 있고, 옮기지 않고 링크만 건다.
+
+| 무엇 | 어디 |
+| --- | --- |
+| Agent 별 라이브 eval — Supervisor · Memory · Curator · Food · Activity · Growth · Health | [`apps/api/tests/eval/agents/`](../apps/api/tests/eval/agents/). 입력 · 기대값 표는 [`docs/agents/food/test_expected_food.md`](../docs/agents/food/test_expected_food.md) · [`docs/agents/growth/test_expected_growth.md`](../docs/agents/growth/test_expected_growth.md) |
+| Memory — 실측으로 바뀐 것 (거짓 저장 답 막기 #667 등) | [`docs/agents/memory-agent-v1.md` §4](../docs/agents/memory-agent-v1.md) |
+| Memory — unclear 조각을 아이 관찰로 남기지 않기 (D13) | [`docs/agents/memory-agent-v1.md` §3 D13](../docs/agents/memory-agent-v1.md) |
+| Curator — 유사도 임계값 대신 판정기 (실험 1~5) | [`docs/memory/curator-linking-v1.md` §1](../docs/memory/curator-linking-v1.md) |
+| 급식표 사진 OCR — 모델 비교 · 채점 | [`docs/meal-plan/ocr-model-eval-v1.md`](../docs/meal-plan/ocr-model-eval-v1.md) |
 
 ## 케이스를 더할 때
 
