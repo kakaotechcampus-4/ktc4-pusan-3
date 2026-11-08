@@ -1374,7 +1374,7 @@ export interface PhotoEntry {
   /**
    * 이 항목으로 넣은 일정. 화면이 채워 보내는 유일한 칸이다 — 시트에서 `submitEventDraft` 가
    * 돌려준 `event.id` 를 commit 때 실어 보내면, 서버가 그 일정에 이 항목을 출처로 단다.
-   * 🚨 **아직 시트가 보내지 않는다** — 시트 연결은 #723. 그전까지는 일정과 공지 항목이 이어지지 않는다.
+   * 넣지 않은 항목은 `null` 이다 (`photo-review.tsx` 의 `commit` · #723).
    */
   event_id?: string | null;
 }
