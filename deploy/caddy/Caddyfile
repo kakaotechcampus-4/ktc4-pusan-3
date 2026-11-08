@@ -30,7 +30,7 @@ api.icatch.ai.kr {
 # dev (develop) — 팀만 연다 (#780). 열려 있으면 누구나 카카오로 가입해 실제 보호자 · 아이 정보가
 # 백업 없는 dev DB 에 쌓인다. 계정은 prod deploy/docker/.env 의 DEV_BASIC_AUTH_USER · _HASH (docs/ops/deploy-v1.md).
 # 🚨 하나만 비면 Caddyfile 검사가 실패하고, 둘 다 비면 검사는 통과하지만 계정 없는 basic_auth 가 된다.
-#    어느 쪽이든 deploy.sh 가 prod 배포 전에 막는다 (해시를 작은따옴표로 안 감싼 것도).
+#    어느 쪽이든 deploy.sh 가 compose 가 해석한 값을 보고 prod 배포 전에 막는다 (해시가 깨진 것도).
 (dev_auth) {
 	basic_auth {
 		{$DEV_BASIC_AUTH_USER} {$DEV_BASIC_AUTH_HASH}
@@ -45,14 +45,21 @@ dev.icatch.ai.kr {
 
 api.dev.icatch.ai.kr {
 	import hsts
-	# 로그인 시작(GET /api/v1/auth/kakao)만 막는다 — 웹만 막으면 api.dev 에서 바로 카카오 로그인을 시작해
-	# curl 로 가입까지 끝낼 수 있다. HEAD 도 같은 핸들러(state 쿠키 · 카카오 주소)를 받는다.
-	# 🚨 나머지는 열어 둔다. api 전체를 막으면 CORS preflight(OPTIONS)가 401 이라 dev 화면이 API 를 못 부른다.
-	@login_start {
+	# 로그인 시작(GET /api/v1/auth/{provider})과 콜백(…/callback)을 막는다 — 웹만 막으면 api.dev 에서 바로
+	# 카카오 로그인을 시작해 curl 로 가입까지 끝낼 수 있다. HEAD 도 같은 핸들러를 받는다.
+	# 콜백도 막는 이유 — oauth_state 쿠키는 서명 · 서버 저장이 없어 누구나 만들 수 있다. 공개 client_id 로
+	#   카카오 동의만 받고 쿠키를 직접 붙여 콜백을 부르면 로그인 시작을 안 거치고 handoff 코드가 나온다 (#808 리뷰).
+	# provider 를 가리지 않는다 — AuthProvider 에 apple · google · naver 가 있어 붙이는 날 Caddyfile 수정 없이 막힌다.
+	# 🚨 나머지는 열어 둔다 — …/status, POST 교환 · 가입 · refresh · logout. api 전체를 막으면
+	#    CORS preflight(OPTIONS)가 401 이라 dev 화면이 API 를 못 부른다. 교환 · 가입은 콜백이 준 코드 없이는 못 쓴다.
+	# path 가 아니라 path_regexp 다 — path 의 끝 * 는 접두사 매칭이라 /api/v1/auth/* 가 …/status 까지 잡는다.
+	#   (가운데 * 는 / 를 넘지 않는다. Caddy 가 // · ./ · ../ · %xx 를 풀고 맞춰서 그렇게 돌아갈 수 없다 — 2.10 로컬 확인)
+	# GET /api/v1/auth/refresh · logout 도 잡히지만 그 경로는 POST 뿐이라 상관없다.
+	@login {
 		method GET HEAD
-		path /api/v1/auth/kakao
+		path_regexp ^/api/v1/auth/[^/]+(/callback)?/?$
 	}
-	route @login_start {
+	route @login {
 		import dev_auth
 	}
 	reverse_proxy ktc4-dev-api:8000
