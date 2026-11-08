@@ -1,7 +1,7 @@
 # Supervisor Agent 명세 v1
 
 > 입력을 가장 먼저 받아 **무엇을 기록해야 하는지, 어떤 Agent가 필요한지**를 정하는 오케스트레이터.
-> 코드는 `app/agents/supervisor/`. 관련: [shared/Agent_공통규약.md](shared/Agent_공통규약.md) · [shared/공통_구현_계획.md](shared/공통_구현_계획.md) · [memory-agent-v1.md](memory-agent-v1.md)
+> 코드는 `app/agents/supervisor/`. 관련: [shared/Agent_공통규약.md](shared/Agent_공통규약.md) · [shared/공통_구현_계획.md](shared/공통_구현_계획.md) · [memory-agent-v1.md](memory-agent-v1.md) · [api/chat-v1.md](../api/chat-v1.md)
 
 ---
 
@@ -157,3 +157,87 @@
 - 0건 규칙 — 신체 성장 3줄은 growth_review(Health · guarded 아님) · "배웠대" 는 요청이 아님 · "약 먹기 싫어해" · "깜빡이는데" 는 낱말이 Growth 로 간 조각이나 같은 입력의 기록 조각에 남음(Growth 의 코드 닫힘이 둘 다 본다)
 - 보정 이력 — 끝까지 라이브(`growth/test_growth_supervisor_e2e.py`)에서 "숫자 놀이 뭐 없어?" 가 "놀이" 라는 낱말만 보고 activity 로 새는 것을 찾았다(직접 표본 3/10 만 growth). `_REQUEST` 에 "놀이라는 말이 있어도 배우는 낱말(숫자 · 한글 · 글자)이 있으면 growth/learning_suggestion, 없으면 activity" 한 줄을 더했고 12/12 가 됐다. 같은 말투(GR25 · GR26)와 반대 경계(GR27 · GR28 — 배우는 낱말이 없는 놀이는 activity)를 GR 에 더했다.
 - 보정은 한 번에 하나, 최대 3회. "변형" 케이스의 문장을 프롬프트에 옮기지 않는다. 고친 뒤 split 합계(RC · T)가 떨어지면 되돌린다. 3회 뒤에도 미달이면 합격선을 낮추지 않고 숫자로 남긴다
+- 앞 대화를 붙인 후속 질문은 FU01~FU14 가 잰다 — [§5-5](#5-5-eval)
+
+---
+
+## 5. 앞 대화 (후속 질문)
+
+결과를 받은 뒤 채팅으로 이어 물으면("그럼 다른 건?" · "더 쉬운 거 없어?" · "아까 못 알려준 거 다시 알려줘") 이번 문장만으로는 무엇을 이어 묻는지 알 수 없다. 입력 1건 = run 1개 구조(루트 §4)는 그대로 두고, **후속 질문으로 보일 때만** 최근 대화를 Supervisor 에 넘긴다. 별도 Query Rewriter · LangGraph 는 쓰지 않고, Supervisor 호출 수도 그대로다(위임이 어긋나 다시 나눌 때만 두 번이고, 그때도 같은 맥락을 싣는다). 이슈 #734 — 감지 #784 · 조회 #785 · Supervisor #786 · 연결 #787.
+
+### 5-1. 흐름
+
+```text
+입력 → (규칙) 후속 질문인가?
+          ├─ 아니오 → Supervisor (이번 문장만, 지금과 같다)
+          └─ 예 → chat_turn 조회(30분 · 3턴) → Supervisor (앞 대화 + 이번 문장)
+                    → 조각은 이번 문장에서만, 이어 묻는 request 조각에는 resolved_request
+                    → routing → 도메인 Agent (추천 task 만 해석한 요청을 받는다)
+```
+
+- **감지** — `supervisor/followup.py` 의 `looks_like_followup()`. 코드 규칙이고 모델에게 묻지 않는다. 앞 대화를 직접 가리키는 말("아까 추천한" · "그중" · "못 알려준" · "두 번째")은 주제어가 있어도 후속이다. 약한 말("다른 건" · "더 쉬운" · "그거")은 주제어(간식 · 놀이 · 책 …)가 없을 때만 후속이다 — "다른 실내 놀이 추천해줘" 는 혼자 읽어도 뜻이 통한다. "아까" · "방금" 은 "추천 · 알려줘 · 말한 · 보여줘" 꼴이 두 어절 안에 붙고 사이에 주어("선생님이")가 끼지 않을 때만 센 말이다 — "아까 좀 아파 보여서 해열제 먹였어" · "아까 친구 손을 물어서 혼났대" 같은 기록은 후속이 아니다. 놓침은 앞 대화 없이 처리되는 지금 동작 그대로라 놓침을 줄이는 쪽으로 쓰지만, 오탐도 공짜가 아니다 — 앞 대화용 프롬프트 · spec 으로 바뀌어 단발 요청의 분류가 조금 흔들린다(5-5 의 회귀 측정). 그래서 기록 입력이 후속으로 잡히는 표현은 좁혔고, 그 표를 `test_followup.py` 가 지킨다.
+- **조회** — pipeline 의 `_conversation()` 이 후속일 때만 `agent_ports.recent_turns_loader` 를 부른다. 같은 보호자 · 같은 아이, 접수 30분 안, 최근 3턴(`domains/chat/repository.py` 의 `recent_turns`). 새 표 · 새 인덱스는 없다.
+- **모델이 보는 글** — 앞 대화가 없는 호출은 이 기능이 생기기 전과 같은 system 프롬프트 · tool spec 을 쓴다(단발 요청의 분류가 달라지지 않는다). 프롬프트의 `[앞 대화가 올 때]` 절과 tool spec 의 `resolved_request` 칸은 앞 대화를 같이 보내는 호출에만 붙는다(`build_system_prompt(with_context=True)` · `ROUTE_TOOL_SPEC_CONTEXT`). 후속 질문 호출은 system 프롬프트가 달라 그 호출끼리만 캐시를 공유한다.
+- **없을 때** — 앞 턴이 없거나 조회가 실패하면 run 을 멈추지 않고 **빈 맥락**으로 Supervisor 를 부른다. 프롬프트가 "[앞 대화] 없음" 이면 `unclear` 로 두라고 해서 질문 하나로 되묻는다 — 맥락 없이 부르면 "그럼 다른 건?" 이 아무 Agent 로나 간다. `chat_turn` 은 run 이 끝난 뒤에 쓰고 `done` 으로 끝난 run 만 남기므로, 결과를 받자마자 보낸 다음 입력에는 앞 턴이 아직 없을 수 있다. 이때도 같다. 조회가 실패했으면 "[앞 대화] 없음 — 앞 대화를 읽지 못했다" 로 보내 대화가 없었다고 거짓으로 말하지 않는다. 턴이 하나도 없으면 모델이 `resolved_request` 를 써도 지운다 — 이어 볼 것이 없는 해석은 지어낸 문장이다.
+
+### 5-2. 무엇을 넘기고 무엇을 빼나
+
+`agents/supervisor/context.py` 의 `ConversationContext.render()` 가 모델에 가는 글의 정본이다(자르기 · 개수 상한도 여기 한 곳).
+
+| 넘긴다 | 뺀다 |
+| --- | --- |
+| 앞 입력 원문(300자까지) | readout 본문 — 알레르기 확인 · 성장 추이 같은 아이 기록 값이 든다. 코드가 쓴 문구는 모델 입력 금지 |
+| 결과마다 Agent · 유형 · 상태 | 되묻기 질문 문장 — Health 는 코드가 쓴 readout 이고 등록한 복약 코스 이름이 든다 |
+| 추천 이름(추천 행 `content` 의 첫 줄, 3개 · 60자까지) | 저장한 관찰 refs · 안내 · 일정 초안 · 삭제 제안 |
+| 되물었다는 표시 · partial 에서 못 낸 Agent | |
+
+추천 이름은 readout 이 아니라 `suggestion.content` 에서 읽는다(readout 제목은 대부분 비어 있다). **모델에 간 적 없는 말의 턴은 통째로 뺀다**(`chat_context._sendable`) — 위험 물질 안내가 나간 턴(규칙이 막아 모델을 부르지 않았다)과 되묻기에 답한 턴 전부(`reply_to` 가 있는 턴). Health 답은 이어받기가 모델 0회이고 답에 약 이름이 드는데, 응급 안내만 남거나 Health 가 실패한 턴은 결과 모양으로 Health 답인지 가를 수 없어 답한 턴을 다 뺀다. 후속 질문 때문에 처음으로 외부 LLM 에 가면 안 된다. Health 결과여도 새 입력(병원 찾기)은 Supervisor 가 읽은 말이라 싣는다. 뺄 턴이 끼어도 세 턴이 남게 9턴까지 읽고 거른다. Growth 교육 추천의 `content` 는 "제목 줄 + 본문" 이고 본문에는 아이 기록에서 온 말이 들어서 첫 줄만 이름으로 싣는다. DTO 의 글 칸은 `repr=False` 라 로그 · 예외 문구에 실리지 않는다.
+
+### 5-3. 조각 text 와 resolved_request
+
+조각 `text` 는 지금처럼 **이번 입력의 부분 문자열**이어야 한다(`validate_segments` · Memory 의 출처 단서 "했대"). 앞 대화로 뜻을 푼 문장은 `text` 를 고쳐 쓰지 않고 request 조각의 **`resolved_request`** 에 따로 낸다 — 앞 대화를 몰라도 뜻이 통하는 한 문장, 200자 이내. 비었거나 길거나 request 가 아닌 조각에 붙은 값은 지우고 조각은 남긴다. 앞 대화를 받지 않은 호출에서 나온 값도 지운다.
+
+| 받는 쪽 | 받는 문장 |
+| --- | --- |
+| Memory | **이번 원문만**(`MemoryTask.raw_text` · 기록 힌트). 앞 대화 · 해석 문장이 기록 경로로 가지 않는다 — 앞에서 기록한 것을 다시 저장하지 않는다 |
+| 추천 task — food/meal_recommendation · activity · growth 의 learning · routine · book | `resolved_request`(없으면 조각 원문). `routing.RESOLVABLE_TASKS` 가 `pipeline.RECOMMENDING_TASKS` 와 같은 값이다(테스트가 맞춘다) |
+| 확인 · 쓰기 task — food_check · daycare_meal · nutrient_analysis · growth_review · health 전부 | 조각 원문. 모델이 만든 문장이 복약 대조 · 급식 갱신 · "먹여도 되나" 판정으로 가지 않게 한다 |
+
+**해석한 문장이 "보호자가 말한 것" 으로 통과하지 않는다.** 해석한 문장에는 앞 추천 이름(AI 가 쓴 글)이 들어갈 수 있다. 그래서 해석을 받은 task 는 이번 입력의 보호자 원문을 `DomainTask.original_texts` 에 따로 들고(`originals()` — 비어 있으면 `request_texts` 가 곧 원문), 앞 턴들의 보호자 원문을 `prior_texts` 에 든다. 모델에게 보내는 요청 · 주제는 `request_texts`, "보호자가 말했는가" 를 코드가 보는 곳은 원문을 읽는다.
+
+| 읽는 곳 | 읽는 글 |
+| --- | --- |
+| 추천 Agent 의 프롬프트 · 주제 | `request_texts`(해석한 문장) |
+| Growth 닫힘(의료 처치 · 증상) · 화면 고민 판정 | `request_texts` 와 `original_texts` 둘 다 — 해석이 "약" 같은 닫힘 낱말을 빼먹어도 닫힌다 |
+| Activity 지역 이름 · 요청한 놀이(`said_in_request`) | 이번 원문 + `prior_texts`(`ActivityRunState.said()`) — "해운대 근처 …" 뒤 "그럼 다른 데는?" 의 지역은 보호자가 앞에서 말했다 |
+| Growth 근거 수치 · 도서 검색어(`GrowthRunState.said_texts` — 원문 + 기록 조각 + 답) | 이번 원문(`originals()`) |
+| 되묻기 맥락의 `hint_text`(답을 받으면 Memory · Supervisor 로 간다) | 이번 원문 — 이어 돌 task 는 `request_texts` 와 `original_texts` 를 둘 다 들고, `prior_texts` 는 비운다 |
+| 05 다시 시도(`RetryContext`) | 셋 다 보관 — 해석한 요청으로 다시 만들고 출처 확인은 원문 · 앞 턴의 말로 한다 |
+
+Food 의 요청 안내(`request_notices`)는 `request_texts` 를 그대로 읽는다. 안내 문구에 해석 문장의 어절이 실릴 수 있지만, 알레르기 · 금지식품은 후보 풀을 코드가 이미 거른 뒤라 안전 판정에는 영향이 없다.
+
+안전 사전검사(알레르기 · 건강 언급 · 위험 물질)와 응급 사전검사는 이번 원문만 본다. Supervisor 도 `kind` · `guard` 를 이번 입력의 말로 정한다 — 앞 대화가 요청이었어도 이번 입력이 증상 · 위험 물질 · 진단 문의면 그쪽이다.
+
+### 5-4. 일부만 실패한 뒤 "아까 못 알려준 거"
+
+`PartialReply.failed` 가 앞 턴에 남아 있어 "못 낸 것: activity" 로 Supervisor 에 간다. 못 낸 Agent 가 하나면 그 턴의 보호자 말에서 요청을 되살려 `resolved_request` 에 쓴다. 못 낸 것이 없거나 여럿이면 정할 수 없어 `unclear` 다. 05 다시 시도 보관함(`suggestion_retry`)은 쓰지 않는다 — 프로세스 메모리이고 15분이라 30분 창과 맞지 않는다.
+
+### 5-5. eval
+
+`tests/eval/agents/supervisor/followup_cases.py` 의 FU01~FU14 를 앞 대화를 붙여 잰다(`supervisor/test.py -m live -k followup_routing`, `TEST_REPEAT=3`).
+
+- 합격선 — 이어 묻는 요청(FU01~FU08)의 agent(+유형) 일치 90% 이상, 0건 규칙 위반 0
+- 0건 규칙(C1 표시는 어기면 치명 오류) — 앞 대화가 간식 · 놀이 요청이어도 증상 기록(FU09)은 request 가 되지 않고 위험 물질 섭취(FU10)는 guarded/hazard 다 · 영양제 문의(FU11)는 guarded/diagnosis 다 · 앞 입력의 기록(FU06)을 이번 조각으로 다시 내지 않는다 · 앞 대화가 없거나 이어 볼 것이 여럿이면(FU12~FU14) request 를 만들지 않는다 · 혼자 읽어도 뜻이 통하는 말(FU08)은 앞 주제로 끌려가지 않는다
+- 회귀 — 단발 요청의 정확도가 떨어지지 않아야 한다. split 합계(RC · T …)를 앞 대화 없이 한 번, RC 에 상관없는 앞 대화를 붙여 한 번(`SPLIT_CONTEXT=unrelated -k "split and RC"`) 재서 변경 전과 견준다
+- `resolved_request` 를 채운 비율은 보고만 한다
+- 상관없는 앞 대화를 붙인 RC 63 은 RECORD 43/47 · RECORD→REQUEST 4 로, 앞 대화 없는 기준선(44/47 · 2~3)보다 약간 낮다 — 후속으로 **잘못 감지된** 입력의 값이다. 완전히 막지는 못해서 감지 규칙을 좁히는 것으로 줄이고, 기준선 이상이라는 #786 의 조건은 이 경우에는 충족하지 못한다고 적어 둔다.
+- 보정 이력 — 처음에는 앞 대화 절과 `resolved_request` 칸을 모든 호출에 실었다. 앞 대화가 없는 호출의 split(148)을 기준선(같은 모델 · 같은 입력 두 번: work 107 · 107, RECORD→REQUEST 2 · 3)과 견주니 두 번 모두 work 104 · 104, RECORD→REQUEST 3 · 6 으로 같은 방향으로 어긋났다("운동회 준비물" 일정 · 수정 경계 케이스가 일관되게 바뀜). 그래서 앞 대화가 있을 때만 싣도록 바꿨다. 지금은 앞 대화가 없는 호출의 system 프롬프트 · tool spec 이 변경 전과 해시까지 같다 — 단발 요청은 모델 입력이 같다.
+
+### 5-6. 외부 LLM 으로 다시 가는 것
+
+후속 질문에서는 보호자가 앞에서 이미 같은 모델에 보낸 문장이 한 번 더 간다.
+
+- 앞 입력 원문과 추천 이름은 Supervisor 모델로 간다(`[앞 대화]` 메시지, 위 5-2 의 칸만). 모델에 간 적 없을 수 있는 말(위험 물질 안내가 나간 턴 · 되묻기에 답한 턴)은 싣지 않아서 "앞에서 이미 같은 모델에 보낸 문장" 이라는 전제가 지켜진다.
+- `resolved_request` 는 추천 Agent 의 모델 입력이 된다 — 원래 요청 문장이 가던 자리다. 앞 대화의 추천 이름이 문장에 들어갈 수 있다.
+- 보호자가 입력한 문장 · 추천 이름의 범위를 넘지 않는다고 보고 처리방침의 전달 항목은 늘리지 않는다. 아이 이름 · 알레르기 · 건강 정보 · 키 · 몸무게는 앞 대화로 가지 않는다(readout 을 싣지 않는다). Growth 가 기록 조각을 모델에 함께 싣는 것과 같은 판단이다([Growth_Agent_명세.md](growth/Growth_Agent_명세.md), PM 확인).
+- 루트 `CLAUDE.md` §10 의 "외부 LLM 전달 범위" 는 이 결정으로 닫히지 않는다. 이 범위가 정해질 때 이 절도 같이 본다.
