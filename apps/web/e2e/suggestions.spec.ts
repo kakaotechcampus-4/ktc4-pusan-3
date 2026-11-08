@@ -1068,6 +1068,28 @@ test.describe("0개 · 이어서 할 수 없음은 실패가 아니다 (#249)", 
     });
   });
 
+  test.describe("재료를 정해 물은 식사 일반 추천 (#740)", () => {
+    test.use({ scenario: "suggest_requested_food" });
+
+    test("레시피북 밖 메뉴도 출처 줄 없이 기준 문구만 서고, 라벨은 또래 기준을 말하지 않는다", async ({
+      page,
+    }) => {
+      await page.goto(SUGGESTIONS);
+
+      const card = page.locator("li").filter({ has: page.getByText("일반 추천", { exact: true }) });
+      await expect(card).toHaveCount(1);
+      await expect(card).toContainText("파프리카볶음");
+      await expect(card).toContainText("기록 0건");
+      await expect(card).toContainText("요청하신 조건을 바탕으로 골랐어요.");
+      // 🚨 가리킬 메뉴 · 문서 행이 없다 — 출처 줄을 지어내지 않는다
+      await expect(card.getByText(/^참고/)).toHaveCount(0);
+      // 🚨 요청에 맞춰 고른 것을 또래 기준이라고 부르지 않는다
+      await expect(page.getByText("또래", { exact: false })).toHaveCount(0);
+      // 아이 기록 근거도 없다 — 개인화로 그려지지 않는다
+      await expect(page.getByText(/^사용한 기록/)).toHaveCount(0);
+    });
+  });
+
   test.describe("식품 아닌 알레르기 확인 문구", () => {
     test.use({ scenario: "suggest_cautions" });
 

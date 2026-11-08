@@ -863,6 +863,33 @@ export const requestedGeneralSuggestion: GeneralSuggestion = {
 };
 
 /**
+ * 보호자가 재료를 정해 물었고 레시피북에 없는 메뉴를 냈을 때의 식사 일반 추천 (#740). 기록이 없으면 그
+ * 요청에 맞춰 고른다.
+ *
+ * 🚨 놀이(`requestedGeneralSuggestion`)와 같은 꼴이다 — `evidence` 가 비어 있고 출처 줄 없이 `basis` 만 선다.
+ *    레시피북 메뉴라면 메뉴 근거(`recipe_catalog`) 카드가 붙지만 생성 메뉴는 가리킬 행이 없다. 레시피북 밖
+ *    메뉴라는 말은 이 카드가 아니라 04 의 안내 줄이 한다.
+ * 🚨 `basis` 는 서버 `GENERAL_REASON_REQUESTED`("요청하신 조건을 바탕으로 골랐어요.")와 같은 문구다.
+ */
+export const requestedFoodSuggestion: GeneralSuggestion = {
+  id: "g_8",
+  child_id: CHILD_ID,
+  agent: "food",
+  kind: "general",
+  content: "파프리카볶음",
+  place_notice: null,
+  event_starts_on: null,
+  event_ends_on: null,
+  warnings: [],
+  basis: "요청하신 조건을 바탕으로 골랐어요.",
+  items: ["파프리카", "올리브유"],
+  status: "draft",
+  expires_at: hoursFromNow(24),
+  record_count: 0,
+  evidence: [],
+};
+
+/**
  * stale 시나리오 — 근거가 전부 6개월을 넘겼다.
  *
  * 🚨 `Evidence.is_stale` 은 **계약서 v1 에 아직 없는 필드**다 (types.ts 의 주석 참고).

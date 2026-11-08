@@ -35,6 +35,7 @@ from app.agents.common.food_safety import filter_food_safety
 from app.agents.common.suggestion import MAX_SUGGESTIONS
 from app.agents.food.context import FoodContext, require_safety
 from app.agents.food.matching import related
+from app.agents.food.meal_request import mentioned_in_request
 from app.agents.food.nutrition_eval import (
     MealRecords,
     NutrientVerdict,
@@ -92,7 +93,8 @@ async def build_pool(context: FoodContext) -> tuple[PoolItem, ...]:
     """이 아이에게 나갈 수 있는 레시피 후보를 가중치와 함께 최대 `POOL_MAX` 개 돌려준다.
 
     🚨 안전 정보를 못 읽었으면(`None`) 풀을 만들지 않는다 — 알레르기를 거를 수 없다.
-    모델을 부르기 전에 한 번 부른다. 안전 필터에 막힌 메뉴와 확인하지 못한 메뉴(재료를 모르는
+    모델을 부르기 전에 한 번 부른다. 요청 글(`state.utterance`)에 이름이나 재료가 나온 레시피는
+    상한에 잘리지 않고 앞에 둔다. 안전 필터에 막힌 메뉴와 확인하지 못한 메뉴(재료를 모르는
     레시피 포함)는 풀에 없다. 막힌 것 중 제품에 따라 성분이 달라질 수 있어서 막힌 메뉴
     (`needs_check`)도 확인 칸이 생기기 전에는 풀에 넣지 않는다.
     """
@@ -109,27 +111,57 @@ async def build_pool(context: FoodContext) -> tuple[PoolItem, ...]:
     recent = await ports.suggestions.recent_menu_keys(
         child_id=context.child_id, since=context.today - timedelta(days=RECENT_DAYS)
     )
+    # 풀 밖 레시피도 이름은 안다 — 안전 필터로 막힌 메뉴가 이름만 바꿔 생성 후보로 돌아오지 않게
+    # 하고    # 최근 추천한 이름은 생성 후보에서도 거절한다(#740). 이름만 담고 사유는 담지 않는다
+    context.state.recipe_keys = frozenset(row.menu_key for row in merged)
+    context.state.recent_keys = frozenset(recent)
     candidates = [row for row in merged if row.menu_key in safe and row.menu_key not in recent]
     if not candidates:
         return ()
 
     weights = await _weights(context, candidates, stage=life.stage, months=life.months)
     items = [PoolItem(row=row, weight=weights[row.menu_key]) for row in candidates]
-    capped = _weighted_order(items, seed=f"{context.run_id}:pool")[:POOL_MAX]
-    return tuple(capped)
+    ordered = _weighted_order(items, seed=f"{context.run_id}:pool")
+    # 요청 글에 이름 · 재료가 나온 레시피는 풀 상한에 잘리지 않는다 — 레시피북이 수백 건이라 상한만
+    # 두면 "오이 들어간" 요청에서도 오이 메뉴가 풀에 없을 수 있다. 상한 안에서 조건 맞는 것이 먼저다
+    wanted = requested_rows(ordered, context.state.utterance.splitlines())
+    rest = [item for item in ordered if item not in wanted]
+    return tuple([*wanted, *rest][:POOL_MAX])
 
 
-def sample_pool(pool: Sequence[PoolItem], *, seed: str) -> tuple[PoolItem, ...]:
+def requested_rows(pool: Sequence[PoolItem], request_texts: Iterable[str]) -> tuple[PoolItem, ...]:
+    """요청 글에 이름이나 재료가 조건으로 나온 레시피(풀 안에서만). 풀의 순서(가중 순서)를 지킨다.
+
+    안전 필터 · 최근 추천 제외는 풀이 이미 했다 — 막힌 레시피는 조건이 맞아도 여기 없다. 모델 앞에서
+    코드가 찾아 샘플 앞에 넣는다(`sample_pool(first=…)`).
+    """
+    texts = list(request_texts)
+    return tuple(
+        item
+        for item in pool
+        if mentioned_in_request((item.row.display_name, *item.row.ingredients), texts)
+    )
+
+
+def sample_pool(
+    pool: Sequence[PoolItem], *, seed: str, first: Sequence[PoolItem] = ()
+) -> tuple[PoolItem, ...]:
     """풀에서 `SAMPLE_MIN`~`SAMPLE_MAX` 개를 가중치대로 뽑는다. 같은 `seed` 면 같은 결과다.
 
     같은 주재료는 `MAIN_INGREDIENT_LIMIT` 개까지만 넣는다. 주재료 칸이 빈 레시피는 이 제약을
     건너뛴다(풀을 줄이지 않는다). 풀이 샘플 크기보다 작으면 풀 전체다.
+
+    `first` 는 조건 맞는 레시피(`requested_rows`)다 — 샘플 앞에 먼저 넣고 같은 주재료 제한을 걸지
+    않는다("파프리카" 조건에서 파프리카 주재료 레시피가 셋이면 하나가 빠지면 안 된다). 샘플 상한을
+    넘으면 앞에서 `SAMPLE_MAX` 개까지다.
     """
     rng = random.Random(seed)
-    size = min(len(pool), rng.randint(SAMPLE_MIN, SAMPLE_MAX))
-    chosen: list[PoolItem] = []
+    required = list(first)[:SAMPLE_MAX]
+    size = max(min(len(pool), rng.randint(SAMPLE_MIN, SAMPLE_MAX)), len(required))
+    chosen: list[PoolItem] = list(required)
+    taken = {item.row.menu_key for item in required}
     counts: Counter[str] = Counter()
-    for item in _weighted_order(pool, rng=rng):
+    for item in _weighted_order([item for item in pool if item.row.menu_key not in taken], rng=rng):
         if len(chosen) >= size:
             break
         mains = {key for name in item.row.main_ingredients if (key := normalize_menu_key(name))}
@@ -286,6 +318,23 @@ def _sparse_groups(verdict: NutrientVerdict) -> frozenset[str]:
         group
         for group in APPEARANCE_DEFICIT_GROUPS
         if verdict.food_group_days.get(group, 0) < verdict.recorded_days * MIN_APPEARANCE_SHARE
+    )
+
+
+def explainable_groups(verdict: NutrientVerdict) -> frozenset[str]:
+    """보호자에게 "적게 나왔다" 고 말해도 되는 채소 · 과일.
+
+    가중(`_sparse_groups`)은 확인한 날만 센다. 문장은 식품군을 모르는 메뉴가 낀 날을 전부 "나왔다"
+    고 쳐도 기록된 날의 `MIN_APPEARANCE_SHARE` 미만일 때만 낸다 — 가중은 틀려도 후보를 막지 않지만
+    문장은 틀린 숫자로 읽힌다(N-19). 모르는 날을 더해도 결론이 안 뒤집히는 식품군만 남는다.
+    """
+    if not verdict.appearance_ready:
+        return frozenset()
+    return frozenset(
+        group
+        for group in APPEARANCE_DEFICIT_GROUPS
+        if verdict.food_group_days.get(group, 0) + verdict.group_unknown_days.get(group, 0)
+        < verdict.recorded_days * MIN_APPEARANCE_SHARE
     )
 
 

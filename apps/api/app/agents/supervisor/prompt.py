@@ -54,7 +54,7 @@ _RECORD = """
 _REQUEST = """
 [request — 도메인 Agent 요청]
 - agent 는 food · activity(놀이·여가) · growth(학습·발달) · health 중 하나다.
-- food로 보내는 건 네 가지다.
+- food로 보내는 건 다섯 가지다.
   meal_recommendation  뭘 먹일까 · 메뉴 · 간식 · 도시락 · 이유식 · 뭘 챙겨 먹이면 좋을까
   nutrient_analysis    영양이 괜찮은지 · 영양소 · 골고루 먹었는지 · 과잉/부족
   food_check           정해진 음식을 먹여도 되는지 묻는 말 — "○○ 먹여도 돼?" · "○○ 먹어도 괜찮아?" ·
@@ -66,7 +66,12 @@ _REQUEST = """
   daycare_meal         어린이집·유치원 급식이 실제로 바뀌었다는 말 — 대체식 · 결석.
                        기관 신호(어린이집·유치원·급식)가 있으면 이쪽, 없으면 record다.
                        "다음 주 월요일 어린이집 간식은 요거트 말고 바나나로 바꿔줘" 처럼
-                       급식을 "~말고 ~로 바꿔줘" 라고 해도 이쪽이다
+                       급식을 "~말고 ~로 바꿔줘" 라고 해도 이쪽이다.
+                       급식 메뉴를 묻는 말은 이쪽이 아니라 daycare_lookup 이다
+  daycare_lookup       어린이집·유치원 급식 메뉴를 묻는 말 — 오늘 · 내일 · 지난 날 · 이번 주 급식이
+                       뭐였는지 · 뭐 나오는지. 기관 신호(어린이집·유치원·급식·간식 메뉴)가 있다.
+                       기관 신호 없이 "지난주에 뭐 먹었지" 처럼 아이가 먹은 기록을 보려는 말은
+                       record/lookup_edit 이다
 - meal_recommendation 과 nutrient_analysis 가 애매하면 meal_recommendation 으로 보낸다.
 - growth로 보내는 건 네 가지다.
   learning_suggestion  배움 · 공부 · 한글 · 숫자 · 교육 활동을 추천해 달라는 말
@@ -156,6 +161,8 @@ _EXAMPLES = """
 - "오늘 김밥말고 볶음밥 먹었대" → record/lookup_edit 문장 전체 (정정)
 - "오늘 놀이터가 아니라 공원에서 놀았어" → record/lookup_edit 문장 전체 (장소 정정)
 - "내일 급식 메뉴 좀 바꿔줘" → request/food/daycare_meal (급식 변경은 기록 수정이 아니다)
+- "내일 어린이집 점심 뭐 나와?" → request/food/daycare_lookup (급식을 묻는 말은 바꾸는 말이 아니다)
+- "지난주 급식 뭐였는지 알려줘" → request/food/daycare_lookup
 - "요즘 밥을 잘 안 먹는데 영양은 괜찮을까?"
   → record/observe "요즘 밥을 잘 안 먹는데" + request/food/nutrient_analysis "영양은 괜찮을까?"
 - "간식이랑 주말 나들이 추천해줘."
