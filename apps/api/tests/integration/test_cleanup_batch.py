@@ -14,7 +14,13 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 
-from app.domains.consent.models import ConsentAction, ConsentRetention, ConsentScope
+from app.domains.consent.models import (
+    ConsentAction,
+    ConsentRetention,
+    ConsentScope,
+    LocationPurpose,
+    LocationUseLog,
+)
 from app.domains.identity.models import AuthSession, Parent
 from app.domains.policy.models import PolicyVersion
 from app.workers.cleanup import run_cleanup
@@ -69,3 +75,24 @@ async def test_both_purges_run_and_are_committed(session):
     )
     assert set(left_sessions) == {alive_id}
     assert left_retention is None
+
+
+async def test_expired_location_logs_are_purged_and_committed(session):
+    parent = Parent()
+    session.add(parent)
+    await session.flush()
+    expired = LocationUseLog(
+        parent_id=parent.id,
+        purpose=LocationPurpose.SUGGESTION,
+        used_at=NOW - timedelta(days=200),
+    )
+    session.add(expired)
+    await session.flush()
+    expired_id = expired.id
+
+    result = await run_cleanup(session, now=NOW)
+    await session.rollback()
+
+    assert result.location_logs == 1
+    left = await session.scalar(select(LocationUseLog.id).where(LocationUseLog.id == expired_id))
+    assert left is None

@@ -308,5 +308,5 @@ def test_Idempotency_Key_를_받는_창구는_모두_Swagger_에_503_이_있다(
         for method, op in ops.items()
         if any(p["name"].lower() == "idempotency-key" for p in op.get("parameters", []))
     }
-    assert len(windows) == 9
+    assert len(windows) == 11
     assert [w for w, ok in windows.items() if not ok] == []

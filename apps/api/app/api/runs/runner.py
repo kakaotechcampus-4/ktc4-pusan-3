@@ -19,6 +19,7 @@
 """
 
 import asyncio
+import contextlib
 import logging
 import traceback
 from collections.abc import Awaitable, Callable
@@ -31,6 +32,9 @@ from app.api import agent_ports, idempotency
 from app.api.deps.db import background_session
 from app.api.runs import pending_reply, sse, suggestion_retry, translate
 from app.api.runs.registry import RunChannel
+from app.core.logging_config import log_error_without_message
+from app.domains.consent.location_log import record_location_use_if_granted
+from app.domains.consent.models import LocationPurpose
 
 log = logging.getLogger(__name__)
 
@@ -107,7 +111,9 @@ def agent_job(
       "동의 안 함"(False)이 아니다. 읽기에 실패하면 창구가 run 을 시작하지 않아서 이 job 이
       만들어지지 않는다.
     - `location` 은 창구가 위치정보 동의를 확인한 흐린 좌표, `activity_weather` 는 서버 시작 때 만든
-      날씨 어댑터다(#380). 둘 다 그대로 진입점에 넘긴다. None 이면 Activity 는 실내 전용이다.
+      날씨 어댑터다(#380). 날씨 어댑터는 그대로 넘긴다. 좌표는 넘기기 직전에 쓴 사실을 남기고
+      (`_hand_location`, #693), 그새 동의가 꺼졌거나 남기기에 실패하면 버린다. None 이면 Activity 는
+      실내 전용이다.
       장소 어댑터는 `agent_ports.place_source` 로 연다 — 좌표가 없으면 진입점 쪽에서 닫힌다.
       `activity_events` 는 서버 시작 때 만든 행사 어댑터(TourAPI)다. 그대로 넘긴다 — None 이면
       Activity 는 행사를 찾지 않는다.
@@ -209,13 +215,14 @@ def agent_job(
 
             try:
                 async with asyncio.timeout(RUN_DEADLINE_SECONDS):
+                    handed_location = await _hand_location(session, parent_id, location)
                     await entrypoint.handle_input(
                         child_id=child_id,
                         parent_id=parent_id,
                         raw_text=raw_text,
                         birth_date=birth_date,
                         child_health_granted=child_health_granted,
-                        location=location,
+                        location=handed_location,
                         activity_weather=activity_weather,
                         activity_places=agent_ports.place_source(),
                         activity_events=activity_events,
@@ -262,6 +269,37 @@ def agent_job(
                         pending_reply.release(reply_to)
 
     return job
+
+
+async def _hand_location(
+    session: Any, parent_id: UUID, location: entrypoint.CoarseLocation | None
+) -> entrypoint.CoarseLocation | None:
+    """좌표를 Agent 에 넘기기 직전에 쓴 사실을 남기고, 넘길 좌표를 돌려준다 (위치정보법 제16조 ②).
+
+    여기서 남기는 이유 — 창구에서 남기면 하루 한도 · 되묻기 맥락 없음 · 키 기억 실패로 run 이
+    뜨지 않은 요청도 "썼다" 로 남는다 (#693 리뷰).
+    - 창구가 동의를 읽은 뒤 철회됐으면 None 이다. 좌표를 버리고 실내 전용으로 돈다.
+    - 🚨 남기기가 실패하면 좌표를 버리고(None) run 은 계속 돈다 — 쓰지 않았으니 기록 없는 사용이
+      아니다. run 을 실패시키면 보호자가 적은 기록까지 위치 표 고장 때문에 사라진다 (#697 리뷰).
+      고장은 ERROR 로 남겨 알림이 가게 한다. 커밋은 됐는데 예외가 난 경우는 "기록은 있고 안 씀"
+      이라 해가 없다.
+    - 바로 커밋해서 보호자 행 잠금을 놓는다. 이 뒤의 Memory 저장과 묶지 않는다. run 세션의 첫
+      문장이라 실패 뒤 rollback 이 함께 버릴 다른 작업은 없다.
+    """
+    if location is None:
+        return None
+    try:
+        granted = await record_location_use_if_granted(
+            session, parent_id=parent_id, purpose=LocationPurpose.SUGGESTION
+        )
+        await session.commit()
+    except Exception as exc:
+        # 연결이 끊겼으면 rollback 도 예외를 낸다. 그래도 run 은 계속 돈다 (#697 리뷰)
+        with contextlib.suppress(Exception):
+            await session.rollback()
+        log_error_without_message(log, "위치 이용 기록 실패 — 좌표 없이 계속", exc)
+        return None
+    return location if granted else None
 
 
 async def _read_saved(

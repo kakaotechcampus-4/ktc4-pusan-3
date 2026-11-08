@@ -14,6 +14,7 @@ import {
   approveSuggestions,
   commitPhotoRun,
   createEventDrafts,
+  deleteObservation,
   submitEventDraft,
   submitInput,
   submitMedicationDraft,
@@ -78,6 +79,7 @@ import type {
   NotificationSettings,
   Observation,
   ObservationDetailResponse,
+  ObservationKind,
   ObservationsResponse,
   OnboardingRequest,
   Policy,
@@ -182,7 +184,7 @@ describe("① 키 누락 — 표에 있는 줄 전부", () => {
   // 🚨 표(lib/api/idempotency.ts)에 줄을 더하고 목을 안 고치면 여기서 깨진다.
   //    메서드도 표가 정한다 — 수정 초안 반영은 PATCH 다 (#316).
   const cases = (Object.keys(idempotentPath) as IdempotentOperation[]).map(
-    (name) => [name, idempotentMethod[name], idempotentPath[name]("c1", "ev_1")] as const,
+    (name) => [name, idempotentMethod[name], idempotentPath[name]("c1", "ev_1", "o_1")] as const,
   );
 
   it.each(cases)("%s (%s) 는 키가 없으면 400 이다", async (_name, method, path) => {
@@ -1624,6 +1626,96 @@ describe("⑧ 관찰과 프로필은 다른 엔드포인트다", () => {
     expect("subject" in health).toBe(false);
     expect("polarity" in health).toBe(false);
     expect("affinity" in health).toBe(false);
+  });
+});
+
+describe("⑨-1 기록 지우기 (#736 · #779)", () => {
+  // 서버 `DELETE /children/{cid}/observations/{kind}/{oid}` 와 같은 행동 — 204 · 키 재생 · 404.
+  const remove = (kind: ObservationKind, id: string, key = newIdempotencyKey()) =>
+    deleteObservation("c1", kind, id, key).then(
+      () => "deleted" as const,
+      (error: unknown) => error,
+    );
+
+  it("지우면 204 이고 목록 · 상세에서 빠지며 total 도 준다", async () => {
+    const before = await api.get<ObservationsResponse>("/children/c1/observations");
+
+    expect(await remove("observation_food", "o_1")).toBe("deleted");
+
+    const after = await api.get<ObservationsResponse>("/children/c1/observations");
+    expect(after.items.some((item) => item.id === "o_1")).toBe(false);
+    expect(after.total).toBe(before.total - 1);
+    const detail = await api
+      .get<ObservationDetailResponse>("/children/c1/observations/observation_food/o_1")
+      .catch((error: unknown) => error);
+    expect(isApiError(detail, "not_found")).toBe(true);
+  });
+
+  it("같은 키로 다시 보내면 처음 204 를 재생한다 — 응답만 잃고 다시 누른 경우 (#736)", async () => {
+    const key = newIdempotencyKey();
+    expect(await remove("observation_food", "o_1", key)).toBe("deleted");
+    expect(await remove("observation_food", "o_1", key)).toBe("deleted");
+  });
+
+  it("새 키로 이미 지운 기록을 지우면 404 not_found 다 — 실패가 아니라 이미 지워진 기록이다", async () => {
+    await remove("observation_food", "o_1");
+    const again = await remove("observation_food", "o_1");
+
+    expect(isApiError(again, "not_found")).toBe(true);
+    expect((again as ApiError).status).toBe(404);
+  });
+
+  it("없는 기록 · 모르는 종류는 404 다", async () => {
+    expect(isApiError(await remove("observation_food", "o_nope"), "not_found")).toBe(true);
+    const unknownKind = await api
+      .delete<void>("/children/c1/observations/observation_growth/o_1", {
+        idempotencyKey: newIdempotencyKey(),
+      })
+      .catch((error: unknown) => error);
+    expect(isApiError(unknownKind, "not_found")).toBe(true);
+  });
+
+  it("고친 기록(stand_alone)도 지운다 — 서버는 deleted 가 아닌 기록을 상태와 상관없이 지운다", async () => {
+    await api.post<CorrectionResponse>("/corrections", {
+      target_ref: { kind: "observation_food", id: "o_1" },
+      verdict: "once_only",
+      child_id: "c1",
+    });
+
+    expect(await remove("observation_food", "o_1")).toBe("deleted");
+    const list = await api.get<ObservationsResponse>("/children/c1/observations");
+    expect(list.items.some((item) => item.id === "o_1")).toBe(false);
+  });
+
+  it("건강 기록도 지운다 — 목록에는 아직 없지만 같은 API 로 지운다 (#764)", async () => {
+    expect(await remove("observation_health", "o_h1")).toBe("deleted");
+  });
+
+  it("지운 기록은 고칠 수 없다 — 404", async () => {
+    await remove("observation_food", "o_1");
+    const failure = await api
+      .post<CorrectionResponse>("/corrections", {
+        target_ref: { kind: "observation_food", id: "o_1" },
+        verdict: "once_only",
+        child_id: "c1",
+      })
+      .catch((error: unknown) => error);
+
+    expect(isApiError(failure, "not_found")).toBe(true);
+  });
+
+  it("지우면 묶인 기억의 기록 수가 다시 세진다", async () => {
+    const before = await api.get<AffinitiesResponse>("/children/c1/affinities");
+    const affinity = before.affinities.find((a) => a.source_refs.length > 1);
+    expect(affinity).toBeDefined();
+    const ref = affinity!.source_refs[0];
+
+    expect(await remove(ref.kind as ObservationKind, ref.id)).toBe("deleted");
+
+    const after = await api.get<AffinitiesResponse>("/children/c1/affinities");
+    const recounted = after.affinities.find((a) => a.id === affinity!.id);
+    expect(recounted?.observation_count).toBe(affinity!.observation_count - 1);
+    expect(recounted?.source_refs.some((r) => r.id === ref.id)).toBe(false);
   });
 });
 
@@ -4025,6 +4117,58 @@ describe("⑰ 08 사진 — 읽기와 저장이 갈린다", () => {
         entries: parsed.entries ?? [],
         attach_to_calendar: true,
       }),
+    ).rejects.toSatisfy((error: unknown) => isApiError(error, "validation_failed"));
+  });
+
+  it("넣은 일정의 id 를 항목에 실어 저장하고, 한 일정을 두 항목에 이으면 422 다 (#723)", async () => {
+    const runId = await upload();
+    const parsed = await parsedOf(runId);
+    const [first, second] = checked(parsed.entries ?? []);
+
+    // 🚨 넣을 때마다 다른 id 다 — 같으면 08 이 일정 두 개를 넣고 저장할 때 막힌다.
+    const a = await submitEventDraft("c1", draftBody(), newIdempotencyKey());
+    const b = await submitEventDraft("c1", draftBody(), newIdempotencyKey());
+    expect(a.event.id).not.toBe(b.event.id);
+
+    await expect(
+      commitPhotoRun(runId, {
+        lane: "document",
+        entries: [
+          { ...first, event_id: a.event.id },
+          { ...second, event_id: a.event.id },
+        ],
+        attach_to_calendar: false,
+      }),
+    ).rejects.toSatisfy((error: unknown) => isApiError(error, "validation_failed"));
+
+    await expect(
+      commitPhotoRun(runId, {
+        lane: "document",
+        entries: [
+          { ...first, event_id: a.event.id },
+          { ...second, event_id: b.event.id },
+        ],
+        attach_to_calendar: false,
+      }),
+    ).resolves.toBeDefined();
+  });
+
+  it("일정의 끝은 그대로 돌아오고, 시작보다 앞서면 400 이다 (#723)", async () => {
+    const body = draftBody();
+    const ends = "2026-09-20T23:59:00+09:00";
+    const saved = await submitEventDraft(
+      "c1",
+      { ...body, event: { ...body.event, ends_at: ends } },
+      newIdempotencyKey(),
+    );
+    expect(saved.event.ends_at).toBe(ends);
+
+    await expect(
+      submitEventDraft(
+        "c1",
+        { ...body, event: { ...body.event, ends_at: "2026-09-18T09:00:00+09:00" } },
+        newIdempotencyKey(),
+      ),
     ).rejects.toSatisfy((error: unknown) => isApiError(error, "validation_failed"));
   });
 

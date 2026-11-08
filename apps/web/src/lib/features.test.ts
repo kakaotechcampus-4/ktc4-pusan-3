@@ -22,28 +22,24 @@ afterEach(() => {
 describe("PENDING_SERVER_FEATURES", () => {
   it("개발 + 목 켬이면 진입점이 열린다", async () => {
     expect(await loadFeatures("development", "enabled")).toEqual({
-      photoEntry: true,
       safetyScan: true,
     });
   });
 
   it("목을 끈 개발 서버(실서버에 붙는다)에서는 닫힌다", async () => {
     expect(await loadFeatures("development", "disabled")).toEqual({
-      photoEntry: false,
       safetyScan: false,
     });
   });
 
   it("프로덕션 빌드는 목 스위치가 켜져 있어도 닫힌다 — 목이 뜨지 않는다", async () => {
     expect(await loadFeatures("production", "enabled")).toEqual({
-      photoEntry: false,
       safetyScan: false,
     });
   });
 
   it("테스트 환경처럼 개발이 아닌 곳에서도 닫힌다", async () => {
     expect(await loadFeatures("test", "enabled")).toEqual({
-      photoEntry: false,
       safetyScan: false,
     });
   });

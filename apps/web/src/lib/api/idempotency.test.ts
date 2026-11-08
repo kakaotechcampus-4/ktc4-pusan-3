@@ -36,10 +36,10 @@ const DRAFT_BODY: SubmitEventBody = {
 describe("되돌릴 수 없는 경로 판정", () => {
   const operations = Object.keys(idempotentPath) as IdempotentOperation[];
 
-  it("표의 줄을 전부 그 메서드로 요구한다 — 5곳 · 초안 제출 · 알레르기 기록 · 복약 제출은 각각 두 줄 · 대화의 삭제 확정 (#535)", () => {
-    expect(operations).toHaveLength(10);
+  it("표의 줄을 전부 그 메서드로 요구한다 — 5곳 · 초안 제출 · 알레르기 기록 · 복약 제출은 각각 두 줄 · 대화의 삭제 확정 (#535) · 기록 지우기 (#736)", () => {
+    expect(operations).toHaveLength(11);
     for (const operation of operations) {
-      const path = idempotentPath[operation]("x1", "x2");
+      const path = idempotentPath[operation]("x1", "x2", "x3");
       expect(requiresIdempotencyKey(idempotentMethod[operation], path), operation).toBe(true);
     }
   });
@@ -63,6 +63,14 @@ describe("되돌릴 수 없는 경로 판정", () => {
     // 읽기와 회차 체크는 되돌릴 수 있다 — 키를 걸지 않는다.
     expect(requiresIdempotencyKey("GET", "/children/c1/medications")).toBe(false);
     expect(requiresIdempotencyKey("PUT", "/children/c1/medication-doses/d1/check")).toBe(false);
+  });
+
+  it("🚨 기록 지우기(DELETE)는 키가 필요하고, 같은 경로의 상세 읽기는 걸지 않는다 (#736)", () => {
+    const path = "/children/c1/observations/observation_food/o_1";
+    expect(requiresIdempotencyKey("DELETE", path)).toBe(true);
+    expect(requiresIdempotencyKey("GET", path)).toBe(false);
+    // 목록 경로는 지우는 자리가 아니다.
+    expect(requiresIdempotencyKey("DELETE", "/children/c1/observations")).toBe(false);
   });
 
   it("같은 경로라도 다른 메서드는 걸지 않는다", () => {
