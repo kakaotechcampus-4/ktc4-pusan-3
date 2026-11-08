@@ -30,6 +30,7 @@ from tests.eval.suite.schema import (
     SavedExpect,
     SeedAffinity,
     SeedObservation,
+    Step,
     ToolsExpect,
     World,
     load_probes,
@@ -314,11 +315,24 @@ def test_기대_tools_는_Memory_가_돌지_않으면_실패한다() -> None:
     assert check_expect(_clean(memory_tools=()), want, today=_TODAY) == []
 
 
+def test_기대_tools_는_실패한_run_을_통과시키지_않는다() -> None:
+    # 확정되지 않은 run 의 성공 호출은 저장으로 남지 않았다
+    trace = _clean(memory_tools=(ToolCallView("create_event", True),), failed="memory_failed")
+    misses = check_expect(trace, Expect(tools=ToolsExpect(must={"create_event": 1})), today=_TODAY)
+    assert misses == ["run 이 실패해 tool 호출이 저장으로 이어지지 않았다 (memory_failed)"]
+
+
 def test_tools_기대값_모양() -> None:
     with pytest.raises(ValidationError):
         ToolsExpect(must={"create_event": 0})
     with pytest.raises(ValidationError):
         ToolsExpect(must={"create_event": 1}, must_not=("create_event",))
+    # 오타는 실행 전에 막는다 — must_not 의 오타는 영원히 통과한다
+    with pytest.raises(ValidationError, match="create_observaton_food"):
+        ToolsExpect(must_not=("create_observaton_food",))
+    # "쓰기" 는 must_not 에만
+    with pytest.raises(ValidationError):
+        ToolsExpect(must={"쓰기": 1})
     [case] = load_probes_text(
         "- id: P-T-01\n  ability: 기록\n  rule: r\n  severity: quality\n"
         "  turns: [{say: 오늘 블록놀이 했어}]\n"
@@ -327,6 +341,19 @@ def test_tools_기대값_모양() -> None:
     assert case.expect.tools == ToolsExpect(
         must={"create_observation_activity": 1}, must_not=("create_event",)
     )
+
+
+def test_W_단계는_tools_를_적을_수_없다() -> None:
+    # W 는 API 로 돌아 Memory tool 기록을 모으지 않는다
+    spec = {
+        "at": "mon 08:10",
+        "by": "mom",
+        "tag": "mon-a",
+        "say": "오늘 블록놀이 했어",
+        "expect": {"tools": {"must": {"create_observation_activity": 1}}},
+    }
+    with pytest.raises(ValidationError, match="tools"):
+        Step.model_validate(spec)
 
 
 def test_memory_tools_는_이름과_성공만_담는다() -> None:

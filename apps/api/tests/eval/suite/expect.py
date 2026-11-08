@@ -7,10 +7,8 @@
 from datetime import date, timedelta
 
 from app.agents.memory.bundles import MUTATING_PREFIXES
-from tests.eval.suite.schema import Expect, ToolsExpect
+from tests.eval.suite.schema import MUTATING, Expect, ToolsExpect
 from tests.eval.suite.trace import Trace
-
-MUTATING = "쓰기"  # must_not 에 적으면 쓰기 tool 전부 (test_memory.py 의 MUTATING 과 같은 뜻)
 
 
 def check_expect(trace: Trace, expect: Expect, *, today: date) -> list[str]:
@@ -67,6 +65,9 @@ def _check_tools(trace: Trace, want: ToolsExpect) -> list[str]:
     if trace.memory_tools is None:
         return ["Memory tool 기록이 없다 — Memory 가 돌지 않았다"]
     misses: list[str] = []
+    if trace.failed is not None:
+        # 실패한 run 은 확정(commit)되지 않는다 — 성공한 호출이 있어도 저장으로 남지 않았다
+        misses.append(f"run 이 실패해 tool 호출이 저장으로 이어지지 않았다 ({trace.failed})")
     for tool, minimum in want.must.items():
         done = sum(1 for call in trace.memory_tools if call.name == tool and call.success)
         if done < minimum:

@@ -10,6 +10,12 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.agents.memory.bundles import LOOKUP_EDIT, RECORD_BASE
+
+# Memory 가 가진 tool 전부 — 기대값의 tool 이름 오타를 막는다
+MEMORY_TOOLS = RECORD_BASE | LOOKUP_EDIT
+MUTATING = "쓰기"  # must_not 에만 — create_ · update_ · delete_ · propose_ tool 전부
+
 # apps/api/tests/eval/suite/schema.py → 저장소 루트
 CASES_DIR = Path(__file__).resolve().parents[5] / "eval" / "cases"
 
@@ -80,7 +86,7 @@ class ToolsExpect(_Strict):
 
     must 는 성공한 호출 수의 최소값이다 — 거절된 호출은 일을 한 것이 아니다. must_not 은
     시도만 해도 위반이다. `test_memory.py` 의 required_tools · forbidden_tools 와 이름 ·
-    "쓰기" 뜻을 맞췄다.
+    "쓰기" 뜻을 맞췄다. 여러 턴 케이스는 마지막 턴의 호출만 본다(판정은 마지막 턴만).
     """
 
     must: dict[str, int] = Field(default_factory=dict)  # tool → 성공한 호출 최소 수
@@ -89,6 +95,11 @@ class ToolsExpect(_Strict):
 
     @model_validator(mode="after")
     def _counts_are_positive(self) -> "ToolsExpect":
+        unknown = sorted(set(self.must) - MEMORY_TOOLS) + sorted(
+            set(self.must_not) - MEMORY_TOOLS - {MUTATING}
+        )
+        if unknown:
+            raise ValueError(f"Memory 에 없는 tool 이름: {unknown}")
         zero = sorted(tool for tool, count in self.must.items() if count < 1)
         if zero:
             raise ValueError(f"must 의 횟수는 1 이상 — 안 불러야 하면 must_not 에: {zero}")
@@ -212,6 +223,9 @@ class Step(_Strict):
             raise ValueError(f"{self.tag}: correct 단계는 correct_of 와 verdict 가 있어야 한다")
         if self.kind == "check" and self.check is None:
             raise ValueError(f"{self.tag}: check 단계는 check 가 있어야 한다")
+        if self.expect.tools is not None:
+            # W 는 API 로 돌아 Memory tool 기록을 모으지 않는다 — 적으면 늘 "안 돌았다" 로 떨어진다
+            raise ValueError(f"{self.tag}: W 단계는 tools 를 판정하지 않는다 (P 에만)")
         return self
 
 
