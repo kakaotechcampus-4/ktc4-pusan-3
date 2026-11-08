@@ -1,14 +1,32 @@
-"""attempt 하나를 판정하고, 반복을 모아 케이스 합격을 정한다 (docs/eval/eval-v1.md §4)."""
+"""attempt 하나를 판정하고, 반복을 모아 케이스 합격을 정한다 (docs/eval/eval-v1.md §4).
+
+run 판정은 세 가지다 (리뷰 11-08 — jjaa0803 안).
+- fail     불변식(§2) 위반이 하나라도 있거나, 기대 미달이 있다
+- untested 위반은 없고, 되묻기를 했고, 미달이 전부 "되묻느라 안 나온 것"(expect.ASKED_INSTEAD)뿐
+           — 알레르기 필터 같은 검사를 한 번도 거치지 않았으니 통과도 실패도 아니다
+- pass     위반 · 미달 없음
+
+제품 run 실패(`trace.failed`)는 "끝까지 못 돌았다" 와 같은 자리의 미달이다 — 실패한 run 이
+"아무 일 없음" 을 기대하는 케이스를 통과시키지 않게. 20초 부분 결과(`trace.partial`)는 §2 가
+허용하는 동작이라 미달로 세지 않는다.
+"""
 
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date
-from typing import Any
+from typing import Any, Literal
 
-from tests.eval.suite.expect import check_expect
-from tests.eval.suite.invariants import Violation, check_invariants, check_state
+from tests.eval.suite.expect import ASKED_INSTEAD, Miss, check_expect
+from tests.eval.suite.invariants import (
+    Violation,
+    check_invariants,
+    check_notes,
+    check_state,
+)
 from tests.eval.suite.schema import Expect, ProbeCase, Step
 from tests.eval.suite.trace import Trace
+
+Status = Literal["pass", "fail", "untested"]
 
 
 @dataclass(frozen=True)
@@ -16,16 +34,62 @@ class Verdict:
     passed: bool
     violations: tuple[Violation, ...]
     misses: tuple[str, ...]
+    status: Status = "pass"
+    notes: tuple[str, ...] = ()  # 판정에 넣지 않는 참고 (invariants.check_notes)
+
+
+def run_misses(trace: Trace) -> list[Miss]:
+    """기대와 상관없이 run 자체가 끝까지 못 간 것 — 하네스 오류 · 제품 run 실패."""
+    if trace.error is not None:
+        return [Miss(f"끝까지 못 돌았다: {trace.error}", "error")]
+    if trace.failed is not None:
+        return [Miss(f"제품 run 실패: {trace.failed}", "failed")]
+    return []
+
+
+def run_status(trace: Trace, violations: Sequence[Violation], misses: Sequence[str]) -> Status:
+    if violations:
+        return "fail"
+    if not misses:
+        return "pass"
+    asked = bool(trace.questions)
+    if asked and all(getattr(m, "kind", "other") in ASKED_INSTEAD for m in misses):
+        return "untested"
+    return "fail"
+
+
+def _verdict(trace: Trace, violations: Sequence[Violation], misses: Sequence[str]) -> Verdict:
+    status = run_status(trace, violations, misses)
+    return Verdict(
+        passed=status == "pass",
+        violations=tuple(violations),
+        misses=tuple(misses),
+        status=status,
+        notes=tuple(check_notes(trace)),
+    )
+
+
+def turn_violations(trace: Trace, *, allergies: Sequence[str]) -> list[Violation]:
+    """여러 턴 케이스의 앞 턴들에도 불변식을 건다 — 앞 턴에서 되묻기를 2개 하거나 §2 를 어겨도
+    잡히게 (리뷰 11-08). 어느 턴인지 상세에 적는다."""
+    found: list[Violation] = []
+    for number, turn in enumerate(trace.earlier, start=1):
+        found += [
+            Violation(v.rule, f"(턴 {number}) {v.detail}")
+            for v in check_invariants(turn, allergies=allergies)
+        ]
+    return found
 
 
 def judge(case: ProbeCase, trace: Trace, *, today: date) -> Verdict:
-    violations = tuple(check_invariants(trace, allergies=case.world.allergies))
-    misses = [] if trace.error is None else [f"끝까지 못 돌았다: {trace.error}"]
+    violations = [
+        *turn_violations(trace, allergies=case.world.allergies),
+        *check_invariants(trace, allergies=case.world.allergies),
+    ]
+    misses: list[str] = [*run_misses(trace)]
     if trace.error is None:
         misses += check_expect(trace, case.expect, today=today)
-    return Verdict(
-        passed=not violations and not misses, violations=violations, misses=tuple(misses)
-    )
+    return _verdict(trace, violations, misses)
 
 
 def required_passes(severity: str, repeat: int) -> int:
@@ -39,7 +103,18 @@ def required_passes(severity: str, repeat: int) -> int:
 
 
 def case_passed(severity: str, passes: Sequence[bool], repeat: int) -> bool:
-    return sum(passes) >= required_passes(severity, repeat)
+    """반복 수와 정확히 같은 run 이 전부 통과 — 재실행이 섞여 run 이 더 많아도 통과가 아니다."""
+    return len(passes) == required_passes(severity, repeat) and all(passes)
+
+
+def case_status(statuses: Sequence[str], repeat: int) -> Status:
+    """실패 run 이 하나라도 → 실패. 아니고 시험 못 한 run 이 섞였거나 덜 돌았으면 → 판정 못 함.
+    반복 수만큼 전부 통과 → 통과."""
+    if "fail" in statuses or len(statuses) > repeat:
+        return "fail"
+    if "untested" in statuses or len(statuses) < repeat:
+        return "untested"
+    return "pass"
 
 
 def case_unstable(passes: Sequence[bool]) -> bool:
@@ -59,8 +134,10 @@ def record(case: ProbeCase, trace: Trace, verdict: Verdict, *, repeat: int) -> d
         "attempt": trace.attempt,
         "input_kind": "reply" if case.turns[-1].reply else (trace.intent or "none"),
         "passed": verdict.passed,
+        "status": verdict.status,
         "violations": [str(v) for v in verdict.violations],
-        "misses": list(verdict.misses),
+        "misses": [str(m) for m in verdict.misses],
+        "notes": list(verdict.notes),
         "trace": trace.to_json(),
     }
 
@@ -74,26 +151,18 @@ def judge_step(
     extra_misses: Sequence[str] = (),
 ) -> Verdict:
     """W 단계 하나 — P 와 같은 규칙(불변식 + 단계 기대)에 종류별 확인(extra_misses)을 더한다."""
-    violations = tuple(check_invariants(trace, allergies=allergies))
-    misses = [] if trace.error is None else [f"끝까지 못 돌았다: {trace.error}"]
-    misses += extra_misses
+    violations = check_invariants(trace, allergies=allergies)
+    misses: list[str] = [*run_misses(trace), *extra_misses]
     if trace.error is None:
         misses += check_expect(trace, expect, today=today)
-    return Verdict(
-        passed=not violations and not misses, violations=violations, misses=tuple(misses)
-    )
+    return _verdict(trace, violations, misses)
 
 
 def judge_check(trace: Trace, *, misses: Sequence[str]) -> Verdict:
     """W 끝 상태 점검 — run 이 없으니 DB 상태 불변식(I5 · I8)과 점검 항목만 본다."""
-    violations = tuple(check_state(trace))
-    all_misses = [] if trace.error is None else [f"끝까지 못 돌았다: {trace.error}"]
-    all_misses += misses
-    return Verdict(
-        passed=not violations and not all_misses,
-        violations=violations,
-        misses=tuple(all_misses),
-    )
+    violations = check_state(trace)
+    all_misses: list[str] = [*run_misses(trace), *misses]
+    return _verdict(trace, violations, all_misses)
 
 
 def record_week(
@@ -119,8 +188,10 @@ def record_week(
         if step.kind in ("check", "approve", "correct")
         else (trace.intent or "none"),
         "passed": verdict.passed,
+        "status": verdict.status,
         "violations": [str(v) for v in verdict.violations],
-        "misses": list(verdict.misses),
+        "misses": [str(m) for m in verdict.misses],
+        "notes": list(verdict.notes),
         "trace": trace.to_json(),
         "week": case_id,
         "persona": persona,

@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import re
 from datetime import date
 
 import pytest
@@ -14,9 +15,16 @@ from tests.eval.suite.trace import Trace
 from tests.eval.suite.verdict import judge_check, judge_step, record_week
 from tests.eval.suite.week_frames import apply_frames, parse_sse
 from tests.eval.suite.week_runner import (
+    W_LOCK,
+    W_MARK,
     ContainsJudge,
     HashEmbedder,
+    affinity_cite_misses,
+    corrected_misses,
+    interest_misses,
+    parent_nickname,
     render_say,
+    response_code,
     simulation_monday,
     step_day,
     step_moment,
@@ -48,7 +56,7 @@ def test_A_의_단계는_부록_대본_순서대로다() -> None:
     approve = next(s for s in a.steps if s.kind == "approve")
     assert approve.approve_of == "tue-notice" and approve.at == "wed 21:00"
     correct = next(s for s in a.steps if s.kind == "correct")
-    assert correct.correct_of == "mon-evening" and correct.verdict == "once_only"
+    assert correct.correct_of == "tue-dad-playground" and correct.verdict == "once_only"
 
 
 _APPROVE_BAD = _MIN + '  - { at: "tue 09:00", by: mom, tag: b, kind: approve, approve_of: nope }\n'
@@ -375,3 +383,132 @@ def test_리포트는_W_행이_섞여도_그려지고_W_요약을_낸다() -> No
 def test_P_만_있는_결과에는_W_절이_없다() -> None:
     md = render([], source="x", sha="abc", day="2026-11-08")
     assert "일주일 시나리오" not in md
+
+
+def test_실패_응답은_상태_코드와_오류_코드만_남긴다() -> None:
+    import httpx
+
+    body = {"error": {"code": "validation_error", "message": "입력 일부", "detail": {"x": 1}}}
+    coded = httpx.Response(422, json=body)
+    assert response_code(coded) == "422 validation_error"
+    plain = httpx.Response(500, text="본문에 섞인 값")
+    assert response_code(plain) == "500"
+
+
+# ── 끝 상태 점검 — 리뷰 11-08 ────────────────────────────────────────────────────
+
+
+def test_not_confirmed_는_그_관심이_있어야_통과한다() -> None:
+    def misses(states: dict[str, str]) -> list[str]:
+        return interest_misses(states, confirmed=(), not_confirmed=("퍼즐",))
+
+    assert misses({"퍼즐": "candidate"}) == []
+    assert misses({}) and "없다" in misses({})[0]  # 행이 아예 없으면 점검이 안 된 것
+    assert misses({"퍼즐": "confirmed"})
+    assert interest_misses({"블록놀이": "confirmed"}, confirmed=("블록",), not_confirmed=()) == []
+    assert interest_misses({"블록놀이": "candidate"}, confirmed=("블록",), not_confirmed=())
+
+
+def test_확정된_관심은_그_뒤_추천의_근거로_쓰여야_한다() -> None:
+    confirmed_at = {"a1": ("블록놀이", 4)}
+    assert affinity_cite_misses(("블록",), confirmed_at=confirmed_at, cites=[(6, "a1")]) == []
+    # 확정되기 전(같은 단계 포함 — 그 run 의 인용은 Curator 보다 먼저다)의 인용은 세지 않는다
+    assert affinity_cite_misses(("블록",), confirmed_at=confirmed_at, cites=[(4, "a1")])
+    assert affinity_cite_misses(("블록",), confirmed_at=confirmed_at, cites=[(6, "a2")])
+    [miss] = affinity_cite_misses(("블록",), confirmed_at={}, cites=[])
+    assert "확정된 적이 없어" in miss
+
+
+def test_정정한_기록은_뒤_추천의_근거에_없어야_한다() -> None:
+    corrections = [("once_only", "o1", 10)]
+    assert corrected_misses(("once_only",), corrections=corrections, cited=[(9, "o1")]) == []
+    assert corrected_misses(("once_only",), corrections=corrections, cited=[(12, "o1")])
+    [miss] = corrected_misses(("wrong",), corrections=corrections, cited=[])
+    assert "점검할 수 없다" in miss
+
+
+def test_A_의_정정_대상은_뒤에서_인용될_만한_놀이_기록이다() -> None:
+    [week] = [w for w in load_weeks() if w.id == "W-A"]
+    tags = [s.tag for s in week.steps]
+    correct = next(s for s in week.steps if s.kind == "correct")
+    target = next(s for s in week.steps if s.tag == correct.correct_of)
+    # Activity · Growth 만 once_only 를 근거에서 뺀다 — Food · Health 는 설계상 계속 읽는다
+    assert target.expect.saved is not None and target.expect.saved.domains == ("activity",)
+    assert correct.match and target.say and re.search(correct.match, target.say)
+    later = week.steps[tags.index(correct.tag) + 1 :]
+    assert any(s.expect.suggestions.get("activity") for s in later if s.kind == "say")
+    end = next(s for s in week.steps if s.kind == "check")
+    assert end.check is not None and "블록" in end.check.cited_affinity
+
+
+def test_남은_W_행을_고르는_표식() -> None:
+    assert W_MARK and parent_nickname("mom").startswith(W_MARK)
+    assert W_LOCK == (777, 1)  # 두 int 꼴 — Curator 의 bigint 잠금과 공간이 겹치지 않는다
+
+
+class _FakeSession:
+    def __init__(self, log: list[str]) -> None:
+        self.log = log
+
+    async def __aenter__(self) -> "_FakeSession":
+        self.log.append("open")
+        return self
+
+    async def __aexit__(self, *_exc: object) -> None:
+        self.log.append("close")
+
+    async def execute(self, statement: object, params: dict | None = None) -> None:
+        self.log.append(f"{statement} {params}")
+
+
+async def test_W_잠금은_실행_전체를_감싸고_예외에도_푼다(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from tests.eval.suite import week_runner
+
+    log: list[str] = []
+    monkeypatch.setattr(week_runner, "async_session_factory", lambda: _FakeSession(log))
+    with pytest.raises(RuntimeError):
+        async with week_runner.week_lock():
+            log.append("run")
+            raise RuntimeError
+    assert log[0] == "open" and "pg_advisory_lock" in log[1] and log[2] == "run"
+    assert "pg_advisory_unlock" in log[3] and log[4] == "close"
+    assert "{'a': 777, 'b': 1}" in log[1]
+
+
+async def test_남은_W_행은_표식_보호자와_eval_레시피만_지운다(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from uuid import uuid4
+
+    from tests.eval.suite import week_runner
+
+    parent, child = uuid4(), uuid4()
+    seen: dict[str, object] = {}
+
+    async def rows(sql: str, **params: object) -> list[tuple[object]]:
+        if "from parent" in sql:
+            seen["parent_like"] = params["m"]
+            return [(parent,)]
+        return [(child,)]
+
+    async def drop(children: list, parents: list) -> None:
+        seen["drop"] = (children, parents)
+
+    async def recipes(keys: list) -> None:
+        seen["recipes"] = keys
+
+    monkeypatch.setattr(week_runner, "_rows", rows)
+    monkeypatch.setattr(week_runner, "_drop", drop)
+    monkeypatch.setattr(week_runner, "drop_recipes", recipes)
+    assert await week_runner.drop_leftovers() == (1, 1)
+    assert seen["parent_like"] == f"{W_MARK}%"
+    assert seen["drop"] == ([child], [parent])
+    assert seen["recipes"] == week_runner.recipe_keys() and seen["recipes"]
+
+
+def test_W_요약은_시험_못_한_단계를_실패로_세지_않는다() -> None:
+    asked = _row("W-A", "mon-dinner-ask", "say", "mom", "2026-11-16", passed=False)
+    asked["status"] = "untested"
+    asked["misses"] = ["food 추천 없음"]
+    rows = [_row("W-A", "mon-breakfast", "say", "mom", "2026-11-16"), asked]
+    md = render(rows, source="week.jsonl", sha="abc", day="2026-11-08")
+    assert "| W-A | 1/2 · 판정 못 함 1 | 없음 | " in md
+    assert "W-A:mon-dinner-ask: food" not in md  # 첫 실패 이유로 올리지 않는다

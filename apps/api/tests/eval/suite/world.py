@@ -32,6 +32,9 @@ from app.agents.memory.store import InMemoryStore
 # 제품이 InMemory id 를 인용 id 로 바꾸는 방식 그대로(_citation_id) — 바뀌면 여기서 바로
 # 깨지게 복사하지 않고 가져온다
 from app.agents.memory_bridge import _uuid as _citation_id
+
+# "쌓인 기록 N건" 을 셀 관찰 종류 — 운영 러너(agent_ports.record_counter)와 같은 표
+from app.api.agent_ports import RECORD_KINDS
 from tests.eval.agents.food.world import birth_date_for
 from tests.eval.agents.food.world import build_world as build_food_world
 from tests.eval.suite.schema import World
@@ -80,6 +83,21 @@ class RecordingAffinity:
         found = [row for domain, row in self._rows if domain in domains]
         self.seen.update(str(row.id) for row in found)
         return found
+
+
+def record_counter(store: InMemoryStore) -> Any:
+    """`CountRecords` — 운영의 `agent_ports.record_counter` 를 InMemory 로. 그 Agent 의 관찰 종류에
+    남아 있는 아이 관찰 수다. 기록기(RecordingStore)를 거치지 않는다 — 센 것은 읽은 근거가
+    아니다(I3)."""
+
+    async def count_records(agent: str) -> int:
+        total = 0
+        for kind in RECORD_KINDS.get(agent, ()):
+            domain = kind.removeprefix("observation_")
+            total += len(await store.query_observations(domain=domain, child_id=CHILD))
+        return total
+
+    return count_records
 
 
 @dataclass
@@ -152,6 +170,9 @@ async def build_probe_world(world: World, *, now: datetime) -> ProbeWorld:
         ),
         "health_medication": medication,
         "health_medication_writer": medication,
+        # 일반 추천 블록의 "쌓인 기록 N건" (§2). 안 넘기면 record_count 가 늘 None 이라 I2 의
+        # 건수 절반을 P 에서 판정할 수 없다 (리뷰 11-08)
+        "count_records": record_counter(inner),
     }
     if world.rain:
         ports["location"] = _BUSAN

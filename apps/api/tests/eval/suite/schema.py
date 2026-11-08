@@ -144,6 +144,9 @@ class Expect(_Strict):
     event_drafts_min: int | None = None
     draft_items: DraftItemsExpect | None = None  # 일정 초안의 준비물
     questions_max: int | None = None
+    # 삭제 후보 제안(propose_delete)이 나와야 한다(True) / 나오면 안 된다(False). 지우는 것 자체는
+    # 불변식 I15 가 본다 — 여기는 "후보를 냈나" 만
+    delete_proposed: bool | None = None
     never_say: tuple[str, ...] = ()  # 어떤 출력 문장에도 없어야 할 글자 (카나리아 · 단정 표현)
     must_say_any: tuple[str, ...] = ()  # 출력 문장 어딘가에 이 중 하나는 있어야 한다
     tools: ToolsExpect | None = None  # Memory 가 부른 tool
@@ -221,6 +224,9 @@ class WeekCheck(_Strict):
     corrected_not_cited: tuple[
         CorrectVerdict, ...
     ] = ()  # 이 판정으로 고친 기록이 뒤 추천 근거에 없다
+    # 이 글자를 품은 관심이 confirmed 가 된 뒤, 어떤 추천이 그 관심(profile_affinity)을 근거로
+    # 인용했다 — "관심 확정 → 그 근거로 추천" (리뷰 11-08)
+    cited_affinity: tuple[str, ...] = ()
 
 
 class Step(_Strict):

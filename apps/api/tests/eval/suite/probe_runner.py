@@ -1,10 +1,10 @@
 """P · 단발 프로브 러너 (docs/eval/eval-v1.md §3-4).
 
 운영 입구 `entrypoint.handle_input` 을 실제 모델로 부른다. 여러 턴 케이스는 앞 턴의 Memory
-되묻기(`memory.pending`)를 다음 턴의 continuation 으로 넘긴다. 판정은 마지막 턴만 한다.
+되묻기(`memory.pending`)를 다음 턴의 continuation 으로 넘긴다. 기대값은 마지막 턴만 보고,
+불변식(§2)은 턴마다 건다 — 앞 턴은 `Trace.earlier` 에 남는다.
 """
 
-import traceback
 from collections.abc import Callable, Sequence
 from datetime import datetime
 from typing import Any
@@ -15,7 +15,15 @@ from app.agents.suggestion_save import InMemorySuggestions, SuggestionBatch
 from app.agents.supervisor.routing import Guidance
 from app.core import llm_usage
 from tests.eval.suite.schema import ProbeCase
-from tests.eval.suite.trace import CitationView, SuggestionView, ToolCallView, Trace
+from tests.eval.suite.trace import (
+    CitationView,
+    SuggestionView,
+    ToolCallView,
+    Trace,
+    error_text,
+    error_trace,
+    removed_rows,
+)
 from tests.eval.suite.world import (
     CHILD,
     KST,
@@ -135,14 +143,28 @@ async def run_probe(case: ProbeCase, *, attempt: int, logs: Callable[[], Sequenc
         stale_ids=world.stale_ids,
     )
     prefix = f"eval-{case.id}-{attempt}-"
+    earlier: list[Trace] = []
     try:
         continuation = None
         for index, turn in enumerate(case.turns):
             if turn.reply and continuation is None:
                 trace.error = "앞 턴이 되묻지 않아 답 턴을 돌릴 수 없다"
                 break
+            last = index == len(case.turns) - 1
+            # 앞 턴도 같은 칸을 채운다 — 불변식을 턴마다 건다. 카나리아 · 로그는 마지막에 한 번
+            current = (
+                trace
+                if last
+                else Trace(
+                    case_id=case.id,
+                    attempt=attempt,
+                    about=turn.about,
+                    stale_ids=world.stale_ids,
+                )
+            )
             world.store.seen.clear()  # 읽은 기록은 이 턴 것만 센다 (I3 = 이 run 의 근거)
             world.affinity.seen.clear()
+            world.store.inner.proposal = None  # 삭제 제안도 이 턴 것만 (InMemory 는 run 당 하나)
             before = await observation_rows(world.store.inner)
             events_before = await stored_event_count(world.store.inner)
             events: list[object] = []
@@ -161,18 +183,16 @@ async def run_probe(case: ProbeCase, *, attempt: int, logs: Callable[[], Sequenc
                     **world.ports,
                 )
             continuation = result.memory.pending if result.memory is not None else None
-            if index < len(case.turns) - 1:
-                if result.failed is not None:
-                    trace.error = f"앞 턴 실패: {result.failed.reason}"
-                    break
-                continue
             after = await observation_rows(world.store.inner)
-            trace.run_id = run_id
-            trace.saved = tuple(row for oid, row in after.items() if oid not in before)
-            trace.stored_events = await stored_event_count(world.store.inner) - events_before
-            trace.searched = world.searched
+            current.run_id = run_id
+            current.saved = tuple(row for oid, row in after.items() if oid not in before)
+            # InMemory 조회는 지운 행을 돌려주지 않는다 — 전에 있다가 없어진 행이 지워진 행이다
+            current.removed = removed_rows(before, after)
+            current.delete_proposed = world.store.inner.proposal is not None
+            current.stored_events = await stored_event_count(world.store.inner) - events_before
+            current.searched = world.searched
             read_run(
-                trace,
+                current,
                 routing=result.routing,
                 drafts=len(result.memory.drafts) if result.memory is not None else 0,
                 model_calls=result.model_calls,
@@ -182,15 +202,23 @@ async def run_probe(case: ProbeCase, *, attempt: int, logs: Callable[[], Sequenc
                 events=events,
                 batches=saved.batches,
             )
-            trace.memory_tools = memory_tools(result.memory)
-            trace.draft_items = draft_items(result.memory)
+            if last:  # tool · 준비물 기대는 마지막 턴만 본다 (schema.ToolsExpect)
+                trace.memory_tools = memory_tools(result.memory)
+                trace.draft_items = draft_items(result.memory)
             if not result.committed:
                 # 확정되지 않은 run 의 쓰기는 운영에서 롤백된다(pipeline 의 commit 결과가
                 # False 면 저장 안 된 것) — InMemory 에 남은 행을 저장으로 세지 않는다
-                trace.saved = ()
+                current.saved = ()
+                current.removed = ()
+            if not last:
+                earlier.append(current)
+                if result.failed is not None:
+                    trace.error = f"앞 턴 실패: {result.failed.reason}"
+                    break
     except Exception as exc:  # run 하나의 예외로 케이스 전체를 멈추지 않는다
-        trace.error = f"{type(exc).__name__}: {exc}"
-        trace.error_detail = traceback.format_exc()
+        trace.error = error_text(exc)
+        trace.error_detail = error_trace(exc)
+    trace.earlier = tuple(earlier)
     trace.usage = tuple(usage_rows(prefix))
     trace.logs = tuple(logs())
     return trace
