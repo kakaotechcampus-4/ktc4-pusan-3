@@ -25,6 +25,7 @@ from typing import Any, Literal, Protocol, Self
 from uuid import UUID
 
 from app.agents.activity.agent import run as run_activity
+from app.agents.common.guardrail import Guardrail
 from app.agents.common.llm_client import LLMClient, LLMError
 from app.agents.common.readout import Readout
 from app.agents.common.result import DomainPending, EventRequest, MedicationDraft
@@ -78,7 +79,6 @@ from app.agents.supervisor.routing import (
     route,
 )
 from app.agents.supervisor.schemas import DomainAgentName, normalize
-from app.rules.hazard import find_hazards
 from app.rules.medicine_name import mentions_medicine
 from app.rules.safety_term import mentions_safety
 
@@ -647,7 +647,7 @@ async def handle_input(
     started = time.perf_counter()
     send = emit or _ignore
     once = _EmergencyOnce()
-    hazards = _safety_precheck(raw_text)
+    hazards = await _safety_precheck(raw_text, memory_context.guardrail)
     if hazards:
         # 이어받기 답에 나와도 같다 — 되묻던 조각보다 아이 상태 확인이 먼저다
         return _stop_for_hazard(hazards, run_id=run_id, send=send, started=started)
@@ -1979,12 +1979,15 @@ def _ignore(event: Event) -> None:
     """emit 콜백이 없을 때 이벤트를 무시한다."""
 
 
-def _safety_precheck(raw_text: str) -> tuple[str, ...]:
-    """안전 사전검사. 걸린 위험 종류(`app/rules/hazard.py`), 없으면 빈 튜플.
+async def _safety_precheck(raw_text: str, guardrail: Guardrail) -> tuple[str, ...]:
+    """안전 사전검사. 걸린 위험 종류, 없으면 빈 튜플.
 
     Supervisor 보다 먼저 돈다 — Supervisor 가 실패해 Memory 단독으로 가는 run 에서도 막힌다.
+    `guardrail` 은 Memory 저장 게이트와 같은 인스턴스다(`AgentContext.guardrail`, #731).
+    검사를 못 하면(`GuardrailUnavailableError`) 잡지 않는다 — run 이 실패로 끝나고 아무것도
+    저장되지 않는다 (fail-closed).
     """
-    return find_hazards(raw_text)
+    return (await guardrail.check(raw_text, "input")).kinds
 
 
 def _emergency_precheck(raw_text: str, child_months: int | None) -> Guidance | None:

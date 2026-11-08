@@ -52,6 +52,7 @@ import {
   type MedicationsResponse,
 } from "@/lib/api";
 import { cn } from "@/lib/cn";
+import { MEDICATION_ENABLED } from "@/lib/store-policy";
 import { homeEmptyTour, homeTour } from "@/lib/tour/screens/home";
 import { FORWARD } from "@/lib/view-transition";
 
@@ -123,7 +124,13 @@ function HomeScreen() {
   const medications = useQuery({
     queryKey: qk.medications(childId),
     queryFn: () => api.get<MedicationsResponse>(`/children/${childId}/medications`),
+    // 스토어 선언 때문에 꺼 둔 동안은 부르지 않는다 (`lib/store-policy.ts`). 데이터도 실패도 없어 구역이 서지 않는다.
+    enabled: MEDICATION_ENABLED,
   });
+  /**
+   * 🚨 `isPending` 을 그대로 쓰지 않는다 — 꺼 둔 쿼리는 데이터가 없어 영영 `pending` 이라, 홈이 스켈레톤에 멈춘다.
+   */
+  const medicationsPending = MEDICATION_ENABLED && medications.isPending;
 
   // 🚨 이름은 스토어에 캐시하지 않는다. 개인정보는 화면이 필요할 때 Query 로 가져온다 (§3).
   const me = useQuery({ queryKey: qk.me(), queryFn: () => api.get<Me>("/me") });
@@ -219,8 +226,8 @@ function HomeScreen() {
         </header>
 
         {/* 스켈레톤 → 내용은 같은 자리의 교체다 (디자인 시스템 §8). */}
-        <Swap id={medications.isPending ? "pending" : phaseOf(home)}>
-          {home.isPending || medications.isPending ? (
+        <Swap id={medicationsPending ? "pending" : phaseOf(home)}>
+          {home.isPending || medicationsPending ? (
             <HomeBodySkeleton />
           ) : consentBlocked ? (
             // 🚨 403 consent_required 를 일반 실패로 그리면 "다시 시도" 만 누르게 된다 — 다시 시도해도

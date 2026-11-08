@@ -21,8 +21,10 @@ from app.agents.activity.events import (
     Event,
     age_allows,
     distance_m,
+    in_period,
     in_province,
     open_on,
+    places_on,
     read_event,
 )
 from app.agents.activity.result import ErrorCode, ToolResult, fail, ok
@@ -301,19 +303,27 @@ async def search_events(context: ActivityContext, args: SearchEventsArgs) -> Too
       거리는 여기서 계산한다 — 보호자 위치가 외부 API 로 나가지 않는다 (4-3).
     - 행사는 바깥 나들이로 본다. 그날(args.day) 바깥 활동이 어려우면 찾지 않는다 — 실내 공연도
       오가는 길과 줄이 바깥이다. 이번 주말은 바깥이 되는 날에 열리는 행사만 찾는다.
-    - 못 읽는 행 · 온라인 · 술 행사는 빼고(`events.read_event`), 반경 안 가까운 순으로 소개정보를
-      `EVENT_INTRO_LIMIT` 건까지 물어 관람 연령으로 거른다(`events.age_allows`). 소개정보를 못
-      읽은 행사는 뺀다 — 연령을 모르는 채 아이에게 내지 않는다.
-    - 가까운 순 `EVENT_TOP_K` 건의 이름 · 종류 · 기간 · 장소만 싣는다. 🚨 거리 · 요금 · 연락처 ·
-      링크는 모델에 주지 않는다. 돌려준 행사는 `context.state.seen_events` 에 적는다 — 출력 검증이
-      place_name 을 이 표와 대조한다. 지역에서 찾았으면 "근처" 금지 목록(`area_places`)에도 넣는다.
+    - 못 읽는 행 · 온라인 · 술 행사는 빼고(`events.read_event`), 기간으로 먼저 거른 뒤 반경 안
+      가까운 순으로 소개정보를 `EVENT_INTRO_LIMIT` 건까지 물어 관람 연령으로 거른다
+      (`events.age_allows`). 소개정보를 못 읽은 행사는 뺀다 — 연령을 모르는 채 아이에게 내지 않는다.
+    - 🚨 남은 행사의 일정을 읽어(`event_schedules`) 그날 열리는 행사만 남긴다. 기간은 전체 기간이라
+      "매주 토요일" 을 모른다. 일정을 모르는 날은 열리지 않는 날이다. 일정 읽기는 모델 호출이라
+      연령으로 빠진 행사에는 부르지 않는다.
+    - 가까운 순 `EVENT_TOP_K` 건의 이름 · 종류 · 기간 · 그날 장소 · 요청한 날 중 열리는 날만 싣는다.
+      장소가 날마다 다른 행사는 그날 장소다 — 다른 날 장소를 주면 모델이 그 장소로 쓴다.
+      🚨 거리 · 요금 · 연락처 · 링크는 모델에 주지 않는다. 돌려준 행사는 `context.state.seen_events`
+      에 적는다 — 출력 검증이 place_name 을 이 표와 대조하고, 후보의 날에 열리는지 다시 본다.
+      지역에서 찾았으면 "근처" 금지 목록(`area_places`)에도 넣는다.
     - 실패하면 UPSTREAM_ERROR. 모델은 행사 없이 낸다.
     - 행사 행은 근거(suggestion_evidence)에 넣지 않는다. 장소처럼 필터 조건이다.
     """
     gate = context.state.gate
     events = context.ports.events
-    if gate is None or events is None:
-        raise RuntimeError("Gate · 행사 어댑터 없이 행사 조회가 불렸다 — registry 가 열지 않는다")
+    schedules = context.ports.event_schedules
+    if gate is None or events is None or schedules is None:
+        raise RuntimeError(
+            "Gate · 행사 어댑터 · 일정 포트 없이 행사 조회가 불렸다 — registry 가 열지 않는다"
+        )
 
     origin = _origin(context, args.area, tool=_EVENTS, provinces=True)
     if isinstance(origin, ToolResult):
@@ -346,7 +356,7 @@ async def search_events(context: ActivityContext, args: SearchEventsArgs) -> Too
     found: list[tuple[int, Event]] = []
     for raw in raws:
         event = read_event(raw)
-        if event is None or not open_on(event, days):
+        if event is None or not in_period(event, days):
             continue
         distance = distance_m(event, origin)
         if in_province(event, province) if province else distance <= EVENT_MAX_RADIUS_M:
@@ -355,7 +365,15 @@ async def search_events(context: ActivityContext, args: SearchEventsArgs) -> Too
     intros = await asyncio.gather(
         *(_or_none(events.intro(content_id=event.content_id)) for _, event in nearest)
     )
-    rows = [
+    allowed = [
+        (distance, event, intro)
+        for (distance, event), intro in zip(nearest, intros, strict=True)
+        if intro is not None and age_allows(intro.age_limit, gate.stage.months)
+    ]
+    found_schedules = await asyncio.gather(
+        *(schedules.schedule_of(event, today=context.today) for _, event, _ in allowed)
+    )
+    opened = (
         EventRow(
             name=event.name,
             kind=event.kind,
@@ -363,10 +381,11 @@ async def search_events(context: ActivityContext, args: SearchEventsArgs) -> Too
             ends_on=event.ends_on,
             place=intro.place.strip(),
             distance_m=distance,
+            schedule=schedule,
         )
-        for (distance, event), intro in zip(nearest, intros, strict=True)
-        if intro is not None and age_allows(intro.age_limit, gate.stage.months)
-    ][:EVENT_TOP_K]
+        for (distance, event, intro), schedule in zip(allowed, found_schedules, strict=True)
+    )
+    rows = [row for row in opened if open_on(row, days)][:EVENT_TOP_K]
     for row in rows:
         context.state.seen_events.setdefault(row.name, row)
         if context.state.area is not None:
@@ -374,16 +393,28 @@ async def search_events(context: ActivityContext, args: SearchEventsArgs) -> Too
     return ok(
         "query",
         _EVENTS,
-        events=[
-            {
-                "name": row.name,
-                "kind": row.kind.value,
-                "period": f"{row.starts_on.isoformat()} ~ {row.ends_on.isoformat()}",
-                "place": row.place,
-            }
-            for row in rows
-        ],
+        events=[_event_result(row, days) for row in rows],
     )
+
+
+def _event_result(row: EventRow, days: Sequence[date]) -> dict[str, Any]:
+    """모델에 주는 행사 한 건. 열리는 날은 요청한 날 중에서만, 장소는 그날 장소다."""
+    open_days = [day for day in days if open_on(row, (day,))]
+    moving = bool(row.schedule.day_places)
+    return {
+        "name": row.name,
+        "kind": row.kind.value,
+        "period": f"{row.starts_on.isoformat()} ~ {row.ends_on.isoformat()}",
+        "place": " · ".join(places_on(row, open_days)),
+        "open_days": [
+            {
+                "date": day.isoformat(),
+                "weekday": _WEEKDAYS[day.weekday()],
+                **({"place": " · ".join(places_on(row, (day,)))} if moving else {}),
+            }
+            for day in open_days
+        ],
+    }
 
 
 def _origin(

@@ -16,6 +16,14 @@
 	header Strict-Transport-Security "max-age=86400"
 }
 
+# api 는 인증 · 크기 검사보다 본문을 먼저 끝까지 받는다. 큰 본문은 여기서 자른다(413).
+# 가장 큰 요청은 버킷 없이 직접 받는 사진 15MB 다 (apps/api/app/api/v1/routers/photos.py). dev · prod api 둘 다.
+(body_limit) {
+	request_body {
+		max_size 16MB
+	}
+}
+
 # prod (main)
 icatch.ai.kr {
 	import hsts
@@ -24,6 +32,7 @@ icatch.ai.kr {
 
 api.icatch.ai.kr {
 	import hsts
+	import body_limit
 	reverse_proxy ktc4-api:8000
 }
 
@@ -45,6 +54,7 @@ dev.icatch.ai.kr {
 
 api.dev.icatch.ai.kr {
 	import hsts
+	import body_limit
 	# 로그인 시작(GET /api/v1/auth/{provider})과 콜백(…/callback)을 막는다 — 웹만 막으면 api.dev 에서 바로
 	# 카카오 로그인을 시작해 curl 로 가입까지 끝낼 수 있다. HEAD 도 같은 핸들러를 받는다.
 	# 콜백도 막는 이유 — oauth_state 쿠키는 서명 · 서버 저장이 없어 누구나 만들 수 있다. 공개 client_id 로

@@ -63,6 +63,9 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@v7
         with:
+          # 배포 이미지(apps/api/Dockerfile `python:3.12-slim`)와 같은 버전. 안 주면 러너 기본(3.14)을 써서
+          # 3.13+ 의 traceback 원문 표시 때문에 로그 가림 테스트가 CI 에서만 깨진다.
+          python-version: "3.12"
           enable-cache: true
           cache-dependency-glob: apps/api/uv.lock
 
@@ -74,6 +77,11 @@ jobs:
 
       - name: Format
         run: uv run ruff format --check .
+
+      # 롤백은 DB 를 안 되돌린다 — 새 마이그레이션이 직전 코드를 깨면 실패 (#782, docs/ops/deploy-v1.md).
+      # git diff 를 안 쓰고 스크립트의 BASELINE 뒤 revision 만 본다. DB 가 필요 없다.
+      - name: Expand-only migrations
+        run: uv run python -m scripts.check_expand_only
 
       - name: Migrate
         run: uv run alembic upgrade heads

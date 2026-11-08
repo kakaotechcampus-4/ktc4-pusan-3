@@ -2,6 +2,7 @@
 
 - 어댑터는 위치를 받지 않는다. 전국 목록을 받아 거리는 서버가 계산한다.
 - 관람 연령은 가까운 것부터 상세를 물어 아이 월령으로 거른다. 상세를 못 읽은 행사는 뺀다.
+- 그날 열리는지는 기간이 아니라 일정으로 본다. 결과에 요청한 날 중 열리는 날 · 그날 장소를 싣는다.
 - 돌려준 행사는 run state 에 남는다. 출력 검증이 place_name 을 이 표와 대조한다.
 """
 
@@ -12,11 +13,16 @@ import pytest
 
 from app.agents.activity.areas import find_area, find_province
 from app.agents.activity.context import ActivityContext, build_gate
+from app.agents.activity.events import schedule_days
 from app.agents.activity.result import ErrorCode
 from app.agents.activity.schemas.common import DayLabel, PlaceCategory
 from app.agents.activity.schemas.outing import SearchEventsArgs, SearchNearbyPlacesArgs
-from app.agents.activity.store.inmemory import InMemoryEvents, in_memory_ports
-from app.agents.activity.store.ports import EVENT_TOP_K, CoarseLocation
+from app.agents.activity.store.inmemory import (
+    InMemoryEvents,
+    InMemoryEventSchedules,
+    in_memory_ports,
+)
+from app.agents.activity.store.ports import EVENT_TOP_K, CoarseLocation, EventSchedule
 from app.agents.activity.tools.outing import days_of, search_events, search_nearby_places
 from app.agents.activity.weather import WeatherBrief
 from app.core.event_raw import RawEvent, RawEventIntro
@@ -52,13 +58,15 @@ def raw(
     )
 
 
-async def context(events: InMemoryEvents, *, outdoor_ok=True, birth=date(2023, 6, 1)):
+async def context(
+    events: InMemoryEvents, *, outdoor_ok=True, birth=date(2023, 6, 1), schedules=None
+):
     ctx = ActivityContext(
         child_id=CHILD,
         run_id="run-1",
         now=NOW,
         timezone=UTC,
-        ports=in_memory_ports(CHILD, birth, events=events),
+        ports=in_memory_ports(CHILD, birth, events=events, event_schedules=schedules),
         location=LOCATION,
     )
     ctx.state.gate = await build_gate(ctx, outdoor_ok=outdoor_ok)
@@ -105,7 +113,7 @@ class TestNearest:
 
         assert names(result) == ["가까운 축제"]
 
-    async def test_이름_종류_기간_장소만_주고_거리는_주지_않는다(self):
+    async def test_이름_종류_기간_장소_열리는_날만_주고_거리는_주지_않는다(self):
         rows = [raw("1", "바다 축제")]
         intros = {"1": RawEventIntro(age_limit="전 연령", place="광안리해수욕장 일원")}
 
@@ -119,6 +127,7 @@ class TestNearest:
                 "kind": "축제",
                 "period": "2026-11-01 ~ 2026-11-09",
                 "place": "광안리해수욕장 일원",
+                "open_days": [{"date": "2026-11-02", "weekday": "월"}],
             }
         ]
 
@@ -177,6 +186,75 @@ class TestDay:
         assert names(result) == ["일요일 축제"]
 
 
+SATURDAY = date(2026, 11, 7)
+
+
+class TestSchedule:
+    """기간은 전체 기간이다 — "매주 토요일" 행사는 기간 안 월요일에 없다 (11-03 실측)."""
+
+    async def test_기간_안이어도_그날_열리지_않는_행사는_주지_않는다(self):
+        rows = [raw("1", "토요일 체조", km=1), raw("2", "매일 축제", km=2)]
+        schedules = InMemoryEventSchedules({"1": EventSchedule(open_days=frozenset({SATURDAY}))})
+        ctx = await context(InMemoryEvents(rows), schedules=schedules)
+
+        today = await search_events(ctx, SearchEventsArgs(day=DayLabel.TODAY))
+        weekend = await search_events(ctx, SearchEventsArgs(day=DayLabel.THIS_WEEKEND))
+
+        assert names(today) == ["매일 축제"]
+        assert names(weekend) == ["토요일 체조", "매일 축제"]
+
+    async def test_요청한_날_중_열리는_날만_싣는다(self):
+        schedules = InMemoryEventSchedules({"1": EventSchedule(open_days=frozenset({SATURDAY}))})
+        ctx = await context(InMemoryEvents([raw("1", "토요일 체조")]), schedules=schedules)
+
+        result = await search_events(ctx, SearchEventsArgs(day=DayLabel.THIS_WEEKEND))
+
+        (event,) = result.data["events"]
+        assert event["open_days"] == [{"date": "2026-11-07", "weekday": "토"}]
+
+    async def test_장소가_날마다_다르면_그날_장소를_준다(self):
+        """다른 날 장소를 주면 모델이 그 장소로 문장을 쓴다."""
+        intros = {"1": RawEventIntro(age_limit="", place="바람숲공원 / 모래섬 해변")}
+        schedules = InMemoryEventSchedules(
+            {
+                "1": EventSchedule(
+                    open_days=frozenset({SATURDAY}),
+                    day_places=((date(2026, 10, 31), "바람숲공원"), (SATURDAY, "모래섬 해변")),
+                )
+            }
+        )
+        ctx = await context(
+            InMemoryEvents([raw("1", "달빛 체조", start="20261001")], intros), schedules=schedules
+        )
+
+        result = await search_events(ctx, SearchEventsArgs(day=DayLabel.THIS_WEEKEND))
+
+        (event,) = result.data["events"]
+        assert event["place"] == "모래섬 해변"
+        assert event["open_days"] == [
+            {"date": "2026-11-07", "weekday": "토", "place": "모래섬 해변"}
+        ]
+
+    async def test_관람_연령으로_빠진_행사는_일정을_읽지_않는다(self):
+        """일정 읽기는 모델 호출이다 — 어차피 빠질 행사에 부르지 않는다."""
+        rows = [raw("1", "청소년 축제", km=1), raw("2", "가족 축제", km=2)]
+        intros = {"1": RawEventIntro(age_limit="만 13세 이상", place="")}
+        schedules = InMemoryEventSchedules()
+
+        await search_events(
+            await context(InMemoryEvents(rows, intros), schedules=schedules),
+            SearchEventsArgs(day=DayLabel.TODAY),
+        )
+
+        assert schedules.calls == ["2"]
+
+    @pytest.mark.parametrize("offset", range(7))
+    def test_일정을_읽는_창이_모든_날_라벨을_덮는다(self, offset):
+        today = date(2026, 11, 2) + timedelta(days=offset)
+        for label in DayLabel:
+            assert set(days_of(label, today)) <= set(schedule_days(today))
+
+
 class TestAge:
     async def test_아이보다_높은_관람_연령은_뺀다(self):
         rows = [raw("1", "청소년 축제", km=1), raw("2", "가족 축제", km=2)]
@@ -227,6 +305,8 @@ class TestSeen:
         assert set(ctx.state.seen_events) == {f"축제{i}" for i in range(EVENT_TOP_K)}
         row = ctx.state.seen_events["축제0"]
         assert (row.starts_on, row.ends_on) == (date(2026, 11, 1), date(2026, 11, 9))
+        # 출력 검증이 후보의 날로 다시 본다 — 요청한 날만이 아니라 창 전체의 열리는 날이다
+        assert row.schedule.open_days == set(schedule_days(date(2026, 11, 2)))
 
 
 # 보호자가 지역을 말한 요청
