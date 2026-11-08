@@ -149,6 +149,12 @@ raw SQL 대상 예시: 승격 판정 집계, observation 4테이블 병합 페�
 - `--autogenerate` 결과를 확인 없이 커밋하지 않는다.
   자동 인식 안 되는 것: `enum`, `CHECK` 제약, `daterange`, `vector` 타입, `GRANT`
 - 첫 revision 에 `CREATE EXTENSION IF NOT EXISTS vector` 를 직접 넣는다.
+- 🚨 **expand-only** — 배포 롤백은 DB 를 안 되돌려서, 직전 코드가 새 스키마에서 돌아야 한다.
+  CI 의 `python -m scripts.check_expand_only` 가 `upgrade()` 의 컬럼 · 테이블 삭제, 이름 바꾸기,
+  NOT NULL 조이기, `server_default` 없는 NOT NULL 컬럼 추가를 막는다. 이런 변경은 배포 두 번에 나누고,
+  두 번째 마이그레이션 파일에 `# contract: #<앞 배포 PR 번호>` 를 적으면 통과한다.
+  검사 대상은 스크립트의 고정 `BASELINE` 뒤 revision 이다 — 출발점이라 올리지 않는다.
+  상세: [`docs/ops/deploy-v1.md`](../../docs/ops/deploy-v1.md) 롤백 절.
 
 ---
 

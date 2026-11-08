@@ -46,6 +46,15 @@ healthy 가 될 때까지 기다리고, 안 되면(최대 240초) 실패로 본�
   - 컬럼 · 테이블 추가, nullable 컬럼 추가 → 한 번에 해도 된다
   - 컬럼 삭제 · 이름 바꾸기 · NOT NULL 로 조이기 → **두 번에 나눈다.** 먼저 코드가 그 컬럼을 안 쓰게 배포하고,
     다음 배포에서 스키마를 바꾼다
+  - **CI 가 막는다** (#782) — `scripts/check_expand_only.py` 가 새 마이그레이션의 `upgrade()` 에서
+    `drop_column` · `drop_table` · `rename_table` · `alter_column(new_column_name=… / nullable=False)` ·
+    `server_default` 없는 NOT NULL `add_column` · `op.execute` 원문 SQL 의 DROP/RENAME/SET NOT NULL/ALTER … TYPE 를 찾으면 빨간불.
+    `drop_index` · `drop_constraint` · `type_` 바꾸기는 보지 않는다 (기존 마이그레이션에서 오탐만 나왔다).
+  - 두 번째 배포의 마이그레이션(앞 배포로 코드가 이미 안 쓰는 컬럼을 지우는 것)에는 파일에
+    `# contract: #<앞 배포 PR 번호>` 를 적는다. 그 파일은 통과한다.
+  - 대상은 스크립트의 `BASELINE`(검사를 넣을 때의 head `d5e8a1c4b937`) 뒤 revision 전부다. 고정된 출발점이라
+    **올리지 않는다** — 그 전 마이그레이션은 이미 배포됐고, 그 뒤는 매번 다 검사한다. git diff 를 쓰지 않는 이유는
+    CI checkout 이 depth 1 이고 배포가 부른 실행엔 비교할 base 가 없어서다.
   - 마이그레이션 자체를 되돌려야 하면 사람이 서버에서 `alembic downgrade` 를 한다 (자동으로 하지 않는다 — 데이터가 지워질 수 있다)
 - 롤백은 **새 커밋의 compose 파일**로 옛 이미지를 띄운다. compose 파일을 크게 바꾼 배포가 실패하면 롤백도 실패할 수 있다.
   그때 Actions 출력에 "롤백도 실패" 가 찍힌다.
