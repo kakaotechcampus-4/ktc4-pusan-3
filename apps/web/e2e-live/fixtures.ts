@@ -24,8 +24,10 @@ type Fixtures = {
 };
 
 /** refresh 쿠키 — 서버의 `_set_refresh` (`apps/api/app/api/v1/routers/auth.py`)와 같은 속성이다. */
-const REFRESH_COOKIE = "icatch_rt";
-const AUTH_COOKIE_PATH = "/api/v1/auth";
+// `__Host-` 쿠키는 Path=/ · Secure · Domain 없음이어야 브라우저가 받는다 (#783). domain 에 점을 안 붙이면
+// Playwright 는 host-only 로 심는다.
+const REFRESH_COOKIE = "__Host-icatch_rt";
+const AUTH_COOKIE_PATH = "/";
 
 function seedParent(): Seeded {
   const out = execFileSync("uv", ["run", "--no-sync", "python", "-m", "scripts.seed_e2e"], {
