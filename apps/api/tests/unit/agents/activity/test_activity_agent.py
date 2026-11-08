@@ -743,3 +743,10 @@ class TestPlaceFit:
         assert "왜 그 종류의 장소인지" in system
         assert "을 짐작해 쓰지 않는다" in system
         assert "기록에 장소 이름이 있으면" in system
+
+    async def test_보호자가_말한_결이_오늘_상태보다_먼저다(self):
+        """많이 뛴 날이어도 보호자가 "또 신나게" 를 원하면 그대로 — 기록은 그 안에서 고르는 데만."""
+        llm = FakeLLM(propose("거실 보물찾기", "그림자놀이", "색종이 접기"))
+        await run(task("오후에도 몸으로 신나게 놀 데 추천해 줘"), context(), client=llm)
+        system = llm.seen[0][0]["content"]
+        assert "보호자가 이번 요청에서 원하는 결" in system
