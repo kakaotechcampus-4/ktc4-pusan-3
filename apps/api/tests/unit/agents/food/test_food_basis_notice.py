@@ -6,12 +6,13 @@
 
 import pytest
 
+from app.agents.common.suggestion import SuggestionDraft
 from app.agents.food.basis_notice import basis_notices
 from app.agents.food.context import FoodContext, MealPick
 from app.agents.food.nutrient_wording import wording_problem
 from app.agents.food.nutrition_eval import NutrientVerdict
 from app.agents.food.schemas.common import MealSlot
-from app.agents.food.store import MenuCatalogRow
+from app.agents.food.store import MenuCatalogRow, SafetyEntry
 from tests.unit.agents.food.support import context, menu_row
 
 VEG = frozenset({"vegetables"})
@@ -44,8 +45,8 @@ def pick(key: str) -> MealPick:
     return MealPick(draft=None, menu_key=key, meal_slot=MealSlot.DINNER)  # type: ignore[arg-type]
 
 
-def ctx(result: NutrientVerdict | None) -> FoodContext:
-    made = context(safety=())
+def ctx(result: NutrientVerdict | None, *, safety: list[SafetyEntry] | None = None) -> FoodContext:
+    made = context(safety=safety if safety is not None else ())
     made.state.nutrient_verdict = result
     return made
 
@@ -214,3 +215,133 @@ class TestOrderAndSafety:
                 {None, "no_meal_subject"} if readout.body.startswith("추천 메뉴는") else {None}
             )
             assert problem in allowed, readout.body
+
+
+# ── 레시피북 밖 생성 메뉴 (#740) ─────────────────────────────────────────────
+def gen_pick(name: str) -> MealPick:
+    """레시피북에 없는 생성 메뉴 — 카탈로그 행이 없어 `rows_by_key` 에 없다."""
+    draft = SuggestionDraft(agent="food", kind="general", content=name, reason="r", requested=True)
+    return MealPick(draft=draft, menu_key=name, meal_slot=MealSlot.DINNER)
+
+
+SOURCE = "추천 메뉴는 농식품정보원 공개 레시피 중 재료가 검수된 메뉴예요."
+GENERATED = "추천 메뉴는 공개 레시피에 없어 일반적인 메뉴로 골랐어요."
+CAVEAT = "여러 재료가 든 음식이면 들어간 재료나 성분표를 한 번 더 확인해 주세요."
+NUT = [SafetyEntry(kind="allergy", label="견과류", status="active")]
+
+
+class TestGeneratedMenus:
+    def test_생성_메뉴만_골랐으면_공개_레시피에_없다고_밝힌다(self) -> None:
+        result = basis_notices(ctx(None), [gen_pick("파프리카볶음")], {})
+
+        assert bodies(result) == [GENERATED]
+
+    def test_레시피북_메뉴만이면_지금처럼_출처_줄이다(self) -> None:
+        result = basis_notices(ctx(None), [pick("시금치나물")], rows_of(SPINACH))
+
+        assert bodies(result) == [SOURCE]
+
+    def test_섞이면_생성_메뉴를_밝히고_나머지는_출처를_말한다(self) -> None:
+        result = basis_notices(
+            ctx(None), [pick("시금치나물"), gen_pick("파프리카볶음")], rows_of(SPINACH)
+        )
+
+        assert bodies(result) == [
+            "파프리카볶음은 공개 레시피에 없어 일반적인 메뉴로 골랐어요. "
+            "나머지는 농식품정보원 공개 레시피 중 재료가 검수된 메뉴예요."
+        ]
+
+    def test_생성_메뉴가_여럿이면_이름을_이어_받침에_맞는_조사를_붙인다(self) -> None:
+        result = basis_notices(
+            ctx(None),
+            [pick("시금치나물"), gen_pick("파프리카볶음"), gen_pick("파프리카전")],
+            rows_of(SPINACH),
+        )
+
+        assert bodies(result)[0].startswith("파프리카볶음, 파프리카전은 공개 레시피에 없어")
+
+    def test_받침이_없는_이름은_는을_붙인다(self) -> None:
+        result = basis_notices(
+            ctx(None), [pick("시금치나물"), gen_pick("파프리카무침")], rows_of(SPINACH)
+        )
+
+        assert bodies(result)[0].startswith("파프리카무침은 ")
+        result = basis_notices(
+            ctx(None), [pick("시금치나물"), gen_pick("파프리카소스")], rows_of(SPINACH)
+        )
+        assert bodies(result)[0].startswith("파프리카소스는 ")
+
+    def test_섞인_줄의_기관은_레시피북_메뉴에서만_온다(self) -> None:
+        nics = menu_row("애호박볶음", source="nics_recipe")
+
+        result = basis_notices(
+            ctx(None), [pick("애호박볶음"), gen_pick("파프리카볶음")], rows_of(nics)
+        )
+
+        assert "농촌진흥청 국립식량과학원 공개 레시피" in bodies(result)[0]
+        assert "농식품정보원" not in bodies(result)[0]
+
+    def test_생성_메뉴는_영양_줄_대상이_아니다(self) -> None:
+        # 식품군을 지어내지 않는다 — 카탈로그 행이 없는 생성 메뉴는 채소가 들었다고 말하지 않는다
+        result = basis_notices(ctx(SPARSE), [gen_pick("파프리카볶음")], {})
+
+        assert bodies(result) == [GENERATED]
+
+    def test_레시피북_메뉴에_영양_줄이_나가도_생성_메뉴는_따로_밝힌다(self) -> None:
+        result = basis_notices(
+            ctx(SPARSE), [pick("시금치나물"), gen_pick("파프리카볶음")], rows_of(SPINACH)
+        )
+
+        assert len(result) == 2
+        assert "더 넣었어요" in bodies(result)[0]
+        assert "공개 레시피에 없어" in bodies(result)[1]
+
+    def test_생성_메뉴_이름은_문구_자리에만_들어간다(self) -> None:
+        result = basis_notices(ctx(None), [gen_pick("파프리카볶음")], {})
+
+        assert {readout.kind for readout in result} == {"notice"}
+        assert {readout.authored_by for readout in result} == {"code"}
+        assert "파프리카" not in bodies(result)[0]  # 모든 줄이 이름 없이도 같은 문구다
+
+
+class TestIngredientsCaveat:
+    def test_알레르기를_등록한_아이에게_생성_메뉴가_나가면_재료_확인을_안내한다(self) -> None:
+        result = basis_notices(ctx(None, safety=NUT), [gen_pick("파프리카볶음")], {})
+
+        assert bodies(result) == [GENERATED, CAVEAT]
+
+    def test_알레르기_등록이_없으면_재료_확인_줄이_없다(self) -> None:
+        result = basis_notices(ctx(None), [gen_pick("파프리카볶음")], {})
+
+        assert CAVEAT not in bodies(result)
+
+    def test_생성_메뉴가_없으면_알레르기_등록이_있어도_재료_확인_줄이_없다(self) -> None:
+        result = basis_notices(ctx(None, safety=NUT), [pick("시금치나물")], rows_of(SPINACH))
+
+        assert bodies(result) == [SOURCE]
+
+    def test_확인_못_한_건강_정보만_있으면_재료_확인_줄이_없다(self) -> None:
+        unconfirmed = [SafetyEntry(kind="allergy", label="견과류", status="unknown")]
+
+        result = basis_notices(ctx(None, safety=unconfirmed), [gen_pick("파프리카볶음")], {})
+
+        assert CAVEAT not in bodies(result)
+
+    def test_줄_순서는_영양_출처_재료_확인이다(self) -> None:
+        result = basis_notices(
+            ctx(SPARSE, safety=NUT),
+            [pick("시금치나물"), gen_pick("파프리카볶음")],
+            rows_of(SPINACH),
+        )
+
+        first, second, third = bodies(result)
+        assert "더 넣었어요" in first and second.startswith("파프리카볶음은") and "성분표" in third
+
+    @pytest.mark.parametrize("name", ["파프리카볶음", "태국식볶음국수"])
+    def test_만들_수_있는_생성_줄이_문장_규칙을_통과한다(self, name: str) -> None:
+        result = basis_notices(
+            ctx(None, safety=NUT), [pick("시금치나물"), gen_pick(name)], rows_of(SPINACH)
+        )
+
+        for readout in result:
+            assert wording_problem(readout.body) in (None, "no_meal_subject"), readout.body

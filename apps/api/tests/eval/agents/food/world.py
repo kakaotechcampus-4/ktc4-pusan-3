@@ -154,6 +154,8 @@ WORLDS: dict[str, WorldSpec] = {
     "C48-pool2": WorldSpec(recipes="pool2"),
     "C48-pool0": WorldSpec(allergy=("달걀",), recipes="pool0"),
     "C48-nodc": WorldSpec(daycare=False),
+    # 대두 알레르기 — 생성 메뉴가 간장 · 된장 같은 양념을 재료에 안 적으면 필터가 놓칠 수 있다(#740)
+    "C48-soy": WorldSpec(allergy=("대두",)),
     "C48-prev": WorldSpec(history=("소불고기", "두부조림", "시금치나물")),
     # 영양 반영이 실제로 도는 세계 — 채소 2일 · 과일 1일 / 기록된 6일
     "C48-veg": WorldSpec(meals="sparse_veg", catalog=True),

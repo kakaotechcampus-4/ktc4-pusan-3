@@ -8,6 +8,7 @@ import {
   mealDraft,
   placeGeneralSuggestion,
   placeSuggestion,
+  requestedFoodSuggestion,
   requestedGeneralSuggestion,
   staleSuggestion,
   suggestionDraft,
@@ -57,6 +58,7 @@ const pickable = [
   ...suggestions,
   ...generalSuggestions,
   requestedGeneralSuggestion,
+  requestedFoodSuggestion,
   placeSuggestion,
   placeGeneralSuggestion,
   eventSuggestion,
@@ -149,7 +151,13 @@ export const suggestionHandlers = [
     //    결과를 낸 Agent 는 묶음이 온다 — 일반 추천만 있어도 그 Agent 의 묶음이 있다.
     //    ⚠️ 답하는 길(#246) 전이라 `options` 는 비어 온다 — 서버와 같은 모양이다.
     //    `suggest_requested` 는 보호자가 놀이를 정해 물은 일반 추천이다 — 문서 근거가 비어 온다 (#597).
-    if (scenario === "scarcity" || scenario === "empty" || scenario === "suggest_requested") {
+    //    `suggest_requested_food` 는 재료를 정해 물은 식사 일반 추천이다 — 같은 꼴로 문서 · 메뉴 근거가 비어 온다 (#740).
+    if (
+      scenario === "scarcity" ||
+      scenario === "empty" ||
+      scenario === "suggest_requested" ||
+      scenario === "suggest_requested_food"
+    ) {
       // 🚨 등록된 알레르기(`active`)가 든 일반 추천은 빼고 내보낸다 (`notBlocked`). 사전검사만 거르면
       //    확인 시트에서 "있어요" 로 등록한 재료가 다음 화면에서 다시 서고, 이번에는 묻지도 않고 채택된다.
       const general = (
@@ -157,7 +165,9 @@ export const suggestionHandlers = [
           ? generalSuggestions
           : scenario === "suggest_requested"
             ? [requestedGeneralSuggestion]
-            : [generalSuggestions[0]]
+            : scenario === "suggest_requested_food"
+              ? [requestedFoodSuggestion]
+              : [generalSuggestions[0]]
       ).filter(notBlocked);
       const count = scenario === "scarcity" ? 1 : 0;
       const generalAgents = new Set(general.map((g) => g.agent));

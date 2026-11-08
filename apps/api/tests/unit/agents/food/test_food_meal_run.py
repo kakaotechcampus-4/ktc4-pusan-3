@@ -470,7 +470,7 @@ async def test_샘플이_3개_미만이면_풀에_후보가_더_있어도_재호
 ) -> None:
     # 같은 주재료 제한 같은 이유로 샘플이 2개에 그쳐도 더 채울 길이가 없는 것으로 본다(exhausted)
     with_pool(monkeypatch, TOFU, EGGROLL, SPINACH, SOUP, BEEF)
-    monkeypatch.setattr(food_agent, "sample_pool", lambda pool, *, seed: tuple(pool[:2]))
+    monkeypatch.setattr(food_agent, "sample_pool", lambda pool, *, seed, first=(): tuple(pool[:2]))
     llm = ScriptedLLM(propose("두부조림", "계란말이"))  # 응답이 하나뿐이라 재호출하면 실패한다
 
     result = await run(meal_task(), meal_context(safety=EGG), client=llm)
@@ -953,3 +953,152 @@ async def test_영양_줄이_나가도_추천의_근거와_종류는_그대로�
 
     # 영양 판정은 저장하지 않아 가리킬 행이 없다 — 줄만 나가고 근거 행 · 개인화 집계는 안 바뀐다
     assert await evidence(sparse_vegetables()) == await evidence(None)
+
+
+# ── 보호자가 정한 조건 — 조건 맞는 레시피 먼저 · 레시피북 밖 생성 (#740) ──────────────
+def propose_generated(
+    *,
+    requested: str | None,
+    kind: str | None = "ingredient",
+    menu_keys: Sequence[str] = (),
+    generated: Sequence[dict] = (),
+    reason: str = "요청하신 조건에 맞아서 골랐어요",
+):
+    from tests.unit.agents.food.support import tool_call, tool_response
+
+    args: dict = {
+        "candidates": [
+            {"menu_key": key, "meal_slot": "dinner", "reason": reason, "evidence": []}
+            for key in menu_keys
+        ],
+        "generated": [
+            {
+                "main_ingredients": ["파프리카"],
+                "ingredients": ["파프리카", "올리브유"],
+                "meal_slot": "dinner",
+                "reason": reason,
+                **item,
+            }
+            for item in generated
+        ],
+    }
+    if requested is not None:
+        args["requested_food"] = requested
+        args["requested_kind"] = kind
+    return tool_response(tool_call("propose-generated", "propose_meal_candidates", args))
+
+
+def fillers(count: int) -> list[MenuCatalogRow]:
+    return [recipe(f"기본반찬{i}", f"기본재료{i}") for i in range(count)]
+
+
+CUCUMBER = recipe("오이무침", "오이", "참기름")
+
+
+async def test_요청_글에_재료가_나온_레시피는_후보_목록에_요청과_맞음으로_먼저_보인다() -> None:
+    from dataclasses import replace
+
+    for run_id in ("run-1", "run-2", "run-3", "run-4", "run-5", "run-6"):
+        llm = ScriptedLLM(propose("오이무침", "두부조림", "시금치나물", evidence=[]))
+        context = replace(meal_context(TOFU, SPINACH, SOUP, BEEF, CUCUMBER), run_id=run_id)
+
+        await run(meal_task("오이 들어간 음식 추천해줘"), context, client=llm)
+
+        shown = "\n".join(str(m["content"]) for m in llm.seen[0] if m["role"] == "user")
+        lines = [line for line in shown.splitlines() if line.startswith("- ")]
+        assert lines[0].startswith("- 오이무침"), run_id  # 샘플 앞에 먼저 들어간다
+        assert lines[0].endswith("요청과 맞음")
+        assert sum("요청과 맞음" in line for line in lines) == 1
+
+
+async def test_조건이_없는_요청은_후보_목록에_요청과_맞음이_없다() -> None:
+    llm = ScriptedLLM(propose("두부조림", "시금치나물", "미역국", evidence=[]))
+
+    await run(meal_task("저녁 추천해줘"), meal_context(TOFU, SPINACH, SOUP, CUCUMBER), client=llm)
+
+    user = "\n".join(str(m["content"]) for m in llm.seen[0] if m["role"] == "user")
+    assert "요청과 맞음" not in user
+
+
+async def test_레시피북에_없는_재료를_정해_물으면_생성_메뉴를_요청_기반_일반_추천으로_낸다() -> (
+    None
+):
+    llm = ScriptedLLM(
+        propose_generated(
+            requested="파프리카",
+            generated=[{"name": "파프리카볶음"}, {"name": "파프리카전"}, {"name": "파프리카밥"}],
+        )
+    )
+
+    result = await run(
+        meal_task("파프리카 들어간 반찬 추천해줘"), meal_context(TOFU, SPINACH, SOUP), client=llm
+    )
+
+    assert result.status == "completed" and result.model_calls == 1
+    assert [d.content for d in result.suggestions] == ["파프리카볶음", "파프리카전", "파프리카밥"]
+    assert {d.kind for d in result.suggestions} == {"general"}
+    assert all(d.requested for d in result.suggestions)
+    assert {d.reason for d in result.suggestions} == {"요청하신 조건을 바탕으로 골랐어요."}
+    assert all(d.citations == () for d in result.suggestions)  # 근거 0행 일반 추천이 정상이다
+
+
+async def test_모델이_조건을_지어내면_생성을_받지_않고_고치게_한다() -> None:
+    llm = ScriptedLLM(
+        propose_generated(requested="파프리카", generated=[{"name": "파프리카볶음"}]),
+        propose("두부조림", "시금치나물", "미역국"),
+    )
+
+    result = await run(meal_task("저녁 뭐 먹일까"), meal_context(TOFU, SPINACH, SOUP), client=llm)
+
+    assert [d.content for d in result.suggestions] == ["두부조림", "시금치나물", "미역국"]
+    assert llm.calls == 2  # 첫 호출은 도구가 거절했고 같은 대화에서 고쳐 냈다
+    assert not any(d.requested for d in result.suggestions)
+
+
+async def test_조건_맞는_레시피_뒤에_부족한_자리만_생성으로_채운다() -> None:
+    llm = ScriptedLLM(
+        propose_generated(
+            requested="파프리카",
+            menu_keys=["파프리카볶음"],
+            generated=[{"name": "파프리카전"}, {"name": "파프리카무침"}],
+        )
+    )
+    stir = recipe("파프리카볶음", "파프리카", "올리브유")
+
+    result = await run(
+        meal_task("파프리카 들어간 반찬 추천해줘"), meal_context(stir, TOFU, SPINACH), client=llm
+    )
+
+    assert [d.content for d in result.suggestions] == ["파프리카볶음", "파프리카전", "파프리카무침"]
+    assert len(result.suggestions[0].citations) == 1  # 레시피북 메뉴는 메뉴 근거를 그대로 단다
+    assert result.suggestions[1].citations == ()
+
+
+async def test_안전_필터에_걸린_생성_메뉴는_재호출에서_다시_내지_않게_제외_목록에_들어간다() -> (
+    None
+):
+    egg = [SafetyEntry(kind="allergy", label="달걀", status="active")]
+    llm = ScriptedLLM(
+        propose_generated(
+            requested="파프리카",
+            generated=[
+                {"name": "파프리카달걀말이", "ingredients": ["파프리카", "계란"]},
+                {"name": "파프리카볶음"},
+                {"name": "파프리카전"},
+            ],
+        ),
+        propose_generated(requested="파프리카", generated=[{"name": "파프리카무침"}]),
+    )
+
+    result = await run(
+        meal_task("파프리카 들어간 반찬 추천해줘"),
+        meal_context(TOFU, SPINACH, SOUP, safety=egg),
+        client=llm,
+    )
+
+    assert llm.calls == 2
+    recall = [str(m["content"]) for m in llm.seen[1] if m["role"] == "user"][-1]
+    excluded = recall.split("[후보 목록]")[0]
+    assert "파프리카달걀말이" in excluded  # 제외 목록에는 이름만 들어간다 — 사유는 없다
+    assert "계란" not in recall and "알레르기" not in excluded
+    assert "파프리카달걀말이" not in [d.content for d in result.suggestions]

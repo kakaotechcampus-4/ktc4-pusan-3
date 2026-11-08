@@ -19,7 +19,7 @@ tool이 못 막는 것을 막는 자리다. 코드로 막을 수 있는 것은 r
 앞의 대화에 이미 있어서 다시 싣지 않는다.
 """
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from typing import Any
 
 from app.agents.food.context import FoodContext
@@ -87,8 +87,28 @@ def _instructions(task_type: FoodTaskType) -> str:
             "피해 골랐으면 무엇을 피했는지 쓴다. 몸 상태나 수치는 쓰지 않는다."
         )
         lines.append(
-            "- 보호자가 말한 음식이 후보 목록에 없으면 그 음식을 reason 에 쓰지 않는다. "
-            "후보 안에서 가까운 것을 고른다."
+            "- 보호자가 말한 음식이 후보 목록에 없고 generated 로도 내지 않으면 그 음식을 "
+            "reason 에 쓰지 않는다. 후보 안에서 가까운 것을 고른다."
+        )
+        lines.append(
+            "- 보호자가 재료나 요리 종류(나라 · 지역 음식, 특정 요리 이름)를 정해 물었으면 "
+            "후보 목록에 그 조건에 맞는 메뉴가 없어도 반드시 requested_food 에 보호자 말 그대로, "
+            "requested_kind 에 재료(ingredient) · 요리 종류(cuisine)를 적는다. 적어야 조건에 "
+            "맞는 메뉴를 generated 로 채울 수 있다. 막연한 요청이면 둘 다 비운다."
+        )
+        lines.append(
+            "- 후보 목록에서 '요청과 맞음' 이 붙은 메뉴를 먼저 고른다. 그것으로 모자랄 때만 "
+            "generated 로 채운다. requested_food 를 적지 않았으면 generated 를 쓰지 않는다."
+        )
+        lines.append(
+            "- generated 는 집이나 식당에서 흔히 먹는 메뉴 이름만 쓴다. 조건을 억지로 끼운 "
+            "조합이나 지어낸 이름은 쓰지 않는다. 아이 월령에 맞게 맵거나 딱딱하지 않은 "
+            "메뉴로 고른다."
+        )
+        lines.append(
+            "- generated 의 재료에는 이름만 적는다. 양 · 숫자 · 단위 · 조리법은 쓰지 않는다. "
+            "들어가는 양념(간장 · 된장 · 고추장 · 버터 · 마요네즈 …)도 재료에 적는다 — 빠뜨리면 "
+            "알레르기를 거를 수 없다."
         )
         lines.append(
             "- 보호자가 알레르기나 피할 음식을 말했어도 reason 에는 그 이름이나 "
@@ -139,12 +159,19 @@ def _examples(examples: tuple[FoodDocRow, ...]) -> str:
 _INGREDIENT_LIMIT = 8
 
 
-def candidate_list(sample: Sequence[MenuCatalogRow]) -> str:
-    """모델에게 보여 줄 후보 목록. menu_key · 이름 · 재료만 싣는다 — 영양 수치 · 알레르기는 없다."""
+def candidate_list(
+    sample: Sequence[MenuCatalogRow], requested: Collection[str] = frozenset()
+) -> str:
+    """모델에게 보여 줄 후보 목록. menu_key · 이름 · 재료만 싣는다 — 영양 수치 · 알레르기는 없다.
+
+    `requested` 는 요청 글에 이름이나 재료가 나온 레시피의 menu_key 다 — 줄 끝에 "요청과 맞음" 을
+    붙여 모델이 먼저 고르게 한다.
+    """
     lines = ["[후보 목록] 이 중에서만 menu_key 로 고른다."]
     for row in sample:
         ingredients = ", ".join(row.ingredients[:_INGREDIENT_LIMIT]) or "재료 모름"
-        lines.append(f"- {row.menu_key} · {row.display_name} · 재료 {ingredients}")
+        mark = " · 요청과 맞음" if row.menu_key in requested else ""
+        lines.append(f"- {row.menu_key} · {row.display_name} · 재료 {ingredients}{mark}")
     return "\n".join(lines)
 
 
@@ -176,20 +203,25 @@ def request_message(
     sample: Sequence[MenuCatalogRow],
     *,
     records: Sequence[Mapping[str, Any]] | None = None,
+    requested: Collection[str] = frozenset(),
 ) -> str:
     """식단 추천의 처음 user 메시지 — 보호자의 요청 그대로와 코드가 뽑은 후보 목록.
 
     `records` 는 선조회한 아이 기록이다(`prefetch_food_memory`). 안 주면(None) 그 구획을 만들지
     않는다 — 빈 목록은 "기록 없음" 이라고 말한다.
     """
-    parts = [_request(request_texts), candidate_list(sample)]
+    parts = [_request(request_texts), candidate_list(sample, requested)]
     if records is not None:
         parts.append(memory_candidates(records))
     return "\n\n".join(parts)
 
 
 def recall_message(
-    request_texts: Sequence[str], *, avoid: Sequence[str], sample: Sequence[MenuCatalogRow]
+    request_texts: Sequence[str],
+    *,
+    avoid: Sequence[str],
+    sample: Sequence[MenuCatalogRow],
+    requested: Collection[str] = frozenset(),
 ) -> str:
     """안전 필터 뒤 재호출의 user 메시지. 빠진 이유는 말하지 않는다 (Tool_공통.md §5-2).
 
@@ -203,7 +235,7 @@ def recall_message(
         "아래 메뉴는 다시 내지 않는다. 앞의 후보 목록은 더 쓰지 않고, 아래 새 목록에서 "
         "다른 메뉴로 3개를 새로 낸다.\n"
         f"{exclusion}\n\n"
-        f"{candidate_list(sample)}"
+        f"{candidate_list(sample, requested)}"
     )
 
 
