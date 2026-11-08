@@ -8,6 +8,8 @@
 통합 테스트 DB(icatch_it)를 쓴다 — 메인 .env 를 환경변수로만 올리고 DB_NAME 만 바꿔 돌릴 것.
 
 🚨 Curator 는 가짜 임베딩 · 가짜 판정기다 — 실제 묶음 품질은 보지 않는다 (eval/README.md).
+실행 전체를 advisory lock 으로 감싼다 — 두 사람이 동시에 돌리면 나중 쪽이 기다린다. 시작할 때
+강제로 죽은 앞 실행이 남긴 W 행(표식 보호자 · 아이 · eval 레시피)을 먼저 지운다.
 결과: eval/results/raw/week-<tier>-<시각>.jsonl (gitignore). 한 줄 = 단계 하나(끝 상태 점검 포함).
 토큰 합이 EVAL_MAX_TOKENS 를 넘으면 남은 단계를 건너뛴다.
 """
@@ -37,6 +39,7 @@ from tests.eval.suite.week_runner import (
     HashEmbedder,
     Login,
     WeekDriver,
+    drop_leftovers,
     drop_recipes,
     drop_world,
     reset_process_state,
@@ -44,6 +47,7 @@ from tests.eval.suite.week_runner import (
     seed_world,
     simulation_monday,
     step_day,
+    week_lock,
 )
 from tests.eval.suite.world import KST
 
@@ -114,6 +118,14 @@ def _usage_capture(_it_db_only: None) -> Iterator[None]:
 
 @pytest.mark.parametrize("case", _selected(), ids=lambda case: case.id)
 async def test_week(
+    case: WeekCase, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async with week_lock():
+        await drop_leftovers()  # 강제로 죽은 앞 실행이 남긴 행 — 잠금 안이라 남의 실행 것이 아니다
+        await _run_week(case, caplog, monkeypatch)
+
+
+async def _run_week(
     case: WeekCase, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from app.agents import entrypoint

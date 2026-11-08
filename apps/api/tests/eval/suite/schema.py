@@ -161,6 +161,9 @@ class WeekCheck(_Strict):
     corrected_not_cited: tuple[
         CorrectVerdict, ...
     ] = ()  # 이 판정으로 고친 기록이 뒤 추천 근거에 없다
+    # 이 글자를 품은 관심이 confirmed 가 된 뒤, 어떤 추천이 그 관심(profile_affinity)을 근거로
+    # 인용했다 — "관심 확정 → 그 근거로 추천" (리뷰 11-08)
+    cited_affinity: tuple[str, ...] = ()
 
 
 class Step(_Strict):

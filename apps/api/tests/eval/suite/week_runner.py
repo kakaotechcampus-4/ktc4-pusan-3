@@ -17,7 +17,8 @@ import hashlib
 import re
 import time
 import uuid
-from collections.abc import Callable, Sequence
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
@@ -61,6 +62,13 @@ BUSAN = {"lat": 35.18, "lon": 129.08}
 SSE_TIMEOUT = 150.0
 OBS_TABLES = ("food", "health", "education", "activity", "routine")
 PROMOTABLE_TABLES = ("food", "education", "activity")
+# W 가 만든 보호자의 별명 머리글 — 강제로 죽은 실행이 남긴 행을 다음 실행이 찾아 지운다.
+# 보호자 별명은 Agent 입력에 쓰이지 않는다(아이 별명만 카나리아)
+W_MARK = "eval-w:"
+# 실행 전체를 감싸는 세션 advisory lock 키 — 두 int 꼴이라 Curator 의 bigint 잠금(아이 단위)과
+# 공간이 겹치지 않는다. 동시에 돌리면 나중 쪽이 기다린다(앞 실행이 레시피를 지우는 사이에 빈
+# 카탈로그로 도는 것을 막는다, 리뷰 11-08)
+W_LOCK = (777, 1)
 OBS_MODEL: dict[str, Any] = {
     "food": obs.ObservationFood,
     "education": obs.ObservationEducation,
@@ -86,6 +94,67 @@ def step_moment(monday: date, at: str) -> datetime:
     """ "tue 18:40" → 그 주 화요일 18:40 KST."""
     day = step_day(monday, at)
     return datetime(day.year, day.month, day.day, int(at[4:6]), int(at[7:9]), tzinfo=KST)
+
+
+def parent_nickname(name: str) -> str:
+    return f"{W_MARK}{name}"
+
+
+def interest_misses(
+    states: Mapping[str, str], *, confirmed: Sequence[str], not_confirmed: Sequence[str]
+) -> list[str]:
+    """관심 확정 점검. 글자를 품은 merge_key 를 본다. not_confirmed 는 그 관심이 있어야 한다 —
+    행이 아예 없으면 "확정되지 않았다" 를 본 게 아니다 (리뷰 11-08)."""
+    misses: list[str] = []
+    for word in confirmed:
+        hit = {k: s for k, s in states.items() if word in k}
+        if not any(s == "confirmed" for s in hit.values()):
+            misses.append(f"'{word}' 관심이 confirmed 가 아니다 ({hit or '없음'})")
+    for word in not_confirmed:
+        hit = {k: s for k, s in states.items() if word in k}
+        if not hit:
+            misses.append(f"'{word}' 관심이 없다 — confirmed 가 아닌지 볼 수 없다")
+        elif any(s == "confirmed" for s in hit.values()):
+            misses.append(f"'{word}' 관심이 confirmed 다 ({hit})")
+    return misses
+
+
+def affinity_cite_misses(
+    words: Sequence[str],
+    *,
+    confirmed_at: Mapping[str, tuple[str, int]],
+    cites: Sequence[tuple[int, str]],
+) -> list[str]:
+    """ "관심 확정 → 그 근거로 추천" 점검. confirmed_at 은 관심 id → (merge_key, 처음 confirmed 로
+    본 단계 번호), cites 는 (단계 번호, 인용한 profile_affinity id). 확정을 본 단계의 인용은 세지
+    않는다 — 그 run 의 추천은 Curator 보다 먼저 나간다."""
+    misses: list[str] = []
+    for word in words:
+        ids = {aid: n for aid, (key, n) in confirmed_at.items() if word in key}
+        if not ids:
+            misses.append(f"'{word}' 관심이 확정된 적이 없어 점검할 수 없다")
+        elif not any(aid in ids and n > ids[aid] for n, aid in cites):
+            misses.append(f"'{word}' 관심이 확정 뒤 어떤 추천의 근거로도 쓰이지 않았다")
+    return misses
+
+
+def corrected_misses(
+    verdicts: Sequence[str],
+    *,
+    corrections: Sequence[tuple[str, str, int]],
+    cited: Sequence[tuple[int, str]],
+) -> list[str]:
+    """정정 점검 — (판정, 기록 id, 단계 번호) 로 고친 기록이 그 뒤 추천 근거에 없다."""
+    misses: list[str] = []
+    for verdict in verdicts:
+        ids = {oid: n for v, oid, n in corrections if v == verdict}
+        if not ids:
+            misses.append(f"{verdict} 로 고친 기록이 없어 점검할 수 없다")
+            continue
+        leaked = sorted({oid for n, oid in cited if oid in ids and n > ids[oid]})
+        if leaked:
+            misses.append(f"{verdict} 로 고친 기록이 뒤 추천의 근거에 있다 ({len(leaked)}건)")
+    return misses
 
 
 def response_code(response: Any) -> str:
@@ -203,6 +272,15 @@ async def confirmed_days(child_id: uuid.UUID) -> dict[str, int]:
     return {key: int(days) for key, days in rows}
 
 
+async def profile_rows(child_id: uuid.UUID) -> list[tuple[str, str, str]]:
+    """(관심 id, merge_key, state) — 인용 id 와 같은 꼴(UUID 문자열)."""
+    rows = await _rows(
+        "select id::text, merge_key, state::text from profile_affinity where child_id=:c",
+        c=child_id,
+    )
+    return [(aid, key, state) for aid, key, state in rows]
+
+
 async def profile_states(child_id: uuid.UUID) -> dict[str, str]:
     rows = await _rows(
         "select merge_key, state::text from profile_affinity where child_id=:c", c=child_id
@@ -302,6 +380,9 @@ class WeekDriver:
         default_factory=list
     )  # (판정, 기록 id, 단계 번호)
     cited: list[tuple[int, str]] = field(default_factory=list)  # (단계 번호, 인용한 아이 기록 id)
+    # 관심 id → (merge_key, 처음 confirmed 로 본 단계 번호) · (단계 번호, 인용한 관심 id)
+    confirmed_at: dict[str, tuple[str, int]] = field(default_factory=dict)
+    affinity_cites: list[tuple[int, str]] = field(default_factory=list)
     inputs: list[tuple[str, str, str]] = field(
         default_factory=list
     )  # (케이스, 보호자, 날짜) 한도용
@@ -342,6 +423,9 @@ class WeekDriver:
                     await self._check(step, outcome)
                 trace.safety_after = await safety_snapshot(self.child_id)
                 trace.confirmed_days = await confirmed_days(self.child_id)
+                for aid, key, state in await profile_rows(self.child_id):
+                    if state == "confirmed" and aid not in self.confirmed_at:
+                        self.confirmed_at[aid] = (key, self.index)
             except Exception as exc:  # 단계 하나의 예외로 주 전체를 멈추지 않는다
                 trace.error = error_text(exc)
                 trace.error_detail = error_trace(exc)
@@ -399,6 +483,12 @@ class WeekDriver:
         self.drafts_by_tag[step.tag] = info.drafts
         self.last_run[step.by] = (run_id, info.awaits_reply)
         self.cited += [(self.index, c.id) for s in trace.suggestions for c in s.child_citations]
+        self.affinity_cites += [
+            (self.index, c.id)
+            for s in trace.suggestions
+            for c in s.citations
+            if c.kind == "profile_affinity"
+        ]
 
     async def _approve(self, step: Step, outcome: StepOutcome) -> None:
         drafts = self.drafts_by_tag.get(step.approve_of or "", [])
@@ -453,27 +543,20 @@ class WeekDriver:
         assert check is not None
         misses = outcome.extra_misses
         states = await profile_states(self.child_id)
-        for word in check.confirmed:
-            hit = {k: s for k, s in states.items() if word in k}
-            if not any(s == "confirmed" for s in hit.values()):
-                misses.append(f"'{word}' 관심이 confirmed 가 아니다 ({hit or '없음'})")
-        for word in check.not_confirmed:
-            hit = {k: s for k, s in states.items() if word in k}
-            if any(s == "confirmed" for s in hit.values()):
-                misses.append(f"'{word}' 관심이 confirmed 다 ({hit})")
+        misses += interest_misses(
+            states, confirmed=check.confirmed, not_confirmed=check.not_confirmed
+        )
+        misses += affinity_cite_misses(
+            check.cited_affinity, confirmed_at=self.confirmed_at, cites=self.affinity_cites
+        )
         if check.no_event_except:
             wanted = [t for t in check.no_event_except if t in self.approved]
             rows = await event_count(self.child_id)
             if rows != len(wanted):
                 misses.append(f"일정 행 {rows}개 ≠ 승인한 {len(wanted)}개 {wanted}")
-        for verdict in check.corrected_not_cited:
-            ids = {oid: n for v, oid, n in self.corrections if v == verdict}
-            if not ids:
-                misses.append(f"{verdict} 로 고친 기록이 없어 점검할 수 없다")
-                continue
-            leaked = sorted({oid for n, oid in self.cited if oid in ids and n > ids[oid]})
-            if leaked:
-                misses.append(f"{verdict} 로 고친 기록이 뒤 추천의 근거에 있다 ({len(leaked)}건)")
+        misses += corrected_misses(
+            check.corrected_not_cited, corrections=self.corrections, cited=self.cited
+        )
 
 
 def _usage(run_id: str) -> list[dict[str, Any]]:
@@ -520,7 +603,7 @@ async def seed_world(
             owner: uuid.UUID | None = None
             child: Child | None = None
             for name in world.parents:
-                parent = Parent(nickname=name)
+                parent = Parent(nickname=parent_nickname(name))
                 session.add(parent)
                 await session.flush()
                 if child is None:
@@ -596,6 +679,55 @@ async def seed_world(
     return child_id, logins, seed_ids, frozenset(stale)
 
 
+@asynccontextmanager
+async def week_lock() -> AsyncIterator[None]:
+    """W 실행 전체를 세션 advisory lock 으로 감싼다. 프로세스가 죽으면 연결이 끊겨 저절로 풀린다."""
+    async with async_session_factory() as session:
+        await session.execute(
+            text("select pg_advisory_lock(:a, :b)"), {"a": W_LOCK[0], "b": W_LOCK[1]}
+        )
+        try:
+            yield
+        finally:
+            await session.execute(
+                text("select pg_advisory_unlock(:a, :b)"), {"a": W_LOCK[0], "b": W_LOCK[1]}
+            )
+
+
+def recipe_keys() -> list[tuple[str, str]]:
+    """W 가 심는 레시피 (source, source_id) — Food eval 세계의 것. source_id 가 메뉴 이름이라 실제
+    적재분(번호)과 겹치지 않는다."""
+    from tests.eval.agents.food.world import build_world
+
+    return [
+        (row.source, str(row.source_id))
+        for row in build_world("C48", now=datetime.now(KST)).recipes
+    ]
+
+
+async def drop_leftovers() -> tuple[int, int]:
+    """강제로 죽은 앞 실행이 남긴 W 행을 지운다 — W 표식 보호자(와 그 아이) · eval 레시피.
+    `week_lock` 안에서만 부른다(돌고 있는 다른 실행의 행을 지우지 않게). (아이 수, 보호자 수)"""
+    parents = [
+        pid
+        for (pid,) in await _rows("select id from parent where nickname like :m", m=f"{W_MARK}%")
+    ]
+    children = (
+        [
+            cid
+            for (cid,) in await _rows(
+                "select id from child where owner_parent_id = any(:p)", p=parents
+            )
+        ]
+        if parents
+        else []
+    )
+    if parents:
+        await _drop(children, parents)
+    await drop_recipes(recipe_keys())
+    return len(children), len(parents)
+
+
 async def seed_recipes() -> list[tuple[str, str]]:
     """Food 후보 풀 — 레시피 카탈로그가 비어 있으면 Food 가 추천을 못 낸다. Food eval 세계의
     레시피를 심고, 새로 넣은 행의 (source, source_id) 를 돌려준다(`drop_recipes` 가 지운다)."""
@@ -629,17 +761,22 @@ async def drop_world(child_id: uuid.UUID, logins: dict[str, Login]) -> None:
     세는 통합 테스트가 깨진다. 제품의 삭제 경로(`purge_child` · `purge_parent`)를 타고, 그 경로가
     일부러 남기는 동의 증빙(`consent_retention`)은 시험 DB 라서 같이 지운다. 아이 → 보호자 순 —
     아이의 소유자 FK 때문이다. 나머지는 FK CASCADE 가 따라온다."""
+    await _drop([child_id], [lg.parent_id for lg in logins.values()])
+
+
+async def _drop(child_ids: Sequence[uuid.UUID], parent_ids: Sequence[uuid.UUID]) -> None:
     now = datetime.now(UTC)
-    parent_ids = [lg.parent_id for lg in logins.values()]
     async with async_session_factory() as session:
-        await purge_child(session, child_id=child_id, now=now)
+        for child_id in child_ids:
+            await purge_child(session, child_id=child_id, now=now)
         for parent_id in parent_ids:
             await purge_parent(session, parent_id=parent_id, now=now)
         await session.execute(
             text(
-                "delete from consent_retention where child_ref = :c or subject_parent_ref = any(:p)"
+                "delete from consent_retention "
+                "where child_ref = any(:c) or subject_parent_ref = any(:p)"
             ),
-            {"c": child_id, "p": parent_ids},
+            {"c": list(child_ids), "p": list(parent_ids)},
         )
         await session.commit()
 

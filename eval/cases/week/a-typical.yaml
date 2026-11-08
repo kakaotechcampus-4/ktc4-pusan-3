@@ -254,14 +254,17 @@ steps:
       saved: { min_rows: 1 }
     say: 소풍 잘 다녀왔대. 김밥 다 먹었대
 
+  # 정정 대상은 뒤에서 실제로 인용될 만한 놀이 기록이다 — 토요일 "밖에서 놀 만한 거" 가 그네 · 놀이터
+  # 기록을 근거로 쓸 수 있다. Activity · Growth 는 once_only(stand_alone)를 근거에서 빼지만 Food ·
+  # Health 는 설계상 계속 읽으므로(app/agents/memory_bridge.py) 식사 기록은 고르지 않는다 (리뷰 11-08)
   - at: fri 21:00
     by: mom
     kind: correct
     tag: fri-correct
     ability: [잊기]
-    correct_of: mon-evening
+    correct_of: tue-dad-playground
     verdict: once_only
-    match: 다투|다퉜|다툼|싸웠|갈등
+    match: 그네|놀이터
 
   # -- 토 --
   - at: sat 08:30
@@ -356,3 +359,4 @@ steps:
       not_confirmed: [퍼즐]
       no_event_except: [tue-notice]
       corrected_not_cited: [once_only]
+      cited_affinity: [블록]  # 블록 확정 뒤 추천(수 "주말에 뭐 하고 놀면") 이 그 관심을 근거로 쓴다
