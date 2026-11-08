@@ -80,7 +80,7 @@ export interface FailedEvent {
     /** LLM 연결 실패 · 그 밖의 LLM 오류 · 도메인 Agent 가 결과 없이 돌아옴. */
     | "llm_unavailable"
     | "llm_rate_limited"
-    /** 인증 · 설정 · 요청 거절. 다시 보내도 같을 수 있다 — 그 말은 `message` 가 한다. */
+    /** 인증 · 설정 · 요청 거절. 잠시 뒤 풀리기도 해서 다른 이유와 같이 다시 시도를 세운다. */
     | "llm_misconfigured"
     /** 위험 물질 검사를 하지 못했다 (#731 · fail-closed). */
     | "guard_unavailable"
