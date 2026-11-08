@@ -338,6 +338,13 @@
       "mustSee": "카카오로 시작하기"
     },
     {
+      "name": "볼 수 없는 아이 — 내 아이 목록에 없는 주소 (#802)",
+      "path": "/child/not-a-child/home",
+      "expect": "/child/not-a-child/home",
+      "auth": true,
+      "mustSee": "주소가 잘못됐거나, 지금은 함께 보고 있지 않은 아이예요"
+    },
+    {
       "name": "404 — 없는 주소",
       "path": "/nope",
       "expect": "/nope",

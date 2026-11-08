@@ -77,6 +77,9 @@ const mutation = useMutation({
 
 `ApiError` 로 잡는다. 특히:
 
+- 🚨 `child_access_denied` (403) → **화면마다 다루지 않는다** (#802). 주소의 아이가 내 목록에 없거나 보는 중에
+  연결이 끊긴 것이다. `lib/query-client.ts` 가 `/me` 를 다시 받고, `ChildScope` 가 화면째 "볼 수 없는 아이" 로
+  바꾼다 ([`screen-rules-v1.md`](screen-rules-v1.md) §1). 구역에는 지금처럼 실패 카드가 잠깐 설 수 있다
 - `consent_required` (403) → 저장이 아예 안 된 상태다. `error.consentDeeplink` 로 동의 화면에 보낸다.
 - 🚨 `daily_input_limit` (429) → **"다시 시도" 를 세우지 않는다** (#147). 같은 본문은 같은
   Idempotency-Key 로 나가고 한도는 한국 시간 자정에 풀려서, 누를 때마다 같은 429 다.
@@ -130,6 +133,7 @@ const mutation = useMutation({
 | 화면을 그리다 터짐 | `app/error.tsx` · `child/[childId]/error.tsx` | 화면이 통째로 바뀜 |
 | 루트 레이아웃이 터짐 | `app/global-error.tsx` | 문서 전체를 대체 (Providers 없음) |
 | 없는 주소 | `app/not-found.tsx` | 404 로 응답한다 |
+| 볼 수 없는 아이 주소 | `components/child-scope.tsx` (`/me` 목록으로 판정 · #802) | 화면이 통째로 "볼 수 없는 아이" |
 | 한 구역만 터짐 | `components/app-error-boundary.tsx` | 그 구역만 `CardFailed` |
 | 렌더 밖에서 터짐 (이벤트 핸들러 · 타이머 · 처리 안 된 rejection) | `lib/report-uncaught-error.ts` (`window` 의 `error` · `unhandledrejection`) | 화면은 그대로, 서버에 보고만 (#732) |
 
