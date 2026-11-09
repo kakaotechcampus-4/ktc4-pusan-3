@@ -59,7 +59,9 @@ class _ObservationBaseOut(ApiSchema):
 class ObservationOut(_ObservationBaseOut):
     kind: ObservationKindOut
     subject: str
-    polarity: int = Field(description="-1 싫어함 · 0 갈림 · 1 좋아함")
+    polarity: int = Field(
+        description="-1 싫어함 · 0 좋다 · 싫다 없음 · 1 좋아함. 0 인 기록은 기억에 묶이지 않는다"
+    )
     strong_signals: list[str] = Field(description="routine 은 승격 대상이 아니라 늘 빈 배열이다")
     affinity: LinkedAffinityOut | None = Field(description="routine 은 늘 null")
 

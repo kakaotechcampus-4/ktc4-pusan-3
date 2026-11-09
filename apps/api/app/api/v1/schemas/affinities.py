@@ -23,7 +23,10 @@ class AffinityOut(ApiSchema):
         description="상태는 Curator 규칙만 바꾼다. 목록은 기본으로 archived 를 뺀다"
     )
     polarity: int | None = Field(
-        description="-1 싫어함 · 0 갈림 · 1 좋아함. candidate 면 null 일 수 있다"
+        description=(
+            "-1 싫어함 · 1 좋아함 · null 아직 모름(candidate 만). 0 은 오지 않는다 — "
+            "좋다 · 싫다가 없는 기록은 기억이 되지 않는다"
+        )
     )
     strength: float
     last_observed_on: date
