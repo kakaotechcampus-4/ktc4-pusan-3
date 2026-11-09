@@ -45,6 +45,7 @@ from app.agents.common.errors import (
 from app.agents.common.errors import (
     LLMUnavailableError as LLMUnavailableError,
 )
+from app.agents.common.prompt_fingerprint import is_registered, logged_fingerprint
 from app.core import llm_usage
 
 logger = logging.getLogger(__name__)
@@ -133,10 +134,15 @@ class LLMClient:
         tool_choice: str | dict[str, Any] = "auto",
         max_completion_tokens: int | None = None,
         response_format: dict[str, Any] | None = None,
+        prompt_name: str | None = None,
     ) -> LLMResponse:
         """tool_choice 는 "auto"/"required" 같은 문자열이나
         {"type": "function", "function": {"name": ...}} 같은 강제 호출 dict를 그대로 보낸다.
         response_format 은 {"type": "json_schema", ...} 를 그대로 보낸다.
+        prompt_name 은 로그에 달 프롬프트 이름(`register_prompt` 에 등록한 이름)이다.
+        안 주면 역할 이름을 쓴다 —
+        역할 하나가 프롬프트 하나인 곳(supervisor · memory · food · growth · health · activity)은
+        그대로 맞고, 한 역할이 다른 프롬프트도 부르는 곳(activity 의 행사 일정)만 이름을 준다.
         """
         params: dict[str, Any] = {
             "model": self._profile.model,
@@ -198,22 +204,47 @@ class LLMClient:
         message = getattr(choice, "message", None)
         if message is None:
             raise LLMError("LLM 응답에 message가 없다.")
-        self._log_call(message, usage, latency_ms, model)
+        self._log_call(message, usage, latency_ms, model, prompt_name)
         return LLMResponse(message=message, usage=usage, latency_ms=latency_ms)
 
-    def _log_call(self, message: Any, usage: dict[str, int], latency_ms: int, model: str) -> None:
+    def _prompt_print(self, prompt_name: str | None) -> tuple[str, str]:
+        """로그에 달 (프롬프트 이름, 지문 12자).
+
+        모르는 이름이거나 지문을 못 만들면 대시다 — 호출은 막지 않는다.
+        """
+        name = prompt_name or self._profile.role
+        if not is_registered(name):
+            return "-", "-"
+        try:
+            return name, logged_fingerprint(name).short
+        except Exception as exc:  # 로그용 값이 호출을 깨뜨리면 안 된다
+            logger.warning("프롬프트 지문을 못 만들었다 name=%s error=%s", name, type(exc).__name__)
+            return name, "-"
+
+    def _log_call(
+        self,
+        message: Any,
+        usage: dict[str, int],
+        latency_ms: int,
+        model: str,
+        prompt_name: str | None = None,
+    ) -> None:
         tool_calls = getattr(message, "tool_calls", None) or []
         attribution = llm_usage.current()
+        name, sha = self._prompt_print(prompt_name)
 
         # 발화 원문·프롬프트·응답 본문은 로그에 남기지 않는다
         logger.info(
-            "llm call role=%s model=%s run=%s source=%s prompt_tokens=%s "
+            "llm call role=%s model=%s run=%s source=%s prompt_name=%s prompt_sha256=%s "
+            "prompt_tokens=%s "
             "cached_prompt_tokens=%s completion_tokens=%s reasoning_tokens=%s "
             "tool_calls=%d tools=%s latency_ms=%d",
             self._profile.role,
             model,
             attribution.run_id if attribution else "-",
             attribution.source if attribution else "-",
+            name,
+            sha,
             usage.get("prompt_tokens"),
             usage.get("cached_prompt_tokens"),
             usage.get("completion_tokens"),

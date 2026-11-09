@@ -53,10 +53,14 @@ const callers = (fn: string) =>
   filesMatching(new RegExp(`\\b${fn}\\(`)).filter((path) => path !== DEFINED_IN);
 
 describe("승인 게이트 ㉠ 캘린더 쓰기", () => {
-  it("초안 제출은 초안 카드 목록(05 · 04)과 08 일정 넣기 시트에서만 부른다", () => {
+  /**
+   * 🚨 08 은 한동안 항목마다 고치기 시트 안에서 넣었다. #824 에서 같은 게이트를 확인 화면 맨 아래 버튼으로
+   *    옮겼다 — 체크한 일정을 그 버튼 하나가 넣는다. 게이트를 늘린 것이 아니라 자리를 옮긴 것이다.
+   */
+  it("초안 제출은 초안 카드 목록(05 · 04)과 08 확인 화면에서만 부른다", () => {
     expect(callers("submitEventDraft")).toEqual([
       "components/event-draft-list.tsx",
-      "components/photo-entry-sheet.tsx",
+      "components/photo-review.tsx",
     ]);
     expect(callers("updateEventDraft")).toEqual(["components/event-draft-list.tsx"]);
   });
@@ -102,6 +106,8 @@ describe("게이트 표식은 게이트 안에만", () => {
    *    `approve` 를 입힌다(`variant={… ? "approve" : "primary"}`). `variant="approve"` 만 찾으면 이 버튼이
    *    목록에서 빠져, 게이트 표식이 어디에 있는지 이 테스트가 모르게 된다.
    * ⚠️ 05 시트가 이 목록에 들어온 것은 게이트 ㉡ 를 칩에서 이 버튼으로 **옮긴** 것이다 — 늘린 것이 아니다.
+   *    08 사진 확인 화면도 같다(#824). 넣을 일정이 있을 때만 맨 아래 버튼이 approve 이고, 게이트 ㉠ 를
+   *    항목 시트(`photo-entry-sheet.tsx`)에서 이 버튼으로 옮긴 것이다.
    */
   const APPROVE = /variant=(?:"approve"|\{[^}]*"approve")/;
   it("approve 버튼은 게이트를 그리는 컴포넌트에만 있다", () => {
@@ -109,7 +115,7 @@ describe("게이트 표식은 게이트 안에만", () => {
       "components/event-draft-card.tsx",
       "components/health-safety-list.tsx",
       "components/medication-draft-card.tsx",
-      "components/photo-entry-sheet.tsx",
+      "components/photo-review.tsx",
       "components/safety-check-sheet.tsx",
       "components/safety-scan-review.tsx",
     ]);
@@ -121,7 +127,7 @@ describe("게이트 표식은 게이트 안에만", () => {
     "components/event-draft-card.tsx",
     "components/health-safety-list.tsx",
     "components/medication-draft-card.tsx",
-    "components/photo-entry-sheet.tsx",
+    "components/photo-review.tsx",
     "components/safety-check-sheet.tsx",
     "components/safety-scan-review.tsx",
     // primitive — tone 을 받아 그리기만 한다.
