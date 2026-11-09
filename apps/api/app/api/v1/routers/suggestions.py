@@ -79,7 +79,13 @@ from app.domains.schedule.models import (
 from app.domains.suggestion import repository as suggestion_repo
 from app.domains.suggestion.draft_items import draft_items
 from app.domains.suggestion.evidence_view import EvidenceView, describe_evidence
-from app.domains.suggestion.models import SuggestionFeedback, SuggestionKind, SuggestionStatus
+from app.domains.suggestion.models import (
+    Suggestion,
+    SuggestionFeedback,
+    SuggestionKind,
+    SuggestionMealSlot,
+    SuggestionStatus,
+)
 from app.rules.book_evidence import BOOK_EVIDENCE_KIND
 from app.rules.home_prompts import prompt_request
 from app.rules.menu_evidence import MENU_EVIDENCE_KIND
@@ -93,6 +99,16 @@ KST = ZoneInfo("Asia/Seoul")
 # 일정 초안을 한 끼로 묶는 Agent. 05 의 merges_into_one 과 create_event_drafts 가 같이 본다 —
 # 정하는 곳이 둘이면 화면은 "한 건으로 묶여요" 라고 말했는데 초안이 세 건 나올 수 있다
 _MERGED_AGENTS = frozenset({"food"})
+
+# food 묶음 초안의 제목. 끼니는 Food 가 추천마다 남긴다 (#898)
+_MEAL_TITLES = {
+    SuggestionMealSlot.BREAKFAST: "아침 식사",
+    SuggestionMealSlot.LUNCH: "점심 식사",
+    SuggestionMealSlot.DINNER: "저녁 식사",
+    SuggestionMealSlot.SNACK: "간식",
+}
+# 묶은 추천의 끼니가 서로 다르거나 모르면(이 칸 전에 만든 추천) 한 끼니를 고르지 않는다
+_MEAL_TITLE_MIXED = "식사"
 
 # 확인 문구를 내는 Agent — entrypoint.allergy_cautions 와 같은 목록
 _CAUTION_AGENTS = frozenset({"activity"})
@@ -316,7 +332,7 @@ async def create_event_drafts(
             EventDraftOut(
                 draft_id=_next_draft_id(),
                 event=EventBodyOut(
-                    title="저녁 식사",
+                    title=_meal_title(food),
                     starts_at=None,
                     ends_at=None,
                     all_day=False,
@@ -347,6 +363,14 @@ async def create_event_drafts(
         )
 
     return CreateEventDraftsResponse(drafts=drafts)
+
+
+def _meal_title(rows: Sequence[Suggestion]) -> str:
+    """food 묶음 초안의 제목. 끼니가 하나로 모이면 그 끼니, 아니면 "식사"."""
+    slots = {row.meal_slot for row in rows}
+    if len(slots) == 1 and (slot := slots.pop()) is not None:
+        return _MEAL_TITLES[slot]
+    return _MEAL_TITLE_MIXED
 
 
 # ── 일정 제출 (승인 게이트 ㉠) ────────────────────────────────────────────
