@@ -35,18 +35,17 @@ class ObservationStatus(enum.StrEnum):
 
       active       Memory Search O · Curator 집계 O
       stand_alone  Memory Search O · Curator 집계 X
-      inactive     Memory Search X · Curator 집계 X
       deleted      Memory Search X · Curator 집계 X · 목록/상세 X
 
     stand_alone 은 Correction once_only("이번만 그랬어요") 가 만드는 상태다.
     관찰 자체는 실제로 있었던 일이라 검색에는 남기고, 성향으로 집계되는 것만 막는다.
-    active / inactive 둘뿐이면 이 둘을 한 번에 빼거나 한 번에 남길 수밖에 없다.
+    지우는 것과 따로 둬야 둘 중 하나만 뺄 수 있다.
 
-    deleted 는 보호자의 삭제 요청이 만든다. 행을 지우지 않고 이 값으로 바꾼다.
-    inactive(Correction wrong)는 "잘못된 기록" 으로 목록에 남지만 deleted 는 보호자에게
-    어디서도 보이지 않는다. 되살리는 경로는 없다.
+    deleted 는 보호자의 삭제(기록 탭 · 대화 삭제 확정)가 만든다. 행을 지우지 않고 이 값으로
+    바꾼다. 보호자에게 어디서도 보이지 않고 되살리는 경로는 없다.
 
-    누가 이 값을 읽는지는 아직 코드에 없다 — 검색 필터와 Curator 집계는 후속 이슈다.
+    inactive 는 더 만들지 않는다. 기록의 Correction wrong("잘못된 기록")이 만들던 값인데, 그 버튼을
+    기록 지우기로 바꾸면서 남은 행을 deleted 로 옮겼다 (#736). 값은 DB CHECK 와 맞추려 남긴다.
     """
 
     ACTIVE = "active"
