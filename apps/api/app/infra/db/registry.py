@@ -26,6 +26,7 @@ from app.domains.notification import models as notification  # noqa: F401
 from app.domains.place import models as place  # noqa: F401
 from app.domains.policy import models as policy  # noqa: F401
 from app.domains.report import models as report  # noqa: F401
+from app.domains.run_hold import models as run_hold  # noqa: F401
 from app.domains.safety import models as safety  # noqa: F401
 from app.domains.schedule import models as schedule  # noqa: F401
 from app.domains.suggestion import models as suggestion  # noqa: F401

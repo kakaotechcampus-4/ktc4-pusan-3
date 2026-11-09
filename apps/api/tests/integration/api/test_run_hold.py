@@ -52,6 +52,17 @@ async def _put(session, key, *, parent_id, child_id, payload=PAYLOAD, now=T0):
     )
 
 
+async def _child_of_someone_else(session: AsyncSession) -> uuid.UUID:
+    """다른 아이. 보호자 한 명은 아이 하나에만 이어져서 새 보호자로 만든다.
+
+    `uq_parent_child_parent_id` 때문이다.
+
+    run_hold 의 FK 는 보호자 · 아이 행이 있는지만 본다 — 둘이 이어져 있는지는 보지 않는다.
+    """
+    _, owner = await issue_bearer(session, token=f"test-token-{uuid.uuid4().hex}")
+    return await link_child(session, parent_id=owner)
+
+
 # --- 정상 동작 ------------------------------------------------------------------------------
 
 
@@ -173,7 +184,7 @@ async def test_다른_보호자는_꺼낼_수_없다(session: AsyncSession, bear
 
 async def test_다른_아이의_질문은_꺼낼_수_없다(session: AsyncSession, bearer: Bearer, cid):
     _, me = bearer
-    other_child = await link_child(session, parent_id=me)
+    other_child = await _child_of_someone_else(session)
     await _put(session, "r1", parent_id=me, child_id=cid)
 
     assert (
@@ -257,7 +268,7 @@ async def test_아이를_지우면_그_아이의_행이_모두_사라진다(
     _, me = bearer
     _, member = await issue_bearer(session, token="test-token-member")
     await link_child(session, parent_id=member, child_id=cid)
-    keep = await link_child(session, parent_id=me)
+    keep = await _child_of_someone_else(session)
     await _put(session, "mine", parent_id=me, child_id=cid)
     await _put(session, "member", parent_id=member, child_id=cid)
     await _put(session, "other-child", parent_id=me, child_id=keep)
@@ -287,7 +298,7 @@ async def test_연결_끊기는_그_보호자_그_아이_것만_지운다(
     _, me = bearer
     _, member = await issue_bearer(session, token="test-token-member")
     await link_child(session, parent_id=member, child_id=cid)
-    other_child = await link_child(session, parent_id=member)
+    other_child = await _child_of_someone_else(session)
     await _put(session, "mine", parent_id=me, child_id=cid)
     await _put(session, "member-here", parent_id=member, child_id=cid)
     await _put(session, "member-there", parent_id=member, child_id=other_child)
@@ -317,7 +328,7 @@ async def test_만료_삭제는_만료된_것만_지우고_개수를_돌려준�
 async def test_표는_UNLOGGED_다(session: AsyncSession):
     """DB 가 비정상 종료되면 비워진다 — 메모리 보관함과 같은 동작이고 WAL 에 원문이 남지 않는다."""
     persistence = await session.scalar(
-        text("SELECT relpersistence FROM pg_class WHERE relname = 'run_hold'")
+        text("SELECT relpersistence::text FROM pg_class WHERE relname = 'run_hold'")
     )
 
     assert persistence == "u"

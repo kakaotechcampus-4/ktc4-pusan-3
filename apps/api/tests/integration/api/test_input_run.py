@@ -552,7 +552,8 @@ async def test_남의_run_을_가리키면_400(db_client, session, bearer, agent
 
 async def test_다른_아이의_질문에_이어_적으면_400(db_client, session, bearer, agent_calls, cid):
     headers, parent_id = bearer
-    other_child = await link_child(session, parent_id=parent_id)
+    _, someone = await issue_bearer(session, token="test-token-someone")
+    other_child = await link_child(session, parent_id=someone)
     assert await pending_reply.put(
         run_id="r-prev", parent_id=parent_id, child_id=other_child, context=_PENDING
     )
@@ -734,7 +735,8 @@ async def test_다른_아이의_Health_질문은_이어받지_못한다(
     db_client, session, bearer, agent_calls, cid
 ):
     headers, parent_id = bearer
-    other_child = await link_child(session, parent_id=parent_id)
+    _, someone = await issue_bearer(session, token="test-token-someone")
+    other_child = await link_child(session, parent_id=someone)
     assert await pending_reply.put(
         run_id="r-health", parent_id=parent_id, child_id=other_child, context=_HEALTH_PENDING
     )
