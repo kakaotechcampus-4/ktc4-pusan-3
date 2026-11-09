@@ -719,7 +719,7 @@ export interface SuggestionsResponse {
    *
    * 서버가 따르는 규칙 (#284): `Suggestion.allergens` 중 `health_safety` 에 행이 **없는** 것만
    *    `unknown_ingredient` 로 묻는다. `active` 인 항목이 든 제안은 묻지 않고 목록에서 아예 빼고,
-   *    괜찮았던 식품(`none` · 같은 이름)은 묻지 않는다. 🚨 **내린 기록(`retracted`)은 다시 묻는다** (#825 · 서버 PR 3).
+   *    괜찮았던 식품(`none` · 같은 이름)은 묻지 않는다. 🚨 **내린 기록(`retracted`)은 다시 묻는다** (#825 · 서버 #837).
    *    물을 것이 없으면 `[]` 다.
    *    비어 있으면 화면은 묻지 않는다 — 🚨 **그때는 "확인했다" 고 말하지도 않는다.**
    */
