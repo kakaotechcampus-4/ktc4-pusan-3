@@ -14,6 +14,7 @@ import {
   approveSuggestions,
   commitPhotoRun,
   createEventDrafts,
+  deleteChild,
   deleteObservation,
   submitEventDraft,
   submitInput,
@@ -420,7 +421,33 @@ describe("일정 초안", () => {
       expect(asked(data).some((a) => a.endsWith(`:${allergen}`))).toBe(false);
     });
 
-    it("retracted 로 내린 항목은 다시 묻지 않고, 그 제안은 목록에 남는다", async () => {
+    /**
+     * 🚨 **목록을 받은 뒤 등록된 알레르기는 채택이 막는다** (문서 §3-8 ② · 서버 #835 · #823).
+     *    하나라도 걸리면 전부 거절하고 걸린 id 를 싣는다 — 화면은 그 id 를 선택에서 뺀다.
+     */
+    it("🚨 목록을 받은 뒤 등록된 알레르기가 든 제안은 채택을 전부 거절하고 그 id 를 싣는다", async () => {
+      const data = await fetchSuggestions();
+      const [id, [allergen]] = Object.entries(suggestionAllergens).find(([, a]) => a.length > 0)!;
+      const other = data.suggestions.find((s) => !suggestionAllergens[s.id]?.length)!;
+      await addHealthSafety("c1", { type: "allergy", label: allergen }, newIdempotencyKey());
+
+      const refused = await approveSuggestions("c1", { suggestion_ids: [id, other.id] }).catch(
+        (e: unknown) => e,
+      );
+      expect(isApiError(refused, "allergen_blocked")).toBe(true);
+      expect((refused as ApiError).status).toBe(409);
+      expect((refused as ApiError).detail).toEqual({ suggestion_ids: [id] });
+
+      // 전부 거절했으므로 걸리지 않은 제안도 아직 draft 다 — 빼고 다시 보내면 채택된다.
+      const approved = await approveSuggestions("c1", { suggestion_ids: [other.id] });
+      expect(approved.suggestions.map((s) => s.id)).toEqual([other.id]);
+    });
+
+    /**
+     * 🚨 **내린 기록은 다시 묻는다** (#825 · 서버 PR 3 · 11-08 시하님 확정). 한동안 묻지 않았는데, 그러면 잘못 등록했다
+     *    내린 식품이나 묶음 이름("견과류")으로 적었다 내린 식품을 영영 안 물었다.
+     */
+    it("retracted 로 내린 항목은 다시 묻고, 그 제안은 목록에 남는다", async () => {
       const [id, [allergen]] = Object.entries(suggestionAllergens).find(([, a]) => a.length > 0)!;
       const { safety } = await addHealthSafety(
         "c1",
@@ -431,7 +458,97 @@ describe("일정 초안", () => {
 
       const data = await fetchSuggestions();
       expect(data.suggestions.map((s) => s.id)).toContain(id);
-      expect(asked(data)).not.toContain(`${id}:${allergen}`);
+      expect(asked(data)).toContain(`${id}:${allergen}`);
+    });
+
+    describe("괜찮았던 식품 (#825 · 서버 PR 3)", () => {
+      const firstAllergen = () =>
+        Object.entries(suggestionAllergens).find(([, a]) => a.length > 0)! as [string, string[]];
+      const list = () => api.get<HealthSafetyListResponse>("/children/c1/health-safety");
+
+      it("tolerated 로 저장하면 알레르기 목록이 아니라 tolerated 에 서고, 다음 사전검사에서 묻지 않는다", async () => {
+        const [id, [allergen]] = firstAllergen();
+        await addHealthSafety(
+          "c1",
+          { type: "allergy", label: allergen, tolerated: true },
+          newIdempotencyKey(),
+        );
+
+        const saved = await list();
+        expect(saved.items.map((i) => i.label)).not.toContain(allergen);
+        expect(saved.tolerated.map((i) => i.label)).toEqual([allergen]);
+        // 묻지 않지만 막지도 않는다 — 제안은 목록에 남는다.
+        const data = await fetchSuggestions();
+        expect(data.suggestions.map((s) => s.id)).toContain(id);
+        expect(asked(data)).not.toContain(`${id}:${allergen}`);
+      });
+
+      it("🚨 같은 이름이 알레르기면 409 allergy_exists 이고 저장되지 않는다 — 알레르기가 이긴다", async () => {
+        const [, [allergen]] = firstAllergen();
+        await addHealthSafety("c1", { type: "allergy", label: allergen }, newIdempotencyKey());
+
+        await expect(
+          addHealthSafety(
+            "c1",
+            { type: "allergy", label: allergen, tolerated: true },
+            newIdempotencyKey(),
+          ),
+        ).rejects.toSatisfy((e: unknown) => isApiError(e, "allergy_exists"));
+        expect((await list()).tolerated).toEqual([]);
+      });
+
+      it("이미 괜찮았던 식품이면 409 already_exists 다", async () => {
+        const [, [allergen]] = firstAllergen();
+        const body = { type: "allergy", label: allergen, tolerated: true };
+        await addHealthSafety("c1", body, newIdempotencyKey());
+        await expect(addHealthSafety("c1", body, newIdempotencyKey())).rejects.toSatisfy(
+          (e: unknown) => isApiError(e, "already_exists"),
+        );
+      });
+
+      it("같은 이름을 알레르기로 등록하면 괜찮았던 식품에서 빠진다", async () => {
+        const [, [allergen]] = firstAllergen();
+        await addHealthSafety(
+          "c1",
+          { type: "allergy", label: allergen, tolerated: true },
+          newIdempotencyKey(),
+        );
+        await addHealthSafety("c1", { type: "allergy", label: allergen }, newIdempotencyKey());
+
+        const after = await list();
+        expect(after.tolerated).toEqual([]);
+        expect(after.items.map((i) => i.label)).toContain(allergen);
+      });
+
+      it("빼면(DELETE) 다음 사전검사에서 다시 묻는다", async () => {
+        const [id, [allergen]] = firstAllergen();
+        const { safety } = await addHealthSafety(
+          "c1",
+          { type: "allergy", label: allergen, tolerated: true },
+          newIdempotencyKey(),
+        );
+        await api.delete(`/children/c1/health-safety/${safety.id}`);
+
+        expect((await list()).tolerated).toEqual([]);
+        expect(asked(await fetchSuggestions())).toContain(`${id}:${allergen}`);
+      });
+
+      it("알레르기가 아니거나 심각도를 같이 보내면 400 이다", async () => {
+        await expect(
+          addHealthSafety(
+            "c1",
+            { type: "chronic_disease", label: "천식", tolerated: true },
+            newIdempotencyKey(),
+          ),
+        ).rejects.toSatisfy((e: unknown) => isApiError(e, "validation_failed"));
+        await expect(
+          addHealthSafety(
+            "c1",
+            { type: "allergy", label: "잣", severity: "class_2", tolerated: true },
+            newIdempotencyKey(),
+          ),
+        ).rejects.toSatisfy((e: unknown) => isApiError(e, "validation_failed"));
+      });
     });
   });
 
@@ -3567,6 +3684,48 @@ describe("⑫ 아이 프로필은 고친 것만 덮는다", () => {
     await expect(api.patch("/children/c1", { nickname })).rejects.toSatisfy(
       (e: unknown) => isApiError(e, "validation_failed") && e.status === 400,
     );
+  });
+});
+
+describe("⑫-1 아이 삭제 — 서버 #751 과 같은 계약", () => {
+  const remove = (childId: string, key = newIdempotencyKey()) =>
+    deleteChild(childId, key).then(
+      () => "deleted" as const,
+      (error: unknown) => error,
+    );
+
+  it("등록 보호자가 지우면 204 이고 /me 에서 빠진다", async () => {
+    expect(await remove("c1")).toBe("deleted");
+
+    const me = await api.get<Me>("/me");
+    expect(me.children.some((c) => c.child_id === "c1")).toBe(false);
+  });
+
+  it("🚨 끝난 뒤 같은 키로 다시 보내면 재생이 아니라 403 child_access_denied 다 — 서버도 접근 확인이 먼저다", async () => {
+    const key = newIdempotencyKey();
+    expect(await remove("c1", key)).toBe("deleted");
+
+    const again = await remove("c1", key);
+    expect(isApiError(again, "child_access_denied")).toBe(true);
+    expect((again as ApiError).status).toBe(403);
+  });
+
+  it("함께 보는 보호자는 403 owner_only 이고 아이는 그대로다", async () => {
+    try {
+      setScenario("consent");
+      const joined = await api.post<InviteAcceptResponse>("/invites/MKGRAND1/accept", {
+        adult_attested: true,
+      });
+      expect(joined.role).toBe("member");
+
+      const caught = await remove(joined.child_id);
+      expect(isApiError(caught, "owner_only")).toBe(true);
+      expect((caught as ApiError).status).toBe(403);
+      const me = await api.get<Me>("/me");
+      expect(me.children.some((c) => c.child_id === joined.child_id)).toBe(true);
+    } finally {
+      setScenario("default");
+    }
   });
 });
 

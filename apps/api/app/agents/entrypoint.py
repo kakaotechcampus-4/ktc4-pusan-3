@@ -27,6 +27,8 @@ from app.agents.activity.store.ports import SafetyReader as ActivitySafetyReader
 from app.agents.common.allergy import allergen_states, shared_book
 from app.agents.common.child_values import ChildValues
 from app.agents.common.datetime_rules import today_of
+from app.agents.common.errors import FailReason
+from app.agents.common.failure import failure_message
 from app.agents.common.readout import Readout
 from app.agents.common.reference_docs import doc_row_id, public_doc_source
 from app.agents.common.result import MedicationDraft
@@ -144,6 +146,7 @@ __all__ = [
     "PhotoReading",
     "UnreadablePhoto",
     "read_photo",
+    "FailReason",
     "MAX_SUGGESTIONS",
     "RECENT_WINDOW",
     "FIRST_REQUEST_AGENTS",
@@ -170,6 +173,7 @@ __all__ = [
     "MedicationDraft",
     "MedicationDrafts",
     "Failed",
+    "failure_message",
     "FoundTabs",
     "Guidance",
     "GrowthLogReader",
@@ -538,7 +542,9 @@ class SafetyLabel:
 @dataclass(frozen=True)
 class AllergenCheck:
     blocked: tuple[str, ...]  # active 에 걸린 항목 — 그 추천은 내보내지 않는다
-    unknown: tuple[str, ...]  # 행이 없는 항목 — 채택 전에 묻는다 (unknown_ingredient)
+    # 확인한 적 없는 항목 — 행이 없거나 내린 기록(retracted)뿐이다. 채택 전에 묻는다
+    # (unknown_ingredient)
+    unknown: tuple[str, ...]
 
 
 def check_allergens(allergens: Sequence[str], rows: Sequence[SafetyLabel]) -> AllergenCheck:

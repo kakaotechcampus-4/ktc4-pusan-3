@@ -259,6 +259,8 @@ export interface HealthSafetyRequest {
   severity?: string | null;
   reactions?: string[];
   notes?: string | null;
+  /** 괜찮았던 식품으로 저장한다 (#825 · 뜻은 `types.ts` 의 `CreateHealthSafetyRequest.tolerated`). */
+  tolerated?: boolean;
 }
 
 /**
@@ -462,4 +464,14 @@ export function deleteObservation(
   return api.delete<void>(idempotentPath.deleteObservation(childId, kind, observationId), {
     idempotencyKey,
   });
+}
+
+/* ── 아이 삭제 (#751) ─────────────────────────────────────────────────── */
+
+/**
+ * 아이 삭제 (#751) — 아이와 기록을 통째로 지운다. 등록 보호자만 (함께 보는 보호자는 403 `owner_only`).
+ * 🚨 키는 `useIdempotencyKey()` 로 들고 있는다 — 응답을 잃고 다시 누를 때 같은 키여야 한다.
+ */
+export function deleteChild(childId: string, idempotencyKey: IdempotencyKey) {
+  return api.delete<void>(idempotentPath.deleteChild(childId), { idempotencyKey });
 }

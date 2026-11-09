@@ -1321,7 +1321,8 @@ async def _hazard(name: str, arguments: dict[str, Any], guardrail: Guardrail) ->
     """관찰 create · update 의 대상 이름이 위험 물질인가. 원문(raw_text)은 보지 않는다.
 
     칸마다 따로 본다(이어 붙이지 않는다). 검사를 못 하면 `GuardrailUnavailableError` 가 그대로
-    올라가 run 이 멈춘다 — 저장하지 않는 쪽으로 닫힌다 (fail-closed).
+    올라가고, pipeline 이 `guard_unavailable` 로 run 을 끝낸다 — 저장하지 않는 쪽으로 닫힌다
+    (fail-closed).
     """
     for prefix in ("create_", "update_"):
         found = _HAZARD_FIELDS.get(name.removeprefix(prefix)) if name.startswith(prefix) else None

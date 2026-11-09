@@ -19,7 +19,9 @@ from app.agents.suggestion_save import SuggestionBatch
 from app.api import agent_ports, quota
 from app.api.runs import suggestion_retry
 from app.api.v1.schemas.suggestions import DocEvidenceOut
+from app.core import llm_usage
 from app.core.config import settings
+from app.domains.consent.models import ConsentAction
 from app.domains.memory.observation.models import (
     ConfidenceSource,
     ObservationActivity,
@@ -473,6 +475,81 @@ async def test_사전검사(db_client, session, bearer, cid, agents, monkeypatch
     ]
 
 
+async def test_내린_알레르기는_사전검사에서_다시_묻는다(
+    db_client, session, bearer, cid, agents, monkeypatch
+):
+    """내린 기록(retracted)은 "모름" 과 같다 — 잘못 등록했다 지운 식품을 영영 안 묻지 않게."""
+    plan, _ = agents
+    headers, parent_id = bearer
+    monkeypatch.setattr("app.api.v1.routers.suggestions.child_health_granted", _granted(True))
+    session.add(
+        HealthSafety(
+            child_id=cid, kind=SafetyKind.ALLERGY, label="견과류", status=SafetyStatus.RETRACTED
+        )
+    )
+    walnut = await _personal(session, cid, parent_id, content="호두죽", allergens=["호두"])
+    plan["food"] = ("drafts", [walnut])
+
+    data = (await _post(db_client, cid, headers, agents=["food"])).json()
+
+    assert [s["content"] for s in data["suggestions"]] == ["호두죽"]
+
+
+async def test_괜찮았던_식품으로_저장한_항목은_다시_묻지_않는다(
+    db_client, session, bearer, cid, agents, monkeypatch
+):
+    """05 확인 시트의 "먹어봤어요 · 괜찮았어요" 를 저장하면(tolerated) 다음 사전검사에서 빠진다."""
+    plan, _ = agents
+    headers, parent_id = bearer
+    monkeypatch.setattr("app.api.v1.routers.suggestions.child_health_granted", _granted(True))
+
+    async def granted(*args, **kwargs):
+        return ConsentAction.GRANTED
+
+    monkeypatch.setattr("app.api.v1.routers.health_safety.latest_action", granted)
+    saved = await db_client.post(
+        f"/api/v1/children/{cid}/health-safety",
+        json={"type": "allergy", "label": "잣", "tolerated": True},
+        headers={**headers, "Idempotency-Key": "tolerated-pine"},
+    )
+    assert saved.status_code == 201
+    plan["food"] = (
+        "drafts",
+        [await _personal(session, cid, parent_id, content="잣호두죽", allergens=["잣", "호두"])],
+    )
+
+    data = (await _post(db_client, cid, headers, agents=["food"])).json()
+
+    assert [p["item"] for p in data["prechecks"]] == ["호두"]
+
+
+async def test_괜찮았던_식품을_내리면_사전검사에서_다시_묻는다(
+    db_client, session, bearer, cid, agents, monkeypatch
+):
+    """프로필에서 괜찮았던 식품을 빼면 다음 05 에서 그 식품을 다시 묻는다.
+
+    내린 기록을 "모름" 으로 보는 AI 쪽 판정 위에서만 성립한다 — 이 브랜치가 그 위에 쌓인 이유다.
+    """
+    plan, _ = agents
+    headers, parent_id = bearer
+    monkeypatch.setattr("app.api.v1.routers.suggestions.child_health_granted", _granted(True))
+    pine = HealthSafety(child_id=cid, kind=SafetyKind.ALLERGY, label="잣", status=SafetyStatus.NONE)
+    session.add(pine)
+    await session.flush()
+    removed = await db_client.delete(
+        f"/api/v1/children/{cid}/health-safety/{pine.id}", headers=headers
+    )
+    assert removed.status_code == 204
+    plan["food"] = (
+        "drafts",
+        [await _personal(session, cid, parent_id, content="잣죽", allergens=["잣"])],
+    )
+
+    data = (await _post(db_client, cid, headers, agents=["food"])).json()
+
+    assert [p["item"] for p in data["prechecks"]] == ["잣"]
+
+
 async def test_동의가_없으면_알레르기_든_추천을_뺀다(
     db_client, session, bearer, cid, agents, monkeypatch
 ):
@@ -781,6 +858,56 @@ async def test_Agent_를_돌리기_전에_요청_세션의_트랜잭션을_닫�
     await _post(db_client, cid, headers, agents=["food"])
 
     assert seen == [False]
+
+
+async def test_다시_만들기는_suggest_로_귀속한다(db_client, bearer, cid, agents, monkeypatch):
+    """LLM 사용량(#710) — 05 는 run 이 없어 요청마다 정한 request_id 가 run_id 다."""
+    headers, parent_id = bearer
+    seen: list[tuple[llm_usage.Attribution | None, str]] = []
+
+    async def fake_suggest(**kwargs):
+        seen.append((llm_usage.current(), kwargs["request_id"]))
+        return entrypoint.SuggestRun((), ())
+
+    monkeypatch.setattr(entrypoint, "suggest", fake_suggest)
+
+    await _post(db_client, cid, headers, agents=["food"])
+
+    [(attribution, request_id)] = seen
+    assert attribution == llm_usage.Attribution(
+        parent_id=parent_id, run_id=request_id, source="suggest"
+    )
+
+
+async def test_다시_시도는_원래_run_의_run_id_로_귀속한다(
+    db_client, bearer, cid, agents, monkeypatch
+):
+    """실패한 추천을 다시 만드는 것은 그 run 의 일이다 (#710 리뷰).
+
+    새 request_id 로 남기면 `WHERE run_id = <그 run>` 에 안 잡히고, run 수 집계가 05 호출마다 하나씩
+    늘어난다. 창구는 `source` 가 가른다.
+    """
+    headers, parent_id = bearer
+    suggestion_retry.put_failed(
+        run_id="run-1",
+        parent_id=parent_id,
+        child_id=cid,
+        agent="food",
+        task=suggestion_retry.RetryTask(
+            "meal_recommendation", ("내일 아침 추천해줘",), datetime.now(UTC)
+        ),
+    )
+    seen: list[llm_usage.Attribution | None] = []
+
+    async def fake_suggest(**kwargs):
+        seen.append(llm_usage.current())
+        return entrypoint.SuggestRun((), ())
+
+    monkeypatch.setattr(entrypoint, "suggest", fake_suggest)
+
+    await _post(db_client, cid, headers, agents=["food"], run_id="run-1")
+
+    assert seen == [llm_usage.Attribution(parent_id=parent_id, run_id="run-1", source="suggest")]
 
 
 async def test_질문_id_는_질문을_낸_Agent_다(db_client, bearer, cid, agents, monkeypatch):

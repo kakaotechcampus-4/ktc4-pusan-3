@@ -25,13 +25,14 @@ import traceback
 from collections.abc import Awaitable, Callable
 from datetime import date
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from app.agents import entrypoint
 from app.api import agent_ports, idempotency
 from app.api.deps.db import background_session
 from app.api.runs import pending_reply, sse, suggestion_retry, translate
 from app.api.runs.registry import RunChannel
+from app.core import llm_usage
 from app.core.logging_config import log_error_without_message
 from app.domains.consent.location_log import record_location_use_if_granted
 from app.domains.consent.models import LocationPurpose
@@ -75,6 +76,28 @@ def curator_trigger() -> entrypoint.CuratorTrigger | None:
         trigger_curator_background(child_id, today, embedder, judge)
 
     return trigger
+
+
+def trigger_curator_after_delete(
+    child_id: UUID, today: date, *, parent_id: UUID, after: str
+) -> None:
+    """run 밖에서 지운 뒤(기록 삭제 · 삭제 확정) Curator 를 띄운다. commit 뒤에만 부른다.
+
+    같은 트랜잭션에서 띄우면 Curator 실패가 삭제까지 되돌린다.
+    🚨 터져도 응답은 성공이다 — 지운 것은 이미 commit 됐다 (pipeline._trigger_curator 와 같다).
+    🚨 이 길은 run 밖이라 귀속이 없다. 여기서 건다 — 안 걸면 Curator 의 임베딩 · 판정 토큰이 보호자
+       없이 쓰여 저장되지 않고 WARNING 만 남는다 (#710). Curator 는 trigger 가 띄우는 태스크라 이
+       귀속을 복사한다. run 밖에서 Curator 를 띄우는 새 길은 이것을 부른다 — 따로 `attribute()` 를
+       복사해 두지 않는다.
+    `after` 는 로그에 남는 길 이름이다(고정 글귀 — 값을 넣지 않는다).
+    """
+    try:
+        trigger = curator_trigger()
+        if trigger is not None:
+            with llm_usage.attribute(parent_id=parent_id, run_id=uuid4().hex, source="delete"):
+                trigger(child_id, today)
+    except Exception as exc:
+        log.error("%s 뒤 curator trigger 실패 error=%s", after, type(exc).__name__)
 
 
 def agent_job(
@@ -136,10 +159,14 @@ def agent_job(
       `Saved` 를 관찰 내용이 아니라 id 로 받으려고 여기서 넘긴다 (#228). 끝 신호 뒤의 것과 번역이
       터진 것은 넘기지 않는다 — 화면에 안 나간 것이다.
 
+    - LLM 사용량(#710)은 이 job 이 보호자 · run 에 묶는다(`source="input"`).
+      Curator 는 run 안에서 태스크로 떠서 귀속을 물려받으므로 run 이 끝난 뒤에 끝나도
+      이 run 으로 남는다. 이어받기 run 도 같다.
+
     🚨 `entrypoint.handle_input` 을 모듈 이름으로 부른다 — 테스트가 진입점을 바꿔 끼울 수 있게.
     """
 
-    async def job(channel: RunChannel) -> None:
+    async def run(channel: RunChannel) -> None:
         # commit 이 채우고 Saved 가 꺼내 쓴다 — 이 run 이 만든 관찰의 화면 모양 (#471)
         saved_rows: dict[tuple[str, str], Any] = {}
         # load_cards 가 채우고 FoundTabs · DeleteProposed 가 꺼내 쓴다 — 카드의 화면 모양 행 (#535)
@@ -272,6 +299,10 @@ def agent_job(
                         pending_reply.drop(reply_to)
                     else:
                         pending_reply.release(reply_to)
+
+    async def job(channel: RunChannel) -> None:
+        with llm_usage.attribute(parent_id=parent_id, run_id=channel.run_id, source="input"):
+            await run(channel)
 
     return job
 

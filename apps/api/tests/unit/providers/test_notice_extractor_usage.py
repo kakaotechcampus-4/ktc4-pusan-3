@@ -58,7 +58,7 @@ async def test_호출_1번이_notice_ocr_행_1개다() -> None:
     parent_id = uuid4()
     extractor = _extractor(_stream())
 
-    with llm_usage.attribute(parent_id=parent_id, run_id="photo-1", source="meal_ocr"):
+    with llm_usage.attribute(parent_id=parent_id, run_id="photo-1", source="photo"):
         await asyncio.to_thread(extractor.read_image, b"png", mime_type="image/png")
 
     [row] = llm_usage.drain()
@@ -69,7 +69,7 @@ async def test_호출_1번이_notice_ocr_행_1개다() -> None:
 async def test_잘린_응답도_예외보다_먼저_기록한다() -> None:
     extractor = _extractor(_stream(content=None, finish_reason="length"))
 
-    with llm_usage.attribute(parent_id=uuid4(), run_id="photo-1", source="meal_ocr"):
+    with llm_usage.attribute(parent_id=uuid4(), run_id="photo-1", source="photo"):
         with pytest.raises(RuntimeError, match="잘림"):
             await asyncio.to_thread(extractor.read_image, b"png", mime_type="image/png")
 

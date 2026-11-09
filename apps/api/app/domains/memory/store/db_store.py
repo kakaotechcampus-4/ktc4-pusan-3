@@ -23,6 +23,8 @@ from app.agents.memory.store.ports import (
     DeleteCandidates,
     EventItemRow,
     EventRow,
+    NoticeItemRow,
+    NoticeRow,
     ObservationDomain,
     ObservationRow,
     SeriesRow,
@@ -40,6 +42,8 @@ from app.domains.memory.observation.models import (
     Promotable,
 )
 from app.domains.memory.profile.service import lock_child_memory, refresh_profile
+from app.domains.notice import repository as notice_repository
+from app.domains.notice.models import Notice, NoticeDocKind, NoticeItem
 from app.domains.schedule import repository as schedule_repository
 from app.domains.schedule import series as series_repository
 from app.domains.schedule.models import Event, EventItem, EventSeries
@@ -160,6 +164,38 @@ def _event_item_row(orm: EventItem) -> EventItemRow:
         item_name=orm.item_name,
         is_prepared=orm.is_prepared,
         prepared_at=orm.prepared_at,
+    )
+
+
+def _notice_row(notice: Notice, items: Sequence[NoticeItem]) -> NoticeRow:
+    """ORM → 포트 행. 식별자 · 저장 메타는 여기서 떨어진다 (#832)."""
+    return NoticeRow(
+        doc_kind=notice.doc_kind.value,
+        input_format=notice.input_format.value,
+        audience_scope=notice.audience_scope.value,
+        issued_on=notice.issued_on,
+        received_at=notice.received_at,
+        title=notice.title,
+        raw_text=notice.raw_text,
+        relation=notice.relation.value if notice.relation else None,
+        items=tuple(
+            NoticeItemRow(
+                handling=i.handling.value,
+                label=i.label,
+                title=i.title,
+                target_scope=i.target_scope.value,
+                starts_at=i.starts_at,
+                ends_at=i.ends_at,
+                all_day=i.all_day,
+                due_at=i.due_at,
+                due_all_day=i.due_all_day,
+                details=tuple((d["name"], d["value"]) for d in i.details),
+                supplies=tuple(i.supplies),
+                source_quote=i.source_quote,
+                done_at=i.done_at,
+            )
+            for i in items
+        ),
     )
 
 
@@ -448,6 +484,31 @@ class DbMemoryStore:
         stmt = stmt.order_by(Event.starts_at, Event.id)
         rows = (await self._session.scalars(stmt)).all()
         return await self._event_rows(rows)
+
+    # ── 기관 공지 (#832) ────────────────────────────────────────
+
+    async def query_notices(
+        self,
+        *,
+        child_id: UUID,
+        date_from: date | None = None,
+        date_to: date | None = None,
+        text_query: str | None = None,
+        doc_kind: str | None = None,
+        limit: int,
+    ) -> list[NoticeRow]:
+        assert child_id == self._child_id, "child_id mismatch"
+        found = await notice_repository.find_notices(
+            self._session,
+            child_id=child_id,
+            date_from=date_from,
+            date_to=date_to,
+            text_query=text_query,
+            doc_kind=NoticeDocKind(doc_kind) if doc_kind else None,
+            limit=limit,
+            tz=_KST,
+        )
+        return [_notice_row(notice, items) for notice, items in found]
 
     async def _event_rows(self, rows: Any) -> list[EventRow]:
         series = await series_repository.series_by_id(

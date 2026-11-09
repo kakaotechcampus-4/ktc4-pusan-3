@@ -70,6 +70,7 @@ from tests.eval.agents.routing_cases import (
     GR_CASES,
     HR_CASES,
     HR_NEVER_HEALTH,
+    NT_CASES,
     RC_CASES,
     T_CASES,
     UNCLEAR_CASES,
@@ -156,7 +157,7 @@ RESULT_PATH = Path(
 INPUT_PRICE = float(os.getenv("LLM_INPUT_PRICE_PER_M", "0"))
 OUTPUT_PRICE = float(os.getenv("LLM_OUTPUT_PRICE_PER_M", "0"))
 
-_CASES = (*RC_CASES, *T_CASES, *FC_CASES, *UNCLEAR_CASES, *DATE_CASES)
+_CASES = (*RC_CASES, *T_CASES, *FC_CASES, *UNCLEAR_CASES, *DATE_CASES, *NT_CASES)
 
 # 앞으로의 계획. unclear 로 가면 일정으로 등록할지 묻지 못한다 (D8 · #624)
 _PLANS = ("T18", "T58")

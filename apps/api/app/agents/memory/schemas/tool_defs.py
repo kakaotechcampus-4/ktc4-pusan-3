@@ -1,9 +1,10 @@
-"""tool 22개의 이름 · 호출 조건 · argument 모델 정의.
+"""tool 23개의 이름 · 호출 조건 · argument 모델 정의.
 
 언제 부르고 언제 부르지 않는지 tool의 경계를 적는다.
 """
 
 from app.agents.common.tool_schema import ToolDefinition
+from app.agents.memory.schemas.notice import NoticeQuery
 from app.agents.memory.schemas.observation import (
     ObservationActivityCreate,
     ObservationActivityUpdate,
@@ -194,6 +195,19 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
             "scope=series 는 묶음 초안에서 그 준비물을 빼는 것이라 보호자가 확인해야 반영된다."
         ),
         args=EventItemRef,
+    ),
+    # 기관 공지 (#832) — 읽기만 한다
+    ToolDefinition(
+        name="query_notice",
+        description=(
+            "기관에서 받은 공지(알림장 · 가정통신문 · 식단표 · 기관 문자)를 "
+            "날짜 · 낱말 · 종류로 찾는다. "
+            "공지 원문과 항목(일정 · 할 일 · 안내)의 모든 칸을 돌려준다. "
+            "원문은 내용을 확인하려고 읽는 자료이고 그대로 옮기지 않는다. "
+            "받은 날이나 항목의 날짜(행사 · 마감)가 그 기간에 걸리면 찾는다. "
+            "공지는 읽기만 하고 고치거나 지우지 않는다."
+        ),
+        args=NoticeQuery,
     ),
     # 삭제 제안 (#535)
     ToolDefinition(

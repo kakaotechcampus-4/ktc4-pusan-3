@@ -11,6 +11,7 @@ import {
   HealthSafetyListSkeleton,
   HealthSafetySheet,
 } from "@/components/health-safety-list";
+import { ToleratedFoodsRow } from "@/components/tolerated-foods";
 import { BottomSheet } from "@/components/ui/bottom-sheet";
 import { EmptyState, EmptyStateSkeleton } from "@/components/ui/empty-state";
 import { Section, SectionAction, SectionError } from "@/components/ui/section";
@@ -82,6 +83,8 @@ export function SafetySection({
   const photoInputRef = useRef<HTMLInputElement>(null);
 
   const items = query.data?.items ?? [];
+  /** 괜찮았던 식품 (#825). 🚨 알레르기 목록과 다른 필드다 — 건수에도 세지 않는다. */
+  const tolerated = query.data?.tolerated ?? [];
 
   return (
     <Section
@@ -108,6 +111,9 @@ export function SafetySection({
         />
       }
     >
+      {/* 🚨 **알레르기 목록 위의 한 줄이다** (#825). 알레르기가 몇 개든 스크롤 없이 보이고, 없으면 서지 않는다. */}
+      <ToleratedFoodsRow childId={childId} items={tolerated} />
+
       {/* 🚨 **교체 페이드를 걸지 않는다** (디자인 시스템 §8 "하지 않는 것"). 이 목록은 게이트 ㉡ 의 결과라
           불러온 순간이라도 투명도로 흘려보내지 않는다. */}
       {query.isPending ? (

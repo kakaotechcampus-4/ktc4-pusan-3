@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo
 from app.agents import entrypoint
 from app.api.runs import sse
 from app.api.runs.registry import RunChannel
+from app.core import llm_usage
 from app.domains.daycare_meal.models import DaycareSlot
 from app.domains.daycare_meal.repository import NewDaycareMeal
 from app.domains.notice.assemble import NewNoticeItem
@@ -67,6 +68,15 @@ def open_photo_run(*, run_id: str, parent_id: uuid.UUID, child_id: uuid.UUID) ->
     run = PhotoRun(run_id, parent_id, child_id, time.monotonic() + TTL_SECONDS)
     _runs[run_id] = run
     return run
+
+
+def forget_child(child_id: uuid.UUID) -> None:
+    """그 아이의 run 을 누가 열었든 지운다 — 아이 삭제 커밋 뒤 (#751).
+
+    아이가 없으면 저장(`commit`)도 아이 접근 확인에서 막혀서, 남겨 둘 이유 없는 공지 원문이다.
+    """
+    for run_id in [k for k, run in _runs.items() if run.child_id == child_id]:
+        _runs.pop(run_id, None)
 
 
 def get(run_id: str, *, parent_id: uuid.UUID) -> PhotoRun | None:
@@ -170,7 +180,7 @@ def build_entries(run: PhotoRun, reading: entrypoint.PhotoReading) -> list[dict]
 def photo_job(run: PhotoRun, *, data: bytes, received_at: datetime, declared_lane: str):
     """🚨 `saved` 를 내지 않는다. 한 줄 입력과 갈리는 지점이다 — 저장은 commit 에서만 일어난다."""
 
-    async def job(channel: RunChannel) -> None:
+    async def run_job(channel: RunChannel) -> None:
         channel.publish(("step", {"index": 1, "total": 2, "label": "사진에서 글자를 찾고 있어요"}))
         try:
             reading = await asyncio.to_thread(entrypoint.read_photo, data, received_at=received_at)
@@ -191,6 +201,12 @@ def photo_job(run: PhotoRun, *, data: bytes, received_at: datetime, declared_lan
             ("parsed", {"raw_text": reading.notice.raw_text, "entries": entries, "tags": []})
         )
         channel.publish(("done", {"run_id": channel.run_id, "model_calls": 1}))
+
+    async def job(channel: RunChannel) -> None:
+        # 공지 읽기와 식단표 읽기가 한 장에서 같이 불린다 (#710).
+        # 창구는 하나(photo)고 모델은 role 이 가른다
+        with llm_usage.attribute(parent_id=run.parent_id, run_id=channel.run_id, source="photo"):
+            await run_job(channel)
 
     return job
 

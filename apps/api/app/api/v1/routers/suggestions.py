@@ -23,6 +23,7 @@ from app.api.deps.child import AccessibleChild
 from app.api.deps.db import SessionDep
 from app.api.errors import ApiError, ErrorEnvelope, constraint_name
 from app.api.runs import suggestion_retry
+from app.api.v1.health_consent import health_consent_required
 from app.api.v1.list_query import PageQueryDep
 from app.api.v1.reminder_check import check_reminder, reminder_out
 from app.api.v1.schemas.common import Ref
@@ -60,7 +61,7 @@ from app.api.v1.schemas.suggestions import (
     UpdateSeriesRequest,
     UpdateSeriesResponse,
 )
-from app.core import deeplinks
+from app.core import deeplinks, llm_usage
 from app.core.config import settings
 from app.core.recipe_source import RECIPE_SOURCE_INFO
 from app.domains.consent.repository import child_health_granted
@@ -158,14 +159,63 @@ def _suggestion_out(s, views: Sequence[EvidenceView] = ()) -> SuggestionOut:
 # ── 채택 ──────────────────────────────────────────────────────────────────
 
 
+async def _safety_labels(session, *, child_id: _uuid.UUID) -> list[entrypoint.SafetyLabel]:
+    """사전검사 · 채택 재확인이 같이 읽는 알레르기 · 건강 행(모든 kind · status).
+
+    목록이 빼는 추천과 채택이 막는 추천이 같으려면 읽는 행도 판정 함수도 같아야 한다.
+    """
+    rows = await list_safety_labels(session, child_id=child_id)
+    return [entrypoint.SafetyLabel(*r) for r in rows]
+
+
+async def _check_allergens_before_approve(session, *, child_id: _uuid.UUID, rows) -> None:
+    """채택 직전에 알레르기를 다시 본다 — 목록을 받은 뒤 등록된 알레르기를 서버가 막는다.
+
+    판정은 목록 응답의 사전검사와 같은 함수다(`check_allergens` · 같은 이름 사전). 목록이 빼는
+    추천과 채택이 막는 추천이 갈리면, 화면에 남은 옛 목록으로 고른 추천이 통과한다.
+    - `active` 에 걸린 추천이 하나라도 있으면 전부 거절한다(409 `allergen_blocked`) — 채택 API 의
+      "전부 아니면 전부" 와 같다. 걸린 추천 id 는 `detail.suggestion_ids` 로 요청 순서대로 싣는다.
+    - "모름"(행 없음)은 막지 않는다 — 답을 미뤄도 채택은 막지 않는다 (event-draft-ui-v1.md §3-8).
+    - `allergens` 가 없는 추천뿐이면 건강정보를 읽지 않는다.
+    - 동의가 없으면 읽지 않고 403 — 목록도 동의 없이는 이 추천을 내보내지 않는다.
+    - 동의 · 알레르기 조회가 실패하면 예외를 그대로 올린다(500, 아무것도 채택하지 않음) —
+      못 읽었다고 통과시키지 않는다 (루트 §2).
+    - 알레르기를 읽은 뒤 커밋 전의 짧은 틈에 등록된 알레르기는 놓친다 — 잠그지 않기로 했다.
+    """
+    with_allergens = [row for row in rows if row.allergens]
+    if not with_allergens:
+        return
+    if not await child_health_granted(session, child_id=child_id):
+        raise health_consent_required()
+    labels = await _safety_labels(session, child_id=child_id)
+    blocked = [
+        str(row.id)
+        for row in with_allergens
+        if entrypoint.check_allergens(row.allergens, labels).blocked
+    ]
+    if blocked:
+        raise ApiError(
+            409,
+            "allergen_blocked",
+            "알레르기로 등록된 항목이 들어 있어 고를 수 없어요",
+            {"suggestion_ids": blocked},
+        )
+
+
 @router.post(
     "/children/{cid}/suggestions/approve",
     summary="추천 채택",
     description=(
         "선택한 추천을 채택(draft → approved)한다. 이미 채택된 것은 멱등 처리. 만료된 추천은 409."
+        " 채택 직전에 알레르기를 다시 본다 — 아이의 알레르기 기록(active)에 걸리는 추천이 하나라도"
+        " 있으면 아무것도 채택하지 않고 409 `allergen_blocked`(`detail.suggestion_ids` = 걸린"
+        " 추천 id, 요청 순서). 알레르기 기록에 없는 항목(모름)은 막지 않는다."
+        " 오류 (순서대로): 400 validation_failed(빈 목록) → 행마다 404 not_found ·"
+        " 409 not_draft · 409 suggestion_expired → 403 consent_required(알레르기 항목이 든 추천인데"
+        " 건강정보 동의 없음) → 409 allergen_blocked."
     ),
     status_code=200,
-    responses={status: {"model": ErrorEnvelope} for status in (400, 404, 409)},
+    responses={status: {"model": ErrorEnvelope} for status in (400, 403, 404, 409)},
 )
 async def approve_suggestions(
     child: AccessibleChild,
@@ -199,6 +249,8 @@ async def approve_suggestions(
         return ApproveSuggestionsResponse(
             suggestions=[_suggestion_out(s) for s in already_approved]
         )
+
+    await _check_allergens_before_approve(session, child_id=child.child_id, rows=found)
 
     to_approve = [s.id for s in found]
     approved = await suggestion_repo.approve_suggestions(
@@ -601,22 +653,31 @@ async def create_suggestions(
             # 여기까지 읽기만 했고, expire_on_commit=False 라 읽은 행도 그대로 쓸 수 있다
             await session.commit()
             sent_at = next(iter(claimed.values())).sent_at if claimed else None
-            run = await entrypoint.suggest(
-                child_id=child.child_id,
-                tasks=to_run,
-                request_id=str(_uuid.uuid4()),
-                save_run_id=run_id if claimed else None,
-                sent_at=sent_at,
-                save_suggestions=agent_ports.suggestion_saver(child.child_id),
-                birth_date=child.birth_date,
-                child_health_granted=health_consent,
-                domain_store=agent_ports.domain_store_opener(child.child_id),
-                **agent_ports.food_stores(),
-                **agent_ports.safety_readers(),
-                **agent_ports.growth_book_ports(),
-                growth_log=agent_ports.growth_log_reader(),
-                affinity_reader=agent_ports.affinity_reader(),
-            )
+            # 다시 만들기는 그 run 의 일이다 — 사용량도 그 run_id 로 남겨 SQL 에서 run 하나를 이어
+            # 본다. 처음 요청은 run 이 없어서 요청마다 정한 id 가 run_id 다.
+            # 창구는 source(suggest)가 가른다 (#710)
+            request_id = str(_uuid.uuid4())
+            with llm_usage.attribute(
+                parent_id=parent.parent_id,
+                run_id=run_id if claimed else request_id,
+                source="suggest",
+            ):
+                run = await entrypoint.suggest(
+                    child_id=child.child_id,
+                    tasks=to_run,
+                    request_id=request_id,
+                    save_run_id=run_id if claimed else None,
+                    sent_at=sent_at,
+                    save_suggestions=agent_ports.suggestion_saver(child.child_id),
+                    birth_date=child.birth_date,
+                    child_health_granted=health_consent,
+                    domain_store=agent_ports.domain_store_opener(child.child_id),
+                    **agent_ports.food_stores(),
+                    **agent_ports.safety_readers(),
+                    **agent_ports.growth_book_ports(),
+                    growth_log=agent_ports.growth_log_reader(),
+                    affinity_reader=agent_ports.affinity_reader(),
+                )
             settled = {o.agent for o in run.outcomes}
     finally:
         for a in claimed:
@@ -695,8 +756,7 @@ async def _suggestions_response(
         # 처음 필요할 때 한 번 읽는다 — allergens 가 든 추천이 없으면 읽지 않는다 (#433 리뷰 ⑬)
         nonlocal safety_rows
         if safety_rows is None:
-            labels = await list_safety_labels(session, child_id=child_id)
-            safety_rows = [entrypoint.SafetyLabel(*r) for r in labels]
+            safety_rows = await _safety_labels(session, child_id=child_id)
         return safety_rows
 
     record_counts: dict[str, int] = {}

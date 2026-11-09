@@ -8,6 +8,7 @@ from typing import Any
 from openai import (
     APIConnectionError,
     APIError,
+    APITimeoutError,
     AsyncOpenAI,
     AuthenticationError,
     BadRequestError,
@@ -21,36 +22,35 @@ from app.agents.common.config import (
     get_agent_settings,
 )
 from app.agents.common.prompt_fingerprint import is_registered, logged_fingerprint
+
+# 실패 예외는 errors.py 에 있다. 원래 import 경로(`llm_client.LLMError` 등)를 지키려고
+# 다시 내보낸다 (#768)
+from app.agents.common.errors import (
+    LLMAuthError as LLMAuthError,
+)
+from app.agents.common.errors import (
+    LLMBadRequestError as LLMBadRequestError,
+)
+from app.agents.common.errors import (
+    LLMConfigError as LLMConfigError,
+)
+from app.agents.common.errors import (
+    LLMError as LLMError,
+)
+from app.agents.common.errors import (
+    LLMRateLimitError as LLMRateLimitError,
+)
+from app.agents.common.errors import (
+    LLMTimeoutError as LLMTimeoutError,
+)
+from app.agents.common.errors import (
+    LLMUnavailableError as LLMUnavailableError,
+)
 from app.core import llm_usage
 
 logger = logging.getLogger(__name__)
 
 _REASONING_EFFORTS = frozenset({"none", "low", "medium", "high"})
-
-
-class LLMError(Exception):
-    """Agent 레이어가 다루는 LLM 호출 실패의 공통 타입."""
-
-
-class LLMConfigError(LLMError):
-    """역할의 API_KEY / BASE_URL / MODEL / REASONING_EFFORT 가 비었거나 잘못됨.
-    메시지에는 실제로 읽은 .env 키를 적는다 — 대체됐으면 MEMORY_* 이름이 나온다."""
-
-
-class LLMAuthError(LLMError):
-    """인증 실패. API_KEY 를 확인한다."""
-
-
-class LLMBadRequestError(LLMError):
-    """요청이 거절됨. 지원하지 않는 파라미터거나 tool schema 가 잘못됨."""
-
-
-class LLMRateLimitError(LLMError):
-    """rate limit 초과. 호출 측에서 backoff 한다."""
-
-
-class LLMUnavailableError(LLMError):
-    """네트워크·타임아웃 등 일시적 장애."""
 
 
 @dataclass(frozen=True)
@@ -174,8 +174,11 @@ class LLMClient:
             raise LLMBadRequestError(f"LLM 요청 거절: {exc}") from exc
         except RateLimitError as exc:
             raise LLMRateLimitError("LLM rate limit 초과.") from exc
+        except APITimeoutError as exc:
+            # APIConnectionError 의 하위라 먼저 잡는다
+            raise LLMTimeoutError("LLM 응답 시간 초과.") from exc
         except APIConnectionError as exc:
-            raise LLMUnavailableError("LLM 연결 실패 또는 타임아웃.") from exc
+            raise LLMUnavailableError("LLM 연결 실패.") from exc
         except APIError as exc:
             raise LLMError(f"LLM 호출 실패: {exc}") from exc
 

@@ -12,6 +12,7 @@
 import json
 from collections.abc import AsyncIterator
 
+from app.agents.entrypoint import failure_message
 from app.api.runs.registry import RunChannel
 
 SseEvent = tuple[str, dict]
@@ -25,12 +26,13 @@ def frame(name: str, payload: dict) -> str:
 
 
 def failed_event(reason: str, raw_text: str) -> SseEvent:
-    """화면용 failed. 모양을 한 곳에서 정한다 — 번역기(Agent 의 Failed)와 러너(internal_error)가
-    같이 쓴다.
+    """화면용 failed. 모양을 한 곳에서 정한다 — 번역기(Agent 의 Failed)와 러너(timeout ·
+    internal_error)가 같이 쓴다.
 
     raw_text 가 있어야 "적어주신 말은 입력창에 그대로 남겨뒀어요" 가 성립한다 (계약서 §06).
+    message 는 이유마다 코드가 정한 문구다 (#768) — 화면이 그대로 그리고 다시 쓰지 않는다.
     """
-    return "failed", {"reason": reason, "raw_text": raw_text}
+    return "failed", {"reason": reason, "raw_text": raw_text, "message": failure_message(reason)}
 
 
 async def stream(channel: RunChannel, *, heartbeat_seconds: float = 10.0) -> AsyncIterator[str]:

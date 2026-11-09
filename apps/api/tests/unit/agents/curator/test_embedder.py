@@ -20,6 +20,7 @@ from app.agents.common.llm_client import (
     LLMConfigError,
     LLMError,
     LLMRateLimitError,
+    LLMTimeoutError,
     LLMUnavailableError,
 )
 from app.agents.curator.embedding import embedder as embedder_module
@@ -127,6 +128,7 @@ async def test_개수가_다르면_막는다() -> None:
             LLMRateLimitError,
         ),
         (openai.APIConnectionError(request=_REQUEST), LLMUnavailableError),
+        (openai.APITimeoutError(request=_REQUEST), LLMTimeoutError),
     ],
 )
 async def test_SDK_예외는_LLMError_계열로_바꾼다(error: Exception, expected: type) -> None:

@@ -19,6 +19,7 @@ from app.agents.common.llm_client import (
     LLMConfigError,
     LLMError,
     LLMRateLimitError,
+    LLMTimeoutError,
     LLMUnavailableError,
 )
 from app.agents.curator.embedding.judge import (
@@ -93,7 +94,7 @@ class JevJudge:
                     self._url, headers={"Authorization": f"Bearer {self._key}"}, json=payload
                 )
         except httpx.TimeoutException as exc:
-            raise LLMUnavailableError("판정 요청 시간 초과.") from exc
+            raise LLMTimeoutError("판정 요청 시간 초과.") from exc
         except httpx.TransportError as exc:
             raise LLMUnavailableError("판정 서버 연결 실패.") from exc
 

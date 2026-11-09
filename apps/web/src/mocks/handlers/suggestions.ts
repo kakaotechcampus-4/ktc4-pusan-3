@@ -92,22 +92,33 @@ function refuseUnapproved(ids: string[]) {
  *    실서버도 `kind` 를 가리지 않고 `check.blocked` 면 뺀다.
  */
 function notBlocked(item: { id: string }): boolean {
-  return !(suggestionAllergens[item.id] ?? []).some((a) => allergyStatus(a) === "active");
+  return !allergensOf(item.id).some((a) => allergyStatus(a) === "active");
+}
+
+/**
+ * 제안에 든 알레르기 항목. `precheck_shared_item` 이면 두부 제안(`s_2`)에도 계란이 들어 있다 — 같은 식품이 든
+ * 제안 둘을 고르면 시트가 그 식품을 한 장으로 묻는지 보는 시나리오다 (#823). 픽스처를 바꾸지 않는 것은
+ * `s_2` 를 골라 다음 단계로 가는 e2e 가 여럿이라서다.
+ */
+function allergensOf(id: string): string[] {
+  const base = suggestionAllergens[id] ?? [];
+  return currentScenario() === "precheck_shared_item" && id === "s_2" ? [...base, "계란"] : base;
 }
 
 /**
  * 알레르기 사전검사. 🚨 **규칙이 만든다** — 모델은 관여하지 않는다 (최상위 §3).
  *
  * 🚨 **기준은 제안의 `allergens` 다** (#233 · 문서 §3-8). `agent` 와 무관해서 놀이 제안의
- *    간식도 걸린다. `health_safety` 에 행이 없는 항목만 묻는다 — `retracted` 는 묻지 않고,
- *    `active` 는 `notBlocked` 에서 제안째 빠졌다. 개인화 · 일반 공통이다 (#509).
+ *    간식도 걸린다. `health_safety` 에 걸리는 행이 없는 항목만 묻는다 — 괜찮았던 식품(`tolerated`)은 묻지 않고,
+ *    `active` 는 `notBlocked` 에서 제안째 빠졌다. 🚨 **내린 기록은 다시 묻는다** (#825 · 서버 PR 3 ·
+ *    `allergyStatus` 머리말). 개인화 · 일반 공통이다 (#509).
  * 🚨 **어느 제안 것인지 `suggestion_id` 로 말한다.** 안 실으면 화면은 재료 하나로 고른 것
  *    전부를 막는다 — 알레르기에서 덜 막는 쪽으로 기울 수 없기 때문이다 (`Precheck` 의 ⚠️).
  * 🚨 **채택할 때 묻는다.** 초안을 만든 뒤가 아니다 — 일정을 안 만들면 영영 안 묻게 된다.
  */
 function prechecksFor(items: Array<{ id: string }>): Precheck[] {
   return items.flatMap((s) =>
-    (suggestionAllergens[s.id] ?? [])
+    allergensOf(s.id)
       .filter((a) => allergyStatus(a) === null)
       .map((a) => ({
         code: "unknown_ingredient" as const,
@@ -471,6 +482,27 @@ export const suggestionHandlers = [
     }
     // ⚠️ 실서버의 `409 not_draft`(거절된 제안) · `409 suggestion_expired`(24시간 지남)는 여기서
     //    안 난다 — 목의 제안은 늘 `draft` 이고 만료되지 않는다. 이미 채택한 것은 서버도 그대로 200 이다.
+
+    /**
+     * 🚨 **채택할 때 알레르기를 다시 읽는다** (문서 §3-8 ②). 목록을 받은 뒤 다른 보호자가
+     *    등록한 알레르기가 든 제안이 있으면 **하나라도 걸려도 전부 거절**하고, 걸린 id 를 싣는다.
+     *    이미 채택한 것은 다시 보지 않는다(`draft` 만 본다).
+     *    서버 #835 와 같다 (`docs/api/suggestions-v1.md` §8). ⚠️ 서버는 알레르기 항목이 든 제안인데 건강정보 동의가
+     *    없으면 `403 consent_required` 를 먼저 낸다 — 목은 `consent` 시나리오가 채택 전체를 403 으로 막는 것으로 대신한다.
+     */
+    const blocked = picked
+      .filter((s) => !approvedSuggestions.has(s.id) && !notBlocked(s))
+      .map((s) => s.id);
+    if (blocked.length > 0) {
+      return apiError(
+        409,
+        "allergen_blocked",
+        "알레르기로 등록된 항목이 들어 있어 고를 수 없어요",
+        {
+          suggestion_ids: blocked,
+        },
+      );
+    }
 
     for (const id of ids) approvedSuggestions.add(id);
 

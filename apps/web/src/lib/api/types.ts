@@ -172,8 +172,12 @@ export interface Affinity {
   merge_key: string;
   domain: Exclude<Agent, "health">;
   state: AffinityState;
-  /** confirmed 면 NOT NULL. */
-  polarity: -1 | 0 | 1 | null;
+  /**
+   * confirmed 면 NOT NULL. 🚨 서버 #847 부터 0 은 오지 않는다 — 좋다 · 싫다가 없는 기록은 기억이
+   * 되지 않는다 (#287, DB CHECK `profile_affinity_polarity`). 그 전에 오는 0 은 `polarityLabel` 이
+   * 줄을 세우지 않는다. 0 이 있는 것은 관찰(`ObservationPromotable`)이다.
+   */
+  polarity: -1 | 1 | null;
   strength: number;
   last_observed_on: string;
   /** 서버 파생값 (affinity_id 역참조 집계). */
@@ -719,7 +723,8 @@ export interface SuggestionsResponse {
    *
    * 서버가 따르는 규칙 (#284): `Suggestion.allergens` 중 `health_safety` 에 행이 **없는** 것만
    *    `unknown_ingredient` 로 묻는다. `active` 인 항목이 든 제안은 묻지 않고 목록에서 아예 빼고,
-   *    `retracted` 인 항목은 묻지 않는다. 물을 것이 없으면 `[]` 다.
+   *    괜찮았던 식품(`none` · 같은 이름)은 묻지 않는다. 🚨 **내린 기록(`retracted`)은 다시 묻는다** (#825 · 서버 #837).
+   *    물을 것이 없으면 `[]` 다.
    *    비어 있으면 화면은 묻지 않는다 — 🚨 **그때는 "확인했다" 고 말하지도 않는다.**
    */
   prechecks?: Precheck[] | null;
@@ -1231,6 +1236,13 @@ export interface CreateHealthSafetyRequest {
   severity?: string;
   reactions?: string[];
   notes?: string;
+  /**
+   * 🚨 **"괜찮았던 식품"으로 저장한다** (#825 · 서버 PR 3). 05 알레르기 확인 시트에서 "먹어 봤고 괜찮았어요" 로
+   *    답한 식품이다 — 그 식품은 다음 사전검사에서 묻지 않는다(등록한 이름과 같은 이름일 때만).
+   *    알레르기(`type: "allergy"`)에만 쓰고 `severity` · `reactions` 와 같이 보내면 400 이다.
+   *    같은 이름이 알레르기로 있으면 `409 allergy_exists`(저장되지 않음), 이미 괜찮았던 식품이면 `409 already_exists`.
+   */
+  tolerated?: boolean;
 }
 
 export interface CreateHealthSafetyResponse {
@@ -2203,7 +2215,13 @@ export interface UpdateGrowthLogResponse {
 
 /** `GET /children/{cid}/health-safety` — 보호자가 확정한 것만 들어 있다 (NF-03). */
 export interface HealthSafetyListResponse {
+  /** 지금 고려 대상인(active) 알레르기 · 건강 기록. 🚨 괜찮았던 식품은 여기 없다. */
   items: HealthSafety[];
+  /**
+   * 괜찮았던 식품 (#825 · 서버 PR 3). 🚨 **`items` 와 다른 필드다** — 이 묶음을 모르는 화면이 "잣 알레르기" 로
+   *    그릴 일이 없게 서버가 갈라 보낸다. 모양은 `HealthSafety` 그대로다. 내리면(`DELETE`) 다음 제안에서 다시 묻는다.
+   */
+  tolerated: HealthSafety[];
   updated_at: string;
 }
 

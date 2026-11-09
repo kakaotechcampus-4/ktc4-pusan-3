@@ -10,6 +10,9 @@
 
 import re
 from pathlib import Path
+from typing import get_args
+
+from app.core.llm_usage import Source
 
 APP = Path(__file__).resolve().parents[3] / "app"
 
@@ -79,3 +82,49 @@ def test_검사_도구가_지금_아는_호출_지점을_실제로_본다() -> N
 
 def test_LLM_을_부르는_모든_파일이_사용량을_기록한다() -> None:
     assert unrecorded(APP) == set()
+
+
+# 인자 안에 `uuid4()` 같은 괄호가 있어도 지나가야 해서 `)` 를 막지 않는다.
+# source 는 키워드 필수 인자라 호출마다 자기 값이 먼저 잡힌다
+_ATTRIBUTE_SOURCE = re.compile(r"llm_usage\.attribute\(.*?source=\"([^\"]*)\"", re.DOTALL)
+
+
+def attribute_sources(root: Path) -> dict[str, set[str]]:
+    """`llm_usage.attribute(..., source="...")` 에 글자로 적힌 창구 값을 파일별로."""
+    found: dict[str, set[str]] = {}
+    for path in root.rglob("*.py"):
+        values = set(_ATTRIBUTE_SOURCE.findall(path.read_text(encoding="utf-8")))
+        if values:
+            found[path.relative_to(root).as_posix()] = values
+    return found
+
+
+def test_attribute_에_적은_창구_값은_모두_Source_값이다() -> None:
+    """Source 를 줄이고 옛 값을 쓰는 가지가 합쳐져도 런타임에는 조용하다 (#710 리뷰).
+
+    그래서 코드에 적힌 값을 여기서 잡는다.
+    """
+    allowed = set(get_args(Source))
+
+    bad = {
+        site: values - allowed
+        for site, values in attribute_sources(APP).items()
+        if values - allowed
+    }
+
+    assert bad == {}
+
+
+def test_창구_값을_찾는_눈이_지금_아는_귀속_지점을_본다() -> None:
+    seen = set().union(*attribute_sources(APP).values())
+
+    assert seen == set(get_args(Source))
+
+
+def test_창구_값_검사가_옛_값을_잡는다(tmp_path: Path) -> None:
+    (tmp_path / "old.py").write_text(
+        'with llm_usage.attribute(\n    parent_id=p, run_id=r, source="meal_ocr"\n):\n    pass\n',
+        encoding="utf-8",
+    )
+
+    assert attribute_sources(tmp_path) == {"old.py": {"meal_ocr"}}
