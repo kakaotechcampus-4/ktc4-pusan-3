@@ -92,13 +92,24 @@ def _entry_date(item: NewNoticeItem) -> date | None:
 
 
 def _is_past(item: NewNoticeItem, today: date) -> bool:
-    """읽은 시작 · 끝 · 마감이 모두 오늘(한국 날짜)보다 앞인가 (#828). 하나도 못 읽었으면 아니다.
+    """지난 항목인가 — 견줄 날이 모두 오늘(한국 날짜)보다 앞인가 (#828). 하나도 못 읽었으면 아니다.
 
     화면은 이 값으로 지난 일정의 체크를 켜 두지 않는다 — 오늘과 견주는 것은 날짜 계산이라 서버가
-    한다 (루트 §2 · apps/web CLAUDE.md §4). 가장 늦은 것으로 본다 — 여러 날 행사가 오늘에 걸쳐
-    있거나, 행사는 지났어도 신청 마감이 남았으면 지난 일정이 아니다.
+    한다 (루트 §2 · apps/web CLAUDE.md §4).
+    🚨 **일정은 화면이 캘린더에 넣는 날로 본다** (web `photo-entry.ts` 의 `eventBody`).
+       시작을 읽었으면 시작 · 끝 중 늦은 것 — 여러 날 행사가 오늘에 걸쳐 있으면 지난 일정이
+       아니다. 시작이 있는데 마감까지 보면 "행사 11-08 · 신청 11-10 까지" 가 켜진 채로 시작해,
+       누르면 이미 지난 11-08 일정이 들어간다 (#854 리뷰). 시작이 없으면 마감이 지났는가다 —
+       그때 넣는 날은 보호자가 고른다.
+    🚨 **할 일 · 안내는 마감까지 본다** — 시작 · 끝 · 마감 중 가장 늦은 것. "신청 11-05 ~ 11-12" 는
+       기간이 열렸어도 마감이 남았으면 아직 할 수 있다 (#903 리뷰).
     """
-    moments = [m for m in (item.starts_at, item.ends_at, item.due_at) if m is not None]
+    if item.handling is not NoticeItemHandling.CALENDAR:
+        moments = [m for m in (item.starts_at, item.ends_at, item.due_at) if m is not None]
+    elif item.starts_at is not None:
+        moments = [m for m in (item.starts_at, item.ends_at) if m is not None]
+    else:
+        moments = [item.due_at] if item.due_at is not None else []
     return bool(moments) and max(m.astimezone(KST).date() for m in moments) < today
 
 
