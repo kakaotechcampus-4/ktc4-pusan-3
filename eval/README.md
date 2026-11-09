@@ -36,9 +36,8 @@
 앱을 프로세스 안에서 API 로 돌린다(`POST /inputs` → SSE · 승인 · 정정). 시계는 `time-machine` 이 단계 시각(주의 요일 · 시:분 KST)으로 옮기고, 저장소는 **통합 테스트 DB `icatch_it`** 다(개발 DB 가 아니다). 실제 모델을 부른다 — 입력 하나 ≈22k 토큰.
 
 ```
-cd apps/api
-EVAL_TIER=full EVAL_ONLY=W-C PYTEST_ADDOPTS= uv run pytest tests/eval/suite/test_week_live.py -m live -q   # 가끔 (4 입력)
-EVAL_TIER=full EVAL_ONLY=W-A PYTEST_ADDOPTS= uv run pytest tests/eval/suite/test_week_live.py -m live -q   # 보통 (입력 39)
+EVAL_ONLY=W-C make eval-week   # 가끔 (4 입력)
+EVAL_ONLY=W-A make eval-week   # 보통 (입력 39)
 ```
 
 - W 는 `make eval-week` 로만 돈다(`EVAL_ONLY=W-C make eval-week` 로 하나만) — `DB_NAME=icatch_it` 가 이 명령에만 있다. `make eval` 은 W 를 deselect 하고, `make eval-smoke` 는 W 를 건너뛴다(거기서 `EVAL_ONLY=W-C` 를 주면 DB 가드에서 멈춘다)
