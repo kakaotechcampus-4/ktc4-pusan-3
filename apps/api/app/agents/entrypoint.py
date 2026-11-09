@@ -129,6 +129,7 @@ from app.agents.suggestion_save import InMemorySuggestions, SaveSuggestions, Sug
 from app.agents.supervisor.context import (
     MAX_RECENT_TURNS,
     RECENT_WINDOW,
+    SHOWN_TURNS,
     ConversationContext,
     LoadRecentTurns,
     PriorResult,
@@ -141,6 +142,7 @@ from app.rules.age import months_between
 # pipeline에 이벤트를 추가하면 여기에도 작성
 __all__ = [
     "MAX_RECENT_TURNS",
+    "SHOWN_TURNS",
     "PhotoReading",
     "UnreadablePhoto",
     "read_photo",

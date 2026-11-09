@@ -225,19 +225,19 @@ def test_추천_이름은_content_의_첫_줄만_싣는다() -> None:
     assert "지난주" not in context.render()
 
 
-def test_빠진_턴을_빼고_최근_세_턴을_남긴다() -> None:
-    usable = [chat_turn(f"놀이 {i} 추천해줘", [result()]) for i in range(4)]
+def test_빠진_턴을_빼고_최근_다섯_턴을_남기고_모델에는_세_턴만_보낸다() -> None:
+    """ "다른 거" 를 여러 번 물어도 앞에서 보여 준 추천을 다시 내지 않게 다섯 턴을 든다 — Supervisor
+    모델에 가는 글은 지금처럼 최근 세 턴이다 (#844)."""
+    usable = [chat_turn(f"놀이 {i} 추천해줘", [result()]) for i in range(6)]
     hazard = chat_turn(
         "세제를 마셨어", [GuidanceReply(code="hazard", message="119", deeplink=None)]
     )
 
     context = to_context([*usable, hazard], {})
 
-    assert [turn.text for turn in context.turns] == [
-        "놀이 1 추천해줘",
-        "놀이 2 추천해줘",
-        "놀이 3 추천해줘",
-    ]
+    assert [turn.text for turn in context.turns] == [f"놀이 {i} 추천해줘" for i in range(1, 6)]
+    rendered = context.render()
+    assert "놀이 3 추천해줘" in rendered and "놀이 2 추천해줘" not in rendered
 
 
 def test_못_읽는_답은_한_번만_로그를_남긴다(caplog) -> None:
