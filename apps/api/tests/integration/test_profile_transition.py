@@ -30,13 +30,13 @@ async def family(session):
     return owner, child
 
 
-def _profile(child_id, *, merge_key="사과::p1", last_observed_on, state="candidate"):
+def _profile(child_id, *, merge_key="사과::p1", last_observed_on, state="candidate", polarity=1):
     return ProfileAffinity(
         child_id=child_id,
         merge_key=merge_key,
         domain=MemoryDomain.FOOD,
         state=ProfileState(state),
-        polarity=1,
+        polarity=polarity,
         strength=STRENGTH_DEFAULT,
         last_observed_on=last_observed_on,
     )
@@ -79,6 +79,24 @@ class TestRecomputeProfile:
 
         assert result.state == ProfileState.CONFIRMED
         assert result.strength == pytest.approx(STRENGTH_DEFAULT * 1.10)
+
+    async def test_polarity_를_모르는_기억은_관찰_3건이어도_candidate(self, session, family):
+        """confirmed 는 늘 -1 · 1 이다 (#287). 방향을 모르는 기억은 되묻기 대상으로 남는다."""
+        _, child = family
+        today = date(2026, 9, 26)
+        profile = _profile(child.id, last_observed_on=today, polarity=None)
+        session.add(profile)
+        await session.flush()
+
+        for i in range(3):
+            session.add(_food_obs(child.id, profile.id, observed_on=today - timedelta(days=i)))
+        await session.flush()
+
+        from app.domains.memory.profile.service import recompute_profile
+
+        result = await recompute_profile(session, profile_id=profile.id, today=today)
+
+        assert result.state == ProfileState.CANDIDATE
 
     async def test_재계산_두_번_돌려도_결과_동일(self, session, family):
         _, child = family
