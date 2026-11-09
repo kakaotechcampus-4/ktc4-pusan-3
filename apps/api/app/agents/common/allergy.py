@@ -571,6 +571,21 @@ def read_label(label: str, book: LabelBook) -> tuple[Restriction, tuple[str, ...
     return found, tuple(rest)
 
 
+def read_label_pieces(label: str, book: LabelBook) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """`read_label` 의 못 찾은 조각 · 낱말을 어느 이름에서 나왔는지 묶는다 (#891).
+
+    → (정규화한 이름, 그 이름에서 사전이 못 찾은 조각 · 낱말). 이름은 `split_label` 의 조각과
+    같다("고양이 털" → "고양이털"). 조각 · 낱말은 그 이름을 `read_label` 로 따로 읽은 것이라
+    전부 모으면 `read_label(label)` 의 것과 같다. 못 찾은 것이 없는 이름은 뺀다.
+    """
+    found = []
+    for part, piece in _pieces(label):
+        _, rest = read_label(part, book)
+        if rest:
+            found.append((piece, rest))
+    return tuple(found)
+
+
 class SafetyRow(Protocol):
     """`health_safety` 한 행에서 이 모듈이 읽는 칸. `SafetyEntry` 는 Agent 마다 따로 둔다."""
 
