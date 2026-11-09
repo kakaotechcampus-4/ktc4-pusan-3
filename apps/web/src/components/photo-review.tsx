@@ -1,16 +1,29 @@
 "use client";
 
+import { useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronUp } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState, type ReactNode } from "react";
 
-import { PhotoEntrySheet, type AddedEventInput } from "@/components/photo-entry-sheet";
+import { PhotoEntrySheet } from "@/components/photo-entry-sheet";
 import { PhotoPreview } from "@/components/photo-preview";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Chip, ChipRow } from "@/components/ui/chip";
 import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
 import { PhotoCard } from "@/components/ui/photo-card";
 import { Spinner } from "@/components/ui/spinner";
+import {
+  createIdempotencyKeyHolder,
+  isApiError,
+  qk,
+  submitEventDraft,
+  type IdempotencyKeyHolder,
+  type ParsedEvent,
+  type PhotoCommitRequest,
+  type PhotoEntry,
+  type PhotoLane,
+} from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { seoulDate } from "@/lib/event-draft";
 import {
@@ -25,18 +38,40 @@ import {
   canBecomeEvent,
   entryDateLabel,
   entryDateRole,
+  eventBody,
+  eventWhen,
+  initialPlan,
+  planEndsAt,
+  planLocks,
+  planStartsAt,
   readMoment,
   readSpan,
+  startsChecked,
+  type AddedEvent,
+  type EventPlan,
 } from "@/lib/photo-entry";
-import type { ParsedEvent, PhotoCommitRequest, PhotoEntry, PhotoLane } from "@/lib/api";
 
 /**
  * 08 사진으로 적기 — 읽어낸 것을 보호자가 확인하는 칸.
  *
- * 🚨 **여기는 승인 게이트가 아니다.** 문서 lane 이 만드는 `event` 는 `draft` 고, 캘린더에 쓰는
- *    되돌릴 수 없는 지점은 여전히 `POST /events/{eid}/confirm` 하나다 (CLAUDE.md §2 —
- *    승인 게이트를 늘리지도 줄이지도 않는다). 그래서 `btn-approve` 도 `caution` 도 쓰지 않는다.
- *    "아직 저장하지 않았어요" 는 경고가 아니라 **사실**이라 중립 면(`surface-muted`)에 앉힌다.
+ * ## 🚨 맨 아래 버튼이 승인 게이트 ㉠ 이 될 때가 있다 (#824)
+ *
+ * 목록 줄마다 "캘린더에 넣기" 체크가 있고, 맨 아래 버튼 하나가 **체크한 일정을 넣고 → 읽은 내용을
+ * 저장한다.** 체크한 것이 있으면 그 버튼이 캘린더에 쓰는 되돌릴 수 없는 지점이라 `btn-approve` +
+ * `caution` 이고, 없으면 그냥 "저장" 이다 (읽은 내용 저장은 게이트가 아니다).
+ *
+ * 🚨 **게이트를 늘린 것이 아니다.** 한동안 이 게이트는 항목마다 고치기 시트 안에 있었다 — 일정이
+ *    셋이면 시트를 세 번 열었고, 저장이 두 군데라 헷갈렸다. 같은 게이트를 목록 아래로 옮겼다
+ *    (최상위 CLAUDE.md §2 — 늘리지도 줄이지도 않는다).
+ * 🚨 **자동으로 넣지 않는다.** 날짜를 읽은 일정은 체크가 켜진 채로 시작하지만(`startsChecked`) 넣는 것은
+ *    보호자가 버튼을 누를 때다. 그래서 버튼 **바로 위에** 무엇이 언제로 들어가는지 목록이 선다 —
+ *    켜진 줄이 접힌 "잘 읽었어요" 안에 있어도 버튼 앞에서 보인다.
+ * 🚨 **캘린더에 쓰는 문은 `POST /children/{cid}/events` 하나다.** 체크한 개수만큼 부르고, `commit` 은
+ *    캘린더에 쓰지 않는다 (`docs/notice/notice-ocr-v1.md` §2).
+ * 🚨 **순서는 일정 먼저, 그다음 commit 이다.** 받은 `event.id` 를 그 항목의 `event_id` 로 실어야 서버가
+ *    일정에 공지 항목을 출처로 단다 (#792).
+ * 🚨 **하나라도 못 넣으면 commit 하지 않는다.** 화면에 남아서 넣은 것은 "넣었어요" 로 잠그고 못 넣은
+ *    것만 다시 넣는다. 항목마다 Idempotency-Key 가 따로라 다시 눌러도 넣은 것이 두 번 들어가지 않는다.
  *
  * 🚨 **한 장에서 항목이 여러 개 나온다.** 알림장 한 장에 일정이 여러 개 적혀 있고 식단표는
  *    거의 한 달치다. 그래서 화면이 두 무리로 가른다 —
@@ -46,7 +81,7 @@ import type { ParsedEvent, PhotoCommitRequest, PhotoEntry, PhotoLane } from "@/l
  *
  * 🚨 **확인하지 않은 항목은 저장되지 않는다.** 고치기 시트에서 확인을 눌러야 저장 대상이 된다 —
  *    못 읽은 값을 그대로 넣으면 "승인 전에는 저장되지 않아요" 가 문구만 남는다.
- *    화면이 몇 건이 빠지는지 숫자로 말한다.
+ *    화면이 몇 건이 빠지는지 숫자로 말한다. 같은 이유로 확인 전에는 캘린더에 넣기도 잠긴다.
  *
  * 🚨 **사진과 읽어낸 글자는 한 카드다.** 부모가 확인해야 하는 것이 "사진에 있는 것" 과
  *    "읽어낸 것" 의 **대조**라서, 둘을 따로 세우면 그 관계가 배치가 아니라 문구로만 남는다.
@@ -95,19 +130,12 @@ const ENTRY_KIND_LABEL: Record<PhotoEntry["kind"], string> = {
 };
 
 /**
- * 줄을 여는 버튼의 문구.
+ * 저장이 왜 안 됐는가. 🚨 **화면이 문구를 만든다** — 서버 문구를 그대로 싣지 않는다 (#815).
  *
- * 🚨 **이 버튼이 여는 곳에서 캘린더에 쓴다.** "고치기" 만 적어 두니 그 일이 이 안에 있다는 것이
- *    목록 어디에도 안 보였다 — 부모는 열어 보고 나서야 알고, 안 열어 본 줄은 못 넣는다.
- * 🚨 **급식 · 안내에는 일정 칸이 아예 없다** (`canBecomeEvent` — 식단표는 전부 날짜가 있지만
- *    일정이 아니고, 안내는 날짜가 없는 것이 보통이다 · #723). 없는 기능을 문구로 약속하지 않는다.
- * 🚨 **이미 넣은 줄도 약속하지 않는다.** 두 번 넣는 길은 시트가 막아 뒀고, 그 줄에서 남은 일은
- *    고치는 것뿐이다.
+ * - `failed`: 다시 누르면 될 수 있다
+ * - `expired`: 읽은 결과가 서버에서 사라졌다(30분 · `404 not_found`). 🚨 다시 눌러도 같아서 버튼을 잠근다
  */
-function editLabel(entry: PhotoEntry, added: boolean): string {
-  if (!canBecomeEvent(entry) || added) return "고치기";
-  return "고치고 일정 넣기";
-}
+export type PhotoCommitFailure = "failed" | "expired";
 
 export interface PhotoReviewProps {
   /**
@@ -121,11 +149,20 @@ export interface PhotoReviewProps {
   date: string;
   onCommit: (body: PhotoCommitRequest) => void;
   committing: boolean;
-  commitError: string | null;
+  commitError: PhotoCommitFailure | null;
   /** 저장하지 않고 03 홈으로. */
   onGoHome: () => void;
   /** 4:3 칸에 그릴 사진. 업로드한 파일의 objectURL 이다. */
   previewUrl: string;
+}
+
+/** 목록 줄의 "캘린더에 넣기" 한 칸. 급식 · 안내 · 이미 넣은 줄에는 없다. */
+interface CalendarPick {
+  checked: boolean;
+  /** 지금 넣을 수 없는 까닭 (`planLocks`). 있으면 체크가 잠긴다. */
+  locks: string[];
+  /** 지난번에 넣지 못한 까닭. */
+  failure: string | undefined;
 }
 
 export function PhotoReview({
@@ -139,6 +176,7 @@ export function PhotoReview({
   onGoHome,
   previewUrl,
 }: PhotoReviewProps) {
+  const queryClient = useQueryClient();
   /**
    * 🚨 **읽어낸 항목의 정본은 여기다.** 부모가 고치면 이 배열이 바뀌고, 저장은 이 값을 보낸다 —
    *    서버가 보낸 `parsed` 를 다시 읽지 않는다.
@@ -147,15 +185,40 @@ export function PhotoReview({
   const [tags, setTags] = useState<string[]>([]);
   const [editing, setEditing] = useState<PhotoEntry | null>(null);
   /**
-   * 이미 캘린더에 넣은 항목 → **넣은 일시.** 🚨 **저장(관찰)과 다른 축이다** — 일정은 고치기
-   *    시트의 승인 게이트가 그 자리에서 넣고, 아래 "이 내용으로 저장" 은 기록을 여러 건 한 번에
-   *    보낸다. 두 개를 한 상태로 묶으면 "일정만 넣고 기록은 안 남긴" 경우를 표현할 수 없다.
-   *
-   * 🚨 **건수만 들지 않는다.** 목록의 그 줄이 "언제로 넣었는지" 까지 말해야 부모가 확인하러
-   *    캘린더에 가지 않는다 — 시트를 닫으면 방금 고른 일시는 화면 어디에도 안 남는다.
+   * 항목마다 캘린더에 넣을 때의 값 (`EventPlan`). 고치기 시트의 "캘린더에 넣을 때" 칸이 고친다.
+   * 🚨 **없는 항목은 처음 값이다** (`initialPlan`) — 열어 보지 않은 항목도 읽은 값 그대로 넣을 수 있다.
    */
-  const [eventAdded, setEventAdded] = useState<Record<string, AddedEventInput>>({});
-  const addedCount = Object.keys(eventAdded).length;
+  const [plans, setPlans] = useState<Record<string, EventPlan>>({});
+  /**
+   * "캘린더에 넣기" 를 켠 항목. 🚨 **처음에는 시작 날짜를 읽은 일정만이다** (`startsChecked`) — 할 일은
+   *    보호자가 고른다. 켠 것은 넣은 것이 아니다. 넣는 것은 맨 아래 버튼이다.
+   */
+  const [picked, setPicked] = useState<Set<string>>(
+    () => new Set((parsed.entries ?? []).filter(startsChecked).map((entry) => entry.id)),
+  );
+  /**
+   * 이미 캘린더에 넣은 항목 → **넣은 일정.** 🚨 **저장(commit)과 다른 축이다** — 일정을 다 넣고 commit 이
+   *    실패하면 "일정은 들어갔는데 공지는 저장 안 된" 상태가 된다. 한 상태로 묶으면 그것을 표현할 수 없다.
+   * 🚨 **건수만 들지 않는다.** 목록의 그 줄이 "언제로 넣었는지" 까지 말해야 부모가 확인하러
+   *    캘린더에 가지 않는다.
+   */
+  const [eventAdded, setEventAdded] = useState<Record<string, AddedEvent>>({});
+  /** 지난번에 넣지 못한 항목 → 까닭. 🚨 이것이 하나라도 있으면 commit 하지 않았다. */
+  const [eventFailed, setEventFailed] = useState<Record<string, string>>({});
+  /** 일정을 넣는 중인가. commit 중(`committing`)과 갈라 둔다 — 버튼이 지금 무엇을 하는지 말한다. */
+  const [adding, setAdding] = useState(false);
+  /**
+   * 🚨 **항목마다 Idempotency-Key 가 따로다.** 하나의 키로 여러 일정을 보내면 둘째부터 "같은 키 · 다른 본문"
+   *    422 다. 실패한 뒤 다시 누르면 같은 항목은 같은 키로 간다 — 응답만 못 받고 들어간 일정이 두 번 들어가지
+   *    않는다. 본문을 고치면 키가 바뀐다 (`current(payload)` · apps/web/CLAUDE.md §3).
+   * 🚨 `useState` 의 게으른 초기화로 화면 수명 동안 한 벌이다 (`useIdempotencyKey` 와 같은 이유).
+   */
+  const [eventKeys] = useState(() => new Map<string, IdempotencyKeyHolder>());
+  /**
+   * 🚨 **두 번 빨리 누르면 넣기가 두 벌 돈다.** 버튼은 `adding` 이 칠해진 뒤에야 잠기는데, 그 사이의 두 번째
+   *    누름이 같은 키로 같은 일정을 동시에 보낸다(서버 409 in_progress). 상태가 아니라 ref 로 바로 막는다.
+   */
+  const running = useRef(false);
   const [showChecked, setShowChecked] = useState(false);
   /**
    * 자리 옮김 (디자인 시스템 §8). 확인한 줄이 "확인이 필요해요" 에서 "잘 읽었어요" 로 옮겨 가고, 빼거나
@@ -164,49 +227,62 @@ export function PhotoReview({
   const flipRef = useFlip<HTMLDivElement>();
 
   const copy = LANE[lane];
+  const busy = adding || committing;
 
-  function saveEntry(next: PhotoEntry) {
-    setEntries((prev) => prev.map((e) => (e.id === next.id ? next : e)));
-    setEditing(null);
+  function planOf(entry: PhotoEntry): EventPlan {
+    return plans[entry.id] ?? initialPlan(entry);
   }
 
-  /**
-   * 캘린더에 넣었다 — 목록의 그 줄을 **넣은 것으로** 표시하고, 넣으면서 확인한 값을 얹는다.
-   *
-   * 🚨 **`saveEntry` 를 쓰지 않는다** — 그쪽은 시트를 닫는다. 여기서 닫으면 부모는 방금 넣은
-   *    결과("캘린더에 넣었어요")를 못 보고, 같은 시트에서 이어 하려던 일이 끊긴다.
-   * 🚨 **확인한 것으로 넘긴다** (`needs_review: false`). 승인 게이트를 지난 값이라 시트의
-   *    "이 내용으로 확인" 보다 무거운 확인이다 — 그대로 두면 화면이 **방금 부모가 확인한 날짜**를
-   *    "못 읽었어요 · 고쳐야 저장돼요" 라고 계속 말한다.
-   * 🚨 **그래도 기록이 저장되는 것은 아니다.** 저장은 아래 버튼 하나이고, 빼고 싶으면 시트의
-   *    "이 항목은 저장하지 않기" 가 그대로 있다 — 두 축은 여전히 따로다.
-   */
-  function markEventAdded(id: string, added: AddedEventInput) {
-    setEventAdded((prev) => ({ ...prev, [id]: added }));
+  /** 줄의 "캘린더에 넣기" 칸. 급식 · 안내 · 이미 넣은 줄은 `null` 이다. */
+  function pickOf(entry: PhotoEntry): CalendarPick | null {
+    if (!canBecomeEvent(entry) || eventAdded[entry.id]) return null;
+    const locks = planLocks(entry, planOf(entry));
+    return {
+      // 🚨 잠긴 줄은 켜져 있어도 넣지 않는다 — 켜 둔 뒤 날짜를 지우면 그 줄이 조용히 빠진다고 말하는 대신
+      //    꺼진 채로 잠기고, 왜 잠겼는지를 그 줄이 말한다.
+      checked: picked.has(entry.id) && locks.length === 0,
+      locks,
+      failure: eventFailed[entry.id],
+    };
+  }
+
+  function forgetFailure(id: string) {
+    setEventFailed((prev) => {
+      if (!(id in prev)) return prev;
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+  }
+
+  function togglePick(id: string, next: boolean) {
+    setPicked((prev) => {
+      const out = new Set(prev);
+      if (next) out.add(id);
+      else out.delete(id);
+      return out;
+    });
+    forgetFailure(id);
+  }
+
+  function saveEntry(next: PhotoEntry, plan: EventPlan | null) {
+    setEntries((prev) => prev.map((e) => (e.id === next.id ? next : e)));
+    if (plan) setPlans((prev) => ({ ...prev, [next.id]: plan }));
     /**
-     * 🚨 **줄이 어디로 갔는지 보여준다.** 확인된 줄은 접힌 "잘 읽었어요" 로 옮겨 가는데,
-     *    그대로 두면 방금 캘린더에 넣은 줄이 **화면에서 사라진 것처럼** 보인다 — 넣었다는
-     *    표시를 달아 놓고 그 표시를 접어 두는 셈이다.
+     * 🚨 **고친 값으로 잠기면 켜 둔 것을 끈다.** 켠 채로 두면 나중에 값을 채워 풀리는 순간 보호자가 다시 켜지
+     *    않았는데 저절로 켜진다. 한 번 잠긴 줄은 보호자가 다시 켠다.
      */
-    setShowChecked(true);
-    setEntries((prev) =>
-      prev.map((entry) =>
-        entry.id === id
-          ? {
-              ...entry,
-              title: added.title,
-              date: added.date === "" ? null : added.date,
-              items: added.items,
-              needs_review: false,
-              review_reason: undefined,
-            }
-          : entry,
-      ),
-    );
+    if (canBecomeEvent(next) && planLocks(next, plan ?? planOf(next)).length > 0) {
+      togglePick(next.id, false);
+    }
+    // 고친 줄의 지난 실패는 지운다 — 고친 값으로는 될 수 있고, 남겨 두면 고친 뒤에도 못 넣었다고 말한다.
+    forgetFailure(next.id);
+    setEditing(null);
   }
 
   function removeEntry(id: string) {
     setEntries((prev) => prev.filter((e) => e.id !== id));
+    togglePick(id, false);
     setEditing(null);
   }
 
@@ -214,12 +290,21 @@ export function PhotoReview({
   const checked = entries.filter((e) => !e.needs_review);
 
   /**
-   * 🚨 **`attach_to_calendar` 는 이제 활동 lane 만의 것이다** — 그 lane 에서는 "사진을 그날
+   * 이번에 넣을 일정. 🚨 **목록 순서 그대로다** — 버튼 위 목록과 넣는 순서가 같아야 실패한 줄을 찾기 쉽다.
+   * 🚨 저장 대상(확인한 항목)만이다. 확인이 필요한 항목은 `planLocks` 가 먼저 막지만 한 번 더 거른다.
+   */
+  const toAdd = lane === "document" ? checked.filter((entry) => pickOf(entry)?.checked) : [];
+  /** 버튼 위 "캘린더" 줄에 서는 것 — 이미 넣은 것과 이번에 넣을 것, 목록 순서대로. */
+  const calendarEntries = checked.filter((entry) => eventAdded[entry.id] || toAdd.includes(entry));
+  const addedCount = Object.keys(eventAdded).length;
+  const failedCount = Object.keys(eventFailed).length;
+
+  /**
+   * 🚨 **`attach_to_calendar` 는 활동 lane 만의 것이다** — 그 lane 에서는 "사진을 그날
    *    캘린더에 함께 남길까" 라는 뜻이다 (계약서 §09 의 부수 효과 표).
    *
-   * 🚨 **문서 lane 은 언제나 `false` 다.** 일정은 고치기 시트의 승인 게이트가 그 자리에서 넣는다 —
-   *    저장이 일정까지 만들면 같은 일을 두 곳이 하게 되고, 부모는 자기가 안 고른 일정이
-   *    캘린더에 들어간 것을 나중에 발견한다 (최상위 §2 — 되돌릴 수 없는 것은 사람이 고른다).
+   * 🚨 **문서 lane 은 언제나 `false` 다.** 일정은 이 화면이 `POST /events` 로 따로 넣는다 —
+   *    commit 이 일정까지 만들면 같은 일을 두 곳이 하게 된다 (`docs/notice/notice-ocr-v1.md` §2).
    *
    * 🚨 **날짜를 만들지 않는다.** 활동은 화면이 들고 온 날짜를 그대로 쓴다 (apps/web/CLAUDE.md §4).
    */
@@ -230,29 +315,96 @@ export function PhotoReview({
    * 🚨 **활동 lane 은 태그를 하나도 안 고르면 저장할 수 없다.** 그 상태로 눌리면 화면이 바로
    *    위에서 한 "고르지 않은 태그는 저장하지 않아요" 를 스스로 뒤집는다.
    *    문서 lane 은 확인된 항목이 하나라도 있어야 한다 — 빈 저장을 만들지 않는다.
+   * 🚨 **읽은 결과가 사라졌으면(`expired`) 잠근다.** 다시 눌러도 같은 404 다.
    */
   const hasSomethingToSave = lane === "activity" ? tags.length > 0 : checked.length > 0;
-  const canSave = !committing && hasSomethingToSave;
+  const canSave = !busy && hasSomethingToSave && commitError !== "expired";
 
-  function commit() {
-    onCommit(
-      lane === "activity"
-        ? { lane, selected_tags: tags, attach_to_calendar: attachToCalendar }
-        : {
-            lane,
-            /**
-             * 🚨 **넣은 일정의 id 를 그 항목에 실어 보낸다** (#723). 서버가 그 일정에 이 공지 항목을
-             *    출처로 단다 — 안 실으면 캘린더의 일정과 저장한 공지가 서로를 모른다.
-             *    시트에서 넣고 나서 "이 항목은 저장하지 않기" 를 고른 항목은 `checked` 에 없어서
-             *    실리지 않는다. 일정은 남고 출처만 비는 것이라 그대로 둔다.
-             */
-            entries: checked.map((entry) => ({
-              ...entry,
-              event_id: eventAdded[entry.id]?.event_id ?? null,
-            })),
-            attach_to_calendar: attachToCalendar,
+  /** 넣을 일정을 차례로 넣는다. 넣은 것을 모두 돌려주고, 하나라도 못 넣었으면 `null` 이다. */
+  async function addEvents(): Promise<Record<string, AddedEvent> | null> {
+    let added = eventAdded;
+    const failures: Record<string, string> = {};
+    /**
+     * 🚨 **하나씩, 끝까지 간다.** 하나가 실패해도 나머지는 넣는다 — 거기서 멈추면 뒤의 줄은 시도도 안 한
+     *    채로 "못 넣었어요" 가 된다. 동시에 보내지 않는 것은 실패한 줄과 넣은 줄이 목록 순서대로
+     *    갈려야 보호자가 따라 읽을 수 있어서다. 많아야 몇 건이다.
+     */
+    for (const entry of toAdd) {
+      const body = eventBody(entry, planOf(entry));
+      if (body === null) continue; // 잠긴 줄은 `toAdd` 에 없다 — 타입을 좁히는 자리다.
+      let holder = eventKeys.get(entry.id);
+      if (!holder) {
+        holder = createIdempotencyKeyHolder();
+        eventKeys.set(entry.id, holder);
+      }
+      try {
+        const res = await submitEventDraft(childId, body, holder.current(JSON.stringify(body)));
+        // 🚨 성공한 뒤에만 다음 키로 넘어간다. 실패 뒤 다시 누르는 것은 재시도라 같은 키여야 한다.
+        holder.rotate();
+        added = {
+          ...added,
+          [entry.id]: {
+            event_id: res.event.id,
+            // 🚨 일시는 응답에서 받는다 — 같은 키 재시도면 서버는 처음 넣은 일정을 돌려준다 (#792 리뷰).
+            starts_at: res.event.starts_at,
+            ends_at: res.event.ends_at,
+            all_day: res.event.all_day,
           },
-    );
+        };
+        // 🚨 넣을 때마다 바로 표시한다 — 다 끝나고 한 번에 바꾸면 넣는 동안 어디까지 됐는지 안 보인다.
+        setEventAdded(added);
+      } catch (error) {
+        failures[entry.id] = eventFailureText(error);
+      }
+    }
+
+    if (added !== eventAdded) {
+      // 🚨 캘린더가 바뀌었다. commit 이 실패해 이 화면에 남아도 09 · 03 이 방금 넣은 일정을 보여야 한다.
+      void queryClient.invalidateQueries({ queryKey: qk.child(childId) });
+    }
+    setEventFailed(failures);
+    if (Object.keys(failures).length > 0) {
+      // 🚨 못 넣은 줄이 접힌 묶음 안에 있으면 까닭이 안 보인다.
+      setShowChecked(true);
+      return null;
+    }
+    return added;
+  }
+
+  async function save() {
+    if (running.current) return;
+    if (lane === "activity") {
+      onCommit({ lane, selected_tags: tags, attach_to_calendar: attachToCalendar });
+      return;
+    }
+
+    let added = eventAdded;
+    if (toAdd.length > 0) {
+      running.current = true;
+      setAdding(true);
+      const result = await addEvents().finally(() => {
+        running.current = false;
+        setAdding(false);
+      });
+      // 🚨 **하나라도 못 넣었으면 저장하지 않는다.** 화면에 남아 못 넣은 것만 다시 넣는다.
+      if (result === null) return;
+      added = result;
+    }
+
+    onCommit({
+      lane,
+      /**
+       * 🚨 **넣은 일정의 id 를 그 항목에 실어 보낸다** (#723). 서버가 그 일정에 이 공지 항목을
+       *    출처로 단다 — 안 실으면 캘린더의 일정과 저장한 공지가 서로를 모른다.
+       *    넣은 뒤 "이 항목은 저장하지 않기" 를 고른 항목은 `checked` 에 없어서 실리지 않는다.
+       *    일정은 남고 출처만 비는 것이라 그대로 둔다.
+       */
+      entries: checked.map((entry) => ({
+        ...entry,
+        event_id: added[entry.id]?.event_id ?? null,
+      })),
+      attach_to_calendar: attachToCalendar,
+    });
   }
 
   return (
@@ -316,10 +468,20 @@ export function PhotoReview({
         <TagPicker tags={parsed.tags ?? []} selected={tags} onChange={setTags} busy={committing} />
       ) : (
         <>
-          <NeedsReviewGroup entries={needsReview} added={eventAdded} onEdit={setEditing} />
+          <NeedsReviewGroup
+            entries={needsReview}
+            added={eventAdded}
+            pickOf={pickOf}
+            busy={busy}
+            onPick={togglePick}
+            onEdit={setEditing}
+          />
           <CheckedGroup
             entries={checked}
             added={eventAdded}
+            pickOf={pickOf}
+            busy={busy}
+            onPick={togglePick}
             open={showChecked}
             onToggle={() => setShowChecked((v) => !v)}
             onEdit={setEditing}
@@ -329,9 +491,13 @@ export function PhotoReview({
 
       <Card>
         <p className="text-section text-ink">이렇게 저장할게요</p>
-        {/* 🚨 중립 면이다. 사실을 말하는 자리라 경고색을 쓰지 않는다 (위 주석). */}
+        {/* 🚨 중립 면이다. 사실을 말하는 자리라 경고색을 쓰지 않는다.
+            🚨 **넣은 일정이 있으면 "아무것도 저장되지 않았어요" 가 거짓이다** — 일부만 넣고 멈췄거나
+               commit 만 실패한 뒤다. 들어간 것을 먼저 말한다. */}
         <p className="text-body-sm text-ink-muted bg-surface-muted rounded-field mt-2 px-3 py-2">
-          지금까지는 아무것도 저장되지 않았어요. 아래를 눌러야 저장돼요.
+          {addedCount > 0
+            ? `캘린더에 넣은 일정 ${addedCount}개 말고는 아직 저장되지 않았어요. 아래를 눌러야 저장돼요.`
+            : "지금까지는 아무것도 저장되지 않았어요. 아래를 눌러야 저장돼요."}
         </p>
 
         <dl className="mt-4 flex flex-col gap-2">
@@ -346,69 +512,107 @@ export function PhotoReview({
               {/* 🚨 **몇 건이 빠지는지 숫자로 말한다.** 확인 안 한 것이 조용히 사라지면
                   "승인 전에는 저장되지 않아요" 의 반대말이 된다.
                   🚨 **회색 면을 따로 두지 않고 이 목록의 한 줄로 둔다** — "확인한 것" 과 같은
-                  질문("무엇이 저장되나")의 나머지 절반이라 나란히 서야 읽힌다. 면을 하나 더
-                  세우면 이 카드에 회색 상자가 세 겹으로 쌓이고, 그러면 아무도 안 읽는다. */}
+                  질문("무엇이 저장되나")의 나머지 절반이라 나란히 서야 읽힌다. */}
               {needsReview.length > 0 ? (
                 <PreviewRow
                   term="확인 안 한 것"
                   value={`${needsReview.length}건은 저장하지 않아요`}
                 />
               ) : null}
+              {/* 🚨 **게이트 앞에서 무엇이 언제로 들어가는지 하나씩 말한다** (#824). 켜진 줄이 접힌
+                  "잘 읽었어요" 안에 있어도 여기서 보인다 — 개수만 보고 누르는 버튼이 되면 안 된다. */}
+              <PreviewRow
+                term="캘린더"
+                value={
+                  calendarEntries.length === 0 ? (
+                    "넣지 않아요"
+                  ) : (
+                    // 🚨 **목록 순서 그대로다.** 넣은 것과 넣을 것을 따로 모으면 실패한 줄이 맨 아래로 밀려
+                    //    위 목록과 순서가 달라진다.
+                    <ul className="flex flex-col gap-1">
+                      {calendarEntries.map((entry) => {
+                        const got = eventAdded[entry.id];
+                        return (
+                          <li key={entry.id}>
+                            {entry.title},{" "}
+                            {got
+                              ? eventWhen(got.starts_at, got.ends_at, got.all_day)
+                              : planWhen(entry, planOf(entry))}
+                            {got ? (
+                              <span className="text-ink-muted"> 넣었어요</span>
+                            ) : eventFailed[entry.id] ? (
+                              <span className="text-ink-muted"> 넣지 못했어요</span>
+                            ) : null}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )
+                }
+              />
             </>
           )}
-          {attachDate ? (
-            <PreviewRow
-              term={lane === "document" ? "일시" : "남기는 날"}
-              value={formatDay(attachDate)}
-            />
-          ) : null}
+          {attachDate ? <PreviewRow term="남기는 날" value={formatDay(attachDate)} /> : null}
           <PreviewRow
             term="출처"
             value={lane === "document" ? "기관이 보낸 문서" : "보호자가 확인한 사진 태그"}
           />
         </dl>
 
-        {commitError ? (
-          // 🚨 실패를 빨강으로 칠하지 않는다 (디자인 시스템 §3).
+        {/* 🚨 실패를 빨강으로 칠하지 않는다 (디자인 시스템 §3). */}
+        {failedCount > 0 ? (
           <p
             role="status"
             className="bg-surface-muted rounded-field text-body-sm text-ink-muted mt-4 p-3"
           >
-            {commitError}
+            {`일정 ${failedCount}개를 넣지 못해서 아직 저장하지 않았어요. `}
+            {addedCount > 0 ? `넣은 ${addedCount}개는 캘린더에 들어갔어요. ` : null}
+            다시 누르면 못 넣은 것만 다시 넣어요. 빼고 저장하려면 그 줄의 체크를 꺼 주세요.
+          </p>
+        ) : commitError ? (
+          <p
+            role="status"
+            className="bg-surface-muted rounded-field text-body-sm text-ink-muted mt-4 p-3"
+          >
+            {commitText(commitError, addedCount)}
           </p>
         ) : null}
 
-        <Button block className="mt-4" disabled={!canSave} aria-busy={committing} onClick={commit}>
-          {committing ? <Spinner /> : null}
-          {committing ? "저장하는 중이에요" : "이 내용으로 저장"}
+        {/* 🚨 **게이트의 마지막 확인은 버튼 옆에 선다** (`safety-scan-review.tsx` 선례). 배너를 하나 더
+            세우지 않는다 — 색은 `caution` 을 쓰되 글자 한 덩이다. 넣을 것이 없으면 게이트가 아니라서 없다. */}
+        {toAdd.length > 0 ? (
+          <p className="text-body-sm text-caution mt-4">
+            누르면 일정 {toAdd.length}개가 캘린더에 바로 들어가요. 함께 보는 보호자에게도 보여요.
+          </p>
+        ) : null}
+
+        <Button
+          block
+          className="mt-4"
+          // 🚨 넣을 일정이 있을 때만 게이트 표식이다. 읽은 내용 저장만 하는 버튼은 게이트가 아니다.
+          variant={toAdd.length > 0 ? "approve" : "primary"}
+          disabled={!canSave}
+          aria-busy={busy}
+          onClick={() => void save()}
+        >
+          {busy ? <Spinner /> : null}
+          {saveLabel({ lane, adding, committing, count: toAdd.length })}
         </Button>
 
-        {/* 🚨 **저장 버튼이 일정을 만들지 않는다고 분명히 말한다.** 한동안 "일정 초안으로 함께
-            올라가요" 라고 적어 뒀는데, 이제 일정은 고치기 시트에서만 들어간다 —
-            문구가 남으면 부모는 저장만 누르고 일정도 됐다고 믿는다.
-            🚨 **문서 lane 에서 "기록" 이라고 쓰지 않는다.** 이 제품에서 "기록" 은 **관찰**을
-            가리키는 화면 용어인데(apps/web/CLAUDE.md §3), 알림장·급식표는 아이 기록이 아니라
-            **기관 문서 행**으로 들어간다(`notice` · `daycare_meal` · AI 파트 data_model).
-            실제로 이 화면 위쪽이 "아이의 기록으로는 쌓지 않아요" 라고 말하고 있어서, 아래에서
-            "기록이에요" 라고 하면 **한 화면이 서로 반대말**을 했다.
-            🚨 **넣은 일정도 여기서 함께 말한다.** 요약이 기록만 세면 부모는 아직 아무 일정도
-            안 넣은 줄 안다. 회색 면을 따로 세우지 않는 것은 같은 줄에 들어가는 말이기 때문이다 —
-            "저장 버튼이 무엇을 하고 무엇을 안 하는가" 한 문장이다. */}
-        <p className="text-caption text-ink-subtle mt-2">
-          {lane === "activity"
-            ? attachDate
+        {lane === "activity" ? (
+          <p className="text-caption text-ink-subtle mt-2">
+            {attachDate
               ? `저장하면 이 사진도 ${formatDay(attachDate)} 캘린더에 함께 남아요.`
-              : "남길 날짜가 없어서 캘린더에는 붙이지 않아요."
-            : addedCount > 0
-              ? `여기서 저장하는 것은 읽은 내용이에요. 일정 ${addedCount}건은 저장과 따로 이미 캘린더에 넣었어요.`
-              : "여기서 저장하는 것은 읽은 내용이에요. 일정은 항목을 열어 따로 넣어요."}
-        </p>
+              : "남길 날짜가 없어서 캘린더에는 붙이지 않아요."}
+          </p>
+        ) : null}
       </Card>
 
-      {/* 🚨 저장하지 않고 나가는 길. 저장된 것이 없으므로 확인을 묻지 않는다 —
-          승인 게이트는 2곳뿐이고 여기는 그 2곳이 아니다 (CLAUDE.md §2). */}
+      {/* 🚨 저장하지 않고 나가는 길. 확인을 묻지 않는다 — 승인 게이트는 3곳뿐이고 여기는 그곳이 아니다
+          (CLAUDE.md §2). 일부만 넣고 나가도 넣은 일정은 이미 캘린더에 있어서 잃을 것이 없다.
+          🚨 넣는 중에는 잠근다 — 나가면 어디까지 들어갔는지 볼 곳이 없다. */}
       <div>
-        <Button variant="secondary" onClick={onGoHome}>
+        <Button variant="secondary" disabled={busy} onClick={onGoHome}>
           홈으로 돌아가기
         </Button>
       </div>
@@ -417,9 +621,8 @@ export function PhotoReview({
 
       <PhotoEntrySheet
         entry={editing}
-        childId={childId}
+        plan={editing !== null && canBecomeEvent(editing) ? planOf(editing) : null}
         added={editing !== null ? eventAdded[editing.id] : undefined}
-        onEventAdded={markEventAdded}
         onClose={() => setEditing(null)}
         onSave={saveEntry}
         onRemove={removeEntry}
@@ -428,21 +631,73 @@ export function PhotoReview({
   );
 }
 
+/** 맨 아래 버튼의 문구. 🚨 **넣을 개수를 버튼이 말한다** — 무엇이 되는지 누르기 전에 보여야 한다. */
+function saveLabel({
+  lane,
+  adding,
+  committing,
+  count,
+}: {
+  lane: PhotoLane;
+  adding: boolean;
+  committing: boolean;
+  count: number;
+}): string {
+  if (adding) return "일정을 넣는 중이에요";
+  if (committing) return "저장하는 중이에요";
+  if (lane === "activity") return "이 내용으로 저장";
+  return count > 0 ? `저장하고 캘린더에 ${count}개 넣기` : "저장";
+}
+
+/**
+ * 일정 하나를 못 넣은 까닭.
+ * 🚨 **다시 눌러도 같은 실패는 고칠 곳을 말한다** — 값이 틀린 400 · 지난 알림 422 는 같은 값으로 다시 보내면
+ *    같은 응답이다 (apps/web/CLAUDE.md §3 에러). 나머지(연결 · 서버)는 다시 누르면 될 수 있다.
+ */
+function eventFailureText(error: unknown): string {
+  if (isApiError(error, "invalid_reminder")) {
+    return "고른 알림으로는 넣을 수 없어요. 고치기에서 알림을 다시 골라 주세요.";
+  }
+  if (isApiError(error, "validation_failed")) {
+    return "이 값으로는 넣을 수 없어요. 고치기에서 날짜와 시간을 확인해 주세요.";
+  }
+  return "넣지 못했어요. 다시 누르면 이것만 다시 넣어요.";
+}
+
+/** commit 이 실패했을 때. 🚨 **넣은 일정이 있으면 그것부터 말한다** — "아무것도 저장 안 됐어요" 가 거짓이 된다. */
+function commitText(failure: PhotoCommitFailure, added: number): string {
+  const head =
+    added > 0
+      ? `읽은 내용을 저장하지 못했어요. 캘린더에 넣은 일정 ${added}개는 들어갔어요.`
+      : "저장하지 못했어요. 아직 아무것도 저장되지 않았어요.";
+  return failure === "expired"
+    ? `${head} 읽은 지 오래돼서 이 사진으로는 더 저장할 수 없어요. 사진을 다시 올려 주세요.`
+    : `${head} 다시 누르면 읽은 내용만 저장해요.`;
+}
+
+/** 넣을 일정의 일시. 🚨 넣을 값 그대로다 — 읽은 값이 아니라 보호자가 시트에서 고친 값이다. */
+function planWhen(entry: PhotoEntry, plan: EventPlan): string {
+  const startsAt = planStartsAt(entry, plan);
+  if (startsAt === null) return "";
+  return eventWhen(startsAt, planEndsAt(entry, plan, startsAt), plan.allDay);
+}
+
 /* ── 확인이 필요한 것 ─────────────────────────────────────────────────── */
+
+interface GroupProps {
+  entries: PhotoEntry[];
+  added: Record<string, AddedEvent>;
+  pickOf: (entry: PhotoEntry) => CalendarPick | null;
+  busy: boolean;
+  onPick: (id: string, next: boolean) => void;
+  onEdit: (entry: PhotoEntry) => void;
+}
 
 /**
  * 🚨 **펼친 채로 맨 위에 둔다.** 부모가 이 화면에서 할 일은 "기계가 못 읽은 곳을 메우는 것"
  *    하나고, 그게 화면 아래에 있으면 스무 줄을 지나야 닿는다.
  */
-function NeedsReviewGroup({
-  entries,
-  added,
-  onEdit,
-}: {
-  entries: PhotoEntry[];
-  added: Record<string, AddedEventInput>;
-  onEdit: (entry: PhotoEntry) => void;
-}) {
+function NeedsReviewGroup({ entries, ...row }: GroupProps) {
   if (entries.length === 0) return null;
 
   return (
@@ -454,7 +709,7 @@ function NeedsReviewGroup({
       <ul className="flex flex-col gap-2">
         {entries.map((entry) => (
           <li key={entry.id} data-flip={entry.id}>
-            <EntryRow entry={entry} added={added[entry.id]} onEdit={onEdit} />
+            <EntryRow entry={entry} {...row} />
           </li>
         ))}
       </ul>
@@ -467,22 +722,16 @@ function NeedsReviewGroup({
 /**
  * 🚨 **기본이 접힘이다.** 식단표는 거의 한 달치라 스무 개가 넘는데, 잘 읽은 것을 전부 펼쳐 두면
  *    위의 "확인이 필요해요" 가 화면 밖으로 밀린다. 건수는 접힌 채로도 보인다.
+ *    켜진 "캘린더에 넣기" 가 이 안에 있어도 무엇을 넣는지는 맨 아래 버튼 위에서 보인다 (#824).
  * 🚨 **펼친 줄은 투명도로만 선다** (디자인 시스템 §8 "펼침"). 높이를 움직이지 않는다 — 목록이 자라는
  *    동안 아래 저장 버튼이 같이 끌려 내려가며 흔들린다. 줄마다의 페이드는 위 `useFlip` 이 건다.
  */
 function CheckedGroup({
   entries,
-  added,
   open,
   onToggle,
-  onEdit,
-}: {
-  entries: PhotoEntry[];
-  added: Record<string, AddedEventInput>;
-  open: boolean;
-  onToggle: () => void;
-  onEdit: (entry: PhotoEntry) => void;
-}) {
+  ...row
+}: GroupProps & { open: boolean; onToggle: () => void }) {
   if (entries.length === 0) return null;
 
   /**
@@ -543,7 +792,7 @@ function CheckedGroup({
         >
           {entries.map((entry) => (
             <li key={entry.id} data-flip={entry.id}>
-              <EntryRow entry={entry} added={added[entry.id]} onEdit={onEdit} />
+              <EntryRow entry={entry} {...row} />
             </li>
           ))}
         </ul>
@@ -556,14 +805,16 @@ function CheckedGroup({
 
 function EntryRow({
   entry,
-  added,
+  added: addedMap,
+  pickOf,
+  busy,
+  onPick,
   onEdit,
-}: {
-  entry: PhotoEntry;
-  /** 이 줄을 캘린더에 넣었다면 **넣은 일시.** 안 넣었으면 `undefined` 다. */
-  added?: AddedEventInput;
-  onEdit: (entry: PhotoEntry) => void;
-}) {
+}: Omit<GroupProps, "entries"> & { entry: PhotoEntry }) {
+  /** 이 줄을 캘린더에 넣었다면 **넣은 일정.** 안 넣었으면 `undefined` 다. */
+  const added = addedMap[entry.id];
+  const pick = pickOf(entry);
+
   return (
     <div
       className={cn(
@@ -589,8 +840,10 @@ function EntryRow({
           </div>
           <p className="text-body text-ink mt-0.5">{entry.title}</p>
         </div>
-        <Button variant="tertiary" size="compact" onClick={() => onEdit(entry)}>
-          {editLabel(entry, added !== undefined)}
+        {/* 🚨 **고치기만 한다** (#824). 한동안 "고치고 일정 넣기" 하나에 두 일이 섞여 누르기 전에는
+            무엇이 되는지 안 보였다. 캘린더에 넣을지는 아래 체크가 말한다. */}
+        <Button variant="tertiary" size="compact" disabled={busy} onClick={() => onEdit(entry)}>
+          고치기
         </Button>
       </div>
 
@@ -618,6 +871,22 @@ function EntryRow({
           {entry.review_reason}
         </p>
       ) : null}
+
+      {/* 🚨 **캘린더에 넣을지는 줄마다 고른다** (#824). 켜도 넣은 것이 아니다 — 맨 아래 버튼을 눌러야 들어간다.
+          🚨 **급식 · 안내에는 세우지 않는다** (`canBecomeEvent`) · 이미 넣은 줄도 세우지 않는다 — 끈다고
+             캘린더에서 빠지지 않는다. 그 줄은 위의 칩과 "캘린더" 줄이 말한다.
+          🚨 **잠긴 까닭을 그 자리에서 말한다** — 고치기에서 무엇을 채우면 되는지까지. */}
+      {pick ? (
+        <div className="border-line mt-3 border-t pt-1">
+          <Checkbox
+            checked={pick.checked}
+            disabled={busy || pick.locks.length > 0}
+            onChange={(next) => onPick(entry.id, next)}
+            label="캘린더에 넣기"
+            description={pick.failure ?? (pick.locks.length > 0 ? pick.locks.join(" ") : undefined)}
+          />
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -630,7 +899,7 @@ function EntryRow({
  * 🚨 **다르면 날짜까지 쓴다.** 기록의 일자를 나중에 고치면 캘린더에 들어간 날과 갈릴 수 있고,
  *    그때 시각만 보여주면 **다른 날에 들어간 일정**을 같은 날인 것처럼 읽게 된다.
  */
-function calendarValue(entry: PhotoEntry, added: AddedEventInput): string {
+function calendarValue(entry: PhotoEntry, added: AddedEvent): string {
   const from = seoulDate(added.starts_at);
   const to = seoulDate(added.ends_at);
   // 여러 날이면 기간이 본체다. 위 칸과 같은 날에 시작해도 끝날까지 말한다.
@@ -730,12 +999,14 @@ function TagPicker({
   );
 }
 
-function PreviewRow({ term, value }: { term: string; value: string }) {
+function PreviewRow({ term, value }: { term: string; value: ReactNode }) {
   return (
-    <div className="flex gap-3">
+    // 🚨 **글자를 키우면 값이 라벨 아래로 내려간다** (`flex-wrap` + 값의 최소 폭). "캘린더" 줄은 여러 줄짜리
+    //    목록이라, 200% 에서 라벨 옆에 두면 한 줄에 한두 낱말씩 쪼개지고 카드 밖으로 삐져나갔다 (디자인 시스템 §10).
+    <div className="flex flex-wrap gap-x-3 gap-y-1">
       {/* 🚨 폭을 고정하지 않는다. 글자를 키우면 라벨이 잘려서 무엇을 저장하는지가 가려진다. */}
       <dt className="text-body-sm text-ink-subtle shrink-0 basis-24">{term}</dt>
-      <dd className="text-body-sm text-ink min-w-0">{value}</dd>
+      <dd className="text-body-sm text-ink min-w-0 grow basis-48 break-words">{value}</dd>
     </div>
   );
 }

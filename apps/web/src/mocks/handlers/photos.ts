@@ -56,9 +56,13 @@ interface PhotoRun {
 
 const photoRuns = new Map<string, PhotoRun>();
 
+/** `photo_commit_failed` 에서 commit 을 이미 한 번 끊었는가 (#824). 🚨 한 번만 끊는다 — 다시 누르면 저장돼야 한다. */
+let commitCut = false;
+
 /** 🚨 목은 프로세스 수명만큼 산다. 테스트 사이에 비운다 (`src/test/setup.ts`). */
 export function resetPhotoRuns(): void {
   photoRuns.clear();
+  commitCut = false;
 }
 
 export function isPhotoRun(runId: string): boolean {
@@ -450,6 +454,17 @@ export const photoHandlers = [
 
     const run = photoRuns.get(String(params.rid));
     if (!run) return apiError(404, "not_found", "저장할 사진이 없어요");
+
+    // 🚨 일정을 넣은 뒤 commit 만 실패한 경우 (#824). 화면은 넣은 일정 수를 말하고, 다시 누르면 commit 만 보내야 한다.
+    const scenario = currentScenario();
+    if (scenario === "photo_commit_failed" && !commitCut) {
+      commitCut = true;
+      return apiError(500, "internal_error", "잠시 후 다시 시도해 주세요");
+    }
+    // 읽은 결과가 서버에서 사라진 경우 (30분 · `photo_run.py`). 다시 눌러도 같은 404 다.
+    if (scenario === "photo_commit_expired") {
+      return apiError(404, "not_found", "저장할 사진이 없어요");
+    }
 
     const body = (await request.json()) as PhotoCommitRequest;
     const entries = body.entries ?? [];

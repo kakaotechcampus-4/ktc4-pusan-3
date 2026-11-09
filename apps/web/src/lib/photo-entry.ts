@@ -1,5 +1,7 @@
-import type { PhotoEntry } from "@/lib/api/types";
-import { seoulDate, seoulTime } from "@/lib/event-draft";
+import type { PhotoEntry, SubmitEventBody } from "@/lib/api/types";
+import { seoulDate, seoulTime, withSeoulDateTime } from "@/lib/event-draft";
+import { formatDateTime, formatDayRange, formatEventTime, formatTimeOfDay } from "@/lib/format";
+import { isPast, NO_REMINDER, type ReminderChoice } from "@/lib/reminder";
 
 /**
  * 08 사진 — 읽어낸 항목 하나의 **날짜가 무엇인지** 가르는 규칙 (#723).
@@ -132,4 +134,148 @@ export function droppedEnd(
   if (readSpan(entry) !== null) return "span";
   if (entryDateRole(entry) !== "start" || entry.all_day !== false || !entry.ends_at) return null;
   return "time";
+}
+
+/* ── 캘린더에 넣기 (#824) ─────────────────────────────────────────────── */
+
+/**
+ * 항목을 캘린더에 넣을 때의 값. 고치기 시트의 "캘린더에 넣을 때" 칸이 고친다.
+ *
+ * 🚨 **넣는 것은 시트가 아니라 목록의 체크와 맨 아래 버튼이다** (#824). 한동안 시트 안에 게이트 버튼이
+ *    있어서 일정이 셋이면 시트를 세 번 열었다. 그래도 값을 고치는 칸까지 빼면 할 일의 시작하는 날,
+ *    못 읽은 시각, 알림을 고를 곳이 없어진다 — 그래서 값은 시트에, 넣는 일은 목록에 둔다.
+ */
+export interface EventPlan {
+  /**
+   * 마감 항목을 일정으로 넣을 때의 **시작 날짜.** 🚨 비어서 시작한다 — 마감일을 시작일로 채우면
+   * "11/14 까지 회신" 이 11/14 에 시작하는 일정으로 들어간다 (#723). 시작 항목은 위 칸이 곧 시작이라 쓰지 않는다.
+   */
+  startDate: string;
+  allDay: boolean;
+  /** 🚨 읽은 시각이 있을 때만 채워서 시작한다 (`readStartTime`). 없는 것을 자정으로 채우지 않는다. */
+  time: string;
+  /** 🚨 기본값은 "없음" 이다 (#609). */
+  reminder: ReminderChoice;
+}
+
+/**
+ * 처음 값. 🚨 마감 항목의 `all_day` 는 **마감**이 하루 종일이라는 뜻이라(서버 `due_all_day`) 쓰지 않고
+ * 하루 종일에서 시작한다.
+ */
+export function initialPlan(entry: PhotoEntry): EventPlan {
+  return {
+    startDate: "",
+    allDay: entryDateRole(entry) === "start" ? (entry.all_day ?? true) : true,
+    time: readStartTime(entry),
+    reminder: NO_REMINDER,
+  };
+}
+
+/** 일정이 들어갈 날. 시작 항목은 위 칸, 마감 항목은 따로 고른 시작하는 날이다. */
+export function planDate(entry: PhotoEntry, plan: EventPlan): string {
+  return entryDateRole(entry) === "start" ? (entry.date ?? "") : plan.startDate;
+}
+
+/** 일정의 시작 ISO. 날짜가 없거나, 하루 종일이 아닌데 시각이 없으면 `null` 이다. */
+export function planStartsAt(entry: PhotoEntry, plan: EventPlan): string | null {
+  return withSeoulDateTime(planDate(entry, plan), plan.time, plan.allDay);
+}
+
+/** 함께 넣는 끝. 읽은 그대로일 때만 실린다 (`carriedEndsAt`). */
+export function planEndsAt(
+  entry: PhotoEntry,
+  plan: EventPlan,
+  startsAt: string | null = planStartsAt(entry, plan),
+): string | null {
+  return carriedEndsAt(entry, { date: planDate(entry, plan), allDay: plan.allDay, startsAt });
+}
+
+/**
+ * 처음부터 "캘린더에 넣기" 를 켜 두는가.
+ *
+ * 🚨 **시작 날짜를 읽은 일정만이다.** 할 일은 보호자가 고른다 — 회신 마감을 일정으로 넣을지는
+ *    읽은 글자가 정하지 못한다. 마감만 읽은 일정("4월 30일까지")도 켜지 않는다. 그 날은 시작이 아니다.
+ * 🚨 확인이 필요한 항목은 켜지 않는다. 저장이 그 항목을 받지 않아서, 일정만 들어가고 공지는 빠진다.
+ * 🚨 **켜 둔 것은 넣은 것이 아니다.** 넣는 것은 보호자가 맨 아래 버튼을 누를 때고, 그 버튼 바로 위에
+ *    무엇이 들어가는지 목록이 선다 (`photo-review.tsx`). 접힌 목록 안에 켜진 것이 있어도 거기서 보인다.
+ */
+export function startsChecked(entry: PhotoEntry): boolean {
+  return (
+    entry.kind === "event" &&
+    entryDateRole(entry) === "start" &&
+    entry.date !== null &&
+    !entry.needs_review &&
+    planLocks(entry, initialPlan(entry)).length === 0
+  );
+}
+
+/**
+ * 지금 넣을 수 없는 까닭. 비어 있으면 넣을 수 있다.
+ *
+ * 🚨 **막는 것이 여럿이면 전부 말한다** (초안 카드와 같은 규칙). 하나씩 말하면 보호자가 날짜를 채운 뒤에야
+ *    두 번째 관문을 알게 된다.
+ * 🚨 확인이 필요한 항목은 그 하나만 말한다 — 확인하고 나면 나머지 값이 바뀌어 있을 수 있다.
+ */
+export function planLocks(entry: PhotoEntry, plan: EventPlan, now = Date.now()): string[] {
+  if (entry.needs_review) return ["고치기에서 확인하면 넣을 수 있어요."];
+  const startsAt = planStartsAt(entry, plan);
+  return [
+    planDate(entry, plan) === ""
+      ? entryDateRole(entry) === "start"
+        ? "고치기에서 날짜를 고르면 넣을 수 있어요."
+        : "고치기에서 시작하는 날을 고르면 넣을 수 있어요."
+      : null,
+    // 🚨 하루 종일이면 시각을 안 묻는다 — 물을 것이 없는 것이지 안 고른 것이 아니다.
+    !plan.allDay && plan.time === "" ? "고치기에서 시작 시간을 고르면 넣을 수 있어요." : null,
+    // 🚨 조용히 "없음" 으로 바꾸지 않는다 — 고른 것과 들어간 것이 달라진다 (초안 카드와 같다).
+    plan.reminder !== NO_REMINDER &&
+    startsAt !== null &&
+    isPast(plan.reminder, startsAt, plan.allDay, now)
+      ? "고른 알림 시각이 이미 지났어요. 고치기에서 알림을 다시 골라 주세요."
+      : null,
+  ].filter((reason) => reason !== null);
+}
+
+/**
+ * 캘린더에 넣는 본문. 넣을 수 없으면 `null` 이다.
+ * 🚨 알림장에서 읽은 것은 기관이 알려준 일정이다 (계약서 §09 와 같은 출처 판정).
+ */
+export function eventBody(entry: PhotoEntry, plan: EventPlan): SubmitEventBody | null {
+  const startsAt = planStartsAt(entry, plan);
+  if (startsAt === null) return null;
+  return {
+    event: {
+      title: entry.title.trim(),
+      starts_at: startsAt,
+      ends_at: planEndsAt(entry, plan, startsAt),
+      all_day: plan.allDay,
+      event_type: "episodic",
+      category: "institution",
+    },
+    items: entry.items.map((item) => ({ item_id: null, item_name: item })),
+    reminder: plan.reminder === NO_REMINDER ? null : { lead: plan.reminder },
+  };
+}
+
+/** 캘린더에 넣은 것. 🚨 일시는 **응답에서** 받는다 — 같은 키 재시도면 서버는 처음 넣은 일정을 돌려준다 (#792 리뷰). */
+export interface AddedEvent {
+  /** 🚨 저장할 때 그 항목의 `event_id` 로 실어 보낸다 — 그래야 서버가 일정에 공지 항목을 출처로 단다. */
+  event_id: string;
+  starts_at: string;
+  ends_at: string | null;
+  all_day: boolean;
+}
+
+/**
+ * 일정 한 줄의 일시. 여러 날이면 기간, 같은 날 끝나는 시각이 있으면 그것까지 쓴다.
+ * 🚨 하루 종일 하루짜리의 끝(그날 23:59)은 말하지 않는다 — 서버 관례일 뿐 보호자가 고른 값이 아니다.
+ */
+export function eventWhen(startsAt: string, endsAt: string | null, allDay: boolean): string {
+  const from = seoulDate(startsAt);
+  const to = seoulDate(endsAt);
+  if (to !== "" && to !== from) return formatDayRange(from, to);
+  if (!allDay && endsAt !== null && to === from) {
+    return `${formatDateTime(startsAt)}부터 ${formatTimeOfDay(endsAt)}까지`;
+  }
+  return formatEventTime(startsAt, allDay);
 }

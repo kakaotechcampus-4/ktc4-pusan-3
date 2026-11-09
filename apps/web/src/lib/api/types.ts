@@ -1567,9 +1567,9 @@ export interface PhotoCommitResponse {
    */
   observations: Observation[];
   /**
-   * 🚨 **일정은 여기서 만들어지지 않는다** (#151). 커밋이 만드는 것은 **관찰**이고, 일정은
-   *    고치기 시트의 승인 게이트(`POST /children/{cid}/events`)가 그 자리에서 넣는다 —
-   *    무엇을 넣는지 아는 자리와 넣는 자리를 갈라 두면 같은 항목을 두 화면에서 두 번 확인하게 된다.
+   * 🚨 **일정은 여기서 만들어지지 않는다** (#151). 일정은 확인 화면 맨 아래 버튼의 승인 게이트가
+   *    `POST /children/{cid}/events` 로 먼저 넣고, 받은 id 를 항목의 `event_id` 로 실어 커밋한다
+   *    (`photo-review.tsx` · #824).
    *
    *    `event.status` 가 없어진 뒤(#118) 이 커밋이 게이트 없이 캘린더에 쓰는 유일한 경로였는데,
    *    일정을 아예 안 만들면 그 경로 자체가 사라진다.
