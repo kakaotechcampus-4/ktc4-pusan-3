@@ -59,11 +59,10 @@ interface VerdictSpec {
  * 🚨 **여기 없는 판정은 화면에 서지 않는다.** 서버도 대상마다 받는 값이 갈린다 — 기록에
  *    `need_more_observation` · `outdated` 를 보내면 400 이다 (#277).
  * 🚨 **기록에는 `wrong` 을 묻지 않는다** (#736 · #779). "잘못된 기록" 은 그 기록을 없던 것으로 하려는 것이라
- *    기록 지우기로 바꿨다 — 그 자리에 `onDelete` 의 "기록 지우기" 가 선다. 서버는 FE 가 넘어갈 때까지 기록 `wrong` 을
- *    받고(#736 3단계에서 400), 이미 `wrong` 으로 고친 기록(`inactive`)은 아래 `CORRECTED_OBSERVATION` 이 그린다.
+ *    기록 지우기로 바꿨다 — 그 자리에 `onDelete` 의 "기록 지우기" 가 선다. 서버도 기록 `wrong` 을 400 으로 막고,
+ *    예전에 `wrong` 으로 고친 기록(`inactive`)은 `deleted` 로 옮겼다.
  *
- * 무엇이 목록에 남는지는 서버 표를 따른다. 기록은 고쳐도 목록에 남는다(`stand_alone` · `inactive`
- * 둘 다 목록에 내린다).
+ * 무엇이 목록에 남는지는 서버 표를 따른다. 기록은 고쳐도 목록에 남는다(`stand_alone` 도 목록에 내린다).
  *
  * 🚨 **기억 고치기는 명령이 아니라 의견이다.** 서버(#277)는 판정으로 기억의 상태를 바꾸지 않고,
  *    상태는 쌓인 기록 수로만 다시 센다 (최상위 §2 "승격은 Curator 의 반복 집계로만"). 세 판정 모두
@@ -122,18 +121,10 @@ const VERDICTS: Record<CorrectionTargetKind, VerdictSpec[]> = {
  * 🚨 `label` 은 위 `VERDICTS.observation` 의 라벨과 같은 말이어야 한다 — 누른 버튼의 이름이
  *    그대로 줄에 남아야 무엇을 눌렀는지 알아본다. `note` 는 그 판정의 `after` 에서 "되돌릴 수
  *    없어요" 를 뺀 것이다 (이미 일어난 일이라).
- * ⚠️ `inactive` 는 이제 버튼이 없다 (#736 · 기록 `wrong` 을 지우기로 바꿨다). 그 전에 고친 기록이 남아 있어서
- *    표시만 둔다 — #736 3단계에서 서버가 그 행을 `deleted` 로 옮기면 이 줄도 걷는다.
+ * ⚠️ "잘못된 기록"(`inactive`)은 없다 (#736). 기록 `wrong` 을 지우기로 바꿨고, 서버가 남은 행을 `deleted` 로 옮겼다.
  */
-export const CORRECTED_OBSERVATION: Record<
-  "stand_alone" | "inactive",
-  { label: string; note: string }
-> = {
+export const CORRECTED_OBSERVATION: Record<"stand_alone", { label: string; note: string }> = {
   stand_alone: { label: "이번만 그랬어요", note: "아이의 기억으로는 세지 않아요." },
-  inactive: {
-    label: "잘못된 기록",
-    note: "제안의 근거로도, 아이의 기억으로도 쓰이지 않아요.",
-  },
 };
 
 export function CorrectionButtons({

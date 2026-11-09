@@ -128,13 +128,15 @@ const PROFILE_DOMAIN_OPTIONS: readonly DomainOption[] = OBSERVATION_DOMAIN_OPTIO
 );
 
 /**
- * 기록 탭의 상태 필터 — 서버 `?status=` 하나를 고른다 (#266). 주지 않으면 세 상태 모두다.
+ * 기록 탭의 상태 필터 — 서버 `?status=` 하나를 고른다 (#266). 주지 않으면 두 상태 모두다.
  *
  * ⚠️ **"사용되지 않은 기록만"(`unused_in_suggestions`)은 없다.** 이 자리가 상태 필터로 바뀌었고
  *    (#266), 쓰는 곳이 없어 서버에서도 파라미터를 지웠다 (#286).
+ * ⚠️ **"잘못된 기록"(`inactive`)도 없다** (#736). 서버가 남은 행을 `deleted` 로 옮기고 `status=inactive` 를
+ *    400 으로 막는다. 주소에 그 값이 남은 예전 링크는 `isObservationStatusFilter` 에서 걸러 "전체" 로 열린다.
  * 🚨 이름은 고치기 버튼과 **같은 말**이다 (`CORRECTED_OBSERVATION`) — 누른 버튼 이름으로 찾게.
  */
-const OBSERVATION_STATUS_FILTERS = ["all", "active", "stand_alone", "inactive"] as const;
+const OBSERVATION_STATUS_FILTERS = ["all", "active", "stand_alone"] as const;
 type ObservationStatusFilter = (typeof OBSERVATION_STATUS_FILTERS)[number];
 
 function isObservationStatusFilter(value: string | null): value is ObservationStatusFilter {
@@ -145,7 +147,6 @@ const OBSERVATION_STATUS_OPTIONS = [
   { value: "all", label: "전체" },
   { value: "active", label: "고치지 않은 기록" },
   { value: "stand_alone", label: CORRECTED_OBSERVATION.stand_alone.label },
-  { value: "inactive", label: CORRECTED_OBSERVATION.inactive.label },
 ] as const;
 
 /**

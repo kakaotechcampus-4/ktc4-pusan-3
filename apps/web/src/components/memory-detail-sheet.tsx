@@ -444,7 +444,7 @@ function DeleteConfirm({
 }
 
 /** 이미 고친 기록을 열었을 때 버튼 자리에 서는 한 덩이. 무엇으로 고쳤고 그래서 어떻게 되는지. */
-function CorrectedNote({ status }: { status: "stand_alone" | "inactive" }) {
+function CorrectedNote({ status }: { status: "stand_alone" }) {
   const { label, note } = CORRECTED_OBSERVATION[status];
   return (
     <div className="bg-surface-muted rounded-field p-3.5">
