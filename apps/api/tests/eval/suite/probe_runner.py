@@ -46,10 +46,18 @@ def memory_tools(memory: Any) -> tuple[ToolCallView, ...] | None:
 
 
 def draft_items(memory: Any) -> tuple[str, ...]:
-    """Memory 가 만든 일정 초안의 준비물 이름."""
+    """Memory 가 만든 일정 초안의 준비물 이름.
+
+    일정 초안(`EventDraft`)은 준비물을 `DraftItem` 으로, 반복 묶음 초안(`SeriesDraft`, #738)은
+    이름 문자열로 든다 — 둘 다 이름으로 읽는다.
+    """
     if memory is None:
         return ()
-    return tuple(item.item_name for draft in memory.drafts for item in draft.items)
+    return tuple(
+        item if isinstance(item, str) else item.item_name
+        for draft in memory.drafts
+        for item in draft.items
+    )
 
 
 def read_run(

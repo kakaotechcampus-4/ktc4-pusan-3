@@ -432,8 +432,10 @@ def test_draft_items_기대값_모양() -> None:
 
 def test_draft_items_는_초안의_준비물_이름을_모은다() -> None:
     item = SimpleNamespace(item_name="돗자리")
-    memory = SimpleNamespace(drafts=[SimpleNamespace(items=(item,)), SimpleNamespace(items=())])
-    assert draft_items(memory) == ("돗자리",)
+    series = SimpleNamespace(items=("수영모",))  # 반복 묶음 초안(SeriesDraft)은 이름 문자열로 든다
+    empty = SimpleNamespace(items=())
+    memory = SimpleNamespace(drafts=[SimpleNamespace(items=(item,)), empty, series])
+    assert draft_items(memory) == ("돗자리", "수영모")
     assert draft_items(None) == ()
 
 
