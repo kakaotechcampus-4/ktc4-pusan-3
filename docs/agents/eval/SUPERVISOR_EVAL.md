@@ -11,7 +11,7 @@ tool spec · 응답 스키마: `app/agents/supervisor/schemas.py` (`ROUTE_TOOL_S
 
 | 측정 조건 | |
 | --- | --- |
-| 코드 | `develop` @ `81174dfe` (프롬프트 지문 `2df200d9e14a`) |
+| 코드 | `develop` @ `2fc92746` (프롬프트 지문 `05d6538172c2`) |
 | 모델 | `SUPERVISOR_MODEL` · `SUPERVISOR_REASONING_EFFORT` (비면 `MEMORY_*` — 기준선이 그 상태) |
 | 실행 | 케이스마다 `TEST_REPEAT` 회 (기존 기준 3회, 이 문서부터 5회) |
 | 평가셋 | `apps/api/tests/eval/agents/routing_cases.py` — 라우팅 케이스 전체(T · RC · GR · FC · HR · UNCLEAR · DATE 묶음), 실행은 `tests/eval/agents/supervisor/test.py` |
@@ -27,7 +27,7 @@ tool spec · 응답 스키마: `app/agents/supervisor/schemas.py` (`ROUTE_TOOL_S
 
 | 버전 | 커밋 | 지문 | 조건 | 무엇을 왜 바꿨나 | C1 | 안정 오답 | 불안정 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| v0 | `81174dfe` | `2df200d9e14a` | 미측정 | 최초 기준선. 합격선만 기존 문서에서 옮김, 수치는 다음 변경 때 전후 두 행으로 잰다. 이 규칙 전에 develop 에 들어간 프롬프트 변경(앞 대화 해석 #786 — 지문에 앞 대화 절 · 메시지 · route spec 도 넣음)은 잰 수치가 없어 다시 재지 않고 v0 지문만 그 뒤 코드로 고침 | 미측정 | 미측정 | 미측정 |
+| v0 | `2fc92746` | `05d6538172c2` | 미측정 | 최초 기준선. 합격선만 기존 문서에서 옮김, 수치는 다음 변경 때 전후 두 행으로 잰다. 이 규칙 전에 develop 에 들어간 프롬프트 변경(앞 대화 해석 #786 — 지문에 앞 대화 절 · 메시지 · route spec 도 넣음 · 공지 질문 조회 라우팅)은 잰 수치가 없어 다시 재지 않고 v0 지문만 그 뒤 코드로 고침 | 미측정 | 미측정 | 미측정 |
 
 - `커밋` 은 재 본 코드. 작업 트리가 더러웠으면 커밋 옆에 `dirty` 를 적는다 (`tests/eval/agents/live_run_meta.json` 의 `dirty`).
 - `C1` 칸은 `a/b` (C1 사례 입력 수 / 전체 입력 수). `미측정` 은 v0 에만 쓴다.

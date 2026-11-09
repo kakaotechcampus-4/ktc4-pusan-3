@@ -11,7 +11,7 @@ tool spec · 응답 스키마: `app/agents/memory/schemas/tool_defs.py` · 응�
 
 | 측정 조건 | |
 | --- | --- |
-| 코드 | `develop` @ `81174dfe` (프롬프트 지문 `6d4e7e879adb`) |
+| 코드 | `develop` @ `2fc92746` (프롬프트 지문 `042d44c7c3a1`) |
 | 모델 | `MEMORY_MODEL` · `MEMORY_REASONING_EFFORT` |
 | 실행 | 케이스마다 5회 |
 | 평가셋 | `apps/api/tests/eval/agents/memory/test_memory.py` (T01~T30) · `test_multirun.py` · `test_delete_confirm.py` · `test_continuation.py` |
@@ -26,7 +26,7 @@ tool spec · 응답 스키마: `app/agents/memory/schemas/tool_defs.py` · 응�
 
 | 버전 | 커밋 | 지문 | 조건 | 무엇을 왜 바꿨나 | C1 | 안정 오답 | 불안정 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| v0 | `81174dfe` | `6d4e7e879adb` | 미측정 | 최초 기준선. 수치 없음, 다음 변경 때 전후 두 행으로 잰다. 이 규칙 전에 develop 에 들어간 프롬프트 변경(반복 일정 묶음 #738)은 잰 수치가 없어 다시 재지 않고 v0 지문만 그 뒤 코드로 고침 | 미측정 | 미측정 | 미측정 |
+| v0 | `2fc92746` | `042d44c7c3a1` | 미측정 | 최초 기준선. 수치 없음, 다음 변경 때 전후 두 행으로 잰다. 이 규칙 전에 develop 에 들어간 프롬프트 변경(반복 일정 묶음 #738 · 공지 조회 tool · 공지 요약 답)은 잰 수치가 없어 다시 재지 않고 v0 지문만 그 뒤 코드로 고침 | 미측정 | 미측정 | 미측정 |
 
 - `커밋` 은 재 본 코드. 작업 트리가 더러웠으면 커밋 옆에 `dirty` 를 적는다 (`tests/eval/agents/live_run_meta.json` 의 `dirty`).
 - `C1` 칸은 `a/b` (C1 사례 입력 수 / 전체 입력 수). `미측정` 은 v0 에만 쓴다.

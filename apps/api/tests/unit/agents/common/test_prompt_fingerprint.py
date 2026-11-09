@@ -144,6 +144,18 @@ def test_growth_는_task_와_상태_구획을_전부_싣는다():
         assert needle in joined, needle
 
 
+def test_growth_는_주제_기록_구획과_월령별_짜임을_전부_싣는다():
+    """요청 주제의 아이 기록(후보마다 달기 · 일부만) 과 만 3 · 4 · 5세 [활동 짜임] (#399)."""
+    from app.agents.growth import prompt
+
+    joined = "\n".join(pf.prompt_parts("growth"))
+    assert "[요청 주제의 아이 기록]" in joined
+    assert prompt._TOPIC_RECORD_REQUIRED in joined
+    assert prompt._TOPIC_RECORD_SOME in joined
+    for _, frame in prompt._AGE_FRAMES:
+        assert frame in joined, frame
+
+
 def test_supervisor_는_앞_대화_갈래를_전부_싣는다():
     from app.agents.supervisor import context
 
