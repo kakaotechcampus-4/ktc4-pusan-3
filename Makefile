@@ -24,11 +24,10 @@ DEPLOY_GUARD   := bash deploy/scripts/deploy.sh --check-env
 # 마이그레이션 · 적재용 — 잠금을 잡은 뒤에 .deployed-tag 를 읽는다. make 가 미리 펼친 DEPLOYED_TAG 는 잠금을 기다리는
 # 동안 끝난 배포를 모른다 (#753 리뷰). 🚨 api 이미지가 없으면 멈춘다 — compose run 에는 --no-build 가 없어서
 # (v2.34, --pull never 여도) 지금 작업 트리를 배포된 sha 이름으로 구워 롤백할 이미지를 덮는다 (#808 리뷰).
-# run 에는 일회용 덧씌우기(docker-compose.oneoff.yml)를 붙인다 — 떠 있는 api 의 ktc4-edge 고정 주소와 부딪히지 않게.
 COMPOSE_DEPLOY_NOW := sh -c 'tag=$$(cat deploy/docker/.deployed-tag 2>/dev/null || echo local); export API_IMAGE_TAG=$$tag WEB_IMAGE_TAG=$$tag; \
 	img=$$($(COMPOSE_FILES) config --images | grep -- "-api:" | head -n 1); \
 	docker image inspect "$$img" >/dev/null 2>&1 || { echo "$$img 이미지가 없다 — 굽지 않고 멈춘다. 로컬이면 make api-image 먼저, 서버면 deploy.sh 로 다시 배포"; exit 1; }; \
-	exec $(COMPOSE_FILES) -f deploy/docker/docker-compose.oneoff.yml "$$@"' compose
+	exec $(COMPOSE_FILES) "$$@"' compose
 # 🚨 서버(.deployed-tag 가 있는 checkout)에서는 이미지를 손으로 굽지 않는다. 지금 소스를 배포된 sha 태그로
 #    구워 롤백할 이미지를 덮어쓴다. 서버 빌드는 deploy.sh 만 한다 (#753 리뷰).
 NO_SERVER_BUILD := [ ! -f deploy/docker/.deployed-tag ] || { echo "서버에서는 이미지를 손으로 굽지 않는다 — 배포된 sha 태그를 덮어 롤백할 곳이 사라진다. bash deploy/scripts/deploy.sh <sha> <dev|prod> 로 (docs/ops/deploy-v1.md)"; exit 1; }
@@ -86,7 +85,7 @@ help:
 	@echo "  make web-logs     프론트 컨테이너 로그"
 	@echo "  make deploy-up      전체 기동 (db + redis + api + web)"
 	@echo "  make deploy-down    전체 중지"
-	@echo "  make deploy-migrate 배포 DB 마이그레이션 (api 컨테이너 안에서 alembic upgrade heads)"
+	@echo "  make deploy-migrate 배포 DB 마이그레이션 (api 이미지의 일회용 상자 api-task 로 alembic upgrade heads)"
 	@echo "  make deploy-load-food-dry  배포 DB 에 Food 카탈로그를 받고 세기만 (쓰지 않음)"
 	@echo "  make deploy-load-food      배포 DB 에 Food 카탈로그 적재 (영양DB + 레시피, 한 트랜잭션)"
 	@echo "  make deploy-load-places-dry  배포 DB 에 장소(공원 · 도서관 · 놀이시설)를 받고 세기만 (쓰지 않음)"
@@ -262,24 +261,24 @@ deploy-down:
 
 deploy-migrate:
 	@$(DEPLOY_GUARD)
-	$(DEPLOY_LOCK) $(COMPOSE_DEPLOY_NOW) run --rm api uv run --no-sync alembic upgrade heads
+	$(DEPLOY_LOCK) $(COMPOSE_DEPLOY_NOW) run --rm api-task uv run --no-sync alembic upgrade heads
 
 # Food 카탈로그 적재 (FT-19). 배포된 api 이미지 안의 스크립트를 프로세스로 돌린다 — 정리 표 ·
 # 식품군 대응표는 이미지에 구워진 것을 쓴다. 출력은 건수뿐이다.
 deploy-load-food-dry:
 	@$(DEPLOY_GUARD)
-	$(DEPLOY_LOCK) $(COMPOSE_DEPLOY_NOW) run --rm api uv run --no-sync python -m scripts.load_food_catalog --all --dry-run
+	$(DEPLOY_LOCK) $(COMPOSE_DEPLOY_NOW) run --rm api-task uv run --no-sync python -m scripts.load_food_catalog --all --dry-run
 
 deploy-load-food:
 	@$(DEPLOY_GUARD)
-	$(DEPLOY_LOCK) $(COMPOSE_DEPLOY_NOW) run --rm api uv run --no-sync python -m scripts.load_food_catalog --all
+	$(DEPLOY_LOCK) $(COMPOSE_DEPLOY_NOW) run --rm api-task uv run --no-sync python -m scripts.load_food_catalog --all
 
 # 장소 적재 (#516). 공원 · 도서관 표준데이터와 어린이놀이시설(화이트리스트)을 place 로 싣는다.
 # 출력은 건수뿐이다.
 deploy-load-places-dry:
 	@$(DEPLOY_GUARD)
-	$(DEPLOY_LOCK) $(COMPOSE_DEPLOY_NOW) run --rm api uv run --no-sync python -m scripts.load_places --all --dry-run
+	$(DEPLOY_LOCK) $(COMPOSE_DEPLOY_NOW) run --rm api-task uv run --no-sync python -m scripts.load_places --all --dry-run
 
 deploy-load-places:
 	@$(DEPLOY_GUARD)
-	$(DEPLOY_LOCK) $(COMPOSE_DEPLOY_NOW) run --rm api uv run --no-sync python -m scripts.load_places --all
+	$(DEPLOY_LOCK) $(COMPOSE_DEPLOY_NOW) run --rm api-task uv run --no-sync python -m scripts.load_places --all

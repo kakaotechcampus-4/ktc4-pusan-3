@@ -111,12 +111,13 @@ services:
     logging: *logging
     mem_limit: ${API_MEM_LIMIT:-0}
     memswap_limit: ${API_MEM_LIMIT:-0}
-    depends_on:
+    # &api-… 이름표 — 아래 api-task 가 같은 값을 그대로 쓴다. 여기만 고치면 둘 다 바뀐다.
+    depends_on: &api-depends-on
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
-    environment:
+    environment: &api-environment
       APP_ENV: ${APP_ENV:-prod}
       TZ: Asia/Seoul
       APP_NAME: ktc4-pusan-3-api
@@ -134,10 +135,10 @@ services:
       # 빈칸이 apps/api/.env 값을 덮는다. apps/api/.env 에서만 관리한다.
       # 나머지 키(LLM·OAuth·외부 API)는 apps/api/.env 에서 직접 주입한다.
       # 여기에 일일이 나열하면 키가 추가될 때마다 두 곳을 고쳐야 한다.
-    env_file:
+    env_file: &api-env-file
       - path: ../../apps/api/.env
         required: false
-    volumes:
+    volumes: &api-volumes
       # FCM 서비스 계정 키 (#594) — 서버에 둔 파일을 읽기 전용으로 붙인다. 키를 이미지 · 저장소에
       # 넣지 않으려는 것이다. FCM_KEY_PATH 를 비우면 빈 파일이 붙는다 — apps/api/.env 의
       # FCM_SERVICE_ACCOUNT_FILE 도 비워 두면 알림 발송 배치만 돌지 않는다.
@@ -165,6 +166,29 @@ services:
       # deploy.sh 의 up --wait 가 이 판정으로 롤백을 정한다. 서버는 평소 9초에 뜨지만 dev · prod 빌드가 겹쳐
       # swap 을 쓸 때는 훨씬 느리다 — 15s 면 멀쩡한 배포가 롤백된다 (#747 로컬 리허설에서 2분 20초를 봤다).
       start_period: 120s
+
+  # 일회용 작업 상자 — 마이그레이션(deploy.sh · make deploy-migrate)과 적재(make deploy-load-*)가
+  # `compose run --rm api-task <명령>` 으로 쓴다. api 와 같은 이미지 · 환경 · 메모리 상한이고, 다른 것은 셋뿐이다.
+  # 🚨 `run --rm api` 로 되돌리지 않는다. compose run 은 서비스의 고정 IP 까지 복사해서, api 가 떠 있는 동안
+  #    같은 주소(.20 · .21)를 두 번 잡아 "Address already in use" 로 멈춘다. 첫 배포 · 첫 전환은 api 가 없어서
+  #    통과하고 두 번째 배포부터 늘 터졌다 (11-09). 그래서 edge 에 안 붙는다 — DB 만 보면 된다.
+  # - build 가 없다: 이미지가 없을 때 compose run 이 지금 소스를 배포된 sha 이름으로 굽지 못한다 (#808 리뷰).
+  #   pull_policy: never — 레지스트리에서 찾지도 않고 "이미지 없음" 으로 바로 멈춘다.
+  # - profiles: up(deploy.sh · make deploy-up)이 상시 서비스로 띄우지 않는다. run 으로 이름을 부르면 켜진다.
+  # - mem_limit: dev 상한이 마이그레이션에도 걸려야 운영 postgres 를 지킨다 (머리말 · #780).
+  api-task:
+    image: ktc4${STACK_SUFFIX:-}-api:${API_IMAGE_TAG:-local}
+    profiles: [task]
+    pull_policy: never
+    logging: *logging
+    mem_limit: ${API_MEM_LIMIT:-0}
+    memswap_limit: ${API_MEM_LIMIT:-0}
+    depends_on: *api-depends-on
+    environment: *api-environment
+    env_file: *api-env-file
+    volumes: *api-volumes
+    networks:
+      - default
 
   web:
     build:
