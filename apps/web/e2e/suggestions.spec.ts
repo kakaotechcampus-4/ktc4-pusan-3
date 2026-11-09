@@ -1,4 +1,4 @@
-import type { Page } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
 
 import {
   CHILD,
@@ -1303,6 +1303,72 @@ test.describe("채택과 초안 만들기는 게이트가 아니다 · 승인 �
       );
     }, CHILD);
     expect(kept).toEqual([["input", "old-input"]]);
+  });
+});
+
+test.describe("넣기 버튼은 시트 스크롤 바닥에 붙는다 (#866)", () => {
+  /** 놀이 제안 하나로 초안 시트를 열고 준비물을 늘려 카드를 시트보다 길게 만든다 (재료가 그대로 들어오면 10개 안팎 · #679). */
+  async function openLongDraft(page: Page) {
+    await page.goto(SUGGESTIONS);
+    await page.getByRole("tab", { name: "놀이 3가지" }).click();
+    await page.getByText("주말에 실내 물놀이장은 어떨까요").click();
+    await page.getByRole("button", { name: "이 1가지로 할게요" }).click();
+    await page.getByRole("button", { name: "일정으로 만들기" }).click();
+
+    const sheet = page.getByRole("dialog", { name: "캘린더에 넣을까요" });
+    const add = sheet.getByRole("textbox", { name: "준비물 더하기" });
+    for (let i = 1; i <= 10; i += 1) {
+      await add.fill(`준비물 ${i}`);
+      await add.press("Enter");
+    }
+    return { sheet, add };
+  }
+
+  /** 글자를 치는 칸을 스크롤 면 바닥에 둔다 — 브라우저는 입력 중인 칸을 바닥까지만 끌어올린다. 바가 그 칸을 덮는가. */
+  async function typeAtBottom(add: Locator, text: string) {
+    await add.fill(text);
+    return add.evaluate((el) => {
+      el.scrollIntoView({ block: "end" });
+      const r = el.getBoundingClientRect();
+      return document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) !== el;
+    });
+  }
+
+  test("🚨 준비물이 많아도 넣기 버튼과 막힌 이유가 스크롤 없이 보이고, 입력 중에는 칸을 덮지 않는다", async ({
+    page,
+  }) => {
+    const { sheet, add } = await openLongDraft(page);
+
+    // 🚨 입력하는 동안에는 바닥에 붙지 않는다 — 키보드가 올라온 시트에서 바가 입력칸을 덮는다.
+    expect(await typeAtBottom(add, "쓰는 중")).toBe(false);
+    // 🚨 옆의 "더하기" 를 누르는 순간 포커스가 옮겨 가도, 바가 그 자리를 덮어 누르기를 삼키지 않는다 (#866 리뷰).
+    await sheet.getByRole("button", { name: "더하기" }).click();
+    await expect(sheet.getByText("쓰는 중", { exact: true })).toBeVisible();
+    await expect(add).toHaveValue("");
+    await add.blur();
+
+    // 시트를 연 첫 화면으로 되돌린다 — 더하는 동안 입력칸을 따라 내려갔다.
+    await sheet.getByRole("textbox", { name: "제목" }).scrollIntoViewIfNeeded();
+    await expect(sheet.getByRole("textbox", { name: "제목" })).toBeInViewport();
+
+    const submit = sheet.getByRole("button", { name: "확인했어요, 캘린더에 넣을게요" });
+    await expect(submit).toBeDisabled();
+    await expect(submit).toBeInViewport({ ratio: 1 });
+    // 🚨 꺼진 버튼만 보이고 이유가 가려지면 보호자는 왜 막혔는지 모른다.
+    await expect(sheet.getByText("날짜를 골라주셔야 넣을 수 있어요.")).toBeInViewport({ ratio: 1 });
+  });
+
+  test.describe("손가락 탭", () => {
+    test.use({ hasTouch: true });
+
+    test('🚨 입력 중 바닥의 "더하기" 를 탭해도 준비물이 들어간다', async ({ page }) => {
+      const { sheet, add } = await openLongDraft(page);
+
+      expect(await typeAtBottom(add, "탭으로 더한 것")).toBe(false);
+      await sheet.getByRole("button", { name: "더하기" }).tap();
+      await expect(sheet.getByText("탭으로 더한 것", { exact: true })).toBeVisible();
+      await expect(add).toHaveValue("");
+    });
   });
 });
 
