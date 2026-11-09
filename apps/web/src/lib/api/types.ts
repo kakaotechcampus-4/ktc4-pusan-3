@@ -172,8 +172,12 @@ export interface Affinity {
   merge_key: string;
   domain: Exclude<Agent, "health">;
   state: AffinityState;
-  /** confirmed 면 NOT NULL. */
-  polarity: -1 | 0 | 1 | null;
+  /**
+   * confirmed 면 NOT NULL. 🚨 서버 #847 부터 0 은 오지 않는다 — 좋다 · 싫다가 없는 기록은 기억이
+   * 되지 않는다 (#287, DB CHECK `profile_affinity_polarity`). 그 전에 오는 0 은 `polarityLabel` 이
+   * 줄을 세우지 않는다. 0 이 있는 것은 관찰(`ObservationPromotable`)이다.
+   */
+  polarity: -1 | 1 | null;
   strength: number;
   last_observed_on: string;
   /** 서버 파생값 (affinity_id 역참조 집계). */
