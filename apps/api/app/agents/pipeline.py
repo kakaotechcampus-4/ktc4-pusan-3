@@ -77,6 +77,7 @@ from app.agents.supervisor.agent import run as run_supervisor
 from app.agents.supervisor.context import ConversationContext, LoadRecentTurns
 from app.agents.supervisor.emergency import emergency_guidance, infant_fever_age
 from app.agents.supervisor.followup import looks_like_followup
+from app.agents.supervisor.prompt import reroute_feedback
 from app.agents.supervisor.routing import (
     AGENT_LIMIT,
     HAZARD_GUIDANCE,
@@ -866,7 +867,7 @@ async def handle_input(
         retry = await run_supervisor(
             raw_text,
             client=supervisor_client,
-            feedback=_reroute_feedback(bounced),
+            feedback=reroute_feedback(bounced),
             context=conversation,
         )
         supervisor_ms += _ms_since(reroute_started)
@@ -2598,18 +2599,6 @@ def _bounced_hints(task: MemoryTask | None, memory: MemoryAgentResult | None) ->
 def _kept(hint: str, written: list[str]) -> bool:
     """힌트와 기록된 조각을 비교해 어느 쪽이 다른 쪽에 들어가면 적힌 것으로 본다."""
     return any(hint and text and (hint in text or text in hint) for text in written)
-
-
-def _reroute_feedback(bounced: tuple[str, ...]) -> str:
-    """Supervisor에게 돌려줄 실패 원인. 모델 입력이라 조각 원문이 들어간다 (로그에는 안 남긴다)."""
-    listed = "\n".join(f"- {text}" for text in bounced)
-    return (
-        "[다시 나누기] 아래 조각을 record 로 보냈는데 Memory 가 기록하지 않았다.\n"
-        f"{listed}\n"
-        "기록할 사실이 아니라 요청이면 request로 바꾸고 담당 agent와 food 유형을 정한다. "
-        "기록이 맞으면 record로 두고, 둘 다 아니면 unclear로 바꾼다. "
-        "발화 전체를 다시 나눠 route를 부른다."
-    )
 
 
 def _did_anything(
