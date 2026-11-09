@@ -93,6 +93,22 @@ class TestIdempotencyRedis:
         )
         assert _r.get("idem-run:run-2") is None
 
+    async def test_commit_이_실패하면_적은_키를_지운다(self, _mock):
+        """키는 commit 전에 적는다 (#774). commit 이 실패하면 지운 것이 없으니 같은 키 재시도가
+        성공을 재생받지 않고 다시 지우러 가야 한다."""
+
+        class BrokenCommit:
+            async def commit(self):
+                raise RuntimeError("commit failed")
+
+        scope = {"parent_id": PID, "method": "DELETE", "path": "/o", "key": "c1"}
+        with pytest.raises(RuntimeError):
+            await idempotency.remember_and_commit(
+                BrokenCommit(), **scope, replay={"status_code": 204}
+            )
+
+        assert await idempotency.recall(**scope) is None
+
     async def test_dict_no_reverse_index(self, _mock):
         """dict replay 는 역인덱스를 만들지 않는다."""
         body = {"ok": True}
