@@ -97,12 +97,20 @@ describe("대화의 삭제 확정 (#535)", () => {
 });
 
 describe("게이트 표식은 게이트 안에만", () => {
+  /**
+   * 🚨 **조건부 표식도 센다** (#823). 05 알레르기 확인 시트는 저장할 알레르기가 있을 때만 버튼에
+   *    `approve` 를 입힌다(`variant={… ? "approve" : "primary"}`). `variant="approve"` 만 찾으면 이 버튼이
+   *    목록에서 빠져, 게이트 표식이 어디에 있는지 이 테스트가 모르게 된다.
+   * ⚠️ 05 시트가 이 목록에 들어온 것은 게이트 ㉡ 를 칩에서 이 버튼으로 **옮긴** 것이다 — 늘린 것이 아니다.
+   */
+  const APPROVE = /variant=(?:"approve"|\{[^}]*"approve")/;
   it("approve 버튼은 게이트를 그리는 컴포넌트에만 있다", () => {
-    expect(filesMatching(/variant="approve"/).filter((path) => !DESIGN_SYSTEM.test(path))).toEqual([
+    expect(filesMatching(APPROVE).filter((path) => !DESIGN_SYSTEM.test(path))).toEqual([
       "components/event-draft-card.tsx",
       "components/health-safety-list.tsx",
       "components/medication-draft-card.tsx",
       "components/photo-entry-sheet.tsx",
+      "components/safety-check-sheet.tsx",
       "components/safety-scan-review.tsx",
     ]);
   });
@@ -133,7 +141,7 @@ describe("게이트 표식은 게이트 안에만", () => {
   it("복약 회차 체크 화면에는 게이트 표식이 없다", () => {
     const page = "app/child/[childId]/profile/medications/page.tsx";
     expect(sources.has(page)).toBe(true);
-    expect(filesMatching(/variant="approve"/)).not.toContain(page);
+    expect(filesMatching(APPROVE)).not.toContain(page);
     expect(filesMatching(CAUTION)).not.toContain(page);
   });
 

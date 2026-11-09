@@ -420,6 +420,28 @@ describe("일정 초안", () => {
       expect(asked(data).some((a) => a.endsWith(`:${allergen}`))).toBe(false);
     });
 
+    /**
+     * 🚨 **목록을 받은 뒤 등록된 알레르기는 채택이 막는다** (문서 §3-8 ② · 서버 PR 2 · #823).
+     *    하나라도 걸리면 전부 거절하고 걸린 id 를 싣는다 — 화면은 그 id 를 선택에서 뺀다.
+     */
+    it("🚨 목록을 받은 뒤 등록된 알레르기가 든 제안은 채택을 전부 거절하고 그 id 를 싣는다", async () => {
+      const data = await fetchSuggestions();
+      const [id, [allergen]] = Object.entries(suggestionAllergens).find(([, a]) => a.length > 0)!;
+      const other = data.suggestions.find((s) => !suggestionAllergens[s.id]?.length)!;
+      await addHealthSafety("c1", { type: "allergy", label: allergen }, newIdempotencyKey());
+
+      const refused = await approveSuggestions("c1", { suggestion_ids: [id, other.id] }).catch(
+        (e: unknown) => e,
+      );
+      expect(isApiError(refused, "allergen_blocked")).toBe(true);
+      expect((refused as ApiError).status).toBe(409);
+      expect((refused as ApiError).detail).toEqual({ suggestion_ids: [id] });
+
+      // 전부 거절했으므로 걸리지 않은 제안도 아직 draft 다 — 빼고 다시 보내면 채택된다.
+      const approved = await approveSuggestions("c1", { suggestion_ids: [other.id] });
+      expect(approved.suggestions.map((s) => s.id)).toEqual([other.id]);
+    });
+
     it("retracted 로 내린 항목은 다시 묻지 않고, 그 제안은 목록에 남는다", async () => {
       const [id, [allergen]] = Object.entries(suggestionAllergens).find(([, a]) => a.length > 0)!;
       const { safety } = await addHealthSafety(
