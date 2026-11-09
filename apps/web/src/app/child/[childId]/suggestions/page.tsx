@@ -333,6 +333,14 @@ function SuggestionsScreen() {
   const consentBlocked = isApiError(suggestions.error, "consent_required")
     ? suggestions.error
     : null;
+  /**
+   * 채택이 `403 consent_required` 로 막혔다 (#835). 알레르기 항목이 든 제안은 서버가 건강정보를 다시 읽어야
+   *    채택할 수 있어서, 목록을 받은 뒤 동의를 거뒀으면 여기서 막힌다. 🚨 **일반 실패 카드로 그리지 않는다** —
+   *    다시 눌러도 같은 403 이다. 목록이 막혔을 때와 같은 동의 카드로 가는 곳을 말한다.
+   */
+  const approveConsentBlocked = isApiError(approve.error, "consent_required")
+    ? approve.error
+    : null;
 
   return (
     <Screen
@@ -526,6 +534,15 @@ function SuggestionsScreen() {
           </Card>
         ) : null}
 
+        {/* 🚨 카드 안에 카드를 두지 않으려고 확인 카드 밖, 바로 위에 둔다. 쓰기가 막힌 것이라 저장된 것이 없다고 말한다. */}
+        {approveConsentBlocked && chosenIds === null ? (
+          <ConsentRequiredCard
+            childId={childId}
+            error={approveConsentBlocked}
+            what="고른 것을 남길 수 없어요. 저장된 것은 하나도 없어요."
+          />
+        ) : null}
+
         {/* 🚨 **다음 행동은 여기 한 곳이다** (줄마다 두지 않는다 · `suggestion-list.tsx` 머리말).
           그래서 화면의 `primary` 도 하나다 — 단계가 바뀌어도 이 카드 안에서 하나씩만 선다. */}
         {pickable.some((s) => s.agent !== "health") ? (
@@ -560,7 +577,9 @@ function SuggestionsScreen() {
                     고른 것을 먼저 남겨요. 캘린더에는 아무것도 넣지 않아요.
                   </p>
 
-                  {approve.isError && !isApiError(approve.error, "allergen_blocked") ? (
+                  {approve.isError &&
+                  !isApiError(approve.error, "allergen_blocked") &&
+                  !approveConsentBlocked ? (
                     <CardFailed className="mt-3">
                       <p>
                         {approve.error instanceof Error
