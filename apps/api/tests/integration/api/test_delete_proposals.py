@@ -25,6 +25,7 @@ from app.api.runs import runner
 from app.api.runs.registry import RunChannel
 from app.api.v1 import card_rows
 from app.api.v1.routers import delete_proposals
+from app.core import llm_usage
 from app.domains.delete_proposal.models import DeleteProposal
 from app.domains.delete_proposal.repository import PROPOSAL_TTL, ProposalTab, add_proposal
 from app.domains.memory.observation.models import ObservationFood, ObservationStatus
@@ -43,11 +44,20 @@ def _clean_keys():
 
 
 @pytest.fixture
-def curator_calls(monkeypatch):
+def curator_attributions() -> list:
+    """Curator 를 띄우는 순간 걸려 있던 LLM 사용량 귀속 (#710)."""
+    return []
+
+
+@pytest.fixture
+def curator_calls(monkeypatch, curator_attributions):
     calls: list[uuid.UUID] = []
-    monkeypatch.setattr(
-        delete_proposals, "curator_trigger", lambda: lambda child_id, today: calls.append(child_id)
-    )
+
+    def trigger(child_id, today):
+        calls.append(child_id)
+        curator_attributions.append(llm_usage.current())
+
+    monkeypatch.setattr(runner, "curator_trigger", lambda: trigger)
     return calls
 
 
@@ -105,7 +115,12 @@ async def _status(session: AsyncSession, oid: str) -> ObservationStatus:
 
 
 async def test_deletes_only_checked_candidates(
-    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID, curator_calls
+    db_client: AsyncClient,
+    session: AsyncSession,
+    bearer: Bearer,
+    cid: uuid.UUID,
+    curator_calls,
+    curator_attributions,
 ):
     headers, pid = bearer
     lunch, snack = await _meal(session, cid, pid, "rice"), await _meal(session, cid, pid, "snack")
@@ -132,6 +147,9 @@ async def test_deletes_only_checked_candidates(
     assert await _status(session, snack) is not ObservationStatus.DELETED
     assert await session.scalar(select(Event.id).where(Event.id == uuid.UUID(event))) is None
     assert curator_calls == [cid]
+    # 삭제 확정은 run 밖에서 Curator 를 띄운다 — 확정한 보호자로 귀속된다 (#710)
+    [attribution] = curator_attributions
+    assert (attribution.parent_id, attribution.source) == (pid, "delete")
 
 
 async def test_outside_id_deletes_nothing(

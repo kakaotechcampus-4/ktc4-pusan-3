@@ -34,6 +34,7 @@ from app.agents.entrypoint import (
 from app.agents.memory.schemas.task import WorkType
 from app.api import agent_ports, idempotency
 from app.api.runs import pending_reply, registry, runner, suggestion_retry
+from app.core import llm_usage
 from app.domains.child.agent_reader import DbChildBasicReader
 from app.domains.medication.agent_reader import DbMedicationStore
 from app.domains.memory.profile.agent_reader import DbAffinityReader
@@ -90,6 +91,32 @@ async def test_agent_job_calls_the_agents_entrypoint_and_relays_its_events(monke
     assert isinstance(seen["growth_log"], DbGrowthLogReader)
     assert names(channel) == ["step", "done"]
     assert channel.closed
+
+
+async def test_입력_run_은_보호자_와_run_으로_귀속한다(monkeypatch):
+    """LLM 사용량(#710) — Agent 도 Curator 도 이 run 의 보호자 · run_id 로 남는다.
+
+    Curator 는 run 안에서 태스크로 떠서(trigger_curator_background) 귀속을 복사한다.
+    """
+    seen: list[llm_usage.Attribution | None] = []
+
+    async def fake_handle_input(**kwargs):
+        seen.append(llm_usage.current())
+
+        async def curator_like():
+            seen.append(llm_usage.current())
+
+        await asyncio.create_task(curator_like())
+        kwargs["emit"](Done(kwargs["run_id"], 0))
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+
+    job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    expected = llm_usage.Attribution(parent_id=PARENT, run_id=channel.run_id, source="input")
+    assert seen == [expected, expected]
 
 
 def _location_logs(monkeypatch, result: bool | Exception = True) -> list[uuid.UUID]:

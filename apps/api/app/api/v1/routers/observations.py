@@ -13,7 +13,6 @@
 
 import logging
 import uuid
-from datetime import date
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Header, Request, Response
@@ -24,7 +23,7 @@ from app.api.deps.child import AccessibleChild
 from app.api.deps.db import SessionDep
 from app.api.errors import ApiError, ErrorEnvelope
 from app.api.quota import today_kst
-from app.api.runs.runner import curator_trigger
+from app.api.runs.runner import trigger_curator_after_delete
 from app.api.v1.list_query import ListQueryDep
 from app.api.v1.observation_outs import to_observation_outs
 from app.api.v1.schemas.observations import (
@@ -224,21 +223,10 @@ async def delete_observation(
     await store.flush_profiles()
     await session.commit()
     await idempotency.remember(**scope, replay=_DELETED_REPLAY)
-    _trigger_curator(child.child_id, today)
+    trigger_curator_after_delete(
+        child.child_id, today, parent_id=parent.parent_id, after="기록 삭제"
+    )
     return Response(status_code=204)
-
-
-def _trigger_curator(child_id: uuid.UUID, today: date) -> None:
-    """commit 뒤에만 부른다 — 같은 트랜잭션에서 띄우면 Curator 실패가 삭제까지 되돌린다.
-
-    🚨 터져도 응답은 성공이다 — 지운 것은 이미 commit 됐다 (delete_proposals 와 같다).
-    """
-    try:
-        trigger = curator_trigger()
-        if trigger is not None:
-            trigger(child_id, today)
-    except Exception as exc:
-        log.error("기록 삭제 뒤 curator trigger 실패 error=%s", type(exc).__name__)
 
 
 def _deletable_domain(kind: str) -> ObservationDomain | None:
