@@ -168,11 +168,13 @@ Discord 메시지에 붙이지 않는다 (루트 CLAUDE.md §9). **`APP_ENV=loca
 (`tests/__init__.py`).
 
 로컬에서 한 번 확인하려면 `.env` 에 URL 을 넣고 아래를 돌린다 (`APP_ENV=dev` 로 local 규칙을 비켜
-간다. dev 는 카카오 키 4개가 비면 뜨지 않으니 `.env` 에 키도 있어야 한다 — #310). 서버가 뜰 때와 같은 순서로 설정을 읽고 ERROR 하나를 찍는다 — Discord 에 주황 카드로
+간다. dev 는 카카오 키 4개가 비면 뜨지 않아서 가짜 키를 같이 넘긴다 — 알림 시험은 카카오를 부르지 않는다, #310). 서버가 뜰 때와 같은 순서로 설정을 읽고 ERROR 하나를 찍는다 — Discord 에 주황 카드로
 `🟠 알림 시험` 과 `probe:<module>:1 · dev` 가 뜨면 된다.
 
 ```bash
-cd apps/api && APP_ENV=dev uv run python -c "import logging, app.main; logging.getLogger('app.probe').error('알림 시험'); logging.shutdown()"
+cd apps/api && APP_ENV=dev KAKAO_REST_API_KEY=x KAKAO_CLIENT_SECRET=x \
+  KAKAO_CALLBACK_URL=https://example.test/cb KAKAO_ADMIN_KEY=x \
+  uv run python -c "import logging, app.main; logging.getLogger('app.probe').error('알림 시험'); logging.shutdown()"
 ```
 
 ### 컨테이너 감시 (배포 실패 · redis 죽음 · 재시작 반복)
