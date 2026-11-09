@@ -196,7 +196,41 @@ def today_of(now: datetime, tz: tzinfo) -> date:
     return now.astimezone(tz).date()
 
 
+# 날짜 뒤에 붙은 요일 괄호 — 공지 원문의 "11월 27일(금)" · "11월 27일 (금요일)" (#797)
+_WEEKDAY_PAREN_RE = re.compile(r"\s*\(\s*([월화수목금토일])(?:요일)?\s*\)\s*$")
+
+
 def resolve_date(
+    value: str,
+    *,
+    today: date,
+    direction: TemporalDirection = "nearest",
+    anchor: DateRange | None = None,
+) -> date:
+    """하루를 가리키는 날짜 표현을 확정 날짜로 바꾼다 — `_resolve_date` 에 요일 괄호를 더한다.
+
+    공지 원문은 "11월 27일(금)" 처럼 요일을 괄호로 붙인다. 요일은 떼고 읽은 뒤 날짜를 검산하는
+    데만 쓴다 — 요일이 날짜와 안 맞으면 조용히 한쪽을 고르지 않고 거절한다(옮겨 적다 틀렸을 수
+    있다). 공지 사진 경로는 `app/rules/notice_dates.py` 가 따로 읽는다 (#797).
+    """
+    if isinstance(value, str):
+        matched = _WEEKDAY_PAREN_RE.search(value)
+        if matched is not None and value[: matched.start()].strip():
+            said = _WEEKDAY_INDEX[matched.group(1)]
+            day = _resolve_date(
+                value[: matched.start()], today=today, direction=direction, anchor=anchor
+            )
+            if day.weekday() != said:
+                raise DateParseError(
+                    f"요일이 날짜와 맞지 않는다: {value.strip()!r} — "
+                    f"{day.month}월 {day.day}일은 {'월화수목금토일'[day.weekday()]}요일이다. "
+                    "어느 쪽이 맞는지 보호자에게 묻는다."
+                )
+            return day
+    return _resolve_date(value, today=today, direction=direction, anchor=anchor)
+
+
+def _resolve_date(
     value: str,
     *,
     today: date,

@@ -137,14 +137,14 @@ async def test_to_thread_로_돈_스레드도_귀속을_본다() -> None:
     llm_usage.enable()
     parent_id = uuid4()
 
-    with llm_usage.attribute(parent_id=parent_id, run_id="up-1", source="meal_ocr"):
+    with llm_usage.attribute(parent_id=parent_id, run_id="up-1", source="photo"):
         await asyncio.to_thread(_record, role="meal_ocr")
 
     [row] = llm_usage.drain()
     assert (row.parent_id, row.run_id, row.source, row.role) == (
         parent_id,
         "up-1",
-        "meal_ocr",
+        "photo",
         "meal_ocr",
     )
 
@@ -155,7 +155,7 @@ async def test_run_in_executor_는_귀속을_넘기지_못한다(caplog: pytest.
     loop = asyncio.get_running_loop()
 
     with caplog.at_level(logging.WARNING, logger="app.core.llm_usage"):
-        with llm_usage.attribute(parent_id=uuid4(), run_id="up-1", source="meal_ocr"):
+        with llm_usage.attribute(parent_id=uuid4(), run_id="up-1", source="photo"):
             await loop.run_in_executor(None, _record)
 
     assert llm_usage.drain() == []
@@ -244,3 +244,67 @@ def test_숫자가_아닌_토큰_값은_0으로_담고_예외를_내지_않는�
     [row] = llm_usage.drain()
     assert (row.prompt_tokens, row.cached_prompt_tokens, row.completion_tokens) == (0, 0, 0)
     assert (row.reasoning_tokens, row.latency_ms) == (0, 0)
+
+
+def test_int4_를_넘는_숫자는_0_이다() -> None:
+    """한 행의 숫자 하나가 묶음 500행의 INSERT 를 통째로 실패시키지 않게 (#710 리뷰)."""
+    llm_usage.enable()
+
+    with llm_usage.attribute(parent_id=uuid4(), run_id="run-1", source="input"):
+        _record(prompt_tokens=3_000_000_000, completion_tokens=2**31 - 1)
+
+    [row] = llm_usage.drain()
+    assert (row.prompt_tokens, row.completion_tokens) == (0, 2**31 - 1)
+
+
+def test_글자_칸의_NUL_은_지운다() -> None:
+    """NUL 이 든 글자는 Postgres 가 거부해 묶음째 실패한다 (#710 리뷰)."""
+    llm_usage.enable()
+
+    with llm_usage.attribute(parent_id=uuid4(), run_id="run-1", source="input"):
+        _record(role="fo\x00od", provider="exa\x00mple.invalid", model="mod\x00el-a")
+
+    [row] = llm_usage.drain()
+    assert (row.role, row.provider, row.model) == ("food", "example.invalid", "model-a")
+
+
+def test_Source_밖의_창구_값이면_저장하지_않고_WARNING(caplog: pytest.LogCaptureFixture) -> None:
+    """CHECK 에 걸릴 행은 큐에 들이지 않는다 — 안 그러면 같은 묶음의 다른 행까지 날아간다."""
+    llm_usage.enable()
+
+    with caplog.at_level(logging.WARNING, logger="app.core.llm_usage"):
+        with llm_usage.attribute(
+            parent_id=uuid4(),
+            run_id="run-1",
+            source="meal_ocr",  # type: ignore[arg-type]
+        ):
+            _record()
+        with llm_usage.attribute(parent_id=uuid4(), run_id="run-2", source="input"):
+            _record()
+
+    assert [row.run_id for row in llm_usage.drain()] == ["run-2"]
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "meal_ocr" in warnings[0].getMessage()  # 코드가 정한 글자라 남겨도 된다
+
+
+def test_requeue_는_못_쓴_묶음을_큐_뒤에_되돌리고_상한을_넘는_만큼은_버린다(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    llm_usage.enable()
+    with llm_usage.attribute(parent_id=uuid4(), run_id="run-1", source="input"):
+        for _ in range(3):
+            _record()
+    batch = llm_usage.drain()
+    assert len(batch) == 3
+
+    assert llm_usage.requeue(batch) == 3
+    assert len(llm_usage.drain()) == 3
+
+    # 상한 — 큐가 MAX_PENDING 에 닿으면 되돌릴 자리가 없다
+    with llm_usage.attribute(parent_id=uuid4(), run_id="run-1", source="input"):
+        for _ in range(llm_usage.MAX_PENDING - 1):
+            _record()
+    with caplog.at_level(logging.WARNING, logger="app.core.llm_usage"):
+        assert llm_usage.requeue(batch) == 1  # 자리는 하나뿐이다
+    assert len([r for r in caplog.records if r.levelno == logging.WARNING]) == 1

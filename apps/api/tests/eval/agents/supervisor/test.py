@@ -5,6 +5,8 @@
     uv run pytest tests/eval/agents/supervisor/test.py -m live -k split -s        # Supervisor 단독
     uv run pytest tests/eval/agents/supervisor/test.py -m live -k growth_routing -s  # Growth 경계
     uv run pytest tests/eval/agents/supervisor/test.py -m live -k health_routing -s  # Health 경계
+    uv run pytest tests/eval/agents/supervisor/test.py -m live -k followup_routing -s  # 후속 질문
+    $env:SPLIT_CONTEXT="unrelated"; uv run pytest ... -m live -k "split and RC" -s  # 앞 대화 회귀
     uv run pytest tests/eval/agents/supervisor/test.py -m live -s                 # 둘 다
 
 
@@ -68,6 +70,7 @@ from tests.eval.agents.routing_cases import (
     GR_CASES,
     HR_CASES,
     HR_NEVER_HEALTH,
+    NT_CASES,
     RC_CASES,
     T_CASES,
     UNCLEAR_CASES,
@@ -85,6 +88,13 @@ from tests.eval.agents.routing_cases import (
     score_split,
     sum_scores,
 )
+from tests.eval.agents.supervisor.followup_cases import (
+    FU_CASES,
+    UNRELATED_CONTEXT,
+    followup_agent_ok,
+    followup_violations,
+    resolved_filled,
+)
 
 pytestmark = pytest.mark.live
 
@@ -92,6 +102,10 @@ HR_IDS = frozenset(case.case_id for case in HR_CASES)
 
 # 흔들림(같은 입력에 결과가 바뀌는 것)을 보려면 2 이상으로 올린다
 TEST_REPEAT = int(os.getenv("TEST_REPEAT", "1"))
+
+# "unrelated" 면 split 의 모든 케이스에 상관없는 앞 대화(`UNRELATED_CONTEXT`)를 붙여 돈다 —
+# 단발 요청이 앞 주제로 끌려가지 않는지 본다. 비우면 지금까지의 기준선 그대로다
+SPLIT_CONTEXT = os.getenv("SPLIT_CONTEXT")
 
 KST = ZoneInfo("Asia/Seoul")
 # Food 출력에 쓰면 안 되는 영양 단위(공통 실패 1). 자세한 판정은 food/test_food_run.py
@@ -143,7 +157,7 @@ RESULT_PATH = Path(
 INPUT_PRICE = float(os.getenv("LLM_INPUT_PRICE_PER_M", "0"))
 OUTPUT_PRICE = float(os.getenv("LLM_OUTPUT_PRICE_PER_M", "0"))
 
-_CASES = (*RC_CASES, *T_CASES, *FC_CASES, *UNCLEAR_CASES, *DATE_CASES)
+_CASES = (*RC_CASES, *T_CASES, *FC_CASES, *UNCLEAR_CASES, *DATE_CASES, *NT_CASES)
 
 # 앞으로의 계획. unclear 로 가면 일정으로 등록할지 묻지 못한다 (D8 · #624)
 _PLANS = ("T18", "T58")
@@ -181,10 +195,13 @@ def test_supervisor_split(case: RoutingCase, expect: Callable[..., None]) -> Non
     # 라벨이 틀려도 실패하지 않는다 — 정답 구간은 점수로만 본다. 그래서 둘을 나눠 적는다
     expect(f"검증을 통과한 출력이 나온다 (라벨은 점수로만 본다) · 정답 구간 {format_spans(case)}")
     client = _client()
+    context = UNRELATED_CONTEXT if SPLIT_CONTEXT == "unrelated" else None
     for attempt in range(1, TEST_REPEAT + 1):
         started = time.perf_counter()
         # keep_rejected — 버려진 조각을 콘솔에서 본다. 케이스 문장이 합성이라 괜찮다
-        result = asyncio.run(supervisor.run(case.text, client=client, keep_rejected=True))
+        result = asyncio.run(
+            supervisor.run(case.text, client=client, keep_rejected=True, context=context)
+        )
         elapsed_ms = int((time.perf_counter() - started) * 1000)
         score = score_split(case, result.output)
         _SPLIT_SCORES.append(score)
@@ -202,6 +219,67 @@ def test_supervisor_split(case: RoutingCase, expect: Callable[..., None]) -> Non
         assert result.error is None, (
             f"{case.case_id}: Supervisor 실패 {result.error} ({result.detail})"
         )
+
+
+# ── 후속 질문 (Supervisor 단독, 앞 대화를 붙여서) ────────────────
+# 합격선 — TEST_REPEAT 번 되풀이한 전부로 센다. 0건 규칙은 비율과 섞지 않는다
+FOLLOWUP_AGENT_MIN = 0.9
+
+
+def test_followup_routing(expect: Callable[..., None]) -> None:
+    """FU01~FU14 — 0건 규칙 위반이 없고 이어 묻는 요청의 agent(+유형) 일치율이 합격선 이상이다.
+
+    0건 규칙(followup_cases): 앞 대화가 있어도 증상 · 위험 물질 · 진단 문의는 이번 입력의 말로
+    가른다 · 앞 입력의 기록을 다시 내지 않는다 · 앞 대화가 없거나 이어 볼 것이 여럿이면 request 를
+    만들지 않는다 · 혼자 읽어도 뜻이 통하는 말은 앞 주제로 끌려가지 않는다. C1 은 따로 센다.
+    `resolved_request` 를 채운 비율은 보고만 한다.
+    """
+    expect(f"0건 규칙 위반 0 · agent(+유형) ≥ {FOLLOWUP_AGENT_MIN:.0%} (FU01~FU08)")
+    client = _client()
+    graded = matched = fillable = filled = 0
+    violations: list[str] = []
+    errors: list[str] = []
+    for case in FU_CASES:
+        for attempt in range(1, TEST_REPEAT + 1):
+            started = time.perf_counter()
+            result = asyncio.run(
+                supervisor.run(case.text, client=client, keep_rejected=True, context=case.context)
+            )
+            elapsed_ms = int((time.perf_counter() - started) * 1000)
+            agent_ok = followup_agent_ok(case, result.output)
+            if agent_ok is not None:
+                graded += 1
+                matched += agent_ok
+            was_filled = resolved_filled(case, result.output)
+            if was_filled is not None:
+                fillable += 1
+                filled += was_filled
+            found = followup_violations(case, result.output)
+            violations.extend(found)
+            if result.error:
+                errors.append(f"{case.case_id}: {result.error}")
+            suffix = f" #{attempt}" if TEST_REPEAT > 1 else ""
+            print(f"\n[{case.case_id}{suffix}] {case.watch}")
+            print(f"    입력 {case.text!r}")
+            print(f"    S {result.model_calls}회 {elapsed_ms}ms  {format_segments(result.output)}")
+            if result.output is not None:
+                resolved = [
+                    s.resolved_request for s in result.output.segments if s.resolved_request
+                ]
+                if resolved:
+                    print(f"      해석: {resolved}")
+            print(f"      agent {agent_ok} · 위반 {found or '없음'}")
+
+    agent = rate(matched, graded)
+    c1 = [item for item in violations if item.endswith("(C1)")]
+    print(f"\n══ 후속 질문 합계 — 실행 {len(FU_CASES) * TEST_REPEAT}회")
+    print(f"   agent {matched}/{graded} = {agent:.0%} · 해석 채움 {filled}/{fillable}")
+    print(f"   0건 규칙 위반 {len(violations)} (C1 {len(c1)})")
+    if violations:
+        print(f"   위반: {violations}")
+    assert not errors, f"Supervisor 실패: {errors}"
+    assert not violations, f"0건 규칙 위반: {violations}"
+    assert agent >= FOLLOWUP_AGENT_MIN, f"agent {agent:.0%} < {FOLLOWUP_AGENT_MIN:.0%}"
 
 
 # ── Growth 경계 (Supervisor 단독) ───────────────────────────────

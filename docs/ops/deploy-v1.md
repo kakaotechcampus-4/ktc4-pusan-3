@@ -97,7 +97,7 @@ dev 가 열려 있으면 누구나 카카오로 가입해 실제 보호자 · �
   dev 가 죽지 않고 서버 swap 2GB 를 채우며 운영까지 느려진다 (#808 리뷰).
 - 🚨 `${X:-0}` 은 **빈 값도 0(상한 없음)** 으로 바꿔 오류 없이 띄운다. 그래서 `deploy.sh` 가 dev 배포 전에
   네 값이 다 있고 0 이 아닌지 본다 (`--check-env` · make 배포 타깃도 같다). prod 는 안 쓴다 — 0 이면 compose 설정에서 빠져서 컨테이너가 다시 만들어지지 않는다.
-- 마이그레이션(`compose run`)에도 걸린다. 거기서 넘치면 exit 137 로 `deploy.sh` 가 up 전에 멈추고 옛 컨테이너가 그대로 서비스한다.
+- 마이그레이션 · 적재(`compose run --rm api-task`)에도 걸린다 — `api-task` 가 api 와 같은 값을 쓴다. 거기서 넘치면 exit 137 로 `deploy.sh` 가 up 전에 멈추고 옛 컨테이너가 그대로 서비스한다.
 - 이미지 빌드에는 안 걸린다. 빌드는 `flock` 이 한 번에 하나로 줄 세운다.
 - 확인: `docker inspect ktc4-dev-api --format '{{.HostConfig.Memory}} {{.HostConfig.MemorySwap}}'` → 같은 바이트 두 개, `ktc4-api` → `0 0`.
 
@@ -153,6 +153,16 @@ dev 가 열려 있으면 누구나 카카오로 가입해 실제 보호자 · �
 - `deploy-migrate` · `deploy-load-*` 는 배포와 같은 잠금 안에서 `.deployed-tag` 를 읽고, 그 태그의 api 이미지가 없으면 멈춘다.
   `compose run` 에는 `--no-build` 가 없고 `--pull never` 여도 이미지가 없으면 굽기 때문이다 (compose v2.34 로컬 확인).
 - 🚨 **로컬에서 처음 띄울 때** 는 `make api-image web-image` 를 먼저 돈다 — up · migrate 가 더는 알아서 굽지 않는다.
+
+**일회용 작업은 `api-task` 로** — 마이그레이션(deploy.sh · `make deploy-migrate`)과 적재(`make deploy-load-*`)는
+`compose run --rm api-task <명령>` 이다. `api-task` 는 api 와 같은 이미지 · 환경 · 메모리 상한이고 다른 것은 셋뿐이다.
+
+- **ktc4-edge 에 안 붙는다.** `compose run` 은 서비스의 고정 IP 까지 복사한다. 그래서 `run --rm api` 는 떠 있는 api 와
+  같은 주소(.20 · .21)를 두 번 잡아 `Address already in use` 로 멈춘다. 첫 배포 · 첫 전환은 api 가 없어서 통과하고
+  두 번째 배포부터 늘 터졌다 (11-09 dev 배포 3회 실패). DB 만 보면 되니 Caddy 망 · S3 열쇠(.20)에 닿을 이유도 없다.
+- **`build:` 가 없고 `pull_policy: never` 다.** 이미지가 없으면 굽지도 받지도 않고 멈춘다 — 위 "make 로 굽지 않기" 와 같은 이유.
+- **profile(`task`)이 있다.** `up` 은 띄우지 않고, `run` 으로 이름을 부를 때만 켜진다.
+- `test_deploy.py` 가 deploy.sh · Makefile 의 `run --rm <서비스>` 가 고정 IP 서비스를 부르면 실패한다.
 
 ## CI
 

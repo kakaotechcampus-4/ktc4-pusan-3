@@ -71,6 +71,7 @@ from app.agents.growth.tools.memory import (
     category_chains,
     has_citable_memory,
     has_topic_memory,
+    topic_records,
 )
 from app.agents.growth.tools.routine import ask_question
 from app.rules.growth_topic import (
@@ -167,14 +168,16 @@ async def _run(
         context.state.topic = request_topic(asked_texts, task.record_texts)
         context.state.strict_topic = strict_topic(asked_texts, task.record_texts)
     context.state.routine_scope = routine_scope(task.request_texts, task.record_texts)
-    context.state.said_texts = (*task.request_texts, *task.record_texts, *task.answer_texts)
+    # "보호자가 말했는가" 를 코드가 확인하는 근거다 — 해석한 문장이 아니라 원문을 읽는다
+    context.state.said_texts = (*task.originals(), *task.record_texts, *task.answer_texts)
     context.state.recorded_subjects = task.recorded_subjects
     context.state.answered_subject = task.answered_subject
 
     key = closed_readout_key(task_type, gate)
     if key is None and task_type is GrowthTaskType.ROUTINE_COACHING:
-        # 같은 입력의 기록 조각도 본다 — "약 먹기 싫어해. 어떻게 하지?" 는 요청 조각에 약이 없다
-        key = closure_key((*task.request_texts, *task.record_texts, *task.answer_texts))
+        # 같은 입력의 기록 조각도 본다 — "약 먹기 싫어해. 어떻게 하지?" 는 요청 조각에 약이 없다.
+        # 해석한 문장이 낱말을 빼먹어도 닫히게 보호자 원문도 같이 본다
+        key = closure_key(_closure_texts(task))
     if key is not None:
         context.state.closed_reason = key
         return _result(task_type, "blocked", readouts=(READOUTS.render(key),))
@@ -231,6 +234,11 @@ async def _run(
             )
         # 프롬프트에 실은 행만 근거로 달 수 있다
         context.state.seen_docs = {hit.row.id: hit.row for hit in examples}
+        if not from_routine and context.state.topic:
+            # 요청 주제의 아이 기록은 모델 전에 읽는다 — 조회 tool 을 안 불러도 근거로 달 수 있고,
+            # 후보가 달지 않으면 거절된다(`review_learning`)
+            context.state.topic_records = await topic_records(context, context.state.topic)
+            context.state.seen_evidence.update(context.state.topic_records)
         # 코드가 주제를 읽었는데 그 주제의 [예시] 행이 없다 — 보호자가 정한 요청이 기준인 일반
         # 추천을 낼 수 있다(`review_learning`). 주제를 못 읽은 막연한 요청은 해당하지 않는다.
         # 루틴에서 넘어온 run 은 [예시]를 찾지 않으니 보호자가 말한 루틴 낱말이 그 요청이다
@@ -473,9 +481,14 @@ def _screen_candidate(task: DomainTask, task_type: GrowthTaskType) -> bool:
     """
     return (
         task_type is GrowthTaskType.ROUTINE_COACHING
-        and screen_use(task.request_texts, task.record_texts)
-        and closure_key((*task.request_texts, *task.record_texts, *task.answer_texts)) is None
+        and screen_use((*task.request_texts, *task.original_texts), task.record_texts)
+        and closure_key(_closure_texts(task)) is None
     )
+
+
+def _closure_texts(task: DomainTask) -> tuple[str, ...]:
+    """닫힘(의료 처치 · 증상)을 볼 글. 요청 · 해석 전 보호자 원문 · 같은 입력의 기록 조각 · 답."""
+    return (*task.request_texts, *task.original_texts, *task.record_texts, *task.answer_texts)
 
 
 def _doc_hits(state: GrowthRunState) -> int:

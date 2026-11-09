@@ -17,6 +17,11 @@ export const API_ERROR_CODES = [
   "not_found", // 404
   "owner_required", // 409
   "already_confirmed", // 409 승인 게이트 중복
+  // 🔶 409 `POST /children/{cid}/suggestions/approve` — 채택하려는 제안에 그사이 알레르기로 등록된 식품이 들어 있다
+  //    (서버 #835 · `docs/web/event-draft-ui-v1.md` §3-8 · `docs/api/suggestions-v1.md` §8).
+  //    하나라도 걸리면 **전부 거절**하고 걸린 제안 id 를
+  //    `detail.suggestion_ids` 에 싣는다. 🚨 다시 시도할 수 없다 — 같은 선택은 같은 409 다. 화면은 그 제안을 선택에서 뺀다.
+  "allergen_blocked",
   "already_exists", // 409 health_safety 등록 — active 끼리 (아이, 종류, 앞뒤 공백 뗀 이름)이 겹침 (#369). 🚨 실패가 아니라 "이미 기록에 있다" 다
   "already_corrected", // 409 `POST /corrections` 가 active 가 아닌 기록을 받음 (#277) — 값이 틀린 400 과 다르다
   "invite_used", // 409

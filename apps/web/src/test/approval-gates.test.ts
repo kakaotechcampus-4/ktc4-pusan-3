@@ -100,19 +100,23 @@ describe("대화의 삭제 확정 (#535)", () => {
   });
 });
 
-/**
- * approve 버튼. 🚨 **조건부 변형도 잡는다** — 08 맨 아래 버튼은 넣을 일정이 있을 때만 approve 다
- * (`variant={… ? "approve" : "primary"}` · #824). 글자 그대로의 `variant="approve"` 만 찾으면 그 자리가 빠진다.
- */
-const APPROVE = /variant=(?:"approve"|\{[^}]*"approve")/;
-
 describe("게이트 표식은 게이트 안에만", () => {
+  /**
+   * 🚨 **조건부 표식도 센다** (#823). 05 알레르기 확인 시트는 저장할 알레르기가 있을 때만 버튼에
+   *    `approve` 를 입힌다(`variant={… ? "approve" : "primary"}`). `variant="approve"` 만 찾으면 이 버튼이
+   *    목록에서 빠져, 게이트 표식이 어디에 있는지 이 테스트가 모르게 된다.
+   * ⚠️ 05 시트가 이 목록에 들어온 것은 게이트 ㉡ 를 칩에서 이 버튼으로 **옮긴** 것이다 — 늘린 것이 아니다.
+   *    08 사진 확인 화면도 같다(#824). 넣을 일정이 있을 때만 맨 아래 버튼이 approve 이고, 게이트 ㉠ 를
+   *    항목 시트(`photo-entry-sheet.tsx`)에서 이 버튼으로 옮긴 것이다.
+   */
+  const APPROVE = /variant=(?:"approve"|\{[^}]*"approve")/;
   it("approve 버튼은 게이트를 그리는 컴포넌트에만 있다", () => {
     expect(filesMatching(APPROVE).filter((path) => !DESIGN_SYSTEM.test(path))).toEqual([
       "components/event-draft-card.tsx",
       "components/health-safety-list.tsx",
       "components/medication-draft-card.tsx",
       "components/photo-review.tsx",
+      "components/safety-check-sheet.tsx",
       "components/safety-scan-review.tsx",
     ]);
   });

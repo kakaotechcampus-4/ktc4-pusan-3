@@ -17,6 +17,7 @@ from app.agents.activity import agent as agent_module
 from app.agents.activity.agent import MAX_STEPS, run
 from app.agents.activity.areas import find_area
 from app.agents.activity.context import ActivityContext
+from app.agents.activity.prompt import RECALL_HINT
 from app.agents.activity.schemas.common import (
     ActivitySetting,
     CaregiverRole,
@@ -100,9 +101,15 @@ def _say(text: str) -> LLMResponse:
 
 
 def candidate(
-    content: str, *, setting: str = "indoor", materials=(), day: str = "today"
+    content: str,
+    *,
+    setting: str = "indoor",
+    materials=(),
+    day: str = "today",
+    place_name: str | None = None,
 ) -> dict[str, Any]:
     return {
+        "place_name": place_name,
         "content": content,
         "setting": setting,
         "day": day,
@@ -387,16 +394,21 @@ class TestWeather:
             "날씨는 확인하지 않았어요. 바깥 놀이라면 나가기 전에 날씨를 한 번 봐 주세요."
         ]
 
-    async def test_위치가_없어도_해가_지면_실내만이다(self):
-        """묻지 않은 날이어도 해가 진 뒤 공원은 막는다 — 일몰은 국토 가운데 기준점으로 계산한다."""
-        llm = FakeLLM(
-            propose("공원 산책", "그림자놀이", "색종이 접기", setting="outdoor"),
-            propose("거실 보물찾기", "그림자놀이", "색종이 접기"),
-        )
+    async def test_해가_져도_공원_산책은_막지_않는다(self):
+        """해가 진 뒤에는 오늘 놀이터만 뺀다 — 공원은 보호자와 같이 걷는다 (#800)."""
+        llm = FakeLLM(propose("공원 산책", "그림자놀이", "색종이 접기", setting="outdoor"))
         night = datetime(2026, 10, 7, 21, 0, tzinfo=KST)
         result = await run(task(), context(now=night, timezone=KST), client=llm)
-        assert contents(result)[0] == "거실 보물찾기"
-        assert [r.body for r in result.readouts] == ["해가 져서 실내 놀이만 골랐어요."]
+        assert contents(result)[0] == "공원 산책"
+        assert "해가 져서 실내 놀이만 골랐어요." not in [r.body for r in result.readouts]
+
+    async def test_다른_날_실내_놀이에는_오늘_밤_안내를_붙이지_않는다(self):
+        """일요일 밤에 "다음 주 주말" 을 물었는데 "해가 져서" 가 붙던 버그 (#800)."""
+        llm = FakeLLM(propose("키즈카페 탐색", "블록 쌓기", "역할놀이", day="다음 주 주말"))
+        night = datetime(2026, 10, 11, 21, 0, tzinfo=KST)  # 일요일
+        result = await run(task(), context(now=night, timezone=KST), client=llm)
+        assert len(contents(result)) == 3
+        assert all("어두워서" not in r.body for r in result.readouts)
 
     async def test_오늘_해가_져도_내일_바깥_놀이에는_해_진_안내를_붙이지_않는다(self):
         """안내는 결과에 나간 바깥 활동의 날로 고른다 — 오늘 판정을 붙이면 틀린다 (#515 리뷰)."""
@@ -624,6 +636,91 @@ class TestArea:
         assert result.status == "degraded"
 
 
+# ── 음식 칸 · 재호출 힌트 · 요청한 음식 안내 (#582) ───────────────────────────────────
+
+
+def _allergic(label: str, born=BORN_40_MONTHS) -> ActivityContext:
+    safety = InMemorySafety([SafetyEntry(kind="allergy", label=label, status="active")])
+    return ActivityContext(
+        child_id=CHILD,
+        run_id="run-1",
+        now=NOW,
+        timezone=UTC,
+        ports=in_memory_ports(CHILD, born, safety=safety, docs=InMemoryActivityDocs([DEFAULT_DOC])),
+    )
+
+
+def _food(content: str, *foods: str) -> dict[str, Any]:
+    return {**candidate(content), "involves_food": True, "foods": list(foods)}
+
+
+def _propose_foods(*items: dict[str, Any]) -> LLMResponse:
+    return _tools(("propose_activity_candidates", {"candidates": list(items)}))
+
+
+class TestFoods:
+    async def test_재호출_힌트는_빠진_이유와_상관없이_같다(self):
+        """알레르기로 빠졌을 때만 힌트를 주면 그 자체가 사유다 (Tool_공통 §5-2 · #582)."""
+        hazard = FakeLLM(
+            propose("구슬 꿰기", "그림자놀이", "색종이 접기"),
+            propose("까꿍 놀이", "공 굴리기", "컵 쌓기"),
+        )
+        await run(task(), context(BORN_20_MONTHS), client=hazard)
+        allergy = FakeLLM(
+            _propose_foods(
+                _food("쿠키 굽기", "쿠키"), candidate("그림자놀이"), candidate("컵 쌓기")
+            ),
+            propose("까꿍 놀이", "공 굴리기", "색종이 접기"),
+        )
+        await run(task(), _allergic("밀"), client=allergy)
+
+        first, second = hazard.seen[1][-1]["content"], allergy.seen[1][-1]["content"]
+        assert RECALL_HINT in first and RECALL_HINT in second
+        assert "알레르기" not in second and "밀" not in second
+
+    async def test_요청한_음식이_막히면_보호자가_쓴_말로_빼고_골랐다고_안내한다(self):
+        """등록한 알레르기 이름이 아니라 보호자가 쓴 어절을 싣는다 — Food 요청 안내와 같다."""
+        llm = FakeLLM(propose("그림자놀이", "색종이 접기", "까꿍 놀이"))
+
+        result = await run(task("땅콩버터 샌드위치 만들기 하자"), _allergic("땅콩"), client=llm)
+
+        (notice,) = [r for r in result.readouts if "요청하신" in r.body]
+        assert notice.body == (
+            "요청하신 땅콩버터에는 등록해 두신 알레르기와 겹치는 것이 있어서 그런 놀이는 빼고 "
+            "골랐어요."
+        )
+        assert (notice.kind, notice.authored_by) == ("notice", "code")
+
+    async def test_빼_달라고_한_음식은_안내하지_않는다(self):
+        llm = FakeLLM(propose("그림자놀이", "색종이 접기", "까꿍 놀이"))
+
+        result = await run(task("땅콩 빼고 놀 거리 알려 줘"), _allergic("땅콩"), client=llm)
+
+        assert not [r for r in result.readouts if "요청하신" in r.body]
+
+    async def test_연령으로_막힌_음식도_보호자가_쓴_말로_안내한다(self):
+        llm = FakeLLM(propose("그림자놀이", "색종이 접기", "까꿍 놀이"))
+
+        result = await run(
+            task("꿀 넣은 요거트 맛보기 해 볼까"), context(date(2025, 12, 1)), client=llm
+        )
+
+        (notice,) = [r for r in result.readouts if "요청하신" in r.body]
+        assert notice.body == "요청하신 꿀은 12개월 전에는 먹이지 않아서 그런 놀이는 빼고 골랐어요."
+
+    async def test_다_빠지면_예시로_채우지_않고_안내만_낸다(self):
+        """[예시] 행으로 채우면 요청과 상관없는 추천이 나간다 (#582 실험) — 정직하게 0개."""
+        peanut = [_food(f"땅콩버터 놀이 {n}", "땅콩버터") for n in range(1, 4)]
+        llm = FakeLLM(_propose_foods(*peanut), _propose_foods(*peanut))
+
+        result = await run(task("땅콩버터로 놀고 싶어"), _allergic("땅콩"), client=llm)
+
+        assert (result.status, result.suggestions, result.model_calls) == ("completed", (), 2)
+        codes = [r.code for r in result.readouts]
+        assert "empty" in codes
+        assert any("요청하신 땅콩버터" in r.body for r in result.readouts)
+
+
 class TestEvents:
     """행사 어댑터가 있으면 search_events 가 열리고, 찾은 행사는 장소처럼 이름이 붙는다."""
 
@@ -682,3 +779,131 @@ class TestEvents:
         assert result.suggestions[0].place_notice.startswith("한국관광공사 행사 정보예요.")
         # 행사는 근거가 아니다 — [예시] 문서 행만 남는다
         assert {c.ref.kind for c in result.suggestions[0].citations} == {"activity_doc"}
+
+
+class TestWhen:
+    """언제 하는 활동인지는 보호자가 쓴 표현으로 받는다 (#800)."""
+
+    async def test_지난_날을_내면_고쳐_다시_내게_한다(self):
+        llm = FakeLLM(
+            propose("공원 산책", "그림자놀이", "색종이 접기", day="어제"),
+            propose("공원 산책", "그림자놀이", "색종이 접기", day="내일"),
+        )
+        result = await run(task(), context(), client=llm)
+        assert len(contents(result)) == 3
+        retry = llm.seen[1][-1]["content"]
+        assert "지난 날" in retry
+
+    async def test_밤에_놀이터를_찾으려_하면_안내를_붙인다(self):
+        """오늘 밤 놀이터는 장소 조회가 막는다. 막혔으면 "어두워서 놀이터는 뺐어요" 를 싣는다."""
+        playground = PlaceRow(
+            name="○○놀이터",
+            category=PlaceCategory.PLAYGROUND,
+            distance_m=300,
+            source="kids_play_facility",
+            data_date=None,
+        )
+        ctx = ActivityContext(
+            child_id=CHILD,
+            run_id="run-1",
+            now=datetime(2026, 10, 7, 21, 0, tzinfo=KST),
+            timezone=KST,
+            ports=in_memory_ports(
+                CHILD,
+                BORN_40_MONTHS,
+                docs=InMemoryActivityDocs([DEFAULT_DOC]),
+                places=InMemoryPlaces([playground]),
+            ),
+            location=CoarseLocation(lat=35.18, lon=129.08),
+        )
+        llm = FakeLLM(
+            _tools(("search_nearby_places", {"category": "playground", "day": "오늘"})),
+            propose("거실 보물찾기", "그림자놀이", "색종이 접기"),
+        )
+        result = await run(task(), ctx, client=llm)
+        assert len(contents(result)) == 3
+        assert "지금은 어두워서 놀이터는 뺐어요." in [r.body for r in result.readouts]
+
+
+class TestPlaceFit:
+    """장소는 "이 아이가 지금 어떤 곳이 맞는지" 를 먼저 쓰고, 시설을 지어내지 않는다 (#814)."""
+
+    async def test_프롬프트가_장소를_고른_이유와_시설_금지를_적는다(self):
+        llm = FakeLLM(propose("거실 보물찾기", "그림자놀이", "색종이 접기"))
+        await run(task("키즈카페 갈 만한 데 있어?"), context(), client=llm)
+        system = llm.seen[0][0]["content"]
+        assert "왜 그 종류의 장소인지" in system
+        assert "을 짐작해 쓰지 않는다" in system
+        assert "기록에 장소 이름이 있으면" in system
+
+    async def test_보호자가_말한_결이_오늘_상태보다_먼저다(self):
+        """많이 뛴 날이어도 보호자가 "또 신나게" 를 원하면 그대로 — 기록은 그 안에서 고르는 데만."""
+        llm = FakeLLM(propose("거실 보물찾기", "그림자놀이", "색종이 접기"))
+        await run(task("오후에도 몸으로 신나게 놀 데 추천해 줘"), context(), client=llm)
+        system = llm.seen[0][0]["content"]
+        assert "보호자가 이번 요청에서 원하는 결" in system
+
+
+class TestDarkPlaygroundRun:
+    async def test_내일로_찾은_놀이터를_오늘_후보로_내면_거절하고_안내를_붙인다(self):
+        """장소 조회는 day 마다 막지만, 내일로 찾은 놀이터를 오늘 후보에 붙이는 길을 출력 검증이
+        막는다 (#805 리뷰)."""
+        playground = PlaceRow(
+            name="○○놀이터",
+            category=PlaceCategory.PLAYGROUND,
+            distance_m=300,
+            source="kids_play_facility",
+            data_date=None,
+        )
+        ctx = ActivityContext(
+            child_id=CHILD,
+            run_id="run-1",
+            now=datetime(2026, 10, 7, 21, 0, tzinfo=KST),
+            timezone=KST,
+            ports=in_memory_ports(
+                CHILD,
+                BORN_40_MONTHS,
+                docs=InMemoryActivityDocs([DEFAULT_DOC]),
+                places=InMemoryPlaces([playground]),
+            ),
+            location=CoarseLocation(lat=35.18, lon=129.08),
+        )
+        llm = FakeLLM(
+            _tools(("search_nearby_places", {"category": "playground", "day": "내일"})),
+            propose(
+                "미끄럼틀 타기", "그림자놀이", "색종이 접기", place_name="○○놀이터", day="오늘"
+            ),
+            propose("거실 보물찾기", "그림자놀이", "색종이 접기"),
+        )
+        result = await run(task(), ctx, client=llm)
+        assert "미끄럼틀 타기" not in " ".join(contents(result))
+        assert "지금은 어두워서 놀이터는 뺐어요." in [r.body for r in result.readouts]
+
+
+class TestSaidTexts:
+    """해석한 요청은 모델에게 가고, "보호자가 말했는가" 를 보는 검사는 보호자 원문만 읽는다."""
+
+    async def test_해석한_요청과_보호자_원문을_따로_둔다(self):
+        ctx = context()
+        asked = DomainTask(
+            run_id="run-1",
+            agent="activity",
+            task_type=None,
+            request_texts=("컵 쌓기 말고 더 쉬운 실내 놀이 추천",),
+            original_texts=("더 쉬운 건 없어?",),
+        )
+        llm = FakeLLM(memory(), propose("종이컵 탑 쌓기", "그림자놀이", "색종이 접기"))
+
+        await run(asked, ctx, client=llm)
+
+        assert ctx.state.request_texts == ("컵 쌓기 말고 더 쉬운 실내 놀이 추천",)
+        assert ctx.state.said() == ("더 쉬운 건 없어?",)
+
+    async def test_원문_칸이_비면_요청_글이_말한_글이다(self):
+        ctx = context()
+        llm = FakeLLM(memory(), propose("종이컵 탑 쌓기", "그림자놀이", "색종이 접기"))
+
+        await run(task("공놀이 하고 싶어"), ctx, client=llm)
+
+        assert ctx.state.original_texts == ()
+        assert ctx.state.said() == ("공놀이 하고 싶어",)

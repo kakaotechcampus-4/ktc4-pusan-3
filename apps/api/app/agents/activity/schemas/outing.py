@@ -1,6 +1,6 @@
 """날씨 · 일정 · 장소 · 행사 조회 인자.
 
-날짜는 DayLabel 라벨로만 받는다. 모델이 날짜를 계산하지 않는다.
+날짜는 보호자가 쓴 표현(`When`)으로 받는다. 모델이 날짜를 계산하지 않는다 — 코드가 푼다(#800).
 위치는 인자에 없다 — 좌표는 요청 바디로만 받아 격자로 뭉갠 뒤 context 가 들고 있다 (4-3).
 보호자가 지역을 말했으면 그 이름만 글자로 받고, 대표 지점은 코드가 정한다(`areas.py`).
 반경도 인자에 없다 — 코드 상수다.
@@ -10,12 +10,9 @@ from typing import Annotated
 
 from pydantic import Field
 
-from app.agents.activity.schemas.common import DayLabel, PlaceCategory, ToolArgs
+from app.agents.activity.schemas.common import PlaceCategory, ToolArgs, When
 
-Day = Annotated[
-    DayLabel,
-    Field(default=DayLabel.TODAY, description="today / tomorrow / this_weekend 중 하나"),
-]
+Day = When
 
 
 Area = Annotated[

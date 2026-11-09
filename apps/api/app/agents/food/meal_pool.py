@@ -93,7 +93,7 @@ async def build_pool(context: FoodContext) -> tuple[PoolItem, ...]:
     """이 아이에게 나갈 수 있는 레시피 후보를 가중치와 함께 최대 `POOL_MAX` 개 돌려준다.
 
     🚨 안전 정보를 못 읽었으면(`None`) 풀을 만들지 않는다 — 알레르기를 거를 수 없다.
-    모델을 부르기 전에 한 번 부른다. 요청 글(`state.utterance`)에 이름이나 재료가 나온 레시피는
+    모델을 부르기 전에 한 번 부른다. 보호자 말(`state.said_texts()`)에 이름이나 재료가 나온 레시피는
     상한에 잘리지 않고 앞에 둔다. 안전 필터에 막힌 메뉴와 확인하지 못한 메뉴(재료를 모르는
     레시피 포함)는 풀에 없다. 막힌 것 중 제품에 따라 성분이 달라질 수 있어서 막힌 메뉴
     (`needs_check`)도 확인 칸이 생기기 전에는 풀에 넣지 않는다.
@@ -124,7 +124,7 @@ async def build_pool(context: FoodContext) -> tuple[PoolItem, ...]:
     ordered = _weighted_order(items, seed=f"{context.run_id}:pool")
     # 요청 글에 이름 · 재료가 나온 레시피는 풀 상한에 잘리지 않는다 — 레시피북이 수백 건이라 상한만
     # 두면 "오이 들어간" 요청에서도 오이 메뉴가 풀에 없을 수 있다. 상한 안에서 조건 맞는 것이 먼저다
-    wanted = requested_rows(ordered, context.state.utterance.splitlines())
+    wanted = requested_rows(ordered, context.state.said_texts())
     rest = [item for item in ordered if item not in wanted]
     return tuple([*wanted, *rest][:POOL_MAX])
 

@@ -8,6 +8,7 @@ import {
   gateMarks,
   recordApi,
   test,
+  switchScenario,
   writes,
 } from "./fixtures";
 
@@ -296,7 +297,7 @@ test.describe("근거가 부족하면 일반 추천 (§2 기억)", () => {
       await page.getByRole("button", { name: "이 1가지로 할게요" }).click();
 
       const sheet = page.getByRole("dialog");
-      await expect(sheet.getByText("처음 보는 재료가 있어요")).toBeVisible();
+      await expect(sheet.getByText("처음 보는 식품이 있어요")).toBeVisible();
       await expect(sheet.getByText("참깨")).toBeVisible();
       expect(writes(calls, "POST", /\/suggestions\/approve$/)).toEqual([]);
     });
@@ -780,8 +781,9 @@ test.describe("승인 게이트 ㉡ — 알레르기 확인은 채택보다 먼�
     const sheet = await pickEggAndAdopt(page);
 
     await expect(sheet).toBeVisible();
-    await expect(sheet.getByText("처음 보는 재료가 있어요")).toBeVisible();
-    await expect(sheet.getByRole("button", { name: "확인했어요" })).toBeDisabled();
+    await expect(sheet.getByText("처음 보는 식품이 있어요")).toBeVisible();
+    await expect(sheet.getByText("식품마다 하나씩 골라 주세요")).toBeVisible();
+    await expect(sheet.getByRole("button", { name: "이대로 고르기" })).toBeDisabled();
     expect(writes(calls, "POST", /\/suggestions\/approve$/)).toEqual([]);
 
     // 🚨 되돌릴 수 없는 것 앞의 시트는 실수로 닫히지 않는다.
@@ -789,25 +791,70 @@ test.describe("승인 게이트 ㉡ — 알레르기 확인은 채택보다 먼�
     await expect(sheet).toBeVisible();
   });
 
-  test('"알레르기가 있어요" 는 Idempotency-Key 를 달고 저장되고, 그 제안은 채택에서 빠진다', async ({
+  test("칩은 답만 고른다 — 마음을 바꾸면 배너도 같이 바뀌고, 아무것도 저장되지 않는다 (#823)", async ({
+    page,
+  }) => {
+    const calls = recordApi(page);
+    const sheet = await pickEggAndAdopt(page);
+
+    await sheet.getByRole("button", { name: "알레르기가 있어요" }).click();
+    // 🚨 누르기 전에는 "추가해요" 다. "추가했어요" 는 서버 저장이 끝난 뒤에만 선다.
+    await expect(sheet.getByText("계란을 알레르기 기록에 추가해요")).toBeVisible();
+    await expect(sheet.getByText("알레르기 기록에 추가했어요", { exact: false })).toHaveCount(0);
+
+    await sheet.getByRole("button", { name: "먹어 봤고 괜찮았어요" }).click();
+    await expect(sheet.getByText("계란을 알레르기 기록에 추가해요")).toHaveCount(0);
+    await expect(sheet.getByRole("button", { name: "이대로 고르기" })).toBeEnabled();
+    expect(writes(calls, "POST", /\/health-safety$/)).toEqual([]);
+  });
+
+  test('"알레르기가 있어요" 는 버튼을 누를 때 저장되고, 고른 것이 전부 막히면 목록에서 알린다', async ({
     page,
   }) => {
     const calls = recordApi(page);
     const sheet = await pickEggAndAdopt(page);
     await sheet.getByRole("button", { name: "알레르기가 있어요" }).click();
-    await expect(sheet.getByText("알레르기 기록에 추가했어요")).toBeVisible();
+    await expect(
+      sheet.getByText("이번에는 고를 수 있는 제안이 없어요", { exact: false }),
+    ).toBeVisible();
 
+    // 🚨 이 버튼이 게이트 ㉡ 다 (칩에서 옮겼다 · 게이트 수는 그대로).
+    expect(await gateMarks(page, "dialog[open]")).toContain("approve 버튼: 알레르기 저장하기");
+    await sheet.getByRole("button", { name: "알레르기 저장하기" }).click();
+
+    await expect(sheet).toBeHidden();
     const saved = writes(calls, "POST", /\/health-safety$/);
     expect(saved).toHaveLength(1);
     expect(saved[0].idempotencyKey).toBeTruthy();
     expect(saved[0].body).toMatchObject({ type: "allergy", label: "계란" });
-
-    await sheet.getByRole("button", { name: "알레르기가 있는 건 빼고 고를게요" }).click();
-    // s_1 만 골랐으므로 채택할 것이 남지 않는다.
+    // s_1 만 골랐으므로 채택할 것이 남지 않는다. 🚨 조용히 풀지 않고 이유를 말한다.
     expect(writes(calls, "POST", /\/suggestions\/approve$/)).toEqual([]);
+    await expect(
+      page.getByRole("status").filter({ hasText: "계란이 들어간 제안은 고를 수 없어요" }),
+    ).toBeVisible();
+    await expect(page.getByRole("button", { name: "고른 것이 없어요" })).toBeDisabled();
   });
 
-  test("다른 보호자가 먼저 등록한 재료면 기록된 것으로 서고, 다시 시도가 없다 (#374)", async ({
+  test("고를 것이 남으면 저장이 끝난 뒤 나머지만 채택한다", async ({ page }) => {
+    const calls = recordApi(page);
+    await page.goto(SUGGESTIONS);
+    await page.getByText("계란말이에 시금치를 조금 섞어 보세요").click();
+    await page.getByRole("tab", { name: "놀이 3가지" }).click();
+    await page.getByText("주말에 실내 물놀이장은 어떨까요").click();
+    await page.getByRole("button", { name: "이 2가지로 할게요" }).click();
+
+    const sheet = page.getByRole("dialog", { name: "확인해 주세요" });
+    await sheet.getByRole("button", { name: "알레르기가 있어요" }).click();
+    await sheet.getByRole("button", { name: "저장하고 나머지 고르기" }).click();
+
+    await expect(page.getByText("이렇게 하기로 했어요")).toBeVisible();
+    expect(writes(calls, "POST", /\/health-safety$/)).toHaveLength(1);
+    const approved = writes(calls, "POST", /\/suggestions\/approve$/);
+    expect(approved).toHaveLength(1);
+    expect(approved[0].body).toEqual({ suggestion_ids: ["s_4"] });
+  });
+
+  test("다른 보호자가 먼저 등록한 식품이면 저장된 것으로 보고, 다시 시도가 없다 (#374)", async ({
     page,
   }) => {
     const sheet = await pickEggAndAdopt(page);
@@ -822,18 +869,23 @@ test.describe("승인 게이트 ㉡ — 알레르기 확인은 채택보다 먼�
 
     // 🚨 409 already_exists 는 "이미 기록에 있다" 다 — 다음 제안에서도 걸러진다.
     await sheet.getByRole("button", { name: "알레르기가 있어요" }).click();
-    await expect(sheet.getByText("알레르기 기록에 추가했어요")).toBeVisible();
+    await sheet.getByRole("button", { name: "알레르기 저장하기" }).click();
+    await expect(sheet).toBeHidden();
     await expect(
-      sheet.getByText("알레르기 기록에 저장하지 못했어요", { exact: false }),
-    ).toHaveCount(0);
-    await expect(sheet.getByRole("button", { name: "다시 시도" })).toHaveCount(0);
+      page.getByRole("status").filter({ hasText: "계란이 들어간 제안은 고를 수 없어요" }),
+    ).toBeVisible();
+    await expect(page.getByText("알레르기 기록에 저장하지 못했어요", { exact: false })).toHaveCount(
+      0,
+    );
   });
 
   test('"괜찮았어요" 는 알레르기 기록을 만들지 않는다', async ({ page }) => {
     const calls = recordApi(page);
     const sheet = await pickEggAndAdopt(page);
     await sheet.getByRole("button", { name: "먹어 봤고 괜찮았어요" }).click();
-    await sheet.getByRole("button", { name: "확인했어요" }).click();
+    // 🚨 저장할 알레르기가 없으면 이 버튼은 게이트가 아니다 — 표식이 서면 게이트가 는 것처럼 읽힌다.
+    await expectNoGate(page, "dialog[open]");
+    await sheet.getByRole("button", { name: "이대로 고르기" }).click();
     await expect(page.getByText("이렇게 하기로 했어요")).toBeVisible();
     expect(writes(calls, "POST", /\/health-safety$/)).toEqual([]);
   });
@@ -846,7 +898,162 @@ test.describe("승인 게이트 ㉡ — 알레르기 확인은 채택보다 먼�
     await page.getByText("놀이터에 땅콩버터 쿠키를 간식으로 챙겨 가 보세요").click();
     await page.getByRole("button", { name: "이 1가지로 할게요" }).click();
     const sheet = page.getByRole("dialog", { name: "확인해 주세요" });
-    await expect(sheet.getByText("땅콩 (알레르기 기록에 없음)")).toBeVisible();
+    // 🚨 제목은 식품 이름만이다 — 서버 note("알레르기 기록에 없음")는 저장한 뒤에도 남는 고정값이었다 (#823).
+    await expect(sheet.getByText("땅콩", { exact: true })).toBeVisible();
+    await expect(sheet.getByText("알레르기 기록에 없음", { exact: false })).toHaveCount(0);
+  });
+
+  test("목록을 받은 뒤 그사이 등록된 알레르기는 채택에서 서버가 막고, 화면은 그 제안을 빼고 알린다", async ({
+    page,
+  }) => {
+    const calls = recordApi(page);
+    await page.goto(SUGGESTIONS);
+    await page.getByText("계란말이에 시금치를 조금 섞어 보세요").click();
+    await page.getByText("두부를 부쳐서 한 조각 곁들여 보세요").click();
+    await page.getByRole("button", { name: "이 2가지로 할게요" }).click();
+    const sheet = page.getByRole("dialog", { name: "확인해 주세요" });
+
+    // 시트에 답하는 사이 다른 보호자가 대두를 알레르기로 등록했다.
+    expect(
+      await asOtherCaregiver(page, {
+        method: "POST",
+        path: `/children/${CHILD}/health-safety`,
+        body: { type: "allergy", label: "대두" },
+        idempotent: true,
+      }),
+    ).toBe(201);
+    for (const card of await sheet.locator("section").all()) {
+      await card.getByRole("button", { name: "먹어 봤고 괜찮았어요" }).click();
+    }
+    await sheet.getByRole("button", { name: "이대로 고르기" }).click();
+
+    // 🚨 하나라도 걸리면 서버는 전부 거절한다 — 아무것도 채택되지 않았다.
+    await expect(
+      page.getByRole("status").filter({
+        hasText: "그사이 알레르기로 등록된 식품이 들어간 제안이 있어서 고르지 못했어요",
+      }),
+    ).toBeVisible();
+    await expect(page.getByText("이렇게 하기로 했어요")).toHaveCount(0);
+    // 🚨 실패 카드가 아니다 — 같은 선택으로 다시 누르면 같은 409 라서 서버 문구를 실패로 세우지 않는다.
+    await expect(page.getByText("알레르기로 등록된 항목이 들어 있어 고를 수 없어요")).toHaveCount(
+      0,
+    );
+    expect(writes(calls, "POST", /\/suggestions\/approve$/)).toHaveLength(1);
+
+    // 걸린 두부만 선택에서 빠졌다. 남은 계란말이로 다시 고르면 채택된다.
+    await expect(page.getByRole("button", { name: "이 1가지로 할게요" })).toBeVisible();
+    await page.getByRole("button", { name: "이 1가지로 할게요" }).click();
+    await sheet.getByRole("button", { name: "이대로 고르기" }).click();
+    await expect(page.getByText("이렇게 하기로 했어요")).toBeVisible();
+    const approved = writes(calls, "POST", /\/suggestions\/approve$/);
+    expect(approved.at(-1)?.body).toEqual({ suggestion_ids: ["s_1"] });
+  });
+});
+
+test.describe("채택이 동의로 막히면 (#835)", () => {
+  test("목록을 받은 뒤 건강정보 동의가 없어지면 일반 실패가 아니라 동의 카드를 세운다", async ({
+    page,
+  }) => {
+    await page.goto(SUGGESTIONS);
+    await page.getByText("계란말이에 시금치를 조금 섞어 보세요").click();
+    await page.getByRole("button", { name: "이 1가지로 할게요" }).click();
+    const sheet = page.getByRole("dialog", { name: "확인해 주세요" });
+    await sheet.getByRole("button", { name: "모르겠어요" }).click();
+
+    // 목록을 받은 뒤 동의를 거뒀다 — 알레르기 항목이 든 제안은 서버가 건강정보를 다시 읽어야 채택한다.
+    await switchScenario(page, "consent");
+    await sheet.getByRole("button", { name: "이대로 고르기" }).click();
+
+    await expect(page.getByText("먼저 동의가 필요해요")).toBeVisible();
+    await expect(page.getByText("고른 것을 남길 수 없어요", { exact: false })).toBeVisible();
+    await expect(page.getByRole("link", { name: "동의 관리로 가기" })).toHaveAttribute(
+      "href",
+      `/child/${CHILD}/settings`,
+    );
+    // 🚨 다시 눌러도 같은 403 이라 일반 실패 카드(서버 문구 + "아직 아무것도 저장되지 않았어요")를 세우지 않는다.
+    await expect(page.getByText("아직 아무것도 저장되지 않았어요")).toHaveCount(0);
+    await expect(page.getByText("이렇게 하기로 했어요")).toHaveCount(0);
+  });
+});
+
+test.describe("승인 게이트 ㉡ — 같은 식품이 두 제안에 (#823)", () => {
+  test.use({ scenario: "precheck_shared_item" });
+
+  test("같은 식품은 한 장으로 묻고, 막으면 그 식품이 든 제안을 전부 막는다", async ({ page }) => {
+    const calls = recordApi(page);
+    await page.goto(SUGGESTIONS);
+    await page.getByText("계란말이에 시금치를 조금 섞어 보세요").click();
+    await page.getByText("두부를 부쳐서 한 조각 곁들여 보세요").click();
+    await page.getByRole("button", { name: "이 2가지로 할게요" }).click();
+
+    const sheet = page.getByRole("dialog", { name: "확인해 주세요" });
+    await expect(sheet.getByText("계란", { exact: true })).toHaveCount(1);
+    await expect(sheet.getByText("고른 제안 2개에 들어 있어요")).toBeVisible();
+
+    const egg = sheet.locator("section").filter({ hasText: "고른 제안 2개에 들어 있어요" });
+    await egg.getByRole("button", { name: "알레르기가 있어요" }).click();
+    await sheet
+      .locator("section")
+      .filter({ hasText: "대두" })
+      .getByRole("button", { name: "모르겠어요" })
+      .click();
+    await sheet.getByRole("button", { name: "알레르기 저장하기" }).click();
+
+    // 두 제안 모두 계란이 들어 있어서 채택할 것이 없다.
+    await expect(sheet).toBeHidden();
+    expect(writes(calls, "POST", /\/suggestions\/approve$/)).toEqual([]);
+    await expect(
+      page.getByRole("status").filter({ hasText: "계란이 들어간 제안은 고를 수 없어요" }),
+    ).toBeVisible();
+  });
+});
+
+test.describe("승인 게이트 ㉡ — 저장 실패 (#823)", () => {
+  test.use({ scenario: "safety_save_fail" });
+
+  test("하나라도 저장에 실패하면 채택하지 않고, 실패한 것만 같은 키로 다시 보낸다", async ({
+    page,
+  }) => {
+    const calls = recordApi(page);
+    await page.goto(SUGGESTIONS);
+    await page.getByText("계란말이에 시금치를 조금 섞어 보세요").click();
+    await page.getByText("두부를 부쳐서 한 조각 곁들여 보세요").click();
+    await page.getByText("멸치볶음을 간을 약하게 해서 조금만").click();
+    await page.getByRole("button", { name: "이 3가지로 할게요" }).click();
+
+    const sheet = page.getByRole("dialog", { name: "확인해 주세요" });
+    for (const card of await sheet.locator("section").all()) {
+      await card.getByRole("button", { name: "알레르기가 있어요" }).click();
+    }
+    await sheet.getByRole("button", { name: "저장하고 나머지 고르기" }).click();
+
+    const failed = sheet
+      .getByRole("status")
+      .filter({ hasText: "대두를 알레르기 기록에 저장하지 못했어요" });
+    await expect(failed).toBeVisible();
+    await expect(failed).toContainText("계란은 저장했어요");
+    // 🚨 실패 안내는 버튼 바로 위다 — 본문 맨 아래에 두면 고정된 아래 영역에 깔려 화면에서 안 보였다.
+    await expect(failed).toBeInViewport();
+    // 🚨 시트는 열린 채, 아무것도 채택되지 않았다. 저장된 계란은 답을 글자로 보이고 칩이 없다.
+    await expect(sheet).toBeVisible();
+    expect(writes(calls, "POST", /\/suggestions\/approve$/)).toEqual([]);
+    const egg = sheet.locator("section").filter({ hasText: "계란" });
+    await expect(egg.getByText("알레르기가 있다고 답했어요", { exact: false })).toBeVisible();
+    await expect(egg.getByRole("button")).toHaveCount(0);
+    expect(writes(calls, "POST", /\/health-safety$/)).toHaveLength(2);
+
+    // 다시 시도는 아래 버튼 하나다.
+    await sheet.getByRole("button", { name: "다시 저장하고 나머지 고르기" }).click();
+    await expect.poll(() => writes(calls, "POST", /\/health-safety$/).length).toBe(3);
+    await expect(failed).toBeVisible();
+
+    // 🚨 다시 시도는 실패한 대두만, 처음과 같은 키로 보낸다. 계란을 한 번 더 넣지 않는다.
+    const soy = writes(calls, "POST", /\/health-safety$/).filter(
+      (c) => (c.body as { label: string }).label === "대두",
+    );
+    expect(soy).toHaveLength(2);
+    expect(soy[1].idempotencyKey).toBe(soy[0].idempotencyKey);
+    expect(writes(calls, "POST", /\/suggestions\/approve$/)).toEqual([]);
   });
 });
 
@@ -863,8 +1070,13 @@ test.describe("승인 게이트 ㉡ — 화면이 모르는 사전검사", () =>
     // 🚨 예전에는 시트가 아무것도 묻지 않은 채 "확인했어요" 로 그대로 채택했다.
     const sheet = page.getByRole("dialog", { name: "확인해 주세요" });
     await expect(sheet.getByText("여기서 확인할 수 없는 항목이 있어요")).toBeVisible();
-    await expect(sheet.getByRole("button", { name: "확인했어요" })).toHaveCount(0);
-    await sheet.getByRole("button", { name: "확인하지 못한 건 빼고 고를게요" }).click();
+    // 고른 것이 전부 막혀서 고르기가 아니라 확인만 남는다.
+    await sheet.getByRole("button", { name: "확인했어요" }).click();
+    await expect(
+      page
+        .getByRole("status")
+        .filter({ hasText: "확인이 필요한 항목 때문에 고른 제안을 고르지 않았어요" }),
+    ).toBeVisible();
     expect(writes(calls, "POST", /\/suggestions\/approve$/)).toEqual([]);
     expect(writes(calls, "POST", /\/health-safety$/)).toEqual([]);
   });

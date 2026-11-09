@@ -260,6 +260,9 @@ export function MemoryDetailSheet({
                 onSelect={(verdict) => correct.mutate(verdict)}
                 pending={correct.isPending ? (correct.variables ?? null) : null}
                 onDelete={observation ? () => askDelete(true) : undefined}
+                // 🚨 건강 기록은 판정 없이 지우기만 선다 (#764) — 서버가 건강 기록 고치기를 400 으로 막는다.
+                //    "이번만 그랬어요" 는 기억 집계에서 빼는 일인데 건강 기록은 기억에 묶이지 않아서다.
+                deleteOnly={observation !== null && isHealthObservation(observation)}
               />
             )}
           </div>
@@ -506,6 +509,10 @@ function ObservationDetail({
                 </li>
               ))}
             </ul>
+          ) : isHealthObservation(observation) ? (
+            // 🚨 건강 기록은 고칠 수 없어서 근거에서 "빠질" 일이 없다 (#764). 빠졌다고 말하면 보호자가 무언가를
+            //    해서 뺀 것처럼 읽힌다 — 아직 쓴 추천이 없다는 사실만 말한다.
+            <p className="text-body-sm text-ink-muted mt-2">아직 이 기록을 쓴 추천이 없어요.</p>
           ) : (
             <p className="text-body-sm text-ink-muted mt-2">아직 이 기록을 쓴 제안이 없어요.</p>
           )}

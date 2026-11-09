@@ -23,3 +23,20 @@ def test_프롬프트에_담당_Agent_가_없다() -> None:
     )
 
     assert "담당 Agent" not in build_system_prompt(context)
+
+
+def test_공지_절이_있다() -> None:
+    """공지는 읽기만 하고, 원문은 통째로 옮기지 않고 요약해 답한다 (#832)."""
+    context = AgentContext(
+        child_id=UUID(int=1),
+        source_writer=UUID(int=2),
+        now=NOW,
+        timezone=KST,
+        store=InMemoryStore(now=NOW),
+    )
+
+    prompt = build_system_prompt(context)
+
+    assert "query_notice" in prompt
+    assert "통째로 옮기거나" in prompt
+    assert "핵심만 요약해 알리며" in prompt
