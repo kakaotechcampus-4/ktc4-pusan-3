@@ -1735,7 +1735,7 @@ React `<ViewTransition>` 이 브라우저 View Transitions 로 그린다. 자식
 | 05 제안 · 개인화 | 묶음 머리줄 + 근거 목록 | 묶음마다 `chip-domain` + 질문, 그 아래 `suggestion-row` **3줄 전부 펼침** (줄에는 도메인 색도 칩도 없다) |
 | 05 제안 · 일반 (`scarcity`) | "일반 추천" 라벨 + 건수 + 되묻는 질문 1개 | `card-general` (점선) **위**, 그 아래 고른 것 요약 카드(채택 · 일정 만들기), 질문 카드가 **맨 아래** (#509). ⚠️ 응답 필드는 계약서 협의 중 — §14 |
 | 05 제안 · `partial` | 성공 + 실패 한 화면 | `suggestion-row` + `card-failed` 나란히 |
-| 06 승인 · `prechecks` | "확인해 주세요" | `banner-caution` + `btn-approve` |
+| 05 알레르기 확인 · `prechecks` | "확인해 주세요" | 답하기 전 `banner-caution`, 저장할 알레르기가 있을 때 아래 버튼이 `btn-approve`(게이트 ㉡ · #823). 저장할 것이 없으면 표식이 없다 |
 | 06 승인 · 알레르기 저촉 | 추천 차단 | `banner-danger` |
 | 07 기록 고치기 | 기록 / 기억 2계층 | `탭` (화면의 말은 기록·기억, 코드·엔드포인트는 observation·affinity) |
 | 07 기록 고치기 | 교정 (기록 1 + 지우기 · 기억 3) | `btn-secondary`. `wrong` 도 빨강 아님 — 교정은 사고가 아니다. 고르면 **확인 단계**가 뜬다 (§7 "교정") |
