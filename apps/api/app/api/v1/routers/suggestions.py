@@ -61,7 +61,7 @@ from app.api.v1.schemas.suggestions import (
     UpdateSeriesRequest,
     UpdateSeriesResponse,
 )
-from app.core import deeplinks
+from app.core import deeplinks, llm_usage
 from app.core.config import settings
 from app.core.recipe_source import RECIPE_SOURCE_INFO
 from app.domains.consent.repository import child_health_granted
@@ -653,22 +653,31 @@ async def create_suggestions(
             # 여기까지 읽기만 했고, expire_on_commit=False 라 읽은 행도 그대로 쓸 수 있다
             await session.commit()
             sent_at = next(iter(claimed.values())).sent_at if claimed else None
-            run = await entrypoint.suggest(
-                child_id=child.child_id,
-                tasks=to_run,
-                request_id=str(_uuid.uuid4()),
-                save_run_id=run_id if claimed else None,
-                sent_at=sent_at,
-                save_suggestions=agent_ports.suggestion_saver(child.child_id),
-                birth_date=child.birth_date,
-                child_health_granted=health_consent,
-                domain_store=agent_ports.domain_store_opener(child.child_id),
-                **agent_ports.food_stores(),
-                **agent_ports.safety_readers(),
-                **agent_ports.growth_book_ports(),
-                growth_log=agent_ports.growth_log_reader(),
-                affinity_reader=agent_ports.affinity_reader(),
-            )
+            # 다시 만들기는 그 run 의 일이다 — 사용량도 그 run_id 로 남겨 SQL 에서 run 하나를 이어
+            # 본다. 처음 요청은 run 이 없어서 요청마다 정한 id 가 run_id 다.
+            # 창구는 source(suggest)가 가른다 (#710)
+            request_id = str(_uuid.uuid4())
+            with llm_usage.attribute(
+                parent_id=parent.parent_id,
+                run_id=run_id if claimed else request_id,
+                source="suggest",
+            ):
+                run = await entrypoint.suggest(
+                    child_id=child.child_id,
+                    tasks=to_run,
+                    request_id=request_id,
+                    save_run_id=run_id if claimed else None,
+                    sent_at=sent_at,
+                    save_suggestions=agent_ports.suggestion_saver(child.child_id),
+                    birth_date=child.birth_date,
+                    child_health_granted=health_consent,
+                    domain_store=agent_ports.domain_store_opener(child.child_id),
+                    **agent_ports.food_stores(),
+                    **agent_ports.safety_readers(),
+                    **agent_ports.growth_book_ports(),
+                    growth_log=agent_ports.growth_log_reader(),
+                    affinity_reader=agent_ports.affinity_reader(),
+                )
             settled = {o.agent for o in run.outcomes}
     finally:
         for a in claimed:

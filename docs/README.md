@@ -144,7 +144,7 @@
 - [ops/alembic-collaboration-v1.md](ops/alembic-collaboration-v1.md) — 마이그레이션 협업 규칙 · make 명령어 치트시트 · autogenerate 한계 · revision 충돌 해결법 확정
 - [ops/logging-alerts-v1.md](ops/logging-alerts-v1.md) — 서버 로그 적재(docker journald) · ERROR 알림(Discord 웹훅) 결정과 근거 · 알림이 못 잡는 것 (멘토 #267 2번 · PR #302)
 - [ops/deploy-v1.md](ops/deploy-v1.md) — CI 게이트 · 헬스 실패 시 직전 이미지 자동 롤백 · 한 EC2 위 dev(develop)/prod(main) 분리 · 서버 준비 절차
-- [ops/llm-usage-v1.md](ops/llm-usage-v1.md) — LLM 토큰 사용량을 보호자 · run · 모델별로 남기는 방법 (BM 산정) · 새 호출 지점 규칙 · OCR 담당 계약 · 서버 고려
+- [ops/llm-usage-v1.md](ops/llm-usage-v1.md) — LLM 토큰 사용량을 보호자 · run · 모델별로 남기는 방법 (BM 산정) · 새 호출 지점 규칙 · 창구별 귀속 규칙 · 사진 run 연결 · 서버 고려
 - [ops/encryption-v1.md](ops/encryption-v1.md) — 전송(TLS · HSTS) · 저장(EBS) 구간 암호화가 어디서 지켜지는지와 확인 기록 · E2E 를 하지 않는 이유 · 예외 로그에서 원문 빼기 (#670)
 
 그 밖에 *아직 문서 없음.* 배포, 보안 5종 체크, 모델 호출·토큰 비용 실측.

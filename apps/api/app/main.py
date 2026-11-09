@@ -4,12 +4,13 @@ FastAPI는 라우터와 예외 처리기를 자동으로 찾지 않는다. 아�
 include_router와 register_error_handlers 호출이 실제 등록 지점이다.
 """
 
+import asyncio
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI
 
-from app.api import health
+from app.api import health, llm_usage_writer
 from app.api.cors import register_cors
 from app.api.errors import register_error_handlers
 from app.api.v1.router import v1_router
@@ -46,6 +47,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     병원 어댑터(국립중앙의료원, #713)도 같다 — 시도별 기관 목록 캐시가 프로세스 메모리에 있다.
     같은 키를 쓰고, 없으면 Health 병원 찾기가 `place.unavailable` 로 닫힌다.
+
+    LLM 사용량 writer(#710)는 키와 상관없이 늘 띄운다 — 큐를 2초마다 `llm_usage` 표에 쓴다.
+    프로세스마다 큐 · writer 가 하나라 `--workers` 와 무관하다. 종료 때는 먼저 멈춰서(취소)
+    남은 큐를 쓰고 끝낸다. SIGKILL · OOM 이면 최대 2초분을 잃는다.
     """
     has_key = bool(settings.DATA_GO_KR_SERVICE_KEY.strip())
     weather = PublicWeather() if has_key else None
@@ -54,9 +59,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.activity_weather = weather
     app.state.activity_events = events
     app.state.health_places = hospitals
+    usage_writer = asyncio.create_task(llm_usage_writer.run_writer(), name="llm-usage-writer")
     try:
         yield
     finally:
+        usage_writer.cancel()
+        # writer 가 예외로 죽어 있었다면(run_writer 가 이미 알렸다) 그 예외가 여기서 나가면서
+        # 아래 클라이언트 닫기를 건너뛰면 안 된다
+        with suppress(asyncio.CancelledError, Exception):
+            await usage_writer
         for client in (weather, events, hospitals):
             if client is not None:
                 await client.aclose()
