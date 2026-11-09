@@ -9,7 +9,7 @@
 - 새 표만 만든다 (expand-only).
 
 Revision ID: 3c5b651dc02e
-Revises: de2051c89680
+Revises: 90ac5aae7ad1
 Create Date: 2026-11-09
 """
 
@@ -21,7 +21,7 @@ from sqlalchemy.dialects import postgresql
 from alembic import op
 
 revision: str = "3c5b651dc02e"
-down_revision: str | Sequence[str] | None = "de2051c89680"
+down_revision: str | Sequence[str] | None = "90ac5aae7ad1"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
