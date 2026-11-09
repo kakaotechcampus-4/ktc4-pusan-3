@@ -473,6 +473,27 @@ async def test_사전검사(db_client, session, bearer, cid, agents, monkeypatch
     ]
 
 
+async def test_내린_알레르기는_사전검사에서_다시_묻는다(
+    db_client, session, bearer, cid, agents, monkeypatch
+):
+    """내린 기록(retracted)은 "모름" 과 같다 — 잘못 등록했다 지운 식품을 영영 안 묻지 않게."""
+    plan, _ = agents
+    headers, parent_id = bearer
+    monkeypatch.setattr("app.api.v1.routers.suggestions.child_health_granted", _granted(True))
+    session.add(
+        HealthSafety(
+            child_id=cid, kind=SafetyKind.ALLERGY, label="견과류", status=SafetyStatus.RETRACTED
+        )
+    )
+    walnut = await _personal(session, cid, parent_id, content="호두죽", allergens=["호두"])
+    plan["food"] = ("drafts", [walnut])
+
+    data = (await _post(db_client, cid, headers, agents=["food"])).json()
+
+    assert [s["content"] for s in data["suggestions"]] == ["호두죽"]
+    assert [p["item"] for p in data["prechecks"]] == ["호두"]
+
+
 async def test_동의가_없으면_알레르기_든_추천을_뺀다(
     db_client, session, bearer, cid, agents, monkeypatch
 ):

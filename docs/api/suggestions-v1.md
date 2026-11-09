@@ -48,7 +48,7 @@
 | `groups[].cautions` | 식품 아닌 알레르기 확인 문구. `health_safety` 에서 코드로 다시 만든다(Activity 와 같은 함수) — 재생해도 같다. 동의가 없으면 `[]` |
 | `general[].record_count` | 그 Agent 도메인에 남아 있는 관찰 수. 04 `agent_result.record_count` 와 같은 표(`agent_ports.RECORD_KINDS`) |
 | `groups[].notice.code = "daily_limit"` | 하루 한도라 그 Agent 는 돌리지 않았다. 같은 응답에 보여 줄 다른 결과가 없으면 지금처럼 429 |
-| `prechecks` | 추천 `allergens` ↔ `health_safety`(모든 kind · status) 를 같은 이름 사전으로 맞춘다. `active` 면 그 추천을 빼고, 행이 없으면 묻고, `none` · `retracted` 는 묻지 않는다. `child_health` 동의가 없으면 `allergens` 가 있는 추천을 뺀다 |
+| `prechecks` | 추천 `allergens` ↔ `health_safety`(모든 kind · status) 를 맞춘다. `active` 면 그 추천을 빼고(같은 이름 사전으로 넓게 — 코드 · 동의어가 겹치면 걸림), 행이 없거나 내린 기록(`retracted`)뿐이면 묻고, 괜찮았던 식품(`none`)은 정규화한 이름이 같을 때만 묻지 않는다. `child_health` 동의가 없으면 `allergens` 가 있는 추천을 뺀다 |
 
 근거의 `label` · `observed_to` · `is_stale` 은 원본 행(관찰 · 관심 · 성장 기록)에서 읽는다(#323 최소분).
 건강 관찰은 증상 문장을 되풀이하지 않고 고정 이름("건강 기록")으로, 성장 기록은 숫자 없이 "키 · 몸무게

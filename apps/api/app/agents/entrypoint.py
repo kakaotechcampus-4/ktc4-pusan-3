@@ -538,7 +538,9 @@ class SafetyLabel:
 @dataclass(frozen=True)
 class AllergenCheck:
     blocked: tuple[str, ...]  # active 에 걸린 항목 — 그 추천은 내보내지 않는다
-    unknown: tuple[str, ...]  # 행이 없는 항목 — 채택 전에 묻는다 (unknown_ingredient)
+    # 확인한 적 없는 항목 — 행이 없거나 내린 기록(retracted)뿐이다. 채택 전에 묻는다
+    # (unknown_ingredient)
+    unknown: tuple[str, ...]
 
 
 def check_allergens(allergens: Sequence[str], rows: Sequence[SafetyLabel]) -> AllergenCheck:
