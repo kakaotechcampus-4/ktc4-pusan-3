@@ -582,6 +582,7 @@ def _doc_index() -> dict[tuple[str, UUID], DocCard]:
     """검수를 마친(approved) 시드 행. Agent 가 [예시] 로 받은 것과 같은 행이라 같은 id 다."""
     from app.agents.activity.doc_seed import activity_doc_seed
     from app.agents.food.doc_seed import food_doc_seed
+    from app.agents.food.weaning_menu import weaning_menu_id, weaning_menu_table
     from app.agents.growth.doc_seed import growth_doc_seed
 
     index: dict[tuple[str, UUID], DocCard] = {}
@@ -601,6 +602,12 @@ def _doc_index() -> dict[tuple[str, UUID], DocCard]:
             index[key] = DocCard(
                 meta.title, source.source_org, source.source_title, source.source_url
             )
+    # 이유식 식단 표(#399) — 일반 추천의 근거라 검수 상태가 없고, 출처는 서비스 자체 표시다
+    table = weaning_menu_table()
+    for entry in table.entries:
+        index[("food_doc", weaning_menu_id(entry.key))] = DocCard(
+            entry.name, table.source_org, table.source_title, None
+        )
     return index
 
 

@@ -9,6 +9,7 @@ import pytest
 from app.agents import entrypoint, pipeline
 from app.agents.activity.doc_seed import activity_doc_seed
 from app.agents.food.doc_seed import food_doc_seed
+from app.agents.food.weaning_menu import weaning_menu_id, weaning_menu_rows
 from app.agents.suggestion_save import InMemorySuggestions
 
 CHILD, PARENT = uuid.uuid4(), uuid.uuid4()
@@ -127,6 +128,23 @@ def test_검수된_시드_행은_Agent_가_근거로_단_id_로_찾아진다(mon
     assert set(cards) == set(refs)
     assert cards[refs[0]].title == activity_entry.meta.title
     assert cards[refs[1]].source_org == food_entry.meta.source_org
+
+
+def test_이유식_식단_근거는_아이캐치_출처_카드로_나간다():
+    entrypoint._doc_index.cache_clear()
+    try:
+        row = weaning_menu_rows(8, synced_at=datetime(2026, 10, 14, tzinfo=UTC))[0]
+        ref = ("food_doc", weaning_menu_id(row.source_id))
+        [card] = entrypoint.describe_docs([ref]).values()
+    finally:
+        entrypoint._doc_index.cache_clear()
+
+    assert (card.title, card.source_org, card.source_title, card.source_url) == (
+        row.display_name,
+        "아이캐치 서비스 일반추천",
+        "월령별 이유식 추천 식단",
+        None,
+    )
 
 
 def test_검수_전_시드_행은_근거로_나가지_않는다():
