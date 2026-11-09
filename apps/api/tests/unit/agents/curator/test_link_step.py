@@ -324,17 +324,17 @@ async def test_polarity_가_다르면_후보가_없어_새로_만든다() -> Non
     assert judge.calls == []
 
 
-async def test_중립_관찰은_중립_Profile_만_후보다() -> None:
+async def test_중립_관찰은_연결하지도_Profile_을_만들지도_않는다() -> None:
+    """polarity 0 은 좋다 · 싫다가 없는 기록이라 성향 집계 대상이 아니다 (#287)."""
     store = InMemoryCuratorStore()
-    _profile(store, "딸기1", polarity=None)  # 방향을 모름 — 중립이 아니다
-    _profile(store, "딸기2", polarity=1)
-    _profile(store, "딸기3", polarity=0)
+    _profile(store, "딸기", polarity=None)  # 이름이 같은 후보가 있어도 붙지 않는다
     judge = FakeJudge()
-    _observe(store, "1", "생딸기", polarity=0)
+    _observe(store, "1", "딸기", polarity=0)
 
-    await _link(store, judge)
-
-    assert judge.calls[0][2] == ["딸기3"]
+    assert await _link(store, judge) == ()
+    assert judge.calls == []
+    assert store.observation("food", "1").affinity_id is None
+    assert len(store.profiles) == 1
 
 
 async def test_archived_도_후보이고_연결해도_state_는_그대로다() -> None:

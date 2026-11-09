@@ -4,9 +4,14 @@
 Profile 의 state · strength 는 쓰지 않는다 — 승격·감쇠 파트의 값이다.
 
 조회 조건을 둘로 나눈다.
-    임베딩 대상  active · embedding 없음
-    연결 대상    active · embedding 있음 · affinity_id 없음 · 관찰 시작일 >= 기준 날짜
+    임베딩 대상  active · polarity ≠ 0 · embedding 없음
+    연결 대상    active · polarity ≠ 0 · embedding 있음 · affinity_id 없음
+                 · 관찰 시작일 >= 기준 날짜
 임베딩은 됐는데 연결 전에 멈춘 관찰은 다음 실행에서 연결만 다시 한다.
+
+polarity 0(좋다 · 싫다 없음)은 어느 쪽에도 나오지 않는다 — Profile 의 polarity 는
+-1 · 1 · NULL 뿐이다 (#287, `docs/memory/curator-linking-v1.md` §1-1).
+관찰을 고쳐 ±1 이 되면 그때 대상이 된다.
 """
 
 from collections.abc import Mapping

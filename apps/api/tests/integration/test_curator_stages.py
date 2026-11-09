@@ -578,3 +578,36 @@ class TestE2EFullFlow:
         )
         assert r2.embed_calls == 0, "임베딩 대상 없음"
         assert len(r2.outcomes) == 0, "연결 대상 없음"
+
+    async def test_polarity_0_은_임베딩도_연결도_하지_않는다(self, session, family):
+        """좋다 · 싫다가 없는 기록은 Profile 이 되지 않는다 (#287). 다음 실행에도 다시 안 잡힌다."""
+        _, child = family
+        today = date(2026, 9, 26)
+        neutral = [
+            _food(child.id, subject="사과", polarity=0, observed_on=today - timedelta(days=i))
+            for i in range(3)
+        ]
+        session.add_all([*neutral, _food(child.id, subject="배", observed_on=today)])
+        await session.flush()
+
+        from app.agents.curator.embedding.linker import link_observations
+        from app.domains.memory.curator.db_store import DbCuratorStore
+
+        store = DbCuratorStore(session)
+        embedder = _FakeEmbedder()
+        for _ in range(2):
+            await link_observations(
+                store, embedder, _FakeJudge(), child_id=child.id, birth_date=child.birth_date
+            )
+
+        assert embedder.call_count == 1
+        assert embedder.last_texts == ["배"]
+        for obs in neutral:
+            await session.refresh(obs)
+            assert obs.embedding is None and obs.affinity_id is None
+        keys = (
+            await session.scalars(
+                select(ProfileAffinity.merge_key).where(ProfileAffinity.child_id == child.id)
+            )
+        ).all()
+        assert keys == ["배"]
