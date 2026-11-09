@@ -70,6 +70,15 @@ def open_photo_run(*, run_id: str, parent_id: uuid.UUID, child_id: uuid.UUID) ->
     return run
 
 
+def forget_child(child_id: uuid.UUID) -> None:
+    """그 아이의 run 을 누가 열었든 지운다 — 아이 삭제 커밋 뒤 (#751).
+
+    아이가 없으면 저장(`commit`)도 아이 접근 확인에서 막혀서, 남겨 둘 이유 없는 공지 원문이다.
+    """
+    for run_id in [k for k, run in _runs.items() if run.child_id == child_id]:
+        _runs.pop(run_id, None)
+
+
 def get(run_id: str, *, parent_id: uuid.UUID) -> PhotoRun | None:
     """남의 run 은 없는 run 과 같다 (SSE 와 같은 이유)."""
     _purge()

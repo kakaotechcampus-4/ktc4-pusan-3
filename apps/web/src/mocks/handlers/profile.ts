@@ -13,6 +13,8 @@ import { isMeasurementInRange } from "@/lib/measurement";
 import { childProfile, growthLogs, measuredLabel, newGrowthLog } from "../fixtures";
 import { currentScenario } from "../scenario";
 import { apiError, networkDelay, url } from "./helpers";
+import { withIdempotency } from "./idempotency";
+import { currentMe, deleteChild } from "./membership";
 
 /**
  * 11 아이 프로필 — 별명·생일·성별과 키·몸무게 측정 로그.
@@ -99,6 +101,12 @@ function currentLogs(): GrowthLog[] {
   return currentScenario() === "empty" ? [] : logs;
 }
 
+const deleteOwnedChild = withIdempotency(async ({ params }) => {
+  await networkDelay(320);
+  deleteChild(String(params.cid));
+  return new HttpResponse(null, { status: 204 });
+});
+
 export const profileHandlers = [
   http.get(url("/children/:cid"), async () => {
     await networkDelay();
@@ -130,6 +138,25 @@ export const profileHandlers = [
     };
 
     return HttpResponse.json({ child: profile });
+  }),
+
+  /**
+   * 아이 삭제 (#751). 서버 `DELETE /children/{cid}` 와 같다 — 판정 순서도 같다.
+   *
+   * - 연결된 아이가 아니면(이미 지운 아이 포함) 403 `child_access_denied`
+   * - 함께 보는 보호자면 403 `owner_only` — 키를 보기 전에 막는다
+   * - 키가 필수다(`withIdempotency`). 🚨 끝난 뒤 같은 키로 다시 오면 재생이 아니라 위의 403 이다 —
+   *   서버도 아이 접근 확인이 재생보다 먼저다 (`docs/api/idempotency-v1.md` §3-1)
+   * 🚨 지운 아이는 `/me` 에서 빠진다(`deleteChild`). 다른 목 상태(기록 · 일정)는 그 아이 주소로 다시
+   *   열 수 없어서 따로 비우지 않는다.
+   */
+  http.delete(url("/children/:cid"), async (info) => {
+    const link = currentMe().children.find((c) => c.child_id === info.params.cid);
+    if (!link) return apiError(403, "child_access_denied", "이 아이에 접근할 수 없어요");
+    if (link.role !== "owner") {
+      return apiError(403, "owner_only", "아이를 등록한 보호자만 아이를 삭제할 수 있어요");
+    }
+    return deleteOwnedChild(info);
   }),
 
   http.get(url("/children/:cid/growth"), async () => {

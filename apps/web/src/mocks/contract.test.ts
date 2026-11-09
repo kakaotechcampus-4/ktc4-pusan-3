@@ -14,6 +14,7 @@ import {
   approveSuggestions,
   commitPhotoRun,
   createEventDrafts,
+  deleteChild,
   deleteObservation,
   submitEventDraft,
   submitInput,
@@ -3683,6 +3684,48 @@ describe("⑫ 아이 프로필은 고친 것만 덮는다", () => {
     await expect(api.patch("/children/c1", { nickname })).rejects.toSatisfy(
       (e: unknown) => isApiError(e, "validation_failed") && e.status === 400,
     );
+  });
+});
+
+describe("⑫-1 아이 삭제 — 서버 #751 과 같은 계약", () => {
+  const remove = (childId: string, key = newIdempotencyKey()) =>
+    deleteChild(childId, key).then(
+      () => "deleted" as const,
+      (error: unknown) => error,
+    );
+
+  it("등록 보호자가 지우면 204 이고 /me 에서 빠진다", async () => {
+    expect(await remove("c1")).toBe("deleted");
+
+    const me = await api.get<Me>("/me");
+    expect(me.children.some((c) => c.child_id === "c1")).toBe(false);
+  });
+
+  it("🚨 끝난 뒤 같은 키로 다시 보내면 재생이 아니라 403 child_access_denied 다 — 서버도 접근 확인이 먼저다", async () => {
+    const key = newIdempotencyKey();
+    expect(await remove("c1", key)).toBe("deleted");
+
+    const again = await remove("c1", key);
+    expect(isApiError(again, "child_access_denied")).toBe(true);
+    expect((again as ApiError).status).toBe(403);
+  });
+
+  it("함께 보는 보호자는 403 owner_only 이고 아이는 그대로다", async () => {
+    try {
+      setScenario("consent");
+      const joined = await api.post<InviteAcceptResponse>("/invites/MKGRAND1/accept", {
+        adult_attested: true,
+      });
+      expect(joined.role).toBe("member");
+
+      const caught = await remove(joined.child_id);
+      expect(isApiError(caught, "owner_only")).toBe(true);
+      expect((caught as ApiError).status).toBe(403);
+      const me = await api.get<Me>("/me");
+      expect(me.children.some((c) => c.child_id === joined.child_id)).toBe(true);
+    } finally {
+      setScenario("default");
+    }
   });
 });
 
