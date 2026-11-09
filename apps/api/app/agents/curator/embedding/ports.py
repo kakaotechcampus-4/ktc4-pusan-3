@@ -11,7 +11,8 @@ Profile 의 state · strength 는 쓰지 않는다 — 승격·감쇠 파트의 
 
 polarity 0(좋다 · 싫다 없음)은 어느 쪽에도 나오지 않는다 — Profile 의 polarity 는
 -1 · 1 · NULL 뿐이다 (#287, `docs/memory/curator-linking-v1.md` §1-1).
-관찰을 고쳐 ±1 이 되면 그때 대상이 된다.
+관찰의 polarity 를 고치는 경로는 지금 없다(Memory 고치기 도구에 칸이 없다) — 0 으로 잘못
+저장된 관찰은 지우고 다시 기록해야 한다.
 """
 
 from collections.abc import Mapping

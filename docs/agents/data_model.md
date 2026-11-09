@@ -203,7 +203,7 @@
 | subject | text | NOT NULL (임베딩·병합 판정 입력이라 값이 항상 있어야 함). 정규화 대상 문자열 |
 | embedding | vector(1536) | nullable, `subject`를 임베딩한 벡터 |
 | affinity_id | uuid | nullable. FK → `profile_affinity.id`, `ON DELETE SET NULL`. 소속 프로필 및 집계 키 |
-| polarity | smallint | NOT NULL, DEFAULT `0`, `-1 / 0 / 1`만 허용 |
+| polarity | smallint | NOT NULL, DEFAULT `0`, `-1 / 0 / 1`만 허용. `0` 은 좋다·싫다가 없는 기록이다 — Curator 가 Profile 에 연결하지 않는다 (#287) |
 | strong_signals | text[] | NOT NULL, DEFAULT `'{}'`. 허용값: `resistance_to_redirect`, `self_initiated`, `comparative_choice`, `asks_questions`, `role_extension` |
 | confidence_source | text | NOT NULL. `institution_notice / parent_direct / parent_hedged / parent_hearsay` |
 | status | enum | NOT NULL, DEFAULT `active`. `active / stand_alone / inactive / deleted`  |
@@ -216,6 +216,7 @@
 - `status` 는 값마다 빠지는 곳이 다르다. `stand_alone` 은 Curator 집계에서만, `inactive` 는 검색과 집계에서 빠진다. `deleted` 는 목록·상세까지 모든 조회에서 빠진다.
 - 보호자의 삭제 요청은 행을 지우지 않고 `status = deleted` 로 바꾼다. `raw_text` 는 남고 `embedding` 은 비운다(`health` 에는 `embedding` 칸이 없다). 그 관찰의 연결 보류(`observation_link_hold`) 행도 지우고, 연결돼 있던 Profile 의 `last_observed_on` · 상태를 다시 계산한다. 되살리는 경로는 없다.
 - 관찰을 고쳐 `subject` · `polarity` 가 바뀌면 `embedding` · `affinity_id` 를 비워 Curator 가 다시 연결하게 하고, 그 칸들이나 `observed_range` · `strong_signals` 가 바뀌면 원래 Profile 을 다시 계산한다(#257, `memory-agent-v1.md` "고친 관찰은 Curator 집계에 다시 들어간다").
+- `polarity = 0` 인 관찰은 Curator 가 임베딩하지도, Profile 에 연결하지도 않는다(#287). 성향 집계 대상이 아니라서다 — 관찰은 그대로 남아 최근 14일 근거(티어 3)로 쓰인다. 지금은 관찰의 `polarity` 를 고치는 경로가 없어서(Memory 고치기 도구에 칸이 없다), `0` 으로 잘못 저장된 관찰은 지우고 다시 기록해야 한다.
 
 ### 1. observation_food (섭취·영양)
 
@@ -324,7 +325,7 @@
 | embedding | vector(1536) | nullable, `merge_key`를 임베딩한 벡터. 병합 후보 검색용 |
 | domain | text | NOT NULL. `food` / `activity` / `education`. **`routine` 은 없다** — 승격 대상이 아니다 (2026-09-23) |
 | state | text | NOT NULL, DEFAULT `candidate`. `candidate / confirmed / archived` |
-| polarity | smallint | nullable, `-1 / 1`만 허용. 단, `confirmed` 상태에서는 NOT NULL |
+| polarity | smallint | nullable, `-1 / 1`만 허용. 단, `confirmed` 상태에서는 NOT NULL — `recompute_profile` 이 `NULL` 인 Profile 을 `confirmed` 로 올리지 않는다. `NULL` 은 아직 모름(미상·동수·상충)이다 — `0` 이 아니다 (#287) |
 | strength | real | NOT NULL, DEFAULT `0.3`. 프로필 강도 |
 | last_observed_on | date | NOT NULL, 마지막 관찰 날짜 |
 | created_at | timestamptz | NOT NULL, DEFAULT `now()` |
