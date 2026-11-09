@@ -22,6 +22,7 @@ TODAY = date(2026, 11, 9)
 
 def _item(
     *,
+    handling: NoticeItemHandling = NoticeItemHandling.CALENDAR,
     starts_at: datetime | None = None,
     ends_at: datetime | None = None,
     all_day: bool = False,
@@ -29,7 +30,7 @@ def _item(
     due_all_day: bool = False,
 ) -> NewNoticeItem:
     return NewNoticeItem(
-        handling=NoticeItemHandling.CALENDAR,
+        handling=handling,
         label="행사",
         title="숲 체험",
         target_scope=NoticeItemTarget.CLASS,
@@ -114,6 +115,18 @@ def test_행사가_남았으면_신청_마감이_지나도_지난_일정이_아�
     item = _item(
         starts_at=datetime(2026, 11, 12, 10, 0, tzinfo=KST),
         due_at=datetime(2026, 11, 5, 23, 59, tzinfo=KST),
+    )
+
+    assert _item_entry("pe_1", item, today=TODAY)["past"] is False
+
+
+def test_할_일은_기간이_열렸어도_마감이_남았으면_지난_일정이_아니다() -> None:
+    # "신청 11-05 ~ 11-12" — 일정과 달리 캘린더에 넣는 날이 아니라 할 수 있는 동안이 중요하다.
+    # 시작 · 끝만 보면 아직 신청할 수 있는 할 일이 지난 것으로 나간다 (#903 리뷰)
+    item = _item(
+        handling=NoticeItemHandling.TODO,
+        starts_at=datetime(2026, 11, 5, tzinfo=KST),
+        due_at=datetime(2026, 11, 12, 23, 59, tzinfo=KST),
     )
 
     assert _item_entry("pe_1", item, today=TODAY)["past"] is False
