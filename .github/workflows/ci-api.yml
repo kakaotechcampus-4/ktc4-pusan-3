@@ -35,6 +35,9 @@ env:
 
 jobs:
   check:
+    # 🚨 develop 필수 체크는 이 이름으로 건다. ci-web.yml 의 job 도 `check` 라, 이름을 따로 주지 않으면
+    #    두 체크가 같은 이름으로 떠서 필수 체크 결과가 모호해진다 (#770). id(`check`)는 그대로 둔다.
+    name: api-check
     runs-on: ubuntu-latest
     timeout-minutes: 20
     defaults:
