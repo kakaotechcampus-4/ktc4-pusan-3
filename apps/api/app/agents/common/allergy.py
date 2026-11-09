@@ -582,23 +582,44 @@ def read_label_pieces(label: str, book: LabelBook) -> tuple[tuple[str, tuple[str
     따로 읽은 것이라 전부 모으면 `read_label(label)` 의 것과 같다. 못 찾은 것이 없는 이름은 뺀다.
     """
     found = []
-    for part, _ in _pieces(label):
+    for part, piece in _pieces(label):
         _, rest = read_label(part, book)
-        if rest:
-            found.append((_written_name(part), rest))
+        if not rest:
+            continue
+        name = _written_name(part)
+        if split_label(name) != (piece,):
+            # 꼬리말을 떼다 다른 이름이 됐다 — "쑥 과민 반응" 은 "반응" 만 떨어져 "쑥 과민" 이 된다.
+            # 괜찮았던 식품 · 내린 기록과 맞추려면 `split_label` 이 같아야 해서 적힌 그대로 둔다
+            name = " ".join(part.split())
+        found.append((name, rest))
     return tuple(found)
 
 
 def _written_name(part: str) -> str:
-    """적힌 조각에서 앞뒤 공백과 뒤에 붙인 말(`_SUFFIXES`)만 뗀다. 띄어쓰기 · 대소문자는 둔다."""
-    name = part.strip()
+    """적힌 조각에서 겹친 공백 · 앞뒤 문장부호 · 뒤에 붙인 말(`_SUFFIXES`)만 뗀다.
+
+    띄어쓰기 · 대소문자는 둔다 — 05 가 이 이름을 낱말까지 다시 읽는다.
+    """
+    name = _trim_marks(" ".join(part.split()))
     while True:
         for suffix in _SUFFIXES:
             if len(name) > len(suffix) and name[-len(suffix) :].lower() == suffix:
-                name = name[: -len(suffix)].rstrip()
+                name = _trim_marks(name[: -len(suffix)])
                 break
         else:
             return name
+
+
+def _trim_marks(text: str) -> str:
+    """앞뒤의 공백 · 문장부호 · 기호를 뗀다 — "'쑥 가루'" 는 쑥 가루, "쑥-" 은 쑥."""
+    start, end = 0, len(text)
+    while start < end and (text[start].isspace() or unicodedata.category(text[start])[0] in "PS"):
+        start += 1
+    while end > start and (
+        text[end - 1].isspace() or unicodedata.category(text[end - 1])[0] in "PS"
+    ):
+        end -= 1
+    return text[start:end]
 
 
 class SafetyRow(Protocol):
