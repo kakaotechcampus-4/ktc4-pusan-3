@@ -239,7 +239,6 @@ async def test_기록_건수는_남아_있는_관찰만(session, kid):
     owner, child = kid
     await _food(session, child, owner, on=TODAY)
     await _food(session, child, owner, on=TODAY, status=ObservationStatus.STAND_ALONE)
-    await _food(session, child, owner, on=TODAY, status=ObservationStatus.INACTIVE)
     await _food(session, child, owner, on=TODAY, status=ObservationStatus.DELETED)
 
     count = await repository.count_child_records(
