@@ -1486,3 +1486,38 @@ class TestDarkPlayground:
     def test_해가_진_뒤라도_오늘_공원은_통과한다(self):
         park = candidate(content="공원 산책", setting="outdoor", place_name=PARK, day="오늘")
         assert reason_of(review(park, dark_today=True)) is None
+
+
+class TestInterestHeavy:
+    """막연한 요청에 3개 모두 확정 관심으로 채우지 않는다 — 관심 기반은 2개까지 (11-09 운영:
+    야구 · 자동차만 반복)."""
+
+    BLOCK_PICK = {"id": str(BLOCKS), "note": "블록을 좋아해요"}
+
+    def test_세_번째_관심_후보는_거절(self):
+        result = review(
+            candidate(content="큰 블록으로 탑 쌓기", evidence=[self.BLOCK_PICK]),
+            candidate(content="블록으로 집 만들기", evidence=[self.BLOCK_PICK]),
+            candidate(content="블록 도미노", evidence=[self.BLOCK_PICK]),
+        )
+        assert len(result.drafts) == 2
+        assert [r.reason for r in result.rejections] == [RejectReason.INTEREST_HEAVY]
+        assert result.rejections[0].index == 2
+
+    def test_보호자가_놀이를_정했으면_세_개_모두_관심이어도_된다(self):
+        result = review(
+            candidate(content="큰 블록으로 탑 쌓기", evidence=[self.BLOCK_PICK]),
+            candidate(content="블록으로 집 만들기", evidence=[self.BLOCK_PICK]),
+            candidate(content="블록 도미노", evidence=[self.BLOCK_PICK]),
+            requested=True,
+        )
+        assert result.rejections == ()
+
+    def test_관찰_근거는_세지_않는다(self):
+        sand = {"id": str(SAND), "note": "모래놀이를 즐겼어요"}
+        result = review(
+            candidate(content="큰 블록으로 탑 쌓기", evidence=[self.BLOCK_PICK]),
+            candidate(content="블록으로 집 만들기", evidence=[self.BLOCK_PICK]),
+            candidate(content="모래성 쌓기", evidence=[sand]),
+        )
+        assert result.rejections == ()
