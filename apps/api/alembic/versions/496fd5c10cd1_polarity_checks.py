@@ -9,7 +9,7 @@ CHECK 를 걸기 전에 걸리는 행을 정리한다.
 - `confirmed` 인데 `polarity` 가 `NULL` 인 Profile 은 `candidate` 로 내린다 (지금 코드는 만들지 않는다)
 
 🚨 contract 마이그레이션이다 — 새 CHECK 는 직전 코드의 쓰기를 막을 수 있다. 0 관찰을 연결하지 않는
-코드(#287 의 코드 PR)가 prod(main) 에 배포된 뒤에 develop 에 머지한다. 그래야 배포가 롤백돼도
+코드(#844)가 prod(main) 에 배포된 뒤에 develop 에 머지한다. 그래야 배포가 롤백돼도
 직전 이미지가 0 Profile 을 만들지 않는다 (docs/ops/deploy-v1.md 롤백 절).
 🚨 downgrade 는 CHECK 만 푼다. 지운 Profile · 비운 칸은 되살리지 않는다.
 
@@ -59,6 +59,8 @@ def upgrade() -> None:
         " WHERE NOT (" + PROFILE_CONFIRMED_POLARITY_CHECK + ")"
     )
 
+    # 새 CHECK 는 expand-only 검사에 안 걸리지만 조이기다 — 표시는 찾기 쉽게 단다
+    # contract: #844
     op.create_check_constraint(
         "profile_affinity_polarity", "profile_affinity", PROFILE_POLARITY_CHECK
     )
