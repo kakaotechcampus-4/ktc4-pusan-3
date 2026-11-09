@@ -41,6 +41,7 @@ import {
   eventBody,
   eventWhen,
   initialPlan,
+  offBecausePast,
   planEndsAt,
   planLocks,
   planStartsAt,
@@ -163,6 +164,8 @@ interface CalendarPick {
   locks: string[];
   /** 지난번에 넣지 못한 까닭. */
   failure: string | undefined;
+  /** 지난 일정이라 처음에 꺼 둔 줄이고, 보호자가 아직 건드리지 않았다 (`pastOff`). */
+  pastOff: boolean;
 }
 
 export function PhotoReview({
@@ -195,6 +198,14 @@ export function PhotoReview({
    */
   const [picked, setPicked] = useState<Set<string>>(
     () => new Set((parsed.entries ?? []).filter(startsChecked).map((entry) => entry.id)),
+  );
+  /**
+   * 지난 일정이라 처음에 꺼 둔 줄 (`offBecausePast` · #828 리뷰). 그 줄이 "지난 일정이라 꺼 두었어요." 를
+   * 말한다. 🚨 **보호자가 그 줄을 켜고 끄거나 고치면 빠진다** — 그 뒤로는 앱이 끈 것이 아니고, 날짜를 고쳤으면
+   *    `past` 는 처음 읽은 날짜의 판정이라 더는 맞지 않는다. 화면이 고친 날짜로 다시 견주지 않는다 (§4).
+   */
+  const [pastOff, setPastOff] = useState<Set<string>>(
+    () => new Set((parsed.entries ?? []).filter(offBecausePast).map((entry) => entry.id)),
   );
   /**
    * 이미 캘린더에 넣은 항목 → **넣은 일정.** 🚨 **저장(commit)과 다른 축이다** — 일정을 다 넣고 commit 이
@@ -257,6 +268,7 @@ export function PhotoReview({
       checked: picked.has(entry.id) && locks.length === 0,
       locks,
       failure: eventFailed[entry.id],
+      pastOff: pastOff.has(entry.id),
     };
   }
 
@@ -269,6 +281,15 @@ export function PhotoReview({
     });
   }
 
+  function forgetPastOff(id: string) {
+    setPastOff((prev) => {
+      if (!prev.has(id)) return prev;
+      const out = new Set(prev);
+      out.delete(id);
+      return out;
+    });
+  }
+
   function togglePick(id: string, next: boolean) {
     setPicked((prev) => {
       const out = new Set(prev);
@@ -277,6 +298,7 @@ export function PhotoReview({
       return out;
     });
     forgetFailure(id);
+    forgetPastOff(id);
   }
 
   function saveEntry(next: PhotoEntry, plan: EventPlan | null) {
@@ -291,6 +313,7 @@ export function PhotoReview({
     }
     // 고친 줄의 지난 실패는 지운다 — 고친 값으로는 될 수 있고, 남겨 두면 고친 뒤에도 못 넣었다고 말한다.
     forgetFailure(next.id);
+    forgetPastOff(next.id);
     setEditing(null);
   }
 
@@ -831,6 +854,11 @@ function EntryRow({
   /** 이 줄을 캘린더에 넣었다면 **넣은 일정.** 안 넣었으면 `undefined` 다. */
   const added = addedMap[entry.id];
   const pick = pickOf(entry);
+  /**
+   * 지난 일정이라 꺼 둔 줄은 왜 꺼졌는지 그 줄이 말한다 (#828 리뷰). 다른 일정은 켜져 있는데 이 줄만
+   * 꺼져 있으면 못 읽은 것처럼 보인다. 🚨 켜면 이 말은 사라진다 — 넣지 말라는 것이 아니다.
+   */
+  const pastHint = pick?.pastOff && !pick.checked ? "지난 일정이라 꺼 두었어요." : undefined;
 
   return (
     <div
@@ -900,7 +928,7 @@ function EntryRow({
             disabled={busy || pick.locks.length > 0}
             onChange={(next) => onPick(entry.id, next)}
             label="캘린더에 넣기"
-            description={pick.failure ?? (pick.locks.length > 0 ? pick.locks.join(" ") : undefined)}
+            description={pick.failure ?? (pick.locks.length > 0 ? pick.locks.join(" ") : pastHint)}
           />
         </div>
       ) : null}

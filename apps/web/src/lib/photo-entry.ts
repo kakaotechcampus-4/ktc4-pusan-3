@@ -196,6 +196,8 @@ export function planEndsAt(
  * 🚨 **시작 날짜를 읽은 일정만이다.** 할 일은 보호자가 고른다 — 회신 마감을 일정으로 넣을지는
  *    읽은 글자가 정하지 못한다. 마감만 읽은 일정("4월 30일까지")도 켜지 않는다. 그 날은 시작이 아니다.
  * 🚨 확인이 필요한 항목은 켜지 않는다. 저장이 그 항목을 받지 않아서, 일정만 들어가고 공지는 빠진다.
+ * 🚨 **지난 일정은 켜지 않는다** (`past` · #828 리뷰). 지난주 알림장을 올리면 이미 지난 일정도 읽힌다.
+ *    지났는지는 서버가 정한다 — 화면이 오늘과 견주지 않는다. 보호자가 켜면 넣을 수 있다.
  * 🚨 **켜 둔 것은 넣은 것이 아니다.** 넣는 것은 보호자가 맨 아래 버튼을 누를 때고, 그 버튼 바로 위에
  *    무엇이 들어가는지 목록이 선다 (`photo-review.tsx`). 접힌 목록 안에 켜진 것이 있어도 거기서 보인다.
  */
@@ -205,8 +207,19 @@ export function startsChecked(entry: PhotoEntry): boolean {
     entryDateRole(entry) === "start" &&
     entry.date !== null &&
     !entry.needs_review &&
+    !entry.past &&
     planLocks(entry, initialPlan(entry)).length === 0
   );
+}
+
+/**
+ * 지난 일정이라는 것 **하나 때문에** 꺼 둔 줄인가 (#828 리뷰). 화면이 그 줄에 "지난 일정이라 꺼
+ * 두었어요." 를 말할지를 정한다.
+ * 🚨 `past` 만 보지 않는다. 할 일은 지나지 않았어도 켜지 않으니, 지난 할 일에 이 말을 붙이면 틀린
+ *    까닭이다. `past` 를 빼면 켜졌을 줄만이다.
+ */
+export function offBecausePast(entry: PhotoEntry): boolean {
+  return entry.past === true && startsChecked({ ...entry, past: false });
 }
 
 /**

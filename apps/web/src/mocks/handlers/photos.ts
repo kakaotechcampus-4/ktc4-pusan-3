@@ -125,6 +125,8 @@ function noticeText(): string {
     "부모 참여 수업은 오전 10시부터 12시까지예요. 신청은 수요일까지 받아요.",
     "가정통신문은 화요일 오후 6시까지 회신해 주세요.",
     "비가 오면 바깥 놀이는 실내 활동으로 바꿔요.",
+    "지난 금요일 가을 운동회에 와 주셔서 고맙습니다.",
+    "현장학습 신청서는 지난 화요일까지 받았어요.",
     "이달 말 생일잔치 날짜는 추후 공지합니다.",
   ].join("\n");
 }
@@ -150,6 +152,8 @@ function noticeEntries(): PhotoEntry[] {
   const classDay = daysAgo(-9);
   const classDue = daysAgo(-3);
   const letterDue = daysAgo(-2);
+  const sportsDay = daysAgo(3);
+  const tripDue = daysAgo(2);
   return [
     {
       id: "pe_1",
@@ -160,6 +164,7 @@ function noticeEntries(): PhotoEntry[] {
       all_day: false,
       items: [],
       needs_review: false,
+      past: false,
       starts_at: seoulAt(library, "09:30"),
       ends_at: null,
       due_at: null,
@@ -173,6 +178,7 @@ function noticeEntries(): PhotoEntry[] {
       all_day: true,
       items: [],
       needs_review: false,
+      past: false,
       starts_at: seoulAt(readingFrom, "00:00"),
       ends_at: seoulAt(readingTo, "23:59"),
       due_at: null,
@@ -186,6 +192,7 @@ function noticeEntries(): PhotoEntry[] {
       all_day: true,
       items: [],
       needs_review: false,
+      past: false,
       starts_at: null,
       ends_at: null,
       due_at: seoulAt(consentDue, "23:59"),
@@ -200,6 +207,7 @@ function noticeEntries(): PhotoEntry[] {
       all_day: false,
       items: [],
       needs_review: false,
+      past: false,
       starts_at: seoulAt(classDay, "10:00"),
       ends_at: seoulAt(classDay, "12:00"),
       due_at: seoulAt(classDue, "23:59"),
@@ -213,6 +221,7 @@ function noticeEntries(): PhotoEntry[] {
       all_day: false,
       items: [],
       needs_review: false,
+      past: false,
       starts_at: null,
       ends_at: null,
       due_at: seoulAt(letterDue, "18:00"),
@@ -226,6 +235,7 @@ function noticeEntries(): PhotoEntry[] {
       all_day: false,
       items: [],
       needs_review: false,
+      past: false,
       starts_at: null,
       ends_at: null,
       due_at: null,
@@ -238,6 +248,7 @@ function noticeEntries(): PhotoEntry[] {
       all_day: true,
       items: ["원복"],
       needs_review: false,
+      past: false,
     },
     {
       id: "pe_3",
@@ -247,6 +258,37 @@ function noticeEntries(): PhotoEntry[] {
       all_day: true,
       items: ["수건", "수영복", "여벌 옷"],
       needs_review: false,
+      past: false,
+    },
+    {
+      id: "pe_10",
+      kind: "event",
+      title: "가을 운동회",
+      // 🚨 지난 일정이다 (#828 리뷰 · #854). 지난주 알림장을 늦게 올리면 이미 지난 일정도 읽힌다.
+      //    시작 날짜를 읽었어도 켜 두지 않는다 — 지났는지는 서버가 정해 보낸다(`past`).
+      date: sportsDay,
+      all_day: true,
+      items: [],
+      needs_review: false,
+      past: true,
+      starts_at: seoulAt(sportsDay, "00:00"),
+      ends_at: seoulAt(sportsDay, "23:59"),
+      due_at: null,
+    },
+    {
+      id: "pe_11",
+      kind: "todo",
+      title: "현장학습 신청서 회신",
+      // 🚨 마감이 지난 할 일이다. 서버는 이것도 `past` 로 보내지만, 할 일은 원래 켜지 않으니
+      //    "지난 일정이라 꺼 두었어요." 를 말하면 틀린 까닭이다 (`offBecausePast`).
+      date: tripDue,
+      all_day: true,
+      items: [],
+      needs_review: false,
+      past: true,
+      starts_at: null,
+      ends_at: null,
+      due_at: seoulAt(tripDue, "23:59"),
     },
     {
       id: "pe_4",
@@ -256,6 +298,7 @@ function noticeEntries(): PhotoEntry[] {
       date: null,
       items: [],
       needs_review: true,
+      past: false,
       review_reason: "날짜가 '추후 공지' 로 적혀 있어서 읽지 못했어요.",
     },
   ];
@@ -286,6 +329,7 @@ function mealPlanEntries(): PhotoEntry[] {
     all_day: true,
     items: [],
     needs_review: false,
+    past: false,
   }));
 
   // 한 칸은 접혀서 안 보이는 자리에도 못 읽은 것이 있을 수 있다는 것을 보여준다.
@@ -294,6 +338,7 @@ function mealPlanEntries(): PhotoEntry[] {
     title: "읽지 못한 칸",
     date: null,
     needs_review: true,
+    past: false,
     review_reason: "글자가 겹쳐 있어서 이 칸은 읽지 못했어요.",
   };
 
