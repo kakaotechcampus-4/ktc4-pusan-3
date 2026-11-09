@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 import pytest
 
 from app.agents.entrypoint import PendingMemoryContext
-from app.api.runs import pending_reply
+from app.api.runs import pending_reply, photo_run, suggestion_retry
 
 
 @dataclass
@@ -73,3 +73,109 @@ def fake_pending_reply(monkeypatch: pytest.MonkeyPatch) -> FakePendingReply:
     for name in ("put", "get", "claim", "release", "drop", "open_runs"):
         monkeypatch.setattr(pending_reply, name, getattr(fake, name))
     return fake
+
+
+@dataclass
+class FakeRetryEntry:
+    parent_id: uuid.UUID
+    child_id: uuid.UUID
+    expires_at: datetime
+    task: object = None
+    message: str | None = None
+    guard: tuple[str, str] | None = None
+    in_use: bool = False
+
+
+@dataclass
+class FakeSuggestionRetry:
+    """`suggestion_retry` 의 async 함수를 메모리로.
+
+    판정은 tests/integration/api/test_suggestion_retry.py 가 건다.
+    """
+
+    entries: dict[tuple[str, str], FakeRetryEntry] = field(default_factory=dict)
+
+    def _own(self, run_id, agent, parent_id, child_id, now):
+        entry = self.entries.get((run_id, agent))
+        moment = now or datetime.now(UTC)
+        if entry is None or entry.expires_at <= moment:
+            return None
+        if (entry.parent_id, entry.child_id) != (parent_id, child_id):
+            return None
+        return entry
+
+    async def put_failed(self, *, run_id, parent_id, child_id, agent, task, now=None) -> None:
+        moment = now or datetime.now(UTC)
+        kept = self._own(run_id, agent, parent_id, child_id, moment)
+        expires = (
+            kept.expires_at
+            if kept is not None and kept.task is not None
+            else moment + suggestion_retry.FAILED_TTL
+        )
+        self.entries[(run_id, agent)] = FakeRetryEntry(parent_id, child_id, expires, task=task)
+
+    async def put_empty(self, *, run_id, parent_id, child_id, agent, message, now=None) -> None:
+        moment = now or datetime.now(UTC)
+        self.entries[(run_id, agent)] = FakeRetryEntry(
+            parent_id, child_id, moment + suggestion_retry.RECORD_TTL, message=message
+        )
+
+    async def put_guard(self, *, run_id, parent_id, child_id, agent, code, message, now=None):
+        moment = now or datetime.now(UTC)
+        self.entries[(run_id, agent)] = FakeRetryEntry(
+            parent_id, child_id, moment + suggestion_retry.RECORD_TTL, guard=(code, message)
+        )
+
+    async def guard_of(self, *, run_id, parent_id, child_id, agent, now=None):
+        entry = self._own(run_id, agent, parent_id, child_id, now)
+        return None if entry is None else entry.guard
+
+    async def empty_message(self, *, run_id, parent_id, child_id, agent, now=None):
+        entry = self._own(run_id, agent, parent_id, child_id, now)
+        return None if entry is None else entry.message
+
+    async def claim(self, *, run_id, parent_id, child_id, agent, now=None):
+        entry = self._own(run_id, agent, parent_id, child_id, now)
+        if entry is None or entry.task is None:
+            return None
+        if entry.in_use:
+            return suggestion_retry.BUSY
+        entry.in_use = True
+        return entry.task
+
+    async def release(self, *, run_id, agent) -> None:
+        if (run_id, agent) in self.entries:
+            self.entries[(run_id, agent)].in_use = False
+
+    async def drop(self, *, run_id, agent) -> None:
+        self.entries.pop((run_id, agent), None)
+
+
+@pytest.fixture(autouse=True)
+def fake_suggestion_retry(monkeypatch: pytest.MonkeyPatch) -> FakeSuggestionRetry:
+    fake = FakeSuggestionRetry()
+    for name in (
+        "put_failed",
+        "put_empty",
+        "put_guard",
+        "guard_of",
+        "empty_message",
+        "claim",
+        "release",
+        "drop",
+    ):
+        monkeypatch.setattr(suggestion_retry, name, getattr(fake, name))
+    return fake
+
+
+@pytest.fixture(autouse=True)
+def fake_photo_run_keep(monkeypatch: pytest.MonkeyPatch) -> list:
+    """사진 run 을 표에 넣는 자리. 넣은 run 을 순서대로 적는다."""
+    kept: list = []
+
+    async def keep(run, *, now=None) -> bool:
+        kept.append(run)
+        return True
+
+    monkeypatch.setattr(photo_run, "keep", keep)
+    return kept

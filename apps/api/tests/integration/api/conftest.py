@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.agents.entrypoint import PendingMemoryContext
 from app.agents.memory.schemas.task import WorkType
 from app.api.deps.auth import hash_token
-from app.api.runs import pending_reply, suggestion_retry
+from app.api.runs import pending_reply, photo_run, suggestion_retry
 from app.domains.child.models import Child, ParentChild, ParentChildRelation
 from app.domains.identity.models import Parent
 from app.domains.identity.repository import create_access, create_session
@@ -113,7 +113,8 @@ async def cid(session: AsyncSession, bearer: Bearer) -> uuid.UUID:
 
 @pytest.fixture
 async def pending_db(session: AsyncSession, monkeypatch: pytest.MonkeyPatch):
-    """되묻기 보관함(`run_hold`, #877)이 테스트 트랜잭션 안에서 읽고 쓰게 한다.
+    """보관함 표(`run_hold`, #877 — 되묻기 · 05 다시 시도 · 사진 run)가 테스트 트랜잭션 안에서 읽고
+    쓰게 한다.
 
     보관함 함수는 자기 세션을 열고 바로 commit 한다. 그대로 두면 바깥 트랜잭션 밖이라 테스트가
     만든 보호자 · 아이를 못 보고 FK 오류가 난다. 같은 연결에 savepoint 로 묶은 공장을 끼운다 —
@@ -124,7 +125,8 @@ async def pending_db(session: AsyncSession, monkeypatch: pytest.MonkeyPatch):
         expire_on_commit=False,
         join_transaction_mode="create_savepoint",
     )
-    monkeypatch.setattr(pending_reply, "_session_factory", factory)
+    for store in (pending_reply, suggestion_retry, photo_run):
+        monkeypatch.setattr(store, "_session_factory", factory)
     return factory
 
 
@@ -132,16 +134,13 @@ async def pending_db(session: AsyncSession, monkeypatch: pytest.MonkeyPatch):
 def clean_in_memory_stores(pending_db):
     """`stash_in_memory` 를 쓰는 테스트가 받는다.
 
-    05 다시 시도 보관함은 아직 프로세스 메모리라(2단계) 비우지 않으면 다음 테스트로 샌다.
-    되묻기 보관함은 표라 `pending_db` 의 rollback 이 비운다.
+    보관함은 표라 `pending_db` 의 rollback 이 비운다.
     """
-    suggestion_retry.clear()
-    yield
-    suggestion_retry.clear()
+    return pending_db
 
 
 async def stash_in_memory(*, parent_id: uuid.UUID, child_id: uuid.UUID) -> str:
-    """보관함 둘(되묻기 표 · 05 다시 시도 메모리)에 그 보호자 · 아이의 항목을 하나씩 넣는다.
+    """보관함 둘(되묻기 · 05 다시 시도, 둘 다 run_hold)에 그 보호자 · 아이의 항목을 하나씩 넣는다.
 
     돌려준 run_id 로 `in_memory` 가 남아 있는지 본다 (#561 · #877).
     🚨 `clean_in_memory_stores` 와 같이 쓴다.
@@ -150,7 +149,7 @@ async def stash_in_memory(*, parent_id: uuid.UUID, child_id: uuid.UUID) -> str:
     owner = {"parent_id": parent_id, "child_id": child_id}
     context = PendingMemoryContext("synthetic", "synthetic question", WorkType.OBSERVE)
     assert await pending_reply.put(run_id=run_id, context=context, **owner)
-    suggestion_retry.put_empty(run_id=run_id, agent="food", message="synthetic", **owner)
+    await suggestion_retry.put_empty(run_id=run_id, agent="food", message="synthetic", **owner)
     return run_id
 
 
@@ -159,7 +158,7 @@ async def in_memory(run_id: str, *, parent_id: uuid.UUID, child_id: uuid.UUID) -
     owner = {"run_id": run_id, "parent_id": parent_id, "child_id": child_id}
     return (
         await pending_reply.get(**owner) is not None,
-        suggestion_retry.empty_message(agent="food", **owner) is not None,
+        await suggestion_retry.empty_message(agent="food", **owner) is not None,
     )
 
 

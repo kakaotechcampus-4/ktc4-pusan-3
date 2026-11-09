@@ -832,7 +832,6 @@ async def test_저장_중에_Agent_가_죽어도_잡아_둔_이벤트는_failed_
 
 async def test_실패_맥락과_0개_기록은_보관함으로만_간다(monkeypatch):
     """실패 맥락에는 요청 원문 조각이 있다. 화면 · 로그로 보내지 않고 05 보관함에만 둔다 (#249)."""
-    suggestion_retry.clear()
     sent_at = datetime(2026, 1, 1, tzinfo=UTC)
 
     async def fake_handle_input(**kwargs):
@@ -849,17 +848,16 @@ async def test_실패_맥락과_0개_기록은_보관함으로만_간다(monkeyp
     await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
 
     assert names(channel) == ["done"]  # 화면에는 아무것도 가지 않는다
-    claimed = suggestion_retry.claim(
+    claimed = await suggestion_retry.claim(
         run_id=channel.run_id, parent_id=PARENT, child_id=CHILD, agent="food"
     )
     assert claimed == suggestion_retry.RetryTask("meal_recommendation", ("저녁 추천해줘",), sent_at)
     assert (
-        suggestion_retry.empty_message(
+        await suggestion_retry.empty_message(
             run_id=channel.run_id, parent_id=PARENT, child_id=CHILD, agent="activity"
         )
         == "조건에 맞는 추천이 없어요."
     )
-    suggestion_retry.clear()
 
 
 async def test_이어받기_맥락을_진입점에_넘긴다(monkeypatch):
@@ -1562,7 +1560,6 @@ async def test_화면에_안_나간_조회_카드는_대화에도_남기지_않�
 
 
 async def test_실패_맥락은_해석과_보호자_원문을_같이_보관한다(monkeypatch):
-    suggestion_retry.clear()
     sent_at = datetime(2026, 1, 1, tzinfo=UTC)
 
     async def fake_handle_input(**kwargs):
@@ -1586,7 +1583,7 @@ async def test_실패_맥락은_해석과_보호자_원문을_같이_보관한�
     job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
     await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
 
-    claimed = suggestion_retry.claim(
+    claimed = await suggestion_retry.claim(
         run_id=channel.run_id, parent_id=PARENT, child_id=CHILD, agent="activity"
     )
     assert claimed == suggestion_retry.RetryTask(
@@ -1596,4 +1593,3 @@ async def test_실패_맥락은_해석과_보호자_원문을_같이_보관한�
         original_texts=("더 쉬운 건 없어?",),
         prior_texts=("블록 놀이 추천해줘",),
     )
-    suggestion_retry.clear()

@@ -33,8 +33,12 @@ from app.providers.meal_plan.schema import (
     MenuItem,
     UnparsedCell,
 )
+from tests.integration.api.conftest import issue_bearer, link_child
 
 KST = ZoneInfo("Asia/Seoul")
+# 사진 run 의 읽은 결과는 표(run_hold, #877)라 `pending_db` 가 테스트 트랜잭션에 묶는다
+pytestmark = pytest.mark.usefixtures("pending_db")
+
 PHOTOS = "/api/v1/children/{cid}/photos"
 COMMIT = "/api/v1/photo-runs/{rid}/commit"
 SOURCE = "숲 체험 안내\n일시: 11월 6일(금) 9:30~12:00\n참가 동의서는 11월 3일(화) 14시까지 회신"
@@ -466,12 +470,13 @@ async def test_식단표를_못_읽어도_공지_항목은_보여_준다(
     assert parsed["entries"][-1]["needs_review"] is True
 
 
-async def test_남의_run_은_없는_run_이다(db_client, bearer, cid, key_set, monkeypatch):
+async def test_남의_run_은_없는_run_이다(db_client, session, bearer, cid, key_set, monkeypatch):
     headers, _ = bearer
-    run = photo_run.open_photo_run(
-        run_id=uuid.uuid4().hex, parent_id=uuid.uuid4(), child_id=uuid.uuid4()
-    )
+    _, someone = await issue_bearer(session, token="test-token-someone")
+    their_child = await link_child(session, parent_id=someone)
+    run = photo_run.open_photo_run(run_id=uuid.uuid4().hex, parent_id=someone, child_id=their_child)
     run.reading = _reading()
+    await photo_run.keep(run)
     response = await db_client.post(
         COMMIT.format(rid=run.run_id),
         json={"lane": "document", "entries": [], "attach_to_calendar": False},
