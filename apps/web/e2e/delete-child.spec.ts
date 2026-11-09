@@ -102,6 +102,8 @@ test.describe("초대로 들어온 member 가 볼 때", () => {
     await page.getByRole("link", { name: "아이 프로필", exact: true }).click();
     await expect(page).toHaveURL(/\/profile$/);
     await expect(page.getByRole("heading", { name: "기본 정보" })).toBeVisible();
+    // 🚨 프로필을 받은 뒤에 센다 — 제목은 받기 전에도 서서, 그때 세면 role 과 상관없이 0 이다 (#865 에서 발견).
+    await expect(page.getByText("2021년 4월 2일")).toBeVisible();
     await expect(page.getByRole("link", { name: /이 아이 삭제하기/ })).toHaveCount(0);
   });
 });

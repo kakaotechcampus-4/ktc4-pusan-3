@@ -75,6 +75,7 @@
 - [agents/data_model.md](agents/data_model.md) — DB 스키마 정본
 - [agents/memory-agent-v1.md](agents/memory-agent-v1.md) — Memory Agent
 - [agents/activity/activity-agent-v1.md](agents/activity/activity-agent-v1.md) — Activity Agent. 월령 임계값 게이팅 · 추천 근거 3단 · 안전 판정을 모델 출력 바깥에 두는 구조 · 월령별 차단 · 경고 9축
+- [agents/eval/](agents/eval/) — **프롬프트 평가 문서 10개** (`SUPERVISOR` · `MEMORY` · `FOOD` · `ACTIVITY` · `ACTIVITY_EVENT_SCHEDULE` · `GROWTH` · `HEALTH` · `CURATOR_JUDGE` · `MEAL_OCR` · `NOTICE_OCR` `_EVAL.md`). 프롬프트 지문 · 측정 이력 · C1(치명 오류) 정의. 프롬프트나 tool spec 을 바꾸면 이력에 행을 더해야 `test_prompt_history.py` 가 통과한다 (#770). 루트 `eval/` 의 골든셋 · 주간 회귀가 생겨도 측정 결과는 여기 이력에 쌓는다
 
 ## API · 백엔드
 
@@ -186,7 +187,7 @@
 | --- | --- | --- |
 | `overview/` | 기획·테크스펙·범위 등 제품 전반 문서 | 박재형 (PM) |
 | `memory/` | Child·Observation Memory 스키마, 3분류, Curator 승격·감쇠, Correction | 이시하 (AI) |
-| `agents/` | Supervisor 라우팅, Food · Activity · Growth · Health Agent, 프롬프트·컨텍스트 | 이시하 (AI) · Activity는 별도 |
+| `agents/` | Supervisor 라우팅, Food · Activity · Growth · Health Agent, 프롬프트·컨텍스트. 프롬프트 평가 문서(측정 이력 · C1)는 `agents/eval/` | 이시하 (AI) · Activity는 별도 |
 | `api/` | 엔드포인트 계약, SSE, 승인 게이트, 외부 API 연동 | 김명성 (백엔드) |
 | `event/` | 일정 초안 계약, 제출 API 가 지켜야 할 규칙 | 이시하 (AI) |
 | `meal-plan/` | 급식표 입력(사진 · 엑셀 · 한글) → 구조화 JSON · 알레르기 번호 · 저장 | 박재형 (PM) |

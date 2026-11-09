@@ -19,6 +19,12 @@ async function sendFromHome(page: Page, text: string) {
   await page.waitForURL(`**/child/${CHILD}/chat`);
 }
 
+/**
+ * 실패 카드(`failed`)의 둘째 줄. 첫 줄은 서버가 이유마다 다른 문구를 보내서(#768) 카드가 **안 섰는지**는
+ * 이 줄로 본다 — 첫 줄 글자로 보면 문구가 바뀌는 순간 늘 통과한다.
+ */
+const NOTHING_SAVED = "아무것도 저장하지 않았어요.";
+
 /** 그 한 줄의 답 묶음 (말풍선 하나 = `li` 하나). */
 function turn(page: Page, text: string) {
   return page.getByRole("listitem").filter({ hasText: text }).first();
@@ -103,7 +109,7 @@ test.describe("성공과 실패 · 안내를 한 화면에 (§2 실행 NF-06)", 
       await expect(
         reply.getByText("놀이 쪽은 이번에 처리하지 못했어요. 저장한 기록은 그대로 남아 있어요."),
       ).toBeVisible();
-      await expect(reply.getByText("읽지 못했어요")).toHaveCount(0);
+      await expect(reply.getByText(NOTHING_SAVED, { exact: true })).toHaveCount(0);
 
       // 🚨 해낸 것이 먼저, 못 한 것이 그 아래다 (#868) — 제목 바로 아래에 실패 안내가 서면 저장이 실패한 것처럼 읽혔다.
       const saved = await reply.getByText("기록 2건", { exact: true }).boundingBox();
@@ -193,6 +199,23 @@ test.describe("성공과 실패 · 안내를 한 화면에 (§2 실행 NF-06)", 
       await expect(reply.getByText("아래 기록은 그대로 저장했어요.")).toBeVisible();
       await expect(reply.getByText("기록 2건", { exact: true })).toBeVisible();
       await expect(reply.getByRole("status").filter({ hasText: "아직 준비 중" })).toHaveCount(0);
+    });
+  });
+
+  test.describe("failed — 저장 없이 끝난 run (#768)", () => {
+    test.use({ scenario: "failed" });
+
+    test("첫 줄은 서버 문구 그대로, 둘째 줄은 저장 없음, 두 길이 선다", async ({ page }) => {
+      await sendFromHome(page, "지어낸 한 줄");
+      const reply = turn(page, "지어낸 한 줄");
+      // 🚨 화면이 `reason` 으로 문구를 만들지 않는다 — 목이 보낸 `message` 의 글자 그대로다
+      await expect(
+        reply.getByText("말씀을 정리하지 못했어요. 조금 바꿔서 다시 적어 주세요.", { exact: true }),
+      ).toBeVisible();
+      await expect(reply.getByText("읽지 못했어요")).toHaveCount(0);
+      await expect(reply.getByText(NOTHING_SAVED, { exact: true })).toBeVisible();
+      await expect(reply.getByRole("button", { name: "다시 시도" })).toBeVisible();
+      await expect(reply.getByRole("button", { name: "고쳐 쓰기" })).toBeVisible();
     });
   });
 });
@@ -295,7 +318,7 @@ test.describe("도메인 Agent 결과는 답 묶음 안의 블록이다 (#227)",
         reply.getByText("놀이 쪽은 이번에 처리하지 못했어요.", { exact: true }),
       ).toBeVisible();
       await expect(reply.getByText("저장한 기록은 그대로", { exact: false })).toHaveCount(0);
-      await expect(reply.getByText("읽지 못했어요")).toHaveCount(0);
+      await expect(reply.getByText(NOTHING_SAVED, { exact: true })).toHaveCount(0);
       // 실패한 추천 Agent 를 그 run 의 처음 맥락으로 다시 준비한다 (#249)
       const retry = reply.getByRole("link", { name: "다시 준비하기" });
       await expect(retry).toHaveAttribute(
@@ -303,6 +326,34 @@ test.describe("도메인 Agent 결과는 답 묶음 안의 블록이다 (#227)",
         /^\/child\/c1\/suggestions\?agents=activity&run=.+/,
       );
     });
+  });
+});
+
+test.describe("연결이 끊긴 채 보낸다 (#865)", () => {
+  test("🚨 홈에 머물고 쓴 글이 남으며, 다시 연결된 뒤 보내면 한 번만 저장된다", async ({
+    page,
+    context,
+  }) => {
+    const calls = recordApi(page);
+    await page.goto(`/child/${CHILD}/home`);
+    const box = page.getByRole("textbox", { name: "오늘 있었던 일" });
+    await box.fill("지어낸 한 줄");
+
+    await context.setOffline(true);
+    await page.getByRole("button", { name: "이 이야기 남기기" }).click();
+
+    // 넘어가려다 실패하면 브라우저 오류 화면이 앱을 통째로 덮는다 — 홈에 머물러야 한다.
+    await expect(page.getByText("인터넷 연결이 끊겨 있어요", { exact: false })).toBeVisible();
+    await expect(page).toHaveURL(new RegExp(`/child/${CHILD}/home$`));
+    await expect(box).toHaveValue("지어낸 한 줄");
+    expect(writes(calls, "POST", /\/inputs$/)).toEqual([]);
+
+    await context.setOffline(false);
+    await expect(page.getByText("다시 연결됐어요", { exact: false })).toBeVisible();
+    await page.getByRole("button", { name: "이 이야기 남기기" }).click();
+    await page.waitForURL(`**/child/${CHILD}/chat`);
+    await expect(turn(page, "지어낸 한 줄")).toBeVisible();
+    expect(writes(calls, "POST", /\/inputs$/)).toHaveLength(1);
   });
 });
 
@@ -323,7 +374,7 @@ test.describe("저장한 뒤 끊긴 run 은 실패가 아니다 (#271)", () => {
     // 🚨 새 키로 다시 보내면 두 번 저장된다 — 실패 화면의 두 길을 세우지 않는다.
     await expect(reply.getByRole("button", { name: "다시 시도" })).toHaveCount(0);
     await expect(reply.getByRole("button", { name: "고쳐 쓰기" })).toHaveCount(0);
-    await expect(reply.getByText("읽지 못했어요")).toHaveCount(0);
+    await expect(reply.getByText(NOTHING_SAVED, { exact: true })).toHaveCount(0);
   });
 
   test('받은 기록이 없어도 "저장하지 않았어요" 라고 말하지 않는다', async ({ page }) => {
@@ -666,5 +717,45 @@ test.describe("초안 카드의 준비물 (#679)", () => {
         .filter({ has: page.getByRole("button", { name: "간식 빼기" }) })
         .getByText("새로 더한 것"),
     ).toBeVisible();
+  });
+});
+
+test.describe("한 줄 입력의 글자 수 한도 (#867)", () => {
+  test("한도 가까이에서만 숫자가 서고, 넘으면 이유를 말하며 보내지 않는다", async ({ page }) => {
+    const calls = recordApi(page);
+    await page.goto(`/child/${CHILD}/home`);
+    const input = page.getByRole("textbox", { name: "오늘 있었던 일" });
+    const send = page.getByRole("button", { name: "이 이야기 남기기" });
+    const reason = page.getByText("2,000자까지 보낼 수 있어요. 줄이거나 나눠서 보내 주세요.");
+
+    // 대부분의 한 줄에는 숫자가 없다.
+    await input.fill("가".repeat(1799));
+    await expect(page.getByText(/\d+\/2000/)).toHaveCount(0);
+    await input.fill("가".repeat(1800));
+    await expect(page.getByText("1800/2000")).toBeVisible();
+
+    // 🚨 서버처럼 앞뒤 공백을 떼고 코드 포인트로 센다 — 이모지 2,000개는 보낼 수 있는 글이다.
+    await input.fill(`${"😀".repeat(2000)}   `);
+    await expect(page.getByText("2000/2000")).toBeVisible();
+    await expect(reason).toHaveCount(0);
+    await expect(send).toBeEnabled();
+
+    // 🚨 `maxLength` 로 자르지 않는다 — 붙여넣은 글이 그대로 남고, 보내기만 막는다.
+    await input.fill("가".repeat(2001));
+    await expect(input).toHaveValue("가".repeat(2001));
+    await expect(page.getByText("2001/2000")).toBeVisible();
+    await expect(reason).toBeVisible();
+    await expect(send).toBeDisabled();
+    await expect(send).toHaveAccessibleDescription(/2,000자까지 보낼 수 있어요/);
+
+    // Enter 도 같은 말을 한다 — 줄바꿈으로 새지도, 보내지도 않는다.
+    await input.press("Enter");
+    await expect(input).toHaveValue("가".repeat(2001));
+    expect(writes(calls, "POST", /\/inputs$/)).toEqual([]);
+
+    // 줄이면 다시 보낼 수 있다.
+    await input.press("Backspace");
+    await expect(reason).toHaveCount(0);
+    await expect(send).toBeEnabled();
   });
 });

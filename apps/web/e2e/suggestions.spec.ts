@@ -975,6 +975,127 @@ test.describe("채택이 동의로 막히면 (#835)", () => {
   });
 });
 
+/**
+ * 채택한 뒤 등록된 알레르기 (#859). 채택은 새로고침해도 남고 "일정으로 만들기" 는 나중에 눌러도 되어서,
+ * 그사이 다른 보호자가 등록한 알레르기는 초안 만들기(서버)가 다시 보고 `409 allergen_blocked` 로 막는다.
+ * 🚨 다시 눌러도 같은 응답이라 일반 실패 카드(서버 문구 + "아직 아무것도 넣지 않았어요")를 세우지 않는다.
+ */
+test.describe("채택한 뒤 등록된 알레르기는 일정으로 만들지 않는다 (#859)", () => {
+  /** 계란말이(계란)를 고르고 시트에서 "모르겠어요" 로 채택까지 간다. `extra` 는 함께 고를 놀이 제안. */
+  async function approveEggDish(page: Page, extra?: string) {
+    await page.goto(SUGGESTIONS);
+    await page.getByText("계란말이에 시금치를 조금 섞어 보세요").click();
+    if (extra) {
+      await page.getByRole("tab", { name: "놀이 3가지" }).click();
+      await page.getByText(extra).click();
+    }
+    await page
+      .getByRole("button", { name: extra ? "이 2가지로 할게요" : "이 1가지로 할게요" })
+      .click();
+    const sheet = page.getByRole("dialog", { name: "확인해 주세요" });
+    await sheet.getByRole("button", { name: "모르겠어요" }).click();
+    await sheet.getByRole("button", { name: "이대로 고르기" }).click();
+    await expect(page.getByText("이렇게 하기로 했어요")).toBeVisible();
+  }
+
+  const registerEgg = (page: Page) =>
+    asOtherCaregiver(page, {
+      method: "POST",
+      path: `/children/${CHILD}/health-safety`,
+      body: { type: "allergy", label: "계란" },
+      idempotent: true,
+    });
+
+  test("걸린 추천만 빼고 알린 뒤, 다시 누르면 나머지로 초안을 만든다", async ({ page }) => {
+    const calls = recordApi(page);
+    await approveEggDish(page, "주말에 실내 물놀이장은 어떨까요");
+    expect(await registerEgg(page)).toBe(201);
+
+    await page.getByRole("button", { name: "일정으로 만들기" }).click();
+    const notice = page.getByRole("status").filter({
+      hasText: "그사이 알레르기로 등록된 식품이 들어간 추천이 있어서 일정으로 만들지 않았어요",
+    });
+    await expect(notice).toBeVisible();
+    await expect(notice.getByText("식사", { exact: true })).toBeVisible();
+    // 🚨 실패 카드가 아니다 — 서버 문구도 "아직 아무것도 넣지 않았어요" 도 세우지 않는다.
+    await expect(
+      page.getByText("알레르기로 등록된 항목이 들어 있어 일정으로 만들 수 없어요"),
+    ).toHaveCount(0);
+    await expect(page.getByText("아직 아무것도 넣지 않았어요")).toHaveCount(0);
+    await expect(page.getByRole("dialog", { name: "캘린더에 넣을까요" })).toHaveCount(0);
+    // 🚨 채택은 풀리지 않는다 — 서버에서 계속 approved 다.
+    await expect(page.getByText("식사 1가지, 놀이 1가지")).toBeVisible();
+
+    // 걸린 계란말이를 빼고 다시 보낸다 — 같은 id 로 다시 보내면 같은 409 다.
+    await page.getByRole("button", { name: "일정으로 만들기" }).click();
+    await expect(page.getByRole("dialog", { name: "캘린더에 넣을까요" })).toBeVisible();
+    const drafts = writes(calls, "POST", /\/suggestions\/event-drafts$/);
+    expect(drafts.map((d) => d.body)).toEqual([
+      { suggestion_ids: ["s_1", "s_4"] },
+      { suggestion_ids: ["s_4"] },
+    ]);
+    expect(writes(calls, "POST", /\/events$/)).toEqual([]);
+  });
+
+  test("묶음 안내는 초안에 실릴 것만 센다 — 막힌 식사 추천은 세지 않는다", async ({ page }) => {
+    await page.goto(SUGGESTIONS);
+    await page.getByText("계란말이에 시금치를 조금 섞어 보세요").click();
+    await page.getByText("두부를 부쳐서 한 조각 곁들여 보세요").click();
+    await page.getByRole("button", { name: "이 2가지로 할게요" }).click();
+    const sheet = page.getByRole("dialog", { name: "확인해 주세요" });
+    for (const card of await sheet.locator("section").all()) {
+      await card.getByRole("button", { name: "모르겠어요" }).click();
+    }
+    await sheet.getByRole("button", { name: "이대로 고르기" }).click();
+    await expect(page.getByText("이렇게 하기로 했어요")).toBeVisible();
+    await expect(page.getByText("식사에서 고른 2가지는 일정 하나로 묶여요.")).toBeVisible();
+    expect(await registerEgg(page)).toBe(201);
+
+    await page.getByRole("button", { name: "일정으로 만들기" }).click();
+    await expect(
+      page.getByRole("status").filter({ hasText: "그 추천을 빼고 다시 만들 수 있어요" }),
+    ).toBeVisible();
+    // 🚨 남은 것은 두부 하나라 묶을 것이 없다. "고른 것" 요약은 채택을 그대로 센다.
+    await expect(page.getByText("일정 하나로 묶여요", { exact: false })).toHaveCount(0);
+    await expect(page.getByText("식사 2가지")).toBeVisible();
+  });
+
+  test("고른 것이 전부 걸렸으면 일정으로 만들기를 더 묻지 않는다", async ({ page }) => {
+    const calls = recordApi(page);
+    await approveEggDish(page);
+    expect(await registerEgg(page)).toBe(201);
+
+    await page.getByRole("button", { name: "일정으로 만들기" }).click();
+    await expect(
+      page.getByRole("status").filter({
+        hasText: "그사이 알레르기로 등록된 식품이 들어간 추천이라 일정으로 만들 수 없어요",
+      }),
+    ).toBeVisible();
+    // 🚨 만들 것이 없는데 버튼을 세우면 눌러도 같은 409 다.
+    await expect(page.getByRole("button", { name: "일정으로 만들기" })).toHaveCount(0);
+    await expect(page.getByText("일정으로도 만들까요?")).toHaveCount(0);
+    await expect(page.getByText("이렇게 하기로 했어요")).toBeVisible();
+    expect(writes(calls, "POST", /\/suggestions\/event-drafts$/)).toHaveLength(1);
+  });
+
+  test("채택한 뒤 건강정보 동의가 없어지면 일반 실패가 아니라 동의 카드를 세운다", async ({
+    page,
+  }) => {
+    await approveEggDish(page);
+    // 알레르기 항목이 든 제안은 서버가 건강정보를 다시 읽어야 초안을 만든다.
+    await switchScenario(page, "consent");
+    await page.getByRole("button", { name: "일정으로 만들기" }).click();
+
+    await expect(page.getByText("먼저 동의가 필요해요")).toBeVisible();
+    await expect(page.getByText("일정 초안을 만들 수 없어요", { exact: false })).toBeVisible();
+    await expect(page.getByRole("link", { name: "동의 관리로 가기" })).toHaveAttribute(
+      "href",
+      `/child/${CHILD}/settings`,
+    );
+    await expect(page.getByText("아직 아무것도 넣지 않았어요")).toHaveCount(0);
+  });
+});
+
 test.describe("승인 게이트 ㉡ — 같은 식품이 두 추천에 (#823)", () => {
   test.use({ scenario: "precheck_shared_item" });
 
