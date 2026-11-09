@@ -61,6 +61,13 @@ class PhotoEntry(ApiSchema):
     all_day: bool = False
     items: list[str] = Field(default_factory=list, max_length=100)
     needs_review: bool = False
+    past: bool = Field(
+        default=False,
+        description=(
+            "지난 일정인가. 화면이 캘린더에 넣을 날이 사진을 받은 날보다 앞이면 참이다. "
+            "확인 화면 전용이고 저장할 때 다시 보내도 쓰지 않는다"
+        ),
+    )
     review_reason: str | None = None
     label: str | None = Field(default=None, description='내용 이름. "회신" · "체험비"')
     target_scope: Literal["child", "class", "all", "conditional", "unknown"] | None = Field(
