@@ -2,7 +2,7 @@
 
 import { useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronUp } from "lucide-react";
-import { useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { PhotoEntrySheet } from "@/components/photo-entry-sheet";
 import { PhotoPreview } from "@/components/photo-preview";
@@ -219,6 +219,20 @@ export function PhotoReview({
    *    누름이 같은 키로 같은 일정을 동시에 보낸다(서버 409 in_progress). 상태가 아니라 ref 로 바로 막는다.
    */
   const running = useRef(false);
+  /**
+   * 🚨 **넣는 도중에 화면을 떠나면 남은 일정은 보내지 않는다** (#828 리뷰). 머리의 "뒤로 가기" 버튼이나
+   *    기기 뒤로가기로 화면이 사라져도 `addEvents` 의 반복은 그대로 돌아, 누르고 바로 마음을 바꿔
+   *    떠났는데 켠 일정이 전부 들어갔다. 이미 보내고 있던 한 건은 되돌릴 수 없어 그대로 두고, 다음
+   *    건부터 멈춘다. 그 두 뒤로 가기는 넣는 동안에도 잠그지 않는다.
+   * 🚨 마운트 때 `true` 로 다시 칠한다 — Strict Mode 는 마운트 → 정리 → 마운트를 한 번 더 돈다.
+   */
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   const [showChecked, setShowChecked] = useState(false);
   /**
    * 자리 옮김 (디자인 시스템 §8). 확인한 줄이 "확인이 필요해요" 에서 "잘 읽었어요" 로 옮겨 가고, 빼거나
@@ -326,10 +340,11 @@ export function PhotoReview({
     const failures: Record<string, string> = {};
     /**
      * 🚨 **하나씩, 끝까지 간다.** 하나가 실패해도 나머지는 넣는다 — 거기서 멈추면 뒤의 줄은 시도도 안 한
-     *    채로 "못 넣었어요" 가 된다. 동시에 보내지 않는 것은 실패한 줄과 넣은 줄이 목록 순서대로
+     *    채로 "못 넣었어요" 가 된다. 멈추는 것은 화면을 떠났을 때뿐이다(`mounted`). 동시에 보내지 않는 것은 실패한 줄과 넣은 줄이 목록 순서대로
      *    갈려야 보호자가 따라 읽을 수 있어서다. 많아야 몇 건이다.
      */
     for (const entry of toAdd) {
+      if (!mounted.current) break;
       const body = eventBody(entry, planOf(entry));
       if (body === null) continue; // 잠긴 줄은 `toAdd` 에 없다 — 타입을 좁히는 자리다.
       let holder = eventKeys.get(entry.id);
@@ -362,6 +377,8 @@ export function PhotoReview({
       // 🚨 캘린더가 바뀌었다. commit 이 실패해 이 화면에 남아도 09 · 03 이 방금 넣은 일정을 보여야 한다.
       void queryClient.invalidateQueries({ queryKey: qk.child(childId) });
     }
+    // 화면을 떠났으면 commit 하지 않는다 — 넣은 일정만 남고 공지는 저장되지 않는다.
+    if (!mounted.current) return null;
     setEventFailed(failures);
     if (Object.keys(failures).length > 0) {
       // 🚨 못 넣은 줄이 접힌 묶음 안에 있으면 까닭이 안 보인다.
