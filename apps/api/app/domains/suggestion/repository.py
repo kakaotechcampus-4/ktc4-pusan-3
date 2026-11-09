@@ -369,14 +369,15 @@ async def _checked_citations(
 
 # 요청 기반 일반 추천을 받는 Agent. `app/agents/common/suggestion.REQUESTED_AGENTS` 와 같은 값이다 —
 # 레이어가 달라 서로 import 하지 않고 테스트(`test_requested_agents`)가 맞춘다
-_REQUESTED_AGENTS = frozenset({"activity", "growth"})
+_REQUESTED_AGENTS = frozenset({"activity", "growth", "food"})
 
 
 def _requested(payload: Mapping[str, Any]) -> bool:
-    """보호자가 놀이 · 주제를 정해 물은 일반 추천인가. 저장 검사와 행의 `requested` 가 같이 쓴다.
+    """보호자가 놀이 · 주제 · 재료를 정해 물은 일반 추천인가. 저장 검사와 행의 `requested` 가 쓴다.
 
-    Activity · Growth 만이다 — Food 는 후보가 레시피북에서만 나와야 해서, `requested` 가 와도 문서 ·
-    메뉴 근거를 본다 (#597 리뷰). 개인화는 아이 기록이 근거라 요청 기반이 아니다.
+    Activity · Growth · Food 다. Food 는 보호자가 재료 · 요리 종류를 정해 물은 요청에만 Agent 가
+    `requested` 를 넘긴다(#740) — 막연한 요청의 추천은 지금처럼 문서 · 메뉴 근거를 본다. 개인화는
+    아이 기록이 근거라 요청 기반이 아니다.
     """
     return (
         bool(payload.get("requested", False))

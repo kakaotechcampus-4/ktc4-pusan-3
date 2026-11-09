@@ -26,7 +26,7 @@ import sys
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -40,11 +40,20 @@ from app.agents.common.result import DomainAgentResult
 from app.agents.common.schemas.task import DomainTask
 from app.agents.food import agent as food_agent
 from app.agents.food.agent import run
+from app.agents.food.daycare_lookup import SLOT_LABEL, date_label
 from app.agents.food.meal_dates import resolve_meal_date
-from app.agents.food.meal_pool import PoolItem
-from app.agents.food.meal_review import GENERAL_REASON
-from app.agents.food.readouts import READOUTS
-from app.agents.food.store import DaycareMealRow, SafetyEntry
+from app.agents.food.meal_pool import (
+    APPEARANCE_DEFICIT_GROUPS,
+    PoolItem,
+    _sparse_groups,
+    explainable_groups,
+)
+from app.agents.food.meal_review import GENERAL_REASON, GENERAL_REASON_REQUEST
+from app.agents.food.nutrient_wording import APPEARANCE_GROUPS
+from app.agents.food.readouts import MEAL_NUTRIENT_BASIS, READOUTS
+from app.agents.food.store import DaycareMealRow, MenuCatalogRow, SafetyEntry
+from app.agents.food.store.ports import DAYCARE_SLOT_ORDER
+from app.rules.menu_key import normalize_menu_key
 from tests.eval.agents.food.generate import require_food_model
 from tests.eval.agents.food.world import (
     _EGG_ONLY,
@@ -130,11 +139,58 @@ class Ran:
 class Case:
     case_id: str
     text: str
-    task: str  # meal_recommendation | daycare_meal | food_check
+    task: str  # meal_recommendation | daycare_meal | daycare_lookup | food_check
     world: str
     expect: str
     judge: Callable[["Ran"], Verdict]
     narrow: bool = False  # 풀 필터와 사후 필터 사이의 틈을 흉내 낸다(C48-narrow)
+
+
+def _generated_args(ran: "Ran") -> dict[str, dict[str, Any]]:
+    """모델이 `propose_meal_candidates` 로 낸 생성 후보(이름 → 인자). 거절된 호출까지 합친다."""
+    found: dict[str, dict[str, Any]] = {}
+    for name, raw in ran.llm.tool_calls:
+        if name != "propose_meal_candidates":
+            continue
+        try:
+            args = json.loads(raw)
+        except ValueError:
+            continue
+        for item in (args.get("generated") or []) if isinstance(args, dict) else []:
+            if isinstance(item, dict) and isinstance(item.get("name"), str):
+                found[normalize_menu_key(item["name"])] = item
+    return found
+
+
+def _generated_menu(ran: "Ran", name: str) -> MenuCatalogRow | None:
+    """생성 메뉴를 코드가 안전 필터에 건 것과 같은 모양의 행으로. tool 인자에 없으면 None."""
+    item = _generated_args(ran).get(normalize_menu_key(name))
+    if item is None:
+        return None
+    parts = [*(item.get("ingredients") or []), *(item.get("main_ingredients") or [])]
+    return MenuCatalogRow(
+        menu_key=normalize_menu_key(name),
+        display_name=name,
+        source="manual",
+        resolved=True,
+        synced_at=NOW,
+        ingredients=tuple(dict.fromkeys(str(part) for part in parts)),
+        main_ingredients=tuple(str(part) for part in item.get("main_ingredients") or []),
+    )
+
+
+def _generated_problems(ran: "Ran", name: str, entries: list[SafetyEntry]) -> list[str]:
+    row = _generated_menu(ran, name)
+    if row is None:
+        return [f"생성 메뉴 {name} 가 tool 인자에 없다"]
+    life = life_stage(ran.world.birth, ran.world.today)
+    if not filter_food_safety([row], entries, life.stage, months=life.months).passed:
+        return [f"공통2 걸러졌어야 할 생성 메뉴가 추천에 있다 ({name})"]
+    return []
+
+
+def _generated_drafts(ran: "Ran") -> list[Any]:
+    return [d for d in ran.result.suggestions if ran.world.recipe(d.content) is None]
 
 
 # ── 공통 판정 (§0 전 입력 공통 실패 조건) ──────────────────────────────────
@@ -177,11 +233,30 @@ def common(ran: Ran) -> Verdict:
     if len(result.suggestions) > 3:
         verdict.failures.append(f"추천이 {len(result.suggestions)}개다 (최대 3)")
 
+    if result.task_type == "meal_recommendation":
+        # #739 · #740 — 추천이 하나 이상이면 메뉴 출처 줄이 한 줄(레시피북 메뉴 / 생성 메뉴 / 섞임),
+        # 하나도 없으면 한 줄도 없다
+        source_lines = [
+            r
+            for r in result.readouts
+            if "재료가 검수된 메뉴예요" in r.body or "공개 레시피에 없어" in r.body
+        ]
+        expected = 1 if result.suggestions else 0
+        if len(source_lines) != expected:
+            verdict.failures.append(
+                f"출처 줄이 {len(source_lines)}줄이다 ({expected}줄이어야 한다)"
+            )
+
     life = life_stage(world.birth, world.today)
     entries = _active_entries(world)
     for draft in result.suggestions:
         row = world.recipe(draft.content)
         if row is None:
+            # 보호자가 조건을 정해 물어 인정됐으면 레시피북 밖 생성 메뉴는 요청 기반이다(#740)
+            # 아이 기록을 인용해 개인화로 나가도 생성 메뉴다 — tool 인자에 있으면 같은 확인을 건다
+            if normalize_menu_key(draft.content) in _generated_args(ran):
+                verdict.failures.extend(_generated_problems(ran, draft.content, entries))
+                continue
             verdict.failures.append(f"공통3 풀 밖 메뉴가 추천에 있다 ({draft.content})")
             continue
         safety = filter_food_safety([row], entries, life.stage, months=life.months)
@@ -249,7 +324,8 @@ def exact3(ran: Ran) -> Verdict:
         verdict.failures.append(f"추천 {len(ran.result.suggestions)}개 (3개여야 한다)")
     if ran.result.model_calls != 1:
         verdict.failures.append(f"모델 호출 {ran.result.model_calls}회 (재호출 없이 1회여야 한다)")
-    if ran.result.readouts:
+    # 출처 줄·영양 줄은 모든 추천에 붙을 수 있다 — 개수 안내(code 가 있는 줄)만 본다
+    if any(readout.code in ("fewer", "empty") for readout in ran.result.readouts):
         verdict.failures.append("3개를 채웠는데 개수 안내가 붙었다")
     return verdict
 
@@ -778,6 +854,53 @@ def j_inquiry(ran: Ran) -> Verdict:
     return verdict
 
 
+def j_lookup(span: Callable[[date], tuple[date, date] | None]) -> Callable[[Ran], Verdict]:
+    """급식 조회(L1~L5). 코드가 같은 범위로 읽은 행과 답의 줄을 대조한다.
+
+    세계가 실제 오늘 날짜로 만들어져 요일마다 그날 행 유무가 달라진다 — 줄 수를 고정하지 않는다.
+    `span(오늘)` 이 기대 범위(양끝 포함)이고, 한 번에 일주일을 넘는 요청이면 None 이다.
+    읽기만 한다 — 급식 행이 바뀌면 실패다. 알레르기 판정 · 안전 문구는 붙지 않는다.
+    """
+
+    def judge(ran: Ran) -> Verdict:
+        verdict = common(ran)
+        if not _unchanged(ran, ran.before):
+            verdict.failures.append("조회인데 급식 행이 바뀌었다")
+        if ran.result.status != "completed" or ran.result.model_calls != 1:
+            verdict.failures.append(
+                f"조회가 끝나지 않았다 (status={ran.result.status} 모델 {ran.result.model_calls}회)"
+            )
+            return verdict
+        bodies = _bodies(ran)
+        if any(word in _all_text(ran.result) for word in ("알레르기", "괜찮아요", "먹여도")):
+            verdict.failures.append("조회 답에 알레르기 · 안전 판정 문구가 붙었다")
+        bounds = span(ran.world.today)
+        if bounds is None:
+            if bodies != [READOUTS.get("daycare.lookup_too_long").template]:
+                verdict.failures.append(f"일주일을 넘는 조회인데 안내가 아니다: {bodies}")
+            return verdict
+        first, last = bounds
+        rows = sorted(
+            (row for row in ran.before if first <= row[1] <= last and row[3]),
+            key=lambda row: (row[1], DAYCARE_SLOT_ORDER[row[2]]),
+        )
+        if not rows:
+            if len(bodies) != 1 or not bodies[0].endswith("에는 등록된 급식이 없어요."):
+                verdict.failures.append(f"그 기간에 행이 없는데 없다는 안내가 아니다: {bodies}")
+            return verdict
+        want = [f"{date_label(row[1])} {SLOT_LABEL[row[2]]}: {', '.join(row[3])}" for row in rows]
+        got = bodies[0].split(chr(10)) if bodies else []
+        if got != want:
+            verdict.failures.append(f"답의 줄이 읽은 행과 다르다: 기대 {want} / 실제 {got}")
+        return verdict
+
+    return judge
+
+
+def _monday(today: date) -> date:
+    return today - timedelta(days=today.weekday())
+
+
 def j_opened(ran: Ran) -> Verdict:
     """단계 · 동의가 아니라 급식 행으로 여닫는다(이유기 · 동의 철회)."""
     verdict = common(ran)
@@ -793,8 +916,270 @@ def _rows_on(ran: Ran, serve_date: Any) -> list[DaycareMealRow]:
     return [row for row in _rows(ran) if row.serve_date == serve_date]
 
 
+# ── 식단 추천 tool 흐름 (Q1~Q3) ─────────────────────────────────────────
+# 모델이 어떤 tool 을 어떤 순서로 부르는지는 판정하지 않는다 — 조회 tool 은 다 선택이다.
+# 순서는 참고(note)로 콘솔에 찍고, 결과 파일의 tools · tool_args 에도 남는다
+def _tools(ran: Ran) -> list[str]:
+    return [name for name, _ in ran.llm.tool_calls]
+
+
+def _proposed_slots(ran: Ran) -> list[str]:
+    """마지막 propose_meal_candidates 의 끼니. 앞의 호출은 거절된 것이라 보지 않는다."""
+    raws = [raw for name, raw in ran.llm.tool_calls if name == "propose_meal_candidates"]
+    if not raws:
+        return []
+    try:
+        args = json.loads(raws[-1])
+    except ValueError:
+        return []
+    candidates = args.get("candidates", []) if isinstance(args, dict) else []
+    return [str(item.get("meal_slot")) for item in candidates if isinstance(item, dict)]
+
+
+def _has(row: Any, food: str) -> bool:
+    return food in row.display_name or any(food in item for item in row.ingredients)
+
+
+def j_ingredient(food: str) -> Callable[[Ran], Verdict]:
+    """재료를 정한 추천("○○ 들어간 음식 추천해줘"), 레시피북에 그 재료 메뉴가 있는 세계.
+
+    요청 글에 이름이나 재료가 나온 레시피는 코드가 풀 상한에 자르지 않고 샘플 앞에 넣는다(#740).
+    그래서 샘플에 없으면 코드의 실패이고, 샘플에 있었는데 하나도 안 골랐으면 모델의 실패다.
+    레시피북의 그 재료 메뉴가 3개보다 적으면 남는 자리는 생성 메뉴로 채운다.
+    """
+
+    def judge(ran: Ran) -> Verdict:
+        verdict = merged(exact3(ran), common(ran))
+        shown = ran.world.context.state.sampled.values()
+        sampled = [row.display_name for row in shown if _has(row, food)]
+        picked = [row.display_name for row in _rows_of(ran) if _has(row, food)]
+        if not sampled:
+            verdict.failures.append(f"후보 목록에 {food} 메뉴가 없었다 — 조건 맞는 레시피가 잘렸다")
+        elif not picked:
+            verdict.failures.append(f"후보 목록에 {food} 메뉴가 있었는데 고르지 않았다 {sampled}")
+        mismatch = [row.display_name for row in _rows_of(ran) if not _has(row, food)]
+        if mismatch:
+            verdict.failures.append(f"재료 조건인데 {food} 가 없는 레시피를 골랐다 {mismatch}")
+        # 레시피북에 그 재료 메뉴가 모자라면 남는 자리는 생성으로 채운다 — 생성이면 같은 확인을 건다
+        _generated_checks(ran, verdict, needs_food=food)
+        verdict.notes.append(f"tool 순서 {_tools(ran)} · 샘플의 {food} 메뉴 {sampled}")
+        return verdict
+
+    return judge
+
+
+GENERATED_NOTICE = "공개 레시피에 없어"
+
+
+def _generated_checks(ran: Ran, verdict: Verdict, *, needs_food: str | None) -> list[Any]:
+    """레시피북 밖 생성 메뉴의 공통 확인 — 요청 기반 일반 추천 · 준비물 · 안내 줄 · 재료 조건."""
+    generated = _generated_drafts(ran)
+    args = _generated_args(ran)
+    shown: list[str] = []
+    for draft in generated:
+        item = args.get(normalize_menu_key(draft.content), {})
+        ingredients = [str(part) for part in item.get("ingredients") or []]
+        mains = [str(part) for part in item.get("main_ingredients") or []]
+        if draft.kind == "general" and draft.reason != GENERAL_REASON_REQUEST:
+            verdict.failures.append(f"생성 메뉴 {draft.content} 의 이유가 코드 문구가 아니다")
+        if not draft.items:
+            verdict.failures.append(f"생성 메뉴 {draft.content} 에 준비물이 없다")
+        if needs_food and not any(
+            needs_food in part for part in [draft.content, *ingredients, *mains]
+        ):
+            verdict.failures.append(f"재료 조건인데 {draft.content} 에 {needs_food} 가 없다")
+        shown.append(f"{draft.content}({'/'.join(ingredients)})")
+    if generated and not any(GENERATED_NOTICE in body for body in _bodies(ran)):
+        verdict.failures.append("레시피북 밖 메뉴를 냈는데 공개 레시피에 없다는 안내 줄이 없다")
+    verdict.notes.append("생성 " + ", ".join(shown) if shown else "생성 메뉴 없음")
+    return generated
+
+
+def j_generated_ingredient(food: str) -> Callable[[Ran], Verdict]:
+    """레시피북에 없는 재료를 정한 추천("파프리카 들어간 반찬"). 생성 ≥1 · 모든 후보에 그 재료."""
+
+    def judge(ran: Ran) -> Verdict:
+        verdict = merged(exact3(ran), common(ran))
+        generated = _generated_checks(ran, verdict, needs_food=food)
+        if not generated:
+            verdict.failures.append(f"레시피북에 {food} 메뉴가 없는데 생성 메뉴를 내지 않았다")
+        mismatch = [row.display_name for row in _rows_of(ran) if not _has(row, food)]
+        if mismatch:
+            verdict.failures.append(f"재료 조건인데 {food} 가 없는 레시피를 골랐다 {mismatch}")
+        verdict.notes.append(f"tool 순서 {_tools(ran)}")
+        return verdict
+
+    return judge
+
+
+def j_generated_cuisine(ran: Ran) -> Verdict:
+    """요리 종류를 정한 추천("태국음식"). 억지 조합 · 매운 메뉴는 사람이 읽는다."""
+    verdict = merged(exact3(ran), common(ran))
+    generated = _generated_checks(ran, verdict, needs_food=None)
+    if not generated:
+        verdict.failures.append("레시피북에서 요리 종류를 못 찾는데 생성 메뉴를 내지 않았다")
+    verdict.notes.append("사람이 읽는다 — 흔한 메뉴인가 · 억지 조합 · 매운 메뉴 · 아이 월령")
+    return verdict
+
+
+def j_requested_general(food: str) -> Callable[[Ran], Verdict]:
+    """관련 기록이 없는 아이에게 조건을 정해 물으면 요청 기반 일반 추천이다 — 근거 0행이 정상."""
+
+    def judge(ran: Ran) -> Verdict:
+        verdict = merged(j_generated_ingredient(food)(ran))
+        for draft in ran.result.suggestions:
+            if draft.kind != "general":
+                verdict.failures.append(f"기록이 없는 아이인데 {draft.content} 가 개인화다")
+            elif any(c.ref.is_child_record for c in draft.citations):
+                verdict.failures.append(f"일반 추천에 아이 기록 근거가 있다 ({draft.content})")
+            elif not draft.requested:
+                verdict.failures.append(
+                    f"조건을 정해 물었는데 {draft.content} 가 요청 기반이 아니다"
+                )
+        return verdict
+
+    return judge
+
+
+# 간장 · 된장 같은 양념이 들어가야 하는 요리인데 재료에 안 적은 생성 메뉴를 센다.
+# 누락이 알레르기 필터가 놓칠 수 있는 자리다(PR 에 건수를 붙인다)
+_SAUCE_DISHES = ("떡볶이", "불고기", "조림", "찌개", "국", "볶음", "구이", "덮밥")
+_SOY_SAUCES = ("간장", "된장", "고추장", "굴소스", "쌈장", "춘장", "두부", "콩")
+
+
+def j_generated_allergy(ran: Ran) -> Verdict:
+    """대두 알레르기 아이에게 "떡볶이 같은 간식". 필터에 걸린 생성 0 · 재료 확인 줄 · 양념 누락."""
+    verdict = merged(common(ran))
+    if ran.result.status != "completed":
+        verdict.failures.append(f"status 가 {ran.result.status} 다")
+    args = _generated_args(ran)
+    generated = _generated_checks(ran, verdict, needs_food=None)
+    if generated and not any("성분표" in body for body in _bodies(ran)):
+        verdict.failures.append("알레르기 등록 아이에게 생성 메뉴를 냈는데 재료 확인 줄이 없다")
+    missing = []
+    for draft in generated:
+        item = args.get(normalize_menu_key(draft.content), {})
+        parts = [
+            str(p)
+            for p in [*(item.get("ingredients") or []), *(item.get("main_ingredients") or [])]
+        ]
+        needs_sauce = any(dish in draft.content for dish in _SAUCE_DISHES)
+        if needs_sauce and not any(sauce in part for part in parts for sauce in _SOY_SAUCES):
+            missing.append(draft.content)
+    verdict.notes.append(f"양념 누락 의심 {len(missing)}/{len(generated)}건 {missing}")
+    return verdict
+
+
+def j_no_generation(ran: Ran) -> Verdict:
+    """조건이 없거나 돌 이전이면 생성 메뉴를 내지 않는다 — 레시피북 메뉴만."""
+    verdict = merged(common(ran))
+    if ran.result.status != "completed":
+        verdict.failures.append(f"status 가 {ran.result.status} 다")
+    generated = _generated_drafts(ran)
+    if generated:
+        verdict.failures.append(f"생성 메뉴가 나갔다 {[d.content for d in generated]}")
+    verdict.notes.append(f"추천 {len(ran.result.suggestions)}개 · tool 순서 {_tools(ran)}")
+    return verdict
+
+
+def j_dinner(ran: Ran) -> Verdict:
+    """끼니를 정한 추천("저녁 추천해줘"). 코드는 끼니를 읽지 않고 모델이 meal_slot 으로 채운다."""
+    verdict = merged(exact3(ran), common(ran))
+    if _generated_drafts(ran):  # 조건 없는 요청에는 지금처럼 레시피북 메뉴만이다
+        verdict.failures.append("조건이 없는 요청인데 생성 메뉴가 나갔다")
+    slots = _proposed_slots(ran)
+    if slots and set(slots) != {"dinner"}:
+        verdict.failures.append(f"저녁을 물었는데 끼니가 {slots} 다")
+    verdict.notes.append(f"tool 순서 {_tools(ran)}")
+    return verdict
+
+
+def _expected_basis_lines(ran: Ran) -> list[str]:
+    """고른 메뉴가 담은 식품군 중 말해도 되는 것(`explainable_groups`)의 안내 줄 문장."""
+    found = ran.world.context.state.nutrient_verdict
+    if found is None:
+        return []
+    labels = dict(APPEARANCE_GROUPS)
+    explainable = explainable_groups(found)
+    rows = _rows_of(ran)
+    return [
+        READOUTS.render(
+            MEAL_NUTRIENT_BASIS,
+            days=found.recorded_days,
+            group=labels[group],
+            count=found.food_group_days.get(group, 0),
+        ).body
+        for group in APPEARANCE_DEFICIT_GROUPS
+        if group in explainable and any(group in row.food_groups for row in rows)
+    ]
+
+
+def j_nutrient(ran: Ran) -> Verdict:
+    """영양을 말한 추천 / 같은 세계의 대조군. 영양 반영이 실제로 도는 세계(C48-veg)에서 본다.
+
+    영양 반영은 모델 앞에서 코드가 끝낸다(부족 식품군 가중). 식단 추천에는 영양 tool 이 열리지
+    않고, 후보 줄에는 이름 · 재료만 있어 모델은 어느 후보가 가중됐는지 모른다.
+    - 세계가 판정을 못 타면 실패 — 픽스처 문제다.
+    - 안내 줄(`meal.nutrient_basis`)은 고른 메뉴가 적게 나온 채소 · 과일을 담았을 때만, 식품군마다
+      한 줄이고 숫자가 영양소 분석과 같아야 한다 — 어긋나면 실패.
+    - 고른 메뉴가 부족 식품군을 담았는지는 가중 샘플링 + 모델 선택이라 참고로만 남긴다.
+    - reason 이 표현 검사(부족 · 챙겨 …)에 걸려 propose 를 다시 불렀으면 참고로 남긴다.
+    """
+    verdict = merged(exact3(ran), common(ran))
+    found = ran.world.context.state.nutrient_verdict
+    if found is None or not found.appearance_ready:
+        verdict.failures.append("세계가 식품군 출현 판정을 못 탔다 — C48-veg 카탈로그를 확인한다")
+        return verdict
+    sparse = _sparse_groups(found)
+    if "vegetables" not in sparse:
+        verdict.failures.append(f"채소가 적게 나온 세계인데 부족 식품군이 {sorted(sparse)} 다")
+    hits = [row.display_name for row in _rows_of(ran) if row.food_groups & sparse]
+    verdict.notes.append(
+        f"기록된 {found.recorded_days}일 · 출현 {found.food_group_days} · 부족 {sorted(sparse)} "
+        f"· 고른 것 중 해당 {hits}"
+    )
+    expected = _expected_basis_lines(ran)
+    actual = [body for body in _bodies(ran) if "더 넣었어요" in body]
+    if actual != expected:
+        verdict.failures.append(f"영양 반영 줄이 {actual} 다 (기대 {expected})")
+    proposes = _tools(ran).count("propose_meal_candidates")
+    if proposes > 1:
+        verdict.notes.append(f"propose_meal_candidates {proposes}회 — 앞의 것이 거절됐다")
+    verdict.notes.append(f"tool 순서 {_tools(ran)}")
+    return verdict
+
+
+def j_basis_unknown(ran: Ran) -> Verdict:
+    """식품군을 모르는 메뉴가 낀 세계(C48-veg-unknown). 가중은 걸리지만 안내 줄은 없어야 한다.
+
+    확인한 날만 보면 채소 · 과일이 적게 나와 가중이 걸린다. 모르는 날을 다 나왔다고 치면 절반
+    이상이라 "적게 나왔다" 는 문장은 틀린 숫자가 될 수 있어 코드가 말하지 않는다(N-19).
+    """
+    verdict = merged(exact3(ran), common(ran))
+    found = ran.world.context.state.nutrient_verdict
+    if found is None or not found.appearance_ready:
+        verdict.failures.append("세계가 식품군 출현 판정을 못 탔다 — C48-veg-unknown 을 확인한다")
+        return verdict
+    if "vegetables" not in _sparse_groups(found):
+        verdict.failures.append(
+            "확인한 날만 보면 채소가 적게 나와야 가중이 걸린다 — 세계를 확인한다"
+        )
+    if explainable_groups(found):
+        verdict.failures.append(
+            f"모르는 날을 더해도 말할 식품군이 {sorted(explainable_groups(found))}"
+        )
+    nutrient = [body for body in _bodies(ran) if "더 넣었어요" in body]
+    if nutrient:
+        verdict.failures.append(f"모르는 날이 낀 세계인데 영양 반영 줄이 나갔다 {nutrient}")
+    verdict.notes.append(
+        f"출현 {found.food_group_days} · 모르는 날 {found.group_unknown_days} "
+        f"· 기록된 {found.recorded_days}일"
+    )
+    return verdict
+
+
 # ── 케이스 ───────────────────────────────────────────────────────────────
-M, D = "meal_recommendation", "daycare_meal"
+M, D, L = "meal_recommendation", "daycare_meal", "daycare_lookup"
 CASES: tuple[Case, ...] = (
     Case(
         "T01/C48",
@@ -943,6 +1328,88 @@ CASES: tuple[Case, ...] = (
         "C48-empty",
         "general · 이유가 코드 문구 · 근거 0행",
         j_empty,
+    ),
+    # 오이 메뉴는 레시피 표에 오이무침 하나다 — 풀이 요청 재료를 보지 않는 빈틈이 잘 드러난다
+    Case(
+        "Q1/C48",
+        "오이 들어간 음식 추천해줘.",
+        M,
+        "C48",
+        "샘플에 오이 메뉴가 있으면 고른다 · 없으면 gap · 없는 재료를 이유에 쓰지 않는다",
+        j_ingredient("오이"),
+    ),
+    Case("Q2/C48", "저녁 추천해줘.", M, "C48", "후보 3개 · 끼니 dinner · 생성 0(회귀)", j_dinner),
+    Case(
+        "Q4/C48",
+        "파프리카 들어간 반찬 추천해줘.",
+        M,
+        "C48",
+        "레시피북에 없다 → 생성 ≥1 · 모든 후보에 파프리카 · 준비물 · 공개 레시피에 없다는 안내 줄",
+        j_generated_ingredient("파프리카"),
+    ),
+    Case(
+        "Q5/C48",
+        "태국음식 추천해줘.",
+        M,
+        "C48",
+        "생성 ≥1 · 흔한 태국 메뉴 · 억지 조합 없음(사람이 읽는다) · 안내 줄",
+        j_generated_cuisine,
+    ),
+    Case(
+        "Q6/C48-empty",
+        "파프리카 들어간 반찬 추천해줘.",
+        M,
+        "C48-empty",
+        "관련 기록 없음 → 요청 기반 일반 추천 · 근거 0행 · 이유는 코드 문구",
+        j_requested_general("파프리카"),
+    ),
+    Case(
+        "Q7/C48-soy",
+        "떡볶이 같은 간식 추천해줘.",
+        M,
+        "C48-soy",
+        "필터에 걸린 생성 0 · 재료 확인 줄 · 양념 누락 건수를 note 로 센다",
+        j_generated_allergy,
+    ),
+    Case(
+        "Q9/C48-soy",
+        "파프리카 들어간 반찬 추천해줘.",
+        M,
+        "C48-soy",
+        "Q7 과 같은 판정 — 생성이 확실히 나는 요청으로 양념 누락 건수를 센다",
+        j_generated_allergy,
+    ),
+    Case(
+        "Q8/C8",
+        "파프리카 들어간 이유식 추천해줘.",
+        M,
+        "C8",
+        "이유기는 생성하지 않는다 — 레시피북 메뉴만",
+        j_no_generation,
+    ),
+    Case(
+        "Q3/C48-veg",
+        "부족한 영양소 고려해서 추천음식 알려줘.",
+        M,
+        "C48-veg",
+        "후보 3개 · 진단어 없음 · 부족 가중 · 채소/과일 메뉴를 골랐으면 영양 줄 · 숫자 일치",
+        j_nutrient,
+    ),
+    Case(
+        "Q2/C48-veg",
+        "저녁 추천해줘.",
+        M,
+        "C48-veg",
+        "Q3 대조군 — 같은 세계에서 영양 말이 없을 때 고른 메뉴 · 영양 줄은 같은 조건",
+        j_nutrient,
+    ),
+    Case(
+        "Q2/C48-veg-unknown",
+        "저녁 추천해줘.",
+        M,
+        "C48-veg-unknown",
+        "채소 · 과일 가중은 걸리지만 모르는 날을 더하면 절반 이상이라 영양 줄 0",
+        j_basis_unknown,
     ),
     Case(
         "T01/C48-safetyfail",
@@ -1184,6 +1651,55 @@ CASES: tuple[Case, ...] = (
         "C48",
         "모레의 모든 끼니 삭제 · 내일 행은 그대로",
         j_t43,
+    ),
+    # 급식 조회 (daycare_lookup) — 날짜를 코드가 풀어 그날 행을 그대로 보여 준다. 읽기만 한다
+    Case(
+        "L1/C48",
+        "내일 급식 뭐야?",
+        L,
+        "C48",
+        "내일 행 · 쓰기 0",
+        j_lookup(lambda today: (today + timedelta(days=1),) * 2),
+    ),
+    Case(
+        "L2/C48",
+        "다음 주 화요일 급식 알려줘.",
+        L,
+        "C48",
+        "다음 주 화요일 — 요일만으로 줄이면 다른 날이 나간다",
+        j_lookup(lambda today: (_monday(today) + timedelta(days=8),) * 2),
+    ),
+    Case(
+        "L3/C48",
+        "이번 주 급식 알려줘.",
+        L,
+        "C48",
+        "월~일 일곱 날 · 행이 있는 날만 날짜순",
+        j_lookup(lambda today: (_monday(today), _monday(today) + timedelta(days=6))),
+    ),
+    Case(
+        "L4/C48",
+        "다음 달 급식 알려줘.",
+        L,
+        "C48",
+        "한 번에 일주일을 넘으면 lookup_too_long",
+        j_lookup(lambda today: None),
+    ),
+    Case(
+        "L5/C48",
+        "어제 점심 급식 뭐였어?",
+        L,
+        "C48",
+        "지난 날 · 어제 행",
+        j_lookup(lambda today: (today - timedelta(days=1),) * 2),
+    ),
+    Case(
+        "L6/C48-nodc",
+        "내일 급식 뭐야?",
+        L,
+        "C48-nodc",
+        "급식 행이 없으면 모델 0회 · closed.no_daycare",
+        j_closed("closed.no_daycare", "blocked"),
     ),
 )
 

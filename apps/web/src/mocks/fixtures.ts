@@ -863,6 +863,33 @@ export const requestedGeneralSuggestion: GeneralSuggestion = {
 };
 
 /**
+ * 보호자가 재료를 정해 물었고 레시피북에 없는 메뉴를 냈을 때의 식사 일반 추천 (#740). 기록이 없으면 그
+ * 요청에 맞춰 고른다.
+ *
+ * 🚨 놀이(`requestedGeneralSuggestion`)와 같은 꼴이다 — `evidence` 가 비어 있고 출처 줄 없이 `basis` 만 선다.
+ *    레시피북 메뉴라면 메뉴 근거(`recipe_catalog`) 카드가 붙지만 생성 메뉴는 가리킬 행이 없다. 레시피북 밖
+ *    메뉴라는 말은 이 카드가 아니라 04 의 안내 줄이 한다.
+ * 🚨 `basis` 는 서버 `GENERAL_REASON_REQUESTED`("요청하신 조건을 바탕으로 골랐어요.")와 같은 문구다.
+ */
+export const requestedFoodSuggestion: GeneralSuggestion = {
+  id: "g_8",
+  child_id: CHILD_ID,
+  agent: "food",
+  kind: "general",
+  content: "파프리카볶음",
+  place_notice: null,
+  event_starts_on: null,
+  event_ends_on: null,
+  warnings: [],
+  basis: "요청하신 조건을 바탕으로 골랐어요.",
+  items: ["파프리카", "올리브유"],
+  status: "draft",
+  expires_at: hoursFromNow(24),
+  record_count: 0,
+  evidence: [],
+};
+
+/**
  * stale 시나리오 — 근거가 전부 6개월을 넘겼다.
  *
  * 🚨 `Evidence.is_stale` 은 **계약서 v1 에 아직 없는 필드**다 (types.ts 의 주석 참고).
@@ -979,19 +1006,31 @@ export const runEventDrafts: EventDraft[] = [
 ];
 
 /**
- * 요일 반복 묶음 (#738 · `?scenario=event_repeat`). 🚨 **실서버는 아직 반복을 만들지 않는다** — Agent 쪽(#744)은
- * DB 가 묶음을 지원할 때만 반복 초안을 낸다. 모양은 `core/event_draft.py` 의 `RepeatPayload` 를 따른다.
+ * 요일 반복 묶음 (#738 · `?scenario=event_repeat`). 모양은 서버 `EventSeriesOut`(#761)과 초안의
+ * `RepeatPayload`(`core/event_draft.py`)를 따른다.
  *
  * 🚨 **문구(`label`)는 서버가 만든다.** 목이 서버 대신 만드는 자리라 여기서 적는다 — 화면은 이 값을 그대로 그린다.
  */
 function repeatSeries(): EventSeriesRef {
-  const until = new Date(Date.now() + 40 * DAY_MS);
-  return {
-    id: "series_1",
-    weekdays: [1, 3],
-    until: iso(until),
-    label: `${until.getMonth() + 1}월 ${until.getDate()}일까지 매주 월, 수`,
-  };
+  return seriesRef("series_1", [1, 3], iso(new Date(Date.now() + 40 * DAY_MS)));
+}
+
+const WEEKDAY_NAMES = ["", "월", "화", "수", "목", "금", "토", "일"];
+
+/**
+ * 묶음 한 건 (`EventSeriesOut` 모양). 🚨 **문구는 서버 `repeat_label` 을 흉내 낸다** — 목이 서버 대신 만드는 자리다.
+ * 화면은 이 값을 그대로 그리고 다시 만들지 않는다.
+ */
+export function seriesRef(id: string, weekdays: number[], until: string): EventSeriesRef {
+  const days = [...new Set(weekdays)].sort((a, b) => a - b);
+  const which =
+    days.length === 7
+      ? "매일"
+      : days.join() === "1,2,3,4,5"
+        ? "평일"
+        : `매주 ${days.map((d) => WEEKDAY_NAMES[d]).join(", ")}`;
+  const [, month, day] = until.split("-").map(Number);
+  return { id, weekdays: days, until, label: `${month}월 ${day}일까지 ${which}` };
 }
 
 /** 다가오는 월요일 08:30 (KST) — 반복 새 일정의 첫 회차. 목이 서버(`recurrence.py`) 대신 고른다. */
@@ -1042,7 +1081,7 @@ export function repeatRunDrafts(): AnyEventDraft[] {
         category: "activity",
       },
       repeat,
-      /** 🚨 서버가 오늘 이후 회차에서 **가장 흔한 값**으로 만든다 — "오후 3:00 → 오후 4:00" 와 준비물 변화가 보여야 한다. */
+      /** 🚨 서버가 아직 시작하지 않은 회차에서 **가장 흔한 값**으로 만든다 — "오후 3:00 → 오후 4:00" 와 준비물 변화가 보여야 한다. */
       before: {
         title: "수영",
         starts_time: "15:00",

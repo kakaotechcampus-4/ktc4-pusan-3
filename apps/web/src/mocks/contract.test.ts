@@ -758,6 +758,21 @@ describe("05 묶음 안내 · 일반 추천 근거 (#249)", () => {
     expect(data.suggestions).toEqual([]);
   });
 
+  it("🚨 재료를 정해 물은 식사 일반 추천도 문서 근거가 비어 오고 기준 문구를 단다 (#740)", async () => {
+    const data = await fetchWith("suggest_requested_food", { agents: ["food"] });
+
+    const general = data.general ?? [];
+    expect(general.length).toBeGreaterThan(0);
+    for (const item of general) {
+      // 🚨 종류는 그대로 general 이다 — 요청 기반인지 가르는 칸은 응답에 없다
+      expect(item.kind).toBe("general");
+      expect(item.agent).toBe("food");
+      expect(item.evidence).toEqual([]);
+      expect(item.basis).not.toBe("");
+    }
+    expect(data.suggestions).toEqual([]);
+  });
+
   it("🚨 묶음마다 확인 문구 칸이 늘 있고, 식품 아닌 알레르기는 놀이 묶음에 문구가 온다", async () => {
     const plain = await fetchWith("default", { agents: ["food", "activity"] });
     for (const group of plain.groups ?? []) expect(Array.isArray(group.cautions)).toBe(true);
@@ -4975,9 +4990,10 @@ describe("반복 일정 — 새 반복 일정 · 묶음 고치기 (#738)", () =>
       repeat: repeatRequest(created.repeat),
     };
     expect(body.repeat).not.toHaveProperty("label");
-    await expect(submitEventDraft("c1", body, newIdempotencyKey())).resolves.toHaveProperty(
-      "event",
-    );
+    // 응답 `event` 는 첫 회차이고 묶음이 붙는다 (서버 #761) — 문구는 초안이 보여 준 것과 같다.
+    await expect(submitEventDraft("c1", body, newIdempotencyKey())).resolves.toMatchObject({
+      event: { starts_at: created.event.starts_at, series: { label: created.repeat.label } },
+    });
 
     // 🚨 문구까지 실으면 막는다 — 서버 문구는 화면이 다시 보낼 값이 아니다.
     const withLabel = { ...body, repeat: created.repeat };
@@ -4989,14 +5005,18 @@ describe("반복 일정 — 새 반복 일정 · 묶음 고치기 (#738)", () =>
   it("묶음 고치기는 before 를 같이 보내고, 키 없이는 나가지 않는다", async () => {
     const series = seriesOf(await repeatDrafts());
     const body = seriesSubmitBody(series);
-    // 🚨 서버는 before 와 달라진 값만 오늘 이후 회차에 적용한다 — 빠지면 따로 고쳐 둔 회차가 덮인다.
+    // 🚨 서버는 before 와 달라진 값만 아직 시작하지 않은 회차에 적용한다 — 빠지면 따로 고쳐 둔 회차가 덮인다.
     expect(body.before).not.toBeNull();
     expect(body.repeat).not.toHaveProperty("label");
     expect(body.before?.repeat).not.toHaveProperty("label");
 
+    // 응답은 서버 `UpdateSeriesResponse` 와 같은 모양이다 — 화면은 읽지 않지만 목이 다른 모양을 내면 계약이 갈린다.
     await expect(
       updateEventSeries("c1", series.series_id, body, newIdempotencyKey()),
-    ).resolves.toBeDefined();
+    ).resolves.toMatchObject({
+      series: { id: series.series_id, label: expect.any(String) },
+      occurrence_count: expect.any(Number),
+    });
 
     const response = await raw(idempotentPath.updateEventSeries("c1", series.series_id), {
       method: "PATCH",

@@ -123,7 +123,7 @@ export function repeatRequest(repeat: EventRepeat): RepeatRequest {
 
 /**
  * 묶음 고치기 제출 본문. 🚨 **카드가 읽기 전용이라 초안 값을 그대로 보낸다** — `before` 까지 실어야 서버가
- * 달라진 값만 오늘 이후 회차에 적용한다 (`UpdateSeriesBody`).
+ * 달라진 값만 아직 시작하지 않은 회차에 적용한다 (`UpdateSeriesBody`).
  */
 export function seriesSubmitBody(draft: SeriesDraft): UpdateSeriesBody {
   return {

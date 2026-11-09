@@ -8,7 +8,9 @@ import {
   mealDraft,
   placeGeneralSuggestion,
   placeSuggestion,
+  requestedFoodSuggestion,
   requestedGeneralSuggestion,
+  seriesRef,
   staleSuggestion,
   suggestionDraft,
   suggestionAllergens,
@@ -61,6 +63,7 @@ const pickable = [
   ...suggestions,
   ...generalSuggestions,
   requestedGeneralSuggestion,
+  requestedFoodSuggestion,
   placeSuggestion,
   placeGeneralSuggestion,
   eventSuggestion,
@@ -153,7 +156,13 @@ export const suggestionHandlers = [
     //    결과를 낸 Agent 는 묶음이 온다 — 일반 추천만 있어도 그 Agent 의 묶음이 있다.
     //    ⚠️ 답하는 길(#246) 전이라 `options` 는 비어 온다 — 서버와 같은 모양이다.
     //    `suggest_requested` 는 보호자가 놀이를 정해 물은 일반 추천이다 — 문서 근거가 비어 온다 (#597).
-    if (scenario === "scarcity" || scenario === "empty" || scenario === "suggest_requested") {
+    //    `suggest_requested_food` 는 재료를 정해 물은 식사 일반 추천이다 — 같은 꼴로 문서 · 메뉴 근거가 비어 온다 (#740).
+    if (
+      scenario === "scarcity" ||
+      scenario === "empty" ||
+      scenario === "suggest_requested" ||
+      scenario === "suggest_requested_food"
+    ) {
       // 🚨 등록된 알레르기(`active`)가 든 일반 추천은 빼고 내보낸다 (`notBlocked`). 사전검사만 거르면
       //    확인 시트에서 "있어요" 로 등록한 재료가 다음 화면에서 다시 서고, 이번에는 묻지도 않고 채택된다.
       const general = (
@@ -161,7 +170,9 @@ export const suggestionHandlers = [
           ? generalSuggestions
           : scenario === "suggest_requested"
             ? [requestedGeneralSuggestion]
-            : [generalSuggestions[0]]
+            : scenario === "suggest_requested_food"
+              ? [requestedFoodSuggestion]
+              : [generalSuggestions[0]]
       ).filter(notBlocked);
       const count = scenario === "scarcity" ? 1 : 0;
       const generalAgents = new Set(general.map((g) => g.agent));
@@ -545,7 +556,7 @@ export const suggestionHandlers = [
       };
 
       // 🚨 반복 일정(#738)은 요일과 끝 날짜가 다 있어야 한다. 문구는 서버 값이라 되돌려 받지 않는다 (`RepeatRequest`).
-      //    ⚠️ 서버 계약 전이다 — 회차로 펼치는 것은 실서버 몫이라 목은 첫 회차 한 건만 돌려준다.
+      //    회차로 펼치는 것은 실서버 몫이라(#761) 목은 첫 회차 한 건만 돌려준다 — 서버 응답도 `event` 는 첫 회차고 `series` 가 붙는다.
       if (
         body.repeat &&
         (!body.repeat.weekdays?.length || !body.repeat.until || "label" in body.repeat)
@@ -630,6 +641,16 @@ export const suggestionHandlers = [
         })),
         // 🚨 제출한 보호자 본인의 알림만 걸린다 — 응답도 그것만 싣는다.
         reminder,
+        // 반복이면 첫 회차에 묶음이 붙는다 (서버 #761). 반복이 아니면 키 자체가 없다.
+        ...(body.repeat?.weekdays && body.repeat.until
+          ? {
+              series: seriesRef(
+                `series_new_${submittedCount}`,
+                body.repeat.weekdays,
+                body.repeat.until,
+              ),
+            }
+          : {}),
       });
 
       // 🚨 제안의 `status` 를 싣지 않는다 — 제출은 상태를 바꾸지 않는다 (#206).

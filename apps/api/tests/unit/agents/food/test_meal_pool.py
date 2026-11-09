@@ -17,7 +17,9 @@ from app.agents.food.meal_pool import (
     SAMPLE_MIN,
     PoolItem,
     build_pool,
+    explainable_groups,
     remember_sample,
+    requested_rows,
     sample_pool,
 )
 from app.agents.food.nutrition_eval import NutrientVerdict
@@ -285,6 +287,7 @@ def verdict(
     group_days: dict[str, int] | None = None,
     recorded_days: int = 7,
     appearance_ready: bool = False,
+    unknown_days: dict[str, int] | None = None,
 ) -> NutrientVerdict:
     return NutrientVerdict(
         bands={nutrient: "low" for nutrient in low},
@@ -295,6 +298,7 @@ def verdict(
         food_groups=frozenset(group_days or ()),
         food_group_days=dict(group_days or {}),
         recorded_days=recorded_days,
+        group_unknown_days=dict(unknown_days or {}),
         appearance_ready=appearance_ready,
     )
 
@@ -712,3 +716,211 @@ async def test_샘플이_세_개_미만이면_처음부터_더_채울_길이가_
 
     assert ctx.state.exhausted is True
     assert len(ctx.state.sampled) == 2
+
+
+# ── 안내 줄에 말해도 되는 식품군 (#739) ─────────────────────────────────────
+# 가중(`_sparse_groups`)은 확인한 날만 센다. 문장은 보호자에게 하는 말이라, 식품군을 모르는 메뉴가
+# 낀 날을 전부 "나왔다" 로 쳐도 절반 미만일 때만 낸다. 기록된 6일이면 절반은 3일이다.
+def test_모르는_날을_다_나왔다고_쳐도_절반_미만이면_말한다() -> None:
+    result = explainable_groups(
+        verdict(
+            group_days={"vegetables": 1, "fruits": 6},
+            recorded_days=6,
+            appearance_ready=True,
+            unknown_days={"vegetables": 1},
+        )
+    )
+
+    assert result == frozenset({"vegetables"})  # 1 + 1 = 2 < 3
+
+
+def test_모르는_날까지_더해_절반이면_말하지_않는다() -> None:
+    result = explainable_groups(
+        verdict(
+            group_days={"vegetables": 2, "fruits": 6},
+            recorded_days=6,
+            appearance_ready=True,
+            unknown_days={"vegetables": 1},
+        )
+    )
+
+    assert result == frozenset()  # 2 + 1 = 3, 절반 미만이 아니다
+
+
+def test_모르는_날이_없으면_가중_기준과_같다() -> None:
+    sparse = verdict(
+        group_days={"vegetables": 2, "fruits": 3}, recorded_days=6, appearance_ready=True
+    )
+
+    assert explainable_groups(sparse) == frozenset({"vegetables"})  # 2 < 3, 3 은 아니다
+
+
+def test_가중은_걸려도_모르는_날_때문에_말하지_않는_식품군이_있다() -> None:
+    # 채소는 확인한 날 2일(< 3)이라 가중이 걸리지만 모르는 날 2일을 더하면 4 라서 문장은 없다
+    sparse = verdict(
+        group_days={"vegetables": 2, "fruits": 6},
+        recorded_days=6,
+        appearance_ready=True,
+        unknown_days={"vegetables": 2},
+    )
+
+    assert meal_pool._sparse_groups(sparse) == frozenset({"vegetables"})
+    assert explainable_groups(sparse) == frozenset()
+
+
+def test_출현을_말할_수_없으면_말할_식품군도_없다() -> None:
+    result = explainable_groups(verdict(group_days={"vegetables": 0}, appearance_ready=False))
+
+    assert result == frozenset()
+
+
+# ── 조건 맞는 레시피 — 요청 글에 이름 · 재료가 나온 레시피 (#740) ───────────────
+def items(*rows: MenuCatalogRow) -> tuple[PoolItem, ...]:
+    return tuple(PoolItem(row=row, weight=1.0) for row in rows)
+
+
+CUCUMBER = recipe("오이무침", "오이", "참기름")
+PAPRIKA = recipe("파프리카볶음", "파프리카", "올리브유")
+JAPCHAE = recipe("잡채", "당면", "파프리카", "시금치")
+TOFU = recipe("두부조림", "두부", "간장")
+SUGAR_SNACK = recipe("설탕쿠키", "밀가루", "설탕")
+
+
+def test_요청_글에_재료가_나온_레시피를_찾는다() -> None:
+    found = requested_rows(items(CUCUMBER, TOFU), ["오이 들어간 음식 추천해줘"])
+
+    assert keys(found) == ["오이무침"]
+
+
+def test_이름이_나온_레시피도_찾는다() -> None:
+    found = requested_rows(items(CUCUMBER, TOFU), ["두부조림 같은 반찬 추천해줘"])
+
+    assert keys(found) == ["두부조림"]
+
+
+def test_재료로만_들어간_레시피도_찾는다() -> None:
+    found = requested_rows(items(PAPRIKA, JAPCHAE, TOFU), ["파프리카 들어간 반찬 추천해줘"])
+
+    assert keys(found) == ["파프리카볶음", "잡채"]
+
+
+def test_한_글자_재료는_조건으로_보지_않는다() -> None:
+    radish = recipe("무나물", "무", "참기름")
+    leek = recipe("파전", "파", "밀가루")
+
+    assert requested_rows(items(radish, leek), ["파 들어간 반찬 추천해줘"]) == ()
+
+
+def test_빼고_말고_같은_말이_붙은_낱말은_조건이_아니다() -> None:
+    texts = (
+        "설탕 적은 간식 추천해줘",
+        "설탕 빼고 간식 추천해줘",
+        "설탕 말고 간식",
+        "설탕 없는 간식",
+    )
+    for text in texts:
+        assert requested_rows(items(SUGAR_SNACK), [text]) == (), text
+
+
+def test_부정하지_않은_다른_자리에_나오면_조건이다() -> None:
+    found = requested_rows(items(SUGAR_SNACK), ["설탕 빼고 간식 말고 설탕쿠키 추천해줘"])
+
+    assert keys(found) == ["설탕쿠키"]
+
+
+def test_조건이_없는_요청은_빈_목록이다() -> None:
+    assert requested_rows(items(CUCUMBER, TOFU), ["저녁 추천해줘"]) == ()
+
+
+def test_요청_글이_여럿이면_모두_본다() -> None:
+    found = requested_rows(items(CUCUMBER, TOFU), ["저녁 추천해줘", "오이 들어간 걸로"])
+
+    assert keys(found) == ["오이무침"]
+
+
+def test_조건_맞는_레시피는_샘플_앞에_먼저_들어간다() -> None:
+    many_rows = [recipe(f"기본반찬{i}", f"기본재료{i}") for i in range(30)]
+    pool = items(*many_rows, CUCUMBER)
+    found = requested_rows(pool, ["오이 들어간 음식"])
+
+    for seed in ("a", "b", "c", "d", "e", "f"):
+        sample = sample_pool(pool, seed=seed, first=found)
+        assert keys(sample)[0] == "오이무침"
+        assert SAMPLE_MIN <= len(sample) <= SAMPLE_MAX
+
+
+def test_조건_맞는_레시피에는_같은_주재료_제한을_걸지_않는다() -> None:
+    same_main = [
+        recipe(f"파프리카요리{i}", "파프리카", main_ingredients=("파프리카",)) for i in range(4)
+    ]
+    others = [recipe(f"기본반찬{i}", f"기본재료{i}") for i in range(30)]
+    pool = items(*same_main, *others)
+    found = requested_rows(pool, ["파프리카 들어간 반찬"])
+
+    sample = sample_pool(pool, seed="run-1", first=found)
+
+    assert [k for k in keys(sample) if k.startswith("파프리카요리")] == keys(found)
+    assert len(found) == 4
+
+
+def test_조건_맞는_레시피가_샘플_크기보다_많아도_상한_안이다() -> None:
+    matching = [recipe(f"오이요리{i}", "오이") for i in range(20)]
+    pool = items(*matching)
+    found = requested_rows(pool, ["오이 들어간 음식"])
+
+    sample = sample_pool(pool, seed="run-1", first=found)
+
+    assert len(sample) == SAMPLE_MAX
+    assert all(k.startswith("오이요리") for k in keys(sample))
+
+
+def test_first_가_없으면_지금_샘플과_같다() -> None:
+    pool = items(*[recipe(f"기본반찬{i}", f"기본재료{i}") for i in range(30)])
+
+    assert keys(sample_pool(pool, seed="run-1")) == keys(sample_pool(pool, seed="run-1", first=()))
+
+
+# ── 풀 상한과 조건 맞는 레시피 — 상한(POOL_MAX)이 조건 맞는 레시피를 자르면 안 된다 (#740) ──────
+async def test_조건_맞는_레시피는_풀_상한에_잘리지_않는다() -> None:
+    rows = [*many(POOL_MAX * 3), CUCUMBER]
+    for run_id in ("run-1", "run-2", "run-3", "run-4", "run-5"):
+        ctx = context(recipes=recipes(*rows), run_id=run_id)
+        ctx.state.utterance = "오이 들어간 음식 추천해줘"
+
+        pool = await build_pool(ctx)
+
+        assert "오이무침" in keys(pool), run_id
+        assert len(pool) <= POOL_MAX
+
+
+async def test_조건_맞는_레시피가_상한보다_많아도_풀은_상한_안이다() -> None:
+    matching = [recipe(f"오이요리{i}", "오이") for i in range(POOL_MAX + 10)]
+    ctx = context(recipes=recipes(*matching, *many(20)))
+    ctx.state.utterance = "오이 들어간 음식"
+
+    pool = await build_pool(ctx)
+
+    assert len(pool) == POOL_MAX
+    assert all(key.startswith("오이요리") for key in keys(pool))
+
+
+async def test_조건이_없는_요청은_풀을_지금처럼_만든다() -> None:
+    rows = many(POOL_MAX * 3)
+    plain = context(recipes=recipes(*rows), run_id="run-1")
+    asked = context(recipes=recipes(*rows), run_id="run-1")
+    asked.state.utterance = "저녁 추천해줘"
+
+    assert keys(await build_pool(plain)) == keys(await build_pool(asked))
+
+
+async def test_풀을_만들면_레시피북_전체와_최근_추천을_run_state_에_남긴다() -> None:
+    ctx = context(
+        recipes=recipes(TOFU, CUCUMBER),
+        suggestions=InMemorySuggestionHistory({CHILD: {"오이무침"}}),
+    )
+
+    pool = await build_pool(ctx)
+
+    assert keys(pool) == ["두부조림"]  # 최근 추천한 오이무침은 풀에서 빠진다
+    assert ctx.state.recipe_keys == frozenset({"두부조림", "오이무침"})  # 풀 밖 레시피도 안다
+    assert ctx.state.recent_keys == frozenset({"오이무침"})
