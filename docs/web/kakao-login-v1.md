@@ -322,7 +322,7 @@ export function clearBind(): void { sessionStorage.removeItem(KEY); }
 | | 값 |
 | --- | --- |
 | access | 불투명 난수 · **15분** (`expires_in: 900`) · `Authorization: Bearer` · JS 메모리에만 |
-| refresh | 쿠키 `icatch_rt` · `HttpOnly; Secure; SameSite=Strict; Path=/api/v1/auth` · 유휴 30일(쓸 때마다 연장) · 절대 90일 · 쓸 때마다 회전 |
+| refresh | 쿠키 `__Host-icatch_rt` · `HttpOnly; Secure; SameSite=Strict; Path=/` (#783) · 유휴 30일(쓸 때마다 연장) · 절대 90일 · 쓸 때마다 회전 |
 | 갱신 | `POST /auth/refresh` — 쿠키로만 인증 · 200 `{ token, expires_in }` · 실패는 전부 `401 unauthenticated` |
 | 앱을 켤 때 | 웹이 refresh 를 부른다. **셸은 토큰을 다루지 않는다** — 교환을 웹뷰 안의 웹이 하므로 쿠키가 웹뷰 쿠키 저장소에 남는다. 셸이 하는 일은 백그라운드로 갈 때 그 저장소를 디스크에 쓰는 것뿐이다 (아래 ⚠️) |
 

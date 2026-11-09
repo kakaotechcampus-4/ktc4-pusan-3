@@ -21,7 +21,7 @@ async function openAddSheet(page: import("@playwright/test").Page) {
   await page.goto(PROFILE);
   await page.getByRole("button", { name: "알레르기·건강 기록 추가" }).click();
   await page.getByRole("button", { name: /^직접 적기/ }).click();
-  const sheet = page.getByRole("dialog", { name: "알레르기 · 건강 기록 추가" });
+  const sheet = page.getByRole("dialog", { name: "알레르기·건강 기록 추가" });
   // 시트는 아래에서 올라온다 (#490). 올라오는 중에 누르거나 휠을 굴리면 엉뚱한 자리에 맞는다.
   await sheet.evaluate((el) => Promise.all(el.getAnimations().map((a) => a.finished)));
   return sheet;
@@ -108,14 +108,14 @@ test.describe("알레르기 직접 등록은 승인 게이트 ㉡ (§2 안전)",
     }) => {
       const sheet = await openAddSheet(page);
       const hint =
-        "알레르기 혈액검사 결과를 0부터 6까지 나눈 등급이에요. 검사를 안 했거나 잘 모르면 모르겠어요를 골라 주세요. 몇 등급이든 식단 추천에서는 똑같이 빼요.";
+        "알레르기 혈액검사 결과를 0부터 6까지 나눈 등급이에요. 검사를 안 했거나 잘 모르면 모르겠어요를 골라 주세요. 몇 등급이든 식사 제안에서는 똑같이 빼요.";
       await expect(sheet.getByText(hint)).toBeVisible();
       await expect(sheet.getByRole("combobox", { name: "검사 등급" })).toHaveAccessibleDescription(
         hint,
       );
 
       await sheet.getByRole("combobox", { name: "종류" }).click();
-      await page.getByRole("option", { name: "지병 · 만성질환" }).click();
+      await page.getByRole("option", { name: "지병·만성질환" }).click();
       await expect(sheet.getByText(hint)).toHaveCount(0);
       // 설명이 없는 상자는 `aria-describedby` 를 비우지 않고 아예 걸지 않는다.
       await expect(sheet.getByRole("combobox", { name: "얼마나 심한가요" })).not.toHaveAttribute(
@@ -129,7 +129,7 @@ test.describe("알레르기 직접 등록은 승인 게이트 ㉡ (§2 안전)",
       await page.getByRole("option", { name: "Class 3" }).click();
 
       await sheet.getByRole("combobox", { name: "종류" }).click();
-      await page.getByRole("option", { name: "지병 · 만성질환" }).click();
+      await page.getByRole("option", { name: "지병·만성질환" }).click();
 
       // Class 3 이 남아 있으면 DB 가 막는 조합이 된다
       const severity = sheet.getByRole("combobox", { name: "얼마나 심한가요" });
@@ -150,7 +150,7 @@ test.describe("시트 안 고르기 상자는 마지막 항목까지 고를 수 
     const sheet = await openAddSheet(page);
     // 지병으로 고른다 — 심각도 상자의 이름과 마지막 값("심하게")이 알레르기와 달리 바뀌지 않는다 (#298).
     await sheet.getByRole("combobox", { name: "종류" }).click();
-    await page.getByRole("option", { name: "지병 · 만성질환" }).click();
+    await page.getByRole("option", { name: "지병·만성질환" }).click();
     await sheet.getByLabel("무엇인가요").fill("천식");
 
     await sheet.getByRole("combobox", { name: "얼마나 심한가요" }).click();
@@ -171,7 +171,7 @@ test.describe("시트 안 고르기 상자는 마지막 항목까지 고를 수 
     const sheet = await openAddSheet(page);
     // 알레르기(기본값)면 상자 이름이 "검사 등급" 이다 — 위 테스트처럼 지병으로 바꿔 이름을 고정한다 (#298).
     await sheet.getByRole("combobox", { name: "종류" }).click();
-    await page.getByRole("option", { name: "지병 · 만성질환" }).click();
+    await page.getByRole("option", { name: "지병·만성질환" }).click();
     const trigger = sheet.getByRole("combobox", { name: "얼마나 심한가요" });
     await trigger.click();
     await expect(page.getByRole("listbox")).toBeVisible();
@@ -284,12 +284,12 @@ test.describe("알레르기 등록과 내리기는 서버 응답대로 그린다
     const name = sheet.getByLabel("무엇인가요");
     await name.pressSequentially("가".repeat(105));
     await expect(name).toHaveValue("가".repeat(100));
-    const notes = sheet.getByLabel("메모 · 선택");
+    const notes = sheet.getByLabel("메모 (선택)");
     await notes.fill("나".repeat(505));
     await expect(notes).toHaveValue("나".repeat(500));
 
     await sheet
-      .getByLabel("증상 · 선택")
+      .getByLabel("증상 (선택)")
       .fill(Array.from({ length: 21 }, (_, n) => `증상${n}`).join(", "));
     await sheet.getByRole("button", { name: "확인했어요, 등록할게요" }).click();
     await expect(sheet.getByText("증상은 20개까지 적을 수 있어요")).toBeVisible();
@@ -323,7 +323,7 @@ test.describe("알레르기 고치기는 게이트 ㉡ 이고, 고치면 새 기
       .filter({ hasText: "우유" })
       .getByRole("button", { name: "이 기록 고치기" })
       .click();
-    return page.getByRole("dialog", { name: "알레르기 · 건강 기록 고치기" });
+    return page.getByRole("dialog", { name: "알레르기·건강 기록 고치기" });
   }
 
   test("그 기록의 값으로 열리고, Idempotency-Key 를 달고 고친다", async ({ page }) => {
@@ -331,9 +331,9 @@ test.describe("알레르기 고치기는 게이트 ㉡ 이고, 고치면 새 기
     const sheet = await openEditSheet(page);
     // 목 픽스처의 우유: Class 3, 두드러기
     await expect(sheet.getByRole("combobox", { name: "검사 등급" })).toContainText("Class 3");
-    await expect(sheet.getByLabel("증상 · 선택")).toHaveValue("두드러기");
+    await expect(sheet.getByLabel("증상 (선택)")).toHaveValue("두드러기");
 
-    await sheet.getByLabel("메모 · 선택").fill("병원에서 다시 확인");
+    await sheet.getByLabel("메모 (선택)").fill("병원에서 다시 확인");
     await sheet.getByRole("button", { name: "확인했어요, 고칠게요" }).click();
     await expect(sheet).toBeHidden();
     await expect(page.locator("main").getByText("병원에서 다시 확인")).toBeVisible();
@@ -359,7 +359,7 @@ test.describe("알레르기 고치기는 게이트 ㉡ 이고, 고치면 새 기
       }),
     ).toBe(200);
 
-    await sheet.getByLabel("메모 · 선택").fill("내가 적으려던 것");
+    await sheet.getByLabel("메모 (선택)").fill("내가 적으려던 것");
     await sheet.getByRole("button", { name: "확인했어요, 고칠게요" }).click();
     await expect(
       sheet.getByText("이미 먼저 고쳐졌거나 내려간 기록이에요", { exact: false }),
@@ -389,7 +389,7 @@ test.describe("키 · 몸무게는 최근 한 줄만, 평가 없이 (§2 개인�
   test("측정 기록 새로 적기는 승인 게이트가 아니다", async ({ page }) => {
     await page.goto(PROFILE);
     await page.getByRole("button", { name: "키·몸무게 새로 적기" }).click();
-    const sheet = page.getByRole("dialog", { name: "새로 재서 적기" });
+    const sheet = page.getByRole("dialog", { name: "키·몸무게 새로 적기" });
     await expect(sheet).toBeVisible();
     await expectNoGate(page, "dialog[open]");
     await page.keyboard.press("Escape");

@@ -14,7 +14,8 @@
 #
 # 🚨 순서: 이 규칙이 서버에 걸린 **뒤에** hop limit 을 2 로 올린다. 거꾸로 하면 그 사이 모든 상자가
 #    열쇠를 받을 수 있다 (docs/notice/notice-ocr-v1.md §2 "배포 전에 할 것").
-# 🚨 API_IP 는 docker-compose.deploy.yml 의 api ipv4_address 와 같아야 한다.
+# 🚨 API_IP 는 docker-compose.deploy.yml 의 api 의 ktc4-edge 주소(prod 기본값)와 같아야 한다.
+#    dev api 는 .21 이라 여기서 막힌다 (#747). api 가 ktc4-edge 로 나가게 하는 건 compose 의 gw_priority 다.
 # 🚨 서버 자신이 메타데이터에 닿는 길(OUTPUT)은 건드리지 않는다 — SSM 접속 · CloudWatch 가 쓴다.
 #    도커 상자에서 나가는 길(FORWARD → DOCKER-USER)만 막는다.
 # 맥에서는 아무것도 하지 않는다 — iptables 도 메타데이터 주소도 없다.

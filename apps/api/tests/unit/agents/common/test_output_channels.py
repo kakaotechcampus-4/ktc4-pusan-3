@@ -198,21 +198,36 @@ class TestSuggestionBuild:
                 today=TODAY,
             )
 
-    def test_요청_기반을_여는_Agent_는_Activity_와_Growth_다(self):
-        assert REQUESTED_AGENTS == frozenset({"activity", "growth"})
+    def test_요청_기반을_여는_Agent_는_Activity_Growth_Food_다(self):
+        assert REQUESTED_AGENTS == frozenset({"activity", "growth", "food"})
 
-    def test_Food_는_요청_기반이어도_문서_근거를_본다(self):
-        """Food 는 레시피북 밖 메뉴가 나가면 안 된다 — requested 로 근거를 면제하지 않는다."""
+    def test_Food_는_조건이_확인되지_않으면_문서_근거를_본다(self):
+        """막연한 요청의 Food 추천은 메뉴 · 문서 행이 근거다 — requested 가 없으면 면제도 없다."""
         with pytest.raises(SuggestionRejected, match="문서 행 근거가 없다"):
             build(
                 agent="food",
                 content="책에 없는 메뉴",
                 reason="이유",
                 citations=(),
-                general_reason="요청하신 메뉴에 맞춰 골랐어요.",
-                requested=True,
+                general_reason="또래 기준",
                 today=TODAY,
             )
+
+    def test_Food_는_보호자가_조건을_정해_물었으면_근거_0행_일반_추천을_낸다(self):
+        """재료 · 요리 종류를 정해 물은 요청이 기준이다(#740) — 책에 없는 메뉴가 나가는 길."""
+        draft = build(
+            agent="food",
+            content="파프리카볶음",
+            reason="이유",
+            citations=(),
+            general_reason="요청하신 조건을 바탕으로 골랐어요.",
+            requested=True,
+            today=TODAY,
+        )
+
+        assert draft.kind == "general"
+        assert draft.requested is True
+        assert draft.citations == ()
 
     def test_요청_기반이어도_아이_기록이_있으면_개인화다(self):
         """같은 요청도 기록이 쌓이면 개인화로 나간다 — 요청 기반은 종류가 아니다."""

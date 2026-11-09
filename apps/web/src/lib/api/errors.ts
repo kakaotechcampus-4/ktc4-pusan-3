@@ -48,6 +48,10 @@ export const API_ERROR_CODES = [
   // 422 일정 알림이 그 일정 종류에 맞지 않거나 울릴 시각이 이미 지났다 (#594). 제출 · 수정이면
   // 일정도 저장되지 않았다. 🚨 같은 값으로 다시 시도할 수 없다 — 알림을 다시 골라야 한다.
   "invalid_reminder",
+  // 422 요일 반복 일정의 규칙이 성립하지 않는다 (#738 · 서버 #761) — 요일이 없거나, 끝 날짜가 첫 회차보다 앞이거나,
+  // 90일을 넘거나, 한 회차가 그날 안에서 끝나지 않거나, 묶음 고치기 뒤 남는 회차(아직 시작하지 않은 것)가 없다.
+  // 🚨 같은 초안으로 다시 시도할 수 없다 — 카드는 요일 · 끝 날짜 · 첫 회차를 고칠 칸이 없어서 대화로 다시 말해야 한다.
+  "invalid_repeat",
   "llm_unavailable", // 503 — 🚨 기본값으로 대체하지 않는다
 ] as const;
 
@@ -89,7 +93,7 @@ export class ApiError extends Error {
 /** 네트워크 자체가 실패했을 때 (서버 봉투가 없음). */
 export class NetworkError extends Error {
   constructor(cause: unknown) {
-    super("서버에 연결하지 못했어요");
+    super("연결하지 못했어요. 인터넷 연결을 확인해 주세요.");
     this.name = "NetworkError";
     this.cause = cause;
   }

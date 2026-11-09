@@ -44,6 +44,7 @@ _DAYCARE_BUNDLE = (
     "delete_daycare_meal",
     "keep_daycare_meal",
 )
+_LOOKUP_BUNDLE = ("show_daycare_meal",)
 _WEANING_MEAL_BUNDLE = ("search_food_memory", "guide_weaning_stage", "propose_meal_candidates")
 _TODDLER_MEAL_WITH_DAYCARE = (
     "search_food_memory",
@@ -99,6 +100,11 @@ def _gate(
         (11, FoodTaskType.DAYCARE_MEAL, False, ()),
         (12, FoodTaskType.DAYCARE_MEAL, True, _DAYCARE_BUNDLE),
         (48, FoodTaskType.DAYCARE_MEAL, False, ()),
+        # daycare_lookup — 같다. 열리는 tool 은 조회 출력 tool 하나
+        (3, FoodTaskType.DAYCARE_LOOKUP, True, _LOOKUP_BUNDLE),
+        (12, FoodTaskType.DAYCARE_LOOKUP, True, _LOOKUP_BUNDLE),
+        (48, FoodTaskType.DAYCARE_LOOKUP, True, _LOOKUP_BUNDLE),
+        (48, FoodTaskType.DAYCARE_LOOKUP, False, ()),
     ],
 )
 def test_tools_for(
@@ -127,8 +133,23 @@ def test_급식_행_없으면_closed_no_daycare() -> None:
     )
 
 
+def test_급식_조회도_행_없으면_closed_no_daycare() -> None:
+    assert (
+        closed_readout_key(FoodTaskType.DAYCARE_LOOKUP, _gate(24, daycare=False))
+        == "closed.no_daycare"
+    )
+
+
+@pytest.mark.parametrize("months", [3, 12, 48])
+def test_급식_조회는_알레르기_조회_실패에도_열려_있다(months: int) -> None:
+    # 알레르기를 쓰지 않는 읽기다 — safety_ok 로 닫지 않는다
+    gate = _gate(months, safety_ok=False)
+    assert closed_readout_key(FoodTaskType.DAYCARE_LOOKUP, gate) is None
+    assert tools_for(FoodTaskType.DAYCARE_LOOKUP, gate) == _LOOKUP_BUNDLE
+
+
 def test_NOT_READY_는_비어_있다() -> None:
-    # tool 12개가 다 구현되고 run() 이 결과를 옮긴다. 스텁 tool 이 생기면 그 task 를 다시 적는다
+    # tool 13개가 다 구현되고 run() 이 결과를 옮긴다. 스텁 tool 이 생기면 그 task 를 다시 적는다
     assert registry.NOT_READY == {}
 
 
@@ -325,6 +346,14 @@ def test_급식_갱신은_쓰지_않고_끝내는_출력_tool_도_있다() -> No
     assert output_tools_for(FoodTaskType.DAYCARE_MEAL) == frozenset(
         {"update_daycare_meal", "delete_daycare_meal", "keep_daycare_meal"}
     )
+
+
+def test_급식_조회는_출력_tool_하나고_쓰는_라벨이_아니다() -> None:
+    assert output_tools_for(FoodTaskType.DAYCARE_LOOKUP) == frozenset({"show_daycare_meal"})
+    assert answers_by_code(FoodTaskType.DAYCARE_LOOKUP) is False
+    # 읽기라 같은 run 의 다른 task 보다 먼저 끝낼 이유가 없다 — 갱신이 먼저 끝나서 바뀐 행을 읽는다
+    assert FoodTaskType.DAYCARE_LOOKUP not in registry.WRITING_TASKS
+    assert FoodTaskType.DAYCARE_MEAL in registry.WRITING_TASKS
 
 
 # ── food_check — 단계로 닫지 않고, 열린 tool 없이 코드가 답한다 ─────────

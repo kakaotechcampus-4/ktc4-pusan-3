@@ -144,7 +144,7 @@ function WithdrawScreen({ onDone }: { onDone: () => void }) {
       </section>
 
       <section className="flex flex-col gap-3">
-        <h2 className="text-label text-brand">탈퇴하면 이렇게 됩니다</h2>
+        <h2 className="text-label text-brand">탈퇴하면 이렇게 돼요</h2>
         <Card>
           {/* 🚨 **`<ol>` 이 아니다.** 번호는 "지금 → 며칠 뒤" 라는 순서에서 왔는데, 유예가
               없어지면서 적힌 일이 전부 **같은 순간에** 일어난다 (#167) — 번호를 남기면 화면이
