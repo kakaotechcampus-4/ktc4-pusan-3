@@ -7,6 +7,7 @@ from app.providers.meal_plan.schema import MealPlanJSON
 from scripts.meal_ocr_eval import (
     DEFAULT_FIXTURE,
     cost_usd,
+    failed_run,
     grade,
     grade_slots,
     load_fixture,
@@ -176,3 +177,38 @@ def test_summary_counts_an_extra_meal_once_even_if_it_appears_in_one_run():
 
 def test_answer_set_has_69_meals():
     assert len(grade_slots(load_fixture(DEFAULT_FIXTURE), load_fixture(DEFAULT_FIXTURE))) == 69
+
+
+def test_two_menus_merged_into_one_item_is_not_c1():
+    # 정답셋은 "…,우유2" 를 항목 2개로 나눈다. 모델이 한 항목으로 붙여도 메뉴는 맞다
+    expected = _plan(["카레라이스5,6", "우유2"])
+    actual = _plan(["카레라이스5,6,우유2"])
+
+    assert not grade_slots(expected, actual)[(2, "lunch")].failed
+
+
+def test_alternative_split_into_two_items_is_not_c1():
+    expected = _plan(["경기도과일 또는 고구마우유죽2"])
+    actual = _plan(["경기도과일", "고구마우유죽2"])
+
+    assert not grade_slots(expected, actual)[(2, "lunch")].failed
+
+
+def test_wrong_menu_hidden_in_a_merged_item_is_still_c1():
+    expected = _plan(["카레라이스5,6", "우유2"])
+    actual = _plan(["하이라이스5,6,우유2"])
+
+    slot = grade_slots(expected, actual)[(2, "lunch")]
+
+    assert slot.c1
+    assert slot.wrong == ["하이라이스5,6,우유2"]
+
+
+def test_a_failed_read_counts_as_missing_every_menu_not_c1():
+    # 읽기에 실패하면 아무것도 저장되지 않는다 — 틀린 메뉴가 붙지 않으니 일반 실패
+    expected = _plan_days({2: ["현미밥"], 3: ["백미밥"]})
+
+    s = summarize_runs(expected, [expected, failed_run(expected)])
+
+    assert s.c1_cases == 0
+    assert s.unstable == [(2, "lunch"), (3, "lunch")]

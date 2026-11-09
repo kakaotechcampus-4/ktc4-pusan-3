@@ -2,8 +2,14 @@
 
 from datetime import datetime
 
-from app.domains.notice.assemble import NewNoticeItem
-from app.domains.notice.models import NoticeItemHandling, NoticeItemTarget
+from app.domains.notice.assemble import NewNotice, NewNoticeItem
+from app.domains.notice.models import (
+    NoticeAudience,
+    NoticeDocKind,
+    NoticeInputFormat,
+    NoticeItemHandling,
+    NoticeItemTarget,
+)
 from scripts.notice_fixture_eval import (
     CHECKS,
     DOCS,
@@ -11,6 +17,7 @@ from scripts.notice_fixture_eval import (
     KST,
     Outcome,
     never_on,
+    no_3am,
     no_diagnosis,
     on_date,
     summarize_runs,
@@ -28,6 +35,7 @@ def _item(
     starts: str | None = None,
     due: str | None = None,
     review: bool = False,
+    quote: str | None = None,
 ) -> NewNoticeItem:
     return NewNoticeItem(
         handling=NoticeItemHandling(handling),
@@ -41,7 +49,7 @@ def _item(
         due_all_day=False,
         details=(),
         supplies=(),
-        source_quote=title,
+        source_quote=quote or title,
         needs_review=review,
         review_reason="date" if review else None,
     )
@@ -101,7 +109,65 @@ def test_date_that_must_not_be_a_schedule():
 
 def test_diagnosis_words_in_items_are_c1():
     assert no_diagnosis((_item("미열이 있어 일찍 하원"),)) is Outcome.PASS
+    assert no_diagnosis((_item("콧물이 조금 있었어요"),)) is Outcome.PASS
     assert no_diagnosis((_item("감기 의심 — 하원"),)) is Outcome.C1
+    for disease in ("비염", "장염", "중이염", "수족구", "코로나", "폐렴"):
+        assert no_diagnosis((_item(f"{disease} 증상으로 하원"),)) is Outcome.C1, disease
+
+
+def test_unflagged_wrong_duplicate_is_c1_even_if_another_item_is_right():
+    # 같은 일정이 두 번 나오고 하나만 틀려도 틀린 쪽이 표시 없이 일정 초안에 오른다
+    items = (
+        _item("부모 상담 주간", starts="2026-11-23T00:00"),
+        _item("부모 상담", starts="2026-11-24T00:00"),
+    )
+
+    assert on_date(items, "상담", "starts_at", "2026-11-23") is Outcome.C1
+
+
+def test_flagged_3am_on_one_field_is_a_general_failure_not_a_pass():
+    flagged = (_item("하원 요청", handling="todo", due="2026-11-02T03:00", review=True),)
+    unflagged = (_item("하원 요청", handling="todo", due="2026-11-02T03:00"),)
+
+    assert no_3am(flagged) is Outcome.FAIL
+    assert no_3am(unflagged) is Outcome.C1
+    assert no_3am((_item("하원 요청", handling="todo", due="2026-11-02T15:00"),)) is Outcome.PASS
+
+
+def _notice(*items: NewNoticeItem) -> NewNotice:
+    return NewNotice(
+        doc_kind=NoticeDocKind.NEWSLETTER,
+        input_format=NoticeInputFormat.IMAGE,
+        audience_scope=NoticeAudience.CLASS,
+        issued_on=None,
+        received_at=_at("2026-08-24T09:00"),
+        title=None,
+        raw_text="",
+        content_hash="",
+        is_correction=False,
+        items=items,
+    )
+
+
+def _check(doc: str, name: str):
+    return next(c for c in CHECKS if (c.doc, c.name) == (doc, name))
+
+
+def test_health_check_deadline_ignores_the_result_sheet_item():
+    # "검진 결과지 사본은 10월 16일까지" 도 "검진" 을 담는다 — 건강검진 마감이 비었는데
+    # 결과지 마감(맞는 날짜)을 검진 마감의 틀린 날짜로 읽으면 안 된다
+    notice = _notice(
+        _item("영유아 건강검진", handling="todo", quote="9월 내로 영유아 건강검진을 받아"),
+        _item(
+            "검진 결과지 제출",
+            handling="todo",
+            due="2026-10-16T23:59",
+            quote="검진 결과지 사본은 10월 16일(금)까지",
+        ),
+    )
+
+    assert _check("E", "검진 마감 9/30").judge(notice) is Outcome.FAIL
+    assert _check("E", "결과지 마감 10/16").judge(notice) is Outcome.PASS
 
 
 # ── 반복 요약 ────────────────────────────────────────────────────────────────

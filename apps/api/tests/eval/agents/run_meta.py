@@ -1,16 +1,17 @@
 """라이브 eval 실행 메타 (#770) — 측정 이력 행에 적을 값을 파일로 남긴다.
 
 `conftest.py` 가 `-m live` 로 돈 세션이 끝나면 `build_meta` 를 `live_run_meta.json` 으로 쓴다
-(`.gitignore` 대상). pytest 가 아닌 eval 스크립트(급식표 · 알림장 OCR, 판정기 실험)는 돌린 뒤
-직접 남긴다:
+(`.gitignore` 대상). 급식표 · 알림장 OCR 채점 스크립트(`scripts/meal_ocr_eval.py` ·
+`scripts/notice_fixture_eval.py`)는 `--repeat` 로 돈 뒤 `build_meta` 를 직접 불러 반복 횟수와
+effort 를 넘긴다. 그 밖의 스크립트(공지 말뭉치, 판정기 실험)는 돌린 뒤 명령으로 남긴다:
 
-    uv run python -m tests.eval.agents.run_meta scripts/meal_ocr_eval.py
+    uv run python -m tests.eval.agents.run_meta scripts/notice_corpus_eval.py --repeat 1
  프롬프트 본문 · 질문 · 답은 넣지 않는다 — 이름과 SHA-256, 모델, 커밋뿐이다.
 
 - `commit` · `dirty`: 평가한 코드. 작업 트리가 더러우면 측정 이력 행의 커밋 옆에 `dirty` 를 적는다
 - `models`: 역할마다 실제로 쓴 `<ROLE>_MODEL` · `<ROLE>_REASONING_EFFORT`.
   `.env` 값이라 이 파일이 아니면 남지 않는다. 설정이 틀린 역할은 `None`
-- `repetitions`: 같은 입력을 몇 번 돌렸나 (`TEST_REPEAT`, 없으면 1)
+- `repetitions`: 같은 입력을 몇 번 돌렸나. 넘긴 값, 없으면 `TEST_REPEAT`, 그것도 없으면 1
 - `prompts`: 10곳의 전체 지문. 문서에는 앞 12자를 적는다
 """
 
@@ -18,7 +19,7 @@ import argparse
 import json
 import os
 import subprocess
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import UTC, datetime
 from functools import cache
 from pathlib import Path
@@ -61,15 +62,18 @@ def _models(settings: AgentSettings) -> dict[str, dict[str, str] | None]:
     return models
 
 
-def _all_models(settings: AgentSettings, ocr_model: str | None) -> dict[str, Any]:
-    """역할 6개 + 판정기 + OCR 두 곳. 판정기 · OCR 은 effort 를 역할 설정으로 두지 않아 None."""
+def _all_models(
+    settings: AgentSettings, ocr_model: str | None, ocr_efforts: Mapping[str, str]
+) -> dict[str, Any]:
+    """역할 6개 + 판정기 + OCR 두 곳. 판정기 · OCR 은 effort 를 역할 설정으로 두지 않는다 —
+    OCR 은 돌린 스크립트가 넘긴 값(`ocr_efforts`), 없으면 None."""
     models: dict[str, Any] = dict(_models(settings))
     models["curator_judge"] = {
         "model": settings.CURATOR_JUDGE_MODEL or None,
         "reasoning_effort": None,
     }
     for name in ("meal_ocr", "notice_ocr"):  # 알림장 OCR 은 급식표 OCR 의 모델 설정을 같이 쓴다
-        models[name] = {"model": ocr_model, "reasoning_effort": None}
+        models[name] = {"model": ocr_model, "reasoning_effort": ocr_efforts.get(name)}
     return models
 
 
@@ -87,15 +91,19 @@ def build_meta(
     evalset: Iterable[str],
     settings: AgentSettings | None = None,
     ocr_model: str | None = None,
+    repetitions: int | None = None,
+    ocr_efforts: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     status = _git("status", "--porcelain", "--untracked-files=no")
     return {
         "run_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "commit": _git("rev-parse", "HEAD"),
         "dirty": bool(status),
-        "repetitions": int(os.getenv("TEST_REPEAT", "1")),
+        "repetitions": repetitions or int(os.getenv("TEST_REPEAT", "1")),
         "evalset": sorted(evalset),
-        "models": _all_models(settings or get_agent_settings(), ocr_model or _ocr_model()),
+        "models": _all_models(
+            settings or get_agent_settings(), ocr_model or _ocr_model(), ocr_efforts or {}
+        ),
         "prompts": {name: print_.sha256 for name, print_ in all_fingerprints().items()},
     }
 
@@ -117,8 +125,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="라이브 eval 실행 메타를 남긴다 (#770)")
     parser.add_argument("evalset", nargs="+", help="돌린 eval 스크립트 · 평가셋 경로")
     parser.add_argument("--out", type=Path, default=META_PATH, help="쓸 파일")
+    parser.add_argument("--repeat", type=int, default=None, help="같은 입력을 몇 번 돌렸나")
     args = parser.parse_args(argv)
-    meta = build_meta(evalset=args.evalset)
+    meta = build_meta(evalset=args.evalset, repetitions=args.repeat)
     args.out.write_text(json.dumps(meta, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(f"{args.out} 에 남겼다 — commit {meta['commit']} · dirty {meta['dirty']}")
     return 0

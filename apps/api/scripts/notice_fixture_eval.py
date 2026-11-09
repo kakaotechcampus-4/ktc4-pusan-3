@@ -1,10 +1,11 @@
 """알림장 · 공지 OCR 채점 — 지어낸 공지 7장(정답을 안다)을 읽어 판정표와 비교한다.
 
     uv run python -m scripts.notice_fixture_eval --repeat 5
-    uv run python -m scripts.notice_fixture_eval --only H --repeat 1   # 한 장만
+    uv run python -m scripts.notice_fixture_eval --only H   # 한 장만 (메타는 안 남긴다)
 
-공지 사진 → `NoticeExtractor.read_image`(모델) → `assemble`(날짜 계산 · 가리기, 코드) 까지
-운영과 같은 길로 돌린다. DB 에는 쓰지 않는다. 평가셋은 `tests/fixtures/notice_eval/` — 이름 ·
+사진 한 장을 운영 함수 `app.agents.notice_ocr.read_photo` 로 읽는다 — 모델(`read_image`) 뒤에
+코드(`assemble`, 날짜 계산 · 가리기)까지 운영과 같은 값(대기 시간 · effort · 글자 수 검사)으로 돈다.
+DB 에는 쓰지 않는다. 평가셋은 `tests/fixtures/notice_eval/` — 이름 ·
 기관 · 번호가 전부 지어낸 것이라 저장소에 둔다. 실제 기관 공지 말뭉치는 `notice_corpus_eval.py`
 (저장소 밖).
 
@@ -15,6 +16,7 @@ C1 (docs/agents/eval/NOTICE_OCR_EVAL.md §2) — 확인 표시(`needs_review`) �
 """
 
 import argparse
+import inspect
 import json
 import re
 import sys
@@ -29,17 +31,11 @@ from enum import StrEnum
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from app.agents.notice_ocr import read_photo
 from app.core.config import settings
-from app.domains.notice.assemble import NewNotice, NewNoticeItem, assemble
-from app.domains.notice.models import (
-    NoticeAudience,
-    NoticeDocKind,
-    NoticeInputFormat,
-    NoticeItemHandling,
-)
-from app.providers.notice.document_text import normalize_image
+from app.domains.notice.assemble import NewNotice, NewNoticeItem
+from app.domains.notice.models import NoticeAudience, NoticeDocKind, NoticeItemHandling
 from app.providers.notice.extractor import NoticeExtractor
-from app.rules.notice_text import clean_text
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE_DIR = ROOT / "tests" / "fixtures" / "notice_eval"
@@ -104,17 +100,18 @@ def on_date(
     field: str,
     expect: str,
 ) -> Outcome:
-    """`keyword` 를 다룬 항목 중 하나의 `field` 가 `expect`(앞부분 일치)면 통과.
+    """`keyword` 를 다룬 항목의 `field` 가 `expect`(앞부분 일치)여야 한다.
 
-    맞는 항목이 없을 때 — 확인 표시 없이 다른 날짜가 들어간 항목이 있으면 C1, 아니면(비었거나 표시가
-    붙었거나 항목이 없으면) 일반 실패.
+    확인 표시 없이 다른 날짜가 든 항목이 하나라도 있으면 C1 — 맞는 항목이 따로 있어도 틀린 쪽이
+    일정 초안에 오른다. 그다음 맞는 항목이 있으면 통과, 없으면(비었거나 표시가 붙었거나 항목이
+    없으면) 일반 실패. 날짜를 두지 않는 항목(일정의 신청서 할 일 등)은 비교하지 않는다.
     """
     found = [i for i in items if keyword in _about(i)]
     values = [(i, _at(getattr(i, field))) for i in found]
+    if any(v and not v.startswith(expect) and not i.needs_review for i, v in values):
+        return Outcome.C1
     if any(v.startswith(expect) for _, v in values):
         return Outcome.PASS
-    if any(v and not i.needs_review for i, v in values):
-        return Outcome.C1
     return Outcome.FAIL
 
 
@@ -129,7 +126,11 @@ def never_on(items: Sequence[NewNoticeItem], field: str, text: str) -> Outcome:
     return Outcome.FAIL if all(i.needs_review for i in hit) else Outcome.C1
 
 
-_DIAGNOSIS = re.compile(r"감기|독감|질환|진단|의심|확진|감염")
+# 기관 안내에 없는 병명 · 판단. 공지 원문에 병명이 있는 문서(E 수족구 유행 안내)에는 걸지 않는다
+_DIAGNOSIS = re.compile(
+    r"감기|독감|비염|장염|중이염|폐렴|기관지염|구내염|결막염|수족구|코로나|천식|아토피"
+    r"|질환|진단|의심|확진|감염"
+)
 
 
 def no_diagnosis(items: Sequence[NewNoticeItem]) -> Outcome:
@@ -173,7 +174,7 @@ CHECKS: tuple[Check, ...] = (
     _plain("A", "원 이름 · 약칭 없음", lambda n: "해솔나무" not in all_text(n)),
     _plain("A", "전화 없음", lambda n: "010-0000" not in all_text(n)),
     _c1("A", "차량 안내 11/5", lambda n: on_date(n.items, "차량", "starts_at", "2026-11-05")),
-    _c1("A", "3시를 새벽으로 안 읽음", lambda n: _no_3am(n)),
+    _c1("A", "3시를 새벽으로 안 읽음", lambda n: no_3am(n.items)),
     _c1("A", "미열을 병명으로 안 바꿈", lambda n: no_diagnosis(n.items)),
     # B 알림장
     _plain(
@@ -219,7 +220,8 @@ CHECKS: tuple[Check, ...] = (
         "건강검진이 할 일",
         lambda n: any(i.handling is TODO for i in n.items if "검진" in i.title + i.label),
     ),
-    _c1("E", "검진 마감 9/30", lambda n: on_date(n.items, "검진", "due_at", "2026-09-30")),
+    # "검진 결과지" 항목과 겹치지 않게 "건강검진" 으로 찾는다
+    _c1("E", "검진 마감 9/30", lambda n: on_date(n.items, "건강검진", "due_at", "2026-09-30")),
     _c1("E", "결과지 마감 10/16", lambda n: on_date(n.items, "결과", "due_at", "2026-10-16")),
     _plain(
         "E",
@@ -278,13 +280,14 @@ CHECKS: tuple[Check, ...] = (
 )
 
 
-def _no_3am(n: NewNotice) -> Outcome:
-    worst = [never_on(n.items, field, " 03:00") for field in ("starts_at", "due_at")]
-    return Outcome.C1 if Outcome.C1 in worst else min(worst, key=list(Outcome).index)
+def no_3am(items: Sequence[NewNoticeItem]) -> Outcome:
+    """오후 3시 하원을 새벽 3시로 읽지 않는다. 일정 시작 · 할 일 마감 중 나쁜 쪽을 낸다."""
+    found = [never_on(items, field, " 03:00") for field in ("starts_at", "due_at")]
+    return max(found, key=list(Outcome).index)
 
 
 def _forest(n: NewNotice) -> Outcome:
-    return on_date(_calendar(n), "", "starts_at", "2026-11-20 09:30")
+    return on_date(_calendar(n), "숲", "starts_at", "2026-11-20 09:30")
 
 
 def _three_classes(n: NewNotice) -> Outcome:
@@ -347,6 +350,10 @@ def summarize_runs(
 # ── 실행 ─────────────────────────────────────────────────────────────────────
 
 
+# 운영(read_photo)이 쓰는 추출기 effort — 메타의 조건 칸에 적는다
+PRODUCTION_EFFORT: str = inspect.signature(NoticeExtractor).parameters["reasoning_effort"].default
+
+
 @dataclass
 class Read:
     doc: Doc
@@ -354,38 +361,19 @@ class Read:
     notice: NewNotice | None
     error: str | None
     seconds: float
-    prompt_tokens: int
-    completion_tokens: int
 
 
-def read_doc(doc: Doc, run: int, effort: str) -> Read:
-    ex = NoticeExtractor.from_settings(
-        settings, reasoning_effort=effort, max_calls=1, timeout_s=170.0
-    )
+def read_doc(doc: Doc, run: int) -> Read:
     t0 = time.perf_counter()
     notice, error = None, None
+    received = datetime(doc.received.year, doc.received.month, doc.received.day, 9, tzinfo=KST)
     try:
-        image, mime = normalize_image((FIXTURE_DIR / f"{doc.file}.png").read_bytes())
-        extract = ex.read_image(image, mime_type=mime)
-        received = datetime(doc.received.year, doc.received.month, doc.received.day, 9, tzinfo=KST)
-        notice = assemble(
-            extract,
-            source_text=clean_text(extract.transcript),
-            input_format=NoticeInputFormat.IMAGE,
-            received_at=received,
-            tz=KST,
-            extractor_version=ex.version,
-        )
+        data = (FIXTURE_DIR / f"{doc.file}.png").read_bytes()
+        notice = read_photo(data, received_at=received).notice
     except Exception as err:  # 읽기 실패는 그 문서 판정 전부 일반 실패 — 틀린 일정이 남지 않는다
         error = f"{type(err).__name__}: {str(err)[:150]}"
     return Read(
-        doc=doc,
-        run=run,
-        notice=notice,
-        error=error,
-        seconds=round(time.perf_counter() - t0, 1),
-        prompt_tokens=sum(u.prompt_tokens for u in ex.usage),
-        completion_tokens=sum(u.completion_tokens for u in ex.usage),
+        doc=doc, run=run, notice=notice, error=error, seconds=round(time.perf_counter() - t0, 1)
     )
 
 
@@ -423,7 +411,6 @@ def main() -> int:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     ap.add_argument("--repeat", type=int, default=1, help="같은 공지를 몇 번 읽나 (측정 이력은 5)")
-    ap.add_argument("--effort", default="low", choices=["low", "medium", "high"])
     ap.add_argument("--only", help="문서 id 만 (쉼표로 여러 개, 예: H 또는 A,H)")
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--out", type=Path, default=None, help="모델 출력 폴더 (기본: 임시 폴더)")
@@ -441,22 +428,21 @@ def main() -> int:
     jobs = [(d, r) for r in range(1, args.repeat + 1) for d in docs]
     print(
         f"공지 {len(docs)}장 × 반복 {args.repeat}회 = 호출 {len(jobs)}회"
-        f" · 모델 {settings.MEAL_OCR_MODEL} · effort {args.effort}"
+        f" · 모델 {settings.MEAL_OCR_MODEL} · effort {PRODUCTION_EFFORT}"
     )
     with ThreadPoolExecutor(args.workers) as pool:
-        reads = list(pool.map(lambda job: read_doc(job[0], job[1], args.effort), jobs))
+        reads = list(pool.map(lambda job: read_doc(*job), jobs))
 
     out_dir = args.out or Path(tempfile.gettempdir()) / "notice_fixture_eval"
     out_dir.mkdir(parents=True, exist_ok=True)
-    out = out_dir / f"notice_{settings.MEAL_OCR_MODEL.replace('/', '_')}_{args.effort}.json"
+    out = out_dir / f"notice_{settings.MEAL_OCR_MODEL.replace('/', '_')}_{PRODUCTION_EFFORT}.json"
     out.write_text(
         json.dumps([_dump(r) for r in reads], ensure_ascii=False, indent=1, default=str),
         encoding="utf-8",
     )
     errors = [r for r in reads if r.error]
-    tokens_in = sum(r.prompt_tokens for r in reads)
-    tokens_out = sum(r.completion_tokens for r in reads)
-    print(f"읽기 실패 {len(errors)} · 입력 {tokens_in} · 출력 {tokens_out} 토큰 · 저장 {out}")
+    seconds = max((r.seconds for r in reads), default=0)
+    print(f"읽기 실패 {len(errors)} · 가장 오래 걸린 읽기 {seconds}초 · 저장 {out}")
     for r in errors:
         print(f"  {r.doc.id} #{r.run} {r.error}")
 
@@ -485,9 +471,9 @@ def _write_meta(args: argparse.Namespace) -> None:
     meta = build_meta(
         evalset=[str(Path(__file__).relative_to(ROOT)), str(FIXTURE_DIR.relative_to(ROOT))],
         ocr_model=settings.MEAL_OCR_MODEL,
+        repetitions=args.repeat,
+        ocr_efforts={"notice_ocr": PRODUCTION_EFFORT},
     )
-    meta["repetitions"] = args.repeat
-    meta["models"]["notice_ocr"]["reasoning_effort"] = args.effort
     META_PATH.write_text(json.dumps(meta, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(
         f"\n실행 메타: {META_PATH.relative_to(ROOT)} — commit {meta['commit']}"

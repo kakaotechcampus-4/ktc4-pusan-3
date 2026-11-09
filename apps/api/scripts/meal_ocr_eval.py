@@ -192,6 +192,19 @@ class SlotGrade:
         return self.c1 or bool(self.missing)
 
 
+_MENU_SEP = re.compile(r",|또는")
+
+
+def menu_keys(raw: str) -> set[str]:
+    """항목 하나에 든 메뉴들의 이름. 쉼표 · `또는` 으로 나눈다.
+
+    정답셋은 "…,우유2" 를 항목 2개로 나누고 "A 또는 B" 는 한 항목으로 두는데, 모델이 붙이거나
+    나눠도 메뉴가 같으면 같게 본다. 알레르기 번호 사이 쉼표는 번호를 먼저 떼서 나누지 않는다.
+    """
+    keys = {menu_key(part) for part in _MENU_SEP.split(strip_allergen_marks(raw))}
+    return keys - {""}
+
+
 def grade_slots(expected: MealPlanJSON, actual: MealPlanJSON) -> dict[Slot, SlotGrade]:
     """정답 끼니 전부 + 정답에 없는데 모델이 메뉴를 낸 끼니를 채점한다."""
     exp, act = _by_meal(expected), _by_meal(actual)
@@ -199,13 +212,18 @@ def grade_slots(expected: MealPlanJSON, actual: MealPlanJSON) -> dict[Slot, Slot
     graded: dict[Slot, SlotGrade] = {}
     for key in sorted(slots):
         exp_raws, act_raws = exp.get(key, []), act.get(key, [])
-        exp_keys = {menu_key(r) for r in exp_raws}
-        act_keys = {menu_key(r) for r in act_raws}
+        exp_keys = set().union(*(menu_keys(r) for r in exp_raws))
+        act_keys = set().union(*(menu_keys(r) for r in act_raws))
         graded[key] = SlotGrade(
-            wrong=[r for r in act_raws if menu_key(r) not in exp_keys],
-            missing=[r for r in exp_raws if menu_key(r) not in act_keys],
+            wrong=[r for r in act_raws if menu_keys(r) - exp_keys],
+            missing=[r for r in exp_raws if menu_keys(r) - act_keys],
         )
     return graded
+
+
+def failed_run(expected: MealPlanJSON) -> MealPlanJSON:
+    """읽기에 실패한 회차 — 아무것도 저장되지 않으니 모든 끼니를 빼먹은 것(일반 실패)으로 센다."""
+    return MealPlanJSON(source=expected.source, year_month=expected.year_month, days=[])
 
 
 @dataclass(frozen=True)
@@ -381,7 +399,12 @@ def main() -> int:
     for n in range(1, args.repeat + 1):
         reader = new_reader()
         t0 = time.perf_counter()
-        plan = reader.read(image_bytes, mime_type=mime)
+        try:
+            plan = reader.read(image_bytes, mime_type=mime)
+        except Exception as err:  # 출력 상한 · 호출 실패 — 앞 회차 비용을 버리지 않고 계속 잰다
+            print(f"[{n}/{args.repeat}] 읽기 실패 {type(err).__name__}: {str(err)[:150]}")
+            plans.append(failed_run(expected))
+            continue
         elapsed = time.perf_counter() - t0
         plans.append(plan)
 
@@ -409,15 +432,15 @@ def main() -> int:
 
 
 def _write_meta(args: argparse.Namespace) -> None:
-    """측정 이력 행에 적을 커밋 · 지문 · 조건. 반복 횟수와 effort 는 이 스크립트 값으로 덮는다."""
+    """측정 이력 행에 적을 커밋 · 지문 · 조건. 반복 횟수와 effort 는 이 스크립트 값이다."""
     from tests.eval.agents.run_meta import META_PATH, build_meta
 
     meta = build_meta(
         evalset=[str(Path(__file__).relative_to(ROOT)), str(args.fixture)],
         ocr_model=args.model,
+        repetitions=args.repeat,
+        ocr_efforts={"meal_ocr": args.effort},
     )
-    meta["repetitions"] = args.repeat
-    meta["models"]["meal_ocr"]["reasoning_effort"] = args.effort
     META_PATH.write_text(json.dumps(meta, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(
         f"\n실행 메타: {META_PATH.relative_to(ROOT)} — commit {meta['commit']}"
