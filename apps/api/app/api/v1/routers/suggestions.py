@@ -161,9 +161,10 @@ def _suggestion_out(s, views: Sequence[EvidenceView] = ()) -> SuggestionOut:
 
 
 async def _safety_labels(session, *, child_id: _uuid.UUID) -> list[entrypoint.SafetyLabel]:
-    """사전검사 · 채택 · 초안 만들기 재확인이 같이 읽는 알레르기 · 건강 행(모든 kind · status).
+    """사전검사와 채택 · 초안 만들기 · 제출 재확인이 같이 읽는 알레르기 · 건강 행(모든 kind ·
+    status).
 
-    목록이 빼는 추천과 채택 · 초안 만들기가 막는 추천이 같으려면 읽는 행도 판정 함수도 같아야 한다.
+    목록이 빼는 추천과 재확인이 막는 추천이 같으려면 읽는 행도 판정 함수도 같아야 한다.
     """
     rows = await list_safety_labels(session, child_id=child_id)
     return [entrypoint.SafetyLabel(*r) for r in rows]

@@ -798,7 +798,7 @@ async def _submit(db_client: AsyncClient, cid: uuid.UUID, headers, key: str, *ro
                 "event_type": "episodic",
                 "category": "etc",
             },
-            "items": [{"item_id": None, "item_name": "호두"}],
+            "items": [],
             "suggestion_ids": [str(r.id) for r in rows],
         },
         headers={**headers, "Idempotency-Key": key},
