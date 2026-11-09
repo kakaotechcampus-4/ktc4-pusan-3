@@ -47,6 +47,7 @@ export function HomeComposer({
   locked = false,
   busyLabel = "보내는 중이에요",
   sentLine = false,
+  notice = null,
   lead,
   promptsPending = false,
 }: {
@@ -79,6 +80,13 @@ export function HomeComposer({
    *    빨려 들어간다.
    */
   sentLine?: boolean;
+  /**
+   * 화면이 입력창 위에 세우는 안내 한 줄 — 03 홈의 "연결이 끊겨 있어요" (#865). 음성 안내와 같은 자리에 선다.
+   * 🚨 **음성 안내가 이것보다 먼저다** — 이 안내는 보내기를 누를 때 서고 그때 음성 안내는 지워지므로(`submit`),
+   *    음성 안내가 서 있다면 그쪽이 더 나중 일이다. 반대로 두면 끊긴 채로 마이크를 눌렀을 때 "마이크 권한이 꺼져
+   *    있어요" 같은 실패가 이 안내에 가려 아무 일도 안 일어난 것처럼 보인다 (#865 리뷰).
+   */
+  notice?: string | null;
   /** 제안 줄 맨 앞에 서는 문 하나 — 03 의 "오늘 대화 이어보기" (`AgentPrompts` 의 `lead`). */
   lead?: ReactNode;
   /** 제안을 아직 받는 중. 줄 자리를 알약 모양으로 잡아 둔다 (`AgentPrompts` 의 `pending`). */
@@ -158,7 +166,7 @@ export function HomeComposer({
             ? SPEECH_ASKING
             : voice.listening
               ? "듣고 있어요. 말하면 입력창에 바로 적혀요."
-              : voice.notice}
+              : (voice.notice ?? notice)}
         </p>
 
         {/* 알약 하나 안에 버튼·입력·보내기가 다 들어간다. 입력만 테두리를 갖지 않는 이유(§7 bare). */}
