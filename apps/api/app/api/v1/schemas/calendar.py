@@ -3,15 +3,15 @@
 일기와 사진은 #115 에서 둘로 나뉘었다 — `my_diary` 는 로그인한 보호자 본인 것만,
 `shared_photos` 는 연결된 보호자가 함께 본다. 모양은 #121 제안을 따른다.
 
-🚨 건강 관찰(`observation_health`)은 세지도 싣지도 않는다 — 첫 배포 범위 밖이다.
-   보호자가 승인해 저장한 건강 일정(병원 등)은 일정이라 `events` 에 들어간다.
+건강 관찰(`observation_health`)도 기록 탭처럼 세고 싣는다 (#764). 보호자가 승인해 저장한 건강
+일정(병원 등)은 관찰이 아니라 일정이라 `events` 에 들어간다.
 """
 
 from datetime import date, datetime
 
 from pydantic import BaseModel, Field
 
-from app.api.v1.schemas.observations import ObservationOut
+from app.api.v1.schemas.observations import ObservationHealthOut, ObservationOut
 from app.api.v1.schemas.suggestions import CalendarEventOut
 
 
@@ -50,7 +50,7 @@ class CalendarDayResponse(BaseModel):
     events: list[CalendarEventOut] = Field(
         description="그날 안에 걸친 일정, 준비물 포함. 그날 00:00 에 끝난 일정은 넣지 않는다"
     )
-    observations: list[ObservationOut] = Field(
+    observations: list[ObservationOut | ObservationHealthOut] = Field(
         description="그날과 기간이 겹치는 기록. 기록 탭 목록과 같은 모양 · 같은 상태 기준이다"
     )
     chat_count: int = Field(

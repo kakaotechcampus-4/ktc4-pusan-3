@@ -3,8 +3,8 @@
 모양은 화면 타입(apps/web `lib/api/types.ts` 의 `ObservationsResponse` ·
 `ObservationDetailResponse` · `ObservationPromotable`)을 따른다.
 
-🚨 건강 관찰(`observation_health`)은 목록 · 상세 응답에 실리지 않는다 — 첫 배포 범위 밖이다 (#259).
-   `ObservationHealthOut` 은 04 run 의 `saved` 이벤트에만 실린다 (#471).
+🚨 건강 관찰(`observation_health`)은 `ObservationHealthOut` 으로 실린다 — 목록 · 상세 ·
+   캘린더(#764)와 04 run 의 `saved`(#471) · 지난 대화가 같은 모양이다. 화면은 `kind` 로 가른다.
 """
 
 from datetime import date, datetime
@@ -72,7 +72,7 @@ class ObservationHealthOut(_ObservationBaseOut):
 
 
 class ObservationsResponse(BaseModel):
-    items: list[ObservationOut]
+    items: list[ObservationOut | ObservationHealthOut]
     total: int = Field(description="필터 · 날짜 · 검색을 건 뒤의 전체 건수. 쪽과 무관하다")
     page: int = Field(description="요청한 쪽 번호 (1부터)")
     size: int = Field(description="요청한 한 쪽 개수")
@@ -92,8 +92,10 @@ class CorrectionOut(BaseModel):
 
 
 class ObservationDetailResponse(BaseModel):
-    observation: ObservationOut
+    observation: ObservationOut | ObservationHealthOut
     used_in: list[UsedInOut] = Field(
         description='이 관찰을 근거로 쓴 추천. 비면 "제안 근거에서 빠져 있어요"'
     )
-    corrections: list[CorrectionOut]
+    corrections: list[CorrectionOut] = Field(
+        description="교정 이력. 건강 기록은 고치기를 받지 않아 늘 빈 배열이다"
+    )
