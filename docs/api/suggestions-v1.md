@@ -189,7 +189,8 @@ approved 추천 전부를 본다. 세 곳 모두 같은 함수(`_recheck_allerge
 - `suggestion_ids` 를 실은 제출만 본다. 보호자가 직접 만든 일정은 그대로다.
 - 제출은 카드 한 장에 요청 하나라서 걸린 추천이 든 카드만 실패하고, 나머지 카드는 그대로 넣을 수 있다(food 는
   한 장으로 묶인다). 문구가 초안 만들기와 같아서 카드가 실패 때 띄우는 서버 문구로 그대로 쓰인다.
-- 오류 순서는 행마다 404 · 422 `not_approved` → 409 `already_confirmed` → 403 → 409 `allergen_blocked`. 아무것도
-  쓰기 전이다 — 알림 연결 잠금 · 반복 일정 펼치기보다 앞이다.
+- 오류 순서는 400 `idempotency_key_required` → 422 `invalid_reminder` → 행마다 404 · 422 `not_approved` →
+  409 `already_confirmed` → 403 `consent_required` → 409 `allergen_blocked`. 아무것도 쓰기 전이다 — 그 뒤가 알림
+  연결 잠금(403 `child_access_denied`) · 반복 일정 펼치기(422 `invalid_repeat`)다.
 - 같은 `Idempotency-Key` 로 이미 성공한 제출은 그 응답을 그대로 돌려준다(이미 넣은 일정이다). 409 · 403 은
   저장하지 않아서 같은 키로 다시 보내면 다시 본다.
