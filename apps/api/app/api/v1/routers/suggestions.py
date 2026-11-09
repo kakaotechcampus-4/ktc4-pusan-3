@@ -283,9 +283,16 @@ def _next_draft_id() -> str:
         "채택한 추천으로 일정 초안을 만든다. food는 하나로 묶이고 나머지는 별도 초안. "
         "준비물은 그 추천의 items — food 묶음에서 같은 재료는 한 번. "
         "DB에 저장하지 않는다 — 응답으로만 반환."
+        " 만들기 직전에 알레르기를 다시 본다 — 채택한 뒤 등록된 알레르기(active)에 걸리는"
+        " 추천이 하나라도 있으면 초안을 하나도 만들지 않고 409 `allergen_blocked`"
+        "(`detail.suggestion_ids` = 걸린 추천 id, 요청 순서). 판정 · 응답은 채택과 같다 —"
+        " 알레르기 기록에 없는 항목(모름)은 막지 않는다. 걸린 추천은 `approved` 그대로다."
+        " 오류 (순서대로): 400 validation_failed(빈 목록) → 행마다 404 not_found ·"
+        " 422 not_approved → 403 consent_required(알레르기 항목이 든 추천인데 건강정보 동의 없음)"
+        " → 409 allergen_blocked."
     ),
     status_code=201,
-    responses={status: {"model": ErrorEnvelope} for status in (400, 404, 422)},
+    responses={status: {"model": ErrorEnvelope} for status in (400, 403, 404, 409, 422)},
 )
 async def create_event_drafts(
     child: AccessibleChild,
@@ -306,6 +313,16 @@ async def create_event_drafts(
         if row.status != SuggestionStatus.APPROVED:
             raise ApiError(422, "not_approved", "채택되지 않은 제안이 포함돼 있어요")
         suggestions.append(row)
+
+    # 채택 뒤에 등록된 알레르기를 여기서 막는다 (#859) — 아무것도 쓰지 않는 단계라 되돌릴 게 없고,
+    # 일정 초안 시트(게이트 ㉠)가 뜨기 전이다. food 를 한 장으로 묶기 전에 본다 — 걸린 추천을
+    # id 로 알려야 한다. 제출(/events)은 다시 보지 않는다 — 05 의 초안은 저장하지 않는다(#539)
+    await _recheck_allergens(
+        session,
+        child_id=child.child_id,
+        rows=suggestions,
+        message="알레르기로 등록된 항목이 들어 있어 일정으로 만들 수 없어요",
+    )
 
     food = [s for s in suggestions if str(s.agent) in _MERGED_AGENTS]
     rest = [s for s in suggestions if str(s.agent) not in _MERGED_AGENTS]
