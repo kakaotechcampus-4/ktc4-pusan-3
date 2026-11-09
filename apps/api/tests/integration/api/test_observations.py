@@ -154,6 +154,29 @@ async def test_list_keeps_corrected_observations_but_not_deleted_ones(
     assert gone.status_code == 400
 
 
+async def test_inactive_left_behind_reads_as_deleted_not_500(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    """배포 중 직전 화면 · 롤백 동안 "잘못된 기록" 으로 inactive 가 새로 생길 수 있다 (#736).
+    마이그레이션은 다시 돌지 않으니 읽는 쪽이 지운 기록처럼 둔다 — 응답 status 에 inactive 가 없어서
+    거르지 않으면 상세 · 지난 대화가 500 이다."""
+    headers, parent_id = bearer
+    record = await _observe(session, cid, parent_id, "food")
+    await session.execute(
+        update(ObservationFood)
+        .where(ObservationFood.id == record.id)
+        .values(status=ObservationStatus.INACTIVE)
+    )
+
+    detail = await db_client.get(
+        f"/api/v1/children/{cid}/observations/observation_food/{record.id}", headers=headers
+    )
+    listed = await db_client.get(f"/api/v1/children/{cid}/observations", headers=headers)
+
+    assert detail.status_code == 404
+    assert listed.json()["total"] == 0
+
+
 async def test_pages_through_newest_first_without_gaps_and_reports_total_pages(
     db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
 ):
