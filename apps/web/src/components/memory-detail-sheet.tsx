@@ -407,6 +407,12 @@ function DeleteConfirm({
             ? "목록에서 빠지고 제안의 근거로도 쓰이지 않아요. 묶인 기억은 다시 계산돼요."
             : "목록에서 빠지고 제안의 근거로도 쓰이지 않아요."}
         </p>
+        {/* 🚨 **대화의 삭제 카드(`record-tabs-card.tsx`)와 같은 말을 한다** (#748). 지우는 길이 둘이고
+            서버가 하는 일은 같다 — 기록은 빠져도 지난 대화의 말풍선(`chat_turn.raw_text`)은 남는다.
+            한쪽에서만 말하면 어디서 지웠느냐에 따라 보호자가 아는 것이 달라진다. */}
+        <p className="text-body-sm text-ink-muted mt-1">
+          대화에 적은 말은 지난 대화에 그대로 남아요.
+        </p>
         <p className="text-caption text-ink-subtle mt-2">지운 기록은 되살릴 수 없어요.</p>
       </div>
 
