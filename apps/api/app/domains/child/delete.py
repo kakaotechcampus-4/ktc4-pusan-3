@@ -43,6 +43,12 @@ async def delete_owned_child(
        GONE 으로 끝난다.
     🚨 아이 행만 잠그고 보호자 행은 잠그지 않는다. 탈퇴는 보호자 → 아이 순서로 잠그는데, 여기서
        아이 → 보호자로 잡으면 둘이 겹칠 때 교착이 된다. 아이를 지우는 데 보호자 행은 필요 없다.
+    🚨 아이 기억 잠금(`lock_child_memory`)은 잡지 않는다. 기록 run 은 새 관찰을 먼저 넣고
+       (아이 행에 FOR KEY SHARE) 커밋 직전 `flush_profiles` 에서 그 잠금을 잡는다
+       (db_store `_lock_child`). 여기서 기억 잠금 → 아이 행 순서로 잡으면 가장 흔한 run 과
+       서로를 기다린다. 대신 관찰 · 기억 행을 먼저 고친 뒤 새 행을 넣는 트랜잭션(고치기가 섞인
+       run · Curator)과 겹치면 Postgres 가 한쪽을 교착으로 끊을 수 있다. 삭제가 끊기면 아무것도
+       지워지지 않은 5xx 라 화면이 `/me` 로 확인하고 다시 누르게 한다.
     """
     owner = await session.scalar(
         select(Child.owner_parent_id).where(Child.id == child_id).with_for_update()

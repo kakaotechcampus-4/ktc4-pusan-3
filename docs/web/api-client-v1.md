@@ -51,7 +51,7 @@
 승인 게이트가 아니지만 지운 기록은 되살릴 수 없고 서버도 키가 필수다. 이미 지운 기록을 다시 지우면 404 라, 응답만 잃은 204 를
 재생받으려면 키가 같아야 한다. 본문이 없어 `current(kind/id)` 로 기록에 묶는다. 화면 규칙은 [`screen-rules-v1.md`](screen-rules-v1.md) §3.
 🚨 **아이 삭제도 표에 있다** (#751) — `DELETE /children/{cid}`. 보호자가 직접 누르는 삭제라 승인 게이트가 아니라 확인 화면이고,
-서버도 키가 필수다. 같은 키가 동시에 두 번 가면 둘 다 204 지만, **끝난 뒤** 같은 키로 다시 보내면 재생이 아니라 403 `child_access_denied`
+서버도 키가 필수다. 같은 키가 두 번 가도 지우는 것은 한 번이지만, **끝난 뒤** 같은 키로 다시 보내면 재생이 아니라 403 `child_access_denied`
 다 — 아이가 없어 아이 접근 확인에서 막힌다 ([`idempotency-v1.md`](../api/idempotency-v1.md) §3-1). 그래서 화면은 그 403 과 응답을 못 받은
 경우를 `/me` 로 확인해 지워진 것으로 넘긴다 (`app/child/[childId]/profile/delete/page.tsx`).
 그래서 표(`idempotentPath`)는 줄마다 메서드(`idempotentMethod`)를 같이 들고, 클라이언트 차단도 그 메서드로 건다.

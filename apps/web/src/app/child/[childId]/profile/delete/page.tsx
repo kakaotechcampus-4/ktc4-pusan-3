@@ -91,6 +91,16 @@ function DeleteChildScreen() {
     },
   });
 
+  /**
+   * 🚨 **닫을 때 지난 실패를 지운다.** 남겨 두면 나중에 다시 열었을 때 누르기도 전에 옛 실패 문구가 선다.
+   *    키는 그대로 둔다(`rotate` 하지 않는다) — 응답을 못 받은 앞의 요청이 지웠을 수 있어 다시 누르면 재시도다.
+   */
+  const closeSheet = () => {
+    if (remove.isPending) return;
+    setConfirming(false);
+    remove.reset();
+  };
+
   return (
     <Screen className="gap-6">
       <header>
@@ -207,9 +217,7 @@ function DeleteChildScreen() {
 
       <BottomSheet
         open={confirming}
-        onClose={() => {
-          if (!remove.isPending) setConfirming(false);
-        }}
+        onClose={closeSheet}
         title="정말 이 아이를 삭제할까요?"
         description="아이 기본정보 · 건강정보 동의를 거두는 것과 같아요. 기록이 모두 지워지고 되돌릴 수 없어요."
         footer={
@@ -218,7 +226,7 @@ function DeleteChildScreen() {
               variant="tertiary"
               className="flex-1"
               disabled={remove.isPending}
-              onClick={() => setConfirming(false)}
+              onClick={closeSheet}
             >
               그대로 둘게요
             </Button>
