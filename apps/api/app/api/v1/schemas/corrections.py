@@ -35,7 +35,8 @@ class CorrectionRequest(ApiSchema):
     target_ref: TargetRef = Field(description="고칠 대상 1건. 배열이 아니라 객체다")
     verdict: Literal["once_only", "need_more_observation", "outdated", "wrong"] = Field(
         description=(
-            "기록은 once_only(이번만 그랬어요) · wrong(잘못된 기록), "
+            "기록은 once_only(이번만 그랬어요)만 받는다 — 잘못된 기록은 "
+            "기록 지우기(DELETE /children/{cid}/observations/{kind}/{oid})로 지운다 (#736). "
             "기억은 need_more_observation · outdated · wrong. 어긋나면 400"
         )
     )

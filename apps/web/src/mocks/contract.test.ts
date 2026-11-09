@@ -220,28 +220,35 @@ describe("② 같은 키 · 같은 요청 = 재시도", () => {
   });
 });
 
-describe("③ 같은 키 · 다른 요청 = 재사용 거부", () => {
-  it("422 idempotency_key_reuse", async () => {
+/**
+ * 🚨 **서버는 본문을 비교하지 않는다** — 같은 키면 처음 응답을 재생한다. 422 `idempotency_key_reuse` ·
+ *    409 `idempotency_in_progress` 는 만들지 않기로 했다 (#438 · 11-09 PM). 화면이 본문이 바뀌면 새 키를
+ *    쓰므로(`current(text)`) 고친 본문이 옛 응답에 묻히는 일은 화면 쪽에서 막는다.
+ */
+describe("③ 같은 키 · 다른 요청 = 처음 응답 재생 (서버와 같다)", () => {
+  it("같은 키로 본문을 바꿔 보내도 처음 응답이 오고, 바뀐 본문은 저장되지 않는다", async () => {
     const key = newIdempotencyKey();
-    await submitOnboarding("c1", { gender: "female" }, key);
+    const first = await submitOnboarding("c1", { gender: "female" }, key);
 
-    await expect(submitOnboarding("c1", { gender: "male" }, key)).rejects.toSatisfy(
-      (e: unknown) => isApiError(e, "idempotency_key_reuse") && e.status === 422,
-    );
+    const second = await submitOnboarding("c1", { gender: "male" }, key);
+
+    expect(second).toEqual(first);
+    const profile = await api.get<ChildProfile>("/children/c1");
+    expect(profile.gender).toBe("female");
   });
 
-  it("다른 엔드포인트에 같은 키를 돌려써도 거부한다", async () => {
+  it("다른 엔드포인트에 같은 키를 쓰면 다른 요청이다 — 키의 범위는 (방법, 경로, 키)", async () => {
     const key = newIdempotencyKey();
     await submitEventDraft("c1", draftBody(), key);
 
     await expect(
       addHealthSafety("c1", { type: "allergy", label: "지어낸항목" }, key),
-    ).rejects.toSatisfy((e: unknown) => isApiError(e, "idempotency_key_reuse"));
+    ).resolves.toBeTruthy();
   });
 });
 
 describe("④ 같은 키 · 동시 요청", () => {
-  it("한 번만 실행되고 나머지는 409 idempotency_in_progress", async () => {
+  it("한 번만 실행되고 나머지는 처음 응답을 받는다", async () => {
     const key = newIdempotencyKey();
 
     const body = await approvedDraftBody("s_4");
@@ -251,14 +258,10 @@ describe("④ 같은 키 · 동시 요청", () => {
       submitEventDraft("c1", body, key),
     ]);
 
-    const fulfilled = results.filter((r) => r.status === "fulfilled");
-    const rejected = results.filter((r) => r.status === "rejected");
-
-    expect(fulfilled).toHaveLength(1);
-    for (const r of rejected) {
-      expect(isApiError(r.reason, "idempotency_in_progress")).toBe(true);
-      expect((r.reason as ApiError).status).toBe(409);
-    }
+    expect(results.every((r) => r.status === "fulfilled")).toBe(true);
+    const ids = results.map((r) => (r.status === "fulfilled" ? r.value.event.id : null));
+    // 셋 다 같은 일정 — 핸들러는 한 번만 돌았다
+    expect(new Set(ids).size).toBe(1);
   });
 });
 

@@ -24,13 +24,6 @@ export interface MapEntry {
 /** 서버 스키마 하나를 웹이 둘 이상으로 나눠 받으면 배열로 둘 다 적는다. */
 export type MapValue = string | MapEntry | Array<string | MapEntry>;
 
-/**
- * 추천의 `items`(필요한 재료 · 준비물 · #659). 웹이 먼저 붙였고 서버는 #674 에서 내린다.
- * 🚨 **서버에 칸이 생기면 이 `allow` 를 지운다** — 남겨 두면 그 뒤로 칸 이름 · 값 종류가 어긋나도 못 잡는다.
- */
-const ITEMS_PENDING =
-  "서버 SuggestionOut · GeneralSuggestionOut 에 아직 없다 (#674). 실서버 응답에서는 빠져 오고 SuggestionItems 가 빈 배열처럼 영역을 세우지 않는다";
-
 export const SCHEMA_MAP: Record<string, MapValue> = {
   /* ── 로그인 · 계정 ── */
   AuthProvider: "AuthProvider",
@@ -185,20 +178,16 @@ export const SCHEMA_MAP: Record<string, MapValue> = {
   PrecheckOut: "Precheck",
   SuggestionOut: [
     // 07 목록 — 개인화와 채택한 일반 추천이 같이 온다. kind 를 서버 enum 과 그대로 맞춘다
-    {
-      web: "ReceivedSuggestion",
-      allow: { items: ITEMS_PENDING },
-    },
+    "ReceivedSuggestion",
     {
       web: "Suggestion",
       allow: {
         kind: "05 의 개인화 칸(SuggestionsResponse.suggestions)이 같은 서버 스키마를 쓴다. 05 의 일반 추천은 general 칸으로 따로 온다 (#545)",
-        items: ITEMS_PENDING,
       },
     },
   ],
   EvidenceOut: "Evidence",
-  GeneralSuggestionOut: { web: "GeneralSuggestion", allow: { items: ITEMS_PENDING } },
+  GeneralSuggestionOut: "GeneralSuggestion",
   DocEvidenceOut: "DocEvidence",
   AnswerRequest: "AnswerRequest",
   ApproveSuggestionsRequest: "ApproveSuggestionsRequest",
