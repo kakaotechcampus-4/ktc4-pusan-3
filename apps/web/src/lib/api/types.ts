@@ -490,9 +490,8 @@ export interface CalendarEvent {
   /** 요청한 보호자 본인의 알림. 걸지 않았으면 null. */
   reminder: Reminder | null;
   /**
-   * 요일 반복 묶음의 회차이면 그 묶음 (#738). 반복이 아니면 키가 없다.
-   * ⚠️ **서버가 아직 내지 않는 칸이다** — 모양은 이슈 #738 의 BE 범위(`series` 에 id · 요일 · 끝 날짜 · 문구)를 따랐다.
-   *    BE 가 캘린더 응답에 실으면 계약 검사(`contract/schema-map.ts` 의 `CalendarEventOut`)의 `allow` 를 뺀다.
+   * 요일 반복 묶음의 회차이면 그 묶음 (#738 · 서버 #761 `CalendarEventOut.series`).
+   * 🚨 **반복이 아니면 키 자체가 없다** (null 이 아니다) — 서버가 `exclude_if` 로 뺀다. 값이 있는지로 가른다.
    */
   series?: EventSeriesRef;
 }
@@ -858,7 +857,7 @@ export interface SeriesDraftFields {
   category: CalendarEvent["category"];
 }
 
-/** 고치기 전 묶음. 🚨 서버가 **오늘 이후 회차에서 가장 흔한 값**으로 만든다 (첫 회차가 아니다). */
+/** 고치기 전 묶음. 🚨 서버가 **아직 시작하지 않은 회차에서 가장 흔한 값**으로 만든다 (첫 회차가 아니다). */
 export interface SeriesDraftBefore extends SeriesDraftFields {
   repeat: EventRepeat;
   /** 준비물 **이름**. 회차마다 `item_id` 가 달라 이름으로 맞춘다. */
@@ -868,7 +867,7 @@ export interface SeriesDraftBefore extends SeriesDraftFields {
 /**
  * 반복 묶음 전체를 고치는 초안 (`op: "update_series"` · #738). 정본은 `core/event_draft.py` 의 `UpdateSeriesDraft`.
  *
- * 🚨 **오늘 이후 회차에만 적용된다.** 지난 회차는 그대로다.
+ * 🚨 **아직 시작하지 않은 회차에만 적용된다**(시간 일정은 시작이 지금 이후, 종일은 KST 오늘 이후). 지난 회차는 그대로다.
  * 🚨 **카드는 읽기 전용이다** (#738). 고칠 값이 날짜 없는 시각 · 요일 · 끝 날짜라 일정 카드의 칸(날짜 + 시각)으로
  *    받을 수 없고, 요일 · 끝 날짜를 화면이 고치면 `label` 을 다시 만들어야 한다(날짜 계산). 다르게 하려면 다시 말한다.
  * 🚨 `event_id` 가 없다 — 대상은 `series_id` 다. 같은 묶음의 초안은 최신 한 장만 남긴다 (`draftTarget`).
@@ -922,9 +921,8 @@ export interface SubmitEventBody {
 }
 
 /**
- * 반복 규칙을 제출할 때의 모양 (#738). 🚨 `label` 을 싣지 않는다 — 화면에 그리는 서버 문구라 되돌려 보낼 값이 아니다.
- * ⚠️ **서버 계약 전이다.** `POST /events` 의 `repeat` 와 `PATCH …/event-series/{sid}` 는 BE 몫이고(#738), 이 모양은
- *    초안 payload(`core/event_draft.py` 의 `RepeatPayload`)에서 문구만 뺀 잠정형이다.
+ * 반복 규칙을 제출할 때의 모양 (#738 · 서버 `RepeatIn`). 🚨 `label` 을 싣지 않는다 — 화면에 그리는 서버 문구라
+ * 되돌려 보낼 값이 아니고, 서버는 모르는 칸을 받지 않는다(`extra="forbid"` · 400).
  */
 export interface RepeatRequest {
   weekdays: number[];
@@ -932,8 +930,11 @@ export interface RepeatRequest {
 }
 
 /**
- * 반복 일정 제출 본문 (#738). 회차마다 일정 행으로 펼치는 것은 서버다. `event.starts_at` 은 첫 회차다.
- * 🚨 알림(`reminder`)은 회차마다 걸린다 — 고르는 것은 한 번이다.
+ * 반복 일정 제출 본문 (#738 · 서버 `SubmitEventRequest.repeat`). 🚨 `repeat` 는 `event` 안이 아니라 **본문 최상위**다.
+ * 회차마다 일정 행으로 펼치는 것은 서버고, `event.starts_at` 은 첫 회차다 — 그 KST 시각과 걸린 시간을 모든 회차에 쓴다.
+ * 🚨 알림(`reminder`)은 회차마다 걸린다 — 고르는 것은 한 번이고, 울릴 시각이 지난 회차는 서버가 건너뛴다.
+ *    시각 때문에 422 `invalid_reminder` 가 되는 것은 전 회차가 다 지났을 때뿐이다 (종일 여부와 안 맞는 알림 종류도 422 다).
+ *    응답 `event` 는 첫 회차이고 `series` 가 붙는다.
  */
 export interface SubmitRepeatEventBody extends SubmitEventBody {
   repeat: RepeatRequest;
@@ -942,11 +943,13 @@ export interface SubmitRepeatEventBody extends SubmitEventBody {
 /**
  * 반복 묶음 고치기 제출 본문 — 🚨 **승인 게이트 ㉠ 안의 메서드다** (캘린더 쓰기 · 게이트를 늘린 것이 아니다).
  *
- * 🚨 **`before` 를 같이 보낸다.** 서버는 `before` 와 달라진 값만 오늘 이후 회차에 적용한다 — 한 회차만 따로 고쳐 둔
+ * 🚨 **`before` 를 같이 보낸다.** 서버는 `before` 와 달라진 값만 아직 시작하지 않은 회차에 적용한다 — 한 회차만 따로 고쳐 둔
  *    값이 "전부 바꾸기" 에 덮이지 않게 하는 장치다 (`docs/event/event-draft-flow-v1.md` §3). 초안은 서버에 남지 않아서
  *    (9/21) 기준 값을 되돌려 보낼 수 있는 것은 화면뿐이다.
  * 🚨 카드가 읽기 전용이라 초안 값을 그대로 보낸다 (문구만 뺀다).
- * ⚠️ 서버 계약 전이다 (`RepeatRequest` 와 같다).
+ * 서버(`UpdateSeriesRequest` · #761)는 **아직 시작하지 않은 회차만** 고친다 — 시간 일정은 시작이 지금 이후, 종일은 KST 오늘
+ * 이후다. 시작이 지난 오늘 회차는 지난 회차로 본다 (`docs/event/event-draft-flow-v1.md` §4-6). 요일 · 끝 날짜가 바뀌면 다시 펼치고,
+ * 남는 회차(아직 시작하지 않은 것)가 없으면 422 `invalid_repeat` 다 (묶음 삭제는 삭제 제안 경로다).
  */
 export interface UpdateSeriesBody {
   event: SeriesDraftFields;
@@ -955,8 +958,12 @@ export interface UpdateSeriesBody {
   items: string[];
 }
 
-/** ⚠️ 서버 계약 전이다. 화면은 성공 여부만 쓰고 본문을 읽지 않는다 — 캘린더는 무효화로 다시 받는다. */
-export type UpdateSeriesResponse = Record<string, unknown>;
+/** 🚨 화면은 성공 여부만 쓰고 본문을 읽지 않는다 — 캘린더는 무효화로 다시 받는다. */
+export interface UpdateSeriesResponse {
+  series: EventSeriesRef;
+  /** 고친 뒤 남은 회차 수 — 아직 시작하지 않은 회차를 센다 (`series.py` · 서버 설명의 "오늘 이후" 보다 좁다). */
+  occurrence_count: number;
+}
 
 /* ── 06 승인 ─────────────────────────────────────────────────────────── */
 

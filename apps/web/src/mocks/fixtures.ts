@@ -1006,19 +1006,31 @@ export const runEventDrafts: EventDraft[] = [
 ];
 
 /**
- * 요일 반복 묶음 (#738 · `?scenario=event_repeat`). 🚨 **실서버는 아직 반복을 만들지 않는다** — Agent 쪽(#744)은
- * DB 가 묶음을 지원할 때만 반복 초안을 낸다. 모양은 `core/event_draft.py` 의 `RepeatPayload` 를 따른다.
+ * 요일 반복 묶음 (#738 · `?scenario=event_repeat`). 모양은 서버 `EventSeriesOut`(#761)과 초안의
+ * `RepeatPayload`(`core/event_draft.py`)를 따른다.
  *
  * 🚨 **문구(`label`)는 서버가 만든다.** 목이 서버 대신 만드는 자리라 여기서 적는다 — 화면은 이 값을 그대로 그린다.
  */
 function repeatSeries(): EventSeriesRef {
-  const until = new Date(Date.now() + 40 * DAY_MS);
-  return {
-    id: "series_1",
-    weekdays: [1, 3],
-    until: iso(until),
-    label: `${until.getMonth() + 1}월 ${until.getDate()}일까지 매주 월, 수`,
-  };
+  return seriesRef("series_1", [1, 3], iso(new Date(Date.now() + 40 * DAY_MS)));
+}
+
+const WEEKDAY_NAMES = ["", "월", "화", "수", "목", "금", "토", "일"];
+
+/**
+ * 묶음 한 건 (`EventSeriesOut` 모양). 🚨 **문구는 서버 `repeat_label` 을 흉내 낸다** — 목이 서버 대신 만드는 자리다.
+ * 화면은 이 값을 그대로 그리고 다시 만들지 않는다.
+ */
+export function seriesRef(id: string, weekdays: number[], until: string): EventSeriesRef {
+  const days = [...new Set(weekdays)].sort((a, b) => a - b);
+  const which =
+    days.length === 7
+      ? "매일"
+      : days.join() === "1,2,3,4,5"
+        ? "평일"
+        : `매주 ${days.map((d) => WEEKDAY_NAMES[d]).join(", ")}`;
+  const [, month, day] = until.split("-").map(Number);
+  return { id, weekdays: days, until, label: `${month}월 ${day}일까지 ${which}` };
 }
 
 /** 다가오는 월요일 08:30 (KST) — 반복 새 일정의 첫 회차. 목이 서버(`recurrence.py`) 대신 고른다. */
@@ -1069,7 +1081,7 @@ export function repeatRunDrafts(): AnyEventDraft[] {
         category: "activity",
       },
       repeat,
-      /** 🚨 서버가 오늘 이후 회차에서 **가장 흔한 값**으로 만든다 — "오후 3:00 → 오후 4:00" 와 준비물 변화가 보여야 한다. */
+      /** 🚨 서버가 아직 시작하지 않은 회차에서 **가장 흔한 값**으로 만든다 — "오후 3:00 → 오후 4:00" 와 준비물 변화가 보여야 한다. */
       before: {
         title: "수영",
         starts_time: "15:00",

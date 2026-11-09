@@ -35,7 +35,7 @@
 **둘 다 키가 필요하다** — update 도 `item_id: null` 인 새 준비물은 멱등이 아니다 (#316).
 요일 반복 일정(#738)은 같은 `POST` 에 `repeat` 를 싣고, 반복 묶음 고치기는 세 번째 메서드
 `PATCH /children/{cid}/event-series/{sid}` 다. 같은 게이트 안의 메서드라 게이트를 늘린 것이 아니고, 새 준비물 이름이 회차마다
-행으로 들어가서 키를 단다. ⚠️ 경로와 본문은 잠정이다 — 서버 API 가 아직 없다 ([`event-draft-ui-v1.md`](event-draft-ui-v1.md) §3-9).
+행으로 들어가서 키를 단다. 서버도 키를 필수로 받는다 (#761 · [`event-draft-ui-v1.md`](event-draft-ui-v1.md) §3-9).
 🚨 **게이트 ㉡ 도 메서드가 둘이다** — 등록 `POST /children/{cid}/health-safety`, 고치기
 `PATCH …/health-safety/{id}` (서버 #370 · #375). 서버는 고치면 지금 기록을 내리고 **새 id** 로 다시 넣어서
 (이력이 남는다) 같은 고치기를 두 번 보내면 두 번째가 404 다 — 그래서 고치기도 키를 단다. 서버는 키를
