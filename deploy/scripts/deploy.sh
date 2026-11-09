@@ -22,8 +22,6 @@ set -euo pipefail
 
 ENV_FILE="deploy/docker/.env"
 COMPOSE=(docker compose -f deploy/docker/docker-compose.deploy.yml --env-file "$ENV_FILE")
-# 마이그레이션 같은 일회용 run 은 api 의 ktc4-edge 고정 주소를 떼고 띄운다 — 떠 있는 api 가 그 주소를 쥐고 있다
-ONEOFF=("${COMPOSE[@]}" -f deploy/docker/docker-compose.oneoff.yml)
 TAG_FILE="deploy/docker/.deployed-tag"
 EDGE_NET="ktc4-edge"
 
@@ -152,7 +150,9 @@ log "이미지 빌드"
 # 진행 로그를 끈다 — SSM 은 출력 앞부분만 돌려줘서, 빌드 로그가 alembic · up 의 에러를 밀어낸다.
 "${COMPOSE[@]}" build --quiet api web
 log "마이그레이션"
-"${ONEOFF[@]}" run --rm api uv run --no-sync alembic upgrade heads
+# api 가 아니라 api-task 다 — api 는 ktc4-edge 고정 IP 라, 떠 있는 api 옆에서 run 하면 같은 주소를 두 번 잡아
+# "Address already in use" 로 멈춘다 (docker-compose.deploy.yml 의 api-task · 11-09).
+"${COMPOSE[@]}" run --rm api-task uv run --no-sync alembic upgrade heads
 
 log "기동 — 헬스체크 통과까지 대기"
 if "${COMPOSE[@]}" up -d --no-build --pull never --wait --wait-timeout 240; then
