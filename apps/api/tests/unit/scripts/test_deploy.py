@@ -267,6 +267,21 @@ def test_failed_predeploy_backup_stops_before_migration(box):
     assert box.tag_file.read_text().strip() == "prev"
 
 
+def test_only_a_manual_deploy_can_skip_the_backup():
+    """skip_backup 이 deploy.yml 에서 빠지면 아무 테스트도 실패하지 않고 건너뛰기만 조용히 사라진다.
+    push 배포에는 inputs 가 없어 늘 빈 값 — 늘 백업한다 (#758)."""
+    workflow = yaml.safe_load((ROOT / ".github" / "workflows" / "deploy.yml").read_text())
+    trigger = workflow[True]  # YAML 1.1 은 `on:` 을 참으로 읽는다
+    skip = trigger["workflow_dispatch"]["inputs"]["skip_backup"]
+    job = workflow["jobs"]["deploy"]
+    ssm = next(step["run"] for step in job["steps"] if step.get("id") == "ssm")
+
+    assert (skip["type"], skip["default"]) == ("boolean", False)
+    assert job["env"]["SKIP_BACKUP"] == "${{ inputs.skip_backup && '1' || '' }}"
+    assert '--arg skip "$SKIP_BACKUP"' in ssm
+    assert "SKIP_PREDEPLOY_BACKUP=\\($skip) bash $F" in ssm
+
+
 def test_lock_file_made_by_another_user_is_still_locked(box, tmp_path):
     """재부팅 뒤 복원 점검 cron(ubuntu)이 잠금 파일을 먼저 만들면, root 도 그 파일을
     쓰기 · O_CREAT 로는 못 연다(/var/lock 은 sticky · fs.protected_regular=2).

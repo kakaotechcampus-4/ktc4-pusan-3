@@ -5,6 +5,8 @@
 #     daily      서버 cron 이 매일 03시에 부른다
 #     predeploy  배포가 마이그레이션 직전에 부른다. 실패하면 0 이 아닌 값으로 끝나고 배포가 멈춘다
 #     표시       키 끝에 붙일 짧은 글자 — 배포 커밋 sha 같은 것. 영문 · 숫자 · - 만, 앞 12자
+#     SKIP_PREDEPLOY_BACKUP=1  predeploy 를 건너뛰고 알림만 보낸다. DB 컨테이너가 죽어 백업이 안 될 때
+#                              그걸 고치는 배포까지 막히지 않게 — 손으로 돌리는 배포의 skip_backup 입력이 켠다
 #     대상 스택 · 환경 이름은 이 checkout 의 deploy/docker/.env 로 정한다 (backup-lib.sh 머리말)
 #     S3 키: <APP_ENV>/<daily|predeploy>/<UTC 시각>[-표시].dump
 #
@@ -45,6 +47,11 @@ else
   esac
   LABEL="$(printf '%s' "${2:-}" | tr -cd 'A-Za-z0-9-' | cut -c1-12)"
   pick_target ""
+  if [ "$KIND" = predeploy ] && [ "${SKIP_PREDEPLOY_BACKUP:-}" = 1 ]; then
+    # 성공으로 끝내되 알린다 — 이 배포의 마이그레이션은 되돌릴 백업이 없다.
+    alert "배포 전 백업을 건너뛰었다 (skip_backup 입력${LABEL:+ · $LABEL}) — 되돌릴 곳은 마지막 매일 백업이다"
+    exit 0
+  fi
 fi
 
 # 서버 디스크의 덤프 — 주인만 읽는 임시 폴더에 두고, 성공이든 실패든 끝나면 지운다.

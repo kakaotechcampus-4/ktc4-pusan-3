@@ -3,7 +3,7 @@
 실제 pg_dump · 복원은 `backup.sh --local` · `restore-check.sh --local` 로 로컬 개발 DB 에서 확인한다
 (#758 검증 방법). 여기서는 그걸로 볼 수 없는 것만 본다.
 
-- 배포 전 백업이 실패하면 0 이 아닌 값으로 끝난다 — 배포가 이걸 보고 멈춘다
+- 배포 전 백업이 실패하면 0 이 아닌 값으로 끝나 배포가 멈춘다. 건너뛰라면 알리기만 한다
 - 덤프가 엉뚱한 환경의 키로 가거나 서버 디스크에 남지 않는다
 - pg_dump · pg_restore 오류에 실린 행 내용이 출력(cron 로그 · SSM → Actions)에 나가지 않는다
 - 배포 전 백업이 있어도 매일 백업이 밀린 것을 잡는다
@@ -82,6 +82,7 @@ def box(tmp_path: Path):
         dump_fail: bool = False,
         restore_fail: bool = False,
         listing: str = "",
+        skip: bool = False,
     ):
         env_file.write_text(
             f"APP_ENV={app_env}\nSTACK_SUFFIX={suffix}\nBACKUP_S3_BUCKET=bk\n"
@@ -95,6 +96,7 @@ def box(tmp_path: Path):
             "FAKE_DUMP_FAIL": "1" if dump_fail else "",
             "FAKE_RESTORE_FAIL": "1" if restore_fail else "",
             "FAKE_LIST": listing,
+            "SKIP_PREDEPLOY_BACKUP": "1" if skip else "",
             "TMPDIR": str(work),
             "DEPLOY_LOCK": str(tmp_path / "deploy.lock"),
         }
@@ -144,6 +146,16 @@ def test_덤프가_실패하면_올리지_않고_실패로_끝난다(box):
     assert "SECRET-ROW" not in result.out + result.calls  # pg_dump 의 오류 원문은 안 나간다
     assert "SECRET-TOKEN" not in result.out
     assert list(box.work.iterdir()) == []
+
+
+def test_배포_전_백업을_건너뛰면_DB_를_건드리지_않고_알린다(box):
+    """DB 컨테이너가 죽어 백업이 안 될 때 그걸 고치는 배포가 막히지 않게 — 건너뛴 것은 알린다."""
+    result = box("backup.sh", "predeploy", "abc1234", skip=True)
+
+    assert result.returncode == 0, result.out
+    assert "docker " not in result.calls
+    assert "aws " not in result.calls
+    assert result.calls.count("curl ") == 1
 
 
 def test_환경_짝이_안_맞으면_DB_를_건드리지_않는다(box):
