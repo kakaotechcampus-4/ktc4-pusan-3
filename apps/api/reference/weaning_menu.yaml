@@ -1,0 +1,297 @@
+# 월령별 이유식 추천 식단 — 이유기(4–11개월) 식단 추천의 후보 표 (#399)
+#
+# 이유기 아이의 식단 추천은 레시피북(recipe_catalog)을 읽지 않고 이 표에서 그 달 단계 행만 후보로 삼는다.
+# 저장소 루트 `권장이유식단.md` §1–3 의 메뉴를 옮겼다. 읽는 쪽은 `app/agents/food/weaning_menu.py`.
+#
+# 🚨 알레르기 · 연령 판정은 코드가 한다 — 이 표의 행도 `filter_food_safety` 를 통과한 것만 풀에 든다.
+#    allergen_codes 는 그 근거 중 하나일 뿐이다 (읽는 쪽이 이름 · 재료를 사전으로 훑은 코드와 합친다).
+#    테스트가 menu_codes(이름 + 재료) ⊆ allergen_codes 를 건다.
+#
+# 단계 · 월령 (age_gates.yaml 의 infant_weaning 4 · toddler 12 와 맞춘다)
+#   초기 early 4–6개월 (min 4 · max 7)  puree
+#   중기 mid   7–8개월 (min 7 · max 9)  mashed
+#   후기 late  9–11개월 (min 9 · max 12) minced
+#   원본은 초기를 5–6개월로 적었지만 이유기 시작이 4개월이라 4부터 둔다.
+#
+# 넣지 않은 것
+#   - 김가루미음: 조미 김은 소금이 들어 있어 첫 이유식 행으로 두지 않는다. 무조미 김으로 정리되면 더한다.
+#   - 완료기(12–15개월) 진밥: 12개월부터는 toddler 라 레시피북 경로다.
+#
+# 주재료(main_ingredients)는 쌀을 뺀다(쌀미음만 쌀). 모든 행에 쌀이 있어서 넣으면
+# "같은 주재료 2개 이하" 샘플 제한이 풀을 2개로 줄인다.
+source: 아이캐치 서비스 일반추천
+title: 월령별 이유식 추천 식단
+note: 아이캐치 서비스가 월령별 이유식 단계에 맞춰 정리한 메뉴예요.
+version: "1"
+fetched_at: 2026-11-09
+rows:
+  - key: food.weaning_menu.early.rice
+    name: 쌀미음
+    min_month: 4
+    max_month: 7
+    texture: puree
+    ingredients: [쌀]
+    main_ingredients: [쌀]
+    food_groups: [grains]
+    allergen_codes: []
+  - key: food.weaning_menu.early.sweet_pumpkin
+    name: 단호박미음
+    min_month: 4
+    max_month: 7
+    texture: puree
+    ingredients: [쌀, 단호박]
+    main_ingredients: [단호박]
+    food_groups: [grains, vegetables]
+    allergen_codes: []
+  - key: food.weaning_menu.early.zucchini
+    name: 애호박미음
+    min_month: 4
+    max_month: 7
+    texture: puree
+    ingredients: [쌀, 애호박]
+    main_ingredients: [애호박]
+    food_groups: [grains, vegetables]
+    allergen_codes: []
+  - key: food.weaning_menu.early.sweet_potato
+    name: 고구마미음
+    min_month: 4
+    max_month: 7
+    texture: puree
+    ingredients: [쌀, 고구마]
+    main_ingredients: [고구마]
+    food_groups: [grains]
+    allergen_codes: []
+  - key: food.weaning_menu.early.beef
+    name: 쇠고기미음
+    min_month: 4
+    max_month: 7
+    texture: puree
+    ingredients: [쌀, 쇠고기]
+    main_ingredients: [쇠고기]
+    food_groups: [grains, meat_fish_egg_legumes]
+    allergen_codes: [16]
+  - key: food.weaning_menu.early.radish
+    name: 무미음
+    min_month: 4
+    max_month: 7
+    texture: puree
+    ingredients: [쌀, 무]
+    main_ingredients: [무]
+    food_groups: [grains, vegetables]
+    allergen_codes: []
+  - key: food.weaning_menu.mid.beef_zucchini
+    name: 쇠고기애호박죽
+    min_month: 7
+    max_month: 9
+    texture: mashed
+    ingredients: [쌀, 쇠고기, 애호박]
+    main_ingredients: [쇠고기, 애호박]
+    food_groups: [grains, meat_fish_egg_legumes, vegetables]
+    allergen_codes: [16]
+  - key: food.weaning_menu.mid.chicken_sweet_potato
+    name: 닭살고구마죽
+    min_month: 7
+    max_month: 9
+    texture: mashed
+    ingredients: [쌀, 닭고기, 고구마]
+    main_ingredients: [닭고기, 고구마]
+    food_groups: [grains, meat_fish_egg_legumes]
+    allergen_codes: [15]
+  - key: food.weaning_menu.mid.white_fish
+    name: 흰살생선죽
+    min_month: 7
+    max_month: 9
+    texture: mashed
+    ingredients: [쌀, 흰살생선]
+    main_ingredients: [흰살생선]
+    food_groups: [grains, meat_fish_egg_legumes]
+    allergen_codes: []
+  - key: food.weaning_menu.mid.white_fish_zucchini
+    name: 흰살생선애호박죽
+    min_month: 7
+    max_month: 9
+    texture: mashed
+    ingredients: [쌀, 흰살생선, 애호박]
+    main_ingredients: [흰살생선, 애호박]
+    food_groups: [grains, meat_fish_egg_legumes, vegetables]
+    allergen_codes: []
+  - key: food.weaning_menu.mid.cod
+    name: 대구살죽
+    min_month: 7
+    max_month: 9
+    texture: mashed
+    ingredients: [쌀, 대구]
+    main_ingredients: [대구]
+    food_groups: [grains, meat_fish_egg_legumes]
+    allergen_codes: []
+  - key: food.weaning_menu.mid.soft_tofu
+    name: 연두부죽
+    min_month: 7
+    max_month: 9
+    texture: mashed
+    ingredients: [쌀, 연두부]
+    main_ingredients: [연두부]
+    food_groups: [grains, meat_fish_egg_legumes]
+    allergen_codes: [5]
+  - key: food.weaning_menu.mid.silken_tofu
+    name: 순두부죽
+    min_month: 7
+    max_month: 9
+    texture: mashed
+    ingredients: [쌀, 순두부]
+    main_ingredients: [순두부]
+    food_groups: [grains, meat_fish_egg_legumes]
+    allergen_codes: [5]
+  - key: food.weaning_menu.mid.tofu_sweet_potato
+    name: 연두부고구마죽
+    min_month: 7
+    max_month: 9
+    texture: mashed
+    ingredients: [쌀, 연두부, 고구마]
+    main_ingredients: [연두부, 고구마]
+    food_groups: [grains, meat_fish_egg_legumes]
+    allergen_codes: [5]
+  - key: food.weaning_menu.mid.zucchini_carrot
+    name: 애호박당근죽
+    min_month: 7
+    max_month: 9
+    texture: mashed
+    ingredients: [쌀, 애호박, 당근]
+    main_ingredients: [애호박, 당근]
+    food_groups: [grains, vegetables]
+    allergen_codes: []
+  - key: food.weaning_menu.mid.sweet_potato
+    name: 고구마죽
+    min_month: 7
+    max_month: 9
+    texture: mashed
+    ingredients: [쌀, 고구마]
+    main_ingredients: [고구마]
+    food_groups: [grains]
+    allergen_codes: []
+  - key: food.weaning_menu.mid.radish_sprout
+    name: 무콩나물죽
+    min_month: 7
+    max_month: 9
+    texture: mashed
+    ingredients: [쌀, 무, 콩나물]
+    main_ingredients: [무, 콩나물]
+    food_groups: [grains, vegetables]
+    allergen_codes: [5]
+  - key: food.weaning_menu.mid.sesame_sweet_potato
+    name: 참깨고구마죽
+    min_month: 7
+    max_month: 9
+    texture: mashed
+    ingredients: [쌀, 고구마, 참깨]
+    main_ingredients: [고구마]
+    food_groups: [grains]
+    allergen_codes: []
+  - key: food.weaning_menu.mid.sweet_pumpkin
+    name: 단호박죽
+    min_month: 7
+    max_month: 9
+    texture: mashed
+    ingredients: [쌀, 단호박]
+    main_ingredients: [단호박]
+    food_groups: [grains, vegetables]
+    allergen_codes: []
+  - key: food.weaning_menu.late.beef_zucchini
+    name: 쇠고기애호박무른밥
+    min_month: 9
+    max_month: 12
+    texture: minced
+    ingredients: [쌀, 쇠고기, 애호박]
+    main_ingredients: [쇠고기, 애호박]
+    food_groups: [grains, meat_fish_egg_legumes, vegetables]
+    allergen_codes: [16]
+  - key: food.weaning_menu.late.chicken_sweet_potato
+    name: 닭살고구마무른밥
+    min_month: 9
+    max_month: 12
+    texture: minced
+    ingredients: [쌀, 닭고기, 고구마]
+    main_ingredients: [닭고기, 고구마]
+    food_groups: [grains, meat_fish_egg_legumes]
+    allergen_codes: [15]
+  - key: food.weaning_menu.late.white_fish_zucchini
+    name: 흰살생선애호박무른밥
+    min_month: 9
+    max_month: 12
+    texture: minced
+    ingredients: [쌀, 흰살생선, 애호박]
+    main_ingredients: [흰살생선, 애호박]
+    food_groups: [grains, meat_fish_egg_legumes, vegetables]
+    allergen_codes: []
+  - key: food.weaning_menu.late.cod
+    name: 대구살무른밥
+    min_month: 9
+    max_month: 12
+    texture: minced
+    ingredients: [쌀, 대구]
+    main_ingredients: [대구]
+    food_groups: [grains, meat_fish_egg_legumes]
+    allergen_codes: []
+  - key: food.weaning_menu.late.soft_tofu
+    name: 연두부무른밥
+    min_month: 9
+    max_month: 12
+    texture: minced
+    ingredients: [쌀, 연두부]
+    main_ingredients: [연두부]
+    food_groups: [grains, meat_fish_egg_legumes]
+    allergen_codes: [5]
+  - key: food.weaning_menu.late.silken_tofu
+    name: 순두부무른밥
+    min_month: 9
+    max_month: 12
+    texture: minced
+    ingredients: [쌀, 순두부]
+    main_ingredients: [순두부]
+    food_groups: [grains, meat_fish_egg_legumes]
+    allergen_codes: [5]
+  - key: food.weaning_menu.late.tofu_sweet_potato
+    name: 연두부고구마무른밥
+    min_month: 9
+    max_month: 12
+    texture: minced
+    ingredients: [쌀, 연두부, 고구마]
+    main_ingredients: [연두부, 고구마]
+    food_groups: [grains, meat_fish_egg_legumes]
+    allergen_codes: [5]
+  - key: food.weaning_menu.late.radish_sprout
+    name: 무콩나물무른밥
+    min_month: 9
+    max_month: 12
+    texture: minced
+    ingredients: [쌀, 무, 콩나물]
+    main_ingredients: [무, 콩나물]
+    food_groups: [grains, vegetables]
+    allergen_codes: [5]
+  - key: food.weaning_menu.late.sweet_potato_zucchini
+    name: 고구마애호박무른밥
+    min_month: 9
+    max_month: 12
+    texture: minced
+    ingredients: [쌀, 고구마, 애호박]
+    main_ingredients: [고구마, 애호박]
+    food_groups: [grains, vegetables]
+    allergen_codes: []
+  - key: food.weaning_menu.late.sesame_tofu
+    name: 참깨연두부무른밥
+    min_month: 9
+    max_month: 12
+    texture: minced
+    ingredients: [쌀, 연두부, 참깨]
+    main_ingredients: [연두부]
+    food_groups: [grains, meat_fish_egg_legumes]
+    allergen_codes: [5]
+  - key: food.weaning_menu.late.sweet_pumpkin
+    name: 단호박무른밥
+    min_month: 9
+    max_month: 12
+    texture: minced
+    ingredients: [쌀, 단호박]
+    main_ingredients: [단호박]
+    food_groups: [grains, vegetables]
+    allergen_codes: []
