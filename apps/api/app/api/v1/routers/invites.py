@@ -116,7 +116,7 @@ async def _limited_attempt(parent_id: UUID, request: Request) -> AsyncIterator[N
     """
     ip = invite_attempts.ip_bucket(request.client.host if request.client else None)
     now = datetime.now(UTC)
-    if not invite_attempts.acquire(parent_id=parent_id, ip=ip, now=now):
+    if not await invite_attempts.acquire(parent_id=parent_id, ip=ip, now=now):
         raise ApiError(429, "too_many_attempts", "여러 번 틀렸어요. 잠시 후 다시 시도해 주세요")
     try:
         yield
@@ -125,12 +125,12 @@ async def _limited_attempt(parent_id: UUID, request: Request) -> AsyncIterator[N
             # 원문 코드는 남기지 않는다.
             log.info("초대 코드 실패 parent_id=%s reason=%s", parent_id, exc.code)
             raise
-        invite_attempts.release(parent_id=parent_id, ip=ip, now=now)
+        await invite_attempts.release(parent_id=parent_id, ip=ip, now=now)
         raise
     except BaseException:
-        invite_attempts.release(parent_id=parent_id, ip=ip, now=now)
+        await invite_attempts.release(parent_id=parent_id, ip=ip, now=now)
         raise
-    invite_attempts.release(parent_id=parent_id, ip=ip, now=now)
+    await invite_attempts.release(parent_id=parent_id, ip=ip, now=now)
 
 
 async def _reject_if_has_child(session: AsyncSession, parent_id: UUID) -> None:

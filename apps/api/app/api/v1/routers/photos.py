@@ -158,7 +158,7 @@ async def upload_photo(
         if not data:
             raise ApiError(400, "validation_failed", _PICK_AGAIN)
 
-        if not quota.consume(
+        if not await quota.consume(
             parent_id=parent.parent_id, today=quota.today_kst(), limit=settings.INPUT_DAILY_LIMIT
         ):
             raise ApiError(

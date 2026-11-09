@@ -636,7 +636,7 @@ async def create_suggestions(
         health_consent = await child_health_granted(session, child_id=child.child_id)
         if to_run:
             # Agent 를 실제로 새로 돌릴 때만 하루 한도를 쓴다 — 재생은 모델을 부르지 않는다 (D8)
-            if not quota.consume(
+            if not await quota.consume(
                 parent_id=parent.parent_id,
                 today=quota.today_kst(),
                 limit=settings.INPUT_DAILY_LIMIT,
