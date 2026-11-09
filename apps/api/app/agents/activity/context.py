@@ -56,6 +56,9 @@ class ActivityRunState:
     shown_before: tuple[str, ...] = ()
     # 행사 조회에서 앞에서 보여 준 행사뿐이라 새 행사가 없었다 — 결과에 한 줄 안내를 붙인다
     no_new_events: bool = False
+    # run 마감 시각(`time.perf_counter` 기준, `DomainTask.deadline`). 행사 일정 읽기가 남은
+    # 시간만큼만 기다린다. None 이면 마감을 모른다(테스트 · eval)
+    deadline: float | None = None
     # 장소 · 행사를 찾으려 했는데 위치도 지역도 없었다 — 결과에 위치 · 지역 안내를 붙인다
     location_missing: bool = False
     # 보호자가 말한 지역(`areas.find_area`). 장소 조회가 찾으면 넣는다. 있으면 이 run 의 장소 ·

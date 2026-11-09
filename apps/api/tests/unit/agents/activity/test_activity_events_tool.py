@@ -6,6 +6,7 @@
 - 돌려준 행사는 run state 에 남는다. 출력 검증이 place_name 을 이 표와 대조한다.
 """
 
+import asyncio
 from datetime import UTC, date, datetime, timedelta, timezone
 from uuid import UUID
 
@@ -583,3 +584,52 @@ class TestShortFirst:
         result = await search_events(ctx, SearchEventsArgs(day=DayLabel.TODAY))
 
         assert names(result) == ["주말 축제", "두 달 축제", "상설 전시"]
+
+
+class SlowSchedules(InMemoryEventSchedules):
+    """일정 읽기(모델 호출)가 느린 행사. `slow` 의 행사는 `delay` 초 걸린다."""
+
+    def __init__(self, slow: set[str], delay: float) -> None:
+        super().__init__()
+        self.slow, self.delay, self.done = slow, delay, []
+
+    async def schedule_of(self, event, *, today):
+        if event.content_id in self.slow:
+            await asyncio.sleep(self.delay)
+        self.done.append(event.content_id)
+        return await super().schedule_of(event, today=today)
+
+
+class TestReadBudget:
+    """첫 run 이 20초를 넘지 않게 일정 읽기에 상한을 둔다. 못 끝낸 행사는 이번에는 빼고, 읽기는
+    멈추지 않고 이어서 캐시를 채운다 — 다음 run 부터는 나온다."""
+
+    async def test_상한_안에_못_읽은_행사는_이번에는_빼고_읽기는_이어간다(self, monkeypatch):
+        from app.agents.activity.tools import outing
+
+        monkeypatch.setattr(outing, "EVENT_READ_BUDGET_S", 0.05)
+        rows = [raw("1", "빠른 축제", km=1), raw("2", "느린 축제", km=2)]
+        schedules = SlowSchedules({"2"}, delay=0.2)
+        ctx = await context(InMemoryEvents(rows), schedules=schedules)
+
+        result = await search_events(ctx, SearchEventsArgs(day=DayLabel.TODAY))
+
+        assert names(result) == ["빠른 축제"]
+        await asyncio.sleep(0.3)
+        assert "2" in schedules.done  # 뒤에서 끝까지 읽었다
+
+    async def test_마감이_가까우면_남은_시간만큼만_기다린다(self, monkeypatch):
+        import time
+
+        from app.agents.activity.tools import outing
+
+        monkeypatch.setattr(outing, "EVENT_READ_BUDGET_S", 5.0)
+        rows = [raw("1", "느린 축제", km=1)]
+        ctx = await context(InMemoryEvents(rows), schedules=SlowSchedules({"1"}, delay=1.0))
+        # 마감까지 남은 시간이 마지막 후보 내기 몫보다 적다 — 일정 읽기를 기다리지 않는다
+        ctx.state.deadline = time.perf_counter() + outing.FINAL_TURN_RESERVE_S
+
+        started = time.perf_counter()
+        result = await search_events(ctx, SearchEventsArgs(day=DayLabel.TODAY))
+
+        assert names(result) == [] and time.perf_counter() - started < 0.5

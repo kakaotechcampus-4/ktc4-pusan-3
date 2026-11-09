@@ -81,6 +81,7 @@ async def run(
     context.state.original_texts = tuple(task.original_texts)
     context.state.prior_texts = tuple(task.prior_texts)
     context.state.shown_before = tuple(task.shown_before)
+    context.state.deadline = task.deadline
     weather = await check_weather(context, context.today)
     gate = await build_gate(context, outdoor_ok=weather.outdoor_ok)
     context.state.gate = gate

@@ -7,6 +7,7 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Sequence
 from datetime import date, datetime, time, timedelta
+from time import perf_counter
 from typing import Any, TypeVar
 
 from app.agents.activity.areas import (
@@ -46,6 +47,7 @@ from app.agents.activity.store.ports import (
     PLACE_TOP_K,
     CoarseLocation,
     EventRow,
+    EventSchedule,
     ScheduleBlock,
     UpstreamUnavailable,
 )
@@ -84,6 +86,13 @@ DAY_START = time(8)
 DAY_END = time(20)
 # 끝 시각이 없는 일정이 차지한다고 보는 길이. 비는 시간을 넉넉히 잡지 않는 쪽으로 둔다 (잠정)
 OPEN_ENDED_BLOCK = timedelta(hours=1)
+
+# 일정 읽기(행사마다 모델 호출)를 기다리는 상한 · run 마감 전에 마지막 후보를 낼 몫 (잠정 — eval).
+# 11-10 실측: 캐시가 빈 첫 run 의 행사 조회 4 ~ 7초, 가장 느린 한 건이 시간을 정한다
+EVENT_READ_BUDGET_S = 4.0
+FINAL_TURN_RESERVE_S = 6.0
+# 상한을 넘겨 뒤에서 이어 가는 일정 읽기 — 끝날 때까지 붙든다(가비지로 사라지지 않게)
+_BACKGROUND: set["asyncio.Task[EventSchedule]"] = set()
 
 _PLACES = "search_nearby_places"
 _EVENTS = "search_events"
@@ -430,9 +439,13 @@ async def search_events(context: ActivityContext, args: SearchEventsArgs) -> Too
         for (distance, event), intro in zip(nearest, intros, strict=True)
         if intro is not None and age_allows(intro.age_limit, gate.stage.months)
     ]
-    found_schedules = await asyncio.gather(
-        *(schedules.schedule_of(event, today=context.today) for _, event, _ in allowed)
+    # 일정 읽기(모델 호출)는 상한 안에 끝난 행사만 이번에 쓴다 — 첫 run 이 20초를 넘지 않게.
+    # 못 끝낸 읽기는 멈추지 않고 이어서 캐시를 채운다(다음 run 부터 나온다)
+    found_schedules = await _read_schedules(
+        context, [event for _, event, _ in allowed], budget=_read_budget(context)
     )
+    allowed = [found for found, schedule in zip(allowed, found_schedules, strict=True) if schedule]
+    found_schedules = [schedule for schedule in found_schedules if schedule]
     # 오늘 밤에 물었으면 운영 시간 원문에서 끝나는 시각을 읽어, 이미 끝난 행사는 오늘에서 뺀다.
     # 시각을 모르면 남긴다 — 화면에 "가기 전에 확인" 문구가 붙는다 (#800)
     local_now = context.now.astimezone(context.timezone).time()
@@ -466,6 +479,49 @@ async def search_events(context: ActivityContext, args: SearchEventsArgs) -> Too
         _EVENTS,
         events=[_event_result(row, _open_days(context, row.name, days)) for row in rows],
     )
+
+
+def _read_budget(context: ActivityContext) -> float:
+    """일정 읽기를 기다리는 시간. 기본 `EVENT_READ_BUDGET_S` 이고, run 마감이 가까우면 마지막 후보를
+    낼 몫(`FINAL_TURN_RESERVE_S`)을 남기고 그만큼만 기다린다. 마감을 모르면 기본값이다."""
+    deadline = context.state.deadline
+    if deadline is None:
+        return EVENT_READ_BUDGET_S
+    left = deadline - perf_counter() - FINAL_TURN_RESERVE_S
+    return max(0.0, min(EVENT_READ_BUDGET_S, left))
+
+
+async def _read_schedules(
+    context: ActivityContext, events: Sequence[Event], *, budget: float
+) -> list[EventSchedule | None]:
+    """행사마다 일정 — 상한 안에 못 읽은 행사는 None. 못 끝낸 읽기는 취소하지 않고 뒤에서 이어
+    간다(`_BACKGROUND` 가 붙든다) — 일정 캐시가 채워져 다음 run 은 기다리지 않는다."""
+    schedules = context.ports.event_schedules
+    if schedules is None or not events:
+        return []
+    tasks = [
+        asyncio.ensure_future(schedules.schedule_of(event, today=context.today)) for event in events
+    ]
+    if budget > 0:
+        await asyncio.wait(tasks, timeout=budget)
+    found: list[EventSchedule | None] = []
+    for task in tasks:
+        if task.done() and not task.cancelled() and task.exception() is None:
+            found.append(task.result())
+            continue
+        if not task.done():
+            _BACKGROUND.add(task)
+            task.add_done_callback(_settle)
+        found.append(None)
+    if any(schedule is None for schedule in found):
+        logger.info("행사 일정 읽기 상한 budget=%.1fs 못_읽음=%d", budget, found.count(None))
+    return found
+
+
+def _settle(task: "asyncio.Task[EventSchedule]") -> None:
+    _BACKGROUND.discard(task)
+    if not task.cancelled() and task.exception() is not None:
+        logger.warning("행사 일정 뒤 읽기 실패 error=%s", type(task.exception()).__name__)
 
 
 def _no_new_events(context: ActivityContext) -> ToolResult:
