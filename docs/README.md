@@ -85,6 +85,7 @@
 - [api/suggestions-v1.md](api/suggestions-v1.md) — **05 추천 받기의 판단 순서와 다시 시도.** `run_id` 없으면 처음 요청(문장은 홈 버튼 키의 표 문장뿐) · 있으면 Agent 마다 그 run 의 추천 → 0개 기록 → 실패 맥락(15분)으로 다시 만들기 → `cannot_resume` 순서 · 보관함은 프로세스 메모리 · 응답 조립 규칙(`groups[].notice` · 문서 행을 근거로 단 일반 추천 · 알레르기 사전검사) · 새로 돌릴 때만 하루 한도 (#249) · 채택 직전 알레르기 재확인(`409 allergen_blocked`)
 - [api/chat-v1.md](api/chat-v1.md) — **지난 대화 다시 보기.** run 하나를 대화 한 턴(`chat_turn`)으로 · 쓴 보호자 본인만 보고 탈퇴 · 연결 끊기 · 아이 삭제 때 지운다 · `done` 으로 끝난 run 만 · 말풍선은 그날 오간 말 그대로, 관찰은 id 로 담아 조회 때 지금 상태로(지운 기록은 `deleted`) · 날짜는 접수 KST, 되묻기 답은 질문한 날 · 커서는 날짜를 품는다 (#228)
 - [api/delete-proposal-v1.md](api/delete-proposal-v1.md) — **대화로 지울 때 사람이 버튼으로 확정한다.** AI 는 지우지 않고 제안만 남긴다(후보 · 기본 체크) · 보호자가 체크를 고쳐 버튼을 누르면 서버가 후보 안의 체크한 것만 지운다 · 제안한 보호자만 · 24시간 만료는 읽을 때 판정 · 지난 대화는 제안 id 만 담고 지금 상태로 그린다 (#535)
+- [api/run-failure-v1.md](api/run-failure-v1.md) — **run 이 실패하는 이유 8가지와 화면 문구.** 실패 예외를 `AgentFailure` 계통 하나로 모아 예외 종류가 로그 · SSE `failed.reason` · `failed.message` 를 정한다 · 문구는 코드 카탈로그(`failure.readout.yaml`)가 이유마다 하나 · 도메인 Agent 가 전부 실패하면 이유를 task 순서가 아니라 우선순위로 고른다 · 검사를 못 해도 응급 신호면 응급 안내로 끝낸다 · 계통 밖에 둔 `UpstreamUnavailable` 과 이유 (#768)
 
 *아직 문서 없음.* 외부 연동(나이스 급식 · Calendar).
 
