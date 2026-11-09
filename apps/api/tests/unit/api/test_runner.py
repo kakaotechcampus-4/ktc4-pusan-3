@@ -612,7 +612,7 @@ _PENDING = PendingMemoryContext("요즘 기침해", "언제부터였어요?", Wo
 
 def _fake():
     """이 폴더 conftest 가 끼운 메모리 가짜 보관함(`FakePendingReply`). 속(`entries`)을 본다."""
-    return pending_reply.put.__self__
+    return pending_reply.get.__self__  # put 은 느린 저장 시험이 바꿔 끼운다
 
 
 async def test_되묻기로_끝난_run_의_맥락은_채널이_아니라_store_로_간다(monkeypatch):

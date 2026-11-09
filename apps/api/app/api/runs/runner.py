@@ -172,17 +172,37 @@ def agent_job(
         # load_cards 가 채우고 FoundTabs · DeleteProposed 가 꺼내 쓴다 — 카드의 화면 모양 행 (#535)
         card_rows: dict[tuple[str, str], Any] = {}
         relay = translate.relay(channel, saved_rows=saved_rows, card_rows=card_rows)
+        # 되묻기 맥락 저장(DB, #877)이 도는 동안 나온 이벤트. 저장이 끝나면 순서대로 내보낸다 —
+        # 질문 카드가 보이면 보호자가 바로 답할 수 있어서, 맥락이 없으면 그 답이 400 이다.
+        # 🚨 끝 신호도 여기 기다린다. 따로 띄운 태스크에서만 내면 run() 이 먼저 끝나 _guarded 가
+        #    끝 신호가 없다고 보고 failed 를 붙인다 — run() 이 handle_input 뒤에 저장을 기다린다
+        held: list[entrypoint.Event] = []
+        saving: asyncio.Task[None] | None = None
 
-        def emit(event: entrypoint.Event) -> None:
-            # 끝 신호 뒤의 이벤트는 채널이 버린다 — 화면에 안 나간 것은 대화에도 남기지 않는다
-            live = channel.ended_with is None
-            if isinstance(event, entrypoint.PendingReply):
-                pending_reply.put(
+        async def save_pending(event: entrypoint.PendingReply, after: asyncio.Task[None] | None):
+            if after is not None:
+                await after  # 한 run 에 질문이 둘이면 앞 저장부터
+            try:
+                await pending_reply.put(
                     run_id=event.run_id,
                     parent_id=parent_id,
                     child_id=child_id,
                     context=event.context,
                 )
+            except Exception as exc:
+                # 저장이 안 되면 그 질문에 답할 때 400 일 뿐이다. 이미 한 기록 · 추천을 failed 로
+                # 덮지 않는다. 🚨 예외 메시지에 원문이 섞일 수 있어 종류만 남긴다 (루트 §2)
+                log.error(
+                    "run %s 의 되묻기 맥락 저장이 %s 로 실패했다", event.run_id, type(exc).__name__
+                )
+            if asyncio.current_task() is saving:  # 마지막 저장이 끝났다
+                while held:
+                    deliver(held.pop(0))
+
+        def emit(event: entrypoint.Event) -> None:
+            nonlocal saving
+            if isinstance(event, entrypoint.PendingReply):
+                saving = asyncio.create_task(save_pending(event, saving))
                 return
             if isinstance(event, entrypoint.RetryContext):
                 # 원문 조각이 있다 — 화면 · 로그로 보내지 않고 05 보관함에만 둔다 (#249)
@@ -209,6 +229,14 @@ def agent_job(
                     message=event.message,
                 )
                 return
+            if saving is not None and not saving.done():
+                held.append(event)
+                return
+            deliver(event)
+
+        def deliver(event: entrypoint.Event) -> None:
+            # 끝 신호 뒤의 이벤트는 채널이 버린다 — 화면에 안 나간 것은 대화에도 남기지 않는다
+            live = channel.ended_with is None
             sent = relay(event)
             # 번역이 끝난 뒤에 넘긴다 — 번역이 터진 이벤트는 화면에 안 나갔다. 위에서 돌아간
             # 셋(PendingReply 등)은 대화에도 남기지 않는 것이라 여기까지 오지 않아도 된다
@@ -278,6 +306,8 @@ def agent_job(
                         affinity_reader=agent_ports.affinity_reader(),
                         **agent_ports.health_ports(),
                     )
+                    if saving is not None:
+                        await saving
             except TimeoutError:
                 log.warning(
                     "run %s 가 %s초 안에 끝나지 않아 끊었다", channel.run_id, RUN_DEADLINE_SECONDS
@@ -296,9 +326,9 @@ def agent_job(
                 # 같은 질문에 다시 답할 수 있게 한다 — 15분은 처음 넣은 시각 그대로 센다.
                 if continuation is not None and reply_to is not None:
                     if channel.ended_with == "done" or channel.committed:
-                        pending_reply.drop(reply_to)
+                        await pending_reply.drop(reply_to)
                     else:
-                        pending_reply.release(reply_to)
+                        await pending_reply.release(reply_to)
 
     async def job(channel: RunChannel) -> None:
         with llm_usage.attribute(parent_id=parent_id, run_id=channel.run_id, source="input"):
