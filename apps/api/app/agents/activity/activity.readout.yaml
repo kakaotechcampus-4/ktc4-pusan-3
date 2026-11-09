@@ -69,7 +69,7 @@ weather.outdoor_blocked:
   template: 오늘은 바깥 활동이 어려운 날이라 실내 놀이만 골랐어요.
 weather.after_sunset:
   kind: notice
-  template: 해가 져서 실내 놀이만 골랐어요.
+  template: 지금은 어두워서 놀이터는 뺐어요.
 weather.heat_advisory:
   kind: notice
   template: 폭염주의보가 내려져 있어요. 한낮은 피해 주세요.
