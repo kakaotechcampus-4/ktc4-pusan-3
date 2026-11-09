@@ -17,8 +17,10 @@ DEPLOYED_TAG   := $(shell cat deploy/docker/.deployed-tag 2>/dev/null || echo lo
 COMPOSE_FILES  := docker compose -f deploy/docker/docker-compose.deploy.yml --env-file deploy/docker/.env
 COMPOSE_DEPLOY := env API_IMAGE_TAG=$(DEPLOYED_TAG) WEB_IMAGE_TAG=$(DEPLOYED_TAG) $(COMPOSE_FILES)
 # 적재는 배포와 같은 잠금을 잡는다 — 4GB 서버에서 빌드와 겹치지 않게. 맥에는 flock 이 없어 그냥 돈다.
-# (COMPOSE_DEPLOY 가 `env` 로 시작하는 이유 — flock 뒤에 오는 첫 단어는 명령이어야 해서 VAR=값 을 못 받는다)
-DEPLOY_LOCK    := $(shell command -v flock >/dev/null 2>&1 && echo flock -w 1200 /var/lock/ktc4-deploy.lock)
+# `flock <파일> 명령` 이 아니라 스크립트다 — 그 꼴은 O_CREAT 로 열어서 cron(ubuntu)이 만든 잠금 파일을 root 가
+# 못 연다 (deploy/scripts/with-deploy-lock.sh · #758).
+# (COMPOSE_DEPLOY 가 `env` 로 시작하는 이유 — 잠금 뒤에 오는 첫 단어는 명령이어야 해서 VAR=값 을 못 받는다)
+DEPLOY_LOCK    := $(shell command -v flock >/dev/null 2>&1 && echo bash deploy/scripts/with-deploy-lock.sh)
 # 떠 있는 스택 · 배포 DB 를 건드리는 타깃은 .env 가 dev · prod 중 하나와 통째로 맞는지 먼저 본다 (deploy.sh 와 같은 검사).
 # dev .env 에서 COMPOSE_PROJECT_NAME 한 줄만 빠져도 운영 프로젝트(ktc4-deploy) · 운영 DB 로 떨어지기 때문이다.
 DEPLOY_GUARD   := bash deploy/scripts/deploy.sh --check-env

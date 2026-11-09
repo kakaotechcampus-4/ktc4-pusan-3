@@ -267,6 +267,39 @@ def test_failed_predeploy_backup_stops_before_migration(box):
     assert box.tag_file.read_text().strip() == "prev"
 
 
+def test_lock_file_made_by_another_user_is_still_locked(box, tmp_path):
+    """재부팅 뒤 복원 점검 cron(ubuntu)이 잠금 파일을 먼저 만들면, root 도 그 파일을
+    쓰기 · O_CREAT 로는 못 연다(/var/lock 은 sticky · fs.protected_regular=2).
+    읽기로 열어야 배포가 잠금을 잡는다 (#758). 여기서는 쓰기 권한이 없는 파일로 흉내 낸다."""
+    lock = tmp_path / "lock"
+    lock.write_text("")
+    lock.chmod(0o444)
+
+    result = box()
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.skipif(not shutil.which("flock"), reason="flock 이 없다 (맥)")
+def test_make_lock_helper_holds_the_deploy_lock_while_the_command_runs(tmp_path):
+    """Makefile 의 deploy-migrate · deploy-load-* 잠금 — 쓰기 권한 없는 파일도 연다 (#758)."""
+    lock = tmp_path / "lock"
+    lock.write_text("")
+    lock.chmod(0o444)
+    probe = 'flock -n "$0" true && echo free || echo held'
+
+    result = subprocess.run(
+        ["bash", str(SCRIPT.parent / "with-deploy-lock.sh"), "sh", "-c", probe, str(lock)],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "DEPLOY_LOCK_FILE": str(lock)},
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "held"
+
+
 def test_failed_migration_never_touches_running_containers(box):
     result = box(run_fail="1")
 

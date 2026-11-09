@@ -96,7 +96,12 @@ fi
 # 4GB 서버에서 dev · prod 가 동시에 이미지를 구우면 메모리가 넘친다. 다른 환경 배포가 끝날 때까지 기다린다.
 # 20분 = 다른 쪽 최악(빌드 ~10분 + up 4분 + 롤백 4분). (맥에는 flock 이 없다 — 로컬 시험에서는 잠그지 않는다)
 if command -v flock >/dev/null; then
-  exec 9>"${DEPLOY_LOCK:-/var/lock/ktc4-deploy.lock}"
+  # 없으면 0644 로 만들고(실패는 넘김) 읽기로 연다. `exec 9>` 로 열면 재부팅 뒤 복원 점검 cron(ubuntu)이 먼저
+  # 만든 파일을 root 가 못 연다 — /var/lock 은 sticky 이고 fs.protected_regular=2 다 (backup-lib.sh 의
+  # take_deploy_lock · #758). 이 스크립트는 reset 전에 임시 파일로 돌아 그 함수를 불러 쓸 수 없어 같은 줄을 둔다.
+  LOCK="${DEPLOY_LOCK:-/var/lock/ktc4-deploy.lock}"
+  [ -e "$LOCK" ] || (umask 022 && : > "$LOCK") 2>/dev/null || true
+  exec 9<"$LOCK" || { log "🔴 잠금 파일 $LOCK 을 열지 못했다 — 소유자 · 권한(0644)을 본다"; exit 1; }
   log "잠금 대기"
   flock -w 1200 9 || { log "20분 동안 다른 배포가 안 끝났다 — 포기"; exit 1; }
 fi

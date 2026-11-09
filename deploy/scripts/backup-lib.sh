@@ -59,13 +59,18 @@ err_table() {
   [ -z "$t" ] || printf ' · 테이블 %s' "$t"
 }
 
-# 배포와 같은 잠금을 잡는다 — 4GB 서버에서 이미지 빌드와 임시 DB 가 겹치지 않게. 배포는 root 로
-# 잠금 파일을 쓰기로 열고, cron(ubuntu)은 읽기로 연다 — flock 은 읽기로 연 파일도 배타로 잠근다.
+# 배포와 같은 잠금을 잡는다 — 4GB 서버에서 이미지 빌드와 임시 DB 가 겹치지 않게. 배포(root)와
+# cron(ubuntu) 모두 "없으면 0644 로 만들고, 읽기로 연다" — flock 은 읽기로 연 파일도 배타로 잠근다.
+# 🚨 만들면서 열지 않는다 — `exec 9>` 도 `flock <파일> 명령` 도 O_CREAT 로 연다. /var/lock 은 재부팅마다 비는 sticky 폴더이고
+#    Ubuntu 기본값 fs.protected_regular=2 는 남이 만든 파일을 O_CREAT 로 여는 것을 root 에게도 막는다 —
+#    재부팅 뒤 cron 이 먼저 만들면 그 뒤 배포가 전부 Permission denied 로 실패한다 (#773 리뷰).
+#    같은 세 줄이 deploy.sh(reset 전에 임시 파일로 돌아 이 파일을 못 부른다)와 with-deploy-lock.sh(Makefile)에 있다.
 # 🚨 파일이 0600 이면 다른 사용자가 못 연다. 스크립트가 umask 077 이어도 여기서는 0644 로 만든다.
 take_deploy_lock() {
   command -v flock >/dev/null || return 0
   local lock="${DEPLOY_LOCK:-/var/lock/ktc4-deploy.lock}"
-  [ -e "$lock" ] || (umask 022 && : > "$lock") || fail "잠금 파일 $lock 을 만들지 못했다"
+  # 만들기 실패는 넘긴다 — 그 사이 배포가 먼저 만들었으면 남의 파일이라 못 만든다. 여는 쪽이 검사다.
+  [ -e "$lock" ] || (umask 022 && : > "$lock") 2>/dev/null || true
   exec 9< "$lock" || fail "잠금 파일 $lock 을 열지 못했다 — 소유자 · 권한을 본다 (0644)"
   log "배포 잠금 대기"
   flock -w 1200 9 || fail "20분 동안 배포가 안 끝나 기다리지 못했다"
