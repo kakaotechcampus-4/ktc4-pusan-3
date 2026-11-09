@@ -26,7 +26,7 @@ const VISIBLE = 4;
  *    재료가 열 개 넘게 오면 카드 셋을 견주는 화면에서 재료가 제안 문장보다 길어진다.
  * 🚨 **펼치기는 고르기와 따로다.** 버튼은 체크박스의 `<label>` 밖에 서서, 눌러도 추천 선택이 바뀌지 않는다.
  *
- * 비어 있으면(또는 실서버가 아직 칸을 안 내리면) 아무것도 그리지 않는다 — 라벨만 선 빈 영역은 "필요한 게 없다"
+ * 비어 있으면(또는 칸이 빠져 오면) 아무것도 그리지 않는다 — 라벨만 선 빈 영역은 "필요한 게 없다"
  * 인지 "못 받았다" 인지 가를 수 없다. health 는 무엇을 하라고 권하지 않아서 영역 자체가 없다.
  */
 export function SuggestionItems({
@@ -35,7 +35,10 @@ export function SuggestionItems({
   className,
 }: {
   agent: Agent;
-  /** 서버 순서 그대로. ⚠️ 실서버가 칸을 내리기 전에는 `undefined` 로 온다 (`types.ts` 의 `Suggestion.items`). */
+  /**
+   * 서버 순서 그대로. 서버는 늘 배열로 내린다 (#674). `undefined` 를 받는 것은 서버가 칸을 내리기 전부터
+   * 있던 방어라 남겨 둔다 — 빠져 와도 빈 배열과 같게 그린다.
+   */
   items: readonly string[] | undefined;
   className?: string;
 }) {
