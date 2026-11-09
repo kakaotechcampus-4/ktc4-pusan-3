@@ -349,6 +349,8 @@ def test_creates_edge_network_with_caddy_address_reserved(box):
         ("dev", DEV_ENV.replace("DB_MEM_LIMIT=512m", "DB_MEM_LIMIT=0")),
         ("prod", PROD_ENV.replace("https://api.", "https://api.dev.")),  # prod 가 dev API 를 굽는다
         ("prod", PROD_ENV.replace("STACK_SUFFIX=", "STACK_SUFFIX=-dev")),
+        # 배포 전 백업의 짝 검사가 빌드 10분 뒤에야 멈춘다 (#758)
+        ("prod", PROD_ENV.replace("APP_ENV=prod", "APP_ENV=production")),
         # 첫 전환의 down 이 Caddy · 옛 네트워크를 남겨 운영이 내려간 채 멈춘다
         ("prod", PROD_ENV.replace("COMPOSE_PROFILES=edge", "COMPOSE_PROFILES=")),
         # dev api 가 prod 주소(.20)를 받으면 EC2 메타데이터(서버 역할 열쇠)에 닿는다

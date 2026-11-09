@@ -53,7 +53,8 @@ jobs:
     steps:
       - name: 배포 전 백업 건너뜀 표시
         if: inputs.skip_backup
-        run: echo "::warning::배포 전 백업을 건너뛴다 — ${{ github.actor }} 가 skip_backup 으로 실행했다"
+        # triggering_actor — Re-run 이면 다시 돌린 사람이다(actor 는 처음 실행한 사람). skip 도 Re-run 을 따라간다
+        run: echo "::warning::배포 전 백업을 건너뛴다 — ${{ github.triggering_actor }} 가 skip_backup 으로 실행했다"
 
       - uses: aws-actions/configure-aws-credentials@v4
         with:

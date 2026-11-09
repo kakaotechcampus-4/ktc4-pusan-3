@@ -59,13 +59,15 @@ case "$TARGET" in
   # web 이미지는 API 주소를 번들에 굽는다 — prod 가 dev API 를 굽거나 그 반대면 막는 건 CORS 하나뿐이다 (#747).
   # edge 가 빠지면 Caddy 를 compose 가 못 본다 — 첫 전환의 down 이 Caddy · 옛 네트워크를 남겨
   # ktc4-edge 를 못 만들고, 운영이 내려간 채 멈춘다.
+  # APP_ENV 는 배포 전 백업(backup.sh)의 짝 검사와 같은 규칙 — 다르면 빌드 10분 뒤 백업에서야 멈춘다 (#758).
   prod) { [ -z "$PROJECT" ] || [ "$PROJECT" = ktc4-deploy ]; } && [ -z "$SUFFIX" ] && [[ "$API_URL" != *//api.dev.* ]] &&
-    [ "$PROFILES" = edge ] && { [ -z "$EDGE_IP" ] || [ "$EDGE_IP" = 172.30.0.20 ]; } ;;
+    [ "$PROFILES" = edge ] && { [ -z "$EDGE_IP" ] || [ "$EDGE_IP" = 172.30.0.20 ]; } &&
+    { [ -z "$APPENV" ] || [ "$APPENV" = prod ]; } ;;
   *) false ;;
 esac || {
   log "🔴 $TARGET 배포인데 $ENV_FILE 이 맞지 않는다 — COMPOSE_PROJECT_NAME='$PROJECT' STACK_SUFFIX='$SUFFIX' NEXT_PUBLIC_API_BASE_URL='$API_URL' COMPOSE_PROFILES='$PROFILES' APP_ENV='$APPENV' API_EDGE_IP='$EDGE_IP'"
   log "   dev: ktc4-dev · -dev · https://api.dev.… · profile 비움 · APP_ENV=dev · API_EDGE_IP=172.30.0.21 · API · WEB · DB · REDIS_MEM_LIMIT 네 개(빈 값 · 0 아님)"
-  log "   prod: 비움(또는 ktc4-deploy) · 비움 · api.dev 아님 · COMPOSE_PROFILES=edge · API_EDGE_IP 비움 (docs/ops/deploy-v1.md)"
+  log "   prod: 비움(또는 ktc4-deploy) · 비움 · api.dev 아님 · COMPOSE_PROFILES=edge · APP_ENV 비움 또는 prod · API_EDGE_IP 비움 (docs/ops/deploy-v1.md)"
   exit 1
 }
 # dev 사이트 basic_auth 계정 (#780) — 두 환경을 다 받는 Caddy 가 prod 에 있어서 prod .env 에만 둔다.
@@ -160,8 +162,17 @@ log "이미지 빌드"
 # 실패하면 set -e 로 여기서 멈춘다 — 옛 컨테이너가 그대로 서비스하고 DB 는 건드리지 않았다. 이 마이그레이션을
 # 되돌릴 곳이 이 백업뿐이라 멈춘다. backup.sh 는 이 checkout 의 .env 로 대상(dev · prod)을 정하고, 배포가
 # 쥔 잠금을 다시 잡지 않는다. DB 가 죽어 백업이 안 되는 복구 배포는 SKIP_PREDEPLOY_BACKUP(머리말)로 넘긴다.
+# 10분 상한 — DB 컨테이너는 떠 있는데 postgres 가 멈췄으면 pg_dump 가 SSM 상한(40분)까지 잠금을 쥐어 다른 환경
+# 배포까지 막는다(11-06 덤프는 수 초). 잠금(fd 9)은 넘기지 않는다 — 상한에 끊겨도 남은 docker exec 가 쥐지 않게.
+# (맥에는 timeout 이 없다 — 로컬 시험에서는 상한 없이 돈다)
 log "배포 전 백업"
-bash deploy/scripts/backup.sh predeploy "$SHA"
+BACKUP=(bash deploy/scripts/backup.sh predeploy "$SHA")
+command -v timeout >/dev/null && BACKUP=(timeout 600 "${BACKUP[@]}")
+"${BACKUP[@]}" 9<&- || {
+  rc=$?
+  [ "$rc" != 124 ] || log "🔴 배포 전 백업이 10분 안에 안 끝났다 — DB 컨테이너를 본다. 아무것도 바꾸지 않았다"
+  exit "$rc"
+}
 log "마이그레이션"
 # api 가 아니라 api-task 다 — api 는 ktc4-edge 고정 IP 라, 떠 있는 api 옆에서 run 하면 같은 주소를 두 번 잡아
 # "Address already in use" 로 멈춘다 (docker-compose.deploy.yml 의 api-task · 11-09).

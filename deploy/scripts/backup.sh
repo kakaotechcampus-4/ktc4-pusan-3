@@ -27,7 +27,7 @@
 #    (컨테이너 안 소켓 접속). 버전도 서버 DB 와 같은 pg_dump 가 된다.
 # 🚨 pg_dump · pg_restore · aws 의 stderr 는 화면에 내지 않는다 (backup-lib.sh 의 quiet) — 이 출력은
 #    배포 때 SSM 을 거쳐 공개 GitHub Actions 로그에 남는다. aws 오류에는 버킷 이름이 실린다.
-# 복원 시점은 덤프가 시작된 순간의 스냅샷이다. 덤프 뒤 · 배포 down 전 몇 분의 쓰기는 이 백업에 없다.
+# 복원 시점은 덤프가 시작된 순간의 스냅샷이다. 덤프 뒤 · 마이그레이션 전 몇 초의 쓰기는 이 백업에 없다.
 
 set -euo pipefail
 # shellcheck source=deploy/scripts/backup-lib.sh
