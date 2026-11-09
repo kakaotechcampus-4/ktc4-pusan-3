@@ -30,8 +30,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
-      # dev 는 #753 으로 dev 스택이 생기고 dev checkout 에 매일 백업 cron 을 건 뒤 "prod dev" 로 늘린다.
-      ENVS: prod
+      # 매일 백업 cron 이 걸린 환경만 넣는다 — 아직 안 건 환경을 넣으면 매일 "하나도 없다" 가 운다.
+      # dev 는 11-09 에 걸었다. prod 는 #773 이 main 으로 배포되고 prod checkout 에 cron 을 건 뒤
+      # 손으로 한 번 돌려 prod/daily/ 에 백업이 생기면 "prod dev" 로 늘린다.
+      ENVS: dev
       MAX_AGE_SECONDS: "93600" # 26시간 — restore-check.sh 와 같은 기준
     steps:
       - uses: aws-actions/configure-aws-credentials@v4
