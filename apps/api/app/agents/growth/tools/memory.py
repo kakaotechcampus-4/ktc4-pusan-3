@@ -18,8 +18,9 @@
 """
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from datetime import date, timedelta
+from uuid import UUID
 
 from app.agents.common.evidence import (
     OBSERVATION_WINDOW_DAYS,
@@ -64,6 +65,8 @@ logger = logging.getLogger(__name__)
 
 # 모델에게 돌려주는 근거 수 (공통 TOP_N 과 같다)
 MEMORY_LIMIT = TOP_N
+# 코드가 모델 전에 읽어 프롬프트에 싣는 요청 주제 기록의 최대 수
+TOPIC_RECORD_LIMIT = 3
 # keywords 와 subject 를 서로 포함 관계로 볼 때 짧은 쪽의 최소 길이
 MIN_KEYWORD_MATCH = 2
 # 자립 단계 사슬이 있는 카테고리. 예절 · 습관은 단계가 아니라 전략 행이다
@@ -138,6 +141,8 @@ async def _citable(context: GrowthContext) -> tuple[RankedEvidence, ...]:
     관심. 순위는 `rank_evidence` 다.
     """
     _require_gate(context)
+    if context.state.citable is not None:
+        return context.state.citable
     start, today = _window(context)
     memory = context.ports.memory
     child_id = context.child_id
@@ -150,7 +155,7 @@ async def _citable(context: GrowthContext) -> tuple[RankedEvidence, ...]:
         *(("observation_activity", row.activity, row) for row in activities),
         *(("observation_routine", "", row) for row in routine),
     ]
-    return rank_evidence(
+    context.state.citable = rank_evidence(
         tuple(affinities),
         tuple(
             ObservationRow(
@@ -165,6 +170,7 @@ async def _citable(context: GrowthContext) -> tuple[RankedEvidence, ...]:
         ),
         today=today,
     )
+    return context.state.citable
 
 
 async def has_citable_memory(context: GrowthContext) -> bool:
@@ -178,17 +184,42 @@ async def has_citable_memory(context: GrowthContext) -> bool:
     return any(not is_stale(item.observed_on, today) for item in await _citable(context))
 
 
+async def topic_records(context: GrowthContext, areas: Sequence[str]) -> dict[UUID, RankedEvidence]:
+    """요청 주제(`areas`)의 아이 기록을 순위대로 `TOPIC_RECORD_LIMIT` 개까지.
+
+    모델 전에 코드가 읽는다. 6개월이 지난 기록과 14일 밖 관찰은 싣지 않는다. 이 기록은 코드가
+    주제 일치를 이미 판정한 것이라 후보가 달아야 한다(`review.review_learning`). 모델에게는
+    id · label · polarity · 날짜만 간다 — 발화 원문은 포트가 싣지 않는다.
+    """
+    today = context.today
+    found = [
+        item
+        for item in await _citable(context)
+        if not is_stale(item.observed_on, today)
+        and record_on_topic((item.subject, item.label), areas)
+    ]
+    return top_refs(found, limit=TOPIC_RECORD_LIMIT)
+
+
+def covers_topic(records: Iterable[RankedEvidence], areas: Sequence[str]) -> bool:
+    """요청 주제의 영역마다 주제 기록이 하나 이상 있는가. 이때만 후보마다 주제 기록을 달게 한다.
+
+    "수학이랑 한글" 을 물었는데 수학 기록만 있으면 한글 후보가 수학 기록을 달 수 없다.
+    """
+    found = tuple(records)
+    return bool(found) and all(
+        any(record_on_topic((item.subject, item.label), (area,)) for item in found)
+        for area in areas
+    )
+
+
 async def has_topic_memory(context: GrowthContext, areas: Sequence[str]) -> bool:
     """요청 주제(`areas`)의 아이 기록이 근거로 달 수 있게 있는가. 6개월이 지난 기록은 세지 않는다.
 
     주제가 있는 요청은 이 기록이나 그 주제의 [예시] 행이 있어야 후보를 낼 근거가 선다 — 다른 주제의
     기록만으로는 개인화가 아니다(`review.topic_citations`). 둘 다 없으면 호출부가 모델 전에 닫는다.
     """
-    today = context.today
-    return any(
-        not is_stale(item.observed_on, today) and record_on_topic((item.subject, item.label), areas)
-        for item in await _citable(context)
-    )
+    return bool(await topic_records(context, areas))
 
 
 async def search_education_memory(
