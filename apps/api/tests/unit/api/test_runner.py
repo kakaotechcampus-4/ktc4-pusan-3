@@ -785,6 +785,51 @@ async def test_지운_아이라_저장되지_않아도_조용히_done_으로_끝
     assert not [r for r in caplog.records if r.levelname == "ERROR"]
 
 
+async def test_저장을_기다리다_시간이_다_돼도_잡아_둔_이벤트는_끝_신호보다_먼저_나간다(monkeypatch):
+    """시간 제한이 저장 태스크까지 취소하면 잡아 둔 결과 · 질문 카드가 화면과 대화 기록에서
+    사라진다.
+
+    저장은 시간 제한과 따로 끝까지 돌고(그래야 맥락이 남는다), 잡아 둔 이벤트는 끝 신호 전에 낸다.
+    """
+    _slow_put(monkeypatch, delay=0.3)
+    monkeypatch.setattr(runner, "RUN_DEADLINE_SECONDS", 0.1)
+
+    async def fake_handle_input(**kwargs):
+        emit = kwargs["emit"]
+        emit(PendingReply(kwargs["run_id"], _PENDING))
+        emit(AgentQuestion("growth", "routine_coaching", "언제부터였어요?", awaits_reply=True))
+        emit(Done(kwargs["run_id"], 2))
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+
+    job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    assert names(channel) == ["agent_result", "done"]
+    await asyncio.sleep(0.4)  # 저장은 취소되지 않고 끝까지 간다
+    assert channel.run_id in _fake().entries
+
+
+async def test_저장_중에_Agent_가_죽어도_잡아_둔_이벤트는_failed_보다_먼저_나간다(monkeypatch):
+    """예전에는 바로 나갔을 결과가 끝 신호 뒤로 밀려 버려지면 안 된다."""
+    _slow_put(monkeypatch, delay=0.3)
+
+    async def fake_handle_input(**kwargs):
+        emit = kwargs["emit"]
+        emit(PendingReply(kwargs["run_id"], _PENDING))
+        emit(MemoryNote("기록했어요", "message"))
+        raise RuntimeError("synthetic")
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+
+    job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    assert names(channel) == ["note", "failed"]
+
+
 async def test_실패_맥락과_0개_기록은_보관함으로만_간다(monkeypatch):
     """실패 맥락에는 요청 원문 조각이 있다. 화면 · 로그로 보내지 않고 05 보관함에만 둔다 (#249)."""
     suggestion_retry.clear()

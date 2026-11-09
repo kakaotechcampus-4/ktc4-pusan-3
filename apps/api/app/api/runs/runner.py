@@ -196,8 +196,11 @@ def agent_job(
                     "run %s 의 되묻기 맥락 저장이 %s 로 실패했다", event.run_id, type(exc).__name__
                 )
             if asyncio.current_task() is saving:  # 마지막 저장이 끝났다
-                while held:
-                    deliver(held.pop(0))
+                flush_held()
+
+        def flush_held() -> None:
+            while held:
+                deliver(held.pop(0))
 
         def emit(event: entrypoint.Event) -> None:
             nonlocal saving
@@ -307,11 +310,15 @@ def agent_job(
                         **agent_ports.health_ports(),
                     )
                     if saving is not None:
-                        await saving
+                        # shield — 시간 제한이 저장까지 취소하면 맥락도 잡아 둔 이벤트도 잃는다
+                        await asyncio.shield(saving)
             except TimeoutError:
                 log.warning(
                     "run %s 가 %s초 안에 끝나지 않아 끊었다", channel.run_id, RUN_DEADLINE_SECONDS
                 )
+                # 저장을 기다리다 끊겼으면 잡아 둔 것을 끝 신호보다 먼저 낸다.
+                # 맥락은 shield 덕에 뒤에서 마저 저장된다
+                flush_held()
                 if channel.committed:
                     done = (
                         "done",
@@ -321,7 +328,8 @@ def agent_job(
                 else:
                     channel.publish(sse.failed_event("timeout", raw_text))
             finally:
-                # 예외로 죽으면 failed 는 _guarded 가 이 뒤에 붙인다
+                # 예외로 죽으면 failed 는 _guarded 가 이 뒤에 붙인다 — 그 전에 잡아 둔 것을 낸다
+                flush_held()
                 # 창구가 "사용 중" 으로 둔 맥락을 정리한다 (#564). 저장 없이 끝났으면 표시만 풀어
                 # 같은 질문에 다시 답할 수 있게 한다 — 15분은 처음 넣은 시각 그대로 센다.
                 if continuation is not None and reply_to is not None:
