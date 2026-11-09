@@ -1,128 +1,133 @@
-"""되묻기 맥락 보관 — run_id → PendingMemoryContext
+"""되묻기 맥락 보관 — run_id → PendingMemoryContext (#877 · docs/ops/stateless-v1.md 1단계)
 
-Memory가 저장하지 못한 조각을 임시 보관하고, 후속 입력(reply_to)에서 꺼내 Agent에 전달한다.
+Memory 가 저장하지 못한 조각을 임시 보관하고, 후속 입력(reply_to)에서 꺼내 Agent 에 전달한다.
+표(`run_hold`, UNLOGGED)에 둔다 — 워커가 여럿이어도 다음 요청이 같은 맥락을 본다.
 
-프로세스 메모리 기반: 재시작/멀티 워커 간 공유 불가.
-추후 DB·Redis 전환 시 put/get/claim/release/drop만 교체.
-RunChannel과 분리하며, 원문·질문을 포함하므로 15분만 보관하고 로그는 남기지 않는다.
-🚨 넣을 때 지울 때를 예약한다(#561). 꺼내는 쪽이 만료를 걸러도 지우지 않으면 원문은 메모리에 남는다.
-🚨 답이 오면 지우지 않고 "사용 중" 으로 둔다(#564). 이어받기 run 이 저장 전에 실패하면 표시만 풀고,
-   15분은 처음 넣은 시각 그대로 센다. 지웠다가 다시 넣으면 실패할 때마다 15분이 새로 시작된다.
+- 함수마다 자기 세션을 열고 바로 commit 한다. 요청 트랜잭션과 섞으면 아이 삭제(아이 행
+  FOR UPDATE)가 FK 잠금(FOR KEY SHARE) 때문에 그 요청이 끝날 때까지 기다린다.
+  테스트는 `_session_factory` 를 바꿔 끼운다.
+- 원문 · 질문이 들어 있다. 15분 뒤 꺼낼 수 없고(`TTL`), 지우는 것은 `hold_purge` 가 1분마다 한다.
+  로그에 내용을 남기지 않는다.
+- 🚨 답이 오면 지우지 않고 "사용 중" 으로 둔다(#564). 이어받기 run 이 저장 전에 실패하면
+  표시만 풀고, 15분은 처음 넣은 시각 그대로 센다.
+- 탈퇴 · 아이 삭제는 FK CASCADE, 연결 끊기는 `run_hold.repository.delete_link_holds` 가 지운다.
+- `PendingMemoryContext` 는 pydantic 으로 JSON 이 됐다가 돌아온다. agents 의
+  `DomainPending.payload` 는 이미 "JSON 으로 바뀌는 값만" 이 규칙이라(`agents/common/result.py`)
+  agents 코드는 고치지 않는다.
 """
 
-import asyncio
-import time
+import logging
 import uuid
-from dataclasses import dataclass, replace
+from collections.abc import Callable, Sequence
+from datetime import datetime, timedelta
+
+from pydantic import TypeAdapter
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.entrypoint import PendingMemoryContext
+from app.api.deps.db import background_session
+from app.domains.run_hold.models import HoldKind
+from app.domains.run_hold.repository import (
+    claim_hold,
+    drop_hold,
+    get_hold,
+    open_hold_keys,
+    put_hold,
+    release_hold,
+)
 
-TTL_SECONDS = 900.0
+log = logging.getLogger(__name__)
+
+TTL = timedelta(minutes=15)
+_KIND = HoldKind.PENDING_REPLY
+_ADAPTER = TypeAdapter(PendingMemoryContext)
+
+_session_factory: Callable[[], AsyncSession] = background_session
 
 
-@dataclass(frozen=True)
-class _Entry:
-    parent_id: uuid.UUID
-    child_id: uuid.UUID
-    context: PendingMemoryContext
-    stored_at: float
-    # 답을 받아 이어받기 run 이 쓰는 중이다. 같은 질문에 온 다음 답은 받지 않는다
-    in_use: bool = False
-
-
-_pending: dict[str, _Entry] = {}
-
-
-def put(
+async def put(
     *,
     run_id: str,
     parent_id: uuid.UUID,
     child_id: uuid.UUID,
     context: PendingMemoryContext,
-    now: float | None = None,
-) -> None:
-    moment = time.monotonic() if now is None else now
-    _pending[run_id] = _Entry(
-        parent_id=parent_id, child_id=child_id, context=context, stored_at=moment
-    )
-    asyncio.get_running_loop().call_later(TTL_SECONDS, _expire, run_id)
+    now: datetime | None = None,
+) -> bool:
+    """넣는다. 저장했으면 True.
 
-
-def _expire(run_id: str) -> None:
-    """예약한 때가 되면 지운다. 사용 중이어도 지운다 — run 은 맥락을 이미 받아 두었다.
-    이미 지워졌으면(저장 뒤 drop · 탈퇴 · 연결 끊기) 할 일이 없다.
-
-    🚨 예약은 조금 일찍 돌 수 있다(이벤트 루프의 시계 해상도). 아직 만료 전이면 남은 시간만큼
-       다시 예약한다 — 그냥 넘어가면 그 항목을 지울 예약이 더는 없다.
+    보호자 · 아이가 이미 지워졌으면(그 아이로 돌던 run 이 늦게 끝난 경우) False — 원문을 남기지 않는
+    것이 맞는 결과라 예외를 내지 않는다. 그 밖의 DB 오류는 올린다.
     """
-    entry = _pending.get(run_id)
-    if entry is None:
-        return
-    left = entry.stored_at + TTL_SECONDS - time.monotonic()
-    if left > 0:
-        asyncio.get_running_loop().call_later(left, _expire, run_id)
-        return
-    del _pending[run_id]
+    payload = _ADAPTER.dump_python(context, mode="json")
+    async with _session_factory() as session:
+        try:
+            await put_hold(
+                session,
+                kind=_KIND,
+                key=run_id,
+                parent_id=parent_id,
+                child_id=child_id,
+                payload=payload,
+                ttl=TTL,
+                now=now,
+            )
+            await session.commit()
+        except IntegrityError:
+            await session.rollback()
+            log.warning("run %s 의 되묻기 맥락을 넣지 않았다 — 보호자 · 아이가 없다", run_id)
+            return False
+    return True
 
 
-def get(
-    *, run_id: str, parent_id: uuid.UUID, child_id: uuid.UUID, now: float | None = None
+async def get(
+    *, run_id: str, parent_id: uuid.UUID, child_id: uuid.UUID, now: datetime | None = None
 ) -> PendingMemoryContext | None:
-    """임자·아이·만료·사용 중을 한 곳에서 본다. 하나라도 안 맞으면 None(이유는 밖에 알리지 않음).
-
-    사용 중이면 없는 것과 같다 — 답할 수 있는 질문이 아니다.
-    """
-    entry = _pending.get(run_id)
-    if entry is None or entry.in_use:
-        return None
-    if entry.parent_id != parent_id or entry.child_id != child_id:
-        return None
-    moment = time.monotonic() if now is None else now
-    if moment - entry.stored_at > TTL_SECONDS:
-        return None
-    return entry.context
+    """확인만 한다. 없음 · 남의 것 · 다른 아이 · 사용 중 · 만료를 하나로 합친다(None)."""
+    async with _session_factory() as session:
+        payload = await get_hold(
+            session, kind=_KIND, key=run_id, parent_id=parent_id, child_id=child_id, now=now
+        )
+    return None if payload is None else _ADAPTER.validate_python(payload)
 
 
-def claim(
-    *, run_id: str, parent_id: uuid.UUID, child_id: uuid.UUID, now: float | None = None
+async def claim(
+    *, run_id: str, parent_id: uuid.UUID, child_id: uuid.UUID, now: datetime | None = None
 ) -> PendingMemoryContext | None:
     """답이 왔다. 맥락을 넘기고 "사용 중" 으로 둔다 — 같은 질문에 두 번 답하면 관찰이 두 행이 된다.
 
-    🚨 확인과 표시 사이에 await 가 없다. 같은 reply_to 로 거의 동시에 온 두 답 중 하나만 받는다.
+    🚨 확인과 표시가 DB 한 문장이다. 같은 reply_to 로 거의 동시에 온 두 답 중 하나만 받는다 —
+       워커가 달라도 같다.
     """
-    context = get(run_id=run_id, parent_id=parent_id, child_id=child_id, now=now)
-    if context is not None:
-        _pending[run_id] = replace(_pending[run_id], in_use=True)
-    return context
+    async with _session_factory() as session:
+        payload = await claim_hold(
+            session, kind=_KIND, key=run_id, parent_id=parent_id, child_id=child_id, now=now
+        )
+        await session.commit()
+    return None if payload is None else _ADAPTER.validate_python(payload)
 
 
-def release(run_id: str) -> None:
-    """표시만 푼다. 시각은 그대로라 15분은 처음 넣은 때부터 센다. 이미 지워졌으면 할 일이 없다."""
-    entry = _pending.get(run_id)
-    if entry is not None:
-        _pending[run_id] = replace(entry, in_use=False)
+async def release(run_id: str) -> None:
+    """표시만 푼다. 15분은 처음 넣은 때부터 센다. 이미 지워졌으면 할 일이 없다."""
+    async with _session_factory() as session:
+        await release_hold(session, kind=_KIND, key=run_id)
+        await session.commit()
 
 
-def drop(run_id: str) -> None:
+async def drop(run_id: str) -> None:
     """이어받기 run 이 저장까지 갔다. 다시 답할 일이 없으니 지운다."""
-    _pending.pop(run_id, None)
+    async with _session_factory() as session:
+        await drop_hold(session, kind=_KIND, key=run_id)
+        await session.commit()
 
 
-def forget_parent(*, parent_id: uuid.UUID, child_id: uuid.UUID | None = None) -> None:
-    """그 보호자의 것을 바로 지운다 — 탈퇴 · 연결 끊기 (#561). child_id 를 주면 그 아이 것만."""
-    for run_id, entry in list(_pending.items()):
-        if entry.parent_id == parent_id and child_id in (None, entry.child_id):
-            del _pending[run_id]
-
-
-def forget_child(child_id: uuid.UUID) -> None:
-    """그 아이의 것을 보호자와 상관없이 바로 지운다 — 등록 보호자의 탈퇴로 아이가 지워질 때
-    (#561)."""
-    for run_id, entry in list(_pending.items()):
-        if entry.child_id == child_id:
-            del _pending[run_id]
-
-
-def clear() -> None:
-    """전부 비운다. 테스트가 서로 새지 않게 쓰는 것이고, 서버 코드는 부르지 않는다."""
-    _pending.clear()
+async def open_runs(
+    *, run_ids: Sequence[str], parent_id: uuid.UUID, child_id: uuid.UUID
+) -> set[str]:
+    """그중 지금 답할 수 있는 run. 대화 하루치의 `reply_open` 을 한 번에 본다."""
+    if not run_ids:
+        return set()
+    async with _session_factory() as session:
+        return await open_hold_keys(
+            session, kind=_KIND, keys=run_ids, parent_id=parent_id, child_id=child_id
+        )
