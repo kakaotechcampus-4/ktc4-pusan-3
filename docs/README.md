@@ -148,6 +148,7 @@
 - [ops/deploy-v1.md](ops/deploy-v1.md) — CI 게이트 · 헬스 실패 시 직전 이미지 자동 롤백 · 한 EC2 위 dev(develop)/prod(main) 분리 · 서버 준비 절차
 - [ops/llm-usage-v1.md](ops/llm-usage-v1.md) — LLM 토큰 사용량을 보호자 · run · 모델별로 남기는 방법 (BM 산정) · 새 호출 지점 규칙 · 창구별 귀속 규칙 · 사진 run 연결 · 서버 고려
 - [ops/encryption-v1.md](ops/encryption-v1.md) — 전송(TLS · HSTS) · 저장(EBS) 구간 암호화가 어디서 지켜지는지와 확인 기록 · E2E 를 하지 않는 이유 · 예외 로그에서 원문 빼기 (#670)
+- [ops/stateless-v1.md](ops/stateless-v1.md) — `--workers 1` 전제(#134)를 풀려고 프로세스 메모리 상태를 PostgreSQL 로 옮기는 결정(Redis 대비)과 단계 · 1단계 되묻기 맥락 설계 (#877)
 
 그 밖에 *아직 문서 없음.* 배포, 보안 5종 체크, 모델 호출·토큰 비용 실측.
 
