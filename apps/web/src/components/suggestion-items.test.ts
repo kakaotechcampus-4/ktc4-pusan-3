@@ -28,4 +28,16 @@ describe("itemNames", () => {
       expect(itemNames(agent, ["가"])).toEqual(["가"]);
     }
   });
+
+  it("도서처럼 항목이 제안 문장과 같은 하나뿐이면 그릴 것이 없다 (#892)", () => {
+    expect(itemNames("growth", ["책 제목(지은이)"], "책 제목(지은이)")).toEqual([]);
+  });
+
+  it("제안 문장과 같은 항목만 빼고 나머지는 그대로 둔다 — 앞뒤 공백은 무시한다", () => {
+    expect(itemNames("activity", ["블록 ", "바구니"], " 블록")).toEqual(["바구니"]);
+  });
+
+  it("항목이 제안 문장 안에 들어 있어도 같은 글이 아니면 그린다", () => {
+    expect(itemNames("food", ["두부"], "두부 조림")).toEqual(["두부"]);
+  });
 });
