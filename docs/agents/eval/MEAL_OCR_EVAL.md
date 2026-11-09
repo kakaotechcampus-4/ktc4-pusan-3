@@ -14,7 +14,7 @@ tool spec · 응답 스키마: `app/providers/meal_plan/image_ocr.py` (`RESPONSE
 | 코드 | `develop` @ `3e0d3afc` (프롬프트 지문 `dee1526c3682`) |
 | 모델 | `MEAL_OCR_MODEL` (`gemini-4-argon`) |
 | 실행 | 1회 (11-02) — 기존 기준 |
-| 평가셋 | `apps/api/tests/fixtures/meal_plan_2025_01.json` — 2025-01 ③형 1장, 27일 · 178항목, 사람이 원본과 대조해 확정 |
+| 평가셋 | `apps/api/tests/fixtures/meal_plan_2025_01.json` — 2025-01 ③형 1장, 27일 · 69끼니 · 178항목, 사람이 원본과 대조해 확정. 11-09 6일 오후간식 한 칸을 사진대로 정정(빵(우유식빵) → 빵(우유카스텔라), 번호는 같음 — 메뉴 이름 채점을 더하며 발견) |
 
 | 지표 | 값 |
 | --- | --- |
@@ -30,6 +30,7 @@ tool spec · 응답 스키마: `app/providers/meal_plan/image_ocr.py` (`RESPONSE
 | 버전 | 커밋 | 지문 | 조건 | 무엇을 왜 바꿨나 | C1 | 안정 오답 | 불안정 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | v0 | `3e0d3afc` | `dee1526c3682` | 미측정 | 최초 기준선. 번호 일치 수치는 참고용(번호 불일치는 C1 아님, §2). C1 은 다음 프롬프트 변경 때 바꾸기 전 · 후로 잰다 | 미측정 | 미측정 | 미측정 |
+| v1 | `3264a029` | `dee1526c3682` | `gemini-4-argon` · medium · 5회 · 69끼니 | 프롬프트 그대로. 채점에 C1(끼니 단위)과 반복을 더해 지금 프롬프트를 처음 잼 — 다음 프롬프트 변경의 바꾸기 전 행 | 0/69 | 0 | 1 |
 
 - `커밋` 은 재 본 코드. 작업 트리가 더러웠으면 커밋 옆에 `dirty` 를 적는다 (`tests/eval/agents/live_run_meta.json` 의 `dirty`).
 - `C1` 칸은 `a/b` (C1 사례 입력 수 / 전체 입력 수). `미측정` 은 v0 에만 쓴다.
@@ -46,6 +47,7 @@ tool spec · 응답 스키마: `app/providers/meal_plan/image_ocr.py` (`RESPONSE
 
 **일반 실패**
 
+- 정답 메뉴를 빼먹기만 함 (틀린 메뉴는 안 들어감) — 화면에 덜 보일 뿐 틀린 메뉴가 기록에 붙지 않는다. 11-09 PM
 - 원문 글자 차이 (공백 · 기호)
 - `unparsed` 칸이 늘어남 (모델이 못 읽겠다고 신고)
 
@@ -60,16 +62,26 @@ tool spec · 응답 스키마: `app/providers/meal_plan/image_ocr.py` (`RESPONSE
 
 ## 3. 반복해서 같은 오답 · 흔들리는 값
 
-측정 전. C1(메뉴 이름 · 날짜 · 끼니 불일치)은 11-09 에 정했고, 지금 `scripts/meal_ocr_eval.py` 는 알레르기 번호 · 원문 일치만 채점한다. 다음에 급식표 프롬프트를 바꿀 때 채점에 C1 을 더하고, 바꾸기 전 · 후 프롬프트를 같은 조건으로 재서 §1 에 두 행을 더한다. 원문 글자 차이(공백 · 기호)는 일반 실패라 C1 으로 세지 않는다.
+**채점 방법** (`scripts/meal_ocr_eval.py`)
+
+- 입력 하나 = 끼니 하나(날짜 × 끼니). 분모 = 정답 끼니 69 + 어느 실행에서든 정답에 없는데 메뉴가 생긴 끼니(휴일에 급식이 생기는 날짜 밀림도 C1 이라 분모에 넣는다)
+- 메뉴 이름은 알레르기 번호를 떼고 괄호로 나눈 조각을 순서 없이 비교한다 — 공백 · ★ · 칸 끝 쉼표 · `백김치(백깍두기)` ↔ `백깍두기(백김치)` 는 같은 메뉴. 맞춤법 차이는 사람이 같은 음식이라고 확인한 것만 `SAME_MENU_SPELLING` 에 둔다(현미밥 / 흑미밥 처럼 한 글자만 달라도 다른 메뉴라 글자 거리로 묶지 않는다)
+- 안정 오답 = 5번 다 실패한 끼니, 불안정 = 일부만 실패한 끼니. 실패 = C1 또는 메뉴 빼먹음
+
+**v1 (11-09, 5회)**
+
+| 끼니 | 실패 | 내용 |
+| --- | --- | --- |
+| 8일 점심 | 1/5 · 빼먹음 | 신선과일(샤인머스켓) 을 한 번 빠뜨림 |
+
+- C1 0건. 첫 시험(1회)에서 C1 14끼니가 나왔지만 13끼니는 같은 메뉴의 표기 차이(칸 끝 쉼표 10 · 괄호 앞뒤 1 · 맞춤법 2)였고, 1끼니는 정답셋이 틀린 것이었다(§0) — 채점을 고친 뒤 잰 값이 위 행이다
+- 참고 지표(마지막 실행): 알레르기 번호 메뉴 단위 178/178 · 원문 정규화 175/178 · 생일식단 열(날짜 없음)은 매번 `unparsed` 로 신고
 
 ## 4. 실행 방법
 
 ```powershell
 uv run python -m scripts.meal_ocr_eval --check   # 접속 · 모델 목록만 (과금 없음)
-uv run python -m scripts.meal_ocr_eval tests/fixtures/meal_plan_2025_01.jpg
-uv run python -m tests.eval.agents.run_meta scripts/meal_ocr_eval.py  # 메타
+uv run python -m scripts.meal_ocr_eval tests/fixtures/meal_plan_2025_01.jpg --repeat 5
 ```
 
-스크립트는 1회씩 읽는다. 반복 5회로 재려면 같은 명령을 다섯 번 돌려 입력별 발생 횟수를 합산한다.
-
-pytest 라이브 eval(`-m live`)은 끝나면 `tests/eval/agents/live_run_meta.json`(gitignore)에 커밋 · dirty · 모델 · effort · 반복 횟수 · 프롬프트 지문을 남긴다. pytest 가 아닌 스크립트는 위의 `run_meta` 명령으로 남긴다. 그 값으로 §1 에 행을 더한다. 라이브 eval 은 CI 에서 돌리지 않는다.
+같은 사진을 5번 읽어(한 번에 호출 2회, 11-09 기준 약 430원 · 7분) 끝에 `측정 이력 칸`(C1 `a/b` · 안정 오답 · 불안정)과 끼니별 실패 횟수를 출력하고, `tests/eval/agents/live_run_meta.json`(gitignore)에 커밋 · dirty · 모델 · effort · 반복 횟수 · 프롬프트 지문을 남긴다. 그 값으로 §1 에 행을 더한다. 모델 출력은 `--out`(기본 임시 폴더)에 실행마다 저장한다. 라이브 eval 은 CI 에서 돌리지 않는다.
