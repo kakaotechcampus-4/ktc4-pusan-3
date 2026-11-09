@@ -1,7 +1,7 @@
 # 프로세스 메모리 상태를 DB 로 — v1
 
 > 이슈 #877 · 작성 김명성 · 2026-11-09
-> 상태: **1단계 설계 검토 중**. 2~5단계는 단계마다 이 문서에 절을 더한다.
+> 상태: **1단계 설계 승인(#887)**. 2~5단계는 단계마다 이 문서에 절을 더한다.
 
 ## 왜
 
@@ -62,7 +62,7 @@ idempotency 는 이미 Redis 이고 동작하므로 옮기지 않는다.
 
 - PK `(kind, key)`
 - 인덱스 `parent_id` · `child_id`(CASCADE 가 찾는다 — Postgres 는 FK 쪽 인덱스를 만들어 주지 않는다) · `expires_at`(만료 삭제)
-- **UNLOGGED** 로 만든다 (작성자 판단). DB 가 비정상 종료되면 비워지는데, 지금 메모리 보관함과 같은 동작이다. WAL 에 원문이 남지 않는다. 일반 테이블을 참조하는 FK 는 UNLOGGED 에서도 걸 수 있다
+- **UNLOGGED** 로 만든다 (#887 리뷰 동의 · 복제본이 없어 잃는 것이 없다). 🚨 autogenerate 로는 안 붙는다 — 마이그레이션의 `op.create_table` 에 `prefixes=["UNLOGGED"]` 를 직접 적는다. DB 가 비정상 종료되면 비워지는데, 지금 메모리 보관함과 같은 동작이다. WAL 에 원문이 남지 않는다. 일반 테이블을 참조하는 FK 는 UNLOGGED 에서도 걸 수 있다
 - 시각은 DB 의 `now()` 기준이다. 워커마다 시계가 달라도 판정이 같다
 
 ### 코드 배치
@@ -88,8 +88,10 @@ idempotency 는 이미 Redis 이고 동작하므로 옮기지 않는다.
 지금은 `children.py` 의 `get` 과 `claim` 사이에 await 가 없다는 것에 기댄다. 워커가 둘이면 성립하지 않는다.
 
 - `claim` 은 한 문장: `UPDATE … SET in_use = true WHERE kind · key · parent_id · child_id 일치 AND in_use = false AND expires_at > now() RETURNING payload`. 행이 안 나오면 None
-- 순서를 바꾼다. 지금: `get`(확인) → 하루 한도 → `claim`. 바뀐 뒤: **`claim` → 하루 한도 → 429 면 `release`**. 결과는 같다 — 429 여도 맥락이 남는다
-- `idempotency.remember` 실패 시 `release` 하는 기존 처리는 그대로다
+- 순서를 바꾼다. 지금: `get`(확인) → 하루 한도 → `claim`. 바뀐 뒤: **`claim` → 하루 한도 → 러너 시작**. 맥락이 없으면 한도를 쓰기 전에 400 으로 끝나는 것은 지금과 같다
+- `claim` 부터 러너 시작까지를 `try` 로 감싸 **어떤 예외든 `release`** 한다 — 429 만 풀면 3단계에서 `quota.consume` 이 DB 오류로 터질 때 15분 동안 "사용 중" 으로 남는다 (#887 리뷰)
+- `children.py` 의 "get 과 consume 사이에 await 를 넣지 말 것" 주석들은 더 이상 맞지 않으니 같이 정리한다
+- `idempotency.remember` 실패 시 `release` 하는 기존 처리는 위 `try` 에 합쳐진다
 
 ### 넣기 — 끝 신호보다 먼저
 
@@ -97,6 +99,7 @@ idempotency 는 이미 Redis 이고 동작하므로 옮기지 않는다.
 
 - `PendingReply` 를 받으면 저장 태스크를 띄우고 run 안에 붙잡아 둔다
 - **끝 신호(done · failed)를 채널에 내기 전에 그 태스크를 기다린다.** 안 그러면 화면이 질문을 보고 바로 답했을 때 맥락이 아직 없어 400(`reply_context_unavailable`)이 난다
+- 🚨 끝 신호를 따로 띄운 태스크에서 내면 안 된다 — `run()` 이 먼저 끝나 `_guarded` 가 끝 신호가 없다고 보고 failed 를 붙인다. `emit` 은 끝 신호를 **잡아 두기만** 하고, `run()` 안(`RUN_DEADLINE_SECONDS` 시간 제한 안)에서 `handle_input` 이 돌아온 뒤 저장을 기다리고 잡아 둔 끝 신호를 낸다 (#887 리뷰)
 - 저장이 실패하면(DB 오류) run 은 그대로 끝낸다. 그 질문에 답하면 400 이 나는 것으로 끝난다. 로그에는 run_id 와 오류 종류만
 - **지운 아이 앞으로 늦게 온 저장**은 FK 오류(`IntegrityError`)가 난다 — 조용히 버린다. run 실패 · 알림으로 만들지 않는다. 지금은 메모리에 15분 남는 빈틈이었는데 이게 막는다
 
@@ -127,11 +130,14 @@ idempotency 는 이미 Redis 이고 동작하므로 옮기지 않는다.
 이유를 적어야 한다(#758, `apps/api/CLAUDE.md` Alembic 절). 이 표는 `NOT_LOGGED` 에 둔다: 백업에 내용이 없어 복원해도
 되살아날 행이 없고, 15분마다 생기고 지워져 이력을 걸면 행만 쌓인다.
 
-### 처리방침 — 배포 전 PM 결정 필요
+### 처리방침 — 결정됨(#877) · 새 판 대기
 
 `docs/api/chat-v1.md` §5(10-06 "되묻기 맥락은 DB 로 옮기지 않는다") · 처리방침 2026-11-03 판 · `retention-v1.md` 36행이
-"서버 메모리에만" 이라고 적었다. 보관 시간과 삭제 시점은 그대로고 **보관 장소**와 **백업 제외**만 바뀐다.
-**1단계 구현 PR 은 열고 리뷰를 받되, PM 결정과 처리방침 새 판 전에는 develop 에 머지하지 않는다** (develop push 는 dev 에 바로 배포되고 멘토 PR 로 prod 에 실린다). 결정이 나면 같은 PR 에서 세 문서를 함께 고친 뒤 머지한다.
+"서버 메모리에만" 이라고 적었다. 보관 시간과 삭제 시점은 그대로고 **보관 장소**와 **백업 제외**만 바뀐다 — #877 에서 정했다.
+
+- 처리방침 새 판은 #166 항목으로 jjaa0803 이 쓴다
+- `chat-v1.md` · `retention-v1.md` 는 1단계 구현 PR 에서 고친다
+- **1단계 구현 PR 은 열고 리뷰를 받되, 처리방침 새 판이 나온 뒤에 develop 에 머지한다** (develop push 는 dev 에 바로 배포되고 멘토 PR 로 prod 에 실린다)
 
 ### 검증
 
