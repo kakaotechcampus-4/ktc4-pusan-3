@@ -7,9 +7,14 @@ import {
   droppedEnd,
   entryDateLabel,
   entryDateRole,
+  eventBody,
+  eventWhen,
+  initialPlan,
+  planLocks,
   readMoment,
   readSpan,
   readStartTime,
+  startsChecked,
 } from "@/lib/photo-entry";
 
 /**
@@ -232,5 +237,108 @@ describe("carriedEndsAt", () => {
         { date: "2026-11-10", allDay: true, startsAt: "2026-11-10T00:00:00+09:00" },
       ),
     ).toBeNull();
+  });
+});
+
+/* ── 캘린더에 넣기 (#824) ─────────────────────────────────────────────── */
+
+describe("startsChecked", () => {
+  it("시작 날짜를 읽은 일정만 처음부터 켠다", () => {
+    expect(startsChecked(timed)).toBe(true);
+    expect(startsChecked(span)).toBe(true);
+    // 날짜만 읽고 시각이 없으면 하루 종일로 넣는다 — 그래도 넣을 수 있어서 켠다.
+    expect(startsChecked(entry({ date: "2026-11-23" }))).toBe(true);
+  });
+
+  it("🚨 할 일은 켜지 않는다 — 보호자가 고른다", () => {
+    expect(startsChecked(due)).toBe(false);
+    expect(startsChecked({ ...due, kind: "event" })).toBe(false); // 마감만 읽은 일정도 그 날은 시작이 아니다
+  });
+
+  it("🚨 확인이 필요한 일정은 켜지 않는다 — 저장이 그 항목을 받지 않는다", () => {
+    expect(startsChecked({ ...timed, needs_review: true })).toBe(false);
+  });
+
+  it("날짜가 없거나, 시각을 읽어야 하는데 없으면 켜지 않는다", () => {
+    expect(startsChecked(entry({ date: null }))).toBe(false);
+    expect(startsChecked(entry({ date: "2026-11-23", all_day: false }))).toBe(false);
+  });
+});
+
+describe("planLocks", () => {
+  it("읽은 값 그대로 넣을 수 있으면 비어 있다", () => {
+    expect(planLocks(timed, initialPlan(timed))).toEqual([]);
+  });
+
+  it("🚨 할 일은 시작하는 날을 고르기 전에는 잠긴다 — 마감일로 넣지 않는다", () => {
+    expect(planLocks(due, initialPlan(due))).toEqual([
+      "고치기에서 시작하는 날을 고르면 넣을 수 있어요.",
+    ]);
+    expect(planLocks(due, { ...initialPlan(due), startDate: "2026-11-10" })).toEqual([]);
+  });
+
+  it("확인이 필요한 항목은 그 하나만 말한다", () => {
+    expect(planLocks({ ...timed, needs_review: true }, initialPlan(timed))).toEqual([
+      "고치기에서 확인하면 넣을 수 있어요.",
+    ]);
+  });
+
+  it("막는 것이 여럿이면 전부 말한다", () => {
+    const blank = entry({ date: null });
+    expect(planLocks(blank, { ...initialPlan(blank), allDay: false, time: "" })).toEqual([
+      "고치기에서 날짜를 고르면 넣을 수 있어요.",
+      "고치기에서 시작 시간을 고르면 넣을 수 있어요.",
+    ]);
+  });
+
+  it("🚨 지난 알림은 조용히 빼지 않고 막는다", () => {
+    const plan = { ...initialPlan(timed), reminder: "1h" as const };
+    const after = Date.parse("2026-11-23T09:00:00+09:00");
+    expect(planLocks(timed, plan, after)).toEqual([
+      "고른 알림 시각이 이미 지났어요. 고치기에서 알림을 다시 골라 주세요.",
+    ]);
+  });
+});
+
+describe("eventBody", () => {
+  it("읽은 시각과 끝을 그대로 싣고, 알림은 없음이다", () => {
+    expect(eventBody({ ...timed, items: ["물병"] }, initialPlan(timed))).toEqual({
+      event: {
+        title: "지어낸 항목",
+        starts_at: "2026-11-23T09:30:00+09:00",
+        ends_at: "2026-11-23T11:00:00+09:00",
+        all_day: false,
+        event_type: "episodic",
+        category: "institution",
+      },
+      items: [{ item_id: null, item_name: "물병" }],
+      reminder: null,
+    });
+  });
+
+  it("🚨 할 일은 고른 시작하는 날로 넣는다 — 마감일이 아니다", () => {
+    const body = eventBody(due, { ...initialPlan(due), startDate: "2026-11-10" });
+    expect(body?.event).toMatchObject({
+      starts_at: "2026-11-10T00:00:00+09:00",
+      ends_at: null,
+      all_day: true,
+    });
+  });
+
+  it("넣을 수 없으면 null 이다", () => {
+    expect(eventBody(due, initialPlan(due))).toBeNull();
+  });
+});
+
+describe("eventWhen", () => {
+  it("여러 날이면 기간, 같은 날 끝나는 시각이 있으면 그것까지 쓴다", () => {
+    expect(eventWhen(span.starts_at!, span.ends_at!, true)).toMatch(/23일.*부터 .*27일.*까지/);
+    expect(eventWhen(timed.starts_at!, timed.ends_at!, false)).toMatch(/9:30부터 \S+ 11:00까지$/);
+  });
+
+  it("🚨 하루 종일 하루짜리의 끝(그날 23:59)은 말하지 않는다", () => {
+    expect(eventWhen("2026-11-23T00:00:00+09:00", "2026-11-23T23:59:00+09:00", true)).toMatch(
+      /하루 종일$/,
+    );
   });
 });

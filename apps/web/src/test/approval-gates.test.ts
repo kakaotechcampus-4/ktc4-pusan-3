@@ -53,10 +53,14 @@ const callers = (fn: string) =>
   filesMatching(new RegExp(`\\b${fn}\\(`)).filter((path) => path !== DEFINED_IN);
 
 describe("승인 게이트 ㉠ 캘린더 쓰기", () => {
-  it("초안 제출은 초안 카드 목록(05 · 04)과 08 일정 넣기 시트에서만 부른다", () => {
+  /**
+   * 🚨 08 은 한동안 항목마다 고치기 시트 안에서 넣었다. #824 에서 같은 게이트를 확인 화면 맨 아래 버튼으로
+   *    옮겼다 — 체크한 일정을 그 버튼 하나가 넣는다. 게이트를 늘린 것이 아니라 자리를 옮긴 것이다.
+   */
+  it("초안 제출은 초안 카드 목록(05 · 04)과 08 확인 화면에서만 부른다", () => {
     expect(callers("submitEventDraft")).toEqual([
       "components/event-draft-list.tsx",
-      "components/photo-entry-sheet.tsx",
+      "components/photo-review.tsx",
     ]);
     expect(callers("updateEventDraft")).toEqual(["components/event-draft-list.tsx"]);
   });
@@ -96,13 +100,19 @@ describe("대화의 삭제 확정 (#535)", () => {
   });
 });
 
+/**
+ * approve 버튼. 🚨 **조건부 변형도 잡는다** — 08 맨 아래 버튼은 넣을 일정이 있을 때만 approve 다
+ * (`variant={… ? "approve" : "primary"}` · #824). 글자 그대로의 `variant="approve"` 만 찾으면 그 자리가 빠진다.
+ */
+const APPROVE = /variant=(?:"approve"|\{[^}]*"approve")/;
+
 describe("게이트 표식은 게이트 안에만", () => {
   it("approve 버튼은 게이트를 그리는 컴포넌트에만 있다", () => {
-    expect(filesMatching(/variant="approve"/).filter((path) => !DESIGN_SYSTEM.test(path))).toEqual([
+    expect(filesMatching(APPROVE).filter((path) => !DESIGN_SYSTEM.test(path))).toEqual([
       "components/event-draft-card.tsx",
       "components/health-safety-list.tsx",
       "components/medication-draft-card.tsx",
-      "components/photo-entry-sheet.tsx",
+      "components/photo-review.tsx",
       "components/safety-scan-review.tsx",
     ]);
   });
@@ -113,7 +123,7 @@ describe("게이트 표식은 게이트 안에만", () => {
     "components/event-draft-card.tsx",
     "components/health-safety-list.tsx",
     "components/medication-draft-card.tsx",
-    "components/photo-entry-sheet.tsx",
+    "components/photo-review.tsx",
     "components/safety-check-sheet.tsx",
     "components/safety-scan-review.tsx",
     // primitive — tone 을 받아 그리기만 한다.
@@ -133,7 +143,7 @@ describe("게이트 표식은 게이트 안에만", () => {
   it("복약 회차 체크 화면에는 게이트 표식이 없다", () => {
     const page = "app/child/[childId]/profile/medications/page.tsx";
     expect(sources.has(page)).toBe(true);
-    expect(filesMatching(/variant="approve"/)).not.toContain(page);
+    expect(filesMatching(APPROVE)).not.toContain(page);
     expect(filesMatching(CAUTION)).not.toContain(page);
   });
 
