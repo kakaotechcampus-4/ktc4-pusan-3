@@ -232,7 +232,6 @@ async def delete_observation(
     return Response(status_code=204)
 
 
-
 def _observation_domain(kind: str) -> ObservationDomain | None:
     """경로의 kind 가 관찰 표면 그 도메인. 다섯 종류 모두(건강 포함). 모르는 값은 None (→ 404)."""
     if not kind.startswith("observation_"):
