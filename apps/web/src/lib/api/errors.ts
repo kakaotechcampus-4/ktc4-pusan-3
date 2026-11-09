@@ -18,7 +18,7 @@ export const API_ERROR_CODES = [
   "owner_required", // 409
   "already_confirmed", // 409 승인 게이트 중복
   // 🔶 409 `POST /children/{cid}/suggestions/approve` — 채택하려는 제안에 그사이 알레르기로 등록된 식품이 들어 있다
-  //    ⚠️ **잠정 · 아직 서버에 없다** — 서버 PR 2(현식님)와 맞춘 이름이다 (`docs/web/event-draft-ui-v1.md` §3-8 · 열린 결정 8).
+  //    (서버 #835 · `docs/web/event-draft-ui-v1.md` §3-8 · `docs/api/suggestions-v1.md` §8).
   //    하나라도 걸리면 **전부 거절**하고 걸린 제안 id 를
   //    `detail.suggestion_ids` 에 싣는다. 🚨 다시 시도할 수 없다 — 같은 선택은 같은 409 다. 화면은 그 제안을 선택에서 뺀다.
   "allergen_blocked",

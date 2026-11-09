@@ -141,6 +141,23 @@ async def test_agent_job_좌표와_날씨_어댑터를_진입점에_그대로_�
     assert isinstance(seen["activity_places"], DbPlaceSource)
 
 
+async def test_agent_job_최근_대화_포트를_진입점에_넘긴다(monkeypatch):
+    """후속 질문일 때 pipeline 이 부를 앞 대화 조회 — 이 run 의 보호자 · 아이로 묶어 넘긴다."""
+    seen: dict = {}
+
+    async def fake_handle_input(**kwargs):
+        seen.update(kwargs)
+        kwargs["emit"](Done(kwargs["run_id"], 1))
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+
+    job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    assert callable(seen["recent_turns"])
+
+
 async def test_agent_job_위치_기록에_실패하면_좌표만_버리고_끝까지_돈다(monkeypatch, caplog):
     """기록 없는 사용을 만들지 않는다 (위치정보법 제16조 ②) — 좌표를 안 넘기면 쓴 것도 없다.
     run 은 실패시키지 않는다. 보호자가 적은 기록이 위치 표 고장 때문에 사라지면 안 된다."""
@@ -1338,3 +1355,41 @@ async def test_화면에_안_나간_조회_카드는_대화에도_남기지_않�
 
     assert names(channel) == ["delete_proposal", "done"]
     assert [type(event).__name__ for event in recorded] == ["DeleteProposed", "Done"]
+
+
+async def test_실패_맥락은_해석과_보호자_원문을_같이_보관한다(monkeypatch):
+    suggestion_retry.clear()
+    sent_at = datetime(2026, 1, 1, tzinfo=UTC)
+
+    async def fake_handle_input(**kwargs):
+        run_id = kwargs["run_id"]
+        kwargs["emit"](
+            RetryContext(
+                run_id,
+                "activity",
+                None,
+                ("블록 쌓기보다 쉬운 놀이 추천",),
+                sent_at,
+                original_texts=("더 쉬운 건 없어?",),
+                prior_texts=("블록 놀이 추천해줘",),
+            )
+        )
+        kwargs["emit"](Done(run_id, 0))
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+
+    job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    claimed = suggestion_retry.claim(
+        run_id=channel.run_id, parent_id=PARENT, child_id=CHILD, agent="activity"
+    )
+    assert claimed == suggestion_retry.RetryTask(
+        None,
+        ("블록 쌓기보다 쉬운 놀이 추천",),
+        sent_at,
+        original_texts=("더 쉬운 건 없어?",),
+        prior_texts=("블록 놀이 추천해줘",),
+    )
+    suggestion_retry.clear()

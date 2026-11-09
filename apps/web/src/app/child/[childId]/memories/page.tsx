@@ -81,17 +81,22 @@ function isTab(value: string | null): value is MemoryTab {
 }
 
 /**
- * 두 목록이 받는 분류. 🚨 **health 가 없다** — 이유가 탭마다 다르다.
- * - 기억: `Affinity.domain` 이 health 를 뺀 3종이다 (승격 파이프라인 밖).
- * - 기록: 건강 관찰은 첫 배포 범위 밖이라 서버가 늘 빈 목록을 준다 (#259). 그대로 두면
- *   "이 조건에 맞는 기록이 없어요" 가 떠서, 건강 이야기를 남긴 보호자에게 사실과 다른 말이 된다 (#269).
+ * 두 목록이 받는 분류. 🚨 **탭마다 다르다.**
+ * - 기록: 네 분류 모두다. 건강 기록도 목록에 나온다 (#764).
+ * - 기억: 🚨 **health 가 없다.** `Affinity.domain` 이 health 를 뺀 3종이다 — 건강 관찰은 승격 파이프라인 밖이라
+ *   건강 기억이 생기지 않는다. 고를 수 있게 두면 늘 "이 조건에 맞는 기억이 없어요" 가 선다.
  *
- * 주소에 `?domain=health` 가 남아 있어도 "전체" 로 읽는다 — 고를 수 없는 값이 고른 채로 서지 않게.
+ * 주소의 `?domain=` 은 탭마다 따로 읽는다. 기억 탭에 `?domain=health` 가 남아 있으면 "전체" 로 읽는다 —
+ * 고를 수 없는 값이 고른 채로 서지 않게.
  */
-type ListDomain = Exclude<Agent, "health">;
+type ProfileDomain = Exclude<Agent, "health">;
 
-function isListDomain(value: string | null): value is ListDomain {
-  return value !== null && value !== "health" && (AGENTS as readonly string[]).includes(value);
+function isObservationDomain(value: string | null): value is Agent {
+  return value !== null && (AGENTS as readonly string[]).includes(value);
+}
+
+function isProfileDomain(value: string | null): value is ProfileDomain {
+  return isObservationDomain(value) && value !== "health";
 }
 
 /* ── 필터 ─────────────────────────────────────────────────────────────── */
@@ -109,14 +114,18 @@ function isFilterState(value: string | null): value is AffinityFilterState {
   return value !== null && (FILTER_STATES as readonly string[]).includes(value);
 }
 
-/** 🚨 health 가 없다 — `isListDomain` 의 이유. 기록과 기억이 같은 선택지를 쓴다. */
-const DOMAIN_OPTIONS = [
+type DomainOption = { value: Agent | "all"; label: string };
+
+/** 기록 탭의 분류 — 건강 포함 (#764). */
+const OBSERVATION_DOMAIN_OPTIONS: readonly DomainOption[] = [
   { value: "all", label: "전체" },
-  ...AGENTS.filter((agent): agent is ListDomain => agent !== "health").map((agent) => ({
-    value: agent,
-    label: domainLabel(agent),
-  })),
-] as const;
+  ...AGENTS.map((agent) => ({ value: agent, label: domainLabel(agent) })),
+];
+
+/** 🚨 기억 탭의 분류 — health 가 없다 (`isProfileDomain` 의 이유). */
+const PROFILE_DOMAIN_OPTIONS: readonly DomainOption[] = OBSERVATION_DOMAIN_OPTIONS.filter(
+  (option) => option.value !== "health",
+);
 
 /**
  * 기록 탭의 상태 필터 — 서버 `?status=` 하나를 고른다 (#266). 주지 않으면 세 상태 모두다.
@@ -174,7 +183,7 @@ const FEEDBACK_VIEW_OPTIONS = [
  *
  * 🚨 **주소의 값을 그대로 믿지 않는다.** 서버는 100자 넘는 검색어, 없는 날짜, 시작이 끝보다 늦은
  *    기간, 10,000 을 넘는 쪽을 400 으로 돌려준다 (`api/v1/list_query.py`). 손으로 고친 주소가
- *    실패 화면이 되지 않게, 그런 값은 없는 것으로 읽는다 (`?domain=health` 를 전체로 읽는 것과 같다).
+ *    실패 화면이 되지 않게, 그런 값은 없는 것으로 읽는다 (기억 탭의 `?domain=health` 를 전체로 읽는 것과 같다).
  */
 interface ListParams {
   q: string | null;
@@ -230,7 +239,7 @@ function toListQuery(list: ListParams): ListQuery {
 
 /** 한 번에 바꾸는 것. 주지 않은 칸은 지금 값 그대로다 — 쪽만 예외다 (`setFilter`). */
 interface FilterChange {
-  domain?: ListDomain | null;
+  domain?: Agent | null;
   status?: ObservationStatusFilter;
   state?: AffinityFilterState;
   q?: string | null;
@@ -259,7 +268,10 @@ function MemoriesScreen() {
   const tabParam = searchParams.get("tab");
   const tab: MemoryTab = isTab(tabParam) ? tabParam : "observations";
   const domainParam = searchParams.get("domain");
-  const domain: ListDomain | null = isListDomain(domainParam) ? domainParam : null;
+  const observationDomain: Agent | null = isObservationDomain(domainParam) ? domainParam : null;
+  const profileDomain: ProfileDomain | null = isProfileDomain(domainParam) ? domainParam : null;
+  /** 지금 탭에서 걸린 분류. 피드백 탭은 분류가 없어서 무엇이든 상관없다. */
+  const domain = tab === "profile" ? profileDomain : observationDomain;
   const statusParam = searchParams.get("status");
   const status: ObservationStatusFilter = isObservationStatusFilter(statusParam)
     ? statusParam
@@ -337,7 +349,7 @@ function MemoriesScreen() {
         {tab === "observations" ? (
           <ObservationsTab
             childId={childId}
-            domain={domain}
+            domain={observationDomain}
             status={status}
             list={list}
             onFilter={setFilter}
@@ -348,7 +360,7 @@ function MemoriesScreen() {
 
         {tab === "profile" ? (
           <ProfileTab
-            domain={domain}
+            domain={profileDomain}
             state={state}
             list={list}
             onFilter={setFilter}
@@ -463,7 +475,7 @@ function SearchField({
 
 /** 필터 시트가 고르는 것. 두 탭이 같은 모양을 쓰고, 탭에 없는 칸(`status` · `state`)은 무시된다. */
 interface FilterDraft {
-  domain: ListDomain | null;
+  domain: Agent | null;
   status: ObservationStatusFilter;
   state: AffinityFilterState;
   from: string | null;
@@ -553,7 +565,7 @@ function FilterSheet({
             label="분류"
             shape="field"
             value={draft.domain ?? "all"}
-            options={DOMAIN_OPTIONS}
+            options={tab === "observations" ? OBSERVATION_DOMAIN_OPTIONS : PROFILE_DOMAIN_OPTIONS}
             onChange={(next) => setDraft({ ...draft, domain: next === "all" ? null : next })}
           />
           {tab === "observations" ? (
@@ -637,7 +649,7 @@ function ConditionChips({
 }
 
 /** 분류와 기간 칩은 두 탭이 같다. 상태 칩만 탭이 붙인다. */
-function commonConditions(domain: ListDomain | null, list: ListParams): Condition[] {
+function commonConditions(domain: Agent | null, list: ListParams): Condition[] {
   const conditions: Condition[] = [];
   if (domain)
     conditions.push({ key: "domain", label: domainLabel(domain), clear: { domain: null } });
@@ -687,7 +699,7 @@ function ObservationsTab({
   onHasRecords,
 }: {
   childId: string;
-  domain: ListDomain | null;
+  domain: Agent | null;
   status: ObservationStatusFilter;
   list: ListParams;
   onFilter: (next: FilterChange) => void;
@@ -830,7 +842,7 @@ function ProfileTab({
   onOpen,
 }: {
   childId: string;
-  domain: ListDomain | null;
+  domain: ProfileDomain | null;
   state: AffinityFilterState;
   list: ListParams;
   onFilter: (next: FilterChange) => void;

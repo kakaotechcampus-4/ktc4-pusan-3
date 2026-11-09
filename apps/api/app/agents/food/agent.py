@@ -90,6 +90,8 @@ async def run(
     gate = await build_gate(context)
     context.state.gate = gate
     context.state.utterance = "\n".join(task.request_texts)
+    # 앞 대화를 이어 묻는 말이면 request_texts 는 해석한 문장이다 — 말했는지는 원문으로 본다
+    context.state.said = (*task.originals(), *task.prior_texts)
 
     key = closed_readout_key(task_type, gate)
     if key is not None:
@@ -188,7 +190,7 @@ async def _recommend(task: DomainTask, context: FoodContext, llm: LLMClient) -> 
     pool = await build_pool(context)
     # 풀의 행과 조건 맞는 레시피를 run state 에 둔다 — 생성 후보 검사(풀 이름 · 자리 수)가 쓴다
     context.state.pool_rows = {item.row.menu_key: item.row for item in pool}
-    matched = requested_rows(pool, task.request_texts)
+    matched = requested_rows(pool, context.state.said_texts())
     context.state.requested_keys = frozenset(item.row.menu_key for item in matched)
     if not pool:
         # 안전 · 연령 · 최근 추천으로 다 빠졌다. 모델 없이 추천 없는 안내만 낸다 — 실패가 아니다
@@ -378,7 +380,7 @@ async def _recall(
     sample = sample_pool(
         rest,
         seed=f"{context.run_id}:recall",
-        first=requested_rows(rest, task.request_texts),
+        first=requested_rows(rest, context.state.said_texts()),
     )
     remember_sample(context, sample, recalled=True)
     messages.append(

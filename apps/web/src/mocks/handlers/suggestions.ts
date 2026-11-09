@@ -487,8 +487,8 @@ export const suggestionHandlers = [
      * 🚨 **채택할 때 알레르기를 다시 읽는다** (문서 §3-8 ②). 목록을 받은 뒤 다른 보호자가
      *    등록한 알레르기가 든 제안이 있으면 **하나라도 걸려도 전부 거절**하고, 걸린 id 를 싣는다.
      *    이미 채택한 것은 다시 보지 않는다(`draft` 만 본다).
-     * ⚠️ **실서버에는 아직 없다** — 서버 PR 2(현식님)가 이 모양으로 낼 예정이다(잠정 · 열린 결정 8).
-     *    지금 실서버는 그대로 채택한다.
+     *    서버 #835 와 같다 (`docs/api/suggestions-v1.md` §8). ⚠️ 서버는 알레르기 항목이 든 제안인데 건강정보 동의가
+     *    없으면 `403 consent_required` 를 먼저 낸다 — 목은 `consent` 시나리오가 채택 전체를 403 으로 막는 것으로 대신한다.
      */
     const blocked = picked
       .filter((s) => !approvedSuggestions.has(s.id) && !notBlocked(s))
@@ -497,7 +497,7 @@ export const suggestionHandlers = [
       return apiError(
         409,
         "allergen_blocked",
-        "알레르기로 등록된 식품이 들어 있어 고를 수 없어요",
+        "알레르기로 등록된 항목이 들어 있어 고를 수 없어요",
         {
           suggestion_ids: blocked,
         },

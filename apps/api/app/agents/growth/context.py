@@ -68,6 +68,17 @@ class GrowthRunState:
     seen_evidence: dict[UUID, RankedEvidence] = field(default_factory=dict)
     # search_routine_memory 가 돌려준 루틴 관찰. 근거 14일 · 카테고리 대조에 쓴다
     seen_routine: dict[UUID, RoutineObservation] = field(default_factory=dict)
+    # 요청 주제의 아이 기록. 코드가 [예시]를 고른 직후 모델 전에 읽는다
+    # (`tools/memory.topic_records`).
+    # 프롬프트에 싣고 `seen_evidence` 에도 넣어 조회 없이 근거로 달 수 있다. 이 기록이 있으면 후보는
+    # 하나 이상을 달아야 한다(`review.review_learning`). 주제가 없는 요청은 비어 있다
+    topic_records: dict[UUID, RankedEvidence] = field(default_factory=dict)
+    # `topic_records` 를 안 달아 한 번 거절됐는가. 두 번째 제출부터는 강제하지 않는다 — 막기만 하면
+    # 모델이 같은 실수를 되풀이해 왕복 상한에 걸리고 카드가 하나도 안 나간다(루트 §2 부분 결과)
+    topic_record_retried: bool = False
+    # `tools/memory._citable` 이 읽은 근거 후보. run 당 한 번만 읽는다 — 선조회 · 닫힘 판정 · 되묻기
+    # 판정이 같은 표를 본다. Memory 쓰기는 이 run 이 돌기 전에 끝난다(루트 §4)
+    citable: tuple[RankedEvidence, ...] | None = None
     # 프롬프트 [예시]에 실은 문서 행. 일반 추천은 이 행을 근거로 단다 (루트 §2)
     seen_docs: dict[UUID, GrowthDocRow] = field(default_factory=dict)
     # 보호자가 주제를 정해 물었는데 그 주제의 [예시] 행이 없는 교육 run. 코드가 [예시]를 고른 직후

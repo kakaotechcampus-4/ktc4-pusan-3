@@ -178,6 +178,13 @@ def j_learning(o: Observed) -> None:
     o.notes.append(f"추천 {len(event.suggestion_ids)}개 · {event.kind}")
 
 
+def j_personalized_learning(o: Observed) -> None:
+    j_learning(o)
+    event = _ran(o, LEARN)
+    if event is not None and event.kind != "personalized":
+        o.failures.append(f"주제 기록이 있는데 {event.kind} 추천이다 (personalized 여야 한다)")
+
+
 def j_routine(*, need_suggestion: bool) -> Judge:
     def judge(o: Observed) -> None:
         event = _ran(o, ROUTINE)
@@ -368,6 +375,13 @@ def _gr(case_id: str) -> str:
 CASES: tuple[Case, ...] = (
     Case("T01/C48", INPUTS["T01"], "C48", "교육 → learning_suggestion · 추천 저장", j_learning),
     Case("T04/C30", INPUTS["T04"], "C30", "숫자 활동 → learning_suggestion", j_learning),
+    Case(
+        "T45/C60-math",
+        INPUTS["T45"],
+        "C60-math",
+        "수학 기록이 있는 요청 → learning_suggestion · 개인화 3",
+        j_personalized_learning,
+    ),
     Case(
         "T11/C48",
         INPUTS["T11"],

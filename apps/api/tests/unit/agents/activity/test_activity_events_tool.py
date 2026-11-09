@@ -371,6 +371,33 @@ class TestArea:
 BUSAN = find_province("부산")
 
 
+class TestSaidArea:
+    """지역 이름은 보호자가 쓴 그대로여야 한다 — 해석한 요청에만 있는 지역은 받지 않는다."""
+
+    async def test_해석_문장에만_있는_지역은_받지_않는다(self):
+        ctx = await area_context(InMemoryEvents([raw("1", "부산 축제", near=BUSAN.location)]))
+        # 앞 추천 이름에서 AI 가 가져온 지역이다 — 보호자는 "다른 데" 라고만 했다
+        ctx.state.request_texts = ("부산 말고 다른 곳 놀러 갈 만한 행사 추천",)
+        ctx.state.original_texts = ("다른 데는 없어?",)
+
+        result = await search_events(ctx, SearchEventsArgs(day=DayLabel.TODAY, area="부산"))
+
+        assert result.success is False
+        assert result.error["code"] == ErrorCode.INVALID_ARGS
+
+    async def test_앞_턴에서_보호자가_말한_지역은_받는다(self):
+        """ "해운대 근처 나들이 추천해줘" 뒤 "그럼 다른 데는?" — 지역은 보호자가 앞에서 말했다."""
+        rows = [raw("1", "해운대 모래축제", near=HAEUNDAE.location)]
+        ctx = await area_context(InMemoryEvents(rows))
+        ctx.state.request_texts = ("해운대 근처 다른 나들이 추천",)
+        ctx.state.original_texts = ("그럼 다른 데는?",)
+        ctx.state.prior_texts = ("해운대 근처 나들이 추천해줘",)
+
+        result = await search_events(ctx, SearchEventsArgs(day=DayLabel.TODAY, area="해운대"))
+
+        assert names(result) == ["해운대 모래축제"]
+
+
 class TestProvince:
     """시 · 도만 말해도 행사는 그 시 · 도 전체에서 찾는다 — "부산 놀러 갈 건데 행사 추천해줘"."""
 
@@ -468,3 +495,41 @@ class TestProvince:
         assert result.error["code"] == ErrorCode.INVALID_ARGS
         assert result.resource == "search_events"
         assert "지역 이름만" in result.error["message"]
+
+
+class TestEndedTonight:
+    """오늘 밤에 물으면 운영 시간이 이미 끝난 행사는 오늘에서 뺀다 — 모르면 남긴다 (#800)."""
+
+    async def at(self, hour: int, intros) -> ActivityContext:
+        events = InMemoryEvents([raw("1", "빛 축제")], intros=intros)
+        ctx = await context(events)
+        return ActivityContext(
+            child_id=ctx.child_id,
+            run_id=ctx.run_id,
+            now=datetime(2026, 11, 2, hour, tzinfo=UTC),
+            timezone=UTC,
+            ports=ctx.ports,
+            location=ctx.location,
+            state=ctx.state,
+        )
+
+    async def test_끝난_행사는_오늘_빼고_내일은_남긴다(self):
+        ctx = await self.at(
+            21, {"1": RawEventIntro(age_limit="전 연령", place="광장", playtime="10:00~18:00")}
+        )
+        today = await search_events(ctx, SearchEventsArgs(day="오늘"))
+        assert names(today) == []
+        tomorrow = await search_events(ctx, SearchEventsArgs(day="내일"))
+        assert names(tomorrow) == ["빛 축제"]
+
+    async def test_밤까지_하는_행사는_남긴다(self):
+        ctx = await self.at(
+            21, {"1": RawEventIntro(age_limit="전 연령", place="광장", playtime="18:00~22:00")}
+        )
+        assert names(await search_events(ctx, SearchEventsArgs(day="오늘"))) == ["빛 축제"]
+
+    async def test_끝_시각을_모르면_남긴다(self):
+        ctx = await self.at(
+            21, {"1": RawEventIntro(age_limit="전 연령", place="광장", playtime="(토) 19:00")}
+        )
+        assert names(await search_events(ctx, SearchEventsArgs(day="오늘"))) == ["빛 축제"]

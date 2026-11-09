@@ -925,3 +925,131 @@ def test_HR_Health_요청은_라벨째_task_type_으로_간다() -> None:
     assert tasks["HR06"] == [("health", "care_handoff")]
     assert tasks["HR07"] == [("health", "visit_summary")]
     assert tasks["HR09"] == [("health", "place_lookup")]
+
+
+# ── resolved_request — 추천 task 만 해석 문장을 받는다 ───────────
+def _result_of(arguments: dict[str, Any]) -> SupervisorResult:
+    return SupervisorResult(output=SupervisorOutput.model_validate(arguments))
+
+
+RESOLVED = "블록 쌓기보다 쉬운 실내 놀이 추천"
+FOLLOW_RAW = "더 쉬운 건 없어?"
+RESOLVABLE = [
+    ("activity", None, None),
+    ("food", "food_task", "meal_recommendation"),
+    ("growth", "growth_task", "learning_suggestion"),
+    ("growth", "growth_task", "routine_coaching"),
+    ("growth", "growth_task", "book_suggestion"),
+]
+NOT_RESOLVABLE = [
+    ("food", "food_task", "food_check"),
+    ("food", "food_task", "daycare_meal"),
+    ("food", "food_task", "nutrient_analysis"),
+    ("health", "health_task", "medication"),
+    ("health", "health_task", "place_lookup"),
+    ("growth", "growth_task", "growth_review"),
+]
+
+
+def _follow(agent: str, field: str | None, label: str | None) -> SupervisorResult:
+    segment: dict[str, Any] = {
+        "text": FOLLOW_RAW,
+        "kind": "request",
+        "agent": agent,
+        "resolved_request": RESOLVED,
+    }
+    if field is not None:
+        segment[field] = label
+    return _result_of({"segments": [segment]})
+
+
+@pytest.mark.parametrize(("agent", "field", "label"), RESOLVABLE)
+def test_추천_라벨은_해석_문장을_받는다(agent: str, field: str | None, label: str | None) -> None:
+    result = _follow(agent, field, label)
+
+    (task,) = route(FOLLOW_RAW, result, run_id=RUN_ID).domain_tasks
+
+    assert task.agent == agent and task.request_texts == (RESOLVED,)
+
+
+@pytest.mark.parametrize(("agent", "field", "label"), NOT_RESOLVABLE)
+def test_확인_쓰기_task_는_원문을_받는다(agent: str, field: str, label: str) -> None:
+    """LLM 이 만든 문장이 복약 대조 · 급식 갱신 · "먹여도 되나" 판정으로 가지 않는다."""
+    result = _follow(agent, field, label)
+
+    (task,) = route(FOLLOW_RAW, result, run_id=RUN_ID).domain_tasks
+
+    assert task.agent == agent and task.request_texts == (FOLLOW_RAW,)
+
+
+def test_해석이_있어도_Memory_는_원문만_받는다() -> None:
+    raw = "오늘 또 울었어. 다른 방법도 알려줘"
+    result = _result_of(
+        {
+            "segments": [
+                {"text": "오늘 또 울었어", "kind": "record", "work": "observe"},
+                {
+                    "text": "다른 방법도 알려줘",
+                    "kind": "request",
+                    "agent": "growth",
+                    "growth_task": "routine_coaching",
+                    "resolved_request": RESOLVED,
+                },
+            ]
+        }
+    )
+
+    routing = route(raw, result, run_id=RUN_ID)
+
+    assert routing.memory_task is not None
+    assert routing.memory_task.raw_text == raw
+    assert [hint.text for hint in routing.memory_task.hints] == ["오늘 또 울었어"]
+    (task,) = routing.domain_tasks
+    assert task.request_texts == (RESOLVED,)
+    assert task.record_texts == ("오늘 또 울었어",)
+
+
+def test_해석_문장을_받은_task_는_보호자_원문도_같이_든다() -> None:
+    (task,) = route(FOLLOW_RAW, _follow("activity", None, None), run_id=RUN_ID).domain_tasks
+
+    assert task.request_texts == (RESOLVED,)
+    assert task.original_texts == (FOLLOW_RAW,)
+    assert task.originals() == (FOLLOW_RAW,)
+
+
+@pytest.mark.parametrize(("agent", "field", "label"), NOT_RESOLVABLE)
+def test_원문을_받은_task_는_원문_칸이_비고_said_가_요청_글이다(
+    agent: str, field: str, label: str
+) -> None:
+    (task,) = route(FOLLOW_RAW, _follow(agent, field, label), run_id=RUN_ID).domain_tasks
+
+    assert task.original_texts == ()
+    assert task.originals() == task.request_texts == (FOLLOW_RAW,)
+
+
+def test_해석한_조각과_아닌_조각이_섞이면_원문을_모두_싣는다() -> None:
+    other = "실내에서 할 만한 것도 보여줘"
+    result = _result_of(
+        {
+            "segments": [
+                {
+                    "text": FOLLOW_RAW,
+                    "kind": "request",
+                    "agent": "activity",
+                    "resolved_request": RESOLVED,
+                },
+                {"text": other, "kind": "request", "agent": "activity"},
+            ]
+        }
+    )
+
+    (task,) = route(f"{FOLLOW_RAW} {other}", result, run_id=RUN_ID).domain_tasks
+
+    assert task.request_texts == (RESOLVED, other)
+    assert task.original_texts == (FOLLOW_RAW, other)
+
+
+def test_RESOLVABLE_TASKS_는_추천_task_표와_같다() -> None:
+    from app.agents.pipeline import RECOMMENDING_TASKS
+
+    assert routing_module.RESOLVABLE_TASKS == RECOMMENDING_TASKS

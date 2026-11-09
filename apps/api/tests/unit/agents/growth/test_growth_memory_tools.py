@@ -19,10 +19,14 @@ from app.agents.growth.schemas.task import GrowthTaskType
 from app.agents.growth.store.inmemory import InMemoryGrowthDocs, InMemoryGrowthMemory
 from app.agents.growth.store.ports import EducationObservation, RoutineObservation
 from app.agents.growth.tools.memory import (
+    TOPIC_RECORD_LIMIT,
+    has_topic_memory,
     search_affinity,
     search_education_memory,
     search_routine_memory,
+    topic_records,
 )
+from app.rules.growth_topic import record_on_topic
 from tests.unit.agents.growth.support import (
     CALM,
     CHILD,
@@ -349,3 +353,73 @@ class TestBrokenChain:
         assert steps["양치하기"].readout_key == "doc.no_row"
         assert steps["손 씻기"].row is not None
         assert _TOOTH in caplog.text and "양치" not in caplog.text
+
+
+class TestTopicRecords:
+    async def test_주제_기록만_순위대로_3개까지(self):
+        math = [
+            education(1, days_ago=1, subject="수학", topic="두 자리 덧셈"),
+            education(2, days_ago=2, subject="숫자", topic="숫자 세기"),
+            education(3, days_ago=3, subject="도형", topic="도형 모양 찾기"),
+            education(4, days_ago=4, subject="셈", topic="물건 세어 보기"),
+            education(5, days_ago=1, subject="글 읽기", topic="4문장 글 읽기"),
+        ]
+        ctx = await opened(
+            GrowthTaskType.LEARNING_SUGGESTION, memory=InMemoryGrowthMemory(education=math)
+        )
+        found = await topic_records(ctx, ("nature",))
+        assert TOPIC_RECORD_LIMIT == 3 and len(found) == 3
+        assert all(record_on_topic((r.subject, r.label), ("nature",)) for r in found.values())
+
+    async def test_14일_밖_기록을_싣지_않는다(self):
+        old = education(1, days_ago=20, subject="수학", topic="두 자리 덧셈")
+        ctx = await opened(
+            GrowthTaskType.LEARNING_SUGGESTION, memory=InMemoryGrowthMemory(education=[old])
+        )
+        assert await topic_records(ctx, ("nature",)) == {}
+
+    async def test_has_topic_memory_는_topic_records_와_같다(self):
+        row = education(1, days_ago=1, subject="수학", topic="두 자리 덧셈")
+        ctx = await opened(
+            GrowthTaskType.LEARNING_SUGGESTION, memory=InMemoryGrowthMemory(education=[row])
+        )
+        for areas in (("nature",), ("communication",)):
+            assert await has_topic_memory(ctx, areas) is bool(await topic_records(ctx, areas))
+
+
+class CountingMemory(InMemoryGrowthMemory):
+    """교육 관찰을 몇 번 읽었는지 센다."""
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.education_reads = 0
+
+    async def education(self, **kwargs):
+        self.education_reads += 1
+        return await super().education(**kwargs)
+
+
+class TestCitableOnce:
+    async def test_한_run_에서_근거_후보는_한_번만_읽는다(self):
+        from app.agents.growth.tools.memory import has_citable_memory
+
+        memory = CountingMemory(
+            education=[education(1, days_ago=1, subject="수학", topic="두 자리 덧셈")]
+        )
+        ctx = await opened(GrowthTaskType.LEARNING_SUGGESTION, memory=memory)
+        await topic_records(ctx, ("nature",))
+        await has_topic_memory(ctx, ("nature",))
+        await has_citable_memory(ctx)
+        assert memory.education_reads == 1
+
+    async def test_reset_뒤에는_다시_읽는다(self):
+        memory = CountingMemory(
+            education=[education(1, days_ago=1, subject="수학", topic="두 자리 덧셈")]
+        )
+        ctx = await opened(GrowthTaskType.LEARNING_SUGGESTION, memory=memory)
+        await topic_records(ctx, ("nature",))
+        gate = ctx.state.gate
+        ctx.state.reset()
+        ctx.state.gate = gate
+        await topic_records(ctx, ("nature",))
+        assert memory.education_reads == 2

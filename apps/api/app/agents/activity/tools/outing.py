@@ -21,6 +21,7 @@ from app.agents.activity.events import (
     Event,
     age_allows,
     distance_m,
+    ended_today,
     in_period,
     in_province,
     open_on,
@@ -28,7 +29,7 @@ from app.agents.activity.events import (
     read_event,
 )
 from app.agents.activity.result import ErrorCode, ToolResult, fail, ok
-from app.agents.activity.schemas.common import DayLabel, PlaceCategory
+from app.agents.activity.schemas.common import PlaceCategory
 from app.agents.activity.schemas.outing import (
     LookupScheduleArgs,
     LookupWeatherArgs,
@@ -57,6 +58,9 @@ from app.agents.activity.weather import (
     read_air,
     read_forecast,
 )
+from app.agents.activity.when import PastDay
+from app.agents.activity.when import days_of as _when_days
+from app.agents.common.datetime_rules import DateParseError
 from app.rules.holidays import holidays_known, is_public_holiday
 from app.rules.sun import sun_times
 
@@ -86,20 +90,12 @@ _WEEKDAYS = "월화수목금토일"
 _T = TypeVar("_T")
 
 
-def day_of(label: DayLabel, today: date) -> date:
-    """모델이 고른 날 라벨을 날짜로. 모델은 날짜를 계산하지 않는다.
-
-    이번 주말은 토요일이다. 오늘이 토 · 일이면 오늘이다 — 주말 당일에 "이번 주말"은 오늘이다.
-    """
-    if label == DayLabel.TOMORROW:
-        return today + timedelta(days=1)
-    if label == DayLabel.THIS_WEEKEND:
-        days_to_saturday = 5 - today.weekday()
-        return today if days_to_saturday <= 0 else today + timedelta(days=days_to_saturday)
-    return today
+def day_of(when: str, today: date) -> date:
+    """표현이 가리키는 첫날. 날짜는 코드가 푼다(`when.days_of`, #800)."""
+    return days_of(when, today)[0]
 
 
-async def outdoor_on(context: ActivityContext, label: DayLabel) -> bool:
+async def outdoor_on(context: ActivityContext, label: str) -> bool:
     """그 라벨의 날에 바깥 활동을 할 수 있는가. 출력 검증과 장소 조회가 같이 쓴다 (#377).
 
     - 이미 판정한 날(사전 조회 · `lookup_weather`)은 `state.weather` 를 다시 쓰고, 없으면 여기서
@@ -116,14 +112,49 @@ async def outdoor_on(context: ActivityContext, label: DayLabel) -> bool:
     return any(context.state.weather[day].outdoor_ok for day in days)
 
 
-def days_of(label: DayLabel, today: date) -> tuple[date, ...]:
-    """라벨이 가리키는 날들. 이번 주말은 토 · 일 이틀이다 — 주말 나들이는 둘 중 하루를 고르는
-    일이라 날마다 따로 본다. 오늘이 일요일이면 오늘 하루다.
+def days_of(when: str, today: date) -> tuple[date, ...]:
+    """표현이 가리키는 날들 — 보호자가 쓴 표현 그대로 받아 코드가 푼다(`when.days_of`, #800).
+
+    이번 주말은 토 · 일 이틀이다 — 주말 나들이는 둘 중 하루를 고르는 일이라 날마다 따로 본다.
+    오늘이 일요일이면 오늘 하루다. 못 읽거나 지난 날이면 `DateParseError` 다 — tool 은
+    `resolve_days` 로 걸러 모델에게 다시 쓰게 한다.
     """
-    first = day_of(label, today)
-    if label == DayLabel.THIS_WEEKEND and first.weekday() == 5:
-        return (first, first + timedelta(days=1))
-    return (first,)
+    return _when_days(when, today)
+
+
+def resolve_days(context: ActivityContext, when: str, tool: str) -> tuple[date, ...] | ToolResult:
+    """tool 인자의 날 표현을 날짜로. 못 읽으면 모델이 고쳐 다시 부르게 INVALID_ARGS 로 돌려준다.
+
+    보호자에게 되묻지 않는다 — 표현을 고쳐 쓰는 일은 모델이 한다.
+    """
+    try:
+        return days_of(when, context.today)
+    except PastDay:
+        return fail(
+            "query",
+            tool,
+            ErrorCode.INVALID_ARGS,
+            f"'{when}' 은 이미 지난 날이다. 오늘 이후의 날을 쓴다. "
+            "보호자가 날을 말하지 않았으면 오늘이다.",
+        )
+    except DateParseError:
+        return fail("query", tool, ErrorCode.INVALID_ARGS, when_remedy(when))
+
+
+def when_remedy(when: str) -> str:
+    """못 읽은 날 표현을 고쳐 쓰는 법. 출력 tool 도 같은 문장을 쓴다."""
+    return (
+        f"'{when}' 을 날짜로 읽지 못했다. 보호자가 쓴 표현을 오늘 · 내일 · 이번 주말 · "
+        "다음 주 토요일 · 11월 20일 같은 꼴로 바꿔 다시 쓴다. 날짜를 계산해 적지 않는다."
+    )
+
+
+def dark_now(context: ActivityContext) -> bool:
+    """지금 해가 졌는가. 놀이터만 오늘 후보에서 뺀다 — 어두우면 다칠 수 있다 (#800).
+
+    공원 · 실내 장소 · 행사는 막지 않는다. 밤에 하는 축제도 있고 공원은 보호자와 같이 걷는다.
+    """
+    return _after_sunset(context, context.today)
 
 
 async def check_weather(context: ActivityContext, day: date) -> WeatherBrief:
@@ -138,12 +169,12 @@ async def check_weather(context: ActivityContext, day: date) -> WeatherBrief:
     - 🚨 대기질은 오늘만 본다. 에어코리아는 지금 측정값만 주고 예보가 아니다 — 내일 추천에 오늘
       미세먼지를 쓰지 않고 "확인 못 함"으로 둔다. 특보는 지금 발효 중인 것을 그날에도 본다
       (더 막는 쪽).
-    - 해가 졌는지는 오늘만 본다. 일몰은 위치와 날짜로 계산한다(`app/rules/sun.py`).
+    - 해가 졌는지는 날씨 판정이 아니다 — 바깥 활동을 막지 않고 오늘 놀이터만 뺀다(`dark_now`, #800).
     """
     weather = context.ports.weather
     grid = context.grid
     if weather is None or grid is None:
-        return not_asked(after_sunset=day == context.today and _after_sunset(context, day))
+        return not_asked()
 
     today = day == context.today
     forecast, air, uv, advisories = await asyncio.gather(
@@ -157,7 +188,6 @@ async def check_weather(context: ActivityContext, day: date) -> WeatherBrief:
         air=read_air(air) if air is not None else None,
         uv_index=parse_uv(uv),
         advisories=read_advisories(advisories) if advisories is not None else None,
-        after_sunset=today and _after_sunset(context, day),
     )
 
 
@@ -175,7 +205,9 @@ async def lookup_weather(context: ActivityContext, args: LookupWeatherArgs) -> T
     - 날씨를 못 읽은 날은 `checked=False` 다. 모든 날을 못 읽으면 UPSTREAM_ERROR. "맑음"으로
       가정하지 않지만 바깥을 막지도 않는다 — 모델은 날씨 이야기만 쓰지 않는다.
     """
-    days = days_of(args.day, context.today)
+    days = resolve_days(context, args.day, _WEATHER)
+    if isinstance(days, ToolResult):
+        return days
     briefs = await asyncio.gather(*(check_weather(context, day) for day in days))
     context.state.weather.update(zip(days, briefs, strict=True))
     # 묻지 않은 날(위치 · 포트 없음)도 확인한 날이 아니다 — 이 tool 은 열리지 않았어야 한다.
@@ -215,8 +247,9 @@ async def lookup_schedule(context: ActivityContext, args: LookupScheduleArgs) ->
       모델에게 맡기지 않는다 (루트 CLAUDE.md §2).
     - 일정 제목은 싣지 않는다. 시각만 준다 — 포트도 제목을 주지 않는다.
     """
-    today = context.today
-    days = days_of(args.day, today)
+    days = resolve_days(context, args.day, _SCHEDULE)
+    if isinstance(days, ToolResult):
+        return days
     blocks = await context.ports.schedule.blocks(
         child_id=context.child_id, date_from=days[0], date_to=days[-1]
     )
@@ -260,6 +293,9 @@ async def search_nearby_places(
 
     # ToolArgs 는 use_enum_values 라 args.category 가 글자("park")로 온다. 포트에는 enum 으로 넘긴다
     category = PlaceCategory(args.category)
+    days = resolve_days(context, args.day, _PLACES)
+    if isinstance(days, ToolResult):
+        return days
     if category not in INDOOR_CATEGORIES and not await outdoor_on(context, args.day):
         indoor = " · ".join(sorted(INDOOR_CATEGORIES))
         return fail(
@@ -267,6 +303,15 @@ async def search_nearby_places(
             _PLACES,
             ErrorCode.INVALID_ARGS,
             f"그날은 바깥 활동이 어려운 날이라 실내 장소만 찾을 수 있다. {indoor} 중에서 고른다.",
+        )
+    if category == PlaceCategory.PLAYGROUND and days == (context.today,) and dark_now(context):
+        # 오늘 하루를 물었고 해가 졌다 — 놀이터만 뺀다. 공원 · 실내는 그대로 (#800)
+        context.state.dark_skipped = True
+        return fail(
+            "query",
+            _PLACES,
+            ErrorCode.INVALID_ARGS,
+            "지금은 해가 져서 오늘 놀이터는 찾지 않는다. 공원이나 실내 장소를 고른다.",
         )
 
     try:
@@ -329,9 +374,12 @@ async def search_events(context: ActivityContext, args: SearchEventsArgs) -> Too
     if isinstance(origin, ToolResult):
         return origin
 
+    asked = resolve_days(context, args.day, _EVENTS)
+    if isinstance(asked, ToolResult):
+        return asked
     await outdoor_on(context, args.day)
     weather = context.state.weather
-    days = [day for day in days_of(args.day, context.today) if weather[day].outdoor_ok]
+    days = [day for day in asked if weather[day].outdoor_ok]
     if not days:
         return fail(
             "query",
@@ -373,6 +421,12 @@ async def search_events(context: ActivityContext, args: SearchEventsArgs) -> Too
     found_schedules = await asyncio.gather(
         *(schedules.schedule_of(event, today=context.today) for _, event, _ in allowed)
     )
+    # 오늘 밤에 물었으면 운영 시간 원문에서 끝나는 시각을 읽어, 이미 끝난 행사는 오늘에서 뺀다.
+    # 시각을 모르면 남긴다 — 화면에 "가기 전에 확인" 문구가 붙는다 (#800)
+    local_now = context.now.astimezone(context.timezone).time()
+    for _, event, intro in allowed:
+        if ended_today(intro.playtime, local_now):
+            context.state.ended_today.add(event.name)
     opened = (
         EventRow(
             name=event.name,
@@ -385,7 +439,9 @@ async def search_events(context: ActivityContext, args: SearchEventsArgs) -> Too
         )
         for (distance, event, intro), schedule in zip(allowed, found_schedules, strict=True)
     )
-    rows = [row for row in opened if open_on(row, days)][:EVENT_TOP_K]
+    rows = [row for row in opened if open_on(row, _open_days(context, row.name, days))][
+        :EVENT_TOP_K
+    ]
     for row in rows:
         context.state.seen_events.setdefault(row.name, row)
         if context.state.area is not None:
@@ -393,8 +449,15 @@ async def search_events(context: ActivityContext, args: SearchEventsArgs) -> Too
     return ok(
         "query",
         _EVENTS,
-        events=[_event_result(row, days) for row in rows],
+        events=[_event_result(row, _open_days(context, row.name, days)) for row in rows],
     )
+
+
+def _open_days(context: ActivityContext, name: str, days: Sequence[date]) -> list[date]:
+    """그 행사에 물어볼 날 — 오늘 운영 시간이 이미 끝난 행사는 오늘을 뺀다."""
+    if name not in context.state.ended_today:
+        return list(days)
+    return [day for day in days if day != context.today]
 
 
 def _event_result(row: EventRow, days: Sequence[date]) -> dict[str, Any]:
@@ -462,8 +525,8 @@ def _origin(
                 "말하지 않았으면 장소가 필요 없는 놀이만 낸다.",
             )
         return context.outing_location
-    name = named_area(area_text, state.request_texts)
-    if name is None and not said(area_text, state.request_texts):
+    name = named_area(area_text, state.said())
+    if name is None and not said(area_text, state.said()):
         return fail(
             "query",
             tool,

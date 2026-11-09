@@ -80,6 +80,9 @@ const mutation = useMutation({
 
 `ApiError` 로 잡는다. 특히:
 
+- 🚨 `child_access_denied` (403) → **화면마다 다루지 않는다** (#802). 주소의 아이가 내 목록에 없거나 보는 중에
+  연결이 끊긴 것이다. `lib/query-client.ts` 가 `/me` 를 다시 받고, `ChildScope` 가 화면째 "볼 수 없는 아이" 로
+  바꾼다 ([`screen-rules-v1.md`](screen-rules-v1.md) §1). 구역에는 지금처럼 실패 카드가 잠깐 설 수 있다
 - `consent_required` (403) → 저장이 아예 안 된 상태다. `error.consentDeeplink` 로 동의 화면에 보낸다.
 - 🚨 `daily_input_limit` (429) → **"다시 시도" 를 세우지 않는다** (#147). 같은 본문은 같은
   Idempotency-Key 로 나가고 한도는 한국 시간 자정에 풀려서, 누를 때마다 같은 429 다.
@@ -99,8 +102,8 @@ const mutation = useMutation({
   직접 적기 시트는 "이미 등록된 항목이에요" 로 말한다(보호자가 새로 적은 이름이라 무엇이 겹쳤는지 알려야 한다)
 - 🚨 `allergy_exists` (409 · 괜찮았던 식품 저장 · #825) → **실패가 아니라 "알레르기가 이겼다" 다.** 그사이 같은 이름이
   알레르기로 등록돼 저장되지 않았다. "다시 시도" 를 세우지 않는다 — 05 확인 시트는 그 식품을 막는 쪽으로 그린다
-- 🚨 `allergen_blocked` (409 · 05 채택) → **실패가 아니라 서버가 알레르기 필터를 다시 건 결과다** (#823).
-  ⚠️ **잠정이다** — 서버 PR 2(현식님)에서 낼 코드로, 아직 서버에 없다 (`event-draft-ui-v1.md` 열린 결정 8).
+- 🚨 `allergen_blocked` (409 · 05 채택) → **실패가 아니라 서버가 알레르기 필터를 다시 건 결과다** (#823 · 서버 #835).
+  같은 채택이 `403 consent_required` 면(알레르기 항목이 든 제안인데 건강정보 동의가 없다) 일반 실패 카드가 아니라 동의 카드다.
   목록을 받은 뒤 그사이 등록된 알레르기가 든 제안이 있어 **아무것도 채택되지 않았다.** "다시 시도" 를 세우지 않고,
   `detail.suggestion_ids` 의 제안을 선택에서 뺀 뒤 안내 카드를 세운다 (`event-draft-ui-v1.md` §3-8)
 - 🚨 `not_found` (404 · 알레르기 내리기) → **실패가 아니다** (#374). 다른 보호자가 먼저 내렸거나
@@ -143,6 +146,7 @@ const mutation = useMutation({
 | 화면을 그리다 터짐 | `app/error.tsx` · `child/[childId]/error.tsx` | 화면이 통째로 바뀜 |
 | 루트 레이아웃이 터짐 | `app/global-error.tsx` | 문서 전체를 대체 (Providers 없음) |
 | 없는 주소 | `app/not-found.tsx` | 404 로 응답한다 |
+| 볼 수 없는 아이 주소 | `components/child-scope.tsx` (`/me` 목록으로 판정 · #802) | 화면이 통째로 "볼 수 없는 아이" |
 | 한 구역만 터짐 | `components/app-error-boundary.tsx` | 그 구역만 `CardFailed` |
 | 렌더 밖에서 터짐 (이벤트 핸들러 · 타이머 · 처리 안 된 rejection) | `lib/report-uncaught-error.ts` (`window` 의 `error` · `unhandledrejection`) | 화면은 그대로, 서버에 보고만 (#732) |
 

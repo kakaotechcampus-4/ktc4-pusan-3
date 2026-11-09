@@ -73,6 +73,13 @@
       "mustSee": "저녁에 계란말이를 또 찾았어요"
     },
     {
+      "name": "07 기억 — 관찰 탭 건강 분류 (#764)",
+      "path": "/child/c1/memories?domain=health",
+      "auth": true,
+      "expect": "/child/c1/memories",
+      "mustSee": "자다가 기침을 몇 번 했어요"
+    },
+    {
       "name": "07 기억 — 기억 탭 (프로필)",
       "path": "/child/c1/memories?tab=profile",
       "auth": true,
@@ -108,7 +115,7 @@
       "mustSee": "기록 3건"
     },
     {
-      "name": "07 기억 — 기록 25건 · 2쪽 (#584)",
+      "name": "07 기억 — 기록 26건 · 2쪽 (#584)",
       "path": "/child/c1/memories?scenario=observations_many&page=2",
       "auth": true,
       "expect": "/child/c1/memories",
@@ -336,6 +343,13 @@
       "path": "/auth/callback",
       "expect": "/",
       "mustSee": "카카오로 시작하기"
+    },
+    {
+      "name": "볼 수 없는 아이 — 내 아이 목록에 없는 주소 (#802)",
+      "path": "/child/not-a-child/home",
+      "expect": "/child/not-a-child/home",
+      "auth": true,
+      "mustSee": "주소가 잘못됐거나, 지금은 함께 보고 있지 않은 아이예요"
     },
     {
       "name": "404 — 없는 주소",

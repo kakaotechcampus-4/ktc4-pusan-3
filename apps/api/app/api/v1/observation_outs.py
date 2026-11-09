@@ -4,9 +4,7 @@
 04 에서 "저장됨" 으로 본 기록과 07 기록 탭의 기록이 같은 모양이 된다.
 
 🚨 건강 관찰은 `ObservationHealthOut` 으로 바꾼다 — `subject` · `polarity` · `affinity` 키가
-   아예 없다.
-   목록 · 상세 · 캘린더는 `VISIBLE_DOMAINS` 가 앞에서 걸러서 여기까지 오지 않는다 (#259).
-   여기까지 오는 건 04 run 의 `saved` 뿐이다.
+   아예 없다. 목록 · 상세 · 캘린더(#764) · 04 run 의 `saved` · 지난 대화가 모두 이 모양을 받는다.
 """
 
 import uuid

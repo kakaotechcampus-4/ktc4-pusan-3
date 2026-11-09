@@ -1214,3 +1214,37 @@ async def test_05_도_도서_어댑터를_Growth_에_넘긴다(monkeypatch: pyte
     )
 
     assert isinstance(seen["contexts"]["growth"].ports.books, LibraryBooks)
+
+
+async def test_suggest_는_보호자_원문과_앞_턴의_말을_task_에_싣는다(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: list[Any] = []
+
+    async def fake_run(tasks: Any, *args: Any, **kwargs: Any) -> Any:
+        seen.extend(tasks)
+        return pipeline.SuggestRun(outcomes=(), failed=())
+
+    monkeypatch.setattr(pipeline, "run_suggestions", fake_run)
+
+    await entrypoint.suggest(
+        child_id=CHILD,
+        tasks=[
+            entrypoint.SuggestTask(
+                "activity",
+                None,
+                ("블록 쌓기보다 쉬운 놀이 추천",),
+                original_texts=("더 쉬운 건 없어?",),
+                prior_texts=("블록 놀이 추천해줘",),
+            )
+        ],
+        request_id="q",
+        save_run_id=None,
+        sent_at=None,
+        save_suggestions=InMemorySuggestions(),
+    )
+
+    (task,) = seen
+    assert task.request_texts == ("블록 쌓기보다 쉬운 놀이 추천",)
+    assert task.original_texts == ("더 쉬운 건 없어?",)
+    assert task.prior_texts == ("블록 놀이 추천해줘",)
