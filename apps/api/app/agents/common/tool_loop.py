@@ -53,7 +53,8 @@ ExecuteTool = Callable[[str, dict[str, Any]], Awaitable[ToolResult]]
 # Food 영양소 분석은 모델을 부르지 않아 이 루프를 타지 않는다 — 코드가 출현 문장을 낸다 (#411)
 EndedBy = Literal["output_accepted", "no_tool_call", "max_steps"]
 
-_BAD_JSON = "arguments가 올바른 JSON 객체가 아니다. 스키마에 맞는 JSON으로 다시 만든다."
+# 프롬프트 지문(#770)에 들어간다 — 바꾸면 food · activity · growth · health 평가 문서에 행을 더한다
+BAD_JSON = "arguments가 올바른 JSON 객체가 아니다. 스키마에 맞는 JSON으로 다시 만든다."
 
 
 @dataclass(frozen=True)
@@ -147,7 +148,7 @@ async def _execute(tool_call: Any, execute: ExecuteTool) -> ToolCall:
     if arguments is None:
         # registry 는 dict 를 전제한다. 깨진 인자로는 실행하지 않는다 —
         # operation=None 은 실행 전에 거절했다는 뜻이다
-        return ToolCall(name, {}, fail(None, name, ErrorCode.INVALID_ARGS, _BAD_JSON))
+        return ToolCall(name, {}, fail(None, name, ErrorCode.INVALID_ARGS, BAD_JSON))
     return ToolCall(name, arguments, await execute(name, arguments))
 
 

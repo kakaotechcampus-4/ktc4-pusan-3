@@ -212,7 +212,12 @@ export const SCHEMA_MAP: Record<string, MapValue> = {
   DraftItemPayload: "EventDraftItem",
   // 반복 일정(#738)은 같은 본문에 최상위 `repeat` 를 더한다 — 웹은 두 타입으로 나눠 보낸다
   SubmitEventRequest: ["SubmitEventBody", "SubmitRepeatEventBody"],
-  PhotoEntry: "PhotoEntry",
+  PhotoEntry: {
+    web: "PhotoEntry",
+    allow: {
+      past: "확인 화면 SSE(parsed.entries)에만 실리는 칸이다 (#854). 저장 요청에 다시 실려도 서버 스키마가 extra=ignore 라 버린다",
+    },
+  },
   PhotoEntryDetail: "PhotoEntryDetail",
   PhotoUploadTicket: "PhotoUploadTicket",
   PhotoCommitRequest: "PhotoCommitRequest",

@@ -12,11 +12,19 @@ import { RunReply } from "@/components/run-result";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { Card, CardFailed } from "@/components/ui/card";
 import { initialRunState } from "@/hooks/use-run-stream";
-import { api, isApiError, qk, type Agent, type ChatDayResponse } from "@/lib/api";
+import {
+  api,
+  INPUT_TEXT_MAX_LENGTH,
+  isApiError,
+  qk,
+  type Agent,
+  type ChatDayResponse,
+} from "@/lib/api";
 import { askedQuestion, visibleAgentResults } from "@/lib/agent-result";
 import { pastTurnsOf, type PastTurn } from "@/lib/chat-history";
 import { draftTarget } from "@/lib/event-draft";
 import { formatDay } from "@/lib/format";
+import { isLengthRejected } from "@/lib/input-length";
 import { VIEW_TRANSITION } from "@/lib/view-transition";
 import { useDraftText } from "@/stores/draft";
 import {
@@ -591,6 +599,7 @@ function useRewriteBlocked(childId: string): boolean {
  *    (#147 · #175). 같은 본문은 같은 키로 나가서 몇 번을 눌러도 같은 답이다 — 누르면 같은 실패가
  *    나오는 버튼을 만들지 않는다 (`consent_required` 를 일반 실패로 그리지 않는 것과 같은 이유).
  * 🚨 **429 · 400 문구는 서버 것을 그대로 쓴다.** 하루 몇 번인지는 서버 설정값이라 바뀐다 (#147).
+ *    길이 거절만 예외다 (#867) — 서버 문구("요청 형식이 올바르지 않아요")로는 무엇을 고칠지 모른다.
  * 🚨 **"다 다시 적어 주세요" 라고 하지 않는다** (#158 · #175 · #208). 앞서 저장된 이야기까지 다시
  *    적으면 그 조각이 두 번 저장된다.
  */
@@ -666,11 +675,18 @@ function SendFailure({
   }
 
   // 🚨 **그 밖의 거절(4xx)은 다시 시도가 없다** — 형식 거절(2000자 초과) · 권한 없음 같은 것이라 같은 본문은
-  //    몇 번을 보내도 같은 답이다 (`canRetry` · #231 리뷰). 서버 문구를 그대로 쓰고 고쳐 쓰기만 둔다.
+  //    몇 번을 보내도 같은 답이다 (`canRetry` · #231 리뷰). 서버 문구를 그대로 쓰고(길이 거절만 화면
+  //    문구 · #867) 고쳐 쓰기만 둔다.
   if (isRejected(error)) {
     return (
       <CardFailed>
-        <p>{isApiError(error) ? error.message : "보내지 못했어요."}</p>
+        <p>
+          {isLengthRejected(error, turn.body.text)
+            ? `글이 길어서 보내지 못했어요. ${INPUT_TEXT_MAX_LENGTH.toLocaleString("ko-KR")}자까지 보낼 수 있어요.`
+            : isApiError(error)
+              ? error.message
+              : "보내지 못했어요."}
+        </p>
         <div className="mt-3">
           <RewriteButton blocked={rewriteBlocked} onClick={rewrite} />
         </div>

@@ -101,6 +101,17 @@ function currentLogs(): GrowthLog[] {
   return currentScenario() === "empty" ? [] : logs;
 }
 
+/**
+ * 지금 보호자에게 보이는 프로필. 🚨 **`role` 은 이 보호자와 아이의 연결에서 읽는다** — 서버도 `parent_child` 행의
+ * 값을 싣는다. 픽스처의 `owner` 를 그대로 돌려주면 초대로 들어온 보호자에게도 등록 보호자만의 길(아이 삭제)이
+ * 서서, 화면이 role 로 길을 가리는지 목으로 확인할 수 없다 (`e2e/delete-child.spec.ts` · #865 에서 발견).
+ * 연결이 없으면(실서버라면 403) 픽스처 값을 둔다.
+ */
+function seenBy(childId: string): ChildProfile {
+  const link = currentMe().children.find((c) => c.child_id === childId);
+  return link ? { ...profile, role: link.role } : profile;
+}
+
 const deleteOwnedChild = withIdempotency(async ({ params }) => {
   await networkDelay(320);
   deleteChild(String(params.cid));
@@ -108,16 +119,16 @@ const deleteOwnedChild = withIdempotency(async ({ params }) => {
 });
 
 export const profileHandlers = [
-  http.get(url("/children/:cid"), async () => {
+  http.get(url("/children/:cid"), async ({ params }) => {
     await networkDelay();
-    return HttpResponse.json(profile);
+    return HttpResponse.json(seenBy(String(params.cid)));
   }),
 
   /**
    * 🚨 **세 값 다 선택이다.** 화면은 고친 것만 보낸다 — 안 고친 필드를 함께 올리면
    *    두 보호자가 같은 화면을 열어 뒀을 때 나중 저장이 남의 수정을 덮는다.
    */
-  http.patch(url("/children/:cid"), async ({ request }) => {
+  http.patch(url("/children/:cid"), async ({ request, params }) => {
     await networkDelay(320);
     const body = (await request.json()) as UpdateChildRequest;
 
@@ -137,7 +148,7 @@ export const profileHandlers = [
       ...(body.gender !== undefined ? { gender: body.gender } : {}),
     };
 
-    return HttpResponse.json({ child: profile });
+    return HttpResponse.json({ child: seenBy(String(params.cid)) });
   }),
 
   /**

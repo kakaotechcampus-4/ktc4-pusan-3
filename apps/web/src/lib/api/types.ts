@@ -172,8 +172,12 @@ export interface Affinity {
   merge_key: string;
   domain: Exclude<Agent, "health">;
   state: AffinityState;
-  /** confirmed 면 NOT NULL. */
-  polarity: -1 | 0 | 1 | null;
+  /**
+   * confirmed 면 NOT NULL. 🚨 서버 #847 부터 0 은 오지 않는다 — 좋다 · 싫다가 없는 기록은 기억이
+   * 되지 않는다 (#287, DB CHECK `profile_affinity_polarity`). 그 전에 오는 0 은 `polarityLabel` 이
+   * 줄을 세우지 않는다. 0 이 있는 것은 관찰(`ObservationPromotable`)이다.
+   */
+  polarity: -1 | 1 | null;
   strength: number;
   last_observed_on: string;
   /** 서버 파생값 (affinity_id 역참조 집계). */
@@ -558,6 +562,12 @@ export interface CreateInputRequest {
   /** 흐린 위치. 위치 동의가 있고 휴대폰이 허용했을 때만 싣는다 (#593 · `InputLocation`). */
   location?: InputLocation;
 }
+
+/**
+ * 한 줄 입력의 상한. 서버 `CreateInputRequest.text`(`apps/api/app/api/v1/schemas/children.py`)의 `max_length` 와 같은 값이다.
+ * 한쪽만 바꾸지 않는다. 서버는 앞뒤 공백을 뗀 뒤 글자(코드 포인트) 수로 센다 — 세는 법은 `lib/input-length.ts`.
+ */
+export const INPUT_TEXT_MAX_LENGTH = 2000;
 
 /**
  * 휴대폰이 약 1km 로 흐려 보낸 좌표 (서버 `InputLocation` · #380). 소수점 둘째 자리다.
@@ -1491,6 +1501,13 @@ export interface PhotoEntry {
   needs_review: boolean;
   /** 왜 확인이 필요한지. 서버가 만든 문구 — 프론트가 지어내지 않는다. */
   review_reason?: string;
+  /**
+   * 🚨 **지난 일정인가** (#854). 읽은 시작 · 끝 · 마감 중 가장 늦은 것이 사진을 받은 날(한국 날짜)보다
+   *    앞이면 참이다. 날짜를 못 읽었으면 거짓. 화면은 이 값으로 "캘린더에 넣기" 를 켜 두지 않는다
+   *    (`startsChecked`). 🚨 **화면이 오늘과 견주지 않는다** — 날짜 계산이라 서버가 한다 (§4).
+   *    서버가 처음 읽은 날짜로 정한 값이라, 고치기에서 날짜를 바꿔도 다시 정하지 않는다. 처음 켜 둘지에만 쓴다.
+   */
+  past: boolean;
   /** 내용 이름. "회신" · "체험비". 아래 칸은 서버가 읽어 보내고, 저장할 때 다시 쓰지 않는다. */
   label?: string | null;
   /** 누구의 일인가. `conditional` 은 해당하는 아이만이다. */
@@ -1577,9 +1594,9 @@ export interface PhotoCommitResponse {
    */
   observations: Observation[];
   /**
-   * 🚨 **일정은 여기서 만들어지지 않는다** (#151). 커밋이 만드는 것은 **관찰**이고, 일정은
-   *    고치기 시트의 승인 게이트(`POST /children/{cid}/events`)가 그 자리에서 넣는다 —
-   *    무엇을 넣는지 아는 자리와 넣는 자리를 갈라 두면 같은 항목을 두 화면에서 두 번 확인하게 된다.
+   * 🚨 **일정은 여기서 만들어지지 않는다** (#151). 일정은 확인 화면 맨 아래 버튼의 승인 게이트가
+   *    `POST /children/{cid}/events` 로 먼저 넣고, 받은 id 를 항목의 `event_id` 로 실어 커밋한다
+   *    (`photo-review.tsx` · #824).
    *
    *    `event.status` 가 없어진 뒤(#118) 이 커밋이 게이트 없이 캘린더에 쓰는 유일한 경로였는데,
    *    일정을 아예 안 만들면 그 경로 자체가 사라진다.

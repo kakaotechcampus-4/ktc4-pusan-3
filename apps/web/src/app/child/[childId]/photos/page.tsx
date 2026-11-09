@@ -31,20 +31,20 @@ import { formatDay, parseISODate, toISODate } from "@/lib/format";
  * 08 사진으로 적기 (`/child/[childId]/photos?date=YYYY-MM-DD`).
  *
  * 🚨 **승인 전에는 아무것도 저장되지 않는다.** `POST /children/{cid}/photos` 는 읽기만 하고,
- *    저장은 `POST /photo-runs/{rid}/commit` 하나다. 그래서 화면을 그냥 나가면 남는 것이 없다 —
- *    "나가면 사라져요" 같은 확인 창을 만들지 않는다 (승인 게이트는 2곳뿐이다 · CLAUDE.md §2).
+ *    저장은 `POST /photo-runs/{rid}/commit` 하나다. 그래서 화면을 그냥 나가면 남는 것이 없다
+ *    (일정을 일부 넣은 뒤라면 그 일정은 이미 캘린더에 있다 — 잃을 것이 없다는 점은 같다) —
+ *    "나가면 사라져요" 같은 확인 창을 만들지 않는다 (승인 게이트는 3곳뿐이다 · CLAUDE.md §2).
  *
- * 🚨 **여기는 그 승인 게이트가 아니다.** `commit` 은 **캘린더에 쓰지 않고**, 일정은 보호자가
- *    항목의 시트에서 넣어야 들어간다 (#151). 그래서 이 화면의 저장 버튼에는 `btn-approve` ·
- *    `caution` 을 쓰지 않는다 — 그 둘은 시트의 제출 버튼이 가져간다.
+ * 🚨 **`commit` 은 승인 게이트가 아니다.** `commit` 은 **캘린더에 쓰지 않고**, 일정은 확인 화면이
+ *    보호자가 체크한 개수만큼 `POST /events` 로 따로 넣는다 (#151 · #824). 그래서 확인 화면의 맨 아래
+ *    버튼은 **넣을 일정이 있을 때만** `btn-approve` · `caution` 이다 — 그때 그 버튼이 게이트 ㉠ 이다
+ *    (`photo-review.tsx`). 넣을 일정이 없으면 그냥 저장이다.
  *    ⚠️ **커밋이 무엇을 만드는지는 확정 전이다** — 한동안 "관찰" 이라고 적어 뒀는데, AI 파트
  *    문서는 기관 문서를 별도 테이블(`notice` · `daycare_meal`)로 뒀다 (`lib/api/types.ts` 의
  *    `PhotoCommitResponse`). 게이트 판단은 그것과 무관하다 — 기준은 **캘린더에 쓰느냐**다.
  *
- *    ⚠️ **`commit` 이 게이트인지는 아직 안 정해졌다.** `event.status` 가 없어지면서(#118) 이
- *    커밋이 게이트 없이 캘린더에 쓰는 유일한 경로가 됐고, #121 에서 제기했지만 답이 오지 않았다.
- *    초안만 내는 쪽으로 짠 이유와 반대로 정해졌을 때 고칠 것은
- *    [`docs/web/event-draft-ui-v1.md`](../../../../../../docs/web/event-draft-ui-v1.md) §4 에 있다.
+ *    ⚠️ **`commit` 이 게이트인지는 닫혔다** — commit 이 일정을 아예 안 만들게 해서 게이트 없는 캘린더 쓰기
+ *    경로가 없다 ([`docs/web/event-draft-ui-v1.md`](../../../../../../docs/web/event-draft-ui-v1.md) §4).
  *
  * 🚨 **하단 네비(`ChildNav`)를 붙이지 않는다.** 흐름 중인 화면이라 고르는 도중에 새는 길을
  *    만들지 않는다 (apps/web/CLAUDE.md §3 — 04·05 와 같은 이유).
@@ -188,8 +188,8 @@ function PhotosScreen() {
   }, [photo, startUpload]);
 
   /**
-   * 저장하지 않고 03 홈으로. 🚨 **확인을 묻지 않는다** — 여기까지 저장된 것이 없어서
-   *    잃을 것이 없고, 승인 게이트는 딱 2곳이다 (CLAUDE.md §2).
+   * 저장하지 않고 03 홈으로. 🚨 **확인을 묻지 않는다** — 읽은 내용은 저장 전이고, 일정을 일부 넣은 뒤라면
+   *    그 일정은 이미 캘린더에 있어서 잃을 것이 없다. 승인 게이트는 딱 3곳이다 (CLAUDE.md §2).
    */
   function goHome() {
     router.push(`/child/${childId}/home`);
@@ -264,7 +264,9 @@ function PhotosScreen() {
             committing={commit.isPending}
             commitError={
               // 🚨 서버 문구를 그대로 싣지 않는다 — 에러 문구는 화면이 만든다 (#815).
-              commit.isError ? "저장하지 못했어요. 아직 아무것도 저장되지 않았어요." : null
+              //    무엇이 들어갔는지는 확인 화면이 안다 (넣은 일정 수 · #824). 여기서는 까닭만 가른다 —
+              //    읽은 결과가 서버에서 사라진 404 는 다시 눌러도 같다.
+              commit.isError ? (isApiError(commit.error, "not_found") ? "expired" : "failed") : null
             }
             onGoHome={goHome}
           />

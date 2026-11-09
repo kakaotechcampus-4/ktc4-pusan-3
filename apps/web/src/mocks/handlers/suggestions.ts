@@ -44,6 +44,13 @@ const linkedSuggestions = new Set<string>();
 let submittedCount = 0;
 
 /**
+ * `photo_event_partial` 에서 받은 일정 넣기 요청 수와, 이미 한 번 끊었는가 (#824).
+ * 🚨 **한 번만 끊는다** — 다시 누르면 들어가야 "못 넣은 것만 다시 넣는다" 를 볼 수 있다.
+ */
+let partialSeen = 0;
+let partialCut = false;
+
+/**
  * 채택된 제안. 🚨 **일정과 다른 축이다** — 여기 있다고 캘린더에 들어간 것이 아니다.
  *    실서버는 `suggestion.status` 한 칸이고, 목은 그 칸을 이 집합으로 흉내 낸다.
  */
@@ -53,6 +60,8 @@ const approvedSuggestions = new Set<string>();
 export function resetSubmittedEvents(): void {
   linkedSuggestions.clear();
   submittedCount = 0;
+  partialSeen = 0;
+  partialCut = false;
   approvedSuggestions.clear();
 }
 
@@ -547,6 +556,29 @@ export const suggestionHandlers = [
       .map((id) => pool.find((s) => s.id === id))
       .filter((s): s is (typeof pool)[number] => s !== undefined);
 
+    /**
+     * 🚨 **채택한 뒤에 등록된 알레르기를 다시 본다** (서버 #859). ⚠️ 서버 PR 보다 목이 먼저다 —
+     *    `docs/api/suggestions-v1.md` §8 은 서버 PR 이 머지될 때까지 이 틈을 "남은 일" 로 적고 있다.
+     *    채택은 새로고침해도 남고 "일정으로 만들기" 는 나중에 눌러도 되어서, 그사이 다른 보호자가 등록한
+     *    알레르기를 채택 검사는 보지 못한다. 판정은 채택과 같다 — 하나라도 걸리면 초안을 하나도 만들지 않고
+     *    걸린 id 를 요청 순서대로 싣는다. food 를 한 장으로 묶기 **전에** 본다(어느 제안인지 id 로 말해야 한다).
+     *    오류 순서도 서버와 같다: 400 → 404 · 422 → 403 `consent_required` → 409 `allergen_blocked`.
+     *    알레르기 항목이 없는 제안뿐이면 건강정보를 읽지 않아 `consent` 시나리오에서도 막지 않는다.
+     */
+    const withAllergens = chosen.filter((s) => allergensOf(s.id).length > 0);
+    if (withAllergens.length > 0) {
+      if (currentScenario() === "consent") return consentRequired("child_health");
+      const blocked = withAllergens.filter((s) => !notBlocked(s)).map((s) => s.id);
+      if (blocked.length > 0) {
+        return apiError(
+          409,
+          "allergen_blocked",
+          "알레르기로 등록된 항목이 들어 있어 일정으로 만들 수 없어요",
+          { suggestion_ids: blocked },
+        );
+      }
+    }
+
     const food = chosen.filter((s) => s.agent === "food");
     const rest = chosen.filter((s) => s.agent !== "food");
 
@@ -586,6 +618,13 @@ export const suggestionHandlers = [
         reminder?: { lead: unknown } | null;
         repeat?: { weekdays?: number[]; until?: string; label?: string };
       };
+
+      // 🚨 08 사진에서 일정 여럿을 한 번에 넣다가 두 번째만 실패하는 경우 (#824). 서버가 저장하기 전에
+      //    죽은 것처럼 500 이다 — `withIdempotency` 는 실패를 기억하지 않아서 같은 키로 다시 보내면 여기를 다시 지난다.
+      if (currentScenario() === "photo_event_partial" && !partialCut && ++partialSeen === 2) {
+        partialCut = true;
+        return apiError(500, "internal_error", "잠시 후 다시 시도해 주세요");
+      }
 
       // 🚨 반복 일정(#738)은 요일과 끝 날짜가 다 있어야 한다. 문구는 서버 값이라 되돌려 받지 않는다 (`RepeatRequest`).
       //    회차로 펼치는 것은 실서버 몫이라(#761) 목은 첫 회차 한 건만 돌려준다 — 서버 응답도 `event` 는 첫 회차고 `series` 가 붙는다.

@@ -43,8 +43,8 @@ function polarityLabel(affinity: Affinity): string | null {
   if (affinity.state !== "confirmed") return null;
   if (affinity.polarity === 1) return "좋아해요";
   if (affinity.polarity === -1) return "안 좋아해요";
-  if (affinity.polarity === 0) return "반응이 갈려요";
   // confirmed 면 NOT NULL 이다. 비어 오면 지어내지 않고 줄을 세우지 않는다.
+  // 0 도 여기로 온다 — 서버 #847 부터 0 기억은 오지 않는다(#287). 그 전에 0 이 와도 줄만 세우지 않는다.
   return null;
 }
 

@@ -19,17 +19,19 @@ from app.agents.common.llm_client import (
     LLMConfigError,
     LLMError,
     LLMRateLimitError,
+    LLMTimeoutError,
     LLMUnavailableError,
 )
 from app.agents.curator.embedding.judge import (
-    NONE,
     PROMPT,
-    UNCERTAIN,
     JudgeAnswer,
     JudgeQuotaError,
+    criteria,
+    prompt_parts,
 )
 from app.agents.curator.embedding.ports import CuratorDomain
 from app.core import llm_usage
+from app.core.prompt_hash import fingerprint, short
 
 logger = logging.getLogger(__name__)
 
@@ -78,11 +80,7 @@ class JevJudge:
                 "identity": {
                     "type": "choice",
                     "instructions": self._prompt,
-                    "criteria": {
-                        **{option: f"동일한 대상: {option}" for option in options},
-                        NONE: "동일한 후보가 없다",
-                        UNCERTAIN: "정보 부족 또는 모호하여 판단 불가",
-                    },
+                    "criteria": criteria(options),
                 }
             },
         }
@@ -96,7 +94,7 @@ class JevJudge:
                     self._url, headers={"Authorization": f"Bearer {self._key}"}, json=payload
                 )
         except httpx.TimeoutException as exc:
-            raise LLMUnavailableError("판정 요청 시간 초과.") from exc
+            raise LLMTimeoutError("판정 요청 시간 초과.") from exc
         except httpx.TransportError as exc:
             raise LLMUnavailableError("판정 서버 연결 실패.") from exc
 
@@ -109,7 +107,9 @@ class JevJudge:
         # subject · 후보 원문은 남기지 않는다. Elice 응답에는 금액(cost)이 없어 토큰 수를 남긴다
         # (금액은 Elice 콘솔에서 본다). 출력 토큰은 과금되지 않는다
         logger.info(
-            "curator judge model=%s candidates=%d confidence=%s input_tokens=%s latency_ms=%d",
+            "curator judge prompt_name=curator_judge prompt_sha256=%s model=%s candidates=%d "
+            "confidence=%s input_tokens=%s latency_ms=%d",
+            short(fingerprint(*prompt_parts(self._prompt))),
             answer.model,
             len(options),
             answer.confidence,

@@ -150,39 +150,33 @@ class Settings(AgentLLMSettings):
         return raw
 
     @model_validator(mode="after")
-    def _require_kakao_keys_in_prod(self) -> "Settings":
-        """🚨 운영에서는 카카오 키가 없으면 서버가 뜨지 않는다 (#97).
+    def _require_kakao_keys_on_servers(self) -> "Settings":
+        """🚨 서버(prod · dev)에서는 카카오 키가 없으면 서버가 뜨지 않는다 (#97 · #310).
 
-        local · dev 는 막지 않는다. 키를 못 받은 팀원이 나머지 API 를 띄워 쓰기 위해서다.
+        local 은 막지 않는다. 키를 못 받은 팀원이 나머지 API 를 띄워 쓰기 위해서다.
 
-        dev 를 뺀 이유 — **아직 dev 환경이 없다** (배포 도메인 미정). 지금 정하면
-        추측이고, 추측이 빗나갔을 때 손해가 한쪽으로 크다.
+        dev 는 처음엔 열어 뒀다 — dev 서버가 없을 때 정하면 추측이었다. 11-06 dev 서버가 생겼고
+        (deploy-v1.md), prod 와 같은 배포 · 같은 키 구성으로 도는 운영 리허설 자리라 막는다.
+        키 누락을 prod 배포가 아니라 그 전 dev 배포에서 알게 된다 (#310).
 
-            막았는데 키 없이 써야 하는 곳이었다면
-                → 팀이 가짜 키를 넣어 우회한다. 그 뒤로 이 검증은 아무도 안 믿는다.
-            열었는데 운영 리허설 자리였다면
-                → 키 누락을 prod 배포에서 알게 된다. 늦지만 사용자에게 가기 전이다.
-
-        아래쪽이 덜 나쁘다. 그래서 열어 둔다.
-
-        🚨 dev 서버가 생기면 다시 판단한다. 조건에 "dev" 를 더하면 된다.
-
-        운영은 다르다. 키가 없으면 ready: false 가 내려가 로그인 버튼만 꺼진 채
+        운영은 키가 없으면 ready: false 가 내려가 로그인 버튼만 꺼진 채
         배포가 끝나고, 서비스가 성립하지 않는다는 사실을 사용자가 먼저 발견한다.
 
         빠진 키 이름을 메시지에 싣는다 — 부팅 로그는 배포자만 본다 (응답에 싣지
         않는 것은 kakao_missing_keys 의 주석 참고).
         """
-        if self.APP_ENV == "prod" and self.kakao_missing_keys:
+        on_server = self.APP_ENV in ("prod", "dev")
+        if on_server and self.kakao_missing_keys:
             raise ValueError(
-                f"운영 환경인데 카카오 설정이 비어 있다: {', '.join(self.kakao_missing_keys)}. "
+                f"{self.APP_ENV} 환경인데 카카오 설정이 비어 있다: "
+                f"{', '.join(self.kakao_missing_keys)}. "
                 "이대로 뜨면 로그인 버튼만 꺼진 채 배포된다"
             )
         # 어드민 키는 로그인 준비 목록 밖이라 따로 본다. 없으면 탈퇴한 사람의 카카오 연결이
         # 늘 남는다 — 탈퇴 실패가 아니라서 아무도 모르는 채 쌓인다 (#379).
-        if self.APP_ENV == "prod" and not self.KAKAO_ADMIN_KEY:
+        if on_server and not self.KAKAO_ADMIN_KEY:
             raise ValueError(
-                "운영 환경인데 카카오 설정이 비어 있다: KAKAO_ADMIN_KEY. "
+                f"{self.APP_ENV} 환경인데 카카오 설정이 비어 있다: KAKAO_ADMIN_KEY. "
                 "이대로 뜨면 탈퇴해도 카카오 연결이 끊기지 않는다"
             )
         return self

@@ -33,6 +33,7 @@ import {
   streamRunEvents,
   type AgentResultEvent,
   type EventDraftsEvent,
+  type FailedEvent,
   type GuidanceEvent,
   type LaneEvent,
   type MedicationDraftsEvent,
@@ -48,6 +49,7 @@ import { isSeverityFor } from "@/lib/health-safety";
 import { api } from "@/lib/api/client";
 import {
   DIARY_CONTENT_MAX_LENGTH,
+  INPUT_TEXT_MAX_LENGTH,
   REPORT_CATEGORIES,
   REPORT_MESSAGE_MAX_LENGTH,
 } from "@/lib/api/types";
@@ -340,6 +342,68 @@ describe("일정 초안", () => {
     await expect(
       createEventDrafts("c1", { suggestion_ids: [id, "s_does_not_exist"] }),
     ).rejects.toSatisfy((e: unknown) => isApiError(e, "not_found") && e.status === 404);
+  });
+
+  /**
+   * 🚨 **채택한 뒤에 등록된 알레르기는 초안 만들기가 막는다** (서버 #859 · 문서 §3-8). 채택은 새로고침해도 남고
+   *    일정은 나중에 만들어도 되어서, 그사이 등록된 알레르기를 채택 검사는 보지 못한다. 하나라도 걸리면
+   *    초안을 하나도 만들지 않고 걸린 id 를 싣는다 — 화면은 그 id 를 빼고 다시 보낸다.
+   */
+  describe("채택한 뒤 등록된 알레르기 (#859)", () => {
+    afterEach(() => setScenario("default"));
+
+    const [blockedId, [allergen]] = Object.entries(suggestionAllergens).find(
+      ([id, a]) => a.length > 0 && suggestions.some((s) => s.id === id && s.agent === "food"),
+    )!;
+    const plain = () =>
+      suggestions.find(
+        (s) => s.agent !== "health" && s.id !== blockedId && !suggestionAllergens[s.id]?.length,
+      )!.id;
+
+    it("🚨 걸린 제안이 하나라도 있으면 초안을 하나도 만들지 않고 409 와 그 id 를 준다", async () => {
+      const other = plain();
+      await approveSuggestions("c1", { suggestion_ids: [blockedId, other] });
+      await addHealthSafety("c1", { type: "allergy", label: allergen }, newIdempotencyKey());
+
+      const refused = await createEventDrafts("c1", { suggestion_ids: [blockedId, other] }).catch(
+        (e: unknown) => e,
+      );
+      expect(isApiError(refused, "allergen_blocked")).toBe(true);
+      expect((refused as ApiError).status).toBe(409);
+      expect((refused as ApiError).detail).toEqual({ suggestion_ids: [blockedId] });
+
+      // 걸린 것을 빼고 다시 보내면 만든다.
+      const created = await createEventDrafts("c1", { suggestion_ids: [other] });
+      expect(created.drafts.flatMap((d) => d.suggestion_ids)).toEqual([other]);
+    });
+
+    it("내린 기록만 있는 항목은 막지 않는다", async () => {
+      await approveSuggestions("c1", { suggestion_ids: [blockedId] });
+      const { safety } = await addHealthSafety(
+        "c1",
+        { type: "allergy", label: allergen },
+        newIdempotencyKey(),
+      );
+      await api.delete(`/children/c1/health-safety/${safety.id}`);
+
+      const created = await createEventDrafts("c1", { suggestion_ids: [blockedId] });
+      expect(created.drafts.length).toBeGreaterThan(0);
+    });
+
+    it("알레르기 항목이 든 제안인데 동의가 없으면 403, 항목이 없는 제안뿐이면 건강정보를 보지 않는다", async () => {
+      const other = plain();
+      await approveSuggestions("c1", { suggestion_ids: [blockedId, other] });
+      setScenario("consent");
+
+      const refused = await createEventDrafts("c1", { suggestion_ids: [blockedId] }).catch(
+        (e: unknown) => e,
+      );
+      expect(isApiError(refused, "consent_required")).toBe(true);
+      expect((refused as ApiError).status).toBe(403);
+
+      const created = await createEventDrafts("c1", { suggestion_ids: [other] });
+      expect(created.drafts.length).toBeGreaterThan(0);
+    });
   });
 
   it("🚨 제안 초안은 일자가 비어 있다 — 서버가 오늘로 채우지 않는다", async () => {
@@ -1088,6 +1152,10 @@ describe("⑦ 상태 전이 · SSE 순서", () => {
       const last = events.at(-1);
       expect(last?.type).toBe("failed");
       expect((last?.data as { raw_text: string }).raw_text).toBe(text);
+      // 서버는 모든 `failed` 에 이유별 문구를 싣는다 (#768). SSE 는 OpenAPI 에 없어 계약 비교가 못 잡는다
+      expect((last?.data as FailedEvent).message).toBe(
+        "말씀을 정리하지 못했어요. 조금 바꿔서 다시 적어 주세요.",
+      );
       // 저장된 게 없으니 saved 가 있으면 안 된다 (CLAUDE.md §4 — 다음 칸으로 전파하지 않는다).
       expect(events.map((e) => e.type)).not.toContain("saved");
     } finally {
@@ -4430,7 +4498,7 @@ describe("⑰ 08 사진 — 읽기와 저장이 갈린다", () => {
 
     /**
      * 🚨 `event.status` 가 없어진 뒤(#118) 이 커밋이 **게이트 없이 캘린더에 쓰는 유일한 경로**
-     *    였다. 일정을 아예 안 만들면 그 경로가 사라진다 — 일정은 고치기 시트의 승인 게이트가 넣는다.
+     *    였다. 일정을 아예 안 만들면 그 경로가 사라진다 — 일정은 확인 화면 맨 아래 버튼의 승인 게이트가 넣는다 (#824).
      */
     expect(saved).not.toHaveProperty("drafts");
     expect(saved).not.toHaveProperty("event");
@@ -4766,6 +4834,29 @@ async function runChatToEnd(text: string): Promise<string> {
 function chatDay(query: Record<string, string> = {}) {
   return api.get<ChatDayResponse>(`/children/${CHAT_CHILD}/chat`, { query });
 }
+
+describe("한 줄 입력의 길이 — 서버 `CreateInputRequest.text` 와 같이 거절한다 (#867)", () => {
+  it("앞뒤 공백을 뗀 코드 포인트가 2000자를 넘으면 400 validation_failed · fields 에 text", async () => {
+    const error = await submitInput(
+      CHAT_CHILD,
+      { text: "가".repeat(INPUT_TEXT_MAX_LENGTH + 1), source: "home_input" },
+      newIdempotencyKey(),
+    ).catch((e: unknown) => e);
+    expect(isApiError(error, "validation_failed")).toBe(true);
+    expect((error as ApiError).status).toBe(400);
+    expect((error as ApiError).detail?.fields).toEqual(["text"]);
+  });
+
+  it("🚨 이모지 2000개에 앞뒤 공백이 붙어도 받는다 — UTF-16 이 아니라 코드 포인트로 센다", async () => {
+    // 받았는지만 본다 — 스트림은 읽지 않는다.
+    const { run_id } = await submitInput(
+      CHAT_CHILD,
+      { text: `  ${"😀".repeat(INPUT_TEXT_MAX_LENGTH)}  `, source: "home_input" },
+      newIdempotencyKey(),
+    );
+    expect(run_id).toBeTruthy();
+  });
+});
 
 describe("지난 대화 — 서버처럼 끝난 run 만 남긴다 (#228)", () => {
   afterEach(() => setScenario("default"));

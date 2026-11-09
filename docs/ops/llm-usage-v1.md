@@ -90,7 +90,7 @@ Curator 는 run 이 끝난 뒤에 끝나도 그 run 으로 남는다 (asyncio �
 | 종료 · 유실 | SIGTERM 이면 lifespan 이 writer 를 멈추며(취소) 쓰던 묶음을 큐에 되돌리고 남은 큐를 마지막으로 쓴다. 마지막 flush 는 5초까지만 기다린다(docker 정지 유예 10초 안). SIGKILL · OOM 이면 최대 2초분을 잃는다. 종료 뒤에 끝나는 run · Curator 의 기록은 이미 `disable()` 이라 남지 않는다 — BM 추정에는 감수 |
 | 저장 실패 | 탈퇴와 겹친 FK 위반은 새 세션으로 한 번 더 쓴다. 연결 · 풀 오류는 묶음을 큐 뒤에 되돌리고 다음 주기에 다시 쓴다 — 큐 상한(10,000건)보다 오래 못 쓰면 넘치는 만큼만 버린다. 그 밖의 실패(스키마 버그 · 값 오류)는 그 묶음(최대 500건)을 버리고 그 주기를 끝낸다. 첫 실패만 ERROR(Discord), 이어지면 WARNING, 고쳐지면 INFO 한 줄 |
 | 값 검사 | `record()` 가 숫자는 int4 범위로(넘으면 0), 글자 칸은 NUL 을 지워서, `Source` 밖의 창구 값은 큐에 들이지 않고 WARNING 으로 걸러낸다 — 한 행이 같은 묶음의 500행을 실패시키지 않게. `tests/unit/core/test_llm_usage_sites.py` 가 `attribute(source=...)` 에 적힌 글자도 `Source` 와 대조한다 |
-| 정리 | 기존 하루 한 번 `python -m app.workers.cleanup` 이 90일 지난 행도 지운다 (cron 추가 없음). 처방침이 약속한 정리(세션 · 동의 증빙 · 위치 기록)를 커밋한 **다음 다른 트랜잭션**에서 한다 — 사용량 정리가 실패해도(예: 배포 때 migrate 전이라 표가 없다) 앞의 정리는 되감기지 않고 ERROR 로만 알린다. 배치 로그의 `90일 지난 LLM 사용량 정리: N건` 으로 확인한다 |
+| 정리 | 기존 하루 한 번 `python -m app.workers.cleanup` 이 90일 지난 행도 지운다 (cron 추가 없음). 처방침이 약속한 정리(세션 · 동의 증빙 · 위치 기록 · 삭제 이력)를 커밋한 **다음 다른 트랜잭션**에서 한다 — 사용량 정리가 실패해도(예: 배포 때 migrate 전이라 표가 없다) 앞의 정리는 되감기지 않고 ERROR 로만 알린다. 배치 로그의 `90일 지난 LLM 사용량 정리: N건` 으로 확인한다 |
 | journald | `llm call` 로그 줄은 계속 남는다. [retention-v1](../safety/retention-v1.md) 이 서버 로그 3개월을 약속하므로 `MaxRetentionSec=90day` 와 `SystemMaxUse`(`journalctl --disk-usage`)를 확인한다 |
 | 조회 · 공유 | psql 로 집계한다. 🚨 `parent_id` 단위 결과를 Discord · Notion 에 붙이지 않는다 — 합계 · 분포만. 외부 수집 서비스로 보내지 않는다 ([logging-alerts-v1 §1](logging-alerts-v1.md#1-결정)) |
 | 대조 | 월 1회 제공처 콘솔 합계와 비교한다. 타임아웃(60초) · 취소 · 오류 호출은 응답에 usage 가 없어 우리 쪽에 남지 않지만 과금될 수 있다. 차이 비율을 BM 의 보정값으로 쓴다 |

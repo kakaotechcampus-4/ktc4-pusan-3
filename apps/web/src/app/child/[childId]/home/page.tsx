@@ -40,6 +40,7 @@ import { SkeletonGroup, SkeletonText, SkeletonTile } from "@/components/ui/skele
 import { useTodayChat } from "@/hooks/use-chat-history";
 import { useChildId } from "@/hooks/use-child-id";
 import { useLocationConsent } from "@/hooks/use-consents";
+import { useOnline } from "@/hooks/use-online";
 import { hasOpenQuestion, isBusy, sendLine, useConversation } from "@/stores/conversation";
 import { useDraftStore, useDraftText } from "@/stores/draft";
 import { usePhotoDraftStore } from "@/stores/photo-draft";
@@ -62,6 +63,8 @@ import { FORWARD } from "@/lib/view-transition";
  * 🚨 **보내는 순간 04 대화 화면으로 넘어간다** (#226). 202 를 기다리지 않는다 — 말풍선이 먼저 서고
  *    요청은 뒤에서 나간다 (`stores/conversation.ts`). 그래서 **이 화면은 실패를 그리지 않는다.**
  *    보내기 실패 · 429 · 400 은 대화 화면의 그 말풍선 아래 한 곳에 선다.
+ *    예외는 **기기가 끊긴 것이 확실할 때**(`navigator.onLine === false`) 하나다 — 보내지도 넘어가지도 않고
+ *    입력창 위에 안내만 선다 (#865 · `send`). 보낸 것이 없으니 실패한 말풍선도 없다.
  *
  * 🚨 **아직 안 보낸 원문은 이 화면이 들고 있지 않다** (`stores/draft.ts`). 하단 네비가
  *    보내기 버튼 바로 아래에 다른 화면으로 가는 문을 세 개 열어서, 화면 로컬 상태로 두면
@@ -106,6 +109,17 @@ function HomeScreen() {
    */
   const [leaving, setLeaving] = useState<string | null>(null);
   const chatHref = `/child/${childId}/chat`;
+  /**
+   * 끊긴 채로 보내기를 눌렀다 (#865 · `send`). 안내는 연결 상태를 따라 바뀌고, 보내는 데 성공하면 걷힌다 —
+   * 다시 연결됐다고 바로 대신 보내지 않는다. 그 사이 글을 고쳤을 수 있고, 보내기는 보호자가 누른다.
+   */
+  const [offlineBlocked, setOfflineBlocked] = useState(false);
+  const online = useOnline();
+  const offlineNotice = !offlineBlocked
+    ? null
+    : online
+      ? "다시 연결됐어요. 이제 보내면 돼요."
+      : "인터넷 연결이 끊겨 있어요. 쓴 글은 그대로 있어요. 연결되면 다시 보내 주세요.";
 
   // 보내는 순간 넘어가야 해서 미리 받아 둔다. 안 받아 두면 첫 이동이 그 주소를 받는 동안 멈춘다.
   useEffect(() => {
@@ -142,8 +156,16 @@ function HomeScreen() {
    *    대화 화면이고, 입구가 "답을 기다리는 질문이 있어요" 로 그리로 부른다.
    */
   function send() {
+    // 🚨 **끊긴 채로는 보내지도 넘어가지도 않는다** (#865). 넘어가는 순간 대화 화면을 받으러 가는데,
+    //    그 요청이 실패하면 Next 가 브라우저 전체 이동으로 바꿔서 앱 대신 브라우저 오류 화면이 뜨고,
+    //    메모리에만 있던 쓴 글과 말풍선이 같이 사라진다. 글은 입력창에 그대로 두고 안내만 세운다.
+    if (!navigator.onLine) {
+      setOfflineBlocked(true);
+      return;
+    }
     const line = text;
     if (!sendLine(childId, line, { asReply: false, source: "home_input", shareLocation })) return;
+    setOfflineBlocked(false);
     // 셋이 한 번에 그려진다 — 입력창은 막 보낸 글자를 든 채로 대화 화면으로 넘어간다.
     setLeaving(line);
     clearDraft(childId);
@@ -184,6 +206,7 @@ function HomeScreen() {
               locked={leaving !== null}
               busyLabel={leaving !== null ? "보내는 중이에요" : "답을 기다리는 중이에요"}
               sentLine={leaving !== null}
+              notice={offlineNotice}
               promptsPending={home.isPending}
               lead={
                 // 🚨 **오늘 대화가 있을 때만 선다** — 빈 대화로 가는 문을 세우지 않는다. 앱을 다시 켜면 대화

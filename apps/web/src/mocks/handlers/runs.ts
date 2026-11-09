@@ -1,7 +1,13 @@
 import { http, HttpResponse } from "msw";
 
 import type { AgentReadout, AgentResultEvent } from "@/lib/api/sse";
-import type { Agent, CreateInputResponse, InputLocation, Observation } from "@/lib/api/types";
+import {
+  INPUT_TEXT_MAX_LENGTH,
+  type Agent,
+  type CreateInputResponse,
+  type InputLocation,
+  type Observation,
+} from "@/lib/api/types";
 // 서버는 서류 머리에 오늘을 `isoformat()` 으로 싣는다 (`YYYY-MM-DD`).
 import { toSeoulDateKey } from "@/lib/format";
 
@@ -585,7 +591,11 @@ async function* continuationScript(
     // 🚨 `failed` 보다 **먼저** 되돌린다. 화면이 받자마자 다시 시도해도 맥락과 키가 이미 풀려 있다.
     pendingReplies.set(input.replyTo, input.childId);
     forgetRun(runId);
-    yield frame("failed", { reason: "internal_error", raw_text: input.text });
+    yield frame("failed", {
+      reason: "internal_error",
+      raw_text: input.text,
+      message: "처리하다 문제가 생겼어요. 다시 보내 주세요.",
+    });
     return;
   }
 
@@ -714,7 +724,12 @@ async function* runScript(runId: string): AsyncGenerator<Uint8Array> {
   if (scenario === "failed") {
     // 여기서 스트림이 끝난다. 저장된 게 없으니 다음 칸으로 전파하지 않는다.
     forgetRun(runId);
-    yield frame("failed", { reason: "unparsable", raw_text: rawText });
+    // 문구는 서버 카탈로그(`apps/api/app/agents/common/failure.readout.yaml`)의 글자 그대로다 (#768)
+    yield frame("failed", {
+      reason: "unparsable",
+      raw_text: rawText,
+      message: "말씀을 정리하지 못했어요. 조금 바꿔서 다시 적어 주세요.",
+    });
     return;
   }
 
@@ -989,6 +1004,14 @@ export const runHandlers = [
           reply_to?: string;
           location?: InputLocation;
         };
+
+        // 서버는 핸들러보다 먼저 스키마로 거절한다 — 앞뒤 공백을 떼고 2000자 초과면 400 (#867).
+        // 화면은 보내기 전에 막아서 여기 닿지 않는다. 목이 서버처럼 거절하는지는 `contract.test.ts` 가 건다.
+        if ([...body.text.trim()].length > INPUT_TEXT_MAX_LENGTH) {
+          return apiError(400, "validation_failed", "요청 형식이 올바르지 않아요", {
+            fields: ["text"],
+          });
+        }
 
         // 🚨 한도보다 **먼저 확인만** 한다 — 잘못된 `reply_to` 가 하루 횟수를 쓰면 안 된다.
         //    꺼내는(지우는) 것은 한도를 통과한 뒤다. 한도에 걸린 답이 맥락까지 잃으면 안 되기
