@@ -22,6 +22,7 @@ from app.agents.common.reference import (
     food_safety_terms,
     hazard_terms,
 )
+from app.agents.entrypoint import SafetyLabel, check_allergens
 from app.rules.allergen import ALLERGEN_NAMES
 
 
@@ -292,6 +293,34 @@ class TestAllergens:
 
     def test_재료에서도_찾는다(self):
         assert check("점토 놀이", ("밀가루", "물")).allergens == ("밀",)
+
+    def test_19종_밖은_조각이_아니라_보호자가_적은_이름으로_담는다(self):
+        """띄어 쓴 이름의 조각("고양" · "가루")으로 담으면 05 가 적은 적 없는 이름을 묻는다 (#891).
+
+        대조는 조각마다 그대로라, 태그가 붙는 놀이는 같고 이름만 바뀐다.
+        """
+        cat = [allergy("고양이 털", "retracted")]
+        mugwort = [allergy("쑥 가루", "retracted")]
+
+        assert check("고양이 그림 그리기", entries=cat).allergens == ("고양이털",)
+        assert check("반죽 놀이", ("밀가루",), entries=mugwort).allergens == ("밀", "쑥가루")
+
+    @pytest.mark.parametrize(
+        ("status", "blocked", "unknown"),
+        [
+            ("none", (), ("밀",)),
+            ("retracted", (), ("밀", "쑥가루")),
+            ("active", ("쑥가루",), ("밀",)),
+        ],
+    )
+    def test_조각에서_나온_태그를_05_사전검사가_그_행으로_알아본다(self, status, blocked, unknown):
+        """괜찮았던 식품이면 다시 묻지 않고, 내린 기록이면 묻고, 그 뒤 다시 등록하면 채택 · 초안
+        만들기의 재확인이 막는다 — 태그 이름이 행의 이름과 맞아야 셋이 다 된다 (#891)."""
+        tags = check("반죽 놀이", ("밀가루",), entries=[allergy("쑥 가루", "retracted")]).allergens
+
+        found = check_allergens(tags, [SafetyLabel(kind="allergy", label="쑥 가루", status=status)])
+
+        assert (found.blocked, found.unknown) == (blocked, unknown)
 
 
 class TestNonFoodAllergyCaution:
