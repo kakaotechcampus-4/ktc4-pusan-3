@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { homeTour } from "./screens/home";
-import { liveSteps } from "./steps";
+import { liveSteps, withSeen } from "./steps";
 import { HELP_STEP, type TourDefinition, type TourStep } from "./types";
 
 /** 화면에 그려진 `data-tour` 를 흉내 낸다. */
@@ -44,5 +44,18 @@ describe("liveSteps — 열 때 보여 줄 단계 (docs/web/screen-tour-v1.md §
     expect(liveSteps(homeTour, "help", new Set(["home-empty"]), has).map((s) => s.target)).toEqual([
       "highlight",
     ]);
+  });
+});
+
+describe("withSeen — 본 투어를 캐시에 얹기 (docs/web/screen-tour-v1.md §2 · #815)", () => {
+  it("읽은 목록에 없으면 끝에 더하고, 있으면 그대로 둔다", () => {
+    expect(withSeen(["home"], "chat")).toEqual(["home", "chat"]);
+    const same: ("home" | "chat")[] = ["home", "chat"];
+    expect(withSeen(same, "chat")).toBe(same);
+  });
+
+  /** 🚨 읽기가 실패한 채 ? 로 하나를 보면, 그 하나만 든 목록이 "성공" 이 되어 다른 투어가 다 저절로 떴다. */
+  it("읽은 목록이 없으면 새로 만들지 않는다", () => {
+    expect(withSeen(undefined, "home")).toBeUndefined();
   });
 });

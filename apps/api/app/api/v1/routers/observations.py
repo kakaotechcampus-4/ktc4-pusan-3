@@ -3,11 +3,11 @@
 인증은 router.py 의 protected_router 가 건다. 아이 주소는 `AccessibleChild` 가 본문보다 먼저
 확인한다 — 연결된 보호자가 아니면 403 (deps/child.py).
 
-🚨 건강 관찰(`observation_health`)은 첫 배포 범위 밖이다 (#259). 목록에서 빼고 상세는 404 다.
-   `domain=health` 는 오류가 아니라 빈 목록이다 — 화면의 분류 선택에 "건강" 이 있어서, 막으면
-   기록이 없다는 안내 대신 실패 화면이 뜬다.
-   삭제는 건강도 받는다 — 대화 삭제(#535)가 이미 받고, §2 가 막는 것은 LLM 이 건강 정보를 만들거나
-   고치는 일이지 보호자가 직접 지우는 일이 아니다 (#736).
+🚨 건강 관찰(`observation_health`)도 목록 · 상세 · 삭제에 나온다 (#764).
+   모양은 `ObservationHealthOut` — 주제 · 성향 · 기억 칸이 없다. 검색(`q`)은 주제 대신 화면 줄
+   제목(약 이름 · 증상)을 본다. 기억에는 묶이지 않는다.
+   §2 가 막는 것은 LLM 이 건강 정보를 만들거나 고치는 일이지 보호자가 직접 보고 지우는 일이 아니다.
+   고치기(`/corrections`)는 건강 기록을 받지 않는다 — 이유는 corrections.py.
 🚨 `growth` 는 표 이름이 아니다. education · routine 두 표를 읽는다 (루트 CLAUDE.md §5).
 """
 
@@ -51,12 +51,12 @@ router = APIRouter()
 AgentFilter = Literal["food", "activity", "growth", "health"]
 StatusFilter = Literal["active", "stand_alone", "inactive"]
 
-# 화면의 분류(Agent) → 읽을 관찰 표. health 는 범위 밖이라 빈 목록이다.
+# 화면의 분류(Agent) → 읽을 관찰 표.
 _DOMAINS_BY_AGENT: dict[str, tuple[ObservationDomain, ...]] = {
     "food": (ObservationDomain.FOOD,),
     "activity": (ObservationDomain.ACTIVITY,),
     "growth": (ObservationDomain.EDUCATION, ObservationDomain.ROUTINE),
-    "health": (),
+    "health": (ObservationDomain.HEALTH,),
 }
 # 목록에 보이는 상태. 보호자가 고친 기록(이번만 · 잘못된 기록)도 남는다 — deleted 만 빠진다.
 LISTED_STATUSES = (
@@ -64,8 +64,10 @@ LISTED_STATUSES = (
     ObservationStatus.STAND_ALONE,
     ObservationStatus.INACTIVE,
 )
+# 기록 탭 · 캘린더가 보여 주는 표. 다섯 종류 모두다 (#764).
 VISIBLE_DOMAINS = (
     ObservationDomain.FOOD,
+    ObservationDomain.HEALTH,
     ObservationDomain.EDUCATION,
     ObservationDomain.ACTIVITY,
     ObservationDomain.ROUTINE,
@@ -86,15 +88,13 @@ async def list_observations(
     """deleted 가 아닌 관찰을 `observed_to` 최신순으로, `page` · `size` 쪽으로 나눠서.
 
     `date_from` · `date_to` 는 관찰 기간이 그 범위와 **겹치면** 포함한다(양 끝 날짜 포함).
-    `q` 는 원문(`raw_text`)과 주제(`subject`)의 부분 일치다. 필터를 건 건수가 `total` 이다.
+    `q` 는 원문(`raw_text`)과 주제(`subject`)의 부분 일치다 — 건강 기록은 주제 대신 약 이름 ·
+    증상을 본다(화면 줄 제목과 같은 말).
+    필터를 건 건수가 `total` 이다. 항목은 `kind` 로 모양이 갈린다 — `observation_health` 는
+    `ObservationHealthOut` 이다.
     status 를 주면 그 상태만, 주지 않으면 세 상태 모두다.
     """
     domains = _DOMAINS_BY_AGENT[domain] if domain else VISIBLE_DOMAINS
-    if not domains:
-        return ObservationsResponse(
-            items=[], total=0, page=query.page, size=query.size, total_pages=0
-        )
-
     page = await page_observations(
         session,
         child_id=child.child_id,
@@ -126,8 +126,11 @@ async def get_observation(
     oid: uuid.UUID,
     session: SessionDep,
 ) -> ObservationDetailResponse:
-    """관찰 1건 + 그 관찰을 근거로 쓴 추천 + 교정 이력."""
-    domain = _visible_domain(kind)
+    """관찰 1건 + 그 관찰을 근거로 쓴 추천 + 교정 이력.
+
+    건강 기록은 고치기를 받지 않아서 `corrections` 가 늘 빈 배열이다 (#764).
+    """
+    domain = _observation_domain(kind)
     record = (
         await find_observation(session, domain=domain, child_id=child.child_id, observation_id=oid)
         if domain
@@ -203,7 +206,7 @@ async def delete_observation(
     # 이미 지운 기록은 다시 지우면 404 라서 재생은 지우기 전에 본다
     if await idempotency.recall(**scope) is not None:
         return Response(status_code=204)
-    domain = _deletable_domain(kind)
+    domain = _observation_domain(kind)
     if domain is None:
         raise ApiError(404, "not_found", "그 기록을 찾지 못했어요")
 
@@ -229,7 +232,20 @@ async def delete_observation(
     return Response(status_code=204)
 
 
-def _deletable_domain(kind: str) -> ObservationDomain | None:
+def _trigger_curator(child_id: uuid.UUID, today: date) -> None:
+    """commit 뒤에만 부른다 — 같은 트랜잭션에서 띄우면 Curator 실패가 삭제까지 되돌린다.
+
+    🚨 터져도 응답은 성공이다 — 지운 것은 이미 commit 됐다 (delete_proposals 와 같다).
+    """
+    try:
+        trigger = curator_trigger()
+        if trigger is not None:
+            trigger(child_id, today)
+    except Exception as exc:
+        log.error("기록 삭제 뒤 curator trigger 실패 error=%s", type(exc).__name__)
+
+
+def _observation_domain(kind: str) -> ObservationDomain | None:
     """경로의 kind 가 관찰 표면 그 도메인. 다섯 종류 모두(건강 포함). 모르는 값은 None (→ 404)."""
     if not kind.startswith("observation_"):
         return None
@@ -237,9 +253,3 @@ def _deletable_domain(kind: str) -> ObservationDomain | None:
         return ObservationDomain(kind.removeprefix("observation_"))
     except ValueError:
         return None
-
-
-def _visible_domain(kind: str) -> ObservationDomain | None:
-    """경로의 kind 가 이 화면이 보여주는 표면 그 도메인. 건강 · 모르는 값은 None (→ 404)."""
-    domain = _deletable_domain(kind)
-    return domain if domain in VISIBLE_DOMAINS else None

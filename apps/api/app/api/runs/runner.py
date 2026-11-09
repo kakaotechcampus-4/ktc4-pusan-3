@@ -192,7 +192,11 @@ def agent_job(
                     child_id=child_id,
                     agent=event.agent,
                     task=suggestion_retry.RetryTask(
-                        event.task_type, event.request_texts, event.sent_at
+                        event.task_type,
+                        event.request_texts,
+                        event.sent_at,
+                        original_texts=event.original_texts,
+                        prior_texts=event.prior_texts,
                     ),
                 )
                 return
@@ -264,6 +268,7 @@ def agent_job(
                         ),
                         count_records=agent_ports.record_counter(child_id),
                         load_cards=load_cards,
+                        recent_turns=agent_ports.recent_turns_loader(parent_id, child_id),
                         curator_trigger=curator_trigger(),
                         domain_store=agent_ports.domain_store_opener(child_id),
                         **agent_ports.food_stores(),

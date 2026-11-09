@@ -404,7 +404,7 @@ function RecordedReply({
 
   return (
     <CardFailed>
-      <p>앞서 처리된 한 줄이에요. 결과는 기록 탭에서 볼 수 있어요.</p>
+      <p>앞서 처리된 한 줄이에요. 결과는 기록/기억 화면에서 볼 수 있어요.</p>
       <ButtonLink
         href={`/child/${childId}/memories`}
         variant="secondary"
@@ -445,7 +445,7 @@ function SentBubble({ text, answer, named }: { text: string; answer: boolean; na
   const bubble = (
     // 흰 글자 6.2:1 (§2-2 `brand` 행) — 캡션도 같은 흰색이다. 흐리게 낮추면 4.5:1 아래로 내려간다.
     <div data-tour="bubble" className="bg-brand rounded-card max-w-[85%] px-4 py-3 text-white">
-      {answer ? <p className="text-caption mb-1">질문에 대한 답</p> : null}
+      {answer ? <p className="text-caption mb-1">질문에 답함</p> : null}
       <p className="text-body break-words whitespace-pre-wrap">{text}</p>
     </div>
   );
@@ -615,7 +615,7 @@ function SendFailure({
         <ConsentRequiredCard
           childId={childId}
           error={error}
-          what="적어주신 말을 저장할 수 없어요."
+          what="적어 주신 말을 저장하지 않았어요."
         />
         {keptHere ? (
           <RewriteButton blocked={rewriteBlocked} onClick={rewrite} />
@@ -655,7 +655,7 @@ function SendFailure({
           <p className="text-body-sm text-ink mt-2">{turn.answering.text}</p>
         ) : null}
         <p className="text-caption text-ink-subtle mt-2">
-          고쳐 쓰기를 누르면 적어주신 답이 입력창으로 돌아가요. 무엇에 대한 답인지 함께 적어 보내
+          고쳐 쓰기를 누르면 적어주신 답이 입력창으로 돌아가요. 무엇을 물은 답인지 함께 적어 보내
           주세요. 앞서 저장된 이야기는 다시 적지 않아도 돼요.
         </p>
         <div className="mt-3">

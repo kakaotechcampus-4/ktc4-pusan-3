@@ -197,10 +197,11 @@ async function checkRoute(browser, route) {
   if (route.auth) {
     await ctx.addInitScript((key) => localStorage.setItem(key, "1"), MOCK_REFRESH_KEY);
     // 화면 투어(#632)를 다 본 채로 연다 — 처음 들어온 화면마다 덮개가 뜨면 스크린샷이 타이밍에 따라 갈린다.
-    // 목 보호자 id 는 p1, 키 모양은 apps/web/src/lib/tour/types.ts 의 seenStorageKey · TOUR_KEYS 와 같다.
+    // "봤음" 은 서버 기록이고(#696), 목은 그것을 이 키에 든다 (apps/web/src/mocks/handlers/tours.ts 의
+    // MOCK_TOURS_KEY). 목록은 apps/web/src/lib/tour/types.ts 의 TOUR_KEYS 와 같다.
     await ctx.addInitScript(() =>
       localStorage.setItem(
-        "icatch.tour.seen.p1",
+        "icatch.mock.tours",
         JSON.stringify(["home-empty", "home", "chat", "suggestions", "memories", "calendar", "profile", "growth", "settings"]),
       ),
     );

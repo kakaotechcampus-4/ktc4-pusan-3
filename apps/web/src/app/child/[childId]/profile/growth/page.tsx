@@ -102,7 +102,7 @@ function GrowthDetailScreen() {
         <div>
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-baseline gap-2">
-              <PageTitle>키 · 몸무게</PageTitle>
+              <PageTitle>키·몸무게</PageTitle>
               {/* 🚨 0 건이면 넘기지 않는다 — 아래 `EmptyState` 가 같은 숫자를 훨씬 크게 말한다. */}
               {logs.length > 0 ? <CountChip>{logs.length}건</CountChip> : null}
             </div>

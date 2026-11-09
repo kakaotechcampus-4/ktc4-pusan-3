@@ -12,9 +12,11 @@ Activity 처럼 구획 상수를 이어 붙인다. tool 이 못 막는 것을 �
 
 from collections.abc import Sequence
 
+from app.agents.common.evidence import RankedEvidence
 from app.agents.growth.context import GrowthContext
 from app.agents.growth.schemas.task import GrowthTaskType
 from app.agents.growth.tools.docs import DocHit
+from app.agents.growth.tools.memory import covers_topic
 from app.rules.growth_topic import SCREEN
 
 # 같은 입력의 기록 조각을 요청과 가르는 머리말
@@ -28,8 +30,10 @@ _ROLE = """
 
 _DONT = """
 [하지 않는 것]
-- 아이의 발달을 평가하지 않는다. 또래 · 평균 · 정상 · 수준 · 발달 단계와 비교하지 않는다.
-  늦다 · 빠르다 · 뛰어나다 · 재능 · 소질 같은 말을 쓰지 않는다.
+- 아이의 발달을 평가하지 않는다. 아이를 또래 · 평균 · 정상 · 학년 · 발달 단계와 견주거나 수준을
+  매기지 않는다. 늦다 · 빠르다 · 뛰어나다 · 재능 · 소질 · 나이에 비해 같은 말을 쓰지 않는다.
+- 보호자가 기록한 '아이가 지금 하는 것'은 활동 난이도를 맞추는 데만 쓴다. 그것이 높다 · 낮다고
+  말하지 않는다.
 - 진단하지 않는다. 행동을 문제로 규정하지 않는다.
 - 한 번의 관찰을 성향으로 쓰지 않는다. "늘" "항상" "좋아하는" 은 확정된 관심(tier 1)에만 쓴다.
 - 음식 · 식재료를 쓰는 활동을 내지 않는다. 그건 놀이 추천의 몫이다.
@@ -177,6 +181,13 @@ def build_system_prompt(
     dynamic = [f"[월령]\n아이는 {gate.stage.months}개월이다.", _now(context)]
     if task_type is not GrowthTaskType.BOOK_SUGGESTION:
         dynamic.insert(0, _examples(examples))
+    if task_type is GrowthTaskType.LEARNING_SUGGESTION:
+        if frame := age_frame(gate.stage.months):
+            dynamic.insert(1, frame)
+        if context.state.topic_records:
+            records = tuple(context.state.topic_records.values())
+            required = covers_topic(records, context.state.topic)
+            dynamic.insert(0, topic_record_block(records, required=required))
     return "\n\n".join([_ROLE, _DONT, label, evidence, _OUTPUT, *dynamic])
 
 
@@ -204,6 +215,82 @@ def recall_message(
         "아래 후보는 다시 내지 않는다. 다른 후보로 다시 낸다.\n"
         f"{avoid}"
     )
+
+
+_TOPIC_RECORD_REQUIRED = (
+    "- 후보마다 위 id 중 하나 이상을 evidence 에 단다. reason 에 그 기록의 subject 를 그대로 넣어 "
+    "무엇을 이어 가는지 쓴다."
+)
+# 요청 영역 중 기록이 없는 영역이 있다 — 그 영역 후보는 위 기록을 달 수 없다(`memory.covers_topic`)
+_TOPIC_RECORD_SOME = (
+    "- 위 기록의 주제로 낸 후보는 그 id 를 evidence 에 달고, reason 에 그 기록의 subject 를 그대로 "
+    "넣는다."
+)
+_TOPIC_RECORD_RULES = (
+    "- 기록이 아이가 지금 하는 것(무엇을 · 어디까지)을 말하면 활동 내용의 난이도는 [월령]이 아니라 "
+    "그 기록에 맞춘다.",
+    "  잘한 것(polarity +1)이면 한 걸음 더 나아간 것, 어려워한 것(-1)이면 그 바로 앞 단계부터 "
+    "돕는 것이다.",
+    "- 진행 방식 · 시간 · 준비물은 [월령]과 [활동 짜임]에 맞춘다. [예시]는 집에서 하는 방식만 "
+    "참고하고 난이도는 따르지 않는다.",
+    "- 책 · 문제집 · 앱 이름을 대지 않는다. 집에 있는 물건으로 하는 활동이다.",
+)
+
+# 문서 행이 3~5세 공통이라(2019 개정 누리과정) 만 나이별 짜임을 코드가 더한다. 짜임만 준다 —
+# 누가 이끄나 · 단계 수 · 무엇을 바꾸나. 숫자 기준(몇까지 세기 등)은 발달 기준이라 싣지 않는다
+# 누리과정(만 3~5세)이 끝나는 월령. 이 월령부터 [활동 짜임]을 싣지 않는다
+NURI_END_MONTH = 72
+_FRAME_TAIL = " [예시]는 만 3~5세 공통 자료다. 이 짜임에 맞게 바꿔 낸다."
+_AGE_FRAMES = (
+    (
+        60,
+        "[활동 짜임] 아이는 만 5세다. 아이가 규칙 · 순서 · 기준을 정하고 말로 설명한다. "
+        "단계는 3~4줄. 그림이나 표시로 남겨 다시 본다. "
+        "두 가지를 견주거나 기준을 바꿔 다시 해 본다.",
+    ),
+    (
+        48,
+        "[활동 짜임] 아이는 만 4세다. 어른과 아이가 번갈아 한다. 단계는 3줄. "
+        "아이가 규칙 하나를 이어 가거나 바꿔 본다. 왜 그렇게 했는지 한 번 묻는다.",
+    ),
+    (
+        36,
+        "[활동 짜임] 아이는 만 3세다. 어른이 먼저 한 번 해 보이고 아이가 따라 한다. "
+        "단계는 2~3줄. 한 번에 한 가지만 바꾼다. 손으로 만지고 옮기는 물건을 쓴다.",
+    ),
+)
+
+
+def topic_record_block(records: Sequence[RankedEvidence], *, required: bool = True) -> str:
+    """요청 주제의 아이 기록 구획. 코드가 모델 전에 읽은 기록이다(`GrowthRunState.topic_records`).
+
+    id · subject · 이름 · tier · polarity · 날짜만 싣는다 — 발화 원문 · 아이 이름은 없다. subject 는
+    출력 검증이 reason 에서 찾는 값이라 보여 준다. tier 는 "늘 · 좋아하는" 을 써도 되는지(tier 1)의
+    기준이다. polarity 는 아래 규칙과 같은 모양(+1 · -1)으로 쓴다.
+
+    `required` 가 False 면 요청 영역 중 기록이 없는 영역이 있다 — 후보마다 달라고 하지 않는다.
+    """
+    lines = ["[요청 주제의 아이 기록]"]
+    for record in records:
+        polarity = f"{record.polarity:+d}" if record.polarity else "0"
+        lines.append(
+            f"- id {record.ref.id} · subject {record.subject} · {record.label} "
+            f"(tier {record.tier}, polarity {polarity}, {record.observed_on.isoformat()})"
+        )
+    lines.append(_TOPIC_RECORD_REQUIRED if required else _TOPIC_RECORD_SOME)
+    lines.extend(_TOPIC_RECORD_RULES)
+    return "\n".join(lines)
+
+
+def age_frame(months: int) -> str | None:
+    """교육의 [활동 짜임]. 35개월 이하는 없다 — 문서 행 구간이 이미 나뉘어 있다. 72개월부터도 없다 —
+    누리과정 밖이고 만 5세 짜임을 주면 나이를 틀리게 말한다."""
+    if months >= NURI_END_MONTH:
+        return None
+    for floor, text in _AGE_FRAMES:
+        if months >= floor:
+            return text + _FRAME_TAIL
+    return None
 
 
 def _examples(examples: Sequence[DocHit]) -> str:

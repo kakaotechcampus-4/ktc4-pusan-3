@@ -22,3 +22,35 @@ def test_급식_조회와_갱신의_경계_예시가_있다() -> None:
 def test_무엇을_먹일지_없이_시점만_묻는_말은_food_가_아니다() -> None:
     prompt = build_system_prompt()
     assert '"지금 또 먹여도 돼?" → request/health' in prompt
+
+
+def test_앞_대화_절이_다시_나눌_때_절_뒤에_있다() -> None:
+    prompt = build_system_prompt(with_context=True)
+
+    assert "[앞 대화가 올 때]" in prompt and "resolved_request" in prompt
+    assert prompt.index("[다시 나눌 때]") < prompt.index("[앞 대화가 올 때]")
+
+
+def test_앞_대화_절은_조각과_kind_를_이번_입력으로_묶는다() -> None:
+    section = build_system_prompt(with_context=True).split("[앞 대화가 올 때]")[1]
+
+    assert "이번 입력에서만 자른다" in section
+    assert "다시 record 로 보내지 않는다" in section
+    assert "이번 입력의 말로 정한다" in section
+    assert "unclear" in section
+
+
+def test_프롬프트_예시는_후속_eval_문장을_옮기지_않는다() -> None:
+    from tests.eval.agents.supervisor.followup_cases import FU_CASES
+
+    prompt = build_system_prompt(with_context=True)
+
+    assert not [case.case_id for case in FU_CASES if case.text in prompt]
+
+
+def test_앞_대화가_없는_호출의_프롬프트에는_앞_대화_절이_없다() -> None:
+    """context=None 호출은 앞 대화 기능이 생기기 전과 같은 글을 모델에 보낸다."""
+    default = build_system_prompt()
+
+    assert "[앞 대화가 올 때]" not in default and "resolved_request" not in default
+    assert build_system_prompt(with_context=True).startswith(default)

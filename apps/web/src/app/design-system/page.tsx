@@ -1138,8 +1138,8 @@ function EventDraftSection() {
 
       <SubTitle>반복 일정 전부 고치기 — 읽기 전용 (#738)</SubTitle>
       <p className="text-caption text-ink-subtle">
-        🚨 범위(오늘 이후 회차 전부)를 먼저 말하고, `before` 와 비교한 변화를 그린다. 고칠 칸이 없다
-        — 다르게 하려면 대화로 다시 말한다. 제출도 게이트 ㉠ 이다.
+        🚨 범위(아직 시작하지 않은 회차 전부)를 먼저 말하고, `before` 와 비교한 변화를 그린다. 고칠
+        칸이 없다 — 다르게 하려면 대화로 다시 말한다. 제출도 게이트 ㉠ 이다.
       </p>
       <SeriesDraftCard draft={DS_DRAFT_SERIES} onSubmit={() => {}} />
       <SeriesDraftCard draft={DS_DRAFT_SERIES} state="submitted" onSubmit={() => {}} />

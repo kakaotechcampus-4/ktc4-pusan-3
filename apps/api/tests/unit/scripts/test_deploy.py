@@ -22,14 +22,17 @@ docker · git · sleep 을 가짜로 바꿔 돈다. docker · git 은 받은 인
 
 import json
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
 
 ROOT = Path(__file__).resolve().parents[5]
 SCRIPT = ROOT / "deploy" / "scripts" / "deploy.sh"
+COMPOSE_FILE = ROOT / "deploy" / "docker" / "docker-compose.deploy.yml"
 
 DEV_ENV = (
     "COMPOSE_PROJECT_NAME=ktc4-dev\n"
@@ -479,5 +482,78 @@ def test_make_migrate_reads_the_deployed_tag_when_it_runs(box):
     result = box.make("deploy-migrate")
 
     assert result.returncode == 0, result.stdout + result.stderr
-    run = next(c for c in box.calls() if " run --rm api " in c)
+    run = next(c for c in box.calls() if " run --rm api-task " in c)
     assert "alembic upgrade heads" in run and run.endswith("tag=prev web=prev")
+
+
+# ── compose run (일회용 상자) ─────────────────────────────────────────
+
+
+def _services() -> dict:
+    return yaml.safe_load(COMPOSE_FILE.read_text())["services"]
+
+
+def _one_off_targets(path: Path) -> list[str]:
+    """`compose … run --rm <서비스>` 로 부르는 서비스 이름.
+    `docker run --rm -e …`(Caddyfile 검사)는 compose 가 아니라 빠진다."""
+    return re.findall(r"\brun --rm (?:--\S+ )*([a-z][\w-]*)", path.read_text())
+
+
+def _fixed_ip_networks(service: dict) -> list[str]:
+    nets = service.get("networks") or {}
+    if not isinstance(nets, dict):  # `- default` 처럼 목록이면 주소를 못 적는다
+        return []
+    return [name for name, cfg in nets.items() if cfg and "ipv4_address" in cfg]
+
+
+@pytest.mark.parametrize("path", [SCRIPT, ROOT / "Makefile"], ids=["deploy.sh", "Makefile"])
+def test_one_off_runs_never_use_a_service_with_a_fixed_ip(path):
+    """compose run 은 서비스의 고정 IP 까지 복사한다. api(ktc4-edge .20 · .21)가 떠 있는 동안
+    `run --rm api` 를 하면 같은 주소를 두 번 잡아 Address already in use 로 배포가 멈춘다.
+    첫 배포 · 첫 전환은 api 가 없어서 통과하고 두 번째 배포부터 늘 터졌다 (11-09 dev 배포 3회)."""
+    targets = _one_off_targets(path)
+    services = _services()
+
+    assert targets, f"{path.name} 에서 compose run 을 못 찾았다 — 정규식이 낡았다"
+    for name in targets:
+        fixed = _fixed_ip_networks(services[name])
+        assert not fixed, f"{path.name}: run --rm {name} — {name} 은 {fixed} 에 고정 IP 가 있다"
+
+
+SHARED_WITH_API = (
+    "image",
+    "environment",
+    "env_file",
+    "volumes",
+    "mem_limit",
+    "memswap_limit",
+    "depends_on",
+)
+
+
+def test_api_task_is_the_api_image_with_api_settings_minus_the_edge():
+    """일회용 작업(마이그레이션 · 적재)은 api 와 같은 이미지 · 같은 설정으로 돈다.
+    다른 것은 셋뿐이다.
+    - edge 에 안 붙는다 — 고정 IP 가 없고, Caddy 망 · S3 열쇠(.20)에 닿을 이유도 없다.
+    - build 가 없다 — 이미지가 없을 때 compose run 이 지금 소스를 배포된 sha 이름으로
+      굽지 못하게 (#808 리뷰).
+    - profile 이 있다 — up(deploy.sh · make deploy-up)이 상시 서비스로 띄우지 않게."""
+    s = _services()
+    api, task = s["api"], s["api-task"]
+
+    for key in SHARED_WITH_API:
+        assert task.get(key) == api.get(key), key
+    assert "edge" not in (task.get("networks") or ["default"])
+    assert "build" not in task
+    assert task.get("pull_policy") == "never"
+    assert task.get("profiles")
+    assert "container_name" not in task
+
+
+def test_migration_runs_in_api_task_before_up(box):
+    box()
+
+    calls = box.calls()
+    migrate = _index(calls, "alembic upgrade heads")
+    assert " run --rm api-task uv run --no-sync alembic upgrade heads " in calls[migrate]
+    assert migrate < _index(calls, " up ")

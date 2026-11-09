@@ -235,7 +235,7 @@ function HomeScreen() {
             <ConsentRequiredCard
               childId={childId}
               error={consentBlocked}
-              what="오늘 기록을 보여드릴 수 없어요."
+              what="오늘 기록을 보여 드릴 수 없어요."
             />
           ) : home.isError ? (
             <CardFailed>
@@ -329,7 +329,7 @@ function HomeBody({ data, medications }: { data: HomeResponse; medications: Reac
           data-tour="empty"
           icon={NotebookPen}
           title="아래에 한 줄 적으면 여기에 쌓여요"
-          description="기록이 없으면 제안도 만들지 않아요. 지어내지 않으려고요."
+          description="기록이 쌓이기 전에도 제안은 받을 수 있어요. 그때는 일반 추천이라고 적어 드려요."
           count={0}
         />
       </div>

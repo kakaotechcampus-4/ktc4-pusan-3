@@ -83,13 +83,13 @@ async def test_other_childs_calendar_is_forbidden(
 async def test_month_counts_match_day_lists(
     db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
 ):
-    """달 보기의 기록 수 = 하루 보기의 기록 목록. 여러 날 기록은 걸친 날마다 나온다."""
+    """달 보기의 기록 수 = 하루 보기의 기록 목록. 여러 날 기록은 걸친 날마다, 건강 기록도 나온다."""
     headers, parent_id = bearer
     await _food(session, cid, DAY)
     await _food(session, cid, DAY, days=2)  # 10일 · 11일
     await _food(session, cid, DAY, status=ObservationStatus.INACTIVE)  # 고친 기록도 나온다
     await _food(session, cid, DAY, status=ObservationStatus.DELETED)  # 지운 기록은 안 나온다
-    await create_observation(
+    await create_observation(  # 건강 기록도 기록 탭처럼 세고 싣는다 (#764)
         session,
         domain="health",
         child_id=cid,
@@ -105,10 +105,13 @@ async def test_month_counts_match_day_lists(
         )
     ).json()
     counts = {d["date"]: d["observation_count"] for d in month["days"]}
-    assert counts == {"2026-03-10": 3, "2026-03-11": 1}
+    assert counts == {"2026-03-10": 4, "2026-03-11": 1}
+    days = {}
     for day, count in counts.items():
         detail = await db_client.get(f"/api/v1/children/{cid}/calendar/{day}", headers=headers)
-        assert len(detail.json()["observations"]) == count
+        days[day] = detail.json()["observations"]
+        assert len(days[day]) == count
+    assert "observation_health" in {o["kind"] for o in days["2026-03-10"]}
 
 
 async def test_event_ending_at_midnight_stays_on_its_day(

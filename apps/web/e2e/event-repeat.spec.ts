@@ -8,7 +8,7 @@ import { browserDaysAgo } from "./time-zone";
  *
  * - 회차 날짜는 서버 규칙이 정한다 — 화면은 반복 문구를 그대로 그리고 첫 회차 날짜를 고치지 않는다.
  * - 반복 묶음 고치기도 승인 게이트 ㉠ 이다 — 누르기 전에는 아무것도 쓰지 않고, 키를 단다.
- * - 묶음 고치기는 읽기 전용이고, 범위(오늘 이후 회차 전부)를 먼저 말한다.
+ * - 묶음 고치기는 읽기 전용이고, 범위(아직 시작하지 않은 회차 전부)를 먼저 말한다.
  * 🚨 지어낸 일정이다 (최상위 §9).
  */
 
@@ -80,7 +80,7 @@ test.describe("event_repeat — 반복 일정 초안", () => {
 
     const card = sheet.locator("div:not([hidden]) > *").filter({ hasText: "반복 일정 수정" });
     await expect(
-      card.getByText("오늘 이후 회차가 모두 바뀌어요. 지난 회차는 그대로예요."),
+      card.getByText("앞으로의 회차가 모두 바뀌어요. 지난 회차는 그대로예요."),
     ).toBeVisible();
     // 무엇이 달라지는지 — 시각과 준비물 (서버가 준 before 와 비교).
     await expect(card.getByText("이렇게 달라져요")).toBeVisible();

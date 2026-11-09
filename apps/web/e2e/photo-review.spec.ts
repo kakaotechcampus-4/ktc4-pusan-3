@@ -31,7 +31,7 @@ function row(page: Page, title: string): Locator {
 
 async function openSheet(page: Page, title: string): Promise<Locator> {
   await row(page, title)
-    .getByRole("button", { name: /^고치기/ })
+    .getByRole("button", { name: /^고치(기|고 일정 넣기)/ })
     .click();
   return page.getByRole("dialog");
 }
@@ -62,8 +62,8 @@ test("읽은 시각이 시각 칸에 채워져 열리고, 그대로 넣을 수 �
   const sheet = await openSheet(page, "도서관 나들이");
 
   await sheet.getByText("일정으로도 넣기", { exact: true }).click();
-  await expect(sheet.getByRole("combobox", { name: "시작 시간 — 시" })).toHaveText(/오전 9시/);
-  await expect(sheet.getByRole("combobox", { name: "시작 시간 — 분" })).toHaveText(/30분/);
+  await expect(sheet.getByRole("combobox", { name: "시작 시간, 시" })).toHaveText(/오전 9시/);
+  await expect(sheet.getByRole("combobox", { name: "시작 시간, 분" })).toHaveText(/30분/);
 
   await sheet.getByRole("button", { name: "확인했어요, 캘린더에 넣을게요" }).click();
   await expect(sheet.getByText(/캘린더에 넣었어요/)).toBeVisible();
@@ -93,9 +93,9 @@ test("여러 날 일정은 끝날까지 함께 넣고, 시작을 고치면 그�
   // 시작 시각을 고르기 전에는 잠긴 이유가 먼저 서므로, 시각까지 고른 뒤에 본다.
   await sheet.getByText("하루 종일", { exact: true }).click();
   await expect(sheet.getByText(/그날 하루로 넣어요/)).toHaveCount(0);
-  await sheet.getByRole("combobox", { name: "시작 시간 — 시" }).click();
+  await sheet.getByRole("combobox", { name: "시작 시간, 시" }).click();
   await page.getByRole("option", { name: "오전 9시", exact: true }).click();
-  await sheet.getByRole("combobox", { name: "시작 시간 — 분" }).click();
+  await sheet.getByRole("combobox", { name: "시작 시간, 분" }).click();
   await page.getByRole("option", { name: "00분", exact: true }).click();
   await expect(sheet.getByText(/그날 하루로 넣어요/)).toBeVisible();
   await sheet.getByText("하루 종일", { exact: true }).click();
@@ -186,15 +186,15 @@ test("시각을 읽은 시작은 하루 종일 마감이 붙어도 시각과 끝
 
   const sheet = await openSheet(page, "부모 참여 수업");
   await sheet.getByText("일정으로도 넣기", { exact: true }).click();
-  await expect(sheet.getByRole("combobox", { name: "시작 시간 — 시" })).toHaveText(/오전 10시/);
+  await expect(sheet.getByRole("combobox", { name: "시작 시간, 시" })).toHaveText(/오전 10시/);
   // 🚨 함께 넣는 끝은 게이트 앞에서 보인다.
   await expect(sheet.getByText(/오후 12:00에 끝나요/)).toBeVisible();
 
   // 시작을 끝보다 늦게 고치면 끝이 빠지고, 빠졌다고 말한다.
-  await sheet.getByRole("combobox", { name: "시작 시간 — 시" }).click();
+  await sheet.getByRole("combobox", { name: "시작 시간, 시" }).click();
   await page.getByRole("option", { name: "오후 1시", exact: true }).click();
   await expect(
-    sheet.getByText("시작이나 하루 종일을 바꿔서 읽은 끝나는 시각 없이 넣어요."),
+    sheet.getByText("시작 시간이나 하루 종일을 바꿔서, 읽어 둔 끝나는 시각은 빼고 넣어요."),
   ).toBeVisible();
   await expect(sheet.getByText(/에 끝나요/)).toHaveCount(0);
 });

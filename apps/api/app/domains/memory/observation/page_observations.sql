@@ -1,7 +1,11 @@
 WITH observations AS (
     SELECT 'observation_food' AS kind, id, child_id, status, observed_range, affinity_id, raw_text, subject FROM observation_food
     UNION ALL
-    SELECT 'observation_health', id, child_id, status, observed_range, NULL::uuid, raw_text, NULL::text FROM observation_health
+    -- 건강 표는 주제 칸이 없다. 화면 줄 제목(약 이름 · 증상)을 주제 자리에 넣어 검색이 그 말로도 찾게 한다 (#764).
+    -- 한 행에 약과 증상이 같이 있지 않다(CHECK observation_health_symptom_not_with_medication).
+    -- 증상은 화면 제목처럼 ", " 로 잇는다 — 보이는 그대로 검색해도 찾는다
+    SELECT 'observation_health', id, child_id, status, observed_range, NULL::uuid, raw_text,
+           COALESCE(medication_given, array_to_string(symptom, ', ')) FROM observation_health
     UNION ALL
     SELECT 'observation_education', id, child_id, status, observed_range, affinity_id, raw_text, subject FROM observation_education
     UNION ALL

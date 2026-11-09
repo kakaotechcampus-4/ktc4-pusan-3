@@ -17,6 +17,11 @@ export const API_ERROR_CODES = [
   "not_found", // 404
   "owner_required", // 409
   "already_confirmed", // 409 승인 게이트 중복
+  // 🔶 409 `POST /children/{cid}/suggestions/approve` — 채택하려는 제안에 그사이 알레르기로 등록된 식품이 들어 있다
+  //    (서버 #835 · `docs/web/event-draft-ui-v1.md` §3-8 · `docs/api/suggestions-v1.md` §8).
+  //    하나라도 걸리면 **전부 거절**하고 걸린 제안 id 를
+  //    `detail.suggestion_ids` 에 싣는다. 🚨 다시 시도할 수 없다 — 같은 선택은 같은 409 다. 화면은 그 제안을 선택에서 뺀다.
+  "allergen_blocked",
   "already_exists", // 409 health_safety 등록 — active 끼리 (아이, 종류, 앞뒤 공백 뗀 이름)이 겹침 (#369). 🚨 실패가 아니라 "이미 기록에 있다" 다
   "already_corrected", // 409 `POST /corrections` 가 active 가 아닌 기록을 받음 (#277) — 값이 틀린 400 과 다르다
   "invite_used", // 409
@@ -49,7 +54,7 @@ export const API_ERROR_CODES = [
   // 일정도 저장되지 않았다. 🚨 같은 값으로 다시 시도할 수 없다 — 알림을 다시 골라야 한다.
   "invalid_reminder",
   // 422 요일 반복 일정의 규칙이 성립하지 않는다 (#738 · 서버 #761) — 요일이 없거나, 끝 날짜가 첫 회차보다 앞이거나,
-  // 90일을 넘거나, 한 회차가 그날 안에서 끝나지 않거나, 묶음 고치기 뒤 오늘 이후 회차가 남지 않는다.
+  // 90일을 넘거나, 한 회차가 그날 안에서 끝나지 않거나, 묶음 고치기 뒤 남는 회차(아직 시작하지 않은 것)가 없다.
   // 🚨 같은 초안으로 다시 시도할 수 없다 — 카드는 요일 · 끝 날짜 · 첫 회차를 고칠 칸이 없어서 대화로 다시 말해야 한다.
   "invalid_repeat",
   "llm_unavailable", // 503 — 🚨 기본값으로 대체하지 않는다
@@ -93,7 +98,7 @@ export class ApiError extends Error {
 /** 네트워크 자체가 실패했을 때 (서버 봉투가 없음). */
 export class NetworkError extends Error {
   constructor(cause: unknown) {
-    super("서버에 연결하지 못했어요");
+    super("연결하지 못했어요. 인터넷 연결을 확인해 주세요.");
     this.name = "NetworkError";
     this.cause = cause;
   }

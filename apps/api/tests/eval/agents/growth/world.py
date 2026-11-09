@@ -161,6 +161,20 @@ WORLDS: dict[str, WorldSpec] = {
     "C35": WorldSpec(months=35, **_EMPTY),
     "C36": WorldSpec(months=36, **_EMPTY),
     "C48": WorldSpec(),
+    # 보호자가 수준을 말한 수학 기록 하나뿐인 60개월 (T45) — 주제 기록이 있으면 개인화여야 한다
+    "C60-math": WorldSpec(
+        months=60,
+        observations=(
+            (
+                "education",
+                1,
+                {"subject": "수학", "topic": "중학교 1학년 수준의 수학 문제 풀이", "polarity": 1},
+            ),
+        ),
+        affinities=(),
+    ),
+    "C40-empty": WorldSpec(months=40, **_EMPTY),
+    "C64-empty": WorldSpec(months=64, **_EMPTY),
     "C48-tooth": WorldSpec(**_only(_routine(1, "양치하기", "self_care", "verbal_prompt"))),
     # Memory 가 같은 run 에 방금 저장한 "혼자 양치했어" (T23)
     "C48-today": WorldSpec(**_only(_routine(0, "양치하기", "self_care", "independent"))),

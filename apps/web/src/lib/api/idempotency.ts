@@ -123,11 +123,11 @@ export const idempotentPath = {
    */
   updateEvent: (childId: string, eventId: string) => `/children/${childId}/events/${eventId}`,
   /**
-   * 🚨 승인 게이트 ㉠ — 반복 묶음 고치기 반영 (#738). 오늘 이후 회차 전부를 한 번에 고친다 — 같은 게이트의
+   * 🚨 승인 게이트 ㉠ — 반복 묶음 고치기 반영 (#738). 아직 시작하지 않은 회차 전부를 한 번에 고친다 — 같은 게이트의
    *    세 번째 메서드지 게이트가 는 것이 아니다. 새 준비물 이름이 회차마다 행으로 들어가서 `updateEvent` 와 같은
    *    이유로 키를 단다.
-   * ⚠️ **경로는 잠정이다.** 서버 PR 은 아직이고(#744 는 `PATCH /event-series/{sid}` 로 적었다), 일정 수정과 같이
-   *    아이 스코프 아래에 둔다 — `series_id` 하나로는 남의 아이 묶음인지 가릴 수 없다 (#284 · #316).
+   * 경로는 서버(#761)와 같다. 일정 수정과 같이 아이 스코프 아래다 — `series_id` 하나로는 남의 아이 묶음인지
+   *    가릴 수 없다 (#284 · #316). 다른 아이의 묶음이면 404 다. 서버도 키를 필수로 받는다.
    */
   updateEventSeries: (childId: string, seriesId: string) =>
     `/children/${childId}/event-series/${seriesId}`,

@@ -56,7 +56,7 @@ export function SafetyScanRowSheet({
       open={row !== null}
       onClose={onClose}
       title="옮겨 적은 것 고치기"
-      description="여기서 고친 값이 등록돼요. 등록은 아래 승인 버튼을 눌러야 돼요."
+      description="고친 값으로 등록돼요. 시트를 닫고 화면 아래 등록 버튼을 눌러야 저장돼요."
     >
       {/* 🚨 열 때마다 그 줄의 값에서 시작한다 — 앞 줄을 고치던 값이 남으면 다른 줄에 덮인다. */}
       {row ? <RowForm key={row.id} row={row} onSave={onSave} onDrop={onDrop} /> : null}

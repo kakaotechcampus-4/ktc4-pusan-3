@@ -10,6 +10,7 @@ import {
   placeSuggestion,
   requestedFoodSuggestion,
   requestedGeneralSuggestion,
+  seriesRef,
   staleSuggestion,
   suggestionDraft,
   suggestionAllergens,
@@ -91,7 +92,17 @@ function refuseUnapproved(ids: string[]) {
  *    실서버도 `kind` 를 가리지 않고 `check.blocked` 면 뺀다.
  */
 function notBlocked(item: { id: string }): boolean {
-  return !(suggestionAllergens[item.id] ?? []).some((a) => allergyStatus(a) === "active");
+  return !allergensOf(item.id).some((a) => allergyStatus(a) === "active");
+}
+
+/**
+ * 제안에 든 알레르기 항목. `precheck_shared_item` 이면 두부 제안(`s_2`)에도 계란이 들어 있다 — 같은 식품이 든
+ * 제안 둘을 고르면 시트가 그 식품을 한 장으로 묻는지 보는 시나리오다 (#823). 픽스처를 바꾸지 않는 것은
+ * `s_2` 를 골라 다음 단계로 가는 e2e 가 여럿이라서다.
+ */
+function allergensOf(id: string): string[] {
+  const base = suggestionAllergens[id] ?? [];
+  return currentScenario() === "precheck_shared_item" && id === "s_2" ? [...base, "계란"] : base;
 }
 
 /**
@@ -106,7 +117,7 @@ function notBlocked(item: { id: string }): boolean {
  */
 function prechecksFor(items: Array<{ id: string }>): Precheck[] {
   return items.flatMap((s) =>
-    (suggestionAllergens[s.id] ?? [])
+    allergensOf(s.id)
       .filter((a) => allergyStatus(a) === null)
       .map((a) => ({
         code: "unknown_ingredient" as const,
@@ -471,6 +482,27 @@ export const suggestionHandlers = [
     // ⚠️ 실서버의 `409 not_draft`(거절된 제안) · `409 suggestion_expired`(24시간 지남)는 여기서
     //    안 난다 — 목의 제안은 늘 `draft` 이고 만료되지 않는다. 이미 채택한 것은 서버도 그대로 200 이다.
 
+    /**
+     * 🚨 **채택할 때 알레르기를 다시 읽는다** (문서 §3-8 ②). 목록을 받은 뒤 다른 보호자가
+     *    등록한 알레르기가 든 제안이 있으면 **하나라도 걸려도 전부 거절**하고, 걸린 id 를 싣는다.
+     *    이미 채택한 것은 다시 보지 않는다(`draft` 만 본다).
+     *    서버 #835 와 같다 (`docs/api/suggestions-v1.md` §8). ⚠️ 서버는 알레르기 항목이 든 제안인데 건강정보 동의가
+     *    없으면 `403 consent_required` 를 먼저 낸다 — 목은 `consent` 시나리오가 채택 전체를 403 으로 막는 것으로 대신한다.
+     */
+    const blocked = picked
+      .filter((s) => !approvedSuggestions.has(s.id) && !notBlocked(s))
+      .map((s) => s.id);
+    if (blocked.length > 0) {
+      return apiError(
+        409,
+        "allergen_blocked",
+        "알레르기로 등록된 항목이 들어 있어 고를 수 없어요",
+        {
+          suggestion_ids: blocked,
+        },
+      );
+    }
+
     for (const id of ids) approvedSuggestions.add(id);
 
     const response: ApproveSuggestionsResponse = {
@@ -555,7 +587,7 @@ export const suggestionHandlers = [
       };
 
       // 🚨 반복 일정(#738)은 요일과 끝 날짜가 다 있어야 한다. 문구는 서버 값이라 되돌려 받지 않는다 (`RepeatRequest`).
-      //    ⚠️ 서버 계약 전이다 — 회차로 펼치는 것은 실서버 몫이라 목은 첫 회차 한 건만 돌려준다.
+      //    회차로 펼치는 것은 실서버 몫이라(#761) 목은 첫 회차 한 건만 돌려준다 — 서버 응답도 `event` 는 첫 회차고 `series` 가 붙는다.
       if (
         body.repeat &&
         (!body.repeat.weekdays?.length || !body.repeat.until || "label" in body.repeat)
@@ -640,6 +672,16 @@ export const suggestionHandlers = [
         })),
         // 🚨 제출한 보호자 본인의 알림만 걸린다 — 응답도 그것만 싣는다.
         reminder,
+        // 반복이면 첫 회차에 묶음이 붙는다 (서버 #761). 반복이 아니면 키 자체가 없다.
+        ...(body.repeat?.weekdays && body.repeat.until
+          ? {
+              series: seriesRef(
+                `series_new_${submittedCount}`,
+                body.repeat.weekdays,
+                body.repeat.until,
+              ),
+            }
+          : {}),
       });
 
       // 🚨 제안의 `status` 를 싣지 않는다 — 제출은 상태를 바꾸지 않는다 (#206).

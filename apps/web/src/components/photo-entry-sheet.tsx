@@ -97,8 +97,8 @@ export function PhotoEntrySheet({
        * 🚨 급식 · 안내는 예외다 — 일정 칸을 아예 세우지 않는 종류라(`canBecomeEvent`) 제목이
        *    없는 기능을 약속하면 안 된다.
        */
-      title={entry && canBecomeEvent(entry) ? "고치기 · 일정 넣기" : "읽은 내용 고치기"}
-      description="여기서 고친 값이 저장돼요. 고치기 전에는 아무것도 저장되지 않아요."
+      title={entry && canBecomeEvent(entry) ? "고치고 일정 넣기" : "읽은 내용 고치기"}
+      description="고친 값은 마지막에 저장을 누를 때 함께 저장돼요."
     >
       {/* 🚨 열 때마다 처음 값에서 시작한다 — 앞 항목을 고치던 값이 남으면 다른 항목에 덮인다. */}
       {entry ? (
@@ -405,7 +405,7 @@ function EntryForm({
             // 🚨 이미 넣은 것은 끌 수 없다 — 끈다고 캘린더에서 빠지지 않는다.
             onChange={(next) => !eventAdded && setAsEvent(next)}
             label="일정으로도 넣기"
-            description="켜면 이 내용이 캘린더에 들어가요. 기록으로 남기는 것과는 별개예요."
+            description="켜면 캘린더에 넣을 날짜와 시간을 고를 수 있어요. 읽은 내용 저장과는 따로예요."
           />
 
           {added ? (
@@ -451,7 +451,7 @@ function EntryForm({
                 </p>
               ) : dropped === "time" ? (
                 <p className="text-body-sm text-ink-muted">
-                  시작이나 하루 종일을 바꿔서 읽은 끝나는 시각 없이 넣어요.
+                  시작 시간이나 하루 종일을 바꿔서, 읽어 둔 끝나는 시각은 빼고 넣어요.
                 </p>
               ) : null}
 
@@ -468,8 +468,7 @@ function EntryForm({
                   role="status"
                   className="bg-surface-muted rounded-field text-body-sm text-ink-muted px-3 py-2"
                 >
-                  {addEvent.error instanceof Error ? addEvent.error.message : "넣지 못했어요."} 아직
-                  아무것도 넣지 않았어요.
+                  넣지 못했어요. 아직 아무것도 넣지 않았어요.
                 </p>
               ) : null}
 

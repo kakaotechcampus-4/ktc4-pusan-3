@@ -77,13 +77,13 @@ const VERDICT_DECAY: Record<"need_more_observation" | "outdated" | "wrong", numb
  *
  * 🚨 **`observation_${domain}` 으로 유추하지 않는다.** `growth` 는 education 과 routine 두 테이블이고,
  *    그렇게 찾으면 없는 테이블(`observation_growth`)을 찾아 "성장" 이 늘 비었다 (#269).
- * 🚨 **건강은 첫 배포 범위 밖이다** (#259). 서버는 목록에서 빼고 `domain=health` 에 빈 목록을 준다.
+ * 건강 기록도 목록 · 상세 · 캘린더에 나온다 (#764). 모양은 `ObservationHealth` 다 — 주제가 없어서 검색은 원문만 본다.
  */
 const KINDS_BY_AGENT: Record<Agent, readonly ObservationKind[]> = {
   food: ["observation_food"],
   activity: ["observation_activity"],
   growth: ["observation_education", "observation_routine"],
-  health: [],
+  health: ["observation_health"],
 };
 const VISIBLE_KINDS: readonly ObservationKind[] = Object.values(KINDS_BY_AGENT).flat();
 
@@ -377,6 +377,11 @@ export const memoryHandlers = [
       return HttpResponse.json(response, { status: 201 });
     }
 
+    // 🚨 서버는 건강 기록 고치기를 받지 않는다 (#764). 기록을 찾기 전에 400 이다 — 화면은 건강 기록에 고치기 버튼을
+    //    세우지 않고 기록 지우기만 둔다.
+    if (body.target_ref.kind === "observation_health") {
+      return apiError(400, "validation_failed", "이 대상에는 쓸 수 없는 고치기예요");
+    }
     const target = allObservations.find(
       (o) => o.kind === body.target_ref.kind && o.id === body.target_ref.id,
     );

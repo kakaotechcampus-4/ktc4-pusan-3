@@ -240,6 +240,11 @@ export const childrenHandlers = [
         reactions?: string[];
         notes?: string | null;
       };
+      // 저장 실패 흉내 (#823). 🚨 **대두만 실패한다** — 여러 식품 중 하나만 실패했을 때 저장된 것은 잠기고
+      //    실패한 것만 같은 키로 다시 나가는지 본다. 에러는 재생하지 않으니(`isReplayable`) 다시 눌러도 같은 실패다.
+      if (currentScenario() === "safety_save_fail" && body.label.trim() === "대두") {
+        return apiError(500, "internal_error", "잠시 후 다시 시도해 주세요");
+      }
       // 🚨 DB CHECK `health_safety_severity_by_kind` 를 목이 대신 막는다 — 알레르기에 가볍게~심하게
       //    를 보내면 실서버에서는 등록이 통째로 실패한다. 목이 받아 주면 화면이 그걸 모르고 지나간다.
       if (body.severity != null && !isSeverityFor(body.type, body.severity)) {

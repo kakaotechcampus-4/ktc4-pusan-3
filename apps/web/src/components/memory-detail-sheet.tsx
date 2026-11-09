@@ -260,6 +260,9 @@ export function MemoryDetailSheet({
                 onSelect={(verdict) => correct.mutate(verdict)}
                 pending={correct.isPending ? (correct.variables ?? null) : null}
                 onDelete={observation ? () => askDelete(true) : undefined}
+                // 🚨 건강 기록은 판정 없이 지우기만 선다 (#764) — 서버가 건강 기록 고치기를 400 으로 막는다.
+                //    "이번만 그랬어요" 는 기억 집계에서 빼는 일인데 건강 기록은 기억에 묶이지 않아서다.
+                deleteOnly={observation !== null && isHealthObservation(observation)}
               />
             )}
           </div>
@@ -312,7 +315,10 @@ function CascadeResult({
   return (
     <div className="bg-surface-muted rounded-field p-3.5" role="status">
       <p className="text-body-sm text-ink">
-        {josa(VERDICT_LABEL[result.correction.verdict], "으로/로")} 반영했어요.
+        {/* 🚨 라벨에 조사를 붙여 말하지 않는다 — "기록이 더 필요해요로 반영했어요" 가 됐다 (#815).
+            ⚠️ 기록 쪽 문장은 기록 교정이 `once_only` 하나뿐이라는 전제다 (`CorrectionButtons` 의 `VERDICTS.observation`).
+               판정이 늘면 `result.correction.verdict` 로 가른다. */}
+        {affinity ? "남긴 의견을 반영했어요." : "이번 한 번만 있던 일로 바꿨어요."}
       </p>
       {affinity && stateBefore ? (
         <div className="mt-1">
@@ -331,7 +337,7 @@ function CascadeResult({
           {profiles > 0 ? <li>기억 {profiles}건을 다시 계산했어요.</li> : null}
           {suggestions > 0 ? (
             <li>
-              {targetKind === "observation" ? "이 기록" : "이 기억"}을 쓰던 추천 {suggestions}건이
+              {targetKind === "observation" ? "이 기록" : "이 기억"}을 쓰던 제안 {suggestions}건이
               달라졌어요.
             </li>
           ) : null}
@@ -436,7 +442,9 @@ function CorrectedNote({ status }: { status: "stand_alone" | "inactive" }) {
   const { label, note } = CORRECTED_OBSERVATION[status];
   return (
     <div className="bg-surface-muted rounded-field p-3.5">
-      <p className="text-body-sm text-ink">{josa(label, "으로/로")} 고친 기록이에요.</p>
+      <p className="text-body-sm text-ink">
+        ‘{label}’{josa.pick(label, "으로/로")} 고친 기록이에요.
+      </p>
       <p className="text-caption text-ink-muted mt-1">{note}</p>
     </div>
   );
@@ -488,7 +496,7 @@ function ObservationDetail({
       </dl>
 
       <section>
-        <h3 className="text-section text-ink">이 기록을 쓴 추천</h3>
+        <h3 className="text-section text-ink">이 기록을 쓴 제안</h3>
         {/* 스켈레톤 → 내용은 같은 자리의 교체다 (디자인 시스템 §8). */}
         <Swap id={phaseOf(detail)}>
           {detail.isPending ? (
@@ -501,8 +509,12 @@ function ObservationDetail({
                 </li>
               ))}
             </ul>
+          ) : isHealthObservation(observation) ? (
+            // 🚨 건강 기록은 고칠 수 없어서 근거에서 "빠질" 일이 없다 (#764). 빠졌다고 말하면 보호자가 무언가를
+            //    해서 뺀 것처럼 읽힌다 — 아직 쓴 추천이 없다는 사실만 말한다.
+            <p className="text-body-sm text-ink-muted mt-2">아직 이 기록을 쓴 추천이 없어요.</p>
           ) : (
-            <p className="text-body-sm text-ink-muted mt-2">이 기록은 제안 근거에서 빠져 있어요.</p>
+            <p className="text-body-sm text-ink-muted mt-2">아직 이 기록을 쓴 제안이 없어요.</p>
           )}
         </Swap>
       </section>
@@ -577,8 +589,8 @@ function AffinityDetail({ affinity }: { affinity: Affinity }) {
           "프로필" 이 아니라 "기억" 이다 — 탭 이름과 카드 문구가 그렇게 부른다. */}
       {affinity.is_stale ? (
         <p className="text-body-sm text-ink-muted">
-          6개월이 지나서 이 기억만으로는 추천을 만들지 않아요. 요즘도 그렇다면 홈에서 한 줄 적어
-          주세요. 새로 기록되면 다시 추천에 써요.
+          6개월이 지나서 이 기억만으로는 제안하지 않아요. 요즘도 그렇다면 홈에서 한 줄 적어 주세요.
+          새로 기록되면 다시 제안에 써요.
         </p>
       ) : null}
     </div>

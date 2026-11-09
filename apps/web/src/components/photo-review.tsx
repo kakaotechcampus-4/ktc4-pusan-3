@@ -82,7 +82,7 @@ const LANE: Record<PhotoLane, LaneCopy> = {
   activity: {
     read: "아이 활동 사진으로 읽었어요.",
     note: "사진에서 활동 태그만 뽑아요. 얼굴이나 사람은 분석하지 않아요.",
-    footnote: "태그는 성향이나 발달로 확정하지 않아요. 알레르기나 건강 정보로도 쓰지 않아요.",
+    footnote: "태그로 아이의 성향이나 발달을 정하지 않아요. 알레르기나 건강 정보로도 쓰지 않아요.",
   },
 };
 
@@ -106,7 +106,7 @@ const ENTRY_KIND_LABEL: Record<PhotoEntry["kind"], string> = {
  */
 function editLabel(entry: PhotoEntry, added: boolean): string {
   if (!canBecomeEvent(entry) || added) return "고치기";
-  return "고치기 · 일정 넣기";
+  return "고치고 일정 넣기";
 }
 
 export interface PhotoReviewProps {
@@ -351,7 +351,7 @@ export function PhotoReview({
               {needsReview.length > 0 ? (
                 <PreviewRow
                   term="확인 안 한 것"
-                  value={`${needsReview.length}건 · 저장하지 않아요`}
+                  value={`${needsReview.length}건은 저장하지 않아요`}
                 />
               ) : null}
             </>
@@ -364,7 +364,7 @@ export function PhotoReview({
           ) : null}
           <PreviewRow
             term="출처"
-            value={lane === "document" ? "기관이 보낸 문서" : "사진 태그 · 보호자 확인"}
+            value={lane === "document" ? "기관이 보낸 문서" : "보호자가 확인한 사진 태그"}
           />
         </dl>
 
@@ -400,7 +400,7 @@ export function PhotoReview({
               ? `저장하면 이 사진도 ${formatDay(attachDate)} 캘린더에 함께 남아요.`
               : "남길 날짜가 없어서 캘린더에는 붙이지 않아요."
             : addedCount > 0
-              ? `여기서 저장하는 것은 기록이에요. 일정 ${addedCount}건은 이미 캘린더에 넣었어요(저장과는 따로예요).`
+              ? `여기서 저장하는 것은 읽은 내용이에요. 일정 ${addedCount}건은 저장과 따로 이미 캘린더에 넣었어요.`
               : "여기서 저장하는 것은 읽은 내용이에요. 일정은 항목을 열어 따로 넣어요."}
         </p>
       </Card>
@@ -409,7 +409,7 @@ export function PhotoReview({
           승인 게이트는 2곳뿐이고 여기는 그 2곳이 아니다 (CLAUDE.md §2). */}
       <div>
         <Button variant="secondary" onClick={onGoHome}>
-          메인으로 돌아가기
+          홈으로 돌아가기
         </Button>
       </div>
 
