@@ -517,12 +517,12 @@ async def run(
                 # 다시 확인은 저장 0건일 때만 한다. 일부라도 저장했으면 확인이 끝나지 못할 때
                 # 그 저장까지 되돌려진다 (#678 리뷰) — 그 run 은 아래 _partial_reply 가 맡는다.
                 # 위험 물질 · 알레르기를 막은 run 은 "한 줄로만" 알리는 규칙과 안내가 따로 있다.
-                # 관찰 조각이 전부 등록된 약이라 거절된 run 도 뺀다 (#811)
+                # 등록 약 거절뿐인 run 은 그 말을 pipeline 이 지운다 (#811)
                 recheck_missing = (
                     bool(missing)
                     and unsaved
                     and not _blocked(calls)
-                    and not (missing == (WorkType.OBSERVE,) and _medicine_refused_only(task, calls))
+                    and not _medicine_refused_only(task, calls)
                 )
                 asked_again = resuming and replied.kind == "question" and not _wrote(calls)
                 if (
@@ -835,29 +835,45 @@ def _blocked(calls: list[ToolCallRecord]) -> bool:
 
 
 def _medicine_refused_only(task: MemoryTask | None, calls: list[ToolCallRecord]) -> bool:
-    """관찰 조각마다 그 문장에 든 약을 저장 게이트가 등록된 약이라 거절했는가.
+    """Memory 가 한 일이 등록 약 거절뿐이고, 받은 조각도 그 약을 말한 관찰뿐인가.
 
-    그 문장은 pipeline 이 같은 기준(`_with_refused_doses` 의 `mentions_medicine`)으로 복약 체크
-    안내에 싣고, Memory 말은 지운다. 다시 확인해도 보호자에게 보이는 것이 같아 호출만 는다 (#811).
+    그러면 그 문장은 pipeline 이 복약 체크 안내에 싣고 Memory 말은 지운다
+    (`_refused_doses_checked`). 다시 확인해도 보호자에게 보이는 것이 같아 호출만 는다 (#811).
     게이트는 체크 안내를 낼 자리가 있을 때만 켜진다(`_medication_room`). 거절이 났으면 카드가
     맡는다.
-    호출이 아니라 조각으로 본다. 모델이 다른 조각을 아예 부르지 않은 run 은 실패한 호출이 전부
-    거절이어도 남은 조각이 있다. 호출의 raw_text 로 짝짓지 않는다 — 모델이 원문을 바꿔 적는다.
+
+    두 기준을 같이 본다.
+      - 호출: 전부 등록 약 거절이거나 쓰기가 아닌 성공이다. pipeline 이 말을 지우는 기준과 같다.
+        이보다 넓으면 지우지 않을 말이 다시 확인 없이 나간다(인자 오류로 한 번 실패한 run).
+      - 조각: 전부 관찰이고 조각마다 거절된 약 이름이 들어 있다. 호출만 보면 모델이 부르지 않은
+        조각 · 조회 · 일정 조각이 남은 run 도 걸린다. 약 이름은 pipeline `_with_refused_doses` 와
+        같은 `mentions_medicine` 으로 본다. 호출의 raw_text 로 짝짓지 않는다 — 모델이 원문을 바꿔
+        적는다.
     """
-    if task is None:
+    if task is None or not task.hints:
         return False
     refused = [
-        name
+        str(call.arguments.get("medication_given") or "")
         for call in calls
-        if call.result.get("error", {}).get("code") == ErrorCode.REGISTERED_MEDICINE
-        and (name := str(call.arguments.get("medication_given") or ""))
+        if _medicine_refused(call)
     ]
-    observed = [hint for hint in task.hints if WorkType(hint.work) is WorkType.OBSERVE]
-    return (
-        bool(refused)
-        and bool(observed)
-        and all(any(mentions_medicine(hint.text, name) for name in refused) for hint in observed)
+    if not refused:
+        return False
+    if not all(
+        _medicine_refused(call) or (call.success and not call.name.startswith(MUTATING_PREFIXES))
+        for call in calls
+    ):
+        return False
+    return all(
+        WorkType(hint.work) is WorkType.OBSERVE
+        and any(mentions_medicine(hint.text, name) for name in refused)
+        for hint in task.hints
     )
+
+
+def _medicine_refused(call: ToolCallRecord) -> bool:
+    """저장 게이트가 등록된 약이라 거절한 호출인가."""
+    return call.result.get("error", {}).get("code") == ErrorCode.REGISTERED_MEDICINE
 
 
 def _settle(reply: MemoryReply, calls: list[ToolCallRecord], *, claimed: bool) -> MemoryReply:
