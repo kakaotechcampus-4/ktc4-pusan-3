@@ -1,6 +1,6 @@
 """기록 삭제 API — `DELETE /children/{cid}/observations/{kind}/{oid}` (#736).
 
-    ① deleted 가 아닌 기록은 상태와 상관없이 지운다 — 고친 기록(stand_alone · inactive)도
+    ① deleted 가 아닌 기록은 상태와 상관없이 지운다 — 고친 기록(stand_alone)도
     ② owner · member 모두 지운다. 연결되지 않은 보호자는 403
     ③ 없는 종류 · 없는 기록 · 이미 지운 기록 · 다른 아이의 기록은 404, 키가 없으면 400
     ④ 같은 키로 다시 오면 처음처럼 204 — 두 번 지우지 않는다. 잠금에서 기다린 사이 앞의 것이
@@ -103,7 +103,7 @@ async def _status(session: AsyncSession, model: type, oid: uuid.UUID) -> Observa
 
 @pytest.mark.parametrize(
     "status",
-    [ObservationStatus.ACTIVE, ObservationStatus.STAND_ALONE, ObservationStatus.INACTIVE],
+    [ObservationStatus.ACTIVE, ObservationStatus.STAND_ALONE],
 )
 async def test_deletes_whatever_the_status_and_starts_curator(
     db_client: AsyncClient,

@@ -39,7 +39,7 @@ class _ObservationBaseOut(BaseModel):
     confidence_source: Literal[
         "institution_notice", "parent_direct", "parent_hedged", "parent_hearsay"
     ]
-    status: Literal["active", "stand_alone", "inactive"] = Field(
+    status: Literal["active", "stand_alone"] = Field(
         description='deleted 는 응답에 나오지 않는다. stand_alone 은 "이번만 그랬어요" 를 누른 기록'
     )
     observed_from: date
