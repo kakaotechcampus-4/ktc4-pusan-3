@@ -220,22 +220,22 @@ async def test_same_key_twice_is_204_both_times_and_deletes_once(
 # 세션을 따로 열고, 끝나면 만든 보호자 · 아이를 지운다 (기록은 CASCADE). API 는 `client` 로 부른다 —
 # 핸들러도 자기 세션으로 커밋해야 겹친다.
 
-_RACE_TOKEN = "test-token-observation-race"
-
 
 @pytest.fixture
 async def committed_record():
     """(Authorization 헤더, 아이 id, 기록 id) — 실제로 커밋된 값."""
     factory = async_sessionmaker(engine, expire_on_commit=False)
+    # 실행마다 새 토큰 — 로컬 DB 를 여러 worktree 가 같이 써서, 고정 값이면 겹쳐 돌 때 부딪힌다
+    token = f"test-token-race-{uuid.uuid4().hex}"
     async with factory() as setup:
         parent = Parent()
         setup.add(parent)
         await setup.flush()
-        await seed_login(setup, parent_id=parent.id, token=_RACE_TOKEN)
+        await seed_login(setup, parent_id=parent.id, token=token)
         child_id = await link_child(setup, parent_id=parent.id)
         record = await _observe(setup, child_id, parent.id, "food")
         await setup.commit()
-    yield {"Authorization": f"Bearer {_RACE_TOKEN}"}, child_id, record.id
+    yield {"Authorization": f"Bearer {token}"}, child_id, record.id
     async with factory() as cleanup:
         await cleanup.execute(delete(Child).where(Child.id == child_id))
         await cleanup.execute(delete(Parent).where(Parent.id == parent.id))
@@ -272,8 +272,12 @@ async def test_same_key_overlapping_is_204_both_times(
     first = asyncio.create_task(client.delete(url, headers=keyed))
     await asyncio.wait_for(writing.wait(), timeout=5)
     second = asyncio.create_task(client.delete(url, headers=keyed))
-    await wait_for_lock_wait(blocker=locking[0])  # 뒤의 것이 앞의 것이 쥔 아이 잠금에서 기다린다
-    release.set()
+    try:
+        await wait_for_lock_wait(
+            blocker=locking[0]
+        )  # 뒤의 것이 앞의 것이 쥔 아이 잠금에서 기다린다
+    finally:
+        release.set()  # 실패해도 앞의 것이 잠금을 쥔 채 남지 않게 — 남으면 뒷정리가 멈춘다
     responses = await asyncio.wait_for(asyncio.gather(first, second), timeout=5)
 
     assert [r.status_code for r in responses] == [204, 204]
