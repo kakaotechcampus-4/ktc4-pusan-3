@@ -324,8 +324,8 @@ function Picker({ date, onPick }: { date: string; onPick: () => void }) {
       <div>
         <h2 className="text-title text-ink">사진 한 장이 한 줄을 대신해요</h2>
         <p className="text-body-sm text-ink-muted mt-2">
-          {formatDay(date)}에 남겨요. 알림장이나 식단표는 글자를 읽어 준비물과 일시로 정리하고, 아이
-          활동 사진은 활동 태그만 뽑아요.
+          {/* 아이 활동 사진은 시트에서 꺼 뒀다 (`lib/features.ts` · #884) — 켜면 이 문장도 같이 고친다. */}
+          {formatDay(date)}에 남겨요. 알림장이나 식단표는 글자를 읽어 준비물과 일시로 정리해요.
         </p>
       </div>
 
