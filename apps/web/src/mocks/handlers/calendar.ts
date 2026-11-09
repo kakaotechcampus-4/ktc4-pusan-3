@@ -235,7 +235,7 @@ export const calendarHandlers = [
    * 그날 내 일기 쓰기 — 서버 `PUT /children/{cid}/diary/{date}` (#318 2/3 · PR #333) 와 같다.
    * 같은 날 다시 쓰면 덮어쓰고, 응답은 하루 보기 `my_diary` 와 같은 `MyDiary` 다.
    *
-   * 🚨 **공백뿐이면 422 이고 기존 일기는 남는다.** 빈 내용은 지우기가 아니다 — 지우기는 아래
+   * 🚨 **공백뿐이면 400 이고 기존 일기는 남는다.** 빈 내용은 지우기가 아니다 — 지우기는 아래
    *    `DELETE` 하나다. 저장은 앞뒤 공백 · 줄바꿈까지 원문 그대로다.
    * 🚨 **`content` 가 없거나 문자열이 아니면 400 이다** (서버 errors.py 의 바디 검증 — 경로는 422).
    *    1000자를 넘거나 NUL 이 들어도 400 이다 (#549 · `isDiaryContentAccepted`).
@@ -256,7 +256,8 @@ export const calendarHandlers = [
       });
     }
     if (content.trim() === "") {
-      return apiError(422, "validation_failed", "일기 내용을 적어 주세요");
+      // 본문 오류라 400 이다 — 422 는 경로 값(날짜)에만 쓴다 (docs/api/errors-v1.md · #438)
+      return apiError(400, "validation_failed", "일기 내용을 적어 주세요");
     }
 
     const saved: MyDiary = writeMyDiary(date, content);
