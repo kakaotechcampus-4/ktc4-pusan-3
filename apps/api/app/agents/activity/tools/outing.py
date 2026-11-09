@@ -25,6 +25,7 @@ from app.agents.activity.events import (
     in_period,
     in_province,
     open_on,
+    period_tier,
     places_on,
     read_event,
 )
@@ -416,7 +417,9 @@ async def search_events(context: ActivityContext, args: SearchEventsArgs) -> Too
     ]
     if found and not fresh:
         return _no_new_events(context)
-    nearest = sorted(fresh, key=lambda pair: pair[0])[:EVENT_INTRO_LIMIT]
+    # 기간이 짧은 행사부터, 같은 묶음 안에서는 가까운 순이다. 1년 내내 하는 곳은 다음에도 갈 수
+    # 있어서 뒤로 미룬다 — 빼지는 않는다(짧은 행사가 없으면 그래도 나온다)
+    nearest = sorted(fresh, key=lambda pair: (period_tier(pair[1]), pair[0]))[:EVENT_INTRO_LIMIT]
     intros = await asyncio.gather(
         *(_or_none(events.intro(content_id=event.content_id)) for _, event in nearest)
     )
@@ -538,6 +541,7 @@ def _origin(
         )
     if not area_text or not area_text.strip():
         if context.outing_location is None:
+            context.state.location_missing = True
             return fail(
                 "query",
                 tool,

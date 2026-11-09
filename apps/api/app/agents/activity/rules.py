@@ -60,6 +60,18 @@ def shown_again(content: str, place_name: str | None, shown: Iterable[str]) -> b
     return bool(place) and any(place in normalize_activity(item) for item in shown)
 
 
+# 나들이를 묻는 말 — 위치도 지역도 없을 때 "위치 · 지역을 알려 주면 찾아볼게요" 를 붙이는 기준
+_OUTING_WORDS = re.compile(
+    r"주말|나들이|어디|행사|축제|공연|장소|키즈카페|공원|도서관|놀이터|박물관|미술관|과학관|체험|"
+    r"갈\s?만|가\s?볼|나가|밖에서|바깥"
+)
+
+
+def asks_outing(texts: Iterable[str]) -> bool:
+    """보호자가 바깥 나들이 · 장소 · 행사를 물었는가. 안내 문구를 붙일지만 정한다."""
+    return any(_OUTING_WORDS.search(text) for text in texts)
+
+
 def said_in_request(requested_play: str | None, request_texts: Iterable[str]) -> bool:
     """모델이 적은 `requested_play` 가 보호자가 이번 요청에서 한 말에 있는가.
 

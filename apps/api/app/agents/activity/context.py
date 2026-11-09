@@ -56,6 +56,8 @@ class ActivityRunState:
     shown_before: tuple[str, ...] = ()
     # 행사 조회에서 앞에서 보여 준 행사뿐이라 새 행사가 없었다 — 결과에 한 줄 안내를 붙인다
     no_new_events: bool = False
+    # 장소 · 행사를 찾으려 했는데 위치도 지역도 없었다 — 결과에 위치 · 지역 안내를 붙인다
+    location_missing: bool = False
     # 보호자가 말한 지역(`areas.find_area`). 장소 조회가 찾으면 넣는다. 있으면 이 run 의 장소 ·
     # 날씨는 그 지역 대표 지점 기준이다(`ActivityContext.outing_location`). 한 run 에 한 지역이다
     area: Area | None = None

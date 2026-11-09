@@ -18,6 +18,8 @@ PLACE_NOTICE_EVENT = "place.notice_event"
 PLACE_AREA_UNKNOWN = "place.area_unknown"
 # 앞에서 보여 준 행사뿐이라 새 행사가 없었다 (#852)
 EVENTS_NO_NEW = "events.no_new"
+# 위치도 지역도 없어 장소 · 행사를 못 찾았다 — 왜 집 놀이만 나오는지 알린다
+LOCATION_MISSING = "place.location_missing"
 # 보호자가 요청에 쓴 음식이 막혀 그런 놀이는 빼고 골랐다 — 알레르기 · 연령 (#582)
 REQUEST_FOOD_CONFLICT = "request.food_conflict"
 REQUEST_FOOD_AGE_BLOCK = "request.food_age_block"

@@ -149,6 +149,20 @@ def core_name(name: str) -> str:
     return core or name.strip()
 
 
+# 행사 기간 묶음 — 짧은 행사(축제 · 공연)가 먼저고, 길게 하는 행사 · 상설에 가까운 곳은 뒤다.
+# 1년에 한 번인지는 데이터가 알려 주지 않아서 기간이 짧은 것으로 대신한다. 잠정값 — eval 로 조정
+LONG_EVENT_DAYS = 60
+ALL_YEAR_EVENT_DAYS = 300
+
+
+def period_tier(event: Event) -> int:
+    """0 짧은 행사 · 1 두 달 이상 · 2 상설에 가까움(300일 이상). 정렬에만 쓴다 — 빼지 않는다."""
+    days = (event.ends_on - event.starts_on).days + 1
+    if days >= ALL_YEAR_EVENT_DAYS:
+        return 2
+    return 1 if days >= LONG_EVENT_DAYS else 0
+
+
 def in_period(event: Event, days: Iterable[date]) -> bool:
     """그날들 중 하루라도 기간 안인가. 시작일 · 종료일을 포함한다.
 

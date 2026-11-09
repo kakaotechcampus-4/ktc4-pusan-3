@@ -49,6 +49,10 @@ events.no_new:
   kind: notice
   template: 앞에서 보여 드린 행사 말고는 그날 열리는 행사를 더 찾지 못했어요.
 
+place.location_missing:
+  kind: notice
+  template: "위치를 허용하거나 지역(예: 해운대)을 말씀해 주시면 행사 · 장소도 찾아볼게요."
+
 place.area_unknown:
   kind: notice
   template: 말씀하신 지역을 찾지 못해 장소 없이 골랐어요. 시·도와 구·군까지 말씀해 주시면 그 지역 장소도 찾아볼게요.

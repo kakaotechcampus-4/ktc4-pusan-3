@@ -567,3 +567,19 @@ class TestShownBefore:
         result = await search_events(ctx, SearchEventsArgs(day=DayLabel.TODAY))
 
         assert names(result) == [] and ctx.state.no_new_events is True
+
+
+class TestShortFirst:
+    """기간이 짧은 행사가 먼저다 — 1년 내내 하는 곳은 다음에도 갈 수 있다. 빼지는 않는다."""
+
+    async def test_짧은_행사가_가까운_긴_행사보다_먼저다(self):
+        rows = [
+            raw("1", "상설 전시", km=1, start="20260101", end="20261231"),
+            raw("2", "두 달 축제", km=2, start="20261001", end="20261210"),
+            raw("3", "주말 축제", km=8, start="20261101", end="20261109"),
+        ]
+        ctx = await context(InMemoryEvents(rows))
+
+        result = await search_events(ctx, SearchEventsArgs(day=DayLabel.TODAY))
+
+        assert names(result) == ["주말 축제", "두 달 축제", "상설 전시"]
