@@ -16,8 +16,15 @@ import { currentScenario } from "../scenario";
  */
 let joined: Me["children"] = [];
 
+/**
+ * 이 세션에서 **지운 아이** (#751). 시나리오와 상관없이 `/me` 에서 뺀다 — 안 빼면 `/start` 가 지운 아이
+ * 홈으로 되돌리고, 아이 스코프 셸이 그 아이를 "볼 수 있다" 로 판정한다.
+ */
+let deleted = new Set<string>();
+
 export function resetMembership(): void {
   joined = [];
+  deleted = new Set();
 }
 
 export function joinChild(child: Me["children"][number]): void {
@@ -29,8 +36,15 @@ export function leaveChild(childId: string): void {
   joined = joined.filter((c) => c.child_id !== childId);
 }
 
+/** 아이 삭제 (#751). 함께 보던 보호자 연결도 같이 사라지는 것이라 `joined` 에서도 뺀다. */
+export function deleteChild(childId: string): void {
+  deleted = new Set([...deleted, childId]);
+  leaveChild(childId);
+}
+
 /** `GET /me` 가 돌려줄 것. 🚨 손으로 만들지 말고 이걸 부른다 — 두 곳이 어긋나면 화면이 튕긴다. */
 export function currentMe(): Me {
-  if (currentScenario() !== "consent") return me;
-  return { ...me, children: joined };
+  const base = currentScenario() !== "consent" ? me : { ...me, children: joined };
+  if (deleted.size === 0) return base;
+  return { ...base, children: base.children.filter((c) => !deleted.has(c.child_id)) };
 }

@@ -152,7 +152,11 @@ def test_failed_carries_raw_text_back():
     """raw_text 가 있어야 "적어주신 말은 입력창에 그대로 남겨뒀어요" 가 성립한다 (계약서 §06)."""
     assert translate.to_sse(Failed("llm_unavailable", "계란말이 또 찾아요")) == (
         "failed",
-        {"reason": "llm_unavailable", "raw_text": "계란말이 또 찾아요"},
+        {
+            "reason": "llm_unavailable",
+            "raw_text": "계란말이 또 찾아요",
+            "message": "지금은 답을 만들 수 없어요. 잠시 뒤 다시 보내 주세요.",
+        },
     )
 
 
@@ -813,3 +817,17 @@ def test_kind_lists_agree():
     """탭 순서 · DB 가 받는 종류 · Agent 가 담는 종류가 같다 — 하나만 늘리면 카드가 깨진다."""
     assert KIND_ORDER == DELETE_KINDS  # 순서까지 — Agent 가 만드는 탭 순서와 서버 정렬이 같다
     assert set(KIND_ORDER) == KINDS
+
+
+def test_failed_는_모든_이유에서_문구를_싣는다() -> None:
+    # 문구 없는 failed 는 화면이 옛 문구로 떨어진다 (#768). 번역기와 러너가 같은 함수를 쓴다
+    from typing import get_args
+
+    from app.agents.entrypoint import Failed, FailReason
+
+    for reason in get_args(FailReason):
+        name, payload = translate.to_sse(Failed(reason, "한 줄"))
+        assert name == "failed"
+        assert set(payload) == {"reason", "raw_text", "message"}
+        assert payload["reason"] == reason and payload["raw_text"] == "한 줄"
+        assert payload["message"].strip()
