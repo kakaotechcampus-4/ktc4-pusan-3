@@ -45,6 +45,10 @@ place.notice_event:
   template: 한국관광공사 행사 정보예요. 일정과 관람 연령이 바뀔 수 있으니 가기 전에 확인해 주세요.
 # 보호자가 말한 지역을 못 찾았다(모르는 이름 · 여러 곳인데 위치가 없음 · 시도만). 비슷한 곳으로
 # 짐작하지 않고 장소 없이 골랐다고 알린다. run 에 한 줄이다 (`areas.py`)
+events.no_new:
+  kind: notice
+  template: 앞에서 보여 드린 행사 말고는 그날 열리는 행사를 더 찾지 못했어요.
+
 place.area_unknown:
   kind: notice
   template: 말씀하신 지역을 찾지 못해 장소 없이 골랐어요. 시·도와 구·군까지 말씀해 주시면 그 지역 장소도 찾아볼게요.

@@ -29,6 +29,7 @@ from app.agents.activity.events import (
     read_event,
 )
 from app.agents.activity.result import ErrorCode, ToolResult, fail, ok
+from app.agents.activity.rules import shown_again
 from app.agents.activity.schemas.common import PlaceCategory
 from app.agents.activity.schemas.outing import (
     LookupScheduleArgs,
@@ -409,7 +410,19 @@ async def search_events(context: ActivityContext, args: SearchEventsArgs) -> Too
         distance = distance_m(event, origin)
         if in_province(event, province) if province else distance <= EVENT_MAX_RADIUS_M:
             found.append((distance, event))
-    nearest = sorted(found, key=lambda pair: pair[0])[:EVENT_INTRO_LIMIT]
+    # 앞 턴에서 보여 준 행사는 빼고 그다음 행사를 준다 — "다른 행사" 를 여러 번 물어도 (#844)
+    fresh = [
+        pair for pair in found if not shown_again("", pair[1].name, context.state.shown_before)
+    ]
+    if found and not fresh:
+        context.state.no_new_events = True
+        return ok(
+            "query",
+            _EVENTS,
+            events=[],
+            message="앞에서 보여 준 행사뿐이다. 행사를 다시 내지 말고 행사 없이 낸다.",
+        )
+    nearest = sorted(fresh, key=lambda pair: pair[0])[:EVENT_INTRO_LIMIT]
     intros = await asyncio.gather(
         *(_or_none(events.intro(content_id=event.content_id)) for _, event in nearest)
     )

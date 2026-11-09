@@ -157,6 +157,7 @@ def review(
     requested=False,
     request_texts=(),
     dark_today=False,
+    shown_before=(),
 ):
     return review_candidates(
         candidates,
@@ -174,6 +175,7 @@ def review(
         requested=requested,
         request_texts=request_texts,
         dark_today=dark_today,
+        shown_before=shown_before,
     )
 
 
@@ -383,6 +385,27 @@ class TestOverstatedNote:
     )
     def test_같은_글자가_든_낱말은_걸리지_않는다(self, note):
         assert overstates(note) is False
+
+
+class TestShownBefore:
+    """앞 턴에서 이미 보여 준 추천은 다시 내지 않는다 — "다른 거" 를 여러 번 물어도 (#844)."""
+
+    def test_같은_놀이는_거절(self):
+        result = review(
+            candidate(content="큰 블록으로 탑 쌓기!"), shown_before=["큰 블록으로 탑쌓기"]
+        )
+        assert reason_of(result) is RejectReason.SHOWN_BEFORE
+
+    def test_앞에서_보여_준_장소를_다시_붙이면_거절(self):
+        shown = [f"{PARK}에서 모래성 쌓기"]
+        result = review(
+            candidate(content=f"{PARK}에서 낙엽 줍기", place_name=PARK), shown_before=shown
+        )
+        assert reason_of(result) is RejectReason.SHOWN_BEFORE
+
+    def test_다른_놀이는_통과(self):
+        result = review(candidate(content="큰 블록으로 탑 쌓기"), shown_before=["색종이 접기"])
+        assert result.rejections == ()
 
 
 class TestRecentDuplicate:

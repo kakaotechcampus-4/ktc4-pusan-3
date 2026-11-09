@@ -26,7 +26,12 @@ from app.agents.activity.prompt import (
     recall_message,
     request_message,
 )
-from app.agents.activity.readouts import CAUTION_NON_FOOD_ALLERGY, PLACE_AREA_UNKNOWN, READOUTS
+from app.agents.activity.readouts import (
+    CAUTION_NON_FOOD_ALLERGY,
+    EVENTS_NO_NEW,
+    PLACE_AREA_UNKNOWN,
+    READOUTS,
+)
 from app.agents.activity.registry import closed_readout_key, execute_tool, specs_for, tools_for
 from app.agents.activity.result import ToolResult
 from app.agents.activity.rules import normalize_activity
@@ -73,6 +78,7 @@ async def run(
     context.state.request_texts = tuple(task.request_texts)
     context.state.original_texts = tuple(task.original_texts)
     context.state.prior_texts = tuple(task.prior_texts)
+    context.state.shown_before = tuple(task.shown_before)
     weather = await check_weather(context, context.today)
     gate = await build_gate(context, outdoor_ok=weather.outdoor_ok)
     context.state.gate = gate
@@ -102,7 +108,10 @@ async def run(
     llm = client or LLMClient(role="activity")
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": system},
-        {"role": "user", "content": request_message(task.request_texts)},
+        {
+            "role": "user",
+            "content": request_message(task.request_texts, shown=task.shown_before),
+        },
     ]
 
     if not await _converse(llm, messages, context, allowed):
@@ -151,6 +160,7 @@ async def run(
             *(READOUTS.render(key) for key in _weather_notices(weather, drafts, context)),
             *((READOUTS.render(AFTER_SUNSET),) if context.state.dark_skipped and drafts else ()),
             *((READOUTS.render(PLACE_AREA_UNKNOWN),) if context.state.area_missed else ()),
+            *((READOUTS.render(EVENTS_NO_NEW),) if context.state.no_new_events else ()),
             *((notice,) if notice else ()),
         ),
         model_calls=model_calls,

@@ -533,3 +533,27 @@ class TestEndedTonight:
             21, {"1": RawEventIntro(age_limit="전 연령", place="광장", playtime="(토) 19:00")}
         )
         assert names(await search_events(ctx, SearchEventsArgs(day="오늘"))) == ["빛 축제"]
+
+
+class TestShownBefore:
+    """ "다른 행사 추천해줘" — 앞 턴에서 보여 준 행사는 빼고 그다음 가까운 행사를 준다 (#844)."""
+
+    async def test_앞에서_보여_준_행사는_빼고_다음_행사를_준다(self):
+        rows = [raw(str(i), f"축제{i}", km=10 - i) for i in range(8)]
+        ctx = await context(InMemoryEvents(rows))
+        ctx.state.shown_before = ("축제7 구경하기", "축제6에서 사진 찍기")
+
+        result = await search_events(ctx, SearchEventsArgs(day=DayLabel.TODAY))
+
+        assert names(result) == ["축제5", "축제4", "축제3", "축제2", "축제1"]
+        assert ctx.state.no_new_events is False
+
+    async def test_새_행사가_없으면_빈_목록과_안내다(self):
+        ctx = await context(InMemoryEvents([raw("1", "축제1")]))
+        ctx.state.shown_before = ("축제1 구경하기",)
+
+        result = await search_events(ctx, SearchEventsArgs(day=DayLabel.TODAY))
+
+        assert result.success is True and names(result) == []
+        assert "앞에서 보여 준" in result.data["message"]
+        assert ctx.state.no_new_events is True

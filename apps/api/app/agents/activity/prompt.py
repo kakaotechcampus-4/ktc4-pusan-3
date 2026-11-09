@@ -192,9 +192,19 @@ def recall_message(
     )
 
 
-def request_message(request_texts: Sequence[str]) -> str:
-    """처음 user 메시지 — 보호자의 요청 그대로."""
-    return _request(request_texts)
+def request_message(request_texts: Sequence[str], *, shown: Sequence[str] = ()) -> str:
+    """처음 user 메시지 — 보호자의 요청 그대로. 앞 턴에서 보여 준 추천이 있으면 다시 내지 말라고
+    붙인다 (#844). 출력 검증도 같은 놀이 · 장소 · 행사를 거절한다(`SHOWN_BEFORE`)."""
+    request = _request(request_texts)
+    names = [name for name in shown if name.strip()]
+    if not names:
+        return request
+    listed = "\n".join(f"- {name}" for name in names)
+    return (
+        f"{request}\n\n"
+        "아래는 앞에서 이미 보여 준 추천이다. 같은 놀이 · 장소 · 행사는 다시 내지 않고 다른 것으로 "
+        f"낸다.\n{listed}"
+    )
 
 
 def _request(request_texts: Sequence[str]) -> str:

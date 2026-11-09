@@ -47,6 +47,19 @@ def is_recent_duplicate(content: str, recent: Iterable[str]) -> bool:
     return bool(key) and any(key == normalize_activity(item) for item in recent)
 
 
+def shown_again(content: str, place_name: str | None, shown: Iterable[str]) -> bool:
+    """앞 턴에서 보여 준 추천을 다시 내는가 (#844). 놀이는 정규화 후 완전 일치
+    (`is_recent_duplicate` 와 같은 기준), 장소 · 행사는 그 이름이 앞 추천 문장에 들어 있으면 같다
+    — 앞 추천은 이름만 남아서("○○공원에서 모래성 쌓기") 장소 칸이 따로 없다."""
+    shown = [item for item in shown if item.strip()]
+    if not shown:
+        return False
+    if is_recent_duplicate(content, shown):
+        return True
+    place = normalize_activity(place_name or "")
+    return bool(place) and any(place in normalize_activity(item) for item in shown)
+
+
 def said_in_request(requested_play: str | None, request_texts: Iterable[str]) -> bool:
     """모델이 적은 `requested_play` 가 보호자가 이번 요청에서 한 말에 있는가.
 

@@ -37,7 +37,12 @@ from app.agents.activity.readouts import (
     READOUTS,
 )
 from app.agents.activity.result import ErrorCode
-from app.agents.activity.rules import invented_facilities, is_recent_duplicate, normalize_activity
+from app.agents.activity.rules import (
+    invented_facilities,
+    is_recent_duplicate,
+    normalize_activity,
+    shown_again,
+)
 from app.agents.activity.schemas.common import (
     ActivitySetting,
     CaregiverRole,
@@ -116,6 +121,7 @@ class RejectReason(StrEnum):
     OUTDOOR_CLOSED = "outdoor_closed"
     MIXED_PLACES = "mixed_places"
     INVENTED_FACILITY = "invented_facility"
+    SHOWN_BEFORE = "shown_before"
     DARK_PLAYGROUND = "dark_playground"
     BUILD = "build_rejected"
 
@@ -139,6 +145,10 @@ GUIDANCE: dict[RejectReason, str] = {
         "note 의 '어제도 · 또 · 늘 · 항상 · 좋아하는' 은 확정된 관심(tier 1)에만 쓴다."
     ),
     RejectReason.RECENT_DUPLICATE: "최근에 한 활동이다. 다른 활동으로 바꾼다.",
+    RejectReason.SHOWN_BEFORE: (
+        "앞에서 이미 보여 준 놀이 · 장소 · 행사다. 보호자가 다른 것을 원한다 — 다른 놀이 · 다른 "
+        "장소 · 다른 행사로 바꾼다. 남은 것이 없으면 장소 없이 집에서 할 놀이로 낸다."
+    ),
     RejectReason.CAREGIVER_ROLE: "이 월령은 보호자가 같이 하는 활동(together)만 낸다.",
     RejectReason.UNKNOWN_PLACE: (
         "place_name 에는 search_nearby_places 결과의 장소 이름이나 search_events 결과의 행사 "
@@ -226,6 +236,7 @@ def review_candidates(
     ended_today: Collection[str] = (),
     request_texts: Sequence[str] = (),
     dark_today: bool = False,
+    shown_before: Collection[str] = (),
 ) -> Review:
     """후보를 3-3 순서로 검사해 통과한 것은 SuggestionDraft 로, 걸린 것은 사유로 돌려준다.
 
@@ -295,6 +306,7 @@ def review_candidates(
             far_places=far_places,
             avoided=avoided,
             recent=recent_activities,
+            shown_before=shown_before,
             outdoor=outdoor,
             outdoor_days=outdoor_days,
             today=today,
@@ -361,7 +373,8 @@ def _check(
     far_places: frozenset[str],
     avoided: tuple[str, ...],
     recent: Collection[str],
-    outdoor: Mapping[str, bool] | None,
+    shown_before: Collection[str] = (),
+    outdoor: Mapping[str, bool] | None = None,
     outdoor_days: Mapping[date, bool] | None,
     today: date,
     ended_today: Collection[str] = (),
@@ -449,6 +462,8 @@ def _check(
         return RejectReason.OVERSTATED_NOTE, (), None
     if is_recent_duplicate(candidate.content, recent):
         return RejectReason.RECENT_DUPLICATE, (), None
+    if shown_again(candidate.content, candidate.place_name, shown_before):
+        return RejectReason.SHOWN_BEFORE, (), None
     if months < TOGETHER_ONLY_BELOW_MONTH and candidate.caregiver_role != CaregiverRole.TOGETHER:
         return RejectReason.CAREGIVER_ROLE, (), None
 
