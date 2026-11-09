@@ -679,6 +679,71 @@ async def test_event_drafts_not_approved(
     assert resp.json()["error"]["code"] == "not_approved"
 
 
+# ── 초안 만들기 직전 알레르기 재확인 (#859) ───────────────────────────────────
+# 판정 · "모름" · 조회 실패는 같은 함수라 위의 채택 테스트가, 내린 기록은 사전검사 테스트
+# (test_suggestions_endpoint.py · test_allergy_states.py)가 본다. 여기서는 초안 만들기가 그 함수를
+# 부르는지와, 부르는 자리에서만 갈릴 수 있는 것만 본다.
+
+
+async def _drafts(db_client: AsyncClient, cid: uuid.UUID, headers, *rows: Suggestion):
+    return await db_client.post(
+        f"/api/v1/children/{cid}/suggestions/event-drafts",
+        json={"suggestion_ids": [str(r.id) for r in rows]},
+        headers=headers,
+    )
+
+
+async def test_채택_뒤에_등록된_알레르기에_걸리면_초안을_하나도_만들지_않는다(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID, monkeypatch
+):
+    """food 를 한 장으로 묶기 전에 본다 — 같이 고른 food · 놀이 중 걸린 추천 id 만 싣는다."""
+    monkeypatch.setattr("app.api.v1.routers.suggestions.child_health_granted", _granted(True))
+    headers, parent_id = bearer
+    approved = SuggestionStatus.APPROVED
+    rice = await _make_suggestion(
+        session, child_id=cid, agent=SuggestionAgent.FOOD, status=approved
+    )
+    walnut = await _make_suggestion(
+        session, child_id=cid, agent=SuggestionAgent.FOOD, status=approved, allergens=["호두"]
+    )
+    play = await _make_suggestion(session, child_id=cid, status=approved)
+    await create_safety(
+        session, child_id=cid, parent_id=parent_id, kind=SafetyKind.ALLERGY, label="견과류"
+    )
+
+    resp = await _drafts(db_client, cid, headers, rice, walnut, play)
+
+    assert resp.status_code == 409
+    error = resp.json()["error"]
+    assert error["code"] == "allergen_blocked"
+    assert error["detail"] == {"suggestion_ids": [str(walnut.id)]}
+
+
+async def test_채택_뒤에_건강정보_동의를_거두면_알레르기_항목이_든_추천으로_초안을_만들지_않는다(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID, monkeypatch
+):
+    """동의가 없어 알레르기를 못 읽는 것을 "걸린 것 없음" 으로 넘기지 않는다 (루트 §2).
+
+    부르는 자리에서 동의를 먼저 보고 재확인을 건너뛰게 바뀌면 여기서만 깨진다.
+    """
+    monkeypatch.setattr("app.api.v1.routers.suggestions.child_health_granted", _granted(False))
+    headers, _ = bearer
+    walnut = await _make_suggestion(
+        session,
+        child_id=cid,
+        agent=SuggestionAgent.FOOD,
+        status=SuggestionStatus.APPROVED,
+        allergens=["호두"],
+    )
+
+    resp = await _drafts(db_client, cid, headers, walnut)
+
+    assert resp.status_code == 403
+    error = resp.json()["error"]
+    assert error["code"] == "consent_required"
+    assert error["detail"]["scopes"] == ["child_health"]
+
+
 # ── 일정 제출 API ─────────────────────────────────────────────────────────
 
 
