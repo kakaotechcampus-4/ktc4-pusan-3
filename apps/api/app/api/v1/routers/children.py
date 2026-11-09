@@ -337,11 +337,11 @@ async def delete_child(
 def _forget_child_in_memory(child_id: UUID) -> None:
     """원문이 든 메모리 보관함도 DB 처럼 그 자리에서 비운다 — 누가 넣은 것이든 그 아이 것 전부.
 
-    되묻기 · 05 다시 시도(#561)는 탈퇴와 같고, 사진 읽은 내용(30분)도 함께 지운다 — 아이가 없어서
-    저장할 수도 없는 공지 원문이다.
+    05 다시 시도(#561)는 탈퇴와 같고, 사진 읽은 내용(30분)도 함께 지운다 — 아이가 없어서
+    저장할 수도 없는 공지 원문이다. 되묻기 맥락은 표(`run_hold`)라 아이 행의 FK CASCADE 가
+    같은 트랜잭션에서 지운다 (#877).
     🚨 커밋 뒤에 부른다. 커밋 전에 실패하면 DB 가 되돌아가니 보관함도 남아 있어야 한다.
     """
-    pending_reply.forget_child(child_id)
     suggestion_retry.forget_child(child_id)
     photo_run.forget_child(child_id)
 
@@ -574,22 +574,23 @@ async def create_input(
     # 🚨 읽기에 실패하면 False 로 바꾸지 않고 예외로 끝낸다 — "동의 안 함" 으로 넘기면 Agent 가
     #    health_safety 를 읽지 않고 알레르기 필터 없이 추천을 연다. 한도 · 되묻기 맥락 · 채널 ·
     #    키 기억보다 앞이라 실패한 요청이 하루 한도와 한 번뿐인 맥락을 먹지 않는다.
-    # 🚨 되묻기 맥락 확인(get)보다도 앞이다. get 과 consume 사이에 await 가 생기면 같은
-    #    reply_to 로 거의 동시에 온 두 답이 둘 다 확인을 통과해 관찰이 두 행이 된다.
     #    공통 의존성(AccessibleChild)에 넣지 않았다 — 아이 주소를 쓰는 모든 요청에 쿼리가 붙는다.
     health_consent = await child_health_granted(session, child_id=child.child_id)
     # 좌표는 위치정보 동의가 있을 때만 Agent 로 넘긴다 (#380). 좌표가 안 왔으면 읽지도 않는다.
     # 동의가 없으면 버리고 실내 전용으로 돈다 — 화면이 보냈어도 동의 없이 쓰지 않는다.
     # 🚨 좌표는 저장 · 로그 · 예외 문구에 싣지 않는다. CoarseLocation 이 한 번 더 자르고
-    #    repr 을 막는다. 동의 읽기와 같은 이유로 되묻기 맥락 확인(get)보다 앞이다 (await)
+    #    repr 을 막는다. 동의 읽기와 같은 이유로 되묻기 맥락 찜하기(claim)보다 앞이다
     location = None
     if body.location is not None and await location_granted(session, parent_id=parent.parent_id):
         location = entrypoint.CoarseLocation(lat=body.location.lat, lon=body.location.lon)
 
     continuation = None
     if body.reply_to is not None:
-        # 확인만 한다. 한도에 걸려 429 로 끝나도 맥락은 남아야 한다
-        continuation = pending_reply.get(
+        # 확인과 "사용 중" 표시가 DB 한 문장이다(`run_hold`, #877). 같은 reply_to 로 거의 동시에
+        # 온 두 답은 워커가 달라도 하나만 받는다 — 같은 질문에 두 번 답하면 관찰이 두 행이 된다.
+        # 한도보다 앞이라 늦게 온 답은 한도를 쓰기 전에 400 으로 끝난다(#439 리뷰).
+        # 지우지 않고 "사용 중" 으로 둔다. 러너가 끝나며 지우거나 표시를 푼다 (#564)
+        continuation = await pending_reply.claim(
             run_id=body.reply_to, parent_id=parent.parent_id, child_id=child.child_id
         )
         if continuation is None:
@@ -603,61 +604,57 @@ async def create_input(
                 "이전 질문을 이어서 확인할 수 없어요.",
             )
 
-    # 재생 뒤에 센다 — 같은 키 재생은 새 입력이 아니다. Agent 를 부르기 전에 막는다 (quota.py).
-    # 되묻기 답도 센다. 이어받기 run 도 Memory 를 부른다. 같은 조각의 되묻기는 처음 질문까지
-    # 4회가 상한이지만(#251 · agents/memory/agent.py MAX_QUESTIONS), 조각마다 새로 열리니
-    # 답을 빼면 하루 한도를 비껴간다.
-    if not quota.consume(
-        parent_id=parent.parent_id, today=quota.today_kst(), limit=settings.INPUT_DAILY_LIMIT
-    ):
-        raise ApiError(429, "daily_input_limit", "오늘은 더 적을 수 없어요. 내일 다시 적어 주세요.")
-
-    if body.reply_to is not None:
-        # get 과 여기 사이에 await 가 없어서 같은 reply_to 로 온 다른 요청이 끼어들지 못한다.
-        # 🚨 이 사이에 await 를 넣지 말 것 — tests/unit/api/test_create_input_consent.py 의
-        #    "같은 되묻기에 거의 동시에 두 번 답하면 하나만 받는다" 가 막는다.
-        # 지우지 않고 "사용 중" 으로 둔다. 같은 질문에 두 번 답하면 관찰이 두 행이 된다.
-        # 러너가 끝나며 지우거나 표시를 푼다 (#564)
-        pending_reply.claim(
-            run_id=body.reply_to, parent_id=parent.parent_id, child_id=child.child_id
-        )
-
-    channel = registry.open_run(parent_id=parent.parent_id)
+    # 🚨 찜한 뒤 러너가 뜨기 전에 무엇이 터지든(429 · 한도 저장 오류 · 키 기억 실패) 표시를 푼다.
+    #    풀어 줄 러너가 없어서, 풀지 않으면 15분 동안 그 질문에 답할 수 없다 (#564 · #887 리뷰)
     try:
-        await idempotency.remember(**scope, replay=channel.run_id, strict=True)
-    except Exception:
-        # 러너가 안 떠서 이 채널은 아무도 닫지 않는다. 닫아야 지울 예약이 걸린다 (#536 리뷰)
-        channel.close()
-        # 표시를 풀어 줄 러너도 없다. 풀지 않으면 15분 동안 그 질문에 답할 수 없다 (#564)
-        if body.reply_to is not None:
-            pending_reply.release(body.reply_to)
+        # 재생 뒤에 센다 — 같은 키 재생은 새 입력이 아니다. Agent 를 부르기 전에 막는다 (quota.py).
+        # 되묻기 답도 센다. 이어받기 run 도 Memory 를 부른다. 같은 조각의 되묻기는 처음 질문까지
+        # 4회가 상한이지만(#251 · agents/memory/agent.py MAX_QUESTIONS), 조각마다 새로 열리니
+        # 답을 빼면 하루 한도를 비껴간다.
+        if not quota.consume(
+            parent_id=parent.parent_id, today=quota.today_kst(), limit=settings.INPUT_DAILY_LIMIT
+        ):
+            raise ApiError(
+                429, "daily_input_limit", "오늘은 더 적을 수 없어요. 내일 다시 적어 주세요."
+            )
+
+        channel = registry.open_run(parent_id=parent.parent_id)
+        try:
+            await idempotency.remember(**scope, replay=channel.run_id, strict=True)
+        except Exception:
+            # 러너가 안 떠서 이 채널은 아무도 닫지 않는다. 닫아야 지울 예약이 걸린다 (#536 리뷰)
+            channel.close()
+            raise
+        # 대화 기록(#228). 접수한 시각으로 날짜를 정한다 — run 이 끝나 행을 쓰는 시각이 아니다
+        record = chat_record.TurnRecorder(
+            parent_id=parent.parent_id,
+            child_id=child.child_id,
+            run_id=channel.run_id,
+            raw_text=body.text,
+            reply_to=body.reply_to,
+            accepted_at=datetime.now(UTC),
+        )
+        # 보호자는 본문이 아니라 토큰에서 — Memory 가 작성자로 적어서 보호자의 말이 아이의 사실이
+        # 되지 않는다 (§2).
+        job = runner.agent_job(
+            child_id=child.child_id,
+            birth_date=child.birth_date,
+            child_health_granted=health_consent,
+            location=location,
+            activity_weather=getattr(request.app.state, "activity_weather", None),
+            activity_events=getattr(request.app.state, "activity_events", None),
+            # 병원 어댑터만 넘긴다. 좌표는 Health 에 넘기지 않는다 — 위 위치 동의 확인이 약관의 판을
+            # 보지 않아서다(runner.agent_job · #586)
+            health_places=getattr(request.app.state, "health_places", None),
+            parent_id=parent.parent_id,
+            raw_text=body.text,
+            continuation=continuation,
+            reply_to=body.reply_to,
+            on_event=record.add,
+        )
+        runner.start(channel, job, raw_text=body.text, on_end=record.save)
+    except BaseException:
+        if continuation is not None and body.reply_to is not None:
+            await pending_reply.release(body.reply_to)
         raise
-    # 대화 기록(#228). 접수한 시각으로 날짜를 정한다 — run 이 끝나 행을 쓰는 시각이 아니다
-    record = chat_record.TurnRecorder(
-        parent_id=parent.parent_id,
-        child_id=child.child_id,
-        run_id=channel.run_id,
-        raw_text=body.text,
-        reply_to=body.reply_to,
-        accepted_at=datetime.now(UTC),
-    )
-    # 보호자는 본문이 아니라 토큰에서 — Memory 가 작성자로 적어서 보호자의 말이 아이의 사실이
-    # 되지 않는다 (§2).
-    job = runner.agent_job(
-        child_id=child.child_id,
-        birth_date=child.birth_date,
-        child_health_granted=health_consent,
-        location=location,
-        activity_weather=getattr(request.app.state, "activity_weather", None),
-        activity_events=getattr(request.app.state, "activity_events", None),
-        # 병원 어댑터만 넘긴다. 좌표는 Health 에 넘기지 않는다 — 위 위치 동의 확인이 약관의 판을
-        # 보지 않아서다(runner.agent_job · #586)
-        health_places=getattr(request.app.state, "health_places", None),
-        parent_id=parent.parent_id,
-        raw_text=body.text,
-        continuation=continuation,
-        reply_to=body.reply_to,
-        on_event=record.add,
-    )
-    runner.start(channel, job, raw_text=body.text, on_end=record.save)
     return CreateInputResponse(run_id=channel.run_id)

@@ -21,11 +21,12 @@ from fastapi import APIRouter, Response
 from app.api.deps.auth import CurrentParent
 from app.api.deps.db import SessionDep
 from app.api.errors import ApiError, ErrorEnvelope
-from app.api.runs import pending_reply, suggestion_retry
+from app.api.runs import suggestion_retry
 from app.api.v1.schemas.child_parents import ChildParentOut, ChildParentsResponse
 from app.domains.child.models import Child
 from app.domains.child.parents import list_parents_with_nickname, unlink_parent
 from app.domains.child.repository import find_accessible_child
+from app.domains.run_hold.repository import delete_link_holds
 
 router = APIRouter()
 
@@ -85,8 +86,10 @@ async def unlink(cid: UUID, pid: UUID, parent: CurrentParent, session: SessionDe
     # 위 확인과 이 사이에 다른 요청이 먼저 끊었으면 지울 행이 없다 — 같은 404 다.
     if not await unlink_parent(session, child_id=child.id, parent_id=pid):
         raise ApiError(404, "not_found", "그 보호자를 찾지 못했어요")
+    # 되묻기 맥락(`run_hold`)은 보호자 · 아이가 둘 다 남아 CASCADE 가 안 걸린다. 끊기와 같은
+    # 트랜잭션에서 지운다 — 커밋되면 같이, 실패하면 같이 되돌아간다 (#877)
+    await delete_link_holds(session, parent_id=pid, child_id=child.id)
     await session.commit()
-    # 원문이 든 메모리 보관함(되묻기 · 05 다시 시도)도 그 자리에서 비운다. 커밋 뒤여야 한다 (#561)
-    for store in (pending_reply, suggestion_retry):
-        store.forget_parent(parent_id=pid, child_id=child.id)
+    # 원문이 든 메모리 보관함(05 다시 시도)도 그 자리에서 비운다. 커밋 뒤여야 한다 (#561)
+    suggestion_retry.forget_parent(parent_id=pid, child_id=child.id)
     return Response(status_code=204)
