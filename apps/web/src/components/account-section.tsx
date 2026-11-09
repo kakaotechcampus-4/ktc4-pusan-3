@@ -55,7 +55,7 @@ export function AccountSection({ childId }: { childId: string }) {
           icon={KeyRound}
           title="로그인 수단"
           status="카카오"
-          note="이메일과 프로필 사진은 받아도 저장하지 않아요"
+          note="이메일과 프로필 사진은 카카오에 요청하지 않아요"
         />
         <SettingsInfoRow
           icon={DoorOpen}
