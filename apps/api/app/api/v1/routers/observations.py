@@ -232,18 +232,6 @@ async def delete_observation(
     return Response(status_code=204)
 
 
-def _trigger_curator(child_id: uuid.UUID, today: date) -> None:
-    """commit 뒤에만 부른다 — 같은 트랜잭션에서 띄우면 Curator 실패가 삭제까지 되돌린다.
-
-    🚨 터져도 응답은 성공이다 — 지운 것은 이미 commit 됐다 (delete_proposals 와 같다).
-    """
-    try:
-        trigger = curator_trigger()
-        if trigger is not None:
-            trigger(child_id, today)
-    except Exception as exc:
-        log.error("기록 삭제 뒤 curator trigger 실패 error=%s", type(exc).__name__)
-
 
 def _observation_domain(kind: str) -> ObservationDomain | None:
     """경로의 kind 가 관찰 표면 그 도메인. 다섯 종류 모두(건강 포함). 모르는 값은 None (→ 404)."""
