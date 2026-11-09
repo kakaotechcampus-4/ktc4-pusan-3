@@ -33,7 +33,10 @@ MAX_ITEM_NAME = 100
 
 
 class DraftBase(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    # use_attribute_docstrings — 일정 · 복약 초안 본문은 요청 스키마로 Swagger 에 실린다. 필드 아래
+    # 설명 글을 적으면 버려지지 않고 나가게 한다 (app/api/schema_base.py 와 같은 설정 · #893 리뷰).
+    # core 는 api 를 import 하지 않아서 ApiSchema 를 상속하지 않고 설정만 같게 둔다
+    model_config = ConfigDict(extra="forbid", use_attribute_docstrings=True)
 
 
 class DraftItemPayload(DraftBase):

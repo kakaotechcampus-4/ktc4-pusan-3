@@ -13,6 +13,7 @@ from fastapi import FastAPI
 from app.api import health, llm_usage_writer
 from app.api.cors import register_cors
 from app.api.errors import register_error_handlers
+from app.api.openapi import install_openapi
 from app.api.v1.router import v1_router
 from app.core.alerts import configure_alerts
 from app.core.config import settings
@@ -93,3 +94,7 @@ app.include_router(health.router)
 #    라우터가 각자 붙이면 v2 때 전부 고쳐야 하고, 프론트 apps/web/src/lib/env.ts 가
 #    이미 오리진 뒤에 /api/v1 을 붙이고 있어서 양쪽이 어긋나면 즉시 404 다.
 app.include_router(v1_router, prefix=API_V1_PREFIX)
+
+# Swagger 의 형식 오류 모양(400 · 422)을 실제 봉투와 맞춘다 — FastAPI 기본 422 모양은 실제로
+# 오지 않는다 (#438 · docs/api/errors-v1.md). 라우터를 다 붙인 뒤에 건다.
+install_openapi(app)

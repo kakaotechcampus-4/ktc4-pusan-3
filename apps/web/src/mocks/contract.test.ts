@@ -2428,21 +2428,24 @@ describe("⑪ 일기 쓰기 · 지우기 — 서버 #333 과 같은 계약 (#364
   it.each([
     ["빈 문자열", ""],
     ["공백 · 줄바꿈 · 탭뿐", " \n\t"],
-  ])("내용이 %s 이면 422 validation_failed 이고 기존 일기가 남는다", async (_, content) => {
-    const diaryDay = (await recentCalendarDays()).find((day) => day.has_my_diary);
-    expect(diaryDay).toBeDefined();
-    const before = await api.get<CalendarDayResponse>(`/children/c1/calendar/${diaryDay!.date}`);
-    expect(before.my_diary).not.toBeNull();
+  ])(
+    "내용이 %s 이면 400 validation_failed 이고 기존 일기가 남는다 — 본문 오류 (#438)",
+    async (_, content) => {
+      const diaryDay = (await recentCalendarDays()).find((day) => day.has_my_diary);
+      expect(diaryDay).toBeDefined();
+      const before = await api.get<CalendarDayResponse>(`/children/c1/calendar/${diaryDay!.date}`);
+      expect(before.my_diary).not.toBeNull();
 
-    const failure = await api
-      .put(`/children/c1/diary/${diaryDay!.date}`, { content })
-      .catch((error: unknown) => error);
+      const failure = await api
+        .put(`/children/c1/diary/${diaryDay!.date}`, { content })
+        .catch((error: unknown) => error);
 
-    expect(isApiError(failure, "validation_failed")).toBe(true);
-    expect((failure as ApiError).status).toBe(422);
-    const after = await api.get<CalendarDayResponse>(`/children/c1/calendar/${diaryDay!.date}`);
-    expect(after.my_diary).toEqual(before.my_diary);
-  });
+      expect(isApiError(failure, "validation_failed")).toBe(true);
+      expect((failure as ApiError).status).toBe(400);
+      const after = await api.get<CalendarDayResponse>(`/children/c1/calendar/${diaryDay!.date}`);
+      expect(after.my_diary).toEqual(before.my_diary);
+    },
+  );
 
   it.each([
     ["content 가 없다", {}],
@@ -2478,7 +2481,7 @@ describe("⑪ 일기 쓰기 · 지우기 — 서버 #333 과 같은 계약 (#364
 
   it.each([
     ["NUL 이 든", "지어낸\u0000일기"],
-    // 서버는 바디 검증(400)이 라우터의 공백 검사(422)보다 먼저다.
+    // 서버는 바디 검증(길이 · NUL)이 라우터의 공백 검사보다 먼저다 — 둘 다 400 이다.
     ["공백뿐이고 1000자를 넘는", " ".repeat(DIARY_CONTENT_MAX_LENGTH + 1)],
   ])("%s 본문은 400 이고 기존 일기가 남는다 (#549)", async (_, content) => {
     const diaryDay = (await recentCalendarDays()).find((day) => day.has_my_diary);

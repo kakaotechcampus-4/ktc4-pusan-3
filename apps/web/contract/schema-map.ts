@@ -296,9 +296,6 @@ export const NOT_MAPPED: Record<string, string> = {
   PhotoUploadResponse: "웹은 `{ run_id: string }` 을 함수 반환형에 바로 적는다 (uploadPhoto)",
   Body_upload_photo_api_v1_children__cid__photos_post:
     "multipart 본문. 웹은 photoFormData 가 FormData 로 만든다",
-  HTTPValidationError:
-    "FastAPI 가 자동으로 붙이는 422 모양. 서버는 실제로 ErrorEnvelope 로 바꿔 보낸다 (app/api/errors.py · #438)",
-  ValidationError: "HTTPValidationError 안쪽",
   LinkedAffinityOut: "웹이 ObservationOut.affinity 를 읽지 않는다",
   AnswerResponse: "05 가 되묻기 답의 응답 본문을 읽지 않는다",
 };

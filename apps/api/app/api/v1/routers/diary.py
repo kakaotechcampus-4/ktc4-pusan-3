@@ -35,10 +35,16 @@ async def put_my_diary(
     date: dt.date,
     body: DiaryRequest,
 ) -> MyDiaryOut:
-    """그날 내 일기를 쓴다. 이미 있으면 덮어쓴다."""
+    """그날 내 일기를 쓴다. 이미 있으면 덮어쓴다.
+
+    공백뿐인 내용은 400 `validation_failed` 다. 기존 일기는 그대로 남는다 — 빈 저장은 지우기가
+    아니다.
+    날짜 형식 · 범위가 틀리면 422 다 — 422 는 경로 값 오류에만 쓴다 (docs/api/errors-v1.md).
+    """
     check_day(date, status=422)
     if not body.content.strip():
-        raise ApiError(422, "validation_failed", "일기 내용을 적어 주세요")
+        # 본문 오류라 400 이다. 한동안 422 였다 (#438 — 본문 400 · 경로 422 규칙과 어긋났다)
+        raise ApiError(400, "validation_failed", "일기 내용을 적어 주세요")
     row = await put_diary(
         session, child_id=child.child_id, parent_id=parent.parent_id, day=date, content=body.content
     )
