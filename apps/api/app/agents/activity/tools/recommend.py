@@ -103,6 +103,7 @@ async def propose_activity_candidates(
         # outdoor_on 이 위에서 후보의 날을 모두 판정해 넣었다. 행사는 날짜마다 본다 (#668 리뷰)
         outdoor_days={day: brief.outdoor_ok for day, brief in context.state.weather.items()},
         ended_today=context.state.ended_today,
+        request_texts=context.state.request_texts,
         dark_today=dark_now(context),
     )
     if any(r.reason is RejectReason.DARK_PLAYGROUND for r in review.rejections):

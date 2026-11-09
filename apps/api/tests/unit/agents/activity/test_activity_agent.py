@@ -739,6 +739,25 @@ class TestWhen:
         assert "지금은 어두워서 놀이터는 뺐어요." in [r.body for r in result.readouts]
 
 
+class TestPlaceFit:
+    """장소는 "이 아이가 지금 어떤 곳이 맞는지" 를 먼저 쓰고, 시설을 지어내지 않는다 (#814)."""
+
+    async def test_프롬프트가_장소를_고른_이유와_시설_금지를_적는다(self):
+        llm = FakeLLM(propose("거실 보물찾기", "그림자놀이", "색종이 접기"))
+        await run(task("키즈카페 갈 만한 데 있어?"), context(), client=llm)
+        system = llm.seen[0][0]["content"]
+        assert "왜 그 종류의 장소인지" in system
+        assert "을 짐작해 쓰지 않는다" in system
+        assert "기록에 장소 이름이 있으면" in system
+
+    async def test_보호자가_말한_결이_오늘_상태보다_먼저다(self):
+        """많이 뛴 날이어도 보호자가 "또 신나게" 를 원하면 그대로 — 기록은 그 안에서 고르는 데만."""
+        llm = FakeLLM(propose("거실 보물찾기", "그림자놀이", "색종이 접기"))
+        await run(task("오후에도 몸으로 신나게 놀 데 추천해 줘"), context(), client=llm)
+        system = llm.seen[0][0]["content"]
+        assert "보호자가 이번 요청에서 원하는 결" in system
+
+
 class TestDarkPlaygroundRun:
     async def test_내일로_찾은_놀이터를_오늘_후보로_내면_거절하고_안내를_붙인다(self):
         """장소 조회는 day 마다 막지만, 내일로 찾은 놀이터를 오늘 후보에 붙이는 길을 출력 검증이
