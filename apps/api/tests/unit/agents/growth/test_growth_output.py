@@ -42,6 +42,7 @@ from app.agents.growth.tools.memory import (
     search_affinity,
     search_education_memory,
     search_routine_memory,
+    topic_records,
 )
 from app.agents.growth.tools.propose import propose_learning_activity, propose_routine_plan
 from tests.unit.agents.growth.support import (
@@ -1406,3 +1407,115 @@ class TestRequestedGeneral:
             it.steps = ["하루 1시간까지 이야기를 나눈다"]
         result = await propose_learning_activity(ctx, args)
         assert result.success and len(ctx.state.suggestions) == 3
+
+
+MATH_GOOD = EducationObservation(
+    id=UUID(int=840),
+    child_id=CHILD,
+    observed_on=TODAY,
+    subject="수학",
+    topic="두 자리 덧셈 문제 풀이",
+    polarity=1,
+)
+MATH_HARD = replace(MATH_GOOD, id=UUID(int=841), polarity=-1)
+
+
+async def preloaded_ctx(*records):
+    """선조회를 흉내 낸 컨텍스트 — 주제 기록을 `topic_records` 에 채워 둔다."""
+    ctx = await topic_ctx(("nature",), education=list(records))
+    ctx.state.topic_records = await topic_records(ctx, ("nature",))
+    return ctx
+
+
+class TestTopicRecordRequired:
+    async def test_주제_기록이_있는데_예시만_달면_거절하고_그_id_를_알려_준다(self):
+        ctx = await preloaded_ctx(MATH_GOOD)
+        result = await propose_learning_activity(ctx, basis_args(ctx))
+        assert not result.success
+        assert str(MATH_GOOD.id) in result.error["message"]
+        assert ctx.state.suggestions == ()
+
+    async def test_주제_기록을_달고_reason_에_subject_가_있으면_개인화다(self):
+        ctx = await preloaded_ctx(MATH_GOOD)
+        args = basis_args(ctx, MATH_GOOD.id, reason="수학 덧셈에서 한 걸음 더 나아가요")
+        result = await propose_learning_activity(ctx, args)
+        assert result.success
+        assert {d.kind for d in ctx.state.suggestions} == {"personalized"}
+
+    async def test_주제_기록을_달았는데_reason_에_subject_가_없으면_거절한다(self):
+        ctx = await preloaded_ctx(MATH_GOOD)
+        result = await propose_learning_activity(
+            ctx, basis_args(ctx, MATH_GOOD.id, reason="재미있게 해 봐요")
+        )
+        assert not result.success
+
+    async def test_어려워한_주제_기록도_subject_를_쓰면_통과한다(self):
+        ctx = await preloaded_ctx(MATH_HARD)
+        args = basis_args(ctx, MATH_HARD.id, reason="수학 덧셈 앞 단계부터 같이 해요")
+        result = await propose_learning_activity(ctx, args)
+        assert result.success
+        assert ctx.state.suggestions[0].kind == "personalized"
+
+    async def test_주제_기록이_없으면_예시만_달아도_일반_추천이다(self):
+        ctx = await topic_ctx(("nature",), education=[MATH_GOOD])
+        assert ctx.state.topic_records == {}
+        result = await propose_learning_activity(ctx, basis_args(ctx))
+        assert result.success
+        assert {d.kind for d in ctx.state.suggestions} == {"general"}
+
+
+ADD_RECORD = replace(
+    MATH_GOOD, id=UUID(int=842), subject="덧셈", topic="두 자리 수 더하기 문제 풀이"
+)
+
+
+class TestTopicRecordReview:
+    async def test_거절_설명에_기록의_subject_를_싣는다(self):
+        ctx = await preloaded_ctx(ADD_RECORD)
+        result = await propose_learning_activity(
+            ctx, basis_args(ctx, ADD_RECORD.id, reason="두 자리 수 더하기에서 한 걸음 더")
+        )
+        assert not result.success
+        assert "덧셈" in result.error["message"]
+
+    async def test_한_번_거절된_뒤에도_안_달면_일반_추천으로_받는다(self):
+        """두 번째 제출까지 막으면 왕복 상한에 걸려 카드가 하나도 안 나간다(루트 §2 부분 결과)."""
+        ctx = await preloaded_ctx(MATH_GOOD)
+        first = await propose_learning_activity(ctx, basis_args(ctx))
+        assert not first.success
+        second = await propose_learning_activity(ctx, basis_args(ctx))
+        assert second.success
+        assert {d.kind for d in ctx.state.suggestions} == {"general"}
+
+    async def test_재제출에서도_기록을_단_후보는_개인화다(self):
+        ctx = await preloaded_ctx(MATH_GOOD)
+        await propose_learning_activity(ctx, basis_args(ctx))
+        mixed = ProposeLearningActivityArgs.model_validate(
+            {
+                "items": [
+                    item(
+                        "덧셈 카드 놀이",
+                        evidence=[{"id": str(MATH_GOOD.id), "note": "덧셈 기록"}],
+                        reason="수학 덧셈을 이어 가요",
+                    ),
+                    item("숫자 찾기", evidence=[doc_pick(ctx)]),
+                    item("모양 맞추기", evidence=[doc_pick(ctx)]),
+                ]
+            }
+        )
+        result = await propose_learning_activity(ctx, mixed)
+        assert result.success
+        assert [d.kind for d in ctx.state.suggestions] == ["personalized", "general", "general"]
+
+    async def test_기록이_없는_영역이_섞인_요청은_달지_않아도_받는다(self):
+        ctx = await topic_ctx(("nature", "communication"), education=[MATH_GOOD])
+        ctx.state.topic_records = await topic_records(ctx, ("nature", "communication"))
+        assert ctx.state.topic_records
+        result = await propose_learning_activity(ctx, basis_args(ctx))
+        assert result.success
+
+    async def test_수준이_높다는_말은_뺀다(self):
+        ctx = await preloaded_ctx(MATH_GOOD)
+        args = basis_args(ctx, MATH_GOOD.id, reason="수학 수준이 높아서 한 걸음 더 나아가요")
+        result = await propose_learning_activity(ctx, args)
+        assert ctx.state.suggestions == () or not result.success
