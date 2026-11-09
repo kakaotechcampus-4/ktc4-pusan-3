@@ -73,7 +73,7 @@ async def context(rows=(), *, outdoor_ok=True, fail=False, places=None) -> Activ
     return ctx
 
 
-def args(category: PlaceCategory, day: DayLabel = DayLabel.TODAY) -> SearchNearbyPlacesArgs:
+def args(category: PlaceCategory, day: str = DayLabel.TODAY) -> SearchNearbyPlacesArgs:
     return SearchNearbyPlacesArgs(category=category, day=day)
 
 
@@ -420,3 +420,67 @@ class TestOutdoorOn:
         ctx.state.weather.clear()
         assert await outdoor_on(ctx, DayLabel.TOMORROW) is True
         assert len(ctx.state.weather) == 1
+
+
+class TestDark:
+    """해가 진 뒤에는 오늘 놀이터만 뺀다 — 공원 · 실내 · 다른 날은 그대로 (#800)."""
+
+    NIGHT = datetime(2026, 10, 2, 21, tzinfo=KST)
+
+    async def night(self, rows) -> ActivityContext:
+        ctx = ActivityContext(
+            child_id=CHILD,
+            run_id="run-1",
+            now=self.NIGHT,
+            timezone=KST,
+            ports=in_memory_ports(CHILD, date(2025, 1, 1), places=InMemoryPlaces(rows)),
+            location=LOCATION,
+        )
+        ctx.state.gate = await build_gate(ctx, outdoor_ok=True)
+        for when in ("오늘", "내일"):
+            for day in days_of(when, ctx.today):
+                ctx.state.weather[day] = WeatherBrief(outdoor_ok=True)
+        return ctx
+
+    def playground(self) -> PlaceRow:
+        return PlaceRow(
+            name="○○놀이터",
+            category=PlaceCategory.PLAYGROUND,
+            distance_m=300,
+            source="kids_play_facility",
+            data_date=None,
+        )
+
+    async def test_오늘_밤_놀이터는_찾지_않는다(self):
+        ctx = await self.night([self.playground()])
+        result = await search_nearby_places(ctx, args(PlaceCategory.PLAYGROUND, "오늘"))
+        assert result.success is False
+        assert result.error["code"] == ErrorCode.INVALID_ARGS
+        assert ctx.state.dark_skipped is True
+        assert ctx.state.seen_places == {}
+
+    async def test_오늘_밤에도_공원은_찾는다(self):
+        ctx = await self.night([park("○○공원", 300)])
+        result = await search_nearby_places(ctx, args(PlaceCategory.PARK, "오늘"))
+        assert names(result) == ["○○공원"]
+        assert ctx.state.dark_skipped is False
+
+    async def test_오늘_밤에_물어도_내일_놀이터는_찾는다(self):
+        ctx = await self.night([self.playground()])
+        result = await search_nearby_places(ctx, args(PlaceCategory.PLAYGROUND, "내일"))
+        assert names(result) == ["○○놀이터"]
+
+
+class TestWhenArg:
+    async def test_못_읽는_날은_고쳐_다시_부르게_한다(self):
+        ctx = await context([park("○○공원", 300)])
+        result = await search_nearby_places(ctx, args(PlaceCategory.PARK, "언젠가"))
+        assert result.success is False
+        assert result.error["code"] == ErrorCode.INVALID_ARGS
+        assert "11월 20일" in result.error["message"]
+
+    async def test_지난_날은_오늘로_바꾸지_않는다(self):
+        ctx = await context([park("○○공원", 300)])
+        result = await search_nearby_places(ctx, args(PlaceCategory.PARK, "어제"))
+        assert result.success is False
+        assert "지난 날" in result.error["message"]

@@ -13,7 +13,6 @@ from functools import partial
 from uuid import UUID
 
 from app.agents.activity.areas import Area
-from app.agents.activity.schemas.common import DayLabel
 from app.agents.activity.store.ports import (
     ActivityDocRow,
     ActivityPorts,
@@ -80,7 +79,14 @@ class ActivityRunState:
     excluded: tuple[str, ...] = ()
     # 통과한 바깥 활동의 (정규화한 content, 날). 재호출 결과까지 모은다 — 날씨 안내를 결과에 실제로
     # 나간 바깥 활동의 날로 고른다
-    outdoor_drafts: frozenset[tuple[str, DayLabel]] = frozenset()
+    outdoor_drafts: frozenset[tuple[str, str]] = frozenset()
+    # 통과한 후보 전부의 날 표현. 오늘 하는 추천이 하나도 없으면 오늘 날씨 안내를 붙이지
+    # 않는다 (#800)
+    draft_days: frozenset[str] = frozenset()
+    # 해가 져서 오늘 놀이터를 뺐다 — "지금은 어두워서 놀이터는 뺐어요" 를 붙인다 (#800)
+    dark_skipped: bool = False
+    # 오늘 운영 시간이 이미 끝난 행사 이름. 장소 조회 결과와 출력 검증이 오늘을 뺀다 (#800)
+    ended_today: set[str] = field(default_factory=set)
 
     def said(self) -> tuple[str, ...]:
         """보호자가 실제로 한 말 — 이번 입력과 앞 턴. 지역 · 요청한 놀이를 대조할 때 읽는다."""

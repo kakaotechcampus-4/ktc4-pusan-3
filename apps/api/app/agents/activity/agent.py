@@ -32,12 +32,14 @@ from app.agents.activity.result import ToolResult
 from app.agents.activity.rules import normalize_activity
 from app.agents.activity.schemas.task import task_type_of
 from app.agents.activity.tools.docs import search_activity_doc
-from app.agents.activity.tools.outing import check_weather, days_of
+from app.agents.activity.tools.outing import check_weather, dark_now, days_of
 from app.agents.activity.weather import (
+    AFTER_SUNSET,
     INDOOR_ONLY,
     OUTDOOR_ONLY,
     WeatherBrief,
 )
+from app.agents.common.datetime_rules import DateParseError
 from app.agents.common.llm_client import LLMClient
 from app.agents.common.readout import Readout
 from app.agents.common.result import DomainAgentResult
@@ -95,7 +97,7 @@ async def run(
     # 프롬프트에 실은 행만 근거로 달 수 있다. 재호출도 같은 system 프롬프트라 그대로 쓴다
     context.state.seen_docs = {row.id: row for row in examples}
     context.state.example_ids = example_ids(examples)
-    system = build_system_prompt(context, examples, weather=weather)
+    system = build_system_prompt(context, examples, weather=weather, dark=dark_now(context))
     llm = client or LLMClient(role="activity")
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": system},
@@ -140,6 +142,7 @@ async def run(
         readouts=(
             *(_caution(text) for text in context.state.cautions),
             *(READOUTS.render(key) for key in _weather_notices(weather, drafts, context)),
+            *((READOUTS.render(AFTER_SUNSET),) if context.state.dark_skipped and drafts else ()),
             *((READOUTS.render(PLACE_AREA_UNKNOWN),) if context.state.area_missed else ()),
             *((notice,) if notice else ()),
         ),
@@ -152,8 +155,10 @@ def _weather_notices(
 ) -> tuple[str, ...]:
     """화면에 붙일 날씨 안내 키 — 결과에 실제로 나간 추천의 날로 고른다 (#515 리뷰).
 
-    - 바깥 활동이 없으면 오늘 판정의 안내다 — 왜 실내만인지("해가 져서" · "바깥 활동이 어려운
-      날")를 알린다. "날씨는 확인하지 않았어요" · "확인하지 못했어요" 는 빼고(`OUTDOOR_ONLY`) —
+    - 바깥 활동이 없으면 오늘 판정의 안내다 — 왜 실내만인지("바깥 활동이 어려운 날")를 알린다.
+      다만 오늘 하는 추천이 하나도 없으면 붙이지 않는다 — 다음 주 놀이에 오늘 날씨를 말하면
+      틀린다 (#800). "어두워서 놀이터는 뺐어요" 는 날씨 안내가 아니라 run 이 따로 붙인다.
+      "날씨는 확인하지 않았어요" · "확인하지 못했어요" 는 빼고(`OUTDOOR_ONLY`) —
       실내 놀이에 날씨 확인을 당부하면 군말이다.
     - 바깥 활동이 있으면 그 활동의 날 중 바깥이 열린 날의 안내다. "실내 놀이만 골랐어요" 류는
       뺀다 — 오늘 해가 졌어도 내일 공원이 나가면 그 말은 틀린다.
@@ -163,6 +168,8 @@ def _weather_notices(
         day for content, day in sorted(context.state.outdoor_drafts) if content in shown
     )
     if not labels:
+        if not any(_includes_today(day, context) for day in context.state.draft_days):
+            return ()
         return tuple(key for key in weather.notices if key not in OUTDOOR_ONLY)
     keys: list[str] = []
     for label in labels:
@@ -171,6 +178,14 @@ def _weather_notices(
             if brief is not None and brief.outdoor_ok:
                 keys.extend(key for key in brief.notices if key not in INDOOR_ONLY)
     return tuple(dict.fromkeys(keys))
+
+
+def _includes_today(when: str, context: ActivityContext) -> bool:
+    """그 날 표현에 오늘이 들어 있나. 출력 tool 이 이미 읽은 표현이라 실패하지 않는다."""
+    try:
+        return context.today in days_of(when, context.today)
+    except DateParseError:
+        return False
 
 
 def _caution(text: str) -> Readout:

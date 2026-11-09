@@ -39,8 +39,8 @@ from app.agents.activity.rules import is_recent_duplicate, normalize_activity
 from app.agents.activity.schemas.common import (
     ActivitySetting,
     CaregiverRole,
-    DayLabel,
     EvidencePick,
+    PlaceCategory,
 )
 from app.agents.activity.schemas.recommend import ActivityCandidate
 from app.agents.activity.store.ports import (
@@ -108,6 +108,7 @@ class RejectReason(StrEnum):
     NEARBY_WORDING = "nearby_wording"
     OUTDOOR_CLOSED = "outdoor_closed"
     MIXED_PLACES = "mixed_places"
+    DARK_PLAYGROUND = "dark_playground"
     BUILD = "build_rejected"
 
 
@@ -148,6 +149,10 @@ GUIDANCE: dict[RejectReason, str] = {
         "한 후보에는 장소나 행사를 하나만 쓴다. 문장에 쓴 행사가 있으면 place_name 에 그 행사 "
         "이름(name)을 쓴다."
     ),
+    RejectReason.DARK_PLAYGROUND: (
+        "지금은 해가 져서 오늘 놀이터는 내지 않는다. 그 놀이터를 다른 날(day)로 옮기거나, 공원 · "
+        "실내 장소로 바꾼다."
+    ),
     RejectReason.BUILD: (
         "아이 기록을 인용하지 않으면 [예시] 문서 행 id 를 하나 이상 인용한다 "
         "(보호자가 이번 요청에서 직접 말한 놀이일 때만 requested_play 로 면제된다). "
@@ -178,7 +183,9 @@ class Review:
     removed: tuple[Removal, ...] = ()
     # 통과한 바깥 활동(`_outdoors`)의 (정규화한 content, 날). 날씨 안내를 결과에 실제로 나간
     # 바깥 활동의 날로 고르는 데 쓴다 — 오늘 해가 졌어도 내일 공원은 나간다 (#515 리뷰)
-    outdoor: frozenset[tuple[str, DayLabel]] = frozenset()
+    outdoor: frozenset[tuple[str, str]] = frozenset()
+    # 통과한 후보 전부의 날 표현 — 오늘 하는 추천이 없으면 오늘 날씨 안내를 붙이지 않는다 (#800)
+    days: frozenset[str] = frozenset()
 
 
 def review_candidates(
@@ -190,12 +197,14 @@ def review_candidates(
     safety: SafetyTerms,
     places: Mapping[str, PlaceRow] | None = None,
     events: Mapping[str, EventRow] | None = None,
-    outdoor: Mapping[DayLabel, bool] | None = None,
+    outdoor: Mapping[str, bool] | None = None,
     outdoor_days: Mapping[date, bool] | None = None,
     docs: Docs | None = None,
     area_places: Collection[str] = (),
     today: date,
     requested: bool = False,
+    ended_today: Collection[str] = (),
+    dark_today: bool = False,
 ) -> Review:
     """후보를 3-3 순서로 검사해 통과한 것은 SuggestionDraft 로, 걸린 것은 사유로 돌려준다.
 
@@ -218,6 +227,11 @@ def review_candidates(
     `docs` 는 이번 run 의 프롬프트 [예시]에 실은 문서 행이다. 인용하면 `activity_doc` 근거가
     되고, 아이 기록이 아니라 개인화로 세지 않는다 — 문서 행만 단 추천은 `general` 이다.
     `today` 는 `build()` 의 6개월 판정 기준일이다.
+    `dark_today` 는 지금 해가 졌는지다(`outing.dark_now`) — 오늘 하루에 붙인 놀이터는 거절한다.
+    장소 조회도 오늘 놀이터를 막지만, 다른 날로 조회한 놀이터를 오늘 후보에 붙이는 길이 있다
+    (#805 리뷰).
+    `ended_today` 는 오늘 운영 시간이 이미 끝난 행사 이름이다 — 그 행사는 오늘 열리지 않은
+    것으로 본다.
     """
     # 대조는 subject 로 한다 — 관찰의 label 은 "물감 놀이" 같은 문장이라
     # 후보에 그대로 나오는 일이 드물다
@@ -230,7 +244,8 @@ def review_candidates(
     known = _Known.of(places or {}, events or {})
     far_places = frozenset(normalize_activity(name) for name in area_places)
     drafts: list[SuggestionDraft] = []
-    outdoor_drafts: set[tuple[str, DayLabel]] = set()
+    outdoor_drafts: set[tuple[str, str]] = set()
+    draft_days: set[str] = set()
     rejections: list[Rejection] = []
     removed: list[Removal] = []
     for index, candidate in enumerate(candidates):
@@ -251,6 +266,8 @@ def review_candidates(
             outdoor=outdoor,
             outdoor_days=outdoor_days,
             today=today,
+            ended_today=ended_today,
+            dark_today=dark_today,
         )
         if reason is None:
             try:
@@ -268,6 +285,7 @@ def review_candidates(
             except SuggestionRejected:
                 reason = RejectReason.BUILD
             else:
+                draft_days.add(candidate.day)
                 if _outdoors(candidate, place):
                     outdoor_drafts.add((normalize_activity(drafts[-1].content), candidate.day))
         if reason is not None:
@@ -277,6 +295,7 @@ def review_candidates(
         rejections=tuple(rejections),
         removed=tuple(removed),
         outdoor=frozenset(outdoor_drafts),
+        days=frozenset(draft_days),
     )
 
 
@@ -308,9 +327,11 @@ def _check(
     far_places: frozenset[str],
     avoided: tuple[str, ...],
     recent: Collection[str],
-    outdoor: Mapping[DayLabel, bool] | None,
+    outdoor: Mapping[str, bool] | None,
     outdoor_days: Mapping[date, bool] | None,
     today: date,
+    ended_today: Collection[str] = (),
+    dark_today: bool = False,
 ) -> tuple[RejectReason | None, tuple[EvidenceCitation, ...], PlaceRow | EventRow | None]:
     # 1. 안전 필터는 호출부(review_candidates)가 먼저 돌렸다
 
@@ -332,7 +353,11 @@ def _check(
     if reason is not None:
         return reason, (), None
     if isinstance(place, EventRow):
-        open_days = [day for day in days_of(candidate.day, today) if open_on(place, (day,))]
+        open_days = [
+            day
+            for day in days_of(candidate.day, today)
+            if open_on(place, (day,)) and not (day == today and place.name in ended_today)
+        ]
         if not open_days:
             return RejectReason.EVENT_CLOSED, (), None
         if _elsewhere(candidate, place, open_days):
@@ -346,6 +371,14 @@ def _check(
         and any(word in text for text in texts for word in NEARBY_WORDS)
     ):
         return RejectReason.NEARBY_WORDING, (), None
+    # 해가 진 뒤 오늘 하루에 붙인 놀이터 — 장소 조회와 같은 기준이다 (#800 · #805 리뷰)
+    if (
+        dark_today
+        and isinstance(place, PlaceRow)
+        and place.category == PlaceCategory.PLAYGROUND
+        and days_of(candidate.day, today) == (today,)
+    ):
+        return RejectReason.DARK_PLAYGROUND, (), None
 
     # 그날 날씨 판정이 야외를 막았다(D8 · #377). 표에 없는 날은 판정하지 않은 날이라 막는다 —
     # 맑다고 가정하지 않는다

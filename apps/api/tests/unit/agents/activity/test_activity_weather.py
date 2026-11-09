@@ -49,7 +49,7 @@ CALM = Advisories(heat="none", cold="none", severe=False)
 
 
 def judge(**kwargs):
-    base = dict(forecast=CLEAR, air=CLEAN_AIR, uv_index=4, advisories=CALM, after_sunset=False)
+    base = dict(forecast=CLEAR, air=CLEAN_AIR, uv_index=4, advisories=CALM)
     return judge_weather(**{**base, **kwargs})
 
 
@@ -232,12 +232,6 @@ class TestFailures:
         assert brief.notices == (OUTDOOR_BLOCKED,)
         assert brief.unread is True
 
-    def test_못_읽어도_해가_지면_실내만(self):
-        brief = judge(forecast=None, after_sunset=True)
-        assert brief.outdoor_ok is False
-        assert brief.notices == (AFTER_SUNSET,)
-        assert brief.unread is True
-
     def test_미세먼지만_실패하면_야외는_허용하고_알린다(self):
         brief = judge(air=None)
         assert brief.outdoor_ok is True
@@ -257,10 +251,11 @@ class TestFailures:
 
 
 class TestBlocked:
-    def test_해가_지면_실내만(self):
-        brief = judge(after_sunset=True)
-        assert brief.outdoor_ok is False
-        assert brief.notices[-1] == AFTER_SUNSET
+    def test_해가_진_것은_날씨_판정이_아니다(self):
+        """해가 지면 오늘 놀이터만 뺀다 — 바깥 활동 전체를 막지 않는다 (#800, `outing.dark_now`)."""
+        brief = judge()
+        assert brief.outdoor_ok is True
+        assert AFTER_SUNSET not in brief.notices
 
     def test_막히면_주의_안내는_빼고_확인_못_한_것만_남긴다(self):
         """야외를 막았는데 "우산 챙기세요"가 붙으면 이상하다."""
