@@ -119,7 +119,7 @@ test.describe("지난 턴에는 지금 누르면 막다른 버튼이 없다", ()
 
   test("🚨 고친 기록은 기록 탭처럼 무엇으로 고쳤는지 말한다", async ({ page }) => {
     const breakfast = turn(page, "아침에 계란을 잘 먹었어");
-    await expect(breakfast).toContainText("‘잘못된 기록’으로 고친 기록");
+    await expect(breakfast).toContainText("‘이번만 그랬어요’로 고친 기록");
     await expect(breakfast).toContainText("기록 2건 저장됨");
   });
 

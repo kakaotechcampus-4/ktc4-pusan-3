@@ -218,7 +218,6 @@ test.describe("고친 기록은 목록에 남고 다시 고치지 않는다 (#26
       "전체",
       "고치지 않은 기록",
       "이번만 그랬어요",
-      "잘못된 기록",
     ]);
     await page.getByRole("option", { name: "이번만 그랬어요" }).click();
     await filter.getByRole("button", { name: "적용하기" }).click();
@@ -612,6 +611,16 @@ test.describe("검색과 필터 (#584)", () => {
         await expect(page.getByRole("button", { name: /조건 풀기$/ })).toHaveCount(0);
       });
     }
+  });
+
+  // 🚨 "잘못된 기록"(`inactive`) 필터는 없어졌고 서버는 그 값을 400 으로 막는다 (#736). 주소에 남은 예전 링크가
+  //    목록 실패로 열리면 안 된다 — 모르는 값이라 "전체" 로 읽는다.
+  test("주소에 예전 상태 값(status=inactive)이 남아 있으면 실패 화면 대신 전체로 읽는다", async ({
+    page,
+  }) => {
+    await page.goto(`${MEMORIES}?status=inactive`);
+    await expect(page.getByText("기록 7건")).toBeVisible();
+    await expect(page.getByRole("button", { name: /조건 풀기$/ })).toHaveCount(0);
   });
 });
 
