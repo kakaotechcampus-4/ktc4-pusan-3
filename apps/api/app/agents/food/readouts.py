@@ -11,12 +11,14 @@ from app.agents.common.readout import ReadoutCatalog
 UNSUPPORTED_MILK_MEAL = "unsupported.milk_meal"  # 식단 추천 + 수유기(0–3개월)
 UNSUPPORTED_INFANT_NUTRIENT = "unsupported.infant_nutrient"  # 영양소 분석 + 0–11개월
 BLOCKED_SAFETY = "blocked.safety"  # 안전 조회 실패 — 식단 추천 · 영양소 분석
-CLOSED_NO_DAYCARE = "closed.no_daycare"  # daycare_meal 라벨인데 급식 행이 없음
+# 급식 라벨(daycare_meal · daycare_lookup)인데 급식 행이 없음
+CLOSED_NO_DAYCARE = "closed.no_daycare"
 
 # 식단 추천 후보 풀
 POOL_EMPTY = "pool.empty"
 GENERAL_REASON_TODDLER = "general.reason.toddler"
 GENERAL_REASON_WEANING = "general.reason.weaning"
+GENERAL_REASON_REQUESTED = "general.reason.requested"  # 보호자가 정한 조건이 기준인 일반 추천
 FOLLOWUP_PREFERENCE = "followup.preference"
 UNSUPPORTED_MILK_AMOUNT = "unsupported.milk_amount"
 UNSUPPORTED_WEANING_OVER12 = "unsupported.weaning_over12"
@@ -57,6 +59,12 @@ CHECK_ASK_FOOD = "check.ask_food"  # 음식 이름이 없을 때 되묻는 한 �
 # 식단 추천 요청 글에 알레르기 · 연령 금지 음식이 있을 때의 안내. 등록한 이름은 싣지 않는다
 MEAL_REQUEST_CONFLICT = "meal.request_conflict"
 MEAL_REQUEST_AGE_BLOCK = "meal.request_age_block"
+# 고른 메뉴가 왜 이렇게 모였는지(영양 반영) · 어디서 온 메뉴인지(레시피 출처). 코드가 만든 값만
+# 문구 자리에 채운다
+MEAL_NUTRIENT_BASIS = "meal.nutrient_basis"
+MEAL_MENU_SOURCE = "meal.menu_source"
+MEAL_MENU_GENERATED = "meal.menu_generated"  # 고른 메뉴가 모두 레시피북에 없는 생성 메뉴
+MEAL_MENU_MIXED = "meal.menu_mixed"  # 레시피북 메뉴와 생성 메뉴가 섞임
 
 # 급식 조회 · 갱신 · 삭제
 DAYCARE_ASK_SUBSTITUTE = "daycare.ask_substitute"
@@ -72,5 +80,9 @@ DAYCARE_OUT_OF_RANGE = "daycare.out_of_range"
 DAYCARE_NOT_FOUND = "daycare.not_found"
 DAYCARE_REPLACED_UNKNOWN = "daycare.replaced_unknown"
 DAYCARE_UNCHANGED = "daycare.unchanged"
+# 급식 날짜 조회(daycare_lookup) — 행마다 한 줄 · 기간에 급식이 없을 때 · 기간이 7일을 넘었을 때
+DAYCARE_LOOKUP_LINE = "daycare.lookup_line"
+DAYCARE_LOOKUP_EMPTY = "daycare.lookup_empty"
+DAYCARE_LOOKUP_TOO_LONG = "daycare.lookup_too_long"
 
 READOUTS = ReadoutCatalog.from_yaml(Path(__file__).with_name("food.readout.yaml"))

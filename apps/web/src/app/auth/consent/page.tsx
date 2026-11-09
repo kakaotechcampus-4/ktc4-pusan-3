@@ -101,7 +101,7 @@ export default function AuthConsentPage() {
 
     const name = nickname.trim();
     if (!name) {
-      setNicknameError("부르는 이름을 알려주세요.");
+      setNicknameError("내 이름을 알려 주세요.");
       return;
     }
 
@@ -153,7 +153,7 @@ export default function AuthConsentPage() {
         <p className="text-label text-ink-subtle">가입</p>
         <PageTitle className="mt-2">시작하기 전에 확인해 주세요</PageTitle>
         <p className="text-body text-ink-muted mt-3">
-          이름 하나와 보호자 계정에 대한 동의예요. 아이에 대한 동의는 아이를 등록할 때 따로 받아요.
+          보호자 이름과 계정 동의를 받아요. 아이 정보 동의는 아이를 등록할 때 따로 받아요.
         </p>
       </div>
 
@@ -173,7 +173,7 @@ export default function AuthConsentPage() {
       <div className="flex flex-col gap-3">
         {/* 🚨 이름 칸과 **제목으로 가른다.** 같은 제출 버튼을 쓰더라도 무엇에 동의하는지는
             아래 항목들이 각자 말해야 한다 (위 머리말 ⚠️). */}
-        <p className="text-section text-ink">보호자 계정에 대한 동의</p>
+        <p className="text-section text-ink">보호자 계정 동의</p>
 
         {/* 받는 동안 카드 모양으로 자리를 잡는다 — 약관이 오는 순간 아래가 밀리지 않게. */}
         {policies.isPending ? <ConsentChecklistSkeleton /> : null}
@@ -184,7 +184,7 @@ export default function AuthConsentPage() {
           <>
             <CardFailed>
               <p>동의 항목을 불러오지 못했어요.</p>
-              <p className="mt-1">잠시 뒤에 다시 불러와 주세요. 로그인은 그대로예요.</p>
+              <p className="mt-1">잠시 뒤에 다시 불러와 주세요. 적은 이름은 그대로예요.</p>
             </CardFailed>
             <Button variant="secondary" onClick={() => void policies.refetch()}>
               다시 불러오기

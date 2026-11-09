@@ -12,7 +12,7 @@ const COMPOSER = {
   body: "배우자에게 카톡 보내듯 적으면 돼요. 한 줄에 여러 일이 섞여 있어도 하나씩 나눠서 기록해요.",
 } as const;
 
-/** 🚨 사진 버튼은 서버에 기능이 생겨야 선다 (`lib/features.ts`). 없으면 이 단계도 빠진다. */
+/** 사진 버튼 (#723 에서 실서버에 열었다). 🚨 버튼이 다시 숨겨지는 날에는 이 단계도 빠진다 — 없는 요소를 짚지 않는다. */
 const PHOTO = {
   target: "photo",
   title: "사진으로도 적을 수 있어요",
@@ -22,7 +22,7 @@ const PHOTO = {
 const PROMPTS = {
   target: "prompts",
   title: "제안 받기",
-  body: "누르면 지금까지의 기록을 보고 준비해요. 기록이 부족하면 또래 기준이라고 따로 표시해요.",
+  body: "누르면 지금까지의 기록을 보고 준비해요. 기록이 부족하면 일반 추천이라고 따로 표시해요.",
 } as const;
 
 export const homeEmptyTour: TourDefinition = {

@@ -4,6 +4,7 @@ import { ChevronDown, ChevronUp } from "lucide-react";
 import { useState } from "react";
 
 import { PhotoEntrySheet, type AddedEventInput } from "@/components/photo-entry-sheet";
+import { PhotoPreview } from "@/components/photo-preview";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Chip, ChipRow } from "@/components/ui/chip";
@@ -11,8 +12,22 @@ import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
 import { PhotoCard } from "@/components/ui/photo-card";
 import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/cn";
-import { formatDay, formatEventTime, formatTimeOfDay } from "@/lib/format";
+import { seoulDate } from "@/lib/event-draft";
+import {
+  formatDateTime,
+  formatDay,
+  formatDayRange,
+  formatEventTime,
+  formatTimeOfDay,
+} from "@/lib/format";
 import { playEnter, useFlip } from "@/lib/motion";
+import {
+  canBecomeEvent,
+  entryDateLabel,
+  entryDateRole,
+  readMoment,
+  readSpan,
+} from "@/lib/photo-entry";
 import type { ParsedEvent, PhotoCommitRequest, PhotoEntry, PhotoLane } from "@/lib/api";
 
 /**
@@ -67,7 +82,7 @@ const LANE: Record<PhotoLane, LaneCopy> = {
   activity: {
     read: "아이 활동 사진으로 읽었어요.",
     note: "사진에서 활동 태그만 뽑아요. 얼굴이나 사람은 분석하지 않아요.",
-    footnote: "태그는 성향이나 발달로 확정하지 않아요. 알레르기나 건강 정보로도 쓰지 않아요.",
+    footnote: "태그로 아이의 성향이나 발달을 정하지 않아요. 알레르기나 건강 정보로도 쓰지 않아요.",
   },
 };
 
@@ -75,6 +90,8 @@ const ENTRY_KIND_LABEL: Record<PhotoEntry["kind"], string> = {
   event: "일정",
   supply: "준비물",
   meal: "급식",
+  todo: "할 일",
+  info: "안내",
 };
 
 /**
@@ -82,14 +99,14 @@ const ENTRY_KIND_LABEL: Record<PhotoEntry["kind"], string> = {
  *
  * 🚨 **이 버튼이 여는 곳에서 캘린더에 쓴다.** "고치기" 만 적어 두니 그 일이 이 안에 있다는 것이
  *    목록 어디에도 안 보였다 — 부모는 열어 보고 나서야 알고, 안 열어 본 줄은 못 넣는다.
- * 🚨 **급식에는 일정 칸이 아예 없다** (`photo-entry-sheet.tsx` — 식단표는 전부 날짜가 있지만
- *    일정이 아니다). 없는 기능을 문구로 약속하지 않는다.
+ * 🚨 **급식 · 안내에는 일정 칸이 아예 없다** (`canBecomeEvent` — 식단표는 전부 날짜가 있지만
+ *    일정이 아니고, 안내는 날짜가 없는 것이 보통이다 · #723). 없는 기능을 문구로 약속하지 않는다.
  * 🚨 **이미 넣은 줄도 약속하지 않는다.** 두 번 넣는 길은 시트가 막아 뒀고, 그 줄에서 남은 일은
  *    고치는 것뿐이다.
  */
 function editLabel(entry: PhotoEntry, added: boolean): string {
-  if (entry.kind === "meal" || added) return "고치기";
-  return "고치기 · 일정 넣기";
+  if (!canBecomeEvent(entry) || added) return "고치기";
+  return "고치고 일정 넣기";
 }
 
 export interface PhotoReviewProps {
@@ -221,7 +238,20 @@ export function PhotoReview({
     onCommit(
       lane === "activity"
         ? { lane, selected_tags: tags, attach_to_calendar: attachToCalendar }
-        : { lane, entries: checked, attach_to_calendar: attachToCalendar },
+        : {
+            lane,
+            /**
+             * 🚨 **넣은 일정의 id 를 그 항목에 실어 보낸다** (#723). 서버가 그 일정에 이 공지 항목을
+             *    출처로 단다 — 안 실으면 캘린더의 일정과 저장한 공지가 서로를 모른다.
+             *    시트에서 넣고 나서 "이 항목은 저장하지 않기" 를 고른 항목은 `checked` 에 없어서
+             *    실리지 않는다. 일정은 남고 출처만 비는 것이라 그대로 둔다.
+             */
+            entries: checked.map((entry) => ({
+              ...entry,
+              event_id: eventAdded[entry.id]?.event_id ?? null,
+            })),
+            attach_to_calendar: attachToCalendar,
+          },
     );
   }
 
@@ -279,8 +309,7 @@ export function PhotoReview({
           </div>
         }
       >
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={previewUrl} alt="방금 넣은 사진" className="h-full w-full object-cover" />
+        <PhotoPreview src={previewUrl} alt="방금 넣은 사진" />
       </PhotoCard>
 
       {lane === "activity" ? (
@@ -322,7 +351,7 @@ export function PhotoReview({
               {needsReview.length > 0 ? (
                 <PreviewRow
                   term="확인 안 한 것"
-                  value={`${needsReview.length}건 · 저장하지 않아요`}
+                  value={`${needsReview.length}건은 저장하지 않아요`}
                 />
               ) : null}
             </>
@@ -335,7 +364,7 @@ export function PhotoReview({
           ) : null}
           <PreviewRow
             term="출처"
-            value={lane === "document" ? "기관이 보낸 문서" : "사진 태그 · 보호자 확인"}
+            value={lane === "document" ? "기관이 보낸 문서" : "보호자가 확인한 사진 태그"}
           />
         </dl>
 
@@ -371,7 +400,7 @@ export function PhotoReview({
               ? `저장하면 이 사진도 ${formatDay(attachDate)} 캘린더에 함께 남아요.`
               : "남길 날짜가 없어서 캘린더에는 붙이지 않아요."
             : addedCount > 0
-              ? `여기서 저장하는 것은 기록이에요. 일정 ${addedCount}건은 이미 캘린더에 넣었어요(저장과는 따로예요).`
+              ? `여기서 저장하는 것은 읽은 내용이에요. 일정 ${addedCount}건은 저장과 따로 이미 캘린더에 넣었어요.`
               : "여기서 저장하는 것은 읽은 내용이에요. 일정은 항목을 열어 따로 넣어요."}
         </p>
       </Card>
@@ -380,7 +409,7 @@ export function PhotoReview({
           승인 게이트는 2곳뿐이고 여기는 그 2곳이 아니다 (CLAUDE.md §2). */}
       <div>
         <Button variant="secondary" onClick={onGoHome}>
-          메인으로 돌아가기
+          홈으로 돌아가기
         </Button>
       </div>
 
@@ -389,7 +418,7 @@ export function PhotoReview({
       <PhotoEntrySheet
         entry={editing}
         childId={childId}
-        eventAdded={editing !== null && editing.id in eventAdded}
+        added={editing !== null ? eventAdded[editing.id] : undefined}
         onEventAdded={markEventAdded}
         onClose={() => setEditing(null)}
         onSave={saveEntry}
@@ -566,11 +595,17 @@ function EntryRow({
       </div>
 
       <dl className="mt-3 flex flex-col gap-1">
-        <EntryMeta
-          term="언제"
-          value={entry.date ? formatDay(entry.date) : "못 읽었어요"}
-          missing={entry.date === null}
-        />
+        {/* 🚨 **날짜가 없는 안내에는 날짜 줄을 세우지 않는다** (#723). 안내는 날짜가 없는 것이
+            보통인데 "못 읽었어요" 라고 쓰면 보호자가 없던 날짜를 고치러 들어간다.
+            🚨 **할 일의 날짜는 "마감" 이다** — "언제" 로 부르면 그 날에 하는 일로 읽힌다.
+               급식은 "마감" 이 아니다 (`entryDateLabel` · #792 리뷰). */}
+        {entry.kind === "info" && entry.date === null ? null : (
+          <EntryMeta
+            term={entryDateLabel(entry)}
+            value={entryWhen(entry)}
+            missing={entry.date === null}
+          />
+        )}
         {/* 🚨 **기록의 일자와 다른 줄에 둔다.** 위는 아직 저장 안 한 기록의 값이고 이건 이미
             캘린더에 들어간 값이다 — 한 줄에 합치면 저장하지도 않은 것이 들어간 것처럼 읽힌다. */}
         {added ? <EntryMeta term="캘린더" value={calendarValue(entry, added)} /> : null}
@@ -596,9 +631,32 @@ function EntryRow({
  *    그때 시각만 보여주면 **다른 날에 들어간 일정**을 같은 날인 것처럼 읽게 된다.
  */
 function calendarValue(entry: PhotoEntry, added: AddedEventInput): string {
-  const sameDay = entry.date !== null && entry.date === added.date;
+  const from = seoulDate(added.starts_at);
+  const to = seoulDate(added.ends_at);
+  // 여러 날이면 기간이 본체다. 위 칸과 같은 날에 시작해도 끝날까지 말한다.
+  if (to !== "" && to !== from) return formatDayRange(from, to);
+  // 🚨 **마감 줄과는 겹쳐 쓰지 않는다** — 위 칸이 마감이면 같은 날이라도 날짜까지 쓴다.
+  //    시각만 내면 "마감 11월 14일" 아래의 "오전 9:00" 이 마감 시각으로 읽힌다.
+  const sameDay = entryDateRole(entry) === "start" && entry.date !== null && entry.date === from;
   if (!sameDay) return formatEventTime(added.starts_at, added.all_day);
   return added.all_day ? "하루 종일" : formatTimeOfDay(added.starts_at);
+}
+
+/**
+ * 날짜 줄에 뭐라고 쓰나. 서버가 여러 날을 읽었으면 기간을 쓴다 (#723 · `readSpan`).
+ * 🚨 보호자가 시작일을 고쳤으면 기간도 시각도 쓰지 않는다 — 저장되는 것은 그날 하루다.
+ * 🚨 **읽은 시각은 오전 · 오후와 함께 쓴다** (`readMoment` · #723 댓글). "8시" 를 오전으로 읽은 것이
+ *    맞는지 보호자가 목록에서 본다.
+ */
+function entryWhen(entry: PhotoEntry): string {
+  if (entry.date === null) return "못 읽었어요";
+  const span = readSpan(entry);
+  const moment = readMoment(entry);
+  if (span)
+    return moment
+      ? `${formatDateTime(moment)}부터 ${formatDay(span.to)}까지`
+      : formatDayRange(span.from, span.to);
+  return moment ? formatDateTime(moment) : formatDay(entry.date);
 }
 
 function EntryMeta({

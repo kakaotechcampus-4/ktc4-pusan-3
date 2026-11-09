@@ -7,6 +7,8 @@
 /**
  * 투어 이름. "봤음" 을 이 이름으로 센다.
  *
+ * 🚨 **서버(#696)의 `TourKey` 와 같은 값이다** (`apps/api/app/api/v1/schemas/tours.py`). 화면이 늘면 서버에도 더한다 —
+ *    서버가 모르는 이름은 `PUT /me/tours/{key}` 가 422 로 막아서 그 투어가 매번 다시 뜬다.
  * 🚨 **이름을 바꾸면 이미 본 사람에게 다시 뜬다.** 화면이 바뀌어도 다시 띄우지 않기로 했으므로
  *    (`docs/web/screen-tour-v1.md` §2 · 버전 숫자 없음) 이름은 처음 정한 그대로 둔다.
  * 🚨 홈은 둘이다 — 기록이 없을 때(`home-empty`)와 생긴 뒤(`home`). 가입 직후에는 빈 상태 단계만 보여 주고,
@@ -25,14 +27,6 @@ export const TOUR_KEYS = [
 ] as const;
 
 export type TourKey = (typeof TOUR_KEYS)[number];
-
-/**
- * 기기 저장소의 "봤음" 키 (`lib/tour/seen.ts`). 🚨 e2e 공통 바탕(`e2e/fixtures.ts`)이 이 키로 "다 봤음" 을
- * 심어서 다른 화면 테스트에 투어가 끼어들지 않게 한다 — 그래서 여기(화면 코드를 안 부르는 파일)에 둔다.
- */
-export function seenStorageKey(parentId: string): string {
-  return `icatch.tour.seen.${parentId}`;
-}
 
 export interface TourStep {
   /** 비출 요소의 `data-tour` 값. 🚨 화면에 그 요소가 없으면 이 단계는 빠지고 분모도 줄어든다 (`docs/web/screen-tour-v1.md` §3). */

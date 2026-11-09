@@ -20,10 +20,11 @@ from app.api.v1.observation_outs import to_observation_outs
 from app.api.v1.reminder_check import reminder_out
 from app.api.v1.schemas.cards import KIND_ORDER, CardTabOut, ProposalTabOut
 from app.api.v1.schemas.observations import ObservationHealthOut, ObservationOut
-from app.api.v1.schemas.suggestions import CalendarEventOut, EventItemOut
+from app.api.v1.schemas.suggestions import CalendarEventOut, EventItemOut, EventSeriesOut
 from app.domains.memory.observation.repository import ObservationDomain, find_observations
-from app.domains.schedule.models import Event, EventItem, Reminder
+from app.domains.schedule.models import Event, EventItem, EventSeries, Reminder
 from app.domains.schedule.repository import find_events, list_items_by_event, list_my_reminders
+from app.domains.schedule.series import series_by_id
 
 CardRow = ObservationOut | ObservationHealthOut | CalendarEventOut
 CardRows = dict[tuple[str, str], CardRow]
@@ -32,8 +33,16 @@ EVENT_KIND = "event"
 _OBSERVATION_PREFIX = "observation_"
 
 
-def event_out(event: Event, items: list[EventItem], reminder: Reminder | None) -> CalendarEventOut:
-    """일정 행 → 09 캘린더 모양. 캘린더 하루 보기와 카드가 같이 쓴다."""
+def event_out(
+    event: Event,
+    items: list[EventItem],
+    reminder: Reminder | None,
+    series: EventSeries | None,
+) -> CalendarEventOut:
+    """일정 행 → 09 캘린더 모양. 캘린더 하루 보기와 카드가 같이 쓴다.
+
+    반복 묶음의 회차면 `series` 를 싣는다 (#738) — 카드에서도 그 일정이 반복인지 보여야 한다.
+    """
     return CalendarEventOut(
         id=str(event.id),
         title=event.title,
@@ -55,6 +64,7 @@ def event_out(event: Event, items: list[EventItem], reminder: Reminder | None) -
             for i in items
         ],
         reminder=reminder_out(reminder),
+        series=EventSeriesOut.of(series),
     )
 
 
@@ -143,8 +153,11 @@ async def read_card_rows(
         ids = list(events)
         items = await list_items_by_event(session, event_ids=ids)
         reminders = await list_my_reminders(session, parent_id=parent_id, event_ids=ids)
+        series = await series_by_id(session, series_ids={e.series_id for e in events.values()})
         for eid, event in events.items():
-            rows[(EVENT_KIND, str(eid))] = event_out(event, items.get(eid, []), reminders.get(eid))
+            rows[(EVENT_KIND, str(eid))] = event_out(
+                event, items.get(eid, []), reminders.get(eid), series.get(event.series_id)
+            )
     return rows
 
 

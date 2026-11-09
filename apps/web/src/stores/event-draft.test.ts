@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { EventDraft } from "@/lib/api/types";
+import type { EventDraft, SeriesDraft } from "@/lib/api/types";
 import { mergeDrafts, useEventDraftStore, type StoredDraft } from "@/stores/event-draft";
 
 function draft(overrides: Partial<EventDraft> & Pick<EventDraft, "draft_id">): StoredDraft {
@@ -20,6 +20,31 @@ function draft(overrides: Partial<EventDraft> & Pick<EventDraft, "draft_id">): S
       before: null,
       items: [],
       ...overrides,
+    },
+  };
+}
+
+/** 반복 묶음 고치기 초안 (#738). */
+function series(draftId: string, seriesId: string): StoredDraft {
+  const repeat = { weekdays: [1, 3], until: "2026-12-20", label: "12월 20일까지 매주 월, 수" };
+  const fields = {
+    title: "지어낸 반복 일정",
+    starts_time: "09:00",
+    ends_time: null,
+    all_day: false,
+    event_type: "core",
+    category: "institution",
+  } satisfies SeriesDraft["event"];
+  return {
+    origin: "input",
+    draft: {
+      draft_id: draftId,
+      op: "update_series",
+      series_id: seriesId,
+      event: fields,
+      repeat,
+      before: { ...fields, starts_time: "08:30", repeat, items: [] },
+      items: [],
     },
   };
 }
@@ -46,6 +71,22 @@ describe("mergeDrafts", () => {
     const merged = mergeDrafts(before, [draft({ draft_id: "new", suggestion_ids: ["s1"] })]);
 
     expect(ids(merged)).toEqual(["other", "new"]);
+  });
+
+  it("🚨 같은 반복 묶음의 고치기 초안은 새 것이 이긴다 (#738) — 낡은 장을 나중에 내면 새 장을 되돌린다", () => {
+    const merged = mergeDrafts([series("old", "series_1")], [series("new", "series_1")]);
+
+    expect(ids(merged)).toEqual(["new"]);
+  });
+
+  it("다른 묶음의 초안과, id 가 같은 일정의 수정 초안은 그대로 둔다 — 묶음과 일정은 다른 대상이다", () => {
+    const before = [
+      series("other", "series_9"),
+      draft({ draft_id: "event", op: "update", event_id: "series_1" }),
+    ];
+    const merged = mergeDrafts(before, [series("new", "series_1")]);
+
+    expect(ids(merged)).toEqual(["other", "event", "new"]);
   });
 
   it("🚨 제안이 없는 create 초안은 합치지 않는다 — 같은 일정인지 알 근거가 없다", () => {

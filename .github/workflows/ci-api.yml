@@ -1,0 +1,99 @@
+name: API CI
+# apps/api 의 `make lint` + `make test` 와 같은 검사 (#79). 참고: feat/be-68-pr-ci 의 초안.
+#
+# PR 에서 돌고, 배포(deploy.yml)가 workflow_call 로 다시 불러 게이트로 쓴다 — 빨간불이면 배포하지 않는다.
+# push 트리거가 없는 이유가 그것이다. 있으면 develop push 마다 같은 검사가 두 번 돈다.
+#
+# 🚨 paths 필터를 걸지 않는다. 걸면 API 를 안 건드린 PR 에는 체크가 안 떠서 필수 체크로 지정했을 때
+#    그 PR 이 영원히 기다린다 (be-68 브랜치에서 겪었다).
+
+on:
+  pull_request:
+    branches:
+      - develop
+      - main
+  workflow_call:
+
+# PR 은 새 커밋이 오면 이전 실행을 끊는다. 배포가 부른 실행은 run 마다 따로 — 끊기면 배포가 멈춘다.
+# 🚨 그룹 이름에 github.workflow 를 쓰지 않는다. workflow_call 로 불리면 그 값이 부른 쪽("배포")이 된다.
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('ci-api-{0}', github.ref) || format('ci-api-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  # 설정(app/core/config.py)의 필수값. 단위 테스트는 DB 에 붙지 않는다 — 첫 쿼리에서야 연결한다.
+  DB_HOST: localhost
+  DB_PORT: 5432
+  DB_USER: ci_user
+  DB_PASSWORD: ci_password
+  DB_NAME: ci_db
+  AUTH_RETURN_URL_WEB: http://localhost:3000/auth/callback
+  AUTH_RETURN_URL_APP: icatch://auth
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: apps/api
+    services:
+      # 배포 compose 와 같은 이미지. 첫 revision 이 CREATE EXTENSION vector 를 한다.
+      postgres:
+        image: pgvector/pgvector:0.8.6-pg18
+        env:
+          POSTGRES_USER: ci_user
+          POSTGRES_PASSWORD: ci_password
+          POSTGRES_DB: ci_db
+        options: >-
+          --health-cmd "pg_isready -U ci_user -d ci_db"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+        ports:
+          - 5432:5432
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # Python 버전은 pyproject 의 requires-python 을 따른다.
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          # 배포 이미지(apps/api/Dockerfile `python:3.12-slim`)와 같은 버전. 안 주면 러너 기본(3.14)을 써서
+          # 3.13+ 의 traceback 원문 표시 때문에 로그 가림 테스트가 CI 에서만 깨진다.
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: apps/api/uv.lock
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Format
+        run: uv run ruff format --check .
+
+      # 롤백은 DB 를 안 되돌린다 — 새 마이그레이션이 직전 코드를 깨면 실패 (#782, docs/ops/deploy-v1.md).
+      # git diff 를 안 쓰고 스크립트의 BASELINE 뒤 revision 만 본다. DB 가 필요 없다.
+      - name: Expand-only migrations
+        run: uv run python -m scripts.check_expand_only
+
+      - name: Migrate
+        run: uv run alembic upgrade heads
+
+      # 모델과 마이그레이션이 어긋나면(autogenerate 할 게 남아 있으면) 실패한다.
+      - name: Migration drift
+        run: uv run alembic check
+
+      # head 가 둘 이상이면 서버의 `alembic upgrade heads` 는 통과해도 다음 revision 이 꼬인다.
+      - name: Single head
+        run: test "$(uv run alembic heads | wc -l)" -eq 1
+
+      # live(실제 LLM) 는 pyproject addopts 가 이미 뺀다.
+      - name: Test
+        run: uv run pytest

@@ -3,11 +3,14 @@ import uuid
 from datetime import date, datetime
 
 from sqlalchemy import (
+    ARRAY,
     Boolean,
+    CheckConstraint,
     Date,
     DateTime,
     ForeignKey,
     Index,
+    SmallInteger,
     Text,
     UniqueConstraint,
     text,
@@ -37,6 +40,34 @@ class EventCreatedBy(enum.StrEnum):
     CAREGIVER = "caregiver"
 
 
+class EventSeries(Base, UUIDPk):
+    """요일 반복 묶음 (#738). 회차는 날짜마다 따로인 `event` 행이고, 이 행은 규칙만 든다.
+
+    회차 날짜는 `app/rules/recurrence.py` 가 (starts_on, weekdays, until) 로 정한다.
+    준비물 · 알림은 회차 행마다 따로 있다 — 한 회차의 챙김 표시가 다른 회차로 번지지 않는다.
+    """
+
+    __tablename__ = "event_series"
+    __table_args__ = (
+        CheckConstraint("until >= starts_on", name="ck_event_series_until_after_start"),
+        CheckConstraint(
+            "cardinality(weekdays) > 0 AND weekdays <@ ARRAY[1,2,3,4,5,6,7]::smallint[]",
+            name="ck_event_series_weekdays",
+        ),
+        Index("ix_event_series_child_id", "child_id"),
+    )
+
+    child_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("child.id", ondelete="CASCADE"), nullable=False
+    )
+    weekdays: Mapped[list[int]] = mapped_column(ARRAY(SmallInteger), nullable=False)
+    """ISO 요일 오름차순 (1=월 … 7=일)."""
+    starts_on: Mapped[date] = mapped_column(Date, nullable=False)
+    """첫 회차 날짜. 90일 상한을 여기서 센다 — 고쳐도 바뀌지 않는다."""
+    until: Mapped[date] = mapped_column(Date, nullable=False)
+    """마지막 날 (포함)."""
+
+
 class Event(Base, UUIDPk):
     """draft 는 DB 에 쓰지 않는다 (9/17 결정) — status 컬럼 자체를 없앴다.
 
@@ -53,6 +84,10 @@ class Event(Base, UUIDPk):
     """
 
     __tablename__ = "event"
+    __table_args__ = (
+        # 공지 항목 하나는 일정 하나가 된다. 같은 항목에 일정이 둘 걸리면 막는다
+        UniqueConstraint("source_notice_item_id", name="uq_event_source_notice_item_id"),
+    )
 
     child_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("child.id", ondelete="CASCADE"), nullable=False
@@ -70,8 +105,25 @@ class Event(Base, UUIDPk):
     created_by: Mapped[EventCreatedBy] = mapped_column(
         enum_col_py(EventCreatedBy, name="event_created_by"), nullable=False
     )
-    source_notice_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    source_notice_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("notice.id", ondelete="SET NULL")
+    )
+    # 공지의 어느 항목으로 만든 일정인가. 일정은 보호자가 확정한 것이라 공지가 지워져도 남긴다.
+    # 공지 저장 때 채운다 — 사진 화면은 공지를 저장하기 전에 일정부터 넣을 수 있다
+    source_notice_item_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("notice_item.id", ondelete="SET NULL")
+    )
     source_refs: Mapped[list | None] = mapped_column(JSONB)
+    series_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("event_series.id", ondelete="SET NULL"), index=True
+    )
+    """반복 묶음의 회차이면 그 묶음 (#738). 묶음 행을 지워도 회차는 남는다(SET NULL) —
+    묶음 전체 삭제는 후속 이슈가 회차를 먼저 지우는 쪽으로 정한다."""
+    origin_date: Mapped[date | None] = mapped_column(Date)
+    """회차가 처음 만들어진 날(KST) (#790). `series_id` 가 있는 행만 값이 있다. 한 회차만 다른 날로
+    옮겨도(`starts_at` 수정) 바뀌지 않는다 — 묶음 고치기가 "이 회차가 옛 규칙의 어느 날이었나" 를
+    가리는 기준이다. 옛 이미지가 만든 회차는 비어 올 수 있어, 읽는 쪽은 비면
+    `starts_at` 날짜를 쓴다."""
 
 
 class EventItem(Base, Timestamps):

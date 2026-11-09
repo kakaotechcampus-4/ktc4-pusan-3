@@ -125,7 +125,9 @@ class ObservationCommon:
     source_writer: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("parent.id", ondelete="SET NULL"), nullable=True
     )
-    source_notice_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    source_notice_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("notice.id", ondelete="SET NULL"), nullable=True
+    )
 
 
 class Promotable:
@@ -243,7 +245,9 @@ class ObservationHealth(Base, UUIDPk, Timestamps):
     source_writer: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("parent.id", ondelete="SET NULL"), nullable=True
     )
-    source_notice_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    source_notice_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("notice.id", ondelete="SET NULL"), nullable=True
+    )
     # 약 행은 비어 있다(CHECK observation_health_symptom_not_with_medication).
     # 증상 행은 1개 이상 — Memory 스키마가 막는다(옛 행에는 빈 것이 있을 수 있다)
     symptom: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False, server_default="{}")
@@ -271,7 +275,7 @@ class ObservationHealth(Base, UUIDPk, Timestamps):
 class ObservationLinkHold(Base, UUIDPk, Timestamps):
     """Curator 의 uncertain 횟수와 subject 해시를 관찰별로 보관한다.
 
-    아이 삭제는 child_id CASCADE, 관찰 soft delete 는 delete_observation 이 정리한다.
+    아이 삭제는 child_id CASCADE, 관찰 soft delete 는 store 의 delete_observation 이 정리한다.
     관찰 참조는 correction.target_id 처럼 FK 없이 domain 과 observation_id 로 식별한다.
     Profile 에 연결되면 행을 지우며 원문 subject 는 저장하지 않는다.
     """

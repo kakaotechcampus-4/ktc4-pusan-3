@@ -1,0 +1,150 @@
+name: Live E2E CI
+# 실서버 e2e (#756). 화면이 실제 api 와 실제 DB 위에서 이어지는지 본다 — `make web-e2e-live` 와 같다.
+# 목 서버로 화면 규칙을 거는 e2e 는 ci-web.yml 이 돈다. 둘이 무엇을 나눠 거는지는 docs/web/mock-and-tests-v1.md §2.
+#
+# 🚨 ci-web.yml 에 job 으로 넣지 않았다. #747(PR #753)이 머지되면 배포가 ci-web.yml 을 통째로 불러 게이트로
+#    쓴다 — 거기 넣으면 첫날부터 배포를 막는 조건이 된다. 여기서 안정적으로 도는 것을 본 뒤에 정한다.
+# ⚠️ 필수 체크(브랜치 보호)로 지정하지 않았다 — paths 필터라 안 건드린 PR 에는 안 뜬다 (ci-web.yml 과 같은 사정).
+# 🚨 LLM 을 부르지 않는다. 키를 전부 비운 채 돈다 (apps/web/e2e-live/server-env.ts). 비밀값을 쓰지 않는다.
+
+on:
+  pull_request:
+    branches:
+      - develop
+      - main
+    paths:
+      - apps/web/**
+      - apps/api/**
+      - .github/workflows/ci-e2e-live.yml
+  push:
+    branches:
+      - develop
+    paths:
+      - apps/web/**
+      - apps/api/**
+      - .github/workflows/ci-e2e-live.yml
+
+# ci-web.yml 과 같은 규칙 — PR 은 새 커밋이 오면 이전 실행을 끊고, develop push 는 커밋마다 끝까지 돈다.
+# 그룹 앞부분은 워크플로 이름이 아니라 고정 문자열이다. 다른 워크플로가 workflow_call 로 부르면
+# github.workflow 가 부르는 쪽 이름이 되어 그룹이 겹친다 (#747 리뷰).
+concurrency:
+  group: >-
+    ${{ github.ref == 'refs/heads/develop'
+        && format('ci-e2e-live-{0}', github.sha)
+        || format('ci-e2e-live-{0}', github.ref) }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/develop' }}
+
+permissions:
+  contents: read
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    # 배포 이미지(deploy/docker)와 같은 DB 이미지. pg18 의 uuidv7() 을 마이그레이션이 쓴다.
+    services:
+      db:
+        image: pgvector/pgvector:0.8.6-pg18
+        env:
+          POSTGRES_USER: e2e
+          POSTGRES_PASSWORD: ci-only-not-a-secret
+          POSTGRES_DB: icatch_e2e
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U e2e -d icatch_e2e"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    # api 설정. apps/api/.env 가 없으니 필수 값을 여기서 준다. 나머지(LLM 키 비우기 · CORS · DB 이름)는
+    # playwright.live.config.ts 가 api 를 띄울 때 덮는다 — 로컬과 CI 가 같은 값을 쓰게 한 곳에 뒀다.
+    env:
+      APP_ENV: local
+      DB_HOST: localhost
+      DB_PORT: 5432
+      DB_USER: e2e
+      DB_PASSWORD: ci-only-not-a-secret
+      DB_NAME: icatch_e2e
+      E2E_DB_NAME: icatch_e2e
+      AUTH_RETURN_URL_WEB: http://localhost:3100/auth/callback
+      AUTH_RETURN_URL_APP: icatch://auth
+      NEXT_TELEMETRY_DISABLED: "1"
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # uv · Python 은 API 배포 이미지(apps/api/Dockerfile)와 같게 둔다 (ci-contract.yml 과 같은 값).
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.3.0
+        with:
+          version: "0.13.0"
+          python-version: "3.12"
+          working-directory: apps/api
+
+      - name: Install API dependencies
+        working-directory: apps/api
+        run: uv sync --frozen
+
+      - name: Migrate
+        working-directory: apps/api
+        run: uv run --no-sync alembic upgrade heads
+
+      # 🚨 pnpm 버전을 여기 적지 않는다. 정본은 package.json 의 `packageManager` 하나다 (ci-web.yml 과 같은 이유).
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          package_json_file: apps/web/package.json
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: apps/web/pnpm-lock.yaml
+
+      - name: Install web dependencies
+        working-directory: apps/web
+        run: pnpm install --frozen-lockfile
+
+      # 🚨 api 주소는 빌드에 박힌다 (NEXT_PUBLIC_*). playwright.live.config.ts 가 띄우는 api 포트와 같아야 한다.
+      #    목 코드는 프로덕션 빌드에서 통째로 빠진다 — 그래서 이 빌드로 돈 테스트는 실서버를 탄 것이다.
+      - name: Build web
+        working-directory: apps/web
+        env:
+          NEXT_PUBLIC_API_BASE_URL: http://localhost:8100
+          NEXT_PUBLIC_API_MOCKING: disabled
+        run: pnpm build
+
+      - name: Cache Playwright browsers
+        id: browsers
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('apps/web/pnpm-lock.yaml') }}
+
+      - name: Install Chromium
+        if: steps.browsers.outputs.cache-hit != 'true'
+        working-directory: apps/web
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Install Chromium system deps
+        if: steps.browsers.outputs.cache-hit == 'true'
+        working-directory: apps/web
+        run: pnpm exec playwright install-deps chromium
+
+      - name: Live e2e
+        working-directory: apps/web
+        run: pnpm test:e2e-live
+
+      # 실패한 테스트의 trace · 스크린샷. `pnpm exec playwright show-trace <zip>` 으로 연다.
+      - name: Upload report
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report-live
+          path: |
+            apps/web/playwright-report/live/
+            apps/web/test-results/live/
+          retention-days: 7
