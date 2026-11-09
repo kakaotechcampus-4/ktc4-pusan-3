@@ -24,10 +24,11 @@ DEPLOY_GUARD   := bash deploy/scripts/deploy.sh --check-env
 # 마이그레이션 · 적재용 — 잠금을 잡은 뒤에 .deployed-tag 를 읽는다. make 가 미리 펼친 DEPLOYED_TAG 는 잠금을 기다리는
 # 동안 끝난 배포를 모른다 (#753 리뷰). 🚨 api 이미지가 없으면 멈춘다 — compose run 에는 --no-build 가 없어서
 # (v2.34, --pull never 여도) 지금 작업 트리를 배포된 sha 이름으로 구워 롤백할 이미지를 덮는다 (#808 리뷰).
+# run 에는 일회용 덧씌우기(docker-compose.oneoff.yml)를 붙인다 — 떠 있는 api 의 ktc4-edge 고정 주소와 부딪히지 않게.
 COMPOSE_DEPLOY_NOW := sh -c 'tag=$$(cat deploy/docker/.deployed-tag 2>/dev/null || echo local); export API_IMAGE_TAG=$$tag WEB_IMAGE_TAG=$$tag; \
 	img=$$($(COMPOSE_FILES) config --images | grep -- "-api:" | head -n 1); \
 	docker image inspect "$$img" >/dev/null 2>&1 || { echo "$$img 이미지가 없다 — 굽지 않고 멈춘다. 로컬이면 make api-image 먼저, 서버면 deploy.sh 로 다시 배포"; exit 1; }; \
-	exec $(COMPOSE_FILES) "$$@"' compose
+	exec $(COMPOSE_FILES) -f deploy/docker/docker-compose.oneoff.yml "$$@"' compose
 # 🚨 서버(.deployed-tag 가 있는 checkout)에서는 이미지를 손으로 굽지 않는다. 지금 소스를 배포된 sha 태그로
 #    구워 롤백할 이미지를 덮어쓴다. 서버 빌드는 deploy.sh 만 한다 (#753 리뷰).
 NO_SERVER_BUILD := [ ! -f deploy/docker/.deployed-tag ] || { echo "서버에서는 이미지를 손으로 굽지 않는다 — 배포된 sha 태그를 덮어 롤백할 곳이 사라진다. bash deploy/scripts/deploy.sh <sha> <dev|prod> 로 (docs/ops/deploy-v1.md)"; exit 1; }

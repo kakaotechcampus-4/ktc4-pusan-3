@@ -152,6 +152,9 @@ dev 가 열려 있으면 누구나 카카오로 가입해 실제 보호자 · �
 - `api-up` · `web-up` · `deploy-up` 은 `--no-build` 다. 이미지가 없으면 굽지 않고 실패한다.
 - `deploy-migrate` · `deploy-load-*` 는 배포와 같은 잠금 안에서 `.deployed-tag` 를 읽고, 그 태그의 api 이미지가 없으면 멈춘다.
   `compose run` 에는 `--no-build` 가 없고 `--pull never` 여도 이미지가 없으면 굽기 때문이다 (compose v2.34 로컬 확인).
+- 🚨 **일회용 `compose run`(배포의 마이그레이션 · `deploy-migrate` · `deploy-load-*`)은 `docker-compose.oneoff.yml` 을 덧씌운다.**
+  run 은 api 의 `ktc4-edge` 고정 주소(.20 · .21)까지 가져가는데, 그 주소는 떠 있는 api 가 쥐고 있어 "Address already in use" 로
+  배포가 마이그레이션에서 멈췄다. 덧씌우기는 일회용 상자를 default 네트워크에만 붙인다 — 메타데이터(S3 열쇠)에도 닿지 않는다.
 - 🚨 **로컬에서 처음 띄울 때** 는 `make api-image web-image` 를 먼저 돈다 — up · migrate 가 더는 알아서 굽지 않는다.
 
 ## CI
