@@ -8,7 +8,9 @@ import {
   mealDraft,
   placeGeneralSuggestion,
   placeSuggestion,
+  requestedFoodSuggestion,
   requestedGeneralSuggestion,
+  seriesRef,
   staleSuggestion,
   suggestionDraft,
   suggestionAllergens,
@@ -61,6 +63,7 @@ const pickable = [
   ...suggestions,
   ...generalSuggestions,
   requestedGeneralSuggestion,
+  requestedFoodSuggestion,
   placeSuggestion,
   placeGeneralSuggestion,
   eventSuggestion,
@@ -153,7 +156,13 @@ export const suggestionHandlers = [
     //    결과를 낸 Agent 는 묶음이 온다 — 일반 추천만 있어도 그 Agent 의 묶음이 있다.
     //    ⚠️ 답하는 길(#246) 전이라 `options` 는 비어 온다 — 서버와 같은 모양이다.
     //    `suggest_requested` 는 보호자가 놀이를 정해 물은 일반 추천이다 — 문서 근거가 비어 온다 (#597).
-    if (scenario === "scarcity" || scenario === "empty" || scenario === "suggest_requested") {
+    //    `suggest_requested_food` 는 재료를 정해 물은 식사 일반 추천이다 — 같은 꼴로 문서 · 메뉴 근거가 비어 온다 (#740).
+    if (
+      scenario === "scarcity" ||
+      scenario === "empty" ||
+      scenario === "suggest_requested" ||
+      scenario === "suggest_requested_food"
+    ) {
       // 🚨 등록된 알레르기(`active`)가 든 일반 추천은 빼고 내보낸다 (`notBlocked`). 사전검사만 거르면
       //    확인 시트에서 "있어요" 로 등록한 재료가 다음 화면에서 다시 서고, 이번에는 묻지도 않고 채택된다.
       const general = (
@@ -161,7 +170,9 @@ export const suggestionHandlers = [
           ? generalSuggestions
           : scenario === "suggest_requested"
             ? [requestedGeneralSuggestion]
-            : [generalSuggestions[0]]
+            : scenario === "suggest_requested_food"
+              ? [requestedFoodSuggestion]
+              : [generalSuggestions[0]]
       ).filter(notBlocked);
       const count = scenario === "scarcity" ? 1 : 0;
       const generalAgents = new Set(general.map((g) => g.agent));
@@ -541,7 +552,24 @@ export const suggestionHandlers = [
         items: Array<{ item_id: string | null; item_name: string }>;
         suggestion_ids?: string[];
         reminder?: { lead: unknown } | null;
+        repeat?: { weekdays?: number[]; until?: string; label?: string };
       };
+
+      // 🚨 반복 일정(#738)은 요일과 끝 날짜가 다 있어야 한다. 문구는 서버 값이라 되돌려 받지 않는다 (`RepeatRequest`).
+      //    회차로 펼치는 것은 실서버 몫이라(#761) 목은 첫 회차 한 건만 돌려준다 — 서버 응답도 `event` 는 첫 회차고 `series` 가 붙는다.
+      if (
+        body.repeat &&
+        (!body.repeat.weekdays?.length || !body.repeat.until || "label" in body.repeat)
+      ) {
+        return apiError(400, "validation_failed", "요청 형식이 올바르지 않아요", {
+          fields: ["repeat"],
+        });
+      }
+      // 🚨 반복 규칙이 성립하지 않으면 서버는 422 `invalid_repeat` 다 (#761). 카드에서 고칠 수 없는 실패라
+      //    화면이 "대화로 다시 말해 주세요" 를 붙이는지 보려고 시나리오로 만든다.
+      if (body.repeat && currentScenario() === "repeat_invalid") {
+        return apiError(422, "invalid_repeat", "반복은 첫 회차부터 90일까지만 돼요");
+      }
 
       // 🚨 일자 없이 제출되면 안 된다. 화면이 막지만 계약도 막는다 (규칙은 코드가 진다).
       //    실서버는 스키마가 `starts_at` 을 필수로 걸어 공통 검증 오류로 낸다.
@@ -569,8 +597,12 @@ export const suggestionHandlers = [
             fields: ["reminder.lead"],
           });
         }
-        const wrong = refuseReminder(lead, body.event.starts_at, body.event.all_day);
-        if (wrong) return wrong;
+        // 🚨 반복 일정은 첫 회차 하나로 거절하지 않는다 (#761). 서버는 지난 회차만 건너뛰고 전 회차가 다 지났을 때만
+        //    422 다 — 목은 회차를 펼치지 않아서 반복이면 시각 검사를 하지 않는다 (종류 검사는 위에서 했다).
+        if (!body.repeat) {
+          const wrong = refuseReminder(lead, body.event.starts_at, body.event.all_day);
+          if (wrong) return wrong;
+        }
         reminder = { lead };
       }
 
@@ -609,6 +641,16 @@ export const suggestionHandlers = [
         })),
         // 🚨 제출한 보호자 본인의 알림만 걸린다 — 응답도 그것만 싣는다.
         reminder,
+        // 반복이면 첫 회차에 묶음이 붙는다 (서버 #761). 반복이 아니면 키 자체가 없다.
+        ...(body.repeat?.weekdays && body.repeat.until
+          ? {
+              series: seriesRef(
+                `series_new_${submittedCount}`,
+                body.repeat.weekdays,
+                body.repeat.until,
+              ),
+            }
+          : {}),
       });
 
       // 🚨 제안의 `status` 를 싣지 않는다 — 제출은 상태를 바꾸지 않는다 (#206).

@@ -941,3 +941,90 @@ async def test_다시_판정하는_앞_7일에_중량이_빈_몫이_크면_EAR_�
 
     assert verdict.bands.get("calcium") != "low"
     assert "calcium" in verdict.unscored
+
+
+# ── 모르는 날 (#739) ─────────────────────────────────────────────────────
+# 식품군을 모르는 메뉴(카탈로그에 없음 · 식품군 빈 행)가 낀 날은 "그 식품군이 안 나왔다" 를
+# 단정할 수 없다. 안내 줄(`meal.nutrient_basis`)은 이런 날을 다 나왔다고 쳐도 결론이 같을 때만 낸다.
+def _unknown_days_context(
+    *, veg_offsets: tuple[int, ...] = (), unknown_offsets: tuple[int, ...] = (), days: int = 7
+) -> FoodContext:
+    """매일 쌀밥 2번(식품군을 앎) + `veg_offsets` 의 시금치나물 + `unknown_offsets` 의 낯선 메뉴."""
+    observations = (
+        [
+            _observation(
+                subject="쌀밥", amount_text="한 그릇", day=_WINDOW_END - timedelta(days=offset)
+            )
+            for offset in range(days)
+            for _ in range(2)
+        ]
+        + [
+            _observation(
+                subject="시금치나물",
+                amount_text="한 그릇",
+                day=_WINDOW_END - timedelta(days=offset),
+            )
+            for offset in veg_offsets
+        ]
+        + [
+            _observation(
+                subject="처음보는음식",
+                amount_text="한 그릇",
+                day=_WINDOW_END - timedelta(days=offset),
+            )
+            for offset in unknown_offsets
+        ]
+    )
+    return _context(
+        observations=observations,
+        catalog_rows=_appearance_catalog(),
+        birth_date=BIRTH_DATE_3Y,
+    )
+
+
+async def test_모르는_메뉴가_낀_날은_안_나온_식품군의_모르는_날로_센다() -> None:
+    context = _unknown_days_context(unknown_offsets=(0, 1))
+
+    verdict = await evaluate_nutrient_bands(context, months=40)
+
+    assert verdict.group_unknown_days["vegetables"] == 2
+    assert verdict.group_unknown_days["fruits"] == 2
+
+
+async def test_그_식품군이_나온_날은_모르는_날로_세지_않는다() -> None:
+    # 채소는 어제(0)에 나왔다 — 같은 날 모르는 메뉴가 있어도 어제는 채소의 모르는 날이 아니다
+    context = _unknown_days_context(veg_offsets=(0,), unknown_offsets=(0, 1))
+
+    verdict = await evaluate_nutrient_bands(context, months=40)
+
+    assert verdict.group_unknown_days["vegetables"] == 1
+    assert verdict.group_unknown_days["fruits"] == 2
+    assert "grains" not in verdict.group_unknown_days  # 쌀밥은 매일 나왔다
+
+
+async def test_모르는_메뉴가_없으면_모르는_날도_없다() -> None:
+    context = _unknown_days_context(veg_offsets=(0,))
+
+    verdict = await evaluate_nutrient_bands(context, months=40)
+
+    assert verdict.group_unknown_days == {}
+
+
+async def test_기록이_없는_날은_모르는_날로_세지_않는다() -> None:
+    # 4일치만 기록했다(하루 3행 = 12행). 모르는 메뉴는 어제 하루뿐이다
+    context = _unknown_days_context(unknown_offsets=(0,), days=4)
+
+    verdict = await evaluate_nutrient_bands(context, months=40)
+
+    assert verdict.recorded_days == 4
+    assert verdict.group_unknown_days["vegetables"] == 1
+
+
+async def test_기록이_모자라_구간이_막혀도_모르는_날은_센다() -> None:
+    # 7일 중 2일 · 3행 — 구간(insufficient)이 막힌 반환 경로에서도 같은 칸이 채워진다
+    context = _unknown_days_context(unknown_offsets=(0,), days=2)
+
+    verdict = await evaluate_nutrient_bands(context, months=40)
+
+    assert verdict.insufficient is True
+    assert verdict.group_unknown_days["vegetables"] == 1

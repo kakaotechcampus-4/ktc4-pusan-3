@@ -21,6 +21,9 @@ general.reason.toddler:
 general.reason.weaning:
   kind: general
   template: "이 시기 아기들이 많이 먹는 재료예요."
+general.reason.requested:
+  kind: general
+  template: "요청하신 조건을 바탕으로 골랐어요."
 followup.preference:
   kind: followup
   template: "{menu}은(는) 좋아하는 편인가요?"
@@ -105,6 +108,15 @@ daycare.replaced_unknown:
 daycare.unchanged:
   kind: daycare
   template: "급식 기록은 그대로 두었어요."
+daycare.lookup_line:
+  kind: daycare
+  template: "{date} {slot}: {menus}"
+daycare.lookup_empty:
+  kind: daycare
+  template: "{when}에는 등록된 급식이 없어요."
+daycare.lookup_too_long:
+  kind: daycare
+  template: "급식은 한 번에 일주일까지 보여 드려요. 날짜를 좁혀서 물어봐 주세요."
 check.blocked_safety:
   kind: blocked
   template: "알레르기 정보를 확인할 수 없어서 지금은 답을 드릴 수 없어요."
@@ -147,3 +159,15 @@ meal.request_conflict:
 meal.request_age_block:
   kind: notice
   template: "요청하신 {food}{은는} {when} 먹이지 않아서 빼고 골랐어요."
+meal.nutrient_basis:
+  kind: notice
+  template: "기록된 {days}일 중 {group} 나온 날은 {count}일이라, {group} 든 메뉴를 더 넣었어요."
+meal.menu_source:
+  kind: notice
+  template: "추천 메뉴는 {org} 공개 레시피 중 재료가 검수된 메뉴예요."
+meal.menu_generated:
+  kind: notice
+  template: "추천 메뉴는 공개 레시피에 없어 일반적인 메뉴로 골랐어요."
+meal.menu_mixed:
+  kind: notice
+  template: "{menus}{은는} 공개 레시피에 없어 일반적인 메뉴로 골랐어요. 나머지는 {org} 공개 레시피 중 재료가 검수된 메뉴예요."

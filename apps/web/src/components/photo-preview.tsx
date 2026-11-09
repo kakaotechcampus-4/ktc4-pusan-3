@@ -25,7 +25,7 @@ export function PhotoPreview({ src, alt }: { src: string; alt: string }) {
       <div className="text-ink-muted flex h-full w-full flex-col items-center justify-center gap-2 px-6 text-center">
         <ImageOff aria-hidden size={ICON_SIZE.lg} strokeWidth={ICON_STROKE} />
         <p className="text-body-sm">
-          이 사진은 미리보기를 띄우지 못했어요. 글자를 읽는 데는 문제없어요.
+          이 사진은 미리보기를 띄우지 못했어요. 사진을 읽는 데는 문제없어요.
         </p>
       </div>
     );

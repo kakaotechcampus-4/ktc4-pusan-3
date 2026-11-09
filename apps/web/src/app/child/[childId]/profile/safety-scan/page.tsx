@@ -274,7 +274,7 @@ function SafetyScanScreen() {
         <ConsentRequiredCard
           childId={childId}
           error={readError}
-          what="검사지를 읽어 드릴 수 없고"
+          what="검사지를 읽어 드릴 수 없어요. 저장된 것은 하나도 없어요."
         />
       ) : readError === "failed" ? (
         <ReadFailed childId={childId} />
@@ -312,7 +312,8 @@ function NoPhoto({ childId }: { childId: string }) {
       <div>
         <h2 className="text-title text-ink">고른 검사지가 없어요</h2>
         <p className="text-body-sm text-ink-muted mt-2">
-          새로고침하면 고른 사진이 사라져요. 저장된 것은 하나도 없으니 프로필에서 다시 골라 주세요.
+          새로고침하면서 고른 사진이 사라졌어요. 저장된 것은 하나도 없으니 프로필에서 다시 골라
+          주세요.
         </p>
       </div>
       <div>

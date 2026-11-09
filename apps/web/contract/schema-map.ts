@@ -44,6 +44,7 @@ export const SCHEMA_MAP: Record<string, MapValue> = {
   RefreshResponse: "AuthRefreshResponse",
   MeResponse: "Me",
   MeChild: "Me.children[]",
+  SeenTours: "SeenTours",
   WithdrawRequest: "WithdrawRequest",
   WithdrawResponse: "WithdrawResponse",
 
@@ -214,11 +215,14 @@ export const SCHEMA_MAP: Record<string, MapValue> = {
         "웹 타입은 04 SSE 초안(app/core/event_draft.py)과 같이 쓴다. 이 응답은 create 초안만이라 서버가 싣지 않고, 화면은 없으면 비교를 안 그린다 (event-draft-card.tsx)",
       needs_review: "웹이 제안한 칸이고 서버는 아직 보내지 않는다 (types.ts 의 EventDraft 주석)",
       review_reason: "needs_review 와 같다",
+      repeat:
+        "04 SSE 반복 초안(#738 · core/event_draft.py 의 CreateRepeatEventDraft)에만 있다. 이 응답은 제안 초안이라 반복이 없다",
     },
   },
   EventBodyOut: "EventDraftFields",
   DraftItemPayload: "EventDraftItem",
-  SubmitEventRequest: "SubmitEventBody",
+  // 반복 일정(#738)은 같은 본문에 최상위 `repeat` 를 더한다 — 웹은 두 타입으로 나눠 보낸다
+  SubmitEventRequest: ["SubmitEventBody", "SubmitRepeatEventBody"],
   PhotoEntry: "PhotoEntry",
   PhotoEntryDetail: "PhotoEntryDetail",
   PhotoUploadTicket: "PhotoUploadTicket",
@@ -255,6 +259,14 @@ export const SCHEMA_MAP: Record<string, MapValue> = {
   CalendarDayOut: "CalendarDay",
   CalendarDayResponse: "CalendarDayResponse",
   CalendarEventOut: "CalendarEvent",
+  EventSeriesOut: "EventSeriesRef",
+
+  /* ── 반복 묶음 고치기 (#738 · 승인 게이트 ㉠) ── */
+  RepeatIn: "RepeatRequest",
+  SeriesEventIn: "SeriesDraftFields",
+  SeriesBeforeIn: "UpdateSeriesBody.before",
+  UpdateSeriesRequest: "UpdateSeriesBody",
+  UpdateSeriesResponse: "UpdateSeriesResponse",
   EventItemOut: "EventItem",
   ReminderOut: "Reminder",
   ReminderLead: "ReminderLead",
@@ -295,13 +307,4 @@ export const NOT_MAPPED: Record<string, string> = {
   ValidationError: "HTTPValidationError 안쪽",
   LinkedAffinityOut: "웹이 ObservationOut.affinity 를 읽지 않는다",
   AnswerResponse: "05 가 되묻기 답의 응답 본문을 읽지 않는다",
-  SeenTours: "웹 미사용 — FE 후속 (#696 머지 뒤 lib/tour/seen.ts 를 서버 호출로 바꿀 때)",
-  // 요일 반복 (#738). 웹 타입은 #746 이 만든다 — 그 PR 이 SCHEMA_MAP 으로 옮긴다
-  // (EventSeriesRef · RepeatRequest · SeriesDraftFields · UpdateSeriesBody.before · UpdateSeriesBody)
-  EventSeriesOut: "웹 타입이 #746 에서 생긴다 (EventSeriesRef)",
-  RepeatIn: "웹 타입이 #746 에서 생긴다 (RepeatRequest)",
-  SeriesEventIn: "웹 타입이 #746 에서 생긴다 (SeriesDraftFields)",
-  SeriesBeforeIn: "웹 타입이 #746 에서 생긴다 (UpdateSeriesBody.before)",
-  UpdateSeriesRequest: "웹 타입이 #746 에서 생긴다 (UpdateSeriesBody)",
-  UpdateSeriesResponse: "웹 타입이 #746 에서 생긴다. 화면은 성공 여부만 쓴다",
 };

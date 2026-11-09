@@ -118,7 +118,9 @@ export function ConsentSection({ childId }: { childId: string }) {
     onSuccess: (_data, variables) => {
       setPending(null);
       setAnnouncement(
-        `${consentName(variables.choice)} 동의를 ${variables.next === "granted" ? "받았어요" : "철회했어요"}.`,
+        variables.next === "granted"
+          ? `${consentName(variables.choice)}에 동의했어요.`
+          : `${consentName(variables.choice)} 동의를 철회했어요.`,
       );
       void queryClient.invalidateQueries({ queryKey: qk.consents(childId) });
       // 🚨 서버가 동의를 기록한 **뒤에** 묻는다. 기록이 실패했는데 휴대폰 권한만 받아 두지 않는다.
@@ -231,12 +233,12 @@ export function ConsentSection({ childId }: { childId: string }) {
         title={
           pending?.next === "withdrawn"
             ? `${consentName(pending.choice)} 동의를 철회할까요?`
-            : `${pending ? consentName(pending.choice) : ""} 동의를 받을까요?`
+            : `${pending ? consentName(pending.choice) : ""}에 동의할까요?`
         }
         description={
           pending?.next === "withdrawn"
-            ? "철회하면 아래가 멈춰요. 설정에서 다시 켤 수 있어요."
-            : "동의하면 아래가 동작해요. 설정에서 언제든 다시 끌 수 있어요."
+            ? "철회하면 아래 기능이 멈춰요. 설정에서 다시 켤 수 있어요."
+            : "동의하면 아래 기능을 쓸 수 있어요. 설정에서 언제든 다시 끌 수 있어요."
         }
         footer={
           pending ? (
@@ -362,7 +364,7 @@ export function LegalDocumentSection() {
             ) : (
               <p id={`${doc.id}-version`} className="text-caption text-ink-subtle pb-2">
                 {doc.href
-                  ? "가장 최신의 처리방침이 열려요."
+                  ? "최신 처리방침이 열려요."
                   : policy
                     ? `${policy.version} 판이에요.`
                     : "지금은 열 수 없어요. 잠시 뒤에 다시 열어 주세요."}

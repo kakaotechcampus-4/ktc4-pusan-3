@@ -86,8 +86,8 @@ export function SafetySection({
   return (
     <Section
       data-tour="safety"
-      title="알레르기 · 건강"
-      description="보호자가 직접 확인한 것만 저장돼요. AI 는 이 목록을 만들지도 고치지도 못해요."
+      title="알레르기·건강"
+      description="보호자가 직접 확인한 것만 저장돼요. AI는 이 목록을 만들지도 고치지도 못해요."
       // 받는 동안은 건수 자리만 잡는다 — 빈 상태를 기다리는 자리면 건수가 설 일이 없어 잡지 않는다.
       count={
         query.isPending
@@ -112,7 +112,7 @@ export function SafetySection({
           불러온 순간이라도 투명도로 흘려보내지 않는다. */}
       {query.isPending ? (
         expectEmpty ? (
-          <EmptyStateSkeleton label="안전 정보를 불러오는 중" descriptionLines={2} />
+          <EmptyStateSkeleton label="알레르기·건강 기록을 불러오는 중" descriptionLines={2} />
         ) : (
           <HealthSafetyListSkeleton />
         )
@@ -121,15 +121,18 @@ export function SafetySection({
         <ConsentRequiredCard
           childId={childId}
           error={query.error}
-          what="안전 정보를 불러올 수 없고"
+          what="알레르기·건강 기록을 보여 드릴 수 없어요."
         />
       ) : query.isError ? (
-        <SectionError what="안전 정보를 불러오지 못했어요" onRetry={() => void query.refetch()} />
+        <SectionError
+          what="알레르기·건강 기록을 불러오지 못했어요"
+          onRetry={() => void query.refetch()}
+        />
       ) : items.length === 0 ? (
         <EmptyState
           icon={Shield}
           title="등록된 것이 아직 없어요"
-          description="알레르기나 지병이 확인되면 여기에 적어 두세요. 식사 제안이 이 목록을 보고 걸러요."
+          description="알레르기나 지병이 확인되면 여기에 적어 두세요. 식사를 제안할 때 이 목록에 있는 것을 먼저 빼요."
           count={0}
           countLabel="등록된 항목"
         />
@@ -204,7 +207,7 @@ function AddSafetySheet({
   onPhoto: () => void;
 }) {
   return (
-    <BottomSheet open={open} onClose={onClose} title="알레르기 · 건강 기록 추가">
+    <BottomSheet open={open} onClose={onClose} title="알레르기·건강 기록 추가">
       <div className="flex flex-col gap-2">
         <AddSafetyOption
           title="직접 적기"

@@ -13,6 +13,7 @@ from app.agents.food.amount_rules import amount_of, portion_scale_for
 from app.agents.food.context import FoodContext
 from app.agents.food.kdri import NutrientRef, refs_for
 from app.agents.food.menu_resolver import MenuResolver, Resolved
+from app.agents.food.nutrient_wording import APPEARANCE_GROUPS
 from app.agents.food.store.ports import DaycareMealRow, FoodObservation
 from app.core.mfds_nutri_raw import OPTIONAL_NUTRIENT_KEYS
 from app.rules.age import months_between
@@ -262,6 +263,9 @@ class NutrientVerdict:
     # 식품군 → 최근 7일 중 나온 날 수(나온 식품군만). 1인분 중량과 무관하게 센다
     food_group_days: dict[str, int] = field(default_factory=dict)
     recorded_days: int = 0  # 최근 7일 중 기록이 있는 날 수 — 출현 문장의 분모
+    # 식품군 → 기록이 있는 날 중 그 식품군이 안 나왔는데 식품군을 모르는 메뉴가 낀 날 수. 그 날들은
+    # "안 나왔다" 가 아니라 "모른다" 라서 안내 줄이 결론을 뒤집을 수 있는지 볼 때 쓴다(#739)
+    group_unknown_days: dict[str, int] = field(default_factory=dict)
     # 출현을 말해도 되는가. 구간(`insufficient`)과 따로 본다 — 구간은 1인분 중량이 빈 메뉴에도
     # 막히지만 출현은 "나왔는가" 라서 기록 행 수(N-1) · 메뉴 해석률만 본다(N-17)
     appearance_ready: bool = False
@@ -300,6 +304,7 @@ async def evaluate_nutrient_bands(context: FoodContext, *, months: int) -> Nutri
     grouped_ratio = (
         sum(dt.grouped_menus for dt in current_totals) / total_menus if total_menus else 0.0
     )
+    group_unknown_days = _group_unknown_days(current_totals)
     appearance_ready = (
         not is_insufficient(records)
         and resolved_ratio >= MIN_RESOLUTION_RATIO
@@ -321,6 +326,7 @@ async def evaluate_nutrient_bands(context: FoodContext, *, months: int) -> Nutri
             food_groups=food_groups,
             food_group_days=food_group_days,
             recorded_days=recorded_days,
+            group_unknown_days=group_unknown_days,
             appearance_ready=appearance_ready,
         )
         context.state.nutrient_verdict = verdict
@@ -349,10 +355,24 @@ async def evaluate_nutrient_bands(context: FoodContext, *, months: int) -> Nutri
         food_groups=food_groups,
         food_group_days=food_group_days,
         recorded_days=recorded_days,
+        group_unknown_days=group_unknown_days,
         appearance_ready=appearance_ready,
     )
     context.state.nutrient_verdict = verdict
     return verdict
+
+
+def _group_unknown_days(totals: list[DayTotals]) -> dict[str, int]:
+    """식품군마다 "안 나왔는데 모르는 메뉴가 낀 날" 수. 0 인 식품군은 싣지 않는다.
+
+    기록이 있는 날만 본다. 식품군을 모르는 메뉴는 카탈로그에 없거나 식품군이 빈 행(찌개 · 국)이다.
+    """
+    unknown_days = [dt for dt in totals if dt.records > 0 and dt.grouped_menus < dt.menus]
+    counts = {
+        group: sum(1 for dt in unknown_days if group not in dt.food_groups)
+        for group, _label in APPEARANCE_GROUPS
+    }
+    return {group: count for group, count in counts.items() if count}
 
 
 def _known_share(nutrient: str, totals: list[DayTotals]) -> float:
