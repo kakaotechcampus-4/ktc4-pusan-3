@@ -160,9 +160,9 @@ def _suggestion_out(s, views: Sequence[EvidenceView] = ()) -> SuggestionOut:
 
 
 async def _safety_labels(session, *, child_id: _uuid.UUID) -> list[entrypoint.SafetyLabel]:
-    """사전검사 · 채택 재확인이 같이 읽는 알레르기 · 건강 행(모든 kind · status).
+    """사전검사 · 채택 · 초안 만들기 재확인이 같이 읽는 알레르기 · 건강 행(모든 kind · status).
 
-    목록이 빼는 추천과 채택이 막는 추천이 같으려면 읽는 행도 판정 함수도 같아야 한다.
+    목록이 빼는 추천과 채택 · 초안 만들기가 막는 추천이 같으려면 읽는 행도 판정 함수도 같아야 한다.
     """
     rows = await list_safety_labels(session, child_id=child_id)
     return [entrypoint.SafetyLabel(*r) for r in rows]
@@ -176,7 +176,8 @@ async def _recheck_allergens(session, *, child_id: _uuid.UUID, rows, message: st
     - `active` 에 걸린 추천이 하나라도 있으면 전부 거절한다(409 `allergen_blocked`) — 부른 API 의
       "전부 아니면 전부" 와 같다. 걸린 추천 id 는 `detail.suggestion_ids` 로 요청 순서대로 싣는다.
       `message` 만 부른 곳마다 다르다 — 응답 모양이 같아야 웹이 안내 카드를 같이 쓴다.
-    - "모름"(행 없음)은 막지 않는다 — 답을 미뤄도 채택은 막지 않는다 (event-draft-ui-v1.md §3-8).
+    - "모름"(행 없음 · 내린 기록만 있음)은 막지 않는다 — 답을 미뤄도 막지 않는다
+      (event-draft-ui-v1.md §3-8).
     - `allergens` 가 없는 추천뿐이면 건강정보를 읽지 않는다.
     - 동의가 없으면 읽지 않고 403 — 목록도 동의 없이는 이 추천을 내보내지 않는다.
     - 동의 · 알레르기 조회가 실패하면 예외를 그대로 올린다(500, 아무것도 쓰지 않음) —
@@ -285,8 +286,8 @@ def _next_draft_id() -> str:
         "DB에 저장하지 않는다 — 응답으로만 반환."
         " 만들기 직전에 알레르기를 다시 본다 — 채택한 뒤 등록된 알레르기(active)에 걸리는"
         " 추천이 하나라도 있으면 초안을 하나도 만들지 않고 409 `allergen_blocked`"
-        "(`detail.suggestion_ids` = 걸린 추천 id, 요청 순서). 판정 · 응답은 채택과 같다 —"
-        " 알레르기 기록에 없는 항목(모름)은 막지 않는다. 걸린 추천은 `approved` 그대로다."
+        "(`detail.suggestion_ids` = 걸린 추천 id, 요청 순서). 판정 · `code` · `detail` 은 채택과"
+        " 같다 — 알레르기 기록에 없는 항목(모름)은 막지 않는다. 걸린 추천은 `approved` 그대로다."
         " 오류 (순서대로): 400 validation_failed(빈 목록) → 행마다 404 not_found ·"
         " 422 not_approved → 403 consent_required(알레르기 항목이 든 추천인데 건강정보 동의 없음)"
         " → 409 allergen_blocked."

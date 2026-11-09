@@ -680,8 +680,9 @@ async def test_event_drafts_not_approved(
 
 
 # ── 초안 만들기 직전 알레르기 재확인 (#859) ───────────────────────────────────
-# 판정 · "모름" · 내린 기록 · 조회 실패는 채택과 같은 함수라 위의 채택 테스트가 본다.
-# 여기서는 초안 만들기가 그 함수를 부르는지와, 부르는 자리에서만 갈릴 수 있는 것만 본다.
+# 판정 · "모름" · 조회 실패는 같은 함수라 위의 채택 테스트가, 내린 기록은 사전검사 테스트
+# (test_suggestions_endpoint.py · test_allergy_states.py)가 본다. 여기서는 초안 만들기가 그 함수를
+# 부르는지와, 부르는 자리에서만 갈릴 수 있는 것만 본다.
 
 
 async def _drafts(db_client: AsyncClient, cid: uuid.UUID, headers, *rows: Suggestion):
@@ -721,7 +722,10 @@ async def test_채택_뒤에_등록된_알레르기에_걸리면_초안을_하�
 async def test_채택_뒤에_건강정보_동의를_거두면_알레르기_항목이_든_추천으로_초안을_만들지_않는다(
     db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID, monkeypatch
 ):
-    """동의가 없어 알레르기를 못 읽는 것을 "걸린 것 없음" 으로 넘기지 않는다 (루트 §2)."""
+    """동의가 없어 알레르기를 못 읽는 것을 "걸린 것 없음" 으로 넘기지 않는다 (루트 §2).
+
+    부르는 자리에서 동의를 먼저 보고 재확인을 건너뛰게 바뀌면 여기서만 깨진다.
+    """
     monkeypatch.setattr("app.api.v1.routers.suggestions.child_health_granted", _granted(False))
     headers, _ = bearer
     walnut = await _make_suggestion(
