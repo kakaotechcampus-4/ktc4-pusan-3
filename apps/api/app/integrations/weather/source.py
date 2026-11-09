@@ -10,13 +10,24 @@ from datetime import date, datetime
 
 import httpx
 
-from app.core.weather_raw import RawAdvisories, RawAir, RawForecast, WeatherGrid
+from app.core.weather_raw import (
+    RawAdvisories,
+    RawAir,
+    RawForecast,
+    UpstreamUnavailable,
+    WeatherGrid,
+)
 from app.integrations.weather.advisories import KmaAdvisories
 from app.integrations.weather.air import AirKorea
-from app.integrations.weather.forecast import KmaForecast
+from app.integrations.weather.forecast import KST, KmaForecast
+from app.integrations.weather.mid import KmaMidForecast
 from app.integrations.weather.uv import KmaUv
 
 log = logging.getLogger(__name__)
+
+
+# 이만큼 뒤의 날부터 단기예보에 칸이 없으면 중기예보로 본다
+MID_FROM_DAYS = 3
 
 
 class PublicWeather:
@@ -27,13 +38,15 @@ class PublicWeather:
         now: Callable[[], datetime] | None = None,
     ) -> None:
         self._forecast = KmaForecast(transport=transport, now=now)
+        self._mid = KmaMidForecast(transport=transport, now=now)
+        self._now = now or (lambda: datetime.now(KST))
         self._air = AirKorea(transport=transport, now=now)
         self._uv = KmaUv(transport=transport, now=now)
         self._advisories = KmaAdvisories(transport=transport, now=now)
 
     async def aclose(self) -> None:
         """넷을 다 닫는다. 하나가 실패해도 나머지는 닫는다 — 클라이언트가 남지 않게 (#346 리뷰)."""
-        for part in (self._forecast, self._air, self._uv, self._advisories):
+        for part in (self._forecast, self._mid, self._air, self._uv, self._advisories):
             try:
                 await part.aclose()
             except Exception as error:  # 닫기 실패는 종류만 남긴다 — 문구에 주소가 들 수 있다
@@ -44,7 +57,14 @@ class PublicWeather:
                 )
 
     async def forecast(self, *, grid: WeatherGrid, day: date) -> RawForecast:
-        return await self._forecast.forecast(grid=grid, day=day)
+        """단기예보에 그날 칸이 없고 3일 이상 뒤면 중기 육상예보로 본다 — 월요일에 묻는 주말처럼.
+        가까운 날의 실패는 중기예보로 메우지 않는다(단기예보가 그날을 맡는다)."""
+        try:
+            return await self._forecast.forecast(grid=grid, day=day)
+        except UpstreamUnavailable:
+            if (day - self._now().astimezone(KST).date()).days < MID_FROM_DAYS:
+                raise
+            return await self._mid.forecast(grid=grid, day=day)
 
     async def air_quality(self, *, grid: WeatherGrid) -> RawAir:
         return await self._air.air_quality(grid=grid)
