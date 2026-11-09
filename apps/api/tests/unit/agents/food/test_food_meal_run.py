@@ -18,9 +18,9 @@ from app.agents.common.schemas.task import DomainTask
 from app.agents.food import agent as food_agent
 from app.agents.food.agent import run
 from app.agents.food.context import FoodContext
-from app.agents.food.meal_pool import PoolItem
+from app.agents.food.meal_pool import PoolItem, build_pool, sample_pool
 from app.agents.food.nutrition_eval import NutrientVerdict
-from app.agents.food.readouts import FOLLOWUP_PREFERENCE, POOL_EMPTY, READOUTS
+from app.agents.food.readouts import FOLLOWUP_PREFERENCE, MEAL_MENU_WEANING, POOL_EMPTY, READOUTS
 from app.agents.food.store import (
     InMemoryFoodDocs,
     InMemoryFoodMemory,
@@ -31,6 +31,7 @@ from app.agents.food.store import (
     SafetyEntry,
     in_memory_ports,
 )
+from app.agents.food.store.ports import RECIPE_SOURCES
 from app.rules.menu_evidence import menu_evidence_id
 from tests.unit.agents.food.support import (
     BIRTH_DATE,
@@ -791,22 +792,88 @@ async def test_요청_안내에는_등록한_알레르기_이름이_없다() -> 
     assert all("달걀" not in body for body in bodies)
 
 
-async def test_12개월_전_꿀_요청은_빼고_골랐다고_안내한다() -> None:
-    weaning = [
-        recipe("쌀미음", "쌀", stage_min="infant_weaning"),
-        recipe("감자퓌레", "감자", stage_min="infant_weaning"),
-        recipe("애호박죽", "애호박", "쌀", stage_min="infant_weaning"),
-        recipe("꿀바나나죽", "바나나", "쌀", "꿀", stage_min="infant_weaning"),
-    ]
-    llm = ScriptedLLM(propose("쌀미음", "감자퓌레", "애호박죽", evidence=[]))
+async def shown_menus(birth: date, count: int = 3) -> list[str]:
+    """`run()` 이 모델에게 보여 줄 샘플(같은 seed)의 앞 `count` 개.
 
-    result = await run(
-        meal_task("꿀 넣은 이유식 추천해줘"),
-        meal_context(*weaning, birth=date(2026, 2, 14)),  # NOW 기준 8개월
-        client=llm,
-    )
+    이유식 식단 표는 중기 13행이라 샘플(10~15개)이 표 전체가 아닐 수 있고, 같은 주재료는 두 개까지만
+    들어간다. 고정한 이름을 고르면 보여 주지 않은 후보가 되어 거절당한다. `run()` 의 게이트가 하는
+    안전 정보 읽기는 여기서 빈 값으로 대신하는 따로 만든 context 다.
+    """
+    context = meal_context(birth=birth)
+    context.state.safety = ()
+    pool = await build_pool(context)
+    return [item.row.menu_key for item in sample_pool(pool, seed="run-1:sample")][:count]
+
+
+async def test_12개월_전_꿀_요청은_빼고_골랐다고_안내한다() -> None:
+    birth = date(2026, 2, 14)  # NOW 기준 8개월
+    llm = ScriptedLLM(propose(*await shown_menus(birth), evidence=[]))
+
+    result = await run(meal_task("꿀 넣은 이유식 추천해줘"), meal_context(birth=birth), client=llm)
 
     assert result.readouts[0].body == "요청하신 꿀은 12개월 전에는 먹이지 않아서 빼고 골랐어요."
+
+
+# ── 이유기 — 이유식 식단 표로 끝까지 (#399) ─────────────────────────────────
+async def test_8개월_식단_추천은_이유식_식단에서_세_개를_낸다() -> None:
+    birth = date(2026, 2, 14)
+    names = await shown_menus(birth)
+    llm = ScriptedLLM(propose(*names, evidence=[]))
+
+    result = await run(meal_task(), meal_context(birth=birth), client=llm)
+
+    assert len(names) == 3
+    assert [d.content for d in result.suggestions] == names
+    assert {d.kind for d in result.suggestions} == {"general"}
+    assert all(d.citations and d.citations[0].ref.kind == "food_doc" for d in result.suggestions)
+    bodies = [r.body for r in result.readouts]
+    assert READOUTS.get(MEAL_MENU_WEANING).template in bodies
+    assert "조건에 맞는 메뉴가 없어요." not in bodies
+
+
+async def test_4개월은_초기_메뉴로_추천한다() -> None:
+    llm = ScriptedLLM(propose("쌀미음", "애호박미음", "고구마미음", evidence=[]))
+
+    result = await run(meal_task(), meal_context(birth=date(2026, 6, 14)), client=llm)
+
+    assert len(result.suggestions) == 3 and result.model_calls == 1
+
+
+async def test_3개월은_모델_없이_수유기_안내다() -> None:
+    llm = ScriptedLLM()
+
+    result = await run(meal_task(), meal_context(birth=date(2026, 7, 14)), client=llm)
+
+    assert (result.status, result.model_calls, llm.calls) == ("unsupported", 0, 0)
+    assert result.readouts[0].body == READOUTS.get("unsupported.milk_meal").template
+
+
+async def test_12개월은_이유식_식단을_쓰지_않는다() -> None:
+    ctx = meal_context(TOFU, SPINACH, SOUP, birth=date(2025, 10, 14))
+    llm = ScriptedLLM(propose("두부조림", "시금치나물", "미역국"))
+
+    await run(meal_task(), ctx, client=llm)
+
+    assert ctx.state.pool_rows
+    assert {row.source for row in ctx.state.pool_rows.values()} <= RECIPE_SOURCES
+
+
+async def test_알레르기로_이유식_풀이_두_개면_두_개만_내고_다시_부르지_않는다() -> None:
+    safety = [
+        SafetyEntry(kind="allergy", label=name, status="active")
+        for name in ("쇠고기", "대두", "닭고기", "생선")
+    ]
+    llm = ScriptedLLM(propose("고구마애호박무른밥", "단호박무른밥", evidence=[]))
+
+    result = await run(
+        meal_task(), meal_context(safety=safety, birth=date(2025, 12, 14)), client=llm
+    )
+
+    assert [d.content for d in result.suggestions] == ["고구마애호박무른밥", "단호박무른밥"]
+    assert result.model_calls == 1
+    bodies = [r.body for r in result.readouts]
+    assert "조건에 맞는 추천을 2개 준비했어요." in bodies
+    assert "조건에 맞는 메뉴가 없어요." not in bodies
 
 
 async def test_풀이_비어도_요청_안내가_붙는다() -> None:

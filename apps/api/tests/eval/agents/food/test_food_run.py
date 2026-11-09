@@ -53,6 +53,7 @@ from app.agents.food.nutrient_wording import APPEARANCE_GROUPS
 from app.agents.food.readouts import MEAL_NUTRIENT_BASIS, READOUTS
 from app.agents.food.store import DaycareMealRow, MenuCatalogRow, SafetyEntry
 from app.agents.food.store.ports import DAYCARE_SLOT_ORDER
+from app.agents.food.weaning_menu import weaning_menu_rows
 from app.rules.menu_key import normalize_menu_key
 from tests.eval.agents.food.generate import require_food_model
 from tests.eval.agents.food.world import (
@@ -489,9 +490,11 @@ def j_c8(ran: Ran) -> Verdict:
     verdict = common(ran)
     if not ran.result.suggestions:
         verdict.failures.append("이유식 후보가 없다")
-    weaning = {row.display_name for row in ran.world.recipes}
+    # 이유기 후보는 레시피북이 아니라 이유식 식단 표(그 달 단계)다(#399).
+    # 세계의 레시피 행은 쓰이지 않는다
+    weaning = {row.display_name for row in weaning_menu_rows(8, synced_at=ran.world.context.now)}
     if any(name not in weaning for name in _names(ran)):
-        verdict.failures.append("이유기 풀 밖 메뉴가 추천에 있다")
+        verdict.failures.append("이유식 식단 표 밖 메뉴가 추천에 있다")
     if "꿀바나나죽" in _names(ran):
         verdict.failures.append("12개월 전 꿀 메뉴가 추천에 있다")
     return verdict
@@ -1384,7 +1387,7 @@ CASES: tuple[Case, ...] = (
         "파프리카 들어간 이유식 추천해줘.",
         M,
         "C8",
-        "이유기는 생성하지 않는다 — 레시피북 메뉴만",
+        "이유기는 생성하지 않는다 — 이유식 식단 표 메뉴만",
         j_no_generation,
     ),
     Case(
