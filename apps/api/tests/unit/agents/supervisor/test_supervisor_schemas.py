@@ -71,6 +71,50 @@ def test_정해진_필드만_노출한다() -> None:
     }
 
 
+def _segment_item(spec: dict[str, Any]) -> dict[str, Any]:
+    return spec["function"]["parameters"]["properties"]["segments"]["items"]
+
+
+def test_앞_대화가_있을_때만_tool_spec_에_resolved_request_가_있다() -> None:
+    from app.agents.supervisor.schemas import (
+        ROUTE_TOOL_SPEC_CONTEXT,
+        ROUTE_TOOL_SPEC_CONTEXT_STRICT,
+        ROUTE_TOOL_SPEC_STRICT,
+    )
+
+    assert "resolved_request" not in _segment_item(ROUTE_TOOL_SPEC)["properties"]
+    assert "resolved_request" not in _segment_item(ROUTE_TOOL_SPEC_STRICT)["required"]
+    assert "resolved_request" in _segment_item(ROUTE_TOOL_SPEC_CONTEXT)["properties"]
+    assert "resolved_request" in _segment_item(ROUTE_TOOL_SPEC_CONTEXT_STRICT)["required"]
+    base = set(_segment_item(ROUTE_TOOL_SPEC)["properties"])
+    assert set(_segment_item(ROUTE_TOOL_SPEC_CONTEXT)["properties"]) == base | {"resolved_request"}
+
+
+# ── resolved_request ────────────────────────────────────────────
+def test_resolved_request_는_request_조각에만_남는다() -> None:
+    record = Segment.model_validate(
+        {"text": "a", "kind": "record", "work": "observe", "resolved_request": "b"}
+    )
+    request = Segment.model_validate(
+        {"text": "a", "kind": "request", "agent": "activity", "resolved_request": "b"}
+    )
+
+    assert record.resolved_request is None
+    assert request.resolved_request == "b"
+
+
+def test_빈_해석은_None_이고_200자를_넘으면_지운다() -> None:
+    from app.agents.supervisor.schemas import MAX_RESOLVED_CHARS
+
+    base = {"text": "a", "kind": "request", "agent": "activity"}
+
+    assert Segment.model_validate({**base, "resolved_request": "  "}).resolved_request is None
+    long = Segment.model_validate({**base, "resolved_request": "가" * (MAX_RESOLVED_CHARS + 1)})
+    assert long.resolved_request is None and long.text == "a"  # 조각은 남는다
+    edge = Segment.model_validate({**base, "resolved_request": "가" * MAX_RESOLVED_CHARS})
+    assert edge.resolved_request == "가" * MAX_RESOLVED_CHARS
+
+
 # ── enum 일치 ───────────────────────────────────────────────────
 def test_agent_이름이_suggestion_과_같다() -> None:
     """회의 §5 ㉡ — enum 을 각자 두고 parity 로 지킨다. 어긋나면 추천이 저장되지 않는다.
@@ -351,11 +395,12 @@ def test_정답_구간이_원문에_있다() -> None:
     assert check_cases() == []
 
 
-def test_food_유형은_네_가지다() -> None:
+def test_food_유형은_다섯_가지다() -> None:
     assert {member.value for member in FoodTaskType} == {
         "meal_recommendation",
         "nutrient_analysis",
         "daycare_meal",
+        "daycare_lookup",
         "food_check",
     }
 
@@ -453,6 +498,19 @@ def test_food_check_조각을_받고_route_스펙에도_있다() -> None:
     )
     assert segment.food_task == "food_check"
     assert "food_check" in json.dumps(ROUTE_TOOL_SPEC, ensure_ascii=False)
+
+
+def test_daycare_lookup_조각을_받고_route_스펙에도_있다() -> None:
+    segment = Segment.model_validate(
+        {
+            "text": "내일 급식 뭐야?",
+            "kind": "request",
+            "agent": "food",
+            "food_task": "daycare_lookup",
+        }
+    )
+    assert segment.food_task == "daycare_lookup"
+    assert "daycare_lookup" in json.dumps(ROUTE_TOOL_SPEC, ensure_ascii=False)
 
 
 def test_health_조각은_라벨을_그대로_둔다() -> None:

@@ -99,10 +99,14 @@
 
 - [notification/reminder-v1.md](notification/reminder-v1.md) — **일정 알림.** 일정마다 보호자 개인 알림 1개(고정 목록 · 종일은 KST 오전 9시) · 울릴 시각이 아니라 `lead` 를 저장하고 보낼 때 계산 · 기기는 로그인에 묶여 로그아웃 · 만료 때 함께 지워짐 · 스위치 2개(보호자 단위, 행 없으면 코드 기본값) · 1분 배치가 보내기 전에 `sent_at` 을 찍음(두 번 울리느니 한 번 빠짐) · 10분 넘게 지난 알림은 안 보냄 · 문구에 일정 제목 없음 · 🔶 문구 · 토큰 동의 · 기본값은 PM 결정 대기 (#594)
 
+## 공지 (notice)
+
+- [notice/notice-ocr-v1.md](notice/notice-ocr-v1.md) — **기관 문서 사진 읽기.** 공지 1건 = 원문 1행 + 항목 N행 · 항목 처리는 `calendar` / `todo` / `info` 셋 · 모델은 날짜 표현만 옮기고 계산은 코드(`rules/notice_dates.py`) · 저장은 commit 하나 · 캘린더는 안 쓴다 · 실제 공지 말뭉치 시험 결과 · 켜기 전에 정할 것
+
 ## 급식표 (meal-plan)
 
 - [meal-plan/meal-plan-pipeline-v1.md](meal-plan/meal-plan-pipeline-v1.md) — 입력 3종(사진 · 엑셀 · 한글)이 모이는 `MealPlanJSON` 과 `MealPlanReader` 확정 · `source` 필드로 검수 필요 여부 구분 · `meal_type` 5종 · `allergen_codes` 는 JSON 에 없음(규칙이 뽑음) · 저장 기준은 미정(우선 아이 기준) · 못 읽은 칸은 그 칸만 비움
-- [meal-plan/ocr-model-eval-v1.md](meal-plan/ocr-model-eval-v1.md) — 사진 입력 기본 모델 `gemini-3.1-pro-preview` 확정(정답셋 178항목, 메뉴 단위 번호 일치 100%) · 채점 지표는 메뉴 단위 번호 일치가 정본 · 게이트웨이 출력 상한 6,000 → 2분할 · 후보 방식 A/A+/A′/B
+- [meal-plan/ocr-model-eval-v1.md](meal-plan/ocr-model-eval-v1.md) — 사진 입력 기본 모델 `gemini-4-argon` 확정(정답셋 178항목, 메뉴 단위 번호 일치 100%) · 채점 지표는 메뉴 단위 번호 일치가 정본 · 게이트웨이 출력 상한 6,000 → 2분할 · 후보 방식 A/A+/A′/B
 
 ## 웹 · 화면
 
@@ -126,6 +130,7 @@
 ## 안전 · 개인정보
 
 - [safety/retention-v1.md](safety/retention-v1.md) — **개인정보 보관 · 삭제 기준.** 아이에 묶인 기록은 아이와 함께 · 근거 글은 원문 그대로 · 서버 로그 3개월 · 동의 증빙 1년 · 백업 30일 이내 · 대화 기록(#228) 규칙 (10-14 PM)
+- [safety/hazard-rules-v1.md](safety/hazard-rules-v1.md) — **위험 물질 규칙 목록과 판정 분리.** 이름 · 동사 · 예외 표기는 `hazard_rules.py`, 판정은 `hazard.py` · 값만 바뀌면 목록, 판정도 바뀌면 코드 · 지금은 코드 상수 + `find_hazards(rules=)` 목록 교체 · 검사 방법 교체 자리 `Guardrail`(사전검사 · 저장 게이트가 한 인스턴스, fail-closed) · 외부로 옮길 때 정할 것 (#731)
 - [safety/consent-texts-v1.md](safety/consent-texts-v1.md) — **약관 · 동의문 작성 메모.** 본문은 `apps/api/alembic/policy_texts/` 에 있고 DB 에 그대로 들어간다 · 초안마다 무엇을 왜 바꿨는지 · 배포 전에 만들어야 사실이 되는 문장 · 위치는 요약 + 위치기반서비스 이용약관 한 글에 체크 하나 (#172)
 
 그 밖에 *아직 문서 없음.* 가드레일 7개, 법정대리인 동의 절차, 외부 LLM 전달 범위. → [지금 열려 있는 결정](#지금-열려-있는-결정-기한-있음)
@@ -138,6 +143,7 @@
 
 - [ops/alembic-collaboration-v1.md](ops/alembic-collaboration-v1.md) — 마이그레이션 협업 규칙 · make 명령어 치트시트 · autogenerate 한계 · revision 충돌 해결법 확정
 - [ops/logging-alerts-v1.md](ops/logging-alerts-v1.md) — 서버 로그 적재(docker journald) · ERROR 알림(Discord 웹훅) 결정과 근거 · 알림이 못 잡는 것 (멘토 #267 2번 · PR #302)
+- [ops/deploy-v1.md](ops/deploy-v1.md) — CI 게이트 · 헬스 실패 시 직전 이미지 자동 롤백 · 한 EC2 위 dev(develop)/prod(main) 분리 · 서버 준비 절차
 - [ops/llm-usage-v1.md](ops/llm-usage-v1.md) — LLM 토큰 사용량을 보호자 · run · 모델별로 남기는 방법 (BM 산정) · 새 호출 지점 규칙 · OCR 담당 계약 · 서버 고려
 - [ops/encryption-v1.md](ops/encryption-v1.md) — 전송(TLS · HSTS) · 저장(EBS) 구간 암호화가 어디서 지켜지는지와 확인 기록 · E2E 를 하지 않는 이유 · 예외 로그에서 원문 빼기 (#670)
 
@@ -153,7 +159,7 @@
 
 두 개요 문서에서 `미정` 으로 남아 있는 항목. **원문이 기준**이고, 결정되면 해당 도메인 폴더에 기능 문서로 고정한 뒤 이 표에서 뺀다.
 
-> 개인정보 보관 범위 · 기간과 삭제 범위는 10-14 확정되어 [safety/retention-v1.md](safety/retention-v1.md) 로 옮겼다 (공지 원문 속 제3자 정보는 알림장 기능이 생길 때 그 문서에서 정한다).
+> 개인정보 보관 범위 · 기간과 삭제 범위는 10-14 확정되어 [safety/retention-v1.md](safety/retention-v1.md) 로 옮겼다 (공지 원문 속 제3자 정보는 그 문서의 🚧 제안을 PM 이 정한다).
 >
 > 승격 임계값 · 감쇠 기준 · 법정대리인 동의 시점 · 급식 데이터 출처는 **확정되어 이 표에서 뺐다.** 확정된 값은 아직 문서로 고정되지 않았다 — 각각 `memory/` · `safety/` · `api/` 에 기능 문서로 남길 것.
 

@@ -37,6 +37,7 @@ import {
   type MedicationsResponse,
 } from "@/lib/api";
 import { timesLabel } from "@/lib/medication";
+import { MEDICATION_ENABLED } from "@/lib/store-policy";
 import { FORWARD } from "@/lib/view-transition";
 import { profileTour } from "@/lib/tour/screens/profile";
 
@@ -72,7 +73,9 @@ function ChildProfileScreen() {
         <div className="min-w-0 flex-1">
           <PageTitle>아이 프로필</PageTitle>
           <p className="text-body-sm text-ink-muted mt-2">
-            기본 정보와 키·몸무게, 복약, 알레르기를 여기서 관리해요.
+            {MEDICATION_ENABLED
+              ? "기본 정보와 키·몸무게, 복약, 알레르기를 여기서 관리해요."
+              : "기본 정보와 키·몸무게, 알레르기를 여기서 관리해요."}
           </p>
         </div>
         <TourHelpButton tour={profileTour} />
@@ -82,7 +85,8 @@ function ChildProfileScreen() {
 
       <GrowthSection childId={childId} query={growth} />
 
-      <MedicationSection childId={childId} />
+      {/* 🚨 스토어 선언 때문에 꺼 둔 동안은 칸도 조회도 없다 (`lib/store-policy.ts`). 투어의 복약 단계는 비출 칸이 없어 저절로 빠진다. */}
+      {MEDICATION_ENABLED ? <MedicationSection childId={childId} /> : null}
 
       <SafetySection childId={childId} />
 
@@ -189,7 +193,7 @@ function GrowthSection({
   return (
     <Section
       data-tour="growth"
-      title="키 · 몸무게"
+      title="키·몸무게"
       description="가장 최근에 잰 것만 보여줘요. 눌러서 지난 기록과 변화를 볼 수 있어요."
       // 🚨 불러오기 전에는 숫자 대신 자리만(`"pending"`), 0 건이면 넘기지 않는다 — 앞은 "아직 모름" 이라
       //    0 을 그리면 거짓말이고, 뒤는 바로 아래 `EmptyState` 가 같은 숫자를 이미 말한다.
@@ -255,7 +259,7 @@ function MedicationSection({ childId }: { childId: string }) {
           <EmptyState
             icon={Pill}
             title="지금 먹이는 약이 없어요"
-            description="대화에 약 이름과 언제, 며칠 먹이는지 적어 주시면 복약 일정을 만들어 드려요."
+            description="대화에 약 이름, 먹일 시각, 먹일 기간을 적으면 복약 일정을 준비해요. 확인하고 넣은 약만 여기에 보여요."
             count={0}
             countLabel="진행 중인 복약"
           />

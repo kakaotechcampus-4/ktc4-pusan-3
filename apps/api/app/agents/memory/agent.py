@@ -30,11 +30,12 @@ from typing import Any, Literal
 
 from pydantic import ValidationError
 
+from app.agents.common.guardrail import GuardContext, Guardrail
 from app.agents.common.llm_client import LLMClient, LLMError
 from app.agents.common.result import DomainPending
 from app.agents.memory.bundles import MUTATING_PREFIXES, WRITES_FOR, tools_for
 from app.agents.memory.context import AgentContext
-from app.agents.memory.drafts import EventDraft
+from app.agents.memory.drafts import AnyEventDraft
 from app.agents.memory.prompt import build_system_prompt
 from app.agents.memory.registry import TOOL_SPECS, execute_tool, specs_for
 from app.agents.memory.result import ErrorCode, fail
@@ -52,10 +53,8 @@ from app.agents.memory.schemas.task import (
     PendingMemoryContext,
     WorkType,
 )
-from app.rules.hazard import FOOD_NAME_TERMS, PLAY_NAME_TERMS, hazard_names
 from app.rules.medicine_name import is_generic_medicine, same_medicine
 from app.rules.safety_term import mentions_safety
-from app.rules.term_match import Term
 
 logger = logging.getLogger(__name__)
 
@@ -342,7 +341,7 @@ class MemoryAgentResult:
     # max_steps: 끝내지 못함
     # unsaved_fallback: 저장 0건 run 의 다시 확인이 끝나지 못해 코드 문구(_UNSAVED_FALLBACK)를 냄
     ended_by: EndedBy = "model"
-    drafts: tuple[EventDraft, ...] = ()  # 보호자 제출을 기다리는 일정 초안
+    drafts: tuple[AnyEventDraft, ...] = ()  # 보호자 제출을 기다리는 일정 초안 (묶음 초안 포함)
     pending: PendingMemoryContext | None = None  # 되묻고 멈춘 조각. kind=question 일 때만
     leftover: bool = False  # 이어받기에서 답에 섞인 다른 기록·요청을 처리하지 않고 남겼는지.
     # 재질문 상한에 닿아 또 물으려던 질문을 맥락 없이 끝냈는지.
@@ -1204,7 +1203,7 @@ async def _execute(
     if arguments is None:
         # registry는 dict를 전제
         return _failed(name, {}, ErrorCode.INVALID_ARGS, _BAD_JSON)
-    if _hazard(name, arguments):
+    if await _hazard(name, arguments, context.guardrail):
         return _failed(name, arguments, ErrorCode.HAZARD, _HAZARD)
     if _safety_named(name, arguments):
         return _failed(name, arguments, ErrorCode.SAFETY_RECORD, _SAFETY_RECORD)
@@ -1233,7 +1232,7 @@ async def _execute(
     # 위험 물질 · 안전 판정을 지난 뒤에 고정한다 — 거절할 이름을 물은 행동으로 덮어 저장하지 않는다.
     # 고정한 이름은 Growth 모델이 적은 값이라 같은 판정을 한 번 더 건다
     arguments = _pinned(name, arguments, asked)
-    if _hazard(name, arguments):
+    if await _hazard(name, arguments, context.guardrail):
         return _failed(name, arguments, ErrorCode.HAZARD, _HAZARD)
     keys = _dedup_keys(name, arguments)
     done = [key in succeeded for key in keys]
@@ -1305,23 +1304,33 @@ def _targets(arguments: dict[str, Any]) -> list[str]:
 # 위험 물질을 보는 관찰과 그 대상 이름 칸. 음식 · 생활은 술 · 담배 · 화학제품까지, 놀이 · 배움은
 # 마약류만 — "담배의 해로움" 같은 배움 주제와 "동전 모으기" 같은 놀이는 기록이다.
 # 건강 관찰은 보지 않는다 — 위험 물질 사건을 건강 기록으로 남길지는 PM 결정이다 (#626 범위 밖)
-_HAZARD_FIELDS: dict[str, tuple[tuple[str, ...], tuple[Term, ...]]] = {
-    "observation_food": (("subject",), FOOD_NAME_TERMS),
-    "observation_activity": (("activity", "subject"), PLAY_NAME_TERMS),
-    "observation_education": (("topic", "subject"), PLAY_NAME_TERMS),
+# 어느 칸을 어떤 기준으로 볼지는 Memory 스키마 지식이라 여기서 정하고, 무엇이 위험 물질인지는
+# Guardrail 이 정한다 (#731)
+_HAZARD_FIELDS: dict[str, tuple[tuple[str, ...], GuardContext]] = {
+    "observation_food": (("subject",), "food_name"),
+    "observation_activity": (("activity", "subject"), "play_name"),
+    "observation_education": (("topic", "subject"), "play_name"),
     # 식사에서 거절된 뒤 "소주 마시기" 로 바꿔 저장하는 길을 막는다 (#626 리뷰)
-    "observation_routine": (("subject",), FOOD_NAME_TERMS),
+    "observation_routine": (("subject",), "food_name"),
 }
 
 
-def _hazard(name: str, arguments: dict[str, Any]) -> bool:
-    """관찰 create · update 의 대상 이름이 위험 물질인가. 원문(raw_text)은 보지 않는다."""
+async def _hazard(name: str, arguments: dict[str, Any], guardrail: Guardrail) -> bool:
+    """관찰 create · update 의 대상 이름이 위험 물질인가. 원문(raw_text)은 보지 않는다.
+
+    칸마다 따로 본다(이어 붙이지 않는다). 검사를 못 하면 `GuardrailUnavailableError` 가 그대로
+    올라가 run 이 멈춘다 — 저장하지 않는 쪽으로 닫힌다 (fail-closed).
+    """
     for prefix in ("create_", "update_"):
         found = _HAZARD_FIELDS.get(name.removeprefix(prefix)) if name.startswith(prefix) else None
         if found is not None:
-            fields, terms = found
-            names = [str(arguments[f]) for f in fields if arguments.get(f)]
-            return bool(names) and bool(hazard_names(names, terms))
+            fields, context = found
+            for field_name in fields:
+                if arguments.get(field_name):
+                    result = await guardrail.check(str(arguments[field_name]), context)
+                    if result.blocked:
+                        return True
+            return False
     return False
 
 

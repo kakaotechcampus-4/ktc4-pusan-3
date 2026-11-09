@@ -381,38 +381,11 @@ class TestHoldRecords:
 
 
 class TestSoftDeleteHoldCleanup:
-    """PR #178: observation 이 soft delete 되면 보류 기록도 정리돼야 한다.
+    """PR #178: soft delete 된 관찰은 Curator 가 다시 줍지 않는다.
 
-    FK CASCADE 가 soft delete 에서는 발동하지 않으므로
-    삭제 시점에 코드가 hold 행을 지워야 한다.
+    지울 때 보류 기록을 정리하는 것은 store 의 delete_observation 이다 — 지우는 동작은
+    tests/integration/test_observation_delete_paths.py 가 본다 (#736).
     """
-
-    async def test_관찰_삭제_시_보류_기록도_사라진다(self, session, family, store):
-        """soft delete 후 해당 관찰의 hold 행이 남아 있으면 안 된다."""
-        from sqlalchemy import select
-
-        _, child = family
-        obs = _food(child.id, embedding=[0.1] * 1536)
-        session.add(obs)
-        await session.flush()
-
-        # 보류 기록 생성
-        await store.record_uncertain(domain="food", observation_id=str(obs.id), subject_hash="abc")
-
-        # soft delete
-        from app.domains.memory.observation.repository import ObservationDomain, delete_observation
-
-        await delete_observation(
-            session, domain=ObservationDomain.FOOD, child_id=child.id, observation_id=obs.id
-        )
-
-        # hold 행이 사라져야 한다
-        hold = await session.scalar(
-            select(ObservationLinkHold).where(
-                ObservationLinkHold.domain == "food", ObservationLinkHold.observation_id == obs.id
-            )
-        )
-        assert hold is None
 
     @pytest.mark.xfail(
         not hasattr(ObservationStatus, "DELETED"),

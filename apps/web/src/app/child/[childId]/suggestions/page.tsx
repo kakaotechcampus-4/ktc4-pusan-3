@@ -481,7 +481,7 @@ function SuggestionsScreen() {
                     ? "아직 없음"
                     : pickedByAgent
                         .map(({ agent, count }) => `${domainLabel(agent)} ${count}가지`)
-                        .join(" · ")}
+                        .join(", ")}
                 </dd>
               </div>
             </dl>
@@ -536,8 +536,8 @@ function SuggestionsScreen() {
                   서버가 정하는데, 화면이 "N건 만들어요" 라고 먼저 말하면 응답과 다를 때
                   거짓말이 된다. */}
                   <p className="text-body-sm text-ink-muted bg-surface-muted rounded-field mt-2 px-3 py-2">
-                    저장될 내용을 먼저 보여드려요. 승인 전에는 캘린더에 넣지 않아요. 안 만들어도
-                    고른 것은 그대로 남아요.
+                    일정 초안을 먼저 보여 드려요. 확인하고 넣기 전에는 캘린더에 넣지 않아요. 안
+                    만들어도 고른 것은 그대로 남아요.
                   </p>
 
                   {createDrafts.isError ? (
@@ -545,7 +545,7 @@ function SuggestionsScreen() {
                       <p>
                         {createDrafts.error instanceof Error
                           ? createDrafts.error.message
-                          : "저장될 내용을 만들지 못했어요."}
+                          : "일정 초안을 만들지 못했어요."}
                       </p>
                       <p className="mt-1">아직 아무것도 넣지 않았어요.</p>
                     </CardFailed>

@@ -94,7 +94,7 @@ test.describe("바텀시트 — 모든 시트가 같은 움직임으로 열리�
 
     await page.getByRole("button", { name: "알레르기·건강 기록 추가" }).click();
     await page.getByRole("button", { name: /^직접 적기/ }).click();
-    const gate = page.getByRole("dialog", { name: "알레르기 · 건강 기록 추가" });
+    const gate = page.getByRole("dialog", { name: "알레르기·건강 기록 추가" });
     await expect(gate).toBeVisible();
     await expect(gate).toHaveClass(/\bbottom-sheet\b/);
     expect(await gate.evaluate((el) => getComputedStyle(el).transitionProperty)).toContain(
@@ -143,8 +143,8 @@ test.describe("바텀시트 — 모든 시트가 같은 움직임으로 열리�
     await page.goto(`/child/${CHILD}/memories`);
     await page.getByText("저녁에 계란말이를 또 찾았어요").click();
     const sheet = page.getByRole("dialog", { name: "기록 상세" });
-    await sheet.getByRole("button", { name: "잘못된 기록" }).click();
-    await expect(sheet.getByText("잘못된 기록으로 바꿀까요?")).toBeVisible();
+    await sheet.getByRole("button", { name: "이번만 그랬어요" }).click();
+    await expect(sheet.getByText("이번 한 번만 있던 일로 바꿀까요?")).toBeVisible();
     await sheet.getByRole("button", { name: "닫기" }).click();
     await expect(sheet).toBeHidden();
     // 닫힘이 끝나 시트가 내용을 놓을 때까지 — 그 전에는 같은 문장이 시트 안에도 남아 있다.
@@ -154,15 +154,15 @@ test.describe("바텀시트 — 모든 시트가 같은 움직임으로 열리�
 
     await page.getByText("저녁에 계란말이를 또 찾았어요").click();
     await expect(sheet.getByText("이 기록이 어떤가요?")).toBeVisible();
-    await expect(sheet.getByText("잘못된 기록으로 바꿀까요?")).toHaveCount(0);
+    await expect(sheet.getByText("이번 한 번만 있던 일로 바꿀까요?")).toHaveCount(0);
   });
 
   test("닫히는 도중에 다시 열어도 눌러 둔 교정 확인이 이어지지 않는다", async ({ page }) => {
     await page.goto(`/child/${CHILD}/memories`);
     await page.getByText("저녁에 계란말이를 또 찾았어요").click();
     const sheet = page.getByRole("dialog", { name: "기록 상세" });
-    await sheet.getByRole("button", { name: "잘못된 기록" }).click();
-    await expect(sheet.getByText("잘못된 기록으로 바꿀까요?")).toBeVisible();
+    await sheet.getByRole("button", { name: "이번만 그랬어요" }).click();
+    await expect(sheet.getByText("이번 한 번만 있던 일로 바꿀까요?")).toBeVisible();
 
     // 🚨 닫히는 시트는 누르기를 받지 않아 아래 목록을 바로 누를 수 있다. 내려가는 200ms 안에 다시 연다.
     await page.evaluate(async () => {
@@ -179,15 +179,15 @@ test.describe("바텀시트 — 모든 시트가 같은 움직임으로 열리�
     });
 
     await expect(sheet.getByText("이 기록이 어떤가요?")).toBeVisible();
-    await expect(sheet.getByText("잘못된 기록으로 바꿀까요?")).toHaveCount(0);
+    await expect(sheet.getByText("이번 한 번만 있던 일로 바꿀까요?")).toHaveCount(0);
   });
 });
 
 test.describe("자리 옮김은 바뀐 순간에만 (11-1 측정 기록)", () => {
   async function addLog(page: Page) {
     await page.getByRole("button", { name: "키·몸무게 새로 적기" }).click();
-    const sheet = page.getByRole("dialog", { name: "새로 재서 적기" });
-    await sheet.getByLabel("키 · cm").fill("110.2");
+    const sheet = page.getByRole("dialog", { name: "키·몸무게 새로 적기" });
+    await sheet.getByLabel("키 (cm)").fill("110.2");
     await sheet.getByRole("button", { name: "적어 두기" }).click();
     await expect(sheet).toBeHidden();
     await expect(page.getByText("110.2").first()).toBeVisible();

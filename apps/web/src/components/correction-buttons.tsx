@@ -1,6 +1,5 @@
 "use client";
 
-import { josa } from "es-hangul";
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -33,6 +32,13 @@ export type CorrectionTargetKind = "observation" | "affinity";
 interface VerdictSpec {
   verdict: CorrectionVerdict;
   label: string;
+  /**
+   * 누른 뒤 확인 단계의 질문. 🚨 라벨에 조사를 붙여 묻지 않는다 — "기록이 더 필요해요로 바꿀까요?" 처럼
+   *    문장형 라벨 뒤에 조사가 붙어 어색했다 (#815). 기억 고치기는 의견이라 "바꿀까요" 로 묻지 않는다.
+   */
+  question: string;
+  /** 확인 단계의 실행 버튼. */
+  confirm: string;
   /** 누르면 실제로 무엇이 바뀌는지. 🚨 확실한 것만 적는다. */
   effect: string;
   /**
@@ -52,6 +58,9 @@ interface VerdictSpec {
 /**
  * 🚨 **여기 없는 판정은 화면에 서지 않는다.** 서버도 대상마다 받는 값이 갈린다 — 기록에
  *    `need_more_observation` · `outdated` 를 보내면 400 이다 (#277).
+ * 🚨 **기록에는 `wrong` 을 묻지 않는다** (#736 · #779). "잘못된 기록" 은 그 기록을 없던 것으로 하려는 것이라
+ *    기록 지우기로 바꿨다 — 그 자리에 `onDelete` 의 "기록 지우기" 가 선다. 서버는 FE 가 넘어갈 때까지 기록 `wrong` 을
+ *    받고(#736 3단계에서 400), 이미 `wrong` 으로 고친 기록(`inactive`)은 아래 `CORRECTED_OBSERVATION` 이 그린다.
  *
  * 무엇이 목록에 남는지는 서버 표를 따른다. 기록은 고쳐도 목록에 남는다(`stand_alone` · `inactive`
  * 둘 다 목록에 내린다).
@@ -70,32 +79,34 @@ const VERDICTS: Record<CorrectionTargetKind, VerdictSpec[]> = {
     {
       verdict: "once_only",
       label: "이번만 그랬어요",
+      question: "이번 한 번만 있던 일로 바꿀까요?",
+      confirm: "바꾸기",
       effect: "이번 한 번만 있던 일로 표시해요. 기록은 목록에 그대로 남아요.",
       after: "아이의 기억으로는 세지 않아요. 한 번 바꾸면 되돌릴 수 없어요.",
-    },
-    {
-      verdict: "wrong",
-      label: "잘못된 기록",
-      effect: "잘못 들어간 기록으로 표시해요. 기록은 목록에 남아요.",
-      after: "제안의 근거로도, 아이의 기억으로도 쓰이지 않아요. 한 번 바꾸면 되돌릴 수 없어요.",
     },
   ],
   affinity: [
     {
       verdict: "need_more_observation",
       label: "기록이 더 필요해요",
+      question: "아직 이르다는 의견을 남길까요?",
+      confirm: "남기기",
       effect: "아직 이르다는 의견을 남겨요. 기억은 목록에 그대로 있어요.",
       after: "기억은 기록이 쌓이는 대로 다시 정해져요.",
     },
     {
       verdict: "outdated",
       label: "지금은 달라요",
+      question: "지금은 다르다는 의견을 남길까요?",
+      confirm: "남기기",
       effect: "지금은 다르다는 의견을 남겨요. 기억은 목록에 그대로 있어요.",
       after: "기억은 기록이 쌓이는 대로 다시 정해져요.",
     },
     {
       verdict: "wrong",
-      label: "잘못된 기록",
+      label: "잘못된 기억",
+      question: "잘못된 기억이라는 의견을 남길까요?",
+      confirm: "남기기",
       effect: "잘못된 기억이라는 의견을 남겨요. 기억은 목록에 그대로 있어요.",
       after: "한동안은 이 기억이 확인되려면 기록이 더 쌓여야 해요.",
     },
@@ -111,6 +122,8 @@ const VERDICTS: Record<CorrectionTargetKind, VerdictSpec[]> = {
  * 🚨 `label` 은 위 `VERDICTS.observation` 의 라벨과 같은 말이어야 한다 — 누른 버튼의 이름이
  *    그대로 줄에 남아야 무엇을 눌렀는지 알아본다. `note` 는 그 판정의 `after` 에서 "되돌릴 수
  *    없어요" 를 뺀 것이다 (이미 일어난 일이라).
+ * ⚠️ `inactive` 는 이제 버튼이 없다 (#736 · 기록 `wrong` 을 지우기로 바꿨다). 그 전에 고친 기록이 남아 있어서
+ *    표시만 둔다 — #736 3단계에서 서버가 그 행을 `deleted` 로 옮기면 이 줄도 걷는다.
  */
 export const CORRECTED_OBSERVATION: Record<
   "stand_alone" | "inactive",
@@ -127,12 +140,19 @@ export function CorrectionButtons({
   targetKind,
   onSelect,
   pending,
+  onDelete,
 }: {
   /** 무엇을 고치는 중인가. 묻는 것도 문구도 갈린다 — 기록 한 건과 기억은 다른 것이다. */
   targetKind: CorrectionTargetKind;
   onSelect: (verdict: CorrectionVerdict) => void;
   /** 보내는 중인 판정. 🚨 전부가 아니라 **누른 것만** 기다린다. */
   pending: CorrectionVerdict | null;
+  /**
+   * 주면 판정 옆에 "기록 지우기" 가 선다 (기록만 · #736). 누르면 확인 띠를 여는 것은 부르는 쪽이다 —
+   * 🚨 지우기는 고치기가 아니라서 이 컴포넌트의 확인 패널(바꾸기)을 쓰지 않는다. 고친 기록에도 서야 해서
+   *    확인 띠와 요청은 시트(`MemoryDetailSheet`)가 든다.
+   */
+  onDelete?: () => void;
 }) {
   const [asking, setAsking] = useState<VerdictSpec | null>(null);
   const busy = pending !== null;
@@ -150,9 +170,7 @@ export function CorrectionButtons({
         {/* 🚨 `role="status"` 로 알린다 — 버튼 묶음이 통째로 바뀌는데 눈으로만 알 수 있으면
             스크린리더 사용자는 자기가 무엇을 확인하는 중인지 모른다. */}
         <div role="status">
-          {/* 🚨 라벨에 조사를 박지 않는다. 라벨은 데이터고 조사는 문법이라, 박아 두면 다른
-              문장에서 못 쓴다 — 받침으로 고르는 것은 `josa` 가 한다 (키가 `"으로/로"` 순서다). */}
-          <p className="text-body text-ink">{josa(asking.label, "으로/로")} 바꿀까요?</p>
+          <p className="text-body text-ink">{asking.question}</p>
           <p className="text-body-sm text-ink-muted mt-1">{asking.effect}</p>
           {asking.after ? (
             <p className="text-caption text-ink-subtle mt-2">{asking.after}</p>
@@ -169,7 +187,7 @@ export function CorrectionButtons({
             onClick={() => onSelect(asking.verdict)}
           >
             {busy ? <Spinner /> : null}
-            바꾸기
+            {asking.confirm}
           </Button>
           <Button variant="tertiary" size="compact" disabled={busy} onClick={() => ask(null)}>
             그만두기
@@ -191,6 +209,12 @@ export function CorrectionButtons({
             {spec.label}
           </Button>
         ))}
+        {/* 🚨 `btn-danger` 가 아니다 — 빨강은 확인 띠의 확정 버튼 하나다. 묻는 버튼은 판정과 같은 무게로 선다. */}
+        {onDelete ? (
+          <Button variant="secondary" size="compact" onClick={onDelete}>
+            기록 지우기
+          </Button>
+        ) : null}
       </div>
       <p className="text-caption text-ink-subtle mt-2">고르면 무엇이 바뀌는지 먼저 보여드려요.</p>
     </div>

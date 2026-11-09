@@ -21,7 +21,14 @@ from app.agents.supervisor.agent import (
     _attempts,
     run,
 )
-from app.agents.supervisor.schemas import NOT_SUBSTRING
+from app.agents.supervisor.context import (
+    EMPTY_CONTEXT,
+    ConversationContext,
+    PriorResult,
+    PriorTurn,
+)
+from app.agents.supervisor.prompt import build_system_prompt
+from app.agents.supervisor.schemas import NOT_SUBSTRING, ROUTE_TOOL_SPEC, ROUTE_TOOL_SPEC_CONTEXT
 
 RAW = "오늘 사과를 먹었어. 저녁에는 뭘 먹이면 좋을까?"
 _GOOD = {
@@ -288,3 +295,123 @@ async def test_실패도_코드만_남긴다(caplog: pytest.LogCaptureFixture) -
 
     assert f"error={NO_TOOL_CALL}" in caplog.text
     assert "사과" not in caplog.text
+
+
+# ── 앞 대화 · resolved_request ──────────────────────────────────
+CTX = ConversationContext(
+    (
+        PriorTurn(
+            "실내 놀이 추천해줘",
+            (PriorResult("activity", None, "completed", ("블록 쌓기",)),),
+        ),
+    )
+)
+FOLLOW_RAW = "더 쉬운 건 없어?"
+RESOLVED = "블록 쌓기보다 쉬운 실내 놀이 추천"
+FOLLOW = {
+    "segments": [
+        {
+            "text": FOLLOW_RAW,
+            "kind": "request",
+            "agent": "activity",
+            "resolved_request": RESOLVED,
+        }
+    ]
+}
+
+
+async def test_앞_대화는_이번_문장_앞_user_메시지_하나다() -> None:
+    llm = FakeLLM(_route(FOLLOW))
+
+    await run(FOLLOW_RAW, client=llm, context=CTX)
+
+    assert llm.calls[0]["messages"][1:] == [
+        {"role": "user", "content": CTX.render()},
+        {"role": "user", "content": FOLLOW_RAW},
+    ]
+
+
+async def test_맥락이_있으면_해석을_돌려준다() -> None:
+    result = await run(FOLLOW_RAW, client=FakeLLM(_route(FOLLOW)), context=CTX)
+
+    assert result.output is not None
+    (segment,) = result.output.segments
+    assert segment.text == FOLLOW_RAW  # 원문 조각은 그대로
+    assert segment.resolved_request == RESOLVED
+
+
+async def test_맥락_없이_온_해석은_지운다() -> None:
+    result = await run(FOLLOW_RAW, client=FakeLLM(_route(FOLLOW)), context=None)
+
+    assert result.output is not None
+    (segment,) = result.output.segments
+    assert segment.resolved_request is None and segment.agent == "activity"
+
+
+async def test_다시_나눌_때도_앞_대화를_싣는다() -> None:
+    llm = FakeLLM(_route(FOLLOW))
+
+    await run(FOLLOW_RAW, client=llm, context=CTX, feedback="[다시 나누기] x")
+
+    assert [m["content"] for m in llm.calls[0]["messages"][1:]] == [
+        CTX.render(),
+        FOLLOW_RAW,
+        "[다시 나누기] x",
+    ]
+
+
+async def test_빈_맥락도_메시지로_간다() -> None:
+    llm = FakeLLM(_route(FOLLOW))
+
+    await run(FOLLOW_RAW, client=llm, context=ConversationContext())
+
+    assert llm.calls[0]["messages"][1] == {"role": "user", "content": EMPTY_CONTEXT}
+
+
+async def test_맥락이_없으면_메시지_구성이_지금과_같다() -> None:
+    llm = FakeLLM(_route(FOLLOW))
+
+    await run(FOLLOW_RAW, client=llm)
+
+    params = llm.calls[0]
+    assert [m["role"] for m in params["messages"]] == ["system", "user"]
+    # 앞 대화가 없는 호출은 앞 대화 기능이 생기기 전과 같은 system 프롬프트 · tool spec 을 쓴다
+    assert params["messages"][0]["content"] == build_system_prompt()
+    assert "[앞 대화가 올 때]" not in params["messages"][0]["content"]
+    assert params["tools"] == [ROUTE_TOOL_SPEC]
+
+
+async def test_맥락이_있으면_앞_대화_절과_resolved_request_칸이_모델에_간다() -> None:
+    llm = FakeLLM(_route(FOLLOW))
+
+    await run(FOLLOW_RAW, client=llm, context=CTX)
+
+    params = llm.calls[0]
+    assert params["messages"][0]["content"] == build_system_prompt(with_context=True)
+    assert params["tools"] == [ROUTE_TOOL_SPEC_CONTEXT]
+
+
+async def test_빈_맥락도_앞_대화용_프롬프트와_spec_을_쓴다() -> None:
+    llm = FakeLLM(_route(FOLLOW))
+
+    await run(FOLLOW_RAW, client=llm, context=ConversationContext())
+
+    assert llm.calls[0]["tools"] == [ROUTE_TOOL_SPEC_CONTEXT]
+
+
+async def test_로그에_해석_문장과_앞_대화가_없다(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.INFO)
+
+    await run(FOLLOW_RAW, client=FakeLLM(_route(FOLLOW)), context=CTX)
+
+    assert "resolved=1" in caplog.text and "turns=1" in caplog.text
+    assert "블록 쌓기" not in caplog.text and "실내 놀이" not in caplog.text
+
+
+async def test_빈_맥락에서_온_해석은_지운다() -> None:
+    """이어 볼 앞 대화가 없으면 모델이 쓴 해석은 지어낸 문장이다 — 보호자 요청으로 넘기지 않는다."""
+    result = await run(FOLLOW_RAW, client=FakeLLM(_route(FOLLOW)), context=ConversationContext())
+
+    assert result.output is not None
+    (segment,) = result.output.segments
+    assert segment.resolved_request is None

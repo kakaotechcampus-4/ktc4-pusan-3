@@ -27,6 +27,7 @@ from app.agents.food.store import (
     InMemoryDaycareMeals,
     InMemoryFoodDocs,
     InMemoryFoodMemory,
+    InMemoryMenuCatalog,
     InMemoryProfile,
     InMemoryRecipeCatalog,
     InMemorySafety,
@@ -129,6 +130,12 @@ class WorldSpec:
     recipes: str = "toddler"  # toddler · weaning · pool2 · pool0
     history: tuple[str, ...] = ()  # 최근 3일 안에 추천한 menu_key
     daycare: bool = True
+    # default · sparse_veg · sparse_veg_unknown. sparse_veg 는 최근 7일에 채소 · 과일이 기록된 날의
+    # 절반 미만으로 나온다. sparse_veg_unknown 은 거기에 식품군을 모르는 메뉴가 낀 날을 더한다
+    meals: str = "default"
+    # True 면 먹은 메뉴의 menu_catalog 행(식품군)을 채운다. 비어 있으면 영양 판정이 메뉴를 하나도
+    # 못 읽어(appearance_ready=False) 부족 식품군 가중 · 오늘 겹침 가중이 돌지 않는다
+    catalog: bool = False
 
 
 WORLDS: dict[str, WorldSpec] = {
@@ -147,7 +154,14 @@ WORLDS: dict[str, WorldSpec] = {
     "C48-pool2": WorldSpec(recipes="pool2"),
     "C48-pool0": WorldSpec(allergy=("달걀",), recipes="pool0"),
     "C48-nodc": WorldSpec(daycare=False),
+    # 대두 알레르기 — 생성 메뉴가 간장 · 된장 같은 양념을 재료에 안 적으면 필터가 놓칠 수 있다(#740)
+    "C48-soy": WorldSpec(allergy=("대두",)),
     "C48-prev": WorldSpec(history=("소불고기", "두부조림", "시금치나물")),
+    # 영양 반영이 실제로 도는 세계 — 채소 2일 · 과일 1일 / 기록된 6일
+    "C48-veg": WorldSpec(meals="sparse_veg", catalog=True),
+    # C48-veg 에 채소가 안 나온 2일 전 · 3일 전마다 카탈로그에 없는 메뉴를 더한다 — 확인한 날만 보면
+    # 적게 나왔지만(가중은 걸린다) 모르는 날을 다 나왔다고 치면 절반 이상이라 안내 줄은 없다(#739)
+    "C48-veg-unknown": WorldSpec(meals="sparse_veg_unknown", catalog=True),
 }
 
 
@@ -195,6 +209,7 @@ def build_world(
         safety=InMemorySafety(entries if safety is None else safety, fail=spec.safety_fails),
         memory=memory if memory is not None else _memory(spec, today),
         recipes=InMemoryRecipeCatalog(recipes),
+        catalog=InMemoryMenuCatalog(_menu_catalog(now) if spec.catalog else ()),
         daycare=InMemoryDaycareMeals(_daycare(today) if spec.daycare else []),
         docs=InMemoryFoodDocs.from_seed(include_draft=True),
         suggestions=InMemorySuggestionHistory(
@@ -236,24 +251,84 @@ def _recipes(spec: WorldSpec, now: datetime) -> list[MenuCatalogRow]:
     return [_row(row, now) for row in _TODDLER]
 
 
+# 최근 7일 기록이 충분하다(10행 이상). (며칠 전, 메뉴, 양)
+_MEALS = (
+    (1, "현미밥", "한 그릇"),
+    (1, "미역국", "한 그릇"),
+    (1, "소불고기", "반 그릇"),
+    (2, "시금치나물", "조금"),
+    (2, "닭죽", "한 그릇"),
+    (3, "감자채볶음", "한 그릇"),
+    (3, "두부조림", "한 그릇"),
+    (4, "딸기", "다 먹음"),
+    (4, "계란말이", "한 그릇"),
+    (5, "무나물", "조금"),
+    (5, "가자미구이", "한 그릇"),
+    (6, "고구마범벅", "한 그릇"),
+)
+# C48-veg — 행 수는 같고 채소는 5일 전 시금치나물뿐이다. 어제 급식 된장국까지 채소 2일 · 과일 1일 /
+# 기록된 6일이라 둘 다 절반(3일) 미만이다(N-19)
+_SPARSE_VEG_MEALS = (
+    (1, "현미밥", "한 그릇"),
+    (1, "소불고기", "반 그릇"),
+    (2, "닭죽", "한 그릇"),
+    (2, "계란말이", "한 그릇"),
+    (3, "두부조림", "한 그릇"),
+    (3, "현미밥", "한 그릇"),
+    (4, "딸기", "다 먹음"),
+    (4, "가자미구이", "한 그릇"),
+    (5, "고구마범벅", "한 그릇"),
+    (5, "시금치나물", "조금"),
+    (6, "닭죽", "한 그릇"),
+    (6, "계란말이", "한 그릇"),
+)
+# C48-veg-unknown — C48-veg 에서 채소 · 과일이 안 나온 2일 전 · 3일 전에 카탈로그에 없는 메뉴를
+# 더한다.
+# 채소 2 + 모르는 날 2 = 4, 과일 1 + 2 = 3 이라 둘 다 기록된 6일의 절반(3일) 미만이 아니다
+_UNKNOWN_VEG_MEALS = (
+    *_SPARSE_VEG_MEALS,
+    (2, "처음보는반찬", "한 그릇"),
+    (3, "낯선국", "한 그릇"),
+)
+# C48-veg 의 menu_catalog — 먹은 메뉴와 어제 급식(잡곡밥 · 된장국 · 계란말이)의 식품군. 영양값은
+# 비워 둔다 — 1차 출력처럼 구간은 못 내고(insufficient) 식품군 출현만 센다
+_CATALOG_GROUPS: dict[str, tuple[str, ...]] = {
+    "현미밥": ("grains",),
+    "잡곡밥": ("grains",),
+    "닭죽": ("grains",),
+    "고구마범벅": ("grains",),
+    "소불고기": ("meat_fish_egg_legumes",),
+    "계란말이": ("meat_fish_egg_legumes",),
+    "두부조림": ("meat_fish_egg_legumes",),
+    "가자미구이": ("meat_fish_egg_legumes",),
+    "시금치나물": ("vegetables",),
+    "된장국": ("vegetables",),
+    "딸기": ("fruits",),
+}
+
+
+def _menu_catalog(now: datetime) -> list[MenuCatalogRow]:
+    return [
+        MenuCatalogRow(
+            menu_key=normalize_menu_key(name),
+            display_name=name,
+            source="manual",
+            resolved=True,
+            synced_at=now,
+            food_groups=frozenset(groups),
+        )
+        for name, groups in _CATALOG_GROUPS.items()
+    ]
+
+
 def _memory(spec: WorldSpec, today: date) -> InMemoryFoodMemory:
     if not spec.records:
         return InMemoryFoodMemory()
-    # 최근 7일 기록이 충분하다(10행 이상). 딸기는 좋아하고 브로콜리는 안 먹는다
-    meals = (
-        (1, "현미밥", "한 그릇"),
-        (1, "미역국", "한 그릇"),
-        (1, "소불고기", "반 그릇"),
-        (2, "시금치나물", "조금"),
-        (2, "닭죽", "한 그릇"),
-        (3, "감자채볶음", "한 그릇"),
-        (3, "두부조림", "한 그릇"),
-        (4, "딸기", "다 먹음"),
-        (4, "계란말이", "한 그릇"),
-        (5, "무나물", "조금"),
-        (5, "가자미구이", "한 그릇"),
-        (6, "고구마범벅", "한 그릇"),
-    )
+    # 딸기는 좋아하고 브로콜리는 안 먹는다
+    meals = {
+        "sparse_veg": _SPARSE_VEG_MEALS,
+        "sparse_veg_unknown": _UNKNOWN_VEG_MEALS,
+    }.get(spec.meals, _MEALS)
     observed = [
         FoodObservation(
             id=uuid4(),

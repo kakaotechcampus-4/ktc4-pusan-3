@@ -52,6 +52,7 @@ import {
   type MedicationsResponse,
 } from "@/lib/api";
 import { cn } from "@/lib/cn";
+import { MEDICATION_ENABLED } from "@/lib/store-policy";
 import { homeEmptyTour, homeTour } from "@/lib/tour/screens/home";
 import { FORWARD } from "@/lib/view-transition";
 
@@ -123,7 +124,13 @@ function HomeScreen() {
   const medications = useQuery({
     queryKey: qk.medications(childId),
     queryFn: () => api.get<MedicationsResponse>(`/children/${childId}/medications`),
+    // 스토어 선언 때문에 꺼 둔 동안은 부르지 않는다 (`lib/store-policy.ts`). 데이터도 실패도 없어 구역이 서지 않는다.
+    enabled: MEDICATION_ENABLED,
   });
+  /**
+   * 🚨 `isPending` 을 그대로 쓰지 않는다 — 꺼 둔 쿼리는 데이터가 없어 영영 `pending` 이라, 홈이 스켈레톤에 멈춘다.
+   */
+  const medicationsPending = MEDICATION_ENABLED && medications.isPending;
 
   // 🚨 이름은 스토어에 캐시하지 않는다. 개인정보는 화면이 필요할 때 Query 로 가져온다 (§3).
   const me = useQuery({ queryKey: qk.me(), queryFn: () => api.get<Me>("/me") });
@@ -219,8 +226,8 @@ function HomeScreen() {
         </header>
 
         {/* 스켈레톤 → 내용은 같은 자리의 교체다 (디자인 시스템 §8). */}
-        <Swap id={medications.isPending ? "pending" : phaseOf(home)}>
-          {home.isPending || medications.isPending ? (
+        <Swap id={medicationsPending ? "pending" : phaseOf(home)}>
+          {home.isPending || medicationsPending ? (
             <HomeBodySkeleton />
           ) : consentBlocked ? (
             // 🚨 403 consent_required 를 일반 실패로 그리면 "다시 시도" 만 누르게 된다 — 다시 시도해도
@@ -228,7 +235,7 @@ function HomeScreen() {
             <ConsentRequiredCard
               childId={childId}
               error={consentBlocked}
-              what="오늘 기록을 보여드릴 수 없어요."
+              what="오늘 기록을 보여 드릴 수 없어요."
             />
           ) : home.isError ? (
             <CardFailed>
@@ -322,7 +329,7 @@ function HomeBody({ data, medications }: { data: HomeResponse; medications: Reac
           data-tour="empty"
           icon={NotebookPen}
           title="아래에 한 줄 적으면 여기에 쌓여요"
-          description="기록이 없으면 제안도 만들지 않아요. 지어내지 않으려고요."
+          description="기록이 쌓이기 전에도 제안은 받을 수 있어요. 그때는 일반 추천이라고 적어 드려요."
           count={0}
         />
       </div>

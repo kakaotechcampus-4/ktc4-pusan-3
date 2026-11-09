@@ -10,6 +10,7 @@ from app.agents.memory.store.ports import (
     EventRow,
     MemoryStore,
     ObservationRow,
+    SeriesRow,
 )
 
 __all__ = [
@@ -18,4 +19,5 @@ __all__ = [
     "InMemoryStore",
     "MemoryStore",
     "ObservationRow",
+    "SeriesRow",
 ]

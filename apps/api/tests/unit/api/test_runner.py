@@ -92,6 +92,20 @@ async def test_agent_job_calls_the_agents_entrypoint_and_relays_its_events(monke
     assert channel.closed
 
 
+def _location_logs(monkeypatch, result: bool | Exception = True) -> list[uuid.UUID]:
+    """위치 기록을 가짜로 바꿔 끼운다. 실제 저장은 integration/api/test_location_use_log.py."""
+    logged: list[uuid.UUID] = []
+
+    async def fake_record(session, *, parent_id, purpose):
+        if isinstance(result, Exception):
+            raise result
+        logged.append(parent_id)
+        return result
+
+    monkeypatch.setattr(runner, "record_location_use_if_granted", fake_record)
+    return logged
+
+
 async def test_agent_job_좌표와_날씨_어댑터를_진입점에_그대로_넘긴다(monkeypatch):
     """창구가 위치 동의를 확인한 좌표와 서버 시작 때 만든 날씨 어댑터 (#380)."""
     seen: dict = {}
@@ -101,6 +115,7 @@ async def test_agent_job_좌표와_날씨_어댑터를_진입점에_그대로_�
         kwargs["emit"](Done(kwargs["run_id"], 1))
 
     monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    logged = _location_logs(monkeypatch)
     channel = registry.open_run(parent_id=PARENT)
     location, weather = entrypoint.CoarseLocation(lat=35.18, lon=129.08), object()
     events = object()
@@ -116,6 +131,7 @@ async def test_agent_job_좌표와_날씨_어댑터를_진입점에_그대로_�
     await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
 
     assert seen["location"] is location
+    assert logged == [PARENT]  # 넘기기 전에 쓴 사실을 남겼다 (#693)
     assert seen["activity_weather"] is weather
     assert seen["activity_events"] is events  # 서버 시작 때 만든 행사 어댑터
     # 🚨 위치 동의는 판을 보지 않고 확인했다 — 날씨 · 놀이 목적의 이전 판에만 동의했어도 같은
@@ -123,6 +139,96 @@ async def test_agent_job_좌표와_날씨_어댑터를_진입점에_그대로_�
     assert seen.get("health_location") is None
     # 장소는 적재한 place 표를 읽는 어댑터다. 좌표가 없는 run 에서는 tool 이 닫혀 부르지 않는다
     assert isinstance(seen["activity_places"], DbPlaceSource)
+
+
+async def test_agent_job_최근_대화_포트를_진입점에_넘긴다(monkeypatch):
+    """후속 질문일 때 pipeline 이 부를 앞 대화 조회 — 이 run 의 보호자 · 아이로 묶어 넘긴다."""
+    seen: dict = {}
+
+    async def fake_handle_input(**kwargs):
+        seen.update(kwargs)
+        kwargs["emit"](Done(kwargs["run_id"], 1))
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+
+    job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    assert callable(seen["recent_turns"])
+
+
+async def test_agent_job_위치_기록에_실패하면_좌표만_버리고_끝까지_돈다(monkeypatch, caplog):
+    """기록 없는 사용을 만들지 않는다 (위치정보법 제16조 ②) — 좌표를 안 넘기면 쓴 것도 없다.
+    run 은 실패시키지 않는다. 보호자가 적은 기록이 위치 표 고장 때문에 사라지면 안 된다."""
+    seen: list = []
+
+    async def fake_handle_input(**kwargs):
+        seen.append(kwargs["location"])
+        kwargs["emit"](Done(kwargs["run_id"], 1))
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    _location_logs(monkeypatch, RuntimeError("남기면 안 되는 예외 문구"))
+    channel = registry.open_run(parent_id=PARENT)
+    job = runner.agent_job(
+        child_id=CHILD,
+        parent_id=PARENT,
+        raw_text=RAW_TEXT,
+        location=entrypoint.CoarseLocation(lat=35.18, lon=129.08),
+    )
+
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    assert seen == [None]
+    assert names(channel) == ["done"]
+    # 고장은 알아야 한다 — ERROR 는 Discord 로 간다. 예외 문구는 남기지 않는다 (#670)
+    errors = [r for r in caplog.records if r.levelname == "ERROR"]
+    assert len(errors) == 1
+    assert "남기면 안 되는 예외 문구" not in caplog.text
+
+
+async def test_agent_job_위치_기록_뒤_rollback_까지_실패해도_좌표만_버리고_끝까지_돈다(
+    monkeypatch, caplog
+):
+    """연결이 끊기면 rollback 자체도 예외를 낸다. 그래도 "기록에 실패해도 run 은 계속" 이다
+    (#697 리뷰)."""
+
+    class BrokenSession:
+        async def __aenter__(self) -> "BrokenSession":
+            return self
+
+        async def __aexit__(self, *exc: object) -> None:
+            return None
+
+        async def commit(self) -> None:
+            return None
+
+        async def rollback(self) -> None:
+            raise ConnectionError("끊긴 연결")
+
+    monkeypatch.setattr(runner, "background_session", BrokenSession)
+    seen: list = []
+
+    async def fake_handle_input(**kwargs):
+        seen.append(kwargs["location"])
+        kwargs["emit"](Done(kwargs["run_id"], 1))
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    _location_logs(monkeypatch, RuntimeError("남기면 안 되는 예외 문구"))
+    channel = registry.open_run(parent_id=PARENT)
+    job = runner.agent_job(
+        child_id=CHILD,
+        parent_id=PARENT,
+        raw_text=RAW_TEXT,
+        location=entrypoint.CoarseLocation(lat=35.18, lon=129.08),
+    )
+
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    assert seen == [None]
+    assert names(channel) == ["done"]
+    errors = [r for r in caplog.records if r.levelname == "ERROR"]
+    assert len(errors) == 1
 
 
 async def test_agent_job_병원_어댑터를_진입점에_그대로_넘긴다(monkeypatch):
@@ -1249,3 +1355,41 @@ async def test_화면에_안_나간_조회_카드는_대화에도_남기지_않�
 
     assert names(channel) == ["delete_proposal", "done"]
     assert [type(event).__name__ for event in recorded] == ["DeleteProposed", "Done"]
+
+
+async def test_실패_맥락은_해석과_보호자_원문을_같이_보관한다(monkeypatch):
+    suggestion_retry.clear()
+    sent_at = datetime(2026, 1, 1, tzinfo=UTC)
+
+    async def fake_handle_input(**kwargs):
+        run_id = kwargs["run_id"]
+        kwargs["emit"](
+            RetryContext(
+                run_id,
+                "activity",
+                None,
+                ("블록 쌓기보다 쉬운 놀이 추천",),
+                sent_at,
+                original_texts=("더 쉬운 건 없어?",),
+                prior_texts=("블록 놀이 추천해줘",),
+            )
+        )
+        kwargs["emit"](Done(run_id, 0))
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+
+    job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    claimed = suggestion_retry.claim(
+        run_id=channel.run_id, parent_id=PARENT, child_id=CHILD, agent="activity"
+    )
+    assert claimed == suggestion_retry.RetryTask(
+        None,
+        ("블록 쌓기보다 쉬운 놀이 추천",),
+        sent_at,
+        original_texts=("더 쉬운 건 없어?",),
+        prior_texts=("블록 놀이 추천해줘",),
+    )
+    suggestion_retry.clear()

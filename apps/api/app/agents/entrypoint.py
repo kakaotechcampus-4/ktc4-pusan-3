@@ -88,6 +88,7 @@ from app.agents.memory_bridge import (
     StoreHealthMemory,
     StoreOpener,
 )
+from app.agents.notice_ocr import PhotoReading, UnreadablePhoto, read_photo
 from app.agents.pipeline import (
     RECOMMENDING_TASKS,
     AgentQuestion,
@@ -125,13 +126,26 @@ from app.agents.pipeline import (
 from app.agents.pipeline import handle_input as _handle_input
 from app.agents.run_writes import RunWrites, record_food_writes, record_medication_writes
 from app.agents.suggestion_save import InMemorySuggestions, SaveSuggestions, SuggestionBatch
+from app.agents.supervisor.context import (
+    MAX_RECENT_TURNS,
+    RECENT_WINDOW,
+    ConversationContext,
+    LoadRecentTurns,
+    PriorResult,
+    PriorTurn,
+)
 from app.agents.supervisor.routing import Guidance
 from app.rules.age import months_between
 
 # api가 이 파일만 보면 되도록 진행 이벤트 타입도 여기서 내보냄
 # pipeline에 이벤트를 추가하면 여기에도 작성
 __all__ = [
+    "MAX_RECENT_TURNS",
+    "PhotoReading",
+    "UnreadablePhoto",
+    "read_photo",
     "MAX_SUGGESTIONS",
+    "RECENT_WINDOW",
     "FIRST_REQUEST_AGENTS",
     "SUGGESTION_AGENTS",
     "AffinityReader",
@@ -140,6 +154,7 @@ __all__ = [
     "AllergenCheck",
     "CardTab",
     "CoarseLocation",
+    "ConversationContext",
     "Commit",
     "CountRecords",
     "CuratorTrigger",
@@ -162,6 +177,7 @@ __all__ = [
     "InMemorySuggestions",
     "IssuedBookReader",
     "LoadCards",
+    "LoadRecentTurns",
     "MemoryNote",
     "MemoryReply",
     "MemoryStore",
@@ -169,6 +185,8 @@ __all__ = [
     "PendingMemoryContext",
     "PendingReply",
     "PipelineResult",
+    "PriorResult",
+    "PriorTurn",
     "EventSource",
     "PlaceSource",
     "RawBookSearch",
@@ -256,6 +274,7 @@ async def handle_input(
     domain_store: StoreOpener | None = None,
     count_records: CountRecords | None = None,
     load_cards: LoadCards | None = None,
+    recent_turns: LoadRecentTurns | None = None,
     food_catalog: MenuCatalogStore | None = None,
     food_recipes: RecipeCatalogStore | None = None,
     food_suggestions: SuggestionHistoryReader | None = None,
@@ -318,6 +337,8 @@ async def handle_input(
       `agent_ports.record_counter` 로 만든다. 안 넘기면(테스트 · eval) 그 칸이 빈다.
     - load_cards 는 조회 · 삭제 제안 카드(`FoundTabs` · `DeleteProposed`)에 실을 행을 러너가 미리
       읽어 두게 하는 콜백이다 (#535). 안 넘기면(테스트 · eval) 읽지 않는다.
+    - recent_turns 는 후속 질문으로 보이는 입력일 때만 부르는 앞 대화 조회 콜백이다. 러너가
+      `agent_ports.recent_turns_loader` 로 만든다. 안 넘기면(테스트 · eval · 05) 앞 대화 없이 돈다.
     - food_catalog · food_recipes · food_suggestions 는 api 가 넘긴 Food 카탈로그 · 추천 이력
       어댑터다(`domains/food` · `domains/suggestion` 의 `agent_reader`). 안 넘기면(테스트 · eval)
       빈 InMemory 다. 문서 행은 어댑터가 아니라 yaml 의 검수된 시드를 항상 읽는다.
@@ -397,6 +418,7 @@ async def handle_input(
         curator_trigger=curator_trigger,
         count_records=count_records,
         load_cards=load_cards,
+        recent_turns=recent_turns,
         child_months=(
             None if birth_date is None else months_between(birth_date, today_of(now, KST))
         ),
@@ -411,6 +433,9 @@ class SuggestTask:
     agent: str
     task_type: str | None
     request_texts: tuple[str, ...]
+    # 입력 run 이 앞 대화를 이어 묻는 task 였으면 보호자 원문 · 앞 턴의 말 (`DomainTask` 와 같다)
+    original_texts: tuple[str, ...] = ()
+    prior_texts: tuple[str, ...] = ()
 
 
 SUGGESTION_AGENTS: frozenset[str] = frozenset(RECOMMENDING_TASKS)
@@ -486,7 +511,15 @@ async def suggest(
         affinity_reader=affinity_reader,
     )
     domain_tasks = tuple(
-        DomainTask(request_id, task.agent, task.task_type, task.request_texts) for task in tasks
+        DomainTask(
+            request_id,
+            task.agent,
+            task.task_type,
+            task.request_texts,
+            original_texts=task.original_texts,
+            prior_texts=task.prior_texts,
+        )
+        for task in tasks
     )
     return await pipeline.run_suggestions(
         domain_tasks, contexts, save_run_id=save_run_id, save_suggestions=save_suggestions
