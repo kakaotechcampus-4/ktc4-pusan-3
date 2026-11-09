@@ -1,7 +1,8 @@
 """기록 · 기억 고치기 API — #259.
 
 상태 변경 · 재계산 규칙은 `profile/service.py` 의 몫이다. 여기는 API 가 더하는 것만 본다:
-아이 접근 확인, 대상별 허용 값, 건강 기록 거부, 고친 뒤 응답과 이력.
+아이 접근 확인, 대상별 허용 값(기록의 "잘못된 기록" 은 지우기로 바꿔 400 — #736), 건강 기록 거부,
+고친 뒤 응답과 이력.
 """
 
 import uuid
@@ -57,7 +58,7 @@ async def test_other_childs_target_is_forbidden(
 
     resp = await db_client.post(
         "/api/v1/corrections",
-        json=_body(other_cid, "observation_food", food.id, "wrong"),
+        json=_body(other_cid, "observation_food", food.id, "once_only"),
         headers=headers,
     )
 
@@ -76,8 +77,36 @@ async def test_verdict_must_fit_target_and_health_is_refused(
 
     assert await post("observation_food", food.id, "outdated") == 400  # 기억에만 쓰는 값
     assert await post("profile_affinity", affinity.id, "once_only") == 400  # 기록에만 쓰는 값
-    assert await post("observation_health", food.id, "wrong") == 400  # 건강 기록은 삭제로만
-    assert await post("observation_food", uuid.uuid4(), "wrong") == 404
+    assert await post("observation_health", food.id, "once_only") == 400  # 건강 기록은 삭제로만
+    assert await post("observation_food", uuid.uuid4(), "once_only") == 404
+
+
+async def test_wrong_on_a_record_is_refused_and_changes_nothing(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    """기록의 "잘못된 기록" 은 기록 지우기로 바꿨다 (#736) — 400 이고 상태도 이력도 그대로다.
+    기억의 wrong 은 그대로 받는다."""
+    headers, _ = bearer
+    food, affinity = await _food_with_affinity(session, cid)
+
+    record = await db_client.post(
+        "/api/v1/corrections",
+        json=_body(cid, "observation_food", food.id, "wrong"),
+        headers=headers,
+    )
+    memory = await db_client.post(
+        "/api/v1/corrections",
+        json=_body(cid, "profile_affinity", affinity.id, "wrong"),
+        headers=headers,
+    )
+
+    assert (record.status_code, record.json()["error"]["code"]) == (400, "validation_failed")
+    detail = await db_client.get(
+        f"/api/v1/children/{cid}/observations/observation_food/{food.id}", headers=headers
+    )
+    assert detail.json()["observation"]["status"] == "active"
+    assert detail.json()["corrections"] == []
+    assert memory.status_code == 201
 
 
 async def test_observation_correction_updates_state_history_and_affinity(

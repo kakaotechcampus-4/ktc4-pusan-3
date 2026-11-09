@@ -132,12 +132,13 @@ async def set_observation_status(
     observation_id: uuid.UUID,
     status: ObservationStatus,
 ) -> ObservationRecord | None:
-    """교정의 once_only/wrong 결과만 반영한다. 이력·성향 재계산은 호출자가 묶는다.
+    """교정의 once_only 결과(stand_alone)만 반영한다. 이력·성향 재계산은 호출자가 묶는다.
 
+    inactive 는 더 만들지 않는다 — 기록용 wrong 은 기록 지우기로 바꿨다 (#736).
     지운(deleted) 행은 교정 대상이 아니라 None 이다.
     """
     status = ObservationStatus(status)
-    if status not in {ObservationStatus.STAND_ALONE, ObservationStatus.INACTIVE}:
+    if status is not ObservationStatus.STAND_ALONE:
         raise ValueError("교정으로 설정할 수 없는 observation 상태다")
     resolved = ObservationDomain(domain)
     model = _MODEL_BY_DOMAIN[resolved]
@@ -331,7 +332,7 @@ async def list_active_refs_by_affinity(
 ) -> dict[uuid.UUID, list[tuple[ObservationDomain, uuid.UUID]]]:
     """기억마다 묶인 active 관찰의 (도메인, id). 최근 관찰이 앞이다.
 
-    기억 카드의 "지금까지 N번" 과 근거 목록이 쓴다. 집계에서 빠지는 stand_alone · inactive 는
+    기억 카드의 "지금까지 N번" 과 근거 목록이 쓴다. 집계에서 빠지는 stand_alone · deleted 는
     세지 않는다 — Curator 가 세는 것과 같은 기준이어야 카드 숫자가 상태와 어긋나지 않는다.
     `domains` 를 주면 그 관찰 표만 본다 — 기억은 자기 도메인의 관찰만 묶이므로 결과는 같고
     조회만 준다. 없으면 세 표를 다 본다.
