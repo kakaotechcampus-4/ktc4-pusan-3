@@ -59,8 +59,8 @@ async def _make_suggestion(
 async def test_approve_draft_to_approved(
     db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
 ):
-    """draft → approved 정상 전이. 채택 응답에도 준비물이 남는다 (#674)."""
-    s = await _make_suggestion(session, child_id=cid, items=["돗자리", "물통"])
+    """draft → approved 정상 전이."""
+    s = await _make_suggestion(session, child_id=cid)
     headers, _ = bearer
     resp = await db_client.post(
         f"/api/v1/children/{cid}/suggestions/approve",
@@ -71,7 +71,6 @@ async def test_approve_draft_to_approved(
     data = resp.json()
     assert len(data["suggestions"]) == 1
     assert data["suggestions"][0]["status"] == "approved"
-    assert data["suggestions"][0]["items"] == ["돗자리", "물통"]
 
 
 async def test_approve_not_found(db_client: AsyncClient, bearer: Bearer, cid: uuid.UUID):

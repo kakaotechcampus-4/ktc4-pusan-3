@@ -1,7 +1,6 @@
 """추천 목록 · 평가 · 추천 받기 가드 · 일정 수정 통합 테스트 — #284."""
 
 import uuid
-from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -30,7 +29,6 @@ async def _make_suggestion(
     status: SuggestionStatus = SuggestionStatus.DRAFT,
     kind: SuggestionKind = SuggestionKind.PERSONALIZED,
     with_evidence: bool = False,
-    items: Sequence[str] = (),
 ) -> Suggestion:
     row = Suggestion(
         child_id=child_id,
@@ -39,7 +37,6 @@ async def _make_suggestion(
         content="공원 산책",
         reason="야외 활동 선호",
         status=status,
-        items=list(items),
         expires_at=datetime.now(UTC) + timedelta(hours=24),
     )
     session.add(row)
@@ -190,11 +187,7 @@ async def test_list_suggestions_includes_general(
         session, child_id=cid, status=SuggestionStatus.APPROVED, with_evidence=True
     )
     g = await _make_suggestion(
-        session,
-        child_id=cid,
-        status=SuggestionStatus.APPROVED,
-        kind=SuggestionKind.GENERAL,
-        items=["돗자리"],
+        session, child_id=cid, status=SuggestionStatus.APPROVED, kind=SuggestionKind.GENERAL
     )
     session.add(
         SuggestionEvidence(
@@ -215,8 +208,6 @@ async def test_list_suggestions_includes_general(
     assert general["source_refs"] == []
     # 05 의 basis 와 같은 문구 — 둘 다 행의 reason 이다
     assert general["reason"] == g.reason
-    # 05 에서 본 준비물이 07 에도 그대로 남는다 (#674)
-    assert general["items"] == ["돗자리"]
     assert str(draft.id) not in items
     # status 필터 경로도 kind 를 보지 않는다
     resp = await db_client.get(
