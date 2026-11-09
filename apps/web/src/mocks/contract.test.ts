@@ -343,6 +343,68 @@ describe("일정 초안", () => {
     ).rejects.toSatisfy((e: unknown) => isApiError(e, "not_found") && e.status === 404);
   });
 
+  /**
+   * 🚨 **채택한 뒤에 등록된 알레르기는 초안 만들기가 막는다** (서버 #859 · 문서 §3-8). 채택은 새로고침해도 남고
+   *    일정은 나중에 만들어도 되어서, 그사이 등록된 알레르기를 채택 검사는 보지 못한다. 하나라도 걸리면
+   *    초안을 하나도 만들지 않고 걸린 id 를 싣는다 — 화면은 그 id 를 빼고 다시 보낸다.
+   */
+  describe("채택한 뒤 등록된 알레르기 (#859)", () => {
+    afterEach(() => setScenario("default"));
+
+    const [blockedId, [allergen]] = Object.entries(suggestionAllergens).find(
+      ([id, a]) => a.length > 0 && suggestions.some((s) => s.id === id && s.agent === "food"),
+    )!;
+    const plain = () =>
+      suggestions.find(
+        (s) => s.agent !== "health" && s.id !== blockedId && !suggestionAllergens[s.id]?.length,
+      )!.id;
+
+    it("🚨 걸린 제안이 하나라도 있으면 초안을 하나도 만들지 않고 409 와 그 id 를 준다", async () => {
+      const other = plain();
+      await approveSuggestions("c1", { suggestion_ids: [blockedId, other] });
+      await addHealthSafety("c1", { type: "allergy", label: allergen }, newIdempotencyKey());
+
+      const refused = await createEventDrafts("c1", { suggestion_ids: [blockedId, other] }).catch(
+        (e: unknown) => e,
+      );
+      expect(isApiError(refused, "allergen_blocked")).toBe(true);
+      expect((refused as ApiError).status).toBe(409);
+      expect((refused as ApiError).detail).toEqual({ suggestion_ids: [blockedId] });
+
+      // 걸린 것을 빼고 다시 보내면 만든다.
+      const created = await createEventDrafts("c1", { suggestion_ids: [other] });
+      expect(created.drafts.flatMap((d) => d.suggestion_ids)).toEqual([other]);
+    });
+
+    it("내린 기록만 있는 항목은 막지 않는다", async () => {
+      await approveSuggestions("c1", { suggestion_ids: [blockedId] });
+      const { safety } = await addHealthSafety(
+        "c1",
+        { type: "allergy", label: allergen },
+        newIdempotencyKey(),
+      );
+      await api.delete(`/children/c1/health-safety/${safety.id}`);
+
+      const created = await createEventDrafts("c1", { suggestion_ids: [blockedId] });
+      expect(created.drafts.length).toBeGreaterThan(0);
+    });
+
+    it("알레르기 항목이 든 제안인데 동의가 없으면 403, 항목이 없는 제안뿐이면 건강정보를 보지 않는다", async () => {
+      const other = plain();
+      await approveSuggestions("c1", { suggestion_ids: [blockedId, other] });
+      setScenario("consent");
+
+      const refused = await createEventDrafts("c1", { suggestion_ids: [blockedId] }).catch(
+        (e: unknown) => e,
+      );
+      expect(isApiError(refused, "consent_required")).toBe(true);
+      expect((refused as ApiError).status).toBe(403);
+
+      const created = await createEventDrafts("c1", { suggestion_ids: [other] });
+      expect(created.drafts.length).toBeGreaterThan(0);
+    });
+  });
+
   it("🚨 제안 초안은 일자가 비어 있다 — 서버가 오늘로 채우지 않는다", async () => {
     const created = await makeDrafts([firstOf("food")]);
     for (const draft of created.drafts) expect(draft.event.starts_at).toBeNull();
