@@ -98,11 +98,22 @@ def test_여러_날_행사가_오늘에_걸쳐_있으면_지난_일정이_아니
     assert _item_entry("pe_1", item, today=TODAY)["past"] is False
 
 
-def test_행사는_앞이어도_신청_마감이_남았으면_지난_일정이_아니다() -> None:
-    # 시작 · 끝 · 마감 중 가장 늦은 것으로 본다
+def test_행사가_지났으면_신청_마감이_남아도_지난_일정이다() -> None:
+    # 화면이 캘린더에 넣는 것은 시작 · 끝이다(마감은 안 넣는다, web photo-entry.ts eventBody).
+    # 마감까지 보면 켜진 채로 시작해, 누르면 이미 지난 11-08 일정이 들어간다 (#854 리뷰)
     item = _item(
         starts_at=datetime(2026, 11, 8, 10, 0, tzinfo=KST),
         due_at=datetime(2026, 11, 10, 23, 59, tzinfo=KST),
+    )
+
+    assert _item_entry("pe_1", item, today=TODAY)["past"] is True
+
+
+def test_행사가_남았으면_신청_마감이_지나도_지난_일정이_아니다() -> None:
+    # 시작을 읽었으면 마감은 보지 않는다 — 넣는 날은 11-12 다
+    item = _item(
+        starts_at=datetime(2026, 11, 12, 10, 0, tzinfo=KST),
+        due_at=datetime(2026, 11, 5, 23, 59, tzinfo=KST),
     )
 
     assert _item_entry("pe_1", item, today=TODAY)["past"] is False
