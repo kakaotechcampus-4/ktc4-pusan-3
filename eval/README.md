@@ -7,7 +7,7 @@
 | 경로 | 무엇 |
 | --- | --- |
 | `cases.md` | 골든셋 — 헤드라인 10개를 입력 · 기대 결과 · 같은 것을 보는 기존 Agent eval 과 한 표로 (판정 정본은 `probes.yaml`) |
-| `cases/probes.yaml` | P · 단발 프로브 33개 (능력 6개 · 헤드라인 10개 · 주입 7개) |
+| `cases/probes.yaml` | P · 단발 프로브 34개 (능력 6개 · 헤드라인 10개 · 주입 7개) |
 | `cases/week/` | W · 일주일 페르소나 — `a-typical.yaml`(보통 · 입력 39 + 승인 · 정정 · 점검) · `c-light.yaml`(가끔 · 4단계). B(많음)는 아직 없다 |
 | `faults.md` | F · 장애 점검표 (계획 3) |
 | `results/<날짜>.md` | 실행 요약 — 커밋한다. 지난 요약과의 diff 가 회귀 신호다 |

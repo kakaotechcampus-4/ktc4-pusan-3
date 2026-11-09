@@ -1,7 +1,7 @@
 """P · 단발 프로브 — 실제 모델로 운영 입구를 돈다 (docs/eval/eval-v1.md §4).
 
     make eval-smoke                    # smoke: true 케이스만 1회 (~15 입력)
-    make eval                          # 전체 33개 × 3회 (~100 입력)
+    make eval                          # 전체 34개 × 3회 (~100 입력)
     EVAL_ONLY=P-REC-02 make eval       # 한 케이스
 
 결과는 eval/results/raw/*.jsonl (gitignore) → make eval-report 로 요약 md.

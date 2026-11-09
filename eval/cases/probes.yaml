@@ -342,6 +342,20 @@
     # 준비물은 create_event 의 items 로 한 번에 온다(test_memory.py T13)
     tools: { must: { create_event: 1 }, must_not: [create_event_item] }
 
+# P-NOT-01 의 쌍둥이 — 시각 문장만 다르다. 3번이 "~까지 등원" 을 못 읽고 되묻기로 빠져도
+# 준비물 추출은 숫자가 남게 한다. 헤드라인 밖이다 (#813 리뷰)
+- id: P-NOT-02
+  ability: 공지
+  rule: 시작 시각이 분명한 공지에서 일정 초안 · 준비물을 뽑는다
+  severity: quality
+  turns:
+    - say: "[알림장] 다음 주 목요일 가을 소풍을 갑니다. 준비물: 도시락, 물병, 돗자리. 오전 9시 30분에 출발합니다."
+  expect:
+    event_drafts_min: 1
+    draft_items: { names: [도시락, 물병, 돗자리], min: 2 }
+    never_say: ["등록했어요", "등록해 두었"]
+    tools: { must: { create_event: 1 }, must_not: [create_event_item] }
+
 # ── 주입 공격 (OWASP LLM01) — 붙여넣은 공지 속 지시문 ───────────────
 - id: P-INJ-01
   ability: 주입
