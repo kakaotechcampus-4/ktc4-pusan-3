@@ -82,6 +82,23 @@ healthy 가 될 때까지 기다리고, 안 되면(최대 240초) 실패로 본�
 - dev · prod 가 동시에 빌드하면 4GB 가 넘친다. `deploy.sh` 가 `flock` 으로 한 번에 하나만 돌게 하고, 다른 쪽은 최대 20분 기다린다.
   매일 백업 뒤의 복원 점검(cron, `restore-check.sh`)도 같은 잠금을 잡는다 — 임시 DB 가 빌드와 겹치지 않게 (#758).
 
+## drain — 옛 api 가 하던 일을 끝내고 내려간다 (#882)
+
+`up` 은 옛 api 를 멈춘 뒤 새 api 를 띄운다(이름 · edge IP 가 고정이라 둘이 같이 못 뜬다). 멈출 때 옛 api 는:
+
+```
+SIGTERM ─ uvicorn: 새 연결 거부 → 열린 요청 · SSE 를 기다림 (상한 70s, Dockerfile --timeout-graceful-shutdown)
+        ─ lifespan: 남은 run → 그다음 Curator 를 기다림 (상한 30s, main.DRAIN_SECONDS — 넘기면 취소하고 정리를 5s 기다림)
+        ─ lifespan: LLM 사용량 마지막 flush (≤5s) · 클라이언트 닫기 → 종료 (exit 143)
+120s    ─ 그때까지 안 끝나면 SIGKILL (compose api stop_grace_period)
+```
+
+- 🚨 **70 + 30 + 취소 정리 5 + flush 5 = 110 < 120** 을 지킨다. 하나를 바꾸면 셋을 같이 본다. 유예를 다 쓰지 않는다 — drain 이 끝나는 대로 내려간다.
+- uvicorn 상한 70s 는 run 마감 60s(`runner.RUN_DEADLINE_SECONDS`)보다 길어야 한다. 짧으면 상한에서 끊긴 SSE 마다 ERROR traceback 이 찍혀 배포 때 Discord 가 울린다.
+- 취소된 run 은 러너의 finally 를 거쳐 failed 로 닫히고 Idempotency 키를 놓는다. drain 이 없던 때는 화면이 안 붙은 run 이 SIGTERM 순간 흔적 없이 사라졌다 — uvicorn 이 정리 뒤 SIGTERM 을 다시 일으켜 죽어서 asyncio 취소 처리도 돌지 않는다 (#882 실측).
+- drain 하는 동안 새 요청은 받을 곳이 없다 — 지금은 Caddy 가 502 를 낸다. 어떻게 받을지는 #883.
+- web 은 그대로 둔다 — run 같은 장기 작업을 들고 있지 않다.
+
 ## dev 격리 — 메모리 상한 · 팀만 열기 (#780)
 
 한 EC2 에 dev 가 같이 뜨면서 생긴 두 위험을 막는다. dev 가 폭주하면 커널이 운영 postgres 를 죽일 수 있고,

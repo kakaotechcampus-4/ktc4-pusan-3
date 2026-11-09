@@ -127,6 +127,11 @@ def get(run_id: str) -> RunChannel | None:
     return _channels.get(run_id)
 
 
+def running_tasks() -> list[asyncio.Task[None]]:
+    """아직 도는 run 태스크. 종료 때 lifespan 이 끝까지 기다린다(drain, #882)."""
+    return [c.task for c in _channels.values() if c.task is not None and not c.task.done()]
+
+
 def clear() -> None:
     """전부 비운다. 테스트가 서로 새지 않게 쓰는 것이고, 서버 코드는 부르지 않는다."""
     _channels.clear()

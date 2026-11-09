@@ -5,6 +5,7 @@ include_router와 register_error_handlers 호출이 실제 등록 지점이다.
 """
 
 import asyncio
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 
@@ -13,11 +14,13 @@ from fastapi import FastAPI
 from app.api import health, llm_usage_writer
 from app.api.cors import register_cors
 from app.api.errors import register_error_handlers
+from app.api.runs import registry
 from app.api.v1.router import v1_router
 from app.core.alerts import configure_alerts
 from app.core.config import settings
 from app.core.constants import API_V1_PREFIX
 from app.core.logging_config import configure_logging
+from app.domains.memory.curator import trigger as curator_trigger
 from app.integrations import discord
 from app.integrations.hospital.client import NmcHospitals
 from app.integrations.tour.events import TourEvents
@@ -32,6 +35,45 @@ configure_logging()
 # 먼저 달면 사라진다.
 if settings.alert_webhook_url:
     configure_alerts(discord.webhook_sender(settings.alert_webhook_url), env=settings.APP_ENV)
+
+
+log = logging.getLogger(__name__)
+
+DRAIN_SECONDS = 30.0
+"""종료 때 남은 run · Curator 를 기다리는 상한(초). 넘기면 취소한다 (#882).
+
+uvicorn 은 SIGTERM 뒤 열린 요청 · SSE 를 먼저 기다린다(`--timeout-graceful-shutdown`, Dockerfile).
+그래서 여기 오는 것은 화면이 안 붙은 run 과 run 뒤에 도는 Curator 다.
+🚨 Dockerfile 의 그 값 + 이 값 + 취소 정리 5초 + 사용량 flush 5초
+   < compose 의 api `stop_grace_period` — 넘으면 SIGKILL 이 먼저 와서 drain 이 중간에 끊긴다
+   (docs/ops/deploy-v1.md §drain).
+"""
+
+
+async def drain_background() -> None:
+    """남은 run 을 기다리고, 그다음 Curator 를 기다린다. 상한을 넘긴 것은 취소한다.
+
+    run 이 먼저다 — run 이 끝나며 Curator 를 띄우므로 run 이 다 끝난 뒤에 Curator 를 모은다.
+    취소하면 러너의 finally 가 failed 를 내고 Idempotency 키를 놓는다. 안 하면 프로세스와 함께
+    흔적 없이 사라진다 (uvicorn 은 정리 뒤 SIGTERM 을 다시 일으켜 죽는다 — #882 실측).
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + DRAIN_SECONDS
+    stages = (("run", registry.running_tasks), ("curator", curator_trigger.running_tasks))
+    for kind, running in stages:
+        tasks = running()
+        if not tasks:
+            continue
+        log.info("drain — %s %d개 기다림", kind, len(tasks))
+        _, late = await asyncio.wait(tasks, timeout=max(0.0, deadline - loop.time()))
+        if late:
+            # WARNING 이다 — ERROR 는 Discord 로 가는데, 배포마다 울리면 알림이 무뎌진다
+            log.warning(
+                "drain — %s %d개가 %s초 안에 안 끝나 취소한다", kind, len(late), DRAIN_SECONDS
+            )
+            for task in late:
+                task.cancel()
+            await asyncio.wait(late, timeout=5)
 
 
 @asynccontextmanager
@@ -63,6 +105,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        # 🚨 writer 를 멈추기 전에 — run · Curator 가 끝나며 남기는 사용량도 마지막 flush 에 실린다
+        with suppress(Exception):
+            await drain_background()
         usage_writer.cancel()
         # writer 가 예외로 죽어 있었다면(run_writer 가 이미 알렸다) 그 예외가 여기서 나가면서
         # 아래 클라이언트 닫기를 건너뛰면 안 된다

@@ -108,6 +108,10 @@ services:
     image: ktc4${STACK_SUFFIX:-}-api:${API_IMAGE_TAG:-local}
     container_name: ktc4${STACK_SUFFIX:-}-api
     restart: unless-stopped
+    # drain (#882) — 옛 api 가 진행 중인 run · Curator 를 끝내고 내려갈 시간. 기본 10초면 SIGKILL 이 먼저 온다.
+    # uvicorn 대기 70 + DRAIN_SECONDS 30 + 취소 정리 5 + 사용량 flush 5 = 110 보다 길게 (apps/api/Dockerfile · app/main.py).
+    # 다 쓰지 않는다 — drain 이 끝나는 대로 내려간다 (#882 실측).
+    stop_grace_period: 120s
     logging: *logging
     mem_limit: ${API_MEM_LIMIT:-0}
     memswap_limit: ${API_MEM_LIMIT:-0}
