@@ -108,7 +108,7 @@ export const MED_FORM_LABEL: Record<MedicationForm, string> = {
   powder: "가루약",
   tablet: "알약",
   ointment: "연고",
-  drops: "점안 · 점이액",
+  drops: "안약·귀약",
 };
 
 /** 시각 목록 한 줄. 서버 값(`HH:MM`)을 그대로 잇는다 — 다시 계산하거나 오전 · 오후로 바꾸지 않는다. */
@@ -192,7 +192,7 @@ export function medicationDiff(
 export function failureOf(error: unknown): { text: string; final: boolean } {
   if (isApiError(error, "consent_required")) {
     return {
-      text: "건강 정보 동의를 받기 전이라 넣은 것은 하나도 없어요. 동의 화면은 아직 없어요.",
+      text: "건강 정보 동의를 받기 전이라 넣은 것은 하나도 없어요.",
       final: true,
     };
   }
@@ -212,7 +212,7 @@ export function failureOf(error: unknown): { text: string; final: boolean } {
     return { text: "넣지 않았어요. 다시 눌러도 같은 결과가 와요.", final: true };
   }
   return {
-    text: "넣었는지 확인하지 못했어요. 다시 누르면 같은 요청으로 확인해요. 이미 들어갔다면 두 번 들어가지 않아요.",
+    text: "넣었는지 확인하지 못했어요. 다시 누르면 이어서 확인해요. 이미 들어갔다면 두 번 들어가지 않아요.",
     final: false,
   };
 }

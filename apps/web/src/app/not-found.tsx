@@ -19,13 +19,7 @@ export const metadata: Metadata = {
 export default function NotFound() {
   return (
     <ErrorView
-      title={
-        <>
-          없는
-          <br />
-          주소예요
-        </>
-      }
+      title="없는 주소예요"
       description="주소가 바뀌었거나 링크가 잘못된 것 같아요. 처음 화면에서 다시 들어와 주세요."
       action={
         <ButtonLink href="/" block>

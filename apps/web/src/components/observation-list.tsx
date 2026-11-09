@@ -201,7 +201,8 @@ export function CorrectedMark({ label }: { label: string }) {
   return (
     <span className="text-caption text-ink-muted inline-flex items-center gap-1">
       <PencilLine aria-hidden size={ICON_SIZE.sm} strokeWidth={ICON_STROKE} className="shrink-0" />
-      {josa(label, "으로/로")} 고친 기록
+      {/* 문장형 라벨은 따옴표로 감싸 조사를 붙인다 — "이번만 그랬어요로" 가 한 낱말처럼 읽혔다 (#815). */}
+      ‘{label}’{josa.pick(label, "으로/로")} 고친 기록
     </span>
   );
 }

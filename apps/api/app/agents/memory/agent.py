@@ -35,7 +35,7 @@ from app.agents.common.llm_client import LLMClient, LLMError
 from app.agents.common.result import DomainPending
 from app.agents.memory.bundles import MUTATING_PREFIXES, WRITES_FOR, tools_for
 from app.agents.memory.context import AgentContext
-from app.agents.memory.drafts import EventDraft
+from app.agents.memory.drafts import AnyEventDraft
 from app.agents.memory.prompt import build_system_prompt
 from app.agents.memory.registry import TOOL_SPECS, execute_tool, specs_for
 from app.agents.memory.result import ErrorCode, fail
@@ -341,7 +341,7 @@ class MemoryAgentResult:
     # max_steps: 끝내지 못함
     # unsaved_fallback: 저장 0건 run 의 다시 확인이 끝나지 못해 코드 문구(_UNSAVED_FALLBACK)를 냄
     ended_by: EndedBy = "model"
-    drafts: tuple[EventDraft, ...] = ()  # 보호자 제출을 기다리는 일정 초안
+    drafts: tuple[AnyEventDraft, ...] = ()  # 보호자 제출을 기다리는 일정 초안 (묶음 초안 포함)
     pending: PendingMemoryContext | None = None  # 되묻고 멈춘 조각. kind=question 일 때만
     leftover: bool = False  # 이어받기에서 답에 섞인 다른 기록·요청을 처리하지 않고 남겼는지.
     # 재질문 상한에 닿아 또 물으려던 질문을 맥락 없이 끝냈는지.
@@ -1319,7 +1319,8 @@ async def _hazard(name: str, arguments: dict[str, Any], guardrail: Guardrail) ->
     """관찰 create · update 의 대상 이름이 위험 물질인가. 원문(raw_text)은 보지 않는다.
 
     칸마다 따로 본다(이어 붙이지 않는다). 검사를 못 하면 `GuardrailUnavailableError` 가 그대로
-    올라가 run 이 멈춘다 — 저장하지 않는 쪽으로 닫힌다 (fail-closed).
+    올라가고, pipeline 이 `guard_unavailable` 로 run 을 끝낸다 — 저장하지 않는 쪽으로 닫힌다
+    (fail-closed).
     """
     for prefix in ("create_", "update_"):
         found = _HAZARD_FIELDS.get(name.removeprefix(prefix)) if name.startswith(prefix) else None

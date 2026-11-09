@@ -27,7 +27,8 @@ export function ObservationRow({ observation }: { observation: Observation }) {
         <ObservationIcon kind={observation.kind} className="text-ink-subtle" />
         {observationLabel(observation.kind)}
         {observation.observed_label ? (
-          <span className="text-caption text-ink-subtle">· {observation.observed_label}</span>
+          // 🚨 기록 줄에는 가운뎃점을 쓰지 않는다 (디자인 시스템 §7 기록 줄 · #815) — 간격 8 로 가른다 (gap 6 + 2).
+          <span className="text-caption text-ink-subtle ml-0.5">{observation.observed_label}</span>
         ) : null}
       </div>
 
@@ -35,9 +36,8 @@ export function ObservationRow({ observation }: { observation: Observation }) {
         {observation.raw_text}
       </p>
 
-      <div className="text-caption text-ink-subtle mt-1.5 flex flex-wrap items-center gap-x-1.5">
+      <div className="text-caption text-ink-subtle mt-1.5 flex flex-wrap items-center gap-x-2">
         {detail ? <span>{detail}</span> : null}
-        {detail ? <span aria-hidden>·</span> : null}
         <span>{CONFIDENCE_LABEL[observation.confidence_source]}</span>
       </div>
 

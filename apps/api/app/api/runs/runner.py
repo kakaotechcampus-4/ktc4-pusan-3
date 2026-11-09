@@ -19,18 +19,23 @@
 """
 
 import asyncio
+import contextlib
 import logging
 import traceback
 from collections.abc import Awaitable, Callable
 from datetime import date
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from app.agents import entrypoint
 from app.api import agent_ports, idempotency
 from app.api.deps.db import background_session
 from app.api.runs import pending_reply, sse, suggestion_retry, translate
 from app.api.runs.registry import RunChannel
+from app.core import llm_usage
+from app.core.logging_config import log_error_without_message
+from app.domains.consent.location_log import record_location_use_if_granted
+from app.domains.consent.models import LocationPurpose
 
 log = logging.getLogger(__name__)
 
@@ -73,6 +78,28 @@ def curator_trigger() -> entrypoint.CuratorTrigger | None:
     return trigger
 
 
+def trigger_curator_after_delete(
+    child_id: UUID, today: date, *, parent_id: UUID, after: str
+) -> None:
+    """run 밖에서 지운 뒤(기록 삭제 · 삭제 확정) Curator 를 띄운다. commit 뒤에만 부른다.
+
+    같은 트랜잭션에서 띄우면 Curator 실패가 삭제까지 되돌린다.
+    🚨 터져도 응답은 성공이다 — 지운 것은 이미 commit 됐다 (pipeline._trigger_curator 와 같다).
+    🚨 이 길은 run 밖이라 귀속이 없다. 여기서 건다 — 안 걸면 Curator 의 임베딩 · 판정 토큰이 보호자
+       없이 쓰여 저장되지 않고 WARNING 만 남는다 (#710). Curator 는 trigger 가 띄우는 태스크라 이
+       귀속을 복사한다. run 밖에서 Curator 를 띄우는 새 길은 이것을 부른다 — 따로 `attribute()` 를
+       복사해 두지 않는다.
+    `after` 는 로그에 남는 길 이름이다(고정 글귀 — 값을 넣지 않는다).
+    """
+    try:
+        trigger = curator_trigger()
+        if trigger is not None:
+            with llm_usage.attribute(parent_id=parent_id, run_id=uuid4().hex, source="delete"):
+                trigger(child_id, today)
+    except Exception as exc:
+        log.error("%s 뒤 curator trigger 실패 error=%s", after, type(exc).__name__)
+
+
 def agent_job(
     *,
     child_id: UUID,
@@ -107,7 +134,9 @@ def agent_job(
       "동의 안 함"(False)이 아니다. 읽기에 실패하면 창구가 run 을 시작하지 않아서 이 job 이
       만들어지지 않는다.
     - `location` 은 창구가 위치정보 동의를 확인한 흐린 좌표, `activity_weather` 는 서버 시작 때 만든
-      날씨 어댑터다(#380). 둘 다 그대로 진입점에 넘긴다. None 이면 Activity 는 실내 전용이다.
+      날씨 어댑터다(#380). 날씨 어댑터는 그대로 넘긴다. 좌표는 넘기기 직전에 쓴 사실을 남기고
+      (`_hand_location`, #693), 그새 동의가 꺼졌거나 남기기에 실패하면 버린다. None 이면 Activity 는
+      실내 전용이다.
       장소 어댑터는 `agent_ports.place_source` 로 연다 — 좌표가 없으면 진입점 쪽에서 닫힌다.
       `activity_events` 는 서버 시작 때 만든 행사 어댑터(TourAPI)다. 그대로 넘긴다 — None 이면
       Activity 는 행사를 찾지 않는다.
@@ -130,10 +159,14 @@ def agent_job(
       `Saved` 를 관찰 내용이 아니라 id 로 받으려고 여기서 넘긴다 (#228). 끝 신호 뒤의 것과 번역이
       터진 것은 넘기지 않는다 — 화면에 안 나간 것이다.
 
+    - LLM 사용량(#710)은 이 job 이 보호자 · run 에 묶는다(`source="input"`).
+      Curator 는 run 안에서 태스크로 떠서 귀속을 물려받으므로 run 이 끝난 뒤에 끝나도
+      이 run 으로 남는다. 이어받기 run 도 같다.
+
     🚨 `entrypoint.handle_input` 을 모듈 이름으로 부른다 — 테스트가 진입점을 바꿔 끼울 수 있게.
     """
 
-    async def job(channel: RunChannel) -> None:
+    async def run(channel: RunChannel) -> None:
         # commit 이 채우고 Saved 가 꺼내 쓴다 — 이 run 이 만든 관찰의 화면 모양 (#471)
         saved_rows: dict[tuple[str, str], Any] = {}
         # load_cards 가 채우고 FoundTabs · DeleteProposed 가 꺼내 쓴다 — 카드의 화면 모양 행 (#535)
@@ -159,7 +192,11 @@ def agent_job(
                     child_id=child_id,
                     agent=event.agent,
                     task=suggestion_retry.RetryTask(
-                        event.task_type, event.request_texts, event.sent_at
+                        event.task_type,
+                        event.request_texts,
+                        event.sent_at,
+                        original_texts=event.original_texts,
+                        prior_texts=event.prior_texts,
                     ),
                 )
                 return
@@ -209,13 +246,14 @@ def agent_job(
 
             try:
                 async with asyncio.timeout(RUN_DEADLINE_SECONDS):
+                    handed_location = await _hand_location(session, parent_id, location)
                     await entrypoint.handle_input(
                         child_id=child_id,
                         parent_id=parent_id,
                         raw_text=raw_text,
                         birth_date=birth_date,
                         child_health_granted=child_health_granted,
-                        location=location,
+                        location=handed_location,
                         activity_weather=activity_weather,
                         activity_places=agent_ports.place_source(),
                         activity_events=activity_events,
@@ -230,6 +268,7 @@ def agent_job(
                         ),
                         count_records=agent_ports.record_counter(child_id),
                         load_cards=load_cards,
+                        recent_turns=agent_ports.recent_turns_loader(parent_id, child_id),
                         curator_trigger=curator_trigger(),
                         domain_store=agent_ports.domain_store_opener(child_id),
                         **agent_ports.food_stores(),
@@ -261,7 +300,42 @@ def agent_job(
                     else:
                         pending_reply.release(reply_to)
 
+    async def job(channel: RunChannel) -> None:
+        with llm_usage.attribute(parent_id=parent_id, run_id=channel.run_id, source="input"):
+            await run(channel)
+
     return job
+
+
+async def _hand_location(
+    session: Any, parent_id: UUID, location: entrypoint.CoarseLocation | None
+) -> entrypoint.CoarseLocation | None:
+    """좌표를 Agent 에 넘기기 직전에 쓴 사실을 남기고, 넘길 좌표를 돌려준다 (위치정보법 제16조 ②).
+
+    여기서 남기는 이유 — 창구에서 남기면 하루 한도 · 되묻기 맥락 없음 · 키 기억 실패로 run 이
+    뜨지 않은 요청도 "썼다" 로 남는다 (#693 리뷰).
+    - 창구가 동의를 읽은 뒤 철회됐으면 None 이다. 좌표를 버리고 실내 전용으로 돈다.
+    - 🚨 남기기가 실패하면 좌표를 버리고(None) run 은 계속 돈다 — 쓰지 않았으니 기록 없는 사용이
+      아니다. run 을 실패시키면 보호자가 적은 기록까지 위치 표 고장 때문에 사라진다 (#697 리뷰).
+      고장은 ERROR 로 남겨 알림이 가게 한다. 커밋은 됐는데 예외가 난 경우는 "기록은 있고 안 씀"
+      이라 해가 없다.
+    - 바로 커밋해서 보호자 행 잠금을 놓는다. 이 뒤의 Memory 저장과 묶지 않는다. run 세션의 첫
+      문장이라 실패 뒤 rollback 이 함께 버릴 다른 작업은 없다.
+    """
+    if location is None:
+        return None
+    try:
+        granted = await record_location_use_if_granted(
+            session, parent_id=parent_id, purpose=LocationPurpose.SUGGESTION
+        )
+        await session.commit()
+    except Exception as exc:
+        # 연결이 끊겼으면 rollback 도 예외를 낸다. 그래도 run 은 계속 돈다 (#697 리뷰)
+        with contextlib.suppress(Exception):
+            await session.rollback()
+        log_error_without_message(log, "위치 이용 기록 실패 — 좌표 없이 계속", exc)
+        return None
+    return location if granted else None
 
 
 async def _read_saved(

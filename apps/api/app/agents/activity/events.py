@@ -16,7 +16,7 @@ import math
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 
 from app.agents.activity.schemas.common import EventKind
 from app.agents.activity.store.ports import (
@@ -169,6 +169,30 @@ def places_on(event: EventRow, days: Iterable[date]) -> tuple[str, ...]:
     if not places:
         return (event.place,) if event.place else ()
     return tuple(dict.fromkeys(places))
+
+
+# 운영 시간 원문의 "10:00~21:00" · "18:00 - 22:30" — 끝 시각이 있는 구간만 본다
+_TIME_SPAN = re.compile(r"(\d{1,2}):(\d{2})\s*[~\-–]\s*(\d{1,2}):(\d{2})")
+
+
+def ended_today(playtime: str, now: time) -> bool:
+    """운영 시간 원문의 가장 늦은 끝 시각이 이미 지났는가 (#800).
+
+    끝 시각이 적힌 구간("10:00~21:00")이 있을 때만 판단한다. 시작 시각뿐("(토) 19:00")이거나
+    시각이 없으면 모른다 — 빼지 않는다. "24:00" · 자정을 넘는 끝("22:00~02:00")은 끝나지 않은 것으로
+    본다.
+    """
+    latest: time | None = None
+    for start_h, start_m, end_h, end_m in _TIME_SPAN.findall(playtime or ""):
+        begins = (int(start_h), int(start_m))
+        ends = (int(end_h), int(end_m))
+        if ends[0] >= 24 or ends <= begins:
+            return False
+        if ends[0] > 23 or ends[1] > 59:
+            continue
+        candidate = time(*ends)
+        latest = candidate if latest is None or candidate > latest else latest
+    return latest is not None and now > latest
 
 
 def schedule_days(today: date) -> tuple[date, ...]:

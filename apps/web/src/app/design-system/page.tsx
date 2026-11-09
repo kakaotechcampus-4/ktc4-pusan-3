@@ -54,12 +54,13 @@ import { TextArea } from "@/components/ui/text-area";
 import { Tabs } from "@/components/ui/tabs";
 import { TextInput } from "@/components/ui/text-input";
 import { TimeField } from "@/components/ui/time-field";
-import { EventDraftCard } from "@/components/event-draft-card";
+import { EventDraftCard, SeriesDraftCard } from "@/components/event-draft-card";
 import {
   OBSERVATION_KINDS,
   type Agent,
   type EventDraft,
   type EventDraftFields,
+  type SeriesDraft,
 } from "@/lib/api/types";
 import { severityFieldHint, severityOptions } from "@/lib/health-safety";
 import { contrastRatio, meetsAA, parseColor } from "./contrast";
@@ -1128,6 +1129,21 @@ function EventDraftSection() {
       </p>
       <EventDraftCard draft={DS_DRAFT_UPDATE} onSubmit={() => {}} />
 
+      <SubTitle>요일 반복 새 일정 — 날짜는 고르지 않는다 (#738)</SubTitle>
+      <p className="text-caption text-ink-subtle">
+        🚨 회차 날짜는 서버 규칙이 정해서 날짜 칸 대신 반복 문구(서버 문구)와 첫 회차가 선다. 시각 ·
+        하루 종일 · 준비물 · 알림은 회차마다 같아서 고친다.
+      </p>
+      <EventDraftCard draft={DS_DRAFT_REPEAT} onSubmit={() => {}} />
+
+      <SubTitle>반복 일정 전부 고치기 — 읽기 전용 (#738)</SubTitle>
+      <p className="text-caption text-ink-subtle">
+        🚨 범위(아직 시작하지 않은 회차 전부)를 먼저 말하고, `before` 와 비교한 변화를 그린다. 고칠
+        칸이 없다 — 다르게 하려면 대화로 다시 말한다. 제출도 게이트 ㉠ 이다.
+      </p>
+      <SeriesDraftCard draft={DS_DRAFT_SERIES} onSubmit={() => {}} />
+      <SeriesDraftCard draft={DS_DRAFT_SERIES} state="submitted" onSubmit={() => {}} />
+
       <SubTitle>사진에서 온 초안 — 확인이 필요한 것</SubTitle>
       <p className="text-caption text-ink-subtle">
         왜 확인이 필요한지는 서버 문구(`review_reason`)를 그대로 쓴다. 프론트가 지어내지 않는다.
@@ -1191,6 +1207,52 @@ const DS_DRAFT_CREATE: EventDraft = {
     { item_id: null, item_name: "수영복" },
     { item_id: null, item_name: "여벌옷" },
   ],
+};
+
+const DS_REPEAT = {
+  weekdays: [1, 3],
+  until: "2026-12-20",
+  label: "12월 20일까지 매주 월, 수",
+};
+
+const DS_DRAFT_REPEAT: EventDraft = {
+  draft_id: "d_repeat",
+  op: "create",
+  event_id: null,
+  event: {
+    title: "등원",
+    starts_at: "2026-11-09T08:30:00+09:00",
+    ends_at: null,
+    all_day: false,
+    event_type: "core",
+    category: "institution",
+  },
+  items: [{ item_id: null, item_name: "물통" }],
+  repeat: DS_REPEAT,
+};
+
+const DS_SERIES_FIELDS: SeriesDraft["event"] = {
+  title: "수영",
+  starts_time: "16:00",
+  ends_time: null,
+  all_day: false,
+  event_type: "core",
+  category: "activity",
+};
+
+const DS_DRAFT_SERIES: SeriesDraft = {
+  draft_id: "d_series",
+  op: "update_series",
+  series_id: "series_1",
+  event: DS_SERIES_FIELDS,
+  repeat: DS_REPEAT,
+  before: {
+    ...DS_SERIES_FIELDS,
+    starts_time: "15:00",
+    repeat: DS_REPEAT,
+    items: ["수영복", "수건"],
+  },
+  items: ["수영복", "수건", "물안경"],
 };
 
 const DS_DRAFT_UPDATE: EventDraft = {

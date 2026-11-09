@@ -150,7 +150,7 @@ test.describe("삭제 카드 — 체크한 것만 버튼으로 지운다 (§2 �
     await reply.getByRole("button", { name: "전체 해제" }).click();
     await expect(reply.getByRole("button", { name: "고른 것이 없어요" })).toBeDisabled();
 
-    await reply.getByRole("button", { name: "취소" }).click();
+    await reply.getByRole("button", { name: "지우지 않을래요" }).click();
     await expect(reply.getByText("삭제를 취소했어요.")).toBeVisible();
     expect(writes(calls, "POST", /\/confirm$/)).toEqual([]);
     expect(writes(calls, "POST", /\/cancel$/)).toHaveLength(1);

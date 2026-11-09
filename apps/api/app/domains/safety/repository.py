@@ -71,6 +71,56 @@ async def has_active_safety(
     return found is not None
 
 
+async def has_tolerated_safety(session: AsyncSession, *, child_id: uuid.UUID, label: str) -> bool:
+    """같은 이름의 괜찮았던 식품(allergy · none)이 있는가. 내린 줄은 세지 않는다."""
+    found = await session.scalar(
+        select(HealthSafety.id).where(
+            HealthSafety.child_id == child_id,
+            HealthSafety.kind == SafetyKind.ALLERGY,
+            HealthSafety.label == label,
+            HealthSafety.status == SafetyStatus.NONE,
+        )
+    )
+    return found is not None
+
+
+async def list_tolerated_safety_with_writer(
+    session: AsyncSession, *, child_id: uuid.UUID
+) -> list[tuple[HealthSafety, str | None]]:
+    """괜찮았던 식품(allergy · none)과 적은 보호자의 부르는 이름. 순서는 active 목록과 같다."""
+    stmt = (
+        select(HealthSafety, Parent.nickname)
+        .outerjoin(Parent, Parent.id == HealthSafety.created_by)
+        .where(
+            HealthSafety.child_id == child_id,
+            HealthSafety.kind == SafetyKind.ALLERGY,
+            HealthSafety.status == SafetyStatus.NONE,
+        )
+        .order_by(HealthSafety.created_at.desc(), HealthSafety.id.desc())
+    )
+    return [(row, nickname) for row, nickname in (await session.execute(stmt)).all()]
+
+
+async def retract_tolerated(
+    session: AsyncSession, *, child_id: uuid.UUID, ids: list[uuid.UUID], parent_id: uuid.UUID
+) -> None:
+    """알레르기로 등록된 식품을 괜찮았던 식품 목록에서 내린다 — 알레르기가 이긴다.
+
+    어느 줄을 내릴지(이름 사전 판정)는 호출자가 정한다. 내린 줄은 이력으로 남는다.
+    """
+    if not ids:
+        return
+    await session.execute(
+        update(HealthSafety)
+        .where(
+            HealthSafety.child_id == child_id,
+            HealthSafety.id.in_(ids),
+            HealthSafety.status == SafetyStatus.NONE,
+        )
+        .values(status=SafetyStatus.RETRACTED, updated_by=parent_id)
+    )
+
+
 async def find_safety(
     session: AsyncSession, *, child_id: uuid.UUID, safety_id: uuid.UUID
 ) -> HealthSafety | None:
@@ -141,17 +191,27 @@ async def create_safety(
     reactions: list[str] | None = None,
     management: str | None = None,
     notes: str | None = None,
+    status: SafetyStatus = SafetyStatus.ACTIVE,
 ) -> HealthSafety:
     """보호자 승인·동의·접근권한 검증을 마친 호출자만 사용한다.
 
     severity는 allergy면 class_0~6, 나머지는 mild~anaphylaxis만 받는다. DB CHECK도 같은 것을
     막지만, 여기서 먼저 ValueError로 돌려 호출자가 IntegrityError를 해석하지 않게 한다.
+    status 는 active(알레르기 · 건강 기록) 또는 none(괜찮았던 식품)이다. 내린 줄(retracted)을
+    새로 만드는 길은 없다.
     """
     kind = SafetyKind(kind)
     if severity is not None:
         severity = SafetySeverity(severity)
         if (kind is SafetyKind.ALLERGY) != (severity in ALLERGY_SEVERITIES):
             raise ValueError(f"severity {severity} 는 kind {kind} 에 쓸 수 없다")
+    status = SafetyStatus(status)
+    if status is SafetyStatus.RETRACTED:
+        raise ValueError("내린 기록을 새로 만들 수 없다")
+    if status is SafetyStatus.NONE and (
+        kind is not SafetyKind.ALLERGY or severity is not None or reactions
+    ):
+        raise ValueError("괜찮았던 식품은 심각도 · 증상이 없는 알레르기 항목만이다")
     row = HealthSafety(
         child_id=child_id,
         created_by=parent_id,
@@ -161,7 +221,7 @@ async def create_safety(
         reactions=reactions or [],
         management=management,
         notes=notes,
-        status=SafetyStatus.ACTIVE,
+        status=status,
     )
     session.add(row)
     await session.flush()
@@ -175,13 +235,16 @@ async def retract_safety(
     safety_id: uuid.UUID,
     parent_id: uuid.UUID,
 ) -> HealthSafety | None:
-    """DELETE API는 물리 삭제가 아니라 회수다. 이미 회수됐으면 None."""
+    """DELETE API는 물리 삭제가 아니라 회수다. 이미 회수됐으면 None.
+
+    알레르기 · 건강 기록(active)과 괜찮았던 식품(none)을 같이 내린다 — 보호자 화면의 두 목록이다.
+    """
     stmt = (
         update(HealthSafety)
         .where(
             HealthSafety.child_id == child_id,
             HealthSafety.id == safety_id,
-            HealthSafety.status == SafetyStatus.ACTIVE,
+            HealthSafety.status.in_((SafetyStatus.ACTIVE, SafetyStatus.NONE)),
         )
         .values(status=SafetyStatus.RETRACTED, updated_by=parent_id)
         .returning(HealthSafety)

@@ -12,10 +12,10 @@ from pydantic import Field
 from app.agents.activity.schemas.common import (
     ActivitySetting,
     CaregiverRole,
-    DayLabel,
     EvidencePick,
     Intensity,
     ToolArgs,
+    When,
 )
 from app.agents.common.suggestion import MAX_SUGGESTIONS
 
@@ -26,16 +26,7 @@ class ActivityCandidate(ToolArgs):
         Field(min_length=1, description="놀이·외출 후보. 예: 종이컵으로 탑 쌓기"),
     ]
     setting: Annotated[ActivitySetting, Field(description="indoor / outdoor / either")]
-    day: Annotated[
-        DayLabel,
-        Field(
-            default=DayLabel.TODAY,
-            description=(
-                "언제 하는 활동인지. today / tomorrow / this_weekend. "
-                "바깥 활동은 그날 날씨로 거른다"
-            ),
-        ),
-    ]
+    day: When  # 언제 하는 활동인지. 바깥 활동 · 행사는 그날로 거른다 (#377 · #800)
     materials: Annotated[
         list[str],
         Field(
@@ -46,10 +37,25 @@ class ActivityCandidate(ToolArgs):
             ),
         ),
     ]
+    foods: Annotated[
+        list[str],
+        Field(
+            default_factory=list,
+            description=(
+                "활동에서 만지거나 먹는 음식 · 식재료 이름을 하나씩 빠짐없이. 예: 밥, 김, 밀가루, "
+                "군밤. 음식이 없는 활동이면 비운다. 안전 검사는 코드가 이 목록으로 한다 — "
+                "알아서 빼거나 바꾸지 않는다"
+            ),
+        ),
+    ]
     physical_intensity: Annotated[Intensity, Field(description="low / medium / high")]
     involves_food: Annotated[
         bool,
-        Field(description="음식·식재료를 만지거나 먹는 활동이면 true"),
+        Field(
+            description=(
+                "음식·식재료를 만지거나 먹는 활동이면 true. true 면 foods 에 그 음식을 적는다"
+            )
+        ),
     ]
     caregiver_role: Annotated[
         CaregiverRole,

@@ -176,6 +176,19 @@
 
 **삭제 순서**: 증빙 복사 → 운영 `consent` 삭제 → 대상 hard delete. 호출자의 단일 트랜잭션 안에서 수행해 중간 실패 시 모두 롤백한다. 만료된 보관 행은 worker가 `purge_at` 기준으로 삭제한다.
 
+### location_use_log
+
+위치를 쓴 사실 1건. 위치정보법 제16조 ② 의 확인자료다 (#693). 🚨 좌표 칸을 두지 않는다.
+
+| **필드** | **타입** | **비고** |
+| --- | --- | --- |
+| id | uuid | PK |
+| parent_id | uuid | FK → `parent.id`, NOT NULL, `ON DELETE CASCADE`. 위치 동의는 계정 동의라 아이를 적지 않는다 |
+| purpose | enum | `location_purpose`, NOT NULL. 값이 가리키는 취득경로 · 방법 · 제공받는 자는 [`retention-v1.md`](../safety/retention-v1.md) |
+| used_at | timestamptz | NOT NULL, default `now()` |
+
+러너가 좌표를 Agent 에 넘기기 직전에 남긴다. 위치 동의를 철회하면 그 보호자의 행을 지우고, 6개월이 지난 행은 worker가 지운다. 남기기와 철회는 `parent` 행 잠금(FOR KEY SHARE / FOR UPDATE)으로 줄을 선다 — 철회 뒤에 행이 남지 않게.
+
 ## Memory/Observation
 
 ### observation 계층 테이블 5개(food/health/education/activity/routine)
@@ -347,7 +360,7 @@
 제약:
 
 - **`unknown` 은 저장하지 않는다. 매칭되는 행이 없는 것이 곧 `unknown` 이다** (2026-10-04). 아이를 만들 때 알레르기 19행을 미리 깔지 않는다.
-- `active` 는 고려 대상, `retracted` 는 과거에 `active` 였고 지금은 아님, `none` 은 확인했고 없음. 필터에서 `retracted` 와 `none` 은 같다 — 구분은 이력을 위한 것이다.
+- `active` 는 고려 대상, `retracted` 는 내린 기록(과거에 `active` 였거나 괜찮았던 식품이었고 지금은 아님 — 아래 `none` 줄), `none` 은 확인했고 없음(괜찮았던 식품). **Agent 필터(막기)에서는 `retracted` 와 `none` 이 같다** — 둘 다 거르지 않는다. **05 사전검사(묻기)에서는 다르다** — `none` 은 정규화한 이름이 같은 항목만 묻지 않게 하고(이름 사전은 동의어와 하위 식품을 가르지 않아서 넓게 맞추면 덜 묻게 된다), `retracted` 는 행이 없는 것과 같아 다시 묻는다(내린 기록은 "지금은 아니다" 일 뿐 "먹어봤고 괜찮았다" 가 아니다).
 - **거르는 것은 `status='active'` 뿐이다.** 행이 없는(`unknown`) 알레르기는 필터에서 거르지 않고, 추천을 승인할 때
   "이 음식에는 땅콩이 들어가요. 땅콩 알레르기가 있는지 확인해주세요" 로 안내한다. 그래서 추천에 무엇이 들어 있는지를
   `suggestion.allergens` 에 남긴다. 모르는 항목 때문에 추천을 통째로 닫으면 답을 미룬 보호자가 서비스를 못 쓴다.
@@ -358,6 +371,7 @@
 - **`kind` 마다 0행의 뜻이 다르다.** 알레르기는 위와 같고(행 없음 = `unknown`), 나머지 `kind`(만성질환·행동·환경·기타)는 **0행이 곧 해당 없음**이다.
 - 🚨 **안전 필터는 active 알레르기를 전부 읽는다.** Agent 별 matcher 가 자기 후보(Food 는 메뉴명 · 재료, Activity 는 놀이 문장 · 준비물)와 실제로 매칭되는 것만 거른다.
 - **active 끼리만** `UNIQUE(child_id, kind, label)` — 부분 고유 인덱스 `uq_health_safety_active_item` (`WHERE status = 'active'`, 2026-10-13). 10/4 표의 전체 UNIQUE 와 다르다. 내린(`retracted`) 줄은 이력으로 남고, 같은 항목을 내린 뒤 다시 등록하면 같은 (child_id, kind, label) 로 새 줄이 생겨서, 전체에 걸면 다시 등록이 막힌다. 등록 API 는 코드로 먼저 보고(409), 동시에 온 두 번째 요청은 이 인덱스가 막는다
+- **`none` 을 쓰는 길은 "괜찮았던 식품" 하나다** — 05 알레르기 확인 시트에서 보호자가 "먹어봤어요 · 괜찮았어요" 로 답한 식품(등록 API 의 `tolerated: true`). `kind='allergy'` 만이고 `severity` 는 null, `reactions` 는 비어 있다. 알레르기가 아니라 조회 API 는 `items` 와 따로 `tolerated` 로 내려준다. 같은 식품이 알레르기(`active`)로 있으면 받지 않고(409 `allergy_exists`), 알레르기를 등록하면 그것이 덮는 괜찮았던 식품을 `retracted` 로 내린다 — "같은 식품" 은 05 사전검사와 같은 이름 사전으로 본다. 내리기(`DELETE`)도 같은 길이다. 같은 이름은 한 줄만 — 부분 고유 인덱스 `uq_health_safety_none_item` (`WHERE status = 'none'`). 그래서 `retracted` 는 "과거에 `active` 였던 것" 보다 넓다 — 내린 괜찮았던 식품, 알레르기가 덮은 괜찮았던 식품도 `retracted` 다
 - **보호자가 고치면(`PATCH`) 제자리에서 바꾸지 않는다** — 지금 줄을 `retracted`(`updated_by` = 고친 보호자)로 내리고, 바뀐 값으로 새 줄을 넣는다(`created_by` = 고친 보호자). #87 첫 질문의 답이다 (2026-10-13 PM 결정). 종류 · 이름은 고칠 수 없어서 같은 (child_id, kind, label) 의 줄을 시간순으로 놓으면 그 항목이 바뀌어 온 길이다. 바뀐 값이 없으면 새 줄을 만들지 않는다. 고치기는 한 트랜잭션이라 옛 줄의 `updated_at` 과 새 줄의 `created_at` 이 같다 — 보호자가 따로 "내리고 다시 등록" 한 것과 가르는 근거가 이것이다
 - 안전 조회는 항상 `status='active'` 필터
 - DB 계층: Agent/Curator role 에는 이 테이블 write 권한 비부여 (권한 분리로 LLM 쓰기 원천 차단)
@@ -495,7 +509,8 @@
 | all_day | bool | NOT NULL, DEFAULT false |
 | category | enum | `institution | health | activity | etc`, NOT NULL |
 | created_by | enum | `agent | caregiver`, NOT NULL |
-| source_notice_id | uuid | nullable, 현재 FK 없는 근거 식별자 |
+| source_notice_id | uuid | FK → `notice.id` (NOT VALID), nullable, ON DELETE SET NULL. 기관 공지에서 온 일정 |
+| source_notice_item_id | uuid | FK → `notice_item.id`, nullable, UNIQUE, ON DELETE SET NULL. 사진 공지의 어느 항목으로 만든 일정인가 — 항목 하나는 일정 하나다. 공지 저장(commit) 때 채운다 |
 | source_refs | jsonb | nullable, 근거 참조 |
 - `status`, `expires_at`, `EventStatus`는 제거됐다.
 - DB에는 보호자가 제출한 일정만 저장한다. Agent 초안은 DB에 저장하지 않고 SSE payload로 전달한다 (2026-09-22 확정). **복약 초안도 같은 방식이다** — `medication_schedule`에 `draft` 상태를 두지 않는다.
@@ -669,15 +684,14 @@ Food · Growth · Health 의 `*_agent_own_table.md` "공유 테이블 변경 요
 
 ### 아직 위 표에 없는 것
 
-#### notice (기관 공지) — 테이블 신설
+#### notice · notice_item (기관 원문과 거기서 뽑은 항목)
 
-`observation_*.source_notice_id` 가 이미 이 테이블을 가리키는데 테이블이 없어서 FK 가 안 걸려 있다.
-`suggestion_evidence.source_kind` 의 아이 기록 값이기도 하다.
+정본은 [`docs/notice/notice-ocr-v1.md`](../notice/notice-ocr-v1.md) · `apps/api/app/domains/notice/models.py`.
 
-소유는 Memory · OCR 파이프라인이다. Growth 가 기관 맥락 연결에 읽고, Food 는 `daycare_meal.source_notice_id` 로 건다.
-Growth 는 우선순위 낮음으로 올렸다 — 없어도 핵심 기능은 돈다.
-
-필드는 아직 정하지 않았다. OCR 3갈래 분류에서 "일반 공지" 로 빠지는 것을 담는다.
+- `notice` 는 기관에서 온 원문 1건, `notice_item` 은 거기서 뽑은 보호자가 할 일 · 알 일 N건이다.
+- 처음 계획은 "일반 공지만 담는 표" 였는데, 실제 공지는 한 장에 일정 · 회신 · 비용 · 운영 변경이 섞여 와서 공지 단위로 갈래를 고르면 나머지가 사라진다. 그래서 일정성 공지 · 식단표 원문도 여기 담고, 분류는 항목 단위로 한다.
+- 아이 관찰과 급식 메뉴는 이 표에 없다. 자기 표(`observation_*` · `daycare_meal`)에 들어가 `source_notice_id` 로 원문을 가리킨다.
+- `suggestion_evidence.source_kind` 의 아이 기록 값이기도 하다. 반 전체 공지만 근거로 단 추천을 개인화로 셀지는 아직 정하지 않았다.
 
 #### observation_food.amount — 값 집합 미확정
 
@@ -693,7 +707,6 @@ Growth 는 우선순위 낮음으로 올렸다 — 없어도 핵심 기능은 �
 **테이블이 없다**
 
 - `child_growth_log` — 나중에 도입한다. 이 문서에는 계획만 둔다. `Gate.growth_log_count` 가 이 테이블의 측정 건수를 센다
-- `notice` — `observation_*.source_notice_id` 가 가리키는데 테이블이 없어 FK 를 못 건다. 지금은 plain uuid 다
 - 문서 행 `food_doc` · `growth_doc` · `activity_doc`
 
 **컬럼이 없다**

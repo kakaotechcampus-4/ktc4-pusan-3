@@ -2,9 +2,9 @@
 재현 가능한 테스트를 위해 id는 도메인별 순번(observation_food-1)으로 만든다.
 """
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import replace
-from datetime import date, datetime, timezone
+from datetime import date, datetime, time, timedelta, timezone, tzinfo
 from typing import Any
 from uuid import UUID
 
@@ -13,10 +13,65 @@ from app.agents.memory.store.ports import (
     DeleteCandidates,
     EventItemRow,
     EventRow,
+    NoticeRow,
     ObservationDomain,
     ObservationRow,
+    SeriesRow,
     check_candidates,
 )
+from app.rules.recurrence import occurrence_dates
+
+_KST = timezone(timedelta(hours=9))  # DB 쪽(db_store)과 같다. 하루 단위는 한국 시간으로 센다
+
+
+def _in_days(moment: datetime, date_from: date | None, date_to: date | None) -> bool:
+    day = moment.astimezone(_KST).date()
+    return (date_from is None or day >= date_from) and (date_to is None or day <= date_to)
+
+
+def _notice_in_days(row: NoticeRow, date_from: date | None, date_to: date | None) -> bool:
+    """공지의 날 · 항목의 시작~끝 · 항목의 마감 중 하나라도 기간에 걸리면 True."""
+    if date_from is None and date_to is None:
+        return True
+    if row.issued_on is not None:
+        notice_day_hit = (date_from is None or row.issued_on >= date_from) and (
+            date_to is None or row.issued_on <= date_to
+        )
+    else:
+        notice_day_hit = _in_days(row.received_at, date_from, date_to)
+    if notice_day_hit:
+        return True
+    for item in row.items:
+        if item.starts_at is not None:
+            first = item.starts_at.astimezone(_KST).date()
+            last = (item.ends_at or item.starts_at).astimezone(_KST).date()
+            if (date_to is None or first <= date_to) and (date_from is None or last >= date_from):
+                return True
+        if item.due_at is not None and _in_days(item.due_at, date_from, date_to):
+            return True
+    return False
+
+
+def _notice_has_text(row: NoticeRow, text: str) -> bool:
+    return any(
+        text in value
+        for value in (
+            row.title or "",
+            row.raw_text,
+            *(v for item in row.items for v in (item.title, item.label)),
+        )
+    )
+
+
+def _item_order(item: Any) -> tuple:
+    """시작 → 마감 → 제목. 없으면 뒤."""
+    return (
+        item.starts_at is None,
+        item.starts_at or datetime.min.replace(tzinfo=timezone.utc),
+        item.due_at is None,
+        item.due_at or datetime.min.replace(tzinfo=timezone.utc),
+        item.title,
+    )
 
 
 def _is_deleted(row: ObservationRow) -> bool:
@@ -26,12 +81,16 @@ def _is_deleted(row: ObservationRow) -> bool:
 class InMemoryStore:
     """MemoryStore Protocol 구현. 한 인스턴스가 한 테스트/한 run의 저장소를 의미한다."""
 
+    supports_series = True  # 반복 묶음을 읽고 지운다 (`supports_series()` 참고)
+
     def __init__(self, now: datetime | None = None) -> None:
         # created_at 을 고정할 수 있어야 조회 결과 검증 가능
         self._now = now or datetime.now(timezone.utc)
         self._observations: dict[str, ObservationRow] = {}
         self._events: dict[str, EventRow] = {}
         self._items: dict[str, EventItemRow] = {}
+        self._series: dict[str, SeriesRow] = {}
+        self._notices: list[tuple[str, NoticeRow]] = []  # (child_id, 공지)
         self._counters: dict[str, int] = {}
         # 이 run 의 삭제 제안 (id, 탭들). 테스트가 무엇을 제안했는지 읽는다
         self.proposal: tuple[str, tuple[DeleteCandidates, ...]] | None = None
@@ -196,6 +255,7 @@ class InMemoryStore:
             ends_at=when.ends_at if when is not None else row.ends_at,
             all_day=when.all_day if when is not None else row.all_day,
             fields={**row.fields, **changes},
+            series=row.series,
         )
         self._events[row.id] = updated
         return updated
@@ -207,6 +267,60 @@ class InMemoryStore:
         # ON DELETE CASCADE(일정이 사라지면 준비물도 같이 정리)
         self._items = {key: item for key, item in self._items.items() if item.event_id != event_id}
         return True
+
+    # ── 반복 묶음 ───────────────────────────────────────────────
+    async def create_series(
+        self,
+        *,
+        child_id: UUID,
+        title: str,
+        weekdays: Iterable[int],
+        starts_on: date,
+        until: date,
+        start_time: time,
+        end_time: time | None,
+        tz: tzinfo,
+        fields: dict[str, Any],
+        item_names: Iterable[str] = (),
+    ) -> tuple[SeriesRow, list[EventRow]]:
+        """테스트 시드 전용. 회차마다 일정 행과 준비물 행을 만든다 (DB 의 제출 경로와 같은 모양)."""
+        days = occurrence_dates(starts_on, weekdays, until)
+        series = SeriesRow(
+            id=self._next_id("series"),
+            weekdays=tuple(sorted(set(weekdays))),
+            starts_on=days[0],
+            until=until,
+        )
+        self._series[series.id] = series
+        events: list[EventRow] = []
+        for day in days:
+            row = EventRow(
+                id=self._next_id("event"),
+                title=title,
+                starts_at=datetime.combine(day, start_time, tzinfo=tz),
+                ends_at=datetime.combine(day, end_time, tzinfo=tz) if end_time else None,
+                all_day=False,
+                fields={**fields, "child_id": str(child_id)},
+                series=series,
+            )
+            self._events[row.id] = row
+            events.append(row)
+            for name in item_names:
+                await self.create_event_item(event_id=row.id, item_name=name)
+        return series, events
+
+    async def get_series(self, *, series_id: str) -> SeriesRow | None:
+        return self._series.get(series_id)
+
+    async def list_series_events(self, *, series_id: str, date_from: date) -> list[EventRow]:
+        rows = [
+            row
+            for row in self._events.values()
+            if row.series is not None
+            and row.series.id == series_id
+            and row.starts_at.date() >= date_from
+        ]
+        return sorted(rows, key=lambda row: (row.starts_at, row.id))
 
     # event_item
     async def create_event_item(self, *, event_id: str, item_name: str) -> EventItemRow:
@@ -247,6 +361,32 @@ class InMemoryStore:
 
     async def delete_event_item(self, *, item_id: str) -> bool:
         return self._items.pop(item_id, None) is not None
+
+    # ── 기관 공지 ───────────────────────────────────────────────
+    def add_notice(self, row: NoticeRow, *, child_id: UUID) -> None:
+        """테스트 · eval 시드 전용. 공지는 확인 · 저장한 뒤에만 있어서 tool 에는 저장이 없다."""
+        self._notices.append((str(child_id), row))
+
+    async def query_notices(
+        self,
+        *,
+        child_id: UUID,
+        date_from: date | None = None,
+        date_to: date | None = None,
+        text_query: str | None = None,
+        doc_kind: str | None = None,
+        limit: int,
+    ) -> list[NoticeRow]:
+        rows = [row for owner, row in self._notices if owner == str(child_id)]
+        rows = [row for row in rows if _notice_in_days(row, date_from, date_to)]
+        if text_query:
+            rows = [row for row in rows if _notice_has_text(row, text_query)]
+        if doc_kind:
+            rows = [row for row in rows if row.doc_kind == doc_kind]
+        rows.sort(key=lambda row: row.received_at, reverse=True)
+        return [
+            replace(row, items=tuple(sorted(row.items, key=_item_order))) for row in rows[:limit]
+        ]
 
     # delete proposal
     async def propose_delete(

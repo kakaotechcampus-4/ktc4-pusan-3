@@ -48,7 +48,7 @@
 | `groups[].cautions` | 식품 아닌 알레르기 확인 문구. `health_safety` 에서 코드로 다시 만든다(Activity 와 같은 함수) — 재생해도 같다. 동의가 없으면 `[]` |
 | `general[].record_count` | 그 Agent 도메인에 남아 있는 관찰 수. 04 `agent_result.record_count` 와 같은 표(`agent_ports.RECORD_KINDS`) |
 | `groups[].notice.code = "daily_limit"` | 하루 한도라 그 Agent 는 돌리지 않았다. 같은 응답에 보여 줄 다른 결과가 없으면 지금처럼 429 |
-| `prechecks` | 추천 `allergens` ↔ `health_safety`(모든 kind · status) 를 같은 이름 사전으로 맞춘다. `active` 면 그 추천을 빼고, 행이 없으면 묻고, `none` · `retracted` 는 묻지 않는다. `child_health` 동의가 없으면 `allergens` 가 있는 추천을 뺀다 |
+| `prechecks` | 추천 `allergens` ↔ `health_safety`(모든 kind · status) 를 맞춘다. `active` 면 그 추천을 빼고(같은 이름 사전으로 넓게 — 코드 · 동의어가 겹치면 걸림), 행이 없거나 내린 기록(`retracted`)뿐이면 묻고, 괜찮았던 식품(`none`)은 정규화한 이름이 같을 때만 묻지 않는다. `child_health` 동의가 없으면 `allergens` 가 있는 추천을 뺀다 |
 
 근거의 `label` · `observed_to` · `is_stale` 은 원본 행(관찰 · 관심 · 성장 기록)에서 읽는다(#323 최소분).
 건강 관찰은 증상 문장을 되풀이하지 않고 고정 이름("건강 기록")으로, 성장 기록은 숫자 없이 "키 · 몸무게
@@ -135,3 +135,21 @@ Agent 를 실제로 새로 돌릴 때만 `/inputs` 와 같은 하루 한도에�
    (루트 §2 "한 번의 관찰을 성향으로 확정하지 않는다").
 
 화면 문구 "피드백은 다음 제안의 무게만 바꿔요" 는 신호를 붙이는 PR 에서 개인화 · 일반을 같이 맞춘다.
+
+## 8. 채택 직전 알레르기 재확인
+
+목록 응답은 `active` 알레르기에 걸린 추천을 빼고 내보내지만, 목록을 받은 **뒤에** 알레르기가 등록될 수 있다
+(다른 보호자가 프로필에서 등록 · 다른 탭에서 등록). 그래서 채택(`POST /children/{cid}/suggestions/approve`)이
+새로 채택할 draft 의 `allergens` 를 `health_safety` 와 다시 맞춘다.
+
+- 판정은 목록의 사전검사와 같은 함수 · 같은 조회다(`check_allergens` · `_safety_labels`). 목록이 빼는 추천과
+  채택이 막는 추천이 갈리면, 화면에 남은 옛 목록으로 고른 추천이 통과한다.
+- `active` 에 걸린 추천이 하나라도 있으면 전부 거절한다 — `409 allergen_blocked`,
+  `detail.suggestion_ids` 에 걸린 추천 id(요청 순서). 채택 API 의 "전부 아니면 전부" 와 같다.
+- 알레르기 기록에 없는 항목("모름")은 막지 않는다 — 답을 미뤄도 채택은 막지 않는다
+  (`docs/web/event-draft-ui-v1.md` §3-8).
+- 이미 `approved` 인 추천(멱등 재전송)은 다시 보지 않는다. `allergens` 가 없는 추천뿐이면 건강정보를 읽지 않는다.
+- 알레르기 항목이 든 추천인데 `child_health` 동의가 없으면 `403 consent_required` — 목록도 동의 없이는 그 추천을
+  내보내지 않는다. 동의 · 알레르기 조회가 실패하면 500 이고 아무것도 채택하지 않는다.
+- 알레르기를 읽은 뒤 채택을 커밋하기 전의 짧은 틈은 잠그지 않는다.
+- 채택한 **뒤에** 등록된 알레르기는 이 검사가 보지 않는다 — 일정 초안 · 제출에서 다시 볼지는 남은 일이다.

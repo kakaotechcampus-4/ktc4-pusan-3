@@ -13,6 +13,7 @@ import { profileHandlers } from "./profile";
 import { reportHandlers } from "./reports";
 import { runHandlers } from "./runs";
 import { settingsHandlers } from "./settings";
+import { tourHandlers } from "./tours";
 import { suggestionHandlers } from "./suggestions";
 
 /**
@@ -56,4 +57,6 @@ export const handlers = [
   ...clientErrorHandlers,
   // 10 설정 › 문제 알리기 (#487). 아이 스코프 밖, 겹치는 경로 없음.
   ...reportHandlers,
+  // 화면 투어를 본 기록 (#696). `/me/tours` 라 `/me/push-device`(settings) 와 겹치지 않는다.
+  ...tourHandlers,
 ];

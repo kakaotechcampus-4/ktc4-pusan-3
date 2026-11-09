@@ -23,7 +23,7 @@ class Settings(AgentLLMSettings):
     # 급식표 사진 OCR — Elice MLAPI (OpenAI 호환). 비어 있으면 사진 입력만 비활성, 서버는 뜬다
     MEAL_OCR_BASE_URL: str | None = None
     MEAL_OCR_API_KEY: str | None = None
-    MEAL_OCR_MODEL: str = "gemini-3.1-pro-preview"
+    MEAL_OCR_MODEL: str = "gemini-4-argon"
 
     # 도서관 정보나루(data4library.kr) 인증키 — Growth 도서 추천. 비어 있으면 도서 라벨만
     # 닫히고(`closed.book_api`) 서버는 뜬다. 키 없이 빈 목록으로 채우지 않는다. 서버 IP 를 등록해야
@@ -119,6 +119,15 @@ class Settings(AgentLLMSettings):
 
     # 보호자별 하루 한 줄 입력 횟수 (app/api/quota.py). 모델 크레딧 보호용 — 테스트용 숫자.
     INPUT_DAILY_LIMIT: int = 5
+
+    # 기관 문서 사진을 받기 시작하는 스위치. 사진은 외부 AI 로 나가므로 처리방침 · 동의가 먼저다
+    # (docs/safety/consent-texts-v1.md "공통"). 꺼져 있으면 `POST .../photos` 가 503 이다
+    PHOTO_UPLOAD_ACCEPT: bool = False
+    # 사진을 서버가 직접 받지 않고 화면이 S3 에 바로 올리는 버킷 (멘토님 제안). 비어 있으면
+    # 서버가 직접 받는다 — 로컬 개발에서 AWS 로그인 없이 돌게. 자격 증명은 두지 않는다
+    # (서버에서는 EC2 역할을 boto3 가 찾는다)
+    PHOTO_UPLOAD_BUCKET: str = ""
+    PHOTO_UPLOAD_REGION: str = "ap-northeast-2"
 
     # 푸시 기기 토큰을 받기 시작하는 스위치 (#594). 기기 토큰이 실린 처리방침 새 판이 나가기 전에는
     # 꺼 둔다 — 꺼져 있으면 `PUT /me/push-device` 가 204 만 주고 저장하지 않는다 (#605 PM).

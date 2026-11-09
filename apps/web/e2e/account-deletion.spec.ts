@@ -17,7 +17,7 @@ test.describe("로그인 전", () => {
     await expect(page).toHaveURL(/\/account-deletion$/);
 
     await expect(page.getByText("아이캐치(운영: 트루독)", { exact: false })).toBeVisible();
-    await expect(page.getByText("설정 › 계정 › 탈퇴하기")).toBeVisible();
+    await expect(page.getByText("설정의 계정 구역에서 “탈퇴하기”를 눌러요.")).toBeVisible();
     await expect(page.getByRole("link", { name: "parkhajh0803.dev@gmail.com" })).toHaveAttribute(
       "href",
       "mailto:parkhajh0803.dev@gmail.com",

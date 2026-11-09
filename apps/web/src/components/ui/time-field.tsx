@@ -91,7 +91,7 @@ export function TimeField({
 
       <div className="flex items-start gap-2">
         <Select
-          label={`${label} — 시`}
+          label={`${label}, 시`}
           labelHidden
           shape="field"
           placeholder="몇 시"
@@ -100,7 +100,7 @@ export function TimeField({
           onChange={(next) => commit(next, minute)}
         />
         <Select
-          label={`${label} — 분`}
+          label={`${label}, 분`}
           labelHidden
           shape="field"
           placeholder="몇 분"

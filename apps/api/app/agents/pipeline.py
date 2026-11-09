@@ -25,8 +25,15 @@ from typing import Any, Literal, Protocol, Self
 from uuid import UUID
 
 from app.agents.activity.agent import run as run_activity
+from app.agents.common.errors import (
+    AgentFailure,
+    FailReason,
+    GuardrailUnavailableError,
+    LLMConfigError,
+    failure_reason,
+)
 from app.agents.common.guardrail import Guardrail
-from app.agents.common.llm_client import LLMClient, LLMError
+from app.agents.common.llm_client import LLMClient
 from app.agents.common.readout import Readout
 from app.agents.common.result import DomainPending, EventRequest, MedicationDraft
 from app.agents.common.schemas.task import MAX_DOMAIN_AGENTS, DomainTask
@@ -51,7 +58,7 @@ from app.agents.memory.agent import MemoryAgentResult, ToolCallRecord
 from app.agents.memory.agent import run as run_memory
 from app.agents.memory.bundles import MUTATING_PREFIXES, WRITES_FOR
 from app.agents.memory.context import AgentContext
-from app.agents.memory.drafts import DraftBook, EventDraft, draft_from_request
+from app.agents.memory.drafts import AnyEventDraft, DraftBook, draft_from_request
 from app.agents.memory.result import ErrorCode
 from app.agents.memory.schemas.reply import ReplyKind
 from app.agents.memory.schemas.task import (
@@ -67,7 +74,9 @@ from app.agents.run_writes import RunWrites
 from app.agents.suggestion_save import SaveSuggestions, SuggestionBatch
 from app.agents.supervisor.agent import SupervisorResult
 from app.agents.supervisor.agent import run as run_supervisor
+from app.agents.supervisor.context import ConversationContext, LoadRecentTurns
 from app.agents.supervisor.emergency import emergency_guidance, infant_fever_age
+from app.agents.supervisor.followup import looks_like_followup
 from app.agents.supervisor.routing import (
     AGENT_LIMIT,
     HAZARD_GUIDANCE,
@@ -103,9 +112,6 @@ RUN_DEADLINE_S = 20.0
 # 조각을 잘못 위임하면 그 요청은 아무 데서도 처리되지 않는다 — 호출 하나를 더 쓰는 값이 있다.
 # 다시 나누는 것은 run 당 한 번뿐이고, 그때만 예산이 MAX_MODEL_CALLS + 1 이 된다
 REROUTE_MISDELEGATED = True
-
-# no_child_observation 판정 기준은 추후 추가
-FailReason = Literal["unparsable", "llm_unavailable"]
 
 
 class DomainOutcome(Protocol):
@@ -338,7 +344,7 @@ class EventDrafts:
     #   초안만 내고 제출은 한 엔드포인트로 모아야 승인 시트를 하나로 유지 가능)
     """
 
-    drafts: tuple[EventDraft, ...]
+    drafts: tuple[AnyEventDraft, ...]
 
 
 @dataclass(frozen=True)
@@ -460,7 +466,8 @@ class Rerouted:
 class RetryContext:
     """결과를 못 낸 추천 task 의 다시 시도 맥락. 화면에 보내지 않는다.
 
-    러너가 05 보관함에 넣는다(api/runs/suggestion_retry.py). `request_texts` 는 원문 조각이라
+    러너가 05 보관함에 넣는다(api/runs/suggestion_retry.py). `request_texts` 는 Agent 가 받은 요청
+    (앞 대화를 이어 묻는 말이면 해석한 문장)이고, 원문 조각과 함께
     로그 · 화면에 싣지 않는다. `Partial` 보다 먼저 나간다 — 화면이 실패 카드를 그리자마자 다시
     시도해도 맥락이 있다.
     """
@@ -470,6 +477,9 @@ class RetryContext:
     task_type: str | None
     request_texts: tuple[str, ...]
     sent_at: datetime  # 입력 run 의 기준 시각(memory_context.now)
+    # 앞 대화를 이어 묻는 task 였으면 보호자 원문 · 앞 턴의 말. 05 가 같은 출처 확인으로 다시 만든다
+    original_texts: tuple[str, ...] = ()
+    prior_texts: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -570,6 +580,10 @@ class StageTimes:
     readers_ms: int | None = None  # 읽는 도메인 task 묶음
 
 
+# 결과를 못 낸 task 하나와 이유. None 은 결과 없이 돌아온 것이다
+_Failure = tuple[DomainTask, FailReason | None]
+
+
 @dataclass(frozen=True)
 class _DomainRun:
     """_run_domain 결과."""
@@ -580,7 +594,14 @@ class _DomainRun:
     readers_ms: int | None = None
     # status="failed" 로 돌아온 결과의 모델 호출 수. outcomes 에는 없지만 몇 번 불렀는지는 안다
     failed_model_calls: int = 0
-    failed_tasks: tuple[DomainTask, ...] = ()  # 결과를 못 낸 task. 다시 시도 맥락이 여기서 나온다
+    # 결과를 못 낸 task 와 그 이유, task 순서 (#768). 이유가 None 이면 결과 없이 돌아왔다
+    # (`status="failed"`) — 그 뜻은 부른 쪽이 정한다(`_nothing_done_reason`)
+    failures: tuple[_Failure, ...] = ()
+
+    @property
+    def failed_tasks(self) -> tuple[DomainTask, ...]:
+        """결과를 못 낸 task. 다시 시도 맥락이 여기서 나온다."""
+        return tuple(task for task, _ in self.failures)
 
 
 @dataclass(frozen=True)
@@ -624,6 +645,7 @@ async def handle_input(
     curator_trigger: CuratorTrigger | None = None,
     count_records: CountRecords | None = None,
     load_cards: LoadCards | None = None,
+    recent_turns: LoadRecentTurns | None = None,
     child_months: int | None = None,
 ) -> PipelineResult:
     """사용자 입력 한 건을 처리한다.
@@ -641,13 +663,22 @@ async def handle_input(
     eval 은 `InMemorySuggestions()` 를 넘긴다.
     writes는 도메인 쓰기 포트가 성공했는지 남는 표시다. entrypoint가 쓰기 포트를 감싸 넘긴다.
     count_records 를 넘기면 일반 추천 블록의 쌓인 기록 수를 센다(없으면 그 칸이 빈다).
+    recent_turns 는 후속 질문으로 보이는 입력일 때만 부르는 앞 대화 조회 콜백이다. 없으면(테스트 ·
+    eval · 05) 앞 대화 없이 돈다.
     child_months 는 생일로 계산한 월령이다. 응급 사전검사가 말에 적힌 월령과 함께 본다. 저장 뒤
     hook 에 맡기면 동의가 없거나 Memory 가 저장하지 않은 run 에서 안내가 빠진다. 없으면 None.
     """
     started = time.perf_counter()
     send = emit or _ignore
     once = _EmergencyOnce()
-    hazards = await _safety_precheck(raw_text, memory_context.guardrail)
+    try:
+        hazards = await _safety_precheck(raw_text, memory_context.guardrail)
+    except GuardrailUnavailableError:
+        # 검사를 못 하면 Supervisor · Memory 를 부르지 않고 멈춘다 (fail-closed, #768).
+        # 응급 안내는 사전 · 규칙이라 검사기 없이도 낸다 — "잠시 뒤 다시" 보다 119 가 먼저다
+        return _stop_for_unchecked(
+            raw_text, child_months, run_id=run_id, send=send, started=started
+        )
     if hazards:
         # 이어받기 답에 나와도 같다 — 되묻던 조각보다 아이 상태 확인이 먼저다
         return _stop_for_hazard(hazards, run_id=run_id, send=send, started=started)
@@ -699,10 +730,12 @@ async def handle_input(
         )
 
     send(Step(1, _TOTAL_STEPS, _LABELS[0]))
+    # 후속 질문으로 보일 때만 앞 대화를 읽는다. Memory 는 이 맥락을 받지 않는다 — 기록은 이번 원문만
+    conversation = await _conversation(raw_text, recent_turns, run_id=run_id)
     supervisor_started = time.perf_counter()
-    supervisor = await run_supervisor(raw_text, client=supervisor_client)
+    supervisor = await run_supervisor(raw_text, client=supervisor_client, context=conversation)
     supervisor_ms = _ms_since(supervisor_started)
-    routing = route(raw_text, supervisor, run_id=run_id)
+    routing = _with_prior(route(raw_text, supervisor, run_id=run_id), conversation)
     if emergency is not None:
         # 응급이면 도메인 Agent 가 돌지 않는다. 복약 대조도 하지 않는다 — 기록 힌트에서
         # health 조각을 다시 더하면 응급 run 에 도메인 Agent 가 돈다
@@ -741,10 +774,12 @@ async def handle_input(
             memory = await run_memory(
                 raw_text, memory_context, client=memory_client, task=routing.memory_task
             )
-        except LLMError:
+        except AgentFailure as exc:
+            # 저장 게이트의 GuardrailUnavailableError 도 여기로 온다 — commit 없이 끝난다
             memory_ms = _ms_since(record_started)
             # Memory 실패 시 기본값으로 대체하지 않는다. commit 전이라 러너가 되돌린다
-            failed = Failed("llm_unavailable", raw_text)
+            failed = Failed(failure_reason(exc), raw_text)
+            model_calls += _memory_calls(exc)
         else:
             model_calls += 1  # Agent 하나가 1. 루프를 몇 바퀴 돌았는지는 memory.steps
         if memory is not None and not memory.completed:
@@ -829,13 +864,16 @@ async def handle_input(
     if bounced and stranded and REROUTE_MISDELEGATED and not waiting:
         reroute_started = time.perf_counter()
         retry = await run_supervisor(
-            raw_text, client=supervisor_client, feedback=_reroute_feedback(bounced)
+            raw_text,
+            client=supervisor_client,
+            feedback=_reroute_feedback(bounced),
+            context=conversation,
         )
         supervisor_ms += _ms_since(reroute_started)
         model_calls += retry.model_calls
         if retry.output is not None:
             before, supervisor = routing, retry
-            routing = route(raw_text, retry, run_id=run_id)
+            routing = _with_prior(route(raw_text, retry, run_id=run_id), conversation)
             for guidance in routing.guidance:  # 새로 생긴 안내만 내보낸다
                 if guidance not in before.guidance:
                     send(guidance)
@@ -860,6 +898,7 @@ async def handle_input(
     writers_ms: int | None = None
     readers_ms: int | None = None
     domain_asked: _Asked | None = None
+    domain_failures: tuple[_Failure, ...] = ()
     if failed is None and routing.domain_tasks:
         # Memory 가 성공한 뒤에 돈다. 방금 저장한 관찰이 도메인 Agent 조회에 잡혀야 한다
         stage = await _domain_stage(
@@ -880,6 +919,7 @@ async def handle_input(
             drafts=memory_context.drafts,
         )
         partial, domain_asked = stage.partial, stage.asked
+        domain_failures = stage.failures
         budget_ms, writers_ms, readers_ms = stage.budget_ms, stage.writers_ms, stage.readers_ms
         # 쓰기 포트는 호출마다 바로 commit. 포트 호출이 성공한 뒤에만 표시가 남는다.
         # 추천 저장도 commit 이 끝난 뒤에만 saved 에 들어간다
@@ -893,7 +933,7 @@ async def handle_input(
         and not _did_anything(memory, domain, routing, emergency=emergency is not None)
     ):
         # 도메인 Agent 가 전부 실패했고 남은 결과도 없으면 부분 결과가 아니라 실패다
-        failed = Failed("llm_unavailable" if partial is not None else "unparsable", raw_text)
+        failed = Failed(_nothing_done_reason(domain_failures), raw_text)
     if failed is not None:
         send(failed)
     else:
@@ -1188,11 +1228,14 @@ async def _handle_health_reply(
             send(MemoryNote(LEFTOVER_NOTE_QUESTION if asks_again else LEFTOVER_NOTE, "message"))
     domain = list(stage.outcomes) if stage is not None else []
     committed = (writes is not None and writes.wrote) or (stage is not None and stage.saved)
-    # Health 가 이어 가지 못했으면 실패다. 모델을 부르지 않은 run 이라 "연결 실패"(llm_unavailable)
-    # 가 아니다 — 그렇게 보이면 보호자가 같은 답을 다시 보내 같은 실패를 되풀이한다
+    # Health 가 이어 가지 못했으면 실패다. 결과가 없었을 뿐이면 unparsable 이다 — 모델을 부르지 않은
+    # run 이라 "연결 실패"(llm_unavailable)로 보이면 보호자가 같은 답을 다시 보내
+    # 같은 실패를 되풀이한다
     failed = None
     if not _did_anything(None, domain, _NO_ROUTING, emergency=emergency):
-        failed = Failed("unparsable", answer)
+        failed = Failed(
+            _nothing_done_reason(stage.failures if stage else (), no_result="unparsable"), answer
+        )
     if failed is not None:
         send(failed)
     elif stage is not None:
@@ -1279,9 +1322,10 @@ async def _handle_continuation(
         memory = await run_memory(
             answer, memory_context, client=memory_client, continuation=continuation
         )
-    except LLMError:
+    except AgentFailure as exc:
         memory_ms = _ms_since(record_started)
-        failed = Failed("llm_unavailable", answer)
+        failed = Failed(failure_reason(exc), answer)
+        model_calls += _memory_calls(exc)
     else:
         model_calls += 1
     if memory is not None and not memory.completed:
@@ -1366,7 +1410,7 @@ async def _handle_continuation(
     domain = ([] if hooked is None else [hooked]) + (list(stage.outcomes) if stage else [])
     # 쓴 것도 한 말도 없으면 실패 처리
     if failed is None and not _did_anything(memory, domain, _NO_ROUTING, emergency=emergency):
-        failed = Failed("unparsable", answer)
+        failed = Failed(_nothing_done_reason(stage.failures if stage else ()), answer)
     if failed is not None:
         send(failed)
     elif stage is not None:
@@ -1664,6 +1708,7 @@ class _DomainStage:
     writers_ms: int | None
     readers_ms: int | None
     asked: _Asked | None  # 이 run 이 보낼 되묻기. 보내는 것은 부른 쪽이다
+    failures: tuple[_Failure, ...] = ()  # 결과를 못 낸 task 와 이유 (#768, `_DomainRun.failures`)
 
 
 async def _domain_stage(
@@ -1757,6 +1802,9 @@ async def _domain_stage(
                     _task_label(task.task_type),
                     task.request_texts,
                     sent_at,
+                    # 05 가 해석한 요청으로 다시 만들되, 출처 확인은 보호자 원문 · 앞 턴의 말로 한다
+                    original_texts=task.original_texts,
+                    prior_texts=task.prior_texts,
                 )
             )
     asked = _pick_question(ran.outcomes, tasks, can_resume=can_resume)
@@ -1769,6 +1817,7 @@ async def _domain_stage(
         writers_ms=ran.writers_ms,
         readers_ms=ran.readers_ms,
         asked=asked,
+        failures=ran.failures,
     )
 
 
@@ -1826,28 +1875,20 @@ async def _run_domain(
 
     outcomes: list[DomainOutcome] = []
     succeeded: list[str] = []
-    failed: list[str] = []
-    failed_tasks: list[DomainTask] = []
+    failures: list[_Failure] = []
     failed_model_calls = 0
-    timed_out = False
     for index, task in enumerate(tasks):
         item = settled[index]
+        reason: FailReason | None = None
         if isinstance(item, TimeoutError):
-            timed_out = True
-            failed.append(task.agent)
-            failed_tasks.append(task)
-            result = "timeout"
+            result, reason = "timeout", "timeout"
             logger.warning("도메인 Agent 시간 초과 run_id=%s agent=%s", task.run_id, task.agent)
         elif isinstance(item, _NotDelivered):
             # 결과는 나왔는데 추천을 저장하지 못했다. 카드가 없으니 실패로 센다 — 모델은 불렀다
-            failed.append(task.agent)
-            failed_tasks.append(task)
             failed_model_calls += item.outcome.model_calls
-            result = "save_error"
+            result, reason = "save_error", "internal_error"
         elif isinstance(item, (Exception, asyncio.CancelledError)):
-            failed.append(task.agent)
-            failed_tasks.append(task)
-            result = "error"
+            result, reason = "error", failure_reason(item)
             # 예외 메시지에는 발화 조각이 섞일 수 있다. 종류만 남긴다
             logger.error(
                 "도메인 Agent 실패 run_id=%s agent=%s error=%s",
@@ -1858,33 +1899,39 @@ async def _run_domain(
         elif isinstance(item, BaseException):
             raise item  # KeyboardInterrupt·SystemExit 는 부분 실패가 아니다
         elif _failed(item):
-            # 예외 없이 돌아왔어도 결과를 못 냈으면 예외와 같게 센다. 화면 이벤트도 없다
-            failed.append(task.agent)
-            failed_tasks.append(task)
+            # 예외 없이 돌아왔어도 결과를 못 냈으면 예외와 같게 센다. 화면 이벤트도 없다.
+            # 이유는 None — 모델이 출력하지 못한 것인지, 답을 이어 가지 못한 것인지는 부른 쪽이 안다
             failed_model_calls += item.model_calls
             result = "failed"
         else:
             outcomes.append(item)
             succeeded.append(task.agent)
             result = "ok"
-        # 최소 예산을 정할 실측. Agent/유형별로 모으려고 task 마다 한 줄 (라벨과 ms 만)
+        if result != "ok":
+            failures.append((task, reason))
+        # 최소 예산을 정할 실측. Agent/유형별로 모으려고 task 마다 한 줄 (라벨 · 이유 · ms 만)
         logger.info(
-            "도메인 task run_id=%s task=%s result=%s ms=%s",
+            "도메인 task run_id=%s task=%s result=%s reason=%s ms=%s",
             task.run_id,
             _label(task.agent, task.task_type),
             result,
+            reason,
             elapsed_ms.get(index),
         )
 
-    if not failed:
+    if not failures:
         return _DomainRun(tuple(outcomes), None, writers_ms, readers_ms)
+    # LLM 응답 시간 초과(`LLMTimeoutError`)도 시간 초과로 센다 — failed.reason 과 같은 기준
+    timed_out = any(reason == "timeout" for _, reason in failures)
     partial = Partial(
         reason="timeout_20s" if timed_out else "agent_error",
         succeeded=tuple(dict.fromkeys(succeeded)),
-        failed=tuple(dict.fromkeys(failed)),
+        failed=tuple(dict.fromkeys(task.agent for task, _ in failures)),
         # RetryContext 를 남긴 것과 같은 Agent — 05 가 그 맥락으로 다시 만든다 (D9)
         retryable=tuple(
-            dict.fromkeys(t.agent for t in failed_tasks if _recommends(t.agent, t.task_type))
+            dict.fromkeys(
+                task.agent for task, _ in failures if _recommends(task.agent, task.task_type)
+            )
         ),
     )
     return _DomainRun(
@@ -1893,7 +1940,7 @@ async def _run_domain(
         writers_ms,
         readers_ms,
         failed_model_calls=failed_model_calls,
-        failed_tasks=tuple(failed_tasks),
+        failures=tuple(failures),
     )
 
 
@@ -1975,6 +2022,46 @@ def _empty_notice(outcome: DomainOutcome) -> str | None:
     return None if notice is None else notice.body
 
 
+def _memory_calls(exc: AgentFailure) -> int:
+    """실패로 끝난 Memory 가 쓴 모델 호출 수 — Agent 하나가 1 이다 (성공과 같은 단위).
+
+    설정 오류(`LLMConfigError`)는 요청을 보내기 전에 난다. 그 밖의 실패(모델 오류 · 저장 게이트의
+    검사 불가 · 조회 실패)는 모델에 요청이 나간 뒤라 1 로 센다 — 안 세면 예산 · 사용량 지표에서
+    과금된 호출이 빠진다 (#768 리뷰).
+    """
+    return 0 if isinstance(exc, LLMConfigError) else 1
+
+
+# 한 일 없는 run 에서 이유가 여럿이면 앞의 것을 고른다 (#768). 서비스 쪽 실패가 "바꿔서 다시
+# 적어 주세요"(unparsable)에 가려지면 보호자가 말을 바꿔 같은 실패를 되풀이한다
+_REASON_PRIORITY: tuple[FailReason, ...] = (
+    "llm_misconfigured",
+    "llm_rate_limited",
+    "timeout",
+    "guard_unavailable",
+    "lookup_unavailable",
+    "llm_unavailable",
+    "internal_error",
+    "unparsable",
+)
+
+
+def _nothing_done_reason(
+    failures: Sequence[_Failure], *, no_result: FailReason = "llm_unavailable"
+) -> FailReason:
+    """저장도 결과도 없이 끝난 run 의 실패 이유 (#768).
+
+    실패한 도메인 task 가 없는데 한 일이 없으면 `unparsable` 이다. 있으면 `_REASON_PRIORITY` 에서
+    가장 앞의 이유다. 결과 없이 돌아온 task(이유 None)는 `no_result` 로 센다 — 모델을 부르는 Agent
+    는 모델이 출력하지 못한 것이라 "잠시 뒤 다시"(`llm_unavailable`, 공통 tool loop 의 "화면은
+    다시 시도"), 모델을 안 부르는 Health 답은 답을 이어 가지 못한 것이라 `unparsable` 이다.
+    """
+    reasons = {no_result if reason is None else reason for _, reason in failures}
+    if not reasons:
+        return "unparsable"
+    return next(reason for reason in _REASON_PRIORITY if reason in reasons)
+
+
 def _ignore(event: Event) -> None:
     """emit 콜백이 없을 때 이벤트를 무시한다."""
 
@@ -1984,8 +2071,9 @@ async def _safety_precheck(raw_text: str, guardrail: Guardrail) -> tuple[str, ..
 
     Supervisor 보다 먼저 돈다 — Supervisor 가 실패해 Memory 단독으로 가는 run 에서도 막힌다.
     `guardrail` 은 Memory 저장 게이트와 같은 인스턴스다(`AgentContext.guardrail`, #731).
-    검사를 못 하면(`GuardrailUnavailableError`) 잡지 않는다 — run 이 실패로 끝나고 아무것도
-    저장되지 않는다 (fail-closed).
+    검사를 못 하면(`GuardrailUnavailableError`) 빈 결과가 아니라 그 예외가 올라온다. 부른 쪽
+    (`handle_input`)이 잡아 `guard_unavailable` 로 run 을 끝낸다 — 아무것도 저장되지 않는다
+    (fail-closed).
     """
     return (await guardrail.check(raw_text, "input")).kinds
 
@@ -2013,24 +2101,62 @@ def _stop_for_hazard(
     같은 입력의 다른 기록 · 요청도 처리하지 않는다 — 아이 상태 확인이 먼저고, 섞어 처리하면
     "좋아했다" 가 다른 조각으로 기록될 수 있다.
     """
-    model_calls = 0 if supervisor is None else supervisor.model_calls
-    routing = Routing(intent_type="record", memory_task=None, guidance=(HAZARD_GUIDANCE,))
-    send(HAZARD_GUIDANCE)
-    send(Done(run_id, model_calls))
-    result = PipelineResult(
-        run_id=run_id,
-        supervisor=supervisor or SupervisorResult(output=None),
-        routing=routing,
-        memory=None,
-        model_calls=model_calls,
-        latency_ms=_ms_since(started),
-    )
     # 원문 없이 걸린 종류만. Supervisor 가 건 이어받기는 종류가 없다
     logger.info(
         "hazard stop run_id=%s by=%s kinds=%s",
         run_id,
         "precheck" if supervisor is None else "continuation",
         list(hazards),
+    )
+    return _stop_early(
+        HAZARD_GUIDANCE, run_id=run_id, send=send, started=started, supervisor=supervisor
+    )
+
+
+def _stop_for_unchecked(
+    raw_text: str, child_months: int | None, *, run_id: str, send: Emit, started: float
+) -> PipelineResult:
+    """위험 물질 검사를 하지 못한 입력. 모델 · 저장 없이 끝낸다 (fail-closed, #768).
+
+    응급 신호가 있으면 응급 안내 한 건으로 끝낸다 — `failed` 로 끝내면 화면이 실패 카드만 그려
+    119 안내가 사라진다. 저장하지 않은 것은 위험 물질 멈춤과 같다. 응급이 아니면
+    `failed(guard_unavailable)` 이고 원문은 입력창에 남는다.
+    """
+    logger.warning("guard unavailable run_id=%s by=precheck", run_id)
+    emergency = _emergency_precheck(raw_text, child_months)
+    if emergency is not None:
+        return _stop_early(emergency, run_id=run_id, send=send, started=started, emergency=True)
+    failed = Failed("guard_unavailable", raw_text)
+    return _stop_early(failed, run_id=run_id, send=send, started=started)
+
+
+def _stop_early(
+    event: Guidance | Failed,
+    *,
+    run_id: str,
+    send: Emit,
+    started: float,
+    supervisor: SupervisorResult | None = None,
+    emergency: bool = False,
+) -> PipelineResult:
+    """Memory · 도메인 Agent 전에 이벤트 한 건과 `Done` 으로 끝낸다. 저장 · 추천 없음.
+
+    안내(`Guidance`)로 끝내면 run 은 성공(done)이고, `Failed` 면 실패다 — 어느 쪽이든 끝 신호는
+    하나다(번역기가 `Failed` 뒤의 `Done` 을 버린다).
+    """
+    model_calls = 0 if supervisor is None else supervisor.model_calls
+    guidance = (event,) if isinstance(event, Guidance) else ()
+    send(event)
+    send(Done(run_id, model_calls))
+    result = PipelineResult(
+        run_id=run_id,
+        supervisor=supervisor or SupervisorResult(output=None),
+        routing=Routing(intent_type="record", memory_task=None, guidance=guidance),
+        memory=None,
+        failed=event if isinstance(event, Failed) else None,
+        emergency=emergency,
+        model_calls=model_calls,
+        latency_ms=_ms_since(started),
     )
     _log(result)
     return result
@@ -2221,14 +2347,19 @@ def _pending_context(
     데 `pending.payload`(대상 id · 화면에 나갈 값 · 검증을 통과한 span)만 쓰므로 요청 조각도 싣지
     않는다. 발화 원문 전체는 싣지 않는다는 명세 §8 의 약속이다.
     """
+    # hint_text 는 답을 받으면 Memory · Supervisor 로 가는 "보호자가 한 말" 이다 — 앞 대화를
+    # 이어 묻는 말을 해석한 문장(모델이 쓴 글)이 아니라 원문을 싣는다. 이어 돌 task 는 둘 다 든다
     texts = () if agent == _HEALTH else resume.request_texts
+    said = () if agent == _HEALTH else resume.originals()
     return PendingMemoryContext(
-        hint_text=" ".join(texts),
+        hint_text=" ".join(said),
         question=pending.question,
         work=WorkType.OBSERVE,
         resume=replace(
             resume,
             request_texts=tuple(texts),
+            original_texts=() if tuple(said) == tuple(texts) else tuple(said),
+            prior_texts=(),
             record_texts=(),
             recorded_subjects=(),
             answer_texts=(),
@@ -2265,6 +2396,43 @@ def _result(
         reason=summary.reason,
         record_count=record_count,
     )
+
+
+async def _conversation(
+    raw_text: str, recent_turns: LoadRecentTurns | None, *, run_id: str
+) -> ConversationContext | None:
+    """후속 질문으로 보일 때만 앞 대화를 읽는다. 아니면 None — 조회도 메시지도 없다.
+
+    조회가 실패하면 run 을 멈추지 않고 빈 맥락으로 간다. Supervisor 는 "없음" 을 받아 이어 볼 것이
+    없다고 알고 질문 하나로 되묻는다 — 맥락 없이 부르면 "그럼 다른 건?" 이 아무 Agent 로나 간다.
+    실패는 여기 한 곳에서만 잡는다(포트는 잡지 않는다). `CancelledError` 는 잡지 않는다 — run 이
+    끊긴 것이지 앞 대화가 없는 것이 아니다. 로그에는 예외 종류와 턴 수만 싣는다(원문 없음).
+    """
+    if recent_turns is None or not looks_like_followup(raw_text):
+        return None
+    try:
+        context = await recent_turns()
+    except Exception as exc:
+        logger.error("앞 대화 조회 실패 run_id=%s error=%s", run_id, type(exc).__name__)
+        context = ConversationContext(lookup_failed=True)
+    logger.info("followup run_id=%s turns=%d", run_id, len(context.turns))
+    return context
+
+
+def _with_prior(routing: Routing, conversation: ConversationContext | None) -> Routing:
+    """앞 대화를 이어 묻는 task(원문 칸이 찬 것)에 앞 턴들의 보호자 원문을 싣는다.
+
+    Activity 가 "보호자가 이 지역 · 놀이를 말했는가" 를 볼 때 앞 턴에서 말한 것도 센다. Memory ·
+    되묻기 맥락으로는 가지 않는다(`_pending_context` 가 비운다).
+    """
+    if not conversation or not conversation.turns:
+        return routing
+    prior = tuple(turn.text for turn in conversation.turns)
+    tasks = tuple(
+        replace(task, prior_texts=prior) if task.original_texts else task
+        for task in routing.domain_tasks
+    )
+    return replace(routing, domain_tasks=tasks)
 
 
 async def _count(agent: str, count_records: CountRecords | None) -> int | None:

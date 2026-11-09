@@ -76,7 +76,7 @@ async def test_verdict_must_fit_target_and_health_is_refused(
 
     assert await post("observation_food", food.id, "outdated") == 400  # 기억에만 쓰는 값
     assert await post("profile_affinity", affinity.id, "once_only") == 400  # 기록에만 쓰는 값
-    assert await post("observation_health", food.id, "wrong") == 400  # 첫 배포 범위 밖
+    assert await post("observation_health", food.id, "wrong") == 400  # 건강 기록은 삭제로만
     assert await post("observation_food", uuid.uuid4(), "wrong") == 404
 
 

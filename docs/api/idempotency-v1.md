@@ -191,7 +191,7 @@ UNIQUE (parent_id, method, path, key)
 
 키는 Redis 에 둔다. Redis 가 죽으면 **모든 창구가 `503 temporarily_unavailable` 로 막고 아무것도 처리하지 않는다.** 다시 시도할 수 있는 오류라 같은 키로 다시 보내면 된다.
 
-창구는 Idempotency-Key 를 받는 9개다 — 한 줄 입력 · 온보딩 · 일정 등록/수정(㉠) · 건강 기록 등록/고치기(㉡) · 복약 등록/수정(㉡, #577) · 삭제 확정(㉢, #535). 9개 모두 Swagger `responses` 에 503 이 있다(`tests/unit/api/test_idempotency_redis.py` 가 Idempotency-Key 를 받는 창구마다 확인한다).
+창구는 Idempotency-Key 를 받는 11개다 — 한 줄 입력 · 사진 읽기 · 온보딩 · 일정 등록/수정(㉠) · 건강 기록 등록/고치기(㉡) · 복약 등록/수정(㉡, #577) · 삭제 확정(㉢, #535) · 기록 탭 삭제(#736 — 게이트가 아니라 보호자가 직접 누르는 삭제지만 되돌릴 수 없어 키를 받는다). 11개 모두 Swagger `responses` 에 503 이 있다(`tests/unit/api/test_idempotency_redis.py` 가 Idempotency-Key 를 받는 창구마다 확인한다).
 
 - **"죽었다" 에는 쓰기만 막힌 Redis 도 든다.** RDB 저장에 실패한 Redis 는 기본 설정상 읽기는 받고 쓰기만 `MISCONF` 로 거절한다. 그래서 처음 보는 키면 재생 확인(recall)에서 쓰기도 한 번 해 보고, 막혔으면 처리하기 전에 503 이다 (#729 리뷰).
 - **Redis 가 응답 없이 멈춰도 서버 전체가 멈추지 않는다.** 재생 확인 · 키 적기는 이벤트 루프 밖(스레드)에서 부르고, 한 번의 상한은 연결 + 명령 각 1초다. 연결 · 시간 초과가 한 번 나면 10초 동안은 Redis 를 부르지 않고 바로 503 이다(차단기 — `app/infra/redis.py`). 도서 검색어 캐시도 같은 차단기를 탄다.
@@ -231,9 +231,10 @@ UNIQUE (parent_id, method, path, key)
 | `idempotency_key_reuse` | 422 | 같은 키인데 요청 지문이 다르다 | 신설 |
 | `idempotency_in_progress` | 409 | 같은 키가 아직 처리 중이다 | 신설 |
 | `already_exists` | 409 | `health_safety` `UNIQUE(child_id, type, label)` 재등록 | 신설 — 계약서 본문에 **"409" 만 있고 코드가 없다** |
+| `allergy_exists` | 409 | 괜찮았던 식품(`tolerated: true`)으로 저장하려는데 같은 식품이 알레르기 · 건강 기록(`active`)으로 있다 — 이름 사전으로 본다. `already_exists` 와 달리 **저장된 것이 아니다** | 서버 구현됨. 웹 `errors.ts` 에는 아직 없다 (괜찮았던 식품 화면 작업 때 더한다) |
 | `temporarily_unavailable` | 503 | 키 저장소(Redis)가 죽어 Idempotency-Key 를 받는 요청을 처리하지 않는다 (§3-6) | 서버 구현됨 (#671). 웹 `errors.ts` 에는 아직 없다 — 모르는 코드라 서버 문구가 그대로 뜬다 |
 
-넷 다 [`apps/web/src/lib/api/errors.ts`](../../apps/web/src/lib/api/errors.ts) 에 이미 들어가 있다(주석으로 제안임을 표시). **확정 전까지 서버와 다를 수 있는 부분이다.**
+위 넷(`idempotency_key_required` · `idempotency_key_reuse` · `idempotency_in_progress` · `already_exists`)은 [`apps/web/src/lib/api/errors.ts`](../../apps/web/src/lib/api/errors.ts) 에 이미 들어가 있다(주석으로 제안임을 표시). **확정 전까지 서버와 다를 수 있는 부분이다.**
 
 ---
 

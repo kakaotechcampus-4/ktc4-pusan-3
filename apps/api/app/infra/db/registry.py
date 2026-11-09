@@ -13,12 +13,14 @@ from app.domains.chat import models as chat  # noqa: F401
 from app.domains.child import models as child  # noqa: F401
 from app.domains.consent import models as consent  # noqa: F401
 from app.domains.correction import models as correction  # noqa: F401
+from app.domains.daycare_meal import models as daycare_meal  # noqa: F401
 from app.domains.delete_proposal import models as delete_proposal  # noqa: F401
 from app.domains.food import models as food  # noqa: F401
 from app.domains.identity import models as identity  # noqa: F401
 from app.domains.medication import models as medication  # noqa: F401
 from app.domains.memory.observation import models as observation  # noqa: F401
 from app.domains.memory.profile import models as profile  # noqa: F401
+from app.domains.notice import models as notice  # noqa: F401
 from app.domains.notification import models as notification  # noqa: F401
 from app.domains.place import models as place  # noqa: F401
 from app.domains.policy import models as policy  # noqa: F401
@@ -27,3 +29,4 @@ from app.domains.safety import models as safety  # noqa: F401
 from app.domains.schedule import models as schedule  # noqa: F401
 from app.domains.suggestion import models as suggestion  # noqa: F401
 from app.domains.tour import models as tour  # noqa: F401
+from app.domains.usage import models as usage  # noqa: F401

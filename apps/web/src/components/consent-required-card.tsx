@@ -26,6 +26,8 @@ export function ConsentRequiredCard({
   /**
    * 이 화면에서 무엇이 막혔는지. **문장을 통째로** 넘긴다 ("제안을 준비할 수 없어요").
    * 어간만 받아서 "…할 수 없어요" 를 붙이면 화면마다 말이 어긋난다 (실제로 그렇게 났다).
+   * 🚨 **"저장된 것은 하나도 없어요" 는 쓰기가 막힌 화면만 붙인다.** 카드가 늘 붙이던 때는 읽기 화면에서
+   *    "알레르기 목록을 불러올 수 없고 저장된 것은 하나도 없어요" 로 조립돼 목록이 비어 있다고 읽혔다 (#815).
    */
   what,
 }: {
@@ -45,9 +47,7 @@ export function ConsentRequiredCard({
   return (
     <Card>
       <p className="text-body text-ink">먼저 동의가 필요해요</p>
-      <p className="text-body-sm text-ink-muted mt-2">
-        동의를 받기 전이라 {what} 저장된 것은 하나도 없어요.
-      </p>
+      <p className="text-body-sm text-ink-muted mt-2">동의를 받기 전이라 {what}</p>
       {missing.length > 0 ? (
         <p className="text-caption text-ink-subtle mt-2">
           설정 화면의 동의에서 켤 수 있어요 ({missing.join(", ")}).

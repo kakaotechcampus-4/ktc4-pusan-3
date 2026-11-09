@@ -131,7 +131,7 @@ test.describe("성공과 실패 · 안내를 한 화면에 (§2 실행 NF-06)", 
       await sendFromHome(page, "땅콩 알레르기 있어");
       const reply = turn(page, "땅콩 알레르기 있어");
       await expect(reply.getByRole("heading", { name: "적어주신 말을 확인했어요" })).toBeVisible();
-      await expect(reply.getByText("안전 정보", { exact: true })).toBeVisible();
+      await expect(reply.getByText("알레르기·건강", { exact: true })).toBeVisible();
       await expect(reply.getByRole("link", { name: "직접 입력하러 가기" })).toHaveAttribute(
         "href",
         `/child/${CHILD}/profile`,
@@ -263,13 +263,13 @@ test.describe("도메인 Agent 결과는 답 묶음 안의 블록이다 (#227)",
   test.describe("agent_suggestions — 추천이 든 결과", () => {
     test.use({ scenario: "agent_suggestions" });
 
-    test("후보 수 · 이유 · 일반 추천 표시가 서고, 후보 보기는 그 run 의 05 로 간다", async ({
+    test("후보 수 · 이유 · 일반 추천 표시가 서고, 제안 보기는 그 run 의 05 로 간다", async ({
       page,
     }) => {
       await sendFromHome(page, "저녁이랑 놀이 추천해줘");
       const reply = turn(page, "저녁이랑 놀이 추천해줘");
 
-      await expect(reply.getByText("후보 3개")).toBeVisible();
+      await expect(reply.getByText("제안 3가지")).toBeVisible();
       await expect(reply.getByText("아이 기록 4건을 보고 골랐어요.")).toBeVisible();
       // 🚨 일반 묶음은 일반 추천임과 쌓인 기록 수를 그대로 적는다 (최상위 §2).
       //    "또래 기준" 은 붙이지 않는다 — 요청에 맞춰 고른 일반 추천도 있다 (#597)
@@ -283,7 +283,7 @@ test.describe("도메인 Agent 결과는 답 묶음 안의 블록이다 (#227)",
         reply.getByText("아이에 관한 기록은 찾지 못했어요", { exact: false }),
       ).toHaveCount(0);
 
-      const links = reply.getByRole("link", { name: "후보 보기" });
+      const links = reply.getByRole("link", { name: "제안 보기" });
       await expect(links).toHaveCount(2);
       expect(await links.first().getAttribute("href")).toMatch(
         /^\/child\/c1\/suggestions\?agents=food&run=.+/,
@@ -344,7 +344,7 @@ test.describe("저장한 뒤 끊긴 run 은 실패가 아니다 (#271)", () => {
     await expect(reply.getByRole("heading", { name: "적어주신 내용은 반영했어요" })).toBeVisible();
     await expect(reply.getByText("나머지는 마무리하지 못했어요")).toBeVisible();
     await expect(
-      reply.getByText("반영된 내용은 기록 탭이나 달력에서 확인할 수 있어요."),
+      reply.getByText("반영된 내용은 기록/기억 화면이나 캘린더에서 확인할 수 있어요."),
     ).toBeVisible();
     await expect(reply.getByText("저장하지 않았어요", { exact: false })).toHaveCount(0);
     await expect(reply.getByText("이렇게 이해했어요")).toHaveCount(0);

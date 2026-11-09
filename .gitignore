@@ -96,3 +96,7 @@ Claude outputs/
 # 케이스와 입력만 커밋하고, 결과는 PR 코멘트에 붙인다.
 apps/api/tests/**/*_result.txt
 apps/api/tests/**/*_results.jsonl
+eval/results/raw/
+
+# 배포 스크립트가 마지막으로 성공한 커밋을 적는 곳 — 서버마다 다르다 (deploy/scripts/deploy.sh)
+deploy/docker/.deployed-tag
