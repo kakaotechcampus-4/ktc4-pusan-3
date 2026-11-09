@@ -30,13 +30,14 @@ POST /children/{cid}/photos                 202 + run_id. 아무것도 저장하
    ↓
 GET /runs/{rid}/events                       step → lane → step → parsed → done
    ↓
-화면에서 보호자가 확인 · 수정
-   ├─ 항목 시트의 "일정으로도 넣기" → POST /children/{cid}/events   🚨 승인 게이트 ㉠
-   └─ 맨 아래 "이 내용으로 저장"    → POST /photo-runs/{rid}/commit
+화면에서 보호자가 확인 · 수정, 캘린더에 넣을 항목을 체크
+   ↓ 맨 아래 버튼 하나 (#824)
+   ├─ ① 체크한 항목마다 POST /children/{cid}/events   🚨 승인 게이트 ㉠ (체크가 있을 때만)
+   └─ ② POST /photo-runs/{rid}/commit                 ①에서 받은 event.id 를 그 항목의 event_id 로
                                       notice + notice_item + daycare_meal
 ```
 
-🚨 **commit 은 캘린더에 쓰지 않는다.** 캘린더에 쓰는 문은 지금도 `POST /children/{cid}/events` 하나다.
+🚨 **commit 은 캘린더에 쓰지 않는다.** 캘린더에 쓰는 문은 지금도 `POST /children/{cid}/events` 하나다. 화면이 체크한 개수만큼 부르고, 하나라도 실패하면 commit 하지 않는다 (`docs/web/event-draft-ui-v1.md` §2 ㉢).
 
 🚨 읽은 결과는 저장을 누르기 전까지 서버 메모리에 30분만 있다 (`app/api/runs/photo_run.py`). 프로세스 메모리라 run 채널과 같은 `--workers 1` 전제다.
 
@@ -101,7 +102,7 @@ GET /runs/{rid}/events                       step → lane → step → parsed �
 | `todo` | 회신 · 신청 · 제출 · 납부 · 준비물 | `todo` | 확인 저장 |
 | `info` | 운영 변경 · 건강 안내 · 교사 변경 · 외부 기관 안내 | `info` | 확인 저장 |
 
-- 🚨 **알림은 일정에만 붙는다.** `reminder.event_id` 가 필수고, 승인 없는 알림 발송 경로를 만들지 않는다 (`apps/api/CLAUDE.md`). 회신 마감에 알림이 필요하면 시트의 "일정으로도 넣기" 로 일정이 된 뒤 알림을 건다. 그래서 게이트는 2곳 그대로다.
+- 🚨 **알림은 일정에만 붙는다.** `reminder.event_id` 가 필수고, 승인 없는 알림 발송 경로를 만들지 않는다 (`apps/api/CLAUDE.md`). 회신 마감에 알림이 필요하면 확인 화면에서 그 할 일을 일정으로 넣으며 알림을 건다 (시작하는 날과 알림은 고치기 시트에서 고른다). 그래서 게이트 ㉠ 안의 일이고, 게이트를 늘리지 않는다.
 - 🚨 **건강 안내는 `health_safety` 로 가지 않는다.** 기관이 보낸 글이지 아이의 기록이 아니다. 이 경로는 건강 · 알레르기 확정(게이트 ㉡)을 만들지 않는다.
 - 건강검진 받기 · 소견서 제출처럼 보호자에게 요청한 일은 `todo` 다. 프롬프트가 금지하는 것은 아이의 건강을 판단하는 일이지, 요청을 옮기는 일이 아니다.
 - 안내(`info`)는 보호자에게 묻지 않는다. 그래서 못 믿을 날짜는 남기지 않고 버린다. 묻지도 않고 틀린 값을 두면 조용한 오류가 된다.
@@ -185,7 +186,6 @@ GET /runs/{rid}/events                       step → lane → step → parsed �
 - 활동 lane — 서버가 422 로 돌려보낸다
 - 알림장의 아이 문장 → `observation_*`. 지금 commit 은 관찰을 만들지 않는다. 반 공통 문장을 구분하지 않고 넣으면 잘못 승격되므로 `audience_scope` · 문장 주체 판정이 먼저다. 우리 아이 이름도 `[이름]` 으로 가려져서 `[이름]는 [이름]와` 가 되므로, 경로를 만들 때 우리 아이를 구분하는 표시도 필요하다. 공개 자료에 알림장 실물이 없어서 지어낸 문서로만 시험했다
 - 정정 공지를 앞 공지에 잇는 자동 판단 — 정정이라는 사실(`relation`)만 저장한다. 어느 공지 · 어느 일정을 고치는지 찾지 못해서, 보호자가 새 날짜를 일정으로 넣으면 옛 일정이 그대로 남는다
-- 시트에서 넣은 일정의 출처 — 서버는 commit 때 `PhotoEntry.event_id` 로 잇지만(§4), 웹 시트가 아직 그 값을 보내지 않는다
 - HEIC 미리보기 — 서버는 읽지만, 안드로이드 Chrome · WebView 는 HEIC 를 `<img>` 로 그리지 못해 읽는 중 · 확인 화면의 사진 미리보기가 비어 보일 수 있다
 - 업로드 본문 크기 제한 — 사진은 S3 로 가지만(§2), FastAPI 는 누가 보내든 본문을 먼저 끝까지 받는다. Caddy `request_body max_size` 가 아직 없다
 - 화면에 보이는 값 — 서버는 `PhotoEntry` 로 `starts_at` · `ends_at` · `due_at` · `target_scope` · `details` · `source_quote` 를 보내지만 웹이 아직 그리지 않는다. 그래서 `9:30` 은 보호자가 다시 입력하고, `11/23 ~ 11/27` 은 첫날 하루 일정으로 들어가고, 금액 · 대상 · 회신 수단을 보호자가 확인할 수 없다. 웹 `photo-review.tsx` · `photo-entry-sheet.tsx` 를 고친다 (#611 과 같은 파일)
