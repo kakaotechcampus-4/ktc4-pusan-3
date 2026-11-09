@@ -118,8 +118,25 @@ STRONG_SIGNALS = (
 )
 
 
+# 1 좋아함 · 0 좋다 · 싫다 없음 · -1 싫어함. 모델이 채우는 값이라 DB 가 마지막에 막는다 (#287).
+# 0 은 Curator 가 Profile 에 연결하지 않는다 — Profile 쪽은 profile/models.py 의
+# PROFILE_POLARITIES 다
+OBSERVATION_POLARITIES = (-1, 0, 1)
+
+# 🚨 마이그레이션 `496fd5c10cd1` 과 같은 글자다.
+# 표마다 같은 이름으로 건다 (`observation_status` 처럼)
+OBSERVATION_POLARITY_CHECK = f"polarity IN ({', '.join(str(v) for v in OBSERVATION_POLARITIES)})"
+
+
+def _polarity_check() -> CheckConstraint:
+    return CheckConstraint(OBSERVATION_POLARITY_CHECK, name="observation_polarity")
+
+
 class ObservationCommon:
-    """food · education · activity · routine 공통 컬럼. health 는 상속하지 않는다."""
+    """food · education · activity · routine 공통 컬럼. health 는 상속하지 않는다.
+
+    `polarity` CHECK 는 표마다 `__table_args__` 에 `_polarity_check()` 로 건다.
+    """
 
     child_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("child.id", ondelete="CASCADE"), nullable=False
@@ -154,7 +171,10 @@ class Promotable:
 
 class ObservationFood(Base, UUIDPk, Timestamps, ObservationCommon, Promotable):
     __tablename__ = "observation_food"
-    __table_args__ = (Index("ix_observation_food_child_status", "child_id", "status"),)
+    __table_args__ = (
+        Index("ix_observation_food_child_status", "child_id", "status"),
+        _polarity_check(),
+    )
 
     action: Mapped[str | None] = mapped_column(Text, nullable=True)
     amount: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -163,7 +183,10 @@ class ObservationFood(Base, UUIDPk, Timestamps, ObservationCommon, Promotable):
 
 class ObservationEducation(Base, UUIDPk, Timestamps, ObservationCommon, Promotable):
     __tablename__ = "observation_education"
-    __table_args__ = (Index("ix_observation_education_child_status", "child_id", "status"),)
+    __table_args__ = (
+        Index("ix_observation_education_child_status", "child_id", "status"),
+        _polarity_check(),
+    )
 
     topic: Mapped[str] = mapped_column(Text, nullable=False)  # 사람이 읽는 원문. subject 와 별개
     session_type: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -175,7 +198,10 @@ class ObservationEducation(Base, UUIDPk, Timestamps, ObservationCommon, Promotab
 
 class ObservationActivity(Base, UUIDPk, Timestamps, ObservationCommon, Promotable):
     __tablename__ = "observation_activity"
-    __table_args__ = (Index("ix_observation_activity_child_status", "child_id", "status"),)
+    __table_args__ = (
+        Index("ix_observation_activity_child_status", "child_id", "status"),
+        _polarity_check(),
+    )
 
     activity: Mapped[str] = mapped_column(Text, nullable=False)  # 사람이 읽는 원문. subject 와 별개
     location: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -190,7 +216,10 @@ class ObservationRoutine(Base, UUIDPk, Timestamps, ObservationCommon):
     """승격 대상이 아니라 Promotable을 상속하지 않는다."""
 
     __tablename__ = "observation_routine"
-    __table_args__ = (Index("ix_observation_routine_child_status", "child_id", "status"),)
+    __table_args__ = (
+        Index("ix_observation_routine_child_status", "child_id", "status"),
+        _polarity_check(),
+    )
 
     routine_category: Mapped[RoutineCategory] = mapped_column(routine_category, nullable=False)
     context: Mapped[str | None] = mapped_column(Text, nullable=True)

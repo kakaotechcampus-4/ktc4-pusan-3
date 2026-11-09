@@ -58,6 +58,7 @@ async def add_affinity(
         merge_key=key,
         domain=domain,
         state=state,
+        polarity=1,  # confirmed 는 NULL 을 받지 않는다 (CHECK profile_affinity_confirmed_polarity)
         last_observed_on=last_observed_on,
     )
     session.add(affinity)

@@ -3,7 +3,16 @@ import uuid
 from datetime import date, datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import Date, DateTime, Float, ForeignKey, SmallInteger, String, Text
+from sqlalchemy import (
+    CheckConstraint,
+    Date,
+    DateTime,
+    Float,
+    ForeignKey,
+    SmallInteger,
+    String,
+    Text,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -26,9 +35,28 @@ class ProfileState(enum.StrEnum):
 memory_domain = enum_col_py(MemoryDomain, name="memory_domain")
 profile_state = enum_col_py(ProfileState, name="profile_state")
 
+# 선호(1) · 기피(-1) 만 있다. NULL 은 아직 모름(미상 · 동수 · 상충)이고 0 은 없다 (#287) —
+# 좋다 · 싫다가 없는 관찰은 Curator 가 연결하지 않는다 (`docs/memory/curator-linking-v1.md` §1-1)
+PROFILE_POLARITIES = (-1, 1)
+
+# 파이썬 값에서 문장을 만든다. 🚨 마이그레이션 `496fd5c10cd1` 과 같은 글자다 —
+# autogenerate 는 CHECK 를 비교하지 않는다
+PROFILE_POLARITY_CHECK = (
+    f"polarity IS NULL OR polarity IN ({', '.join(str(v) for v in PROFILE_POLARITIES)})"
+)
+PROFILE_CONFIRMED_POLARITY_CHECK = (
+    f"state <> '{ProfileState.CONFIRMED.value}' OR polarity IS NOT NULL"
+)
+
 
 class ProfileAffinity(Base, UUIDPk, Timestamps):
     __tablename__ = "profile_affinity"
+    __table_args__ = (
+        CheckConstraint(PROFILE_POLARITY_CHECK, name="profile_affinity_polarity"),
+        CheckConstraint(
+            PROFILE_CONFIRMED_POLARITY_CHECK, name="profile_affinity_confirmed_polarity"
+        ),
+    )
 
     child_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("child.id", ondelete="CASCADE"), nullable=False
