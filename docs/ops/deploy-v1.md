@@ -77,6 +77,9 @@ healthy 가 될 때까지 기다리고, 안 되면(최대 240초) 실패로 본�
     (#753 전에는 prod 가 develop push 로 배포돼 main head 와 다를 수 있다). 배포된 revision 이 새 규칙에 걸려 배포 게이트가 막히지 않게. git diff 를 쓰지 않는 이유는
     CI checkout 이 depth 1 이고 배포가 부른 실행엔 비교할 base 가 없어서다.
   - 마이그레이션 자체를 되돌려야 하면 사람이 서버에서 `alembic downgrade` 를 한다 (자동으로 하지 않는다 — 데이터가 지워질 수 있다)
+  - 마이그레이션이 잠금 대기(`lock_timeout` — `canceling statement due to lock timeout`)로 실패했으면 긴 쓰기
+    트랜잭션에 막힌 것이다. 같은 실행의 revision 은 모두 되돌아가 반쯤 적용된 상태가 없고, 옛 컨테이너가 그대로
+    서비스한다. 잠시 뒤 배포를 다시 돌린다 (삭제 이력 `de2051c89680` 은 표마다 트리거를 걸며 5초까지만 기다린다 · #812 리뷰)
 - 롤백은 **새 커밋의 compose 파일**로 옛 이미지를 띄운다. compose 파일을 크게 바꾼 배포가 실패하면 롤백도 실패할 수 있다.
   그때 Actions 출력에 "롤백도 실패" 가 찍힌다.
 - dev · prod 가 동시에 빌드하면 4GB 가 넘친다. `deploy.sh` 가 `flock` 으로 한 번에 하나만 돌게 하고, 다른 쪽은 최대 20분 기다린다.
@@ -85,7 +88,7 @@ healthy 가 될 때까지 기다리고, 안 되면(최대 240초) 실패로 본�
 ## dev 격리 — 메모리 상한 · 팀만 열기 (#780)
 
 한 EC2 에 dev 가 같이 뜨면서 생긴 두 위험을 막는다. dev 가 폭주하면 커널이 운영 postgres 를 죽일 수 있고,
-dev 가 열려 있으면 누구나 카카오로 가입해 실제 보호자 · 아이 정보가 백업 없는 dev DB 에 쌓인다.
+dev 가 열려 있으면 누구나 카카오로 가입해 실제 보호자 · 아이 정보가 dev DB 에 쌓인다.
 
 **메모리 상한** — compose 의 `mem_limit` · `memswap_limit: ${API_MEM_LIMIT:-0}` 꼴 (api · web · db · redis). 0 = 상한 없음.
 
