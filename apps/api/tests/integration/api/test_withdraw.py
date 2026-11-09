@@ -186,14 +186,14 @@ async def test_owner_withdraw_forgets_in_memory_entries_of_the_child(
     headers, owner = bearer
     _, member = await issue_bearer(session, token="member")
     await link_child(session, parent_id=member, child_id=cid)
-    owners = stash_in_memory(parent_id=owner, child_id=cid)
-    members = stash_in_memory(parent_id=member, child_id=cid)
+    owners = await stash_in_memory(parent_id=owner, child_id=cid)
+    members = await stash_in_memory(parent_id=member, child_id=cid)
 
     resp = await db_client.post(URL, json=ACK, headers=headers)
 
     assert resp.status_code == 200
-    assert in_memory(owners, parent_id=owner, child_id=cid) == (False, False)
-    assert in_memory(members, parent_id=member, child_id=cid) == (False, False)
+    assert await in_memory(owners, parent_id=owner, child_id=cid) == (False, False)
+    assert await in_memory(members, parent_id=member, child_id=cid) == (False, False)
 
 
 async def test_member_withdraw_forgets_only_their_in_memory_entries(
@@ -208,14 +208,14 @@ async def test_member_withdraw_forgets_only_their_in_memory_entries(
     _, owner = bearer
     member_headers, member = await issue_bearer(session, token="member")
     await link_child(session, parent_id=member, child_id=cid)
-    owners = stash_in_memory(parent_id=owner, child_id=cid)
-    members = stash_in_memory(parent_id=member, child_id=cid)
+    owners = await stash_in_memory(parent_id=owner, child_id=cid)
+    members = await stash_in_memory(parent_id=member, child_id=cid)
 
     resp = await db_client.post(URL, json=ACK, headers=member_headers)
 
     assert resp.status_code == 200
-    assert in_memory(members, parent_id=member, child_id=cid) == (False, False)
-    assert in_memory(owners, parent_id=owner, child_id=cid) == (True, True)
+    assert await in_memory(members, parent_id=member, child_id=cid) == (False, False)
+    assert await in_memory(owners, parent_id=owner, child_id=cid) == (True, True)
 
 
 @pytest.mark.parametrize(

@@ -24,7 +24,7 @@ from sqlalchemy import select, text
 from app.agents import entrypoint
 from app.agents.entrypoint import Done
 from app.api import agent_ports, idempotency, quota
-from app.api.runs import pending_reply, registry, runner
+from app.api.runs import registry, runner
 from app.core.config import settings
 from app.domains.consent.location_log import purge_expired_location_logs
 from app.domains.consent.models import ConsentScope, LocationPurpose, LocationUseLog
@@ -42,10 +42,10 @@ COORDS = entrypoint.CoarseLocation(lat=35.18, lon=129.08)
 
 @pytest.fixture(autouse=True)
 def _clean_process_memory():
-    for module in (registry, idempotency, quota, pending_reply):
+    for module in (registry, idempotency, quota):
         module.clear()
     yield
-    for module in (registry, idempotency, quota, pending_reply):
+    for module in (registry, idempotency, quota):
         module.clear()
 
 

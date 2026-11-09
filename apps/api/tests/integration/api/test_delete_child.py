@@ -192,19 +192,19 @@ async def test_delete_forgets_in_memory_entries_of_the_child(
     headers, owner = bearer
     _, member = await issue_bearer(session, token="member")
     await link_child(session, parent_id=member, child_id=cid)
-    owners = stash_in_memory(parent_id=owner, child_id=cid)
-    members = stash_in_memory(parent_id=member, child_id=cid)
+    owners = await stash_in_memory(parent_id=owner, child_id=cid)
+    members = await stash_in_memory(parent_id=member, child_id=cid)
     other_child = uuid.uuid4()
-    others = stash_in_memory(parent_id=member, child_id=other_child)
+    others = await stash_in_memory(parent_id=member, child_id=other_child)
     photo_run.open_photo_run(run_id="photo-of-child", parent_id=member, child_id=cid)
     photo_run.open_photo_run(run_id="photo-of-other", parent_id=member, child_id=other_child)
 
     resp = await db_client.delete(_url(cid), headers={**headers, **_key()})
 
     assert resp.status_code == 204
-    assert in_memory(owners, parent_id=owner, child_id=cid) == (False, False)
-    assert in_memory(members, parent_id=member, child_id=cid) == (False, False)
-    assert in_memory(others, parent_id=member, child_id=other_child) == (True, True)
+    assert await in_memory(owners, parent_id=owner, child_id=cid) == (False, False)
+    assert await in_memory(members, parent_id=member, child_id=cid) == (False, False)
+    assert await in_memory(others, parent_id=member, child_id=other_child) == (True, True)
     assert photo_run.get("photo-of-child", parent_id=member) is None
     assert photo_run.get("photo-of-other", parent_id=member) is not None
 
@@ -220,12 +220,12 @@ async def test_delete_keeps_in_memory_entries_when_member_is_refused(
     _, owner = bearer
     member_headers, member = await issue_bearer(session, token="member")
     await link_child(session, parent_id=member, child_id=cid)
-    owners = stash_in_memory(parent_id=owner, child_id=cid)
+    owners = await stash_in_memory(parent_id=owner, child_id=cid)
 
     resp = await db_client.delete(_url(cid), headers={**member_headers, **_key()})
 
     assert resp.status_code == 403
-    assert in_memory(owners, parent_id=owner, child_id=cid) == (True, True)
+    assert await in_memory(owners, parent_id=owner, child_id=cid) == (True, True)
 
 
 # ── 동시 요청 ─────────────────────────────────────────────────────────────────

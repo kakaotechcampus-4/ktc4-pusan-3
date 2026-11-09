@@ -14,10 +14,9 @@ Idempotency 는 계약서 §01 "헤더가 없으면 400" 에 더해 docs/api/ide
 """
 
 import asyncio
-import time
 import uuid
 from contextlib import asynccontextmanager
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from unittest.mock import ANY
 
 import pytest
@@ -39,6 +38,8 @@ from app.domains.policy.models import PolicyVersion
 
 from .conftest import issue_bearer, link_child
 
+pytestmark = pytest.mark.usefixtures("pending_db")
+
 INPUTS = "/api/v1/children/{cid}/inputs"
 EVENTS = "/api/v1/runs/{rid}/events"
 BODY = {"text": "계란말이 또 찾아요", "source": "home_input"}
@@ -46,17 +47,18 @@ BODY = {"text": "계란말이 또 찾아요", "source": "home_input"}
 
 @pytest.fixture(autouse=True)
 def _clean_process_memory(monkeypatch):
-    """채널과 Idempotency 기억은 프로세스 메모리라 테스트 사이에 샌다. 가짜 러너의 지연도 없앤다."""
+    """채널과 Idempotency 기억은 프로세스 메모리라 테스트 사이에 샌다. 가짜 러너의 지연도 없앤다.
+
+    되묻기 맥락은 표(`run_hold`, #877)라 `pending_db` 가 테스트 트랜잭션에 묶는다.
+    """
     registry.clear()
     idempotency.clear()
     quota.clear()
-    pending_reply.clear()
     monkeypatch.setattr(runner, "DEMO_STEP_DELAY", 0.0)
     yield
     registry.clear()
     idempotency.clear()
     quota.clear()
-    pending_reply.clear()
 
 
 @pytest.fixture(autouse=True)
@@ -500,7 +502,7 @@ _ANSWER = {"text": "3일 전부터", "source": "home_input"}
 
 async def test_reply_to_가_이전_질문_맥락을_agent_로_넘긴다(db_client, bearer, agent_calls, cid):
     headers, parent_id = bearer
-    pending_reply.put(run_id="r-prev", parent_id=parent_id, child_id=cid, context=_PENDING)
+    await pending_reply.put(run_id="r-prev", parent_id=parent_id, child_id=cid, context=_PENDING)
 
     response = await db_client.post(
         INPUTS.format(cid=cid),
@@ -530,9 +532,13 @@ async def test_없는_reply_to_는_400_이고_agent_를_부르지_않는다(
     assert agent_calls == []
 
 
-async def test_남의_run_을_가리키면_400(db_client, bearer, agent_calls, cid):
+async def test_남의_run_을_가리키면_400(db_client, session, bearer, agent_calls, cid):
     headers, _ = bearer
-    pending_reply.put(run_id="r-other", parent_id=uuid.uuid4(), child_id=cid, context=_PENDING)
+    _, other = await issue_bearer(session, token="test-token-other")
+    await link_child(session, parent_id=other, child_id=cid)
+    assert await pending_reply.put(
+        run_id="r-other", parent_id=other, child_id=cid, context=_PENDING
+    )
 
     response = await db_client.post(
         INPUTS.format(cid=cid),
@@ -544,9 +550,12 @@ async def test_남의_run_을_가리키면_400(db_client, bearer, agent_calls, c
     assert agent_calls == []
 
 
-async def test_다른_아이의_질문에_이어_적으면_400(db_client, bearer, agent_calls, cid):
+async def test_다른_아이의_질문에_이어_적으면_400(db_client, session, bearer, agent_calls, cid):
     headers, parent_id = bearer
-    pending_reply.put(run_id="r-prev", parent_id=parent_id, child_id=uuid.uuid4(), context=_PENDING)
+    other_child = await link_child(session, parent_id=parent_id)
+    assert await pending_reply.put(
+        run_id="r-prev", parent_id=parent_id, child_id=other_child, context=_PENDING
+    )
 
     response = await db_client.post(
         INPUTS.format(cid=cid),
@@ -560,7 +569,7 @@ async def test_다른_아이의_질문에_이어_적으면_400(db_client, bearer
 
 async def test_같은_reply_to_를_두_번_쓰면_두_번째가_막힌다(db_client, bearer, agent_calls, cid):
     headers, parent_id = bearer
-    pending_reply.put(run_id="r-prev", parent_id=parent_id, child_id=cid, context=_PENDING)
+    await pending_reply.put(run_id="r-prev", parent_id=parent_id, child_id=cid, context=_PENDING)
     body = {**_ANSWER, "reply_to": "r-prev"}
 
     first = await db_client.post(INPUTS.format(cid=cid), json=body, headers=with_key(headers))
@@ -575,7 +584,7 @@ async def test_같은_키로_다시_누르면_400_이_아니라_같은_run_을_�
 ):
     # 맥락은 재생 뒤에 꺼낸다. 순서가 바뀌면 두 번째 누름이 400 을 받는다
     headers, parent_id = bearer
-    pending_reply.put(run_id="r-prev", parent_id=parent_id, child_id=cid, context=_PENDING)
+    await pending_reply.put(run_id="r-prev", parent_id=parent_id, child_id=cid, context=_PENDING)
     body = {**_ANSWER, "reply_to": "r-prev"}
     keyed = with_key(headers)
 
@@ -593,7 +602,7 @@ async def test_한도에_걸린_답은_맥락을_지우지_않는다(
     # 429 는 접수 전이다. 여기서 맥락을 지우면 한도가 풀려도 이어 적을 수 없다
     monkeypatch.setattr(settings, "INPUT_DAILY_LIMIT", 1)
     headers, parent_id = bearer
-    pending_reply.put(run_id="r-prev", parent_id=parent_id, child_id=cid, context=_PENDING)
+    await pending_reply.put(run_id="r-prev", parent_id=parent_id, child_id=cid, context=_PENDING)
     await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=with_key(headers))
 
     response = await db_client.post(
@@ -603,7 +612,7 @@ async def test_한도에_걸린_답은_맥락을_지우지_않는다(
     )
 
     assert response.status_code == 429
-    assert pending_reply.get(run_id="r-prev", parent_id=parent_id, child_id=cid) == _PENDING
+    assert await pending_reply.get(run_id="r-prev", parent_id=parent_id, child_id=cid) == _PENDING
     assert len(agent_calls) == 1  # 한도를 채운 첫 입력만 Agent 까지 갔다
 
 
@@ -612,7 +621,7 @@ async def test_한도가_풀리면_남겨_둔_맥락으로_이어_적는다(
 ):
     monkeypatch.setattr(settings, "INPUT_DAILY_LIMIT", 1)
     headers, parent_id = bearer
-    pending_reply.put(run_id="r-prev", parent_id=parent_id, child_id=cid, context=_PENDING)
+    await pending_reply.put(run_id="r-prev", parent_id=parent_id, child_id=cid, context=_PENDING)
     body = {**_ANSWER, "reply_to": "r-prev"}
     await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=with_key(headers))
     blocked = await db_client.post(INPUTS.format(cid=cid), json=body, headers=with_key(headers))
@@ -666,7 +675,9 @@ async def test_Health_질문에_reply_to_로_답하면_맥락이_agent_로_넘�
     db_client, bearer, agent_calls, cid
 ):
     headers, parent_id = bearer
-    pending_reply.put(run_id="r-health", parent_id=parent_id, child_id=cid, context=_HEALTH_PENDING)
+    await pending_reply.put(
+        run_id="r-health", parent_id=parent_id, child_id=cid, context=_HEALTH_PENDING
+    )
 
     response = await db_client.post(
         INPUTS.format(cid=cid),
@@ -681,12 +692,12 @@ async def test_Health_질문에_reply_to_로_답하면_맥락이_agent_로_넘�
 
 async def test_15분이_지난_Health_맥락은_400(db_client, bearer, agent_calls, cid):
     headers, parent_id = bearer
-    pending_reply.put(
+    await pending_reply.put(
         run_id="r-health",
         parent_id=parent_id,
         child_id=cid,
         context=_HEALTH_PENDING,
-        now=time.monotonic() - pending_reply.TTL_SECONDS - 1,
+        now=datetime.now(UTC) - pending_reply.TTL - timedelta(minutes=1),
     )
 
     response = await db_client.post(
@@ -700,10 +711,14 @@ async def test_15분이_지난_Health_맥락은_400(db_client, bearer, agent_cal
     assert agent_calls == []
 
 
-async def test_다른_보호자는_Health_질문에_답할_수_없다(db_client, bearer, agent_calls, cid):
+async def test_다른_보호자는_Health_질문에_답할_수_없다(
+    db_client, session, bearer, agent_calls, cid
+):
     headers, _ = bearer
-    pending_reply.put(
-        run_id="r-health", parent_id=uuid.uuid4(), child_id=cid, context=_HEALTH_PENDING
+    _, other = await issue_bearer(session, token="test-token-other")
+    await link_child(session, parent_id=other, child_id=cid)
+    assert await pending_reply.put(
+        run_id="r-health", parent_id=other, child_id=cid, context=_HEALTH_PENDING
     )
 
     response = await db_client.post(
@@ -715,10 +730,13 @@ async def test_다른_보호자는_Health_질문에_답할_수_없다(db_client,
     assert response.status_code == 400 and agent_calls == []
 
 
-async def test_다른_아이의_Health_질문은_이어받지_못한다(db_client, bearer, agent_calls, cid):
+async def test_다른_아이의_Health_질문은_이어받지_못한다(
+    db_client, session, bearer, agent_calls, cid
+):
     headers, parent_id = bearer
-    pending_reply.put(
-        run_id="r-health", parent_id=parent_id, child_id=uuid.uuid4(), context=_HEALTH_PENDING
+    other_child = await link_child(session, parent_id=parent_id)
+    assert await pending_reply.put(
+        run_id="r-health", parent_id=parent_id, child_id=other_child, context=_HEALTH_PENDING
     )
 
     response = await db_client.post(
@@ -733,7 +751,9 @@ async def test_다른_아이의_Health_질문은_이어받지_못한다(db_clien
 async def test_같은_Health_질문의_두_번째_답은_400(db_client, bearer, agent_calls, cid):
     # 중단 확인에 "응" 이 두 번 가면 같은 코스를 두 번 멈추려는 것과 같다
     headers, parent_id = bearer
-    pending_reply.put(run_id="r-health", parent_id=parent_id, child_id=cid, context=_HEALTH_PENDING)
+    await pending_reply.put(
+        run_id="r-health", parent_id=parent_id, child_id=cid, context=_HEALTH_PENDING
+    )
     body = {**_HEALTH_ANSWER, "reply_to": "r-health"}
 
     first = await db_client.post(INPUTS.format(cid=cid), json=body, headers=with_key(headers))

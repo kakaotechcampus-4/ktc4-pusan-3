@@ -36,10 +36,10 @@ class DbDown(Exception):
 
 @pytest.fixture(autouse=True)
 def _clean_process_memory():
-    for module in (registry, idempotency, quota, pending_reply):
+    for module in (registry, idempotency, quota):
         module.clear()
     yield
-    for module in (registry, idempotency, quota, pending_reply):
+    for module in (registry, idempotency, quota):
         module.clear()
 
 
@@ -164,7 +164,7 @@ async def test_동의_조회가_실패해도_한도와_되묻기_맥락은_그�
 
     실패한 요청이 하루 한도와 한 번뿐인 맥락을 먹지 않는다.
     """
-    pending_reply.put(
+    await pending_reply.put(
         run_id="prev-run",
         parent_id=PARENT,
         child_id=CHILD,
@@ -175,7 +175,7 @@ async def test_동의_조회가_실패해도_한도와_되묻기_맥락은_그�
     with pytest.raises(DbDown):
         await client.post(URL, json={**BODY, "reply_to": "prev-run"}, headers=_key())
 
-    assert pending_reply.get(run_id="prev-run", parent_id=PARENT, child_id=CHILD) is not None
+    assert await pending_reply.get(run_id="prev-run", parent_id=PARENT, child_id=CHILD) is not None
     from app.core.config import settings
 
     # 한도가 줄지 않았다 — 한도까지 남은 횟수를 그대로 쓸 수 있다
@@ -291,7 +291,7 @@ async def test_키_기억이_실패하면_되묻기_맥락의_표시를_푼다(
 
     풀지 않으면 15분 동안 그 질문에 답할 수 없다.
     """
-    pending_reply.put(
+    await pending_reply.put(
         run_id="prev-run",
         parent_id=PARENT,
         child_id=CHILD,
@@ -306,8 +306,53 @@ async def test_키_기억이_실패하면_되묻기_맥락의_표시를_푼다(
     with pytest.raises(DbDown):
         await client.post(URL, json={**BODY, "reply_to": "prev-run"}, headers=_key())
 
-    assert pending_reply.get(run_id="prev-run", parent_id=PARENT, child_id=CHILD) is not None
+    assert await pending_reply.get(run_id="prev-run", parent_id=PARENT, child_id=CHILD) is not None
     assert agent_calls == []
+
+
+async def test_한도를_세다가_터져도_되묻기_맥락의_표시를_푼다(
+    client, agent_calls, consent_reads, monkeypatch
+):
+    """찜한 뒤 러너가 뜨기 전에 무엇이 터지든 표시를 푼다 (#887 리뷰).
+
+    429 만 풀면, 한도 저장이 DB 로 가는 3단계에서 오류가 날 때 15분 동안 "사용 중" 으로 남아
+    그 질문에 답할 수 없다.
+    """
+    await pending_reply.put(
+        run_id="prev-run",
+        parent_id=PARENT,
+        child_id=CHILD,
+        context=PendingMemoryContext("요즘 기침해", "언제부터였어요?", WorkType.OBSERVE),
+    )
+
+    def quota_down(**kwargs):
+        raise DbDown("한도 저장 실패")
+
+    monkeypatch.setattr(quota, "consume", quota_down)
+
+    with pytest.raises(DbDown):
+        await client.post(URL, json={**BODY, "reply_to": "prev-run"}, headers=_key())
+
+    assert await pending_reply.get(run_id="prev-run", parent_id=PARENT, child_id=CHILD) is not None
+    assert agent_calls == []
+
+
+async def test_한도에_걸리면_되묻기_맥락의_표시를_푼다(
+    client, agent_calls, consent_reads, monkeypatch
+):
+    """429 는 접수 전이다 — 한도가 풀리면 같은 질문에 이어 답할 수 있어야 한다."""
+    await pending_reply.put(
+        run_id="prev-run",
+        parent_id=PARENT,
+        child_id=CHILD,
+        context=PendingMemoryContext("요즘 기침해", "언제부터였어요?", WorkType.OBSERVE),
+    )
+    monkeypatch.setattr(quota, "consume", lambda **kwargs: False)
+
+    response = await client.post(URL, json={**BODY, "reply_to": "prev-run"}, headers=_key())
+
+    assert response.status_code == 429
+    assert await pending_reply.get(run_id="prev-run", parent_id=PARENT, child_id=CHILD) is not None
 
 
 async def _answer_same_question_twice_at_once(client, monkeypatch):
@@ -315,7 +360,7 @@ async def _answer_same_question_twice_at_once(client, monkeypatch):
 
     동의 읽기가 두 요청이 모두 들어올 때까지 기다리게 해서 끼어들기를 재현한다.
     """
-    pending_reply.put(
+    await pending_reply.put(
         run_id="prev-run",
         parent_id=PARENT,
         child_id=CHILD,
@@ -344,10 +389,11 @@ async def _answer_same_question_twice_at_once(client, monkeypatch):
 async def test_같은_되묻기에_거의_동시에_두_번_답하면_하나만_받는다(
     client, agent_calls, monkeypatch
 ):
-    """맥락 확인(get)과 찜하기(claim) 사이에 await 가 있으면 두 답이 다 확인을 통과한다.
+    """같은 답으로 run 이 두 개 뜨면 관찰이 두 행이 된다.
 
-    동의 읽기가 get 과 claim 사이에 있으면 둘 다 202 가 되고, 같은 답으로 run 이 두 개 떠
-    관찰이 두 행이 된다.
+    확인과 찜하기는 `claim` 한 번이다 — 표에서는 `UPDATE … WHERE in_use = false RETURNING`
+    한 문장이라 워커가 여럿이어도 하나만 통과한다(#877, 표 쪽은 test_run_hold.py 가 건다).
+    여기서는 창구가 확인을 따로 하지 않고 claim 결과로 400 을 내는지 본다.
     """
     first, second = await _answer_same_question_twice_at_once(client, monkeypatch)
 
