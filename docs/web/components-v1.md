@@ -46,7 +46,7 @@
   `SettingsGroup`/`SettingsLinkRow`/`SettingsInfoRow` · `StartBackLink`(01 · 초대 → 00-1) · `ConsentSection`/`LegalDocumentSection` · `LocationPermissionNote`(10 설정 · 위치 동의는 켜졌는데 휴대폰이 허용 안 했을 때만 · #593) · `LocationOffNote`(04 놀이 추천 아래 · 같은 어긋남 · 하루 한 번 · #638 리뷰) ·
   `ParentSection` · `AccountSection` · `NotificationSection`(10 설정의 일정 알림 켜고 끄기 · 동의 줄과 같은 모양 · 복약 줄은 발송이 붙을 때까지 없다 · #609) ·
   `ChildIdentityCard`/`ChildIdentitySheet` · `GrowthLogList`/`GrowthLatestCard` · `GrowthSheet` ·
-  `GrowthChart` · `HealthSafetyList`/`HealthSafetySheet` · `SafetyScanReview`/`SafetyScanRowSheet` ·
+  `GrowthChart` · `HealthSafetyList`/`HealthSafetySheet` · `ToleratedFoodsRow`(11 · 02 알레르기 구역 위의 괜찮았던 식품 한 줄 + 보고 빼는 시트 · #825) · `SafetyScanReview`/`SafetyScanRowSheet` ·
   `PhotoReview`/`PhotoEntrySheet` · `PhotoSourceSheet` · `PhotoPreview`(08 사진 칸 미리보기 · 못 그리면 글자로 말한다 · #723) · `ScreenTour`/`TourHelpButton`(화면 투어 · [`screen-tour-v1.md`](screen-tour-v1.md)) ·
   `MedicationDraftCard`/`MedicationDraftList`(게이트 ㉡ · 복약 초안 · [`medication-v1.md`](medication-v1.md)) ·
   `DoseCheck`(회차 체크 줄 · 03 홈과 11-3 이 같이 씀) · `TodayMedications`(03 홈 "오늘 먹일 약") ·
