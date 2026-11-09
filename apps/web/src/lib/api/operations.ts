@@ -259,6 +259,8 @@ export interface HealthSafetyRequest {
   severity?: string | null;
   reactions?: string[];
   notes?: string | null;
+  /** 괜찮았던 식품으로 저장한다 (#825 · 뜻은 `types.ts` 의 `CreateHealthSafetyRequest.tolerated`). */
+  tolerated?: boolean;
 }
 
 /**

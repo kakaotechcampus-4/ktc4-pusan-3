@@ -45,8 +45,15 @@ import {
 /** 알레르기 확인은 3지선다다. 🚨 "모르겠어요" 는 "없음" 이 아니다 — 아무것도 저장하지 않는다. */
 type SafetyAnswer = "has" | "none" | "unknown";
 
-/** 🚨 보호자의 선택이 아니라 **서버가 저장을 끝냈는가**. 둘을 한 값으로 쓰지 않는다. */
-type SafetySaveState = "saving" | "saved" | "failed";
+/**
+ * 🚨 보호자의 선택이 아니라 **서버가 저장을 끝냈는가**. 둘을 한 값으로 쓰지 않는다.
+ * - `conflict`: 괜찮았던 식품으로 저장하려는데 서버에 같은 이름이 알레르기로 있었다(`409 allergy_exists` · #825).
+ *   저장되지 않았고, **알레르기가 이긴다** — 그 식품이 든 제안은 막는다.
+ */
+type SafetySaveState = "saving" | "saved" | "failed" | "conflict";
+
+/** 저장하는 답. "모르겠어요" 는 저장하지 않는다. */
+type SavedAnswer = Exclude<SafetyAnswer, "unknown">;
 
 const SAFETY_CHOICES: Array<{ value: SafetyAnswer; label: string }> = [
   { value: "none", label: "먹어 봤고 괜찮았어요" },
@@ -105,6 +112,10 @@ export function SafetyCheckSheet({
    * 🚨 **식품 한 건이 사용자 동작 하나다.** 그래서 `useIdempotencyKey()`(동작 하나에 키 하나)가
    *    아니라 식품별 맵이다 — 같은 식품을 다시 저장하면 같은 키가 나가고(재시도), 다른 식품은
    *    다른 키가 나간다. 하나로 묶으면 두 번째 식품이 "같은 키 · 다른 요청" 이라 422 다.
+   * 🚨 **키는 식품과 답의 짝에 묶는다** (#825). 알레르기로 보냈다 실패한 뒤 답을 괜찮았어요로 바꿔 다시 보내면
+   *    본문이 달라진다(`tolerated: true`) — 같은 키면 "같은 키 · 다른 본문" 422 에 갇힌다. ⚠️ 지금 실서버는 422 대신
+   *    **처음 응답을 재생**한다 — 처음 알레르기 저장이 성공했는데 응답만 잃었다면, 괜찮았어요 요청에 알레르기 201 이
+   *    돌아와 "괜찮았던 식품으로 저장했어요" 라고 거짓말을 한다. 어느 쪽이든 키를 합치지 않는다.
    */
   const safetyKeys = useRef(new Map<string, IdempotencyKey>());
 
@@ -123,16 +134,28 @@ export function SafetyCheckSheet({
   const answeredAll = items.every((item) => answers[item] !== undefined);
 
   const allergyItems = items.filter((item) => answers[item] === "has");
+  /** 그사이 알레르기로 등록돼 괜찮았던 식품으로 저장하지 못한 식품. 🚨 알레르기처럼 막는다. */
+  const conflictItems = items.filter((item) => saveState[item] === "conflict");
+  /** 괜찮았던 식품으로 저장할 식품 (#825). */
+  const toleratedItems = items.filter(
+    (item) => answers[item] === "none" && saveState[item] !== "conflict",
+  );
+  /** 막는 식품 — 알레르기로 답했거나, 괜찮았어요로 답했지만 서버에 알레르기로 있었다. */
+  const blockingItems = [...allergyItems, ...conflictItems];
   /** 버튼을 누르면 저장할 식품. 저장이 끝난 것은 다시 보내지 않는다. */
-  const toSave = allergyItems.filter((item) => saveState[item] !== "saved");
-  const failedItems = allergyItems.filter((item) => saveState[item] === "failed");
-  const savedItems = allergyItems.filter((item) => saveState[item] === "saved");
+  const toSave = [...allergyItems, ...toleratedItems].filter((item) => saveState[item] !== "saved");
+  const toleratedToSave = toleratedItems.filter((item) => saveState[item] !== "saved");
+  const failedItems = toSave.filter((item) => saveState[item] === "failed");
+  const savedItems = [...allergyItems, ...toleratedItems].filter(
+    (item) => saveState[item] === "saved",
+  );
   /** 알레르기로 답한 식품이 전부 기록에 남았는가. 이것이 참일 때만 "추가했어요" 라고 말할 수 있다. */
-  const recorded = allergyItems.length > 0 && toSave.length === 0;
+  const recorded =
+    allergyItems.length > 0 && allergyItems.every((item) => saveState[item] === "saved");
   const unknownLeft = items.some((item) => answers[item] === "unknown");
 
   const blockedChecks = [
-    ...ingredientChecks.filter((p) => allergyItems.includes(p.item)),
+    ...ingredientChecks.filter((p) => blockingItems.includes(p.item)),
     ...unhandledChecks,
   ];
   // 🚨 하나라도 어느 제안인지 모르면 **전부 막는다** (`SafetyResult` 의 머리말).
@@ -153,33 +176,43 @@ export function SafetyCheckSheet({
     unhandledChecks.length === 0 &&
     blockedSuggestionIds !== null &&
     selectedIds.every((id) =>
-      ingredientChecks.some((p) => p.suggestion_id === id && allergyItems.includes(p.item)),
+      ingredientChecks.some((p) => p.suggestion_id === id && blockingItems.includes(p.item)),
     );
 
   /** 승인 게이트 ㉡ — 보호자가 확인한 값만 들어간다. LLM 이 추론한 값은 여기 오지 않는다 (NF-03). */
   const saveSafety = useMutation({
-    mutationFn: (item: string) => {
-      const key = safetyKeys.current.get(item) ?? newIdempotencyKey();
-      safetyKeys.current.set(item, key);
+    mutationFn: ({ item, answer }: { item: string; answer: SavedAnswer }) => {
+      const slot = `${item}:${answer}`;
+      const key = safetyKeys.current.get(slot) ?? newIdempotencyKey();
+      safetyKeys.current.set(slot, key);
       const body: CreateHealthSafetyRequest = {
         type: "allergy",
         label: item,
         notes: "제안을 고를 때 보호자가 확인",
+        // 🚨 괜찮았던 식품은 다음 사전검사에서 묻지 않는 것까지다. 알레르기 목록(`items`)에는 들어가지 않는다.
+        ...(answer === "none" ? { tolerated: true } : {}),
       };
       return addHealthSafety(childId, body, key);
     },
-    onMutate: (item) => setSaveState((prev) => ({ ...prev, [item]: "saving" })),
-    onSuccess: (_result, item) => {
+    onMutate: ({ item }) => setSaveState((prev) => ({ ...prev, [item]: "saving" })),
+    onSuccess: (_result, { item }) => {
       setSaveState((prev) => ({ ...prev, [item]: "saved" }));
       return queryClient.invalidateQueries({ queryKey: qk.healthSafety(childId) });
     },
-    onError: (error, item) => {
-      // 🚨 **409 `already_exists` 는 실패가 아니다** (#369). 그 식품이 이미 알레르기 기록에 있다는
-      //    뜻이라(다른 보호자가 먼저 등록했거나, 앞서 등록한 응답만 못 받았다) 다음 제안에서도
-      //    걸러진다. 실패로 두면 "다시 시도" 가 서는데, 다시 눌러도 같은 409 다.
-      const saved = isApiError(error, "already_exists");
-      setSaveState((prev) => ({ ...prev, [item]: saved ? "saved" : "failed" }));
-      if (saved) void queryClient.invalidateQueries({ queryKey: qk.healthSafety(childId) });
+    onError: (error, { item }) => {
+      // 🚨 **409 `already_exists` 는 실패가 아니다** (#369). 그 식품이 이미 같은 모양으로 기록에 있다는
+      //    뜻이라(다른 보호자가 먼저 등록했거나, 앞서 등록한 응답만 못 받았다) 저장된 것과 같다.
+      //    실패로 두면 "다시 시도" 가 서는데, 다시 눌러도 같은 409 다.
+      // 🚨 **409 `allergy_exists` 도 다시 시도할 것이 아니다** (#825). 그사이 같은 이름이 알레르기로 등록됐다 —
+      //    알레르기가 이기므로 그 식품은 막는다.
+      const state: SafetySaveState = isApiError(error, "already_exists")
+        ? "saved"
+        : isApiError(error, "allergy_exists")
+          ? "conflict"
+          : "failed";
+      setSaveState((prev) => ({ ...prev, [item]: state }));
+      if (state !== "failed")
+        void queryClient.invalidateQueries({ queryKey: qk.healthSafety(childId) });
     },
   });
 
@@ -189,18 +222,24 @@ export function SafetyCheckSheet({
   /**
    * 🚨 **저장이 먼저, 채택이 그다음이다.** 하나라도 저장되지 않으면 여기서 멈춘다 — 실패한 식품은
    *    이 버튼을 다시 누를 때 같은 키로 다시 보낸다(실패 안내는 버튼 바로 위). `already_exists` 는 저장된 것으로 친다(`onError`).
+   * 🚨 **`allergy_exists` 가 나오면 여기서 한 번 멈춘다** (#825). 보호자는 "괜찮았어요" 로 답했는데 그 식품이 든 제안이
+   *    막히게 됐다 — 이유를 읽기 전에 시트가 닫히면 안 된다. 다음 누름에서 그 식품은 막힌 채로 넘어간다.
    */
   async function submit() {
     const results = await Promise.all(
-      toSave.map((item) =>
-        saveSafety.mutateAsync(item).then(
+      toSave.map((item) => {
+        const answer: SavedAnswer = answers[item] === "has" ? "has" : "none";
+        return saveSafety.mutateAsync({ item, answer }).then(
           () => true,
           (error: unknown) => isApiError(error, "already_exists"),
-        ),
-      ),
+        );
+      }),
     );
     if (!results.every(Boolean)) return;
-    onConfirm({ blockedSuggestionIds, allergyItems: blockedByAllergyOnly ? allergyItems : [] });
+    onConfirm({
+      blockedSuggestionIds,
+      allergyItems: blockedByAllergyOnly ? blockingItems : [],
+    });
   }
 
   const allergyNames = allergyItems.join(", ");
@@ -211,9 +250,8 @@ export function SafetyCheckSheet({
       onClose={onCancel}
       dismissible={false}
       title="확인해 주세요"
-      // 🚨 저장되는 것은 "알레르기가 있어요" 뿐이다. "고른 내용이 저장돼요" 라고 하면 괜찮았어요 · 모르겠어요도
-      //    기록에 남는다고 읽힌다 (괜찮았던 식품 저장은 #825).
-      description="고르기 전에 알레르기부터 확인해요. 알레르기가 있다고 답한 식품만 아래 버튼을 누를 때 기록에 저장돼요."
+      // 🚨 "모르겠어요" 는 저장하지 않는다. "고른 내용이 저장돼요" 라고 하면 그것도 남는다고 읽힌다.
+      description="고르기 전에 알레르기부터 확인해요. 알레르기가 있거나 먹어 봤고 괜찮았던 식품은 아래 버튼을 누를 때 저장돼요. 모르겠어요는 저장하지 않아요."
       footer={
         <div className="flex flex-col gap-2">
           {/* 🚨 **실패 안내는 버튼 바로 위다** (#823 리뷰). 본문 맨 아래에 두면 고정된 아래 영역에 깔려서,
@@ -221,20 +259,30 @@ export function SafetyCheckSheet({
               실패한 식품만 다시 보내고, 다 저장되면 고르기로 넘어간다. 실패를 빨강으로 칠하지 않는다. */}
           {failedItems.length > 0 && !busy ? (
             <CardFailed>
-              {josa(failedItems.join(", "), "을/를")} 알레르기 기록에 저장하지 못했어요. 아직
-              아무것도 고르지 않았어요.
+              {josa(failedItems.join(", "), "을/를")} 저장하지 못했어요. 아직 아무것도 고르지
+              않았어요.
               {savedItems.length > 0
                 ? ` ${josa(savedItems.join(", "), "은/는")} 저장했어요.`
                 : null}
             </CardFailed>
           ) : !answeredAll ? (
             <p className="text-body-sm text-ink-muted">식품마다 하나씩 골라 주세요</p>
-          ) : unknownLeft && !allBlocked ? (
-            <p className="text-body-sm text-ink-muted">아직 모르는 식품이 포함돼 있어요</p>
-          ) : null}
+          ) : (
+            <>
+              {/* 누르기 전에는 "저장해요" — 저장이 끝난 것은 카드가 글자로 말한다. */}
+              {toleratedToSave.length > 0 ? (
+                <p className="text-body-sm text-ink-muted">
+                  {josa(toleratedToSave.join(", "), "은/는")} 괜찮았던 식품으로 저장해요
+                </p>
+              ) : null}
+              {unknownLeft && !allBlocked ? (
+                <p className="text-body-sm text-ink-muted">아직 모르는 식품이 포함돼 있어요</p>
+              ) : null}
+            </>
+          )}
           {/*
-           * 🚨 **이 버튼이 승인 게이트 ㉡ 다** — 저장할 알레르기가 있을 때만. 그때만 `approve` 표식을
-           *    쓰고, 저장할 것이 없으면 고르기를 이어 가는 버튼이라 표식이 없다.
+           * 🚨 **이 버튼이 승인 게이트 ㉡ 다** — 저장할 것(알레르기 · 괜찮았던 식품)이 있을 때만. 그때만
+           *    `approve` 표식을 쓰고, 저장할 것이 없으면 고르기를 이어 가는 버튼이라 표식이 없다.
            */}
           <Button
             variant={toSave.length > 0 ? "approve" : "primary"}
@@ -253,10 +301,16 @@ export function SafetyCheckSheet({
                     failedItems.length > 0
                     ? allBlocked
                       ? "다시 저장하기"
-                      : "다시 저장하고 나머지 고르기"
+                      : blockedChecks.length > 0
+                        ? "다시 저장하고 나머지 고르기"
+                        : "다시 저장하고 고르기"
                     : allBlocked
-                      ? "알레르기 저장하기"
-                      : "저장하고 나머지 고르기"
+                      ? toleratedToSave.length > 0
+                        ? "저장하기"
+                        : "알레르기 저장하기"
+                      : blockedChecks.length > 0
+                        ? "저장하고 나머지 고르기"
+                        : "저장하고 고르기"
                   : allBlocked
                     ? "확인했어요"
                     : blockedChecks.length > 0
@@ -288,7 +342,23 @@ export function SafetyCheckSheet({
               ? "고른 제안에 모두 알레르기 식품이 들어가 있어서 이번에는 고를 수 있는 제안이 없어요. 앞으로의 제안에서도 빼요."
               : `${josa(allergyNames, "이/가")} 들어간 제안은 고르지 않고, 앞으로의 제안에서도 빼요.`}
           </Banner>
-        ) : items.length > 0 && !answeredAll ? (
+        ) : null}
+
+        {conflictItems.length > 0 ? (
+          // 🚨 알레르기가 이긴다 (#825). 보호자는 괜찮았어요로 답했지만 그사이 같은 이름이 알레르기로 등록됐다.
+          <Banner
+            tone="danger"
+            title={`${josa(conflictItems.join(", "), "은/는")} 알레르기로 등록돼 있어요`}
+          >
+            그사이 알레르기로 등록돼서 괜찮았던 식품으로 저장하지 않았어요.{" "}
+            {josa(conflictItems.join(", "), "이/가")} 들어간 제안은 고르지 않아요.
+          </Banner>
+        ) : null}
+
+        {allergyItems.length === 0 &&
+        conflictItems.length === 0 &&
+        items.length > 0 &&
+        !answeredAll ? (
           <Banner tone="caution" title="처음 보는 식품이 있어요">
             아이 알레르기 기록에 없는 식품이에요. 먹어본 적이 있는지 알려 주세요.
           </Banner>
@@ -311,7 +381,15 @@ export function SafetyCheckSheet({
             onAnswer={(value) => {
               if (!busy) setAnswers((prev) => ({ ...prev, [item]: value }));
             }}
-            saved={saveState[item] === "saved"}
+            locked={
+              saveState[item] === "conflict"
+                ? "conflict"
+                : saveState[item] === "saved"
+                  ? answers[item] === "has"
+                    ? "allergy"
+                    : "tolerated"
+                  : null
+            }
           />
         ))}
       </div>
@@ -324,7 +402,7 @@ function SafetyCheck({
   suggestionCount,
   value,
   onAnswer,
-  saved,
+  locked,
 }: {
   item: string;
   /** 이 식품이 든 고른 제안 수. 둘 이상일 때만 말한다. */
@@ -332,10 +410,11 @@ function SafetyCheck({
   value: SafetyAnswer | undefined;
   onAnswer: (value: SafetyAnswer) => void;
   /**
-   * 🚨 알레르기 기록에 저장이 끝났다. 서버에 있는 기록을 화면에서 풀 수 없어 답을 바꾸지 못하게 한다.
-   *    칩을 `disabled` 로 잠그면 세 칩이 다 같은 회색이라 어느 답이 저장됐는지 사라진다 — 칩 대신 답을 글자로 둔다.
+   * 🚨 서버에 저장이 끝났거나(`allergy` · `tolerated`) 서버가 알레르기라고 했다(`conflict`). 서버에 있는 기록을 화면에서
+   *    풀 수 없어 답을 바꾸지 못하게 한다. 칩을 `disabled` 로 잠그면 세 칩이 다 같은 회색이라 어느 답인지 사라진다 —
+   *    칩 대신 답을 글자로 둔다.
    */
-  saved: boolean;
+  locked: "allergy" | "tolerated" | "conflict" | null;
 }) {
   return (
     <section className="border-line rounded-card bg-surface border p-4">
@@ -347,9 +426,14 @@ function SafetyCheck({
           고른 제안 {suggestionCount}개에 들어 있어요
         </p>
       ) : null}
-      {saved ? (
+      {locked ? (
         <p className="text-body-sm text-ink mt-2">
-          알레르기가 있다고 답했어요. 알레르기 기록에 저장했어요.
+          {locked === "allergy"
+            ? "알레르기가 있다고 답했어요. 알레르기 기록에 저장했어요."
+            : locked === "tolerated"
+              ? "먹어 봤고 괜찮았다고 답했어요. 괜찮았던 식품으로 저장했어요."
+              : // 이유와 결과는 위 배너가 말한다 — 여기서 되풀이하지 않는다.
+                "알레르기로 등록돼 있어요."}
         </p>
       ) : (
         <>

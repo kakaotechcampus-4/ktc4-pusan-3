@@ -804,7 +804,8 @@ test.describe("승인 게이트 ㉡ — 알레르기 확인은 채택보다 먼�
 
     await sheet.getByRole("button", { name: "먹어 봤고 괜찮았어요" }).click();
     await expect(sheet.getByText("계란을 알레르기 기록에 추가해요")).toHaveCount(0);
-    await expect(sheet.getByRole("button", { name: "이대로 고르기" })).toBeEnabled();
+    await expect(sheet.getByText("계란은 괜찮았던 식품으로 저장해요")).toBeVisible();
+    await expect(sheet.getByRole("button", { name: "저장하고 고르기" })).toBeEnabled();
     expect(writes(calls, "POST", /\/health-safety$/)).toEqual([]);
   });
 
@@ -874,16 +875,14 @@ test.describe("승인 게이트 ㉡ — 알레르기 확인은 채택보다 먼�
     await expect(
       page.getByRole("status").filter({ hasText: "계란이 들어간 제안은 고를 수 없어요" }),
     ).toBeVisible();
-    await expect(page.getByText("알레르기 기록에 저장하지 못했어요", { exact: false })).toHaveCount(
-      0,
-    );
+    await expect(page.getByText("저장하지 못했어요", { exact: false })).toHaveCount(0);
   });
 
-  test('"괜찮았어요" 는 알레르기 기록을 만들지 않는다', async ({ page }) => {
+  test('"모르겠어요" 는 아무것도 저장하지 않고, 그때 버튼은 게이트가 아니다', async ({ page }) => {
     const calls = recordApi(page);
     const sheet = await pickEggAndAdopt(page);
-    await sheet.getByRole("button", { name: "먹어 봤고 괜찮았어요" }).click();
-    // 🚨 저장할 알레르기가 없으면 이 버튼은 게이트가 아니다 — 표식이 서면 게이트가 는 것처럼 읽힌다.
+    await sheet.getByRole("button", { name: "모르겠어요" }).click();
+    // 🚨 저장할 것이 없으면 이 버튼은 게이트가 아니다 — 표식이 서면 게이트가 는 것처럼 읽힌다.
     await expectNoGate(page, "dialog[open]");
     await sheet.getByRole("button", { name: "이대로 고르기" }).click();
     await expect(page.getByText("이렇게 하기로 했어요")).toBeVisible();
@@ -923,7 +922,7 @@ test.describe("승인 게이트 ㉡ — 알레르기 확인은 채택보다 먼�
       }),
     ).toBe(201);
     for (const card of await sheet.locator("section").all()) {
-      await card.getByRole("button", { name: "먹어 봤고 괜찮았어요" }).click();
+      await card.getByRole("button", { name: "모르겠어요" }).click();
     }
     await sheet.getByRole("button", { name: "이대로 고르기" }).click();
 
@@ -1027,9 +1026,7 @@ test.describe("승인 게이트 ㉡ — 저장 실패 (#823)", () => {
     }
     await sheet.getByRole("button", { name: "저장하고 나머지 고르기" }).click();
 
-    const failed = sheet
-      .getByRole("status")
-      .filter({ hasText: "대두를 알레르기 기록에 저장하지 못했어요" });
+    const failed = sheet.getByRole("status").filter({ hasText: "대두를 저장하지 못했어요" });
     await expect(failed).toBeVisible();
     await expect(failed).toContainText("계란은 저장했어요");
     // 🚨 실패 안내는 버튼 바로 위다 — 본문 맨 아래에 두면 고정된 아래 영역에 깔려 화면에서 안 보였다.
@@ -1054,6 +1051,114 @@ test.describe("승인 게이트 ㉡ — 저장 실패 (#823)", () => {
     expect(soy).toHaveLength(2);
     expect(soy[1].idempotencyKey).toBe(soy[0].idempotencyKey);
     expect(writes(calls, "POST", /\/suggestions\/approve$/)).toEqual([]);
+  });
+});
+
+test.describe("괜찮았던 식품 (#825)", () => {
+  test('"괜찮았어요" 는 버튼을 누를 때 괜찮았던 식품으로 저장되고, 11 프로필에서 보고 뺄 수 있다', async ({
+    page,
+  }) => {
+    const calls = recordApi(page);
+    await page.goto(SUGGESTIONS);
+    await page.getByText("계란말이에 시금치를 조금 섞어 보세요").click();
+    await page.getByRole("button", { name: "이 1가지로 할게요" }).click();
+    const sheet = page.getByRole("dialog", { name: "확인해 주세요" });
+    await sheet.getByRole("button", { name: "먹어 봤고 괜찮았어요" }).click();
+
+    // 🚨 괜찮았던 식품 저장도 게이트 ㉡ 다 — 건강 기록을 확정한다.
+    expect(await gateMarks(page, "dialog[open]")).toContain("approve 버튼: 저장하고 고르기");
+    await sheet.getByRole("button", { name: "저장하고 고르기" }).click();
+    await expect(page.getByText("이렇게 하기로 했어요")).toBeVisible();
+
+    const saved = writes(calls, "POST", /\/health-safety$/);
+    expect(saved).toHaveLength(1);
+    expect(saved[0].idempotencyKey).toBeTruthy();
+    expect(saved[0].body).toMatchObject({ type: "allergy", label: "계란", tolerated: true });
+
+    // 🚨 `page.goto` 로 가면 목 상태가 날아간다 — 앱 안의 길로 간다.
+    await page.getByRole("link", { name: "홈으로" }).last().click();
+    await page.getByRole("link", { name: "아이" }).click();
+
+    const row = page.getByRole("button", { name: "괜찮았던 식품 1개" });
+    await expect(row).toBeVisible();
+    // 🚨 알레르기 목록과 섞이지 않는다. 목록이 뜬 뒤에 보고(받는 중에 보면 늘 0개다), 범위는 구역의 알레르기
+    //    목록이다 — 닫힌 시트도 DOM 에 있어서 `main li` 로 보면 시트 안의 계란이 잡힌다.
+    const allergies = page.locator('[data-tour="safety"] > ul');
+    await expect(allergies.getByText("우유")).toBeVisible();
+    await expect(allergies.getByText("계란")).toHaveCount(0);
+    // 🚨 평가로 읽히는 색도, 게이트 표식도 없다.
+    await expectNoGate(page);
+
+    await row.click();
+    const list = page.getByRole("dialog", { name: "괜찮았던 식품" });
+    await list.getByRole("button", { name: "계란 빼기" }).click();
+    await expect(list.getByText("계란을 빼면 다음 제안에서 다시 물어요.")).toBeVisible();
+    // 🚨 빼면 더 묻는 쪽이라 빨강이 아니다. 보호자가 직접 누르는 삭제라 게이트 표식도 없다.
+    expect(await gateMarks(page, "dialog[open]")).toEqual([]);
+    await list.getByRole("button", { name: "뺄게요" }).click();
+
+    await expect(row).toHaveCount(0);
+    expect(writes(calls, "DELETE", /\/health-safety\/[^/]+$/)).toHaveLength(1);
+  });
+
+  test("그사이 같은 식품이 알레르기로 등록됐으면 알레르기가 이기고, 이유를 읽게 한 번 멈춘다", async ({
+    page,
+  }) => {
+    const calls = recordApi(page);
+    await page.goto(SUGGESTIONS);
+    await page.getByText("계란말이에 시금치를 조금 섞어 보세요").click();
+    await page.getByRole("button", { name: "이 1가지로 할게요" }).click();
+    const sheet = page.getByRole("dialog", { name: "확인해 주세요" });
+
+    expect(
+      await asOtherCaregiver(page, {
+        method: "POST",
+        path: `/children/${CHILD}/health-safety`,
+        body: { type: "allergy", label: "계란" },
+        idempotent: true,
+      }),
+    ).toBe(201);
+    await sheet.getByRole("button", { name: "먹어 봤고 괜찮았어요" }).click();
+    await sheet.getByRole("button", { name: "저장하고 고르기" }).click();
+
+    // 🚨 409 allergy_exists 는 실패가 아니다 — 다시 시도가 없고, 그 식품이 든 제안은 막는다.
+    await expect(sheet.getByText("계란은 알레르기로 등록돼 있어요")).toBeVisible();
+    await expect(sheet.getByText("저장하지 못했어요", { exact: false })).toHaveCount(0);
+    expect(writes(calls, "POST", /\/suggestions\/approve$/)).toEqual([]);
+
+    await sheet.getByRole("button", { name: "확인했어요" }).click();
+    await expect(sheet).toBeHidden();
+    await expect(
+      page.getByRole("status").filter({ hasText: "계란이 들어간 제안은 고를 수 없어요" }),
+    ).toBeVisible();
+    expect(writes(calls, "POST", /\/suggestions\/approve$/)).toEqual([]);
+  });
+});
+
+test.describe("괜찮았던 식품 — 답을 바꿔 다시 보낼 때 (#825)", () => {
+  test.use({ scenario: "safety_save_fail" });
+
+  test("알레르기로 보냈다 실패한 뒤 괜찮았어요로 바꾸면 다른 키로 보낸다", async ({ page }) => {
+    const calls = recordApi(page);
+    await page.goto(SUGGESTIONS);
+    await page.getByText("두부를 부쳐서 한 조각 곁들여 보세요").click();
+    await page.getByRole("button", { name: "이 1가지로 할게요" }).click();
+    const sheet = page.getByRole("dialog", { name: "확인해 주세요" });
+
+    await sheet.getByRole("button", { name: "알레르기가 있어요" }).click();
+    await sheet.getByRole("button", { name: "알레르기 저장하기" }).click();
+    await expect(sheet.getByText("대두를 저장하지 못했어요", { exact: false })).toBeVisible();
+
+    await sheet.getByRole("button", { name: "먹어 봤고 괜찮았어요" }).click();
+    await sheet.getByRole("button", { name: "다시 저장하고 고르기" }).click();
+    await expect.poll(() => writes(calls, "POST", /\/health-safety$/).length).toBe(2);
+
+    // 🚨 본문이 다르면 키도 다르다. 같은 키면 실서버는 처음 응답(알레르기)을 재생하거나 422 로 막는다.
+    const [first, second] = writes(calls, "POST", /\/health-safety$/);
+    expect(first.body).not.toHaveProperty("tolerated");
+    expect(second.body).toMatchObject({ label: "대두", tolerated: true });
+    expect(second.idempotencyKey).toBeTruthy();
+    expect(second.idempotencyKey).not.toBe(first.idempotencyKey);
   });
 });
 

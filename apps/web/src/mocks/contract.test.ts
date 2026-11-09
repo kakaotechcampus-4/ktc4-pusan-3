@@ -442,7 +442,11 @@ describe("일정 초안", () => {
       expect(approved.suggestions.map((s) => s.id)).toEqual([other.id]);
     });
 
-    it("retracted 로 내린 항목은 다시 묻지 않고, 그 제안은 목록에 남는다", async () => {
+    /**
+     * 🚨 **내린 기록은 다시 묻는다** (#825 · 서버 PR 3 · 11-08 시하님 확정). 한동안 묻지 않았는데, 그러면 잘못 등록했다
+     *    내린 식품이나 묶음 이름("견과류")으로 적었다 내린 식품을 영영 안 물었다.
+     */
+    it("retracted 로 내린 항목은 다시 묻고, 그 제안은 목록에 남는다", async () => {
       const [id, [allergen]] = Object.entries(suggestionAllergens).find(([, a]) => a.length > 0)!;
       const { safety } = await addHealthSafety(
         "c1",
@@ -453,7 +457,97 @@ describe("일정 초안", () => {
 
       const data = await fetchSuggestions();
       expect(data.suggestions.map((s) => s.id)).toContain(id);
-      expect(asked(data)).not.toContain(`${id}:${allergen}`);
+      expect(asked(data)).toContain(`${id}:${allergen}`);
+    });
+
+    describe("괜찮았던 식품 (#825 · 서버 PR 3)", () => {
+      const firstAllergen = () =>
+        Object.entries(suggestionAllergens).find(([, a]) => a.length > 0)! as [string, string[]];
+      const list = () => api.get<HealthSafetyListResponse>("/children/c1/health-safety");
+
+      it("tolerated 로 저장하면 알레르기 목록이 아니라 tolerated 에 서고, 다음 사전검사에서 묻지 않는다", async () => {
+        const [id, [allergen]] = firstAllergen();
+        await addHealthSafety(
+          "c1",
+          { type: "allergy", label: allergen, tolerated: true },
+          newIdempotencyKey(),
+        );
+
+        const saved = await list();
+        expect(saved.items.map((i) => i.label)).not.toContain(allergen);
+        expect(saved.tolerated.map((i) => i.label)).toEqual([allergen]);
+        // 묻지 않지만 막지도 않는다 — 제안은 목록에 남는다.
+        const data = await fetchSuggestions();
+        expect(data.suggestions.map((s) => s.id)).toContain(id);
+        expect(asked(data)).not.toContain(`${id}:${allergen}`);
+      });
+
+      it("🚨 같은 이름이 알레르기면 409 allergy_exists 이고 저장되지 않는다 — 알레르기가 이긴다", async () => {
+        const [, [allergen]] = firstAllergen();
+        await addHealthSafety("c1", { type: "allergy", label: allergen }, newIdempotencyKey());
+
+        await expect(
+          addHealthSafety(
+            "c1",
+            { type: "allergy", label: allergen, tolerated: true },
+            newIdempotencyKey(),
+          ),
+        ).rejects.toSatisfy((e: unknown) => isApiError(e, "allergy_exists"));
+        expect((await list()).tolerated).toEqual([]);
+      });
+
+      it("이미 괜찮았던 식품이면 409 already_exists 다", async () => {
+        const [, [allergen]] = firstAllergen();
+        const body = { type: "allergy", label: allergen, tolerated: true };
+        await addHealthSafety("c1", body, newIdempotencyKey());
+        await expect(addHealthSafety("c1", body, newIdempotencyKey())).rejects.toSatisfy(
+          (e: unknown) => isApiError(e, "already_exists"),
+        );
+      });
+
+      it("같은 이름을 알레르기로 등록하면 괜찮았던 식품에서 빠진다", async () => {
+        const [, [allergen]] = firstAllergen();
+        await addHealthSafety(
+          "c1",
+          { type: "allergy", label: allergen, tolerated: true },
+          newIdempotencyKey(),
+        );
+        await addHealthSafety("c1", { type: "allergy", label: allergen }, newIdempotencyKey());
+
+        const after = await list();
+        expect(after.tolerated).toEqual([]);
+        expect(after.items.map((i) => i.label)).toContain(allergen);
+      });
+
+      it("빼면(DELETE) 다음 사전검사에서 다시 묻는다", async () => {
+        const [id, [allergen]] = firstAllergen();
+        const { safety } = await addHealthSafety(
+          "c1",
+          { type: "allergy", label: allergen, tolerated: true },
+          newIdempotencyKey(),
+        );
+        await api.delete(`/children/c1/health-safety/${safety.id}`);
+
+        expect((await list()).tolerated).toEqual([]);
+        expect(asked(await fetchSuggestions())).toContain(`${id}:${allergen}`);
+      });
+
+      it("알레르기가 아니거나 심각도를 같이 보내면 400 이다", async () => {
+        await expect(
+          addHealthSafety(
+            "c1",
+            { type: "chronic_disease", label: "천식", tolerated: true },
+            newIdempotencyKey(),
+          ),
+        ).rejects.toSatisfy((e: unknown) => isApiError(e, "validation_failed"));
+        await expect(
+          addHealthSafety(
+            "c1",
+            { type: "allergy", label: "잣", severity: "class_2", tolerated: true },
+            newIdempotencyKey(),
+          ),
+        ).rejects.toSatisfy((e: unknown) => isApiError(e, "validation_failed"));
+      });
     });
   });
 
