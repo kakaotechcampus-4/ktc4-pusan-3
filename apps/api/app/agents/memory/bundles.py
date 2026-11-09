@@ -33,7 +33,8 @@ RECORD_BASE: frozenset[str] = frozenset(
     }
 )
 
-# 조회·수정·삭제 묶음: 관찰 query·update 10 + 일정 update · 준비물 update·delete 3 + 삭제 제안 1
+# 조회·수정·삭제 묶음: 관찰 query·update 10 + 일정 update · 준비물 update·delete 3 + 공지 조회 1
+# + 삭제 제안 1. 공지 조회는 읽기만 하고 조회 카드가 없다 (#832)
 # 관찰 · 일정을 지우는 tool 은 없다 — 제안을 보호자가 버튼으로 확정한다 (#535). 준비물은 아직
 # 채팅 확인으로 지운다 (후속 이슈)
 LOOKUP_EDIT: frozenset[str] = frozenset(
@@ -46,6 +47,7 @@ LOOKUP_EDIT: frozenset[str] = frozenset(
         "update_event",
         "update_event_item",
         "delete_event_item",
+        "query_notice",
         "propose_delete",
     }
 )

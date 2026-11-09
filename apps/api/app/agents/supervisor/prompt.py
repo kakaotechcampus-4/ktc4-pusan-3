@@ -45,6 +45,8 @@ _RECORD = """
   앞부분이 일어난 일처럼 보여도 observe 로 떼지 않고 문장 전체를 한 조각으로 둔다.
   단 "당근 말고 다 먹었어" 처럼 빼고 말하는 것은 정정이 아니라 observe 다.
   어린이집·유치원 급식을 바꾼다는 말은 기록 수정이 아니라 daycare_meal 이다.
+- 기관에서 받은 공지(알림장 · 가정통신문 · 기관 문자)의 내용을 묻는 말도 record/lookup_edit 이다.
+  급식 메뉴를 묻는 말만 request/food/daycare_lookup 이다.
 - 기록인지 요청인지 애매하면 record 로 보낸다.
   요청문 안에 섞인 사실 진술도 따로 떼어 record 로 보낸다.
 - "~것 같아" 처럼 확신이 약한 보호자의 인상도 record 다. 확신 정도는 Memory 가 판단한다.
@@ -157,6 +159,9 @@ _EXAMPLES = """
   + request/food/meal_recommendation "내일 소풍 도시락은 뭐가 좋을까?"
 - "다음 주 화요일 치과 예약 있어." → record/schedule
 - "지난주에 먹은 것 좀 보여줘." → record/lookup_edit
+- "공지 뭐 있어?" → record/lookup_edit
+- "어린이집 공지 뭐 왔어?" → record/lookup_edit (급식 메뉴를 묻는 말이 아니다)
+- "어제 온 알림장에 뭐라고 써 있었어?" → record/lookup_edit
 - "오늘 친구들이랑 자전거 타고 논 기록을 킥보드로 바꿔줘" → record/lookup_edit 문장 전체
 - "오늘 김밥말고 볶음밥 먹었대" → record/lookup_edit 문장 전체 (정정)
 - "오늘 놀이터가 아니라 공원에서 놀았어" → record/lookup_edit 문장 전체 (장소 정정)

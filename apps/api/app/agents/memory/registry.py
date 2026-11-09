@@ -14,6 +14,7 @@ from app.agents.common.tool_schema import ToolDefinition, build_tool_specs
 from app.agents.memory.context import AgentContext
 from app.agents.memory.result import ErrorCode, ToolResult, fail
 from app.agents.memory.schemas.tool_defs import TOOL_DEFINITIONS
+from app.agents.memory.tools.notice import NOTICE_HANDLERS
 from app.agents.memory.tools.observation import OBSERVATION_HANDLERS
 from app.agents.memory.tools.proposal import PROPOSAL_HANDLERS
 from app.agents.memory.tools.schedule import SCHEDULE_HANDLERS
@@ -24,6 +25,7 @@ ToolHandler = Callable[[AgentContext, Any], Awaitable[ToolResult]]
 TOOL_HANDLERS: dict[str, ToolHandler] = {
     **OBSERVATION_HANDLERS,
     **SCHEDULE_HANDLERS,
+    **NOTICE_HANDLERS,
     **PROPOSAL_HANDLERS,
 }
 _DEFINITIONS: dict[str, ToolDefinition] = {

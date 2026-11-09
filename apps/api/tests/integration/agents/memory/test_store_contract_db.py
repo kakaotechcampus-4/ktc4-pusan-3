@@ -14,6 +14,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.memory.context import AgentContext
 from app.agents.memory.drafts import EventDraft
+from app.agents.memory.store import NoticeRow
+from app.core.notice_extract import ItemDetail
 from app.domains.child.models import Child
 from app.domains.identity.models import Parent
 from app.domains.memory.observation.models import (
@@ -24,6 +26,16 @@ from app.domains.memory.observation.models import (
     ObservationRoutine,
 )
 from app.domains.memory.store.db_store import DbMemoryStore
+from app.domains.notice.assemble import NewNotice, NewNoticeItem, content_hash
+from app.domains.notice.models import (
+    NoticeAudience,
+    NoticeDocKind,
+    NoticeInputFormat,
+    NoticeItem,
+    NoticeItemHandling,
+    NoticeItemTarget,
+)
+from app.domains.notice.repository import save_notice
 from app.domains.schedule.models import EventCreatedBy, EventItem
 from app.domains.schedule.repository import create_event, create_event_item
 from tests.unit.agents.memory.store_contract import CASES, KST, NOW, Scenario
@@ -84,6 +96,51 @@ class DbHarness:
             update(EventItem).where(EventItem.item_id == UUID(item_id)).values(prepared_at=when)
         )
 
+    async def seed_notice(self, notice: NoticeRow) -> None:
+        saved = await save_notice(
+            self._session,
+            child_id=self.context.child_id,
+            uploader_parent_id=self.context.source_writer,
+            notice=NewNotice(
+                doc_kind=NoticeDocKind(notice.doc_kind),
+                input_format=NoticeInputFormat(notice.input_format),
+                audience_scope=NoticeAudience(notice.audience_scope),
+                issued_on=notice.issued_on,
+                received_at=notice.received_at,
+                title=notice.title,
+                raw_text=notice.raw_text,
+                content_hash=content_hash(notice.raw_text),
+                is_correction=notice.relation == "correction",
+                items=tuple(
+                    NewNoticeItem(
+                        handling=NoticeItemHandling(i.handling),
+                        label=i.label,
+                        title=i.title,
+                        target_scope=NoticeItemTarget(i.target_scope),
+                        starts_at=i.starts_at,
+                        ends_at=i.ends_at,
+                        all_day=i.all_day,
+                        due_at=i.due_at,
+                        due_all_day=i.due_all_day,
+                        details=tuple(ItemDetail(name=n, value=v) for n, v in i.details),
+                        supplies=i.supplies,
+                        source_quote=i.source_quote,
+                        needs_review=False,
+                        review_reason=None,
+                    )
+                    for i in notice.items
+                ),
+            ),
+        )
+        # done_at 은 저장 경로에 없다 — 받은 순서의 id 로 채운다
+        for item, item_id in zip(notice.items, saved.item_ids, strict=True):
+            if item.done_at is not None:
+                await self._session.execute(
+                    update(NoticeItem).where(NoticeItem.id == item_id).values(done_at=item.done_at)
+                )
+        await self._session.flush()
+        self._session.expire_all()
+
 
 @pytest.fixture
 async def harness(session: AsyncSession) -> DbHarness:
@@ -101,3 +158,35 @@ async def test_store_계약_DB(
     harness: DbHarness, scenario: Scenario, params: dict[str, Any]
 ) -> None:
     await scenario(harness, **params)
+
+
+async def test_다른_아이_공지는_찾지_않는다(session: AsyncSession, harness: DbHarness) -> None:
+    other = Child(
+        owner_parent_id=harness.context.source_writer,
+        nickname="다른아이",
+        birth_date=date(2022, 1, 1),
+    )
+    session.add(other)
+    await session.flush()
+    raw_text = "다른 아이만 받은 공지입니다."
+    await save_notice(
+        session,
+        child_id=other.id,
+        uploader_parent_id=harness.context.source_writer,
+        notice=NewNotice(
+            doc_kind=NoticeDocKind.NEWSLETTER,
+            input_format=NoticeInputFormat.TEXT,
+            audience_scope=NoticeAudience.CLASS,
+            issued_on=None,
+            received_at=NOW,
+            title="다른 아이 공지",
+            raw_text=raw_text,
+            content_hash=content_hash(raw_text),
+            is_correction=False,
+            items=(),
+        ),
+    )
+
+    found = await harness.store.query_notices(child_id=harness.context.child_id, limit=5)
+
+    assert found == []

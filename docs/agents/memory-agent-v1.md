@@ -42,13 +42,14 @@ raw_text ──▶ run()  ──▶ [ LLM: tool 선택 + 인자 추출 ]
 pipeline 을 거치는 경로에서는 `pipeline.handle_input()` 이 Supervisor → Memory → Food 순서로 부른다.
 `run()` 을 직접 부르는 것은 Supervisor 없이 Memory 만 잴 때다.
 
-### tool 22개
+### tool 23개
 
 | 묶음 | 개수 | 이름 |
 | --- | --- | --- |
 | observation | 15 | `create/query/update_observation_{food,health,education,activity,routine}` |
 | event | 3 | `create/query/update_event` |
 | event_item | 3 | `create/update/delete_event_item` |
+| 공지 조회 | 1 | `query_notice` (#832, D17) |
 | 삭제 제안 | 1 | `propose_delete` (#535, D16) |
 
 `routine` 은 #107 에서 다섯 번째 도메인으로 붙었다. 생활 행동(양치·정리·인사)이 `activity` 에 섞여
@@ -551,6 +552,33 @@ update 는 `raw_text` 를 고치지 않아서 원문은 바뀌기 전 말("떡�
 - **카드는 Memory commit 뒤에 낸다.** 제안은 store 포트로 commit 때 저장되고, pipeline 이 commit 뒤
   `load_cards` 로 행을 읽은 다음 `DeleteProposed` 를 낸다. 조회만 하고 끝난 조회 · 수정 run 은 같은 탭 모양의
   `FoundTabs`(보기 전용)를 낸다.
+
+### D17. 기관 공지는 읽기만 하고, 원문은 읽어서 요약해 답한다 (#832)
+
+기관에서 받아 보호자가 확인하고 저장한 공지(`notice` · `notice_item`)를 "공지 뭐 있어?" 로 물을 수 있다.
+`query_notice` 하나가 조회 묶음(`LOOKUP_EDIT`)에만 열려 있고, 공지를 고치거나 지우거나 관찰 · 일정으로 저장하는 tool 은
+없다 (승인 게이트를 늘리지도 줄이지도 않는다).
+
+- **카드가 없다.** `context.found` 에 넣지 않아 조회 카드가 생기지 않고 답은 일반 `message` 로 나간다.
+  `agent._found()` 도 이 tool 을 세지 않는다.
+- **식별자는 store 포트에서부터 없다.** `NoticeRow` · `NoticeItemRow` 에는 `id` · `*_id` · `content_hash` 와
+  저장 메타(`extractor_version` · `created_at` · `updated_at`) 칸이 없다 (tool 이 빼는 게 아니라 애초에 안 담는다).
+  받은 때는 `received_at` 이 맡는다.
+- **날짜 · 요일은 코드가 만든다.** enum 은 한국어 라벨로, 시각은 `context.timezone` 의 `YYYY-MM-DD(요) HH:MM`
+  (종일이면 날짜만)으로 준다. 모델에게 UTC ISO 를 주지 않는다. 라벨 표는 enum 의 문자열 값을 키로 쓰고
+  (Agent 는 `domains` 를 import 하지 않는다), enum 이 늘면 단위 테스트가 깨진다.
+- **찾는 규칙은 두 store 가 같다.** 받은 시각 최신순 5건(원문이 같이 가서 40건은 입력이 크다). 날짜는 공지의 날
+  (`issued_on`, 없으면 받은 날) · 항목의 시작~끝 · 항목의 마감 중 하나라도 한국 시간 기준 기간에 걸리면 찾는다.
+  낱말은 공지 제목 · 원문 · 항목 제목 · 이름표, 종류는 `doc_kind`. 계약 시나리오가 InMemory · DB 를 같이 본다.
+- **원문(`raw_text`)은 모델이 읽는 자료다.** 장소 · 금액 · 준비물처럼 구체적인 질문에는 항목 칸과 원문을 읽고
+  묻은 만큼만 두세 문장으로 요약해 답한다. "원문 보여줘" 도 통째로 옮기지 않고 요약해 알린다. 답이 짧아서
+  Memory 답 한도(1400토큰)를 그대로 쓴다 — 원문을 옮기려던 첫 안은 긴 공지가 답 한도에서 잘려 JSON 조각이 화면에
+  나가는 문제가 있었고, 요약으로 바꾸면서 없어졌다. 복사 금지는 프롬프트 규칙이고 코드가 막지는 않는다.
+  라이브 eval 이 답과 원문이 50자 이상 연속으로 같은지를 본다.
+- **낱말로 찾아 0건이면 한 번 더 넓혀 본다.** "체험학습 가정통신문" 처럼 낱말을 여러 개 붙인 질문에서 모델이
+  0건을 보고 바로 "찾지 못했다" 고 답했다(라이브 첫 실행 5/5). 프롬프트에 낱말을 줄이거나 빼고 한 번 더 조회하라는
+  줄을 더하자 사라졌다.
+- **범위 밖.** "그거 장소가 어디야?" 처럼 앞 대화를 가리키는 말(#734 의 앞 대화는 request 조각에만 붙는다).
 
 ---
 
