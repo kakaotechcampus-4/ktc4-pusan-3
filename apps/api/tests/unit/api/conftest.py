@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 import pytest
 
 from app.agents.entrypoint import PendingMemoryContext
+from app.api import quota
 from app.api.runs import pending_reply, photo_run, suggestion_retry
 
 
@@ -179,3 +180,22 @@ def fake_photo_run_keep(monkeypatch: pytest.MonkeyPatch) -> list:
 
     monkeypatch.setattr(photo_run, "keep", keep)
     return kept
+
+
+@pytest.fixture(autouse=True)
+def fake_quota(monkeypatch: pytest.MonkeyPatch) -> dict:
+    """하루 입력 한도(`quota.consume`)를 메모리로.
+
+    판정은 tests/integration/api/test_rate_limits.py 가 건다.
+    """
+    counts: dict = {}
+
+    async def consume(*, parent_id, today, limit, now=None) -> bool:
+        used = counts.get((parent_id, today), 0)
+        if used >= limit:
+            return False
+        counts[(parent_id, today)] = used + 1
+        return True
+
+    monkeypatch.setattr(quota, "consume", consume)
+    return counts

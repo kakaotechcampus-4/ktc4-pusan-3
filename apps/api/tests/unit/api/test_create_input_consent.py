@@ -36,10 +36,10 @@ class DbDown(Exception):
 
 @pytest.fixture(autouse=True)
 def _clean_process_memory():
-    for module in (registry, idempotency, quota):
+    for module in (registry, idempotency):
         module.clear()
     yield
-    for module in (registry, idempotency, quota):
+    for module in (registry, idempotency):
         module.clear()
 
 
@@ -347,7 +347,11 @@ async def test_한도에_걸리면_되묻기_맥락의_표시를_푼다(
         child_id=CHILD,
         context=PendingMemoryContext("요즘 기침해", "언제부터였어요?", WorkType.OBSERVE),
     )
-    monkeypatch.setattr(quota, "consume", lambda **kwargs: False)
+
+    async def full(**kwargs):
+        return False
+
+    monkeypatch.setattr(quota, "consume", full)
 
     response = await client.post(URL, json={**BODY, "reply_to": "prev-run"}, headers=_key())
 

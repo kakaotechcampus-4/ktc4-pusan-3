@@ -49,16 +49,15 @@ BODY = {"text": "계란말이 또 찾아요", "source": "home_input"}
 def _clean_process_memory(monkeypatch):
     """채널과 Idempotency 기억은 프로세스 메모리라 테스트 사이에 샌다. 가짜 러너의 지연도 없앤다.
 
-    되묻기 맥락은 표(`run_hold`, #877)라 `pending_db` 가 테스트 트랜잭션에 묶는다.
+    되묻기 맥락 · 하루 한도는 표(`run_hold` · `rate_event`, #877)라 `pending_db` 가 테스트
+    트랜잭션에 묶는다.
     """
     registry.clear()
     idempotency.clear()
-    quota.clear()
     monkeypatch.setattr(runner, "DEMO_STEP_DELAY", 0.0)
     yield
     registry.clear()
     idempotency.clear()
-    quota.clear()
 
 
 @pytest.fixture(autouse=True)
@@ -627,7 +626,7 @@ async def test_한도가_풀리면_남겨_둔_맥락으로_이어_적는다(
     await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=with_key(headers))
     blocked = await db_client.post(INPUTS.format(cid=cid), json=body, headers=with_key(headers))
 
-    quota.clear()  # 날짜가 바뀐 것과 같다
+    await quota.reset()  # 날짜가 바뀐 것과 같다
     accepted = await db_client.post(INPUTS.format(cid=cid), json=body, headers=with_key(headers))
 
     assert blocked.status_code == 429

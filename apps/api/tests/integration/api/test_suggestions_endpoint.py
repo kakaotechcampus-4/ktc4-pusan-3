@@ -16,7 +16,7 @@ from app.agents.common.refs import EvidenceCitation, Ref
 from app.agents.common.suggestion import SuggestionDraft
 from app.agents.food.meal_review import GENERAL_REASON_REQUEST as FOOD_REQUESTED_REASON
 from app.agents.suggestion_save import SuggestionBatch
-from app.api import agent_ports, quota
+from app.api import agent_ports
 from app.api.runs import suggestion_retry
 from app.api.v1.schemas.suggestions import DocEvidenceOut
 from app.core import llm_usage
@@ -47,11 +47,9 @@ REAL_DOC_INDEX = entrypoint._doc_index
 
 @pytest.fixture(autouse=True)
 def _clean(monkeypatch, pending_db):
-    """05 다시 시도 보관함은 표(run_hold, #877)라 `pending_db` 가 테스트 트랜잭션에 묶는다."""
-    quota.clear()
+    """05 다시 시도 보관함 · 하루 한도는 표(run_hold · rate_event, #877)라 `pending_db` 가 테스트
+    트랜잭션에 묶는다."""
     monkeypatch.setattr(entrypoint, "_doc_index", lambda: {("activity_doc", DOC_ID): DOC_CARD})
-    yield
-    quota.clear()
 
 
 @pytest.fixture(autouse=True)

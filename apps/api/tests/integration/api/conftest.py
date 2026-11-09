@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.agents.entrypoint import PendingMemoryContext
 from app.agents.memory.schemas.task import WorkType
+from app.api import invite_attempts, quota
 from app.api.deps.auth import hash_token
 from app.api.runs import pending_reply, photo_run, suggestion_retry
 from app.domains.child.models import Child, ParentChild, ParentChildRelation
@@ -113,8 +114,8 @@ async def cid(session: AsyncSession, bearer: Bearer) -> uuid.UUID:
 
 @pytest.fixture
 async def pending_db(session: AsyncSession, monkeypatch: pytest.MonkeyPatch):
-    """보관함 표(`run_hold`, #877 — 되묻기 · 05 다시 시도 · 사진 run)가 테스트 트랜잭션 안에서 읽고
-    쓰게 한다.
+    """워커 밖 표(#877 — `run_hold` 의 되묻기 · 05 다시 시도 · 사진 run, `rate_event` 의 하루 한도 ·
+    초대 시도)가 테스트 트랜잭션 안에서 읽고 쓰게 한다.
 
     보관함 함수는 자기 세션을 열고 바로 commit 한다. 그대로 두면 바깥 트랜잭션 밖이라 테스트가
     만든 보호자 · 아이를 못 보고 FK 오류가 난다. 같은 연결에 savepoint 로 묶은 공장을 끼운다 —
@@ -125,7 +126,7 @@ async def pending_db(session: AsyncSession, monkeypatch: pytest.MonkeyPatch):
         expire_on_commit=False,
         join_transaction_mode="create_savepoint",
     )
-    for store in (pending_reply, suggestion_retry, photo_run):
+    for store in (pending_reply, suggestion_retry, photo_run, quota, invite_attempts):
         monkeypatch.setattr(store, "_session_factory", factory)
     return factory
 
