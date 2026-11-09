@@ -17,7 +17,8 @@ from app.agents.food.readouts import GENERAL_REASON_REQUESTED, READOUTS
 from app.agents.food.schemas.common import EvidenceRef
 from app.agents.food.schemas.recommend import GeneratedMeal, MealCandidate
 from app.agents.food.store import MenuCatalogRow, SafetyEntry
-from tests.unit.agents.food.support import MEAL_DOC, day, menu_row
+from app.agents.food.weaning_menu import weaning_menu_citation, weaning_menu_rows
+from tests.unit.agents.food.support import MEAL_DOC, NOW, day, menu_row
 
 REQUESTED_REASON = READOUTS.get(GENERAL_REASON_REQUESTED).template
 EGG = [SafetyEntry(kind="allergy", label="달걀", status="active")]
@@ -33,6 +34,7 @@ def recipe(name: str, *ingredients: str, **overrides: object) -> MenuCatalogRow:
     )
 
 
+WEANING = weaning_menu_rows(8, synced_at=NOW)[0]  # 쇠고기애호박죽
 PAPRIKA_STIR = recipe("파프리카볶음", "파프리카", "올리브유")
 TOFU = recipe("두부조림", "두부", "간장")
 CUCUMBER = recipe("오이무침", "오이", "참기름")
@@ -366,7 +368,7 @@ class TestInfantKeepsRecipeBookOnly:
     """생성할 수 없는 단계(돌 이전)에서는 조건 검사 · 요청 기반 문구를 적용하지 않는다.
 
     재료 조건 검사를 그대로 걸면 레시피북에 그 재료가 없을 때 모델이 빠져나갈 길이 없다 — 레시피는
-    조건 불일치로 막히고 생성은 단계로 막힌다. 이유기는 지금처럼 레시피북 메뉴만 낸다.
+    조건 불일치로 막히고 생성은 단계로 막힌다. 이유기는 이유식 식단 표 메뉴만 낸다(#399).
     """
 
     def test_레시피가_조건과_안_맞아도_거절하지_않는다(self) -> None:
@@ -386,8 +388,47 @@ class TestInfantKeepsRecipeBookOnly:
             [pick("쌀미음")], request=ASKED, sampled=[porridge], stage="infant_weaning", months=8
         ).picks
 
-        assert item.draft.reason == "이 시기 아기들이 많이 먹는 재료예요."
+        assert item.draft.reason == "이 시기 이유식 단계에 맞춘 메뉴예요."
         assert item.draft.requested is False
+
+    def test_이유식_식단_메뉴의_일반_추천은_food_doc_식단_행이_근거다(self) -> None:
+        (item,) = review(
+            [pick(WEANING.menu_key, evidence=[])],
+            request=NO_REQUEST,
+            sampled=[WEANING],
+            stage="infant_weaning",
+            months=8,
+        ).picks
+
+        assert item.draft.kind == "general"
+        assert item.draft.reason == "이 시기 이유식 단계에 맞춘 메뉴예요."
+        assert item.draft.citations == (weaning_menu_citation(WEANING),)
+
+    def test_이유식_메뉴도_아이_기록을_인용하면_개인화이고_식단_근거는_버린다(self) -> None:
+        key = uuid4()
+        seen = {
+            key: RankedEvidence(
+                ref=Ref(kind="observation_food", id=key),
+                tier=3,
+                label="애호박",
+                polarity=1,
+                observed_on=day(1),
+                subject="애호박",
+            )
+        }
+        cite = EvidenceRef(kind="observation_food", id=str(key), note="애호박을 잘 먹음")
+
+        (item,) = review(
+            [pick(WEANING.menu_key, evidence=[cite])],
+            request=NO_REQUEST,
+            sampled=[WEANING],
+            seen=seen,
+            stage="infant_weaning",
+            months=8,
+        ).picks
+
+        assert item.draft.kind == "personalized"
+        assert [c.ref.kind for c in item.draft.citations] == ["observation_food"]
 
     def test_유아식_단계에서는_조건_검사가_계속_걸린다(self) -> None:
         result = review([pick("두부조림")], request=ASKED, sampled=[TOFU])
