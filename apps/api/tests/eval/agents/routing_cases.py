@@ -9,6 +9,7 @@
 - T01~T30    라이브 eval 입력의 정답 Supervisor 출력. Step 7 이 Memory 힌트로 쓰고,
              Supervisor 채점에서는 "쉬운 30개" 대조군이 된다
 - T35~T69    아이가 한 일이 아닌 말(unclear)과 그대로 기록되는 말 대조 (#624 · #484 · #642)
+- NT01~NT06  기관 공지를 묻는 말(record/lookup_edit)과 급식 조회(daycare_lookup) 대조 (#832)
 - T70~T75    날짜의 기준점 — 오늘 기준 · 일정 기준 · 하루로 안 정해지는 말 (#497)
 - score_split()  Step 5(Supervisor 단독)와 Step 9(끝까지)가 같은 기준으로 잰다
 
@@ -1316,8 +1317,43 @@ DATE_CASES: tuple[RoutingCase, ...] = (
     ),
 )
 
+# ── NT01~NT06 — 기관 공지 조회 (#832) ───────────────────────────
+# 공지의 내용을 묻는 말은 Memory 가 읽어 요약한다(record/lookup_edit).
+# 급식 메뉴만 daycare_lookup 이다
+NT_CASES: tuple[RoutingCase, ...] = (
+    RoutingCase("NT01", "공지 뭐 있어?", (R("공지 뭐 있어?", LOOKUP_EDIT),)),
+    RoutingCase(
+        "NT02",
+        "어린이집 공지 뭐 왔어?",
+        (R("어린이집 공지 뭐 왔어?", LOOKUP_EDIT),),
+        watch="기관 신호가 있어도 급식을 묻는 말이 아니다",
+    ),
+    RoutingCase(
+        "NT03",
+        "이번 주 가정통신문 준비물 뭐였지?",
+        (R("이번 주 가정통신문 준비물 뭐였지?", LOOKUP_EDIT),),
+    ),
+    RoutingCase(
+        "NT04",
+        "운동회 공지에 장소가 어디라고 했지?",
+        (R("운동회 공지에 장소가 어디라고 했지?", LOOKUP_EDIT),),
+        watch="공지의 구체적인 내용을 묻는 말 — 요약해 답한다",
+    ),
+    RoutingCase(
+        "NT05",
+        "알림장에 숙제 있었어?",
+        (R("알림장에 숙제 있었어?", LOOKUP_EDIT),),
+    ),
+    RoutingCase(
+        "NT06",
+        "내일 어린이집 점심 뭐 나와?",
+        (Q("내일 어린이집 점심 뭐 나와?", FOOD, LOOKUP),),
+        watch="대조 — 급식 메뉴를 묻는 말은 daycare_lookup 그대로 (RC26 과 같은 모양)",
+    ),
+)
+
 ALL_CASES: tuple[RoutingCase, ...] = (
-    RC_CASES + T_CASES + GR_CASES + FC_CASES + HR_CASES + UNCLEAR_CASES + DATE_CASES
+    RC_CASES + T_CASES + GR_CASES + FC_CASES + HR_CASES + UNCLEAR_CASES + DATE_CASES + NT_CASES
 )
 CASES_BY_ID: dict[str, RoutingCase] = {case.case_id: case for case in ALL_CASES}
 
