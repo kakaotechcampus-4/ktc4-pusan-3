@@ -83,6 +83,28 @@ def test_menu_key_ignores_allergen_numbers_and_spacing():
     assert menu_key("연근조림5,6") != menu_key("우엉조림5,6")
 
 
+def test_menu_key_ignores_trailing_separator_from_the_cell():
+    # 11-09 첫 측정: 칸의 쉼표가 메뉴 끝에 붙어 나온 것이 10끼니
+    assert menu_key("누룽지죽,") == menu_key("누룽지죽")
+    assert menu_key("찐만두1,2,5,6,10,15,16,18,") == menu_key("찐만두1,2,5,6,10,15,16,18")
+    assert menu_key("빵(프렌치토스트1,2,5,6),") == menu_key("빵(프렌치토스트)1,2,5,6")
+
+
+def test_menu_key_treats_swapped_alternative_as_same_menu():
+    assert menu_key("백깍두기9(백김치9)") == menu_key("백김치9(백깍두기9)")
+
+
+def test_menu_key_treats_listed_spelling_variants_as_same_menu():
+    assert menu_key("신선과일(샤인머스캣)") == menu_key("신선과일(샤인머스켓)")
+    assert menu_key("물만둣국1,2") == menu_key("물만두국1,2")
+
+
+def test_menu_key_keeps_one_letter_differences_apart():
+    # 한 글자만 달라도 다른 메뉴다 — 그래서 글자 거리로 묶지 않고 표기 목록만 쓴다
+    assert menu_key("현미밥") != menu_key("흑미밥")
+    assert menu_key("빵(우유식빵)1,2,5,6") != menu_key("빵(우유카스텔라1,2,5,6)")
+
+
 def test_wrong_menu_in_a_meal_is_c1():
     expected = _plan(["현미밥", "연근조림5,6"])
     actual = _plan(["현미밥", "우엉조림5,6"])  # 연근조림을 우엉조림으로 읽음

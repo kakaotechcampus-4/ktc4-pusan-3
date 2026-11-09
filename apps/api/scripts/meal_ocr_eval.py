@@ -149,9 +149,31 @@ def grade(expected: MealPlanJSON, actual: MealPlanJSON) -> dict:
 Slot = tuple[int, str]  # (날짜, 끼니)
 
 
+_PARENS = re.compile(r"[()（）]")
+_EDGE = ",.·/"
+
+# 같은 음식의 표기 차이 (틀린 표기 → 바른 표기). 사람이 사진을 보고 같은 메뉴라고 확인한 것만 둔다.
+# 글자 거리로 묶지 않는 이유 — 현미밥 / 흑미밥 처럼 한 글자만 달라도 다른 메뉴다.
+SAME_MENU_SPELLING: dict[str, str] = {
+    "샤인머스켓": "샤인머스캣",  # 11-09 첫 측정
+    "물만두국": "물만둣국",  # 11-09 첫 측정
+}
+
+
 def menu_key(raw: str) -> str:
-    """C1 채점용 메뉴 이름 — 알레르기 번호를 떼고 공백 · ★ · 괄호 차이를 지운 글자."""
-    return normalize_raw(strip_allergen_marks(raw))
+    """C1 채점용 메뉴 이름. 같은 음식이면 같은 값이 나온다.
+
+    알레르기 번호를 떼고, 괄호로 나눈 조각마다 공백 · ★ · 칸 끝 쉼표를 지운 뒤 순서 없이 묶는다
+    — `백김치(백깍두기)` 와 `백깍두기(백김치)` 는 같은 메뉴다. 표기 차이는 `SAME_MENU_SPELLING` 만.
+    """
+    parts = []
+    for part in _PARENS.split(strip_allergen_marks(raw)):
+        text = normalize_raw(part).strip(_EDGE)
+        for wrong, right in SAME_MENU_SPELLING.items():
+            text = text.replace(wrong, right)
+        if text:
+            parts.append(text)
+    return "|".join(sorted(parts))
 
 
 @dataclass(frozen=True)
