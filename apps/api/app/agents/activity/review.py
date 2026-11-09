@@ -31,6 +31,7 @@ from uuid import UUID
 from app.agents.activity.events import core_name, open_on
 from app.agents.activity.readouts import (
     PLACE_NOTICE,
+    PLACE_NOTICE_CULTURE,
     PLACE_NOTICE_EVENT,
     PLACE_NOTICE_FACILITY,
     PLACE_NOTICE_UNDATED,
@@ -77,6 +78,7 @@ MIN_AVOIDED_LABEL = 2
 
 # 어린이놀이시설(키즈카페 · 육아종합지원센터) 장소의 출처. 이용료 확인 문구를 붙인다 (#516)
 FACILITY_SOURCE: PlaceSourceName = "kids_play_facility"
+CULTURE_SOURCE = "tour_culture"  # `culture.CULTURE_SOURCE` — culture 가 review 를 import 하지 않게
 
 # 아이 기록 근거가 0행이면 build() 가 reason 을 이 문구로 덮어쓴다 (kind="general").
 # 화면이 일반 추천임을 표시하고 쌓인 기록 건수를 함께 보여준다 (루트 §2).
@@ -664,6 +666,8 @@ def place_notice(place: PlaceRow | EventRow) -> str:
         return READOUTS.render(PLACE_NOTICE_EVENT).body
     if place.source == FACILITY_SOURCE:
         return READOUTS.render(PLACE_NOTICE_FACILITY).body
+    if place.source == CULTURE_SOURCE:
+        return READOUTS.render(PLACE_NOTICE_CULTURE).body
     if place.data_date is None:
         return READOUTS.render(PLACE_NOTICE_UNDATED).body
     return READOUTS.render(

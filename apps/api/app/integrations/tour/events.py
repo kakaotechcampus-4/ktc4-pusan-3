@@ -23,6 +23,7 @@ from zoneinfo import ZoneInfo
 
 import httpx
 
+from app.core.culture_raw import RawSite
 from app.core.event_raw import RawEvent, RawEventIntro
 from app.core.weather_raw import UpstreamUnavailable
 from app.integrations.weather.public_data import get_json, result_code
@@ -38,6 +39,9 @@ ROWS = 1000
 MAX_PAGES = 3
 # 축제공연행사의 콘텐츠 타입. 소개정보는 타입마다 칸이 달라 같이 보낸다
 EVENT_CONTENT_TYPE = 15
+# 박물관 · 과학관 · 체험관을 고르는 타입 — 문화시설(박물관 · 미술관 · 과학관) · 관광지(체험관이 여기
+# 섞인다). 11-09 실측 부산 125 · 353행, 경남 176 · 1380행
+SITE_CONTENT_TYPES = ("14", "12")
 
 _OK = "0000"
 _COMMON = {"MobileOS": "ETC", "MobileApp": "icatch", "_type": "json"}
@@ -59,6 +63,9 @@ class TourEvents:
         self._overviews: dict[str, str] = {}
         self._detail_day: date | None = None
         self._lock = asyncio.Lock()
+        self._province_codes: dict[str, str] | None = None
+        self._sites: dict[str, tuple[date, tuple[RawSite, ...]]] = {}
+        self._sites_lock = asyncio.Lock()
 
     async def aclose(self) -> None:
         await self._client.aclose()
@@ -111,6 +118,67 @@ class TourEvents:
         overview = _text(items[0].get("overview"))
         self._overviews[content_id] = overview
         return overview
+
+    async def sites(self, *, province: str) -> list[RawSite]:
+        """그 시 · 도의 문화시설 · 관광지(박물관 · 과학관 · 체험관을 고르는 목록).
+
+        좌표를 보내지 않는다 — 시 · 도 이름만 법정동 시도 코드(`ldongCode2`)로 바꿔 지역기반 목록을
+        받는다. 위치기반 목록(`locationBasedList2`)은 예전 지역 코드가 붙은 행만 돌려줘서(부산
+        문화시설 125행 중 5행, 11-09 실측) 쓰지 않는다. 시 · 도마다 그날 하루 둔다. 모르는 시 · 도와
+        조회 실패는 UpstreamUnavailable 이다 — 실패는 캐시하지 않는다.
+        """
+        async with self._sites_lock:
+            code = (await self._codes()).get(province)
+            if code is None:
+                raise UpstreamUnavailable("모르는 시 · 도다")
+            today = self._now().astimezone(KST).date()
+            cached = self._sites.get(code)
+            if cached is None or cached[0] != today:
+                rows: list[RawSite] = []
+                for content_type in SITE_CONTENT_TYPES:
+                    rows.extend(await self._fetch_sites(code, content_type))
+                cached = (today, tuple(rows))
+                self._sites[code] = cached
+            return list(cached[1])
+
+    async def _codes(self) -> dict[str, str]:
+        """시 · 도 이름 → 법정동 시도 코드. 프로세스에 한 번 받는다(통합 시 · 도 이름이 바뀌어도
+        재시작으로 따라간다)."""
+        if self._province_codes is None:
+            payload = await get_json(
+                self._client,
+                f"{BASE_URL}/ldongCode2",
+                {**_COMMON, "numOfRows": 100},
+                what="시도 코드",
+            )
+            self._province_codes = {
+                _text(item.get("name")): _text(item.get("code"))
+                for item in _items(payload, what="시도 코드")
+            }
+        return self._province_codes
+
+    async def _fetch_sites(self, code: str, content_type: str) -> list[RawSite]:
+        rows: list[RawSite] = []
+        for page in range(1, MAX_PAGES + 1):
+            payload = await get_json(
+                self._client,
+                f"{BASE_URL}/areaBasedList2",
+                {
+                    **_COMMON,
+                    "contentTypeId": content_type,
+                    "lDongRegnCd": code,
+                    "numOfRows": ROWS,
+                    "pageNo": page,
+                },
+                what="문화시설 목록",
+            )
+            items = _items(payload, what="문화시설 목록")
+            rows.extend(_site(item, content_type) for item in items)
+            total = _body(payload).get("totalCount")
+            if not items or not isinstance(total, int) or len(rows) >= total:
+                return rows
+        log.warning("문화시설 목록이 %d쪽을 넘는다 — 뒤는 자른다", MAX_PAGES)
+        return rows
 
     def _roll_day(self) -> None:
         """하루가 지나면 소개정보 · 개요를 비운다 — 주최 측이 고친 연령 · 장소 · 일정을 다음 날에는
@@ -177,6 +245,17 @@ def _event(item: dict[str, Any]) -> RawEvent:
         kind_code=_text(item.get("lclsSystm2")),
         progress=_text(item.get("progresstype")),
         region_code=_text(item.get("lDongRegnCd")),
+    )
+
+
+def _site(item: dict[str, Any], content_type: str) -> RawSite:
+    return RawSite(
+        content_id=_text(item.get("contentid")),
+        title=_text(item.get("title")),
+        mapx=_text(item.get("mapx")),
+        mapy=_text(item.get("mapy")),
+        content_type=_text(item.get("contenttypeid")) or content_type,
+        category=_text(item.get("lclsSystm2")),
     )
 
 
