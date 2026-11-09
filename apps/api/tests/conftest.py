@@ -99,3 +99,16 @@ def hung_redis_url():
     server.close()
     for conn in held:
         conn.close()
+
+
+@pytest.fixture(autouse=True)
+def _no_run_channel_mirror(monkeypatch):
+    """run 채널의 표 미러(#877 4단계)를 끈다 — 메모리 채널만으로 돈다.
+
+    미러는 자기 연결로 백그라운드에서 쓰므로 테스트 트랜잭션 밖이다. 켜 두면 테스트가 만든
+    (커밋 안 된) 보호자를 못 봐 FK 오류가 나고, 끝나도 행이 남는다. 미러 자체는
+    tests/integration/api/test_run_channel_mirror.py 가 실제로 커밋하는 연결로 켜서 본다.
+    """
+    from app.api.runs import registry
+
+    monkeypatch.setattr(registry, "_session_factory", None, raising=False)
