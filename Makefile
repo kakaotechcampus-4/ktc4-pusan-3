@@ -9,7 +9,28 @@
 
 # 로컬 개발 DB 와 배포는 compose 파일이 다르다. .env 는 한 곳(deploy/docker/.env)을 같이 쓴다.
 COMPOSE_DEV    := docker compose -f deploy/docker/docker-compose.yml --env-file deploy/docker/.env
-COMPOSE_DEPLOY := docker compose -f deploy/docker/docker-compose.deploy.yml --env-file deploy/docker/.env
+# 배포 이미지 태그는 마지막으로 배포에 성공한 커밋 sha 다 (deploy/scripts/deploy.sh 가 적는다). 서버에서 make 로
+# 띄우거나 적재할 때도 지금 서비스 중인 그 이미지를 쓴다 — :local 을 쓰면 옛 이미지로 조용히 돌아가거나,
+# 없으면 그 자리에서 다시 굽는다. 로컬은 파일이 없어 local 이다.
+DEPLOYED_TAG   := $(shell cat deploy/docker/.deployed-tag 2>/dev/null || echo local)
+COMPOSE_FILES  := docker compose -f deploy/docker/docker-compose.deploy.yml --env-file deploy/docker/.env
+COMPOSE_DEPLOY := env API_IMAGE_TAG=$(DEPLOYED_TAG) WEB_IMAGE_TAG=$(DEPLOYED_TAG) $(COMPOSE_FILES)
+# 적재는 배포와 같은 잠금을 잡는다 — 4GB 서버에서 빌드와 겹치지 않게. 맥에는 flock 이 없어 그냥 돈다.
+# (COMPOSE_DEPLOY 가 `env` 로 시작하는 이유 — flock 뒤에 오는 첫 단어는 명령이어야 해서 VAR=값 을 못 받는다)
+DEPLOY_LOCK    := $(shell command -v flock >/dev/null 2>&1 && echo flock -w 1200 /var/lock/ktc4-deploy.lock)
+# 떠 있는 스택 · 배포 DB 를 건드리는 타깃은 .env 가 dev · prod 중 하나와 통째로 맞는지 먼저 본다 (deploy.sh 와 같은 검사).
+# dev .env 에서 COMPOSE_PROJECT_NAME 한 줄만 빠져도 운영 프로젝트(ktc4-deploy) · 운영 DB 로 떨어지기 때문이다.
+DEPLOY_GUARD   := bash deploy/scripts/deploy.sh --check-env
+# 마이그레이션 · 적재용 — 잠금을 잡은 뒤에 .deployed-tag 를 읽는다. make 가 미리 펼친 DEPLOYED_TAG 는 잠금을 기다리는
+# 동안 끝난 배포를 모른다 (#753 리뷰). 🚨 api 이미지가 없으면 멈춘다 — compose run 에는 --no-build 가 없어서
+# (v2.34, --pull never 여도) 지금 작업 트리를 배포된 sha 이름으로 구워 롤백할 이미지를 덮는다 (#808 리뷰).
+COMPOSE_DEPLOY_NOW := sh -c 'tag=$$(cat deploy/docker/.deployed-tag 2>/dev/null || echo local); export API_IMAGE_TAG=$$tag WEB_IMAGE_TAG=$$tag; \
+	img=$$($(COMPOSE_FILES) config --images | grep -- "-api:" | head -n 1); \
+	docker image inspect "$$img" >/dev/null 2>&1 || { echo "$$img 이미지가 없다 — 굽지 않고 멈춘다. 로컬이면 make api-image 먼저, 서버면 deploy.sh 로 다시 배포"; exit 1; }; \
+	exec $(COMPOSE_FILES) "$$@"' compose
+# 🚨 서버(.deployed-tag 가 있는 checkout)에서는 이미지를 손으로 굽지 않는다. 지금 소스를 배포된 sha 태그로
+#    구워 롤백할 이미지를 덮어쓴다. 서버 빌드는 deploy.sh 만 한다 (#753 리뷰).
+NO_SERVER_BUILD := [ ! -f deploy/docker/.deployed-tag ] || { echo "서버에서는 이미지를 손으로 굽지 않는다 — 배포된 sha 태그를 덮어 롤백할 곳이 사라진다. bash deploy/scripts/deploy.sh <sha> <dev|prod> 로 (docs/ops/deploy-v1.md)"; exit 1; }
 
 help:
 	@echo "사용 가능한 명령"
@@ -53,7 +74,7 @@ help:
 	@echo "  make db-merge msg=\"설명\"     갈라진 head를 합치는 merge revision 생성"
 	@echo "  make db-psql      로컬 DB에 psql 직접 접속"
 	@echo ""
-	@echo "── 배포 (docker) ──"
+	@echo "── 배포 (docker) ── up · migrate · 적재는 굽지 않는다. 로컬 처음이면 api-image · web-image 먼저 (서버에선 굽기 거부)"
 	@echo "  make api-image    API 이미지 굽기"
 	@echo "  make api-up       API 컨테이너 기동 (db+redis 의존)"
 	@echo "  make api-down     API 컨테이너 중지"
@@ -64,7 +85,7 @@ help:
 	@echo "  make web-logs     프론트 컨테이너 로그"
 	@echo "  make deploy-up      전체 기동 (db + redis + api + web)"
 	@echo "  make deploy-down    전체 중지"
-	@echo "  make deploy-migrate 배포 DB 마이그레이션 (api 컨테이너 안에서 alembic upgrade heads)"
+	@echo "  make deploy-migrate 배포 DB 마이그레이션 (api 이미지의 일회용 상자 api-task 로 alembic upgrade heads)"
 	@echo "  make deploy-load-food-dry  배포 DB 에 Food 카탈로그를 받고 세기만 (쓰지 않음)"
 	@echo "  make deploy-load-food      배포 DB 에 Food 카탈로그 적재 (영양DB + 레시피, 한 트랜잭션)"
 	@echo "  make deploy-load-places-dry  배포 DB 에 장소(공원 · 도서관 · 놀이시설)를 받고 세기만 (쓰지 않음)"
@@ -192,55 +213,72 @@ db-psql:
 # ── 배포 (docker) ────────────────────────────────────────────────────
 
 api-image:
+	@$(NO_SERVER_BUILD)
 	$(COMPOSE_DEPLOY) build api
 
 api-up:
-	$(COMPOSE_DEPLOY) up -d api
+	@$(DEPLOY_GUARD)
+	$(COMPOSE_DEPLOY) up -d --no-build api
 
 api-down:
+	@$(DEPLOY_GUARD)
 	$(COMPOSE_DEPLOY) down api
 
 api-logs:
 	$(COMPOSE_DEPLOY) logs -f api
 
 # 🚨 web-image 는 deploy/docker/.env 의 NEXT_PUBLIC_API_BASE_URL 을 번들에 박는다.
-#    주소가 바뀌면 web-up 을 다시 하는 게 아니라 web-image 를 다시 굽는다.
+#    주소가 바뀌면 web-up 을 다시 하는 게 아니라 web-image 를 다시 굽는다 (서버에서는 deploy.sh 로 다시 배포).
+# 🚨 up 은 --no-build 다 — 이미지가 없을 때 compose 가 지금 작업 트리를 배포된 sha 이름으로 구우면
+#    롤백할 이미지를 덮는다 (#808 리뷰). 로컬은 처음 한 번 api-image · web-image 를 먼저 돈다.
 
 web-image:
+	@$(NO_SERVER_BUILD)
 	$(COMPOSE_DEPLOY) build web
 
 web-up:
-	$(COMPOSE_DEPLOY) up -d web
+	@$(DEPLOY_GUARD)
+	$(COMPOSE_DEPLOY) up -d --no-build web
 
 web-down:
+	@$(DEPLOY_GUARD)
 	$(COMPOSE_DEPLOY) down web
 
 web-logs:
 	$(COMPOSE_DEPLOY) logs -f web
 
+# ktc4-edge 는 dev · prod 가 같이 쓰는 바깥 네트워크다 (deploy.sh 와 같은 값). 로컬에서 처음 띄울 때도 있어야 한다.
 deploy-up:
-	$(COMPOSE_DEPLOY) up -d
+	@$(DEPLOY_GUARD)
+	docker network inspect ktc4-edge >/dev/null 2>&1 || docker network create --subnet 172.30.0.0/24 --ip-range 172.30.0.128/25 ktc4-edge
+	$(COMPOSE_DEPLOY) up -d --no-build
 	@# api 상자만 EC2 메타데이터(S3 열쇠)에 닿게 한다 — 서버 재부팅 뒤에도 걸리게 등록까지. 맥은 건너뛴다
 	@if [ "$$(uname -s)" = Linux ]; then sudo -n deploy/scripts/imds-firewall.sh --install; fi
 
 deploy-down:
+	@$(DEPLOY_GUARD)
 	$(COMPOSE_DEPLOY) down
 
 deploy-migrate:
-	$(COMPOSE_DEPLOY) run --rm api uv run --no-sync alembic upgrade heads
+	@$(DEPLOY_GUARD)
+	$(DEPLOY_LOCK) $(COMPOSE_DEPLOY_NOW) run --rm api-task uv run --no-sync alembic upgrade heads
 
 # Food 카탈로그 적재 (FT-19). 배포된 api 이미지 안의 스크립트를 프로세스로 돌린다 — 정리 표 ·
 # 식품군 대응표는 이미지에 구워진 것을 쓴다. 출력은 건수뿐이다.
 deploy-load-food-dry:
-	$(COMPOSE_DEPLOY) run --rm api uv run --no-sync python -m scripts.load_food_catalog --all --dry-run
+	@$(DEPLOY_GUARD)
+	$(DEPLOY_LOCK) $(COMPOSE_DEPLOY_NOW) run --rm api-task uv run --no-sync python -m scripts.load_food_catalog --all --dry-run
 
 deploy-load-food:
-	$(COMPOSE_DEPLOY) run --rm api uv run --no-sync python -m scripts.load_food_catalog --all
+	@$(DEPLOY_GUARD)
+	$(DEPLOY_LOCK) $(COMPOSE_DEPLOY_NOW) run --rm api-task uv run --no-sync python -m scripts.load_food_catalog --all
 
 # 장소 적재 (#516). 공원 · 도서관 표준데이터와 어린이놀이시설(화이트리스트)을 place 로 싣는다.
 # 출력은 건수뿐이다.
 deploy-load-places-dry:
-	$(COMPOSE_DEPLOY) run --rm api uv run --no-sync python -m scripts.load_places --all --dry-run
+	@$(DEPLOY_GUARD)
+	$(DEPLOY_LOCK) $(COMPOSE_DEPLOY_NOW) run --rm api-task uv run --no-sync python -m scripts.load_places --all --dry-run
 
 deploy-load-places:
-	$(COMPOSE_DEPLOY) run --rm api uv run --no-sync python -m scripts.load_places --all
+	@$(DEPLOY_GUARD)
+	$(DEPLOY_LOCK) $(COMPOSE_DEPLOY_NOW) run --rm api-task uv run --no-sync python -m scripts.load_places --all

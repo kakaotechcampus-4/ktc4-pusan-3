@@ -131,6 +131,15 @@ export function formatDateRange(from: string, to: string): string {
 }
 
 /**
+ * 여러 날 가는 일정 한 줄 ("11월 23일 (월)부터 11월 27일 (금)까지" · 08 사진 #723).
+ * 🚨 날짜를 더하고 빼지 않는다 — 서버가 읽은 시작과 끝을 그대로 옮긴다.
+ * 🚨 `~` 로 잇지 않는다 (위 `formatDateRange` 와 같은 이유).
+ */
+export function formatDayRange(from: string, to: string): string {
+  return `${formatDay(from)}부터 ${formatDay(to)}까지`;
+}
+
+/**
  * 날짜 하나를 요일 없이 ("9월 12일"). `YYYY-MM-DD` 와 밀리초 타임스탬프를 모두 받는다.
  * 🚨 상대 표현("3일 전")을 만들지 않는다 — 그건 `measured_label` 이고 서버가 만든다.
  */

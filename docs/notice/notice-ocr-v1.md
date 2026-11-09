@@ -74,7 +74,7 @@ GET /runs/{rid}/events                       step → lane → step → parsed �
 
 | 저장소에 들어간 것 | 파일 |
 | --- | --- |
-| api 상자 고정 주소 `172.30.0.20` | `deploy/docker/docker-compose.deploy.yml` |
+| api 상자 고정 주소 `172.30.0.20` — 공용 네트워크 `ktc4-edge` 의 prod api 주소. dev api 는 `.21` 이라 막힌다. 나가는 길은 `gw_priority` 로 edge 고정 (#747) | `deploy/docker/docker-compose.deploy.yml` |
 | 방화벽 — `DOCKER-USER` 에서 메타데이터 주소를 막고 api 만 연다. 여러 번 돌려도 한 벌, 재부팅 뒤에도 systemd 가 다시 건다. 서버 자신의 길(SSM · CloudWatch)은 안 막는다 | `deploy/scripts/imds-firewall.sh` · `make deploy-up` 이 부른다 |
 | Caddy 본문 상한 16MB (api 주소) — S3 를 써도 누가 API 에 큰 본문을 직접 보내는 것은 앞에서 잘라야 막힌다 | `deploy/caddy/Caddyfile` |
 
@@ -170,7 +170,7 @@ GET /runs/{rid}/events                       step → lane → step → parsed �
 
 ## 7. 켜기 전에 정할 것
 
-서버 스위치 `PHOTO_UPLOAD_ACCEPT` 는 기본값 꺼짐이고, 꺼져 있으면 `POST /children/{cid}/photos` 가 503 이다. 화면 입구(`features.ts` 의 `photoEntry`)도 닫아 둔다. 사진이 외부 AI 로 나가므로 처리방침 · 동의가 먼저다 ([`consent-texts-v1.md`](../safety/consent-texts-v1.md) "공통").
+서버 스위치 `PHOTO_UPLOAD_ACCEPT` 는 기본값 꺼짐이고, 꺼져 있으면 `POST /children/{cid}/photos` 가 503 이다. 화면 입구(`features.ts` 의 `photoEntry`)는 운영 서버를 켠 뒤 #723 에서 열었다. 사진이 외부 AI 로 나가므로 처리방침 · 동의가 먼저다 ([`consent-texts-v1.md`](../safety/consent-texts-v1.md) "공통").
 
 - [x] 처리방침 · 동의 — 2026-11-03 판에 조건문으로 들어갔다 ([`consent-texts-v1.md`](../safety/consent-texts-v1.md) "급식표 · 알림장 사진 읽기"). 사진은 별도 선택 동의 없이 아이 동의문의 한 항목으로 받는다 (11-03 PM). 처리방침에 S3 임시 보관("읽은 즉시 지우고 늦어도 하루 안에") 문장을 더할지는 #166
 - [x] **EXIF 지우기** (처리방침 1장 ⑧ 4호) — `normalize_image` 가 사진을 방향대로 돌린 뒤 다시 그려서 보낸다. 촬영 장소 · 기기 같은 부가 정보와 PNG 글자 정보가 따라가지 않는다. JPEG 는 화질 95 로 다시 저장한다(완전 무손실은 아님). S3 에는 원본이 몇 초 있다가 지워진다 — 약속은 "전송하기 전에" 라 모델로 가는 사진에서 지운다

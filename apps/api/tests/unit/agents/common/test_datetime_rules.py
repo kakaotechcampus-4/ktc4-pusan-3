@@ -19,6 +19,7 @@ import pytest
 
 from app.agents.common.datetime_rules import (
     DateNeedsAsking,
+    DateParseError,
     DateRange,
     TemporalDirection,
     resolve_date,
@@ -501,3 +502,38 @@ async def test_기준_없는_일정_종료일은_오늘에서_세고_시작보�
 
     assert payload["success"] is True, payload
     assert await _event_days(context) == want
+
+
+class TestWeekdayParen:
+    """공지 원문은 "11월 27일(금)" 처럼 요일을 괄호로 붙인다 — 붙여넣은 공지가 못 읽혀 일정 초안이
+    안 나왔다 (#797, 2026-11-08 eval). 요일은 날짜를 검산하는 데만 쓴다."""
+
+    TODAY = date(2026, 11, 8)  # 일요일
+
+    @pytest.mark.parametrize(
+        "text", ["11월 27일(금)", "11월 27일 (금)", "11월 27일(금요일)", "2026년 11월 27일(금)"]
+    )
+    def test_요일_괄호를_떼고_읽는다(self, text):
+        assert resolve_date(text, today=self.TODAY, direction="future") == date(2026, 11, 27)
+
+    def test_요일이_날짜와_안_맞으면_거절한다(self):
+        """조용히 한쪽을 고르지 않는다 — 날짜를 잘못 옮겨 적었을 수 있다."""
+        with pytest.raises(DateParseError, match="요일"):
+            resolve_date("11월 27일(월)", today=self.TODAY, direction="future")
+
+    def test_기간_조회도_같다(self):
+        found = resolve_date_range("11월 27일(금)", today=self.TODAY, direction="future")
+        assert (found.start, found.end) == (date(2026, 11, 27), date(2026, 11, 28))
+
+
+async def test_붙여넣은_공지의_요일_괄호로_일정_초안을_만든다() -> None:
+    """채팅에 붙여넣은 공지 원문 그대로 — Memory 가 날짜를 옮겨 적어도 초안이 나온다 (#797)."""
+    context = _context()  # 2026-09-29(화)
+    payload = await _call(
+        context,
+        "create_event",
+        {"title": "가을 소풍", "starts_on": "10월 2일(금)", "starts_time": "오전 9시 30분"},
+    )
+
+    assert payload["success"] is True, payload
+    assert payload["data"]["starts_at"].startswith("2026-10-02"), payload

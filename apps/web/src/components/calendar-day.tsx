@@ -49,7 +49,7 @@ import { FORWARD } from "@/lib/view-transition";
  * 09 하루 패널 — 고른 날의 내 일기 · 일정 · 관찰 · 나눈 대화 · 함께 보는 사진 (이 순서로 선다 · #503 · #228).
  *
  * 🚨 **없는 구역은 그리지 않는다.** 빈 상자를 늘어놓아 하루를 채우지 않는다 — 프로토타입의
- *    "기록이 없는 날은 비워둬요. 채우려고 만들지 않아요" 가 이 화면의 태도다. 일기 카드만은
+ *    기록이 없는 날은 비워 둔다 — 빈 상태 "이날 남긴 일정이나 기록이 없어요" 가 이 화면의 태도다. 일기 카드만은
  *    빈 날에도 서지만 "이날의 일기 쓰기" 줄 하나뿐이다 (`DiaryCard`).
  *
  * 🚨 **일기와 관찰을 한 구역에 섞지 않는다.** 일기는 관찰로 자동 추출되지 않는다(계약서 §09) —
@@ -78,7 +78,7 @@ export function CalendarDayPanel({
    * 일기 편집기가 열려 있다.
    *
    * 🚨 **빈 입력창을 하루마다 세워 두지 않는다.** 처음에는 일기 칸을 늘 펼쳐 뒀는데, 그러면
-   *    아무것도 없는 날에 "채우려고 만들지 않아요" 바로 위에 **채우라는 큰 입력 상자**가 서서
+   *    아무것도 없는 날에 빈 상태 바로 위에 **채우라는 큰 입력 상자**가 서서
    *    화면이 스스로를 부정했다. 쓰겠다고 누른 날만 편집기가 열린다.
    *
    * 날짜가 바뀌면 이 상태도 처음으로 돌아가야 한다 — 그건 이 컴포넌트를 `key={date}` 로
@@ -142,7 +142,7 @@ export function CalendarDayPanel({
         </Section>
       ) : null}
 
-      {/* 🚨 **"채우려고 만들지 않아요" 와 채우는 행동을 붙여 놓지 않는다.** 빈 상태에 `일기 쓰기`
+      {/* 🚨 **빈 상태와 채우는 행동을 붙여 놓지 않는다.** 빈 상태에 `일기 쓰기`
           버튼을 달았더니 화면이 스스로를 부정했다 — 사실을 말하는 자리와 할 일을 주는 자리를
           나눈다. 그래서 쓰는 줄은 빈 상태가 아니라 일기 구역에 따로 서고, 쓰는 동안에는
           빈 상태를 내린다. 일기를 지워 그날 다른 것이 없으면 이 빈 상태가 다시 선다. */}
@@ -150,7 +150,7 @@ export function CalendarDayPanel({
         <EmptyState
           icon={CalendarOff}
           title="이날은 아무것도 없어요"
-          description="기록이 없는 날은 비워둬요. 채우려고 만들지 않아요."
+          description="이날 남긴 일정이나 기록이 없어요."
           count={0}
           countLabel="이날의 기록"
         />
@@ -272,6 +272,11 @@ function EventCard({
       <p className="text-caption text-ink-subtle mt-1">
         {formatEventTime(event.starts_at, event.all_day)}
       </p>
+      {/* 요일 반복 묶음의 회차면 그 반복 (#738). 🚨 서버 문구 그대로다 — 요일 · 끝 날짜로 화면이 다시 만들지 않는다.
+          준비물 체크와 알림은 이 회차 하나의 것이라, 반복이라는 사실을 시각 바로 아래에 둬 범위를 헷갈리지 않게 한다. */}
+      {event.series ? (
+        <p className="text-caption text-ink-subtle mt-0.5">{event.series.label}</p>
+      ) : null}
 
       <MyReminder childId={childId} date={date} event={event} titleId={titleId} />
 
@@ -494,7 +499,7 @@ function DiaryCard({
   date: string;
   data: CalendarDayResponse;
   /**
-   * 편집기가 열려 있다. 하루 패널이 든다 — 쓰는 동안은 빈 상태("채우려고 만들지 않아요")를
+   * 편집기가 열려 있다. 하루 패널이 든다 — 쓰는 동안은 빈 상태("이날 남긴 일정이나 기록이 없어요")를
    * 내려야 해서다. 날짜가 바뀌면 패널째 새로 서서(`key={date}`) 닫힌다.
    */
   editing: boolean;

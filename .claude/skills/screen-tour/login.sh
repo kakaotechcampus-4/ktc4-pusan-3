@@ -6,7 +6,7 @@
 #
 # refresh 는 쓸 때마다 바뀐다(회전). 스크립트가 끝날 때 storageState 를 다시 저장하므로 같은 파일을 이어 쓰면 되고,
 # 중간에 죽어서 옛 쿠키가 남으면 서버가 재사용으로 보고 그 세션을 끊는다 — 그때는 이걸 다시 돌린다.
-# 🚨 다시 돌리면 파일의 localStorage(투어 "봤음") 도 비워진다.
+# 투어 "봤음" 은 서버(tour_seen · #696)에 남는다. 처음부터 다시 보려면 설정의 "화면 설명 다시 보기" 를 누르거나 @help 로 연다.
 set -euo pipefail
 OUT=${1:?storage state path}
 PARENT=${2:-$(docker exec ktc4-postgres psql -U dev -d dailyagent -At -c "select id from parent order by created_at limit 1")}
@@ -16,7 +16,7 @@ docker exec ktc4-postgres psql -U dev -d dailyagent -q -c "insert into session(p
 python3 - "$OUT" "$TOKEN" <<'PY'
 import json, sys, time
 out, token = sys.argv[1], sys.argv[2]
-json.dump({"cookies": [{"name": "icatch_rt", "value": token, "domain": "localhost", "path": "/api/v1/auth",
+json.dump({"cookies": [{"name": "__Host-icatch_rt", "value": token, "domain": "localhost", "path": "/",
            "expires": time.time() + 7 * 86400, "httpOnly": True, "secure": True, "sameSite": "Strict"}],
            "origins": []}, open(out, "w"))
 PY

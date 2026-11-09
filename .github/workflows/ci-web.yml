@@ -1,5 +1,7 @@
 name: Web CI
 # apps/web 를 바꾼 PR 에서 `make web-check` + `make web-build` 와 같은 검사를 돈다 (#225).
+# develop · main push 때는 따로 돌지 않는다 — 배포(deploy.yml)가 workflow_call 로 불러 게이트로 쓴다 (#747).
+# 그때는 paths 필터가 없어서 프론트를 안 건드린 커밋에도 돌고, 빨간불이면 배포하지 않는다.
 #
 # 🚨 build 를 빼지 않는다. `useSearchParams` 의 Suspense 경계가 빠지면 dev · typecheck · lint 는
 #    전부 통과하고 프로덕션 빌드만 멈춘다 (apps/web/CLAUDE.md §3 라우팅 · PR #71 리뷰).
@@ -15,20 +17,14 @@ on:
     paths:
       - apps/web/**
       - .github/workflows/ci-web.yml
-  push:
-    branches:
-      - develop
-    paths:
-      - apps/web/**
-      - .github/workflows/ci-web.yml
+  # 배포(deploy.yml)가 게이트로 부른다 — 빨간불이면 배포하지 않는다. 그래서 push 트리거는 없다 (ci-api.yml 과 같다).
+  workflow_call:
 
-# PR 은 새 커밋이 오면 이전 실행을 끊고, develop push 는 커밋마다 끝까지 돈다 (ci-api.yml 과 같은 규칙).
+# PR 은 새 커밋이 오면 이전 실행을 끊고, 배포가 부른 실행은 run 마다 끝까지 돈다 (ci-api.yml 과 같은 규칙).
+# 🚨 그룹 이름에 github.workflow 를 쓰지 않는다. workflow_call 로 불리면 그 값이 부른 쪽("배포")이 된다.
 concurrency:
-  group: >-
-    ${{ github.ref == 'refs/heads/develop'
-        && format('{0}-{1}', github.workflow, github.sha)
-        || format('{0}-{1}', github.workflow, github.ref) }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/develop' }}
+  group: ${{ github.event_name == 'pull_request' && format('ci-web-{0}', github.ref) || format('ci-web-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -85,7 +81,9 @@ jobs:
   # 🚨 목은 개발 서버에서만 뜬다 — 위 job 의 build 결과를 쓸 수 없어서 따로 돈다 (playwright.config.ts).
   e2e:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
+    # 30 인 이유 — 테스트 8~10분 + `Install Chromium system deps` 의 apt 가 17초~10분으로 들쭉날쭉하다.
+    # 배포 게이트라서 apt 가 느린 날 코드와 상관없이 배포가 막히지 않게 여유를 둔다 (#747)
     defaults:
       run:
         working-directory: apps/web

@@ -149,10 +149,10 @@ export function GrowthSheet({
         reset();
         onClose();
       }}
-      title={editing ? "잰 것 고치기" : "새로 재서 적기"}
+      title={editing ? "키·몸무게 고치기" : "키·몸무게 새로 적기"}
       description={
         editing
-          ? "잘못 적은 값을 바꿔요. 한쪽을 비우면 그날 그건 안 잰 것이 돼요."
+          ? "잘못 적은 값을 바꿔요. 한쪽을 비우면 그날은 그 값을 재지 않은 것으로 남아요."
           : "둘 중 하나만 적어도 괜찮아요."
       }
       footer={
@@ -180,7 +180,7 @@ export function GrowthSheet({
         {/* ⚠️ 입력을 16px 미만으로 내리지 않는다 — iOS 웹뷰가 화면을 확대하고 그대로 남는다
             (`TextInput` 주석). `inputMode="decimal"` 로 숫자 키패드만 띄운다. */}
         <TextInput
-          label="키 · cm"
+          label="키 (cm)"
           value={height}
           onChange={(e) => setHeight(e.target.value)}
           error={errors.height}
@@ -190,7 +190,7 @@ export function GrowthSheet({
         />
 
         <TextInput
-          label="몸무게 · kg"
+          label="몸무게 (kg)"
           value={weight}
           onChange={(e) => setWeight(e.target.value)}
           error={errors.weight}

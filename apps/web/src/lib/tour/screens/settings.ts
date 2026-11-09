@@ -11,6 +11,11 @@ export const settingsTour: TourDefinition = {
       body: "같은 아이의 기록을 함께 보고 적는 사람들이에요. 아이를 등록한 보호자는 더하기를 눌러 초대할 수 있어요.",
     },
     {
+      target: "notifications",
+      title: "알림",
+      body: "일정 알림을 받을지 정해요. 내 계정에만 적용되고, 함께 보는 보호자는 각자 정해요.",
+    },
+    {
       target: "consents",
       title: "동의",
       body: "지금 켜고 끌 수 있는 동의예요. 바꾸기 전에 무엇이 달라지는지 먼저 보여 드려요.",

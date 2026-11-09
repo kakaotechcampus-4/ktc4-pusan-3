@@ -404,7 +404,7 @@ function ChatScreen() {
               <PageTitle>대화</PageTitle>
               {/* 누구의 어느 날 대화인지 — 스크롤을 따라 바뀐다 (`shownDay`). 🚨 날짜 머리줄은 날이 둘 이상일
                 때만 본문에 선다 (`ChatThread`) — 하루뿐이면 이 줄이 그 말을 한다. */}
-              <p data-tour="day" className="text-caption text-ink-subtle w-fit">
+              <p className="text-caption text-ink-subtle w-fit">
                 {nickname ? `${nickname} · ${formatDay(shownDay)}` : formatDay(shownDay)}
               </p>
             </div>
@@ -453,7 +453,8 @@ function ChatScreen() {
         {isError && !data ? (
           <CardFailed>
             <p>
-              지난 대화를 지금 불러오지 못했어요. 적어주신 기록은 기록 화면에 그대로 남아 있어요.
+              지난 대화를 지금 불러오지 못했어요. 적어 주신 기록은 기록/기억 화면에 그대로 남아
+              있어요.
             </p>
             <Button
               variant="secondary"
@@ -484,7 +485,7 @@ function ChatScreen() {
             <EmptyState
               icon={MessagesSquare}
               title="아래에 한 줄 적으면 여기서 이어져요"
-              description="주고받은 대화는 날짜별로 남아요. 적어주신 기록은 기록 화면에도 그대로 남아요."
+              description="주고받은 대화는 날짜별로 남아요. 적어 주신 기록은 기록/기억 화면에도 그대로 남아요."
               count={0}
               countLabel="오늘 보낸 한 줄"
             />
@@ -606,8 +607,8 @@ function AnsweringBar({
           화면이 갈려서 안 보였다). 앞 이야기는 저장 여부와 상관없이 서버가 `reply_to` 로 찾는다. */}
       <p className="text-caption text-ink-subtle mt-2">
         {savedAlongside
-          ? "이 질문에 대한 답만 적어주세요. 앞서 적어주신 말 중 기록할 것은 저장돼 있어요."
-          : "이 질문에 대한 답만 적어주세요. 앞서 적어주신 말은 이어서 같이 볼게요."}
+          ? "이 질문의 답만 적어 주세요. 앞서 적어 주신 말 중 기록할 것은 저장돼 있어요."
+          : "이 질문의 답만 적어 주세요. 앞서 적어 주신 말은 이어서 같이 볼게요."}
       </p>
       <Button variant="tertiary" size="compact" className="mt-3" onClick={onStop}>
         답하지 않고 새로 적기

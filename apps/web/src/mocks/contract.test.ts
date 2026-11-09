@@ -22,6 +22,7 @@ import {
   photoFormData,
   submitOnboarding,
   updateEventDraft,
+  updateEventSeries,
   updateHealthSafety,
   uploadPhoto,
 } from "@/lib/api/operations";
@@ -90,7 +91,9 @@ import type {
   PhotoLane,
   SafetyScanResponse,
   UpdateHealthSafetyRequest,
+  AnyEventDraft,
   EventDraft,
+  SeriesDraft,
   EventItem,
   EventItemUpdateResponse,
   ReminderResponse,
@@ -103,10 +106,11 @@ import type {
 } from "@/lib/api/types";
 
 import { INVITE_CODE_LENGTH, normalizeInviteCode } from "@/lib/invite-code";
+import { isSeriesDraft, repeatRequest, seriesSubmitBody } from "@/lib/event-draft";
 
 import { submittedInput } from "./handlers/runs";
 
-import { daysAgo, suggestionAllergens, suggestions } from "./fixtures";
+import { confirmedEvent, daysAgo, suggestionAllergens, suggestions } from "./fixtures";
 import { setScenario } from "./scenario";
 
 /**
@@ -754,6 +758,21 @@ describe("05 묶음 안내 · 일반 추천 근거 (#249)", () => {
     expect(data.suggestions).toEqual([]);
   });
 
+  it("🚨 재료를 정해 물은 식사 일반 추천도 문서 근거가 비어 오고 기준 문구를 단다 (#740)", async () => {
+    const data = await fetchWith("suggest_requested_food", { agents: ["food"] });
+
+    const general = data.general ?? [];
+    expect(general.length).toBeGreaterThan(0);
+    for (const item of general) {
+      // 🚨 종류는 그대로 general 이다 — 요청 기반인지 가르는 칸은 응답에 없다
+      expect(item.kind).toBe("general");
+      expect(item.agent).toBe("food");
+      expect(item.evidence).toEqual([]);
+      expect(item.basis).not.toBe("");
+    }
+    expect(data.suggestions).toEqual([]);
+  });
+
   it("🚨 묶음마다 확인 문구 칸이 늘 있고, 식품 아닌 알레르기는 놀이 묶음에 문구가 온다", async () => {
     const plain = await fetchWith("default", { agents: ["food", "activity"] });
     for (const group of plain.groups ?? []) expect(Array.isArray(group.cautions)).toBe(true);
@@ -880,7 +899,7 @@ describe("⑦ 상태 전이 · SSE 순서", () => {
     );
 
     const seen: string[] = [];
-    let drafts: EventDraft[] = [];
+    let drafts: AnyEventDraft[] = [];
     for await (const event of streamRunEvents(run_id)) {
       seen.push(event.type);
       if (isDraftEvent(event.type)) drafts = (event.data as EventDraftsEvent).drafts;
@@ -892,7 +911,7 @@ describe("⑦ 상태 전이 · SSE 순서", () => {
 
     // 🚨 한 run 이 create 와 update 를 같이 낼 수 있다 — 화면이 op 로 엔드포인트를 가른다.
     expect(drafts.some((d) => d.op === "create")).toBe(true);
-    const update = drafts.find((d) => d.op === "update");
+    const update = drafts.find((d): d is EventDraft => d.op === "update");
     expect(update?.event_id).toBeTruthy();
     // 🚨 update 초안은 `before` 가 원본 전체다 — 없으면 "오후 3시 → 오후 5시" 를 못 그린다.
     expect(update?.before?.items).toBeDefined();
@@ -4120,6 +4139,58 @@ describe("⑰ 08 사진 — 읽기와 저장이 갈린다", () => {
     ).rejects.toSatisfy((error: unknown) => isApiError(error, "validation_failed"));
   });
 
+  it("넣은 일정의 id 를 항목에 실어 저장하고, 한 일정을 두 항목에 이으면 422 다 (#723)", async () => {
+    const runId = await upload();
+    const parsed = await parsedOf(runId);
+    const [first, second] = checked(parsed.entries ?? []);
+
+    // 🚨 넣을 때마다 다른 id 다 — 같으면 08 이 일정 두 개를 넣고 저장할 때 막힌다.
+    const a = await submitEventDraft("c1", draftBody(), newIdempotencyKey());
+    const b = await submitEventDraft("c1", draftBody(), newIdempotencyKey());
+    expect(a.event.id).not.toBe(b.event.id);
+
+    await expect(
+      commitPhotoRun(runId, {
+        lane: "document",
+        entries: [
+          { ...first, event_id: a.event.id },
+          { ...second, event_id: a.event.id },
+        ],
+        attach_to_calendar: false,
+      }),
+    ).rejects.toSatisfy((error: unknown) => isApiError(error, "validation_failed"));
+
+    await expect(
+      commitPhotoRun(runId, {
+        lane: "document",
+        entries: [
+          { ...first, event_id: a.event.id },
+          { ...second, event_id: b.event.id },
+        ],
+        attach_to_calendar: false,
+      }),
+    ).resolves.toBeDefined();
+  });
+
+  it("일정의 끝은 그대로 돌아오고, 시작보다 앞서면 400 이다 (#723)", async () => {
+    const body = draftBody();
+    const ends = "2026-09-20T23:59:00+09:00";
+    const saved = await submitEventDraft(
+      "c1",
+      { ...body, event: { ...body.event, ends_at: ends } },
+      newIdempotencyKey(),
+    );
+    expect(saved.event.ends_at).toBe(ends);
+
+    await expect(
+      submitEventDraft(
+        "c1",
+        { ...body, event: { ...body.event, ends_at: "2026-09-18T09:00:00+09:00" } },
+        newIdempotencyKey(),
+      ),
+    ).rejects.toSatisfy((error: unknown) => isApiError(error, "validation_failed"));
+  });
+
   it("확인한 항목만 저장된다", async () => {
     const runId = await upload();
     const parsed = await parsedOf(runId);
@@ -4860,5 +4931,110 @@ describe("복약 run 대본 (#537)", () => {
       const { courses } = await api.get<MedicationsResponse>("/children/c1/medications");
       expect(courses.map((c) => c.id)).toContain("ms_seed");
     });
+  });
+});
+
+describe("반복 일정 — 새 반복 일정 · 묶음 고치기 (#738)", () => {
+  afterEach(() => setScenario("default"));
+
+  /** `?scenario=event_repeat` 의 run 이 내는 초안 묶음. */
+  async function repeatDrafts(): Promise<AnyEventDraft[]> {
+    setScenario("event_repeat");
+    const { run_id } = await api.post<{ run_id: string }>(
+      idempotentPath.input("c1"),
+      { text: "지어낸 반복 한 줄", source: "home_input" },
+      { idempotencyKey: newIdempotencyKey() },
+    );
+    let drafts: AnyEventDraft[] = [];
+    for await (const event of streamRunEvents(run_id)) {
+      if (isDraftEvent(event.type)) drafts = (event.data as EventDraftsEvent).drafts;
+    }
+    return drafts;
+  }
+
+  function seriesOf(drafts: AnyEventDraft[]): SeriesDraft {
+    const found = drafts.find(isSeriesDraft);
+    if (!found) throw new Error("묶음 초안이 없다");
+    return found;
+  }
+
+  function repeatOf(drafts: AnyEventDraft[]): EventDraft {
+    const found = drafts.find((d): d is EventDraft => !isSeriesDraft(d) && d.repeat !== undefined);
+    if (!found) throw new Error("반복 새 일정 초안이 없다");
+    return found;
+  }
+
+  it("한 프레임에 반복 새 일정과 묶음 고치기가 섞여 온다 — 카드는 op 로 가른다", async () => {
+    const drafts = await repeatDrafts();
+    const created = repeatOf(drafts);
+    expect(created.op).toBe("create");
+    // 🚨 문구는 서버가 만든다 — 화면은 그대로 그린다.
+    expect(created.repeat?.label).toMatch(/까지/);
+
+    const series = seriesOf(drafts);
+    // 🚨 묶음 초안에는 날짜가 없다. 일정 카드의 칸(날짜 + 시각)으로 그리면 안 된다.
+    expect(series.event).not.toHaveProperty("starts_at");
+    expect(series).not.toHaveProperty("event_id");
+    // 🚨 준비물은 이름이다 — 회차마다 item_id 가 달라서다.
+    for (const name of series.items) expect(typeof name).toBe("string");
+    expect(series.before?.items.every((name) => typeof name === "string")).toBe(true);
+  });
+
+  it("반복 새 일정은 요일 · 끝 날짜를 싣고 문구는 되돌려 보내지 않는다", async () => {
+    const created = repeatOf(await repeatDrafts());
+    if (!created.repeat || !created.event.starts_at) throw new Error("반복 초안 모양이 아니다");
+    const body = {
+      event: created.event,
+      items: created.items,
+      reminder: null,
+      repeat: repeatRequest(created.repeat),
+    };
+    expect(body.repeat).not.toHaveProperty("label");
+    // 응답 `event` 는 첫 회차이고 묶음이 붙는다 (서버 #761) — 문구는 초안이 보여 준 것과 같다.
+    await expect(submitEventDraft("c1", body, newIdempotencyKey())).resolves.toMatchObject({
+      event: { starts_at: created.event.starts_at, series: { label: created.repeat.label } },
+    });
+
+    // 🚨 문구까지 실으면 막는다 — 서버 문구는 화면이 다시 보낼 값이 아니다.
+    const withLabel = { ...body, repeat: created.repeat };
+    await expect(submitEventDraft("c1", withLabel, newIdempotencyKey())).rejects.toSatisfy(
+      (error: unknown) => isApiError(error, "validation_failed"),
+    );
+  });
+
+  it("묶음 고치기는 before 를 같이 보내고, 키 없이는 나가지 않는다", async () => {
+    const series = seriesOf(await repeatDrafts());
+    const body = seriesSubmitBody(series);
+    // 🚨 서버는 before 와 달라진 값만 아직 시작하지 않은 회차에 적용한다 — 빠지면 따로 고쳐 둔 회차가 덮인다.
+    expect(body.before).not.toBeNull();
+    expect(body.repeat).not.toHaveProperty("label");
+    expect(body.before?.repeat).not.toHaveProperty("label");
+
+    // 응답은 서버 `UpdateSeriesResponse` 와 같은 모양이다 — 화면은 읽지 않지만 목이 다른 모양을 내면 계약이 갈린다.
+    await expect(
+      updateEventSeries("c1", series.series_id, body, newIdempotencyKey()),
+    ).resolves.toMatchObject({
+      series: { id: series.series_id, label: expect.any(String) },
+      occurrence_count: expect.any(Number),
+    });
+
+    const response = await raw(idempotentPath.updateEventSeries("c1", series.series_id), {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    expect(response.status).toBe(400);
+  });
+
+  it("09 의 회차에 그 반복의 문구가 붙는다", async () => {
+    setScenario("event_repeat");
+    const date = confirmedEvent.starts_at.slice(0, 10);
+    const day = await api.get<CalendarDayResponse>(`/children/c1/calendar/${date}`);
+    expect(day.events[0]?.series?.label).toMatch(/까지/);
+
+    setScenario("default");
+    const plain = await api.get<CalendarDayResponse>(`/children/c1/calendar/${date}`);
+    // 🚨 반복이 아닌 일정에는 키 자체가 없다.
+    expect(plain.events[0]).not.toHaveProperty("series");
   });
 });

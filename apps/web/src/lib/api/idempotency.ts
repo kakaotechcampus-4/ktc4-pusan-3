@@ -83,8 +83,8 @@ export function createIdempotencyKeyHolder(): IdempotencyKeyHolder {
 
 /**
  * 계약서 §01 의 5곳과 대화의 삭제 확정(#535), 기록 탭의 기록 지우기(#736). 승인 게이트 2곳(㉠ 초안 제출 · ㉡ healthSafety · 복약 제출)이 여기 포함된다.
- * 🚨 초안 제출은 create(`submitEvent`)와 update(`updateEvent`) **두 줄**이다 — 한 곳의 두 갈래라
- *    게이트가 늘어난 것이 아니다 (9/21 에 op 별로 엔드포인트를 갈랐다).
+ * 🚨 초안 제출은 create(`submitEvent`)와 update(`updateEvent`), 반복 묶음 고치기(`updateEventSeries` · #738)
+ *    **세 줄**이다 — 한 곳의 갈래라 게이트가 늘어난 것이 아니다 (9/21 에 op 별로 엔드포인트를 갈랐다).
  *    알레르기 · 건강 기록도 같다 — 등록(`healthSafety`)과 고치기(`updateHealthSafety`) 두 줄이 게이트 ㉡ 하나다.
  *    🚨 **복약 제출(`submitMedication` · `updateMedication`)도 게이트 ㉡ 안의 메서드다** (#537) — 건강 기록을
  *    확정하는 같은 게이트에 메서드가 는 것이지 세 번째 게이트가 아니다 (최상위 §2 — 딱 2곳).
@@ -122,6 +122,15 @@ export const idempotentPath = {
    *    다시 보내면 서버는 이미 들어간 것인지 알 수 없어서 준비물이 두 줄 들어간다.
    */
   updateEvent: (childId: string, eventId: string) => `/children/${childId}/events/${eventId}`,
+  /**
+   * 🚨 승인 게이트 ㉠ — 반복 묶음 고치기 반영 (#738). 아직 시작하지 않은 회차 전부를 한 번에 고친다 — 같은 게이트의
+   *    세 번째 메서드지 게이트가 는 것이 아니다. 새 준비물 이름이 회차마다 행으로 들어가서 `updateEvent` 와 같은
+   *    이유로 키를 단다.
+   * 경로는 서버(#761)와 같다. 일정 수정과 같이 아이 스코프 아래다 — `series_id` 하나로는 남의 아이 묶음인지
+   *    가릴 수 없다 (#284 · #316). 다른 아이의 묶음이면 404 다. 서버도 키를 필수로 받는다.
+   */
+  updateEventSeries: (childId: string, seriesId: string) =>
+    `/children/${childId}/event-series/${seriesId}`,
   /**
    * 🚨 승인 게이트 ㉡ — 복약 초안 **제출** (#537). 코스 한 건과 기간만큼의 회차 행을 한 번에 만든다 —
    *    두 번 나가면 같은 약이 두 코스가 되고 알림이 두 번 울린다.
@@ -171,6 +180,7 @@ export const idempotentMethod = {
   updateHealthSafety: "PATCH",
   submitEvent: "POST",
   updateEvent: "PATCH",
+  updateEventSeries: "PATCH",
   submitMedication: "POST",
   updateMedication: "PATCH",
   confirmDeleteProposal: "POST",

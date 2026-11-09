@@ -41,14 +41,14 @@ test.describe("교정 질문이 기록과 기억에서 다르다 (§5 Correction
     await expect(sheet.getByText("이 기록이 어떤가요?")).toBeVisible();
 
     const verdicts = sheet.getByRole("button", {
-      name: /^(이번만 그랬어요|잘못된 기록|맞아요|기록이 더 필요해요|지금은 달라요|기록 지우기)$/,
+      name: /^(이번만 그랬어요|잘못된 기록|잘못된 기억|맞아요|기록이 더 필요해요|지금은 달라요|기록 지우기)$/,
     });
     await expect(verdicts).toHaveText(["이번만 그랬어요", "기록 지우기"]);
     // 교정은 되돌릴 수 있다 — 승인 게이트가 아니다.
     await expectNoGate(page, "dialog[open]");
   });
 
-  test('기억에는 "기록이 더 필요해요" · "지금은 달라요" · "잘못된 기록" 셋만 묻는다', async ({
+  test('기억에는 "기록이 더 필요해요" · "지금은 달라요" · "잘못된 기억" 셋만 묻는다', async ({
     page,
   }) => {
     await page.goto(`${MEMORIES}?tab=profile`);
@@ -58,9 +58,9 @@ test.describe("교정 질문이 기록과 기억에서 다르다 (§5 Correction
 
     // 🚨 지우기는 기록에만 선다 — 기억 시트에 서면 여기서 넷이 된다.
     const verdicts = sheet.getByRole("button", {
-      name: /^(이번만 그랬어요|잘못된 기록|맞아요|기록이 더 필요해요|지금은 달라요|기록 지우기)$/,
+      name: /^(이번만 그랬어요|잘못된 기록|잘못된 기억|맞아요|기록이 더 필요해요|지금은 달라요|기록 지우기)$/,
     });
-    await expect(verdicts).toHaveText(["기록이 더 필요해요", "지금은 달라요", "잘못된 기록"]);
+    await expect(verdicts).toHaveText(["기록이 더 필요해요", "지금은 달라요", "잘못된 기억"]);
     await expectNoGate(page, "dialog[open]");
   });
 });
@@ -121,13 +121,13 @@ test.describe("기록 지우기 (#736)", () => {
     const sheet = await openRecord(page, "저녁에 계란말이를 또 찾았어요");
     await sheet.getByRole("button", { name: "이번만 그랬어요", exact: true }).click();
     await sheet.getByRole("button", { name: "바꾸기" }).click();
-    await expect(sheet.getByText("이번만 그랬어요로 반영했어요.")).toBeVisible();
+    await expect(sheet.getByText("이번 한 번만 있던 일로 바꿨어요.")).toBeVisible();
     // 방금 고친 시트에서도 지울 수 있다.
     await expect(sheet.getByRole("button", { name: "기록 지우기" })).toBeVisible();
     await sheet.getByRole("button", { name: "닫기" }).last().click();
 
     await openRecord(page, "저녁에 계란말이를 또 찾았어요");
-    await expect(sheet.getByText("이번만 그랬어요로 고친 기록이에요.")).toBeVisible();
+    await expect(sheet.getByText("‘이번만 그랬어요’로 고친 기록이에요.")).toBeVisible();
     await expect(sheet.getByRole("button", { name: "이번만 그랬어요", exact: true })).toHaveCount(
       0,
     );
@@ -181,17 +181,17 @@ test.describe("고친 기록은 목록에 남고 다시 고치지 않는다 (#26
     const sheet = page.getByRole("dialog", { name: "기록 상세" });
     await sheet.getByRole("button", { name: "이번만 그랬어요", exact: true }).click();
     await sheet.getByRole("button", { name: "바꾸기" }).click();
-    await expect(sheet.getByText("이번만 그랬어요로 반영했어요.")).toBeVisible();
+    await expect(sheet.getByText("이번 한 번만 있던 일로 바꿨어요.")).toBeVisible();
     // 방금 고친 기록에 버튼이 다시 서면 누르는 순간 409 다.
     await expect(sheet.getByText("이 기록이 어떤가요?")).toHaveCount(0);
     await sheet.getByRole("button", { name: "닫기" }).last().click();
 
     // 고친 표시가 서고, 기억으로 세지 않으니 묶인 기억 칩은 사라진다.
-    await expect(row).toContainText("이번만 그랬어요로 고친 기록");
+    await expect(row).toContainText("‘이번만 그랬어요’로 고친 기록");
     await expect(row).not.toContainText("계란 반찬");
 
     await row.click();
-    await expect(sheet.getByText("이번만 그랬어요로 고친 기록이에요.")).toBeVisible();
+    await expect(sheet.getByText("‘이번만 그랬어요’로 고친 기록이에요.")).toBeVisible();
     // 연결은 남지만 기억의 기록 수에는 들어가지 않는다 — "관련된 기억" 이라고 쓰지 않는다.
     await expect(sheet.getByText("세지 않는 기억")).toBeVisible();
     await expect(sheet.getByText("관련된 기억")).toHaveCount(0);
@@ -205,7 +205,7 @@ test.describe("고친 기록은 목록에 남고 다시 고치지 않는다 (#26
     const sheet = page.getByRole("dialog", { name: "기록 상세" });
     await sheet.getByRole("button", { name: "이번만 그랬어요", exact: true }).click();
     await sheet.getByRole("button", { name: "바꾸기" }).click();
-    await expect(sheet.getByText("이번만 그랬어요로 반영했어요.")).toBeVisible();
+    await expect(sheet.getByText("이번 한 번만 있던 일로 바꿨어요.")).toBeVisible();
     await sheet.getByRole("button", { name: "닫기" }).last().click();
 
     await page.getByRole("button", { name: /^필터/ }).click();
@@ -244,7 +244,7 @@ test.describe("기억 고치기는 기억을 목록에서 빼지 않는다 (#277
     await sheet.getByRole("button", { name: label, exact: true }).click();
     await expect(sheet.getByText("기억은 목록에 그대로 있어요.", { exact: false })).toBeVisible();
     await expect(sheet.getByText("목록에서 빼요", { exact: false })).toHaveCount(0);
-    await sheet.getByRole("button", { name: "바꾸기" }).click();
+    await sheet.getByRole("button", { name: "남기기" }).click();
     return sheet;
   }
 
@@ -258,7 +258,7 @@ test.describe("기억 고치기는 기억을 목록에서 빼지 않는다 (#277
 
   test("상태가 바뀌면 직전 상태와 함께 말한다", async ({ page }) => {
     // 계란 반찬은 묶인 기록 3건으로 확인됨이다. wrong 이 기준을 올려 후보로 내려간다.
-    const sheet = await correctAffinity(page, "잘못된 기록");
+    const sheet = await correctAffinity(page, "잘못된 기억");
 
     await expect(sheet.getByText("기억이 확인됨에서 후보로 바뀌었어요.")).toBeVisible();
   });
@@ -295,21 +295,21 @@ test.describe("6개월 지난 기억은 단독 근거로 쓰지 않는다 (§2 �
   test("카드와 상세가 그 사실을 글자로 말한다", async ({ page }) => {
     await page.goto(`${MEMORIES}?tab=profile`);
     await expect(
-      page.getByText("6개월이 지나서 이 기억만으로는 추천을 만들지 않아요.").first(),
+      page.getByText("6개월이 지나서 이 기억만으로는 제안하지 않아요.").first(),
     ).toBeVisible();
     await expect(page.getByText("마지막으로 본 지 7개월이 지났어요").first()).toBeVisible();
 
-    await page.getByText("6개월이 지나서 이 기억만으로는 추천을 만들지 않아요.").first().click();
+    await page.getByText("6개월이 지나서 이 기억만으로는 제안하지 않아요.").first().click();
     const sheet = page.getByRole("dialog", { name: "기억 상세" });
     await expect(
-      sheet.getByText("이 기억만으로는 추천을 만들지 않아요", { exact: false }),
+      sheet.getByText("이 기억만으로는 제안하지 않아요", { exact: false }),
     ).toBeVisible();
   });
 
   // `confirm`(맞아요)은 없는 판정이다(§5). 한동안 안내가 "맞아요를 눌러주세요" 였다 (#242).
   test("상세 안내가 화면에 없는 버튼을 가리키지 않는다", async ({ page }) => {
     await page.goto(`${MEMORIES}?tab=profile`);
-    await page.getByText("6개월이 지나서 이 기억만으로는 추천을 만들지 않아요.").first().click();
+    await page.getByText("6개월이 지나서 이 기억만으로는 제안하지 않아요.").first().click();
     const sheet = page.getByRole("dialog", { name: "기억 상세" });
     await expect(sheet.getByText("이 기억이 맞나요?")).toBeVisible();
     await expect(sheet.getByText("맞아요를", { exact: false })).toHaveCount(0);

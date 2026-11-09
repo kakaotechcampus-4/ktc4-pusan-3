@@ -47,7 +47,7 @@
   `ParentSection` · `AccountSection` · `NotificationSection`(10 설정의 일정 알림 켜고 끄기 · 동의 줄과 같은 모양 · 복약 줄은 발송이 붙을 때까지 없다 · #609) ·
   `ChildIdentityCard`/`ChildIdentitySheet` · `GrowthLogList`/`GrowthLatestCard` · `GrowthSheet` ·
   `GrowthChart` · `HealthSafetyList`/`HealthSafetySheet` · `SafetyScanReview`/`SafetyScanRowSheet` ·
-  `PhotoReview`/`PhotoEntrySheet` · `PhotoSourceSheet` · `ScreenTour`/`TourHelpButton`(화면 투어 · [`screen-tour-v1.md`](screen-tour-v1.md)) ·
+  `PhotoReview`/`PhotoEntrySheet` · `PhotoSourceSheet` · `PhotoPreview`(08 사진 칸 미리보기 · 못 그리면 글자로 말한다 · #723) · `ScreenTour`/`TourHelpButton`(화면 투어 · [`screen-tour-v1.md`](screen-tour-v1.md)) ·
   `MedicationDraftCard`/`MedicationDraftList`(게이트 ㉡ · 복약 초안 · [`medication-v1.md`](medication-v1.md)) ·
   `DoseCheck`(회차 체크 줄 · 03 홈과 11-3 이 같이 씀) · `TodayMedications`(03 홈 "오늘 먹일 약") ·
   `ReminderField`(일정 알림 고르기 · 초안 카드 · 08 시트 · 09 패널이 같이 쓴다 · 지난 값은 목록에서 뺀다 · #609)

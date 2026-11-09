@@ -124,7 +124,7 @@ function MedicationsScreen() {
           <EmptyState
             icon={Pill}
             title="지금 먹이는 약이 없어요"
-            description="대화에 약 이름과 언제, 며칠 먹이는지 적어 주시면 복약 일정을 만들어 드려요."
+            description="대화에 약 이름, 먹일 시각, 먹일 기간을 적으면 복약 일정을 준비해요. 확인하고 넣은 약만 여기에 보여요."
             count={0}
             countLabel="진행 중인 복약"
           />
