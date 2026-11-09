@@ -10,6 +10,12 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.agents.memory.bundles import LOOKUP_EDIT, RECORD_BASE
+
+# Memory 가 가진 tool 전부 — 기대값의 tool 이름 오타를 막는다
+MEMORY_TOOLS = RECORD_BASE | LOOKUP_EDIT
+MUTATING = "쓰기"  # must_not 에만 — create_ · update_ · delete_ · propose_ tool 전부
+
 # apps/api/tests/eval/suite/schema.py → 저장소 루트
 CASES_DIR = Path(__file__).resolve().parents[5] / "eval" / "cases"
 
@@ -75,18 +81,75 @@ class SavedExpect(_Strict):
     days_ago: int | None = None  # 새로 만든 관찰의 observed_on 이 모두 실행일 - N 일
 
 
+class ToolsExpect(_Strict):
+    """Memory 가 부른 tool (테크스펙 13-1 "경로가 맞나").
+
+    Memory 가 돌지 않은 run 은 아무것도 부르지 않은 것으로 본다 — 순수 요청형은 제품이 Memory 를
+    건너뛸 수 있다. 그래서 must_not 만 적은 기대는 통과하고, must 가 있거나 memory_ran 이면
+    실패한다.
+    unclear 조각(보호자 자신의 얘기 · 무관한 말)은 Memory 가 돌고 저장 tool 을 거절당하는 게 설계된
+    경로라(#624) must_not 대신 saved 로 본다.
+
+    must 는 성공한 호출 수의 최소값이다 — 거절된 호출은 쓰지도 읽지도 못했다. must_not 은
+    시도만 해도 위반이다. tool 이름과 "쓰기" 뜻은 `test_memory.py` 의 required_tools ·
+    forbidden_tools 와 같지만, required_tools 는 시도를 센다는 점이 다르다 — 그쪽은 Memory 가
+    얼마나 헤맸는지(재시도 예산)도 보는 평가다. 여러 턴 케이스는 마지막 턴의 호출만 본다.
+    """
+
+    must: dict[str, int] = Field(default_factory=dict)  # tool → 성공한 호출 최소 수
+    # 부르면 안 되는 tool. "쓰기" = create_ · update_ · delete_ · propose_ 전부
+    must_not: tuple[str, ...] = ()
+    # Memory 가 반드시 돌아야 한다. must 가 있으면 이미 그렇다 — must 없이 "돌았는가" 만 볼 때
+    memory_ran: bool = False
+
+    @model_validator(mode="after")
+    def _valid_tools(self) -> "ToolsExpect":
+        unknown = sorted(set(self.must) - MEMORY_TOOLS) + sorted(
+            set(self.must_not) - MEMORY_TOOLS - {MUTATING}
+        )
+        if unknown:
+            raise ValueError(f"Memory 에 없는 tool 이름: {unknown}")
+        zero = sorted(tool for tool, count in self.must.items() if count < 1)
+        if zero:
+            raise ValueError(f"must 의 횟수는 1 이상 — 안 불러야 하면 must_not 에: {zero}")
+        both = sorted(set(self.must) & set(self.must_not))
+        if both:
+            raise ValueError(f"must 와 must_not 에 같은 tool: {both}")
+        return self
+
+
+class DraftItemsExpect(_Strict):
+    """일정 초안에 붙은 준비물. 이름은 글자 포함으로 본다("도시락" 은 "점심 도시락" 에 맞는다)."""
+
+    names: tuple[str, ...] = Field(min_length=1)
+    min: int = Field(default=1, ge=1)  # names 중 이만큼은 초안에 있어야 한다
+
+    @model_validator(mode="after")
+    def _min_fits(self) -> "DraftItemsExpect":
+        # 빈 이름은 모든 준비물에 맞고, 겹친 이름은 한 품목으로 min 을 채운다
+        if any(not name.strip() for name in self.names):
+            raise ValueError("names 에 빈 이름이 있다")
+        if len(set(self.names)) != len(self.names):
+            raise ValueError(f"names 가 겹친다: {self.names}")
+        if self.min > len(self.names):
+            raise ValueError(f"min {self.min} > names {len(self.names)}개")
+        return self
+
+
 class Expect(_Strict):
     route: RouteExpect | None = None
     saved: SavedExpect | None = None
     suggestions: dict[Agent, SuggestionWant] = Field(default_factory=dict)
     guidance: tuple[str, ...] = ()  # 이 안내 코드가 모두 나가야 한다
     event_drafts_min: int | None = None
+    draft_items: DraftItemsExpect | None = None  # 일정 초안의 준비물
     questions_max: int | None = None
     # 삭제 후보 제안(propose_delete)이 나와야 한다(True) / 나오면 안 된다(False). 지우는 것 자체는
     # 불변식 I15 가 본다 — 여기는 "후보를 냈나" 만
     delete_proposed: bool | None = None
     never_say: tuple[str, ...] = ()  # 어떤 출력 문장에도 없어야 할 글자 (카나리아 · 단정 표현)
     must_say_any: tuple[str, ...] = ()  # 출력 문장 어딘가에 이 중 하나는 있어야 한다
+    tools: ToolsExpect | None = None  # Memory 가 부른 tool
 
 
 class ProbeCase(_Strict):
@@ -194,6 +257,9 @@ class Step(_Strict):
             raise ValueError(f"{self.tag}: correct 단계는 correct_of 와 verdict 가 있어야 한다")
         if self.kind == "check" and self.check is None:
             raise ValueError(f"{self.tag}: check 단계는 check 가 있어야 한다")
+        if self.expect.tools is not None or self.expect.draft_items is not None:
+            # W 는 API 로 돌아 Memory tool 기록 · 초안 준비물을 모으지 않는다 — 적으면 늘 실패한다
+            raise ValueError(f"{self.tag}: W 단계는 tools · draft_items 를 판정하지 않는다 (P 만)")
         return self
 
 

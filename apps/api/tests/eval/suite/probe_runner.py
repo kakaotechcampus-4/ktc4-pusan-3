@@ -18,6 +18,7 @@ from tests.eval.suite.schema import ProbeCase
 from tests.eval.suite.trace import (
     CitationView,
     SuggestionView,
+    ToolCallView,
     Trace,
     error_text,
     error_trace,
@@ -35,6 +36,28 @@ from tests.eval.suite.world import (
 
 async def _no_commit() -> None:
     """InMemoryStore 라 확정할 것이 없다."""
+
+
+def memory_tools(memory: Any) -> tuple[ToolCallView, ...] | None:
+    """Memory 가 부른 tool — 이름과 성공 여부만. Memory 가 돌지 않았으면 None."""
+    if memory is None:
+        return None
+    return tuple(ToolCallView(call.name, call.success) for call in memory.calls)
+
+
+def draft_items(memory: Any) -> tuple[str, ...]:
+    """Memory 가 만든 일정 초안의 준비물 이름.
+
+    일정 초안(`EventDraft`)은 준비물을 `DraftItem` 으로, 반복 묶음 초안(`SeriesDraft`, #738)은
+    이름 문자열로 든다 — 둘 다 이름으로 읽는다.
+    """
+    if memory is None:
+        return ()
+    return tuple(
+        item if isinstance(item, str) else item.item_name
+        for draft in memory.drafts
+        for item in draft.items
+    )
 
 
 def read_run(
@@ -187,6 +210,9 @@ async def run_probe(case: ProbeCase, *, attempt: int, logs: Callable[[], Sequenc
                 events=events,
                 batches=saved.batches,
             )
+            if last:  # tool · 준비물 기대는 마지막 턴만 본다 (schema.ToolsExpect)
+                trace.memory_tools = memory_tools(result.memory)
+                trace.draft_items = draft_items(result.memory)
             if not result.committed:
                 # 확정되지 않은 run 의 쓰기는 운영에서 롤백된다(pipeline 의 commit 결과가
                 # False 면 저장 안 된 것) — InMemory 에 남은 행을 저장으로 세지 않는다

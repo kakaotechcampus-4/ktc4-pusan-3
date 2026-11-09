@@ -6,7 +6,8 @@
 
 | 경로 | 무엇 |
 | --- | --- |
-| `cases/probes.yaml` | P · 단발 프로브 33개 (능력 6개 · 헤드라인 10개 · 주입 7개) |
+| `cases.md` | 골든셋 — 헤드라인 10개를 입력 · 기대 결과 · 같은 것을 보는 기존 Agent eval 과 한 표로 (판정 정본은 `probes.yaml`) |
+| `cases/probes.yaml` | P · 단발 프로브 34개 (능력 6개 · 헤드라인 10개 · 주입 7개) |
 | `cases/week/` | W · 일주일 페르소나 — `a-typical.yaml`(보통 · 입력 39 + 승인 · 정정 · 점검) · `c-light.yaml`(가끔 · 4단계). B(많음)는 아직 없다 |
 | `faults.md` | F · 장애 점검표 (계획 3) |
 | `results/<날짜>.md` | 실행 요약 — 커밋한다. 지난 요약과의 diff 가 회귀 신호다 |
@@ -35,9 +36,8 @@
 앱을 프로세스 안에서 API 로 돌린다(`POST /inputs` → SSE · 승인 · 정정). 시계는 `time-machine` 이 단계 시각(주의 요일 · 시:분 KST)으로 옮기고, 저장소는 **통합 테스트 DB `icatch_it`** 다(개발 DB 가 아니다). 실제 모델을 부른다 — 입력 하나 ≈22k 토큰.
 
 ```
-cd apps/api
-EVAL_TIER=full EVAL_ONLY=W-C PYTEST_ADDOPTS= uv run pytest tests/eval/suite/test_week_live.py -m live -q   # 가끔 (4 입력)
-EVAL_TIER=full EVAL_ONLY=W-A PYTEST_ADDOPTS= uv run pytest tests/eval/suite/test_week_live.py -m live -q   # 보통 (입력 39)
+EVAL_ONLY=W-C make eval-week   # 가끔 (4 입력)
+EVAL_ONLY=W-A make eval-week   # 보통 (입력 39)
 ```
 
 - W 는 `make eval-week` 로만 돈다(`EVAL_ONLY=W-C make eval-week` 로 하나만) — `DB_NAME=icatch_it` 가 이 명령에만 있다. `make eval` 은 W 를 deselect 하고, `make eval-smoke` 는 W 를 건너뛴다(거기서 `EVAL_ONLY=W-C` 를 주면 DB 가드에서 멈춘다)
@@ -69,6 +69,18 @@ EVAL_TIER=full EVAL_ONLY=W-A PYTEST_ADDOPTS= uv run pytest tests/eval/suite/test
 | 날짜 | 커밋 | 모델 | effort | 반복 | 헤드라인 | 판정 못 함 | 불안정 | 불변식 위반 | 비고 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | (11-10 첫 측정 뒤 채운다) | | | | | | | | | |
+
+## 다른 평가가 있는 곳
+
+여기 스위트는 서비스 전체를 지나는 입력을 본다. Agent 하나만 떼어 본 평가와 지난 개선 실험은 각자 자리에 있고, 옮기지 않고 링크만 건다.
+
+| 무엇 | 어디 |
+| --- | --- |
+| Agent 별 라이브 eval — Supervisor · Memory · Curator · Food · Activity · Growth · Health | [`apps/api/tests/eval/agents/`](../apps/api/tests/eval/agents/). 입력 · 기대값 표는 [`docs/agents/food/test_expected_food.md`](../docs/agents/food/test_expected_food.md) · [`docs/agents/growth/test_expected_growth.md`](../docs/agents/growth/test_expected_growth.md) |
+| Memory — 실측으로 바뀐 것 (거짓 저장 답 막기 #667 등) | [`docs/agents/memory-agent-v1.md` §4](../docs/agents/memory-agent-v1.md) |
+| Memory — unclear 조각을 아이 관찰로 남기지 않기 (D13) | [`docs/agents/memory-agent-v1.md` §3 D13](../docs/agents/memory-agent-v1.md) |
+| Curator — 유사도 임계값 대신 판정기 (실험 1~5) | [`docs/memory/curator-linking-v1.md` §1](../docs/memory/curator-linking-v1.md) |
+| 급식표 사진 OCR — 모델 비교 · 채점 | [`docs/meal-plan/ocr-model-eval-v1.md`](../docs/meal-plan/ocr-model-eval-v1.md) |
 
 ## 케이스를 더할 때
 

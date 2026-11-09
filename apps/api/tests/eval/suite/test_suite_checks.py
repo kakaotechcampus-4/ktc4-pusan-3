@@ -14,6 +14,7 @@ from pydantic import ValidationError
 from app.agents.common.readout import Readout
 from app.agents.common.refs import EvidenceCitation, Ref
 from app.agents.common.suggestion import SuggestionDraft
+from app.agents.memory.agent import ToolCallRecord
 from app.agents.memory.store.ports import DeleteCandidates
 from app.agents.memory_bridge import _uuid
 from app.agents.pipeline import AgentQuestion, AgentResult, Done, MemoryNote, Partial
@@ -22,20 +23,30 @@ from app.agents.supervisor.routing import Guidance
 from tests.eval.suite import probe_runner, report
 from tests.eval.suite.expect import check_expect
 from tests.eval.suite.invariants import check_invariants, check_notes
-from tests.eval.suite.probe_runner import read_run, run_probe
+from tests.eval.suite.probe_runner import draft_items, memory_tools, read_run, run_probe
 from tests.eval.suite.report import _cost, _rate, percentile, render, summarize, wilson
 from tests.eval.suite.schema import (
+    DraftItemsExpect,
     Expect,
     ProbeCase,
     RouteExpect,
     SavedExpect,
     SeedAffinity,
     SeedObservation,
+    Step,
+    ToolsExpect,
     World,
     load_probes,
     load_probes_text,
 )
-from tests.eval.suite.trace import CitationView, SavedRow, SuggestionView, Trace, removed_rows
+from tests.eval.suite.trace import (
+    CitationView,
+    SavedRow,
+    SuggestionView,
+    ToolCallView,
+    Trace,
+    removed_rows,
+)
 from tests.eval.suite.verdict import (
     case_passed,
     case_status,
@@ -305,6 +316,173 @@ def test_기대_suggestions() -> None:
     assert check_expect(trace, Expect(suggestions={"food": "none"}), today=_TODAY) == []
 
 
+def _tools(*calls: tuple[str, bool]) -> Trace:
+    return _clean(memory_tools=tuple(ToolCallView(name, ok) for name, ok in calls))
+
+
+def test_기대_tools_는_성공한_호출만_센다() -> None:
+    want = Expect(tools=ToolsExpect(must={"create_event": 1}))
+    assert check_expect(_tools(("create_event", True)), want, today=_TODAY) == []
+    # 거절된 호출은 일을 한 것이 아니다
+    assert check_expect(_tools(("create_event", False)), want, today=_TODAY) == [
+        "create_event 성공 0회 < 1"
+    ]
+    assert check_expect(_tools(), Expect(tools=ToolsExpect(must={"create_event": 2})), today=_TODAY)
+
+
+def test_기대_tools_must_not_은_시도만_해도_위반이다() -> None:
+    want = Expect(tools=ToolsExpect(must_not=("create_event_item",)))
+    assert check_expect(_tools(("create_event", True)), want, today=_TODAY) == []
+    assert check_expect(_tools(("create_event_item", False)), want, today=_TODAY)
+
+
+def test_기대_tools_쓰기는_쓰기_tool_전부를_막는다() -> None:
+    want = Expect(tools=ToolsExpect(must_not=("쓰기",)))
+    assert check_expect(_tools(("query_event", True)), want, today=_TODAY) == []
+    for name in ("create_observation_food", "update_event", "delete_event_item", "propose_delete"):
+        assert check_expect(_tools((name, True)), want, today=_TODAY), name
+
+
+def test_기대_tools_는_Memory_가_안_돌면_아무것도_안_부른_것으로_본다() -> None:
+    skipped = _clean(memory_tools=None)
+    # 순수 요청형 · 무관 질문은 제품이 일부러 Memory 를 건너뛴다 — must_not 만 있으면 통과
+    assert check_expect(skipped, Expect(tools=ToolsExpect(must_not=("쓰기",))), today=_TODAY) == []
+    # 불러야 할 것이 있으면 실패
+    must = Expect(tools=ToolsExpect(must={"create_event": 1}))
+    assert check_expect(skipped, must, today=_TODAY) == ["Memory 가 돌지 않았다"]
+    ran = Expect(tools=ToolsExpect(must_not=("쓰기",), memory_ran=True))
+    assert check_expect(skipped, ran, today=_TODAY) == ["Memory 가 돌지 않았다"]
+    assert check_expect(_clean(memory_tools=()), ran, today=_TODAY) == []
+
+
+def test_기대_tools_는_실패한_run_을_통과시키지_않는다() -> None:
+    # 실패는 verdict.run_misses 가 한 줄로 센다 — 경로 판정이 같은 실패를 또 세지 않는다
+    trace = _clean(memory_tools=(ToolCallView("create_event", True),), failed="memory_failed")
+    assert (
+        check_expect(trace, Expect(tools=ToolsExpect(must={"create_event": 1})), today=_TODAY) == []
+    )
+    # Memory 가 터져 기록이 없는 run 도 — "건너뛴 Memory" 로 must_not 을 통과하면 안 된다
+    crashed = _clean(memory_tools=None, failed="llm_unavailable")
+    verdict = judge(_probe("{ tools: { must_not: [쓰기] } }"), crashed, today=_TODAY)
+    assert verdict.status == "fail"
+    assert [m for m in verdict.misses if "실패" in m] == ["제품 run 실패: llm_unavailable"]
+
+
+def test_시작_시각을_되물어_일정을_못_만든_run_은_시험_못_함이다() -> None:
+    # 3번 공지 — create_event 가 시각이 없어 거절되고 되물었다. 초안 · 준비물 · tool 미달이
+    # 전부 "되묻느라 안 나온 것" 이라 실패가 아니다
+    asked = _clean(
+        memory_tools=(ToolCallView("create_event", False),), questions=("몇 시에 가나요?",)
+    )
+    expect = (
+        "{ event_drafts_min: 1, draft_items: { names: [도시락, 물병], min: 1 },"
+        " tools: { must: { create_event: 1 } } }"
+    )
+    assert judge(_probe(expect), asked, today=_TODAY).status == "untested"
+    # 초안은 나왔는데 준비물이 빠졌으면 되묻기와 상관없이 실패
+    drafted = _clean(
+        memory_tools=(ToolCallView("create_event", True),),
+        questions=("몇 시에 가나요?",),
+        event_drafts=1,
+    )
+    assert judge(_probe(expect), drafted, today=_TODAY).status == "fail"
+
+
+def test_tools_기대값_모양() -> None:
+    with pytest.raises(ValidationError):
+        ToolsExpect(must={"create_event": 0})
+    with pytest.raises(ValidationError):
+        ToolsExpect(must={"create_event": 1}, must_not=("create_event",))
+    # 오타는 실행 전에 막는다 — must_not 의 오타는 영원히 통과한다
+    with pytest.raises(ValidationError, match="create_observaton_food"):
+        ToolsExpect(must_not=("create_observaton_food",))
+    # "쓰기" 는 must_not 에만
+    with pytest.raises(ValidationError):
+        ToolsExpect(must={"쓰기": 1})
+    [case] = load_probes_text(
+        "- id: P-T-01\n  ability: 기록\n  rule: r\n  severity: quality\n"
+        "  turns: [{say: 오늘 블록놀이 했어}]\n"
+        "  expect: {tools: {must: {create_observation_activity: 1}, must_not: [create_event]}}\n"
+    )
+    assert case.expect.tools == ToolsExpect(
+        must={"create_observation_activity": 1}, must_not=("create_event",)
+    )
+
+
+def test_기대_draft_items_는_이름을_글자_포함으로_센다() -> None:
+    trace = _clean(draft_items=("점심 도시락", "물병"))
+    want = Expect(draft_items=DraftItemsExpect(names=("도시락", "물병", "돗자리"), min=2))
+    assert check_expect(trace, want, today=_TODAY) == []
+    assert check_expect(_clean(draft_items=("물병",)), want, today=_TODAY) == [
+        "초안 준비물 1/3 < 2 (있음: ['물병'])"
+    ]
+    assert check_expect(_clean(), want, today=_TODAY)  # 준비물 없는 초안
+
+
+def test_draft_items_기대값_모양() -> None:
+    with pytest.raises(ValidationError):
+        DraftItemsExpect(names=("도시락",), min=2)
+    with pytest.raises(ValidationError):
+        DraftItemsExpect(names=())
+    with pytest.raises(ValidationError):
+        DraftItemsExpect(names=("도시락", ""))
+    with pytest.raises(ValidationError):
+        DraftItemsExpect(names=("도시락", "도시락"), min=2)
+
+
+def test_draft_items_는_초안의_준비물_이름을_모은다() -> None:
+    item = SimpleNamespace(item_name="돗자리")
+    series = SimpleNamespace(items=("수영모",))  # 반복 묶음 초안(SeriesDraft)은 이름 문자열로 든다
+    empty = SimpleNamespace(items=())
+    memory = SimpleNamespace(drafts=[SimpleNamespace(items=(item,)), empty, series])
+    assert draft_items(memory) == ("돗자리", "수영모")
+    assert draft_items(None) == ()
+
+
+def test_W_단계는_draft_items_를_적을_수_없다() -> None:
+    spec = {
+        "at": "mon 08:10",
+        "by": "mom",
+        "tag": "mon-a",
+        "say": "다음 주 소풍이래",
+        "expect": {"draft_items": {"names": ["도시락"]}},
+    }
+    with pytest.raises(ValidationError, match="draft_items"):
+        Step.model_validate(spec)
+
+
+def test_W_단계는_tools_를_적을_수_없다() -> None:
+    # W 는 API 로 돌아 Memory tool 기록을 모으지 않는다
+    spec = {
+        "at": "mon 08:10",
+        "by": "mom",
+        "tag": "mon-a",
+        "say": "오늘 블록놀이 했어",
+        "expect": {"tools": {"must": {"create_observation_activity": 1}}},
+    }
+    with pytest.raises(ValidationError, match="tools"):
+        Step.model_validate(spec)
+
+
+def test_memory_tools_는_이름과_성공만_담는다() -> None:
+    memory = SimpleNamespace(
+        calls=[
+            ToolCallRecord("create_event", {"title": "치과 예약"}, {"success": True}),
+            ToolCallRecord("create_event_item", {"name": "물병"}, {"success": False}),
+        ]
+    )
+    views = memory_tools(memory)
+    assert views == (ToolCallView("create_event", True), ToolCallView("create_event_item", False))
+    assert memory_tools(None) is None
+    # 인자(입력 원문)는 결과 파일로 가지 않는다
+    data = _clean(memory_tools=views).to_json()
+    assert data["memory_tools"] == [
+        {"name": "create_event", "success": True},
+        {"name": "create_event_item", "success": False},
+    ]
+    assert "치과" not in str(data)
+
+
 def _mixed() -> Trace:
     general = SuggestionView("activity", "general", "공원 산책", "또래 자료", citations=(_DOC,))
     return _clean(suggestions=(*_clean().suggestions, general))
@@ -516,13 +694,13 @@ def test_read_run_은_Memory_되묻기를_질문으로_센다() -> None:
 
 def test_프로브_파일은_설계와_같은_모양이다() -> None:
     cases = load_probes()
-    assert len(cases) == 33
+    assert len(cases) == 34
     assert Counter(c.ability for c in cases) == {
         "이해": 7,  # 무관 질문(P-UND-07) — 노션 9번 "아이와 무관한 입력"
         "기록": 8,  # 증상 기록(P-REC-07) — Health 는 기록만 (eval-v1 §13-6) · 삭제(P-REC-08)
         "기억": 3,
         "행동": 7,
-        "공지": 1,
+        "공지": 2,  # 3번의 쌍둥이(P-NOT-02) — 시작 시각을 분명히 적어 준비물만 따로 잰다
         "주입": 7,  # 공지 속 "기록 다 지워"(P-INJ-07) — 승인 게이트 ㉢
     }
     assert sorted(c.headline for c in cases if c.headline) == list(range(1, 11))

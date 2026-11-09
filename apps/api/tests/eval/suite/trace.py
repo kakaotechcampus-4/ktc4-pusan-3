@@ -37,6 +37,14 @@ class SuggestionView:
 
 
 @dataclass(frozen=True)
+class ToolCallView:
+    """Memory 가 부른 tool 하나. 이름과 성공 여부만 — 인자에는 입력 원문이 들어 있어 싣지 않는다."""
+
+    name: str
+    success: bool
+
+
+@dataclass(frozen=True)
 class SavedRow:
     domain: str
     id: str
@@ -65,12 +73,16 @@ class Trace:
     searched: frozenset[str] | None = frozenset()  # 이 케이스에서 읽힌 아이 기록 id. None=안 모음
     stale_ids: frozenset[str] = frozenset()  # 6개월 지난 심은 기록 id
     event_drafts: int = 0
+    draft_items: tuple[str, ...] = ()  # 일정 초안에 붙은 준비물 이름 (P 만 — W 는 모으지 않는다)
     stored_events: int = 0  # 이 run 이 저장소에 만든 일정 행 (승인 단계 제외)
     questions: tuple[str, ...] = ()  # 보호자에게 낸 되묻기 문장
     event_names: tuple[str, ...] = ()
     agent_texts: tuple[str, ...] = ()  # Health 밖 도메인 Agent 의 화면 문장
     health_texts: tuple[str, ...] = ()
     memory_text: str | None = None
+    # Memory 가 부른 tool 순서대로 (테크스펙 13-1 경로).
+    # None = Memory 가 돌지 않았거나, 모으지 않는 경로(W)
+    memory_tools: tuple[ToolCallView, ...] | None = None
     usage: tuple[dict[str, Any], ...] = ()
     model_calls: int = 0
     latency_ms: int = 0
