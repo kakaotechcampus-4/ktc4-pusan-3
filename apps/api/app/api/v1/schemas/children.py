@@ -9,8 +9,9 @@ from decimal import Decimal
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StrictBool, StringConstraints
+from pydantic import AfterValidator, ConfigDict, Field, StrictBool, StringConstraints
 
+from app.api.schema_base import ApiSchema
 from app.api.v1.schemas.auth import ConsentInput, Nickname
 from app.domains.child.models import Gender, ParentChildRelation
 
@@ -18,7 +19,7 @@ Role = Literal["owner", "member"]
 """아이의 owner(등록한 보호자)인가, 초대로 연결된 member 인가 — child.owner_parent_id 와 비교."""
 
 
-class CreateChildRequest(BaseModel):
+class CreateChildRequest(ApiSchema):
     """POST /children — 아이 정보와 아이 동의를 한 요청에 (#92 결정, 2026-09-18)."""
 
     nickname: Nickname = Field(description="아이를 부르는 이름. 앞뒤 공백을 떼고 1~20자")
@@ -38,7 +39,7 @@ class CreateChildRequest(BaseModel):
     )
 
 
-class CreateChildResponse(BaseModel):
+class CreateChildResponse(ApiSchema):
     """201 — 등록한 아이. 등록한 보호자는 항상 owner 다."""
 
     id: UUID
@@ -47,7 +48,7 @@ class CreateChildResponse(BaseModel):
     role: Role
 
 
-class ChildProfile(BaseModel):
+class ChildProfile(ApiSchema):
     """아이 프로필 — GET /children/{cid} 의 응답이자 PATCH 의 응답 안 child.
 
     관계(relation) · 역할(role)은 보는 보호자 기준이다. 같은 아이라도 보호자마다 다르게 받는다.
@@ -67,7 +68,7 @@ class ChildProfile(BaseModel):
     role: Role
 
 
-class UpdateChildRequest(BaseModel):
+class UpdateChildRequest(ApiSchema):
     """PATCH /children/{cid} — 고친 칸만 보낸다. 안 보낸 칸은 그대로 둔다. 하나도 없으면 400.
 
     null 은 받지 않는다(400). 별명 · 생일 · 성별은 늘 값이 있어서 "비우기" 가 없다.
@@ -90,7 +91,7 @@ class UpdateChildRequest(BaseModel):
     )
 
 
-class UpdateChildResponse(BaseModel):
+class UpdateChildResponse(ApiSchema):
     """200 — 고친 뒤의 프로필."""
 
     child: ChildProfile
@@ -130,7 +131,7 @@ WeightKg = Annotated[
 ]
 
 
-class OnboardingRequest(BaseModel):
+class OnboardingRequest(ApiSchema):
     """POST /children/{cid}/onboarding — 아이 등록 뒤 02 화면. 적은 칸만 보낸다. 하나도 없으면 400.
 
     null 은 받지 않는다(400) — 적지 않은 칸은 보내지 않는다.
@@ -160,7 +161,7 @@ class OnboardingRequest(BaseModel):
     )
 
 
-class GrowthLogOut(BaseModel):
+class GrowthLogOut(ApiSchema):
     """키 · 몸무게를 잰 날 한 줄."""
 
     # 🚨 증감 · 백분위 · 또래 비교 칸은 만들지 않는다 — 발달 평가로 읽힌다 (루트 §2)
@@ -176,14 +177,14 @@ class GrowthLogOut(BaseModel):
     note: str | None
 
 
-class GrowthLogsResponse(BaseModel):
+class GrowthLogsResponse(ApiSchema):
     """GET /children/{cid}/growth — 잰 날 최신순. 한 화면에 다 들어오는 분량이라 커서는 늘 null."""
 
     items: list[GrowthLogOut]
     next_cursor: None = None
 
 
-class CreateGrowthLogRequest(BaseModel):
+class CreateGrowthLogRequest(ApiSchema):
     """POST /children/{cid}/growth — 잰 날 필수, 키 · 몸무게는 하나 이상.
 
     잰 날은 아이 생일부터 오늘(한국 날짜)까지. 키 · 몸무게는 칸별 범위 밖이거나 소수 둘째 자리부터
@@ -202,7 +203,7 @@ class CreateGrowthLogRequest(BaseModel):
     )
 
 
-class UpdateGrowthLogRequest(BaseModel):
+class UpdateGrowthLogRequest(ApiSchema):
     """PATCH /children/{cid}/growth/{id} — 보낸 칸만 바꾼다.
 
     하나도 없으면(`{}`) 바꾸지 않고 지금 줄을 200 으로 돌려준다.
@@ -222,20 +223,20 @@ class UpdateGrowthLogRequest(BaseModel):
     )
 
 
-class GrowthLogResponse(BaseModel):
+class GrowthLogResponse(ApiSchema):
     """201 · 200 — 더하거나 고친 기록 한 줄."""
 
     log: GrowthLogOut
 
 
-class OnboardingResponse(BaseModel):
+class OnboardingResponse(ApiSchema):
     """200 — 저장한 뒤의 프로필과, 키·몸무게를 적었으면 그 기록 한 줄."""
 
     child: ChildProfile
     growth: GrowthLogOut | None = Field(description="키 · 몸무게를 둘 다 안 적었으면 null")
 
 
-class InputLocation(BaseModel):
+class InputLocation(ApiSchema):
     """휴대폰이 흐려 보낸 좌표 (#380). 소수점 둘째 자리(약 1km)로 보낸다 — 서버도 한 번 더 자른다.
 
     🚨 저장하지 않고 로그에도 남기지 않는다. 이 요청의 run 안에서 날씨 격자 변환과 장소 거리
@@ -246,7 +247,7 @@ class InputLocation(BaseModel):
     lon: float = Field(ge=-180, le=180, repr=False, description="경도. 소수점 둘째 자리로 흐린 값")
 
 
-class CreateInputRequest(BaseModel):
+class CreateInputRequest(ApiSchema):
     """POST /children/{cid}/inputs — 한 줄 입력."""
 
     text: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)]
@@ -270,7 +271,7 @@ class CreateInputRequest(BaseModel):
     )
 
 
-class CreateInputResponse(BaseModel):
+class CreateInputResponse(ApiSchema):
     """202 — run_id. 결과는 전부 GET /runs/{rid}/events 로 흐른다.
 
     같은 키 재생에서 그 run 의 채널이 이미 지워졌고(닫힌 지 5분 뒤 · 서버 재시작) 대화 기록이

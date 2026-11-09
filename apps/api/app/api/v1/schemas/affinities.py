@@ -6,12 +6,13 @@
 from datetime import date
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import Field
 
+from app.api.schema_base import ApiSchema
 from app.api.v1.schemas.common import Ref
 
 
-class AffinityOut(BaseModel):
+class AffinityOut(ApiSchema):
     kind: Literal["profile_affinity"] = "profile_affinity"
     id: str
     merge_key: str
@@ -36,7 +37,7 @@ class AffinityOut(BaseModel):
     source_refs: list[Ref] = Field(description="묶인 active 관찰. 최근 것이 앞")
 
 
-class AffinitiesResponse(BaseModel):
+class AffinitiesResponse(ApiSchema):
     affinities: list[AffinityOut]
     total: int = Field(
         description=(
