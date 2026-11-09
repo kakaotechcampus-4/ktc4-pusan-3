@@ -21,7 +21,6 @@ from app.agents.common.config import (
     AgentSettings,
     get_agent_settings,
 )
-from app.agents.common.prompt_fingerprint import is_registered, logged_fingerprint
 
 # 실패 예외는 errors.py 에 있다. 원래 import 경로(`llm_client.LLMError` 등)를 지키려고
 # 다시 내보낸다 (#768)
@@ -46,6 +45,7 @@ from app.agents.common.errors import (
 from app.agents.common.errors import (
     LLMUnavailableError as LLMUnavailableError,
 )
+from app.agents.common.prompt_fingerprint import is_registered, logged_fingerprint
 from app.core import llm_usage
 
 logger = logging.getLogger(__name__)

@@ -13,13 +13,13 @@ Activity 처럼 구획 상수를 이어 붙인다. tool 이 못 막는 것을 �
 from collections.abc import Sequence
 from types import SimpleNamespace
 
+from app.agents.common.evidence import RankedEvidence
 from app.agents.common.prompt_fingerprint import (
     fixed_context,
     fixed_gate,
     register_prompt,
     tools_text,
 )
-from app.agents.common.evidence import RankedEvidence
 from app.agents.growth.context import GrowthContext
 from app.agents.growth.schemas.task import GrowthTaskType
 from app.agents.growth.tools.docs import DocHit
