@@ -525,8 +525,8 @@ def _origin(
                 "말하지 않았으면 장소가 필요 없는 놀이만 낸다.",
             )
         return context.outing_location
-    name = named_area(area_text, state.request_texts)
-    if name is None and not said(area_text, state.request_texts):
+    name = named_area(area_text, state.said())
+    if name is None and not said(area_text, state.said()):
         return fail(
             "query",
             tool,

@@ -46,6 +46,11 @@ class ActivityRunState:
     # 보호자 요청 글. run() 이 모델을 부르기 전에 채운다. 모델이 지어낸 값을 받지 않으려고 이 글과
     # 대조한다 — 장소 조회의 `area`(`areas.said`), 출력 tool 의 requested_play(#597 리뷰)
     request_texts: tuple[str, ...] = ()
+    # 앞 대화를 이어 묻는 말을 해석했을 때만 찬다 — 이번 입력의 보호자 원문 · 앞 턴들의 보호자
+    # 원문. 지역 · 요청한 놀이는 이 글과 대조한다(`said()`). 원문이 비어 있으면 `request_texts` 가
+    # 곧 원문이다
+    original_texts: tuple[str, ...] = ()
+    prior_texts: tuple[str, ...] = ()
     # 보호자가 말한 지역(`areas.find_area`). 장소 조회가 찾으면 넣는다. 있으면 이 run 의 장소 ·
     # 날씨는 그 지역 대표 지점 기준이다(`ActivityContext.outing_location`). 한 run 에 한 지역이다
     area: Area | None = None
@@ -82,6 +87,10 @@ class ActivityRunState:
     dark_skipped: bool = False
     # 오늘 운영 시간이 이미 끝난 행사 이름. 장소 조회 결과와 출력 검증이 오늘을 뺀다 (#800)
     ended_today: set[str] = field(default_factory=set)
+
+    def said(self) -> tuple[str, ...]:
+        """보호자가 실제로 한 말 — 이번 입력과 앞 턴. 지역 · 요청한 놀이를 대조할 때 읽는다."""
+        return (*(self.original_texts or self.request_texts), *self.prior_texts)
 
 
 @dataclass(frozen=True)

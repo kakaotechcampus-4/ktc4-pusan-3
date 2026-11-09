@@ -19,6 +19,7 @@ from typing import Any, Protocol
 from uuid import UUID
 
 from app.agents.common.datetime_rules import DateRange
+from app.rules.recurrence import repeat_label
 
 # observation 5테이블. 도메인별 컬럼이 달라 payload로 받고 테이블만 이름으로 가름
 ObservationDomain = str
@@ -68,6 +69,16 @@ class EventItemRow:
 
 
 @dataclass(frozen=True)
+class SeriesRow:
+    """요일 반복 묶음 (#738). 회차는 날짜마다 따로인 일정 행이고, 이 행이 규칙을 들고 있다."""
+
+    id: str
+    weekdays: tuple[int, ...]  # ISO 요일, 1=월 … 7=일
+    starts_on: date  # 첫 회차 날짜
+    until: date  # 마지막 날 (포함)
+
+
+@dataclass(frozen=True)
 class EventRow:
     id: str
     title: str
@@ -75,20 +86,38 @@ class EventRow:
     ends_at: datetime | None
     all_day: bool
     fields: dict[str, Any]  # event_type / category / created_by
+    series: SeriesRow | None = None  # 반복 묶음의 회차이면 그 묶음
 
     def to_summary(self, items: list[EventItemRow] | None = None) -> dict[str, Any]:
         """조회 결과 요약.
 
         event 테이블에는 created_at 이 없다(ORM 확인). 시작 시각으로 대신한다.
         event_item 에는 조회 tool이 없어서 여기 같이 싣는다.
+        반복 묶음의 회차이면 `series` 가 붙는다 — 모델이 어느 일정이 묶음인지 보고 범위를 정한다.
         """
-        return {
+        summary: dict[str, Any] = {
             "id": self.id,
             "title": self.title,
             "starts_at": self.starts_at.isoformat(),
             "all_day": self.all_day,
             "items": [item.to_summary() for item in (items or [])],
         }
+        if self.series is not None:
+            summary["series"] = {
+                "id": self.series.id,
+                "label": repeat_label(self.series.weekdays, self.series.until),
+            }
+        return summary
+
+
+def supports_series(store: object) -> bool:
+    """이 store 가 반복 묶음(`SeriesRow` · `list_series_events` …)을 다룰 수 있는지.
+
+    store 가 `supports_series = True` 를 달아야 열린다. 달지 않았으면 모르는 것으로 본다 —
+    DB 어댑터가 묶음을 구현하기 전에 Agent 가 반복 일정 초안을 만들면, 제출할 곳이 없어 보호자가
+    반복으로 말한 일정이 하나만 만들어진다. `is True` 로 보는 건 참처럼 보이는 값을 막는다.
+    """
+    return getattr(store, "supports_series", False) is True
 
 
 @dataclass(frozen=True)
@@ -216,6 +245,15 @@ class MemoryStore(Protocol):
 
     async def delete_event(self, *, event_id: str) -> bool:
         """연결된 event_item 도 함께 제거 (ON DELETE CASCADE)."""
+        ...
+
+    # 반복 묶음 (#738)
+    async def get_series(self, *, series_id: str) -> SeriesRow | None:
+        """없으면(형식이 틀린 id 포함) None."""
+        ...
+
+    async def list_series_events(self, *, series_id: str, date_from: date) -> list[EventRow]:
+        """`date_from` 이후(그날 포함) 회차를 날짜순으로. 묶음이 없으면 빈 목록."""
         ...
 
     # event_item(create X)

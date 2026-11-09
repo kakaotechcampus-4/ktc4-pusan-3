@@ -17,6 +17,9 @@
       라벨이 없는 Agent(activity)는 None 이다. Health 라벨이 비어 있어도 채우지 않고 None 으로
       넘긴다 — Health 가 unsupported 로 닫는다.
       Growth 추천 라벨은 run 당 하나 — 처음 것이되 늘 닫히는 도서는 다른 추천 라벨에 자리를 내준다.
+      앞 대화를 이어 묻는 말이면 추천 task 에 한해 `resolved_request` 가 조각 원문 대신 간다
+      (`RESOLVABLE_TASKS`). 그때 보호자 원문은 `original_texts` 에 따로 든다. 확인 · 쓰기 task 와
+      Memory 는 늘 보호자 원문을 받는다.
 
   - 미구현 Agent 처리
       구현된 Agent 가 아닌 곳(`IMPLEMENTED_AGENTS` 밖)으로 라우팅된 조각은
@@ -82,6 +85,14 @@ _ONE_RECOMMENDATION: dict[str, frozenset[str]] = {
 # 다른 추천 라벨이 없을 때만 돈다
 _YIELDING: dict[str, frozenset[str]] = {
     DomainAgentName.GROWTH.value: GROWTH_YIELDING,
+}
+
+# 앞 대화를 이어 묻는 말의 해석 문장(`resolved_request`)을 받는 task. 추천을 내는 task 표
+# (`pipeline.RECOMMENDING_TASKS`)와 같은 값이다 — 레이어가 달라 import 하지 않고 테스트가 맞춘다
+RESOLVABLE_TASKS: dict[str, frozenset[str | None]] = {
+    DomainAgentName.FOOD.value: frozenset({"meal_recommendation"}),
+    DomainAgentName.ACTIVITY.value: frozenset({None}),
+    DomainAgentName.GROWTH.value: frozenset(GROWTH_RECOMMENDING),
 }
 
 # True: 순수 요청형(원문이 전부 요청, 안내 조각)이면 Memory를 건너뛴다.
@@ -272,13 +283,15 @@ def _domain_tasks(
     """
     kept = _kept_recommendations(segments)
     texts: dict[tuple[str, str | None], list[str]] = {}
+    said: dict[tuple[str, str | None], list[str]] = {}
     trimmed = False
     for segment in segments:
         agent, label = str(segment.agent), _task_label(segment)
         if label in _ONE_RECOMMENDATION.get(agent, frozenset()) and label != kept.get(agent):
             trimmed = True
             continue
-        texts.setdefault((agent, label), []).append(segment.text)
+        texts.setdefault((agent, label), []).append(_request_text(segment))
+        said.setdefault((agent, label), []).append(segment.text)
     tasks = tuple(
         DomainTask(
             run_id=run_id,
@@ -286,6 +299,10 @@ def _domain_tasks(
             task_type=task_type,
             request_texts=tuple(items),
             record_texts=record_texts,
+            # 해석한 문장이 든 task 만 보호자 원문을 따로 든다 — 아니면 request_texts 가 곧 원문이다
+            original_texts=(
+                () if said[(agent, task_type)] == items else tuple(said[(agent, task_type)])
+            ),
         )
         for (agent, task_type), items in texts.items()
     )
@@ -310,6 +327,19 @@ def _kept_recommendations(segments: list) -> dict[str, str]:
         yielding = _YIELDING.get(agent, frozenset())
         kept[agent] = next((label for label in labels if label not in yielding), labels[0])
     return kept
+
+
+def _request_text(segment) -> str:
+    """도메인 task 가 받을 문장. 추천 task 만 해석한 요청을 받고 나머지는 보호자 원문 조각이다.
+
+    확인 · 쓰기 task(food_check · daycare_meal · nutrient_analysis · growth_review · health 전부)는
+    모델이 만든 문장을 받지 않는다 — 복약 대조 · 급식 갱신 · "먹여도 되나" 판정에 LLM 이 쓴 이름이
+    들어가면 안 된다. 해석이 없으면 원문 조각이다.
+    """
+    resolved = getattr(segment, "resolved_request", None)
+    if resolved and _task_label(segment) in RESOLVABLE_TASKS.get(str(segment.agent), frozenset()):
+        return resolved
+    return segment.text
 
 
 def _task_label(segment) -> str | None:

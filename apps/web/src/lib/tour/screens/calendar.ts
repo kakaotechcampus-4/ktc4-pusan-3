@@ -12,7 +12,7 @@ export const calendarTour: TourDefinition = {
     {
       target: "diary",
       title: "이날의 일기",
-      body: "그날 어땠는지 편하게 남겨요. 쓰지 않은 날은 비워 두고, 채우려고 지어내지 않아요.",
+      body: "그날 어땠는지 편하게 남겨요. 쓰지 않은 날은 비워 둬도 돼요.",
     },
     {
       target: "events",

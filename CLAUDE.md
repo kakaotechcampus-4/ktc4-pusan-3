@@ -44,9 +44,9 @@
 
 ### 기억
 
-- 🚨 **근거 Memory 가 없으면 개인화 추천 대신 일반 추천을 낸다.** 일반 추천임을 **화면에 명시**하고(막연한 요청이면 또래 기준, 보호자가 놀이 · 교육 주제나 루틴 행동을 정해 물었으면 그 요청에 맞춤), 쌓인 기록 건수를 그대로 보여준다. 되물을 때는 최소 질문 **1개**(복수 금지). 근거가 없는데 "우리 아이 맞춤"인 척하지 않는 것이 이 규칙의 전부다.
+- 🚨 **근거 Memory 가 없으면 개인화 추천 대신 일반 추천을 낸다.** 일반 추천임을 **화면에 명시**하고(막연한 요청이면 또래 기준, 보호자가 놀이 · 교육 주제나 루틴 행동 · 음식 재료나 요리 종류를 정해 물었으면 그 요청에 맞춤), 쌓인 기록 건수를 그대로 보여준다. 되물을 때는 최소 질문 **1개**(복수 금지). 근거가 없는데 "우리 아이 맞춤"인 척하지 않는 것이 이 규칙의 전부다.
 - 🚨 **개인화 추천에는 사용한 `source_id` 를 반드시 첨부한다.** 근거를 달고 나가는데 `suggestion_evidence` 가 0행이면 **버그**다 (품질 지표 하드 기준 0건).
-- 🚨 **일반 추천과 개인화 추천은 타입으로 구분한다.** 개인화는 아이 기록을, 일반은 문서 행을 근거로 단다(Food 일반 추천은 고른 메뉴 — 레시피 카탈로그 행 — 만으로도 된다, #442. 같은 예외를 Growth 도서에도 — 고른 책의 서지 행(도서관 정보나루)만으로도 된다, #506. 보호자가 놀이를 정해 물은 Activity 일반 추천은 그 요청이 기준이라 문서 행이 없어도 된다. 같은 예외를 Growth 교육에도 — 보호자가 정한 주제 · 루틴 행동의 문서 행이 없을 때, #702). 일반 추천은 아이 기록 근거가 0행인 것이 정상이고, 그래서 **개인화 추천으로 집계되면 안 된다** — 두 개가 한 필드에 섞이면 위의 하드 기준이 무의미해진다.
+- 🚨 **일반 추천과 개인화 추천은 타입으로 구분한다.** 개인화는 아이 기록을, 일반은 문서 행을 근거로 단다(Food 일반 추천은 고른 메뉴 — 레시피 카탈로그 행 — 만으로도 된다, #442. 같은 예외를 Growth 도서에도 — 고른 책의 서지 행(도서관 정보나루)만으로도 된다, #506. 보호자가 놀이를 정해 물은 Activity 일반 추천은 그 요청이 기준이라 문서 행이 없어도 된다. 같은 예외를 Growth 교육에도 — 보호자가 정한 주제 · 루틴 행동의 문서 행이 없을 때, #702. 같은 예외를 Food 에도 — 보호자가 재료 · 요리 종류를 정해 물었고 그 말이 요청 글에 있을 때, 레시피북에 없는 흔한 메뉴는 메뉴 · 문서 행이 없어도 된다. 막연한 요청은 해당 없다, #740). 일반 추천은 아이 기록 근거가 0행인 것이 정상이고, 그래서 **개인화 추천으로 집계되면 안 된다** — 두 개가 한 필드에 섞이면 위의 하드 기준이 무의미해진다.
 - 🚨 **한 번의 관찰을 성향으로 확정하지 않는다.** 승격은 오직 Curator 의 반복 집계로만. LLM 이 `state` 를 직접 쓰지 않는다.
 - 🚨 **부모의 말은 아이의 Fact 가 아니다.** "요즘 산만하다"는 보호자 Observation(`caregiver_observation`). 주체를 섞지 말 것 — 부모의 알레르기가 아이 것으로 저장되는 게 eval 케이스 10번이다.
 - 🚨 **6개월 이상 지난 관심 기록은 단독 근거로 쓰지 않는다.**
@@ -158,6 +158,7 @@
 │   │   ├── Dockerfile        배포 이미지 (standalone 3단계). 🚨 API 주소는 빌드 인자다 — 런타임에 못 바꾼다
 │   │   ├── .dockerignore     빌드 컨텍스트 제외 목록. `.env*` 를 여기서 막는다
 │   │   ├── e2e/              Playwright 화면 규칙 테스트 (`make web-e2e`) — §2 가 화면에서 지켜지는지를 목 서버로 건다
+│   │   ├── e2e-live/         실서버 e2e (`make web-e2e-live`) — 실제 api + DB 에서 저장하고 다시 읽는 행복 경로. 로그인은 시드(`apps/api/scripts/seed_e2e.py`), LLM 은 안 부른다
 │   │   ├── contract/         웹 API 타입 ↔ 서버 OpenAPI 비교 (`make web-contract`) — 서버 스키마는 전부 대응표에 있어야 한다
 │   │   └── src/
 │   │       ├── app/          App Router — layout · providers · globals.css
@@ -208,7 +209,9 @@
 ├── deploy/
 │   ├── docker/                compose 두 벌 — docker-compose.yml 은 로컬 개발 DB(Postgres+pgvector)+Redis,
 │   │                          docker-compose.deploy.yml 은 배포(db+redis+api+web+caddy). .env 는 한 곳을 같이 쓴다
-│   ├── caddy/                  Caddyfile — HTTPS 종단 + 리버스 프록시 (icatch.ai.kr → web, api.icatch.ai.kr → api)
+│   ├── caddy/                  Caddyfile — HTTPS 종단 + 리버스 프록시 (icatch.ai.kr → web, api.icatch.ai.kr → api, dev.· 는 dev 환경)
+│   │                          🚨 한 EC2 에 prod(main) · dev(develop) 두 벌이 뜬다. CI 통과 후에만 배포, 헬스 실패면 직전 이미지로 자동 롤백 —
+│   │                          DB 는 안 되돌리므로 마이그레이션은 expand-only ([`docs/ops/deploy-v1.md`](docs/ops/deploy-v1.md))
 │   └── nginx/, scripts/       (비어 있음) 배포용
 └── .github/                  ⚠️ §8 참고 — 손대면 안 되는 파일이 있다
 ```
@@ -317,7 +320,7 @@
   - `GET /auth/{provider}/callback`
   - `POST /auth/{provider}`
   - `POST /auth/{provider}/signup`
-  - `POST /auth/refresh` — Bearer 대신 HttpOnly 쿠키(`icatch_rt`)로 인증한다. access 가 만료된 뒤에 부르는 곳이라 Bearer 를 요구할 수 없다 (#466)
+  - `POST /auth/refresh` — Bearer 대신 HttpOnly 쿠키(`__Host-icatch_rt`, #783)로 인증한다. access 가 만료된 뒤에 부르는 곳이라 Bearer 를 요구할 수 없다 (#466)
   - `GET /policies` — 약관은 공개 문서이고, 동의 화면은 계정이 생기기 전에 뜬다 (#91)
   - `GET /policies/{scope}/{version}` — 그 화면의 "전문 보기" 가 여는 약관 정본 HTML (#172)
   - `GET /privacy-policy` · `GET /privacy-policy/{version}` — 개인정보 처리방침 정본 HTML (#221). 누구나 언제든 볼 수 있게 게시해야 하고, 동의 대상이 아니라 동의 목록 밖에 둔다. 스토어에 거는 고정 주소가 앞의 것이다

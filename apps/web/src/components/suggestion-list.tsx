@@ -337,7 +337,7 @@ function SuggestionRow({
         <SuggestionWarnings warnings={suggestion.warnings} className="mt-2" />
 
         {reason ? (
-          <Reason className="mt-2" term={isHealth ? "무엇을 봤나" : "추천 이유"} value={reason} />
+          <Reason className="mt-2" term={isHealth ? "무엇을 봤나" : "제안 이유"} value={reason} />
         ) : null}
 
         {/* 필요한 재료 · 준비물은 이유 다음, 근거 선 위다 (#659). 제안에 딸린 내용이라 선 위에 두고,
@@ -415,12 +415,13 @@ function EvidenceList({ evidence }: { evidence: Evidence[] }) {
         {evidence.map((item) => (
           <li key={`${item.ref.kind}:${item.ref.id}`}>
             <p className="text-body-sm text-ink">{item.label}</p>
-            <p className="text-caption text-ink-subtle mt-0.5">
-              {item.note}
-              {/* 🚨 6개월 지난 근거는 단독으로 쓰지 않는다 (NF-08) — 그 사실을 글자로 말한다.
-                  색·점선 하나로는 단독 신호가 되고, 이 목록엔 칩이 없어서 얹을 자리도 없다. */}
-              {item.is_stale ? " · 6개월이 지난 기록이에요" : ""}
-            </p>
+            <p className="text-caption text-ink-subtle mt-0.5">{item.note}</p>
+            {/* 🚨 6개월 지난 근거는 단독으로 쓰지 않는다 (NF-08) — 그 사실을 글자로 말한다.
+                색·점선 하나로는 단독 신호가 되고, 이 목록엔 칩이 없어서 얹을 자리도 없다.
+                note 뒤에 가운뎃점으로 잇지 않고 줄을 나눈다 — 기록 줄에는 가운뎃점을 쓰지 않는다 (#815). */}
+            {item.is_stale ? (
+              <p className="text-caption text-ink-subtle mt-0.5">6개월이 지난 기록이에요</p>
+            ) : null}
           </li>
         ))}
       </ul>

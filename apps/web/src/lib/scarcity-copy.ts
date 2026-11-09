@@ -11,6 +11,8 @@
  * 🚨 **"더 남기면 개인화된다" 를 약속하지 않는다.** 질문이 있을 때만 질문 하나에 이어 붙인다 —
  *    답해 주신 것이 다음 추천의 근거가 되는 것은 질문을 한 경우뿐이다.
  */
+
+import { josa } from "es-hangul";
 export interface ScarcityCopyInput {
   /** `general[].record_count` — Agent별 누적 건수. 응답의 Agent 순서를 유지한다. */
   records: readonly AgentRecordCount[];
@@ -40,12 +42,12 @@ export function scarcityCopy({
 }: ScarcityCopyInput): ScarcityCopy {
   if (records.length === 0) {
     return {
-      title: "이번에는 추천할 근거를 찾지 못했어요",
-      body: `${fallbackRecorded(fallbackCount)} 근거 없이 추천을 만들지는 않을게요.`,
+      title: "이번에는 제안할 근거를 찾지 못했어요",
+      body: `${fallbackRecorded(fallbackCount)} 근거 없이 제안을 만들지는 않을게요.`,
     };
   }
 
-  const followup = asked ? " 하나만 알려주시면 다음 추천에 참고할게요." : "";
+  const followup = asked ? " 하나만 알려 주시면 다음 제안에 참고할게요." : "";
 
   if (hasPersonal) {
     const only = records[0]!;
@@ -53,15 +55,14 @@ export function scarcityCopy({
       title: "일부는 일반 추천으로 골랐어요",
       body:
         (records.length === 1 && only.count > 0
-          ? `${only.label} 기록은 ${only.count}건 있지만, 일반 추천이라고 적힌 것에는 직접 연결한 아이 기록이 없어요.`
-          : `${recorded(records)} 일반 추천이라고 적힌 것에는 직접 연결한 아이 기록이 없어요.`) +
-        followup,
+          ? `${only.label} 기록은 ${only.count}건 있지만, 일반 추천이라고 적힌 것은 아이 기록 없이 골랐어요.`
+          : `${recorded(records)} 일반 추천이라고 적힌 것은 아이 기록 없이 골랐어요.`) + followup,
     };
   }
 
   return {
     title: "이번에는 일반 추천으로 골랐어요",
-    body: `${recorded(records)} 이번 추천에 직접 사용한 아이 기록이 없어 추천 아래 적힌 기준으로 골랐어요.${followup}`,
+    body: `${recorded(records)} 이번에는 아이 기록을 쓰지 않고, 제안마다 아래 적힌 기준으로 골랐어요.${followup}`,
   };
 }
 
@@ -75,10 +76,10 @@ function recorded(records: readonly AgentRecordCount[]): string {
       : `${first.label} 기록은 ${first.count}건 있어요.`;
   }
   if (first.count === 0 && second.count === 0) {
-    return `${first.label}와 ${second.label} 기록은 아직 없어요.`;
+    return `${josa(first.label, "와/과")} ${second.label} 기록은 아직 없어요.`;
   }
   if (first.count > 0 && second.count > 0) {
-    return `영역별 기록은 ${first.label} ${first.count}건 · ${second.label} ${second.count}건이에요.`;
+    return `영역별 기록은 ${first.label} ${first.count}건, ${second.label} ${second.count}건이에요.`;
   }
   const present = first.count > 0 ? first : second;
   const absent = first.count === 0 ? first : second;

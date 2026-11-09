@@ -21,6 +21,7 @@ import {
   resetParentState,
 } from "@/mocks/handlers/settings";
 import { resetSubmittedEvents } from "@/mocks/handlers/suggestions";
+import { resetTourState } from "@/mocks/handlers/tours";
 import { resetDiaries } from "@/mocks/fixtures";
 import { server } from "@/mocks/server";
 
@@ -55,6 +56,7 @@ afterEach(() => {
   resetMembership();
   resetAuthState();
   resetReportState();
+  resetTourState();
 });
 
 afterAll(() => {

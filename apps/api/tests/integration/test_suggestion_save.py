@@ -407,21 +407,16 @@ async def test_Growth_요청_기반이_아니면_문서_근거가_필요하다(s
     assert await counts(session, child.id) == (0, 0)
 
 
-async def test_요청_기반은_Activity_와_Growth_일반_추천만_행에_남긴다(session, kids):
-    """Food 가 requested 를 보내도 요청 기반으로 남지 않는다 — 05 에서 문서 근거가 사라지면
-    다른 일반 추천처럼 빠진다. 막연한 요청의 Activity 일반 추천도 남기지 않는다."""
+async def test_요청_기반은_requested_를_보낸_일반_추천만_행에_남긴다(session, kids):
+    """requested 를 안 보낸 일반 추천은 Agent 가 무엇이든 요청 기반으로 남지 않는다 — 05 에서 문서
+    근거가 사라지면 다른 일반 추천처럼 빠진다. 막연한 요청의 Activity · Food 가 그렇다."""
     _, child, _ = kids
     food, activity = await save_agent_suggestions(
         session,
         child_id=child.id,
         run_id=RUN,
         payloads=[
-            payload(
-                kind="general",
-                requested=True,
-                agent="food",
-                citations=[doc_citation("food_doc")],
-            ),
+            payload(kind="general", agent="food", citations=[doc_citation("food_doc")]),
             payload(kind="general", agent="activity", citations=[doc_citation()]),
         ],
         now=NOW,
@@ -430,15 +425,30 @@ async def test_요청_기반은_Activity_와_Growth_일반_추천만_행에_남�
     assert (await session.get(Suggestion, activity)).requested is False
 
 
-async def test_Food_는_요청_기반이어도_문서_근거를_본다(session, kids):
-    """Food 는 레시피북 밖 메뉴가 나가면 안 된다 — requested 가 와도 문서 근거를 본다."""
+async def test_Food_요청_기반_일반_추천을_문서_근거_없이_저장한다(session, kids):
+    """보호자가 재료 · 요리 종류를 정해 물었고(Agent 가 보호자 말에서 확인) 레시피북에 없는
+    메뉴를 냈으면 그 요청이 기준이다 (#740)."""
+    _, child, _ = kids
+    [suggestion_id] = await save_agent_suggestions(
+        session,
+        child_id=child.id,
+        run_id=RUN,
+        payloads=[payload(kind="general", requested=True, agent="food", content="파프리카볶음")],
+        now=NOW,
+    )
+    assert await counts(session, child.id) == (1, 0)
+    assert (await session.get(Suggestion, suggestion_id)).requested is True
+
+
+async def test_Food_는_요청_기반이_아니면_문서_근거를_본다(session, kids):
+    """조건을 정해 묻지 않은 Food 일반 추천은 지금처럼 메뉴 · 문서 행이 근거다."""
     _, child, _ = kids
     with pytest.raises(SuggestionEvidenceError, match="문서 행 근거가 없다"):
         await save_agent_suggestions(
             session,
             child_id=child.id,
             run_id=RUN,
-            payloads=[payload(kind="general", requested=True, agent="food")],
+            payloads=[payload(kind="general", agent="food")],
             now=NOW,
         )
     assert await counts(session, child.id) == (0, 0)

@@ -580,7 +580,7 @@ function ProposalPicker({
                 onClick={() => cancel.mutate()}
               >
                 {cancel.isPending ? <Spinner /> : null}
-                취소
+                지우지 않을래요
               </Button>
               {/* 🚨 0건이면 막고, 막힌 이유를 버튼이 말한다 — 이유 없이 꺼진 버튼을 두지 않는다. */}
               <Button

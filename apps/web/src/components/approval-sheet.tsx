@@ -64,7 +64,7 @@ export function ApprovalSheet({
         incoming={result.drafts}
         origin="suggestion"
         transient
-        found="고른 제안으로 저장될 내용을 만들었어요."
+        found="고른 제안으로 일정 초안을 만들었어요."
       />
     </BottomSheet>
   );
