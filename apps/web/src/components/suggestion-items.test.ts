@@ -4,14 +4,14 @@ import { itemNames } from "@/components/suggestion-items";
 
 /**
  * 필요한 재료 · 준비물에 무엇을 그리는가 (#659). 목 픽스처는 health 추천이 없고 `items` 를 늘 배열로 싣는다 —
- * 실서버가 칸을 내리기 전의 `undefined` 와 health 경로는 화면 테스트가 지나가지 않아서 여기서 건다.
+ * 칸이 빠져 오는 `undefined`(서버는 늘 배열이지만 남겨 둔 방어 · #674)와 health 경로는 화면 테스트가 지나가지 않아서 여기서 건다.
  */
 describe("itemNames", () => {
   it("health 는 권하는 것이 없어서 항목이 와도 그리지 않는다", () => {
     expect(itemNames("health", ["체온계"])).toEqual([]);
   });
 
-  it("칸이 빠져 오면(서버가 내리기 전) 빈 배열과 같다", () => {
+  it("칸이 빠져 오면 빈 배열과 같다", () => {
     expect(itemNames("food", undefined)).toEqual([]);
   });
 
