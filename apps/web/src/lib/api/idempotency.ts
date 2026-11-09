@@ -82,7 +82,7 @@ export function createIdempotencyKeyHolder(): IdempotencyKeyHolder {
 /* ── 되돌릴 수 없는 엔드포인트 ────────────────────────────────────────── */
 
 /**
- * 계약서 §01 의 5곳과 대화의 삭제 확정(#535), 기록 탭의 기록 지우기(#736). 승인 게이트 2곳(㉠ 초안 제출 · ㉡ healthSafety · 복약 제출)이 여기 포함된다.
+ * 계약서 §01 의 5곳과 대화의 삭제 확정(#535), 기록 탭의 기록 지우기(#736), 아이 삭제(#751). 승인 게이트 2곳(㉠ 초안 제출 · ㉡ healthSafety · 복약 제출)이 여기 포함된다.
  * 🚨 초안 제출은 create(`submitEvent`)와 update(`updateEvent`), 반복 묶음 고치기(`updateEventSeries` · #738)
  *    **세 줄**이다 — 한 곳의 갈래라 게이트가 늘어난 것이 아니다 (9/21 에 op 별로 엔드포인트를 갈랐다).
  *    알레르기 · 건강 기록도 같다 — 등록(`healthSafety`)과 고치기(`updateHealthSafety`) 두 줄이 게이트 ㉡ 하나다.
@@ -162,6 +162,14 @@ export const idempotentPath = {
    */
   deleteObservation: (childId: string, kind: string, observationId: string) =>
     `/children/${childId}/observations/${kind}/${observationId}`,
+  /**
+   * 아이 삭제 (#751) — 아이 기본정보 · 건강정보 동의를 거두는 것과 같아서 아이와 기록을 통째로 지운다.
+   *    보호자가 직접 누르는 삭제라 **승인 게이트가 아니라 확인 화면**이다 (기록 지우기와 같은 판단).
+   *    서버도 키가 필수다(없으면 400). 같은 키가 동시에 두 번 가면 둘 다 204 다.
+   *    🚨 끝난 뒤 같은 키로 다시 보내면 재생이 아니라 403 이다 — 아이가 없어 아이 접근 확인에서 막힌다
+   *    (`docs/api/idempotency-v1.md` §3-1). 그래서 화면은 실패하면 `/me` 로 지워졌는지 본다.
+   */
+  deleteChild: (childId: string) => `/children/${childId}`,
 } as const satisfies Record<string, (...ids: string[]) => string>;
 
 export type IdempotentOperation = keyof typeof idempotentPath;
@@ -185,6 +193,7 @@ export const idempotentMethod = {
   updateMedication: "PATCH",
   confirmDeleteProposal: "POST",
   deleteObservation: "DELETE",
+  deleteChild: "DELETE",
 } as const satisfies Record<IdempotentOperation, "POST" | "PATCH" | "DELETE">;
 
 const ID_SLOT = "__ID__";

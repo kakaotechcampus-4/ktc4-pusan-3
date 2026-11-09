@@ -36,8 +36,8 @@ const DRAFT_BODY: SubmitEventBody = {
 describe("되돌릴 수 없는 경로 판정", () => {
   const operations = Object.keys(idempotentPath) as IdempotentOperation[];
 
-  it("표의 줄을 전부 그 메서드로 요구한다 — 5곳 · 초안 제출은 세 줄 · 알레르기 기록 · 복약 제출은 각각 두 줄 · 대화의 삭제 확정 (#535) · 기록 지우기 (#736)", () => {
-    expect(operations).toHaveLength(12);
+  it("표의 줄을 전부 그 메서드로 요구한다 — 5곳 · 초안 제출은 세 줄 · 알레르기 기록 · 복약 제출은 각각 두 줄 · 대화의 삭제 확정 (#535) · 기록 지우기 (#736) · 아이 삭제 (#751)", () => {
+    expect(operations).toHaveLength(13);
     for (const operation of operations) {
       const path = idempotentPath[operation]("x1", "x2", "x3");
       expect(requiresIdempotencyKey(idempotentMethod[operation], path), operation).toBe(true);
@@ -77,6 +77,16 @@ describe("되돌릴 수 없는 경로 판정", () => {
     expect(requiresIdempotencyKey("GET", path)).toBe(false);
     // 목록 경로는 지우는 자리가 아니다.
     expect(requiresIdempotencyKey("DELETE", "/children/c1/observations")).toBe(false);
+  });
+
+  it("🚨 아이 삭제(DELETE)는 키가 필요하고, 같은 경로의 읽기 · 고치기는 걸지 않는다 (#751)", () => {
+    expect(requiresIdempotencyKey("DELETE", "/children/c1")).toBe(true);
+    expect(requiresIdempotencyKey("GET", "/children/c1")).toBe(false);
+    expect(requiresIdempotencyKey("PATCH", "/children/c1")).toBe(false);
+    // 아이 아래의 다른 삭제를 잘못 걸지 않는다 — [^/]+ 가 / 를 넘지 않는지 본다.
+    expect(requiresIdempotencyKey("DELETE", "/children/c1/health-safety/hs_1")).toBe(false);
+    expect(requiresIdempotencyKey("DELETE", "/children/c1/parents/p1")).toBe(false);
+    expect(requiresIdempotencyKey("DELETE", "/children")).toBe(false);
   });
 
   it("같은 경로라도 다른 메서드는 걸지 않는다", () => {
