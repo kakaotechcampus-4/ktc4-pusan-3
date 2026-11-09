@@ -84,6 +84,8 @@ test.describe("기록 지우기 (#736)", () => {
     await expect(sheet.getByText("이 기록을 지울까요?")).toBeVisible();
     // 묶인 기억이 있는 기록이라 다시 계산된다고 말한다.
     await expect(sheet.getByText(/묶인 기억은 다시 계산돼요/)).toBeVisible();
+    // 🚨 대화의 삭제 카드(#714)와 같은 말을 한다 — 지워도 대화에 적은 말은 남는다 (#748).
+    await expect(sheet.getByText("대화에 적은 말은 지난 대화에 그대로 남아요.")).toBeVisible();
     // 🚨 승인 게이트가 아니다 — 표식이 없다.
     await expectNoGate(page, "dialog[open]");
 
