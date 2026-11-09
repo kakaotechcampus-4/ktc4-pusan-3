@@ -185,6 +185,28 @@ test.describe("들은 말은 입력창에 넣기만 하고 보내지 않는다",
     await expect(statusLine(page, LISTENING)).toHaveCount(0);
   });
 
+  test("🚨 끊긴 채 보내 연결 안내가 선 뒤에도 마이크 실패가 그 안내에 가려지지 않는다 (#865 리뷰)", async ({
+    page,
+    context,
+  }) => {
+    await page.goto(`/child/${CHILD}/home`);
+    await input(page).fill("지어낸 한 줄");
+    await context.setOffline(true);
+    await send(page).click();
+    await expect(statusLine(page, "인터넷 연결이 끊겨 있어요")).toBeVisible();
+
+    // 기기 안 인식은 끊긴 채로도 쓴다 — 바로 그 순간 마이크를 누르는 흐름이다.
+    await mic(page).click();
+    await emit(page, { type: "error", reason: "denied" });
+    await expect(
+      statusLine(page, "마이크 권한이 꺼져 있어요. 휴대폰 설정에서 아이캐치의 마이크를 켜 주세요."),
+    ).toBeVisible();
+
+    // 다시 보내기를 누르면 가장 최근 일인 연결 안내로 돌아간다.
+    await send(page).click();
+    await expect(statusLine(page, "인터넷 연결이 끊겨 있어요")).toBeVisible();
+  });
+
   test("채팅바가 시작하지 않은 듣기가 시작되면 멈춘다", async ({ page }) => {
     // 셸은 듣는데 화면은 꺼져 있는 상태를 남기지 않는다 (`useVoiceInput` 머리말).
     await page.goto(`/child/${CHILD}/home`);
