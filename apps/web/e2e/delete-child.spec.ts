@@ -99,7 +99,7 @@ test.describe("초대로 들어온 member 가 볼 때", () => {
     await page.getByRole("button", { name: "연결하기" }).click();
     await expect(page).toHaveURL(/\/child\/[^/]+\/home$/);
 
-    await page.getByRole("link", { name: "아이", exact: true }).click();
+    await page.getByRole("link", { name: "아이 프로필", exact: true }).click();
     await expect(page).toHaveURL(/\/profile$/);
     await expect(page.getByRole("heading", { name: "기본 정보" })).toBeVisible();
     await expect(page.getByRole("link", { name: /이 아이 삭제하기/ })).toHaveCount(0);
