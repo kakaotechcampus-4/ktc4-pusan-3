@@ -52,7 +52,7 @@ class ActivityRunState:
     original_texts: tuple[str, ...] = ()
     prior_texts: tuple[str, ...] = ()
     # 앞 턴들에서 Activity 가 낸 추천 이름(`DomainTask.shown_before`). 출력 검증이 같은 놀이 ·
-    # 장소 · 행사를 거절하고, 행사 조회가 이미 보여 준 행사를 뺀다 (#844)
+    # 장소 · 행사를 거절하고, 행사 조회가 이미 보여 준 행사를 뺀다 (#852)
     shown_before: tuple[str, ...] = ()
     # 행사 조회에서 앞에서 보여 준 행사뿐이라 새 행사가 없었다 — 결과에 한 줄 안내를 붙인다
     no_new_events: bool = False

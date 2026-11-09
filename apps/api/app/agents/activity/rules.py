@@ -48,7 +48,7 @@ def is_recent_duplicate(content: str, recent: Iterable[str]) -> bool:
 
 
 def shown_again(content: str, place_name: str | None, shown: Iterable[str]) -> bool:
-    """앞 턴에서 보여 준 추천을 다시 내는가 (#844). 놀이는 정규화 후 완전 일치
+    """앞 턴에서 보여 준 추천을 다시 내는가 (#852). 놀이는 정규화 후 완전 일치
     (`is_recent_duplicate` 와 같은 기준), 장소 · 행사는 그 이름이 앞 추천 문장에 들어 있으면 같다
     — 앞 추천은 이름만 남아서("○○공원에서 모래성 쌓기") 장소 칸이 따로 없다."""
     shown = [item for item in shown if item.strip()]

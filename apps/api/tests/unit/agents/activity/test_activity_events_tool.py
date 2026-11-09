@@ -536,7 +536,7 @@ class TestEndedTonight:
 
 
 class TestShownBefore:
-    """ "다른 행사 추천해줘" — 앞 턴에서 보여 준 행사는 빼고 그다음 가까운 행사를 준다 (#844)."""
+    """ "다른 행사 추천해줘" — 앞 턴에서 보여 준 행사는 빼고 그다음 가까운 행사를 준다 (#852)."""
 
     async def test_앞에서_보여_준_행사는_빼고_다음_행사를_준다(self):
         rows = [raw(str(i), f"축제{i}", km=10 - i) for i in range(8)]
@@ -557,3 +557,13 @@ class TestShownBefore:
         assert result.success is True and names(result) == []
         assert "앞에서 보여 준" in result.data["message"]
         assert ctx.state.no_new_events is True
+
+    async def test_보여_준_것을_빼고_남은_것도_연령으로_빠지면_안내다(self):
+        rows = [raw("1", "가족 축제", km=1), raw("2", "청소년 축제", km=2)]
+        intros = {"2": RawEventIntro(age_limit="만 13세 이상", place="")}
+        ctx = await context(InMemoryEvents(rows, intros))
+        ctx.state.shown_before = ("가족 축제 구경하기",)
+
+        result = await search_events(ctx, SearchEventsArgs(day=DayLabel.TODAY))
+
+        assert names(result) == [] and ctx.state.no_new_events is True

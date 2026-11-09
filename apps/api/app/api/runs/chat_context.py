@@ -60,7 +60,7 @@ class PreparedTurns:
     def context(self, contents: Mapping[str, str]) -> ConversationContext:
         """앞 대화로. `contents` 는 추천 id(문자열) → 추천 content 다. 최근 다섯 턴을 남긴다 —
         모델에 가는 글(`render`)은 그중 최근 세 턴이고, 나머지는 이미 보여 준 추천을 모으는 데만
-        쓴다 (#844)."""
+        쓴다 (#852)."""
         prior = [_prior(turn, replies, contents) for turn, replies in self.turns]
         return ConversationContext(tuple(prior[-SHOWN_TURNS:]))
 

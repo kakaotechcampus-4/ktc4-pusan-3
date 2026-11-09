@@ -410,18 +410,12 @@ async def search_events(context: ActivityContext, args: SearchEventsArgs) -> Too
         distance = distance_m(event, origin)
         if in_province(event, province) if province else distance <= EVENT_MAX_RADIUS_M:
             found.append((distance, event))
-    # 앞 턴에서 보여 준 행사는 빼고 그다음 행사를 준다 — "다른 행사" 를 여러 번 물어도 (#844)
+    # 앞 턴에서 보여 준 행사는 빼고 그다음 행사를 준다 — "다른 행사" 를 여러 번 물어도 (#852)
     fresh = [
         pair for pair in found if not shown_again("", pair[1].name, context.state.shown_before)
     ]
     if found and not fresh:
-        context.state.no_new_events = True
-        return ok(
-            "query",
-            _EVENTS,
-            events=[],
-            message="앞에서 보여 준 행사뿐이다. 행사를 다시 내지 말고 행사 없이 낸다.",
-        )
+        return _no_new_events(context)
     nearest = sorted(fresh, key=lambda pair: pair[0])[:EVENT_INTRO_LIMIT]
     intros = await asyncio.gather(
         *(_or_none(events.intro(content_id=event.content_id)) for _, event in nearest)
@@ -455,6 +449,9 @@ async def search_events(context: ActivityContext, args: SearchEventsArgs) -> Too
     rows = [row for row in opened if open_on(row, _open_days(context, row.name, days))][
         :EVENT_TOP_K
     ]
+    if not rows and len(fresh) < len(found):
+        # 보여 준 행사를 빼고 남은 것도 연령 · 일정으로 빠졌다 — 새 행사가 없는 것과 같다
+        return _no_new_events(context)
     for row in rows:
         context.state.seen_events.setdefault(row.name, row)
         if context.state.area is not None:
@@ -463,6 +460,17 @@ async def search_events(context: ActivityContext, args: SearchEventsArgs) -> Too
         "query",
         _EVENTS,
         events=[_event_result(row, _open_days(context, row.name, days)) for row in rows],
+    )
+
+
+def _no_new_events(context: ActivityContext) -> ToolResult:
+    """앞 턴에서 보여 준 행사 말고는 새 행사가 없다 — 같은 행사를 다시 내지 않고 안내한다 (#852)."""
+    context.state.no_new_events = True
+    return ok(
+        "query",
+        _EVENTS,
+        events=[],
+        message="앞에서 보여 준 행사뿐이다. 행사를 다시 내지 말고 행사 없이 낸다.",
     )
 
 

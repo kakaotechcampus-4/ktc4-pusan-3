@@ -388,7 +388,7 @@ class TestOverstatedNote:
 
 
 class TestShownBefore:
-    """앞 턴에서 이미 보여 준 추천은 다시 내지 않는다 — "다른 거" 를 여러 번 물어도 (#844)."""
+    """앞 턴에서 이미 보여 준 추천은 다시 내지 않는다 — "다른 거" 를 여러 번 물어도 (#852)."""
 
     def test_같은_놀이는_거절(self):
         result = review(

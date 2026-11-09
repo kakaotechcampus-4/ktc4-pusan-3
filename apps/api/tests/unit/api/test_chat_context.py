@@ -227,7 +227,7 @@ def test_추천_이름은_content_의_첫_줄만_싣는다() -> None:
 
 def test_빠진_턴을_빼고_최근_다섯_턴을_남기고_모델에는_세_턴만_보낸다() -> None:
     """ "다른 거" 를 여러 번 물어도 앞에서 보여 준 추천을 다시 내지 않게 다섯 턴을 든다 — Supervisor
-    모델에 가는 글은 지금처럼 최근 세 턴이다 (#844)."""
+    모델에 가는 글은 지금처럼 최근 세 턴이다 (#852)."""
     usable = [chat_turn(f"놀이 {i} 추천해줘", [result()]) for i in range(6)]
     hazard = chat_turn(
         "세제를 마셨어", [GuidanceReply(code="hazard", message="119", deeplink=None)]

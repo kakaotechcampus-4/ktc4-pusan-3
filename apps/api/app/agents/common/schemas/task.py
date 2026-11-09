@@ -50,7 +50,7 @@ class DomainTask:
     prior_texts: tuple[str, ...] = ()
     # 앞 대화를 읽은 task 만 — 앞 턴들에서 같은 Agent 가 낸 추천 이름(오래된 순, 겹침 없음).
     # "다른 거 추천해줘" 를 여러 번 물어도 이미 보여 준 것을 다시 내지 않게 Agent 가 읽는다
-    # (#844). AI 가 쓴 이름이라 "보호자가 말했는가" 확인(`originals`)에는 쓰지 않는다
+    # (#852). AI 가 쓴 이름이라 "보호자가 말했는가" 확인(`originals`)에는 쓰지 않는다
     shown_before: tuple[str, ...] = ()
 
     def originals(self) -> tuple[str, ...]:

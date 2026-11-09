@@ -16,7 +16,7 @@ PLACE_NOTICE_FACILITY = "place.notice_facility"
 PLACE_NOTICE_EVENT = "place.notice_event"
 # 보호자가 말한 지역을 못 찾아 장소 없이 골랐다 (`areas.py`)
 PLACE_AREA_UNKNOWN = "place.area_unknown"
-# 앞에서 보여 준 행사뿐이라 새 행사가 없었다 (#844)
+# 앞에서 보여 준 행사뿐이라 새 행사가 없었다 (#852)
 EVENTS_NO_NEW = "events.no_new"
 # 보호자가 요청에 쓴 음식이 막혀 그런 놀이는 빼고 골랐다 — 알레르기 · 연령 (#582)
 REQUEST_FOOD_CONFLICT = "request.food_conflict"

@@ -2331,7 +2331,7 @@ def _with_prior(routing: Routing, conversation: ConversationContext | None) -> R
 
 
 def _shown_before(conversation: ConversationContext, agent: str) -> tuple[str, ...]:
-    """앞 턴들에서 그 Agent 가 낸 추천 이름 — 오래된 순, 겹침 없음 (#844).
+    """앞 턴들에서 그 Agent 가 낸 추천 이름 — 오래된 순, 겹침 없음 (#852).
 
     해석을 받았는지와 상관없이 싣는다. "주말에 갈만한 다른 행사" 는 혼자 읽어도 통해서 Supervisor
     가 해석을 안 쓸 수 있는데, 그래도 앞에서 보여 준 행사는 빼야 한다. 앞 대화는 후속 질문으로 보일

@@ -354,7 +354,7 @@ async def test_닫힘은_해석_문장에서_빠진_보호자_말도_본다() ->
     assert result.status == "blocked"
 
 
-# ── 이미 보여 준 추천 (#844) ─────────────────────────────────────────────
+# ── 이미 보여 준 추천 (#852) ─────────────────────────────────────────────
 def _routing(*tasks):
     from app.agents.common.schemas.task import DomainTask
     from app.agents.supervisor.routing import Routing
