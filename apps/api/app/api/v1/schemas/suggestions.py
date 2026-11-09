@@ -60,6 +60,17 @@ class SuggestionOut(BaseModel):
             "없으면 빈 배열"
         ),
     )
+    items: list[str] = Field(
+        default_factory=list,
+        description=(
+            "해 보는 데 필요한 것. food 는 메뉴의 주재료(양념 · 부재료는 뺀다, #474)라 "
+            "전체 재료가 아니다 — 알레르기를 확인하는 목록으로 쓰지 않는다"
+            "(알레르기는 이 칸과 따로 서버가 거른다). "
+            'activity · growth 는 준비물이고 growth 도서는 "제목(저자)" 한 항목이다. '
+            "승인한 추천으로 만드는 일정 초안의 준비물(event-drafts 의 items)과 같은 원본이다. "
+            "근거가 아니어서 evidence 에 들어가지 않는다. 없으면 빈 배열"
+        ),
+    )
     event_starts_on: date | None = Field(
         default=None,
         description=(
@@ -175,6 +186,17 @@ class GeneralSuggestionOut(BaseModel):
             "그 추천에 주의할 요소가 있을 때만 오는 위험 경고 문구(예: 작은 부품 · 물놀이). "
             "서버 코드 문구라 글자 그대로 보여 준다. 근거가 아니어서 evidence 에 들어가지 않는다. "
             "없으면 빈 배열"
+        ),
+    )
+    items: list[str] = Field(
+        default_factory=list,
+        description=(
+            "해 보는 데 필요한 것. food 는 메뉴의 주재료(양념 · 부재료는 뺀다, #474)라 "
+            "전체 재료가 아니다 — 알레르기를 확인하는 목록으로 쓰지 않는다"
+            "(알레르기는 이 칸과 따로 서버가 거른다). "
+            'activity · growth 는 준비물이고 growth 도서는 "제목(저자)" 한 항목이다. '
+            "승인한 추천으로 만드는 일정 초안의 준비물(event-drafts 의 items)과 같은 원본이다. "
+            "근거가 아니어서 evidence 에 들어가지 않는다. 없으면 빈 배열"
         ),
     )
     event_starts_on: date | None = Field(

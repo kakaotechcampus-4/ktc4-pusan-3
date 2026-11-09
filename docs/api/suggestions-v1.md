@@ -45,6 +45,7 @@
 | `general` | 일반 추천. 근거는 문서 행이고 출처 기관 · 출처 제목을 싣는다. Growth 도서는 고른 책(`book_catalog`)이 근거고 출처는 국립중앙도서관 · 도서관 정보나루, 제목은 그 추천의 "제목(저자)" 다. 문서 근거 0행인 일반 추천은 Agent 와 저장이 둘 다 거절한다 — 보호자가 놀이 · 교육 주제를 정해 물은 Activity · Growth 추천(`suggestion.requested`)만 예외라 `evidence` 가 비고 기준은 `basis` 문구다. 검수가 풀린 문서만 남은 일반 추천은 내지 않는다(요청 기반이어도 문서를 달았으면 같다) |
 | `scarcity` | 일반 추천이 있을 때만. `count` 는 일반 추천을 낸 Agent별 `record_count`의 합인 호환 필드다. 정상 화면 문구는 이 합계를 쓰지 않고 `general[].record_count`를 Agent별로 쓴다. `question` 은 Agent 가 되물을 때만(답하는 길은 #246) |
 | `suggestions[].warnings` · `general[].warnings` | 그 추천의 위험 경고 문구(위험 용어 사전의 축 문구 — 작은 부품 · 물놀이 등). Agent 가 코드로 싣고 서버는 저장한 그대로 낸다. 근거가 아니어서 `evidence` 에 없다. 없으면 `[]` (#402) |
+| `suggestions[].items` · `general[].items` | 해 보는 데 필요한 것 — Food 는 메뉴의 주재료(양념 · 부재료 제외, #474), Activity · Growth 는 준비물, Growth 도서는 "제목(저자)" 한 항목. 승인한 추천으로 만드는 일정 초안의 준비물과 **같은 원본**(`suggestion.items`)이다 — 서버는 저장한 그대로 낸다. 같은 이름을 한 번으로 줄이고(food 묶음이면 여러 추천의 재료를 합쳐서) 빈 이름 · 제출 상한(이름 길이 · 개수)을 넘는 것을 빼는 것은 일정 초안에서만 한다(`draft_items`). 🚨 Food 는 전체 재료가 아니어서 알레르기를 확인하는 목록으로 쓰지 않는다 — 알레르기는 이 칸과 따로 거른다. 근거가 아니어서 `evidence` 에 없다. 없으면 `[]` (#674) |
 | `groups[].cautions` | 식품 아닌 알레르기 확인 문구. `health_safety` 에서 코드로 다시 만든다(Activity 와 같은 함수) — 재생해도 같다. 동의가 없으면 `[]` |
 | `general[].record_count` | 그 Agent 도메인에 남아 있는 관찰 수. 04 `agent_result.record_count` 와 같은 표(`agent_ports.RECORD_KINDS`) |
 | `groups[].notice.code = "daily_limit"` | 하루 한도라 그 Agent 는 돌리지 않았다. 같은 응답에 보여 줄 다른 결과가 없으면 지금처럼 429 |
