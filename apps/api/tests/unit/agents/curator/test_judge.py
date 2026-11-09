@@ -20,6 +20,7 @@ from app.agents.common.llm_client import (
     LLMConfigError,
     LLMError,
     LLMRateLimitError,
+    LLMTimeoutError,
     LLMUnavailableError,
 )
 from app.agents.curator.embedding.jev import JevJudge
@@ -145,13 +146,19 @@ async def test_HTTP_오류는_LLMError_계열로_바꾼다(status: int, expected
 
 
 @pytest.mark.parametrize(
-    "error",
-    [httpx.ConnectTimeout("timeout"), httpx.ConnectError("refused")],
-    ids=["시간초과", "연결실패"],
+    ("error", "expected"),
+    [
+        (httpx.ConnectTimeout("timeout"), LLMTimeoutError),
+        (httpx.ReadTimeout("timeout"), LLMTimeoutError),
+        (httpx.ConnectError("refused"), LLMUnavailableError),
+    ],
+    ids=["연결_시간초과", "응답_시간초과", "연결실패"],
 )
-async def test_통신_실패는_LLMUnavailableError(error: Exception) -> None:
-    with pytest.raises(LLMUnavailableError):
+async def test_통신_실패는_시간_초과와_연결_실패로_갈린다(error: Exception, expected: type) -> None:
+    # chat 경로(LLMClient)와 같은 분류다 — 예외 종류가 로그 분류를 정한다 (#768)
+    with pytest.raises(LLMError) as caught:
         await _ask(_judge(Recorder(error)))
+    assert type(caught.value) is expected
 
 
 @pytest.mark.parametrize(
