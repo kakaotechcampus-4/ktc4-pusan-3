@@ -1,8 +1,8 @@
 """아이 엔드포인트 — 계약서 §04 · §05 · §06.
 
 `POST /children`(등록) · `GET` · `PATCH /children/{cid}`(프로필) ·
-`POST /children/{cid}/onboarding`(02 화면) · `/children/{cid}/growth`(키·몸무게 기록) ·
-`POST /children/{cid}/inputs`.
+`DELETE /children/{cid}`(아이 삭제) · `POST /children/{cid}/onboarding`(02 화면) ·
+`/children/{cid}/growth`(키·몸무게 기록) · `POST /children/{cid}/inputs`.
 
 인증은 여기서 하지 않는다. router.py 의 protected_router 에 붙어서 자동으로 걸린다.
 
@@ -26,7 +26,7 @@ from app.api.deps.child import AccessibleChild
 from app.api.deps.db import SessionDep
 from app.api.errors import ApiError, ErrorEnvelope, constraint_name
 from app.api.quota import today_kst
-from app.api.runs import chat_record, pending_reply, registry, runner
+from app.api.runs import chat_record, pending_reply, photo_run, registry, runner, suggestion_retry
 from app.api.v1.schemas.children import (
     ChildProfile,
     CreateChildRequest,
@@ -45,11 +45,13 @@ from app.api.v1.schemas.children import (
 )
 from app.core.config import settings
 from app.domains.chat.repository import find_turn_date
+from app.domains.child.delete import ChildDeletion, delete_owned_child
 from app.domains.child.models import Child, ChildGrowthLog, ParentChildRelation
 from app.domains.child.repository import (
     create_child,
     create_growth_log,
     delete_growth_log,
+    find_accessible_child,
     find_child_link,
     find_growth_log,
     has_child_link,
@@ -260,6 +262,87 @@ async def update_child_profile(
     )
     await session.commit()
     return response
+
+
+_DELETED_REPLAY = {"status_code": 204}
+"""같은 키 재생값. 204 는 본문이 없어서 "지웠다" 는 표시만 적어 둔다 — 값은 보지 않는다."""
+
+
+@router.delete(
+    "/children/{cid}",
+    status_code=204,
+    responses={status: {"model": ErrorEnvelope} for status in (400, 403, 503)},
+)
+async def delete_child(
+    cid: UUID,
+    parent: CurrentParent,
+    session: SessionDep,
+    request: Request,
+    idempotency_key: Annotated[str | None, Header()] = None,
+) -> Response:
+    """아이 삭제 — 아이 기본정보 · 건강정보 동의를 거두는 것과 같다 (#751).
+
+    아이와 아이의 기록 · 일정 · 사진 · 대화 · 일기 · 함께 보는 보호자 연결을 바로 지운다.
+    유예가 없고 되돌릴 수 없다. 동의 이력만 1년 보관 표로 옮긴다(탈퇴와 같은 `purge_child`).
+    보호자 계정은 그대로다.
+
+    - **등록 보호자만** 지운다. 함께 보는 보호자는 `403 owner_only` 다 — 키를 보기 전에 막는다.
+    - 되돌릴 수 없어서 `Idempotency-Key` 가 필수다. 같은 키가 **동시에** 두 번 오면 둘 다 204 다.
+      **끝난 뒤** 같은 키로 다시 오면 아이가 없어 `403 child_access_denied` 다 — 아이 접근
+      확인이 재생보다 먼저다(docs/api/idempotency-v1.md §3-1). 화면은 이 403 을 받으면 `/me` 로
+      지워졌는지 본다.
+    - 보호자가 직접 누르는 삭제라 승인 게이트가 아니다(루트 §2). 화면이 확인을 한 번 더 받는다.
+
+    오류 (순서대로): 403 child_access_denied(연결 없음 · 없는 아이 — 404 로 있는지 드러내지
+    않는다) → 403 owner_only → 400 idempotency_key_required → 503 temporarily_unavailable(Redis
+    장애 — 지우기 전에 막는다).
+    """
+    child = await find_accessible_child(session, child_id=cid, parent_id=parent.parent_id)
+    if child is None:
+        raise ApiError(403, "child_access_denied", "이 아이에 접근할 수 없어요")
+    if child.owner_parent_id != parent.parent_id:
+        raise ApiError(403, "owner_only", "아이를 등록한 보호자만 아이를 삭제할 수 있어요")
+    if not idempotency_key:
+        raise ApiError(
+            400, "idempotency_key_required", "요청을 처리할 수 없어요. 다시 시도해 주세요"
+        )
+    scope = {
+        "parent_id": parent.parent_id,
+        "method": request.method,
+        "path": request.url.path,
+        "key": idempotency_key,
+    }
+    if await idempotency.recall(**scope) is not None:
+        return Response(status_code=204)
+
+    child_id = child.id
+    deleted = await delete_owned_child(
+        session, child_id=child_id, parent_id=parent.parent_id, now=datetime.now(UTC)
+    )
+    if deleted is ChildDeletion.GONE:
+        # 같은 키가 동시에 두 번 왔으면 뒤의 것은 앞의 것이 커밋할 때까지 잠금에서 기다렸다 —
+        # 그 사이 앞의 것이 기억해 둔 응답을 다시 본다. 안 보면 지운 것은 맞는데 화면에 403 이 뜬다
+        if await idempotency.recall(**scope) is not None:
+            return Response(status_code=204)
+        raise ApiError(403, "child_access_denied", "이 아이에 접근할 수 없어요")
+    if deleted is ChildDeletion.NOT_OWNER:
+        raise ApiError(403, "owner_only", "아이를 등록한 보호자만 아이를 삭제할 수 있어요")
+    await session.commit()
+    await idempotency.remember(**scope, replay=_DELETED_REPLAY)
+    _forget_child_in_memory(child_id)
+    return Response(status_code=204)
+
+
+def _forget_child_in_memory(child_id: UUID) -> None:
+    """원문이 든 메모리 보관함도 DB 처럼 그 자리에서 비운다 — 누가 넣은 것이든 그 아이 것 전부.
+
+    되묻기 · 05 다시 시도(#561)는 탈퇴와 같고, 사진 읽은 내용(30분)도 함께 지운다 — 아이가 없어서
+    저장할 수도 없는 공지 원문이다.
+    🚨 커밋 뒤에 부른다. 커밋 전에 실패하면 DB 가 되돌아가니 보관함도 남아 있어야 한다.
+    """
+    pending_reply.forget_child(child_id)
+    suggestion_retry.forget_child(child_id)
+    photo_run.forget_child(child_id)
 
 
 @router.post(
