@@ -24,7 +24,7 @@ class AffinityOut(ApiSchema):
     )
     polarity: int | None = Field(
         description=(
-            "-1 싫어함 · 1 좋아함 · null 아직 모름(candidate 만). 0 은 오지 않는다 — "
+            "-1 싫어함 · 1 좋아함 · null 아직 모름(confirmed 는 늘 값이 있다). 0 은 오지 않는다 — "
             "좋다 · 싫다가 없는 기록은 기억이 되지 않는다"
         )
     )
