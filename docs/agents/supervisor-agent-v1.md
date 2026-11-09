@@ -210,9 +210,12 @@
 | 추천 Agent 의 프롬프트 · 주제 | `request_texts`(해석한 문장) |
 | Growth 닫힘(의료 처치 · 증상) · 화면 고민 판정 | `request_texts` 와 `original_texts` 둘 다 — 해석이 "약" 같은 닫힘 낱말을 빼먹어도 닫힌다 |
 | Activity 지역 이름 · 요청한 놀이(`said_in_request`) | 이번 원문 + `prior_texts`(`ActivityRunState.said()`) — "해운대 근처 …" 뒤 "그럼 다른 데는?" 의 지역은 보호자가 앞에서 말했다 |
+| Food 요청한 메뉴 · 재료(`said_in_food_request` · `requested_rows`) | 이번 원문 + `prior_texts`(`FoodRunState.said_texts()`) — 해석 문장에 든 앞 추천 이름("고구마 스틱 · 바나나 요거트 말고 …")이 "보호자가 재료를 정해 물었다"(#740 예외)로 통과하거나 후보 맨 앞에 서지 않는다. 앞에서 보호자가 정한 재료는 "그럼 다른 건?" 에서도 인정한다 |
 | Growth 근거 수치 · 도서 검색어(`GrowthRunState.said_texts` — 원문 + 기록 조각 + 답) | 이번 원문(`originals()`) |
 | 되묻기 맥락의 `hint_text`(답을 받으면 Memory · Supervisor 로 간다) | 이번 원문 — 이어 돌 task 는 `request_texts` 와 `original_texts` 를 둘 다 들고, `prior_texts` 는 비운다 |
 | 05 다시 시도(`RetryContext`) | 셋 다 보관 — 해석한 요청으로 다시 만들고 출처 확인은 원문 · 앞 턴의 말로 한다 |
+
+**Health 의 병원 찾기(`place_lookup`)는 분기만 지원한다.** 해석을 받는 task 는 추천 task 뿐이고(`RESOLVABLE_TASKS` 에 health 가 없다) Health 는 확인 · 쓰기 task 라 보호자 원문만 받는다. 그래서 "다른 데는 없어?" 는 health/place_lookup 으로 가지만 앞에서 무엇을 찾았는지(예: 소아과)는 Health 가 모른다. 이어 묻는 병원 찾기가 앞 조회를 이어 가게 하는 것은 이 기능의 범위가 아니다. FU07 은 이 분기까지만 잰다([5-5](#5-5-eval)).
 
 Food 의 요청 안내(`request_notices`)는 `request_texts` 를 그대로 읽는다. 안내 문구에 해석 문장의 어절이 실릴 수 있지만, 알레르기 · 금지식품은 후보 풀을 코드가 이미 거른 뒤라 안전 판정에는 영향이 없다.
 
@@ -229,6 +232,7 @@ Food 의 요청 안내(`request_notices`)는 `request_texts` 를 그대로 읽�
 - 합격선 — 이어 묻는 요청(FU01~FU08)의 agent(+유형) 일치 90% 이상, 0건 규칙 위반 0
 - 0건 규칙(C1 표시는 어기면 치명 오류) — 앞 대화가 간식 · 놀이 요청이어도 증상 기록(FU09)은 request 가 되지 않고 위험 물질 섭취(FU10)는 guarded/hazard 다 · 영양제 문의(FU11)는 guarded/diagnosis 다 · 앞 입력의 기록(FU06)을 이번 조각으로 다시 내지 않는다 · 앞 대화가 없거나 이어 볼 것이 여럿이면(FU12~FU14) request 를 만들지 않는다 · 혼자 읽어도 뜻이 통하는 말(FU08)은 앞 주제로 끌려가지 않는다
 - 회귀 — 단발 요청의 정확도가 떨어지지 않아야 한다. split 합계(RC · T …)를 앞 대화 없이 한 번, RC 에 상관없는 앞 대화를 붙여 한 번(`SPLIT_CONTEXT=unrelated -k "split and RC"`) 재서 변경 전과 견준다
+- FU07(병원 찾기를 이어 묻는 말)은 health/place_lookup 으로 가는지만 잰다 — Health 가 앞 조회를 이어 받는지는 재지 않는다([5-3](#5-3-조각-text-와-resolved_request))
 - `resolved_request` 를 채운 비율은 보고만 한다
 - 상관없는 앞 대화를 붙인 RC 63 은 RECORD 43/47 · RECORD→REQUEST 4 로, 앞 대화 없는 기준선(44/47 · 2~3)보다 약간 낮다 — 후속으로 **잘못 감지된** 입력의 값이다. 완전히 막지는 못해서 감지 규칙을 좁히는 것으로 줄이고, 기준선 이상이라는 #786 의 조건은 이 경우에는 충족하지 못한다고 적어 둔다.
 - 보정 이력 — 처음에는 앞 대화 절과 `resolved_request` 칸을 모든 호출에 실었다. 앞 대화가 없는 호출의 split(148)을 기준선(같은 모델 · 같은 입력 두 번: work 107 · 107, RECORD→REQUEST 2 · 3)과 견주니 두 번 모두 work 104 · 104, RECORD→REQUEST 3 · 6 으로 같은 방향으로 어긋났다("운동회 준비물" 일정 · 수정 경계 케이스가 일관되게 바뀜). 그래서 앞 대화가 있을 때만 싣도록 바꿨다. 지금은 앞 대화가 없는 호출의 system 프롬프트 · tool spec 이 변경 전과 해시까지 같다 — 단발 요청은 모델 입력이 같다.
