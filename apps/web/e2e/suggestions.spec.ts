@@ -8,6 +8,7 @@ import {
   gateMarks,
   recordApi,
   test,
+  switchScenario,
   writes,
 } from "./fixtures";
 
@@ -934,7 +935,7 @@ test.describe("승인 게이트 ㉡ — 알레르기 확인은 채택보다 먼�
     ).toBeVisible();
     await expect(page.getByText("이렇게 하기로 했어요")).toHaveCount(0);
     // 🚨 실패 카드가 아니다 — 같은 선택으로 다시 누르면 같은 409 라서 서버 문구를 실패로 세우지 않는다.
-    await expect(page.getByText("알레르기로 등록된 식품이 들어 있어 고를 수 없어요")).toHaveCount(
+    await expect(page.getByText("알레르기로 등록된 항목이 들어 있어 고를 수 없어요")).toHaveCount(
       0,
     );
     expect(writes(calls, "POST", /\/suggestions\/approve$/)).toHaveLength(1);
@@ -946,6 +947,32 @@ test.describe("승인 게이트 ㉡ — 알레르기 확인은 채택보다 먼�
     await expect(page.getByText("이렇게 하기로 했어요")).toBeVisible();
     const approved = writes(calls, "POST", /\/suggestions\/approve$/);
     expect(approved.at(-1)?.body).toEqual({ suggestion_ids: ["s_1"] });
+  });
+});
+
+test.describe("채택이 동의로 막히면 (#835)", () => {
+  test("목록을 받은 뒤 건강정보 동의가 없어지면 일반 실패가 아니라 동의 카드를 세운다", async ({
+    page,
+  }) => {
+    await page.goto(SUGGESTIONS);
+    await page.getByText("계란말이에 시금치를 조금 섞어 보세요").click();
+    await page.getByRole("button", { name: "이 1가지로 할게요" }).click();
+    const sheet = page.getByRole("dialog", { name: "확인해 주세요" });
+    await sheet.getByRole("button", { name: "모르겠어요" }).click();
+
+    // 목록을 받은 뒤 동의를 거뒀다 — 알레르기 항목이 든 제안은 서버가 건강정보를 다시 읽어야 채택한다.
+    await switchScenario(page, "consent");
+    await sheet.getByRole("button", { name: "이대로 고르기" }).click();
+
+    await expect(page.getByText("먼저 동의가 필요해요")).toBeVisible();
+    await expect(page.getByText("고른 것을 남길 수 없어요", { exact: false })).toBeVisible();
+    await expect(page.getByRole("link", { name: "동의 관리로 가기" })).toHaveAttribute(
+      "href",
+      `/child/${CHILD}/settings`,
+    );
+    // 🚨 다시 눌러도 같은 403 이라 일반 실패 카드(서버 문구 + "아직 아무것도 저장되지 않았어요")를 세우지 않는다.
+    await expect(page.getByText("아직 아무것도 저장되지 않았어요")).toHaveCount(0);
+    await expect(page.getByText("이렇게 하기로 했어요")).toHaveCount(0);
   });
 });
 
