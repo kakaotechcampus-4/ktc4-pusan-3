@@ -562,6 +562,12 @@ export interface CreateInputRequest {
 }
 
 /**
+ * 한 줄 입력의 상한. 서버 `CreateInputRequest.text`(`apps/api/app/api/v1/schemas/children.py`)의 `max_length` 와 같은 값이다.
+ * 한쪽만 바꾸지 않는다. 서버는 앞뒤 공백을 뗀 뒤 글자(코드 포인트) 수로 센다 — 세는 법은 `lib/input-length.ts`.
+ */
+export const INPUT_TEXT_MAX_LENGTH = 2000;
+
+/**
  * 휴대폰이 약 1km 로 흐려 보낸 좌표 (서버 `InputLocation` · #380). 소수점 둘째 자리다.
  *
  * 🚨 **`lib/location.ts` 의 `coarseLocation` 을 거친 값만 싣는다.** 서버도 한 번 더 줄이고, 위치 동의가
