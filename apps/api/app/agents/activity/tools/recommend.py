@@ -69,7 +69,7 @@ async def propose_activity_candidates(
         candidates,
         # 보호자가 놀이를 정해 물었으면 그 요청에 맞춘 일반 추천이다 — [예시] 근거가 없어도 된다.
         # 모델이 적은 놀이가 보호자 말에 없으면 막연한 요청과 같다 (#597 리뷰)
-        requested=said_in_request(args.requested_play, context.state.request_texts),
+        requested=said_in_request(args.requested_play, context.state.said()),
         months=gate.stage.months,
         seen=context.state.seen_evidence,
         docs=context.state.seen_docs,

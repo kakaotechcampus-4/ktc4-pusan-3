@@ -36,3 +36,18 @@ class DomainTask:
     # 그 답의 원문. 코드 판정(닫힘 · 요청 행동)만 읽고 모델에게는 보내지 않는다 — Memory 가 저장하지
     # 않은 말까지 외부 모델로 가지 않게 한다. Growth 는 저장된 기록을 조회로 읽는다
     answer_texts: tuple[str, ...] = ()
+    # 이번 입력에서 보호자가 실제로 한 말(원문 조각). 앞 대화를 이어 묻는 말을 Supervisor 가
+    # 해석해 `request_texts` 를 모델이 쓴 문장으로 바꿨을 때만 찬다 — 비어 있으면
+    # `request_texts` 가 곧 원문이다(`originals()`). "보호자가 말했는가" 를 코드가 확인하는
+    # 곳(지역 이름 · 요청한 놀이 · 근거 수치 · 도서 검색어)과 되묻기 맥락의 hint 는 원문을
+    # 읽는다 — 해석한 문장에 든 앞 추천
+    # 이름(AI 가 쓴 글)이 보호자 말로 통과하거나 기록 경로로 가지 않게. 닫힘 판정은 원문과 해석을
+    # 둘 다 본다. 모델에게 보내는 요청 · 주제는 `request_texts` 를 읽는다
+    original_texts: tuple[str, ...] = ()
+    # 앞 대화를 이어 묻는 task 만 — 앞 턴들에서 보호자가 입력한 원문(오래된 순). 앞에서 말한 지역 ·
+    # 놀이를 이어 묻는 말("그럼 다른 데는?")이 "보호자가 말하지 않았다" 로 막히지 않게 Activity 의
+    # 출처 확인만 읽는다. Memory · 되묻기 맥락으로는 가지 않는다
+    prior_texts: tuple[str, ...] = ()
+
+    def originals(self) -> tuple[str, ...]:
+        return self.original_texts or self.request_texts

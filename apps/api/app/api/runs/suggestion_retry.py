@@ -30,6 +30,9 @@ class RetryTask:
     task_type: str | None
     request_texts: tuple[str, ...]
     sent_at: datetime  # 입력 run 의 기준 시각. 다시 만들 때 Agent context 의 now
+    # 앞 대화를 이어 묻는 task 였으면 보호자 원문 · 앞 턴의 말. 다시 만들 때 같은 출처 확인을 한다
+    original_texts: tuple[str, ...] = ()
+    prior_texts: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
