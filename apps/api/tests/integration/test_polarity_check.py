@@ -123,14 +123,23 @@ async def test_마이그레이션은_걸리는_행을_정리하고_CHECK_를_건
                 ),
                 zero=zero,
             )
-            conn.execute(
+            liked = returning(
                 sa.text(
-                    "INSERT INTO observation_link_hold"
-                    " (child_id, domain, observation_id, uncertain_count, subject_hash)"
-                    " VALUES (:child_id, 'food', :obs, 1, 'synthetic')"
-                ),
-                params | {"obs": neutral},
+                    "INSERT INTO observation_food (child_id, raw_text, subject, polarity,"
+                    " confidence_source, observed_range) VALUES (:child_id, 'synthetic record',"
+                    " 'liked', 1, 'parent_direct', '[2026-09-01,2026-09-02)'::daterange)"
+                    " RETURNING id"
+                )
             )
+            for obs in (neutral, liked):
+                conn.execute(
+                    sa.text(
+                        "INSERT INTO observation_link_hold"
+                        " (child_id, domain, observation_id, uncertain_count, subject_hash)"
+                        " VALUES (:child_id, 'food', :obs, 1, 'synthetic')"
+                    ),
+                    params | {"obs": obs},
+                )
 
             migration["upgrade"]()
 
@@ -150,10 +159,10 @@ async def test_마이그레이션은_걸리는_행을_정리하고_CHECK_를_건
         ).scalar_one()
         assert cleared, "관찰은 남고 연결 · 벡터만 비운다"
         holds = conn.execute(
-            sa.text("SELECT count(*) FROM observation_link_hold WHERE child_id = :child_id"),
+            sa.text("SELECT observation_id FROM observation_link_hold WHERE child_id = :child_id"),
             params,
-        ).scalar_one()
-        assert holds == 0
+        ).scalars()
+        assert list(holds) == [liked], "0 관찰의 보류 기록만 지운다"
         with pytest.raises(IntegrityError):
             with conn.begin_nested():
                 conn.execute(insert_profile(state="candidate", polarity="0"), params)
