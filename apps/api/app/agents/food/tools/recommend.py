@@ -102,9 +102,7 @@ def _request(context: FoodContext, args: ProposeMealCandidatesArgs) -> RequestCo
     state = context.state
     if state.request_misses >= MAX_REQUEST_MISSES:
         return NO_REQUEST
-    if not args.requested_food or not said_in_food_request(
-        args.requested_food, state.utterance.splitlines()
-    ):
+    if not args.requested_food or not said_in_food_request(args.requested_food, state.said_texts()):
         return NO_REQUEST
     # 샘플 안의 조건 맞는 레시피가 자리를 차지한다. 요리 종류 조건은 레시피북에서 못 찾아
     # 세지 않는다
