@@ -270,14 +270,15 @@ async def test_same_key_overlapping_is_204_both_times(
     monkeypatch.setattr(observations, "lock_child_memory", tracked)
 
     first = asyncio.create_task(client.delete(url, headers=keyed))
-    await asyncio.wait_for(writing.wait(), timeout=5)
-    second = asyncio.create_task(client.delete(url, headers=keyed))
+    # 앞의 것을 띄운 뒤에는 어디서 실패해도 풀어 준다 — 잠금을 쥔 채 남으면 뒷정리가 멈춘다
     try:
+        await asyncio.wait_for(writing.wait(), timeout=5)
+        second = asyncio.create_task(client.delete(url, headers=keyed))
         await wait_for_lock_wait(
             blocker=locking[0]
         )  # 뒤의 것이 앞의 것이 쥔 아이 잠금에서 기다린다
     finally:
-        release.set()  # 실패해도 앞의 것이 잠금을 쥔 채 남지 않게 — 남으면 뒷정리가 멈춘다
+        release.set()
     responses = await asyncio.wait_for(asyncio.gather(first, second), timeout=5)
 
     assert [r.status_code for r in responses] == [204, 204]

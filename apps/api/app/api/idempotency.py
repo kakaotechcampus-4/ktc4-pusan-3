@@ -125,9 +125,9 @@ async def remember(
     """재생값을 기억한다. 한 줄 입력은 run_id(str), 일정 제출은 응답 전체(dict).
 
     Redis 장애여도 기본은 예외를 내지 않는다 — 저장(commit)이 끝난 뒤라 실패로 답하면 보호자가 다시
-    눌러 겹친다. 잠금을 쥐고 지우는 창구는 이 함수가 아니라 commit 전에 적는 `remember_and_commit`
-    을 쓴다. 키는 못 남긴다: recall 과 이 사이(핸들러 전체 — DB 저장 · commit 포함)에
-    Redis 가 죽은 요청을 Redis 가 돌아온 뒤 같은 키로 다시 보내면 새 요청이 된다
+    눌러 겹친다. 잠금을 쥐고 지우는 두 창구(기록 탭 삭제 · 삭제 확정)는 이 함수가 아니라 commit 전에
+    적는 `remember_and_commit` 을 쓴다. 키는 못 남긴다: recall 과 이 사이(핸들러 전체 — DB 저장 ·
+    commit 포함)에 Redis 가 죽은 요청을 Redis 가 돌아온 뒤 같은 키로 다시 보내면 새 요청이 된다
     (docs/api/idempotency-v1.md §3-6).
 
     `strict` — 아직 아무것도 저장하지 않은 창구(한 줄 입력은 러너보다 먼저 적는다)는 503 으로
