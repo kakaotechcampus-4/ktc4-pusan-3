@@ -14,6 +14,7 @@ import {
   readMoment,
   readSpan,
   readStartTime,
+  offBecausePast,
   startsChecked,
 } from "@/lib/photo-entry";
 
@@ -29,6 +30,7 @@ function entry(over: Partial<PhotoEntry>): PhotoEntry {
     date: null,
     items: [],
     needs_review: false,
+    past: false,
     ...over,
   };
 }
@@ -259,9 +261,29 @@ describe("startsChecked", () => {
     expect(startsChecked({ ...timed, needs_review: true })).toBe(false);
   });
 
+  it("🚨 지난 일정은 켜지 않는다 — 지났는지는 서버가 정한다 (#828 리뷰)", () => {
+    expect(startsChecked({ ...timed, past: true })).toBe(false);
+    expect(startsChecked({ ...span, past: true })).toBe(false);
+  });
+
   it("날짜가 없거나, 시각을 읽어야 하는데 없으면 켜지 않는다", () => {
     expect(startsChecked(entry({ date: null }))).toBe(false);
     expect(startsChecked(entry({ date: "2026-11-23", all_day: false }))).toBe(false);
+  });
+});
+
+describe("offBecausePast", () => {
+  it("지난 일정이라는 것 하나 때문에 꺼 둔 줄만이다", () => {
+    expect(offBecausePast({ ...timed, past: true })).toBe(true);
+    expect(offBecausePast(timed)).toBe(false);
+  });
+
+  it("🚨 지난 할 일은 아니다 — 할 일은 지나지 않았어도 켜지 않는다", () => {
+    expect(offBecausePast({ ...due, past: true })).toBe(false);
+  });
+
+  it("다른 까닭으로도 꺼질 줄은 아니다", () => {
+    expect(offBecausePast({ ...timed, past: true, needs_review: true })).toBe(false);
   });
 });
 

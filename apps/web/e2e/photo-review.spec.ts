@@ -21,6 +21,8 @@ import { browserDaysAgo } from "./time-zone";
  * 날짜 없는 안내(비 오는 날 실내 활동), 시각 있는 시작에 하루 종일 마감이 붙은 일정(부모 참여 수업),
  * 시각 있는 마감(가정통신문 회신), 날짜를 못 읽은 일정(생일잔치)이 한 장에 있다.
  * 시작 날짜를 읽은 일정은 다섯이다 — 도서관 나들이 · 독서 주간 · 부모 참여 수업 · 원복 입고 등원 · 물놀이.
+ * 지난 일정(가을 운동회 · 서버가 `past` 로 표시)도 하나 있는데, 이것은 켜 두지 않는다 (#828 리뷰).
+ * 마감이 지난 할 일(현장학습 신청서 회신)도 `past` 지만, 할 일이라 원래 켜지 않는다.
  */
 
 const EVENTS = /\/children\/c1\/events$/;
@@ -129,6 +131,38 @@ test("시작 날짜를 읽은 일정만 처음부터 켜져 있고, 할 일과 �
   await expect(row(page, "생일잔치")).toContainText("고치기에서 확인하면 넣을 수 있어요.");
   // 안내에는 체크가 아예 없다.
   await expect(row(page, "비 오는 날 실내 활동").getByRole("checkbox")).toHaveCount(0);
+});
+
+test("🚨 지난 일정은 꺼진 채로 시작하고 까닭을 말한다 — 켜면 넣는다 (#828 리뷰)", async ({
+  page,
+}) => {
+  const calls = recordApi(page);
+  await openNotice(page);
+
+  await expect(pick(page, "가을 운동회")).not.toBeChecked();
+  await expect(pick(page, "가을 운동회")).toBeEnabled();
+  await expect(row(page, "가을 운동회")).toContainText("지난 일정이라 꺼 두었어요.");
+  await expect(summary(page)).not.toContainText("가을 운동회");
+
+  // 🚨 마감이 지난 할 일에는 이 말이 없다 — 할 일은 원래 켜지 않아서 틀린 까닭이다.
+  await expect(row(page, "현장학습 신청서 회신")).not.toContainText("지난 일정이라");
+
+  // 보호자가 켜면 넣을 수 있다 — 지났다는 것은 켜 두지 않을 까닭이지 막을 까닭이 아니다.
+  await togglePick(page, "가을 운동회");
+  await expect(row(page, "가을 운동회")).not.toContainText("지난 일정이라 꺼 두었어요.");
+  await expect(summary(page)).toContainText("가을 운동회");
+  // 🚨 보호자가 다시 끄면 앱이 끈 것이 아니다 — "꺼 두었어요" 가 돌아오지 않는다.
+  await togglePick(page, "가을 운동회");
+  await expect(row(page, "가을 운동회")).not.toContainText("지난 일정이라 꺼 두었어요.");
+  await togglePick(page, "가을 운동회");
+  await page.getByRole("button", { name: "저장하고 캘린더에 6개 넣기" }).click();
+  await page.waitForURL(`**/child/${CHILD}/home`);
+
+  const titles = writes(calls, "POST", EVENTS).map(
+    (c) => (c.body as { event: { title: string } }).event.title,
+  );
+  expect(titles).toContain("가을 운동회");
+  expect(titles).toHaveLength(6);
 });
 
 test("🚨 버튼 바로 위에 무엇이 언제로 들어가는지 서고, 버튼이 개수를 말한다", async ({ page }) => {
