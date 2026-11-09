@@ -17,6 +17,7 @@ from app.agents.common.refs import (
     Ref,
 )
 from app.agents.common.suggestion import SuggestionDraft
+from app.agents.food.schemas.common import MealSlot
 from app.domains.child.models import ParentChildRelation
 from app.domains.child.repository import create_child
 from app.domains.food import repository as food_repository
@@ -27,6 +28,7 @@ from app.domains.suggestion.models import (
     Suggestion,
     SuggestionEvidence,
     SuggestionKind,
+    SuggestionMealSlot,
     SuggestionStatus,
 )
 from app.domains.suggestion.repository import (
@@ -144,6 +146,12 @@ def test_근거_종류_목록이_Agent_쪽과_같다():
     assert repository._DOC_KINDS == frozenset(get_args(DocKind))
 
 
+def test_끼니_목록이_Food_쪽과_같다():
+    """끼니도 두 곳에 있다. Food 쪽만 늘리면 그 끼니는 저장에서 비워져 초안 제목이 "식사" 로
+    떨어진다 (#898)."""
+    assert {slot.value for slot in SuggestionMealSlot} == {slot.value for slot in MealSlot}
+
+
 async def test_추천을_draft_로_저장하고_id_를_순서대로_돌려준다(session, kids):
     owner, child, _ = kids
     obs = await observation(session, child, owner)
@@ -169,6 +177,7 @@ async def test_추천을_draft_로_저장하고_id_를_순서대로_돌려준다
     assert {row.place_notice for row in rows} == {None}  # payload 에 키가 없으면 비운다
     assert [row.warnings for row in rows] == [[], []]
     assert {(row.event_starts_on, row.event_ends_on) for row in rows} == {(None, None)}
+    assert {row.meal_slot for row in rows} == {None}  # 이 칸 전에 만든 payload 도 저장된다
     assert await counts(session, child.id) == (2, 2)  # 아이 기록 근거 1행 + 문서 근거 1행
 
 
@@ -188,6 +197,7 @@ async def test_SuggestionDraft_의_payload_가_그대로_저장된다(session, k
         ),
         allergens=("난류",),
         items=("계란",),
+        meal_slot="breakfast",
     )
 
     [row_id] = await save_agent_suggestions(
@@ -195,6 +205,7 @@ async def test_SuggestionDraft_의_payload_가_그대로_저장된다(session, k
     )
 
     row = await session.get(Suggestion, row_id)
+    assert row.meal_slot == "breakfast"  # 일정 초안 제목이 이 값으로 정해진다 (#898)
     assert (row.kind, row.agent, row.reason) == (
         SuggestionKind.PERSONALIZED,
         "food",
