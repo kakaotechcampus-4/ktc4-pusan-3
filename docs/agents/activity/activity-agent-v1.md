@@ -101,7 +101,7 @@ def tools_for(task_type, gate: Gate) -> tuple[str, ...]:
 
 - `search_activity_memory` 는 결과에 **`id` 를 함께 돌려준다.** `suggestion_evidence` 의 허용 `source_kind` 에 `observation_activity` 가 있고, 루트 §2 가 막는 것은 관찰을 **프로필로 승격**하는 것이지 그 한 번의 추천 근거로 **인용**하는 것이 아니다.
 - **Tier 2 임계는 공통 기본값 `0.5` 를 따른다.** Activity 만 다르게 둘 근거가 없다.
-- 🚨 **관찰은 `ObservationStatus = active` 만 읽는다.** `stand_alone` 은 Correction `once_only`(*"이번만 그랬어요"*)가 만드는 상태라 검색에는 남지만 성향으로 세면 안 되고, `inactive` 는 검색에서도 빠진다. 이 필터가 없으면 **보호자가 직접 고친 기록이 다음 추천의 근거로 돌아온다.**
+- 🚨 **관찰은 `ObservationStatus = active` 만 읽는다.** `stand_alone` 은 Correction `once_only`(*"이번만 그랬어요"*)가 만드는 상태라 검색에는 남지만 성향으로 세면 안 되고, 지운 기록(`deleted`)은 검색에서도 빠진다. 이 필터가 없으면 **보호자가 직접 고친 기록이 다음 추천의 근거로 돌아온다.**
 - `affinity_id = NULL` 인 관찰도 읽는다. 승격 전 관찰이 티어 3 근거다 (`공통_구현_계획.md` K-7).
 - 모델에게는 **10개**(`MEMORY_LIMIT`)만 `id` · 티어 · 이름 · polarity · 날짜로 준다. 최근 관찰(티어 3)에 **3자리**(`RECENT_RESERVED`, 잠정)를 먼저 주고 남은 자리를 티어 순으로 채운다 — 첫 관찰부터 티어 2 인 affinity 가 10개를 채우면 최근 관찰이 하나도 안 남아서다 (#304 리뷰). 주는 순서는 티어 순 그대로다. 같은 `subject` · polarity 의 관찰은 가장 최근 1건만 남긴다.
 - **대조는 `subject`, 설명은 `activity`.** 관찰의 이름(화면 · reason)은 사람이 읽는 활동명(`activity`)이고, 기피 거절(D4)과 `keywords` 대조는 Curator 가 merge_key 를 만드는 `subject` 로 한다 — "물감 놀이" 같은 활동명은 후보 문장에 그대로 나오는 일이 드물다. `keywords` 는 `subject` 와 양쪽으로 포함을 보고(짧은 쪽이 2글자 이상일 때), 활동명에 든 말로도 찾는다. 줄 세운 뒤 거르는 것이라 순서를 바꾸지 않는다. 0행이면 `NO_RECORDS` 로 일반 추천에 가라고 알린다 — 되묻기로 바꾸지 않는다.

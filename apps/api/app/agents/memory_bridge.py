@@ -42,13 +42,13 @@ from app.agents.memory.store.ports import MemoryStore, ObservationRow
 from app.rules.profile import archived_by_time
 
 # 검색에 남는 status. stand_alone 은 Correction once_only("이번만 그랬어요") 라
-# Curator 집계에서만 빠진다 (data_model §observation). inactive · deleted 는 읽지 않는다
+# Curator 집계에서만 빠진다 (data_model §observation). 지운 기록(deleted)은 읽지 않는다
 FOOD_STATUSES = frozenset({"active", "stand_alone"})
 # Activity는 active만 읽는다. Activity 포트(ActivityObservation 주석)와 activity-agent-v1
 #   A-10 이 stand_alone을 근거에서 뺀다 — "이번만 그랬어요" 로 고친 기록이 근거로 돌아오지 않게
 ACTIVITY_STATUSES = frozenset({"active"})
 # Health 는 Food 와 같다 — stand_alone("이번만 그랬어요")도 그날 있었던 증상이라 날 수에 센다.
-# 정정으로 내린 기록(wrong → inactive)과 삭제는 읽지 않는다
+# 지운 기록은 읽지 않는다
 HEALTH_STATUSES = frozenset({"active", "stand_alone"})
 
 # Growth 도 active 만 읽는다 — "이번만 그랬어요" 로 고친 기록으로 루틴 수준을 잡지 않는다
