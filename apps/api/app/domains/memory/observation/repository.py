@@ -13,6 +13,7 @@ from sqlalchemy.dialects.postgresql import Range
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domains.memory.observation.models import (
+    GONE_STATUSES,
     ObservationActivity,
     ObservationEducation,
     ObservationFood,
@@ -415,16 +416,13 @@ def _to_record(domain: ObservationDomain, row: Any) -> ObservationRecord:
     )
 
 
-# 지운 것으로 보는 상태. inactive 는 deleted 로 옮겼고(#736 · 90ac5aae7ad1) 새로 만드는 길도
-# 막았지만, 배포 중 직전 화면 · 서버가 떠 있는 틈이나 롤백된 동안 "잘못된 기록" 으로 새로 생길 수
-# 있다. 마이그레이션은 다시 돌지 않으니 그 행도 지운 것처럼 둔다 — 응답 status 에 inactive 가
-# 없어서, 여기서 거르지 않으면 상세 · 지난 대화 · 삭제 카드가 응답을 못 만들고 500 이 된다.
-_GONE = (ObservationStatus.DELETED, ObservationStatus.INACTIVE)
-
-
 def _not_deleted(model: type[Any]) -> Any:
-    """지운 행(남은 inactive 포함)은 조회·수정·교정 어디에도 걸리지 않는다."""
-    return model.status.notin_(_GONE)
+    """지운 행(남은 inactive 포함 · `GONE_STATUSES`)은 조회·수정·교정 어디에도 걸리지 않는다.
+
+    응답 status 에 inactive 가 없어서, 남은 inactive 를 여기서 거르지 않으면 상세 · 지난 대화 ·
+    삭제 카드가 응답을 못 만들고 500 이 된다.
+    """
+    return model.status.notin_(GONE_STATUSES)
 
 
 # -- 필드 검증 --

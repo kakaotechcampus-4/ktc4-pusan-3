@@ -46,12 +46,23 @@ class ObservationStatus(enum.StrEnum):
 
     inactive 는 더 만들지 않는다. 기록의 Correction wrong("잘못된 기록")이 만들던 값인데, 그 버튼을
     기록 지우기로 바꾸면서 남은 행을 deleted 로 옮겼다 (#736). 값은 DB CHECK 와 맞추려 남긴다.
+    그 뒤에 생긴 행은 아래 `GONE_STATUSES` 로 deleted 처럼 읽는다.
     """
 
     ACTIVE = "active"
     STAND_ALONE = "stand_alone"
     INACTIVE = "inactive"
     DELETED = "deleted"
+
+
+# 지운 것으로 읽는 상태. 기록 탭 · 상세 · 교정(repository), Memory Agent 기록 조회 · 고치기(store),
+# 추천 카드의 사용한 기록(evidence_view)이 같이 쓴다.
+# inactive 는 deleted 로 옮겼고(#736 · 90ac5aae7ad1) 새로 만드는 길도 막았지만, 배포 중 직전
+# 화면 · 서버가 떠 있는 틈이나 롤백된 동안 "잘못된 기록" 으로 새로 생길 수 있다. 마이그레이션은
+# 다시 돌지 않으니 그 행도 지운 것처럼 읽는다 — 보호자에게 안 보이는 기록을 Memory Agent 가
+# 보여 주거나 고치지 않게. 지우기(store `delete_observation`)만은 그 행도 받는다 — 지우면 deleted
+# 가 될 뿐이다. 추천 Agent 는 `memory_bridge` 의 허용 목록(active · stand_alone)으로 따로 거른다.
+GONE_STATUSES = (ObservationStatus.DELETED, ObservationStatus.INACTIVE)
 
 
 class EngagementLevel(enum.StrEnum):

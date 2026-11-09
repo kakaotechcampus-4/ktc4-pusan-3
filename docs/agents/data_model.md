@@ -214,7 +214,7 @@
 | updated_at | timestamptz | NOT NULL, DEFAULT `now()` |
 - `health` 에서는 다음 필드 제외: `subject` · `embedding` · `affinity_id` · `polarity` · `strong_signals` (승격 파이프라인 밖이라 profile 행 자체가 없음)
 - `status` 는 값마다 빠지는 곳이 다르다. `stand_alone` 은 Curator 집계에서만 빠지고, `deleted` 는 목록·상세까지 모든 조회에서 빠진다.
-- `inactive` 는 기록의 Correction `wrong`("잘못된 기록")이 만들던 값이다. 그 버튼을 기록 지우기로 바꾸면서 남은 행을 `deleted` 로 옮겼고(#736 · revision `90ac5aae7ad1`), 지금은 만드는 길이 없다. 값은 DB CHECK 에 남겨 둔다.
+- `inactive` 는 기록의 Correction `wrong`("잘못된 기록")이 만들던 값이다. 그 버튼을 기록 지우기로 바꾸면서 남은 행을 `deleted` 로 옮겼고(#736 · revision `90ac5aae7ad1`), 지금은 만드는 길이 없다. 값은 DB CHECK 에 남겨 둔다. 배포 틈 · 롤백 중에 새로 생긴 행은 읽는 쪽(기록 탭 · Memory Agent 기록 조회 · 고치기 · 추천 카드의 사용한 기록)이 `deleted` 처럼 거른다(`GONE_STATUSES`).
 - 보호자의 삭제 요청은 행을 지우지 않고 `status = deleted` 로 바꾼다. `raw_text` 는 남고 `embedding` 은 비운다(`health` 에는 `embedding` 칸이 없다). 그 관찰의 연결 보류(`observation_link_hold`) 행도 지우고, 연결돼 있던 Profile 의 `last_observed_on` · 상태를 다시 계산한다. 되살리는 경로는 없다.
 - 관찰을 고쳐 `subject` · `polarity` 가 바뀌면 `embedding` · `affinity_id` 를 비워 Curator 가 다시 연결하게 하고, 그 칸들이나 `observed_range` · `strong_signals` 가 바뀌면 원래 Profile 을 다시 계산한다(#257, `memory-agent-v1.md` "고친 관찰은 Curator 집계에 다시 들어간다").
 
