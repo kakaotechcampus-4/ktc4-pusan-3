@@ -168,19 +168,20 @@ async def _safety_labels(session, *, child_id: _uuid.UUID) -> list[entrypoint.Sa
     return [entrypoint.SafetyLabel(*r) for r in rows]
 
 
-async def _check_allergens_before_approve(session, *, child_id: _uuid.UUID, rows) -> None:
-    """채택 직전에 알레르기를 다시 본다 — 목록을 받은 뒤 등록된 알레르기를 서버가 막는다.
+async def _recheck_allergens(session, *, child_id: _uuid.UUID, rows, message: str) -> None:
+    """추천을 쓰기 직전에 알레르기를 다시 본다 — 목록을 받은 뒤 등록된 알레르기를 서버가 막는다.
 
     판정은 목록 응답의 사전검사와 같은 함수다(`check_allergens` · 같은 이름 사전). 목록이 빼는
-    추천과 채택이 막는 추천이 갈리면, 화면에 남은 옛 목록으로 고른 추천이 통과한다.
-    - `active` 에 걸린 추천이 하나라도 있으면 전부 거절한다(409 `allergen_blocked`) — 채택 API 의
+    추천과 여기서 막는 추천이 갈리면, 화면에 남은 옛 목록으로 고른 추천이 통과한다.
+    - `active` 에 걸린 추천이 하나라도 있으면 전부 거절한다(409 `allergen_blocked`) — 부른 API 의
       "전부 아니면 전부" 와 같다. 걸린 추천 id 는 `detail.suggestion_ids` 로 요청 순서대로 싣는다.
+      `message` 만 부른 곳마다 다르다 — 응답 모양이 같아야 웹이 안내 카드를 같이 쓴다.
     - "모름"(행 없음)은 막지 않는다 — 답을 미뤄도 채택은 막지 않는다 (event-draft-ui-v1.md §3-8).
     - `allergens` 가 없는 추천뿐이면 건강정보를 읽지 않는다.
     - 동의가 없으면 읽지 않고 403 — 목록도 동의 없이는 이 추천을 내보내지 않는다.
-    - 동의 · 알레르기 조회가 실패하면 예외를 그대로 올린다(500, 아무것도 채택하지 않음) —
+    - 동의 · 알레르기 조회가 실패하면 예외를 그대로 올린다(500, 아무것도 쓰지 않음) —
       못 읽었다고 통과시키지 않는다 (루트 §2).
-    - 알레르기를 읽은 뒤 커밋 전의 짧은 틈에 등록된 알레르기는 놓친다 — 잠그지 않기로 했다.
+    - 알레르기를 읽은 뒤 응답 전의 짧은 틈에 등록된 알레르기는 놓친다 — 잠그지 않기로 했다.
     """
     with_allergens = [row for row in rows if row.allergens]
     if not with_allergens:
@@ -194,12 +195,7 @@ async def _check_allergens_before_approve(session, *, child_id: _uuid.UUID, rows
         if entrypoint.check_allergens(row.allergens, labels).blocked
     ]
     if blocked:
-        raise ApiError(
-            409,
-            "allergen_blocked",
-            "알레르기로 등록된 항목이 들어 있어 고를 수 없어요",
-            {"suggestion_ids": blocked},
-        )
+        raise ApiError(409, "allergen_blocked", message, {"suggestion_ids": blocked})
 
 
 @router.post(
@@ -250,7 +246,12 @@ async def approve_suggestions(
             suggestions=[_suggestion_out(s) for s in already_approved]
         )
 
-    await _check_allergens_before_approve(session, child_id=child.child_id, rows=found)
+    await _recheck_allergens(
+        session,
+        child_id=child.child_id,
+        rows=found,
+        message="알레르기로 등록된 항목이 들어 있어 고를 수 없어요",
+    )
 
     to_approve = [s.id for s in found]
     approved = await suggestion_repo.approve_suggestions(
