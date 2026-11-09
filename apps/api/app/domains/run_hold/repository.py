@@ -9,7 +9,7 @@ import uuid
 from collections.abc import Sequence
 from datetime import datetime, timedelta
 
-from sqlalchemy import ColumnElement, delete, func, select, update
+from sqlalchemy import ColumnElement, and_, case, delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,17 +20,26 @@ def _at(now: datetime | None) -> ColumnElement[datetime] | datetime:
     return func.now() if now is None else now
 
 
-def _open(
-    kind: HoldKind, parent_id: uuid.UUID, child_id: uuid.UUID, now: datetime | None
+def _owned(
+    kind: HoldKind, parent_id: uuid.UUID, child_id: uuid.UUID | None, now: datetime | None
 ) -> tuple[ColumnElement[bool], ...]:
-    """지금 꺼낼 수 있는 행 — 같은 보호자 · 같은 아이 · 사용 중 아님 · 만료 전."""
-    return (
-        RunHold.kind == kind,
-        RunHold.parent_id == parent_id,
-        RunHold.child_id == child_id,
-        RunHold.in_use.is_(False),
-        RunHold.expires_at > _at(now),
-    )
+    """같은 보호자 · (주면) 같은 아이 · 만료 전. 사진 run 은 아이를 모르는 주소라 보호자만 본다."""
+    where = [RunHold.kind == kind, RunHold.parent_id == parent_id, RunHold.expires_at > _at(now)]
+    if child_id is not None:
+        where.append(RunHold.child_id == child_id)
+    return tuple(where)
+
+
+def _open(
+    kind: HoldKind, parent_id: uuid.UUID, child_id: uuid.UUID | None, now: datetime | None
+) -> tuple[ColumnElement[bool], ...]:
+    """지금 꺼낼 수 있는 행 — 주인 확인 + 사용 중 아님."""
+    return (*_owned(kind, parent_id, child_id, now), RunHold.in_use.is_(False))
+
+
+def _typed(payload_type: str | None) -> tuple[ColumnElement[bool], ...]:
+    """payload 의 `type` 칸으로 한 칸 안의 종류를 가른다 (05 의 실패 맥락 · 0개 · 닫힘 기록)."""
+    return () if payload_type is None else (RunHold.payload["type"].astext == payload_type,)
 
 
 async def put_hold(
@@ -43,9 +52,12 @@ async def put_hold(
     payload: dict,
     ttl: timedelta,
     now: datetime | None = None,
+    keep_expiry_of_type: str | None = None,
 ) -> None:
     """넣는다. 같은 key 가 있으면 덮고 보관 시간을 새로 센다 — 같은 run 에서 질문이 다시 나온 경우.
 
+    `keep_expiry_of_type` 을 주면, 덮이는 행이 같은 주인의 만료 전 그 type 일 때 만료 시각을
+    이어받는다 — 05 실패 맥락은 다시 넣어도 15분을 처음 넣은 때부터 센다.
     보호자 · 아이가 이미 지워졌으면 FK 오류(IntegrityError)다. 버릴지는 부르는 쪽이 정한다.
     """
     values = {
@@ -58,11 +70,18 @@ async def put_hold(
         "in_use": False,
     }
     stmt = insert(RunHold).values(**values)
-    stmt = stmt.on_conflict_do_update(
-        index_elements=[RunHold.kind, RunHold.key],
-        set_={name: stmt.excluded[name] for name in values if name not in ("kind", "key")},
+    updates = {name: stmt.excluded[name] for name in values if name not in ("kind", "key")}
+    if keep_expiry_of_type is not None:
+        kept = and_(
+            RunHold.payload["type"].astext == keep_expiry_of_type,
+            RunHold.parent_id == stmt.excluded.parent_id,
+            RunHold.child_id == stmt.excluded.child_id,
+            RunHold.expires_at > _at(now),
+        )
+        updates["expires_at"] = case((kept, RunHold.expires_at), else_=stmt.excluded.expires_at)
+    await session.execute(
+        stmt.on_conflict_do_update(index_elements=[RunHold.kind, RunHold.key], set_=updates)
     )
-    await session.execute(stmt)
 
 
 async def get_hold(
@@ -88,6 +107,7 @@ async def claim_hold(
     parent_id: uuid.UUID,
     child_id: uuid.UUID,
     now: datetime | None = None,
+    payload_type: str | None = None,
 ) -> dict | None:
     """꺼내면서 "사용 중" 으로 둔다.
 
@@ -96,9 +116,55 @@ async def claim_hold(
     """
     return await session.scalar(
         update(RunHold)
-        .where(RunHold.key == key, *_open(kind, parent_id, child_id, now))
+        .where(RunHold.key == key, *_open(kind, parent_id, child_id, now), *_typed(payload_type))
         .values(in_use=True)
         .returning(RunHold.payload)
+    )
+
+
+async def hold_in_use(
+    session: AsyncSession,
+    *,
+    kind: HoldKind,
+    key: str,
+    parent_id: uuid.UUID,
+    child_id: uuid.UUID,
+    now: datetime | None = None,
+    payload_type: str | None = None,
+) -> bool:
+    """주인의 만료 전 행이 "사용 중" 인가. claim 이 None 일 때 없음과 사용 중을 가르는 데 쓴다."""
+    found = await session.scalar(
+        select(RunHold.key).where(
+            RunHold.key == key,
+            *_owned(kind, parent_id, child_id, now),
+            *_typed(payload_type),
+            RunHold.in_use.is_(True),
+        )
+    )
+    return found is not None
+
+
+async def lock_hold(
+    session: AsyncSession,
+    *,
+    kind: HoldKind,
+    key: str,
+    parent_id: uuid.UUID,
+    now: datetime | None = None,
+) -> RunHold | None:
+    """주인의 만료 전 행을 `FOR UPDATE` 로 잡는다 — 부르는 트랜잭션이 끝날 때까지 같은 행을 잡으려는
+    다른 요청은 기다린다. 사진 저장처럼 "확인 → 쓰기 → 결과 남기기" 를 한 번만 하게 할 때 쓴다."""
+    return await session.scalar(
+        select(RunHold)
+        .where(RunHold.key == key, *_owned(kind, parent_id, None, now))
+        .with_for_update()
+    )
+
+
+async def set_payload(session: AsyncSession, *, kind: HoldKind, key: str, payload: dict) -> None:
+    """내용만 바꾼다. 만료 시각 · 사용 중 표시는 그대로."""
+    await session.execute(
+        update(RunHold).where(RunHold.kind == kind, RunHold.key == key).values(payload=payload)
     )
 
 

@@ -5,24 +5,47 @@
 05 가 다시 만든 결과가 0개면 0개 기록, 닫힘(blocked · unsupported)이면 guard 기록을 남긴다 —
 다음 요청이 같은 모양을 재생한다.
 
-- 프로세스 메모리다. 재시작하면 사라지고 05 는 "이어서 할 수 없다" 로 간다 — 맥락 없이 다시
-  만들지 않는다. 워커가 둘이면 나뉜다 (`--workers 1` 전제 · #134).
-- 실패 맥락에는 원문 조각(request_texts)이 있다. 로그를 남기지 않고, 넣을 때 지울 때를 예약한다
-  (pending_reply.py 와 같다 · #561).
+- 표(`run_hold`, UNLOGGED)에 둔다 (#877 2단계). 워커가 여럿이어도 05 가 같은 맥락을 본다.
+  한 칸(run_id, agent)에 실패 맥락 · 0개 기록 · 닫힘 기록 중 하나가 든다 — payload 의 `type`.
+- 실패 맥락에는 원문 조각(request_texts)이 있다. 로그를 남기지 않는다. 만료가 지나면 꺼낼 수 없고
+  `hold_purge` 가 1분마다 지운다. 탈퇴 · 아이 삭제는 FK CASCADE, 연결 끊기는 `delete_link_holds`.
 - 꺼낼 때 "사용 중" 표시만 한다(#246 되묻기 보관함과 같은 방식). 다시 만들기가 성공하면 지우고,
   실패하면 표시만 푼다. 15분은 처음 넣은 시각부터 센다 — 다시 넣어도 갱신하지 않는다.
+- 함수마다 자기 세션으로 바로 commit 한다 (`pending_reply` 와 같은 이유).
 """
 
-import asyncio
-import time
+import logging
 import uuid
-from dataclasses import dataclass, replace
-from datetime import datetime
+from collections.abc import Callable
+from dataclasses import dataclass
+from datetime import datetime, timedelta
 from typing import Final, Literal
 
-FAILED_TTL_SECONDS = 900.0
-EMPTY_TTL_SECONDS = 86_400.0
+from pydantic import TypeAdapter
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.api.deps.db import background_session
+from app.domains.run_hold.models import HoldKind
+from app.domains.run_hold.repository import (
+    claim_hold,
+    drop_hold,
+    get_hold,
+    hold_in_use,
+    put_hold,
+    release_hold,
+)
+
+log = logging.getLogger(__name__)
+
+FAILED_TTL = timedelta(minutes=15)
+RECORD_TTL = timedelta(hours=24)
 BUSY: Final = "busy"
+
+_KIND = HoldKind.SUGGESTION_RETRY
+_FAILED, _EMPTY, _GUARD = "failed", "empty", "guard"
+
+_session_factory: Callable[[], AsyncSession] = background_session
 
 
 @dataclass(frozen=True)
@@ -35,95 +58,102 @@ class RetryTask:
     prior_texts: tuple[str, ...] = ()
 
 
-@dataclass(frozen=True)
-class _Entry:
-    parent_id: uuid.UUID
-    child_id: uuid.UUID
-    stored_at: float
-    task: RetryTask | None = None  # 실패 맥락
-    message: str | None = None  # 0개 기록의 안내 본문
-    guard: tuple[str, str] | None = None  # 닫힘 기록 — (guard code, 문구)
-    in_use: bool = False
-
-    def ttl(self) -> float:
-        return FAILED_TTL_SECONDS if self.task is not None else EMPTY_TTL_SECONDS
+_TASK = TypeAdapter(RetryTask)
 
 
-_entries: dict[tuple[str, str], _Entry] = {}
+def _key(run_id: str, agent: str) -> str:
+    return f"{run_id}:{agent}"
 
 
-def _now(now: float | None) -> float:
-    return time.monotonic() if now is None else now
+async def _put(
+    *,
+    run_id: str,
+    agent: str,
+    parent_id: uuid.UUID,
+    child_id: uuid.UUID,
+    payload: dict,
+    ttl: timedelta,
+    now: datetime | None,
+    keep_failed_expiry: bool = False,
+) -> None:
+    """넣는다. 보호자 · 아이가 이미 지워졌으면(늦게 끝난 run) 남기지 않고 넘어간다."""
+    async with _session_factory() as session:
+        try:
+            await put_hold(
+                session,
+                kind=_KIND,
+                key=_key(run_id, agent),
+                parent_id=parent_id,
+                child_id=child_id,
+                payload=payload,
+                ttl=ttl,
+                now=now,
+                keep_expiry_of_type=_FAILED if keep_failed_expiry else None,
+            )
+            await session.commit()
+        except IntegrityError:
+            await session.rollback()
+            log.warning("run %s 의 05 보관을 넣지 않았다 — 보호자 · 아이가 없다", run_id)
 
 
-def _owned(
-    key: tuple[str, str], parent_id: uuid.UUID, child_id: uuid.UUID, moment: float
-) -> _Entry | None:
-    """주인 · 아이 · 만료를 한 곳에서 본다. 이유는 밖에 알리지 않는다."""
-    entry = _entries.get(key)
-    if entry is None or entry.parent_id != parent_id or entry.child_id != child_id:
-        return None
-    if moment - entry.stored_at > entry.ttl():
-        return None
-    return entry
+async def _read(
+    *, run_id: str, agent: str, parent_id: uuid.UUID, child_id: uuid.UUID, now: datetime | None
+) -> dict | None:
+    """주인 · 만료를 본다. 사용 중이어도 읽는다 — 0개 · 닫힘 기록은 사용 중 표시가 없다."""
+    async with _session_factory() as session:
+        payload = await get_hold(
+            session,
+            kind=_KIND,
+            key=_key(run_id, agent),
+            parent_id=parent_id,
+            child_id=child_id,
+            now=now,
+        )
+    return payload
 
 
-def _keep(key: tuple[str, str], entry: _Entry, moment: float) -> None:
-    """넣고, 그 항목의 보관 기간이 끝날 때 지우는 예약을 건다.
-
-    실패 맥락을 다시 넣으면 처음 시각을 이어받아서 남은 시간만 기다린다.
-    """
-    _entries[key] = entry
-    asyncio.get_running_loop().call_later(entry.stored_at + entry.ttl() - moment, _expire, key)
-
-
-def _expire(key: tuple[str, str]) -> None:
-    """예약한 때가 되면 그 칸의 **지금 항목**이 만료됐는지 보고 지운다.
-
-    🚨 같은 칸에 다시 넣을 수 있다(실패 맥락 → 0개 · 닫힘 기록). 앞 예약이 돌 때 새 항목이
-       들어 있으면 남은 시간만큼 다시 예약하고 지우지 않는다. 예약이 조금 일찍 돈 경우(시계
-       해상도)도 같은 길이다.
-    """
-    entry = _entries.get(key)
-    if entry is None:
-        return
-    left = entry.stored_at + entry.ttl() - time.monotonic()
-    if left > 0:
-        asyncio.get_running_loop().call_later(left, _expire, key)
-        return
-    del _entries[key]
-
-
-def put_failed(
+async def put_failed(
     *,
     run_id: str,
     parent_id: uuid.UUID,
     child_id: uuid.UUID,
     agent: str,
     task: RetryTask,
-    now: float | None = None,
+    now: datetime | None = None,
 ) -> None:
-    moment = _now(now)
-    key = (run_id, agent)
-    kept = _owned(key, parent_id, child_id, moment)
-    stored_at = kept.stored_at if kept is not None and kept.task is not None else moment
-    _keep(key, _Entry(parent_id, child_id, stored_at, task=task), moment)
+    await _put(
+        run_id=run_id,
+        agent=agent,
+        parent_id=parent_id,
+        child_id=child_id,
+        payload={"type": _FAILED, "task": _TASK.dump_python(task, mode="json")},
+        ttl=FAILED_TTL,
+        now=now,
+        keep_failed_expiry=True,
+    )
 
 
-def put_empty(
+async def put_empty(
     *,
     run_id: str,
     parent_id: uuid.UUID,
     child_id: uuid.UUID,
     agent: str,
     message: str,
-    now: float | None = None,
+    now: datetime | None = None,
 ) -> None:
-    moment = _now(now)
-    _keep((run_id, agent), _Entry(parent_id, child_id, moment, message=message), moment)
+    await _put(
+        run_id=run_id,
+        agent=agent,
+        parent_id=parent_id,
+        child_id=child_id,
+        payload={"type": _EMPTY, "message": message},
+        ttl=RECORD_TTL,
+        now=now,
+    )
 
 
-def put_guard(
+async def put_guard(
     *,
     run_id: str,
     parent_id: uuid.UUID,
@@ -131,68 +161,87 @@ def put_guard(
     agent: str,
     code: str,
     message: str,
-    now: float | None = None,
+    now: datetime | None = None,
 ) -> None:
-    moment = _now(now)
-    _keep((run_id, agent), _Entry(parent_id, child_id, moment, guard=(code, message)), moment)
+    await _put(
+        run_id=run_id,
+        agent=agent,
+        parent_id=parent_id,
+        child_id=child_id,
+        payload={"type": _GUARD, "code": code, "message": message},
+        ttl=RECORD_TTL,
+        now=now,
+    )
 
 
-def guard_of(
-    *, run_id: str, parent_id: uuid.UUID, child_id: uuid.UUID, agent: str, now: float | None = None
+async def guard_of(
+    *,
+    run_id: str,
+    parent_id: uuid.UUID,
+    child_id: uuid.UUID,
+    agent: str,
+    now: datetime | None = None,
 ) -> tuple[str, str] | None:
-    entry = _owned((run_id, agent), parent_id, child_id, _now(now))
-    return None if entry is None else entry.guard
+    payload = await _read(
+        run_id=run_id, agent=agent, parent_id=parent_id, child_id=child_id, now=now
+    )
+    if payload is None or payload.get("type") != _GUARD:
+        return None
+    return payload["code"], payload["message"]
 
 
-def empty_message(
-    *, run_id: str, parent_id: uuid.UUID, child_id: uuid.UUID, agent: str, now: float | None = None
+async def empty_message(
+    *,
+    run_id: str,
+    parent_id: uuid.UUID,
+    child_id: uuid.UUID,
+    agent: str,
+    now: datetime | None = None,
 ) -> str | None:
-    entry = _owned((run_id, agent), parent_id, child_id, _now(now))
-    return None if entry is None else entry.message
+    payload = await _read(
+        run_id=run_id, agent=agent, parent_id=parent_id, child_id=child_id, now=now
+    )
+    if payload is None or payload.get("type") != _EMPTY:
+        return None
+    return payload["message"]
 
 
-def claim(
-    *, run_id: str, parent_id: uuid.UUID, child_id: uuid.UUID, agent: str, now: float | None = None
+async def claim(
+    *,
+    run_id: str,
+    parent_id: uuid.UUID,
+    child_id: uuid.UUID,
+    agent: str,
+    now: datetime | None = None,
 ) -> RetryTask | Literal["busy"] | None:
     """실패 맥락을 꺼내 "사용 중" 으로 둔다. 다른 요청이 쓰는 중이면 BUSY.
 
-    🚨 get 과 표시 사이에 await 가 없다 — 같은 맥락으로 온 두 요청이 둘 다 다시 만들지 않게.
+    🚨 확인과 표시가 DB 한 문장이다 — 같은 맥락으로 온 두 요청이 워커가 달라도 둘 다 다시 만들지
+       않는다.
     """
-    key = (run_id, agent)
-    entry = _owned(key, parent_id, child_id, _now(now))
-    if entry is None or entry.task is None:
-        return None
-    if entry.in_use:
-        return BUSY
-    _entries[key] = replace(entry, in_use=True)
-    return entry.task
+    where = {
+        "kind": _KIND,
+        "key": _key(run_id, agent),
+        "parent_id": parent_id,
+        "child_id": child_id,
+        "now": now,
+        "payload_type": _FAILED,
+    }
+    async with _session_factory() as session:
+        payload = await claim_hold(session, **where)
+        await session.commit()
+        if payload is None:
+            return BUSY if await hold_in_use(session, **where) else None
+    return _TASK.validate_python(payload["task"])
 
 
-def release(*, run_id: str, agent: str) -> None:
-    entry = _entries.get((run_id, agent))
-    if entry is not None:
-        _entries[(run_id, agent)] = replace(entry, in_use=False)
+async def release(*, run_id: str, agent: str) -> None:
+    async with _session_factory() as session:
+        await release_hold(session, kind=_KIND, key=_key(run_id, agent))
+        await session.commit()
 
 
-def drop(*, run_id: str, agent: str) -> None:
-    _entries.pop((run_id, agent), None)
-
-
-def forget_parent(*, parent_id: uuid.UUID, child_id: uuid.UUID | None = None) -> None:
-    """그 보호자의 것을 바로 지운다 — 탈퇴 · 연결 끊기 (#561). child_id 를 주면 그 아이 것만."""
-    for key, entry in list(_entries.items()):
-        if entry.parent_id == parent_id and child_id in (None, entry.child_id):
-            del _entries[key]
-
-
-def forget_child(child_id: uuid.UUID) -> None:
-    """그 아이의 것을 보호자와 상관없이 바로 지운다 — 등록 보호자의 탈퇴로 아이가 지워질 때
-    (#561)."""
-    for key, entry in list(_entries.items()):
-        if entry.child_id == child_id:
-            del _entries[key]
-
-
-def clear() -> None:
-    """테스트가 서로 새지 않게 쓰는 것이고, 서버 코드는 부르지 않는다."""
-    _entries.clear()
+async def drop(*, run_id: str, agent: str) -> None:
+    async with _session_factory() as session:
+        await drop_hold(session, kind=_KIND, key=_key(run_id, agent))
+        await session.commit()

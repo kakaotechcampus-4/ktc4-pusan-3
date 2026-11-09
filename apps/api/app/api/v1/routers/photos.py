@@ -197,7 +197,8 @@ async def upload_photo(
 async def commit_photo(
     rid: str, body: PhotoCommitRequest, parent: CurrentParent, session: SessionDep
 ) -> JSONResponse:
-    run = photo_run.get(rid, parent_id=parent.parent_id)
+    # 행을 잡는다 — 같은 저장이 두 워커에 동시에 와도 뒤 요청은 이 commit 뒤 남긴 응답을 본다 (#877)
+    run = await photo_run.lock(session, rid, parent_id=parent.parent_id)
     if run is None or run.reading is None:
         raise ApiError(404, "not_found", "저장할 사진이 없어요")
     if run.response is not None:
@@ -292,10 +293,12 @@ async def commit_photo(
         await insert_daycare_meals(
             session, child_id=run.child_id, meals=meals, source_notice_id=saved.notice_id
         )
-    await session.commit()
 
     first_date = next((str(e.date) for e in body.entries if e.date is not None), None)
-    run.response = PhotoCommitResponse(
+    response = PhotoCommitResponse(
         calendar_date=first_date if body.attach_to_calendar else None
     ).model_dump()
-    return JSONResponse(status_code=201, content=run.response)
+    # 응답을 기록과 같은 트랜잭션에 남긴다 — commit 이 실패하면 둘 다 없다
+    await photo_run.finish(session, run, response)
+    await session.commit()
+    return JSONResponse(status_code=201, content=response)

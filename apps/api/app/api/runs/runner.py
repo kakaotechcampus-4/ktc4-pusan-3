@@ -172,28 +172,25 @@ def agent_job(
         # load_cards 가 채우고 FoundTabs · DeleteProposed 가 꺼내 쓴다 — 카드의 화면 모양 행 (#535)
         card_rows: dict[tuple[str, str], Any] = {}
         relay = translate.relay(channel, saved_rows=saved_rows, card_rows=card_rows)
-        # 되묻기 맥락 저장(DB, #877)이 도는 동안 나온 이벤트. 저장이 끝나면 순서대로 내보낸다 —
-        # 질문 카드가 보이면 보호자가 바로 답할 수 있어서, 맥락이 없으면 그 답이 400 이다.
+        # 보관함 저장(되묻기 맥락 · 05 다시 시도, DB #877)이 도는 동안 나온 이벤트. 저장이 끝나면
+        # 순서대로 내보낸다 — 질문 카드가 보이면 보호자가 바로 답할 수 있어서, 맥락이 없으면 그
+        # 답이 400 이다. 05 "다시 시도" 버튼도 끝 신호 뒤에 열린다.
         # 🚨 끝 신호도 여기 기다린다. 따로 띄운 태스크에서만 내면 run() 이 먼저 끝나 _guarded 가
         #    끝 신호가 없다고 보고 failed 를 붙인다 — run() 이 handle_input 뒤에 저장을 기다린다
         held: list[entrypoint.Event] = []
         saving: asyncio.Task[None] | None = None
 
-        async def save_pending(event: entrypoint.PendingReply, after: asyncio.Task[None] | None):
+        async def save(store: Awaitable[object], what: str, after: asyncio.Task[None] | None):
             if after is not None:
-                await after  # 한 run 에 질문이 둘이면 앞 저장부터
+                await after  # 저장이 여럿이면 앞 저장부터 — 마지막 저장이 잡아 둔 것을 낸다
             try:
-                await pending_reply.put(
-                    run_id=event.run_id,
-                    parent_id=parent_id,
-                    child_id=child_id,
-                    context=event.context,
-                )
+                await store
             except Exception as exc:
-                # 저장이 안 되면 그 질문에 답할 때 400 일 뿐이다. 이미 한 기록 · 추천을 failed 로
-                # 덮지 않는다. 🚨 예외 메시지에 원문이 섞일 수 있어 종류만 남긴다 (루트 §2)
+                # 저장이 안 되면 그 질문에 답하거나 다시 시도할 때 400 · "이어서 할 수 없다" 일
+                # 뿐이다. 이미 한 기록 · 추천을 failed 로 덮지 않는다.
+                # 🚨 예외 메시지에 원문이 섞일 수 있어 종류만 남긴다 (루트 §2)
                 log.error(
-                    "run %s 의 되묻기 맥락 저장이 %s 로 실패했다", event.run_id, type(exc).__name__
+                    "run %s 의 %s 저장이 %s 로 실패했다", channel.run_id, what, type(exc).__name__
                 )
             if asyncio.current_task() is saving:  # 마지막 저장이 끝났다
                 flush_held()
@@ -202,34 +199,51 @@ def agent_job(
             while held:
                 deliver(held.pop(0))
 
-        def emit(event: entrypoint.Event) -> None:
+        def keep(store: Awaitable[object], what: str) -> None:
             nonlocal saving
+            saving = asyncio.create_task(save(store, what, saving))
+
+        def emit(event: entrypoint.Event) -> None:
             if isinstance(event, entrypoint.PendingReply):
-                saving = asyncio.create_task(save_pending(event, saving))
+                keep(
+                    pending_reply.put(
+                        run_id=event.run_id,
+                        parent_id=parent_id,
+                        child_id=child_id,
+                        context=event.context,
+                    ),
+                    "되묻기 맥락",
+                )
                 return
             if isinstance(event, entrypoint.RetryContext):
                 # 원문 조각이 있다 — 화면 · 로그로 보내지 않고 05 보관함에만 둔다 (#249)
-                suggestion_retry.put_failed(
-                    run_id=event.run_id,
-                    parent_id=parent_id,
-                    child_id=child_id,
-                    agent=event.agent,
-                    task=suggestion_retry.RetryTask(
-                        event.task_type,
-                        event.request_texts,
-                        event.sent_at,
-                        original_texts=event.original_texts,
-                        prior_texts=event.prior_texts,
+                keep(
+                    suggestion_retry.put_failed(
+                        run_id=event.run_id,
+                        parent_id=parent_id,
+                        child_id=child_id,
+                        agent=event.agent,
+                        task=suggestion_retry.RetryTask(
+                            event.task_type,
+                            event.request_texts,
+                            event.sent_at,
+                            original_texts=event.original_texts,
+                            prior_texts=event.prior_texts,
+                        ),
                     ),
+                    "05 실패 맥락",
                 )
                 return
             if isinstance(event, entrypoint.EmptyResult):
-                suggestion_retry.put_empty(
-                    run_id=event.run_id,
-                    parent_id=parent_id,
-                    child_id=child_id,
-                    agent=event.agent,
-                    message=event.message,
+                keep(
+                    suggestion_retry.put_empty(
+                        run_id=event.run_id,
+                        parent_id=parent_id,
+                        child_id=child_id,
+                        agent=event.agent,
+                        message=event.message,
+                    ),
+                    "05 0개 기록",
                 )
                 return
             if saving is not None and not saving.done():

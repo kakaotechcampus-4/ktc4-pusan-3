@@ -39,7 +39,7 @@ GET /runs/{rid}/events                       step → lane → step → parsed �
 
 🚨 **commit 은 캘린더에 쓰지 않는다.** 캘린더에 쓰는 문은 지금도 `POST /children/{cid}/events` 하나다. 화면이 체크한 개수만큼 부르고, 하나라도 실패하면 commit 하지 않는다 (`docs/web/event-draft-ui-v1.md` §2 ㉢).
 
-🚨 읽은 결과는 저장을 누르기 전까지 서버 메모리에 30분만 있다 (`app/api/runs/photo_run.py`). 프로세스 메모리라 run 채널과 같은 `--workers 1` 전제다.
+🚨 읽은 결과는 저장을 누르기 전까지 서버 DB(`run_hold` · UNLOGGED · 백업에서 내용 제외)에 30분만 있다 (`app/api/runs/photo_run.py` · #877). 워커가 여럿이어도 저장 요청이 같은 결과를 본다. 저장은 그 행을 잠근 트랜잭션에서 해서, 같은 저장이 동시에 와도 한 번만 들어간다.
 
 **받는 것은 사진뿐이다** (11-04 재형님). PNG · JPEG · HEIC(갤럭시 "고효율 사진") 등 그림 파일만 연다. PDF · HWP 는 받지 않는다 (§8).
 

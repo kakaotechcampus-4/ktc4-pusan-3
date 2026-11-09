@@ -605,17 +605,17 @@ async def create_suggestions(
                 if rows:
                     replay[a] = rows
                     continue
-                message = suggestion_retry.empty_message(run_id=run_id, agent=a, **owner)
+                message = await suggestion_retry.empty_message(run_id=run_id, agent=a, **owner)
                 if message is not None:
                     notices[a] = GroupNoticeOut(code="empty", message=message)
                     continue
-                recorded = suggestion_retry.guard_of(run_id=run_id, agent=a, **owner)
+                recorded = await suggestion_retry.guard_of(run_id=run_id, agent=a, **owner)
                 if recorded is not None:
                     # 다시 만들었더니 닫혔던 Agent — 같은 guard 를 다시 낸다 (#433 리뷰 ⑧)
                     code, message = recorded
                     guards.append(_guard_out(code, a, message))
                     continue
-                task = suggestion_retry.claim(run_id=run_id, agent=a, **owner)
+                task = await suggestion_retry.claim(run_id=run_id, agent=a, **owner)
                 if task == suggestion_retry.BUSY:
                     continue  # 다른 요청이 다시 만드는 중 — 둘을 만들지 않는다. 실패와 같다
                 if task is None:
@@ -683,9 +683,9 @@ async def create_suggestions(
     finally:
         for a in claimed:
             if a in settled:
-                suggestion_retry.drop(run_id=run_id, agent=a)
+                await suggestion_retry.drop(run_id=run_id, agent=a)
             else:
-                suggestion_retry.release(run_id=run_id, agent=a)
+                await suggestion_retry.release(run_id=run_id, agent=a)
 
     # 다시 만든 결과를 지운 맥락 자리에 남긴다 — 다음 요청이 같은 모양을 재생한다 (24시간).
     # 지운 뒤에 넣어야 한다 — 같은 (run_id, agent) 칸이라 순서를 바꾸면 기록이 지워진다
@@ -695,9 +695,11 @@ async def create_suggestions(
         empty = entrypoint.empty_notice(o.readouts)
         code = _guard_code(o)
         if empty is not None:
-            suggestion_retry.put_empty(run_id=run_id, agent=o.agent, message=empty.body, **owner)
+            await suggestion_retry.put_empty(
+                run_id=run_id, agent=o.agent, message=empty.body, **owner
+            )
         elif code is not None:
-            suggestion_retry.put_guard(
+            await suggestion_retry.put_guard(
                 run_id=run_id, agent=o.agent, code=code, message=_guard_message(o), **owner
             )
 

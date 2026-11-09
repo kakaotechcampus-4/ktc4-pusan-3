@@ -26,7 +26,7 @@ from app.api.deps.child import AccessibleChild
 from app.api.deps.db import SessionDep
 from app.api.errors import ApiError, ErrorEnvelope, constraint_name
 from app.api.quota import today_kst
-from app.api.runs import chat_record, pending_reply, photo_run, registry, runner, suggestion_retry
+from app.api.runs import chat_record, pending_reply, registry, runner
 from app.api.v1.schemas.children import (
     ChildProfile,
     CreateChildRequest,
@@ -330,20 +330,9 @@ async def delete_child(
         raise ApiError(403, "owner_only", "아이를 등록한 보호자만 아이를 삭제할 수 있어요")
     await session.commit()
     await idempotency.remember(**scope, replay=_DELETED_REPLAY)
-    _forget_child_in_memory(child_id)
+    # 원문이 든 보관함(되묻기 · 05 다시 시도 · 사진 읽은 내용)은 표(run_hold)라 아이 행의
+    # FK CASCADE 가 같은 트랜잭션에서 지웠다 — 누가 넣은 것이든 그 아이 것 전부 (#561 · #751 · #877)
     return Response(status_code=204)
-
-
-def _forget_child_in_memory(child_id: UUID) -> None:
-    """원문이 든 메모리 보관함도 DB 처럼 그 자리에서 비운다 — 누가 넣은 것이든 그 아이 것 전부.
-
-    05 다시 시도(#561)는 탈퇴와 같고, 사진 읽은 내용(30분)도 함께 지운다 — 아이가 없어서
-    저장할 수도 없는 공지 원문이다. 되묻기 맥락은 표(`run_hold`)라 아이 행의 FK CASCADE 가
-    같은 트랜잭션에서 지운다 (#877).
-    🚨 커밋 뒤에 부른다. 커밋 전에 실패하면 DB 가 되돌아가니 보관함도 남아 있어야 한다.
-    """
-    suggestion_retry.forget_child(child_id)
-    photo_run.forget_child(child_id)
 
 
 @router.post(
