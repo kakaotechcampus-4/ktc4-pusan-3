@@ -1,24 +1,26 @@
 """백업을 복원한 뒤 삭제 이력을 다시 적용한다 (#758). 복원할 때만 손으로 돌린다.
 
+    # 서버 절차 · 명령은 docs/ops/backup-restore-v1.md 5-2 — api · web 을 내린 뒤 일회용 api-task
+    #   로 돌린다. 배포된 이미지로 돌게 태그부터 넘긴다
+    #   (없으면 ktc4-api:local 을 찾다 멈추거나 옛 코드가 돈다)
+    #   TAG=$(cat deploy/docker/.deployed-tag); export API_IMAGE_TAG=$TAG WEB_IMAGE_TAG=$TAG
+    #   DC="docker compose -f deploy/docker/docker-compose.deploy.yml --env-file deploy/docker/.env"
+    #   TASK="$DC run --rm -T api-task uv run --no-sync"
     # ① 서비스를 막는다 — 막기 전에 빼면 그 사이에 지운 것이 파일에도 백업에도 없다
     # ② 지금 운영 DB 의 이력을 서버 파일로 빼 둔다 (주인만 읽게)
-    umask 077; docker exec ktc4-api uv run --no-sync python -m scripts.deletion_log export \\
-        > /var/tmp/deletion-log.jsonl
+    umask 077; $TASK python -m scripts.deletion_log export > /var/tmp/deletion-log.jsonl
     # ③ 백업을 복원하고, 곧바로 이력 id 를 비켜 둔 뒤(reserve) alembic upgrade heads 한다
     #   — 복원본의 순번은 백업 시각에 멈춰 있어, 그대로 두면 마이그레이션 · 배치가 이 사이에 남긴
     #     이력이 운영 DB 이력과 같은 id 를 받는다
-    docker exec -i ktc4-api uv run --no-sync python -m scripts.deletion_log reserve \\
-        < /var/tmp/deletion-log.jsonl
+    $TASK python -m scripts.deletion_log reserve < /var/tmp/deletion-log.jsonl
     # ④ 그 파일을 복원한 DB 에 다시 적용한다 — 먼저 --dry-run 으로 건수만 보고
-    docker exec -i ktc4-api uv run --no-sync python -m scripts.deletion_log apply --dry-run \\
-        < /var/tmp/deletion-log.jsonl
-    docker exec -i ktc4-api uv run --no-sync python -m scripts.deletion_log apply \\
-        < /var/tmp/deletion-log.jsonl
+    $TASK python -m scripts.deletion_log apply --dry-run < /var/tmp/deletion-log.jsonl
+    $TASK python -m scripts.deletion_log apply < /var/tmp/deletion-log.jsonl
     # ⑤ 정리 배치(app.workers.cleanup)와 기억 다시 계산(app.workers.profile_recompute)을 한 번씩
     #   바로 돌린다 ⑥ 서비스를 연다
     # ⑦ 빼 둔 파일을 지운다 — 구분 값과 동의 행 사본이 들어 있어 35일 넘게 남으면 안 된다
     shred -u /var/tmp/deletion-log.jsonl
-    #   순서 · 사고 구간을 고르는 법은 docs/ops/backup-restore-v1.md (#758 PR 3)
+    #   사고 구간을 고르는 법 · 운영 DB 까지 잃었을 때는 같은 문서 5-3 · 5-4
 
 apply 가 하는 일 — 한 트랜잭션이다. 하나라도 이상하면 아무것도 바꾸지 않는다.
   · **파일의 이력을 복원본의 deletion_log 에 id · 시각 그대로 옮긴다.** 그래야 복원본의 이력이 원래
