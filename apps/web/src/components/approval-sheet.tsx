@@ -47,8 +47,9 @@ export function ApprovalSheet({
       open={open}
       onClose={onClose}
       dismissible={false}
+      // 🚨 설명을 달지 않는다 (#868) — 목록이 "고른 제안으로 … 넣기 전까지는 캘린더에 들어가지 않아요" 를 세운다.
+      //    시트 머리에도 같은 말을 두면 한 화면에 같은 뜻이 두 번 선다. 목록의 질문 머리글도 같은 이유로 끈다.
       title="캘린더에 넣을까요"
-      description="넣기 전에는 아무것도 저장되지 않아요."
       footer={
         <Button variant="secondary" block onClick={onClose}>
           닫기
@@ -64,7 +65,8 @@ export function ApprovalSheet({
         incoming={result.drafts}
         origin="suggestion"
         transient
-        found="고른 제안으로 일정 초안을 만들었어요."
+        heading={false}
+        found="고른 추천으로 일정 초안을 만들었어요."
       />
     </BottomSheet>
   );

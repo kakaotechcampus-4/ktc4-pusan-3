@@ -58,9 +58,9 @@ export function missingFields(fields: MedicationFields): MissingField[] {
 
 /** 막힌 이유 한 줄씩. 🚨 막는 것이 둘이면 둘 다 말한다 (`EventDraftCard` 와 같은 규칙). */
 export const MISSING_REASON: Record<MissingField, string> = {
-  title: "약 이름을 적어주셔야 넣을 수 있어요.",
-  starts_on: "언제부터 먹이는지 골라주셔야 넣을 수 있어요.",
-  ends_on: "언제까지 먹이는지 골라주셔야 넣을 수 있어요. 기간이 정해진 약만 넣을 수 있어요.",
+  title: "약 이름을 적어 주셔야 넣을 수 있어요.",
+  starts_on: "언제부터 먹이는지 골라 주셔야 넣을 수 있어요.",
+  ends_on: "언제까지 먹이는지 골라 주셔야 넣을 수 있어요. 기간이 정해진 약만 넣을 수 있어요.",
 };
 
 const trimmedOrNull = (value: string) => (value.trim() === "" ? null : value.trim());

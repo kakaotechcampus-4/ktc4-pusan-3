@@ -144,7 +144,7 @@ function DeleteChildScreen() {
             <h2 className="text-label text-brand">혹시 이것만 멈추고 싶으신가요</h2>
             <Card>
               <ul className="text-body-sm text-ink-muted marker:text-ink-subtle flex list-disc flex-col gap-2 pl-5">
-                <li>기록 하나만 지우고 싶다면 기록/기억 탭에서 그 기록만 지울 수 있어요.</li>
+                <li>기록 하나만 지우고 싶다면 기록과 기억 탭에서 그 기록만 지울 수 있어요.</li>
                 <li>위치정보 같은 선택 동의는 설정에서 하나씩 끌 수 있어요.</li>
                 <li>함께 보는 사람만 줄이고 싶다면 설정에서 그 보호자의 연결만 끊을 수 있어요.</li>
               </ul>

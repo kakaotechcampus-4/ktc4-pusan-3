@@ -117,7 +117,7 @@ export function GrowthSheet({
     }
     // 🚨 한쪽만 재고 오는 날이 있다. 둘 다 비어 있을 때만 막는다.
     if (h === null && w === null) {
-      setErrors({ height: "키나 몸무게 중 하나는 적어주세요" });
+      setErrors({ height: "키나 몸무게 중 하나는 적어 주세요" });
       return;
     }
     setErrors({});

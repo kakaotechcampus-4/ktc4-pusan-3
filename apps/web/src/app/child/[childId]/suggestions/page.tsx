@@ -358,7 +358,7 @@ function SuggestionsScreen() {
             <ArrowLeft aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
           </IconButtonLink>
           <div className="min-w-0 flex-1">
-            <PageTitle>제안 후보</PageTitle>
+            <PageTitle>추천 후보</PageTitle>
             {/* 🚨 looked_at 앞에 가운뎃점을 하나 더 붙이지 않는다 — 이미 점으로 나뉜 메타
                 스트립이고, 띄운 가운뎃점은 줄당 하나까지다 (문서 §4). */}
             {/* 서버가 아직 무엇을 봤는지 내지 않으면 비어 온다 — 빈 줄을 그리지 않는다 (#249). */}
@@ -384,7 +384,7 @@ function SuggestionsScreen() {
         {data && data.guards.length > 0 ? (
           <Banner
             tone="danger"
-            title={`${[...blockedByGuard].map(domainLabel).join(", ")} 제안을 만들지 않았어요`}
+            title={`${[...blockedByGuard].map(domainLabel).join(", ")} 추천을 만들지 않았어요`}
           >
             {data.guards.map((guard) => (
               <p key={`${guard.code}:${guard.blocked_agents.join(",")}`}>{guard.message}</p>
@@ -394,7 +394,7 @@ function SuggestionsScreen() {
             {data.guards.some((guard) => guard.code === "safety_unknown") ? (
               <>
                 <p className="text-caption mt-1">
-                  알레르기를 알려주시면 식사 제안도 함께 준비해요.
+                  알레르기를 알려 주시면 식사 추천도 함께 준비해요.
                 </p>
                 <ButtonLink
                   href={`/child/${childId}/profile`}
@@ -422,7 +422,7 @@ function SuggestionsScreen() {
           <ConsentRequiredCard
             childId={childId}
             error={consentBlocked}
-            what="제안을 준비할 수 없어요."
+            what="추천을 준비할 수 없어요."
           />
         ) : suggestions.isError ? (
           // 🚨 llm_unavailable 을 기본값으로 대체하지 않는다. 실패했다고 화면에 말한다.
@@ -430,7 +430,7 @@ function SuggestionsScreen() {
             <p>
               {suggestions.error instanceof Error
                 ? suggestions.error.message
-                : "제안을 준비하지 못했어요."}
+                : "추천을 준비하지 못했어요."}
             </p>
             {/* 🚨 하루 한도는 다시 눌러도 같은 답이다 — 다시 시도를 세우지 않는다 (apps/web CLAUDE §3 에러) */}
             {isApiError(suggestions.error, "daily_input_limit") ? null : (
@@ -523,12 +523,12 @@ function SuggestionsScreen() {
               ) : null}
               <p className="text-body-sm text-ink mt-1">
                 {safetyNotice.kind === "approve_blocked"
-                  ? "그사이 알레르기로 등록된 식품이 들어간 제안이 있어서 고르지 못했어요. 그 제안을 빼고 다시 골라 주세요."
+                  ? "그사이 알레르기로 등록된 식품이 들어간 추천이 있어서 고르지 못했어요. 그 추천을 빼고 다시 골라 주세요."
                   : safetyNotice.items.length > 0
-                    ? `${josa(safetyNotice.items.join(", "), "이/가")} 들어간 제안은 고를 수 없어요. 다른 제안을 골라 주세요.`
+                    ? `${josa(safetyNotice.items.join(", "), "이/가")} 들어간 추천은 고를 수 없어요. 다른 추천을 골라 주세요.`
                     : // 🚨 이유를 단정하지 않는다. 화면이 모르는 검사일 수도, 어느 제안 것인지 몰라
                       //    전부 막은 알레르기일 수도 있다 (`SafetyResult.allergyItems` 머리말).
-                      "확인이 필요한 항목 때문에 고른 제안을 고르지 않았어요. 다른 제안을 골라 주세요."}
+                      "확인이 필요한 항목 때문에 고른 추천을 고르지 않았어요. 다른 추천을 골라 주세요."}
               </p>
             </div>
           </Card>
@@ -796,7 +796,7 @@ function ScarcityCard({
         <p className="text-body-sm text-ink-muted mt-2">답을 저장하지 못했어요.</p>
       ) : answered ? (
         <p className="text-body-sm text-ink-muted mt-2">
-          기록으로 남겼어요. 다음 제안부터 근거로 써요.
+          기록으로 남겼어요. 다음 추천부터 근거로 써요.
         </p>
       ) : null}
 
