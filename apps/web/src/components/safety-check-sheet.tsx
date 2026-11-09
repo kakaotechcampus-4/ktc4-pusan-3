@@ -1,6 +1,7 @@
 "use client";
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { josa } from "es-hangul";
 import { useRef, useState } from "react";
 
 import { Banner } from "@/components/ui/banner";
@@ -49,7 +50,7 @@ type SafetyAnswer = "has" | "none" | "unknown";
 type SafetySaveState = "saving" | "saved" | "failed";
 
 const SAFETY_CHOICES: Array<{ value: SafetyAnswer; label: string }> = [
-  { value: "none", label: "먹어봤어요 · 괜찮았어요" },
+  { value: "none", label: "먹어 봤고 괜찮았어요" },
   { value: "has", label: "알레르기가 있어요" },
   { value: "unknown", label: "모르겠어요" },
 ];
@@ -196,7 +197,8 @@ export function SafetyCheckSheet({
       <div className="flex flex-col gap-4">
         {unhandledChecks.length > 0 ? (
           <Banner tone="danger" title="여기서 확인할 수 없는 항목이 있어요">
-            {unhandledChecks.map((p) => p.item).join(", ")} — 이 항목이 걸린 제안은 고르지 않아요.
+            {josa(unhandledChecks.map((p) => p.item).join(", "), "은/는")} 여기서 확인할 수 없어서,
+            이 항목이 걸린 제안은 고르지 않아요.
           </Banner>
         ) : null}
 
@@ -235,8 +237,8 @@ export function SafetyCheckSheet({
           //    저장은 다시 시도하지 않아서, 화면에서 실패가 사라진 채로 기록이 비어 있었다.
           <CardFailed>
             <p>
-              {failedItems.join(", ")} — 알레르기 기록에 저장하지 못했어요. 이 제안은 고르지 않지만,
-              저장되기 전까지는 다음 제안에서 걸러내지 못해요.
+              {josa(failedItems.join(", "), "을/를")} 알레르기 기록에 저장하지 못했어요. 이 제안은
+              고르지 않지만, 저장되기 전까지는 다음 제안에서 걸러내지 못해요.
             </p>
             <Button
               variant="tertiary"
@@ -286,7 +288,8 @@ function SafetyCheck({
         ))}
       </ChipRow>
       <p className="text-caption text-ink-subtle mt-2">
-        보호자가 확인한 값만 건강 기록에 저장돼요. 모르겠어요를 고르면 아무것도 저장하지 않아요.
+        직접 확인해 주신 것만 알레르기 기록에 저장해요. &ldquo;모르겠어요&rdquo;를 고르면 아무것도
+        저장하지 않아요.
       </p>
     </section>
   );

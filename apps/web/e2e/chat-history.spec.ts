@@ -94,21 +94,21 @@ test.describe("지난 턴에는 지금 누르면 막다른 버튼이 없다", ()
     await expect(pool.getByRole("button", { name: "확인하고 넣기" })).toHaveCount(0);
   });
 
-  test('🚨 지난 부분 실패에는 "다시 준비하기" 가 없고, 고를 후보가 남은 결과에만 "후보 보기" 가 선다', async ({
+  test('🚨 지난 부분 실패에는 "다시 준비하기" 가 없고, 고를 후보가 남은 결과에만 "제안 보기" 가 선다', async ({
     page,
   }) => {
     const dinner = turn(page, "저녁 뭐 먹일지 같이 정해 줘");
     await expect(dinner).toContainText("놀이 쪽은 이번에 처리하지 못했어요.");
     await expect(dinner.getByRole("link", { name: "다시 준비하기" })).toHaveCount(0);
     // 하나는 채택했다 — 05 에서 보인다.
-    await expect(dinner.getByRole("link", { name: "후보 보기" })).toHaveAttribute(
+    await expect(dinner.getByRole("link", { name: "제안 보기" })).toHaveAttribute(
       "href",
       /run=r_hist_dinner/,
     );
     // 고르지 않은 채 다 지났다 — 눌러도 "이어서 할 수 없어요" 뿐이라 세우지 않는다.
     const play = turn(page, "주말에 뭐 하고 놀지 골라 줘");
     await expect(play).toContainText("지금은 고를 수 있는 후보가 없어요.");
-    await expect(play.getByRole("link", { name: "후보 보기" })).toHaveCount(0);
+    await expect(play.getByRole("link", { name: "제안 보기" })).toHaveCount(0);
   });
 
   test("🚨 지운 기록은 내용 없이 지웠다고만 말한다", async ({ page }) => {
@@ -119,7 +119,7 @@ test.describe("지난 턴에는 지금 누르면 막다른 버튼이 없다", ()
 
   test("🚨 고친 기록은 기록 탭처럼 무엇으로 고쳤는지 말한다", async ({ page }) => {
     const breakfast = turn(page, "아침에 계란을 잘 먹었어");
-    await expect(breakfast).toContainText("잘못된 기록으로 고친 기록");
+    await expect(breakfast).toContainText("‘잘못된 기록’으로 고친 기록");
     await expect(breakfast).toContainText("기록 2건 저장됨");
   });
 
@@ -130,9 +130,9 @@ test.describe("지난 턴에는 지금 누르면 막다른 버튼이 없다", ()
     await expect(turn(page, "블록 놀이를 오래 했어")).toContainText(
       "이 질문은 더 이어서 답할 수 없어요.",
     );
-    // 답한 줄은 그날처럼 "질문에 대한 답" 으로 서고, 건강 기록도 run 화면과 같은 모양이다.
+    // 답한 줄은 그날처럼 "질문에 답함" 으로 서고, 건강 기록도 run 화면과 같은 모양이다.
     const reply = turn(page, "사흘 전부터");
-    await expect(reply).toContainText("질문에 대한 답");
+    await expect(reply).toContainText("질문에 답함");
     await expect(reply).toContainText("건강");
   });
 });
@@ -151,7 +151,7 @@ test.describe("앱을 다시 켜도 15분 안이면 질문에 이어서 답한�
 
     await page.getByRole("textbox", { name: "오늘 있었던 일" }).fill("한 시간쯤");
     await page.getByRole("button", { name: "이 이야기 남기기" }).click();
-    await expect(turn(page, "한 시간쯤")).toContainText("질문에 대한 답");
+    await expect(turn(page, "한 시간쯤")).toContainText("질문에 답함");
 
     const sent = calls.find((c) => c.method === "POST" && c.path === `/children/${CHILD}/inputs`);
     // 🚨 원문을 다시 보내지 않고 어느 run 에 대한 답인지만 싣는다.

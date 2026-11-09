@@ -78,13 +78,13 @@ function StartScreen() {
           icon={Baby}
           title="아이를 등록할게요"
           status="처음 등록하는 보호자예요"
-          note="별명과 생일부터 받아요. 아이 정보에 대한 동의도 그 화면에서 함께 받아요."
+          note="별명과 생일부터 받아요. 아이 정보 동의도 그 화면에서 함께 받아요."
         />
         <SettingsLinkRow
           href="/invite"
           icon={MailPlus}
           title="초대 코드를 받았어요"
-          status="이미 등록된 아이에 함께 연결돼요"
+          status="이미 등록된 아이와 연결돼요"
           note="아이 정보를 다시 입력하지 않아요. 코드는 아이를 등록한 보호자가 만들어요."
         />
       </SettingsGroup>

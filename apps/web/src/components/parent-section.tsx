@@ -203,7 +203,7 @@ export function ParentSection({
         description={
           issued
             ? "이 코드를 받은 사람이 앱에서 입력하면 바로 함께 보게 돼요."
-            : "코드 하나를 만들어 전해 주세요. 아이와 어떤 사이인지는 받는 분이 직접 고릅니다."
+            : "코드 하나를 만들어 전해 주세요. 아이와 어떤 사이인지는 받는 분이 직접 골라요."
         }
         footer={
           issued ? (
@@ -334,7 +334,7 @@ export function ParentSection({
               <CardFailed>
                 <p>
                   {isApiError(disconnect.error, "owner_required")
-                    ? "아이를 만든 보호자는 연결을 끊을 수 없어요."
+                    ? "아이를 등록한 보호자는 연결을 끊을 수 없어요."
                     : isApiError(disconnect.error, "owner_only")
                       ? "다른 보호자의 연결은 아이를 등록한 보호자만 끊을 수 있어요."
                       : leaving
@@ -356,7 +356,7 @@ export function ParentSection({
 function parentStatus(parent: ChildParent): string | undefined {
   const relation = parent.nickname?.trim() ? RELATION_LABEL[parent.relation] : null;
   if (parent.role === "owner") {
-    return relation ? `${relation} · 아이를 만든 보호자` : "아이를 만든 보호자";
+    return relation ? `${relation} · 아이를 등록한 보호자` : "아이를 등록한 보호자";
   }
   return relation ?? undefined;
 }
@@ -364,7 +364,7 @@ function parentStatus(parent: ChildParent): string | undefined {
 function ParentNote() {
   return (
     <p className="text-caption text-ink-subtle">
-      누가 무엇을 적었는지는 기록마다 남아요. 함께 보는 보호자도 같은 기억을 봅니다.
+      누가 무엇을 적었는지는 기록마다 남아요. 함께 보는 보호자도 같은 기억을 봐요.
     </p>
   );
 }

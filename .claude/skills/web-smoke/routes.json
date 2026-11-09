@@ -179,7 +179,7 @@
       "path": "/child/c1/settings/help",
       "auth": true,
       "expect": "/child/c1/settings/help",
-      "mustSee": "알레르기를 AI 가 추측하나요?"
+      "mustSee": "알레르기를 AI가 짐작하나요?"
     },
     {
       "name": "10 설정 › 탈퇴",
@@ -252,7 +252,7 @@
       "path": "/child/c1/suggestions?agents=food,activity",
       "auth": true,
       "expect": "/child/c1/suggestions",
-      "mustSee": "추천 이유"
+      "mustSee": "제안 이유"
     },
     {
       "name": "05 제안 후보 — 근거 부족 (일반 추천 + 질문 1개)",

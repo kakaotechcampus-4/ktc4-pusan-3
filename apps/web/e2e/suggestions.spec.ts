@@ -81,7 +81,7 @@ test.describe("개인화 추천 (default)", () => {
         const row = panel.locator(":scope > ul > li").filter({ hasText: s.content });
         // 행을 못 찾으면 아래 "라벨 0건" 이 그냥 통과한다 — 행이 있다는 전제를 먼저 건다
         await expect(row).toHaveCount(1);
-        const label = row.getByText("추천 이유", { exact: true });
+        const label = row.getByText("제안 이유", { exact: true });
         if (s.reason) {
           await expect(label).toBeVisible();
           await expect(row.getByText(s.reason, { exact: true })).toBeVisible();
@@ -130,7 +130,7 @@ test.describe("들어온 곳으로 돌아가기 (#683)", () => {
   });
 
   test("대화에서 왔으면 위 화살표가 대화로 가고, 스크롤해도 화면 위에 남는다", async ({ page }) => {
-    // 04 "후보 보기" 는 run 을 싣고, "이것도 도와드릴까요?" 는 영역만 싣는다 — 둘 다 대화다
+    // 04 "제안 보기" 는 run 을 싣고, "이것도 도와드릴까요?" 는 영역만 싣는다 — 둘 다 대화다
     for (const path of [`${SUGGESTIONS}&run=r1`, SUGGESTIONS]) {
       await page.goto(path);
       await expect(page.getByText("사용한 기록", { exact: false }).first()).toBeVisible();
@@ -179,12 +179,9 @@ test.describe("근거가 부족하면 일반 추천 (§2 기억)", () => {
       ).toBeVisible();
       await expect(page.getByText("놀이 기록은 1건 있어요.", { exact: false })).toBeVisible();
       await expect(
-        page.getByText(
-          "이번 추천에 직접 사용한 아이 기록이 없어 추천 아래 적힌 기준으로 골랐어요.",
-          {
-            exact: false,
-          },
-        ),
+        page.getByText("이번에는 아이 기록을 쓰지 않고, 제안마다 아래 적힌 기준으로 골랐어요.", {
+          exact: false,
+        }),
       ).toBeVisible();
       // 🚨 누적 건수를 "적다" 고 단정하거나 쌓이면 달라진다고 약속하지 않는다 (#662)
       await expect(page.getByText("뿐이에요", { exact: false })).toHaveCount(0);
@@ -325,7 +322,7 @@ test.describe("근거가 부족하면 일반 추천 (§2 기억)", () => {
       await expect(
         page.getByRole("heading", { name: "이번에는 일반 추천으로 골랐어요" }),
       ).toBeVisible();
-      await expect(page.getByText("영역별 기록은 식사 22건 · 놀이 8건이에요.")).toBeVisible();
+      await expect(page.getByText("영역별 기록은 식사 22건, 놀이 8건이에요.")).toBeVisible();
       for (const banned of ["30건", "이 주제로", "또래 기준", "다음부터 달라져요"]) {
         await expect(page.getByText(banned, { exact: false })).toHaveCount(0);
       }
@@ -406,7 +403,7 @@ test.describe("개인화와 일반이 같은 Agent 에 섞여 오면 (#512 리�
       page.getByRole("heading", { name: "일부는 일반 추천으로 골랐어요" }),
     ).toBeVisible();
     await expect(
-      page.getByText("일반 추천이라고 적힌 것에는 직접 연결한 아이 기록이 없어요", {
+      page.getByText("일반 추천이라고 적힌 것은 아이 기록 없이 골랐어요", {
         exact: false,
       }),
     ).toBeVisible();
@@ -438,7 +435,7 @@ test.describe("장소가 붙은 추천의 확인 문구 (#516)", () => {
       row.getByRole("checkbox", { name: "햇살어린이공원에서 모래성 쌓기", exact: true }),
     ).toBeVisible();
     // 제안 문장 바로 아래, 이유보다 위다
-    const reasonLabel = row.getByText("추천 이유", { exact: true });
+    const reasonLabel = row.getByText("제안 이유", { exact: true });
     expect((await notice.boundingBox())!.y).toBeLessThan((await reasonLabel.boundingBox())!.y);
 
     // 🚨 장소는 근거가 아니다 — 근거 목록 안에 없고, 건수는 근거 줄 수 그대로다
@@ -548,7 +545,7 @@ test.describe("필요한 재료 · 준비물 (#659)", () => {
       tofu.getByRole("checkbox", { name: "두부를 부쳐서 한 조각 곁들여 보세요", exact: true }),
     ).toBeVisible();
     // 이유 다음, 근거 선 위다 — 근거가 아니라서 "사용한 기록" 목록에 섞이지 않는다
-    const reasonY = (await tofu.getByText("추천 이유", { exact: true }).boundingBox())!.y;
+    const reasonY = (await tofu.getByText("제안 이유", { exact: true }).boundingBox())!.y;
     const itemsY = (await tofu.getByText("필요한 재료", { exact: true }).boundingBox())!.y;
     const evidence = tofu.getByText(/^사용한 기록 \d+건$/);
     expect(reasonY).toBeLessThan(itemsY);
@@ -680,7 +677,7 @@ test.describe("추천별 위험 경고 (#402 · #672)", () => {
     await expect(
       row.getByRole("checkbox", { name: "주말에 실내 물놀이장은 어떨까요", exact: true }),
     ).toBeVisible();
-    const reasonLabel = row.getByText("추천 이유", { exact: true });
+    const reasonLabel = row.getByText("제안 이유", { exact: true });
     expect((await warning.boundingBox())!.y).toBeLessThan((await reasonLabel.boundingBox())!.y);
 
     // 🚨 경고는 근거가 아니다 — 근거 목록 안에 없고, 건수는 근거 줄 수 그대로다
@@ -835,7 +832,7 @@ test.describe("승인 게이트 ㉡ — 알레르기 확인은 채택보다 먼�
   test('"괜찮았어요" 는 알레르기 기록을 만들지 않는다', async ({ page }) => {
     const calls = recordApi(page);
     const sheet = await pickEggAndAdopt(page);
-    await sheet.getByRole("button", { name: "먹어봤어요 · 괜찮았어요" }).click();
+    await sheet.getByRole("button", { name: "먹어 봤고 괜찮았어요" }).click();
     await sheet.getByRole("button", { name: "확인했어요" }).click();
     await expect(page.getByText("이렇게 하기로 했어요")).toBeVisible();
     expect(writes(calls, "POST", /\/health-safety$/)).toEqual([]);
@@ -1055,12 +1052,9 @@ test.describe("0개 · 이어서 할 수 없음은 실패가 아니다 (#249)", 
       // 🚨 요청에 맞춰 고른 것을 또래 기준이라고 부르지 않는다 (카드 · 질문 카드 둘 다)
       await expect(page.getByText("또래", { exact: false })).toHaveCount(0);
       await expect(
-        page.getByText(
-          "이번 추천에 직접 사용한 아이 기록이 없어 추천 아래 적힌 기준으로 골랐어요.",
-          {
-            exact: false,
-          },
-        ),
+        page.getByText("이번에는 아이 기록을 쓰지 않고, 제안마다 아래 적힌 기준으로 골랐어요.", {
+          exact: false,
+        }),
       ).toBeVisible();
       await expect(page.getByText("기록이 아직 적어서", { exact: false })).toHaveCount(0);
       // 아이 기록 근거도 없다 — 개인화로 그려지지 않는다

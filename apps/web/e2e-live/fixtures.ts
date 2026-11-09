@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 
 import { test as base, expect, type Page } from "@playwright/test";
 
-import { seenStorageKey, TOUR_KEYS } from "@/lib/tour/types";
+import { TOUR_KEYS } from "@/lib/tour/types";
 
 import { API_DIR, API_ORIGIN, WEB_ORIGIN, apiEnv } from "./server-env";
 
@@ -39,9 +39,42 @@ function seedParent(): Seeded {
   return JSON.parse(out.trim().split("\n").at(-1) ?? "") as Seeded;
 }
 
+/**
+ * 이 보호자가 투어를 다 본 것으로 서버에 남기고, 회전된 refresh 를 돌려준다 (#696).
+ *
+ * 처음 들어온 화면마다 투어 덮개(모달 `<dialog>`)가 서서 배경이 inert 가 된다 — 덮개가 먼저 서면 테스트의
+ * 누르기가 막힌다. 목 e2e 의 `toursSeen` 과 같은 바탕이다.
+ * 🚨 **access 를 받으려고 refresh 를 한 번 쓴다 → 쿠키가 회전한다.** 브라우저에는 시드의 값이 아니라 여기서
+ *    받은 새 값을 심는다. 옛 값을 심으면 유예(30초)가 지난 뒤 재사용으로 보고 세션이 지워진다.
+ */
+async function markToursSeen(refreshToken: string): Promise<string> {
+  const refreshed = await fetch(`${API_ORIGIN}/api/v1/auth/refresh`, {
+    method: "POST",
+    headers: { Cookie: `${REFRESH_COOKIE}=${refreshToken}` },
+  });
+  expect(refreshed.status, "투어 기록을 심으려고 받은 refresh").toBe(200);
+  const { token } = (await refreshed.json()) as { token: string };
+  const rotated = refreshed.headers
+    .getSetCookie()
+    .map((line) => line.split(";")[0] ?? "")
+    .find((pair) => pair.startsWith(`${REFRESH_COOKIE}=`))
+    ?.slice(REFRESH_COOKIE.length + 1);
+  expect(rotated, "회전된 refresh 쿠키").toBeTruthy();
+
+  for (const key of TOUR_KEYS) {
+    const res = await fetch(`${API_ORIGIN}/api/v1/me/tours/${key}`, {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    expect(res.status, `투어 ${key} 기록`).toBe(204);
+  }
+  return rotated!;
+}
+
 export const test = base.extend<Fixtures>({
   parent: async ({}, provide) => {
-    await provide(seedParent());
+    const seeded = seedParent();
+    await provide({ ...seeded, refresh_token: await markToursSeen(seeded.refresh_token) });
   },
 
   // 🚨 두 번째 인자를 `use` 로 부르지 않는다 — React 의 `use` 훅으로 읽혀 lint 가 막는다.
@@ -58,15 +91,7 @@ export const test = base.extend<Fixtures>({
       },
     ]);
 
-    // 화면 투어를 본 채로 시작한다 (목 e2e `toursSeen` 과 같은 값). 처음 들어온 화면마다 투어 덮개
-    // (모달 `<dialog>`)가 서서 배경이 inert 가 된다 — 덮개가 먼저 서면 테스트의 누르기가 막힌다.
-    // 투어 기록은 보호자 단위라 시드가 돌려준 id 로 심는다.
-    await page.addInitScript(
-      ([key, keys]) => {
-        if (localStorage.getItem(key) === null) localStorage.setItem(key, JSON.stringify(keys));
-      },
-      [seenStorageKey(parent.parent_id), TOUR_KEYS] as const,
-    );
+    // 화면 투어는 `parent` 바탕이 서버에 다 본 것으로 남겨 두었다 (`markToursSeen`).
 
     // 🚨 이 두 서버 밖으로 나간 요청은 실패로 본다. api 의 키를 다 비웠어도 브라우저가 직접 부르는
     //    곳(지도 · 폰트 CDN 등)이 생기면 CI 가 외부에 기대게 된다.

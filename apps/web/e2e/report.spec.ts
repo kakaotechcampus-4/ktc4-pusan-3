@@ -45,7 +45,7 @@ test("설정에서 들어가 적어 보내면 첫 분류와 앞뒤 공백을 뗀
   // 처음부터 첫 분류가 골라져 있다 — 다 안 고른 칸은 고르는 칸인지 드러나지 않는다.
   // 분류는 건드리지 않고 보내서, 기본값이 그대로 나가는지까지 본다.
   await expect(page.getByRole("radio", { checked: true })).toHaveCount(1);
-  await expect(page.getByRole("radio", { name: "AI 답이나 추천이 부적절해요" })).toBeChecked();
+  await expect(page.getByRole("radio", { name: "AI 답이나 제안이 부적절해요" })).toBeChecked();
   // 글이 없으면 아직 보낼 수 없다.
   await expect(send).toBeDisabled();
 

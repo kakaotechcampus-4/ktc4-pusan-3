@@ -163,7 +163,7 @@ export function ChildIdentitySheet({
 
   function submit() {
     if (!nickname.trim()) {
-      setNicknameError("별명을 적어주세요");
+      setNicknameError("별명을 적어 주세요.");
       return;
     }
     setNicknameError(null);
@@ -210,7 +210,7 @@ export function ChildIdentitySheet({
 
         <DateField
           label="생일"
-          hint="나이는 생일을 보고 서버가 계산해요."
+          hint="나이는 생일을 보고 계산해요."
           value={birthDate}
           onChange={setBirthDate}
           fromDate={earliestBirthDate}

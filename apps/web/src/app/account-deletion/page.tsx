@@ -27,17 +27,24 @@ export const metadata: Metadata = {
  */
 
 const DELETED_NOW = [
-  "계정 정보 — 카카오 회원번호, 부르는 이름",
-  "개인 기록 — 일기, 지난 대화 기록",
-  "직접 등록한 아이 — 관리 권한을 넘기지 않고 탈퇴하면 그 아이와 공동 기록(아이 정보, 일상 기록, 알레르기와 건강 정보, 키와 몸무게, 일정)을 지우고, 함께 보던 보호자와의 연결도 끊어요",
-  "함께 보는 보호자로 연결된 아이 — 남기신 공동 기록은 아이 기록으로 남고, 기록에 적힌 작성자는 비워요",
+  { data: "계정 정보", detail: "카카오 회원번호, 부르는 이름" },
+  { data: "개인 기록", detail: "일기, 지난 대화 기록" },
+  {
+    data: "직접 등록한 아이",
+    detail:
+      "관리 권한을 넘기지 않고 탈퇴하면 그 아이와 공동 기록(아이 정보, 일상 기록, 알레르기와 건강 정보, 키와 몸무게, 일정)을 지우고, 함께 보던 보호자와의 연결도 끊어요",
+  },
+  {
+    data: "함께 보는 보호자로 연결된 아이",
+    detail: "남기신 공동 기록은 아이 기록으로 남고, 기록에 적힌 작성자는 비워요",
+  },
 ];
 
 const KEPT_FOR_A_WHILE = [
   { data: "백업 사본", period: "최대 30일 뒤 전체 파기" },
   { data: "접속 기록, 오류 기록, 인공지능 요청 기록", period: "3개월 뒤 삭제" },
   { data: "동의 기록 (언제 무엇에 동의했는지)", period: "삭제한 때부터 1년 뒤 파기" },
-  { data: "삭제 요청 · 문의 기록", period: "처리를 마친 날부터 1년" },
+  { data: "삭제 요청과 문의 기록", period: "처리를 마친 날부터 1년" },
   { data: "외부 처리 회사에 남은 사본", period: "각 회사가 정한 기간 (처리방침 제7장)" },
 ];
 
@@ -55,7 +62,9 @@ export default function AccountDeletionPage() {
         <h2 className="text-label text-brand">지우는 방법</h2>
         <Card>
           <h3 className="text-section text-ink">앱에서 바로</h3>
-          <p className="text-body-sm text-ink mt-2">설정 › 계정 › 탈퇴하기</p>
+          <p className="text-body-sm text-ink mt-2">
+            설정의 계정 구역에서 &ldquo;탈퇴하기&rdquo;를 눌러요.
+          </p>
           <p className="text-body-sm text-ink-muted mt-2">
             탈퇴하면 계정을 바로 쓸 수 없고, 되살릴 수 없어요.
           </p>
@@ -97,13 +106,14 @@ export default function AccountDeletionPage() {
       <section className="flex flex-col gap-3">
         <h2 className="text-label text-brand">탈퇴하면 바로 지워지는 것</h2>
         <Card>
-          <ul className="flex flex-col gap-2">
-            {DELETED_NOW.map((item) => (
-              <li key={item} className="text-body-sm text-ink">
-                {item}
-              </li>
+          <dl className="flex flex-col gap-3">
+            {DELETED_NOW.map((row) => (
+              <div key={row.data}>
+                <dt className="text-body-sm text-ink">{row.data}</dt>
+                <dd className="text-body-sm text-ink-muted">{row.detail}</dd>
+              </div>
             ))}
-          </ul>
+          </dl>
           <p className="border-line text-caption text-ink-subtle mt-3 border-t pt-3">
             탈퇴할 때 카카오에도 이 서비스와의 연결을 끊어 달라고 요청해요.
           </p>

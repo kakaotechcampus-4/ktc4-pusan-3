@@ -288,7 +288,7 @@ export function EventDraftCard({
       {/* 🚨 왜 확인이 필요한지는 **서버 문구**를 그대로 쓴다. 프론트가 지어내지 않는다. */}
       {draft.needs_review ? (
         <p className="text-body-sm text-ink-muted bg-surface-muted rounded-field mt-3 px-3 py-2">
-          {draft.review_reason ?? "읽지 못한 값이 있어요. 보고 채워 주세요."}
+          {draft.review_reason ?? "읽지 못한 칸이 있어요. 확인하고 채워 주세요."}
         </p>
       ) : null}
 

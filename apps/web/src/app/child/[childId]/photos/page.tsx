@@ -225,7 +225,7 @@ function PhotosScreen() {
           <ConsentRequiredCard
             childId={childId}
             error={consentBlocked}
-            what="사진을 읽어 드릴 수 없어요."
+            what="사진을 읽어 드릴 수 없어요. 저장된 것은 하나도 없어요."
           />
         ) : !photo ? (
           <Picker date={date} onPick={() => setSheetOpen(true)} />
@@ -263,11 +263,8 @@ function PhotosScreen() {
             onCommit={(body) => commit.mutate(body)}
             committing={commit.isPending}
             commitError={
-              commit.isError
-                ? commit.error instanceof Error
-                  ? commit.error.message
-                  : "저장하지 못했어요. 아직 아무것도 저장되지 않았어요."
-                : null
+              // 🚨 서버 문구를 그대로 싣지 않는다 — 에러 문구는 화면이 만든다 (#815).
+              commit.isError ? "저장하지 못했어요. 아직 아무것도 저장되지 않았어요." : null
             }
             onGoHome={goHome}
           />
@@ -276,7 +273,7 @@ function PhotosScreen() {
         run.state.failure?.reason === "not_document" ? (
           <Failed
             title="공지나 식단표를 찾지 못했어요"
-            note="알림장 · 가정통신문 · 식단표처럼 기관에서 받은 문서 사진을 올려 주세요. 아무것도 저장하지 않았어요."
+            note="알림장, 가정통신문, 식단표처럼 기관에서 받은 문서 사진을 올려 주세요. 아무것도 저장하지 않았어요."
             retryLabel="다른 사진 고르기"
             onRetry={() => setSheetOpen(true)}
             onGoHome={goHome}
@@ -284,7 +281,7 @@ function PhotosScreen() {
         ) : (
           <Failed
             title="이 사진에서는 읽어낼 게 없었어요"
-            note="잘못 저장하지 않으려고 아무것도 저장하지 않았어요. 글자가 더 잘 보이는 사진이면 읽을 수 있어요."
+            note="잘못 저장하지 않으려고 아무것도 저장하지 않았어요. 더 또렷한 사진이면 읽을 수 있어요."
             onRetry={() => startUpload(photo)}
             onGoHome={goHome}
           />
@@ -400,7 +397,7 @@ function Failed({
       <div className="flex flex-wrap gap-2">
         <Button onClick={onRetry}>{retryLabel}</Button>
         <Button variant="secondary" onClick={onGoHome}>
-          메인으로 돌아가기
+          홈으로 돌아가기
         </Button>
       </div>
     </div>

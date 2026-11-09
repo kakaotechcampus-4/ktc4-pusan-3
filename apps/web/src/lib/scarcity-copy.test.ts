@@ -15,7 +15,7 @@ describe("scarcityCopy — Agent별 기록 수와 이번 추천의 근거를 섞
 
     expect(copy.title).toBe("이번에는 일반 추천으로 골랐어요");
     expect(copy.body).toBe(
-      "식사 기록은 22건 있어요. 이번 추천에 직접 사용한 아이 기록이 없어 추천 아래 적힌 기준으로 골랐어요.",
+      "식사 기록은 22건 있어요. 이번에는 아이 기록을 쓰지 않고, 제안마다 아래 적힌 기준으로 골랐어요.",
     );
     expect(all(copy)).not.toContain("999");
   });
@@ -29,7 +29,7 @@ describe("scarcityCopy — Agent별 기록 수와 이번 추천의 근거를 섞
 
     expect(copy.title).toBe("일부는 일반 추천으로 골랐어요");
     expect(copy.body).toBe(
-      "식사 기록은 22건 있지만, 일반 추천이라고 적힌 것에는 직접 연결한 아이 기록이 없어요.",
+      "식사 기록은 22건 있지만, 일반 추천이라고 적힌 것은 아이 기록 없이 골랐어요.",
     );
     expect(copy.body).not.toContain("위 추천");
   });
@@ -37,7 +37,7 @@ describe("scarcityCopy — Agent별 기록 수와 이번 추천의 근거를 섞
   it.each([
     {
       records: [record("식사", 22), record("놀이", 8)],
-      summary: "영역별 기록은 식사 22건 · 놀이 8건이에요.",
+      summary: "영역별 기록은 식사 22건, 놀이 8건이에요.",
     },
     {
       records: [record("식사", 22), record("놀이", 0)],
@@ -50,6 +50,11 @@ describe("scarcityCopy — Agent별 기록 수와 이번 추천의 근거를 섞
     {
       records: [record("식사", 0), record("놀이", 0)],
       summary: "식사와 놀이 기록은 아직 없어요.",
+    },
+    // 🚨 받침이 있는 이름은 "과" 다 — 조사를 박아 두었을 때 "성장와 건강" 이 나왔다 (#815).
+    {
+      records: [record("성장", 0), record("건강", 0)],
+      summary: "성장과 건강 기록은 아직 없어요.",
     },
   ])("Agent 둘의 기록을 합치지 않고 보여 준다: $summary", ({ records, summary }) => {
     const copy = scarcityCopy({ records, fallbackCount: 30, hasPersonal: false });
@@ -73,8 +78,8 @@ describe("scarcityCopy — Agent별 기록 수와 이번 추천의 근거를 섞
     const some = scarcityCopy({ records: [], fallbackCount: 3, hasPersonal: false });
     const none = scarcityCopy({ records: [], fallbackCount: 0, hasPersonal: false });
 
-    expect(some.body).toBe("쌓인 기록은 3건 있어요. 근거 없이 추천을 만들지는 않을게요.");
-    expect(none.body).toBe("쌓인 기록이 아직 없어요. 근거 없이 추천을 만들지는 않을게요.");
+    expect(some.body).toBe("쌓인 기록은 3건 있어요. 근거 없이 제안을 만들지는 않을게요.");
+    expect(none.body).toBe("쌓인 기록이 아직 없어요. 근거 없이 제안을 만들지는 않을게요.");
   });
 
   it("질문이 있을 때만 다음 추천에 참고한다는 문장을 붙인다", () => {
@@ -90,8 +95,8 @@ describe("scarcityCopy — Agent별 기록 수와 이번 추천의 근거를 섞
       hasPersonal: false,
     });
 
-    expect(asked.body).toContain("하나만 알려주시면 다음 추천에 참고할게요.");
-    expect(quiet.body).not.toContain("하나만 알려주시면");
+    expect(asked.body).toContain("하나만 알려 주시면 다음 제안에 참고할게요.");
+    expect(quiet.body).not.toContain("하나만 알려 주시면");
   });
 
   it("일반 추천이 없으면 질문이 있어도 후속 문장을 붙이지 않는다", () => {
@@ -102,7 +107,7 @@ describe("scarcityCopy — Agent별 기록 수와 이번 추천의 근거를 섞
       asked: true,
     });
 
-    expect(copy.body).not.toContain("하나만 알려주시면");
+    expect(copy.body).not.toContain("하나만 알려 주시면");
   });
 
   it.each([

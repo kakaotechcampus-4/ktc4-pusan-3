@@ -12,6 +12,7 @@ import type {
   SavedEvent,
   UnavailableEvent,
 } from "./sse";
+import type { TourKey } from "@/lib/tour/types";
 
 /* ── Ref — 도메인 간 참조 ────────────────────────────────────────────────
  * observation 테이블이 5개로 나뉘어 있어 id 만으로는 어느 테이블인지 알 수 없다.
@@ -1851,6 +1852,14 @@ export interface Me {
     role: "owner" | "member";
     consent_required: string[];
   }>;
+}
+
+/**
+ * `GET /me/tours` — 이 보호자가 이미 본 화면 투어 (#696 · `docs/web/screen-tour-v1.md` §2).
+ * 계정 단위라 아이를 바꿔도, 기기를 바꿔도 같은 목록이다. 한 번도 안 봤으면 빈 목록이다.
+ */
+export interface SeenTours {
+  seen: TourKey[];
 }
 
 /** ?cursor=&limit= — 커서는 (observed_to, kind, id) 를 base64 로 인코딩한 것. */

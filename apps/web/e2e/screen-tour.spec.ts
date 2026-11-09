@@ -1,15 +1,13 @@
 import type { Page } from "@playwright/test";
 
-import { PARENT_ID } from "@/mocks/fixtures";
-import { seenStorageKey } from "@/lib/tour/types";
-
-import { CHILD, expect, test } from "./fixtures";
+import { CHILD, MOCK_TOURS_KEY, expect, test } from "./fixtures";
 
 /**
  * 화면 투어 (#632 · `docs/web/screen-tour-v1.md`).
  *
  * 다른 화면 테스트는 투어를 이미 본 채로 시작한다 (`fixtures.ts` 의 `toursSeen`). 여기서만 끈다.
- * 🚨 "봤음" 은 기기 저장소라 `page.goto` · `reload` 를 해도 남는다 — 목 상태와 달리 다시 들어와 볼 수 있다.
+ * 🚨 "봤음" 은 서버 기록이다 (#696). 목도 그 기록을 저장소에 들어서 `page.goto` · `reload` 를 해도 남는다
+ *    (`mocks/handlers/tours.ts`) — 다른 목 상태와 달리 다시 들어와 볼 수 있다.
  */
 test.use({ toursSeen: false });
 
@@ -18,9 +16,12 @@ function tour(page: Page) {
   return page.locator("dialog[open][aria-describedby]");
 }
 
-/** 기기에 남은 "봤음" 목록. 🚨 "안 뜬다" 보다 이것이 먼저다 — 안 뜨는 것은 저장이 깨져도 잠깐은 성립한다. */
+/**
+ * 서버(목)에 남은 "봤음" 목록. 🚨 "안 뜬다" 보다 이것이 먼저다 — 안 뜨는 것은 화면 캐시만으로도 잠깐은 성립한다.
+ * `PUT /me/tours/{key}` · `DELETE /me/tours` 가 실제로 나갔는지를 목 저장소로 본다.
+ */
 async function seenTours(page: Page): Promise<string[]> {
-  const raw = await page.evaluate((key) => localStorage.getItem(key), seenStorageKey(PARENT_ID));
+  const raw = await page.evaluate((key) => localStorage.getItem(key), MOCK_TOURS_KEY);
   return raw ? (JSON.parse(raw) as string[]) : [];
 }
 

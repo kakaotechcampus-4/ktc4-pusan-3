@@ -18,7 +18,7 @@ description: apps/web 화면에 구역·카드·버튼을 더하거나 빼거나
 | 단계 정의 (화면당 한 파일) | `apps/web/src/lib/tour/screens/<화면>.ts` |
 | 투어 이름 · 모양 · `TOUR_KEYS` | `apps/web/src/lib/tour/types.ts` |
 | 덮개 · ? 버튼 · 자동 시작 | `apps/web/src/components/screen-tour.tsx` (`ScreenTour` · `TourHelpButton`) |
-| "봤음" 저장 (지금 기기 · 나중에 서버) | `apps/web/src/lib/tour/seen.ts` |
+| "봤음" 저장 (서버 `/me/tours` · #696) | `apps/web/src/lib/tour/seen.ts` |
 | 화면별 결정 표 | `docs/web/screen-tour-v1.md` §1 |
 | e2e | `apps/web/e2e/screen-tour.spec.ts` · 다른 e2e 는 `fixtures.ts` 의 `toursSeen` 으로 다 본 채 시작 |
 
@@ -48,7 +48,7 @@ git diff origin/develop...HEAD -- 'apps/web/src/app/child/**' apps/web/src/compo
    - 🚨 화면당 **6단계 이하**. 넘으면 덜 중요한 것을 뺀다 (? 안내 단계는 자동이 붙인다 — 세지 않는다)
    - 🚨 **투어 이름(`TourKey`)을 바꾸지 않는다** — 이미 본 사람에게 다시 뜬다. 화면이 바뀌어도 다시 띄우지 않기로 했다
    - 🚨 화면에 적힌 이름 그대로 부른다. Agent · Memory · run · observation · affinity 같은 안쪽 말 금지 (기록 · 기억)
-   - 🚨 AI 를 부풀리지 않는다 · 키몸무게에 평가 말 금지("잘 크고", "또래보다", "정상") · 알레르기는 "AI 는 이 목록을 만들지도 고치지도 못해요"
+   - 🚨 AI 를 부풀리지 않는다 · 키몸무게에 평가 말 금지("잘 크고", "또래보다", "정상") · 알레르기는 "AI는 이 목록을 만들지도 고치지도 못해요"
    - 🚨 승인 게이트(일정 넣기 · 알레르기 등록) 시트 안을 비추지 않는다 — 여는 버튼까지만
    - 🚨 화면에 보이는 글자에 이모지 · 줄표(`—`) 금지 (apps/web/CLAUDE.md §5). 가운뎃점은 화면 문구 관례를 따른다
 4. **새 화면에 투어를 붙일 때만**
