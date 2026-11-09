@@ -249,6 +249,26 @@ test("🚨 하나만 못 넣으면 저장하지 않고, 다시 누르면 못 넣
   expect(linked).toHaveLength(5);
 });
 
+test("🚨 넣는 도중에 화면을 떠나면 남은 일정은 보내지 않고 저장도 하지 않는다 (#828 리뷰)", async ({
+  page,
+}) => {
+  const calls = recordApi(page);
+  await openNotice(page);
+
+  // 첫 일정이 나가는 순간 기기 뒤로가기로 떠난다. 목은 일정마다 왕복을 기다려서 다섯 건이 다 나가기 전이다.
+  const first = page.waitForRequest((r) => r.method() === "POST" && EVENTS.test(r.url()));
+  await page.getByRole("button", { name: "저장하고 캘린더에 5개 넣기" }).click();
+  await first;
+  await page.goBack();
+  await page.waitForURL(`**/child/${CHILD}/home`);
+  // 남은 넷이 나갔다면 다 나갔을 만큼 기다린다.
+  await page.waitForTimeout(2000);
+
+  // 🚨 보내고 있던 것은 되돌릴 수 없어 들어가지만, 그다음부터는 멈춘다.
+  expect(writes(calls, "POST", EVENTS).length).toBeLessThan(5);
+  expect(writes(calls, "POST", COMMIT)).toHaveLength(0);
+});
+
 test("🚨 일정을 넣고 저장만 실패하면 넣은 수를 말하고, 다시 누르면 저장만 보낸다", async ({
   page,
 }) => {
