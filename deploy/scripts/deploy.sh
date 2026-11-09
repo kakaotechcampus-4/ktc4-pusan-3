@@ -149,6 +149,12 @@ fi
 log "이미지 빌드"
 # 진행 로그를 끈다 — SSM 은 출력 앞부분만 돌려줘서, 빌드 로그가 alembic · up 의 에러를 밀어낸다.
 "${COMPOSE[@]}" build --quiet api web
+# 배포 전 백업 (#758) — 빌드가 끝난 뒤 · 마이그레이션 직전. 덤프와 마이그레이션 사이에 쓰기가 덜 끼게 여기서 뜬다.
+# 실패하면 set -e 로 여기서 멈춘다 — 옛 컨테이너가 그대로 서비스하고 DB 는 건드리지 않았다. 이 마이그레이션을
+# 되돌릴 곳이 이 백업뿐이라 멈춘다. backup.sh 는 이 checkout 의 .env 로 대상(dev · prod)을 정하고, 배포가
+# 쥔 잠금을 다시 잡지 않는다.
+log "배포 전 백업"
+bash deploy/scripts/backup.sh predeploy "$SHA"
 log "마이그레이션"
 # api 가 아니라 api-task 다 — api 는 ktc4-edge 고정 IP 라, 떠 있는 api 옆에서 run 하면 같은 주소를 두 번 잡아
 # "Address already in use" 로 멈춘다 (docker-compose.deploy.yml 의 api-task · 11-09).

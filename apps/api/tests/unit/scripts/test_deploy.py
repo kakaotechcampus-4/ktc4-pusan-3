@@ -11,6 +11,7 @@ docker · git · sleep 을 가짜로 바꿔 돈다. docker · git 은 받은 인
     FAKE_NO_NET        network inspect (ktc4-edge 없음)
     FAKE_CADDY_INVALID docker run … caddy validate
     FAKE_RELOAD_FAIL   docker exec ktc4-caddy caddy reload
+    FAKE_BACKUP_FAIL   배포 전 백업(가짜 deploy/scripts/backup.sh)
 
 `compose config --format json` 은 FAKE_CONFIG 를 그대로 찍는다
 (compose 가 .env 를 해석한 결과 자리).
@@ -104,6 +105,11 @@ def box(tmp_path: Path):
         f.chmod(0o755)
     work = tmp_path / "repo"
     (work / "deploy" / "docker").mkdir(parents=True)
+    # 배포 전 백업은 backup.sh 의 시험(test_backup.py)이 본다. 여기서는 불리는 자리와 실패만
+    (work / "deploy" / "scripts").mkdir(parents=True)
+    (work / "deploy" / "scripts" / "backup.sh").write_text(
+        'echo "backup $*" >> "$FAKE_LOG"\n[ -z "$FAKE_BACKUP_FAIL" ]\n'
+    )
     env_file = work / "deploy" / "docker" / ".env"
     env_file.write_text(DEV_ENV)
     tag_file = work / "deploy" / "docker" / ".deployed-tag"
@@ -240,6 +246,25 @@ def test_no_previous_image_does_not_attempt_rollback(box):
     inspect = next(c for c in calls if c.startswith("docker image inspect"))
     assert "ktc4-dev-api:local" in inspect and "ktc4-dev-web:local" in inspect
     assert "롤백할 직전 이미지(local)가 없다" in result.stdout
+
+
+def test_predeploy_backup_runs_after_build_and_right_before_migration(box):
+    """덤프와 마이그레이션 사이에 쓰기가 덜 끼게 — 빌드(~10분)를 기다린 뒤 뜬다."""
+    box()
+
+    calls = box.calls()
+    backup = _index(calls, "backup predeploy new")
+    assert _index(calls, " build ") < backup < _index(calls, " run --rm api-task")
+
+
+def test_failed_predeploy_backup_stops_before_migration(box):
+    """마이그레이션을 되돌릴 곳이 이 백업뿐이다 — 없으면 DB 도 컨테이너도 건드리지 않는다."""
+    result = box(backup_fail="1")
+
+    assert result.returncode != 0
+    calls = box.calls()
+    assert not any(" run " in c or " up " in c for c in calls)
+    assert box.tag_file.read_text().strip() == "prev"
 
 
 def test_failed_migration_never_touches_running_containers(box):
