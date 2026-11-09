@@ -48,6 +48,7 @@ import { isSeverityFor } from "@/lib/health-safety";
 import { api } from "@/lib/api/client";
 import {
   DIARY_CONTENT_MAX_LENGTH,
+  INPUT_TEXT_MAX_LENGTH,
   REPORT_CATEGORIES,
   REPORT_MESSAGE_MAX_LENGTH,
 } from "@/lib/api/types";
@@ -4766,6 +4767,29 @@ async function runChatToEnd(text: string): Promise<string> {
 function chatDay(query: Record<string, string> = {}) {
   return api.get<ChatDayResponse>(`/children/${CHAT_CHILD}/chat`, { query });
 }
+
+describe("한 줄 입력의 길이 — 서버 `CreateInputRequest.text` 와 같이 거절한다 (#867)", () => {
+  it("앞뒤 공백을 뗀 코드 포인트가 2000자를 넘으면 400 validation_failed · fields 에 text", async () => {
+    const error = await submitInput(
+      CHAT_CHILD,
+      { text: "가".repeat(INPUT_TEXT_MAX_LENGTH + 1), source: "home_input" },
+      newIdempotencyKey(),
+    ).catch((e: unknown) => e);
+    expect(isApiError(error, "validation_failed")).toBe(true);
+    expect((error as ApiError).status).toBe(400);
+    expect((error as ApiError).detail?.fields).toEqual(["text"]);
+  });
+
+  it("🚨 이모지 2000개에 앞뒤 공백이 붙어도 받는다 — UTF-16 이 아니라 코드 포인트로 센다", async () => {
+    // 받았는지만 본다 — 스트림은 읽지 않는다.
+    const { run_id } = await submitInput(
+      CHAT_CHILD,
+      { text: `  ${"😀".repeat(INPUT_TEXT_MAX_LENGTH)}  `, source: "home_input" },
+      newIdempotencyKey(),
+    );
+    expect(run_id).toBeTruthy();
+  });
+});
 
 describe("지난 대화 — 서버처럼 끝난 run 만 남긴다 (#228)", () => {
   afterEach(() => setScenario("default"));
