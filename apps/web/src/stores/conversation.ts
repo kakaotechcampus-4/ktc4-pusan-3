@@ -22,7 +22,7 @@ import type { CreateInputResponse, InputLocation } from "@/lib/api/types";
 import { refreshAfterRun, refreshTodayChat } from "@/lib/chat-history";
 import { toSeoulDateKey } from "@/lib/format";
 import { readCoarseLocation } from "@/lib/location";
-import { getQueryClient } from "@/lib/query-client";
+import { getQueryClient, refreshMeOnLostChild } from "@/lib/query-client";
 import { useDraftStore } from "@/stores/draft";
 import { useEventDraftStore } from "@/stores/event-draft";
 import { useMedicationDraftStore } from "@/stores/medication-draft";
@@ -573,6 +573,9 @@ export function isRejected(error: unknown): boolean {
  *   남긴다** — 그때는 말풍선이 원문의 자리이고, 화면은 "고쳐 쓰기" 로 나중에 꺼내게 한다 (#231 리뷰).
  */
 function failSend(childId: string, turn: ChatTurn, error: unknown): void {
+  // 보는 중에 아이 연결이 끊겼으면 `/me` 를 다시 받아 화면째 "볼 수 없는 아이" 로 바뀐다 (#802).
+  // 쿼리 캐시를 거치지 않는 요청이라 여기서 직접 부른다.
+  refreshMeOnLostChild(getQueryClient(), error);
   const lostContext = isApiError(error, "reply_context_unavailable");
   // 지난 턴의 질문이었으면 서버의 `reply_open` 도 닫혔다 — 오늘 장을 다시 받아야 "닫힘" 으로 바뀐다 (#228).
   if (lostContext) void refreshTodayChat(getQueryClient(), childId);
