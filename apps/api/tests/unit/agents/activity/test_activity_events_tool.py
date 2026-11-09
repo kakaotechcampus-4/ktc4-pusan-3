@@ -633,3 +633,43 @@ class TestReadBudget:
         result = await search_events(ctx, SearchEventsArgs(day=DayLabel.TODAY))
 
         assert names(result) == [] and time.perf_counter() - started < 0.5
+
+
+class CachingSlowSchedules(SlowSchedules):
+    """한 번 읽은 행사는 캐시에서 바로 준다 — `ReadEventSchedules` 의 일정 캐시처럼."""
+
+    async def schedule_of(self, event, *, today):
+        if event.content_id in self.done:
+            return await InMemoryEventSchedules.schedule_of(self, event, today=today)
+        return await super().schedule_of(event, today=today)
+
+
+class TestPrefetch:
+    """나들이를 물은 run 은 날씨를 보는 동안 근처 행사 일정 읽기를 뒤에서 시작한다 — 모델이
+    행사를 찾을 때는 캐시에 있다."""
+
+    async def test_미리_읽어_두면_상한이_짧아도_행사가_나온다(self, monkeypatch):
+        from app.agents.activity.tools import outing
+
+        monkeypatch.setattr(outing, "EVENT_READ_BUDGET_S", 0.05)
+        schedules = CachingSlowSchedules({"1"}, delay=0.1)
+        ctx = await context(InMemoryEvents([raw("1", "느린 축제", km=1)]), schedules=schedules)
+        ctx.state.request_texts = ("주말에 갈만한 행사 추천해줘",)
+
+        outing.start_event_prefetch(ctx)
+        await asyncio.sleep(0.3)  # 날씨 조회 · 모델 1회차 동안
+        result = await search_events(ctx, SearchEventsArgs(day=DayLabel.TODAY))
+
+        assert names(result) == ["느린 축제"]
+
+    async def test_나들이를_묻지_않았으면_미리_읽지_않는다(self):
+        from app.agents.activity.tools import outing
+
+        schedules = CachingSlowSchedules(set(), delay=0)
+        ctx = await context(InMemoryEvents([raw("1", "축제")]), schedules=schedules)
+        ctx.state.request_texts = ("오늘 집에서 뭐 하고 놀까",)
+
+        outing.start_event_prefetch(ctx)
+        await asyncio.sleep(0.05)
+
+        assert schedules.calls == []

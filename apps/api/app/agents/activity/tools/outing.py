@@ -31,7 +31,7 @@ from app.agents.activity.events import (
     read_event,
 )
 from app.agents.activity.result import ErrorCode, ToolResult, fail, ok
-from app.agents.activity.rules import shown_again
+from app.agents.activity.rules import asks_outing, shown_again
 from app.agents.activity.schemas.common import PlaceCategory
 from app.agents.activity.schemas.outing import (
     LookupScheduleArgs,
@@ -91,6 +91,8 @@ OPEN_ENDED_BLOCK = timedelta(hours=1)
 # 11-10 실측: 캐시가 빈 첫 run 의 행사 조회 4 ~ 7초, 가장 느린 한 건이 시간을 정한다
 EVENT_READ_BUDGET_S = 4.0
 FINAL_TURN_RESERVE_S = 6.0
+# 미리 읽는 행사 — 오늘부터 이 날 수 안에 시작하는 것만 (주말 · 다음 주까지)
+PREFETCH_DAYS = 14
 # 상한을 넘겨 뒤에서 이어 가는 일정 읽기 — 끝날 때까지 붙든다(가비지로 사라지지 않게)
 _BACKGROUND: set["asyncio.Task[EventSchedule]"] = set()
 
@@ -478,6 +480,56 @@ async def search_events(context: ActivityContext, args: SearchEventsArgs) -> Too
         "query",
         _EVENTS,
         events=[_event_result(row, _open_days(context, row.name, days)) for row in rows],
+    )
+
+
+def start_event_prefetch(context: ActivityContext) -> None:
+    """나들이를 물은 run 이면 날씨를 보는 동안 보호자 위치 근처 행사의 소개정보 · 일정 읽기를 뒤에서
+    시작한다 — 모델이 행사를 찾을 때(날씨 조회 · 모델 1회차 뒤, 약 5초)는 캐시에 있다.
+
+    날(주말) · 지역은 아직 모르므로 위치 근처에서 `PREFETCH_DAYS` 안에 시작하는 행사를 행사 조회와
+    같은 순서(짧은 행사 → 가까운 순)로 `EVENT_INTRO_LIMIT` 건만 읽는다. 관람 연령은 거르지 않는다 —
+    읽기만 하고 거르기는 행사 조회가 한다. 나들이를 묻지 않았거나(`rules.asks_outing`) 위치 · 행사
+    어댑터가 없으면 하지 않는다. 실패는 조용히 버린다 — 행사 조회가 다시 읽는다.
+    """
+    events = context.ports.events
+    schedules = context.ports.event_schedules
+    origin = context.location
+    if events is None or schedules is None or origin is None:
+        return
+    if not asks_outing(context.state.said()):
+        return
+    task = asyncio.ensure_future(_prefetch(context, origin))
+    _BACKGROUND.add(task)
+    task.add_done_callback(_settle)
+
+
+async def _prefetch(context: ActivityContext, origin: CoarseLocation) -> None:
+    events = context.ports.events
+    schedules = context.ports.event_schedules
+    if events is None or schedules is None:
+        return
+    raws = await _or_none(events.events(ending_on_or_after=context.today))
+    if not raws:
+        return
+    horizon = context.today + timedelta(days=PREFETCH_DAYS)
+    near = [
+        (distance, event)
+        for event in (read_event(raw) for raw in raws)
+        if event is not None
+        and event.starts_on <= horizon
+        and (distance := distance_m(event, origin)) <= EVENT_MAX_RADIUS_M
+    ]
+    picked = [
+        event
+        for _, event in sorted(near, key=lambda pair: (period_tier(pair[1]), pair[0]))[
+            :EVENT_INTRO_LIMIT
+        ]
+    ]
+    await asyncio.gather(*(_or_none(events.intro(content_id=event.content_id)) for event in picked))
+    await asyncio.gather(
+        *(schedules.schedule_of(event, today=context.today) for event in picked),
+        return_exceptions=True,
     )
 
 

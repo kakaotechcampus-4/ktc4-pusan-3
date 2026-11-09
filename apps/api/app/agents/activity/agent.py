@@ -39,7 +39,12 @@ from app.agents.activity.rules import asks_outing, normalize_activity
 from app.agents.activity.schemas.task import task_type_of
 from app.agents.activity.tools.docs import search_activity_doc
 from app.agents.activity.tools.filters import request_notices
-from app.agents.activity.tools.outing import check_weather, dark_now, days_of
+from app.agents.activity.tools.outing import (
+    check_weather,
+    dark_now,
+    days_of,
+    start_event_prefetch,
+)
 from app.agents.activity.weather import (
     AFTER_SUNSET,
     INDOOR_ONLY,
@@ -82,6 +87,8 @@ async def run(
     context.state.prior_texts = tuple(task.prior_texts)
     context.state.shown_before = tuple(task.shown_before)
     context.state.deadline = task.deadline
+    # 나들이를 물었으면 날씨를 보는 동안 근처 행사 일정 읽기를 뒤에서 시작한다 (#905)
+    start_event_prefetch(context)
     weather = await check_weather(context, context.today)
     gate = await build_gate(context, outdoor_ok=weather.outdoor_ok)
     context.state.gate = gate
