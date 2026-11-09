@@ -2,7 +2,7 @@
 
 기록 수 집계는 `test_observation_repository.py`, 기억 문구는 `test_affinity_reason`,
 예상 질문은 `test_home_prompts` 가 건다. 여기는 API 가 더하는 것만 본다: 아이 접근 확인,
-건강 제외, 이번 주 경계, 오늘 · 다가오는 일정, 하이라이트로 고르는 기억.
+건강 기록도 세기, 이번 주 경계, 오늘 · 다가오는 일정, 하이라이트로 고르는 기억.
 """
 
 import uuid
@@ -65,7 +65,7 @@ async def test_other_childs_home_is_forbidden(
     assert resp.status_code == 403
 
 
-async def test_counts_skip_health_and_split_at_monday(
+async def test_counts_include_health_and_split_at_monday(
     db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
 ):
     headers, parent_id = bearer
@@ -75,7 +75,7 @@ async def test_counts_skip_health_and_split_at_monday(
     await _food(session, cid, last_sunday)  # 지난주 — 전체에는 들어가고 이번 주에는 아니다
     await _food(session, cid, today, status=ObservationStatus.INACTIVE)  # 고친 기록도 센다
     await _food(session, cid, today, status=ObservationStatus.DELETED)  # 지운 기록은 안 센다
-    await create_observation(
+    await create_observation(  # 건강 기록도 기록 탭처럼 센다 (#764)
         session,
         domain="health",
         child_id=cid,
@@ -87,7 +87,7 @@ async def test_counts_skip_health_and_split_at_monday(
 
     data = (await db_client.get(f"/api/v1/children/{cid}/home", headers=headers)).json()
 
-    assert (data["observation_count"], data["week_count"]) == (3, 2)
+    assert (data["observation_count"], data["week_count"]) == (4, 3)
 
 
 async def test_events_today_and_within_seven_days(

@@ -11,7 +11,7 @@ tool spec · 응답 스키마: `app/agents/food/schemas/tool_defs.py`
 
 | 측정 조건 | |
 | --- | --- |
-| 코드 | `develop` @ `3e0d3afc` (프롬프트 지문 `84dc34339b37`) |
+| 코드 | `develop` @ `81174dfe` (프롬프트 지문 `b2ebdc128dbe`) |
 | 모델 | `FOOD_MODEL` · `FOOD_REASONING_EFFORT` (비면 `MEMORY_*`) |
 | 실행 | 케이스마다 5회 (`TEST_REPEAT=5`) |
 | 평가셋 | `apps/api/tests/eval/agents/food/test_food_run.py` — 입력 `docs/agents/food/test_input_food.txt`, 기준 `docs/agents/food/test_expected_food.md` |
@@ -26,7 +26,7 @@ tool spec · 응답 스키마: `app/agents/food/schemas/tool_defs.py`
 
 | 버전 | 커밋 | 지문 | 조건 | 무엇을 왜 바꿨나 | C1 | 안정 오답 | 불안정 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| v0 | `3e0d3afc` | `84dc34339b37` | 미측정 | 최초 기준선. 수치 없음, 다음 변경 때 전후 두 행으로 잰다 | 미측정 | 미측정 | 미측정 |
+| v0 | `81174dfe` | `b2ebdc128dbe` | 미측정 | 최초 기준선. 수치 없음, 다음 변경 때 전후 두 행으로 잰다. 이 규칙 전에 develop 에 들어간 프롬프트 변경(재료 · 요리 종류 맞춤 #740 · 급식 날짜 조회 #794 · 안내 줄 #739 · #734)은 잰 수치가 없어 다시 재지 않고 v0 지문만 그 뒤 코드로 고침 | 미측정 | 미측정 | 미측정 |
 
 - `커밋` 은 재 본 코드. 작업 트리가 더러웠으면 커밋 옆에 `dirty` 를 적는다 (`tests/eval/agents/live_run_meta.json` 의 `dirty`).
 - `C1` 칸은 `a/b` (C1 사례 입력 수 / 전체 입력 수). `미측정` 은 v0 에만 쓴다.

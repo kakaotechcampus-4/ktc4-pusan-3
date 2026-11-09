@@ -1308,8 +1308,8 @@ export interface ListQuery {
 }
 
 /**
- * 관찰 목록 필터. `?domain=` 생략 시 건강을 뺀 4개 테이블을 observed_to DESC 로 병합한다.
- * 🚨 `growth` 는 education 과 routine 두 테이블이다. `health` 는 첫 배포 범위 밖이라 늘 빈 목록이다 (#259).
+ * 관찰 목록 필터. `?domain=` 생략 시 5개 테이블을 observed_to DESC 로 병합한다 (건강 포함 · #764).
+ * 🚨 `growth` 는 education 과 routine 두 테이블이다. 건강 기록은 주제가 없어서 `q` 가 원문만 본다.
  */
 export interface ObservationFilters extends ListQuery {
   domain?: Agent;
@@ -1595,7 +1595,7 @@ export interface CalendarDay {
   has_my_diary: boolean;
   /** 연결된 보호자가 함께 보는 사진이 그날 있다. */
   has_shared_photo: boolean;
-  /** 그날과 기간이 겹치는 기록 수. 하루 조회의 `observations` 와 같은 기준이다 (건강 · 지운 기록 제외). */
+  /** 그날과 기간이 겹치는 기록 수. 하루 조회의 `observations` 와 같은 기준이다 (지운 기록 제외 · 건강 기록도 센다 · #764). */
   observation_count: number;
 }
 

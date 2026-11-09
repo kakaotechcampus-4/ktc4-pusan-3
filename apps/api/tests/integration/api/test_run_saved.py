@@ -171,7 +171,7 @@ async def test_health_관찰도_saved_에_health_모양으로_실린다(monkeypa
 
     🚨 health 는 subject · polarity · strong_signals · affinity 키가 **아예 없다** (null 이 아니다).
        화면은 `kind === "observation_health"` 로 가른다 (apps/web types.ts 의 ObservationHealth).
-    🚨 기록 탭에는 여전히 안 보인다 — 건강 쪽은 첫 배포 범위 밖이다 (#259).
+    기록 탭에도 같은 모양으로 나온다 — "저장됨" 으로 본 카드가 기록 탭의 줄과 같다 (#764).
     """
     headers, parent_id = bearer
     created = _pipeline(monkeypatch, HEALTH)
@@ -187,7 +187,7 @@ async def test_health_관찰도_saved_에_health_모양으로_실린다(monkeypa
     assert not {"subject", "polarity", "strong_signals", "affinity"} & saved.keys()
 
     listed = (await db_client.get(OBSERVATIONS.format(cid=cid), headers=headers)).json()
-    assert listed["total"] == 0
+    assert listed["items"] == [saved]
 
 
 async def test_health_관찰_시각은_한국_시간으로_싣는다(monkeypatch, bearer, cid):

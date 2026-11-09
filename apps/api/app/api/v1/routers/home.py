@@ -4,7 +4,7 @@
 확인한다 (deps/child.py). 동의는 요청마다 확인하지 않는다 — 계약이 쓰기에만 걸어 두었고,
 화면은 `GET /me` 의 `consent_required` 로 막는다.
 
-🚨 건강 기록은 첫 배포 범위 밖이라 세지 않는다 (#259).
+건강 기록도 기록 탭처럼 센다 (#764).
 🚨 모델을 부르지 않는다. 하이라이트 문구와 예상 질문은 규칙이다.
 """
 
@@ -16,6 +16,7 @@ from app.api.deps.child import AccessibleChild
 from app.api.deps.db import SessionDep
 from app.api.errors import ErrorEnvelope
 from app.api.quota import KST
+from app.api.v1.routers.observations import LISTED_STATUSES
 from app.api.v1.schemas.common import Ref
 from app.api.v1.schemas.home import (
     AgentPromptOut,
@@ -24,7 +25,6 @@ from app.api.v1.schemas.home import (
     TodayEventOut,
 )
 from app.domains.child.models import Child
-from app.domains.memory.observation.models import ObservationStatus
 from app.domains.memory.observation.repository import (
     count_active_days_by_affinity,
     count_active_observations,
@@ -40,12 +40,6 @@ from app.rules.profile import CANDIDATE_MIN_DAYS
 router = APIRouter()
 
 _UPCOMING_DAYS = 7
-# 기록 탭 목록과 같은 기준 — 고친 기록도 센다. deleted 만 빠진다.
-_COUNTED_STATUSES = (
-    ObservationStatus.ACTIVE,
-    ObservationStatus.STAND_ALONE,
-    ObservationStatus.INACTIVE,
-)
 
 
 @router.get(
@@ -63,8 +57,7 @@ async def get_home(child: AccessibleChild, session: SessionDep) -> HomeResponse:
         child_id=child.child_id,
         period_start=week_start,
         period_end=week_start + timedelta(days=7),
-        exclude_health=True,
-        statuses=_COUNTED_STATUSES,
+        statuses=LISTED_STATUSES,  # 기록 탭 목록과 같은 기준 — deleted 만 빠진다
     )
     day_start = datetime.combine(today, datetime.min.time(), tzinfo=KST)
     todays = await list_events(

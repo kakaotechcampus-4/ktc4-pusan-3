@@ -82,11 +82,25 @@ _CANDIDATES = """
   알아서 빼거나 위험한 부분만 고쳐서 내지 않는다.
 - 싫어한다고 나온 활동(polarity -1)은 다시 내지 않는다. 싫어하는 것을 피해 골랐다면
   무엇을 피했는지 reason 에 쓴다.
-- 언제 하는 활동인지 day 에 적는다(today · tomorrow · this_weekend). 보호자가 날을 말하지
-  않았으면 today 다. 바깥 활동(outdoor)은 그날 날씨로 거른다 — 내일 · 주말 활동이면
-  lookup_weather 로 그날을 먼저 본다. 이번 주말은 토 · 일 중 되는 날을 reason 에 쓴다.
+- 언제 하는 활동인지 day 에 보호자가 쓴 날 표현을 그대로 적는다(오늘 · 내일 · 이번 주말 ·
+  다음 주 주말 · 11월 20일). 보호자가 날을 말하지 않았으면 오늘이다. 날짜는 코드가 계산한다.
+  바깥 활동(outdoor)은 그날 날씨로 거른다 — 다른 날 활동이면 lookup_weather 로 그날을 먼저
+  본다. 주말처럼 여러 날이면 되는 날을 reason 에 쓴다.
 - 장소는 search_nearby_places 결과에 있는 이름만 place_name 에 쓴다. 없으면 비운다.
   장소를 찾을 때도 그 활동의 day 를 같이 넘긴다.
+- 보호자가 이번 요청에서 원하는 결(활동적인 · 조용한 · 실내 · 바깥)이나 장소 종류(키즈카페 ·
+  공원 · 도서관)를 말했으면 그것이 먼저다. 기록 · 오늘 상태로 바꾸지 않고, 기록은 그 안에서
+  무엇을 할지 고르는 데만 쓴다. 오늘 많이 뛰었어도 "또 신나게" 를 원하면 신나는 놀이를 낸다.
+- 보호자가 결을 말하지 않았으면, 장소를 붙일 때 reason 에 먼저 왜 그 종류의 장소인지를 이
+  아이의 기록 · 오늘 상태로 쓴다. 예: 오늘 많이 뛰었으면 조용한 곳(도서관), 며칠 실내에만
+  있었으면 몸 쓰는 곳, 최근에 같은 종류를 여러 번 갔으면 다른 종류. 거리 · 이름만으로 고른
+  것처럼 쓰지 않는다.
+- 장소 이름만 보고 그 안의 시설(볼풀 · 트램펄린 · 블록존 같은)을 짐작해 쓰지 않는다. 장소
+  결과에는 이름과 종류만 있다. 그 장소에 시설이 있다고 쓰는 것은 기록에 그 장소에서 그 시설을
+  쓴 일이 있을 때뿐이다. 보호자가 원하는 시설(볼풀 있는 곳)을 말했어도 그곳에 있는지는 모른다 —
+  시설 이름 없이 놀이 방법만 쓰거나, 있는지는 가기 전에 확인해 달라고 쓴다.
+- 기록에 장소 이름이 있으면(지난번에 간 곳) 그 장소 이름과 그곳에서 한 일을 근거 note 에
+  그대로 쓴다.
 - 예시는 결을 보여주는 것이다. 그대로 베끼지 않는다.
 """.strip()
 
@@ -120,8 +134,8 @@ _OUTPUT = """
 [출력]
 - 마지막에 propose_activity_candidates 를 한 번 부른다. 말로 후보를 설명하지 않는다.
 - reason 에는 이 아이에게 맞는 이유와 지금인 이유를 한두 문장으로 쓴다. 조회한 사실로만 쓴다.
-- 날짜와 시간을 계산하지 않는다. 날짜가 필요하면 tool 의 day 라벨(today · tomorrow ·
-  this_weekend)을 고른다.
+- 날짜와 시간을 계산하지 않는다. 날짜가 필요하면 tool 의 day 에 보호자가 쓴 날 표현을 그대로
+  넣는다.
 """.strip()
 
 _SECTIONS = (_ROLE, _DONT, _CANDIDATES, _EVIDENCE, _FAILURE, _OUTPUT)
@@ -132,8 +146,10 @@ def build_system_prompt(
     examples: tuple[ActivityDocRow, ...],
     *,
     weather: WeatherBrief,
+    dark: bool = False,
 ) -> str:
     """system 메시지 본문. examples 는 search_activity_doc 결과, weather 는 run() 의 사전 조회다.
+    dark 는 지금 해가 졌는지다(`outing.dark_now`) — 오늘 놀이터만 빼라고 적는다 (#800).
 
     고정 구획 뒤에 동적 구획을 둔다. 동적 구획 안에서는 아이 사이에 공유되는 것(같은 월령의 예시)을
     앞에, run 마다 바뀌는 현재 시각을 맨 뒤에 둔다 — 앞쪽이 프롬프트 캐시에 남게.
@@ -145,7 +161,7 @@ def build_system_prompt(
         raise RuntimeError("Gate 없이 프롬프트를 만들었다 — run() 이 build_gate 를 먼저 부른다")
     dynamic = [
         _examples(examples),
-        _conditions(weather, checked=weather_checked(gate, weather), gate=gate),
+        _conditions(weather, checked=weather_checked(gate, weather), gate=gate, dark=dark),
         f"[월령]\n아이는 {gate.stage.months}개월이다.",
         _now(context),
     ]
@@ -207,7 +223,7 @@ def _examples(examples: tuple[ActivityDocRow, ...]) -> str:
     return "\n".join(lines)
 
 
-def _conditions(weather: WeatherBrief, *, checked: bool, gate: Gate) -> str:
+def _conditions(weather: WeatherBrief, *, checked: bool, gate: Gate, dark: bool = False) -> str:
     """오늘 날씨는 판정과 등급 라벨만 준다. 수치는 주지 않는다 (4-2).
 
     확인하지 못한 날은 "어렵다" 와 나눠 쓴다 — 같은 말이면 모델이 확인 안 한 날씨를 이유 문장에
@@ -219,11 +235,9 @@ def _conditions(weather: WeatherBrief, *, checked: bool, gate: Gate) -> str:
         # 묻지 않은 날 — 바깥 놀이를 막지 않는다. 확인은 보호자 몫이라 화면 문구가 알린다
         outdoor = (
             "날씨는 확인하지 않았다. 날씨 이야기를 쓰지 않는다. 바깥 활동(outdoor)도 낼 수 있다."
-            if weather.outdoor_ok
-            else "해가 졌다. 오늘 하는 활동은 setting 이 indoor 나 either 인 것만 낸다."
         )
     elif not weather.outdoor_ok:
-        # 못 읽은 것이 있어도 해가 졌거나 읽은 신호가 나쁘면 막는다 — "확인하지 못했다" 보다 먼저
+        # 못 읽은 것이 있어도 읽은 신호가 나쁘면 막는다 — "확인하지 못했다" 보다 먼저
         outdoor = (
             "오늘은 바깥 활동이 어렵다. 오늘 하는 활동은 setting 이 indoor 나 either 인 것만 낸다."
         )
@@ -252,15 +266,21 @@ def _conditions(weather: WeatherBrief, *, checked: bool, gate: Gate) -> str:
     else:
         place = "위치를 모른다. 특정 장소가 필요한 활동은 내지 않는다."
     lines = ["[오늘의 조건]", outdoor]
+    if dark:
+        # 해가 진 것은 바깥을 막지 않는다 — 밤에 하는 행사도 있고 공원은 보호자와 같이 걷는다 (#800)
+        lines.append(
+            "지금은 해가 졌다. 오늘 하는 활동이면 어두워도 할 수 있는 것을 고르고 놀이터는 내지 "
+            "않는다. 다른 날 활동은 상관없다."
+        )
     if labels:
         lines.append(f"날씨: {labels}")
     lines.append(place)
     if finds_events(gate):
         lines.append(
             "그날 열리는 축제 · 공연 · 행사는 search_events 로 찾을 수 있다. 결과에 있는 "
-            "이름만 place_name 에 쓰고 day 는 결과의 open_days 에 있는 날로 쓴다. 보호자가 지역을 "
-            "말했으면 area 에 그 이름을 쓴 그대로 넣는다. 시 · 도만 말해도(부산) 행사는 그 시 · 도 "
-            "전체에서 찾는다."
+            "이름만 place_name 에 쓰고 day 는 결과의 open_days 에 있는 날을 '11월 20일' 꼴로 "
+            "쓴다. 보호자가 지역을 말했으면 area 에 그 이름을 쓴 그대로 넣는다. "
+            "시 · 도만 말해도(부산) 행사는 그 시 · 도 전체에서 찾는다."
         )
     return "\n".join(lines)
 

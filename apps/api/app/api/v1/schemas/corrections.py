@@ -22,7 +22,11 @@ TargetKind = Literal[
 
 
 class TargetRef(BaseModel):
-    kind: TargetKind = Field(description="observation_health 는 첫 배포 범위 밖이라 받지 않는다")
+    kind: TargetKind = Field(
+        description=(
+            "observation_health 는 받지 않는다(400). 건강 기록은 기록 탭에서 삭제로만 손댄다 (#764)"
+        )
+    )
     id: str = Field(description="기록 또는 기억의 id")
 
 

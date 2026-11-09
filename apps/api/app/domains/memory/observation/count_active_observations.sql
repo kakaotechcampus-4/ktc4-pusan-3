@@ -12,7 +12,7 @@ FROM (
 
     SELECT observed_range
     FROM observation_health
-    WHERE child_id = :child_id AND status = ANY(CAST(:statuses AS text[])) AND NOT CAST(:exclude_health AS boolean)
+    WHERE child_id = :child_id AND status = ANY(CAST(:statuses AS text[]))
 
     UNION ALL
 

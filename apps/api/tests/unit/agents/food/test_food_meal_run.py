@@ -1102,3 +1102,75 @@ async def test_안전_필터에_걸린_생성_메뉴는_재호출에서_다시_�
     assert "파프리카달걀말이" in excluded  # 제외 목록에는 이름만 들어간다 — 사유는 없다
     assert "계란" not in recall and "알레르기" not in excluded
     assert "파프리카달걀말이" not in [d.content for d in result.suggestions]
+
+
+# ── 앞 대화를 이어 묻는 말 — 해석한 문장은 보호자 말이 아니다 ──────────────────
+def follow_task(resolved: str, *, said: str, prior: tuple[str, ...] = ()) -> DomainTask:
+    """Supervisor 가 해석한 문장(`request_texts`)과 보호자 원문(`original_texts`)을 따로 든 task."""
+    return DomainTask(
+        run_id="run-1",
+        agent="food",
+        task_type="meal_recommendation",
+        request_texts=(resolved,),
+        original_texts=(said,),
+        prior_texts=prior,
+    )
+
+
+async def test_해석_문장에만_있는_재료로는_요청_기반_일반_추천을_인정하지_않는다() -> None:
+    llm = ScriptedLLM(
+        propose_generated(
+            requested="고구마",
+            generated=[
+                {
+                    "name": name,
+                    "main_ingredients": ["고구마"],
+                    "ingredients": ["고구마", "올리브유"],
+                }
+                for name in ("고구마볶음", "고구마전", "고구마밥")
+            ],
+        ),
+        propose("두부조림", "시금치나물", "미역국"),
+    )
+    # 앞 추천 이름(고구마 스틱)이 든 해석 문장 — 보호자는 재료를 말한 적이 없다
+    task = follow_task(
+        "고구마 스틱 · 바나나 요거트 말고 다른 반찬 추천",
+        said="또 뭐 있어?",
+        prior=("반찬 추천해줘",),
+    )
+
+    result = await run(task, meal_context(TOFU, SPINACH, SOUP), client=llm)
+
+    assert [d.content for d in result.suggestions] == ["두부조림", "시금치나물", "미역국"]
+    assert llm.calls == 2  # 보호자는 재료를 말한 적이 없어서 첫 생성은 도구가 거절했다
+    assert not any(d.requested for d in result.suggestions)
+
+
+async def test_앞_턴에서_보호자가_정한_재료는_이어_묻는_말에서도_인정한다() -> None:
+    llm = ScriptedLLM(
+        propose_generated(
+            requested="파프리카",
+            generated=[{"name": "파프리카볶음"}, {"name": "파프리카전"}, {"name": "파프리카밥"}],
+        )
+    )
+    task = follow_task(
+        "파프리카볶음 말고 다른 파프리카 반찬 추천",
+        said="그럼 다른 건?",
+        prior=("파프리카 들어간 반찬 추천해줘",),
+    )
+
+    result = await run(task, meal_context(TOFU, SPINACH, SOUP), client=llm)
+
+    assert result.status == "completed" and llm.calls == 1
+    assert all(d.requested for d in result.suggestions)
+
+
+async def test_해석_문장에_든_앞_추천_이름은_요청과_맞음으로_앞에_세우지_않는다() -> None:
+    llm = ScriptedLLM(propose("두부조림", "시금치나물", "미역국", evidence=[]))
+    task = follow_task("오이무침 · 두부조림 말고 다른 반찬 추천", said="또 뭐 있어?")
+
+    await run(task, meal_context(TOFU, SPINACH, SOUP, CUCUMBER), client=llm)
+
+    user = "\n".join(str(m["content"]) for m in llm.seen[0] if m["role"] == "user")
+    assert "오이무침 · 두부조림 말고 다른 반찬 추천" in user  # 모델은 해석한 요청을 받는다
+    assert "요청과 맞음" not in user  # 요청한 메뉴를 가르는 건 보호자 말뿐이다

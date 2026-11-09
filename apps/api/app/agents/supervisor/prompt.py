@@ -246,12 +246,39 @@ _RETRY = """
 - 나머지 조각은 처음 나눌 때와 같은 기준으로 나눈다. route 는 발화 전체를 다시 담아 한 번 부른다.
 """.strip()
 
+_CONTEXT = """
+[앞 대화가 올 때]
+- 이번 입력 앞에 "[앞 대화]" 메시지가 오면 30분 안에 보호자와 나눈 대화다.
+  이번 입력이 그 대화를 이어 묻는 말일 때만 쓴다.
+  혼자 읽어도 뜻이 통하는 요청은 앞 주제로 끌고 가지 않는다.
+- 조각 text 는 언제나 이번 입력에서만 자른다. 앞 대화의 문장을 조각으로 내지 않고,
+  앞 대화에 있던 기록을 다시 record 로 보내지 않는다.
+- kind · guard 는 이번 입력의 말로 정한다. 앞 대화가 요청이었어도 이번 입력이 증상 · 위험 물질 ·
+  진단 문의면 그쪽이다.
+- 앞 대화를 이어 묻는 request 조각에는 resolved_request 를 채운다 — 앞 대화를 몰라도 뜻이 통하는
+  요청 한 문장. 앞에서 낸 추천 이름이 있으면 겹치지 않게 그 이름을 담는다.
+  예) 앞: 보호자 "주말 나들이 추천해줘" / activity completed — 추천: 숲 체험 · 동물원
+      이번: "그럼 다른 데는?" → request/activity,
+      resolved_request "숲 체험 · 동물원 말고 다른 주말 나들이 추천"
+- "못 낸 것" 을 다시 묻는 말은 가장 최근 턴의 "못 낸 것" Agent 로 보내고, 그 턴의 보호자 말에서
+  요청을 되살려 resolved_request 에 쓴다.
+- 무엇을 이어서 하라는지 정할 수 없으면 — "[앞 대화] 없음" 이거나 이어 볼 것이 여럿이면 — unclear 로
+  둔다. 짐작해서 agent 를 고르지 않는다.
+- "[앞 대화]" 메시지가 없으면 resolved_request 를 채우지 않는다.
+""".strip()
+
 _SECTIONS = (_ROLE, _SPLIT, _RECORD, _REQUEST, _GUARDED, _ELSE, _EXAMPLES, _RETRY)
 
 
-def build_system_prompt() -> str:
-    """system 메시지 본문. 아이 정보를 담지 않으므로 run마다 같다."""
-    return "\n\n".join(_SECTIONS)
+def build_system_prompt(*, with_context: bool = False) -> str:
+    """system 메시지 본문. 아이 정보를 담지 않으므로 run마다 같다.
+
+    `with_context` 는 "[앞 대화]" 메시지를 같이 보내는 호출(후속 질문)만 켠다. 앞 대화가 없는
+    호출은 이 절을 받지 않는다 — 단발 요청의 분류가 이 기능 때문에 달라지지 않게, 모델이 보는 글을
+    앞 대화 기능이 생기기 전과 같게 둔다. 켠 쪽은 끄지 않은 글에 이 절만 뒤에 붙는다.
+    """
+    sections = (*_SECTIONS, _CONTEXT) if with_context else _SECTIONS
+    return "\n\n".join(sections)
 
 
 def reroute_feedback(bounced: tuple[str, ...]) -> str:
@@ -270,15 +297,29 @@ def reroute_feedback(bounced: tuple[str, ...]) -> str:
 def _fingerprint_parts() -> tuple[str, ...]:
     """프롬프트 지문(#770)의 입력.
 
-    system 프롬프트, 다시 나누기 지시, route tool spec(일반 · strict).
+    system 프롬프트(앞 대화 절 없이 · 있게), 앞 대화 메시지의 고정 문구, 다시 나누기 지시,
+    route tool spec(일반 · strict, 앞 대화 없이 · 있게). 앞 대화는 표본 한 턴을 렌더링해 줄 모양까지
+    넣는다.
     """
     from app.agents.supervisor import schemas
+    from app.agents.supervisor.context import ConversationContext, PriorResult, PriorTurn
 
+    sample_turn = PriorTurn(
+        text="요청",
+        results=(PriorResult("activity", "suggest", "completed", ("추천",), asked=True),),
+        failed_agents=("food",),
+    )
     return (
         build_system_prompt(),
+        build_system_prompt(with_context=True),
+        ConversationContext().render(),
+        ConversationContext(lookup_failed=True).render(),
+        ConversationContext(turns=(sample_turn,)).render(),
         reroute_feedback(("조각",)),
         canonical_json(schemas.ROUTE_TOOL_SPEC),
         canonical_json(schemas.ROUTE_TOOL_SPEC_STRICT),
+        canonical_json(schemas.ROUTE_TOOL_SPEC_CONTEXT),
+        canonical_json(schemas.ROUTE_TOOL_SPEC_CONTEXT_STRICT),
     )
 
 

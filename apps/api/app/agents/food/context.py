@@ -58,6 +58,10 @@ class FoodRunState:
     """
 
     utterance: str = ""  # span 검증용. request_texts를 줄바꿈으로 이은 것
+    # 보호자가 실제로 한 말 — 이번 입력 원문과 앞 턴의 원문. 앞 대화를 이어 묻는 말이면
+    # `utterance` 는 Supervisor 가 해석한 문장이라 앞 추천 이름(AI 가 쓴 글)이 든다. "보호자가
+    # 재료 · 메뉴를 정해 물었는가" 를 코드가 보는 곳(`said_texts`)은 이 칸을 읽는다
+    said: tuple[str, ...] = ()
     seen_refs: set[tuple[str, UUID]] = field(default_factory=set)  # 조회 tool이 돌려준 근거
     # search_food_memory 가 돌려준 근거(id → 순위 매긴 근거). 출력 tool 이 이 표 밖 id 를 인용한
     # 후보를 거절하고(`common/evidence.unseen`), 기피 근거를 이 표로 찾는다
@@ -112,6 +116,10 @@ class FoodRunState:
     # build_gate가 task 시작에 한 번 읽은 health_safety
     # () = 동의가 없어 읽지 않음(거를 것 없음), None = 조회 실패("알레르기 확인 못 함")
     safety: tuple[SafetyEntry, ...] | None = None
+
+    def said_texts(self) -> tuple[str, ...]:
+        """보호자가 실제로 한 말. `said` 가 비어 있으면(직접 채운 state) `utterance` 다."""
+        return self.said or tuple(self.utterance.splitlines())
 
 
 @dataclass(frozen=True)

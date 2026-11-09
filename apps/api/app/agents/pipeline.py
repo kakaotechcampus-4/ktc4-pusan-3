@@ -67,7 +67,9 @@ from app.agents.run_writes import RunWrites
 from app.agents.suggestion_save import SaveSuggestions, SuggestionBatch
 from app.agents.supervisor.agent import SupervisorResult
 from app.agents.supervisor.agent import run as run_supervisor
+from app.agents.supervisor.context import ConversationContext, LoadRecentTurns
 from app.agents.supervisor.emergency import emergency_guidance, infant_fever_age
+from app.agents.supervisor.followup import looks_like_followup
 from app.agents.supervisor.prompt import reroute_feedback
 from app.agents.supervisor.routing import (
     AGENT_LIMIT,
@@ -461,7 +463,8 @@ class Rerouted:
 class RetryContext:
     """결과를 못 낸 추천 task 의 다시 시도 맥락. 화면에 보내지 않는다.
 
-    러너가 05 보관함에 넣는다(api/runs/suggestion_retry.py). `request_texts` 는 원문 조각이라
+    러너가 05 보관함에 넣는다(api/runs/suggestion_retry.py). `request_texts` 는 Agent 가 받은 요청
+    (앞 대화를 이어 묻는 말이면 해석한 문장)이고, 원문 조각과 함께
     로그 · 화면에 싣지 않는다. `Partial` 보다 먼저 나간다 — 화면이 실패 카드를 그리자마자 다시
     시도해도 맥락이 있다.
     """
@@ -471,6 +474,9 @@ class RetryContext:
     task_type: str | None
     request_texts: tuple[str, ...]
     sent_at: datetime  # 입력 run 의 기준 시각(memory_context.now)
+    # 앞 대화를 이어 묻는 task 였으면 보호자 원문 · 앞 턴의 말. 05 가 같은 출처 확인으로 다시 만든다
+    original_texts: tuple[str, ...] = ()
+    prior_texts: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -625,6 +631,7 @@ async def handle_input(
     curator_trigger: CuratorTrigger | None = None,
     count_records: CountRecords | None = None,
     load_cards: LoadCards | None = None,
+    recent_turns: LoadRecentTurns | None = None,
     child_months: int | None = None,
 ) -> PipelineResult:
     """사용자 입력 한 건을 처리한다.
@@ -642,6 +649,8 @@ async def handle_input(
     eval 은 `InMemorySuggestions()` 를 넘긴다.
     writes는 도메인 쓰기 포트가 성공했는지 남는 표시다. entrypoint가 쓰기 포트를 감싸 넘긴다.
     count_records 를 넘기면 일반 추천 블록의 쌓인 기록 수를 센다(없으면 그 칸이 빈다).
+    recent_turns 는 후속 질문으로 보이는 입력일 때만 부르는 앞 대화 조회 콜백이다. 없으면(테스트 ·
+    eval · 05) 앞 대화 없이 돈다.
     child_months 는 생일로 계산한 월령이다. 응급 사전검사가 말에 적힌 월령과 함께 본다. 저장 뒤
     hook 에 맡기면 동의가 없거나 Memory 가 저장하지 않은 run 에서 안내가 빠진다. 없으면 None.
     """
@@ -700,10 +709,12 @@ async def handle_input(
         )
 
     send(Step(1, _TOTAL_STEPS, _LABELS[0]))
+    # 후속 질문으로 보일 때만 앞 대화를 읽는다. Memory 는 이 맥락을 받지 않는다 — 기록은 이번 원문만
+    conversation = await _conversation(raw_text, recent_turns, run_id=run_id)
     supervisor_started = time.perf_counter()
-    supervisor = await run_supervisor(raw_text, client=supervisor_client)
+    supervisor = await run_supervisor(raw_text, client=supervisor_client, context=conversation)
     supervisor_ms = _ms_since(supervisor_started)
-    routing = route(raw_text, supervisor, run_id=run_id)
+    routing = _with_prior(route(raw_text, supervisor, run_id=run_id), conversation)
     if emergency is not None:
         # 응급이면 도메인 Agent 가 돌지 않는다. 복약 대조도 하지 않는다 — 기록 힌트에서
         # health 조각을 다시 더하면 응급 run 에 도메인 Agent 가 돈다
@@ -830,13 +841,16 @@ async def handle_input(
     if bounced and stranded and REROUTE_MISDELEGATED and not waiting:
         reroute_started = time.perf_counter()
         retry = await run_supervisor(
-            raw_text, client=supervisor_client, feedback=reroute_feedback(bounced)
+            raw_text,
+            client=supervisor_client,
+            feedback=reroute_feedback(bounced),
+            context=conversation,
         )
         supervisor_ms += _ms_since(reroute_started)
         model_calls += retry.model_calls
         if retry.output is not None:
             before, supervisor = routing, retry
-            routing = route(raw_text, retry, run_id=run_id)
+            routing = _with_prior(route(raw_text, retry, run_id=run_id), conversation)
             for guidance in routing.guidance:  # 새로 생긴 안내만 내보낸다
                 if guidance not in before.guidance:
                     send(guidance)
@@ -1758,6 +1772,9 @@ async def _domain_stage(
                     _task_label(task.task_type),
                     task.request_texts,
                     sent_at,
+                    # 05 가 해석한 요청으로 다시 만들되, 출처 확인은 보호자 원문 · 앞 턴의 말로 한다
+                    original_texts=task.original_texts,
+                    prior_texts=task.prior_texts,
                 )
             )
     asked = _pick_question(ran.outcomes, tasks, can_resume=can_resume)
@@ -2222,14 +2239,19 @@ def _pending_context(
     데 `pending.payload`(대상 id · 화면에 나갈 값 · 검증을 통과한 span)만 쓰므로 요청 조각도 싣지
     않는다. 발화 원문 전체는 싣지 않는다는 명세 §8 의 약속이다.
     """
+    # hint_text 는 답을 받으면 Memory · Supervisor 로 가는 "보호자가 한 말" 이다 — 앞 대화를
+    # 이어 묻는 말을 해석한 문장(모델이 쓴 글)이 아니라 원문을 싣는다. 이어 돌 task 는 둘 다 든다
     texts = () if agent == _HEALTH else resume.request_texts
+    said = () if agent == _HEALTH else resume.originals()
     return PendingMemoryContext(
-        hint_text=" ".join(texts),
+        hint_text=" ".join(said),
         question=pending.question,
         work=WorkType.OBSERVE,
         resume=replace(
             resume,
             request_texts=tuple(texts),
+            original_texts=() if tuple(said) == tuple(texts) else tuple(said),
+            prior_texts=(),
             record_texts=(),
             recorded_subjects=(),
             answer_texts=(),
@@ -2266,6 +2288,43 @@ def _result(
         reason=summary.reason,
         record_count=record_count,
     )
+
+
+async def _conversation(
+    raw_text: str, recent_turns: LoadRecentTurns | None, *, run_id: str
+) -> ConversationContext | None:
+    """후속 질문으로 보일 때만 앞 대화를 읽는다. 아니면 None — 조회도 메시지도 없다.
+
+    조회가 실패하면 run 을 멈추지 않고 빈 맥락으로 간다. Supervisor 는 "없음" 을 받아 이어 볼 것이
+    없다고 알고 질문 하나로 되묻는다 — 맥락 없이 부르면 "그럼 다른 건?" 이 아무 Agent 로나 간다.
+    실패는 여기 한 곳에서만 잡는다(포트는 잡지 않는다). `CancelledError` 는 잡지 않는다 — run 이
+    끊긴 것이지 앞 대화가 없는 것이 아니다. 로그에는 예외 종류와 턴 수만 싣는다(원문 없음).
+    """
+    if recent_turns is None or not looks_like_followup(raw_text):
+        return None
+    try:
+        context = await recent_turns()
+    except Exception as exc:
+        logger.error("앞 대화 조회 실패 run_id=%s error=%s", run_id, type(exc).__name__)
+        context = ConversationContext(lookup_failed=True)
+    logger.info("followup run_id=%s turns=%d", run_id, len(context.turns))
+    return context
+
+
+def _with_prior(routing: Routing, conversation: ConversationContext | None) -> Routing:
+    """앞 대화를 이어 묻는 task(원문 칸이 찬 것)에 앞 턴들의 보호자 원문을 싣는다.
+
+    Activity 가 "보호자가 이 지역 · 놀이를 말했는가" 를 볼 때 앞 턴에서 말한 것도 센다. Memory ·
+    되묻기 맥락으로는 가지 않는다(`_pending_context` 가 비운다).
+    """
+    if not conversation or not conversation.turns:
+        return routing
+    prior = tuple(turn.text for turn in conversation.turns)
+    tasks = tuple(
+        replace(task, prior_texts=prior) if task.original_texts else task
+        for task in routing.domain_tasks
+    )
+    return replace(routing, domain_tasks=tasks)
 
 
 async def _count(agent: str, count_records: CountRecords | None) -> int | None:

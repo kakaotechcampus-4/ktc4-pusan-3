@@ -300,6 +300,8 @@ def _fingerprint_parts() -> tuple[str, ...]:
         request_message(["요청"], sample, records=[]),  # type: ignore[arg-type]
         request_message(["요청"], sample, records=records),  # type: ignore[arg-type]
         recall_message(["요청"], avoid=["menu_key"], sample=sample),  # type: ignore[arg-type]
+        # 요청 글에 나온 레시피는 후보 줄 끝에 "요청과 맞음" 이 붙는다 (#740)
+        candidate_list(sample, {"menu_key"}),  # type: ignore[arg-type]
     )
     # 예시가 있으면 [예시] 머리말 지시("결만 참고한다 …")가 붙는다
     # — 고정 더미 행으로 그 갈래도 싣는다

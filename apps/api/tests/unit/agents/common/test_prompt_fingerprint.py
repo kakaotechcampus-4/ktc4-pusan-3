@@ -52,7 +52,9 @@ def test_이름마다_지문이_다르다():
 
 def test_system_프롬프트가_바뀌면_지문이_바뀐다(monkeypatch):
     before = pf.prompt_fingerprint("supervisor")
-    monkeypatch.setattr("app.agents.supervisor.prompt.build_system_prompt", lambda: "다른 프롬프트")
+    monkeypatch.setattr(
+        "app.agents.supervisor.prompt.build_system_prompt", lambda **_: "다른 프롬프트"
+    )
     assert pf.prompt_fingerprint("supervisor") != before
 
 
@@ -140,6 +142,34 @@ def test_growth_는_task_와_상태_구획을_전부_싣는다():
     # 교육 · 루틴 · 도서 구획이 모두 들어간다
     for needle in ("[교육 활동]", "[생활 루틴]", "[도서]"):
         assert needle in joined, needle
+
+
+def test_supervisor_는_앞_대화_갈래를_전부_싣는다():
+    from app.agents.supervisor import context
+
+    joined = "\n".join(pf.prompt_parts("supervisor"))
+    # 앞 대화 절 · 앞 대화 메시지의 고정 문구 세 갈래
+    assert "[앞 대화가 올 때]" in joined
+    for text in (context.CONTEXT_HEADER, context.EMPTY_CONTEXT, context.LOOKUP_FAILED):
+        assert text in joined, text
+
+
+@pytest.mark.parametrize("attr", ["ROUTE_TOOL_SPEC_CONTEXT", "ROUTE_TOOL_SPEC_CONTEXT_STRICT"])
+def test_supervisor_앞_대화용_route_tool_이_바뀌면_지문이_바뀐다(monkeypatch, attr):
+    import copy
+
+    from app.agents.supervisor import schemas
+
+    before = pf.prompt_fingerprint("supervisor")
+    spec = copy.deepcopy(getattr(schemas, attr))
+    spec["function"]["description"] += "!"
+    monkeypatch.setattr(schemas, attr, spec)
+    assert pf.prompt_fingerprint("supervisor") != before
+
+
+def test_food_는_요청과_맞는_후보_표시를_싣는다():
+    # 안내문에도 같은 말이 있어서, 후보 줄 끝에 붙은 모양으로 확인한다
+    assert "재료 재료 · 요청과 맞음" in "\n".join(pf.prompt_parts("food"))
 
 
 def test_activity_는_날씨_조건_구획을_전부_싣는다():

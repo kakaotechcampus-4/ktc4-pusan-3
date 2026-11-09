@@ -16,13 +16,7 @@ export function SessionUnreachable() {
 
   return (
     <ErrorView
-      title={
-        <>
-          연결을 확인해
-          <br />
-          주세요
-        </>
-      }
+      title="연결을 확인해 주세요"
       description="로그인 상태를 확인하지 못했어요. 인터넷에 연결된 뒤 다시 시도하면 이어서 쓸 수 있어요."
       action={
         <Button block onClick={() => void restore()}>
