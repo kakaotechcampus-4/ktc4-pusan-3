@@ -547,6 +547,29 @@ export const suggestionHandlers = [
       .map((id) => pool.find((s) => s.id === id))
       .filter((s): s is (typeof pool)[number] => s !== undefined);
 
+    /**
+     * 🚨 **채택한 뒤에 등록된 알레르기를 다시 본다** (서버 #859). ⚠️ 서버 PR 보다 목이 먼저다 —
+     *    `docs/api/suggestions-v1.md` §8 은 서버 PR 이 머지될 때까지 이 틈을 "남은 일" 로 적고 있다.
+     *    채택은 새로고침해도 남고 "일정으로 만들기" 는 나중에 눌러도 되어서, 그사이 다른 보호자가 등록한
+     *    알레르기를 채택 검사는 보지 못한다. 판정은 채택과 같다 — 하나라도 걸리면 초안을 하나도 만들지 않고
+     *    걸린 id 를 요청 순서대로 싣는다. food 를 한 장으로 묶기 **전에** 본다(어느 제안인지 id 로 말해야 한다).
+     *    오류 순서도 서버와 같다: 400 → 404 · 422 → 403 `consent_required` → 409 `allergen_blocked`.
+     *    알레르기 항목이 없는 제안뿐이면 건강정보를 읽지 않아 `consent` 시나리오에서도 막지 않는다.
+     */
+    const withAllergens = chosen.filter((s) => allergensOf(s.id).length > 0);
+    if (withAllergens.length > 0) {
+      if (currentScenario() === "consent") return consentRequired("child_health");
+      const blocked = withAllergens.filter((s) => !notBlocked(s)).map((s) => s.id);
+      if (blocked.length > 0) {
+        return apiError(
+          409,
+          "allergen_blocked",
+          "알레르기로 등록된 항목이 들어 있어 일정으로 만들 수 없어요",
+          { suggestion_ids: blocked },
+        );
+      }
+    }
+
     const food = chosen.filter((s) => s.agent === "food");
     const rest = chosen.filter((s) => s.agent !== "food");
 
