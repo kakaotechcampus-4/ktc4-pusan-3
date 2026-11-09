@@ -22,8 +22,12 @@ export function ErrorView({
   action,
   digest,
 }: {
-  /** 줄바꿈은 부르는 쪽이 `<br />` 로 정한다 (제목 두 줄이 기본 모양이다). */
-  title: ReactNode;
+  /**
+   * 한 줄 문장이다. 🚨 `<br />` 로 끊지 않는다 — 화면 제목을 끊지 않는 규칙(디자인 시스템 §4)이
+   * 여기도 같다. 그래서 문자열만 받는다. 좁은 폭에서 넘치면 `keep-all` 이 어절에서 끊는다.
+   * ⚠️ 한동안 "없는 / 주소예요" 처럼 두 줄로 끊어 두었다 — 한 줄에 들어가는 제목이 세로를 한 줄 더 먹었다.
+   */
+  title: string;
   description: ReactNode;
   action: ReactNode;
   /** 서버에서 난 예외에만 있다. 없으면 줄 자체를 그리지 않는다. */

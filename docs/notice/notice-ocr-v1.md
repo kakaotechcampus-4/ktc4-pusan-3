@@ -74,7 +74,7 @@ GET /runs/{rid}/events                       step → lane → step → parsed �
 
 | 저장소에 들어간 것 | 파일 |
 | --- | --- |
-| api 상자 고정 주소 `172.30.0.20` | `deploy/docker/docker-compose.deploy.yml` |
+| api 상자 고정 주소 `172.30.0.20` — 공용 네트워크 `ktc4-edge` 의 prod api 주소. dev api 는 `.21` 이라 막힌다. 나가는 길은 `gw_priority` 로 edge 고정 (#747) | `deploy/docker/docker-compose.deploy.yml` |
 | 방화벽 — `DOCKER-USER` 에서 메타데이터 주소를 막고 api 만 연다. 여러 번 돌려도 한 벌, 재부팅 뒤에도 systemd 가 다시 건다. 서버 자신의 길(SSM · CloudWatch)은 안 막는다 | `deploy/scripts/imds-firewall.sh` · `make deploy-up` 이 부른다 |
 | Caddy 본문 상한 16MB (api 주소) — S3 를 써도 누가 API 에 큰 본문을 직접 보내는 것은 앞에서 잘라야 막힌다 | `deploy/caddy/Caddyfile` |
 

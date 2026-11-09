@@ -1,4 +1,4 @@
-"""급식 갱신·삭제 인자.
+"""급식 조회·갱신·삭제 인자.
 
 `update_daycare_meal`·`delete_daycare_meal`은 모델에게 보이는 몇 안 되는 쓰기 tool이다.
 날짜·메뉴·양은 전부 발화 원문의 부분 문자열이어야 하고, 그 검증은 코드가 한다.
@@ -63,3 +63,18 @@ class DeleteDaycareMealArgs(ToolArgs):
 
 class KeepDaycareMealArgs(ToolArgs):
     """급식 기록을 바꾸지 않고 끝낸다. 인자가 없다."""
+
+
+class DaycareLookupArgs(ToolArgs):
+    """급식 조회. 날짜 구간만 고른다 — 어느 날인지는 코드가 푼다. 끼니는 받지 않는다."""
+
+    date_span: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description=(
+                "날짜를 가리키는 원문 구간. 예: 내일, 다음 주 화요일, 이번 주, 11월 12일. "
+                "날짜를 말하지 않았으면 비운다(오늘로 본다)"
+            ),
+        ),
+    ]

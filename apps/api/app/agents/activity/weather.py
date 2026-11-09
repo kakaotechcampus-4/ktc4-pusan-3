@@ -59,6 +59,7 @@ WEATHER_NOT_ASKED = "weather.not_asked"
 AIR_UNCHECKED = "weather.air_unchecked"
 UV_UNCHECKED = "weather.uv_unchecked"
 OUTDOOR_BLOCKED = "weather.outdoor_blocked"
+# 해가 져서 오늘 놀이터를 뺐다 — 날씨 판정이 아니라 run 이 붙인다(`state.dark_skipped`, #800)
 AFTER_SUNSET = "weather.after_sunset"
 HEAT_ADVISORY = "weather.heat_advisory"
 COLD_ADVISORY = "weather.cold_advisory"
@@ -68,7 +69,7 @@ UV_VERY_HIGH = "weather.uv_very_high"
 RAIN_LIKELY = "weather.rain_likely"
 
 # "실내 놀이만 골랐어요" 류 — 바깥 활동이 결과에 나가면 붙이지 않는다 (#515 리뷰)
-INDOOR_ONLY = frozenset({OUTDOOR_BLOCKED, AFTER_SUNSET})
+INDOOR_ONLY = frozenset({OUTDOOR_BLOCKED})
 
 # "바깥 놀이라면 날씨를 봐 주세요" 류 — 바깥 활동이 결과에 없으면 붙이지 않는다. 실내 놀이에
 # 날씨 확인을 당부하면 군말이다
@@ -96,16 +97,15 @@ class WeatherBrief:
         return tuple(READOUTS.get(key).template for key in self.notices)
 
 
-def not_asked(*, after_sunset: bool) -> WeatherBrief:
+def not_asked() -> WeatherBrief:
     """날씨를 아예 묻지 않은 날의 판정 — 바깥 놀이를 막지 않고 확인을 보호자에게 맡긴다.
 
     위치가 없으면(1차 배포는 위치 기능을 두지 않는다, #451) 매번 실내만 나가 공원 · 산책 같은
     추천이 한 번도 안 나온다. 그래서 조회를 시도하지 않은 날은 바깥 놀이를 열고 "날씨는 확인하지
     않았어요" 를 붙인다. 조회했는데 실패한 날도 바깥은 열고 "확인하지 못했어요" 를 붙인다
-    (`judge_weather`). 해가 진 뒤는 묻지 않았어도 실내만이다.
+    (`judge_weather`). 해가 진 것은 날씨 판정이 아니다 — 오늘 놀이터만 뺀다
+    (`outing.dark_now`, #800).
     """
-    if after_sunset:
-        return WeatherBrief(outdoor_ok=False, notices=(AFTER_SUNSET,))
     return WeatherBrief(outdoor_ok=True, notices=(WEATHER_NOT_ASKED,))
 
 
@@ -115,7 +115,6 @@ def judge_weather(
     air: AirQuality | None,
     uv_index: int | None,
     advisories: Advisories | None,
-    after_sunset: bool,
 ) -> WeatherBrief:
     """조회 결과를 4-2 표로 판정한다. None 은 그 조회가 실패했다는 뜻이다.
 
@@ -183,11 +182,11 @@ def judge_weather(
         elif uv == "매우높음":
             notices.append(UV_VERY_HIGH)
 
-    if after_sunset or block:
+    if block:
         # 야외가 막히면 "우산 챙기세요" 같은 안내는 필요 없다. 확인 못 한 것만 남긴다 —
         # "날씨를 확인하지 못했어요. 바깥 놀이라면 …" 은 바깥 놀이가 없으니 뺀다
         kept = [key for key in notices if key in _UNCHECKED]
-        notices = [*kept, AFTER_SUNSET if after_sunset else OUTDOOR_BLOCKED]
+        notices = [*kept, OUTDOOR_BLOCKED]
         return WeatherBrief(
             outdoor_ok=False,
             labels=labels,

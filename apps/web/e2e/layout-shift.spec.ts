@@ -114,7 +114,7 @@ const SCREENS: Array<{ name: string; path: string; ready: string; scenario?: Sce
   {
     name: "05 제안 후보",
     path: `/child/${CHILD}/suggestions?agents=food,activity`,
-    ready: "추천 이유",
+    ready: "제안 이유",
   },
   { name: "01 첫 진입", path: "/onboarding", ready: "민감정보 처리 (아이 건강·알레르기)" },
   { name: "02 아이 정보", path: `/child/${CHILD}/onboarding`, ready: "우유" },

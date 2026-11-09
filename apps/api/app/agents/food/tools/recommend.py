@@ -5,12 +5,23 @@ import logging
 from app.agents.common.age import life_stage
 from app.agents.common.suggestion import SuggestionRejected, check_count, count_notice
 from app.agents.food.context import FoodContext, require_safety
-from app.agents.food.meal_review import error_code, explain, review_candidates
+from app.agents.food.meal_request import said_in_food_request
+from app.agents.food.meal_review import (
+    NO_REQUEST,
+    RejectReason,
+    RequestContext,
+    error_code,
+    explain,
+    review_candidates,
+)
 from app.agents.food.readouts import POOL_EMPTY, READOUTS
 from app.agents.food.result import ErrorCode, ToolResult, fail, ok
 from app.agents.food.schemas.recommend import ProposeMealCandidatesArgs
 
 _NAME = "propose_meal_candidates"
+
+# 조건 불일치로 이만큼 거절하면 조건을 맞출 수 없는 요청으로 보고 조건 없이 낸다
+MAX_REQUEST_MISSES = 2
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +46,9 @@ async def propose_meal_candidates(
       빠졌으면 재호출 결과와 합치기 전이라 개수를 따지지 않고 안내도 붙이지 않는다. 재호출을 했거나
       풀이 처음부터 모자라면(`exhausted`) 있는 만큼 내고 `count_notice` 안내를 붙인다 — 0개면 추천
       없이 `pool.empty` 다.
+    - 보호자가 재료 · 요리 종류를 정해 물었고 모델이 적은 `requested_food` 가 보호자 말에 있으면
+      (조건 인정) 레시피북에서 맞는 메뉴가 모자랄 때만 `generated` 를 받는다(#740). 이름 · 재료는
+      모델이 쓰므로 같은 안전 필터를 이름 + 재료로 걸고, 걸린 것은 거절이 아니라 풀에서 뺀다.
     - 메뉴 이름 · 재료(`items`)는 카탈로그 행에서 오고 `allergens` 는 `SafetyVerdict.allergens` 와
       같다. 통과한 추천은 `state.picks` 에 담는다. 저장 · 발송 · 예약은 하지 않는다. status 와
       expires_at 은 인자에 없다.
@@ -46,6 +60,8 @@ async def propose_meal_candidates(
 
     review = review_candidates(
         args.candidates,
+        generated=args.generated,
+        request=_request(context, args),
         sampled=state.sampled,
         seen=state.seen_evidence,
         docs=state.seen_docs,
@@ -54,6 +70,8 @@ async def propose_meal_candidates(
         months=life.months,
         today=context.today,
     )
+    if any(r.reason is RejectReason.REQUEST_MISMATCH for r in review.rejections):
+        state.request_misses += 1
     if review.rejections:
         return fail("propose", _NAME, error_code(review.rejections), explain(review.rejections))
 
@@ -74,3 +92,28 @@ async def propose_meal_candidates(
         state.picks = picks
         state.notice = count_notice(len(picks), empty=READOUTS.get(POOL_EMPTY))
     return ok("propose", _NAME, count=len(picks), kinds=[pick.draft.kind for pick in picks])
+
+
+def _request(context: FoodContext, args: ProposeMealCandidatesArgs) -> RequestContext:
+    """모델이 적은 `requested_food` 가 보호자 말에 있을 때만 조건이 인정된다. 아니면 조건 없는 요청.
+
+    막연한 요청("저녁 추천해줘")에 모델이 조건을 지어 넣어도 근거 없는 일반 추천이 통과하지 않는다.
+    """
+    state = context.state
+    if state.request_misses >= MAX_REQUEST_MISSES:
+        return NO_REQUEST
+    if not args.requested_food or not said_in_food_request(args.requested_food, state.said_texts()):
+        return NO_REQUEST
+    # 샘플 안의 조건 맞는 레시피가 자리를 차지한다. 요리 종류 조건은 레시피북에서 못 찾아
+    # 세지 않는다
+    matched = (
+        0 if args.requested_kind == "cuisine" else len(state.requested_keys & state.sampled.keys())
+    )
+    return RequestContext(
+        food=args.requested_food.strip(),
+        kind=args.requested_kind,
+        matched=matched,
+        pool=state.pool_rows,
+        recipe_keys=state.recipe_keys,
+        recent_keys=state.recent_keys,
+    )

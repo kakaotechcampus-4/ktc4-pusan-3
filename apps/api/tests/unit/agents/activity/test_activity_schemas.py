@@ -10,7 +10,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.agents.activity.registry import TOOL_SPECS
-from app.agents.activity.schemas.common import DayLabel, EvidencePick
+from app.agents.activity.schemas.common import EvidencePick
 from app.agents.activity.schemas.outing import LookupWeatherArgs
 from app.agents.activity.schemas.recommend import (
     ActivityCandidate,
@@ -99,14 +99,18 @@ class TestEvidencePick:
             )
 
 
-class TestDayLabel:
+class TestWhen:
     def test_날짜를_안_고르면_오늘이다(self):
-        assert LookupWeatherArgs.model_validate({}).day == DayLabel.TODAY
+        assert LookupWeatherArgs.model_validate({}).day == "오늘"
 
-    def test_날짜_문자열은_받지_않는다(self):
-        """모델은 날짜를 계산하지 않는다. 라벨만 고른다."""
+    def test_보호자가_쓴_표현을_그대로_받는다(self):
+        """날짜는 코드가 푼다(`when.days_of`, #800). 예전 라벨도 받는다."""
+        for when in ("다음 주 주말", "11월 20일", "tomorrow"):
+            assert LookupWeatherArgs.model_validate({"day": when}).day == when
+
+    def test_긴_글은_받지_않는다(self):
         with pytest.raises(ValidationError):
-            LookupWeatherArgs.model_validate({"day": "2026-09-28"})
+            LookupWeatherArgs.model_validate({"day": "가" * 31})
 
 
 class TestTaskType:

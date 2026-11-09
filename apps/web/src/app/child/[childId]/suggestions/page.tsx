@@ -1,12 +1,13 @@
 "use client";
 
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { josa } from "es-hangul";
 import { ArrowLeft } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
 
 import { ApprovalSheet } from "@/components/approval-sheet";
-import { SafetyCheckSheet } from "@/components/safety-check-sheet";
+import { SafetyCheckSheet, type SafetyResult } from "@/components/safety-check-sheet";
 import { AuthGate } from "@/components/auth-gate";
 import { ScreenTransition } from "@/components/route-transition";
 import { ConsentRequiredCard } from "@/components/consent-required-card";
@@ -141,6 +142,18 @@ function SuggestionsScreen() {
    *    알레르기가 확인된 제안은 **채택 자체를 하지 않는다** (`safety-check-sheet.tsx`).
    */
   const [checkingSafety, setCheckingSafety] = useState(false);
+  /**
+   * 알레르기 때문에 고르지 못했다는 안내 (#823). 🚨 **실패가 아니다** — 다시 시도를 두지 않는다.
+   *    예전에는 고른 것이 전부 막히면 시트만 닫히고 선택이 조용히 풀려서, 보호자는 무슨 일이
+   *    일어났는지 모른 채 목록으로 돌아왔다.
+   *    - `all_blocked`: 시트에서 고른 것이 전부 막혔다. `items` 는 알레르기로 답한 식품
+   *    - `approve_blocked`: 채택 API 가 `409 allergen_blocked` 로 거절했다 — 목록을 받은 뒤 그사이 등록된 알레르기다
+   */
+  const [safetyNotice, setSafetyNotice] = useState<
+    | { kind: "all_blocked"; agents: Agent[]; items: string[] }
+    | { kind: "approve_blocked"; agents: Agent[] }
+    | null
+  >(null);
   const approving = useSheetTarget<CreateEventDraftsResponse>();
 
   const suggestions = useQuery({
@@ -184,6 +197,24 @@ function SuggestionsScreen() {
   const approve = useMutation({
     mutationFn: (ids: string[]) => approveSuggestions(childId, { suggestion_ids: ids }),
     onSuccess: (result) => setApprovedIds(result.suggestions.map((s) => s.id)),
+    /**
+     * 🚨 **`409 allergen_blocked` 는 서버가 알레르기 필터를 다시 건 결과다** (문서 §3-8).
+     *    목록을 받은 뒤 다른 보호자가 알레르기를 등록했다. 하나라도 걸리면 서버는 **전부** 거절하므로
+     *    아무것도 채택되지 않았다. 걸린 제안만 선택에서 빼고 다시 고르게 한다 — 같은 선택으로
+     *    다시 누르면 같은 409 다. ⚠️ 서버가 어느 제안인지 안 실으면 고른 것 전부를 뺀다
+     *    (알레르기에서 덜 막는 쪽으로 기울 수 없다).
+     */
+    onError: (error, ids) => {
+      if (!isApiError(error, "allergen_blocked")) return;
+      const listed = error.detail?.suggestion_ids;
+      // 🚨 빈 배열도 "어느 제안인지 모른다" 다 — 아무것도 안 빼면 다시 눌러도 같은 409 에 갇힌다.
+      const blocked =
+        Array.isArray(listed) && listed.length > 0 && listed.every((id) => typeof id === "string")
+          ? (listed as string[])
+          : ids;
+      setSelectedIds((prev) => prev.filter((id) => !blocked.includes(id)));
+      setSafetyNotice({ kind: "approve_blocked", agents: agentsOf(blocked) });
+    },
   });
 
   const data = suggestions.data;
@@ -200,6 +231,7 @@ function SuggestionsScreen() {
 
   /** 🚨 물을 것이 있으면 **묻고 나서** 채택한다. 없으면 바로 채택한다. */
   function startApprove() {
+    setSafetyNotice(null);
     if (prechecks.length > 0) setCheckingSafety(true);
     else approve.mutate(selectedIds);
   }
@@ -208,7 +240,7 @@ function SuggestionsScreen() {
    * 확인이 끝났다. 🚨 **알레르기가 걸린 제안은 빼고** 나머지만 채택한다 —
    *    `null` 은 "어느 제안인지 모른다" 라서 고른 것 전부를 뺀다(= 채택할 것이 없다).
    */
-  function afterSafety(blockedSuggestionIds: string[] | null) {
+  function afterSafety({ blockedSuggestionIds, allergyItems }: SafetyResult) {
     setCheckingSafety(false);
     const keep =
       blockedSuggestionIds === null
@@ -216,6 +248,9 @@ function SuggestionsScreen() {
         : selectedIds.filter((id) => !blockedSuggestionIds.includes(id));
     setSelectedIds(keep);
     if (keep.length > 0) approve.mutate(keep);
+    // 🚨 고른 것이 전부 막혔으면 **말한다** (#823). 조용히 선택만 풀면 보호자는 이유를 모른다.
+    else
+      setSafetyNotice({ kind: "all_blocked", agents: agentsOf(selectedIds), items: allergyItems });
   }
   const visible = data?.suggestions ?? [];
   /**
@@ -249,6 +284,10 @@ function SuggestionsScreen() {
    *    둘을 가를 수 없게 된다 — 여기서 쓰는 것은 고른 개수 · 채택 상태뿐이다.
    */
   const pickable = [...visible, ...general].map(({ id, agent, status }) => ({ id, agent, status }));
+  /** 제안 id 들이 속한 Agent. 🚨 순서는 화면에 선 순서다. 안내 카드의 머리 라벨에 쓴다. */
+  function agentsOf(ids: string[]): Agent[] {
+    return [...new Set(pickable.filter((s) => ids.includes(s.id)).map((s) => s.agent))];
+  }
   /**
    * 🚨 **새로고침해도 채택은 남는다** (#249). 서버가 그 run 의 채택한 추천도 돌려주므로 응답의
    *    `status` 로 되살린다 — 다시 고르게 그리면 채택 API 가 `not_draft` 로 거절한다.
@@ -293,6 +332,14 @@ function SuggestionsScreen() {
 
   const consentBlocked = isApiError(suggestions.error, "consent_required")
     ? suggestions.error
+    : null;
+  /**
+   * 채택이 `403 consent_required` 로 막혔다 (#835). 알레르기 항목이 든 제안은 서버가 건강정보를 다시 읽어야
+   *    채택할 수 있어서, 목록을 받은 뒤 동의를 거뒀으면 여기서 막힌다. 🚨 **일반 실패 카드로 그리지 않는다** —
+   *    다시 눌러도 같은 403 이다. 목록이 막혔을 때와 같은 동의 카드로 가는 곳을 말한다.
+   */
+  const approveConsentBlocked = isApiError(approve.error, "consent_required")
+    ? approve.error
     : null;
 
   return (
@@ -464,6 +511,38 @@ function SuggestionsScreen() {
             ) : null;
           })}
 
+        {/* 🚨 알레르기로 고르지 못했다는 안내 (#823). 실패 카드가 아니라서 빨강도 다시 시도도 없다.
+            다시 고르는 자리 바로 위에 둔다. */}
+        {safetyNotice && chosenIds === null ? (
+          <Card>
+            <div role="status">
+              {safetyNotice.agents.length > 0 ? (
+                <p className="text-label text-ink-subtle">
+                  {safetyNotice.agents.map(domainLabel).join(", ")}
+                </p>
+              ) : null}
+              <p className="text-body-sm text-ink mt-1">
+                {safetyNotice.kind === "approve_blocked"
+                  ? "그사이 알레르기로 등록된 식품이 들어간 제안이 있어서 고르지 못했어요. 그 제안을 빼고 다시 골라 주세요."
+                  : safetyNotice.items.length > 0
+                    ? `${josa(safetyNotice.items.join(", "), "이/가")} 들어간 제안은 고를 수 없어요. 다른 제안을 골라 주세요.`
+                    : // 🚨 이유를 단정하지 않는다. 화면이 모르는 검사일 수도, 어느 제안 것인지 몰라
+                      //    전부 막은 알레르기일 수도 있다 (`SafetyResult.allergyItems` 머리말).
+                      "확인이 필요한 항목 때문에 고른 제안을 고르지 않았어요. 다른 제안을 골라 주세요."}
+              </p>
+            </div>
+          </Card>
+        ) : null}
+
+        {/* 🚨 카드 안에 카드를 두지 않으려고 확인 카드 밖, 바로 위에 둔다. 쓰기가 막힌 것이라 저장된 것이 없다고 말한다. */}
+        {approveConsentBlocked && chosenIds === null ? (
+          <ConsentRequiredCard
+            childId={childId}
+            error={approveConsentBlocked}
+            what="고른 것을 남길 수 없어요. 저장된 것은 하나도 없어요."
+          />
+        ) : null}
+
         {/* 🚨 **다음 행동은 여기 한 곳이다** (줄마다 두지 않는다 · `suggestion-list.tsx` 머리말).
           그래서 화면의 `primary` 도 하나다 — 단계가 바뀌어도 이 카드 안에서 하나씩만 선다. */}
         {pickable.some((s) => s.agent !== "health") ? (
@@ -481,7 +560,7 @@ function SuggestionsScreen() {
                     ? "아직 없음"
                     : pickedByAgent
                         .map(({ agent, count }) => `${domainLabel(agent)} ${count}가지`)
-                        .join(" · ")}
+                        .join(", ")}
                 </dd>
               </div>
             </dl>
@@ -498,7 +577,9 @@ function SuggestionsScreen() {
                     고른 것을 먼저 남겨요. 캘린더에는 아무것도 넣지 않아요.
                   </p>
 
-                  {approve.isError ? (
+                  {approve.isError &&
+                  !isApiError(approve.error, "allergen_blocked") &&
+                  !approveConsentBlocked ? (
                     <CardFailed className="mt-3">
                       <p>
                         {approve.error instanceof Error
@@ -536,8 +617,8 @@ function SuggestionsScreen() {
                   서버가 정하는데, 화면이 "N건 만들어요" 라고 먼저 말하면 응답과 다를 때
                   거짓말이 된다. */}
                   <p className="text-body-sm text-ink-muted bg-surface-muted rounded-field mt-2 px-3 py-2">
-                    저장될 내용을 먼저 보여드려요. 승인 전에는 캘린더에 넣지 않아요. 안 만들어도
-                    고른 것은 그대로 남아요.
+                    일정 초안을 먼저 보여 드려요. 확인하고 넣기 전에는 캘린더에 넣지 않아요. 안
+                    만들어도 고른 것은 그대로 남아요.
                   </p>
 
                   {createDrafts.isError ? (
@@ -545,7 +626,7 @@ function SuggestionsScreen() {
                       <p>
                         {createDrafts.error instanceof Error
                           ? createDrafts.error.message
-                          : "저장될 내용을 만들지 못했어요."}
+                          : "일정 초안을 만들지 못했어요."}
                       </p>
                       <p className="mt-1">아직 아무것도 넣지 않았어요.</p>
                     </CardFailed>
@@ -617,6 +698,7 @@ function SuggestionsScreen() {
         open={checkingSafety}
         childId={childId}
         prechecks={prechecks}
+        selectedIds={selectedIds}
         onCancel={() => setCheckingSafety(false)}
         onConfirm={afterSafety}
       />

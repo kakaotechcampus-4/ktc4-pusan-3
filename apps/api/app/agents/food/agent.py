@@ -29,9 +29,16 @@ from app.agents.common.result import AgentStatus, DomainAgentResult
 from app.agents.common.schemas.task import DomainTask
 from app.agents.common.suggestion import MAX_SUGGESTIONS, count_notice, merge_drafts
 from app.agents.common.tool_loop import run_tool_loop
+from app.agents.food.basis_notice import basis_notices
 from app.agents.food.context import FoodContext, MealPick, build_gate, require_safety
 from app.agents.food.food_check import answer_food_check, request_notices
-from app.agents.food.meal_pool import PoolItem, build_pool, remember_sample, sample_pool
+from app.agents.food.meal_pool import (
+    PoolItem,
+    build_pool,
+    remember_sample,
+    requested_rows,
+    sample_pool,
+)
 from app.agents.food.prompt import (
     build_system_prompt,
     recall_message,
@@ -59,10 +66,11 @@ logger = logging.getLogger(__name__)
 
 AGENT = "food"
 
-# 모델이 tool 을 꼭 불러야 하는가. 둘 다 required 다(`_converse`)
+# 모델이 tool 을 꼭 불러야 하는가. 셋 다 required 다(`_converse`)
 _TOOL_CHOICE: dict[FoodTaskType, str] = {
     FoodTaskType.MEAL_RECOMMENDATION: "required",
     FoodTaskType.DAYCARE_MEAL: "required",
+    FoodTaskType.DAYCARE_LOOKUP: "required",
 }
 
 # 식단 추천 [예시] 로 보여 주는 문서 행 종류 (RAG_plan Food 절). 이유기는 이유식 단계 · 재료 행이다.
@@ -82,6 +90,8 @@ async def run(
     gate = await build_gate(context)
     context.state.gate = gate
     context.state.utterance = "\n".join(task.request_texts)
+    # 앞 대화를 이어 묻는 말이면 request_texts 는 해석한 문장이다 — 말했는지는 원문으로 본다
+    context.state.said = (*task.originals(), *task.prior_texts)
 
     key = closed_readout_key(task_type, gate)
     if key is not None:
@@ -106,7 +116,7 @@ async def run(
     llm = client or LLMClient(role="food")
     if task_type == FoodTaskType.MEAL_RECOMMENDATION:
         return await _recommend(task, context, llm)
-    return await _update_daycare(task, context, llm)
+    return await _daycare(task_type, context, llm)
 
 
 def _check_foods_result(context: FoodContext) -> DomainAgentResult:
@@ -140,23 +150,24 @@ def _failed(task_type: FoodTaskType, *, model_calls: int) -> DomainAgentResult:
     )
 
 
-async def _update_daycare(
-    task: DomainTask, context: FoodContext, llm: LLMClient
+async def _daycare(
+    task_type: FoodTaskType, context: FoodContext, llm: LLMClient
 ) -> DomainAgentResult:
-    """급식 조회 · 갱신 · 삭제. 모델이 출력 tool(`update_daycare_meal` · `delete_daycare_meal`)을
-    부르면 끝난다. 화면 문구는 tool 이 쓰기가 끝난 뒤에 `state.readouts` 에 담은 코드 문구다."""
+    """급식 조회 · 갱신 · 삭제. 모델이 출력 tool(`show_daycare_meal` · `update_daycare_meal` ·
+    `delete_daycare_meal` · `keep_daycare_meal`)을 부르면 끝난다. 화면 문구는 tool 이
+    `state.readouts` 에 담은 코드 문구다 — 갱신은 쓰기가 끝난 뒤에, 조회는 읽은 행으로 만든 뒤에."""
     gate = context.state.gate
     assert gate is not None  # run() 이 build_gate 를 먼저 부른다
     messages: list[dict[str, Any]] = [
-        {"role": "system", "content": build_system_prompt(context, FoodTaskType.DAYCARE_MEAL)},
+        {"role": "system", "content": build_system_prompt(context, task_type)},
         {"role": "user", "content": context.state.utterance},
     ]
-    allowed = tools_for(FoodTaskType.DAYCARE_MEAL, gate)
-    if not await _converse(llm, messages, context, allowed, FoodTaskType.DAYCARE_MEAL):
-        return _failed(FoodTaskType.DAYCARE_MEAL, model_calls=1)
+    allowed = tools_for(task_type, gate)
+    if not await _converse(llm, messages, context, allowed, task_type):
+        return _failed(task_type, model_calls=1)
     return DomainAgentResult(
         agent=AGENT,
-        task_type=FoodTaskType.DAYCARE_MEAL.value,
+        task_type=task_type.value,
         status="completed",
         readouts=context.state.readouts,
         model_calls=1,
@@ -177,11 +188,15 @@ async def _recommend(task: DomainTask, context: FoodContext, llm: LLMClient) -> 
     )
 
     pool = await build_pool(context)
+    # 풀의 행과 조건 맞는 레시피를 run state 에 둔다 — 생성 후보 검사(풀 이름 · 자리 수)가 쓴다
+    context.state.pool_rows = {item.row.menu_key: item.row for item in pool}
+    matched = requested_rows(pool, context.state.said_texts())
+    context.state.requested_keys = frozenset(item.row.menu_key for item in matched)
     if not pool:
         # 안전 · 연령 · 최근 추천으로 다 빠졌다. 모델 없이 추천 없는 안내만 낸다 — 실패가 아니다
         return _recommendation(task_type, (), context, model_calls=0, followup=(), notices=notices)
 
-    sample = sample_pool(pool, seed=f"{context.run_id}:sample")
+    sample = sample_pool(pool, seed=f"{context.run_id}:sample", first=matched)
     remember_sample(context, sample)
     examples = await search_food_doc(
         context.ports.docs,
@@ -198,7 +213,12 @@ async def _recommend(task: DomainTask, context: FoodContext, llm: LLMClient) -> 
         {"role": "system", "content": build_system_prompt(context, task_type, examples)},
         {
             "role": "user",
-            "content": request_message(task.request_texts, _rows(sample), records=records),
+            "content": request_message(
+                task.request_texts,
+                _rows(sample),
+                records=records,
+                requested=context.state.requested_keys,
+            ),
         },
     ]
     allowed = tools_for(task_type, gate)
@@ -220,13 +240,15 @@ async def _recommend(task: DomainTask, context: FoodContext, llm: LLMClient) -> 
                 return _failed(task_type, model_calls=2)
 
     _log_evidence(context, picks)
+    # 재호출이 state.sampled 를 덮어써서 처음 고른 메뉴는 샘플로 못 찾는다 — 풀의 행으로 찾는다
+    rows_by_key = {item.row.menu_key: item.row for item in pool}
     return _recommendation(
         task_type,
         picks,
         context,
         model_calls=model_calls,
         followup=await _followup(context),
-        notices=notices,
+        notices=(*notices, *basis_notices(context, picks, rows_by_key)),
     )
 
 
@@ -355,13 +377,20 @@ async def _recall(
     rest = tuple(item for item in pool if item.row.menu_key not in {*blocked, *chosen})
     if not rest:
         return None
-    sample = sample_pool(rest, seed=f"{context.run_id}:recall")
+    sample = sample_pool(
+        rest,
+        seed=f"{context.run_id}:recall",
+        first=requested_rows(rest, context.state.said_texts()),
+    )
     remember_sample(context, sample, recalled=True)
     messages.append(
         {
             "role": "user",
             "content": recall_message(
-                task.request_texts, avoid=[*chosen, *sorted(blocked)], sample=_rows(sample)
+                task.request_texts,
+                avoid=[*chosen, *sorted(blocked)],
+                sample=_rows(sample),
+                requested=context.state.requested_keys,
             ),
         }
     )

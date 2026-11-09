@@ -82,7 +82,7 @@
 - [api/auth-kakao-v1.md](api/auth-kakao-v1.md) — **서버 주도 인가 코드 흐름.** `redirect_uri` 를 API 오리진 하나로 고정(preview 도메인은 등록 불가) · 클라이언트는 1회용 코드를 받아 `{code, bind}` 로 교환하고 `bind` 가 그 홉을 지킨다 · **동의 전에는 `parent` 를 만들지 않는다**(`signup` 신설) · 계약서 §01 `Bearer` 유지, Bearer 없는 6개(로그인 5 + refresh)와 302 엔드포인트 2개를 예외로 명시 · 불투명 access 15분(메모리) + refresh 30일/최대 90일(HttpOnly 쿠키 · 회전 · 재사용 탐지, #466) · `session`·`session_access`·`auth_handoff` 테이블 · `parent.nickname` nullable
 - [api/invite-v1.md](api/invite-v1.md) — **초대를 링크가 아니라 코드로.** 카톡 링크는 인앱 브라우저에서 열려 `sessionStorage` 가 날아가면 `bind` 까지 잃고 **로그인 자체가 깨진다** · Crockford Base32 8자(`I`·`L`·`O`·`U` 제외) · 정규화한 값을 해시로 저장 · 24시간 · 1회용 · 🚨 **시도 제한이 이 선택의 전제**(40비트 · 확인과 수락이 같은 통) · 관계는 **받는 쪽이 수락할 때** 고른다 · 수락 전 확인 `GET /invites/{code}` · 시도 제한 계정 5회 · IP 30회 / 1시간 (#198 에서 확정) · ⚠️ 계약서 §05 를 **대체한다**
 - [api/idempotency-v1.md](api/idempotency-v1.md) — **되돌릴 수 없는 POST 5개의 중복 실행 방지.** 계약서 §01 의 "헤더가 없으면 400" 을 동작까지 채운다 — 같은 키·같은 요청은 **처음 응답 재생**, 다른 요청은 422, 처리 중은 409 · **2xx 만 저장**(403 을 캐시하면 동의 후 재시도가 막힌다) · 키 스코프 `(parent_id, method, path, key)` · 에러 코드 4개 신설 제안 · 클라이언트는 전용 함수의 **필수 인자**로 강제하고 목은 같은 동작을 회귀 테스트로 건다 (#29 리뷰 반영)
-- [api/suggestions-v1.md](api/suggestions-v1.md) — **05 추천 받기의 판단 순서와 다시 시도.** `run_id` 없으면 처음 요청(문장은 홈 버튼 키의 표 문장뿐) · 있으면 Agent 마다 그 run 의 추천 → 0개 기록 → 실패 맥락(15분)으로 다시 만들기 → `cannot_resume` 순서 · 보관함은 프로세스 메모리 · 응답 조립 규칙(`groups[].notice` · 문서 행을 근거로 단 일반 추천 · 알레르기 사전검사) · 새로 돌릴 때만 하루 한도 (#249)
+- [api/suggestions-v1.md](api/suggestions-v1.md) — **05 추천 받기의 판단 순서와 다시 시도.** `run_id` 없으면 처음 요청(문장은 홈 버튼 키의 표 문장뿐) · 있으면 Agent 마다 그 run 의 추천 → 0개 기록 → 실패 맥락(15분)으로 다시 만들기 → `cannot_resume` 순서 · 보관함은 프로세스 메모리 · 응답 조립 규칙(`groups[].notice` · 문서 행을 근거로 단 일반 추천 · 알레르기 사전검사) · 새로 돌릴 때만 하루 한도 (#249) · 채택 직전 알레르기 재확인(`409 allergen_blocked`)
 - [api/chat-v1.md](api/chat-v1.md) — **지난 대화 다시 보기.** run 하나를 대화 한 턴(`chat_turn`)으로 · 쓴 보호자 본인만 보고 탈퇴 · 연결 끊기 · 아이 삭제 때 지운다 · `done` 으로 끝난 run 만 · 말풍선은 그날 오간 말 그대로, 관찰은 id 로 담아 조회 때 지금 상태로(지운 기록은 `deleted`) · 날짜는 접수 KST, 되묻기 답은 질문한 날 · 커서는 날짜를 품는다 (#228)
 - [api/delete-proposal-v1.md](api/delete-proposal-v1.md) — **대화로 지울 때 사람이 버튼으로 확정한다.** AI 는 지우지 않고 제안만 남긴다(후보 · 기본 체크) · 보호자가 체크를 고쳐 버튼을 누르면 서버가 후보 안의 체크한 것만 지운다 · 제안한 보호자만 · 24시간 만료는 읽을 때 판정 · 지난 대화는 제안 id 만 담고 지금 상태로 그린다 (#535)
 
@@ -137,13 +137,14 @@
 
 ## 평가 (Eval)
 
-*아직 문서 없음.* eval 케이스 10개, Trajectory 판정, 골든셋, 주 1회 회귀 실행.
+- [eval/eval-v1.md](eval/eval-v1.md) — **AI 품질 점검 설계.** 노션 10개는 구조가 아니라 "헤드라인 N/10" 보기로 · 모든 실행에 §2 불변식 14개(코드 판정 — 승인 게이트 ㉢ 삭제 확정 I15 포함, 호출 수는 비용 경고로) · 단발 프로브 P 34개 · 일주일 페르소나 W 2명(A · C — 통합 DB + 시계 이동, Curator 까지 실제로) · 장애 점검표 F 40칸(기존 테스트 29칸 + 구멍 8) · 되묻기로만 끝난 run 은 "시험 못 함"(통과도 실패도 아님) · 토큰은 `llm_usage` 계약으로 같이 수집 · 하루 입력 한도 계산식 · 비용 계층(스모크 · 전체 · W) · eval 예산 월 크레딧 25% 이하 (11-07, 11-08 리뷰 반영)
 
 ## 운영 (Ops)
 
 - [ops/alembic-collaboration-v1.md](ops/alembic-collaboration-v1.md) — 마이그레이션 협업 규칙 · make 명령어 치트시트 · autogenerate 한계 · revision 충돌 해결법 확정
 - [ops/logging-alerts-v1.md](ops/logging-alerts-v1.md) — 서버 로그 적재(docker journald) · ERROR 알림(Discord 웹훅) 결정과 근거 · 알림이 못 잡는 것 (멘토 #267 2번 · PR #302)
-- [ops/llm-usage-v1.md](ops/llm-usage-v1.md) — LLM 토큰 사용량을 보호자 · run · 모델별로 남기는 방법 (BM 산정) · 새 호출 지점 규칙 · OCR 담당 계약 · 서버 고려
+- [ops/deploy-v1.md](ops/deploy-v1.md) — CI 게이트 · 헬스 실패 시 직전 이미지 자동 롤백 · 한 EC2 위 dev(develop)/prod(main) 분리 · 서버 준비 절차
+- [ops/llm-usage-v1.md](ops/llm-usage-v1.md) — LLM 토큰 사용량을 보호자 · run · 모델별로 남기는 방법 (BM 산정) · 새 호출 지점 규칙 · 창구별 귀속 규칙 · 사진 run 연결 · 서버 고려
 - [ops/encryption-v1.md](ops/encryption-v1.md) — 전송(TLS · HSTS) · 저장(EBS) 구간 암호화가 어디서 지켜지는지와 확인 기록 · E2E 를 하지 않는 이유 · 예외 로그에서 원문 빼기 (#670)
 
 그 밖에 *아직 문서 없음.* 배포, 보안 5종 체크, 모델 호출·토큰 비용 실측.

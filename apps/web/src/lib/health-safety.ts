@@ -55,7 +55,7 @@ export function severityFieldLabel(type: string): string {
  */
 export function severityFieldHint(type: string): string | undefined {
   return type === "allergy"
-    ? "알레르기 혈액검사 결과를 0부터 6까지 나눈 등급이에요. 검사를 안 했거나 잘 모르면 모르겠어요를 골라 주세요. 몇 등급이든 식단 추천에서는 똑같이 빼요."
+    ? "알레르기 혈액검사 결과를 0부터 6까지 나눈 등급이에요. 검사를 안 했거나 잘 모르면 모르겠어요를 골라 주세요. 몇 등급이든 식사 제안에서는 똑같이 빼요."
     : undefined;
 }
 

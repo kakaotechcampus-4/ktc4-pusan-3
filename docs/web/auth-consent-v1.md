@@ -86,7 +86,7 @@
   🚨 **체크는 boolean 이 아니라 "어느 버전에 동의했는가" 다** (`ConsentChecked`). 그래야 약관이
   바뀌어 화면을 다시 받았을 때 **바뀐 항목만** 체크가 풀린다. `400 policy_version_invalid` 는
   고장이 아니라 화면이 낡은 것이다 — 다시 시도가 아니라 **다시 확인**을 시킨다 (대기표는 살아 있다)
-- 기존 회원인데 `consent_required` 가 남아 있으면 **콜백 화면에서 멈춘다.** 남은 동의는 10 설정에서 켠다
+- 기존 회원인데 `consent_required` 가 남아 있으면 **콜백 화면에서 멈춘다.** ⚠️ 계정 동의(`service_terms` · `privacy_account`)를 다시 받는 화면은 아직 없다 — 10 설정은 선택 동의만 세운다. 그래서 다시 로그인을 권하지 않고(같은 목록이 다시 온다) 처리방침의 연락처로 안내한다 (#815). 동의 이름은 `consentCopy` 로 바꿔 보이고 스코프 코드를 내지 않는다
 
 ### 위치 — 동의와 휴대폰 권한은 따로 움직인다 (#593)
 
@@ -136,14 +136,14 @@
 
 | | access 토큰 | refresh 토큰 |
 | --- | --- | --- |
-| 어디에 | **JS 메모리만** (`stores/session.ts` · `lib/api/client.ts`) | 서버가 심는 **HttpOnly 쿠키** `icatch_rt` (`Path=/api/v1/auth`) |
+| 어디에 | **JS 메모리만** (`stores/session.ts` · `lib/api/client.ts`) | 서버가 심는 **HttpOnly 쿠키** `__Host-icatch_rt` (`Path=/`, #783) |
 | 수명 | 15분 (`expires_in: 900`) | 유휴 30일(쓸 때마다 연장) · 절대 90일 |
 | 보내는 법 | `Authorization: Bearer` — 일반 API · SSE 전부 | 브라우저가 붙인다. 화면 코드는 읽지도 쓰지도 못한다 |
 | 받는 곳 | 교환 · 가입 응답, `POST /auth/refresh` 응답 | 교환 · 가입 · refresh 가 심고(회전), 로그아웃 · 탈퇴가 지운다 |
 
 - 🚨 **토큰을 어떤 저장소에도 두지 않는다.** `localStorage` 금지는 그대로고(이유는 `apps/web/CLAUDE.md` §4 의 XSS 항목 · [`docs/api/auth-kakao-v1.md`](../../docs/api/auth-kakao-v1.md) §7-7), 이제 `sessionStorage` 에도 두지 않는다. 메모리의 access 는 15분이면 끝나고, 오래 사는 refresh 는 JS 가 읽지 못한다.
   세션 쪽에서 남기는 것은 `activeChildId` 하나다(`localStorage` 의 `icatch.active-child`) — 권한 근거가 아니라 "마지막에 본 아이" 이고, 앱을 다시 켰을 때 그 아이의 홈으로 열려고 둔다. 쓰기 전에 `/me` 목록에 있는지 본다 (`lib/auth/landing.ts`)
-  ⚠️ 세션과 무관하게 **화면 투어의 "봤음"** 도 `localStorage` 에 있다(`icatch.tour.seen.<보호자 id>` · 투어 이름 목록뿐 · #632). 보호자 id 가 키에 드는 것은 한 기기에서 다른 보호자로 로그인하면 그 사람은 아직 안 봤기 때문이다. 로그아웃 · 탈퇴로 지우지 않는다(다시 로그인한 같은 사람에게 다시 뜨지 않게). 서버 테이블로 옮기면 이 키는 없어진다 ([`screen-tour-v1.md`](screen-tour-v1.md) §2)
+  ⚠️ 화면 투어의 "봤음" 은 기기가 아니라 서버(`/me/tours` · #696)에 있다. 로그아웃 · 탈퇴로 기기에서 지울 것이 없고, 탈퇴하면 서버 행이 함께 지워진다 ([`screen-tour-v1.md`](screen-tour-v1.md) §2)
 - 토큰은 불투명 난수다. **JWT 가 아니니 디코딩해서 정보를 꺼내려 하지 않는다**
 - **앱을 켜면 `restore()` 가 `POST /auth/refresh` 를 부른다** (Providers · 목이 뜬 뒤). 200 이면 로그인, 401 이면 로그인 전이다.
   🚨 **서버에 닿지 못한 것(네트워크 · 5xx)은 로그아웃이 아니다** — `restoreFailed` 로 갈라 `SessionUnreachable`(연결 확인 + 다시 시도)을 세우고, 로그인 화면으로 보내지 않는다. 쿠키가 그대로라 연결이 돌아오면 이어진다

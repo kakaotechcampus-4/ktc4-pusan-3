@@ -12,9 +12,11 @@
 import type {
   Affinity,
   Agent,
+  AnyEventDraft,
   CalendarEvent,
   ChildProfile,
   EventDraft,
+  EventSeriesRef,
   Evidence,
   GeneralSuggestion,
   ReceivedSuggestion,
@@ -861,6 +863,33 @@ export const requestedGeneralSuggestion: GeneralSuggestion = {
 };
 
 /**
+ * 보호자가 재료를 정해 물었고 레시피북에 없는 메뉴를 냈을 때의 식사 일반 추천 (#740). 기록이 없으면 그
+ * 요청에 맞춰 고른다.
+ *
+ * 🚨 놀이(`requestedGeneralSuggestion`)와 같은 꼴이다 — `evidence` 가 비어 있고 출처 줄 없이 `basis` 만 선다.
+ *    레시피북 메뉴라면 메뉴 근거(`recipe_catalog`) 카드가 붙지만 생성 메뉴는 가리킬 행이 없다. 레시피북 밖
+ *    메뉴라는 말은 이 카드가 아니라 04 의 안내 줄이 한다.
+ * 🚨 `basis` 는 서버 `GENERAL_REASON_REQUESTED`("요청하신 조건을 바탕으로 골랐어요.")와 같은 문구다.
+ */
+export const requestedFoodSuggestion: GeneralSuggestion = {
+  id: "g_8",
+  child_id: CHILD_ID,
+  agent: "food",
+  kind: "general",
+  content: "파프리카볶음",
+  place_notice: null,
+  event_starts_on: null,
+  event_ends_on: null,
+  warnings: [],
+  basis: "요청하신 조건을 바탕으로 골랐어요.",
+  items: ["파프리카", "올리브유"],
+  status: "draft",
+  expires_at: hoursFromNow(24),
+  record_count: 0,
+  evidence: [],
+};
+
+/**
  * stale 시나리오 — 근거가 전부 6개월을 넘겼다.
  *
  * 🚨 `Evidence.is_stale` 은 **계약서 v1 에 아직 없는 필드**다 (types.ts 의 주석 참고).
@@ -977,6 +1006,98 @@ export const runEventDrafts: EventDraft[] = [
 ];
 
 /**
+ * 요일 반복 묶음 (#738 · `?scenario=event_repeat`). 모양은 서버 `EventSeriesOut`(#761)과 초안의
+ * `RepeatPayload`(`core/event_draft.py`)를 따른다.
+ *
+ * 🚨 **문구(`label`)는 서버가 만든다.** 목이 서버 대신 만드는 자리라 여기서 적는다 — 화면은 이 값을 그대로 그린다.
+ */
+function repeatSeries(): EventSeriesRef {
+  return seriesRef("series_1", [1, 3], iso(new Date(Date.now() + 40 * DAY_MS)));
+}
+
+const WEEKDAY_NAMES = ["", "월", "화", "수", "목", "금", "토", "일"];
+
+/**
+ * 묶음 한 건 (`EventSeriesOut` 모양). 🚨 **문구는 서버 `repeat_label` 을 흉내 낸다** — 목이 서버 대신 만드는 자리다.
+ * 화면은 이 값을 그대로 그리고 다시 만들지 않는다.
+ */
+export function seriesRef(id: string, weekdays: number[], until: string): EventSeriesRef {
+  const days = [...new Set(weekdays)].sort((a, b) => a - b);
+  const which =
+    days.length === 7
+      ? "매일"
+      : days.join() === "1,2,3,4,5"
+        ? "평일"
+        : `매주 ${days.map((d) => WEEKDAY_NAMES[d]).join(", ")}`;
+  const [, month, day] = until.split("-").map(Number);
+  return { id, weekdays: days, until, label: `${month}월 ${day}일까지 ${which}` };
+}
+
+/** 다가오는 월요일 08:30 (KST) — 반복 새 일정의 첫 회차. 목이 서버(`recurrence.py`) 대신 고른다. */
+function nextMonday(): string {
+  const day = new Date();
+  const ahead = ((8 - day.getDay()) % 7 || 7) * DAY_MS;
+  return `${iso(new Date(day.getTime() + ahead))}T08:30:00+09:00`;
+}
+
+/** 반복이 걸린 캘린더 회차의 묶음 (`?scenario=event_repeat` 에서만 붙는다 · `handlers/calendar.ts`). */
+export function calendarSeries(): EventSeriesRef {
+  return repeatSeries();
+}
+
+/**
+ * 반복 일정 run 이 내는 초안 묶음 (#738). 🚨 **새 반복 일정 + 묶음 전체 고치기가 섞여 있다** — 카드가 `op` 로
+ * 갈리는지(묶음은 읽기 전용 카드) 이 픽스처가 확인한다.
+ */
+export function repeatRunDrafts(): AnyEventDraft[] {
+  const series = repeatSeries();
+  const repeat = { weekdays: series.weekdays, until: series.until, label: series.label };
+  return [
+    {
+      draft_id: "d_repeat",
+      op: "create",
+      event_id: null,
+      event: {
+        title: "등원",
+        starts_at: nextMonday(),
+        ends_at: null,
+        all_day: false,
+        event_type: "core",
+        category: "institution",
+      },
+      items: [{ item_id: null, item_name: "물통" }],
+      repeat,
+    },
+    {
+      draft_id: "d_series",
+      op: "update_series",
+      series_id: series.id,
+      event: {
+        title: "수영",
+        starts_time: "16:00",
+        ends_time: null,
+        all_day: false,
+        event_type: "core",
+        category: "activity",
+      },
+      repeat,
+      /** 🚨 서버가 아직 시작하지 않은 회차에서 **가장 흔한 값**으로 만든다 — "오후 3:00 → 오후 4:00" 와 준비물 변화가 보여야 한다. */
+      before: {
+        title: "수영",
+        starts_time: "15:00",
+        ends_time: null,
+        all_day: false,
+        event_type: "core",
+        category: "activity",
+        repeat,
+        items: ["수영복", "수건"],
+      },
+      items: ["수영복", "수건", "물안경"],
+    },
+  ];
+}
+
+/**
  * 식사 제안 여러 건을 **한 끼로 묶은** 초안. 🚨 고른 개수와 초안 개수가 1:1 이 아니라는 것을
  * 목이 실제로 보여주는 자리다 — 제안 둘을 고르면 "저녁 식사" 하나가 되고, 준비물로 각 제안이 붙는다.
  *
@@ -1074,10 +1195,7 @@ export const routineObservation: ObservationPromotable = {
   strong_signals: [],
 };
 
-/**
- * 다섯 테이블 전부. 목록과 캘린더는 여기서 건강을 빼고 내려주지만(첫 배포 범위 밖 · #259 · #318),
- * 상세는 아직 이 배열에서 찾는다.
- */
+/** 다섯 테이블 전부. 목록 · 상세 · 캘린더가 모두 이 배열에서 찾는다 (건강 포함 · #764). */
 export const allObservations: Observation[] = [
   ...observations,
   educationObservation,

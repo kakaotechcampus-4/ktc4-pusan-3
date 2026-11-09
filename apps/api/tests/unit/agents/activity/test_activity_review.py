@@ -155,6 +155,8 @@ def review(
     docs=DOCS,
     area_places=(),
     requested=False,
+    request_texts=(),
+    dark_today=False,
 ):
     return review_candidates(
         candidates,
@@ -170,6 +172,8 @@ def review(
         area_places=area_places,
         today=TODAY,
         requested=requested,
+        request_texts=request_texts,
+        dark_today=dark_today,
     )
 
 
@@ -500,7 +504,7 @@ class TestPlace:
             data_date=None,
         )
         (draft,) = review(
-            candidate(content="볼풀에서 공 던지기", place_name="시험키즈카페"),
+            candidate(content="큰 쿠션 위에서 굴러 보기", place_name="시험키즈카페"),
             places={"시험키즈카페": cafe},
         ).drafts
         # 출처가 안 보이면 왜 이 가게가 나왔는지 몰라 광고처럼 읽힌다 — 날짜 없이 출처만 (#600 PM)
@@ -930,6 +934,70 @@ class TestSafety:
         assert draft.items == ("밀가루", "밀대")
 
 
+class TestFoods:
+    """음식 칸(foods) — 음식 활동이면 코드가 판정할 음식 이름이 있어야 한다 (#582)."""
+
+    PEANUT = SafetyEntry(kind="allergy", label="땅콩", status="active")
+
+    def food(self, **kwargs) -> ActivityCandidate:
+        base = dict(
+            content="바나나 잘라 꼬치 만들기",
+            involves_food=True,
+            foods=["바나나"],
+            materials=["꼬치"],
+            evidence=[DOC_PICK],
+        )
+        return candidate(**{**base, **kwargs})
+
+    def test_음식_활동인데_음식_칸이_비면_다시_적게_한다(self):
+        result = review(self.food(foods=[]))
+
+        assert reason_of(result) is RejectReason.FOODS_MISSING
+        assert "foods" in GUIDANCE[RejectReason.FOODS_MISSING]
+
+    def test_공백만_적은_음식_칸도_빈_칸이다(self):
+        assert reason_of(review(self.food(foods=["  "]))) is RejectReason.FOODS_MISSING
+
+    def test_음식_활동이_아니면_음식_칸이_비어도_된다(self):
+        assert review(candidate(evidence=[DOC_PICK])).rejections == ()
+
+    def test_음식_칸의_음식도_items_에_싣는다(self):
+        """승인 때 일정 준비물로 쓴다 — 재료와 같은 이름은 한 번만."""
+        (draft,) = review(
+            self.food(materials=["꼬치", "바나나"], foods=["바나나", "요거트"])
+        ).drafts
+
+        assert draft.items == ("꼬치", "바나나", "요거트")
+
+    def test_개인화_이유에_막힌_음식_이름이_나오면_다시_쓰게_한다(self):
+        """빼는 말("땅콩 없이")이어도 화면에 등록한 알레르기 이름이 나간다 (#575 ⭐3 기준)."""
+        personal = self.food(
+            reason="블록 놀이 뒤 간식으로 땅콩 없이 바나나만 써요",
+            evidence=[{"id": str(BLOCKS), "note": "블록 쌓기를 즐겨 했어요"}],
+        )
+
+        result = review(personal, safety=[self.PEANUT])
+
+        assert reason_of(result) is RejectReason.FOOD_MENTION
+        assert "땅콩" not in GUIDANCE[RejectReason.FOOD_MENTION]  # 걸린 낱말은 알려 주지 않는다
+
+    def test_일반_추천의_이유는_코드_문구로_덮어서_보지_않는다(self):
+        """기록 근거가 없으면 이유가 GENERAL_REASON 으로 바뀐다 — 거절하면 왕복만 는다."""
+        general = self.food(reason="땅콩 없이 바나나만 써요", evidence=[DOC_PICK])
+
+        (draft,) = review(general, safety=[self.PEANUT]).drafts
+
+        assert draft.reason == GENERAL_REASON
+
+    def test_알레르기와_겹치지_않는_음식_이름은_이유에_써도_된다(self):
+        personal = self.food(
+            reason="블록 놀이 뒤 바나나 간식이 잘 맞아요",
+            evidence=[{"id": str(BLOCKS), "note": "블록 쌓기를 즐겨 했어요"}],
+        )
+
+        assert review(personal, safety=[self.PEANUT]).rejections == ()
+
+
 class TestOutdoor:
     """그날 날씨 판정이 야외를 막았으면(D8) 야외 후보를 거절한다. 모델이 실내로 고친다 (#377)."""
 
@@ -968,7 +1036,7 @@ class TestOutdoor:
             data_date=None,
         )
         either_cafe = candidate(
-            content="볼풀에서 공 던지기", setting="either", place_name="시험키즈카페"
+            content="큰 쿠션 위에서 굴러 보기", setting="either", place_name="시험키즈카페"
         )
         result = review(either_cafe, outdoor=self.RAIN_TODAY, places={"시험키즈카페": cafe})
         assert result.rejections == ()
@@ -1263,3 +1331,135 @@ class TestSaidInRequest:
     )
     def test_보호자_말에_없으면_요청이_아니다(self, play, said):
         assert said_in_request(play, [said]) is False
+
+
+class TestInventedFacility:
+    """장소 이름만 보고 그 안의 시설을 지어내지 않는다 (#814 · "가상놀이키즈카페에서 볼풀").
+
+    공공데이터에는 시설 칸이 없다. 시설은 보호자가 말했거나 이번 run 에 조회한 기록에 있을
+    때만 쓴다.
+    """
+
+    CAFE = "가상놀이키즈카페"
+    CAFE_ROW = PlaceRow(
+        name=CAFE,
+        category=PlaceCategory.INDOOR_PLAYGROUND,
+        distance_m=900,
+        source="kids_play_facility",
+        data_date=None,
+    )
+
+    def at_cafe(
+        self, content: str, reason: str = "몸을 쓰는 실내 놀이가 맞아요"
+    ) -> ActivityCandidate:
+        return candidate(content=content, reason=reason, place_name=self.CAFE)
+
+    def run(self, *cands, **kwargs):
+        return review(*cands, places={self.CAFE: self.CAFE_ROW}, **kwargs)
+
+    @pytest.mark.parametrize(
+        "content",
+        [
+            "볼풀에서 공 옮기기",
+            "역할놀이존에서 가게 놀이",
+            "블록존에서 탑 쌓기",
+            "키즈풀에서 물장구",
+        ],
+    )
+    def test_요청에도_기록에도_없는_시설은_거절한다(self, content):
+        assert reason_of(self.run(self.at_cafe(content))) is RejectReason.INVENTED_FACILITY
+
+    def test_이유_문장에_써도_거절한다(self):
+        cand = self.at_cafe("큰 블록으로 탑 쌓기", reason="이곳 볼풀이 넓어서 좋아요")
+        assert reason_of(self.run(cand)) is RejectReason.INVENTED_FACILITY
+
+    def test_보호자가_말해도_그_장소에_있다고_단정하면_거절한다(self):
+        """요청의 시설은 "원한다" 이지 "그곳에 있다" 가 아니다 (#820 리뷰)."""
+        result = self.run(
+            self.at_cafe("볼풀에서 공 옮기기"), request_texts=("볼풀 있는 키즈카페 가려는데",)
+        )
+        assert reason_of(result) is RejectReason.INVENTED_FACILITY
+
+    def test_싫다고_한_시설도_허용하지_않는다(self):
+        """ "볼풀은 싫어해" 에 볼풀이 들어 있다고 볼풀을 쓰게 하면 안 된다 (#820 리뷰)."""
+        result = self.run(self.at_cafe("볼풀에서 공 옮기기"), request_texts=("볼풀은 싫어해",))
+        assert reason_of(result) is RejectReason.INVENTED_FACILITY
+
+    def test_있는지_확인하라는_문장은_통과한다(self):
+        cand = self.at_cafe(
+            "큰 쿠션 위에서 굴러 보기", reason="볼풀이 있는지는 가기 전에 확인해 주세요"
+        )
+        assert reason_of(self.run(cand)) is None
+
+    def test_그_장소에서_시설을_쓴_기록이면_통과한다(self):
+        visit = UUID(int=31)
+        seen = {
+            **SEEN,
+            visit: ranked(visit, label="가상놀이키즈카페에서 볼풀 놀이", tier=3, polarity=1),
+        }
+        assert reason_of(self.run(self.at_cafe("볼풀에서 공 옮기기"), seen=seen)) is None
+
+    def test_장소_없이_시설만_나온_기록은_확인이_아니다(self):
+        ball_pit = UUID(int=31)
+        seen = {**SEEN, ball_pit: ranked(ball_pit, label="볼풀 놀이", tier=3, polarity=1)}
+        result = self.run(self.at_cafe("볼풀에서 공 옮기기"), seen=seen)
+        assert reason_of(result) is RejectReason.INVENTED_FACILITY
+
+    @pytest.mark.parametrize(
+        ("label", "polarity"),
+        [
+            ("가상놀이키즈카페 볼풀은 싫어함", -1),
+            ("가상놀이키즈카페는 볼풀이 없어서 아쉬웠다", 0),
+        ],
+    )
+    def test_부정하는_기록은_확인이_아니다(self, label, polarity):
+        visit = UUID(int=31)
+        seen = {**SEEN, visit: ranked(visit, label=label, tier=3, polarity=polarity)}
+        result = self.run(self.at_cafe("볼풀에서 공 옮기기"), seen=seen)
+        assert reason_of(result) is RejectReason.INVENTED_FACILITY
+
+    def test_장소가_없는_후보는_보지_않는다(self):
+        """장소를 붙이지 않은 집 놀이는 그 장소의 시설을 단정하지 않는다."""
+        cand = candidate(content="거실에 쿠션으로 볼풀 만들기")
+        assert reason_of(review(cand)) is None
+
+    def test_띄어써도_같은_시설이다(self):
+        assert reason_of(self.run(self.at_cafe("볼 풀에서 공 옮기기"))) is (
+            RejectReason.INVENTED_FACILITY
+        )
+
+
+class TestDarkPlayground:
+    """해가 진 뒤 오늘 놀이터는 출력 검증에서도 막는다 — 다른 날로 조회한 놀이터를 오늘 후보로
+    내는 길이 있다 (#805 리뷰)."""
+
+    PLAYGROUND = "가상놀이터"
+    ROW = PlaceRow(
+        name=PLAYGROUND,
+        category=PlaceCategory.PLAYGROUND,
+        distance_m=300,
+        source="kids_play_facility",
+        data_date=None,
+    )
+
+    def at_playground(self, day: str) -> ActivityCandidate:
+        return candidate(
+            content="미끄럼틀 타기", setting="outdoor", place_name=self.PLAYGROUND, day=day
+        )
+
+    def run(self, cand, *, dark_today: bool):
+        return review(cand, places={self.PLAYGROUND: self.ROW}, dark_today=dark_today)
+
+    def test_해가_진_뒤_오늘_놀이터는_거절한다(self):
+        result = self.run(self.at_playground("오늘"), dark_today=True)
+        assert reason_of(result) is RejectReason.DARK_PLAYGROUND
+
+    def test_해가_진_뒤라도_내일_놀이터는_통과한다(self):
+        assert reason_of(self.run(self.at_playground("내일"), dark_today=True)) is None
+
+    def test_해가_지기_전이면_오늘_놀이터도_통과한다(self):
+        assert reason_of(self.run(self.at_playground("오늘"), dark_today=False)) is None
+
+    def test_해가_진_뒤라도_오늘_공원은_통과한다(self):
+        park = candidate(content="공원 산책", setting="outdoor", place_name=PARK, day="오늘")
+        assert reason_of(review(park, dark_today=True)) is None

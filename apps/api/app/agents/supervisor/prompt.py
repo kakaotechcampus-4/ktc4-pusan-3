@@ -45,6 +45,8 @@ _RECORD = """
   앞부분이 일어난 일처럼 보여도 observe 로 떼지 않고 문장 전체를 한 조각으로 둔다.
   단 "당근 말고 다 먹었어" 처럼 빼고 말하는 것은 정정이 아니라 observe 다.
   어린이집·유치원 급식을 바꾼다는 말은 기록 수정이 아니라 daycare_meal 이다.
+- 기관에서 받은 공지(알림장 · 가정통신문 · 기관 문자)의 내용을 묻는 말도 record/lookup_edit 이다.
+  급식 메뉴를 묻는 말만 request/food/daycare_lookup 이다.
 - 기록인지 요청인지 애매하면 record 로 보낸다.
   요청문 안에 섞인 사실 진술도 따로 떼어 record 로 보낸다.
 - "~것 같아" 처럼 확신이 약한 보호자의 인상도 record 다. 확신 정도는 Memory 가 판단한다.
@@ -54,7 +56,7 @@ _RECORD = """
 _REQUEST = """
 [request — 도메인 Agent 요청]
 - agent 는 food · activity(놀이·여가) · growth(학습·발달) · health 중 하나다.
-- food로 보내는 건 네 가지다.
+- food로 보내는 건 다섯 가지다.
   meal_recommendation  뭘 먹일까 · 메뉴 · 간식 · 도시락 · 이유식 · 뭘 챙겨 먹이면 좋을까
   nutrient_analysis    영양이 괜찮은지 · 영양소 · 골고루 먹었는지 · 과잉/부족
   food_check           정해진 음식을 먹여도 되는지 묻는 말 — "○○ 먹여도 돼?" · "○○ 먹어도 괜찮아?" ·
@@ -66,7 +68,12 @@ _REQUEST = """
   daycare_meal         어린이집·유치원 급식이 실제로 바뀌었다는 말 — 대체식 · 결석.
                        기관 신호(어린이집·유치원·급식)가 있으면 이쪽, 없으면 record다.
                        "다음 주 월요일 어린이집 간식은 요거트 말고 바나나로 바꿔줘" 처럼
-                       급식을 "~말고 ~로 바꿔줘" 라고 해도 이쪽이다
+                       급식을 "~말고 ~로 바꿔줘" 라고 해도 이쪽이다.
+                       급식 메뉴를 묻는 말은 이쪽이 아니라 daycare_lookup 이다
+  daycare_lookup       어린이집·유치원 급식 메뉴를 묻는 말 — 오늘 · 내일 · 지난 날 · 이번 주 급식이
+                       뭐였는지 · 뭐 나오는지. 기관 신호(어린이집·유치원·급식·간식 메뉴)가 있다.
+                       기관 신호 없이 "지난주에 뭐 먹었지" 처럼 아이가 먹은 기록을 보려는 말은
+                       record/lookup_edit 이다
 - meal_recommendation 과 nutrient_analysis 가 애매하면 meal_recommendation 으로 보낸다.
 - growth로 보내는 건 네 가지다.
   learning_suggestion  배움 · 공부 · 한글 · 숫자 · 교육 활동을 추천해 달라는 말
@@ -152,10 +159,15 @@ _EXAMPLES = """
   + request/food/meal_recommendation "내일 소풍 도시락은 뭐가 좋을까?"
 - "다음 주 화요일 치과 예약 있어." → record/schedule
 - "지난주에 먹은 것 좀 보여줘." → record/lookup_edit
+- "공지 뭐 있어?" → record/lookup_edit
+- "어린이집 공지 뭐 왔어?" → record/lookup_edit (급식 메뉴를 묻는 말이 아니다)
+- "어제 온 알림장에 뭐라고 써 있었어?" → record/lookup_edit
 - "오늘 친구들이랑 자전거 타고 논 기록을 킥보드로 바꿔줘" → record/lookup_edit 문장 전체
 - "오늘 김밥말고 볶음밥 먹었대" → record/lookup_edit 문장 전체 (정정)
 - "오늘 놀이터가 아니라 공원에서 놀았어" → record/lookup_edit 문장 전체 (장소 정정)
 - "내일 급식 메뉴 좀 바꿔줘" → request/food/daycare_meal (급식 변경은 기록 수정이 아니다)
+- "내일 어린이집 점심 뭐 나와?" → request/food/daycare_lookup (급식을 묻는 말은 바꾸는 말이 아니다)
+- "지난주 급식 뭐였는지 알려줘" → request/food/daycare_lookup
 - "요즘 밥을 잘 안 먹는데 영양은 괜찮을까?"
   → record/observe "요즘 밥을 잘 안 먹는데" + request/food/nutrient_analysis "영양은 괜찮을까?"
 - "간식이랑 주말 나들이 추천해줘."
@@ -236,9 +248,36 @@ _RETRY = """
 - 나머지 조각은 처음 나눌 때와 같은 기준으로 나눈다. route 는 발화 전체를 다시 담아 한 번 부른다.
 """.strip()
 
+_CONTEXT = """
+[앞 대화가 올 때]
+- 이번 입력 앞에 "[앞 대화]" 메시지가 오면 30분 안에 보호자와 나눈 대화다.
+  이번 입력이 그 대화를 이어 묻는 말일 때만 쓴다.
+  혼자 읽어도 뜻이 통하는 요청은 앞 주제로 끌고 가지 않는다.
+- 조각 text 는 언제나 이번 입력에서만 자른다. 앞 대화의 문장을 조각으로 내지 않고,
+  앞 대화에 있던 기록을 다시 record 로 보내지 않는다.
+- kind · guard 는 이번 입력의 말로 정한다. 앞 대화가 요청이었어도 이번 입력이 증상 · 위험 물질 ·
+  진단 문의면 그쪽이다.
+- 앞 대화를 이어 묻는 request 조각에는 resolved_request 를 채운다 — 앞 대화를 몰라도 뜻이 통하는
+  요청 한 문장. 앞에서 낸 추천 이름이 있으면 겹치지 않게 그 이름을 담는다.
+  예) 앞: 보호자 "주말 나들이 추천해줘" / activity completed — 추천: 숲 체험 · 동물원
+      이번: "그럼 다른 데는?" → request/activity,
+      resolved_request "숲 체험 · 동물원 말고 다른 주말 나들이 추천"
+- "못 낸 것" 을 다시 묻는 말은 가장 최근 턴의 "못 낸 것" Agent 로 보내고, 그 턴의 보호자 말에서
+  요청을 되살려 resolved_request 에 쓴다.
+- 무엇을 이어서 하라는지 정할 수 없으면 — "[앞 대화] 없음" 이거나 이어 볼 것이 여럿이면 — unclear 로
+  둔다. 짐작해서 agent 를 고르지 않는다.
+- "[앞 대화]" 메시지가 없으면 resolved_request 를 채우지 않는다.
+""".strip()
+
 _SECTIONS = (_ROLE, _SPLIT, _RECORD, _REQUEST, _GUARDED, _ELSE, _EXAMPLES, _RETRY)
 
 
-def build_system_prompt() -> str:
-    """system 메시지 본문. 아이 정보를 담지 않으므로 run마다 같다."""
-    return "\n\n".join(_SECTIONS)
+def build_system_prompt(*, with_context: bool = False) -> str:
+    """system 메시지 본문. 아이 정보를 담지 않으므로 run마다 같다.
+
+    `with_context` 는 "[앞 대화]" 메시지를 같이 보내는 호출(후속 질문)만 켠다. 앞 대화가 없는
+    호출은 이 절을 받지 않는다 — 단발 요청의 분류가 이 기능 때문에 달라지지 않게, 모델이 보는 글을
+    앞 대화 기능이 생기기 전과 같게 둔다. 켠 쪽은 끄지 않은 글에 이 절만 뒤에 붙는다.
+    """
+    sections = (*_SECTIONS, _CONTEXT) if with_context else _SECTIONS
+    return "\n\n".join(sections)

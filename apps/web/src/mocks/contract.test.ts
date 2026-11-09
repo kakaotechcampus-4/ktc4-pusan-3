@@ -22,6 +22,7 @@ import {
   photoFormData,
   submitOnboarding,
   updateEventDraft,
+  updateEventSeries,
   updateHealthSafety,
   uploadPhoto,
 } from "@/lib/api/operations";
@@ -90,7 +91,9 @@ import type {
   PhotoLane,
   SafetyScanResponse,
   UpdateHealthSafetyRequest,
+  AnyEventDraft,
   EventDraft,
+  SeriesDraft,
   EventItem,
   EventItemUpdateResponse,
   ReminderResponse,
@@ -103,10 +106,11 @@ import type {
 } from "@/lib/api/types";
 
 import { INVITE_CODE_LENGTH, normalizeInviteCode } from "@/lib/invite-code";
+import { isSeriesDraft, repeatRequest, seriesSubmitBody } from "@/lib/event-draft";
 
 import { submittedInput } from "./handlers/runs";
 
-import { daysAgo, suggestionAllergens, suggestions } from "./fixtures";
+import { confirmedEvent, daysAgo, suggestionAllergens, suggestions } from "./fixtures";
 import { setScenario } from "./scenario";
 
 /**
@@ -414,6 +418,28 @@ describe("일정 초안", () => {
       const data = await fetchSuggestions();
       expect(data.suggestions.map((s) => s.id)).not.toContain(id);
       expect(asked(data).some((a) => a.endsWith(`:${allergen}`))).toBe(false);
+    });
+
+    /**
+     * 🚨 **목록을 받은 뒤 등록된 알레르기는 채택이 막는다** (문서 §3-8 ② · 서버 #835 · #823).
+     *    하나라도 걸리면 전부 거절하고 걸린 id 를 싣는다 — 화면은 그 id 를 선택에서 뺀다.
+     */
+    it("🚨 목록을 받은 뒤 등록된 알레르기가 든 제안은 채택을 전부 거절하고 그 id 를 싣는다", async () => {
+      const data = await fetchSuggestions();
+      const [id, [allergen]] = Object.entries(suggestionAllergens).find(([, a]) => a.length > 0)!;
+      const other = data.suggestions.find((s) => !suggestionAllergens[s.id]?.length)!;
+      await addHealthSafety("c1", { type: "allergy", label: allergen }, newIdempotencyKey());
+
+      const refused = await approveSuggestions("c1", { suggestion_ids: [id, other.id] }).catch(
+        (e: unknown) => e,
+      );
+      expect(isApiError(refused, "allergen_blocked")).toBe(true);
+      expect((refused as ApiError).status).toBe(409);
+      expect((refused as ApiError).detail).toEqual({ suggestion_ids: [id] });
+
+      // 전부 거절했으므로 걸리지 않은 제안도 아직 draft 다 — 빼고 다시 보내면 채택된다.
+      const approved = await approveSuggestions("c1", { suggestion_ids: [other.id] });
+      expect(approved.suggestions.map((s) => s.id)).toEqual([other.id]);
     });
 
     it("retracted 로 내린 항목은 다시 묻지 않고, 그 제안은 목록에 남는다", async () => {
@@ -754,6 +780,21 @@ describe("05 묶음 안내 · 일반 추천 근거 (#249)", () => {
     expect(data.suggestions).toEqual([]);
   });
 
+  it("🚨 재료를 정해 물은 식사 일반 추천도 문서 근거가 비어 오고 기준 문구를 단다 (#740)", async () => {
+    const data = await fetchWith("suggest_requested_food", { agents: ["food"] });
+
+    const general = data.general ?? [];
+    expect(general.length).toBeGreaterThan(0);
+    for (const item of general) {
+      // 🚨 종류는 그대로 general 이다 — 요청 기반인지 가르는 칸은 응답에 없다
+      expect(item.kind).toBe("general");
+      expect(item.agent).toBe("food");
+      expect(item.evidence).toEqual([]);
+      expect(item.basis).not.toBe("");
+    }
+    expect(data.suggestions).toEqual([]);
+  });
+
   it("🚨 묶음마다 확인 문구 칸이 늘 있고, 식품 아닌 알레르기는 놀이 묶음에 문구가 온다", async () => {
     const plain = await fetchWith("default", { agents: ["food", "activity"] });
     for (const group of plain.groups ?? []) expect(Array.isArray(group.cautions)).toBe(true);
@@ -880,7 +921,7 @@ describe("⑦ 상태 전이 · SSE 순서", () => {
     );
 
     const seen: string[] = [];
-    let drafts: EventDraft[] = [];
+    let drafts: AnyEventDraft[] = [];
     for await (const event of streamRunEvents(run_id)) {
       seen.push(event.type);
       if (isDraftEvent(event.type)) drafts = (event.data as EventDraftsEvent).drafts;
@@ -892,7 +933,7 @@ describe("⑦ 상태 전이 · SSE 순서", () => {
 
     // 🚨 한 run 이 create 와 update 를 같이 낼 수 있다 — 화면이 op 로 엔드포인트를 가른다.
     expect(drafts.some((d) => d.op === "create")).toBe(true);
-    const update = drafts.find((d) => d.op === "update");
+    const update = drafts.find((d): d is EventDraft => d.op === "update");
     expect(update?.event_id).toBeTruthy();
     // 🚨 update 초안은 `before` 가 원본 전체다 — 없으면 "오후 3시 → 오후 5시" 를 못 그린다.
     expect(update?.before?.items).toBeDefined();
@@ -1433,13 +1474,13 @@ describe("㉑ 하루 한도는 다시 시도로 풀리지 않는다", () => {
 /* ── 07 기억 · 교정 ──────────────────────────────────────────────────── */
 
 describe("⑧ 관찰과 프로필은 다른 엔드포인트다", () => {
-  it("도메인을 생략하면 건강을 뺀 4개 테이블을 병합해 observed_to DESC 로 내려준다", async () => {
+  it("도메인을 생략하면 건강까지 5개 테이블을 병합해 observed_to DESC 로 내려준다", async () => {
     const page = await api.get<ObservationsResponse>("/children/c1/observations");
 
     const kinds = new Set(page.items.map((item) => item.kind));
     expect(kinds.size).toBeGreaterThan(1);
-    // 🚨 건강 관찰은 첫 배포 범위 밖이다 — 서버(#266)가 목록에서 뺀다 (#259).
-    expect(kinds).not.toContain("observation_health");
+    // 건강 기록도 기록 탭에 나온다 (#764). 서버도 다섯 표를 합친다.
+    expect(kinds).toContain("observation_health");
     expect(page.total).toBe(page.items.length);
 
     const dates = page.items.map((item) => item.observed_to);
@@ -1466,12 +1507,28 @@ describe("⑧ 관찰과 프로필은 다른 엔드포인트다", () => {
     );
   });
 
-  it("health 는 오류가 아니라 빈 목록이다", async () => {
+  it("health 는 건강 테이블만 건강 모양으로 내려준다 (#764)", async () => {
     const page = await api.get<ObservationsResponse>("/children/c1/observations", {
       query: { domain: "health" },
     });
 
-    expect(page).toEqual({ items: [], total: 0, page: 1, size: 20, total_pages: 0 });
+    expect(page.items.length).toBeGreaterThan(0);
+    expect(page.items.every((item) => item.kind === "observation_health")).toBe(true);
+    // 🚨 건강 모양은 주제 · 성향 · 기억 키가 아예 없다 (null 이 아니다). 화면은 `kind` 로 가른다.
+    for (const item of page.items) {
+      expect(["subject", "polarity", "strong_signals", "affinity"].some((key) => key in item)).toBe(
+        false,
+      );
+    }
+  });
+
+  it("건강 기록 상세는 200 이고 고친 이력이 없다 (#764)", async () => {
+    const detail = await api.get<ObservationDetailResponse>(
+      "/children/c1/observations/observation_health/o_h1",
+    );
+
+    expect(detail.observation.kind).toBe("observation_health");
+    expect(detail.corrections).toEqual([]);
   });
 
   it("1쪽부터 total_pages 까지 넘기면 빠지거나 겹치는 기록 없이 끝까지 간다 (#584)", async () => {
@@ -1498,18 +1555,18 @@ describe("⑧ 관찰과 프로필은 다른 엔드포인트다", () => {
     setScenario("observations_many");
     try {
       const first = await api.get<ObservationsResponse>("/children/c1/observations");
-      expect(first).toMatchObject({ total: 25, page: 1, size: 20, total_pages: 2 });
+      expect(first).toMatchObject({ total: 26, page: 1, size: 20, total_pages: 2 });
       expect(first.items).toHaveLength(20);
 
       const second = await api.get<ObservationsResponse>("/children/c1/observations", {
         query: { page: 2 },
       });
-      expect(second.items).toHaveLength(5);
+      expect(second.items).toHaveLength(6);
 
       const beyond = await api.get<ObservationsResponse>("/children/c1/observations", {
         query: { page: 3 },
       });
-      expect(beyond).toMatchObject({ items: [], total: 25, page: 3, total_pages: 2 });
+      expect(beyond).toMatchObject({ items: [], total: 26, page: 3, total_pages: 2 });
     } finally {
       setScenario("default");
     }
@@ -1830,6 +1887,27 @@ describe("⑨ 교정은 지우지 않고 내린다", () => {
     expect((failure as ApiError).status).toBe(400);
   });
 
+  // 🚨 서버는 건강 기록 고치기를 받지 않는다 (#764). 화면은 건강 기록에 고치기 버튼을 세우지 않는다.
+  it.each(["once_only", "wrong"] as const)(
+    "건강 기록에 %s 를 보내면 400 이고 기록은 그대로다",
+    async (verdict) => {
+      const failure = await api
+        .post<CorrectionResponse>("/corrections", {
+          target_ref: { kind: "observation_health", id: "o_h1" },
+          verdict,
+          child_id: "c1",
+        })
+        .catch((error: unknown) => error);
+
+      expect(isApiError(failure, "validation_failed")).toBe(true);
+      expect((failure as ApiError).status).toBe(400);
+      const detail = await api.get<ObservationDetailResponse>(
+        "/children/c1/observations/observation_health/o_h1",
+      );
+      expect(detail.observation.status).toBe("active");
+    },
+  );
+
   it("기록에 기억 판정(need_more_observation)을 보내면 400 이다", async () => {
     const failure = await api
       .post<CorrectionResponse>("/corrections", {
@@ -2097,8 +2175,8 @@ describe("⑪ 일기는 관찰이 아니다", () => {
       onCalendar.push(...detail.observations);
     }
 
-    // 🚨 건강 기록은 첫 배포 범위 밖이다 (#259 · #318). 기록 탭에서도 캘린더에서도 빠진다.
-    expect(onCalendar.some((o) => o.kind === "observation_health")).toBe(false);
+    // 건강 기록도 기록 탭처럼 캘린더에 선다 (#764).
+    expect(onCalendar.some((o) => o.kind === "observation_health")).toBe(true);
     // 고친 기록(`stand_alone`)도 캘린더에 남는다 — 기록 탭이 남기기 때문이다.
     expect(onCalendar.find((o) => o.id === target!.id)?.status).toBe("stand_alone");
 
@@ -4912,5 +4990,110 @@ describe("복약 run 대본 (#537)", () => {
       const { courses } = await api.get<MedicationsResponse>("/children/c1/medications");
       expect(courses.map((c) => c.id)).toContain("ms_seed");
     });
+  });
+});
+
+describe("반복 일정 — 새 반복 일정 · 묶음 고치기 (#738)", () => {
+  afterEach(() => setScenario("default"));
+
+  /** `?scenario=event_repeat` 의 run 이 내는 초안 묶음. */
+  async function repeatDrafts(): Promise<AnyEventDraft[]> {
+    setScenario("event_repeat");
+    const { run_id } = await api.post<{ run_id: string }>(
+      idempotentPath.input("c1"),
+      { text: "지어낸 반복 한 줄", source: "home_input" },
+      { idempotencyKey: newIdempotencyKey() },
+    );
+    let drafts: AnyEventDraft[] = [];
+    for await (const event of streamRunEvents(run_id)) {
+      if (isDraftEvent(event.type)) drafts = (event.data as EventDraftsEvent).drafts;
+    }
+    return drafts;
+  }
+
+  function seriesOf(drafts: AnyEventDraft[]): SeriesDraft {
+    const found = drafts.find(isSeriesDraft);
+    if (!found) throw new Error("묶음 초안이 없다");
+    return found;
+  }
+
+  function repeatOf(drafts: AnyEventDraft[]): EventDraft {
+    const found = drafts.find((d): d is EventDraft => !isSeriesDraft(d) && d.repeat !== undefined);
+    if (!found) throw new Error("반복 새 일정 초안이 없다");
+    return found;
+  }
+
+  it("한 프레임에 반복 새 일정과 묶음 고치기가 섞여 온다 — 카드는 op 로 가른다", async () => {
+    const drafts = await repeatDrafts();
+    const created = repeatOf(drafts);
+    expect(created.op).toBe("create");
+    // 🚨 문구는 서버가 만든다 — 화면은 그대로 그린다.
+    expect(created.repeat?.label).toMatch(/까지/);
+
+    const series = seriesOf(drafts);
+    // 🚨 묶음 초안에는 날짜가 없다. 일정 카드의 칸(날짜 + 시각)으로 그리면 안 된다.
+    expect(series.event).not.toHaveProperty("starts_at");
+    expect(series).not.toHaveProperty("event_id");
+    // 🚨 준비물은 이름이다 — 회차마다 item_id 가 달라서다.
+    for (const name of series.items) expect(typeof name).toBe("string");
+    expect(series.before?.items.every((name) => typeof name === "string")).toBe(true);
+  });
+
+  it("반복 새 일정은 요일 · 끝 날짜를 싣고 문구는 되돌려 보내지 않는다", async () => {
+    const created = repeatOf(await repeatDrafts());
+    if (!created.repeat || !created.event.starts_at) throw new Error("반복 초안 모양이 아니다");
+    const body = {
+      event: created.event,
+      items: created.items,
+      reminder: null,
+      repeat: repeatRequest(created.repeat),
+    };
+    expect(body.repeat).not.toHaveProperty("label");
+    // 응답 `event` 는 첫 회차이고 묶음이 붙는다 (서버 #761) — 문구는 초안이 보여 준 것과 같다.
+    await expect(submitEventDraft("c1", body, newIdempotencyKey())).resolves.toMatchObject({
+      event: { starts_at: created.event.starts_at, series: { label: created.repeat.label } },
+    });
+
+    // 🚨 문구까지 실으면 막는다 — 서버 문구는 화면이 다시 보낼 값이 아니다.
+    const withLabel = { ...body, repeat: created.repeat };
+    await expect(submitEventDraft("c1", withLabel, newIdempotencyKey())).rejects.toSatisfy(
+      (error: unknown) => isApiError(error, "validation_failed"),
+    );
+  });
+
+  it("묶음 고치기는 before 를 같이 보내고, 키 없이는 나가지 않는다", async () => {
+    const series = seriesOf(await repeatDrafts());
+    const body = seriesSubmitBody(series);
+    // 🚨 서버는 before 와 달라진 값만 아직 시작하지 않은 회차에 적용한다 — 빠지면 따로 고쳐 둔 회차가 덮인다.
+    expect(body.before).not.toBeNull();
+    expect(body.repeat).not.toHaveProperty("label");
+    expect(body.before?.repeat).not.toHaveProperty("label");
+
+    // 응답은 서버 `UpdateSeriesResponse` 와 같은 모양이다 — 화면은 읽지 않지만 목이 다른 모양을 내면 계약이 갈린다.
+    await expect(
+      updateEventSeries("c1", series.series_id, body, newIdempotencyKey()),
+    ).resolves.toMatchObject({
+      series: { id: series.series_id, label: expect.any(String) },
+      occurrence_count: expect.any(Number),
+    });
+
+    const response = await raw(idempotentPath.updateEventSeries("c1", series.series_id), {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    expect(response.status).toBe(400);
+  });
+
+  it("09 의 회차에 그 반복의 문구가 붙는다", async () => {
+    setScenario("event_repeat");
+    const date = confirmedEvent.starts_at.slice(0, 10);
+    const day = await api.get<CalendarDayResponse>(`/children/c1/calendar/${date}`);
+    expect(day.events[0]?.series?.label).toMatch(/까지/);
+
+    setScenario("default");
+    const plain = await api.get<CalendarDayResponse>(`/children/c1/calendar/${date}`);
+    // 🚨 반복이 아닌 일정에는 키 자체가 없다.
+    expect(plain.events[0]).not.toHaveProperty("series");
   });
 });

@@ -12,6 +12,7 @@ import type {
   SavedEvent,
   UnavailableEvent,
 } from "./sse";
+import type { TourKey } from "@/lib/tour/types";
 
 /* ── Ref — 도메인 간 참조 ────────────────────────────────────────────────
  * observation 테이블이 5개로 나뉘어 있어 id 만으로는 어느 테이블인지 알 수 없다.
@@ -365,7 +366,7 @@ export interface Suggestion {
  *    `source_refs` 필드가 **아예 없어서**, 개인화 목록(`SuggestionList`)에 넘기면 타입이 막는다.
  *
  * 🚨 **`basis` 는 서버 문구다.** 무엇을 기준으로 골랐는지는 만든 쪽만 안다 — 막연한 요청이면
- *    또래 기준이고, 보호자가 놀이를 정해 물었으면 그 요청에 맞춘 것이다 (#597). 응답에는 둘을 가르는
+ *    또래 기준이고, 보호자가 놀이 · 주제 · 재료를 정해 물었으면 그 요청에 맞춘 것이다 (#597 · #740). 응답에는 둘을 가르는
  *    칸이 없어서 화면은 라벨에 "또래 기준" 을 붙이지 않고 이 문구를 그대로 보인다.
  */
 export interface GeneralSuggestion {
@@ -392,7 +393,8 @@ export interface GeneralSuggestion {
   record_count: number;
   /**
    * 🚨 **문서 행 근거다** (#249 · 최상위 §2 "일반은 문서 행을 근거로 단다").
-   * ⚠️ **비어 올 수 있다** (#597). 보호자가 놀이를 정해 물은 Activity 일반 추천은 그 요청이 기준이라
+   * ⚠️ **비어 올 수 있다** (#597 · #740). 보호자가 놀이 · 주제 · 재료를 정해 물은 일반 추천(Activity · Growth ·
+   *    Food)은 그 요청이 기준이라
    *    문서 행이 없어도 된다. 화면은 출처 줄 없이 `basis` 만 그린다 — 근거 0건을 개인화로 그릴 길은
    *    여전히 없다 (`Suggestion` 과 타입이 다르다).
    *    아이 기록 근거(`Suggestion.evidence`)와 필드 이름까지 같지만 **다른 타입**이다.
@@ -488,6 +490,16 @@ export interface CalendarEvent {
   items: EventItem[];
   /** 요청한 보호자 본인의 알림. 걸지 않았으면 null. */
   reminder: Reminder | null;
+  /**
+   * 요일 반복 묶음의 회차이면 그 묶음 (#738 · 서버 #761 `CalendarEventOut.series`).
+   * 🚨 **반복이 아니면 키 자체가 없다** (null 이 아니다) — 서버가 `exclude_if` 로 뺀다. 값이 있는지로 가른다.
+   */
+  series?: EventSeriesRef;
+}
+
+/** 일정이 속한 반복 묶음 (#738). 🚨 `label` 은 서버 문구다 — 화면이 요일 · 끝 날짜로 다시 만들지 않는다. */
+export interface EventSeriesRef extends EventRepeat {
+  id: string;
 }
 
 /* ── 화면 응답 ────────────────────────────────────────────────────────── */
@@ -812,7 +824,73 @@ export interface EventDraft {
    *    단수로 두면 묶인 나머지 제안은 일정이 됐다는 사실이 남지 않는다.
    */
   suggestion_ids?: string[];
+  /**
+   * 요일 반복 일정이면 그 규칙 (#738). 🚨 **create 초안에만 있고, 반복이 아니면 키 자체가 없다**
+   *    (`core/event_draft.py` 의 `CreateRepeatEventDraft` — 항상 null 인 키는 싣지 않는다).
+   *    `event.starts_at` 은 **첫 회차**의 시각이다. 회차마다 일정 행으로 펼치는 것은 제출받는 서버다.
+   */
+  repeat?: EventRepeat;
 }
+
+/**
+ * 요일 반복 규칙 (#738). 🚨 **화면은 날짜를 계산하지 않는다** — 어느 날이 회차인지와 90일 상한은
+ * 서버 `app/rules/recurrence.py` 가 정하고, 화면은 `label` 을 그대로 그린다 (최상위 §3).
+ */
+export interface EventRepeat {
+  /** ISO 요일 (1=월 … 7=일). */
+  weekdays: number[];
+  /** 마지막 날 `YYYY-MM-DD` (그날 포함). */
+  until: string;
+  /** "12월 20일까지 매주 월, 수". 🚨 서버 문구다 — 화면이 `weekdays` 로 다시 만들지 않는다. */
+  label: string;
+}
+
+/**
+ * 반복 묶음 고치기에서 바꾸는 값 (#738). 🚨 **날짜가 없다** — 회차 날짜는 반복 규칙이 정하고,
+ * 시각은 하루의 시각(KST `HH:MM`)만 말한다. 종일이면 `null` 이다.
+ */
+export interface SeriesDraftFields {
+  title: string;
+  starts_time: string | null;
+  ends_time: string | null;
+  all_day: boolean;
+  event_type: CalendarEvent["event_type"];
+  category: CalendarEvent["category"];
+}
+
+/** 고치기 전 묶음. 🚨 서버가 **아직 시작하지 않은 회차에서 가장 흔한 값**으로 만든다 (첫 회차가 아니다). */
+export interface SeriesDraftBefore extends SeriesDraftFields {
+  repeat: EventRepeat;
+  /** 준비물 **이름**. 회차마다 `item_id` 가 달라 이름으로 맞춘다. */
+  items: string[];
+}
+
+/**
+ * 반복 묶음 전체를 고치는 초안 (`op: "update_series"` · #738). 정본은 `core/event_draft.py` 의 `UpdateSeriesDraft`.
+ *
+ * 🚨 **아직 시작하지 않은 회차에만 적용된다**(시간 일정은 시작이 지금 이후, 종일은 KST 오늘 이후). 지난 회차는 그대로다.
+ * 🚨 **카드는 읽기 전용이다** (#738). 고칠 값이 날짜 없는 시각 · 요일 · 끝 날짜라 일정 카드의 칸(날짜 + 시각)으로
+ *    받을 수 없고, 요일 · 끝 날짜를 화면이 고치면 `label` 을 다시 만들어야 한다(날짜 계산). 다르게 하려면 다시 말한다.
+ * 🚨 `event_id` 가 없다 — 대상은 `series_id` 다. 같은 묶음의 초안은 최신 한 장만 남긴다 (`draftTarget`).
+ */
+export interface SeriesDraft {
+  /** 🚨 화면 전용 키 (`EventDraft.draft_id` 와 같다). */
+  draft_id: string;
+  op: "update_series";
+  series_id: string;
+  event: SeriesDraftFields;
+  repeat: EventRepeat;
+  /** 🚨 `null` 이면 비교를 그리지 않고 바뀐 뒤 값만 보여 준다. */
+  before: SeriesDraftBefore | null;
+  /** 준비물 이름의 **최종 목록**. 같은 이름은 그 회차의 챙김 표시를 지킨다. */
+  items: string[];
+}
+
+/**
+ * SSE 초안 프레임과 대화 기록이 싣는 초안 (#738). 🚨 **`op` 로 가른다** — 묶음 초안은 일정 카드의 모양이 아니다.
+ * 05 제안 초안(`CreateEventDraftsResponse`)은 묶음을 내지 않아 `EventDraft` 그대로다.
+ */
+export type AnyEventDraft = EventDraft | SeriesDraft;
 
 /**
  * 초안 제출 본문 — 🚨 **승인 게이트 ㉠. 되돌릴 수 없는 지점.**
@@ -841,6 +919,51 @@ export interface SubmitEventBody {
    * 🚨 수정(`PATCH`)에는 싣지 않는다 — 칸이 없으면 서버가 걸린 알림을 그대로 둔다 (`updateEventDraft`).
    */
   reminder?: Reminder | null;
+}
+
+/**
+ * 반복 규칙을 제출할 때의 모양 (#738 · 서버 `RepeatIn`). 🚨 `label` 을 싣지 않는다 — 화면에 그리는 서버 문구라
+ * 되돌려 보낼 값이 아니고, 서버는 모르는 칸을 받지 않는다(`extra="forbid"` · 400).
+ */
+export interface RepeatRequest {
+  weekdays: number[];
+  until: string;
+}
+
+/**
+ * 반복 일정 제출 본문 (#738 · 서버 `SubmitEventRequest.repeat`). 🚨 `repeat` 는 `event` 안이 아니라 **본문 최상위**다.
+ * 회차마다 일정 행으로 펼치는 것은 서버고, `event.starts_at` 은 첫 회차다 — 그 KST 시각과 걸린 시간을 모든 회차에 쓴다.
+ * 🚨 알림(`reminder`)은 회차마다 걸린다 — 고르는 것은 한 번이고, 울릴 시각이 지난 회차는 서버가 건너뛴다.
+ *    시각 때문에 422 `invalid_reminder` 가 되는 것은 전 회차가 다 지났을 때뿐이다 (종일 여부와 안 맞는 알림 종류도 422 다).
+ *    응답 `event` 는 첫 회차이고 `series` 가 붙는다.
+ */
+export interface SubmitRepeatEventBody extends SubmitEventBody {
+  repeat: RepeatRequest;
+}
+
+/**
+ * 반복 묶음 고치기 제출 본문 — 🚨 **승인 게이트 ㉠ 안의 메서드다** (캘린더 쓰기 · 게이트를 늘린 것이 아니다).
+ *
+ * 🚨 **`before` 를 같이 보낸다.** 서버는 `before` 와 달라진 값만 아직 시작하지 않은 회차에 적용한다 — 한 회차만 따로 고쳐 둔
+ *    값이 "전부 바꾸기" 에 덮이지 않게 하는 장치다 (`docs/event/event-draft-flow-v1.md` §3). 초안은 서버에 남지 않아서
+ *    (9/21) 기준 값을 되돌려 보낼 수 있는 것은 화면뿐이다.
+ * 🚨 카드가 읽기 전용이라 초안 값을 그대로 보낸다 (문구만 뺀다).
+ * 서버(`UpdateSeriesRequest` · #761)는 **아직 시작하지 않은 회차만** 고친다 — 시간 일정은 시작이 지금 이후, 종일은 KST 오늘
+ * 이후다. 시작이 지난 오늘 회차는 지난 회차로 본다 (`docs/event/event-draft-flow-v1.md` §4-6). 요일 · 끝 날짜가 바뀌면 다시 펼치고,
+ * 남는 회차(아직 시작하지 않은 것)가 없으면 422 `invalid_repeat` 다 (묶음 삭제는 삭제 제안 경로다).
+ */
+export interface UpdateSeriesBody {
+  event: SeriesDraftFields;
+  repeat: RepeatRequest;
+  before: (Omit<SeriesDraftBefore, "repeat"> & { repeat: RepeatRequest }) | null;
+  items: string[];
+}
+
+/** 🚨 화면은 성공 여부만 쓰고 본문을 읽지 않는다 — 캘린더는 무효화로 다시 받는다. */
+export interface UpdateSeriesResponse {
+  series: EventSeriesRef;
+  /** 고친 뒤 남은 회차 수 — 아직 시작하지 않은 회차를 센다 (`series.py` · 서버 설명의 "오늘 이후" 보다 좁다). */
+  occurrence_count: number;
 }
 
 /* ── 06 승인 ─────────────────────────────────────────────────────────── */
@@ -1185,8 +1308,8 @@ export interface ListQuery {
 }
 
 /**
- * 관찰 목록 필터. `?domain=` 생략 시 건강을 뺀 4개 테이블을 observed_to DESC 로 병합한다.
- * 🚨 `growth` 는 education 과 routine 두 테이블이다. `health` 는 첫 배포 범위 밖이라 늘 빈 목록이다 (#259).
+ * 관찰 목록 필터. `?domain=` 생략 시 5개 테이블을 observed_to DESC 로 병합한다 (건강 포함 · #764).
+ * 🚨 `growth` 는 education 과 routine 두 테이블이다. 건강 기록은 주제가 없어서 `q` 가 원문만 본다.
  */
 export interface ObservationFilters extends ListQuery {
   domain?: Agent;
@@ -1472,7 +1595,7 @@ export interface CalendarDay {
   has_my_diary: boolean;
   /** 연결된 보호자가 함께 보는 사진이 그날 있다. */
   has_shared_photo: boolean;
-  /** 그날과 기간이 겹치는 기록 수. 하루 조회의 `observations` 와 같은 기준이다 (건강 · 지운 기록 제외). */
+  /** 그날과 기간이 겹치는 기록 수. 하루 조회의 `observations` 와 같은 기준이다 (지운 기록 제외 · 건강 기록도 센다 · #764). */
   observation_count: number;
 }
 
@@ -1731,6 +1854,14 @@ export interface Me {
   }>;
 }
 
+/**
+ * `GET /me/tours` — 이 보호자가 이미 본 화면 투어 (#696 · `docs/web/screen-tour-v1.md` §2).
+ * 계정 단위라 아이를 바꿔도, 기기를 바꿔도 같은 목록이다. 한 번도 안 봤으면 빈 목록이다.
+ */
+export interface SeenTours {
+  seen: TourKey[];
+}
+
 /** ?cursor=&limit= — 커서는 (observed_to, kind, id) 를 base64 로 인코딩한 것. */
 export interface Page<T> {
   items: T[];
@@ -1822,7 +1953,7 @@ export interface AuthSession {
 }
 
 /**
- * POST /auth/refresh — Bearer 가 아니라 refresh 쿠키(`icatch_rt`, HttpOnly)로 인증한다.
+ * POST /auth/refresh — Bearer 가 아니라 refresh 쿠키(`__Host-icatch_rt`, HttpOnly)로 인증한다 (#783).
  * 성공하면 새 access 토큰을 주고 쿠키를 회전시킨다. 실패는 전부 `401 unauthenticated` 다.
  * 정본은 서버 Swagger 다 (docs/web/auth-consent-v1.md §2).
  */

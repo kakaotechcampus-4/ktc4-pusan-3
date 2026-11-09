@@ -44,6 +44,7 @@ export const SCHEMA_MAP: Record<string, MapValue> = {
   RefreshResponse: "AuthRefreshResponse",
   MeResponse: "Me",
   MeChild: "Me.children[]",
+  SeenTours: "SeenTours",
   WithdrawRequest: "WithdrawRequest",
   WithdrawResponse: "WithdrawResponse",
 
@@ -166,7 +167,7 @@ export const SCHEMA_MAP: Record<string, MapValue> = {
   TargetRef: {
     web: "CorrectionRequest.target_ref",
     allow: {
-      kind: "웹은 Ref 를 그대로 싣는다. 서버가 받지 않는 건강 기록은 목록 · 상세 · 캘린더에서 빠져서(#259) 고치기 시트까지 오지 않는다",
+      kind: "웹은 Ref 를 그대로 싣는다. 서버가 받지 않는 건강 기록은 상세 시트가 고치기 버튼을 세우지 않아서(#764) 보내지 않는다",
     },
   },
   CorrectionResponse: "CorrectionResponse",
@@ -214,11 +215,14 @@ export const SCHEMA_MAP: Record<string, MapValue> = {
         "웹 타입은 04 SSE 초안(app/core/event_draft.py)과 같이 쓴다. 이 응답은 create 초안만이라 서버가 싣지 않고, 화면은 없으면 비교를 안 그린다 (event-draft-card.tsx)",
       needs_review: "웹이 제안한 칸이고 서버는 아직 보내지 않는다 (types.ts 의 EventDraft 주석)",
       review_reason: "needs_review 와 같다",
+      repeat:
+        "04 SSE 반복 초안(#738 · core/event_draft.py 의 CreateRepeatEventDraft)에만 있다. 이 응답은 제안 초안이라 반복이 없다",
     },
   },
   EventBodyOut: "EventDraftFields",
   DraftItemPayload: "EventDraftItem",
-  SubmitEventRequest: "SubmitEventBody",
+  // 반복 일정(#738)은 같은 본문에 최상위 `repeat` 를 더한다 — 웹은 두 타입으로 나눠 보낸다
+  SubmitEventRequest: ["SubmitEventBody", "SubmitRepeatEventBody"],
   PhotoEntry: "PhotoEntry",
   PhotoEntryDetail: "PhotoEntryDetail",
   PhotoUploadTicket: "PhotoUploadTicket",
@@ -255,6 +259,14 @@ export const SCHEMA_MAP: Record<string, MapValue> = {
   CalendarDayOut: "CalendarDay",
   CalendarDayResponse: "CalendarDayResponse",
   CalendarEventOut: "CalendarEvent",
+  EventSeriesOut: "EventSeriesRef",
+
+  /* ── 반복 묶음 고치기 (#738 · 승인 게이트 ㉠) ── */
+  RepeatIn: "RepeatRequest",
+  SeriesEventIn: "SeriesDraftFields",
+  SeriesBeforeIn: "UpdateSeriesBody.before",
+  UpdateSeriesRequest: "UpdateSeriesBody",
+  UpdateSeriesResponse: "UpdateSeriesResponse",
   EventItemOut: "EventItem",
   ReminderOut: "Reminder",
   ReminderLead: "ReminderLead",
@@ -295,5 +307,4 @@ export const NOT_MAPPED: Record<string, string> = {
   ValidationError: "HTTPValidationError 안쪽",
   LinkedAffinityOut: "웹이 ObservationOut.affinity 를 읽지 않는다",
   AnswerResponse: "05 가 되묻기 답의 응답 본문을 읽지 않는다",
-  SeenTours: "웹 미사용 — FE 후속 (#696 머지 뒤 lib/tour/seen.ts 를 서버 호출로 바꿀 때)",
 };

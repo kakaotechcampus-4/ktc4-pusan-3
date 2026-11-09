@@ -68,7 +68,6 @@ async def test_관심도_기록도_없으면_문서_행을_근거로_한_일반_
 
 
 async def test_관심이_0행이어도_14일_안_교육_기록이_있으면_티어_3_개인화다():
-    doc_id = await example_id()
     ctx = docs_ctx(memory=InMemoryGrowthMemory(education=[EDU]))
     llm = FakeLLM(
         call("search_affinity", {"domains": ["education"]}),
@@ -82,17 +81,27 @@ async def test_관심이_0행이어도_14일_안_교육_기록이_있으면_티�
                         {"id": str(EDU.id), "note": "계단에서 숫자를 센 기록이 있어요"},
                         reason="최근 계단에서 숫자를 센 기록이 있어서 이어 가요",
                     ),
-                    item("색깔 찾기", doc(doc_id)),
-                    item("모양 맞추기", doc(doc_id)),
+                    item(
+                        "숫자 카드 줄 세우기",
+                        {"id": str(EDU.id), "note": "계단에서 숫자를 센 기록이 있어요"},
+                        reason="계단 숫자 세기에서 한 걸음 더 나아가 숫자를 이어 봐요",
+                    ),
+                    item(
+                        "숫자 찾기 놀이",
+                        {"id": str(EDU.id), "note": "계단에서 숫자를 센 기록이 있어요"},
+                        reason="계단 숫자 세기를 이어 숫자를 집 안에서 찾아봐요",
+                    ),
                 ]
             },
         ),
     )
     result = await run(task("learning_suggestion", REQUEST), ctx, client=llm)
     assert ctx.state.seen_evidence[EDU.id].tier == 3
-    personal = [d for d in result.suggestions if d.kind == "personalized"]
-    assert len(personal) == 1
-    assert [c.ref.kind for c in personal[0].citations] == ["observation_education"]
+    # 요청 주제의 14일 안 기록이 있으면 후보마다 그 기록을 달아야 한다 — 예시만 단 후보는 거절된다
+    assert [d.kind for d in result.suggestions] == ["personalized"] * 3
+    assert all(
+        [c.ref.kind for c in d.citations] == ["observation_education"] for d in result.suggestions
+    )
 
 
 async def test_6개월_넘은_관심을_인용해도_일반_추천이고_그_인용은_빠진다():

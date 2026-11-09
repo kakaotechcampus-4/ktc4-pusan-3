@@ -23,6 +23,7 @@ from app.api.deps.child import AccessibleChild
 from app.api.deps.db import SessionDep
 from app.api.errors import ApiError, ErrorEnvelope, constraint_name
 from app.api.runs import suggestion_retry
+from app.api.v1.health_consent import health_consent_required
 from app.api.v1.list_query import PageQueryDep
 from app.api.v1.reminder_check import check_reminder, reminder_out
 from app.api.v1.schemas.common import Ref
@@ -38,6 +39,7 @@ from app.api.v1.schemas.suggestions import (
     EventBodyOut,
     EventDraftOut,
     EventItemOut,
+    EventSeriesOut,
     EvidenceOut,
     GeneralSuggestionOut,
     GroupNoticeOut,
@@ -45,6 +47,7 @@ from app.api.v1.schemas.suggestions import (
     PrecheckOut,
     ScarcityOut,
     ScarcityQuestionOut,
+    SeriesEventIn,
     SubmitEventRequest,
     SubmitEventResponse,
     SuggestionFeedbackRequest,
@@ -55,15 +58,24 @@ from app.api.v1.schemas.suggestions import (
     SuggestionsRequest,
     SuggestionsResponse,
     UpdateEventRequest,
+    UpdateSeriesRequest,
+    UpdateSeriesResponse,
 )
-from app.core import deeplinks
+from app.core import deeplinks, llm_usage
 from app.core.config import settings
 from app.core.recipe_source import RECIPE_SOURCE_INFO
 from app.domains.consent.repository import child_health_granted
 from app.domains.food import repository as food_repo
 from app.domains.safety.labels import list_safety_labels
 from app.domains.schedule import repository as schedule_repo
-from app.domains.schedule.models import EventCategory, EventCreatedBy, EventType
+from app.domains.schedule import series as series_repo
+from app.domains.schedule.models import (
+    EventCategory,
+    EventCreatedBy,
+    EventItem,
+    EventSeries,
+    EventType,
+)
 from app.domains.suggestion import repository as suggestion_repo
 from app.domains.suggestion.draft_items import draft_items
 from app.domains.suggestion.evidence_view import EvidenceView, describe_evidence
@@ -71,6 +83,8 @@ from app.domains.suggestion.models import SuggestionFeedback, SuggestionKind, Su
 from app.rules.book_evidence import BOOK_EVIDENCE_KIND
 from app.rules.home_prompts import prompt_request
 from app.rules.menu_evidence import MENU_EVIDENCE_KIND
+from app.rules.recurrence import RepeatError
+from app.rules.reminder import fits, remind_at
 
 router = APIRouter(tags=["suggestions"])
 
@@ -92,6 +106,20 @@ _CLOSED_CODE = "closed"
 _GUARD_DEEPLINKS = {"safety_unknown": deeplinks.PROFILE}
 _NOT_READY = "아직 준비 중인 주제예요."
 _UNKNOWN_NOTE = "알레르기 기록에 없음"
+
+# 반복 규칙이 성립하지 않을 때 (`RepeatError.code`)
+_REPEAT_ERRORS = {
+    "no_weekday": "반복할 요일을 골라 주세요",
+    "bad_weekday": "반복할 요일을 다시 골라 주세요",
+    "until_before_start": "끝 날짜가 첫 회차보다 앞이에요",
+    "too_long": "반복은 첫 회차부터 90일까지만 돼요",
+    "no_occurrence": "그 기간에 고른 요일이 없어요",
+}
+
+
+def _invalid_repeat(exc: RepeatError) -> ApiError:
+    return ApiError(422, "invalid_repeat", _REPEAT_ERRORS[exc.code])
+
 
 # 하루 한도 문구. 05 는 "적기" 가 아니라 "준비하기" 라 /inputs 와 문구를 따로 둔다 (코드는 같다)
 _DAILY_LIMIT = "오늘은 더 준비할 수 없어요. 내일 다시 골라 주세요."
@@ -131,14 +159,63 @@ def _suggestion_out(s, views: Sequence[EvidenceView] = ()) -> SuggestionOut:
 # ── 채택 ──────────────────────────────────────────────────────────────────
 
 
+async def _safety_labels(session, *, child_id: _uuid.UUID) -> list[entrypoint.SafetyLabel]:
+    """사전검사 · 채택 재확인이 같이 읽는 알레르기 · 건강 행(모든 kind · status).
+
+    목록이 빼는 추천과 채택이 막는 추천이 같으려면 읽는 행도 판정 함수도 같아야 한다.
+    """
+    rows = await list_safety_labels(session, child_id=child_id)
+    return [entrypoint.SafetyLabel(*r) for r in rows]
+
+
+async def _check_allergens_before_approve(session, *, child_id: _uuid.UUID, rows) -> None:
+    """채택 직전에 알레르기를 다시 본다 — 목록을 받은 뒤 등록된 알레르기를 서버가 막는다.
+
+    판정은 목록 응답의 사전검사와 같은 함수다(`check_allergens` · 같은 이름 사전). 목록이 빼는
+    추천과 채택이 막는 추천이 갈리면, 화면에 남은 옛 목록으로 고른 추천이 통과한다.
+    - `active` 에 걸린 추천이 하나라도 있으면 전부 거절한다(409 `allergen_blocked`) — 채택 API 의
+      "전부 아니면 전부" 와 같다. 걸린 추천 id 는 `detail.suggestion_ids` 로 요청 순서대로 싣는다.
+    - "모름"(행 없음)은 막지 않는다 — 답을 미뤄도 채택은 막지 않는다 (event-draft-ui-v1.md §3-8).
+    - `allergens` 가 없는 추천뿐이면 건강정보를 읽지 않는다.
+    - 동의가 없으면 읽지 않고 403 — 목록도 동의 없이는 이 추천을 내보내지 않는다.
+    - 동의 · 알레르기 조회가 실패하면 예외를 그대로 올린다(500, 아무것도 채택하지 않음) —
+      못 읽었다고 통과시키지 않는다 (루트 §2).
+    - 알레르기를 읽은 뒤 커밋 전의 짧은 틈에 등록된 알레르기는 놓친다 — 잠그지 않기로 했다.
+    """
+    with_allergens = [row for row in rows if row.allergens]
+    if not with_allergens:
+        return
+    if not await child_health_granted(session, child_id=child_id):
+        raise health_consent_required()
+    labels = await _safety_labels(session, child_id=child_id)
+    blocked = [
+        str(row.id)
+        for row in with_allergens
+        if entrypoint.check_allergens(row.allergens, labels).blocked
+    ]
+    if blocked:
+        raise ApiError(
+            409,
+            "allergen_blocked",
+            "알레르기로 등록된 항목이 들어 있어 고를 수 없어요",
+            {"suggestion_ids": blocked},
+        )
+
+
 @router.post(
     "/children/{cid}/suggestions/approve",
     summary="추천 채택",
     description=(
         "선택한 추천을 채택(draft → approved)한다. 이미 채택된 것은 멱등 처리. 만료된 추천은 409."
+        " 채택 직전에 알레르기를 다시 본다 — 아이의 알레르기 기록(active)에 걸리는 추천이 하나라도"
+        " 있으면 아무것도 채택하지 않고 409 `allergen_blocked`(`detail.suggestion_ids` = 걸린"
+        " 추천 id, 요청 순서). 알레르기 기록에 없는 항목(모름)은 막지 않는다."
+        " 오류 (순서대로): 400 validation_failed(빈 목록) → 행마다 404 not_found ·"
+        " 409 not_draft · 409 suggestion_expired → 403 consent_required(알레르기 항목이 든 추천인데"
+        " 건강정보 동의 없음) → 409 allergen_blocked."
     ),
     status_code=200,
-    responses={status: {"model": ErrorEnvelope} for status in (400, 404, 409)},
+    responses={status: {"model": ErrorEnvelope} for status in (400, 403, 404, 409)},
 )
 async def approve_suggestions(
     child: AccessibleChild,
@@ -172,6 +249,8 @@ async def approve_suggestions(
         return ApproveSuggestionsResponse(
             suggestions=[_suggestion_out(s) for s in already_approved]
         )
+
+    await _check_allergens_before_approve(session, child_id=child.child_id, rows=found)
 
     to_approve = [s.id for s in found]
     approved = await suggestion_repo.approve_suggestions(
@@ -306,10 +385,13 @@ async def submit_event(
     if replayed is not None and isinstance(replayed, dict):
         return JSONResponse(status_code=201, content=replayed)
 
-    if body.reminder is not None:
+    # 반복이면 회차마다 걸고 지난 회차는 건너뛴다 — 여기서는 종류만 보고, 지났는지는 펼친 뒤에 본다
+    if body.reminder is not None and body.repeat is None:
         check_reminder(
             body.reminder.lead, starts_at=body.event.starts_at, all_day=body.event.all_day
         )
+    elif body.reminder is not None and not fits(body.reminder.lead, all_day=body.event.all_day):
+        raise ApiError(422, "invalid_reminder", "이 일정에는 걸 수 없는 알림이에요")
 
     # suggestion_ids 검증 (중복 제거)
     suggestion_ids = list(dict.fromkeys(body.suggestion_ids)) if body.suggestion_ids else []
@@ -336,26 +418,58 @@ async def submit_event(
     # Event INSERT
     created_by = EventCreatedBy.AGENT if suggestion_ids else EventCreatedBy.CAREGIVER
 
-    event = await schedule_repo.create_event(
-        session,
-        child_id=child.child_id,
-        title=body.event.title,
-        event_type=EventType(body.event.event_type),
-        starts_at=body.event.starts_at,
-        ends_at=body.event.ends_at,
-        all_day=body.event.all_day,
-        category=EventCategory(body.event.category),
-        created_by=created_by,
-    )
-
-    # EventItem INSERT
-    items = []
-    for item in body.items:
-        ei = await schedule_repo.create_event_item(
-            session, child_id=child.child_id, event_id=event.id, item_name=item.item_name
+    fields = {
+        "child_id": child.child_id,
+        "title": body.event.title,
+        "event_type": EventType(body.event.event_type),
+        "starts_at": body.event.starts_at,
+        "ends_at": body.event.ends_at,
+        "all_day": body.event.all_day,
+        "category": EventCategory(body.event.category),
+        "created_by": created_by,
+    }
+    series: EventSeries | None = None
+    now = datetime.now(timezone.utc)
+    if body.repeat is None:
+        events = [await schedule_repo.create_event(session, **fields)]
+    else:
+        try:
+            plan = series_repo.plan_occurrences(
+                starts_at=fields.pop("starts_at"),
+                ends_at=fields.pop("ends_at"),
+                all_day=body.event.all_day,
+                weekdays=body.repeat.weekdays,
+                until=body.repeat.until,
+            )
+        except RepeatError as exc:
+            raise _invalid_repeat(exc) from exc
+        except ValueError as exc:
+            raise ApiError(422, "invalid_repeat", str(exc)) from exc
+        # 걸리는 알림이 하나도 없으면 단건 제출처럼 막는다 — 쓰기 전에 본다
+        if body.reminder is not None and all(
+            remind_at(body.reminder.lead, starts_at=starts, all_day=body.event.all_day) <= now
+            for starts, _ in plan
+        ):
+            raise ApiError(422, "invalid_reminder", "알림 시각이 이미 지났어요")
+        # 반복 일정은 일상이라 늘 core 다 (event-draft-flow §5-5) — 무엇이 와도 코드가 정한다
+        fields["event_type"] = EventType.CORE
+        series, events = await series_repo.create_series(
+            session,
+            plan=plan,
+            weekdays=body.repeat.weekdays,
+            until=body.repeat.until,
+            **fields,
         )
-        if ei:
-            items.append(ei)
+    event = events[0]  # 반복이면 첫 회차. 응답과 제안 연결은 이 행을 가리킨다
+
+    # EventItem INSERT — 회차마다 따로 (한 회차의 챙김 표시가 다른 회차로 번지지 않는다)
+    session.add_all(
+        EventItem(event_id=e.id, item_name=item.item_name) for e in events for item in body.items
+    )
+    await session.flush()
+    items = await schedule_repo.list_event_items(
+        session, child_id=child.child_id, event_id=event.id
+    )
 
     # SuggestionEvent INSERT
     if suggestion_ids:
@@ -365,7 +479,17 @@ async def submit_event(
 
     # 알림은 제출한 보호자에게만 건다 — 다른 보호자는 캘린더에서 각자 건다 (#594)
     reminder = None
-    if body.reminder is not None:
+    if body.reminder is not None and series is not None:
+        put = await series_repo.put_reminders(
+            session,
+            child_id=child.child_id,
+            parent_id=parent.parent_id,
+            events=events,
+            lead=body.reminder.lead,
+            now=now,
+        )
+        reminder = put.get(event.id)
+    elif body.reminder is not None:
         reminder = await schedule_repo.put_reminder(
             session,
             child_id=child.child_id,
@@ -406,6 +530,7 @@ async def submit_event(
                 for ei in items
             ],
             reminder=reminder_out(reminder),
+            series=EventSeriesOut.of(series),
         )
     )
 
@@ -498,7 +623,14 @@ async def create_suggestions(
                     claimed[a] = task
 
         to_run = fresh + [
-            entrypoint.SuggestTask(a, t.task_type, t.request_texts) for a, t in claimed.items()
+            entrypoint.SuggestTask(
+                a,
+                t.task_type,
+                t.request_texts,
+                original_texts=t.original_texts,
+                prior_texts=t.prior_texts,
+            )
+            for a, t in claimed.items()
         ]
         health_consent = await child_health_granted(session, child_id=child.child_id)
         if to_run:
@@ -521,22 +653,31 @@ async def create_suggestions(
             # 여기까지 읽기만 했고, expire_on_commit=False 라 읽은 행도 그대로 쓸 수 있다
             await session.commit()
             sent_at = next(iter(claimed.values())).sent_at if claimed else None
-            run = await entrypoint.suggest(
-                child_id=child.child_id,
-                tasks=to_run,
-                request_id=str(_uuid.uuid4()),
-                save_run_id=run_id if claimed else None,
-                sent_at=sent_at,
-                save_suggestions=agent_ports.suggestion_saver(child.child_id),
-                birth_date=child.birth_date,
-                child_health_granted=health_consent,
-                domain_store=agent_ports.domain_store_opener(child.child_id),
-                **agent_ports.food_stores(),
-                **agent_ports.safety_readers(),
-                **agent_ports.growth_book_ports(),
-                growth_log=agent_ports.growth_log_reader(),
-                affinity_reader=agent_ports.affinity_reader(),
-            )
+            # 다시 만들기는 그 run 의 일이다 — 사용량도 그 run_id 로 남겨 SQL 에서 run 하나를 이어
+            # 본다. 처음 요청은 run 이 없어서 요청마다 정한 id 가 run_id 다.
+            # 창구는 source(suggest)가 가른다 (#710)
+            request_id = str(_uuid.uuid4())
+            with llm_usage.attribute(
+                parent_id=parent.parent_id,
+                run_id=run_id if claimed else request_id,
+                source="suggest",
+            ):
+                run = await entrypoint.suggest(
+                    child_id=child.child_id,
+                    tasks=to_run,
+                    request_id=request_id,
+                    save_run_id=run_id if claimed else None,
+                    sent_at=sent_at,
+                    save_suggestions=agent_ports.suggestion_saver(child.child_id),
+                    birth_date=child.birth_date,
+                    child_health_granted=health_consent,
+                    domain_store=agent_ports.domain_store_opener(child.child_id),
+                    **agent_ports.food_stores(),
+                    **agent_ports.safety_readers(),
+                    **agent_ports.growth_book_ports(),
+                    growth_log=agent_ports.growth_log_reader(),
+                    affinity_reader=agent_ports.affinity_reader(),
+                )
             settled = {o.agent for o in run.outcomes}
     finally:
         for a in claimed:
@@ -615,8 +756,7 @@ async def _suggestions_response(
         # 처음 필요할 때 한 번 읽는다 — allergens 가 든 추천이 없으면 읽지 않는다 (#433 리뷰 ⑬)
         nonlocal safety_rows
         if safety_rows is None:
-            labels = await list_safety_labels(session, child_id=child_id)
-            safety_rows = [entrypoint.SafetyLabel(*r) for r in labels]
+            safety_rows = await _safety_labels(session, child_id=child_id)
         return safety_rows
 
     record_counts: dict[str, int] = {}
@@ -656,10 +796,10 @@ async def _suggestions_response(
             ]
             if not basis and (not row.requested or general_ev.get(row.id)):
                 # 일반 추천의 근거는 문서 행(Food 는 메뉴 행도)이다 — 검수가 풀린 문서 · 후보 풀에서
-                # 빠진 메뉴만 남았으면 보여 줄 근거가 없어서 내지 않는다. 보호자가 놀이 · 주제를
-                # 정해 물은 Activity · Growth 추천은 그 요청이 기준이라 문서 없이도 낸다 — 단
-                # 문서를 달았다가 그 문서가 빠졌으면 그 문서를 바탕으로 만든 추천이라 같이 내지
-                # 않는다 (#597 리뷰)
+                # 빠진 메뉴만 남았으면 보여 줄 근거가 없어서 내지 않는다. 보호자가 놀이 · 주제 ·
+                # 재료를 정해 물은 Activity · Growth · Food 추천은 그 요청이 기준이라 문서 없이도
+                # 낸다 — 단 문서를 달았다가 그 문서가 빠졌으면 그 문서를 바탕으로 만든 추천이라 같이
+                # 내지 않는다 (#597 리뷰 · #740)
                 continue
             general.append(_general_out(row, basis, await records(str(row.agent))))
         prechecks.extend(
@@ -1094,9 +1234,99 @@ async def update_event(
                 for ei in items
             ],
             reminder=reminder_out(mine),
+            series=EventSeriesOut.of(
+                await session.get(EventSeries, event.series_id) if event.series_id else None
+            ),
         )
     )
 
     response_dict = response_data.model_dump(mode="json")
+    await idempotency.remember(**scope, replay=response_dict)
+    return JSONResponse(status_code=200, content=response_dict)
+
+
+# ── 반복 묶음 고치기 (#738, 승인 게이트 ㉠) ───────────────────────────────
+
+
+def _series_values(body: SeriesEventIn) -> series_repo.SeriesValues:
+    return series_repo.SeriesValues(
+        title=body.title,
+        starts_time=body.starts_time,
+        ends_time=body.ends_time,
+        all_day=body.all_day,
+        event_type=EventType.CORE,  # 묶음은 늘 core 다 (event-draft-flow §5-5)
+        category=EventCategory(body.category),
+    )
+
+
+@router.patch(
+    "/children/{cid}/event-series/{sid}",
+    summary="반복 일정 전부 고치기 (승인 게이트 ㉠)",
+    description=(
+        "아직 시작하지 않은 회차만 고친다 — 시간 일정은 시작이 지금(서버 시계) 이후인 회차, "
+        "종일 일정은 오늘(KST, 그날 포함) 이후 회차. 지난 회차는 그대로다. "
+        "before 와 달라진 칸만 쓰고, 요일 · 끝 날짜가 바뀌면 회차를 다시 펼친다. "
+        "준비물은 이름으로 맞춰 챙김 표시를 지킨다. Idempotency-Key 필수."
+    ),
+    status_code=200,
+    response_model=UpdateSeriesResponse,
+    responses={status: {"model": ErrorEnvelope} for status in (400, 403, 404, 422, 503)},
+)
+async def update_event_series(
+    child: AccessibleChild,
+    sid: _uuid.UUID,
+    body: UpdateSeriesRequest,
+    parent: CurrentParent,
+    session: SessionDep,
+    request: Request,
+    idempotency_key: str | None = Header(alias="Idempotency-Key", default=None),
+) -> JSONResponse:
+    if not idempotency_key:
+        raise ApiError(
+            400, "idempotency_key_required", "요청을 처리할 수 없어요. 다시 시도해 주세요"
+        )
+    scope = {
+        "parent_id": parent.parent_id,
+        "method": request.method,
+        "path": request.url.path,
+        "key": idempotency_key,
+    }
+    replayed = await idempotency.recall(**scope)
+    if replayed is not None and isinstance(replayed, dict):
+        return JSONResponse(status_code=200, content=replayed)
+
+    # 일정 수정과 같은 순서 — 연결 → 묶음 → 회차 (#427)
+    if not await schedule_repo.lock_link(
+        session, child_id=child.child_id, parent_id=parent.parent_id
+    ):
+        raise ApiError(403, "child_access_denied", "이 아이에 접근할 수 없어요")
+    series = await series_repo.find_series(
+        session, child_id=child.child_id, series_id=sid, lock=True
+    )
+    if series is None:
+        raise ApiError(404, "not_found", "반복 일정을 찾을 수 없어요")
+
+    try:
+        count = await series_repo.update_series(
+            session,
+            series=series,
+            values=_series_values(body.event),
+            weekdays=body.repeat.weekdays,
+            until=body.repeat.until,
+            before=_series_values(body.before) if body.before is not None else None,
+            before_items=body.before.items if body.before is not None else None,
+            items=body.items,
+            today=quota.today_kst(),
+            now=datetime.now(timezone.utc),
+        )
+    except RepeatError as exc:
+        raise _invalid_repeat(exc) from exc
+    except series_repo.NoFutureOccurrence as exc:
+        raise ApiError(422, "invalid_repeat", str(exc)) from exc
+    await session.commit()
+
+    response_dict = UpdateSeriesResponse(
+        series=EventSeriesOut.of(series), occurrence_count=count
+    ).model_dump(mode="json")
     await idempotency.remember(**scope, replay=response_dict)
     return JSONResponse(status_code=200, content=response_dict)

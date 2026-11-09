@@ -691,24 +691,33 @@ def allergen_states(
     """추천에 든 항목마다 그 아이의 health_safety 상태. 05 의 사전검사가 쓴다 (#249).
 
     `rows` 는 (kind, label, status) — 모든 kind 다. Activity 는 19종 밖 이름(꽃가루)을 등록된
-    이름 그대로 싣고, 그 행은 environmental 일 수 있다. 같은 이름 사전(`read_label`)으로 양쪽을
-    읽어 코드 · Term 이 겹치거나 사전에 없는 조각이 같으면 같은 항목이다.
-    - active 행에 걸리면 "active" — 그 추천은 내보내지 않는다.
-    - none · retracted 행에만 걸리면 "known" — 묻지 않는다.
-    - 걸리는 행이 없으면 None — 채택 전에 묻는다.
+    이름 그대로 싣고, 그 행은 environmental 일 수 있다.
+    - active 행에 걸리면 "active" — 그 추천은 내보내지 않는다. 같은 이름 사전(`read_label`)으로
+      양쪽을 읽어 코드 · Term 이 겹치거나 사전에 없는 조각이 같으면 걸린다(넓게 — 더 막는 쪽).
+    - none 행(괜찮았던 식품)은 정규화한 이름이 같을 때만 "known" — 묻지 않는다. 사전은 동의어와
+      하위 식품을 가르지 않아서(치즈 · 버터는 우유, 간장 · 두부는 대두) 넓게 맞추면 보호자가 답한
+      적 없는 식품까지 덜 묻는다. 05 확인 시트는 이 항목 이름을 그대로 저장한다.
+    - retracted 행(내린 기록)은 보지 않는다 — "지금은 아니다" 일 뿐 "먹어봤고 괜찮았다" 가 아니다.
+    - 그 밖에는 None — 채택 전에 묻는다.
     """
-    read = [(status, *read_label(label, book)) for _, label, status in rows]
+    rows = list(rows)
+    read = [read_label(label, book) for _, label, status in rows if status == "active"]
+    tolerated = {split_label(label) for _, label, status in rows if status == "none"}
+    tolerated.discard(())  # 이름이 비면 아무것도 덮지 않는다
     states: dict[str, AllergenState] = {}
     for name in allergens:
         wanted, rest = read_label(name, book)
-        hits = [
-            status
-            for status, found, found_rest in read
-            if wanted.codes & found.codes
+        if any(
+            wanted.codes & found.codes
             or set(wanted.terms) & set(found.terms)
             or set(rest) & set(found_rest)
-        ]
-        states[name] = "active" if "active" in hits else ("known" if hits else None)
+            for found, found_rest in read
+        ):
+            states[name] = "active"
+        elif split_label(name) in tolerated:
+            states[name] = "known"
+        else:
+            states[name] = None
     return states
 
 

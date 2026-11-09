@@ -33,6 +33,9 @@
 🚨 **초안 제출은 메서드가 둘이다** — create 는 `POST /children/{cid}/events`, update 는
 `PATCH /children/{cid}/events/{eid}` (9/21 · 서버 #236 · #284). 한 곳의 두 갈래라 게이트를 늘린 것이 아니고,
 **둘 다 키가 필요하다** — update 도 `item_id: null` 인 새 준비물은 멱등이 아니다 (#316).
+요일 반복 일정(#738)은 같은 `POST` 에 `repeat` 를 싣고, 반복 묶음 고치기는 세 번째 메서드
+`PATCH /children/{cid}/event-series/{sid}` 다. 같은 게이트 안의 메서드라 게이트를 늘린 것이 아니고, 새 준비물 이름이 회차마다
+행으로 들어가서 키를 단다. 서버도 키를 필수로 받는다 (#761 · [`event-draft-ui-v1.md`](event-draft-ui-v1.md) §3-9).
 🚨 **게이트 ㉡ 도 메서드가 둘이다** — 등록 `POST /children/{cid}/health-safety`, 고치기
 `PATCH …/health-safety/{id}` (서버 #370 · #375). 서버는 고치면 지금 기록을 내리고 **새 id** 로 다시 넣어서
 (이력이 남는다) 같은 고치기를 두 번 보내면 두 번째가 404 다 — 그래서 고치기도 키를 단다. 서버는 키를
@@ -77,6 +80,9 @@ const mutation = useMutation({
 
 `ApiError` 로 잡는다. 특히:
 
+- 🚨 `child_access_denied` (403) → **화면마다 다루지 않는다** (#802). 주소의 아이가 내 목록에 없거나 보는 중에
+  연결이 끊긴 것이다. `lib/query-client.ts` 가 `/me` 를 다시 받고, `ChildScope` 가 화면째 "볼 수 없는 아이" 로
+  바꾼다 ([`screen-rules-v1.md`](screen-rules-v1.md) §1). 구역에는 지금처럼 실패 카드가 잠깐 설 수 있다
 - `consent_required` (403) → 저장이 아예 안 된 상태다. `error.consentDeeplink` 로 동의 화면에 보낸다.
 - 🚨 `daily_input_limit` (429) → **"다시 시도" 를 세우지 않는다** (#147). 같은 본문은 같은
   Idempotency-Key 로 나가고 한도는 한국 시간 자정에 풀려서, 누를 때마다 같은 429 다.
@@ -94,6 +100,10 @@ const mutation = useMutation({
   다른 보호자가 먼저 등록했거나 앞서 등록한 응답만 못 받은 것이라, 다음 제안에서도 걸러진다.
   "다시 시도" 를 세우면 누를 때마다 같은 409 다 — 05 확인 시트와 11-2 는 저장된 것으로 그린다.
   직접 적기 시트는 "이미 등록된 항목이에요" 로 말한다(보호자가 새로 적은 이름이라 무엇이 겹쳤는지 알려야 한다)
+- 🚨 `allergen_blocked` (409 · 05 채택) → **실패가 아니라 서버가 알레르기 필터를 다시 건 결과다** (#823 · 서버 #835).
+  같은 채택이 `403 consent_required` 면(알레르기 항목이 든 제안인데 건강정보 동의가 없다) 일반 실패 카드가 아니라 동의 카드다.
+  목록을 받은 뒤 그사이 등록된 알레르기가 든 제안이 있어 **아무것도 채택되지 않았다.** "다시 시도" 를 세우지 않고,
+  `detail.suggestion_ids` 의 제안을 선택에서 뺀 뒤 안내 카드를 세운다 (`event-draft-ui-v1.md` §3-8)
 - 🚨 `not_found` (404 · 알레르기 내리기) → **실패가 아니다** (#374). 다른 보호자가 먼저 내렸거나
   고친 기록이다(고치면 새 id 다). 목록을 다시 받는다 — "아직 그대로 있으니 다시 눌러 주세요" 는 반대말이다
   **고치기의 404 도 같다** (#375) — 시트는 닫지 않고 "이미 먼저 고쳐졌거나 내려간 기록" 이라고 말한 채
@@ -106,7 +116,11 @@ const mutation = useMutation({
 - 🚨 `invalid_reminder` (422 · 일정 알림 · #609) → **"다시 시도" 를 세우지 않는다.** 그 일정 종류에 맞지 않거나
   울릴 시각이 이미 지난 알림이라 같은 값은 계속 422 다. 제출이면 **일정도 들어가지 않았다** — 초안 카드는
   서버 문구와 "아직 아무것도 넣지 않았어요" 를 세우고 알림을 다시 고르게 둔다. 화면이 지난 값을 목록에서 미리
-  빼지만(`lib/reminder.ts`) 고른 채 시간이 흐르면 여기 닿는다
+  빼지만(`lib/reminder.ts`) 고른 채 시간이 흐르면 여기 닿는다.
+  반복 일정은 첫 회차로 미리 빼지 않아서 **전 회차가 다 지났을 때만** 여기 닿는다 (#746 리뷰 · 서버 #761)
+- 🚨 `invalid_repeat` (422 · 요일 반복 · #738 · 서버 #761) → **카드에서 고칠 수 없는 실패다.** 요일 · 끝 날짜 · 첫 회차를
+  고칠 칸이 없어서 같은 초안은 계속 422 다. 서버 문구 아래에 "대화로 다시 말해 주세요" 를 붙인다
+  ([`event-draft-ui-v1.md`](event-draft-ui-v1.md) §3-9)
 - `llm_unavailable` (503) → 🚨 **기본값으로 대체하지 않는다.** 실패했다고 화면에 말한다.
 - 4xx 는 재시도하지 않는다 (`query-client.ts` 에 이미 걸려 있다).
 - **뮤테이션은 자동 재시도가 꺼져 있다.** 승인 게이트를 두 번 실행할 수 있어서다 — 켜지 말 것.
@@ -130,6 +144,7 @@ const mutation = useMutation({
 | 화면을 그리다 터짐 | `app/error.tsx` · `child/[childId]/error.tsx` | 화면이 통째로 바뀜 |
 | 루트 레이아웃이 터짐 | `app/global-error.tsx` | 문서 전체를 대체 (Providers 없음) |
 | 없는 주소 | `app/not-found.tsx` | 404 로 응답한다 |
+| 볼 수 없는 아이 주소 | `components/child-scope.tsx` (`/me` 목록으로 판정 · #802) | 화면이 통째로 "볼 수 없는 아이" |
 | 한 구역만 터짐 | `components/app-error-boundary.tsx` | 그 구역만 `CardFailed` |
 | 렌더 밖에서 터짐 (이벤트 핸들러 · 타이머 · 처리 안 된 rejection) | `lib/report-uncaught-error.ts` (`window` 의 `error` · `unhandledrejection`) | 화면은 그대로, 서버에 보고만 (#732) |
 

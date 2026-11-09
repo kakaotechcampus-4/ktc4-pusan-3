@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 /**
  * 승인 게이트가 **딱 3곳**인 것을 코드로 건다 (최상위 CLAUDE.md §2 실행 · #242 · #754).
  *
- *   ㉠ 캘린더 쓰기 — 초안 제출 (`submitEventDraft` · `updateEventDraft`)
+ *   ㉠ 캘린더 쓰기 — 초안 제출 (`submitEventDraft` · `updateEventDraft` · 반복 묶음 고치기 `updateEventSeries` #738)
  *   ㉡ 건강·알레르기 기록 확정 — 등록 `addHealthSafety` · 고치기 `updateHealthSafety` ·
  *      복약 초안 제출 `submitMedicationDraft` · `updateMedicationDraft` (#537 — 같은 게이트의 다른 메서드)
  *   ㉢ 대화로 지울 때의 삭제 확정 — `confirmDeleteProposal` (#535 · 11-03 팀 회의)
@@ -60,6 +60,10 @@ describe("승인 게이트 ㉠ 캘린더 쓰기", () => {
     ]);
     expect(callers("updateEventDraft")).toEqual(["components/event-draft-list.tsx"]);
   });
+
+  it("반복 묶음 고치기도 초안 카드 목록에서만 부른다 (#738 · 같은 게이트의 다른 메서드)", () => {
+    expect(callers("updateEventSeries")).toEqual(["components/event-draft-list.tsx"]);
+  });
 });
 
 describe("승인 게이트 ㉡ 건강·알레르기 확정", () => {
@@ -93,12 +97,20 @@ describe("대화의 삭제 확정 (#535)", () => {
 });
 
 describe("게이트 표식은 게이트 안에만", () => {
+  /**
+   * 🚨 **조건부 표식도 센다** (#823). 05 알레르기 확인 시트는 저장할 알레르기가 있을 때만 버튼에
+   *    `approve` 를 입힌다(`variant={… ? "approve" : "primary"}`). `variant="approve"` 만 찾으면 이 버튼이
+   *    목록에서 빠져, 게이트 표식이 어디에 있는지 이 테스트가 모르게 된다.
+   * ⚠️ 05 시트가 이 목록에 들어온 것은 게이트 ㉡ 를 칩에서 이 버튼으로 **옮긴** 것이다 — 늘린 것이 아니다.
+   */
+  const APPROVE = /variant=(?:"approve"|\{[^}]*"approve")/;
   it("approve 버튼은 게이트를 그리는 컴포넌트에만 있다", () => {
-    expect(filesMatching(/variant="approve"/).filter((path) => !DESIGN_SYSTEM.test(path))).toEqual([
+    expect(filesMatching(APPROVE).filter((path) => !DESIGN_SYSTEM.test(path))).toEqual([
       "components/event-draft-card.tsx",
       "components/health-safety-list.tsx",
       "components/medication-draft-card.tsx",
       "components/photo-entry-sheet.tsx",
+      "components/safety-check-sheet.tsx",
       "components/safety-scan-review.tsx",
     ]);
   });
@@ -129,7 +141,7 @@ describe("게이트 표식은 게이트 안에만", () => {
   it("복약 회차 체크 화면에는 게이트 표식이 없다", () => {
     const page = "app/child/[childId]/profile/medications/page.tsx";
     expect(sources.has(page)).toBe(true);
-    expect(filesMatching(/variant="approve"/)).not.toContain(page);
+    expect(filesMatching(APPROVE)).not.toContain(page);
     expect(filesMatching(CAUTION)).not.toContain(page);
   });
 

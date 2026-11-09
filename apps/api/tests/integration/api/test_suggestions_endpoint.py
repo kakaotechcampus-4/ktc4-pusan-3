@@ -14,10 +14,12 @@ from app.agents.activity.review import REQUESTED_REASON
 from app.agents.common.readout import Readout
 from app.agents.common.refs import EvidenceCitation, Ref
 from app.agents.common.suggestion import SuggestionDraft
+from app.agents.food.meal_review import GENERAL_REASON_REQUEST as FOOD_REQUESTED_REASON
 from app.agents.suggestion_save import SuggestionBatch
 from app.api import agent_ports, quota
 from app.api.runs import suggestion_retry
 from app.api.v1.schemas.suggestions import DocEvidenceOut
+from app.core import llm_usage
 from app.core.config import settings
 from app.domains.memory.observation.models import (
     ConfidenceSource,
@@ -472,6 +474,27 @@ async def test_사전검사(db_client, session, bearer, cid, agents, monkeypatch
     ]
 
 
+async def test_내린_알레르기는_사전검사에서_다시_묻는다(
+    db_client, session, bearer, cid, agents, monkeypatch
+):
+    """내린 기록(retracted)은 "모름" 과 같다 — 잘못 등록했다 지운 식품을 영영 안 묻지 않게."""
+    plan, _ = agents
+    headers, parent_id = bearer
+    monkeypatch.setattr("app.api.v1.routers.suggestions.child_health_granted", _granted(True))
+    session.add(
+        HealthSafety(
+            child_id=cid, kind=SafetyKind.ALLERGY, label="견과류", status=SafetyStatus.RETRACTED
+        )
+    )
+    walnut = await _personal(session, cid, parent_id, content="호두죽", allergens=["호두"])
+    plan["food"] = ("drafts", [walnut])
+
+    data = (await _post(db_client, cid, headers, agents=["food"])).json()
+
+    assert [s["content"] for s in data["suggestions"]] == ["호두죽"]
+    assert [p["item"] for p in data["prechecks"]] == ["호두"]
+
+
 async def test_동의가_없으면_알레르기_든_추천을_뺀다(
     db_client, session, bearer, cid, agents, monkeypatch
 ):
@@ -608,6 +631,34 @@ async def test_요청_기반_일반_추천은_문서_근거_없이도_05_에_선
     assert general["basis"] == REQUESTED_REASON
     assert general["evidence"] == []
     assert data["scarcity"] == {"count": 0, "question": None}
+
+
+async def test_Food_요청_기반_일반_추천은_메뉴_근거_없이도_05_에_선다(
+    db_client, bearer, cid, agents
+):
+    """보호자가 재료를 정해 물어 레시피북에 없는 메뉴를 냈다 — 저장부터 05 응답까지 문서 · 메뉴
+    근거가 비어도 기준 문구만으로 선다 (#740)."""
+    plan, _ = agents
+    headers, _ = bearer
+    plan["food"] = (
+        "drafts",
+        [
+            SuggestionDraft(
+                agent="food",
+                kind="general",
+                content="파프리카볶음",
+                reason=FOOD_REQUESTED_REASON,
+                requested=True,
+            )
+        ],
+    )
+
+    data = (await _post(db_client, cid, headers, agents=["food"])).json()
+
+    [general] = data["general"]
+    assert general["content"] == "파프리카볶음"
+    assert general["basis"] == "요청하신 조건을 바탕으로 골랐어요."
+    assert general["evidence"] == []
 
 
 async def test_요청_기반_일반_추천은_같은_run_으로_다시_열어도_그대로다(
@@ -752,6 +803,56 @@ async def test_Agent_를_돌리기_전에_요청_세션의_트랜잭션을_닫�
     await _post(db_client, cid, headers, agents=["food"])
 
     assert seen == [False]
+
+
+async def test_다시_만들기는_suggest_로_귀속한다(db_client, bearer, cid, agents, monkeypatch):
+    """LLM 사용량(#710) — 05 는 run 이 없어 요청마다 정한 request_id 가 run_id 다."""
+    headers, parent_id = bearer
+    seen: list[tuple[llm_usage.Attribution | None, str]] = []
+
+    async def fake_suggest(**kwargs):
+        seen.append((llm_usage.current(), kwargs["request_id"]))
+        return entrypoint.SuggestRun((), ())
+
+    monkeypatch.setattr(entrypoint, "suggest", fake_suggest)
+
+    await _post(db_client, cid, headers, agents=["food"])
+
+    [(attribution, request_id)] = seen
+    assert attribution == llm_usage.Attribution(
+        parent_id=parent_id, run_id=request_id, source="suggest"
+    )
+
+
+async def test_다시_시도는_원래_run_의_run_id_로_귀속한다(
+    db_client, bearer, cid, agents, monkeypatch
+):
+    """실패한 추천을 다시 만드는 것은 그 run 의 일이다 (#710 리뷰).
+
+    새 request_id 로 남기면 `WHERE run_id = <그 run>` 에 안 잡히고, run 수 집계가 05 호출마다 하나씩
+    늘어난다. 창구는 `source` 가 가른다.
+    """
+    headers, parent_id = bearer
+    suggestion_retry.put_failed(
+        run_id="run-1",
+        parent_id=parent_id,
+        child_id=cid,
+        agent="food",
+        task=suggestion_retry.RetryTask(
+            "meal_recommendation", ("내일 아침 추천해줘",), datetime.now(UTC)
+        ),
+    )
+    seen: list[llm_usage.Attribution | None] = []
+
+    async def fake_suggest(**kwargs):
+        seen.append(llm_usage.current())
+        return entrypoint.SuggestRun((), ())
+
+    monkeypatch.setattr(entrypoint, "suggest", fake_suggest)
+
+    await _post(db_client, cid, headers, agents=["food"], run_id="run-1")
+
+    assert seen == [llm_usage.Attribution(parent_id=parent_id, run_id="run-1", source="suggest")]
 
 
 async def test_질문_id_는_질문을_낸_Agent_다(db_client, bearer, cid, agents, monkeypatch):

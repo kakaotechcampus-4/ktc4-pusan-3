@@ -135,8 +135,8 @@ def test_영양소_분석_프롬프트에는_후보_고르기_안내가_없다()
 
 
 LINE = (
-    "- 보호자가 말한 음식이 후보 목록에 없으면 그 음식을 reason 에 쓰지 않는다. "
-    "후보 안에서 가까운 것을 고른다."
+    "- 보호자가 말한 음식이 후보 목록에 없고 generated 로도 내지 않으면 그 음식을 reason 에 "
+    "쓰지 않는다. 후보 안에서 가까운 것을 고른다."
 )
 
 
@@ -204,3 +204,65 @@ def test_요청_메시지에_기록_후보가_비어_있으면_없다고_명시�
 
 def test_요청_메시지는_기록_후보를_안_주면_구획을_만들지_않는다() -> None:
     assert "[아이 기록 후보]" not in request_message(("저녁",), ())
+
+
+# ── 보호자가 정한 조건 — 후보 표시 · 생성 지시 (#740) ───────────────────────────
+def rows_for_prompt():
+    from tests.unit.agents.food.support import menu_row
+
+    return [
+        menu_row("오이무침", source="mafra_recipe", ingredients=("오이", "참기름")),
+        menu_row("두부조림", source="mafra_recipe", ingredients=("두부", "간장")),
+    ]
+
+
+def test_조건_맞는_후보에만_요청과_맞음을_표시한다() -> None:
+    text = request_message(
+        ("오이 들어간 음식",), rows_for_prompt(), requested=frozenset({"오이무침"})
+    )
+
+    cucumber, tofu = [line for line in text.splitlines() if line.startswith("- ")]
+    assert cucumber.endswith("요청과 맞음")
+    assert "요청과 맞음" not in tofu
+
+
+def test_조건_표시가_없으면_후보_줄은_지금과_같다() -> None:
+    text = request_message(("저녁 추천",), rows_for_prompt())
+
+    assert "요청과 맞음" not in text
+
+
+def test_재호출_메시지도_조건_맞는_후보를_표시한다() -> None:
+    from app.agents.food.prompt import recall_message
+
+    text = recall_message(
+        ("오이 들어간 음식",),
+        avoid=["두부조림"],
+        sample=rows_for_prompt()[:1],
+        requested=frozenset({"오이무침"}),
+    )
+
+    assert "오이무침" in text and "요청과 맞음" in text
+
+
+def test_식단_추천_지시에_조건_적기와_생성_가드레일이_있다() -> None:
+    text = build_system_prompt(context(), FoodTaskType.MEAL_RECOMMENDATION)
+
+    for part in ("requested_food", "requested_kind", "요청과 맞음", "generated", "흔히 먹는"):
+        assert part in text
+    assert "억지로" in text  # 조건을 억지로 끼운 조합 금지
+    assert "양념" in text  # 양념까지 재료에 적는다 — 알레르기 필터가 보려면 필요하다
+    assert "양·숫자" in text or "양 · 숫자" in text
+
+
+def test_다른_task_프롬프트에는_생성_지시가_없다() -> None:
+    for task in (FoodTaskType.NUTRIENT_ANALYSIS, FoodTaskType.DAYCARE_MEAL):
+        assert "generated" not in build_system_prompt(context(), task)
+
+
+def test_프롬프트에_라이브_eval_문장을_넣지_않는다() -> None:
+    # 외운 문장을 재게 된다 — 일반화를 재려고 예시를 두지 않는다
+    text = build_system_prompt(context(), FoodTaskType.MEAL_RECOMMENDATION)
+
+    for sentence in ("태국음식", "파프리카", "오이 들어간"):
+        assert sentence not in text

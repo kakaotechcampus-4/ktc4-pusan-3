@@ -88,6 +88,39 @@ def record_counter(child_id: UUID) -> entrypoint.CountRecords:
     return count_records
 
 
+def recent_turns_loader(parent_id: UUID, child_id: UUID) -> entrypoint.LoadRecentTurns:
+    """후속 질문일 때 pipeline 이 부르는 앞 대화 조회 — 최근 30분 · 3턴 (`chat_turn`).
+
+    부를 때마다 짧은 세션 하나다 — run 세션을 도메인 task 들과 같이 타지 않는다.
+    🚨 읽기가 실패해도 여기서 잡지 않는다. pipeline(`_conversation`)이 한 곳에서 잡아 빈 맥락으로
+       바꾼다 — 두 곳에서 잡으면 실패가 로그에 두 번 남거나 한쪽이 삼킨다.
+    """
+    from app.api.runs import chat_context
+    from app.domains.chat.repository import recent_turns
+    from app.domains.suggestion.repository import list_suggestions_by_ids
+
+    async def load() -> entrypoint.ConversationContext:
+        since = datetime.now(UTC) - entrypoint.RECENT_WINDOW
+        async with background_session() as session:
+            turns = await recent_turns(
+                session,
+                parent_id=parent_id,
+                child_id=child_id,
+                since=since,
+                # 위험 물질 안내 · 되묻기 답 턴을 거른 뒤 세 턴이 남게 넉넉히 읽는다 — 거르기 전에
+                # 세 턴만 끊으면 쓸 수 있는 앞 턴을 두고 "[앞 대화] 없음" 이 나간다
+                limit=entrypoint.MAX_RECENT_TURNS * 3,
+            )
+            prepared = chat_context.prepare(turns)
+            # 추천 이름은 답이 아니라 추천 행에 있다. 아이로 거르므로 남의 id 는 읽히지 않는다
+            rows = await list_suggestions_by_ids(
+                session, child_id=child_id, ids=prepared.suggestion_ids()
+            )
+            return prepared.context({str(row.id): row.content for row in rows})
+
+    return load
+
+
 def food_stores() -> dict[str, object]:
     """Food 가 읽는 카탈로그 · 추천 이력 어댑터. 호출마다 짧은 세션을 연다 — 러너와 05 가 같이 쓴다.
 

@@ -2,13 +2,14 @@ import asyncio
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import date, datetime, time, timedelta, tzinfo
 
-from sqlalchemy import select
+from sqlalchemy import and_, exists, func, or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domains.notice.assemble import NewNotice, NewNoticeItem, same_notice
-from app.domains.notice.models import Notice, NoticeItem, NoticeRelation
+from app.domains.notice.models import Notice, NoticeDocKind, NoticeItem, NoticeRelation
 
 # 사진을 다시 찍어 올리는 일은 받은 지 얼마 안 된 공지에서 일어난다
 RECENT_NOTICES = 30
@@ -150,3 +151,79 @@ async def link_related(
         row.related_notice_id = related_notice_id
         row.relation = relation
         await session.flush()
+
+
+async def find_notices(
+    session: AsyncSession,
+    *,
+    child_id: uuid.UUID,
+    date_from: date | None,
+    date_to: date | None,
+    text_query: str | None,
+    doc_kind: NoticeDocKind | None,
+    limit: int,
+    tz: tzinfo,
+) -> list[tuple[Notice, list[NoticeItem]]]:
+    """받은 시각 최신순 `limit` 건과 그 항목 (#832). 읽기만 한다.
+
+    날짜 (`tz` 기준 하루 단위, 한쪽이 None 이면 그쪽은 열림) — 아래 중 하나라도 걸리면 찾는다.
+      · 공지의 날: `issued_on`, 없으면 `received_at` 의 날짜
+      · 항목의 `starts_at` ~ `ends_at`(없으면 `starts_at`) 이 기간과 겹침
+      · 항목의 `due_at` 이 기간 안
+    낱말은 공지 제목 · 원문, 항목 제목 · 이름표 중 하나에 들면 찾는다. 항목은 시작 → 마감 → 제목
+    순(없으면 뒤)이다.
+    """
+    stmt = select(Notice).where(Notice.child_id == child_id)
+    if date_from is not None or date_to is not None:
+        issued = [Notice.issued_on.is_not(None)]
+        received = [Notice.issued_on.is_(None)]
+        starts = [NoticeItem.starts_at.is_not(None)]
+        due = [NoticeItem.due_at.is_not(None)]
+        if date_from is not None:
+            start = datetime.combine(date_from, time.min, tzinfo=tz)
+            issued.append(Notice.issued_on >= date_from)
+            received.append(Notice.received_at >= start)
+            starts.append(func.coalesce(NoticeItem.ends_at, NoticeItem.starts_at) >= start)
+            due.append(NoticeItem.due_at >= start)
+        if date_to is not None:
+            end = datetime.combine(date_to + timedelta(days=1), time.min, tzinfo=tz)
+            issued.append(Notice.issued_on <= date_to)
+            received.append(Notice.received_at < end)
+            starts.append(NoticeItem.starts_at < end)
+            due.append(NoticeItem.due_at < end)
+        item_hit = exists().where(NoticeItem.notice_id == Notice.id, or_(and_(*starts), and_(*due)))
+        stmt = stmt.where(or_(and_(*issued), and_(*received), item_hit))
+    if text_query:
+        item_text = exists().where(
+            NoticeItem.notice_id == Notice.id,
+            or_(
+                NoticeItem.title.contains(text_query, autoescape=True),
+                NoticeItem.label.contains(text_query, autoescape=True),
+            ),
+        )
+        stmt = stmt.where(
+            or_(
+                Notice.title.contains(text_query, autoescape=True),
+                Notice.raw_text.contains(text_query, autoescape=True),
+                item_text,
+            )
+        )
+    if doc_kind is not None:
+        stmt = stmt.where(Notice.doc_kind == doc_kind)
+    stmt = stmt.order_by(Notice.received_at.desc(), Notice.id).limit(limit)
+    notices = list((await session.scalars(stmt)).all())
+    if not notices:
+        return []
+    items = await session.scalars(
+        select(NoticeItem)
+        .where(NoticeItem.notice_id.in_([n.id for n in notices]))
+        .order_by(
+            NoticeItem.starts_at.asc().nulls_last(),
+            NoticeItem.due_at.asc().nulls_last(),
+            NoticeItem.title,
+        )
+    )
+    by_notice: dict[uuid.UUID, list[NoticeItem]] = {n.id: [] for n in notices}
+    for item in items:
+        by_notice[item.notice_id].append(item)
+    return [(n, by_notice[n.id]) for n in notices]

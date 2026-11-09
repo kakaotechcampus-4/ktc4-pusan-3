@@ -36,6 +36,7 @@ import {
   visibleAgentResults,
   type BlockCandidates,
 } from "@/lib/agent-result";
+import { isSeriesDraft } from "@/lib/event-draft";
 import type { RunState } from "@/hooks/use-run-stream";
 import type {
   AgentReadout,
@@ -45,7 +46,7 @@ import type {
   PartialEvent,
 } from "@/lib/api/sse";
 import type { QuestionState } from "@/stores/conversation";
-import type { Agent, EventDraft, MedicationDraft, StoredRef } from "@/lib/api/types";
+import type { Agent, AnyEventDraft, MedicationDraft, StoredRef } from "@/lib/api/types";
 import { formatEventTime } from "@/lib/format";
 import { MEDICATION_ENABLED } from "@/lib/store-policy";
 import { FORWARD } from "@/lib/view-transition";
@@ -161,8 +162,8 @@ export function RunReply({
               다시 보내도 두 번 저장되지 않는다 — 연결만 끊긴 경우도 있어서 다시 시도는 남긴다. */}
           {checkRecords ? (
             <p className="mt-1">
-              다시 보내도 결과를 받지 못했어요. 저장됐다면 기록 탭에 남아 있으니 먼저 확인해 주세요.
-              같은 한 줄로 다시 보내도 두 번 저장되지 않아요.
+              다시 보내도 결과를 받지 못했어요. 저장됐다면 기록/기억 화면에 남아 있으니 먼저 확인해
+              주세요. 같은 한 줄로 다시 보내도 두 번 저장되지 않아요.
             </p>
           ) : (
             <p className="mt-1">
@@ -202,7 +203,7 @@ export function RunReply({
   if (run.failure) {
     return (
       <CardFailed>
-        <p className="text-body text-ink">읽지 못했어요</p>
+        <p className="text-body text-ink">적어 주신 말을 읽지 못했어요</p>
         <p className="mt-1">잘못 저장하지 않으려고 아무것도 저장하지 않았어요.</p>
         <RetryActions onRetry={onRetry} onRewrite={onRewrite} rewriteBlocked={rewriteBlocked} />
       </CardFailed>
@@ -376,7 +377,7 @@ export function RunReply({
       )}
 
       {run.promoted.length > 0 ? (
-        <section data-tour="promoted" className="flex flex-col gap-2">
+        <section className="flex flex-col gap-2">
           <h3 className="text-label text-brand">기억이 자랐어요</h3>
           {run.promoted.map((change) => (
             <Card key={change.ref.id}>
@@ -419,12 +420,12 @@ export function RunReply({
       {/* 🚨 쌓인 기록이 있을 때의 말이다. 일정만 말한 한 줄에는 확정할 행동 자체가 없다. */}
       {savedSomething ? (
         <p className="text-caption text-ink-subtle">
-          한 번의 행동은 성향으로 확정하지 않아요. 반복 횟수는 코드가 셉니다.
+          한 번 있었던 일로 아이의 성향을 정하지 않아요. 서로 다른 날에 반복돼야 확인된 기억이 돼요.
         </p>
       ) : null}
 
       {/* 🚨 제안을 버튼으로 쌓지 않는다. 고르는 것은 줄(`AgentPromptRow`)이다. "아니요" 버튼은
-          두지 않는다: 기본값이 기록만이라는 것은 아래 문구가 말하고, 아무것도 고르지 않아도
+          두지 않는다: 고르지 않으면 기록만 남는다는 것은 아래 문구가 말하고, 아무것도 고르지 않아도
           이미 저장은 끝나 있다. */}
       {run.offers.length > 0 ? (
         <section className="flex flex-col gap-2">
@@ -437,8 +438,8 @@ export function RunReply({
           {/* 🚨 **저장한 것이 없으면 "기록은 이미 남았어요" 도 거짓이다.** */}
           <p className="text-caption text-ink-subtle mt-1">
             {savedSomething
-              ? "고르지 않아도 기록은 이미 남았어요. 기본값은 기록만이에요."
-              : "고르지 않아도 괜찮아요. 기본값은 아무것도 더 하지 않는 거예요."}
+              ? "고르지 않아도 기록은 이미 남았어요."
+              : "고르지 않아도 괜찮아요. 고르지 않으면 아무것도 바뀌지 않아요."}
           </p>
         </section>
       ) : null}
@@ -495,7 +496,7 @@ function InterruptedCard({ savedSomething }: { savedSomething: boolean }) {
           : "적어주신 내용은 이미 반영됐어요. 같은 말을 다시 보내지 않아도 돼요."}
       </p>
       {savedSomething ? null : (
-        <p className="mt-1">반영된 내용은 기록 탭이나 달력에서 확인할 수 있어요.</p>
+        <p className="mt-1">반영된 내용은 기록/기억 화면이나 캘린더에서 확인할 수 있어요.</p>
       )}
     </CardFailed>
   );
@@ -565,7 +566,7 @@ function AgentResultCard({
           <p className="text-caption text-ink-subtle">{domainLabel(result.agent)}</p>
           {candidates ? (
             <div className="mt-1">
-              <p className="text-body text-ink">후보 {candidates.count}개</p>
+              <p className="text-body text-ink">제안 {candidates.count}가지</p>
               {/* 🚨 일반 묶음은 "일반 추천" 과 쌓인 기록 수를 그대로 적는다 — 0건도 적는다 (최상위 §2).
                   색으로 가르지 않는다 — 라벨과 건수가 본체다 (apps/web CLAUDE §5).
                   "또래 기준" 은 붙이지 않는다 — 요청에 맞춰 고른 일반 추천도 있다 (#597). 기준은 아래 `reason` 이 말한다. */}
@@ -627,7 +628,7 @@ function AgentResultCard({
               className="mt-3"
               transitionTypes={FORWARD.transitionTypes}
             >
-              후보 보기
+              제안 보기
             </ButtonLink>
           ) : null}
         </div>
@@ -835,7 +836,7 @@ function DraftsCard({
  * 적고 캘린더를 가리킨다. 보관함에 남아 있으면 아직 넣지 않은 것이라 이 카드 대신 `DraftsCard` 가 선다.
  * 🚨 지난 턴의 초안을 보관함에 새로 얹지는 않는다 (`lib/chat-history.ts`).
  */
-function ArchivedDraftsCard({ drafts }: { drafts: readonly EventDraft[] }) {
+function ArchivedDraftsCard({ drafts }: { drafts: readonly AnyEventDraft[] }) {
   return (
     <section>
       <h3 className="text-label text-brand">그때 찾은 일정</h3>
@@ -847,11 +848,16 @@ function ArchivedDraftsCard({ drafts }: { drafts: readonly EventDraft[] }) {
               {drafts.map((draft) => (
                 <li key={draft.draft_id}>
                   <p className="text-body text-ink">{draft.event.title}</p>
-                  {/* 🚨 일자를 못 읽은 초안은 비어 온다 — 오늘로 채우지 않는다 (`EventDraftFields.starts_at`). */}
-                  {draft.event.starts_at ? (
+                  {/* 🚨 반복 묶음 고치기(#738)에는 날짜가 없다 — 반복 문구(서버 문구)로 무엇을 고치려 했는지 말한다. */}
+                  {isSeriesDraft(draft) ? (
+                    <p className="text-caption text-ink-subtle">앞으로의 회차 전부 바꾸기</p>
+                  ) : draft.event.starts_at ? (
                     <p className="text-caption text-ink-subtle">
                       {formatEventTime(draft.event.starts_at, draft.event.all_day)}
                     </p>
+                  ) : null}
+                  {draft.repeat ? (
+                    <p className="text-caption text-ink-subtle">{draft.repeat.label}</p>
                   ) : null}
                 </li>
               ))}
@@ -925,7 +931,7 @@ const GUIDANCE_KIND: Record<
   { label: string; icon: LucideIcon; to?: { path: string; label: string } }
 > = {
   safety_record: {
-    label: "안전 정보",
+    label: "알레르기·건강",
     icon: ShieldCheck,
     to: { path: "profile", label: "직접 입력하러 가기" },
   },
@@ -1085,7 +1091,7 @@ function NoteCard({
                   적게 했더니, 일부가 이미 저장된 run 에서는 그 조각이 **두 번 저장**됐다. 앞
                   이야기는 서버가 `reply_to` 로 찾으므로 화면은 답만 받는다. */}
               <p className="text-body-sm text-ink-muted mt-2">
-                이 질문에 대한 답만 적어주시면 돼요. 앞서 적어주신 말은 그대로 두고 이어서 볼게요.
+                이 질문의 답만 적어 주시면 돼요. 앞서 적어주신 말은 그대로 두고 이어서 볼게요.
               </p>
               {answeringNow ? (
                 <p className="text-caption text-ink-muted mt-2">아래 입력창에서 답하는 중이에요.</p>

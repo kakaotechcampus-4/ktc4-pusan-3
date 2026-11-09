@@ -226,3 +226,77 @@ async def test_묻는_말에_모델이_삭제를_불러도_지우지_않는다()
     assert [r.body for r in result.readouts] == [READOUTS.render("daycare.unchanged").body]
     after = await context.ports.daycare.rows(child_id=CHILD, date_from=TODAY, date_to=TODAY)
     assert after == before
+
+
+# ── 급식 조회(daycare_lookup) ─────────────────────────────────────────
+def lookup_task(text: str) -> DomainTask:
+    return DomainTask(
+        run_id="run-1", agent="food", task_type="daycare_lookup", request_texts=(text,)
+    )
+
+
+def show_call(span: str | None, call_id: str = "s") -> object:
+    return tool_response(tool_call(call_id, "show_daycare_meal", {"date_span": span}))
+
+
+async def test_급식_조회는_모델이_조회_tool_을_부르면_끝나고_행은_그대로다() -> None:
+    context = daycare_context()
+    llm = ScriptedLLM(show_call("오늘"))
+
+    result = await run(lookup_task("오늘 급식 뭐야?"), context, client=llm)
+
+    assert (result.agent, result.task_type, result.status) == (
+        "food",
+        "daycare_lookup",
+        "completed",
+    )
+    assert result.model_calls == 1
+    assert result.suggestions == () and result.needs_observation == ()
+    (readout,) = result.readouts
+    assert readout.authored_by == "code"
+    assert readout.body == "10월 14일(수) 점심: 된장국, 잡곡밥"
+    assert llm.tool_choices == ["required"]
+    (row,) = await context.ports.daycare.rows(child_id=CHILD, date_from=TODAY, date_to=TODAY)
+    assert row.menu_keys == ("된장국", "잡곡밥")
+
+
+async def test_급식_조회는_알레르기_조회가_실패해도_열린다() -> None:
+    # 알레르기를 쓰지 않는 읽기다 — 식단 추천 · 영양소 분석처럼 blocked.safety 로 닫지 않는다
+    llm = ScriptedLLM(show_call(None))
+
+    result = await run(lookup_task("급식 뭐야?"), daycare_context(safety_fails=True), client=llm)
+
+    assert result.status == "completed" and result.model_calls == 1
+    assert [readout.body for readout in result.readouts] == ["10월 14일(수) 점심: 된장국, 잡곡밥"]
+
+
+async def test_급식_조회도_행이_없으면_모델을_부르지_않고_닫는다() -> None:
+    llm = ScriptedLLM()
+
+    result = await run(lookup_task("내일 급식 뭐야?"), daycare_context(rows=False), client=llm)
+
+    assert result.status == "blocked" and result.model_calls == 0
+    assert [readout.body for readout in result.readouts] == [
+        READOUTS.get("closed.no_daycare").template
+    ]
+    assert llm.calls == 0
+
+
+async def test_잘린_구간은_모델에게_돌려주고_다시_부르면_끝난다() -> None:
+    # 다음 주 화요일을 화요일로 줄이면 다른 날 급식이 나간다 — 코드가 고쳐 쓰지 않고 돌려보낸다
+    llm = ScriptedLLM(show_call("내일", "bad"), show_call("내일모레", "good"))
+
+    result = await run(lookup_task("내일모레 급식 알려줘"), daycare_context(), client=llm)
+
+    assert result.status == "completed"
+    assert llm.calls == 2
+    assert result.model_calls == 1  # Agent 진입 수다
+
+
+async def test_모델이_조회_tool_을_끝내지_못하면_failed_다() -> None:
+    llm = ScriptedLLM(*[show_call("내일", f"bad{i}") for i in range(10)])
+
+    result = await run(lookup_task("급식 알려줘"), daycare_context(), client=llm)
+
+    assert result.status == "failed" and result.model_calls == 1
+    assert result.readouts == ()
