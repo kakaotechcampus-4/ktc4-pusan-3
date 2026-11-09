@@ -4430,7 +4430,7 @@ describe("⑰ 08 사진 — 읽기와 저장이 갈린다", () => {
 
     /**
      * 🚨 `event.status` 가 없어진 뒤(#118) 이 커밋이 **게이트 없이 캘린더에 쓰는 유일한 경로**
-     *    였다. 일정을 아예 안 만들면 그 경로가 사라진다 — 일정은 고치기 시트의 승인 게이트가 넣는다.
+     *    였다. 일정을 아예 안 만들면 그 경로가 사라진다 — 일정은 확인 화면 맨 아래 버튼의 승인 게이트가 넣는다 (#824).
      */
     expect(saved).not.toHaveProperty("drafts");
     expect(saved).not.toHaveProperty("event");

@@ -90,6 +90,9 @@ NEXT_PUBLIC_API_MOCKING=enabled
 | `photo_unreadable` | 08 사진에서 읽어낼 게 없음 — `failed` · 저장된 것 없음 |
 | `photo_not_document` | 08 사진이 공지 · 식단표가 아님(영수증 등) — `failed` `not_document` · 다른 사진 고르기 |
 | `photo_lane_mismatch` | 08 에서 고른 종류와 서버가 읽은 종류가 어긋남 — 한 줄로 알리고 **고른 쪽을 유지** |
+| `photo_event_partial` | 08 에서 켠 일정을 한 번에 넣다가 두 번째만 한 번 실패 — 저장(commit)하지 않고 남아서 못 넣은 것만 같은 키로 다시 넣는다 (#824) |
+| `photo_commit_failed` | 08 에서 일정을 다 넣은 뒤 저장(commit)만 한 번 500 — 넣은 수를 말하고, 다시 누르면 일정 없이 저장만 (#824) |
+| `photo_commit_expired` | 08 저장(commit)이 404 — 읽은 결과가 사라졌다. 버튼을 잠그고 사진을 다시 올리라고 한다 (#824) |
 | `withdraw_lost` | 10 탈퇴 — 지운 **뒤에** 응답이 사라짐. 🚨 **첫 화면이 아니라 "탈퇴했어요" 로 끝나야 한다** (#389) |
 | `withdraw_unconfirmed` | 10 탈퇴 — 지운 뒤 응답도 첫 확인(`/me`)도 끊김. "확인하지 못했어요" → **다시 누른 탈퇴의 401 이 "탈퇴했어요" 로 끝나야 한다** (#389) |
 | `session_expired` | 앱을 켤 때 받은 access 가 이미 만료 — 첫 요청이 401. 🚨 **갱신한 뒤 다시 보내 화면이 그대로 이어져야 한다** · 갱신은 쿼리가 여럿이어도 하나 (#465) |
