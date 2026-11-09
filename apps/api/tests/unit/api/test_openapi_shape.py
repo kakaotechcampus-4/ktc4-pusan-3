@@ -8,31 +8,30 @@
    자기 기본 422 모양(`HTTPValidationError`)을 붙였다.
 """
 
-import importlib
-import inspect
-import pkgutil
-
 import pytest
 from pydantic import BaseModel
 
-import app.api.v1.schemas as schemas_pkg
 from app.main import app
 
 ENVELOPE_REF = "#/components/schemas/ErrorEnvelope"
 
 
-def _schema_modules():
-    names = [f"app.api.v1.schemas.{m.name}" for m in pkgutil.iter_modules(schemas_pkg.__path__)]
-    return [importlib.import_module(n) for n in [*names, "app.api.errors", "app.api.chat_replies"]]
+def _all_models(cls: type[BaseModel] = BaseModel) -> list[type[BaseModel]]:
+    found = []
+    for sub in cls.__subclasses__():
+        found.append(sub)
+        found.extend(_all_models(sub))
+    return found
 
 
-def _api_models() -> list[type[BaseModel]]:
-    models = []
-    for module in _schema_modules():
-        for _, cls in inspect.getmembers(module, inspect.isclass):
-            if issubclass(cls, BaseModel) and cls.__module__ == module.__name__:
-                models.append(cls)
-    return models
+def _swagger_models() -> list[type[BaseModel]]:
+    """Swagger 에 실린 스키마의 클래스 — 폴더가 아니라 "Swagger 에 실리는가" 로 고른다 (#893 리뷰).
+
+    `app/api/v1/schemas/` 밖(예: `app/core/event_draft.py`)에 있어도 요청 · 응답에 쓰이면 실린다.
+    FastAPI 가 만드는 multipart 본문(`Body_…`)은 우리 클래스가 아니라 뺀다.
+    """
+    names = {n for n in app.openapi()["components"]["schemas"] if not n.startswith("Body_")}
+    return [m for m in _all_models() if m.__name__ in names and m.__module__.startswith("app.")]
 
 
 def _operations():
@@ -45,12 +44,15 @@ def _ref(response: dict) -> str | None:
     return response.get("content", {}).get("application/json", {}).get("schema", {}).get("$ref")
 
 
-def test_API_스키마는_모두_필드_설명을_Swagger_에_싣는다() -> None:
+def test_Swagger_에_실리는_스키마는_모두_필드_설명을_싣는다() -> None:
+    models = _swagger_models()
     missing = [
-        m.__qualname__ for m in _api_models() if not m.model_config.get("use_attribute_docstrings")
+        f"{m.__module__}.{m.__qualname__}"
+        for m in models
+        if not m.model_config.get("use_attribute_docstrings")
     ]
 
-    assert _api_models(), "스키마를 하나도 못 찾았다 — 모듈 목록이 바뀌었다"
+    assert len(models) > 100, "Swagger 스키마를 거의 못 찾았다 — 고르는 방법이 바뀌었다"
     assert missing == []
 
 
