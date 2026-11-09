@@ -369,6 +369,7 @@ export async function* photoRunScript(runId: string): AsyncGenerator<Uint8Array>
   if (run.failure) {
     // 🚨 실패는 200 + 빈 배열이 아니다. 여기서 스트림이 끝나고 저장된 것은 없다.
     //    서버처럼 실패한 run 의 키는 잊는다 (photos.py 의 `ended_with != "failed"`) — 한 줄 입력 목과 같다.
+    //    `message`(#768)는 싣지 않는다 — 08 은 그 문구를 쓰지 않고 자기 카드를 그린다 (chat-run-v1.md §3)
     forgetRun(runId);
     yield frame("failed", { reason: run.failure, raw_text: "" });
     return;
