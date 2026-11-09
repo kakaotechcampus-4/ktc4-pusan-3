@@ -227,27 +227,27 @@ def test_missing_return_url_fails_at_boot(field, blank):
 KAKAO_KEYS = ("KAKAO_REST_API_KEY", "KAKAO_CLIENT_SECRET", "KAKAO_CALLBACK_URL")
 
 
+@pytest.mark.parametrize("env", ["prod", "dev"])
 @pytest.mark.parametrize("key", KAKAO_KEYS)
-def test_missing_kakao_key_fails_at_boot_in_prod(key):
-    """🚨 #97. 운영에서는 카카오 키가 비면 서버가 뜨지 않는다.
+def test_missing_kakao_key_fails_at_boot_on_servers(env, key):
+    """🚨 #97 · #310. 서버(prod · dev)에서는 카카오 키가 비면 서버가 뜨지 않는다.
 
-    복귀 URL 과 달리 local · dev 는 막지 않는다(아래 테스트). 운영만 다른 이유 —
+    복귀 URL 과 달리 local 은 막지 않는다(아래 테스트). 서버만 다른 이유 —
     키가 없으면 ready: false 가 내려가 로그인 버튼만 꺼진 채 배포가 끝나고,
     서비스가 성립하지 않는다는 사실을 사용자가 먼저 발견한다 (멘토 리뷰, #71).
+    dev 는 운영 리허설 자리라 키 누락을 prod 전에 여기서 잡는다 (#310).
     """
     with pytest.raises(ValidationError):
-        Settings(APP_ENV="prod", **{key: ""})
+        Settings(APP_ENV=env, **{key: ""})
 
 
-@pytest.mark.parametrize("env", ["local", "dev"])
 @pytest.mark.parametrize("key", KAKAO_KEYS)
-def test_missing_kakao_key_is_allowed_outside_prod(env, key):
-    """개발 환경은 키 없이 뜬다 — ready: false 로 알린다 (§3-1 · A-20).
+def test_missing_kakao_key_is_allowed_in_local(key):
+    """노트북은 키 없이 뜬다 — ready: false 로 알린다 (§3-1 · A-20).
 
-    키를 못 받은 팀원이 나머지 API 를 띄워 쓰는 것, 키를 받기 전에 dev 서버를
-    올려보는 것이 실제로 필요하다.
+    키를 못 받은 팀원이 나머지 API 를 띄워 쓰는 것이 실제로 필요하다.
     """
-    settings_without_key = Settings(APP_ENV=env, **{key: ""})
+    settings_without_key = Settings(APP_ENV="local", **{key: ""})
 
     assert settings_without_key.kakao_ready is False
 
@@ -268,14 +268,15 @@ def test_prod_boots_when_kakao_keys_are_present():
     assert configured.kakao_ready is True
 
 
-def test_missing_admin_key_fails_at_boot_in_prod():
-    """🚨 #379. 어드민 키는 로그인 준비(kakao_ready) 밖이라 따로 막는다.
+@pytest.mark.parametrize("env", ["prod", "dev"])
+def test_missing_admin_key_fails_at_boot_on_servers(env):
+    """🚨 #379 · #310. 어드민 키는 로그인 준비(kakao_ready) 밖이라 따로 막는다.
 
     없으면 로그인은 되는데 탈퇴한 사람의 카카오 연결이 늘 남는다 — 탈퇴는 성공하니
     아무도 모르는 채 쌓인다.
     """
     with pytest.raises(ValidationError, match="KAKAO_ADMIN_KEY"):
-        Settings(**{**PROD_KAKAO, "KAKAO_ADMIN_KEY": ""})
+        Settings(**{**PROD_KAKAO, "APP_ENV": env, "KAKAO_ADMIN_KEY": ""})
 
 
 def test_wildcard_origin_fails_at_boot():
