@@ -1,6 +1,6 @@
 # apps/web 배포 이미지. 빌드 컨텍스트는 이 폴더다 (deploy/docker/docker-compose.deploy.yml).
 #
-#   make web-image        굽기
+#   make web-image        굽기 (로컬. 서버에서는 거부된다 — deploy/scripts/deploy.sh 가 굽는다)
 #   make web-up / web-down / web-logs
 #
 # 🚨 이 파일의 전제 두 개
@@ -51,7 +51,7 @@ ARG NEXT_PUBLIC_API_BASE_URL
 RUN [ -n "$NEXT_PUBLIC_API_BASE_URL" ] || { \
       echo ""; \
       echo "NEXT_PUBLIC_API_BASE_URL 이 비어 있다."; \
-      echo "deploy/docker/.env 에 값을 넣고 make web-image 로 굽는다."; \
+      echo "deploy/docker/.env 에 값을 넣고 다시 굽는다 (로컬 make web-image · 서버 deploy.sh)."; \
       echo ""; exit 1; }
 
 ENV NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL

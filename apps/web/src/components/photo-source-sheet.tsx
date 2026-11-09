@@ -59,6 +59,12 @@ interface LaneCopy {
   rule: string;
   camera: string;
   album: string;
+  /**
+   * 2단계 맨 아래의 고르는 법 한 줄 (#723). 🚨 **얼굴이 나온 사진을 피하라고 고르기 전에 말한다** —
+   *    사진은 글자를 읽으러 외부 모델로 간다(아이 동의문 · 처리방침 ⑧ 3호). 동의문에 이미 있는
+   *    사실이지만, 고르는 순간에 보이지 않으면 아이 얼굴이 담긴 알림장을 그대로 고른다.
+   */
+  guide?: string;
 }
 
 /**
@@ -73,6 +79,7 @@ const LANE: Record<PhotoLane, LaneCopy> = {
     rule: "글자만 읽어요. 아이의 기록으로는 쌓지 않아요.",
     camera: "받아 온 알림장을 지금 찍어요",
     album: "찍어 둔 알림장에서 골라요",
+    guide: "알림장, 가정통신문, 식단표 사진을 골라 주세요. 얼굴이 나온 사진은 피해 주세요.",
   },
   activity: {
     icon: Baby,
@@ -347,6 +354,8 @@ function SourceStep({
           onClick={onAlbum}
         />
       </SheetList>
+
+      {copy.guide ? <p className="text-body-sm text-ink-muted mt-4">{copy.guide}</p> : null}
     </div>
   );
 }

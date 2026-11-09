@@ -909,8 +909,8 @@ function ProfileTab({
             ) : (
               <EmptyState
                 icon={Sprout}
-                title="아직 확정된 기억이 없어요"
-                description="같은 것이 서로 다른 날에 반복되면 기억이 돼요. 한 번 본 것은 성향으로 확정하지 않아요."
+                title="아직 쌓인 기억이 없어요"
+                description="같은 일이 서로 다른 날에 반복되면 기억이 돼요. 한 번 있었던 일로 아이의 성향을 정하지 않아요."
                 count={0}
                 countLabel="쌓인 기억"
               />

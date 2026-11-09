@@ -5,7 +5,8 @@
 
 import uuid
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -111,6 +112,40 @@ async def page_turns(
     page = rows[:limit]
     more = TurnCursor(page[-1].created_at, page[-1].id) if len(rows) > limit else None
     return list(reversed(page)), more
+
+
+_KST = ZoneInfo("Asia/Seoul")
+
+
+async def recent_turns(
+    session: AsyncSession,
+    *,
+    parent_id: uuid.UUID,
+    child_id: uuid.UUID,
+    since: datetime,
+    limit: int,
+) -> list[ChatTurn]:
+    """접수 시각이 `since` 이후인 가장 최근 턴 `limit` 개를 오래된 순으로 준다.
+
+    Supervisor 가 후속 질문을 읽을 앞 대화다. 같은 보호자 · 같은 아이의 것만 준다.
+    날짜 칸은 `since` 의 KST 날짜보다 하루 앞까지만 좁힌다 — 되묻기에 답한 턴은 질문한 날을 따라서
+    접수 시각이 자정을 넘겨도 날짜가 하루 앞서 있을 수 있다. 이 범위 조건이 있어야 지금 인덱스
+    (`ix_chat_turn_parent_child_date`)로 찾는다.
+    """
+    earliest_day = since.astimezone(_KST).date() - timedelta(days=1)
+    stmt = (
+        select(ChatTurn)
+        .where(
+            ChatTurn.parent_id == parent_id,
+            ChatTurn.child_id == child_id,
+            ChatTurn.conversation_date >= earliest_day,
+            ChatTurn.created_at >= since,
+        )
+        .order_by(ChatTurn.created_at.desc(), ChatTurn.id.desc())
+        .limit(limit)
+    )
+    rows = list((await session.scalars(stmt)).all())
+    return list(reversed(rows))
 
 
 async def count_turns(

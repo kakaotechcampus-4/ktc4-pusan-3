@@ -154,7 +154,11 @@ function SettingsScreen() {
         />
       </Section>
 
-      <Section title="알림" description="내 계정에만 적용돼요. 함께 보는 보호자는 각자 정해요.">
+      <Section
+        tour="notifications"
+        title="알림"
+        description="내 계정에만 적용돼요. 함께 보는 보호자는 각자 정해요."
+      >
         <NotificationSection />
       </Section>
 
@@ -162,7 +166,7 @@ function SettingsScreen() {
         <Section
           tour="consents"
           title="동의"
-          description="지금 켜고 끌 수 있는 것이에요. 바꾸기 전에 무엇이 달라지는지 먼저 보여드리고, 이름을 누르면 전문을 볼 수 있어요."
+          description="지금 켜고 끌 수 있는 동의예요. 바꾸기 전에 무엇이 달라지는지 먼저 보여 드려요. 이름을 누르면 전문을 볼 수 있어요."
         >
           <ConsentSection childId={childId} />
         </Section>
@@ -178,7 +182,7 @@ function SettingsScreen() {
             href={`/child/${childId}/settings/help`}
             icon={LifeBuoy}
             title="자주 묻는 질문"
-            status="기록 · 제안 · 안전 · 함께 보기"
+            status="기록, 제안, 안전, 함께 보기"
             {...FORWARD}
           />
           {/* 🚨 **앱 안에서 보내는 길이다** (#487). Google Play 정책이 불쾌한 AI 답 · 공동 기록 ·
@@ -188,7 +192,7 @@ function SettingsScreen() {
             href={`/child/${childId}/settings/report`}
             icon={Flag}
             title="문제 알리기"
-            status="AI 답 · 공동 기록 · 앱 오류"
+            status="AI 답, 공동 기록, 앱 오류"
             {...FORWARD}
           />
           <TourResetRow />
@@ -224,7 +228,7 @@ function SettingsScreen() {
 /**
  * 고객센터의 "화면 설명 다시 보기" (#632 · `docs/web/screen-tour-v1.md` §1). 각 화면의 ? 는 그 화면만
  * 다시 보여 주고, 이 줄은 모든 화면의 처음 설명을 다시 켠다 — 지금 바로 띄우지 않고 다음에 들어갈 때 뜬다.
- * 🚨 되돌릴 수 있는 일이라 확인 단계를 두지 않는다.
+ * 🚨 되돌릴 수 있는 일이라 확인 단계를 두지 않는다. 서버(#696)가 지운 뒤에만 "다시 켰어요" 라고 말한다.
  */
 function TourResetRow() {
   const tours = useResetTours();
@@ -237,7 +241,9 @@ function TourResetRow() {
         <span role="status">
           {tours.done
             ? "다시 켰어요. 각 화면에 들어가면 다시 보여 드려요."
-            : "처음 들어왔을 때 보던 설명을 모든 화면에서 다시 켜요."}
+            : tours.failed
+              ? "다시 켜지 못했어요. 잠시 뒤에 다시 눌러 주세요."
+              : "처음 들어왔을 때 보던 설명을 모든 화면에서 다시 켜요."}
         </span>
       }
       action={
@@ -245,7 +251,7 @@ function TourResetRow() {
           variant="tertiary"
           size="compact"
           className="shrink-0"
-          disabled={!tours.ready || tours.done}
+          disabled={!tours.ready || tours.pending || tours.done}
           onClick={tours.reset}
         >
           다시 켜기

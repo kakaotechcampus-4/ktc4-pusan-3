@@ -1,4 +1,13 @@
-import type { EventDraftFields } from "@/lib/api/types";
+import type {
+  AnyEventDraft,
+  EventDraftFields,
+  EventRepeat,
+  RepeatRequest,
+  SeriesDraft,
+  SeriesDraftFields,
+  UpdateSeriesBody,
+} from "@/lib/api/types";
+import { formatTimeOfDay } from "@/lib/format";
 
 /**
  * 일정 초안의 **일시 조립.**
@@ -88,4 +97,54 @@ export function moveStart(
   const span = Date.parse(event.ends_at) - Date.parse(event.starts_at);
   if (Number.isNaN(span)) return { starts_at: starts };
   return { starts_at: starts, ends_at: new Date(Date.parse(starts) + span).toISOString() };
+}
+
+/* ── 반복 일정 (#738) ──────────────────────────────────────────────── */
+
+/** 반복 묶음 전체를 고치는 초안인가. 🚨 일정 카드의 모양이 아니라서 그리기 전에 반드시 가른다. */
+export function isSeriesDraft(draft: AnyEventDraft): draft is SeriesDraft {
+  return draft.op === "update_series";
+}
+
+/**
+ * 초안이 고치는 대상. 🚨 **같은 대상의 초안은 최신 한 장만 남긴다** (`stores/event-draft.ts` 의 `mergeDrafts`) —
+ * 낡은 장을 나중에 내면 새 장의 준비물이 지워진다. 새 일정은 대상이 없어 `null` 이다.
+ * 🚨 일정과 묶음의 id 가 겹쳐도 다른 대상이라 앞에 종류를 붙인다.
+ */
+export function draftTarget(draft: AnyEventDraft): string | null {
+  if (isSeriesDraft(draft)) return `series:${draft.series_id}`;
+  return draft.event_id === null ? null : `event:${draft.event_id}`;
+}
+
+/** 제출에 싣는 반복 규칙. 🚨 `label` 은 화면에 그리는 서버 문구라 되돌려 보내지 않는다. */
+export function repeatRequest(repeat: EventRepeat): RepeatRequest {
+  return { weekdays: repeat.weekdays, until: repeat.until };
+}
+
+/**
+ * 묶음 고치기 제출 본문. 🚨 **카드가 읽기 전용이라 초안 값을 그대로 보낸다** — `before` 까지 실어야 서버가
+ * 달라진 값만 아직 시작하지 않은 회차에 적용한다 (`UpdateSeriesBody`).
+ */
+export function seriesSubmitBody(draft: SeriesDraft): UpdateSeriesBody {
+  return {
+    event: draft.event,
+    repeat: repeatRequest(draft.repeat),
+    before: draft.before ? { ...draft.before, repeat: repeatRequest(draft.before.repeat) } : null,
+    items: draft.items,
+  };
+}
+
+/**
+ * 묶음의 하루 시각 한 줄 ("오전 9:00", 종일이면 "하루 종일"). 🚨 **날짜를 계산하는 것이 아니라 표기만 바꾼다** —
+ * 서버가 준 KST `HH:MM` 을 아무 날에나 붙여 시각 부분만 읽는다. 날짜는 화면에 나오지 않는다.
+ */
+export function seriesTimeLabel(fields: SeriesDraftFields): string {
+  if (fields.all_day) return "하루 종일";
+  if (!fields.starts_time) return "시각 없음";
+  const start = formatClock(fields.starts_time);
+  return fields.ends_time ? `${start} ~ ${formatClock(fields.ends_time)}` : start;
+}
+
+function formatClock(hhmm: string): string {
+  return formatTimeOfDay(`2000-01-01T${hhmm}:00${SEOUL_OFFSET}`) || hhmm;
 }

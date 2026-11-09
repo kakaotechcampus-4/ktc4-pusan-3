@@ -107,7 +107,7 @@ function GrowthMeasureChart({
       {/* 🚨 무엇의 그래프인지는 글자가 진다 — 선 색으로 구분하는 범례를 두지 않는다
           (선이 한 장에 하나뿐이라 범례가 가리킬 것도 없다). */}
       <figcaption className="text-label text-ink-muted">
-        {title} · {unit}
+        {title} ({unit})
       </figcaption>
 
       {points.length < 2 ? (
@@ -277,7 +277,7 @@ function GrowthTooltip({
 export function GrowthChartSkeleton() {
   return (
     <SkeletonGroup label="변화 그래프를 불러오는 중" className="flex flex-col gap-4">
-      {["키 · cm", "몸무게 · kg"].map((caption) => (
+      {["키 (cm)", "몸무게 (kg)"].map((caption) => (
         <div key={caption} className="rounded-card border-line bg-surface border p-4">
           <p className="text-label text-ink-muted">{caption}</p>
           <Skeleton className="mt-3 h-40 w-full" />

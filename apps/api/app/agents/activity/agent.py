@@ -70,6 +70,8 @@ async def run(
     task_type = task_type_of(task)
     # 장소 조회의 area · 출력 tool 의 requested_play 를 이 글과 대조한다 — 지어낸 값을 받지 않게
     context.state.request_texts = tuple(task.request_texts)
+    context.state.original_texts = tuple(task.original_texts)
+    context.state.prior_texts = tuple(task.prior_texts)
     weather = await check_weather(context, context.today)
     gate = await build_gate(context, outdoor_ok=weather.outdoor_ok)
     context.state.gate = gate

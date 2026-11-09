@@ -1,8 +1,7 @@
 import { test as base, expect, type Page, type Request } from "@playwright/test";
 
-import { PARENT_ID } from "@/mocks/fixtures";
 import type { Scenario } from "@/mocks/scenario";
-import { seenStorageKey, TOUR_KEYS } from "@/lib/tour/types";
+import { TOUR_KEYS } from "@/lib/tour/types";
 
 /**
  * 화면 규칙 테스트의 공통 바탕 (#242).
@@ -23,6 +22,11 @@ import { seenStorageKey, TOUR_KEYS } from "@/lib/tour/types";
  * `MOCK_REFRESH_KEY` · /web-smoke 와 같은 값).
  */
 const MOCK_REFRESH_KEY = "icatch.mock.refresh";
+/**
+ * 목이 "봤음" 을 드는 자리 (`mocks/handlers/tours.ts` 의 `MOCK_TOURS_KEY`). 🚨 핸들러 파일을 import 하지
+ * 않는다 — `lib/env` 를 끌고 와 Playwright 쪽에서 환경변수 검사가 돈다. 그래서 값을 손으로 맞춘다.
+ */
+export const MOCK_TOURS_KEY = "icatch.mock.tours";
 /** 이 탭에서 이미 심었다는 표시. 로그아웃한 뒤 새로고침했을 때 다시 심지 않으려고 둔다. */
 const SEEDED_KEY = "icatch.e2e.seeded";
 
@@ -75,7 +79,7 @@ export const test = base.extend<Options>({
         ([key, keys]) => {
           if (localStorage.getItem(key) === null) localStorage.setItem(key, JSON.stringify(keys));
         },
-        [seenStorageKey(PARENT_ID), TOUR_KEYS] as const,
+        [MOCK_TOURS_KEY, TOUR_KEYS] as const,
       );
     }
 

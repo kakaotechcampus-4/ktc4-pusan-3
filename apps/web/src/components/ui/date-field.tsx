@@ -268,7 +268,7 @@ export function DateRangeField({
         open={open}
         onClose={() => setOpen(false)}
         title={label}
-        description="시작일과 끝일을 차례로 눌러주세요. 한 날만 누르면 그날 하루예요."
+        description="시작하는 날과 끝나는 날을 차례로 눌러 주세요. 한 날만 누르면 그날 하루예요."
         footer={
           <div className="flex gap-2">
             <Button variant="secondary" className="flex-1" onClick={() => setOpen(false)}>

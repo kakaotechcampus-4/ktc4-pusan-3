@@ -137,12 +137,13 @@
 
 ## 평가 (Eval)
 
-*아직 문서 없음.* eval 케이스 10개, Trajectory 판정, 골든셋, 주 1회 회귀 실행.
+- [eval/eval-v1.md](eval/eval-v1.md) — **AI 품질 점검 설계.** 노션 10개는 구조가 아니라 "헤드라인 N/10" 보기로 · 모든 실행에 §2 불변식 14개(코드 판정 — 승인 게이트 ㉢ 삭제 확정 I15 포함, 호출 수는 비용 경고로) · 단발 프로브 P 34개 · 일주일 페르소나 W 2명(A · C — 통합 DB + 시계 이동, Curator 까지 실제로) · 장애 점검표 F 40칸(기존 테스트 29칸 + 구멍 8) · 되묻기로만 끝난 run 은 "시험 못 함"(통과도 실패도 아님) · 토큰은 `llm_usage` 계약으로 같이 수집 · 하루 입력 한도 계산식 · 비용 계층(스모크 · 전체 · W) · eval 예산 월 크레딧 25% 이하 (11-07, 11-08 리뷰 반영)
 
 ## 운영 (Ops)
 
 - [ops/alembic-collaboration-v1.md](ops/alembic-collaboration-v1.md) — 마이그레이션 협업 규칙 · make 명령어 치트시트 · autogenerate 한계 · revision 충돌 해결법 확정
 - [ops/logging-alerts-v1.md](ops/logging-alerts-v1.md) — 서버 로그 적재(docker journald) · ERROR 알림(Discord 웹훅) 결정과 근거 · 알림이 못 잡는 것 (멘토 #267 2번 · PR #302)
+- [ops/deploy-v1.md](ops/deploy-v1.md) — CI 게이트 · 헬스 실패 시 직전 이미지 자동 롤백 · 한 EC2 위 dev(develop)/prod(main) 분리 · 서버 준비 절차
 - [ops/llm-usage-v1.md](ops/llm-usage-v1.md) — LLM 토큰 사용량을 보호자 · run · 모델별로 남기는 방법 (BM 산정) · 새 호출 지점 규칙 · OCR 담당 계약 · 서버 고려
 - [ops/encryption-v1.md](ops/encryption-v1.md) — 전송(TLS · HSTS) · 저장(EBS) 구간 암호화가 어디서 지켜지는지와 확인 기록 · E2E 를 하지 않는 이유 · 예외 로그에서 원문 빼기 (#670)
 

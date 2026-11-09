@@ -152,7 +152,7 @@ extra_allergens:
     aliases: [키위, 참다래, kiwi]
     guards: []
   - label: 겨자
-    aliases: [겨자, 겨잣, 머스타드, 머스터드, 와사비, mustard]
+    aliases: [겨자, 겨잣, 머스타드, 머스터드, 와사비, 고추냉이, mustard]
     guards: []
   - label: 메론
     aliases: [메론, 멜론, melon]

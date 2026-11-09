@@ -1,7 +1,8 @@
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 
-import type { EventDraft } from "@/lib/api/types";
+import type { AnyEventDraft } from "@/lib/api/types";
+import { draftTarget, isSeriesDraft } from "@/lib/event-draft";
 
 /**
  * 아직 제출하지 않은 **일정 초안.** 아이별로 묶어 둔다.
@@ -55,7 +56,7 @@ export type DraftOrigin = "input" | "photo" | "suggestion";
 
 export interface StoredDraft {
   origin: DraftOrigin;
-  draft: EventDraft;
+  draft: AnyEventDraft;
 }
 
 interface EventDraftState {
@@ -63,7 +64,7 @@ interface EventDraftState {
   byChild: Record<string, StoredDraft[]>;
 
   /** run 이 내보낸 묶음을 얹는다. 같은 `event_id` 가 있으면 **새 것으로 갈아 끼운다.** */
-  addDrafts: (childId: string, origin: DraftOrigin, drafts: EventDraft[]) => void;
+  addDrafts: (childId: string, origin: DraftOrigin, drafts: AnyEventDraft[]) => void;
   /**
    * 한 경로의 초안을 **전부 뗀다.** 다른 경로의 초안은 그대로 둔다.
    * 🚨 05 승인 시트가 열 때 부른다 (#539) — 제안 초안을 여기 두지 않기로 하기 전에 얹힌 것을 지운다.
@@ -78,6 +79,7 @@ interface EventDraftState {
 /**
  * 🚨 **같은 `event_id` 는 새 것이 이긴다.** `event_id` 가 `null`(create)이면 합칠 기준이 없어
  *    그대로 쌓는다. `draft_id` 가 같으면 같은 장이므로 그것도 갈아 끼운다.
+ *    반복 묶음 고치기(#738)는 같은 `series_id` 가 같은 대상이다 — 기준은 `draftTarget` 한 곳이다.
  *
  * 🚨 **경로를 가리지 않고 `event_id` 로 판정한다.** 같은 일정을 한 줄 입력으로도 사진으로도
  *    고칠 수 있고, 낡은 쪽이 남아 있으면 그것이 뒤 결과를 지운다 — 갈라 두는 것은 **문구**이지
@@ -91,19 +93,26 @@ interface EventDraftState {
  *    스토어가 막으려던 바로 그 사고를 화면이 되살린다.
  */
 export function mergeDrafts(current: StoredDraft[], incoming: StoredDraft[]): StoredDraft[] {
-  const replacedEventIds = new Set(
-    incoming.map((d) => d.draft.event_id).filter((id): id is string => id !== null),
+  const replacedTargets = new Set(
+    incoming.map((d) => draftTarget(d.draft)).filter((id): id is string => id !== null),
   );
   const replacedDraftIds = new Set(incoming.map((d) => d.draft.draft_id));
-  const replacedSuggestionIds = new Set(incoming.flatMap((d) => d.draft.suggestion_ids ?? []));
+  const replacedSuggestionIds = new Set(incoming.flatMap((d) => suggestionIds(d)));
 
-  const kept = current.filter(
-    (d) =>
+  const kept = current.filter((d) => {
+    const target = draftTarget(d.draft);
+    return (
       !replacedDraftIds.has(d.draft.draft_id) &&
-      !(d.draft.event_id !== null && replacedEventIds.has(d.draft.event_id)) &&
-      !(d.draft.suggestion_ids ?? []).some((id) => replacedSuggestionIds.has(id)),
-  );
+      !(target !== null && replacedTargets.has(target)) &&
+      !suggestionIds(d).some((id) => replacedSuggestionIds.has(id))
+    );
+  });
   return [...kept, ...incoming];
+}
+
+/** 묶음 초안은 제안에서 오지 않는다 (05 는 묶음을 내지 않는다). */
+function suggestionIds(stored: StoredDraft): string[] {
+  return isSeriesDraft(stored.draft) ? [] : (stored.draft.suggestion_ids ?? []);
 }
 
 export const useEventDraftStore = create<EventDraftState>()(

@@ -15,6 +15,7 @@ import { initialRunState } from "@/hooks/use-run-stream";
 import { api, isApiError, qk, type Agent, type ChatDayResponse } from "@/lib/api";
 import { askedQuestion, visibleAgentResults } from "@/lib/agent-result";
 import { pastTurnsOf, type PastTurn } from "@/lib/chat-history";
+import { draftTarget } from "@/lib/event-draft";
 import { formatDay } from "@/lib/format";
 import { VIEW_TRANSITION } from "@/lib/view-transition";
 import { useDraftText } from "@/stores/draft";
@@ -403,7 +404,7 @@ function RecordedReply({
 
   return (
     <CardFailed>
-      <p>앞서 처리된 한 줄이에요. 결과는 기록 탭에서 볼 수 있어요.</p>
+      <p>앞서 처리된 한 줄이에요. 결과는 기록/기억 화면에서 볼 수 있어요.</p>
       <ButtonLink
         href={`/child/${childId}/memories`}
         variant="secondary"
@@ -444,7 +445,7 @@ function SentBubble({ text, answer, named }: { text: string; answer: boolean; na
   const bubble = (
     // 흰 글자 6.2:1 (§2-2 `brand` 행) — 캡션도 같은 흰색이다. 흐리게 낮추면 4.5:1 아래로 내려간다.
     <div data-tour="bubble" className="bg-brand rounded-card max-w-[85%] px-4 py-3 text-white">
-      {answer ? <p className="text-caption mb-1">질문에 대한 답</p> : null}
+      {answer ? <p className="text-caption mb-1">질문에 답함</p> : null}
       <p className="text-body break-words whitespace-pre-wrap">{text}</p>
     </div>
   );
@@ -552,18 +553,19 @@ function medicationsReplacedByLater(turn: ChatTurn, later: ChatTurn[]): boolean 
 }
 
 /**
- * 이 줄의 일정 초안을 뒤 run 이 **같은 초안으로 다시 냈는가**. 스토어가 같은 `draft_id` · `event_id` 를 새 장으로
+ * 이 줄의 일정 초안을 뒤 run 이 **같은 초안으로 다시 냈는가**. 스토어가 같은 `draft_id` · 대상(`draftTarget`)을 새 장으로
  * 갈아 끼우므로(`mergeDrafts`), 그때 이 줄의 남은 초안이 0 이 되는데 그건 "넣었다" 가 아니다 (#231 리뷰).
  */
 function replacedByLater(turn: ChatTurn, later: ChatTurn[]): boolean {
   const ids = new Set(turn.run.drafts.map((d) => d.draft_id));
-  const events = new Set(
-    turn.run.drafts.map((d) => d.event_id).filter((id): id is string => id !== null),
+  const targets = new Set(
+    turn.run.drafts.map((d) => draftTarget(d)).filter((id): id is string => id !== null),
   );
   return later.some((t) =>
-    t.run.drafts.some(
-      (d) => ids.has(d.draft_id) || (d.event_id !== null && events.has(d.event_id)),
-    ),
+    t.run.drafts.some((d) => {
+      const target = draftTarget(d);
+      return ids.has(d.draft_id) || (target !== null && targets.has(target));
+    }),
   );
 }
 
@@ -613,7 +615,7 @@ function SendFailure({
         <ConsentRequiredCard
           childId={childId}
           error={error}
-          what="적어주신 말을 저장할 수 없어요."
+          what="적어 주신 말을 저장하지 않았어요."
         />
         {keptHere ? (
           <RewriteButton blocked={rewriteBlocked} onClick={rewrite} />
@@ -653,7 +655,7 @@ function SendFailure({
           <p className="text-body-sm text-ink mt-2">{turn.answering.text}</p>
         ) : null}
         <p className="text-caption text-ink-subtle mt-2">
-          고쳐 쓰기를 누르면 적어주신 답이 입력창으로 돌아가요. 무엇에 대한 답인지 함께 적어 보내
+          고쳐 쓰기를 누르면 적어주신 답이 입력창으로 돌아가요. 무엇을 물은 답인지 함께 적어 보내
           주세요. 앞서 저장된 이야기는 다시 적지 않아도 돼요.
         </p>
         <div className="mt-3">

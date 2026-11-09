@@ -1,0 +1,52 @@
+# W-C · 가끔 — 36개월 "보리" · 알레르기 없음 · 엄마 (docs/eval/eval-v1.md 부록 A)
+# 기록이 적은 아이 — 일반 추천 · 기록 건수 · 맞춤인 척하지 않기를 본다. 문장은 전부 지어낸 것.
+id: W-C
+persona: 가끔 — 엄마 주 4회
+world:
+  months: 36
+  nickname: 보리
+  parents: [mom]
+steps:
+  - at: mon 21:00
+    by: mom
+    tag: mon-weekend
+    ability: [모름]
+    say: 주말에 뭐 하지?
+    expect:
+      suggestions: { activity: general }
+      questions_max: 1
+
+  - at: wed 20:00
+    by: mom
+    tag: wed-swing
+    ability: [추출]
+    say: 오늘 놀이터에서 그네 탔어
+    expect:
+      saved: { domains: [activity], min_rows: 1 }
+
+  - at: fri 21:00
+    by: mom
+    tag: fri-dinner
+    ability: [모름]
+    say: 저녁 메뉴 추천해 줘
+    expect:
+      suggestions: { food: general }
+
+  - at: sun 10:00
+    by: mom
+    tag: sun-play
+    ability: [모름]
+    say: 오늘 뭐 하고 놀까
+    expect:
+      # 수요일 그네 1건은 최근 14일 관찰이라 근거로 인용할 수 있다(Activity D3 티어 3 · 인용은 승격이 아니다).
+      # 그래서 종류는 묻지 않고, 개인화면 아이 기록 근거가 있는지는 I2 · I3 가 본다
+      suggestions: { activity: any }
+      never_say: [우리 아이 맞춤]
+
+  - at: sun 22:00
+    by: mom
+    kind: check
+    tag: end-state
+    ability: [끝 상태]
+    check:
+      not_confirmed: [그네]

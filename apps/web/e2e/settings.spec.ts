@@ -16,7 +16,9 @@ test.describe("owner 가 볼 때", () => {
     // 목록이 뜬 뒤에 센다 — 스켈레톤 동안에는 "버튼 0개" 가 그냥 성립한다.
     await expect(page.getByRole("button", { name: "연결 끊기" })).toHaveCount(2);
     const rows = page.getByRole("listitem");
-    await expect(rows.filter({ hasText: "아이를 만든 보호자" }).getByRole("button")).toHaveCount(0);
+    await expect(rows.filter({ hasText: "아이를 등록한 보호자" }).getByRole("button")).toHaveCount(
+      0,
+    );
     await expect(page.getByRole("button", { name: "나가기" })).toHaveCount(0);
   });
 

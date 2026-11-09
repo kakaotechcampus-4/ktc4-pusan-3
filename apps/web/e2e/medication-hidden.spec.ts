@@ -32,7 +32,7 @@ test("11 프로필에 복약 칸이 없고, 머리말도 복약을 말하지 않
   await page.goto(`/child/${CHILD}/profile`);
 
   await expect(page.getByText("기본 정보와 키·몸무게, 알레르기를 여기서 관리해요.")).toBeVisible();
-  await expect(page.getByRole("heading", { name: "알레르기 · 건강" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "알레르기·건강" })).toBeVisible();
   await expect(page.getByText("복약")).toHaveCount(0);
   expect(medicationReads(calls)).toEqual([]);
 });

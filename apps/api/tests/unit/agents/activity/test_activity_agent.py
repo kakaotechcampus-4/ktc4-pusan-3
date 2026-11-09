@@ -792,3 +792,32 @@ class TestDarkPlaygroundRun:
         result = await run(task(), ctx, client=llm)
         assert "미끄럼틀 타기" not in " ".join(contents(result))
         assert "지금은 어두워서 놀이터는 뺐어요." in [r.body for r in result.readouts]
+
+
+class TestSaidTexts:
+    """해석한 요청은 모델에게 가고, "보호자가 말했는가" 를 보는 검사는 보호자 원문만 읽는다."""
+
+    async def test_해석한_요청과_보호자_원문을_따로_둔다(self):
+        ctx = context()
+        asked = DomainTask(
+            run_id="run-1",
+            agent="activity",
+            task_type=None,
+            request_texts=("컵 쌓기 말고 더 쉬운 실내 놀이 추천",),
+            original_texts=("더 쉬운 건 없어?",),
+        )
+        llm = FakeLLM(memory(), propose("종이컵 탑 쌓기", "그림자놀이", "색종이 접기"))
+
+        await run(asked, ctx, client=llm)
+
+        assert ctx.state.request_texts == ("컵 쌓기 말고 더 쉬운 실내 놀이 추천",)
+        assert ctx.state.said() == ("더 쉬운 건 없어?",)
+
+    async def test_원문_칸이_비면_요청_글이_말한_글이다(self):
+        ctx = context()
+        llm = FakeLLM(memory(), propose("종이컵 탑 쌓기", "그림자놀이", "색종이 접기"))
+
+        await run(task("공놀이 하고 싶어"), ctx, client=llm)
+
+        assert ctx.state.original_texts == ()
+        assert ctx.state.said() == ("공놀이 하고 싶어",)
