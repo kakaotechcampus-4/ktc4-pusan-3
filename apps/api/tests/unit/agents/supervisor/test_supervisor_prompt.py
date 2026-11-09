@@ -19,6 +19,17 @@ def test_급식_조회와_갱신의_경계_예시가_있다() -> None:
     assert '"지난주에 먹은 것 좀 보여줘." → record/lookup_edit' in prompt
 
 
+def test_선생님_알림장이_전한_급식_먹은_양은_급식_갱신이다() -> None:
+    """선생님 · 알림장이 전한 점심 · 간식의 먹은 양은 급식 행의 양을 고친다 (#798).
+    기관 신호가 어린이집 · 유치원 · 급식뿐이면 record 로 가서 Memory 가 메뉴를 되묻는다."""
+    prompt = build_system_prompt()
+    assert "선생님 · 알림장이 전한 점심 · 간식" in prompt
+    assert '"선생님이 점심은 반만 먹었대" → request/food/daycare_meal' in prompt
+    assert '"알림장에 간식 싹 비웠다고 써 있네" → request/food/daycare_meal' in prompt
+    # 기관 끼니가 아닌 집 식사는 그대로 기록이다
+    assert '"아침에 밥 반 공기 먹고 등원했어" → record/observe' in prompt
+
+
 def test_무엇을_먹일지_없이_시점만_묻는_말은_food_가_아니다() -> None:
     prompt = build_system_prompt()
     assert '"지금 또 먹여도 돼?" → request/health' in prompt
