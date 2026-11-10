@@ -173,10 +173,14 @@ async def run(
 def _location_missing(context: ActivityContext, gate: Gate) -> bool:
     """위치도 지역도 없어 장소 · 행사를 못 찾는 run 인가 — 찾으려다 막혔거나 나들이를 물었을 때만.
     집 놀이를 물었으면 붙이지 않는다. 장소 · 행사 데이터가 아예 없으면(어댑터 없음) 위치 탓이
-    아니라 붙이지 않는다."""
-    if context.outing_location is not None or not (finds_places(gate) or finds_events(gate)):
+    아니라 붙이지 않는다. 보호자가 말한 지역을 못 찾았으면 그 안내(`place.area_unknown`)만
+    붙인다 — 지역을 말한 사람에게 "지역을 말해 달라" 를 또 하지 않는다 (#856 리뷰)."""
+    state = context.state
+    if state.area_missed or context.outing_location is not None:
         return False
-    return context.state.location_missing or asks_outing(context.state.said())
+    if not (finds_places(gate) or finds_events(gate)):
+        return False
+    return state.location_missing or asks_outing(state.original_texts or state.request_texts)
 
 
 def _weather_notices(
