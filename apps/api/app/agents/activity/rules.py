@@ -60,16 +60,22 @@ def shown_again(content: str, place_name: str | None, shown: Iterable[str]) -> b
     return bool(place) and any(place in normalize_activity(item) for item in shown)
 
 
-# 나들이를 묻는 말 — 위치도 지역도 없을 때 "위치 · 지역을 알려 주면 찾아볼게요" 를 붙이는 기준
+# 나들이를 묻는 말 — 위치도 지역도 없을 때 "위치 · 지역을 알려 주면 찾아볼게요" 를 붙이는 기준.
+# "어디 · 나가" 처럼 집 놀이에도 쓰는 넓은 말은 넣지 않는다 ("집에서 놀 거 어디 없나", #856 리뷰)
 _OUTING_WORDS = re.compile(
-    r"주말|나들이|어디|행사|축제|공연|장소|키즈카페|공원|도서관|놀이터|박물관|미술관|과학관|체험|"
-    r"갈\s?만|가\s?볼|나가|밖에서|바깥"
+    r"주말|나들이|외출|놀러|행사|축제|공연|전시|장소|키즈\s?카페|키카|공원|도서관|놀이터|"
+    r"박물관|미술관|과학관|동물원|수족관|체험관|체험장|"
+    r"갈\s?만|갈\s?데|갈\s?곳|가\s?볼|밖에서|바깥"
 )
+# 집 안 놀이를 물은 말 — 나들이 낱말이 같이 있어도("주말에 집에서") 나들이로 보지 않는다
+_HOME_WORDS = re.compile(r"집\s?에서|집\s?안|집콕")
 
 
 def asks_outing(texts: Iterable[str]) -> bool:
-    """보호자가 바깥 나들이 · 장소 · 행사를 물었는가. 안내 문구를 붙일지만 정한다."""
-    return any(_OUTING_WORDS.search(text) for text in texts)
+    """보호자가 바깥 나들이 · 장소 · 행사를 물었는가. 안내 문구 · 행사 미리 읽기를 할지만 정한다.
+
+    이번 입력의 말만 넘긴다 — 앞 턴에서 나들이를 물었어도 이번에 집 놀이를 물으면 아니다."""
+    return any(_OUTING_WORDS.search(text) and not _HOME_WORDS.search(text) for text in texts)
 
 
 def said_in_request(requested_play: str | None, request_texts: Iterable[str]) -> bool:
