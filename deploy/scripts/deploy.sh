@@ -200,7 +200,7 @@ if "${COMPOSE[@]}" up -d --no-build --pull never --wait --wait-timeout 360; then
     command -v timeout >/dev/null && LIMIT=(timeout 300)
     if out="$(
       img="$("${COMPOSE[@]}" --profile monitor config --images | grep '^grafana/alloy:' | head -n 1)" &&
-        ${LIMIT[@]+"${LIMIT[@]}"} docker run --rm -v "$PWD/deploy/alloy:/etc/alloy:ro" "$img" validate /etc/alloy/config.alloy 2>&1 &&
+        ${LIMIT[@]+"${LIMIT[@]}"} docker run --rm --network none -v "$PWD/deploy/alloy:/etc/alloy:ro" "$img" validate /etc/alloy/config.alloy 2>&1 &&
         ${LIMIT[@]+"${LIMIT[@]}"} "${COMPOSE[@]}" up -d --no-build --pull missing --force-recreate alloy 2>&1
     )"; then
       log "Alloy(메트릭 수집) 기동"

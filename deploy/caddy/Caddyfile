@@ -9,7 +9,8 @@
 #   시간(response_duration)으로 본다 (docs/ops/logging-alerts-v1.md §7).
 # 🚨 per_host(사이트별 host 라벨)를 켜지 않는다. 2.10 은 들어온 Host 헤더를 그대로 라벨로 써서, 인터넷 누구나
 #    Host 를 바꿔 보내면 시계열이 늘고(무료 한도 초과) 상한 없는 Caddy 메모리가 커진다 (#946 보안 검토 M1 · 재현).
-#    설정에 없는 Host 를 묶는 보호는 2.11 부터다 (caddyserver/caddy#7306) — 올린 뒤에 켠다.
+#    설정에 없는 Host 를 묶는 보호는 2.11 부터다 (caddyserver/caddy#7306). 올려서 켜지도 않는다 — dev · prod 가 한 서버라
+#    합계로 충분하다 (docs/ops/logging-alerts-v1.md §7).
 {
 	metrics
 }
