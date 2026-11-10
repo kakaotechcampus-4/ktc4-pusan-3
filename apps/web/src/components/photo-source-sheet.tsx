@@ -79,7 +79,7 @@ const LANE: Record<PhotoLane, LaneCopy> = {
     icon: ClipboardList,
     label: "알림장·식단표",
     hint: "글자를 읽어 준비물과 일시로 정리해요",
-    rule: "글자만 읽어요. 아이의 기록으로는 쌓지 않아요.",
+    rule: "글자만 읽어 준비물과 일시로 정리해요. 아이의 기록으로는 쌓지 않아요.",
     camera: "받아 온 알림장을 지금 찍어요",
     album: "찍어 둔 알림장에서 골라요",
     guide: "알림장, 가정통신문, 식단표 사진을 골라 주세요. 얼굴이 나온 사진은 피해 주세요.",
