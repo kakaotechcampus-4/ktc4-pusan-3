@@ -142,12 +142,12 @@ make web-install && make web-dev             # 웹 → http://localhost:3000
 
 백엔드 없이 화면만 보려면 `apps/web/.env.local` 에서 `NEXT_PUBLIC_API_MOCKING=enabled` 로 바꿉니다.
 
-| 무엇을 검사하나 | 명령 | CI |
+| 무엇을 검사하나 | 명령 | CI · 최근 30일 성공률 |
 | --- | --- | :---: |
-| API 단위 · 통합 · 장애 점검 | `make test` | [![API CI](https://github.com/kakaotechcampus-4/ktc4-pusan-3/actions/workflows/ci-api.yml/badge.svg?branch=develop)](https://github.com/kakaotechcampus-4/ktc4-pusan-3/actions/workflows/ci-api.yml) |
-| 웹 단위 · 화면 규칙 e2e | `make web-test` · `make web-e2e` | [![Web CI](https://github.com/kakaotechcampus-4/ktc4-pusan-3/actions/workflows/ci-web.yml/badge.svg?branch=develop)](https://github.com/kakaotechcampus-4/ktc4-pusan-3/actions/workflows/ci-web.yml) |
-| 웹 ↔ 서버 계약 | `make web-contract` | [![Contract CI](https://github.com/kakaotechcampus-4/ktc4-pusan-3/actions/workflows/ci-contract.yml/badge.svg?branch=develop)](https://github.com/kakaotechcampus-4/ktc4-pusan-3/actions/workflows/ci-contract.yml) |
-| 실서버 e2e | `make web-e2e-live` | [![Live E2E CI](https://github.com/kakaotechcampus-4/ktc4-pusan-3/actions/workflows/ci-e2e-live.yml/badge.svg?branch=develop)](https://github.com/kakaotechcampus-4/ktc4-pusan-3/actions/workflows/ci-e2e-live.yml) |
+| API 단위 · 통합 · 장애 점검 | `make test` | [API CI](https://github.com/kakaotechcampus-4/ktc4-pusan-3/actions/workflows/ci-api.yml) · 96% |
+| 웹 단위 · 화면 규칙 e2e | `make web-test` · `make web-e2e` | [Web CI](https://github.com/kakaotechcampus-4/ktc4-pusan-3/actions/workflows/ci-web.yml) · 96% |
+| 웹 ↔ 서버 계약 | `make web-contract` | [Contract CI](https://github.com/kakaotechcampus-4/ktc4-pusan-3/actions/workflows/ci-contract.yml) · 100% |
+| 실서버 e2e | `make web-e2e-live` | [Live E2E CI](https://github.com/kakaotechcampus-4/ktc4-pusan-3/actions/workflows/ci-e2e-live.yml) · 100% |
 | AI 품질 (실제 모델) | `make eval` | 손으로 돌린다 |
 
 ```mermaid
