@@ -267,7 +267,8 @@ async def commit_photo(
                     detail={"field": "entries", "ids": [entry.id]},
                 )
             meals.append(row)
-        elif not entry.id.startswith("pe_meal_unread_"):
+        elif not entry.id.startswith(photo_run.UNREAD_PREFIXES):
+            # 읽지 못한 칸은 저장하지 않는다. 보호자가 확인해 보내도 건너뛴다
             raise ApiError(
                 422,
                 "validation_failed",
