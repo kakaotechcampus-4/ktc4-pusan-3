@@ -245,7 +245,8 @@ def _day(*meals: tuple[str, list[str | tuple[str, str]]], day: int = 2) -> MealP
 
 
 def test_name_that_disagrees_with_its_raw_is_c1():
-    # 화면 제목과 저장 키는 name 으로 만든다 — raw 만 맞아서는 틀린 메뉴가 저장된다
+    # grade_slots 는 받은 이름을 그대로 본다. 운영 이름은 원문에서 만들어 이렇게 갈리지 않지만,
+    # 모델 이름 깨짐(참고)을 가를 때 같은 규칙을 쓴다 (`model_name_breaks`)
     expected = _plan(["현미밥"])
     actual = _day(("lunch", [("흑미밥", "현미밥")]))
 
@@ -256,8 +257,8 @@ def test_name_that_disagrees_with_its_raw_is_c1():
 
 
 def test_name_with_junk_that_is_not_hangul_is_general_failure_not_c1():
-    # 11-09 첫 측정: 닫는 괄호 자리에 " Riot" 이 붙었다. 다른 음식으로 바뀐 것이 아니고, 저장되면
-    # 카탈로그에 없는 메뉴가 되어 알레르기 판정이 "확인 못 함" 으로 나온다 — 틀린 판단이 남지 않는다
+    # 11-09 첫 측정: 닫는 괄호 자리에 " Riot" 이 붙었다. 다른 음식으로 바뀐 것이 아니다.
+    # 운영은 #908 부터 이름을 원문에서 만들어 이 찌꺼기가 화면 · 저장에 가지 않는다
     expected = _plan(["백김치9(백깍두기9)"])
     actual = _day(("lunch", [("백김치(백깍두기 Riot", "백김치9(백깍두기9)")]))
 
@@ -376,13 +377,16 @@ def test_report_keeps_the_c1_grading_when_a_later_run_only_fails():
 _MILLION = Usage(prompt_tokens=1_000_000, completion_tokens=0, cached_prompt_tokens=0)
 
 
-def _run_main(monkeypatch, tmp_path, reads: list[bool], *extra: str):
+def _run_main(
+    monkeypatch, tmp_path, reads: list[bool], *extra: str, answer: MealPlanJSON | None = None
+):
     """`reads` 순서대로 읽기에 성공(True) · 실패(False)하는 reader 로 main 을 돈다.
 
     회차마다 입력 100만 토큰을 쓴 것으로 친다 — 잘린 응답도 과금된다(`image_ocr._call`).
+    읽기에 성공하면 `answer`(기본: 정답셋)를 모델 출력으로 낸다.
     돌려주는 것: (종료 코드, 실행 메타를 쓴 횟수, 만든 reader 수).
     """
-    answer = load_fixture(DEFAULT_FIXTURE)
+    answer = answer or load_fixture(DEFAULT_FIXTURE)
     script = iter(reads)
     made, wrote = [], []
 
@@ -443,3 +447,49 @@ def test_a_failed_read_still_costs_and_does_not_hide_the_reference_report(
     assert "추정 합계 $4.000" in out  # 회차마다 $2 — 실패한 회차도 과금됐다
     assert "읽기 실패 1/2회" in out
     assert "메뉴 단위 알레르기 번호 일치 : 178/178" in out  # 참고 지표는 읽힌 실행으로 낸다
+
+
+# ── 운영과 같은 이름으로 채점한다 (#908) ─────────────────────────────────────────
+# 운영은 모델의 name 을 쓰지 않고 원문에서 이름을 만든다(`notice_ocr.names_from_raw`).
+# 모델 name 이 깨진 횟수는 프롬프트 변화를 보려고 참고로만 센다.
+
+
+def _garbled_answer() -> MealPlanJSON:
+    """정답셋에서 2일 점심 · 3일 오후간식 첫 항목의 모델 이름만 깨뜨린 출력 (원문은 그대로)."""
+    plan = load_fixture(DEFAULT_FIXTURE).model_copy(deep=True)
+    for day in plan.days:
+        for meal in day.meals:
+            if (day.day, meal.meal_type.value) in {(2, "lunch"), (3, "snack_pm")}:
+                meal.items[0].name += " Riot"
+    return plan
+
+
+def test_served_names_are_graded_not_the_model_names(monkeypatch, tmp_path, capsys):
+    code, _, _ = _run_main(monkeypatch, tmp_path, [True], answer=_garbled_answer())
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "C1 (정답에 없는 메뉴가 그 끼니로 읽힘) : 0/69" in out
+    assert "안정 오답 0 · 불안정 0" in out  # 운영 이름에는 찌꺼기가 없다
+    assert "모델 이름 깨짐(참고) : 2항목 · 회차별 [2]" in out
+
+
+def test_model_name_breaks_count_junk_and_other_menu_words():
+    plan = _day(
+        (
+            "lunch",
+            [
+                ("떡(증편 Riot", "떡(증편)"),
+                ("흑미밥", "현미밥"),
+                ('떡(꿀설기)}{"', "떡(꿀설기)"),  # 11-11 측정 M3 — 기호 찌꺼기도 화면 제목에 갔다
+                ("빵(식빵)&잼", "빵(식빵2,5,6&쨈)"),  # 정답셋 식 이름 · 잼/쨈 은 깨짐이 아니다
+                "우유2",
+            ],
+        )
+    )
+
+    assert meal_ocr_eval.model_name_breaks(plan) == [
+        "떡(증편) (이름: 떡(증편 Riot)",
+        "현미밥 (이름: 흑미밥) · 다른 음식 낱말",
+        '떡(꿀설기) (이름: 떡(꿀설기)}{")',
+    ]

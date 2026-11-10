@@ -78,7 +78,7 @@ def read_photo(
         return PhotoReading(notice=notice, meal_plan=None)
     reader = ImageOcrMealPlanReader.from_settings(settings, max_calls=2, deadline=meal_deadline)
     try:
-        plan = _names_from_raw(reader.read(image, mime_type=mime_type))
+        plan = names_from_raw(reader.read(image, mime_type=mime_type))
         return PhotoReading(notice=notice, meal_plan=plan)
     except ReadDeadlineExceeded:
         log.warning("meal_plan 읽기가 기한 안에 끝나지 않았다 — 공지 항목만 낸다")
@@ -90,12 +90,13 @@ def read_photo(
         return PhotoReading(notice=notice, meal_plan=None, meal_failed=True)
 
 
-def _names_from_raw(plan: MealPlanJSON) -> MealPlanJSON:
+def names_from_raw(plan: MealPlanJSON) -> MealPlanJSON:
     """메뉴 이름을 모델의 `name` 대신 원문(`raw`)에서 코드로 다시 만든다 (#908).
 
     화면 제목과 저장 키가 이 이름으로 만들어진다(`photo_run._meal_entries` → `meal_row`).
     모델 이름에 찌꺼기가 붙은 적이 있어서(" Riot" · "/Optional?") 원문에서 번호 · 기호만 지운다.
     응답 스키마는 그대로 둔다 — `name` 을 빼면 프롬프트 지문이 바뀐다.
+    급식표 eval(`scripts/meal_ocr_eval.py`)도 이 함수를 거쳐 운영과 같은 이름을 채점한다.
     """
     fixed = plan.model_copy(deep=True)
     for day in fixed.days:
