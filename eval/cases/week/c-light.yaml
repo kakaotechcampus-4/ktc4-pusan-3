@@ -20,7 +20,8 @@ steps:
     by: mom
     tag: wed-swing
     ability: [추출]
-    say: 오늘 놀이터에서 그네 탔어
+    # 좋아한다는 신호를 넣는다 — 사실만 말하면(0) 기억 행이 없어 끝의 not_confirmed 를 볼 수 없다 (#839)
+    say: 오늘 놀이터에서 그네 탔는데 엄청 좋아하더라
     expect:
       saved: { domains: [activity], min_rows: 1 }
 
