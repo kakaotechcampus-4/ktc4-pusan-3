@@ -236,7 +236,7 @@ def test_every_up_waits_for_health_and_never_builds_or_pulls(box):
     ups = [c for c in box.calls() if " up " in c]
     assert len(ups) == 2
     for c in ups:
-        assert " -d --no-build --pull never --wait --wait-timeout 240 " in c
+        assert " -d --no-build --pull never --wait --wait-timeout 360 " in c
 
 
 def test_missing_non_built_images_are_pulled_before_build(box):

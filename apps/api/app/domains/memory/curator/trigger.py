@@ -32,6 +32,11 @@ logger = logging.getLogger(__name__)
 _background_tasks: set[asyncio.Task[None]] = set()
 
 
+def running_tasks() -> list[asyncio.Task[None]]:
+    """아직 도는 Curator 태스크. 종료 때 lifespan 이 끝까지 기다린다(drain, #882)."""
+    return [t for t in _background_tasks if not t.done()]
+
+
 async def _run_curator(
     child_id: UUID,
     today: date,

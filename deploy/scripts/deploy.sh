@@ -179,7 +179,8 @@ log "마이그레이션"
 "${COMPOSE[@]}" run --rm api-task uv run --no-sync alembic upgrade heads
 
 log "기동 — 헬스체크 통과까지 대기"
-if "${COMPOSE[@]}" up -d --no-build --pull never --wait --wait-timeout 240; then
+# 360 = 기동 240 + 옛 api drain 유예 120 (stop_grace_period · docs/ops/deploy-v1.md §drain, #897 리뷰)
+if "${COMPOSE[@]}" up -d --no-build --pull never --wait --wait-timeout 360; then
   echo "$SHA" > "$TAG_FILE"
   log "배포 성공 $SHA"
   # api 가 뜰 때 남기는 "꺼져 있는 기능" 한 줄(app/api/startup_report.py)을 배포 출력에도 보인다 —
@@ -223,7 +224,7 @@ if ! docker image inspect "ktc4${SUFFIX}-api:$PREV" "ktc4${SUFFIX}-web:$PREV" >/
 fi
 log "직전 $PREV 로 롤백"
 export API_IMAGE_TAG="$PREV" WEB_IMAGE_TAG="$PREV"
-if "${COMPOSE[@]}" up -d --no-build --pull never --wait --wait-timeout 240; then
+if "${COMPOSE[@]}" up -d --no-build --pull never --wait --wait-timeout 360; then
   log "롤백 성공 — $PREV 가 서비스 중. $SHA 는 올라가지 않았다"
 else
   log "🔴🔴 롤백도 실패 — 서버에서 직접 본다: docker compose -f deploy/docker/docker-compose.deploy.yml --env-file $ENV_FILE logs --tail 100"
