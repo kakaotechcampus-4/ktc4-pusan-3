@@ -212,8 +212,7 @@
 │   ├── caddy/                  Caddyfile — HTTPS 종단 + 리버스 프록시 (icatch.ai.kr → web, api.icatch.ai.kr → api, dev.· 는 dev 환경)
 │   │                          🚨 한 EC2 에 prod(main) · dev(develop) 두 벌이 뜬다. CI 통과 후에만 배포, 헬스 실패면 직전 이미지로 자동 롤백 —
 │   │                          DB 는 안 되돌리므로 마이그레이션은 expand-only ([`docs/ops/deploy-v1.md`](docs/ops/deploy-v1.md))
-│   ├── scripts/                `deploy.sh`(배포 · 롤백) · `backup.sh` · `restore-check.sh`(백업 · 복원 점검) · `health-alert.sh`(컨테이너 감시)
-│   └── nginx/                  (비어 있음) Caddy 를 쓴다
+│   └── scripts/                `deploy.sh`(배포 · 롤백) · `backup.sh` · `restore-check.sh`(백업 · 복원 점검) · `health-alert.sh`(컨테이너 감시)
 └── .github/                  ⚠️ §8 참고 — 손대면 안 되는 파일이 있다
 ```
 
