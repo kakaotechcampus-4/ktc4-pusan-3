@@ -232,8 +232,11 @@ def _item_entry(entry_id: str, item: NewNoticeItem, *, today: date) -> dict:
 
 def _meal_entries(run: PhotoRun, plan, *, today: date) -> list[dict]:
     entries: list[dict] = []
-    # (원문, 이유) — 모델이 못 읽었다고 한 칸 뒤에 이름이 하나도 없는 끼니를 같은 모양으로 붙인다
-    unread = [(cell.raw, cell.why) for cell in plan.unparsed]
+    # (원문, 이유, 어디) — 모델이 못 읽었다고 한 칸 뒤에 이름이 하나도 없는 끼니를
+    # 같은 모양으로 붙인다
+    unread = [
+        (cell.raw, cell.why, _where(plan, cell.day, cell.meal_type)) for cell in plan.unparsed
+    ]
     for day in plan.days:
         for meal in day.meals:
             # 기관 급식 끼니는 셋이다. 아침 · 저녁은 daycare_meal 에 자리가 없어 싣지 않는다
@@ -247,13 +250,20 @@ def _meal_entries(run: PhotoRun, plan, *, today: date) -> list[dict]:
                     (
                         ", ".join(item.raw for item in meal.items),
                         "같은 날 같은 끼니가 두 번 읽혀 앞의 것만 남겼어요.",
+                        _where(plan, day.day, meal.meal_type),
                     )
                 )
                 continue
             if not any(item.name for item in meal.items):
                 # 원문이 번호뿐이라 이름이 전부 비었다. 빈 제목으로 내보내면 저장이 422 로 막힌다 —
                 # 조용히 빼지 않고 못 읽은 칸으로 확인을 받는다
-                unread.append((", ".join(item.raw for item in meal.items), None))
+                unread.append(
+                    (
+                        ", ".join(item.raw for item in meal.items),
+                        None,
+                        _where(plan, day.day, meal.meal_type),
+                    )
+                )
                 continue
             run.meals[entry_id] = MealSlot(plan.date_of(day.day), DaycareSlot(meal.meal_type.value))
             entries.append(
@@ -269,7 +279,8 @@ def _meal_entries(run: PhotoRun, plan, *, today: date) -> list[dict]:
                     "past": plan.date_of(day.day) < today,
                 }
             )
-    for index, (raw, why) in enumerate(unread):
+    for index, (raw, why, where) in enumerate(unread):
+        reason = why or "이 칸은 읽지 못했어요."
         entries.append(
             {
                 "id": f"pe_meal_unread_{index}",
@@ -280,10 +291,35 @@ def _meal_entries(run: PhotoRun, plan, *, today: date) -> list[dict]:
                 "items": [],
                 "needs_review": True,
                 "past": False,
-                "review_reason": why or "이 칸은 읽지 못했어요.",
+                # 어느 날 어느 끼니인지 보여야 보호자가 종이에서 찾는다.
+                # 🚨 날짜 칸(`date`)은 비운다 — 저장하지 않는 칸이고(commit 이
+                #    `pe_meal_unread_` 를 건너뛴다), 의심스러운 날일 수 있다
+                "review_reason": f"{where} — {reason}" if where else reason,
             }
         )
     return entries
+
+
+_SLOT_NAME = {
+    "breakfast": "아침",
+    "snack_am": "오전 간식",
+    "lunch": "점심",
+    "snack_pm": "오후 간식",
+    "dinner": "저녁",
+}
+
+
+def _where(plan, day: int | None, meal_type) -> str | None:
+    """ "11월 9일 오후 간식" — 그 달에 있는 날일 때만. 없는 날("11월 31일")은 말하지 않는다."""
+    if day is None:
+        return None
+    try:
+        served = plan.date_of(day)
+    except ValueError:
+        return None
+    where = f"{served.month}월 {served.day}일"
+    slot = _SLOT_NAME.get(meal_type.value) if meal_type is not None else None
+    return f"{where} {slot}" if slot else where
 
 
 def build_entries(run: PhotoRun, reading: entrypoint.PhotoReading, *, today: date) -> list[dict]:

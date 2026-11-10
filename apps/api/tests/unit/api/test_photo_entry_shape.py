@@ -220,7 +220,7 @@ def test_이름이_하나도_없는_끼니는_읽지_못한_칸으로_보낸다(
                 day=9, meals=[meal("lunch", ("밥", "밥")), meal("snack_pm", ("", "2"), ("", "1,5"))]
             )
         ],
-        unparsed=[SimpleNamespace(raw="생일식단", why="날짜 없는 열")],
+        unparsed=[SimpleNamespace(day=None, meal_type=None, raw="생일식단", why="날짜 없는 열")],
         date_of=lambda day: date(2026, 11, day),
     )
     run = PhotoRun("r1", None, None, 0.0)
@@ -235,7 +235,12 @@ def test_이름이_하나도_없는_끼니는_읽지_못한_칸으로_보낸다(
     assert all(e["title"] for e in entries)  # 빈 제목 항목이 나가지 않는다
     unread = entries[2]
     assert (unread["kind"], unread["title"], unread["date"]) == ("meal", "2, 1,5", None)
-    assert (unread["needs_review"], unread["review_reason"]) == (True, "이 칸은 읽지 못했어요.")
+    # 어느 날 어느 끼니인지 보여야 보호자가 종이에서 찾는다 (날짜를 아는 칸만)
+    assert (unread["needs_review"], unread["review_reason"]) == (
+        True,
+        "11월 9일 오후 간식 — 이 칸은 읽지 못했어요.",
+    )
+    assert entries[1]["review_reason"] == "날짜 없는 열"  # 날짜 없는 칸은 이유만
     assert list(run.meals) == ["pe_meal_9_lunch"]  # 저장할 끼니로 들고 있지 않는다
 
 
@@ -266,3 +271,30 @@ def test_한_날에_같은_끼니가_두_번이면_앞의_것만_싣고_뒤는_�
         ("pe_meal_unread_0", "현미밥, 미역국", True),
     ]
     assert list(run.meals) == ["pe_meal_9_lunch"]
+
+
+def test_모델이_못_읽었다고_한_칸도_어느_날인지_보인다() -> None:
+    from types import SimpleNamespace
+
+    from app.api.runs.photo_run import PhotoRun
+
+    plan = SimpleNamespace(
+        days=[],
+        unparsed=[
+            SimpleNamespace(
+                day=4, meal_type=SimpleNamespace(value="lunch"), raw="빵(찐", why="잘림"
+            ),
+            SimpleNamespace(day=15, meal_type=None, raw="현미밥", why="두 번 읽힘"),
+            SimpleNamespace(day=31, meal_type=None, raw=None, why="흐림"),  # 11월에 없는 날
+        ],
+        date_of=lambda day: date(2026, 11, day),
+    )
+
+    entries = _meal_entries(PhotoRun("r1", None, None), plan, today=TODAY)
+
+    assert [e["review_reason"] for e in entries] == [
+        "11월 4일 점심 — 잘림",
+        "11월 15일 — 두 번 읽힘",
+        "흐림",
+    ]
+    assert all(e["date"] is None for e in entries)  # 저장하지 않는 칸이라 날짜 칸은 비운다
