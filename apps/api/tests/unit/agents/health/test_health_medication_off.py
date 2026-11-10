@@ -70,13 +70,23 @@ async def test_동의가_없어도_동의_안내가_아니라_준비_중_문구�
     "text", ["어린이집에 낼 투약의뢰서 써줘.", "내일 어린이집에 약 보낼 거 써줘"]
 )
 async def test_투약의뢰서는_아무것도_읽지_않고_준비_중_문구로_닫힌다(text):
+    # care_handoff 는 게이트가 안전 정보를 읽는 라벨이다 — 안 읽었으면 게이트 앞에서 닫은 것이다
+    safety = InMemoryHealthSafety([HealthSafetyEntry("allergy", "땅콩", "active")])
     llm = FakeLLM()
 
-    result = await run(task("care_handoff", text), context(medication=_NoReads()), client=llm)
+    result = await run(
+        task("care_handoff", text), context(safety=safety, medication=_NoReads()), client=llm
+    )
 
     assert (result.status, result.model_calls) == ("unsupported", 0)
     assert result.readouts == (READOUTS.render(NOTICE_PREPARING),)
-    assert llm.seen == []
+    assert llm.seen == [] and safety.calls == 0
+
+
+async def test_동의가_없어도_투약의뢰서는_준비_중_문구다():
+    result = await run(task("care_handoff", "투약의뢰서 써줘"), context(consent=False))
+
+    assert result.readouts == (READOUTS.render(NOTICE_PREPARING),)
 
 
 async def test_등록된_약_이름을_읽지_않는다():
@@ -91,8 +101,16 @@ async def test_등록된_약_이름을_읽지_않는다():
     assert spy.reads == 0
 
 
-async def test_응급_카드는_닫지_않는다():
-    result = await run(task("care_handoff", "시터한테 줄 알레르기랑 먹는 약 정리해줘."), context())
+@pytest.mark.parametrize(
+    "text",
+    [
+        "시터한테 줄 알레르기랑 먹는 약 정리해줘.",
+        # 넓은 투약 표현("투약")이 있어도 카드 표현이 먼저다 — care_handoff 경로와 같은 표로 가른다
+        "응급 카드에 투약 중인 약도 넣어줘",
+    ],
+)
+async def test_응급_카드는_닫지_않는다(text):
+    result = await run(task("care_handoff", text), context())
 
     assert result.status == "completed"
     assert [r.kind for r in result.readouts] == ["emergency_card"]
