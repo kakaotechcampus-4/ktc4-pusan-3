@@ -239,12 +239,22 @@ def _meal_entries(run: PhotoRun, plan, *, today: date) -> list[dict]:
             # 기관 급식 끼니는 셋이다. 아침 · 저녁은 daycare_meal 에 자리가 없어 싣지 않는다
             if meal.meal_type.value not in _SLOTS or not meal.items:
                 continue
+            entry_id = f"pe_meal_{day.day}_{meal.meal_type.value}"
+            if entry_id in run.meals:
+                # 한 날에 같은 끼니가 두 번 왔다. 같은 id 두 개를 내보내면 저장 전체가 "같은 항목을
+                # 두 번 보냈어요" 로 막힌다 — 합치기의 같은 날 규칙처럼 앞의 것을 남긴다
+                unread.append(
+                    (
+                        ", ".join(item.raw for item in meal.items),
+                        "같은 날 같은 끼니가 두 번 읽혀 앞의 것만 남겼어요.",
+                    )
+                )
+                continue
             if not any(item.name for item in meal.items):
                 # 원문이 번호뿐이라 이름이 전부 비었다. 빈 제목으로 내보내면 저장이 422 로 막힌다 —
                 # 조용히 빼지 않고 못 읽은 칸으로 확인을 받는다
                 unread.append((", ".join(item.raw for item in meal.items), None))
                 continue
-            entry_id = f"pe_meal_{day.day}_{meal.meal_type.value}"
             run.meals[entry_id] = MealSlot(plan.date_of(day.day), DaycareSlot(meal.meal_type.value))
             entries.append(
                 {

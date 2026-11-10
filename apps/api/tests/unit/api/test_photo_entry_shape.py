@@ -237,3 +237,32 @@ def test_이름이_하나도_없는_끼니는_읽지_못한_칸으로_보낸다(
     assert (unread["kind"], unread["title"], unread["date"]) == ("meal", "2, 1,5", None)
     assert (unread["needs_review"], unread["review_reason"]) == (True, "이 칸은 읽지 못했어요.")
     assert list(run.meals) == ["pe_meal_9_lunch"]  # 저장할 끼니로 들고 있지 않는다
+
+
+def test_한_날에_같은_끼니가_두_번이면_앞의_것만_싣고_뒤는_읽지_못한_칸이다() -> None:
+    # 같은 끼니가 두 번 오면 항목 id 가 겹친다(pe_meal_9_lunch). 웹이 그대로 보내면 저장 전체가
+    # "같은 항목을 두 번 보냈어요" 로 막힌다 — 합치기의 같은 날 규칙처럼 앞의 것을 남긴다
+    from types import SimpleNamespace
+
+    from app.api.runs.photo_run import PhotoRun
+
+    def meal(*raws: str) -> SimpleNamespace:
+        return SimpleNamespace(
+            meal_type=SimpleNamespace(value="lunch"),
+            items=[SimpleNamespace(name=r, raw=r) for r in raws],
+        )
+
+    plan = SimpleNamespace(
+        days=[SimpleNamespace(day=9, meals=[meal("흑미밥"), meal("현미밥", "미역국")])],
+        unparsed=[],
+        date_of=lambda day: date(2026, 11, day),
+    )
+    run = PhotoRun("r1", None, None)
+
+    entries = _meal_entries(run, plan, today=TODAY)
+
+    assert [(e["id"], e["title"], e["needs_review"]) for e in entries] == [
+        ("pe_meal_9_lunch", "흑미밥", False),
+        ("pe_meal_unread_0", "현미밥, 미역국", True),
+    ]
+    assert list(run.meals) == ["pe_meal_9_lunch"]
