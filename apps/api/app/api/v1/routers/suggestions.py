@@ -1005,9 +1005,14 @@ def _general_out(row, docs: list[DocEvidenceOut], record_count: int) -> GeneralS
 
 @router.post(
     "/children/{cid}/answers",
-    summary="되묻기 답변 (Agent 연결 전 stub)",
-    description="근거 부족 시 보호자 답변을 관찰로 저장한다. 현재 501 stub — #249에서 해제.",
+    summary="되묻기 답변 — 아직 받지 않는다 (501)",
+    description=(
+        "05 의 되묻기 질문에 보호자가 고른 답을 받는 자리다. 아직 받지 않는다 — 언제나 501 "
+        "`not_implemented` 로 답한다. 서버가 질문의 선택지(`scarcity.question.options`)를 채워 "
+        "보내지 않아서 화면에 답 칩이 서지 않는다."
+    ),
     status_code=200,
+    response_description="지금은 오지 않는다 — 언제나 501 이다",
     response_model=AnswerResponse,
     responses={501: {"model": ErrorEnvelope}},
 )
@@ -1016,10 +1021,13 @@ async def answer_question(
     body: AnswerRequest,
     session: SessionDep,
 ) -> JSONResponse:
-    # TODO(#284): Agent 진입점 연결 — 이시하님 후속
+    # 아직 열지 않았다. 열 때는 답을 관찰로 저장하는 길을 붙이고, 05 응답이 선택지를 채워 보내게
+    # 한다 — 화면의 답 칩은 선택지가 있을 때만 서서, 그 전에는 웹이 이 주소를 부르지 않는다.
     return JSONResponse(
         status_code=501,
-        content={"error": {"code": "not_implemented", "message": "Agent 연결 전 (#284)"}},
+        content={
+            "error": {"code": "not_implemented", "message": "되묻기 답변은 아직 받지 않아요."}
+        },
     )
 
 

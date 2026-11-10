@@ -122,7 +122,7 @@ async def test_evidence_label_and_is_stale_are_filled(
 
 
 async def test_answer_question_returns_501(db_client: AsyncClient, bearer: Bearer, cid: uuid.UUID):
-    """POST /children/{cid}/answers는 agent 연결 전까지 501."""
+    """POST /children/{cid}/answers 는 아직 답을 받지 않아 501."""
     headers, _ = bearer
     resp = await db_client.post(
         f"/api/v1/children/{cid}/answers",
