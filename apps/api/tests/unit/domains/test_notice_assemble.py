@@ -767,6 +767,27 @@ def test_끝이_열린_마감을_모델이_이미_적었으면_한_줄만_남는
     assert [(d.name, d.value) for d in item.details] == [("신청", "10월 1일(목) 10:00~선착순 마감")]
 
 
+@pytest.mark.parametrize("count", [3, 30])
+def test_끝이_열린_마감의_적힌_대로는_맨_뒤에_두고_개수_상한에서도_남는다(count):
+    # 행사와 다른 날짜다. "언제" 바로 밑에 두면 날짜가 둘인 것처럼 읽힌다
+    model = [ItemDetail(name=f"이름{i}", value=f"값{i}") for i in range(count)]
+    item = _build(_item(date_text="11월 13일(금) 10:00", due_text=OPEN_DUE, details=model)).items[0]
+    assert len(item.details) == min(count + 1, MAX_DETAILS)
+    assert (item.details[-1].name, item.details[-1].value) == (WRITTEN, OPEN_DUE)
+    assert item.details[0].value == "값0"
+
+
+def test_까지_시각은_맨_앞_끝이_열린_마감은_맨_뒤다():
+    model = [ItemDetail(name=f"이름{i}", value=f"값{i}") for i in range(30)]
+    item = _build(_item(date_text="11월 20일(금) 9시까지", due_text=OPEN_DUE, details=model)).items[
+        0
+    ]
+    assert len(item.details) == MAX_DETAILS
+    assert item.details[0].value == "11월 20일(금) 9시까지"
+    assert item.details[-1].value == OPEN_DUE
+    assert _written(item) == ["11월 20일(금) 9시까지", OPEN_DUE]
+
+
 def test_할_일의_7시는_되묻고_날짜만_남긴다():
     item = _build(_item(handling="todo", date_text="11월 6일(금) 7시까지")).items[0]
     assert item.needs_review is True

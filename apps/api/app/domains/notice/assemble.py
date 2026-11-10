@@ -263,8 +263,7 @@ def _cut(text: str, limit: int) -> str:
     return text if len(text) <= limit else f"{text[: limit - 1]}…"
 
 
-def _details(raw: list[ItemDetail], hide: Callable[[str], str]) -> tuple[ItemDetail, ...]:
-    """빈 값 · 중복을 빼고 개수 · 길이를 묶는다. 값은 가린 뒤에 자른다 — 이름이 잘려 남지 않게."""
+def _kept(raw: list[ItemDetail], hide: Callable[[str], str]) -> dict[tuple[str, str], ItemDetail]:
     kept: dict[tuple[str, str], ItemDetail] = {}
     for detail in raw:
         value = hide(detail.value.strip())
@@ -275,7 +274,19 @@ def _details(raw: list[ItemDetail], hide: Callable[[str], str]) -> tuple[ItemDet
             (name, value),
             ItemDetail(name=_cut(name, MAX_DETAIL_NAME), value=_cut(value, MAX_DETAIL_VALUE)),
         )
-    return tuple(kept.values())[:MAX_DETAILS]
+    return kept
+
+
+def _details(
+    raw: list[ItemDetail], hide: Callable[[str], str], tail: list[ItemDetail] | None = None
+) -> tuple[ItemDetail, ...]:
+    """빈 값 · 중복을 빼고 개수 · 길이를 묶는다. 값은 가린 뒤에 자른다 — 이름이 잘려 남지 않게.
+
+    `tail` 은 맨 뒤에 두고, 개수 상한에 잘리지 않게 그만큼 자리를 남긴다.
+    """
+    kept = _kept(raw, hide)
+    last = [d for key, d in _kept(tail or [], hide).items() if key not in kept]
+    return (*tuple(kept.values())[: MAX_DETAILS - len(last)], *last)
 
 
 def _written_as(texts: list[str], details: list[ItemDetail]) -> list[ItemDetail]:
@@ -320,8 +331,8 @@ def _item(
 ) -> NewNoticeItem:
     raw = _cleaned(raw)
     reasons: list[str] = []
-    # 날짜 칸에서 읽었지만 화면의 "언제" 줄에 나타나지 않게 된 원문 글
-    unshown: list[str] = []
+    # 일시 칸에 시작이 있어 버린 끝이 열린 마감 칸의 원문
+    dropped_due: list[str] = []
     # 일정의 "9시까지" 에서 마감으로 옮긴 시각
     until_at: time | None = None
 
@@ -346,7 +357,7 @@ def _item(
             when = due
         else:
             # 일시 칸의 시작을 쓰고 이 칸은 버린다. 신청이 열리는 때가 사라지지 않게 원문을 남긴다
-            unshown.append(raw.due_text or "")
+            dropped_due.append(raw.due_text or "")
         due = NoticeWhen()
         if raw.handling == "todo":
             reasons.append("마감을 읽지 못했어요")
@@ -428,12 +439,17 @@ def _item(
         reasons.append("제목에 공지에 없는 글이 섞였어요")
     # details 는 보여 주기만 하는 값이라 줄을 버려도 일정 · 마감이 바뀌지 않는다
     details = [d for d in raw.details if not _monologue(d.value, words)]
-    # 위의 확인 검사 · 혼잣말 거르기가 끝난 뒤에 붙인다 — 날짜 칸의 원문이라 둘 다의 대상이 아니다.
-    # 앞에 두어 개수 상한에 잘리지 않게 한다
-    # 모델이 그 시각의 "까지" 를 details 에 적었으면 화면에 이미 있다 ("9시까지 등교 부탁드리며")
+    # 규칙이 날짜로 쓰지 못한 원문은 위의 확인 검사 · 혼잣말 거르기가 끝난 뒤에 붙인다 — 날짜
+    # 칸의 원문이라 둘 다의 대상이 아니다. 둘 다 개수 상한에 잘리지 않는다.
+    # - "9시까지" 는 "언제" 의 보충이라 맨 앞. 모델이 그 시각의 "까지" 를 details 에 적었으면
+    #   화면에 이미 있다 ("9시까지 등교 부탁드리며")
+    # - 버린 마감 칸은 행사와 다른 날짜라 맨 뒤. "언제" 밑에 두면 날짜가 둘인 것처럼 읽힌다
+    until: list[str] = []
     if until_at is not None and not any(_until_clock(d.value, until_at) for d in details):
-        unshown.insert(0, _until_text(raw.date_text or "", quote if quoted else "", until_at, hide))
-    details = [*_written_as(unshown, details), *details]
+        until.append(_until_text(raw.date_text or "", quote if quoted else "", until_at, hide))
+    first = _written_as(until, details)
+    last = _written_as(dropped_due, [*first, *details])
+    details = [*first, *details]
 
     return NewNoticeItem(
         handling=NoticeItemHandling(raw.handling),
@@ -445,7 +461,7 @@ def _item(
         all_day=all_day,
         due_at=due_at,
         due_all_day=due_day is not None and due_time is None,
-        details=_details(details, hide),
+        details=_details(details, hide, tail=last),
         supplies=tuple(hide(i.item_name) for i in draft_items([raw.supplies])),
         source_quote=hide(quote),
         needs_review=bool(reasons),
