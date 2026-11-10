@@ -9,6 +9,7 @@ LLM이 만들면 안 되는 값(child_id, 식이 단계)과 날짜 계산의 기
 한 값(Gate)으로 판단한다.
 """
 
+import logging
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, tzinfo
 from functools import partial
@@ -23,6 +24,7 @@ from app.agents.common.readout import Readout
 from app.agents.common.suggestion import SuggestionDraft
 from app.agents.food.schemas.common import MealSlot
 from app.agents.food.store.ports import (
+    DaycareLookupError,
     FoodDocRow,
     FoodPorts,
     MenuCatalogRow,
@@ -34,6 +36,8 @@ if TYPE_CHECKING:
     # nutrition_eval.py 가 FoodContext 를 쓰므로 런타임에 여기서 가져오면 순환 임포트다
     # (설계 §3 ⑤ — 판정 결과는 run state 에만 둔다)
     from app.agents.food.nutrition_eval import NutrientVerdict
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -57,6 +61,10 @@ class FoodRunState:
     것인가"를 확인할 때 쓴다 — 모델이 근거·후보를 지어내는 것을 막는 자리다.
     """
 
+    # 급식 표를 읽다 실패했다(`DaycareLookupError`). 참이면 이 task 는 급식을 다시 읽지 않는다 —
+    # 한 task 안에서 여러 번 읽는데(가중치 · 영양 판정 · tool) 실패가 읽을 때마다 달라지면 안 되고,
+    # 느리게 실패하는 읽기를 되풀이하면 20초 예산을 먹는다. `mark_daycare_unread` 만 쓴다
+    daycare_unread: bool = False
     utterance: str = ""  # span 검증용. request_texts를 줄바꿈으로 이은 것
     # 보호자가 실제로 한 말 — 이번 입력 원문과 앞 턴의 원문. 앞 대화를 이어 묻는 말이면
     # `utterance` 는 Supervisor 가 해석한 문장이라 앞 추천 이름(AI 가 쓴 글)이 든다. "보호자가
@@ -143,6 +151,12 @@ class FoodContext:
         return replace(self, state=FoodRunState())
 
 
+def mark_daycare_unread(context: FoodContext, *, at: str) -> None:
+    """급식 표를 못 읽었다고 이 task 에 표시한다. 로그에는 run_id 와 자리 이름만 싣는다."""
+    context.state.daycare_unread = True
+    logger.warning("Food 급식 읽기 실패 run_id=%s at=%s", context.run_id, at)
+
+
 async def build_gate(context: FoodContext) -> Gate:
     """이번 run의 Gate(registry의 `tools_for`·`closed_readout_key`입력).
 
@@ -175,13 +189,19 @@ async def build_gate(context: FoodContext) -> Gate:
         )
     context.state.safety = basis.entries
 
-    daycare_meal = await ports.daycare.has_rows(child_id=context.child_id)
+    # 급식 표를 못 읽는 것은 안전 조회 실패와 다르다 — 식단 추천 · 영양소 분석을 닫지 않는다.
+    # "없음" 으로 바꾸지도 않는다(`daycare_unread`). 급식 조회 · 고치기만 못 읽음 문구로 닫힌다
+    try:
+        daycare_meal = await ports.daycare.has_rows(child_id=context.child_id)
+    except DaycareLookupError:
+        mark_daycare_unread(context, at="gate")
+        daycare_meal = False
 
     return Gate(
         stage=stage,
         consent_child_health=consent,
         safety_ok=basis.ok,
-        data=DataReady(daycare_meal=daycare_meal),
+        data=DataReady(daycare_meal=daycare_meal, daycare_unread=context.state.daycare_unread),
     )
 
 

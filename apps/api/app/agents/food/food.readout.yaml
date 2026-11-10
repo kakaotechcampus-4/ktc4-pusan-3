@@ -111,6 +111,9 @@ daycare.out_of_range:
 closed.no_daycare:
   kind: closed
   template: "등록된 기관 급식 정보가 없어요."
+closed.daycare_unread:
+  kind: closed
+  template: "급식 정보를 지금 불러오지 못했어요. 잠시 뒤 다시 물어봐 주세요."
 daycare.not_found:
   kind: daycare
   template: "급식 정보를 못 찾았어요."

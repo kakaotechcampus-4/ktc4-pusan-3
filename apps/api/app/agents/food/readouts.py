@@ -13,6 +13,8 @@ UNSUPPORTED_INFANT_NUTRIENT = "unsupported.infant_nutrient"  # 영양소 분석 
 BLOCKED_SAFETY = "blocked.safety"  # 안전 조회 실패 — 식단 추천 · 영양소 분석
 # 급식 라벨(daycare_meal · daycare_lookup)인데 급식 행이 없음
 CLOSED_NO_DAYCARE = "closed.no_daycare"
+# 급식 표를 읽지 못함(`DaycareLookupError`) — 급식이 없다는 뜻이 아니다(#956)
+CLOSED_DAYCARE_UNREAD = "closed.daycare_unread"
 
 # 식단 추천 후보 풀
 POOL_EMPTY = "pool.empty"

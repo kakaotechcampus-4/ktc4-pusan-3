@@ -7,7 +7,7 @@ from app.agents.common.age import life_stage
 from app.agents.common.datetime_rules import DateParseError
 from app.agents.common.food_safety import SafetyVerdict, filter_food_safety
 from app.agents.food.amount_rules import amount_of, is_amount_text
-from app.agents.food.context import FoodContext
+from app.agents.food.context import FoodContext, mark_daycare_unread
 from app.agents.food.daycare_intent import (
     is_question,
     is_uncertain,
@@ -29,6 +29,7 @@ from app.agents.food.meal_dates import (
 )
 from app.agents.food.menu_resolver import MenuResolver
 from app.agents.food.readouts import (
+    CLOSED_DAYCARE_UNREAD,
     DAYCARE_ABSENT,
     DAYCARE_ALLERGY_CONFLICT,
     DAYCARE_ALLERGY_UNCHECKED,
@@ -55,6 +56,7 @@ from app.agents.food.schemas.daycare import (
 from app.agents.food.schemas.menu import DaycareMenuArgs, MenuDay
 from app.agents.food.store.ports import (
     DAYCARE_SLOT_ORDER,
+    DaycareLookupError,
     DaycareMealRow,
     DaycareSlot,
     MenuCatalogRow,
@@ -204,7 +206,11 @@ async def update_daycare_meal(context: FoodContext, args: UpdateDaycareMealArgs)
     if day is None:
         return _stop(context, "update", stop)
     ports = context.ports
-    rows = await ports.daycare.rows(child_id=context.child_id, date_from=day, date_to=day)
+    try:
+        rows = await ports.daycare.rows(child_id=context.child_id, date_from=day, date_to=day)
+    except DaycareLookupError:
+        mark_daycare_unread(context, at="update_daycare_meal")
+        return _stop(context, "update", CLOSED_DAYCARE_UNREAD)
     row, stop = _pick_row(rows, args.slot)
     if row is None:
         if stop == DAYCARE_NOT_FOUND and _amount_only(args) and day.weekday() < 5:
@@ -325,7 +331,11 @@ async def delete_daycare_meal(context: FoodContext, args: DeleteDaycareMealArgs)
     if day is None:
         return _stop(context, "delete", stop)
     ports = context.ports
-    rows = await ports.daycare.rows(child_id=context.child_id, date_from=day, date_to=day)
+    try:
+        rows = await ports.daycare.rows(child_id=context.child_id, date_from=day, date_to=day)
+    except DaycareLookupError:
+        mark_daycare_unread(context, at="delete_daycare_meal")
+        return _stop(context, "delete", CLOSED_DAYCARE_UNREAD)
     targets = [row for row in rows if args.slot is None or row.meal_slot == args.slot]
     if not targets:
         return _stop(context, "delete", DAYCARE_NOT_FOUND)
@@ -467,9 +477,13 @@ async def show_daycare_meal(context: FoodContext, args: DaycareLookupArgs) -> To
     if date_from < context.today - timedelta(days=EDIT_PAST_DAYS):
         return _stop(context, "query", DAYCARE_OUT_OF_RANGE)
 
-    rows = await context.ports.daycare.rows(
-        child_id=context.child_id, date_from=date_from, date_to=date_to
-    )
+    try:
+        rows = await context.ports.daycare.rows(
+            child_id=context.child_id, date_from=date_from, date_to=date_to
+        )
+    except DaycareLookupError:
+        mark_daycare_unread(context, at="show_daycare_meal")
+        return _stop(context, "query", CLOSED_DAYCARE_UNREAD)
     state.readouts = lookup_readouts(rows, date_from=date_from, date_to=date_to)
     return ok(
         "query",
