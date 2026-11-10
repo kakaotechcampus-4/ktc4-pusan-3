@@ -31,6 +31,7 @@ tool spec · 응답 스키마: `app/agents/supervisor/schemas.py` (`ROUTE_TOOL_S
 | v1 | `be021516` | `05d6538172c2` | split · GR · HR 208 · gpt-5.6-luna/none · R3 | 바꾸기 전 프롬프트로 잼 — 일반 정보 질문(#574) 변경의 비교 기준 | 0/208 | 0 | 12 |
 | v2 | `be021516 dirty` | `aa7e4c55b5ae` | split · GR · HR 208 · gpt-5.6-luna/none · R3 | `request` 조각의 공통 칸 `request_mode`(suggest · info)와 경계 절 · 예시 6줄을 더함 (#574). 아이 일반을 묻는 말이 추천 카드로 저장되지 않게 | 0/208 | 1 | 7 |
 | v3 | `785f9141 dirty` | `6356e81d35aa` | split · GR · HR 208 · gpt-5.6-luna/none · R3 | `request_mode` 를 growth · health 조각에만 붙이게 좁힘 — activity · food 경계는 이 PR 에서 바꾸지 않는다(#574). 경계 절에서 두 Agent 를 빼고 activity · food info 예시 3줄을 growth 예시로 바꿈, 스키마 설명 한 줄 | 0/208 | 2 | 6 |
+| v4 | `24b9152d` | `08fbb4b9963c` | split · GR · HR 208 · gpt-5.6-luna/none · R3 | 접종 · 검진 시기는 `보통` 이 붙어도 health/schedule_check 로 보내게 함 — health info 예시를 "보통 아이들 정상 체온은 몇 도야?" 로 바꾸고 경계 줄 · 예시 1줄 · 스키마 설명 한 문장을 더함 (#574 리뷰). develop 에서 나가던 접종 안내가 닫히지 않게 | 0/208 | 0 | 7 |
 
 - `커밋` 은 재 본 코드. 작업 트리가 더러웠으면 커밋 옆에 `dirty` 를 적는다 (`tests/eval/agents/live_run_meta.json` 의 `dirty`).
 - `C1` 칸은 `a/b` (C1 사례 입력 수 / 전체 입력 수). `미측정` 은 v0 에만 쓴다.
@@ -87,6 +88,21 @@ tool spec · 응답 스키마: `app/agents/supervisor/schemas.py` (`ROUTE_TOOL_S
 
 - T42 는 v1 부터 1~2/3 이 unclear 구간을 놓치던 흔들림이고 v3 에서 3/3 이 됐다. 놓친 것은 unclear 조각이라 C1 은 아니다. FC04 는 v2 와 같다. 둘 다 다음 Supervisor 보정 후보다.
 - 일반 정보 경계는 IN 묶음을 growth · health 6개(IN08 ~ IN13)로 줄여 따로 쟀다 — agent 100% · info 판정 100% · info↔suggest 새는 건수 0 (`-k info_routing`, R3). activity · food 의 아이 일반 질문은 info 를 받지 않아 기존 RC · T · FC 케이스가 그대로 본다.
+
+**v3 → v4 (접종 · 검진 시기는 보통이 붙어도 schedule_check, 같은 조건 R3)** — C1 은 둘 다 0/208 이다. 한 번이라도 틀린 입력은 8 → 7 이다.
+
+| | v3 (바꾸기 전) | v4 (바꾼 뒤) |
+| --- | --- | --- |
+| 안정 오답 (3회 모두) | FC04 · T42 | 없음 |
+| 불안정 (1~2회) | FC09 · RC01 · RC17 · RC34 · RC36 · T06 | HR08 · RC01 · RC17 · RC27 · RC34 · RC36 · T42 |
+| Growth 경계 (84회) | agent · 유형 100% | agent · 유형 100% |
+| Health 경계 (45회) | agent · 유형 100% · GUARDED 6/6 | agent 97% · 유형 97% · GUARDED 6/6 |
+| split GUARDED | 66/66 | 66/66 |
+
+- 새로 흔들린 입력은 HR08 · RC27 둘이다. HR08 "내일 소아과 가는데 정리해줘"(정답 `health/visit_summary` 한 조각)는 1/3 이 "내일 소아과 가는데"(`record/schedule`)와 "정리해줘"(`request/health`) 둘로 쪼개졌다. 정리 요청은 health 로 갔고 안전 조각이 아니며 일정은 승인 게이트 앞 초안이라 C1 은 아니다. 접종 · 검진 문구와 직접 겹치지 않는 입력이고 3회 중 1회라 이 변경 탓인지는 R3 로 가리지 못했다.
+- RC27 "골고루 먹게 뭘 해 주면 좋을까?"는 1/3 이 `food` 안에서 `nutrient_analysis` 로 갔다(나머지 2회는 `meal_recommendation`). 추천 경로 안에서 유형만 어긋나 C1 은 아니다.
+- 나머지 불안정 입력(RC01 1/3 · RC17 2/3 · RC34 1/3 · RC36 2/3 · T42 2/3)은 v3 에서도 흔들리거나 v1 부터 알려진 것이다. RC01 · RC34 · RC36 은 기록이 요청으로 간 것(RECORD→REQUEST)이지만 guarded 여야 할 조각이 아니라 C1 이 아니고, RC17 은 growth 요청 하나를 놓쳤으며, T42 가 놓친 것은 unclear 조각이다. v3 의 안정 오답이던 FC04 는 3/3 정답, T42 는 2/3 으로 바뀌었고 v3 에서 흔들리던 FC09 · T06 도 3/3 정답이다.
+- 일반 정보 경계는 IN08 ~ IN15 8개(IN14 · IN15 를 더함)로 따로 쟀다 — agent 100% · info 판정 100% · info↔suggest 새는 건수 0 (`-k info_routing`, R3, 24회). IN14 "보통 몇 살에 영유아 검진 받아?"는 3/3 `health/schedule_check`, IN15 "또래 아이들 정상 체온은 어느 정도야?"는 3/3 `health/info` 였다.
 
 GR 계열은 "숫자 놀이" 가 "놀이" 낱말만 보고 activity 로 새던 경계(보정 이력은 `supervisor-agent-v1.md` §4 eval · 보정 규칙)가 알려진 흔들림이다.
 
