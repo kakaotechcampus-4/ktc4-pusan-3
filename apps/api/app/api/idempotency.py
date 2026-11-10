@@ -85,8 +85,8 @@ async def recall(*, parent_id: UUID, method: str, path: str, key: str) -> str | 
     except json.JSONDecodeError:
         # 깨진 값을 두면 TTL 24시간 동안 같은 키 재시도가 매번 막힌다 (ISSUE-F7). 지우고 이번만
         # 503 — 다음 재시도는 새 요청이 된다. 바로 새 요청으로 받지 않는 이유: 처음 요청이 저장까지
-        # 끝냈는지 몰라 두 번 저장될 수 있다. 로그에는 키를 싣지 않는다 (parent_id 가 들어 있다).
-        log.warning("idempotency 재생 값이 깨져 지웠다 — 이번 요청은 503")
+        # 끝냈는지 몰라 두 번 저장될 수 있다. 로그에는 창구만 — 키에는 parent_id 가 있다.
+        log.warning("idempotency 재생 값이 깨져 지웠다 — 이번 요청은 503 %s %s", method, path)
         try:
             await asyncio.to_thread(r.delete, _idem_key(parent_id, method, path, key))
         except RedisError as exc:
