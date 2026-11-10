@@ -8,7 +8,7 @@ nullable · 기본값 없음 — Food 가 아닌 추천과 이 칸이 생기기 
 이 칸을 모르고 쓰지 않아 그대로 돈다 (expand-only).
 
 Revision ID: b7e4c2a9d815
-Revises: 90ac5aae7ad1
+Revises: c2b85f0e4a13
 Create Date: 2026-11-10
 """
 
@@ -19,7 +19,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "b7e4c2a9d815"
-down_revision: Union[str, Sequence[str], None] = "90ac5aae7ad1"
+down_revision: Union[str, Sequence[str], None] = "c2b85f0e4a13"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
