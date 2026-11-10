@@ -3,6 +3,7 @@
 DB 구현이 붙으면 같은 기대를 그쪽에도 걸어야 한다 — 여기 적힌 것이 계약이다.
     - 임베딩 대상과 연결 대상은 따로 잡힌다
     - active 만 본다 (stand_alone · deleted 는 Curator 집계 밖)
+    - polarity 0(좋다 · 싫다 없음) 관찰은 어느 조회에도 나오지 않는다 (#287)
     - 저장된 순서로 돌려준다 (observed_on 순이 아니다)
     - 다른 아이 · 다른 도메인 · 다른 polarity 의 Profile 은 후보가 아니다
     - Profile 후보도 저장된 순서로 돌려준다 (동점이면 오래된 Profile 을 고르는 근거)
@@ -37,6 +38,9 @@ def _add_excluded(store: InMemoryCuratorStore, **fields: object) -> None:
         child_id=CHILD, domain="food", id="gone", subject="딸기", status="deleted", **fields
     )
     store.add_observation(child_id=OTHER_CHILD, domain="food", id="other", subject="딸기", **fields)
+    store.add_observation(
+        child_id=CHILD, domain="food", id="neutral", subject="딸기", polarity=0, **fields
+    )
 
 
 async def test_임베딩_대상은_active_이고_벡터가_없는_관찰이다() -> None:
@@ -106,7 +110,7 @@ async def test_Profile_후보는_같은_아이_도메인_polarity_만이다() ->
         child_id=CHILD, domain="food", merge_key="딸기", polarity=1, embedding=VEC
     )
     store.add_profile(child_id=CHILD, domain="food", merge_key="딸기", polarity=-1, embedding=VEC)
-    store.add_profile(child_id=CHILD, domain="food", merge_key="딸기", polarity=0, embedding=VEC)
+    store.add_profile(child_id=CHILD, domain="food", merge_key="딸기", polarity=None, embedding=VEC)
     store.add_profile(
         child_id=CHILD, domain="activity", merge_key="딸기", polarity=1, embedding=VEC
     )
@@ -129,21 +133,6 @@ async def test_Profile_후보는_저장된_순서대로_돌려준다() -> None:
     ]
 
     assert _ids(await store.list_profiles(child_id=CHILD, domain="food", polarity=1)) == ids
-
-
-async def test_중립_관찰은_중립_Profile_만_찾는다() -> None:
-    store = InMemoryCuratorStore()
-    neutral = store.add_profile(
-        child_id=CHILD, domain="food", merge_key="딸기", polarity=0, embedding=VEC
-    )
-    # polarity 가 빈 Profile 은 "중립" 이 아니라 "방향을 모름" 이다
-    for polarity in (None, 1, -1):
-        store.add_profile(
-            child_id=CHILD, domain="food", merge_key="딸기", polarity=polarity, embedding=VEC
-        )
-
-    found = await store.list_profiles(child_id=CHILD, domain="food", polarity=0)
-    assert _ids(found) == [neutral.id]
 
 
 async def test_archived_Profile_도_후보다() -> None:

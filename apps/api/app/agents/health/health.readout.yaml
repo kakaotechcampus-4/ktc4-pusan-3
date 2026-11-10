@@ -250,6 +250,17 @@ place.unavailable:
 place.preparing:
   kind: unsupported
   template: "병원 찾기는 아직 준비 중이에요."
+# 스토어 건강 앱 선언 때문에 복약을 꺼 둔 동안(`registry.MEDICATION_ENABLED`) `medication` 라벨이 이 문구로
+# 닫힌다 (#923). 용량 · 간격 질문도 이 라벨로 오므로 처방한 곳에 확인하라는 안내를 같이 싣는다.
+# 복약을 다시 켜면 이 문구와 키를 함께 지운다. 문구는 PM 확인(#923)
+med.preparing:
+  kind: unsupported
+  template: "복약 관리는 아직 준비 중이에요. 용량 · 간격은 처방한 병원이나 약국에 확인해 주세요."
+# 같은 스위치로 투약의뢰서가 닫힌다 (#923). 서식은 등록된 복약 코스로만 채우는데 꺼 둔 동안은 코스를
+# 등록할 화면이 없다. 응급 카드는 닫지 않는다. 복약을 다시 켜면 이 문구와 키를 함께 지운다
+notice.preparing:
+  kind: unsupported
+  template: "투약의뢰서는 아직 준비 중이에요."
 safety.unavailable:
   kind: caution
   template: "알레르기 정보를 불러오지 못했어요. 아래 정리는 그것 없이 만든 거예요."

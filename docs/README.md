@@ -75,7 +75,7 @@
 - [agents/data_model.md](agents/data_model.md) — DB 스키마 정본
 - [agents/memory-agent-v1.md](agents/memory-agent-v1.md) — Memory Agent
 - [agents/activity/activity-agent-v1.md](agents/activity/activity-agent-v1.md) — Activity Agent. 월령 임계값 게이팅 · 추천 근거 3단 · 안전 판정을 모델 출력 바깥에 두는 구조 · 월령별 차단 · 경고 9축
-- [agents/eval/](agents/eval/) — **프롬프트 평가 문서 10개** (`SUPERVISOR` · `MEMORY` · `FOOD` · `ACTIVITY` · `ACTIVITY_EVENT_SCHEDULE` · `GROWTH` · `HEALTH` · `CURATOR_JUDGE` · `MEAL_OCR` · `NOTICE_OCR` `_EVAL.md`). 프롬프트 지문 · 측정 이력 · C1(치명 오류) 정의. 프롬프트나 tool spec 을 바꾸면 이력에 행을 더해야 `test_prompt_history.py` 가 통과한다 (#770). 루트 `eval/` 의 골든셋 · 주간 회귀가 생겨도 측정 결과는 여기 이력에 쌓는다
+- [agents/eval/](agents/eval/) — **프롬프트 평가 문서 10개** (`SUPERVISOR` · `MEMORY` · `FOOD` · `ACTIVITY` · `ACTIVITY_EVENT_SCHEDULE` · `GROWTH` · `HEALTH` · `CURATOR_JUDGE` · `MEAL_OCR` · `NOTICE_OCR` `_EVAL.md`). 프롬프트 지문 · 측정 이력 · C1(치명 오류) 정의. 프롬프트나 tool spec 을 바꾸면 이력에 행을 더해야 `test_prompt_history.py` 가 통과한다 (#770). 루트 `eval/` 의 골든셋 · 주간 회귀가 생겨도 측정 결과는 여기 이력에 쌓는다. [`live-ci-v1.md`](agents/eval/live-ci-v1.md) — 라이브 eval 의 tool 금지 판정 · PR 에서 도는 CI 묶음 (#816).
 
 ## API · 백엔드
 

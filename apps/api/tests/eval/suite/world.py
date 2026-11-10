@@ -7,7 +7,7 @@
 진입점은 `datetime.now(KST)` 를 쓰므로 세계도 실행 시각 기준으로 심는다.
 """
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
@@ -45,7 +45,7 @@ CHILD = UUID("00000000-0000-7000-8000-0000000000e1")  # 지어낸 id
 PARENT = UUID("00000000-0000-7000-8000-0000000000e2")
 STALE_DAYS = 183  # 루트 §2 "6개월 이상 지난 관심 기록" — 케이스는 200일로 경계에서 멀리 둔다
 OBSERVATION_DOMAINS = ("food", "health", "education", "activity", "routine")
-_SEED_TEXT = "심어 둔 기록"  # 원문 칸은 판정하지 않는다
+_SEED_TEXT = "심어 둔 기록"  # 활동 · 대상 칸이 없을 때만. 원문 칸은 판정하지 않는다
 _BUSAN = CoarseLocation(lat=35.18, lon=129.08)
 _HEAVY_RAIN = RawForecast(sky="4", pcp="30.0~50.0mm", pop="90")
 
@@ -113,6 +113,13 @@ class ProbeWorld:
         return frozenset(self.store.seen | self.affinity.seen)
 
 
+def _seed_text(fields: Mapping[str, object]) -> str:
+    """심은 관찰의 원문 — 보호자가 한 말처럼 활동 · 대상 이름을 담는다. 원문으로 찾는 조회
+    (`raw_text_query`)가 실제 DB 에서처럼 찾게 한다 (P-REC-08, 11-10 기준선)."""
+    name = fields.get("activity") or fields.get("subject")
+    return f"{name} 했어" if name else _SEED_TEXT
+
+
 async def build_probe_world(world: World, *, now: datetime) -> ProbeWorld:
     today = now.astimezone(KST).date()
     inner = InMemoryStore(now=now)
@@ -123,7 +130,7 @@ async def build_probe_world(world: World, *, now: datetime) -> ProbeWorld:
             domain=seed.domain,
             child_id=CHILD,
             source_writer=PARENT,
-            raw_text=_SEED_TEXT,
+            raw_text=_seed_text(seed.fields),
             observed_on=day,
             observed_range=build_observed_range(day),
             fields=dict(seed.fields),

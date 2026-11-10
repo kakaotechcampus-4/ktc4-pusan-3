@@ -150,7 +150,8 @@ class MenuCatalogRow:
     # menu_catalog: mfds_nutri · center_standard · manual
     # recipe_catalog: `RecipeSource`(core) 그대로.
     # COOKRCP01(mfds_recipe)은 보류라 뺀다. 들이면 레시피라 recipe_catalog 쪽에 들어간다
-    source: Literal["mfds_nutri", "center_standard", "manual"] | RecipeSource
+    # "weaning_menu": 이유식 식단 표 행(`reference/weaning_menu.yaml`, #399) — 저장하지 않는다
+    source: Literal["mfds_nutri", "center_standard", "manual", "weaning_menu"] | RecipeSource
     resolved: bool
     synced_at: datetime
     food_code: str | None = None

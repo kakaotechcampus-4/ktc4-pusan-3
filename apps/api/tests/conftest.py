@@ -118,3 +118,19 @@ def _no_run_channel_mirror():
     registry._session_factory = None
     yield
     registry._session_factory = saved
+
+
+@pytest.fixture(autouse=True)
+def _medication_on():
+    """스토어 정책으로 꺼 둔 복약(#923)을 테스트에서는 켠다 — 기존 테스트는 켜진 동작을 건다.
+
+    꺼 둔 것은 다시 켤 코드라서 건너뛰지 않고 지킨다. 꺼진 동작은
+    tests/unit/agents/health/test_health_medication_off.py 가 끄고 본다.
+    🚨 monkeypatch 를 받지 않는다 — 바로 위 픽스처와 같은 이유다.
+    """
+    from app.agents.health import registry
+
+    saved = registry.MEDICATION_ENABLED
+    registry.MEDICATION_ENABLED = True
+    yield
+    registry.MEDICATION_ENABLED = saved

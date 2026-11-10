@@ -161,7 +161,7 @@
 | F4 | SRCH-A | `tests/eval/faults/test_f4_memory_search_failure.py` | P0 | 통과 — 회귀 방지 |
 | F5 | IDEM-D | `tests/eval/faults/test_f5_model_calls.py` | P1 | 통과 — 회귀 방지 |
 | F6 | SAVE-C | `tests/eval/faults/test_f6_saved_id_count.py` | P1 | 통과 — 회귀 방지 |
-| F7 | IDEM-C | `tests/eval/faults/test_f7_broken_replay.py` | P1 | **실패 → xfail(strict) · ISSUE-F7** |
+| F7 | IDEM-C | `tests/eval/faults/test_f7_broken_replay.py` | P1 | **실패 → xfail(strict) · #935** |
 | F8 | CUR-B | `tests/integration/test_db_timeouts.py` (쿼리 상한) | 이슈만 | #936 쿼리 2분 상한 · #937 남음 |
 
 가짜는 `tests/eval/faults/fakes.py` 한 곳에 있다 — 새로 만든 것은 다른 테스트 모듈에서 import 할 수 없는 것뿐이다(그 파일 머리말).

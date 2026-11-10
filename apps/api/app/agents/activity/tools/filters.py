@@ -23,6 +23,7 @@ from app.agents.common.allergy import (
     for_sentences,
     non_food_allergies,
     read_label,
+    read_label_pieces,
     split_label,
 )
 from app.agents.common.food_safety import menu_codes
@@ -59,7 +60,9 @@ class SafetyTerms:
 
     blocking: tuple[Term, ...]  # status='active' 행 — 걸리면 차단. content 대조용
     blocking_items: tuple[Term, ...]  # 같은 행의 materials · foods 대조용 — 다른 뜻 별칭도 막는다
-    allergens: tuple[Term, ...]  # 놀이에 든 알레르기 항목 표시용 — 상태 무관, key 가 정식 명칭
+    # 놀이에 든 알레르기 항목 표시용 — 상태 무관. key 는 19종이면 정식 명칭, 등록된 19종 밖 이름이면
+    # 보호자가 적은 이름(구분 기호로 나눈 조각, 꼬리말만 뗌 — "고양이 털")이다. 05 가 그대로 묻는다
+    allergens: tuple[Term, ...]
     # 음식 칸 · 음식 활동 문장을 Food 판정(`common/food_words.check_foods`)에 넘길 행 (#582).
     # check_foods 가 retracted · none 을 스스로 거른다
     rows: tuple[SafetyEntry, ...] = ()
@@ -74,7 +77,8 @@ class SafetyCheck:
     blocked: bool
     hits: tuple[str, ...]  # 걸린 위험 축 이름 · "health_safety". 로그용 — 원문을 싣지 않는다
     warnings: tuple[str, ...]  # 경고 축의 warning_text (상수). 차단이면 비어 있다
-    allergens: tuple[str, ...]  # 놀이에 든 알레르기 항목 정식 명칭 (suggestion.allergens)
+    # 놀이에 든 알레르기 항목 (suggestion.allergens). 19종은 정식 명칭, 밖은 보호자가 적은 이름
+    allergens: tuple[str, ...]
 
 
 def safety_terms(entries: Sequence[SafetyEntry]) -> SafetyTerms:
@@ -112,8 +116,14 @@ def safety_terms(entries: Sequence[SafetyEntry]) -> SafetyTerms:
         literal = tuple(Term(key=word, aliases=(word,)) for word in rest)
         foods = (*named.terms, *literal)
         if entry.kind == "allergy":
-            for term in literal:
-                add(registered, for_sentences(term))
+            # 태그 이름은 조각이 나온 이름이다 — "고양이 털" 을 조각 "고양" 으로 태그하면 05 가
+            # 보호자가 적은 적 없는 "고양" 을 묻는다 (#891). 대조는 지금처럼 조각마다 따로 해서
+            # 태그가 붙는 놀이는 그대로다. 05 는 이 이름을 낱말까지 읽어 맞추므로 띄어쓰기를
+            # 살린다 — 나중에 "쑥" 을 등록하면 "쑥 가루" 태그가 막힌다. 이름의 다른 낱말이 등록된
+            # 알레르기와 겹쳐도 막혀서, 조각으로 달 때보다 더 막는 쪽이다
+            for name, words in read_label_pieces(entry.label, book):
+                for word in words:
+                    add(registered, for_sentences(Term(key=name, aliases=(word,))))
         if entry.status == "active":
             for term in (*coded, *(for_sentences(t) for t in foods)):
                 add(blocking, term)

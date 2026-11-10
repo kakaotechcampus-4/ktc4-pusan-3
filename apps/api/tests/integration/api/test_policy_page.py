@@ -113,6 +113,6 @@ async def test_list_points_to_each_page(db_client):
     body = (await db_client.get("/api/v1/policies")).json()
     paths = {item["scope"]: item["html_path"] for item in body}
 
-    assert paths["location"] == "/policies/location/2026-11-03"
-    assert paths["service_terms"] == "/policies/service_terms/2026-11-03"
-    assert paths["child_basic"] == "/policies/child_basic/2026-11-03"
+    assert paths["location"] == "/policies/location/2026-11-10"
+    assert paths["service_terms"] == "/policies/service_terms/2026-11-10"
+    assert paths["child_basic"] == "/policies/child_basic/2026-11-10"

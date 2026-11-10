@@ -232,6 +232,37 @@ async def test_급식이_없는_날은_새로_만들지_않고_못_찾았다고_
     assert await rows_on(meals, -1) == []  # INSERT 0건
 
 
+async def test_평일에_급식이_없는데_먹은_양만_말하면_그날_먹은_끼니를_알려_달라고_안내한다() -> (
+    None
+):
+    """급식표가 없는 평일의 "점심은 반만 먹었대" — 양을 붙일 행이 없다. 못 찾았다로 끝내지 않고
+    무엇을 먹었는지 알려 달라고 안내한다. 되묻기 tool 이 아니라 문구 하나다 (#798)."""
+    meals = InMemoryDaycareMeals([])
+    ctx = context(daycare=meals, utterance="선생님이 오늘 점심은 반만 먹었대")
+
+    await update_daycare_meal(
+        ctx, UpdateDaycareMealArgs(date_span="오늘", slot="lunch", amount_span="반만")
+    )
+
+    assert texts(ctx) == [code("daycare.amount_no_meal", date="오늘", slot="점심")]
+    assert texts(ctx) == ["오늘 점심 급식을 확인하지 못했어요. 오늘 먹은 점심을 알려주세요."]
+    assert await rows_on(meals, 0) == []  # INSERT 0건
+
+
+async def test_주말에는_급식이_없어도_그대로_못_찾았다고_한다() -> None:
+    meals = InMemoryDaycareMeals([])
+    saturday = day(4)  # TODAY 2026-10-14 수 → 10-10 토
+    span = f"{saturday.month}월 {saturday.day}일"
+    ctx = context(daycare=meals, utterance=f"{span} 점심은 반만 먹었대")
+
+    await update_daycare_meal(
+        ctx, UpdateDaycareMealArgs(date_span=span, slot="lunch", amount_span="반만")
+    )
+
+    assert saturday.weekday() == 5
+    assert texts(ctx) == [code("daycare.not_found")]
+
+
 async def test_그날_행이_여럿이면_끼니를_되묻고_하나면_바로_고친다() -> None:
     meals = InMemoryDaycareMeals(
         [lunch("밥", "우유"), daycare("과일", days_ago=0, slot="snack_pm")]
