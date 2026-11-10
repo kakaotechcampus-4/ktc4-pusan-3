@@ -1,5 +1,6 @@
 """Agent 결과 하나의 추천 저장 — 근거 검증 · 묶음 단위 · run_id · draft +24h."""
 
+import logging
 import uuid
 from datetime import UTC, date, datetime
 from typing import get_args
@@ -213,6 +214,24 @@ async def test_SuggestionDraft_의_payload_가_그대로_저장된다(session, k
     )
     assert (row.allergens, row.items) == (["난류"], ["계란"])
     assert await counts(session, child.id) == (1, 2)
+
+
+async def test_모르는_끼니는_비우고_경고만_남긴다(session, kids, caplog):
+    """끼니 목록이 어긋나도 Food 묶음 저장은 실패하지 않는다 — 초안 제목이 "식사" 가 될
+    뿐이다. 운영에서 어긋난 것이 보이게 경고는 남기되 모델이 낸 값은 싣지 않는다 (#898)."""
+    _, child, _ = kids
+    item = {**payload(citations=[doc_citation()]), "meal_slot": "brunch"}
+
+    with caplog.at_level(logging.WARNING, logger=repository.__name__):
+        [row_id] = await save_agent_suggestions(
+            session, child_id=child.id, run_id=RUN, now=NOW, payloads=[item]
+        )
+
+    row = await session.get(Suggestion, row_id)
+    assert row.meal_slot is None
+    [record] = [record for record in caplog.records if record.name == repository.__name__]
+    assert record.levelno == logging.WARNING
+    assert "brunch" not in record.getMessage()
 
 
 async def test_장소가_붙은_추천의_확인_문구를_저장한다(session, kids):

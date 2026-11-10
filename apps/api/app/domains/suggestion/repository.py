@@ -1,5 +1,6 @@
 """제안 표시·피드백과 관찰 상세의 근거 역조회."""
 
+import logging
 import uuid
 from collections.abc import Mapping, Sequence
 from datetime import date, datetime, timedelta
@@ -31,6 +32,8 @@ from app.domains.suggestion.models import (
 )
 from app.rules.book_evidence import BOOK_EVIDENCE_KIND
 from app.rules.menu_evidence import MENU_EVIDENCE_KIND
+
+log = logging.getLogger(__name__)
 
 
 async def create_suggestion(
@@ -312,9 +315,15 @@ def _meal_slot(payload: Mapping[str, Any]) -> SuggestionMealSlot | None:
 
     모르는 값도 None 이다 — 초안 제목에만 쓰는 칸이라 이 값 하나로 추천 묶음 저장을 실패시키지
     않는다(제목이 "식사" 가 될 뿐이다). 값 목록은 Food 의 `MealSlot` 과 테스트가 맞춘다.
+    그래도 어긋난 것이 운영에서 보이게 경고는 남긴다 — 모델이 낸 값이라 값은 싣지 않는다.
     """
     value = payload.get("meal_slot")
-    return SuggestionMealSlot(value) if value in SuggestionMealSlot else None
+    if value is None:
+        return None
+    if value not in SuggestionMealSlot:
+        log.warning("모르는 끼니라 meal_slot 을 비운다 — Food 의 MealSlot 목록과 맞는지 볼 것")
+        return None
+    return SuggestionMealSlot(value)
 
 
 def _event_period(payload: Mapping[str, Any]) -> tuple[date, date] | None:
