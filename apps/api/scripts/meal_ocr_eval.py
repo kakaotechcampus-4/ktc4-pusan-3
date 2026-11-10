@@ -198,6 +198,7 @@ class SlotGrade:
 
     wrong: list[str] = field(default_factory=list)  # 정답에 없는 메뉴 (모델 원문)
     missing: list[str] = field(default_factory=list)  # 모델이 빼먹은 메뉴 (정답 원문)
+    garbled: list[str] = field(default_factory=list)  # 맞는 메뉴인데 이름에 찌꺼기가 붙음
 
     @property
     def c1(self) -> bool:
@@ -205,7 +206,7 @@ class SlotGrade:
 
     @property
     def failed(self) -> bool:
-        return self.c1 or bool(self.missing)
+        return self.c1 or bool(self.missing) or bool(self.garbled)
 
 
 _MENU_SEP = re.compile(r",|또는")
@@ -232,15 +233,30 @@ def _letters(text: str) -> str:
     return text
 
 
-def name_fits_raw(name: str, raw: str) -> bool:
-    """이름(`name`)의 낱말이 전부 제 원문(`raw`) 안에 있는가.
+_WORD = re.compile(r"[가-힣]+|[A-Za-z]+")
+_HANGUL = re.compile(r"[가-힣]")
+
+
+def stray_words(name: str, raw: str) -> list[str]:
+    """이름(`name`)의 낱말 가운데 제 원문(`raw`)에 없는 것.
 
     화면 제목과 저장 키는 원문이 아니라 이름으로 만든다 (`photo_run._meal_entries`). 이름은 원문에서
     번호 · 분량 · 대체 메뉴를 뺀 것이라 원문의 일부여도 맞다 — `백김치9(백깍두기9)` 의 이름
-    `백김치`. 원문에 없는 낱말이 들면 칸에 적히지 않은 메뉴가 화면에 나간다.
+    `백김치`. 낱말은 한글 · 영문이 이어진 덩어리로 끊는다 (`증편Riot` → `증편` · `Riot`).
     """
     whole = _letters(raw)
-    return all(_letters(word) in whole for word in _WORD_SEP.split(name))
+    return [word for word in _WORD.findall(name) if _letters(word) not in whole]
+
+
+def is_another_menu(stray: list[str]) -> bool:
+    """원문에 없는 낱말이 다른 음식 이름인가 (C1), 깨진 출력의 찌꺼기인가 (일반 실패).
+
+    한글 낱말이면 다른 음식으로 본다 — 원문 `현미밥` 에 이름 `흑미밥`. 한글이 아닌 것뿐이면
+    찌꺼기다 — `백김치(백깍두기 Riot`. 같은 음식이고, 저장되면 카탈로그에 없는 메뉴가 되어 알레르기
+    판정이 "확인 못 함" 으로 나온다(안전함으로 나오지 않는다). 찌꺼기가 한글이면 다른 음식으로
+    잡힌다 — 헷갈릴 때 엄하게 세는 쪽이다.
+    """
+    return any(_HANGUL.search(word) for word in stray)
 
 
 # 운영이 화면 · 저장에 싣는 끼니. 아침 · 저녁은 `daycare_meal` 에 자리가 없어 버린다
@@ -252,7 +268,8 @@ def grade_slots(expected: MealPlanJSON, actual: MealPlanJSON) -> dict[Slot, Slot
 
     모델 출력은 운영이 싣는 끼니(`SERVED`)만 본다 — 저녁으로 간 메뉴는 저장되지 않으니 틀린 메뉴가
     남지 않고, 제 끼니에서 빼먹은 것으로 잡힌다. 메뉴 이름이 없는 끼니(번호뿐)는 세지 않는다.
-    항목은 원문과 이름이 둘 다 맞아야 한다 (`name_fits_raw`).
+    항목은 원문과 이름이 둘 다 맞아야 한다. 이름이 다른 음식을 말하면 틀린 메뉴(C1), 맞는 음식에
+    찌꺼기만 붙었으면 이름 깨짐(일반 실패)이다 (`stray_words` · `is_another_menu`).
     """
     exp = _by_meal(expected)
     act = {key: items for key, items in _meals(actual).items() if key[1] in SERVED}
@@ -263,12 +280,16 @@ def grade_slots(expected: MealPlanJSON, actual: MealPlanJSON) -> dict[Slot, Slot
         exp_keys = set().union(*(menu_keys(r) for r in exp_raws))
         act_keys = set().union(*(menu_keys(it.raw) for it in items))
         wrong = [it.raw for it in items if menu_keys(it.raw) - exp_keys]
-        wrong += [
-            f"{it.raw} (이름: {it.name})" for it in items if not name_fits_raw(it.name, it.raw)
-        ]
+        garbled: list[str] = []
+        for it in items:
+            stray = stray_words(it.name, it.raw)
+            if stray:
+                bucket = wrong if is_another_menu(stray) else garbled
+                bucket.append(f"{it.raw} (이름: {it.name})")
         graded[key] = SlotGrade(
             wrong=wrong,
             missing=[r for r in exp_raws if menu_keys(r) - act_keys],
+            garbled=garbled,
         )
     return graded
 
@@ -284,10 +305,9 @@ class RepeatSummary:
 
     runs: int
     c1_runs: dict[Slot, int]  # 끼니마다 C1 이 나온 횟수
-    fail_runs: dict[Slot, int]  # 끼니마다 실패(C1 또는 빼먹음)한 횟수
-    last: dict[
-        Slot, SlotGrade
-    ]  # 끼니마다 출력할 채점 — C1 이 있었으면 마지막 C1, 없으면 마지막 실패
+    fail_runs: dict[Slot, int]  # 끼니마다 실패(C1 · 빼먹음 · 이름 깨짐)한 횟수
+    # 끼니마다 출력할 채점 — C1 이 있었으면 마지막 C1, 없으면 마지막 실패
+    last: dict[Slot, SlotGrade]
 
     @property
     def total(self) -> int:
@@ -340,13 +360,18 @@ def _slot(key: Slot) -> str:
 def print_c1_report(s: RepeatSummary) -> None:
     print(f"C1 (정답에 없는 메뉴가 그 끼니로 읽힘) : {s.c1_cases}/{s.total} 끼니 · 반복 {s.runs}회")
     stable, unstable = len(s.stable_wrong), len(s.unstable)
-    print(f"안정 오답 {stable} · 불안정 {unstable}  (실패 = C1 또는 메뉴 빼먹음)")
+    print(f"안정 오답 {stable} · 불안정 {unstable}  (실패 = C1 · 메뉴 빼먹음 · 이름 깨짐)")
     for key, n in s.fail_runs.items():
         if not n:
             continue
         g = s.last[key]
-        mark = f"C1 {s.c1_runs[key]}/{s.runs}" if s.c1_runs[key] else "빼먹음"
-        print(f"  {_slot(key)} 실패 {n}/{s.runs} · {mark} · 틀림 {g.wrong} · 빠짐 {g.missing}")
+        if s.c1_runs[key]:
+            mark = f"C1 {s.c1_runs[key]}/{s.runs}"
+        else:
+            kinds = (("빼먹음", g.missing), ("이름 깨짐", g.garbled))
+            mark = " · ".join(name for name, hit in kinds if hit)
+        line = f"  {_slot(key)} 실패 {n}/{s.runs} · {mark} · 틀림 {g.wrong} · 빠짐 {g.missing}"
+        print(line + (f" · 깨짐 {g.garbled}" if g.garbled else ""))
 
 
 def print_report(g: dict) -> None:

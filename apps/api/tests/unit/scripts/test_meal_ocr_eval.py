@@ -15,6 +15,7 @@ from scripts.meal_ocr_eval import (
     load_fixture,
     menu_key,
     normalize_raw,
+    print_c1_report,
     summarize_runs,
 )
 
@@ -252,6 +253,61 @@ def test_name_that_disagrees_with_its_raw_is_c1():
 
     assert slot.c1
     assert slot.wrong == ["현미밥 (이름: 흑미밥)"]
+
+
+def test_name_with_junk_that_is_not_hangul_is_general_failure_not_c1():
+    # 11-09 첫 측정: 닫는 괄호 자리에 " Riot" 이 붙었다. 다른 음식으로 바뀐 것이 아니고, 저장되면
+    # 카탈로그에 없는 메뉴가 되어 알레르기 판정이 "확인 못 함" 으로 나온다 — 틀린 판단이 남지 않는다
+    expected = _plan(["백김치9(백깍두기9)"])
+    actual = _day(("lunch", [("백김치(백깍두기 Riot", "백김치9(백깍두기9)")]))
+
+    slot = grade_slots(expected, actual)[(2, "lunch")]
+
+    assert not slot.c1
+    assert slot.failed
+    assert slot.garbled == ["백김치9(백깍두기9) (이름: 백김치(백깍두기 Riot)"]
+
+
+def test_junk_stuck_to_the_menu_name_without_a_space_is_still_only_garbled():
+    expected = _plan(["떡(증편)"])
+    actual = _day(("lunch", [("떡(증편Riot", "떡(증편)")]))
+
+    slot = grade_slots(expected, actual)[(2, "lunch")]
+
+    assert not slot.c1
+    assert slot.garbled == ["떡(증편) (이름: 떡(증편Riot)"]
+
+
+def test_another_menu_in_the_name_is_c1_even_with_junk():
+    expected = _plan(["현미밥"])
+    actual = _day(("lunch", [("흑미밥 Riot", "현미밥")]))
+
+    slot = grade_slots(expected, actual)[(2, "lunch")]
+
+    assert slot.c1
+    assert slot.garbled == []
+
+
+def test_summary_counts_a_garbled_name_as_a_failure_but_not_as_c1():
+    expected = _plan(["떡(증편)"])
+    garbled = _day(("lunch", [("떡(증편 Riot", "떡(증편)")]))
+
+    s = summarize_runs(expected, [expected, garbled])
+
+    assert (s.c1_cases, s.total) == (0, 1)
+    assert s.unstable == [(2, "lunch")]
+
+
+def test_report_calls_a_garbled_name_garbled_not_missing(capsys):
+    expected = _plan(["떡(증편)"])
+    garbled = _day(("lunch", [("떡(증편 Riot", "떡(증편)")]))
+
+    print_c1_report(summarize_runs(expected, [garbled]))
+
+    line = capsys.readouterr().out.splitlines()[-1]
+    assert "이름 깨짐" in line
+    assert "빼먹음" not in line
+    assert "떡(증편 Riot" in line
 
 
 def test_name_written_as_a_part_of_its_raw_is_not_a_failure():
