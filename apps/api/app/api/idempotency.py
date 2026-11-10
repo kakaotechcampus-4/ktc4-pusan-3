@@ -15,7 +15,8 @@ docs/api/idempotency-v1.md 가 그 위에 제안한 동작 중 **"같은 키 · 
   `remember_first`(SET NX)로 적고, 처음 적은 요청만 러너를 띄운다. 진 요청은 먼저 적힌 run 을
   돌려준다 (한도는 키 적기보다 앞이라 진 요청도 1회 쓴다)
 - 응답 전체(dict)를 재생하는 창구는 아직 확인과 적기가 따로다 — 그 창에 온 같은 키는 두 번
-  처리될 수 있다
+  처리될 수 있다. 잠그고 지우는 두 창구(기록 탭 삭제 · 삭제 확정)만 잠금 안에서 다시 확인하고
+  commit 전에 적어서(`remember_and_commit`) 겹쳐도 한 번만 지운다
 
 REDIS_URL 이 설정되면 Redis 를 쓰고, 없으면 프로세스 메모리 dict 로 폴백한다(로컬 · 테스트).
 폴백은 단일 워커 전제다 (#134).
@@ -160,9 +161,11 @@ async def remember_and_commit(
     쥔 채 적으면 뒤의 것은 잠금을 얻을 때 반드시 키를 본다.
 
     - `strict` 로 적는다 — Redis 가 죽었으면 commit 하기 전에 503 으로 끝나 아무것도 지우지 않는다.
+      적기가 실패해도 키를 지운다 — Redis 가 SET 은 받고 응답만 늦은 시간 초과면 키는 적혀 있다
     - 🚨 대가 — 지우지 않았는데 처음 성공을 재생받는 경우가 생긴다. 지울 것은 목록에 남아 있어
       다시 지울 수 있다 (docs/api/idempotency-v1.md §3-3-1).
-      - 키를 적은 뒤 commit 전에 서버가 죽거나, Redis 가 응답만 늦게 503 을 낸 뒤 같은 키로 올 때
+      - 키를 적은 뒤 commit 전에 서버가 죽고 같은 키로 다시 올 때
+      - 키 적기나 commit 이 실패했는데 키 지우기(`forget`)까지 실패했을 때
       - commit 이 실패할 때 그 잠금에서 기다리던 같은 키 요청 — DB 는 실패하는 즉시 잠금을 풀고
         키는 그 뒤(`forget`)에 지운다
       - 앞의 요청이 commit 하기 전에 잠금 밖에서 키를 본 같은 키 요청은 그 commit 보다 먼저 성공을
@@ -172,18 +175,21 @@ async def remember_and_commit(
     - commit 이 끝난 뒤의 실패는 다루지 않는다 — 그때는 지운 것이 맞아서 키가 남아야 한다.
     """
     scope = {"parent_id": parent_id, "method": method, "path": path, "key": key}
-    await remember(**scope, replay=replay, strict=True)
     try:
+        # 🚨 키 적기도 try 안이다 — 503 이어도 키는 적혀 있을 수 있다(응답만 늦은 시간 초과).
+        #    아직 commit 전이라 잠금을 쥐고 지운다 (#916 리뷰)
+        await remember(**scope, replay=replay, strict=True)
         await session.commit()
     except BaseException:
-        # 취소(CancelledError)도 받는다 — commit 이 끝났는지 모르면 지우는 쪽이 안전하다. 키가
-        # 없으면 같은 키 재시도는 404 · 409 를 받고(지금까지와 같다), 남으면 거짓 성공을 받는다
+        # 취소(CancelledError)도 받는다 — 키가 적혔는지, commit 이 끝났는지 모르면 지우는 쪽이
+        # 안전하다. 키가 없으면 같은 키 재시도는 404 · 409 를 받고(지금까지와 같다), 남으면 거짓
+        # 성공을 받는다
         await forget(**scope)
         raise
 
 
 async def forget(*, parent_id: UUID, method: str, path: str, key: str) -> None:
-    """적어 둔 키를 지운다 — commit 이 실패해 재생할 성공이 없어졌을 때 (`remember_and_commit`).
+    """적은 키를 지운다 — 키 적기 · commit 이 실패해 재생할 성공이 없을 때 (`remember_and_commit`).
 
     Redis 장애면 지우지 못하고 로그만 남긴다. 그 키는 24시간 동안 같은 키 재시도에 성공을 재생한다
     — 지울 것은 목록에 남아 있어 새 키로 다시 지울 수 있다.
@@ -195,7 +201,7 @@ async def forget(*, parent_id: UUID, method: str, path: str, key: str) -> None:
     try:
         await asyncio.to_thread(r.delete, _idem_key(parent_id, method, path, key))
     except RedisError as exc:
-        _warn(exc, "commit 이 실패한 요청의 키를 못 지웠다")
+        _warn(exc, "실패한 삭제 요청의 키를 못 지웠다")
 
 
 def _write(r: Redis, idem: str, replay: str | dict) -> None:
