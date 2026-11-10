@@ -3,7 +3,7 @@
 고정하는 것
 - 발표 시각 고르기(발표 10분 뒤부터) · 날마다 볼 칸
 - 원문 그대로 넘긴다 — 해석하지 않는다
-- 캐시 키는 발표 시각이다. 같은 발표분은 한 번만 부른다(동시에 불러도)
+- 캐시 키는 발표 시각이다. 같은 발표분은 한 번만 부른다(동시에 불러도 · 실패해도)
 - 실패는 전부 UpstreamUnavailable 이고, 메시지 · 로그에 인증키와 주소가 없다
 """
 
@@ -18,6 +18,7 @@ import pytest
 from app.core.config import settings
 from app.core.weather_raw import RawForecast, UpstreamUnavailable, WeatherGrid
 from app.integrations.weather.forecast import KST, KmaForecast, latest_base, parse_slots, slot_for
+from app.integrations.weather.public_data import TIMEOUT
 
 GRID = WeatherGrid(nx=98, ny=76)
 NOW = datetime(2026, 10, 11, 17, 43, tzinfo=KST)  # 일요일
@@ -143,6 +144,13 @@ class TestForecast:
         assert query["base_date"] == ["20261011"] and query["base_time"] == ["1700"]
         assert query["serviceKey"] == [KEY]
 
+    async def test_공통보다_긴_읽기_제한으로_묻는다(self):
+        """오늘 ~ 모레는 단기예보가 빠지면 그날 날씨가 통째로 "확인하지 못했어요" 다. 저녁 발표분은
+        응답에 1.4초쯤 걸리고 밤에 공통 2초에 걸려 빠진 적이 있다 (#959)."""
+        src, recorder = source(ok())
+        await src.forecast(grid=GRID, day=date(2026, 10, 11))
+        assert recorder.requests[0].extensions["timeout"]["read"] > TIMEOUT.read
+
     async def test_Encoding_키는_한_번_풀어서_보낸다(self, monkeypatch):
         monkeypatch.setattr(settings, "DATA_GO_KR_SERVICE_KEY", "test-key%2Fwith%2Bplus")
         src, recorder = source(ok())
@@ -165,6 +173,36 @@ class TestForecast:
         )
         assert len(recorder.requests) == 1
 
+    async def test_동시에_부르다_실패해도_한_번만_부른다(self):
+        """기다리던 호출이 하나씩 다시 부르면 서버가 느린 날 기다림이 날 수만큼 늘어난다
+        (#959 리뷰)."""
+        src, recorder = source(httpx.Response(500, text="error"))
+        results = await asyncio.gather(
+            src.forecast(grid=GRID, day=date(2026, 10, 11)),
+            src.forecast(grid=GRID, day=date(2026, 10, 13)),
+            return_exceptions=True,
+        )
+        assert all(isinstance(result, UpstreamUnavailable) for result in results)
+        assert len(recorder.requests) == 1
+
+    async def test_한_호출이_취소돼도_같이_기다리던_호출은_받는다(self):
+        """run 하나가 20초에 끊겨도 같은 발표분을 기다리던 다른 호출의 조회는 끊지 않는다."""
+        gate = asyncio.Event()
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            await gate.wait()
+            return ok()
+
+        src = opened(KmaForecast(transport=httpx.MockTransport(handler), now=lambda: NOW))
+        first = asyncio.create_task(src.forecast(grid=GRID, day=date(2026, 10, 11)))
+        second = asyncio.create_task(src.forecast(grid=GRID, day=date(2026, 10, 13)))
+        await asyncio.sleep(0)  # 둘 다 같은 조회를 기다리게 한다
+        first.cancel()
+        gate.set()
+        assert await second == RawForecast(sky="4", pcp="2.0mm", pop="60")
+        with pytest.raises(asyncio.CancelledError):
+            await first
+
     async def test_새_발표가_나오면_다시_부른다(self):
         clock = [NOW]
         recorder = Recorder(ok())
@@ -180,17 +218,17 @@ class TestForecast:
             await src.forecast(grid=GRID, day=date(2026, 10, 12))
 
 
-class TestLocks:
-    async def test_실패해도_Lock_을_남기지_않는다(self):
+class TestInflight:
+    async def test_실패해도_받는_중_표시를_남기지_않는다(self):
         src, _ = source(httpx.Response(500, text="error"))
         with pytest.raises(UpstreamUnavailable):
             await src.forecast(grid=GRID, day=date(2026, 10, 11))
-        assert src._locks == {}
+        assert src._inflight == {}
 
-    async def test_성공하면_Lock_을_남기지_않는다(self):
+    async def test_성공하면_받는_중_표시를_남기지_않는다(self):
         src, _ = source(ok())
         await src.forecast(grid=GRID, day=date(2026, 10, 11))
-        assert src._locks == {}
+        assert src._inflight == {}
 
 
 class TestFailure:
