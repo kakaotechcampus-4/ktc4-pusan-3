@@ -63,6 +63,7 @@ from tests.eval.agents.food.world import (
     _row,
     build_world,
 )
+from tests.eval.agents.tool_rules import forbidden_failures
 
 pytestmark = pytest.mark.live
 
@@ -153,6 +154,10 @@ class Case:
     expect: str
     judge: Callable[["Ran"], Verdict]
     narrow: bool = False  # 풀 필터와 사후 필터 사이의 틈을 흉내 낸다(C48-narrow)
+    # 부르면 안 되는 tool (#816). 조회 tool 은 선택이라 필수는 두지 않는다
+    forbidden_tools: frozenset[str] = frozenset()
+    c1: bool = False  # forbidden_tools 에 쓰기 tool 이 있으면 어김을 C1 로 센다
+    ci: bool = False  # PR 에서 도는 CI 묶음 (`-m tool_ci`)
 
 
 def _generated_args(ran: "Ran") -> dict[str, dict[str, Any]]:
@@ -1199,6 +1204,7 @@ CASES: tuple[Case, ...] = (
         "C48",
         "후보 3개 · 재호출 0회 · 근거 없으면 general",
         j_t01,
+        ci=True,
     ),
     Case("T02/C48", "오후 간식으로 뭐 주면 좋을까?", M, "C48", "간식 후보 3개", j_t01),
     Case("T03/C48", "내일 아침 메뉴 추천해줘.", M, "C48", "아침 후보 3개", j_t01),
@@ -1470,6 +1476,10 @@ CASES: tuple[Case, ...] = (
         "C48",
         "되묻기 1개 · 변경 0건",
         j_ask("daycare.replaced_unknown", "daycare.slot_ambiguous"),
+        # update 는 금지하지 않는다 — 어느 끼니인지 모르면 update 호출이 코드의 되묻기를 부른다
+        forbidden_tools=frozenset({"delete_daycare_meal"}),
+        c1=True,
+        ci=True,
     ),
     Case(
         "T42/C48",
@@ -1478,6 +1488,9 @@ CASES: tuple[Case, ...] = (
         "C48",
         "오늘 행 양 1.5 · 메뉴 그대로",
         j_t42,
+        forbidden_tools=frozenset({"delete_daycare_meal"}),
+        c1=True,
+        ci=True,
     ),
     Case(
         "T43/C48",
@@ -1754,7 +1767,12 @@ def _say(text: str) -> None:
     print(text.encode(encoding, "replace").decode(encoding))
 
 
-@pytest.mark.parametrize("case", CASES, ids=[case.case_id for case in CASES])
+def _param(case: Case) -> Any:
+    marks = (pytest.mark.tool_ci,) if case.ci else ()
+    return pytest.param(case, id=case.case_id, marks=marks)
+
+
+@pytest.mark.parametrize("case", [_param(case) for case in CASES])
 def test_food_run(case: Case, expect: Callable[..., None], monkeypatch: pytest.MonkeyPatch) -> None:
     expect(case.expect)
     client = _client()
@@ -1785,6 +1803,8 @@ def test_food_run(case: Case, expect: Callable[..., None], monkeypatch: pytest.M
             before=before,
         )
         verdict = case.judge(ran)
+        for message in forbidden_failures(case, [name for name, _ in recorder.tool_calls]):
+            verdict.fail(message, c1=case.c1)
 
         outcome = "FAIL" if verdict.failures else ("GAP" if verdict.gaps else "PASS")
         suffix = f" #{attempt}" if TEST_REPEAT > 1 else ""

@@ -190,3 +190,11 @@ def test_요약_파일에_덧붙인다(tmp_path, monkeypatch):
 
     text = out.read_text(encoding="utf-8")
     assert text.startswith("앞\n") and "T01" in text
+
+
+def test_회차_기록이_하나도_없으면_fail_on_stable_은_1(tmp_path, monkeypatch, capsys):
+    # 키가 없어 테스트가 전부 건너뛰어진 실행이 초록불로 끝나면 안 된다
+    monkeypatch.setattr(tally, "RESULTS", tmp_path / "없음.jsonl")
+
+    assert main(["--fail-on", "stable"]) == 1
+    assert "회차 기록이 없다" in capsys.readouterr().err

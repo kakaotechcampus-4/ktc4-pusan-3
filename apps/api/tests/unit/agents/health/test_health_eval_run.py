@@ -292,3 +292,22 @@ async def test_Turn_은_저장소_쓰기_증가분만_담는다():
 
     assert [len(turn.writes) for turn in ran.turns] == [0, 0, 1]
     assert isinstance(ran.turns[0], Turn)
+
+
+# ── 부른 tool 이름은 금지 tool 판정(#816)이 읽는다 ──
+async def test_모델이_부른_tool_이름이_ran_에_남는다():
+    ran = await run_case(BY_ID["T01"], client=llm_for("T01"))
+
+    assert ran.tools == ("create_medication_schedule",)
+
+
+async def test_되묻기를_이어받는_케이스도_앞_턴의_tool_이름을_남긴다():
+    ran = await run_case(BY_ID["T13"], client=llm_for("T13"))
+
+    assert ran.tools == ("stop_medication_schedule",)
+
+
+async def test_모델을_안_부르면_tool_이름이_비어_있다():
+    ran = await run_case(BY_ID["T11"], client=llm_for("T11"))
+
+    assert ran.tools == ()

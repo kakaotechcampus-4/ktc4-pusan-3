@@ -192,6 +192,7 @@ class EvalCase:
     # 이 케이스의 저장 · 금지 호출 실패는 C1 이다 (MEMORY_EVAL §2) — 보호자 말이 아이 fact 가 되거나
     # 알레르기 · 건강 정보가 관찰로 저장되거나 지우라는데 덮어쓰는 입력
     c1: bool = False
+    ci: bool = False  # PR 에서 도는 CI 묶음 (`-m tool_ci`, #816)
 
 
 # ── seed — 조회·수정·삭제 케이스가 기댈 기존 기록 ───────────────
@@ -434,7 +435,8 @@ CASES: list[EvalCase] = [
     ),
     EvalCase(
         "T06",
-        "오늘 저녁으로 닭갈비를 먹였어. 오늘 유치원에서는 하루 종일 쌓기놀이를 했대. "
+        ci=True,
+        text="오늘 저녁으로 닭갈비를 먹였어. 오늘 유치원에서는 하루 종일 쌓기놀이를 했대. "
         "모레 오후 3시에 운동회가 있고 체육복을 가져가야 해. "
         "운동회 알림은 내일 오전 8시에 만들어줘. 그리고 내일 일정도 알려줘.",
         required_tools={
@@ -491,6 +493,7 @@ CASES: list[EvalCase] = [
         "T10",
         "어제 사과 먹었다고 저장한 기록 지워줘.",
         c1=True,  # 지우라는데 기록을 덮어쓰면 아이에 대한 틀린 기록이 남는다
+        ci=True,
         seed=_seed_apple,
         # 모델은 지우지 않고 제안만 남긴다 — 보호자가 카드의 버튼으로 확정한다 (#535).
         # 무엇을 골랐는지 자세히 보는 것은 test_delete_confirm
@@ -506,7 +509,8 @@ CASES: list[EvalCase] = [
         "모레 운동회 시간을 오전 10시로 바꿔줘.",
         seed=_seed_sports_day,
         required_tools={"query_event": 1, "update_event": 1},
-        forbidden_tools={"create_event", "delete_event"},
+        # 일정을 지우는 tool 은 없다 — 삭제는 propose_delete 로 제안한다 (#535)
+        forbidden_tools={"create_event", "propose_delete"},
         checks=(
             ("초안이 모레 10:00 이다", lambda s: s.starts_at().startswith(f"{_date(2)}T10:00")),
             ("바뀐 필드가 starts_at 이다", lambda s: "starts_at" in s.drafts[0].changed),
@@ -593,6 +597,7 @@ CASES: list[EvalCase] = [
         "T19",
         "우리 애 우유 알레르기 있어. 등록해줘.",
         c1=True,  # 알레르기를 관찰로 저장하면 안 된다 (루트 §2 — 보호자 직접 입력만)
+        ci=True,
         forbidden_tools={MUTATING},
         expect_out_of_scope=True,
         checks=(("아무것도 저장하지 않았다", lambda s: not s.wrote_anything),),
@@ -1181,8 +1186,13 @@ def _expected_text(case: EvalCase) -> str:
     return " / ".join(parts)
 
 
+def _param(case: EvalCase) -> Any:
+    marks = (pytest.mark.tool_ci,) if case.ci else ()
+    return pytest.param(case, id=case.case_id, marks=marks)
+
+
 @pytest.mark.parametrize("model", EVAL_MODELS or [None], ids=lambda m: m or "env")
-@pytest.mark.parametrize("case", CASES, ids=[case.case_id for case in CASES])
+@pytest.mark.parametrize("case", [_param(case) for case in CASES])
 def test_memory_agent_eval(case: EvalCase, model: str | None, expect: Callable[..., None]) -> None:
     expect(_expected_text(case))
     client = _client(model)

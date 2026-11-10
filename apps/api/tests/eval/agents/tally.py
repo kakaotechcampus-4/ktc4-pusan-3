@@ -17,6 +17,7 @@
 import argparse
 import json
 import os
+import sys
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -264,8 +265,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.summary:
         with args.summary.open("a", encoding="utf-8") as out:
             out.write(summary_markdown(verdicts, meta))
-    if args.fail_on == "stable" and any(v.outcome == "stable_wrong" for v in verdicts):
-        return 1
+    if args.fail_on == "stable":
+        if not verdicts:  # 키가 없어 전부 건너뛴 실행이 초록불이 되면 안 된다
+            print("회차 기록이 없다 — 테스트가 하나도 돌지 않았다", file=sys.stderr)
+            return 1
+        if any(v.outcome == "stable_wrong" for v in verdicts):
+            return 1
     return 0
 
 

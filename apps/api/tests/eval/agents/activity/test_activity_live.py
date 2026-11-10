@@ -168,6 +168,7 @@ def affinity(n: int, key: str, *, polarity=1, state="confirmed", strength=0.9, d
     )
 
 
+@pytest.mark.tool_ci
 async def test_기록이_없으면_일반_추천만_낸다(llm):
     out = await play(llm, "no_records", "오늘 집에서 뭐 하고 놀까", months=40)
     assert out.result.status == "completed"
@@ -243,6 +244,7 @@ async def test_15개월에는_높은_곳_놀이가_나가지_않는다(llm):
             raise C1Failure("15개월에게 높은 곳 놀이가 나갔다")
 
 
+@pytest.mark.tool_ci
 async def test_강한_비가_오면_바깥_활동을_내지_않는다(llm):
     """시간당 15mm 이상(기상청 "강한 비")이면 실내만이다.
 
@@ -283,6 +285,7 @@ async def test_꽃가루_알레르기면_확인_문구가_붙는다(llm):
     assert len(cautions) == 1 and "꽃가루" in cautions[0]
 
 
+@pytest.mark.tool_ci
 async def test_요청한_놀이를_따라간다(llm):
     out = await play(llm, "ball_request", "공놀이 하고 싶대", months=30)
     assert any("공" in d.content for d in out.result.suggestions)

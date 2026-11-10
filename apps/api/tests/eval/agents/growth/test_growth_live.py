@@ -170,6 +170,7 @@ class Case:
     recorded: tuple[str, ...] = ()  # 같은 run 에서 Memory 가 저장한 루틴 관찰의 행동 이름(혼합형)
     golden: bool = False
     model: bool = True
+    ci: bool = False  # PR 에서 도는 CI 묶음 (`-m tool_ci`, #816)
 
 
 @dataclass
@@ -946,10 +947,21 @@ def case(
     recorded: tuple[str, ...] = (),
     golden: bool = False,
     model: bool = True,
+    ci: bool = False,
 ) -> Case:
     key, world = case_id.split("/", 1)
     return Case(
-        case_id, text or INPUTS[key], task, world, expect, judge, records, recorded, golden, model
+        case_id,
+        text or INPUTS[key],
+        task,
+        world,
+        expect,
+        judge,
+        records,
+        recorded,
+        golden,
+        model,
+        ci,
     )
 
 
@@ -959,11 +971,11 @@ CASES: tuple[Case, ...] = (
          expect="돌 전 교육 → closed.infant_learning · 모델 0 (G2)"),
     case("T04/C30", LEARNING, j_learning(band="standard"), golden=True,
          expect="숫자 활동 3개 · 표준보육과정에서 쓴 행"),
-    case("T01/C48", LEARNING, j_learning(personal="some", band="nuri"), golden=True,
+    case("T01/C48", LEARNING, j_learning(personal="some", band="nuri"), golden=True, ci=True,
          expect="농구 · 공룡 관심을 근거로 3개 · 누리과정에서 쓴 행"),
     case("T11/C8", ROUTINE, j_rhythm, golden=True, model=False,
          expect="리듬 안내 하나 · 추천 0 · 모델 0"),
-    case("T13/C30", ROUTINE, j_step(f"{TOOTH}.step3"), golden=True,
+    case("T13/C30", ROUTINE, j_step(f"{TOOTH}.step3"), golden=True, ci=True,
          expect="손을 포개는 단계의 다음 칸(말로 일러 주기) 하나 · 개수 안내"),
     case("T13/C48-tooth", ROUTINE, j_step(f"{TOOTH}.step4"), golden=True,
          expect="말로 일러 주는 단계의 다음 칸(혼자 닦기) 하나 · 개수 안내"),
@@ -989,7 +1001,7 @@ CASES: tuple[Case, ...] = (
          expect="위험 사전 실패 → 닫힘 · 모델 0 (빈 사전 폴백 금지)"),
     case("T01/C80", LEARNING, j_closed(DOC_NO_ROW), model=False,
          expect="[예시]도 기록도 없음 → doc.no_row · 모델 0"),
-    case("T03/C48", LEARNING, j_learning(), expect="규칙 익히기 활동"),
+    case("T03/C48", LEARNING, j_learning(), expect="규칙 익히기 활동", ci=True),
     case("T04/C48", LEARNING, j_learning(personal="all"),
          expect="숫자 기록이 있다 → 3개 모두 그 기록을 근거로 한 개인화"),
     case("T45/C60-math", LEARNING, j_learning(personal="all"),
@@ -1285,6 +1297,8 @@ def _fresh_results() -> None:
 
 def _param(c: Case) -> Any:
     marks = (pytest.mark.live,) if c.model else ()
+    if c.ci:
+        marks = (*marks, pytest.mark.tool_ci)
     return pytest.param(c, id=("golden-" if c.golden else "") + c.case_id, marks=marks)
 
 
