@@ -39,7 +39,7 @@ raw_text ──▶ run()  ──▶ [ LLM: tool 선택 + 인자 추출 ]
 라서 registry·prompt·client 는 전부 내부 구현으로 둔다. 초판에는 이 규칙을 import-linter 가 강제한다고
 적었는데 그런 설정은 저장소에 없다. 지금은 규칙 문서와 리뷰가 전부다.
 
-pipeline 을 거치는 경로에서는 `pipeline.handle_input()` 이 Supervisor → Memory → Food 순서로 부른다.
+pipeline 을 거치는 경로에서는 `pipeline.handle_input()` 이 Supervisor → Memory → 도메인 Agent 순서로 부른다.
 `run()` 을 직접 부르는 것은 Supervisor 없이 Memory 만 잴 때다.
 
 ### tool 23개
@@ -67,10 +67,10 @@ deleted 로 바뀌며(soft delete), 지운 행은 조회·수정·목록·집계
 안내를 싣는다. 조회 · 삭제 카드의 탭 하나에 실리는 양이고, 보호자가 한 화면에서 보고 판단할 수 있는 양이다.
 잘리지 않으면 결과 모양은 예전과 같다 — 늘 싣거나 날짜를 더하면 모델 행동이 흔들렸다(라이브 D02).
 
-22개를 한꺼번에 열지 않는다. `bundles.py` 가 작업 종류에 따라 두 묶음으로 나눈다 —
-기록 기본 묶음 `RECORD_BASE` 8개는 항상 열고, 수정·삭제 묶음 `LOOKUP_EDIT` 14개는 Supervisor 가
+23개를 한꺼번에 열지 않는다. `bundles.py` 가 작업 종류에 따라 두 묶음으로 나눈다 —
+기록 기본 묶음 `RECORD_BASE` 8개는 항상 열고, 수정·삭제 묶음 `LOOKUP_EDIT` 15개는 Supervisor 가
 `lookup_edit` 조각을 짚었거나, 기록 후보를 확실히 못 정했을 때(힌트가 없거나 unclear 조각이 있을 때) 더한다
-(`MemoryTask.open_lookup_edit`, #483). Supervisor 없이 `run()` 을 직접 부르면 22개를 다 연다.
+(`MemoryTask.open_lookup_edit`, #483). Supervisor 없이 `run()` 을 직접 부르면 23개를 다 연다.
 
 `event_item` 에는 조회 tool 이 없다. `query_event` 가 딸린 준비물을 함께 돌려준다 —
 "기존 일정에 준비물 추가" 가 조회 한 번으로 끝나야 하기 때문이다.
@@ -167,7 +167,7 @@ ISO 문자열도 같은 필드로 받는다 — 모델·API 조합에 따라 표
 
 1. **기준이 있으면 거기서 센다.** `anchor_on`(보호자가 말한 날짜)이 `anchor_event`(등록된 일정 이름)보다 앞선다.
    - 기준 일정은 정확히 한 건일 때만 쓴다. 없거나 여러 건이면(같은 날 두 건이어도) 고르지 않고 되묻는다.
-     관찰은 저장 전에 사람이 확인하지 않아서(승인 게이트는 캘린더 · 건강 기록 두 곳뿐), 잘못 고른 일정은 틀린
+     관찰은 저장 전에 사람이 확인하지 않아서(승인 게이트는 캘린더 · 건강 기록 · 삭제 확정 세 곳뿐, D16), 잘못 고른 일정은 틀린
      날짜로 그대로 남는다. 빈 이름은 저장소가 "조건 없음" 으로 읽으니 거부한다.
    - 여러 날 일정은 앞쪽("전날" · "이틀 전")을 첫날에서, 뒤쪽("다음날" · "사흘 뒤")을 마지막 날에서 센다.
      10/1~10/3 수련회의 "다음날" 은 10/4 다. "당일" 은 어느 날인지 몰라 되묻는다.
@@ -290,8 +290,8 @@ lookup_edit 조각은 코드가 저장을 거절하는 데에도 쓴다(D13 · D
 9/22 회의에서 **`op` 별로 두 모양**으로 확정했다 — create 는 `POST`, update 는 `PATCH` 로 가기 때문이다.
 
 ```
-create : draft_id · op · source · event · items
-update : draft_id · op · source · event_id · event · before · items
+create : draft_id · op · event · items
+update : draft_id · op · event_id · event · before · items
 ```
 
 `event_id` 와 `before` 는 create 에서 언제나 `null` 이라 싣지 않는다. `op` 는 두 모양 모두에 남긴다 —
@@ -302,8 +302,8 @@ update : draft_id · op · source · event_id · event · before · items
 `changed` 는 못 쓰는 값이 되고, 화면은 어차피 `before` 와 비교해야 한다. dataclass 에는 남겨서
 tool 결과와 "바뀐 게 없으면 초안을 만들지 않는다" 판정에 쓴다.
 
-`source` 는 제안에서 온 초안의 출처를 담을 자리다. Memory 는 그 경로를 거치지 않아 언제나 `null` 이고,
-#121 의 제안 경로가 붙을 때 suggestion 도메인이 채운다.
+`source`(제안에서 온 초안의 출처)는 payload 에 없다. Memory 는 그 경로를 거치지 않아 채울 값이 없고,
+제안에서 온 초안은 `POST /children/{cid}/suggestions/event-drafts` 응답이 `suggestion_ids` 로 출처를 싣는다.
 
 준비물의 `is_prepared` 는 payload 에 싣지 않는다. `items` 가 최종 목록이라 실어 보내면, SSE 로 나간 뒤
 보호자가 `PATCH /event-items/{iid}` 로 누른 체크가 제출하는 순간 풀린다. 체크는 그 PATCH 만의 몫이다.
@@ -340,8 +340,8 @@ unclear 뿐인 입력은 되묻지 않고 끝나므로 되묻기 맥락이 생�
 
 **보관 (10-05 트랜잭션 회의)**
 
-- DB 에 두지 않는다. 프로세스 메모리에 15분 둔다(`app/api/runs/pending_reply.py`). 재시작하면 사라지고,
-  프로세스가 여러 개면 공유되지 않는다 — api 가 `--workers 1` 전제(#134)라 run 채널과 같은 조건이다.
+- DB 표(`run_hold`, UNLOGGED)에 15분 둔다(`app/api/runs/pending_reply.py`, #877). 10-05 에는 프로세스 메모리에
+  두었는데, 워커를 늘리면 다른 워커가 맥락을 못 봐서 옮겼다. 지우기는 `hold_purge` 가 1분마다 한다.
 - 트랜잭션은 기록 단계(Memory 의 쓰기)만 묶는다. 되묻기 맥락은 그 commit 이 끝난 뒤 `PendingReply` 로 나가
   러너가 보관함에 넣는다. commit 이 실패해 되돌려지면 맥락도 생기지 않는다.
 - 답이 오면 입력 API 는 맥락을 꺼내 지우지 않고 "사용 중" 표시만 한다. 같은 질문에 온 두 번째 답은 이
@@ -376,7 +376,7 @@ unclear 뿐인 입력은 되묻지 않고 끝나므로 되묻기 맥락이 생�
 
 Growth 루틴이 "지금 어느 정도까지 하나요?" 를 물으면 보호자의 답은 Memory 가 저장하는 아이 기록이면서
 그 요청을 다시 돌릴 맥락이다. 그래서 pipeline 이 질문을 `AgentQuestion(awaits_reply=true)` 로 내기 전에 맥락을
-먼저 보관한다(`PendingReply`). 표(`_RESUMED_BY_ANSWER`)에 있는 task 만 해당하고, Health 는 표에 없다.
+먼저 보관한다(`PendingReply`). 표(`_RESUMED_BY_ANSWER`)에 있는 task 만 해당하고, Health 는 복약(`medication`)만 표에 있다(#713).
 
 - 맥락에는 `resume`(요청 조각만 든 `DomainTask`, 같은 입력의 기록 조각 원문은 싣지 않는다)과 `asked`(Agent 가
   물은 자리 `DomainPending`: 행동 이름 · 카테고리 · 채울 칸)가 더해진다. 15분 · 같은 보관 규칙이다.
@@ -846,13 +846,12 @@ tool 27개의 비용 부담이 계획에서 걱정하던 것보다 작다.
 | `agents/memory/test_event_draft.py` | 22 | 초안 payload 모양, 같은 일정은 초안 하나, `changed` 판정, 준비물 경로 |
 | `agents/memory/test_agent_loop.py` | 20 | 깨진 JSON, 중복 차단, 실패 재시도 허용, MAX_STEPS, 조기 종료 |
 
-`tests/unit/agents/test_store_clear.py` 가 `agents/memory/` 쪽과 바이트 단위로 같다. #109 머지에서 이동
-커밋의 삭제가 빠진 흔적이고, 지우는 커밋이 따로 필요하다.
+#109 머지에서 남았던 사본 `tests/unit/agents/test_store_clear.py` 는 지웠다(`agents/memory/` 쪽만 남는다).
 
-문서 초판이 적었던 `test_datetime_rules.py` · `test_tool_schema.py` · `test_store.py` · `test_registry.py` ·
+문서 초판이 적었던 `test_tool_schema.py` · `test_store.py` · `test_registry.py` ·
 `test_prompt.py` · `test_observation_tools.py` · `test_schedule_tools.py` 는 지금 저장소에 없다.
-파일이 합쳐지고 이름이 바뀌는 과정에서 사라졌다 — 날짜 규칙과 프롬프트 구획을 직접 겨누는 테스트가
-지금은 없다는 뜻이다. §6 에 남긴다.
+파일이 합쳐지고 이름이 바뀌는 과정에서 사라졌다. 날짜 규칙은 `tests/unit/agents/common/test_datetime_rules.py` 가
+다시 겨누고, 프롬프트는 새는 낱말만 보는 `test_memory_prompt.py` 가 있다. §6 에 남긴다.
 
 ### 라이브 eval
 
@@ -897,13 +896,13 @@ uv run pytest tests/eval/agents/supervisor/test.py -m live         # Supervisor 
 
 | | 이유 |
 | --- | --- |
-| 초안 제출 API | D9 의 초안을 받아 event·event_item 에 쓰는 엔드포인트. 백엔드 몫이고, 보호자가 고친 시각을 `check_when` 으로 다시 검증해야 한다 |
-| 날짜 규칙·프롬프트 단위 테스트 | 초판에 있던 `test_datetime_rules.py` · `test_prompt.py` 가 지금 없다. `datetime_rules.py` 는 `test_event_when.py` 가 간접적으로만 덮고, 프롬프트 구획을 겨누는 테스트는 아예 없다 |
+| 초안 제출 API | ✅ 생겼다 — `POST /children/{cid}/events` · `PATCH /children/{cid}/events/{eid}`(승인 게이트 ㉠, `api/v1/routers/suggestions.py`) |
+| 프롬프트 단위 테스트 | 초판에 있던 `test_prompt.py` 가 지금 없다. 날짜 규칙은 `common/test_datetime_rules.py` 가 다시 생겼지만, 프롬프트 구획을 겨누는 테스트는 새는 낱말을 보는 `test_memory_prompt.py` 뿐이다 |
 | 낡은 초안이 뒤 결과를 덮어쓰는 것 | 초안은 만들어진 시점의 DB 값을 들고 화면에 떠 있다. 두 장을 띄워두고 나중 것부터 제출하면 앞 초안이 뒤 결과를 지운다(`items` 가 최종 목록이라). 일단 현상유지로 두고 잠금은 나중에 보기로 했다 |
 | 승인 전 재발화 | 초안을 제출하기 전에 같은 일정을 다시 말하면 `query_event` 가 0건을 돌려주고 create 초안이 두 장 생긴다. `DraftBook` 이 run 단위라서다(D11). 보호자가 한 장만 승인하면 된다 |
 | `calendar` 연동 | `event.calendar_id` 컬럼이 아직 없다. 일기·사진은 `diary_entry` · `shared_photo` 로 갈라졌다 |
-| `EventCreate.ends_on` | 생성은 하루짜리만, 수정으로는 여러 날로 바꿀 수 있는 비대칭 |
-| 주·월 단위 조회 | `resolve_query_bound` 에 "이번 주" 가 없다 |
+| `EventCreate.ends_on` | ✅ 생겼다 — 생성도 자정을 넘기거나 여러 날 이어지는 일정을 받는다 |
+| 주·월 단위 조회 | ✅ 생겼다 — "이번 주" · "지난주" · "이번 달" 을 그 기간으로 조회한다(`datetime_rules.resolve_query_bounds`) |
 
 ### 이관 검토
 
@@ -936,8 +935,8 @@ uv run pytest tests/eval/agents/supervisor/test.py -m live         # Supervisor 
 
 D9 가 요구한 ORM 변경이다. 이 브랜치가 아니라 백엔드 쪽에서 처리됐다 — `EventStatus` enum,
 `Event.status`, `Event.expires_at` 이 빠졌고 모델 docstring 에 "draft 는 DB 에 쓰지 않는다 (9/17 결정)" 가
-적혔다. Agent 가 아직 이 ORM 을 쓰지 않아(자체 in-memory store) 그 불변식을 코드가 강제하지는 않는다.
-어댑터를 붙일 때 확인할 것.
+적혔다. 지금은 DB 어댑터(`domains/memory/store/db_store.py` 의 `DbMemoryStore`)가 붙어 있고, 일정 생성 · 수정은
+`MemoryStore` 계약에 없다(D9).
 
 ### 고친 관찰은 Curator 집계에 다시 들어간다
 
