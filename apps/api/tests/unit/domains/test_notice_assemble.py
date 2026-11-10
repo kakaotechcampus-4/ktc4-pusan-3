@@ -430,6 +430,56 @@ def test_details_에_섞인_모델의_혼잣말은_그_줄을_버린다():
     assert [(d.name, d.value) for d in item.details] == [("참여", "Zoom 으로도 가능")]
 
 
+LEGIT = (
+    "줌 학부모 상담 안내. 코로나19 예방접종. 영어 특강."
+    " 카카오톡 · 키즈노트 앱으로 회신. information desk"
+)
+
+
+@pytest.mark.parametrize("title", ["Zoom 학부모 상담", "COVID-19 예방접종", "English 특강"])
+def test_원문에_한글로만_있는_말을_영문으로_적은_제목은_그대로다(title):
+    # 낱말 하나는 모델이 옮겨 적은 정당한 값일 수 있다. 혼잣말은 영어 구절로 나온다
+    item = _build(_item(title=title, source_quote="줌 학부모 상담 안내"), source=LEGIT).items[0]
+    assert item.title == title
+    assert item.needs_review is False
+
+
+@pytest.mark.parametrize("value", ["Zoom 화상 상담", "카카오톡(KakaoTalk)", "KidsNote 앱"])
+def test_원문에_한글로만_있는_말을_영문으로_적은_details_는_그대로다(value):
+    item = _build(
+        _item(source_quote="줌 학부모 상담 안내", details=[ItemDetail(name="방법", value=value)]),
+        source=LEGIT,
+    ).items[0]
+    assert [d.value for d in item.details] == [value]
+
+
+def test_낱말_단위로_대조한다():
+    # 원문의 information 때문에 Info · form 이 통과하면 안 된다
+    item = _build(
+        _item(title="학부모 상담 (Info form 겸함)", source_quote="줌 학부모 상담 안내"),
+        source=LEGIT,
+    ).items[0]
+    assert item.title == "학부모 상담"
+
+
+def test_전각_영문도_원문과_맞춘다():
+    source = "ＺＯＯＭ ＭＥＥＴＩＮＧ 학부모 상담"
+    item = _build(
+        _item(title="Zoom Meeting 학부모 상담", source_quote="학부모 상담"), source=source
+    ).items[0]
+    assert item.title == "Zoom Meeting 학부모 상담"
+    assert item.needs_review is False
+
+
+def test_괄호로_시작하는_제목은_자르지_않고_확인을_요청한다():
+    item = _build(
+        _item(title="(필독) 겨울 방학식 Note Summary 겸함", source_quote="가을 소풍 안내"),
+        source=PICNIC,
+    ).items[0]
+    assert item.title == "(필독) 겨울 방학식 Note Summary 겸함"
+    assert item.needs_review is True
+
+
 def test_날짜가_details_로_새면_확인을_요청한다():
     item = _build(
         _item(

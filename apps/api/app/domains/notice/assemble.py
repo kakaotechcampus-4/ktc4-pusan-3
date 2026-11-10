@@ -6,6 +6,7 @@
 
 import hashlib
 import re
+import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, time, tzinfo
@@ -54,8 +55,12 @@ _OPENS = re.compile(r"(?:신청|접수|예약|모집)\s*시작|시작\s*일시|�
 _QUOTE_NOISE = re.compile(r"[\s|│·ㆍ:：\-–—*•◆■□○●▶]+")
 _END_OF_DAY = time(23, 59)
 # 모델이 값을 고르며 한 생각이 제목 · details 에 섞인다 — "… Notice 포함 Info 등 겸함이나" (#909).
-# 공지에 없는 라틴 문자 낱말을 그 표시로 본다. 두 글자 이하는 단위 · 약어라 세지 않는다
+# 공지에 없는 라틴 문자 낱말이 둘 이상이면 그 표시로 본다. 혼잣말은 영어 구절로 나온다 —
+# 낱말 하나는 원문의 "줌" 을 "Zoom" 으로 적은 정당한 값일 수 있다.
+# 두 글자 이하는 단위 · 약어라 세지 않는다
 _LATIN_WORD = re.compile(r"[A-Za-z]{3,}")
+_LATIN_RUN = re.compile(r"[A-Za-z]+")
+_MONOLOGUE_WORDS = 2
 _OPEN_PAREN = re.compile(r"[(（]")
 
 
@@ -218,25 +223,36 @@ def _cleaned(raw: ExtractedItem) -> ExtractedItem:
     )
 
 
-def _not_in_source(text: str, source: str) -> bool:
-    """원문에 없는 라틴 문자 낱말이 있나.
+def _source_words(source: str) -> frozenset[str]:
+    """원문의 라틴 문자 낱말. 전각 글자는 반각으로 맞춘다.
 
-    대소문자는 가리지 않는다 — 모델이 "ZOOM" 을 "Zoom" 으로 옮긴다.
+    사진의 "ＺＯＯＭ" 을 모델은 "ZOOM" 으로 적는다.
     """
-    key = source.lower()
-    return any(word.lower() not in key for word in _LATIN_WORD.findall(text))
+    return frozenset(w.lower() for w in _LATIN_RUN.findall(unicodedata.normalize("NFKC", source)))
 
 
-def _title(raw: ExtractedItem, source: str) -> tuple[str, bool]:
+def _monologue(text: str, words: frozenset[str]) -> bool:
+    """원문에 없는 라틴 문자 낱말이 둘 이상인가. 낱말 단위로 대조하고 대소문자는 가리지 않는다.
+
+    부분 문자열로 대조하면 원문의 "information" 때문에 "Info" 가 통과한다.
+    """
+    found = _LATIN_WORD.findall(unicodedata.normalize("NFKC", text))
+    return sum(w.lower() not in words for w in found) >= _MONOLOGUE_WORDS
+
+
+def _title(raw: ExtractedItem, words: frozenset[str]) -> tuple[str, bool]:
     """(제목, 확인 필요). 혼잣말이 섞이면 첫 여는 괄호 앞까지만 남긴다.
 
-    혼잣말은 제목 뒤에 덧붙인 괄호에 든다. 그래도 남으면 확인을 요청한다.
+    혼잣말은 제목 뒤에 덧붙인 괄호에 든다. 그래도 남으면 확인을 요청한다. 괄호로 시작하는
+    제목("(필독) …")은 괄호 앞이 비므로 자르지 않고 확인만 요청한다.
     """
     title = raw.title.strip() or raw.label.strip() or "안내"
-    if not _not_in_source(title, source):
+    if not _monologue(title, words):
         return title, False
-    title = _OPEN_PAREN.split(title, maxsplit=1)[0].strip() or raw.label.strip() or "안내"
-    return title, _not_in_source(title, source)
+    cut = _OPEN_PAREN.split(title, maxsplit=1)[0].strip()
+    if not cut:
+        return title, True
+    return cut, _monologue(cut, words)
 
 
 def _cut(text: str, limit: int) -> str:
@@ -361,11 +377,12 @@ def _item(
     ):
         reasons.append("시각을 항목에 넣지 못했어요")
     # 날짜 검사가 끝난 뒤에 본다 — 앞의 검사들은 "다른 이유가 없을 때만" 붙는다
-    title, odd_title = _title(raw, source)
+    words = _source_words(source)
+    title, odd_title = _title(raw, words)
     if odd_title:
         reasons.append("제목에 공지에 없는 글이 섞였어요")
     # details 는 보여 주기만 하는 값이라 줄을 버려도 일정 · 마감이 바뀌지 않는다
-    details = [d for d in raw.details if not _not_in_source(d.value, source)]
+    details = [d for d in raw.details if not _monologue(d.value, words)]
 
     return NewNoticeItem(
         handling=NoticeItemHandling(raw.handling),
