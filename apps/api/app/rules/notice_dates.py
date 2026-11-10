@@ -338,8 +338,11 @@ def parse_notice_when(
         end, end_reason, _ = _first_date(rest, start, month) if adjacent else (None, None, 0)
         reason = reason or end_reason
         bare = _BARE_DAY.match(rest.strip()) if end is None else None
-        if end is None and bare is None and _RANGE_SEP.match(text[at:]):
-            # "일" 없는 끝 날은 "~" 가 날짜 바로 뒤일 때만 읽는다. "11/23 9:30~12" 의 12 는 시각이다
+        # 날짜 표현 끝의 공백은 지운 시각일 수 있다 — 원문은 그 공백을 빼고 본다
+        core = len(dateless[:at].rstrip())
+        if end is None and bare is None and _RANGE_SEP.match(text[core:]):
+            # "일" 없는 끝 날은 원문에서 "~" 가 날짜 바로 뒤일 때만 읽는다. "11/2 9:30~12" 의 12 는
+            # 시각이다 — 시각을 지운 글에서는 "~" 가 날짜 바로 뒤처럼 보인다
             bare = _BARE_END_DAY.match(rest.strip())
         if bare:
             # "11월 9일~20일" — 뒤쪽은 달이 생략된다. 말일을 넘기면 다음 달로 읽지 않고 되묻는다

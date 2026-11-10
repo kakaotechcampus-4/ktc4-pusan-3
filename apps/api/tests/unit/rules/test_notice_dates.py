@@ -167,6 +167,26 @@ def test_물결표_뒤의_숫자가_날이_아니면_끝_날로_읽지_않는다
 
 
 @pytest.mark.parametrize(
+    ("text", "start", "start_time"),
+    [
+        ("11/2 9:30~12", date(2026, 11, 2), time(9, 30)),
+        ("11.2 9:30~12", date(2026, 11, 2), time(9, 30)),
+        ("2026.11.2 10:00~11", date(2026, 11, 2), time(10)),
+        ("11/2 10시 ~ 12", date(2026, 11, 2), time(10)),
+        ("11/2 13:00~15", date(2026, 11, 2), time(13)),
+        ("11/2 오후 2시~4", date(2026, 11, 2), time(14)),
+        ("11/10 9:30~12", date(2026, 11, 10), time(9, 30)),
+        ("11/23 9:30~12", date(2026, 11, 23), time(9, 30)),
+    ],
+)
+def test_시각_뒤의_물결표는_날짜_바로_뒤가_아니다(text, start, start_time):
+    # 시각을 지운 자리의 공백까지 날짜 표현으로 치면 "9:30~12" 의 12 가 11/12 가 된다 (검토 R1)
+    when = parse_notice_when(text, anchor=ANCHOR)
+    assert (when.start, when.start_time, when.end) == (start, start_time, None)
+    assert when.review is None
+
+
+@pytest.mark.parametrize(
     "text", ["11월 중", "11월 말 예정", "시간은 개별 안내", "추후 공지", "9:30", "2월 30일"]
 )
 def test_못_읽으면_값을_비우고_이유를_준다(text):
