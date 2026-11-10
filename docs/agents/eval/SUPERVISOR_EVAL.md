@@ -28,6 +28,8 @@ tool spec · 응답 스키마: `app/agents/supervisor/schemas.py` (`ROUTE_TOOL_S
 | 버전 | 커밋 | 지문 | 조건 | 무엇을 왜 바꿨나 | C1 | 안정 오답 | 불안정 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | v0 | `2fc92746` | `05d6538172c2` | 미측정 | 최초 기준선. 합격선만 기존 문서에서 옮김, 수치는 다음 변경 때 전후 두 행으로 잰다. 이 규칙 전에 develop 에 들어간 프롬프트 변경(앞 대화 해석 #786 — 지문에 앞 대화 절 · 메시지 · route spec 도 넣음 · 공지 질문 조회 라우팅)은 잰 수치가 없어 다시 재지 않고 v0 지문만 그 뒤 코드로 고침 | 미측정 | 미측정 | 미측정 |
+| v1 | `5f86bd87 dirty` | `05d6538172c2` | split RC · T 144입력 · gpt-5.6-luna/none · R2 | #864 바꾸기 전. 같은 조건으로 잰 전 행 (RECORD 228/232 · REQUEST 48/48 · GUARDED 42/42) | 0/144 | 없음 | RC01(어린이집 딸기 → daycare_meal, 6회 중 4) · T59 |
+| v2 | `5f86bd87 dirty` | `4850e16be932` | split RC · T 144입력 · gpt-5.6-luna/none · R2 | #864 다른 집 아이 · 다른 보호자가 하는 일을 묻는 말은 out_of_scope, 또래 기준 추천은 request, 친구 · 옆집에서 겪은 일은 record 한 줄씩 + 예시 3줄 (RECORD 226/232 · REQUEST 48/48 · GUARDED 42/42 — 측정 뒤 예시 한 줄을 줄바꿈만 했다. 차이 2건은 RC01 · T59 의 같은 흔들림, 6회 재측정에서 RC01 daycare_meal 이 전 4/6 → 후 2/6). 0건 규칙은 `readout_routing` RO01~RO08 × 3회 = 24회 위반 0 | 0/144 | 없음 | RC01(6회 중 2) · T59 |
 
 - `커밋` 은 재 본 코드. 작업 트리가 더러웠으면 커밋 옆에 `dirty` 를 적는다 (`tests/eval/agents/live_run_meta.json` 의 `dirty`).
 - `C1` 칸은 `a/b` (C1 사례 입력 수 / 전체 입력 수). `미측정` 은 v0 에만 쓴다.
@@ -58,7 +60,7 @@ tool spec · 응답 스키마: `app/agents/supervisor/schemas.py` (`ROUTE_TOOL_S
 
 ## 3. 반복해서 같은 오답 · 흔들리는 값
 
-측정 전. GR 계열은 "숫자 놀이" 가 "놀이" 낱말만 보고 activity 로 새던 경계(보정 이력은 `supervisor-agent-v1.md` §4 eval · 보정 규칙)가 알려진 흔들림이다.
+RC01 은 "오늘 어린이집에서 딸기는 잘 먹었대" 가 가끔 request/food·daycare_meal 로 간다(#864 측정에서 바꾸기 전 6회 중 4 · 후 2). 프롬프트 변경과 무관하게 있던 흔들림이다. T59 는 조각 경계가 "배 아프다고" 로 줄어드는 정도로 라벨은 같다. GR 계열은 "숫자 놀이" 가 "놀이" 낱말만 보고 activity 로 새던 경계(보정 이력은 `supervisor-agent-v1.md` §4 eval · 보정 규칙)가 알려진 흔들림이다.
 
 ## 4. 실행 방법
 
