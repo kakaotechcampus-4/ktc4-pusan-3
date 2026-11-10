@@ -1,5 +1,8 @@
+import logging
 from collections.abc import AsyncGenerator
 
+from sqlalchemy import event
+from sqlalchemy.engine import ExceptionContext
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 # 🚨 registry 는 import 자체가 목적이다 — 모든 도메인 모델을 메타데이터에 등록시킨다.
@@ -28,6 +31,27 @@ engine = create_async_engine(
     pool_pre_ping=True,
     connect_args={"server_settings": {"statement_timeout": "120s", "lock_timeout": "60s"}},
 )
+
+log = logging.getLogger(__name__)
+
+_TIMEOUT_SQLSTATES = {
+    "57014": "쿼리 2분 상한(statement_timeout)",
+    "55P03": "잠금 대기 1분 상한(lock_timeout)",
+}
+
+
+@event.listens_for(engine.sync_engine, "handle_error")
+def _log_timeout(ctx: ExceptionContext) -> None:
+    """상한에 걸린 쿼리를 경로와 상관없이 한 줄로 남긴다 — API · Curator · 배치가 다 이 엔진을
+    지난다. Curator 는 오류 종류만, API 처리기는 sqlstate 만 찍어서 상한에 걸린 건지 따로 안 보였다.
+
+    🚨 쿼리 글 · 값은 싣지 않는다 (위 hide_parameters 와 같은 이유).
+    57014 는 사람이 취소한 쿼리도 같은 코드다.
+    """
+    kind = _TIMEOUT_SQLSTATES.get(getattr(ctx.original_exception, "sqlstate", None) or "")
+    if kind:
+        log.warning("DB 시간 상한에 걸려 끊었다 — %s", kind)
+
 
 async_session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
