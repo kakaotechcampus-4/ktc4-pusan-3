@@ -247,11 +247,27 @@ class InputLocation(ApiSchema):
     lon: float = Field(ge=-180, le=180, repr=False, description="경도. 소수점 둘째 자리로 흐린 값")
 
 
+# 한 줄 입력의 상한 — 앞뒤 공백을 뗀 코드 포인트 수다.
+# 웹 `INPUT_TEXT_MAX_LENGTH`(`lib/api/types.ts`)와 같은 값이다. 한쪽만 바꾸지 않는다.
+# 🚨 Agent 가 감당하는 길이에 맞춘 값이다 (2026-11-10 실측).
+#    근거는 docs/web/chat-run-v1.md 의 "입력 상한의 근거".
+#    Supervisor 는 조각을 JSON 하나에 다 적는데 출력 상한이 900 토큰이다.
+#    관찰이 촘촘한 글 600자에서 3번 중 1번, 1,000자부터는 매번 상한에서 잘려
+#    BAD_JSON 이 났다. Memory 는 600자에서 20초에 닿는다.
+#    올리려면 Supervisor · Memory 의 출력 상한과 시간을 같이 다시 잰다.
+INPUT_TEXT_MAX_LENGTH = 500
+
+
 class CreateInputRequest(ApiSchema):
     """POST /children/{cid}/inputs — 한 줄 입력."""
 
-    text: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)]
-    """보호자가 적은 한 줄. 공백뿐이면 400 — 빈 줄을 Agent 에 보내면 모델 호출 한 번이 낭비다."""
+    text: Annotated[
+        str,
+        StringConstraints(strip_whitespace=True, min_length=1, max_length=INPUT_TEXT_MAX_LENGTH),
+    ]
+    """보호자가 적은 한 줄. 500자까지 — 더 긴 글은 Supervisor 가 한 번에 나누지 못한다.
+
+    공백뿐이면 400 — 빈 줄을 Agent 에 보내면 모델 호출 한 번이 낭비다."""
 
     source: Annotated[str, StringConstraints(min_length=1, max_length=32)]
     """어디서 온 입력인가 — home_input · photo 등. 계약서가 값을 고정하지 않아 문자열로 받는다."""
