@@ -259,9 +259,29 @@ def test_rain_date_as_the_end_of_the_concert_is_c1():
     assert _check("H", "우천 연기일 11/28 이 일정이 안 됨").judge(notice) is Outcome.C1
 
 
-def test_3am_on_an_info_item_is_c1():
-    # 안내 항목은 확인 표시가 붙지 않고 시각이 화면에 그대로 실린다
-    assert no_3am((_item("하원 요청", handling="info", starts="2026-11-02T03:00"),)) is Outcome.C1
+# ── 안내 항목: 보여 주기만 한다 — 틀린 날짜는 C1 이 아니라 일반 실패 (§2, 11-10) ──────
+
+
+def test_3am_on_an_info_item_is_general_failure_not_c1():
+    # 안내는 일정 초안이 되지 않아 틀린 때에 알림이 울리지 않는다. 그래도 통과는 아니다
+    assert no_3am((_item("하원 요청", handling="info", starts="2026-11-02T03:00"),)) is Outcome.FAIL
+
+
+def test_wrong_date_on_an_info_item_is_general_failure_not_c1():
+    wrong = _item("등원 차량 변경", handling="info", starts="2026-11-06T00:00", all_day=True)
+    right = _item("등원 차량 30분 지연", handling="info", starts="2026-11-05T00:00", all_day=True)
+
+    assert on_date((wrong,), "차량", "starts_at", "2026-11-05") is Outcome.FAIL
+    # 맞는 항목이 따로 있어도 틀린 날짜가 화면에 그대로 보인다
+    assert on_date((wrong, right), "차량", "starts_at", "2026-11-05") is Outcome.FAIL
+    assert on_date((right,), "차량", "starts_at", "2026-11-05") is Outcome.PASS
+
+
+def test_wrong_date_on_a_schedule_is_c1_even_next_to_a_wrong_info_item():
+    info = _item("등원 차량 변경", handling="info", starts="2026-11-06T00:00", all_day=True)
+    schedule = _item("등원 차량 지연", starts="2026-11-06T00:00", all_day=True)
+
+    assert on_date((info, schedule), "차량", "starts_at", "2026-11-05") is Outcome.C1
 
 
 # ── 시각만 비운 날짜: 보호자가 채운다 — 일반 실패 (§2 표시 없이 빈 값) ───────────

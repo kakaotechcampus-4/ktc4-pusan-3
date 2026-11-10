@@ -116,10 +116,11 @@ def on_date(
     항목은 화면 글(`shown`)에서 찾는다 — 근거 문장은 모델이 여러 문장을 한 번에 인용해 다른 항목의
     낱말이 섞인다. `kind` 를 주면 그 종류만 보고, `without` 이 화면 글에 든 항목은 뺀다.
 
-    확인 표시 없이 다른 날짜가 든 항목이 하나라도 있으면 C1 — 맞는 항목이 따로 있어도 틀린 쪽이
-    일정 초안에 오른다. 그다음 맞는 항목이 있으면 통과, 없으면(비었거나 표시가 붙었거나 항목이
-    없으면) 일반 실패. 시각까지 기대하는데 날짜는 맞고 시각만 비운 항목(하루 종일)은 빈 값이라
-    일반 실패다 — 틀리게 읽은 것(오후 6시 → 06:00)만 C1.
+    확인 표시 없이 다른 날짜가 든 일정 · 할 일 항목이 하나라도 있으면 C1 — 맞는 항목이 따로 있어도
+    틀린 쪽이 일정 초안에 오른다. 안내 항목이면 일반 실패다 — 보여 주기만 하고 일정 초안이 되지
+    않는다. 그다음 맞는 항목이 있으면 통과, 없으면(비었거나 표시가 붙었거나 항목이 없으면) 일반
+    실패. 시각까지 기대하는데 날짜는 맞고 시각만 비운 항목(하루 종일)은 빈 값이라 일반 실패다 —
+    틀리게 읽은 것(오후 6시 → 06:00)만 C1.
     """
     found = [
         i
@@ -129,7 +130,7 @@ def on_date(
         and not (without and without in shown(i))
     ]
     wants_time = len(expect) > len("2026-11-21")
-    right = wrong = False
+    right = wrong = wrong_info = False
     for item in found:
         value = _at(getattr(item, field))
         if not value:
@@ -139,10 +140,11 @@ def on_date(
         if value.startswith(expect):
             right = True
         elif not item.needs_review:
-            wrong = True
+            wrong = wrong or item.handling in DATED
+            wrong_info = wrong_info or item.handling not in DATED
     if wrong:
         return Outcome.C1
-    return Outcome.PASS if right else Outcome.FAIL
+    return Outcome.PASS if right and not wrong_info else Outcome.FAIL
 
 
 def never_on(
@@ -154,7 +156,8 @@ def never_on(
 ) -> Outcome:
     """`kinds` 항목의 `fields` 어느 칸에도 `text`(날짜 · 시각)가 나오면 안 된다.
 
-    우천 연기일 · 정정 전 옛 날짜 · 새벽 3시 같은 것. 표시 없이 나오면 C1, 표시가 붙으면 일반 실패.
+    우천 연기일 · 정정 전 옛 날짜 · 새벽 3시 같은 것. 일정 · 할 일 항목에 표시 없이 나오면 C1,
+    표시가 붙었거나 안내 항목이면 일반 실패 — 안내는 보여 주기만 한다.
     """
     names = (fields,) if isinstance(fields, str) else fields
     hit = [
@@ -164,7 +167,9 @@ def never_on(
     ]
     if not hit:
         return Outcome.PASS
-    return Outcome.FAIL if all(i.needs_review for i in hit) else Outcome.C1
+    return (
+        Outcome.C1 if any(i.handling in DATED and not i.needs_review for i in hit) else Outcome.FAIL
+    )
 
 
 # 기관 안내에 없는 병명 · 판단. 공지 원문에 병명이 있는 문서(E 수족구 유행 안내)에는 걸지 않는다
@@ -348,7 +353,8 @@ def _worst(outcomes: Sequence[Outcome]) -> Outcome:
 def no_3am(items: Sequence[NewNoticeItem]) -> Outcome:
     """오후 3시 하원을 새벽 3시로 읽지 않는다.
 
-    안내 항목도 본다 — 확인 표시가 붙지 않고 시각이 화면에 그대로 실린다.
+    안내 항목도 본다 — 확인 표시가 붙지 않고 시각이 화면에 그대로 실린다. 안내에서 나오면
+    일반 실패, 일정 · 할 일에서 나오면 C1 이다 (`never_on`).
     """
     return never_on(
         items, ("starts_at", "ends_at", "due_at"), " 03:00", kinds=tuple(NoticeItemHandling)
