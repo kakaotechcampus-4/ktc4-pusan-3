@@ -179,7 +179,28 @@ def test_물결표_뒤의_숫자가_날이_아니면_끝_날로_읽지_않는다
     assert parse_notice_when(text, anchor=ANCHOR).end is None
 
 
-@pytest.mark.parametrize("text", ["11/23~2만원", "11/23~3천원", "11/23~5원"])
+@pytest.mark.parametrize(
+    "text",
+    ["11/23~27 원내 행사", "11/23~27 원아 전체", "11/23~27 원복 착용", "11/23~27 만 3세반"]
+    + ["11/23~27 천연염색", "11/23~27 학부모 참여", "11/23~27 달님반"],
+)
+def test_끝_날_뒤에_띄어_쓴_낱말은_단위가_아니다(text):
+    # 금액 · 단위는 숫자에 붙어 쓴다. 띄어 쓴 "원내" · "만 3세" 를 단위로 보면 끝 날을
+    # 놓친다 (검토 N3)
+    when = parse_notice_when(text, anchor=ANCHOR)
+    assert (when.start, when.end) == (date(2026, 11, 23), date(2026, 11, 27))
+    assert when.review is None
+
+
+@pytest.mark.parametrize("text", ["11/23~27 만원", "11/23~27 원", "11/23~3 천원", "11/23~2 만 원"])
+def test_띄어_쓴_금액도_끝_날이_아니다(text):
+    # "원" 이 낱말의 첫 글자가 아니라 혼자 서면 금액이다 — "원내" · "원아" 와 가른다
+    when = parse_notice_when(text, anchor=ANCHOR)
+    assert when.end is None
+    assert when.review is None
+
+
+@pytest.mark.parametrize("text", ["11/23~2만원", "11/23~3천원", "11/23~5원", "11/23~27원"])
 def test_물결표_뒤의_금액은_끝_날이_아니다(text):
     when = parse_notice_when(text, anchor=ANCHOR)
     assert when.end is None
