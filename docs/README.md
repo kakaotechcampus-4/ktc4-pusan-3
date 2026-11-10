@@ -168,11 +168,12 @@
 >
 > 승격 임계값 · 감쇠 기준 · 법정대리인 동의 시점 · 급식 데이터 출처는 **확정되어 이 표에서 뺐다.** 확정된 값은 아직 문서로 고정되지 않았다 — 각각 `memory/` · `safety/` · `api/` 에 기능 문서로 남길 것.
 
+> 외부 LLM 전달 · 국외 처리는 개인정보 처리방침(받는 곳 · 국외 이전)에 적어 공개했고, 모델에는 이름 대신 별명 · ID 를 보낸다(CLAUDE.md §2 개인정보).
+> Agent Workflow · API Schema 는 Swagger(`/docs`)와 `agents/` 문서로 확정됐다. 둘 다 **이 표에서 뺐다.**
+
 | 결정할 것 | 기한 | 원문 | 결정 후 갈 곳 |
 | --- | --- | --- | --- |
-| 외부 LLM 전달 범위 · 식별정보 제거 · 국외 처리 여부 | **9월 2~4주** (스키마 확정과 동시) | [리스크 ⑤](overview/tech-spec.md#리스크) | `safety/` |
-| 냅킨 계산 — 유저 1인당 월 모델 비용 | **9월 1주** | [요청사항 3](overview/tech-spec.md#요청사항) | `ops/` |
-| Agent Workflow · API Schema 확정 | **9월 2~4주** | [일정](overview/tech-spec.md#일정) | `agents/` · `api/` |
+| 냅킨 계산 — 유저 1인당 월 모델 비용 | 재는 방법은 정했다([ops/llm-usage-v1.md](ops/llm-usage-v1.md)) · 금액은 아직 | [요청사항 3](overview/tech-spec.md#요청사항) | `ops/` |
 | Agent 참조 문서(건강검진 정보, 0~5세 선호 활동 자료) 출처 | **9월 2주** | [요청사항 1](overview/tech-spec.md#요청사항) | `agents/` |
 | 블라인드 비교 선택률 · 재방문율 목표치 | 미정 | [기획 §7](overview/service-plan.md#7-잘-됐다는-걸-뭘로-아는가) | `eval/` |
 
