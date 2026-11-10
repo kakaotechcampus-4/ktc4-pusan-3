@@ -58,6 +58,30 @@ class StoredScreenRef(_Reply):
     id: str
 
 
+DocSourceKind = Literal["activity_doc", "food_doc", "growth_doc"]
+
+
+class StoredDocRef(_Reply):
+    """일반 정보 답변 · 일반 추천이 근거로 단 문서 행."""
+
+    kind: DocSourceKind
+    id: str
+
+
+class StoredDocSource(_Reply):
+    """readout 아래 "참고 · 제목 (기관, 출처)" 한 줄 (#574).
+
+    답할 때의 값을 그대로 담는다 — 나중에 문서 제목이 바뀌어도 지난 대화의 참고 줄은 그대로다.
+    CC BY 문서는 출처 표시가 이용 조건이라 기관 · 출처 칸을 빼지 않는다.
+    """
+
+    ref: StoredDocRef
+    title: str
+    source_org: str
+    source_title: str
+    source_url: str | None
+
+
 class NoteReply(_Reply):
     """Memory 가 한 말. 저장한 내용을 알리는 말이라 관찰 내용이 들어 있을 수 있다.
 
@@ -135,6 +159,14 @@ class StoredReadout(_Reply):
         description=(
             "이 readout 이 가리키는 복약 코스(`medication_schedule`). 다른 근거 종류는 "
             "싣지 않는다. 이 칸이 없던 때 쌓인 행은 빈 목록이다."
+        ),
+    )
+    sources: list[StoredDocSource] = Field(
+        default_factory=list,
+        description=(
+            "이 readout 이 근거로 단 문서 행의 제목 · 기관 · 출처 (`activity_doc` · `food_doc` · "
+            "`growth_doc` 만). 일반 정보 답변(`doc_answer`)이 채운다. 근거가 없거나 이 칸이 없던 "
+            "때 쌓인 행은 빈 목록이다."
         ),
     )
 
