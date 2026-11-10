@@ -16,7 +16,8 @@
   기록 하나가 한 줄이다 — 원문끼리 같다고 합치지 않는다
 - 먹인 약 행(`medication_given`)은 에피소드에 들어가지 않고 따로 간다. 증상을 골랐으면 그 증상
   행에 묶인 약만 넣는다
-- 체온 · 측정 칸은 싣지 않는다 — 열 타임라인(코드)이 같은 기록에서 직접 나열한다
+- 체온은 에피소드 줄에 싣는다 — 하나면 그 값, 여럿이면 최고 · 최저와 잰 시각(`visit_lines.py`).
+  시간순 전체 나열은 열 타임라인(최근 48시간) 몫이다. 모델에게는 여전히 줄 수만 간다
 - 복약 체크는 날짜 · 코스별 한 줄이다. 체크 안 된 회차는 "안 먹였다" 가 아니라 그날 회차 수에만
   들어간다. 아직 오지 않은 회차는 세지 않는다
 - 같은 기록은 몇 번 읽어도 한 줄이다(`state.visit_keys`)
@@ -207,7 +208,12 @@ def _episodes(context: HealthContext, rows: Sequence[HealthObservation]) -> int:
     for episode in group_symptom_episodes(rows, timezone=tz):
         members = [by_id[record_id] for record_id in episode.observation_ids]
         line = symptom_line(
-            episode.starts_on, episode.ends_on, code=episode.code, texts=(), members=members
+            episode.starts_on,
+            episode.ends_on,
+            code=episode.code,
+            texts=(),
+            members=members,
+            timezone=tz,
         )
         found.append(_episode(episode.starts_on, episode.ends_on, line, members, (episode.code,)))
     # 사전에 없는 말은 기록 하나가 한 줄 — 묶지 않는다
@@ -215,7 +221,9 @@ def _episodes(context: HealthContext, rows: Sequence[HealthObservation]) -> int:
         texts = [text for text in row.symptoms if not symptom_codes_of((text,))]
         if texts:
             days = observation_days(row, tz)
-            line = symptom_line(days[0], days[-1], code=None, texts=texts, members=[row])
+            line = symptom_line(
+                days[0], days[-1], code=None, texts=texts, members=[row], timezone=tz
+            )
             found.append(_episode(days[0], days[-1], line, [row], ()))
     found.sort(key=lambda item: (item[0], item[1]))
     for _, _, line, codes in found:
