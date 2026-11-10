@@ -2166,7 +2166,8 @@ class TestLevelPrompt:
         for months in (36, 48, 60):
             assert "까지 세" not in (age_frame(months) or "")
 
-    async def test_교육_프롬프트에_주제_기록과_짜임이_실린다(self):
+    async def test_교육_프롬프트에_주제_기록이_실리고_짜임은_빠진다(self):
+        """기록이 수준을 말하면 만 나이 짜임이 난이도를 끌어내린다 — 짜임을 싣지 않는다 (#399)."""
         ctx = context(
             birth_for(60),
             docs=fixture_docs(),
@@ -2179,11 +2180,10 @@ class TestLevelPrompt:
         prompt = llm.seen[0][0]["content"]
         assert str(MATH_RECORD.id) in prompt
         assert "중학교 1학년 수준의 수학 문제 풀이" in prompt
-        assert "아이는 만 5세다" in prompt
+        assert "[활동 짜임]" not in prompt  # 기록 구획의 규칙 문구도 짜임을 가리키지 않는다
         order = [
             prompt.index("[요청 주제의 아이 기록]"),
             prompt.index("[예시] 결만 참고한다"),
-            prompt.index("[활동 짜임] 아이는"),
             prompt.index("[월령]\n아이는"),
         ]
         assert order == sorted(order)
