@@ -33,7 +33,10 @@ def _item(
     *,
     handling: str = "calendar",
     starts: str | None = None,
+    ends: str | None = None,
+    all_day: bool = False,
     due: str | None = None,
+    due_all_day: bool = False,
     review: bool = False,
     quote: str | None = None,
 ) -> NewNoticeItem:
@@ -43,10 +46,10 @@ def _item(
         title=title,
         target_scope=NoticeItemTarget.ALL,
         starts_at=_at(starts) if starts else None,
-        ends_at=None,
-        all_day=False,
+        ends_at=_at(ends) if ends else None,
+        all_day=all_day,
         due_at=_at(due) if due else None,
-        due_all_day=False,
+        due_all_day=due_all_day,
         details=(),
         supplies=(),
         source_quote=quote or title,
@@ -134,7 +137,7 @@ def test_flagged_3am_on_one_field_is_a_general_failure_not_a_pass():
     assert no_3am((_item("하원 요청", handling="todo", due="2026-11-02T15:00"),)) is Outcome.PASS
 
 
-def _notice(*items: NewNoticeItem) -> NewNotice:
+def _notice(*items: NewNoticeItem, raw_text: str = "") -> NewNotice:
     return NewNotice(
         doc_kind=NoticeDocKind.NEWSLETTER,
         input_format=NoticeInputFormat.IMAGE,
@@ -142,7 +145,7 @@ def _notice(*items: NewNoticeItem) -> NewNotice:
         issued_on=None,
         received_at=_at("2026-08-24T09:00"),
         title=None,
-        raw_text="",
+        raw_text=raw_text,
         content_hash="",
         is_correction=False,
         items=items,
@@ -168,6 +171,130 @@ def test_health_check_deadline_ignores_the_result_sheet_item():
 
     assert _check("E", "검진 마감 9/30").judge(notice) is Outcome.FAIL
     assert _check("E", "결과지 마감 10/16").judge(notice) is Outcome.PASS
+
+
+# ── 항목 찾기: 화면 글(제목 · 이름 · 딸린 정보)에서만 — 근거 문장은 여러 항목이 같이 인용한다 ──
+
+
+def test_two_deadlines_quoted_together_are_judged_by_their_own_titles():
+    # 모델이 3번 · 4번 문장을 한 번에 인용하면 두 항목의 근거 문장에 "신청" · "체험비" 가 다 든다
+    quote = "3. 참가 신청서는 11월 9일(월)까지 제출해 주세요. 4. 체험비 5,000원은 11월 12일(목)까지"
+    notice = _notice(
+        _item("참가 신청서 제출", handling="todo", due="2026-11-09T23:59", quote=quote),
+        _item("체험비 5,000원 납부", handling="todo", due="2026-11-12T23:59", quote=quote),
+    )
+
+    assert _check("G", "신청서 마감 11/9").judge(notice) is Outcome.PASS
+    assert _check("G", "체험비 마감 11/12").judge(notice) is Outcome.PASS
+
+
+def test_concert_date_ignores_the_application_todo():
+    # 신청서 할 일이 마감 시각을 시작에도 갖고 있어도 음악회 일정의 날짜가 아니다
+    notice = _notice(
+        _item("가을 음악회", starts="2026-11-21T10:00"),
+        _item(
+            "음악회 참가 신청서 제출",
+            handling="todo",
+            starts="2026-11-10T18:00",
+            due="2026-11-10T18:00",
+        ),
+    )
+
+    assert _check("H", "음악회 11/21 10시").judge(notice) is Outcome.PASS
+
+
+def test_health_check_deadline_ignores_a_result_sheet_titled_with_health_check():
+    notice = _notice(
+        _item("영유아 건강검진 받기", handling="todo", due="2026-09-30T23:59"),
+        _item("영유아 건강검진 결과지 사본 제출", handling="todo", due="2026-10-16T23:59"),
+    )
+
+    assert _check("E", "검진 마감 9/30").judge(notice) is Outcome.PASS
+
+
+def test_health_check_as_a_schedule_is_not_saved_by_the_result_sheet_todo():
+    # 건강검진을 일정으로 잘못 나눴는데 결과지 제출(할 일)이 있다고 통과하면 안 된다
+    notice = _notice(
+        _item("영유아 건강검진", starts="2026-09-30T00:00", all_day=True),
+        _item("검진 결과지 사본 제출", handling="todo", due="2026-10-16T23:59"),
+    )
+
+    assert _check("E", "건강검진이 할 일").judge(notice) is Outcome.FAIL
+
+
+# ── 반별 일정: 어느 반이 어느 날인지까지 본다 ─────────────────────────────────
+
+
+def test_each_class_must_be_on_its_own_day():
+    # 근거 문장에는 세 반이 다 들어 있다 — 반 이름은 제목에서 찾는다
+    quote = "1. 일정: 11월 17일(화) 해님반, 11월 18일(수) 달님반, 11월 19일(목) 별님반"
+    check = _check("G", "반별 일정 11/17 · 18 · 19")
+    right = _notice(
+        _item("해님반 고구마 캐기 체험", starts="2026-11-17T10:00", quote=quote),
+        _item("달님반 고구마 캐기 체험", starts="2026-11-18T10:00", quote=quote),
+        _item("별님반 고구마 캐기 체험", starts="2026-11-19T10:00", quote=quote),
+    )
+    swapped = _notice(
+        _item("해님반 고구마 캐기 체험", starts="2026-11-18T10:00", quote=quote),
+        _item("달님반 고구마 캐기 체험", starts="2026-11-17T10:00", quote=quote),
+        _item("별님반 고구마 캐기 체험", starts="2026-11-19T10:00", quote=quote),
+    )
+
+    assert check.judge(right) is Outcome.PASS
+    assert check.judge(swapped) is Outcome.C1  # 해님반 보호자에게 틀린 날이 표시 없이 오른다
+
+
+# ── 나오면 안 되는 날짜: 끝 날짜 · 안내 항목도 화면에 실린다 ───────────────────
+
+
+def test_rain_date_as_the_end_of_the_concert_is_c1():
+    # 11/21 에 시작해 11/28 에 끝나는 8일짜리 일정 — 우천 연기일이 끝 날짜로 들어갔다
+    notice = _notice(_item("가을 음악회", starts="2026-11-21T10:00", ends="2026-11-28T23:59"))
+
+    assert _check("H", "우천 연기일 11/28 이 일정이 안 됨").judge(notice) is Outcome.C1
+
+
+def test_3am_on_an_info_item_is_c1():
+    # 안내 항목은 확인 표시가 붙지 않고 시각이 화면에 그대로 실린다
+    assert no_3am((_item("하원 요청", handling="info", starts="2026-11-02T03:00"),)) is Outcome.C1
+
+
+# ── 시각만 비운 날짜: 보호자가 채운다 — 일반 실패 (§2 표시 없이 빈 값) ───────────
+
+
+def test_right_day_without_a_time_is_general_failure_not_c1():
+    concert = (_item("가을 음악회", starts="2026-11-21T00:00", all_day=True),)
+    deadline = (_item("참가 신청서", handling="todo", due="2026-11-10T23:59", due_all_day=True),)
+
+    assert on_date(concert, "음악회", "starts_at", "2026-11-21 10:00") is Outcome.FAIL
+    assert on_date(deadline, "신청서", "due_at", "2026-11-10 18:00") is Outcome.FAIL
+
+
+def test_wrong_day_without_a_time_is_still_c1():
+    items = (_item("가을 음악회", starts="2026-11-28T00:00", all_day=True),)
+
+    assert on_date(items, "음악회", "starts_at", "2026-11-21 10:00") is Outcome.C1
+
+
+# ── 이름 가리기: 성 없이 부른 이름도 본다 ─────────────────────────────────────
+
+
+def test_given_name_left_in_the_saved_text_fails_the_masking_check():
+    check = _check("A", "아이 · 담임 이름 없음")
+    left = _notice(raw_text="오늘 점심 후 하늘이가 37.8도 미열이 있습니다.")
+    masked = _notice(raw_text="오늘 점심 후 [이름]이가 37.8도 미열이 있습니다.")
+
+    assert check.judge(left) is Outcome.FAIL
+    assert check.judge(masked) is Outcome.PASS
+
+
+def test_daily_note_masking_check_finds_our_child_but_not_sky_blue():
+    check = _check("B", "아이 · 담임 이름 없음")
+    left = _notice(raw_text="하늘이는 [이름]이와 낙엽을 밟았어요. 내일 하늘색 여벌 옷")
+    masked = _notice(raw_text="[이름]이는 [이름]이와 낙엽을 밟았어요. 내일 하늘색 여벌 옷")
+
+    assert check.judge(left) is Outcome.FAIL
+    assert check.judge(masked) is Outcome.PASS
 
 
 # ── 반복 요약 ────────────────────────────────────────────────────────────────

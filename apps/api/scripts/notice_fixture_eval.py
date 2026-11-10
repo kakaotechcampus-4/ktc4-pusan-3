@@ -42,6 +42,7 @@ FIXTURE_DIR = ROOT / "tests" / "fixtures" / "notice_eval"
 KST = ZoneInfo("Asia/Seoul")
 
 CALENDAR, TODO = NoticeItemHandling.CALENDAR, NoticeItemHandling.TODO
+DATED = (CALENDAR, TODO)  # 날짜가 일정 초안 · 할 일 마감으로 오르는 종류
 
 
 @dataclass(frozen=True)
@@ -94,33 +95,71 @@ def all_text(notice: NewNotice) -> str:
     return " ".join(parts)
 
 
+def _no_time(item: NewNoticeItem, field: str) -> bool:
+    """그 칸이 하루 종일 값인가 — 시각을 읽지 않았다."""
+    return item.due_all_day if field == "due_at" else item.all_day
+
+
 def on_date(
     items: Sequence[NewNoticeItem],
     keyword: str,
     field: str,
     expect: str,
+    *,
+    kind: NoticeItemHandling | None = None,
+    without: str | None = None,
 ) -> Outcome:
     """`keyword` 를 다룬 항목의 `field` 가 `expect`(앞부분 일치)여야 한다.
 
+    항목은 화면 글(`shown`)에서 찾는다 — 근거 문장은 모델이 여러 문장을 한 번에 인용해 다른 항목의
+    낱말이 섞인다. `kind` 를 주면 그 종류만 보고, `without` 이 화면 글에 든 항목은 뺀다.
+
     확인 표시 없이 다른 날짜가 든 항목이 하나라도 있으면 C1 — 맞는 항목이 따로 있어도 틀린 쪽이
     일정 초안에 오른다. 그다음 맞는 항목이 있으면 통과, 없으면(비었거나 표시가 붙었거나 항목이
-    없으면) 일반 실패. 날짜를 두지 않는 항목(일정의 신청서 할 일 등)은 비교하지 않는다.
+    없으면) 일반 실패. 시각까지 기대하는데 날짜는 맞고 시각만 비운 항목(하루 종일)은 빈 값이라
+    일반 실패다 — 틀리게 읽은 것(오후 6시 → 06:00)만 C1.
     """
-    found = [i for i in items if keyword in _about(i)]
-    values = [(i, _at(getattr(i, field))) for i in found]
-    if any(v and not v.startswith(expect) and not i.needs_review for i, v in values):
+    found = [
+        i
+        for i in items
+        if keyword in shown(i)
+        and (kind is None or i.handling is kind)
+        and not (without and without in shown(i))
+    ]
+    wants_time = len(expect) > len("2026-11-21")
+    right = wrong = False
+    for item in found:
+        value = _at(getattr(item, field))
+        if not value:
+            continue
+        if wants_time and _no_time(item, field) and value[:10] == expect[:10]:
+            continue
+        if value.startswith(expect):
+            right = True
+        elif not item.needs_review:
+            wrong = True
+    if wrong:
         return Outcome.C1
-    if any(v.startswith(expect) for _, v in values):
-        return Outcome.PASS
-    return Outcome.FAIL
+    return Outcome.PASS if right else Outcome.FAIL
 
 
-def never_on(items: Sequence[NewNoticeItem], field: str, text: str) -> Outcome:
-    """일정 · 할 일의 `field` 에 `text`(날짜 · 시각)가 나오면 안 된다.
+def never_on(
+    items: Sequence[NewNoticeItem],
+    fields: str | Sequence[str],
+    text: str,
+    *,
+    kinds: Collection[NoticeItemHandling] = DATED,
+) -> Outcome:
+    """`kinds` 항목의 `fields` 어느 칸에도 `text`(날짜 · 시각)가 나오면 안 된다.
 
     우천 연기일 · 정정 전 옛 날짜 · 새벽 3시 같은 것. 표시 없이 나오면 C1, 표시가 붙으면 일반 실패.
     """
-    hit = [i for i in items if i.handling in (CALENDAR, TODO) and text in _at(getattr(i, field))]
+    names = (fields,) if isinstance(fields, str) else fields
+    hit = [
+        i
+        for i in items
+        if i.handling in kinds and any(text in _at(getattr(i, name)) for name in names)
+    ]
     if not hit:
         return Outcome.PASS
     return Outcome.FAIL if all(i.needs_review for i in hit) else Outcome.C1
@@ -166,11 +205,17 @@ def _calendar(n: NewNotice) -> list[NewNoticeItem]:
     return [i for i in n.items if i.handling is CALENDAR]
 
 
+# 성 없이 부른 이름("하늘이가")도 남으면 안 된다. "하늘색" 은 이름이 아니다
+_CHILD = "하늘(?!색)"
+# 나오면 안 되는 날짜는 일정의 시작 · 끝 모두 본다 — 끝으로 들어가도 그날까지 일정이 걸린다
+_SPAN = ("starts_at", "ends_at")
+
+
 # 11-02 판정(41개)에서 옮기고 학원 공지를 더했다. 날짜는 전부 받은 날 기준으로 코드가 계산한 값이다
 CHECKS: tuple[Check, ...] = (
     # A 문자
     _plain("A", "문자로 분류", lambda n: n.doc_kind is NoticeDocKind.MESSAGE),
-    _plain("A", "아이 · 담임 이름 없음", lambda n: not re.search("김하늘|박라온", all_text(n))),
+    _plain("A", "아이 · 담임 이름 없음", lambda n: not re.search(_CHILD + "|박라온", all_text(n))),
     _plain("A", "원 이름 · 약칭 없음", lambda n: "해솔나무" not in all_text(n)),
     _plain("A", "전화 없음", lambda n: "010-0000" not in all_text(n)),
     _c1("A", "차량 안내 11/5", lambda n: on_date(n.items, "차량", "starts_at", "2026-11-05")),
@@ -184,7 +229,11 @@ CHECKS: tuple[Check, ...] = (
             n.doc_kind is NoticeDocKind.DAILY_NOTE and n.audience_scope is NoticeAudience.CHILD
         ),
     ),
-    _plain("B", "아이 · 담임 이름 없음", lambda n: not re.search("민준|박라온", all_text(n))),
+    _plain(
+        "B",
+        "아이 · 담임 이름 없음",
+        lambda n: not re.search(_CHILD + "|민준|박라온", all_text(n)),
+    ),
     _c1("B", "여벌 옷 마감 11/3", lambda n: on_date(n.items, "여벌", "due_at", "2026-11-03")),
     _plain(
         "B",
@@ -202,10 +251,13 @@ CHECKS: tuple[Check, ...] = (
     _plain("C", "개별 안내가 항목에 있음", lambda n: "개별" in _shown_all(n)),
     # D 정정
     _plain("D", "정정으로 읽음", lambda n: n.is_correction),
-    _c1("D", "숲 체험 11/20 9:30", lambda n: _forest(n)),
+    # 불참 알림(할 일)도 제목에 "숲 체험" 을 담는다 — 일정만 본다
     _c1(
-        "D", "옛 날짜 11/13 이 일정이 안 됨", lambda n: never_on(n.items, "starts_at", "2026-11-13")
+        "D",
+        "숲 체험 11/20 9:30",
+        lambda n: on_date(n.items, "숲", "starts_at", "2026-11-20 09:30", kind=CALENDAR),
     ),
+    _c1("D", "옛 날짜 11/13 이 일정이 안 됨", lambda n: never_on(n.items, _SPAN, "2026-11-13")),
     _c1("D", "불참 마감 11/17", lambda n: on_date(n.items, "불참", "due_at", "2026-11-17")),
     _plain(
         "D",
@@ -218,10 +270,16 @@ CHECKS: tuple[Check, ...] = (
     _plain(
         "E",
         "건강검진이 할 일",
-        lambda n: any(i.handling is TODO for i in n.items if "검진" in i.title + i.label),
+        lambda n: any(
+            i.handling is TODO for i in n.items if "건강검진" in shown(i) and "결과" not in shown(i)
+        ),
     ),
-    # "검진 결과지" 항목과 겹치지 않게 "건강검진" 으로 찾는다
-    _c1("E", "검진 마감 9/30", lambda n: on_date(n.items, "건강검진", "due_at", "2026-09-30")),
+    # "건강검진 결과지 제출" 은 다른 항목이다 — 결과지 마감을 검진 마감으로 읽지 않는다
+    _c1(
+        "E",
+        "검진 마감 9/30",
+        lambda n: on_date(n.items, "건강검진", "due_at", "2026-09-30", without="결과"),
+    ),
     _c1("E", "결과지 마감 10/16", lambda n: on_date(n.items, "결과", "due_at", "2026-10-16")),
     _plain(
         "E",
@@ -246,16 +304,16 @@ CHECKS: tuple[Check, ...] = (
     ),
     _c1("G", "신청서 마감 11/9", lambda n: on_date(n.items, "신청", "due_at", "2026-11-09")),
     _c1("G", "체험비 마감 11/12", lambda n: on_date(n.items, "체험비", "due_at", "2026-11-12")),
-    # H 학원
+    # H 학원. "음악회 참가 신청서"(할 일)도 제목에 "음악회" 를 담는다 — 일정만 본다
     _c1(
         "H",
         "음악회 11/21 10시",
-        lambda n: on_date(n.items, "음악회", "starts_at", "2026-11-21 10:00"),
+        lambda n: on_date(n.items, "음악회", "starts_at", "2026-11-21 10:00", kind=CALENDAR),
     ),
     _c1(
         "H",
         "우천 연기일 11/28 이 일정이 안 됨",
-        lambda n: never_on(n.items, "starts_at", "2026-11-28"),
+        lambda n: never_on(n.items, _SPAN, "2026-11-28"),
     ),
     _plain("H", "연기일이 항목에 남음", lambda n: "28일" in _shown_all(n)),
     _c1(
@@ -280,23 +338,34 @@ CHECKS: tuple[Check, ...] = (
 )
 
 
+def _worst(outcomes: Sequence[Outcome]) -> Outcome:
+    return max(outcomes, key=list(Outcome).index)
+
+
 def no_3am(items: Sequence[NewNoticeItem]) -> Outcome:
-    """오후 3시 하원을 새벽 3시로 읽지 않는다. 일정 시작 · 할 일 마감 중 나쁜 쪽을 낸다."""
-    found = [never_on(items, field, " 03:00") for field in ("starts_at", "due_at")]
-    return max(found, key=list(Outcome).index)
+    """오후 3시 하원을 새벽 3시로 읽지 않는다.
+
+    안내 항목도 본다 — 확인 표시가 붙지 않고 시각이 화면에 그대로 실린다.
+    """
+    return never_on(
+        items, ("starts_at", "ends_at", "due_at"), " 03:00", kinds=tuple(NoticeItemHandling)
+    )
 
 
-def _forest(n: NewNotice) -> Outcome:
-    return on_date(_calendar(n), "숲", "starts_at", "2026-11-20 09:30")
+_CLASS_DAYS = (("해님", "2026-11-17"), ("달님", "2026-11-18"), ("별님", "2026-11-19"))
 
 
 def _three_classes(n: NewNotice) -> Outcome:
-    """세 반 날짜가 모두 일정에 있어야 한다. 그 밖의 날짜가 표시 없이 있으면 C1."""
-    want = {"2026-11-17", "2026-11-18", "2026-11-19"}
+    """반마다 제 날짜의 일정이어야 한다. 그 밖의 날짜가 표시 없이 있으면 C1.
+
+    날짜 세 개가 있는지만 보면 해님반과 달님반이 뒤바뀌어도 통과한다. 반 이름은 화면 글에서
+    찾는다(`on_date`) — 근거 문장에는 세 반이 다 들어 있다.
+    """
     cal = _calendar(n)
+    want = {day for _, day in _CLASS_DAYS}
     if any(_at(i.starts_at)[:10] not in want and i.starts_at and not i.needs_review for i in cal):
         return Outcome.C1
-    return holds(want <= {_at(i.starts_at)[:10] for i in cal})
+    return _worst([on_date(cal, name, "starts_at", day) for name, day in _CLASS_DAYS])
 
 
 # ── 반복 요약 ────────────────────────────────────────────────────────────────
