@@ -189,10 +189,13 @@ async def test_delete_forgets_in_memory_entries_of_the_child(
     # 다른 아이는 실제 행이어야 한다 — 되묻기 맥락은 표(run_hold)라 아이 FK 를 본다 (#877)
     _, someone = await issue_bearer(session, token="someone")
     other_child = await link_child(session, parent_id=someone)
-    others = await stash_in_memory(parent_id=member, child_id=other_child)
-    for run_id, child_id in (("photo-of-child", cid), ("photo-of-other", other_child)):
+    others = await stash_in_memory(parent_id=someone, child_id=other_child)
+    for run_id, parent_id, child_id in (
+        ("photo-of-child", member, cid),
+        ("photo-of-other", someone, other_child),
+    ):
         await photo_run.keep(
-            photo_run.open_photo_run(run_id=run_id, parent_id=member, child_id=child_id)
+            photo_run.open_photo_run(run_id=run_id, parent_id=parent_id, child_id=child_id)
         )
 
     resp = await db_client.delete(_url(cid), headers={**headers, **_key()})
@@ -200,9 +203,9 @@ async def test_delete_forgets_in_memory_entries_of_the_child(
     assert resp.status_code == 204
     assert await in_memory(owners, parent_id=owner, child_id=cid) == (False, False)
     assert await in_memory(members, parent_id=member, child_id=cid) == (False, False)
-    assert await in_memory(others, parent_id=member, child_id=other_child) == (True, True)
+    assert await in_memory(others, parent_id=someone, child_id=other_child) == (True, True)
     assert await photo_run.get("photo-of-child", parent_id=member) is None
-    assert await photo_run.get("photo-of-other", parent_id=member) is not None
+    assert await photo_run.get("photo-of-other", parent_id=someone) is not None
 
 
 async def test_delete_keeps_in_memory_entries_when_member_is_refused(

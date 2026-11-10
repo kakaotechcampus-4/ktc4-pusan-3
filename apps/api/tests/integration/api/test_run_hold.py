@@ -17,7 +17,7 @@ import pytest
 from sqlalchemy import delete, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.domains.child.models import Child
+from app.domains.child.models import Child, ParentChild, ParentChildRelation
 from app.domains.identity.models import Parent
 from app.domains.run_hold.models import HoldKind, RunHold
 from app.domains.run_hold.repository import (
@@ -52,15 +52,13 @@ async def _put(session, key, *, parent_id, child_id, payload=PAYLOAD, now=T0):
     )
 
 
-async def _child_of_someone_else(session: AsyncSession) -> uuid.UUID:
-    """다른 아이. 보호자 한 명은 아이 하나에만 이어져서 새 보호자로 만든다.
+async def _someone_else(session: AsyncSession) -> tuple[uuid.UUID, uuid.UUID]:
+    """다른 보호자와 그 아이 (보호자, 아이). 보호자 한 명은 아이 하나에만 이어져서 새로 만든다.
 
-    `uq_parent_child_parent_id` 때문이다.
-
-    run_hold 의 FK 는 보호자 · 아이 행이 있는지만 본다 — 둘이 이어져 있는지는 보지 않는다.
+    `uq_parent_child_parent_id` 때문이다. 보관함은 이어진 보호자 · 아이에게만 넣는다.
     """
     _, owner = await issue_bearer(session, token=f"test-token-{uuid.uuid4().hex}")
-    return await link_child(session, parent_id=owner)
+    return owner, await link_child(session, parent_id=owner)
 
 
 # --- 정상 동작 ------------------------------------------------------------------------------
@@ -184,7 +182,7 @@ async def test_다른_보호자는_꺼낼_수_없다(session: AsyncSession, bear
 
 async def test_다른_아이의_질문은_꺼낼_수_없다(session: AsyncSession, bearer: Bearer, cid):
     _, me = bearer
-    other_child = await _child_of_someone_else(session)
+    _, other_child = await _someone_else(session)
     await _put(session, "r1", parent_id=me, child_id=cid)
 
     assert (
@@ -239,19 +237,17 @@ async def test_만료된_행은_claim_해도_사용_중이_되지_않는다(
     assert row is not None and row.in_use is False
 
 
-async def test_지운_아이로_넣으면_FK_오류가_난다(session: AsyncSession, bearer: Bearer, cid):
-    """늦게 끝난 run 이 지운 아이 앞으로 저장하려는 경우 — 표가 막는다.
-
-    조용히 버리는 것은 파사드(pending_reply.put) 몫이다.
-    """
-    from sqlalchemy.exc import IntegrityError
-
+async def test_지운_아이로는_넣지_않는다(session: AsyncSession, bearer: Bearer, cid):
+    """늦게 끝난 run 이 지운 아이 앞으로 저장하려는 경우 — 넣지 않고 False. 원문이 남지 않는다."""
     _, me = bearer
     await session.execute(delete(Child).where(Child.id == cid))
 
-    with pytest.raises(IntegrityError):
-        async with session.begin_nested():
-            await _put(session, "r1", parent_id=me, child_id=cid)
+    stored = await put_hold(
+        session, kind=KIND, key="r1", parent_id=me, child_id=cid, payload=PAYLOAD, ttl=TTL, now=T0
+    )
+
+    assert stored is False
+    assert await _rows(session) == []
 
 
 # --- 지우기 --------------------------------------------------------------------------------
@@ -268,14 +264,14 @@ async def test_아이를_지우면_그_아이의_행이_모두_사라진다(
     _, me = bearer
     _, member = await issue_bearer(session, token="test-token-member")
     await link_child(session, parent_id=member, child_id=cid)
-    keep = await _child_of_someone_else(session)
+    someone, keep = await _someone_else(session)
     await _put(session, "mine", parent_id=me, child_id=cid)
     await _put(session, "member", parent_id=member, child_id=cid)
-    await _put(session, "other-child", parent_id=me, child_id=keep)
+    await _put(session, "other-child", parent_id=someone, child_id=keep)
 
     await session.execute(delete(Child).where(Child.id == cid))
 
-    assert await _rows(session) == [(me, keep)]
+    assert await _rows(session) == [(someone, keep)]
 
 
 async def test_보호자를_지우면_그_보호자의_행이_사라진다(
@@ -298,14 +294,14 @@ async def test_연결_끊기는_그_보호자_그_아이_것만_지운다(
     _, me = bearer
     _, member = await issue_bearer(session, token="test-token-member")
     await link_child(session, parent_id=member, child_id=cid)
-    other_child = await _child_of_someone_else(session)
+    someone, other_child = await _someone_else(session)
     await _put(session, "mine", parent_id=me, child_id=cid)
     await _put(session, "member-here", parent_id=member, child_id=cid)
-    await _put(session, "member-there", parent_id=member, child_id=other_child)
+    await _put(session, "someone-there", parent_id=someone, child_id=other_child)
 
     await delete_link_holds(session, parent_id=member, child_id=cid)
 
-    assert await _rows(session) == sorted([(me, cid), (member, other_child)])
+    assert await _rows(session) == sorted([(me, cid), (someone, other_child)])
 
 
 async def test_만료_삭제는_만료된_것만_지우고_개수를_돌려준다(
@@ -347,6 +343,11 @@ async def committed_owner():
         await s.flush()
         child = Child(owner_parent_id=parent.id, nickname="테스트아이", birth_date=T0.date())
         s.add(child)
+        await s.flush()
+        # 보관함은 이어진 보호자 · 아이에게만 넣는다
+        s.add(
+            ParentChild(parent_id=parent.id, child_id=child.id, relation=ParentChildRelation.OTHER)
+        )
         await s.commit()
         ids = (parent.id, child.id)
     yield factory, ids

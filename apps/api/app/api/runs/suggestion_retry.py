@@ -99,7 +99,8 @@ async def _put(
 async def _read(
     *, run_id: str, agent: str, parent_id: uuid.UUID, child_id: uuid.UUID, now: datetime | None
 ) -> dict | None:
-    """주인 · 만료를 본다. 사용 중이어도 읽는다 — 0개 · 닫힘 기록은 사용 중 표시가 없다."""
+    """주인 · 만료 · 사용 중 아님을 본다(`get_hold`). 0개 · 닫힘 기록은 사용 중 표시가 붙지 않아서
+    늘 읽히고, 사용 중인 실패 맥락은 읽히지 않는다 — 그 칸은 BUSY 로 claim 이 판단한다."""
     async with _session_factory() as session:
         payload = await get_hold(
             session,

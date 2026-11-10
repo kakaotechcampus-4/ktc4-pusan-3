@@ -108,7 +108,7 @@ async def keep(run: PhotoRun, *, now: datetime | None = None) -> bool:
     """읽은 결과를 30분 넣는다. 아이가 그 사이 지워졌으면 남기지 않고 False."""
     async with _session_factory() as session:
         try:
-            await put_hold(
+            stored = await put_hold(
                 session,
                 kind=_KIND,
                 key=run.run_id,
@@ -121,9 +121,10 @@ async def keep(run: PhotoRun, *, now: datetime | None = None) -> bool:
             await session.commit()
         except IntegrityError:
             await session.rollback()
-            log.warning("사진 run %s 을 넣지 않았다 — 보호자 · 아이가 없다", run.run_id)
-            return False
-    return True
+            stored = False
+    if not stored:
+        log.warning("사진 run %s 을 넣지 않았다 — 보호자 · 아이가 없거나 끊겼다", run.run_id)
+    return stored
 
 
 async def get(run_id: str, *, parent_id: uuid.UUID, now: datetime | None = None) -> PhotoRun | None:

@@ -21,6 +21,7 @@ from app.api.deps.auth import CurrentParent, hash_token
 from app.api.deps.db import SessionDep
 from app.api.errors import ApiError, ErrorEnvelope
 from app.api.quota import today_kst
+from app.api.runs.tidy import tidy
 from app.api.v1.schemas.invites import (
     AcceptInviteRequest,
     AcceptInviteResponse,
@@ -125,12 +126,25 @@ async def _limited_attempt(parent_id: UUID, request: Request) -> AsyncIterator[N
             # 원문 코드는 남기지 않는다.
             log.info("초대 코드 실패 parent_id=%s reason=%s", parent_id, exc.code)
             raise
-        await invite_attempts.release(parent_id=parent_id, ip=ip, now=now)
+        await _give_back(parent_id, ip, now)
         raise
     except BaseException:
-        await invite_attempts.release(parent_id=parent_id, ip=ip, now=now)
+        await _give_back(parent_id, ip, now)
         raise
-    await invite_attempts.release(parent_id=parent_id, ip=ip, now=now)
+    await _give_back(parent_id, ip, now)
+
+
+async def _give_back(parent_id: UUID, ip: str, now: datetime) -> None:
+    """잡은 한 건을 돌려준다. 돌려주기(DB)가 실패해도 응답을 덮지 않는다.
+
+    수락은 이미 커밋됐을 수 있다(500 이면 화면은 실패로 보고, 다시 누르면 invite_used 다).
+    돌려주지 못한 한 건은 1시간 뒤 세지 않는다.
+    """
+    await tidy(
+        invite_attempts.release(parent_id=parent_id, ip=ip, now=now),
+        "초대 시도 돌려주기",
+        parent_id,
+    )
 
 
 async def _reject_if_has_child(session: AsyncSession, parent_id: UUID) -> None:

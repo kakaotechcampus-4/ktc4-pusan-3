@@ -53,13 +53,29 @@ async def put_hold(
     ttl: timedelta,
     now: datetime | None = None,
     keep_expiry_of_type: str | None = None,
-) -> None:
+) -> bool:
     """넣는다. 같은 key 가 있으면 덮고 보관 시간을 새로 센다 — 같은 run 에서 질문이 다시 나온 경우.
+
+    🚨 그 보호자와 아이가 지금 이어져 있을 때만 넣는다. 아니면 넣지 않고 False — 연결을 끊은 뒤
+       늦게 끝난 run 이 끊긴 보호자 앞으로 원문을 남기지 않게 (#877 적대 검증 · retention-v1
+       "연결 끊기 때 지체 없이"). 보호자 → 아이 → 연결 행 순서로 `FOR KEY SHARE` 를 잡는다 —
+       탈퇴(보호자 → 아이)와 같은 순서라 겹쳐도 교착이 없고, 끊기 · 아이 삭제는 이 넣기가 끝날
+       때까지 기다린다.
 
     `keep_expiry_of_type` 을 주면, 덮이는 행이 같은 주인의 만료 전 그 type 일 때 만료 시각을
     이어받는다 — 05 실패 맥락은 다시 넣어도 15분을 처음 넣은 때부터 센다.
     보호자 · 아이가 이미 지워졌으면 FK 오류(IntegrityError)다. 버릴지는 부르는 쪽이 정한다.
     """
+    for table, where, params in (
+        ("parent", "id = :p", {"p": parent_id}),
+        ("child", "id = :c", {"c": child_id}),
+        ("parent_child", "parent_id = :p AND child_id = :c", {"p": parent_id, "c": child_id}),
+    ):
+        found = await session.scalar(
+            text(f"SELECT 1 FROM {table} WHERE {where} FOR KEY SHARE"), params
+        )
+        if found is None:
+            return False
     values = {
         "kind": kind,
         "key": key,
@@ -82,6 +98,7 @@ async def put_hold(
     await session.execute(
         stmt.on_conflict_do_update(index_elements=[RunHold.kind, RunHold.key], set_=updates)
     )
+    return True
 
 
 async def get_hold(

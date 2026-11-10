@@ -19,7 +19,7 @@ from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.api.runs import photo_run
-from app.domains.child.models import Child
+from app.domains.child.models import Child, ParentChild, ParentChildRelation
 from app.domains.daycare_meal.models import DaycareSlot
 from app.domains.identity.models import Parent
 from app.infra.db.session import engine
@@ -148,6 +148,11 @@ async def committed_owner(monkeypatch: pytest.MonkeyPatch):
         await s.flush()
         child = Child(owner_parent_id=parent.id, nickname="테스트아이", birth_date=date(2023, 1, 1))
         s.add(child)
+        await s.flush()
+        # 보관함은 이어진 보호자 · 아이에게만 넣는다
+        s.add(
+            ParentChild(parent_id=parent.id, child_id=child.id, relation=ParentChildRelation.OTHER)
+        )
         await s.commit()
         ids = (parent.id, child.id)
     yield factory, ids

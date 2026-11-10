@@ -62,7 +62,7 @@ async def put(
     payload = _ADAPTER.dump_python(context, mode="json")
     async with _session_factory() as session:
         try:
-            await put_hold(
+            stored = await put_hold(
                 session,
                 kind=_KIND,
                 key=run_id,
@@ -75,9 +75,10 @@ async def put(
             await session.commit()
         except IntegrityError:
             await session.rollback()
-            log.warning("run %s 의 되묻기 맥락을 넣지 않았다 — 보호자 · 아이가 없다", run_id)
-            return False
-    return True
+            stored = False
+    if not stored:
+        log.warning("run %s 의 되묻기 맥락을 넣지 않았다 — 보호자 · 아이가 없거나 끊겼다", run_id)
+    return stored
 
 
 async def _load(run_id: str, payload: dict | None) -> PendingMemoryContext | None:

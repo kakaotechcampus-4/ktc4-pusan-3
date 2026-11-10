@@ -553,7 +553,8 @@ async def test_다른_아이의_질문에_이어_적으면_400(db_client, sessio
     headers, parent_id = bearer
     _, someone = await issue_bearer(session, token="test-token-someone")
     other_child = await link_child(session, parent_id=someone)
-    assert await pending_reply.put(
+    # 이어지지 않은 아이라 넣어지지도 않는다(False) — 넣혔더라도 다른 아이 주소로는 꺼낼 수 없다
+    await pending_reply.put(
         run_id="r-prev", parent_id=parent_id, child_id=other_child, context=_PENDING
     )
 
@@ -736,7 +737,8 @@ async def test_다른_아이의_Health_질문은_이어받지_못한다(
     headers, parent_id = bearer
     _, someone = await issue_bearer(session, token="test-token-someone")
     other_child = await link_child(session, parent_id=someone)
-    assert await pending_reply.put(
+    # 이어지지 않은 아이라 넣어지지도 않는다(False) — 넣혔더라도 다른 아이 주소로는 꺼낼 수 없다
+    await pending_reply.put(
         run_id="r-health", parent_id=parent_id, child_id=other_child, context=_HEALTH_PENDING
     )
 
