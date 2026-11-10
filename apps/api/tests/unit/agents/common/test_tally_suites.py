@@ -69,3 +69,30 @@ def test_Memory_c1_케이스는_실행_문제를_뺀_실패만_C1_이다():
 
     assert c1 == ["금지된 호출: ['create_observation_health']"]
     assert general == ["재시도 예산(1회) 초과"]
+
+
+def test_Memory_c1_케이스에서도_필수_tool_누락과_되묻기_문장은_일반_실패다():
+    from tests.eval.agents.memory.test_memory import CASES, split_c1
+
+    case = next(c for c in CASES if c.case_id == "T10")
+
+    c1, general = split_c1(
+        case,
+        [
+            "query_observation_food: 최소 1회 필요, 실제 0회",
+            "되묻지 않고 끝냈다",
+            "범위 밖이라고 안내하지 않음: '…'",
+            "지우지 않았다",
+            "금지된 호출: ['update_observation_food']",
+        ],
+    )
+
+    assert c1 == ["지우지 않았다", "금지된 호출: ['update_observation_food']"]
+    assert len(general) == 3
+
+
+def test_Memory_입력_id_는_모델이_여럿이면_모델을_붙인다():
+    from tests.eval.agents.memory.test_memory import input_id
+
+    assert input_id("T19", None) == "T19"
+    assert input_id("T19", "model-a") == "T19@model-a"

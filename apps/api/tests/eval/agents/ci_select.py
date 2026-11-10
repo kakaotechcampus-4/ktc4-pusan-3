@@ -15,6 +15,7 @@ base 지문을 못 구하면(`--base-prints` 가 없거나 JSON 이 아니면) �
 import argparse
 import hashlib
 import json
+import os
 import subprocess
 from collections.abc import Collection, Iterable, Mapping, Sequence
 from pathlib import Path
@@ -38,6 +39,15 @@ TEST_FILES: dict[str, str] = {
 SHARED_FILES: tuple[str, ...] = ("tally.py", "conftest.py", "run_meta.py", "tool_rules.py")
 # 한 Agent 만 쓰는 공용 파일
 OWNED_FILES: dict[str, str] = {"routing_cases.py": "memory"}
+# eval 폴더 밖에 있지만 그 Agent 가 채점받는 입력을 정하는 파일 (저장소 루트 기준)
+EXTRA_FILES: dict[str, tuple[str, ...]] = {
+    "memory": (f"{EVAL_PREFIX}/test_input.txt",),
+    "growth": (
+        "apps/api/tests/unit/agents/growth/support.py",
+        "docs/agents/growth/test_input_growth.txt",
+    ),
+    "health": ("docs/agents/health/test_input_health.txt",),
+}
 
 
 def eval_hash(agent: str, root: Path = EVAL_DIR) -> str:
@@ -53,6 +63,11 @@ def eval_hash(agent: str, root: Path = EVAL_DIR) -> str:
             continue
         digest.update(path.relative_to(root).as_posix().encode())
         digest.update(path.read_bytes())
+    for extra in EXTRA_FILES.get(agent, ()):
+        path = REPO_ROOT / extra
+        if path.is_file():
+            digest.update(extra.encode())
+            digest.update(path.read_bytes())
     return digest.hexdigest()[:12]
 
 
@@ -61,6 +76,9 @@ def touched_agents(changed_paths: Iterable[str]) -> set[str]:
     found: set[str] = set()
     for raw in changed_paths:
         path = raw.replace("\\", "/")
+        for agent, extras in EXTRA_FILES.items():
+            if path in extras:
+                found.add(agent)
         if not path.startswith(f"{EVAL_PREFIX}/"):
             continue
         rest = path.removeprefix(f"{EVAL_PREFIX}/")
@@ -82,8 +100,19 @@ def changed_agents(
     return [a for a in AGENTS if head.get(a) != base.get(a) or a in touched]
 
 
-def cache_key(agent: str, sha256: str, hashed: str) -> str:
-    return f"tool-calls-{agent}-{sha256[:12]}-{hashed}"
+def cache_key(agent: str, sha256: str, hashed: str, *, condition: str = "") -> str:
+    """캐시 키. `condition` 은 모델/effort — repo `vars` 를 바꾸면 같은 지문이어도 다시 돈다."""
+    key = f"tool-calls-{agent}-{sha256[:12]}-{hashed}"
+    if condition:
+        key += "-" + hashlib.sha256(condition.encode()).hexdigest()[:8]
+    return key
+
+
+def _condition(agent: str) -> str:
+    """그 Agent 역할의 `<ROLE>_MODEL` · `<ROLE>_REASONING_EFFORT` (워크플로가 vars 를 넘긴다)."""
+    role = agent.upper()
+    model, effort = os.getenv(f"{role}_MODEL", ""), os.getenv(f"{role}_REASONING_EFFORT", "")
+    return f"{model}/{effort}" if model or effort else ""
 
 
 def _load_base(path: Path | None) -> dict[str, str] | None:
@@ -125,7 +154,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     matrix = [
         {
             "agent": agent,
-            "key": cache_key(agent, prints[agent], eval_hash(agent)),
+            "key": cache_key(agent, prints[agent], eval_hash(agent), condition=_condition(agent)),
             "tests": TEST_FILES[agent],
         }
         for agent in agents

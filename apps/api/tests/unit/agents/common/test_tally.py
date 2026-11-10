@@ -198,3 +198,43 @@ def test_회차_기록이_하나도_없으면_fail_on_stable_은_1(tmp_path, mon
 
     assert main(["--fail-on", "stable"]) == 1
     assert "회차 기록이 없다" in capsys.readouterr().err
+
+
+def test_회차_순서는_숫자로_센다(tmp_path):
+    marks = [M("food", "T01", f"1.{n}", tools=(f"t{n}",)) for n in (10, 2, 1)]
+
+    (verdict,) = by_input(marks)
+
+    assert verdict.tools == (("t1",), ("t2",), ("t10",))
+
+
+def test_불안정해도_C1_이_있으면_fail_on_c1_은_1(tmp_path, monkeypatch):
+    path = tmp_path / "results.jsonl"
+    monkeypatch.setattr(tally, "RESULTS", path)
+    mark("food", "T41", c1=("금지된 호출",), path=path, session=1)
+    mark("food", "T41", path=path, session=2)
+    mark("food", "T41", path=path, session=3)
+
+    assert main(["--fail-on", "stable"]) == 0  # 안정 오답은 아니다
+    assert main(["--fail-on", "stable", "--fail-on", "c1"]) == 1
+
+
+def test_C1_이_없으면_fail_on_c1_도_통과한다(tmp_path, monkeypatch):
+    path = tmp_path / "results.jsonl"
+    monkeypatch.setattr(tally, "RESULTS", path)
+    mark("food", "T41", general=("x",), path=path, session=1)
+    mark("food", "T41", path=path, session=2)
+
+    assert main(["--fail-on", "stable", "--fail-on", "c1"]) == 0
+
+
+def test_입력이_모자라면_min_inputs_로_실패한다(tmp_path, monkeypatch, capsys):
+    # 케이스 하나가 건너뛰어지거나 죽어서 기록이 없는데 나머지가 통과해 초록불이 되면 안 된다
+    path = tmp_path / "results.jsonl"
+    monkeypatch.setattr(tally, "RESULTS", path)
+    mark("food", "T01", path=path)
+    mark("food", "T41", path=path)
+
+    assert main(["--fail-on", "stable", "--min-inputs", "3"]) == 1
+    assert "2/3" in capsys.readouterr().err
+    assert main(["--fail-on", "stable", "--min-inputs", "2"]) == 0

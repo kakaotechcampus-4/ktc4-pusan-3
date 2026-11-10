@@ -1132,13 +1132,24 @@ def _judge(case: EvalCase, snapshot: Snapshot) -> list[str]:
     return failures
 
 
-_NOT_C1 = ("MAX_STEPS", "재시도 예산", "내부 추론")  # c1 케이스에서도 일반 실패인 것
+# c1 케이스에서도 일반 실패인 것 — 실행 · 문장 문제이거나 필수 tool 누락이다. 잘못 쓰거나 지운 것이
+# 아니다. C1 은 금지된 호출과 저장 결과 검사(`checks`) 실패뿐이다
+_NOT_C1 = ("MAX_STEPS", "재시도 예산", "내부 추론", "범위 밖이라고 안내하지 않음", "되묻지 않")
+
+
+def _not_c1(failure: str) -> bool:
+    return failure.startswith(_NOT_C1) or ("최소" in failure and "회 필요" in failure)
 
 
 def split_c1(case: EvalCase, failures: list[str]) -> tuple[list[str], list[str]]:
-    """실패를 (C1, 일반) 으로 나눈다. `c1` 케이스의 실패 중 실행 · 문장 문제가 아닌 것이 C1 이다."""
-    c1 = [item for item in failures if case.c1 and not item.startswith(_NOT_C1)]
+    """실패를 (C1, 일반) 으로 나눈다. `c1` 케이스의 금지된 호출 · 저장 결과 실패가 C1 이다."""
+    c1 = [item for item in failures if case.c1 and not _not_c1(item)]
     return c1, [item for item in failures if item not in c1]
+
+
+def input_id(case_id: str, model: str | None) -> str:
+    """회차 집계의 입력 id. 모델이 여럿이면 모델마다 따로 센다 (`EVAL_MODELS`)."""
+    return f"{case_id}@{model}" if model else case_id
 
 
 def _retried(snapshot: Snapshot) -> list[str]:
@@ -1203,7 +1214,7 @@ def test_memory_agent_eval(case: EvalCase, model: str | None, expect: Callable[.
     c1_failures, general_failures = split_c1(case, failures)
     tally.mark(
         TALLY_SUITE,
-        case.case_id,
+        input_id(case.case_id, model),
         c1=c1_failures,
         general=general_failures,
         tools=snapshot.result.tool_names,

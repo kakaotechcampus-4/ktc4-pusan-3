@@ -69,6 +69,17 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          # 캐시 키에 들어간다 — vars 를 바꾸면 같은 지문이어도 다시 돈다
+          MEMORY_MODEL: ${{ vars.MEMORY_MODEL }}
+          MEMORY_REASONING_EFFORT: ${{ vars.MEMORY_REASONING_EFFORT }}
+          FOOD_MODEL: ${{ vars.FOOD_MODEL }}
+          FOOD_REASONING_EFFORT: ${{ vars.FOOD_REASONING_EFFORT }}
+          ACTIVITY_MODEL: ${{ vars.ACTIVITY_MODEL }}
+          ACTIVITY_REASONING_EFFORT: ${{ vars.ACTIVITY_REASONING_EFFORT }}
+          GROWTH_MODEL: ${{ vars.GROWTH_MODEL }}
+          GROWTH_REASONING_EFFORT: ${{ vars.GROWTH_REASONING_EFFORT }}
+          HEALTH_MODEL: ${{ vars.HEALTH_MODEL }}
+          HEALTH_REASONING_EFFORT: ${{ vars.HEALTH_REASONING_EFFORT }}
         run: |
           set -euo pipefail
           ARGS=()
@@ -137,7 +148,8 @@ jobs:
         run: uv sync --locked
 
       # 같은 pytest 를 3번 돌려 입력마다 통과 회차를 센다(EVAL_ATTEMPT). 한 세션이 빨개도 다음 회차를 돈다.
-      # 마지막 단계가 안정 오답(3/3 실패) 이 있거나 기록이 하나도 없으면 실패시킨다.
+      # 마지막 단계가 안정 오답(3/3 실패) · C1(한 번이라도) 이 있거나 기록된 입력이 3건보다 적으면(건너뛰거나
+      # 죽은 케이스) 실패시킨다. 통과했을 때만 캐시에 저장한다.
       - name: Run live eval
         if: steps.seen.outputs.cache-hit != 'true'
         env:
@@ -169,7 +181,7 @@ jobs:
           for i in 1 2 3; do
             EVAL_ATTEMPT=$i uv run pytest "$TESTS" -m "live and tool_ci" -q -p no:cacheprovider || true
           done
-          uv run python -m tests.eval.agents.tally --fail-on stable --summary "$GITHUB_STEP_SUMMARY"
+          uv run python -m tests.eval.agents.tally --fail-on stable --fail-on c1 --min-inputs 3 --summary "$GITHUB_STEP_SUMMARY"
 
       - name: Remember pass
         if: steps.seen.outputs.cache-hit != 'true'

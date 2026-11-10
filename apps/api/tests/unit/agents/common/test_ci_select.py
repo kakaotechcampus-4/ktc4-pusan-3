@@ -85,3 +85,36 @@ def test_CLI_는_지문이_같으면_빈_목록을_낸다(tmp_path, capsys):
 
     out = json.loads(capsys.readouterr().out)
     assert out == {"agents": [], "matrix": []}
+
+
+def test_입력_문서가_바뀌면_그_Agent_를_고른다():
+    assert touched_agents(["docs/agents/health/test_input_health.txt"]) == {"health"}
+    assert touched_agents(["docs/agents/growth/test_input_growth.txt"]) == {"growth"}
+    assert touched_agents(["apps/api/tests/unit/agents/growth/support.py"]) == {"growth"}
+    assert touched_agents(["apps/api/tests/eval/agents/test_input.txt"]) == {"memory"}
+
+
+def test_캐시_키는_모델과_effort_가_다르면_달라진다():
+    base = cache_key("food", "ab" * 32, "c" * 12)
+
+    assert cache_key("food", "ab" * 32, "c" * 12, condition="m-1/low") != base
+    assert cache_key("food", "ab" * 32, "c" * 12, condition="m-1/low") != cache_key(
+        "food", "ab" * 32, "c" * 12, condition="m-1/high"
+    )
+    assert cache_key("food", "ab" * 32, "c" * 12, condition="m-1/low") == cache_key(
+        "food", "ab" * 32, "c" * 12, condition="m-1/low"
+    )
+
+
+def test_CLI_는_환경변수의_모델과_effort_를_캐시_키에_넣는다(tmp_path, capsys, monkeypatch):
+    monkeypatch.setenv("FOOD_MODEL", "m-1")
+    monkeypatch.setenv("FOOD_REASONING_EFFORT", "low")
+    main([])
+    low = {r["agent"]: r["key"] for r in json.loads(capsys.readouterr().out)["matrix"]}
+
+    monkeypatch.setenv("FOOD_REASONING_EFFORT", "high")
+    main([])
+    high = {r["agent"]: r["key"] for r in json.loads(capsys.readouterr().out)["matrix"]}
+
+    assert low["food"] != high["food"]
+    assert low["health"] == high["health"]

@@ -45,14 +45,14 @@ Memory `T06` 의 `create_reminder` 는 app 에 없는 tool 이다(`65103a52` 에
 
 - CI 는 pytest 세션을 3번 돌린다(`EVAL_ATTEMPT=1..3`). 테스트 안의 `TEST_REPEAT` 루프가 있으면 안쪽 번호가 붙어 `세션.안쪽` 이 한 입력의 회차 id 다. 안에서 반복하지 않는 Memory · Activity 도 세션이 곧 회차다.
 - 입력마다 실패 회차 수 f / 회차 수 R — f=0 통과 · 0<f<R **불안정** · f=R **안정 오답.** C1 사례 = C1 실패가 한 번이라도 있는 입력.
-- 빨간불은 **안정 오답이 1건 이상**이거나 회차 기록이 하나도 없을 때(키가 없어 전부 건너뛴 실행이 초록불이 되면 안 된다)다.
+- 빨간불은 아래 중 하나다. ① **안정 오답** 1건 이상 ② **C1 이 한 번이라도** 나온 입력 — 불안정해도 센다(§2 "일부 실행에서만 나온 오류도 빼지 않는다"). 통과로 캐시되면 안전 규칙이 모델이 우연히 지킨 한 번으로만 확인된다 ③ 기록된 입력이 3건보다 적음 — 키가 없어 건너뛴 케이스나 죽은 케이스가 있는데 나머지가 통과해 초록불이 되면 안 된다. 기록이 아예 없으면 당연히 실패다.
 - 같은 번호로 다시 돌리면 나중 것이 이긴다. 로컬에서 새로 재려면 먼저 `uv run python -m tests.eval.agents.tally --reset`.
 
 ## 4. CI 동작 (`.github/workflows/ci-agent-live.yml`)
 
 1. 트리거 — `apps/api/app/agents/**` · `apps/api/tests/eval/agents/**` 를 건드린 PR. `workflow_dispatch` 는 다섯 Agent 전부.
 2. `select` job 이 PR base 의 프롬프트 지문과 지금(merge ref) 지문을 견줘 **바뀐 Agent 만** 고른다. 지문은 같아도 그 Agent 의 eval 파일(`tests/eval/agents/<agent>/**` · 공용 `tally` · `conftest` · `run_meta` · `tool_rules`)이 바뀌었으면 고른다. base 지문을 못 구하면 다섯 다 고른다.
-3. 캐시 키 `tool-calls-<agent>-<지문 12자>-<eval 해시 12자>` (PM 11-09). 같은 값이 있으면 이미 통과한 것이라 건너뛴다 — `pull_request` paths 필터는 PR 전체 diff 로 판단해서, 한 번 해당 경로를 건드린 PR 은 이후 오타 고친 push 에도 매번 다시 돌기 때문이다. **통과했을 때만** 저장한다.
+3. 캐시 키 `tool-calls-<agent>-<지문 12자>-<eval 해시 12자>[-<모델/effort 8자>]` (PM 11-09). 모델/effort 는 repo `vars` 라서 키에 넣었다 — 바꾸면 같은 지문이어도 다시 돈다. eval 해시에는 입력을 정하는 문서(`test_input_*.txt` · Growth `support.py`)도 들어간다. 같은 값이 있으면 이미 통과한 것이라 건너뛴다 — `pull_request` paths 필터는 PR 전체 diff 로 판단해서, 한 번 해당 경로를 건드린 PR 은 이후 오타 고친 push 에도 매번 다시 돌기 때문이다. **통과했을 때만** 저장한다.
 4. `live` job 은 Agent 마다 3회 돌고 job 요약에 케이스 id · 통과 회차 · 판정 · C1 · 부른 tool · 지문 · 모델/effort 만 쓴다. 요청 · 답 · 실패 문장(모델 출력 조각이 들어 있다)은 쓰지 않는다.
 5. 필수 체크가 아니다 — paths 필터라 안 뜨는 PR 이 있어서 필수로 걸면 그 PR 이 영원히 기다린다. `pull_request_target` 은 쓰지 않는다. 같은 저장소 브랜치 PR 에만 키가 가고 fork PR 은 `live` 를 건너뛴다.
 

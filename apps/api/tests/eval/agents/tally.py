@@ -141,6 +141,11 @@ class InputVerdict:
         return "stable_wrong" if self.failed == self.attempts else "unstable"
 
 
+def _attempt_key(attempt: str) -> tuple[int, ...]:
+    """`세션.안쪽` 을 숫자로 센다 — 문자열로 정렬하면 `1.10` 이 `1.2` 앞에 온다."""
+    return tuple(int(part) if part.isdigit() else 0 for part in attempt.split("."))
+
+
 def by_input(marks: Sequence[Mark]) -> list[InputVerdict]:
     groups: dict[tuple[str, str], list[Mark]] = defaultdict(list)
     for row in marks:
@@ -152,7 +157,7 @@ def by_input(marks: Sequence[Mark]) -> list[InputVerdict]:
             failed=sum(r.failed for r in rows),
             attempts=len(rows),
             c1=any(r.c1 for r in rows),
-            tools=tuple(r.tools for r in sorted(rows, key=lambda r: r.attempt)),
+            tools=tuple(r.tools for r in sorted(rows, key=lambda r: _attempt_key(r.attempt))),
         )
         for (suite, input_id), rows in groups.items()
     ]
@@ -249,7 +254,18 @@ def read_meta() -> dict[str, Any]:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="라이브 eval 회차 집계 (#816)")
     parser.add_argument("--reset", action="store_true", help="결과 파일을 지운다")
-    parser.add_argument("--fail-on", choices=["stable"], help="안정 오답이 있으면 종료 코드 1")
+    parser.add_argument(
+        "--fail-on",
+        action="append",
+        choices=["stable", "c1"],
+        help="stable: 안정 오답이 있으면 종료 코드 1. c1: 불안정해도 C1 이 한 번이라도 있으면 1",
+    )
+    parser.add_argument(
+        "--min-inputs",
+        type=int,
+        default=0,
+        help="기록된 입력이 이보다 적으면 종료 코드 1 (건너뛴 케이스가 초록불이 되지 않게)",
+    )
     parser.add_argument("--summary", type=Path, help="job 요약을 이 파일에 덧붙인다")
     args = parser.parse_args(argv)
 
@@ -265,11 +281,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.summary:
         with args.summary.open("a", encoding="utf-8") as out:
             out.write(summary_markdown(verdicts, meta))
-    if args.fail_on == "stable":
+    if args.fail_on:
         if not verdicts:  # 키가 없어 전부 건너뛴 실행이 초록불이 되면 안 된다
             print("회차 기록이 없다 — 테스트가 하나도 돌지 않았다", file=sys.stderr)
             return 1
-        if any(v.outcome == "stable_wrong" for v in verdicts):
+        if len(verdicts) < args.min_inputs:
+            print(f"입력 {len(verdicts)}/{args.min_inputs} 만 기록됐다", file=sys.stderr)
+            return 1
+        if "stable" in args.fail_on and any(v.outcome == "stable_wrong" for v in verdicts):
+            return 1
+        if "c1" in args.fail_on and any(v.c1 for v in verdicts):
             return 1
     return 0
 
