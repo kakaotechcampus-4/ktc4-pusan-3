@@ -96,7 +96,7 @@ SIGTERM ─ uvicorn: 새 연결 거부 → 열린 요청 · SSE 를 기다림 (�
 - 🚨 **70 + 30 + 취소 정리 5 + flush 5 = 110 < 120** 을 지킨다. 하나를 바꾸면 셋을 같이 본다. 유예를 다 쓰지 않는다 — drain 이 끝나는 대로 내려간다.
 - uvicorn 상한 70s 는 run 마감 60s(`runner.RUN_DEADLINE_SECONDS`)보다 길어야 한다. 짧으면 상한에서 끊긴 SSE 마다 ERROR traceback 이 찍혀 배포 때 Discord 가 울린다.
 - 취소된 run 은 러너의 finally 를 거쳐 failed 로 닫히고 Idempotency 키를 놓는다. drain 이 없던 때는 화면이 안 붙은 run 이 SIGTERM 순간 흔적 없이 사라졌다 — uvicorn 이 정리 뒤 SIGTERM 을 다시 일으켜 죽어서 asyncio 취소 처리도 돌지 않는다 (#882 실측).
-- drain 하는 동안 새 요청은 받을 곳이 없다 — 지금은 Caddy 가 502 를 낸다. 어떻게 받을지는 #883.
+- drain 하는 동안 새 요청은 받을 곳이 없다 — Caddy 가 새 api 가 뜰 때까지 붙잡는다(`wait_upstream`, deploy/caddy/Caddyfile · #883).
 - web 은 그대로 둔다 — run 같은 장기 작업을 들고 있지 않다.
 
 ## dev 격리 — 메모리 상한 · 팀만 열기 (#780)
