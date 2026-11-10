@@ -23,6 +23,13 @@ KdriGroup = Literal["1-2y", "3-5y"]
 # 하루 평균 1.5행이 기준이다. 기록량을 보고 조정한다
 MIN_RECORDS = 10
 
+# 식품군 출현("그 식품군이 나온 날이 있었나")을 말하는 데 필요한 최소 기록. 구간처럼 영양소 양의
+# 일평균을 내지 않아서 낮다 — 3건으로 칼슘 일평균을 내는 것은 위험하지만
+# "기록된 2일 중 채소 0일" 은 사실이다.
+# 하루치만으로는 일반화하지 않도록 날 수도 본다. 10행(MIN_RECORDS)에 못 미치면 적은 기록이라 밝힌다
+MIN_APPEARANCE_RECORDS = 3
+MIN_APPEARANCE_DAYS = 2
+
 # 한 번 low 였던 항목이 ok 로 돌아가려면 EAR 의 이 배수를 넘어야 한다 (설계 §6 · N-8 임시값)
 HYSTERESIS_FACTOR = 1.1
 
@@ -47,6 +54,11 @@ def select_kdri_group(months: int) -> KdriGroup:
 def is_insufficient(records: int, *, minimum: int = MIN_RECORDS) -> bool:
     """기록 행이 모자라 수치 기반 결론을 낼 수 없는가. 끼니 비율이 아니라 행 수로 본다."""
     return records < minimum
+
+
+def is_appearance_insufficient(records: int, days: int) -> bool:
+    """식품군 출현을 말하기에 기록이 모자란가. 행 수와 기록된 날 수를 같이 본다."""
+    return records < MIN_APPEARANCE_RECORDS or days < MIN_APPEARANCE_DAYS
 
 
 def amount_weight(factor: float, *, known: bool) -> float:

@@ -7,6 +7,8 @@
 - 가정 · 짐작(`is_uncertain`)이면 삭제만 막는다. 갱신은 되돌릴 수 있고 "우유 나오면 두유로 바꿔줘"
   같은 부탁이 가정 꼴이다.
 - 삭제는 빠지거나 끼니가 없었다는 말(`says_absence`)이 있어야 한다.
+- 넣을 메뉴만 말했을 때 교체 말(`says_replacement`)이 있으면 무엇 대신인지 되묻고, 없으면 그날
+  급식에 더한다.
 """
 
 import re
@@ -28,6 +30,7 @@ class _Table:
     question_endings: tuple[str, ...]
     conditional_endings: tuple[str, ...]
     uncertain: tuple[str, ...]
+    replacement: tuple[str, ...]
 
 
 @cache
@@ -38,6 +41,7 @@ def _table() -> _Table:
         question_endings=tuple(data["question_endings"]),
         conditional_endings=tuple(data["conditional_endings"]),
         uncertain=tuple(data["uncertain"]),
+        replacement=tuple(data["replacement"]),
     )
 
 
@@ -70,3 +74,12 @@ def says_absence(text: str) -> bool:
     """빠지거나 그 끼니가 없었다는 말이 있나. 없으면 삭제하지 않는다."""
     compact = _compact(text)
     return any(word in compact for word in _table().absence)
+
+
+def says_replacement(text: str) -> bool:
+    """다른 메뉴로 바뀌었다는 말이 있나("대신" · "말고" · "바뀌었대").
+
+    없으면 먹은 메뉴를 그날 급식에 더한 것으로 본다.
+    """
+    compact = _compact(text)
+    return any(word in compact for word in _table().replacement)

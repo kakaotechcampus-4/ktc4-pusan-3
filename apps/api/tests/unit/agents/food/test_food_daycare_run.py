@@ -171,7 +171,8 @@ async def test_급식_갱신은_안전_조회가_실패해도_닫히지_않는�
 
     assert result.status == "completed"
     assert [readout.body for readout in result.readouts] == [
-        READOUTS.render("daycare.updated", date="10월 14일", slot="점심", menu="미역국").body
+        READOUTS.render("daycare.updated", date="10월 14일", slot="점심", menu="미역국").body,
+        READOUTS.render("daycare.allergy_unchecked").body,  # 확인 못 한 것을 화면에도 밝힌다
     ]
 
 
