@@ -79,6 +79,8 @@ export function EventDraftList({
   draftIds,
   transient = false,
   heading = true,
+  onAllergenBlocked,
+  onSuggestionsSubmitted,
 }: {
   childId: string;
   /** 🚨 반복 묶음 고치기(#738)가 섞여 온다 — 장마다 `op` 로 카드를 가른다 (`DraftRow`). */
@@ -119,6 +121,16 @@ export function EventDraftList({
    * "캘린더에 넣을까요"). 둘 다 서면 시트 머리에 같은 질문이 두 번 섰다. `found` 와 "넣기 전까지는" 줄은 남는다.
    */
   heading?: boolean;
+  /**
+   * 넣는 순간 서버가 알레르기로 막은 제안 id (#902). 그 카드는 여기서 잠그고, id 는 그릇에 올린다 — 05 는 시트를
+   *    닫은 뒤 다시 만들 때 그 제안을 뺀다(#859 와 같은 상태). 🚨 막는 것은 서버다. 화면은 결과만 옮긴다.
+   */
+  onAllergenBlocked?: (suggestionIds: string[]) => void;
+  /**
+   * 캘린더에 넣은 초안의 제안 id (#902 리뷰). 05 는 시트를 닫은 뒤 다시 만들 때 이것도 뺀다 — 안 빼면 이미 넣은
+   *    제안이 초안으로 다시 서고, 넣으면 `409 already_confirmed` 다. 🚨 서버가 넣었다고 답한 뒤에만 부른다.
+   */
+  onSuggestionsSubmitted?: (suggestionIds: string[]) => void;
 }) {
   const addDrafts = useEventDraftStore((s) => s.addDrafts);
   const dropDrafts = useEventDraftStore((s) => s.dropDrafts);
@@ -201,9 +213,12 @@ export function EventDraftList({
             draft={row.draft}
             blocked={blockedDraftIds?.includes(row.draft.draft_id) ?? false}
             lockReason={lockReason}
-            onSubmitted={(draftId) =>
-              setSubmittedIds((prev) => (prev.includes(draftId) ? prev : [...prev, draftId]))
-            }
+            onAllergenBlocked={onAllergenBlocked}
+            onSubmitted={(draftId) => {
+              setSubmittedIds((prev) => (prev.includes(draftId) ? prev : [...prev, draftId]));
+              const ids = isSeriesDraft(row.draft) ? [] : (row.draft.suggestion_ids ?? []);
+              if (ids.length > 0) onSuggestionsSubmitted?.(ids);
+            }}
           />
         </div>
       ))}
@@ -262,6 +277,7 @@ function DraftRow(props: {
   draft: AnyEventDraft;
   blocked: boolean;
   lockReason?: string;
+  onAllergenBlocked?: (suggestionIds: string[]) => void;
   onSubmitted: (draftId: string) => void;
 }) {
   const { draft } = props;
@@ -277,14 +293,27 @@ function DraftRow(props: {
  * 하나로 묶으면 두 번째 제출이 "같은 키 · 다른 본문" 이라 422 다.
  */
 const REPEAT_FIX_HINT = "반복하는 요일이나 날짜를 바꾸려면 대화로 다시 말해 주세요.";
+/**
+ * 동의가 없어 막힌 제출 (#902). 🚨 "같은 버튼으로" 라고 약속하지 않는다 — 05 초안은 저장하지 않아서(#539) 이 탭에서
+ * 설정으로 가면 시트와 카드가 사라진다. 돌아와 다시 만드는 것이 보호자가 실제로 하게 되는 일이다. 버튼은 남긴다 —
+ * 다른 탭 · 기기에서 켰으면 서버가 403 을 기억하지 않아 같은 키로 들어간다.
+ */
+const CONSENT_FIX_HINT = "설정 화면의 동의에서 켠 뒤 일정을 다시 만들어 주세요.";
 
 function useDraftSubmit<Body>(
   childId: string,
   draftId: string,
   onSubmitted: (draftId: string) => void,
   send: (body: Body, key: IdempotencyKey) => Promise<unknown>,
-  /** 서버가 이유를 주지 않았을 때의 말. 🚨 묶음 고치기는 "넣지" 가 아니라 "바꾸지" 못한 것이다. */
-  fallbackError = "넣지 못했어요.",
+  {
+    fallbackError = "넣지 못했어요.",
+    onError,
+  }: {
+    /** 서버가 이유를 주지 않았을 때의 말. 🚨 묶음 고치기는 "넣지" 가 아니라 "바꾸지" 못한 것이다. */
+    fallbackError?: string;
+    /** 실패 응답을 그릇에 올릴 때 (#902 · 알레르기로 막힌 제안 id). */
+    onError?: (error: Error) => void;
+  } = {},
 ) {
   const queryClient = useQueryClient();
   const removeDraft = useEventDraftStore((s) => s.removeDraft);
@@ -303,6 +332,7 @@ function useDraftSubmit<Body>(
       // 일정 하나가 홈 카운트·캘린더를 동시에 바꾼다. 아이 스코프를 통째로 무효화한다.
       await queryClient.invalidateQueries({ queryKey: qk.child(childId) });
     },
+    onError,
   });
 
   const state: DraftSubmitState = submitted
@@ -322,9 +352,13 @@ function useDraftSubmit<Body>(
    * 🚨 반복 규칙 오류는 카드에서 고칠 수 없다 (`invalid_repeat` · #761). 요일 · 끝 날짜 · 첫 회차를 고칠 칸이 없어서
    *    같은 초안으로 다시 눌러도 같은 422 다 — 어떻게 하면 되는지를 서버 문구 아래에 붙인다.
    */
-  const errorHint = isApiError(submit.error, "invalid_repeat") ? REPEAT_FIX_HINT : undefined;
+  const errorHint = isApiError(submit.error, "invalid_repeat")
+    ? REPEAT_FIX_HINT
+    : isApiError(submit.error, "consent_required")
+      ? CONSENT_FIX_HINT
+      : undefined;
 
-  return { state, error, errorHint, mutate: submit.mutate };
+  return { state, error, errorHint, mutate: submit.mutate, failure: submit.error };
 }
 
 function EventDraftRow({
@@ -332,15 +366,17 @@ function EventDraftRow({
   draft,
   blocked,
   lockReason,
+  onAllergenBlocked,
   onSubmitted,
 }: {
   childId: string;
   draft: EventDraft;
   blocked: boolean;
   lockReason?: string;
+  onAllergenBlocked?: (suggestionIds: string[]) => void;
   onSubmitted: (draftId: string) => void;
 }) {
-  const { state, error, errorHint, mutate } = useDraftSubmit<DraftSubmitFinal>(
+  const { state, error, errorHint, mutate, failure } = useDraftSubmit<DraftSubmitFinal>(
     childId,
     draft.draft_id,
     onSubmitted,
@@ -363,19 +399,54 @@ function EventDraftRow({
       };
       return submitEventDraft(childId, create, key);
     },
+    {
+      onError: (e) => {
+        const ids = allergenBlockedIds(e, draft.suggestion_ids ?? []);
+        if (ids) onAllergenBlocked?.(ids);
+      },
+    },
   );
+
+  /**
+   * 🚨 **넣는 순간 서버가 알레르기로 막았다** (`409 allergen_blocked` · 서버 #902 · 문서 §3-8). 초안을 만든 뒤
+   *    다른 보호자가 등록한 알레르기다. 다시 눌러도 같은 409 라서 실패 카드(서버 문구 + 다시 누를 수 있는 버튼)로
+   *    그리지 않고, 그 카드를 잠근 채 안내한다. 🚨 **막히는 것은 이 카드뿐이다** — 제출은 카드 한 장에 요청
+   *    하나라서 다른 카드는 그대로 넣을 수 있다.
+   */
+  const lateBlocked = allergenBlockedIds(failure, draft.suggestion_ids ?? []);
+  /** 묶인 식사 초안이면 걸리지 않은 제안이 남는다 — 05 에서 다시 만들면 그것만으로 만들어진다. */
+  const othersLeft = (draft.suggestion_ids ?? []).some((id) => !lateBlocked?.includes(id));
 
   return (
     <EventDraftCard
       draft={draft}
       state={state}
-      blocked={blocked}
+      blocked={blocked || lateBlocked !== null}
+      blockedNote={
+        lateBlocked === null
+          ? undefined
+          : othersLeft
+            ? "그사이 알레르기로 등록된 식품이 들어간 추천이 있어서 이 일정은 넣지 않았어요. 닫고 일정으로 다시 만들면 그 추천을 빼고 만들 수 있어요."
+            : "그사이 알레르기로 등록된 식품이 들어간 추천이라 이 일정은 넣지 않았어요."
+      }
       lockReason={lockReason}
-      error={error}
+      error={lateBlocked === null ? error : undefined}
       errorHint={errorHint}
       onSubmit={(final) => mutate(final)}
     />
   );
+}
+
+/**
+ * `409 allergen_blocked` 면 걸린 제안 id, 아니면 `null`. ⚠️ 서버가 어느 제안인지 안 실으면 이 초안의 제안
+ * 전부로 본다 — 알레르기에서 덜 막는 쪽으로 기울 수 없다 (05 의 채택 · 초안 만들기 409 와 같다).
+ */
+function allergenBlockedIds(error: unknown, sent: string[]): string[] | null {
+  if (!isApiError(error, "allergen_blocked")) return null;
+  const listed = error.detail?.suggestion_ids;
+  return Array.isArray(listed) && listed.length > 0 && listed.every((id) => typeof id === "string")
+    ? (listed as string[])
+    : sent;
 }
 
 /**
@@ -396,7 +467,7 @@ function SeriesDraftRow({
     draft.draft_id,
     onSubmitted,
     (body, key) => updateEventSeries(childId, body.series_id, seriesSubmitBody(body), key),
-    "바꾸지 못했어요.",
+    { fallbackError: "바꾸지 못했어요." },
   );
 
   return (

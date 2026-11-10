@@ -155,11 +155,17 @@ function SuggestionsScreen() {
     | null
   >(null);
   /**
-   * 채택한 뒤에 알레르기로 막혀 일정으로 만들 수 없는 제안 (#859). 🚨 **채택을 풀지 않는다** — 서버에서 계속
+   * 채택한 뒤에 알레르기로 막혀 일정으로 만들 수 없는 제안 (#859 · 승인 시트에서 넣다가 막힌 것도 · #902). 🚨 **채택을 풀지 않는다** — 서버에서 계속
    *    `approved` 고 되돌리는 길이 없다. "고른 것" 에는 남고, 초안 만들기에 싣는 id 에서만 뺀다.
    *    같은 id 로 다시 누르면 같은 409 다.
    */
   const [draftBlockedIds, setDraftBlockedIds] = useState<string[]>([]);
+  /**
+   * 승인 시트에서 캘린더에 넣은 제안 (#902 리뷰). 🚨 다시 만들 때 뺀다 — 서버의 초안 만들기는 이미 넣은 제안을 막지
+   *    않아서, 빼지 않으면 그 제안이 초안으로 다시 서고 넣으면 `409 already_confirmed` 다. ⚠️ 화면 안에서만 산다 —
+   *    새로고침하면 되살린 채택에 다시 섞인다 (서버가 채택 목록에 "넣었는가" 를 싣지 않는다).
+   */
+  const [putIds, setPutIds] = useState<string[]>([]);
   const approving = useSheetTarget<CreateEventDraftsResponse>();
 
   const suggestions = useQuery({
@@ -373,7 +379,11 @@ function SuggestionsScreen() {
   /** 채택한 것 중 알레르기로 일정이 될 수 없게 된 것 (#859). 🚨 "고른 것" 에는 그대로 남는다. */
   const draftBlocked = (chosenIds ?? []).filter((id) => draftBlockedIds.includes(id));
   /** 초안 만들기에 싣는 id. 비면 일정으로 만들 것이 없다 — 묻지도 버튼을 세우지도 않는다. */
-  const draftIds = (chosenIds ?? []).filter((id) => !draftBlockedIds.includes(id));
+  const draftIds = (chosenIds ?? []).filter(
+    (id) => !draftBlockedIds.includes(id) && !putIds.includes(id),
+  );
+  /** 이번 화면에서 넣은 것이 있고 더 만들 것이 없다 — 단계를 지우고 그 사실만 말한다. */
+  const allPut = chosenIds !== null && draftIds.length === 0 && putIds.length > 0;
 
   return (
     <Screen
@@ -670,7 +680,17 @@ function SuggestionsScreen() {
                           `이 ${selectedIds.length}가지로 할게요`}
                   </Button>
                 </>
-              ) : draftIds.length === 0 ? null : (
+              ) : draftIds.length === 0 ? (
+                /* 🚨 넣은 제안은 다시 만들지 않는다 (#902 리뷰). 버튼 대신 넣었다는 사실만 말한다 — 막힌 것이 있으면
+                   위 안내 카드가 그 이유를 말한다. */
+                allPut ? (
+                  <p className="text-body-sm text-ink-muted mt-3">
+                    {draftBlocked.length > 0
+                      ? "넣을 수 있는 것은 캘린더에 넣었어요."
+                      : "고른 것을 캘린더에 넣었어요."}
+                  </p>
+                ) : null
+              ) : (
                 /* ── ② 일정으로도 만들까 ─────────────────────────────────────── */
                 /* 🚨 고른 것이 전부 알레르기로 막혔으면 묻지 않는다 (#859) — 만들 것이 없는데 버튼을 세우면
                    눌러도 같은 409 다. 이유는 위 안내 카드가 말한다. */
@@ -782,6 +802,10 @@ function SuggestionsScreen() {
           }}
           childId={childId}
           result={approving.target}
+          // 🚨 시트를 연 사이 등록된 알레르기 (#902) — 초안 만들기의 409 와 같은 자리에 쌓는다. 닫으면 위 안내가
+          //    서고, 다시 만들 때 그 제안이 빠진다. 같은 id 로 다시 만들면 초안 만들기가 같은 409 를 낸다.
+          onAllergenBlocked={(ids) => setDraftBlockedIds((prev) => [...new Set([...prev, ...ids])])}
+          onSuggestionsSubmitted={(ids) => setPutIds((prev) => [...new Set([...prev, ...ids])])}
         />
       ) : null}
 
