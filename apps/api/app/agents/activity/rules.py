@@ -47,6 +47,40 @@ def is_recent_duplicate(content: str, recent: Iterable[str]) -> bool:
     return bool(key) and any(key == normalize_activity(item) for item in recent)
 
 
+def shown_again(content: str, names: Iterable[str], shown: Iterable[str]) -> bool:
+    """앞 턴에서 보여 준 추천을 다시 내는가 (#852). 놀이는 정규화 후 완전 일치
+    (`is_recent_duplicate` 와 같은 기준), 장소 · 행사는 `names`(장소 이름 · 행사를 알아보는 이름) 중
+    하나가 앞 추천 문장에 들어 있으면 같다 — 앞 추천은 이름만 남아서("○○공원에서 모래성 쌓기")
+    장소 칸이 따로 없다. 행사는 줄인 이름(`events.event_keys`)으로 문장에 남기도 해서 그 이름도
+    넘긴다 (#853 리뷰)."""
+    shown = [item for item in shown if item.strip()]
+    if not shown:
+        return False
+    if is_recent_duplicate(content, shown):
+        return True
+    keys = {normalize_activity(name) for name in names} - {""}
+    written = [normalize_activity(item) for item in shown]
+    return any(key in item for key in keys for item in written)
+
+
+# 나들이를 묻는 말 — 위치도 지역도 없을 때 "위치 · 지역을 알려 주면 찾아볼게요" 를 붙이는 기준.
+# "어디 · 나가" 처럼 집 놀이에도 쓰는 넓은 말은 넣지 않는다 ("집에서 놀 거 어디 없나", #856 리뷰)
+_OUTING_WORDS = re.compile(
+    r"주말|나들이|외출|놀러|행사|축제|공연|전시|장소|키즈\s?카페|키카|공원|도서관|놀이터|"
+    r"박물관|미술관|과학관|동물원|수족관|체험관|체험장|"
+    r"갈\s?만|갈\s?데|갈\s?곳|가\s?볼|밖에서|바깥"
+)
+# 집 안 놀이를 물은 말 — 나들이 낱말이 같이 있어도("주말에 집에서") 나들이로 보지 않는다
+_HOME_WORDS = re.compile(r"집\s?에서|집\s?안|집콕")
+
+
+def asks_outing(texts: Iterable[str]) -> bool:
+    """보호자가 바깥 나들이 · 장소 · 행사를 물었는가. 안내 문구 · 행사 미리 읽기를 할지만 정한다.
+
+    이번 입력의 말만 넘긴다 — 앞 턴에서 나들이를 물었어도 이번에 집 놀이를 물으면 아니다."""
+    return any(_OUTING_WORDS.search(text) and not _HOME_WORDS.search(text) for text in texts)
+
+
 def said_in_request(requested_play: str | None, request_texts: Iterable[str]) -> bool:
     """모델이 적은 `requested_play` 가 보호자가 이번 요청에서 한 말에 있는가.
 

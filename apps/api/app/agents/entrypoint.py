@@ -15,11 +15,13 @@ from zoneinfo import ZoneInfo
 
 from app.agents import pipeline
 from app.agents.activity.context import ActivityContext
+from app.agents.activity.culture import with_culture
 from app.agents.activity.store.inmemory import InMemoryConsent as ActivityConsent
 from app.agents.activity.store.inmemory import InMemoryProfile as ActivityProfile
 from app.agents.activity.store.inmemory import unwired_ports as activity_unwired_ports
 from app.agents.activity.store.ports import (
     CoarseLocation,
+    CultureSource,
     EventSource,
     PlaceSource,
     WeatherSource,
@@ -133,6 +135,7 @@ from app.agents.suggestion_save import InMemorySuggestions, SaveSuggestions, Sug
 from app.agents.supervisor.context import (
     MAX_RECENT_TURNS,
     RECENT_WINDOW,
+    SHOWN_TURNS,
     ConversationContext,
     LoadRecentTurns,
     PriorResult,
@@ -146,6 +149,7 @@ from app.rules.age import months_between
 # pipeline에 이벤트를 추가하면 여기에도 작성
 __all__ = [
     "MAX_RECENT_TURNS",
+    "SHOWN_TURNS",
     "PhotoReading",
     "UnreadablePhoto",
     "read_photo",
@@ -782,7 +786,11 @@ def _domain_contexts(
                 )
             ),
             weather=activity_weather,
-            places=activity_places,
+            # 박물관 · 과학관 · 체험관은 행사 어댑터(TourAPI)가 같이 찾는다(`activity/culture.py`)
+            places=with_culture(
+                activity_places,
+                activity_events if isinstance(activity_events, CultureSource) else None,
+            ),
             events=activity_events,
             safety=activity_safety,
         ),

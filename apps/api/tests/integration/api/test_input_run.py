@@ -21,7 +21,8 @@ from unittest.mock import ANY
 
 import pytest
 import redis
-from sqlalchemy import select
+from sqlalchemy import delete, select
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.agents.common.result import DomainPending
 from app.agents.common.schemas.task import DomainTask
@@ -34,9 +35,12 @@ from app.domains.chat.models import ChatTurn
 from app.domains.child.models import Child
 from app.domains.consent.models import ConsentAction, ConsentScope
 from app.domains.consent.repository import record_consent
+from app.domains.identity.models import Parent
 from app.domains.policy.models import PolicyVersion
+from app.domains.rate_event.models import RateEvent
+from app.infra.db.session import engine
 
-from .conftest import issue_bearer, link_child
+from .conftest import issue_bearer, link_child, seed_login
 
 pytestmark = pytest.mark.usefixtures("pending_db")
 
@@ -931,3 +935,115 @@ async def test_키를_적은_뒤_응답을_못_받아_503_이면_같은_키_재�
     assert first.status_code == 503
     assert retry.status_code == 202
     assert len(agent_calls) == 1  # 재시도가 실제로 처리됐다
+
+
+# ── 같은 키가 거의 동시에 올 때 ─────────────────────────────────
+# 키 확인(recall)과 키 적기 사이에 동의 읽기 · 한도 · 채널 열기가 있다. 그 사이에 같은 키가 또 오면
+# 그 요청도 "처음 보는 키" 를 본다 — 11-11 로컬에서 같은 키 4개를 한꺼번에 보내 run 4개 · 관찰
+# 4건이 저장됐다. 키 적기가 "처음 적은 요청만 통과"(SET NX) 여야 뒤 요청이 새 run 을 띄우지 않는다.
+
+
+def _recall_misses(monkeypatch) -> None:
+    """앞 요청이 키를 적기 전에 같은 키가 와서 recall 이 아무것도 못 본 상황."""
+
+    async def missed(**scope):
+        return None
+
+    monkeypatch.setattr(idempotency, "recall", missed)
+
+
+def _lost_channels(winner: str) -> list:
+    return [c for c in registry._channels.values() if c.run_id != winner]
+
+
+async def test_recall_이_놓친_같은_키는_러너를_다시_띄우지_않고_먼저_적힌_run_을_준다(
+    db_client, bearer, agent_calls, monkeypatch, cid
+):
+    headers, _ = bearer
+    keyed = with_key(headers)
+    first = await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=keyed)
+    _recall_misses(monkeypatch)
+
+    second = await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=keyed)
+
+    winner = first.json()["run_id"]
+    assert second.status_code == 202
+    assert second.json()["run_id"] == winner
+    assert len(agent_calls) == 1  # 러너를 한 번만 띄웠다
+    # 진 쪽이 연 채널은 아무도 닫지 않는다 — 닫아야 지울 예약이 걸린다
+    assert all(c.closed and c.task is None for c in _lost_channels(winner))
+
+
+async def test_진_요청이_찜한_되묻기_맥락은_풀어_둔다(
+    db_client, bearer, agent_calls, monkeypatch, cid
+):
+    """같은 키를 앞 요청이 먼저 적었으면 러너가 안 떠서 "사용 중" 표시를 풀어 줄 쪽이 없다.
+
+    풀지 않으면 15분 동안 그 질문에 답할 수 없다 (#564). 같은 키에 다른 본문이 온 드문 경우다 —
+    같은 reply_to 면 찜하기(claim)에서 먼저 막힌다.
+    """
+    headers, parent_id = bearer
+    keyed = with_key(headers)
+    await db_client.post(INPUTS.format(cid=cid), json=BODY, headers=keyed)
+    await pending_reply.put(run_id="r-prev", parent_id=parent_id, child_id=cid, context=_PENDING)
+    _recall_misses(monkeypatch)
+    answer = {**_ANSWER, "reply_to": "r-prev"}
+
+    lost = await db_client.post(INPUTS.format(cid=cid), json=answer, headers=keyed)
+    answered = await db_client.post(INPUTS.format(cid=cid), json=answer, headers=with_key(headers))
+
+    assert lost.status_code == answered.status_code == 202
+    assert len(agent_calls) == 2  # 처음 입력과 다시 보낸 답만 러너까지 갔다
+    assert agent_calls[-1]["continuation"] == _PENDING
+
+
+# ── 동시성 — 실제로 커밋하는 연결 여럿 ─────────────────────────────
+# 테스트 세션 하나에 묶인 db_client 로는 요청을 겹쳐 보낼 수 없다(한 연결은 한 번에 하나만 묻는다).
+# 여기만 커밋하는 보호자 · 아이를 따로 만들고 요청마다 자기 연결을 쓰게 한 뒤, 끝나면 직접 지운다
+# (test_rate_limits · test_run_hold 의 committed 와 같은 방식).
+
+
+@pytest.fixture
+async def committed_input(pending_db, monkeypatch):
+    """(Authorization 헤더, 아이 id).
+
+    pending_db 가 테스트 트랜잭션에 묶어 둔 한도 · 보관함을 커밋하는 연결로 되돌린다.
+    """
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    token = f"test-token-{uuid.uuid4().hex}"
+    async with factory() as s:
+        parent = Parent()
+        s.add(parent)
+        await s.flush()
+        await seed_login(s, parent_id=parent.id, token=token)
+        child_id = await link_child(s, parent_id=parent.id)
+        await s.commit()
+        parent_id = parent.id
+    for store in (quota, pending_reply):
+        monkeypatch.setattr(store, "_session_factory", factory)
+
+    async def unrecorded(self, channel):  # 대화 기록 행은 이 테스트가 보는 것이 아니다
+        return None
+
+    monkeypatch.setattr(chat_record.TurnRecorder, "save", unrecorded)
+    yield {"Authorization": f"Bearer {token}"}, child_id
+    async with factory() as s:
+        await s.execute(delete(RateEvent).where(RateEvent.key.like(f"input:{parent_id}:%")))
+        await s.execute(delete(Child).where(Child.id == child_id))
+        await s.execute(delete(Parent).where(Parent.id == parent_id))
+        await s.commit()
+
+
+async def test_같은_키가_동시에_와도_run_은_하나다(client, committed_input, agent_calls):
+    headers, child_id = committed_input
+    keyed = with_key(headers)
+
+    responses = await asyncio.gather(
+        *(client.post(INPUTS.format(cid=child_id), json=BODY, headers=keyed) for _ in range(4))
+    )
+
+    assert [r.status_code for r in responses] == [202] * 4
+    run_ids = {r.json()["run_id"] for r in responses}
+    assert len(run_ids) == 1
+    assert len(agent_calls) == 1
+    await asyncio.wait_for(registry.get(run_ids.pop()).task, timeout=2)

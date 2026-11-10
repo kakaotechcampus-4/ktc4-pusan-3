@@ -533,3 +533,102 @@ class TestEndedTonight:
             21, {"1": RawEventIntro(age_limit="전 연령", place="광장", playtime="(토) 19:00")}
         )
         assert names(await search_events(ctx, SearchEventsArgs(day="오늘"))) == ["빛 축제"]
+
+
+class TestShownBefore:
+    """ "다른 행사 추천해줘" — 앞 턴에서 보여 준 행사는 빼고 그다음 가까운 행사를 준다 (#852)."""
+
+    async def test_앞에서_보여_준_행사는_빼고_다음_행사를_준다(self):
+        rows = [raw(str(i), f"축제{i}", km=10 - i) for i in range(8)]
+        ctx = await context(InMemoryEvents(rows))
+        ctx.state.shown_before = ("축제7 구경하기", "축제6에서 사진 찍기")
+
+        result = await search_events(ctx, SearchEventsArgs(day=DayLabel.TODAY))
+
+        assert names(result) == ["축제5", "축제4", "축제3", "축제2", "축제1"]
+        assert ctx.state.no_new_events is False
+
+    async def test_새_행사가_없으면_빈_목록과_안내다(self):
+        ctx = await context(InMemoryEvents([raw("1", "축제1")]))
+        ctx.state.shown_before = ("축제1 구경하기",)
+
+        result = await search_events(ctx, SearchEventsArgs(day=DayLabel.TODAY))
+
+        assert result.success is True and names(result) == []
+        assert "앞에서 보여 준" in result.data["message"]
+        assert ctx.state.no_new_events is True
+
+    async def test_보여_준_것을_빼고_남은_것도_연령으로_빠지면_안내다(self):
+        rows = [raw("1", "가족 축제", km=1), raw("2", "청소년 축제", km=2)]
+        intros = {"2": RawEventIntro(age_limit="만 13세 이상", place="")}
+        ctx = await context(InMemoryEvents(rows, intros))
+        ctx.state.shown_before = ("가족 축제 구경하기",)
+
+        result = await search_events(ctx, SearchEventsArgs(day=DayLabel.TODAY))
+
+        assert names(result) == [] and ctx.state.no_new_events is True
+
+    @pytest.mark.parametrize(
+        ("title", "shown"),
+        [
+            # 앞 추천 문장에는 연도 · 회차 · 부제를 뗀 이름만 남는다 (`_with_place`, #853 리뷰)
+            ("제15회 가상국제코미디페스티벌", "가상국제코미디페스티벌에서 공연 보기"),
+            ("2026 가상 별빛축제 (밤하늘 이야기)", "가상 별빛축제에서 별 보기"),
+            ("2026 대한민국 가상정원박람회", "가상정원박람회에서 꽃 모양 찾기"),
+        ],
+    )
+    async def test_줄인_이름으로_보여_준_행사도_뺀다(self, title, shown):
+        rows = [raw("1", title, km=1), raw("2", "다른 축제", km=2)]
+        ctx = await context(InMemoryEvents(rows))
+        ctx.state.shown_before = (shown,)
+
+        result = await search_events(ctx, SearchEventsArgs(day=DayLabel.TODAY))
+
+        assert names(result) == ["다른 축제"]
+
+
+class TestOrder:
+    """읽는 순서 — 1년 내내 하는 곳은 다음에도 갈 수 있어 뒤로 미루되 빼지는 않는다.
+    보호자 위치에서 찾으면 가까운 묶음(10km)이 먼저다 (#856 리뷰)."""
+
+    async def test_가까운_묶음_안에서는_짧은_행사가_먼저다(self):
+        rows = [
+            raw("1", "상설 전시", km=1, start="20260101", end="20261231"),
+            raw("2", "두 달 축제", km=2, start="20261001", end="20261210"),
+            raw("3", "주말 축제", km=8, start="20261101", end="20261109"),
+        ]
+        ctx = await context(InMemoryEvents(rows))
+
+        result = await search_events(ctx, SearchEventsArgs(day=DayLabel.TODAY))
+
+        assert names(result) == ["주말 축제", "두 달 축제", "상설 전시"]
+
+    async def test_멀리_있는_짧은_행사는_가까운_상설_행사_뒤다(self):
+        rows = [
+            raw("1", "먼 주말 축제", km=18, start="20261101", end="20261109"),
+            raw("2", "상설 전시", km=1, start="20260101", end="20261231"),
+        ]
+        ctx = await context(InMemoryEvents(rows))
+
+        result = await search_events(ctx, SearchEventsArgs(day=DayLabel.TODAY))
+
+        assert names(result) == ["상설 전시", "먼 주말 축제"]
+
+    async def test_말한_지역에서는_거리보다_짧은_행사가_먼저다(self):
+        """지역을 말했으면 거리는 그 지역 대표 지점에서 잰 값이라 보호자에게 뜻이 없다."""
+        rows = [
+            raw(
+                "1",
+                "해운대 상설 전시",
+                km=1,
+                near=HAEUNDAE.location,
+                start="20260101",
+                end="20261231",
+            ),
+            raw("2", "해운대 주말 축제", km=15, near=HAEUNDAE.location),
+        ]
+        ctx = await area_context(InMemoryEvents(rows), location=HOME)
+
+        result = await search_events(ctx, SearchEventsArgs(day=DayLabel.TODAY, area="해운대"))
+
+        assert names(result) == ["해운대 주말 축제", "해운대 상설 전시"]

@@ -614,8 +614,9 @@ def _services() -> dict:
 
 def _one_off_targets(path: Path) -> list[str]:
     """`compose … run --rm <서비스>` 로 부르는 서비스 이름.
-    `docker run --rm -e …`(Caddyfile 검사)는 compose 가 아니라 빠진다."""
-    return re.findall(r"\brun --rm (?:--\S+ )*([a-z][\w-]*)", path.read_text())
+    `docker run --rm …`(Caddyfile · Alloy 검사)는 compose 가 아니라 빠진다 — `--network none` 의
+    값을 서비스 이름으로 읽었다 (#955 CI)."""
+    return re.findall(r"(?<!docker )\brun --rm (?:--\S+ )*([a-z][\w-]*)", path.read_text())
 
 
 def _fixed_ip_networks(service: dict) -> list[str]:

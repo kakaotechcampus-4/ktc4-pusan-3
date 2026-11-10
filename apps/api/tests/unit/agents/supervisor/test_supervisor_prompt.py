@@ -76,6 +76,23 @@ def test_앞_대화가_없는_호출의_프롬프트에는_앞_대화_절이_없
     assert build_system_prompt(with_context=True).startswith(default)
 
 
+def test_request_mode_절과_경계_예시가_있다() -> None:
+    prompt = build_system_prompt()
+    assert "[request_mode — 추천인가, 일반 정보인가]" in prompt
+    for line in (
+        '"보통 몇 살부터 혼자 양치해?" → request/growth/info',
+        '"몇 개월에 예방접종 맞아?" → request/health/schedule_check',
+        '"보통 아이들 정상 체온은 몇 도야?" → request/health/info',
+    ):
+        assert line in prompt
+    # food · activity 의 경계는 이 칸으로 바꾸지 않는다
+    assert "activity/info" not in prompt and "food/info" not in prompt
+    assert "activity · food 조각에는 붙이지 않는다" in prompt
+    # request_mode 절은 request 절 바로 뒤다
+    assert prompt.index("[request — 도메인 Agent 요청]") < prompt.index("[request_mode")
+    assert prompt.index("[request_mode") < prompt.index("[guarded")
+
+
 def test_재촉하는_말투와_서술어_없는_간식_요청_예시가_있다() -> None:
     prompt = build_system_prompt()
 

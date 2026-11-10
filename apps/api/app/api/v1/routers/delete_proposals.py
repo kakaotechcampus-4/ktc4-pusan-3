@@ -159,8 +159,9 @@ async def confirm_delete_proposal(
     response = DeleteProposalResponse(proposal=_out(row, now)).model_dump(mode="json")
     # 지운 관찰의 기억은 여기서 한꺼번에 계산한다 — 정정과 잠금 순서가 안 섞이게 (#717)
     await store.flush_profiles()
-    await session.commit()
-    await idempotency.remember(**scope, replay=response)
+    # 🚨 키는 제안 행 잠금을 쥔 채(commit 전에) 적는다 — 위에서 기다리던 같은 키 요청이 잠금을
+    #    얻을 때 반드시 보게 (#774)
+    await idempotency.remember_and_commit(session, **scope, replay=response)
     if any(kind != "event" for kind in result):
         trigger_curator_after_delete(
             child.child_id, today, parent_id=parent.parent_id, after="삭제 확정"

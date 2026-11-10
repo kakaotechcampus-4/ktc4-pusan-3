@@ -44,7 +44,7 @@
 
 **Jev 를 고른 이유** (실험 3 · 4) — 같은 조건에서 Gemini 3.5 Flash Lite 는 잘못된 연결이 6~11건, Jev 는 0건이었다. 비용은 513번 호출에 약 ₩18 이었다.
 
-**남은 한계** (실험 5) — 최종 확인에서 잘못된 연결이 3건 있었다. 모두 딸기–딸기잼처럼 같은 대상인지 사람도 판단이 갈리는 쌍이었고 Jev 도 확신이 낮았다. 분명한 쌍은 틀리지 않았다.
+**남은 한계** (실험 5) — 최종 확인에서 잘못된 연결이 3건 있었다. 모두 딸기–딸기잼처럼 같은 대상인지 사람도 판단이 갈리는 쌍이었고 Jev 도 확신이 낮았다. 분명한 쌍은 틀리지 않았다. 측정 이력 v1(#816)로 보면 이 3건은 데이터가 다른 대상으로 정한 물감놀이–핑거페인팅 한 쌍의 물음으로 보인다 — [`CURATOR_JUDGE_EVAL.md`](../agents/eval/CURATOR_JUDGE_EVAL.md) §3.
 
 판정기는 답만 한다. 답이 후보 목록에 있는지 확인하고 연결하는 것은 코드다 (루트 CLAUDE.md §3).
 
@@ -108,11 +108,11 @@ Profile 은 대상 하나에 대한 선호 · 기피다. 그래서 Profile 의 `
 
 | 칸 | 뜻 |
 | --- | --- |
-| `food_id` · `activity_id` · `education_id` | 보류된 관찰. **셋 중 하나만** 채운다 (CHECK `observation_link_hold_one_target`) |
+| `domain` · `observation_id` | 보류된 관찰. FK 없이 도메인(`food` · `activity` · `education`, CHECK)과 관찰 id 로 가리킨다 (UNIQUE `observation_link_hold_domain_observation_key`) |
 | `uncertain_count` | 1~3 (CHECK). 3이 되면 새 Profile 을 만들고 행을 지운다 |
 | `subject_hash` | `same_name_key(subject)` 의 sha256 |
 
-**FK 를 칸 셋으로 둔 이유** — 관찰은 도메인마다 테이블이 달라서 칸 하나로는 FK 를 걸 수 없다. `correction.target_id` · `suggestion_evidence.source_id` 는 FK 없이 두지만 이 테이블은 **삭제를 DB 가 보장해야 해서** 칸을 나눴다(exclusive arc). 해시는 익명화가 아니다 — "딸기" 같은 짧은 단어는 해시로 원래 값을 찾을 수 있어서 관찰이 지워지면 같이 지워져야 한다 (`ON DELETE CASCADE`).
+**관찰에 FK 를 걸지 않은 이유** — 관찰은 도메인마다 테이블이 달라서 칸 하나로는 FK 를 걸 수 없다. 처음에는 칸 셋으로 나눠 FK 를 걸었지만(exclusive arc) 지금은 `correction.target_id` · `suggestion_evidence.source_id` 처럼 FK 없이 두고, 아이 삭제는 `child_id` 의 `ON DELETE CASCADE`, 관찰 삭제는 store 의 `delete_observation` 이 보류 기록까지 지운다. 해시는 익명화가 아니다 — "딸기" 같은 짧은 단어는 해시로 원래 값을 찾을 수 있어서 관찰이 지워지면 같이 지워져야 한다.
 
 **행이 사는 기간** — 첫 `uncertain` 에서 생기고 관찰이 어떤 경로로든 Profile 에 연결되면 지운다. 테이블에는 지금 보류 중인 관찰의 기록만 남는다.
 
@@ -140,7 +140,7 @@ Jev 는 Elice ML API 를 거쳐 부른다 (#686 — 처음엔 OpenRouter 였다.
 
 | 항목 | 상태 |
 | --- | --- |
-| `last_observed_on` 갱신 | Curator 통합 때 처리한다 (김명성). 연결 단계는 새 Profile 을 만들 때만 첫 관찰 날짜를 넣는다 — 관찰이 지워진 것을 알 수 없어서 연결할 때마다 날짜를 올리면 틀린 값이 남는다. 통합 쪽에서 "연결된 active 관찰 중 가장 늦은 `observed_on`" 으로 다시 계산한다. 🚨 감쇠가 돌기 전에 되어 있어야 한다 — 없으면 관찰이 계속 붙는 Profile 도 첫 관찰 날짜 기준으로 오래된 관심이 되어 근거에서 빠진다 |
-| DB `CuratorStore` 구현 · 실행 흐름 연결 | DB 구현은 `clear_hold` 를 `link` 와 같은 트랜잭션에서 해야 한다. 지금은 Protocol 과 인메모리 구현뿐이다 |
+| `last_observed_on` 갱신 | Curator 통합에서 처리했다 (`domains/memory/curator/recompute.py` → `refresh_profile`). 연결 단계는 새 Profile 을 만들 때만 첫 관찰 날짜를 넣는다 — 관찰이 지워진 것을 알 수 없어서 연결할 때마다 날짜를 올리면 틀린 값이 남는다. 통합 쪽에서 "연결된 active 관찰 중 가장 늦은 `observed_on`" 으로 다시 계산한다. 🚨 감쇠가 돌기 전에 되어 있어야 한다 — 없으면 관찰이 계속 붙는 Profile 도 첫 관찰 날짜 기준으로 오래된 관심이 되어 근거에서 빠진다 |
+| DB `CuratorStore` 구현 · 실행 흐름 연결 | DB 구현은 `clear_hold` 를 `link` 와 같은 트랜잭션에서 해야 한다. 구현됐다 — `domains/memory/curator/db_store.py`(같은 세션) · 실행 흐름은 `domains/memory/curator/trigger.py` |
 | 동시 실행 | 같은 아이에 대해 두 실행이 동시에 돌면 같은 대상으로 candidate 가 두 번 생길 수 있다. 부르는 쪽이 막는다 |
 | 연결된 관찰 이름 활용 | 후보를 `merge_key` 뿐 아니라 연결된 관찰들의 이름과도 비교하면 두 번째 "당근"부터 판정기를 부르지 않아도 된다. 다만 잘못된 연결이 번진다 (딸기잼이 한 번 딸기에 붙으면 이후 딸기잼이 모두 딸기로 간다). 운영 뒤에 볼 개선 후보 |

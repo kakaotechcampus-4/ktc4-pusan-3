@@ -46,6 +46,13 @@ _WEAK = tuple(
     )
 )
 
+# "다른 행사 추천해줘" · "다른 놀이 뭐 있어?" — 주제어가 있어도 무엇과 다른지를 말하지 않았으면 앞
+# 목록을 가리킨다. 앞 대화가 있어야 날(주말)을 이어받고 이미 보여 준 것을 뺀다. "다른" 뒤 세 어절
+# 안에 요청 말(추천 · 알려 · 보여 · 찾아 · 뭐 · 있 · 없)이 붙을 때만이다 — "다른 친구랑 놀았대" 같은
+# 기록은 아니다. 무엇과 다른지 말했으면("블록 말고 다른" · "어제와 다른") 혼자 읽어도 통한다
+_OTHER_REQUEST = re.compile(r"(?:^|\s)다른\s(?:\S+\s){0,3}?\S*(추천|알려|보여|찾아|뭐|있|없)")
+_OTHER_REFERENCE = re.compile(r"(말고|와|과|랑|이랑|하고|보다|대신)\s?다른")
+
 # 요청의 주제를 스스로 밝히는 낱말. 있으면 약한 표현만으로는 후속으로 보지 않는다
 _TOPICS = (
     "간식",
@@ -87,6 +94,8 @@ def looks_like_followup(text: str) -> bool:
     if not normalized:
         return False
     if any(pattern.search(normalized) for pattern in _STRONG):
+        return True
+    if _OTHER_REQUEST.search(normalized) and not _OTHER_REFERENCE.search(normalized):
         return True
     if any(topic in normalized for topic in _TOPICS):
         return False

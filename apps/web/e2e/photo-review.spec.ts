@@ -443,6 +443,39 @@ test("읽은 시각이 시각 칸에 채워져 열린다", async ({ page }) => {
   await expect(sheet.getByRole("combobox", { name: "시작 시간, 분" })).toHaveText(/30분/);
 });
 
+test("🚨 시트에서 고친 시작 시간이 목록의 날짜 줄과 저장되는 기록에도 들어간다", async ({
+  page,
+}) => {
+  const calls = recordApi(page);
+  await openNotice(page);
+  await expect(row(page, "도서관 나들이")).toContainText("오전 9:30");
+
+  // 오전으로 읽은 것을 저녁으로 고친다.
+  const sheet = await openSheet(page, "도서관 나들이");
+  await sheet.getByRole("combobox", { name: "시작 시간, 시" }).click();
+  await page.getByRole("option", { name: "오후 8시", exact: true }).click();
+  await sheet.getByRole("button", { name: "이 내용으로 확인" }).click();
+
+  // 🚨 목록 줄이 고친 시각을 말한다 — 읽은 시각이 남으면 고친 것이 안 먹힌 것처럼 보인다.
+  await expect(row(page, "도서관 나들이")).toContainText("오후 8:30");
+  await expect(row(page, "도서관 나들이")).not.toContainText("오전 9:30");
+
+  await page.getByRole("button", { name: "저장하고 캘린더에 5개 넣기" }).click();
+  await page.waitForURL(`**/child/${CHILD}/home`);
+
+  // 🚨 캘린더에 넣은 값과 저장하는 기록의 값이 같다. 한동안 기록에는 읽은 시각(9:30)이 남았다.
+  const fixed = { starts_at: `${browserDaysAgo(-5)}T20:30:00+09:00`, all_day: false };
+  const event = writes(calls, "POST", EVENTS).find(
+    (c) => (c.body as { event: { title: string } }).event.title === "도서관 나들이",
+  );
+  expect(event?.body).toMatchObject({ event: fixed });
+  const [commit] = writes(calls, "POST", COMMIT);
+  const saved = (commit.body as { entries: Array<{ title: string }> }).entries.find(
+    (e) => e.title === "도서관 나들이",
+  );
+  expect(saved).toMatchObject(fixed);
+});
+
 test("🚨 급식 날짜는 마감이 아니다 — 목록도 시트도 언제다 (#792 리뷰)", async ({ page }) => {
   await openNotice(page, "photo_meal_plan");
 

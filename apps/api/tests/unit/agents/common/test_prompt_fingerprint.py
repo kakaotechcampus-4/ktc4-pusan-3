@@ -1,4 +1,4 @@
-"""프롬프트 지문 — 10곳 전부 만들어지고, 프롬프트 · tool spec 이 바뀌면 바뀐다 (#770)."""
+"""프롬프트 지문 — 11곳 전부 만들어지고, 프롬프트 · tool spec 이 바뀌면 바뀐다 (#770)."""
 
 import dataclasses
 import re
@@ -16,6 +16,7 @@ EXPECTED_NAMES = (
     "activity",
     "activity_event_schedule",
     "growth",
+    "doc_answer",
     "health",
     "curator_judge",
     "meal_ocr",
@@ -23,7 +24,7 @@ EXPECTED_NAMES = (
 )
 
 
-def test_프롬프트는_10곳이다():
+def test_프롬프트는_11곳이다():
     assert prompt_registry.PROMPT_NAMES == EXPECTED_NAMES
 
 

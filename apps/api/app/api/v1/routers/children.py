@@ -524,8 +524,9 @@ async def create_input(
     순서: (아이 접근 확인 — 의존성) → 키 확인 → 재생 → 동의 읽기 → 맥락 찜하기(확인과 표시가 한
     문장) → 한도 → 채널 열기(표에 쓰일 때까지) → 키 기억 → 러너 시작. 찜한 뒤 러너가 뜨기 전에
     무엇이 터지든 표시를 푼다.
-    키를 러너보다 먼저 적어 두면 같은 키가 몇 ms 뒤에 또 와도 새 run이 아니라
-    재생으로 흡수된다 (idempotency.py). 이어받기 맥락은 재생 뒤에 본다. 같은 키 재생은 이미 꺼낸
+    키 기억은 "처음 적은 요청만" 이다(SET NX) — 재생 확인 뒤에 같은 키가 겹쳐 와도 먼저 적은
+    요청만 러너를 띄우고, 나머지는 그 run 을 돌려받는다 (idempotency.py). 진 요청도 한도는 1회
+    쓴다. 이어받기 맥락은 재생 뒤에 본다. 같은 키 재생은 이미 꺼낸
     맥락으로 돈 run을 돌려받아야 하고, 400 을 받으면 안 된다. 늦게 온 답은 한도를 쓰기 전에
     400 이다.
     재생할 run 이 failed 로 끝났으면 재생하지 않고 새 run 으로 받는다. 채널이 이미 지워졌으면
@@ -616,11 +617,20 @@ async def create_input(
             # 채널 행이 표에 쓰인 뒤에 202 — 화면이 바로 다른 워커로 SSE 를 열어도 404 가 아니고,
             # 같은 키 재시도도 다른 워커에서 이 run 을 찾는다 (#877 4단계 · #899 리뷰)
             await channel.opened()
-            await idempotency.remember(**scope, replay=channel.run_id, strict=True)
+            # 재생 확인 뒤에 같은 키가 겹쳐 왔으면 먼저 적은 요청만 러너를 띄운다 (idempotency.py)
+            winner = await idempotency.remember_first(**scope, replay=channel.run_id)
         except Exception:
             # 러너가 안 떠서 이 채널은 아무도 닫지 않는다. 닫아야 지울 예약이 걸린다 (#536 리뷰)
             channel.close()
             raise
+        if winner is not None:
+            # 진 요청 — 먼저 적힌 run 을 돌려준다. 러너를 안 띄우니 채널을 닫는 것도, 찜한 되묻기
+            # 맥락을 푸는 것도 여기서 한다(아래 except 는 예외에만 돈다).
+            # 🚨 하루 한도는 이미 1회 썼다 — 한도가 키 적기보다 앞이라서다. 순서는 그대로 둔다
+            channel.close()
+            if continuation is not None and body.reply_to is not None:
+                await tidy(pending_reply.release(body.reply_to), "되묻기 표시 풀기", body.reply_to)
+            return CreateInputResponse(run_id=winner)
         # 대화 기록(#228). 접수한 시각으로 날짜를 정한다 — run 이 끝나 행을 쓰는 시각이 아니다
         record = chat_record.TurnRecorder(
             parent_id=parent.parent_id,

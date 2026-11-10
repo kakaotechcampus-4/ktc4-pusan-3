@@ -49,6 +49,7 @@ import {
   planStartsAt,
   readMoment,
   readSpan,
+  recordedEntry,
   startsChecked,
   type AddedEvent,
   type EventPlan,
@@ -260,6 +261,14 @@ export function PhotoReview({
     return plans[entry.id] ?? initialPlan(entry);
   }
 
+  /**
+   * 저장되는 기록의 값 (`recordedEntry`). 🚨 **시트에서 고친 시작이 기록에도 들어간다** — 목록의 날짜 줄과
+   *    저장 요청이 같은 값을 쓴다. 한쪽만 얹으면 화면이 말한 것과 저장된 것이 갈린다.
+   */
+  function recordOf(entry: PhotoEntry): PhotoEntry {
+    return recordedEntry(entry, planOf(entry));
+  }
+
   /** 줄의 "캘린더에 넣기" 칸. 급식 · 안내 · 이미 넣은 줄은 `null` 이다. */
   function pickOf(entry: PhotoEntry): CalendarPick | null {
     if (!canBecomeEvent(entry) || eventAdded[entry.id]) return null;
@@ -442,7 +451,11 @@ export function PhotoReview({
        *    일정은 남고 출처만 비는 것이라 그대로 둔다.
        * 🚨 딸린 정보(`details`)는 싣지 않는다 — 고칠 수 없는 값이다 (`commitEntry`).
        */
-      entries: checked.map((entry) => commitEntry(entry, added[entry.id]?.event_id)),
+      entries: checked.map((entry) =>
+        // 🚨 고친 시작을 얹어 보낸다 (`recordOf`) — 읽은 값 그대로 보내면 캘린더에는 고친 시각이,
+        //    기록에는 읽은 시각이 들어간다. 그 값에서 `commitEntry` 가 `event_id` 를 싣고 `details` 를 뺀다.
+        commitEntry(recordOf(entry), added[entry.id]?.event_id),
+      ),
       attach_to_calendar: attachToCalendar,
     });
   }
@@ -512,6 +525,7 @@ export function PhotoReview({
             entries={needsReview}
             added={eventAdded}
             pickOf={pickOf}
+            recordOf={recordOf}
             busy={busy}
             onPick={togglePick}
             onEdit={setEditing}
@@ -520,6 +534,7 @@ export function PhotoReview({
             entries={checked}
             added={eventAdded}
             pickOf={pickOf}
+            recordOf={recordOf}
             busy={busy}
             onPick={togglePick}
             open={showChecked}
@@ -728,6 +743,8 @@ interface GroupProps {
   entries: PhotoEntry[];
   added: Record<string, AddedEvent>;
   pickOf: (entry: PhotoEntry) => CalendarPick | null;
+  /** 줄이 날짜 줄에 쓰는 값 — 저장되는 기록의 값이다 (`recordedEntry`). */
+  recordOf: (entry: PhotoEntry) => PhotoEntry;
   busy: boolean;
   onPick: (id: string, next: boolean) => void;
   onEdit: (entry: PhotoEntry) => void;
@@ -847,6 +864,7 @@ function EntryRow({
   entry,
   added: addedMap,
   pickOf,
+  recordOf,
   busy,
   onPick,
   onEdit,
@@ -900,7 +918,9 @@ function EntryRow({
         {entry.kind === "info" && entry.date === null ? null : (
           <EntryMeta
             term={entryDateLabel(entry)}
-            value={entryWhen(entry)}
+            // 🚨 **저장되는 값을 쓴다** (`recordOf`) — 시트에서 시작 시간을 고쳤으면 고친 시각이다.
+            //    읽은 값을 쓰면 고친 뒤에도 이 줄이 그대로라, 고친 것이 안 먹힌 것처럼 보인다.
+            value={entryWhen(recordOf(entry))}
             missing={entry.date === null}
           />
         )}
@@ -964,7 +984,9 @@ function calendarValue(entry: PhotoEntry, added: AddedEvent): string {
 
 /**
  * 날짜 줄에 뭐라고 쓰나. 서버가 여러 날을 읽었으면 기간을 쓴다 (#723 · `readSpan`).
- * 🚨 보호자가 시작일을 고쳤으면 기간도 시각도 쓰지 않는다 — 저장되는 것은 그날 하루다.
+ * 🚨 **받는 값은 저장되는 기록의 값이다** (`recordedEntry`) — 읽은 값이 아니라 시트에서 고친 시작까지 얹은 것.
+ * 🚨 보호자가 시작일을 고쳤으면 읽은 기간은 쓰지 않는다 — 저장되는 것은 고친 날이다. 시각은 시트의
+ *    시작 시간에 남아 있으면 그 날 그 시각으로, 하루 종일이면 날짜만 쓴다 (캘린더에 넣는 값과 같다).
  * 🚨 **읽은 시각은 오전 · 오후와 함께 쓴다** (`readMoment` · #723 댓글). "8시" 를 오전으로 읽은 것이
  *    맞는지 보호자가 목록에서 본다.
  */

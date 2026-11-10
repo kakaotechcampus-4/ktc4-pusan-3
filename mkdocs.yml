@@ -1,0 +1,133 @@
+# 개발 문서 사이트 (MkDocs Material) — docs/ 를 복사하지 않고 그대로 읽는다.
+# 로컬: uvx --with mkdocs-material==9.8.1 mkdocs serve -a 127.0.0.1:8899
+# 배포: .github/workflows/docs.yml 이 develop push 때 GitHub Pages 로 올린다.
+# docs/ 밖을 가리키는 링크는 docs_hooks.py 가 빌드할 때 GitHub 주소로 바꾼다 — 문서는 고치지 않는다.
+site_name: 아이캐치 개발 문서
+site_description: 부모용 아이 기억 AI 아이캐치의 설계 · 안전 · 평가 · 운영 문서
+site_url: https://kakaotechcampus-4.github.io/ktc4-pusan-3/
+repo_url: https://github.com/kakaotechcampus-4/ktc4-pusan-3
+repo_name: kakaotechcampus-4/ktc4-pusan-3
+edit_uri: ""
+docs_dir: docs
+
+theme:
+  name: material
+  language: ko
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: green
+      accent: green
+      toggle:
+        icon: material/brightness-4
+        name: 어두운 화면으로
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: green
+      accent: green
+      toggle:
+        icon: material/brightness-7
+        name: 밝은 화면으로
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - search.highlight
+    - content.code.copy
+
+plugins:
+  - search:
+      lang:
+        - ko
+        - en
+
+hooks:
+  - docs_hooks.py
+
+# README.md 는 팀용 인덱스다 (사이트 첫 화면은 index.md). .txt 는 테스트 입력.
+# docs 안의 .html(프로토타입 · 계약서 초안)은 정적 파일로 그대로 복사된다.
+exclude_docs: |
+  /README.md
+  *.txt
+
+validation:
+  nav:
+    omitted_files: info # nav 에 없는 문서도 빌드한다 — 링크로 찾아간다
+    not_found: warn
+    absolute_links: info
+  links:
+    not_found: warn
+    anchors: warn
+    absolute_links: info
+    unrecognized_links: warn
+
+markdown_extensions:
+  - tables
+  - admonition
+  - attr_list
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - toc:
+      permalink: true
+      # 한글 제목의 앵커를 GitHub 과 같게 만든다 (기본 slugify 는 한글을 지운다)
+      slugify: !!python/object/apply:pymdownx.slugs.slugify
+        kwds:
+          case: lower
+
+nav:
+  - 홈: index.md
+  - 설계 결정: overview/decisions-v1.md
+  - 기획: overview/service-plan.md
+  - 에이전트 설계:
+      - Supervisor Agent: agents/supervisor-agent-v1.md
+      - Memory Agent: agents/memory-agent-v1.md
+      - Curator 연결 단계: memory/curator-linking-v1.md
+      - Activity Agent: agents/activity/activity-agent-v1.md
+      - Agent 공통 규약: agents/shared/Agent_공통규약.md
+      - Tool 공통 규약: agents/shared/Tool_공통.md
+      - 지난 대화 다시 보기: api/chat-v1.md
+      - run 실패 이유와 화면 문구: api/run-failure-v1.md
+  - 안전 · 개인정보:
+      - 위험 물질 규칙: safety/hazard-rules-v1.md
+      - 외부 LLM 으로 나가는 아이 정보: safety/llm-inputs-v1.md
+      - 개인정보 보관 · 삭제 기준: safety/retention-v1.md
+      - 약관 · 동의문 작성 메모: safety/consent-texts-v1.md
+      - 암호화 현황: ops/encryption-v1.md
+  - AI 품질 평가:
+      - AI 품질 점검 설계: eval/eval-v1.md
+      - 행사 일정 읽기 프롬프트 평가: agents/eval/ACTIVITY_EVENT_SCHEDULE_EVAL.md
+      - 급식표 OCR 프롬프트 평가: agents/eval/MEAL_OCR_EVAL.md
+      - 알림장 · 공지 OCR 프롬프트 평가: agents/eval/NOTICE_OCR_EVAL.md
+      - Curator 판정기 프롬프트 평가: agents/eval/CURATOR_JUDGE_EVAL.md
+      - 급식표 사진 OCR 모델 비교: meal-plan/ocr-model-eval-v1.md
+      - 기관 문서 사진 읽기: notice/notice-ocr-v1.md
+  - API:
+      - Swagger (운영 API): https://api.icatch.ai.kr/docs
+      - ReDoc (운영 API): https://api.icatch.ai.kr/redoc
+      - Idempotency-Key: api/idempotency-v1.md
+      - 카카오 OAuth 로그인: api/auth-kakao-v1.md
+      - 추천 받기: api/suggestions-v1.md
+      - 보호자 초대: api/invite-v1.md
+      - 삭제 제안: api/delete-proposal-v1.md
+  - 웹 · 화면:
+      - 화면별 구현 규칙: web/screen-rules-v1.md
+      - 대화 · run 스트림: web/chat-run-v1.md
+      - API 호출 · 에러 처리: web/api-client-v1.md
+      - 목 서버 · 테스트 규칙: web/mock-and-tests-v1.md
+      - 디자인 시스템: web/design-system-v1.md
+      - 화면 투어: web/screen-tour-v1.md
+  - 배포 · 운영:
+      - 배포: ops/deploy-v1.md
+      - 프로세스 메모리 상태를 DB 로: ops/stateless-v1.md
+      - 워커 2개로 돌려 본 기록: ops/workers-2-check-v1.md
+      - 서버 로그 적재 · 에러 알림: ops/logging-alerts-v1.md
+      - LLM 사용량 기록: ops/llm-usage-v1.md
+      - Alembic 마이그레이션 협업: ops/alembic-collaboration-v1.md
+      - 툴체인 · CI · 배포 (웹): web/toolchain-deploy-v1.md
+  - 협업:
+      - 기여 규칙 (CONTRIBUTING.md): https://github.com/kakaotechcampus-4/ktc4-pusan-3/blob/develop/CONTRIBUTING.md
+      - 팀 공유 컨텍스트 (CLAUDE.md): https://github.com/kakaotechcampus-4/ktc4-pusan-3/blob/develop/CLAUDE.md

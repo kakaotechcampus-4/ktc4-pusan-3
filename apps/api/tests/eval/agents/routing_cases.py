@@ -12,6 +12,7 @@
 - NT01~NT06  기관 공지를 묻는 말(record/lookup_edit)과 급식 조회(daycare_lookup) 대조 (#832)
 - RO01~RO08  거절 · 안내 문구가 부모 말에 맞는지 — 진단 · 다른 집 · 주입 (#864)
 - RQ01~RQ08  말투만 다른 식사 추천 · 서술어 없는 요청 (#861)
+- T76~T81    "안 먹었다" 와 식사 태도 · 경향의 경계 — 묻기 · 저장 칸은 Memory 몫 (#929)
 - T70~T75    날짜의 기준점 — 오늘 기준 · 일정 기준 · 하루로 안 정해지는 말 (#497)
 - score_split()  Step 5(Supervisor 단독)와 Step 9(끝까지)가 같은 기준으로 잰다
 
@@ -31,6 +32,7 @@ from app.agents.memory.schemas.task import WorkType
 from app.agents.supervisor.schemas import (
     DomainAgentName,
     GuardReason,
+    RequestMode,
     SegmentKind,
     SupervisorOutput,
     align_segment,
@@ -63,6 +65,7 @@ class Span:
     growth_task: GrowthTaskType | None = None
     health_task: HealthTaskType | None = None
     guard: GuardReason | None = None
+    request_mode: RequestMode | None = None  # info = 아이 일반 질문 (#574). None 은 suggest
     strict: bool = True  # False = 보고만 한다
 
 
@@ -89,6 +92,17 @@ def QG(text: str, growth_task: GrowthTaskType, *, strict: bool = True) -> Span:
         kind=SegmentKind.REQUEST,
         agent=DomainAgentName.GROWTH,
         growth_task=growth_task,
+        strict=strict,
+    )
+
+
+def QI(text: str, agent: DomainAgentName, *, strict: bool = True) -> Span:
+    """아이 일반을 묻는 request 구간 (#574). 도메인 라벨 없이 `request_mode=info` 만 적는다."""
+    return Span(
+        text=text,
+        kind=SegmentKind.REQUEST,
+        agent=agent,
+        request_mode=RequestMode.INFO,
         strict=strict,
     )
 
@@ -1366,6 +1380,75 @@ NT_CASES: tuple[RoutingCase, ...] = (
     ),
 )
 
+
+# ── 일반 정보 질문 (#574) — request_mode 경계 ────────────────────────────
+# info: 아이 일반을 묻는 말("보통" · "또래" · "N세 아이들은"). suggest: 우리 아이에게 해 줄 것.
+# Health 의 info 는 닫힘 안내다 (IN15). 접종 · 검진 시기는 info 가 아니다 (IN12 · IN14).
+# food · activity 는 info 를 받지 않아 여기 넣지 않는다 —
+# 두 Agent 의 경계는 기존 케이스(RC · T · FC)가 그대로 본다
+IN_CASES: tuple[RoutingCase, ...] = (
+    RoutingCase(
+        "IN08",
+        "보통 두 돌 애들은 영양제 뭐 먹어?",
+        (G("보통 두 돌 애들은 영양제 뭐 먹어?", GuardReason.DIAGNOSIS),),
+        watch="아이 일반이라도 영양제는 guarded/diagnosis",
+    ),
+    RoutingCase(
+        "IN09",
+        "보통 몇 살부터 혼자 양치해?",
+        (QI("보통 몇 살부터 혼자 양치해?", GROWTH),),
+        watch="growth/info — growth_task 를 비운다",
+    ),
+    RoutingCase(
+        "IN10",
+        "보통 3세는 숫자 몇까지 세?",
+        (QI("보통 3세는 숫자 몇까지 세?", GROWTH),),
+        watch="나이별 기준 질문도 info. 기준을 말하지 않는 것은 Agent 몫",
+    ),
+    RoutingCase(
+        "IN11",
+        "우리 애 숫자 공부는 어떻게 시켜야 할까?",
+        (QG("우리 애 숫자 공부는 어떻게 시켜야 할까?", LEARN),),
+        watch="우리 아이 배움은 growth/learning_suggestion",
+    ),
+    RoutingCase(
+        "IN12",
+        "몇 개월에 예방접종 맞아?",
+        (QH("몇 개월에 예방접종 맞아?", HealthTaskType.SCHEDULE_CHECK),),
+        watch=(
+            "접종 · 검진 시기는 info 가 아니라 health/schedule_check — "
+            "공개된 표준 일정이라 이 아이 월령으로 답한다"
+        ),
+    ),
+    RoutingCase(
+        "IN13",
+        "보통 3세는 숫자 몇까지 세? 우리 애 숫자 공부는 어떻게 시켜?",
+        (
+            QI("보통 3세는 숫자 몇까지 세?", GROWTH),
+            QG("우리 애 숫자 공부는 어떻게 시켜?", LEARN),
+        ),
+        watch="한 문장의 일반 질문과 우리 아이 추천은 두 조각",
+    ),
+    RoutingCase(
+        "IN14",
+        "보통 몇 살에 영유아 검진 받아?",
+        (QH("보통 몇 살에 영유아 검진 받아?", HealthTaskType.SCHEDULE_CHECK),),
+        watch="변형 — '보통' 이 붙어도 검진 시기는 schedule_check",
+    ),
+    RoutingCase(
+        "IN15",
+        "또래 아이들 정상 체온은 어느 정도야?",
+        (QI("또래 아이들 정상 체온은 어느 정도야?", HEALTH),),
+        watch="변형 — 접종 · 검진 밖의 건강 일반 질문은 health/info → 닫힘 안내",
+    ),
+)
+
+
+def case_is_info(case: "RoutingCase") -> bool:
+    """request_mode 경계를 보는 케이스인가 — IN 묶음이다."""
+    return case.case_id.startswith("IN")
+
+
 # 거절 · 안내가 나올 때 그 문장이 부모가 한 말에 맞는가 (#864).
 # 문구는 routing 이 조각 글을 보고 고른다 — 여기서는 Supervisor 가 알맞은 조각 종류로 나누는지 본다
 RO_CASES: tuple[RoutingCase, ...] = (
@@ -1465,6 +1548,57 @@ RQ_CASES: tuple[RoutingCase, ...] = (
     ),
 )
 
+# ── T76~T81 — "안 먹었다" 와 식사 태도 · 경향 (#929) ─────────────
+# Supervisor 는 한 조각 record 로만 나누면 된다. 묻을지 routine 으로 저장할지는 Memory 몫이다
+MEAL_CASES: tuple[RoutingCase, ...] = (
+    RoutingCase(
+        "T76",
+        T_INPUTS["T76"],
+        (R("오늘 좀 안 먹었어", OBSERVE),),
+        watch="오늘 한 번 · 무엇인지 없음 — 묻는다 (골든셋 P-REC-06 입력)",
+        rows=0,
+    ),
+    RoutingCase(
+        "T77",
+        T_INPUTS["T77"],
+        (R("오늘 점심 조금밖에 안 먹었어", OBSERVE),),
+        watch="끼니만 있다 — 끼니는 음식이 아니라 묻는다",
+        rows=0,
+    ),
+    RoutingCase(
+        "T78",
+        T_INPUTS["T78"],
+        (R("요새 밥을 통 안 먹어", OBSERVE),),
+        watch="되풀이되는 경향 — routine mealtime, 묻지 않는다",
+        rows=1,
+        not_in=("food",),
+    ),
+    RoutingCase(
+        "T79",
+        T_INPUTS["T79"],
+        (R("오늘 저녁 먹기 싫다고 투정부렸어", OBSERVE),),
+        watch="태도 — 끼니가 있어도 묻지 않는다",
+        rows=1,
+        not_in=("food",),
+    ),
+    RoutingCase(
+        "T80",
+        T_INPUTS["T80"],
+        (R("식사 도중에 혼냈더니 방에 들어가서 안 먹겠다고 했어", OBSERVE, strict=False),),
+        watch="거부. 혼냈더니 를 따로 뗄지는 정하지 않았다",
+        rows=1,
+        not_in=("food",),
+    ),
+    RoutingCase(
+        "T81",
+        T_INPUTS["T81"],
+        (R("오늘 저녁에 브로콜리 안 먹었어", OBSERVE),),
+        watch="대조 — 음식이 있으면 바로 food",
+        rows=1,
+        not_in=("routine",),
+    ),
+)
+
 ALL_CASES: tuple[RoutingCase, ...] = (
     RC_CASES
     + T_CASES
@@ -1474,8 +1608,10 @@ ALL_CASES: tuple[RoutingCase, ...] = (
     + UNCLEAR_CASES
     + DATE_CASES
     + NT_CASES
+    + IN_CASES
     + RO_CASES
     + RQ_CASES
+    + MEAL_CASES
 )
 CASES_BY_ID: dict[str, RoutingCase] = {case.case_id: case for case in ALL_CASES}
 
@@ -1496,6 +1632,7 @@ def answer_output(case: RoutingCase) -> SupervisorOutput:
             "growth_task": span.growth_task,
             "health_task": span.health_task,
             "guard": span.guard,
+            "request_mode": span.request_mode,
         }
         segments.append({key: value for key, value in fields.items() if value is not None})
     return SupervisorOutput.model_validate({"segments": segments})
@@ -1536,6 +1673,11 @@ class SplitScore:
     growth_task_ok: int = 0
     health_spans: int = 0
     health_task_ok: int = 0
+    info_spans: int = 0  # request_mode=info 정답 구간 (#574)
+    info_ok: int = 0  # 그중 info 로 보낸 수
+    suggest_spans: int = 0  # request_mode 가 빈(suggest) 정답 구간 중 info 경계 케이스에 든 것
+    info_to_suggest: int = 0  # info 정답이 추천으로 갔다 (다른 나이 추천 카드가 나온다)
+    suggest_to_info: int = 0  # 추천 정답이 info 로 갔다 (우리 아이 추천이 안 나온다)
     guarded_spans: int = 0
     guarded_found: int = 0
     unclear_spans: int = 0
@@ -1632,6 +1774,18 @@ def score_split(case: RoutingCase, output: SupervisorOutput | None) -> SplitScor
                 labels = {s.growth_task for s in requests if s.agent == DomainAgentName.GROWTH}  # type: ignore[attr-defined]
                 if span.growth_task in labels:
                     score.growth_task_ok += 1
+            if case_is_info(case):
+                modes = {s.request_mode for s in requests}  # type: ignore[attr-defined]
+                if span.request_mode == RequestMode.INFO:
+                    score.info_spans += 1
+                    if RequestMode.INFO in modes:
+                        score.info_ok += 1
+                    else:
+                        score.info_to_suggest += 1
+                else:
+                    score.suggest_spans += 1
+                    if RequestMode.INFO in modes:
+                        score.suggest_to_info += 1
             if span.health_task is not None:
                 score.health_spans += 1
                 health = {
@@ -1721,7 +1875,8 @@ def format_score(score: SplitScore) -> str:
         f" (work {score.work_ok}) · REQUEST {score.request_found}/{score.request_spans}"
         f" (agent {score.agent_ok} · food 유형 {score.food_task_ok}/{score.food_spans}"
         f" · growth 유형 {score.growth_task_ok}/{score.growth_spans}"
-        f" · health 유형 {score.health_task_ok}/{score.health_spans})"
+        f" · health 유형 {score.health_task_ok}/{score.health_spans}"
+        f" · info {score.info_ok}/{score.info_spans})"
         f" · GUARDED {score.guarded_found}/{score.guarded_spans}"
         f" · UNCLEAR {score.unclear_found}/{score.unclear_spans}"
         f" · RECORD→REQUEST {score.record_to_request}"

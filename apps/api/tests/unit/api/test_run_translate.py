@@ -235,6 +235,7 @@ def test_agent_result_copies_readouts_and_drops_refs_the_screen_lacks():
                     "authored_by": "code",
                     "code": None,
                     "source_refs": [],
+                    "sources": [],
                 }
             ],
             "question": None,
@@ -831,3 +832,50 @@ def test_failed_는_모든_이유에서_문구를_싣는다() -> None:
         assert set(payload) == {"reason", "raw_text", "message"}
         assert payload["reason"] == reason and payload["raw_text"] == "한 줄"
         assert payload["message"].strip()
+
+
+# ── 일반 정보 답변의 출처 (#574) ────────────────────────────────────────
+def _first_doc(kind: str) -> uuid.UUID:
+    from app.agents.entrypoint import _doc_index
+
+    return next(key for k, key in _doc_index() if k == kind)
+
+
+def _doc_answer(*refs: EvidenceRef) -> AgentResult:
+    readout = Readout(
+        kind="doc_answer",
+        title="만 3세 무렵 생활과 배움 · 일반 자료",
+        body="계단을 오르며 세어 봐요.",
+        authored_by="model",
+        source_refs=refs,
+    )
+    return AgentResult(agent="growth", task_type="info", status="completed", readouts=(readout,))
+
+
+def test_문서_근거는_sources_로_제목_기관_출처를_싣는다():
+    from app.agents.entrypoint import describe_docs
+
+    doc = _first_doc("growth_doc")
+    _, data = translate.to_sse(
+        _doc_answer(
+            EvidenceRef("growth_doc", doc), EvidenceRef("child_growth_log", uuid.UUID(int=7))
+        )
+    )
+    card = describe_docs([("growth_doc", doc)])[("growth_doc", doc)]
+    assert data["readouts"][0]["sources"] == [
+        {
+            "ref": {"kind": "growth_doc", "id": str(doc)},
+            "title": card.title,
+            "source_org": card.source_org,
+            "source_title": card.source_title,
+            "source_url": card.source_url,
+        }
+    ]
+    assert data["readouts"][0]["source_refs"] == []  # 아이 기록 · 문서는 source_refs 로 안 간다
+
+
+def test_시드에_없는_문서_근거는_빼고_경고한다(caplog):
+    with caplog.at_level("WARNING"):
+        _, data = translate.to_sse(_doc_answer(EvidenceRef("growth_doc", uuid.UUID(int=99))))
+    assert data["readouts"][0]["sources"] == []
+    assert "문서 출처를 찾지 못함" in caplog.text
