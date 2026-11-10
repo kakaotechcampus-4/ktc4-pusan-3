@@ -2,9 +2,12 @@
 
 기록 수 집계는 `test_observation_repository.py`, 기억 문구는 `test_affinity_reason`,
 예상 질문은 `test_home_prompts` 가 건다. 여기는 API 가 더하는 것만 본다: 아이 접근 확인,
-건강 기록도 세기, 이번 주 경계, 오늘 · 다가오는 일정, 하이라이트로 고르는 기억.
+건강 기록도 세기, 이번 주 경계, 오늘 급식 · 오늘 · 다가오는 일정, 하이라이트로 고르는 기억.
+
+급식 메뉴는 전부 지어낸 값이다 (루트 CLAUDE.md §9).
 """
 
+import logging
 import uuid
 from datetime import datetime, timedelta
 
@@ -13,6 +16,7 @@ from sqlalchemy.dialects.postgresql import Range
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.quota import KST, today_kst
+from app.domains.daycare_meal.repository import NewDaycareMeal, insert_daycare_meals
 from app.domains.memory.observation.models import (
     ConfidenceSource,
     ObservationFood,
@@ -172,3 +176,95 @@ async def test_highlight_skips_a_candidate_observed_on_a_single_day(
     highlight = (await db_client.get(url, headers=headers)).json()["highlight"]
     assert highlight["ref"] == {"kind": "profile_affinity", "id": str(once.id)}
     assert highlight["state_reason"].startswith("지금까지 3번")  # 카드 숫자는 기록 건수 그대로
+
+
+async def _meals(session, child_id, *meals: NewDaycareMeal):
+    await insert_daycare_meals(session, child_id=child_id, meals=meals)
+
+
+async def test_today_lists_todays_meals_by_slot_before_events(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    headers, _ = bearer
+    today = today_kst()
+    # 넣는 순서를 섞는다 — 화면 순서는 하루 순서(오전 간식 → 점심 → 오후 간식)다
+    await _meals(
+        session,
+        cid,
+        NewDaycareMeal(today, "snack_pm", ("감자", "보리차")),
+        NewDaycareMeal(today, "lunch", ("잡곡밥", "소고기미역국", "두부조림")),
+        NewDaycareMeal(today, "snack_am", ("우유",)),
+        NewDaycareMeal(today - timedelta(days=1), "lunch", ("어제메뉴",)),
+        NewDaycareMeal(today + timedelta(days=1), "lunch", ("내일메뉴",)),
+    )
+    noon = datetime.now(KST).replace(hour=12, minute=0, second=0, microsecond=0)
+    event = await create_event(
+        session,
+        child_id=cid,
+        title="오늘 행사",
+        event_type=EventType.EPISODIC,
+        starts_at=noon,
+        ends_at=noon + timedelta(hours=12),
+        all_day=False,
+        category=EventCategory.ACTIVITY,
+        created_by=EventCreatedBy.AGENT,
+    )
+
+    data = (await db_client.get(f"/api/v1/children/{cid}/home", headers=headers)).json()
+
+    assert data["today"] == [
+        {"kind": "meal", "title": "오전 간식 · 우유", "origin": "기관 급식표"},
+        {
+            "kind": "meal",
+            "title": "점심 · 잡곡밥, 소고기미역국, 두부조림",
+            "origin": "기관 급식표",
+        },
+        {"kind": "meal", "title": "오후 간식 · 감자, 보리차", "origin": "기관 급식표"},
+        {"kind": "event", "event_id": str(event.id), "title": "오늘 행사"},
+    ]
+
+
+async def test_today_has_no_meal_line_without_todays_meal(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    # 급식이 없는 날은 예전과 같은 응답이다 — 빈 급식 줄을 세우지 않는다
+    headers, _ = bearer
+    today = today_kst()
+    await _meals(session, cid, NewDaycareMeal(today + timedelta(days=1), "lunch", ("내일메뉴",)))
+
+    data = (await db_client.get(f"/api/v1/children/{cid}/home", headers=headers)).json()
+
+    assert data["today"] == []
+
+
+async def test_other_childs_meals_stay_behind_the_access_check(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    headers, _ = bearer
+    _, stranger = await issue_bearer(session, token="stranger")
+    other_cid = await link_child(session, parent_id=stranger)
+    await _meals(session, other_cid, NewDaycareMeal(today_kst(), "lunch", ("남의메뉴",)))
+
+    denied = await db_client.get(f"/api/v1/children/{other_cid}/home", headers=headers)
+    mine = (await db_client.get(f"/api/v1/children/{cid}/home", headers=headers)).json()
+
+    assert denied.status_code == 403
+    assert "남의메뉴" not in denied.text
+    assert mine["today"] == []  # 내 아이 홈에도 남의 아이 급식이 섞이지 않는다
+
+
+async def test_meal_menu_text_is_not_logged(
+    db_client: AsyncClient,
+    session: AsyncSession,
+    bearer: Bearer,
+    cid: uuid.UUID,
+    caplog,
+):
+    headers, _ = bearer
+    await _meals(session, cid, NewDaycareMeal(today_kst(), "lunch", ("로그금지메뉴",)))
+
+    with caplog.at_level(logging.DEBUG):
+        resp = await db_client.get(f"/api/v1/children/{cid}/home", headers=headers)
+
+    assert "로그금지메뉴" in resp.text
+    assert "로그금지메뉴" not in caplog.text
