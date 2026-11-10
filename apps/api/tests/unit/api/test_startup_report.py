@@ -121,3 +121,27 @@ def test_확인하다_예외가_나도_서버를_막지_않는다(
     assert "ValueError" in message
     # 예외 문구에는 설정 값이 섞일 수 있어 종류 이름만 남긴다
     assert "비밀값" not in message
+
+
+def test_서버에서_LLM_Curator_가_비면_Discord_로_가는_ERROR_로_남긴다(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from app.core.alerts import format_alert
+
+    gap = "Curator 꺼짐 — 기억을 묶지 않는다 (EMBEDDING_API_KEY 없음)"
+    with caplog.at_level(logging.INFO, logger="app.api.startup_report"):
+        startup_report.log_disabled_features(_settings(PHOTO_UPLOAD_ACCEPT=False), llm_gaps=(gap,))
+
+    assert [r.levelname for r in caplog.records] == ["ERROR"]
+    card = format_alert(caplog.records[0], env="prod")["description"]
+    assert "EMBEDDING_API_KEY" in card  # 무엇이 빠졌는지 카드에서 바로 보인다
+    assert "discord.test" not in card
+
+
+def test_노트북에서는_LLM_이_비어도_ERROR_가_아니다(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.INFO, logger="app.api.startup_report"):
+        startup_report.log_disabled_features(
+            _settings(APP_ENV="local"), llm_gaps=("LLM memory (MEMORY_MODEL 없음)",)
+        )
+
+    assert [r.levelname for r in caplog.records] == ["INFO"]
