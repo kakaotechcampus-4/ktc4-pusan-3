@@ -111,7 +111,7 @@ apps/api/app/agents/
     ├── prompt.py          system prompt
     ├── registry.py        이름 → 함수 매핑 + 인자 검증
     ├── result.py          ToolResult · ErrorCode
-    ├── schemas/           tool argument 스키마 + tool 정의 27개 + MemoryTask
+    ├── schemas/           tool argument 스키마 + tool 정의 23개 + MemoryTask
     ├── tools/             observation.py(20) · schedule.py(7)
     └── store/             ports.py(Protocol) · inmemory.py
 
