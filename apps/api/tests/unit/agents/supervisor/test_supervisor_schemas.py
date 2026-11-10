@@ -67,6 +67,7 @@ def test_정해진_필드만_노출한다() -> None:
         "food_task",
         "growth_task",
         "health_task",
+        "request_mode",
         "guard",
     }
 
@@ -549,3 +550,51 @@ def test_모르는_health_task_는_지운다() -> None:
         {"text": "병원 찾아줘", "kind": "request", "agent": "health", "health_task": "hospital"}
     ).segments[0]
     assert (parsed.agent, parsed.health_task) == ("health", None)
+
+
+# ── request_mode (#574) ──────────────────────────────────────────────────
+from app.agents.supervisor.schemas import RequestMode  # noqa: E402
+
+
+def _seg(**fields):
+    return Segment.model_validate({"text": "보통 3세는 뭐 해?", "kind": "request", **fields})
+
+
+def test_request_mode_가_없으면_비어_있고_라벨은_지금처럼_채운다():
+    segment = _seg(agent="growth")
+    assert segment.request_mode is None
+    assert segment.growth_task == "learning_suggestion"
+
+
+def test_info_면_growth_task_를_지우고_채우지_않는다():
+    segment = _seg(agent="growth", request_mode="info", growth_task="routine_coaching")
+    assert segment.request_mode == RequestMode.INFO
+    assert segment.growth_task is None
+
+
+def test_info_면_food_task_가_없어도_받는다():
+    segment = _seg(agent="food", request_mode="info")
+    assert segment.food_task is None and segment.request_mode == "info"
+
+
+def test_health_info_도_request_mode_를_받는다():
+    """Health 의 일반 정보 질문은 Agent 를 돌리지 않고 routing 이 닫힘 안내를 낸다."""
+    segment = _seg(agent="health", request_mode="info")
+    assert segment.request_mode == RequestMode.INFO and segment.health_task is None
+
+
+def test_health_suggest_는_라벨을_그대로_둔다():
+    segment = _seg(agent="health", health_task="schedule_check")
+    assert segment.request_mode is None and segment.health_task == "schedule_check"
+
+
+def test_request_가_아니면_request_mode_를_지운다():
+    segment = Segment.model_validate(
+        {"text": "블록 놀이 했어", "kind": "record", "work": "observe", "request_mode": "info"}
+    )
+    assert segment.request_mode is None
+
+
+def test_모르는_request_mode_는_지운다():
+    segment = _seg(agent="growth", request_mode="general")
+    assert segment.request_mode is None and segment.growth_task == "learning_suggestion"

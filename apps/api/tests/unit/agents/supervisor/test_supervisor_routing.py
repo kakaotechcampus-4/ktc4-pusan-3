@@ -1053,3 +1053,142 @@ def test_RESOLVABLE_TASKS_는_추천_task_표와_같다() -> None:
     from app.agents.pipeline import RECOMMENDING_TASKS
 
     assert routing_module.RESOLVABLE_TASKS == RECOMMENDING_TASKS
+
+
+# ── request_mode=info (#574) ─────────────────────────────────────────────
+from app.agents.common.schemas.task import INFO_TASK  # noqa: E402
+from app.agents.supervisor.routing import INFO_HEALTH_CLOSED, INFO_NOT_READY  # noqa: E402
+
+
+def test_growth_info_는_info_task_로_간다() -> None:
+    raw = "보통 몇 살부터 혼자 양치해?"
+    output = _output({"text": raw, "kind": "request", "agent": "growth", "request_mode": "info"})
+    routing = route(raw, SupervisorResult(output=output), run_id=RUN_ID)
+    assert [(t.agent, t.task_type) for t in routing.domain_tasks] == [("growth", INFO_TASK)]
+    assert routing.guidance == ()
+
+
+def test_growth_info_와_추천은_서로_덮지_않는다() -> None:
+    raw = "보통 3세는 숫자 몇까지 세? 우리 애 숫자 공부는 어떻게 시켜?"
+    output = _output(
+        {"text": "보통 3세는 숫자 몇까지 세?", "kind": "request", "agent": "growth",
+         "request_mode": "info"},
+        {"text": "우리 애 숫자 공부는 어떻게 시켜?", "kind": "request", "agent": "growth",
+         "growth_task": "learning_suggestion"},
+    )  # fmt: skip
+    routing = route(raw, SupervisorResult(output=output), run_id=RUN_ID)
+    assert [t.task_type for t in routing.domain_tasks] == [INFO_TASK, "learning_suggestion"]
+    assert all(g.code != TASK_LIMIT for g in routing.guidance)
+
+
+@pytest.mark.parametrize(
+    "agent, raw",
+    [
+        ("activity", "보통 3~4세 어린이들은 어떤 걸 하면서 놀아?"),
+        ("food", "돌 아기는 보통 뭐 먹어?"),
+    ],
+)
+def test_아직_info_를_못_받는_Agent_는_돌리지_않고_안내한다(agent, raw) -> None:
+    output = _output({"text": raw, "kind": "request", "agent": agent, "request_mode": "info"})
+    routing = route(raw, SupervisorResult(output=output), run_id=RUN_ID)
+    assert routing.domain_tasks == ()
+    assert [g.code for g in routing.guidance] == [INFO_NOT_READY]
+
+
+def test_info_를_못_받는_Agent_도_추천은_그대로_돈다() -> None:
+    raw = "보통 1세는 뭐 하고 놀아? 우리 애랑 할 놀이 추천해줘"
+    output = _output(
+        {"text": "보통 1세는 뭐 하고 놀아?", "kind": "request", "agent": "activity",
+         "request_mode": "info"},
+        {"text": "우리 애랑 할 놀이 추천해줘", "kind": "request", "agent": "activity"},
+    )  # fmt: skip
+    routing = route(raw, SupervisorResult(output=output), run_id=RUN_ID)
+    assert [(t.agent, t.task_type) for t in routing.domain_tasks] == [("activity", None)]
+    assert routing.domain_tasks[0].request_texts == ("우리 애랑 할 놀이 추천해줘",)
+    assert [g.code for g in routing.guidance] == [INFO_NOT_READY]
+
+
+# ── IN 케이스의 정답 출력이 기대한 대로 가는지 (#574) ─────────────────────
+from tests.eval.agents.routing_cases import IN_CASES  # noqa: E402
+
+
+def test_IN_정답_출력이_스키마를_통과한다() -> None:
+    for case in IN_CASES:
+        assert answer_output(case).segments, case.case_id
+
+
+def test_IN09_정답은_growth_info_task_다() -> None:
+    routing = _route_case("IN09")
+    assert [(t.agent, t.task_type) for t in routing.domain_tasks] == [("growth", INFO_TASK)]
+
+
+def test_IN04_와_IN11_은_info_가_아니다() -> None:
+    assert [t.task_type for t in _route_case("IN11").domain_tasks] == ["learning_suggestion"]
+    assert all(t.task_type != INFO_TASK for t in _route_case("IN04").domain_tasks)
+
+
+def test_IN12_Health_일반_정보_질문은_Agent_없이_닫힘_안내다() -> None:
+    routing = _route_case("IN12")
+    assert routing.domain_tasks == () and routing.unavailable_agents == ()
+    assert [g.code for g in routing.guidance] == [INFO_HEALTH_CLOSED]
+
+
+def test_Health_info_는_Agent_상한_자리를_쓰지_않는다() -> None:
+    raw = "보통 몇 개월에 예방접종 맞아? 저녁 뭐 먹일까? 양치 혼자 하는 법 알려줘"
+    output = _output(
+        {"text": "보통 몇 개월에 예방접종 맞아?", "kind": "request", "agent": "health",
+         "request_mode": "info"},
+        {"text": "저녁 뭐 먹일까?", "kind": "request", "agent": "food",
+         "food_task": "meal_recommendation"},
+        {"text": "양치 혼자 하는 법 알려줘", "kind": "request", "agent": "growth",
+         "growth_task": "routine_coaching"},
+    )  # fmt: skip
+    routing = route(raw, SupervisorResult(output=output), run_id=RUN_ID)
+    assert [t.agent for t in routing.domain_tasks] == ["food", "growth"]
+    assert [g.code for g in routing.guidance] == [INFO_HEALTH_CLOSED]
+
+
+def test_우리_아이_검진_질문은_Health_suggest_로_그대로_간다() -> None:
+    raw = "검진 언제 받아야 돼?"
+    output = _output(
+        {"text": raw, "kind": "request", "agent": "health", "health_task": "schedule_check"}
+    )
+    routing = route(raw, SupervisorResult(output=output), run_id=RUN_ID)
+    assert [(t.agent, t.task_type) for t in routing.domain_tasks] == [("health", "schedule_check")]
+    assert routing.guidance == ()
+
+
+def test_IN13_일반_질문_뒤_추천은_같은_Agent_의_따로_task_다() -> None:
+    routing = _route_case("IN13")
+    assert [(t.agent, t.task_type) for t in routing.domain_tasks] == [("activity", None)]
+    assert [g.code for g in routing.guidance] == [INFO_NOT_READY]
+
+
+# ── 코드 리뷰 반영 (#574) ────────────────────────────────────────────────
+def test_닫힌_info_조각은_Agent_상한_자리를_쓰지_않는다() -> None:
+    """돌지 않는 activity info 가 자리를 차지해 뒤의 growth 요청이 빠지면 안 된다."""
+    raw = "보통 3세는 뭐 하고 놀아? 저녁 뭐 먹일까? 양치 혼자 하는 법 알려줘"
+    output = _output(
+        {"text": "보통 3세는 뭐 하고 놀아?", "kind": "request", "agent": "activity",
+         "request_mode": "info"},
+        {"text": "저녁 뭐 먹일까?", "kind": "request", "agent": "food",
+         "food_task": "meal_recommendation"},
+        {"text": "양치 혼자 하는 법 알려줘", "kind": "request", "agent": "growth",
+         "growth_task": "routine_coaching"},
+    )  # fmt: skip
+    routing = route(raw, SupervisorResult(output=output), run_id=RUN_ID)
+    assert [t.agent for t in routing.domain_tasks] == ["food", "growth"]
+    assert [g.code for g in routing.guidance] == [INFO_NOT_READY]
+    assert routing.dropped_agents == ()
+
+
+def test_info_조각도_앞_대화를_풀어_쓴_요청을_받는다() -> None:
+    raw = "그럼 4살은?"
+    output = _output(
+        {"text": raw, "kind": "request", "agent": "growth", "request_mode": "info",
+         "resolved_request": "보통 4살은 혼자 양치해?"},
+    )  # fmt: skip
+    routing = route(raw, SupervisorResult(output=output), run_id=RUN_ID)
+    [task] = routing.domain_tasks
+    assert task.request_texts == ("보통 4살은 혼자 양치해?",)
+    assert task.original_texts == (raw,)

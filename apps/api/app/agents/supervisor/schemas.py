@@ -43,6 +43,16 @@ class DomainAgentName(StrEnum):
     HEALTH = "health"
 
 
+class RequestMode(StrEnum):
+    """request 조각이 우리 아이 추천인가, 아이 일반 정보인가 (#574).
+
+    Agent 라벨이 아니라 공통 칸이다.
+    """
+
+    SUGGEST = "suggest"  # 우리 아이에게 무엇을 해 줄지 — 기본값
+    INFO = "info"  # 아이 일반("보통 3세는 …") — 추천 대신 문서 근거 답변
+
+
 class GuardReason(StrEnum):
     SAFETY_RECORD = "safety_record"  # 알레르기·만성질환을 알리는 말 · 등록 요청. 보호자 직접 입력
     DIAGNOSIS = "diagnosis"  # 진단·결핍 판정·치료식·약·영양제 추천은 하지 않음
@@ -70,6 +80,7 @@ _LABEL_ENUMS: dict[str, type] = {
     "food_task": FoodTaskType,
     "growth_task": GrowthTaskType,
     "health_task": HealthTaskType,
+    "request_mode": RequestMode,
 }
 
 
@@ -81,6 +92,8 @@ def _repair(data: dict[str, Any]) -> dict[str, Any]:
     - growth에 유형이 빠졌으면 교육 추천(learning_suggestion)으로 채운다
     - health 는 유형이 빠져도 채우지 않는다. 짐작한 라벨이 틀리면 복약 쓰기 경로가 열리기 때문에,
       비워 두고 Health 가 unsupported 로 닫게 한다
+    - `request_mode=info` 면 food · growth 라벨을 지우고 채우지도 않는다. 라벨은 추천의 Tool 묶음을
+      가르는 값이라 일반 정보 답변에는 쓰지 않는다
     """
     for name, enum in _LABEL_ENUMS.items():
         value = data.get(name)
@@ -109,6 +122,12 @@ def _repair(data: dict[str, Any]) -> dict[str, Any]:
         # 조각을 어디로 보낼지 모르겠을때의 처리
         data["kind"] = kind = SegmentKind.UNCLEAR.value
         logger.info("supervisor 조각을 unclear로 고침 — request인데 agent가 없다")
+    if kind == SegmentKind.REQUEST and data.get("request_mode") == RequestMode.INFO:
+        if data.get("agent") in (DomainAgentName.FOOD, DomainAgentName.GROWTH):
+            for name in ("food_task", "growth_task"):
+                if data.pop(name, None) is not None:
+                    logger.info("supervisor info 조각에서 %s 를 지움", name)
+        return data
     if (
         kind == SegmentKind.REQUEST
         and data.get("agent") == DomainAgentName.FOOD
@@ -224,6 +243,17 @@ class Segment(_Strict):
             ),
         ),
     ]
+    request_mode: Annotated[
+        RequestMode | None,
+        Field(
+            default=None,
+            description=(
+                "kind=request 에만. suggest(우리 아이에게 해 줄 것 · 기본값) / "
+                "info(아이 일반을 묻는 말 — 보통 · 또래 · N세 아이들은 · 몇 살부터). "
+                "info 면 food_task · growth_task 를 비운다"
+            ),
+        ),
+    ]
     guard: Annotated[
         GuardReason | None,
         Field(
@@ -279,6 +309,10 @@ class Segment(_Strict):
         )
         if not is_health and data.get("health_task") is not None:
             dropped.append("health_task")
+        # request 가 아니면 의미가 없다
+        is_request = data.get("kind") == SegmentKind.REQUEST
+        if data.get("request_mode") is not None and not is_request:
+            dropped.append("request_mode")
         if not dropped:
             return data
 
@@ -297,6 +331,8 @@ class Segment(_Strict):
         required = _REQUIRED_FIELD.get(SegmentKind(self.kind))
         if required is not None and getattr(self, required) is None:
             raise ValueError(f"kind={self.kind}이면 {required}가 필요하다")
+        if self.request_mode == RequestMode.INFO:
+            return self  # 일반 정보 답변은 도메인 라벨을 쓰지 않는다
         if self.kind == SegmentKind.REQUEST and self.agent == DomainAgentName.FOOD:
             if self.food_task is None:
                 raise ValueError("agent=food이면 food_task가 필요하다")

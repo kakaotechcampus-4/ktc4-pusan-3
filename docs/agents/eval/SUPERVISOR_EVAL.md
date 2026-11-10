@@ -28,6 +28,8 @@ tool spec · 응답 스키마: `app/agents/supervisor/schemas.py` (`ROUTE_TOOL_S
 | 버전 | 커밋 | 지문 | 조건 | 무엇을 왜 바꿨나 | C1 | 안정 오답 | 불안정 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | v0 | `2fc92746` | `05d6538172c2` | 미측정 | 최초 기준선. 합격선만 기존 문서에서 옮김, 수치는 다음 변경 때 전후 두 행으로 잰다. 이 규칙 전에 develop 에 들어간 프롬프트 변경(앞 대화 해석 #786 — 지문에 앞 대화 절 · 메시지 · route spec 도 넣음 · 공지 질문 조회 라우팅)은 잰 수치가 없어 다시 재지 않고 v0 지문만 그 뒤 코드로 고침 | 미측정 | 미측정 | 미측정 |
+| v1 | `be021516` | `05d6538172c2` | split · GR · HR 208 · gpt-5.6-luna/none · R3 | 바꾸기 전 프롬프트로 잼 — 일반 정보 질문(#574) 변경의 비교 기준 | 0/208 | 0 | 12 |
+| v2 | `be021516 dirty` | `aa7e4c55b5ae` | split · GR · HR 208 · gpt-5.6-luna/none · R3 | `request` 조각의 공통 칸 `request_mode`(suggest · info)와 경계 절 · 예시 6줄을 더함 (#574). 아이 일반을 묻는 말이 추천 카드로 저장되지 않게 | 0/208 | 1 | 7 |
 
 - `커밋` 은 재 본 코드. 작업 트리가 더러웠으면 커밋 옆에 `dirty` 를 적는다 (`tests/eval/agents/live_run_meta.json` 의 `dirty`).
 - `C1` 칸은 `a/b` (C1 사례 입력 수 / 전체 입력 수). `미측정` 은 v0 에만 쓴다.
@@ -58,7 +60,21 @@ tool spec · 응답 스키마: `app/agents/supervisor/schemas.py` (`ROUTE_TOOL_S
 
 ## 3. 반복해서 같은 오답 · 흔들리는 값
 
-측정 전. GR 계열은 "숫자 놀이" 가 "놀이" 낱말만 보고 activity 로 새던 경계(보정 이력은 `supervisor-agent-v1.md` §4 eval · 보정 규칙)가 알려진 흔들림이다.
+**v1 → v2 (#574 request_mode, 같은 조건 R3)** — C1 은 둘 다 0/208 이다. 한 번이라도 틀린 입력은 12 → 8 로 줄었다.
+
+| | v1 (바꾸기 전) | v2 (바꾼 뒤) |
+| --- | --- | --- |
+| 안정 오답 (3회 모두) | 없음 | FC04 |
+| 불안정 (1~2회) | FC04 · FC09 · GR08 · GR16 · GR18 · GR23 · RC01 · RC34 · RC36 · RC38 · T42 · T59 | GR18 · GR22 · RC01 · RC34 · RC36 · RC38 · T42 |
+| Growth 경계 (84회) | agent 99% · 유형 99% | agent 98% · 유형 97% |
+| Health 경계 (45회) | agent · 유형 100% · GUARDED 6/6 | agent · 유형 100% · GUARDED 6/6 |
+| split GUARDED | 66/66 | 66/66 |
+
+- FC04 "이거 먹여도 돼?" (정답 `food_check`)는 v1 에서도 1/3 이 `meal_recommendation` 으로 갔던 흔들림이고 v2 에서 3/3 이 됐다. 추천 경로로 가서 안전 관련 C1 은 아니다 — 무엇을 먹일지 묻지 않고 메뉴를 추천한다. 다음 Supervisor 보정 후보다.
+- 오답 판정은 실행마다 놓친 구간 · RECORD→REQUEST · agent · food/growth/health 유형 불일치가 하나라도 있으면 오답이다. Health 경계는 케이스별 점수 줄을 찍지 않아 합계로 본다(v1 · v2 모두 전부 맞음).
+- 일반 정보 경계(`IN01~IN14`)는 v1 프롬프트에 `request_mode` 가 없어 같은 평가셋으로 견줄 수 없어서 C1 비교에 넣지 않았다. v2 에서 따로 잰 결과는 agent 100% · info 판정 100% · info↔suggest 새는 건수 0 (`-k info_routing`, R1, Health 닫힘 반영 뒤).
+
+GR 계열은 "숫자 놀이" 가 "놀이" 낱말만 보고 activity 로 새던 경계(보정 이력은 `supervisor-agent-v1.md` §4 eval · 보정 규칙)가 알려진 흔들림이다.
 
 ## 4. 실행 방법
 
