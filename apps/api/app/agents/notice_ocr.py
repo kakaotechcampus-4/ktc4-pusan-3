@@ -21,6 +21,7 @@ from app.providers.meal_plan.schema import MealPlanJSON
 from app.providers.model_errors import MODEL_CALL_FAILURES
 from app.providers.notice.document_text import UnreadableDocument, normalize_image
 from app.providers.notice.extractor import NoticeExtractor
+from app.rules.menu_key import menu_display_name
 from app.rules.notice_text import clean_text
 
 log = logging.getLogger(__name__)
@@ -77,7 +78,8 @@ def read_photo(
         return PhotoReading(notice=notice, meal_plan=None)
     reader = ImageOcrMealPlanReader.from_settings(settings, max_calls=2, deadline=meal_deadline)
     try:
-        return PhotoReading(notice=notice, meal_plan=reader.read(image, mime_type=mime_type))
+        plan = _names_from_raw(reader.read(image, mime_type=mime_type))
+        return PhotoReading(notice=notice, meal_plan=plan)
     except ReadDeadlineExceeded:
         log.warning("meal_plan 읽기가 기한 안에 끝나지 않았다 — 공지 항목만 낸다")
         return PhotoReading(notice=notice, meal_plan=None, meal_failed=True, meal_timed_out=True)
@@ -86,3 +88,18 @@ def read_photo(
         # 식단표 호출만 시간 초과 · 429 로 실패해도 읽은 공지 항목까지 버리지 않는다
         log.warning("meal_plan 읽기 실패 — 공지 항목만 낸다 (%s)", type(e).__name__)
         return PhotoReading(notice=notice, meal_plan=None, meal_failed=True)
+
+
+def _names_from_raw(plan: MealPlanJSON) -> MealPlanJSON:
+    """메뉴 이름을 모델의 `name` 대신 원문(`raw`)에서 코드로 다시 만든다 (#908).
+
+    화면 제목과 저장 키가 이 이름으로 만들어진다(`photo_run._meal_entries` → `meal_row`).
+    모델 이름에 찌꺼기가 붙은 적이 있어서(" Riot" · "/Optional?") 원문에서 번호 · 기호만 지운다.
+    응답 스키마는 그대로 둔다 — `name` 을 빼면 프롬프트 지문이 바뀐다.
+    """
+    fixed = plan.model_copy(deep=True)
+    for day in fixed.days:
+        for meal in day.meals:
+            for item in meal.items:
+                item.name = menu_display_name(item.raw)
+    return fixed

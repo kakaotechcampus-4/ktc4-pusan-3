@@ -19,6 +19,15 @@ from app.rules.term_match import normalize
 
 _BRACKETS = re.compile(r"\([^)]*\)|\[[^\]]*\]")
 
+# 메뉴 이름에 남기는 기호. 글자 · 숫자 · 공백 말고는 이것만 남기고
+# 나머지(★ · ` · : · 따옴표 등)는 지운다.
+# `,` 는 한 칸에 두 메뉴가 붙어 온 경우 저장 키를 나누는 자리다 (photo_run.meal_row)
+_NAME_KEEP = frozenset("()&/,·~-%+. ")
+_NAME_EDGE = " ,.·&/-~+"
+_REPEATED_AMP = re.compile(r"&{2,}")
+_EMPTY_PARENS = re.compile(r"\(\s*\)")
+_SPACES = re.compile(r"\s+")
+
 
 def normalize_menu_key(name: str) -> str:
     """메뉴명 → `menu_key`. 이름이 남지 않으면 빈 문자열이다.
@@ -29,3 +38,21 @@ def normalize_menu_key(name: str) -> str:
     text = unicodedata.normalize("NFKC", name)
     text = _BRACKETS.sub(" ", text)
     return normalize(strip_allergen_marks(text))
+
+
+def menu_display_name(raw: str) -> str:
+    """급식표 원문 한 항목 → 화면 제목 · 저장 키에 쓰는 메뉴 이름 (#908).
+
+    모델이 낸 이름이 아니라 원문에서 만든다 — 모델 이름 끝에 " Riot" · "/Optional?" 같은 찌꺼기가
+    붙어 화면과 저장 키까지 간 적이 있다. 원문의 글자를 지우기만 하고 새 글자를 만들지 않는다.
+
+    알레르기 번호를 떼고(`strip_allergen_marks`), 꾸밈 기호를 지우고, 겹친 `&` 는 하나로, 번호만
+    있던 빈 괄호는 지우고, 칸 끝 쉼표 · 공백을 뗀다. 대체 메뉴 괄호("백김치(백깍두기)")와
+    "또는" · 분량("1/2")은 남긴다 — 모델 이름과 같은 모양이다.
+    """
+    stripped = strip_allergen_marks(raw)
+    text = "".join(ch for ch in stripped if ch.isalnum() or ch in _NAME_KEEP)
+    text = _REPEATED_AMP.sub("&", text)
+    text = _EMPTY_PARENS.sub("", text)
+    text = _SPACES.sub(" ", text)
+    return text.strip(_NAME_EDGE)
