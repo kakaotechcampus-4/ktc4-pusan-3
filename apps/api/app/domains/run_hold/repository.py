@@ -9,7 +9,7 @@ import uuid
 from collections.abc import Sequence
 from datetime import datetime, timedelta
 
-from sqlalchemy import ColumnElement, and_, case, delete, func, select, update
+from sqlalchemy import ColumnElement, and_, case, delete, func, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -142,6 +142,31 @@ async def hold_in_use(
         )
     )
     return found is not None
+
+
+async def share_holder_child(
+    session: AsyncSession,
+    *,
+    kind: HoldKind,
+    key: str,
+    parent_id: uuid.UUID,
+    now: datetime | None = None,
+) -> bool:
+    """그 행의 아이 행을 `FOR KEY SHARE` 로 먼저 잡는다. 아이가 없으면(지워졌다) False.
+
+    🚨 `lock_hold` 보다 먼저 부른다. 아이 삭제는 아이 행 → (CASCADE) 이 행 순서로 잠그므로, 이 행을
+       먼저 잡고 나중에 아이 행을 잡으면(공지 · 급식을 넣는 FK 검사) 겹칠 때 교착이다.
+       같은 순서(아이 → 이 행)로 잡으면 한쪽이 기다릴 뿐이다.
+    """
+    child_id = await session.scalar(
+        select(RunHold.child_id).where(RunHold.key == key, *_owned(kind, parent_id, None, now))
+    )
+    if child_id is None:
+        return False
+    held = await session.scalar(
+        text("SELECT id FROM child WHERE id = :id FOR KEY SHARE"), {"id": child_id}
+    )
+    return held is not None
 
 
 async def lock_hold(

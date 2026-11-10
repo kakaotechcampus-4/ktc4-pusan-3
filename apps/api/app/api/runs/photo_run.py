@@ -30,7 +30,13 @@ from app.domains.daycare_meal.repository import NewDaycareMeal
 from app.domains.notice.assemble import NewNoticeItem
 from app.domains.notice.models import NoticeItemHandling
 from app.domains.run_hold.models import HoldKind
-from app.domains.run_hold.repository import get_hold, lock_hold, put_hold, set_payload
+from app.domains.run_hold.repository import (
+    get_hold,
+    lock_hold,
+    put_hold,
+    set_payload,
+    share_holder_child,
+)
 from app.rules.menu_key import normalize_menu_key
 
 log = logging.getLogger(__name__)
@@ -133,7 +139,11 @@ async def lock(session: AsyncSession, run_id: str, *, parent_id: uuid.UUID) -> P
     """저장 요청의 트랜잭션에서 그 run 을 잡는다.
 
     같은 run 을 잡으려는 다른 요청은 이 트랜잭션이 commit 할 때까지 기다린다.
+    🚨 아이 행을 먼저(`FOR KEY SHARE`) 잡고 이 행을 잡는다 — 아이 삭제와 같은 잠금 순서라 겹쳐도
+       교착이 없다. 삭제가 먼저면 기다렸다가 아이가 없어 None(404)이다.
     """
+    if not await share_holder_child(session, kind=_KIND, key=run_id, parent_id=parent_id):
+        return None
     row = await lock_hold(session, kind=_KIND, key=run_id, parent_id=parent_id)
     return None if row is None else _readable(run_id, row.payload)
 
