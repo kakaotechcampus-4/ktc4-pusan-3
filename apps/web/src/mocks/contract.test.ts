@@ -1971,22 +1971,24 @@ describe("⑨ 교정은 지우지 않고 내린다", () => {
     expect((result.target as Observation).status).toBe("stand_alone");
   });
 
-  it("wrong 은 행을 지우지 않고 status 를 inactive 로 내린다", async () => {
+  // 🚨 기록의 "잘못된 기록" 은 기록 지우기로 바꿨다 (#736). 서버는 기록 `wrong` 을 400 으로 막는다.
+  it("기록에 wrong 을 보내면 400 이고 기록은 그대로다", async () => {
     const before = await api.get<ObservationsResponse>("/children/c1/observations");
     const target = before.items.find((item) => item.kind === "observation_education");
     expect(target).toBeDefined();
 
-    const result = await api.post<CorrectionResponse>("/corrections", {
-      target_ref: { kind: target!.kind, id: target!.id },
-      verdict: "wrong",
-      child_id: "c1",
-    });
+    const failure = await api
+      .post<CorrectionResponse>("/corrections", {
+        target_ref: { kind: target!.kind, id: target!.id },
+        verdict: "wrong",
+        child_id: "c1",
+      })
+      .catch((error: unknown) => error);
 
-    // 🚨 `target` 은 관찰이거나 프로필이다 — 어느 쪽인지는 `target_ref.kind` 가 정한다.
-    expect((result.target as Observation).status).toBe("inactive");
-    // 🚨 고친 기록도 목록에 남는다 — 서버는 deleted 만 뺀다 (#266). 화면이 status 로 갈라 그린다.
+    expect(isApiError(failure, "validation_failed")).toBe(true);
+    expect((failure as ApiError).status).toBe(400);
     const after = await api.get<ObservationsResponse>("/children/c1/observations");
-    expect(after.items.find((item) => item.id === target!.id)?.status).toBe("inactive");
+    expect(after.items.find((item) => item.id === target!.id)?.status).toBe("active");
     expect(after.total).toBe(before.total);
   });
 
@@ -2016,7 +2018,7 @@ describe("⑨ 교정은 지우지 않고 내린다", () => {
     await api.post<CorrectionResponse>("/corrections", body);
 
     const failure = await api
-      .post<CorrectionResponse>("/corrections", { ...body, verdict: "wrong" })
+      .post<CorrectionResponse>("/corrections", body)
       .catch((error: unknown) => error);
 
     expect(isApiError(failure, "already_corrected")).toBe(true);
@@ -2044,9 +2046,10 @@ describe("⑨ 교정은 지우지 않고 내린다", () => {
     expect(active.total).toBe(all.total - 1);
   });
 
-  it("모르는 status 는 400 이다", async () => {
+  // `inactive`(잘못된 기록)는 서버가 `deleted` 로 옮기고 필터에서도 뺐다 (#736).
+  it.each(["deleted", "inactive"])("모르는 status(%s)는 400 이다", async (status) => {
     const failure = await api
-      .get<ObservationsResponse>("/children/c1/observations", { query: { status: "deleted" } })
+      .get<ObservationsResponse>("/children/c1/observations", { query: { status } })
       .catch((error: unknown) => error);
 
     expect(isApiError(failure, "validation_failed")).toBe(true);
