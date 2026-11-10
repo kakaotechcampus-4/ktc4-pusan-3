@@ -7,16 +7,23 @@
 /** 계약서에 명시된 코드. 그 외 코드가 와도 죽지 않게 string 을 함께 허용한다. */
 export const API_ERROR_CODES = [
   // ── Idempotency-Key (계약서 §01 은 "헤더가 없으면 400" 까지만 정한다).
-  //    아래 3개는 docs/api/idempotency-v1.md 가 제안하는 신규 코드다 — 계약서 v1.1 대상.
+  //    🚨 같은 키 · 다른 본문 422 와 처리 중 409 는 만들지 않기로 했다 (#438 · 11-09 PM) — 서버는 같은 키면
+  //    처음 응답을 재생한다. 화면은 본문이 바뀌면 새 키를 쓴다(`current(text)`).
   "idempotency_key_required", // 400 되돌릴 수 없는 엔드포인트인데 헤더가 없다
-  "idempotency_key_reuse", // 422 같은 키인데 요청 내용이 다르다 — 재사용 거부
-  "idempotency_in_progress", // 409 같은 키가 아직 처리 중이다 — 중복 실행 차단
   "unauthenticated", // 401 토큰 없음·만료
   "child_access_denied", // 403 parent_child 연결 없음
   "consent_required", // 403 필수 동의 미동의·철회 — 저장 시도 전에 막힌다
   "not_found", // 404
   "owner_required", // 409
   "already_confirmed", // 409 승인 게이트 중복
+  // 🔶 409 `POST /children/{cid}/suggestions/approve` — 채택하려는 제안에 그사이 알레르기로 등록된 식품이 들어 있다
+  //    (서버 #835 · `docs/web/event-draft-ui-v1.md` §3-8 · `docs/api/suggestions-v1.md` §8).
+  //    하나라도 걸리면 **전부 거절**하고 걸린 제안 id 를
+  //    `detail.suggestion_ids` 에 싣는다. 🚨 다시 시도할 수 없다 — 같은 선택은 같은 409 다. 화면은 그 제안을 선택에서 뺀다.
+  "allergen_blocked",
+  // 409 괜찮았던 식품으로 저장하려는데 같은 이름이 알레르기로 등록돼 있다 (#825 · 서버 PR 3). 🚨 저장되지 않았다.
+  //    알레르기가 이긴다 — 그 식품이 든 제안은 막는 쪽으로 다룬다. 다시 시도해도 같은 409 다.
+  "allergy_exists",
   "already_exists", // 409 health_safety 등록 — active 끼리 (아이, 종류, 앞뒤 공백 뗀 이름)이 겹침 (#369). 🚨 실패가 아니라 "이미 기록에 있다" 다
   "already_corrected", // 409 `POST /corrections` 가 active 가 아닌 기록을 받음 (#277) — 값이 틀린 400 과 다르다
   "invite_used", // 409

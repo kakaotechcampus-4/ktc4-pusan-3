@@ -403,7 +403,8 @@ def j_rhythm(ran: Ran) -> Verdict:
 def j_learning(*, personal: str = "any", band: str | None = None) -> Judge:
     """교육 후보 — 재호출 없이 채웠으면 3개 · 안내 없음. 재호출 뒤 모자라면 개수 안내.
 
-    personal: none(전부 일반) · some(개인화 하나 이상) · any(비율만 note)
+    personal: none(전부 일반) · some(개인화 하나 이상) · all(전부 개인화 + 모든 후보가 요청 주제의
+    아이 기록을 인용) · any(비율만 note)
     band: standard(표준보육과정에서 쓴 행 — 36개월 미만) · nuri(누리과정에서 쓴 행 — 36개월부터)
     """
 
@@ -425,6 +426,21 @@ def j_learning(*, personal: str = "any", band: str | None = None) -> Judge:
             verdict.failures.append("관심 · 기록이 없는데 개인화 추천이 있다")
         if personal == "some" and result.suggestions and "personalized" not in kinds:
             verdict.failures.append("관심 · 기록이 있는데 전부 일반 추천이다")
+        if personal == "all":
+            topic_ids = set(ran.world.context.state.topic_records)
+            if not topic_ids:
+                verdict.failures.append("요청 주제의 아이 기록을 코드가 선조회하지 못했다")
+            for draft in result.suggestions:
+                if draft.kind != "personalized":
+                    verdict.failures.append(
+                        f"주제 기록이 있는데 일반 추천이다 ({draft.content[:20]})"
+                    )
+                elif not topic_ids & {c.ref.id for c in draft.citations}:
+                    verdict.failures.append("개인화인데 요청 주제의 기록을 인용하지 않았다")
+            # 난이도는 사람이 본다 — 제목 · 단계를 note 로 남긴다
+            verdict.notes += [d.content.replace("\n", " / ") for d in result.suggestions]
+        if personal == "none" and band is None:
+            verdict.notes += [d.content.replace("\n", " / ") for d in result.suggestions]
         verdict.notes.append(f"개인화 {kinds.count('personalized')}/{count}")
         for row in ran.world.context.state.seen_docs.values():
             if band == "standard" and row.max_month > 36:
@@ -961,7 +977,16 @@ CASES: tuple[Case, ...] = (
     case("T01/C80", LEARNING, j_closed(DOC_NO_ROW), model=False,
          expect="[예시]도 기록도 없음 → doc.no_row · 모델 0"),
     case("T03/C48", LEARNING, j_learning(), expect="규칙 익히기 활동"),
-    case("T04/C48", LEARNING, j_learning(), expect="숫자 활동 3개"),
+    case("T04/C48", LEARNING, j_learning(personal="all"),
+         expect="숫자 기록이 있다 → 3개 모두 그 기록을 근거로 한 개인화"),
+    case("T45/C60-math", LEARNING, j_learning(personal="all"),
+         expect="수학 기록 → 3개 모두 개인화 · reason 에 수학 · 난이도는 사람이 본다"),
+    case("T45/C48-empty", LEARNING, j_learning(personal="none"),
+         expect="수학 기록 없음 → 일반 추천 3개 · 질문(ask.learning_current)은 사람이 본다"),
+    case("T04/C40-empty", LEARNING, j_learning(personal="none"),
+         expect="기록 0 · 만 3세 — 단계 수 · 제목을 만 5세와 나란히 사람이 본다(판정 없음)"),
+    case("T04/C64-empty", LEARNING, j_learning(personal="none"),
+         expect="기록 0 · 만 5세 — 단계 수 · 제목을 만 3세와 나란히 사람이 본다(판정 없음)"),
     case("T06/C48", LEARNING, j_t06, expect="유치원 활동 연결 — lookup_notice 는 아직 없다"),
     case("T33/C48", LEARNING, j_lure, expect="공간지각 판정 없이 관심 기반 활동"),
     case("T34/C48", LEARNING, j_lure, expect="또래 비교 없음 · '늦지 않아요' 도 실패"),

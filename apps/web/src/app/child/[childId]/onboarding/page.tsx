@@ -177,7 +177,7 @@ function ChildOnboardingScreen() {
       */}
       <ChoiceField
         label="성별"
-        hint="화면에만 보여요. 제안을 고를 때는 쓰지 않아요. 밝히지 않아도 돼요."
+        hint="화면에만 보여요. 추천을 고를 때는 쓰지 않아요. 밝히지 않아도 돼요."
         value={gender}
         options={GENDER_OPTIONS}
         onChange={setGender}

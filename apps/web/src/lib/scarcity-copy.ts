@@ -42,12 +42,12 @@ export function scarcityCopy({
 }: ScarcityCopyInput): ScarcityCopy {
   if (records.length === 0) {
     return {
-      title: "이번에는 제안할 근거를 찾지 못했어요",
-      body: `${fallbackRecorded(fallbackCount)} 근거 없이 제안을 만들지는 않을게요.`,
+      title: "이번에는 추천할 근거를 찾지 못했어요",
+      body: `${fallbackRecorded(fallbackCount)} 근거 없이 추천을 만들지는 않을게요.`,
     };
   }
 
-  const followup = asked ? " 하나만 알려 주시면 다음 제안에 참고할게요." : "";
+  const followup = asked ? " 하나만 알려 주시면 다음 추천에 참고할게요." : "";
 
   if (hasPersonal) {
     const only = records[0]!;
@@ -62,7 +62,7 @@ export function scarcityCopy({
 
   return {
     title: "이번에는 일반 추천으로 골랐어요",
-    body: `${recorded(records)} 이번에는 아이 기록을 쓰지 않고, 제안마다 아래 적힌 기준으로 골랐어요.${followup}`,
+    body: `${recorded(records)} 이번에는 아이 기록을 쓰지 않고, 추천마다 아래 적힌 기준으로 골랐어요.${followup}`,
   };
 }
 

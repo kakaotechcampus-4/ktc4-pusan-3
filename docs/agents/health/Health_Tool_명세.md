@@ -193,7 +193,7 @@ Memory 가 뽑은 문장이라 보호자 말 그대로라고 보장하지 못해
 | `check_symptom_repetition` | 같은 증상 코드가 **최근 7일 안 3일 이상** 기록 (설정값, 10-18). 단위는 날 — 같은 날 여러 번은 1일, 사흘 내리면 3일. 에피소드로 세지 않는다 | `Readout(code, kind="symptom_repeat")` + 병원 찾기 버튼. 질환 연결이 서면 `symptom.repeat_condition`, 아니면 `symptom.repeat` |
 | `check_infant_fever` | **3개월 미만** + 최근 48시간 안 `fever` 코드 또는 `temperature >= 38.0` (`infant_fever` · `reference/infant_fever.yaml` — 진료 준비의 응급 판정과 같은 함수 · 같은 기준). 기록만 해도 나가야 해서 라벨 밖에 둔다 | `Readout(code, kind="emergency")` 1건 (`emergency`). 월령이 기준 이상이면 건강 기록을 읽지 않는다 · 동의가 없으면 읽지 않는다 · 생일을 못 읽으면 지어내지 않고 예외 |
 
-세는 기준: 아이 타임존의 달력 날짜 · `observed_time`이 있으면 그 날, 없으면 `observed_range`의 날들(여러 날이면 7일 창 안의 날을 다 센다) · 정정으로 내린 기록(`wrong`)은 세지 않음 · 증상은 `normalize_symptom_term` 표준 코드로 묶음.
+세는 기준: 아이 타임존의 달력 날짜 · `observed_time`이 있으면 그 날, 없으면 `observed_range`의 날들(여러 날이면 7일 창 안의 날을 다 센다) · 보호자가 지운 기록(`deleted`)은 세지 않음 · 증상은 `normalize_symptom_term` 표준 코드로 묶음.
 
 (알레르기 후보 감지 hook은 v1에서 뺐다.)
 

@@ -35,6 +35,15 @@ class SuggestionStatus(enum.StrEnum):
     EXPIRED = "expired"
 
 
+class SuggestionMealSlot(enum.StrEnum):
+    """식사 추천의 끼니. Food Agent 의 `MealSlot` 과 같은 값이다 (#898)."""
+
+    BREAKFAST = "breakfast"
+    LUNCH = "lunch"
+    DINNER = "dinner"
+    SNACK = "snack"
+
+
 class SuggestionFeedback(enum.StrEnum):
     CHILD_LIKED = "child_liked"
     CHILD_DISLIKED = "child_disliked"
@@ -92,6 +101,11 @@ class Suggestion(Base, UUIDPk, Timestamps):
     # 문서 행 근거 없이 저장되고, 05 도 문서 근거 없이 내보낸다. 저장 검사가 Activity 일반 추천일
     # 때만 켠다 — 문서 근거가 검수에서 빠진 일반 추천과 가를 수 있게 행에 남긴다 (#597 리뷰)
     requested: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, server_default=sa.false())
+    # 식사 추천의 끼니. Food 만 채운다. 근거가 아니다 — 일정 초안 제목("아침 식사")에만 쓴다 (#898).
+    # Food 가 아닌 추천 · 이 칸이 생기기 전의 행은 비어 있다
+    meal_slot: Mapped[SuggestionMealSlot | None] = mapped_column(
+        enum_col_py(SuggestionMealSlot, name="suggestion_meal_slot"), nullable=True
+    )
 
 
 class SuggestionEvent(Base):

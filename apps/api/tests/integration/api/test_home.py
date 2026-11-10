@@ -73,7 +73,7 @@ async def test_counts_include_health_and_split_at_monday(
     last_sunday = today - timedelta(days=today.weekday() + 1)
     await _food(session, cid, today)
     await _food(session, cid, last_sunday)  # 지난주 — 전체에는 들어가고 이번 주에는 아니다
-    await _food(session, cid, today, status=ObservationStatus.INACTIVE)  # 고친 기록도 센다
+    await _food(session, cid, today, status=ObservationStatus.STAND_ALONE)  # 고친 기록도 센다
     await _food(session, cid, today, status=ObservationStatus.DELETED)  # 지운 기록은 안 센다
     await create_observation(  # 건강 기록도 기록 탭처럼 센다 (#764)
         session,

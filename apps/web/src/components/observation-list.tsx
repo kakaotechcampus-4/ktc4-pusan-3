@@ -14,7 +14,6 @@ import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
 import { IconTile } from "@/components/ui/icon-tile";
 import { SkeletonText, SkeletonTile } from "@/components/ui/skeleton";
 import { isHealthObservation, type Observation } from "@/lib/api/types";
-import { cn } from "@/lib/cn";
 import { healthTitle } from "@/lib/health-observation";
 
 /**
@@ -26,17 +25,17 @@ import { healthTitle } from "@/lib/health-observation";
  *    관찰을 성향으로 확정하지 않는다 · CLAUDE.md §2)이 화면에서 사라지는 지점이다.
  *
  * ⚠️ **줄은 한 덩어리가 아니라 하나씩 떨어져 선다** (#269 · 제품 결정). 처음에는 가는 선으로만
- *    나뉜 한 덩어리였는데, 기록마다 상태(`active` · `stand_alone` · `inactive`)가 갈리면서 줄마다
- *    면을 달리 줘야 했고, 붙어 있으면 어디서 한 건이 끝나는지 읽히지 않았다. 대신 카드와 갈리는
+ *    나뉜 한 덩어리였는데, 기록마다 상태(`active` · `stand_alone`)가 갈리면서 아래 자리에 다른 것이
+ *    서게 됐고, 붙어 있으면 어디서 한 건이 끝나는지 읽히지 않았다. 대신 카드와 갈리는
  *    지점을 셋 남긴다 — **작은 모서리(`field` 10)** · **좁은 간격(8)** · **본문 크기 글자**.
  *    기억 카드는 `card` 14 · 간격 12 · 이름이 `title` 20 이다.
  *
- * 🚨 **상태는 면 + 글자로 갈린다** (색만으로 가르지 않는다 · 문서 §3).
+ * 🚨 **상태는 아래 자리의 글자로 갈린다** (색만으로 가르지 않는다 · 문서 §3).
  *    - `active`: 기본 줄. 아래 자리에 묶인 기억 **칩**
  *    - `stand_alone`(이번만 그랬어요): 같은 면. 아래 자리에 **고친 표시**("이번만 그랬어요로
  *      고친 기록"). 실제로 있었던 일이라 물러서지 않는다
- *    - `inactive`(잘못된 기록): 고친 표시 + 낡은 기억 카드와 같은 말로 **물러선다**
- *      (`surface-muted` 면 · `ink-muted` 글자 · 뉴트럴 타일) — 근거에서도 빠진 기록이다
+ *    ⚠️ 물러서는 줄(`inactive` · 잘못된 기록)은 없어졌다 (#736) — 기록 지우기로 바꿨고 서버가 남은 행을
+ *      `deleted` 로 옮겼다.
  * 🚨 **고친 표시는 칩이 아니다.** 아이콘 + 문장이고 면이 없다. 같은 자리에 서는 기억 칩과 같은
  *    알약 모양이면 "이번만 그랬어요" 가 기억 이름처럼 읽혔다 — 모양이 달라야 다른 것으로 읽힌다.
  *    라벨만 두지 않고 "…로 고친 기록" 까지 쓰는 것도 같은 이유다.
@@ -103,47 +102,29 @@ export function ObservationList({
 
 function ObservationRow({ observation, onOpen }: { observation: Observation; onOpen: () => void }) {
   const agent = observationAgent(observation.kind);
-  const wrong = observation.status === "inactive";
   const title = observationTitle(observation);
 
   return (
     <button
       type="button"
       onClick={onOpen}
-      className={cn(
-        "min-h-touch rounded-field ease-standard flex w-full items-start gap-3 border px-4 py-3.5 text-left transition-colors duration-120",
-        wrong
-          ? "bg-surface-muted active:bg-line border-transparent"
-          : "bg-surface border-line active:bg-surface-muted",
-      )}
+      className="min-h-touch rounded-field ease-standard bg-surface border-line active:bg-surface-muted flex w-full items-start gap-3 border px-4 py-3.5 text-left transition-colors duration-120"
     >
       {/* 모양과 이름은 기록 종류, 색은 그 기록을 읽는 Agent 다 — 교육 · 생활습관이 같은 성장 색이다 (#501). */}
       <IconTile
         icon={OBSERVATION_ICON[observation.kind]}
-        tone={wrong ? "neutral" : "plain"}
-        className={wrong ? undefined : domainField(agent)}
+        tone="plain"
+        className={domainField(agent)}
       />
 
       <span className="flex min-w-0 flex-1 flex-col gap-1.5">
-        <span
-          className={cn(
-            "text-body ease-standard font-semibold transition-colors duration-120",
-            wrong ? "text-ink-muted" : "text-ink",
-          )}
-        >
-          {title ?? observation.raw_text}
-        </span>
+        <span className="text-body text-ink font-semibold">{title ?? observation.raw_text}</span>
 
         {/* 원문은 근거라 한 단계 약하게 선다. 자르지 않는다 (문서 §10). 제목이 원문이면 다시 쓰지 않는다. */}
         {title ? <span className="text-body-sm text-ink-muted">{observation.raw_text}</span> : null}
 
         {/* 기록 종류와 날짜는 가운뎃점 없이 간격으로 가른다 (#524). 칩은 아래 줄. */}
-        <span
-          className={cn(
-            "text-caption ease-standard flex flex-wrap gap-x-2 transition-colors duration-120",
-            wrong ? "text-ink-muted" : "text-ink-subtle",
-          )}
-        >
+        <span className="text-caption text-ink-subtle flex flex-wrap gap-x-2">
           <span>{observationLabel(observation.kind)}</span>
           {observation.observed_label ? <span>{observation.observed_label}</span> : null}
         </span>
@@ -155,10 +136,7 @@ function ObservationRow({ observation, onOpen }: { observation: Observation; onO
         aria-hidden
         size={ICON_SIZE.md}
         strokeWidth={ICON_STROKE}
-        className={cn(
-          "ease-standard mt-2 shrink-0 transition-colors duration-120",
-          wrong ? "text-ink-muted" : "text-ink-subtle",
-        )}
+        className="text-ink-subtle mt-2 shrink-0"
       />
     </button>
   );

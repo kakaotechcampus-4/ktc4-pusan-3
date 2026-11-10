@@ -25,6 +25,7 @@ from app.agents.growth.readouts import (
 )
 from app.agents.growth.result import ErrorCode, ToolResult, fail, ok
 from app.agents.growth.review import (
+    RejectReason,
     error_code,
     explain,
     parse_id,
@@ -46,7 +47,7 @@ from app.agents.growth.tools.docs import (
     related_names,
     strategy_rows,
 )
-from app.agents.growth.tools.memory import SELF_RELIANCE, category_chains
+from app.agents.growth.tools.memory import SELF_RELIANCE, category_chains, covers_topic
 from app.agents.growth.tools.routine import (
     PickedStep,
     SameBehavior,
@@ -73,6 +74,18 @@ def _ready(context: GrowthContext) -> tuple[Gate, SafetyRules]:
     return gate, rules
 
 
+def _record_required(state: GrowthRunState) -> bool:
+    """후보마다 요청 주제 기록을 달게 하는가.
+
+    영역마다 기록이 있고 아직 그 일로 거절된 적이 없을 때만이다.
+    """
+    return (
+        bool(state.topic_records)
+        and not state.topic_record_retried
+        and covers_topic(state.topic_records.values(), state.topic)
+    )
+
+
 async def propose_learning_activity(
     context: GrowthContext, args: ProposeLearningActivityArgs
 ) -> ToolResult:
@@ -92,12 +105,14 @@ async def propose_learning_activity(
         requested=state.requested,
         # 보호자가 한 말과 프롬프트의 [월령] 이 아는 수치. 이 밖의 시간 · 횟수 · 나이는 근거가 없다
         grounds=(*state.said_texts, f"{gate.stage.months}개월"),
+        topic_records=state.topic_records if _record_required(state) else None,
     )
     if review.rejections:
         usable = (*state.seen_evidence, *state.seen_docs)
-        return fail(
-            "propose", _LEARNING, error_code(review.rejections), explain(review.rejections, usable)
-        )
+        message = explain(review.rejections, usable, topic=state.topic_records)
+        if any(r.reason is RejectReason.TOPIC_RECORD for r in review.rejections):
+            state.topic_record_retried = True
+        return fail("propose", _LEARNING, error_code(review.rejections), message)
     _log_removed(context, len(review.removed))
     state.excluded = tuple(args.items[i].title for i in review.removed)
     if not review.removed:

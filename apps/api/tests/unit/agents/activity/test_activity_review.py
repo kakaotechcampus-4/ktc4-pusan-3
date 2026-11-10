@@ -934,6 +934,70 @@ class TestSafety:
         assert draft.items == ("밀가루", "밀대")
 
 
+class TestFoods:
+    """음식 칸(foods) — 음식 활동이면 코드가 판정할 음식 이름이 있어야 한다 (#582)."""
+
+    PEANUT = SafetyEntry(kind="allergy", label="땅콩", status="active")
+
+    def food(self, **kwargs) -> ActivityCandidate:
+        base = dict(
+            content="바나나 잘라 꼬치 만들기",
+            involves_food=True,
+            foods=["바나나"],
+            materials=["꼬치"],
+            evidence=[DOC_PICK],
+        )
+        return candidate(**{**base, **kwargs})
+
+    def test_음식_활동인데_음식_칸이_비면_다시_적게_한다(self):
+        result = review(self.food(foods=[]))
+
+        assert reason_of(result) is RejectReason.FOODS_MISSING
+        assert "foods" in GUIDANCE[RejectReason.FOODS_MISSING]
+
+    def test_공백만_적은_음식_칸도_빈_칸이다(self):
+        assert reason_of(review(self.food(foods=["  "]))) is RejectReason.FOODS_MISSING
+
+    def test_음식_활동이_아니면_음식_칸이_비어도_된다(self):
+        assert review(candidate(evidence=[DOC_PICK])).rejections == ()
+
+    def test_음식_칸의_음식도_items_에_싣는다(self):
+        """승인 때 일정 준비물로 쓴다 — 재료와 같은 이름은 한 번만."""
+        (draft,) = review(
+            self.food(materials=["꼬치", "바나나"], foods=["바나나", "요거트"])
+        ).drafts
+
+        assert draft.items == ("꼬치", "바나나", "요거트")
+
+    def test_개인화_이유에_막힌_음식_이름이_나오면_다시_쓰게_한다(self):
+        """빼는 말("땅콩 없이")이어도 화면에 등록한 알레르기 이름이 나간다 (#575 ⭐3 기준)."""
+        personal = self.food(
+            reason="블록 놀이 뒤 간식으로 땅콩 없이 바나나만 써요",
+            evidence=[{"id": str(BLOCKS), "note": "블록 쌓기를 즐겨 했어요"}],
+        )
+
+        result = review(personal, safety=[self.PEANUT])
+
+        assert reason_of(result) is RejectReason.FOOD_MENTION
+        assert "땅콩" not in GUIDANCE[RejectReason.FOOD_MENTION]  # 걸린 낱말은 알려 주지 않는다
+
+    def test_일반_추천의_이유는_코드_문구로_덮어서_보지_않는다(self):
+        """기록 근거가 없으면 이유가 GENERAL_REASON 으로 바뀐다 — 거절하면 왕복만 는다."""
+        general = self.food(reason="땅콩 없이 바나나만 써요", evidence=[DOC_PICK])
+
+        (draft,) = review(general, safety=[self.PEANUT]).drafts
+
+        assert draft.reason == GENERAL_REASON
+
+    def test_알레르기와_겹치지_않는_음식_이름은_이유에_써도_된다(self):
+        personal = self.food(
+            reason="블록 놀이 뒤 바나나 간식이 잘 맞아요",
+            evidence=[{"id": str(BLOCKS), "note": "블록 쌓기를 즐겨 했어요"}],
+        )
+
+        assert review(personal, safety=[self.PEANUT]).rejections == ()
+
+
 class TestOutdoor:
     """그날 날씨 판정이 야외를 막았으면(D8) 야외 후보를 거절한다. 모델이 실내로 고친다 (#377)."""
 

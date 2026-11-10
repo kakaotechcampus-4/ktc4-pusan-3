@@ -168,11 +168,13 @@ Discord 메시지에 붙이지 않는다 (루트 CLAUDE.md §9). **`APP_ENV=loca
 (`tests/__init__.py`).
 
 로컬에서 한 번 확인하려면 `.env` 에 URL 을 넣고 아래를 돌린다 (`APP_ENV=dev` 로 local 규칙을 비켜
-간다). 서버가 뜰 때와 같은 순서로 설정을 읽고 ERROR 하나를 찍는다 — Discord 에 주황 카드로
+간다. dev 는 카카오 키 4개가 비면 뜨지 않아서 가짜 키를 같이 넘긴다 — 알림 시험은 카카오를 부르지 않는다, #310). 서버가 뜰 때와 같은 순서로 설정을 읽고 ERROR 하나를 찍는다 — Discord 에 주황 카드로
 `🟠 알림 시험` 과 `probe:<module>:1 · dev` 가 뜨면 된다.
 
 ```bash
-cd apps/api && APP_ENV=dev uv run python -c "import logging, app.main; logging.getLogger('app.probe').error('알림 시험'); logging.shutdown()"
+cd apps/api && APP_ENV=dev KAKAO_REST_API_KEY=x KAKAO_CLIENT_SECRET=x \
+  KAKAO_CALLBACK_URL=https://example.test/cb KAKAO_ADMIN_KEY=x \
+  uv run python -c "import logging, app.main; logging.getLogger('app.probe').error('알림 시험'); logging.shutdown()"
 ```
 
 ### 컨테이너 감시 (배포 실패 · redis 죽음 · 재시작 반복)
@@ -217,9 +219,9 @@ Discord 연동이 들어 있고, 보호자 정보는 가지 않는다 (주소를
 첫 배포 뒤 (서버 주소가 생겨야 한다):
 
 3. New monitor › HTTP(s), 5분 간격, 2번 Discord 연결 선택. 두 개 —
-   api `https://<도메인>/…/health` (인증 없음, `/api/v1` 밖) · web `https://<도메인>/`. IP 가 아니라 **도메인**으로
-   등록한다 — 경로 · 포트는 nginx 를 앞에 둘 때 정해진다
-4. 보안그룹에서 그 포트가 밖으로 열려 있어야 한다
+   api `https://api.<도메인>/health` (인증 없음, `/api/v1` 밖) · web `https://<도메인>/`. IP 가 아니라 **도메인**으로
+   등록한다 — 앞단은 Caddy 이고 주소는 `deploy/caddy/Caddyfile` 에 있다 (api 는 `api.` 서브도메인, 443)
+4. 보안그룹에서 443 이 밖으로 열려 있어야 한다
 
 🚨 **EC2 를 중지했다 시작하면 공인 IP 가 바뀐다** (카테캠 환경은 고정 IP 불가). 재부팅은 그대로다. 도메인을 사기로
 했으므로(10-10) 그때는 **도메인의 A 레코드만 새 IP 로 바꾼다** — 모니터 · 카카오 콜백 · 웹 빌드 · 앱은 도메인을
@@ -229,7 +231,8 @@ Discord 연동이 들어 있고, 보호자 정보는 가지 않는다 (주소를
 
 처리방침이 "로그인 유지 값은 하루 한 번 서버에서 지운다" 고 알린다. 서버의 cron 이 하루 한 번
 [`app/workers/cleanup.py`](app/workers/cleanup.py) 를 api 컨테이너 안에서 돌린다 — 만료된 로그인 세션 ·
-access · 1회용 코드 · 가입 대기표, 보관 기간(1년)이 끝난 동의 증빙, 6개월이 지난 위치 이용 확인자료를 지운다.
+access · 1회용 코드 · 가입 대기표, 보관 기간(1년)이 끝난 동의 증빙, 6개월이 지난 위치 이용 확인자료,
+35일이 지난 삭제 이력(`deletion_log`), 90일이 지난 LLM 사용량(`llm_usage`)을 지운다.
 로그에는 지운 건수만 남고, 실패하면 위의 Discord 알림으로 온다.
 
 서버 준비 — cron 은 서버 시계를 따른다. `timedatectl` 이 UTC 면 아래처럼 19시(= 한국 04시),
@@ -240,6 +243,7 @@ Asia/Seoul 이면 `0 4 * * *` 로 `crontab -e`:
 ```
 
 넣은 뒤 같은 명령을 한 번 손으로 돌려 `만료된 로그인 행 정리: session N건 …` 줄이 찍히면 된다.
+LLM 사용량 정리는 `90일 지난 LLM 사용량 정리: N건` 줄로 본다.
 로컬에서는 개발 DB 를 상대로 `uv run python -m app.workers.cleanup`.
 
 ### 기억 상태 다시 계산 (하루 한 번)

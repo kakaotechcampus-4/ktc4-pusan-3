@@ -55,7 +55,7 @@ export function AccountSection({ childId }: { childId: string }) {
           icon={KeyRound}
           title="로그인 수단"
           status="카카오"
-          note="이메일과 프로필 사진은 받아도 저장하지 않아요"
+          note="이메일과 프로필 사진은 카카오에 요청하지 않아요"
         />
         <SettingsInfoRow
           icon={DoorOpen}
@@ -72,7 +72,7 @@ export function AccountSection({ childId }: { childId: string }) {
           icon={UserMinus}
           title="탈퇴하기"
           status="쌓인 기억이 사라져요"
-          note="무엇이 어떻게 되는지 다음 화면에서 알려드려요"
+          note="무엇이 어떻게 되는지 다음 화면에서 알려 드려요"
           {...FORWARD}
         />
       </SettingsGroup>

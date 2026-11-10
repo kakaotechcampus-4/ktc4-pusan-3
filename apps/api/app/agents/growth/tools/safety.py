@@ -43,6 +43,9 @@ from app.agents.common.allergy import (
     read_label,
     related_blocks,
 )
+from app.agents.common.errors import (
+    SafetyRulesUnavailable as SafetyRulesUnavailable,  # 다시 내보낸다 (#768)
+)
 from app.agents.common.food_words import SCAN, find_food_words, preload
 from app.agents.common.reference import HazardTerms, allergen_terms, hazard_terms
 from app.agents.growth.store.ports import SafetyEntry
@@ -53,10 +56,6 @@ RemovedBy = Literal["food_term", "allergy_name", "allergy_related", "hazard_bloc
 
 # 질식 위험 음식 축. 교육 · 루틴 문장에 나오면 아이와 상관없이 뺀다
 FOOD_CHOKING_AXIS = "food_choking"
-
-
-class SafetyRulesUnavailable(Exception):
-    """안전 사전을 읽지 못했다. 빈 사전으로 통과시키지 않는다 — 교육을 닫는다."""
 
 
 @dataclass(frozen=True)

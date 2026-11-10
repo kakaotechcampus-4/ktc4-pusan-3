@@ -32,6 +32,7 @@ from pydantic import ValidationError
 
 from app.agents.common.guardrail import GuardContext, Guardrail
 from app.agents.common.llm_client import LLMClient, LLMError
+from app.agents.common.prompt_fingerprint import register_prompt
 from app.agents.common.result import DomainPending
 from app.agents.memory.bundles import MUTATING_PREFIXES, WRITES_FOR, tools_for
 from app.agents.memory.context import AgentContext
@@ -53,7 +54,8 @@ from app.agents.memory.schemas.task import (
     PendingMemoryContext,
     WorkType,
 )
-from app.rules.medicine_name import is_generic_medicine, same_medicine
+from app.core.prompt_hash import canonical_json
+from app.rules.medicine_name import is_generic_medicine, mentions_medicine, same_medicine
 from app.rules.safety_term import mentions_safety
 
 logger = logging.getLogger(__name__)
@@ -516,8 +518,14 @@ async def run(
                 )
                 # 다시 확인은 저장 0건일 때만 한다. 일부라도 저장했으면 확인이 끝나지 못할 때
                 # 그 저장까지 되돌려진다 (#678 리뷰) — 그 run 은 아래 _partial_reply 가 맡는다.
-                # 위험 물질 · 알레르기를 막은 run 은 "한 줄로만" 알리는 규칙과 안내가 따로 있다
-                recheck_missing = bool(missing) and unsaved and not _blocked(calls)
+                # 위험 물질 · 알레르기를 막은 run 은 "한 줄로만" 알리는 규칙과 안내가 따로 있다.
+                # 등록 약 거절뿐인 run 은 그 말을 pipeline 이 지운다 (#811)
+                recheck_missing = (
+                    bool(missing)
+                    and unsaved
+                    and not _blocked(calls)
+                    and not _refused_dose_hints_only(task, calls)
+                )
                 asked_again = resuming and replied.kind == "question" and not _wrote(calls)
                 if (
                     (recording and unsaved)
@@ -826,6 +834,60 @@ def _unsaved_result(
 def _blocked(calls: list[ToolCallRecord]) -> bool:
     """위험 물질 · 알레르기 이름이라 저장 게이트가 막았는가. 안내는 pipeline 이 따로 낸다."""
     return _refused(calls, ErrorCode.HAZARD) or _refused(calls, ErrorCode.SAFETY_RECORD)
+
+
+def _refused_dose_hints_only(task: MemoryTask | None, calls: list[ToolCallRecord]) -> bool:
+    """Memory 가 한 일이 등록 약 거절뿐이고, 받은 조각도 그 약을 말한 관찰뿐인가.
+
+    그러면 그 문장은 pipeline 이 복약 체크 안내에 싣고 Memory 말은 지운다
+    (`_refused_doses_checked`). 다시 확인해도 보호자에게 보이는 것이 같아 호출만 는다 (#811).
+    게이트는 체크 안내를 낼 자리가 있을 때만 켜진다(`_medication_room`). 거절이 났으면 카드가
+    맡는다.
+
+    두 기준을 같이 본다.
+      - 호출: `refused_medicine_only` — pipeline 이 말을 지우는 기준과 같은 함수다.
+      - 조각: 전부 관찰이고 조각마다 거절된 약 이름이 들어 있다. 호출만 보면 모델이 부르지 않은
+        조각 · 조회 · 일정 조각이 남은 run 도 걸린다. 약 이름은 pipeline `_with_refused_doses` 와
+        같은 `mentions_medicine` 으로 본다. 호출의 raw_text 로 짝짓지 않는다 — 모델이 원문을 바꿔
+        적는다.
+    """
+    if task is None or not task.hints or not refused_medicine_only(calls):
+        return False
+    refused = refused_medicines(calls)
+    return all(
+        WorkType(hint.work) is WorkType.OBSERVE
+        and any(mentions_medicine(hint.text, name) for name in refused)
+        for hint in task.hints
+    )
+
+
+def refused_medicine_only(calls: Sequence[ToolCallRecord]) -> bool:
+    """한 일이 등록 약 거절뿐인가 — 등록 약 거절이 있고, 나머지 호출은 쓰기가 아닌 성공이다.
+
+    Memory 의 다시 확인 건너뛰기(`_refused_dose_hints_only`)와 pipeline 이 Memory 말을 지우는
+    기준(`_refused_doses_checked`)이 같이 쓴다 (#811). 둘이 어긋나면 건너뛴 말이 지워지지 않고
+    확인 없이 나간다 — 인자 오류로 한 번 실패한 뒤 거절된 run 이 그렇다. 다른 이유로 실패한
+    호출(되묻기)이나 성공한 쓰기(저장 · 고치기 · 지우기 · 일정 초안)가 있으면 거짓이다.
+    """
+    return any(_medicine_refused(call) for call in calls) and all(
+        _medicine_refused(call) or (call.success and not call.name.startswith(MUTATING_PREFIXES))
+        for call in calls
+    )
+
+
+def refused_medicines(calls: Sequence[ToolCallRecord]) -> tuple[str, ...]:
+    """저장 게이트가 등록된 약이라 거절한 호출이 말한 약 이름들. 빈 이름은 뺀다."""
+    return tuple(
+        name
+        for call in calls
+        if _medicine_refused(call)
+        and (name := str(call.arguments.get("medication_given") or "").strip())
+    )
+
+
+def _medicine_refused(call: ToolCallRecord) -> bool:
+    """저장 게이트가 등록된 약이라 거절한 호출인가."""
+    return call.result.get("error", {}).get("code") == ErrorCode.REGISTERED_MEDICINE
 
 
 def _settle(reply: MemoryReply, calls: list[ToolCallRecord], *, claimed: bool) -> MemoryReply:
@@ -1319,7 +1381,8 @@ async def _hazard(name: str, arguments: dict[str, Any], guardrail: Guardrail) ->
     """관찰 create · update 의 대상 이름이 위험 물질인가. 원문(raw_text)은 보지 않는다.
 
     칸마다 따로 본다(이어 붙이지 않는다). 검사를 못 하면 `GuardrailUnavailableError` 가 그대로
-    올라가 run 이 멈춘다 — 저장하지 않는 쪽으로 닫힌다 (fail-closed).
+    올라가고, pipeline 이 `guard_unavailable` 로 run 을 끝낸다 — 저장하지 않는 쪽으로 닫힌다
+    (fail-closed).
     """
     for prefix in ("create_", "update_"):
         found = _HAZARD_FIELDS.get(name.removeprefix(prefix)) if name.startswith(prefix) else None
@@ -1492,3 +1555,52 @@ def _assistant_message(message: Any) -> dict[str, Any]:
 def _accumulate(total: dict[str, int], usage: dict[str, int]) -> None:
     for key, value in usage.items():
         total[key] = total.get(key, 0) + value
+
+
+# ── 프롬프트 지문 (#770) ────────────────────────────────────────────────
+# system 프롬프트 밖에서 모델에 가는 글.
+# 재시도 · 되묻기 문구와 tool 실패 사유, user 메시지 머리말이다.
+# 화면에 그대로 나가는 글(_UNSAVED_FALLBACK 등)은 모델 입력이 아니라 넣지 않는다.
+# 여기 이름을 더하거나 빼면 지문이 바뀐다
+# — 평가 문서(docs/agents/eval/MEMORY_EVAL.md)에 행을 더한다.
+_MODEL_TEXTS: tuple[str, ...] = (
+    "_HINT_HEADER",
+    "_CONTINUATION_HEADER",
+    "_RESUME_HEADER",
+    "_WHOLE_FRAGMENT",
+    "_NOT_CHILD_RECORD_ALONE",
+    "_NOT_CHILD_RECORD_MIXED",
+    "_HAZARD",
+    "_SAFETY_RECORD",
+    "_MEDICINE_REGISTERED",
+    "_LOOKUP_FIRST",
+    "_FOUND_HEADER",
+    "_BAD_JSON",
+    "_EMPTY_TURN",
+    "_PENDING_RETRY",
+    "_UNSAVED_REPLY",
+    "_RESUME_UNSAVED",
+    "_FIRST_RUN_UNSAVED_REPLY",
+    "_RESUME_ONE_RECORD",
+    "_SAVED_FEVER_HEADER",
+)
+
+
+def _fingerprint_parts() -> tuple[str, ...]:
+    """프롬프트 지문의 입력 — 고정 시각으로 렌더링한 system 프롬프트, tool spec, 응답 스키마 두 벌
+    (처음 run · 이어받기), 그리고 system 밖에서 모델에 가는 문구."""
+    from app.agents.common.prompt_fingerprint import fixed_context, tools_text
+    from app.agents.memory import prompt as memory_prompt
+    from app.agents.memory.schemas import reply, tool_defs
+
+    texts = globals()
+    return (
+        memory_prompt.build_system_prompt(fixed_context()),  # type: ignore[arg-type]
+        tools_text(tool_defs.TOOL_DEFINITIONS),
+        canonical_json(reply.REPLY_FORMAT),
+        canonical_json(reply.CONTINUATION_REPLY_FORMAT),
+        *(texts[name] for name in _MODEL_TEXTS),
+    )
+
+
+register_prompt("memory", _fingerprint_parts)

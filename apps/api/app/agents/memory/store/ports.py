@@ -110,6 +110,48 @@ class EventRow:
         return summary
 
 
+@dataclass(frozen=True)
+class NoticeItemRow:
+    """공지 항목 하나 (#832). 모델이 읽는 값이라 식별자 · 저장 메타 칸이 애초에 없다.
+
+    enum 칸은 문자열 값이다 — Agent 는 `domains` 를 import 하지 않는다. 한국어 라벨과 KST 문자열은
+    tool 이 만든다.
+    """
+
+    handling: str  # calendar / todo / info
+    label: str
+    title: str
+    target_scope: str  # child / class / all / conditional / unknown
+    starts_at: datetime | None
+    ends_at: datetime | None
+    all_day: bool
+    due_at: datetime | None
+    due_all_day: bool
+    details: tuple[tuple[str, str], ...]  # (name, value) — 저장된 순서 그대로
+    supplies: tuple[str, ...]
+    source_quote: str
+    done_at: datetime | None
+
+
+@dataclass(frozen=True)
+class NoticeRow:
+    """기관에서 받은 공지 1건과 항목 (#832). 보호자가 확인하고 저장한 것만 있다.
+
+    🚨 `id` · `child_id` · `content_hash` 같은 식별자와 `extractor_version` · `created_at` ·
+       `updated_at` 같은 저장 메타는 담지 않는다. 받은 때는 `received_at` 이 맡는다.
+    """
+
+    doc_kind: str  # daily_note / newsletter / meal_plan / schedule / message / other
+    input_format: str
+    audience_scope: str  # child / class / institution / unknown
+    issued_on: date | None
+    received_at: datetime
+    title: str | None
+    raw_text: str
+    relation: str | None  # correction / follow_up
+    items: tuple[NoticeItemRow, ...]
+
+
 def supports_series(store: object) -> bool:
     """이 store 가 반복 묶음(`SeriesRow` · `list_series_events` …)을 다룰 수 있는지.
 
@@ -275,6 +317,25 @@ class MemoryStore(Protocol):
         ...
 
     async def delete_event_item(self, *, item_id: str) -> bool: ...
+
+    # 기관 공지 (#832) — 읽기만 한다
+    async def query_notices(
+        self,
+        *,
+        child_id: UUID,
+        date_from: date | None = None,
+        date_to: date | None = None,
+        text_query: str | None = None,
+        doc_kind: str | None = None,
+        limit: int,
+    ) -> list[NoticeRow]:
+        """받은 시각 최신순으로 최대 `limit` 건. 항목은 시작 → 마감 → 제목 순(없으면 뒤).
+
+        날짜(한국 시간 하루 단위, 한쪽이 None 이면 그쪽은 열림)는 아래 중 하나라도 기간에 걸리면
+        찾는다 — 공지의 날(`issued_on`, 없으면 받은 날), 항목의 시작~끝, 항목의 마감.
+        낱말은 공지 제목 · 원문, 항목 제목 · 이름표 중 하나에 들면 찾는다.
+        """
+        ...
 
     # delete proposal (#535)
     async def propose_delete(

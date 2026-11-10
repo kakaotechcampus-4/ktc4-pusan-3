@@ -63,6 +63,11 @@ async def _make_suggestion(
     return row
 
 
+# 05 는 하루 한도 · 다시 시도 보관함을 표(rate_event · run_hold, #877)에 쓴다 — 테스트
+# 트랜잭션에 묶어 끝나면 되돌린다. 안 묶으면 한도 행이 커밋돼 로컬 DB 에 남는다
+pytestmark = pytest.mark.usefixtures("pending_db")
+
+
 # ── 추천 받기 가드 ───────────────────────────────────────────────────────
 
 
@@ -122,7 +127,7 @@ async def test_evidence_label_and_is_stale_are_filled(
 
 
 async def test_answer_question_returns_501(db_client: AsyncClient, bearer: Bearer, cid: uuid.UUID):
-    """POST /children/{cid}/answers는 agent 연결 전까지 501."""
+    """POST /children/{cid}/answers 는 아직 답을 받지 않아 501."""
     headers, _ = bearer
     resp = await db_client.post(
         f"/api/v1/children/{cid}/answers",

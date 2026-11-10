@@ -34,6 +34,7 @@ from app.agents.entrypoint import (
 from app.agents.memory.schemas.task import WorkType
 from app.api import agent_ports, idempotency
 from app.api.runs import pending_reply, registry, runner, suggestion_retry
+from app.core import llm_usage
 from app.domains.child.agent_reader import DbChildBasicReader
 from app.domains.medication.agent_reader import DbMedicationStore
 from app.domains.memory.profile.agent_reader import DbAffinityReader
@@ -90,6 +91,32 @@ async def test_agent_job_calls_the_agents_entrypoint_and_relays_its_events(monke
     assert isinstance(seen["growth_log"], DbGrowthLogReader)
     assert names(channel) == ["step", "done"]
     assert channel.closed
+
+
+async def test_입력_run_은_보호자_와_run_으로_귀속한다(monkeypatch):
+    """LLM 사용량(#710) — Agent 도 Curator 도 이 run 의 보호자 · run_id 로 남는다.
+
+    Curator 는 run 안에서 태스크로 떠서(trigger_curator_background) 귀속을 복사한다.
+    """
+    seen: list[llm_usage.Attribution | None] = []
+
+    async def fake_handle_input(**kwargs):
+        seen.append(llm_usage.current())
+
+        async def curator_like():
+            seen.append(llm_usage.current())
+
+        await asyncio.create_task(curator_like())
+        kwargs["emit"](Done(kwargs["run_id"], 0))
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+
+    job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    expected = llm_usage.Attribution(parent_id=PARENT, run_id=channel.run_id, source="input")
+    assert seen == [expected, expected]
 
 
 def _location_logs(monkeypatch, result: bool | Exception = True) -> list[uuid.UUID]:
@@ -356,7 +383,11 @@ async def test_agent_job_stops_a_run_past_the_deadline(monkeypatch):
     await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
 
     assert names(channel) == ["step", "failed"]
-    assert channel.events[-1][1] == {"reason": "timeout", "raw_text": RAW_TEXT}
+    assert channel.events[-1][1] == {
+        "reason": "timeout",
+        "raw_text": RAW_TEXT,
+        "message": "시간 안에 답을 만들지 못했어요. 잠시 뒤 다시 보내 주세요.",
+    }
     assert await idempotency.recall(**scope) is None
 
 
@@ -374,7 +405,11 @@ async def test_job_that_returns_without_an_end_signal_ends_with_failed():
     await asyncio.wait_for(runner.start(channel, quiet, raw_text=RAW_TEXT), timeout=1)
 
     assert names(channel) == ["step", "failed"]
-    assert channel.events[-1][1] == {"reason": "internal_error", "raw_text": RAW_TEXT}
+    assert channel.events[-1][1] == {
+        "reason": "internal_error",
+        "raw_text": RAW_TEXT,
+        "message": "처리하다 문제가 생겼어요. 다시 보내 주세요.",
+    }
 
 
 async def test_untranslatable_event_fails_the_run_loudly(monkeypatch, caplog):
@@ -405,7 +440,11 @@ async def test_untranslatable_event_fails_the_run_loudly(monkeypatch, caplog):
     await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
 
     assert names(channel) == ["step", "failed"]
-    assert channel.events[-1][1] == {"reason": "internal_error", "raw_text": RAW_TEXT}
+    assert channel.events[-1][1] == {
+        "reason": "internal_error",
+        "raw_text": RAW_TEXT,
+        "message": "처리하다 문제가 생겼어요. 다시 보내 주세요.",
+    }
     assert await idempotency.recall(**scope) is None
     assert "ValueError" in caplog.text
     assert secret not in caplog.text
@@ -512,7 +551,11 @@ async def test_job_exception_ends_with_failed_only_and_channel_closes():
     await asyncio.wait_for(task, timeout=1)
 
     assert names(channel) == ["step", "failed"]
-    assert channel.events[1][1] == {"reason": "internal_error", "raw_text": "계란말이 또 찾아요"}
+    assert channel.events[1][1] == {
+        "reason": "internal_error",
+        "raw_text": "계란말이 또 찾아요",
+        "message": "처리하다 문제가 생겼어요. 다시 보내 주세요.",
+    }
     assert channel.closed
 
 
@@ -567,9 +610,13 @@ async def test_fake_job_walks_three_steps_then_done():
 _PENDING = PendingMemoryContext("요즘 기침해", "언제부터였어요?", WorkType.OBSERVE)
 
 
+def _fake():
+    """이 폴더 conftest 가 끼운 메모리 가짜 보관함(`FakePendingReply`). 속(`entries`)을 본다."""
+    return pending_reply.get.__self__  # put 은 느린 저장 시험이 바꿔 끼운다
+
+
 async def test_되묻기로_끝난_run_의_맥락은_채널이_아니라_store_로_간다(monkeypatch):
     # 조각 원문이 들어 있다. 화면으로 흘리지 않고 다음 입력의 reply_to 가 찾을 곳에 둔다
-    pending_reply.clear()
 
     async def fake_handle_input(**kwargs):
         emit = kwargs["emit"]
@@ -584,14 +631,12 @@ async def test_되묻기로_끝난_run_의_맥락은_채널이_아니라_store_�
     await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
 
     assert names(channel) == ["note", "done"]
-    stored = pending_reply.get(run_id=channel.run_id, parent_id=PARENT, child_id=CHILD)
+    stored = await pending_reply.get(run_id=channel.run_id, parent_id=PARENT, child_id=CHILD)
     assert stored == _PENDING
-    pending_reply.clear()
 
 
 async def test_답을_받는_질문은_보내기_전에_맥락이_들어간다(monkeypatch):
     """질문 카드가 화면에 보일 때 답(reply_to)이 바로 올 수 있다 — 맥락이 없으면 400 이다."""
-    pending_reply.clear()
     seen: list[bool] = []
 
     async def fake_handle_input(**kwargs):
@@ -606,8 +651,8 @@ async def test_답을_받는_질문은_보내기_전에_맥락이_들어간다(m
 
     def checking_publish(event):
         if event[0] == "agent_result":
-            stored = pending_reply.get(run_id=channel.run_id, parent_id=PARENT, child_id=CHILD)
-            seen.append(stored == _PENDING)
+            entry = _fake().entries.get(channel.run_id)
+            seen.append(entry is not None and entry.context == _PENDING)
         return publish(event)
 
     monkeypatch.setattr(channel, "publish", checking_publish)
@@ -618,12 +663,207 @@ async def test_답을_받는_질문은_보내기_전에_맥락이_들어간다(m
     assert seen == [True]
     (payload,) = [p for n, p in channel.events if n == "agent_result"]
     assert (payload["question"], payload["awaits_reply"]) == ("언제부터였어요?", True)
-    pending_reply.clear()
+
+
+def _slow_put(monkeypatch, *, delay: float = 0.05, result: bool | Exception = True):
+    """맥락 저장이 DB 왕복만큼 걸리게(또는 실패하게) 바꿔 끼운다."""
+    fake = _fake()
+    real_put = fake.put
+
+    async def slow_put(**kwargs):
+        await asyncio.sleep(delay)
+        if isinstance(result, Exception):
+            raise result
+        if result:
+            await real_put(**kwargs)
+        return result
+
+    monkeypatch.setattr(pending_reply, "put", slow_put)
+
+
+async def test_저장이_느려도_질문_카드와_끝_신호보다_맥락이_먼저_들어간다(monkeypatch):
+    """맥락 저장은 DB 라 시간이 걸린다(#877). 질문 카드가 보이면 보호자가 바로 답할 수 있어서,
+    저장을 시작한 뒤의 이벤트는 저장이 끝날 때까지 기다렸다가 원래 순서대로 나간다."""
+    _slow_put(monkeypatch)
+    seen: list[tuple[str, bool]] = []
+
+    async def fake_handle_input(**kwargs):
+        emit = kwargs["emit"]
+        emit(PendingReply(kwargs["run_id"], _PENDING))
+        emit(MemoryNote("언제부터였어요?", "question"))
+        emit(AgentQuestion("growth", "routine_coaching", "언제부터였어요?", awaits_reply=True))
+        emit(Done(kwargs["run_id"], 2))
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+    publish = channel.publish
+
+    def checking_publish(event):
+        seen.append((event[0], channel.run_id in _fake().entries))
+        return publish(event)
+
+    monkeypatch.setattr(channel, "publish", checking_publish)
+
+    job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    assert seen == [("note", True), ("agent_result", True), ("done", True)]
+
+
+async def test_저장_전에_나온_이벤트는_기다리지_않는다(monkeypatch):
+    """되묻기와 상관없는 앞 이벤트(진행 단계 등)까지 늦추면 화면이 멈춘 것처럼 보인다."""
+    _slow_put(monkeypatch)
+    seen: list[tuple[str, bool]] = []
+
+    async def fake_handle_input(**kwargs):
+        emit = kwargs["emit"]
+        emit(MemoryNote("기록했어요", "message"))
+        emit(PendingReply(kwargs["run_id"], _PENDING))
+        emit(Done(kwargs["run_id"], 2))
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+    publish = channel.publish
+
+    def checking_publish(event):
+        seen.append((event[0], channel.run_id in _fake().entries))
+        return publish(event)
+
+    monkeypatch.setattr(channel, "publish", checking_publish)
+
+    job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    assert seen == [("note", False), ("done", True)]
+
+
+async def test_되묻기_저장이_실패해도_run_은_done_으로_끝나고_원문을_로그에_남기지_않는다(
+    monkeypatch, caplog
+):
+    """저장이 안 되면 그 질문에 답할 때 400 이 날 뿐이다.
+
+    이미 한 기록 · 추천을 failed 로 덮지 않는다.
+    """
+
+    class HoldDown(Exception):
+        pass
+
+    _slow_put(monkeypatch, result=HoldDown("요즘 기침해"))
+
+    async def fake_handle_input(**kwargs):
+        emit = kwargs["emit"]
+        emit(PendingReply(kwargs["run_id"], _PENDING))
+        emit(Done(kwargs["run_id"], 2))
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+
+    job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    assert names(channel)[-1] == "done"
+    assert "HoldDown" in caplog.text
+    assert "요즘 기침해" not in caplog.text and "언제부터였어요?" not in caplog.text
+
+
+async def test_지운_아이라_저장되지_않아도_조용히_done_으로_끝난다(monkeypatch, caplog):
+    """run 도중 아이가 지워졌다 — 맥락을 남기지 않는 것이 맞는 결과라 오류 알림을 내지 않는다."""
+    _slow_put(monkeypatch, result=False)
+
+    async def fake_handle_input(**kwargs):
+        emit = kwargs["emit"]
+        emit(PendingReply(kwargs["run_id"], _PENDING))
+        emit(Done(kwargs["run_id"], 2))
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+
+    job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    assert names(channel)[-1] == "done"
+    assert not [r for r in caplog.records if r.levelname == "ERROR"]
+
+
+async def test_저장을_기다리다_시간이_다_돼도_잡아_둔_이벤트는_끝_신호보다_먼저_나간다(monkeypatch):
+    """시간 제한이 저장 태스크까지 취소하면 잡아 둔 결과 · 질문 카드가 화면과 대화 기록에서
+    사라진다.
+
+    저장은 시간 제한과 따로 끝까지 돌고(그래야 맥락이 남는다), 잡아 둔 이벤트는 끝 신호 전에 낸다.
+    """
+    _slow_put(monkeypatch, delay=0.3)
+    monkeypatch.setattr(runner, "RUN_DEADLINE_SECONDS", 0.1)
+
+    async def fake_handle_input(**kwargs):
+        emit = kwargs["emit"]
+        emit(PendingReply(kwargs["run_id"], _PENDING))
+        emit(AgentQuestion("growth", "routine_coaching", "언제부터였어요?", awaits_reply=True))
+        emit(Done(kwargs["run_id"], 2))
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+
+    job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    assert names(channel) == ["agent_result", "done"]
+    await asyncio.sleep(0.4)  # 저장은 취소되지 않고 끝까지 간다
+    assert channel.run_id in _fake().entries
+
+
+async def test_저장_중에_Agent_가_죽어도_잡아_둔_이벤트는_failed_보다_먼저_나간다(monkeypatch):
+    """예전에는 바로 나갔을 결과가 끝 신호 뒤로 밀려 버려지면 안 된다."""
+    _slow_put(monkeypatch, delay=0.3)
+
+    async def fake_handle_input(**kwargs):
+        emit = kwargs["emit"]
+        emit(PendingReply(kwargs["run_id"], _PENDING))
+        emit(MemoryNote("기록했어요", "message"))
+        raise RuntimeError("synthetic")
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+
+    job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
+    await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
+
+    assert names(channel) == ["note", "failed"]
+
+
+async def test_이어받기_맥락을_지우는_것이_실패해도_run_은_done_이다(monkeypatch, caplog):
+    """정리(drop)가 DB 오류를 내도 run 결과를 덮지 않는다 — 맥락은 15분 뒤 만료된다
+    (#899 jjaa0803 리뷰 🟠1)."""
+    await _claim_prev()
+
+    async def drop_down(run_id):
+        raise ConnectionError("synthetic")
+
+    monkeypatch.setattr(pending_reply, "drop", drop_down)
+
+    async def fake_handle_input(**kwargs):
+        kwargs["emit"](Done(kwargs["run_id"], 1))
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+
+    job = runner.agent_job(
+        child_id=CHILD,
+        parent_id=PARENT,
+        raw_text="3일 전부터",
+        continuation=_PENDING,
+        reply_to="r-prev",
+    )
+    await asyncio.wait_for(runner.start(channel, job, raw_text="3일 전부터"), timeout=1)
+
+    assert names(channel) == ["done"]
+    assert "ConnectionError" in caplog.text
+    assert not [
+        r for r in caplog.records if "job 이" in r.getMessage()
+    ]  # job 이 터진 것으로 보지 않는다
 
 
 async def test_실패_맥락과_0개_기록은_보관함으로만_간다(monkeypatch):
     """실패 맥락에는 요청 원문 조각이 있다. 화면 · 로그로 보내지 않고 05 보관함에만 둔다 (#249)."""
-    suggestion_retry.clear()
     sent_at = datetime(2026, 1, 1, tzinfo=UTC)
 
     async def fake_handle_input(**kwargs):
@@ -640,17 +880,16 @@ async def test_실패_맥락과_0개_기록은_보관함으로만_간다(monkeyp
     await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
 
     assert names(channel) == ["done"]  # 화면에는 아무것도 가지 않는다
-    claimed = suggestion_retry.claim(
+    claimed = await suggestion_retry.claim(
         run_id=channel.run_id, parent_id=PARENT, child_id=CHILD, agent="food"
     )
     assert claimed == suggestion_retry.RetryTask("meal_recommendation", ("저녁 추천해줘",), sent_at)
     assert (
-        suggestion_retry.empty_message(
+        await suggestion_retry.empty_message(
             run_id=channel.run_id, parent_id=PARENT, child_id=CHILD, agent="activity"
         )
         == "조건에 맞는 추천이 없어요."
     )
-    suggestion_retry.clear()
 
 
 async def test_이어받기_맥락을_진입점에_넘긴다(monkeypatch):
@@ -734,23 +973,22 @@ async def test_동의_값을_안_받은_job_은_동의_없음으로_바꿔_넘�
     assert seen["child_health_granted"] is None
 
 
-def _claim_prev() -> float:
-    """창구처럼 앞 질문의 맥락을 넣고 "사용 중" 으로 둔다. 넣은 시각을 돌려준다."""
-    pending_reply.clear()
-    pending_reply.put(run_id="r-prev", parent_id=PARENT, child_id=CHILD, context=_PENDING)
-    pending_reply.claim(run_id="r-prev", parent_id=PARENT, child_id=CHILD)
-    return pending_reply._pending["r-prev"].stored_at
+async def _claim_prev() -> datetime:
+    """창구처럼 앞 질문의 맥락을 넣고 "사용 중" 으로 둔다. 만료 시각을 돌려준다."""
+    await pending_reply.put(run_id="r-prev", parent_id=PARENT, child_id=CHILD, context=_PENDING)
+    await pending_reply.claim(run_id="r-prev", parent_id=PARENT, child_id=CHILD)
+    return _fake().entries["r-prev"].expires_at
 
 
-def _released() -> bool:
+async def _released() -> bool:
     """표시만 풀렸다 — 같은 질문에 다시 답할 수 있다."""
-    return pending_reply.get(run_id="r-prev", parent_id=PARENT, child_id=CHILD) == _PENDING
+    return await pending_reply.get(run_id="r-prev", parent_id=PARENT, child_id=CHILD) == _PENDING
 
 
 async def test_이어받기_run_이_실패하면_표시만_풀고_처음_시각을_둔다(monkeypatch):
     # 표시를 풀지 않으면 "다시 시도" 가 400 을 받는다. 지웠다 다시 넣으면 실패할 때마다
     # 15분이 새로 시작된다 (#564)
-    stored_at = _claim_prev()
+    expires_at = await _claim_prev()
 
     async def fake_handle_input(**kwargs):
         kwargs["emit"](Failed("llm_unavailable", "3일 전부터"))
@@ -767,13 +1005,12 @@ async def test_이어받기_run_이_실패하면_표시만_풀고_처음_시각�
     )
     await asyncio.wait_for(runner.start(channel, job, raw_text="3일 전부터"), timeout=1)
 
-    assert _released()
-    assert pending_reply._pending["r-prev"].stored_at == stored_at
-    pending_reply.clear()
+    assert await _released()
+    assert _fake().entries["r-prev"].expires_at == expires_at
 
 
 async def test_이어받기_run_이_끝나면_맥락을_지운다(monkeypatch):
-    _claim_prev()
+    await _claim_prev()
 
     async def fake_handle_input(**kwargs):
         kwargs["emit"](Done(kwargs["run_id"], 1))
@@ -790,7 +1027,7 @@ async def test_이어받기_run_이_끝나면_맥락을_지운다(monkeypatch):
     )
     await asyncio.wait_for(runner.start(channel, job, raw_text="3일 전부터"), timeout=1)
 
-    assert "r-prev" not in pending_reply._pending
+    assert "r-prev" not in _fake().entries
 
 
 async def test_commit_후_예외가_나도_키를_풀지_않는다(monkeypatch):
@@ -824,7 +1061,7 @@ async def test_이어받기_commit_후_예외가_나도_맥락을_지운다(monk
     """이어받기 run 에서 commit 뒤 터져도 표시를 풀지 않고 지운다.
     이미 답이 저장됐으니 다시 답할 수 있게 두면 같은 답이 두 번 저장된다.
     """
-    _claim_prev()
+    await _claim_prev()
 
     async def fake_handle_input(**kwargs):
         kwargs["store"].wrote = True
@@ -846,12 +1083,11 @@ async def test_이어받기_commit_후_예외가_나도_맥락을_지운다(monk
     # commit 됐으므로 done 으로 끝남
     assert channel.ended_with == "done"
     # 이미 저장됐으니 다시 답할 일이 없다
-    assert "r-prev" not in pending_reply._pending
-    pending_reply.clear()
+    assert "r-prev" not in _fake().entries
 
 
 async def test_이어받기_run_이_예외로_죽어도_표시를_푼다(monkeypatch):
-    _claim_prev()
+    await _claim_prev()
 
     async def fake_handle_input(**kwargs):
         raise RuntimeError("boom")
@@ -869,8 +1105,7 @@ async def test_이어받기_run_이_예외로_죽어도_표시를_푼다(monkeyp
     await asyncio.wait_for(runner.start(channel, job, raw_text="3일 전부터"), timeout=1)
 
     assert channel.ended_with == "failed"
-    assert _released()
-    pending_reply.clear()
+    assert await _released()
 
 
 async def test_timeout이_commit_뒤에_걸려도_done으로_끝난다(monkeypatch):
@@ -918,7 +1153,7 @@ async def test_commit_전_timeout은_failed로_끝나고_키가_풀린다(monkey
 
 async def test_이어받기_timeout이_commit_뒤에_걸려도_done_이고_맥락을_지운다(monkeypatch):
     """이어받기 run에서 commit 후 timeout → done + 맥락 지움."""
-    _claim_prev()
+    await _claim_prev()
 
     async def fake_handle_input(**kwargs):
         kwargs["store"].wrote = True
@@ -939,12 +1174,12 @@ async def test_이어받기_timeout이_commit_뒤에_걸려도_done_이고_맥�
     await asyncio.wait_for(runner.start(channel, job, raw_text="3일 전부터"), timeout=2)
 
     assert channel.ended_with == "done"
-    assert "r-prev" not in pending_reply._pending
+    assert "r-prev" not in _fake().entries
 
 
 async def test_이어받기_timeout이_commit_전에_걸리면_failed_이고_표시를_푼다(monkeypatch):
     """이어받기 run에서 commit 전 timeout → failed + 표시만 풂."""
-    _claim_prev()
+    await _claim_prev()
 
     async def fake_handle_input(**kwargs):
         await asyncio.sleep(999)  # commit 전에 timeout
@@ -963,8 +1198,7 @@ async def test_이어받기_timeout이_commit_전에_걸리면_failed_이고_표
     await asyncio.wait_for(runner.start(channel, job, raw_text="3일 전부터"), timeout=2)
 
     assert channel.ended_with == "failed"
-    assert _released()
-    pending_reply.clear()
+    assert await _released()
 
 
 async def test_저장_안_한_run의_commit_후_예외는_failed로_끝난다(monkeypatch):
@@ -1358,7 +1592,6 @@ async def test_화면에_안_나간_조회_카드는_대화에도_남기지_않�
 
 
 async def test_실패_맥락은_해석과_보호자_원문을_같이_보관한다(monkeypatch):
-    suggestion_retry.clear()
     sent_at = datetime(2026, 1, 1, tzinfo=UTC)
 
     async def fake_handle_input(**kwargs):
@@ -1382,7 +1615,7 @@ async def test_실패_맥락은_해석과_보호자_원문을_같이_보관한�
     job = runner.agent_job(child_id=CHILD, parent_id=PARENT, raw_text=RAW_TEXT)
     await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
 
-    claimed = suggestion_retry.claim(
+    claimed = await suggestion_retry.claim(
         run_id=channel.run_id, parent_id=PARENT, child_id=CHILD, agent="activity"
     )
     assert claimed == suggestion_retry.RetryTask(
@@ -1392,4 +1625,3 @@ async def test_실패_맥락은_해석과_보호자_원문을_같이_보관한�
         original_texts=("더 쉬운 건 없어?",),
         prior_texts=("블록 놀이 추천해줘",),
     )
-    suggestion_retry.clear()

@@ -7,7 +7,8 @@
 재능 · 소질 · 문제 행동)은 사람이 검수하는 문서 행용이다. 한 글자 어간을 모델 문장에 그대로 걸면
 "늦은 오후 산책" · "느리게 걷기 놀이" · "산 정상까지 걷기" 가 걸린다. 그래서 여기는 **평가로
 쓰일 때의 형태**만 둔다. 낱말은 공백을 무시하고 부분 일치로 찾고, 낱말로 못 잡는 모양
-(또래 비교 · 성장 항목의 빠르기 판정 · "~한 편이에요")은 정규식으로 찾는다.
+(또래 비교 · 나이 · 학년과 견주는 말 · 성장 항목의 빠르기 판정 · "~한 편이에요")은 정규식으로
+찾는다.
 아니라고 안심시키는 말("한글이 늦지 않아요" · "늦은 게 아니에요" · "아직 늦지 않았어요")과
 "또래 아이들도 아직 못 해요" 처럼 또래도 못 한다고 안심시키는 말도 판정이다.
 
@@ -98,8 +99,14 @@ _NOT_SLOW = re.compile(r"(?<![가-힣])(?:늦은|느린|더딘|빠른)\s*(?:게|
 _NOT_TEND = re.compile(r"(?<![가-힣])(?:늦은|느린|더딘|빠른)\s*편(?:은|이|도)?\s*아니")
 # "아직 늦지 않았어요" — 늦지 않았다는 판정. "늦지 않게 · 늦지 않도록" 준비는 통과한다
 _NOT_LATE = re.compile(r"(?<![가-힣])늦지\s*않(?:았|아요|습니다|네요)")
+# "나이에 비해 어려운 문제도 풀어요" · "1학년보다 높은" — 나이 · 학년과 견주는 말. 공백을 지우면
+# "하나 이에 비해" 가 "나이에비해" 가 되어서 공백을 남긴 문장에 걸고 앞 글자가 한글이면 건너뛴다.
+# "이 나이에 맞는" · "월령에 맞춰" 처럼 견주지 않고 나이를 말하는 문장은 통과한다
+_AGE_COMPARE = re.compile(
+    r"(?<![가-힣])(?:나이|월령|연령|학년)\s*(?:에\s*비해|에\s*비하면|보다|치고)"
+)
 _DENSE_PATTERNS = (_COMPARE, _PEER_TOO, _RANK)
-_SPACED_PATTERNS = (_SPEED, _STALL, _TEND, _NOT_SLOW, _NOT_TEND, _NOT_LATE)
+_SPACED_PATTERNS = (_SPEED, _STALL, _TEND, _NOT_SLOW, _NOT_TEND, _NOT_LATE, _AGE_COMPARE)
 
 
 def _dense(text: str) -> str:
@@ -121,3 +128,22 @@ def find_evaluative(text: str) -> tuple[str, ...]:
     found += [m.group() for pattern in _DENSE_PATTERNS for m in pattern.finditer(dense)]
     found += [m.group() for pattern in _SPACED_PATTERNS for m in pattern.finditer(spaced)]
     return tuple(found)
+
+
+# 아이의 수준을 판정하는 말 — "수학 수준이 높아요" · "수준급이에요" · "나이에 맞지 않게 어려운".
+# Growth 만 쓴다: Food 영양 분석은 "나트륨 수준이 높아요" 처럼 같은 모양을 판정 아닌 뜻으로 쓴다.
+# 보호자가 기록에 쓴 "중학교 1학년 수준의 문제 풀이" 를 잇는 말은 판정이 아니라 통과한다
+_LEVEL_PATTERNS = (
+    re.compile(r"수준이\s*(?:높|낮|뛰어나|앞서|대단)"),
+    re.compile(r"수준급"),
+    re.compile(r"(?<![가-힣])나이에\s*맞지\s*않"),
+)
+
+
+def find_level_judgement(text: str) -> tuple[str, ...]:
+    """text 에 들어 있는 수준 판정 말. 없으면 빈 튜플.
+
+    Growth 출력 검증이 `find_evaluative` 와 같이 쓴다.
+    """
+    spaced = _spaced(text)
+    return tuple(m.group() for pattern in _LEVEL_PATTERNS for m in pattern.finditer(spaced))

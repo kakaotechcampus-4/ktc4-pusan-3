@@ -6,12 +6,13 @@
 from datetime import date
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import Field
 
+from app.api.schema_base import ApiSchema
 from app.api.v1.schemas.common import Ref
 
 
-class AffinityOut(BaseModel):
+class AffinityOut(ApiSchema):
     kind: Literal["profile_affinity"] = "profile_affinity"
     id: str
     merge_key: str
@@ -36,7 +37,7 @@ class AffinityOut(BaseModel):
     source_refs: list[Ref] = Field(description="묶인 active 관찰. 최근 것이 앞")
 
 
-class AffinitiesResponse(BaseModel):
+class AffinitiesResponse(ApiSchema):
     affinities: list[AffinityOut]
     total: int = Field(
         description=(
@@ -51,5 +52,8 @@ class AffinitiesResponse(BaseModel):
     )
     safety: list[dict[str, Any]] = Field(
         default_factory=list,
-        description="알레르기 · 건강 정보. 첫 배포 범위 밖이라 늘 빈 배열이다 (#259)",
+        description=(
+            "알레르기 · 건강 정보 자리. 지금은 늘 빈 배열이다 — 알레르기 · 건강 정보는 "
+            "`GET /children/{cid}/health-safety` 가 낸다"
+        ),
     )
