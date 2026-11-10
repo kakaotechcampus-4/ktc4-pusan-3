@@ -81,7 +81,7 @@ Agent 를 실제로 새로 돌릴 때만 `/inputs` 와 같은 하루 한도에�
 05 의 일반 추천도 개인화와 같은 길로 채택 · 일정 · 평가된다.
 
 - 채택(`/suggestions/approve`) · 초안(`/suggestions/event-drafts`) · 제출(`/events`) · 평가(`/feedback`)는
-  `kind` 를 보지 않는다. food 를 초안 한 장("저녁 식사")으로 묶는 것도 `kind` 가 아니라 agent 기준이라
+  `kind` 를 보지 않는다. food 를 초안 한 장으로 묶는 것도 `kind` 가 아니라 agent 기준이라
   개인화 + 일반을 같이 고르면 한 장에 묶인다. 테스트가 이 동작을 고정한다 — `kind` 검사를 넣으면 깨진다.
 - 07 목록(`GET /children/{cid}/suggestions`)은 둘을 함께 돌려주고 `kind` 로 구분한다. 일반 추천의
   `evidence` · `source_refs` 는 늘 빈 배열이고 `reason` 은 05 의 `basis` 와 같은 문구다.
