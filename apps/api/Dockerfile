@@ -3,7 +3,7 @@
 #   make api-image        굽기
 #   make api-up / api-down / api-logs
 #
-# --workers 1 고정 — run 진행 상황이 프로세스 메모리에 있어서 (#134)
+# --workers 1 고정 (#134). 되묻기 맥락 · 한도는 DB 로 옮겼지만(#877) run 은 받은 워커에서 돈다 — 워커 수는 아직 올리지 않았다 (docs/ops/stateless-v1.md)
 # 둘 이상이면 POST 받은 프로세스와 GET 받은 프로세스가 갈려 조용히 404 가 난다.
 
 FROM python:3.12-slim
