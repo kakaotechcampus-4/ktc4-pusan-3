@@ -78,6 +78,10 @@ _REQUEST = """
                        기관 신호 없이 "지난주에 뭐 먹었지" 처럼 아이가 먹은 기록을 보려는 말은
                        record/lookup_edit 이다
 - meal_recommendation 과 nutrient_analysis 가 애매하면 meal_recommendation 으로 보낸다.
+- 서술어 없이 끼니 · 간식 · 메뉴로 끝나는 말("어린이집 끝나고 간식")도 무엇을 먹일지 묻는 말이라
+  meal_recommendation 이다. 어린이집 · 유치원이 때만 말하면 기관 신호가 아니다.
+- "~해달라고" · "~해달라니까" · "~하라고" 는 재촉하는 말투다. 앞에서 한 말을 고쳐 달라는 말이
+  아니다. 요청 안의 "말고" 도 정정이 아니라 빼 달라는 조건이다.
 - growth로 보내는 건 네 가지다.
   learning_suggestion  배움 · 공부 · 한글 · 숫자 · 교육 활동을 추천해 달라는 말
   routine_coaching     생활 습관 · 혼자 하기(양치 · 손 씻기 · 숟가락) · 예절 · 습관 고치기 · 잠 리듬
@@ -181,6 +185,12 @@ _EXAMPLES = """
   → request/food/meal_recommendation "간식 추천해줘" + request/activity "주말 나들이 추천해줘"
 - "땅콩소스 먹여도 될까?" → request/food/food_check
 - "견과류 들어간 메뉴 추천해줘." → request/food/meal_recommendation
+- "야 밥 추천 해달라고" → request/food/meal_recommendation
+  (재촉하는 말투는 고쳐 말하기가 아니다)
+- "김밥 말고 다른 거 추천해달라니까" → request/food/meal_recommendation
+  (요청 안의 "말고" 는 정정이 아니다)
+- "어린이집 끝나고 간식" → request/food/meal_recommendation
+  (어린이집은 때를 말할 뿐 급식이 아니다)
 - "땅콩버터 먹여도 돼? 안 되면 다른 간식 추천해줘."
   → request/food/food_check "땅콩버터 먹여도 돼?"
   + request/food/meal_recommendation "안 되면 다른 간식 추천해줘"

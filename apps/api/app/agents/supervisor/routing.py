@@ -8,6 +8,7 @@
 
   - MemoryTask
       원문 전체와 RECORD 조각 힌트, UNCLEAR 조각 원문을 전달한다.
+      조각 밖에 부르는 말 · 추임새(`FILLER_WORDS`)만 남은 것은 놓친 기록이 아니다 (#861).
       원문이 전부 요청·안내 조각이면 만들지 않는다 (SKIP_MEMORY_FOR_PURE_REQUEST).
       unclear 와 요청·안내 조각만 있을 때도 만들지 않는다 — 답은 그쪽이 낸다.
 
@@ -96,6 +97,15 @@ RESOLVABLE_TASKS: dict[str, frozenset[str | None]] = {
     DomainAgentName.ACTIVITY.value: frozenset({None}),
     DomainAgentName.GROWTH.value: frozenset(GROWTH_RECOMMENDING),
 }
+
+# 혼자서는 아이가 겪은 일이 될 수 없는 낱말 — 조각 밖에 남아도 놓친 기록이 아니다 (#861).
+# "아니" 는 정정("김밥 아니 볶음밥")에 쓰여 뺀다. "근데" 도 뒤에 기록이 이어지는 연결어라 뺀다
+FILLER_WORDS: frozenset[str] = frozenset(
+    "야 얘 아 어 음 흠 헐 하 휴 에휴 아이고 저기 저기요 있잖아 제발 진짜 좀 빨리 그니까".split()
+)
+# ㅠㅠ · ㅋㅋ · ㄱㄱ · ㅇㅇ 처럼 자모만 된 낱말. isalnum() 이 True 라
+# 걸러 주지 않으면 안 덮인 글자로 센다
+_JAMO_ONLY = re.compile(r"[ㄱ-ㅎㅏ-ㅣ]+")
 
 # True: 순수 요청형(원문이 전부 요청, 안내 조각)이면 Memory를 건너뛴다.
 #       (Supervisor가 의도를 제대로 나눴다고 보는 정책으로, 잘못 나누면 입력 정보가 그대로 삭제)
@@ -456,7 +466,20 @@ def _covers_all(raw_text: str, output: SupervisorOutput) -> bool:
         for start, end in align_segment(raw_text, segment) or []:
             for index in range(start, end):
                 covered[index] = True
-    return all(covered[i] for i, char in enumerate(haystack) if char.isalnum())
+    for word in re.finditer(r"\w+", haystack):
+        span = covered[word.start() : word.end()]
+        if all(span):
+            continue
+        # 낱말이 통째로 조각 밖이고 기록일 수 없는 말이면 덮인 것으로 본다.
+        # 일부만 덮인 낱말은 아니다
+        if not any(span) and _is_filler(word.group()):
+            continue
+        return False
+    return True
+
+
+def _is_filler(word: str) -> bool:
+    return word in FILLER_WORDS or _JAMO_ONLY.fullmatch(word) is not None
 
 
 def _log(routing: Routing, supervisor_error: str | None) -> None:

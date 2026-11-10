@@ -5,6 +5,7 @@
     uv run pytest tests/eval/agents/supervisor/test.py -m live -k split -s        # Supervisor 단독
     uv run pytest tests/eval/agents/supervisor/test.py -m live -k growth_routing -s  # Growth 경계
     uv run pytest tests/eval/agents/supervisor/test.py -m live -k health_routing -s  # Health 경계
+    uv run pytest tests/eval/agents/supervisor/test.py -m live -k request_tone -s  # 말투 (#861)
     uv run pytest tests/eval/agents/supervisor/test.py -m live -k readout_routing -s  # #864
     uv run pytest tests/eval/agents/supervisor/test.py -m live -k followup_routing -s  # 후속 질문
     $env:SPLIT_CONTEXT="unrelated"; uv run pytest ... -m live -k "split and RC" -s  # 앞 대화 회귀
@@ -81,6 +82,7 @@ from tests.eval.agents.routing_cases import (
     NT_CASES,
     RC_CASES,
     RO_CASES,
+    RQ_CASES,
     T_CASES,
     UNCLEAR_CASES,
     R,
@@ -174,6 +176,7 @@ _CASES = (
     *DATE_CASES,
     *NT_CASES,
     *RO_CASES,
+    *RQ_CASES,
 )
 
 # 앞으로의 계획. unclear 로 가면 일정으로 등록할지 묻지 못한다 (D8 · #624)
@@ -344,6 +347,32 @@ def test_growth_routing(expect: Callable[..., None]) -> None:
     assert not violations, f"0건 규칙 위반: {violations}"
     assert agent >= GROWTH_AGENT_MIN, f"agent {agent:.0%} < {GROWTH_AGENT_MIN:.0%}"
     assert growth >= GROWTH_TASK_MIN, f"growth 유형 {growth:.0%} < {GROWTH_TASK_MIN:.0%}"
+
+
+# ── 말투만 다른 식사 추천 (Supervisor → routing) ────────────────
+def test_request_tone_routing(expect: Callable[..., None]) -> None:
+    """RQ01~RQ08 — 매번 Memory 없이 Food meal_recommendation 하나만 탄다 (#861).
+
+    0건 규칙이라 비율이 아니다. Memory 가 불리면 수정 묶음이 열리고(`lookup_edit=True`) 모델 문장이
+    같은 카드에 섞인다. Supervisor 가 요청으로 못 읽은 것(unclear · lookup_edit)도 여기서 걸린다.
+    """
+    expect("RQ 전부 Memory 없음 · Food meal_recommendation 하나 (0건 규칙)")
+    client = _client()
+    violations: list[str] = []
+    for case in RQ_CASES:
+        for attempt in range(1, TEST_REPEAT + 1):
+            result = asyncio.run(supervisor.run(case.text, client=client, keep_rejected=True))
+            tag = f"{case.case_id} #{attempt}"
+            if result.error:
+                violations.append(f"{tag}: Supervisor 실패 {result.error}")
+                continue
+            routing = route(case.text, result, run_id="rq")
+            tasks = [(t.agent, t.task_type) for t in routing.domain_tasks]
+            has_memory = routing.memory_task is not None
+            print(f"\n[{tag}] memory={has_memory} tasks={tasks}")
+            if has_memory or tasks != [("food", "meal_recommendation")]:
+                violations.append(f"{tag}: memory={has_memory} tasks={tasks}")
+    assert not violations, f"0건 규칙 위반: {violations}"
 
 
 # ── 거절 · 안내 문구 (Supervisor 단독 + routing) ─────────────────
