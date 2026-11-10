@@ -18,6 +18,7 @@ import pytest
 from app.core.config import settings
 from app.core.weather_raw import RawForecast, UpstreamUnavailable, WeatherGrid
 from app.integrations.weather.forecast import KST, KmaForecast, latest_base, parse_slots, slot_for
+from app.integrations.weather.public_data import TIMEOUT
 
 GRID = WeatherGrid(nx=98, ny=76)
 NOW = datetime(2026, 10, 11, 17, 43, tzinfo=KST)  # 일요일
@@ -142,6 +143,13 @@ class TestForecast:
         assert query["nx"] == ["98"] and query["ny"] == ["76"]
         assert query["base_date"] == ["20261011"] and query["base_time"] == ["1700"]
         assert query["serviceKey"] == [KEY]
+
+    async def test_공통보다_긴_읽기_제한으로_묻는다(self):
+        """단기예보가 빠지면 그날 날씨가 통째로 "확인하지 못했어요" 다. 저녁 발표분은 응답에 1.4초쯤
+        걸리고 밤에 공통 2초에 걸려 빠진 적이 있다 (#959)."""
+        src, recorder = source(ok())
+        await src.forecast(grid=GRID, day=date(2026, 10, 11))
+        assert recorder.requests[0].extensions["timeout"]["read"] > TIMEOUT.read
 
     async def test_Encoding_키는_한_번_풀어서_보낸다(self, monkeypatch):
         monkeypatch.setattr(settings, "DATA_GO_KR_SERVICE_KEY", "test-key%2Fwith%2Bplus")
