@@ -4915,7 +4915,7 @@ function chatDay(query: Record<string, string> = {}) {
 }
 
 describe("한 줄 입력의 길이 — 서버 `CreateInputRequest.text` 와 같이 거절한다 (#867)", () => {
-  it("앞뒤 공백을 뗀 코드 포인트가 2000자를 넘으면 400 validation_failed · fields 에 text", async () => {
+  it("앞뒤 공백을 뗀 코드 포인트가 상한(500자)을 넘으면 400 validation_failed · fields 에 text", async () => {
     const error = await submitInput(
       CHAT_CHILD,
       { text: "가".repeat(INPUT_TEXT_MAX_LENGTH + 1), source: "home_input" },

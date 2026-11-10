@@ -155,7 +155,7 @@
 - 둘 중 하나라도 넘으면 `429 too_many_attempts`. 계정만 세면 계정을 여러 개 만들어 돌 수 있어서 IP 를 함께 본다 ([#150 멘토 답변](https://github.com/kakaotechcampus-4/ktc4-pusan-3/pull/150#issuecomment-5857345738)).
 - 🚨 **§3-2 와 §3-3 이 같은 통을 쓴다.** 확인 쪽이 더 좋은 추측 도구라, 따로 세면 막은 것이 아니다.
 - **실패로 세는 것은 `invite_not_found` · `invite_used` · `invite_expired`** 다. 만료 · 사용된 코드도 "그 코드가 있었다" 를 알려 준다. `child_already_exists` 와 성공은 세지 않는다. 실패마다 원문 코드 없이 `parent_id` 와 사유만 로그로 남긴다.
-  - 🚨 **uvicorn 접근 로그도 원문 코드를 남기지 않는다.** 코드가 경로에 있어 가리지 않으면 `"GET /api/v1/invites/<원문 코드> HTTP/1.1" 200` 이 남고, 상태 코드로 아직 안 쓴 코드를 고를 수 있다. `app/core/logging_config.py` 의 `_RedactAccessLog` 가 `/invites/` 뒤 한 칸과 쿼리 문자열 전체를 `[redacted]` 로 가린다 (#239 — 카카오 콜백의 `?code=` · `?bind=` 도 같이). nginx 를 붙이면 그 접근 로그도 배포 작업에서 같은 규칙으로 가린다.
+  - 🚨 **uvicorn 접근 로그도 원문 코드를 남기지 않는다.** 코드가 경로에 있어 가리지 않으면 `"GET /api/v1/invites/<원문 코드> HTTP/1.1" 200` 이 남고, 상태 코드로 아직 안 쓴 코드를 고를 수 있다. `app/core/logging_config.py` 의 `_RedactAccessLog` 가 `/invites/` 뒤 한 칸과 쿼리 문자열 전체를 `[redacted]` 로 가린다 (#239 — 카카오 콜백의 `?code=` · `?bind=` 도 같이). 앞단 Caddy 는 접근 로그를 켜지 않았다 (`deploy/caddy/Caddyfile` 에 `log` 가 없다). 다만 api 에 닿지 못해 502 를 낼 때는 Caddy 오류 로그(`http.log.error`)에 쿼리까지 붙은 주소가 남는다 — 배포 · 롤백 중 잠깐이다. 접근 로그를 켜거나 오류 로그를 가리는 날에는 그 로그도 같은 규칙으로 가린다.
 - 🚨 **실패를 먼저 잡아 두고, 실패가 아니면 돌려준다.** 끝난 뒤에 세면 한꺼번에 보낸 요청이 전부 검사를 통과한 뒤 DB 를 기다리는 동안 한도를 넘는다. 검사와 기록 사이에 await 가 없다.
 - 카운터는 워커 밖 표(`rate_event`, UNLOGGED · 백업에서 내용 제외)다 (#877). 워커가 여럿이어도 한 통으로 세고, 확인과 기록이 한 트랜잭션 · 통마다 잠금이라 동시에 와도 한도를 넘지 않는다. DB 가 비정상 종료되면 비워진다. 이틀 지난 실패는 1분마다 지운다.
 
