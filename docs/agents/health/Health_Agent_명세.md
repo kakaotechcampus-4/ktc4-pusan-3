@@ -268,7 +268,9 @@ AI는 **요청에서 범위만 정합니다** (#551 리뷰). 보호자가 말한
 
 상세 스키마는 [`health_agent_own_table.md`](health_agent_own_table.md).
 
-> **2026-11-10 — 지금은 꺼 두었습니다 (#923).** 스토어 건강 앱 선언 때문에 웹이 복약 화면 · 초안 카드를 꺼 두었고(`apps/web/src/lib/store-policy.ts`), 서버도 같은 스위치(`app/agents/health/registry.py` 의 `MEDICATION_ENABLED`)로 이 라벨을 닫습니다. 꺼 둔 동안은 동의 · 조회 · 모델 없이 `med.preparing` 한 줄("복약 관리는 아직 준비 중이에요. 용량 · 간격은 처방한 병원이나 약국에 확인해 주세요.")로 끝나고, pipeline 의 등록된 약 대조(`registered_titles`)도 하지 않아 "약 먹였어" 는 Memory 가 먹인 약 기록으로 남깁니다. **다시 켤 때는 웹과 서버를 같이 켭니다** — 아래는 켜져 있을 때의 동작입니다.
+> **2026-11-10 — 지금은 꺼 두었습니다 (#923).** 스토어 건강 앱 선언 때문에 웹이 복약 화면 · 초안 카드를 꺼 두었고(`apps/web/src/lib/store-policy.ts`), 서버도 같은 스위치(`app/agents/health/registry.py` 의 `MEDICATION_ENABLED`)로 이 라벨을 닫습니다. 꺼 둔 동안은 동의 · 조회 · 모델 없이 `med.preparing` 한 줄("복약 관리는 아직 준비 중이에요. 용량 · 간격은 처방한 병원이나 약국에 확인해 주세요.")로 끝나고, pipeline 의 등록된 약 대조(`registered_titles`)도 하지 않아 "해열제 먹였어" 는 Memory 가 먹인 약 기록으로 남깁니다(약 이름이 없는 "약 먹였어" 는 Memory 가 무슨 약인지 되묻습니다). 아래는 켜져 있을 때의 동작입니다.
+>
+> **다시 켤 때** — ① 건강 앱 선언부터 고칩니다(`store-policy.ts` 머리말). ② 웹 `MEDICATION_ENABLED` 와 서버 `registry.MEDICATION_ENABLED` 를 같이 켭니다 — 한쪽만 켜면 답할 수 없는 질문이나 답이 없는 화면이 남습니다. ③ 꺼 둔 동안만 쓰는 것을 지웁니다: `med.preparing` · `notice.preparing` 키(yaml · `readouts.py` · `Health_Tool_명세.md` §4 · 닫힘 줄), `agent.py` 의 `_switched_off` 와 `registered_titles` 의 꺼짐 분기, `tests/unit/agents/health/test_health_medication_off.py`, `tests/conftest.py` 의 `_medication_on`, 이 인용 블록과 §6-6 의 것.
 
 **역할 분담**
 
