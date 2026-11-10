@@ -2,8 +2,10 @@
 
 import pytest
 
+from app.core.config import settings
 from app.providers.meal_plan.image_ocr import Usage
 from app.providers.meal_plan.schema import MealPlanJSON
+from scripts import meal_ocr_eval
 from scripts.meal_ocr_eval import (
     DEFAULT_FIXTURE,
     cost_usd,
@@ -311,3 +313,77 @@ def test_report_keeps_the_c1_grading_when_a_later_run_only_fails():
     s = summarize_runs(expected, [_plan(["우엉조림"]), failed_run(expected)])
 
     assert s.last[(2, "lunch")].wrong == ["우엉조림"]
+
+
+# ── 실행: 모델을 부르지 않는 reader 로 main 을 돈다 ─────────────────────────────
+
+_MILLION = Usage(prompt_tokens=1_000_000, completion_tokens=0, cached_prompt_tokens=0)
+
+
+def _run_main(monkeypatch, tmp_path, reads: list[bool], *extra: str):
+    """`reads` 순서대로 읽기에 성공(True) · 실패(False)하는 reader 로 main 을 돈다.
+
+    회차마다 입력 100만 토큰을 쓴 것으로 친다 — 잘린 응답도 과금된다(`image_ocr._call`).
+    돌려주는 것: (종료 코드, 실행 메타를 쓴 횟수, 만든 reader 수).
+    """
+    answer = load_fixture(DEFAULT_FIXTURE)
+    script = iter(reads)
+    made, wrote = [], []
+
+    class FakeReader:
+        def __init__(self, *args, **kwargs):
+            made.append(self)
+            self.calls = 0
+            self.total_usage = Usage(0, 0, 0)
+
+        def read(self, image_bytes, *, mime_type):
+            self.calls, self.total_usage = 2, _MILLION
+            if not next(script):
+                raise RuntimeError("응답이 출력 상한에서 잘림")
+            return answer
+
+    image = tmp_path / "meal.jpg"
+    image.write_bytes(b"jpg")
+    monkeypatch.setattr(settings, "MEAL_OCR_API_KEY", "test-key")
+    monkeypatch.setattr(meal_ocr_eval, "ImageOcrMealPlanReader", FakeReader)
+    monkeypatch.setattr(meal_ocr_eval, "_write_meta", lambda args: wrote.append(args))
+    argv = [str(image), "--base-url", "http://mlapi.test", "--model", "gemini-4-argon"]
+    argv += ["--out", str(tmp_path), "--repeat", str(len(reads)), *extra]
+    return meal_ocr_eval.main(argv), len(wrote), len(made)
+
+
+def test_repeat_beyond_the_call_budget_is_refused_before_any_call(monkeypatch, tmp_path):
+    # 한 번에 호출 2회 × 50회 = 100회. 예산을 넘기면 팀 키가 삭제된다 (image_ocr.py 머리말)
+    made = []
+    monkeypatch.setattr(meal_ocr_eval, "ImageOcrMealPlanReader", lambda *a, **k: made.append(1))
+
+    with pytest.raises(SystemExit):
+        meal_ocr_eval.main([str(tmp_path / "meal.jpg"), "--repeat", "50"])
+
+    assert made == []
+
+
+def test_call_budget_can_be_raised_on_purpose(monkeypatch, tmp_path):
+    code, _, made = _run_main(monkeypatch, tmp_path, [True] * 11, "--max-calls", "22")
+
+    assert (code, made) == (0, 11)
+
+
+def test_when_every_read_fails_nothing_is_recorded(monkeypatch, tmp_path):
+    # 잰 것이 없는데 "C1 0/69" 와 실행 메타가 남으면 측정 이력에 옮겨 적힌다
+    code, wrote, _ = _run_main(monkeypatch, tmp_path, [False, False])
+
+    assert code == 1
+    assert wrote == 0
+
+
+def test_a_failed_read_still_costs_and_does_not_hide_the_reference_report(
+    monkeypatch, tmp_path, capsys
+):
+    code, wrote, _ = _run_main(monkeypatch, tmp_path, [True, False])
+
+    out = capsys.readouterr().out
+    assert (code, wrote) == (0, 1)
+    assert "추정 합계 $4.000" in out  # 회차마다 $2 — 실패한 회차도 과금됐다
+    assert "읽기 실패 1/2회" in out
+    assert "메뉴 단위 알레르기 번호 일치 : 178/178" in out  # 참고 지표는 읽힌 실행으로 낸다

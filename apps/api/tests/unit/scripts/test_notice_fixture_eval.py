@@ -1,7 +1,11 @@
 """scripts/notice_fixture_eval.py — 판정 로직 (네트워크 없음)."""
 
 from datetime import datetime
+from types import SimpleNamespace
 
+import pytest
+
+from app.core.config import settings
 from app.domains.notice.assemble import NewNotice, NewNoticeItem
 from app.domains.notice.models import (
     NoticeAudience,
@@ -10,6 +14,7 @@ from app.domains.notice.models import (
     NoticeItemHandling,
     NoticeItemTarget,
 )
+from scripts import notice_fixture_eval
 from scripts.notice_fixture_eval import (
     CHECKS,
     DOCS,
@@ -328,3 +333,45 @@ def test_every_document_has_a_c1_check_and_names_are_unique():
     keys = [(c.doc, c.name) for c in CHECKS]
     assert len(keys) == len(set(keys))
     assert {d.id for d in DOCS} == {c.doc for c in CHECKS if c.c1}
+
+
+# ── 실행: 모델을 부르지 않는 read_photo 로 main 을 돈다 ─────────────────────────
+
+
+def _run_main(monkeypatch, tmp_path, read_photo, *argv: str) -> tuple[int, int]:
+    """돌려주는 것: (종료 코드, 실행 메타를 쓴 횟수)."""
+    wrote = []
+    monkeypatch.setattr(settings, "MEAL_OCR_BASE_URL", "http://mlapi.test")
+    monkeypatch.setattr(settings, "MEAL_OCR_API_KEY", "test-key")
+    monkeypatch.setattr(notice_fixture_eval, "read_photo", read_photo)
+    monkeypatch.setattr(notice_fixture_eval, "_write_meta", lambda args: wrote.append(args))
+    return notice_fixture_eval.main(["--out", str(tmp_path), *argv]), len(wrote)
+
+
+def test_repeat_beyond_the_call_budget_is_refused_before_any_read(monkeypatch, tmp_path):
+    # 7장 × 50회 = 350회. 예산을 넘기면 팀 키가 삭제된다
+    reads = []
+
+    def read_photo(data, *, received_at):
+        reads.append(received_at)
+        raise RuntimeError("부르면 안 된다")
+
+    with pytest.raises(SystemExit):
+        _run_main(monkeypatch, tmp_path, read_photo, "--repeat", "50")
+
+    assert reads == []
+
+
+def test_when_every_read_fails_nothing_is_recorded(monkeypatch, tmp_path):
+    # 읽기 실패는 일반 실패라 C1 0 으로 나온다 — 잰 것이 없는데 실행 메타가 남으면 안 된다
+    def read_photo(data, *, received_at):
+        raise RuntimeError("키가 틀렸다")
+
+    assert _run_main(monkeypatch, tmp_path, read_photo) == (1, 0)
+
+
+def test_reads_that_succeed_are_recorded(monkeypatch, tmp_path):
+    def read_photo(data, *, received_at):
+        return SimpleNamespace(notice=_notice())
+
+    assert _run_main(monkeypatch, tmp_path, read_photo) == (0, 1)

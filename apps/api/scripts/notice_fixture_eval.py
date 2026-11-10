@@ -43,6 +43,8 @@ KST = ZoneInfo("Asia/Seoul")
 
 CALENDAR, TODO = NoticeItemHandling.CALENDAR, NoticeItemHandling.TODO
 DATED = (CALENDAR, TODO)  # 날짜가 일정 초안 · 할 일 마감으로 오르는 종류
+# 한 번 실행의 총 읽기 상한. 측정 이력은 7장 × 5회 = 35회다 — `--repeat 50` 같은 오타를 막는다
+DEFAULT_MAX_CALLS = 40
 
 
 @dataclass(frozen=True)
@@ -475,7 +477,7 @@ def _dump(read: Read) -> dict:
     return data
 
 
-def main() -> int:
+def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
@@ -483,18 +485,29 @@ def main() -> int:
     ap.add_argument("--only", help="문서 id 만 (쉼표로 여러 개, 예: H 또는 A,H)")
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--out", type=Path, default=None, help="모델 출력 폴더 (기본: 임시 폴더)")
-    args = ap.parse_args()
+    ap.add_argument(
+        "--max-calls",
+        type=int,
+        default=DEFAULT_MAX_CALLS,
+        help="한 번 실행의 총 읽기 상한 — 예산을 넘기면 팀 키가 삭제된다",
+    )
+    args = ap.parse_args(argv)
     if args.repeat < 1:
         ap.error("--repeat 는 1 이상")
+    only = set(args.only.split(",")) if args.only else None
+    docs = [d for d in DOCS if only is None or d.id in only]
+    jobs = [(d, r) for r in range(1, args.repeat + 1) for d in docs]
+    if len(jobs) > args.max_calls:
+        ap.error(
+            f"읽기 {len(jobs)}회(공지 {len(docs)}장 × 반복 {args.repeat})가"
+            f" --max-calls {args.max_calls} 를 넘는다. 일부러 늘리려면 --max-calls 를 같이 준다"
+        )
     if not settings.MEAL_OCR_BASE_URL or not settings.MEAL_OCR_API_KEY:
         print(
             "apps/api/.env 에 MEAL_OCR_BASE_URL 과 MEAL_OCR_API_KEY 가 필요합니다", file=sys.stderr
         )
         return 2
 
-    only = set(args.only.split(",")) if args.only else None
-    docs = [d for d in DOCS if only is None or d.id in only]
-    jobs = [(d, r) for r in range(1, args.repeat + 1) for d in docs]
     print(
         f"공지 {len(docs)}장 × 반복 {args.repeat}회 = 호출 {len(jobs)}회"
         f" · 모델 {settings.MEAL_OCR_MODEL} · effort {PRODUCTION_EFFORT}"
@@ -514,6 +527,13 @@ def main() -> int:
     print(f"읽기 실패 {len(errors)} · 가장 오래 걸린 읽기 {seconds}초 · 저장 {out}")
     for r in errors:
         print(f"  {r.doc.id} #{r.run} {r.error}")
+    if len(errors) == len(reads):
+        # 읽기 실패는 일반 실패라 C1 0 으로 나온다. 한 번도 못 읽었으면 잰 것이 아니다
+        print(
+            "\n읽기가 전부 실패했다 — 잰 것이 없어 측정 이력 칸 · 실행 메타를 남기지 않는다",
+            file=sys.stderr,
+        )
+        return 1
 
     per_run: list[dict[Key, Outcome]] = []
     for run in range(1, args.repeat + 1):

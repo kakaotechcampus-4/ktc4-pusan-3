@@ -37,6 +37,8 @@ from app.rules.allergen import parse_allergens, strip_allergen_marks
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_FIXTURE = ROOT / "tests" / "fixtures" / "meal_plan_2025_01.json"
 MIME = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}
+# 한 번 실행의 총 호출 상한. 측정 이력은 5회 × 2회 = 10회다 — `--repeat 50` 같은 오타를 막는다
+DEFAULT_MAX_CALLS = 20
 
 # 100만 토큰당 USD (입력, 출력). 냅킨 계산용 추정치 — 실제 과금은 MLAPI 기준.
 PRICE_USD_PER_MILLION: dict[str, tuple[float, float]] = {
@@ -376,7 +378,7 @@ def print_report(g: dict) -> None:
         print("\n모델이 못 읽었다고 한 칸:", json.dumps(g["unparsed"], ensure_ascii=False))
 
 
-def main() -> int:
+def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
@@ -395,10 +397,23 @@ def main() -> int:
     ap.add_argument("--cache-write", default=None, choices=[None, "off", "5m", "1h"])
     ap.add_argument("--out", type=Path, default=None, help="모델 출력 폴더 (기본: 임시 폴더)")
     ap.add_argument("--repeat", type=int, default=1, help="같은 사진을 몇 번 읽나 (측정 이력은 5)")
+    ap.add_argument(
+        "--max-calls",
+        type=int,
+        default=DEFAULT_MAX_CALLS,
+        help="한 번 실행의 총 호출 상한 — 예산을 넘기면 팀 키가 삭제된다",
+    )
     ap.add_argument("--check", action="store_true", help="접속·모델 목록만 확인 (과금 없음)")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
     if args.repeat < 1:
         ap.error("--repeat 는 1 이상")
+    calls_per_run = 1 if args.whole else len(DEFAULT_DAY_RANGES)
+    # reader 의 호출 상한은 회차마다 새로 만들어져 실행 전체를 막지 못한다 — 여기서 한 번 더 막는다
+    if args.repeat * calls_per_run > args.max_calls:
+        ap.error(
+            f"호출 {args.repeat * calls_per_run}회(반복 {args.repeat} × {calls_per_run})가"
+            f" --max-calls {args.max_calls} 를 넘는다. 일부러 늘리려면 --max-calls 를 같이 준다"
+        )
 
     if not args.base_url or not settings.MEAL_OCR_API_KEY:
         print(
@@ -434,7 +449,6 @@ def main() -> int:
     if mime is None:
         ap.error(f"지원하지 않는 확장자: {args.image.suffix}")
     image_bytes = args.image.read_bytes()
-    calls_per_run = 1 if args.whole else len(DEFAULT_DAY_RANGES)
     print(
         f"이미지 {args.image.name} ({len(image_bytes) / 1024:.0f} KB)"
         f" · 모델 {args.model} · effort {args.effort}"
@@ -445,22 +459,20 @@ def main() -> int:
     out_dir = args.out or Path(tempfile.gettempdir())
     out_dir.mkdir(parents=True, exist_ok=True)
     stem = f"meal_ocr_{args.model.replace('/', '_')}_{args.effort}"
-    plans: list[MealPlanJSON] = []
+    plans: list[MealPlanJSON] = []  # 채점용 — 읽기 실패 회차는 `failed_run` 으로 채운다
+    read: list[MealPlanJSON] = []  # 실제로 읽힌 회차만
     total_cost = 0.0
     for n in range(1, args.repeat + 1):
         reader = new_reader()
         t0 = time.perf_counter()
+        plan, error = None, ""
         try:
             plan = reader.read(image_bytes, mime_type=mime)
         except Exception as err:  # 출력 상한 · 호출 실패 — 앞 회차 비용을 버리지 않고 계속 잰다
-            print(f"[{n}/{args.repeat}] 읽기 실패 {type(err).__name__}: {str(err)[:150]}")
-            plans.append(failed_run(expected))
-            continue
+            error = f"{type(err).__name__}: {str(err)[:150]}"
         elapsed = time.perf_counter() - t0
-        plans.append(plan)
 
-        out = out_dir / f"{stem}_run{n}.json"
-        out.write_text(plan.model_dump_json(indent=2, exclude_none=False), encoding="utf-8")
+        # 사용량은 실패한 회차도 센다 — 잘리거나 거절된 응답도 과금된다 (`image_ocr._call`)
         u = reader.total_usage
         usage_line = f"[{n}/{args.repeat}] {elapsed:.1f}초 · {reader.calls}회 호출"
         if u.prompt_tokens:
@@ -470,14 +482,35 @@ def main() -> int:
             if cost is not None:
                 total_cost += cost
                 usage_line += f" · 추정 ${cost:.3f}"
+        if plan is None:
+            plans.append(failed_run(expected))
+            print(f"{usage_line} · 읽기 실패 {error}")
+            continue
+        plans.append(plan)
+        read.append(plan)
+        out = out_dir / f"{stem}_run{n}.json"
+        out.write_text(plan.model_dump_json(indent=2, exclude_none=False), encoding="utf-8")
         print(f"{usage_line} · 저장 {out}")
     if total_cost:
         print(f"추정 합계 ${total_cost:.3f} (약 {total_cost * 1400:,.0f}원)")
 
-    print("\n── 참고 지표 (마지막 실행) ──")
-    print_report(grade(expected, plans[-1]))
+    failures = len(plans) - len(read)
+    if not read:
+        # 읽기 실패는 틀린 메뉴를 남기지 않아 C1 0 으로 나온다. 한 번도 못 읽었으면 잰 것이 아니다
+        print(
+            "\n읽기가 전부 실패했다 — 잰 것이 없어 측정 이력 칸 · 실행 메타를 남기지 않는다",
+            file=sys.stderr,
+        )
+        return 1
+    print("\n── 참고 지표 (마지막으로 읽힌 실행) ──")
+    print_report(grade(expected, read[-1]))
     print("\n── 측정 이력 칸 ──")
     print_c1_report(summarize_runs(expected, plans))
+    if failures:
+        print(
+            f"읽기 실패 {failures}/{args.repeat}회 — 그 회차는 모든 끼니를 빼먹은 것으로 셌다."
+            " 측정 이력 §3 에 같이 적는다"
+        )
     _write_meta(args)
     return 0
 
