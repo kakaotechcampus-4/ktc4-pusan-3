@@ -356,7 +356,7 @@ def test_growth_routing(expect: Callable[..., None]) -> None:
             # GR 0건 규칙 위반은 C1 이다 (SUPERVISOR_EVAL §2)
             tally.mark(
                 TALLY_SUITE,
-                case.case_id,
+                f"{case.case_id}/growth",
                 inner=attempt,
                 c1=found,
                 general=(f"Supervisor 실패 {result.error}",) if result.error else (),
