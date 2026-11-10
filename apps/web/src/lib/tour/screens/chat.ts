@@ -19,7 +19,7 @@ export const chatTour: TourDefinition = {
       target: "saved",
       within: "turn",
       title: "저장한 기록",
-      body: "무엇을 기록으로 남겼는지 보여 드려요. 잘못 알아들었으면 기록/기억 화면에서 고칠 수 있어요.",
+      body: "무엇을 기록으로 남겼는지 보여 드려요. 잘못 알아들었으면 기록과 기억 화면에서 고칠 수 있어요.",
     },
     {
       target: "found-tabs",

@@ -2,7 +2,9 @@
 
 from typing import Literal, get_args
 
-from pydantic import BaseModel, Field
+from pydantic import Field
+
+from app.api.schema_base import ApiSchema
 
 TourKey = Literal[
     "home-empty",
@@ -24,7 +26,7 @@ TourKey = Literal[
 TOUR_KEYS: frozenset[str] = frozenset(get_args(TourKey))
 
 
-class SeenTours(BaseModel):
+class SeenTours(ApiSchema):
     seen: list[TourKey] = Field(
         description=(
             "이 보호자가 이미 본 가이드. 처음 본 순서대로. 여기 있는 화면은 들어와도 "

@@ -149,6 +149,8 @@
 단위를 화면에서 넣는 기록이라(루트 §2) 채팅 쓰기 경로가 없다. 예전에는 record 로 가서 Memory 가 저장할 곳 없이
 "기록했어요" 라고 답했다(멘토 리뷰). 같이 온 기록 · 요청은 다른 guarded 와 같이 잘라서 보낸다.
 
+**guarded/diagnosis 와 out_of_scope 의 안내는 code 당 문구가 두 벌이다 (#864).** 조각 글에 약 · 영양제 · 치료식 낱말이 있으면 약 용량 문장까지 낸다(`routing.mentions_treatment` — 낱말 단위라 "예약" · "치약" 의 "약" 은 걸리지 않는다). 없으면 진단 문장만 낸다(`PLAIN_DIAGNOSIS_GUIDANCE`). out_of_scope 는 다른 집 아이 · 다른 보호자를 말하면 "우리 아이 기록만 다룬다"(`OTHER_FAMILY_GUIDANCE`), 아니면 대행 불가다. 같은 code 의 조각이 여럿이면 한 조각이라도 걸리는 쪽이다. code 는 그대로라 화면 계약은 바뀌지 않는다. 문구를 고르는 일은 코드가 한다 — Supervisor 는 조각 종류만 정한다.
+
 ### eval · 보정 규칙
 
 이 예시와 프롬프트에 없는 변형을 `tests/eval/agents/routing_cases.py` 의 GR01~GR28 이 잰다(`supervisor/test.py -m live -k growth_routing`, `TEST_REPEAT=3`).
@@ -158,6 +160,7 @@
 - 보정 이력 — 끝까지 라이브(`growth/test_growth_supervisor_e2e.py`)에서 "숫자 놀이 뭐 없어?" 가 "놀이" 라는 낱말만 보고 activity 로 새는 것을 찾았다(직접 표본 3/10 만 growth). `_REQUEST` 에 "놀이라는 말이 있어도 배우는 낱말(숫자 · 한글 · 글자)이 있으면 growth/learning_suggestion, 없으면 activity" 한 줄을 더했고 12/12 가 됐다. 같은 말투(GR25 · GR26)와 반대 경계(GR27 · GR28 — 배우는 낱말이 없는 놀이는 activity)를 GR 에 더했다.
 - 보정은 한 번에 하나, 최대 3회. "변형" 케이스의 문장을 프롬프트에 옮기지 않는다. 고친 뒤 split 합계(RC · T)가 떨어지면 되돌린다. 3회 뒤에도 미달이면 합격선을 낮추지 않고 숫자로 남긴다
 - 앞 대화를 붙인 후속 질문은 FU01~FU14 가 잰다 — [§5-5](#5-5-eval)
+- 거절 · 안내 문구는 RO01~RO08 이 잰다(`supervisor/test.py -m live -k readout_routing`, 0건 규칙, #864) — 약 얘기가 없는 진단 문의는 약 문구가 없다 · 다른 집 아이 · 다른 보호자가 하는 일을 묻는 말은 도메인 Agent 없이 "우리 아이 기록만 다룬다" 안내 · 또래 기준 추천은 request 그대로 · 친구네 집 · 옆집에서 겪은 일은 record. 프롬프트에는 예시 세 줄과 out_of_scope 정의 세 줄을 더했다. 바꾸기 전후 split(RC · T)는 [SUPERVISOR_EVAL.md](eval/SUPERVISOR_EVAL.md) §1 에 있다
 
 ---
 

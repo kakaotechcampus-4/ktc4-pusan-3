@@ -2,12 +2,13 @@
 
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import ConfigDict, Field, StringConstraints
 
+from app.api.schema_base import ApiSchema
 from app.domains.notification.models import PushPlatform
 
 
-class PushDeviceIn(BaseModel):
+class PushDeviceIn(ApiSchema):
     model_config = ConfigDict(extra="forbid")
 
     # 앞뒤 공백을 자른 뒤 길이를 본다 — 공백만 있는 값이 토큰으로 저장되지 않게 (#605 리뷰)
@@ -19,7 +20,7 @@ class PushDeviceIn(BaseModel):
     platform: PushPlatform
 
 
-class NotificationSettings(BaseModel):
+class NotificationSettings(ApiSchema):
     """설정 탭의 스위치 2개. 알림 시각은 여기가 아니라 일정마다 고른다."""
 
     model_config = ConfigDict(extra="forbid")

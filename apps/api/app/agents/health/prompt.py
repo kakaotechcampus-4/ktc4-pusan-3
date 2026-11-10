@@ -17,6 +17,7 @@ tool 이 못 막는 것만 적는다 — span 이 원문에 있는지 · 시점 
 알레르기 줄은 코드가 넣는다(`tools/records.py` · `tools/visit_lines.py` · `tools/timeline.py`).
 """
 
+from app.agents.common.prompt_fingerprint import fixed_context, register_prompt, tools_text
 from app.agents.health.context import HealthContext
 from app.agents.health.schemas.task import HealthTaskType
 
@@ -90,3 +91,22 @@ _SECTIONS: dict[HealthTaskType, tuple[str, ...]] = {
 def build_system_prompt(context: HealthContext, task_type: HealthTaskType) -> str:
     """모델을 부르는 라벨의 system prompt. 구획을 이어 붙이고 마지막에 오늘 날짜를 단다."""
     return "\n\n".join((*_SECTIONS[task_type], f"오늘: {context.today.isoformat()}"))
+
+
+def _fingerprint_parts() -> tuple[str, ...]:
+    """프롬프트 지문(#770)의 입력 — 라벨마다 렌더링한 system 프롬프트와 tool spec."""
+    from app.agents.health.schemas import tool_defs
+
+    rendered = []
+    for task in HealthTaskType:
+        try:
+            rendered.append(build_system_prompt(fixed_context(), task))  # type: ignore[arg-type]
+        except KeyError:  # 모델을 부르지 않는 라벨
+            continue
+    from app.agents.common import tool_loop
+
+    # user 메시지는 보호자 요청 원문 그대로라 틀이 없다
+    return (*rendered, tools_text(tool_defs.TOOL_DEFINITIONS), tool_loop.BAD_JSON)
+
+
+register_prompt("health", _fingerprint_parts)

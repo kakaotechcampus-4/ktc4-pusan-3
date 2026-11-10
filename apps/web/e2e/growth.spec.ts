@@ -69,13 +69,13 @@ test("선과 점은 뉴트럴 토큰으로만 칠한다 — 평가로 읽히는 
 });
 
 test("화면 어디에도 평가 낱말이 없다 (평가하지 않는다는 안내 한 줄 말고는)", async ({ page }) => {
-  const notice = "잰 날 그대로 쌓아 둬요. 또래와 견주거나 백분위를 매기지 않아요.";
+  const notice = "잰 날과 잰 값을 그대로 쌓아 둬요.";
   await expect(page.getByText(notice)).toBeVisible();
   const text = (await visibleText(page)).replace(notice, "");
   expect(text).not.toMatch(EVALUATIVE);
 });
 
-test("툴팁은 값과 날짜만 보여주고 직전과의 차이를 만들지 않는다", async ({ page }) => {
+test("툴팁은 값과 날짜만 보여 주고 직전과의 차이를 만들지 않는다", async ({ page }) => {
   const dots = page.locator("figure").first().locator(".recharts-line-dots circle");
   await dots.last().hover({ force: true });
   const tooltip = page.locator(".recharts-tooltip-wrapper").first();

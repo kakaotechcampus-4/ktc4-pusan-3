@@ -21,3 +21,6 @@
 # 셸 스크립트·git hook 은 CRLF 면 실행이 실패하니 LF 로 고정하는 게 좋습니다:
 #   *.sh        text eol=lf
 #   .githooks/* text eol=lf
+
+# 선택형 pre-push 훅(#770) — CRLF 면 `#!/bin/sh` 가 깨져 실행이 실패한다
+.githooks/* text eol=lf

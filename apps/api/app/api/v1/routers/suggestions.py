@@ -145,6 +145,7 @@ def _suggestion_out(s, views: Sequence[EvidenceView] = ()) -> SuggestionOut:
         content=s.content,
         place_notice=s.place_notice,
         warnings=list(s.warnings),
+        items=list(s.items),
         event_starts_on=s.event_starts_on,
         event_ends_on=s.event_ends_on,
         reason=s.reason,
@@ -160,27 +161,30 @@ def _suggestion_out(s, views: Sequence[EvidenceView] = ()) -> SuggestionOut:
 
 
 async def _safety_labels(session, *, child_id: _uuid.UUID) -> list[entrypoint.SafetyLabel]:
-    """사전검사 · 채택 재확인이 같이 읽는 알레르기 · 건강 행(모든 kind · status).
+    """사전검사와 채택 · 초안 만들기 · 제출 재확인이 같이 읽는 알레르기 · 건강 행(모든 kind ·
+    status).
 
-    목록이 빼는 추천과 채택이 막는 추천이 같으려면 읽는 행도 판정 함수도 같아야 한다.
+    목록이 빼는 추천과 재확인이 막는 추천이 같으려면 읽는 행도 판정 함수도 같아야 한다.
     """
     rows = await list_safety_labels(session, child_id=child_id)
     return [entrypoint.SafetyLabel(*r) for r in rows]
 
 
-async def _check_allergens_before_approve(session, *, child_id: _uuid.UUID, rows) -> None:
-    """채택 직전에 알레르기를 다시 본다 — 목록을 받은 뒤 등록된 알레르기를 서버가 막는다.
+async def _recheck_allergens(session, *, child_id: _uuid.UUID, rows, message: str) -> None:
+    """추천을 쓰기 직전에 알레르기를 다시 본다 — 목록을 받은 뒤 등록된 알레르기를 서버가 막는다.
 
     판정은 목록 응답의 사전검사와 같은 함수다(`check_allergens` · 같은 이름 사전). 목록이 빼는
-    추천과 채택이 막는 추천이 갈리면, 화면에 남은 옛 목록으로 고른 추천이 통과한다.
-    - `active` 에 걸린 추천이 하나라도 있으면 전부 거절한다(409 `allergen_blocked`) — 채택 API 의
+    추천과 여기서 막는 추천이 갈리면, 화면에 남은 옛 목록으로 고른 추천이 통과한다.
+    - `active` 에 걸린 추천이 하나라도 있으면 전부 거절한다(409 `allergen_blocked`) — 부른 API 의
       "전부 아니면 전부" 와 같다. 걸린 추천 id 는 `detail.suggestion_ids` 로 요청 순서대로 싣는다.
-    - "모름"(행 없음)은 막지 않는다 — 답을 미뤄도 채택은 막지 않는다 (event-draft-ui-v1.md §3-8).
+      `message` 만 부른 곳마다 다르다 — 응답 모양이 같아야 웹이 안내 카드를 같이 쓴다.
+    - "모름"(행 없음 · 내린 기록만 있음)은 막지 않는다 — 답을 미뤄도 막지 않는다
+      (event-draft-ui-v1.md §3-8).
     - `allergens` 가 없는 추천뿐이면 건강정보를 읽지 않는다.
     - 동의가 없으면 읽지 않고 403 — 목록도 동의 없이는 이 추천을 내보내지 않는다.
-    - 동의 · 알레르기 조회가 실패하면 예외를 그대로 올린다(500, 아무것도 채택하지 않음) —
+    - 동의 · 알레르기 조회가 실패하면 예외를 그대로 올린다(500, 아무것도 쓰지 않음) —
       못 읽었다고 통과시키지 않는다 (루트 §2).
-    - 알레르기를 읽은 뒤 커밋 전의 짧은 틈에 등록된 알레르기는 놓친다 — 잠그지 않기로 했다.
+    - 알레르기를 읽은 뒤 응답 전의 짧은 틈에 등록된 알레르기는 놓친다 — 잠그지 않기로 했다.
     """
     with_allergens = [row for row in rows if row.allergens]
     if not with_allergens:
@@ -194,12 +198,7 @@ async def _check_allergens_before_approve(session, *, child_id: _uuid.UUID, rows
         if entrypoint.check_allergens(row.allergens, labels).blocked
     ]
     if blocked:
-        raise ApiError(
-            409,
-            "allergen_blocked",
-            "알레르기로 등록된 항목이 들어 있어 고를 수 없어요",
-            {"suggestion_ids": blocked},
-        )
+        raise ApiError(409, "allergen_blocked", message, {"suggestion_ids": blocked})
 
 
 @router.post(
@@ -250,7 +249,12 @@ async def approve_suggestions(
             suggestions=[_suggestion_out(s) for s in already_approved]
         )
 
-    await _check_allergens_before_approve(session, child_id=child.child_id, rows=found)
+    await _recheck_allergens(
+        session,
+        child_id=child.child_id,
+        rows=found,
+        message="알레르기로 등록된 항목이 들어 있어 고를 수 없어요",
+    )
 
     to_approve = [s.id for s in found]
     approved = await suggestion_repo.approve_suggestions(
@@ -268,6 +272,8 @@ async def approve_suggestions(
 # ── 일정 초안 ─────────────────────────────────────────────────────────────
 
 _AGENT_CATEGORY = {"activity": "activity", "health": "health"}
+# 초안 만들기 · 제출이 같이 쓰는 409 문구 (#902)
+_NOT_AN_EVENT = "알레르기로 등록된 항목이 들어 있어 일정으로 만들 수 없어요"
 
 
 def _next_draft_id() -> str:
@@ -282,9 +288,16 @@ def _next_draft_id() -> str:
         "채택한 추천으로 일정 초안을 만든다. food는 하나로 묶이고 나머지는 별도 초안. "
         "준비물은 그 추천의 items — food 묶음에서 같은 재료는 한 번. "
         "DB에 저장하지 않는다 — 응답으로만 반환."
+        " 만들기 직전에 알레르기를 다시 본다 — 채택한 뒤 등록된 알레르기(active)에 걸리는"
+        " 추천이 하나라도 있으면 초안을 하나도 만들지 않고 409 `allergen_blocked`"
+        "(`detail.suggestion_ids` = 걸린 추천 id, 요청 순서). 판정 · `code` · `detail` 은 채택과"
+        " 같다 — 알레르기 기록에 없는 항목(모름)은 막지 않는다. 걸린 추천은 `approved` 그대로다."
+        " 오류 (순서대로): 400 validation_failed(빈 목록) → 행마다 404 not_found ·"
+        " 422 not_approved → 403 consent_required(알레르기 항목이 든 추천인데 건강정보 동의 없음)"
+        " → 409 allergen_blocked."
     ),
     status_code=201,
-    responses={status: {"model": ErrorEnvelope} for status in (400, 404, 422)},
+    responses={status: {"model": ErrorEnvelope} for status in (400, 403, 404, 409, 422)},
 )
 async def create_event_drafts(
     child: AccessibleChild,
@@ -305,6 +318,16 @@ async def create_event_drafts(
         if row.status != SuggestionStatus.APPROVED:
             raise ApiError(422, "not_approved", "채택되지 않은 제안이 포함돼 있어요")
         suggestions.append(row)
+
+    # 채택 뒤에 등록된 알레르기를 여기서 막는다 (#859) — 아무것도 쓰지 않는 단계라 되돌릴 게 없고,
+    # 일정 초안 시트(게이트 ㉠)가 뜨기 전이다. food 를 한 장으로 묶기 전에 본다 — 걸린 추천을
+    # id 로 알려야 한다. 초안을 만든 뒤의 틈은 제출(/events)이 한 번 더 본다 (#902)
+    await _recheck_allergens(
+        session,
+        child_id=child.child_id,
+        rows=suggestions,
+        message=_NOT_AN_EVENT,
+    )
 
     food = [s for s in suggestions if str(s.agent) in _MERGED_AGENTS]
     rest = [s for s in suggestions if str(s.agent) not in _MERGED_AGENTS]
@@ -357,10 +380,15 @@ async def create_event_drafts(
     description=(
         "초안에 시간을 채워 캘린더에 확정한다. Idempotency-Key 필수. "
         "추천에서 왔으면 suggestion ↔ event 연결."
+        " 추천에서 온 일정은 넣기 직전에 알레르기를 다시 본다 — 초안을 만든 뒤 등록된"
+        " 알레르기(active)에 걸리는 추천이 있으면 아무것도 쓰지 않고 409 `allergen_blocked`"
+        "(`detail.suggestion_ids` = 걸린 추천 id, 요청 순서). 판정 · `code` · `detail` · 문구는"
+        " 초안 만들기와 같다. 알레르기 항목이 든 추천인데 건강정보 동의가 없으면 403"
+        " `consent_required` — 409 `already_confirmed` 바로 뒤에 본다."
     ),
     status_code=201,
     response_model=SubmitEventResponse,
-    responses={status: {"model": ErrorEnvelope} for status in (400, 404, 409, 422, 503)},
+    responses={status: {"model": ErrorEnvelope} for status in (400, 403, 404, 409, 422, 503)},
 )
 async def submit_event(
     child: AccessibleChild,
@@ -396,6 +424,7 @@ async def submit_event(
     # suggestion_ids 검증 (중복 제거)
     suggestion_ids = list(dict.fromkeys(body.suggestion_ids)) if body.suggestion_ids else []
     if suggestion_ids:
+        suggestions = []
         for sid in suggestion_ids:
             row = await suggestion_repo.find_suggestion(
                 session, child_id=child.child_id, suggestion_id=sid
@@ -404,9 +433,17 @@ async def submit_event(
                 raise ApiError(404, "not_found", "제안을 찾을 수 없어요")
             if row.status != SuggestionStatus.APPROVED:
                 raise ApiError(422, "not_approved", "채택되지 않은 제안이 포함돼 있어요")
+            suggestions.append(row)
 
         if await suggestion_repo.is_any_linked(session, suggestion_ids=suggestion_ids):
             raise ApiError(409, "already_confirmed", "이미 캘린더에 넣은 제안이에요")
+
+        # 초안을 만든 뒤 등록된 알레르기를 넣기 직전에 한 번 더 막는다 (#902) — 05 의 시트는
+        # 열어 둔 채 몇 시간이 지날 수 있다. 서버가 그 틈을 웹에 기대지 않는다(루트 §2).
+        # 아무것도 쓰기 전이다 — 알림 연결 잠금 · 반복 펼치기보다 앞이다
+        await _recheck_allergens(
+            session, child_id=child.child_id, rows=suggestions, message=_NOT_AN_EVENT
+        )
 
     # 알림을 함께 걸면 연결부터 잡는다 — 일정을 넣으면 아이 행에 외래 키 잠금이 걸리는데, 그 뒤에
     # 보호자 → 아이 순으로 잠그면 같은 순서로 잡는 탈퇴(`withdraw_parent`)와 엇갈린다 (#603 리뷰)
@@ -972,6 +1009,7 @@ def _general_out(row, docs: list[DocEvidenceOut], record_count: int) -> GeneralS
         content=row.content,
         place_notice=row.place_notice,
         warnings=list(row.warnings),
+        items=list(row.items),
         event_starts_on=row.event_starts_on,
         event_ends_on=row.event_ends_on,
         basis=row.reason or "",
@@ -984,9 +1022,14 @@ def _general_out(row, docs: list[DocEvidenceOut], record_count: int) -> GeneralS
 
 @router.post(
     "/children/{cid}/answers",
-    summary="되묻기 답변 (Agent 연결 전 stub)",
-    description="근거 부족 시 보호자 답변을 관찰로 저장한다. 현재 501 stub — #249에서 해제.",
+    summary="되묻기 답변 — 아직 받지 않는다 (501)",
+    description=(
+        "05 의 되묻기 질문에 보호자가 고른 답을 받는 자리다. 아직 받지 않는다 — 언제나 501 "
+        "`not_implemented` 로 답한다. 서버가 질문의 선택지(`scarcity.question.options`)를 채워 "
+        "보내지 않아서 화면에 답 칩이 서지 않는다."
+    ),
     status_code=200,
+    response_description="지금은 오지 않는다 — 언제나 501 이다",
     response_model=AnswerResponse,
     responses={501: {"model": ErrorEnvelope}},
 )
@@ -995,10 +1038,13 @@ async def answer_question(
     body: AnswerRequest,
     session: SessionDep,
 ) -> JSONResponse:
-    # TODO(#284): Agent 진입점 연결 — 이시하님 후속
+    # 아직 열지 않았다. 열 때는 답을 관찰로 저장하는 길을 붙이고, 05 응답이 선택지를 채워 보내게
+    # 한다 — 화면의 답 칩은 선택지가 있을 때만 서서, 그 전에는 웹이 이 주소를 부르지 않는다.
     return JSONResponse(
         status_code=501,
-        content={"error": {"code": "not_implemented", "message": "Agent 연결 전 (#284)"}},
+        content={
+            "error": {"code": "not_implemented", "message": "되묻기 답변은 아직 받지 않아요."}
+        },
     )
 
 

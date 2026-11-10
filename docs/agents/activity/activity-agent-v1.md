@@ -101,7 +101,7 @@ def tools_for(task_type, gate: Gate) -> tuple[str, ...]:
 
 - `search_activity_memory` 는 결과에 **`id` 를 함께 돌려준다.** `suggestion_evidence` 의 허용 `source_kind` 에 `observation_activity` 가 있고, 루트 §2 가 막는 것은 관찰을 **프로필로 승격**하는 것이지 그 한 번의 추천 근거로 **인용**하는 것이 아니다.
 - **Tier 2 임계는 공통 기본값 `0.5` 를 따른다.** Activity 만 다르게 둘 근거가 없다.
-- 🚨 **관찰은 `ObservationStatus = active` 만 읽는다.** `stand_alone` 은 Correction `once_only`(*"이번만 그랬어요"*)가 만드는 상태라 검색에는 남지만 성향으로 세면 안 되고, `inactive` 는 검색에서도 빠진다. 이 필터가 없으면 **보호자가 직접 고친 기록이 다음 추천의 근거로 돌아온다.**
+- 🚨 **관찰은 `ObservationStatus = active` 만 읽는다.** `stand_alone` 은 Correction `once_only`(*"이번만 그랬어요"*)가 만드는 상태라 검색에는 남지만 성향으로 세면 안 되고, 지운 기록(`deleted`)은 검색에서도 빠진다. 이 필터가 없으면 **보호자가 직접 고친 기록이 다음 추천의 근거로 돌아온다.**
 - `affinity_id = NULL` 인 관찰도 읽는다. 승격 전 관찰이 티어 3 근거다 (`공통_구현_계획.md` K-7).
 - 모델에게는 **10개**(`MEMORY_LIMIT`)만 `id` · 티어 · 이름 · polarity · 날짜로 준다. 최근 관찰(티어 3)에 **3자리**(`RECENT_RESERVED`, 잠정)를 먼저 주고 남은 자리를 티어 순으로 채운다 — 첫 관찰부터 티어 2 인 affinity 가 10개를 채우면 최근 관찰이 하나도 안 남아서다 (#304 리뷰). 주는 순서는 티어 순 그대로다. 같은 `subject` · polarity 의 관찰은 가장 최근 1건만 남긴다.
 - **대조는 `subject`, 설명은 `activity`.** 관찰의 이름(화면 · reason)은 사람이 읽는 활동명(`activity`)이고, 기피 거절(D4)과 `keywords` 대조는 Curator 가 merge_key 를 만드는 `subject` 로 한다 — "물감 놀이" 같은 활동명은 후보 문장에 그대로 나오는 일이 드물다. `keywords` 는 `subject` 와 양쪽으로 포함을 보고(짧은 쪽이 2글자 이상일 때), 활동명에 든 말로도 찾는다. 줄 세운 뒤 거르는 것이라 순서를 바꾸지 않는다. 0행이면 `NO_RECORDS` 로 일반 추천에 가라고 알린다 — 되묻기로 바꾸지 않는다.
@@ -538,7 +538,7 @@ async def run(task, context, *, client=None):
 
 **재호출 방향 (#582)** — 제외 목록 뒤에 늘 같은 방향 문장(`prompt.RECALL_HINT`)을 붙인다: 빠진 활동에 쓰인 음식 · 재료 · 물건(그것으로 만든 것 · 포장 · 껍질 포함)은 **이름만 빼지 말고 재료 자체를** 쓰지 않고, 요청한 놀이의 방식은 살리고 재료만 바꾼다. 쓰는 재료는 숨기지 말고 `materials` · `foods` 에 적는다. **빠진 이유와 상관없이 같은 문장이다** — 알레르기로 빠졌을 때만 주면 그 자체가 사유다(§5-2). 없으면 같은 음식의 변형(밀 쿠키 → 다른 밀 쿠키)을 다시 내 0개로 끝난다.
 
-**다 빠지면 안내만 낸다 (#582)** — [예시] 행으로 채우지 않는다 — 실험에서 요청과 상관없는 추천이 나갔다. 0개면 `count_notice(0)`(`suggestion.empty`)이고, **보호자가 요청에 쓴 음식이 이 아이에게 막혔으면** 그런 놀이는 빼고 골랐다는 한 줄을 붙인다(`request.food_conflict` · `request.food_age_block`, `filters.request_notices`). Food 식단 요청 안내와 같은 방식이다 — 보호자가 쓴 어절만 싣고 등록한 알레르기 이름은 싣지 않으며, 모델 입력에 가지 않는다. 빼 달라는 말(*"땅콩 빼고"*)은 안내하지 않는다. 개수와 상관없이 붙는다 — 0개여도 왜 없는지 이 줄이 말한다.
+**다 빠지면 안내만 낸다 (#582)** — [예시] 행으로 채우지 않는다 — 실험에서 요청과 상관없는 추천이 나갔다. 0개면 `count_notice(0)`(`suggestion.empty`)이고, **보호자가 요청에 쓴 음식이 이 아이에게 막혔으면** 그런 놀이는 빼고 골랐다는 한 줄을 붙인다(`request.food_conflict` · `request.food_age_block`, `filters.request_notices`). Food 식단 요청 안내와 같은 방식이다 — 보호자가 쓴 어절만 싣고 등록한 알레르기 이름은 싣지 않으며, 모델 입력에 가지 않는다. 빼 달라는 말(*"땅콩 빼고"*)은 안내하지 않는다. 개수와 상관없이 붙는다 — 0개여도 왜 없는지 이 줄이 말한다. 붙어 쓴 영어 음식 이름(*peanut butter*)은 한 음식으로 한 줄만 말한다 — 말하는 단위만 묶고 판정은 낱말 그대로다(`food_words.food_phrases`, #864).
 
 **끝나는 조건** — 루프는 공통 `common/tool_loop.run_tool_loop` 다(#320). 출력 tool 이 통과하면 끝난다. `tool_choice="required"` 로 부른다 — 실호출에서 auto 는 tool 을 0/3, required 는 3/3 불렀다. 그래도 말로 끝내거나(`no_tool_call`) 왕복 상한(`MAX_STEPS`)을 넘기면 `failed` 다. 모델이 쓴 말은 화면에 내지 않는다.
 

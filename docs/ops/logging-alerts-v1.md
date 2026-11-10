@@ -67,7 +67,8 @@ api 안의 알림은 **api 프로세스 안의 `app.*` 로거**에만 달린다.
 - 도메인 (10-10 사기로 함) — 모니터는 IP 가 아니라 도메인으로 등록한다. EC2 를 중지 → 시작하면 공인 IP 가 바뀌는데(고정 IP 불가), 그때 도메인의 A 레코드만 고친다. 도메인이 생기면 HTTPS 를 붙일 수 있고, UptimeRobot 의 "SSL · 도메인 만료" 알림이 그때부터 쓸모 있다
 - **시험 서버(dev)** — 11-06 띄움 ([deploy-v1.md](deploy-v1.md)). 꼬리표 · 컨테이너 감시 cron 은 거기서 정리했다. 아래는 그때 같이 본 것으로, Discord 채널 · UptimeRobot 은 아직 열려 있다:
   - 알림 꼬리표 — `deploy/docker/.env` 에 `APP_ENV=dev` 한 줄. compose 가 web(Next 서버 알림)에 넘기고 컨테이너 감시도 같은 줄을 읽는다 (10-10 이렇게 바꿈 — 코드 · cron 줄은 안 고친다). api 는 `apps/api/.env` 의 `APP_ENV` 를 읽으니 그쪽도 `dev` 로 — 두 파일 값이 어긋나면 꼬리표가 갈린다. api 가 compose 에 올라갈 때 같은 파일을 읽게 하면 사라지는 문제다
-  - api — 카카오 키 부팅 검사가 지금 `prod` 만 막는다 (`app/core/config.py` `_require_kakao_keys_in_prod` — "dev 서버가 생기면 다시 판단" 주석)
+  - ~~api — 카카오 키 부팅 검사가 `prod` 만 막는다~~ — dev 도 막는다 (#310, `app/core/config.py` `_require_kakao_keys_on_servers`)
+  - ~~컨테이너 감시가 dev 의 api 준비 상태(`/health/ready`)를 건너뛴다~~ — 이름을 `ktc4-api` 로만 찾던 것을 `ktc4-dev-api` 도 찾게 고쳤다 (#310). cron 줄은 [deploy-v1.md](deploy-v1.md) 준비 4
   - Discord — 시험 서버 알림을 같은 채널에 섞을지, 채널(웹훅)을 따로 둘지 정한다. 섞으면 꼬리표만으로 가른다
   - UptimeRobot — 시험 서버도 감시할지 (무료 플랜은 모니터 50개라 자리는 있다). 도메인은 하위 이름(예: `dev.<도메인>`)으로
 - ~~배포 스크립트가 `compose up` 직후 healthcheck 를 기다렸다가 바로 알리는 것~~ — `deploy.sh` 가 `up --wait` 로 기다리고, 실패하면 롤백 후 워크플로를 빨간불로 끝낸다 ([deploy-v1.md](deploy-v1.md))
