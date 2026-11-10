@@ -1140,6 +1140,13 @@ def _send_reply(
         and _request_only(memory, routing)
     ):
         note = MemoryNote(REQUEST_ONLY_NOTE, "message")
+    elif (
+        routing is not None
+        and note is not None
+        and note.kind == "message"
+        and _nothing_to_record(memory, routing)
+    ):
+        note = None
     elif note is not None and note.kind == "message" and checked_by_health:
         # 등록된 약이라 저장하지 않은 것밖에 없고, 그 문장이 같은 run 의 체크 안내로 실렸다 —
         # Memory 의 말까지 나가면 같은 안내가 두 번이다
@@ -2541,8 +2548,33 @@ def _request_only(memory: MemoryAgentResult, routing: Routing) -> bool:
         return False
     if memory.reply is None or memory.reply.kind != "message":
         return False
-    attempted = any(call.name.startswith(MUTATING_PREFIXES) for call in memory.calls)
-    return not (attempted or memory.drafts)
+    return not _tried_to_write(memory)
+
+
+def _tried_to_write(memory: MemoryAgentResult) -> bool:
+    """쓰기를 시도했거나 제출을 기다리는 초안이 있는가."""
+    return any(call.name.startswith(MUTATING_PREFIXES) for call in memory.calls) or bool(
+        memory.drafts
+    )
+
+
+def _nothing_to_record(memory: MemoryAgentResult, routing: Routing) -> bool:
+    """기록 조각이 없는 요청 run 에서 Memory 가 쓰기 없이 말로만 끝냈는가 (#861).
+
+    힌트 0개로 불린 Memory 의 말은 모델이 쓴 범위 안내("식사 추천은 해드리지 않아요")라 매번 달라서,
+    같은 카드의 도메인 추천과 부딪힌다. 남긴 기록이 없으니 `REQUEST_ONLY_NOTE` 도 거짓 신호다 —
+    말을 싣지 않는다. 시도했다 막힌 거절 · 질문 · 저장 확인은 그대로 둔다
+    (`_request_only` 와 같은 기준).
+
+    tool 을 하나라도 불렀으면 싣는다 — 조각 밖에 추임새가 아닌 글자가 남은 run 이라 Supervisor 가
+    놓친 조회 · 중복 안내에 Memory 가 읽고 답한 것일 수 있다. 도구 없이 말만 한 경우만 뺀다.
+    """
+    task = routing.memory_task
+    if task is None or task.hints or not routing.domain_tasks:
+        return False
+    if memory.reply is None or memory.reply.kind != "message":
+        return False
+    return not memory.calls and not _tried_to_write(memory)
 
 
 def _unwritten(task: MemoryTask | None, memory: MemoryAgentResult) -> Unwritten | None:
@@ -2614,7 +2646,13 @@ def _did_anything(
     응급 안내를 낸 run 은 쓴 것이 없어도 처리한 일이다 — 실패로 끝내면 안내가 실패 화면에 묻힌다.
     """
     wrote = _memory_wrote(memory)
-    note = memory is not None and bool(memory.final_message)
+    # 싣지 않은 말(`_nothing_to_record`)은 처리한 일이 아니다.
+    # 세면 도메인 Agent 가 다 실패했을 때 Failed 없이 빈 화면으로 끝난다
+    note = (
+        memory is not None
+        and bool(memory.final_message)
+        and not _nothing_to_record(memory, routing)
+    )
     return (
         wrote
         or note

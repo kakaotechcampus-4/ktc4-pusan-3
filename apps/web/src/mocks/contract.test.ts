@@ -409,6 +409,76 @@ describe("일정 초안", () => {
     });
   });
 
+  /**
+   * 🚨 **초안을 만든 뒤에 등록된 알레르기는 제출이 막는다** (서버 #902 · 문서 §3-8). 05 승인 시트는 열어 둔 채
+   *    나중에 넣을 수 있어서, 초안 만들기의 검사만으로는 그 틈을 못 막는다. 판정 · 응답은 초안 만들기와 같다.
+   */
+  describe("초안을 만든 뒤 등록된 알레르기 (#902)", () => {
+    afterEach(() => setScenario("default"));
+
+    const [blockedId, [allergen]] = Object.entries(suggestionAllergens).find(
+      ([id, a]) => a.length > 0 && suggestions.some((s) => s.id === id && s.agent === "food"),
+    )!;
+    const otherFood = () =>
+      suggestions.find(
+        (s) => s.agent === "food" && s.id !== blockedId && !suggestionAllergens[s.id]?.length,
+      )!.id;
+
+    it("🚨 걸린 제안이 든 제출은 넣지 않고 409 와 그 id 를 준다 — 걸리지 않은 제안은 따로 넣을 수 있다", async () => {
+      const other = otherFood();
+      await approveSuggestions("c1", { suggestion_ids: [blockedId, other] });
+      await createEventDrafts("c1", { suggestion_ids: [blockedId, other] });
+      await addHealthSafety("c1", { type: "allergy", label: allergen }, newIdempotencyKey());
+
+      const refused = await submitEventDraft(
+        "c1",
+        draftBody(blockedId, other),
+        newIdempotencyKey(),
+      ).catch((e: unknown) => e);
+      expect(isApiError(refused, "allergen_blocked")).toBe(true);
+      expect((refused as ApiError).status).toBe(409);
+      expect((refused as ApiError).detail).toEqual({ suggestion_ids: [blockedId] });
+
+      // 막힌 제출은 연결을 남기지 않는다 — 함께 실렸던 제안이 "이미 넣은 제안" 으로 막히지 않는다.
+      const put = await submitEventDraft("c1", draftBody(other), newIdempotencyKey());
+      expect(put.event.created_by).toBe("agent");
+    });
+
+    it("알레르기 항목이 든 제안인데 동의가 없으면 403, 항목이 없는 제출은 건강정보를 보지 않는다", async () => {
+      const other = otherFood();
+      await approveSuggestions("c1", { suggestion_ids: [blockedId, other] });
+      setScenario("consent");
+
+      const refused = await submitEventDraft("c1", draftBody(blockedId), newIdempotencyKey()).catch(
+        (e: unknown) => e,
+      );
+      expect(isApiError(refused, "consent_required")).toBe(true);
+      expect((refused as ApiError).status).toBe(403);
+
+      const put = await submitEventDraft("c1", draftBody(other), newIdempotencyKey());
+      expect(put.event.created_by).toBe("agent");
+    });
+
+    /**
+     * 🚨 403 · 409 는 기억하지 않는다 — 기억하면 다른 탭에서 동의를 켠 뒤 같은 버튼(같은 키)으로 넣어도 403 이 재생된다.
+     *    상태가 바뀌는 쪽으로 걸어야 "재생된 실패" 와 "다시 본 실패" 가 갈린다.
+     */
+    it("🚨 동의가 없어 막힌 제출은 기억하지 않아, 동의를 켠 뒤 같은 키로 보내면 들어간다", async () => {
+      await approveSuggestions("c1", { suggestion_ids: [blockedId] });
+      const key = newIdempotencyKey();
+
+      setScenario("consent");
+      const refused = await submitEventDraft("c1", draftBody(blockedId), key).catch(
+        (e: unknown) => e,
+      );
+      expect(isApiError(refused, "consent_required")).toBe(true);
+
+      setScenario("default");
+      const put = await submitEventDraft("c1", draftBody(blockedId), key);
+      expect(put.event.created_by).toBe("agent");
+    });
+  });
+
   it("🚨 제안 초안은 일자가 비어 있다 — 서버가 오늘로 채우지 않는다", async () => {
     const created = await makeDrafts([firstOf("food")]);
     for (const draft of created.drafts) expect(draft.event.starts_at).toBeNull();

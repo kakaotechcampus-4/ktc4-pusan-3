@@ -232,6 +232,5 @@ dev 가 열려 있으면 누구나 카카오로 가입해 실제 보호자 · �
 
 ## 남은 것
 
-- dev 의 카카오 키 부팅 검사 — 지금은 `APP_ENV=prod` 만 막는다 (`app/core/config.py`). dev 에 키가 없어도 뜬다
 - 적재 워크플로(`load-food-catalog.yml` · `load-places.yml`)는 prod 경로 고정이다. dev 적재가 필요해지면 환경 입력을 더한다
 - 빌드는 서버에서 한다. 빌드 중 OOM 이 실제로 나면 Actions 에서 빌드해 ECR 로 올리고 서버는 받기만 하게 옮긴다

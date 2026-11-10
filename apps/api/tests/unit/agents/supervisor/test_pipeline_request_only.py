@@ -44,9 +44,17 @@ def route(record_work: str = "observe", *, with_request: bool = True) -> FakeLLM
     return FakeLLM(call("route", {"segments": segments}))
 
 
-async def notes(memory: FakeLLM, **kwargs: Any) -> list[pipeline.MemoryNote]:
+# 조각 밖에 추임새가 아닌 글자("그게")가 남아 Memory 가 힌트 없이 불린다
+RAW_NO_HINT = "그게 양치 혼자 하게 하고 싶어"
+
+
+def route_request_only() -> FakeLLM:
+    return FakeLLM(call("route", {"segments": [REQUEST_SEGMENT]}))
+
+
+async def notes(memory: FakeLLM, *, raw: str = RAW, **kwargs: Any) -> list[pipeline.MemoryNote]:
     events = await run_events(
-        RAW,
+        raw,
         InMemoryStore(now=NOW),
         growth_llm=asks_level(),
         supervisor_llm=kwargs.pop("supervisor", route()),
@@ -153,3 +161,83 @@ async def test_저장을_시도했다_실패한_run_은_Memory_문장_그대로�
     (note, *_) = await notes(memory)
 
     assert note.text == "저장하지 못했어요. 다시 적어 주세요."
+
+
+@pytest.mark.parametrize(
+    "said",
+    ["아이 식사 추천은 해드리지 않아요.", "무엇을 먹일지 추천해 드리지는 않아요."],
+)
+async def test_기록_조각_없이_요청만_있으면_Memory_문장은_싣지_않는다(said: str) -> None:
+    """같은 카드에 "추천 안 해요" 와 추천이 같이 나오던 길 (#861)."""
+    got = await notes(
+        FakeLLM(memory_says(said, answering=False)),
+        raw=RAW_NO_HINT,
+        supervisor=route_request_only(),
+    )
+
+    assert got == []
+
+
+def _no_hint_routing() -> Routing:
+    return Routing(
+        intent_type="request",
+        memory_task=MemoryTask(RAW_NO_HINT),
+        domain_tasks=(DomainTask("run-1", "growth", "routine_coaching", (REQUEST,)),),
+    )
+
+
+def _memory(reply: MemoryReply, *calls: ToolCallRecord) -> MemoryAgentResult:
+    return MemoryAgentResult(reply=reply, completed=True, steps=1, calls=list(calls))
+
+
+def test_기록_조각이_없어도_쓰기를_시도했으면_Memory_문장_그대로다() -> None:
+    written = ToolCallRecord(
+        "create_observation_activity", {}, {"success": True, "resource": "observation_activity"}
+    )
+    reply = MemoryReply("기록을 남겼어요.", "message")
+
+    assert pipeline._nothing_to_record(_memory(reply), _no_hint_routing()) is True
+    assert pipeline._nothing_to_record(_memory(reply, written), _no_hint_routing()) is False
+
+
+def test_기록_조각이_없어도_Memory_질문은_그대로다() -> None:
+    asked = _memory(MemoryReply("언제 그랬어요?", "question"))
+
+    assert pipeline._nothing_to_record(asked, _no_hint_routing()) is False
+
+
+def test_도메인_task_가_없으면_해당이_없다() -> None:
+    """강등 run 의 Memory 말은 그대로다."""
+    routing = Routing(intent_type="record", memory_task=MemoryTask(RAW_NO_HINT), degraded=True)
+    said = _memory(MemoryReply("저장할 내용이 없어요.", "message"))
+
+    assert pipeline._nothing_to_record(said, routing) is False
+
+
+def test_기록_조각이_있으면_이_길이_아니다() -> None:
+    """힌트가 있는 run 은 `_request_only` 가 코드 문구로 바꾼다."""
+    task = MemoryTask(RAW, hints=(MemoryHint("오늘 그림 그렸어", WorkType.OBSERVE),))
+    routing = Routing(
+        intent_type="mixed",
+        memory_task=task,
+        domain_tasks=(DomainTask("run-1", "growth", "routine_coaching", (REQUEST,)),),
+    )
+
+    assert (
+        pipeline._nothing_to_record(_memory(MemoryReply("그림 기록", "message")), routing) is False
+    )
+
+
+def test_기록_조각이_없어도_조회한_run_의_Memory_문장은_그대로다() -> None:
+    """Supervisor 가 놓친 조회에 Memory 가 읽어 답했다면 그 답이 사라지면 안 된다 (리뷰)."""
+    searched = ToolCallRecord("search_observations", {}, {"success": True})
+    reply = MemoryReply("지난주에는 바나나를 먹었어요.", "message")
+
+    assert pipeline._nothing_to_record(_memory(reply, searched), _no_hint_routing()) is False
+
+
+def test_Memory_말을_싣지_않았으면_처리한_일로_세지_않는다() -> None:
+    """말을 뺀 run 에서 도메인 Agent 가 전부 실패하면 빈 화면이 아니라 Failed 로 끝나야 한다."""
+    said = _memory(MemoryReply("식사 추천은 해드리지 않아요.", "message"))
+
+    assert pipeline._did_anything(said, [], _no_hint_routing()) is False

@@ -1094,6 +1094,115 @@ test.describe("채택한 뒤 등록된 알레르기는 일정으로 만들지 �
     );
     await expect(page.getByText("아직 아무것도 넣지 않았어요")).toHaveCount(0);
   });
+
+  /**
+   * 초안을 만든 뒤 등록된 알레르기 (#902). 승인 시트는 열어 둔 채 나중에 넣을 수 있어서, 넣는 순간 제출(서버)이
+   * 다시 보고 `409 allergen_blocked` 로 막는다. 제출은 카드 한 장에 요청 하나라 걸린 카드만 막힌다.
+   */
+  async function pickToday(sheet: Locator, page: Page) {
+    await sheet.getByRole("button", { name: /언제/ }).click();
+    await page.getByRole("button", { name: /^오늘, / }).click();
+    await page.getByRole("button", { name: "고르기" }).click();
+  }
+
+  test("시트를 연 사이 등록된 알레르기는 그 카드만 잠그고, 다른 카드는 넣고, 닫으면 05 가 둘 다 다시 만들지 않는다 (#902)", async ({
+    page,
+  }) => {
+    const calls = recordApi(page);
+    await approveEggDish(page, "주말에 실내 물놀이장은 어떨까요");
+    await page.getByRole("button", { name: "일정으로 만들기" }).click();
+    const sheet = page.getByRole("dialog", { name: "캘린더에 넣을까요" });
+    await expect(sheet.getByText("2건 중 1번째")).toBeVisible();
+    expect(await registerEgg(page)).toBe(201);
+
+    // 식사 초안 — 넣는 순간 서버가 막는다.
+    await pickToday(sheet, page);
+    const submit = sheet.getByRole("button", { name: "확인했어요, 캘린더에 넣을게요" });
+    await submit.click();
+    await expect(
+      sheet.getByRole("status").filter({
+        hasText: "그사이 알레르기로 등록된 식품이 들어간 추천이라 이 일정은 넣지 않았어요.",
+      }),
+    ).toBeVisible();
+    // 🚨 다시 눌러도 같은 409 라 실패 카드(서버 문구 + 다시 누를 버튼)를 세우지 않는다.
+    await expect(
+      sheet.getByText("알레르기로 등록된 항목이 들어 있어 일정으로 만들 수 없어요"),
+    ).toHaveCount(0);
+    await expect(sheet.getByText("아직 아무것도 넣지 않았어요")).toHaveCount(0);
+    await expect(submit).toHaveCount(0);
+
+    // 🚨 막히는 것은 그 카드뿐이다 — 놀이 초안은 그대로 넣는다.
+    await sheet.getByRole("button", { name: "다음" }).click();
+    await pickToday(sheet, page);
+    await sheet.getByRole("button", { name: "확인했어요, 캘린더에 넣을게요" }).click();
+    await expect(sheet.getByText("넣었어요", { exact: true })).toBeVisible();
+    expect(writes(calls, "POST", /\/children\/c1\/events$/).map((w) => w.body)).toEqual([
+      expect.objectContaining({ suggestion_ids: ["s_1"] }),
+      expect.objectContaining({ suggestion_ids: ["s_4"] }),
+    ]);
+
+    // 닫으면 초안 만들기의 409(#859)와 같은 안내가 서고, 채택은 그대로다.
+    await sheet.getByRole("button", { name: "닫기" }).click();
+    await expect(
+      page.getByRole("status").filter({
+        hasText: "그사이 알레르기로 등록된 식품이 들어간 추천이라 일정으로 만들 수 없어요",
+      }),
+    ).toBeVisible();
+    await expect(page.getByText("식사 1가지, 놀이 1가지")).toBeVisible();
+    // 🚨 넣은 놀이 추천은 다시 만들지 않는다 — 남은 것이 없으니 버튼 대신 넣었다는 말만 선다.
+    await expect(page.getByText("넣을 수 있는 것은 캘린더에 넣었어요.")).toBeVisible();
+    await expect(page.getByRole("button", { name: "일정으로 만들기" })).toHaveCount(0);
+    await expect(page.getByText("일정으로도 만들까요?")).toHaveCount(0);
+  });
+
+  test("묶인 식사 초안이 막히면 닫고 다시 만들 때 걸린 추천만 빠진다 (#902)", async ({ page }) => {
+    const calls = recordApi(page);
+    await page.goto(SUGGESTIONS);
+    await page.getByText("계란말이에 시금치를 조금 섞어 보세요").click();
+    await page.getByText("두부를 부쳐서 한 조각 곁들여 보세요").click();
+    await page.getByRole("button", { name: "이 2가지로 할게요" }).click();
+    const check = page.getByRole("dialog", { name: "확인해 주세요" });
+    for (const card of await check.locator("section").all()) {
+      await card.getByRole("button", { name: "모르겠어요" }).click();
+    }
+    await check.getByRole("button", { name: "이대로 고르기" }).click();
+    await page.getByRole("button", { name: "일정으로 만들기" }).click();
+    const sheet = page.getByRole("dialog", { name: "캘린더에 넣을까요" });
+    await expect(sheet.getByRole("textbox", { name: "제목" })).toHaveValue("저녁 식사");
+    expect(await registerEgg(page)).toBe(201);
+
+    await pickToday(sheet, page);
+    await sheet.getByRole("button", { name: "확인했어요, 캘린더에 넣을게요" }).click();
+    await expect(
+      sheet.getByRole("status").filter({ hasText: "닫고 일정으로 다시 만들면 그 추천을 빼고" }),
+    ).toBeVisible();
+
+    await sheet.getByRole("button", { name: "닫기" }).click();
+    await page.getByRole("button", { name: "일정으로 만들기" }).click();
+    await expect(page.getByRole("dialog", { name: "캘린더에 넣을까요" })).toBeVisible();
+    expect(writes(calls, "POST", /\/suggestions\/event-drafts$/).map((d) => d.body)).toEqual([
+      { suggestion_ids: ["s_1", "s_2"] },
+      { suggestion_ids: ["s_2"] },
+    ]);
+  });
+
+  test("넣는 순간 건강정보 동의가 없으면 다시 넣을 길을 함께 말한다 (#902)", async ({ page }) => {
+    await approveEggDish(page);
+    await page.getByRole("button", { name: "일정으로 만들기" }).click();
+    const sheet = page.getByRole("dialog", { name: "캘린더에 넣을까요" });
+    await expect(sheet).toBeVisible();
+    await switchScenario(page, "consent");
+
+    await pickToday(sheet, page);
+    const submit = sheet.getByRole("button", { name: "확인했어요, 캘린더에 넣을게요" });
+    await submit.click();
+    await expect(sheet.getByText("아직 아무것도 넣지 않았어요")).toBeVisible();
+    await expect(
+      sheet.getByText("설정 화면의 동의에서 켠 뒤 일정을 다시 만들어 주세요."),
+    ).toBeVisible();
+    // 다른 탭 · 기기에서 동의를 켰으면 같은 키로 들어가서 버튼은 남는다 (서버는 403 을 기억하지 않는다).
+    await expect(submit).toBeEnabled();
+  });
 });
 
 test.describe("승인 게이트 ㉡ — 같은 식품이 두 추천에 (#823)", () => {
