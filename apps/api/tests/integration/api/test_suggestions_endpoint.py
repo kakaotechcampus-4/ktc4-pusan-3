@@ -870,6 +870,37 @@ async def test_다시_만들었더니_닫혔으면_다음_요청도_같은_guard
     assert len(calls) == 1  # 두 번째는 다시 돌리지 않는다
 
 
+async def test_다시_만든_결과를_기록하는_칸은_지우지_않고_바로_덮는다(
+    db_client, bearer, cid, agents, monkeypatch
+):
+    """지운 뒤 기록을 넣으면 그 사이에 온 요청이 "맥락도 기록도 없음" 을 본다 (#899 리뷰).
+
+    닫힘 · 0개 기록은 실패 맥락 칸을 그대로 덮는다(upsert) — 그 칸은 지우지 않는다.
+    """
+    plan, _ = agents
+    headers, parent_id = bearer
+    task = suggestion_retry.RetryTask(None, ("놀이 추천해줘",), datetime.now(UTC))
+    await suggestion_retry.put_failed(
+        run_id="run-1", parent_id=parent_id, child_id=cid, agent="activity", task=task
+    )
+    plan["activity"] = ("blocked", "알레르기 정보를 확인할 수 없어서 추천을 드릴 수 없어요.")
+    dropped: list[str] = []
+    real_drop = suggestion_retry.drop
+
+    async def spy_drop(*, run_id, agent):
+        dropped.append(agent)
+        await real_drop(run_id=run_id, agent=agent)
+
+    monkeypatch.setattr(suggestion_retry, "drop", spy_drop)
+
+    await _post(db_client, cid, headers, agents=["activity"], run_id="run-1")
+
+    assert dropped == []
+    assert await suggestion_retry.guard_of(
+        run_id="run-1", parent_id=parent_id, child_id=cid, agent="activity"
+    ) == ("safety_unknown", "알레르기 정보를 확인할 수 없어서 추천을 드릴 수 없어요.")
+
+
 async def test_Agent_를_돌리기_전에_요청_세션의_트랜잭션을_닫는다(
     db_client, session, bearer, cid, agents, monkeypatch
 ):

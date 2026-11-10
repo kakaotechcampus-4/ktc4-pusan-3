@@ -247,3 +247,54 @@ async def test_미러가_꺼져_있으면_표에_쓰지_않는다(monkeypatch: p
     await channel.drained()  # 기다릴 것이 없다
 
     assert channel.events == [("done", {})]
+
+
+async def test_채널_행은_opened_를_기다리면_바로_다른_워커에서_보인다(mirror):
+    """창구는 202 전에 이것을 기다린다 — 화면이 202 를 받자마자 다른 워커로 SSE 를 열어도 404 가
+    아니다 (#899 리뷰)."""
+    (parent, _), _ = mirror
+    channel = registry.open_run(parent_id=parent)
+
+    await channel.opened()
+    _forget_locally(channel.run_id)
+
+    view = await registry.lookup(channel.run_id)
+    assert view is not None and view.parent_id == parent
+
+
+async def test_원문에_NUL_이_있어도_끝_신호와_닫힘이_남는다(mirror):
+    """JSONB 는 \\u0000 을 받지 않는다. 그 이벤트 하나 때문에 닫힘이 안 남으면 다른 워커의 화면이
+    10분 붙잡힌다 (#899 리뷰)."""
+    (parent, _), _ = mirror
+    channel = registry.open_run(parent_id=parent)
+    channel.publish(("failed", {"reason": "synthetic", "raw_text": "앞\x00뒤"}))
+    channel.close()
+    await channel.drained()
+    _forget_locally(channel.run_id)
+
+    view = await registry.lookup(channel.run_id)
+    frames = await _read_all(channel.run_id)
+
+    assert (view.ended_with, view.closed) == ("failed", True)
+    assert _names(frames) == ["failed"]
+    assert "앞뒤" in frames[0]
+
+
+async def test_이벤트_쓰기가_실패해도_끝_신호와_닫힘은_따로_남긴다(mirror, monkeypatch):
+    """DB 가 잠깐 이벤트를 못 받아도 다른 워커의 화면은 끝을 안다 — 끝 신호 이벤트는 못 받아도
+    채널이 닫혀 읽기를 마친다."""
+    (parent, _), _ = mirror
+
+    async def broken_append(*args, **kwargs):
+        raise ConnectionError("synthetic")
+
+    monkeypatch.setattr(registry, "append_events", broken_append)
+    channel = registry.open_run(parent_id=parent)
+    channel.publish(("done", {}))
+    channel.close()
+    await channel.drained()
+    _forget_locally(channel.run_id)
+
+    view = await registry.lookup(channel.run_id)
+    assert (view.ended_with, view.closed) == ("done", True)
+    assert await _read_all(channel.run_id) == []  # 읽기는 기다리지 않고 끝난다

@@ -359,6 +359,31 @@ async def test_한도에_걸리면_되묻기_맥락의_표시를_푼다(
     assert await pending_reply.get(run_id="prev-run", parent_id=PARENT, child_id=CHILD) is not None
 
 
+async def test_202_전에_채널_행이_표에_쓰이기를_기다린다(
+    client, agent_calls, consent_reads, monkeypatch
+):
+    """화면은 202 를 받자마자 SSE 를 연다. 그 요청이 다른 워커로 가면 표에 채널 행이 있어야
+    404 가 아니다 (#877 4단계 · #899 리뷰)."""
+    awaited: list[str] = []
+    real_open = registry.open_run
+
+    def open_run(*, parent_id):
+        channel = real_open(parent_id=parent_id)
+
+        async def opened():
+            awaited.append(channel.run_id)
+
+        channel.opened = opened
+        return channel
+
+    monkeypatch.setattr(registry, "open_run", open_run)
+
+    response = await client.post(URL, json=BODY, headers=_key())
+
+    assert response.status_code == 202
+    assert awaited == [response.json()["run_id"]]
+
+
 async def _answer_same_question_twice_at_once(client, monkeypatch):
     """같은 되묻기에 두 답을 거의 동시에 보낸다.
 
