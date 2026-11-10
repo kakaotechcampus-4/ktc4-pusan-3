@@ -726,31 +726,31 @@ test.describe("한 줄 입력의 글자 수 한도 (#867)", () => {
     await page.goto(`/child/${CHILD}/home`);
     const input = page.getByRole("textbox", { name: "오늘 있었던 일" });
     const send = page.getByRole("button", { name: "이 이야기 남기기" });
-    const reason = page.getByText("2,000자까지 보낼 수 있어요. 줄이거나 나눠서 보내 주세요.");
+    const reason = page.getByText("500자까지 보낼 수 있어요. 줄이거나 나눠서 보내 주세요.");
 
     // 대부분의 한 줄에는 숫자가 없다.
-    await input.fill("가".repeat(1799));
-    await expect(page.getByText(/\d+\/2000/)).toHaveCount(0);
-    await input.fill("가".repeat(1800));
-    await expect(page.getByText("1800/2000")).toBeVisible();
+    await input.fill("가".repeat(299));
+    await expect(page.getByText(/\d+\/500/)).toHaveCount(0);
+    await input.fill("가".repeat(300));
+    await expect(page.getByText("300/500")).toBeVisible();
 
-    // 🚨 서버처럼 앞뒤 공백을 떼고 코드 포인트로 센다 — 이모지 2,000개는 보낼 수 있는 글이다.
-    await input.fill(`${"😀".repeat(2000)}   `);
-    await expect(page.getByText("2000/2000")).toBeVisible();
+    // 🚨 서버처럼 앞뒤 공백을 떼고 코드 포인트로 센다 — 이모지 500개는 보낼 수 있는 글이다.
+    await input.fill(`${"😀".repeat(500)}   `);
+    await expect(page.getByText("500/500")).toBeVisible();
     await expect(reason).toHaveCount(0);
     await expect(send).toBeEnabled();
 
     // 🚨 `maxLength` 로 자르지 않는다 — 붙여넣은 글이 그대로 남고, 보내기만 막는다.
-    await input.fill("가".repeat(2001));
-    await expect(input).toHaveValue("가".repeat(2001));
-    await expect(page.getByText("2001/2000")).toBeVisible();
+    await input.fill("가".repeat(501));
+    await expect(input).toHaveValue("가".repeat(501));
+    await expect(page.getByText("501/500")).toBeVisible();
     await expect(reason).toBeVisible();
     await expect(send).toBeDisabled();
-    await expect(send).toHaveAccessibleDescription(/2,000자까지 보낼 수 있어요/);
+    await expect(send).toHaveAccessibleDescription(/500자까지 보낼 수 있어요/);
 
     // Enter 도 같은 말을 한다 — 줄바꿈으로 새지도, 보내지도 않는다.
     await input.press("Enter");
-    await expect(input).toHaveValue("가".repeat(2001));
+    await expect(input).toHaveValue("가".repeat(501));
     expect(writes(calls, "POST", /\/inputs$/)).toEqual([]);
 
     // 줄이면 다시 보낼 수 있다.

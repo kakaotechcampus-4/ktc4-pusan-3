@@ -542,7 +542,7 @@ describe("다시 시도는 응답을 못 받은 경우의 것이다 (#231 리뷰
 
   it("서버가 거절한 4xx 에는 다시 시도가 없다 (형식 · 권한 · 한도 · 맥락)", () => {
     for (const error of [
-      new ApiError(422, "validation_error", "2000자를 넘을 수 없어요"),
+      new ApiError(422, "validation_error", "500자를 넘을 수 없어요"),
       new ApiError(403, "child_access_denied", "이 아이를 볼 수 없어요"),
       new ApiError(429, "daily_input_limit", "오늘은 더 적을 수 없어요"),
       new ApiError(400, "reply_context_unavailable", "이어서 확인할 수 없어요"),

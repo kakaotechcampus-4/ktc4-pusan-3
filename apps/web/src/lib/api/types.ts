@@ -572,8 +572,10 @@ export interface CreateInputRequest {
 /**
  * 한 줄 입력의 상한. 서버 `CreateInputRequest.text`(`apps/api/app/api/v1/schemas/children.py`)의 `max_length` 와 같은 값이다.
  * 한쪽만 바꾸지 않는다. 서버는 앞뒤 공백을 뗀 뒤 글자(코드 포인트) 수로 센다 — 세는 법은 `lib/input-length.ts`.
+ * 🚨 Agent 가 감당하는 길이에 맞춘 값이다 — 관찰이 촘촘한 글은 600자쯤부터 Supervisor 가 나누다 깨진다
+ *    (2026-11-10 실측 · `docs/web/chat-run-v1.md` "입력 상한의 근거").
  */
-export const INPUT_TEXT_MAX_LENGTH = 2000;
+export const INPUT_TEXT_MAX_LENGTH = 500;
 
 /**
  * 휴대폰이 약 1km 로 흐려 보낸 좌표 (서버 `InputLocation` · #380). 소수점 둘째 자리다.

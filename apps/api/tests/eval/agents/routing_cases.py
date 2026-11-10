@@ -11,6 +11,7 @@
 - T35~T69    아이가 한 일이 아닌 말(unclear)과 그대로 기록되는 말 대조 (#624 · #484 · #642)
 - NT01~NT06  기관 공지를 묻는 말(record/lookup_edit)과 급식 조회(daycare_lookup) 대조 (#832)
 - RO01~RO08  거절 · 안내 문구가 부모 말에 맞는지 — 진단 · 다른 집 · 주입 (#864)
+- RQ01~RQ08  말투만 다른 식사 추천 · 서술어 없는 요청 (#861)
 - T70~T75    날짜의 기준점 — 오늘 기준 · 일정 기준 · 하루로 안 정해지는 말 (#497)
 - score_split()  Step 5(Supervisor 단독)와 Step 9(끝까지)가 같은 기준으로 잰다
 
@@ -1409,6 +1410,49 @@ RO_CASES: tuple[RoutingCase, ...] = (
     ),
 )
 
+# ── RQ01~RQ08 — 말투만 다른 식사 추천 (#861) ────────────────────
+# 같은 뜻의 요청은 말투가 달라도 Food 만 탄다. 부르는 말("야")은 조각에 안 들어가도 된다 —
+# 기록일 수 없는 글자라 Memory 를 부르는 이유가 되면 안 된다
+RQ_CASES: tuple[RoutingCase, ...] = (
+    RoutingCase(
+        "RQ01", "애기 점심 뭐 먹이지", (Q("애기 점심 뭐 먹이지", FOOD, REC),), watch="대조 — 정상"
+    ),
+    RoutingCase("RQ02", "저녁메뉴 ㄱㄱ", (Q("저녁메뉴 ㄱㄱ", FOOD, REC),), watch="대조 — 정상"),
+    RoutingCase(
+        "RQ03", "애기 간식 뭐 주지 ㅠ", (Q("애기 간식 뭐 주지 ㅠ", FOOD, REC),), watch="대조 — 정상"
+    ),
+    RoutingCase(
+        "RQ04",
+        "야 밥 추천 해달라고",
+        (Q("밥 추천 해달라고", FOOD, REC),),
+        watch="재촉하는 말투는 고쳐 말하기가 아니다 · '야' 는 조각 밖에 남아도 된다",
+    ),
+    RoutingCase(
+        "RQ05",
+        "야 애기 밥추천 해달라니까",
+        (Q("애기 밥추천 해달라니까", FOOD, REC),),
+        watch="RQ04 와 같다",
+    ),
+    RoutingCase(
+        "RQ06",
+        "아 진짜 간식 추천 좀 하라고",
+        (Q("간식 추천 좀 하라고", FOOD, REC),),
+        watch="'~하라고'",
+    ),
+    RoutingCase(
+        "RQ07",
+        "어린이집 끝나고 간식",
+        (Q("어린이집 끝나고 간식", FOOD, REC),),
+        watch="어린이집은 때일 뿐 급식이 아니다 · 서술어 없는 요청",
+    ),
+    RoutingCase(
+        "RQ08",
+        "김밥 말고 다른 거 추천해달라니까",
+        (Q("김밥 말고 다른 거 추천해달라니까", FOOD, REC),),
+        watch="요청 안의 '말고' 는 정정이 아니다",
+    ),
+)
+
 ALL_CASES: tuple[RoutingCase, ...] = (
     RC_CASES
     + T_CASES
@@ -1419,6 +1463,7 @@ ALL_CASES: tuple[RoutingCase, ...] = (
     + DATE_CASES
     + NT_CASES
     + RO_CASES
+    + RQ_CASES
 )
 CASES_BY_ID: dict[str, RoutingCase] = {case.case_id: case for case in ALL_CASES}
 

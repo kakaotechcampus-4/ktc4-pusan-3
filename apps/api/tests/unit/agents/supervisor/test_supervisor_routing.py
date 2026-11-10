@@ -17,6 +17,7 @@ from app.agents.supervisor.agent import BAD_JSON, SupervisorResult
 from app.agents.supervisor.routing import (
     _GUIDANCE,
     AGENT_LIMIT,
+    FILLER_WORDS,
     MAX_DOMAIN_AGENTS,
     OTHER_FAMILY_GUIDANCE,
     PLAIN_DIAGNOSIS_GUIDANCE,
@@ -1149,3 +1150,52 @@ def test_RESOLVABLE_TASKS_는_추천_task_표와_같다() -> None:
     from app.agents.pipeline import RECOMMENDING_TASKS
 
     assert routing_module.RESOLVABLE_TASKS == RECOMMENDING_TASKS
+
+
+# ── 부르는 말 · 추임새만 조각 밖에 남은 요청 (#861) ────────────────
+_FOOD_REC = {
+    "text": "간식 추천해줘",
+    "kind": "request",
+    "agent": "food",
+    "food_task": "meal_recommendation",
+}
+
+
+@pytest.mark.parametrize("case_id", ["RQ04", "RQ05", "RQ06"])
+def test_부르는_말만_남은_요청은_Memory_를_부르지_않는다(case_id: str) -> None:
+    routing = _route_case(case_id)
+
+    assert routing.memory_task is None
+    assert routing.intent_type == "request"
+    assert [(t.agent, t.task_type) for t in routing.domain_tasks] == [
+        ("food", "meal_recommendation")
+    ]
+
+
+def test_자모만_남은_글자도_덮인_것으로_본다() -> None:
+    result = SupervisorResult(output=_output(_FOOD_REC))
+    routing = route("간식 추천해줘 ㅠㅠ", result, run_id=RUN_ID)
+
+    assert routing.memory_task is None
+
+
+def test_추임새는_낱말_단위로만_본다() -> None:
+    """ "야채" 의 "야" 는 추임새가 아니다 — 놓친 기록이라 Memory 가 본다."""
+    raw = "야채 먹었어. 간식 추천해줘"
+
+    routing = route(raw, SupervisorResult(output=_output(_FOOD_REC)), run_id=RUN_ID)
+
+    assert routing.memory_task is not None
+
+
+def test_추임새_말고_다른_글자가_남으면_Memory_가_본다() -> None:
+    raw = "야 오늘 김밥 먹었는데 간식 추천해줘"
+
+    routing = route(raw, SupervisorResult(output=_output(_FOOD_REC)), run_id=RUN_ID)
+
+    assert routing.memory_task is not None
+
+
+def test_아니_는_추임새가_아니다() -> None:
+    """ "김밥 아니 볶음밥" 같은 정정에 쓰인다."""
+    assert "아니" not in FILLER_WORDS

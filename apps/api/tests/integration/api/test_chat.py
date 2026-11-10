@@ -328,14 +328,7 @@ async def test_suggestions_come_back_with_their_current_status(
     ]
 
 
-@pytest.fixture
-def _no_pending():
-    pending_reply.clear()
-    yield
-    pending_reply.clear()
-
-
-@pytest.mark.usefixtures("_no_pending")
+@pytest.mark.usefixtures("pending_db")
 async def test_reply_open_only_while_the_question_context_lives(
     db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
 ):
@@ -352,7 +345,7 @@ async def test_reply_open_only_while_the_question_context_lives(
         at=NOON + timedelta(minutes=1),
         replies=[question, done],
     )
-    pending_reply.put(
+    await pending_reply.put(
         run_id=open_run,
         parent_id=me,
         child_id=cid,
