@@ -235,6 +235,8 @@ dev 가 열려 있으면 누구나 카카오로 가입해 실제 보호자 · �
      LLM · 외부 API · 카카오 키는 prod 와 같은 값을 쓴다 (11-06 결정 — 카카오는 같은 앱에 dev 콜백만 추가 등록). DB 비밀번호만 새로 만든다.
    - dev 의 `deploy/docker/.env` 에 메모리 상한 네 줄을 넣는다 (위 "dev 격리"). 🚨 없으면 dev 배포가 `deploy.sh` 검사에서 멈춘다.
    - prod 의 `deploy/docker/.env` 에 `COMPOSE_PROFILES=edge` 와 `DEV_BASIC_AUTH_USER` · `DEV_BASIC_AUTH_HASH` 를 더한다 (위 "dev 격리" — main 머지 전에).
+   - prod 의 `deploy/docker/.env` 에 `GRAFANA_PROM_URL` · `GRAFANA_PROM_USER` · `GRAFANA_CLOUD_TOKEN` 을 더한다 (서버 메트릭 · #946).
+     비어도 배포는 된다 — Alloy 는 `deploy.sh` 가 prod 배포 성공 뒤 따로 띄우고, 실패해도 🟠 경고만 남긴다 ([logging-alerts-v1 §7](logging-alerts-v1.md#7-서버-메트릭--grafana-cloud-946))
    - 🚨 서버에서 make 는 이미지를 굽지 않는다 (위 "make 로 굽지 않기"). 서버 빌드는 `deploy.sh` 만 한다 —
      빌드 인자(`NEXT_PUBLIC_*`)를 바꿨으면 `deploy.sh` 로 다시 배포한다.
    - swap 을 확인한다. `free -h` 에서 Swap 이 0이면 2GB 를 만든다 (`fallocate -l 2G /swapfile` …).

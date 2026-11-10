@@ -3,6 +3,30 @@
 # 🚨 이 파일은 prod checkout 의 것이 쓰인다 — dev 주소를 바꿔도 main 배포가 성공해야 반영된다
 #    (deploy.sh 가 prod 배포 성공 뒤 caddy reload 한다. up 만으로는 다시 읽지 않는다).
 
+# 전역 옵션 — Caddyfile 맨 첫 블록이어야 한다.
+# metrics: 요청 수 · 응답 코드 · 응답 시간 · 크기를 센다. Alloy 가 아래 :2020 에서 긁는다 (#946).
+#   경로 · IP 는 라벨에 없다. 요청 시간(request_duration)에는 SSE 연결 시간이 섞인다 — 첫 바이트까지
+#   시간(response_duration)으로 본다 (docs/ops/logging-alerts-v1.md §7).
+# 🚨 per_host(사이트별 host 라벨)를 켜지 않는다. 2.10 은 들어온 Host 헤더를 그대로 라벨로 써서, 인터넷 누구나
+#    Host 를 바꿔 보내면 시계열이 늘고(무료 한도 초과) 상한 없는 Caddy 메모리가 커진다 (#946 보안 검토 M1 · 재현).
+#    설정에 없는 Host 를 묶는 보호는 2.11 부터다 (caddyserver/caddy#7306) — 올린 뒤에 켠다.
+{
+	metrics
+}
+
+# 메트릭 창구. 🚨 호스트 포트를 열지 않는다(compose 는 80/443 만) — ktc4-edge 안에서만 닿고,
+# 그 안에서도 Alloy 고정 주소(172.30.0.11, compose)만 받는다. dev 컨테이너(develop 코드)도 edge 에 있어서다.
+# 사이트 주소가 포트뿐이라 TLS 없이 http 로 뜬다.
+:2020 {
+	@alloy remote_ip 172.30.0.11
+	handle @alloy {
+		metrics
+	}
+	handle {
+		respond 403
+	}
+}
+
 # HSTS — 브라우저가 이 주소를 정해진 기간 동안 https 로만 연다 (#670).
 #   http 로 먼저 여는 첫 요청이 사라져, 그 순간을 가로채 https 로 못 가게 붙잡는 공격을 막는다.
 #   🚨 한 번 보낸 기간은 보호자 브라우저에 남아 서버에서 되돌릴 수 없다 — 그 기간에 https 가

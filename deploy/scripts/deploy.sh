@@ -188,6 +188,22 @@ if "${COMPOSE[@]}" up -d --no-build --pull never --wait --wait-timeout 360; then
   # 못 읽어도, 그 줄이 없어도 배포는 성공이다.
   "${COMPOSE[@]}" logs --no-color --since 10m api 2>/dev/null | grep "꺼져 있는 기능" | tail -n 1 || true
   if [ "$TARGET" = prod ]; then
+    # 서버 메트릭 수집(Alloy · #946). 🚨 감시 도구라 무엇이 실패해도 배포는 성공이다 — 경고만 남기고 넘어간다.
+    # 위 `up --wait` 에 안 들어간다(profile monitor) — 들어가면 깨진 config.alloy 가 운영 배포를 롤백시키고,
+    # 롤백도 같은 config 를 읽어 같이 실패한다. 이름을 불러 따로 띄우고(--wait 없음) 이미지는 없으면 받는다.
+    # --force-recreate — compose 정의가 그대로면 up 은 컨테이너를 두고 가고, Alloy 는 바뀐 config.alloy 를
+    # 스스로 다시 읽지 않는다. 그러면 검사만 새 설정으로 하고 옛 설정으로 돈다 (#946 보안 검토 L3).
+    # Caddy reload 보다 먼저 — reload 가 실패해 exit 1 로 끝나도 메트릭은 돈다.
+    if out="$(
+      img="$("${COMPOSE[@]}" --profile monitor config --images | grep '^grafana/alloy:' | head -n 1)" &&
+        docker run --rm -v "$PWD/deploy/alloy:/etc/alloy:ro" "$img" validate /etc/alloy/config.alloy 2>&1 &&
+        "${COMPOSE[@]}" up -d --no-build --pull missing --force-recreate alloy 2>&1
+    )"; then
+      log "Alloy(메트릭 수집) 기동"
+    else
+      log "🟠 Alloy 검사 · 기동 실패 — 배포는 성공이고 메트릭만 빈다. deploy/alloy/config.alloy 를 고쳐 다시 배포한다"
+      echo "$out" | tail -n 20
+    fi
     # Caddyfile 은 up 만으로 다시 읽히지 않는다 (Caddy 설정이 그대로면 컨테이너를 다시 안 만든다).
     # 이번 up 이 Caddy 를 새로 만들었으면 관리 포트(2019)가 몇 초 늦게 열린다 — 리허설에서 바로 부르면
     # connection refused 였다. 몇 번 다시 해 본다.
