@@ -53,7 +53,8 @@ class PhotoEntry(ApiSchema):
 
     시작 일시는 `date` 가 시작일인 항목에서만 받는다 (마감만 읽은 항목은 마감 날짜만 고친다).
     `starts_at` 의 한국 날짜가 `date` 와 같아야 받고, 다르면 그날 하루 종일로 저장한다.
-    `ends_at` 은 `starts_at` 보다 뒤일 때만 함께 저장한다.
+    `ends_at` 은 사진에서 읽은 끝 그대로이고 `starts_at` 보다 뒤일 때만 함께 저장한다. 그 밖의 값은
+    받지 않고 끝을 비운다 — 끝 시각은 고칠 수 있는 값이 아니다.
     """
 
     model_config = ConfigDict(extra="ignore")

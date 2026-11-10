@@ -204,7 +204,8 @@ export function planEndsAt(
  *    기록의 날짜는 마감이다. 급식 · 안내에는 그 칸이 없다.
  * 🚨 시작이 아직 정해지지 않았으면(하루 종일을 껐는데 시각이 빈 경우) 읽은 값 그대로다.
  * 🚨 **서버 `apply_edits` 가 같은 규칙으로 받는다** — 시작 항목에서만, `starts_at` 의 날짜가 `date` 와
- *    같을 때만. 이 함수를 바꾸면 서버도 같이 본다.
+ *    같을 때만. 끝은 읽은 끝 그대로일 때만 받는다 (`carriedEndsAt` 이 보내는 값이 그것뿐이다 · #952 리뷰).
+ *    이 함수를 바꾸면 서버도 같이 본다.
  */
 export function recordedEntry(entry: PhotoEntry, plan: EventPlan): PhotoEntry {
   if (!canBecomeEvent(entry) || entryDateRole(entry) !== "start") return entry;

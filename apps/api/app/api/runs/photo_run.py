@@ -368,6 +368,7 @@ def apply_edits(
     들어가는데 기록에는 사진에서 읽은 시각이 남던 것을 막는다. 시작을 고치는 항목에서만 쓰고,
     보낸 시각의 날짜(한국)가 `day` 와 같을 때만 받는다 — 날짜만 고치고 읽은 시각을 그대로 다시
     보내는 화면이 있어, 그 시각을 새 날짜에 붙이면 보호자가 고른 적 없는 일시가 저장된다.
+    끝(`ends_at`)은 고칠 수 있는 값이 아니다. 읽은 끝을 그대로 둘지 뺄지만 정한다.
     """
     current = _entry_date(item)
     changed = {
@@ -383,9 +384,21 @@ def apply_edits(
     sent = starts_at if starts_at is not None and starts_at.tzinfo is not None else None
     if edits_start and day is not None and sent is not None and _kst_date(sent) == day:
         if not all_day:
-            # 끝은 고친 시작보다 뒤일 때만 함께 둔다 — 앞선 끝을 두면 시작이 끝보다 늦은 항목이 된다
-            end = ends_at if ends_at is not None and ends_at.tzinfo and ends_at > sent else None
-            return replace(item, **changed, starts_at=sent, ends_at=end, all_day=False)
+            # 끝은 사진에서 읽은 끝 그대로일 때만, 그리고 고친 시작보다 뒤일 때만 함께 둔다.
+            # 화면이 보내는 끝은 읽은 끝이거나 빈 값뿐이다 (web `carriedEndsAt`). 시작보다 뒤이기만
+            # 하면 받으면 요청만 바꿔서 읽은 적 없는 기간이 저장된다 (#952 리뷰).
+            # 앞선 끝을 두면 시작이 끝보다 늦은 항목이 된다
+            read_end = item.ends_at
+            kept = (
+                read_end is not None
+                and ends_at is not None
+                and ends_at.tzinfo is not None
+                and ends_at == read_end
+                and read_end > sent
+            )
+            return replace(
+                item, **changed, starts_at=sent, ends_at=read_end if kept else None, all_day=False
+            )
         if day == current and item.starts_at is not None and not item.all_day:
             # 시각을 읽은 일정을 보호자가 하루 종일로 바꿨다
             return replace(item, **changed, **_whole_day(day))
