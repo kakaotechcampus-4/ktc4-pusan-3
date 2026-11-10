@@ -91,6 +91,7 @@ VISIT_MED_CHECK = "visit.med_check"
 VISIT_MEAL = "visit.meal"
 PLACE_UNAVAILABLE = "place.unavailable"
 PLACE_PREPARING = "place.preparing"
+MED_PREPARING = "med.preparing"  # 복약을 꺼 둔 동안 `medication` 라벨 (#923)
 SAFETY_UNAVAILABLE = "safety.unavailable"
 
 READOUTS = ReadoutCatalog.from_yaml(Path(__file__).with_name("health.readout.yaml"))

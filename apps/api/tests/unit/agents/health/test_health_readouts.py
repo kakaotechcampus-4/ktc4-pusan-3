@@ -45,8 +45,8 @@ def doc_constants() -> dict[str, str]:
     return dict(_ROW.findall(section))
 
 
-def test_명세의_문구는_73개다():
-    assert len(doc_constants()) == 73
+def test_명세의_문구는_74개다():
+    assert len(doc_constants()) == 74
 
 
 class TestDocParity:

@@ -2,6 +2,8 @@
 
 순서
   ① 라벨이 비었거나 모르는 값이면 아무것도 읽지 않고 `unsupported` — 짐작하지 않는다
+  ①' 스토어 정책으로 꺼 둔 복약이면 아무것도 읽지 않고 고정 문구로 `unsupported` (#923 ·
+     `registry.MEDICATION_ENABLED`). 동의보다 먼저다 — 꺼 둔 기능 때문에 동의를 받게 하지 않는다
   ② build_gate 로 월령 · 동의 · 안전 조회를 모은다
   ③ 동의가 없으면 전 라벨이 `blocked.consent` 코드 문구로 끝 — 모델 0회
   ④ 구현된 라벨 경로가 없으면 `unsupported` — 모델 0회. 병원 찾기만 준비 중 문구 한 줄이 붙는다
@@ -21,13 +23,14 @@ from app.agents.common.llm_client import LLMClient
 from app.agents.common.readout import Readout
 from app.agents.common.result import DomainAgentResult
 from app.agents.common.schemas.task import DomainTask
+from app.agents.health import registry
 from app.agents.health.context import HealthContext, build_gate
 from app.agents.health.envelope import result as _result
 from app.agents.health.labels.handoff import run_care_handoff
 from app.agents.health.labels.medication import answer_leftover, is_dose_report, run_medication
 from app.agents.health.labels.schedule import run_schedule_check
 from app.agents.health.labels.visit import run_visit_summary
-from app.agents.health.readouts import PLACE_PREPARING, READOUTS
+from app.agents.health.readouts import MED_PREPARING, PLACE_PREPARING, READOUTS
 from app.agents.health.registry import HOOK_HANDLERS, IMPLEMENTED_TASKS, closed_readout_key
 from app.agents.health.schemas.task import HealthTaskType, task_type_of
 
@@ -62,6 +65,10 @@ async def run(
     if task_type is None:
         return _result(None, "unsupported")
 
+    off = _switched_off(task_type)
+    if off is not None:
+        return _result(task_type, "unsupported", readouts=(READOUTS.render(off),))
+
     gate = await build_gate(context, task_type)
     context.state.gate = gate
 
@@ -75,6 +82,20 @@ async def run(
         return _result(task_type, "unsupported", readouts=readouts)
 
     return await _LABEL_RUNNERS[task_type](task, context, client)
+
+
+def _switched_off(task_type: HealthTaskType) -> str | None:
+    """스토어 정책으로 꺼 둔 복약이면 닫는 문구 키 (#923). 켜져 있거나 복약이 아니면 None.
+
+    `medication` 라벨은 보호자가 등록한 복약 코스로 일한다(등록 · 수정 · 중단 · 체크 현황). 꺼 둔
+    동안은 웹에 코스를 등록할 화면이 없어서, 열어 두면 "알려드릴까요?" 처럼 답할 수 없는 질문을
+    낸다.
+    """
+    if registry.MEDICATION_ENABLED:
+        return None
+    if task_type is HealthTaskType.MEDICATION:
+        return MED_PREPARING
+    return None
 
 
 async def run_hooks(context: HealthContext) -> DomainAgentResult:
