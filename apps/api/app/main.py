@@ -11,10 +11,11 @@ from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI
 
-from app.api import health, llm_usage_writer
+from app.api import health, llm_usage_writer, startup_report
 from app.api.cors import register_cors
 from app.api.errors import register_error_handlers
-from app.api.runs import registry
+from app.api.openapi import install_openapi
+from app.api.runs import hold_purge, registry
 from app.api.v1.router import v1_router
 from app.core.alerts import configure_alerts
 from app.core.config import settings
@@ -93,7 +94,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     LLM 사용량 writer(#710)는 키와 상관없이 늘 띄운다 — 큐를 2초마다 `llm_usage` 표에 쓴다.
     프로세스마다 큐 · writer 가 하나라 `--workers` 와 무관하다. 종료 때는 먼저 멈춰서(취소)
     남은 큐를 쓰고 끝낸다. SIGKILL · OOM 이면 최대 2초분을 잃는다.
+
+    뜰 때 한 번, 설정이 비어 꺼져 있는 기능을 한 줄로 남긴다 (`api/startup_report.py`). 서버를
+    막지는 않는다 — 배포가 성공으로 끝난 뒤 무엇이 꺼진 채 도는지 로그 한 곳에서 보이게 할 뿐이다.
     """
+    startup_report.log_at_startup(settings)
     has_key = bool(settings.DATA_GO_KR_SERVICE_KEY.strip())
     weather = PublicWeather() if has_key else None
     events = TourEvents() if has_key else None
@@ -102,12 +107,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.activity_events = events
     app.state.health_places = hospitals
     usage_writer = asyncio.create_task(llm_usage_writer.run_writer(), name="llm-usage-writer")
+    # 만료된 되묻기 맥락을 1분마다 지운다 (#877). 처리방침이 "15분 안에 지운다" 라
+    # 하루 배치로는 늦다
+    hold_purger = asyncio.create_task(hold_purge.run_purger(), name="run-hold-purger")
     try:
         yield
     finally:
         # 🚨 writer 를 멈추기 전에 — run · Curator 가 끝나며 남기는 사용량도 마지막 flush 에 실린다
         with suppress(Exception):
             await drain_background()
+        hold_purger.cancel()
+        with suppress(asyncio.CancelledError):
+            await hold_purger
         usage_writer.cancel()
         # writer 가 예외로 죽어 있었다면(run_writer 가 이미 알렸다) 그 예외가 여기서 나가면서
         # 아래 클라이언트 닫기를 건너뛰면 안 된다
@@ -138,3 +149,7 @@ app.include_router(health.router)
 #    라우터가 각자 붙이면 v2 때 전부 고쳐야 하고, 프론트 apps/web/src/lib/env.ts 가
 #    이미 오리진 뒤에 /api/v1 을 붙이고 있어서 양쪽이 어긋나면 즉시 404 다.
 app.include_router(v1_router, prefix=API_V1_PREFIX)
+
+# Swagger 의 형식 오류 모양(400 · 422)을 실제 봉투와 맞춘다 — FastAPI 기본 422 모양은 실제로
+# 오지 않는다 (#438 · docs/api/errors-v1.md). 라우터를 다 붙인 뒤에 건다.
+install_openapi(app)

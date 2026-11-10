@@ -79,7 +79,7 @@ test.describe("삭제 카드 — 체크한 것만 버튼으로 지운다 (§2 �
     // 🚨 서버는 AI 가 하나도 안 고른 종류를 탭으로 보내지 않는다 (#712).
     await expect(tabs.getByRole("tab")).toHaveCount(2);
     await expect(tabs.getByRole("tab", { name: /식사/ })).toContainText("27/40");
-    await expect(reply.getByText(/최근 40건만 보여드렸어요/)).toBeVisible();
+    await expect(reply.getByText(/최근 40건만 보여 드렸어요/)).toBeVisible();
     await expect(reply.getByText("요청에 맞는 기록 27건")).toBeVisible();
     // 🚨 AI 가 안 고른 간식은 "나머지" 로 접혀 있다.
     await expect(reply.getByRole("button", { name: "나머지 기록 13건 보기" })).toBeVisible();

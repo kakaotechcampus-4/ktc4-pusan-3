@@ -2,8 +2,10 @@
 
 검증에 실패하거나 LLM이 실패하면 재시도하지 않고 호출자(pipeline)가 Memory 단독으로 강등한다.
 Memory는 원문 전체를 보므로 Supervisor가 없어도 기록은 남는다.
+모델이 멈춰도 같다 — `SUPERVISOR_TIMEOUT_S` 안에 답이 없으면 실패로 돌려주고 강등한다 (#914).
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -35,6 +37,13 @@ BAD_JSON = "BAD_JSON"  # arguments가 JSON 이 아니다
 SCHEMA = "SCHEMA"  # 스키마/짝 검사 위반
 NO_TOOL_CALL = "NO_TOOL_CALL"  # route를 부르지 않고 말로 답함
 LLM_UNAVAILABLE = "LLM_UNAVAILABLE"  # 인증/rate limit/네트워크/설정. detail에 예외 이름
+TIMEOUT = "TIMEOUT"  # SUPERVISOR_TIMEOUT_S 안에 답이 없다. tool_choice 폴백까지 합친 시간이다
+
+# Supervisor 모델 호출에 거는 상한(초). 모델이 멈추면 SDK 가 60초까지(재시도면 더) 기다리고,
+# 보호자는 그동안 진행 화면만 본다. 넘으면 Supervisor 가 실패했을 때처럼 강등한다 —
+# Memory 가 기록 후보 조각 없이 원문 전체를 받는다. Memory 에는 걸지 않는다(쓰기를 중간에 자르면
+# 기록이 반만 남는다). 한 번의 호출이 아니라 폴백 재시도까지 합친 시간이다
+SUPERVISOR_TIMEOUT_S = 20.0
 
 # route를 강제로 부르게 한다. provider 가 거절하면 순서대로 물러선다
 _FORCE_ROUTE: dict[str, Any] = {"type": "function", "function": {"name": "route"}}
@@ -130,17 +139,23 @@ async def run(
     calls = 0
     response = None
     for spec, tool_choice in _ATTEMPTS_CONTEXT if with_context else _ATTEMPTS:
+        remaining = SUPERVISOR_TIMEOUT_S - (time.perf_counter() - started)
+        if remaining <= 0:  # 앞 시도가 거절로 시간을 다 썼다 — 호출을 더 하지 않는다
+            return _failed(TIMEOUT, calls, usage, started, detail=TimeoutError.__name__)
         try:
             calls += 1
-            response = await llm.chat(
-                messages=messages,
-                tools=[spec],
-                tool_choice=tool_choice,
-                max_completion_tokens=MAX_COMPLETION_TOKENS,
-            )
+            async with asyncio.timeout(remaining):
+                response = await llm.chat(
+                    messages=messages,
+                    tools=[spec],
+                    tool_choice=tool_choice,
+                    max_completion_tokens=MAX_COMPLETION_TOKENS,
+                )
             break
         except LLMBadRequestError:
             continue
+        except TimeoutError:
+            return _failed(TIMEOUT, calls, usage, started, detail=TimeoutError.__name__)
         except LLMError as exc:
             return _failed(LLM_UNAVAILABLE, calls, usage, started, detail=type(exc).__name__)
 

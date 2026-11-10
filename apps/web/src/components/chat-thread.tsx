@@ -412,7 +412,7 @@ function RecordedReply({
 
   return (
     <CardFailed>
-      <p>앞서 처리된 한 줄이에요. 결과는 기록/기억 화면에서 볼 수 있어요.</p>
+      <p>앞서 처리된 한 줄이에요. 결과는 기록과 기억 화면에서 볼 수 있어요.</p>
       <ButtonLink
         href={`/child/${childId}/memories`}
         variant="secondary"
@@ -629,7 +629,7 @@ function SendFailure({
         {keptHere ? (
           <RewriteButton blocked={rewriteBlocked} onClick={rewrite} />
         ) : (
-          <p className="text-caption text-ink-subtle">적어주신 말은 입력창에 그대로 남겨뒀어요.</p>
+          <p className="text-caption text-ink-subtle">적어 주신 말은 입력창에 그대로 남겨뒀어요.</p>
         )}
       </div>
     );
@@ -647,7 +647,7 @@ function SendFailure({
           </div>
         ) : (
           <p className="text-caption text-ink-subtle mt-2">
-            적어주신 말은 입력창에 그대로 남겨뒀어요.
+            적어 주신 말은 입력창에 그대로 남겨뒀어요.
           </p>
         )}
       </CardFailed>
@@ -664,7 +664,7 @@ function SendFailure({
           <p className="text-body-sm text-ink mt-2">{turn.answering.text}</p>
         ) : null}
         <p className="text-caption text-ink-subtle mt-2">
-          고쳐 쓰기를 누르면 적어주신 답이 입력창으로 돌아가요. 무엇을 물은 답인지 함께 적어 보내
+          고쳐 쓰기를 누르면 적어 주신 답이 입력창으로 돌아가요. 무엇을 물은 답인지 함께 적어 보내
           주세요. 앞서 저장된 이야기는 다시 적지 않아도 돼요.
         </p>
         <div className="mt-3">
@@ -674,7 +674,7 @@ function SendFailure({
     );
   }
 
-  // 🚨 **그 밖의 거절(4xx)은 다시 시도가 없다** — 형식 거절(2000자 초과) · 권한 없음 같은 것이라 같은 본문은
+  // 🚨 **그 밖의 거절(4xx)은 다시 시도가 없다** — 형식 거절(글자 수 상한 초과) · 권한 없음 같은 것이라 같은 본문은
   //    몇 번을 보내도 같은 답이다 (`canRetry` · #231 리뷰). 서버 문구를 그대로 쓰고(길이 거절만 화면
   //    문구 · #867) 고쳐 쓰기만 둔다.
   if (isRejected(error)) {

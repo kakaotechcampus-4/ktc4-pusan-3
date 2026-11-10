@@ -8,8 +8,9 @@ from datetime import datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field, StringConstraints
+from pydantic import Field, StringConstraints
 
+from app.api.schema_base import ApiSchema
 from app.domains.delete_proposal.repository import KINDS, TAB_MAX_IDS
 
 # 탭 수 × 탭당 최대 건수(240). 이보다 많으면 제안 후보 밖이 섞인 것이다. 탭당 건수는 제안을
@@ -23,7 +24,7 @@ DeleteProposalState = Literal["pending", "deleted", "cancelled", "expired"]
 RowId = Annotated[str, StringConstraints(min_length=1, max_length=64)]
 
 
-class ConfirmDeleteProposalRequest(BaseModel):
+class ConfirmDeleteProposalRequest(ApiSchema):
     ids: list[RowId] = Field(
         min_length=1,
         max_length=MAX_CONFIRM_IDS,
@@ -34,7 +35,7 @@ class ConfirmDeleteProposalRequest(BaseModel):
     )
 
 
-class DeleteProposalOut(BaseModel):
+class DeleteProposalOut(ApiSchema):
     id: UUID
     status: DeleteProposalState = Field(
         description="결정 전(pending) · 지움(deleted) · 취소(cancelled) · 만료(expired, 24시간)"
@@ -48,5 +49,5 @@ class DeleteProposalOut(BaseModel):
     )
 
 
-class DeleteProposalResponse(BaseModel):
+class DeleteProposalResponse(ApiSchema):
     proposal: DeleteProposalOut

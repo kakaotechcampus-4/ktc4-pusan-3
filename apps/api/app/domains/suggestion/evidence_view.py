@@ -4,8 +4,9 @@
 날짜를 싣도록 원본 행을 한 번에 읽는다. 낡음은 `rules/staleness.is_stale`(달력 6개월) —
 기억 카드(`Affinity.is_stale`)와 같은 판정이다.
 
-- 원본이 없거나 보호자가 지운 기록(`deleted`)은 빠진다. 지운 기록의 내용을 근거로 다시 보여
-  주지 않는다. 그래서 개인화 추천의 보이는 근거가 0행이 될 수 있고, 05 는 그 추천을 내지 않는다.
+- 원본이 없거나 보호자가 지운 기록(`deleted` · 배포 틈에 남은 `inactive` — `GONE_STATUSES`)은
+  빠진다. 지운 기록의 내용을 근거로 다시 보여 주지 않는다. 그래서 개인화 추천의 보이는 근거가
+  0행이 될 수 있고, 05 는 그 추천을 내지 않는다.
 - 건강 관찰은 이름이 없는 기록이다(`subject` 칸이 없다). 증상 · 원문을 근거 이름으로 되풀이하지
   않고 고정 이름을 쓴다.
 - 문서 행 · 아직 테이블이 없는 종류(notice · daycare_meal)는 여기서 다루지 않는다.
@@ -22,12 +23,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domains.child.models import ChildGrowthLog
 from app.domains.memory.observation.models import (
+    GONE_STATUSES,
     ObservationActivity,
     ObservationEducation,
     ObservationFood,
     ObservationHealth,
     ObservationRoutine,
-    ObservationStatus,
 )
 from app.domains.memory.profile.models import ProfileAffinity
 from app.domains.suggestion.models import SuggestionEvidence
@@ -73,7 +74,7 @@ async def describe_evidence(
         stmt = select(model).where(
             model.id.in_(ids),
             model.child_id == child_id,
-            model.status != ObservationStatus.DELETED,
+            model.status.notin_(GONE_STATUSES),
         )
         for obs in (await session.scalars(stmt)).all():
             # daterange 의 upper 는 열린 끝이라 하루를 뺀 날이 마지막으로 본 날이다

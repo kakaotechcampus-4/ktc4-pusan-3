@@ -71,8 +71,11 @@ export type ConfidenceSource =
  * 교정 판정 (CLAUDE.md §5 Correction).
  *
  * 서버 `correction_verdict` 와 같은 4개다. **대상마다 쓸 수 있는 값이 다르다** — 기록은
- * `once_only` · `wrong`, 기억은 `need_more_observation` · `outdated` · `wrong`. 어긋나면 400.
+ * `once_only` 하나, 기억은 `need_more_observation` · `outdated` · `wrong`. 어긋나면 400.
  * 어떤 버튼을 보여줄지는 `CorrectionButtons` 의 표가 정한다.
+ * ⚠️ 기록의 `wrong` 은 기록 지우기로 바꿨다 (#736). 🚨 그래도 `wrong` 을 빼지 않는다 — 기억 고치기가 같은
+ *    타입으로 `wrong` 을 보낸다. 기록 상세의 지난 이력에는 이제 올 일이 없다(예전에 `wrong` 으로 고친 기록은
+ *    서버가 `deleted` 로 옮겨서 상세가 404 다).
  *
  * 🚨 **`confirm`(맞아요)은 없다.** 동의는 아무것도 바꾸지 않아서 서버가 이력으로도 남기지 않는다
  *    (docs/agents/data_model.md). 보내면 400 이고, 지난 이력에도 실려 오지 않는다 (#277).
@@ -88,8 +91,11 @@ interface ObservationBase {
   child_id: string;
   raw_text: string;
   confidence_source: ConfidenceSource;
-  /** `stand_alone` 은 "이번만 그랬어요" 를 누른 기록이다. 화면은 이 값으로 가르지 않는다. */
-  status: "active" | "inactive" | "stand_alone";
+  /**
+   * `stand_alone` 은 "이번만 그랬어요" 를 누른 기록이다.
+   * ⚠️ `inactive`(잘못된 기록)는 없다 — 서버가 남은 행을 `deleted` 로 옮기고 응답에서 뺐다 (#736).
+   */
+  status: "active" | "stand_alone";
   /** observed_range 하한 (YYYY-MM-DD). */
   observed_from: string;
   /** 상한. 무한대 금지. */
@@ -344,12 +350,14 @@ export interface Suggestion {
   /**
    * 해 보는 데 필요한 것 (#659). Food 는 **필요한 재료**, Activity · Growth 는 **준비물**이고 Growth 도서는
    * "제목(저자)" 한 항목이다. 서버가 일정 초안의 준비물을 만드는 것과 **같은 원본**(`suggestion.items`)이라,
-   * 고르기 전에 보는 것과 일정에 붙는 것이 어긋나지 않는다. 화면은 `SuggestionItems` 하나로 그린다.
+   * 고르기 전에 본 것이 일정 준비물로 이어진다 (초안은 같은 이름을 한 번으로 줄인다). 화면은 `SuggestionItems` 하나로 그린다.
    *
    * 🚨 **읽기 전용이다.** 여기서 "준비했어요" 를 체크하지 않는다 — 준비 상태는 일정이 생긴 뒤 캘린더의
    *    `EventItem.is_prepared` 다. 추천 단계에 체크박스를 두면 추천을 고르는 체크박스와 섞인다.
-   * 🚨 **서버가 아직 이 칸을 내리지 않는다** (#674 · `contract/schema-map.ts` 의 `allow`). 그때까지 실서버
-   *    응답에서는 빠져 오고, 화면은 빈 배열과 같게 영역을 세우지 않는다. 서버에 칸이 생기면 늘 배열이다.
+   * ⚠️ **Food 는 주재료뿐이다** (양념 · 부재료 제외 · #474). 전체 재료가 아니라서 알레르기를 확인하는 목록이
+   *    아니다 — 알레르기는 이 칸과 따로 서버가 거른다.
+   *
+   * 서버는 저장한 그대로 늘 배열로 내린다 (#674 · 없으면 `[]`).
    */
   items: string[];
   status: SuggestionStatus;
@@ -564,8 +572,10 @@ export interface CreateInputRequest {
 /**
  * 한 줄 입력의 상한. 서버 `CreateInputRequest.text`(`apps/api/app/api/v1/schemas/children.py`)의 `max_length` 와 같은 값이다.
  * 한쪽만 바꾸지 않는다. 서버는 앞뒤 공백을 뗀 뒤 글자(코드 포인트) 수로 센다 — 세는 법은 `lib/input-length.ts`.
+ * 🚨 Agent 가 감당하는 길이에 맞춘 값이다 — 관찰이 촘촘한 글은 600자쯤부터 Supervisor 가 나누다 깨진다
+ *    (2026-11-10 실측 · `docs/web/chat-run-v1.md` "입력 상한의 근거").
  */
-export const INPUT_TEXT_MAX_LENGTH = 2000;
+export const INPUT_TEXT_MAX_LENGTH = 500;
 
 /**
  * 휴대폰이 약 1km 로 흐려 보낸 좌표 (서버 `InputLocation` · #380). 소수점 둘째 자리다.
@@ -1500,8 +1510,9 @@ export interface PhotoEntry {
   /** 왜 확인이 필요한지. 서버가 만든 문구 — 프론트가 지어내지 않는다. */
   review_reason?: string;
   /**
-   * 🚨 **지난 일정인가** (#854). 읽은 시작 · 끝 · 마감 중 가장 늦은 것이 사진을 받은 날(한국 날짜)보다
-   *    앞이면 참이다. 날짜를 못 읽었으면 거짓. 화면은 이 값으로 "캘린더에 넣기" 를 켜 두지 않는다
+   * 🚨 **지난 항목인가** (#854 · #903). 견줄 날이 모두 사진을 받은 날(한국 날짜)보다 앞이면 참이다.
+   *    일정은 시작 · 끝(시작이 없으면 마감), 할 일 · 안내는 시작 · 끝 · 마감 중 가장 늦은 날과 견준다 —
+   *    "행사 11-08 · 신청 11-10 까지" 는 11-09 에 참이다. 날짜를 못 읽었으면 거짓. 화면은 이 값으로 "캘린더에 넣기" 를 켜 두지 않는다
    *    (`startsChecked`). 🚨 **화면이 오늘과 견주지 않는다** — 날짜 계산이라 서버가 한다 (§4).
    *    서버가 처음 읽은 날짜로 정한 값이라, 고치기에서 날짜를 바꿔도 다시 정하지 않는다. 처음 켜 둘지에만 쓴다.
    */

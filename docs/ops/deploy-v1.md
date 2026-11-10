@@ -77,6 +77,9 @@ healthy 가 될 때까지 기다리고, 안 되면(최대 240초) 실패로 본�
     (#753 전에는 prod 가 develop push 로 배포돼 main head 와 다를 수 있다). 배포된 revision 이 새 규칙에 걸려 배포 게이트가 막히지 않게. git diff 를 쓰지 않는 이유는
     CI checkout 이 depth 1 이고 배포가 부른 실행엔 비교할 base 가 없어서다.
   - 마이그레이션 자체를 되돌려야 하면 사람이 서버에서 `alembic downgrade` 를 한다 (자동으로 하지 않는다 — 데이터가 지워질 수 있다)
+  - 마이그레이션이 잠금 대기(`lock_timeout` — `canceling statement due to lock timeout`)로 실패했으면 긴 쓰기
+    트랜잭션에 막힌 것이다. 같은 실행의 revision 은 모두 되돌아가 반쯤 적용된 상태가 없고, 옛 컨테이너가 그대로
+    서비스한다. 잠시 뒤 배포를 다시 돌린다 (삭제 이력 `de2051c89680` 은 표마다 트리거를 걸며 5초까지만 기다린다 · #812 리뷰)
 - 롤백은 **새 커밋의 compose 파일**로 옛 이미지를 띄운다. compose 파일을 크게 바꾼 배포가 실패하면 롤백도 실패할 수 있다.
   그때 Actions 출력에 "롤백도 실패" 가 찍힌다.
 - dev · prod 가 동시에 빌드하면 4GB 가 넘친다. `deploy.sh` 가 `flock` 으로 한 번에 하나만 돌게 하고, 다른 쪽은 최대 20분 기다린다.
@@ -102,7 +105,7 @@ SIGTERM ─ uvicorn: 새 연결 거부 → 열린 요청 · SSE 를 기다림 (�
 ## dev 격리 — 메모리 상한 · 팀만 열기 (#780)
 
 한 EC2 에 dev 가 같이 뜨면서 생긴 두 위험을 막는다. dev 가 폭주하면 커널이 운영 postgres 를 죽일 수 있고,
-dev 가 열려 있으면 누구나 카카오로 가입해 실제 보호자 · 아이 정보가 백업 없는 dev DB 에 쌓인다.
+dev 가 열려 있으면 누구나 카카오로 가입해 실제 보호자 · 아이 정보가 dev DB 에 쌓인다.
 
 **메모리 상한** — compose 의 `mem_limit` · `memswap_limit: ${API_MEM_LIMIT:-0}` 꼴 (api · web · db · redis). 0 = 상한 없음.
 
@@ -193,7 +196,7 @@ dev 가 열려 있으면 누구나 카카오로 가입해 실제 보호자 · �
 
 1. **IAM** — 역할 `ktc-github-deploy` 의 신뢰 정책 sub 가 이미 `repo:kakaotechcampus-4/ktc4-pusan-3:*` 라서
    `…:environment:dev|prod` 도 통과한다. **할 일 없음** (11-06 확인).
-   🚨 정책을 좁힐 때는 env 두 값과 함께 `…:ref:refs/heads/develop` 도 남긴다 — 적재 · `oidc-test` 워크플로는
+   🚨 정책을 좁힐 때는 env 두 값과 함께 `…:ref:refs/heads/develop` 도 남긴다 — 적재 · 백업 감시 워크플로는
    environment 없이 develop ref 로 역할을 받는다.
    배포 job 이 `environment:` 를 쓰면 sub 가 브랜치가 아니라 환경 이름이 된다. 빠지면 배포가 인증에서 멈춘다.
 2. **GitHub Environments** `dev` · `prod` — 변수 `DEPLOY_DIR` (위 표의 checkout 경로).
@@ -201,7 +204,7 @@ dev 가 열려 있으면 누구나 카카오로 가입해 실제 보호자 · �
    🚨 **이 규칙만으로는 막히지 않는다.** 규칙은 `environment:` 를 쓴 job 에만 걸린다. 신뢰 정책이 `:*` 인 동안은
    쓰기 권한이 있는 누구나 아무 브랜치에서 `environment:` 없는 워크플로를 만들어 dispatch 하면 역할을 받아
    운영 EC2 에 SSM 으로 root 명령을 보낼 수 있다 — "main 머지 = 운영" 을 우회한다 (#753 리뷰).
-   막으려면 sub 를 `environment:dev` · `environment:prod` · `ref:refs/heads/develop`(적재 · `oidc-test`) 셋으로 좁힌다 — 후속.
+   막으려면 sub 를 `environment:dev` · `environment:prod` · `ref:refs/heads/develop`(적재 · 백업 감시) 셋으로 좁힌다 — 후속.
    `AWS_ACCOUNT_ID` · `EC2_INSTANCE_ID` 는 저장소 변수 그대로다. prod 에 승인자를 걸지는 않는다 — main 머지가 이미 멘토 리뷰다.
 3. **DNS** — `dev.icatch.ai.kr` · `api.dev.icatch.ai.kr` A 레코드를 같은 EC2 로.
 4. **서버**
@@ -246,6 +249,5 @@ dev 가 열려 있으면 누구나 카카오로 가입해 실제 보호자 · �
 
 ## 남은 것
 
-- dev 의 카카오 키 부팅 검사 — 지금은 `APP_ENV=prod` 만 막는다 (`app/core/config.py`). dev 에 키가 없어도 뜬다
 - 적재 워크플로(`load-food-catalog.yml` · `load-places.yml`)는 prod 경로 고정이다. dev 적재가 필요해지면 환경 입력을 더한다
 - 빌드는 서버에서 한다. 빌드 중 OOM 이 실제로 나면 Actions 에서 빌드해 ECR 로 올리고 서버는 받기만 하게 옮긴다

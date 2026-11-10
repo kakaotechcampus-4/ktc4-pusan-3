@@ -410,7 +410,7 @@ class WeekDriver:
         )
         outcome = StepOutcome(trace)
         with time_machine.travel(moment, tick=True):
-            quota.clear()  # W 는 한도를 끄고 돈다 — 한도 분석은 inputs 로 따로 낸다
+            await quota.reset()  # W 는 한도를 끄고 돈다 — 한도 분석은 inputs 로 따로 낸다
             try:
                 trace.safety_before = await safety_snapshot(self.child_id)
                 if step.kind in ("say", "reply"):
@@ -786,4 +786,4 @@ def reset_process_state() -> None:
 
     registry.clear()
     idempotency.clear()
-    quota.clear()
+    # 하루 한도는 표(rate_event, #877)라 여기서 비우지 않는다 — 단계마다 quota.reset() 이 비운다

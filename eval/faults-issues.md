@@ -8,7 +8,7 @@
 | ISSUE-F7 | [BE Fix] 멱등 재생 값이 깨져 있으면 같은 키 재시도가 24시간 500 이다 | IDEM-C | 명성 | `test_f7_broken_replay.py` (xfail) |
 | ISSUE-F8-a | [BE Chore] DB 쿼리 · 잠금 대기 시간 상한(statement_timeout · lock_timeout) 정하기 | CUR-B · SAVE-B · SAFE-B | 명성 | 없음 — 설정 결정이 먼저 |
 | ISSUE-F8-b | [BE Refactor] Curator 가 아이 잠금을 쥔 채 임베딩 · 판정 모델을 부른다 | CUR-B | 시하 (명성 협의 — `app/domains` ↔ `app/agents`) | 없음 — 설계 결정이 먼저 |
-| ISSUE-F2-UX | [AI Feat] 모델이 멈추면 보호자가 60초를 기다린 뒤 실패를 본다 — Supervisor 상한 여부 결정 | SUP-B · MEM-B | 시하 · PM 결정 | `test_f2_stuck_supervisor_memory.py` 가 지금 동작을 고정 |
+| ISSUE-F2-UX → #914 | [AI Feat] 모델이 멈추면 보호자가 60초를 기다린 뒤 실패를 본다 — Supervisor 에 20초 상한 (Memory 는 그대로) | SUP-B · MEM-B | 시하 | `test_supervisor_agent.py` · `test_pipeline.py` 의 상한 테스트 |
 
 ---
 
@@ -71,6 +71,8 @@
 ---
 
 ## ISSUE-F2-UX — [AI Feat] 모델이 멈추면 보호자가 60초를 기다린 뒤 실패를 본다 — Supervisor 상한 여부 결정
+
+> **#914 로 올라가 정해졌다** — 결정 1 은 "예"(20초, 폴백 재시도까지 합친 시간), 결정 2 는 Memory 를 그대로 둔다. 결정 3(화면 문구)은 이 이슈 밖이라 열려 있다. 아래는 올리기 전 초안 그대로다.
 
 **목적** — 모델이 멈출 때 보호자가 진행 화면을 60초 본 뒤 실패를 받는 것을 그대로 둘지 정한다.
 

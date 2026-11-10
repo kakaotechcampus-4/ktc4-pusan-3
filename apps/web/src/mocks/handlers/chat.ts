@@ -181,7 +181,7 @@ const done: ChatReply = { type: "done", completed: true };
  * 오늘 · 어제 · 사흘 전. 🚨 **화면이 지켜야 하는 지난 턴의 경우를 하나씩 담는다** — 지운 기록, 답한 질문,
  * 답하지 않은 질문(닫힘), 아직 답할 수 있는 질문(오늘 · `reply_open`), 지난 일정 초안, 다시 준비할 수 있던
  * 부분 실패(다시 준비하기 없음), 고를 수 있는 추천이 남은 결과(후보 보기가 선다)와 다 지난 결과(안 선다),
- * 건강 기록(건강 모양), 잘못된 기록으로 고친 기록.
+ * 건강 기록(건강 모양), 이번만 그랬어요로 고친 기록.
  * 🚨 실제 발화가 아니다 (최상위 §9).
  */
 function historyTurns(childId: string): StoredTurn[] {
@@ -333,8 +333,8 @@ function historyTurns(childId: string): StoredTurn[] {
         replies: [
           {
             type: "saved",
-            // 하나는 보호자가 "잘못된 기록" 으로 고쳤다 — 지우지 않고 상태만 바뀌어서 지금 모습으로 온다.
-            observations: [observations[0], { ...observations[1], status: "inactive" }],
+            // 하나는 보호자가 "이번만 그랬어요" 로 고쳤다 — 지우지 않고 상태만 바뀌어서 지금 모습으로 온다.
+            observations: [observations[0], { ...observations[1], status: "stand_alone" }],
             deleted: [],
           },
           done,

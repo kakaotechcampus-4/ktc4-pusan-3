@@ -227,7 +227,7 @@ async def test_find_update_are_scoped_to_child_id(session, family):
 async def test_delete_keeps_row_as_deleted_and_hides_it_everywhere(session, family, domain):
     """delete는 soft delete. 행과 원문은 남고 status 만 deleted 로 바뀐다.
 
-    지운 행은 find · query · update · 교정 · 목록(active, inactive) · 홈 집계 어디에도 안 걸린다.
+    지운 행은 find · query · update · 교정 · 목록(active, stand_alone) · 홈 집계 어디에도 안 걸린다.
     지우기는 store 하나로 한다 (#736) — 지우는 동작 자체는 test_observation_delete_paths.py 가 본다.
     """
     writer, child, _ = family
@@ -266,11 +266,11 @@ async def test_delete_keeps_row_as_deleted_and_hides_it_everywhere(session, fami
             domain=domain,
             child_id=child.id,
             observation_id=record.id,
-            status=ObservationStatus.INACTIVE,
+            status=ObservationStatus.STAND_ALONE,
         )
         is None
     )
-    for status in (ObservationStatus.ACTIVE, ObservationStatus.INACTIVE):
+    for status in (ObservationStatus.ACTIVE, ObservationStatus.STAND_ALONE):
         page = await page_observations(session, child_id=child.id, status=status)
         assert page.total == 0
     counts = await count_active_observations(
@@ -316,7 +316,7 @@ async def test_create_and_update_reject_status_in_fields(session, family):
             )
 
 
-async def test_count_active_merges_five_tables_excludes_inactive_and_other_child(session, family):
+async def test_count_active_merges_five_tables_excludes_corrected_and_other_child(session, family):
     """count_active는 5테이블 UNION ALL + status='active' + child_id 필터.
 
     - 5개 도메인 각 1건 = total 5, period 5
@@ -346,14 +346,14 @@ async def test_count_active_merges_five_tables_excludes_inactive_and_other_child
         observed_range=observed(date(2026, 8, 31), days=2),
         fields=required_fields(ObservationDomain.ACTIVITY, "기간 활동"),
     )
-    inactive = await add_observation(
-        session, writer, child, ObservationDomain.ROUTINE, period_start, "비활성 기록"
+    corrected = await add_observation(
+        session, writer, child, ObservationDomain.ROUTINE, period_start, "고친 기록"
     )
     await set_observation_status(
         session,
-        domain=inactive.domain,
+        domain=corrected.domain,
         child_id=child.id,
-        observation_id=inactive.id,
+        observation_id=corrected.id,
         status=ObservationStatus.STAND_ALONE,
     )
     await add_observation(

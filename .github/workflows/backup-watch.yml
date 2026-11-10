@@ -11,7 +11,9 @@
 #
 # 저장소 Settings › Secrets and variables › Actions 에 둘:
 #   BACKUP_S3_BUCKET           백업 버킷 이름 (서버 deploy/docker/.env 와 같은 값)
-#   BACKUP_ALERT_WEBHOOK_URL   Discord 웹훅 (서버 ALERT_WEBHOOK_URL 과 같은 값)
+#   BACKUP_ALERT_WEBHOOK_URL       운영 알림 채널의 Discord 웹훅 (prod checkout .env 의 ALERT_WEBHOOK_URL 과 같은 값)
+#   BACKUP_ALERT_WEBHOOK_URL_DEV   개발 알림 채널의 Discord 웹훅 (dev checkout .env 의 ALERT_WEBHOOK_URL 과 같은 값)
+# 알림은 환경마다 그 환경의 채널로 간다 — 서버의 backup.sh 가 checkout 마다 자기 .env 의 웹훅으로 보내는 것과 같다.
 # 예약 실행은 기본 브랜치(develop)의 이 파일로만 돈다. 손으로 돌리려면 Actions › 백업 감시 › Run workflow.
 
 name: 백업 감시
@@ -30,8 +32,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
-      # dev 는 #753 으로 dev 스택이 생기고 dev checkout 에 매일 백업 cron 을 건 뒤 "prod dev" 로 늘린다.
-      ENVS: prod
+      # 매일 백업 cron 이 걸린 환경만 넣는다 — 아직 안 건 환경을 넣으면 매일 "하나도 없다" 가 운다.
+      # dev 는 11-09 에 걸었다. prod 는 #773 이 main 으로 배포되고 prod checkout 에 cron 을 건 뒤
+      # 손으로 한 번 돌려 prod/daily/ 에 백업이 생기면 "prod dev" 로 늘린다.
+      ENVS: dev
       MAX_AGE_SECONDS: "93600" # 26시간 — restore-check.sh 와 같은 기준
     steps:
       - uses: aws-actions/configure-aws-credentials@v4
@@ -45,7 +49,6 @@ jobs:
         run: |
           set -euo pipefail
           now="$(date +%s)"
-          problems=""
           for e in $ENVS; do
             # 조회가 실패하면 여기서 멈춘다(set -e) — "백업이 없다" 와 "볼 수 없다" 를 섞지 않는다.
             listing="$(aws s3api list-objects-v2 --bucket "$BUCKET" --prefix "$e/daily/" \
@@ -53,17 +56,18 @@ jobs:
             # 비어 있으면 aws 가 "None" 을 낸다. ISO 시각이라 글자 순 정렬이 곧 시간 순이다.
             latest="$(printf '%s\n' "$listing" | tr '\t' '\n' | grep -v -e '^None$' -e '^$' | sort | tail -n 1 || true)"
             if [ -z "$latest" ]; then
-              problems="${problems}[$e] 매일 백업이 하나도 없다 — 서버 cron 을 본다"$'\n'
+              echo "[$e] 매일 백업이 하나도 없다 — 서버 cron 을 본다" | tee -a "problems-$e.txt"
               continue
             fi
             age=$(( now - $(date -d "$latest" +%s) ))
             echo "$e: 가장 최근 매일 백업 $((age / 3600))시간 $((age % 3600 / 60))분 전"
             if [ "$age" -gt "$MAX_AGE_SECONDS" ]; then
-              problems="${problems}[$e] 가장 최근 매일 백업이 $((age / 3600))시간 전이다 — 서버 cron 을 본다"$'\n'
+              echo "[$e] 가장 최근 매일 백업이 $((age / 3600))시간 전이다 — 서버 cron 을 본다" | tee -a "problems-$e.txt"
             fi
           done
-          if [ -n "$problems" ]; then
-            printf '%s' "$problems" | tee problems.txt
+          # 모든 환경의 목록을 끝까지 읽었다는 표시 — 없으면 다음 단계가 "감시 자체가 실패" 로 본다.
+          touch checked
+          if ls problems-*.txt > /dev/null 2>&1; then
             exit 1
           fi
 
@@ -71,14 +75,27 @@ jobs:
       - name: 실패하면 Discord 로 한 줄
         if: failure()
         env:
-          WEBHOOK: ${{ secrets.BACKUP_ALERT_WEBHOOK_URL }}
+          WEBHOOK_PROD: ${{ secrets.BACKUP_ALERT_WEBHOOK_URL }}
+          WEBHOOK_DEV: ${{ secrets.BACKUP_ALERT_WEBHOOK_URL_DEV }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          if [ -f problems.txt ]; then
-            body="$(cat problems.txt)"
-          else
-            body="감시 자체가 실패했다 — AWS 인증 · 버킷 목록 조회를 본다"
-          fi
-          jq -n --arg d "🔴 [백업 감시] ${body}"$'\n'"${RUN_URL}" \
-            '{username: "infra-alert", embeds: [{color: 16711680, description: $d}], allowed_mentions: {parse: []}}' |
-            curl -sS -o /dev/null --max-time 10 -X POST -H 'Content-Type: application/json' --data @- "$WEBHOOK"
+          send() { # <웹훅> <본문>
+            jq -n --arg d "🔴 [백업 감시] $2"$'\n'"${RUN_URL}" \
+              '{username: "infra-alert", embeds: [{color: 16711680, description: $d}], allowed_mentions: {parse: []}}' |
+              curl -sS -o /dev/null --max-time 10 -X POST -H 'Content-Type: application/json' --data @- "$1"
+          }
+          for f in problems-*.txt; do
+            [ -f "$f" ] || continue
+            e="${f#problems-}"
+            e="${e%.txt}"
+            if [ "$e" != dev ]; then
+              send "$WEBHOOK_PROD" "$(cat "$f")"
+            elif [ -n "$WEBHOOK_DEV" ]; then
+              send "$WEBHOOK_DEV" "$(cat "$f")"
+            else
+              # 개발 채널 웹훅이 없어도 알림은 잃지 않는다 — 운영 채널로 보내고 그렇게 적는다.
+              send "$WEBHOOK_PROD" "$(cat "$f") (BACKUP_ALERT_WEBHOOK_URL_DEV 가 없어 이 채널로 보냈다)"
+            fi
+          done
+          # 목록을 끝까지 못 읽었다(AWS 인증 · 조회 실패) — 어느 환경 문제인지 가릴 수 없어 운영 채널로.
+          [ -f checked ] || send "$WEBHOOK_PROD" "감시 자체가 실패했다 — AWS 인증 · 버킷 목록 조회를 본다"

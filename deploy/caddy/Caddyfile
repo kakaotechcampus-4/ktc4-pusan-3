@@ -24,20 +24,37 @@
 	}
 }
 
+# 재배포로 web · api 컨테이너를 바꾸는 동안 새 요청을 502 로 돌려보내지 않고 새 컨테이너가 뜰 때까지 붙잡는다 (#883).
+#   이름 · edge IP 가 고정이라 옛 것이 내려간 뒤에야 새 것이 뜬다 — 그 사이 옛 api 는 drain(최대 ~110s, #882)
+#   하며 새 연결을 거부하고, 이어 새 api 기동(평소 ~16s)이 붙는다. 150s 는 둘을 합친 값에 여유를 둔 것.
+#   🚨 연결 자체가 안 된(dial 실패) 요청만 다시 보낸다 — upstream 이 받은 POST 는 두 번 가지 않는다(Caddy 기본).
+#   🚨 request_buffers 가 없으면 POST 가 재시도에서 502 다 — 첫 시도가 본문을 써 버린다(2.10 로컬 실측, #883).
+#      1MB 를 넘는 본문(버킷 없이 받는 사진)은 그대로 502 — 지금과 같다. 사진은 대개 S3 로 직접 올린다.
+#   대가 — api 가 배포가 아니라 진짜로 죽었을 때도 화면은 502 대신 150s 를 기다린다.
+#   헬스 감시(health-alert.sh)는 컨테이너에 직접 묻는 것이라 영향이 없다.
+(wait_upstream) {
+	lb_try_duration 150s
+	request_buffers 1MB
+}
+
 # prod (main)
 icatch.ai.kr {
 	import hsts
-	reverse_proxy ktc4-web:3000
+	reverse_proxy ktc4-web:3000 {
+		import wait_upstream
+	}
 }
 
 api.icatch.ai.kr {
 	import hsts
 	import body_limit
-	reverse_proxy ktc4-api:8000
+	reverse_proxy ktc4-api:8000 {
+		import wait_upstream
+	}
 }
 
 # dev (develop) — 팀만 연다 (#780). 열려 있으면 누구나 카카오로 가입해 실제 보호자 · 아이 정보가
-# 백업 없는 dev DB 에 쌓인다. 계정은 prod deploy/docker/.env 의 DEV_BASIC_AUTH_USER · _HASH (docs/ops/deploy-v1.md).
+# dev DB 에 쌓인다. 계정은 prod deploy/docker/.env 의 DEV_BASIC_AUTH_USER · _HASH (docs/ops/deploy-v1.md).
 # 🚨 하나만 비면 Caddyfile 검사가 실패하고, 둘 다 비면 검사는 통과하지만 계정 없는 basic_auth 가 된다.
 #    어느 쪽이든 deploy.sh 가 compose 가 해석한 값을 보고 prod 배포 전에 막는다 (해시가 깨진 것도).
 (dev_auth) {
@@ -49,7 +66,9 @@ api.icatch.ai.kr {
 dev.icatch.ai.kr {
 	import hsts
 	import dev_auth
-	reverse_proxy ktc4-dev-web:3000
+	reverse_proxy ktc4-dev-web:3000 {
+		import wait_upstream
+	}
 }
 
 api.dev.icatch.ai.kr {
@@ -72,5 +91,7 @@ api.dev.icatch.ai.kr {
 	route @login {
 		import dev_auth
 	}
-	reverse_proxy ktc4-dev-api:8000
+	reverse_proxy ktc4-dev-api:8000 {
+		import wait_upstream
+	}
 }

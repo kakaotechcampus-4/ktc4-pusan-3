@@ -82,8 +82,9 @@
 - [api/api-interface-v1.html](api/api-interface-v1.html) — ⚠️ **초기 프로토타입 시점의 글이라 갱신하지 않는다. API 계약 정본은 Swagger(API 서버 `/docs`, 09-20 회의)다.** 문서 안의 "이 문서가 정본" 은 작성 당시 문장이다. 흐름·보안 이유처럼 Swagger 가 담지 못하는 것은 **아래 기능 문서들이 보탠다** (§04 → `auth-kakao-v1.md`, §05 초대 → `invite-v1.md`). 화면이 무엇을 부르는지 훑는 용도로는 여전히 가장 빠르다 — 화면 01~10 을 그리는 최소 API 27개 계약 확정 · 공통 Ref/에러/Idempotency 규약 · 공통 타입 5종 · 승인 게이트 2곳 · 열린 결정 2건 (브라우저로 열기)
 - [api/auth-kakao-v1.md](api/auth-kakao-v1.md) — **서버 주도 인가 코드 흐름.** `redirect_uri` 를 API 오리진 하나로 고정(preview 도메인은 등록 불가) · 클라이언트는 1회용 코드를 받아 `{code, bind}` 로 교환하고 `bind` 가 그 홉을 지킨다 · **동의 전에는 `parent` 를 만들지 않는다**(`signup` 신설) · 계약서 §01 `Bearer` 유지, Bearer 없는 6개(로그인 5 + refresh)와 302 엔드포인트 2개를 예외로 명시 · 불투명 access 15분(메모리) + refresh 30일/최대 90일(HttpOnly 쿠키 · 회전 · 재사용 탐지, #466) · `session`·`session_access`·`auth_handoff` 테이블 · `parent.nickname` nullable
 - [api/invite-v1.md](api/invite-v1.md) — **초대를 링크가 아니라 코드로.** 카톡 링크는 인앱 브라우저에서 열려 `sessionStorage` 가 날아가면 `bind` 까지 잃고 **로그인 자체가 깨진다** · Crockford Base32 8자(`I`·`L`·`O`·`U` 제외) · 정규화한 값을 해시로 저장 · 24시간 · 1회용 · 🚨 **시도 제한이 이 선택의 전제**(40비트 · 확인과 수락이 같은 통) · 관계는 **받는 쪽이 수락할 때** 고른다 · 수락 전 확인 `GET /invites/{code}` · 시도 제한 계정 5회 · IP 30회 / 1시간 (#198 에서 확정) · ⚠️ 계약서 §05 를 **대체한다**
-- [api/idempotency-v1.md](api/idempotency-v1.md) — **되돌릴 수 없는 POST 5개의 중복 실행 방지.** 계약서 §01 의 "헤더가 없으면 400" 을 동작까지 채운다 — 같은 키·같은 요청은 **처음 응답 재생**, 다른 요청은 422, 처리 중은 409 · **2xx 만 저장**(403 을 캐시하면 동의 후 재시도가 막힌다) · 키 스코프 `(parent_id, method, path, key)` · 에러 코드 4개 신설 제안 · 클라이언트는 전용 함수의 **필수 인자**로 강제하고 목은 같은 동작을 회귀 테스트로 건다 (#29 리뷰 반영)
-- [api/suggestions-v1.md](api/suggestions-v1.md) — **05 추천 받기의 판단 순서와 다시 시도.** `run_id` 없으면 처음 요청(문장은 홈 버튼 키의 표 문장뿐) · 있으면 Agent 마다 그 run 의 추천 → 0개 기록 → 실패 맥락(15분)으로 다시 만들기 → `cannot_resume` 순서 · 보관함은 프로세스 메모리 · 응답 조립 규칙(`groups[].notice` · 문서 행을 근거로 단 일반 추천 · 알레르기 사전검사) · 새로 돌릴 때만 하루 한도 (#249) · 채택 직전 알레르기 재확인(`409 allergen_blocked`)
+- [api/errors-v1.md](api/errors-v1.md) — **오류 응답 봉투와 400 · 422 규칙.** 본문 · 쿼리 · 헤더 형식 오류는 400, 경로 값만 422 (둘 다 `validation_failed`) · Swagger 의 FastAPI 기본 422 모양은 `app/api/openapi.py` 가 실제 봉투로 바꾼다 · 필드 설명은 `ApiSchema` 를 상속해야 Swagger 에 나간다 · 어긋나면 `test_openapi_shape.py` 가 잡는다 (#438)
+- [api/idempotency-v1.md](api/idempotency-v1.md) — **되돌릴 수 없는 POST 5개의 중복 실행 방지.** 계약서 §01 의 "헤더가 없으면 400" 을 동작까지 채운다 — 같은 키는 **처음 응답 재생**(본문이 달라도 · 처리 중이어도 — 422 · 409 는 만들지 않기로 했다, 11-09) · **2xx 만 저장**(403 을 캐시하면 동의 후 재시도가 막힌다) · 키 스코프 `(parent_id, method, path, key)` · 에러 코드 4개 신설 제안 · 클라이언트는 전용 함수의 **필수 인자**로 강제하고 목은 같은 동작을 회귀 테스트로 건다 (#29 리뷰 반영)
+- [api/suggestions-v1.md](api/suggestions-v1.md) — **05 추천 받기의 판단 순서와 다시 시도.** `run_id` 없으면 처음 요청(문장은 홈 버튼 키의 표 문장뿐) · 있으면 Agent 마다 그 run 의 추천 → 0개 기록 → 실패 맥락(15분)으로 다시 만들기 → `cannot_resume` 순서 · 보관함은 프로세스 메모리 · 응답 조립 규칙(`groups[].notice` · 문서 행을 근거로 단 일반 추천 · 알레르기 사전검사) · 새로 돌릴 때만 하루 한도 (#249) · 채택 · 일정 초안 만들기 · 제출 직전 알레르기 재확인(`409 allergen_blocked`, #835 · #859 · #902)
 - [api/chat-v1.md](api/chat-v1.md) — **지난 대화 다시 보기.** run 하나를 대화 한 턴(`chat_turn`)으로 · 쓴 보호자 본인만 보고 탈퇴 · 연결 끊기 · 아이 삭제 때 지운다 · `done` 으로 끝난 run 만 · 말풍선은 그날 오간 말 그대로, 관찰은 id 로 담아 조회 때 지금 상태로(지운 기록은 `deleted`) · 날짜는 접수 KST, 되묻기 답은 질문한 날 · 커서는 날짜를 품는다 (#228)
 - [api/delete-proposal-v1.md](api/delete-proposal-v1.md) — **대화로 지울 때 사람이 버튼으로 확정한다.** AI 는 지우지 않고 제안만 남긴다(후보 · 기본 체크) · 보호자가 체크를 고쳐 버튼을 누르면 서버가 후보 안의 체크한 것만 지운다 · 제안한 보호자만 · 24시간 만료는 읽을 때 판정 · 지난 대화는 제안 id 만 담고 지금 상태로 그린다 (#535)
 - [api/run-failure-v1.md](api/run-failure-v1.md) — **run 이 실패하는 이유 8가지와 화면 문구.** 실패 예외를 `AgentFailure` 계통 하나로 모아 예외 종류가 로그 · SSE `failed.reason` · `failed.message` 를 정한다 · 문구는 코드 카탈로그(`failure.readout.yaml`)가 이유마다 하나 · 도메인 Agent 가 전부 실패하면 이유를 task 순서가 아니라 우선순위로 고른다 · 검사를 못 해도 응급 신호면 응급 안내로 끝낸다 · 계통 밖에 둔 `UpstreamUnavailable` 과 이유 (#768)
@@ -117,7 +118,7 @@
 - [web/mock-screens-v1.md](web/mock-screens-v1.md) — 목 서버 화면 확인 조회표 · 시나리오별 주소 · 저장소 둘(sessionStorage/localStorage) 초기화 스니펫 · 목의 refresh 표식
 - [web/event-draft-ui-v1.md](web/event-draft-ui-v1.md) — 초안이 생기는 시점 3곳(한 줄 입력 · 제안 · 사진)과 경로별 흐름 · 그릇은 셋 카드는 한 벌 · 초안 만들기는 게이트가 아니고 **제출만 게이트 ㉠**(`/events/{eid}/confirm` 에서 옮겨옴) · 건별 제출 · 못 읽은 일자를 화면이 안 채움 · 초안은 세션 스토리지에만 · 🔶 `photo-runs/{rid}/commit` 이 게이트인지는 미결
 - [web/screen-tour-v1.md](web/screen-tour-v1.md) — 화면 투어(#632) · 어느 화면에 자동으로 뜨나 · "봤음" 은 서버 별도 테이블(지금은 기기 저장) · 그만 봐도 본 것 · 비출 것이 없으면 단계를 뺀다 · 비춘 요소도 눌리지 않는다 · 화면이 바뀌면 같은 PR 에서 단계를 맞춘다
-- [web/screen-rules-v1.md](web/screen-rules-v1.md) — 04 · 11-1 · 11-2 가 시트가 아니라 라우트인 이유(웹뷰 뒤로가기) · `childId` 정본은 URL · 05 채택과 일정 만들기 분리 · 알레르기 확인이 채택보다 먼저 · 07 기록/기억 이름 · 교정 · 필터 · 08 은 게이트가 아님 · 사진 시트 두 단계 · 09 표식은 모양
+- [web/screen-rules-v1.md](web/screen-rules-v1.md) — 04 · 11-1 · 11-2 가 시트가 아니라 라우트인 이유(웹뷰 뒤로가기) · `childId` 정본은 URL · 05 채택과 일정 만들기 분리 · 알레르기 확인이 채택보다 먼저 · 07 기록과 기억 이름 · 교정 · 필터 · 08 은 게이트가 아님 · 사진 시트 두 단계 · 09 표식은 모양
 - [web/chat-run-v1.md](web/chat-run-v1.md) — 04 는 라우트 · 보내는 순간 넘어감 · 대화는 하루 하나 · `EventSource` 금지 · `partial` · `interrupted` · `guidance` 는 실패 아님 · `unconfirmed` 분리 · 되묻기는 `reply_to` · 키는 말풍선에 · 조회 · 삭제 카드(삭제는 두 번 눌러 체크한 것만 · 요약은 응답 건수 · #535)
 - [web/components-v1.md](web/components-v1.md) — 컴포넌트 목록 · `Screen` 고정 바 · 네비는 가는 곳에만 · `IconButtonLink` · `ButtonLink` · 직접 만든 `Select` · 외부 UI 라이브러리 예외 셋 · 토큰 · 높이 · 서체 두 벌 · 호버 변형
 - [web/auth-consent-v1.md](web/auth-consent-v1.md) — 로그인 시작 지점 하나 · `bind` · 복귀 경로 검증 · 가입 동의와 아이 동의를 나눈 이유 · 관계는 02 · "전체 동의" 금지 · 동의 정본은 `GET /policies` · 토큰은 메모리, refresh 는 쿠키 · 확인 실패는 로그아웃이 아님
@@ -134,8 +135,9 @@
 - [safety/retention-v1.md](safety/retention-v1.md) — **개인정보 보관 · 삭제 기준.** 아이에 묶인 기록은 아이와 함께 · 근거 글은 원문 그대로 · 서버 로그 3개월 · 동의 증빙 1년 · 백업 30일 이내 · 대화 기록(#228) 규칙 (10-14 PM)
 - [safety/hazard-rules-v1.md](safety/hazard-rules-v1.md) — **위험 물질 규칙 목록과 판정 분리.** 이름 · 동사 · 예외 표기는 `hazard_rules.py`, 판정은 `hazard.py` · 값만 바뀌면 목록, 판정도 바뀌면 코드 · 지금은 코드 상수 + `find_hazards(rules=)` 목록 교체 · 검사 방법 교체 자리 `Guardrail`(사전검사 · 저장 게이트가 한 인스턴스, fail-closed) · 외부로 옮길 때 정할 것 (#731)
 - [safety/consent-texts-v1.md](safety/consent-texts-v1.md) — **약관 · 동의문 작성 메모.** 본문은 `apps/api/alembic/policy_texts/` 에 있고 DB 에 그대로 들어간다 · 초안마다 무엇을 왜 바꿨는지 · 배포 전에 만들어야 사실이 되는 문장 · 위치는 요약 + 위치기반서비스 이용약관 한 글에 체크 하나 (#172)
+- [safety/llm-inputs-v1.md](safety/llm-inputs-v1.md) — **외부 LLM 으로 나가는 아이 정보.** 공통 컨텍스트는 만들지 않았고 알레르기 · 건강 정보의 이름은 어느 Agent 의 프롬프트에도 싣지 않는다 · Agent 별로 모델에 나가는 항목 표 · 확인하지 못한 것 (11-10 코드 확인)
 
-그 밖에 *아직 문서 없음.* 가드레일 7개, 법정대리인 동의 절차, 외부 LLM 전달 범위. → [지금 열려 있는 결정](#지금-열려-있는-결정-기한-있음)
+그 밖에 *아직 문서 없음.* 가드레일 7개, 법정대리인 동의 절차. → [지금 열려 있는 결정](#지금-열려-있는-결정-기한-있음)
 
 ## 평가 (Eval)
 
@@ -146,10 +148,12 @@
 - [ops/alembic-collaboration-v1.md](ops/alembic-collaboration-v1.md) — 마이그레이션 협업 규칙 · make 명령어 치트시트 · autogenerate 한계 · revision 충돌 해결법 확정
 - [ops/logging-alerts-v1.md](ops/logging-alerts-v1.md) — 서버 로그 적재(docker journald) · ERROR 알림(Discord 웹훅) 결정과 근거 · 알림이 못 잡는 것 (멘토 #267 2번 · PR #302)
 - [ops/deploy-v1.md](ops/deploy-v1.md) — CI 게이트 · 헬스 실패 시 직전 이미지 자동 롤백 · 한 EC2 위 dev(develop)/prod(main) 분리 · 서버 준비 절차
+- [ops/backup-restore-v1.md](ops/backup-restore-v1.md) — 운영 DB 백업(매일 · 배포 전 · S3 서울 28일) · 매일 복원 점검 · 알림이 오면 볼 것 · 복원 절차(삭제 이력 다시 적용) · 연습 기록 (#758)
 - [ops/llm-usage-v1.md](ops/llm-usage-v1.md) — LLM 토큰 사용량을 보호자 · run · 모델별로 남기는 방법 (BM 산정) · 새 호출 지점 규칙 · 창구별 귀속 규칙 · 사진 run 연결 · 서버 고려
 - [ops/encryption-v1.md](ops/encryption-v1.md) — 전송(TLS · HSTS) · 저장(EBS) 구간 암호화가 어디서 지켜지는지와 확인 기록 · E2E 를 하지 않는 이유 · 예외 로그에서 원문 빼기 (#670)
+- [ops/stateless-v1.md](ops/stateless-v1.md) — `--workers 1` 전제(#134)를 풀려고 프로세스 메모리 상태를 PostgreSQL 로 옮기는 결정(Redis 대비)과 단계 · 1단계 되묻기 맥락 설계 (#877)
 
-그 밖에 *아직 문서 없음.* 배포, 보안 5종 체크, 모델 호출·토큰 비용 실측.
+그 밖에 *아직 문서 없음.* 보안 5종 체크, 모델 호출·토큰 비용 실측 결과.
 
 ## 기획 · 검증
 
@@ -165,11 +169,12 @@
 >
 > 승격 임계값 · 감쇠 기준 · 법정대리인 동의 시점 · 급식 데이터 출처는 **확정되어 이 표에서 뺐다.** 확정된 값은 아직 문서로 고정되지 않았다 — 각각 `memory/` · `safety/` · `api/` 에 기능 문서로 남길 것.
 
+> 외부 LLM 전달 · 국외 처리는 개인정보 처리방침(받는 곳 · 국외 이전)에 적어 공개했고, 모델에는 이름 대신 별명 · ID 를 보낸다(CLAUDE.md §2 개인정보).
+> Agent Workflow · API Schema 는 Swagger(`/docs`)와 `agents/` 문서로 확정됐다. 둘 다 **이 표에서 뺐다.**
+
 | 결정할 것 | 기한 | 원문 | 결정 후 갈 곳 |
 | --- | --- | --- | --- |
-| 외부 LLM 전달 범위 · 식별정보 제거 · 국외 처리 여부 | **9월 2~4주** (스키마 확정과 동시) | [리스크 ⑤](overview/tech-spec.md#리스크) | `safety/` |
-| 냅킨 계산 — 유저 1인당 월 모델 비용 | **9월 1주** | [요청사항 3](overview/tech-spec.md#요청사항) | `ops/` |
-| Agent Workflow · API Schema 확정 | **9월 2~4주** | [일정](overview/tech-spec.md#일정) | `agents/` · `api/` |
+| 냅킨 계산 — 유저 1인당 월 모델 비용 | 재는 방법은 정했다([ops/llm-usage-v1.md](ops/llm-usage-v1.md)) · 금액은 아직 | [요청사항 3](overview/tech-spec.md#요청사항) | `ops/` |
 | Agent 참조 문서(건강검진 정보, 0~5세 선호 활동 자료) 출처 | **9월 2주** | [요청사항 1](overview/tech-spec.md#요청사항) | `agents/` |
 | 블라인드 비교 선택률 · 재방문율 목표치 | 미정 | [기획 §7](overview/service-plan.md#7-잘-됐다는-걸-뭘로-아는가) | `eval/` |
 

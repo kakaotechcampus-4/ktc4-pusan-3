@@ -26,24 +26,33 @@ const VISIBLE = 4;
  *    재료가 열 개 넘게 오면 카드 셋을 견주는 화면에서 재료가 제안 문장보다 길어진다.
  * 🚨 **펼치기는 고르기와 따로다.** 버튼은 체크박스의 `<label>` 밖에 서서, 눌러도 추천 선택이 바뀌지 않는다.
  *
- * 비어 있으면(또는 실서버가 아직 칸을 안 내리면) 아무것도 그리지 않는다 — 라벨만 선 빈 영역은 "필요한 게 없다"
+ * 비어 있으면(또는 칸이 빠져 오면) 아무것도 그리지 않는다 — 라벨만 선 빈 영역은 "필요한 게 없다"
  * 인지 "못 받았다" 인지 가를 수 없다. health 는 무엇을 하라고 권하지 않아서 영역 자체가 없다.
  */
 export function SuggestionItems({
   agent,
   items,
   className,
+  content,
 }: {
   agent: Agent;
-  /** 서버 순서 그대로. ⚠️ 실서버가 칸을 내리기 전에는 `undefined` 로 온다 (`types.ts` 의 `Suggestion.items`). */
+  /**
+   * 서버 순서 그대로. 서버는 늘 배열로 내린다 (#674). `undefined` 를 받는 것은 서버가 칸을 내리기 전부터
+   * 있던 방어라 남겨 둔다 — 빠져 와도 빈 배열과 같게 그린다.
+   */
   items: readonly string[] | undefined;
   className?: string;
+  /**
+   * 그 추천의 제안 문장. 이것과 같은 항목은 그리지 않는다 (`itemNames` · #892).
+   * 필수로 둔 것은 카드가 넘기는 것을 빠뜨리면 도서 이름이 칩으로 한 번 더 서기 때문이다.
+   */
+  content: string;
 }) {
   const [expanded, setExpanded] = useState(false);
   const id = useId();
 
   const term = ITEM_TERM[agent];
-  const names = itemNames(agent, items);
+  const names = itemNames(agent, items, content);
   if (term === null || names.length === 0) return null;
 
   const hidden = names.length - VISIBLE;
@@ -97,17 +106,29 @@ export function SuggestionItems({
 }
 
 /**
- * 그릴 항목. 비면 `SuggestionItems` 가 아무것도 그리지 않는다 — 카드가 근거 선의 간격을 가를 때도 이것을 본다.
+ * 그릴 항목. 비면 `SuggestionItems` 가 아무것도 그리지 않는다 (라벨도 서지 않는다).
  * 공백만 있는 항목은 칩이 빈 동그라미가 되어 거른다. 거르기만 하고 합치거나 고치지 않는다 — 정리는 서버 몫이다.
+ *
+ * 🚨 **제안 문장(`content`)과 같은 항목도 거른다** (#892). Growth 도서는 서버가 `content` 와 `items` 에 같은
+ *    "제목(저자)" 를 싣는다 — 일정 초안의 준비물이 그 값이라 서버는 그대로 둔다. 화면에서 거르지 않으면 카드 본문과
+ *    "준비물" 칩에 같은 글이 두 번 선다. 제안 문장을 되풀이하는 칩은 어느 Agent 에서도 새로 알려 주는 것이 없어서
+ *    도서만 가르지 않고 같은 글이면 거른다. 앞뒤 공백만 무시하고 글자 그대로 비교한다.
  */
-export function itemNames(agent: Agent, items: readonly string[] | undefined): string[] {
+export function itemNames(
+  agent: Agent,
+  items: readonly string[] | undefined,
+  content?: string,
+): string[] {
   if (ITEM_TERM[agent] === null) return [];
-  return (items ?? []).map((name) => name.trim()).filter((name) => name !== "");
+  const sentence = content?.trim();
+  return (items ?? [])
+    .map((name) => name.trim())
+    .filter((name) => name !== "" && name !== sentence);
 }
 
 /**
  * Agent 마다 부르는 말. Food 는 장을 볼 것이라 "필요한 재료", 나머지는 챙길 것이라 "준비물".
- * ⚠️ Growth 도서는 "제목(저자)" 한 항목이라 "준비물" 이 딱 맞지는 않는다 — 도서 전용 말은 이슈에서 따로 정한다 (#659 논의).
+ * Growth 도서는 항목이 제안 문장과 같은 "제목(저자)" 하나라 영역 자체가 서지 않는다 (`itemNames` · #892).
  * health 는 `null` — 권하는 것이 없어서 준비할 것도 없다 (CLAUDE.md §2 진단하지 않는다).
  */
 const ITEM_TERM: Record<Agent, string | null> = {

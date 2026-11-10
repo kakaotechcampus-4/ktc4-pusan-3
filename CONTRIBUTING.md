@@ -1,6 +1,6 @@
 # 육아 Agent 협업 가이드
 
-백엔드 · 프론트엔드 · AI 파트가 함께 지키는 최소 협업 규칙입니다. 자세한 운영/보안/아키텍처 설명은 `README.md`와 `README_COLLABORATION.md`를 참고합니다.
+백엔드 · 프론트엔드 · AI 파트가 함께 지키는 최소 협업 규칙입니다. 자세한 운영/보안/아키텍처 설명은 [`CLAUDE.md`](CLAUDE.md)와 [`docs/README.md`](docs/README.md)를 참고합니다.
 
 ## 1. 기본 작업 흐름
 

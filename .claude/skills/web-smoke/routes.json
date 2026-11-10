@@ -87,25 +87,25 @@
       "mustSee": "서로 다른 3일에 기록됐어요"
     },
     {
-      "name": "07 기억 — 제안 피드백 탭 · 피드백 전",
+      "name": "07 기억 — 추천 피드백 탭 · 피드백 전",
       "path": "/child/c1/memories?tab=feedback",
       "auth": true,
       "expect": "/child/c1/memories",
       "mustSee": "두부를 부쳐서 한 조각 곁들여 보세요"
     },
     {
-      "name": "07 기억 — 제안 피드백 탭 · 피드백 완료 (#592)",
+      "name": "07 기억 — 추천 피드백 탭 · 피드백 완료 (#592)",
       "path": "/child/c1/memories?tab=feedback&view=rated",
       "auth": true,
       "expect": "/child/c1/memories",
       "mustSee": "계란말이에 시금치를 조금 섞어 보세요"
     },
     {
-      "name": "07 기억 — 제안 피드백 21건 · 2쪽 (#592)",
+      "name": "07 기억 — 추천 피드백 21건 · 2쪽 (#592)",
       "path": "/child/c1/memories?tab=feedback&scenario=suggestions_many",
       "auth": true,
       "expect": "/child/c1/memories",
-      "mustSee": "제안 21건"
+      "mustSee": "추천 21건"
     },
     {
       "name": "07 기억 — 기록 탭 · 식사 필터",
@@ -255,35 +255,35 @@
       "mustBeEnabled": "프로필에서 다시 고르기"
     },
     {
-      "name": "05 제안 후보 — 개인화 추천",
+      "name": "05 추천 후보 — 개인화 추천",
       "path": "/child/c1/suggestions?agents=food,activity",
       "auth": true,
       "expect": "/child/c1/suggestions",
-      "mustSee": "제안 이유"
+      "mustSee": "추천 이유"
     },
     {
-      "name": "05 제안 후보 — 근거 부족 (일반 추천 + 질문 1개)",
+      "name": "05 추천 후보 — 근거 부족 (일반 추천 + 질문 1개)",
       "path": "/child/c1/suggestions?agents=food,activity&scenario=scarcity",
       "auth": true,
       "expect": "/child/c1/suggestions",
       "mustSee": "36개월 또래가 자주 찾는 놀이예요"
     },
     {
-      "name": "05 제안 후보 — 요청에 맞춘 일반 추천 (문서 출처 없음 · #597)",
+      "name": "05 추천 후보 — 요청에 맞춘 일반 추천 (문서 출처 없음 · #597)",
       "path": "/child/c1/suggestions?agents=food,activity&scenario=suggest_requested",
       "auth": true,
       "expect": "/child/c1/suggestions",
       "mustSee": "요청하신 놀이에 맞춰 골랐어요"
     },
     {
-      "name": "05 제안 후보 — Agent 1개 실패 (NF-06)",
+      "name": "05 추천 후보 — Agent 1개 실패 (NF-06)",
       "path": "/child/c1/suggestions?agents=food,activity&scenario=partial",
       "auth": true,
       "expect": "/child/c1/suggestions",
       "mustSee": "이번에 준비하지 못했어요"
     },
     {
-      "name": "05 제안 후보 — 알레르기 미상 guard · 오래된 근거",
+      "name": "05 추천 후보 — 알레르기 미상 guard · 오래된 근거",
       "path": "/child/c1/suggestions?agents=food,activity&scenario=stale",
       "auth": true,
       "expect": "/child/c1/suggestions",
@@ -324,7 +324,7 @@
       "path": "/invite?scenario=consent",
       "auth": true,
       "expect": "/invite",
-      "mustSee": "누구의 초대인지 먼저 보여드려요"
+      "mustSee": "누구의 초대인지 먼저 보여 드려요"
     },
     {
       "name": "초대 코드 입력 — 토큰 없이 (AuthGate 튕김)",
