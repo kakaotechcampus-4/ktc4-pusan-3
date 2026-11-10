@@ -261,13 +261,6 @@ def curator_deps() -> tuple[TextEmbedder | None, IdentityJudge | None]:
     return embedder, judge
 
 
-# Curator 가 쓰는 두 묶음. 역할(AgentRole)이 아니라서 MEMORY_* 를 빌려 쓰지 않는다
-_CURATOR_GAPS: tuple[tuple[str, str], ...] = (
-    ("EMBEDDING", "Curator 꺼짐 — 기억을 묶지 않는다"),
-    ("CURATOR_JUDGE", "Curator 판정 꺼짐 — 판정이 필요한 관찰은 연결을 미룬다"),
-)
-
-
 def llm_gaps(settings: AgentSettings | None = None) -> tuple[str, ...]:
     """LLM 을 부를 수 없는 자리. 서버가 뜰 때 한 번 알리려고 본다 (`app/api/startup_report.py`).
 
@@ -298,9 +291,14 @@ def llm_gaps(settings: AgentSettings | None = None) -> tuple[str, ...]:
         roles_by_reason.setdefault(reason, []).append(role)
     gaps = [f"LLM {' · '.join(roles)} ({reason})" for reason, roles in roles_by_reason.items()]
 
-    for prefix, effect in _CURATOR_GAPS:
-        names = [f"{prefix}_{field}" for field in ("API_KEY", "BASE_URL", "MODEL")]
-        missing = [name for name in names if not str(getattr(s, name) or "").strip()]
+    # Curator 의 두 묶음은 역할(AgentRole)이 아니라서 MEMORY_* 를 빌려 쓰지 않는다.
+    # "무엇이 비면 못 만드는가" 는 생성자가 쓰는 함수를 그대로 부른다 (#912 리뷰)
+    from app.agents.curator.embedding import embedder, jev
+
+    for missing, effect in (
+        (embedder.missing_settings(s), "Curator 꺼짐 — 기억을 묶지 않는다"),
+        (jev.missing_settings(s), "Curator 판정 꺼짐 — 판정이 필요한 관찰은 연결을 미룬다"),
+    ):
         if missing:
             gaps.append(f"{effect} ({' / '.join(missing)} 없음)")
     return tuple(gaps)
