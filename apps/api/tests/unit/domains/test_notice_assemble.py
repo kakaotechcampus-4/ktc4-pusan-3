@@ -714,6 +714,18 @@ def test_근거_문장의_그_줄이_길이_상한을_넘으면_날짜_칸_글�
     assert _written(item) == ["11월 20일(금) 9시까지"]
 
 
+@pytest.mark.parametrize("value", ["9시까지 등교 부탁드리며", "오전 9:00 까지 와 주세요"])
+def test_모델이_같은_시각의_까지를_details_에_적었으면_적힌_대로를_넣지_않는다(value):
+    item = _until(ARRIVE, details=[ItemDetail(name="등원", value=value)])
+    assert [(d.name, d.value) for d in item.details] == [("등원", value)]
+
+
+@pytest.mark.parametrize("value", ["9시 출발", "10시까지 하원"])
+def test_details_의_시각이_까지가_아니거나_다른_시각이면_적힌_대로를_넣는다(value):
+    item = _until(ARRIVE, details=[ItemDetail(name="안내", value=value)])
+    assert _written(item) == [ARRIVE]
+
+
 OPEN_DUE = "10월 1일(목) 10:00 ~ 선착순마감"
 
 

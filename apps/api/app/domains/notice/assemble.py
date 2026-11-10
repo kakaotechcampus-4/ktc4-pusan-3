@@ -430,7 +430,8 @@ def _item(
     details = [d for d in raw.details if not _monologue(d.value, words)]
     # 위의 확인 검사 · 혼잣말 거르기가 끝난 뒤에 붙인다 — 날짜 칸의 원문이라 둘 다의 대상이 아니다.
     # 앞에 두어 개수 상한에 잘리지 않게 한다
-    if until_at is not None:
+    # 모델이 그 시각의 "까지" 를 details 에 적었으면 화면에 이미 있다 ("9시까지 등교 부탁드리며")
+    if until_at is not None and not any(_until_clock(d.value, until_at) for d in details):
         unshown.insert(0, _until_text(raw.date_text or "", quote if quoted else "", until_at, hide))
     details = [*_written_as(unshown, details), *details]
 
