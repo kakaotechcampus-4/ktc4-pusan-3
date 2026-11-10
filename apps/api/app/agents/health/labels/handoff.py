@@ -6,7 +6,9 @@
 
     투약의뢰서   머리 아래에 아이 별명 한 줄, 진행 중 복약마다 약 종류 · 투약 시각 · 투약 기간 ·
                 보관 · 복용 이유 · 특이사항 여섯 줄. 끝에 "보호자 확인 후 서명해 주세요" 가 늘
-                붙는다(보호자 책임 서류). 진행 중 복약이 없으면 서식 대신 `notice.no_active_med`
+                붙는다(보호자 책임 서류). 진행 중 복약이 없으면 서식 대신 `notice.no_active_med`.
+                스토어 정책으로 복약을 꺼 둔 동안은 이 경로까지 오지 않는다 — `agent.run()` 이
+                `notice.preparing` 으로 먼저 닫는다 (#923)
     응급 카드    아이 기본 정보 · 알레르기 · 만성질환 · 복용 중인 약. 알레르기 · 만성질환은
                 이름 뒤에 등록한 반응 · 대처 원문이 붙는다(없으면 이름만). **보호자 연락처는
                 없다** — 담을 칸이 없고, 넣으려면 수집 항목이 늘어난다(루트 CLAUDE.md §2)
@@ -86,14 +88,14 @@ _STORAGE = {"room": "실온", "fridge": "냉장"}
 async def run_care_handoff(
     task: DomainTask, context: HealthContext, client: LLMClient | None
 ) -> DomainAgentResult:
-    if _wants_notice(" ".join(task.request_texts)):
+    if wants_notice(" ".join(task.request_texts)):
         readout = await _med_notice(context)
     else:
         readout = await _emergency_card(context)
     return result(TASK, "completed", readouts=(readout,))
 
 
-def _wants_notice(text: str) -> bool:
+def wants_notice(text: str) -> bool:
     """서식 이름이 있으면 투약의뢰서, 없으면 카드 표현이 있을 때 카드, 그 밖의 투약 표현은 서식."""
     if any(word in text for word in NOTICE_FORM_WORDS):
         return True

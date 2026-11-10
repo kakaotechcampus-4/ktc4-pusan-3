@@ -8,7 +8,7 @@ import pytest
 
 from app.agents.health import registry
 from app.agents.health.agent import run
-from app.agents.health.readouts import MED_PREPARING, READOUTS
+from app.agents.health.readouts import MED_PREPARING, NOTICE_PREPARING, READOUTS
 from app.agents.health.store.inmemory import InMemoryHealthSafety, InMemoryMedicationStore
 from app.agents.health.store.ports import HealthSafetyEntry
 from tests.unit.agents.health.support import FakeLLM, context, task
@@ -46,3 +46,23 @@ async def test_동의가_없어도_동의_안내가_아니라_준비_중_문구�
     result = await run(task("medication", "항생제 먹여야 해"), context(consent=False))
 
     assert result.readouts == (READOUTS.render(MED_PREPARING),)
+
+
+@pytest.mark.parametrize(
+    "text", ["어린이집에 낼 투약의뢰서 써줘.", "내일 어린이집에 약 보낼 거 써줘"]
+)
+async def test_투약의뢰서는_아무것도_읽지_않고_준비_중_문구로_닫힌다(text):
+    llm = FakeLLM()
+
+    result = await run(task("care_handoff", text), context(medication=_NoReads()), client=llm)
+
+    assert (result.status, result.model_calls) == ("unsupported", 0)
+    assert result.readouts == (READOUTS.render(NOTICE_PREPARING),)
+    assert llm.seen == []
+
+
+async def test_응급_카드는_닫지_않는다():
+    result = await run(task("care_handoff", "시터한테 줄 알레르기랑 먹는 약 정리해줘."), context())
+
+    assert result.status == "completed"
+    assert [r.kind for r in result.readouts] == ["emergency_card"]
