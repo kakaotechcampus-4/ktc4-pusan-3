@@ -302,6 +302,11 @@ def photo_job(run: PhotoRun, *, data: bytes, received_at: datetime, declared_lan
 
     async def run_job(channel: RunChannel) -> None:
         channel.publish(("step", {"index": 1, "total": 2, "label": "사진에서 글자를 찾고 있어요"}))
+        # 식단표면 표 읽기가 1~2분 더 걸린다. 같은 1단계의 문구만 바꿔 다시 보낸다 — 칸 수는 그대로.
+        # 🚨 읽기 스레드에서 불린다. publish 는 스레드에 안전하지 않아 이벤트 루프로 넘긴다.
+        #    끝 신호(timeout 등) 뒤에 늦게 오면 publish 가 버린다
+        loop = asyncio.get_running_loop()
+        meal_step = ("step", {"index": 1, "total": 2, "label": "급식표를 날짜별로 읽고 있어요"})
         try:
             async with asyncio.timeout(PHOTO_READ_DEADLINE_SECONDS):
                 reading = await asyncio.to_thread(
@@ -311,6 +316,7 @@ def photo_job(run: PhotoRun, *, data: bytes, received_at: datetime, declared_lan
                     meal_deadline=time.monotonic()
                     + PHOTO_READ_DEADLINE_SECONDS
                     - PHOTO_MEAL_MARGIN_SECONDS,
+                    on_meal_plan=lambda: loop.call_soon_threadsafe(channel.publish, meal_step),
                 )
         except entrypoint.UnreadablePhoto:
             channel.publish(sse.failed_event("unparsable", ""))
