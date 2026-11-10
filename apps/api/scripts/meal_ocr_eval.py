@@ -25,12 +25,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from app.core.config import settings
+from app.domains.daycare_meal.models import DaycareSlot
 from app.providers.meal_plan.image_ocr import (
     DEFAULT_DAY_RANGES,
     ImageOcrMealPlanReader,
     Usage,
 )
-from app.providers.meal_plan.schema import MealPlanJSON, MealPlanSource
+from app.providers.meal_plan.schema import MealPlanJSON, MealPlanSource, MenuItem
 from app.rules.allergen import parse_allergens, strip_allergen_marks
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -73,10 +74,21 @@ def load_fixture(path: Path) -> MealPlanJSON:
     return MealPlanJSON.model_validate(data)
 
 
+def _meals(plan: MealPlanJSON) -> dict[tuple[int, str], list[MenuItem]]:
+    """(날짜, 끼니) → 항목들. 한 날짜에 같은 끼니가 두 번 나오면 이어 붙인다.
+
+    스키마는 같은 날짜가 두 번 나오는 것만 거절하고, 운영은 두 끼니를 다 화면에 싣는다 —
+    하나로 덮으면 앞 끼니의 틀린 메뉴가 채점에서 사라진다.
+    """
+    meals: dict[tuple[int, str], list[MenuItem]] = {}
+    for d in plan.days:
+        for m in d.meals:
+            meals.setdefault((d.day, m.meal_type.value), []).extend(m.items)
+    return meals
+
+
 def _by_meal(plan: MealPlanJSON) -> dict[tuple[int, str], list[str]]:
-    return {
-        (d.day, m.meal_type.value): [it.raw for it in m.items] for d in plan.days for m in d.meals
-    }
+    return {key: [it.raw for it in items] for key, items in _meals(plan).items()}
 
 
 def _codes(raws: list[str]) -> set[int]:
@@ -205,17 +217,53 @@ def menu_keys(raw: str) -> set[str]:
     return keys - {""}
 
 
+_WORD_SEP = re.compile(r"또는|[^가-힣A-Za-z]+")
+
+
+def _letters(text: str) -> str:
+    """글자만 남긴다 — 번호 · 기호 · 공백 · 괄호를 빼고 표기 차이를 맞춘다."""
+    text = _WORD_SEP.sub("", text).replace("쨈", "잼")
+    for wrong, right in SAME_MENU_SPELLING.items():
+        text = text.replace(wrong, right)
+    return text
+
+
+def name_fits_raw(name: str, raw: str) -> bool:
+    """이름(`name`)의 낱말이 전부 제 원문(`raw`) 안에 있는가.
+
+    화면 제목과 저장 키는 원문이 아니라 이름으로 만든다 (`photo_run._meal_entries`). 이름은 원문에서
+    번호 · 분량 · 대체 메뉴를 뺀 것이라 원문의 일부여도 맞다 — `백김치9(백깍두기9)` 의 이름
+    `백김치`. 원문에 없는 낱말이 들면 칸에 적히지 않은 메뉴가 화면에 나간다.
+    """
+    whole = _letters(raw)
+    return all(_letters(word) in whole for word in _WORD_SEP.split(name))
+
+
+# 운영이 화면 · 저장에 싣는 끼니. 아침 · 저녁은 `daycare_meal` 에 자리가 없어 버린다
+SERVED = frozenset(slot.value for slot in DaycareSlot)
+
+
 def grade_slots(expected: MealPlanJSON, actual: MealPlanJSON) -> dict[Slot, SlotGrade]:
-    """정답 끼니 전부 + 정답에 없는데 모델이 메뉴를 낸 끼니를 채점한다."""
-    exp, act = _by_meal(expected), _by_meal(actual)
-    slots = set(exp) | {key for key, raws in act.items() if raws}
+    """정답 끼니 전부 + 정답에 없는데 모델이 메뉴를 낸 끼니를 채점한다.
+
+    모델 출력은 운영이 싣는 끼니(`SERVED`)만 본다 — 저녁으로 간 메뉴는 저장되지 않으니 틀린 메뉴가
+    남지 않고, 제 끼니에서 빼먹은 것으로 잡힌다. 메뉴 이름이 없는 끼니(번호뿐)는 세지 않는다.
+    항목은 원문과 이름이 둘 다 맞아야 한다 (`name_fits_raw`).
+    """
+    exp = _by_meal(expected)
+    act = {key: items for key, items in _meals(actual).items() if key[1] in SERVED}
+    named = {key for key, items in act.items() if any(menu_keys(it.raw) for it in items)}
     graded: dict[Slot, SlotGrade] = {}
-    for key in sorted(slots):
-        exp_raws, act_raws = exp.get(key, []), act.get(key, [])
+    for key in sorted(set(exp) | named):
+        exp_raws, items = exp.get(key, []), act.get(key, [])
         exp_keys = set().union(*(menu_keys(r) for r in exp_raws))
-        act_keys = set().union(*(menu_keys(r) for r in act_raws))
+        act_keys = set().union(*(menu_keys(it.raw) for it in items))
+        wrong = [it.raw for it in items if menu_keys(it.raw) - exp_keys]
+        wrong += [
+            f"{it.raw} (이름: {it.name})" for it in items if not name_fits_raw(it.name, it.raw)
+        ]
         graded[key] = SlotGrade(
-            wrong=[r for r in act_raws if menu_keys(r) - exp_keys],
+            wrong=wrong,
             missing=[r for r in exp_raws if menu_keys(r) - act_keys],
         )
     return graded
@@ -233,7 +281,9 @@ class RepeatSummary:
     runs: int
     c1_runs: dict[Slot, int]  # 끼니마다 C1 이 나온 횟수
     fail_runs: dict[Slot, int]  # 끼니마다 실패(C1 또는 빼먹음)한 횟수
-    last: dict[Slot, SlotGrade]  # 끼니마다 마지막으로 틀린 채점 (출력용)
+    last: dict[
+        Slot, SlotGrade
+    ]  # 끼니마다 출력할 채점 — C1 이 있었으면 마지막 C1, 없으면 마지막 실패
 
     @property
     def total(self) -> int:
@@ -267,7 +317,8 @@ def summarize_runs(expected: MealPlanJSON, runs: Sequence[MealPlanJSON]) -> Repe
             slots.add(key)
             c1_runs[key] += g.c1
             fail_runs[key] += g.failed
-            if g.failed:
+            # C1 채점은 뒤 회차의 빼먹음 · 읽기 실패로 덮지 않는다 — 무엇이 틀렸는지 남아야 한다
+            if g.c1 or (g.failed and not (key in last and last[key].c1)):
                 last[key] = g
     return RepeatSummary(
         runs=len(runs),
