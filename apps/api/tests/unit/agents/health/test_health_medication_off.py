@@ -5,8 +5,8 @@
 복약을 다시 켜면 이 파일을 스위치와 같이 지운다.
 """
 
+import ast
 import inspect
-import re
 from datetime import timedelta
 from pathlib import Path
 
@@ -32,9 +32,23 @@ def _off(monkeypatch):
 def test_출고값은_꺼짐이다():
     # 다른 테스트는 모두 스위치를 바꿔 끼우므로 출고값을 아무도 보지 않는다. 충돌 해결 · 디버깅 중에
     # True 로 바뀌면 웹은 꺼진 채 서버만 켜져 나간다. 다시 켤 때는 이 파일을 통째로 지운다
-    source = Path(inspect.getfile(registry)).read_text(encoding="utf-8")
+    # 원문 한 줄만 보면 아래에 `MEDICATION_ENABLED = True` 를 한 줄 더 써도 통과한다 — 값을 넣는
+    # 곳이 하나뿐이고 그 값이 상수 False 인지 본다(환경 변수 등으로 덮어쓰면 상수가 아니다)
+    tree = ast.parse(Path(inspect.getfile(registry)).read_text(encoding="utf-8"))
+    values = [node.value for node in ast.walk(tree) if _assigns_switch(node)]
 
-    assert re.search(r"^MEDICATION_ENABLED: bool = False$", source, re.M)
+    assert len(values) == 1
+    assert isinstance(values[0], ast.Constant) and values[0].value is False
+
+
+def _assigns_switch(node: ast.AST) -> bool:
+    if isinstance(node, ast.Assign):
+        targets = node.targets
+    elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
+        targets = [node.target]
+    else:
+        return False
+    return any(isinstance(t, ast.Name) and t.id == "MEDICATION_ENABLED" for t in targets)
 
 
 class _NoReads(InMemoryMedicationStore):
