@@ -230,6 +230,10 @@ def _times(text: str) -> list[_Clock]:
         groups = m.groupdict()
         minute = 30 if groups.get("half") else int(m["min"] or groups.get("min2") or 0)
         hour = int(m["h"])
+        if m["mer"] is None and mer in _MORNING and hour == 12:
+            # "오전 9시~12시" 의 12시는 정오다. 이어받은 "오전" 으로 자정을 만들지 않는다.
+            # 바로 붙은 "오전 12시" 는 적힌 그대로 자정이다
+            mer = None
         parsed = _time_of(mer, hour, minute)
         if parsed is not None:
             bare = mer is None and not m["h"].startswith("0")  # "07:30" 은 24시간제다
