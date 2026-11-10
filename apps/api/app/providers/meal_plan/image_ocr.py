@@ -177,6 +177,8 @@ def parse_output(content: str) -> OcrOutput:
         raise RuntimeError(f"모델 응답이 JSON 이 아님 — 파싱 실패: {e}") from e
     if isinstance(data, dict) and len(data) == 1 and isinstance(next(iter(data.values())), dict):
         (data,) = data.values()  # OcrOutput 은 필수 키가 5개라 1개짜리는 항상 겹이다
+    if isinstance(data, dict) and isinstance(data.get("days"), list):
+        data = _set_aside_bad_days(data)
     try:
         return OcrOutput.model_validate(data)
     except ValidationError as e:
@@ -202,6 +204,42 @@ class ReadParts:
 
     outputs: tuple[OcrOutput, ...]
     missed: tuple[MissedRange, ...] = ()
+
+
+def _set_aside_bad_days(data: dict) -> dict:
+    """규칙에 맞지 않는 날(1~31 밖)은 그 날만 못 읽은 칸으로 돌린다 — 호출 전체를 버리지 않는다.
+
+    응답 스키마(strict)는 `day` 를 정수로만 묶어서 0 · 32 같은 값이 온다. 프롬프트 · 스키마를
+    바꾸지 않고(지문이 바뀐다) 여기서 가른다. 그 날 읽은 원문은 확인 화면에 싣는다.
+    """
+    good, bad = [], []
+    for day in data["days"]:
+        try:
+            MealDay.model_validate(day)
+        except ValidationError:
+            bad.append(day)
+        else:
+            good.append(day)
+    if not bad:
+        return data
+    cells = list(data.get("unparsed") or [])
+    for day in bad:
+        number = day.get("day") if isinstance(day, dict) else None
+        cells.append({"raw": _raw_of_dict(day), "why": f"날짜 칸({number}일)을 읽지 못했어요."})
+    return {**data, "days": good, "unparsed": cells}
+
+
+def _raw_of_dict(day: object) -> str | None:
+    """검증 전의 날 하나에서 메뉴 원문만 꺼낸다. 모양이 어긋난 곳은 건너뛴다."""
+    meals = day.get("meals") if isinstance(day, dict) else None
+    raws = [
+        item["raw"]
+        for meal in (meals if isinstance(meals, list) else [])
+        if isinstance(meal, dict) and isinstance(meal.get("items"), list)
+        for item in meal["items"]
+        if isinstance(item, dict) and isinstance(item.get("raw"), str)
+    ]
+    return ", ".join(raws) or None
 
 
 def merge_outputs(

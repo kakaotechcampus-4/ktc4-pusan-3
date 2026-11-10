@@ -255,3 +255,30 @@ def test_from_settings_requires_url_and_key():
     )
     assert reader.source is MealPlanSource.IMAGE
     assert reader.model == settings.MEAL_OCR_MODEL
+
+
+# ── 한 날짜 칸이 틀려도 그 호출 전체를 버리지 않는다 ──
+
+
+@pytest.mark.parametrize("bad_day", [0, 32, 45])
+def test_parse_output_sets_aside_a_day_out_of_range_instead_of_failing_the_call(bad_day):
+    # 응답 스키마는 day 를 정수로만 묶는다 — 1~31 밖의 날은 검증에서 걸려, 전에는 그 호출의
+    # 15일치가 다 버려졌다. 그 날만 못 읽은 칸으로 돌린다
+    import json
+
+    content = json.dumps(
+        {
+            "institution_name": None,
+            "year_month": "11",
+            "days": [_lunch(2, "흑미밥"), _lunch(bad_day, "현미밥", "우유2")],
+            "unparsed": [{"day": 3, "meal_type": "lunch", "raw": "빵(찐", "why": "잘림"}],
+            "notes": None,
+        },
+        ensure_ascii=False,
+    )
+
+    out = parse_output(content)
+
+    assert [d.day for d in out.days] == [2]
+    assert [(u.day, u.raw) for u in out.unparsed] == [(3, "빵(찐"), (None, "현미밥, 우유2")]
+    assert f"{bad_day}일" in out.unparsed[1].why
