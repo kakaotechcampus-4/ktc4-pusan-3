@@ -11,12 +11,12 @@ from datetime import date, timedelta
 from typing import Any
 
 from app.agents.food.amount_rules import amount_of, portion_scale_for
-from app.agents.food.context import FoodContext
+from app.agents.food.context import FoodContext, mark_daycare_unread
 from app.agents.food.kdri import NutrientRef, refs_for
 from app.agents.food.menu_resolver import MenuResolver, Resolved
 from app.agents.food.nutrient_wording import APPEARANCE_GROUPS
 from app.agents.food.periods import week_end
-from app.agents.food.store.ports import DaycareMealRow, FoodObservation
+from app.agents.food.store.ports import DaycareLookupError, DaycareMealRow, FoodObservation
 from app.core.mfds_nutri_raw import OPTIONAL_NUTRIENT_KEYS
 from app.rules.age import months_between
 from app.rules.menu_key import normalize_menu_key
@@ -138,9 +138,17 @@ async def read_meal_records(
     observations = await ports.memory.observations(
         child_id=context.child_id, date_from=date_from, date_to=date_to
     )
-    daycare_rows = await ports.daycare.rows(
-        child_id=context.child_id, date_from=date_from, date_to=date_to
-    )
+    # 급식 표를 못 읽으면 집 식사 기록만으로 간다(#956). 한 task 안에서 여러 번 읽으니 한 번
+    # 실패했으면 다시 부르지 않는다 — 읽을 때마다 결과가 다르면 안 되고, 느린 실패를 되풀이하면
+    # 예산을 먹는다. 급식이 없으니 기관 공지에서 온 집 기록과 겹쳐 셀 일도 없다
+    daycare_rows: list[DaycareMealRow] = []
+    if not context.state.daycare_unread:
+        try:
+            daycare_rows = await ports.daycare.rows(
+                child_id=context.child_id, date_from=date_from, date_to=date_to
+            )
+        except DaycareLookupError:
+            mark_daycare_unread(context, at="read_meal_records")
 
     daycare_by_day: dict[date, list[DaycareMealRow]] = defaultdict(list)
     for row in daycare_rows:

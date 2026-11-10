@@ -65,6 +65,8 @@ from app.agents.food.store.ports import (
 from app.rules.allergen import ALLERGEN_NAMES
 from app.rules.menu_key import normalize_menu_key
 
+# 급식 표를 읽지 못했을 때 모델에게 돌려주는 말. 급식과 겹치는지는 보지 않고 후보에서 고르게 한다
+_DAYCARE_READ_FAILED = "급식 메뉴를 지금 읽지 못했다. 급식과 겹치는지는 보지 말고 후보에서 고른다."
 _DAY_OFFSET: dict[MenuDay, int] = {MenuDay.YESTERDAY: -1, MenuDay.TODAY: 0, MenuDay.TOMORROW: 1}
 
 
@@ -87,10 +89,13 @@ async def lookup_daycare_menu(context: FoodContext, args: DaycareMenuArgs) -> To
     """
     ports = context.ports
     day = context.today + timedelta(days=_DAY_OFFSET[MenuDay(args.day)])
-    rows = sorted(
-        await ports.daycare.rows(child_id=context.child_id, date_from=day, date_to=day),
-        key=lambda row: DAYCARE_SLOT_ORDER[row.meal_slot],
-    )
+    try:
+        found_rows = await ports.daycare.rows(child_id=context.child_id, date_from=day, date_to=day)
+    except DaycareLookupError:
+        # 모델이 읽는 메시지다 — 원문 · 메뉴를 싣지 않고, 다음 행동(급식 없이 고르기)을 적는다
+        mark_daycare_unread(context, at="lookup_daycare_menu")
+        return fail("query", "daycare_menu", ErrorCode.UPSTREAM_ERROR, _DAYCARE_READ_FAILED)
+    rows = sorted(found_rows, key=lambda row: DAYCARE_SLOT_ORDER[row.meal_slot])
     keys = tuple(dict.fromkeys(key for row in rows for key in row.menu_keys))
     entries = context.state.safety
 

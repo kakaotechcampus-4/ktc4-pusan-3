@@ -30,6 +30,8 @@ UNSUPPORTED_WEIGHT_DIET = "unsupported.weight_diet"
 NUTRIENT_INSUFFICIENT = "nutrient.insufficient"
 NUTRIENT_TODAY_EMPTY = "nutrient.today_empty"
 NUTRIENT_DAYCARE_AMOUNT_UNKNOWN = "nutrient.daycare_amount_unknown"
+# 급식 표를 못 읽어 집 식사 기록으로만 봤다(#956)
+NUTRIENT_DAYCARE_UNREAD = "nutrient.daycare_unread"
 # 1차 출력 — 기록된 날 중 식품군이 나온 날 수. 영양소 분석 문장은 이것뿐이다(N-17 · N-18)
 NUTRIENT_APPEARANCE = "nutrient.appearance"
 # 출현 줄 뒤에 붙는 줄 — 적게 나온 채소 · 과일 짚기 / 적은 기록 한계 / 이번 주 급식을 본 범위.
@@ -69,6 +71,7 @@ MEAL_REQUEST_AGE_BLOCK = "meal.request_age_block"
 # 고른 메뉴가 왜 이렇게 모였는지(영양 반영) · 어디서 온 메뉴인지(레시피 출처). 코드가 만든 값만
 # 문구 자리에 채운다
 MEAL_NUTRIENT_BASIS = "meal.nutrient_basis"
+MEAL_DAYCARE_UNREAD = "meal.daycare_unread"  # 급식 표를 못 읽어 급식과의 겹침을 못 봤다(#956)
 MEAL_MENU_SOURCE = "meal.menu_source"
 MEAL_MENU_WEANING = "meal.menu_weaning"  # 고른 메뉴가 이유식 식단 표 메뉴(이유기, #399)
 MEAL_MENU_GENERATED = "meal.menu_generated"  # 고른 메뉴가 모두 레시피북에 없는 생성 메뉴

@@ -46,7 +46,13 @@ from app.agents.food.prompt import (
     recall_message,
     request_message,
 )
-from app.agents.food.readouts import FOLLOWUP_PREFERENCE, POOL_EMPTY, READOUTS
+from app.agents.food.readouts import (
+    FOLLOWUP_PREFERENCE,
+    MEAL_DAYCARE_UNREAD,
+    NUTRIENT_DAYCARE_UNREAD,
+    POOL_EMPTY,
+    READOUTS,
+)
 from app.agents.food.registry import (
     answers_by_code,
     closed_readout_key,
@@ -108,11 +114,12 @@ async def run(
         if task_type == FoodTaskType.FOOD_CHECK:
             return _check_foods_result(context)
         # 영양소 분석 1차 출력 — 모델을 부르지 않는다. 구간은 판정해 두되 문장은 식품군 출현만 쓴다
+        readouts = await appearance_report(context)
+        if context.state.daycare_unread:
+            # 급식 표를 못 읽어 집 기록으로만 봤다 — 읽는 도중에 정해지므로 보고서를 만든 뒤에 본다
+            readouts = (READOUTS.render(NUTRIENT_DAYCARE_UNREAD), *readouts)
         return DomainAgentResult(
-            agent=AGENT,
-            task_type=task_type.value,
-            status="completed",
-            readouts=await appearance_report(context),
+            agent=AGENT, task_type=task_type.value, status="completed", readouts=readouts
         )
 
     llm = client or LLMClient(role="food")
@@ -337,6 +344,9 @@ def _recommendation(
 ) -> DomainAgentResult:
     # 끼니는 일정 초안 제목에 쓴다 — 여기서 빼면 서버가 끼니를 알 길이 없다 (#898)
     drafts = tuple(replace(pick.draft, meal_slot=pick.meal_slot.value) for pick in picks)
+    if drafts and context.state.daycare_unread:
+        # 급식과 겹치는지 못 봤다. 추천이 나갈 때만 알린다 — 개수 안내보다 앞이다
+        notices = (*notices, READOUTS.render(MEAL_DAYCARE_UNREAD))
     # 개수 안내는 합친 결과로 센다 — 재호출 때 출력 tool 이 본 것은 재호출분뿐이다
     notice = count_notice(len(drafts), empty=READOUTS.get(POOL_EMPTY))
     return DomainAgentResult(
