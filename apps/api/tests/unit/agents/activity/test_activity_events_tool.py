@@ -567,3 +567,21 @@ class TestShownBefore:
         result = await search_events(ctx, SearchEventsArgs(day=DayLabel.TODAY))
 
         assert names(result) == [] and ctx.state.no_new_events is True
+
+    @pytest.mark.parametrize(
+        ("title", "shown"),
+        [
+            # 앞 추천 문장에는 연도 · 회차 · 부제를 뗀 이름만 남는다 (`_with_place`, #853 리뷰)
+            ("제15회 가상국제코미디페스티벌", "가상국제코미디페스티벌에서 공연 보기"),
+            ("2026 가상 별빛축제 (밤하늘 이야기)", "가상 별빛축제에서 별 보기"),
+            ("2026 대한민국 가상정원박람회", "가상정원박람회에서 꽃 모양 찾기"),
+        ],
+    )
+    async def test_줄인_이름으로_보여_준_행사도_뺀다(self, title, shown):
+        rows = [raw("1", title, km=1), raw("2", "다른 축제", km=2)]
+        ctx = await context(InMemoryEvents(rows))
+        ctx.state.shown_before = (shown,)
+
+        result = await search_events(ctx, SearchEventsArgs(day=DayLabel.TODAY))
+
+        assert names(result) == ["다른 축제"]

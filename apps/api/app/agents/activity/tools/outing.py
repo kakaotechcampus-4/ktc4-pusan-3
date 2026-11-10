@@ -22,6 +22,7 @@ from app.agents.activity.events import (
     age_allows,
     distance_m,
     ended_today,
+    event_keys,
     in_period,
     in_province,
     open_on,
@@ -410,9 +411,13 @@ async def search_events(context: ActivityContext, args: SearchEventsArgs) -> Too
         distance = distance_m(event, origin)
         if in_province(event, province) if province else distance <= EVENT_MAX_RADIUS_M:
             found.append((distance, event))
-    # 앞 턴에서 보여 준 행사는 빼고 그다음 행사를 준다 — "다른 행사" 를 여러 번 물어도 (#852)
+    # 앞 턴에서 보여 준 행사는 빼고 그다음 행사를 준다 — "다른 행사" 를 여러 번 물어도 (#852).
+    # 앞 추천 문장에는 줄인 이름만 남았을 수 있어서 그 이름으로도 본다 (#853 리뷰)
+    shown = context.state.shown_before
     fresh = [
-        pair for pair in found if not shown_again("", pair[1].name, context.state.shown_before)
+        pair
+        for pair in found
+        if not shown_again("", {pair[1].name, *event_keys(pair[1].name)}, shown)
     ]
     if found and not fresh:
         return _no_new_events(context)

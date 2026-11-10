@@ -122,6 +122,9 @@ FEST_ROW = EventRow(
     distance_m=3_000,
     schedule=daily(date(2026, 9, 29), date(2026, 10, 1)),
 )
+# 회차가 붙은 행사. 문장에는 회차를 뗀 이름으로 쓴다
+ROUND = "제15회 가상국제코미디페스티벌"
+ROUND_ROW = replace(FEST_ROW, name=ROUND, place="가상문화회관")
 
 
 TOWER_DOC = ActivityDocRow(
@@ -405,6 +408,24 @@ class TestShownBefore:
 
     def test_다른_놀이는_통과(self):
         result = review(candidate(content="큰 블록으로 탑 쌓기"), shown_before=["색종이 접기"])
+        assert result.rejections == ()
+
+    @pytest.mark.parametrize("place_name", [ROUND, "가상국제코미디페스티벌"])
+    def test_줄인_이름으로_보여_준_행사를_다시_붙이면_거절(self, place_name):
+        # 앞 추천 문장에는 회차를 뗀 이름만 남는다 (`_with_place`, #853 리뷰)
+        shown = ["가상국제코미디페스티벌에서 공연 보기"]
+        result = review(
+            candidate(content="코미디 공연 보며 함께 웃기", place_name=place_name),
+            shown_before=shown,
+            events={ROUND: ROUND_ROW},
+        )
+        assert reason_of(result) is RejectReason.SHOWN_BEFORE
+
+    def test_보여_준_행사와_다른_행사는_통과(self):
+        shown = ["가상국제코미디페스티벌에서 공연 보기"]
+        result = review(
+            candidate(content="축제 구경", place_name=FEST), shown_before=shown, events=EVENTS
+        )
         assert result.rejections == ()
 
 
