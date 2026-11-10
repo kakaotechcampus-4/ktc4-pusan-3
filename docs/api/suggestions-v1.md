@@ -188,7 +188,8 @@ approved 추천 전부를 본다. 세 곳 모두 같은 함수(`_recheck_allerge
   있다(#880 리뷰). 그 틈을 웹 구현에 기대지 않는다 — 루트 §2 "알레르기 필터는 코드가 막는다".
 - `suggestion_ids` 를 실은 제출만 본다. 보호자가 직접 만든 일정은 그대로다.
 - 제출은 카드 한 장에 요청 하나라서 걸린 추천이 든 카드만 실패하고, 나머지 카드는 그대로 넣을 수 있다(food 는
-  한 장으로 묶인다). 문구가 초안 만들기와 같아서 카드가 실패 때 띄우는 서버 문구로 그대로 쓰인다.
+  한 장으로 묶인다). 화면이 막힌 카드를 다루는 방식은 웹 문서
+  [`event-draft-ui-v1.md`](../web/event-draft-ui-v1.md) §3-8 "넣다가 막힐 때"(#910)에 있다.
 - 오류 순서는 400 `idempotency_key_required` → 422 `invalid_reminder` → 행마다 404 · 422 `not_approved` →
   409 `already_confirmed` → 403 `consent_required` → 409 `allergen_blocked`. 아무것도 쓰기 전이다 — 그 뒤가 알림
   연결 잠금(403 `child_access_denied`) · 반복 일정 펼치기(422 `invalid_repeat`)다.
