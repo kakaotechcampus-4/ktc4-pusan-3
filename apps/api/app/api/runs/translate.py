@@ -61,6 +61,7 @@ from app.agents.entrypoint import (
 )
 from app.api.chat_replies import SCREEN_REF_KINDS
 from app.api.runs import sse
+from app.api.runs.readout_sources import doc_sources
 from app.api.runs.registry import RunChannel
 from app.api.v1.card_rows import card_tabs, proposal_tabs
 from app.api.v1.schemas.cards import DeleteProposalCardOut
@@ -172,6 +173,8 @@ def to_sse(
                         for ref in readout.source_refs
                         if ref.kind in SCREEN_REF_KINDS
                     ],
+                    # 문서 근거의 참고 줄 (#574). 근거가 없어도 키는 늘 있다
+                    "sources": [s.model_dump(mode="json") for s in doc_sources(readout)],
                 }
                 for readout in event.readouts
             ],

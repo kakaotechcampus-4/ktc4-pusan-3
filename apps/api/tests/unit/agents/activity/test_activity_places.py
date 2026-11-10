@@ -392,9 +392,13 @@ class TestArea:
         assert ctx.state.area_places == {"○○공원"}
 
 
-def test_실내_종류는_도서관과_실내_놀이터다():
-    # 체험관은 싣는 데이터가 없어 빼 두었다 — 넣으면 모델이 매번 빈 검색을 한다
-    assert INDOOR_CATEGORIES == {PlaceCategory.LIBRARY, PlaceCategory.INDOOR_PLAYGROUND}
+def test_실내_종류는_도서관_실내_놀이터_체험관이다():
+    # 체험관(박물관 · 과학관 · 체험관)은 TourAPI 시 · 도 목록에서 찾는다(`activity/culture.py`)
+    assert INDOOR_CATEGORIES == {
+        PlaceCategory.LIBRARY,
+        PlaceCategory.INDOOR_PLAYGROUND,
+        PlaceCategory.EXPERIENCE_CENTER,
+    }
 
 
 class TestOutdoorOn:

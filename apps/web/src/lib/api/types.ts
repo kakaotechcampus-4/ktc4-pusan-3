@@ -436,6 +436,19 @@ export interface DocEvidence {
   note: string;
 }
 
+/**
+ * readout 이 근거로 단 문서 행 (#574). 일반 정보 답변(`kind: "doc_answer"`)이 싣는다.
+ * `DocEvidence` 에서 `note` 를 뺀 모양이다 — 답변은 문장마다 근거를 달아서 행마다 메모가 없다.
+ * 🚨 출처(`source_org`)를 함께 보여 준다 — CC BY 문서는 출처 표시가 이용 조건이다.
+ */
+export interface DocSource {
+  ref: { kind: "food_doc" | "activity_doc" | "growth_doc"; id: string };
+  title: string;
+  source_org: string;
+  source_title: string;
+  source_url: string | null;
+}
+
 /* ── Event · EventItem · Reminder ─────────────────────────────────────── */
 
 export interface EventItem {

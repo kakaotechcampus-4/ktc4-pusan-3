@@ -79,7 +79,7 @@ from app.agents.run_writes import RunWrites
 from app.agents.suggestion_save import SaveSuggestions, SuggestionBatch
 from app.agents.supervisor.agent import SupervisorResult
 from app.agents.supervisor.agent import run as run_supervisor
-from app.agents.supervisor.context import ConversationContext, LoadRecentTurns
+from app.agents.supervisor.context import MAX_RECENT_TURNS, ConversationContext, LoadRecentTurns
 from app.agents.supervisor.emergency import emergency_guidance, infant_fever_age
 from app.agents.supervisor.followup import looks_like_followup
 from app.agents.supervisor.prompt import reroute_feedback
@@ -2426,12 +2426,33 @@ def _with_prior(routing: Routing, conversation: ConversationContext | None) -> R
     """
     if not conversation or not conversation.turns:
         return routing
-    prior = tuple(turn.text for turn in conversation.turns)
+    # 앞 턴의 보호자 말은 모델이 본 앞 대화와 같은 범위(최근 세 턴)다
+    prior = tuple(turn.text for turn in conversation.turns[-MAX_RECENT_TURNS:])
     tasks = tuple(
-        replace(task, prior_texts=prior) if task.original_texts else task
+        replace(
+            replace(task, prior_texts=prior) if task.original_texts else task,
+            shown_before=_shown_before(conversation, task.agent),
+        )
         for task in routing.domain_tasks
     )
     return replace(routing, domain_tasks=tasks)
+
+
+def _shown_before(conversation: ConversationContext, agent: str) -> tuple[str, ...]:
+    """앞 턴들에서 그 Agent 가 낸 추천 이름 — 오래된 순, 겹침 없음 (#852).
+
+    해석을 받았는지와 상관없이 싣는다. "주말에 갈만한 다른 행사" 는 혼자 읽어도 통해서 Supervisor
+    가 해석을 안 쓸 수 있는데, 그래도 앞에서 보여 준 행사는 빼야 한다. 앞 대화는 후속 질문으로 보일
+    때만 읽으므로(`_conversation`) 새 질문에는 붙지 않는다.
+    """
+    names = (
+        name
+        for turn in conversation.turns
+        for result in turn.results
+        if result.agent == agent
+        for name in result.suggestions
+    )
+    return tuple(dict.fromkeys(names))
 
 
 async def _count(agent: str, count_records: CountRecords | None) -> int | None:

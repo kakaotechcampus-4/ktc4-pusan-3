@@ -51,6 +51,7 @@ from app.api.chat_replies import (
     UnavailableReply,
 )
 from app.api.deps.db import background_session
+from app.api.runs.readout_sources import doc_sources
 from app.api.runs.registry import RunChannel
 from app.domains.chat.repository import add_turn, find_turn_date
 
@@ -102,6 +103,7 @@ def to_reply(event: Event) -> ChatReply | None:
                         for ref in readout.source_refs
                         if ref.kind in SCREEN_REF_KINDS
                     ],
+                    sources=doc_sources(readout),
                 )
                 for readout in event.readouts
             ],

@@ -80,6 +80,7 @@ from tests.eval.agents.routing_cases import (
     GR_CASES,
     HR_CASES,
     HR_NEVER_HEALTH,
+    IN_CASES,
     NT_CASES,
     RC_CASES,
     RO_CASES,
@@ -377,6 +378,50 @@ def test_growth_routing(expect: Callable[..., None]) -> None:
     assert not violations, f"0건 규칙 위반: {violations}"
     assert agent >= GROWTH_AGENT_MIN, f"agent {agent:.0%} < {GROWTH_AGENT_MIN:.0%}"
     assert growth >= GROWTH_TASK_MIN, f"growth 유형 {growth:.0%} < {GROWTH_TASK_MIN:.0%}"
+
+
+# ── 일반 정보 경계 (Supervisor 단독) ────────────────────────────
+# 우리 아이 추천이 info 로 새면 추천이 안 나가고, info 가 추천으로 새면 다른 나이의 추천이 이 아이
+# 카드로 저장된다. 둘 다 0건 규칙이고 비율로 섞지 않는다 (#574)
+INFO_AGENT_MIN = 0.9
+INFO_MODE_MIN = 0.9
+
+
+def test_info_routing(expect: Callable[..., None]) -> None:
+    """IN 묶음(growth · health) — agent · request_mode 일치율 합격선 이상, 모드가 새는 건수 0."""
+    expect(
+        f"agent ≥ {INFO_AGENT_MIN:.0%} · info 판정 ≥ {INFO_MODE_MIN:.0%} · info↔suggest 새는 건수 0"
+    )
+    client = _client()
+    scores: list[SplitScore] = []
+    errors: list[str] = []
+    for case in IN_CASES:
+        for attempt in range(1, TEST_REPEAT + 1):
+            started = time.perf_counter()
+            result = asyncio.run(supervisor.run(case.text, client=client, keep_rejected=True))
+            elapsed_ms = int((time.perf_counter() - started) * 1000)
+            score = score_split(case, result.output)
+            scores.append(score)
+            if result.error:
+                errors.append(f"{case.case_id}: {result.error}")
+            suffix = f" #{attempt}" if TEST_REPEAT > 1 else ""
+            print(f"\n[{case.case_id}{suffix}] {case.watch}")
+            print(f"    S {result.model_calls}회 {elapsed_ms}ms  {format_segments(result.output)}")
+            print(f"      {format_score(score)}")
+
+    total = sum_scores(scores)
+    agent = rate(total.agent_ok, total.request_spans)
+    info = rate(total.info_ok, total.info_spans)
+    leaks = total.info_to_suggest + total.suggest_to_info
+    print(f"\n══ 일반 정보 경계 합계 — 실행 {len(scores)}회 · {format_score(total)}")
+    print(f"   agent {agent:.0%} · info 판정 {info:.0%} · 새는 건수 {leaks}")
+    assert not errors, f"Supervisor 실패: {errors}"
+    assert leaks == 0, (
+        f"info↔suggest 가 샜다: info→suggest {total.info_to_suggest}, "
+        f"suggest→info {total.suggest_to_info}"
+    )
+    assert agent >= INFO_AGENT_MIN, f"agent {agent:.0%} < {INFO_AGENT_MIN:.0%}"
+    assert info >= INFO_MODE_MIN, f"info 판정 {info:.0%} < {INFO_MODE_MIN:.0%}"
 
 
 # ── 말투만 다른 식사 추천 (Supervisor → routing) ────────────────

@@ -17,7 +17,7 @@ from app.agents.common.allergy import allergy_related_table, related_blocks
 from app.agents.common.refs import count_child_records
 from app.agents.growth.schemas.task import GrowthTaskType
 from app.agents.growth.store.inmemory import InMemoryGrowthDocs
-from app.agents.growth.store.ports import GrowthDocRow, GrowthDocType
+from app.agents.growth.store.ports import INFO_ROW_TYPES, GrowthDocRow, GrowthDocType
 from app.agents.growth.tools.docs import (
     DOC_LIMIT,
     DOC_POOL,
@@ -545,3 +545,33 @@ class TestTags:
                 spy, task_type=LEARNING, months=20, tags=("방금 게임을 했어요",)
             )
         assert spy.calls == []
+
+
+class TestSearchRange:
+    async def test_구간이_겹치는_행만(self):
+        docs = InMemoryGrowthDocs.from_seed()
+        rows = await docs.search_range(
+            min_month=12, max_month=24, row_types=INFO_ROW_TYPES, query="", limit=200
+        )
+        assert rows and all(r.min_month < 24 and r.max_month > 12 for r in rows)
+        assert {r.row_type for r in rows} <= set(INFO_ROW_TYPES)
+
+    async def test_경계에_닿기만_하는_행은_겹치지_않는다(self):
+        docs = InMemoryGrowthDocs.from_seed()
+        rows = await docs.search_range(
+            min_month=24, max_month=36, row_types=("learning_activity",), query="", limit=500
+        )
+        assert all(r.min_month < 36 and r.max_month > 24 for r in rows)
+        assert not any(r.max_month == 24 or r.min_month == 36 for r in rows)
+
+    async def test_limit_으로_자른다(self):
+        docs = InMemoryGrowthDocs.from_seed()
+        rows = await docs.search_range(
+            min_month=12, max_month=72, row_types=INFO_ROW_TYPES, query="", limit=5
+        )
+        assert len(rows) == 5
+
+    def test_키_몸무게_안내는_일반_정보에_넣지_않는다(self):
+        """키 · 몸무게 질문이 평가로 읽혀서 뺐다."""
+        assert "measure_guide" not in INFO_ROW_TYPES
+        assert "book_guide" not in INFO_ROW_TYPES
