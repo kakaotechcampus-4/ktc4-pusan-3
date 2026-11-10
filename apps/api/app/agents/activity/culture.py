@@ -24,20 +24,41 @@ from app.core.weather_raw import UpstreamUnavailable
 CULTURE_MAX_RADIUS_M = 30_000
 CULTURE_SOURCE = "tour_culture"
 
-# 아이와 갈 만한 곳의 이름. 11-09 부산 · 경남 실측 목록으로 골랐다
+# 아이와 갈 만한 곳의 이름. 11-09 부산 · 경남 실측 목록으로 골랐다. "천문" 만 두면 사천문화원 ·
+# 금천문화원이 걸리고, "키즈" 는 키즈카페(`indoor_playground`)와 겹쳐서 넣지 않는다 (#858 리뷰)
 _KID = re.compile(
-    r"박물관|과학관|미술관|체험관|체험센터|어린이|키즈|천문|우주|아쿠아리움|수족관|생태|자연사|공룡|곤충"
+    r"박물관|과학관|미술관|체험관|체험센터|어린이|뮤지엄|천문대|천문관|천문과학|우주|아쿠아리움|수족관|"
+    r"생태|자연사|공룡|곤충"
 )
 # 이름에 위 말이 있어도 뺀다 — 대학 · 절 박물관, 인물 기념관, 홍보관, 공연장, 서원
 _NOT_KID = re.compile(
     r"대학교|대학|성보|기념관|기념사업|홍보|갤러리|화랑|아트홀|극장|씨어터|공연장|서원|향교|사찰|교회|성당|"
     r"기독교|선교|불교|천주교|순교"
 )
+# 바깥 장소의 이름 — 이 종류는 실내(`INDOOR_CATEGORIES`)라 비 오는 날에도 나간다. 생태공원 ·
+# 어린이대공원 · 공룡 발자국 화석지가 "생태 · 어린이 · 공룡" 에 걸렸다 (#858 리뷰). 건물 이름으로
+# 끝나면(생태숲 생태체험관) 받는다
+_OUTDOOR = re.compile(r"공원|탐방|습지|둘레길|수목원|숲|늪|화석|마을|캠핑|해변|해수욕장")
+_BUILDING = re.compile(r"(관|센터|뮤지엄)(\s|\(|$)")
+# 관광지(12) 행은 분류 코드(lclsSystm2)가 실내 체험 · 전시 계열일 때만 받는다 — 자연(NA) ·
+# 공원(VE03) · 농산촌 체험(EX03)은 바깥이다. 문화시설(14)은 전부 건물이라 이름만 본다.
+# VE02 는 아쿠아리움 · 천문대와 어린이대공원이 섞여 있어 이름(`_OUTDOOR`)이 가른다 (11-10 실측)
+_SPOT = "12"
+_INDOOR_SPOT_CODES = frozenset({"EX02", "EX06", "EX07", "VE02", "VE07"})
 
 
 def kid_site(title: str) -> bool:
-    """아이와 갈 만한 박물관 · 과학관 · 체험관인가. 이름만 본다."""
-    return bool(_KID.search(title)) and not _NOT_KID.search(title)
+    """아이와 갈 만한 실내 박물관 · 과학관 · 체험관 이름인가. 이름만 본다."""
+    if not _KID.search(title) or _NOT_KID.search(title):
+        return False
+    return not _OUTDOOR.search(title) or bool(_BUILDING.search(title))
+
+
+def kid_place(site: RawSite) -> bool:
+    """TourAPI 한 행이 아이와 갈 만한 실내 체험 · 전시 시설인가 — 관광지는 분류 코드도 본다."""
+    if site.content_type == _SPOT and site.category not in _INDOOR_SPOT_CODES:
+        return False
+    return kid_site(site.title)
 
 
 def province_of(location: CoarseLocation) -> str:
@@ -74,7 +95,7 @@ def with_culture(base: PlaceSource | None, culture: CultureSource | None) -> Pla
 
 
 def _row(site: RawSite, origin: CoarseLocation) -> PlaceRow | None:
-    if not kid_site(site.title):
+    if not kid_place(site):
         return None
     try:
         lon, lat = float(site.mapx), float(site.mapy)
