@@ -117,10 +117,11 @@ def today_meals(rows: list[DaycareMeal]) -> list[TodayMealOut]:
 
     메뉴는 저장된 `menu_keys` 를 그대로 잇는다 — 보기 좋은 이름은 표에 없어서 지어내지 않는다.
     메뉴가 빈 끼니는 줄을 만들지 않는다 (빈 제목 줄 금지 · Food 의 급식 조회와 같은 규칙).
+    NULL · 공백뿐인 키는 건너뛰고 앞뒤 공백은 다듬는다 — 한 행 때문에 홈 전체가 500 이 되지 않게.
     """
     lines = []
     for row in sorted(rows, key=lambda r: _SLOT_ORDER[DaycareSlot(r.meal_slot)]):
-        menus = [m for m in row.menu_keys if m.strip()]
+        menus = [m.strip() for m in row.menu_keys if m is not None and m.strip()]
         if not menus:
             continue
         slot = DaycareSlot(row.meal_slot)

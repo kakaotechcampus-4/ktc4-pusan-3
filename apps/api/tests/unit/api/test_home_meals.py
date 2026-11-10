@@ -53,3 +53,15 @@ def test_급식_줄에는_알레르기_판정_문구가_없다():
         "title": "점심 · 우유, 땅콩조림",
         "origin": "기관 급식표",
     }
+
+
+def test_NULL_과_공백뿐인_키는_건너뛰고_앞뒤_공백은_다듬는다():
+    # 한 행의 이상한 키 때문에 홈 전체가 500 이 되면 안 된다 — 홈은 가장 자주 불리는 화면이다
+    lines = today_meals(
+        [
+            _row(DaycareSlot.LUNCH, [None, " 우유 ", "  ", "잡곡밥"]),
+            _row(DaycareSlot.SNACK_PM, [None, " "]),
+        ]
+    )
+
+    assert [line.title for line in lines] == ["점심 · 우유, 잡곡밥"]
