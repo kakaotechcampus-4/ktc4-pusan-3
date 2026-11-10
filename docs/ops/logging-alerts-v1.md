@@ -97,4 +97,6 @@ api 안의 알림은 **api 프로세스 안의 `app.*` 로거**에만 달린다.
 - **감시 도구가 배포를 막지 않는다** — Alloy 는 profile `monitor` 라 배포 · 롤백의 `up --wait` 밖이다. `deploy.sh` 가 prod 배포 성공 뒤 `alloy validate` 를 거쳐 따로 띄우고, 실패하면 🟠 경고만 남긴다. 감시가 하루 비는 건 괜찮고 서비스가 멈추는 건 안 된다. `GRAFANA_*` 가 비어도 Alloy 는 죽지 않고 보내기만 재시도한다 (실측). dev 는 띄우지 않는다 — 서버에 하나면 다 본다
 - **`network_mode: host` 를 쓰지 않는다** — imds-firewall 은 컨테이너에서 나가는 길만 막는다. edge 의 자동 주소(.128 위)는 막힌다
 - **알림** — Grafana Alerting → 지금 Discord 채널(`infra-alert` 와 같은 곳). 채널이 늘면 덜 본다. 🚨 순간값이 아니라 **5분 이상 계속**(pending period 5m)일 때만 — 배포 중 잠깐 튀는 건 안 오게. 규칙은 Grafana 화면에서 만들고 코드로 두지 않는다
+  - 🚨 **Alloy 가 죽으면 데이터가 아예 안 와서 `up == 0` 도 안 울린다** — 규칙마다 "No data" 를 Alerting 으로 둔다(OK 로 두면 조용하다). Alloy 컨테이너의 죽음 · 재시작 반복은 컨테이너 감시(`health-alert.sh`)가 이미 infra-alert 로 알린다 — compose 의 모든 컨테이너를 본다
+  - `up` 의 job 이름은 Caddy 가 `prometheus.scrape.caddy`, 서버가 `integrations/unix` 다 (Alloy 가 붙인다)
 - **안 하는 것** — 로그(Loki) · 트레이스 · DB · Redis exporter. FastAPI `/metrics`(run 소요 시간 · 부분 결과 횟수)는 다음 이슈

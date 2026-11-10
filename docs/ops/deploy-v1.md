@@ -38,10 +38,21 @@ healthy 가 될 때까지 기다리고, 안 되면(최대 360초 — 옛 api dra
 | 이미지 빌드 · 마이그레이션 | 여기서 멈춘다. `down` 을 먼저 하지 않으므로 **옛 컨테이너가 그대로 서비스한다** (db · redis 이미지가 바뀐 커밋이면 마이그레이션 `run` 이 그 둘을 먼저 새로 띄운다) |
 | 배포 전 백업 (#758 — 빌드 뒤 · 마이그레이션 앞) | 여기서 멈춘다. 아무것도 바꾸지 않았다 — 마이그레이션을 되돌릴 곳이 이 백업뿐이라 백업 없이 넘어가지 않는다. DB 컨테이너가 죽어 백업이 안 되는데 그걸 고치는 배포면 Actions 의 "배포" 를 손으로 돌리며 `skip_backup` 을 켠다 — 백업 없이 넘어가고 Discord 와 Actions 에 남는다. 새 스택의 첫 배포(DB 컨테이너가 아직 없거나 테이블이 0개)도 같다 |
 | Caddy reload (prod) | 새 버전은 떠 있고 Caddy 는 옛 설정이다. 워크플로는 빨간불 — 서버에서 고친다 |
+| Alloy 검사 · 기동 (prod, 서버 메트릭 · #946) | **배포는 성공, 워크플로는 초록** — Actions 로그에 🟠 한 줄뿐이다. 떠 있던 Alloy 는 옛 설정으로 돈다(재시작되면 깨진 설정을 읽어 재시작을 반복하고, 그건 컨테이너 감시가 infra-alert 로 알린다). 고쳐서 다시 배포하거나 아래 "Alloy 손으로" |
 | 지금 떠 있는 것보다 옛 커밋 (옛 run 의 Re-run) | 아무것도 바꾸지 않고 멈춘다. 일부러 되돌릴 때만 서버에서 `ALLOW_OLD=1` |
 | 새 컨테이너 헬스 | 직전에 성공한 태그(`deploy/docker/.deployed-tag`)로 다시 `up --wait`. 워크플로는 빨간불 |
 
 - 이미지 태그는 **커밋 sha** 다. 지금 것과 직전 것 두 개만 남기고 나머지는 지운다.
+- **Alloy 손으로** (서버 메트릭 · [logging-alerts-v1 §7](logging-alerts-v1.md#7-서버-메트릭--grafana-cloud-946)) — profile `monitor` 라
+  `make deploy-up` 은 띄우지 않고 `make deploy-down` 은 멈추지 않는다. prod checkout 에서:
+  ```bash
+  C="docker compose -f deploy/docker/docker-compose.deploy.yml --env-file deploy/docker/.env"
+  $C up -d --force-recreate alloy        # 띄우기 · .env 의 GRAFANA_* 를 바꾼 뒤 다시 읽기
+  $C stop alloy                          # 멈추기
+  docker logs --since 5m ktc4-alloy      # 보내기 오류(401 · 403 = 토큰 · Username)
+  docker exec ktc4-caddy wget -qO- http://127.0.0.1:2019/metrics | head   # Caddy 메트릭 (관리 포트)
+  ```
+  🚨 `docker exec ktc4-caddy wget … 127.0.0.1:2020/metrics` 는 **403 이 정상이다** — :2020 은 Alloy 주소(.11)만 받는다.
 - 🚨 **DB 는 되돌리지 않는다.** 롤백한 직전 코드는 새 스키마 위에서 돈다. 그래서 마이그레이션은
   직전 코드가 계속 돌 수 있게(expand-only) 짠다.
   - 컬럼 · 테이블 추가, nullable 컬럼 추가 → 한 번에 해도 된다

@@ -194,14 +194,19 @@ if "${COMPOSE[@]}" up -d --no-build --pull never --wait --wait-timeout 360; then
     # --force-recreate — compose 정의가 그대로면 up 은 컨테이너를 두고 가고, Alloy 는 바뀐 config.alloy 를
     # 스스로 다시 읽지 않는다. 그러면 검사만 새 설정으로 하고 옛 설정으로 돈다 (#946 보안 검토 L3).
     # Caddy reload 보다 먼저 — reload 가 실패해 exit 1 로 끝나도 메트릭은 돈다.
+    # 5분 상한 — Docker Hub 가 대답 없이 멈추면 실패가 아니라 대기라서, 배포 잠금을 쥔 채 여기서 선다.
+    # 첫 배포는 이미지(~640MB)를 받는다. (맥에는 timeout 이 없다 — 로컬 시험에서는 상한 없이 돈다)
+    LIMIT=()
+    command -v timeout >/dev/null && LIMIT=(timeout 300)
     if out="$(
       img="$("${COMPOSE[@]}" --profile monitor config --images | grep '^grafana/alloy:' | head -n 1)" &&
-        docker run --rm -v "$PWD/deploy/alloy:/etc/alloy:ro" "$img" validate /etc/alloy/config.alloy 2>&1 &&
-        "${COMPOSE[@]}" up -d --no-build --pull missing --force-recreate alloy 2>&1
+        ${LIMIT[@]+"${LIMIT[@]}"} docker run --rm -v "$PWD/deploy/alloy:/etc/alloy:ro" "$img" validate /etc/alloy/config.alloy 2>&1 &&
+        ${LIMIT[@]+"${LIMIT[@]}"} "${COMPOSE[@]}" up -d --no-build --pull missing --force-recreate alloy 2>&1
     )"; then
       log "Alloy(메트릭 수집) 기동"
     else
-      log "🟠 Alloy 검사 · 기동 실패 — 배포는 성공이고 메트릭만 빈다. deploy/alloy/config.alloy 를 고쳐 다시 배포한다"
+      # 검사에서 멈췄으면 떠 있던 Alloy 는 옛 설정으로 계속 돈다 — 다만 재시작되는 순간 깨진 설정을 읽는다.
+      log "🟠 Alloy 검사 · 기동 실패 — 배포는 성공이다. 떠 있던 Alloy 는 옛 설정으로 돌고(없으면 메트릭이 빈다), 재시작되면 깨진 설정을 읽는다. deploy/alloy/config.alloy 를 고쳐 다시 배포한다"
       echo "$out" | tail -n 20
     fi
     # Caddyfile 은 up 만으로 다시 읽히지 않는다 (Caddy 설정이 그대로면 컨테이너를 다시 안 만든다).
