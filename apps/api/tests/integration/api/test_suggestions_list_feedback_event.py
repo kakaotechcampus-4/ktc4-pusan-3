@@ -63,6 +63,11 @@ async def _make_suggestion(
     return row
 
 
+# 05 는 하루 한도 · 다시 시도 보관함을 표(rate_event · run_hold, #877)에 쓴다 — 테스트
+# 트랜잭션에 묶어 끝나면 되돌린다. 안 묶으면 한도 행이 커밋돼 로컬 DB 에 남는다
+pytestmark = pytest.mark.usefixtures("pending_db")
+
+
 # ── 추천 받기 가드 ───────────────────────────────────────────────────────
 
 

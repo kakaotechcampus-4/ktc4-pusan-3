@@ -1,8 +1,8 @@
 /**
  * 웹뷰 안에 둘 주소인가 — 출처가 같고, API 경로가 아니어야 한다 (#273).
  *
- * 🚨 nginx 로 API 를 웹 주소 아래에 둔 상태는 아직 없다. 약관이 in-app 브라우저로, 로그인이 인증 세션으로
- *    실제로 가는지는 nginx 가 붙은 뒤 기기에서 본다 (#273 검증 방법).
+ * 🚨 API 를 웹 주소 아래에 둔 상태는 없다 (지금은 `api.` 서브도메인). 약관이 in-app 브라우저로, 로그인이 인증 세션으로
+ *    실제로 가는지는 그렇게 옮긴 뒤 기기에서 본다 (#273 검증 방법).
  *
  * 실행: `pnpm test`
  */
@@ -45,7 +45,7 @@ test("/api 로 시작만 하는 웹 경로는 웹뷰 안에 남는다", () => {
 });
 
 test("다른 출처는 경로와 무관하게 웹뷰 밖이다", () => {
-  // nginx 이전 — API 가 따로 떠 있는 지금
+  // API 가 따로 떠 있는 지금
   assert.ok(!isInternalUrlOf("http://localhost:8000/api/v1/policies/service_terms/draft-1", ORIGIN));
   assert.ok(!isInternalUrlOf("https://kauth.kakao.com/oauth/authorize", ORIGIN));
   // 포트 · 스킴이 다르면 다른 출처다

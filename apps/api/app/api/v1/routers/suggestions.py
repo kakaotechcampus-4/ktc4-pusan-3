@@ -23,6 +23,7 @@ from app.api.deps.child import AccessibleChild
 from app.api.deps.db import SessionDep
 from app.api.errors import ApiError, ErrorEnvelope, constraint_name
 from app.api.runs import suggestion_retry
+from app.api.runs.tidy import tidy
 from app.api.v1.health_consent import health_consent_required
 from app.api.v1.list_query import PageQueryDep
 from app.api.v1.reminder_check import check_reminder, reminder_out
@@ -79,7 +80,13 @@ from app.domains.schedule.models import (
 from app.domains.suggestion import repository as suggestion_repo
 from app.domains.suggestion.draft_items import draft_items
 from app.domains.suggestion.evidence_view import EvidenceView, describe_evidence
-from app.domains.suggestion.models import SuggestionFeedback, SuggestionKind, SuggestionStatus
+from app.domains.suggestion.models import (
+    Suggestion,
+    SuggestionFeedback,
+    SuggestionKind,
+    SuggestionMealSlot,
+    SuggestionStatus,
+)
 from app.rules.book_evidence import BOOK_EVIDENCE_KIND
 from app.rules.home_prompts import prompt_request
 from app.rules.menu_evidence import MENU_EVIDENCE_KIND
@@ -93,6 +100,16 @@ KST = ZoneInfo("Asia/Seoul")
 # 일정 초안을 한 끼로 묶는 Agent. 05 의 merges_into_one 과 create_event_drafts 가 같이 본다 —
 # 정하는 곳이 둘이면 화면은 "한 건으로 묶여요" 라고 말했는데 초안이 세 건 나올 수 있다
 _MERGED_AGENTS = frozenset({"food"})
+
+# food 묶음 초안의 제목. 끼니는 Food 가 추천마다 남긴다 (#898)
+_MEAL_TITLES = {
+    SuggestionMealSlot.BREAKFAST: "아침 식사",
+    SuggestionMealSlot.LUNCH: "점심 식사",
+    SuggestionMealSlot.DINNER: "저녁 식사",
+    SuggestionMealSlot.SNACK: "간식",
+}
+# 묶은 추천의 끼니가 서로 다르거나 모르면(이 칸 전에 만든 추천) 한 끼니를 고르지 않는다
+_MEAL_TITLE_MIXED = "식사"
 
 # 확인 문구를 내는 Agent — entrypoint.allergy_cautions 와 같은 목록
 _CAUTION_AGENTS = frozenset({"activity"})
@@ -161,9 +178,10 @@ def _suggestion_out(s, views: Sequence[EvidenceView] = ()) -> SuggestionOut:
 
 
 async def _safety_labels(session, *, child_id: _uuid.UUID) -> list[entrypoint.SafetyLabel]:
-    """사전검사 · 채택 · 초안 만들기 재확인이 같이 읽는 알레르기 · 건강 행(모든 kind · status).
+    """사전검사와 채택 · 초안 만들기 · 제출 재확인이 같이 읽는 알레르기 · 건강 행(모든 kind ·
+    status).
 
-    목록이 빼는 추천과 채택 · 초안 만들기가 막는 추천이 같으려면 읽는 행도 판정 함수도 같아야 한다.
+    목록이 빼는 추천과 재확인이 막는 추천이 같으려면 읽는 행도 판정 함수도 같아야 한다.
     """
     rows = await list_safety_labels(session, child_id=child_id)
     return [entrypoint.SafetyLabel(*r) for r in rows]
@@ -271,6 +289,8 @@ async def approve_suggestions(
 # ── 일정 초안 ─────────────────────────────────────────────────────────────
 
 _AGENT_CATEGORY = {"activity": "activity", "health": "health"}
+# 초안 만들기 · 제출이 같이 쓰는 409 문구 (#902)
+_NOT_AN_EVENT = "알레르기로 등록된 항목이 들어 있어 일정으로 만들 수 없어요"
 
 
 def _next_draft_id() -> str:
@@ -318,12 +338,12 @@ async def create_event_drafts(
 
     # 채택 뒤에 등록된 알레르기를 여기서 막는다 (#859) — 아무것도 쓰지 않는 단계라 되돌릴 게 없고,
     # 일정 초안 시트(게이트 ㉠)가 뜨기 전이다. food 를 한 장으로 묶기 전에 본다 — 걸린 추천을
-    # id 로 알려야 한다. 제출(/events)은 다시 보지 않는다 — 05 의 초안은 저장하지 않는다(#539)
+    # id 로 알려야 한다. 초안을 만든 뒤의 틈은 제출(/events)이 한 번 더 본다 (#902)
     await _recheck_allergens(
         session,
         child_id=child.child_id,
         rows=suggestions,
-        message="알레르기로 등록된 항목이 들어 있어 일정으로 만들 수 없어요",
+        message=_NOT_AN_EVENT,
     )
 
     food = [s for s in suggestions if str(s.agent) in _MERGED_AGENTS]
@@ -335,7 +355,7 @@ async def create_event_drafts(
             EventDraftOut(
                 draft_id=_next_draft_id(),
                 event=EventBodyOut(
-                    title="저녁 식사",
+                    title=_meal_title(food),
                     starts_at=None,
                     ends_at=None,
                     all_day=False,
@@ -368,6 +388,14 @@ async def create_event_drafts(
     return CreateEventDraftsResponse(drafts=drafts)
 
 
+def _meal_title(rows: Sequence[Suggestion]) -> str:
+    """food 묶음 초안의 제목. 끼니가 하나로 모이면 그 끼니, 아니면 "식사"."""
+    slots = {row.meal_slot for row in rows}
+    if len(slots) == 1 and (slot := slots.pop()) is not None:
+        return _MEAL_TITLES[slot]
+    return _MEAL_TITLE_MIXED
+
+
 # ── 일정 제출 (승인 게이트 ㉠) ────────────────────────────────────────────
 
 
@@ -377,10 +405,15 @@ async def create_event_drafts(
     description=(
         "초안에 시간을 채워 캘린더에 확정한다. Idempotency-Key 필수. "
         "추천에서 왔으면 suggestion ↔ event 연결."
+        " 추천에서 온 일정은 넣기 직전에 알레르기를 다시 본다 — 초안을 만든 뒤 등록된"
+        " 알레르기(active)에 걸리는 추천이 있으면 아무것도 쓰지 않고 409 `allergen_blocked`"
+        "(`detail.suggestion_ids` = 걸린 추천 id, 요청 순서). 판정 · `code` · `detail` · 문구는"
+        " 초안 만들기와 같다. 알레르기 항목이 든 추천인데 건강정보 동의가 없으면 403"
+        " `consent_required` — 409 `already_confirmed` 바로 뒤에 본다."
     ),
     status_code=201,
     response_model=SubmitEventResponse,
-    responses={status: {"model": ErrorEnvelope} for status in (400, 404, 409, 422, 503)},
+    responses={status: {"model": ErrorEnvelope} for status in (400, 403, 404, 409, 422, 503)},
 )
 async def submit_event(
     child: AccessibleChild,
@@ -416,6 +449,7 @@ async def submit_event(
     # suggestion_ids 검증 (중복 제거)
     suggestion_ids = list(dict.fromkeys(body.suggestion_ids)) if body.suggestion_ids else []
     if suggestion_ids:
+        suggestions = []
         for sid in suggestion_ids:
             row = await suggestion_repo.find_suggestion(
                 session, child_id=child.child_id, suggestion_id=sid
@@ -424,9 +458,17 @@ async def submit_event(
                 raise ApiError(404, "not_found", "제안을 찾을 수 없어요")
             if row.status != SuggestionStatus.APPROVED:
                 raise ApiError(422, "not_approved", "채택되지 않은 제안이 포함돼 있어요")
+            suggestions.append(row)
 
         if await suggestion_repo.is_any_linked(session, suggestion_ids=suggestion_ids):
             raise ApiError(409, "already_confirmed", "이미 캘린더에 넣은 제안이에요")
+
+        # 초안을 만든 뒤 등록된 알레르기를 넣기 직전에 한 번 더 막는다 (#902) — 05 의 시트는
+        # 열어 둔 채 몇 시간이 지날 수 있다. 서버가 그 틈을 웹에 기대지 않는다(루트 §2).
+        # 아무것도 쓰기 전이다 — 알림 연결 잠금 · 반복 펼치기보다 앞이다
+        await _recheck_allergens(
+            session, child_id=child.child_id, rows=suggestions, message=_NOT_AN_EVENT
+        )
 
     # 알림을 함께 걸면 연결부터 잡는다 — 일정을 넣으면 아이 행에 외래 키 잠금이 걸리는데, 그 뒤에
     # 보호자 → 아이 순으로 잠그면 같은 순서로 잡는 탈퇴(`withdraw_parent`)와 엇갈린다 (#603 리뷰)
@@ -602,6 +644,7 @@ async def create_suggestions(
     notices: dict[str, GroupNoticeOut] = {}  # ② 0개 기록 · ④ 이어서 할 수 없음
     claimed: dict[str, suggestion_retry.RetryTask] = {}  # ③ 다시 만들 맥락
     settled: set[str] = set()  # 다시 만들어 결과를 낸 Agent — 그 맥락은 지운다
+    to_record: set[str] = set()  # 그중 0개 · 닫힘 기록을 남길 Agent — 지우지 않고 기록으로 덮는다
     run = entrypoint.SuggestRun(outcomes=(), failed=())
     # 🚨 맥락을 꺼낸(claim) 뒤 무엇이 터져도 "사용 중" 을 푼다. 안 풀면 15분 동안 다시 시도가
     #    BUSY 로 떨어져 실패 카드만 뜬다 (#433 리뷰 ②)
@@ -624,17 +667,17 @@ async def create_suggestions(
                 if rows:
                     replay[a] = rows
                     continue
-                message = suggestion_retry.empty_message(run_id=run_id, agent=a, **owner)
+                message = await suggestion_retry.empty_message(run_id=run_id, agent=a, **owner)
                 if message is not None:
                     notices[a] = GroupNoticeOut(code="empty", message=message)
                     continue
-                recorded = suggestion_retry.guard_of(run_id=run_id, agent=a, **owner)
+                recorded = await suggestion_retry.guard_of(run_id=run_id, agent=a, **owner)
                 if recorded is not None:
                     # 다시 만들었더니 닫혔던 Agent — 같은 guard 를 다시 낸다 (#433 리뷰 ⑧)
                     code, message = recorded
                     guards.append(_guard_out(code, a, message))
                     continue
-                task = suggestion_retry.claim(run_id=run_id, agent=a, **owner)
+                task = await suggestion_retry.claim(run_id=run_id, agent=a, **owner)
                 if task == suggestion_retry.BUSY:
                     continue  # 다른 요청이 다시 만드는 중 — 둘을 만들지 않는다. 실패와 같다
                 if task is None:
@@ -655,7 +698,7 @@ async def create_suggestions(
         health_consent = await child_health_granted(session, child_id=child.child_id)
         if to_run:
             # Agent 를 실제로 새로 돌릴 때만 하루 한도를 쓴다 — 재생은 모델을 부르지 않는다 (D8)
-            if not quota.consume(
+            if not await quota.consume(
                 parent_id=parent.parent_id,
                 today=quota.today_kst(),
                 limit=settings.INPUT_DAILY_LIMIT,
@@ -699,26 +742,47 @@ async def create_suggestions(
                     affinity_reader=agent_ports.affinity_reader(),
                 )
             settled = {o.agent for o in run.outcomes}
+            to_record = {
+                o.agent
+                for o in run.outcomes
+                if o.agent in claimed
+                and (entrypoint.empty_notice(o.readouts) is not None or _guard_code(o) is not None)
+            }
     finally:
         for a in claimed:
+            if a in to_record:
+                continue  # 아래에서 그 칸을 기록으로 바로 덮는다
+            # 정리가 실패해도 응답을 덮지 않는다 — 남은 행은 만료 뒤 지워진다 (#899 리뷰)
             if a in settled:
-                suggestion_retry.drop(run_id=run_id, agent=a)
+                await tidy(suggestion_retry.drop(run_id=run_id, agent=a), "05 맥락 지우기", run_id)
             else:
-                suggestion_retry.release(run_id=run_id, agent=a)
+                await tidy(suggestion_retry.release(run_id=run_id, agent=a), "05 표시 풀기", run_id)
 
-    # 다시 만든 결과를 지운 맥락 자리에 남긴다 — 다음 요청이 같은 모양을 재생한다 (24시간).
-    # 지운 뒤에 넣어야 한다 — 같은 (run_id, agent) 칸이라 순서를 바꾸면 기록이 지워진다
+    # 다시 만든 결과를 맥락 자리에 남긴다 — 다음 요청이 같은 모양을 재생한다 (24시간).
+    # 🚨 맥락을 지우지 않고 같은 칸을 바로 덮는다(upsert). 지운 뒤 넣으면 그 사이에 온 요청이
+    #    "맥락도 기록도 없음" 을 본다 (#899 리뷰). 덮지 못하면 표시를 풀어 다시 시도할 수 있게 한다
     for o in run.outcomes:
-        if o.agent not in claimed:
+        if o.agent not in to_record:
             continue
         empty = entrypoint.empty_notice(o.readouts)
-        code = _guard_code(o)
-        if empty is not None:
-            suggestion_retry.put_empty(run_id=run_id, agent=o.agent, message=empty.body, **owner)
-        elif code is not None:
-            suggestion_retry.put_guard(
-                run_id=run_id, agent=o.agent, code=code, message=_guard_message(o), **owner
+        try:
+            if empty is not None:
+                await suggestion_retry.put_empty(
+                    run_id=run_id, agent=o.agent, message=empty.body, **owner
+                )
+            else:
+                await suggestion_retry.put_guard(
+                    run_id=run_id,
+                    agent=o.agent,
+                    code=_guard_code(o),
+                    message=_guard_message(o),
+                    **owner,
+                )
+        except BaseException:
+            await tidy(
+                suggestion_retry.release(run_id=run_id, agent=o.agent), "05 표시 풀기", run_id
             )
+            raise
 
     return await _suggestions_response(
         session,
