@@ -40,6 +40,9 @@ place.notice_facility:
   template: 공공데이터에 있는 시설이에요. 가기 전에 운영 여부와 이용료를 확인해 주세요.
 # 행사(한국관광공사 TourAPI 축제공연행사). 출처를 밝힌다 — 왜 이 행사가 나왔는지 안 보이면
 # 광고처럼 읽힌다(#600 PM). 기간 · 관람 연령은 주최 측이 바꾸므로 가기 전에 확인해 달라고 한다
+place.notice_culture:
+  kind: notice
+  template: 한국관광공사 관광정보에 있는 곳이에요. 운영 시간 · 휴관일 · 관람료는 가기 전에 확인해 주세요.
 place.notice_event:
   kind: notice
   template: 한국관광공사 행사 정보예요. 일정과 관람 연령이 바뀔 수 있으니 가기 전에 확인해 주세요.

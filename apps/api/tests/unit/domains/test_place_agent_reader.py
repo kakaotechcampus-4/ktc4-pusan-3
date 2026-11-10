@@ -29,6 +29,7 @@ from app.agents.activity.store.ports import (
     PLACE_SOURCES,
     PLACE_TOP_K,
     CoarseLocation,
+    LiveSourceName,
     PlaceRow,
     UpstreamUnavailable,
 )
@@ -304,7 +305,10 @@ def test_category_CHECK_는_PlaceCategory_와_같다():
 
 
 def test_source_CHECK_는_PlaceRow_source_와_같다():
-    allowed = set(typing.get_args(typing.get_type_hints(PlaceRow)["source"]))
+    # PlaceRow.source 는 적재 출처 | 바로 묻는 출처(TourAPI 문화시설)다 — 표의 CHECK 는 적재 출처만
+    hint = typing.get_type_hints(PlaceRow)["source"]
+    sources = {value for part in typing.get_args(hint) for value in typing.get_args(part)}
+    allowed = sources - set(typing.get_args(LiveSourceName))
 
     assert set(PLACE_SOURCES) == allowed
     assert _quoted(SOURCE_CHECK) == allowed

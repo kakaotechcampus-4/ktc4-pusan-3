@@ -14,6 +14,7 @@ PLACE_NOTICE_UNDATED = "place.notice_undated"
 PLACE_NOTICE_FACILITY = "place.notice_facility"
 # 행사(TourAPI)가 붙은 추천의 확인 문구. 출처를 밝히고 일정 · 관람 연령을 확인해 달라고 한다
 PLACE_NOTICE_EVENT = "place.notice_event"
+PLACE_NOTICE_CULTURE = "place.notice_culture"
 # 보호자가 말한 지역을 못 찾아 장소 없이 골랐다 (`areas.py`)
 PLACE_AREA_UNKNOWN = "place.area_unknown"
 # 앞에서 보여 준 행사뿐이라 새 행사가 없었다 (#852)
