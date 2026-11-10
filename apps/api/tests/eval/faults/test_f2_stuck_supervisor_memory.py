@@ -1,12 +1,16 @@
 """F2 — Supervisor · Memory 가 멈출 때 (docs/eval/eval-v1.md §6).
 
-둘은 20초(`pipeline.RUN_DEADLINE_S`)에 끊지 않는다 — 저장이 반만 남지 않게 한 의도된 설계다.
-그래서 멈추면 러너의 60초 안전망(`runner.RUN_DEADLINE_SECONDS`)이 끊는다. 기존 러너 테스트는
-가짜 진입점(`asyncio.sleep`)으로만 봤다 — 여기서는 진짜 진입점 · pipeline 에 멈춘 모델을 꽂는다.
+둘은 `pipeline.RUN_DEADLINE_S` 로는 끊지 않는다 — 저장이 반만 남지 않게 한 의도된 설계다.
+Supervisor 는 모델 호출에 자기 상한(`supervisor.agent.SUPERVISOR_TIMEOUT_S`, 20초)이 따로 있어
+넘으면 강등한다 (#914, 그쪽 테스트는 tests/unit/agents/supervisor). Memory 는 상한이 없어 멈추면
+러너의 60초 안전망(`runner.RUN_DEADLINE_SECONDS`)이 끊는다. 아래 첫 테스트는 러너 안전망을 0.2초로
+줄여 그 길을 본다 — Supervisor 갈래도 상한(20초)보다 안전망이 먼저 끊도록 맞춘 것이다.
+기존 러너 테스트는 가짜 진입점(`asyncio.sleep`)으로만 봤다 — 여기서는 진짜 진입점 · pipeline 에
+멈춘 모델을 꽂는다.
 
 보는 것: 끝 이벤트 1번 (failed · timeout) · commit 없음 · 멱등 키 풀림 · 멈춘 모델이 정말 불렸음.
-"보호자가 60초를 기다린 뒤 실패를 본다" 가 괜찮은지는 테스트로 못 정해 이슈로 올린다
-(eval/faults-issues.md 의 ISSUE-F2-UX).
+Supervisor 가 멈출 때 보호자가 60초를 기다리던 문제는 #914 에서 상한으로 풀었다
+(eval/faults-issues.md 의 ISSUE-F2-UX). Memory 가 멈출 때의 60초는 그대로다.
 """
 
 import asyncio
@@ -84,7 +88,8 @@ async def test_F2_pipeline_은_Supervisor_와_Memory_를_20초에_끊지_않는�
 ) -> None:
     """설계를 고정한다. 20초 예산을 거의 0 으로 줄여도 느린 Supervisor 뒤에 Memory 가 저장한다.
 
-    이 동작이 바뀌면 (예: Supervisor 에 짧은 상한) 이 테스트와 ISSUE-F2-UX 를 같이 고친다.
+    `RUN_DEADLINE_S` 로는 끊지 않는다는 것만 고정한다. Supervisor 의 모델 호출 상한은 별개다 (#914) —
+    여기 LateRoute 는 0.05초 만에 답하니 그 상한(20초)에 걸리지 않는다.
     """
     monkeypatch.setattr(pipeline, "RUN_DEADLINE_S", 0.01)
 

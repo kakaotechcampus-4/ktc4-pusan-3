@@ -105,7 +105,9 @@ logger = logging.getLogger(__name__)
 MAX_MODEL_CALLS = 4
 
 # NF-06 — 입력부터 이만큼 지나면 도메인 Agent를 끊고 있는 결과로 끝낸다.
-# Supervisor·Memory는 끊지 않는다. 저장을 중간에 자르면 기록이 반만 남는다.
+# Memory는 끊지 않는다. 저장을 중간에 자르면 기록이 반만 남는다.
+# Supervisor는 모델이 멈출 때만 `SUPERVISOR_TIMEOUT_S`(20초)에 끊고 강등한다 (#914) —
+# 이 상한은 그 호출 하나에 거는 것이고, 이 20초와는 별개로 센다.
 # 둘이 쓴 만큼 도메인 몫이 줄고, 이미 다 썼으면 도메인 Agent는 시작하자마자 끊긴다
 RUN_DEADLINE_S = 20.0
 
