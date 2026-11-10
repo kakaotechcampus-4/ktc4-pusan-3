@@ -44,7 +44,7 @@
 | SRCH | ✅ F4 | ✅ | ✅ | ✅ |
 | EXT | ✅ | ✅ | ✅ | ✅ |
 | SAVE | ✅ | ✅ | ✅ F6 | ✅ |
-| IDEM | ✅ | ✅ | ⚠️ F7 | ✅ F5 |
+| IDEM | ✅ | ✅ | ✅ F7 | ✅ F5 |
 | RUN | ✅ F1 | ✅ F1 | ✅ | ✅ |
 
 ## 칸마다 공통으로 보는 것
@@ -93,7 +93,7 @@
 | 칸 | 기대 동작 | 코드 | 판정하는 테스트 | 상태 |
 | --- | --- | --- | --- | --- |
 | CUR-A | run 은 Curator 를 기다리지 않는다. 임베딩이 실패하면 아무것도 저장하지 않고 다음 실행이 다시 집는다. 판정이 실패하면 보류하고, 계정 오류면 이번 실행의 남은 판정을 멈춘다. 로그엔 종류만 | `app/agents/curator/embedding/embed_step.py:51-58` · `app/agents/curator/embedding/link_step.py:321-328` · `app/domains/memory/curator/trigger.py:69-77` | `tests/unit/agents/curator/test_embed_step.py::test_실패하면_아무것도_저장하지_않고_다음_실행에서_다시_대상이_된다` · `tests/unit/agents/curator/test_link_step.py::test_판정기_실패는_보류하고_다음_실행에서_다시_시도한다` · `::test_계정_오류가_나면_이번_실행의_남은_관찰은_판정기를_부르지_않는다` · `tests/unit/agents/curator/test_judge.py::test_HTTP_오류는_LLMError_계열로_바꾼다` | ✅ |
-| CUR-B | **정해지지 않음.** 한 호출은 `LLM_TIMEOUT_S` 로 끊기지만, Curator 는 아이 잠금(`pg_advisory_xact_lock`)을 쥔 채 임베딩 · 판정을 부르고 실행 전체 상한이 없다. 그동안 같은 아이의 관찰 고치기 · 지우기와 commit 직전 기억 재계산이 잠금을 기다린다. DB 쪽 `statement_timeout` · `lock_timeout` 도 없다 | `app/domains/memory/curator/trigger.py:49` · `:61` · `app/domains/memory/profile/service.py:55-67` · `app/domains/memory/store/db_store.py:192` · `app/infra/db/session.py:18-20` | 한 호출의 시간 초과만: `tests/unit/agents/curator/test_judge.py::test_통신_실패는_LLMUnavailableError[시간초과]` · 쥔 시간을 남기기만: `tests/integration/test_trigger_curator_background.py::test_잠금을_쥔_시간을_child_id_와_함께_남긴다` **(통합)** · 테스트보다 설정 결정이 먼저 — ISSUE-F8-a · ISSUE-F8-b | 🕳️ F8 |
+| CUR-B | **정해지지 않음.** 한 호출은 `LLM_TIMEOUT_S` 로 끊기지만, Curator 는 아이 잠금(`pg_advisory_xact_lock`)을 쥔 채 임베딩 · 판정을 부르고 실행 전체 상한이 없다. 그동안 같은 아이의 관찰 고치기 · 지우기와 commit 직전 기억 재계산이 잠금을 기다린다. DB 쿼리는 `statement_timeout` 2분으로 끊긴다(#936) — 잠금 대기도 그 안에 들어간다. `lock_timeout` 은 따로 짧게 걸지 않았다(Curator 를 기다리는 정상 저장이 실패한다) | `app/domains/memory/curator/trigger.py:49` · `:61` · `app/domains/memory/profile/service.py:55-67` · `app/domains/memory/store/db_store.py:192` · `app/infra/db/session.py:18-20` | 한 호출의 시간 초과만: `tests/unit/agents/curator/test_judge.py::test_통신_실패는_LLMUnavailableError[시간초과]` · 쥔 시간을 남기기만: `tests/integration/test_trigger_curator_background.py::test_잠금을_쥔_시간을_child_id_와_함께_남긴다` **(통합)** · 상한 값: `tests/integration/test_db_timeouts.py` **(통합)** · 잠금 밖으로 모델 호출 빼기는 #937 | 🕳️ F8 |
 | CUR-C | 판정 응답 모양이 다르면 `LLMError` 로 바꿔 보류한다. 벡터 차원 · 개수가 다르면 막는다. 잘못된 벡터면 생성도 판정도 하지 않는다 | `app/agents/curator/embedding/jev.py:173` · `app/agents/curator/embedding/embedder.py:123` | `tests/unit/agents/curator/test_judge.py::test_응답_형식이_다르면_LLMError` · `tests/unit/agents/curator/test_embedder.py::test_차원이_다르면_막는다` · `::test_개수가_다르면_막는다` · `tests/unit/agents/curator/test_link_step.py::test_관찰_벡터가_잘못되면_생성도_판정도_하지_않는다` | ✅ |
 | CUR-D | 후보 밖 답 · uncertain 이면 추측하지 않고 보류한다. 판정은 연결만 하고 `state` 를 바꾸지 않는다 — 승격은 규칙(재계산)만 (루트 §2) | `app/agents/curator/embedding/link_step.py:203-215` · `app/domains/memory/curator/recompute.py` | `tests/unit/agents/curator/test_link_step.py::test_후보에_없는_값을_답하면_보류한다` · `::test_판정기가_uncertain_이면_보류한다` · `::test_archived_도_후보이고_연결해도_state_는_그대로다` | ✅ |
 
@@ -102,7 +102,7 @@
 | 칸 | 기대 동작 | 코드 | 판정하는 테스트 | 상태 |
 | --- | --- | --- | --- | --- |
 | SAFE-A | 기본값으로 넘기지 않는다 — 조회가 실패하면(`SafetyLookupError`) Food · Activity 는 모델을 0번 부르고 `blocked.safety` 로 닫는다. 빈 목록과 실패를 가른다 (루트 §2) | `app/agents/common/gate.py:129-137` · `app/agents/food/registry.py:138-139` | `tests/unit/agents/food/test_food_agent.py::test_안전_조회_실패는_blocked_safety_로_닫는다` · `tests/unit/agents/activity/test_activity_context.py::TestClosedRun::test_알레르기_조회에_실패하면_모델을_부르지_않고_닫는다` · `tests/unit/agents/test_entrypoint.py::test_안전_어댑터가_못_읽으면_둘_다_닫힌다` · `tests/unit/domains/test_safety_agent_reader.py::TestFailure::test_DB_를_못_읽으면_빈_목록이_아니라_SafetyLookupError` · `::TestFailure::test_연결이_안_돼도_SafetyLookupError` | ✅ |
-| SAFE-B | 조회는 도메인 Agent 실행 안(`build_gate`)에서 돌아 Agent 와 같이 20초에 끊긴다 → `partial`. DB 쿼리 상한은 ISSUE-F8-a | `app/agents/food/agent.py:82` · `app/agents/pipeline.py:1916` | 구조로 같은 길 — 실행 함수 전체를 `wait_for` 로 감싸서 안에서 무엇이 멈춰도 같다: `tests/unit/agents/supervisor/test_pipeline.py::test_RC16_20초를_넘긴_Agent_는_끊고_나머지로_끝낸다` | ✅ (구조) |
+| SAFE-B | 조회는 도메인 Agent 실행 안(`build_gate`)에서 돌아 Agent 와 같이 20초에 끊긴다 → `partial`. DB 쿼리 상한은 2분(#936) | `app/agents/food/agent.py:82` · `app/agents/pipeline.py:1916` | 구조로 같은 길 — 실행 함수 전체를 `wait_for` 로 감싸서 안에서 무엇이 멈춰도 같다: `tests/unit/agents/supervisor/test_pipeline.py::test_RC16_20초를_넘긴_Agent_는_끊고_나머지로_끝낸다` | ✅ (구조) |
 | SAFE-C | 다른 이름으로 적은 알레르기도 같은 항목으로 본다. 0행과 실패를 가른다. 코드 버그는 조회 실패로 숨기지 않고 올린다 | `app/agents/common/allergy.py:688` · `app/agents/common/gate.py:129-137` | `tests/unit/agents/common/test_allergy_states.py::test_다른_이름으로_적어도_같은_항목이다` · `tests/unit/agents/activity/test_activity_context.py::TestBuildGate::test_조회_실패는_0행과_다르다` · `tests/unit/domains/test_safety_agent_reader.py::TestFailure::test_버그는_조회_실패로_바꾸지_않는다` | ✅ |
 | SAFE-D | 모델이 알레르기 식품을 후보로 내도 코드 필터가 뺀다(모델에게 묻지 않는다). 모자라면 재호출로 채운다 | `app/agents/common/food_safety.py:345` · `app/agents/activity/tools/filters.py:147` | `tests/unit/agents/food/test_food_meal_run.py::test_알레르기_메뉴는_풀에서_빠져_모델에게_보이지_않는다` · `::test_사후_필터로_빠져_3개_미만이면_재호출해_빈자리를_채운다` · `tests/unit/agents/activity/test_activity_safety_filter.py::TestAllergens::test_재료에서도_찾는다` · `tests/unit/agents/activity/test_activity_agent.py::TestRecall::test_안전_필터로_빠지면_한_번_더_불러_빈자리만_채운다` | ✅ |
 
@@ -129,7 +129,7 @@
 | 칸 | 기대 동작 | 코드 | 판정하는 테스트 | 상태 |
 | --- | --- | --- | --- | --- |
 | SAVE-A | Memory commit 이 터지면 저장 안내 · 되묻기 맥락을 내지 않는다. 추천 저장이 터지면 그 Agent 만 `partial` · 카드 없음 · 확정된 저장으로 세지 않는다. 예외 메시지(추천 문장)는 로그에 없다 | `app/agents/pipeline.py:2087-2095` · `:2292-2316` · `app/api/runs/runner.py:185-201` | `tests/unit/agents/supervisor/test_pipeline.py::test_commit_이_실패하면_저장_안내도_되묻기_맥락도_나가지_않는다` · `::test_추천_저장에_실패하면_그_Agent_는_partial_이고_카드가_없다[예외]` · `tests/unit/api/test_runner.py::test_추천_저장이_실패하면_확정된_저장으로_세지_않는다` · `tests/unit/agents/test_run_suggestions.py::test_저장에_실패하면_그_Agent_는_실패다` | ✅ |
-| SAVE-B | 저장은 Agent 의 20초 밖에서 기다린다(중간에 끊으면 들어갔는지 모르는 저장이 남는다). 60초 안전망이 저장 뒤에 걸리면 done · 키 유지, 저장 중이면 취소를 부분 실패로 숨기지 않는다. DB 쿼리 상한은 ISSUE-F8-a | `app/agents/pipeline.py:1909-1910` · `:1926` · `app/api/runs/runner.py:242-253` | `tests/unit/agents/supervisor/test_pipeline.py::test_저장이_느려도_이미_끝난_Agent_는_끊기지_않는다` · `::test_저장_중_취소는_부분_실패로_숨기지_않는다` · `tests/unit/api/test_runner.py::test_추천_저장_뒤_시간_안전망에_걸려도_done_이다` · `::test_timeout이_commit_뒤에_걸려도_done으로_끝난다` | ✅ |
+| SAVE-B | 저장은 Agent 의 20초 밖에서 기다린다(중간에 끊으면 들어갔는지 모르는 저장이 남는다). 60초 안전망이 저장 뒤에 걸리면 done · 키 유지, 저장 중이면 취소를 부분 실패로 숨기지 않는다. DB 쿼리 상한은 2분(#936) | `app/agents/pipeline.py:1909-1910` · `:1926` · `app/api/runs/runner.py:242-253` | `tests/unit/agents/supervisor/test_pipeline.py::test_저장이_느려도_이미_끝난_Agent_는_끊기지_않는다` · `::test_저장_중_취소는_부분_실패로_숨기지_않는다` · `tests/unit/api/test_runner.py::test_추천_저장_뒤_시간_안전망에_걸려도_done_이다` · `::test_timeout이_commit_뒤에_걸려도_done으로_끝난다` | ✅ |
 | SAVE-C | 저장이 돌려준 id 수가 추천 수와 다르면(적든 많든) 카드와 추천의 짝이 어긋난다 — 그 Agent 를 실패로 센다. 입력 run · 05 다시 만들기 둘 다 | `app/agents/pipeline.py:2313-2315` | 입력 run · id 가 적은 경우만: `tests/unit/agents/supervisor/test_pipeline.py::test_추천_저장에_실패하면_그_Agent_는_partial_이고_카드가_없다[결과_수가_다름]` · F 테스트: `tests/eval/faults/test_f6_saved_id_count.py::test_F6_05_다시_만들기도_저장한_id_수가_다르면_그_Agent_는_실패다[적다]` · `[많다]` | ✅ F6 |
 | SAVE-D | 확정된 저장이 있는 run 은 failed 로 끝내지 않고 키를 놓지 않는다(놓으면 재시도가 두 번 저장한다). 일정 초안만 만든 run 은 확정된 쓰기가 아니다 (I7). commit 했어도 쓴 것이 없으면 failed 가 맞다 | `app/api/runs/runner.py:395-401` · `app/api/runs/registry.py:51-57` · `app/agents/pipeline.py:886` | `tests/unit/api/test_runner.py::test_commit_후_예외가_나도_키를_풀지_않는다` · `::test_저장_안_한_run의_commit_후_예외는_failed로_끝난다` · `tests/unit/agents/supervisor/test_pipeline.py::test_일정_초안만_만든_run_은_commit_된_쓰기가_없다` · `::test_급식을_고친_뒤_죽으면_failed_가_아니라_partial_로_끝난다` | ✅ |
 
@@ -139,7 +139,7 @@
 | --- | --- | --- | --- | --- |
 | IDEM-A | Redis 가 죽으면 메모리로 넘어가지 않고 503 `temporarily_unavailable` — Agent 를 부르지 않는다. 쓰기만 거절돼도 처리 전에 503 | `app/api/idempotency.py:76-80` · `:112-121` | `tests/unit/api/test_idempotency_redis.py::TestRedisDown::test_장애면_recall_은_503` · `::TestRedisDown::test_쓰기만_거절되면_처리하기_전에_503` · `tests/integration/api/test_input_run.py::test_Redis_가_죽으면_입력은_503_이고_Agent_를_부르지_않는다` **(통합)** | ✅ |
 | IDEM-B | 1초 상한 + 차단기. 멈춘 Redis 를 이벤트 루프 밖(스레드)에서 기다리고 1초 남짓에 503 | `app/infra/redis.py:19` · `:24` · `:31` · `app/api/idempotency.py:77` | `tests/unit/api/test_idempotency_redis.py::test_Redis_가_응답_없이_매달려도_1초_남짓에_503` · `::test_Redis_가_매달려도_이벤트_루프는_멈추지_않는다` | ✅ |
-| IDEM-C | 재생 값이 깨져 있어도 처리 안 된 예외(500)가 아니라 정해진 답(예: 503 · 새 요청)이다 | `app/api/idempotency.py:83` · `app/api/errors.py:199-209` | 기존 없음 · F 테스트: `tests/eval/faults/test_f7_broken_replay.py::test_F7_깨진_재생_값은_처리_안_된_예외가_아니다` (지금 코드는 `JSONDecodeError` → 500 이라 xfail) | ⚠️ F7 |
+| IDEM-C | 재생 값이 깨져 있어도 처리 안 된 예외(500)가 아니라 정해진 답(예: 503 · 새 요청)이다 | `app/api/idempotency.py:83` · `app/api/errors.py:199-209` | 기존 없음 · F 테스트: `tests/eval/faults/test_f7_broken_replay.py::test_F7_깨진_재생_값은_처리_안_된_예외가_아니다` — 못 읽거나 모양이 틀린 값은 지우고 503, 다음 재시도는 새 요청(#935). 두 번 저장은 깨진 값으로는 막을 수 없다 | ✅ F7 |
 | IDEM-D | 하루 한도를 넘으면 막고 날이 바뀌면 0부터, 같은 키 재생은 세지 않는다. run 의 모델 호출 수가 예산(`MAX_MODEL_CALLS`, 다시 나눈 run 은 +1)을 넘으면 경고를 남긴다(실행은 막지 않는다). 재시도(폴백 · 재호출)는 센다 | `app/api/quota.py:31-45` · `app/api/v1/routers/children.py:526-527` · `app/agents/pipeline.py:87-95` · `:2528-2536` | `tests/unit/api/test_quota.py::test_allows_up_to_the_limit_then_refuses` · `::test_a_new_day_starts_from_zero` · `tests/integration/api/test_input_run.py::test_replay_is_not_counted_and_still_works_after_the_limit` **(통합)** · 경고가 안 뜨는 쪽만: `tests/unit/agents/supervisor/test_pipeline.py::test_Memory_가_여러_바퀴_돌아도_호출_예산은_1만_먹는다` · F 테스트: `tests/eval/faults/test_f5_model_calls.py::test_F5_재시도를_세고_예산을_넘으면_경고한다[정상_4회]` · `[폴백_5회]` | ✅ F5 |
 
 ### RUN · 러너 · SSE
@@ -161,8 +161,8 @@
 | F4 | SRCH-A | `tests/eval/faults/test_f4_memory_search_failure.py` | P0 | 통과 — 회귀 방지 |
 | F5 | IDEM-D | `tests/eval/faults/test_f5_model_calls.py` | P1 | 통과 — 회귀 방지 |
 | F6 | SAVE-C | `tests/eval/faults/test_f6_saved_id_count.py` | P1 | 통과 — 회귀 방지 |
-| F7 | IDEM-C | `tests/eval/faults/test_f7_broken_replay.py` | P1 | **실패 → xfail(strict) · ISSUE-F7** |
-| F8 | CUR-B | 테스트 없음 | 이슈만 | ISSUE-F8-a · ISSUE-F8-b |
+| F7 | IDEM-C | `tests/eval/faults/test_f7_broken_replay.py` | P1 | 통과 — #935 로 고침 (xfail 지움) |
+| F8 | CUR-B | `tests/integration/test_db_timeouts.py` (쿼리 상한) | 이슈만 | #936 쿼리 2분 상한 · #937 남음 |
 
 가짜는 `tests/eval/faults/fakes.py` 한 곳에 있다 — 새로 만든 것은 다른 테스트 모듈에서 import 할 수 없는 것뿐이다(그 파일 머리말).
 

@@ -125,7 +125,9 @@ def key_set(monkeypatch):
 
 
 async def _upload(db_client, headers, cid, monkeypatch, reading) -> tuple[str, dict]:
-    monkeypatch.setattr(entrypoint, "read_photo", lambda data, *, received_at: reading)
+    monkeypatch.setattr(
+        entrypoint, "read_photo", lambda data, *, received_at, meal_deadline=None: reading
+    )
     response = await db_client.post(
         PHOTOS.format(cid=cid),
         files={"file": ("a.jpg", b"fake", "image/jpeg")},
@@ -150,7 +152,7 @@ async def test_스위치가_꺼져_있으면_받지_않는다(db_client, bearer,
     # 처리방침 · 동의가 나가기 전에는 주소를 직접 불러도 사진이 외부 AI 로 나가면 안 된다
     monkeypatch.setattr(settings, "PHOTO_UPLOAD_ACCEPT", False)
 
-    def must_not_run(data, *, received_at):
+    def must_not_run(data, *, received_at, meal_deadline=None):
         raise AssertionError("읽기가 돌면 안 된다")
 
     monkeypatch.setattr(entrypoint, "read_photo", must_not_run)
@@ -541,7 +543,7 @@ async def test_S3_에_올린_사진은_열쇠로_읽고_지운다(
     s3_bucket[key] = b"photo-bytes"  # 화면이 S3 에 올렸다
     received: list[bytes] = []
 
-    def read(data, *, received_at):
+    def read(data, *, received_at, meal_deadline=None):
         received.append(data)
         return _reading()
 
@@ -603,7 +605,9 @@ async def test_저장할_것이_없는_사진은_빈_확인_화면_대신_실패
     # 영수증 · 게임 화면처럼 글자는 있는데 공지가 아닌 사진. 빈 확인 화면은 저장 버튼만 꺼져 있었다
     headers, _ = bearer
     reading = entrypoint.PhotoReading(notice=replace(_reading().notice, items=()), meal_plan=None)
-    monkeypatch.setattr(entrypoint, "read_photo", lambda data, *, received_at: reading)
+    monkeypatch.setattr(
+        entrypoint, "read_photo", lambda data, *, received_at, meal_deadline=None: reading
+    )
     response = await db_client.post(
         PHOTOS.format(cid=cid),
         files={"file": ("a.jpg", b"x", "image/jpeg")},
@@ -622,7 +626,7 @@ async def test_저장할_것이_없는_사진은_빈_확인_화면_대신_실패
 async def test_글자를_못_찾으면_실패로_끝난다(db_client, bearer, cid, key_set, monkeypatch):
     headers, _ = bearer
 
-    def unreadable(data, *, received_at):
+    def unreadable(data, *, received_at, meal_deadline=None):
         raise entrypoint.UnreadablePhoto("글자를 찾지 못했어요")
 
     monkeypatch.setattr(entrypoint, "read_photo", unreadable)
@@ -795,7 +799,9 @@ async def test_같은_요청을_다시_보내면_새로_올린_사진은_지우�
     db_client, session, bearer, cid, key_set, s3_bucket, monkeypatch
 ):
     headers, _ = bearer
-    monkeypatch.setattr(entrypoint, "read_photo", lambda data, *, received_at: _reading())
+    monkeypatch.setattr(
+        entrypoint, "read_photo", lambda data, *, received_at, meal_deadline=None: _reading()
+    )
     idem = {**headers, "Idempotency-Key": str(uuid.uuid4())}
     first_key = (await db_client.post(UPLOADS.format(cid=cid), headers=headers)).json()["key"]
     s3_bucket[first_key] = b"photo"

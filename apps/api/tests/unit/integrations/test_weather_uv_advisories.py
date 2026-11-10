@@ -10,7 +10,7 @@
 
 import asyncio
 import logging
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from urllib.parse import parse_qs, urlparse
 
 import httpx
@@ -263,3 +263,39 @@ async def test_PublicWeather_는_하나가_못_닫혀도_나머지를_닫는다(
     await source.aclose()
     assert closed == ["_air", "_uv", "_advisories"]
     await forecast_client.aclose()  # 실패로 바꿔 둔 첫 번째는 직접 닫는다
+
+
+class TestAdvisoriesSlow:
+    """특보 API 는 응답에 2초 넘게 걸리는 일이 잦다(11-09 실측 2.1 ~ 2.2초, 공통 읽기 제한 2초에서
+    5번 중 3번 실패). 특보만 읽기 제한을 늘리고, 새 조회가 실패하면 1시간 안에 받은 목록을 쓴다."""
+
+    async def test_특보는_공통보다_긴_읽기_제한으로_묻는다(self):
+        from app.integrations.weather.advisories import ADVISORY_TIMEOUT
+        from app.integrations.weather.public_data import TIMEOUT
+
+        assert ADVISORY_TIMEOUT.read > TIMEOUT.read
+
+    async def test_새_조회가_실패하면_한_시간_안의_목록을_쓴다(self):
+        clock = [NOW]
+        responses = [httpx.Response(200, json=kma([advisory("L1082500")])), httpx.Response(500)]
+
+        def handler(request):
+            return responses.pop(0) if len(responses) > 1 else responses[0]
+
+        src = opened(KmaAdvisories(transport=httpx.MockTransport(handler), now=lambda: clock[0]))
+        first = await src.advisories(grid=BUSAN)
+        clock[0] = NOW + timedelta(minutes=30)  # 캐시는 지났고 새 조회는 실패한다
+        assert await src.advisories(grid=BUSAN) == first
+
+    async def test_한_시간이_지난_목록으로는_메우지_않는다(self):
+        clock = [NOW]
+        responses = [httpx.Response(200, json=kma([advisory("L1082500")])), httpx.Response(500)]
+
+        def handler(request):
+            return responses.pop(0) if len(responses) > 1 else responses[0]
+
+        src = opened(KmaAdvisories(transport=httpx.MockTransport(handler), now=lambda: clock[0]))
+        await src.advisories(grid=BUSAN)
+        clock[0] = NOW + timedelta(minutes=61)
+        with pytest.raises(UpstreamUnavailable):
+            await src.advisories(grid=BUSAN)

@@ -41,7 +41,7 @@ API 오퍼레이션명·진료과목 코드(소아청소년과)는 각 활용가
 | **`care_handoff`** | – | search_medication_schedules · load_health_safety · compose_daycare_med_notice · build_emergency_card | **0** |
 | (hook) | – | check_symptom_repetition · lookup_condition_guidance · check_infant_fever | 0 |
 
-닫힘: 동의 없음 → 전 라벨 · 위치 없음 → `place_lookup` · `health_safety` 실패 → `visit_summary` 진행 + 경고 줄 · 진행 중 복약 0건 → 투약의뢰서 · 체온 기록 0건 → `build_fever_timeline`.
+닫힘: 복약을 꺼 둔 동안(#923 · `registry.MEDICATION_ENABLED`) → `medication` 전부와 투약의뢰서, 동의보다 먼저 · 동의 없음 → 전 라벨 · 위치 없음 → `place_lookup` · `health_safety` 실패 → `visit_summary` 진행 + 경고 줄 · 진행 중 복약 0건 → 투약의뢰서 · 체온 기록 0건 → `build_fever_timeline`.
 
 ### 연령 — tool을 여닫지 않고 계산 방식을 바꾼다
 
@@ -282,6 +282,8 @@ Memory 가 뽑은 문장이라 보호자 말 그대로라고 보장하지 못해
 | `visit.meal` | {day} {text} |
 | `place.unavailable` | 병원 정보를 불러오지 못했어요. 응급 시 119에 연락하세요. |
 | `place.preparing` | 병원 찾기는 아직 준비 중이에요. |
+| `med.preparing` | 복약 관리는 아직 준비 중이에요. 용량 · 간격은 처방한 병원이나 약국에 확인해 주세요. |
+| `notice.preparing` | 투약의뢰서는 아직 준비 중이에요. |
 | `prescription.not_found` | 처방전 정보를 찾지 못했어요. |
 | `safety.unavailable` | 알레르기 정보를 불러오지 못했어요. 아래 정리는 그것 없이 만든 거예요. |
 | `checkup.current` | 지금은 {round}차 영유아 건강검진 기간이에요. ({starts_on} ~ {ends_on}) |

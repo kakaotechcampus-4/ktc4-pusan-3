@@ -36,6 +36,12 @@ LOOKBACK_DAYS = 30
 ROWS = 5000
 # 전국 목록을 같이 쓰는 시간 (잠정). 특보는 발표 즉시 반영돼야 해서 짧게 둔다
 CACHE_MINUTES = 10
+# 새 조회가 실패했을 때 대신 쓰는 지난 목록의 나이. 특보는 몇 시간 단위로 바뀌어서 한 시간 안의
+# 목록이면 "확인 못 함" 보다 낫다 (잠정)
+STALE_MINUTES = 60
+# 특보 API 는 응답에 2초 넘게 걸리는 일이 잦다(11-09 실측 2.1 ~ 2.2초 · 공통 읽기 제한 2초에서
+# 5번 중 3번 실패). 전국 목록을 10분마다 한 번 받으므로 이것만 넉넉히 기다린다
+ADVISORY_TIMEOUT = httpx.Timeout(6.0, connect=1.0, read=5.0)
 
 _OK = "00"
 _NO_DATA = "03"
@@ -105,18 +111,28 @@ class KmaAdvisories:
                 minutes=CACHE_MINUTES
             ):
                 return self._cached[1], self._cached[2]
-            payload = await get_json(
-                self._client,
-                URL,
-                {
-                    "pageNo": 1,
-                    "numOfRows": ROWS,
-                    "dataType": "JSON",
-                    "fromTmFc": (now - timedelta(days=LOOKBACK_DAYS)).strftime("%Y%m%d"),
-                    "toTmFc": now.strftime("%Y%m%d"),
-                },
-                what="특보",
-            )
+            try:
+                payload = await get_json(
+                    self._client,
+                    URL,
+                    {
+                        "pageNo": 1,
+                        "numOfRows": ROWS,
+                        "dataType": "JSON",
+                        "fromTmFc": (now - timedelta(days=LOOKBACK_DAYS)).strftime("%Y%m%d"),
+                        "toTmFc": now.strftime("%Y%m%d"),
+                    },
+                    what="특보",
+                    timeout=ADVISORY_TIMEOUT,
+                )
+            except UpstreamUnavailable:
+                # 새 조회가 실패하면 한 시간 안에 받은 목록을 쓴다 — 실패마다 "날씨 확인 못 함" 이
+                # 되지 않게. 그보다 오래되면 실패 그대로다
+                if self._cached is not None and now - self._cached[0] < timedelta(
+                    minutes=STALE_MINUTES
+                ):
+                    return self._cached[1], self._cached[2]
+                raise
             code, rows = parse_rows(payload)
             if code in (_OK, _NO_DATA):
                 # 실패 코드는 캐시하지 않는다 — 다음 run 이 다시 묻는다

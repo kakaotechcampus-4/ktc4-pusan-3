@@ -542,6 +542,27 @@ def test_일부만_통과하면_불안정() -> None:
 _NOW = datetime(2026, 11, 9, 19, 0, tzinfo=KST)
 
 
+async def test_심은_관찰의_원문은_보호자_말처럼_활동_이름을_담는다() -> None:
+    """원문으로 찾는 조회(`raw_text_query`)가 심은 기록을 찾게 한다 — "심어 둔 기록" 이면
+    "어제 블록 놀이 기록 지워줘" 가 못 찾았다 (P-REC-08, 11-10 기준선)."""
+    world = World(
+        observations=(
+            SeedObservation(
+                domain="activity", days_ago=1, fields={"subject": "블록", "activity": "블록 놀이"}
+            ),
+            SeedObservation(domain="food", days_ago=1, fields={"subject": "브로콜리"}),
+        ),
+    )
+    built = await build_probe_world(world, now=_NOW)
+    activity = await built.store.inner.query_observations(
+        domain="activity", child_id=CHILD, raw_text_query="블록 놀이"
+    )
+    food = await built.store.inner.query_observations(
+        domain="food", child_id=CHILD, raw_text_query="브로콜리"
+    )
+    assert len(activity) == 1 and len(food) == 1
+
+
 async def test_세계는_관찰과_관심을_날짜대로_심는다() -> None:
     world = World(
         months=60,

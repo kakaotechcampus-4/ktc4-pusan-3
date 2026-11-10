@@ -169,8 +169,18 @@ def test_구간을_말하는_코드_문장은_모델_문장과_같은_kind_다(b
 
 # ── 1차 출력 — 식품군 출현 문장 (#411 T5) ────────────────────────────────
 def _appearance_verdict(
-    days: dict[str, int], *, recorded_days: int = 7, records: int = 14, ready: bool = True
+    days: dict[str, int],
+    *,
+    recorded_days: int = 7,
+    records: int = 14,
+    ready: bool = True,
+    daycare_days: int = 0,
+    upcoming_daycare_days: int = 0,
+    daycare_unknown_amount_days: int | None = None,
+    few_records: bool = False,
+    unknown_days: dict[str, int] | None = None,
 ) -> NutrientVerdict:
+    # records 는 구간 창, appearance_records 는 출현 창이다. 이 헬퍼에서는 같게 둔다
     return NutrientVerdict(
         bands={"calcium": "low"},  # 구간은 만들어도 화면에 나가지 않는다
         unscored=(),
@@ -180,14 +190,22 @@ def _appearance_verdict(
         food_groups=frozenset(days),
         food_group_days=days,
         recorded_days=recorded_days,
+        group_unknown_days=unknown_days or {},
         appearance_ready=ready,
+        appearance_records=records,
+        daycare_days=daycare_days,
+        daycare_unknown_amount_days=(
+            daycare_days if daycare_unknown_amount_days is None else daycare_unknown_amount_days
+        ),
+        upcoming_daycare_days=upcoming_daycare_days,
+        few_records=few_records,
     )
 
 
 def test_출현_문장은_기록된_날_중_식품군이_나온_날을_말한다():
-    (readout,) = appearance_readouts(
+    readout = appearance_readouts(
         _appearance_verdict({"vegetables": 3, "grains": 7, "fruits": 1}), frozenset()
-    )
+    )[0]
 
     assert readout.authored_by == "code"
     assert readout.kind == "nutrient_analysis"
@@ -196,23 +214,23 @@ def test_출현_문장은_기록된_날_중_식품군이_나온_날을_말한다
 
 
 def test_기록된_날이_이레보다_적으면_그_날_수를_분모로_말한다():
-    (readout,) = appearance_readouts(
+    readout = appearance_readouts(
         _appearance_verdict({"vegetables": 2}, recorded_days=5), frozenset()
-    )
+    )[0]
 
     assert "기록된 5일 중 채소가 나온 날은 2일이에요." in readout.body.splitlines()
 
 
 def test_한_번도_안_나온_식품군은_0일이라고_말한다():
-    (readout,) = appearance_readouts(_appearance_verdict({"grains": 7}), frozenset())
+    readout = appearance_readouts(_appearance_verdict({"grains": 7}), frozenset())[0]
 
     assert "기록된 7일 중 과일이 나온 날은 0일이에요." in readout.body.splitlines()
 
 
 def test_식품군_순서는_고정이고_유지_당류는_말하지_않는다():
-    (readout,) = appearance_readouts(
-        _appearance_verdict({"fats_sugars": 7, "dairy": 7}), frozenset()
-    )
+    readout = appearance_readouts(_appearance_verdict({"fats_sugars": 7, "dairy": 7}), frozenset())[
+        0
+    ]
 
     assert [line.split(" ")[3] for line in readout.body.splitlines()] == [
         "곡류가",
@@ -225,9 +243,9 @@ def test_식품군_순서는_고정이고_유지_당류는_말하지_않는다()
 
 
 def test_뺀_식품군은_문장에서_빠진다():
-    (readout,) = appearance_readouts(
+    readout = appearance_readouts(
         _appearance_verdict({"dairy": 0, "vegetables": 3}), frozenset({"dairy"})
-    )
+    )[0]
 
     assert "우유" not in readout.body
     assert "채소가" in readout.body
@@ -235,23 +253,34 @@ def test_뺀_식품군은_문장에서_빠진다():
 
 def test_출현_문장에는_구간_표현이_없다():
     # 칼슘이 low 인 판정이어도 구간 문장은 화면에 나가지 않는다 (N-17)
-    (readout,) = appearance_readouts(_appearance_verdict({"vegetables": 3}), frozenset())
+    readout = appearance_readouts(_appearance_verdict({"vegetables": 3}), frozenset())[0]
 
     assert "칼슘" not in readout.body
     assert "적은 편" not in readout.body and "많은 음식" not in readout.body
 
 
 def test_출현_문장은_자기_검사를_통과한다():
-    (readout,) = appearance_readouts(_appearance_verdict({"vegetables": 3}), frozenset())
+    readout = appearance_readouts(_appearance_verdict({"vegetables": 3}), frozenset())[0]
 
     for line in readout.body.splitlines():
         assert wording_problem(line) is None
 
 
-def test_출현을_말할_수_없으면_기록_부족_문구다():
-    readouts = appearance_readouts(_appearance_verdict({}, records=4, ready=False), frozenset())
+def test_출현_창에_2행뿐이면_기록_부족_문구다():
+    readouts = appearance_readouts(
+        _appearance_verdict({}, records=2, recorded_days=2, ready=False), frozenset()
+    )
 
-    assert readouts == (READOUTS.render(NUTRIENT_INSUFFICIENT, recorded=4),)
+    assert readouts == (READOUTS.render(NUTRIENT_INSUFFICIENT, recorded=2),)
+
+
+def test_하루에_몰린_기록은_행이_많아도_기록_부족_문구다():
+    # 3행이어도 하루치다 — 하루로 일반화하지 않는다
+    readouts = appearance_readouts(
+        _appearance_verdict({}, records=3, recorded_days=1, ready=False), frozenset()
+    )
+
+    assert readouts == (READOUTS.render(NUTRIENT_INSUFFICIENT, recorded=3),)
 
 
 def test_기록은_충분한데_메뉴를_못_읽어_출현을_못_말하면_살펴보지_못했다고_한다():
@@ -259,3 +288,135 @@ def test_기록은_충분한데_메뉴를_못_읽어_출현을_못_말하면_살
     readouts = appearance_readouts(_appearance_verdict({}, records=20, ready=False), frozenset())
 
     assert readouts == (READOUTS.render("nutrient.unscored", recorded=20),)
+
+
+# ── 출현 창 확장 — 적게 나온 식품군 · 적은 기록 · 이번 주 급식 줄 ─────────────────
+SPARSE_VEG = (
+    "기록된 식사에서 채소가 나온 날이 적은 편이라, 식단 추천은 채소가 든 메뉴를 더 넣어 골라요."
+)
+SPARSE_FRUIT = (
+    "기록된 식사에서 과일이 나온 날이 적은 편이라, 식단 추천은 과일이 든 메뉴를 더 넣어 골라요."
+)
+AMOUNT_UNKNOWN = "급식은 메뉴만 알고 먹은 양은 몰라서 참고만 했어요."
+
+
+def _week_verdict(**overrides) -> NutrientVerdict:
+    """수요일, 지난 급식 2일 + 오늘 ~ 금요일 급식 3일, 집 기록 0 — 채소만 적게 나왔다."""
+    base = dict(
+        days={"grains": 5, "meat_fish_egg_legumes": 5, "vegetables": 1, "fruits": 3},
+        recorded_days=5,
+        records=5,
+        daycare_days=5,
+        upcoming_daycare_days=3,
+        few_records=True,
+    )
+    base.update(overrides)
+    return _appearance_verdict(base.pop("days"), **base)
+
+
+def test_줄_순서는_출현_짚기_적은_기록_이번_주_급식_급식_양이다():
+    readouts = appearance_readouts(_week_verdict(), frozenset())
+
+    assert readouts[0].kind == "nutrient_analysis"
+    assert "기록된 5일 중 채소가 나온 날은 1일이에요." in readouts[0].body.splitlines()
+    assert [readout.body for readout in readouts[1:]] == [
+        SPARSE_VEG,
+        "기록된 식사 5건으로 본 거라, 기록이 쌓이면 달라질 수 있어요.",
+        "기록에 오늘부터 이번 주 급식 식단 3일도 넣어서 봤어요.",
+        AMOUNT_UNKNOWN,
+    ]
+    assert all(readout.authored_by == "code" for readout in readouts)
+
+
+def test_식품군마다_한_줄이고_채소가_과일보다_앞이다():
+    readouts = appearance_readouts(_week_verdict(days={"grains": 5, "vegetables": 1}), frozenset())
+
+    assert [r.body for r in readouts[1:3]] == [SPARSE_VEG, SPARSE_FRUIT]
+
+
+def test_모르는_날을_다_나왔다고_쳐서_절반_이상이면_짚지_않는다():
+    # 채소 1일 + 모르는 날 2일 = 3 — 기록된 5일의 절반(2.5)을 넘는다.
+    # 틀린 숫자로 읽히는 말은 하지 않는다
+    readouts = appearance_readouts(_week_verdict(unknown_days={"vegetables": 2}), frozenset())
+
+    assert SPARSE_VEG not in [r.body for r in readouts]
+
+
+def test_아이가_못_먹는_식품군은_짚지_않는다():
+    readouts = appearance_readouts(
+        _week_verdict(days={"grains": 5, "vegetables": 5}), frozenset({"fruits"})
+    )
+
+    assert SPARSE_FRUIT not in [r.body for r in readouts]
+
+
+def test_10행_이상이어도_적게_나왔으면_짚고_적은_기록_줄은_없다():
+    readouts = appearance_readouts(
+        _week_verdict(records=12, few_records=False, recorded_days=7), frozenset()
+    )
+    bodies = [r.body for r in readouts]
+
+    assert SPARSE_VEG in bodies
+    assert not any("기록이 쌓이면" in body for body in bodies)
+
+
+def test_급식이_없으면_급식_줄이_둘_다_없다():
+    readouts = appearance_readouts(
+        _week_verdict(daycare_days=0, upcoming_daycare_days=0), frozenset()
+    )
+    bodies = [r.body for r in readouts]
+
+    assert AMOUNT_UNKNOWN not in bodies
+    assert not any("이번 주 급식" in body for body in bodies)
+
+
+def test_앞날_급식이_없으면_이번_주_급식_줄만_없다():
+    readouts = appearance_readouts(_week_verdict(upcoming_daycare_days=0), frozenset())
+    bodies = [r.body for r in readouts]
+
+    assert AMOUNT_UNKNOWN in bodies
+    assert not any("이번 주 급식" in body for body in bodies)
+
+
+def test_출현을_말할_수_없으면_급식_줄도_없이_한_줄이다():
+    readouts = appearance_readouts(
+        _week_verdict(ready=False, records=2, recorded_days=2, few_records=False), frozenset()
+    )
+
+    assert readouts == (READOUTS.render(NUTRIENT_INSUFFICIENT, recorded=2),)
+
+
+def test_출현_창에서_메뉴를_못_읽었으면_출현_창_건수로_살펴보지_못했다고_한다():
+    readouts = appearance_readouts(
+        _week_verdict(ready=False, records=5, recorded_days=5, few_records=False), frozenset()
+    )
+
+    assert readouts == (READOUTS.render("nutrient.unscored", recorded=5),)
+
+
+@pytest.mark.parametrize(
+    "key", ["nutrient.sparse", "nutrient.few_records", "nutrient.daycare_upcoming"]
+)
+@pytest.mark.parametrize("group", ["채소가", "과일이"])
+def test_새_문구는_자기_검사를_통과한다(key, group):
+    # 코드 문장이 모델 문장 검사에 걸리면 같은 화면에 기준이 둘이 된다
+    body = READOUTS.render(key, group=group, recorded=5, days=3).body
+
+    assert wording_problem(body) is None
+
+
+def test_급식_양_문구는_식사_주어_검사를_통과한다():
+    # 예전 문구("먹었는지") 는 식사 주어 표시("먹은")가 없어 이 검사에 걸렸다
+    assert wording_problem(READOUTS.get("nutrient.daycare_amount_unknown").template) is None
+
+
+def test_줄마다_자기_검사를_통과한다():
+    for readout in appearance_readouts(_week_verdict(), frozenset()):
+        for line in readout.body.splitlines():
+            assert wording_problem(line) is None, line
+
+
+def test_양을_아는_급식뿐이면_급식_양_줄이_없다():
+    readouts = appearance_readouts(_week_verdict(daycare_unknown_amount_days=0), frozenset())
+
+    assert AMOUNT_UNKNOWN not in [r.body for r in readouts]

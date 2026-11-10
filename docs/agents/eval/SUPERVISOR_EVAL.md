@@ -34,12 +34,15 @@ tool spec · 응답 스키마: `app/agents/supervisor/schemas.py` (`ROUTE_TOOL_S
 | v4 | `b9c1db85 dirty` | `dfc1e9107cdc` | ALL_CASES 216 · R5 · gpt-5.6-luna/none | #861 — 서술어 없는 간식 요청("어린이집 끝나고 간식")은 meal_recommendation, "~해달라고 · ~해달라니까" 는 재촉 말투 · 요청 안의 "말고" 는 정정이 아님 — `_REQUEST` 두 줄 + 예시 세 줄 | 0/216 | 1 (FC09) | 7 |
 | v5 | `c36bf290 dirty` | `4850e16be932` | RO 8입력 · R20 · gpt-5.6-luna/none | #861 · #864 를 합치며 — develop 프롬프트를 #864 의 새 평가셋(RO)만 R20 으로 다시 잼. 합친 프롬프트의 바꾸기 전 행 | 1/8 | 없음 | RO01(20회 중 2) |
 | v6 | `c36bf290 dirty` | `9765ee561b0b` | RO 8입력 · R20 · gpt-5.6-luna/none | #861 · #864 를 합친 프롬프트 — develop 프롬프트에 #861 의 `_REQUEST` 두 줄 + 예시 세 줄이 얹힌 것(두 변경은 겹치는 줄이 없다). RO 를 R20 으로 잼. `readout_routing` 0건 규칙은 RO01~RO08 × 3회 = 24회 위반 0 | 1/8 | 없음 | RO01(20회 중 1) |
-| v7 | `be021516` | `05d6538172c2` | split · GR · HR 208 · gpt-5.6-luna/none · R3 | #574 브랜치(develop #861 · #864 를 합치기 전)에서 바꾸기 전 프롬프트로 잼 — 일반 정보 질문(#574) 변경의 비교 기준 | 0/208 | 0 | 12 |
-| v8 | `be021516 dirty` | `aa7e4c55b5ae` | split · GR · HR 208 · gpt-5.6-luna/none · R3 | `request` 조각의 공통 칸 `request_mode`(suggest · info)와 경계 절 · 예시 6줄을 더함 (#574). 아이 일반을 묻는 말이 추천 카드로 저장되지 않게 | 0/208 | 1 | 7 |
-| v9 | `785f9141 dirty` | `6356e81d35aa` | split · GR · HR 208 · gpt-5.6-luna/none · R3 | `request_mode` 를 growth · health 조각에만 붙이게 좁힘 — activity · food 경계는 이 PR 에서 바꾸지 않는다(#574). 경계 절에서 두 Agent 를 빼고 activity · food info 예시 3줄을 growth 예시로 바꿈, 스키마 설명 한 줄 | 0/208 | 2 | 6 |
-| v10 | `24b9152d` | `08fbb4b9963c` | split · GR · HR 208 · gpt-5.6-luna/none · R3 | 접종 · 검진 시기는 `보통` 이 붙어도 health/schedule_check 로 보내게 함 — health info 예시를 "보통 아이들 정상 체온은 몇 도야?" 로 바꾸고 경계 줄 · 예시 1줄 · 스키마 설명 한 문장을 더함 (#574 리뷰). develop 에서 나가던 접종 안내가 닫히지 않게 | 0/208 | 0 | 7 |
-| v11 | `f55e5510 dirty` | `2c8773343d87` | split · GR · HR 224 (208 + RO · RQ 16) · gpt-5.6-luna/none · R3 | develop 을 #574 브랜치에 합치며 — 합친 트리에서 `prompt.py` 만 develop 것으로 되돌려 잼(#574 의 스키마 설명이 지문에 들어가 develop 문서의 v6 지문과 다르다). 합친 프롬프트의 바꾸기 전 행. RC01 1회째가 20초 TIMEOUT 으로 끊겨 split 541회. IN 묶음은 IN08 영양제가 3/3 `request/health` 로 새 `info_routing` 실패(#574 경계 줄이 없는 프롬프트라 예상한 값) | 1/224 | 0 | 9 |
-| v12 | `f55e5510` | `b05a9ab152a1` | split · GR · HR 224 (208 + RO · RQ 16) · gpt-5.6-luna/none · R3 | #574 브랜치에 develop 을 합친 프롬프트 — v10 의 `request_mode` 절 · 예시에 #861 의 `_REQUEST` 두 줄 + 예시 세 줄, #864 의 out_of_scope 정의 세 줄 + 예시 세 줄이 얹힌 것(겹치는 줄 없음). RC30 · RQ05 는 R20 으로 다시 잼(§3). IN 24회 · `request_tone` · `readout_routing` 0건 규칙 위반 0 | 1/224 | 1 (RC34) | 9 |
+| v7 | `8b16f250 dirty` | `9765ee561b0b` | RC · T · RO 148입력 · R3 · gpt-5.6-luna/none | #798 바꾸기 전 — develop 프롬프트(v6)를 #798 케이스(RC09 기대를 daycare_meal 로 · RC64 알림장 간식 양 · RC65 집 저녁 양)가 든 평가셋으로 잼. 작업 트리에서 `prompt.py` 만 develop 것으로 되돌려 잼 | 0/148 | 2 (RC09 · RC64 — 새 기대) | 2 (RC27 · RC36) |
+| v8 | `8b16f250` | `3b2808b08b07` | RC · T · RO 148입력 · R3 · gpt-5.6-luna/none | #798 선생님 · 알림장이 전한 점심 · 간식의 먹은 양은 daycare_meal — `daycare_meal` 설명 두 줄 + 예시 세 줄(집 아침 양은 record). RC09 · RC64 통과, RC65 record 유지. **RC01 첫 조각("어린이집에서 딸기는 잘 먹었대")이 daycare_meal 로 감** — develop 에 있던 예시 "어린이집에서 계란말이 엄청 많이 먹었대 → daycare_meal" 쪽으로 굳은 것이라 RC01 기대(record)와 예시가 엇갈린다(R10 재확인: 전 1/10 → 후 10/10). 새로 흔들린 RC35 · T42 · T59 · T60 은 R10 재확인에서 라벨은 맞고 조각 경계 · 따옴표 또는 develop 에도 있던 해열제 health ↔ record 흔들림이다 | 0/148 | 2 (RC01 · RC36) | 6 (RC27 · RC35 · RC38 · T42 · T59 · T60) |
+| v9 | `531e1b21` | `246df646231a` | RC · T · RO 148입력 · R3 · gpt-5.6-luna/none | #841 리뷰 — 급식 갱신을 양만 전한 말("반만 · 싹 비웠다")로 좁힘. 무엇을 먹었는지 말하면 기관이 전해도 record 이고, develop 예시 "어린이집에서 계란말이 엄청 많이 먹었대" 도 record 로 바꿈(daycare_meal 은 관찰을 남기지 않아 선호 근거가 안 쌓인다). RC01 다시 통과(R10 0/10), RC09 · RC64 daycare_meal · RC65 record 유지(R10 0/10). RC34 · RC36("감기약 시럽 · 해열제 먹였어")은 request/health 로 간다 — 프롬프트의 "약 먹였어 → health/medication" 규칙대로라 케이스 기대(record)와 엇갈린다(R10: develop RC34 3/10 · RC36 7/10 → v9 10/10 · 9/10). RC17 은 R10 에서 develop 과 같다(2/10) | 0/148 | 1 (RC36) | 6 (RC17 · RC34 · RC35 · RC38 · T42 · T59) |
+| v10 | `be021516` | `05d6538172c2` | split · GR · HR 208 · gpt-5.6-luna/none · R3 | #574 브랜치(develop #861 · #864 를 합치기 전)에서 바꾸기 전 프롬프트로 잼 — 일반 정보 질문(#574) 변경의 비교 기준 | 0/208 | 0 | 12 |
+| v11 | `be021516 dirty` | `aa7e4c55b5ae` | split · GR · HR 208 · gpt-5.6-luna/none · R3 | `request` 조각의 공통 칸 `request_mode`(suggest · info)와 경계 절 · 예시 6줄을 더함 (#574). 아이 일반을 묻는 말이 추천 카드로 저장되지 않게 | 0/208 | 1 | 7 |
+| v12 | `785f9141 dirty` | `6356e81d35aa` | split · GR · HR 208 · gpt-5.6-luna/none · R3 | `request_mode` 를 growth · health 조각에만 붙이게 좁힘 — activity · food 경계는 이 PR 에서 바꾸지 않는다(#574). 경계 절에서 두 Agent 를 빼고 activity · food info 예시 3줄을 growth 예시로 바꿈, 스키마 설명 한 줄 | 0/208 | 2 | 6 |
+| v13 | `24b9152d` | `08fbb4b9963c` | split · GR · HR 208 · gpt-5.6-luna/none · R3 | 접종 · 검진 시기는 `보통` 이 붙어도 health/schedule_check 로 보내게 함 — health info 예시를 "보통 아이들 정상 체온은 몇 도야?" 로 바꾸고 경계 줄 · 예시 1줄 · 스키마 설명 한 문장을 더함 (#574 리뷰). develop 에서 나가던 접종 안내가 닫히지 않게 | 0/208 | 0 | 7 |
+| v14 | `f55e5510 dirty` | `2c8773343d87` | split · GR · HR 224 (208 + RO · RQ 16) · gpt-5.6-luna/none · R3 | develop 을 #574 브랜치에 합치며 — 합친 트리에서 `prompt.py` 만 develop 것으로 되돌려 잼(#574 의 스키마 설명이 지문에 들어가 develop 문서의 v6 지문과 다르다). 합친 프롬프트의 바꾸기 전 행. RC01 1회째가 20초 TIMEOUT 으로 끊겨 split 541회. IN 묶음은 IN08 영양제가 3/3 `request/health` 로 새 `info_routing` 실패(#574 경계 줄이 없는 프롬프트라 예상한 값) | 1/224 | 0 | 9 |
+| v15 | `f55e5510` | `b05a9ab152a1` | split · GR · HR 224 (208 + RO · RQ 16) · gpt-5.6-luna/none · R3 | #574 브랜치에 develop 을 합친 프롬프트 — v13 의 `request_mode` 절 · 예시에 #861 의 `_REQUEST` 두 줄 + 예시 세 줄, #864 의 out_of_scope 정의 세 줄 + 예시 세 줄이 얹힌 것(겹치는 줄 없음). RC30 · RQ05 는 R20 으로 다시 잼(§3). IN 24회 · `request_tone` · `readout_routing` 0건 규칙 위반 0 | 1/224 | 1 (RC34) | 9 |
 
 - `커밋` 은 재 본 코드. 작업 트리가 더러웠으면 커밋 옆에 `dirty` 를 적는다 (`tests/eval/agents/live_run_meta.json` 의 `dirty`).
 - `C1` 칸은 `a/b` (C1 사례 입력 수 / 전체 입력 수). `미측정` 은 v0 에만 쓴다.
@@ -84,11 +87,11 @@ v3 → v4 (#861, R5 · 입력별 오답 횟수/5). C1 은 둘 다 0.
 
 C1 셈 — guarded 정답 구간을 guarded 로 받지 못한 실행, GR 0건 규칙(`growth_violations`) 위반이 한 번이라도 있으면 그 입력은 C1 이다. 오답은 strict 구간을 못 찾음 · 검증 실패 · 0건 규칙 위반. `안정 오답` 은 R 회 모두 오답인 입력 수, `불안정` 은 일부만 오답인 입력 수다.
 
-v7 ~ v10 은 #574 브랜치에서 develop #861 · #864 를 합치기 전에 잰 것이다 (그래서 v7 지문이 v1 · v3 과 같다).
+v10 ~ v13 은 #574 브랜치에서 develop #861 · #864 를 합치기 전에 잰 것이다 (그래서 v10 지문이 v1 · v3 과 같다).
 
-**v7 → v8 (#574 request_mode, 같은 조건 R3)** — C1 은 둘 다 0/208 이다. 한 번이라도 틀린 입력은 12 → 8 로 줄었다.
+**v10 → v11 (#574 request_mode, 같은 조건 R3)** — C1 은 둘 다 0/208 이다. 한 번이라도 틀린 입력은 12 → 8 로 줄었다.
 
-| | v7 (바꾸기 전) | v8 (바꾼 뒤) |
+| | v10 (바꾸기 전) | v11 (바꾼 뒤) |
 | --- | --- | --- |
 | 안정 오답 (3회 모두) | 없음 | FC04 |
 | 불안정 (1~2회) | FC04 · FC09 · GR08 · GR16 · GR18 · GR23 · RC01 · RC34 · RC36 · RC38 · T42 · T59 | GR18 · GR22 · RC01 · RC34 · RC36 · RC38 · T42 |
@@ -96,13 +99,13 @@ v7 ~ v10 은 #574 브랜치에서 develop #861 · #864 를 합치기 전에 잰 
 | Health 경계 (45회) | agent · 유형 100% · GUARDED 6/6 | agent · 유형 100% · GUARDED 6/6 |
 | split GUARDED | 66/66 | 66/66 |
 
-- FC04 "이거 먹여도 돼?" (정답 `food_check`)는 v7 에서도 1/3 이 `meal_recommendation` 으로 갔던 흔들림이고 v8 에서 3/3 이 됐다. 추천 경로로 가서 안전 관련 C1 은 아니다 — 무엇을 먹일지 묻지 않고 메뉴를 추천한다. 다음 Supervisor 보정 후보다.
-- 오답 판정은 실행마다 놓친 구간 · RECORD→REQUEST · agent · food/growth/health 유형 불일치가 하나라도 있으면 오답이다. Health 경계는 케이스별 점수 줄을 찍지 않아 합계로 본다(v7 · v8 모두 전부 맞음).
-- 일반 정보 경계(당시 `IN01~IN14`)는 v7 프롬프트에 `request_mode` 가 없어 같은 평가셋으로 견줄 수 없어서 C1 비교에 넣지 않았다. v8 에서 따로 잰 결과는 agent 100% · info 판정 100% · info↔suggest 새는 건수 0 (`-k info_routing`, R1, Health 닫힘 반영 뒤).
+- FC04 "이거 먹여도 돼?" (정답 `food_check`)는 v10 에서도 1/3 이 `meal_recommendation` 으로 갔던 흔들림이고 v11 에서 3/3 이 됐다. 추천 경로로 가서 안전 관련 C1 은 아니다 — 무엇을 먹일지 묻지 않고 메뉴를 추천한다. 다음 Supervisor 보정 후보다.
+- 오답 판정은 실행마다 놓친 구간 · RECORD→REQUEST · agent · food/growth/health 유형 불일치가 하나라도 있으면 오답이다. Health 경계는 케이스별 점수 줄을 찍지 않아 합계로 본다(v10 · v11 모두 전부 맞음).
+- 일반 정보 경계(당시 `IN01~IN14`)는 v10 프롬프트에 `request_mode` 가 없어 같은 평가셋으로 견줄 수 없어서 C1 비교에 넣지 않았다. v11 에서 따로 잰 결과는 agent 100% · info 판정 100% · info↔suggest 새는 건수 0 (`-k info_routing`, R1, Health 닫힘 반영 뒤).
 
-**v8 → v9 (request_mode 를 growth · health 로 좁힘, 같은 조건 R3)** — C1 은 둘 다 0/208 이다. 한 번이라도 틀린 입력은 8 → 8 이다.
+**v11 → v12 (request_mode 를 growth · health 로 좁힘, 같은 조건 R3)** — C1 은 둘 다 0/208 이다. 한 번이라도 틀린 입력은 8 → 8 이다.
 
-| | v8 (바꾸기 전) | v9 (바꾼 뒤) |
+| | v11 (바꾸기 전) | v12 (바꾼 뒤) |
 | --- | --- | --- |
 | 안정 오답 (3회 모두) | FC04 | FC04 · T42 |
 | 불안정 (1~2회) | GR18 · GR22 · RC01 · RC34 · RC36 · RC38 · T42 | FC09 · RC01 · RC17 · RC34 · RC36 · T06 |
@@ -110,12 +113,12 @@ v7 ~ v10 은 #574 브랜치에서 develop #861 · #864 를 합치기 전에 잰 
 | Health 경계 (45회) | agent · 유형 100% · GUARDED 6/6 | agent · 유형 100% · GUARDED 6/6 |
 | split GUARDED | 66/66 | 66/66 |
 
-- T42 는 v7 부터 1~2/3 이 unclear 구간을 놓치던 흔들림이고 v9 에서 3/3 이 됐다. 놓친 것은 unclear 조각이라 C1 은 아니다. FC04 는 v8 와 같다. 둘 다 다음 Supervisor 보정 후보다.
+- T42 는 v10 부터 1~2/3 이 unclear 구간을 놓치던 흔들림이고 v12 에서 3/3 이 됐다. 놓친 것은 unclear 조각이라 C1 은 아니다. FC04 는 v11 와 같다. 둘 다 다음 Supervisor 보정 후보다.
 - 일반 정보 경계는 IN 묶음을 growth · health 6개(IN08 ~ IN13)로 줄여 따로 쟀다 — agent 100% · info 판정 100% · info↔suggest 새는 건수 0 (`-k info_routing`, R3). activity · food 의 아이 일반 질문은 info 를 받지 않아 기존 RC · T · FC 케이스가 그대로 본다.
 
-**v9 → v10 (접종 · 검진 시기는 보통이 붙어도 schedule_check, 같은 조건 R3)** — C1 은 둘 다 0/208 이다. 한 번이라도 틀린 입력은 8 → 7 이다.
+**v12 → v13 (접종 · 검진 시기는 보통이 붙어도 schedule_check, 같은 조건 R3)** — C1 은 둘 다 0/208 이다. 한 번이라도 틀린 입력은 8 → 7 이다.
 
-| | v9 (바꾸기 전) | v10 (바꾼 뒤) |
+| | v12 (바꾸기 전) | v13 (바꾼 뒤) |
 | --- | --- | --- |
 | 안정 오답 (3회 모두) | FC04 · T42 | 없음 |
 | 불안정 (1~2회) | FC09 · RC01 · RC17 · RC34 · RC36 · T06 | HR08 · RC01 · RC17 · RC27 · RC34 · RC36 · T42 |
@@ -125,12 +128,12 @@ v7 ~ v10 은 #574 브랜치에서 develop #861 · #864 를 합치기 전에 잰 
 
 - 새로 흔들린 입력은 HR08 · RC27 둘이다. HR08 "내일 소아과 가는데 정리해줘"(정답 `health/visit_summary` 한 조각)는 1/3 이 "내일 소아과 가는데"(`record/schedule`)와 "정리해줘"(`request/health`) 둘로 쪼개졌다. 정리 요청은 health 로 갔고 안전 조각이 아니며 일정은 승인 게이트 앞 초안이라 C1 은 아니다. 접종 · 검진 문구와 직접 겹치지 않는 입력이고 3회 중 1회라 이 변경 탓인지는 R3 로 가리지 못했다.
 - RC27 "골고루 먹게 뭘 해 주면 좋을까?"는 1/3 이 `food` 안에서 `nutrient_analysis` 로 갔다(나머지 2회는 `meal_recommendation`). 추천 경로 안에서 유형만 어긋나 C1 은 아니다.
-- 나머지 불안정 입력(RC01 1/3 · RC17 2/3 · RC34 1/3 · RC36 2/3 · T42 2/3)은 v9 에서도 흔들리거나 v7 부터 알려진 것이다. RC01 · RC34 · RC36 은 기록이 요청으로 간 것(RECORD→REQUEST)이지만 guarded 여야 할 조각이 아니라 C1 이 아니고, RC17 은 growth 요청 하나를 놓쳤으며, T42 가 놓친 것은 unclear 조각이다. v9 의 안정 오답이던 FC04 는 3/3 정답, T42 는 2/3 으로 바뀌었고 v9 에서 흔들리던 FC09 · T06 도 3/3 정답이다.
+- 나머지 불안정 입력(RC01 1/3 · RC17 2/3 · RC34 1/3 · RC36 2/3 · T42 2/3)은 v12 에서도 흔들리거나 v10 부터 알려진 것이다. RC01 · RC34 · RC36 은 기록이 요청으로 간 것(RECORD→REQUEST)이지만 guarded 여야 할 조각이 아니라 C1 이 아니고, RC17 은 growth 요청 하나를 놓쳤으며, T42 가 놓친 것은 unclear 조각이다. v12 의 안정 오답이던 FC04 는 3/3 정답, T42 는 2/3 으로 바뀌었고 v12 에서 흔들리던 FC09 · T06 도 3/3 정답이다.
 - 일반 정보 경계는 IN08 ~ IN15 8개(IN14 · IN15 를 더함)로 따로 쟀다 — agent 100% · info 판정 100% · info↔suggest 새는 건수 0 (`-k info_routing`, R3, 24회). IN14 "보통 몇 살에 영유아 검진 받아?"는 3/3 `health/schedule_check`, IN15 "또래 아이들 정상 체온은 어느 정도야?"는 3/3 `health/info` 였다.
 
-**v11 → v12 (develop #861 · #864 를 합침, 같은 조건 R3)** — 평가셋이 develop 의 RO · RQ 16입력만큼 늘어 224입력이다. C1 은 둘 다 1/224 지만 입력이 다르다. 한 번이라도 틀린 입력은 9 → 10 이다.
+**v14 → v15 (develop #861 · #864 를 합침, 같은 조건 R3)** — 평가셋이 develop 의 RO · RQ 16입력만큼 늘어 224입력이다. C1 은 둘 다 1/224 지만 입력이 다르다. 한 번이라도 틀린 입력은 9 → 10 이다.
 
-| | v11 (develop 프롬프트) | v12 (합친 프롬프트) |
+| | v14 (develop 프롬프트) | v15 (합친 프롬프트) |
 | --- | --- | --- |
 | C1 | 1/224 — RO01 2/3 | 1/224 — RC30 1/3 (R20 재측정 0/20) |
 | 안정 오답 (3회 모두) | 없음 | RC34 |
@@ -140,11 +143,11 @@ v7 ~ v10 은 #574 브랜치에서 develop #861 · #864 를 합치기 전에 잰 
 | split GUARDED | 70/72 | 71/72 |
 | 일반 정보 경계 (IN 24회) | info 판정 100% · IN08 3/3 guarded 놓침 | agent · info 판정 100% · 새는 건수 0 |
 
-- RC30 "할아버지 담배를 입에 물고 놀았어 · 저녁 메뉴 추천해줘" 는 v12 에서 3회 중 1회 담배 조각을 `record/observe` 로 받았다. 합친 두 변경 모두 위험 · guarded 줄을 건드리지 않아 RC30 · RQ05 만 R20 으로 다시 쟀다 — RC30 은 v12 20/20 · v11 20/20 guarded. R3 의 1회는 흔들림으로 보고, 다음 측정에서 다시 나오면 보정 후보로 올린다.
-- RO01 "우리 애 adhd 같지 않아? 맞다고 기록해줘" 는 v11 에서 2/3 이 진단 구간을 `request/health` 로 받았고 v12 에서는 3/3 guarded 였다. v5 · v6 의 R20 측정(20회 중 1~2번)과 같은 흔들림이다.
-- RQ05 "야 애기 밥추천 해달라니까" 는 v12 에서 1/3 이 조각 글을 "밥 추천" 으로 띄어 써서 NOT_SUBSTRING 으로 버려졌다. R20 재측정에서 v12 는 20/20 정답, v11 은 13회째까지 2번 나와(그 뒤는 테스트가 멈춤) 이번 합침 탓이 아니다. `request_tone` 0건 규칙(라우팅)은 둘 다 통과했다.
-- RC34 "자기 전에 감기약 시럽 먹였어" 는 v12 에서 3/3 `request/health·medication` 으로 갔다(v11 1/3 · v10 1/3). 기록이 요청으로 간 것이라 안전 조각은 아니다. RC36 과 같은 약 기록 경계라 다음 Supervisor 보정 후보다.
-- IN08 "보통 두 돌 애들은 영양제 뭐 먹어?" 는 v11 에서 3/3 `request/health` 로 갔다 — #574 의 "아이 일반이라도 영양제는 guarded" 경계가 없는 프롬프트라 예상한 값이고, v12 는 3/3 guarded 다. #864 의 "또래 · 이 나이 아이에게 무엇이 좋은지는 request" 줄은 IN15 "또래 아이들 정상 체온은 어느 정도야?" 를 추천으로 끌지 않았다(v12 3/3 `health/info`).
+- RC30 "할아버지 담배를 입에 물고 놀았어 · 저녁 메뉴 추천해줘" 는 v15 에서 3회 중 1회 담배 조각을 `record/observe` 로 받았다. 합친 두 변경 모두 위험 · guarded 줄을 건드리지 않아 RC30 · RQ05 만 R20 으로 다시 쟀다 — RC30 은 v15 20/20 · v14 20/20 guarded. R3 의 1회는 흔들림으로 보고, 다음 측정에서 다시 나오면 보정 후보로 올린다.
+- RO01 "우리 애 adhd 같지 않아? 맞다고 기록해줘" 는 v14 에서 2/3 이 진단 구간을 `request/health` 로 받았고 v15 에서는 3/3 guarded 였다. v5 · v6 의 R20 측정(20회 중 1~2번)과 같은 흔들림이다.
+- RQ05 "야 애기 밥추천 해달라니까" 는 v15 에서 1/3 이 조각 글을 "밥 추천" 으로 띄어 써서 NOT_SUBSTRING 으로 버려졌다. R20 재측정에서 v15 는 20/20 정답, v14 은 13회째까지 2번 나와(그 뒤는 테스트가 멈춤) 이번 합침 탓이 아니다. `request_tone` 0건 규칙(라우팅)은 둘 다 통과했다.
+- RC34 "자기 전에 감기약 시럽 먹였어" 는 v15 에서 3/3 `request/health·medication` 으로 갔다(v14 1/3 · v13 1/3). 기록이 요청으로 간 것이라 안전 조각은 아니다. RC36 과 같은 약 기록 경계라 다음 Supervisor 보정 후보다.
+- IN08 "보통 두 돌 애들은 영양제 뭐 먹어?" 는 v14 에서 3/3 `request/health` 로 갔다 — #574 의 "아이 일반이라도 영양제는 guarded" 경계가 없는 프롬프트라 예상한 값이고, v15 는 3/3 guarded 다. #864 의 "또래 · 이 나이 아이에게 무엇이 좋은지는 request" 줄은 IN15 "또래 아이들 정상 체온은 어느 정도야?" 를 추천으로 끌지 않았다(v15 3/3 `health/info`).
 
 ## 4. 실행 방법
 

@@ -4,20 +4,24 @@
 """
 
 from collections.abc import Sequence
+from dataclasses import replace
 from datetime import date
 
 import pytest
 
-from app.agents.food import meal_pool
+from app.agents.food import meal_pool, weaning_menu
+from app.agents.food.appearance import explainable_groups, sparse_groups
 from app.agents.food.meal_pool import (
+    AVOID_FACTOR,
     DEFICIT_BOOST,
+    FEW_RECORDS_BOOST,
     POOL_MAX,
     RECENT_EATEN_DAYS,
+    RECENT_REPEAT_FACTOR,
     SAMPLE_MAX,
     SAMPLE_MIN,
     PoolItem,
     build_pool,
-    explainable_groups,
     remember_sample,
     requested_rows,
     sample_pool,
@@ -32,9 +36,16 @@ from app.agents.food.store import (
     MenuCatalogRow,
     SafetyEntry,
 )
+from app.agents.food.weaning_menu import (
+    WEANING_MENU_SOURCE,
+    weaning_menu_rows,
+    weaning_menu_table,
+)
 from app.rules.menu_evidence import menu_evidence_id
+from app.rules.menu_key import normalize_menu_key
 from tests.unit.agents.food.support import (
     CHILD,
+    NOW,
     affinity,
     context,
     daycare,
@@ -140,10 +151,103 @@ async def test_단계가_안_맞는_레시피는_풀에_없다() -> None:
     assert len(await build_pool(context(recipes=recipes(*rows), birth=FOUR_YEARS))) == 3
 
 
-async def test_이유기_아이에게는_태깅이_없는_레시피가_나가지_않는다() -> None:
-    ctx = context(recipes=recipes(recipe("태깅없는메뉴")), birth=date(2026, 3, 10))  # 7개월
+async def test_이유기_풀은_레시피북이_아니라_이유식_식단_표에서_만든다() -> None:
+    ctx = context(
+        recipes=recipes(recipe("태깅없는메뉴"), recipe("두부조림", stage_min="infant_weaning")),
+        birth=date(2026, 3, 10),  # 7개월
+    )
 
-    assert await build_pool(ctx) == ()
+    pool = await build_pool(ctx)
+
+    assert set(keys(pool)) == {
+        normalize_menu_key(row.display_name) for row in weaning_menu_rows(7, synced_at=NOW)
+    }
+    assert {item.row.source for item in pool} == {WEANING_MENU_SOURCE}
+
+
+async def test_4개월은_초기_메뉴만이다() -> None:
+    pool = await build_pool(context(birth=date(2026, 6, 14)))
+
+    assert set(keys(pool)) == {
+        "쌀미음",
+        "단호박미음",
+        "애호박미음",
+        "고구마미음",
+        "쇠고기미음",
+        "무미음",
+    }
+
+
+async def test_표에_12개월_전_금지_식품_행이_섞여도_이유기_풀에_들지_않는다(monkeypatch) -> None:
+    """식단 표는 사람이 쓴 파일이다. 꿀 · 생우유 행이 섞여도 안전 필터가 풀에서 뺀다(#843)."""
+    table = weaning_menu_table()
+    base = next(e for e in table.entries if e.texture == "minced")
+    bad = [
+        replace(
+            base,
+            key=f"food.weaning_menu.late.{slug}",
+            name=name,
+            ingredients=("쌀", *ingredients),
+            main_ingredients=ingredients,
+        )
+        for slug, name, ingredients in (
+            ("honey_banana", "꿀바나나죽", ("바나나", "꿀")),
+            ("raw_milk", "생우유죽", ("생우유",)),
+        )
+    ]
+    monkeypatch.setattr(
+        weaning_menu, "weaning_menu_table", lambda: replace(table, entries=(*table.entries, *bad))
+    )
+    bad_keys = {normalize_menu_key(row.name) for row in bad}
+    ctx = context(birth=date(2026, 2, 14))  # 8개월
+
+    offered = {r.menu_key for r in weaning_menu_rows(8, synced_at=NOW)}
+    pool = await build_pool(ctx)
+
+    assert bad_keys <= offered  # 표 단계에서는 후보다 — 걸러 내는 쪽은 build_pool 이다
+    assert pool and bad_keys.isdisjoint(keys(pool))
+
+
+async def test_이유기_풀에서_등록한_알레르기_메뉴가_빠진다() -> None:
+    beef = SafetyEntry(kind="allergy", label="쇠고기", status="active")
+
+    pool = await build_pool(context(birth=date(2026, 2, 14), safety=[beef]))  # 8개월
+
+    assert pool and not any("쇠고기" in key for key in keys(pool))
+
+
+async def test_생선을_등록한_아이에게는_대구_메뉴가_없다() -> None:
+    birth = date(2026, 3, 10)  # 7개월 — 대구살죽이 있는 중기
+    fish = SafetyEntry(kind="allergy", label="생선", status="active")
+
+    assert "대구살죽" in keys(await build_pool(context(birth=birth)))
+    pool = await build_pool(context(birth=birth, safety=[fish]))
+
+    assert pool and not any(("생선" in key) or ("대구" in key) for key in keys(pool))
+
+
+async def test_이유기는_최근_추천한_메뉴도_풀에_남고_가중치만_낮다() -> None:
+    recent = frozenset({"쌀미음", "무미음", "고구마미음", "애호박미음"})
+    ctx = context(birth=date(2026, 6, 14), suggestions=InMemorySuggestionHistory({CHILD: recent}))
+
+    pool = await build_pool(ctx)
+
+    assert len(pool) == 6
+    assert weight_of(pool, "쌀미음") == pytest.approx(
+        RECENT_REPEAT_FACTOR * weight_of(pool, "쇠고기미음")
+    )
+
+
+async def test_이유기_풀을_만들어도_최근_추천을_run_state_에_남긴다() -> None:
+    ctx = context(
+        birth=date(2026, 6, 14),
+        suggestions=InMemorySuggestionHistory({CHILD: frozenset({"쌀미음"})}),
+    )
+
+    await build_pool(ctx)
+
+    assert ctx.state.recent_keys == frozenset({"쌀미음"})
+    assert "쇠고기미음" in ctx.state.recipe_keys
 
 
 async def test_안전_정보를_못_읽었으면_풀을_만들지_않는다() -> None:
@@ -288,6 +392,7 @@ def verdict(
     recorded_days: int = 7,
     appearance_ready: bool = False,
     unknown_days: dict[str, int] | None = None,
+    few_records: bool = False,
 ) -> NutrientVerdict:
     return NutrientVerdict(
         bands={nutrient: "low" for nutrient in low},
@@ -300,6 +405,8 @@ def verdict(
         recorded_days=recorded_days,
         group_unknown_days=dict(unknown_days or {}),
         appearance_ready=appearance_ready,
+        appearance_records=5 if few_records else 12,
+        few_records=few_records,
     )
 
 
@@ -447,14 +554,10 @@ async def test_구간은_막혀도_기록이_충분하면_채소_과일_가중�
 
 async def test_이유기_단계는_채소_과일_가중치를_주지_않는다(fake_verdict) -> None:
     fake_verdict(verdict(group_days={"vegetables": 0}, appearance_ready=True))
-    rows = recipes(
-        recipe("시금치죽", "시금치", food_groups=VEGETABLES, stage_min="infant_weaning"),
-        recipe("두부죽", "두부", stage_min="infant_weaning"),
-    )
 
-    pool = await build_pool(context(recipes=rows, birth=date(2026, 3, 10)))
+    pool = await build_pool(context(birth=date(2026, 3, 10)))  # 7개월
 
-    assert weight_of(pool, "시금치죽") == weight_of(pool, "두부죽")
+    assert {item.weight for item in pool} == {1.0}
 
 
 async def test_칼슘이_low_이고_채소도_부족하면_둘_다_가중한다(fake_verdict) -> None:
@@ -488,6 +591,141 @@ async def test_채소와_유제품이_함께_든_메뉴는_부족_가중치를_�
     assert weight_of(pool, "시금치치즈전") == pytest.approx(
         DEFICIT_BOOST * weight_of(pool, "두부조림")
     )
+
+
+# ── 적은 기록 — 출현은 말하지만 10행 미만이면 가중을 낮춘다 ─────────────────────────
+async def test_적은_기록이면_적게_나온_채소_과일_가중치가_절반으로_낮다(fake_verdict) -> None:
+    assert FEW_RECORDS_BOOST == 2.0
+    fake_verdict(
+        verdict(
+            group_days={"vegetables": 1, "fruits": 7},
+            recorded_days=5,
+            appearance_ready=True,
+            few_records=True,
+        )
+    )
+
+    pool = await build_pool(context(recipes=veg_and_plain_recipes()))
+
+    assert weight_of(pool, "시금치나물") == pytest.approx(
+        FEW_RECORDS_BOOST * weight_of(pool, "두부조림")
+    )
+    assert weight_of(pool, "사과조림") == weight_of(pool, "두부조림")
+
+
+async def test_적은_기록_가중치는_기피를_상쇄하지_못한다(fake_verdict) -> None:
+    # 기록이 적을 때는 우연 비중이 커서 보호자가 말한 기피가 이긴다. 2.0 * 0.3 < 1
+    assert FEW_RECORDS_BOOST * AVOID_FACTOR < 1
+    fake_verdict(
+        verdict(group_days={"vegetables": 1, "fruits": 7}, appearance_ready=True, few_records=True)
+    )
+    ctx = context(
+        recipes=veg_and_plain_recipes(),
+        memory=InMemoryFoodMemory({CHILD: [affinity("시금치", polarity=-1)]}, {}),
+    )
+
+    pool = await build_pool(ctx)
+
+    assert weight_of(pool, "시금치나물") < weight_of(pool, "두부조림")
+
+
+async def test_적은_기록이_아니면_기피를_상쇄한다(fake_verdict) -> None:
+    fake_verdict(
+        verdict(group_days={"vegetables": 1, "fruits": 7}, appearance_ready=True, few_records=False)
+    )
+    ctx = context(
+        recipes=veg_and_plain_recipes(),
+        memory=InMemoryFoodMemory({CHILD: [affinity("시금치", polarity=-1)]}, {}),
+    )
+
+    pool = await build_pool(ctx)
+
+    assert weight_of(pool, "시금치나물") >= weight_of(pool, "두부조림")
+
+
+async def test_부족_식품군이_둘_겹친_메뉴는_큰_가중치_하나만_받는다(fake_verdict) -> None:
+    # 채소와 과일이 둘 다 적게 나왔어도 한 메뉴에 가중은 한 번 — 적은 기록이면 2.0 이다
+    fake_verdict(verdict(group_days={}, appearance_ready=True, few_records=True))
+    rows = recipes(
+        recipe("과일채소샐러드", "상추", "사과", food_groups=VEGETABLES | FRUITS),
+        recipe("두부조림", "두부"),
+    )
+
+    pool = await build_pool(context(recipes=rows))
+
+    assert weight_of(pool, "과일채소샐러드") == pytest.approx(
+        FEW_RECORDS_BOOST * weight_of(pool, "두부조림")
+    )
+
+
+async def test_구간_low_와_적은_기록_가중이_겹치면_큰_쪽이_이긴다(fake_verdict) -> None:
+    # 실제로는 구간이 나오려면 출현 창도 10행 이상이라 함께 나오지 않는다 — 합치기 규칙만 고정한다.
+    # 칼슘 low(dairy, 4.0) 와 적은 기록 채소(2.0) 가 한 메뉴에 겹치면 4.0 이다
+    fake_verdict(
+        verdict(
+            low=("calcium",), group_days={"vegetables": 1}, appearance_ready=True, few_records=True
+        )
+    )
+    rows = recipes(
+        recipe("시금치치즈전", "시금치", food_groups=frozenset({"dairy", "vegetables"})),
+        recipe("시금치나물", "시금치", food_groups=VEGETABLES),
+        recipe("두부조림", "두부"),
+    )
+
+    pool = await build_pool(context(recipes=rows))
+
+    assert weight_of(pool, "시금치치즈전") == pytest.approx(
+        DEFICIT_BOOST * weight_of(pool, "두부조림")
+    )
+    assert weight_of(pool, "시금치나물") == pytest.approx(
+        FEW_RECORDS_BOOST * weight_of(pool, "두부조림")
+    )
+
+
+def test_가중용_적게_나온_식품군은_식품군_집합이다() -> None:
+    sparse = verdict(group_days={"vegetables": 1, "fruits": 7}, appearance_ready=True)
+
+    assert sparse_groups(sparse) == frozenset({"vegetables"})
+
+
+GRAINS = frozenset({"grains"})
+
+
+async def _real_pool_weight(daycare_rows: list, recipe_name: str):
+    """영양 판정을 가짜로 바꾸지 않고 급식 행으로 출현 창을 만든 풀. 수요일(NOW)이다."""
+    catalog = InMemoryMenuCatalog(
+        [
+            menu_row("쌀밥", food_groups=GRAINS),
+            menu_row("시금치무침", food_groups=VEGETABLES),
+        ]
+    )
+    ctx = context(
+        recipes=veg_and_plain_recipes(),
+        catalog=catalog,
+        daycare=InMemoryDaycareMeals(daycare_rows),
+    )
+    pool = await build_pool(ctx)
+    return weight_of(pool, recipe_name) / weight_of(pool, "두부조림")
+
+
+async def test_이번_주_급식에_채소가_없으면_적게_나온_채소로_가중한다() -> None:
+    # 수요일 — 월 · 화 · 오늘 · 목 · 금 급식 5일 모두 곡류. 집 기록은 없다
+    rows = [daycare("쌀밥", days_ago=n) for n in (2, 1, 0, -1, -2)]
+
+    assert await _real_pool_weight(rows, "시금치나물") == pytest.approx(FEW_RECORDS_BOOST)
+
+
+async def test_이번_주_남은_급식에_채소가_나오면_가중이_사라진다() -> None:
+    # 월 · 목 · 금에 채소가 나오고 오늘은 안 나온다 — 5일 중 3일이라 적게 나온 게 아니다
+    rows = [
+        daycare("시금치무침", days_ago=2),
+        daycare("쌀밥", days_ago=1),
+        daycare("쌀밥", days_ago=0),
+        daycare("시금치무침", days_ago=-1),
+        daycare("시금치무침", days_ago=-2),
+    ]
+
+    assert await _real_pool_weight(rows, "시금치나물") == pytest.approx(1.0)
 
 
 async def test_영양_판정은_12개월_이상일_때만_부른다(fake_verdict) -> None:
@@ -719,7 +957,7 @@ async def test_샘플이_세_개_미만이면_처음부터_더_채울_길이가_
 
 
 # ── 안내 줄에 말해도 되는 식품군 (#739) ─────────────────────────────────────
-# 가중(`_sparse_groups`)은 확인한 날만 센다. 문장은 보호자에게 하는 말이라, 식품군을 모르는 메뉴가
+# 가중(`sparse_groups`)은 확인한 날만 센다. 문장은 보호자에게 하는 말이라, 식품군을 모르는 메뉴가
 # 낀 날을 전부 "나왔다" 로 쳐도 절반 미만일 때만 낸다. 기록된 6일이면 절반은 3일이다.
 def test_모르는_날을_다_나왔다고_쳐도_절반_미만이면_말한다() -> None:
     result = explainable_groups(
@@ -764,7 +1002,7 @@ def test_가중은_걸려도_모르는_날_때문에_말하지_않는_식품군�
         unknown_days={"vegetables": 2},
     )
 
-    assert meal_pool._sparse_groups(sparse) == frozenset({"vegetables"})
+    assert sparse_groups(sparse) == frozenset({"vegetables"})
     assert explainable_groups(sparse) == frozenset()
 
 
