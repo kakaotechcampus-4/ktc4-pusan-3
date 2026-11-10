@@ -124,7 +124,7 @@
 | **Supervisor**                     | 안전 사전검사 + 의도 분류 + Agent 최대 2개 라우팅                                                         | AI 파트                                                      |
 | **의도 3형**                       | `기록형` / `요청형` / `혼합형`                                                                            | Supervisor 출력                                              |
 | **도메인 Agent**                   | `food` · `activity` · `growth` · `health` **4종 고정**. Agent 이름은 `growth` 지만 관찰 테이블은 `observation_education`, `observation_routine` | `suggestion_agent`                                           |
-| **Suggestion**                     | 추천 1건. `draft → approved / rejected / expired`                                                         | `suggestion_status`                                          |
+| **Suggestion**                     | 추천 1건. DB 에 써지는 상태는 `draft` · `approved` 둘이다. `expired` 는 24시간(`expires_at`)이 지난 draft 를 **읽을 때** 붙이는 값이고 DB 에는 쓰지 않는다. `rejected` 는 값만 있고 쓰는 길(거절 API)이 없다 | `suggestion_status`                                          |
 | **근거 (evidence)**                | 그 추천이 쓴 `source_id` 목록. **0행이면 버그**. 컬럼이 `memory_*` 가 아닌 것은 문서 행·`daycare_meal` 도 가리키기 때문 | `suggestion_evidence`                                        |
 | **Correction**                     | 부모가 기록·기억을 고치는 것. **묻는 것이 대상마다 다르다** — 기록은 `once_only`(이번만 그랬어요) 하나다(잘못된 기록은 고치기가 아니라 기록 지우기 — #736). 기억은 `need_more_observation`(기록이 더 필요해요) / `outdated`(지금은 달라요) / `wrong`. `confirm`(맞아요)은 없다 — 아무것도 바꾸지 않아 이력으로도 남기지 않는다. | `correction_verdict`                                         |
 | **run**                            | 입력 1건의 처리 단위. 진행 상황은 SSE 로 흐른다                                                           | `GET /runs/{rid}/events`                                     |
@@ -212,8 +212,7 @@
 │   ├── caddy/                  Caddyfile — HTTPS 종단 + 리버스 프록시 (icatch.ai.kr → web, api.icatch.ai.kr → api, dev.· 는 dev 환경)
 │   │                          🚨 한 EC2 에 prod(main) · dev(develop) 두 벌이 뜬다. CI 통과 후에만 배포, 헬스 실패면 직전 이미지로 자동 롤백 —
 │   │                          DB 는 안 되돌리므로 마이그레이션은 expand-only ([`docs/ops/deploy-v1.md`](docs/ops/deploy-v1.md))
-│   ├── scripts/                `deploy.sh`(배포 · 롤백) · `backup.sh` · `restore-check.sh`(백업 · 복원 점검) · `health-alert.sh`(컨테이너 감시)
-│   └── nginx/                  (비어 있음) Caddy 를 쓴다
+│   └── scripts/                `deploy.sh`(배포 · 롤백) · `backup.sh` · `restore-check.sh`(백업 · 복원 점검) · `health-alert.sh`(컨테이너 감시)
 └── .github/                  ⚠️ §8 참고 — 손대면 안 되는 파일이 있다
 ```
 

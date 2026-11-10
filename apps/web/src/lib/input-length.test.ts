@@ -22,7 +22,7 @@ describe("isLengthRejected — 실패 카드가 길이 탓이라고 말할지", 
   const textRejected = new ApiError(400, "validation_failed", "요청 형식이 올바르지 않아요", {
     fields: ["text"],
   });
-  const long = "가".repeat(2001);
+  const long = "가".repeat(501);
 
   it("text 를 거절했고 보낸 글이 한도를 넘으면 참", () => {
     expect(isLengthRejected(textRejected, long)).toBe(true);

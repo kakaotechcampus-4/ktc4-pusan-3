@@ -7,6 +7,7 @@
 🚨 서버를 막지 않는다. 알리기만 한다 — 키 하나가 빠졌다고 운영이 안 뜨면 그쪽이 더 큰 사고다.
    확인하다 예외가 나도 삼킨다 (`log_at_startup`).
 🚨 설정 이름만 싣는다. 값(키 · 주소 · 파일 경로)은 싣지 않는다.
+🚨 서버에서 LLM · Curator 가 비면 ERROR 다 — Discord 로 간다. 재시작마다 한 건씩 온다.
 """
 
 import logging
@@ -74,8 +75,23 @@ def log_disabled_features(settings: _Settings, *, llm_gaps: Sequence[str]) -> No
     if not found:
         log.info("꺼져 있는 기능 없음")
         return
-    level = logging.WARNING if settings.APP_ENV in _SERVERS else logging.INFO
-    log.log(level, "꺼져 있는 기능 %d개 — %s", len(found), " | ".join(found))
+    if settings.APP_ENV not in _SERVERS:
+        log.info("꺼져 있는 기능 %d개 — %s", len(found), " | ".join(found))
+        return
+    # LLM · Curator 가 비면 기억이 조용히 안 쌓인다 — 오류 없이 돌아 아무도 모른다. 그래서 ERROR 로
+    # 올려 Discord 에 보낸다 (alerts.py 는 ERROR 이상만). 나머지는 일부러 끈 경우가 있어 경고로 둔다
+    if llm_gaps:
+        log.error(
+            "꺼져 있는 기능 %d개 — %s",
+            len(found),
+            " | ".join(found),
+            extra={
+                "alert_heading": "LLM · Curator 설정이 빠진 채 서버가 떴다",
+                "alert_detail": " | ".join(llm_gaps),  # 설정 이름만 — 값은 없다
+            },
+        )
+        return
+    log.warning("꺼져 있는 기능 %d개 — %s", len(found), " | ".join(found))
 
 
 def log_at_startup(settings: _Settings) -> None:
