@@ -16,6 +16,9 @@
 #    운영 DB 컨테이너와 같은 것을 쓴다. prod 백업을 dev 스택에 복원하지 않는다 (#758 설계 조건).
 # 🚨 4GB 서버라 메모리 상한(768MB)을 걸고, 배포와 같은 잠금을 잡아 이미지 빌드와 겹치지 않게 한다
 #    (backup-lib.sh 의 take_deploy_lock). 배포도 같은 잠금을 잡아야 의미가 있다.
+# 🚨 멈출 수 있는 단계(S3 · 복원 · psql · 임시 DB 지우기)마다 시간 상한을 건다 — 멈춘 채 배포 잠금을 쥐고
+#    서 있지 않게. 스크립트 통째로 timeout 을 씌우면 잠금 fd 가 자식에 남아 풀리지 않는다. 단계가 끊기면
+#    fail → cleanup → 종료로 잠금이 풀린다. 끊긴 단계는 exit 124 로 알린다.
 # 🚨 출력은 alembic 버전 · 테이블별 행 수까지. pg_restore · psql 의 stderr 는 내지 않는다 —
 #    COPY 오류는 행의 값을 싣는다 (backup-lib.sh 의 quiet).
 
@@ -23,6 +26,13 @@ set -euo pipefail
 # shellcheck source=deploy/scripts/backup-lib.sh
 . "$(dirname "$0")/backup-lib.sh"
 trap 'fail "예상 못 한 실패 (줄 $LINENO)"' ERR
+
+# 시간 상한(초). 맥에는 timeout 이 없다 — 로컬 시험에서는 걸지 않는다 (flock 과 같다)
+limit() {
+  local s="$1"
+  shift
+  if command -v timeout >/dev/null; then timeout -k 10 "$s" "$@"; else "$@"; fi
+}
 
 if [ "${1:-}" = --local ]; then
   pick_target "${2:?사용법: restore-check.sh --local <폴더>}"
@@ -34,7 +44,7 @@ umask 077
 WORK="$(mktemp -d)"
 TMPDB="ktc4-restore-check-$$"
 cleanup() {
-  docker rm -f -v "$TMPDB" >/dev/null 2>&1 || true
+  limit 60 docker rm -f -v "$TMPDB" >/dev/null 2>&1 || true
   rm -rf "$WORK"
 }
 trap cleanup EXIT
@@ -53,7 +63,7 @@ if [ -n "$LOCAL_DIR" ]; then
   cp "$SRC" "$DUMP"
 else
   # 비어 있으면 aws 가 "None" 한 줄을 낸다. 시각(ISO)이 앞이라 글자 순 정렬이 곧 시간 순이다.
-  LIST="$(aws s3api list-objects-v2 --bucket "$BUCKET" --prefix "$ENVNAME/" \
+  LIST="$(limit 60 aws s3api list-objects-v2 --bucket "$BUCKET" --prefix "$ENVNAME/" \
     --query 'Contents[].[LastModified, Key]' --output text)" ||
     fail "백업 목록 읽기 실패 (exit $?) — EC2 역할 · 버킷 정책을 본다"
   LIST="$(printf '%s\n' "$LIST" | grep -v '^None$' | sort || true)"
@@ -74,7 +84,7 @@ else
   fi
 
   KEY="$LATEST"
-  aws s3 cp "s3://$BUCKET/$KEY" "$DUMP" --only-show-errors --no-progress || fail "백업 받기 실패 (exit $?)"
+  limit 300 aws s3 cp "s3://$BUCKET/$KEY" "$DUMP" --only-show-errors --no-progress || fail "백업 받기 실패 (exit $?)"
 fi
 log "$KEY 복원 점검 ($(wc -c < "$DUMP" | tr -d ' ') bytes)"
 
@@ -88,7 +98,7 @@ docker run -d --name "$TMPDB" --network none --memory 768m --memory-swap 768m \
 # 초기화 중에도 소켓으로는 응답하므로 TCP(127.0.0.1)로 본다 — 초기화가 끝나야 TCP 를 연다.
 ready=0
 for _ in $(seq 1 60); do
-  if docker exec "$TMPDB" pg_isready -q -h 127.0.0.1 -U restore -d restore; then
+  if limit 10 docker exec "$TMPDB" pg_isready -q -h 127.0.0.1 -U restore -d restore; then
     ready=1
     break
   fi
@@ -96,10 +106,10 @@ for _ in $(seq 1 60); do
 done
 [ "$ready" = 1 ] || fail "임시 DB 가 60초 안에 뜨지 않았다"
 
-quiet docker exec -i "$TMPDB" pg_restore -U restore -d restore --no-owner --no-privileges --exit-on-error < "$DUMP" ||
+quiet limit 600 docker exec -i "$TMPDB" pg_restore -U restore -d restore --no-owner --no-privileges --exit-on-error < "$DUMP" ||
   fail "복원 실패 (exit $?$(err_table)) — 이 백업으로는 되살릴 수 없다"
 
-q() { quiet docker exec "$TMPDB" psql -U restore -d restore -v ON_ERROR_STOP=1 -Atc "$1"; }
+q() { quiet limit 60 docker exec "$TMPDB" psql -U restore -d restore -v ON_ERROR_STOP=1 -Atc "$1"; }
 VERSION="$(q 'SELECT string_agg(version_num, $$,$$ ORDER BY version_num) FROM alembic_version')" ||
   fail "복원한 DB 에서 alembic_version 읽기 실패 (exit $?)"
 [ -n "$VERSION" ] || fail "복원한 DB 의 alembic_version 이 비었다"
@@ -107,7 +117,7 @@ VERSION="$(q 'SELECT string_agg(version_num, $$,$$ ORDER BY version_num) FROM al
   fail "복원한 DB 에 parent · child 테이블이 없다"
 
 # 테이블별 행 수 — 로그에서 날마다 견줘 볼 수 있게. 숫자만이다.
-COUNTS="$(quiet docker exec -i "$TMPDB" psql -U restore -d restore -v ON_ERROR_STOP=1 -At <<'SQL'
+COUNTS="$(quiet limit 120 docker exec -i "$TMPDB" psql -U restore -d restore -v ON_ERROR_STOP=1 -At <<'SQL'
 SELECT format('SELECT %L || $$ $$ || count(*) FROM %I.%I', table_name, table_schema, table_name)
 FROM information_schema.tables
 WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
