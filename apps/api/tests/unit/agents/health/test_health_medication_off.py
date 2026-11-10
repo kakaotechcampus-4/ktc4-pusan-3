@@ -69,7 +69,8 @@ async def test_복약_라벨은_모델도_코스도_없이_준비_중_문구로_
 
 
 async def test_동의가_없어도_동의_안내가_아니라_준비_중_문구다():
-    # 게이트(월령 · 동의 조회) 앞에서 닫았다는 뜻이다 — 게이트를 거쳤다면 동의 안내가 나간다
+    # 동의 닫힘보다 먼저 닫는다 — 동의 안내가 나가면 꺼 둔 기능 때문에 동의를 받게 된다. 게이트의
+    # 조회보다 앞인지는 투약의뢰서 테스트(safety.calls)가 같은 자리(`_switched_off`)로 건다
     result = await run(task("medication", "항생제 먹여야 해"), context(consent=False))
 
     assert result.readouts == (READOUTS.render(MED_PREPARING),)
