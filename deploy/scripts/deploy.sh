@@ -182,6 +182,10 @@ log "기동 — 헬스체크 통과까지 대기"
 if "${COMPOSE[@]}" up -d --no-build --pull never --wait --wait-timeout 240; then
   echo "$SHA" > "$TAG_FILE"
   log "배포 성공 $SHA"
+  # api 가 뜰 때 남기는 "꺼져 있는 기능" 한 줄(app/api/startup_report.py)을 배포 출력에도 보인다 —
+  # 서버 로그(journald)에만 있으면 배포한 사람이 못 본다 (#912 리뷰). 설정 이름만 있고 값은 없는 줄이다.
+  # 못 읽어도, 그 줄이 없어도 배포는 성공이다.
+  "${COMPOSE[@]}" logs --no-color --since 10m api 2>/dev/null | grep "꺼져 있는 기능" | tail -n 1 || true
   if [ "$TARGET" = prod ]; then
     # Caddyfile 은 up 만으로 다시 읽히지 않는다 (Caddy 설정이 그대로면 컨테이너를 다시 안 만든다).
     # 이번 up 이 Caddy 를 새로 만들었으면 관리 포트(2019)가 몇 초 늦게 열린다 — 리허설에서 바로 부르면
