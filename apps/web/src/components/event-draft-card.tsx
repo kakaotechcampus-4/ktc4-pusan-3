@@ -118,6 +118,7 @@ export function EventDraftCard({
   error,
   errorHint,
   blocked = false,
+  blockedNote,
   lockReason,
   onSubmit,
 }: {
@@ -135,6 +136,14 @@ export function EventDraftCard({
    *    사전검사에 답하는 자리는 카드 밖(승인 시트)이고, 여기는 결과만 받는다.
    */
   blocked?: boolean;
+  /**
+   * `blocked` 의 이유를 그릇이 말할 때 (#902). 보호자가 답해 막은 것이 아니라 **넣는 순간 서버가 막은 것**이다 —
+   *    시트를 연 사이 다른 보호자가 알레르기를 등록했다. 기본 문구("알레르기를 확인했어요")는 보호자가 확인한
+   *    일이라 이때 쓰면 거짓말이다.
+   *    🚨 **실패가 아니라 안내라서** `danger` 도 `CardFailed` 도 쓰지 않는다 — 05 의 "채택한 뒤에 막힐 때" 안내
+   *    (`event-draft-ui-v1.md` §3-8)와 같은 꼴이다. 다시 눌러도 같은 409 라 버튼을 세우지 않는다.
+   */
+  blockedNote?: string;
   /**
    * 그릇이 거는 잠금과 그 이유. 🚨 **`blocked` 와 다르다** — `blocked` 는 "안 넣는다"(알레르기)고
    *    이건 "아직 못 넣는다"(제안 경로의 재료 확인이 안 끝남)다. 둘을 한 값으로 쓰면 화면이
@@ -392,7 +401,11 @@ export function EventDraftCard({
             {errorHint ? <p className="mt-1">{errorHint}</p> : null}
           </CardFailed>
         ) : null}
-        {blocked ? (
+        {blocked && blockedNote ? (
+          <p role="status" className="text-body-sm text-ink">
+            {blockedNote}
+          </p>
+        ) : blocked ? (
           <p className="text-body-sm text-danger-ink">
             알레르기를 확인했어요. 이 일정은 넣지 않을게요.
           </p>
