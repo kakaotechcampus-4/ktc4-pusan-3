@@ -9,6 +9,7 @@ import calendar
 import re
 from dataclasses import dataclass
 from datetime import date, time, timedelta
+from itertools import pairwise
 from typing import NamedTuple
 
 _WEEKDAYS = "월화수목금토일"
@@ -255,19 +256,22 @@ def _time_span(text: str) -> tuple[time | None, time | None, bool, bool]:
     first, *rest = times
     if rest and _RANGE_SEP.fullmatch(text[first.end : rest[0].start]):
         start, end = first.at, rest[0].at
+        # 범위가 또 있으면 회차다 — "10~12시, 2~4시" 의 둘째 회차가 조용히 사라지면 안 된다.
+        # 범위 뒤의 낱 시각("9:30 출발, 12:30 도착")은 범위가 아니라 세지 않는다
+        several = any(_RANGE_SEP.fullmatch(text[a.end : b.start]) for a, b in pairwise(rest[1:]))
         if first.vague and not rest[0].vague:
             # "7:30 ~ 19:30" — 끝이 분명하면 시작은 끝보다 이른 쪽 하나로만 읽힌다
             fits = [t for t in (start, start.replace(hour=start.hour + 12)) if t < end]
             if len(fits) == 1:
-                return fits[0], end, False, False
+                return fits[0], end, several, False
         if first.vague:
-            return None, None, False, True
+            return None, None, several, True
         if (first.guessed or rest[0].vague) and end <= start and end.hour < 12:
             # 끝이 시작보다 이를 수는 없다 — "6시 30분 ~ 8시 30분" · "10시 ~ 7시" 는 저녁에 끝난다
-            return start, end.replace(hour=end.hour + 12), False, False
+            return start, end.replace(hour=end.hour + 12), several, False
         if rest[0].vague:
-            return start, None, False, True
-        return start, end, False, False
+            return start, None, several, True
+        return start, end, several, False
     if first.vague:
         return None, None, bool(rest), True
     return first.at, None, bool(rest), False

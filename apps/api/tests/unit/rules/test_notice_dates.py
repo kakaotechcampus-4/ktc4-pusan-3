@@ -335,6 +335,16 @@ def test_회차를_범위로_잇지_않는다():
     assert "시각이 여러 개" in when.review
 
 
+@pytest.mark.parametrize(
+    "text", ["11/23 10~12시, 2~4시", "11/23 10시~12시, 2시~4시", "11/23 10:00~12:00, 14:00~16:00"]
+)
+def test_시각_범위가_둘이면_되묻는다(text):
+    # 2회차가 조용히 사라지면 안 된다 (검토 R3)
+    when = parse_notice_when(text, anchor=ANCHOR)
+    assert when.start == date(2026, 11, 23)
+    assert "시각이 여러 개" in when.review
+
+
 def test_범위_뒤의_괄호_속_시각은_범위가_아니다():
     when = parse_notice_when("2026.9.25.(금) 9:00~12:30(9:30 출발, 12:30 도착)", anchor=ANCHOR)
     assert (when.start_time, when.end_time) == (time(9), time(12, 30))
