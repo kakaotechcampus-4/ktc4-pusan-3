@@ -374,7 +374,7 @@ access 는 `Authorization: Bearer` 로 보낸다. 이 문서가 `token` 을 불�
 
 ### 4-2. 왜 JWT 가 아닌가
 
-이 서비스는 **즉시 무효화**를 세 곳에서 요구한다 — 로그아웃, 계정 탈퇴(보호자 행 삭제 — 세션도 함께 지워진다, #379), 아이 파기(`410 child_deleted`). stateless JWT 는 서명이 유효한 동안 서버가 거절할 방법이 없다. 아동 정보를 다루면서 그 창을 만들 이유가 없다.
+이 서비스는 **즉시 무효화**를 세 곳에서 요구한다 — 로그아웃, 계정 탈퇴(보호자 행 삭제 — 세션도 함께 지워진다, #379), 아이 파기(지운 뒤에는 `403 child_access_denied`). stateless JWT 는 서명이 유효한 동안 서버가 거절할 방법이 없다. 아동 정보를 다루면서 그 창을 만들 이유가 없다.
 
 DB 조회 1회가 JWT 의 이점이지만 세션 조회는 PK 인덱스 단건 읽기라 실질 비용이 거의 없다. JWT 의 다른 이점(서비스 간 stateless 전달)도 해당되지 않는다 — CLAUDE.md §6 이 백엔드와 AI 를 **한 서비스로 묶기로** 정했고 Agent 는 같은 프로세스의 폴더다. **토큰을 건네줄 상대가 없다.**
 
@@ -395,7 +395,7 @@ DB 조회 1회가 JWT 의 이점이지만 세션 조회는 PK 인덱스 단건 �
 
 ### 4-4. 보호자 표시 이름
 
-`parent.nickname` 은 **카카오에서 가져오지 않는다** (노션 논의 ⑫). 보호자가 **가입 화면에 직접 적은 "부르는 이름"** 을 `signup` 요청(§3-5)으로 받는다 (#172). 바꾸는 곳은 **10 설정의 `PATCH /parents`** 다.
+`parent.nickname` 은 **카카오에서 가져오지 않는다** (노션 논의 ⑫). 보호자가 **가입 화면에 직접 적은 "부르는 이름"** 을 `signup` 요청(§3-5)으로 받는다 (#172). 바꾸는 곳은 아직 없다 — 계약서의 10 설정 `PATCH /parents` 는 서버에 없다.
 
 **값이 없으면 화면이 "보호자"로 폴백한다.** 근거는 §5-2.
 
@@ -500,7 +500,7 @@ CREATE INDEX ON session_access (expires_at);
 | 로그아웃 | 그 `session` 행 1건 |
 | 계정 탈퇴 · 아이 파기 | `parent_id` 로 전부 |
 | refresh 재사용 (직전 refresh 가 30초 뒤에 옴) · refresh 만료 | 그 `session` 행 1건 (§3-7) |
-| 만료 | 배치로 `refresh_expires_at <= now()` 또는 `absolute_expires_at <= now()` 인 `session`, 그리고 `expires_at <= now()` 인 `session_access` — 인증 판정과 같은 경계. `app/workers/auth_cleanup.py` (#46, 주기 실행은 배포 구성이 정해진 뒤) |
+| 만료 | 배치로 `refresh_expires_at <= now()` 또는 `absolute_expires_at <= now()` 인 `session`, 그리고 `expires_at <= now()` 인 `session_access` — 인증 판정과 같은 경계. `app/workers/auth_cleanup.py` (#46, 서버 cron 이 하루 한 번 `python -m app.workers.cleanup` 으로 — `apps/api/README.md`) |
 
 🚨 **세션을 access 만료로 지우지 않는다.** access 는 15분이라, 그 기준으로 지우면 15분 쉰 사용자의 로그인이 배치에 사라진다.
 
@@ -696,7 +696,7 @@ Cookie: __Host-oauth_state=<우리가 ③ 에서 심은 값>
 
 ### 7-3. 오픈 리다이렉트를 만들지 않는다
 
-복귀 대상은 **서버 환경변수에서 온다.** 클라이언트는 `client=web|app` 열거값만 고른다 (§2-3). 허용값 밖이면 시작 시점에 `400`.
+복귀 대상은 **서버 환경변수에서 온다.** 클라이언트는 `client=web|app` 열거값만 고른다 (§2-3). 허용값 밖이면 시작 시점에 웹 복귀 URL 로 `302 …?error=invalid_client`.
 
 로그인 후 원래 화면 복원도 서버가 관여하지 않는다 — 프론트가 `sessionStorage` 로 처리한다.
 
@@ -724,7 +724,7 @@ target_id_type=user_id&target_id={provider_user_id}
 - 처음에는 "파기 배치에서만" 이었다. 탈퇴를 유예 없이 바로 지우기로 하면서(#167) 배치가 없어져 탈퇴 요청에서 부른다
 - 🚨 **DB 커밋 뒤에** 부르고, 실패해도 탈퇴는 성공(200)이다. 카카오가 먼저면 카카오 장애 때 탈퇴가 막힌다. 연결이 남아도 다시 로그인하면 신규 가입이라 지운 데이터는 돌아오지 않는다
 - 회원번호는 `auth_identity` 와 함께 지워지므로 커밋 전에 읽어 둔다. 그래서 자동 재시도는 없고, 실패하면 카카오의 "연결된 서비스" 에 이 서비스가 남는 것이 운영상 한계다
-- `APP_ENV=prod` 에서 키가 비어 있으면 서버가 뜨지 않는다. local · dev 에서 비어 있으면 연결 끊기만 건너뛴다
+- `APP_ENV=prod` · `dev` 에서 키가 비어 있으면 서버가 뜨지 않는다 (#310). local 에서 비어 있으면 연결 끊기만 건너뛴다
 
 ### 7-5. 로그
 
@@ -783,9 +783,9 @@ access 가 JS 에서 접근 가능하므로 **XSS 한 건이 그 access 를 넘�
 | 422 | `validation_failed` | `provider` 가 enum 밖 | |
 | 502 | `oauth_provider_error` | 카카오 API 5xx·타임아웃, 코드 교환 실패 | 🆕 |
 
-`invalid_handoff` 는 **실패 사유를 구분하지 않는다.** 만료·재사용·`bind` 불일치를 구분해 알려주면 공격자에게 정보를 준다. 초대 코드 실패를 `404 invalid_invite` 로 통일한 것과 같은 이유다.
+`invalid_handoff` 는 **실패 사유를 구분하지 않는다.** 만료·재사용·`bind` 불일치를 구분해 알려주면 공격자에게 정보를 준다.
 
-`502 oauth_provider_error` 는 **기본값으로 대체하지 않는다.** 카카오가 죽었을 때 로그인을 통과시키는 경로는 존재하지 않는다 — `503 llm_unavailable` 이 모델 실패를 기본값으로 넘기지 않는 것과 같은 원칙이다.
+`502 oauth_provider_error` 는 **기본값으로 대체하지 않는다.** 카카오가 죽었을 때 로그인을 통과시키는 경로는 존재하지 않는다 — run 실패 `llm_unavailable` 이 모델 실패를 기본값으로 넘기지 않는 것과 같은 원칙이다.
 
 카카오 타임아웃은 **3초**로 둔다. NF-06 의 20초는 Agent 파이프라인 예산이고 로그인은 그 예산 밖이다.
 

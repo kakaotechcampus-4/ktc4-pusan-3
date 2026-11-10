@@ -70,7 +70,7 @@ idempotency 는 이미 Redis 이고 동작하므로 옮기지 않는다.
 
 | 무엇 | 어디 | 비고 |
 | --- | --- | --- |
-| 모델 · 저장 함수 | `app/domains/run_state/` (새 폴더) | `payload` 는 dict 로만 다룬다 — domains 는 agents 를 import 하지 않는다 |
+| 모델 · 저장 함수 | `app/domains/run_hold/` (새 폴더) | `payload` 는 dict 로만 다룬다 — domains 는 agents 를 import 하지 않는다 |
 | 맥락 ↔ JSON 변환 | `app/api/runs/pending_reply.py` | pydantic `TypeAdapter(PendingMemoryContext)` 로 바꾸고 되돌린다. agents 코드는 고치지 않는다. `DomainPending.payload` 는 이미 "JSON 으로 바뀌는 값만" 이 규칙이다(`agents/common/result.py` · 날짜는 `isoformat()` 으로 싣는다) |
 | 마이그레이션 | 새 Alembic revision | 새 테이블만 — expand-only 문제 없음 |
 
@@ -237,6 +237,8 @@ idempotency 는 이미 Redis 이고 동작하므로 옮기지 않는다.
 트리거 대신 `deletion_log.NOT_LOGGED` 에 이유를 적었다.
 
 ## 검증 (PR #899)
+
+한 uvicorn 에 워커 2개(`--workers 2`)로 돌려 본 기록은 [`workers-2-check-v1.md`](workers-2-check-v1.md) 에 따로 있다 (11-11).
 
 - 단계마다 스펙 테스트를 먼저 커밋했다(실패) — 동시성은 실제로 커밋하는 연결 여럿으로 건다
   (동시 claim 하나만 · 동시 사진 저장 한 번만 · 동시 한도 넘지 않음)

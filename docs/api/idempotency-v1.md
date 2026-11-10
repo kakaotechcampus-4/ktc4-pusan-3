@@ -1,6 +1,6 @@
 # Idempotency-Key v1
 
-문서 목적: 되돌릴 수 없는 엔드포인트 5개에서 **같은 요청이 두 번 실행되지 않는다**를 계약으로 고정한다. 클라이언트가 무엇을 보장하고, 서버가 무엇을 보장해야 하는지를 나눈다.
+문서 목적: 되돌릴 수 없는 엔드포인트에서 **같은 요청이 두 번 실행되지 않는다**를 계약으로 고정한다. 클라이언트가 무엇을 보장하고, 서버가 무엇을 보장해야 하는지를 나눈다.
 
 기준 브랜치: `refactor/fe-29-idempotency-enforcement`
 작성일: 2026-09-11
@@ -19,7 +19,7 @@
 
 | 정한 것 | 값 |
 | --- | --- |
-| 대상 | 되돌릴 수 없는 **POST 5개** — `inputs` · `onboarding` · `photos` · `health-safety`(㉡) · `events/{eid}/confirm`(㉠) |
+| 대상 | 되돌릴 수 없는 요청 **13개** — 계약서 §01 의 POST 5개(`inputs` · `onboarding` · `photos` · `health-safety`(㉡) · 일정 제출 `events`(㉠))에 건강 기록 · 일정 · 반복 일정 고치기, 복약 등록/수정, 삭제 확정(㉢), 기록 지우기, 아이 삭제가 더해졌다 |
 | 대상의 정본 | [`apps/web/src/lib/api/idempotency.ts`](../../apps/web/src/lib/api/idempotency.ts) 의 `idempotentPath` 표. 정규식은 이 표에서 **생성**한다 |
 | 클라이언트 강제 | 키가 없으면 **요청을 보내지 않고 던진다.** dev 콘솔 경고 아님, 환경 구분 없음 |
 | 호출 경로 | `api.post` 직접 호출이 아니라 [`operations.ts`](../../apps/web/src/lib/api/operations.ts) 의 전용 함수 — 키가 **필수 인자**라 빠뜨리면 `tsc` 가 잡는다 |
@@ -37,7 +37,7 @@
 
 | | 무엇 | 근거 |
 | --- | --- | --- |
-| **제약** | 되돌릴 수 없는 것은 사람이 승인한다 | CLAUDE.md §2 — 승인 게이트 2곳이 이 5개 안에 있다 |
+| **제약** | 되돌릴 수 없는 것은 사람이 승인한다 | CLAUDE.md §2 — 승인 게이트 3곳(㉠ · ㉡ · ㉢)이 이 표 안에 있다 |
 | **제약** | 중복 실행 방지는 **서버**가 한다 | 클라이언트는 재시도를 막을 수 있을 뿐, 이미 나간 요청을 되돌릴 수 없다 |
 | **선택** | 키를 전용 함수의 필수 인자로 | 선택 인자는 빠뜨려도 컴파일된다. 리뷰 지적의 핵심 (§2-1) |
 | **선택** | 2xx 만 저장 | 403 `consent_required` 를 캐시하면 "동의하고 다시 누른" 흐름이 막힌다 (§3-4) |
@@ -50,7 +50,7 @@
 
 이전 구조는 **정규식 목록 + dev 콘솔 경고** 하나였다. 세 군데가 비어 있었다.
 
-**① 경고는 강제가 아니다.** `process.env.NODE_ENV !== "production"` 안에 있어서 운영에서는 실행되지 않았다. 실행되더라도 요청은 그대로 나갔다. 즉 중복 실행을 막는 장치가 "서버가 400 을 주기를 기대하는 것" 하나뿐이었고, **그 서버는 아직 없다.**
+**① 경고는 강제가 아니다.** `process.env.NODE_ENV !== "production"` 안에 있어서 운영에서는 실행되지 않았다. 실행되더라도 요청은 그대로 나갔다. 즉 중복 실행을 막는 장치가 "서버가 400 을 주기를 기대하는 것" 하나뿐이었고, **그 서버는 아직 없었다.**
 
 **② 목록을 사람이 관리했다.** 새 엔드포인트를 추가하면서 정규식을 추가하지 않으면 아무 일도 일어나지 않는다. 조용히 빠진다.
 
@@ -71,23 +71,24 @@
 
 ### 2-1. 타입 — 키가 필수 인자다
 
-`api.post(path, body, { idempotencyKey })` 의 `idempotencyKey` 는 **선택** 인자다. 빠뜨려도 컴파일된다. 그래서 되돌릴 수 없는 5개는 전용 함수로만 부른다.
+`api.post(path, body, { idempotencyKey })` 의 `idempotencyKey` 는 **선택** 인자다. 빠뜨려도 컴파일된다. 그래서 되돌릴 수 없는 요청은 전용 함수로만 부른다.
 
 ```ts
 // apps/web/src/lib/api/operations.ts
-export function confirmEvent(
-  eventId: string,
+export function submitEventDraft(
+  childId: string,
+  body: SubmitEventBody | SubmitRepeatEventBody,
   idempotencyKey: IdempotencyKey,   // ← 선택이 아니다
-): Promise<{ event: CalendarEvent; suggestion_status: SuggestionStatus }>;
+): Promise<SubmitEventResponse>;
 ```
 
-`IdempotencyKey` 는 브랜드 타입이라 아무 문자열이나 넘어가지 않는다. 경로도 `idempotentPath` 표에서만 만든다 — **표를 거치지 않고 이 5개를 부를 방법이 없다.** 리뷰에서 지적된 "새로운 API 를 정규식 목록에 추가하지 않을 가능성" 이 여기서 닫힌다. 표에 줄을 더하지 않으면 경로 자체가 없다.
+`IdempotencyKey` 는 브랜드 타입이라 아무 문자열이나 넘어가지 않는다. 경로도 `idempotentPath` 표에서만 만든다 — **표를 거치지 않고 이 요청들을 부를 방법이 없다.** 리뷰에서 지적된 "새로운 API 를 정규식 목록에 추가하지 않을 가능성" 이 여기서 닫힌다. 표에 줄을 더하지 않으면 경로 자체가 없다.
 
 ### 2-2. 런타임 — 요청이 나가지 않는다
 
 ```ts
 // apps/web/src/lib/api/client.ts — 환경 구분 없음
-if (method === "POST" && !idempotencyKey && requiresIdempotencyKey(path)) {
+if (!idempotencyKey && requiresIdempotencyKey(method, path)) {
   throw new IdempotencyKeyRequiredError(path);
 }
 ```
@@ -98,12 +99,12 @@ if (method === "POST" && !idempotencyKey && requiresIdempotencyKey(path)) {
 
 🚨 **여기가 가장 조용히 깨지는 곳이다.** 리뷰 원문: *"키는 같은 사용자 동작의 재시도에서 재사용해야 한다. 재시도마다 새 키를 만들면 중복 방지가 되지 않는다."*
 
-`mutationFn: () => confirmEvent(id, newIdempotencyKey())` 는 타입도 통과하고 린트도 통과하지만 **키를 붙인 의미가 없다.** 그래서 키를 들고 있는 훅을 둔다.
+`mutationFn: () => submitEventDraft(childId, body, newIdempotencyKey())` 는 타입도 통과하고 린트도 통과하지만 **키를 붙인 의미가 없다.** 그래서 키를 들고 있는 훅을 둔다.
 
 ```tsx
 const idem = useIdempotencyKey();
 const mutation = useMutation({
-  mutationFn: () => confirmEvent(eventId, idem.current()),  // 재시도해도 같은 키
+  mutationFn: () => submitEventDraft(childId, body, idem.current()),  // 재시도해도 같은 키
   onSuccess: () => { idem.rotate(); },                      // 성공한 뒤에만 다음 키
 });
 ```
@@ -114,7 +115,7 @@ const mutation = useMutation({
 
 ## 3. 서버가 보장해야 하는 것
 
-**이 절이 백엔드 작업 범위다.** 지금은 목이 대신 지키고 있다 (§6).
+**이 절이 백엔드 작업 범위다.** 서버 구현은 `apps/api/app/api/idempotency.py` 이고 (§7), 목도 같은 동작을 한다 (§6).
 
 ### 3-1. 판정 순서
 
@@ -134,7 +135,7 @@ const mutation = useMutation({
 
 **④ 는 인증 뒤**여야 한다. 키는 보호자 단위로 스코프되므로(§3-5) `parent_id` 를 모르면 조회할 수 없다. 남의 키로 남의 응답을 재생받는 구멍이 여기서 열린다.
 
-**그래서 401 뒤에 같은 키로 다시 보내도 안전하다** (#466 · #465). access 가 15분이라, 웹은 `401 unauthenticated` 를 받으면 refresh 로 access 를 다시 받고 원래 요청을 **같은 키로 1회** 다시 보낸다. 401 로 끝난 요청은 `parent_id` 가 생기기 전에 막혀서 키를 찾지도 남기지도 않았고, 아무것도 실행하지 않았다. 다시 보낸 요청이 처음 실행되는 요청이다. 되돌릴 수 없는 5개(일정 제출 · 건강 기록 확정 포함)도 같다 — 이것들만 재전송에서 빼면 15분마다 승인 버튼이 한 번씩 실패한다.
+**그래서 401 뒤에 같은 키로 다시 보내도 안전하다** (#466 · #465). access 가 15분이라, 웹은 `401 unauthenticated` 를 받으면 refresh 로 access 를 다시 받고 원래 요청을 **같은 키로 1회** 다시 보낸다. 401 로 끝난 요청은 `parent_id` 가 생기기 전에 막혀서 키를 찾지도 남기지도 않았고, 아무것도 실행하지 않았다. 다시 보낸 요청이 처음 실행되는 요청이다. 되돌릴 수 없는 요청(일정 제출 · 건강 기록 확정 포함)도 같다 — 이것들만 재전송에서 빼면 15분마다 승인 버튼이 한 번씩 실패한다.
 
 🚨 **Idempotency 처리를 인증 앞으로 옮기지 않는다** (미들웨어로 빼는 경우 포함). 키의 범위에 보호자가 들어가므로 인증이 먼저다. 순서가 바뀌면 위 재전송의 안전이 깨진다.
 
@@ -171,7 +172,7 @@ UNIQUE (parent_id, method, path, key)
 
 #### 3-4-1. 한 줄 입력의 재생 — run 이 어떻게 끝났나 (#538)
 
-`POST /children/{cid}/inputs` 는 202 로 run_id 만 저장하고, 결과는 run 채널(`GET /runs/{rid}/events`)로 흐른다. 키는 24시간 남는데 채널은 닫힌 뒤 5분이면 지워진다(`registry.py` `EXPIRE_AFTER_SECONDS`, #533). 서버를 다시 켜도 채널은 전부 사라진다. 그래서 같은 키로 다시 왔을 때 채널 상태에 따라 나눈다.
+`POST /children/{cid}/inputs` 는 202 로 run_id 만 저장하고, 결과는 run 채널(`GET /runs/{rid}/events`)로 흐른다. 키는 24시간 남는데 채널은 닫힌 뒤 5분이면 지워진다(`registry.py` `EXPIRE_AFTER_SECONDS`, #533). 서버를 다시 켜면 메모리 채널은 사라지고, 다른 워커가 읽는 DB 미러(`run_channel` · `run_event`, #877)도 기한(닫힌 뒤 5분 · 안 닫히면 10분)이 지나면 지워진다. 그래서 같은 키로 다시 왔을 때 채널 상태에 따라 나눈다.
 
 | 재생할 run 의 채널 | 응답 | 왜 |
 | --- | --- | --- |
@@ -194,7 +195,7 @@ UNIQUE (parent_id, method, path, key)
 
 키는 Redis 에 둔다. Redis 가 죽으면 **모든 창구가 `503 temporarily_unavailable` 로 막고 아무것도 처리하지 않는다.** 다시 시도할 수 있는 오류라 같은 키로 다시 보내면 된다.
 
-창구는 Idempotency-Key 를 받는 11개다 — 한 줄 입력 · 사진 읽기 · 온보딩 · 일정 등록/수정(㉠) · 건강 기록 등록/고치기(㉡) · 복약 등록/수정(㉡, #577) · 삭제 확정(㉢, #535) · 기록 탭 삭제(#736 — 게이트가 아니라 보호자가 직접 누르는 삭제지만 되돌릴 수 없어 키를 받는다). 11개 모두 Swagger `responses` 에 503 이 있다(`tests/unit/api/test_idempotency_redis.py` 가 Idempotency-Key 를 받는 창구마다 확인한다).
+창구는 Idempotency-Key 를 받는 13개다 — 한 줄 입력 · 사진 읽기 · 온보딩 · 일정 등록/수정 · 반복 일정 고치기(㉠) · 건강 기록 등록/고치기(㉡) · 복약 등록/수정(㉡, #577) · 삭제 확정(㉢, #535) · 기록 탭 삭제(#736 — 게이트가 아니라 보호자가 직접 누르는 삭제지만 되돌릴 수 없어 키를 받는다) · 아이 삭제(#751). 13개 모두 Swagger `responses` 에 503 이 있다(`tests/unit/api/test_idempotency_redis.py` 가 Idempotency-Key 를 받는 창구마다 확인한다).
 
 - **"죽었다" 에는 쓰기만 막힌 Redis 도 든다.** RDB 저장에 실패한 Redis 는 기본 설정상 읽기는 받고 쓰기만 `MISCONF` 로 거절한다. 그래서 처음 보는 키면 재생 확인(recall)에서 쓰기도 한 번 해 보고, 막혔으면 처리하기 전에 503 이다 (#729 리뷰).
 - **Redis 가 응답 없이 멈춰도 서버 전체가 멈추지 않는다.** 재생 확인 · 키 적기는 이벤트 루프 밖(스레드)에서 부르고, 한 번의 상한은 연결 + 명령 각 1초다. 연결 · 시간 초과가 한 번 나면 10초 동안은 Redis 를 부르지 않고 바로 503 이다(차단기 — `app/infra/redis.py`). 도서 검색어 캐시도 같은 차단기를 탄다.
@@ -233,10 +234,10 @@ UNIQUE (parent_id, method, path, key)
 | ~~`idempotency_key_reuse`~~ | ~~422~~ | ~~같은 키인데 요청 지문이 다르다~~ | **안 함 (11-09)** — 웹 `errors.ts` 에서도 뺐다 |
 | ~~`idempotency_in_progress`~~ | ~~409~~ | ~~같은 키가 아직 처리 중이다~~ | **안 함 (11-09)** — 웹 `errors.ts` 에서도 뺐다 |
 | `already_exists` | 409 | `health_safety` `UNIQUE(child_id, type, label)` 재등록 | 신설 — 계약서 본문에 **"409" 만 있고 코드가 없다** |
-| `allergy_exists` | 409 | 괜찮았던 식품(`tolerated: true`)으로 저장하려는데 같은 식품이 알레르기 · 건강 기록(`active`)으로 있다 — 이름 사전으로 본다. `already_exists` 와 달리 **저장된 것이 아니다** | 서버 구현됨. 웹 `errors.ts` 에는 아직 없다 (괜찮았던 식품 화면 작업 때 더한다) |
+| `allergy_exists` | 409 | 괜찮았던 식품(`tolerated: true`)으로 저장하려는데 같은 식품이 알레르기 · 건강 기록(`active`)으로 있다 — 이름 사전으로 본다. `already_exists` 와 달리 **저장된 것이 아니다** | 서버 구현됨. 웹 `errors.ts` 에도 있다 (#825) |
 | `temporarily_unavailable` | 503 | 키 저장소(Redis)가 죽어 Idempotency-Key 를 받는 요청을 처리하지 않는다 (§3-6) | 서버 구현됨 (#671). 웹 `errors.ts` 에는 아직 없다 — 모르는 코드라 서버 문구가 그대로 뜬다 |
 
-위 넷(`idempotency_key_required` · `idempotency_key_reuse` · `idempotency_in_progress` · `already_exists`)은 [`apps/web/src/lib/api/errors.ts`](../../apps/web/src/lib/api/errors.ts) 에 이미 들어가 있다(주석으로 제안임을 표시). **확정 전까지 서버와 다를 수 있는 부분이다.**
+위 넷 중 `idempotency_key_required` · `already_exists` 는 [`apps/web/src/lib/api/errors.ts`](../../apps/web/src/lib/api/errors.ts) 에 들어가 있고 서버도 같은 코드를 쓴다. `idempotency_key_reuse` · `idempotency_in_progress` 는 뺐다 (11-09).
 
 ---
 
@@ -244,7 +245,7 @@ UNIQUE (parent_id, method, path, key)
 
 ### 6-1. 목이 서버 절반을 대신한다
 
-[`apps/web/src/mocks/handlers/idempotency.ts`](../../apps/web/src/mocks/handlers/idempotency.ts) 의 `withIdempotency()` 가 §3 의 키 확인 · 재생 · 재사용 거부 · 처리 중(§3-1 의 ③~⑤, 맨 위 표의 서버 보장 ①~④)을 그대로 구현하고, 되돌릴 수 없는 5개 핸들러에 걸려 있다. 인증 · 아이 접근(§3-1 의 ① · ②)은 목이 흉내 내지 않는다.
+[`apps/web/src/mocks/handlers/idempotency.ts`](../../apps/web/src/mocks/handlers/idempotency.ts) 의 `withIdempotency()` 가 §3 의 키 확인 · 재생(§3-1 의 ③ · ④, 맨 위 표의 서버 보장 ① · ②)을 구현하고 — 처리 중인 같은 키는 끝날 때까지 기다렸다가 재생한다 (11-09) — 되돌릴 수 없는 핸들러에 걸려 있다. 인증 · 아이 접근(§3-1 의 ① · ②)은 목이 흉내 내지 않는다.
 
 ### 6-2. 타입 검사로는 안 되는 것
 
@@ -258,7 +259,7 @@ cd apps/web && pnpm test
 
 | 테스트 | 무엇을 건다 |
 | --- | --- |
-| 키 누락 | `idempotentPath` 표의 **5개 전부** 400 — 표에 줄을 더하고 목을 안 고치면 깨진다 |
+| 키 누락 | `idempotentPath` 표의 **줄 전부** 400 — 표에 줄을 더하고 목을 안 고치면 깨진다 |
 | 같은 키 · 같은 요청 | 같은 응답 · 핸들러 1회 |
 | 같은 키 · 다른 요청 | 처음 응답 재생 · 바뀐 본문은 저장 안 됨 (11-09 결정) |
 | 같은 키 · 다른 엔드포인트 | 다른 요청 — 키 범위는 (방법, 경로, 키) |
@@ -282,5 +283,5 @@ cd apps/web && pnpm test
 | ~~키 저장소~~ | ✅ Redis, 24시간. `REDIS_URL` 이 없으면 프로세스 메모리로 대신한다(로컬 · 테스트). Redis 가 죽으면 메모리로 넘기지 않고 503 이다 (#671) |
 | OpenAPI 생성 | 계약서가 HTML 이라 타입을 손으로 옮겼다. FastAPI 스키마가 나오면 타입 생성으로 바꾼다 — 리뷰의 *"서버 스키마와 클라이언트 타입을 연결"* 이 그때 닫힌다 |
 | 화면 테스트 | 컴포넌트가 아직 없다. RTL·jsdom 은 화면이 생길 때 |
-| `already_exists` 코드명 | §5 제안 상태. 백엔드 확정 필요 |
+| ~~`already_exists` 코드명~~ | ✅ 서버가 쓴다 — 건강 기록 · 복약 등록의 409 |
 | 보관 24시간 | 측정값이 아니다. NF-07 과 같은 창이라는 것 외에 근거 없음 |

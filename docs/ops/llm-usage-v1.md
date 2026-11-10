@@ -14,7 +14,7 @@
 | 계약 — `core/llm_usage.py` (`attribute` · `record` · `drain`) | 구현됨 |
 | 기록 지점 — LLMClient · Curator 판정 · 임베딩 · 식단 OCR · 공지 사진 읽기 | 구현됨 |
 | 호출 지점 목록 테스트 | 구현됨 (`tests/unit/core/test_llm_usage_sites.py`) |
-| 저장 — `llm_usage` 테이블(`domains/usage/`) · writer(`api/llm_usage_writer.py`, lifespan) · 90일 정리(`workers/cleanup.py`) | 구현됨 (#710). 배포 때 `make deploy-migrate` 한 번 |
+| 저장 — `llm_usage` 테이블(`domains/usage/`) · writer(`api/llm_usage_writer.py`, lifespan) · 90일 정리(`workers/cleanup.py`) | 구현됨 (#710). 마이그레이션은 배포(`deploy.sh`)가 api 를 올리기 전에 돈다 |
 | 귀속 — 입력 run · 사진 run · 05 다시 만들기 · 기록 삭제 · 삭제 확정에서 `attribute()` | 구현됨 (#710) — §3 |
 
 ## 1. 결정
@@ -57,7 +57,7 @@
 | 입력 run (`runner.agent_job`, 이어받기 포함) | `input` | `channel.run_id` | `agent_job` 의 job |
 | 사진 run (`photo_run.photo_job`) — 공지 읽기 · 식단표 읽기 | `photo` | `channel.run_id` | `photo_job` 의 job |
 | 05 다시 만들기 (`entrypoint.suggest`) | `suggest` | 실패한 추천을 다시 만드는 요청(`run_id` 가 있다)은 **그 run 의 `run_id`**, 처음 요청은 그 요청의 `request_id` | `routers/suggestions.py` |
-| 기록 삭제(`observations.py`) · 대화 삭제 확정(`delete_proposals.py`) 뒤의 Curator | `delete` | 그때 만든 uuid4 hex | 두 라우터의 `_trigger_curator` |
+| 기록 삭제(`observations.py`) · 대화 삭제 확정(`delete_proposals.py`) 뒤의 Curator | `delete` | 그때 만든 uuid4 hex | 두 라우터가 부르는 `runner.trigger_curator_after_delete` |
 
 사진 한 장이 공지 읽기와 식단표 읽기를 함께 부르므로 창구는 하나(`photo`)다. 모델은 `role`(`notice_ocr` · `meal_ocr`)이 가른다.
 기록 삭제 · 삭제 확정은 run 이 없지만 Curator(임베딩 · 판정)를 띄운다 — 귀속을 따로 건다.
@@ -85,7 +85,7 @@ Curator 는 run 이 끝난 뒤에 끝나도 그 run 으로 남는다 (asyncio �
 
 | 항목 | 내용 |
 | --- | --- |
-| 배포 | 이미지를 올린 뒤 `make deploy-migrate`. 컨테이너 · 환경변수 · cron · 볼륨은 늘지 않는다. 새 api 가 뜬 뒤 migrate 가 끝나기 전 몇 초의 기록은 INSERT 실패로 버려질 수 있다 (ERROR 1줄) |
+| 배포 | 마이그레이션은 `deploy.sh` 가 새 api 를 올리기 전에 돈다. 컨테이너 · 환경변수 · cron · 볼륨은 늘지 않는다 |
 | 용량 | 가정: 하루 run 1천 건 · run 당 10행 · 행당 약 300B → 90일에 약 300MB. 디스크 50GB 기준 문제없다. 실측 뒤 고친다 |
 | 종료 · 유실 | SIGTERM 이면 lifespan 이 writer 를 멈추며(취소) 쓰던 묶음을 큐에 되돌리고 남은 큐를 마지막으로 쓴다. 마지막 flush 는 5초까지만 기다린다(docker 정지 유예 10초 안). SIGKILL · OOM 이면 최대 2초분을 잃는다. 종료 뒤에 끝나는 run · Curator 의 기록은 이미 `disable()` 이라 남지 않는다 — BM 추정에는 감수 |
 | 저장 실패 | 탈퇴와 겹친 FK 위반은 새 세션으로 한 번 더 쓴다. 연결 · 풀 오류는 묶음을 큐 뒤에 되돌리고 다음 주기에 다시 쓴다 — 큐 상한(10,000건)보다 오래 못 쓰면 넘치는 만큼만 버린다. 그 밖의 실패(스키마 버그 · 값 오류)는 그 묶음(최대 500건)을 버리고 그 주기를 끝낸다. 첫 실패만 ERROR(Discord), 이어지면 WARNING, 고쳐지면 INFO 한 줄 |

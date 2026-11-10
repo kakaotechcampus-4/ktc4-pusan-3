@@ -57,14 +57,14 @@ TS 7 (네이티브 컴파일러) 이 최신이지만 **`typescript-eslint` 가 �
 ## 3. CI — PR 마다 같은 검사를 다시 돈다
 
 [`.github/workflows/ci-web.yml`](../../.github/workflows/ci-web.yml) 이 `apps/web/**` 를 바꾼 PR(→ `develop` · `main`)과
-`develop` push 에서 `format:check → lint → typecheck → test → build` 를 돈다. `make web-check` + `make web-build` 와 같다.
+배포(`deploy.yml` 이 `develop` · `main` push 때 게이트로 부른다)에서 `format:check → lint → typecheck → test → build` 를 돈다. `make web-check` + `make web-build` 와 같다.
 같은 워크플로의 `e2e` job 이 화면 규칙 테스트(`make web-e2e`)를 따로 돈다 — 목은 개발 서버에서만 떠서 build 결과를 쓸 수 없다 (§8).
 셸은 [`ci-mobile.yml`](../../.github/workflows/ci-mobile.yml) 이 `typecheck` · `test` 를 돈다.
 [`ci-contract.yml`](../../.github/workflows/ci-contract.yml) 은 웹 API 타입을 서버 OpenAPI 와 맞춘다 (`make web-contract` · #559).
 `apps/web/src/lib/api/**` 뿐 아니라 **서버 스키마(`apps/api/app/**`)를 바꾼 PR 에서도** 돈다 — 규칙은 [`mock-and-tests-v1.md`](mock-and-tests-v1.md) §2.
 [`ci-e2e-live.yml`](../../.github/workflows/ci-e2e-live.yml) 은 실서버 e2e(`make web-e2e-live` · #756)를 돈다 — pgvector 서비스 컨테이너에
 마이그레이션을 올리고, api 주소(8100)를 박은 빌드로 api 와 web 을 띄운다. `apps/web/**` · `apps/api/**` 를 바꾼 PR 에서 돈다.
-🚨 `ci-web.yml` 에 넣지 않았다. #747(PR #753)이 머지되면 배포가 `ci-web.yml` 을 게이트로 불러서, 거기 넣으면 첫날부터
+🚨 `ci-web.yml` 에 넣지 않았다. #747(PR #753)로 배포가 `ci-web.yml` 을 게이트로 불러서, 거기 넣으면 첫날부터
 배포를 막는 조건이 된다. 안정적으로 도는 것을 본 뒤에 정한다.
 
 - 🚨 **pnpm · Node 버전을 워크플로에 적지 않는다.** pnpm 은 `package.json` 의 `packageManager` 를 읽고,
@@ -98,5 +98,5 @@ TS 7 (네이티브 컴파일러) 이 최신이지만 **`typescript-eslint` 가 �
   빌드 컨텍스트에 들어가면 Next 가 그것을 읽어 **개인 설정이 배포 이미지에 굳는다** (최상위 §9)
 - `output: "standalone"` 을 끄지 않는다 (`next.config.ts`). 끄면 `.next/standalone` 이 안 생겨서
   Dockerfile 의 마지막 COPY 가 실패한다. 🚨 standalone 은 `public/` 과 `.next/static/` 을 **자기 안에
-  넣지 않는다** — Dockerfile 이 손으로 옮기고, 그 두 줄을 빼면 화면은 뜨는데 CSS 와 서브셋 폰트 92개가
+  넣지 않는다** — Dockerfile 이 손으로 옮기고, 그 두 줄을 빼면 화면은 뜨는데 CSS 와 서브셋 폰트(두 서체 · 92개씩)가
   전부 404 다 (§5 서체)
