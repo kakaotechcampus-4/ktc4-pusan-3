@@ -417,9 +417,7 @@ async def search_events(context: ActivityContext, args: SearchEventsArgs) -> Too
     ]
     if found and not fresh:
         return _no_new_events(context)
-    # 기간이 짧은 행사부터, 같은 묶음 안에서는 가까운 순이다. 1년 내내 하는 곳은 다음에도 갈 수
-    # 있어서 뒤로 미룬다 — 빼지는 않는다(짧은 행사가 없으면 그래도 나온다)
-    nearest = sorted(fresh, key=lambda pair: (period_tier(pair[1]), pair[0]))[:EVENT_INTRO_LIMIT]
+    nearest = sorted(fresh, key=lambda pair: _event_order(context, *pair))[:EVENT_INTRO_LIMIT]
     intros = await asyncio.gather(
         *(_or_none(events.intro(content_id=event.content_id)) for _, event in nearest)
     )
@@ -464,6 +462,25 @@ async def search_events(context: ActivityContext, args: SearchEventsArgs) -> Too
         _EVENTS,
         events=[_event_result(row, _open_days(context, row.name, days)) for row in rows],
     )
+
+
+# 보호자 위치에서 찾을 때 "가까운 묶음" 의 경계. 이 안의 행사가 밖의 행사보다 먼저다 (잠정값)
+NEAR_EVENT_M = 10_000
+
+
+def _event_order(context: ActivityContext, distance: int, event: Event) -> tuple[int, ...]:
+    """행사를 소개정보 · 일정까지 읽을 순서.
+
+    - 보호자 위치에서 찾으면 거리가 뜻이 있다 — 가까운 묶음(`NEAR_EVENT_M`) 안이 먼저고, 묶음
+      안에서는 기간이 짧은 행사 → 가까운 순이다. 멀리 있는 짧은 행사가 1km 앞 행사를 앞지르지
+      않고(#856 리뷰), 1년 내내 하는 가까운 곳이 위를 다 차지하지도 않는다(#855).
+    - 보호자가 지역을 말했으면 거리는 그 지역 대표 지점에서 잰 값이라 보호자에게 뜻이 없다 —
+      기간이 짧은 행사 → 가까운 순이다.
+    """
+    tier = period_tier(event)
+    if context.state.area is not None:
+        return (tier, distance)
+    return (0 if distance <= NEAR_EVENT_M else 1, tier, distance)
 
 
 def _no_new_events(context: ActivityContext) -> ToolResult:
