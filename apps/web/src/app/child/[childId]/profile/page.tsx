@@ -123,7 +123,7 @@ function DeleteChildSection({ childId }: { childId: string }) {
           icon={Trash2}
           title="이 아이 삭제하기"
           status="아이와 쌓인 기록이 모두 지워져요"
-          note="무엇이 어떻게 되는지 다음 화면에서 알려드려요"
+          note="무엇이 어떻게 되는지 다음 화면에서 알려 드려요"
           {...FORWARD}
         />
       </SettingsGroup>

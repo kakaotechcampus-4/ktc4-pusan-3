@@ -195,14 +195,14 @@ async def test_unlink_forgets_only_their_in_memory_entries(
     같은 아이의 다른 보호자 것은 남는다 (#561)."""
     owner_headers, owner = bearer
     _, member = await _member(session, cid, "member")
-    theirs = stash_in_memory(parent_id=member, child_id=cid)
-    owners = stash_in_memory(parent_id=owner, child_id=cid)
+    theirs = await stash_in_memory(parent_id=member, child_id=cid)
+    owners = await stash_in_memory(parent_id=owner, child_id=cid)
 
     resp = await db_client.delete(f"/api/v1/children/{cid}/parents/{member}", headers=owner_headers)
 
     assert resp.status_code == 204
-    assert in_memory(theirs, parent_id=member, child_id=cid) == (False, False)
-    assert in_memory(owners, parent_id=owner, child_id=cid) == (True, True)
+    assert await in_memory(theirs, parent_id=member, child_id=cid) == (False, False)
+    assert await in_memory(owners, parent_id=owner, child_id=cid) == (True, True)
 
 
 async def test_member_leaves_and_loses_access_even_on_replay(

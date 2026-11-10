@@ -106,3 +106,31 @@ def test_경로_값이_없는_주소는_형식_오류_422_를_안내하지_않�
     ]
 
     assert wrong == []
+
+
+# "나중에 이렇게 된다" 를 적는 말. Swagger 는 지금 서버가 하는 일만 적는다.
+PROMISES = ("stub", "변경 예정")
+
+
+def _texts():
+    """Swagger 에 글로 나가는 자리 — 주소의 요약 · 설명, 스키마와 칸의 설명."""
+    for method, path, op in _operations():
+        yield f"{method} {path}", f"{op.get('summary', '')} {op.get('description', '')}"
+    for name, schema in app.openapi()["components"]["schemas"].items():
+        yield name, schema.get("description", "")
+        for field, prop in schema.get("properties", {}).items():
+            yield f"{name}.{field}", prop.get("description", "")
+
+
+def test_Swagger_는_나중_일을_약속하지_않는다() -> None:
+    """Swagger 는 공개돼 있다(`/docs`). "#번호에서 해제 · 변경 예정" 은 이슈가 닫혀도 남는다.
+
+    되묻기 답변(`POST /children/{cid}/answers`)과 추천의 `reason` 이 그랬다 — 가리키던 이슈
+    (#249 · #284 · #323)는 닫혔고 `reason` 은 반대로(한 칸으로) 정해졌는데 글은 그대로였다.
+    아직 안 되는 것은 "지금은 이렇게 답한다" 로 적는다.
+    """
+    found = [
+        f"{where}: {word}" for where, text in _texts() for word in PROMISES if word in text.lower()
+    ]
+
+    assert found == []

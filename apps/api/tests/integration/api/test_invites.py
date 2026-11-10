@@ -5,15 +5,15 @@ import logging
 from datetime import UTC, date, datetime, timedelta
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select
 
-from app.api import invite_attempts
 from app.api.deps.auth import hash_token
 from app.api.quota import today_kst
 from app.api.v1.routers import invites as invites_router
 from app.domains.child.models import Child, Invite, ParentChild, ParentChildRelation
 from app.domains.child.repository import create_child, create_invite
 from app.domains.identity.models import Parent
+from app.domains.rate_event.models import RateEvent
 from app.rules.age import age_display
 
 from .conftest import issue_bearer
@@ -29,11 +29,10 @@ ATTESTED = {"adult_attested": True}
 
 
 @pytest.fixture(autouse=True)
-def _clear_attempts():
-    """시도 카운터는 프로세스 메모리라 테스트 사이에 샌다 — 같은 IP 버킷을 함께 쓴다."""
-    invite_attempts.clear()
-    yield
-    invite_attempts.clear()
+def _clear_attempts(pending_db):
+    """시도 카운터는 표(rate_event, #877)라 `pending_db` 가 테스트 트랜잭션에 묶고 끝나면 되돌린다
+    — 같은 IP 버킷을 함께 써도 테스트 사이에 새지 않는다."""
+    return pending_db
 
 
 @pytest.fixture
@@ -468,4 +467,37 @@ async def test_아이가_있는_보호자는_코드를_보기_전에_409_이고_
         res = await db_client.get(PREVIEW.format(code=path_code), headers=owner_headers)
         assert res.status_code == 409
         assert res.json()["error"]["code"] == "child_already_exists"
-    assert invite_attempts._failures == {}
+    counted = await session.scalar(
+        select(func.count())
+        .select_from(RateEvent)
+        .where(RateEvent.key == f"invite:parent:{owner_id}")
+    )
+    assert counted == 0
+
+
+async def test_수락이_커밋된_뒤_시도_돌려주기가_실패해도_200(
+    db_client, session, family, monkeypatch
+):
+    """수락은 이미 커밋됐다. 카운터 돌려주기(DB) 실패가 성공 응답을 500 으로 덮으면 안 된다
+    (#877 적대 검증). 덮으면 화면은 실패로 보이고, 다시 누르면 invite_used(409)다."""
+    from sqlalchemy.exc import OperationalError
+
+    from app.api import invite_attempts
+
+    child, _, owner_id, _, stranger_headers = family
+    await _seed_invite(session, child, owner_id)
+
+    async def broken_release(**_):
+        raise OperationalError("SELECT 1", {}, Exception("db down"))
+
+    monkeypatch.setattr(invite_attempts, "release", broken_release)
+
+    res = await db_client.post(
+        ACCEPT.format(code=CODE), json={"relation": "sitter", **ATTESTED}, headers=stranger_headers
+    )
+
+    linked = await session.scalar(
+        select(func.count()).select_from(ParentChild).where(ParentChild.child_id == child.id)
+    )
+    assert linked == 3  # owner · member · 새로 연결된 stranger — 연결은 커밋됐다
+    assert res.status_code == 200

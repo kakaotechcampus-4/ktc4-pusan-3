@@ -113,7 +113,7 @@
 
 P 에서 얕은 곳. **I7** 은 W 에서만 문다 — 인메모리 저장소는 승인 단계 밖에서 일정 행을 쓰지 않아, P 는 초안(`event_drafts`)과 케이스의 `never_say`("등록했어요")로만 본다(저장된 행 검사는 W). **I2** 의 기록 건수는 P 도 건수 포트(`count_records` — 운영과 같은 `RECORD_KINDS` 표로 InMemory 를 센다)를 넘겨서 판정한다. 건수가 실렸는지만 보고 숫자가 맞는지는 세는 포트를 믿는다.
 
-`부모의 말은 caregiver_observation` 이라는 §5 용어와 달리, 지금 코드는 보호자 자신의 말을 **아예 저장하지 않는다**(`memory/agent.py` `NOT_CHILD_RECORD`). I9 는 코드가 실제로 하는 쪽("저장 0행")으로 판정한다 (§12-2).
+기획의 `caregiver_observation` 분류와 달리, 지금 코드는 보호자 자신의 말을 **아예 저장하지 않는다**(`memory/agent.py` `NOT_CHILD_RECORD`). I9 는 코드가 실제로 하는 쪽("저장 0행")으로 판정한다 (§12-2).
 
 ### 3-3. 케이스 형식 — YAML
 
@@ -430,8 +430,8 @@ Makefile                               eval-smoke · eval · eval-week · eval-r
 
 ## 12. 하다가 발견한 문서 · 코드 어긋남
 
-1. **모델 호출 수** — NF-01 은 "최대 3회", 코드 `MAX_MODEL_CALLS=4`(Memory 포함, 넘으면 경고만). 그런데 이 값은 **Agent 진입 수**이고 실제 API 호출은 tool 루프 때문에 훨씬 많다(Memory 최대 7 · 도메인 6~8 · Curator 판정 · 임베딩). 비용은 실제 호출 수가 정한다 → 테크스펙 NF-01 갱신 필요, C 가 실제 수를 잰다.
-2. **`caregiver_observation`** — 루트 CLAUDE.md §2 · §5 의 용어인데 코드에 없다. 보호자 자신의 말은 저장하지 않는다(`NOT_CHILD_RECORD`). 용어를 코드에 맞출지 PM · 시하님 확인.
+1. **모델 호출 수** — ✅ 11-10 NF-01 을 코드에 맞춰 고쳤다(정상 4회 이하). 처음엔 NF-01 이 "최대 3회", 코드가 `MAX_MODEL_CALLS=4`(Memory 포함, 넘으면 경고만)였다. 그런데 이 값은 **Agent 진입 수**이고 실제 API 호출은 tool 루프 때문에 훨씬 많다(Memory 최대 7 · 도메인 6~8 · Curator 판정 · 임베딩). 비용은 실제 호출 수가 정한다 → 테크스펙 NF-01 갱신 필요, C 가 실제 수를 잰다.
+2. **`caregiver_observation`** — ✅ 11-10 루트 CLAUDE.md §2 · §5 를 코드에 맞춰 고쳤다. 그 이름은 코드에 없고, 보호자 자신의 말은 저장하지 않으며(`NOT_CHILD_RECORD`) 아이에 대한 말은 출처(`confidence_source`)를 단다.
 3. **케이스 3 미보유 판단** — 기능 없음 (§13-2).
 4. **전체 지출 차단기 없음** — 보호자별 한도만 있다. 크레딧을 넘으면 키가 지워지므로 전체 상한이 진짜 안전장치다 (#710 이후 BE 제안).
 5. **시각 고정이 안 되는 eval 6개** — `memory/test_continuation` · `test_delete_confirm` · `test_multirun` · `health/test_health_supervisor_e2e` · `test_health_reply_e2e` · `growth/test_growth_resume_live` 가 실제 시계를 쓴다. 날마다 결과가 달라질 수 있다 (고칠지 각 담당 판단).

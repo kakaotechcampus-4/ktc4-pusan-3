@@ -79,6 +79,8 @@ export function MemoryDetailSheet({
   const [stateBefore, setStateBefore] = useState<AffinityState | null>(null);
   /** "기록 지우기" 를 눌러 확인 띠가 열려 있다. */
   const [deleting, setDeleting] = useState(false);
+  /** 고치기 확인 패널이 열려 있다 (`CorrectionButtons` 의 `onAskingChange`). */
+  const [asking, setAsking] = useState(false);
   /** 고치기 버튼 ↔ 지우기 확인 띠는 같은 자리의 **교체**다 (디자인 시스템 §8). */
   const { ref: actionsRef, cue: cueActions } = useMotionCue<HTMLDivElement>();
   /**
@@ -126,6 +128,8 @@ export function MemoryDetailSheet({
             : target.affinity.state,
       );
       setResult(response);
+      // 성공하면 버튼 묶음이 새로 마운트돼 패널이 닫힌다 — 그 사이 걷었던 "닫기" 를 다시 세운다.
+      setAsking(false);
       // 교정 하나가 관찰·프로필·제안을 동시에 바꾼다. 아이 스코프를 통째로 무효화한다.
       void queryClient.invalidateQueries({ queryKey: qk.child(childId) });
     },
@@ -201,6 +205,7 @@ export function MemoryDetailSheet({
     setResult(null);
     setStateBefore(null);
     setDeleting(false);
+    setAsking(false);
     correct.reset();
     remove.reset();
     onClose();
@@ -211,10 +216,15 @@ export function MemoryDetailSheet({
       open={target !== null}
       onClose={requestClose}
       title={target?.type === "affinity" ? "기억 상세" : "기록 상세"}
+      // 🚨 **확인 패널이 열린 동안은 "닫기" 를 걷는다** (#868). 패널에 "그만두기" 가 있어서, 한 창에 둘이 서면
+      //    어느 쪽이 무엇을 하는지 헷갈린다. 시트를 닫는 길은 스크림 · ESC 로 남는다.
       footer={
-        <Button variant="secondary" block disabled={remove.isPending} onClick={requestClose}>
-          닫기
-        </Button>
+        // ⚠️ 이미 지워진 기록(404)이면 확인 띠에 "그만두기" 가 없다 — 그때는 닫기를 남긴다.
+        asking || (deleting && !isApiError(remove.error, "not_found")) ? undefined : (
+          <Button variant="secondary" block disabled={remove.isPending} onClick={requestClose}>
+            닫기
+          </Button>
+        )
       }
     >
       {target === null ? null : (
@@ -263,6 +273,7 @@ export function MemoryDetailSheet({
                 // 🚨 건강 기록은 판정 없이 지우기만 선다 (#764) — 서버가 건강 기록 고치기를 400 으로 막는다.
                 //    "이번만 그랬어요" 는 기억 집계에서 빼는 일인데 건강 기록은 기억에 묶이지 않아서다.
                 deleteOnly={observation !== null && isHealthObservation(observation)}
+                onAskingChange={setAsking}
               />
             )}
           </div>
@@ -275,7 +286,7 @@ export function MemoryDetailSheet({
             </p>
           ) : correct.isError ? (
             <p className="text-body-sm text-ink-muted" role="status">
-              지금은 고치지 못했어요. 잠시 뒤에 다시 눌러주세요.
+              지금은 고치지 못했어요. 잠시 뒤에 다시 눌러 주세요.
             </p>
           ) : null}
 
@@ -325,7 +336,8 @@ function CascadeResult({
           <p className="text-caption text-ink-muted">
             {stateBefore === affinity.state
               ? "기억의 상태는 바뀌지 않았어요."
-              : `기억이 ${STATE_LABEL[stateBefore]}에서 ${josa(STATE_LABEL[affinity.state], "으로/로")} 바뀌었어요.`}
+              : // 🚨 상태 이름이 문장형이라("여러 번 보였어요") 조사를 붙여 잇지 않는다 (#868 · #815 와 같은 이유).
+                `이 기억은 이제 '${STATE_LABEL[affinity.state]}' 상태예요.`}
           </p>
           <p className="text-caption text-ink-muted">{affinity.state_reason}</p>
         </div>
@@ -337,7 +349,7 @@ function CascadeResult({
           {profiles > 0 ? <li>기억 {profiles}건을 다시 계산했어요.</li> : null}
           {suggestions > 0 ? (
             <li>
-              {targetKind === "observation" ? "이 기록" : "이 기억"}을 쓰던 제안 {suggestions}건이
+              {targetKind === "observation" ? "이 기록" : "이 기억"}을 쓰던 추천 {suggestions}건이
               달라졌어요.
             </li>
           ) : null}
@@ -404,8 +416,8 @@ function DeleteConfirm({
         <p className="text-body text-ink">이 기록을 지울까요?</p>
         <p className="text-body-sm text-ink-muted mt-1">
           {hasAffinity
-            ? "목록에서 빠지고 제안의 근거로도 쓰이지 않아요. 묶인 기억은 다시 계산돼요."
-            : "목록에서 빠지고 제안의 근거로도 쓰이지 않아요."}
+            ? "목록에서 빠지고 추천의 근거로도 쓰이지 않아요. 묶인 기억은 다시 계산돼요."
+            : "목록에서 빠지고 추천의 근거로도 쓰이지 않아요."}
         </p>
         {/* 🚨 **대화의 삭제 카드(`record-tabs-card.tsx`)와 같은 말을 한다** (#748). 지우는 길이 둘이고
             서버가 하는 일은 같다 — 기록은 빠져도 지난 대화의 말풍선(`chat_turn.raw_text`)은 남는다.
@@ -420,7 +432,7 @@ function DeleteConfirm({
         <p className="text-body-sm text-ink-muted mt-3" role="status">
           {denied
             ? "이 아이의 기록을 지금은 지울 수 없어요."
-            : "지금은 지우지 못했어요. 잠시 뒤에 다시 눌러주세요."}
+            : "지금은 지우지 못했어요. 잠시 뒤에 다시 눌러 주세요."}
         </p>
       ) : null}
 
@@ -444,7 +456,7 @@ function DeleteConfirm({
 }
 
 /** 이미 고친 기록을 열었을 때 버튼 자리에 서는 한 덩이. 무엇으로 고쳤고 그래서 어떻게 되는지. */
-function CorrectedNote({ status }: { status: "stand_alone" | "inactive" }) {
+function CorrectedNote({ status }: { status: "stand_alone" }) {
   const { label, note } = CORRECTED_OBSERVATION[status];
   return (
     <div className="bg-surface-muted rounded-field p-3.5">
@@ -502,7 +514,7 @@ function ObservationDetail({
       </dl>
 
       <section>
-        <h3 className="text-section text-ink">이 기록을 쓴 제안</h3>
+        <h3 className="text-section text-ink">이 기록을 쓴 추천</h3>
         {/* 스켈레톤 → 내용은 같은 자리의 교체다 (디자인 시스템 §8). */}
         <Swap id={phaseOf(detail)}>
           {detail.isPending ? (
@@ -520,7 +532,7 @@ function ObservationDetail({
             //    해서 뺀 것처럼 읽힌다 — 아직 쓴 추천이 없다는 사실만 말한다.
             <p className="text-body-sm text-ink-muted mt-2">아직 이 기록을 쓴 추천이 없어요.</p>
           ) : (
-            <p className="text-body-sm text-ink-muted mt-2">아직 이 기록을 쓴 제안이 없어요.</p>
+            <p className="text-body-sm text-ink-muted mt-2">아직 이 기록을 쓴 추천이 없어요.</p>
           )}
         </Swap>
       </section>
@@ -595,8 +607,8 @@ function AffinityDetail({ affinity }: { affinity: Affinity }) {
           "프로필" 이 아니라 "기억" 이다 — 탭 이름과 카드 문구가 그렇게 부른다. */}
       {affinity.is_stale ? (
         <p className="text-body-sm text-ink-muted">
-          6개월이 지나서 이 기억만으로는 제안하지 않아요. 요즘도 그렇다면 홈에서 한 줄 적어 주세요.
-          새로 기록되면 다시 제안에 써요.
+          6개월이 지나서 이 기억만으로는 추천하지 않아요. 요즘도 그렇다면 홈에서 한 줄 적어 주세요.
+          새로 기록되면 다시 추천에 써요.
         </p>
       ) : null}
     </div>

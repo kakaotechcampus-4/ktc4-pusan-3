@@ -30,7 +30,7 @@ async function openAddSheet(page: import("@playwright/test").Page) {
 test.describe("알레르기 직접 등록은 승인 게이트 ㉡ (§2 안전)", () => {
   test("게이트 표식(caution 배너 · approve 버튼)이 서고 실수로 닫히지 않는다", async ({ page }) => {
     const sheet = await openAddSheet(page);
-    await expect(sheet.getByText("보호자가 확인한 것만 적어주세요")).toBeVisible();
+    await expect(sheet.getByText("보호자가 확인한 것만 적어 주세요")).toBeVisible();
     const marks = await gateMarks(page, "dialog[open]");
     expect(marks).toContain("approve 버튼: 확인했어요, 등록할게요");
     expect(marks.some((m) => m.startsWith("caution 색:"))).toBe(true);
@@ -79,15 +79,15 @@ test.describe("알레르기 직접 등록은 승인 게이트 ㉡ (§2 안전)",
       await sheet.getByRole("combobox", { name: "검사 등급" }).click();
       await expect(page.getByRole("option")).toHaveText([
         "모르겠어요",
-        "Class 0",
-        "Class 1",
-        "Class 2",
-        "Class 3",
-        "Class 4",
-        "Class 5",
-        "Class 6",
+        "0등급",
+        "1등급",
+        "2등급",
+        "3등급",
+        "4등급",
+        "5등급",
+        "6등급",
       ]);
-      await page.getByRole("option", { name: "Class 3" }).click();
+      await page.getByRole("option", { name: "3등급" }).click();
       await sheet.getByLabel("무엇인가요").fill("복숭아");
       await sheet.getByRole("button", { name: "확인했어요, 등록할게요" }).click();
       await expect(sheet).toBeHidden();
@@ -108,7 +108,7 @@ test.describe("알레르기 직접 등록은 승인 게이트 ㉡ (§2 안전)",
     }) => {
       const sheet = await openAddSheet(page);
       const hint =
-        "알레르기 혈액검사 결과를 0부터 6까지 나눈 등급이에요. 검사를 안 했거나 잘 모르면 모르겠어요를 골라 주세요. 몇 등급이든 식사 제안에서는 똑같이 빼요.";
+        "알레르기 혈액검사 결과를 0부터 6까지 나눈 등급이에요. 검사를 안 했거나 잘 모르면 모르겠어요를 골라 주세요. 몇 등급이든 식사 추천에서는 똑같이 빼요.";
       await expect(sheet.getByText(hint)).toBeVisible();
       await expect(sheet.getByRole("combobox", { name: "검사 등급" })).toHaveAccessibleDescription(
         hint,
@@ -126,7 +126,7 @@ test.describe("알레르기 직접 등록은 승인 게이트 ㉡ (§2 안전)",
     test("지병으로 바꾸면 선택지가 바뀌고, 앞서 고른 Class 는 남지 않는다", async ({ page }) => {
       const sheet = await openAddSheet(page);
       await sheet.getByRole("combobox", { name: "검사 등급" }).click();
-      await page.getByRole("option", { name: "Class 3" }).click();
+      await page.getByRole("option", { name: "3등급" }).click();
 
       await sheet.getByRole("combobox", { name: "종류" }).click();
       await page.getByRole("option", { name: "지병·만성질환" }).click();
@@ -330,7 +330,7 @@ test.describe("알레르기 고치기는 게이트 ㉡ 이고, 고치면 새 기
     const calls = recordApi(page);
     const sheet = await openEditSheet(page);
     // 목 픽스처의 우유: Class 3, 두드러기
-    await expect(sheet.getByRole("combobox", { name: "검사 등급" })).toContainText("Class 3");
+    await expect(sheet.getByRole("combobox", { name: "검사 등급" })).toContainText("3등급");
     await expect(sheet.getByLabel("증상 (선택)")).toHaveValue("두드러기");
 
     await sheet.getByLabel("메모 (선택)").fill("병원에서 다시 확인");

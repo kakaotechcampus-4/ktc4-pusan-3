@@ -182,7 +182,7 @@ function SettingsScreen() {
             href={`/child/${childId}/settings/help`}
             icon={LifeBuoy}
             title="자주 묻는 질문"
-            status="기록, 제안, 안전, 함께 보기"
+            status="기록, 추천, 안전, 함께 보기"
             {...FORWARD}
           />
           {/* 🚨 **앱 안에서 보내는 길이다** (#487). Google Play 정책이 불쾌한 AI 답 · 공동 기록 ·

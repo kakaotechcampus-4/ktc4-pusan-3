@@ -18,13 +18,13 @@
 | 패키지 관리 | uv |
 | 테스트 | pytest |
 | 린트·포맷 | ruff |
-| import 규칙 강제 | import-linter (CI, 예정 — #79 API CI 와 함께) |
+| import 규칙 강제 | 리뷰 (import-linter 는 아직 설정하지 않았다) |
 
 ---
 
 ## 레이어 경계
 
-import-linter 로 CI 에서 강제할 예정이다(#79 API CI 와 함께). 설정이 생기기 전까지는 리뷰가 막는다.
+import-linter 설정은 아직 없다 — API CI(`ci-api.yml`)에도 들어 있지 않다. 지금은 리뷰가 막는다.
 
 ### `app/rules/`
 - **허용**: 표준 라이브러리만

@@ -52,5 +52,8 @@ class AffinitiesResponse(ApiSchema):
     )
     safety: list[dict[str, Any]] = Field(
         default_factory=list,
-        description="알레르기 · 건강 정보. 첫 배포 범위 밖이라 늘 빈 배열이다 (#259)",
+        description=(
+            "알레르기 · 건강 정보 자리. 지금은 늘 빈 배열이다 — 알레르기 · 건강 정보는 "
+            "`GET /children/{cid}/health-safety` 가 낸다"
+        ),
     )

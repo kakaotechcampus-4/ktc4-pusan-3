@@ -155,11 +155,17 @@ function SuggestionsScreen() {
     | null
   >(null);
   /**
-   * 채택한 뒤에 알레르기로 막혀 일정으로 만들 수 없는 제안 (#859). 🚨 **채택을 풀지 않는다** — 서버에서 계속
+   * 채택한 뒤에 알레르기로 막혀 일정으로 만들 수 없는 제안 (#859 · 승인 시트에서 넣다가 막힌 것도 · #902). 🚨 **채택을 풀지 않는다** — 서버에서 계속
    *    `approved` 고 되돌리는 길이 없다. "고른 것" 에는 남고, 초안 만들기에 싣는 id 에서만 뺀다.
    *    같은 id 로 다시 누르면 같은 409 다.
    */
   const [draftBlockedIds, setDraftBlockedIds] = useState<string[]>([]);
+  /**
+   * 승인 시트에서 캘린더에 넣은 제안 (#902 리뷰). 🚨 다시 만들 때 뺀다 — 서버의 초안 만들기는 이미 넣은 제안을 막지
+   *    않아서, 빼지 않으면 그 제안이 초안으로 다시 서고 넣으면 `409 already_confirmed` 다. ⚠️ 화면 안에서만 산다 —
+   *    새로고침하면 되살린 채택에 다시 섞인다 (서버가 채택 목록에 "넣었는가" 를 싣지 않는다).
+   */
+  const [putIds, setPutIds] = useState<string[]>([]);
   const approving = useSheetTarget<CreateEventDraftsResponse>();
 
   const suggestions = useQuery({
@@ -373,7 +379,11 @@ function SuggestionsScreen() {
   /** 채택한 것 중 알레르기로 일정이 될 수 없게 된 것 (#859). 🚨 "고른 것" 에는 그대로 남는다. */
   const draftBlocked = (chosenIds ?? []).filter((id) => draftBlockedIds.includes(id));
   /** 초안 만들기에 싣는 id. 비면 일정으로 만들 것이 없다 — 묻지도 버튼을 세우지도 않는다. */
-  const draftIds = (chosenIds ?? []).filter((id) => !draftBlockedIds.includes(id));
+  const draftIds = (chosenIds ?? []).filter(
+    (id) => !draftBlockedIds.includes(id) && !putIds.includes(id),
+  );
+  /** 이번 화면에서 넣은 것이 있고 더 만들 것이 없다 — 단계를 지우고 그 사실만 말한다. */
+  const allPut = chosenIds !== null && draftIds.length === 0 && putIds.length > 0;
 
   return (
     <Screen
@@ -391,7 +401,7 @@ function SuggestionsScreen() {
             <ArrowLeft aria-hidden size={ICON_SIZE.md} strokeWidth={ICON_STROKE} />
           </IconButtonLink>
           <div className="min-w-0 flex-1">
-            <PageTitle>제안 후보</PageTitle>
+            <PageTitle>추천 후보</PageTitle>
             {/* 🚨 looked_at 앞에 가운뎃점을 하나 더 붙이지 않는다 — 이미 점으로 나뉜 메타
                 스트립이고, 띄운 가운뎃점은 줄당 하나까지다 (문서 §4). */}
             {/* 서버가 아직 무엇을 봤는지 내지 않으면 비어 온다 — 빈 줄을 그리지 않는다 (#249). */}
@@ -417,7 +427,7 @@ function SuggestionsScreen() {
         {data && data.guards.length > 0 ? (
           <Banner
             tone="danger"
-            title={`${[...blockedByGuard].map(domainLabel).join(", ")} 제안을 만들지 않았어요`}
+            title={`${[...blockedByGuard].map(domainLabel).join(", ")} 추천을 만들지 않았어요`}
           >
             {data.guards.map((guard) => (
               <p key={`${guard.code}:${guard.blocked_agents.join(",")}`}>{guard.message}</p>
@@ -427,7 +437,7 @@ function SuggestionsScreen() {
             {data.guards.some((guard) => guard.code === "safety_unknown") ? (
               <>
                 <p className="text-caption mt-1">
-                  알레르기를 알려주시면 식사 제안도 함께 준비해요.
+                  알레르기를 알려 주시면 식사 추천도 함께 준비해요.
                 </p>
                 <ButtonLink
                   href={`/child/${childId}/profile`}
@@ -455,7 +465,7 @@ function SuggestionsScreen() {
           <ConsentRequiredCard
             childId={childId}
             error={consentBlocked}
-            what="제안을 준비할 수 없어요."
+            what="추천을 준비할 수 없어요."
           />
         ) : suggestions.isError ? (
           // 🚨 llm_unavailable 을 기본값으로 대체하지 않는다. 실패했다고 화면에 말한다.
@@ -463,7 +473,7 @@ function SuggestionsScreen() {
             <p>
               {suggestions.error instanceof Error
                 ? suggestions.error.message
-                : "제안을 준비하지 못했어요."}
+                : "추천을 준비하지 못했어요."}
             </p>
             {/* 🚨 하루 한도는 다시 눌러도 같은 답이다 — 다시 시도를 세우지 않는다 (apps/web CLAUDE §3 에러) */}
             {isApiError(suggestions.error, "daily_input_limit") ? null : (
@@ -559,12 +569,12 @@ function SuggestionsScreen() {
               ) : null}
               <p className="text-body-sm text-ink mt-1">
                 {safetyNotice.kind === "approve_blocked"
-                  ? "그사이 알레르기로 등록된 식품이 들어간 제안이 있어서 고르지 못했어요. 그 제안을 빼고 다시 골라 주세요."
+                  ? "그사이 알레르기로 등록된 식품이 들어간 추천이 있어서 고르지 못했어요. 그 추천을 빼고 다시 골라 주세요."
                   : safetyNotice.items.length > 0
-                    ? `${josa(safetyNotice.items.join(", "), "이/가")} 들어간 제안은 고를 수 없어요. 다른 제안을 골라 주세요.`
+                    ? `${josa(safetyNotice.items.join(", "), "이/가")} 들어간 추천은 고를 수 없어요. 다른 추천을 골라 주세요.`
                     : // 🚨 이유를 단정하지 않는다. 화면이 모르는 검사일 수도, 어느 제안 것인지 몰라
                       //    전부 막은 알레르기일 수도 있다 (`SafetyResult.allergyItems` 머리말).
-                      "확인이 필요한 항목 때문에 고른 제안을 고르지 않았어요. 다른 제안을 골라 주세요."}
+                      "확인이 필요한 항목 때문에 고른 추천을 고르지 않았어요. 다른 추천을 골라 주세요."}
               </p>
             </div>
           </Card>
@@ -591,8 +601,8 @@ function SuggestionsScreen() {
               ) : null}
               <p className="text-body-sm text-ink mt-1">
                 {draftIds.length > 0
-                  ? "그사이 알레르기로 등록된 식품이 들어간 제안이 있어서 일정으로 만들지 않았어요. 그 제안을 빼고 다시 만들 수 있어요."
-                  : "그사이 알레르기로 등록된 식품이 들어간 제안이라 일정으로 만들 수 없어요."}
+                  ? "그사이 알레르기로 등록된 식품이 들어간 추천이 있어서 일정으로 만들지 않았어요. 그 추천을 빼고 다시 만들 수 있어요."
+                  : "그사이 알레르기로 등록된 식품이 들어간 추천이라 일정으로 만들 수 없어요."}
               </p>
             </div>
           </Card>
@@ -670,7 +680,17 @@ function SuggestionsScreen() {
                           `이 ${selectedIds.length}가지로 할게요`}
                   </Button>
                 </>
-              ) : draftIds.length === 0 ? null : (
+              ) : draftIds.length === 0 ? (
+                /* 🚨 넣은 제안은 다시 만들지 않는다 (#902 리뷰). 버튼 대신 넣었다는 사실만 말한다 — 막힌 것이 있으면
+                   위 안내 카드가 그 이유를 말한다. */
+                allPut ? (
+                  <p className="text-body-sm text-ink-muted mt-3">
+                    {draftBlocked.length > 0
+                      ? "넣을 수 있는 것은 캘린더에 넣었어요."
+                      : "고른 것을 캘린더에 넣었어요."}
+                  </p>
+                ) : null
+              ) : (
                 /* ── ② 일정으로도 만들까 ─────────────────────────────────────── */
                 /* 🚨 고른 것이 전부 알레르기로 막혔으면 묻지 않는다 (#859) — 만들 것이 없는데 버튼을 세우면
                    눌러도 같은 409 다. 이유는 위 안내 카드가 말한다. */
@@ -782,6 +802,10 @@ function SuggestionsScreen() {
           }}
           childId={childId}
           result={approving.target}
+          // 🚨 시트를 연 사이 등록된 알레르기 (#902) — 초안 만들기의 409 와 같은 자리에 쌓는다. 닫으면 위 안내가
+          //    서고, 다시 만들 때 그 제안이 빠진다. 같은 id 로 다시 만들면 초안 만들기가 같은 409 를 낸다.
+          onAllergenBlocked={(ids) => setDraftBlockedIds((prev) => [...new Set([...prev, ...ids])])}
+          onSuggestionsSubmitted={(ids) => setPutIds((prev) => [...new Set([...prev, ...ids])])}
         />
       ) : null}
 
@@ -864,7 +888,7 @@ function ScarcityCard({
         <p className="text-body-sm text-ink-muted mt-2">답을 저장하지 못했어요.</p>
       ) : answered ? (
         <p className="text-body-sm text-ink-muted mt-2">
-          기록으로 남겼어요. 다음 제안부터 근거로 써요.
+          기록으로 남겼어요. 다음 추천부터 근거로 써요.
         </p>
       ) : null}
 

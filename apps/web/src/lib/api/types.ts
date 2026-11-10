@@ -71,8 +71,11 @@ export type ConfidenceSource =
  * 교정 판정 (CLAUDE.md §5 Correction).
  *
  * 서버 `correction_verdict` 와 같은 4개다. **대상마다 쓸 수 있는 값이 다르다** — 기록은
- * `once_only` · `wrong`, 기억은 `need_more_observation` · `outdated` · `wrong`. 어긋나면 400.
+ * `once_only` 하나, 기억은 `need_more_observation` · `outdated` · `wrong`. 어긋나면 400.
  * 어떤 버튼을 보여줄지는 `CorrectionButtons` 의 표가 정한다.
+ * ⚠️ 기록의 `wrong` 은 기록 지우기로 바꿨다 (#736). 🚨 그래도 `wrong` 을 빼지 않는다 — 기억 고치기가 같은
+ *    타입으로 `wrong` 을 보낸다. 기록 상세의 지난 이력에는 이제 올 일이 없다(예전에 `wrong` 으로 고친 기록은
+ *    서버가 `deleted` 로 옮겨서 상세가 404 다).
  *
  * 🚨 **`confirm`(맞아요)은 없다.** 동의는 아무것도 바꾸지 않아서 서버가 이력으로도 남기지 않는다
  *    (docs/agents/data_model.md). 보내면 400 이고, 지난 이력에도 실려 오지 않는다 (#277).
@@ -88,8 +91,11 @@ interface ObservationBase {
   child_id: string;
   raw_text: string;
   confidence_source: ConfidenceSource;
-  /** `stand_alone` 은 "이번만 그랬어요" 를 누른 기록이다. 화면은 이 값으로 가르지 않는다. */
-  status: "active" | "inactive" | "stand_alone";
+  /**
+   * `stand_alone` 은 "이번만 그랬어요" 를 누른 기록이다.
+   * ⚠️ `inactive`(잘못된 기록)는 없다 — 서버가 남은 행을 `deleted` 로 옮기고 응답에서 뺐다 (#736).
+   */
+  status: "active" | "stand_alone";
   /** observed_range 하한 (YYYY-MM-DD). */
   observed_from: string;
   /** 상한. 무한대 금지. */
@@ -1502,8 +1508,9 @@ export interface PhotoEntry {
   /** 왜 확인이 필요한지. 서버가 만든 문구 — 프론트가 지어내지 않는다. */
   review_reason?: string;
   /**
-   * 🚨 **지난 일정인가** (#854). 읽은 시작 · 끝 · 마감 중 가장 늦은 것이 사진을 받은 날(한국 날짜)보다
-   *    앞이면 참이다. 날짜를 못 읽었으면 거짓. 화면은 이 값으로 "캘린더에 넣기" 를 켜 두지 않는다
+   * 🚨 **지난 항목인가** (#854 · #903). 견줄 날이 모두 사진을 받은 날(한국 날짜)보다 앞이면 참이다.
+   *    일정은 시작 · 끝(시작이 없으면 마감), 할 일 · 안내는 시작 · 끝 · 마감 중 가장 늦은 날과 견준다 —
+   *    "행사 11-08 · 신청 11-10 까지" 는 11-09 에 참이다. 날짜를 못 읽었으면 거짓. 화면은 이 값으로 "캘린더에 넣기" 를 켜 두지 않는다
    *    (`startsChecked`). 🚨 **화면이 오늘과 견주지 않는다** — 날짜 계산이라 서버가 한다 (§4).
    *    서버가 처음 읽은 날짜로 정한 값이라, 고치기에서 날짜를 바꿔도 다시 정하지 않는다. 처음 켜 둘지에만 쓴다.
    */

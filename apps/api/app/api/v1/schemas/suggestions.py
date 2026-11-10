@@ -86,8 +86,8 @@ class SuggestionOut(ApiSchema):
     reason: str | None = Field(
         default=None,
         description=(
-            "현재 문자열. Agent 연결(#323) 시 {why_this, why_now} 객체로 변경 예정. "
-            "일반 추천이면 05 의 basis 와 같은 문구"
+            "왜 이 추천인지 한두 문장. 한 칸이다 — `{why_this, why_now}` 로 나누지 않는다 "
+            "(Agent 공통규약 C-2). 일반 추천이면 05 의 basis 와 같은 문구. 없으면 null"
         ),
     )
     status: str
@@ -240,7 +240,9 @@ class GroupNoticeOut(ApiSchema):
 
 class SuggestionGroupOut(ApiSchema):
     agent: str
-    prompt: str | None = Field(default=None, description="무엇을 봤는지. 아직 비어 있다 (후속)")
+    prompt: str | None = Field(
+        default=None, description="무엇을 봤는지 한 줄. 지금은 채우지 않아 늘 null 이다"
+    )
     merges_into_one: bool | None = Field(
         default=None, description="채택하면 일정 초안이 한 건으로 묶이는 Agent"
     )

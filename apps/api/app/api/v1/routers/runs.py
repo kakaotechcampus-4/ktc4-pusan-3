@@ -22,13 +22,15 @@ async def stream_run_events(rid: str, parent: CurrentParent) -> StreamingRespons
     🚨 헤더 두 줄은 중간 서버용이다. nginx 는 기본으로 응답을 모았다가 보내서, 없으면 진행 단계가
        화면에 안 흐르고 20초 뒤 한꺼번에 도착한다(그땐 이미 "결과를 받지 못했어요").
     """
+    # 이 워커가 돌리는 run 이면 메모리 채널에서, 아니면 표에서 짧은 주기로 읽는다 (#877 4단계)
     channel = registry.get(rid)
+    view = await registry.lookup(rid)
     # 🚨 남의 run 은 없는 run 과 똑같이 404 다. 403 이면 "그 run_id 가 있다" 는 것부터 샌다.
     #    failed 에는 보호자가 적은 문장이 그대로 실려 있다.
-    if channel is None or channel.parent_id != parent.parent_id:
+    if view is None or view.parent_id != parent.parent_id:
         raise ApiError(404, "not_found", "진행 중인 처리를 찾을 수 없어요")
     return StreamingResponse(
-        sse.stream(channel),
+        sse.stream(channel) if channel is not None else sse.stream_remote(rid),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

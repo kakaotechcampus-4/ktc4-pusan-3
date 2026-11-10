@@ -37,7 +37,7 @@ api.icatch.ai.kr {
 }
 
 # dev (develop) — 팀만 연다 (#780). 열려 있으면 누구나 카카오로 가입해 실제 보호자 · 아이 정보가
-# 백업 없는 dev DB 에 쌓인다. 계정은 prod deploy/docker/.env 의 DEV_BASIC_AUTH_USER · _HASH (docs/ops/deploy-v1.md).
+# dev DB 에 쌓인다. 계정은 prod deploy/docker/.env 의 DEV_BASIC_AUTH_USER · _HASH (docs/ops/deploy-v1.md).
 # 🚨 하나만 비면 Caddyfile 검사가 실패하고, 둘 다 비면 검사는 통과하지만 계정 없는 basic_auth 가 된다.
 #    어느 쪽이든 deploy.sh 가 compose 가 해석한 값을 보고 prod 배포 전에 막는다 (해시가 깨진 것도).
 (dev_auth) {

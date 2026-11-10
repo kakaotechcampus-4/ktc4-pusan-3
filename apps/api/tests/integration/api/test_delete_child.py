@@ -170,20 +170,12 @@ async def test_same_key_after_success_is_blocked_by_access_check(
     assert again.json()["error"]["code"] == "child_access_denied"
 
 
-@pytest.fixture
-def clean_photo_runs():
-    photo_run._runs.clear()
-    yield
-    photo_run._runs.clear()
-
-
 async def test_delete_forgets_in_memory_entries_of_the_child(
     db_client: AsyncClient,
     session: AsyncSession,
     bearer: Bearer,
     cid: uuid.UUID,
     clean_in_memory_stores,
-    clean_photo_runs,
 ):
     """커밋 뒤 그 아이의 메모리 보관함(되묻기 · 05 다시 시도 · 사진 읽은 내용)을 비운다.
 
@@ -192,21 +184,28 @@ async def test_delete_forgets_in_memory_entries_of_the_child(
     headers, owner = bearer
     _, member = await issue_bearer(session, token="member")
     await link_child(session, parent_id=member, child_id=cid)
-    owners = stash_in_memory(parent_id=owner, child_id=cid)
-    members = stash_in_memory(parent_id=member, child_id=cid)
-    other_child = uuid.uuid4()
-    others = stash_in_memory(parent_id=member, child_id=other_child)
-    photo_run.open_photo_run(run_id="photo-of-child", parent_id=member, child_id=cid)
-    photo_run.open_photo_run(run_id="photo-of-other", parent_id=member, child_id=other_child)
+    owners = await stash_in_memory(parent_id=owner, child_id=cid)
+    members = await stash_in_memory(parent_id=member, child_id=cid)
+    # 다른 아이는 실제 행이어야 한다 — 되묻기 맥락은 표(run_hold)라 아이 FK 를 본다 (#877)
+    _, someone = await issue_bearer(session, token="someone")
+    other_child = await link_child(session, parent_id=someone)
+    others = await stash_in_memory(parent_id=someone, child_id=other_child)
+    for run_id, parent_id, child_id in (
+        ("photo-of-child", member, cid),
+        ("photo-of-other", someone, other_child),
+    ):
+        await photo_run.keep(
+            photo_run.open_photo_run(run_id=run_id, parent_id=parent_id, child_id=child_id)
+        )
 
     resp = await db_client.delete(_url(cid), headers={**headers, **_key()})
 
     assert resp.status_code == 204
-    assert in_memory(owners, parent_id=owner, child_id=cid) == (False, False)
-    assert in_memory(members, parent_id=member, child_id=cid) == (False, False)
-    assert in_memory(others, parent_id=member, child_id=other_child) == (True, True)
-    assert photo_run.get("photo-of-child", parent_id=member) is None
-    assert photo_run.get("photo-of-other", parent_id=member) is not None
+    assert await in_memory(owners, parent_id=owner, child_id=cid) == (False, False)
+    assert await in_memory(members, parent_id=member, child_id=cid) == (False, False)
+    assert await in_memory(others, parent_id=someone, child_id=other_child) == (True, True)
+    assert await photo_run.get("photo-of-child", parent_id=member) is None
+    assert await photo_run.get("photo-of-other", parent_id=someone) is not None
 
 
 async def test_delete_keeps_in_memory_entries_when_member_is_refused(
@@ -220,12 +219,12 @@ async def test_delete_keeps_in_memory_entries_when_member_is_refused(
     _, owner = bearer
     member_headers, member = await issue_bearer(session, token="member")
     await link_child(session, parent_id=member, child_id=cid)
-    owners = stash_in_memory(parent_id=owner, child_id=cid)
+    owners = await stash_in_memory(parent_id=owner, child_id=cid)
 
     resp = await db_client.delete(_url(cid), headers={**member_headers, **_key()})
 
     assert resp.status_code == 403
-    assert in_memory(owners, parent_id=owner, child_id=cid) == (True, True)
+    assert await in_memory(owners, parent_id=owner, child_id=cid) == (True, True)
 
 
 # ── 동시 요청 ─────────────────────────────────────────────────────────────────

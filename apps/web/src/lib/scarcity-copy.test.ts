@@ -15,7 +15,7 @@ describe("scarcityCopy — Agent별 기록 수와 이번 추천의 근거를 섞
 
     expect(copy.title).toBe("이번에는 일반 추천으로 골랐어요");
     expect(copy.body).toBe(
-      "식사 기록은 22건 있어요. 이번에는 아이 기록을 쓰지 않고, 제안마다 아래 적힌 기준으로 골랐어요.",
+      "식사 기록은 22건 있어요. 이번에는 아이 기록을 쓰지 않고, 추천마다 아래 적힌 기준으로 골랐어요.",
     );
     expect(all(copy)).not.toContain("999");
   });
@@ -78,8 +78,8 @@ describe("scarcityCopy — Agent별 기록 수와 이번 추천의 근거를 섞
     const some = scarcityCopy({ records: [], fallbackCount: 3, hasPersonal: false });
     const none = scarcityCopy({ records: [], fallbackCount: 0, hasPersonal: false });
 
-    expect(some.body).toBe("쌓인 기록은 3건 있어요. 근거 없이 제안을 만들지는 않을게요.");
-    expect(none.body).toBe("쌓인 기록이 아직 없어요. 근거 없이 제안을 만들지는 않을게요.");
+    expect(some.body).toBe("쌓인 기록은 3건 있어요. 근거 없이 추천을 만들지는 않을게요.");
+    expect(none.body).toBe("쌓인 기록이 아직 없어요. 근거 없이 추천을 만들지는 않을게요.");
   });
 
   it("질문이 있을 때만 다음 추천에 참고한다는 문장을 붙인다", () => {
@@ -95,7 +95,7 @@ describe("scarcityCopy — Agent별 기록 수와 이번 추천의 근거를 섞
       hasPersonal: false,
     });
 
-    expect(asked.body).toContain("하나만 알려 주시면 다음 제안에 참고할게요.");
+    expect(asked.body).toContain("하나만 알려 주시면 다음 추천에 참고할게요.");
     expect(quiet.body).not.toContain("하나만 알려 주시면");
   });
 
