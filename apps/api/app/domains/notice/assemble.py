@@ -324,7 +324,11 @@ def _item(
 
     if due.open_ended:
         # "10월 1일 10:00 ~ 선착순 마감" 의 10월 1일은 시작이다. 마감으로 두면 지난 마감으로 보인다
-        when = due if when.start is None else when
+        if when.start is None:
+            when = due
+        else:
+            # 일시 칸의 시작을 쓰고 이 칸은 버린다. 신청이 열리는 때가 사라지지 않게 원문을 남긴다
+            unshown.append(raw.due_text or "")
         due = NoticeWhen()
         if raw.handling == "todo":
             reasons.append("마감을 읽지 못했어요")

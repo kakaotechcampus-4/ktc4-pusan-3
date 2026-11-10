@@ -670,6 +670,47 @@ def test_적힌_대로는_시각_검사를_바꾸지_않는다():
     assert quiet.needs_review is False
 
 
+OPEN_DUE = "10월 1일(목) 10:00 ~ 선착순마감"
+
+
+@pytest.mark.parametrize("handling", ["calendar", "info"])
+def test_일시가_있으면_버리는_끝이_열린_마감을_적힌_대로_남긴다(handling):
+    # 일시 칸의 시작을 두고 마감 칸을 버린다. 신청이 열리는 때가 사라지지 않게 원문을 남긴다
+    event = {"handling": handling, "date_text": "11월 13일(금) 10:00"}
+    item = _build(_item(**event, due_text=f" {OPEN_DUE}  ")).items[0]
+    without = _build(_item(**event, due_text=None)).items[0]
+    assert item.due_at is None
+    assert _dates(item) == _dates(without)
+    assert item.review_reason == without.review_reason
+    assert _written(item) == [OPEN_DUE]
+
+
+def test_할_일의_끝이_열린_마감도_적힌_대로_남기고_확인은_그대로_묻는다():
+    raw = _item(handling="todo", date_text="10월 5일(월) 10:00", due_text=OPEN_DUE)
+    item = _build(raw).items[0]
+    # 할 일의 하루 날짜는 마감이 된다 — 전과 같다
+    assert item.due_at.astimezone(KST) == datetime(2026, 10, 5, 10, tzinfo=KST)
+    assert item.review_reason == "마감을 읽지 못했어요"
+    assert _written(item) == [OPEN_DUE]
+
+
+def test_일시가_없으면_끝이_열린_마감이_시작이라_적힌_대로는_없다():
+    item = _build(_item(handling="todo", date_text=None, due_text=OPEN_DUE)).items[0]
+    assert item.starts_at.astimezone(KST) == datetime(2026, 10, 1, 10, tzinfo=KST)
+    assert _written(item) == []
+
+
+def test_끝이_열린_마감을_모델이_이미_적었으면_한_줄만_남는다():
+    item = _build(
+        _item(
+            date_text="11월 13일(금) 10:00",
+            due_text=OPEN_DUE,
+            details=[ItemDetail(name="신청", value="10월 1일(목) 10:00~선착순 마감")],
+        )
+    ).items[0]
+    assert [(d.name, d.value) for d in item.details] == [("신청", "10월 1일(목) 10:00~선착순 마감")]
+
+
 def test_할_일의_7시는_되묻고_날짜만_남긴다():
     item = _build(_item(handling="todo", date_text="11월 6일(금) 7시까지")).items[0]
     assert item.needs_review is True
