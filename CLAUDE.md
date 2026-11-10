@@ -193,7 +193,7 @@
 │       │   │   ├── deps/     인증 · 권한 · 동의 검사
 │       │   │   ├── idempotency.py  Idempotency-Key 기억 — Redis, 없으면 프로세스 메모리 (같은 키 → 처음 응답 재생)
 │       │   │   ├── runs/     run 채널 · SSE · 백그라운드 러너 · Agent 이벤트 → 화면 이벤트 번역. v1/ 밖인 이유 — 계약서 버전과 무관하다
-│       │   │   │             🚨 run 채널 · 되묻기 맥락은 프로세스 메모리 — api 는 --workers 1 전제 (#134)
+│       │   │   │             🚨 api 는 아직 --workers 1 (#134). 되묻기 · 다시 시도 맥락 · 한도는 DB 로 옮겼고(#877), run 채널은 워커 메모리 + 표 미러다 — docs/ops/stateless-v1.md
 │       │   │   └── v1/       도메인 엔드포인트
 │       │   ├── domains/      도메인 모델 · 리포지토리 — 김명성
 │       │   ├── agents/       Agent (supervisor · memory · curator · food · activity · growth · health) — **내부 구조는 이시하가 결정**
