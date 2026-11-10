@@ -903,12 +903,12 @@ GPS 로 받는다 (09-28). 위치정보 법적 동의는 가입 화면에서 선
 
 ### 5-2. 기대값이 바뀌는 기존 테스트
 
-원인은 한 줄 — [`routing.py:60`](../../../apps/api/app/agents/supervisor/routing.py:60) `IMPLEMENTED_AGENTS` 에 `activity` 가 들어가는 것.
+원인은 한 줄 — [`routing.py:60`](../../../apps/api/app/agents/supervisor/routing.py#L60) `IMPLEMENTED_AGENTS` 에 `activity` 가 들어가는 것.
 
 | 대상 | 지금 | 구현 후 |
 | --- | --- | --- |
 | RC07 "이번 주말에 집에서 뭐 하고 놀면 좋을까?" | `unavailable_agents` 덕분에 `_did_anything()` 이 True | `unavailable=()` + `food_tasks=()` → **False → `Failed("unparsable")`**. 🚨 `_did_anything()` 수정 필수 |
-| **`stranded`** ([pipeline.py:261](../../../apps/api/app/agents/pipeline.py:261)) | activity 요청이 있으면 False | activity 만 있는 run 에서 **True** → Supervisor 재호출 · 모델 호출 1회 낭비 · `Rerouted` 오발신. **가장 조용히 깨지는 지점** |
+| **`stranded`** ([pipeline.py:261](../../../apps/api/app/agents/pipeline.py#L261)) | activity 요청이 있으면 False | activity 만 있는 run 에서 **True** → Supervisor 재호출 · 모델 호출 1회 낭비 · `Rerouted` 오발신. **가장 조용히 깨지는 지점** |
 | RC16 "저녁 메뉴랑 주말 놀이" | food 만 실행 | **food + activity 둘 다 실행** — 도메인 Agent 2개 동시 실행이 처음 |
 | RC17 "저녁 + 놀이 + 한글 공부" | activity `unavailable`, growth `dropped` | activity 실행, growth `dropped` |
 | `_judge` | "Food 는 food 조각만 받는다"만 검사 | Activity 에 다른 도메인 조각이 섞여도 안 잡힘 — 대칭 검사 추가 |

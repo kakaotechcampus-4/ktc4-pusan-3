@@ -11,7 +11,7 @@
 - 같은 키 재생은 새 입력이 아니다 — 세는 쪽(접수 창구)이 재생을 먼저 걸러 낸다.
 
 🚨 프로세스 메모리라 서버를 껐다 켜면 0 부터이고, --workers 2 이상이면 프로세스마다 따로다.
-   run 채널 · Idempotency 와 같은 전제다 (#134 — api 는 --workers 1).
+   run 채널과 같은 전제다 (#134 — api 는 --workers 1). Idempotency 키는 Redis 에 둔다.
 """
 
 from datetime import date, datetime
