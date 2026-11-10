@@ -1139,7 +1139,8 @@ describe("⑦ 상태 전이 · SSE 순서", () => {
 
 describe("⑦-2 도메인 Agent 결과 (#227)", () => {
   async function eventsOf(
-    scenario: "agent_readout" | "agent_question" | "agent_partial" | "agent_suggestions",
+    scenario:
+      "agent_readout" | "agent_question" | "agent_partial" | "agent_suggestions" | "agent_info",
   ) {
     setScenario(scenario);
     try {
@@ -1168,6 +1169,23 @@ describe("⑦-2 도메인 Agent 결과 (#227)", () => {
     },
   );
 
+  it("agent_info — 일반 정보 답은 추천 없이 readout 이고, 답에는 참고 줄이 하나 이상이다 (#574)", async () => {
+    const results = (await eventsOf("agent_info"))
+      .filter((e) => e.type === "agent_result")
+      .map((e) => e.data as AgentResultEvent);
+    expect(results).toHaveLength(1);
+    const [info] = results;
+    expect(info.task_type).toBe("info");
+    expect(info.suggestion_ids).toEqual([]);
+    const answer = info.readouts.find((r) => r.kind === "doc_answer");
+    expect(answer?.sources.length).toBeGreaterThan(0);
+    for (const doc of answer?.sources ?? []) {
+      // 🚨 CC BY 문서는 출처 표시가 이용 조건이다 — 기관 · 출처가 비면 안 된다
+      expect(doc.source_org).not.toBe("");
+      expect(doc.source_title).not.toBe("");
+    }
+  });
+
   it("🚨 결과는 키를 늘 싣는다 — 값이 없으면 null · 빈 배열이다 (서버 translate.py 와 같은 규칙)", async () => {
     for (const event of await eventsOf("agent_readout")) {
       if (event.type !== "agent_result") continue;
@@ -1192,6 +1210,7 @@ describe("⑦-2 도메인 Agent 결과 (#227)", () => {
           "code",
           "kind",
           "source_refs",
+          "sources",
           "title",
         ]);
       }

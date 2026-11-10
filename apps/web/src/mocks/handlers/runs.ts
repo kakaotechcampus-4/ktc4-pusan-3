@@ -208,6 +208,51 @@ const EMPTY_NOTICE_READOUT: AgentReadout = {
   authored_by: "code",
   code: "empty",
   source_refs: [],
+  sources: [],
+};
+
+/**
+ * 일반 정보 질문의 답 (#574). 서버 `common/doc_answer.readout.yaml` 의 기준 안내 + 모델 답 한 덩어리.
+ * 🚨 추천이 아니다 — `suggestion_ids` 가 비어 후보 카드 · 05 가 서지 않는다. 답 아래 참고 줄이 선다.
+ * 문서 행은 지어낸 값이다 (실제 시드 행의 제목을 옮기지 않는다).
+ */
+const INFO_RESULT: AgentResultEvent = {
+  agent: "growth",
+  task_type: "info",
+  status: "completed",
+  readouts: [
+    {
+      kind: "notice",
+      title: "",
+      body: "아이마다 속도가 달라서 나이별 기준은 알려드리지 않아요. 발달이 걱정되면 영유아 건강검진에서 확인해 보세요.",
+      authored_by: "code",
+      code: null,
+      source_refs: [],
+      sources: [],
+    },
+    {
+      kind: "doc_answer",
+      title: "만 3세 무렵 생활과 배움 · 일반 자료",
+      body: "계단을 오르며 하나씩 소리 내어 세어 볼 수 있어요. 놀이처럼 같이 해 보면 좋아요.",
+      authored_by: "model",
+      code: null,
+      source_refs: [],
+      sources: [
+        {
+          ref: { kind: "growth_doc", id: "00000000-0000-4000-8000-000000000574" },
+          title: "계단 오르며 수 세기",
+          source_org: "교육부",
+          source_title: "누리과정 해설서",
+          source_url: null,
+        },
+      ],
+    },
+  ],
+  question: null,
+  suggestion_ids: [],
+  kind: null,
+  reason: null,
+  record_count: null,
 };
 
 /** Agent 가 되묻는 한 줄 (`needs_observation`). Memory 의 `NOTE_QUESTION` 과 **다른 문장**이라 화면에서 갈린다. */
@@ -222,10 +267,19 @@ const AGENT_QUESTION = "요즘 주로 집 안에서 노는지 바깥에서 노�
  */
 async function* agentResultScript(
   runId: string,
-  scenario: "agent_readout" | "agent_question" | "agent_partial" | "agent_suggestions",
+  scenario:
+    "agent_readout" | "agent_question" | "agent_partial" | "agent_suggestions" | "agent_info",
 ): AsyncGenerator<Uint8Array> {
   yield frame("step", { index: 3, total: 3, label: "다음 행동을 준비하고 있어요" });
   await sleep(700);
+
+  if (scenario === "agent_info") {
+    // 일반 정보 답 (#574) — 추천 없이 readout 하나. 나머지 시나리오의 결과 표와 섞지 않는다
+    yield frame("agent_result", INFO_RESULT);
+    await sleep(400);
+    yield frame("done", { run_id: runId, model_calls: 1 });
+    return;
+  }
 
   const results: AgentResultEvent[] =
     scenario === "agent_suggestions"
@@ -257,6 +311,7 @@ async function* agentResultScript(
                 authored_by: "code",
                 code: "fewer",
                 source_refs: [],
+                sources: [],
               },
               {
                 // 서버 activity.readout.yaml 의 날씨 안내와 같은 글자 — code 가 없다
@@ -266,6 +321,7 @@ async function* agentResultScript(
                 authored_by: "code",
                 code: null,
                 source_refs: [],
+                sources: [],
               },
             ],
             question: null,
@@ -290,6 +346,7 @@ async function* agentResultScript(
                   authored_by: "code",
                   code: null,
                   source_refs: [],
+                  sources: [],
                 },
               ],
               question: null,
@@ -397,6 +454,7 @@ function healthReadout(kind: string, body: string, courseIds: string[] = []): Ag
     authored_by: "code",
     code: null,
     source_refs: courseIds.map((id) => ({ kind: "medication_schedule" as const, id })),
+    sources: [],
   };
 }
 
@@ -745,7 +803,8 @@ async function* runScript(runId: string): AsyncGenerator<Uint8Array> {
     scenario === "agent_readout" ||
     scenario === "agent_question" ||
     scenario === "agent_partial" ||
-    scenario === "agent_suggestions"
+    scenario === "agent_suggestions" ||
+    scenario === "agent_info"
   ) {
     yield* agentResultScript(runId, scenario);
     return;
