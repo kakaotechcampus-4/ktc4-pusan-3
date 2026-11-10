@@ -31,6 +31,7 @@ from uuid import UUID
 from app.agents.activity.events import MIN_EVENT_NAME, core_name, event_keys, open_on
 from app.agents.activity.readouts import (
     PLACE_NOTICE,
+    PLACE_NOTICE_CULTURE,
     PLACE_NOTICE_EVENT,
     PLACE_NOTICE_FACILITY,
     PLACE_NOTICE_UNDATED,
@@ -77,6 +78,7 @@ MIN_AVOIDED_LABEL = 2
 
 # 어린이놀이시설(키즈카페 · 육아종합지원센터) 장소의 출처. 이용료 확인 문구를 붙인다 (#516)
 FACILITY_SOURCE: PlaceSourceName = "kids_play_facility"
+CULTURE_SOURCE = "tour_culture"  # `culture.CULTURE_SOURCE` — culture 가 review 를 import 하지 않게
 
 # 아이 기록 근거가 0행이면 build() 가 reason 을 이 문구로 덮어쓴다 (kind="general").
 # 화면이 일반 추천임을 표시하고 쌓인 기록 건수를 함께 보여준다 (루트 §2).
@@ -115,6 +117,7 @@ class RejectReason(StrEnum):
     MIXED_PLACES = "mixed_places"
     INVENTED_FACILITY = "invented_facility"
     SHOWN_BEFORE = "shown_before"
+    INTEREST_NOT_IN_ACTIVITY = "interest_not_in_activity"
     DARK_PLAYGROUND = "dark_playground"
     BUILD = "build_rejected"
 
@@ -138,6 +141,11 @@ GUIDANCE: dict[RejectReason, str] = {
         "note 의 '어제도 · 또 · 늘 · 항상 · 좋아하는' 은 확정된 관심(tier 1)에만 쓴다."
     ),
     RejectReason.RECENT_DUPLICATE: "최근에 한 활동이다. 다른 활동으로 바꾼다.",
+    RejectReason.INTEREST_NOT_IN_ACTIVITY: (
+        "근거로 단 관심이 활동 내용(content)에 드러나지 않는다. 그 관심을 살린 활동이면 content 에 "
+        "드러나게 쓰고, 아니면 그 관심 기록을 근거에서 빼고 reason 에도 쓰지 않는다. 아이 기록 "
+        "근거가 남지 않으면 [예시] 문서 행을 근거로 단다."
+    ),
     RejectReason.SHOWN_BEFORE: (
         "앞에서 이미 보여 준 놀이 · 장소 · 행사다. 보호자가 다른 것을 원한다 — 다른 놀이 · 다른 "
         "장소 · 다른 행사로 바꾼다. 남은 것이 없으면 장소 없이 집에서 할 놀이로 낸다."
@@ -464,8 +472,39 @@ def _check(
     if months < TOGETHER_ONLY_BELOW_MONTH and candidate.caregiver_role != CaregiverRole.TOGETHER:
         return RejectReason.CAREGIVER_ROLE, (), None
 
+    # 확정 관심은 활동에 드러날 때만 근거다 — 억지로 이은 관심("야구를 좋아해서 민속예술제")과
+    # 엉뚱한 관심(자동차 놀이에 야구 기록)을 뺀다. 남은 근거로 낼 수 없으면 다시 쓰게 한다 (11-10)
+    loose = [subject for _, found in resolved if (subject := _interest_outside(found, candidate))]
+    if loose:
+        resolved = [
+            (pick, found) for pick, found in resolved if not _interest_outside(found, candidate)
+        ]
+        child_left = any(isinstance(found, RankedEvidence) for _, found in resolved)
+        reason_key = normalize_activity(candidate.reason)
+        if not resolved or (
+            child_left and any(normalize_activity(word) in reason_key for word in loose)
+        ):
+            return RejectReason.INTEREST_NOT_IN_ACTIVITY, (), None
+
     citations = tuple(_cite(found, note=pick.note) for pick, found in resolved)
     return None, citations, place
+
+
+def _interest_outside(
+    found: RankedEvidence | ActivityDocRow, candidate: ActivityCandidate
+) -> str | None:
+    """활동 내용에 드러나지 않은 확정 관심의 이름. 관심이 아니거나(관찰 · 문서 행) 기피면 None —
+    관찰은 그날 한 일이고, 기피는 피했다는 근거라 활동에 이름이 없는 게 맞다.
+
+    관심 이름의 낱말 하나라도 활동에 있으면 드러난 것으로 본다("블록 쌓기" ↔ "큰 블록으로 탑").
+    """
+    if not isinstance(found, RankedEvidence) or found.ref.kind != "profile_affinity":
+        return None
+    if found.polarity < 0:
+        return None
+    content = normalize_activity(candidate.content)
+    words = [normalize_activity(word) for word in found.subject.split()]
+    return None if any(word and word in content for word in words) else found.subject
 
 
 @dataclass(frozen=True)
@@ -631,6 +670,8 @@ def place_notice(place: PlaceRow | EventRow) -> str:
         return READOUTS.render(PLACE_NOTICE_EVENT).body
     if place.source == FACILITY_SOURCE:
         return READOUTS.render(PLACE_NOTICE_FACILITY).body
+    if place.source == CULTURE_SOURCE:
+        return READOUTS.render(PLACE_NOTICE_CULTURE).body
     if place.data_date is None:
         return READOUTS.render(PLACE_NOTICE_UNDATED).body
     return READOUTS.render(

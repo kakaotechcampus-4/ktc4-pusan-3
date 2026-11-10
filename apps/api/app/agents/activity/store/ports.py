@@ -26,7 +26,7 @@ Activity는 쓰기 포트가 없다 — 기록은 Memory가, 추천 저장은 �
 
 from dataclasses import dataclass, field
 from datetime import date, datetime
-from typing import TYPE_CHECKING, Literal, Protocol, get_args
+from typing import TYPE_CHECKING, Literal, Protocol, get_args, runtime_checkable
 from uuid import UUID
 
 from app.agents.activity.schemas.common import (
@@ -42,6 +42,7 @@ from app.agents.common.ports import (
     ConsentReader,
     SafetyLookupError,
 )
+from app.core.culture_raw import RawSite
 from app.core.event_raw import RawEvent, RawEventIntro
 from app.core.weather_raw import RawAdvisories, RawAir, RawForecast, WeatherGrid
 from app.core.weather_raw import RawAdvisoryRow as RawAdvisoryRow  # 다시 내보낸다
@@ -190,6 +191,9 @@ PLACE_TOP_K = 5
 # 바꾸면 마이그레이션의 CHECK 도 같이 고친다(테스트가 둘을 대조한다)
 PlaceSourceName = Literal["city_park", "kids_play_facility", "library"]
 PLACE_SOURCES: tuple[str, ...] = get_args(PlaceSourceName)
+# 적재하지 않고 바로 묻는 출처 — TourAPI 문화시설(박물관 · 과학관 · 체험관, `activity/culture.py`).
+# place 표에 없어서 위 CHECK 와 무관하다
+LiveSourceName = Literal["tour_culture"]
 
 
 @dataclass(frozen=True)
@@ -203,7 +207,7 @@ class PlaceRow:
     name: str
     category: PlaceCategory
     distance_m: int
-    source: PlaceSourceName
+    source: PlaceSourceName | LiveSourceName
     # 데이터기준일자 — 확인 문구 "공공데이터 기준 2026년 6월이에요" 의 달이다 (D9 · #516).
     # 🚨 모델에는 주지 않는다 — tool 결과는 이름 · 종류뿐이다(`tools/outing.py`)
     data_date: date | None
@@ -346,6 +350,14 @@ class PlaceSource(Protocol):
         `PLAYGROUND` 는 놀이터가 있는 공원(어린이공원 · 유희시설이 있는 공원)도 함께 찾는다.
         읽기에 실패하면 UpstreamUnavailable. 빈 목록을 대신 돌려주지 않는다.
         """
+        ...
+
+
+@runtime_checkable
+class CultureSource(Protocol):
+    async def sites(self, *, province: str) -> list[RawSite]:
+        """그 시 · 도의 문화시설 · 관광지 원문(TourAPI). 좌표를 받지 않는다 — 거리는 Activity 가
+        계산한다(`activity/culture.py`). 모르는 시 · 도 · 조회 실패는 UpstreamUnavailable."""
         ...
 
 

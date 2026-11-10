@@ -26,6 +26,7 @@ from app.agents.activity.events import (
     in_period,
     in_province,
     open_on,
+    period_tier,
     places_on,
     read_event,
 )
@@ -71,10 +72,12 @@ logger = logging.getLogger(__name__)
 # 위치가 없을 때 일몰을 계산하는 고정 기준점(대전 부근, 국토 가운데). 보호자 위치가 아니다
 SUNSET_REFERENCE = (36.35, 127.38)
 
-# 바깥 활동이 어려운 날(outdoor_ok=False)에도 찾을 수 있는 종류. 체험관(experience_center)은 싣는
-# 데이터가 아직 없어 넣지 않는다 — 넣으면 모델이 매번 빈 검색을 한다(#600 리뷰).
-# 데이터를 실을 때 더한다
-INDOOR_CATEGORIES = frozenset({PlaceCategory.LIBRARY, PlaceCategory.INDOOR_PLAYGROUND})
+# 바깥 활동이 어려운 날(outdoor_ok=False)에도 찾을 수 있는 종류. 체험관(experience_center)은
+# 박물관 · 과학관 · 체험관이다 — 적재하지 않고 TourAPI 시 · 도 목록에서 찾는다
+# (`activity/culture.py`)
+INDOOR_CATEGORIES = frozenset(
+    {PlaceCategory.LIBRARY, PlaceCategory.INDOOR_PLAYGROUND, PlaceCategory.EXPERIENCE_CENTER}
+)
 
 # 비는 시간을 계산하는 하루의 범위. 아이가 밖에서 놀 수 있는 시간대로 둔 잠정값이다 — eval 로
 # 조정한다. 오늘이면 지금 시각부터 센다
@@ -421,7 +424,7 @@ async def search_events(context: ActivityContext, args: SearchEventsArgs) -> Too
     ]
     if found and not fresh:
         return _no_new_events(context)
-    nearest = sorted(fresh, key=lambda pair: pair[0])[:EVENT_INTRO_LIMIT]
+    nearest = sorted(fresh, key=lambda pair: _event_order(context, *pair))[:EVENT_INTRO_LIMIT]
     intros = await asyncio.gather(
         *(_or_none(events.intro(content_id=event.content_id)) for _, event in nearest)
     )
@@ -466,6 +469,25 @@ async def search_events(context: ActivityContext, args: SearchEventsArgs) -> Too
         _EVENTS,
         events=[_event_result(row, _open_days(context, row.name, days)) for row in rows],
     )
+
+
+# 보호자 위치에서 찾을 때 "가까운 묶음" 의 경계. 이 안의 행사가 밖의 행사보다 먼저다 (잠정값)
+NEAR_EVENT_M = 10_000
+
+
+def _event_order(context: ActivityContext, distance: int, event: Event) -> tuple[int, ...]:
+    """행사를 소개정보 · 일정까지 읽을 순서.
+
+    - 보호자 위치에서 찾으면 거리가 뜻이 있다 — 가까운 묶음(`NEAR_EVENT_M`) 안이 먼저고, 묶음
+      안에서는 기간이 짧은 행사 → 가까운 순이다. 멀리 있는 짧은 행사가 1km 앞 행사를 앞지르지
+      않고(#856 리뷰), 1년 내내 하는 가까운 곳이 위를 다 차지하지도 않는다(#855).
+    - 보호자가 지역을 말했으면 거리는 그 지역 대표 지점에서 잰 값이라 보호자에게 뜻이 없다 —
+      기간이 짧은 행사 → 가까운 순이다.
+    """
+    tier = period_tier(event)
+    if context.state.area is not None:
+        return (tier, distance)
+    return (0 if distance <= NEAR_EVENT_M else 1, tier, distance)
 
 
 def _no_new_events(context: ActivityContext) -> ToolResult:
@@ -543,6 +565,7 @@ def _origin(
         )
     if not area_text or not area_text.strip():
         if context.outing_location is None:
+            context.state.location_missing = True
             return fail(
                 "query",
                 tool,

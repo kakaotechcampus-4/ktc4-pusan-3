@@ -585,3 +585,50 @@ class TestShownBefore:
         result = await search_events(ctx, SearchEventsArgs(day=DayLabel.TODAY))
 
         assert names(result) == ["다른 축제"]
+
+
+class TestOrder:
+    """읽는 순서 — 1년 내내 하는 곳은 다음에도 갈 수 있어 뒤로 미루되 빼지는 않는다.
+    보호자 위치에서 찾으면 가까운 묶음(10km)이 먼저다 (#856 리뷰)."""
+
+    async def test_가까운_묶음_안에서는_짧은_행사가_먼저다(self):
+        rows = [
+            raw("1", "상설 전시", km=1, start="20260101", end="20261231"),
+            raw("2", "두 달 축제", km=2, start="20261001", end="20261210"),
+            raw("3", "주말 축제", km=8, start="20261101", end="20261109"),
+        ]
+        ctx = await context(InMemoryEvents(rows))
+
+        result = await search_events(ctx, SearchEventsArgs(day=DayLabel.TODAY))
+
+        assert names(result) == ["주말 축제", "두 달 축제", "상설 전시"]
+
+    async def test_멀리_있는_짧은_행사는_가까운_상설_행사_뒤다(self):
+        rows = [
+            raw("1", "먼 주말 축제", km=18, start="20261101", end="20261109"),
+            raw("2", "상설 전시", km=1, start="20260101", end="20261231"),
+        ]
+        ctx = await context(InMemoryEvents(rows))
+
+        result = await search_events(ctx, SearchEventsArgs(day=DayLabel.TODAY))
+
+        assert names(result) == ["상설 전시", "먼 주말 축제"]
+
+    async def test_말한_지역에서는_거리보다_짧은_행사가_먼저다(self):
+        """지역을 말했으면 거리는 그 지역 대표 지점에서 잰 값이라 보호자에게 뜻이 없다."""
+        rows = [
+            raw(
+                "1",
+                "해운대 상설 전시",
+                km=1,
+                near=HAEUNDAE.location,
+                start="20260101",
+                end="20261231",
+            ),
+            raw("2", "해운대 주말 축제", km=15, near=HAEUNDAE.location),
+        ]
+        ctx = await area_context(InMemoryEvents(rows), location=HOME)
+
+        result = await search_events(ctx, SearchEventsArgs(day=DayLabel.TODAY, area="해운대"))
+
+        assert names(result) == ["해운대 주말 축제", "해운대 상설 전시"]
