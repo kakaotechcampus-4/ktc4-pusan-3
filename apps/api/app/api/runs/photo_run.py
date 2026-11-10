@@ -80,6 +80,19 @@ def _load(payload: dict) -> PhotoRun:
     return _RUN.validate_python(payload)
 
 
+def _readable(run_id: str, payload: dict) -> PhotoRun | None:
+    """못 읽으면(PhotoRun 모양을 바꾼 배포 뒤의 옛 행) None — 없는 run 과 같은 404 로 끝난다.
+
+    🚨 검증 오류의 글에 공지 원문이 실릴 수 있어 예외 종류만 남긴다 (#899 리뷰).
+       행은 30분 뒤 만료된다.
+    """
+    try:
+        return _load(payload)
+    except Exception as exc:
+        log.warning("사진 run %s 을 읽지 못했다 — %s", run_id, type(exc).__name__)
+        return None
+
+
 def open_photo_run(*, run_id: str, parent_id: uuid.UUID, child_id: uuid.UUID) -> PhotoRun:
     """빈 run 을 만든다. 표에는 읽기가 끝난 뒤 `keep` 이 넣는다 — 그 전 저장 요청은 404 다."""
     return PhotoRun(run_id, parent_id, child_id)
@@ -113,7 +126,7 @@ async def get(run_id: str, *, parent_id: uuid.UUID, now: datetime | None = None)
         payload = await get_hold(
             session, kind=_KIND, key=run_id, parent_id=parent_id, child_id=None, now=now
         )
-    return None if payload is None else _load(payload)
+    return None if payload is None else _readable(run_id, payload)
 
 
 async def lock(session: AsyncSession, run_id: str, *, parent_id: uuid.UUID) -> PhotoRun | None:
@@ -122,7 +135,7 @@ async def lock(session: AsyncSession, run_id: str, *, parent_id: uuid.UUID) -> P
     같은 run 을 잡으려는 다른 요청은 이 트랜잭션이 commit 할 때까지 기다린다.
     """
     row = await lock_hold(session, kind=_KIND, key=run_id, parent_id=parent_id)
-    return None if row is None else _load(row.payload)
+    return None if row is None else _readable(run_id, row.payload)
 
 
 async def finish(session: AsyncSession, run: PhotoRun, response: dict) -> None:

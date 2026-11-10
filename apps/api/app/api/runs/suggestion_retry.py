@@ -232,7 +232,14 @@ async def claim(
         await session.commit()
         if payload is None:
             return BUSY if await hold_in_use(session, **where) else None
-    return _TASK.validate_python(payload["task"])
+    try:
+        return _TASK.validate_python(payload["task"])
+    except Exception as exc:
+        # 🚨 RetryTask 모양을 바꾼 배포 뒤의 옛 행. 검증 오류의 글에 원문 조각이 실리니 종류만
+        #    남기고, 행을 지워 "이어서 할 수 없어요" 로 끝낸다 — 올리면 15분 동안 BUSY (#899 리뷰)
+        log.warning("run %s 의 05 실패 맥락을 읽지 못해 지운다 — %s", run_id, type(exc).__name__)
+        await drop(run_id=run_id, agent=agent)
+        return None
 
 
 async def release(*, run_id: str, agent: str) -> None:

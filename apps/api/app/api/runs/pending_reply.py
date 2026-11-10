@@ -80,6 +80,23 @@ async def put(
     return True
 
 
+async def _load(run_id: str, payload: dict | None) -> PendingMemoryContext | None:
+    """행을 맥락으로 되돌린다. 못 읽으면(맥락 모양을 바꾼 배포 뒤의 옛 행) 그 행을 지우고 None.
+
+    🚨 검증 오류의 글에는 원문 조각(input_value)이 실린다 — 예외 종류만 남기고 올리지 않는다.
+       올리면 처리되지 않은 예외로 글 전체가 로그에 찍히고, claim 이 켠 "사용 중" 이 15분 남는다
+       (#899 리뷰). 지금처럼 "이어서 확인할 수 없어요"(400)로 끝난다.
+    """
+    if payload is None:
+        return None
+    try:
+        return _ADAPTER.validate_python(payload)
+    except Exception as exc:
+        log.warning("run %s 의 되묻기 맥락을 읽지 못해 지운다 — %s", run_id, type(exc).__name__)
+        await drop(run_id)
+        return None
+
+
 async def get(
     *, run_id: str, parent_id: uuid.UUID, child_id: uuid.UUID, now: datetime | None = None
 ) -> PendingMemoryContext | None:
@@ -88,7 +105,7 @@ async def get(
         payload = await get_hold(
             session, kind=_KIND, key=run_id, parent_id=parent_id, child_id=child_id, now=now
         )
-    return None if payload is None else _ADAPTER.validate_python(payload)
+    return await _load(run_id, payload)
 
 
 async def claim(
@@ -104,7 +121,7 @@ async def claim(
             session, kind=_KIND, key=run_id, parent_id=parent_id, child_id=child_id, now=now
         )
         await session.commit()
-    return None if payload is None else _ADAPTER.validate_python(payload)
+    return await _load(run_id, payload)
 
 
 async def release(run_id: str) -> None:

@@ -27,6 +27,7 @@ from app.api.deps.db import SessionDep
 from app.api.errors import ApiError, ErrorEnvelope, constraint_name
 from app.api.quota import today_kst
 from app.api.runs import chat_record, pending_reply, registry, runner
+from app.api.runs.tidy import tidy
 from app.api.v1.schemas.children import (
     ChildProfile,
     CreateChildRequest,
@@ -520,11 +521,13 @@ async def create_input(
 ) -> CreateInputResponse:
     """접수만 한다 — 채널을 열고 러너를 뒤에서 띄우고 바로 202. Agent 를 기다리지 않는다.
 
-    순서: (아이 접근 확인 — 의존성) → 키 확인 → 재생 → 동의 읽기 → 맥락 확인 → 한도 →
-    맥락 찜하기 → 채널 열기 → 키 기억 → 러너 시작.
+    순서: (아이 접근 확인 — 의존성) → 키 확인 → 재생 → 동의 읽기 → 맥락 찜하기(확인과 표시가 한
+    문장) → 한도 → 채널 열기(표에 쓰일 때까지) → 키 기억 → 러너 시작. 찜한 뒤 러너가 뜨기 전에
+    무엇이 터지든 표시를 푼다.
     키를 러너보다 먼저 적어 두면 같은 키가 몇 ms 뒤에 또 와도 새 run이 아니라
     재생으로 흡수된다 (idempotency.py). 이어받기 맥락은 재생 뒤에 본다. 같은 키 재생은 이미 꺼낸
-    맥락으로 돈 run을 돌려받아야 하고, 400 을 받으면 안 된다. 찜하는 건 한도를 통과한 뒤다.
+    맥락으로 돈 run을 돌려받아야 하고, 400 을 받으면 안 된다. 늦게 온 답은 한도를 쓰기 전에
+    400 이다.
     재생할 run 이 failed 로 끝났으면 재생하지 않고 새 run 으로 받는다. 채널이 이미 지워졌으면
     대화 기록으로 끝났는지 알린다 (#538).
     """
@@ -648,6 +651,7 @@ async def create_input(
         runner.start(channel, job, raw_text=body.text, on_end=record.save)
     except BaseException:
         if continuation is not None and body.reply_to is not None:
-            await pending_reply.release(body.reply_to)
+            # 풀기가 실패해도 원래 응답(429 · 503 …)을 덮지 않는다 — 표시는 15분 뒤 만료된다
+            await tidy(pending_reply.release(body.reply_to), "되묻기 표시 풀기", body.reply_to)
         raise
     return CreateInputResponse(run_id=channel.run_id)

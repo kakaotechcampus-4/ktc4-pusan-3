@@ -23,6 +23,7 @@ from app.api.deps.child import AccessibleChild
 from app.api.deps.db import SessionDep
 from app.api.errors import ApiError, ErrorEnvelope, constraint_name
 from app.api.runs import suggestion_retry
+from app.api.runs.tidy import tidy
 from app.api.v1.health_consent import health_consent_required
 from app.api.v1.list_query import PageQueryDep
 from app.api.v1.reminder_check import check_reminder, reminder_out
@@ -710,10 +711,11 @@ async def create_suggestions(
         for a in claimed:
             if a in to_record:
                 continue  # 아래에서 그 칸을 기록으로 바로 덮는다
+            # 정리가 실패해도 응답을 덮지 않는다 — 남은 행은 만료 뒤 지워진다 (#899 리뷰)
             if a in settled:
-                await suggestion_retry.drop(run_id=run_id, agent=a)
+                await tidy(suggestion_retry.drop(run_id=run_id, agent=a), "05 맥락 지우기", run_id)
             else:
-                await suggestion_retry.release(run_id=run_id, agent=a)
+                await tidy(suggestion_retry.release(run_id=run_id, agent=a), "05 표시 풀기", run_id)
 
     # 다시 만든 결과를 맥락 자리에 남긴다 — 다음 요청이 같은 모양을 재생한다 (24시간).
     # 🚨 맥락을 지우지 않고 같은 칸을 바로 덮는다(upsert). 지운 뒤 넣으면 그 사이에 온 요청이
@@ -736,7 +738,9 @@ async def create_suggestions(
                     **owner,
                 )
         except BaseException:
-            await suggestion_retry.release(run_id=run_id, agent=o.agent)
+            await tidy(
+                suggestion_retry.release(run_id=run_id, agent=o.agent), "05 표시 풀기", run_id
+            )
             raise
 
     return await _suggestions_response(

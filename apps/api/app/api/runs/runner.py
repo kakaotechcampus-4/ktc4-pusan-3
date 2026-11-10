@@ -32,6 +32,7 @@ from app.api import agent_ports, idempotency
 from app.api.deps.db import background_session
 from app.api.runs import pending_reply, sse, suggestion_retry, translate
 from app.api.runs.registry import RunChannel
+from app.api.runs.tidy import tidy
 from app.core import llm_usage
 from app.core.logging_config import log_error_without_message
 from app.domains.consent.location_log import record_location_use_if_granted
@@ -348,9 +349,9 @@ def agent_job(
                 # 같은 질문에 다시 답할 수 있게 한다 — 15분은 처음 넣은 시각 그대로 센다.
                 if continuation is not None and reply_to is not None:
                     if channel.ended_with == "done" or channel.committed:
-                        await pending_reply.drop(reply_to)
+                        await tidy(pending_reply.drop(reply_to), "되묻기 맥락 지우기", reply_to)
                     else:
-                        await pending_reply.release(reply_to)
+                        await tidy(pending_reply.release(reply_to), "되묻기 표시 풀기", reply_to)
 
     async def job(channel: RunChannel) -> None:
         with llm_usage.attribute(parent_id=parent_id, run_id=channel.run_id, source="input"):

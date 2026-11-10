@@ -37,8 +37,10 @@ def upgrade() -> None:
         sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("in_use", sa.Boolean(), server_default=sa.text("false"), nullable=False),
         sa.CheckConstraint("kind IN ('pending_reply')", name="ck_run_hold_kind"),
-        sa.ForeignKeyConstraint(["child_id"], ["child.id"], ondelete="CASCADE"),
+        # 🚨 보호자 FK 를 먼저 만든다. FK 검사 트리거는 이름(만든 순서) 순으로 돌아 넣을 때 보호자 →
+        #    아이 순서로 잠근다 — 탈퇴(withdraw_parent)와 같은 순서라 겹쳐도 교착이 없다 (#899 리뷰)
         sa.ForeignKeyConstraint(["parent_id"], ["parent.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["child_id"], ["child.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("kind", "key"),
         prefixes=["UNLOGGED"],
     )
