@@ -35,8 +35,9 @@ limit() {
   local s="$1" rc=0
   shift
   if command -v timeout >/dev/null; then timeout -k 10 "$s" "$@" || rc=$?; else "$@" || rc=$?; fi
-  # 124 = TERM 으로 끊김, 137 = TERM 을 무시해 10초 뒤 KILL 로 끊김
-  case "$rc" in 124 | 137) log "시간 상한 ${s}초에 걸려 끊었다 (exit $rc) — $1 $2 $3" >&3 ;; esac
+  # 124 = TERM 으로 끊김, 137 = TERM 을 무시해 10초 뒤 KILL 로 끊김.
+  # ${*:1:3} — set -u 라 $3 을 바로 쓰면 인자가 적은 명령에서 여기서 죽고 fail(알림)까지 못 간다
+  case "$rc" in 124 | 137) log "시간 상한 ${s}초에 걸려 끊었다 (exit $rc) — ${*:1:3}" >&3 ;; esac
   return "$rc"
 }
 
@@ -106,11 +107,12 @@ limit 60 docker run -d --name "$TMPDB" --network none --memory 768m --memory-swa
   "$IMAGE" >/dev/null || fail "임시 DB 컨테이너 띄우기 실패 (exit $?)"
 
 # 초기화 중에도 소켓으로는 응답하므로 TCP(127.0.0.1)로 본다 — 초기화가 끝나야 TCP 를 연다.
-# 횟수가 아니라 마감 시각으로 센다 — 확인 한 번이 10초까지 걸리면 60번은 11분이다.
+# 횟수가 아니라 마감 시각으로 센다 — 확인 한 번이 멈추면 60번은 몇 분이다. pg_isready 는 자체 연결
+# 상한(3초)이 있어 limit 은 docker exec 가 멈출 때만 필요하다.
 ready=0
 deadline=$((SECONDS + 60))
 while [ "$SECONDS" -lt "$deadline" ]; do
-  if limit 10 docker exec "$TMPDB" pg_isready -q -h 127.0.0.1 -U restore -d restore; then
+  if limit 5 docker exec "$TMPDB" pg_isready -q -h 127.0.0.1 -U restore -d restore; then
     ready=1
     break
   fi
