@@ -43,8 +43,9 @@ def _log_timeout(ctx: ExceptionContext) -> None:
     """상한에 걸린 쿼리를 경로와 상관없이 한 줄로 남긴다 — API · Curator · 배치가 다 이 엔진을
     지난다. Curator 는 오류 종류만, API 처리기는 sqlstate 만 찍어서 상한에 걸린 건지 따로 안 보였다.
 
-    57014 는 시간 상한과 취소(pg_cancel_backend · 드라이버 취소)가 같은 코드라, Postgres 의 고정
-    문구("statement timeout")로 가른다.
+    57014 는 시간 상한과 취소(pg_cancel_backend · 드라이버 취소)가 같은 코드라, Postgres 오류
+    문구("statement timeout")로 가른다. 이 문구는 DB 의 lc_messages 를 따라 번역된다 — 우리 DB 는
+    기본값(en_US.utf8)이라 영어다. 바꾸면 시간 상한도 "취소됐다" 로 찍힌다.
     🚨 그 글도 쿼리 · 값도 싣지 않는다 (hide_parameters 와 같은 이유).
     """
     if getattr(ctx.original_exception, "sqlstate", None) != "57014":
