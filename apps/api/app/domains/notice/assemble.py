@@ -62,6 +62,9 @@ _LATIN_WORD = re.compile(r"[A-Za-z]{3,}")
 _LATIN_RUN = re.compile(r"[A-Za-z]+")
 _MONOLOGUE_WORDS = 2
 _OPEN_PAREN = re.compile(r"[(（]")
+# 규칙이 날짜 · 시각으로 쓰지 못해 화면에서 사라질 글을 이 이름표로 details 에 남긴다
+WRITTEN_AS = "적힌 대로"
+_MARKS = re.compile(r"[\W_]+")
 
 
 @dataclass(frozen=True)
@@ -274,6 +277,21 @@ def _details(raw: list[ItemDetail], hide: Callable[[str], str]) -> tuple[ItemDet
     return tuple(kept.values())[:MAX_DETAILS]
 
 
+def _written_as(texts: list[str], details: list[ItemDetail]) -> list[ItemDetail]:
+    """규칙이 날짜로 쓰지 못한 원문 글 → `적힌 대로` 줄. 값은 고치지 않는다.
+
+    모델이 이미 details 에 적었으면(공백 · 기호를 빼고 같은 글이 들어 있으면) 넣지 않는다.
+    """
+    have = [_MARKS.sub("", d.value) for d in details]
+    lines: list[ItemDetail] = []
+    for text in texts:
+        key = _MARKS.sub("", text)
+        if key and not any(key in value for value in have):
+            lines.append(ItemDetail(name=WRITTEN_AS, value=text.strip()))
+            have.append(key)
+    return lines
+
+
 def _item(
     raw: ExtractedItem,
     *,
@@ -286,6 +304,8 @@ def _item(
 ) -> NewNoticeItem:
     raw = _cleaned(raw)
     reasons: list[str] = []
+    # 날짜 칸에서 읽었지만 화면의 "언제" 줄에 나타나지 않게 된 원문 글
+    unshown: list[str] = []
 
     def hide(value: str) -> str:
         return mask_names(value, people=people, institutions=orgs)
@@ -334,6 +354,8 @@ def _item(
         # 하루이고, 9시는 시작이 아니라 그 일의 마감이다. 시작 시각을 지어내지 않는다
         due = when if due.start is None else due
         when = replace(when, start_time=None, end_time=None, until=False)
+        # 확인 화면은 일정의 시작만 보여 준다. "9시까지 등원" 이 사라지지 않게 원문을 남긴다
+        unshown.append(raw.date_text or "")
     elif when.until:
         # "4월 30일까지 시행" 을 시작으로 읽으면 없던 하루짜리 일정이 생긴다
         due = when if due.start is None else due
@@ -383,6 +405,9 @@ def _item(
         reasons.append("제목에 공지에 없는 글이 섞였어요")
     # details 는 보여 주기만 하는 값이라 줄을 버려도 일정 · 마감이 바뀌지 않는다
     details = [d for d in raw.details if not _monologue(d.value, words)]
+    # 위의 확인 검사 · 혼잣말 거르기가 끝난 뒤에 붙인다 — 날짜 칸의 원문이라 둘 다의 대상이 아니다.
+    # 앞에 두어 개수 상한에 잘리지 않게 한다
+    details = [*_written_as(unshown, details), *details]
 
     return NewNoticeItem(
         handling=NoticeItemHandling(raw.handling),

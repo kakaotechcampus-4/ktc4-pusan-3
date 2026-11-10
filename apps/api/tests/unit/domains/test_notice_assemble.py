@@ -580,6 +580,96 @@ def test_일정의_시각_까지는_그날_하루이고_시각은_마감이다(h
     assert item.due_all_day is False
 
 
+WRITTEN = "적힌 대로"
+
+
+def _written(item) -> list[str]:
+    return [d.value for d in item.details if d.name == WRITTEN]
+
+
+def test_일정의_시각_까지는_적힌_대로_details_에_남긴다():
+    # 확인 화면은 일정의 시작만 보여 준다. 9시는 마감으로 옮겨져 "9시까지 등원" 이 화면에서 사라진다
+    written = "11월 20일(금) 9시까지 등원"
+    plain = _build(_item(date_text="11월 20일(금)")).items[0]
+    item = _build(_item(date_text=f"  {written} ")).items[0]
+    assert item.all_day is True
+    assert item.starts_at.astimezone(KST).date() == date(2026, 11, 20)
+    assert item.due_at.astimezone(KST) == datetime(2026, 11, 20, 9, tzinfo=KST)
+    assert item.due_all_day is False
+    assert item.needs_review is plain.needs_review is False
+    assert _written(item) == [written]
+
+
+def test_일정의_마감_칸이_따로_있어도_까지_시각은_적힌_대로_남긴다():
+    # 마감 칸 값이 마감이 되고 9시는 어디에도 남지 않는다
+    item = _build(_item(date_text="11월 20일(금) 9시까지 등원", due_text="11월 13일(금)")).items[0]
+    assert item.due_at.astimezone(KST).date() == date(2026, 11, 13)
+    assert _written(item) == ["11월 20일(금) 9시까지 등원"]
+
+
+@pytest.mark.parametrize(
+    "written",
+    [
+        {"date_text": "11월 20일(금) 오전 10시"},  # 시작 시각이 화면에 보인다
+        {"date_text": "11월 20일(금)"},  # 시각이 없다
+        {"date_text": "11월 20일(금) 7시까지"},  # 7시는 비우고 되묻는다 — 옮긴 시각이 없다
+        {"date_text": "4월 30일까지 시행"},  # 날짜만 있는 까지는 마감으로 보인다
+    ],
+)
+def test_일정에서_시각이_화면에_보이거나_옮기지_않았으면_적힌_대로는_없다(written):
+    assert _written(_build(_item(**written)).items[0]) == []
+
+
+def test_할_일의_시각_까지는_마감으로_보여_적힌_대로를_넣지_않는다():
+    item = _build(_item(handling="todo", date_text="11월 20일(금) 9시까지 제출")).items[0]
+    assert item.due_at.astimezone(KST) == datetime(2026, 11, 20, 9, tzinfo=KST)
+    assert _written(item) == []
+
+
+def test_안내의_시각_까지는_화면에_보여_적힌_대로를_넣지_않는다():
+    # 안내는 시작이 없으면 마감 날짜 · 시각을 그대로 보여 준다
+    item = _build(_item(handling="info", date_text="11월 20일(금) 9시까지 등원")).items[0]
+    assert item.starts_at is None
+    assert item.due_at.astimezone(KST) == datetime(2026, 11, 20, 9, tzinfo=KST)
+    assert _written(item) == []
+
+
+def test_모델이_이미_details_에_적었으면_적힌_대로를_다시_넣지_않는다():
+    item = _build(
+        _item(
+            date_text="11월 20일(금) 9시까지 등원",
+            details=[ItemDetail(name="등원", value="11월20일 (금) 9시 까지 등원")],
+        )
+    ).items[0]
+    assert _written(item) == []
+    assert len(item.details) == 1
+
+
+def test_적힌_대로는_details_개수_상한에서도_남는다():
+    item = _build(
+        _item(
+            date_text="11월 20일(금) 9시까지 등원",
+            details=[ItemDetail(name=f"이름{i}", value=f"값{i}") for i in range(30)],
+        )
+    ).items[0]
+    assert len(item.details) == MAX_DETAILS
+    assert _written(item) == ["11월 20일(금) 9시까지 등원"]
+
+
+def test_적힌_대로는_시각_검사를_바꾸지_않는다():
+    # 종일 일정 + 이름이 "시간" 인 details 의 시각 → 확인 요청. 적힌 대로 줄은 이 검사를 타지 않는다
+    leaked = _build(
+        _item(
+            date_text="11월 20일(금) 9시까지 등원",
+            details=[ItemDetail(name="시간", value="9:30~12:00")],
+        )
+    ).items[0]
+    assert leaked.review_reason == "시각을 항목에 넣지 못했어요"
+    assert _written(leaked) == ["11월 20일(금) 9시까지 등원"]
+    quiet = _build(_item(date_text="11월 20일(금) 9시까지 등원")).items[0]
+    assert quiet.needs_review is False
+
+
 def test_할_일의_7시는_되묻고_날짜만_남긴다():
     item = _build(_item(handling="todo", date_text="11월 6일(금) 7시까지")).items[0]
     assert item.needs_review is True
