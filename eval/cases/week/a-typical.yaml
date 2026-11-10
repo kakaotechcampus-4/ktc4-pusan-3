@@ -102,7 +102,7 @@ steps:
     expect:
       route: { intent: mixed, include: [activity] }
       suggestions: { activity: any }
-    say: 오늘은 퍼즐을 재밌어했대. 내일은 뭐 하고 놀아 주지
+    say: 오늘은 블록보다 퍼즐을 더 재밌어했대. 내일은 뭐 하고 놀아 주지
 
   - at: tue 21:30
     by: mom
