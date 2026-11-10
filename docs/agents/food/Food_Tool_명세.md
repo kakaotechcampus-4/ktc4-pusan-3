@@ -469,6 +469,7 @@ Health 는 다르다 — 거기는 건강 그 자체라 동의 없이 전 라벨
 | `check.ask_food` | 어떤 음식인지 알려 주시면 등록된 알레르기와 겹치는지 볼게요. |
 | `meal.request_conflict` | 요청하신 {food}에는 등록해 두신 {what}와 겹치는 것이 있어서 그런 메뉴는 빼고 골랐어요. |
 | `meal.request_age_block` | 요청하신 {food}{은는} {when} 먹이지 않아서 빼고 골랐어요. |
+| | 붙어 쓴 영어 음식 이름(`peanut butter`)은 한 음식으로 한 줄만 말한다(`food_words.food_phrases`). 판정은 낱말 단위 그대로이고 한글 어절은 묶지 않는다 (#864) |
 | `meal.nutrient_basis` | 기록된 {days}일 중 {group} 나온 날은 {count}일이라, {group} 든 메뉴를 더 넣었어요. |
 | `meal.menu_source` | 추천 메뉴는 {org} 공개 레시피 중 재료가 검수된 메뉴예요. |
 | `meal.menu_generated` | 추천 메뉴는 공개 레시피에 없어 일반적인 메뉴로 골랐어요. |

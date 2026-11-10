@@ -229,7 +229,9 @@ function HomeScreen() {
                 🚨 이름 뒤에 "이" 를 붙이지 않는다 — 별명은 보호자가 정한 그대로 부르는 말이라
                 ("민준이" 처럼 이미 붙어 있거나 받침이 없으면) 붙인 글자가 이름을 바꾼다. */}
             <PageTitle>{nickname ? `오늘 ${nickname}` : "오늘"}</PageTitle>
-            {home.data ? (
+            {/* 🚨 빈 홈에서는 이 줄을 세우지 않는다 (#868) — 아래 빈 상태가 "쌓인 기록 0건" 을 말해서 0건이 두 번 섰다.
+                건수를 숨기는 것이 아니라 한 곳에서만 말한다 (`isEmptyHome`). */}
+            {home.data && isEmptyHome(home.data) ? null : home.data ? (
               <p className="text-body-sm text-ink-subtle mt-2">
                 지금까지 함께 쌓은 기록 {home.data.observation_count}건
               </p>
@@ -262,7 +264,7 @@ function HomeScreen() {
             />
           ) : home.isError ? (
             <CardFailed>
-              <p>홈을 불러오지 못했어요. 적어주신 기록은 그대로 있어요.</p>
+              <p>홈을 불러오지 못했어요. 적어 주신 기록은 그대로 있어요.</p>
               <Button
                 variant="tertiary"
                 size="compact"
@@ -338,13 +340,18 @@ function ChatEntryLink({ href, asking }: { href: string; asking: boolean }) {
   );
 }
 
+/** 기록도 기억도 없는 홈. 제목 아래 건수 줄과 본문 빈 상태가 같은 조건으로 갈린다. */
+function isEmptyHome(data: HomeResponse): boolean {
+  return data.highlight === null && data.observation_count === 0;
+}
+
 /**
  * @param medications 오늘 먹일 약 구역 (#563 리뷰). 🚨 **오늘 회차가 있을 때만** 홈 화면이 넘긴다 — 없으면 `null` 이고
  *   아무것도 그리지 않는다. 기록이 0건인 빈 홈에서도 먹일 약은 있을 수 있어서 빈 상태 위에 따로 세운다.
  */
 function HomeBody({ data, medications }: { data: HomeResponse; medications: ReactNode }) {
   // 🚨 기억이 0건이면 빈 상태다. 경보가 아니라 건수를 그대로 보여준다 (문서 §7).
-  if (data.highlight === null && data.observation_count === 0) {
+  if (isEmptyHome(data)) {
     return (
       <div className="flex flex-col gap-6">
         {medications}
@@ -352,7 +359,9 @@ function HomeBody({ data, medications }: { data: HomeResponse; medications: Reac
           data-tour="empty"
           icon={NotebookPen}
           title="아래에 한 줄 적으면 여기에 쌓여요"
-          description="기록이 쌓이기 전에도 제안은 받을 수 있어요. 그때는 일반 추천이라고 적어 드려요."
+          // 🚨 무엇을 적으면 되는지 예를 하나 든다 (#868). 빈 칸만 있으면 처음 온 보호자는 무엇을 쓸지 모른다.
+          //    예시는 지어낸 문장이다 — 실제 발화를 넣지 않는다 (최상위 §9).
+          description="‘오늘 저녁 브로콜리를 남겼어’처럼 있었던 일을 그대로 적어 주세요. 기록이 쌓이기 전에 받는 추천은 일반 추천이라고 적어 드려요."
           count={0}
         />
       </div>

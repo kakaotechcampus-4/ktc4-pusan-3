@@ -59,7 +59,7 @@ export function ToleratedFoodsRow({ childId, items }: { childId: string; items: 
         open={open && items.length > 0}
         onClose={() => setOpen(false)}
         title="괜찮았던 식품"
-        description="식사 제안을 고를 때 먹어 봤고 괜찮았다고 답한 식품이에요. 이 식품은 다시 묻지 않아요. 빼면 다음 제안에서 다시 물어요."
+        description="식사 추천을 고를 때 먹어 봤고 괜찮았다고 답한 식품이에요. 이 식품은 다시 묻지 않아요. 빼면 다음 추천에서 다시 물어요."
       >
         <ul className="border-line divide-line rounded-card bg-surface divide-y overflow-hidden border">
           {items.map((item) => (
@@ -123,7 +123,7 @@ function ToleratedFoodRow({ childId, item }: { childId: string; item: HealthSafe
         <div className="bg-surface-muted border-line flex flex-col gap-3 border-t px-4 py-3">
           {/* 🚨 무엇이 바뀌는지 먼저 말한다. 빼면 **더 묻는 쪽**이라 확인 버튼은 빨강이 아니다. */}
           <p className="text-body-sm text-ink-muted">
-            {josa(item.label, "을/를")} 빼면 다음 제안에서 다시 물어요.
+            {josa(item.label, "을/를")} 빼면 다음 추천에서 다시 물어요.
           </p>
           {remove.isError ? (
             <p role="status" className="text-body-sm text-ink-muted">

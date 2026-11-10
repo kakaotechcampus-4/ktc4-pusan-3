@@ -3,6 +3,8 @@
     $env:TEST_REPEAT=5; uv run python -m tests.eval.agents.supervisor.measure_history out.json
 
 평가셋은 `routing_cases.ALL_CASES` 전체, 케이스마다 `TEST_REPEAT` 회(기본 5).
+`MEASURE_PREFIX=RO` 처럼 케이스 id 앞머리(쉼표로 여럿)를 주면 그 케이스만 잰다 — 새로 들어온
+케이스만 바꾸기 전 · 후로 재는 행에 쓴다. 조건 칸에 그 평가셋을 적는다.
 같은 조건으로 바꾸기 전 · 후를 재야 하므로 평가셋 · 반복 · 모델을 두 행에서 같게 둔다.
 
 C1 (문서 §2): guarded 정답 구간을 guarded 로 못 받음 · GR 0건 규칙 위반.
@@ -22,6 +24,8 @@ from tests.eval.agents.routing_cases import ALL_CASES, growth_violations, score_
 
 REPEAT = int(os.getenv("TEST_REPEAT", "5"))
 CONCURRENCY = int(os.getenv("MEASURE_CONCURRENCY", "8"))
+PREFIXES = tuple(p for p in os.getenv("MEASURE_PREFIX", "").split(",") if p)
+CASES = tuple(c for c in ALL_CASES if not PREFIXES or c.case_id.startswith(PREFIXES))
 
 
 async def main(out: str) -> None:
@@ -51,8 +55,8 @@ async def main(out: str) -> None:
                 }
             )
 
-    await asyncio.gather(*(one(c, a) for c in ALL_CASES for a in range(1, REPEAT + 1)))
-    total = len(ALL_CASES)
+    await asyncio.gather(*(one(c, a) for c in CASES for a in range(1, REPEAT + 1)))
+    total = len(CASES)
     report = {
         "fingerprint": all_fingerprints()["supervisor"].short,
         "repeat": REPEAT,

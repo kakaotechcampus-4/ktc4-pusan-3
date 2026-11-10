@@ -409,6 +409,76 @@ describe("일정 초안", () => {
     });
   });
 
+  /**
+   * 🚨 **초안을 만든 뒤에 등록된 알레르기는 제출이 막는다** (서버 #902 · 문서 §3-8). 05 승인 시트는 열어 둔 채
+   *    나중에 넣을 수 있어서, 초안 만들기의 검사만으로는 그 틈을 못 막는다. 판정 · 응답은 초안 만들기와 같다.
+   */
+  describe("초안을 만든 뒤 등록된 알레르기 (#902)", () => {
+    afterEach(() => setScenario("default"));
+
+    const [blockedId, [allergen]] = Object.entries(suggestionAllergens).find(
+      ([id, a]) => a.length > 0 && suggestions.some((s) => s.id === id && s.agent === "food"),
+    )!;
+    const otherFood = () =>
+      suggestions.find(
+        (s) => s.agent === "food" && s.id !== blockedId && !suggestionAllergens[s.id]?.length,
+      )!.id;
+
+    it("🚨 걸린 제안이 든 제출은 넣지 않고 409 와 그 id 를 준다 — 걸리지 않은 제안은 따로 넣을 수 있다", async () => {
+      const other = otherFood();
+      await approveSuggestions("c1", { suggestion_ids: [blockedId, other] });
+      await createEventDrafts("c1", { suggestion_ids: [blockedId, other] });
+      await addHealthSafety("c1", { type: "allergy", label: allergen }, newIdempotencyKey());
+
+      const refused = await submitEventDraft(
+        "c1",
+        draftBody(blockedId, other),
+        newIdempotencyKey(),
+      ).catch((e: unknown) => e);
+      expect(isApiError(refused, "allergen_blocked")).toBe(true);
+      expect((refused as ApiError).status).toBe(409);
+      expect((refused as ApiError).detail).toEqual({ suggestion_ids: [blockedId] });
+
+      // 막힌 제출은 연결을 남기지 않는다 — 함께 실렸던 제안이 "이미 넣은 제안" 으로 막히지 않는다.
+      const put = await submitEventDraft("c1", draftBody(other), newIdempotencyKey());
+      expect(put.event.created_by).toBe("agent");
+    });
+
+    it("알레르기 항목이 든 제안인데 동의가 없으면 403, 항목이 없는 제출은 건강정보를 보지 않는다", async () => {
+      const other = otherFood();
+      await approveSuggestions("c1", { suggestion_ids: [blockedId, other] });
+      setScenario("consent");
+
+      const refused = await submitEventDraft("c1", draftBody(blockedId), newIdempotencyKey()).catch(
+        (e: unknown) => e,
+      );
+      expect(isApiError(refused, "consent_required")).toBe(true);
+      expect((refused as ApiError).status).toBe(403);
+
+      const put = await submitEventDraft("c1", draftBody(other), newIdempotencyKey());
+      expect(put.event.created_by).toBe("agent");
+    });
+
+    /**
+     * 🚨 403 · 409 는 기억하지 않는다 — 기억하면 다른 탭에서 동의를 켠 뒤 같은 버튼(같은 키)으로 넣어도 403 이 재생된다.
+     *    상태가 바뀌는 쪽으로 걸어야 "재생된 실패" 와 "다시 본 실패" 가 갈린다.
+     */
+    it("🚨 동의가 없어 막힌 제출은 기억하지 않아, 동의를 켠 뒤 같은 키로 보내면 들어간다", async () => {
+      await approveSuggestions("c1", { suggestion_ids: [blockedId] });
+      const key = newIdempotencyKey();
+
+      setScenario("consent");
+      const refused = await submitEventDraft("c1", draftBody(blockedId), key).catch(
+        (e: unknown) => e,
+      );
+      expect(isApiError(refused, "consent_required")).toBe(true);
+
+      setScenario("default");
+      const put = await submitEventDraft("c1", draftBody(blockedId), key);
+      expect(put.event.created_by).toBe("agent");
+    });
+  });
+
   it("🚨 제안 초안은 일자가 비어 있다 — 서버가 오늘로 채우지 않는다", async () => {
     const created = await makeDrafts([firstOf("food")]);
     for (const draft of created.drafts) expect(draft.event.starts_at).toBeNull();
@@ -1971,22 +2041,24 @@ describe("⑨ 교정은 지우지 않고 내린다", () => {
     expect((result.target as Observation).status).toBe("stand_alone");
   });
 
-  it("wrong 은 행을 지우지 않고 status 를 inactive 로 내린다", async () => {
+  // 🚨 기록의 "잘못된 기록" 은 기록 지우기로 바꿨다 (#736). 서버는 기록 `wrong` 을 400 으로 막는다.
+  it("기록에 wrong 을 보내면 400 이고 기록은 그대로다", async () => {
     const before = await api.get<ObservationsResponse>("/children/c1/observations");
     const target = before.items.find((item) => item.kind === "observation_education");
     expect(target).toBeDefined();
 
-    const result = await api.post<CorrectionResponse>("/corrections", {
-      target_ref: { kind: target!.kind, id: target!.id },
-      verdict: "wrong",
-      child_id: "c1",
-    });
+    const failure = await api
+      .post<CorrectionResponse>("/corrections", {
+        target_ref: { kind: target!.kind, id: target!.id },
+        verdict: "wrong",
+        child_id: "c1",
+      })
+      .catch((error: unknown) => error);
 
-    // 🚨 `target` 은 관찰이거나 프로필이다 — 어느 쪽인지는 `target_ref.kind` 가 정한다.
-    expect((result.target as Observation).status).toBe("inactive");
-    // 🚨 고친 기록도 목록에 남는다 — 서버는 deleted 만 뺀다 (#266). 화면이 status 로 갈라 그린다.
+    expect(isApiError(failure, "validation_failed")).toBe(true);
+    expect((failure as ApiError).status).toBe(400);
     const after = await api.get<ObservationsResponse>("/children/c1/observations");
-    expect(after.items.find((item) => item.id === target!.id)?.status).toBe("inactive");
+    expect(after.items.find((item) => item.id === target!.id)?.status).toBe("active");
     expect(after.total).toBe(before.total);
   });
 
@@ -2016,7 +2088,7 @@ describe("⑨ 교정은 지우지 않고 내린다", () => {
     await api.post<CorrectionResponse>("/corrections", body);
 
     const failure = await api
-      .post<CorrectionResponse>("/corrections", { ...body, verdict: "wrong" })
+      .post<CorrectionResponse>("/corrections", body)
       .catch((error: unknown) => error);
 
     expect(isApiError(failure, "already_corrected")).toBe(true);
@@ -2044,9 +2116,10 @@ describe("⑨ 교정은 지우지 않고 내린다", () => {
     expect(active.total).toBe(all.total - 1);
   });
 
-  it("모르는 status 는 400 이다", async () => {
+  // `inactive`(잘못된 기록)는 서버가 `deleted` 로 옮기고 필터에서도 뺐다 (#736).
+  it.each(["deleted", "inactive"])("모르는 status(%s)는 400 이다", async (status) => {
     const failure = await api
-      .get<ObservationsResponse>("/children/c1/observations", { query: { status: "deleted" } })
+      .get<ObservationsResponse>("/children/c1/observations", { query: { status } })
       .catch((error: unknown) => error);
 
     expect(isApiError(failure, "validation_failed")).toBe(true);
@@ -3555,13 +3628,13 @@ describe("㉓ 약관은 서버가 정한다 (#90 · #91 · #172)", () => {
   });
 
   /**
-   * 🚨 **전문이 없는 자리가 있다.** 아이 동의 둘은 아직 정본이 없어서 `html_path` 가 null 이고,
-   *    화면은 그때 전문 보기를 **숨긴다** — 대신 보여줄 글을 만들지 않는다.
+   * 실서버와 같은 판이다 (#868 · `register_policy_2026_11_03.py`). 한동안 `draft-1` 로 남아 목 화면이 실서버와
+   * 달랐다. 아이 동의 둘도 이제 정본이 있다 — `html_path` 가 null 일 때 전문 보기를 숨기는 것은 `lib/consent.test.ts` 가 건다.
    */
-  it("아이 동의 둘은 전문 주소가 비어 있다", async () => {
+  it("다섯 약관 모두 2026-11-03 판이고 전문 주소가 있다", async () => {
     const policies = await api.get<Policy[]>("/policies");
-    const empty = policies.filter((p) => p.html_path === null).map((p) => p.scope);
-    expect(empty).toEqual(["child_basic", "child_health"]);
+    expect(new Set(policies.map((p) => p.version))).toEqual(new Set(["2026-11-03"]));
+    expect(policies.filter((p) => p.html_path === null)).toEqual([]);
 
     const terms = policies.find((p) => p.scope === "service_terms");
     // `/api/v1` 아래 경로다 — 절대 주소는 기준 주소 + 이 값 (`policyHref`).
@@ -3593,7 +3666,7 @@ describe("㉓ 약관은 서버가 정한다 (#90 · #91 · #172)", () => {
         nickname: "테스트",
         birth_date: "2021-04-02",
         consents: [
-          { scope: "child_basic", policy_version: "draft-0" },
+          { scope: "child_basic", policy_version: "2026-11-03" },
           { scope: "child_health", policy_version: "옛날판" },
         ],
         guardian_attested: true,

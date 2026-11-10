@@ -103,7 +103,7 @@ function CreateChildScreen() {
   function submit() {
     const next: typeof errors = {};
     if (!nickname.trim()) next.nickname = "아이 별명을 알려 주세요.";
-    if (!birthDate) next.birthDate = "생일을 알려주세요.";
+    if (!birthDate) next.birthDate = "생일을 알려 주세요.";
     // 나이를 계산하는 게 아니라 입력을 막는 검사다 — 미래에 태어난 아이는 없다.
     // 달력이 이미 막지만, 값이 다른 경로로 들어올 수 있어 제출에서도 본다.
     else if (birthDate > toISODate(today())) next.birthDate = "생일은 오늘 이후일 수 없어요.";
@@ -133,7 +133,7 @@ function CreateChildScreen() {
           <PageTitle>누구 이야기를 모아둘까요</PageTitle>
         </div>
         <p className="text-body text-ink-muted mt-3">
-          별명과 생일만 먼저 알려주세요.
+          별명과 생일만 먼저 알려 주세요.
           <br />
           나머지는 다음 화면에서 골라도 되고, 건너뛰어도 돼요.
         </p>
@@ -151,7 +151,7 @@ function CreateChildScreen() {
         />
 
         <DateField
-          placeholder="생일을 골라주세요"
+          placeholder="생일을 골라 주세요"
           label="생일"
           hint="나이는 생일을 보고 계산해요."
           value={birthDate}

@@ -70,7 +70,8 @@ Owner: 고태영 (프론트 리드)
 - `mocks/` = MSW 목 서버, **개발 환경 전용** (§7).
   🚨 `mocks/native-bridge.ts` 는 **MSW 가 아니다** — 최근 사진은 API 가 아니라 셸이 꽂는 값이라
   서비스 워커가 가로챌 대상이 없다. 스위치만 목과 같은 것을 쓴다
-- ⚠️ `lib/features.ts` = **실서버에 아직 없는 기능의 진입점** (11-2 검사지 · #409. 11-3 복약은 #713, 08 사진으로 적기는 #723 에서 풀었다). 목이 뜨는 환경에서만 버튼이 선다. 서버에 엔드포인트가 생기면 그 항목을 지우고 호출부 조건을 걷어낸다
+- ⚠️ `lib/features.ts` = **실서버에 아직 없는 기능의 진입점** (11-2 검사지 · #409. 11-3 복약은 #713, 08 사진으로 적기는 #723 에서 풀었다). 목이 뜨는 환경에서만 버튼이 선다. 서버에 엔드포인트가 생기면 그 항목을 지우고 호출부 조건을 걷어낸다.
+  같은 파일의 `ACTIVITY_PHOTO_ENABLED`(08 아이 활동 사진 · #884)는 **목에서도 꺼 둔다** — 화면 문구가 11-03 결정과 반대라 문구를 고치기 전에는 켜지 않는다
 - ⚠️ `lib/store-policy.ts` = **스토어 정책 때문에 숨긴 기능** (11-3 복약 · 2026-11-07). 서버에는 있다. 🚨 켜기 전에 Google Play 건강 앱 선언부터 고친다 — 웹뷰라 웹 배포만으로 심사 없이 켜진다
 - `lib/native/` = **네이티브 셸이 꽂아 주는 것의 웹 쪽 약속.** 셸 구현은 `apps/mobile` 이다
 - `stores/` = Zustand, **클라이언트 상태만.** 서버 상태는 TanStack Query (§3).
@@ -105,7 +106,7 @@ Owner: 고태영 (프론트 리드)
 | └ 알레르기 구역은 11 과 **같은 컴포넌트**다 | `components/safety-section.tsx` |
 | 03 홈 | `/child/[childId]/home` |
 | 04 대화 (한 줄 입력의 결과 · 되묻기 답 · 하루 단위 · 지난 대화) | `/child/[childId]/chat?date=YYYY-MM-DD` (날짜는 09 에서 들어왔을 때만) |
-| 05 제안 후보 (고르기 → **채택** → 일정 만들기) | `/child/[childId]/suggestions?agents=food,activity&run=…` (03 홈 버튼에서 오면 `run` 대신 `prompt=…`) |
+| 05 추천 후보 (고르기 → **채택** → 일정 만들기) | `/child/[childId]/suggestions?agents=food,activity&run=…` (03 홈 버튼에서 오면 `run` 대신 `prompt=…`) |
 | 06 승인 | 05 위의 바텀시트 (라우트 없음) |
 | 07 기억 | `/child/[childId]/memories?tab=observations\|profile\|feedback` |
 | 08 사진으로 적기 | `/child/[childId]/photos?date=YYYY-MM-DD` (날짜를 싣는 화면은 지금 없다 · #503) |
@@ -132,7 +133,7 @@ Owner: 고태영 (프론트 리드)
 - 🚨 **서버가 준 `deeplink` 를 주소로 쓰지 않는다.** 어느 구역인지 힌트로만 쓴다
 - 🚨 **기기 뒤로가기는 웹뷰 히스토리다** ([`apps/mobile/App.tsx`](../mobile/App.tsx)). 그래서 04 · 11-1 · 11-2 는 시트가 아니라 라우트고,
   돌아가는 길은 `router.back()` 이 아니라 링크다
-  ⚠️ **하단 네비 네 칸(홈 · 캘린더 · 기록/기억 · 아이)은 예외다.** 셸이 히스토리로 가지 않고 두 번 눌러 종료한다
+  ⚠️ **하단 네비 네 칸(홈 · 캘린더 · 기록과 기억 · 아이 프로필)은 예외다.** 셸이 히스토리로 가지 않고 두 번 눌러 종료한다
   ([`back-press.ts`](../mobile/src/native/back-press.ts) · #462). 그 화면 안에서 `push` 로 쌓은 상태는 기기 뒤로가기로 되돌릴 수 없다 —
   탭 안의 보기 전환은 지금처럼 `replace` 로 둔다. 탭 경로(`child-nav.tsx` 의 `TABS`)를 바꾸면 셸도 같이 고친다
 

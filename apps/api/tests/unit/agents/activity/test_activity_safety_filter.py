@@ -6,6 +6,7 @@
 import pytest
 
 from app.agents.activity.doc_seed import activity_doc_seed
+from app.agents.activity.readouts import READOUTS
 from app.agents.activity.schemas.recommend import ActivityCandidate
 from app.agents.activity.store.ports import SafetyEntry
 from app.agents.activity.tools import filters
@@ -592,3 +593,17 @@ class TestFoods:
         result = check_food("간식 만들어 나눠 먹기", ("쿠키",))
 
         assert "밀" in result.allergens
+
+
+class TestRequestNoticesEnglishFood:
+    """#864 — 붙은 영어 음식 이름은 한 음식으로 한 번만 말한다."""
+
+    def test_영어_음식_이름은_한_줄이다(self):
+        notices = filters.request_notices(
+            ["Recommend a peanut butter activity for my kid"],
+            [allergy("땅콩"), allergy("우유")],
+            months=50,
+        )
+        assert [n.body for n in notices] == [
+            READOUTS.render("request.food_conflict", food="peanut butter", what="알레르기").body
+        ]

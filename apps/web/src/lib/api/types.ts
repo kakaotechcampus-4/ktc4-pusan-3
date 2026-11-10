@@ -71,8 +71,11 @@ export type ConfidenceSource =
  * 교정 판정 (CLAUDE.md §5 Correction).
  *
  * 서버 `correction_verdict` 와 같은 4개다. **대상마다 쓸 수 있는 값이 다르다** — 기록은
- * `once_only` · `wrong`, 기억은 `need_more_observation` · `outdated` · `wrong`. 어긋나면 400.
+ * `once_only` 하나, 기억은 `need_more_observation` · `outdated` · `wrong`. 어긋나면 400.
  * 어떤 버튼을 보여줄지는 `CorrectionButtons` 의 표가 정한다.
+ * ⚠️ 기록의 `wrong` 은 기록 지우기로 바꿨다 (#736). 🚨 그래도 `wrong` 을 빼지 않는다 — 기억 고치기가 같은
+ *    타입으로 `wrong` 을 보낸다. 기록 상세의 지난 이력에는 이제 올 일이 없다(예전에 `wrong` 으로 고친 기록은
+ *    서버가 `deleted` 로 옮겨서 상세가 404 다).
  *
  * 🚨 **`confirm`(맞아요)은 없다.** 동의는 아무것도 바꾸지 않아서 서버가 이력으로도 남기지 않는다
  *    (docs/agents/data_model.md). 보내면 400 이고, 지난 이력에도 실려 오지 않는다 (#277).
@@ -88,8 +91,11 @@ interface ObservationBase {
   child_id: string;
   raw_text: string;
   confidence_source: ConfidenceSource;
-  /** `stand_alone` 은 "이번만 그랬어요" 를 누른 기록이다. 화면은 이 값으로 가르지 않는다. */
-  status: "active" | "inactive" | "stand_alone";
+  /**
+   * `stand_alone` 은 "이번만 그랬어요" 를 누른 기록이다.
+   * ⚠️ `inactive`(잘못된 기록)는 없다 — 서버가 남은 행을 `deleted` 로 옮기고 응답에서 뺐다 (#736).
+   */
+  status: "active" | "stand_alone";
   /** observed_range 하한 (YYYY-MM-DD). */
   observed_from: string;
   /** 상한. 무한대 금지. */
