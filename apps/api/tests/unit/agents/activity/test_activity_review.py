@@ -93,6 +93,10 @@ def candidate(**kwargs) -> ActivityCandidate:
         reason="블록을 오래 가지고 놀았어요 오늘 오후가 비어 있어요",
         evidence=[{"id": str(BLOCKS), "note": "블록 쌓기를 즐겨 했어요"}],
     )
+    if "content" in kwargs and "evidence" not in kwargs:
+        # 내용만 바꾼 후보는 관찰 근거로 단다 — 확정 관심은 활동에 드러날 때만 근거다
+        base["evidence"] = [{"id": str(SAND), "note": "모래놀이를 즐겼어요"}]
+        base["reason"] = "모래놀이를 즐겼어요 오늘 오후가 비어 있어요"
     return ActivityCandidate.model_validate({**base, **kwargs})
 
 
@@ -555,7 +559,7 @@ class TestEvent:
 
     def test_행사는_근거에_넣지_않는다(self):
         (draft,) = review(candidate(content="모래 조각 구경하기", place_name=FEST)).drafts
-        assert [c.ref.id for c in draft.citations] == [BLOCKS]
+        assert [c.ref.id for c in draft.citations] == [SAND]
 
     @pytest.mark.parametrize("day", [DayLabel.TOMORROW, DayLabel.THIS_WEEKEND])
     def test_그날_열리지_않는_행사는_거절(self, day):
@@ -1014,8 +1018,8 @@ class TestFoods:
 
     def test_알레르기와_겹치지_않는_음식_이름은_이유에_써도_된다(self):
         personal = self.food(
-            reason="블록 놀이 뒤 바나나 간식이 잘 맞아요",
-            evidence=[{"id": str(BLOCKS), "note": "블록 쌓기를 즐겨 했어요"}],
+            reason="모래놀이 뒤 바나나 간식이 잘 맞아요",
+            evidence=[{"id": str(SAND), "note": "모래놀이를 즐겼어요"}],
         )
 
         assert review(personal, safety=[self.PEANUT]).rejections == ()
@@ -1486,3 +1490,80 @@ class TestDarkPlayground:
     def test_해가_진_뒤라도_오늘_공원은_통과한다(self):
         park = candidate(content="공원 산책", setting="outdoor", place_name=PARK, day="오늘")
         assert reason_of(review(park, dark_today=True)) is None
+
+
+class TestInterestInActivity:
+    """근거로 단 확정 관심은 활동 내용(content)에 드러나야 한다 — "야구를 좋아해서 민속예술제" 처럼
+    관심을 억지로 잇거나, 자동차 놀이에 야구 기록을 다는 일을 막는다 (11-10 측정)."""
+
+    BLOCK_PICK = {"id": str(BLOCKS), "note": "블록을 좋아해요"}
+
+    def test_관심이_활동에_드러나면_그대로_개인화다(self):
+        result = review(candidate(content="큰 블록으로 탑 쌓기", evidence=[self.BLOCK_PICK]))
+        assert result.rejections == ()
+        assert [c.ref.kind for c in result.drafts[0].citations] == ["profile_affinity"]
+
+    def test_관심이_활동에_없고_다른_근거도_없으면_다시_쓰게_한다(self):
+        result = review(
+            candidate(
+                content="종이비행기 접어 날리기", materials=["색종이"], evidence=[self.BLOCK_PICK]
+            )
+        )
+        assert reason_of(result) == RejectReason.INTEREST_NOT_IN_ACTIVITY
+        assert result.drafts == ()
+
+    def test_행사에_억지로_이은_관심은_빼고_문서_근거의_일반_추천으로_낸다(self):
+        result = review(
+            candidate(
+                content="축제에서 공연 구경하기",
+                setting="outdoor",
+                materials=[],
+                place_name=FEST,
+                reason="블록을 좋아해서 축제를 골랐어요",
+                evidence=[self.BLOCK_PICK, DOC_PICK],
+            ),
+            outdoor={"오늘": True},
+            outdoor_days={TODAY: True},
+        )
+        assert result.rejections == ()
+        draft = result.drafts[0]
+        assert [c.ref.kind for c in draft.citations] == ["activity_doc"]
+        assert draft.kind == "general"
+        assert "블록" not in draft.reason  # 일반 추천 문구로 덮인다
+
+    def test_다른_기록_근거가_남아도_이유가_뺀_관심을_말하면_다시_쓰게_한다(self):
+        sand = {"id": str(SAND), "note": "모래놀이를 즐겼어요"}
+        result = review(
+            candidate(
+                content="모래 위에 손바닥 찍기",
+                materials=["모래"],
+                reason="블록을 좋아하고 모래놀이도 즐겼어요",
+                evidence=[self.BLOCK_PICK, sand],
+            )
+        )
+        assert reason_of(result) == RejectReason.INTEREST_NOT_IN_ACTIVITY
+
+    def test_다른_기록_근거가_남고_이유에_관심이_없으면_관심만_뺀다(self):
+        sand = {"id": str(SAND), "note": "모래놀이를 즐겼어요"}
+        result = review(
+            candidate(
+                content="모래 위에 손바닥 찍기",
+                materials=["모래"],
+                reason="모래놀이를 즐겼어요",
+                evidence=[self.BLOCK_PICK, sand],
+            )
+        )
+        assert result.rejections == ()
+        assert [c.ref.id for c in result.drafts[0].citations] == [SAND]
+
+    def test_관찰_근거와_기피_근거는_보지_않는다(self):
+        """관찰(티어 3)은 그날 한 일이고, 기피는 피했다는 근거라 활동에 이름이 없는 게 맞다."""
+        water = {"id": str(WATER), "note": "물놀이를 싫어해요"}
+        result = review(
+            candidate(
+                content="큰 블록으로 탑 쌓기",
+                reason="물놀이를 싫어해서 블록 놀이로 골랐어요",
+                evidence=[self.BLOCK_PICK, water],
+            )
+        )
+        assert result.rejections == ()

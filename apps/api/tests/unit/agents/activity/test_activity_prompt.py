@@ -22,4 +22,5 @@ def test_구성은_요청을_먼저_따르고_막연할_때만_섞는다() -> No
     assert "확정 관심이 있으면 1개 이상은 그 관심을 살린다" in text
     assert "관심을 상관없는 후보에 억지로 잇지 않는다" in text
     assert "다른 기록(오늘 상태 · 최근에 한 놀이)에 맞추고" in text
+    assert "그 관심이 content 에 드러나야 한다" in text
     assert "search_events" not in text  # 행사 조회가 닫혀도 실리는 고정 구획이다
