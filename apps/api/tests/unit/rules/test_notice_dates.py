@@ -207,6 +207,33 @@ def test_월간표의_요일이_어긋나면_되묻는다():
     assert "요일" in when.review
 
 
+@pytest.mark.parametrize("base_month", [(11, 2026), (11, None)])
+def test_월간표의_일_없는_날짜도_요일이_맞으면_읽는다(base_month):
+    # "30(월) 자체 휴원" — 월간표는 "일" 없이 날짜에 요일 괄호만 붙인다
+    when = parse_notice_when("30(월)", anchor=ANCHOR, base_month=base_month)
+    assert when.start == date(2026, 11, 30)
+    assert when.review is None
+
+
+def test_월간표의_일_없는_기간도_읽는다():
+    when = parse_notice_when("16(월) ~ 18(수)", anchor=ANCHOR, base_month=(11, 2026))
+    assert (when.start, when.end) == (date(2026, 11, 16), date(2026, 11, 18))
+    assert when.review is None
+
+
+def test_월간표의_일_없는_날짜는_요일이_어긋나면_읽지_않는다():
+    # 숫자만으로는 날짜인지 모른다. 요일이 맞아야 날짜로 본다 — 어긋나면 전처럼 되묻는다
+    when = parse_notice_when("30(화)", anchor=ANCHOR, base_month=(11, 2026))
+    assert when.start is None
+    assert "읽지 못했어요" in when.review
+
+
+def test_기준_월이_없으면_일_없는_요일_날짜를_읽지_않는다():
+    when = parse_notice_when("30(월)", anchor=ANCHOR)
+    assert when.start is None
+    assert when.review
+
+
 def test_달력_칸의_숫자는_기준_월의_날짜다():
     when = parse_notice_when("3", anchor=ANCHOR, base_month=(11, None))
     assert when.start == date(2026, 11, 3)
