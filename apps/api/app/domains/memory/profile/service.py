@@ -40,9 +40,9 @@ _OBS_TO_TARGET: dict[str, CorrectionTargetKind] = {
     "routine": CorrectionTargetKind.OBSERVATION_ROUTINE,
 }
 
-# observation verdict → observation status 매핑
+# observation verdict → observation status 매핑. 기록용 wrong(→ inactive)은 없앴다 —
+# "잘못된 기록" 은 기록 지우기다 (#736).
 _VERDICT_TO_OBS_STATUS: dict[str, ObservationStatus] = {
-    "wrong": ObservationStatus.INACTIVE,
     "once_only": ObservationStatus.STAND_ALONE,
 }
 
@@ -115,6 +115,9 @@ async def recompute_profile(
         last_observed_on=profile.last_observed_on,
         today=today,
     )
+    # 방향을 모르는 기억(polarity NULL)은 확정하지 않는다 — confirmed 는 늘 -1 · 1 이다 (#287)
+    if next_state == "confirmed" and profile.polarity is None:
+        next_state = "candidate"
 
     if prev_state != next_state:
         profile.strength = apply_transition(profile.strength, prev_state, next_state)

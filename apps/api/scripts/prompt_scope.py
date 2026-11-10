@@ -114,7 +114,10 @@ SCOPES: tuple[Scope, ...] = (
             "apps/api/app/providers/notice/extractor.py",
             "apps/api/app/core/notice_extract.py",
         ),
-        tests=("tests/unit/providers/test_notice_*.py",),
+        tests=(
+            "tests/unit/providers/test_notice_*.py",
+            "tests/unit/scripts/test_notice_fixture_eval.py",
+        ),
     ),
 )
 

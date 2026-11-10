@@ -71,3 +71,22 @@ def test_request_mode_절과_경계_예시가_있다() -> None:
     # request_mode 절은 request 절 바로 뒤다
     assert prompt.index("[request — 도메인 Agent 요청]") < prompt.index("[request_mode")
     assert prompt.index("[request_mode") < prompt.index("[guarded")
+
+
+def test_재촉하는_말투와_서술어_없는_간식_요청_예시가_있다() -> None:
+    prompt = build_system_prompt()
+
+    assert '"야 밥 추천 해달라고" → request/food/meal_recommendation' in prompt
+    assert '"김밥 말고 다른 거 추천해달라니까" → request/food/meal_recommendation' in prompt
+    assert '"어린이집 끝나고 간식" → request/food/meal_recommendation' in prompt
+    request = prompt.split("[request")[1].split("[guarded")[0]
+    assert "재촉하는 말투" in request
+
+
+def test_다른_집_얘기와_또래_추천_예시가_있다() -> None:
+    prompt = build_system_prompt()
+    assert '"다른 엄마들은 뭐 먹여?" → out_of_scope' in prompt
+    assert '"또래 애들한테 좋은 아침 메뉴 추천해줘" → request/food/meal_recommendation' in prompt
+    assert '"친구네 집에서 피자 먹었어" → record/observe' in prompt
+    else_part = prompt.split("[out_of_scope · unclear]")[1].split("[예시]")[0]
+    assert "다른 집" in else_part

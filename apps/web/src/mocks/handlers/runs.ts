@@ -1,7 +1,13 @@
 import { http, HttpResponse } from "msw";
 
 import type { AgentReadout, AgentResultEvent } from "@/lib/api/sse";
-import type { Agent, CreateInputResponse, InputLocation, Observation } from "@/lib/api/types";
+import {
+  INPUT_TEXT_MAX_LENGTH,
+  type Agent,
+  type CreateInputResponse,
+  type InputLocation,
+  type Observation,
+} from "@/lib/api/types";
 // 서버는 서류 머리에 오늘을 `isoformat()` 으로 싣는다 (`YYYY-MM-DD`).
 import { toSeoulDateKey } from "@/lib/format";
 
@@ -182,7 +188,7 @@ const MAX_QUESTIONS = 4;
 
 /**
  * 상한에 닿은 run 이 질문 대신 내는 말 (서버 `pipeline.py` 의 `ASK_LIMIT_NOTE` 와 같은 글자).
- * 🚨 **"확인" 이 들어가지 않는다** — 저장 없이 message 만 온 run 의 제목이 "적어주신 말을 확인했어요" 라서
+ * 🚨 **"확인" 이 들어가지 않는다** — 저장 없이 message 만 온 run 의 제목이 "적어 주신 말을 확인했어요" 라서
  *    "확인하지 못해" 가 그 바로 아래 서면 한 화면에서 말이 부딪힌다 (#251 리뷰).
  */
 const ASK_LIMIT_NOTE = "필요한 정보가 다 모이지 않아 이번 내용은 저장하지 않았어요.";
@@ -1057,6 +1063,14 @@ export const runHandlers = [
           reply_to?: string;
           location?: InputLocation;
         };
+
+        // 서버는 핸들러보다 먼저 스키마로 거절한다 — 앞뒤 공백을 떼고 상한(500자)을 넘으면 400 (#867).
+        // 화면은 보내기 전에 막아서 여기 닿지 않는다. 목이 서버처럼 거절하는지는 `contract.test.ts` 가 건다.
+        if ([...body.text.trim()].length > INPUT_TEXT_MAX_LENGTH) {
+          return apiError(400, "validation_failed", "요청 형식이 올바르지 않아요", {
+            fields: ["text"],
+          });
+        }
 
         // 🚨 한도보다 **먼저 확인만** 한다 — 잘못된 `reply_to` 가 하루 횟수를 쓰면 안 된다.
         //    꺼내는(지우는) 것은 한도를 통과한 뒤다. 한도에 걸린 답이 맥락까지 잃으면 안 되기

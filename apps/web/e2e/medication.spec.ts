@@ -37,7 +37,7 @@ test.describe("med_draft — 복약 초안 (게이트 ㉡)", () => {
     await sendFromHome(page, "기침 시럽 하루 세 번 식후");
     const reply = turn(page, "기침 시럽 하루 세 번 식후");
 
-    await expect(reply.getByText("적어주신 말에서 복약 2건을 찾았어요.")).toBeVisible();
+    await expect(reply.getByText("적어 주신 말에서 복약 2건을 찾았어요.")).toBeVisible();
     await reply.getByRole("button", { name: "확인하고 넣기" }).click();
 
     const sheet = page.getByRole("dialog", { name: "찾은 복약" });
@@ -50,7 +50,7 @@ test.describe("med_draft — 복약 초안 (게이트 ㉡)", () => {
     // 🚨 기간이 비어 왔다 — 오늘로 채우지 않고 잠근다.
     const submit = sheet.getByRole("button", { name: "확인했어요, 복약 일정에 넣을게요" });
     await expect(submit).toBeDisabled();
-    await expect(sheet.getByText(/언제까지 먹이는지 골라주셔야 넣을 수 있어요/)).toBeVisible();
+    await expect(sheet.getByText(/언제까지 먹이는지 골라 주셔야 넣을 수 있어요/)).toBeVisible();
     expect(await gateMarks(page, "dialog[open]")).toContain(
       "approve 버튼: 확인했어요, 복약 일정에 넣을게요",
     );

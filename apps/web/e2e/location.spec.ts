@@ -165,7 +165,7 @@ test.describe("놀이 추천 아래 위치 안내", () => {
     await page.getByRole("textbox", { name: "오늘 있었던 일" }).fill(text);
     await page.getByRole("button", { name: "이 이야기 남기기" }).click();
     await expect(
-      page.getByRole("listitem").filter({ hasText: text }).getByText("제안 보기").first(),
+      page.getByRole("listitem").filter({ hasText: text }).getByText("추천 보기").first(),
     ).toBeVisible();
   }
 

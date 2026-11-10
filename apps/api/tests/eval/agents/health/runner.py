@@ -45,6 +45,7 @@ class _Recorder:
     def __init__(self, inner: Any) -> None:
         self._inner = inner
         self.messages: list[dict] = []
+        self.tool_names: list[str] = []  # 모델이 부른 tool — 금지 tool 판정이 읽는다 (#816)
 
     async def chat(self, messages, **kwargs):
         # loop 가 messages 를 이어 쓰므로 부를 때마다 처음부터 다시 담긴다 — 판정은 중복을
@@ -54,7 +55,10 @@ class _Recorder:
             for m in messages
             if m.get("role") in {"system", "tool"}
         )
-        return await self._inner.chat(messages, **kwargs)
+        response = await self._inner.chat(messages, **kwargs)
+        for tool_call in getattr(response.message, "tool_calls", None) or []:
+            self.tool_names.append(tool_call.function.name)
+        return response
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._inner, name)
@@ -110,6 +114,7 @@ async def run_case(case: Case, *, client: Any | None) -> Ran:
         elapsed_ms=elapsed_ms,
         turns=tuple(turns),
         model_inputs=tuple(recorder.messages) if recorder is not None else (),
+        tools=tuple(recorder.tool_names) if recorder is not None else (),
     )
 
 

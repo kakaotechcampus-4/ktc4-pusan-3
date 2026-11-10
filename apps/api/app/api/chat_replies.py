@@ -29,7 +29,9 @@
 
 from typing import Annotated, Any, Literal, get_args
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
+from pydantic import ConfigDict, Field, TypeAdapter
+
+from app.api.schema_base import ApiSchema
 
 ScreenRefKind = Literal["medication_schedule"]
 SCREEN_REF_KINDS: frozenset[str] = frozenset(get_args(ScreenRefKind))
@@ -40,7 +42,7 @@ SSE(`runs/translate.py`)와 지난 대화(`StoredReadout`)가 같은 기준을 �
 """
 
 
-class _Reply(BaseModel):
+class _Reply(ApiSchema):
     model_config = ConfigDict(extra="ignore")
 
 

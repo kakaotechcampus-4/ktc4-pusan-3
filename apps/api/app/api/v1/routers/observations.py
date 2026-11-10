@@ -49,7 +49,7 @@ log = logging.getLogger(__name__)
 router = APIRouter()
 
 AgentFilter = Literal["food", "activity", "growth", "health"]
-StatusFilter = Literal["active", "stand_alone", "inactive"]
+StatusFilter = Literal["active", "stand_alone"]
 
 # 화면의 분류(Agent) → 읽을 관찰 표.
 _DOMAINS_BY_AGENT: dict[str, tuple[ObservationDomain, ...]] = {
@@ -58,12 +58,9 @@ _DOMAINS_BY_AGENT: dict[str, tuple[ObservationDomain, ...]] = {
     "growth": (ObservationDomain.EDUCATION, ObservationDomain.ROUTINE),
     "health": (ObservationDomain.HEALTH,),
 }
-# 목록에 보이는 상태. 보호자가 고친 기록(이번만 · 잘못된 기록)도 남는다 — deleted 만 빠진다.
-LISTED_STATUSES = (
-    ObservationStatus.ACTIVE,
-    ObservationStatus.STAND_ALONE,
-    ObservationStatus.INACTIVE,
-)
+# 목록에 보이는 상태. "이번만 그랬어요" 로 고친 기록도 남는다 — deleted 만 빠진다.
+# inactive(예전 "잘못된 기록")는 기록 지우기로 바꾸면서 남은 행을 deleted 로 옮겼다 (#736).
+LISTED_STATUSES = (ObservationStatus.ACTIVE, ObservationStatus.STAND_ALONE)
 # 기록 탭 · 캘린더가 보여 주는 표. 다섯 종류 모두다 (#764).
 VISIBLE_DOMAINS = (
     ObservationDomain.FOOD,
@@ -92,7 +89,7 @@ async def list_observations(
     증상을 본다(화면 줄 제목과 같은 말).
     필터를 건 건수가 `total` 이다. 항목은 `kind` 로 모양이 갈린다 — `observation_health` 는
     `ObservationHealthOut` 이다.
-    status 를 주면 그 상태만, 주지 않으면 세 상태 모두다.
+    status 를 주면 그 상태만, 주지 않으면 두 상태 모두다.
     """
     domains = _DOMAINS_BY_AGENT[domain] if domain else VISIBLE_DOMAINS
     page = await page_observations(
@@ -186,7 +183,7 @@ async def delete_observation(
     대화 삭제(#535)와 같은 store 함수로 지운다. 상태는 `deleted`, 검색 벡터는 비우고, Curator 보류
     기록을 정리하고, 묶인 기억을 다시 계산한다. 행과 원문은 서버에 남는다(soft delete).
     아이와 연결된 보호자면 owner · member 모두 지운다 — 기록 탭은 함께 보는 공동 기록이다.
-    `deleted` 가 아닌 기록은 상태와 상관없이 지운다(고친 기록 `stand_alone` · `inactive` 포함).
+    `deleted` 가 아닌 기록은 상태와 상관없이 지운다("이번만 그랬어요" 로 고친 `stand_alone` 포함).
     되돌릴 수 없어서 Idempotency-Key 가 필수다. 같은 키로 다시 오면 처음처럼 204 다.
 
     오류 (순서대로): 403 child_access_denied → 400 idempotency_key_required →

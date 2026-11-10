@@ -1,18 +1,27 @@
 """사진 run — 읽은 결과를 보호자가 저장을 누를 때까지 들고 있는다.
 
-🚨 사진 흐름에서 DB 에 쓰는 곳은 `POST /photo-runs/{rid}/commit` 하나다. 여기까지는 메모리에만 있고,
-   저장하지 않고 나가면 남는 것이 없다.
-🚨 프로세스 메모리다 — run 채널과 같은 --workers 1 전제. 공지 원문이 실려 있어 시간이 지나면 지운다.
+🚨 사진 흐름에서 기록(공지 · 급식)을 쓰는 곳은 `POST /photo-runs/{rid}/commit` 하나다. 읽은 결과는
+   그때까지 보관함 표(`run_hold`, UNLOGGED · 백업 제외, #877 2단계)에 30분 있고, 저장하지 않고
+   나가면 만료 뒤 `hold_purge` 가 지운다. 워커가 여럿이어도 저장 요청이 같은 결과를 본다.
+🚨 공지 원문이 실려 있다. 아이를 지우면 FK CASCADE 로 함께 지워진다 (#751).
+🚨 저장은 행을 잠근(`lock`) 트랜잭션 안에서 한다 — 같은 저장이 두 워커에 동시에 와도 뒤 요청은
+   앞 요청이 끝난 뒤 남긴 응답(`response`)을 본다.
 """
 
 import asyncio
-import time
+import logging
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
+from pydantic import TypeAdapter
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.agents import entrypoint
+from app.api.deps.db import background_session
 from app.api.runs import sse
 from app.api.runs.registry import RunChannel
 from app.core import llm_usage
@@ -20,11 +29,24 @@ from app.domains.daycare_meal.models import DaycareSlot
 from app.domains.daycare_meal.repository import NewDaycareMeal
 from app.domains.notice.assemble import NewNoticeItem
 from app.domains.notice.models import NoticeItemHandling
+from app.domains.run_hold.models import HoldKind
+from app.domains.run_hold.repository import (
+    get_hold,
+    lock_hold,
+    put_hold,
+    set_payload,
+    share_holder_child,
+)
 from app.rules.menu_key import normalize_menu_key
 
+log = logging.getLogger(__name__)
+
 KST = ZoneInfo("Asia/Seoul")
-TTL_SECONDS = 30 * 60
+TTL = timedelta(minutes=30)
 """보호자가 읽은 내용을 하나씩 확인하는 시간. SSE 채널(5분)보다 길다."""
+_KIND = HoldKind.PHOTO_RUN
+
+_session_factory: Callable[[], AsyncSession] = background_session
 
 # 화면이 아는 항목 종류. 일정 · 할 일 · 안내 · 급식
 _ENTRY_KIND = {
@@ -46,7 +68,6 @@ class PhotoRun:
     run_id: str
     parent_id: uuid.UUID
     child_id: uuid.UUID
-    expires_at: float
     reading: entrypoint.PhotoReading | None = None
     items: dict[str, NewNoticeItem] = field(default_factory=dict)
     meals: dict[str, MealSlot] = field(default_factory=dict)
@@ -54,36 +75,84 @@ class PhotoRun:
     """저장이 끝난 응답. 같은 저장을 다시 보내면 두 번 넣지 않고 이 값을 돌려준다."""
 
 
-_runs: dict[str, PhotoRun] = {}
+_RUN = TypeAdapter(PhotoRun)
 
 
-def _purge() -> None:
-    now = time.monotonic()
-    for run_id in [k for k, run in _runs.items() if run.expires_at < now]:
-        _runs.pop(run_id, None)
+def _dump(run: PhotoRun) -> dict:
+    return _RUN.dump_python(run, mode="json")
+
+
+def _load(payload: dict) -> PhotoRun:
+    return _RUN.validate_python(payload)
+
+
+def _readable(run_id: str, payload: dict) -> PhotoRun | None:
+    """못 읽으면(PhotoRun 모양을 바꾼 배포 뒤의 옛 행) None — 없는 run 과 같은 404 로 끝난다.
+
+    🚨 검증 오류의 글에 공지 원문이 실릴 수 있어 예외 종류만 남긴다 (#899 리뷰).
+       행은 30분 뒤 만료된다.
+    """
+    try:
+        return _load(payload)
+    except Exception as exc:
+        log.warning("사진 run %s 을 읽지 못했다 — %s", run_id, type(exc).__name__)
+        return None
 
 
 def open_photo_run(*, run_id: str, parent_id: uuid.UUID, child_id: uuid.UUID) -> PhotoRun:
-    _purge()
-    run = PhotoRun(run_id, parent_id, child_id, time.monotonic() + TTL_SECONDS)
-    _runs[run_id] = run
-    return run
+    """빈 run 을 만든다. 표에는 읽기가 끝난 뒤 `keep` 이 넣는다 — 그 전 저장 요청은 404 다."""
+    return PhotoRun(run_id, parent_id, child_id)
 
 
-def forget_child(child_id: uuid.UUID) -> None:
-    """그 아이의 run 을 누가 열었든 지운다 — 아이 삭제 커밋 뒤 (#751).
+async def keep(run: PhotoRun, *, now: datetime | None = None) -> bool:
+    """읽은 결과를 30분 넣는다. 아이가 그 사이 지워졌으면 남기지 않고 False."""
+    async with _session_factory() as session:
+        try:
+            stored = await put_hold(
+                session,
+                kind=_KIND,
+                key=run.run_id,
+                parent_id=run.parent_id,
+                child_id=run.child_id,
+                payload=_dump(run),
+                ttl=TTL,
+                now=now,
+            )
+            await session.commit()
+        except IntegrityError:
+            await session.rollback()
+            stored = False
+    if not stored:
+        log.warning("사진 run %s 을 넣지 않았다 — 보호자 · 아이가 없거나 끊겼다", run.run_id)
+    return stored
 
-    아이가 없으면 저장(`commit`)도 아이 접근 확인에서 막혀서, 남겨 둘 이유 없는 공지 원문이다.
-    """
-    for run_id in [k for k, run in _runs.items() if run.child_id == child_id]:
-        _runs.pop(run_id, None)
 
-
-def get(run_id: str, *, parent_id: uuid.UUID) -> PhotoRun | None:
+async def get(run_id: str, *, parent_id: uuid.UUID, now: datetime | None = None) -> PhotoRun | None:
     """남의 run 은 없는 run 과 같다 (SSE 와 같은 이유)."""
-    _purge()
-    run = _runs.get(run_id)
-    return run if run is not None and run.parent_id == parent_id else None
+    async with _session_factory() as session:
+        payload = await get_hold(
+            session, kind=_KIND, key=run_id, parent_id=parent_id, child_id=None, now=now
+        )
+    return None if payload is None else _readable(run_id, payload)
+
+
+async def lock(session: AsyncSession, run_id: str, *, parent_id: uuid.UUID) -> PhotoRun | None:
+    """저장 요청의 트랜잭션에서 그 run 을 잡는다.
+
+    같은 run 을 잡으려는 다른 요청은 이 트랜잭션이 commit 할 때까지 기다린다.
+    🚨 아이 행을 먼저(`FOR KEY SHARE`) 잡고 이 행을 잡는다 — 아이 삭제와 같은 잠금 순서라 겹쳐도
+       교착이 없다. 삭제가 먼저면 기다렸다가 아이가 없어 None(404)이다.
+    """
+    if not await share_holder_child(session, kind=_KIND, key=run_id, parent_id=parent_id):
+        return None
+    row = await lock_hold(session, kind=_KIND, key=run_id, parent_id=parent_id)
+    return None if row is None else _readable(run_id, row.payload)
+
+
+async def finish(session: AsyncSession, run: PhotoRun, response: dict) -> None:
+    """저장 응답을 남긴다. `lock` 한 같은 트랜잭션에서 부르고, 기록과 함께 commit 한다."""
+    run.response = response
+    await set_payload(session, kind=_KIND, key=run.run_id, payload=_dump(run))
 
 
 def _entry_date(item: NewNoticeItem) -> date | None:
@@ -91,7 +160,29 @@ def _entry_date(item: NewNoticeItem) -> date | None:
     return moment.astimezone(KST).date() if moment else None
 
 
-def _item_entry(entry_id: str, item: NewNoticeItem) -> dict:
+def _is_past(item: NewNoticeItem, today: date) -> bool:
+    """지난 항목인가 — 견줄 날이 모두 오늘(한국 날짜)보다 앞인가 (#828). 하나도 못 읽었으면 아니다.
+
+    화면은 이 값으로 지난 일정의 체크를 켜 두지 않는다 — 오늘과 견주는 것은 날짜 계산이라 서버가
+    한다 (루트 §2 · apps/web CLAUDE.md §4).
+    🚨 **일정은 화면이 캘린더에 넣는 날로 본다** (web `photo-entry.ts` 의 `eventBody`).
+       시작을 읽었으면 시작 · 끝 중 늦은 것 — 여러 날 행사가 오늘에 걸쳐 있으면 지난 일정이
+       아니다. 시작이 있는데 마감까지 보면 "행사 11-08 · 신청 11-10 까지" 가 켜진 채로 시작해,
+       누르면 이미 지난 11-08 일정이 들어간다 (#854 리뷰). 시작이 없으면 마감이 지났는가다 —
+       그때 넣는 날은 보호자가 고른다.
+    🚨 **할 일 · 안내는 마감까지 본다** — 시작 · 끝 · 마감 중 가장 늦은 것. "신청 11-05 ~ 11-12" 는
+       기간이 열렸어도 마감이 남았으면 아직 할 수 있다 (#903 리뷰).
+    """
+    if item.handling is not NoticeItemHandling.CALENDAR:
+        moments = [m for m in (item.starts_at, item.ends_at, item.due_at) if m is not None]
+    elif item.starts_at is not None:
+        moments = [m for m in (item.starts_at, item.ends_at) if m is not None]
+    else:
+        moments = [item.due_at] if item.due_at is not None else []
+    return bool(moments) and max(m.astimezone(KST).date() for m in moments) < today
+
+
+def _item_entry(entry_id: str, item: NewNoticeItem, *, today: date) -> dict:
     entry: dict = {
         "id": entry_id,
         "kind": _ENTRY_KIND[item.handling],
@@ -103,6 +194,7 @@ def _item_entry(entry_id: str, item: NewNoticeItem) -> dict:
         "all_day": item.all_day if item.starts_at is not None else item.due_all_day,
         "items": list(item.supplies),
         "needs_review": item.needs_review,
+        "past": _is_past(item, today),
         "label": item.label,
         "target_scope": item.target_scope.value,
         "starts_at": item.starts_at.isoformat() if item.starts_at else None,
@@ -116,7 +208,7 @@ def _item_entry(entry_id: str, item: NewNoticeItem) -> dict:
     return entry
 
 
-def _meal_entries(run: PhotoRun, plan) -> list[dict]:
+def _meal_entries(run: PhotoRun, plan, *, today: date) -> list[dict]:
     entries: list[dict] = []
     for day in plan.days:
         for meal in day.meals:
@@ -134,6 +226,7 @@ def _meal_entries(run: PhotoRun, plan) -> list[dict]:
                     "all_day": True,
                     "items": [],
                     "needs_review": False,
+                    "past": plan.date_of(day.day) < today,
                 }
             )
     for index, cell in enumerate(plan.unparsed):
@@ -146,21 +239,25 @@ def _meal_entries(run: PhotoRun, plan) -> list[dict]:
                 "all_day": True,
                 "items": [],
                 "needs_review": True,
+                "past": False,
                 "review_reason": cell.why or "이 칸은 읽지 못했어요.",
             }
         )
     return entries
 
 
-def build_entries(run: PhotoRun, reading: entrypoint.PhotoReading) -> list[dict]:
-    """읽은 결과 → 화면 항목. 항목마다 id 를 주고, 저장할 때 그 id 로 원래 값을 찾는다."""
+def build_entries(run: PhotoRun, reading: entrypoint.PhotoReading, *, today: date) -> list[dict]:
+    """읽은 결과 → 화면 항목. 항목마다 id 를 주고, 저장할 때 그 id 로 원래 값을 찾는다.
+
+    `today` 는 사진을 받은 날(한국 날짜)이다 — 항목마다 `past`(지난 일정인가)를 그 날과 견준다.
+    """
     entries: list[dict] = []
     for index, item in enumerate(reading.notice.items):
         entry_id = f"pe_{index}"
         run.items[entry_id] = item
-        entries.append(_item_entry(entry_id, item))
+        entries.append(_item_entry(entry_id, item, today=today))
     if reading.meal_plan is not None:
-        entries.extend(_meal_entries(run, reading.meal_plan))
+        entries.extend(_meal_entries(run, reading.meal_plan, today=today))
     if reading.meal_failed:
         entries.append(
             {
@@ -171,6 +268,7 @@ def build_entries(run: PhotoRun, reading: entrypoint.PhotoReading) -> list[dict]
                 "all_day": True,
                 "items": [],
                 "needs_review": True,
+                "past": False,
                 "review_reason": "식단표의 표를 읽지 못했어요. 더 밝게 다시 찍어 주세요.",
             }
         )
@@ -188,7 +286,10 @@ def photo_job(run: PhotoRun, *, data: bytes, received_at: datetime, declared_lan
             channel.publish(sse.failed_event("unparsable", ""))
             return
         run.reading = reading
-        entries = build_entries(run, reading)
+        entries = build_entries(run, reading, today=received_at.astimezone(KST).date())
+        if entries:
+            # 화면이 확인 화면을 받는 순간 저장을 누를 수 있다 — 그 전에 표에 넣는다
+            await keep(run)
         if not entries:
             # 영수증 · 게임 화면처럼 글자는 있는데 기관 문서가 아닌 사진이다. 빈 확인 화면을 보내면
             # 저장 버튼만 꺼진 채 이유를 모른다. "실패는 200 + 빈 배열이 아니다" (계약서 §06)

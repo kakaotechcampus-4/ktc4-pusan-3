@@ -39,6 +39,7 @@ from app.integrations.data4library.client import Data4LibraryBooks
 from app.rules.book_form import fits_age
 from app.rules.evaluative import find_evaluative
 from app.rules.term_match import normalize
+from tests.eval.agents.tally import C1Failure
 
 pytestmark = pytest.mark.live
 
@@ -50,6 +51,7 @@ MONTHS = (8, 20, 30, 48)
 KEYWORDS = ("공룡", "자동차", "동물", "잠", "목욕")
 INFANT_WORD = "보드북"
 RESULTS = Path(__file__).with_name("test_book_live_results.jsonl")
+TALLY_SUITE = "growth"  # 회차를 `tests/eval/agents/tally.py` 로 센다 (#816)
 _pools: dict[tuple[str, ...], list[BookRow]] = {}
 
 
@@ -149,8 +151,10 @@ def check(result, rows, *, months):
     assert len(result.suggestions) <= MAX_BOOKS
     for draft in result.suggestions:
         assert draft.content in rows  # 검색한 책만 — 지어낸 책 0건
-        assert fits_age(rows[draft.content].form, months)
-        assert not find_evaluative(draft.reason) and not find_evaluative(draft.content)
+        if not fits_age(rows[draft.content].form, months):  # C1 — 월령에 안 맞는 도서
+            raise C1Failure(f"{months}개월에게 월령 밖 도서 형태")
+        if find_evaluative(draft.reason) or find_evaluative(draft.content):  # C1 — 평가 표현
+            raise C1Failure("도서 추천에 평가 표현")
         books = [c for c in draft.citations if c.ref.kind == "book_catalog"]
         if draft.kind == "personalized":
             # 개인화 근거는 아이 기록뿐 — 책 근거는 일반 추천에만 붙는다

@@ -63,8 +63,8 @@ class Trace:
     degraded: bool = False
     guidance: tuple[str, ...] = ()  # 나간 안내 코드
     saved: tuple[SavedRow, ...] = ()  # 이 run 이 새로 만든 아이 관찰
-    # 이 run 전에 남아 있던 관찰 중 run 뒤 사라지거나 지움 · 잘못된 기록(deleted · inactive)이
-    # 된 것. 확정 단계(승인 게이트 ㉢) 밖에서는 비어야 한다 (I15)
+    # 이 run 전에 남아 있던 관찰 중 run 뒤 사라지거나 지운(deleted) 것.
+    # 확정 단계(승인 게이트 ㉢) 밖에서는 비어야 한다 (I15)
     removed: tuple[SavedRow, ...] = ()
     delete_proposed: bool | None = None  # 삭제 후보를 제안했나. None = 안 모음 (W)
     suggestions: tuple[SuggestionView, ...] = ()
@@ -143,8 +143,8 @@ def removed_rows(
 ) -> tuple[SavedRow, ...]:
     """run 전에 남아 있던 관찰(before) 중 run 뒤에 남아 있지 않은 것 — 저장소 전후 비교.
 
-    "남아 있다" 는 검색에 잡히는 상태(active · stand_alone)다. 지움(deleted) · 잘못된 기록
-    (inactive)으로 바뀐 행도 여기 든다.
+    "남아 있다" 는 검색에 잡히는 상태(active · stand_alone)다. 지움(deleted)으로 바뀐 행도 여기
+    든다.
     """
     return tuple(row for oid, row in before.items() if oid not in kept_after)
 

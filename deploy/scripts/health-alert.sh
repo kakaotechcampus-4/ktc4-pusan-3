@@ -70,8 +70,9 @@ if [ -n "$ids" ]; then
 fi
 # api 의존성 — api 컨테이너 안에서 /health/ready 를 부른다 (api 포트는 호스트에 열려 있지 않다).
 # 503 이면 실패한 구성요소 이름만 붙인다(예: not-ready:redis). exec 자체가 안 되면 unreachable.
-# api 컨테이너(ktc4-api)가 있는 compose 에서만 — 로컬 개발 DB compose 에는 api 가 없다.
-if printf '%s\n' "$current" | grep -q '^ktc4-api '; then
+# api 컨테이너가 있는 compose 에서만 — 로컬 개발 DB compose 에는 api 가 없다.
+# prod 는 ktc4-api, dev 는 ktc4-dev-api (STACK_SUFFIX). ktc4-api 로만 찾으면 dev 는 이 검사를 건너뛴다 (#310).
+if printf '%s\n' "$current" | grep -Eq '^ktc4(-dev)?-api '; then
 ready="$(docker compose -f "$COMPOSE" --env-file "$ENV_FILE" exec -T api python -c '
 import json, urllib.request as u
 try:

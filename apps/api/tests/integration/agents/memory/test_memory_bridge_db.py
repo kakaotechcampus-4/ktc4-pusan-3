@@ -53,7 +53,7 @@ async def _save(
     return row.id
 
 
-async def _four_statuses(
+async def _three_statuses(
     session: AsyncSession,
     store: DbMemoryStore,
     owner: Parent,
@@ -61,16 +61,14 @@ async def _four_statuses(
     domain: str,
     model: type,
 ) -> dict[str, str]:
-    """active · stand_alone · inactive · deleted 관찰을 하나씩. subject 가 곧 status 이름이다."""
-    names = ("active", "stand_alone", "inactive", "deleted")
+    """active · stand_alone · deleted 관찰을 하나씩. subject 가 곧 status 이름이다."""
+    names = ("active", "stand_alone", "deleted")
     ids = {name: await _save(store, owner, child, domain, name) for name in names}
-    for name, status in (
-        ("stand_alone", ObservationStatus.STAND_ALONE),
-        ("inactive", ObservationStatus.INACTIVE),
-    ):
-        await session.execute(
-            update(model).where(model.id == UUID(ids[name])).values(status=status)
-        )
+    await session.execute(
+        update(model)
+        .where(model.id == UUID(ids["stand_alone"]))
+        .values(status=ObservationStatus.STAND_ALONE)
+    )
     assert await store.delete_observation(domain=domain, observation_id=ids["deleted"])
     return ids
 
@@ -80,7 +78,7 @@ async def test_DB_store_에서도_Food_는_stand_alone_까지만_읽는다(
 ) -> None:
     owner, child = family
     store = DbMemoryStore(session, child_id=child.id)
-    ids = await _four_statuses(session, store, owner, child, "food", ObservationFood)
+    ids = await _three_statuses(session, store, owner, child, "food", ObservationFood)
 
     got = await StoreFoodMemory(store).observations(child_id=child.id, date_from=DAY, date_to=DAY)
 
@@ -94,7 +92,7 @@ async def test_DB_store_에서도_Activity_는_active_만_읽는다(
 ) -> None:
     owner, child = family
     store = DbMemoryStore(session, child_id=child.id)
-    ids = await _four_statuses(session, store, owner, child, "activity", ObservationActivity)
+    ids = await _three_statuses(session, store, owner, child, "activity", ObservationActivity)
 
     got = await StoreActivityMemory(store).observations(
         child_id=child.id, date_from=DAY, date_to=DAY

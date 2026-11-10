@@ -74,4 +74,4 @@ $env:TEST_REPEAT=5
 uv run pytest tests/eval/agents/health/test_health_run.py -m live -s
 ```
 
-pytest 라이브 eval(`-m live`)은 끝나면 `tests/eval/agents/live_run_meta.json`(gitignore)에 커밋 · dirty · 모델 · effort · 반복 횟수 · 프롬프트 지문을 남긴다. pytest 가 아닌 스크립트는 위의 `run_meta` 명령으로 남긴다. 그 값으로 §1 에 행을 더한다. 라이브 eval 은 CI 에서 돌리지 않는다.
+pytest 라이브 eval(`-m live`)은 끝나면 `tests/eval/agents/live_run_meta.json`(gitignore)에 커밋 · dirty · 모델 · effort · 반복 횟수 · 프롬프트 지문을 남긴다. pytest 가 아닌 스크립트는 위의 `run_meta` 명령으로 남긴다. 그 값으로 §1 에 행을 더한다. 실행이 끝나면 터미널에 측정 이력 칸 값이 한 줄 나온다 — 버전 · 무엇을 왜 바꿨나를 채워 §1 에 붙인다. 반복을 세션으로 나눠 돌렸으면(`EVAL_ATTEMPT`) `uv run python -m tests.eval.agents.tally` 로 다시 출력한다. `tool_ci` 표시 케이스(T01 · T13 · T16)만 프롬프트 · tool spec 이 바뀐 PR 에서 CI 로 3회 돈다 — [`live-ci-v1.md`](live-ci-v1.md).

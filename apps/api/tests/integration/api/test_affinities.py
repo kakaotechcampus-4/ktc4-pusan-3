@@ -110,9 +110,9 @@ async def test_count_and_refs_use_only_active_linked_observations(
         [
             *active,
             _food(cid, affinity.id, ObservationStatus.STAND_ALONE),
-            _food(cid, affinity.id, ObservationStatus.INACTIVE),
+            _food(cid, affinity.id, ObservationStatus.DELETED),
             _food(cid, None),
-            _food(cid, corrected.id, ObservationStatus.INACTIVE),
+            _food(cid, corrected.id, ObservationStatus.STAND_ALONE),
         ]
     )
     await session.flush()

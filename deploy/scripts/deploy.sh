@@ -10,6 +10,8 @@
 #     DEPLOY_LOCK  두 환경이 동시에 빌드하지 않게 거는 잠금 파일. 기본값 /var/lock/ktc4-deploy.lock
 #                  (적재 make 타깃도 같은 잠금을 쓴다 — Makefile)
 #     ALLOW_OLD=1  지금 떠 있는 것보다 옛 커밋을 일부러 올릴 때 (아래 "옛 커밋" 검사를 건너뛴다)
+#     SKIP_PREDEPLOY_BACKUP=1  배포 전 백업을 건너뛰고 알림만 보낸다 (backup.sh 가 본다). deploy.yml 을 손으로
+#                  돌릴 때의 skip_backup 입력이 켠다 — DB 컨테이너가 죽어 백업이 안 되는데 그걸 고치는 배포용
 #
 # 🚨 down 을 먼저 하지 않는다. 빌드 · 마이그레이션이 실패하면 옛 컨테이너가 그대로 서비스한다.
 # 🚨 DB 는 되돌리지 않는다. 이미지만 직전 태그로 되돌린다 — 그래서 마이그레이션은 직전 코드도 돌 수 있게
@@ -57,13 +59,15 @@ case "$TARGET" in
   # web 이미지는 API 주소를 번들에 굽는다 — prod 가 dev API 를 굽거나 그 반대면 막는 건 CORS 하나뿐이다 (#747).
   # edge 가 빠지면 Caddy 를 compose 가 못 본다 — 첫 전환의 down 이 Caddy · 옛 네트워크를 남겨
   # ktc4-edge 를 못 만들고, 운영이 내려간 채 멈춘다.
+  # APP_ENV 는 배포 전 백업(backup.sh)의 짝 검사와 같은 규칙 — 다르면 빌드 10분 뒤 백업에서야 멈춘다 (#758).
   prod) { [ -z "$PROJECT" ] || [ "$PROJECT" = ktc4-deploy ]; } && [ -z "$SUFFIX" ] && [[ "$API_URL" != *//api.dev.* ]] &&
-    [ "$PROFILES" = edge ] && { [ -z "$EDGE_IP" ] || [ "$EDGE_IP" = 172.30.0.20 ]; } ;;
+    [ "$PROFILES" = edge ] && { [ -z "$EDGE_IP" ] || [ "$EDGE_IP" = 172.30.0.20 ]; } &&
+    { [ -z "$APPENV" ] || [ "$APPENV" = prod ]; } ;;
   *) false ;;
 esac || {
   log "🔴 $TARGET 배포인데 $ENV_FILE 이 맞지 않는다 — COMPOSE_PROJECT_NAME='$PROJECT' STACK_SUFFIX='$SUFFIX' NEXT_PUBLIC_API_BASE_URL='$API_URL' COMPOSE_PROFILES='$PROFILES' APP_ENV='$APPENV' API_EDGE_IP='$EDGE_IP'"
   log "   dev: ktc4-dev · -dev · https://api.dev.… · profile 비움 · APP_ENV=dev · API_EDGE_IP=172.30.0.21 · API · WEB · DB · REDIS_MEM_LIMIT 네 개(빈 값 · 0 아님)"
-  log "   prod: 비움(또는 ktc4-deploy) · 비움 · api.dev 아님 · COMPOSE_PROFILES=edge · API_EDGE_IP 비움 (docs/ops/deploy-v1.md)"
+  log "   prod: 비움(또는 ktc4-deploy) · 비움 · api.dev 아님 · COMPOSE_PROFILES=edge · APP_ENV 비움 또는 prod · API_EDGE_IP 비움 (docs/ops/deploy-v1.md)"
   exit 1
 }
 # dev 사이트 basic_auth 계정 (#780) — 두 환경을 다 받는 Caddy 가 prod 에 있어서 prod .env 에만 둔다.
@@ -96,7 +100,12 @@ fi
 # 4GB 서버에서 dev · prod 가 동시에 이미지를 구우면 메모리가 넘친다. 다른 환경 배포가 끝날 때까지 기다린다.
 # 20분 = 다른 쪽 최악(빌드 ~10분 + up 4분 + 롤백 4분). (맥에는 flock 이 없다 — 로컬 시험에서는 잠그지 않는다)
 if command -v flock >/dev/null; then
-  exec 9>"${DEPLOY_LOCK:-/var/lock/ktc4-deploy.lock}"
+  # 없으면 0644 로 만들고(실패는 넘김) 읽기로 연다. `exec 9>` 로 열면 재부팅 뒤 복원 점검 cron(ubuntu)이 먼저
+  # 만든 파일을 root 가 못 연다 — /var/lock 은 sticky 이고 fs.protected_regular=2 다 (backup-lib.sh 의
+  # take_deploy_lock · #758). 이 스크립트는 reset 전에 임시 파일로 돌아 그 함수를 불러 쓸 수 없어 같은 줄을 둔다.
+  LOCK="${DEPLOY_LOCK:-/var/lock/ktc4-deploy.lock}"
+  [ -e "$LOCK" ] || (umask 022 && : > "$LOCK") 2>/dev/null || true
+  exec 9<"$LOCK" || { log "🔴 잠금 파일 $LOCK 을 열지 못했다 — 소유자 · 권한(0644)을 본다"; exit 1; }
   log "잠금 대기"
   flock -w 1200 9 || { log "20분 동안 다른 배포가 안 끝났다 — 포기"; exit 1; }
 fi
@@ -149,6 +158,21 @@ fi
 log "이미지 빌드"
 # 진행 로그를 끈다 — SSM 은 출력 앞부분만 돌려줘서, 빌드 로그가 alembic · up 의 에러를 밀어낸다.
 "${COMPOSE[@]}" build --quiet api web
+# 배포 전 백업 (#758) — 빌드가 끝난 뒤 · 마이그레이션 직전. 덤프와 마이그레이션 사이에 쓰기가 덜 끼게 여기서 뜬다.
+# 실패하면 set -e 로 여기서 멈춘다 — 옛 컨테이너가 그대로 서비스하고 DB 는 건드리지 않았다. 이 마이그레이션을
+# 되돌릴 곳이 이 백업뿐이라 멈춘다. backup.sh 는 이 checkout 의 .env 로 대상(dev · prod)을 정하고, 배포가
+# 쥔 잠금을 다시 잡지 않는다. DB 가 죽어 백업이 안 되는 복구 배포는 SKIP_PREDEPLOY_BACKUP(머리말)로 넘긴다.
+# 10분 상한 — DB 컨테이너는 떠 있는데 postgres 가 멈췄으면 pg_dump 가 SSM 상한(40분)까지 잠금을 쥐어 다른 환경
+# 배포까지 막는다(11-06 덤프는 수 초). 잠금(fd 9)은 넘기지 않는다 — 상한에 끊겨도 남은 docker exec 가 쥐지 않게.
+# (맥에는 timeout 이 없다 — 로컬 시험에서는 상한 없이 돈다)
+log "배포 전 백업"
+BACKUP=(bash deploy/scripts/backup.sh predeploy "$SHA")
+command -v timeout >/dev/null && BACKUP=(timeout 600 "${BACKUP[@]}")
+"${BACKUP[@]}" 9<&- || {
+  rc=$?
+  [ "$rc" != 124 ] || log "🔴 배포 전 백업이 10분 안에 안 끝났다 — DB 컨테이너를 본다. 아무것도 바꾸지 않았다"
+  exit "$rc"
+}
 log "마이그레이션"
 # api 가 아니라 api-task 다 — api 는 ktc4-edge 고정 IP 라, 떠 있는 api 옆에서 run 하면 같은 주소를 두 번 잡아
 # "Address already in use" 로 멈춘다 (docker-compose.deploy.yml 의 api-task · 11-09).
@@ -158,6 +182,10 @@ log "기동 — 헬스체크 통과까지 대기"
 if "${COMPOSE[@]}" up -d --no-build --pull never --wait --wait-timeout 240; then
   echo "$SHA" > "$TAG_FILE"
   log "배포 성공 $SHA"
+  # api 가 뜰 때 남기는 "꺼져 있는 기능" 한 줄(app/api/startup_report.py)을 배포 출력에도 보인다 —
+  # 서버 로그(journald)에만 있으면 배포한 사람이 못 본다 (#912 리뷰). 설정 이름만 있고 값은 없는 줄이다.
+  # 못 읽어도, 그 줄이 없어도 배포는 성공이다.
+  "${COMPOSE[@]}" logs --no-color --since 10m api 2>/dev/null | grep "꺼져 있는 기능" | tail -n 1 || true
   if [ "$TARGET" = prod ]; then
     # Caddyfile 은 up 만으로 다시 읽히지 않는다 (Caddy 설정이 그대로면 컨테이너를 다시 안 만든다).
     # 이번 up 이 Caddy 를 새로 만들었으면 관리 포트(2019)가 몇 초 늦게 열린다 — 리허설에서 바로 부르면

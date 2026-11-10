@@ -101,7 +101,7 @@ def tools_for(task_type, gate: Gate) -> tuple[str, ...]:
 
 - `search_activity_memory` 는 결과에 **`id` 를 함께 돌려준다.** `suggestion_evidence` 의 허용 `source_kind` 에 `observation_activity` 가 있고, 루트 §2 가 막는 것은 관찰을 **프로필로 승격**하는 것이지 그 한 번의 추천 근거로 **인용**하는 것이 아니다.
 - **Tier 2 임계는 공통 기본값 `0.5` 를 따른다.** Activity 만 다르게 둘 근거가 없다.
-- 🚨 **관찰은 `ObservationStatus = active` 만 읽는다.** `stand_alone` 은 Correction `once_only`(*"이번만 그랬어요"*)가 만드는 상태라 검색에는 남지만 성향으로 세면 안 되고, `inactive` 는 검색에서도 빠진다. 이 필터가 없으면 **보호자가 직접 고친 기록이 다음 추천의 근거로 돌아온다.**
+- 🚨 **관찰은 `ObservationStatus = active` 만 읽는다.** `stand_alone` 은 Correction `once_only`(*"이번만 그랬어요"*)가 만드는 상태라 검색에는 남지만 성향으로 세면 안 되고, 지운 기록(`deleted`)은 검색에서도 빠진다. 이 필터가 없으면 **보호자가 직접 고친 기록이 다음 추천의 근거로 돌아온다.**
 - `affinity_id = NULL` 인 관찰도 읽는다. 승격 전 관찰이 티어 3 근거다 (`공통_구현_계획.md` K-7).
 - 모델에게는 **10개**(`MEMORY_LIMIT`)만 `id` · 티어 · 이름 · polarity · 날짜로 준다. 최근 관찰(티어 3)에 **3자리**(`RECENT_RESERVED`, 잠정)를 먼저 주고 남은 자리를 티어 순으로 채운다 — 첫 관찰부터 티어 2 인 affinity 가 10개를 채우면 최근 관찰이 하나도 안 남아서다 (#304 리뷰). 주는 순서는 티어 순 그대로다. 같은 `subject` · polarity 의 관찰은 가장 최근 1건만 남긴다.
 - **대조는 `subject`, 설명은 `activity`.** 관찰의 이름(화면 · reason)은 사람이 읽는 활동명(`activity`)이고, 기피 거절(D4)과 `keywords` 대조는 Curator 가 merge_key 를 만드는 `subject` 로 한다 — "물감 놀이" 같은 활동명은 후보 문장에 그대로 나오는 일이 드물다. `keywords` 는 `subject` 와 양쪽으로 포함을 보고(짧은 쪽이 2글자 이상일 때), 활동명에 든 말로도 찾는다. 줄 세운 뒤 거르는 것이라 순서를 바꾸지 않는다. 0행이면 `NO_RECORDS` 로 일반 추천에 가라고 알린다 — 되묻기로 바꾸지 않는다.
@@ -215,7 +215,7 @@ class ActivityCandidate(ToolArgs):
 
 **식품 사전에 없는 알레르기 이름에는 확인 문구를 붙인다** (#298 · #261 리뷰). `allergy` active 행 중 이름에 식품 사전(공용 이름 사전)이 못 찾은 조각이 있으면 — 꽃가루 · 라텍스 · 동물털, 19종 밖 식품 중 별칭 표(`food_safety_terms.yaml` `extra_allergens`)에 없는 것(쑥)도 — 표에 있는 키위 · 버섯은 `allergy_book()` 이 식품으로 읽어 별칭 전부(참다래 · 표고 …)로 막고 문구를 붙이지 않는다(#437 · QA 16) — 코드 문구 `caution.non_food_allergy` 를 이름마다 한 줄 낸다: *"등록된 알레르기(꽃가루)가 있어요. 장소랑 재료를 한 번 확인해 주세요."* 이름이 문장에 그대로 나오는 후보는 위 대조가 빼지만, 꽃가루 · 동물털은 재료가 아니라 장소와 계절에 걸려 있어 뺄 놀이를 코드가 못 정한다. 이름을 장소 · 물건으로 넓히는 대응표(꽃가루 → 공원)는 "어디까지 위험한가" 를 우리가 정하는 일이라 만들지 않는다. 고르는 판정은 Growth 와 같은 공용 함수(`common/allergy.non_food_allergies`)다. `environmental`(고소공포)에는 붙이지 않는다. 문구는 추천마다가 아니라 run 에 한 벌로 run state(`cautions`)에 남기고, 화면 자리는 #249 를 따른다.
 
-**`suggestion.allergens` 는 코드가 채운다** (#232). 그 놀이에 든 알레르기 항목의 정식 명칭이고, 승인할 때 *"이 놀이에는 밀가루가 들어가요"* 안내에 쓴다. 19종은 사전으로 잡고, 19종 밖(쑥 등)은 **그 아이에게 등록된 항목만** 잡힌다 — 등록 안 된 쑥까지 잡으려면 사전이 필요하다. 상태(없음 · 모름)는 담지 않는다 — 승인 때 서버가 다시 읽는다. `suggestion.items` 는 후보의 `materials` 를 준비물로 그대로 담는다.
+**`suggestion.allergens` 는 코드가 채운다** (#232). 그 놀이에 든 알레르기 항목의 이름이고(19종은 정식 명칭), 승인할 때 *"이 놀이에는 밀가루가 들어가요"* 안내에 쓴다. 19종은 사전으로 잡고, 19종 밖(쑥 등)은 **그 아이에게 등록된 항목만** 잡힌다 — 등록 안 된 쑥까지 잡으려면 사전이 필요하다. 19종 밖 이름은 보호자가 적은 이름 그대로 담는다 — 구분 기호로 나눈 조각에서 꼬리말만 떼고("쑥 가루 알레르기" 는 "쑥 가루") 띄어쓰기는 둔다. 대조는 낱말 조각까지 해서 "밀가루" 의 "가루" 에도 걸리지만, 태그는 조각이 아니라 그 이름으로 단다 — 조각으로 달면 05 가 보호자가 적은 적 없는 "가루" 를 묻고, 괜찮았던 식품과 이름이 맞지 않는다 (#891). 05 는 태그를 낱말까지 읽어 맞춘다 — 띄어쓰기를 지운 "쑥가루" 는 한 낱말이라, 나중에 "쑥" 으로 등록한 알레르기에 걸리지 않는다. 그 대신 이름의 다른 낱말이 등록된 알레르기와 겹쳐도 막혀서(내린 "고양이 비듬" 에 "비듬" 이 등록돼 있으면 "고양이 그림 그리기" 도 막힌다) 조각으로 달 때보다 더 막는 쪽이다. 상태(없음 · 모름)는 담지 않는다 — 승인 때 서버가 다시 읽는다. `suggestion.items` 는 후보의 `materials` 를 준비물로 그대로 담는다.
 
 🚨 **`health_safety` 는 run 당 한 번만 읽는다.** `build_gate` 가 읽은 행을 run state(`safety_entries`)에 담고, 출력 검증의 안전 필터는 그 값만 받는 순수 함수다. 출력 검증 때 다시 읽으면 같은 run 안에서 게이트와 필터가 다른 행을 볼 수 있다. 테스트가 출력 검증 동안 `SafetyReader` 호출 0회를 고정한다.
 
@@ -538,7 +538,7 @@ async def run(task, context, *, client=None):
 
 **재호출 방향 (#582)** — 제외 목록 뒤에 늘 같은 방향 문장(`prompt.RECALL_HINT`)을 붙인다: 빠진 활동에 쓰인 음식 · 재료 · 물건(그것으로 만든 것 · 포장 · 껍질 포함)은 **이름만 빼지 말고 재료 자체를** 쓰지 않고, 요청한 놀이의 방식은 살리고 재료만 바꾼다. 쓰는 재료는 숨기지 말고 `materials` · `foods` 에 적는다. **빠진 이유와 상관없이 같은 문장이다** — 알레르기로 빠졌을 때만 주면 그 자체가 사유다(§5-2). 없으면 같은 음식의 변형(밀 쿠키 → 다른 밀 쿠키)을 다시 내 0개로 끝난다.
 
-**다 빠지면 안내만 낸다 (#582)** — [예시] 행으로 채우지 않는다 — 실험에서 요청과 상관없는 추천이 나갔다. 0개면 `count_notice(0)`(`suggestion.empty`)이고, **보호자가 요청에 쓴 음식이 이 아이에게 막혔으면** 그런 놀이는 빼고 골랐다는 한 줄을 붙인다(`request.food_conflict` · `request.food_age_block`, `filters.request_notices`). Food 식단 요청 안내와 같은 방식이다 — 보호자가 쓴 어절만 싣고 등록한 알레르기 이름은 싣지 않으며, 모델 입력에 가지 않는다. 빼 달라는 말(*"땅콩 빼고"*)은 안내하지 않는다. 개수와 상관없이 붙는다 — 0개여도 왜 없는지 이 줄이 말한다.
+**다 빠지면 안내만 낸다 (#582)** — [예시] 행으로 채우지 않는다 — 실험에서 요청과 상관없는 추천이 나갔다. 0개면 `count_notice(0)`(`suggestion.empty`)이고, **보호자가 요청에 쓴 음식이 이 아이에게 막혔으면** 그런 놀이는 빼고 골랐다는 한 줄을 붙인다(`request.food_conflict` · `request.food_age_block`, `filters.request_notices`). Food 식단 요청 안내와 같은 방식이다 — 보호자가 쓴 어절만 싣고 등록한 알레르기 이름은 싣지 않으며, 모델 입력에 가지 않는다. 빼 달라는 말(*"땅콩 빼고"*)은 안내하지 않는다. 개수와 상관없이 붙는다 — 0개여도 왜 없는지 이 줄이 말한다. 붙어 쓴 영어 음식 이름(*peanut butter*)은 한 음식으로 한 줄만 말한다 — 말하는 단위만 묶고 판정은 낱말 그대로다(`food_words.food_phrases`, #864).
 
 **끝나는 조건** — 루프는 공통 `common/tool_loop.run_tool_loop` 다(#320). 출력 tool 이 통과하면 끝난다. `tool_choice="required"` 로 부른다 — 실호출에서 auto 는 tool 을 0/3, required 는 3/3 불렀다. 그래도 말로 끝내거나(`no_tool_call`) 왕복 상한(`MAX_STEPS`)을 넘기면 `failed` 다. 모델이 쓴 말은 화면에 내지 않는다.
 
@@ -903,12 +903,12 @@ GPS 로 받는다 (09-28). 위치정보 법적 동의는 가입 화면에서 선
 
 ### 5-2. 기대값이 바뀌는 기존 테스트
 
-원인은 한 줄 — [`routing.py:60`](../../../apps/api/app/agents/supervisor/routing.py:60) `IMPLEMENTED_AGENTS` 에 `activity` 가 들어가는 것.
+원인은 한 줄 — [`routing.py:60`](../../../apps/api/app/agents/supervisor/routing.py#L60) `IMPLEMENTED_AGENTS` 에 `activity` 가 들어가는 것.
 
 | 대상 | 지금 | 구현 후 |
 | --- | --- | --- |
 | RC07 "이번 주말에 집에서 뭐 하고 놀면 좋을까?" | `unavailable_agents` 덕분에 `_did_anything()` 이 True | `unavailable=()` + `food_tasks=()` → **False → `Failed("unparsable")`**. 🚨 `_did_anything()` 수정 필수 |
-| **`stranded`** ([pipeline.py:261](../../../apps/api/app/agents/pipeline.py:261)) | activity 요청이 있으면 False | activity 만 있는 run 에서 **True** → Supervisor 재호출 · 모델 호출 1회 낭비 · `Rerouted` 오발신. **가장 조용히 깨지는 지점** |
+| **`stranded`** ([pipeline.py:261](../../../apps/api/app/agents/pipeline.py#L261)) | activity 요청이 있으면 False | activity 만 있는 run 에서 **True** → Supervisor 재호출 · 모델 호출 1회 낭비 · `Rerouted` 오발신. **가장 조용히 깨지는 지점** |
 | RC16 "저녁 메뉴랑 주말 놀이" | food 만 실행 | **food + activity 둘 다 실행** — 도메인 Agent 2개 동시 실행이 처음 |
 | RC17 "저녁 + 놀이 + 한글 공부" | activity `unavailable`, growth `dropped` | activity 실행, growth `dropped` |
 | `_judge` | "Food 는 food 조각만 받는다"만 검사 | Activity 에 다른 도메인 조각이 섞여도 안 잡힘 — 대칭 검사 추가 |

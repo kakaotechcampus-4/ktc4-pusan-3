@@ -84,6 +84,7 @@ from app.agents.pipeline import (
 )
 from app.agents.run_writes import RunWrites, record_food_writes
 from app.agents.suggestion_save import InMemorySuggestions, SuggestionBatch
+from app.agents.supervisor import agent as supervisor_agent
 from app.agents.supervisor import routing as routing_module
 from app.agents.supervisor.routing import Guidance
 from app.rules.age import Stage
@@ -580,6 +581,49 @@ async def test_Supervisor_가_죽어도_입력은_실패가_아니다(
     assert result.failed is None
     rows = await memory_context.store.query_observations(domain="food", child_id=CHILD)
     assert len(rows) == 1
+
+
+class _HangingSupervisor(FakeLLM):
+    async def chat(self, **params: Any) -> LLMResponse:
+        self.calls += 1
+        await asyncio.sleep(3600)
+        raise AssertionError("상한이 끊지 못했다")
+
+
+async def test_Supervisor_모델이_멈추면_상한에서_강등하고_Memory_가_기록한다(
+    memory_context: AgentContext,
+    food_context: FoodContext,
+    events: list[Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#914 — 60초 뒤 실패가 아니라, 상한에서 Supervisor 실패와 같은 길로 간다."""
+    monkeypatch.setattr(supervisor_agent, "SUPERVISOR_TIMEOUT_S", 0.05)
+    hanging = _HangingSupervisor()
+    memory_llm = FakeLLM(
+        _tools(_call("a", "create_observation_food", _STRAWBERRY)), _reply("기록했어요.")
+    )
+
+    result = await asyncio.wait_for(
+        _handle(
+            "RC01",
+            memory_llm=memory_llm,
+            memory_context=memory_context,
+            food_context=food_context,
+            events=events,
+            supervisor_llm=hanging,
+        ),
+        timeout=5,
+    )
+
+    assert hanging.calls == 1
+    assert result.supervisor.error == supervisor_agent.TIMEOUT
+    assert result.routing.degraded is True
+    assert result.routing.intent_type == "record"
+    assert result.failed is None
+    rows = await memory_context.store.query_observations(domain="food", child_id=CHILD)
+    assert len(rows) == 1
+    # 기록 후보 조각 없이 원문 전체만 받는다 — 평소의 "기록 후보" 절이 붙지 않는다
+    assert memory_llm.seen[0][-1]["content"] == CASES_BY_ID["RC01"].text
 
 
 # ── 실패 ────────────────────────────────────────────────────────

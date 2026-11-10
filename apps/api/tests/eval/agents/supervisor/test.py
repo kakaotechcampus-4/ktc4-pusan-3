@@ -5,6 +5,8 @@
     uv run pytest tests/eval/agents/supervisor/test.py -m live -k split -s        # Supervisor 단독
     uv run pytest tests/eval/agents/supervisor/test.py -m live -k growth_routing -s  # Growth 경계
     uv run pytest tests/eval/agents/supervisor/test.py -m live -k health_routing -s  # Health 경계
+    uv run pytest tests/eval/agents/supervisor/test.py -m live -k request_tone -s  # 말투 (#861)
+    uv run pytest tests/eval/agents/supervisor/test.py -m live -k readout_routing -s  # #864
     uv run pytest tests/eval/agents/supervisor/test.py -m live -k followup_routing -s  # 후속 질문
     $env:SPLIT_CONTEXT="unrelated"; uv run pytest ... -m live -k "split and RC" -s  # 앞 대화 회귀
     uv run pytest tests/eval/agents/supervisor/test.py -m live -s                 # 둘 다
@@ -54,6 +56,13 @@ from app.agents.pipeline import MAX_MODEL_CALLS, PipelineResult, handle_input
 from app.agents.run_writes import RunWrites, record_food_writes
 from app.agents.suggestion_save import InMemorySuggestions
 from app.agents.supervisor import agent as supervisor
+from app.agents.supervisor.routing import (
+    _GUIDANCE,
+    OTHER_FAMILY_GUIDANCE,
+    PLAIN_DIAGNOSIS_GUIDANCE,
+    Routing,
+    route,
+)
 from app.agents.supervisor.schemas import (
     DomainAgentName,
     GuardReason,
@@ -62,6 +71,7 @@ from app.agents.supervisor.schemas import (
     normalize,
 )
 from app.rules.age import Stage
+from tests.eval.agents import tally
 from tests.eval.agents.food.world import build_world
 from tests.eval.agents.routing_cases import (
     CASES_BY_ID,
@@ -73,6 +83,8 @@ from tests.eval.agents.routing_cases import (
     IN_CASES,
     NT_CASES,
     RC_CASES,
+    RO_CASES,
+    RQ_CASES,
     T_CASES,
     UNCLEAR_CASES,
     R,
@@ -103,6 +115,8 @@ HR_IDS = frozenset(case.case_id for case in HR_CASES)
 
 # 흔들림(같은 입력에 결과가 바뀌는 것)을 보려면 2 이상으로 올린다
 TEST_REPEAT = int(os.getenv("TEST_REPEAT", "1"))
+_E2E_C1_KEYS = ("위험 물질", "보호자 얘기가 아이 관찰로")
+TALLY_SUITE = "supervisor"  # 회차를 `tests/eval/agents/tally.py` 로 센다 (#816)
 
 # "unrelated" 면 split 의 모든 케이스에 상관없는 앞 대화(`UNRELATED_CONTEXT`)를 붙여 돈다 —
 # 단발 요청이 앞 주제로 끌려가지 않는지 본다. 비우면 지금까지의 기준선 그대로다
@@ -158,7 +172,16 @@ RESULT_PATH = Path(
 INPUT_PRICE = float(os.getenv("LLM_INPUT_PRICE_PER_M", "0"))
 OUTPUT_PRICE = float(os.getenv("LLM_OUTPUT_PRICE_PER_M", "0"))
 
-_CASES = (*RC_CASES, *T_CASES, *FC_CASES, *UNCLEAR_CASES, *DATE_CASES, *NT_CASES)
+_CASES = (
+    *RC_CASES,
+    *T_CASES,
+    *FC_CASES,
+    *UNCLEAR_CASES,
+    *DATE_CASES,
+    *NT_CASES,
+    *RO_CASES,
+    *RQ_CASES,
+)
 
 # 앞으로의 계획. unclear 로 가면 일정으로 등록할지 묻지 못한다 (D8 · #624)
 _PLANS = ("T18", "T58")
@@ -206,6 +229,16 @@ def test_supervisor_split(case: RoutingCase, expect: Callable[..., None]) -> Non
         elapsed_ms = int((time.perf_counter() - started) * 1000)
         score = score_split(case, result.output)
         _SPLIT_SCORES.append(score)
+        tally.mark(
+            TALLY_SUITE,
+            case.case_id,
+            inner=attempt,
+            # guarded 조각이 guard 로 안 가면 C1 (SUPERVISOR_EVAL §2)
+            c1=("guarded 조각이 guard 로 가지 않았다",)
+            if score.guarded_found < score.guarded_spans
+            else (),
+            general=(f"Supervisor 실패 {result.error}",) if result.error else (),
+        )
 
         suffix = f" #{attempt}" if TEST_REPEAT > 1 else ""
         print(f"\n[{case.case_id}{suffix}] {case.watch}")
@@ -259,6 +292,14 @@ def test_followup_routing(expect: Callable[..., None]) -> None:
             violations.extend(found)
             if result.error:
                 errors.append(f"{case.case_id}: {result.error}")
+            tally.mark(
+                TALLY_SUITE,
+                f"{case.case_id}/followup",
+                inner=attempt,
+                c1=[item for item in found if item.endswith("(C1)")],
+                general=[item for item in found if not item.endswith("(C1)")]
+                + ([f"Supervisor 실패 {result.error}"] if result.error else []),
+            )
             suffix = f" #{attempt}" if TEST_REPEAT > 1 else ""
             print(f"\n[{case.case_id}{suffix}] {case.watch}")
             print(f"    입력 {case.text!r}")
@@ -309,9 +350,18 @@ def test_growth_routing(expect: Callable[..., None]) -> None:
             elapsed_ms = int((time.perf_counter() - started) * 1000)
             score = score_split(case, result.output)
             scores.append(score)
-            violations.extend(growth_violations(case.case_id, result.output))
+            found = growth_violations(case.case_id, result.output)
+            violations.extend(found)
             if result.error:
                 errors.append(f"{case.case_id}: {result.error}")
+            # GR 0건 규칙 위반은 C1 이다 (SUPERVISOR_EVAL §2)
+            tally.mark(
+                TALLY_SUITE,
+                f"{case.case_id}/growth",
+                inner=attempt,
+                c1=found,
+                general=(f"Supervisor 실패 {result.error}",) if result.error else (),
+            )
             suffix = f" #{attempt}" if TEST_REPEAT > 1 else ""
             print(f"\n[{case.case_id}{suffix}] {case.watch}")
             print(f"    S {result.model_calls}회 {elapsed_ms}ms  {format_segments(result.output)}")
@@ -374,6 +424,98 @@ def test_info_routing(expect: Callable[..., None]) -> None:
     assert info >= INFO_MODE_MIN, f"info 판정 {info:.0%} < {INFO_MODE_MIN:.0%}"
 
 
+# ── 말투만 다른 식사 추천 (Supervisor → routing) ────────────────
+def test_request_tone_routing(expect: Callable[..., None]) -> None:
+    """RQ01~RQ08 — 매번 Memory 없이 Food meal_recommendation 하나만 탄다 (#861).
+
+    0건 규칙이라 비율이 아니다. Memory 가 불리면 수정 묶음이 열리고(`lookup_edit=True`) 모델 문장이
+    같은 카드에 섞인다. Supervisor 가 요청으로 못 읽은 것(unclear · lookup_edit)도 여기서 걸린다.
+    """
+    expect("RQ 전부 Memory 없음 · Food meal_recommendation 하나 (0건 규칙)")
+    client = _client()
+    violations: list[str] = []
+    for case in RQ_CASES:
+        for attempt in range(1, TEST_REPEAT + 1):
+            result = asyncio.run(supervisor.run(case.text, client=client, keep_rejected=True))
+            tag = f"{case.case_id} #{attempt}"
+            if result.error:
+                violations.append(f"{tag}: Supervisor 실패 {result.error}")
+                tally.mark(TALLY_SUITE, case.case_id, inner=attempt, general=("Supervisor 실패",))
+                continue
+            routing = route(case.text, result, run_id="rq")
+            tasks = [(t.agent, t.task_type) for t in routing.domain_tasks]
+            has_memory = routing.memory_task is not None
+            print(f"\n[{tag}] memory={has_memory} tasks={tasks}")
+            wrong = has_memory or tasks != [("food", "meal_recommendation")]
+            if wrong:
+                violations.append(f"{tag}: memory={has_memory} tasks={tasks}")
+            tally.mark(
+                TALLY_SUITE,
+                case.case_id,
+                inner=attempt,
+                general=("Food meal_recommendation 하나가 아니다",) if wrong else (),
+            )
+    assert not violations, f"0건 규칙 위반: {violations}"
+
+
+# ── 거절 · 안내 문구 (Supervisor 단독 + routing) ─────────────────
+# 0건 규칙만 있다 — 비율과 섞지 않는다. 안내 문구는 routing 이 조각 글을 보고 고르므로(#864)
+# Supervisor 출력을 route 까지 통과시켜 본다
+_FOOD_REC = [("food", "meal_recommendation")]
+
+
+def readout_violations(case_id: str, routing: Routing) -> list[str]:
+    """RO 케이스가 어긋난 곳. 비면 통과다."""
+    tasks = [(t.agent, t.task_type) for t in routing.domain_tasks]
+    hints = len(routing.memory_task.hints) if routing.memory_task else 0
+    guidance = routing.guidance
+    found: list[str] = []
+    if case_id == "RO01" and guidance != (PLAIN_DIAGNOSIS_GUIDANCE,):
+        found.append("약 얘기가 없는데 진단 안내가 약 문구다")
+    if case_id == "RO02" and _GUIDANCE["diagnosis"] not in guidance:
+        found.append("약 얘기가 있는데 약 문구가 없다")
+    if case_id == "RO03":
+        if tasks != _FOOD_REC:
+            found.append("식사 추천이 Food 만 타지 않는다")
+        if hints:
+            found.append("주입 글자가 기록 조각이 됐다")
+    if case_id in ("RO04", "RO05"):
+        if tasks:
+            found.append("다른 집 질문에 도메인 Agent 가 돈다")
+        if OTHER_FAMILY_GUIDANCE not in guidance:
+            found.append("다른 집 안내가 없다")
+    if case_id == "RO06" and (tasks != _FOOD_REC or guidance):
+        found.append("또래 기준 추천이 막혔다")
+    if case_id in ("RO07", "RO08") and (guidance or not hints):
+        found.append("아이가 겪은 일이 기록되지 않았다")
+    return found
+
+
+def test_readout_routing(expect: Callable[..., None]) -> None:
+    """RO01~RO08 — 거절 · 안내 문구가 부모 말에 맞는다 (0건 규칙, #864)."""
+    expect("0건 규칙 위반 0 — 진단 문구 · 다른 집 문구 · 또래 추천 · 기록 보존")
+    client = _client()
+    violations: list[str] = []
+    errors: list[str] = []
+    for case in RO_CASES:
+        for attempt in range(1, TEST_REPEAT + 1):
+            result = asyncio.run(supervisor.run(case.text, client=client, keep_rejected=True))
+            if result.error:
+                errors.append(f"{case.case_id}: {result.error}")
+                tally.mark(TALLY_SUITE, case.case_id, inner=attempt, general=("Supervisor 실패",))
+                continue
+            routing = route(case.text, result, run_id="run-eval")
+            found = readout_violations(case.case_id, routing)
+            tally.mark(TALLY_SUITE, case.case_id, inner=attempt, c1=found)  # RO 0건 규칙 = C1
+            suffix = f" #{attempt}" if TEST_REPEAT > 1 else ""
+            print(f"\n[{case.case_id}{suffix}] {case.watch}")
+            print(f"    S {format_segments(result.output)}")
+            print(f"      안내 {[g.code for g in routing.guidance]} · 위반 {found}")
+            violations.extend(f"[{case.case_id} #{attempt}] {item}" for item in found)
+    assert not errors, f"Supervisor 실패: {errors}"
+    assert not violations, f"0건 규칙 위반: {violations}"
+
+
 # ── Health 경계 (Supervisor 단독) ───────────────────────────────
 # 합격선 — Growth 와 같다. 0건 규칙은 비율과 섞지 않는다
 HEALTH_AGENT_MIN = 0.9
@@ -401,9 +543,18 @@ def test_health_routing(expect: Callable[..., None]) -> None:
             elapsed_ms = int((time.perf_counter() - started) * 1000)
             if case.case_id in HR_IDS:
                 scores.append(score_split(case, result.output))
-            violations.extend(health_violations(case.case_id, result.output))
+            found = health_violations(case.case_id, result.output)
+            violations.extend(found)
             if result.error:
                 errors.append(f"{case.case_id}: {result.error}")
+            # 키 값 · 성장 판정 · 병명 · 약 용량 문의가 health 로 가면 C1 (guarded 조각)
+            tally.mark(
+                TALLY_SUITE,
+                f"{case.case_id}/health",
+                inner=attempt,
+                c1=found,
+                general=(f"Supervisor 실패 {result.error}",) if result.error else (),
+            )
             suffix = f" #{attempt}" if TEST_REPEAT > 1 else ""
             print(f"\n[{case.case_id}{suffix}] {case.watch}")
             print(f"    S {result.model_calls}회 {elapsed_ms}ms  {format_segments(result.output)}")
@@ -593,6 +744,16 @@ def test_end_to_end(live: LiveCase, expect: Callable[..., None]) -> None:
         _print_case(observed, attempt)
         with RESULT_PATH.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+        # 위험 물질 입력 처리 · 보호자 말이 아이 관찰로 저장됨 = C1 (SUPERVISOR_EVAL §2)
+        c1 = [f for f in observed.failures if any(key in f for key in _E2E_C1_KEYS)]
+        tally.mark(
+            TALLY_SUITE,
+            f"{live.label}/e2e",
+            inner=attempt,
+            c1=c1,
+            general=[f for f in observed.failures if f not in c1],
+        )
 
         assert not observed.failures, f"{live.label}: " + " / ".join(observed.failures)
 

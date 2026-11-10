@@ -2,7 +2,8 @@
 
 원고는 `alembic/policy_texts/2026-11-03/<scope>.md`, 정본은 같은 폴더의 `<scope>.html` 이고
 마이그레이션(c7d18f3ae5b2)이 두 파일을 그대로 넣는다. 여기서 지키는 것 여섯.
-    ① 다섯이 지금 판이다. 시작 1초 전까지는 앞 판이다
+    ① 다섯이 이 판이었다. 시작 1초 전까지는 앞 판이다.
+       2026-11-10 판이 넷을 이어받고, 보호자 개인정보만 지금도 이 판이다
     ② DB 본문 · 정본 · 제목은 저장소 파일과 한 글자도 다르지 않다
     ③ 앞 판은 이 판이 시작한 시각에 끝난 것으로 기록된다
     ④ 🚨 공개 글에 빈칸 표시 · 미정 표시가 남지 않는다. 위치 약관은 처음으로 연락처가 채워진다
@@ -27,6 +28,20 @@ TEXTS = Path(__file__).resolve().parents[2] / "alembic" / "policy_texts" / "2026
 STARTS_AT = datetime(2026, 11, 2, 15, tzinfo=UTC)
 """한국 시간 2026-11-03 자정."""
 
+NEXT_STARTS_AT = datetime(2026, 11, 9, 15, tzinfo=UTC)
+"""한국 시간 2026-11-10 자정 — 2026-11-10 판(d41e7a0c9b26)이 시작한 시각."""
+
+REPLACED_ON_2026_11_10 = {
+    ConsentScope.SERVICE_TERMS,
+    ConsentScope.CHILD_BASIC,
+    ConsentScope.CHILD_HEALTH,
+    ConsentScope.LOCATION,
+}
+"""2026-11-10 판이 이어받은 scope.
+
+보호자 개인정보(privacy_account)는 글이 바뀌지 않아 이 판이 그대로다.
+"""
+
 PREVIOUS = {
     ConsentScope.SERVICE_TERMS: "draft-2",
     ConsentScope.PRIVACY_ACCOUNT: "draft-2",
@@ -49,12 +64,18 @@ async def versions_at(session, now: datetime) -> dict[ConsentScope, str]:
 
 @pytest.mark.parametrize("scope", PREVIOUS, ids=lambda s: s.value)
 async def test_this_version_is_current(session, scope):
-    """① 시작 1초 전까지는 앞 판, 그 뒤로는 이 판 — 동의 화면이 보여 주는 판이 여기서 정해진다."""
+    """① 시작 1초 전까지는 앞 판, 그 뒤로는 이 판 — 동의 화면이 보여 주는 판이 여기서 정해진다.
+
+    2026-11-10 판이 이어받은 scope 는 그 판이 시작하기 1초 전까지 이 판이다.
+    """
     before = await versions_at(session, STARTS_AT - timedelta(seconds=1))
 
     assert before[scope] == PREVIOUS[scope]
     assert (await versions_at(session, STARTS_AT))[scope] == "2026-11-03"
-    assert (await versions_at(session, datetime.now(UTC)))[scope] == "2026-11-03"
+    last = await versions_at(session, NEXT_STARTS_AT - timedelta(seconds=1))
+    assert last[scope] == "2026-11-03"
+    if scope not in REPLACED_ON_2026_11_10:
+        assert (await versions_at(session, datetime.now(UTC)))[scope] == "2026-11-03"
 
 
 @pytest.mark.parametrize("scope", PREVIOUS, ids=lambda s: s.value)

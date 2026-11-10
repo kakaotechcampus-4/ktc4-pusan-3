@@ -82,6 +82,7 @@ from app.rules.evaluative import find_evaluative, find_level_judgement
 from app.rules.growth_topic import on_topic, record_on_topic
 from app.rules.staleness import is_stale
 from app.rules.term_match import Term, match_fields, normalize
+from tests.eval.agents import tally
 from tests.eval.agents.growth.world import World, build_world
 from tests.unit.agents.growth.support import doc_inputs
 
@@ -89,6 +90,7 @@ RESULT_PATH = Path(
     os.getenv("TEST_RESULT_PATH", str(Path(__file__).with_name("test_growth_live_results.jsonl")))
 )
 TEST_REPEAT = int(os.getenv("TEST_REPEAT", "1"))
+TALLY_SUITE = "growth"  # 회차를 `tests/eval/agents/tally.py` 로 센다 (#816)
 LEARNING, ROUTINE, REVIEW = "learning_suggestion", "routine_coaching", "growth_review"
 INFO = INFO_TASK  # 일반 정보 질문 (#574)
 INPUTS = doc_inputs()
@@ -151,6 +153,13 @@ class Verdict:
     failures: list[str] = field(default_factory=list)
     gaps: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    c1: list[str] = field(default_factory=list)  # failures 중 C1 로 세는 것 (GROWTH_EVAL §2)
+
+    def fail(self, message: str, *, c1: bool = False) -> None:
+        """실패를 적는다. `c1=True` 면 C1 로도 센다 — 실패 건수는 그대로다."""
+        self.failures.append(message)
+        if c1:
+            self.c1.append(message)
 
 
 @dataclass(frozen=True)
@@ -165,6 +174,7 @@ class Case:
     recorded: tuple[str, ...] = ()  # 같은 run 에서 Memory 가 저장한 루틴 관찰의 행동 이름(혼합형)
     golden: bool = False
     model: bool = True
+    ci: bool = False  # PR 에서 도는 CI 묶음 (`-m tool_ci`, #816)
 
 
 @dataclass
@@ -186,6 +196,7 @@ def merged(*verdicts: Verdict) -> Verdict:
     out = Verdict()
     for item in verdicts:
         out.failures += item.failures
+        out.c1 += item.c1
         out.gaps += item.gaps
         out.notes += item.notes
     return out
@@ -276,34 +287,37 @@ def common(ran: Ran) -> Verdict:
         verdict.failures.append(f"추천이 {len(result.suggestions)}개다 (최대 {MAX_SUGGESTIONS})")
     for text in _texts(result):
         if found := find_evaluative(text):
-            verdict.failures.append(f"공통1 평가 표현 {found} — 출력 검증이 뺐어야 한다")
+            verdict.fail(f"공통1 평가 표현 {found} — 출력 검증이 뺐어야 한다", c1=True)
         verdict.notes += [f"넓은 목록 {word!r} — {text[:60]}" for word in _WIDE if word in text]
     titles: set[str] = set()
     for draft in result.suggestions:
         fields = _fields(draft)
         written = (*fields, draft.reason, *(c.note for c in draft.citations))
         if guard := check_growth_text(written).hits:
-            verdict.failures.append(
+            verdict.fail(
                 f"공통9 문장 가드({', '.join(guard)})가 든 후보 — 출력 검증이 뺐어야 한다 "
-                f"({draft.content[:30]})"
+                f"({draft.content[:30]})",
+                c1=True,
             )
         if any(RULES.food_terms(text) for text in fields):
-            verdict.failures.append(f"공통7 음식 용어가 든 후보 ({draft.content[:30]})")
+            verdict.fail(f"공통7 음식 용어가 든 후보 ({draft.content[:30]})", c1=True)
         if ran.case.task == ROUTINE and closure_key(fields):
-            verdict.failures.append(f"공통8 약 · 증상 교정안 ({draft.content[:30]})")
+            verdict.fail(f"공통8 약 · 증상 교정안 ({draft.content[:30]})", c1=True)
         if ran.case.task == LEARNING:
             if any(RULES.hazards(text, world.spec.months) for text in fields):
-                verdict.failures.append(
-                    f"공통4 위험 용어가 든 후보 — 경고도 #402 전까지 뺀다 ({draft.content[:30]})"
+                verdict.fail(
+                    f"공통4 위험 용어가 든 후보 — 경고도 #402 전까지 뺀다 ({draft.content[:30]})",
+                    c1=True,
                 )
             active = _active(world)
             if active and any(RULES.registered_names(text, active) for text in fields):
-                verdict.failures.append(f"등록한 알레르기 이름이 든 후보 ({draft.content[:30]})")
+                verdict.fail(f"등록한 알레르기 이름이 든 후보 ({draft.content[:30]})", c1=True)
             related = _related_terms(world)
             if related and match_fields(fields, related):
-                verdict.failures.append(
+                verdict.fail(
                     "대응표 낱말이 든 후보 — allergy_related 로 빠졌어야 한다 "
-                    f"({draft.content[:30]})"
+                    f"({draft.content[:30]})",
+                    c1=True,
                 )
             title = normalize(draft.content.split("\n", 1)[0])
             if title in titles:
@@ -1014,10 +1028,21 @@ def case(
     recorded: tuple[str, ...] = (),
     golden: bool = False,
     model: bool = True,
+    ci: bool = False,
 ) -> Case:
     key, world = case_id.split("/", 1)
     return Case(
-        case_id, text or INPUTS[key], task, world, expect, judge, records, recorded, golden, model
+        case_id,
+        text or INPUTS[key],
+        task,
+        world,
+        expect,
+        judge,
+        records,
+        recorded,
+        golden,
+        model,
+        ci,
     )
 
 
@@ -1027,11 +1052,11 @@ CASES: tuple[Case, ...] = (
          expect="돌 전 교육 → closed.infant_learning · 모델 0 (G2)"),
     case("T04/C30", LEARNING, j_learning(band="standard"), golden=True,
          expect="숫자 활동 3개 · 표준보육과정에서 쓴 행"),
-    case("T01/C48", LEARNING, j_learning(personal="some", band="nuri"), golden=True,
+    case("T01/C48", LEARNING, j_learning(personal="some", band="nuri"), golden=True, ci=True,
          expect="농구 · 공룡 관심을 근거로 3개 · 누리과정에서 쓴 행"),
     case("T11/C8", ROUTINE, j_rhythm, golden=True, model=False,
          expect="리듬 안내 하나 · 추천 0 · 모델 0"),
-    case("T13/C30", ROUTINE, j_step(f"{TOOTH}.step3"), golden=True,
+    case("T13/C30", ROUTINE, j_step(f"{TOOTH}.step3"), golden=True, ci=True,
          expect="손을 포개는 단계의 다음 칸(말로 일러 주기) 하나 · 개수 안내"),
     case("T13/C48-tooth", ROUTINE, j_step(f"{TOOTH}.step4"), golden=True,
          expect="말로 일러 주는 단계의 다음 칸(혼자 닦기) 하나 · 개수 안내"),
@@ -1057,7 +1082,7 @@ CASES: tuple[Case, ...] = (
          expect="위험 사전 실패 → 닫힘 · 모델 0 (빈 사전 폴백 금지)"),
     case("T01/C80", LEARNING, j_closed(DOC_NO_ROW), model=False,
          expect="[예시]도 기록도 없음 → doc.no_row · 모델 0"),
-    case("T03/C48", LEARNING, j_learning(), expect="규칙 익히기 활동"),
+    case("T03/C48", LEARNING, j_learning(), expect="규칙 익히기 활동", ci=True),
     # ── 일반 정보 질문 (#574) — 추천 없이 문서 근거 답변 ──
     case("IN09/C48", INFO, j_info(), text="보통 몇 살부터 혼자 양치해?",
          expect="growth/info — 답 + 참고 1개 이상 · 근거 행이 아이 월령 구간과 겹침 · 추천 0"),
@@ -1370,6 +1395,8 @@ def _fresh_results() -> None:
 
 def _param(c: Case) -> Any:
     marks = (pytest.mark.live,) if c.model else ()
+    if c.ci:
+        marks = (*marks, pytest.mark.tool_ci)
     return pytest.param(c, id=("golden-" if c.golden else "") + c.case_id, marks=marks)
 
 
@@ -1430,5 +1457,13 @@ async def test_growth(
             for item in items:
                 _say(f"    {label}: {item}")
         _write(_record(ran, verdict, outcome, attempt))
+        tally.mark(
+            TALLY_SUITE,
+            case.case_id,
+            inner=attempt,
+            c1=verdict.c1,
+            general=[item for item in verdict.failures if item not in verdict.c1],
+            tools=recorder.tools,
+        )
         broken += [f"#{attempt} {item}" for item in verdict.failures]
     assert not broken, f"{case.case_id}: " + " / ".join(broken)

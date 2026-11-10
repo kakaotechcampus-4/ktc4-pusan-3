@@ -1,7 +1,7 @@
 "use client";
 
 import { ArrowUp, Camera, Check, Mic, X } from "lucide-react";
-import { type ReactNode, useEffect, useRef } from "react";
+import { type ReactNode, useEffect, useId, useRef } from "react";
 
 import { AgentPrompts } from "@/components/agent-prompts";
 import { IconButton } from "@/components/ui/icon-button";
@@ -10,7 +10,9 @@ import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
 import { TextArea } from "@/components/ui/text-area";
 import { VoiceLevelMeter } from "@/components/voice-level-meter";
 import { useVoiceInput } from "@/hooks/use-voice-input";
-import type { HomeResponse } from "@/lib/api/types";
+import { type HomeResponse, INPUT_TEXT_MAX_LENGTH } from "@/lib/api/types";
+import { INPUT_COUNTER_FROM, inputTextLength } from "@/lib/input-length";
+import { cn } from "@/lib/cn";
 import { SPEECH_ASKING } from "@/lib/native/speech";
 import { VIEW_TRANSITION } from "@/lib/view-transition";
 
@@ -47,6 +49,7 @@ export function HomeComposer({
   locked = false,
   busyLabel = "보내는 중이에요",
   sentLine = false,
+  notice = null,
   lead,
   promptsPending = false,
 }: {
@@ -79,12 +82,25 @@ export function HomeComposer({
    *    빨려 들어간다.
    */
   sentLine?: boolean;
+  /**
+   * 화면이 입력창 위에 세우는 안내 한 줄 — 03 홈의 "연결이 끊겨 있어요" (#865). 음성 안내와 같은 자리에 선다.
+   * 🚨 **음성 안내가 이것보다 먼저다** — 이 안내는 보내기를 누를 때 서고 그때 음성 안내는 지워지므로(`submit`),
+   *    음성 안내가 서 있다면 그쪽이 더 나중 일이다. 반대로 두면 끊긴 채로 마이크를 눌렀을 때 "마이크 권한이 꺼져
+   *    있어요" 같은 실패가 이 안내에 가려 아무 일도 안 일어난 것처럼 보인다 (#865 리뷰).
+   */
+  notice?: string | null;
   /** 제안 줄 맨 앞에 서는 문 하나 — 03 의 "오늘 대화 이어보기" (`AgentPrompts` 의 `lead`). */
   lead?: ReactNode;
   /** 제안을 아직 받는 중. 줄 자리를 알약 모양으로 잡아 둔다 (`AgentPrompts` 의 `pending`). */
   promptsPending?: boolean;
 }) {
-  const canSubmit = value.trim().length > 0 && !pending && !locked;
+  // 🚨 **글자 수는 `maxLength` 로 막지 않는다** (#867). 브라우저는 붙여넣은 긴 글의 뒤를 말없이 잘라서,
+  //    알림장을 통째로 붙인 보호자가 잘린 줄 모르고 앞부분만 보낸다. 말로 적기도 값을 코드로 넣어 `maxLength`
+  //    를 거치지 않는다. 그래서 넘친 글은 그대로 두고 **보내기만 막고 이유를 글자로** 말한다.
+  const length = inputTextLength(value);
+  const tooLong = length > INPUT_TEXT_MAX_LENGTH;
+  const limitId = useId();
+  const canSubmit = length > 0 && !tooLong && !pending && !locked;
   const voice = useVoiceInput({ value, onChange });
 
   // 듣는 동안 마이크 버튼이 사라진다 — 포커스를 "다 말했어요" 로 옮겼다가, 끝나면 마이크로 돌려준다.
@@ -111,7 +127,7 @@ export function HomeComposer({
       maxHeightPx={104}
       /* 🚨 한 줄에 들어가는 길이여야 한다. 버튼 3개가 132px 을 가져가서 입력에 남는 폭이
          206px 뿐이고, 이보다 길면 빈 입력창이 두 줄로 선다. 전체 문구는 위의 라벨이 진다. */
-      placeholder={voice.listening ? "듣고 있어요" : "말하듯 적어주세요"}
+      placeholder={voice.listening ? "듣고 있어요" : "말하듯 적어 주세요"}
       value={value}
       onChange={(e) => onChange(e.target.value)}
       // 모바일 키보드의 Enter 자리에 "보내기" 가 뜬다 — 아래 Enter 동작과 같은 말을 한다.
@@ -158,8 +174,28 @@ export function HomeComposer({
             ? SPEECH_ASKING
             : voice.listening
               ? "듣고 있어요. 말하면 입력창에 바로 적혀요."
-              : voice.notice}
+              : (voice.notice ?? notice)}
         </p>
+
+        {/* 글자 수 (#867). 한도 가까이에서만 숫자를 세우고, 넘으면 왜 못 보내는지를 왼쪽에 말한다.
+            🚨 숫자는 리전 밖에 둔다 — 칠 때마다 바뀌어서 리전에 두면 스크린리더가 글자마다 읽는다.
+               리전의 글은 넘었을 때 한 번 바뀌는 고정 문장이고, 위 음성 안내와 같은 이유로 빈 채로 늘 세워 둔다.
+            🚨 빨강으로 칠하지 않는다 — 고칠 일이지 사고가 아니다 (디자인 시스템 §3). */}
+        <div
+          className={cn("flex items-baseline gap-3 px-3", length >= INPUT_COUNTER_FROM && "pb-2")}
+        >
+          <p id={limitId} role="status" className="text-body-sm text-ink min-w-0 flex-1">
+            {tooLong
+              ? `${INPUT_TEXT_MAX_LENGTH.toLocaleString("ko-KR")}자까지 보낼 수 있어요. 줄이거나 나눠서 보내 주세요.`
+              : ""}
+          </p>
+          {length >= INPUT_COUNTER_FROM ? (
+            <p className="text-caption text-ink-subtle shrink-0 tabular-nums">
+              <span className="sr-only">글자 수 </span>
+              {length}/{INPUT_TEXT_MAX_LENGTH}
+            </p>
+          ) : null}
+        </div>
 
         {/* 알약 하나 안에 버튼·입력·보내기가 다 들어간다. 입력만 테두리를 갖지 않는 이유(§7 bare). */}
         <Named name={VIEW_TRANSITION.chatBar}>
@@ -222,6 +258,8 @@ export function HomeComposer({
                   label={pending ? busyLabel : "이 이야기 남기기"}
                   tone="brand"
                   aria-busy={pending}
+                  // 눌리지 않는 이유를 버튼에서도 들을 수 있게 위 문장을 잇는다.
+                  aria-describedby={tooLong ? limitId : undefined}
                   disabled={!canSubmit}
                   onClick={submit}
                 >

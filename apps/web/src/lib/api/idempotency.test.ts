@@ -182,7 +182,9 @@ describe("전용 함수", () => {
  *
  * 멘토 리뷰(#71): "최초 POST 를 서버가 처리했지만 응답만 유실되면 (…) 사용자가 내용을 고쳐
  * 다시 전송하면 기존 키에 다른 본문이 묶여 422 `idempotency_key_reuse` 가 계속 발생하고,
- * 키를 바꾸는 경로에도 진입하지 못합니다."
+ * 키를 바꾸는 경로에도 진입하지 못합니다." *
+ * ⚠️ 422 는 만들지 않기로 했다 (#438 · 11-09). 지금 서버는 같은 키면 처음 응답을 재생해서, 고친 본문이
+ *    조용히 버려진다 — 멘토님이 짚은 문제(본문이 바뀌어도 키가 그대로)는 그대로라 이 장치가 계속 필요하다.
  */
 describe("키 수명 — 본문에 묶인 키", () => {
   it("같은 본문이면 같은 키다 — 그게 재시도다", () => {
@@ -212,14 +214,15 @@ describe("키 수명 — 본문에 묶인 키", () => {
 describe("응답 유실 → 본문 수정 → 재전송", () => {
   const body = (text: string) => ({ text, source: "home_input" }) as const;
 
-  it("같은 키에 다른 본문을 보내면 422 다 — 고쳐야 하는 이유", async () => {
+  it("같은 키에 다른 본문을 보내면 처음 응답이 재생되고 고친 본문은 처리되지 않는다 — 고쳐야 하는 이유", async () => {
     const key = newIdempotencyKey();
     // 서버는 처리했고(여기까지는 성공) 화면만 응답을 못 받은 상태를 흉내 낸다.
-    await submitInput("c1", body("지어낸 한 줄"), key);
+    const first = await submitInput("c1", body("지어낸 한 줄"), key);
 
-    await expect(submitInput("c1", body("지어낸 다른 한 줄"), key)).rejects.toMatchObject({
-      code: "idempotency_key_reuse",
-    });
+    // 🚨 서버는 본문을 비교하지 않는다(422 를 만들지 않기로 함 · #438). 실패로 알리지도 않아서
+    //    화면은 고친 한 줄이 저장된 줄 안다 — 그래서 본문이 바뀌면 새 키여야 한다.
+    const second = await submitInput("c1", body("지어낸 다른 한 줄"), key);
+    expect(second.run_id).toBe(first.run_id);
   });
 
   it("holder 를 거치면 고쳐 쓴 본문이 새 키로 나가 통과한다", async () => {

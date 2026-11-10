@@ -18,13 +18,13 @@
 | 패키지 관리 | uv |
 | 테스트 | pytest |
 | 린트·포맷 | ruff |
-| import 규칙 강제 | import-linter (CI, 예정 — #79 API CI 와 함께) |
+| import 규칙 강제 | 리뷰 (import-linter 는 아직 설정하지 않았다) |
 
 ---
 
 ## 레이어 경계
 
-import-linter 로 CI 에서 강제할 예정이다(#79 API CI 와 함께). 설정이 생기기 전까지는 리뷰가 막는다.
+import-linter 설정은 아직 없다 — API CI(`ci-api.yml`)에도 들어 있지 않다. 지금은 리뷰가 막는다.
 
 ### `app/rules/`
 - **허용**: 표준 라이브러리만
@@ -154,6 +154,13 @@ raw SQL 대상 예시: 승격 판정 집계, observation 4테이블 병합 페�
 - `--autogenerate` 결과를 확인 없이 커밋하지 않는다.
   자동 인식 안 되는 것: `enum`, `CHECK` 제약, `daterange`, `vector` 타입, `GRANT`
 - 첫 revision 에 `CREATE EXTENSION IF NOT EXISTS vector` 를 직접 넣는다.
+- 🚨 **새 표를 만들면 같은 마이그레이션에서 삭제 트리거를 건다** (#758) — 트리거가 없는 표에서 지운 행은
+  백업을 복원하면 되살아난다. 표를 만든 뒤 한 줄(`CREATE TRIGGER deletion_log AFTER DELETE ON "새_표" FOR EACH ROW
+  EXECUTE FUNCTION log_deletion()`), downgrade 에는 표를 지우기 전에 `DROP TRIGGER`. 걸지 않을 표는
+  `app/domains/deletion_log/models.py` 의 `NOT_LOGGED` 에 이유와 함께 적는다 — 둘 다 안 하면
+  `tests/integration/test_deletion_log.py` 가 실패한다. 행을 지우지 않고 상태만 바꾸는 "삭제"(`status='deleted'` 같은)를
+  새로 만들면 같은 파일의 `STATUS_DELETES` 와 마이그레이션의 상태 트리거에 같이 더한다 — **둘 다 빠뜨리면 테스트가
+  잡지 못한다.** 상세는 그 파일 머리말.
 - 🚨 **expand-only** — 배포 롤백은 DB 를 안 되돌려서, 직전 코드가 새 스키마에서 돌아야 한다.
   CI 의 `python -m scripts.check_expand_only` 가 `upgrade()`(와 거기서 부르는 같은 파일 함수)의 컬럼 · 테이블 삭제,
   이름 바꾸기, NOT NULL 조이기 · 기본값 떼기, `server_default` 없는 NOT NULL 컬럼 추가, CHECK 교체, 넓히기가 아닌

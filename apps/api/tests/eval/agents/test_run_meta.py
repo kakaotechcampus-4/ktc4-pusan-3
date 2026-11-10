@@ -134,3 +134,19 @@ def test_pytest_밖_스크립트_실행도_명령으로_메타를_남긴다(tmp_
     assert main(["scripts/meal_ocr_eval.py", "--out", str(path)]) == 0
     written = json.loads(path.read_text(encoding="utf-8"))
     assert written["evalset"] == ["scripts/meal_ocr_eval.py"]
+
+
+def test_스크립트가_반복_횟수와_OCR_effort_를_직접_넘긴다(monkeypatch):
+    # OCR 스크립트는 --repeat 로 돈다 — TEST_REPEAT 가 없거나 달라도 넘긴 값이 적혀야 한다
+    monkeypatch.setenv("TEST_REPEAT", "1")
+    meta = build_meta(
+        evalset=[],
+        settings=_settings(),
+        ocr_model="ocr-model",
+        repetitions=5,
+        ocr_efforts={"notice_ocr": "low"},
+    )
+
+    assert meta["repetitions"] == 5
+    assert meta["models"]["notice_ocr"] == {"model": "ocr-model", "reasoning_effort": "low"}
+    assert meta["models"]["meal_ocr"] == {"model": "ocr-model", "reasoning_effort": None}

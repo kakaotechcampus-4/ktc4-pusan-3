@@ -111,7 +111,7 @@ apps/api/app/agents/
     ├── prompt.py          system prompt
     ├── registry.py        이름 → 함수 매핑 + 인자 검증
     ├── result.py          ToolResult · ErrorCode
-    ├── schemas/           tool argument 스키마 + tool 정의 27개 + MemoryTask
+    ├── schemas/           tool argument 스키마 + tool 정의 23개 + MemoryTask
     ├── tools/             observation.py(20) · schedule.py(7)
     └── store/             ports.py(Protocol) · inmemory.py
 
@@ -417,6 +417,8 @@ Growth 루틴이 "지금 어느 정도까지 하나요?" 를 물으면 보호자
 어려웠다. 저장했거나, 시도했다 못 한 run(위험 물질 · 안전 기록 · 아이 기록 아님 거절, 인자 오류)이거나, 조회 ·
 수정이거나, Memory 가 되물은 run 은 모델 문장 그대로다. 되묻기가 맥락 없이 message 로 내려간 것도 덮지 않는다. 프롬프트도 "담당 Agent" 를 쓰지 않는다 — 모델이 그 낱말을 옮겨 적었다.
 
+기록 조각이 아예 없는 요청 run(힌트 0개)에서 Memory 가 쓰기를 시도하지 않고 말로만 끝냈으면 그 말은 싣지 않는다 — 남긴 기록이 없으니 `REQUEST_ONLY_NOTE` 도 내지 않는다(`pipeline._nothing_to_record`). tool 을 하나라도 불렀거나(Supervisor 가 놓친 조회에 읽고 답한 것일 수 있다) 시도했다 막힌 거절 · 질문이면 그대로다. 말을 뺀 run 은 `_did_anything` 도 처리한 일로 세지 않아, 도메인 Agent 가 다 실패하면 빈 화면이 아니라 `Failed` 로 끝난다 (#861).
+
 **내려놓은 질문 (#226 · #246 합의 5, 잠정)**
 
 화면은 "답하지 않고 새로 적기" 로 내려놓은 질문을 앱을 끄기 전까지 열어 두고 15분을 세지 않는다(재시작으로도
@@ -432,7 +434,7 @@ unclear 로 둔다. 예전에는 그 판정이 Memory 에 가지 않아 강등�
 다시 보고 음식 이름이 있으면 저장했다. 이제 `route()` 가 unclear 조각을 `MemoryTask.unclear` 로 넘긴다.
 
 - 조각들이 원문을 다 덮고 기록 조각이 없으면 `unclear_only` 다. 이때 관찰 create · update 를 전부 거절한다
-  (`NOT_CHILD_RECORD`). 조각에 안 들어간 글자가 있으면 놓친 기록일 수 있어 unclear 조각만 막는다.
+  (`NOT_CHILD_RECORD`). 조각에 안 들어간 글자가 있으면 놓친 기록일 수 있어 unclear 조각만 막는다. 부르는 말 · 추임새(야 · 음 · ㅠㅠ 등 `routing.FILLER_WORDS`)만 남은 글자는 기록일 수 없어 덮인 것으로 본다 (#861).
 - 섞여 있으면 대상 이름(`subject`·`symptom`·`activity`·`topic`)이 unclear 조각에만 나오거나, 원문이
   unclear 조각 안에 들어갈 때 거절한다. 원문을 길게·바꿔 적어도 대상 이름으로 걸린다.
 - tool 을 빼지 않고 열어 둔 채 거절한다. 빼 봤더니 모델이 이유를 몰라 저장 없이 "기록했어요" 라고 답했다(3번 중 2번).

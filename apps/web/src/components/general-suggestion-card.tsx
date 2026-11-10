@@ -100,7 +100,12 @@ export function GeneralSuggestionCard({
 
         {/* 필요한 재료 · 준비물은 기준 문구 다음, 문서 출처 위다 (#659). 개인화 줄과 같은 컴포넌트다 —
             카드는 따로고 이 부분만 같이 쓴다. */}
-        <SuggestionItems agent={suggestion.agent} items={suggestion.items} className="mt-3" />
+        <SuggestionItems
+          agent={suggestion.agent}
+          items={suggestion.items}
+          content={suggestion.content}
+          className="mt-3"
+        />
 
         {/* 🚨 일반 추천의 근거는 **문서 행**이다 (최상위 §2). 출처를 같이 적는다 — CC BY 문서는 출처
           표시가 이용 조건이고, 무엇을 보고 골랐는지가 `basis`의 근거다. "사용한 기록 N건" 으로

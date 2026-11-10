@@ -8,6 +8,7 @@ import pytest
 
 from app.agents.common.food_words import check_foods
 from app.agents.food.food_check import label_text, request_notices
+from app.agents.food.readouts import READOUTS
 from app.agents.food.store.ports import SafetyEntry
 
 
@@ -102,3 +103,32 @@ def test_합성어_조사가_붙은_요청에도_안내를_붙인다(registered,
 )
 def test_빼_달라는_말은_어미가_달라도_요청한_음식이_아니다(text):
     assert request_notices([text], [entry("땅콩")], stage="preschool", months=50) == ()
+
+
+# ── #864 — 붙은 영어 음식 이름은 한 음식으로 한 번만 말한다 ────────────────────────────────
+PEANUT_BUTTER = "Recommend a peanut butter snack for my kid"
+PEANUT_BUTTER_NOTICE = READOUTS.render(
+    "meal.request_conflict", food="peanut butter", what="알레르기"
+).body
+
+
+@pytest.mark.parametrize(
+    "registered", [[entry("땅콩"), entry("우유")], [entry("땅콩")], [entry("우유")]]
+)
+def test_영어_음식_이름은_한_음식으로_한_번만_말한다(registered):
+    notices = request_notices([PEANUT_BUTTER], registered, stage="preschool", months=50)
+    assert [n.body for n in notices] == [PEANUT_BUTTER_NOTICE]
+
+
+def test_한글_어절은_묶지_않는다():
+    notices = request_notices(
+        ["우유 치즈 들어간 간식 추천"], [entry("우유")], stage="preschool", months=50
+    )
+    assert len(notices) == 2  # 우유 · 치즈 각각 — 지금 동작 그대로
+
+
+def test_영어_묶음은_판정을_바꾸지_않는다():
+    verdicts = check_foods(
+        PEANUT_BUTTER, [entry("땅콩"), entry("우유")], stage="preschool", months=50
+    )
+    assert {v.word for v in verdicts if v.conflicts} == {"peanut", "butter"}
