@@ -183,8 +183,6 @@ export function medicationDiff(
  * - `consent_required` — 동의 전이라 아무것도 넣지 않았다. 다시 눌러도 같다. 동의 화면은 아직 없다.
  * - `not_found` — 그 사이 멈췄거나 바뀐 코스다(수정 초안). 다시 눌러도 같은 404 다.
  * - `validation_failed` — 같은 본문은 같은 답이다. 칸을 고치면 본문이 바뀌어 새 키로 다시 나간다 — 잠그지 않는다.
- * - 🚨 `idempotency_in_progress`(409) — **같은 키의 첫 요청이 아직 처리 중이다.** 들어갔을 수 있어서 "넣지 않았어요" 가
- *   아니고, 잠그지도 않는다 — 같은 키로 다시 누르면 처음 응답이 재생돼 결과를 확인한다 (`idempotency-v1.md` 표).
  * - 그 밖의 4xx — 같은 본문이면 같은 답이다. 잠근다.
  * - 응답을 못 받음(네트워크 · 5xx) — 서버가 받았을 수 있다. 단정하지 않고 같은 키로 다시 확인하게 한다.
  * ⚠️ 서버 코드가 정해지기 전이라 잠정이다 (`docs/web/medication-v1.md` §6).
@@ -208,7 +206,7 @@ export function failureOf(error: unknown): { text: string; final: boolean } {
       final: false,
     };
   }
-  if (isApiError(error) && error.status < 500 && !isApiError(error, "idempotency_in_progress")) {
+  if (isApiError(error) && error.status < 500) {
     return { text: "넣지 않았어요. 다시 눌러도 같은 결과가 와요.", final: true };
   }
   return {

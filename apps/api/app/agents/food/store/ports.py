@@ -260,8 +260,8 @@ class FoodMemoryReader(Protocol):
     ) -> list[FoodObservation]:
         """`observation_food` 구간 조회. `active` · `stand_alone` 행만 돌려준다.
 
-        `memory_bridge.FOOD_STATUSES` 와 같은 기준이다. "잘못된 기록"(`inactive`)과 삭제한
-        행은 근거로도, 영양 판정 합계로도 쓰지 않는다(영양소_계산_설계 §3). 출처 두 칸
+        `memory_bridge.FOOD_STATUSES` 와 같은 기준이다. 삭제한 행은 근거로도, 영양 판정
+        합계로도 쓰지 않는다(영양소_계산_설계 §3). 출처 두 칸
         (`confidence_source` · `source_notice_id`)도 읽어 온다 — `FoodObservation` 참고.
         """
         ...

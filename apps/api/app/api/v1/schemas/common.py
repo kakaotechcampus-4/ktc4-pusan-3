@@ -4,14 +4,13 @@
 응답 생성과 OpenAPI 문서가 같은 모델을 써서 정의가 두 벌이 되는 것을 막는다.
 """
 
-from pydantic import BaseModel
-
 from app.api.errors import ErrorBody, ErrorEnvelope
+from app.api.schema_base import ApiSchema
 
 __all__ = ["ErrorBody", "ErrorEnvelope", "Ref"]
 
 
-class Ref(BaseModel):
+class Ref(ApiSchema):
     """도메인 간 참조 — 계약서 §01 "Ref".
 
     observation 이 4개 테이블로 나뉘어 있어 id 만으로는 어느 테이블인지 알 수 없다.

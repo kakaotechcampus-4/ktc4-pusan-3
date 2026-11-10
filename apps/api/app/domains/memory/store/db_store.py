@@ -32,6 +32,7 @@ from app.agents.memory.store.ports import (
 )
 from app.domains.delete_proposal.repository import PROPOSAL_TTL, ProposalTab, add_proposal
 from app.domains.memory.observation.models import (
+    GONE_STATUSES,
     ObservationActivity,
     ObservationEducation,
     ObservationFood,
@@ -331,7 +332,7 @@ class DbMemoryStore:
         model = _MODEL_BY_DOMAIN[domain]
         stmt = select(model).where(
             model.child_id == child_id,
-            model.status != ObservationStatus.DELETED,
+            model.status.notin_(GONE_STATUSES),
         )
         if date_from is not None:
             stmt = stmt.where(model.observed_range.op("&&")(func.daterange(date_from, None, "[)")))
@@ -357,7 +358,7 @@ class DbMemoryStore:
             select(model).where(
                 model.id == uid,
                 model.child_id == self._child_id,
-                model.status != ObservationStatus.DELETED,
+                model.status.notin_(GONE_STATUSES),
             )
         )
         if orm is None:
@@ -400,7 +401,7 @@ class DbMemoryStore:
                     select(model.affinity_id, *(getattr(model, k) for k in watched)).where(
                         model.id == uid,
                         model.child_id == self._child_id,
-                        model.status != ObservationStatus.DELETED,
+                        model.status.notin_(GONE_STATUSES),
                     )
                 )
             ).first()
@@ -415,7 +416,7 @@ class DbMemoryStore:
             .where(
                 model.id == uid,
                 model.child_id == self._child_id,
-                model.status != ObservationStatus.DELETED,
+                model.status.notin_(GONE_STATUSES),
             )
             .values(**values)
             .returning(model)

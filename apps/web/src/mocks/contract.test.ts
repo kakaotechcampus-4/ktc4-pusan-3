@@ -49,6 +49,7 @@ import { isSeverityFor } from "@/lib/health-safety";
 import { api } from "@/lib/api/client";
 import {
   DIARY_CONTENT_MAX_LENGTH,
+  INPUT_TEXT_MAX_LENGTH,
   REPORT_CATEGORIES,
   REPORT_MESSAGE_MAX_LENGTH,
 } from "@/lib/api/types";
@@ -219,28 +220,35 @@ describe("② 같은 키 · 같은 요청 = 재시도", () => {
   });
 });
 
-describe("③ 같은 키 · 다른 요청 = 재사용 거부", () => {
-  it("422 idempotency_key_reuse", async () => {
+/**
+ * 🚨 **서버는 본문을 비교하지 않는다** — 같은 키면 처음 응답을 재생한다. 422 `idempotency_key_reuse` ·
+ *    409 `idempotency_in_progress` 는 만들지 않기로 했다 (#438 · 11-09 PM). 화면이 본문이 바뀌면 새 키를
+ *    쓰므로(`current(text)`) 고친 본문이 옛 응답에 묻히는 일은 화면 쪽에서 막는다.
+ */
+describe("③ 같은 키 · 다른 요청 = 처음 응답 재생 (서버와 같다)", () => {
+  it("같은 키로 본문을 바꿔 보내도 처음 응답이 오고, 바뀐 본문은 저장되지 않는다", async () => {
     const key = newIdempotencyKey();
-    await submitOnboarding("c1", { gender: "female" }, key);
+    const first = await submitOnboarding("c1", { gender: "female" }, key);
 
-    await expect(submitOnboarding("c1", { gender: "male" }, key)).rejects.toSatisfy(
-      (e: unknown) => isApiError(e, "idempotency_key_reuse") && e.status === 422,
-    );
+    const second = await submitOnboarding("c1", { gender: "male" }, key);
+
+    expect(second).toEqual(first);
+    const profile = await api.get<ChildProfile>("/children/c1");
+    expect(profile.gender).toBe("female");
   });
 
-  it("다른 엔드포인트에 같은 키를 돌려써도 거부한다", async () => {
+  it("다른 엔드포인트에 같은 키를 쓰면 다른 요청이다 — 키의 범위는 (방법, 경로, 키)", async () => {
     const key = newIdempotencyKey();
     await submitEventDraft("c1", draftBody(), key);
 
     await expect(
       addHealthSafety("c1", { type: "allergy", label: "지어낸항목" }, key),
-    ).rejects.toSatisfy((e: unknown) => isApiError(e, "idempotency_key_reuse"));
+    ).resolves.toBeTruthy();
   });
 });
 
 describe("④ 같은 키 · 동시 요청", () => {
-  it("한 번만 실행되고 나머지는 409 idempotency_in_progress", async () => {
+  it("한 번만 실행되고 나머지는 처음 응답을 받는다", async () => {
     const key = newIdempotencyKey();
 
     const body = await approvedDraftBody("s_4");
@@ -250,14 +258,10 @@ describe("④ 같은 키 · 동시 요청", () => {
       submitEventDraft("c1", body, key),
     ]);
 
-    const fulfilled = results.filter((r) => r.status === "fulfilled");
-    const rejected = results.filter((r) => r.status === "rejected");
-
-    expect(fulfilled).toHaveLength(1);
-    for (const r of rejected) {
-      expect(isApiError(r.reason, "idempotency_in_progress")).toBe(true);
-      expect((r.reason as ApiError).status).toBe(409);
-    }
+    expect(results.every((r) => r.status === "fulfilled")).toBe(true);
+    const ids = results.map((r) => (r.status === "fulfilled" ? r.value.event.id : null));
+    // 셋 다 같은 일정 — 핸들러는 한 번만 돌았다
+    expect(new Set(ids).size).toBe(1);
   });
 });
 
@@ -2427,21 +2431,24 @@ describe("⑪ 일기 쓰기 · 지우기 — 서버 #333 과 같은 계약 (#364
   it.each([
     ["빈 문자열", ""],
     ["공백 · 줄바꿈 · 탭뿐", " \n\t"],
-  ])("내용이 %s 이면 422 validation_failed 이고 기존 일기가 남는다", async (_, content) => {
-    const diaryDay = (await recentCalendarDays()).find((day) => day.has_my_diary);
-    expect(diaryDay).toBeDefined();
-    const before = await api.get<CalendarDayResponse>(`/children/c1/calendar/${diaryDay!.date}`);
-    expect(before.my_diary).not.toBeNull();
+  ])(
+    "내용이 %s 이면 400 validation_failed 이고 기존 일기가 남는다 — 본문 오류 (#438)",
+    async (_, content) => {
+      const diaryDay = (await recentCalendarDays()).find((day) => day.has_my_diary);
+      expect(diaryDay).toBeDefined();
+      const before = await api.get<CalendarDayResponse>(`/children/c1/calendar/${diaryDay!.date}`);
+      expect(before.my_diary).not.toBeNull();
 
-    const failure = await api
-      .put(`/children/c1/diary/${diaryDay!.date}`, { content })
-      .catch((error: unknown) => error);
+      const failure = await api
+        .put(`/children/c1/diary/${diaryDay!.date}`, { content })
+        .catch((error: unknown) => error);
 
-    expect(isApiError(failure, "validation_failed")).toBe(true);
-    expect((failure as ApiError).status).toBe(422);
-    const after = await api.get<CalendarDayResponse>(`/children/c1/calendar/${diaryDay!.date}`);
-    expect(after.my_diary).toEqual(before.my_diary);
-  });
+      expect(isApiError(failure, "validation_failed")).toBe(true);
+      expect((failure as ApiError).status).toBe(400);
+      const after = await api.get<CalendarDayResponse>(`/children/c1/calendar/${diaryDay!.date}`);
+      expect(after.my_diary).toEqual(before.my_diary);
+    },
+  );
 
   it.each([
     ["content 가 없다", {}],
@@ -2477,7 +2484,7 @@ describe("⑪ 일기 쓰기 · 지우기 — 서버 #333 과 같은 계약 (#364
 
   it.each([
     ["NUL 이 든", "지어낸\u0000일기"],
-    // 서버는 바디 검증(400)이 라우터의 공백 검사(422)보다 먼저다.
+    // 서버는 바디 검증(길이 · NUL)이 라우터의 공백 검사보다 먼저다 — 둘 다 400 이다.
     ["공백뿐이고 1000자를 넘는", " ".repeat(DIARY_CONTENT_MAX_LENGTH + 1)],
   ])("%s 본문은 400 이고 기존 일기가 남는다 (#549)", async (_, content) => {
     const diaryDay = (await recentCalendarDays()).find((day) => day.has_my_diary);
@@ -4836,6 +4843,29 @@ async function runChatToEnd(text: string): Promise<string> {
 function chatDay(query: Record<string, string> = {}) {
   return api.get<ChatDayResponse>(`/children/${CHAT_CHILD}/chat`, { query });
 }
+
+describe("한 줄 입력의 길이 — 서버 `CreateInputRequest.text` 와 같이 거절한다 (#867)", () => {
+  it("앞뒤 공백을 뗀 코드 포인트가 2000자를 넘으면 400 validation_failed · fields 에 text", async () => {
+    const error = await submitInput(
+      CHAT_CHILD,
+      { text: "가".repeat(INPUT_TEXT_MAX_LENGTH + 1), source: "home_input" },
+      newIdempotencyKey(),
+    ).catch((e: unknown) => e);
+    expect(isApiError(error, "validation_failed")).toBe(true);
+    expect((error as ApiError).status).toBe(400);
+    expect((error as ApiError).detail?.fields).toEqual(["text"]);
+  });
+
+  it("🚨 이모지 2000개에 앞뒤 공백이 붙어도 받는다 — UTF-16 이 아니라 코드 포인트로 센다", async () => {
+    // 받았는지만 본다 — 스트림은 읽지 않는다.
+    const { run_id } = await submitInput(
+      CHAT_CHILD,
+      { text: `  ${"😀".repeat(INPUT_TEXT_MAX_LENGTH)}  `, source: "home_input" },
+      newIdempotencyKey(),
+    );
+    expect(run_id).toBeTruthy();
+  });
+});
 
 describe("지난 대화 — 서버처럼 끝난 run 만 남긴다 (#228)", () => {
   afterEach(() => setScenario("default"));

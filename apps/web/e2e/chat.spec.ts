@@ -318,6 +318,34 @@ test.describe("도메인 Agent 결과는 답 묶음 안의 블록이다 (#227)",
   });
 });
 
+test.describe("연결이 끊긴 채 보낸다 (#865)", () => {
+  test("🚨 홈에 머물고 쓴 글이 남으며, 다시 연결된 뒤 보내면 한 번만 저장된다", async ({
+    page,
+    context,
+  }) => {
+    const calls = recordApi(page);
+    await page.goto(`/child/${CHILD}/home`);
+    const box = page.getByRole("textbox", { name: "오늘 있었던 일" });
+    await box.fill("지어낸 한 줄");
+
+    await context.setOffline(true);
+    await page.getByRole("button", { name: "이 이야기 남기기" }).click();
+
+    // 넘어가려다 실패하면 브라우저 오류 화면이 앱을 통째로 덮는다 — 홈에 머물러야 한다.
+    await expect(page.getByText("인터넷 연결이 끊겨 있어요", { exact: false })).toBeVisible();
+    await expect(page).toHaveURL(new RegExp(`/child/${CHILD}/home$`));
+    await expect(box).toHaveValue("지어낸 한 줄");
+    expect(writes(calls, "POST", /\/inputs$/)).toEqual([]);
+
+    await context.setOffline(false);
+    await expect(page.getByText("다시 연결됐어요", { exact: false })).toBeVisible();
+    await page.getByRole("button", { name: "이 이야기 남기기" }).click();
+    await page.waitForURL(`**/child/${CHILD}/chat`);
+    await expect(turn(page, "지어낸 한 줄")).toBeVisible();
+    expect(writes(calls, "POST", /\/inputs$/)).toHaveLength(1);
+  });
+});
+
 test.describe("저장한 뒤 끊긴 run 은 실패가 아니다 (#271)", () => {
   test.use({ scenario: "interrupted" });
 
@@ -678,5 +706,45 @@ test.describe("초안 카드의 준비물 (#679)", () => {
         .filter({ has: page.getByRole("button", { name: "간식 빼기" }) })
         .getByText("새로 더한 것"),
     ).toBeVisible();
+  });
+});
+
+test.describe("한 줄 입력의 글자 수 한도 (#867)", () => {
+  test("한도 가까이에서만 숫자가 서고, 넘으면 이유를 말하며 보내지 않는다", async ({ page }) => {
+    const calls = recordApi(page);
+    await page.goto(`/child/${CHILD}/home`);
+    const input = page.getByRole("textbox", { name: "오늘 있었던 일" });
+    const send = page.getByRole("button", { name: "이 이야기 남기기" });
+    const reason = page.getByText("2,000자까지 보낼 수 있어요. 줄이거나 나눠서 보내 주세요.");
+
+    // 대부분의 한 줄에는 숫자가 없다.
+    await input.fill("가".repeat(1799));
+    await expect(page.getByText(/\d+\/2000/)).toHaveCount(0);
+    await input.fill("가".repeat(1800));
+    await expect(page.getByText("1800/2000")).toBeVisible();
+
+    // 🚨 서버처럼 앞뒤 공백을 떼고 코드 포인트로 센다 — 이모지 2,000개는 보낼 수 있는 글이다.
+    await input.fill(`${"😀".repeat(2000)}   `);
+    await expect(page.getByText("2000/2000")).toBeVisible();
+    await expect(reason).toHaveCount(0);
+    await expect(send).toBeEnabled();
+
+    // 🚨 `maxLength` 로 자르지 않는다 — 붙여넣은 글이 그대로 남고, 보내기만 막는다.
+    await input.fill("가".repeat(2001));
+    await expect(input).toHaveValue("가".repeat(2001));
+    await expect(page.getByText("2001/2000")).toBeVisible();
+    await expect(reason).toBeVisible();
+    await expect(send).toBeDisabled();
+    await expect(send).toHaveAccessibleDescription(/2,000자까지 보낼 수 있어요/);
+
+    // Enter 도 같은 말을 한다 — 줄바꿈으로 새지도, 보내지도 않는다.
+    await input.press("Enter");
+    await expect(input).toHaveValue("가".repeat(2001));
+    expect(writes(calls, "POST", /\/inputs$/)).toEqual([]);
+
+    // 줄이면 다시 보낼 수 있다.
+    await input.press("Backspace");
+    await expect(reason).toHaveCount(0);
+    await expect(send).toBeEnabled();
   });
 });

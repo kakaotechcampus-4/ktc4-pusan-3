@@ -5,11 +5,13 @@
 
 🚨 상태는 여기서 쓰지 않는다. 기록 상태 · 기억 재계산은 `profile/service.py` 의 핸들러가 하고,
    핸들러는 flush 까지만 하므로 **commit 은 라우터가 한다** — 이력 · 상태 · 재계산이 한 묶음이다.
+🚨 기록에는 `once_only` 만 받는다. 기록용 `wrong`("잘못된 기록")은 400 이다 — 그 기록을 없던
+   것으로 하려는 것이라 기록 지우기(`DELETE …/observations/{kind}/{oid}`)로 바꿨다 (#736).
+   기억의 `wrong` 은 그대로 받는다(기억 하강 계산 W 가 센다).
 🚨 건강 기록(`observation_health`)은 받지 않는다(400). 기록 탭에서는 보이지만 삭제(#736)로만
    손댄다 (#764). 보호자가 건강 기록을 고치면 안 된다는 규칙이 있어서가 아니라, 두 버튼 모두
    건강 기록에서 할 일이 없어서다.
-   - `wrong` — 기록용 `wrong` 은 #736 이 삭제로 바꾸고 마지막 정리에서 막을 예정이다.
-     틀린 건강 기록은 삭제로 지운다.
+   - `wrong` — 아래처럼 기록에는 받지 않는다. 틀린 건강 기록도 삭제로 지운다.
    - `once_only` — 다른 기록에서는 기억 집계에서 빼는 일인데, 건강 관찰은 기억에 묶이지 않는다.
      Health 의 증상 반복 안내(7일 안 3일)도 `stand_alone` 을 그대로 센다
      (`memory_bridge.HEALTH_STATUSES`). 눌러도 표시만 바뀐다. 이번만 그랬던 증상을 날 수에서
@@ -35,7 +37,7 @@ from app.api.v1.schemas.corrections import (
 )
 from app.domains.child.repository import find_accessible_child
 from app.domains.correction.models import (
-    OBSERVATION_VERDICTS,
+    OBSERVATION_VERDICTS_ACCEPTED,
     PROFILE_VERDICTS,
     CorrectionTargetKind,
     CorrectionVerdict,
@@ -72,7 +74,9 @@ async def create_correction(
     kind = CorrectionTargetKind(body.target_ref.kind)
     verdict = CorrectionVerdict(body.verdict)
     allowed = (
-        PROFILE_VERDICTS if kind is CorrectionTargetKind.PROFILE_AFFINITY else OBSERVATION_VERDICTS
+        PROFILE_VERDICTS
+        if kind is CorrectionTargetKind.PROFILE_AFFINITY
+        else OBSERVATION_VERDICTS_ACCEPTED
     )
     if verdict not in allowed:
         raise ApiError(400, "validation_failed", "이 대상에는 쓸 수 없는 고치기예요")
