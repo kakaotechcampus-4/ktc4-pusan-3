@@ -12,9 +12,16 @@
 import asyncio
 import json
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta
 
 from app.agents.entrypoint import failure_message
 from app.api.runs.registry import RunChannel
+
+STALE_AFTER = timedelta(seconds=90)
+"""열린 지 이만큼 지나도 안 닫힌 채널은 돌리던 워커가 죽은 것으로 보고 읽기를 끝낸다.
+
+러너 60초 안전망(`RUN_DEADLINE_SECONDS`) + 여유. 웹은 ping 마다 멈춤 타이머를 다시 걸어서,
+끝내지 않으면 화면이 OPEN_TTL(10분) 동안 "처리 중" 이다 (#899 리뷰)."""
 
 SseEvent = tuple[str, dict]
 """채널에 넣는 모양 — (이름, 내용). frame() 이 이걸 `event:` · `data:` 두 줄로 쓴다."""
@@ -56,7 +63,11 @@ async def stream(channel: RunChannel, *, heartbeat_seconds: float = 10.0) -> Asy
 
 
 async def stream_remote(
-    run_id: str, *, poll_seconds: float = 0.25, heartbeat_seconds: float = 10.0
+    run_id: str,
+    *,
+    poll_seconds: float = 0.25,
+    heartbeat_seconds: float = 10.0,
+    stale_after: timedelta = STALE_AFTER,
 ) -> AsyncIterator[str]:
     """다른 워커가 돌리는 run 을 표(`run_event`)에서 읽어 프레임으로 내준다 (#877 4단계).
 
@@ -82,6 +93,8 @@ async def stream_remote(
             quiet = 0.0
             continue
         if header is None or header.closed:
+            return
+        if datetime.now(UTC) - (header.expires_at - registry.OPEN_TTL) >= stale_after:
             return
         await asyncio.sleep(poll_seconds)
         quiet += poll_seconds

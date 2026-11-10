@@ -26,6 +26,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps.db import background_session
+from app.api.runs.tidy import tidy
 from app.domains.run_hold.models import HoldKind
 from app.domains.run_hold.repository import (
     claim_hold,
@@ -239,7 +240,9 @@ async def claim(
         # 🚨 RetryTask 모양을 바꾼 배포 뒤의 옛 행. 검증 오류의 글에 원문 조각이 실리니 종류만
         #    남기고, 행을 지워 "이어서 할 수 없어요" 로 끝낸다 — 올리면 15분 동안 BUSY (#899 리뷰)
         log.warning("run %s 의 05 실패 맥락을 읽지 못해 지운다 — %s", run_id, type(exc).__name__)
-        await drop(run_id=run_id, agent=agent)
+        # 🚨 tidy 로 감싼다 — except 안에서 터지면 새 예외의 __context__ 로
+        #    검증 오류(원문)가 함께 찍힌다
+        await tidy(drop(run_id=run_id, agent=agent), "05 실패 맥락 지우기", run_id)
         return None
 
 

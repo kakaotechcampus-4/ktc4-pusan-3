@@ -211,6 +211,35 @@ async def test_읽을_수_없는_실패_맥락은_지우고_없는_것으로_한
     assert "synthetic secret" not in caplog.text
 
 
+async def test_못_읽는_실패_맥락을_지우다_실패해도_원문이_예외로_올라가지_않는다(
+    session: AsyncSession, owner, caplog, monkeypatch
+):
+    """except 안의 지우기가 터지면 새 예외의 __context__ 로 검증 오류(원문)가 함께 찍힌다.
+
+    #899 리뷰 🟠1.
+    """
+    from app.domains.run_hold.models import HoldKind
+    from app.domains.run_hold.repository import put_hold
+
+    async def broken_drop(**_) -> None:
+        raise ConnectionError("synthetic")
+
+    await put_hold(
+        session,
+        kind=HoldKind.SUGGESTION_RETRY,
+        key="r:food",
+        payload={"type": "failed", "task": {"request_texts": "synthetic secret"}},
+        ttl=store.FAILED_TTL,
+        now=T0,
+        **owner,
+    )
+    monkeypatch.setattr(store, "drop", broken_drop)
+
+    assert await _claim(owner) is None
+    assert "synthetic secret" not in caplog.text
+    assert "ConnectionError" in caplog.text
+
+
 async def test_만료된_실패_맥락_자리에_다시_넣으면_15분을_새로_센다(owner):
     """처음 시각을 잇는 것은 살아 있는 실패 맥락일 때뿐이다 — 만료된 것을 이으면 넣자마자 없다."""
     await _put(owner, at=T0)

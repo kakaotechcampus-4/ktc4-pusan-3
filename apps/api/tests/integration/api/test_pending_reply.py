@@ -154,6 +154,36 @@ async def test_읽을_수_없는_맥락은_지우고_없는_것으로_한다(
     assert "ValidationError" in caplog.text
 
 
+async def test_못_읽는_맥락을_지우다_실패해도_원문이_예외로_올라가지_않는다(
+    session: AsyncSession, bearer: Bearer, cid: uuid.UUID, caplog, monkeypatch
+):
+    """except 안의 지우기가 터지면 새 예외의 __context__ 로 검증 오류(원문)가 함께 찍힌다.
+
+    #899 리뷰 🟠1.
+    """
+    from app.domains.run_hold.models import HoldKind
+    from app.domains.run_hold.repository import put_hold
+
+    async def broken_drop(run_id: str) -> None:
+        raise ConnectionError("synthetic")
+
+    _, me = bearer
+    owner = {"parent_id": me, "child_id": cid}
+    await put_hold(
+        session,
+        kind=HoldKind.PENDING_REPLY,
+        key="bad-drop",
+        payload={"hint_text": "synthetic secret", "question": "q", "work": "no-such-work"},
+        ttl=pending_reply.TTL,
+        **owner,
+    )
+    monkeypatch.setattr(pending_reply, "drop", broken_drop)
+
+    assert await pending_reply.get(run_id="bad-drop", **owner) is None
+    assert "synthetic secret" not in caplog.text
+    assert "ConnectionError" in caplog.text
+
+
 async def test_연결을_끊은_뒤_늦게_온_보관은_남지_않는다(
     session: AsyncSession, bearer: Bearer, cid: uuid.UUID
 ):

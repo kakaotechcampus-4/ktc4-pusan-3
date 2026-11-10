@@ -27,6 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.entrypoint import PendingMemoryContext
 from app.api.deps.db import background_session
+from app.api.runs.tidy import tidy
 from app.domains.run_hold.models import HoldKind
 from app.domains.run_hold.repository import (
     claim_hold,
@@ -94,7 +95,9 @@ async def _load(run_id: str, payload: dict | None) -> PendingMemoryContext | Non
         return _ADAPTER.validate_python(payload)
     except Exception as exc:
         log.warning("run %s 의 되묻기 맥락을 읽지 못해 지운다 — %s", run_id, type(exc).__name__)
-        await drop(run_id)
+        # 🚨 tidy 로 감싼다 — except 안에서 터지면 새 예외의 __context__ 로
+        #    검증 오류(원문)가 함께 찍힌다
+        await tidy(drop(run_id), "되묻기 맥락 지우기", run_id)
         return None
 
 

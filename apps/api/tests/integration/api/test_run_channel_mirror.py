@@ -298,3 +298,25 @@ async def test_이벤트_쓰기가_실패해도_끝_신호와_닫힘은_따로_�
     view = await registry.lookup(channel.run_id)
     assert (view.ended_with, view.closed) == ("done", True)
     assert await _read_all(channel.run_id) == []  # 읽기는 기다리지 않고 끝난다
+
+
+async def test_돌리던_워커가_죽어_안_닫힌_채널은_오래되면_읽기를_끝낸다(mirror):
+    """웹은 ping 마다 멈춤 타이머를 다시 건다 — 끝내지 않으면 화면이 10분(OPEN_TTL) "처리 중" 이다.
+    run 은 60초 안전망 안에 끝나니, 그보다 오래 열린 채 안 닫혔으면 끝내서 "연결이 끊겼어요" 로 간다
+    (#899 리뷰 🟠3)."""
+    (parent, _), _ = mirror
+    channel = registry.open_run(parent_id=parent)
+    channel.publish(("step", {"index": 1}))
+    await channel.drained()
+    _forget_locally(channel.run_id)
+
+    frames: list[str] = []
+
+    async def collect():
+        reader = sse.stream_remote(channel.run_id, poll_seconds=0.02, stale_after=timedelta(0))
+        async for f in reader:
+            frames.append(f)
+
+    await asyncio.wait_for(collect(), 3.0)
+
+    assert _names(frames) == ["step"]
