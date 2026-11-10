@@ -5,15 +5,34 @@
 🚨 큐가 아니라 append-only 리스트다. 화면이 늦게 붙어도(POST 202 뒤 GET 을 여는 사이에
    Agent 가 벌써 Step 1·2 를 내보낸다) 두 번 붙어도(새로고침) 처음부터 전부 받는다.
 
-🚨 프로세스 메모리에 산다. `_channels` 는 모듈 변수라 서버가 켜져 있는 동안 하나뿐이고,
-   POST 가 넣은 채널을 GET 이 같은 dict 에서 찾는다. 그래서 `--workers 2` 이상이면 깨진다 —
-   데모는 단일 프로세스 전제다 (#134).
+🚨 run 을 돌리는 워커의 메모리에 산다(`_channels`). 같은 워커에 붙은 화면은 여기서 바로 읽는다.
+   다른 워커에 붙은 화면을 위해 내보낸 이벤트를 순서대로 표(`run_channel` · `run_event`, UNLOGGED)
+   에도 쓴다 — 채널마다 쓰는 작업 하나(`_mirror`)가 줄 세워 쓰고, 다른 워커는 그 표를 짧은 주기로
+   읽는다(`sse.stream_remote`). 같은 키 재생 판정도 `lookup` 으로 다른 워커의 run 을 본다
+   (#877 4단계).
+   `_session_factory` 가 None 이면 표에 쓰지 않는다(테스트 대부분).
 
 이벤트는 `(이름, 내용)` 짝이다. sse.frame() 이 그대로 `event:` · `data:` 두 줄로 쓴다.
 """
 
 import asyncio
+import logging
 import uuid
+from collections.abc import Callable
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.api.deps.db import background_session
+from app.domains.run_channel.repository import (
+    append_events,
+    get_channel,
+    mark_channel,
+    open_channel,
+)
+
+log = logging.getLogger(__name__)
 
 TERMINAL = frozenset({"failed", "done"})
 """끝 신호. run 하나에 한 번만 나간다 — 화면은 둘 중 하나를 받으면 읽기를 멈춘다(sse.ts)."""
@@ -25,7 +44,24 @@ EXPIRE_AFTER_SECONDS = 300.0
    서버를 다시 켤 때까지 원문이 메모리에 남는다 (#533).
 """
 
+OPEN_TTL = timedelta(minutes=10)
+"""닫히지 않은 채널을 표에 남겨 두는 시간. run 은 60초 안에 끝나므로, 이보다 오래 열려 있으면 돌리던
+워커가 죽은 것이다 — 그래도 원문을 남기지 않게 지운다."""
+
 _channels: dict[str, "RunChannel"] = {}
+
+_session_factory: Callable[[], AsyncSession] | None = background_session
+"""표 미러를 쓸 세션 공장. None 이면 미러를 끈다."""
+
+
+@dataclass(frozen=True)
+class RunView:
+    """같은 키 재생 판정 · SSE 주인 확인에 쓰는 run 의 겉모습 — 이 워커 것이든 다른 워커 것이든."""
+
+    run_id: str
+    parent_id: uuid.UUID
+    ended_with: str | None
+    closed: bool
 
 
 class RunChannel:
@@ -47,6 +83,9 @@ class RunChannel:
         self._changed = asyncio.Event()
         self.task: asyncio.Task[None] | None = None
         """이 run 을 돌리는 백그라운드 태스크. 참조를 여기 매달아야 GC 가 도중에 거두지 않는다."""
+        self._outbox: asyncio.Queue | None = None
+        self._writer: asyncio.Task[None] | None = None
+        """표 미러를 쓰는 작업. 참조를 매달아야 GC 가 거두지 않는다."""
 
     @property
     def committed(self) -> bool:
@@ -71,6 +110,8 @@ class RunChannel:
         if name in TERMINAL:
             self.ended_with = name
         self._changed.set()
+        if self._outbox is not None:
+            self._outbox.put_nowait(("event", len(self.events) - 1, event))
 
     def close(self) -> None:
         """더 올 게 없다. 구독자가 마지막까지 읽고 나서 끝나게 하고, 지울 때를 예약한다.
@@ -80,9 +121,69 @@ class RunChannel:
         """
         self.closed = True
         self._changed.set()
+        if self._outbox is not None:
+            self._outbox.put_nowait(("close",))
         asyncio.get_running_loop().call_later(
             EXPIRE_AFTER_SECONDS, _channels.pop, self.run_id, None
         )
+
+    def _start_mirror(self, factory: Callable[[], AsyncSession]) -> None:
+        self._outbox = asyncio.Queue()
+        self._outbox.put_nowait(("open",))
+        self._writer = asyncio.create_task(self._mirror(factory), name=f"run-mirror-{self.run_id}")
+
+    async def drained(self) -> None:
+        """여기까지 넣은 것이 표에 다 쓰였다. 미러가 꺼져 있으면 기다릴 것이 없다."""
+        if self._outbox is not None:
+            await self._outbox.join()
+
+    async def _mirror(self, factory: Callable[[], AsyncSession]) -> None:
+        """줄 선 것을 순서대로 표에 쓴다. 한 번에 쌓인 것을 한 트랜잭션으로.
+
+        🚨 실패해도 run 은 모른다 — 다른 워커의 화면만 늦거나 못 받는다. 로그에는 예외 종류만
+           (실패 이벤트에 원문이 있다). 채널 행을 못 만들었으면(보호자가 없다) 나머지는 버린다.
+        """
+        outbox = self._outbox
+        broken = False
+        while True:
+            batch = [await outbox.get()]
+            while not outbox.empty():
+                batch.append(outbox.get_nowait())
+            try:
+                if not broken:
+                    await self._write(factory, batch)
+            except Exception as exc:
+                broken = broken or any(item[0] == "open" for item in batch)
+                log.warning(
+                    "run %s 의 채널 미러를 쓰지 못했다 — %s", self.run_id, type(exc).__name__
+                )
+            finally:
+                for _ in batch:
+                    outbox.task_done()
+            if any(item[0] == "close" for item in batch):
+                return
+
+    async def _write(self, factory: Callable[[], AsyncSession], batch: list[tuple]) -> None:
+        now = datetime.now(UTC)
+        async with factory() as session:
+            if any(item[0] == "open" for item in batch):
+                await open_channel(
+                    session, run_id=self.run_id, parent_id=self.parent_id, expires_at=now + OPEN_TTL
+                )
+            # ("event", seq, (이름, 내용)) → (seq, 이름, 내용)
+            events = [(item[1], *item[2]) for item in batch if item[0] == "event"]
+            if events:
+                await append_events(session, run_id=self.run_id, events=events)
+            marks: dict = {}
+            ended = next((name for _, name, _ in reversed(events) if name in TERMINAL), None)
+            if ended is not None:
+                marks["ended_with"] = ended
+            if any(item[0] == "close" for item in batch):
+                marks["closed"] = True
+                marks["expires_at"] = now + timedelta(seconds=EXPIRE_AFTER_SECONDS)
+            if marks:
+                await mark_channel(session, run_id=self.run_id, **marks)
+            await session.commit()
 
     async def wait_changed(self, timeout: float | None = None) -> bool:
         """깃발을 내리고, 올라갈 때까지 잔다. timeout 안에 안 올라가면 False.
@@ -120,11 +221,28 @@ def open_run(*, parent_id: uuid.UUID) -> RunChannel:
     run_id = uuid.uuid4().hex
     channel = RunChannel(run_id, parent_id)
     _channels[run_id] = channel
+    if _session_factory is not None:
+        channel._start_mirror(_session_factory)
     return channel
 
 
 def get(run_id: str) -> RunChannel | None:
+    """이 워커의 메모리 채널. 다른 워커의 run 까지 보려면 `lookup`."""
     return _channels.get(run_id)
+
+
+async def lookup(run_id: str) -> RunView | None:
+    """이 워커에 있으면 메모리에서, 없으면 표에서 본다. 만료됐거나 모르는 run 이면 None."""
+    channel = _channels.get(run_id)
+    if channel is not None:
+        return RunView(run_id, channel.parent_id, channel.ended_with, channel.closed)
+    if _session_factory is None:
+        return None
+    async with _session_factory() as session:
+        row = await get_channel(session, run_id=run_id)
+    if row is None:
+        return None
+    return RunView(run_id, row.parent_id, row.ended_with, row.closed)
 
 
 def clear() -> None:

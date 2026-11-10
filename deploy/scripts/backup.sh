@@ -64,10 +64,10 @@ NAME="$(date -u +%Y-%m-%dT%H%M%SZ)${LABEL:+-$LABEL}.dump"
 if [ -n "$LOCAL_DIR" ]; then KEY="$NAME"; else KEY="$ENVNAME/$KIND/$NAME"; fi
 
 log "$KEY — $CONTAINER 덤프"
-# run_hold · rate_event 는 내용을 뺀다 (#877) — 되묻기 맥락 원문 · 한도 카운터라 복원해도 이미
+# run_hold · rate_event · run_channel · run_event 는 내용을 뺀다 (#877) — 원문 · 카운터라 복원해도 이미
 # 만료다. 표 정의는 남는다. 표가 아직 없는 DB 에서도 패턴이 안 맞을 뿐 오류가 아니다.
 # shellcheck disable=SC2016  # $POSTGRES_* 는 컨테이너 안에서 풀린다
-quiet docker exec "$CONTAINER" sh -c 'exec pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc --exclude-table-data=run_hold --exclude-table-data=rate_event' > "$DUMP" ||
+quiet docker exec "$CONTAINER" sh -c 'exec pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc --exclude-table-data=run_hold --exclude-table-data=rate_event --exclude-table-data=run_channel --exclude-table-data=run_event' > "$DUMP" ||
   fail "pg_dump 실패 (exit $?) — DB 컨테이너 $CONTAINER 가 떠 있는지 본다"
 
 # 깨진 덤프를 올리고 "백업 있음" 으로 믿는 게 가장 나쁘다. 목차를 끝까지 읽혀 본다.

@@ -175,7 +175,10 @@ async def test_만료_삭제는_이틀_지난_카운터를_지운다(session: As
 
     await hold_purge.purge_once(now=T0)
 
-    keys = (await session.scalars(select(RateEvent.key))).all()
+    # 이 보호자의 통만 본다 — 다른 테스트가 커밋한 카운터가 같은 표에 있을 수 있다
+    keys = (
+        await session.scalars(select(RateEvent.key).where(RateEvent.key.contains(str(parent))))
+    ).all()
     assert keys == [f"input:{parent}:{DAY.isoformat()}"]
 
 

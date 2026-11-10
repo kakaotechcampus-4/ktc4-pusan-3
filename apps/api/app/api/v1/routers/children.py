@@ -541,7 +541,8 @@ async def create_input(
     }
     replayed = await idempotency.recall(**scope)
     if replayed is not None:
-        previous = registry.get(replayed)
+        # 다른 워커가 돌린 run 이어도 끝 신호를 본다 (#877 4단계)
+        previous = await registry.lookup(replayed)
         if previous is None:
             # 채널은 닫힌 지 5분 뒤 지워지고 키는 24시간 남는다. 끝난 run 은 대화 기록이 남아
             # 있으니 화면이 SSE(404) 대신 지난 대화로 결과를 그리게 알린다 (#538).

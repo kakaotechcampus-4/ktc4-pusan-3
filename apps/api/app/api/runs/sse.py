@@ -9,6 +9,7 @@
    실패로 떨어진다.
 """
 
+import asyncio
 import json
 from collections.abc import AsyncIterator
 
@@ -52,3 +53,38 @@ async def stream(channel: RunChannel, *, heartbeat_seconds: float = 10.0) -> Asy
         name, payload = channel.events[i]
         i += 1
         yield frame(name, payload)
+
+
+async def stream_remote(
+    run_id: str, *, poll_seconds: float = 0.25, heartbeat_seconds: float = 10.0
+) -> AsyncIterator[str]:
+    """다른 워커가 돌리는 run 을 표(`run_event`)에서 읽어 프레임으로 내준다 (#877 4단계).
+
+    `stream` 과 같은 약속 — 처음부터, 조용하면 ping, 닫히면 끝. 새 이벤트는 `poll_seconds` 마다
+    본다(같은 워커보다 최대 그만큼 늦다).
+    🚨 채널 행을 이벤트보다 **먼저** 읽는다. 닫힘은 마지막 이벤트와 같거나 뒤의 commit 에
+       쓰이므로, 닫힌 것을 본 뒤 읽은 이벤트가 마지막까지다. 순서를 바꾸면 그 사이 쓰인 마지막
+       이벤트를 놓친다.
+    """
+    from app.api.runs import registry
+    from app.domains.run_channel.repository import events_from, get_channel
+
+    seq = 0
+    quiet = 0.0
+    while True:
+        async with registry._session_factory() as session:
+            header = await get_channel(session, run_id=run_id)
+            rows = await events_from(session, run_id=run_id, seq=seq)
+        for row in rows:
+            seq = row.seq + 1
+            yield frame(row.name, row.payload)
+        if rows:
+            quiet = 0.0
+            continue
+        if header is None or header.closed:
+            return
+        await asyncio.sleep(poll_seconds)
+        quiet += poll_seconds
+        if quiet >= heartbeat_seconds:
+            quiet = 0.0
+            yield frame("ping", {})

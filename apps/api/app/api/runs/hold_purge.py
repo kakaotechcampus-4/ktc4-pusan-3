@@ -1,4 +1,4 @@
-"""만료된 run_hold 행 · 지난 rate_event 를 1분마다 지운다 (#877 · ops/stateless-v1.md "지우기").
+"""만료된 run_hold · run_channel 과 지난 rate_event 를 1분마다 지운다 (#877 · stateless-v1).
 
 처리방침이 되묻기 맥락을 "15분 안에 지운다" 고 적어서 하루 1회 정리 배치
 (`workers/cleanup.py`)로는 모자란다. 읽을 때도 만료를 거르지만(`run_hold.repository`),
@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps.db import background_session
 from app.domains.rate_event.repository import delete_events_before
+from app.domains.run_channel.repository import delete_expired_channels
 from app.domains.run_hold.repository import delete_expired_holds
 
 log = logging.getLogger(__name__)
@@ -34,6 +35,8 @@ async def purge_once(*, now: datetime | None = None) -> int:
     async with _session_factory() as session:
         removed = await delete_expired_holds(session, now=now)
         await delete_events_before(session, before=(now or datetime.now(UTC)) - RATE_KEEP)
+        # run 채널 미러 — 닫힌 뒤 5분 · 끝나지 않으면 10분. 실패 이벤트의 원문까지 CASCADE 로
+        await delete_expired_channels(session, now=now)
         await session.commit()
     return removed
 

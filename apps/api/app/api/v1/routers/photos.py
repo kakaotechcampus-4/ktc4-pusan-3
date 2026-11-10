@@ -148,7 +148,7 @@ async def upload_photo(
         }
         replayed = await idempotency.recall(**scope)
         if replayed is not None:
-            previous = registry.get(replayed)
+            previous = await registry.lookup(replayed)  # 다른 워커의 run 도 (#877)
             if previous is not None and previous.ended_with != "failed":
                 return PhotoUploadResponse(run_id=replayed)
             idempotency.forget_run(replayed)
