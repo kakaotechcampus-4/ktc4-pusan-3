@@ -8,7 +8,12 @@ from app.agents.common.datetime_rules import DateParseError
 from app.agents.common.food_safety import SafetyVerdict, filter_food_safety
 from app.agents.food.amount_rules import amount_of, is_amount_text
 from app.agents.food.context import FoodContext
-from app.agents.food.daycare_intent import is_question, is_uncertain, says_absence
+from app.agents.food.daycare_intent import (
+    is_question,
+    is_uncertain,
+    says_absence,
+    says_replacement,
+)
 from app.agents.food.daycare_lookup import (
     LOOKUP_MAX_DAYS,
     SLOT_LABEL,
@@ -164,9 +169,11 @@ async def update_daycare_meal(context: FoodContext, args: UpdateDaycareMealArgs)
     - 끼니(`slot`)를 말하지 않았을 때 그날 행이 하나면 그 행을, 여럿이면 되묻는다
       (`daycare.slot_ambiguous`) — 엉뚱한 끼니를 고치면 영양 계산이 틀어진다.
     - 메뉴는 **집합 연산**이다: `menu_keys - removed + added`. 같은 갱신을 두 번 해도 결과가 같다.
-      넣을 메뉴만 있고 뺄 메뉴가 없으면 되묻는다(`daycare.replaced_unknown`) — 전체 교체로 처리하면
-      그날 먹은 밥 · 국까지 사라진다. 뺄 메뉴만 있거나 아무것도 못 고치면 되묻는다
-      (`daycare.ask_substitute`). 뺄 메뉴가 그날 급식에 없으면 어느 것을 바꾼 건지 되묻는다.
+      넣을 메뉴만 있고 뺄 메뉴가 없을 때 교체 말("대신" · "말고" · "바뀌었대")이 있으면 되묻는다
+      (`daycare.replaced_unknown`) — 전체 교체로 처리하면 그날 먹은 밥 · 국까지 사라진다. 교체
+      말이 없으면("새우볶음밥 먹었대") 빼지 않고 그날 급식에 더한다(T48). 뺄 메뉴만 있거나
+      아무것도 못 고치면 되묻는다(`daycare.ask_substitute`). 뺄 메뉴가 그날 급식에 없으면 어느
+      것을 바꾼 건지 되묻는다.
       넣을 메뉴를 `MenuResolver` 로 찾아 둔다 — 못 찾아도(`unresolved`) 키는 저장하고 영양
       계산에서만 빠진다.
     - 양은 양 사전(`amount_terms.yaml`)에 있는 말일 때만 바꾼다. 사전에 없는 말로 알던 양을 덮지
@@ -202,7 +209,8 @@ async def update_daycare_meal(context: FoodContext, args: UpdateDaycareMealArgs)
     added_names = _clean(args.added_spans)
     added = _menu_keys(added_names)
     amount_given = is_amount_text(args.amount_span)
-    if added and not removed:
+    if added and not removed and says_replacement(state.utterance):
+        # 바뀌었다는데 무엇 대신인지 모른다 — 전체 교체로 처리하면 그날 먹은 밥 · 국까지 사라진다
         return _stop(context, "update", DAYCARE_REPLACED_UNKNOWN)
     if removed and not added:
         return _stop(context, "update", DAYCARE_ASK_SUBSTITUTE)
@@ -211,7 +219,7 @@ async def update_daycare_meal(context: FoodContext, args: UpdateDaycareMealArgs)
         # 뺄 메뉴가 그날 급식에 없다. 넣을 메뉴가 이미 다 들어 있으면 같은 갱신을 다시 한 것이라
         # 그대로 둔다(두 번 해도 같은 결과). 아니면 어느 메뉴를 바꾼 건지 되묻는다
         return _stop(context, "update", DAYCARE_REPLACED_UNKNOWN)
-    if not removed and not amount_given:
+    if not removed and not added and not amount_given:
         return _stop(context, "update", DAYCARE_ASK_SUBSTITUTE)
 
     updated = row

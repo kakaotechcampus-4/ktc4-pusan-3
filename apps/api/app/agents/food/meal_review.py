@@ -73,6 +73,7 @@ class RejectReason(StrEnum):
     GENERATED_TOO_MANY = "generated_too_many"
     GENERATED_FORMAT = "generated_format"
     GENERATED_RECENT = "generated_recent"
+    REQUEST_BLOCKED = "request_blocked"
 
 
 # 모델에게 돌려줄 설명 — 무엇을 고치면 되는지만. 모델이 쓴 값과 걸린 낱말은 싣지 않는다
@@ -111,6 +112,11 @@ GUIDANCE: dict[RejectReason, str] = {
         "메뉴 이름과 재료에 숫자 · 단위 · 괄호를 쓰지 않는다. 재료는 이름만 적고 8개 이하로 쓴다."
     ),
     RejectReason.GENERATED_RECENT: "최근에 추천한 메뉴는 다시 내지 않는다. 다른 메뉴로 바꾼다.",
+    # 왜 못 쓰는지(알레르기 · 연령)는 싣지 않는다 — 사유를 알면 낱말만 바꿔 같은 음식을 다시 낸다
+    RejectReason.REQUEST_BLOCKED: (
+        "이번 요청의 재료 · 요리 종류로는 generated 를 쓰지 않는다. "
+        "후보 목록에서 menu_key 로 고른다."
+    ),
 }
 
 
@@ -142,6 +148,9 @@ class RequestContext:
     pool: Mapping[str, MenuCatalogRow] = field(default_factory=dict)  # 이번 run 후보 풀
     recipe_keys: frozenset[str] = frozenset()  # 레시피북 전체(풀 밖 = 막힘 · 최근 추천)
     recent_keys: frozenset[str] = frozenset()  # 최근 추천한 메뉴
+    # 보호자가 정한 조건이 아이에게 막힌 음식이다(알레르기 · 연령). 조건을 걸지 않고 생성도 받지
+    # 않는다 — 생성 메뉴는 전부 필터에 걸리고, 걸린 이름이 재호출로 모델에게 다시 간다(T49)
+    blocked: bool = False
 
     @property
     def accepted(self) -> bool:
@@ -149,6 +158,7 @@ class RequestContext:
 
 
 NO_REQUEST = RequestContext()
+BLOCKED_REQUEST = RequestContext(blocked=True)
 
 # 생성 후보의 이름 · 재료에 쓰면 안 되는 것 — 정확한 레시피 · 양 금지(루트 §1)
 _FORMAT_BAD = re.compile(
@@ -290,6 +300,8 @@ def _review_generated(
     레시피북에 있는 이름이면 그 레시피 행(검수된 재료 · 출처)을 쓰고, 풀 밖 레시피(막힘 · 최근
     추천)와 같은 이름이면 `None` — 막힌 메뉴가 이름만 바꿔 돌아오지 않게 뺀다.
     """
+    if request.blocked:
+        return RejectReason.REQUEST_BLOCKED
     if not request.accepted or stage not in _GENERATION_STAGES:
         return RejectReason.GENERATED_NOT_ALLOWED
     allowed = 3 - request.matched

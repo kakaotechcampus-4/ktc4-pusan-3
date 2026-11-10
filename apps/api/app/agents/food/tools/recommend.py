@@ -3,10 +3,12 @@
 import logging
 
 from app.agents.common.age import life_stage
+from app.agents.common.food_words import mentions_blocked_food
 from app.agents.common.suggestion import SuggestionRejected, check_count, count_notice
 from app.agents.food.context import FoodContext, require_safety
 from app.agents.food.meal_request import said_in_food_request
 from app.agents.food.meal_review import (
+    BLOCKED_REQUEST,
     NO_REQUEST,
     RejectReason,
     RequestContext,
@@ -17,6 +19,7 @@ from app.agents.food.meal_review import (
 from app.agents.food.readouts import POOL_EMPTY, READOUTS
 from app.agents.food.result import ErrorCode, ToolResult, fail, ok
 from app.agents.food.schemas.recommend import ProposeMealCandidatesArgs
+from app.rules.age import LifeStage
 
 _NAME = "propose_meal_candidates"
 
@@ -61,7 +64,7 @@ async def propose_meal_candidates(
     review = review_candidates(
         args.candidates,
         generated=args.generated,
-        request=_request(context, args),
+        request=_request(context, args, life),
         sampled=state.sampled,
         seen=state.seen_evidence,
         docs=state.seen_docs,
@@ -94,7 +97,9 @@ async def propose_meal_candidates(
     return ok("propose", _NAME, count=len(picks), kinds=[pick.draft.kind for pick in picks])
 
 
-def _request(context: FoodContext, args: ProposeMealCandidatesArgs) -> RequestContext:
+def _request(
+    context: FoodContext, args: ProposeMealCandidatesArgs, life: LifeStage
+) -> RequestContext:
     """모델이 적은 `requested_food` 가 보호자 말에 있을 때만 조건이 인정된다. 아니면 조건 없는 요청.
 
     막연한 요청("저녁 추천해줘")에 모델이 조건을 지어 넣어도 근거 없는 일반 추천이 통과하지 않는다.
@@ -104,6 +109,11 @@ def _request(context: FoodContext, args: ProposeMealCandidatesArgs) -> RequestCo
         return NO_REQUEST
     if not args.requested_food or not said_in_food_request(args.requested_food, state.said_texts()):
         return NO_REQUEST
+    if mentions_blocked_food(
+        args.requested_food, require_safety(context), stage=life.stage, months=life.months
+    ):
+        # 요청한 음식이 막혔다는 안내는 코드가 따로 낸다(`request_notices`)
+        return BLOCKED_REQUEST
     # 샘플 안의 조건 맞는 레시피가 자리를 차지한다. 요리 종류 조건은 레시피북에서 못 찾아
     # 세지 않는다
     matched = (
@@ -114,6 +124,9 @@ def _request(context: FoodContext, args: ProposeMealCandidatesArgs) -> RequestCo
         kind=args.requested_kind,
         matched=matched,
         pool=state.pool_rows,
-        recipe_keys=state.recipe_keys,
+        # 이번 run 에서 안전 필터로 빠진 이름도 막힌 레시피처럼 뺀다 — 재료만 바꿔 다시 낸 생성
+        # 메뉴가 통과하지 않게. 재호출 제외 목록은 막힌 음식이 든 이름을 싣지 않아 모델이 다시 낼 수
+        # 있다
+        recipe_keys=state.recipe_keys | frozenset(state.blocked_keys),
         recent_keys=state.recent_keys,
     )

@@ -17,7 +17,9 @@ recipe_catalog (resolved · 재료 있는 행)
 - **최근 3일 먹은 메뉴도 빼지 않는다.** 이름이 같은 후보의 가중치만 낮춘다 — 반복은 위험이 아니라
   다양성 문제라, 빼면 급식 메뉴가 자주 겹치는 아이의 풀만 줄어든다.
 - **부족 식품군은 기피보다 세다.** 영양 판정이 `low` 인 항목의 식품군은 기피 가중치를 상쇄한다.
-  기록이 모자라(`insufficient`) 판정이 없으면 영양 가중치는 주지 않고 평소 순위로 간다.
+  기록이 모자라(`insufficient`) 판정이 없으면 구간 가중치는 주지 않고 평소 순위로 간다.
+  다만 적게 나온 채소 · 과일이 *적은 기록*(출현 창 10행 미만)에서 나왔으면 가중을 반으로 낮춘다 —
+  우연의 몫이 커서 보호자가 말한 기피를 이기지 못한다(N-19).
 - 샘플링은 안전 필터 **뒤에** 온다. 앞에 두면 위험한 후보가 뽑힐 자리가 생긴다.
 - 같은 `seed` 면 같은 결과다(재현 · QA). 흔드는 것은 메뉴뿐이고 판정은 흔들지 않는다.
 - 풀이 3개 미만이어도 재호출하지 않고 있는 만큼만 낸다(#216). 풀 밖 메뉴를 만들어 채우지 않는다.
@@ -33,12 +35,12 @@ from app.agents.common.age import first_month_of, life_stage
 from app.agents.common.evidence import OBSERVATION_WINDOW_DAYS, ObservationRow, rank_evidence
 from app.agents.common.food_safety import filter_food_safety
 from app.agents.common.suggestion import MAX_SUGGESTIONS
+from app.agents.food.appearance import sparse_groups
 from app.agents.food.context import FoodContext, require_safety
 from app.agents.food.matching import related
 from app.agents.food.meal_request import mentioned_in_request
 from app.agents.food.nutrition_eval import (
     MealRecords,
-    NutrientVerdict,
     evaluate_nutrient_bands,
     read_meal_records,
 )
@@ -61,6 +63,9 @@ BASE_WEIGHT = 1.0
 AVOID_FACTOR = 0.3  # 기피 — 0 이 되지는 않는다
 PREFER_FACTOR = 1.5  # 선호
 DEFICIT_BOOST = 4.0  # 영양 판정이 low 인 항목의 식품군 · 적게 나온 채소 · 과일
+# 적게 나온 채소 · 과일이 적은 기록(출현 창 3~9행)에서 나왔을 때. 2.0 * AVOID_FACTOR < 1 이라 기피를
+# 상쇄하지 못한다 — 기록이 적을 때는 보호자가 말한 기피가 이긴다
+FEW_RECORDS_BOOST = 2.0
 TODAY_OVERLAP_FACTOR = 0.7  # 오늘 이미 먹은 식품군과 겹침 — 점심에 고기면 저녁은 채소 위주
 RECENT_REPEAT_FACTOR = 0.4  # 최근 3일 안에 먹은 메뉴와 같은 이름 — 0 이 되지는 않는다
 
@@ -71,11 +76,6 @@ LOW_NUTRIENT_GROUPS: dict[str, frozenset[str]] = {
     "calcium": frozenset({"dairy"}),
     "iron": frozenset({"meat_fish_egg_legumes"}),
 }
-
-# 영양 구간에 대응하는 항목이 없는 식품군 — 최근 7일 중 나온 날 수로 부족을 본다(N-19). 기록된 날의
-# 이 비율보다 적게 나오면 부족 식품군에 더한다. 영양 구간으로 오는 부족 식품군과 합집합이다
-APPEARANCE_DEFICIT_GROUPS: tuple[str, ...] = ("vegetables", "fruits")
-MIN_APPEARANCE_SHARE = 0.5
 
 # 영양 판정(KDRI)이 있는 단계. 12개월 미만은 판정하지 않는다
 _NUTRIENT_STAGES: frozenset[Stage] = frozenset({"toddler", "preschool"})
@@ -252,8 +252,10 @@ async def _weights(
             weight *= AVOID_FACTOR
         elif any(_matches(subject, names) for subject in preferred):
             weight *= PREFER_FACTOR
-        if row.food_groups & deficit:
-            weight *= DEFICIT_BOOST
+        # 한 메뉴에 부족 식품군이 여럿 겹쳐도 가중은 한 번, 겹친 것 중 센 쪽이다
+        boosts = [deficit[group] for group in row.food_groups if group in deficit]
+        if boosts:
+            weight *= max(boosts)
         if row.food_groups & today_groups:
             weight *= TODAY_OVERLAP_FACTOR
         if row.menu_key in eaten:
@@ -290,52 +292,26 @@ async def _signals(context: FoodContext) -> tuple[tuple[str, ...], tuple[str, ..
     return avoided, preferred
 
 
-async def _deficit_groups(context: FoodContext, *, stage: Stage, months: int) -> frozenset[str]:
-    """부족 식품군 — 영양 판정이 `low` 인 항목의 식품군 + 적게 나온 채소 · 과일. 판정이 없거나
-    기록이 모자라면 해당 쪽은 비어 있다."""
+async def _deficit_groups(context: FoodContext, *, stage: Stage, months: int) -> dict[str, float]:
+    """부족 식품군 → 가중. 영양 판정이 `low` 인 항목의 식품군(`DEFICIT_BOOST`) + 적게 나온 채소 ·
+    과일(`DEFICIT_BOOST`, 적은 기록이면 `FEW_RECORDS_BOOST`). 같은 식품군이면 센 쪽이다.
+    판정이 없거나 기록이 모자라면 해당 쪽은 비어 있다.
+
+    구간이 나오려면 출현 창도 10행 이상이라 적은 기록과 구간 low 는 실제로는 함께 나오지 않는다.
+    그래도 합치는 규칙은 구간 low 가 약해지지 않게 고정해 둔다."""
     if stage not in _NUTRIENT_STAGES:
-        return frozenset()
+        return {}
     verdict = await evaluate_nutrient_bands(context, months=months)
-    low: frozenset[str] = frozenset()
+    boosts: dict[str, float] = {}
     if not verdict.insufficient:
-        low = frozenset().union(
-            *(
-                LOW_NUTRIENT_GROUPS.get(nutrient, frozenset())
-                for nutrient, band in verdict.bands.items()
-                if band == "low"
-            )
-        )
-    return low | _sparse_groups(verdict)
-
-
-def _sparse_groups(verdict: NutrientVerdict) -> frozenset[str]:
-    """최근 7일에 기록된 날의 `MIN_APPEARANCE_SHARE` 보다 적게 나온 채소 · 과일.
-
-    구간(`insufficient`)과 따로 본다 — 1인분 중량이 빈 메뉴로 구간이 막혀도 "나왔는가" 는 센다."""
-    if not verdict.appearance_ready:
-        return frozenset()
-    return frozenset(
-        group
-        for group in APPEARANCE_DEFICIT_GROUPS
-        if verdict.food_group_days.get(group, 0) < verdict.recorded_days * MIN_APPEARANCE_SHARE
-    )
-
-
-def explainable_groups(verdict: NutrientVerdict) -> frozenset[str]:
-    """보호자에게 "적게 나왔다" 고 말해도 되는 채소 · 과일.
-
-    가중(`_sparse_groups`)은 확인한 날만 센다. 문장은 식품군을 모르는 메뉴가 낀 날을 전부 "나왔다"
-    고 쳐도 기록된 날의 `MIN_APPEARANCE_SHARE` 미만일 때만 낸다 — 가중은 틀려도 후보를 막지 않지만
-    문장은 틀린 숫자로 읽힌다(N-19). 모르는 날을 더해도 결론이 안 뒤집히는 식품군만 남는다.
-    """
-    if not verdict.appearance_ready:
-        return frozenset()
-    return frozenset(
-        group
-        for group in APPEARANCE_DEFICIT_GROUPS
-        if verdict.food_group_days.get(group, 0) + verdict.group_unknown_days.get(group, 0)
-        < verdict.recorded_days * MIN_APPEARANCE_SHARE
-    )
+        for nutrient, band in verdict.bands.items():
+            if band == "low":
+                for group in LOW_NUTRIENT_GROUPS.get(nutrient, frozenset()):
+                    boosts[group] = DEFICIT_BOOST
+    sparse_boost = FEW_RECORDS_BOOST if verdict.few_records else DEFICIT_BOOST
+    for group in sparse_groups(verdict):
+        boosts[group] = max(boosts.get(group, 0.0), sparse_boost)
+    return boosts
 
 
 async def _recent_meals(context: FoodContext) -> MealRecords:

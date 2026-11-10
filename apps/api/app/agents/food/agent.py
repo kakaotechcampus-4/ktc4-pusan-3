@@ -23,6 +23,7 @@ from typing import Any
 
 from app.agents.common.evidence import RankedEvidence, pick_followup
 from app.agents.common.food_safety import filter_food_safety
+from app.agents.common.food_words import mentions_blocked_food
 from app.agents.common.llm_client import LLMClient
 from app.agents.common.readout import Readout
 from app.agents.common.result import AgentStatus, DomainAgentResult
@@ -371,7 +372,13 @@ async def _recall(
     새 대화로 시작하면 모델이 기억 조회를 처음부터 다시 해 왕복이 늘고, pipeline 의 20초에 걸리면
     처음 통과한 것까지 잃는다. 풀에서 빠진 것(`blocked_keys`)과 이미 고른 것을 빼고 다시 뽑는다.
     남은 후보가 없으면 부를 이유가 없어서 None 이다. 제외 목록은 `menu_key` 만 넣고 사유는 없다.
+
+    🚨 빠진 것 중 이름에 막힌 음식이 든 메뉴("계란말이" · "견과류요거트")는 제외 목록에 싣지
+    않는다 — 이름만으로 아이의 알레르기를 외부 모델에 알린다. 새 목록에 없어 다시 고를 수 없고, 생성
+    메뉴로 다시 내도 같은 필터에 걸린다.
     """
+    gate = context.state.gate
+    assert gate is not None  # run() 이 build_gate 를 먼저 부른다
     blocked = set(context.state.blocked_keys)
     chosen = [pick.menu_key for pick in first]
     rest = tuple(item for item in pool if item.row.menu_key not in {*blocked, *chosen})
@@ -388,7 +395,19 @@ async def _recall(
             "role": "user",
             "content": recall_message(
                 task.request_texts,
-                avoid=[*chosen, *sorted(blocked)],
+                avoid=[
+                    *chosen,
+                    *(
+                        key
+                        for key in sorted(blocked)
+                        if not mentions_blocked_food(
+                            key,
+                            require_safety(context),
+                            stage=gate.stage.stage,
+                            months=gate.stage.months,
+                        )
+                    ),
+                ],
                 sample=_rows(sample),
                 requested=context.state.requested_keys,
             ),

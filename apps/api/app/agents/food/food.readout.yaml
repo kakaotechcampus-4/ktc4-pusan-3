@@ -44,10 +44,19 @@ nutrient.today_empty:
   template: "오늘 먹은 기록이 아직 없어서 최근 며칠을 기준으로 골랐어요."
 nutrient.daycare_amount_unknown:
   kind: nutrient
-  template: "급식은 메뉴만 알고 얼마나 먹었는지는 몰라서 참고만 했어요."
+  template: "급식은 메뉴만 알고 먹은 양은 몰라서 참고만 했어요."
 nutrient.appearance:
   kind: nutrient_analysis
   template: "기록된 {days}일 중 {group} 나온 날은 {count}일이에요."
+nutrient.sparse:
+  kind: nutrient_analysis
+  template: "기록된 식사에서 {group} 나온 날이 적은 편이라, 식단 추천은 {group} 든 메뉴를 더 넣어 골라요."
+nutrient.few_records:
+  kind: nutrient_analysis
+  template: "기록된 식사 {recorded}건으로 본 거라, 기록이 쌓이면 달라질 수 있어요."
+nutrient.daycare_upcoming:
+  kind: nutrient
+  template: "기록에 오늘부터 이번 주 급식 식단 {days}일도 넣어서 봤어요."
 nutrient.band.low:
   kind: nutrient_analysis
   template: "기록된 식사 {recorded}건을 보면 {nutrient} 식품이 적은 편이에요."

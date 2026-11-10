@@ -27,6 +27,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -40,14 +41,14 @@ from app.agents.common.result import DomainAgentResult
 from app.agents.common.schemas.task import DomainTask
 from app.agents.food import agent as food_agent
 from app.agents.food.agent import run
+from app.agents.food.appearance import (
+    APPEARANCE_DEFICIT_GROUPS,
+    explainable_groups,
+    sparse_groups,
+)
 from app.agents.food.daycare_lookup import SLOT_LABEL, date_label
 from app.agents.food.meal_dates import resolve_meal_date
-from app.agents.food.meal_pool import (
-    APPEARANCE_DEFICIT_GROUPS,
-    PoolItem,
-    _sparse_groups,
-    explainable_groups,
-)
+from app.agents.food.meal_pool import PoolItem
 from app.agents.food.meal_review import GENERAL_REASON, GENERAL_REASON_REQUEST
 from app.agents.food.nutrient_wording import APPEARANCE_GROUPS
 from app.agents.food.readouts import MEAL_NUTRIENT_BASIS, READOUTS
@@ -144,6 +145,15 @@ class Case:
     expect: str
     judge: Callable[["Ran"], Verdict]
     narrow: bool = False  # 풀 필터와 사후 필터 사이의 틈을 흉내 낸다(C48-narrow)
+    # 값이 있으면 `NOW` 가 든 주의 그 요일(0 = 월)로 세계를 만든다. 이번 주 급식표를 세는
+    # 세계(C48-wk)는 요일마다 오늘 이후 급식 수가 달라서 수요일로 고정한다. 나머지는 실행한 날이다
+    weekday: int | None = None
+
+
+def _now_for(case: "Case") -> datetime:
+    if case.weekday is None:
+        return NOW
+    return NOW + timedelta(days=case.weekday - NOW.weekday())
 
 
 def _generated_args(ran: "Ran") -> dict[str, dict[str, Any]]:
@@ -418,8 +428,10 @@ def j_t49(ran: Ran) -> Verdict:
             f"status={result.status} 추천 {len(result.suggestions)}개 (3개여야 한다)"
         )
     expected = READOUTS.render("meal.request_conflict", food="견과류", what="알레르기").body
-    if [readout.body for readout in result.readouts] != [expected]:
-        verdict.failures.append(f"요청 안내가 {expected!r} 하나여야 한다")
+    # 추천이 나가면 출처 줄(`meal.menu_source`)이 함께 붙는다 — 요청 안내 줄만 센다
+    requests = [r.body for r in result.readouts if r.body.startswith("요청하신")]
+    if requests != [expected]:
+        verdict.failures.append(f"요청 안내가 {expected!r} 하나여야 한다 {requests}")
     life = life_stage(world.birth, world.today)
     for draft in result.suggestions:
         if mentions_blocked_food(
@@ -438,7 +450,9 @@ def j_t50(ran: Ran) -> Verdict:
             f"status={result.status} 모델 {result.model_calls}회 (completed · 0회)"
         )
     expected = [
-        READOUTS.render("check.conflict", food="땅콩소스", label="견과류 알레르기").body,
+        READOUTS.render(
+            "check.conflict", food="땅콩소스", 은는="는", label="견과류 알레르기", 와과="와"
+        ).body,
         READOUTS.get("check.peanut_in_nuts").template,
     ]
     if [readout.body for readout in result.readouts] != expected:
@@ -548,10 +562,11 @@ def j_empty(ran: Ran) -> Verdict:
     for draft in ran.result.suggestions:
         if draft.kind != "general":
             verdict.failures.append(f"기록 0건인데 개인화 추천이다 ({draft.content})")
+        # 일반 추천임을 화면에 밝히는 것은 이 코드 문구다(루트 §2). 근거는 붙어도 되고 없어도
+        # 된다 — 고른 메뉴(레시피 카탈로그 행)를 근거로 다는 것이 정상이다(#442).
+        # 아이 기록 근거가 붙은 일반 추천은 공통 판정이 실패로 센다
         if draft.reason != GENERAL_REASON:
             verdict.failures.append("일반 추천의 이유가 코드 문구와 글자 그대로 같지 않다")
-        if draft.citations:
-            verdict.failures.append("일반 추천에 근거가 있다")
     if ran.result.needs_observation:
         verdict.failures.append("기록 0건인데 되묻기가 있다")
     if not ran.world.context.state.memory_prefetched:
@@ -579,7 +594,8 @@ def j_pool2(ran: Ran) -> Verdict:
             f"status={ran.result.status} 추천 {len(ran.result.suggestions)}개 모델 "
             f"{ran.result.model_calls}회 (completed · 2개 · 1회여야 한다)"
         )
-    codes = [readout.code for readout in ran.result.readouts]
+    # 출처 줄 · 영양 줄은 code 가 없고 모든 추천에 붙는다 — 개수 안내(code 가 있는 줄)만 본다
+    codes = [readout.code for readout in ran.result.readouts if readout.code]
     if codes != ["fewer"]:
         verdict.failures.append(f"개수 안내(suggestion.partial)가 아니다 {codes}")
     return verdict
@@ -825,16 +841,8 @@ def j_t48(*, allergic: bool) -> Callable[[Ran], Verdict]:
         if reflected:
             _only(verdict, ran, {lunch.id}, "오늘 점심")  # type: ignore[union-attr]
             return verdict
-        # 반영하지 않았다면 되묻고 아무것도 안 바꾼 것만 미구현으로 센다 — 행을 지우거나 엉뚱한
-        # 끼니에 쓴 것을 GAP 으로 덮지 않는다
-        keys = _keys(ran)
-        if keys == ["daycare.replaced_unknown"] and _unchanged(ran, ran.before):
-            verdict.gaps.append(
-                "스펙은 새우볶음밥을 바로 반영하길 기대하지만 tool 은 빼는 메뉴 없이 넣기만 하면 "
-                "되묻는다(replaced_unknown)"
-            )
-        else:
-            verdict.failures.append(f"반영도 되묻기도 아니다 ({keys or _bodies(ran)})")
+        # 교체 말이 없는 "먹었대" 는 그날 급식에 더한다 — 되묻기 · 그대로 두기도 실패다
+        verdict.failures.append(f"오늘 점심에 반영하지 않았다 ({_keys(ran) or _bodies(ran)})")
         return verdict
 
     return judge
@@ -1114,7 +1122,17 @@ def _expected_basis_lines(ran: Ran) -> list[str]:
     ]
 
 
-def j_nutrient(ran: Ran) -> Verdict:
+@dataclass(frozen=True)
+class NutrientExpect:
+    """세계마다 정해진 출현 창 숫자. 안 주면 C48-veg 처럼 판정을 읽고 적은 기록만 아니어야 한다."""
+
+    recorded_days: int | None = None
+    vegetable_days: int | None = None
+    few_records: bool = False
+    general: bool = False  # 아이 기록이 없어 추천이 전부 일반 추천이다(C48-wk)
+
+
+def j_nutrient(ran: Ran, expect: NutrientExpect | None = None) -> Verdict:
     """영양을 말한 추천 / 같은 세계의 대조군. 영양 반영이 실제로 도는 세계(C48-veg)에서 본다.
 
     영양 반영은 모델 앞에서 코드가 끝낸다(부족 식품군 가중). 식단 추천에는 영양 tool 이 열리지
@@ -1125,12 +1143,34 @@ def j_nutrient(ran: Ran) -> Verdict:
     - 고른 메뉴가 부족 식품군을 담았는지는 가중 샘플링 + 모델 선택이라 참고로만 남긴다.
     - reason 이 표현 검사(부족 · 챙겨 …)에 걸려 propose 를 다시 불렀으면 참고로 남긴다.
     """
+    expect = expect or NutrientExpect()
     verdict = merged(exact3(ran), common(ran))
     found = ran.world.context.state.nutrient_verdict
     if found is None or not found.appearance_ready:
         verdict.failures.append("세계가 식품군 출현 판정을 못 탔다 — C48-veg 카탈로그를 확인한다")
         return verdict
-    sparse = _sparse_groups(found)
+    if found.few_records != expect.few_records:
+        verdict.failures.append(
+            f"적은 기록 판정이 기대와 다르다 (출현 {found.appearance_records}행, "
+            f"few_records={found.few_records}, 기대 {expect.few_records})"
+        )
+    if expect.recorded_days is not None and found.recorded_days != expect.recorded_days:
+        verdict.failures.append(
+            f"기록된 날이 {found.recorded_days}일이다 (기대 {expect.recorded_days})"
+        )
+    vegetable_days = found.food_group_days.get("vegetables", 0)
+    if expect.vegetable_days is not None and vegetable_days != expect.vegetable_days:
+        verdict.failures.append(
+            f"채소가 나온 날이 {vegetable_days}일이다 (기대 {expect.vegetable_days})"
+        )
+    if expect.general:
+        # 일반 추천에도 영양 반영 줄은 붙는다. 줄은 근거가 아니라 개인화로 집계되지 않는다
+        verdict.failures.extend(
+            f"기록이 없는 아이인데 개인화 추천이다 ({draft.content})"
+            for draft in ran.result.suggestions
+            if draft.kind != "general"
+        )
+    sparse = sparse_groups(found)
     if "vegetables" not in sparse:
         verdict.failures.append(f"채소가 적게 나온 세계인데 부족 식품군이 {sorted(sparse)} 다")
     hits = [row.display_name for row in _rows_of(ran) if row.food_groups & sparse]
@@ -1160,7 +1200,7 @@ def j_basis_unknown(ran: Ran) -> Verdict:
     if found is None or not found.appearance_ready:
         verdict.failures.append("세계가 식품군 출현 판정을 못 탔다 — C48-veg-unknown 을 확인한다")
         return verdict
-    if "vegetables" not in _sparse_groups(found):
+    if "vegetables" not in sparse_groups(found):
         verdict.failures.append(
             "확인한 날만 보면 채소가 적게 나와야 가중이 걸린다 — 세계를 확인한다"
         )
@@ -1402,6 +1442,27 @@ CASES: tuple[Case, ...] = (
         "C48-veg",
         "Q3 대조군 — 같은 세계에서 영양 말이 없을 때 고른 메뉴 · 영양 줄은 같은 조건",
         j_nutrient,
+    ),
+    # 이번 주 급식까지 본 출현 창 — 기대 줄과 숫자는 키 없는 점검(test_food_world.py)이 먼저 본다.
+    # 여기서는 모델이 메뉴를 고른 뒤의 영양 반영 줄 · 일반 추천 판정만 본다
+    Case(
+        "N2/C48-wk",
+        "저녁 뭐 먹일까?",
+        M,
+        "C48-wk",
+        "집 기록 0 · 이번 주 급식표만 — 일반 추천 3개 · 채소 가중(적은 기록) · "
+        "채소 메뉴를 골랐으면 '기록된 5일 중 채소가 나온 날은 1일' 영양 줄",
+        partial(j_nutrient, expect=NutrientExpect(5, 1, few_records=True, general=True)),
+        weekday=2,
+    ),
+    Case(
+        "N4/C48-few",
+        "저녁 메뉴 추천해줘",
+        M,
+        "C48-few",
+        "급식 없이 4행 · 2일 — 채소 가중(적은 기록) · 기피(브로콜리)를 상쇄하지 않음 · "
+        "영양 줄 숫자 일치",
+        partial(j_nutrient, expect=NutrientExpect(2, 0, few_records=True)),
     ),
     Case(
         "Q2/C48-veg-unknown",
@@ -1751,7 +1812,7 @@ def test_food_run(case: Case, expect: Callable[..., None], monkeypatch: pytest.M
     if case.narrow:
         _inject_egg_recipes(monkeypatch)  # 반복마다 감싸면 계란 행이 쌓인다 — 한 번만
     for attempt in range(1, TEST_REPEAT + 1):
-        world = build_world(case.world, now=NOW, run_id=f"live-{case.case_id}-{attempt}")
+        world = build_world(case.world, now=_now_for(case), run_id=f"live-{case.case_id}-{attempt}")
         recorder = RecordingLLM(client)
         task = DomainTask(
             run_id=world.context.run_id,

@@ -18,9 +18,9 @@
 from collections.abc import Mapping, Sequence
 
 from app.agents.common.readout import Readout
+from app.agents.food.appearance import APPEARANCE_DEFICIT_GROUPS, explainable_groups
 from app.agents.food.context import FoodContext, MealPick, require_safety
-from app.agents.food.meal_pool import APPEARANCE_DEFICIT_GROUPS, explainable_groups
-from app.agents.food.nutrient_wording import APPEARANCE_GROUPS
+from app.agents.food.nutrient_wording import APPEARANCE_LABELS
 from app.agents.food.readouts import (
     CHECK_INGREDIENTS_CAVEAT,
     MEAL_MENU_GENERATED,
@@ -34,7 +34,7 @@ from app.core.recipe_source import RECIPE_SOURCE_INFO
 from app.rules.particle import topic_particle
 
 # 식품군 이름에는 조사가 붙어 있다("채소가" · "과일이") — 문구의 두 `{group}` 자리에 그대로 맞는다
-_LABELS: dict[str, str] = dict(APPEARANCE_GROUPS)
+_LABELS = APPEARANCE_LABELS
 
 
 def basis_notices(

@@ -172,10 +172,15 @@ async def test_영양소_분석은_모델을_부르지_않고_식품군_출현�
 
     assert result.status == "completed"
     assert result.model_calls == 0
-    (readout,) = result.readouts
+    readout = result.readouts[0]
     assert readout.authored_by == "code"
     assert "기록된 7일 중 채소가 나온 날은 3일이에요." in readout.body.splitlines()
     assert "기록된 7일 중 곡류가 나온 날은 7일이에요." in readout.body.splitlines()
+    # 채소 3일 · 과일 0일은 기록된 7일의 절반(3.5일) 미만이라 식단 추천에 더 넣는다고 짚는다
+    assert [r.body for r in result.readouts[1:]] == [
+        READOUTS.render("nutrient.sparse", group="채소가").body,
+        READOUTS.render("nutrient.sparse", group="과일이").body,
+    ]
 
 
 async def test_구간은_판정해_두지만_구간_문장은_화면에_안_나간다(task, counting_client) -> None:

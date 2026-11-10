@@ -8,12 +8,14 @@
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import date, timedelta
+from typing import Any
 
 from app.agents.food.amount_rules import amount_of, portion_scale_for
 from app.agents.food.context import FoodContext
 from app.agents.food.kdri import NutrientRef, refs_for
 from app.agents.food.menu_resolver import MenuResolver, Resolved
 from app.agents.food.nutrient_wording import APPEARANCE_GROUPS
+from app.agents.food.periods import week_end
 from app.agents.food.store.ports import DaycareMealRow, FoodObservation
 from app.core.mfds_nutri_raw import OPTIONAL_NUTRIENT_KEYS
 from app.rules.age import months_between
@@ -24,6 +26,7 @@ from app.rules.nutrition import (
     band_range,
     band_upper,
     energy_share,
+    is_appearance_insufficient,
     is_insufficient,
     mean_over_recorded_days,
     select_kdri_group,
@@ -78,6 +81,8 @@ class DayTotals:
     unweighed: dict[str, float] = field(default_factory=dict)
     blank_menus: int = 0  # 해석됐지만 영양값이 하나도 없는 메뉴 수 — 얼마나 빠졌는지 알 수 없다
     grouped_menus: int = 0  # 식품군을 아는 메뉴 수 — 찌개 · 국 같은 음식 행은 식품군이 빈다
+    daycare_rows: int = 0  # records 중 급식 행 수 — 영양소 분석이 급식을 참고했는지 밝히는 데 쓴다
+    daycare_unknown_amount_rows: int = 0  # 그중 먹은 양을 모르는 행 수(`amount_known=False`)
 
 
 def _is_institutional_duplicate(obs: FoodObservation, daycare_menu_keys: frozenset[str]) -> bool:
@@ -116,6 +121,7 @@ async def read_meal_records(
     date_from: date,
     date_to: date,
     daycare_before: date | None = None,
+    observation_before: date | None = None,
 ) -> MealRecords:
     """`observation_food` 와 `daycare_meal` 을 읽어 날짜별로 묶고 기관 중복(N-10)을 뺀다.
 
@@ -124,6 +130,9 @@ async def read_meal_records(
 
     `daycare_before` 를 주면 그날 이전 급식만 읽는다. 오늘 급식은 앞으로 나올 식단이라 먹은 기록이
     아니다. 급식을 자른 뒤에 중복을 보므로, 오늘 알림장이 전한 식사는 급식과 겹치지 않고 남는다.
+
+    `observation_before` 를 주면 그날 이전 관찰만 읽는다. 관찰은 먹은 것이라 앞날 행이 없다 —
+    앞날 급식을 같이 읽는 쪽(영양소 분석의 출현 창)이 앞날 관찰이 들어올 길을 코드로 막는다.
     """
     ports = context.ports
     observations = await ports.memory.observations(
@@ -140,7 +149,8 @@ async def read_meal_records(
 
     observations_by_day: dict[date, list[FoodObservation]] = defaultdict(list)
     for obs in observations:
-        observations_by_day[obs.observed_on].append(obs)
+        if observation_before is None or obs.observed_on < observation_before:
+            observations_by_day[obs.observed_on].append(obs)
 
     kept_observations_by_day: dict[date, list[FoodObservation]] = {}
     for day, day_obs in observations_by_day.items():
@@ -155,14 +165,22 @@ async def read_meal_records(
     return MealRecords(observations=kept_observations_by_day, daycare=dict(daycare_by_day))
 
 
-async def daily_totals(context: FoodContext, *, date_from: date, date_to: date) -> list[DayTotals]:
+async def daily_totals(
+    context: FoodContext,
+    *,
+    date_from: date,
+    date_to: date,
+    observation_before: date | None = None,
+) -> list[DayTotals]:
     """원본에서 날짜별 영양 합계를 만든다. 기록이 있는 날만 돌려준다 (설계 §1-3).
 
     흐름 (설계 §3 ①~③): 원본 두 번 읽기 → 기관 중복 관찰 빼기(`read_meal_records`) → 메뉴를 한
     번에 조회·해석 → 날짜별로 양 가중 · 유아 보정 계수를 적용해 더한다.
     """
     ports = context.ports
-    records = await read_meal_records(context, date_from=date_from, date_to=date_to)
+    records = await read_meal_records(
+        context, date_from=date_from, date_to=date_to, observation_before=observation_before
+    )
     daycare_by_day = records.daycare
     kept_observations_by_day = records.observations
 
@@ -245,6 +263,10 @@ async def daily_totals(context: FoodContext, *, date_from: date, date_to: date) 
                 unweighed=unweighed,
                 blank_menus=blank_menus,
                 grouped_menus=grouped_menus,
+                daycare_rows=len(daycare_by_day.get(day, ())),
+                daycare_unknown_amount_rows=sum(
+                    1 for row in daycare_by_day.get(day, ()) if not row.amount_known
+                ),
             )
         )
     return totals
@@ -256,39 +278,66 @@ class NutrientVerdict:
 
     bands: dict[str, NutrientBand]
     unscored: tuple[str, ...]  # 판정 기간에 빈 칸이 있어 구간을 내지 못한 항목
-    records: int  # 최근 7일(판정 창) 행 수
-    resolved_ratio: float  # 최근 7일 메뉴 해석률
+    records: int  # 구간 판정 창(오늘 - 7일 ~ 어제) 행 수 — 구간 쪽 숫자는 이 창이다
+    resolved_ratio: float  # 구간 판정 창 메뉴 해석률
     insufficient: bool
-    food_groups: frozenset[str]  # 최근 7일에 나온 식품군
-    # 식품군 → 최근 7일 중 나온 날 수(나온 식품군만). 1인분 중량과 무관하게 센다
+    # 아래 출현 칸은 출현 창(오늘 - 7일 ~ 이번 주 일요일)이다. 구간 창과 달리 오늘부터는 급식만
+    # 들어온다(관찰은 먹은 것이라 앞날이 없다) — 이번 주 급식표는 이번 주에 받을 식단이다
+    food_groups: frozenset[str]  # 출현 창에 나온 식품군
+    # 식품군 → 출현 창 중 나온 날 수(나온 식품군만). 1인분 중량과 무관하게 센다
     food_group_days: dict[str, int] = field(default_factory=dict)
-    recorded_days: int = 0  # 최근 7일 중 기록이 있는 날 수 — 출현 문장의 분모
+    recorded_days: int = 0  # 출현 창 중 기록이 있는 날 수 — 출현 문장의 분모
     # 식품군 → 기록이 있는 날 중 그 식품군이 안 나왔는데 식품군을 모르는 메뉴가 낀 날 수. 그 날들은
     # "안 나왔다" 가 아니라 "모른다" 라서 안내 줄이 결론을 뒤집을 수 있는지 볼 때 쓴다(#739)
     group_unknown_days: dict[str, int] = field(default_factory=dict)
     # 출현을 말해도 되는가. 구간(`insufficient`)과 따로 본다 — 구간은 1인분 중량이 빈 메뉴에도
-    # 막히지만 출현은 "나왔는가" 라서 기록 행 수(N-1) · 메뉴 해석률만 본다(N-17)
+    # 막히고 10행이 필요하지만, 출현은 "나왔는가" 라서 출현 창 3행 · 2일(N-1) · 메뉴 해석률이면 된다
     appearance_ready: bool = False
+    appearance_records: int = 0  # 출현 창 행 수(집 기록 + 급식) — 적은 기록 · 기록 부족 문구의 건수
+    daycare_days: int = 0  # 출현 창 중 급식 행이 있는 날 수
+    # 그중 먹은 양을 모르는 급식 행이 있는 날 수 — 앞날 급식은 늘 해당한다. 보호자가 양을 알려 준
+    # 급식뿐이면 0 이라 "양은 몰라서" 를 말하지 않는다
+    daycare_unknown_amount_days: int = 0
+    upcoming_daycare_days: int = 0  # 그중 오늘 이후(오늘 포함) — 아직 먹었는지 모르는 급식
+    # 출현은 말하지만 먹은 기록이 구간을 낼 만큼(10행)은 아닌 경우 —
+    # "기록이 쌓이면 달라질 수 있어요" 를
+    # 밝히고 식단 추천 가중도 낮춘다. 오늘부터의 급식은 아직 안 먹은 식단이라 10행에 세지 않는다
+    few_records: bool = False
 
 
 async def evaluate_nutrient_bands(context: FoodContext, *, months: int) -> NutrientVerdict:
     """항목별 영양 구간. 기록 행 수 · 해석률이 임계 아래면 구간 없이 `insufficient` 만 돌려준다.
 
-    흐름 (설계 §3 ③~⑤): 14일 치 하루 합계를 받아 최근 7일로 기록·해석 충분성을 먼저 보고,
-    충분하면 항목마다 구간을 매긴다 — EAR 항목은 7일 전부터 하루씩 다시 판정해 히스테리시스를
-    지키고, AMDR · 상한 항목은 최근 7일 창 하나의 평균만 본다.
+    흐름 (설계 §3 ③~⑤): 14일 전부터 이번 주 일요일까지의 하루 합계를 한 번 받아 둘로 나눈다. 구간은
+    오늘 이전 7일(+ 다시 판정 7일)로 기록·해석 충분성을 먼저 보고, 충분하면 항목마다 구간을 매긴다 —
+    EAR 항목은 7일 전부터 하루씩 다시 판정해 히스테리시스를 지키고, AMDR · 상한 항목은 최근 7일 창
+    하나의 평균만 본다. 구간 쪽은 `current_days` 로만 읽어서 앞날 급식이 섞이지 않는다. 나머지(오늘
+    ~ 이번 주 일요일)는 식품군 출현에만 쓴다(`_appearance_fields`).
     """
     group = select_kdri_group(months)  # 12개월 미만이면 여기서 ValueError
 
     window_end = context.today - timedelta(days=1)  # "정하는 것 ①" — 오늘 이전
     window_start = window_end - timedelta(days=_WINDOW_DAYS - 1)
     lookback_start = window_end - timedelta(days=_LOOKBACK_DAYS - 1)
+    appearance_end = week_end(context.today)  # 출현 창은 이번 주 일요일까지 — 구간 창은 그대로다
 
-    day_totals = await daily_totals(context, date_from=lookback_start, date_to=window_end)
+    # 한 번 읽어 날짜로 구간 · 출현을 나눈다. 앞날 관찰은 막는다 — 앞날은 급식만 들어온다
+    day_totals = await daily_totals(
+        context,
+        date_from=lookback_start,
+        date_to=appearance_end,
+        observation_before=context.today + timedelta(days=1),
+    )
     by_day = {dt.day: dt for dt in day_totals}
 
     current_days = [window_start + timedelta(days=i) for i in range(_WINDOW_DAYS)]
     current_totals = [by_day[d] for d in current_days if d in by_day]
+    appearance_days = [
+        window_start + timedelta(days=i) for i in range((appearance_end - window_start).days + 1)
+    ]
+    appearance = _appearance_fields(
+        [by_day[d] for d in appearance_days if d in by_day], today=context.today
+    )
 
     records = sum(dt.records for dt in current_totals)
     total_menus = sum(dt.menus for dt in current_totals)
@@ -297,19 +346,6 @@ async def evaluate_nutrient_bands(context: FoodContext, *, months: int) -> Nutri
     resolved_ratio = total_resolved / total_menus if total_menus else 0.0
     # 해석은 됐어도 영양값이 하나도 없는 메뉴는 얼마나 빠졌는지 알 수 없어 해석 안 된 것과 같게 센다
     quantified_ratio = (total_resolved - total_blank) / total_menus if total_menus else 0.0
-    food_groups: frozenset[str] = frozenset().union(*(dt.food_groups for dt in current_totals))
-    food_group_days = dict(Counter(group for dt in current_totals for group in dt.food_groups))
-    recorded_days = sum(1 for dt in current_totals if dt.records > 0)
-    # 식품군을 모르는 메뉴가 많으면 "0일" 은 안 나온 게 아니라 모르는 것이다 — 해석률과 같게 본다
-    grouped_ratio = (
-        sum(dt.grouped_menus for dt in current_totals) / total_menus if total_menus else 0.0
-    )
-    group_unknown_days = _group_unknown_days(current_totals)
-    appearance_ready = (
-        not is_insufficient(records)
-        and resolved_ratio >= MIN_RESOLUTION_RATIO
-        and grouped_ratio >= MIN_RESOLUTION_RATIO
-    )
 
     if (
         is_insufficient(records)
@@ -323,11 +359,7 @@ async def evaluate_nutrient_bands(context: FoodContext, *, months: int) -> Nutri
             records=records,
             resolved_ratio=resolved_ratio,
             insufficient=True,
-            food_groups=food_groups,
-            food_group_days=food_group_days,
-            recorded_days=recorded_days,
-            group_unknown_days=group_unknown_days,
-            appearance_ready=appearance_ready,
+            **appearance,
         )
         context.state.nutrient_verdict = verdict
         return verdict
@@ -352,14 +384,42 @@ async def evaluate_nutrient_bands(context: FoodContext, *, months: int) -> Nutri
         records=records,
         resolved_ratio=resolved_ratio,
         insufficient=False,
-        food_groups=food_groups,
-        food_group_days=food_group_days,
-        recorded_days=recorded_days,
-        group_unknown_days=group_unknown_days,
-        appearance_ready=appearance_ready,
+        **appearance,
     )
     context.state.nutrient_verdict = verdict
     return verdict
+
+
+def _appearance_fields(totals: list[DayTotals], *, today: date) -> dict[str, Any]:
+    """출현 창의 하루 합계에서 `NutrientVerdict` 의 출현 칸을 만든다. 구간 판정과 무관하다."""
+    records = sum(dt.records for dt in totals)
+    menus = sum(dt.menus for dt in totals)
+    recorded_days = sum(1 for dt in totals if dt.records > 0)
+    resolved_ratio = sum(dt.resolved_menus for dt in totals) / menus if menus else 0.0
+    # 식품군을 모르는 메뉴가 많으면 "0일" 은 안 나온 게 아니라 모르는 것이다 — 해석률과 같게 본다
+    grouped_ratio = sum(dt.grouped_menus for dt in totals) / menus if menus else 0.0
+    # 먹은 기록 — 오늘 이후(오늘 포함)의 급식은 아직 먹었는지 모르는 식단이다. 앞날 급식이 많아도
+    # 적은 기록이 풀리지 않게 센다
+    eaten_records = sum(dt.records - (dt.daycare_rows if dt.day >= today else 0) for dt in totals)
+    ready = (
+        not is_appearance_insufficient(records, recorded_days)
+        and resolved_ratio >= MIN_RESOLUTION_RATIO
+        and grouped_ratio >= MIN_RESOLUTION_RATIO
+    )
+    return {
+        "food_groups": frozenset().union(*(dt.food_groups for dt in totals)),
+        "food_group_days": dict(Counter(group for dt in totals for group in dt.food_groups)),
+        "recorded_days": recorded_days,
+        "group_unknown_days": _group_unknown_days(totals),
+        "appearance_ready": ready,
+        "appearance_records": records,
+        "daycare_days": sum(1 for dt in totals if dt.daycare_rows > 0),
+        "daycare_unknown_amount_days": sum(
+            1 for dt in totals if dt.daycare_unknown_amount_rows > 0
+        ),
+        "upcoming_daycare_days": sum(1 for dt in totals if dt.daycare_rows > 0 and dt.day >= today),
+        "few_records": ready and is_insufficient(eaten_records),
+    }
 
 
 def _group_unknown_days(totals: list[DayTotals]) -> dict[str, int]:
