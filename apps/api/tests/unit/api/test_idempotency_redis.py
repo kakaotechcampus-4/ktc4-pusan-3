@@ -47,16 +47,38 @@ class TestIdempotencyRedis:
         """저장한 적 없는 키 → None."""
         assert await idempotency.recall(parent_id=PID, method="POST", path="/x", key="nope") is None
 
-    async def test_깨진_재생값은_이번만_503_이고_지워져_다음은_새_요청(self, _mock, caplog):
-        """ISSUE-F7 — 깨진 값이 24시간 남아 재시도를 매번 막지 않는다."""
+    @pytest.mark.parametrize("broken", ["{깨진", "123", "[1, 2]", "null"])
+    async def test_깨진_재생값은_이번만_503_이고_지워져_다음은_새_요청(self, _mock, caplog, broken):
+        """#935 — 못 읽거나 모양이 틀린 값이 24시간 남아 재시도를 매번 막지 않는다."""
         scope = {"parent_id": PID, "method": "POST", "path": "/x", "key": "broken"}
-        _r.set(idempotency._idem_key(**scope), "{깨진")
+        _r.set(idempotency._idem_key(**scope), broken)
         with pytest.raises(ApiError) as caught:
             await idempotency.recall(**scope)
         assert caught.value.status == 503
-        assert "재생 값이 깨져 지웠다 — 이번 요청은 503 POST /x" in caplog.text
+        assert "깨진 재생 값을 지웠다 — 다음 재시도는 새 요청 POST /x" in caplog.text
         assert str(PID) not in caplog.text
         assert await idempotency.recall(**scope) is None
+
+    async def test_깨진_값을_못_지우면_지웠다고_남기지_않는다(self, _mock, caplog):
+        scope = {"parent_id": PID, "method": "POST", "path": "/x", "key": "broken"}
+        _r.set(idempotency._idem_key(**scope), "{깨진")
+        with patch.object(_r, "delete", side_effect=redis.ConnectionError()):
+            with pytest.raises(ApiError):
+                await idempotency.recall(**scope)
+        assert "못 지웠다" in caplog.text
+        assert "지웠다 — 다음 재시도" not in caplog.text
+
+    async def test_옛_run_의_늦은_forget_run_은_같은_키의_새_run_을_지우지_않는다(self, _mock):
+        """#935 리뷰 — 깨진 값을 지운 뒤 같은 키에 새 run 이 적혔으면 옛 역인덱스는 남의 키다."""
+        scope = {"parent_id": PID, "method": "POST", "path": "/x", "key": "reuse"}
+        await idempotency.remember(**scope, replay="old")
+        _r.set(idempotency._idem_key(**scope), "{깨진")
+        with pytest.raises(ApiError):
+            await idempotency.recall(**scope)
+        await idempotency.remember(**scope, replay="new")
+        idempotency.forget_run("old")
+        assert await idempotency.recall(**scope) == "new"
+        assert _r.get(idempotency._run_key("old")) is None
 
     async def test_forget_run_removes_both_keys(self, _mock):
         """forget_run → idempotency 키와 역인덱스 키 모두 삭제된다."""

@@ -83,14 +83,22 @@ async def recall(*, parent_id: UUID, method: str, path: str, key: str) -> str | 
     try:
         replay = json.loads(raw)
     except json.JSONDecodeError:
-        # 깨진 값을 두면 TTL 24시간 동안 같은 키 재시도가 매번 막힌다 (ISSUE-F7). 지우고 이번만
-        # 503 — 다음 재시도는 새 요청이 된다. 바로 새 요청으로 받지 않는 이유: 처음 요청이 저장까지
-        # 끝냈는지 몰라 두 번 저장될 수 있다. 로그에는 창구만 — 키에는 parent_id 가 있다.
-        log.warning("idempotency 재생 값이 깨져 지웠다 — 이번 요청은 503 %s %s", method, path)
+        replay = None
+    if not isinstance(replay, str | dict):
+        # 깨진 값(못 읽거나 run_id · 응답 모양이 아닌 값)을 두면 TTL 24시간 동안 같은 키 재시도가
+        # 매번 막힌다 (#935). 지우고 이번만 503 — 다음 재시도는 새 요청이 된다.
+        # 🚨 두 번 저장을 막지는 못한다: 처음 요청이 저장까지 끝냈는지 깨진 값으로는 알 수 없다.
+        #    503 은 Redis 장애와 같은 답으로 맞춘 것이고, 24시간 막힘을 재시도 한 번으로 줄인다.
+        # 로그에는 창구만 — 키에는 parent_id 가 있다.
+        log.warning("idempotency 재생 값이 깨졌다 — 이번 요청은 503 %s %s", method, path)
         try:
             await asyncio.to_thread(r.delete, _idem_key(parent_id, method, path, key))
         except RedisError as exc:
             _warn(exc, "깨진 재생 값을 못 지웠다")
+        else:
+            log.warning(
+                "idempotency 깨진 재생 값을 지웠다 — 다음 재시도는 새 요청 %s %s", method, path
+            )
         raise _unavailable() from None
     # dict(일정 응답)는 forget_run 대상이 아니고 set 에 넣을 수도 없다
     return None if isinstance(replay, str) and replay in _forgotten else replay
@@ -158,8 +166,11 @@ def forget_run(run_id: str) -> None:
     rk = _run_key(run_id)
     try:
         idem = r.get(rk)
-        if idem is not None:
-            r.delete(idem, rk)
+        # 키가 아직 이 run 을 가리킬 때만 지운다 — 깨진 값을 지운 뒤 같은 키에 새 run 이 적혔으면
+        # 옛 run 의 늦은 정리가 새 run 의 재생값까지 지운다 (#935 리뷰).
+        if idem is not None and r.get(idem) == json.dumps(run_id):
+            r.delete(idem)
+        r.delete(rk)
     except RedisError as exc:
         _warn(exc, "실패한 run 의 키를 못 지웠다")
         _forgotten.add(run_id)  # Redis 의 키는 24시간 TTL 로 사라진다. 그때까지 recall 이 가린다
