@@ -373,3 +373,28 @@ async def test_동시에_두_번_claim_하면_하나만_받는다(committed_owne
     results = await asyncio.gather(claim_in_own_connection(), claim_in_own_connection())
 
     assert sorted(r is not None for r in results) == [False, True]
+
+
+async def test_FK_검사는_보호자를_아이보다_먼저_잠근다(session: AsyncSession):
+    """탈퇴는 보호자 → 아이 순서로 잠근다. 보관함에 넣을 때 FK 검사가 아이 → 보호자 순서면 탈퇴와
+    겹칠 때 교착이 날 수 있다 (#899 jjaa0803 리뷰 🟠2). FK 검사 트리거는 이름 순으로 돈다."""
+    rows = (
+        (
+            await session.execute(
+                text(
+                    """
+                SELECT ref.relname FROM pg_trigger t
+                JOIN pg_class tbl ON tbl.oid = t.tgrelid
+                JOIN pg_class ref ON ref.oid = t.tgconstrrelid
+                WHERE tbl.relname = 'run_hold' AND t.tgisinternal
+                  AND t.tgfoid = 'pg_catalog."RI_FKey_check_ins"'::regproc
+                ORDER BY t.tgname
+                """
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    assert rows == ["parent", "child"]

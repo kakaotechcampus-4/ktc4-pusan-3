@@ -184,3 +184,28 @@ async def test_지운_아이로_넣으면_예외_없이_넘어간다(session: As
 def test_프로세스_메모리_보관함이_없다():
     for gone in ("_entries", "clear", "forget_parent", "forget_child"):
         assert not hasattr(store, gone), gone
+
+
+async def test_읽을_수_없는_실패_맥락은_지우고_없는_것으로_한다(
+    session: AsyncSession, owner, caplog
+):
+    """RetryTask 모양을 바꾼 배포 뒤 옛 행 — 원문을 로그에 남기지 않고, 15분 BUSY 로 막지 않는다."""
+    from sqlalchemy import select
+
+    from app.domains.run_hold.models import HoldKind, RunHold
+    from app.domains.run_hold.repository import put_hold
+
+    await put_hold(
+        session,
+        kind=HoldKind.SUGGESTION_RETRY,
+        key="r:food",
+        payload={"type": "failed", "task": {"request_texts": "synthetic secret"}},
+        ttl=store.FAILED_TTL,
+        now=T0,
+        **owner,
+    )
+
+    assert await _claim(owner) is None
+
+    assert (await session.scalars(select(RunHold.key).where(RunHold.key == "r:food"))).all() == []
+    assert "synthetic secret" not in caplog.text

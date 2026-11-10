@@ -830,6 +830,38 @@ async def test_저장_중에_Agent_가_죽어도_잡아_둔_이벤트는_failed_
     assert names(channel) == ["note", "failed"]
 
 
+async def test_이어받기_맥락을_지우는_것이_실패해도_run_은_done_이다(monkeypatch, caplog):
+    """정리(drop)가 DB 오류를 내도 run 결과를 덮지 않는다 — 맥락은 15분 뒤 만료된다
+    (#899 jjaa0803 리뷰 🟠1)."""
+    await _claim_prev()
+
+    async def drop_down(run_id):
+        raise ConnectionError("synthetic")
+
+    monkeypatch.setattr(pending_reply, "drop", drop_down)
+
+    async def fake_handle_input(**kwargs):
+        kwargs["emit"](Done(kwargs["run_id"], 1))
+
+    monkeypatch.setattr(entrypoint, "handle_input", fake_handle_input)
+    channel = registry.open_run(parent_id=PARENT)
+
+    job = runner.agent_job(
+        child_id=CHILD,
+        parent_id=PARENT,
+        raw_text="3일 전부터",
+        continuation=_PENDING,
+        reply_to="r-prev",
+    )
+    await asyncio.wait_for(runner.start(channel, job, raw_text="3일 전부터"), timeout=1)
+
+    assert names(channel) == ["done"]
+    assert "ConnectionError" in caplog.text
+    assert not [
+        r for r in caplog.records if "job 이" in r.getMessage()
+    ]  # job 이 터진 것으로 보지 않는다
+
+
 async def test_실패_맥락과_0개_기록은_보관함으로만_간다(monkeypatch):
     """실패 맥락에는 요청 원문 조각이 있다. 화면 · 로그로 보내지 않고 05 보관함에만 둔다 (#249)."""
     sent_at = datetime(2026, 1, 1, tzinfo=UTC)

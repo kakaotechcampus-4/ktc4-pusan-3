@@ -11,7 +11,7 @@
 import uuid
 
 import pytest
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.common.result import DomainPending
@@ -120,3 +120,35 @@ async def test_open_runs_는_턴이_없으면_빈_set(bearer: Bearer, cid: uuid.
     _, me = bearer
 
     assert await pending_reply.open_runs(run_ids=[], parent_id=me, child_id=cid) == set()
+
+
+async def test_읽을_수_없는_맥락은_지우고_없는_것으로_한다(
+    session: AsyncSession, bearer: Bearer, cid: uuid.UUID, caplog
+):
+    """맥락 모양을 바꾼 코드가 배포되면 옛 행을 못 읽는다 (#899 jjaa0803 리뷰 🔴).
+
+    검증 오류의 글에는 원문 조각(input_value)이 실린다 — 로그에 남기지 않는다. "사용 중" 으로
+    15분 막히지도 않게, 그 행을 지우고 "이어서 확인할 수 없어요" 와 같은 None 으로 끝낸다.
+    """
+    from app.domains.run_hold.models import HoldKind, RunHold
+    from app.domains.run_hold.repository import put_hold
+
+    _, me = bearer
+    owner = {"parent_id": me, "child_id": cid}
+    for key in ("bad-get", "bad-claim"):
+        await put_hold(
+            session,
+            kind=HoldKind.PENDING_REPLY,
+            key=key,
+            payload={"hint_text": "synthetic secret", "question": "q", "work": "no-such-work"},
+            ttl=pending_reply.TTL,
+            **owner,
+        )
+
+    assert await pending_reply.get(run_id="bad-get", **owner) is None
+    assert await pending_reply.claim(run_id="bad-claim", **owner) is None
+
+    left = (await session.scalars(select(RunHold.key).where(RunHold.key.like("bad-%")))).all()
+    assert left == []
+    assert "synthetic secret" not in caplog.text
+    assert "ValidationError" in caplog.text

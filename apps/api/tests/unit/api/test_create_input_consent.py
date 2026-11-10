@@ -384,6 +384,32 @@ async def test_202_전에_채널_행이_표에_쓰이기를_기다린다(
     assert awaited == [response.json()["run_id"]]
 
 
+async def test_표시를_푸는_것이_실패해도_원래_응답이_나간다(
+    client, agent_calls, consent_reads, monkeypatch, caplog
+):
+    """정리(release)가 DB 오류를 내도 429 가 500 으로 바뀌지 않는다 (#899 jjaa0803 리뷰 🟠1)."""
+    await pending_reply.put(
+        run_id="prev-run",
+        parent_id=PARENT,
+        child_id=CHILD,
+        context=PendingMemoryContext("요즘 기침해", "언제부터였어요?", WorkType.OBSERVE),
+    )
+
+    async def full(**kwargs):
+        return False
+
+    async def release_down(run_id):
+        raise DbDown("표시 풀기 실패")
+
+    monkeypatch.setattr(quota, "consume", full)
+    monkeypatch.setattr(pending_reply, "release", release_down)
+
+    response = await client.post(URL, json={**BODY, "reply_to": "prev-run"}, headers=_key())
+
+    assert response.status_code == 429
+    assert "DbDown" in caplog.text
+
+
 async def _answer_same_question_twice_at_once(client, monkeypatch):
     """같은 되묻기에 두 답을 거의 동시에 보낸다.
 

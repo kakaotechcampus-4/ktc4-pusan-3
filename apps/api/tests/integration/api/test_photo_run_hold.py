@@ -188,3 +188,27 @@ async def test_같은_저장이_동시에_오면_뒤_요청은_앞_요청의_응
 
     assert a == b == {"calendar_date": "2026-11-06"}
     assert saved == 1
+
+
+async def test_읽을_수_없는_사진_run_은_없는_run_이다(
+    session: AsyncSession, bearer: Bearer, cid: uuid.UUID, caplog
+):
+    """PhotoRun 모양을 바꾼 배포 뒤 옛 행 — 공지 원문을 로그에 남기지 않고 404 로 끝낸다."""
+    from app.domains.run_hold.models import HoldKind
+    from app.domains.run_hold.repository import put_hold
+
+    _, me = bearer
+    for key in ("bad-get", "bad-lock"):
+        await put_hold(
+            session,
+            kind=HoldKind.PHOTO_RUN,
+            key=key,
+            parent_id=me,
+            child_id=cid,
+            payload={"run_id": key, "items": "synthetic secret"},
+            ttl=photo_run.TTL,
+        )
+
+    assert await photo_run.get("bad-get", parent_id=me) is None
+    assert await photo_run.lock(session, "bad-lock", parent_id=me) is None
+    assert "synthetic secret" not in caplog.text
