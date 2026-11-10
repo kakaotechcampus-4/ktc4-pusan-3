@@ -946,6 +946,26 @@ export const emptyHome: HomeResponse = {
 /** 🚨 기록 0건인데 오늘 급식은 있다 (`empty_meal`) — 급식표만 올린 새 보호자. 빈 상태 위에 "오늘" 구역이 선다. */
 export const emptyMealHome: HomeResponse = { ...emptyHome, today: todayMeals };
 
+/**
+ * 띄어쓰기 없는 긴 메뉴 키 · 긴 일정 제목 (`home_long_title`). 메뉴 키는 급식표 이름에서 띄어쓰기 · 괄호를 뺀
+ * 한 덩어리라 길게 이어진다 (서버 `rules/menu_key.py`). 지어낸 값이다.
+ */
+export const longTitleHome: HomeResponse = {
+  ...home,
+  today: [
+    {
+      kind: "meal",
+      title: "점심 · 잡곡밥, 소고기버섯들깨미역국과애호박새우젓두부조림한상차림세트",
+      origin: "기관 급식표",
+    },
+    {
+      kind: "event",
+      event_id: "e_3",
+      title: "가을운동회겸학부모참여수업준비물안내및전달사항확인과귀가시간변경알림",
+    },
+  ],
+};
+
 /* ── 캘린더 초안 (승인 게이트 ㉠) ─────────────────────────────────────── */
 
 /**

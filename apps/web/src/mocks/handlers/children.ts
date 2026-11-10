@@ -9,6 +9,7 @@ import {
   daysAgo,
   emptyHome,
   emptyMealHome,
+  longTitleHome,
   healthSafety,
   home,
   me,
@@ -321,6 +322,7 @@ export const childrenHandlers = [
     if (scenario === "consent") return consentRequired("child_health");
     if (scenario === "empty") return HttpResponse.json(emptyHome);
     if (scenario === "empty_meal") return HttpResponse.json(emptyMealHome);
+    if (scenario === "home_long_title") return HttpResponse.json(longTitleHome);
     if (scenario === "stale") {
       // 기억은 있는데 전부 낡았다. highlight 는 뜨지만 근거로는 못 쓴다.
       return HttpResponse.json({

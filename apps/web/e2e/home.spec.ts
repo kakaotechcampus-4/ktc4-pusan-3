@@ -62,3 +62,24 @@ test("기록이 있는 홈은 급식 줄이 끼니마다 일정 줄 앞에 선�
   expect(new Set(titles).size).toBe(titles.length); // 줄 key 가 제목이라 겹치면 안 된다
   expect(titles.slice(0, meals.length)).toEqual(meals); // 급식이 먼저, 일정이 뒤
 });
+
+/**
+ * 띄어쓰기 없는 긴 메뉴 키 · 일정 제목이 카드 밖으로 넘쳐 페이지가 가로로 밀리면 안 된다.
+ * 전역이 `keep-all` 이라 끊을 자리가 없다 — 제목은 `wrap-anywhere` 로 낱말 안에서도 줄을 바꾼다.
+ */
+test.describe("긴 오늘 줄 제목", () => {
+  test.use({ scenario: "home_long_title" });
+
+  for (const width of [390, 320]) {
+    test(`${width}px 에서 가로로 넘치지 않는다`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 844 });
+      await page.goto(`/child/${CHILD}/home`);
+      await expect(page.getByText(/^점심 · /)).toBeVisible();
+
+      const overflow = await page.evaluate(
+        () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      );
+      expect(overflow).toBe(0);
+    });
+  }
+});

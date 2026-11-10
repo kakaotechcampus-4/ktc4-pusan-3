@@ -507,7 +507,9 @@ function TodayRow({ icon, title, note }: { icon: LucideIcon; title: string; note
     <div className="flex items-center gap-3">
       <IconTile icon={icon} />
       <div className="min-w-0">
-        <p className="text-body-sm text-ink">{title}</p>
+        {/* 🚨 `wrap-anywhere` — 메뉴 키는 띄어쓰기 · 괄호를 뺀 한 덩어리라 길다. 전역이 `keep-all` 이라 끊을 자리가 없으면
+            카드 밖으로 넘쳐 페이지가 가로로 밀린다. `break-words` 는 최소 폭을 줄이지 못한다 (event-draft-card 와 같다). */}
+        <p className="text-body-sm text-ink wrap-anywhere">{title}</p>
         {note ? <p className="text-caption text-ink-subtle mt-0.5">{note}</p> : null}
       </div>
     </div>
