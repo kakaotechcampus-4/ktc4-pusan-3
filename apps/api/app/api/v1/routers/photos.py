@@ -167,6 +167,9 @@ async def upload_photo(
 
         channel = registry.open_run(parent_id=parent.parent_id)
         try:
+            # 채널 행이 표에 쓰인 뒤에 202 — 다른 워커의 SSE · 같은 키 재시도가 이 run 을 찾는다
+            # (#877 4단계 · #899 리뷰). 못 찾으면 재시도가 사진을 두 번 읽고 한도도 두 번 쓴다
+            await channel.opened()
             # 아직 아무것도 읽지 않았다 — 키를 못 남기면 접수하지 않고 503 (한 줄 입력과 같다, #671)
             await idempotency.remember(**scope, replay=channel.run_id, strict=True)
         except Exception:

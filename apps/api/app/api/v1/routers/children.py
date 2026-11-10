@@ -610,6 +610,9 @@ async def create_input(
 
         channel = registry.open_run(parent_id=parent.parent_id)
         try:
+            # 채널 행이 표에 쓰인 뒤에 202 — 화면이 바로 다른 워커로 SSE 를 열어도 404 가 아니고,
+            # 같은 키 재시도도 다른 워커에서 이 run 을 찾는다 (#877 4단계 · #899 리뷰)
+            await channel.opened()
             await idempotency.remember(**scope, replay=channel.run_id, strict=True)
         except Exception:
             # 러너가 안 떠서 이 채널은 아무도 닫지 않는다. 닫아야 지울 예약이 걸린다 (#536 리뷰)

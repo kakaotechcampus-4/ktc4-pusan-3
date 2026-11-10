@@ -583,6 +583,7 @@ async def create_suggestions(
     notices: dict[str, GroupNoticeOut] = {}  # ② 0개 기록 · ④ 이어서 할 수 없음
     claimed: dict[str, suggestion_retry.RetryTask] = {}  # ③ 다시 만들 맥락
     settled: set[str] = set()  # 다시 만들어 결과를 낸 Agent — 그 맥락은 지운다
+    to_record: set[str] = set()  # 그중 0개 · 닫힘 기록을 남길 Agent — 지우지 않고 기록으로 덮는다
     run = entrypoint.SuggestRun(outcomes=(), failed=())
     # 🚨 맥락을 꺼낸(claim) 뒤 무엇이 터져도 "사용 중" 을 푼다. 안 풀면 15분 동안 다시 시도가
     #    BUSY 로 떨어져 실패 카드만 뜬다 (#433 리뷰 ②)
@@ -680,28 +681,44 @@ async def create_suggestions(
                     affinity_reader=agent_ports.affinity_reader(),
                 )
             settled = {o.agent for o in run.outcomes}
+            to_record = {
+                o.agent
+                for o in run.outcomes
+                if o.agent in claimed
+                and (entrypoint.empty_notice(o.readouts) is not None or _guard_code(o) is not None)
+            }
     finally:
         for a in claimed:
+            if a in to_record:
+                continue  # 아래에서 그 칸을 기록으로 바로 덮는다
             if a in settled:
                 await suggestion_retry.drop(run_id=run_id, agent=a)
             else:
                 await suggestion_retry.release(run_id=run_id, agent=a)
 
-    # 다시 만든 결과를 지운 맥락 자리에 남긴다 — 다음 요청이 같은 모양을 재생한다 (24시간).
-    # 지운 뒤에 넣어야 한다 — 같은 (run_id, agent) 칸이라 순서를 바꾸면 기록이 지워진다
+    # 다시 만든 결과를 맥락 자리에 남긴다 — 다음 요청이 같은 모양을 재생한다 (24시간).
+    # 🚨 맥락을 지우지 않고 같은 칸을 바로 덮는다(upsert). 지운 뒤 넣으면 그 사이에 온 요청이
+    #    "맥락도 기록도 없음" 을 본다 (#899 리뷰). 덮지 못하면 표시를 풀어 다시 시도할 수 있게 한다
     for o in run.outcomes:
-        if o.agent not in claimed:
+        if o.agent not in to_record:
             continue
         empty = entrypoint.empty_notice(o.readouts)
-        code = _guard_code(o)
-        if empty is not None:
-            await suggestion_retry.put_empty(
-                run_id=run_id, agent=o.agent, message=empty.body, **owner
-            )
-        elif code is not None:
-            await suggestion_retry.put_guard(
-                run_id=run_id, agent=o.agent, code=code, message=_guard_message(o), **owner
-            )
+        try:
+            if empty is not None:
+                await suggestion_retry.put_empty(
+                    run_id=run_id, agent=o.agent, message=empty.body, **owner
+                )
+            else:
+                await suggestion_retry.put_guard(
+                    run_id=run_id,
+                    agent=o.agent,
+                    code=_guard_code(o),
+                    message=_guard_message(o),
+                    **owner,
+                )
+        except BaseException:
+            await suggestion_retry.release(run_id=run_id, agent=o.agent)
+            raise
 
     return await _suggestions_response(
         session,

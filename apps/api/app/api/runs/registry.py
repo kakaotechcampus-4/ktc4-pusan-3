@@ -16,6 +16,7 @@
 """
 
 import asyncio
+import contextlib
 import logging
 import uuid
 from collections.abc import Callable
@@ -86,6 +87,7 @@ class RunChannel:
         self._outbox: asyncio.Queue | None = None
         self._writer: asyncio.Task[None] | None = None
         """표 미러를 쓰는 작업. 참조를 매달아야 GC 가 거두지 않는다."""
+        self._opened_flag: asyncio.Event | None = None
 
     @property
     def committed(self) -> bool:
@@ -129,8 +131,15 @@ class RunChannel:
 
     def _start_mirror(self, factory: Callable[[], AsyncSession]) -> None:
         self._outbox = asyncio.Queue()
-        self._outbox.put_nowait(("open",))
+        self._opened_flag = asyncio.Event()
         self._writer = asyncio.create_task(self._mirror(factory), name=f"run-mirror-{self.run_id}")
+
+    async def opened(self) -> None:
+        """채널 행이 표에 쓰였다(또는 쓰기를 포기했다). 창구가 202 를 보내기 전에 기다린다 —
+        화면이 202 를 받자마자 다른 워커로 SSE 를 열어도 404 가 아니게 (#899 리뷰).
+        미러가 꺼져 있으면 기다릴 것이 없다."""
+        if self._opened_flag is not None:
+            await self._opened_flag.wait()
 
     async def drained(self) -> None:
         """여기까지 넣은 것이 표에 다 쓰였다. 미러가 꺼져 있으면 기다릴 것이 없다."""
@@ -138,13 +147,22 @@ class RunChannel:
             await self._outbox.join()
 
     async def _mirror(self, factory: Callable[[], AsyncSession]) -> None:
-        """줄 선 것을 순서대로 표에 쓴다. 한 번에 쌓인 것을 한 트랜잭션으로.
+        """채널 행을 먼저 따로 쓰고, 그 뒤 줄 선 것을 순서대로 쓴다(쌓인 만큼 한 트랜잭션).
 
         🚨 실패해도 run 은 모른다 — 다른 워커의 화면만 늦거나 못 받는다. 로그에는 예외 종류만
            (실패 이벤트에 원문이 있다). 채널 행을 못 만들었으면(보호자가 없다) 나머지는 버린다.
+        🚨 이벤트를 못 써도 끝 신호 · 닫힘 표시는 따로 다시 쓴다 — 안 남으면 다른 워커의 화면이
+           끝을 모른 채 10분(OPEN_TTL) 동안 ping 만 받는다 (#899 리뷰).
         """
         outbox = self._outbox
-        broken = False
+        try:
+            await self._open_row(factory)
+            broken = False
+        except Exception as exc:
+            broken = True
+            log.warning("run %s 의 채널 행을 쓰지 못했다 — %s", self.run_id, type(exc).__name__)
+        finally:
+            self._opened_flag.set()
         while True:
             batch = [await outbox.get()]
             while not outbox.empty():
@@ -153,34 +171,47 @@ class RunChannel:
                 if not broken:
                     await self._write(factory, batch)
             except Exception as exc:
-                broken = broken or any(item[0] == "open" for item in batch)
                 log.warning(
                     "run %s 의 채널 미러를 쓰지 못했다 — %s", self.run_id, type(exc).__name__
                 )
+                with contextlib.suppress(Exception):
+                    await self._write(factory, batch, events_too=False)
             finally:
                 for _ in batch:
                     outbox.task_done()
             if any(item[0] == "close" for item in batch):
                 return
 
-    async def _write(self, factory: Callable[[], AsyncSession], batch: list[tuple]) -> None:
-        now = datetime.now(UTC)
+    async def _open_row(self, factory: Callable[[], AsyncSession]) -> None:
         async with factory() as session:
-            if any(item[0] == "open" for item in batch):
-                await open_channel(
-                    session, run_id=self.run_id, parent_id=self.parent_id, expires_at=now + OPEN_TTL
-                )
-            # ("event", seq, (이름, 내용)) → (seq, 이름, 내용)
-            events = [(item[1], *item[2]) for item in batch if item[0] == "event"]
-            if events:
+            await open_channel(
+                session,
+                run_id=self.run_id,
+                parent_id=self.parent_id,
+                expires_at=datetime.now(UTC) + OPEN_TTL,
+            )
+            await session.commit()
+
+    async def _write(
+        self, factory: Callable[[], AsyncSession], batch: list[tuple], *, events_too: bool = True
+    ) -> None:
+        now = datetime.now(UTC)
+        # ("event", seq, (이름, 내용)) → (seq, 이름, 내용). JSONB 는 \u0000 을 받지 않는다 — 뺀다
+        events = [
+            (item[1], item[2][0], _without_nul(item[2][1])) for item in batch if item[0] == "event"
+        ]
+        marks: dict = {}
+        ended = next((name for _, name, _ in reversed(events) if name in TERMINAL), None)
+        if ended is not None:
+            marks["ended_with"] = ended
+        if any(item[0] == "close" for item in batch):
+            marks["closed"] = True
+            marks["expires_at"] = now + timedelta(seconds=EXPIRE_AFTER_SECONDS)
+        if not marks and not (events_too and events):
+            return
+        async with factory() as session:
+            if events_too and events:
                 await append_events(session, run_id=self.run_id, events=events)
-            marks: dict = {}
-            ended = next((name for _, name, _ in reversed(events) if name in TERMINAL), None)
-            if ended is not None:
-                marks["ended_with"] = ended
-            if any(item[0] == "close" for item in batch):
-                marks["closed"] = True
-                marks["expires_at"] = now + timedelta(seconds=EXPIRE_AFTER_SECONDS)
             if marks:
                 await mark_channel(session, run_id=self.run_id, **marks)
             await session.commit()
@@ -214,6 +245,17 @@ class RunChannel:
                 continue
             yield self.events[i]
             i += 1
+
+
+def _without_nul(value):
+    """문자열 속 NUL 을 뺀다 — 보호자 문장에 섞여 오면 그 이벤트를 표에 못 쓴다."""
+    if isinstance(value, str):
+        return value.replace("\x00", "")
+    if isinstance(value, dict):
+        return {k: _without_nul(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_without_nul(v) for v in value]
+    return value
 
 
 def open_run(*, parent_id: uuid.UUID) -> RunChannel:
