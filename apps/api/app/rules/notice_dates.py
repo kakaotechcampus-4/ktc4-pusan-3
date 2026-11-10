@@ -46,6 +46,14 @@ _HANGUL_TIME = re.compile(
     _MERIDIEM + r"\s*(?P<h>\d{1,2})\s*시"
     r"(?:\s*(?P<min>\d{1,2})\s*분|(?P<min2>\d{2})(?!\d)|\s*(?P<half>반))?"
 )
+# "10~12시" · "오후 2~4시" — 범위의 앞 시각은 "시" 가 빠진다. "~" 뒤에 "N시" 가 바로 올 때만
+# 시각이다. 오전 · 오후는 다른 시각과 같은 규칙으로 읽는다(_times · _time_span).
+# 앞에 숫자 · 구분 기호가 붙은 숫자는 날짜의 일부다 ("11/23~12시" 의 23)
+_BARE_HOUR = re.compile(
+    _MERIDIEM
+    + r"\s*(?<![\d./:\-])(?P<h>\d{1,2})(?P<min>)"
+    + r"(?=\s*(?:~|∼|〜|-|–|—)\s*(?:새벽|아침|오전|낮|오후|저녁|밤)?\s*\d{1,2}\s*시(?!간))"
+)
 _TIME_RANGE = re.compile(r"\0+\s*(?:~|∼|〜|-|–|—|부터)\s*\0+")
 _UNTIL = re.compile(r"\s*까지")
 _DATE_START = re.compile(r"\s*(?:\d|오늘|금일|내일|명일|모레|이번|금주|다음|차주)")
@@ -179,7 +187,8 @@ def _times(text: str) -> list[_Clock]:
     taken: list[tuple[int, int]] = []
     last_mer: str | None = None
     for m in sorted(
-        [*_CLOCK.finditer(text), *_HANGUL_TIME.finditer(text)], key=lambda x: x.start()
+        [*_CLOCK.finditer(text), *_HANGUL_TIME.finditer(text), *_BARE_HOUR.finditer(text)],
+        key=lambda x: x.start(),
     ):
         if any(a <= m.start() < b for a, b in taken):
             continue
@@ -243,7 +252,8 @@ def _drop_time_words(text: str) -> str:
     위치가 같아야 시각이 범위의 어느 쪽에 붙었는지 원문에서 찾을 수 있다.
     시각 범위의 "~" 도 같이 지운다. 남기면 "19일 10:00~11:30, 27일" 이 19일부터 27일까지가 된다.
     """
-    marked = _HANGUL_TIME.sub(_hide, _CLOCK.sub(_hide, text))
+    # "시" 없는 앞 시각은 뒤의 "N시" 를 보고 찾으므로 그것을 지우기 전에 지운다
+    marked = _HANGUL_TIME.sub(_hide, _CLOCK.sub(_hide, _BARE_HOUR.sub(_hide, text)))
     return _TIME_RANGE.sub(lambda m: " " * len(m[0]), marked).replace("\0", " ")
 
 

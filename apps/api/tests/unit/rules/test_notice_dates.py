@@ -125,6 +125,40 @@ def test_일_글자_없는_끝_날의_시각은_매일의_시간이다():
 
 
 @pytest.mark.parametrize(
+    ("text", "start_time", "end_time"),
+    [
+        ("11/23 10~12시", time(10), time(12)),
+        ("11월 23일 10~12시", time(10), time(12)),
+        ("11월 23일 오후 2~4시", time(14), time(16)),
+        ("11월 23일 2~4시", time(14), time(16)),
+        ("11월 23일 9~11시 30분", time(9), time(11, 30)),
+        ("11월 23일 10~1시", time(10), time(13)),
+    ],
+)
+def test_앞_숫자에_시가_없는_시각_범위를_읽는다(text, start_time, end_time):
+    # "10~12시" 의 10 을 못 읽으면 12시가 시작이 된다
+    when = parse_notice_when(text, anchor=ANCHOR)
+    assert when.start == date(2026, 11, 23)
+    assert (when.start_time, when.end_time) == (start_time, end_time)
+    assert when.review is None
+
+
+def test_앞_숫자에_시가_없는_7시도_기존_규칙대로_읽는다():
+    # 끝(9시)이 분명하면 시작은 끝보다 이른 쪽 하나로만 읽힌다 — "7:30 ~ 19:30" 과 같은 규칙
+    when = parse_notice_when("11월 23일 7~9시", anchor=ANCHOR)
+    assert (when.start_time, when.end_time) == (time(7), time(9))
+    # 표시 없는 5시는 17시, 끝의 7시는 시작보다 늦은 쪽 — "6시 30분 ~ 8시 30분" 과 같은 규칙
+    evening = parse_notice_when("11월 23일 5~7시", anchor=ANCHOR)
+    assert (evening.start_time, evening.end_time) == (time(17), time(19))
+
+
+def test_일_없는_끝_날과_시_없는_시각_범위를_같이_읽는다():
+    when = parse_notice_when("11/23~27 10~12시", anchor=ANCHOR)
+    assert (when.start, when.end) == (date(2026, 11, 23), date(2026, 11, 27))
+    assert (when.start_time, when.end_time) == (time(10), time(12))
+
+
+@pytest.mark.parametrize(
     "text", ["11/23 9:30~12", "11/23 10~12", "11/23~3세", "11/23~27명", "11/23~12월"]
 )
 def test_물결표_뒤의_숫자가_날이_아니면_끝_날로_읽지_않는다(text):
