@@ -9,6 +9,7 @@
 """
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -42,12 +43,19 @@ class PhotoReading:
 
 
 def read_photo(
-    data: bytes, *, received_at: datetime, meal_deadline: float | None = None
+    data: bytes,
+    *,
+    received_at: datetime,
+    meal_deadline: float | None = None,
+    on_meal_plan: Callable[[], None] | None = None,
 ) -> PhotoReading:
     """동기 호출이다 — 모델을 기다리므로 스레드에서 부른다.
 
     meal_deadline(`time.monotonic()` 기준)이 지나면 식단표의 표 읽기를 멈추고 공지 항목만 낸다.
     시간을 쓰는 쪽이 표 읽기라서, 전체가 timeout 으로 끝나기 전에 읽은 것을 건진다 (#934 리뷰).
+
+    on_meal_plan 은 식단표로 판정된 뒤 · 표 읽기 전에 한 번 부른다 (진행 문구를 바꾸는 자리).
+    🚨 이 스레드에서 불린다. 터져도 읽기는 계속한다 — 진행 문구 때문에 읽기가 실패하면 안 된다.
     """
     try:
         image, mime_type = normalize_image(data)
@@ -75,6 +83,11 @@ def read_photo(
     )
     if notice.doc_kind is not NoticeDocKind.MEAL_PLAN:
         return PhotoReading(notice=notice, meal_plan=None)
+    if on_meal_plan is not None:
+        try:
+            on_meal_plan()
+        except Exception as e:
+            log.warning("식단표 진행 알림 실패 — 표는 계속 읽는다 (%s)", type(e).__name__)
     reader = ImageOcrMealPlanReader.from_settings(settings, max_calls=2, deadline=meal_deadline)
     try:
         return PhotoReading(notice=notice, meal_plan=reader.read(image, mime_type=mime_type))
