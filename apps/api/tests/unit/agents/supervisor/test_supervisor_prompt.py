@@ -30,6 +30,15 @@ def test_선생님_알림장이_전한_급식_먹은_양은_급식_갱신이다(
     assert '"아침에 밥 반 공기 먹고 등원했어" → record/observe' in prompt
 
 
+def test_기관이_전해도_무엇을_먹었는지는_기록이다() -> None:
+    """양만 전한 말만 급식 갱신이다. "딸기는 잘 먹었대" 처럼 무엇을 먹었는지 말하면 아이의
+    관찰이라 record 로 가서 선호 근거로 쌓인다 — 급식 갱신은 관찰을 남기지 않는다 (#841 리뷰)."""
+    prompt = build_system_prompt()
+    assert '양만 전한 말("반만 · 싹 비웠다")만이다' in prompt
+    assert '"어린이집에서 계란말이 엄청 많이 먹었대" → record/observe' in prompt
+    assert '"어린이집에서 계란말이 엄청 많이 먹었대" → request/food/daycare_meal' not in prompt
+
+
 def test_무엇을_먹일지_없이_시점만_묻는_말은_food_가_아니다() -> None:
     prompt = build_system_prompt()
     assert '"지금 또 먹여도 돼?" → request/health' in prompt
