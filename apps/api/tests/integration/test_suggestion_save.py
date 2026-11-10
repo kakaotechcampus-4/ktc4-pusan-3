@@ -1,5 +1,6 @@
 """Agent 결과 하나의 추천 저장 — 근거 검증 · 묶음 단위 · run_id · draft +24h."""
 
+import logging
 import uuid
 from datetime import UTC, date, datetime
 from typing import get_args
@@ -17,6 +18,7 @@ from app.agents.common.refs import (
     Ref,
 )
 from app.agents.common.suggestion import SuggestionDraft
+from app.agents.food.schemas.common import MealSlot
 from app.domains.child.models import ParentChildRelation
 from app.domains.child.repository import create_child
 from app.domains.food import repository as food_repository
@@ -27,6 +29,7 @@ from app.domains.suggestion.models import (
     Suggestion,
     SuggestionEvidence,
     SuggestionKind,
+    SuggestionMealSlot,
     SuggestionStatus,
 )
 from app.domains.suggestion.repository import (
@@ -144,6 +147,12 @@ def test_근거_종류_목록이_Agent_쪽과_같다():
     assert repository._DOC_KINDS == frozenset(get_args(DocKind))
 
 
+def test_끼니_목록이_Food_쪽과_같다():
+    """끼니도 두 곳에 있다. Food 쪽만 늘리면 그 끼니는 저장에서 비워져 초안 제목이 "식사" 로
+    떨어진다 (#898)."""
+    assert {slot.value for slot in SuggestionMealSlot} == {slot.value for slot in MealSlot}
+
+
 async def test_추천을_draft_로_저장하고_id_를_순서대로_돌려준다(session, kids):
     owner, child, _ = kids
     obs = await observation(session, child, owner)
@@ -169,6 +178,7 @@ async def test_추천을_draft_로_저장하고_id_를_순서대로_돌려준다
     assert {row.place_notice for row in rows} == {None}  # payload 에 키가 없으면 비운다
     assert [row.warnings for row in rows] == [[], []]
     assert {(row.event_starts_on, row.event_ends_on) for row in rows} == {(None, None)}
+    assert {row.meal_slot for row in rows} == {None}  # 이 칸 전에 만든 payload 도 저장된다
     assert await counts(session, child.id) == (2, 2)  # 아이 기록 근거 1행 + 문서 근거 1행
 
 
@@ -188,6 +198,7 @@ async def test_SuggestionDraft_의_payload_가_그대로_저장된다(session, k
         ),
         allergens=("난류",),
         items=("계란",),
+        meal_slot="breakfast",
     )
 
     [row_id] = await save_agent_suggestions(
@@ -195,6 +206,7 @@ async def test_SuggestionDraft_의_payload_가_그대로_저장된다(session, k
     )
 
     row = await session.get(Suggestion, row_id)
+    assert row.meal_slot == "breakfast"  # 일정 초안 제목이 이 값으로 정해진다 (#898)
     assert (row.kind, row.agent, row.reason) == (
         SuggestionKind.PERSONALIZED,
         "food",
@@ -202,6 +214,24 @@ async def test_SuggestionDraft_의_payload_가_그대로_저장된다(session, k
     )
     assert (row.allergens, row.items) == (["난류"], ["계란"])
     assert await counts(session, child.id) == (1, 2)
+
+
+async def test_모르는_끼니는_비우고_경고만_남긴다(session, kids, caplog):
+    """끼니 목록이 어긋나도 Food 묶음 저장은 실패하지 않는다 — 초안 제목이 "식사" 가 될
+    뿐이다. 운영에서 어긋난 것이 보이게 경고는 남기되 모델이 낸 값은 싣지 않는다 (#898)."""
+    _, child, _ = kids
+    item = {**payload(citations=[doc_citation()]), "meal_slot": "brunch"}
+
+    with caplog.at_level(logging.WARNING, logger=repository.__name__):
+        [row_id] = await save_agent_suggestions(
+            session, child_id=child.id, run_id=RUN, now=NOW, payloads=[item]
+        )
+
+    row = await session.get(Suggestion, row_id)
+    assert row.meal_slot is None
+    [record] = [record for record in caplog.records if record.name == repository.__name__]
+    assert record.levelno == logging.WARNING
+    assert "brunch" not in record.getMessage()
 
 
 async def test_장소가_붙은_추천의_확인_문구를_저장한다(session, kids):

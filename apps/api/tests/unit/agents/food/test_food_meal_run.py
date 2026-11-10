@@ -124,6 +124,17 @@ async def test_식단_추천은_후보를_보여_주고_고른_3개를_추천으
     assert all(name in shown for name in ("두부조림", "시금치나물", "미역국"))
 
 
+async def test_추천_payload_에_모델이_고른_끼니가_실린다() -> None:
+    """일정 초안 제목("아침 식사")이 이 값으로 정해진다 (#898). 빠지면 서버는 끼니를 모른다."""
+    llm = ScriptedLLM(propose("두부조림", "시금치나물", "미역국", meal_slot="breakfast"))
+
+    context = meal_context(TOFU, SPINACH, SOUP)
+
+    result = await run(meal_task("내일 아침 추천해줘"), context, client=llm)
+
+    assert [draft.to_payload()["meal_slot"] for draft in result.suggestions] == ["breakfast"] * 3
+
+
 async def test_식단_추천은_tool_을_강제한다() -> None:
     # 출력 tool 이 하나(propose_meal_candidates)뿐이고 쓰지 않는다 — 말로 끝나는 것을 줄인다(#320)
     llm = ScriptedLLM(propose("두부조림", "시금치나물", "미역국"))
