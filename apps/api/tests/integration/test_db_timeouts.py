@@ -43,3 +43,15 @@ async def test_취소된_쿼리는_시간_상한으로_적지_않는다(caplog):
         await task
     assert "시간 상한이 아니다(57014)" in caplog.text
     assert "쿼리 2분 상한" not in caplog.text
+
+
+async def test_아이_잠금_기다리기도_쿼리_상한에_같이_끊긴다(caplog):
+    """lock_timeout 을 따로 걸지 않아도 advisory 잠금 대기는 statement_timeout 으로 끝이 난다."""
+    lock = text("SELECT pg_advisory_xact_lock(1, 777777)")
+    async with engine.connect() as holder, holder.begin():
+        await holder.execute(lock)
+        async with engine.connect() as waiter, waiter.begin():
+            await waiter.execute(text("SET LOCAL statement_timeout = '50ms'"))
+            with pytest.raises(DBAPIError):
+                await waiter.execute(lock)
+    assert "쿼리 2분 상한(statement_timeout)" in caplog.text
