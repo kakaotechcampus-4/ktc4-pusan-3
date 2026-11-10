@@ -79,6 +79,10 @@ _MEAL_UNREAD = "식단표의 표를 읽지 못했어요. 더 밝게 다시 찍�
 _MEAL_TIMED_OUT = (
     "식단표의 표를 읽는 데 시간이 오래 걸려 끝내지 못했어요. 잠시 뒤 다시 올려 주세요."
 )
+# 연도를 몰라 급식을 내보내지 않았다 (`rules/meal_plan_month` ③). 다시 찍어도 연도는 생기지 않는다
+_MEAL_NO_YEAR = (
+    "급식표에 연도가 적혀 있지 않아 언제 것인지 알 수 없어요. {month}월 급식은 저장하지 않아요."
+)
 
 
 @dataclass(frozen=True)
@@ -347,10 +351,19 @@ def build_entries(run: PhotoRun, reading: entrypoint.PhotoReading, *, today: dat
                 "items": [],
                 "needs_review": True,
                 "past": False,
-                "review_reason": _MEAL_TIMED_OUT if reading.meal_timed_out else _MEAL_UNREAD,
+                "review_reason": _meal_failed_reason(reading),
             }
         )
     return _servable(run, entries)
+
+
+def _meal_failed_reason(reading: entrypoint.PhotoReading) -> str:
+    if reading.meal_timed_out:
+        return _MEAL_TIMED_OUT
+    month = reading.meal_month
+    if month is not None and month.year is None:
+        return _MEAL_NO_YEAR.format(month=month.month)
+    return _MEAL_UNREAD
 
 
 # ── 화면 항목은 저장 검증을 통과한다 (2026-11-11 운영 장애) ─────────────────────

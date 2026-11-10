@@ -324,3 +324,35 @@ def test_걸린_항목은_id_와_칸_이름만_로그에_남긴다(caplog) -> No
     message = record.getMessage()
     assert "pe_0" in message and "title" in message
     assert "아이이름" not in message  # 원문 · 제목 글자는 남기지 않는다 (§2 개인정보)
+
+
+# ── 연도 (rules/meal_plan_month) ───────────────────────────────────────────
+
+
+def test_연도를_추정한_급식표도_통과한다() -> None:
+    from app.rules.meal_plan_month import MealMonth
+
+    reading = PhotoReading(
+        notice=_notice(BASE_ITEM),
+        meal_plan=MEAL_VARIANTS["빈 이름 · 번호만 · 열량 줄"],
+        meal_month=MealMonth(11, 2026, "guessed"),
+    )
+
+    _assert_commit_passes(*_entries(reading))
+
+
+def test_연도를_몰라_급식을_내지_않은_결과도_통과하고_급식은_저장_대상이_아니다() -> None:
+    from app.rules.meal_plan_month import MealMonth
+
+    reading = PhotoReading(
+        notice=_notice(BASE_ITEM),
+        meal_plan=None,
+        meal_failed=True,
+        meal_month=MealMonth(3, None, "unknown"),
+    )
+
+    run, entries = _entries(reading)
+
+    _assert_commit_passes(run, entries)
+    assert run.meals == {}
+    assert [e["id"] for e in entries if e["kind"] == "meal"] == ["pe_meal_unread_0"]

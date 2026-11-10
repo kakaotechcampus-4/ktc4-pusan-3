@@ -25,7 +25,7 @@ from app.providers.meal_plan.schema import MealPlanJSON
 from app.providers.model_errors import MODEL_CALL_FAILURES
 from app.providers.notice.document_text import UnreadableDocument, normalize_image
 from app.providers.notice.extractor import NoticeExtractor
-from app.rules.meal_plan_month import decide_year_month
+from app.rules.meal_plan_month import MealMonth, decide_year_month
 from app.rules.menu_key import is_nutrition_line, menu_display_name
 from app.rules.notice_text import clean_text
 
@@ -45,6 +45,9 @@ class PhotoReading:
     meal_plan: MealPlanJSON | None
     meal_failed: bool = False  # 식단표인데 표를 못 읽었다. 공지 항목은 살아 있다
     meal_timed_out: bool = False  # 못 읽은 이유가 시간이다 — 사진을 다시 찍으라고 하지 않는다
+    meal_month: MealMonth | None = None
+    """급식표의 연월과 연도의 출처(`rules/meal_plan_month`). `year` 가 None 이면 연도를 몰라 급식을
+    내보내지 않았다(`meal_failed`) — 화면은 "언제 급식표인지 알 수 없어요" 한 줄을 본다."""
 
 
 def read_photo(
@@ -95,11 +98,22 @@ def read_photo(
             # 월을 못 읽었거나 두 호출의 월이 다르다 — 어느 달인지 모르면 날짜를 하나도 쓸 수 없다
             log.warning("meal_plan 의 월을 정하지 못했다 — 공지 항목만 낸다")
             return PhotoReading(notice=notice, meal_plan=None, meal_failed=True)
-        year, month = decided
+        if decided.source != "written":
+            # 🚨 연도를 사진 글자에서 그대로 얻지 못했다. 추정했다는 안내를 그릴 화면 통로가 아직
+            #    없어서 여기 남긴다(docs/meal-plan 결정 ④). 메뉴 글자는 남기지 않는다
+            log.warning("meal_plan 연도를 사진 글자에서 정하지 못했다 — %s", decided.source)
+        if decided.year is None:
+            # 원문에 연도가 없고 받은 날의 앞뒤 한 달 밖이다 — 짐작하지 않는다. 급식을 날짜로
+            # 내보내지 않고 "언제 급식표인지 알 수 없어요" 한 줄만 낸다 (photo_run.build_entries)
+            return PhotoReading(notice=notice, meal_plan=None, meal_failed=True, meal_month=decided)
         plan = names_from_raw(
-            merge_outputs(parts.outputs, year_month=f"{year:04d}-{month:02d}", missed=parts.missed)
+            merge_outputs(
+                parts.outputs,
+                year_month=f"{decided.year:04d}-{decided.month:02d}",
+                missed=parts.missed,
+            )
         )
-        return PhotoReading(notice=notice, meal_plan=plan)
+        return PhotoReading(notice=notice, meal_plan=plan, meal_month=decided)
     except ReadDeadlineExceeded:
         log.warning("meal_plan 읽기가 기한 안에 끝나지 않았다 — 공지 항목만 낸다")
         return PhotoReading(notice=notice, meal_plan=None, meal_failed=True, meal_timed_out=True)

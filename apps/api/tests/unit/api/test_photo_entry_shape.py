@@ -298,3 +298,33 @@ def test_모델이_못_읽었다고_한_칸도_어느_날인지_보인다() -> N
         "흐림",
     ]
     assert all(e["date"] is None for e in entries)  # 저장하지 않는 칸이라 날짜 칸은 비운다
+
+
+def test_연도를_몰라_급식을_내지_않았으면_그_까닭_한_줄만_보인다() -> None:
+    # 원문에 연도가 없고 받은 날의 앞뒤 한 달 밖(11월에 받은 3월 급식표) — 짐작하지 않는다.
+    # "더 밝게 다시 찍어 주세요" 가 아니다 — 다시 찍어도 연도는 생기지 않는다
+    from types import SimpleNamespace
+
+    from app.agents.notice_ocr import PhotoReading
+    from app.api.runs.photo_run import PhotoRun, build_entries
+    from app.rules.meal_plan_month import MealMonth
+
+    reading = PhotoReading(
+        notice=SimpleNamespace(items=()),
+        meal_plan=None,
+        meal_failed=True,
+        meal_month=MealMonth(3, None, "unknown"),
+    )
+    run = PhotoRun("r1", None, None)
+
+    (entry,) = build_entries(run, reading, today=TODAY)
+
+    assert (entry["id"], entry["kind"], entry["date"], entry["needs_review"]) == (
+        "pe_meal_unread_0",
+        "meal",
+        None,
+        True,
+    )
+    assert "연도" in entry["review_reason"] and "3월" in entry["review_reason"]
+    assert "찍어" not in entry["review_reason"]
+    assert run.meals == {}  # 저장할 끼니가 없다
