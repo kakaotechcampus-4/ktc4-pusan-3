@@ -23,7 +23,8 @@ steps:
     tag: mon-breakfast
     ability: [추출]
     expect:
-      saved: { domains: [food], min_rows: 1 }
+      # 집 아침의 "밥" 은 무엇을 먹었는지가 아니다 — 메뉴를 1개 되묻는 게 §2 대로다 (#798)
+      questions_max: 1
     say: 아침에 밥 반 공기 먹고 등원했어
 
   - at: mon 12:40
@@ -31,7 +32,9 @@ steps:
     tag: mon-lunch-note
     ability: [추출]
     expect:
-      saved: { domains: [food], min_rows: 1 }
+      # 알림장이 전한 급식 양은 급식 행의 양을 고친다(Food daycare_meal) — W 에는 급식표 시드가 없어
+      # 경로만 본다 (#798)
+      route: { include: [food] }
     say: 알림장에 점심 반찬 싹 비웠다고 써 있네. 기특해
 
   - at: mon 18:20
@@ -234,7 +237,8 @@ steps:
     tag: fri-lunch-note
     ability: [추출]
     expect:
-      saved: { min_rows: 1 }
+      # 선생님이 전한 급식 양 — mon-lunch-note 와 같다 (#798)
+      route: { include: [food] }
     say: 선생님이 점심은 반만 먹었다고 하셨어
 
   - at: fri 18:30
