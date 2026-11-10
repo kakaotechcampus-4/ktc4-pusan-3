@@ -16,7 +16,7 @@
    2-1. 닫힘 기록이 있으면(24시간) 같은 guard — 다시 만든 결과가 blocked · unsupported 였던 Agent.
 3. 실패 맥락이 있으면(15분, 처음 넣은 시각부터) 처음 시각 · 문장으로 다시 만든다. 다른 요청이
    쓰는 중이면 실패로 둔다(다시 시도할 수 있게).
-4. 그 밖에는 다시 만들지 않고 `cannot_resume` 안내 — 맥락 15분 지남 · 서버 재시작 · 24시간 지남 ·
+4. 그 밖에는 다시 만들지 않고 `cannot_resume` 안내 — 맥락 15분 지남 · DB 비정상 종료 · 24시간 지남 ·
    그 run 에서 돌지 않은 Agent.
 
 요청 모양을 그대로 두고 서버가 가르는 이유 — 화면이 실패한 Agent 만 골라 보내면 응답 둘을 화면이
@@ -71,8 +71,8 @@ Agent 를 실제로 새로 돌릴 때만 `/inputs` 와 같은 하루 한도에�
 ## 6. 알아 둘 것
 
 - 일반 추천은 문서 행이 근거라, 검수를 마친(`approved`) 문서 행이 없으면 Agent 가 일반 추천을 만들지
-  못한다. 지금 `activity_doc.yaml` · `food_doc.yaml` 의 행은 전부 `draft` 라서, 기록이 없는 아이에게는
-  일반 추천 대신 0개 안내가 나간다. 문서 검수가 끝나야 이 경로가 실제로 열린다.
+  못한다. 지금 `activity_doc.yaml` · `food_doc.yaml` 의 행은 대부분 임시 검수(#434 `TEMP` — `reviewed_by: admin`)로
+  `approved` 라서 이 경로가 열려 있다. 나중에 더한 행(#510 등)은 `draft` 이고, 실제 검수를 통과하지 못한 행은 `draft` 로 되돌린다.
 - 러너와 05 가 같은 안전 어댑터(`agent_ports.safety_readers()`)를 Food · Activity 에 넘긴다(#460). 안전 조회에
   실패하면 그 Agent 는 `blocked` 로 닫히고 05 는 guard 만 낸다.
 

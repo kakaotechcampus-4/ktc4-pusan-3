@@ -164,6 +164,29 @@ class GrowthContext:
         return replace(self, state=GrowthRunState())
 
 
+async def read_learning_safety(context: GrowthContext, *, consent: bool) -> bool:
+    """교육 후보를 거를 안전 사전과 등록 알레르기를 읽어 run state 에 담는다. 읽었으면 True.
+
+    - 안전 포트가 `UnwiredSafety` 면 동의와 상관없이 False 다 — 어댑터가 붙기 전에는 알레르기 확인
+      없이 열지 않는다(Activity #380 과 같다).
+    - 사전을 못 읽거나 조회가 실패해도 False 다. 빈 사전 · 빈 목록으로 통과시키지 않는다.
+    - 동의가 없으면 건강정보를 읽지 않고 True 다 — 읽을 것이 없는 상태이지 실패가 아니다.
+
+    `build_gate` 의 교육 분기와 일반 정보 질문(`growth/info`)이 같은 읽기를 쓴다.
+    """
+    state, ports = context.state, context.ports
+    if isinstance(ports.safety, UnwiredSafety):
+        return False
+    try:
+        state.rules = context.safety_rules()
+        entries = await ports.safety.growth_safety(child_id=context.child_id) if consent else []
+    except (SafetyRulesUnavailable, SafetyLookupError):
+        state.rules = None
+        return False
+    state.safety_entries = tuple(entries)
+    return True
+
+
 async def build_gate(
     context: GrowthContext, task_type: GrowthTaskType, *, book_api_ok: bool = True
 ) -> Gate:
@@ -195,21 +218,10 @@ async def build_gate(
     notice = False
 
     if task_type is GrowthTaskType.LEARNING_SUGGESTION and stage.months >= EDUCATION_MIN_MONTH:
-        if isinstance(ports.safety, UnwiredSafety):
-            # 어댑터가 붙기 전이다. 동의가 없어도 닫는다 — 읽지도 않는다 (Activity #380 과 같다)
-            safety_ok = False
-        else:
-            try:
-                state.rules = context.safety_rules()
-                entries = (
-                    await ports.safety.growth_safety(child_id=context.child_id) if consent else []
-                )
-            except (SafetyRulesUnavailable, SafetyLookupError):
-                safety_ok = False
-                state.rules = None
-            else:
-                state.safety_entries = tuple(entries)
-                allergy_states = tuple(entry.status for entry in entries if entry.kind == "allergy")
+        safety_ok = await read_learning_safety(context, consent=consent)
+        allergy_states = tuple(
+            entry.status for entry in state.safety_entries if entry.kind == "allergy"
+        )
         if ports.notice is not None:
             notice = await ports.notice.has_notice(child_id=context.child_id)
     elif task_type is GrowthTaskType.ROUTINE_COACHING:

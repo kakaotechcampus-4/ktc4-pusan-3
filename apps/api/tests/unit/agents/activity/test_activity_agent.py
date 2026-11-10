@@ -907,3 +907,87 @@ class TestSaidTexts:
 
         assert ctx.state.original_texts == ()
         assert ctx.state.said() == ("공놀이 하고 싶어",)
+
+
+class TestLocationMissing:
+    """위치도 지역도 없으면 장소 · 행사를 못 찾는다 — 왜 집 놀이만 나오는지 한 줄로 알린다
+    (11-09 운영: "주말에 할만한 거" 에 집 놀이만)."""
+
+    NOTICE = "위치를 허용하거나 지역(예: 부산 해운대구)을 말씀해 주시면 행사 · 장소도 찾아볼게요."
+
+    def ctx(self, *, location=None):
+        return ActivityContext(
+            child_id=CHILD,
+            run_id="run-1",
+            now=NOW,
+            timezone=UTC,
+            ports=in_memory_ports(
+                CHILD,
+                BORN_40_MONTHS,
+                docs=InMemoryActivityDocs([DEFAULT_DOC]),
+                places=InMemoryPlaces([]),
+            ),
+            location=location,
+        )
+
+    def bodies(self, result):
+        return [r.body for r in result.readouts]
+
+    async def test_나들이를_물었는데_위치도_지역도_없으면_안내한다(self):
+        llm = FakeLLM(memory(), propose("종이컵 탑 쌓기", "그림자놀이", "색종이 접기"))
+        result = await run(task("이번 주 주말에 할만한 거 있을까?"), self.ctx(), client=llm)
+        assert self.NOTICE in self.bodies(result)
+
+    async def test_장소를_찾으려다_위치가_없어_막혀도_안내한다(self):
+        llm = FakeLLM(
+            _tools(("search_nearby_places", {"category": "park", "day": "오늘"})),
+            propose("종이컵 탑 쌓기", "그림자놀이", "색종이 접기"),
+        )
+        result = await run(task("애랑 할만한거 뭐있을까"), self.ctx(), client=llm)
+        assert self.NOTICE in self.bodies(result)
+
+    async def test_집_놀이를_물었으면_안내하지_않는다(self):
+        llm = FakeLLM(memory(), propose("종이컵 탑 쌓기", "그림자놀이", "색종이 접기"))
+        result = await run(task("오늘 집에서 뭐 하고 놀까"), self.ctx(), client=llm)
+        assert self.NOTICE not in self.bodies(result)
+
+    async def test_위치가_있으면_안내하지_않는다(self):
+        llm = FakeLLM(memory(), propose("종이컵 탑 쌓기", "그림자놀이", "색종이 접기"))
+        result = await run(
+            task("이번 주 주말에 할만한 거 있을까?"),
+            self.ctx(location=CoarseLocation(lat=35.18, lon=129.08)),
+            client=llm,
+        )
+        assert self.NOTICE not in self.bodies(result)
+
+    async def test_나들이_낱말이_있어도_집에서를_물었으면_안내하지_않는다(self):
+        llm = FakeLLM(memory(), propose("종이컵 탑 쌓기", "그림자놀이", "색종이 접기"))
+        result = await run(task("주말에 집에서 놀 거 어디 없을까"), self.ctx(), client=llm)
+        assert self.NOTICE not in self.bodies(result)
+
+    async def test_앞_턴에서_나들이를_물었어도_이번_말만_본다(self):
+        asked = DomainTask(
+            run_id="run-1",
+            agent="activity",
+            task_type=None,
+            request_texts=("오늘 그냥 뭐 하고 놀까",),
+            prior_texts=("주말에 갈 만한 행사 있어?",),
+        )
+        llm = FakeLLM(memory(), propose("종이컵 탑 쌓기", "그림자놀이", "색종이 접기"))
+        result = await run(asked, self.ctx(), client=llm)
+        assert self.NOTICE not in self.bodies(result)
+
+    async def test_말한_지역을_못_찾았으면_지역_안내만_붙인다(self):
+        llm = FakeLLM(
+            _tools(
+                (
+                    "search_nearby_places",
+                    {"category": "indoor_playground", "day": "오늘", "area": "가상동"},
+                )
+            ),
+            propose("종이컵 탑 쌓기", "그림자놀이", "색종이 접기"),
+        )
+        result = await run(task("가상동 근처 키즈카페 갈 만한 곳"), self.ctx(), client=llm)
+        bodies = self.bodies(result)
+        assert self.NOTICE not in bodies
+        assert any("말씀하신 지역을 찾지 못해" in body for body in bodies)

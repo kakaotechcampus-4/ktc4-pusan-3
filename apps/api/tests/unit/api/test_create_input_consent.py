@@ -301,7 +301,7 @@ async def test_키_기억이_실패하면_되묻기_맥락의_표시를_푼다(
     def redis_down(**kwargs):
         raise DbDown("키 기억 실패")
 
-    monkeypatch.setattr(idempotency, "remember", redis_down)
+    monkeypatch.setattr(idempotency, "remember_first", redis_down)
 
     with pytest.raises(DbDown):
         await client.post(URL, json={**BODY, "reply_to": "prev-run"}, headers=_key())

@@ -170,11 +170,18 @@ async def upload_photo(
             # 채널 행이 표에 쓰인 뒤에 202 — 다른 워커의 SSE · 같은 키 재시도가 이 run 을 찾는다
             # (#877 4단계 · #899 리뷰). 못 찾으면 재시도가 사진을 두 번 읽고 한도도 두 번 쓴다
             await channel.opened()
-            # 아직 아무것도 읽지 않았다 — 키를 못 남기면 접수하지 않고 503 (한 줄 입력과 같다, #671)
-            await idempotency.remember(**scope, replay=channel.run_id, strict=True)
+            # 아직 아무것도 읽지 않았다 — 키를 못 남기면 접수하지 않고 503 (한 줄 입력과 같다,
+            # #671). 재생 확인 뒤에 같은 키가 겹쳐 왔으면 먼저 적은 요청만 읽는다 (idempotency.py)
+            winner = await idempotency.remember_first(**scope, replay=channel.run_id)
         except Exception:
             channel.close()  # 러너가 안 떠서 아무도 닫지 않는다
             raise
+        if winner is not None:
+            # 진 요청 — 사진을 읽지 않고 먼저 적힌 run 을 돌려준다. 러너가 안 떠서 채널은 여기서
+            # 닫는다. 🚨 순서는 그대로 둔다: 하루 한도는 이미 1회 썼고(한도가 키 적기보다 앞),
+            #    S3 로 받은 사진은 내려받으며 지웠다(읽지 않은 사진이 버킷에 남지 않는다)
+            channel.close()
+            return PhotoUploadResponse(run_id=winner)
         run = photo_run.open_photo_run(
             run_id=channel.run_id, parent_id=parent.parent_id, child_id=child.child_id
         )
@@ -253,7 +260,14 @@ async def commit_photo(
                 item_of_event[entry.event_id] = len(items)
             items.append(
                 photo_run.apply_edits(
-                    run.items[entry.id], title=entry.title, day=entry.date, supplies=entry.items
+                    run.items[entry.id],
+                    title=entry.title,
+                    day=entry.date,
+                    supplies=entry.items,
+                    # 보호자가 시트에서 고친 시작 — 캘린더에 넣는 값과 기록이 같아야 한다
+                    starts_at=entry.starts_at,
+                    ends_at=entry.ends_at,
+                    all_day=entry.all_day,
                 )
             )
         elif entry.id in run.meals:

@@ -5,7 +5,7 @@
 기준 브랜치: `feat/be-16-meal-plan-schema`
 작성일: 2026-09-16
 담당: 박재형
-선행 문서: [`docs/overview/tech-spec.md`](../overview/tech-spec.md#7-데이터-모델) (§7 외부소스 테이블 자리) · 루트 [`CLAUDE.md`](../../CLAUDE.md) §2 §3
+선행 문서: [`docs/overview/tech-spec.md`](../overview/tech-spec.md) (§7 외부소스 테이블 자리) · 루트 [`CLAUDE.md`](../../CLAUDE.md) §2 §3
 
 이슈 #16 (파이프라인) · #63 (엑셀 · 한글 입력). 2026-09-08 초안(#21)을 다섯 PR 로 나누며 다시 썼다.
 
@@ -15,7 +15,7 @@
 
 ```
 사진(OCR)  ┐
-엑셀       ├─→  MealPlanJSON  ─→  저장 (테이블 미정, 회의안건 1-2)
+엑셀       ├─→  MealPlanJSON  ─→  저장 (`daycare_meal`, 아이 기준)
 한글       ┘     §3                메뉴는 name 으로 — 알레르기 번호는 읽지 않는다 (결정 ②)
 ```
 
@@ -161,7 +161,7 @@ app/providers/meal_plan/
 ├── image_ocr.py   (4/5 · #67) Gemini OCR — ImageOcrMealPlanReader · 설정 MEAL_OCR_* · 2분할 호출
 │                  read_parts(호출별 결과 · 실패한 범위) → 연월은 부르는 쪽이 정해 merge_outputs 에 준다
 ├── xlsx.py        (3/5 · #63) 센터 엑셀 — XlsxMealPlanReader(sheet=None) · list_menu_sheets()
-└── hwp.py         (#63) 센터 한글
+└── hwp.py         (#63) 센터 한글 — 아직 없다 (라이브러리 미정, §6)
 ```
 
 **엑셀 읽기의 규칙** (`xlsx.py` 머리 주석에 시트 배치가 있다)
@@ -183,7 +183,7 @@ app/providers/meal_plan/
 | 3/5 | 엑셀 읽기 (#63) | #66 |
 | 4/5 | 사진 OCR (Gemini) + 설정 키 `MEAL_OCR_*` | #67 |
 | 5/5 | 평가 스크립트 + 정답셋 178항목 + 모델 비교 ([문서](./ocr-model-eval-v1.md)) | 이 PR |
-| — | 저장 (테이블) | 회의안건 1-2 확정 후 별도 이슈 |
+| — | 저장 (테이블) | `daycare_meal` 로 구현됨 (`app/domains/daycare_meal/`) |
 
 ---
 

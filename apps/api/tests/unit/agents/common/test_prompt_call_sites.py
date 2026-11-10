@@ -45,6 +45,8 @@ SITES: dict[str, Site] = {
         "activity_event_schedule", frozenset({"SYSTEM_PROMPT"})
     ),
     "agents/growth/agent.py": Site("growth", frozenset({BUILD}), "app.agents.growth.prompt"),
+    # 일반 정보 답변 (#574) — Agent 들이 같이 쓰는 뼈대가 system 메시지를 직접 보낸다
+    "agents/common/doc_answer.py": Site("doc_answer", frozenset({"SYSTEM_PROMPT"})),
     "agents/health/labels/medication.py": Site(
         "health", frozenset({BUILD}), "app.agents.health.prompt"
     ),

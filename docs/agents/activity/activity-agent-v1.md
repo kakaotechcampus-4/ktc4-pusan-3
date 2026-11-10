@@ -36,7 +36,7 @@
 
 **Growth 도 `observation_activity` 를 읽는다** (`공통_구현_계획.md` §Growth). 놀이 기록이 Activity 밖에서도 근거가 되고, Growth 추천 화면에 *"놀이 기록을 참고했어요"* 가 나온다. `observation_activity` 스키마를 바꿀 때는 Growth 쪽도 본다.
 
-**승인된 추천은 다시 `observation_activity` 로 돌아온다.** 보호자가 승인하면 Memory Agent 가 suggestion 을 관찰로 재구조화하고, feedback(`child_liked`/`child_disliked`/`not_acted`)이 그 관찰의 `polarity`(+1/−1/0)가 된다 (`docs/agents/README.md` §2).
+**승인된 추천은 다시 `observation_activity` 로 돌아온다.** 보호자가 승인하면 Memory Agent 가 suggestion 을 관찰로 재구조화하고, feedback(`child_liked`/`child_disliked`/`not_acted`)이 그 관찰의 `polarity`(+1/−1/0)가 된다 (`docs/agents/README.md` §2). 🚧 **이 경로는 아직 구현 전이다** — 지금은 채택 · feedback 을 `suggestion` 행에 저장만 하고 관찰 · `polarity` 는 바꾸지 않는다(`PATCH …/feedback` 설명: "기억은 바꾸지 않는다").
 
 ---
 
@@ -358,12 +358,12 @@ class ActivityCandidate(ToolArgs):
 
 - 시드는 **YAML(`apps/api/reference/activity_doc.yaml`)로 버전 관리하고 Alembic 이 `doc_key` 기준 upsert** 한다. 테이블이 생기기 전에는 `InMemoryActivityDocs.from_seed()` 가 이 파일의 `approved` 행을 읽는다. 행 모양 · 소스 · 검사는 [`RAG_plan.md`](../shared/RAG_plan.md) §4-1. 의미 검색을 하려면 `embedding` 이 있어야 해서 `hazard_term` 과 달리 테이블이다.
 - 행마다 원문 출처(`source_title`, `source_locator`)를 열로 남긴다 (`RAG_plan.md` §1). 라이선스가 문제되면 `DELETE WHERE source_title = ?` 한 줄로 뺀다 (D10).
-- 조회는 **코드 tool `search_activity_doc`** — 월령 슬라이스로 거른 뒤 의미 검색 상위 5행을 프롬프트 `[예시]` 에 넣는다. 모델을 부르기 전에 코드가 부른다.
+- 조회는 **코드 tool `search_activity_doc`** — 월령 슬라이스로 거른 뒤 5행을 골라(`pick_examples` — 요청 낱말과 아이 · 날짜 순환으로 고른다. 의미 검색은 아직 없다) 프롬프트 `[예시]` 에 넣는다. 모델을 부르기 전에 코드가 부른다.
 - **근거(`suggestion_evidence`)에는 넣되 개인화 근거로 세지 않는다.** `refs.py` 가 `activity_doc` 을 `DocKind` 로 따로 두고 `count_child_records()` 가 아이 기록만 센다. 넣어두면 어느 문서 행을 봤는지 추적되고, 문서 행만 달고 나간 추천은 자동으로 `general` 이 된다.
 - **다는 방법.** run() 이 조회한 행을 `state.seen_docs` 에 담고 `[예시]` 에 짧은 id(`예1` …)와 함께 싣는다 — UUID 를 그대로 보여 주면 모델이 두 행의 id 를 이어 붙여(앞 8자는 한 행, 나머지는 다른 행) 없는 id 가 되고, 무엇이 틀렸는지 몰라 같은 id 로 다시 내다 단계 한도에 걸렸다(10-28 라이브 eval). 출력 tool 이 짧은 id 를 행 `id` 로 되돌린다(`state.example_ids`). 모델은 예시를 바탕으로 고른 후보의 `evidence` 에 그 id 와 note 를 단다 — 기억 근거와 같은 칸이다. 출력 검증은 이번 run 에 실은 행만 받고(없는 id 는 `UNKNOWN_EVIDENCE`), note 의 반복 표현 검사도 똑같이 건다 — *"늘 좋아하는"* 은 문서가 아니라 아이에 대한 말이고 문서 행은 확정 관심이 아니다. 기억 근거와 같이 달면 개인화이고 둘 다 근거로 남는다.
 - **기억은 그 후보를 고른 이유가 된 것만 단다.** 라이브 eval 에서 관찰이 "블록 쌓기" 1건뿐인데 크레용 놀이 · 색깔 찾기에도 그 기록을 달았다. 이러면 근거가 약한데 개인화로 집계된다(루트 §2 *"맞춤인 척하지 않는다"*). 상관없는 후보는 가장 가까운 예시 행을 달아 일반 추천으로 나가게 한다. 기피 기록은 예외다 — 피해 고른 이유라 근거로 단다(D4). 관련성을 코드로 대조하지 않는 이유: `subject`("블록")가 후보 문장("레고로 탑 쌓기")에 안 나오는 정상 인용까지 막힌다. 프롬프트로 두고 eval 로 본다.
 - **일반 추천이 나가는 범위 — 요청이 먼저다.** 기록이 없을 때 막연하게 물으면("뭐 하고 놀까?" · "비 오는 날 할 거") [예시]를 근거로 단 일반 추천이다. 보호자가 놀이 종류 · 소재 · 주제를 정해 물었으면("물놀이 뭐 하지?" · "티니핑으로") 모델이 `requested_play` 에 적고 그 요청을 바탕으로 만든다 — [예시]는 결 참고일 뿐 근거로 달지 않아도 되고, 이유는 `REQUESTED_REASON` 이다. 시드에 맞는 행이 없는 요청에 다른 예시를 끼워 내면 억지 추천이 된다(기획 "억지 추천 금지", #557 되돌림 #590). 기록이 쌓이면 같은 요청도 개인화로 나간다 — 요청 기반은 종류가 아니라 일반 추천을 만드는 방식이다. 안전 필터는 똑같이 탄다. 🚨 `requested_play` 는 **보호자가 이번 요청에서 한 말에 있어야** 요청 기반이다(`rules.said_in_request` — 막연한 요청에 모델이 놀이를 지어 넣어 근거를 면제받지 못하게, #597 리뷰). 언제 · 어디서 · 날씨 · 일반 표현("오늘" · "실내" · "추천")은 빼고, 남은 낱말이 **모두** 보호자 말에 있어야 한다 — "놀이 추천" · "실내 놀이" 는 막연한 요청이고, "실내 블록놀이" 는 "실내" 만 겹쳐서는 안 된다. 보호자가 다른 꼴로 말해 놓치면("쿠키 만들래") 막연한 요청의 길([예시] 근거)로 간다. 면제는 Activity 만이다 — Food 는 후보가 레시피북에서만 나와야 한다. 후보가 요청에 맞는지는 코드가 보지 않는다 — "전래놀이" 에 "무궁화꽃이 피었습니다" · "물감 놀이" 에 "색을 섞어 새 색 만들기" 처럼 맞는 후보도 낱말이 안 겹쳐서, 낱말로 막으면 맞는 후보를 거절하고 재호출만 는다(#557 과 같은 자리). 라이브 eval 은 요청 기반으로 분류됐는지만 보고, 내용이 요청에 맞는지는 결과 파일을 사람이 읽는다. 자동으로 잴 필요가 생기면 판정 모델 eval 을 붙인다.
-- 🚩 **시드 80행이 아직 전부 `draft` 다.** 서비스는 `approved` 만 읽으므로 검수 전까지는 `[예시]` 가 비고 일반 추천의 근거도 0행이다 — 품질 지표로 잡힌다 (H-10).
+- 🚩 **시드 80행은 지금 전부 `approved` 지만 실제 검수가 아니다.** 배포 테스트에서 일반 추천을 열려고 임시로 올렸다(`reviewed_by: admin`, #434 — `activity_doc.yaml` 머리말). 검수에서 통과하지 못한 행은 `draft` 로 되돌린다 (H-10).
 - **커버리지는 행 수가 아니라 월령 구간을 빠짐없이 덮는 것이 기준이다.** 행마다 `min_month`·`max_month` 가 있으므로, 행이 적어도 0–71개월을 빈틈없이 덮으면 문서 행이 0개인 경우가 거의 생기지 않는다.
 - 🚩 **프롬프트 캐시** — 근거 문서 행은 동적 구간의 맨 앞에 붙인다 (4-5). 같은 월령 아이들끼리는 거기까지 캐시가 산다.
 
@@ -397,11 +397,11 @@ i-누리·중앙육아종합지원센터·서울육아종합지원센터·아이
 
 **마지막 칸이 제일 중요하다.** 배치로 `expired` 를 찍으면 늦게 온 채택이 `expired → approved` 라는 **역방향 전이**를 요구한다. 조회 시점 판정이면 행은 계속 `draft` 라 **`draft → approved` 로 정상 전이**한다. 🚨 나들이 추천은 **구조적으로** 24시간을 넘기므로, 배치를 돌리면 *"채택률이 조금 낮게 잡히는"* 게 아니라 **나들이 카테고리만 통째로 0%** 가 된다.
 
-**채택 경로** — 승인 게이트는 2곳(캘린더 쓰기 / 건강·알레르기 확정)으로 고정이라 *"이 추천 채택하시겠어요?"* 를 따로 만들 수 없다. **캘린더 쓰기 승인 하나가 두 가지를 기록한다** — 일정 저장 + `suggestion.status = approved`.
+**채택 경로** — 추천 카드의 채택(`POST /children/{cid}/suggestions/approve`)이 `suggestion.status = approved` 를 기록한다. 채택은 승인 게이트가 아니다(루트 §2 의 3곳에 들지 않는다). 캘린더에 넣으려면 채택한 추천으로 일정 초안(`event-drafts`)을 만들고, 캘린더 쓰기 승인(게이트 ㉠)은 일정만 저장한다.
 
 초안 payload 의 정본은 [`docs/event/event-draft-flow-v1.md`](../../event/event-draft-flow-v1.md) 다. 세 경로(한 줄 입력 · 추천 → 일정 · 공지 OCR)가 **같은 JSON 모양**을 내되 클래스는 공유하지 않는다. Activity 가 지킬 것은 다음과 같다.
 
-- 🚩 **추천 → 일정 초안을 만드는 곳은 서버다.** `POST /suggestions/{sid}/event` 가 suggestion 을 읽어 `{ draft, prechecks }` 를 돌려주고, **이 엔드포인트는 쓰기를 하지 않는다.** Activity Agent 는 suggestion 을 만들고 끝난다 — 추천 카드를 누르는 것은 발화가 아니라 Agent 가 돌지 않는다.
+- 🚩 **추천 → 일정 초안을 만드는 곳은 서버다.** `POST /children/{cid}/suggestions/event-drafts` 가 채택한 suggestion 을 읽어 `{ drafts }` 를 돌려주고, **이 엔드포인트는 쓰기를 하지 않는다.** Activity Agent 는 suggestion 을 만들고 끝난다 — 추천 카드를 누르는 것은 발화가 아니라 Agent 가 돌지 않는다.
 - **Activity 는 `prechecks` 가 없다.** 알레르기 사전검사는 Food 만 해당하고, Activity 의 안전 판정(`hazard_term`)은 추천을 만들 때 이미 끝났다.
 - **여러 제안을 승인해도 합치지 않는다 — 제안 1개 = 일정 1개.** Food 의 *"저녁 메뉴 제육 + 김치찌개"* 는 한 끼니라 합치는 게 자연스럽지만, Activity 의 *"토요일 공원 + 일요일 도서관"* 은 다른 날 · 다른 장소라 합치면 오히려 이상하다. 처리 방식은 도메인마다 다르다 (9/25 결정).
 - `draft_id` 는 전체에서 유일한 uuid 다(`_next_draft_id`, #241). Memory 초안과 같은 규칙이다 — 화면은 `draft_id` 가 같으면 같은 장으로 갈아 끼운다 (#250).
@@ -528,7 +528,7 @@ async def run(task, context, *, client=None):
 | | 하는 일 |
 | --- | --- |
 | `rank_evidence` | `search_activity_memory` 내부. 공통 (`Tool_공통.md` §4) |
-| `search_activity_doc` | 모델 호출 전 사전 조회. 월령 슬라이스 → 의미 검색 상위 5 → `[예시]` |
+| `search_activity_doc` | 모델 호출 전 사전 조회. 월령 슬라이스 → `pick_examples` 5행 → `[예시]` (의미 검색은 아직 없다) |
 | `filter_activity_safety` | 🚩 `content` + `materials` + `foods` 를 `hazard_term` 으로 스캔 → 월령 대조 → 차단·경고. `health_safety` 2종(`active`) 대조와 `foods` 의 Food 판정(#582)도 여기서 |
 | `filter_recent_duplicates` | 최근 창 안에 한 활동 거절 (Activity 출력 검증) |
 

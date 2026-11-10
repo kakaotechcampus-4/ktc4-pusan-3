@@ -1,3 +1,4 @@
+import { DocSourceList } from "@/components/doc-source-list";
 import { DomainChip } from "@/components/domain-chip";
 import { EventPeriod } from "@/components/event-period";
 import { SuggestionItems } from "@/components/suggestion-items";
@@ -111,15 +112,7 @@ export function GeneralSuggestionCard({
           세지 않는다 (아이 기록이 아니다).
           ⚠️ 비어 올 수 있다 — 보호자가 놀이 · 주제 · 재료를 정해 물은 일반 추천은 그 요청이 기준이라 문서 행을
           달지 않기도 한다 (#597). 그때는 출처 줄 없이 `basis` 만 선다. */}
-        {suggestion.evidence.length > 0 ? (
-          <ul className="mt-3 flex flex-col gap-1">
-            {suggestion.evidence.map((doc) => (
-              <li key={doc.ref.id} className="text-caption text-ink-subtle">
-                참고 · {doc.title} ({doc.source_org}, {doc.source_title})
-              </li>
-            ))}
-          </ul>
-        ) : null}
+        <DocSourceList docs={suggestion.evidence} className="mt-3" />
       </div>
     </li>
   );
