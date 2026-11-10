@@ -8,7 +8,7 @@ from scripts.prompt_scope import FINGERPRINT_TESTS, SCOPES, changed_files, selec
 API = "apps/api/"
 
 
-def test_프롬프트_10곳이_전부_범위를_가진다():
+def test_프롬프트_11곳이_전부_범위를_가진다():
     assert {scope.name for scope in SCOPES} == set(prompt_registry.PROMPT_NAMES)
 
 
