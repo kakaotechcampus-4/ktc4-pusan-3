@@ -104,6 +104,8 @@ class _Clock(NamedTuple):
     end: int
     guessed: bool  # 오전 · 오후가 안 적혀 오후로 읽었다 ("3시")
     vague: bool  # 오전 · 오후가 안 적혔고 둘 다 될 수 있다 ("7시")
+    bare: bool = False  # 오전 · 오후가 안 적혔다 (24시간제 "07:30" 은 아니다)
+    inherited_am: bool = False  # 앞 시각의 "오전" 을 이어받았다 ("오전 11~1시" 의 1시)
 
 
 def _safe(y: int, m: int, d: int) -> date | None:
@@ -253,7 +255,8 @@ def _times(text: str) -> list[_Clock]:
             mer = None
         parsed = _time_of(mer, hour, minute)
         if parsed is not None:
-            bare = mer is None and not m["h"].startswith("0")  # "07:30" 은 24시간제다
+            # "07:30" 은 24시간제다. 한 자리 "0" 은 표시 없는 시각이다
+            bare = mer is None and not (len(m["h"]) == 2 and m["h"].startswith("0"))
             found.append(
                 _Clock(
                     parsed,
@@ -261,6 +264,8 @@ def _times(text: str) -> list[_Clock]:
                     m.end(),
                     guessed=bare and 1 <= hour <= _EARLY_HOUR,
                     vague=bare and hour in _BOTH_WAYS,
+                    bare=bare,
+                    inherited_am=m["mer"] is None and mer in _MORNING,
                 )
             )
     return found
@@ -287,9 +292,20 @@ def _time_span(text: str) -> tuple[time | None, time | None, bool, bool]:
                 return fits[0], end, several, False
         if first.vague:
             return None, None, several, True
-        if (first.guessed or rest[0].vague) and end <= start and end.hour < 12:
-            # 끝이 시작보다 이를 수는 없다 — "6시 30분 ~ 8시 30분" · "10시 ~ 7시" 는 저녁에 끝난다
+        if (
+            (first.guessed or rest[0].vague or rest[0].inherited_am)
+            and end <= start
+            and end.hour < 12
+        ):
+            # 끝이 시작보다 이를 수는 없다 — "6시 30분 ~ 8시 30분" · "10시 ~ 7시" 는 저녁에 끝난다.
+            # 이어받은 "오전" 도 같다 — "오전 11~1시" 의 1시는 오후 1시다
             return start, end.replace(hour=end.hour + 12), several, False
+        if ((first.guessed or rest[0].guessed) and end <= start) or (
+            first.bare and start == time(0)
+        ):
+            # 짐작한 오후로도 거꾸로인 범위("3~2시")와 표시 없는 0시("0~2시")는 읽을 길이 없다.
+            # 시각을 비우고 되묻는다 — 적힌 그대로 거꾸로인 "14:00~10:00" 은 고치지 않는다
+            return None, None, several, True
         if rest[0].vague:
             return start, None, several, True
         return start, end, several, False

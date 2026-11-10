@@ -565,6 +565,25 @@ def test_이어받은_오전의_12시는_기간의_끝_날에도_정오다():
     assert (when.start_time, when.end_time) == (time(10), time(12))
 
 
+@pytest.mark.parametrize(
+    ("text", "end"),
+    [("11/23~11/24 오전 11~1시", date(2026, 11, 24)), ("11월 23일 오전 11~1시", None)],
+)
+def test_이어받은_오전의_끝이_시작보다_이르면_오후로_넘긴다(text, end):
+    # "오전 11~1시" 의 1시는 오후 1시다. 이어받은 "오전" 으로 새벽 1시를 만들지 않는다 (검토 N1)
+    when = parse_notice_when(text, anchor=ANCHOR)
+    assert when.end == end
+    assert (when.start_time, when.end_time) == (time(11), time(13))
+
+
+@pytest.mark.parametrize("text", ["11/23~11/24 3~2시", "11/23 3~2시", "11/23 0~2시"])
+def test_말이_안_되는_시_없는_시각_범위는_시각을_비운다(text):
+    # 표시 없는 시각으로 짐작해 거꾸로 되거나 새벽이 되는 범위는 짐작하지 않고 되묻는다
+    when = parse_notice_when(text, anchor=ANCHOR)
+    assert (when.start_time, when.end_time) == (None, None)
+    assert when.vague_time is True
+
+
 def test_바로_붙은_오전_12시는_그대로_자정이다():
     assert parse_notice_when("11월 6일 오전 12시", anchor=ANCHOR).start_time == time(0)
 
