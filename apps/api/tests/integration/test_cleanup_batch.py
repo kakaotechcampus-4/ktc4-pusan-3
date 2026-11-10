@@ -1,8 +1,8 @@
 """만료된 값 정리 배치의 진입점 (#166)
 
-두 정리 함수 각각은 test_auth_cleanup · test_consent_retention 이 본다. 여기서는 진입점이
-둘을 다 부르고 **커밋까지 하는지**만 본다 — 두 함수는 flush 만 해서, 커밋이 빠져도 같은 연결
-안에서는 지워진 것처럼 보인다.
+정리 함수 각각은 test_auth_cleanup · test_consent_retention · test_deletion_log_purge 가 본다.
+여기서는 진입점이 모두 부르고 **커밋까지 하는지**만 본다 — 함수들은 flush 만 해서, 커밋이 빠져도
+같은 연결 안에서는 지워진 것처럼 보인다.
 
 세션은 바깥 트랜잭션 안의 savepoint 로 열린다 (tests/conftest.py). 그래서 run_cleanup 뒤에
 rollback 을 불러도 행이 돌아오지 않으면 커밋된 것이고, 돌아오면 커밋이 빠진 것이다.
@@ -23,6 +23,7 @@ from app.domains.consent.models import (
     LocationPurpose,
     LocationUseLog,
 )
+from app.domains.deletion_log.models import DeletionLog
 from app.domains.identity.models import AuthSession, Parent
 from app.domains.policy.models import PolicyVersion
 from app.domains.usage.models import LlmUsage
@@ -63,15 +64,18 @@ async def test_both_purges_run_and_are_committed(session):
         retained_at=NOW - timedelta(days=366),
         purge_at=NOW - timedelta(days=1),
     )
-    session.add_all([expired, alive, retention])
+    old_log = DeletionLog(
+        table_name="parent", row_key={"id": "old"}, deleted_at=NOW - timedelta(days=40)
+    )
+    session.add_all([expired, alive, retention, old_log])
     await session.flush()
     # 커밋 · 롤백 뒤에는 객체가 만료돼 속성을 읽으면 DB 를 다시 부른다 — id 를 미리 꺼내 둔다
-    expired_id, alive_id, retention_id = expired.id, alive.id, retention.id
+    expired_id, alive_id, retention_id, old_log_id = expired.id, alive.id, retention.id, old_log.id
 
     result = await run_cleanup(session, now=NOW)
     await session.rollback()
 
-    assert (result.auth.sessions, result.retentions) == (1, 1)
+    assert (result.auth.sessions, result.retentions, result.deletion_logs) == (1, 1, 1)
     left_sessions = await session.scalars(
         select(AuthSession.id).where(AuthSession.id.in_([expired_id, alive_id]))
     )
@@ -80,6 +84,7 @@ async def test_both_purges_run_and_are_committed(session):
     )
     assert set(left_sessions) == {alive_id}
     assert left_retention is None
+    assert await session.scalar(select(DeletionLog.id).where(DeletionLog.id == old_log_id)) is None
 
 
 async def test_expired_location_logs_are_purged_and_committed(session):

@@ -361,8 +361,8 @@ function MyReminder({
       if (queue.pending === 0 && context?.previous) queryClient.setQueryData(key, context.previous);
       toast.show(
         isApiError(error, "invalid_reminder")
-          ? "그 알림은 지금 걸 수 없어요. 다른 알림을 골라주세요."
-          : "알림을 저장하지 못했어요. 잠시 뒤에 다시 골라주세요.",
+          ? "그 알림은 지금 걸 수 없어요. 다른 알림을 골라 주세요."
+          : "알림을 저장하지 못했어요. 잠시 뒤에 다시 골라 주세요.",
       );
     },
     onSettled: () => {
@@ -456,7 +456,7 @@ function PreparedCheckbox({
       // 🚨 뒤에 기다리는 선택이 있으면 되돌리지 않는다. 되돌리면 방금 누른 값이 화면에서
       //    한 번 뒤집혔다가 그 요청이 끝나고 다시 바뀐다 — 부모 눈에는 체크가 혼자 춤춘다.
       if (queue.pending === 0 && context?.previous) queryClient.setQueryData(key, context.previous);
-      toast.show("준비물 체크를 저장하지 못했어요. 잠시 뒤에 다시 눌러주세요.");
+      toast.show("준비물 체크를 저장하지 못했어요. 잠시 뒤에 다시 눌러 주세요.");
     },
     onSettled: () => {
       // 🚨 줄의 **마지막** 요청만 재조회한다. 중간에 부르면 아직 뒤 요청이 반영되지 않은
@@ -561,7 +561,7 @@ function DiaryCard({
    * 그날 내 일기 쓰기 (`PUT /children/{cid}/diary/{date}` · #364). 같은 날 다시 쓰면 덮어쓴다.
    *
    * 🚨 **본문은 고쳐 보내지 않는다** — 앞뒤 공백 · 줄바꿈까지 서버가 원문 그대로 저장한다.
-   *    공백뿐인 내용은 서버가 422 로 거절하므로 버튼이 먼저 막는다 (아래 `disabled`).
+   *    공백뿐인 내용은 서버가 400 으로 거절하므로 버튼이 먼저 막는다 (아래 `disabled`).
    * 🚨 **"저장됐다" 는 응답으로만 만든다.** 응답이 하루 보기 `my_diary` 와 같은 모양이라 그대로 얹는다 —
    *    `onMutate` 로 먼저 바꾸지 않는다. 사진은 일기 밖이라 싣지 않는다 (#115).
    * Idempotency-Key 를 받지 않는 경로다 — 되돌릴 수 없는 5곳이 아니다.
@@ -653,7 +653,7 @@ function DiaryCard({
               autoFocus
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
-              placeholder="이날 어땠는지 편하게 적어주세요."
+              placeholder="이날 어땠는지 편하게 적어 주세요."
               maxLength={DIARY_CONTENT_MAX_LENGTH}
             />
             {/* 10 문제 알리기와 같은 카운터다 (#549). 브라우저의 `maxLength` 와 같은 단위(UTF-16)로
@@ -669,7 +669,7 @@ function DiaryCard({
             <div className="flex gap-2">
               <Button
                 onClick={() => save.mutate(draft)}
-                // 🚨 공백뿐이면 막는다 — 서버가 422 로 거절한다. 다 지우고 싶으면 "지우기" 다 (#364).
+                // 🚨 공백뿐이면 막는다 — 서버가 400 으로 거절한다. 다 지우고 싶으면 "지우기" 다 (#364).
                 disabled={save.isPending || draft.trim() === "" || draft.trim() === saved.trim()}
                 aria-describedby={emptied ? emptiedHintId : undefined}
               >
@@ -692,13 +692,13 @@ function DiaryCard({
 
             {/* 🚨 **이유 없이 꺼진 버튼을 두지 않는다** — "왜 안 눌리지" 를 먼저 묻게 만든다
               (디자인 시스템 §7 바텀시트). 다 비우고 저장하려던 보호자는 지우고 싶은 것이다 — 빈
-              저장은 서버가 지우기로 보지 않으므로(422) 지우는 길을 알려준다.
+              저장은 서버가 지우기로 보지 않으므로(400) 지우는 길을 알려준다.
               🚨 **편집 중에는 지우기를 세우지 않는다.** 아직 저장 안 한 글이 열린 자리에
               "지우기" 가 "취소" 옆에 서면, 고치던 글을 버리는 것인지 저장된 일기를 지우는 것인지
               갈리지 않는다. 새로 쓰는 중이면 지울 것도 없다. 지우는 길은 읽는 상태의 하나뿐이다. */}
             {emptied ? (
               <p id={emptiedHintId} className="text-caption text-ink-subtle">
-                비운 채로는 저장되지 않아요. 일기를 지우려면 취소한 뒤 지우기를 눌러주세요.
+                비운 채로는 저장되지 않아요. 일기를 지우려면 취소한 뒤 지우기를 눌러 주세요.
               </p>
             ) : null}
 
@@ -821,7 +821,7 @@ function DiaryCard({
 function DiaryNote() {
   return (
     <p className="text-caption text-ink-subtle">
-      일기는 아이 기록으로 저장되지 않아요. 기록으로 남기려면 홈에서 한 줄로 적어주세요.
+      일기는 아이 기록으로 저장되지 않아요. 기록으로 남기려면 홈에서 한 줄로 적어 주세요.
     </p>
   );
 }

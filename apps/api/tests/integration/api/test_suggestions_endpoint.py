@@ -188,6 +188,7 @@ async def test_홈_요청은_Agent_마다_묶음과_안내를_싣는다(db_clien
     assert food["evidence"][0]["is_stale"] is False
     assert food["place_notice"] is None  # 장소가 없는 추천
     assert food["warnings"] == []
+    assert food["items"] == []  # 준비물이 없는 추천 — null 이 아니다
     groups = {g["agent"]: g for g in data["groups"]}
     assert groups["food"]["notice"] == {
         "code": "fewer",
@@ -602,6 +603,7 @@ async def test_일반_추천은_문서_근거와_기록_건수를_싣는다(db_c
     assert data["scarcity"] == {"count": 0, "question": None}
     assert general["place_notice"] is None  # 장소가 없는 추천
     assert general["warnings"] == []
+    assert general["items"] == []
     assert (general["event_starts_on"], general["event_ends_on"]) == (None, None)
 
 
@@ -656,6 +658,27 @@ async def test_행사가_붙은_추천은_기간을_날짜_칸으로_싣는다(
     [general_out] = data["general"]
     for out in (activity, general_out):
         assert (out["event_starts_on"], out["event_ends_on"]) == ("2026-09-29", "2026-10-01")
+
+
+async def test_개인화와_일반_추천_모두_저장한_준비물을_싣는다(
+    db_client, session, bearer, cid, agents
+):
+    """고르기 전에 필요한 것을 본다 — 일정 초안의 준비물과 같은 `suggestion.items` 다 (#674)."""
+    plan, _ = agents
+    headers, parent_id = bearer
+    personal = replace(
+        await _personal(session, cid, parent_id, agent="activity", content="종이컵 탑 쌓기"),
+        items=("종이컵", "색종이"),
+    )
+    general = replace(_general(), items=("블록",))
+    plan["activity"] = ("drafts", [personal, general])
+
+    data = (await _post(db_client, cid, headers, agents=["activity"])).json()
+
+    [activity] = data["suggestions"]
+    [general_out] = data["general"]
+    assert activity["items"] == ["종이컵", "색종이"]  # 저장한 순서 그대로
+    assert general_out["items"] == ["블록"]
 
 
 async def test_문서_행을_읽을_수_없으면_일반_추천을_내지_않는다(

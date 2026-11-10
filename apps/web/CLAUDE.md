@@ -106,7 +106,7 @@ Owner: 고태영 (프론트 리드)
 | └ 알레르기 구역은 11 과 **같은 컴포넌트**다 | `components/safety-section.tsx` |
 | 03 홈 | `/child/[childId]/home` |
 | 04 대화 (한 줄 입력의 결과 · 되묻기 답 · 하루 단위 · 지난 대화) | `/child/[childId]/chat?date=YYYY-MM-DD` (날짜는 09 에서 들어왔을 때만) |
-| 05 제안 후보 (고르기 → **채택** → 일정 만들기) | `/child/[childId]/suggestions?agents=food,activity&run=…` (03 홈 버튼에서 오면 `run` 대신 `prompt=…`) |
+| 05 추천 후보 (고르기 → **채택** → 일정 만들기) | `/child/[childId]/suggestions?agents=food,activity&run=…` (03 홈 버튼에서 오면 `run` 대신 `prompt=…`) |
 | 06 승인 | 05 위의 바텀시트 (라우트 없음) |
 | 07 기억 | `/child/[childId]/memories?tab=observations\|profile\|feedback` |
 | 08 사진으로 적기 | `/child/[childId]/photos?date=YYYY-MM-DD` (날짜를 싣는 화면은 지금 없다 · #503) |
@@ -133,7 +133,7 @@ Owner: 고태영 (프론트 리드)
 - 🚨 **서버가 준 `deeplink` 를 주소로 쓰지 않는다.** 어느 구역인지 힌트로만 쓴다
 - 🚨 **기기 뒤로가기는 웹뷰 히스토리다** ([`apps/mobile/App.tsx`](../mobile/App.tsx)). 그래서 04 · 11-1 · 11-2 는 시트가 아니라 라우트고,
   돌아가는 길은 `router.back()` 이 아니라 링크다
-  ⚠️ **하단 네비 네 칸(홈 · 캘린더 · 기록/기억 · 아이)은 예외다.** 셸이 히스토리로 가지 않고 두 번 눌러 종료한다
+  ⚠️ **하단 네비 네 칸(홈 · 캘린더 · 기록과 기억 · 아이 프로필)은 예외다.** 셸이 히스토리로 가지 않고 두 번 눌러 종료한다
   ([`back-press.ts`](../mobile/src/native/back-press.ts) · #462). 그 화면 안에서 `push` 로 쌓은 상태는 기기 뒤로가기로 되돌릴 수 없다 —
   탭 안의 보기 전환은 지금처럼 `replace` 로 둔다. 탭 경로(`child-nav.tsx` 의 `TABS`)를 바꾸면 셸도 같이 고친다
 
@@ -221,7 +221,7 @@ const mutation = useMutation({
 - 🚨 **`rotate()` 를 실패 경로에서도, 끝을 확인하지 못한 경로에서도 부르지 않는다.** 재시도는 같은 키다
   (예외: 한 줄 입력의 run 이 SSE `failed` 로 끝나면 새 키다 — 서버가 "저장 없음" 을 보장한다 · [`api-client-v1.md`](../../docs/web/api-client-v1.md) §2)
 - 🚨 **사용자가 고쳐 쓸 수 있는 본문은 `current(text)` 로 본문을 넘긴다** — 키가 본문을 따라 바뀌어야 "같은 키 · 다른 본문" 422 에 안 갇힌다
-- `422 idempotency_key_reuse` 가 화면에 도달하면 **버그다.**
+- 서버는 같은 키면 본문을 보지 않고 처음 응답을 재생한다(422 · 409 는 만들지 않기로 함 · #438) — **본문이 바뀌었는데 같은 키로 보내면** 고친 본문이 저장되지 않는데 화면은 성공으로 그린다
 
 ### 에러
 

@@ -8,8 +8,9 @@ tool 하나다. 관찰은 `records`, 일정은 `events` 에 싣고, 다른 쪽�
 from datetime import datetime
 from typing import Literal, get_args
 
-from pydantic import BaseModel, Field
+from pydantic import Field
 
+from app.api.schema_base import ApiSchema
 from app.api.v1.schemas.observations import ObservationHealthOut, ObservationOut
 from app.api.v1.schemas.suggestions import CalendarEventOut
 
@@ -27,7 +28,7 @@ CardKind = Literal[
 KIND_ORDER: tuple[str, ...] = get_args(CardKind)
 
 
-class CardTabOut(BaseModel):
+class CardTabOut(ApiSchema):
     kind: CardKind = Field(
         description=(
             "탭 종류. 탭은 늘 식사 · 건강 · 교육 · 놀이 · 생활습관 · 일정 순서로 온다 — "
@@ -49,14 +50,14 @@ class ProposalTabOut(CardTabOut):
     )
 
 
-class FoundTabsOut(BaseModel):
+class FoundTabsOut(ApiSchema):
     """조회 답변 · 수정 후보 카드. 보기 전용이다."""
 
     type: Literal["found_tabs"] = "found_tabs"
     tabs: list[CardTabOut]
 
 
-class DeleteProposalCardOut(BaseModel):
+class DeleteProposalCardOut(ApiSchema):
     """삭제 제안 카드. 버튼은 `POST …/delete-proposals/{proposal_id}/confirm · cancel`."""
 
     type: Literal["delete_proposal"] = "delete_proposal"

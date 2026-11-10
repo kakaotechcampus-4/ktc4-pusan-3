@@ -91,7 +91,29 @@ def _entry_date(item: NewNoticeItem) -> date | None:
     return moment.astimezone(KST).date() if moment else None
 
 
-def _item_entry(entry_id: str, item: NewNoticeItem) -> dict:
+def _is_past(item: NewNoticeItem, today: date) -> bool:
+    """지난 항목인가 — 견줄 날이 모두 오늘(한국 날짜)보다 앞인가 (#828). 하나도 못 읽었으면 아니다.
+
+    화면은 이 값으로 지난 일정의 체크를 켜 두지 않는다 — 오늘과 견주는 것은 날짜 계산이라 서버가
+    한다 (루트 §2 · apps/web CLAUDE.md §4).
+    🚨 **일정은 화면이 캘린더에 넣는 날로 본다** (web `photo-entry.ts` 의 `eventBody`).
+       시작을 읽었으면 시작 · 끝 중 늦은 것 — 여러 날 행사가 오늘에 걸쳐 있으면 지난 일정이
+       아니다. 시작이 있는데 마감까지 보면 "행사 11-08 · 신청 11-10 까지" 가 켜진 채로 시작해,
+       누르면 이미 지난 11-08 일정이 들어간다 (#854 리뷰). 시작이 없으면 마감이 지났는가다 —
+       그때 넣는 날은 보호자가 고른다.
+    🚨 **할 일 · 안내는 마감까지 본다** — 시작 · 끝 · 마감 중 가장 늦은 것. "신청 11-05 ~ 11-12" 는
+       기간이 열렸어도 마감이 남았으면 아직 할 수 있다 (#903 리뷰).
+    """
+    if item.handling is not NoticeItemHandling.CALENDAR:
+        moments = [m for m in (item.starts_at, item.ends_at, item.due_at) if m is not None]
+    elif item.starts_at is not None:
+        moments = [m for m in (item.starts_at, item.ends_at) if m is not None]
+    else:
+        moments = [item.due_at] if item.due_at is not None else []
+    return bool(moments) and max(m.astimezone(KST).date() for m in moments) < today
+
+
+def _item_entry(entry_id: str, item: NewNoticeItem, *, today: date) -> dict:
     entry: dict = {
         "id": entry_id,
         "kind": _ENTRY_KIND[item.handling],
@@ -103,6 +125,7 @@ def _item_entry(entry_id: str, item: NewNoticeItem) -> dict:
         "all_day": item.all_day if item.starts_at is not None else item.due_all_day,
         "items": list(item.supplies),
         "needs_review": item.needs_review,
+        "past": _is_past(item, today),
         "label": item.label,
         "target_scope": item.target_scope.value,
         "starts_at": item.starts_at.isoformat() if item.starts_at else None,
@@ -116,7 +139,7 @@ def _item_entry(entry_id: str, item: NewNoticeItem) -> dict:
     return entry
 
 
-def _meal_entries(run: PhotoRun, plan) -> list[dict]:
+def _meal_entries(run: PhotoRun, plan, *, today: date) -> list[dict]:
     entries: list[dict] = []
     for day in plan.days:
         for meal in day.meals:
@@ -134,6 +157,7 @@ def _meal_entries(run: PhotoRun, plan) -> list[dict]:
                     "all_day": True,
                     "items": [],
                     "needs_review": False,
+                    "past": plan.date_of(day.day) < today,
                 }
             )
     for index, cell in enumerate(plan.unparsed):
@@ -146,21 +170,25 @@ def _meal_entries(run: PhotoRun, plan) -> list[dict]:
                 "all_day": True,
                 "items": [],
                 "needs_review": True,
+                "past": False,
                 "review_reason": cell.why or "이 칸은 읽지 못했어요.",
             }
         )
     return entries
 
 
-def build_entries(run: PhotoRun, reading: entrypoint.PhotoReading) -> list[dict]:
-    """읽은 결과 → 화면 항목. 항목마다 id 를 주고, 저장할 때 그 id 로 원래 값을 찾는다."""
+def build_entries(run: PhotoRun, reading: entrypoint.PhotoReading, *, today: date) -> list[dict]:
+    """읽은 결과 → 화면 항목. 항목마다 id 를 주고, 저장할 때 그 id 로 원래 값을 찾는다.
+
+    `today` 는 사진을 받은 날(한국 날짜)이다 — 항목마다 `past`(지난 일정인가)를 그 날과 견준다.
+    """
     entries: list[dict] = []
     for index, item in enumerate(reading.notice.items):
         entry_id = f"pe_{index}"
         run.items[entry_id] = item
-        entries.append(_item_entry(entry_id, item))
+        entries.append(_item_entry(entry_id, item, today=today))
     if reading.meal_plan is not None:
-        entries.extend(_meal_entries(run, reading.meal_plan))
+        entries.extend(_meal_entries(run, reading.meal_plan, today=today))
     if reading.meal_failed:
         entries.append(
             {
@@ -171,6 +199,7 @@ def build_entries(run: PhotoRun, reading: entrypoint.PhotoReading) -> list[dict]
                 "all_day": True,
                 "items": [],
                 "needs_review": True,
+                "past": False,
                 "review_reason": "식단표의 표를 읽지 못했어요. 더 밝게 다시 찍어 주세요.",
             }
         )
@@ -188,7 +217,7 @@ def photo_job(run: PhotoRun, *, data: bytes, received_at: datetime, declared_lan
             channel.publish(sse.failed_event("unparsable", ""))
             return
         run.reading = reading
-        entries = build_entries(run, reading)
+        entries = build_entries(run, reading, today=received_at.astimezone(KST).date())
         if not entries:
             # 영수증 · 게임 화면처럼 글자는 있는데 기관 문서가 아닌 사진이다. 빈 확인 화면을 보내면
             # 저장 버튼만 꺼진 채 이유를 모른다. "실패는 200 + 빈 배열이 아니다" (계약서 §06)

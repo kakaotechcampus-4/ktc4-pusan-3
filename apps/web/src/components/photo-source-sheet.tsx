@@ -221,7 +221,7 @@ export function PhotoSourceSheet({
       // 🚨 제목이 **지금 묻는 것**을 말한다. 두 단계가 같은 제목을 쓰면 넘어간 것이 안 보인다.
       title={chosen ? chosen.label : "어떤 사진인가요?"}
       description={
-        chosen ? chosen.rule : "고른 종류에 따라 읽는 방법이 달라져요. 하나를 골라주세요."
+        chosen ? chosen.rule : "고른 종류에 따라 읽는 방법이 달라져요. 하나를 골라 주세요."
       }
       // 🚨 다른 시트(07 기억 상세 · 06 승인)와 같이 닫는 버튼을 세운다. 웹뷰에는 ESC 가 없어서
       //    스크림 탭 하나만 남으면 닫는 길이 화면에 안 보인다. "취소" 가 아니라 "닫기" 다 —

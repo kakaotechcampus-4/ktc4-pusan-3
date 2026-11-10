@@ -1,7 +1,7 @@
 "use client";
 
 import { ArrowRight, Plus, X } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 
 import { ReminderField } from "@/components/reminder-field";
 import { Button } from "@/components/ui/button";
@@ -313,7 +313,7 @@ export function EventDraftCard({
         ) : (
           <DateField
             label="언제"
-            placeholder="날짜를 골라주세요"
+            placeholder="날짜를 골라 주세요"
             hint={missingDate && !draft.review_reason ? "이 초안에는 날짜가 없어요." : undefined}
             value={date}
             onChange={(next) => setWhen({ date: next })}
@@ -382,15 +382,16 @@ export function EventDraftCard({
           서버가 보내 준 `changed` 는 보호자가 값을 고치는 순간 쓸 수 없어서 payload 에서 뺐다 (#122). */}
       {draft.before ? <Diff before={draft.before} event={event} items={items} /> : null}
 
-      {error ? (
-        <CardFailed className="mt-4">
-          <p>{error}</p>
-          <p className="mt-1">아직 아무것도 넣지 않았어요.</p>
-          {errorHint ? <p className="mt-1">{errorHint}</p> : null}
-        </CardFailed>
-      ) : null}
-
-      <div className="mt-5">
+      <CardActions>
+        {/* 🚨 **실패 문구도 바 안에 선다** (#866 리뷰). 바가 붙은 채 시트 위쪽을 보며 누를 수 있어서, 카드 맨 아래
+            원래 자리에 두면 "왜 안 들어갔는지" 가 화면 밖에 남고 버튼만 다시 켜진다. */}
+        {error ? (
+          <CardFailed className="mb-3">
+            <p>{error}</p>
+            <p className="mt-1">아직 아무것도 넣지 않았어요.</p>
+            {errorHint ? <p className="mt-1">{errorHint}</p> : null}
+          </CardFailed>
+        ) : null}
         {blocked ? (
           <p className="text-body-sm text-danger-ink">
             알레르기를 확인했어요. 이 일정은 넣지 않을게요.
@@ -411,14 +412,14 @@ export function EventDraftCard({
             >
               {lockReason ? <p className="text-body-sm">{lockReason}</p> : null}
               {missingDate ? (
-                <p className="text-body-sm">날짜를 골라주셔야 넣을 수 있어요.</p>
+                <p className="text-body-sm">날짜를 골라 주셔야 넣을 수 있어요.</p>
               ) : null}
               {missingTime ? (
-                <p className="text-body-sm">몇 시에 시작하는지 골라주셔야 넣을 수 있어요.</p>
+                <p className="text-body-sm">몇 시에 시작하는지 골라 주셔야 넣을 수 있어요.</p>
               ) : null}
               {reminderPast ? (
                 <p className="text-body-sm">
-                  고른 알림 시각이 이미 지났어요. 알림을 다시 골라주셔야 넣을 수 있어요.
+                  고른 알림 시각이 이미 지났어요. 알림을 다시 골라 주셔야 넣을 수 있어요.
                 </p>
               ) : null}
               {canSubmit ? (
@@ -451,7 +452,7 @@ export function EventDraftCard({
             </Button>
           </>
         )}
-      </div>
+      </CardActions>
     </Card>
   );
 
@@ -462,6 +463,97 @@ export function EventDraftCard({
     setItems((prev) => [...prev, { item_id: null, item_name: name }]);
     setNewItem("");
   }
+}
+
+/**
+ * 넣기 버튼과 그 위의 확인 · 막힌 이유 (#866). 🚨 **시트 스크롤 바닥에 붙는다** — 카드가 시트보다 길면
+ * 넣기 버튼이 "닫기" 아래로 밀려서, 보이는 것이 닫기뿐이었다. 날짜가 비어 버튼이 꺼져 있으면 그 이유까지
+ * 같이 가려져 왜 막혔는지 알 길이 없었다. 카드를 다 내리면 원래 자리(카드 맨 아래)에 놓인다.
+ *
+ * 🚨 **이유와 버튼을 한 덩이로 붙인다.** 이유만 날짜 칸 아래로 옮기는 길도 있었지만, 그러면 막는 것을 말하는
+ *    자리가 버튼과 떨어진다 — 막는 것이 넷(잠금 · 날짜 · 시각 · 알림)이라 한 곳에서 말한다 (카드 본문 주석).
+ * 🚨 **시트 바닥(푸터)으로 옮기지 않는다.** 제출은 건별이라 버튼은 카드의 상태(고친 칸 · 키 · 결과)를 들고,
+ *    여러 장이면 숨긴 장도 마운트돼 있다 (`event-draft-list.tsx` · #537). 시트가 아니라 카드가 버튼을 진다.
+ *
+ * - `-bottom-4` · `-mb-4` · `pb-4` 는 시트 본문의 아래 여백(`BottomSheet` 의 `py-4`)과 카드 여백(`p-4`)을
+ *   덮는다. 스크롤 면은 안쪽 여백만큼 들어온 곳에 붙여서, `bottom-0` 이면 바 아래 16px 틈으로 뒤 칸이 비쳤다
+ * - 🚨 **글자를 입력하는 동안에는 붙지 않는다.** 키보드가 올라오면 시트 높이가 줄어서 바가 입력칸을 덮는다.
+ *   체크박스는 입력으로 치지 않는다 — 누르면 포커스가 가서 바가 떨어졌다 붙는다
+ * - 🚨 **다시 붙는 것은 그 누르기가 끝난 뒤다** (#866 리뷰). 포커스는 누르는 순간(mousedown) 옮겨 가는데, 그때 바로
+ *   붙으면 바가 누른 자리("더하기" · 준비물 빼기)를 덮어 click 이 그 버튼에 닿지 않았다 — 눌렀는데 아무 일도 없다.
+ *   CSS `:focus` 로는 이 순서를 못 미뤄서 상태로 든다. 손가락 탭은 mousedown · mouseup · click 이 한 번에 오고,
+ *   마우스는 누른 채 있다가 떼므로 뗄 때(`pointerup`)까지 기다린다
+ */
+function CardActions({ children }: { children: ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const typing = useTyping(ref);
+  return (
+    <div
+      ref={ref}
+      className={cn(
+        "bg-surface border-line mt-5 border-t pt-3",
+        typing ? "static" : "sticky -bottom-4 -mb-4 pb-4",
+      )}
+    >
+      {children}
+    </div>
+  );
+}
+
+/** 카드 안에서 글자를 입력하는 중인가 (`CardActions` 머리말). 카드는 바의 부모다 — 바가 카드 바로 아래 자식이라서. */
+function useTyping(ref: RefObject<HTMLElement | null>) {
+  const [typing, setTyping] = useState(false);
+
+  useEffect(() => {
+    const card = ref.current?.parentElement;
+    if (!card) return;
+    let pressing = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const isTextInput = (el: Element | EventTarget | null) =>
+      el instanceof HTMLInputElement && el.type !== "checkbox" && card.contains(el);
+    const sync = () => setTyping(isTextInput(document.activeElement));
+    /** 이 누르기의 click 까지 끝난 뒤에 맞춘다. */
+    const later = () => {
+      clearTimeout(timer);
+      timer = setTimeout(sync, 0);
+    };
+    // 🚨 떼는 것만 바로 한다 — 키보드가 올라오기 전에 떨어져 있어야 칸을 안 덮는다. 붙는 것은 늘 미룬다:
+    //    "더하기" 처럼 포커스를 받는 버튼을 누르면 focusin 이 그 버튼에서 오는데, 거기서 바로 붙이면 같은 사고다.
+    const onFocusIn = (e: FocusEvent) => {
+      if (isTextInput(e.target)) {
+        clearTimeout(timer);
+        setTyping(true);
+      } else if (!pressing) later();
+    };
+    const onFocusOut = () => {
+      if (!pressing) later();
+    };
+    const onPointerDown = () => {
+      pressing = true;
+    };
+    const onPointerUp = () => {
+      if (!pressing) return;
+      pressing = false;
+      later();
+    };
+
+    card.addEventListener("focusin", onFocusIn);
+    card.addEventListener("focusout", onFocusOut);
+    document.addEventListener("pointerdown", onPointerDown, true);
+    document.addEventListener("pointerup", onPointerUp, true);
+    document.addEventListener("pointercancel", onPointerUp, true);
+    return () => {
+      clearTimeout(timer);
+      card.removeEventListener("focusin", onFocusIn);
+      card.removeEventListener("focusout", onFocusOut);
+      document.removeEventListener("pointerdown", onPointerDown, true);
+      document.removeEventListener("pointerup", onPointerUp, true);
+      document.removeEventListener("pointercancel", onPointerUp, true);
+    };
+  }, [ref]);
+
+  return typing;
 }
 
 /**
@@ -718,15 +810,15 @@ export function SeriesDraftCard({
             여기서는 고칠 수 없어요. 다르게 바꾸려면 대화로 다시 말해 주세요.
           </p>
 
-          {error ? (
-            <CardFailed className="mt-4">
-              <p>{error}</p>
-              <p className="mt-1">아직 아무것도 바꾸지 않았어요.</p>
-              {errorHint ? <p className="mt-1">{errorHint}</p> : null}
-            </CardFailed>
-          ) : null}
-
-          <div className="mt-5">
+          <CardActions>
+            {/* 실패 문구는 바 안에 선다 (`EventDraftCard` 와 같은 이유 · #866 리뷰). */}
+            {error ? (
+              <CardFailed className="mb-3">
+                <p>{error}</p>
+                <p className="mt-1">아직 아무것도 바꾸지 않았어요.</p>
+                {errorHint ? <p className="mt-1">{errorHint}</p> : null}
+              </CardFailed>
+            ) : null}
             {/* 🚨 게이트의 마지막 확인은 버튼 옆 글자 한 덩이다 (`EventDraftCard` 와 같다). */}
             <p
               className={cn(
@@ -740,7 +832,7 @@ export function SeriesDraftCard({
               {busy ? <Spinner /> : null}
               {busy ? "바꾸는 중이에요" : "확인했어요, 앞으로 전부 바꿀게요"}
             </Button>
-          </div>
+          </CardActions>
         </>
       )}
     </Card>

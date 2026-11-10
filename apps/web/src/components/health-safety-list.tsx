@@ -213,7 +213,7 @@ function HealthSafetyRow({
           <p className="text-body-sm text-ink-muted">
             {/* 🚨 라벨에 조사를 박지 않는다 — 받침으로 고르는 것은 `josa` 다
                 (apps/web/CLAUDE.md §3 · 옵션 키는 받침형이 앞이다). */}
-            {josa(item.label, "이/가")} 알레르기·건강 목록에서 빠져요. 앞으로 식사 제안이 이 항목을
+            {josa(item.label, "이/가")} 알레르기·건강 목록에서 빠져요. 앞으로 식사 추천이 이 항목을
             거르지 않아요.
           </p>
           {/* 🚨 **실패를 빨강으로 칠하지 않는다** (디자인 시스템 §3 · §5). `danger` 는
@@ -375,7 +375,7 @@ export function HealthSafetySheet({
     }
 
     const trimmed = label.trim();
-    setLabelError(trimmed ? null : "무엇인지 적어주세요");
+    setLabelError(trimmed ? null : "무엇인지 적어 주세요");
     if (!trimmed || reactionsTooLong) return;
 
     save.mutate({
@@ -458,8 +458,8 @@ export function HealthSafetySheet({
     >
       <div className="flex flex-col gap-4">
         {/* 🚨 `caution` 은 승인 게이트 2곳 전용이다 (디자인 시스템 §3). 여기가 그중 하나다. */}
-        <Banner tone="caution" title="보호자가 확인한 것만 적어주세요">
-          여기 적은 것은 AI가 고치거나 지우지 못해요. 식사 제안은 이 기록만 보고 거르기 때문에, 들은
+        <Banner tone="caution" title="보호자가 확인한 것만 적어 주세요">
+          여기 적은 것은 AI가 고치거나 지우지 못해요. 식사 추천은 이 기록만 보고 거르기 때문에, 들은
           이야기가 아니라 직접 확인한 것만 남기는 편이 안전해요.
         </Banner>
 

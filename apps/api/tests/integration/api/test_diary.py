@@ -76,7 +76,8 @@ async def test_blank_content_is_rejected_without_deleting(
         f"/api/v1/children/{cid}/diary/{DAY}", json={"content": content}, headers=headers
     )
 
-    assert (resp.status_code, resp.json()["error"]["code"]) == (422, "validation_failed")
+    # 본문 오류라 400 이다 — 422 는 경로 값(날짜) 형식 오류에만 쓴다 (docs/api/errors-v1.md · #438)
+    assert (resp.status_code, resp.json()["error"]["code"]) == (400, "validation_failed")
     assert (await _my_diary(db_client, cid, headers))["content"] == "내 일기"
 
 

@@ -43,8 +43,8 @@ test.describe("일정은 승인 전에는 저장하지 않는다 (§2 실행)", 
       reply.getByText("일정만 찾았어요. 아이에 관한 기록으로 쌓을 것은 없어서 저장하지 않았어요."),
     ).toBeVisible();
     await expect(reply.getByText("이렇게 저장했어요")).toHaveCount(0);
-    await expect(reply.getByText(/기록 \d+건 저장됨/)).toHaveCount(0);
-    await expect(reply.getByText("적어주신 말에서 일정 1건을 찾았어요.")).toBeVisible();
+    await expect(reply.getByText(/^기록 \d+건$/)).toHaveCount(0);
+    await expect(reply.getByText("적어 주신 말에서 일정 1건을 찾았어요.")).toBeVisible();
 
     // 🚨 자동 실행 경로가 없다 — Agent 는 초안까지만 만든다.
     expect(writes(calls, "POST", /\/events$/)).toEqual([]);
@@ -105,11 +105,18 @@ test.describe("성공과 실패 · 안내를 한 화면에 (§2 실행 NF-06)", 
       await sendFromHome(page, "지어낸 한 줄");
       const reply = turn(page, "지어낸 한 줄");
       await expect(reply.getByRole("heading", { name: "이렇게 저장했어요" })).toBeVisible();
-      await expect(reply.getByText("기록 2건 저장됨")).toBeVisible();
+      await expect(reply.getByText("기록 2건", { exact: true })).toBeVisible();
       await expect(
         reply.getByText("놀이 쪽은 이번에 처리하지 못했어요. 저장한 기록은 그대로 남아 있어요."),
       ).toBeVisible();
       await expect(reply.getByText(NOTHING_SAVED, { exact: true })).toHaveCount(0);
+
+      // 🚨 해낸 것이 먼저, 못 한 것이 그 아래다 (#868) — 제목 바로 아래에 실패 안내가 서면 저장이 실패한 것처럼 읽혔다.
+      const saved = await reply.getByText("기록 2건", { exact: true }).boundingBox();
+      const failed = await reply.getByText(/놀이 쪽은 이번에 처리하지 못했어요/).boundingBox();
+      expect(saved!.y).toBeLessThan(failed!.y);
+      // 🚨 보호자가 직접 적은 줄에 "보호자 직접" 을 달지 않는다 (#868) — 다를 때만 출처를 적는다.
+      await expect(reply.getByText("보호자 직접", { exact: true })).toHaveCount(0);
     });
 
     test('저장한 것이 없으면 "저장한 기록은 그대로" 라고 말하지 않는다 (PR #215)', async ({
@@ -130,14 +137,16 @@ test.describe("성공과 실패 · 안내를 한 화면에 (§2 실행 NF-06)", 
     test("저장 0건이라고 말하고, 직접 입력하는 곳은 11 프로필이다", async ({ page }) => {
       await sendFromHome(page, "땅콩 알레르기 있어");
       const reply = turn(page, "땅콩 알레르기 있어");
-      await expect(reply.getByRole("heading", { name: "적어주신 말을 확인했어요" })).toBeVisible();
+      await expect(
+        reply.getByRole("heading", { name: "이 말은 기록으로 남기지 않았어요" }),
+      ).toBeVisible();
       await expect(reply.getByText("알레르기·건강", { exact: true })).toBeVisible();
       await expect(reply.getByRole("link", { name: "직접 입력하러 가기" })).toHaveAttribute(
         "href",
         `/child/${CHILD}/profile`,
       );
       await expect(reply.getByText("이렇게 저장했어요")).toHaveCount(0);
-      await expect(reply.getByText(/기록 \d+건 저장됨/)).toHaveCount(0);
+      await expect(reply.getByText(/^기록 \d+건$/)).toHaveCount(0);
       // 안내가 이미 이유를 말했다 — 그 아래에서 다른 이유를 대지 않는다.
       await expect(
         reply.getByText("아이에 관한 기록은 찾지 못했어요", { exact: false }),
@@ -151,7 +160,9 @@ test.describe("성공과 실패 · 안내를 한 화면에 (§2 실행 NF-06)", 
     test("저장 0건이라고 말하고, 직접 입력하는 곳은 11-1 성장 기록이다", async ({ page }) => {
       await sendFromHome(page, "몸무게는 1톤");
       const reply = turn(page, "몸무게는 1톤");
-      await expect(reply.getByRole("heading", { name: "적어주신 말을 확인했어요" })).toBeVisible();
+      await expect(
+        reply.getByRole("heading", { name: "이 말은 기록으로 남기지 않았어요" }),
+      ).toBeVisible();
       await expect(reply.getByText("키·몸무게", { exact: true })).toBeVisible();
       await expect(reply.getByRole("link", { name: "직접 입력하러 가기" })).toHaveAttribute(
         "href",
@@ -171,7 +182,7 @@ test.describe("성공과 실패 · 안내를 한 화면에 (§2 실행 NF-06)", 
       const reply = turn(page, "계란 잘 먹었어. 그리고 땅콩 알레르기 있어");
       await expect(reply.getByRole("heading", { name: "이렇게 저장했어요" })).toBeVisible();
       await expect(reply.getByText("아래 기록은 그대로 저장했어요.")).toBeVisible();
-      await expect(reply.getByText("기록 2건 저장됨")).toBeVisible();
+      await expect(reply.getByText("기록 2건", { exact: true })).toBeVisible();
     });
   });
 
@@ -186,7 +197,7 @@ test.describe("성공과 실패 · 안내를 한 화면에 (§2 실행 NF-06)", 
       const notice = reply.getByText("아직 준비 중", { exact: true });
       await expect(notice).toBeVisible();
       await expect(reply.getByText("아래 기록은 그대로 저장했어요.")).toBeVisible();
-      await expect(reply.getByText("기록 2건 저장됨")).toBeVisible();
+      await expect(reply.getByText("기록 2건", { exact: true })).toBeVisible();
       await expect(reply.getByRole("status").filter({ hasText: "아직 준비 중" })).toHaveCount(0);
     });
   });
@@ -235,7 +246,7 @@ test.describe("도메인 Agent 결과는 답 묶음 안의 블록이다 (#227)",
       await expect(reply.getByText("성장", { exact: true })).toHaveCount(1);
 
       // 🚨 요청형 한 줄은 저장할 관찰이 없는 것이 정상이다 — Agent 결과가 이미 답했다.
-      await expect(reply.getByRole("heading", { name: "적어주신 말을 확인했어요" })).toBeVisible();
+      await expect(reply.getByRole("heading", { name: "적어 주신 말을 확인했어요" })).toBeVisible();
       await expect(
         reply.getByText("아이에 관한 기록은 찾지 못했어요", { exact: false }),
       ).toHaveCount(0);
@@ -263,13 +274,13 @@ test.describe("도메인 Agent 결과는 답 묶음 안의 블록이다 (#227)",
   test.describe("agent_suggestions — 추천이 든 결과", () => {
     test.use({ scenario: "agent_suggestions" });
 
-    test("후보 수 · 이유 · 일반 추천 표시가 서고, 제안 보기는 그 run 의 05 로 간다", async ({
+    test("후보 수 · 이유 · 일반 추천 표시가 서고, 추천 보기는 그 run 의 05 로 간다", async ({
       page,
     }) => {
       await sendFromHome(page, "저녁이랑 놀이 추천해줘");
       const reply = turn(page, "저녁이랑 놀이 추천해줘");
 
-      await expect(reply.getByText("제안 3가지")).toBeVisible();
+      await expect(reply.getByText("추천 3가지")).toBeVisible();
       await expect(reply.getByText("아이 기록 4건을 보고 골랐어요.")).toBeVisible();
       // 🚨 일반 묶음은 일반 추천임과 쌓인 기록 수를 그대로 적는다 (최상위 §2).
       //    "또래 기준" 은 붙이지 않는다 — 요청에 맞춰 고른 일반 추천도 있다 (#597)
@@ -283,7 +294,7 @@ test.describe("도메인 Agent 결과는 답 묶음 안의 블록이다 (#227)",
         reply.getByText("아이에 관한 기록은 찾지 못했어요", { exact: false }),
       ).toHaveCount(0);
 
-      const links = reply.getByRole("link", { name: "제안 보기" });
+      const links = reply.getByRole("link", { name: "추천 보기" });
       await expect(links).toHaveCount(2);
       expect(await links.first().getAttribute("href")).toMatch(
         /^\/child\/c1\/suggestions\?agents=food&run=.+/,
@@ -318,6 +329,34 @@ test.describe("도메인 Agent 결과는 답 묶음 안의 블록이다 (#227)",
   });
 });
 
+test.describe("연결이 끊긴 채 보낸다 (#865)", () => {
+  test("🚨 홈에 머물고 쓴 글이 남으며, 다시 연결된 뒤 보내면 한 번만 저장된다", async ({
+    page,
+    context,
+  }) => {
+    const calls = recordApi(page);
+    await page.goto(`/child/${CHILD}/home`);
+    const box = page.getByRole("textbox", { name: "오늘 있었던 일" });
+    await box.fill("지어낸 한 줄");
+
+    await context.setOffline(true);
+    await page.getByRole("button", { name: "이 이야기 남기기" }).click();
+
+    // 넘어가려다 실패하면 브라우저 오류 화면이 앱을 통째로 덮는다 — 홈에 머물러야 한다.
+    await expect(page.getByText("인터넷 연결이 끊겨 있어요", { exact: false })).toBeVisible();
+    await expect(page).toHaveURL(new RegExp(`/child/${CHILD}/home$`));
+    await expect(box).toHaveValue("지어낸 한 줄");
+    expect(writes(calls, "POST", /\/inputs$/)).toEqual([]);
+
+    await context.setOffline(false);
+    await expect(page.getByText("다시 연결됐어요", { exact: false })).toBeVisible();
+    await page.getByRole("button", { name: "이 이야기 남기기" }).click();
+    await page.waitForURL(`**/child/${CHILD}/chat`);
+    await expect(turn(page, "지어낸 한 줄")).toBeVisible();
+    expect(writes(calls, "POST", /\/inputs$/)).toHaveLength(1);
+  });
+});
+
 test.describe("저장한 뒤 끊긴 run 은 실패가 아니다 (#271)", () => {
   test.use({ scenario: "interrupted" });
 
@@ -327,7 +366,7 @@ test.describe("저장한 뒤 끊긴 run 은 실패가 아니다 (#271)", () => {
     await sendFromHome(page, "그림 그렸어");
     const reply = turn(page, "그림 그렸어");
     await expect(reply.getByRole("heading", { name: "이렇게 저장했어요" })).toBeVisible();
-    await expect(reply.getByText("기록 1건 저장됨")).toBeVisible();
+    await expect(reply.getByText("기록 1건", { exact: true })).toBeVisible();
     await expect(reply.getByText("나머지는 마무리하지 못했어요")).toBeVisible();
     await expect(
       reply.getByText("위 기록은 그대로 저장됐어요. 같은 말을 다시 보내지 않아도 돼요."),
@@ -341,10 +380,10 @@ test.describe("저장한 뒤 끊긴 run 은 실패가 아니다 (#271)", () => {
   test('받은 기록이 없어도 "저장하지 않았어요" 라고 말하지 않는다', async ({ page }) => {
     await sendFromHome(page, "주말에 소풍 가기");
     const reply = turn(page, "주말에 소풍 가기");
-    await expect(reply.getByRole("heading", { name: "적어주신 내용은 반영했어요" })).toBeVisible();
+    await expect(reply.getByRole("heading", { name: "적어 주신 내용은 반영했어요" })).toBeVisible();
     await expect(reply.getByText("나머지는 마무리하지 못했어요")).toBeVisible();
     await expect(
-      reply.getByText("반영된 내용은 기록/기억 화면이나 캘린더에서 확인할 수 있어요."),
+      reply.getByText("반영된 내용은 기록과 기억 화면이나 캘린더에서 확인할 수 있어요."),
     ).toBeVisible();
     await expect(reply.getByText("저장하지 않았어요", { exact: false })).toHaveCount(0);
     await expect(reply.getByText("이렇게 이해했어요")).toHaveCount(0);
@@ -368,7 +407,7 @@ test.describe("결과를 못 받은 줄을 채널이 지워진 뒤 다시 보낸
       await expect(
         reply.getByText("앞서 처리된 결과예요. 같은 말을 다시 보내지 않아도 돼요."),
       ).toBeVisible();
-      await expect(reply.getByText("기록 2건 저장됨")).toBeVisible();
+      await expect(reply.getByText("기록 2건", { exact: true })).toBeVisible();
       await expect(reply.getByText("저장됐는지 확인하지 못했어요")).toHaveCount(0);
       // 🚨 새 키로 다시 보내면 두 번 저장된다 — 이미 저장된 결과에 다시 보내는 길을 세우지 않는다.
       await expect(reply.getByRole("button", { name: "다시 시도" })).toHaveCount(0);
@@ -396,7 +435,7 @@ test.describe("결과를 못 받은 줄을 채널이 지워진 뒤 다시 보낸
       await page.getByRole("button", { name: "이 이야기 남기기" }).click();
 
       const first = turn(page, "지어낸 한 줄");
-      await expect(first.getByText("기록 2건 저장됨")).toBeVisible();
+      await expect(first.getByText("기록 2건", { exact: true })).toBeVisible();
       await expect(first.getByText("저장됐는지 확인하지 못했어요")).toHaveCount(0);
       // 같은 말풍선이 두 번 서지 않는다.
       await expect(page.getByText("지어낸 한 줄", { exact: true })).toHaveCount(1);
@@ -452,7 +491,7 @@ test.describe("건강 기록의 시각은 시각으로 그린다 (#485)", () => 
   test("서버가 보낸 ISO 시각을 그대로 찍지 않는다", async ({ page }) => {
     await sendFromHome(page, "계란볶음밥 먹었어");
     const reply = turn(page, "계란볶음밥 먹었어");
-    await expect(reply.getByText("기록 2건 저장됨")).toBeVisible();
+    await expect(reply.getByText("기록 2건", { exact: true })).toBeVisible();
     // 날짜는 같은 줄의 "어제" 가 말한다 — 여기는 시각만 선다.
     await expect(reply.getByText("기침, 오후 9:00")).toBeVisible();
     await expect(reply.getByText(/T21:00/)).toHaveCount(0);
@@ -471,7 +510,7 @@ test.describe("되묻기의 답은 원문을 다시 보내지 않는다 (#158)",
     const { run_id: runId } = (await (await first).json()) as { run_id: string };
 
     const reply = turn(page, "계란 잘 먹었어. 요즘 기침해");
-    await expect(reply.getByText("기록 1건 저장됨")).toBeVisible();
+    await expect(reply.getByText("기록 1건", { exact: true })).toBeVisible();
     await expect(page.getByText("위 질문에 답하는 중")).toBeVisible();
     // 🚨 원문을 입력창에 되돌리지 않는다 — 다시 보내면 이미 저장된 조각이 또 저장된다.
     const input = page.getByRole("textbox", { name: "오늘 있었던 일" });
@@ -479,7 +518,7 @@ test.describe("되묻기의 답은 원문을 다시 보내지 않는다 (#158)",
 
     await input.fill("어제부터");
     await page.getByRole("button", { name: "이 이야기 남기기" }).click();
-    await expect(turn(page, "어제부터").getByText("기록 1건 저장됨")).toBeVisible();
+    await expect(turn(page, "어제부터").getByText("기록 1건", { exact: true })).toBeVisible();
 
     const sent = writes(calls, "POST", /\/inputs$/);
     expect(sent).toHaveLength(2);
@@ -560,7 +599,7 @@ test.describe("기록 줄은 Agent 가 아니라 기록 종류로 선다 (#501)"
     await sendFromHome(page, "오늘 혼자 양치했어");
     const reply = turn(page, "오늘 혼자 양치했어");
 
-    await expect(reply.getByText("기록 2건 저장됨")).toBeVisible();
+    await expect(reply.getByText("기록 2건", { exact: true })).toBeVisible();
     // 기록 줄 머리는 이름과 "· 언제" 가 한 덩어리라 머리글자로 찾는다.
     await expect(reply.getByText(/^생활습관/)).toBeVisible();
     await expect(reply.getByText(/^교육/)).toBeVisible();
@@ -678,5 +717,45 @@ test.describe("초안 카드의 준비물 (#679)", () => {
         .filter({ has: page.getByRole("button", { name: "간식 빼기" }) })
         .getByText("새로 더한 것"),
     ).toBeVisible();
+  });
+});
+
+test.describe("한 줄 입력의 글자 수 한도 (#867)", () => {
+  test("한도 가까이에서만 숫자가 서고, 넘으면 이유를 말하며 보내지 않는다", async ({ page }) => {
+    const calls = recordApi(page);
+    await page.goto(`/child/${CHILD}/home`);
+    const input = page.getByRole("textbox", { name: "오늘 있었던 일" });
+    const send = page.getByRole("button", { name: "이 이야기 남기기" });
+    const reason = page.getByText("2,000자까지 보낼 수 있어요. 줄이거나 나눠서 보내 주세요.");
+
+    // 대부분의 한 줄에는 숫자가 없다.
+    await input.fill("가".repeat(1799));
+    await expect(page.getByText(/\d+\/2000/)).toHaveCount(0);
+    await input.fill("가".repeat(1800));
+    await expect(page.getByText("1800/2000")).toBeVisible();
+
+    // 🚨 서버처럼 앞뒤 공백을 떼고 코드 포인트로 센다 — 이모지 2,000개는 보낼 수 있는 글이다.
+    await input.fill(`${"😀".repeat(2000)}   `);
+    await expect(page.getByText("2000/2000")).toBeVisible();
+    await expect(reason).toHaveCount(0);
+    await expect(send).toBeEnabled();
+
+    // 🚨 `maxLength` 로 자르지 않는다 — 붙여넣은 글이 그대로 남고, 보내기만 막는다.
+    await input.fill("가".repeat(2001));
+    await expect(input).toHaveValue("가".repeat(2001));
+    await expect(page.getByText("2001/2000")).toBeVisible();
+    await expect(reason).toBeVisible();
+    await expect(send).toBeDisabled();
+    await expect(send).toHaveAccessibleDescription(/2,000자까지 보낼 수 있어요/);
+
+    // Enter 도 같은 말을 한다 — 줄바꿈으로 새지도, 보내지도 않는다.
+    await input.press("Enter");
+    await expect(input).toHaveValue("가".repeat(2001));
+    expect(writes(calls, "POST", /\/inputs$/)).toEqual([]);
+
+    // 줄이면 다시 보낼 수 있다.
+    await input.press("Backspace");
+    await expect(reason).toHaveCount(0);
+    await expect(send).toBeEnabled();
   });
 });
