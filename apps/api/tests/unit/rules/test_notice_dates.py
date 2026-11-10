@@ -241,6 +241,16 @@ def test_월간표의_일_없는_기간도_읽는다():
     assert when.review is None
 
 
+@pytest.mark.parametrize(
+    "text", ["2~6(금)", "16~20(금) 김장", "9~13(금)", "1~2(월)", "2~6(금) 10:00~12:00", "2 ~ 6(금)"]
+)
+def test_월간표의_물결표_뒤_요일_날짜는_혼자_읽지_않는다(text):
+    # "2~6(금)" 의 6(금) 만 읽으면 기간이 금요일 하루가 된다 (검토 R2). 전처럼 되묻는다
+    when = parse_notice_when(text, anchor=ANCHOR, base_month=(11, 2026))
+    assert when.start is None
+    assert when.review
+
+
 def test_월간표의_일_없는_날짜는_요일이_어긋나면_읽지_않는다():
     # 숫자만으로는 날짜인지 모른다. 요일이 맞아야 날짜로 본다 — 어긋나면 전처럼 되묻는다
     when = parse_notice_when("30(화)", anchor=ANCHOR, base_month=(11, 2026))
