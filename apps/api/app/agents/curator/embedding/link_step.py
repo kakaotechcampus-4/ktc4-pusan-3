@@ -25,7 +25,8 @@
     - 후보가 MAX_CANDIDATES 를 넘을 때 판정기에 보여 줄 후보를 추린다
     - 후보가 REVERSE_TOP 을 넘을 때 반대 방향으로 물을 후보를 고른다
     - 새 candidate 에 관찰 벡터를 복사한다 (Agent 검색 · 추리기에 쓰인다)
-관찰 벡터의 본래 쓰임은 도메인 Agent 의 검색(memory.search)이다.
+관찰 벡터를 도메인 Agent 의 검색(memory.search)에도 쓸 계획이었지만 아직 그런 검색은 없다 —
+지금 관찰 벡터를 읽는 곳은 Curator 뿐이다. polarity 0 관찰은 임베딩하지 않는다 (#287).
 
 바꾸는 것은 관찰의 affinity_id, 새 Profile, 보류 기록(uncertain 횟수)뿐이다.
 보류 기록은 관찰이 연결되면 지운다 — 남는 것은 지금 보류 중인 관찰의 기록이다.

@@ -84,6 +84,15 @@ def test_사전검사는_active_를_막고_없는_것만_묻는다():
     assert check == entrypoint.AllergenCheck(blocked=("우유",), unknown=("땅콩",))
 
 
+def test_사전검사는_내린_기록만_있는_항목을_다시_묻는다():
+    rows = [
+        entrypoint.SafetyLabel("allergy", "땅콩", "retracted"),
+        entrypoint.SafetyLabel("allergy", "잣", "none"),
+    ]
+    check = entrypoint.check_allergens(["땅콩", "잣"], rows)
+    assert check == entrypoint.AllergenCheck(blocked=(), unknown=("땅콩",))
+
+
 def test_안내_문구는_코드_문구다():
     assert entrypoint.count_notice(entrypoint.MAX_SUGGESTIONS) is None
     assert entrypoint.count_notice(0).code == "empty"

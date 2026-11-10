@@ -1,9 +1,9 @@
 """알레르기 · 연령 · 아이 금지 식품을 거르는 내부 safety tool.
 
 Food 가 쓰고, 글에서 음식 낱말을 찾는 판정(`common/food_words`)이 이 필터에 어절을 건다 (#582).
-Activity `foods` 칸도 이 판정을 쓸 예정이다. 메뉴 행과 등록 행은 구조적으로 맞는
-Protocol(`MenuRow` · `SafetyRow`)로 받는다 — Agent 패키지의 포트를 import 하지 않는다
-(docs/agents/README.md §6).
+Activity `foods` 칸도 이 판정으로 본다(알레르기 항목 표시는 `menu_codes`). 메뉴 행과
+등록 행은 구조적으로 맞는 Protocol(`MenuRow` · `SafetyRow`)로 받는다 — Agent 패키지의 포트를
+import 하지 않는다 (docs/agents/README.md §6).
 
 코드가 모델 호출 전에 후보 풀에서 위험한 것을 빼고,
 모델이 답을 낸 후에 다시 한 번 거른다. 급식 조회도 같은 함수를 쓴다.

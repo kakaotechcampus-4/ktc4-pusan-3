@@ -62,7 +62,7 @@ export default function ReportPage() {
 
 /** 화면에 서는 이름. 🚨 서버 값(`category`)과 화면 말은 다르다 — 코드는 계약 이름 그대로 둔다. */
 const CATEGORY_LABEL: Record<ReportCategory, string> = {
-  ai_content: "AI 답이나 제안이 부적절해요",
+  ai_content: "AI 답이나 추천이 부적절해요",
   shared_record: "공동 기록이나 다른 보호자에게 문제가 있어요",
   bug: "앱이 이상하게 동작해요",
   other: "기타",

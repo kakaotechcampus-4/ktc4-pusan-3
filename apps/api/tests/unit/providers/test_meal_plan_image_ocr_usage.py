@@ -89,11 +89,11 @@ async def test_호출_1번이_meal_ocr_행_1개로_남고_보호자는_to_thread
     parent_id = uuid4()
     reader = _reader(_response())
 
-    with llm_usage.attribute(parent_id=parent_id, run_id="upload-1", source="meal_ocr"):
+    with llm_usage.attribute(parent_id=parent_id, run_id="upload-1", source="photo"):
         await asyncio.to_thread(reader.read, PNG_HEADER, mime_type="image/png")
 
     [row] = llm_usage.drain()
-    assert (row.parent_id, row.run_id, row.source) == (parent_id, "upload-1", "meal_ocr")
+    assert (row.parent_id, row.run_id, row.source) == (parent_id, "upload-1", "photo")
     assert row.role == "meal_ocr"
     assert row.model == "served-ocr-model"  # 설정값(ocr-model)이 아니라 응답에 찍힌 모델
     assert row.provider == "ocr-gw.example.invalid"  # 키 · 포트 · 쿼리 없이 host 만
@@ -104,7 +104,7 @@ async def test_호출_1번이_meal_ocr_행_1개로_남고_보호자는_to_thread
 async def test_응답에_모델이_없으면_설정한_모델로_남긴다() -> None:
     reader = _reader(_response(model=None))
 
-    with llm_usage.attribute(parent_id=uuid4(), run_id="upload-1", source="meal_ocr"):
+    with llm_usage.attribute(parent_id=uuid4(), run_id="upload-1", source="photo"):
         await asyncio.to_thread(reader.read, PNG_HEADER, mime_type="image/png")
 
     [row] = llm_usage.drain()
@@ -114,7 +114,7 @@ async def test_응답에_모델이_없으면_설정한_모델로_남긴다() -> 
 async def test_날짜_범위를_나눠_부르면_호출마다_한_행이다() -> None:
     reader = _reader(_response(), _response(), day_ranges=((1, 15), (16, 31)))
 
-    with llm_usage.attribute(parent_id=uuid4(), run_id="upload-1", source="meal_ocr"):
+    with llm_usage.attribute(parent_id=uuid4(), run_id="upload-1", source="photo"):
         await asyncio.to_thread(reader.read, PNG_HEADER, mime_type="image/png")
 
     assert len(llm_usage.drain()) == 2
@@ -124,7 +124,7 @@ async def test_출력_상한에서_잘린_응답도_예외보다_먼저_기록�
     """잘린 응답도 토큰이 과금된다 — 실패했다고 비용이 사라지지 않는다."""
     reader = _reader(_response(content=None, finish_reason="length"))
 
-    with llm_usage.attribute(parent_id=uuid4(), run_id="upload-1", source="meal_ocr"):
+    with llm_usage.attribute(parent_id=uuid4(), run_id="upload-1", source="photo"):
         with pytest.raises(RuntimeError, match="잘림"):
             await asyncio.to_thread(reader.read, PNG_HEADER, mime_type="image/png")
 
@@ -142,7 +142,7 @@ async def test_추론_토큰이_숫자가_아니어도_읽기는_정상으로_�
     )
     reader = _reader(_response(usage=usage))
 
-    with llm_usage.attribute(parent_id=uuid4(), run_id="upload-1", source="meal_ocr"):
+    with llm_usage.attribute(parent_id=uuid4(), run_id="upload-1", source="photo"):
         await asyncio.to_thread(reader.read, PNG_HEADER, mime_type="image/png")
 
     [row] = llm_usage.drain()
@@ -152,7 +152,7 @@ async def test_추론_토큰이_숫자가_아니어도_읽기는_정상으로_�
 async def test_사용량이_응답에_없으면_기록하지_않는다() -> None:
     reader = _reader(_response(usage=None))
 
-    with llm_usage.attribute(parent_id=uuid4(), run_id="upload-1", source="meal_ocr"):
+    with llm_usage.attribute(parent_id=uuid4(), run_id="upload-1", source="photo"):
         await asyncio.to_thread(reader.read, PNG_HEADER, mime_type="image/png")
 
     assert llm_usage.drain() == []

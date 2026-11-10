@@ -4,7 +4,7 @@
 
 from collections.abc import Iterable, Sequence
 from dataclasses import replace
-from datetime import date, datetime, time, timezone, tzinfo
+from datetime import date, datetime, time, timedelta, timezone, tzinfo
 from typing import Any
 from uuid import UUID
 
@@ -13,12 +13,65 @@ from app.agents.memory.store.ports import (
     DeleteCandidates,
     EventItemRow,
     EventRow,
+    NoticeRow,
     ObservationDomain,
     ObservationRow,
     SeriesRow,
     check_candidates,
 )
 from app.rules.recurrence import occurrence_dates
+
+_KST = timezone(timedelta(hours=9))  # DB 쪽(db_store)과 같다. 하루 단위는 한국 시간으로 센다
+
+
+def _in_days(moment: datetime, date_from: date | None, date_to: date | None) -> bool:
+    day = moment.astimezone(_KST).date()
+    return (date_from is None or day >= date_from) and (date_to is None or day <= date_to)
+
+
+def _notice_in_days(row: NoticeRow, date_from: date | None, date_to: date | None) -> bool:
+    """공지의 날 · 항목의 시작~끝 · 항목의 마감 중 하나라도 기간에 걸리면 True."""
+    if date_from is None and date_to is None:
+        return True
+    if row.issued_on is not None:
+        notice_day_hit = (date_from is None or row.issued_on >= date_from) and (
+            date_to is None or row.issued_on <= date_to
+        )
+    else:
+        notice_day_hit = _in_days(row.received_at, date_from, date_to)
+    if notice_day_hit:
+        return True
+    for item in row.items:
+        if item.starts_at is not None:
+            first = item.starts_at.astimezone(_KST).date()
+            last = (item.ends_at or item.starts_at).astimezone(_KST).date()
+            if (date_to is None or first <= date_to) and (date_from is None or last >= date_from):
+                return True
+        if item.due_at is not None and _in_days(item.due_at, date_from, date_to):
+            return True
+    return False
+
+
+def _notice_has_text(row: NoticeRow, text: str) -> bool:
+    return any(
+        text in value
+        for value in (
+            row.title or "",
+            row.raw_text,
+            *(v for item in row.items for v in (item.title, item.label)),
+        )
+    )
+
+
+def _item_order(item: Any) -> tuple:
+    """시작 → 마감 → 제목. 없으면 뒤."""
+    return (
+        item.starts_at is None,
+        item.starts_at or datetime.min.replace(tzinfo=timezone.utc),
+        item.due_at is None,
+        item.due_at or datetime.min.replace(tzinfo=timezone.utc),
+        item.title,
+    )
 
 
 def _is_deleted(row: ObservationRow) -> bool:
@@ -37,6 +90,7 @@ class InMemoryStore:
         self._events: dict[str, EventRow] = {}
         self._items: dict[str, EventItemRow] = {}
         self._series: dict[str, SeriesRow] = {}
+        self._notices: list[tuple[str, NoticeRow]] = []  # (child_id, 공지)
         self._counters: dict[str, int] = {}
         # 이 run 의 삭제 제안 (id, 탭들). 테스트가 무엇을 제안했는지 읽는다
         self.proposal: tuple[str, tuple[DeleteCandidates, ...]] | None = None
@@ -307,6 +361,32 @@ class InMemoryStore:
 
     async def delete_event_item(self, *, item_id: str) -> bool:
         return self._items.pop(item_id, None) is not None
+
+    # ── 기관 공지 ───────────────────────────────────────────────
+    def add_notice(self, row: NoticeRow, *, child_id: UUID) -> None:
+        """테스트 · eval 시드 전용. 공지는 확인 · 저장한 뒤에만 있어서 tool 에는 저장이 없다."""
+        self._notices.append((str(child_id), row))
+
+    async def query_notices(
+        self,
+        *,
+        child_id: UUID,
+        date_from: date | None = None,
+        date_to: date | None = None,
+        text_query: str | None = None,
+        doc_kind: str | None = None,
+        limit: int,
+    ) -> list[NoticeRow]:
+        rows = [row for owner, row in self._notices if owner == str(child_id)]
+        rows = [row for row in rows if _notice_in_days(row, date_from, date_to)]
+        if text_query:
+            rows = [row for row in rows if _notice_has_text(row, text_query)]
+        if doc_kind:
+            rows = [row for row in rows if row.doc_kind == doc_kind]
+        rows.sort(key=lambda row: row.received_at, reverse=True)
+        return [
+            replace(row, items=tuple(sorted(row.items, key=_item_order))) for row in rows[:limit]
+        ]
 
     # delete proposal
     async def propose_delete(

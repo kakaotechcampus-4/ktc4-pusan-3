@@ -244,6 +244,7 @@ def propose(
     *menu_keys: str,
     reason: str = "어제 급식과 겹치지 않아서 골랐어요",
     evidence: list[dict[str, str]] | None = None,
+    meal_slot: str = "dinner",
 ) -> LLMResponse:
     """`propose_meal_candidates` 를 부르는 응답 하나. `evidence` 를 안 주면 MEAL_DOC 을 인용한다."""
     if evidence is None:
@@ -256,7 +257,7 @@ def propose(
                 "candidates": [
                     {
                         "menu_key": key,
-                        "meal_slot": "dinner",
+                        "meal_slot": meal_slot,
                         "reason": reason,
                         "evidence": evidence,
                     }

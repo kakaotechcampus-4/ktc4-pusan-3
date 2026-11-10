@@ -1,4 +1,4 @@
-import { CHILD, expect, recordApi, test, writes } from "./fixtures";
+import { CHILD, expect, recordApi, switchScenario, test, writes } from "./fixtures";
 
 /**
  * 02 아이 정보 — 서버 구현(PR #353)에 맞춘 것. 범위 밖 숫자는 보내기 전에 칸에 붙이고,
@@ -22,12 +22,14 @@ test("범위 밖 키는 보내지 않고 그 칸에 이유를 붙인다", async 
 
 test.describe("응답을 못 받은 뒤 다시 보내기", () => {
   // 저장이 막히는 시나리오로 "실패한 뒤 다시 누르기" 를 만든다. 키 규칙만 본다.
-  test.use({ scenario: "consent" });
-
+  // 🚨 화면은 기본 시나리오로 연다 — `consent` 는 아이 0명인 계정이라, 처음부터 그 시나리오면
+  //    `c1` 이 내 아이가 아니어서 화면이 서지 않는다 (#802). 저장 직전에만 바꾼다.
   test("같은 값은 같은 키, 고친 값은 새 키다", async ({ page }) => {
     const calls = recordApi(page);
     await page.goto(ONBOARDING);
     const next = page.getByRole("button", { name: "다음" });
+    await expect(page.getByLabel("키 (cm)")).toBeVisible();
+    await switchScenario(page, "consent");
 
     await page.getByLabel("키 (cm)").fill("104.2");
     await next.click();

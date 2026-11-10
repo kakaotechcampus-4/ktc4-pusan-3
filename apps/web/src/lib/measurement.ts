@@ -68,8 +68,8 @@ export function isMeasurementInRange(kind: MeasurementKind, value: number): bool
  *    평가로 읽히는 말은 쓰지 않는다 (최상위 §2).
  */
 export function measurementError(kind: MeasurementKind, read: MeasurementRead): string | undefined {
-  if (read === "invalid") return "숫자만 적어주세요";
-  if (read === "too_precise") return "소수점 아래 한 자리까지 적어주세요";
+  if (read === "invalid") return "숫자만 적어 주세요";
+  if (read === "too_precise") return "소수점 아래 한 자리까지 적어 주세요";
   if (read === "out_of_range") {
     const { min, max, unit } = MEASUREMENT_RANGE[kind];
     return `${unit} 단위로 ${min}부터 ${max}까지 적을 수 있어요`;

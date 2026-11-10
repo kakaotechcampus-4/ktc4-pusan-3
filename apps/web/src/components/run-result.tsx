@@ -162,8 +162,8 @@ export function RunReply({
               다시 보내도 두 번 저장되지 않는다 — 연결만 끊긴 경우도 있어서 다시 시도는 남긴다. */}
           {checkRecords ? (
             <p className="mt-1">
-              다시 보내도 결과를 받지 못했어요. 저장됐다면 기록/기억 화면에 남아 있으니 먼저 확인해
-              주세요. 같은 한 줄로 다시 보내도 두 번 저장되지 않아요.
+              다시 보내도 결과를 받지 못했어요. 저장됐다면 기록과 기억 화면에 남아 있으니 먼저
+              확인해 주세요. 같은 한 줄로 다시 보내도 두 번 저장되지 않아요.
             </p>
           ) : (
             <p className="mt-1">
@@ -201,10 +201,17 @@ export function RunReply({
   }
 
   if (run.failure) {
+    /**
+     * 🚨 **첫 줄은 서버 `message` 를 그대로 그린다** (#768 · chat-run-v1.md §3). 이유마다 부모가 할 말이
+     *    달라서(잠시 뒤 다시 / 바꿔서 다시) 서버가 정하고, 화면은 `reason` 으로 문구를 만들지 않는다.
+     *    둘째 줄은 이유와 상관없이 참인 것만 말한다 — `failed` 는 서버가 "저장 없음" 을 보장한 끝이다.
+     */
     return (
       <CardFailed>
-        <p className="text-body text-ink">적어 주신 말을 읽지 못했어요</p>
-        <p className="mt-1">잘못 저장하지 않으려고 아무것도 저장하지 않았어요.</p>
+        <p className="text-body text-ink">
+          {run.failure.message || "적어 주신 말을 읽지 못했어요"}
+        </p>
+        <p className="mt-1">아무것도 저장하지 않았어요.</p>
         <RetryActions onRetry={onRetry} onRewrite={onRewrite} rewriteBlocked={rewriteBlocked} />
       </CardFailed>
     );
@@ -259,12 +266,19 @@ export function RunReply({
     <div className="flex flex-col gap-3">
       <div>
         <h3 className="text-body text-ink">
-          {resultTitle({ savedSomething, interrupted, askingMore, noticedWhy, followUp })}
+          {resultTitle({
+            savedSomething,
+            interrupted,
+            askingMore,
+            noticedWhy,
+            guided: refusedToSave(run.guidance),
+            followUp,
+          })}
         </h3>
         {askingMore && !savedSomething && !interrupted ? (
           // 일어난 일만 적는다 — "답하면 저장돼요" 는 예측이라 쓰지 않는다 (§4).
           <p className="text-body-sm text-ink-muted mt-1">
-            적어주신 말만으로는 아직 기록으로 남기지 않았어요.
+            적어 주신 말만으로는 아직 기록으로 남기지 않았어요.
           </p>
         ) : null}
       </div>
@@ -306,8 +320,8 @@ export function RunReply({
         />
       ) : null}
 
-      {/* 🚨 **partial 바로 위에 둔다** — 한 Agent 가 해낸 것과 다른 Agent 가 못 한 것이 붙어 있어야
-          "성공과 실패를 한 화면에" 가 한눈에 읽힌다 (NF-06). 도착한 순서 그대로다 (#215). */}
+      {/* 🚨 한 Agent 가 해낸 것과 다른 Agent 가 못 한 것(아래 partial)이 한 화면에 서야 "성공과 실패를 한 화면에"
+          가 읽힌다 (NF-06). 도착한 순서 그대로다 (#215). */}
       {agentResults.map((result, index) => (
         <AgentResultCard
           key={`${result.agent}:${result.task_type ?? ""}:${index}`}
@@ -320,7 +334,44 @@ export function RunReply({
 
       {interrupted ? <InterruptedCard savedSomething={savedSomething} /> : null}
 
-      {/* 🚨 서버가 보낸 partial 만 여기 온다 — 어느 Agent 가 실패했는지 서버가 말해 준 경우다.
+      {noChildObservation ? (
+        // 위 `noticedWhy` 주석 — 안내·되묻기가 이미 이유를 말했으면 이 카드를 세우지 않는다.
+        // 🚨 끊긴 run 도 세우지 않는다 — 서버는 저장했는데 "저장하지 않았어요" 가 된다 (#271).
+        noticedWhy || interrupted ? null : (
+          <CardFailed>
+            <p>
+              {run.drafts.length > 0
+                ? "일정만 찾았어요. 아이에 관한 기록으로 쌓을 것은 없어서 저장하지 않았어요."
+                : "아이에 관한 기록은 찾지 못했어요. 적어 주신 말은 그대로 두고, 기록으로는 저장하지 않았어요."}
+            </p>
+          </CardFailed>
+        )
+      ) : (
+        <section data-tour="saved">
+          {/* 🚨 "저장됨" 을 붙이지 않는다 (#868) — 바로 위 제목이 "이렇게 저장했어요" 라 같은 말을 두 번 한다. */}
+          <h3 className="text-label text-brand">기록 {savedCount}건</h3>
+          {/* 🚨 관찰마다 카드를 한 장씩 주면 흰 상자가 줄줄이 서서 무엇이 한 덩어리인지 사라진다.
+              한 장 안에 가는 선으로 나눈다 — 03 홈의 "오늘" 카드와 같은 방식이다. */}
+          <Card className="divide-line mt-2 flex flex-col divide-y">
+            {run.observations.map((observation) => (
+              <ObservationRow key={observation.id} observation={observation} />
+            ))}
+            {/* 🚨 **내용을 싣지 않는다** — 서버도 id 만 준다. 지운 기록이 지난 대화에서 되살아나면 안 된다 (#228). */}
+            {deleted.map((ref) => (
+              <p
+                key={`${ref.kind}:${ref.id}`}
+                className="text-body-sm text-ink-subtle py-3 first:pt-0 last:pb-0"
+              >
+                이 기록은 지웠어요.
+              </p>
+            ))}
+          </Card>
+        </section>
+      )}
+
+      {/* 🚨 **저장 결과 아래에 둔다** (#868). 제목("이렇게 저장했어요") 바로 아래에 실패 안내가 먼저 서면 저장이
+          실패한 것처럼 읽혔다. 해낸 것(답 블록 · 저장한 기록)을 먼저, 못 한 것을 그 아래에 둔다 — 한 화면이라 NF-06 은 그대로다.
+          🚨 서버가 보낸 partial 만 여기 온다 — 어느 Agent 가 실패했는지 서버가 말해 준 경우다.
           클라이언트가 스스로 끝낸 경우는 위 `unconfirmed` 로 빠진다.
           🚨 끊긴 run 이면 세우지 않는다 — 위 카드와 같은 자리에서 "처리하지 못했어요" 를 두 번 말한다. */}
       {run.partial && !interrupted ? (
@@ -341,40 +392,6 @@ export function RunReply({
           ) : null}
         </CardFailed>
       ) : null}
-
-      {noChildObservation ? (
-        // 위 `noticedWhy` 주석 — 안내·되묻기가 이미 이유를 말했으면 이 카드를 세우지 않는다.
-        // 🚨 끊긴 run 도 세우지 않는다 — 서버는 저장했는데 "저장하지 않았어요" 가 된다 (#271).
-        noticedWhy || interrupted ? null : (
-          <CardFailed>
-            <p>
-              {run.drafts.length > 0
-                ? "일정만 찾았어요. 아이에 관한 기록으로 쌓을 것은 없어서 저장하지 않았어요."
-                : "아이에 관한 기록은 찾지 못했어요. 적어주신 말은 그대로 두고, 기록으로는 저장하지 않았어요."}
-            </p>
-          </CardFailed>
-        )
-      ) : (
-        <section data-tour="saved">
-          <h3 className="text-label text-brand">기록 {savedCount}건 저장됨</h3>
-          {/* 🚨 관찰마다 카드를 한 장씩 주면 흰 상자가 줄줄이 서서 무엇이 한 덩어리인지 사라진다.
-              한 장 안에 가는 선으로 나눈다 — 03 홈의 "오늘" 카드와 같은 방식이다. */}
-          <Card className="divide-line mt-2 flex flex-col divide-y">
-            {run.observations.map((observation) => (
-              <ObservationRow key={observation.id} observation={observation} />
-            ))}
-            {/* 🚨 **내용을 싣지 않는다** — 서버도 id 만 준다. 지운 기록이 지난 대화에서 되살아나면 안 된다 (#228). */}
-            {deleted.map((ref) => (
-              <p
-                key={`${ref.kind}:${ref.id}`}
-                className="text-body-sm text-ink-subtle py-3 first:pt-0 last:pb-0"
-              >
-                이 기록은 지웠어요.
-              </p>
-            ))}
-          </Card>
-        </section>
-      )}
 
       {run.promoted.length > 0 ? (
         <section className="flex flex-col gap-2">
@@ -417,12 +434,8 @@ export function RunReply({
         />
       ) : null}
 
-      {/* 🚨 쌓인 기록이 있을 때의 말이다. 일정만 말한 한 줄에는 확정할 행동 자체가 없다. */}
-      {savedSomething ? (
-        <p className="text-caption text-ink-subtle">
-          한 번 있었던 일로 아이의 성향을 정하지 않아요. 서로 다른 날에 반복돼야 확인된 기억이 돼요.
-        </p>
-      ) : null}
+      {/* 🚨 "한 번 있었던 일로 아이의 성향을 정하지 않아요" 를 저장 카드마다 달지 않는다 (#868). 하루치 대화에
+          답마다 같은 말이 붙었다. 그 말은 화면 투어 · 도움말 · 07 빈 상태가 한다. */}
 
       {/* 🚨 제안을 버튼으로 쌓지 않는다. 고르는 것은 줄(`AgentPromptRow`)이다. "아니요" 버튼은
           두지 않는다: 고르지 않으면 기록만 남는다는 것은 아래 문구가 말하고, 아무것도 고르지 않아도
@@ -493,10 +506,10 @@ function InterruptedCard({ savedSomething }: { savedSomething: boolean }) {
       <p className="mt-1">
         {savedSomething
           ? "위 기록은 그대로 저장됐어요. 같은 말을 다시 보내지 않아도 돼요."
-          : "적어주신 내용은 이미 반영됐어요. 같은 말을 다시 보내지 않아도 돼요."}
+          : "적어 주신 내용은 이미 반영됐어요. 같은 말을 다시 보내지 않아도 돼요."}
       </p>
       {savedSomething ? null : (
-        <p className="mt-1">반영된 내용은 기록/기억 화면이나 캘린더에서 확인할 수 있어요.</p>
+        <p className="mt-1">반영된 내용은 기록과 기억 화면이나 캘린더에서 확인할 수 있어요.</p>
       )}
     </CardFailed>
   );
@@ -566,7 +579,7 @@ function AgentResultCard({
           <p className="text-caption text-ink-subtle">{domainLabel(result.agent)}</p>
           {candidates ? (
             <div className="mt-1">
-              <p className="text-body text-ink">제안 {candidates.count}가지</p>
+              <p className="text-body text-ink">추천 {candidates.count}가지</p>
               {/* 🚨 일반 묶음은 "일반 추천" 과 쌓인 기록 수를 그대로 적는다 — 0건도 적는다 (최상위 §2).
                   색으로 가르지 않는다 — 라벨과 건수가 본체다 (apps/web CLAUDE §5).
                   "또래 기준" 은 붙이지 않는다 — 요청에 맞춰 고른 일반 추천도 있다 (#597). 기준은 아래 `reason` 이 말한다. */}
@@ -628,7 +641,7 @@ function AgentResultCard({
               className="mt-3"
               transitionTypes={FORWARD.transitionTypes}
             >
-              제안 보기
+              추천 보기
             </ButtonLink>
           ) : null}
         </div>
@@ -736,11 +749,11 @@ function MedicationDraftsCard({
             {remaining > 0 && onOpen ? (
               <>
                 <p className="text-body text-ink">
-                  적어주신 말에서 복약 {found}건을 찾았어요.
+                  적어 주신 말에서 복약 {found}건을 찾았어요.
                   {remaining < found ? ` 아직 넣지 않은 것은 ${remaining}건이에요.` : null}
                 </p>
                 <p className="text-body-sm text-ink-muted mt-1">
-                  넣기 전까지는 등록되지 않아요. 알려드릴 시각을 확인하고 넣어 주세요.
+                  넣기 전까지는 등록되지 않아요. 알려 드릴 시각을 확인하고 넣어 주세요.
                 </p>
                 <Button variant="secondary" size="compact" className="mt-3" onClick={onOpen}>
                   확인하고 넣기
@@ -805,7 +818,7 @@ function DraftsCard({
             {remaining > 0 ? (
               <>
                 <p className="text-body text-ink">
-                  적어주신 말에서 일정 {found}건을 찾았어요.
+                  적어 주신 말에서 일정 {found}건을 찾았어요.
                   {remaining < found ? ` 아직 넣지 않은 것은 ${remaining}건이에요.` : null}
                 </p>
                 <p className="text-body-sm text-ink-muted mt-1">
@@ -873,37 +886,54 @@ function ArchivedDraftsCard({ drafts }: { drafts: readonly AnyEventDraft[] }) {
 }
 
 /**
+ * 저장을 **대신 거절한** 안내 code (#868). 채팅으로 받지 않고 보호자가 직접 넣는 곳으로 보내는 것들이다.
+ * 🚨 **안내가 왔다고 다 거절이 아니다.** `agent_limit` · `task_limit`(한 번에 두 가지까지)은 추천이 선 run 에,
+ *    응급 안내는 기록과 상관없는 run 에 실린다 — 그 위에 "기록으로 남기지 않았어요" 를 달면 답을 받은 보호자가
+ *    무언가 거절된 줄 안다.
+ */
+const SAVE_REFUSALS: ReadonlySet<string> = new Set(["safety_record", "growth_record"]);
+
+export function refusedToSave(guidance: readonly Pick<GuidanceEvent, "code">[]): boolean {
+  return guidance.some((g) => SAVE_REFUSALS.has(g.code));
+}
+
+/**
  * 04 의 제목. 🚨 **제목이 화면 내용을 앞질러 말하면 아래 카드가 전부 그 말을 뒤집는다.**
  *
- * 다섯 갈래인 이유는 "저장한 것이 없는 run" 이 한 종류가 아니라서다.
+ * 여섯 갈래인 이유는 "저장한 것이 없는 run" 이 한 종류가 아니라서다.
  * - 저장됨 → 있는 그대로.
  * - 되묻기만 (#141) → **제목이 곧 할 일**이다. 화면에 남는 것이 질문 하나뿐이라 "확인했어요" 로
  *   받으면 다 끝난 것처럼 읽힌다. 최소 질문 1개라는 규칙(최상위 §2)이 화면에서는 "한 가지만" 이다.
- * - 안내만 (#141 · 알레르기 · 진단 · 구매 대행) → 저장하지 **않기로 한** 한 줄이다. 읽고 판단까지
- *   했다는 뜻으로 "확인했어요".
+ * - 안내만 (#141 · 알레르기 · 진단 · 구매 대행) → 저장하지 **않기로 한** 한 줄이다. 🚨 "확인했어요" 로
+ *   받지 않는다 (#868) — 잘 처리된 것으로 읽혀서, 알레르기를 말한 보호자가 등록된 줄 알았다. 저장 0건을 제목이 말한다.
+ * - Agent 답 · 조회 카드만 → 요청형 한 줄이라 저장할 것이 없는 것이 정상이다. 읽고 답했다는 뜻으로 "확인했어요".
  * - 일정 초안만 (#151) → 아이에 대한 관찰이 아니라 쌓을 것이 없고 일정도 아직 초안이다 (게이트 ㉠).
  * - 저장한 뒤 끊김 (#271) → 서버는 무언가 썼는데 화면은 받은 기록이 없다. 무엇을 썼는지 모르니
  *   "저장" 대신 "반영" 이다 — 쓴 것이 일정 삭제일 수도 있다. 🚨 되묻기보다 앞선다: 서버가 쓴 것이
  *   있는데 "한 가지만 더" 로 받으면 아직 아무것도 안 남은 것처럼 읽힌다.
  */
-function resultTitle({
+export function resultTitle({
   savedSomething,
   interrupted,
   askingMore,
   noticedWhy,
+  guided,
   followUp,
 }: {
   savedSomething: boolean;
   interrupted: boolean;
   askingMore: boolean;
   noticedWhy: boolean;
+  /** 저장을 대신 거절한 안내가 왔다 (`refusedToSave`). 안내가 왔다는 것만으로 켜지 않는다. */
+  guided: boolean;
   followUp: boolean;
 }): string {
   if (savedSomething) return "이렇게 저장했어요";
-  if (interrupted) return "적어주신 내용은 반영했어요";
+  if (interrupted) return "적어 주신 내용은 반영했어요";
   // 🚨 이어받기 run 이 또 물었으면 "한 가지만 더" 를 두 번 말하지 않는다 — 앞에서 한 말을 스스로 깬다.
-  if (askingMore) return followUp ? "이어서 조금만 더 알려주세요" : "한 가지만 더 알려주세요";
-  if (noticedWhy) return "적어주신 말을 확인했어요";
+  if (askingMore) return followUp ? "이어서 조금만 더 알려 주세요" : "한 가지만 더 알려 주세요";
+  if (guided) return "이 말은 기록으로 남기지 않았어요";
+  if (noticedWhy) return "적어 주신 말을 확인했어요";
   return "이렇게 이해했어요";
 }
 
@@ -1090,15 +1120,18 @@ function NoteCard({
               {/* 🚨 **앞서 적은 말을 다시 쓰라고 하지 않는다** (#158 리뷰). 원문을 되돌려 이어
                   적게 했더니, 일부가 이미 저장된 run 에서는 그 조각이 **두 번 저장**됐다. 앞
                   이야기는 서버가 `reply_to` 로 찾으므로 화면은 답만 받는다. */}
-              <p className="text-body-sm text-ink-muted mt-2">
-                이 질문의 답만 적어 주시면 돼요. 앞서 적어주신 말은 그대로 두고 이어서 볼게요.
-              </p>
               {answeringNow ? (
+                // 🚨 답하는 동안은 "이 질문의 답만" 안내를 걷는다 (#868) — 입력창 위 막대가 같은 말을 한다.
                 <p className="text-caption text-ink-muted mt-2">아래 입력창에서 답하는 중이에요.</p>
               ) : (
-                <Button variant="secondary" size="compact" className="mt-3" onClick={onAnswer}>
-                  이 질문에 답하기
-                </Button>
+                <>
+                  <p className="text-body-sm text-ink-muted mt-2">
+                    이 질문의 답만 적어 주시면 돼요. 앞서 적어 주신 말은 그대로 두고 이어서 볼게요.
+                  </p>
+                  <Button variant="secondary" size="compact" className="mt-3" onClick={onAnswer}>
+                    이 질문에 답하기
+                  </Button>
+                </>
               )}
             </>
           ) : question === "answered" ? (

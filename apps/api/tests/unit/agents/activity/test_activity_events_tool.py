@@ -495,3 +495,41 @@ class TestProvince:
         assert result.error["code"] == ErrorCode.INVALID_ARGS
         assert result.resource == "search_events"
         assert "지역 이름만" in result.error["message"]
+
+
+class TestEndedTonight:
+    """오늘 밤에 물으면 운영 시간이 이미 끝난 행사는 오늘에서 뺀다 — 모르면 남긴다 (#800)."""
+
+    async def at(self, hour: int, intros) -> ActivityContext:
+        events = InMemoryEvents([raw("1", "빛 축제")], intros=intros)
+        ctx = await context(events)
+        return ActivityContext(
+            child_id=ctx.child_id,
+            run_id=ctx.run_id,
+            now=datetime(2026, 11, 2, hour, tzinfo=UTC),
+            timezone=UTC,
+            ports=ctx.ports,
+            location=ctx.location,
+            state=ctx.state,
+        )
+
+    async def test_끝난_행사는_오늘_빼고_내일은_남긴다(self):
+        ctx = await self.at(
+            21, {"1": RawEventIntro(age_limit="전 연령", place="광장", playtime="10:00~18:00")}
+        )
+        today = await search_events(ctx, SearchEventsArgs(day="오늘"))
+        assert names(today) == []
+        tomorrow = await search_events(ctx, SearchEventsArgs(day="내일"))
+        assert names(tomorrow) == ["빛 축제"]
+
+    async def test_밤까지_하는_행사는_남긴다(self):
+        ctx = await self.at(
+            21, {"1": RawEventIntro(age_limit="전 연령", place="광장", playtime="18:00~22:00")}
+        )
+        assert names(await search_events(ctx, SearchEventsArgs(day="오늘"))) == ["빛 축제"]
+
+    async def test_끝_시각을_모르면_남긴다(self):
+        ctx = await self.at(
+            21, {"1": RawEventIntro(age_limit="전 연령", place="광장", playtime="(토) 19:00")}
+        )
+        assert names(await search_events(ctx, SearchEventsArgs(day="오늘"))) == ["빛 축제"]

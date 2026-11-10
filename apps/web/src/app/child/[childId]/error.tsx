@@ -29,13 +29,7 @@ export default function ChildError({
 
   return (
     <ErrorView
-      title={
-        <>
-          화면을 여는 중에
-          <br />
-          문제가 생겼어요
-        </>
-      }
+      title="화면을 여는 중에 문제가 생겼어요"
       description="지금까지 저장한 기록은 그대로 있어요. 다시 시도해 보시고, 계속 같으면 잠시 뒤에 다시 열어 주세요."
       digest={error.digest}
       action={

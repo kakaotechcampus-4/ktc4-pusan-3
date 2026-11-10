@@ -1,11 +1,12 @@
 .DEFAULT_GOAL := help
-.PHONY: help install dev test lint fmt db-up db-down db-logs \
+.PHONY: help install dev test test-prompt hooks lint fmt db-up db-down db-logs \
         db-migrate db-rollback db-current db-history db-heads db-check db-revision \
         db-merge db-reset db-psql \
         web-install web-dev web-build web-start web-test web-e2e web-e2e-live web-lint web-fmt web-fmt-check \
         web-typecheck web-check web-contract web-image web-up web-down web-logs \
         api-image api-up api-down api-logs deploy-up deploy-down deploy-migrate \
-        deploy-load-food-dry deploy-load-food deploy-load-places-dry deploy-load-places
+        deploy-load-food-dry deploy-load-food deploy-load-places-dry deploy-load-places \
+        eval-smoke eval eval-week eval-report
 
 # 로컬 개발 DB 와 배포는 compose 파일이 다르다. .env 는 한 곳(deploy/docker/.env)을 같이 쓴다.
 COMPOSE_DEV    := docker compose -f deploy/docker/docker-compose.yml --env-file deploy/docker/.env
@@ -16,8 +17,10 @@ DEPLOYED_TAG   := $(shell cat deploy/docker/.deployed-tag 2>/dev/null || echo lo
 COMPOSE_FILES  := docker compose -f deploy/docker/docker-compose.deploy.yml --env-file deploy/docker/.env
 COMPOSE_DEPLOY := env API_IMAGE_TAG=$(DEPLOYED_TAG) WEB_IMAGE_TAG=$(DEPLOYED_TAG) $(COMPOSE_FILES)
 # 적재는 배포와 같은 잠금을 잡는다 — 4GB 서버에서 빌드와 겹치지 않게. 맥에는 flock 이 없어 그냥 돈다.
-# (COMPOSE_DEPLOY 가 `env` 로 시작하는 이유 — flock 뒤에 오는 첫 단어는 명령이어야 해서 VAR=값 을 못 받는다)
-DEPLOY_LOCK    := $(shell command -v flock >/dev/null 2>&1 && echo flock -w 1200 /var/lock/ktc4-deploy.lock)
+# `flock <파일> 명령` 이 아니라 스크립트다 — 그 꼴은 O_CREAT 로 열어서 cron(ubuntu)이 만든 잠금 파일을 root 가
+# 못 연다 (deploy/scripts/with-deploy-lock.sh · #758).
+# (COMPOSE_DEPLOY 가 `env` 로 시작하는 이유 — 잠금 뒤에 오는 첫 단어는 명령이어야 해서 VAR=값 을 못 받는다)
+DEPLOY_LOCK    := $(shell command -v flock >/dev/null 2>&1 && echo bash deploy/scripts/with-deploy-lock.sh)
 # 떠 있는 스택 · 배포 DB 를 건드리는 타깃은 .env 가 dev · prod 중 하나와 통째로 맞는지 먼저 본다 (deploy.sh 와 같은 검사).
 # dev .env 에서 COMPOSE_PROJECT_NAME 한 줄만 빠져도 운영 프로젝트(ktc4-deploy) · 운영 DB 로 떨어지기 때문이다.
 DEPLOY_GUARD   := bash deploy/scripts/deploy.sh --check-env
@@ -39,8 +42,14 @@ help:
 	@echo "  make install      의존성 설치 (클론 직후)"
 	@echo "  make dev          개발 서버 실행  http://localhost:8000"
 	@echo "  make test         테스트 실행"
+	@echo "  make test-prompt  바뀐 프롬프트 · tool spec 의 LLM 없는 테스트와 지문 고정 테스트 (기준 origin/develop)"
+	@echo "  make hooks        push 전에 make test-prompt 를 자동으로 돌리는 선택형 훅 켜기"
 	@echo "  make lint         코드 검사 (ruff check + format --check) — PR 올리기 전"
 	@echo "  make fmt          코드 포맷팅 (ruff)"
+	@echo "  make eval-smoke   AI 품질 점검 스모크 (실제 모델 · ~15 입력 · 크레딧 사용)"
+	@echo "  make eval         AI 품질 점검 전체 (실제 모델 · ~100 입력 · 크레딧 사용)"
+	@echo "  make eval-week    W 일주일 시나리오 (실제 모델 · icatch_it 에 시험 행을 씀 · 크레딧 사용)"
+	@echo "  make eval-report  가장 최근 P 전체 실행 결과를 요약 md 로 (eval/results/raw/ · 커밋 안 함)"
 	@echo ""
 	@echo "── 프론트 (apps/web) ──"
 	@echo "  make web-install    의존성 설치 (클론 직후 · pnpm)"
@@ -103,11 +112,36 @@ dev:
 test:
 	cd apps/api && uv run pytest
 
+# 프롬프트 · tool spec 을 바꿨을 때 PR 전에 빠르게 확인한다 (#770). 라이브 eval 은 돌리지 않는다.
+# CI 는 이 타깃을 쓰지 않고 전체 pytest 가 같은 지문 테스트를 돈다.
+test-prompt:
+	cd apps/api && uv run python -m scripts.prompt_scope --run
+
+# 선택형 pre-push 훅. 끄려면 `git config --unset core.hooksPath`
+hooks:
+	git config core.hooksPath .githooks
+	@echo "pre-push 훅을 켰습니다 (.githooks/pre-push). 한 번 건너뛰려면 SKIP_PROMPT_TEST=1 git push"
+
 lint:
 	cd apps/api && uv run ruff check . && uv run ruff format --check .
 
 fmt:
 	cd apps/api && uv run ruff format .
+
+# AI 품질 점검 (docs/eval/eval-v1.md). 실제 모델을 부른다 — 크레딧을 쓴다.
+# PYTEST_ADDOPTS 를 비워 셸에 남은 -m 'not live' 를 지운다
+eval-smoke:
+	cd apps/api && PYTEST_ADDOPTS= EVAL_TIER=smoke uv run pytest tests/eval/suite -m live -q
+
+eval:
+	cd apps/api && PYTEST_ADDOPTS= EVAL_TIER=full uv run pytest tests/eval/suite -m live -q --deselect tests/eval/suite/test_week_live.py
+
+# W 는 보호자 · 아이 · 토큰 · 관찰을 DB 에 쓴다 — 통합 테스트 DB 에서만 돈다 (DB_NAME 이 다르면 시작 전에 실패)
+eval-week:
+	cd apps/api && PYTEST_ADDOPTS= EVAL_TIER=full DB_NAME=icatch_it uv run pytest tests/eval/suite/test_week_live.py -m live -q
+
+eval-report:
+	cd apps/api && uv run python -m tests.eval.suite.report
 
 # ── 프론트 (apps/web) ────────────────────────────────────────────────
 # 최초 1회: cd apps/web && cp .env.example .env.local

@@ -1,7 +1,7 @@
 """관찰 목록 · 상세 API — #259.
 
 저장 함수(필터 · 커서 · 삭제 표시)는 `tests/integration/test_observation_repository.py` 가 건다.
-여기는 API 가 더하는 것만 본다: 분류 → 표 매핑, 건강 제외, 응답 조립, 쪽(page · size) · 날짜 · 검색.
+여기는 API 가 더하는 것만 본다: 분류 → 표 매핑, 건강 모양, 응답 조립, 쪽(page · size) · 날짜 · 검색.
 """
 
 import uuid
@@ -20,6 +20,7 @@ from app.domains.identity.models import Parent
 from app.domains.memory.observation.models import (
     ConfidenceSource,
     ObservationFood,
+    ObservationHealth,
     ObservationStatus,
     RoutineCategory,
 )
@@ -78,13 +79,22 @@ async def test_other_childs_observations_are_forbidden(
     assert (listed.status_code, detail.status_code) == (403, 403)
 
 
-async def test_list_maps_agent_to_tables_and_hides_health(
+async def test_list_maps_agent_to_tables_and_shows_health_in_its_shape(
     db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
 ):
-    """growth 는 education · routine 두 표, health 는 빈 목록, 전체에도 건강은 없다."""
+    """growth 는 education · routine 두 표, health 는 건강 표.
+
+    건강 기록은 주제 · 기억 칸이 없는 모양으로 나오고, 지운 건강 기록은 빠진다 (#764).
+    """
     headers, parent_id = bearer
     for domain in _FIELDS:
         await _observe(session, cid, parent_id, domain)
+    deleted = await _observe(session, cid, parent_id, "health", raw_text="지운 건강 기록")
+    await session.execute(
+        update(ObservationHealth)
+        .where(ObservationHealth.id == deleted.id)
+        .values(status=ObservationStatus.DELETED)
+    )
     url = f"/api/v1/children/{cid}/observations"
 
     growth = (await db_client.get(url, params={"domain": "growth"}, headers=headers)).json()
@@ -95,18 +105,28 @@ async def test_list_maps_agent_to_tables_and_hides_health(
         "observation_education",
         "observation_routine",
     }
-    assert health == {"items": [], "total": 0, "page": 1, "size": 20, "total_pages": 0}
-    assert everything["total"] == 4
-    assert "observation_health" not in {i["kind"] for i in everything["items"]}
+    [item] = health["items"]
+    assert item["kind"] == "observation_health"
+    assert item["domain_fields"]["symptom"] == ["기침"]
+    assert {"subject", "polarity", "strong_signals", "affinity"}.isdisjoint(item)
+    assert everything["total"] == 5
+    assert "observation_health" in {i["kind"] for i in everything["items"]}
 
 
 async def test_list_keeps_corrected_observations_but_not_deleted_ones(
     db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
 ):
-    """고친 기록(이번만 · 잘못된 기록)은 목록에 남고 status 로 구분된다. 지운 것만 빠진다."""
+    """고친 기록(이번만 그랬어요)은 목록에 남고 status 로 구분된다. 지운 것만 빠진다.
+
+    예전 "잘못된 기록"(inactive)은 지우기로 바꿔서 필터 값에도 없다 (#736).
+    """
     headers, parent_id = bearer
     kept = {}
-    for status in ObservationStatus:
+    for status in (
+        ObservationStatus.ACTIVE,
+        ObservationStatus.STAND_ALONE,
+        ObservationStatus.DELETED,
+    ):
         record = await _observe(session, cid, parent_id, "food")
         await session.execute(
             update(ObservationFood).where(ObservationFood.id == record.id).values(status=status)
@@ -118,7 +138,7 @@ async def test_list_keeps_corrected_observations_but_not_deleted_ones(
     assert {i["id"]: i["status"] for i in listed["items"]} == {
         id_: status for id_, status in kept.items() if status != "deleted"
     }
-    assert listed["total"] == 3
+    assert listed["total"] == 2
     only = (
         await db_client.get(
             f"/api/v1/children/{cid}/observations",
@@ -128,6 +148,33 @@ async def test_list_keeps_corrected_observations_but_not_deleted_ones(
     ).json()
     assert [i["status"] for i in only["items"]] == ["stand_alone"]
     assert only["total"] == 1
+    gone = await db_client.get(
+        f"/api/v1/children/{cid}/observations", params={"status": "inactive"}, headers=headers
+    )
+    assert gone.status_code == 400
+
+
+async def test_inactive_left_behind_reads_as_deleted_not_500(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    """배포 중 직전 화면 · 롤백 동안 "잘못된 기록" 으로 inactive 가 새로 생길 수 있다 (#736).
+    마이그레이션은 다시 돌지 않으니 읽는 쪽이 지운 기록처럼 둔다 — 응답 status 에 inactive 가 없어서
+    거르지 않으면 상세 · 지난 대화가 500 이다."""
+    headers, parent_id = bearer
+    record = await _observe(session, cid, parent_id, "food")
+    await session.execute(
+        update(ObservationFood)
+        .where(ObservationFood.id == record.id)
+        .values(status=ObservationStatus.INACTIVE)
+    )
+
+    detail = await db_client.get(
+        f"/api/v1/children/{cid}/observations/observation_food/{record.id}", headers=headers
+    )
+    listed = await db_client.get(f"/api/v1/children/{cid}/observations", headers=headers)
+
+    assert detail.status_code == 404
+    assert listed.json()["total"] == 0
 
 
 async def test_pages_through_newest_first_without_gaps_and_reports_total_pages(
@@ -216,6 +263,31 @@ async def test_q_filters_by_raw_text_and_total_counts_only_matches(
     assert found["total"] == 2
     assert [i["id"] for i in food_only["items"]] == [str(hit.id)] and food_only["total"] == 1
     assert (paged["total"], paged["total_pages"], len(paged["items"])) == (2, 2, 1)
+
+
+async def test_q_finds_health_records_by_the_words_on_their_row_title(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    """건강 줄 제목은 증상 · 약 이름이다. 원문에 없는 그 말로도 찾는다 (#764 리뷰)."""
+    headers, parent_id = bearer
+    symptom = await _observe(session, cid, parent_id, "health", 0, raw_text="밤새 콜록거려요")
+    day = today_kst()
+    medication = await create_observation(
+        session,
+        domain="health",
+        child_id=cid,
+        source_writer=parent_id,
+        raw_text="저녁에 약 먹였어요",
+        observed_range=Range(day, day + timedelta(days=1), bounds="[)"),
+        fields={"confidence_source": ConfidenceSource.PARENT_DIRECT, "medication_given": "해열제"},
+    )
+    url = f"/api/v1/children/{cid}/observations"
+
+    by_symptom = (await db_client.get(url, params={"q": "기침"}, headers=headers)).json()
+    by_medicine = (await db_client.get(url, params={"q": "해열제"}, headers=headers)).json()
+
+    assert [i["id"] for i in by_symptom["items"]] == [str(symptom.id)]
+    assert [i["id"] for i in by_medicine["items"]] == [str(medication.id)]
 
 
 async def test_blank_q_means_no_search_and_wildcards_are_plain_characters(
@@ -344,15 +416,18 @@ async def test_detail_carries_affinity_writer_usage_and_corrections(
     assert [c["verdict"] for c in body["corrections"]] == ["once_only"]
 
 
-async def test_health_detail_is_not_found(
+async def test_health_detail_is_shown_without_corrections(
     db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
 ):
+    """건강 기록 상세는 200 이다. 고치기를 받지 않아서 corrections 는 빈 배열이다 (#764)."""
     headers, parent_id = bearer
     record = await _observe(session, cid, parent_id, "health")
     resp = await db_client.get(
         f"/api/v1/children/{cid}/observations/observation_health/{record.id}", headers=headers
     )
-    assert resp.status_code == 404
+    assert resp.status_code == 200
+    body = resp.json()
+    assert (body["observation"]["kind"], body["corrections"]) == ("observation_health", [])
 
 
 @pytest.mark.parametrize(
@@ -413,26 +488,6 @@ async def test_q_allows_exactly_100_characters_and_trims_the_edges(
 
     assert longest.status_code == 200
     assert padded["total"] == 1  # 가장자리 공백이 검색어에 남으면 "% 브로콜리 %" 라 안 걸린다
-
-
-async def test_health_domain_echoes_page_and_size_and_still_validates(
-    db_client: AsyncClient, bearer: Bearer, cid: uuid.UUID
-):
-    """건강은 빈 목록이지만 고정 응답이 아니다 — 요청한 page · size 를 되돌리고 검증도 한다."""
-    headers, _ = bearer
-    url = f"/api/v1/children/{cid}/observations"
-
-    empty = (
-        await db_client.get(url, params={"domain": "health", "page": 3, "size": 5}, headers=headers)
-    ).json()
-    invalid = await db_client.get(
-        url,
-        params={"domain": "health", "date_from": "2026-10-31", "date_to": "2026-10-01"},
-        headers=headers,
-    )
-
-    assert empty == {"items": [], "total": 0, "page": 3, "size": 5, "total_pages": 0}
-    assert invalid.status_code == 400
 
 
 async def test_other_childs_list_is_forbidden_whatever_the_query(

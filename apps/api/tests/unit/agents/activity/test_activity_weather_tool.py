@@ -189,11 +189,12 @@ class TestCheckWeather:
         assert tomorrow.outdoor_ok is True
         assert AIR_UNCHECKED in tomorrow.notices
 
-    async def test_해가_진_뒤면_오늘은_실내만(self):
+    async def test_해가_진_뒤라도_오늘_바깥을_막지_않는다(self):
+        """밤 축제 · 공원 산책도 있다. 해가 진 뒤에는 오늘 놀이터만 뺀다 (#800)."""
         ctx = await context(InMemoryWeather(uv="4"), now=NIGHT)
         brief = await check_weather(ctx, ctx.today)
-        assert brief.outdoor_ok is False
-        assert AFTER_SUNSET in brief.notices
+        assert brief.outdoor_ok is True
+        assert AFTER_SUNSET not in brief.notices
 
     async def test_해가_진_뒤라도_내일은_막지_않는다(self):
         ctx = await context(InMemoryWeather(uv="4"), now=NIGHT)

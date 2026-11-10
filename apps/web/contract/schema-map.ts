@@ -24,13 +24,6 @@ export interface MapEntry {
 /** 서버 스키마 하나를 웹이 둘 이상으로 나눠 받으면 배열로 둘 다 적는다. */
 export type MapValue = string | MapEntry | Array<string | MapEntry>;
 
-/**
- * 추천의 `items`(필요한 재료 · 준비물 · #659). 웹이 먼저 붙였고 서버는 #674 에서 내린다.
- * 🚨 **서버에 칸이 생기면 이 `allow` 를 지운다** — 남겨 두면 그 뒤로 칸 이름 · 값 종류가 어긋나도 못 잡는다.
- */
-const ITEMS_PENDING =
-  "서버 SuggestionOut · GeneralSuggestionOut 에 아직 없다 (#674). 실서버 응답에서는 빠져 오고 SuggestionItems 가 빈 배열처럼 영역을 세우지 않는다";
-
 export const SCHEMA_MAP: Record<string, MapValue> = {
   /* ── 로그인 · 계정 ── */
   AuthProvider: "AuthProvider",
@@ -167,7 +160,7 @@ export const SCHEMA_MAP: Record<string, MapValue> = {
   TargetRef: {
     web: "CorrectionRequest.target_ref",
     allow: {
-      kind: "웹은 Ref 를 그대로 싣는다. 서버가 받지 않는 건강 기록은 목록 · 상세 · 캘린더에서 빠져서(#259) 고치기 시트까지 오지 않는다",
+      kind: "웹은 Ref 를 그대로 싣는다. 서버가 받지 않는 건강 기록은 상세 시트가 고치기 버튼을 세우지 않아서(#764) 보내지 않는다",
     },
   },
   CorrectionResponse: "CorrectionResponse",
@@ -185,20 +178,16 @@ export const SCHEMA_MAP: Record<string, MapValue> = {
   PrecheckOut: "Precheck",
   SuggestionOut: [
     // 07 목록 — 개인화와 채택한 일반 추천이 같이 온다. kind 를 서버 enum 과 그대로 맞춘다
-    {
-      web: "ReceivedSuggestion",
-      allow: { items: ITEMS_PENDING },
-    },
+    "ReceivedSuggestion",
     {
       web: "Suggestion",
       allow: {
         kind: "05 의 개인화 칸(SuggestionsResponse.suggestions)이 같은 서버 스키마를 쓴다. 05 의 일반 추천은 general 칸으로 따로 온다 (#545)",
-        items: ITEMS_PENDING,
       },
     },
   ],
   EvidenceOut: "Evidence",
-  GeneralSuggestionOut: { web: "GeneralSuggestion", allow: { items: ITEMS_PENDING } },
+  GeneralSuggestionOut: "GeneralSuggestion",
   DocEvidenceOut: "DocEvidence",
   AnswerRequest: "AnswerRequest",
   ApproveSuggestionsRequest: "ApproveSuggestionsRequest",
@@ -302,9 +291,6 @@ export const NOT_MAPPED: Record<string, string> = {
   PhotoUploadResponse: "웹은 `{ run_id: string }` 을 함수 반환형에 바로 적는다 (uploadPhoto)",
   Body_upload_photo_api_v1_children__cid__photos_post:
     "multipart 본문. 웹은 photoFormData 가 FormData 로 만든다",
-  HTTPValidationError:
-    "FastAPI 가 자동으로 붙이는 422 모양. 서버는 실제로 ErrorEnvelope 로 바꿔 보낸다 (app/api/errors.py · #438)",
-  ValidationError: "HTTPValidationError 안쪽",
   LinkedAffinityOut: "웹이 ObservationOut.affinity 를 읽지 않는다",
   AnswerResponse: "05 가 되묻기 답의 응답 본문을 읽지 않는다",
 };

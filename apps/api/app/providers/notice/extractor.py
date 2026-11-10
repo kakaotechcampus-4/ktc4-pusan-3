@@ -11,6 +11,7 @@ import json
 import logging
 import time
 from dataclasses import dataclass
+from functools import cache
 from typing import TypeVar
 
 from openai import OpenAI
@@ -20,6 +21,7 @@ from pydantic import ValidationError
 from app.core import llm_usage
 from app.core.config import Settings
 from app.core.notice_extract import ImageNoticeExtract, NoticeExtract
+from app.core.prompt_hash import canonical_json, fingerprint, short
 from app.providers.streaming import collect
 
 log = logging.getLogger(__name__)
@@ -101,6 +103,24 @@ def _response_format(model: type[NoticeExtract]) -> dict:
             "strict": True,
         },
     }
+
+
+def prompt_parts() -> tuple[str, ...]:
+    """프롬프트 지문(#770)의 입력 — 글자 · 사진 두 갈래의 system 프롬프트와 응답 스키마.
+
+    호출 로그와 평가 문서가 같은 값을 쓴다. `PROMPT_VERSION` 은 캐시 키라 여기에 넣지 않는다.
+    """
+    return (
+        SYSTEM_PROMPT,
+        canonical_json(_response_format(NoticeExtract)),
+        SYSTEM_PROMPT + IMAGE_ADDENDUM,
+        canonical_json(_response_format(ImageNoticeExtract)),
+    )
+
+
+@cache
+def _prompt_sha() -> str:
+    return short(fingerprint(*prompt_parts()))
 
 
 def parse_output(content: str, model: type[T]) -> T:
@@ -199,9 +219,11 @@ class NoticeExtractor:
             usage = CallUsage(reply.prompt_tokens, reply.completion_tokens)
             self.usage.append(usage)
             log.info(
-                "notice_extract call=%d model=%s prompt=%d completion=%d",
+                "notice_extract call=%d model=%s prompt_name=notice_ocr prompt_sha256=%s "
+                "prompt=%d completion=%d",
                 self.calls,
                 self.model,
+                _prompt_sha(),
                 usage.prompt_tokens,
                 usage.completion_tokens,
             )

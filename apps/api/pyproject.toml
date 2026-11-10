@@ -40,6 +40,7 @@ dev = [
     "pytest>=8.3.0",
     "pytest-asyncio>=0.24.0",
     "ruff>=0.8.0",
+    "time-machine>=3.6.0",
 ]
 
 [tool.ruff]
@@ -64,7 +65,11 @@ asyncio_default_test_loop_scope = "session"
 testpaths = ["tests"]
 # Supervisor eval 진입점이 tests/eval/agents/supervisor/test.py 라 패턴 추가
 python_files = ["test_*.py", "*_test.py", "test.py"]
-markers = ["live: 실제 LLM API 를 호출하는 eval"]
+markers = [
+    "live: 실제 LLM API 를 호출하는 eval",
+    "c1: 실패하면 C1 로 세는 라이브 eval 테스트 (#816)",
+    "tool_ci: CI 에서 도는 라이브 eval 케이스 (#816)",
+]
 # 라이브 eval 은 API 키와 비용이 필요하므로 기본 실행에서 뺀다. 실행하려면 마커를 직접 지정한다.
 #   pytest tests/eval/agents/supervisor/test.py -m live    Supervisor → Memory → Food
 #   pytest tests/eval/agents/memory/test_memory.py -m live  Memory 단독

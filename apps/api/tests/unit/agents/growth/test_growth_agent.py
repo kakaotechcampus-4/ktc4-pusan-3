@@ -21,6 +21,7 @@ from app.agents.common.llm_client import LLMResponse
 from app.agents.common.refs import Ref
 from app.agents.common.schemas.task import DomainTask
 from app.agents.growth.agent import run
+from app.agents.growth.prompt import age_frame
 from app.agents.growth.readouts import READOUTS, RHYTHM_NO_ROW
 from app.agents.growth.review import BOOK_GENERAL_REASON, REQUESTED_REASON
 from app.agents.growth.schemas.task import GrowthTaskType
@@ -2088,3 +2089,174 @@ class TestPromptScope:
         for topic in ((), ("communication",)):
             other = await self._prompt(learning, topic)
             assert self.SCREEN_MARK not in other and self.DONT_MARK not in other
+
+
+MATH_RECORD = EducationObservation(
+    id=UUID(int=910),
+    child_id=CHILD,
+    observed_on=TODAY - timedelta(days=1),
+    subject="수학",
+    topic="중학교 1학년 수준의 수학 문제 풀이",
+    polarity=1,
+)
+
+
+def _math_call(record_id: UUID) -> LLMResponse:
+    items = [
+        {
+            "title": title,
+            "steps": ["하나씩 해 본다"],
+            "materials": [],
+            "evidence": [{"id": str(record_id), "note": "수학 기록을 이어요"}],
+            "reason": "수학 문제 풀이에서 한 걸음 더 나아가요",
+        }
+        for title in ("식 세워 보기", "규칙 찾기", "문제 만들어 보기")
+    ]
+    return call("propose_learning_activity", {"items": items})
+
+
+class TestTopicRecordsPrefetch:
+    async def test_주제_기록은_조회_tool_없이도_근거로_달_수_있다(self):
+        ctx = context(
+            birth_for(60),
+            docs=fixture_docs(),
+            memory=InMemoryGrowthMemory(education=[MATH_RECORD]),
+        )
+        llm = FakeLLM(_math_call(MATH_RECORD.id))
+        result = await run(
+            task("learning_suggestion", "수학 관련해서 추천해줄 만한 거 있어?"), ctx, client=llm
+        )
+        assert [d.kind for d in result.suggestions] == ["personalized"] * 3
+        assert set(ctx.state.topic_records) == {MATH_RECORD.id}
+
+    async def test_주제가_없으면_선조회하지_않는다(self):
+        ctx = context(
+            birth_for(60),
+            docs=fixture_docs(),
+            memory=InMemoryGrowthMemory(education=[MATH_RECORD]),
+        )
+        await run(task("learning_suggestion", "뭐 하고 놀까?"), ctx, client=FakeLLM())
+        assert ctx.state.topic_records == {}
+
+
+class TestLevelPrompt:
+    @pytest.mark.parametrize(
+        "months, age",
+        [
+            (36, "만 3세"),
+            (47, "만 3세"),
+            (48, "만 4세"),
+            (59, "만 4세"),
+            (60, "만 5세"),
+            (71, "만 5세"),
+        ],
+    )
+    def test_age_frame_은_만_나이별로_다르다(self, months, age):
+        frame = age_frame(months)
+        assert frame is not None and age in frame
+        assert "공통 자료" in frame
+
+    def test_age_frame_은_36개월_전에는_없다(self):
+        assert age_frame(35) is None
+
+    def test_age_frame_은_72개월부터_없다(self):
+        assert age_frame(72) is None and age_frame(80) is None
+
+    def test_age_frame_에는_숫자_기준이_없다(self):
+        for months in (36, 48, 60):
+            assert "까지 세" not in (age_frame(months) or "")
+
+    async def test_교육_프롬프트에_주제_기록과_짜임이_실린다(self):
+        ctx = context(
+            birth_for(60),
+            docs=fixture_docs(),
+            memory=InMemoryGrowthMemory(education=[MATH_RECORD]),
+        )
+        llm = FakeLLM()
+        await run(
+            task("learning_suggestion", "수학 관련해서 추천해줄 만한 거 있어?"), ctx, client=llm
+        )
+        prompt = llm.seen[0][0]["content"]
+        assert str(MATH_RECORD.id) in prompt
+        assert "중학교 1학년 수준의 수학 문제 풀이" in prompt
+        assert "아이는 만 5세다" in prompt
+        order = [
+            prompt.index("[요청 주제의 아이 기록]"),
+            prompt.index("[예시] 결만 참고한다"),
+            prompt.index("[활동 짜임] 아이는"),
+            prompt.index("[월령]\n아이는"),
+        ]
+        assert order == sorted(order)
+        assert "매기지 않는다" in prompt
+        assert "난이도를 맞추는 데만" in prompt
+
+    async def test_주제_기록이_없으면_기록_구획이_없고_짜임은_월령_때문에_있다(self):
+        ctx = docs_ctx(60)
+        llm = FakeLLM()
+        await run(task("learning_suggestion", "뭐 하고 놀까?"), ctx, client=llm)
+        prompt = llm.seen[0][0]["content"]
+        assert "[요청 주제의 아이 기록]" not in prompt
+        assert "[활동 짜임] 아이는 만 5세다" in prompt
+
+    async def test_35개월_이하_교육_프롬프트에는_짜임이_없다(self):
+        llm = FakeLLM()
+        await run(task("learning_suggestion", "뭐 하고 놀까?"), docs_ctx(30), client=llm)
+        assert "[활동 짜임] 아이는" not in llm.seen[0][0]["content"]
+
+    async def test_루틴_프롬프트에는_짜임이_없다(self):
+        llm = FakeLLM()
+        await run(task("routine_coaching", "양치 어떻게 가르쳐?"), docs_ctx(60), client=llm)
+        assert llm.seen and "[활동 짜임] 아이는" not in llm.seen[0][0]["content"]
+
+
+class TestTopicRecordBlock:
+    def _record(self, **kwargs):
+        from app.agents.common.evidence import RankedEvidence
+
+        base = dict(
+            ref=Ref(kind="observation_education", id=UUID(int=920)),
+            tier=3,
+            subject="덧셈",
+            label="두 자리 수 더하기 문제 풀이",
+            polarity=1,
+            observed_on=TODAY,
+        )
+        return RankedEvidence(**{**base, **kwargs})
+
+    def test_subject_tier_부호_있는_polarity_를_싣는다(self):
+        from app.agents.growth.prompt import topic_record_block
+
+        block = topic_record_block((self._record(),))
+        assert "subject 덧셈" in block and "두 자리 수 더하기 문제 풀이" in block
+        assert "tier 3" in block and "polarity +1" in block
+
+    def test_어려워한_기록은_ASCII_마이너스로_규칙과_같다(self):
+        from app.agents.growth.prompt import topic_record_block
+
+        block = topic_record_block((self._record(polarity=-1),))
+        assert "polarity -1" in block and "(-1)" in block and "−" not in block
+
+    def test_달아야_하지_않을_때는_후보마다라고_하지_않는다(self):
+        from app.agents.growth.prompt import topic_record_block
+
+        block = topic_record_block((self._record(),), required=False)
+        assert "후보마다" not in block
+
+
+class CountingEducation(InMemoryGrowthMemory):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.education_reads = 0
+
+    async def education(self, **kwargs):
+        self.education_reads += 1
+        return await super().education(**kwargs)
+
+
+async def test_주제_교육_run_은_모델_전에_교육_기록을_한_번만_읽는다():
+    memory = CountingEducation(education=[MATH_RECORD])
+    ctx = context(birth_for(60), docs=fixture_docs(), memory=memory)
+    request = task("learning_suggestion", "수학 관련해서 추천해줄 만한 거 있어?")
+    result = await run(request, ctx, client=FakeLLM(_math_call(MATH_RECORD.id)))
+    assert len(result.suggestions) == 3
+    assert memory.education_reads == 1

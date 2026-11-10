@@ -19,7 +19,7 @@
 
 import logging
 from collections.abc import Collection
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from app.agents.common.evidence import RankedEvidence, pick_followup
@@ -334,7 +334,8 @@ def _recommendation(
     followup: tuple[str, ...],
     notices: tuple[Readout, ...] = (),
 ) -> DomainAgentResult:
-    drafts = tuple(pick.draft for pick in picks)
+    # 끼니는 일정 초안 제목에 쓴다 — 여기서 빼면 서버가 끼니를 알 길이 없다 (#898)
+    drafts = tuple(replace(pick.draft, meal_slot=pick.meal_slot.value) for pick in picks)
     # 개수 안내는 합친 결과로 센다 — 재호출 때 출력 tool 이 본 것은 재호출분뿐이다
     notice = count_notice(len(drafts), empty=READOUTS.get(POOL_EMPTY))
     return DomainAgentResult(

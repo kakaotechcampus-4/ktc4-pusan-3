@@ -287,7 +287,7 @@ function InviteScreen() {
         {/* 🚨 여기서 아직 아무것도 연결되지 않는다는 것을 적는다 — 버튼 이름만으로는
             "확인" 이 곧 연결로 읽힌다. */}
         <p className="text-caption text-ink-subtle text-center">
-          누구의 초대인지 먼저 보여드려요. 아직 연결되지 않아요.
+          누구의 초대인지 먼저 보여 드려요. 아직 연결되지 않아요.
         </p>
       </div>
     </Screen>

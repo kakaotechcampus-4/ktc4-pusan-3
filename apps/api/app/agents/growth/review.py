@@ -45,7 +45,7 @@ from app.agents.growth.tools.safety import (
     check_routine_candidate,
 )
 from app.rules.book_evidence import book_evidence_id
-from app.rules.evaluative import find_evaluative
+from app.rules.evaluative import find_evaluative, find_level_judgement
 from app.rules.growth_topic import on_topic, record_on_topic, row_on_topic
 from app.rules.term_match import normalize
 
@@ -76,6 +76,7 @@ class RejectReason(StrEnum):
     OVER_CAPACITY = "over_capacity"
     OVERSTATED_NOTE = "overstated_note"
     TOPIC_EVIDENCE = "topic_evidence"
+    TOPIC_RECORD = "topic_record"
     BUILD = "build_rejected"
 
 
@@ -91,6 +92,10 @@ GUIDANCE: dict[RejectReason, str] = {
     RejectReason.TOPIC_EVIDENCE: (
         "요청 주제의 기록이 아니면 개인화 근거가 되지 않는다. "
         "주제 기록이 없으면 [예시] id 를 근거로 단다."
+    ),
+    RejectReason.TOPIC_RECORD: (
+        "요청 주제의 아이 기록이 있다. 후보마다 [요청 주제의 아이 기록]의 id 를 하나 이상 "
+        "evidence 에 달고, reason 에 그 기록의 subject 를 그대로 넣어 무엇을 이어 가는지 쓴다."
     ),
     RejectReason.BUILD: (
         "아이 기록을 인용하지 않으면 [예시] 문서 행 id 를 하나 이상 인용한다. "
@@ -194,6 +199,7 @@ def review_learning(
     requested: bool = False,
     grounds: Sequence[str] = (),
     basis_words: Sequence[str] = (),
+    topic_records: Seen | None = None,
 ) -> Review:
     """`topic` 은 후보 글로 거를 주제 영역 키(`GrowthRunState.strict_topic`)다. 있으면 그 영역의
     낱말이 제목 · 단계 · 준비물에 없고 그 영역의 [예시] 행도 인용하지 않은 후보는 주제 밖이라
@@ -211,6 +217,11 @@ def review_learning(
     `basis_words` 는 단계 · 전략 행이 없는 루틴 행동을 교육 활동으로 낼 때 보호자가 말한 루틴
     낱말(`GrowthRunState.routine_words`)이다. 주제 영역 대신 이 낱말이 기록 이름에 있는지로
     개인화 근거를 판정한다 — "등원 준비" 를 물었는데 손 씻기 기록만 달면 일반 추천이다.
+
+    `topic_records` 는 코드가 모델 전에 읽은 요청 주제의 아이 기록(`GrowthRunState.topic_records`)
+    이다. 비어 있지 않으면 후보는 그 기록 하나 이상을 달고 reason 에 그 기록의 subject 를 써야
+    한다 — 아니면 일반 추천으로 떨어뜨리지 않고 거절한다(`TOPIC_RECORD`). 주제 기록이 있는데
+    "기록이 없을 때만 일반" 이라는 규칙을 어기는 후보를 막는 것이다.
     """
     about = _learning_about(basis_topic, today, basis_words)
     drafts: list[SuggestionDraft] = []
@@ -246,6 +257,9 @@ def review_learning(
         if _overstated(item.evidence, seen):
             rejections.append(Rejection(index, RejectReason.OVERSTATED_NOTE))
             continue
+        if topic_records and not _continues_record(item, topic_records):
+            rejections.append(Rejection(index, RejectReason.TOPIC_RECORD))
+            continue
         kept = topic_citations(citations, about)
         try:
             draft = build(
@@ -270,6 +284,17 @@ def review_learning(
             continue
         drafts.append(draft)
     return Review(tuple(drafts), tuple(rejections), tuple(removed))
+
+
+def _continues_record(item: LearningItem, records: Seen) -> bool:
+    """후보가 요청 주제 기록 하나를 달고, reason 에 그 기록의 subject 를 썼는가."""
+    reason = normalize(item.reason)
+    for pick in item.evidence:
+        key = parse_id(pick.id)
+        record = records.get(key) if key is not None else None
+        if record is not None and normalize(record.subject) in reason:
+            return True
+    return False
 
 
 def _in_topic(
@@ -457,20 +482,32 @@ def error_code(rejections: Sequence[Rejection]) -> str:
     return ErrorCode.CANDIDATE_REJECTED
 
 
-def explain(rejections: Sequence[Rejection], usable: Sequence[UUID] = ()) -> str:
+def explain(
+    rejections: Sequence[Rejection], usable: Sequence[UUID] = (), topic: Seen | None = None
+) -> str:
     """모델이 읽는 거절 설명. 후보 번호(1부터)와 고칠 방향만 싣는다.
 
+    주제 기록을 안 달아 거절했으면 `topic`(그 기록의 id 와 reason 에 넣을 subject)을 덧붙인다.
     모르는 근거 id 때문에 거절했으면 `usable`(조회 결과 · [예시]의 id)을 한 번 덧붙인다. 알려 주지
     않으면 모델이 옮겨 적다 한 글자 틀린 id 로 같은 후보를 되풀이해 왕복 상한까지 간다.
     """
     text = " / ".join(f"{r.index + 1}번 후보: {GUIDANCE[r.reason]}" for r in rejections)
     if usable and any(r.reason is RejectReason.UNKNOWN_EVIDENCE for r in rejections):
         text += " 쓸 수 있는 id: " + ", ".join(str(key) for key in usable)
+    if topic and any(r.reason is RejectReason.TOPIC_RECORD for r in rejections):
+        text += " 주제 기록: " + ", ".join(
+            f"id {key} (subject {record.subject})" for key, record in topic.items()
+        )
     return text
 
 
 def _evaluative(texts: Sequence[str], evidence: Sequence[EvidencePick]) -> bool:
-    return any(find_evaluative(text) for text in (*texts, *(pick.note for pick in evidence)))
+    # 수준 판정("수준이 높아요")은 Growth 만 막는다 — Food 영양 분석은 "나트륨 수준이 높아요"
+    # 를 판정 아닌 뜻으로 쓴다
+    return any(
+        find_evaluative(text) or find_level_judgement(text)
+        for text in (*texts, *(pick.note for pick in evidence))
+    )
 
 
 def _guarded(

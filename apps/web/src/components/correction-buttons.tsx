@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import type { CorrectionVerdict } from "@/lib/api/types";
+import { cn } from "@/lib/cn";
 import { useMotionCue } from "@/lib/motion";
 
 /**
@@ -44,11 +45,13 @@ interface VerdictSpec {
   /**
    * 바꾼 뒤에 어떻게 되는지. 없으면 줄을 세우지 않는다.
    *
-   * 🚨 **판정마다 둔다. 대상(기록/기억)마다 한 줄로 묶지 않는다.** 한동안 대상마다 한 줄이라
+   * 🚨 **판정마다 둔다. 대상(기록과 기억)마다 한 줄로 묶지 않는다.** 한동안 대상마다 한 줄이라
    *    목록에 남는 판정에도 "목록에서 빠지고" 가 붙어, 바로 위 `effect` 와 반대말을 했다 (#270 리뷰).
    * 🚨 **되돌릴 수 있다고 말하지 않는다.** 교정 자체는 append-only 라 데이터가 지워지지는 않지만,
    *    화면에는 되돌리는 기능이 없다(제품 결정). "다시 고칠 수 있어요" 라고 쓰면 부모가 찾지 못할
    *    길을 약속하는 것이다. 서버도 한 번 고친 기록은 다시 받지 않는다(409 `already_corrected`).
+   *    ⚠️ 그렇다고 "되돌릴 수 없어요" 를 붙이지도 않는다 (#868) — 표시 하나 바꾸는 일에 비해 무섭게 읽혔다.
+   *    고친 뒤에는 버튼이 걷히고 고친 표시가 남아서, 다시 못 바꾼다는 것은 화면이 보여 준다.
    * 🚨 **Agent 마다 다른 것은 적지 않는다.** `stand_alone` 은 Food 는 검색하고 Activity 는 안 해서
    *    "제안의 근거로 쓰이지 않아요" 가 반만 맞다 — 확실한 "기억으로 세지 않는다" 만 적는다.
    */
@@ -56,14 +59,20 @@ interface VerdictSpec {
 }
 
 /**
+ * 기억 고치기 세 판정의 끝 줄 (#868). 🚨 **"기억은 목록에 그대로 있어요" 를 쓰지 않는다** — 그 말만 있으면
+ *    눌러도 아무 일이 없는 것으로 읽혔다. 무엇이 실제로 바뀌었는지는 응답이 아니면 모르니(`CascadeResult`),
+ *    남긴 뒤에 바로 알려 준다고 말한다.
+ */
+const AFTER_OPINION = "기억은 목록에 남고, 남긴 뒤 무엇이 바뀌었는지 바로 알려 드려요.";
+
+/**
  * 🚨 **여기 없는 판정은 화면에 서지 않는다.** 서버도 대상마다 받는 값이 갈린다 — 기록에
  *    `need_more_observation` · `outdated` 를 보내면 400 이다 (#277).
  * 🚨 **기록에는 `wrong` 을 묻지 않는다** (#736 · #779). "잘못된 기록" 은 그 기록을 없던 것으로 하려는 것이라
- *    기록 지우기로 바꿨다 — 그 자리에 `onDelete` 의 "기록 지우기" 가 선다. 서버는 FE 가 넘어갈 때까지 기록 `wrong` 을
- *    받고(#736 3단계에서 400), 이미 `wrong` 으로 고친 기록(`inactive`)은 아래 `CORRECTED_OBSERVATION` 이 그린다.
+ *    기록 지우기로 바꿨다 — 그 자리에 `onDelete` 의 "기록 지우기" 가 선다. 서버도 기록 `wrong` 을 400 으로 막고,
+ *    예전에 `wrong` 으로 고친 기록(`inactive`)은 `deleted` 로 옮겼다.
  *
- * 무엇이 목록에 남는지는 서버 표를 따른다. 기록은 고쳐도 목록에 남는다(`stand_alone` · `inactive`
- * 둘 다 목록에 내린다).
+ * 무엇이 목록에 남는지는 서버 표를 따른다. 기록은 고쳐도 목록에 남는다(`stand_alone` 도 목록에 내린다).
  *
  * 🚨 **기억 고치기는 명령이 아니라 의견이다.** 서버(#277)는 판정으로 기억의 상태를 바꾸지 않고,
  *    상태는 쌓인 기록 수로만 다시 센다 (최상위 §2 "승격은 Curator 의 반복 집계로만"). 세 판정 모두
@@ -82,7 +91,7 @@ const VERDICTS: Record<CorrectionTargetKind, VerdictSpec[]> = {
       question: "이번 한 번만 있던 일로 바꿀까요?",
       confirm: "바꾸기",
       effect: "이번 한 번만 있던 일로 표시해요. 기록은 목록에 그대로 남아요.",
-      after: "아이의 기억으로는 세지 않아요. 한 번 바꾸면 되돌릴 수 없어요.",
+      after: "아이의 기억으로는 세지 않아요.",
     },
   ],
   affinity: [
@@ -91,24 +100,25 @@ const VERDICTS: Record<CorrectionTargetKind, VerdictSpec[]> = {
       label: "기록이 더 필요해요",
       question: "아직 이르다는 의견을 남길까요?",
       confirm: "남기기",
-      effect: "아직 이르다는 의견을 남겨요. 기억은 목록에 그대로 있어요.",
-      after: "기억은 기록이 쌓이는 대로 다시 정해져요.",
+      effect: "아직 이르다는 의견을 남기고, 이 기억을 조금 덜 확실하게 봐요.",
+      after: AFTER_OPINION,
     },
     {
       verdict: "outdated",
       label: "지금은 달라요",
       question: "지금은 다르다는 의견을 남길까요?",
       confirm: "남기기",
-      effect: "지금은 다르다는 의견을 남겨요. 기억은 목록에 그대로 있어요.",
-      after: "기억은 기록이 쌓이는 대로 다시 정해져요.",
+      effect: "지금은 다르다는 의견을 남기고, 이 기억을 조금 덜 확실하게 봐요.",
+      after: AFTER_OPINION,
     },
     {
       verdict: "wrong",
       label: "잘못된 기억",
       question: "잘못된 기억이라는 의견을 남길까요?",
       confirm: "남기기",
-      effect: "잘못된 기억이라는 의견을 남겨요. 기억은 목록에 그대로 있어요.",
-      after: "한동안은 이 기억이 확인되려면 기록이 더 쌓여야 해요.",
+      effect:
+        "잘못된 기억이라는 의견을 남기고, 한동안은 기록이 더 쌓여야 '여러 번 보였어요'가 돼요.",
+      after: AFTER_OPINION,
     },
   ],
 };
@@ -120,20 +130,11 @@ const VERDICTS: Record<CorrectionTargetKind, VerdictSpec[]> = {
  *    갈라 그리지 않으면 고친 기록과 아닌 기록이 같은 줄로 선다 — "이번만 그랬어요" 로 고친 기록이
  *    기억에 묶인 칩을 단 채 서 있으면 부모는 여전히 기억으로 세는 줄 안다.
  * 🚨 `label` 은 위 `VERDICTS.observation` 의 라벨과 같은 말이어야 한다 — 누른 버튼의 이름이
- *    그대로 줄에 남아야 무엇을 눌렀는지 알아본다. `note` 는 그 판정의 `after` 에서 "되돌릴 수
- *    없어요" 를 뺀 것이다 (이미 일어난 일이라).
- * ⚠️ `inactive` 는 이제 버튼이 없다 (#736 · 기록 `wrong` 을 지우기로 바꿨다). 그 전에 고친 기록이 남아 있어서
- *    표시만 둔다 — #736 3단계에서 서버가 그 행을 `deleted` 로 옮기면 이 줄도 걷는다.
+ *    그대로 줄에 남아야 무엇을 눌렀는지 알아본다. `note` 는 그 판정의 `after` 와 같은 말이다.
+ * ⚠️ "잘못된 기록"(`inactive`)은 없다 (#736). 기록 `wrong` 을 지우기로 바꿨고, 서버가 남은 행을 `deleted` 로 옮겼다.
  */
-export const CORRECTED_OBSERVATION: Record<
-  "stand_alone" | "inactive",
-  { label: string; note: string }
-> = {
+export const CORRECTED_OBSERVATION: Record<"stand_alone", { label: string; note: string }> = {
   stand_alone: { label: "이번만 그랬어요", note: "아이의 기억으로는 세지 않아요." },
-  inactive: {
-    label: "잘못된 기록",
-    note: "제안의 근거로도, 아이의 기억으로도 쓰이지 않아요.",
-  },
 };
 
 export function CorrectionButtons({
@@ -141,6 +142,8 @@ export function CorrectionButtons({
   onSelect,
   pending,
   onDelete,
+  deleteOnly = false,
+  onAskingChange,
 }: {
   /** 무엇을 고치는 중인가. 묻는 것도 문구도 갈린다 — 기록 한 건과 기억은 다른 것이다. */
   targetKind: CorrectionTargetKind;
@@ -153,8 +156,28 @@ export function CorrectionButtons({
    *    확인 띠와 요청은 시트(`MemoryDetailSheet`)가 든다.
    */
   onDelete?: () => void;
+  /**
+   * 판정 없이 "기록 지우기" 만 세운다 — 건강 기록 (#764). 서버가 건강 기록 고치기를 400 으로 막는다.
+   * 🚨 따로 그리지 않고 **같은 자리 · 같은 크기**로 세운다 — 버튼 크기가 달라지면 건강 기록만 고친 기록처럼
+   *    읽힌다. 묻는 줄과 안내 줄은 걷는다 (#868 · 고를 것이 하나라서). `onDelete` 와 같이 준다.
+   */
+  deleteOnly?: boolean;
+  /**
+   * 확인 패널이 열리고 닫힐 때 (#868). 시트가 그동안 자기 "닫기" 를 걷는다 — 패널의 "그만두기" 와 한 창에
+   * 둘이 서면 무엇을 눌러야 하는지 헷갈린다. 이 묶음이 내려갈 때(성공 뒤 다시 마운트 · 409 로 걷힘)도 `false` 를 알린다.
+   */
+  onAskingChange?: (asking: boolean) => void;
 }) {
   const [asking, setAsking] = useState<VerdictSpec | null>(null);
+  /**
+   * 🚨 **패널이 열린 채로 내려가면 놓았다고 알린다** (#868 리뷰). 409 `already_corrected` 처럼 시트가 이 묶음을 통째로
+   *    걷는 길이 있어서, 알리지 않으면 시트가 "닫기" 를 걷은 채로 남아 닫는 버튼이 하나도 없다.
+   */
+  const askingChange = useRef(onAskingChange);
+  useEffect(() => {
+    askingChange.current = onAskingChange;
+  });
+  useEffect(() => () => askingChange.current?.(false), []);
   const busy = pending !== null;
   /** 판정 버튼 묶음 ↔ 확인 패널은 같은 자리의 **교체**다 (디자인 시스템 §8). 누른 것만 움직인다. */
   const { ref: swapRef, cue: cueSwap } = useMotionCue<HTMLDivElement>();
@@ -162,6 +185,7 @@ export function CorrectionButtons({
   function ask(next: VerdictSpec | null) {
     cueSwap("fade");
     setAsking(next);
+    onAskingChange?.(next !== null);
   }
 
   if (asking) {
@@ -199,12 +223,16 @@ export function CorrectionButtons({
 
   return (
     <div ref={swapRef}>
-      <p className="text-label text-ink-muted">
-        {targetKind === "observation" ? "이 기록이 어떤가요?" : "이 기억이 맞나요?"}
-      </p>
+      {/* 🚨 **고를 것이 하나면 묻지 않는다** (#868). 건강 기록은 지우기 하나뿐인데 "이 기록이 어떤가요?" 를 달면
+          고를 것이 더 있는 줄 알고 찾는다. 버튼은 다른 기록과 같은 칸 · 같은 크기로 둔다. */}
+      {deleteOnly ? null : (
+        <p className="text-label text-ink-muted">
+          {targetKind === "observation" ? "이 기록이 어떤가요?" : "이 기억이 맞나요?"}
+        </p>
+      )}
       {/* 순서는 교정의 세기 순이고, 한 줄에 둘씩 둬서 좁은 폰에서도 문구가 잘리지 않는다. */}
-      <div className="mt-2 grid grid-cols-2 gap-2">
-        {VERDICTS[targetKind].map((spec) => (
+      <div className={cn("grid grid-cols-2 gap-2", !deleteOnly && "mt-2")}>
+        {(deleteOnly ? [] : VERDICTS[targetKind]).map((spec) => (
           <Button key={spec.verdict} variant="secondary" size="compact" onClick={() => ask(spec)}>
             {spec.label}
           </Button>
@@ -216,7 +244,11 @@ export function CorrectionButtons({
           </Button>
         ) : null}
       </div>
-      <p className="text-caption text-ink-subtle mt-2">고르면 무엇이 바뀌는지 먼저 보여드려요.</p>
+      {deleteOnly ? null : (
+        <p className="text-caption text-ink-subtle mt-2">
+          고르면 무엇이 바뀌는지 먼저 보여 드려요.
+        </p>
+      )}
     </div>
   );
 }

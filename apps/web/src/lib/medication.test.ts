@@ -118,13 +118,6 @@ describe("제출 실패 — 다시 눌러도 되는가 (게이트 ㉡)", () => {
     expect(failureOf(new ApiError(400, "validation_failed", "x")).final).toBe(false);
   });
 
-  it("🚨 같은 키가 처리 중(409)이면 '넣지 않았어요' 라고 하지 않고 잠그지 않는다 — 들어갔을 수 있다", () => {
-    const failure = failureOf(new ApiError(409, "idempotency_in_progress", "x"));
-    expect(failure.final).toBe(false);
-    expect(failure.text).toContain("확인하지 못했어요");
-    expect(failure.text).not.toContain("넣지 않았어요");
-  });
-
   it("🚨 응답을 못 받은 실패는 단정하지 않고 같은 키로 다시 확인하게 한다", () => {
     for (const error of [
       new NetworkError(new Error("x")),

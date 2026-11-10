@@ -94,18 +94,14 @@ async def test_Food_포트는_관찰의_출처를_같이_넘긴다() -> None:
     }
 
 
-async def test_Food_는_stand_alone_까지_읽고_inactive_deleted_는_읽지_않는다() -> None:
+async def test_Food_는_stand_alone_까지_읽고_deleted_는_읽지_않는다() -> None:
     store = InMemoryStore(now=NOW)
     await _save(store, "food", subject="딸기")
     once = await _save(store, "food", subject="사과")
-    wrong = await _save(store, "food", subject="배")
     gone = await _save(store, "food", subject="귤")
-    # once_only("이번만 그랬어요") 는 검색에 남고, wrong("잘못된 기록") 은 빠진다
+    # once_only("이번만 그랬어요") 는 검색에 남고, 지운 기록은 빠진다
     await store.update_observation(
         domain="food", observation_id=once.id, fields={"status": "stand_alone"}
-    )
-    await store.update_observation(
-        domain="food", observation_id=wrong.id, fields={"status": "inactive"}
     )
     await store.delete_observation(domain="food", observation_id=gone.id)
 
@@ -236,7 +232,7 @@ class _NoStatusStore:
 
 
 async def test_status_가_없는_관찰은_읽지_않는다() -> None:
-    # 모르는 상태를 active 로 보면 inactive("잘못된 기록") 가 근거로 돌아올 수 있다
+    # 모르는 상태를 active 로 보면 지운 기록이 근거로 돌아올 수 있다
     rows = await StoreFoodMemory(_NoStatusStore()).observations(  # type: ignore[arg-type]
         child_id=CHILD, date_from=TODAY, date_to=TODAY
     )
@@ -353,9 +349,7 @@ async def test_Health_포트는_날짜_범위의_health_관찰을_읽고_status_
     for offset in (2, 1, 0):
         await _save(store, "health", day=TODAY - timedelta(days=offset), symptom=["기침"])
     gone = await _save(store, "health", day=TODAY, symptom=["콧물"])
-    await store.update_observation(
-        domain="health", observation_id=gone.id, fields={"status": "inactive"}
-    )
+    await store.delete_observation(domain="health", observation_id=gone.id)
     await _save(store, "health", day=TODAY - timedelta(days=9), symptom=["발진"])  # 구간 밖
     await _save(store, "food", subject="딸기")  # 다른 도메인
     await _save(store, "health", child_id=OTHER, symptom=["구토"])  # 다른 아이
@@ -421,9 +415,7 @@ async def test_health_리더가_체온과_식사를_읽는다() -> None:
         domain="food", observation_id=stand_alone.id, fields={"status": "stand_alone"}
     )
     gone = await _save(store, "food", day=TODAY, subject="치킨")
-    await store.update_observation(
-        domain="food", observation_id=gone.id, fields={"status": "inactive"}
-    )
+    await store.delete_observation(domain="food", observation_id=gone.id)
     await _save(store, "food", day=TODAY - timedelta(days=9), subject="국수")  # 구간 밖
     await _save(store, "food", child_id=OTHER, subject="피자")  # 다른 아이
     reader = StoreHealthMemory(store)

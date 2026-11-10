@@ -1,17 +1,19 @@
 """놀이 후보 출력 검증 — 설계 3-3 순서.
 
-  1. 안전 필터       위험 용어(월령별 차단 · 경고) · health_safety(active). 걸린 후보는 거절이
-                     아니라 풀에서 뺀다(`removed`) — 모델에게 사유를 돌려주지 않는다 (§5-2)
-  2. 평가 표현       content · reason · note
-  3. Activity 검증   근거 id · 장소 · 행사 이름(문장에만 쓴 행사도 붙인다 · 한 후보에 둘이면
-                     거절) · 그날 열리지 않는 행사(일정으로) · 그날이 아닌 날의 행사 장소 ·
-                     말한 지역의 장소에 "근처" · 바깥 활동이
-                     어려운 날의 야외 후보(행사 포함) · 기피 대상 · note 반복 표현 · 최근 중복 ·
-                     0–17개월 보호자 동반
-  4. build()         6개월이 안 지난 아이 기록 근거 수로 kind 를 정한다. 모델이 고르지 않는다.
+  1. 안전 필터       위험 용어(월령별 차단 · 경고) · health_safety(active) · 음식 칸의 Food 판정.
+                     걸린 후보는 거절이 아니라 풀에서 뺀다(`removed`) — 모델에게 사유를 돌려주지
+                     않는다 (§5-2)
+  2. 음식 칸         음식 활동인데 foods 가 비면 다시 적게 한다 — 코드가 판정할 이름이 없다 (#582)
+  3. 평가 표현       content · reason · note
+  4. Activity 검증   근거 id · 개인화 이유의 막힌 음식 이름 · 장소 · 행사 이름(문장에만 쓴 행사도
+                     붙인다 · 한 후보에 둘이면 거절) · 그날 열리지 않는 행사(일정으로) · 그날이
+                     아닌 날의 행사 장소 · 말한 지역의 장소에 "근처" · 바깥 활동이 어려운 날의
+                     야외 후보(행사 포함) · 기피 대상 · note 반복 표현 · 최근 중복 · 0–17개월
+                     보호자 동반
+  5. build()         6개월이 안 지난 아이 기록 근거 수로 kind 를 정한다. 모델이 고르지 않는다.
                      장소 이름은 코드가 content 앞에 붙이고, 확인 문구(place_notice)를 칸으로
                      싣는다. allergens · items · 위험 경고(warnings)도 코드가 채운다
-  5. check_count()   최대 3개 — 호출부(출력 tool)가 부른다
+  6. check_count()   최대 3개 — 호출부(출력 tool)가 부른다
 
 순서가 결과를 바꾼다. 안전에 걸린 후보가 뒤 검사를 타면 엉뚱한 사유가 나간다.
 걸린 후보는 고치지 않고 통째로 빼거나 거절한다. "물놀이터" 를 "얕은 물놀이터" 로 고쳐 통과시키지
@@ -35,12 +37,12 @@ from app.agents.activity.readouts import (
     READOUTS,
 )
 from app.agents.activity.result import ErrorCode
-from app.agents.activity.rules import is_recent_duplicate, normalize_activity
+from app.agents.activity.rules import invented_facilities, is_recent_duplicate, normalize_activity
 from app.agents.activity.schemas.common import (
     ActivitySetting,
     CaregiverRole,
-    DayLabel,
     EvidencePick,
+    PlaceCategory,
 )
 from app.agents.activity.schemas.recommend import ActivityCandidate
 from app.agents.activity.store.ports import (
@@ -48,10 +50,13 @@ from app.agents.activity.store.ports import (
     EventRow,
     PlaceRow,
     PlaceSourceName,
+    SafetyEntry,
 )
 from app.agents.activity.tools.filters import SafetyTerms, check_candidate
 from app.agents.activity.tools.outing import INDOOR_CATEGORIES, days_of
+from app.agents.common.age import stage_of
 from app.agents.common.evidence import RankedEvidence, cite, overstates
+from app.agents.common.food_words import mentions_blocked_food
 from app.agents.common.reference import age_gates
 from app.agents.common.refs import EvidenceCitation, Ref
 from app.agents.common.suggestion import SuggestionDraft, SuggestionRejected, build
@@ -96,7 +101,9 @@ Docs = Mapping[UUID, ActivityDocRow]
 
 
 class RejectReason(StrEnum):
+    FOODS_MISSING = "foods_missing"
     EVALUATIVE = "evaluative_expression"
+    FOOD_MENTION = "food_mention"
     UNKNOWN_EVIDENCE = "unknown_evidence"
     AVOIDED = "avoided_activity"
     OVERSTATED_NOTE = "overstated_note"
@@ -108,12 +115,22 @@ class RejectReason(StrEnum):
     NEARBY_WORDING = "nearby_wording"
     OUTDOOR_CLOSED = "outdoor_closed"
     MIXED_PLACES = "mixed_places"
+    INVENTED_FACILITY = "invented_facility"
+    DARK_PLAYGROUND = "dark_playground"
     BUILD = "build_rejected"
 
 
 # 모델에게 돌려줄 설명 — 무엇을 고치면 되는지만. 걸린 낱말은 알려 주지 않는다
 GUIDANCE: dict[RejectReason, str] = {
+    RejectReason.FOODS_MISSING: (
+        "음식 · 식재료를 만지거나 먹는 활동(involves_food)이면 foods 에 그 이름을 하나씩 적는다."
+    ),
     RejectReason.EVALUATIVE: "또래 비교나 발달 판정 표현을 쓰지 않는다.",
+    # Food(`meal_review`)와 같은 기준이다 — 걸린 낱말은 알려 주지 않는다 (#575 ⭐3)
+    RejectReason.FOOD_MENTION: (
+        "reason 에는 고른 놀이와 아이 기록에서 고른 이유만 쓴다. 보호자가 요청에 쓴 음식을 빼거나 "
+        "바꿨다는 말('~ 없이' · '~ 대신')과 '알레르기를 고려해' 같은 말은 쓰지 않는다."
+    ),
     RejectReason.UNKNOWN_EVIDENCE: (
         "evidence 에는 search_activity_memory 결과의 id 나 [예시]의 id(예1 같은)만 그대로 쓴다."
     ),
@@ -148,6 +165,14 @@ GUIDANCE: dict[RejectReason, str] = {
         "한 후보에는 장소나 행사를 하나만 쓴다. 문장에 쓴 행사가 있으면 place_name 에 그 행사 "
         "이름(name)을 쓴다."
     ),
+    RejectReason.INVENTED_FACILITY: (
+        "그 장소에 시설이 있다고 쓰지 않는다 — 기록에 그 장소에서 그 시설을 쓴 일이 있을 때만 "
+        "쓴다. 시설 이름 없이 놀이 방법만 쓰거나, 있는지는 가기 전에 확인해 달라고 쓴다."
+    ),
+    RejectReason.DARK_PLAYGROUND: (
+        "지금은 해가 져서 오늘 놀이터는 내지 않는다. 그 놀이터를 다른 날(day)로 옮기거나, 공원 · "
+        "실내 장소로 바꾼다."
+    ),
     RejectReason.BUILD: (
         "아이 기록을 인용하지 않으면 [예시] 문서 행 id 를 하나 이상 인용한다 "
         "(보호자가 이번 요청에서 직접 말한 놀이일 때만 requested_play 로 면제된다). "
@@ -178,7 +203,9 @@ class Review:
     removed: tuple[Removal, ...] = ()
     # 통과한 바깥 활동(`_outdoors`)의 (정규화한 content, 날). 날씨 안내를 결과에 실제로 나간
     # 바깥 활동의 날로 고르는 데 쓴다 — 오늘 해가 졌어도 내일 공원은 나간다 (#515 리뷰)
-    outdoor: frozenset[tuple[str, DayLabel]] = frozenset()
+    outdoor: frozenset[tuple[str, str]] = frozenset()
+    # 통과한 후보 전부의 날 표현 — 오늘 하는 추천이 없으면 오늘 날씨 안내를 붙이지 않는다 (#800)
+    days: frozenset[str] = frozenset()
 
 
 def review_candidates(
@@ -190,12 +217,15 @@ def review_candidates(
     safety: SafetyTerms,
     places: Mapping[str, PlaceRow] | None = None,
     events: Mapping[str, EventRow] | None = None,
-    outdoor: Mapping[DayLabel, bool] | None = None,
+    outdoor: Mapping[str, bool] | None = None,
     outdoor_days: Mapping[date, bool] | None = None,
     docs: Docs | None = None,
     area_places: Collection[str] = (),
     today: date,
     requested: bool = False,
+    ended_today: Collection[str] = (),
+    request_texts: Sequence[str] = (),
+    dark_today: bool = False,
 ) -> Review:
     """후보를 3-3 순서로 검사해 통과한 것은 SuggestionDraft 로, 걸린 것은 사유로 돌려준다.
 
@@ -218,6 +248,14 @@ def review_candidates(
     `docs` 는 이번 run 의 프롬프트 [예시]에 실은 문서 행이다. 인용하면 `activity_doc` 근거가
     되고, 아이 기록이 아니라 개인화로 세지 않는다 — 문서 행만 단 추천은 `general` 이다.
     `today` 는 `build()` 의 6개월 판정 기준일이다.
+    `request_texts` 는 보호자 요청 글이다. 장소가 붙은 후보가 그 장소에 있다고 쓴 시설은 조회한
+    기록이 그 장소와 함께 확인해 줄 때만 통과한다 — 요청의 시설은 "원한다" 라 확인이 아니다
+    (#814 · #820 리뷰, `rules.invented_facilities`).
+    `dark_today` 는 지금 해가 졌는지다(`outing.dark_now`) — 오늘 하루에 붙인 놀이터는 거절한다.
+    장소 조회도 오늘 놀이터를 막지만, 다른 날로 조회한 놀이터를 오늘 후보에 붙이는 길이 있다
+    (#805 리뷰).
+    `ended_today` 는 오늘 운영 시간이 이미 끝난 행사 이름이다 — 그 행사는 오늘 열리지 않은
+    것으로 본다.
     """
     # 대조는 subject 로 한다 — 관찰의 label 은 "물감 놀이" 같은 문장이라
     # 후보에 그대로 나오는 일이 드물다
@@ -228,9 +266,17 @@ def review_candidates(
         and len(subject := normalize_activity(ranked.subject)) >= MIN_AVOIDED_LABEL
     )
     known = _Known.of(places or {}, events or {})
+    # 시설이 그 장소에 있다고 확인해 줄 수 있는 글 — 이번 run 에 조회한 기록(글 · 극성).
+    # 보호자 요청은 "원한다" 라서 확인이 아니다 (#820 리뷰)
+    records = tuple(
+        (text, ranked.polarity)
+        for ranked in seen.values()
+        for text in dict.fromkeys((ranked.label, ranked.subject))
+    )
     far_places = frozenset(normalize_activity(name) for name in area_places)
     drafts: list[SuggestionDraft] = []
-    outdoor_drafts: set[tuple[str, DayLabel]] = set()
+    outdoor_drafts: set[tuple[str, str]] = set()
+    draft_days: set[str] = set()
     rejections: list[Rejection] = []
     removed: list[Removal] = []
     for index, candidate in enumerate(candidates):
@@ -242,6 +288,7 @@ def review_candidates(
         reason, citations, place = _check(
             candidate,
             months=months,
+            rows=safety.rows,
             seen=seen,
             docs=docs or {},
             known=known,
@@ -251,6 +298,9 @@ def review_candidates(
             outdoor=outdoor,
             outdoor_days=outdoor_days,
             today=today,
+            ended_today=ended_today,
+            records=records,
+            dark_today=dark_today,
         )
         if reason is None:
             try:
@@ -268,6 +318,7 @@ def review_candidates(
             except SuggestionRejected:
                 reason = RejectReason.BUILD
             else:
+                draft_days.add(candidate.day)
                 if _outdoors(candidate, place):
                     outdoor_drafts.add((normalize_activity(drafts[-1].content), candidate.day))
         if reason is not None:
@@ -277,6 +328,7 @@ def review_candidates(
         rejections=tuple(rejections),
         removed=tuple(removed),
         outdoor=frozenset(outdoor_drafts),
+        days=frozenset(draft_days),
     )
 
 
@@ -302,25 +354,33 @@ def _check(
     candidate: ActivityCandidate,
     *,
     months: int,
+    rows: Sequence[SafetyEntry] = (),
     seen: Seen,
     docs: Docs,
     known: "_Known",
     far_places: frozenset[str],
     avoided: tuple[str, ...],
     recent: Collection[str],
-    outdoor: Mapping[DayLabel, bool] | None,
+    outdoor: Mapping[str, bool] | None,
     outdoor_days: Mapping[date, bool] | None,
     today: date,
+    ended_today: Collection[str] = (),
+    records: Sequence[tuple[str, int]] = (),
+    dark_today: bool = False,
 ) -> tuple[RejectReason | None, tuple[EvidenceCitation, ...], PlaceRow | EventRow | None]:
     # 1. 안전 필터는 호출부(review_candidates)가 먼저 돌렸다
 
-    # 2. 평가 표현
+    # 2. 음식 활동인데 음식 이름을 안 적었으면 코드가 판정할 것이 없다 — 다시 적게 한다 (#582)
+    if candidate.involves_food and not any(food.strip() for food in candidate.foods):
+        return RejectReason.FOODS_MISSING, (), None
+
+    # 3. 평가 표현
     texts = (candidate.content, candidate.reason)
     notes = tuple(pick.note for pick in candidate.evidence)
     if any(find_evaluative(text) for text in (*texts, *notes)):
         return RejectReason.EVALUATIVE, (), None
 
-    # 3. Activity 검증
+    # 4. Activity 검증
     resolved: list[tuple[EvidencePick, RankedEvidence | ActivityDocRow]] = []
     for pick in candidate.evidence:
         found = _lookup(seen, docs, pick.id)
@@ -328,11 +388,23 @@ def _check(
             return RejectReason.UNKNOWN_EVIDENCE, (), None
         resolved.append((pick, found))
 
+    # 아이 기록을 인용한 이유만 화면에 그대로 나간다 — 일반 추천은 build() 가 코드 문구로 덮는다.
+    # 빼는 말("땅콩 없이")이어도 막힌 음식 이름이 나오면 다시 쓰게 한다. 피한 것(기피 근거)은
+    # 이유에 적어야 해서 허용한다 (Food 와 같은 기준, #575 ⭐3)
+    if any(isinstance(found, RankedEvidence) for _, found in resolved) and mentions_blocked_food(
+        candidate.reason, rows, stage=stage_of(months), months=months, allow=avoided
+    ):
+        return RejectReason.FOOD_MENTION, (), None
+
     reason, place = _attach(candidate, known)
     if reason is not None:
         return reason, (), None
     if isinstance(place, EventRow):
-        open_days = [day for day in days_of(candidate.day, today) if open_on(place, (day,))]
+        open_days = [
+            day
+            for day in days_of(candidate.day, today)
+            if open_on(place, (day,)) and not (day == today and place.name in ended_today)
+        ]
         if not open_days:
             return RejectReason.EVENT_CLOSED, (), None
         if _elsewhere(candidate, place, open_days):
@@ -346,6 +418,19 @@ def _check(
         and any(word in text for text in texts for word in NEARBY_WORDS)
     ):
         return RejectReason.NEARBY_WORDING, (), None
+    # 장소 이름만 보고 시설을 지어내지 않는다 — 공공데이터에 시설 칸이 없다 (#814)
+    if isinstance(place, PlaceRow) and invented_facilities(
+        texts, place_name=place.name, records=records
+    ):
+        return RejectReason.INVENTED_FACILITY, (), None
+    # 해가 진 뒤 오늘 하루에 붙인 놀이터 — 장소 조회와 같은 기준이다 (#800 · #805 리뷰)
+    if (
+        dark_today
+        and isinstance(place, PlaceRow)
+        and place.category == PlaceCategory.PLAYGROUND
+        and days_of(candidate.day, today) == (today,)
+    ):
+        return RejectReason.DARK_PLAYGROUND, (), None
 
     # 그날 날씨 판정이 야외를 막았다(D8 · #377). 표에 없는 날은 판정하지 않은 날이라 막는다 —
     # 맑다고 가정하지 않는다
@@ -501,7 +586,8 @@ def _build(
     today: date,
     requested: bool = False,
 ) -> SuggestionDraft:
-    """allergens 는 안전 필터가 찾은 알레르기 항목 정식 명칭, items 는 후보의 재료다 (#232).
+    """allergens 는 안전 필터가 찾은 알레르기 항목(19종은 정식 명칭, 19종 밖은 보호자가 적은 이름),
+    items 는 후보의 재료다 (#232 · #891).
 
     `requested` 면 보호자가 놀이를 정해 물은 것이다. 아이 기록 근거가 없으면 [예시] 근거 없이도
     일반 추천으로 나가고 이유는 `REQUESTED_REASON` 이다 — 막연한 요청만 [예시]를 근거로 단다.
@@ -517,7 +603,10 @@ def _build(
         citations=citations,
         general_reason=REQUESTED_REASON if requested else GENERAL_REASON,
         allergens=allergens,
-        items=tuple(candidate.materials),
+        # 음식 칸도 준비물이다 — 승인 때 일정 준비물로 쓴다. 재료와 같은 이름은 한 번만
+        items=tuple(
+            dict.fromkeys((*candidate.materials, *(f for f in candidate.foods if f.strip())))
+        ),
         requested=requested,
         today=today,
     )

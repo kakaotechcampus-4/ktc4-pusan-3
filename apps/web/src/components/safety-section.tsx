@@ -11,7 +11,9 @@ import {
   HealthSafetyListSkeleton,
   HealthSafetySheet,
 } from "@/components/health-safety-list";
+import { ToleratedFoodsRow } from "@/components/tolerated-foods";
 import { BottomSheet } from "@/components/ui/bottom-sheet";
+import { Button } from "@/components/ui/button";
 import { EmptyState, EmptyStateSkeleton } from "@/components/ui/empty-state";
 import { Section, SectionAction, SectionError } from "@/components/ui/section";
 import { useSheetTarget } from "@/hooks/use-sheet-target";
@@ -82,6 +84,8 @@ export function SafetySection({
   const photoInputRef = useRef<HTMLInputElement>(null);
 
   const items = query.data?.items ?? [];
+  /** 괜찮았던 식품 (#825). 🚨 알레르기 목록과 다른 필드다 — 건수에도 세지 않는다. */
+  const tolerated = query.data?.tolerated ?? [];
 
   return (
     <Section
@@ -108,6 +112,9 @@ export function SafetySection({
         />
       }
     >
+      {/* 🚨 **알레르기 목록 위의 한 줄이다** (#825). 알레르기가 몇 개든 스크롤 없이 보이고, 없으면 서지 않는다. */}
+      <ToleratedFoodsRow childId={childId} items={tolerated} />
+
       {/* 🚨 **교체 페이드를 걸지 않는다** (디자인 시스템 §8 "하지 않는 것"). 이 목록은 게이트 ㉡ 의 결과라
           불러온 순간이라도 투명도로 흘려보내지 않는다. */}
       {query.isPending ? (
@@ -132,7 +139,7 @@ export function SafetySection({
         <EmptyState
           icon={Shield}
           title="등록된 것이 아직 없어요"
-          description="알레르기나 지병이 확인되면 여기에 적어 두세요. 식사를 제안할 때 이 목록에 있는 것을 먼저 빼요."
+          description="알레르기나 지병이 확인되면 여기에 적어 두세요. 식사를 추천할 때 이 목록에 있는 것을 먼저 빼요."
           count={0}
           countLabel="등록된 항목"
         />
@@ -207,7 +214,18 @@ function AddSafetySheet({
   onPhoto: () => void;
 }) {
   return (
-    <BottomSheet open={open} onClose={onClose} title="알레르기·건강 기록 추가">
+    <BottomSheet
+      open={open}
+      onClose={onClose}
+      title="알레르기·건강 기록 추가"
+      // 🚨 **닫는 버튼을 세운다** (#868 · 디자인 시스템 §7 — 웹뷰에는 ESC 가 없다). 스크림 탭 하나만 남으면 닫는 길이
+      //    화면에 안 보인다. 다른 고르기 시트(`photo-source-sheet.tsx`)와 같은 "닫기" 다.
+      footer={
+        <Button variant="secondary" block onClick={onClose}>
+          닫기
+        </Button>
+      }
+    >
       <div className="flex flex-col gap-2">
         <AddSafetyOption
           title="직접 적기"

@@ -5,7 +5,7 @@ import { Notebook, Search, SlidersHorizontal, Sprout, ThumbsUp, X } from "lucide
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useRef, useState, type FormEvent } from "react";
 
-import { AffinityList, AffinityListSkeleton } from "@/components/affinity-list";
+import { AffinityList, AffinityListSkeleton, STATE_LABEL } from "@/components/affinity-list";
 import { AuthGate } from "@/components/auth-gate";
 import { ChildNav } from "@/components/child-nav";
 import { ConsentRequiredCard } from "@/components/consent-required-card";
@@ -81,17 +81,22 @@ function isTab(value: string | null): value is MemoryTab {
 }
 
 /**
- * 두 목록이 받는 분류. 🚨 **health 가 없다** — 이유가 탭마다 다르다.
- * - 기억: `Affinity.domain` 이 health 를 뺀 3종이다 (승격 파이프라인 밖).
- * - 기록: 건강 관찰은 첫 배포 범위 밖이라 서버가 늘 빈 목록을 준다 (#259). 그대로 두면
- *   "이 조건에 맞는 기록이 없어요" 가 떠서, 건강 이야기를 남긴 보호자에게 사실과 다른 말이 된다 (#269).
+ * 두 목록이 받는 분류. 🚨 **탭마다 다르다.**
+ * - 기록: 네 분류 모두다. 건강 기록도 목록에 나온다 (#764).
+ * - 기억: 🚨 **health 가 없다.** `Affinity.domain` 이 health 를 뺀 3종이다 — 건강 관찰은 승격 파이프라인 밖이라
+ *   건강 기억이 생기지 않는다. 고를 수 있게 두면 늘 "이 조건에 맞는 기억이 없어요" 가 선다.
  *
- * 주소에 `?domain=health` 가 남아 있어도 "전체" 로 읽는다 — 고를 수 없는 값이 고른 채로 서지 않게.
+ * 주소의 `?domain=` 은 탭마다 따로 읽는다. 기억 탭에 `?domain=health` 가 남아 있으면 "전체" 로 읽는다 —
+ * 고를 수 없는 값이 고른 채로 서지 않게.
  */
-type ListDomain = Exclude<Agent, "health">;
+type ProfileDomain = Exclude<Agent, "health">;
 
-function isListDomain(value: string | null): value is ListDomain {
-  return value !== null && value !== "health" && (AGENTS as readonly string[]).includes(value);
+function isObservationDomain(value: string | null): value is Agent {
+  return value !== null && (AGENTS as readonly string[]).includes(value);
+}
+
+function isProfileDomain(value: string | null): value is ProfileDomain {
+  return isObservationDomain(value) && value !== "health";
 }
 
 /* ── 필터 ─────────────────────────────────────────────────────────────── */
@@ -109,23 +114,29 @@ function isFilterState(value: string | null): value is AffinityFilterState {
   return value !== null && (FILTER_STATES as readonly string[]).includes(value);
 }
 
-/** 🚨 health 가 없다 — `isListDomain` 의 이유. 기록과 기억이 같은 선택지를 쓴다. */
-const DOMAIN_OPTIONS = [
+type DomainOption = { value: Agent | "all"; label: string };
+
+/** 기록 탭의 분류 — 건강 포함 (#764). */
+const OBSERVATION_DOMAIN_OPTIONS: readonly DomainOption[] = [
   { value: "all", label: "전체" },
-  ...AGENTS.filter((agent): agent is ListDomain => agent !== "health").map((agent) => ({
-    value: agent,
-    label: domainLabel(agent),
-  })),
-] as const;
+  ...AGENTS.map((agent) => ({ value: agent, label: domainLabel(agent) })),
+];
+
+/** 🚨 기억 탭의 분류 — health 가 없다 (`isProfileDomain` 의 이유). */
+const PROFILE_DOMAIN_OPTIONS: readonly DomainOption[] = OBSERVATION_DOMAIN_OPTIONS.filter(
+  (option) => option.value !== "health",
+);
 
 /**
- * 기록 탭의 상태 필터 — 서버 `?status=` 하나를 고른다 (#266). 주지 않으면 세 상태 모두다.
+ * 기록 탭의 상태 필터 — 서버 `?status=` 하나를 고른다 (#266). 주지 않으면 두 상태 모두다.
  *
  * ⚠️ **"사용되지 않은 기록만"(`unused_in_suggestions`)은 없다.** 이 자리가 상태 필터로 바뀌었고
  *    (#266), 쓰는 곳이 없어 서버에서도 파라미터를 지웠다 (#286).
+ * ⚠️ **"잘못된 기록"(`inactive`)도 없다** (#736). 서버가 남은 행을 `deleted` 로 옮기고 `status=inactive` 를
+ *    400 으로 막는다. 주소에 그 값이 남은 예전 링크는 `isObservationStatusFilter` 에서 걸러 "전체" 로 열린다.
  * 🚨 이름은 고치기 버튼과 **같은 말**이다 (`CORRECTED_OBSERVATION`) — 누른 버튼 이름으로 찾게.
  */
-const OBSERVATION_STATUS_FILTERS = ["all", "active", "stand_alone", "inactive"] as const;
+const OBSERVATION_STATUS_FILTERS = ["all", "active", "stand_alone"] as const;
 type ObservationStatusFilter = (typeof OBSERVATION_STATUS_FILTERS)[number];
 
 function isObservationStatusFilter(value: string | null): value is ObservationStatusFilter {
@@ -136,7 +147,6 @@ const OBSERVATION_STATUS_OPTIONS = [
   { value: "all", label: "전체" },
   { value: "active", label: "고치지 않은 기록" },
   { value: "stand_alone", label: CORRECTED_OBSERVATION.stand_alone.label },
-  { value: "inactive", label: CORRECTED_OBSERVATION.inactive.label },
 ] as const;
 
 /**
@@ -146,8 +156,8 @@ const OBSERVATION_STATUS_OPTIONS = [
  */
 const STATE_OPTIONS = [
   { value: "all", label: "전체" },
-  { value: "confirmed", label: "확인됨" },
-  { value: "candidate", label: "후보" },
+  { value: "confirmed", label: STATE_LABEL.confirmed },
+  { value: "candidate", label: STATE_LABEL.candidate },
 ] as const;
 
 /**
@@ -174,7 +184,7 @@ const FEEDBACK_VIEW_OPTIONS = [
  *
  * 🚨 **주소의 값을 그대로 믿지 않는다.** 서버는 100자 넘는 검색어, 없는 날짜, 시작이 끝보다 늦은
  *    기간, 10,000 을 넘는 쪽을 400 으로 돌려준다 (`api/v1/list_query.py`). 손으로 고친 주소가
- *    실패 화면이 되지 않게, 그런 값은 없는 것으로 읽는다 (`?domain=health` 를 전체로 읽는 것과 같다).
+ *    실패 화면이 되지 않게, 그런 값은 없는 것으로 읽는다 (기억 탭의 `?domain=health` 를 전체로 읽는 것과 같다).
  */
 interface ListParams {
   q: string | null;
@@ -230,7 +240,7 @@ function toListQuery(list: ListParams): ListQuery {
 
 /** 한 번에 바꾸는 것. 주지 않은 칸은 지금 값 그대로다 — 쪽만 예외다 (`setFilter`). */
 interface FilterChange {
-  domain?: ListDomain | null;
+  domain?: Agent | null;
   status?: ObservationStatusFilter;
   state?: AffinityFilterState;
   q?: string | null;
@@ -259,7 +269,10 @@ function MemoriesScreen() {
   const tabParam = searchParams.get("tab");
   const tab: MemoryTab = isTab(tabParam) ? tabParam : "observations";
   const domainParam = searchParams.get("domain");
-  const domain: ListDomain | null = isListDomain(domainParam) ? domainParam : null;
+  const observationDomain: Agent | null = isObservationDomain(domainParam) ? domainParam : null;
+  const profileDomain: ProfileDomain | null = isProfileDomain(domainParam) ? domainParam : null;
+  /** 지금 탭에서 걸린 분류. 피드백 탭은 분류가 없어서 무엇이든 상관없다. */
+  const domain = tab === "profile" ? profileDomain : observationDomain;
   const statusParam = searchParams.get("status");
   const status: ObservationStatusFilter = isObservationStatusFilter(statusParam)
     ? statusParam
@@ -280,7 +293,7 @@ function MemoriesScreen() {
   const tabs: TabItem[] = [
     { key: "observations", label: "기록", href: base },
     { key: "profile", label: "기억", href: `${base}?tab=profile` },
-    { key: "feedback", label: "제안 피드백", href: `${base}?tab=feedback` },
+    { key: "feedback", label: "추천 피드백", href: `${base}?tab=feedback` },
   ];
 
   /**
@@ -322,7 +335,7 @@ function MemoriesScreen() {
         <div className="min-w-0 flex-1">
           <PageTitle>기록과 기억</PageTitle>
           <p className="text-body-sm text-ink-muted mt-2">
-            적어주신 말이 기록으로 쌓이고, 같은 것이 반복되면 기억이 돼요.
+            적어 주신 말이 기록으로 쌓이고, 같은 것이 반복되면 기억이 돼요.
           </p>
         </div>
         <TourHelpButton tour={memoriesTour} />
@@ -337,7 +350,7 @@ function MemoriesScreen() {
         {tab === "observations" ? (
           <ObservationsTab
             childId={childId}
-            domain={domain}
+            domain={observationDomain}
             status={status}
             list={list}
             onFilter={setFilter}
@@ -348,7 +361,7 @@ function MemoriesScreen() {
 
         {tab === "profile" ? (
           <ProfileTab
-            domain={domain}
+            domain={profileDomain}
             state={state}
             list={list}
             onFilter={setFilter}
@@ -463,7 +476,7 @@ function SearchField({
 
 /** 필터 시트가 고르는 것. 두 탭이 같은 모양을 쓰고, 탭에 없는 칸(`status` · `state`)은 무시된다. */
 interface FilterDraft {
-  domain: ListDomain | null;
+  domain: Agent | null;
   status: ObservationStatusFilter;
   state: AffinityFilterState;
   from: string | null;
@@ -553,7 +566,7 @@ function FilterSheet({
             label="분류"
             shape="field"
             value={draft.domain ?? "all"}
-            options={DOMAIN_OPTIONS}
+            options={tab === "observations" ? OBSERVATION_DOMAIN_OPTIONS : PROFILE_DOMAIN_OPTIONS}
             onChange={(next) => setDraft({ ...draft, domain: next === "all" ? null : next })}
           />
           {tab === "observations" ? (
@@ -637,7 +650,7 @@ function ConditionChips({
 }
 
 /** 분류와 기간 칩은 두 탭이 같다. 상태 칩만 탭이 붙인다. */
-function commonConditions(domain: ListDomain | null, list: ListParams): Condition[] {
+function commonConditions(domain: Agent | null, list: ListParams): Condition[] {
   const conditions: Condition[] = [];
   if (domain)
     conditions.push({ key: "domain", label: domainLabel(domain), clear: { domain: null } });
@@ -687,7 +700,7 @@ function ObservationsTab({
   onHasRecords,
 }: {
   childId: string;
-  domain: ListDomain | null;
+  domain: Agent | null;
   status: ObservationStatusFilter;
   list: ListParams;
   onFilter: (next: FilterChange) => void;
@@ -830,7 +843,7 @@ function ProfileTab({
   onOpen,
 }: {
   childId: string;
-  domain: ListDomain | null;
+  domain: ProfileDomain | null;
   state: AffinityFilterState;
   list: ListParams;
   onFilter: (next: FilterChange) => void;
@@ -1030,20 +1043,20 @@ function FeedbackTab({
           ⚠️ 두 줄 안에 둔다 — 기록 · 기억 탭은 조작 줄 바로 아래가 건수 줄이라, 여기서 길어지면 이 탭만
           목록이 한참 아래서 시작한다. 평가한 줄이 피드백 완료로 옮겨 가는 것은 건수가 줄어드는 것으로 보인다. */}
       <p className="text-body-sm text-ink-muted">
-        피드백은 다음 제안에만 반영되고 기억은 그대로 둬요. 기억을 고치려면 기록이나 기억 탭에서
-        고쳐주세요.
+        피드백은 다음 추천에만 반영되고 기억은 그대로 둬요. 기억을 고치려면 기록이나 기억 탭에서
+        고쳐 주세요.
       </p>
 
       <Swap id={phaseOf({ isPending: received.isPending || outOfRange, data: received.data })}>
         {received.isPending || outOfRange ? (
-          <SkeletonGroup label="받은 제안을 불러오는 중" className="flex flex-col gap-3">
+          <SkeletonGroup label="받은 추천을 불러오는 중" className="flex flex-col gap-3">
             <SkeletonText size="caption" width="1/4" />
             <SuggestionFeedbackListSkeleton />
           </SkeletonGroup>
         ) : null}
 
         {received.isError && !received.data ? (
-          <LoadFailed what="받은 제안을" childId={childId} error={received.error} />
+          <LoadFailed what="받은 추천을" childId={childId} error={received.error} />
         ) : null}
 
         {received.data && !outOfRange ? (
@@ -1052,25 +1065,25 @@ function FeedbackTab({
               // 🚨 "아직 받은 제안이 없어요" 라고 하지 않는다 — 다 평가해서 비었을 수도 있다.
               <EmptyState
                 icon={ThumbsUp}
-                title="피드백을 기다리는 제안이 없어요"
-                description="제안을 받아 고르면 여기서 어땠는지 알려줄 수 있어요. 남긴 피드백은 피드백 완료에 있어요."
+                title="피드백을 기다리는 추천이 없어요"
+                description="추천을 받아 고르면 여기서 어땠는지 알려줄 수 있어요. 남긴 피드백은 피드백 완료에 있어요."
                 count={0}
-                countLabel="피드백 전 제안"
+                countLabel="피드백 전 추천"
               />
             ) : (
               <EmptyState
                 icon={ThumbsUp}
                 title="아직 남긴 피드백이 없어요"
-                description="피드백 전에서 제안이 어땠는지 알려주면 여기에 모여요."
+                description="피드백 전에서 추천이 어땠는지 알려 주면 여기에 모여요."
                 count={0}
-                countLabel="피드백 완료 제안"
+                countLabel="피드백 완료 추천"
               />
             )
           ) : (
             <div className="flex flex-col gap-3" aria-busy={received.isPlaceholderData}>
               {/* 🚨 건수는 이 쪽의 줄 수가 아니라 그 보기의 `total` 이다 (기록 · 기억과 같다). */}
               <p ref={top} className="text-caption text-ink-subtle scroll-mt-4">
-                제안 {received.data.total}건
+                추천 {received.data.total}건
               </p>
               <SuggestionFeedbackList
                 suggestions={received.data.items}
@@ -1078,7 +1091,7 @@ function FeedbackTab({
                 onSelect={(suggestion, feedback) => sendFeedback.mutate({ suggestion, feedback })}
               />
               <Pagination
-                label="제안 쪽 넘기기"
+                label="추천 쪽 넘기기"
                 page={page}
                 totalPages={received.data.total_pages}
                 onChange={(next) => {
@@ -1093,7 +1106,7 @@ function FeedbackTab({
 
       {sendFeedback.isError ? (
         <p className="text-body-sm text-ink-muted" role="status">
-          지금은 보내지 못했어요. 잠시 뒤에 다시 눌러주세요.
+          지금은 보내지 못했어요. 잠시 뒤에 다시 눌러 주세요.
         </p>
       ) : null}
     </section>
@@ -1113,7 +1126,7 @@ function LoadFailed({ what, childId, error }: { what: string; childId: string; e
 
   return (
     <div className="bg-surface-muted rounded-card text-body-sm text-ink-muted p-4" role="status">
-      {what} 지금 불러오지 못했어요. 잠시 뒤에 다시 열어주세요.
+      {what} 지금 불러오지 못했어요. 잠시 뒤에 다시 열어 주세요.
     </div>
   );
 }

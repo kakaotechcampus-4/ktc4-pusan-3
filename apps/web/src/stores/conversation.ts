@@ -22,7 +22,7 @@ import type { CreateInputResponse, InputLocation } from "@/lib/api/types";
 import { refreshAfterRun, refreshTodayChat } from "@/lib/chat-history";
 import { toSeoulDateKey } from "@/lib/format";
 import { readCoarseLocation } from "@/lib/location";
-import { getQueryClient } from "@/lib/query-client";
+import { getQueryClient, refreshMeOnLostChild } from "@/lib/query-client";
 import { useDraftStore } from "@/stores/draft";
 import { useEventDraftStore } from "@/stores/event-draft";
 import { useMedicationDraftStore } from "@/stores/medication-draft";
@@ -193,7 +193,7 @@ const keyBooks = new Map<string, Map<string, IdempotencyKey>>();
 /**
  * 키 → 그 키로 보낸 흐린 위치 (`null` = 위치 없이 보냈다) (#593).
  *
- * 🚨 **같은 키는 같은 본문이어야 한다** (`422 idempotency_key_reuse`). 위치는 보낼 때마다 다시 읽으면 달라질 수 있어서
+ * 🚨 **같은 키는 같은 본문이어야 한다** — 서버는 같은 키면 본문을 보지 않고 처음 응답을 재생한다. 위치는 보낼 때마다 다시 읽으면 달라질 수 있어서
  *    `keyPayload` 에 넣지 않고, 키가 처음 나갈 때 읽은 값을 여기 붙든다. 다시 시도 · 같은 문장을 다시 적어 같은 키가
  *    나간 줄은 그 값을 그대로 싣는다 — 그 사이 동의를 껐어도 같다(서버가 동의를 읽어 버린다 · #380).
  * 🚨 **메모리에만 산다.** 키를 놓을 때(`releaseKey`) · 로그아웃(`clearAll`) 때 지운다. 웹 저장소에 두지 않는다.
@@ -280,7 +280,7 @@ export function isReplaceable(turn: ChatTurn): boolean {
 /**
  * 같은 자리에서 **같은 키로** 다시 보낼 수 있는가.
  * 🚨 **서버가 거절한 4xx 는 전부 아니다** — 같은 키 · 같은 본문이면 몇 번을 보내도 같은 답이다 (#147 · #175).
- *    한동안 429 · 400 · 403(동의) 셋만 골라 뺐더니, 2000자 초과 같은 형식 거절과 `child_access_denied` 에
+ *    한동안 429 · 400 · 403(동의) 셋만 골라 뺐더니, 글자 수 상한 초과 같은 형식 거절과 `child_access_denied` 에
  *    눌러도 같은 실패만 나오는 버튼이 섰다 (#231 리뷰). 다시 시도는 응답을 못 받은 경우(네트워크 · 5xx)의 것이다.
  */
 export function canRetry(turn: ChatTurn): boolean {
@@ -316,7 +316,7 @@ function findTurn(childId: string, turnId: string): ChatTurn | undefined {
  *
  * 🚨 **`text` 만으로는 부족하다.** 요청 지문은 `method + 경로 + 요청 본문` 이라
  *    (`docs/api/idempotency-v1.md` §3-2), "네" 라는 같은 답을 서로 다른 질문에 보내면
- *    같은 키에 다른 본문(`reply_to`)이 실려 `422 idempotency_key_reuse` 가 된다.
+ *    같은 키에 다른 본문(`reply_to`)이 실리고, 서버는 앞 질문의 응답을 재생해 이 답은 처리되지 않는다.
  * 🚨 필드를 더하면 **여기도 같이** 더한다 — 빠뜨리면 그 필드만 바뀐 요청이 조용히 같은 키로 나간다.
  */
 export function keyPayload(body: InputRequest): string {
@@ -573,6 +573,9 @@ export function isRejected(error: unknown): boolean {
  *   남긴다** — 그때는 말풍선이 원문의 자리이고, 화면은 "고쳐 쓰기" 로 나중에 꺼내게 한다 (#231 리뷰).
  */
 function failSend(childId: string, turn: ChatTurn, error: unknown): void {
+  // 보는 중에 아이 연결이 끊겼으면 `/me` 를 다시 받아 화면째 "볼 수 없는 아이" 로 바뀐다 (#802).
+  // 쿼리 캐시를 거치지 않는 요청이라 여기서 직접 부른다.
+  refreshMeOnLostChild(getQueryClient(), error);
   const lostContext = isApiError(error, "reply_context_unavailable");
   // 지난 턴의 질문이었으면 서버의 `reply_open` 도 닫혔다 — 오늘 장을 다시 받아야 "닫힘" 으로 바뀐다 (#228).
   if (lostContext) void refreshTodayChat(getQueryClient(), childId);
