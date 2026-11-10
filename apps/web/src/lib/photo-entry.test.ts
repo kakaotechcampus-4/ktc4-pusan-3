@@ -4,9 +4,11 @@ import type { PhotoEntry } from "@/lib/api/types";
 import {
   canBecomeEvent,
   carriedEndsAt,
+  commitEntry,
   droppedEnd,
   entryDateLabel,
   entryDateRole,
+  entryDetails,
   eventBody,
   eventWhen,
   initialPlan,
@@ -362,5 +364,62 @@ describe("eventWhen", () => {
     expect(eventWhen("2026-11-23T00:00:00+09:00", "2026-11-23T23:59:00+09:00", true)).toMatch(
       /하루 종일$/,
     );
+  });
+});
+
+describe("entryDetails", () => {
+  const place = { name: "장소", value: "강당" };
+  const arrive = { name: "등원 시각", value: "당일은 9시까지 등원" };
+
+  it("서버가 보낸 순서 그대로 돌려준다", () => {
+    expect(entryDetails(entry({ details: [arrive, place] }))).toEqual([arrive, place]);
+  });
+
+  it("칸이 빠져 오거나 비어 있으면 그릴 것이 없다", () => {
+    expect(entryDetails(entry({}))).toEqual([]);
+    expect(entryDetails(entry({ details: [] }))).toEqual([]);
+  });
+
+  it("🚨 급식에는 그리지 않는다 — 실려 와도", () => {
+    expect(entryDetails(entry({ kind: "meal", details: [place] }))).toEqual([]);
+  });
+
+  it("이름이나 값이 공백뿐인 줄은 뺀다 — 빈 이름표 · 빈 값을 세우지 않는다", () => {
+    expect(
+      entryDetails(
+        entry({ details: [{ name: " ", value: "강당" }, { name: "금액", value: "  " }, place] }),
+      ),
+    ).toEqual([place]);
+  });
+
+  it("서버 상한 12줄을 자르지 않는다", () => {
+    const twelve = Array.from({ length: 12 }, (_, i) => ({ name: `이름${i}`, value: `값${i}` }));
+    expect(entryDetails(entry({ details: twelve }))).toEqual(twelve);
+  });
+
+  it("🚨 값을 고치지 않는다 — 꺾쇠가 든 글자도 그대로다 (HTML 로 읽지 않는다)", () => {
+    const odd = { name: "안내", value: "<b>강당</b> & 체육관" };
+    expect(entryDetails(entry({ details: [odd] }))).toEqual([odd]);
+  });
+});
+
+describe("commitEntry", () => {
+  it("🚨 저장 본문에 딸린 정보를 싣지 않는다 — 고칠 수 없는 값이라 서버가 보관한 값으로 저장한다", () => {
+    const body = commitEntry(entry({ details: [{ name: "장소", value: "강당" }] }), "ev_1");
+    expect(body).not.toHaveProperty("details");
+  });
+
+  it("넣은 일정의 id 를 싣고, 안 넣었으면 null 이다", () => {
+    expect(commitEntry(entry({}), "ev_1").event_id).toBe("ev_1");
+    expect(commitEntry(entry({}), undefined).event_id).toBeNull();
+  });
+
+  it("고친 제목 · 날짜 · 준비물은 그대로 싣는다", () => {
+    const fixed = entry({ title: "고친 제목", date: "2026-11-20", items: ["물병"] });
+    expect(commitEntry(fixed, undefined)).toMatchObject({
+      title: "고친 제목",
+      date: "2026-11-20",
+      items: ["물병"],
+    });
   });
 });

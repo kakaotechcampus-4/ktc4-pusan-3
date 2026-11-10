@@ -36,8 +36,10 @@ import {
 import { playEnter, useFlip } from "@/lib/motion";
 import {
   canBecomeEvent,
+  commitEntry,
   entryDateLabel,
   entryDateRole,
+  entryDetails,
   eventBody,
   eventWhen,
   initialPlan,
@@ -438,11 +440,9 @@ export function PhotoReview({
        *    출처로 단다 — 안 실으면 캘린더의 일정과 저장한 공지가 서로를 모른다.
        *    넣은 뒤 "이 항목은 저장하지 않기" 를 고른 항목은 `checked` 에 없어서 실리지 않는다.
        *    일정은 남고 출처만 비는 것이라 그대로 둔다.
+       * 🚨 딸린 정보(`details`)는 싣지 않는다 — 고칠 수 없는 값이다 (`commitEntry`).
        */
-      entries: checked.map((entry) => ({
-        ...entry,
-        event_id: added[entry.id]?.event_id ?? null,
-      })),
+      entries: checked.map((entry) => commitEntry(entry, added[entry.id]?.event_id)),
       attach_to_calendar: attachToCalendar,
     });
   }
@@ -908,6 +908,12 @@ function EntryRow({
             캘린더에 들어간 값이다 — 한 줄에 합치면 저장하지도 않은 것이 들어간 것처럼 읽힌다. */}
         {added ? <EntryMeta term="캘린더" value={calendarValue(entry, added)} /> : null}
         {entry.items.length > 0 ? <EntryMeta term="준비물" value={entry.items.join(", ")} /> : null}
+        {/* 🚨 **딸린 정보는 준비물 아래 같은 모양으로 선다** — 시트를 열지 않아도 "9시까지 등원" 이 보여야 한다.
+            일시와 다른 시각이 여기 실려 온다. 고칠 칸은 없다(`entryDetails`). 없으면 줄째 없다.
+            🚨 외부 텍스트다. 텍스트로만 그린다. */}
+        {entryDetails(entry).map((detail, index) => (
+          <EntryMeta key={`${index}-${detail.name}`} term={detail.name} value={detail.value} />
+        ))}
       </dl>
 
       {/* 🚨 왜 확인이 필요한지는 **서버가 만든 문구**다. 프론트가 추측해 쓰지 않는다. */}
@@ -985,8 +991,11 @@ function EntryMeta({
   return (
     <div className="flex gap-3">
       <dt className="text-body-sm text-ink-subtle shrink-0 basis-16">{term}</dt>
-      {/* 🚨 못 읽은 값도 **글자로** 말한다. 빈칸으로 두면 부모가 없는 건지 못 읽은 건지 모른다. */}
-      <dd className={cn("text-body-sm min-w-0", missing ? "text-ink-muted" : "text-ink")}>
+      {/* 🚨 못 읽은 값도 **글자로** 말한다. 빈칸으로 두면 부모가 없는 건지 못 읽은 건지 모른다.
+          🚨 `break-words` — 딸린 정보는 200자까지 온다. 띄어쓰기 없는 긴 값(주소 등)이 카드 밖으로 넘치지 않게 한다. */}
+      <dd
+        className={cn("text-body-sm min-w-0 break-words", missing ? "text-ink-muted" : "text-ink")}
+      >
         {value}
       </dd>
     </div>

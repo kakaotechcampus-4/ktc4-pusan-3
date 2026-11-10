@@ -196,6 +196,15 @@ function noticeEntries(): PhotoEntry[] {
       starts_at: null,
       ends_at: null,
       due_at: seoulAt(consentDue, "23:59"),
+      // 🚨 긴 값이 줄을 바꾸는지 보려고 한 줄은 길게 둔다 (서버 상한 200자 · `assemble.py`).
+      details: [
+        { name: "체험비", value: "30,000원" },
+        {
+          name: "회신 방법",
+          value:
+            "동의서에 서명해서 가방에 넣어 보내 주세요. 참여하지 않으면 아래 칸에 표시해 주세요.",
+        },
+      ],
     },
     {
       id: "pe_8",
@@ -211,6 +220,12 @@ function noticeEntries(): PhotoEntry[] {
       starts_at: seoulAt(classDay, "10:00"),
       ends_at: seoulAt(classDay, "12:00"),
       due_at: seoulAt(classDue, "23:59"),
+      // 🚨 딸린 정보(`details`). 일시(10시)와 다른 시각("9시까지 등원")이 여기 실려 온다 — 화면이 안 그리면
+      //    보호자가 못 본다. 이름은 문서마다 달라서 서버도 화면도 코드로 가르지 않는다.
+      details: [
+        { name: "장소", value: "강당" },
+        { name: "등원 시각", value: "당일은 9시까지 등원" },
+      ],
     },
     {
       id: "pe_9",
