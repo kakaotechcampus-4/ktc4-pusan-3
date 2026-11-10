@@ -6,8 +6,8 @@
 | id | 제목 | 칸 | 담당 (제안) | 테스트 |
 | --- | --- | --- | --- | --- |
 | ISSUE-F7 | [BE Fix] 멱등 재생 값이 깨져 있으면 같은 키 재시도가 24시간 500 이다 | IDEM-C | 명성 | `test_f7_broken_replay.py` (xfail) |
-| ISSUE-F8-a | [BE Chore] DB 쿼리 · 잠금 대기 시간 상한(statement_timeout · lock_timeout) 정하기 | CUR-B · SAVE-B · SAFE-B | 명성 | 없음 — 설정 결정이 먼저 |
-| ISSUE-F8-b | [BE Refactor] Curator 가 아이 잠금을 쥔 채 임베딩 · 판정 모델을 부른다 | CUR-B | 시하 (명성 협의 — `app/domains` ↔ `app/agents`) | 없음 — 설계 결정이 먼저 |
+| ISSUE-F8-a → #936 | [BE Chore] DB 쿼리 · 잠금 대기 시간 상한(statement_timeout · lock_timeout) 정하기 | CUR-B · SAVE-B · SAFE-B | 명성 | 없음 — 설정 결정이 먼저 |
+| ISSUE-F8-b → #937 | [BE Refactor] Curator 가 아이 잠금을 쥔 채 임베딩 · 판정 모델을 부른다 | CUR-B | 시하 (명성 협의 — `app/domains` ↔ `app/agents`) | 없음 — 설계 결정이 먼저 |
 | ISSUE-F2-UX → #914 | [AI Feat] 모델이 멈추면 보호자가 60초를 기다린 뒤 실패를 본다 — Supervisor 에 20초 상한 (Memory 는 그대로) | SUP-B · MEM-B | 시하 | `test_supervisor_agent.py` · `test_pipeline.py` 의 상한 테스트 |
 
 ---
