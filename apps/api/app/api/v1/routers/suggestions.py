@@ -1009,9 +1009,10 @@ def _general_out(row, docs: list[DocEvidenceOut], record_count: int) -> GeneralS
     description=(
         "05 의 되묻기 질문에 보호자가 고른 답을 받는 자리다. 아직 받지 않는다 — 언제나 501 "
         "`not_implemented` 로 답한다. 서버가 질문의 선택지(`scarcity.question.options`)를 채워 "
-        "보내지 않아서 화면에 답 칩이 서지 않고, 웹도 이 주소를 부르지 않는다."
+        "보내지 않아서 화면에 답 칩이 서지 않는다."
     ),
     status_code=200,
+    response_description="지금은 오지 않는다 — 언제나 501 이다",
     response_model=AnswerResponse,
     responses={501: {"model": ErrorEnvelope}},
 )
