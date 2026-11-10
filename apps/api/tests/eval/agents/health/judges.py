@@ -1542,6 +1542,15 @@ def _visit_failures(world: World, timeline: Readout) -> list[str]:
     recent = [m for m in spec.meals if meal_from <= m.observed_on <= today]
     if recent and not any(m.subject in line for m in recent for line in content):
         failures.append("최근 3일 식사가 있는데 식사 줄이 없다")
+    # 체온 — "병원 가려는데 최근 증상 정리해줘" 가 "발열" 만 내고 몇 도였는지를 뺐다. 가장 짧은
+    # 조회 기간(3일) 안의 가장 높은 체온은 어떤 기간을 골라도 그 에피소드 줄의 최고값으로 나온다
+    temps = [
+        o.temperature
+        for o in spec.observations
+        if o.symptoms and o.temperature is not None and o.observed_to >= meal_from
+    ]
+    if temps and f"{max(temps)}℃" not in joined:
+        failures.append(f"최근 3일 체온 기록이 있는데 가장 높은 체온 {max(temps)}℃ 가 정리에 없다")
     return failures
 
 
@@ -1603,6 +1612,7 @@ def _symptom_candidates(world: World, first_day: date) -> list[str]:
             code=episode.code,
             texts=(),
             members=[by_id[i] for i in episode.observation_ids],
+            timezone=tz,
         )
         for episode in group_symptom_episodes(rows, timezone=tz)
     ]
@@ -1611,7 +1621,12 @@ def _symptom_candidates(world: World, first_day: date) -> list[str]:
         if texts:
             lines.append(
                 symptom_line(
-                    row.observed_from, row.observed_to, code=None, texts=texts, members=[row]
+                    row.observed_from,
+                    row.observed_to,
+                    code=None,
+                    texts=texts,
+                    members=[row],
+                    timezone=tz,
                 )
             )
     return lines
