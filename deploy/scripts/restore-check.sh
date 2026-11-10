@@ -32,12 +32,15 @@ trap 'fail "예상 못 한 실패 (줄 $LINENO)"' ERR
 # 섞이지 않고, quiet 가 stderr 를 가져가도 로그 파일로 간다.
 exec 3>&1
 limit() {
-  local s="$1" rc=0
+  local s="$1" rc=0 t0=$SECONDS
   shift
   if command -v timeout >/dev/null; then timeout -k 10 "$s" "$@" || rc=$?; else "$@" || rc=$?; fi
-  # 124 = TERM 으로 끊김, 137 = TERM 을 무시해 10초 뒤 KILL 로 끊김.
+  # 124 = TERM 으로 끊김, 137 = TERM 을 무시해 10초 뒤 KILL 로 끊김. 137 은 안에서 KILL(임시 DB 의
+  # 768MB 상한 OOM 등)로 죽어도 같은 값이라, 상한까지 갔을 때만 시간 상한으로 적는다.
   # ${*:1:3} — set -u 라 $3 을 바로 쓰면 인자가 적은 명령에서 여기서 죽고 fail(알림)까지 못 간다
-  case "$rc" in 124 | 137) log "시간 상한 ${s}초에 걸려 끊었다 (exit $rc) — ${*:1:3}" >&3 ;; esac
+  if [ "$rc" = 124 ] || { [ "$rc" = 137 ] && [ $((SECONDS - t0)) -ge "$s" ]; }; then
+    log "시간 상한 ${s}초에 걸려 끊었다 (exit $rc) — ${*:1:3}" >&3
+  fi
   return "$rc"
 }
 
