@@ -4,20 +4,25 @@ Supervisor 가 실패해도 입력 처리는 계속돼야 한다 — run() 은 �
 돌려주고, **재시도하지 않는다**. 강등 여부는 pipeline 이 정한다 (supervisor_plan S5).
 """
 
+import asyncio
 import json
 import logging
+import time
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
 from app.agents.common.llm_client import LLMBadRequestError, LLMResponse, LLMUnavailableError
+from app.agents.supervisor import agent as agent_module
 from app.agents.supervisor.agent import (
     _FORCE_ROUTE,
     BAD_JSON,
     LLM_UNAVAILABLE,
     NO_TOOL_CALL,
     SCHEMA,
+    SUPERVISOR_TIMEOUT_S,
+    TIMEOUT,
     _attempts,
     run,
 )
@@ -276,6 +281,60 @@ async def test_전부_거절되면_LLM_오류로_끝낸다() -> None:
 
     assert result.error == LLM_UNAVAILABLE
     assert result.model_calls == 3  # tool_choice 3가지
+
+
+# ── 시간 상한 (#914) ────────────────────────────────────────────
+class HangingLLM(FakeLLM):
+    """답을 주지 않고 멈춘다. 상한이 끊어야 테스트가 끝난다."""
+
+    async def chat(self, **params: Any) -> LLMResponse:
+        self.calls.append(params)
+        await asyncio.sleep(3600)
+        raise AssertionError("상한이 끊지 못했다")
+
+
+async def test_모델이_멈추면_상한에서_예외_없이_실패로_끝낸다(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(agent_module, "SUPERVISOR_TIMEOUT_S", 0.05)
+    llm = HangingLLM()
+
+    result = await asyncio.wait_for(run(RAW, client=llm), timeout=5)
+
+    assert result.error == TIMEOUT
+    assert result.detail == "TimeoutError"  # 예외 이름만 — 원문은 싣지 않는다
+    assert result.output is None
+    assert result.model_calls == 1
+    assert len(llm.calls) == 1  # 멈춘 호출을 다른 tool_choice 로 다시 부르지 않는다
+
+
+async def test_상한은_폴백_재시도까지_합친_시간이다(monkeypatch: pytest.MonkeyPatch) -> None:
+    """첫 호출이 거절로 상한을 다 쓰고 돌아오면 다음 tool_choice 를 부르지 않는다."""
+    monkeypatch.setattr(agent_module, "SUPERVISOR_TIMEOUT_S", 0.05)
+
+    class SlowReject(FakeLLM):
+        async def chat(self, **params: Any) -> LLMResponse:
+            self.calls.append(params)
+            time.sleep(0.06)  # await 없이 상한을 넘긴다 — 취소가 아니라 남은 시간 검사가 막는다
+            raise LLMBadRequestError("tool_choice")
+
+    llm = SlowReject()
+    result = await run(RAW, client=llm)
+
+    assert result.error == TIMEOUT
+    assert result.model_calls == 1
+    assert len(llm.calls) == 1
+
+
+async def test_상한_안에서_답하면_그대로_쓴다() -> None:
+    result = await run(RAW, client=FakeLLM(_route(_GOOD)))
+
+    assert result.ok
+    assert result.error is None
+
+
+def test_상한은_20초다() -> None:
+    assert SUPERVISOR_TIMEOUT_S == 20.0
 
 
 # ── 로그 ────────────────────────────────────────────────────────

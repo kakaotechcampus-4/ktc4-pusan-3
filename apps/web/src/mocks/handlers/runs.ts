@@ -1005,7 +1005,7 @@ export const runHandlers = [
           location?: InputLocation;
         };
 
-        // 서버는 핸들러보다 먼저 스키마로 거절한다 — 앞뒤 공백을 떼고 2000자 초과면 400 (#867).
+        // 서버는 핸들러보다 먼저 스키마로 거절한다 — 앞뒤 공백을 떼고 상한(500자)을 넘으면 400 (#867).
         // 화면은 보내기 전에 막아서 여기 닿지 않는다. 목이 서버처럼 거절하는지는 `contract.test.ts` 가 건다.
         if ([...body.text.trim()].length > INPUT_TEXT_MAX_LENGTH) {
           return apiError(400, "validation_failed", "요청 형식이 올바르지 않아요", {
