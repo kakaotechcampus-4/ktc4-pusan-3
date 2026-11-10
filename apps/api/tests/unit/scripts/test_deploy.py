@@ -12,6 +12,9 @@ docker · git · sleep 을 가짜로 바꿔 돈다. docker · git 은 받은 인
     FAKE_CADDY_INVALID docker run … caddy validate
     FAKE_RELOAD_FAIL   docker exec ktc4-caddy caddy reload
     FAKE_BACKUP_FAIL   배포 전 백업(가짜 deploy/scripts/backup.sh)
+    FAKE_LOGS_FAIL     compose logs (api 로그 읽기)
+
+`compose logs` 는 FAKE_LOGS 를 그대로 찍는다 (api 컨테이너가 뜰 때 남긴 로그 자리).
 
 `compose config --format json` 은 FAKE_CONFIG 를 그대로 찍는다
 (compose 가 .env 를 해석한 결과 자리).
@@ -80,6 +83,7 @@ case "$*" in
   *" config --images"*)
     printf "redis:7-alpine\ncaddy:2.10.0-alpine\nktc4-dev-api:%s\n" "$API_IMAGE_TAG" ;;
   *" pull "*) [ -z "$FAKE_PULL_FAIL" ] ;;
+  *" logs "*) [ -z "$FAKE_LOGS_FAIL" ] || exit 1; printf '%s\n' "$FAKE_LOGS" ;;
   *" up "*) case " $FAKE_UP_FAIL " in *" $API_IMAGE_TAG "*) exit 1 ;; esac ;;
   *" run "*) [ -z "$FAKE_RUN_FAIL" ] ;;
 esac
@@ -182,6 +186,46 @@ def test_success_records_tag_and_keeps_only_current_and_previous(box):
     assert any(" build --quiet api web " in c for c in calls)
     removed = [c.split()[3] for c in calls if c.startswith("docker image rm")]
     assert removed == ["ktc4-dev-api:old"]
+
+
+API_LOGS = (
+    "ktc4-dev-api  | 2026-11-10 15:00:00+0900 INFO app.api.cors CORS 를 켠다\n"
+    "ktc4-dev-api  | 2026-11-10 15:00:01+0900 WARNING app.api.startup_report "
+    "꺼져 있는 기능 1개 — 사진 받기 — 올리면 503 (PHOTO_UPLOAD_ACCEPT=false)\n"
+    "ktc4-dev-api  | 2026-11-10 15:00:02+0900 INFO uvicorn.error Application startup complete."
+)
+
+
+def test_success_shows_which_features_are_off(box):
+    """api 가 뜰 때 남긴 "꺼져 있는 기능" 한 줄을 배포 출력에도 보인다 (#912 리뷰).
+
+    서버 로그(journald)에만 있으면 배포한 사람이 못 본다. 배포 출력은 Actions 화면에 그대로 뜬다.
+    """
+    result = box(logs=API_LOGS)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "꺼져 있는 기능 1개 — 사진 받기" in result.stdout
+    # 그 줄만 — 다른 로그 줄까지 쏟지 않는다
+    assert "Application startup complete" not in result.stdout
+    assert any(" logs " in c and c.split(" tag=")[0].endswith(" api") for c in box.calls())
+
+
+@pytest.mark.parametrize("fail", [{"logs_fail": "1"}, {"logs": "아무 줄도 없다"}, {}])
+def test_unreadable_api_logs_never_fail_the_deploy(box, fail):
+    """로그를 못 읽거나 그 줄이 없어도 배포는 성공이다 — 보여 주는 것일 뿐이다."""
+    result = box(**fail)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert box.tag_file.read_text().strip() == "new"
+
+
+def test_rolled_back_deploy_does_not_read_api_logs(box):
+    # 떠 있는 것은 직전 버전이다 — 새 버전의 줄인 것처럼 보이면 안 된다
+    result = box(up_fail="new", logs=API_LOGS)
+
+    assert result.returncode == 1
+    assert "꺼져 있는 기능" not in result.stdout
+    assert not any(" logs " in c for c in box.calls())
 
 
 def test_every_up_waits_for_health_and_never_builds_or_pulls(box):
