@@ -125,6 +125,13 @@ const SCREENS: Array<{ name: string; path: string; ready: string; scenario?: Sce
     scenario: "empty",
   },
   {
+    // 기록 0건이어도 오늘 급식이 있으면 빈 상태 위에 "오늘" 구역이 선다
+    name: "03 홈 · 기록 0건 · 오늘 급식",
+    path: `/child/${CHILD}/home`,
+    ready: "아래에 한 줄 적으면 여기에 쌓여요",
+    scenario: "empty_meal",
+  },
+  {
     name: "11 아이 프로필 · 0건",
     path: `/child/${CHILD}/profile`,
     ready: "등록된 것이 아직 없어요",
