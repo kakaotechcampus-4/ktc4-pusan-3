@@ -686,6 +686,28 @@ export const suggestionHandlers = [
       if (sids.some((sid) => linkedSuggestions.has(sid))) {
         return apiError(409, "already_confirmed", "이미 캘린더에 넣은 제안이에요");
       }
+
+      /**
+       * 🚨 **초안을 만든 뒤에 등록된 알레르기를 제출이 다시 본다** (서버 #902). ⚠️ 서버 PR 보다 목이 먼저다.
+       *    05 승인 시트는 열어 둔 채 몇 시간 뒤에도 넣을 수 있고, 초안이 여러 장이면 한 장씩 넣는 사이에도 시간이
+       *    흐른다. 판정 · 응답은 초안 만들기와 같다 — 하나라도 걸리면 일정을 넣지 않고 걸린 id 를 요청 순서대로
+       *    싣는다. 오류 순서도 서버와 같다: `already_confirmed` 다음에 403 `consent_required` → 409 `allergen_blocked`.
+       *    알레르기 항목이 없는 제안뿐이면(직접 만든 일정 포함) 건강정보를 읽지 않는다.
+       *    `withIdempotency` 는 실패를 기억하지 않아서, 같은 키로 다시 보내면 여기를 다시 지난다 — 서버와 같다.
+       */
+      const withAllergens = sids.filter((sid) => allergensOf(sid).length > 0);
+      if (withAllergens.length > 0) {
+        if (currentScenario() === "consent") return consentRequired("child_health");
+        const blocked = withAllergens.filter((sid) => !notBlocked({ id: sid }));
+        if (blocked.length > 0) {
+          return apiError(
+            409,
+            "allergen_blocked",
+            "알레르기로 등록된 항목이 들어 있어 일정으로 만들 수 없어요",
+            { suggestion_ids: blocked },
+          );
+        }
+      }
       for (const sid of sids) linkedSuggestions.add(sid);
 
       /**

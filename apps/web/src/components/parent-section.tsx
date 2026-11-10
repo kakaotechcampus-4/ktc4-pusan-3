@@ -259,7 +259,7 @@ export function ParentSection({
           <ul className="text-body-sm text-ink-muted marker:text-ink-subtle flex list-disc flex-col gap-1.5 pl-5">
             {/* 🚨 바로 위 설명이 한 말을 다시 적지 않는다. 시트 머리와 본문이 같은 문장을
                 두 번 하면 읽는 사람이 둘 중 하나를 건너뛴다. */}
-            <li>코드를 입력한 사람은 이 아이의 기록과 제안을 함께 보게 돼요.</li>
+            <li>코드를 입력한 사람은 이 아이의 기록과 추천을 함께 보게 돼요.</li>
             <li>한 번 쓰면 그 코드는 닫혀요. 여러 명을 초대하려면 그만큼 만들어 주세요.</li>
           </ul>
         )}
@@ -315,14 +315,14 @@ export function ParentSection({
           <div className="flex flex-col gap-4">
             {leaving ? (
               <ul className="text-body text-ink marker:text-ink-subtle flex list-disc flex-col gap-2 pl-5">
-                <li>이 아이의 기록과 제안을 더는 볼 수 없어요.</li>
+                <li>이 아이의 기록과 추천을 더는 볼 수 없어요.</li>
                 <li>내가 적은 기록은 아이에게 남고, 적은 사람으로 내 이름이 보여요.</li>
                 <li>내가 쓴 일기와 일정에 걸어 둔 알림은 지워져요.</li>
                 <li>다시 함께 보려면 아이를 등록한 보호자에게 초대 코드를 새로 받아야 해요.</li>
               </ul>
             ) : (
               <ul className="text-body text-ink marker:text-ink-subtle flex list-disc flex-col gap-2 pl-5">
-                <li>이 아이의 기록과 제안을 더는 볼 수 없어요.</li>
+                <li>이 아이의 기록과 추천을 더는 볼 수 없어요.</li>
                 <li>그동안 적어 준 기록은 남아요. 누가 적었는지도 그대로예요.</li>
                 <li>
                   {josa(disconnectingName, "이/가")} 쓴 일기와 일정에 걸어 둔 알림은 지워져요.

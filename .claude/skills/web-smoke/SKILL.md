@@ -72,7 +72,7 @@ node .claude/skills/web-smoke/smoke.mjs
 
 ```json
 {
-  "name": "05 제안 후보",
+  "name": "05 추천 후보",
   "path": "/child/c1/suggestions",
   "auth": true,
   "expect": "/child/c1/suggestions",

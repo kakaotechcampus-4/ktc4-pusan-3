@@ -60,7 +60,7 @@ export function MedicationDraftList({
       <div>
         <h3 className="text-label text-brand">복약 일정으로 넣을까요?</h3>
         <p className="text-body-sm text-ink-muted mt-1">
-          적어주신 말에서 복약을 찾았어요. 넣기 전까지는 등록되지 않아요.
+          적어 주신 말에서 복약을 찾았어요. 넣기 전까지는 등록되지 않아요.
         </p>
       </div>
 

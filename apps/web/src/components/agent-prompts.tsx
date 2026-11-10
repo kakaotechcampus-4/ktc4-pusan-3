@@ -132,7 +132,7 @@ function PromptButton<T extends AgentPrompt>({
 /** 받는 동안의 알약 두 개. `PromptButton` 과 같은 테두리 · 높이 · 칩 자리다. */
 function PromptPillSkeletons() {
   return (
-    <li role="status" aria-label="제안을 불러오는 중" className="flex shrink-0 gap-2">
+    <li role="status" aria-label="추천을 불러오는 중" className="flex shrink-0 gap-2">
       {[0, 1].map((i) => (
         <span key={i} aria-hidden className={cn(PROMPT_PILL, "w-64")}>
           {/* 도메인 칩 자리 (`DomainChip` · 28px 알약) */}

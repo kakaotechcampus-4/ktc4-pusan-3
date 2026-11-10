@@ -9,6 +9,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from functools import cache
+from typing import get_args
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -26,6 +27,7 @@ from app.agents.activity.store.ports import (
 from app.agents.activity.store.ports import SafetyReader as ActivitySafetyReader
 from app.agents.common.allergy import allergen_states, shared_book
 from app.agents.common.child_values import ChildValues
+from app.agents.common.config import AgentConfigError, AgentSettings, get_agent_settings
 from app.agents.common.datetime_rules import today_of
 from app.agents.common.errors import FailReason
 from app.agents.common.failure import failure_message
@@ -137,6 +139,7 @@ from app.agents.supervisor.context import (
     PriorTurn,
 )
 from app.agents.supervisor.routing import Guidance
+from app.core.agent_config import AgentRole
 from app.rules.age import months_between
 
 # api가 이 파일만 보면 되도록 진행 이벤트 타입도 여기서 내보냄
@@ -218,6 +221,7 @@ __all__ = [
     "describe_docs",
     "empty_notice",
     "handle_input",
+    "llm_gaps",
     "recommendation_task_type",
     "suggest",
 ]
@@ -255,6 +259,49 @@ def curator_deps() -> tuple[TextEmbedder | None, IdentityJudge | None]:
     except LLMConfigError:
         logger.debug("CURATOR_JUDGE_* 미설정 — curator judge 비활성")
     return embedder, judge
+
+
+def llm_gaps(settings: AgentSettings | None = None) -> tuple[str, ...]:
+    """LLM 을 부를 수 없는 자리. 서버가 뜰 때 한 번 알리려고 본다 (`app/api/startup_report.py`).
+
+    키가 빠져도 서버는 뜬다 — 그 역할의 첫 호출에서야 `llm_misconfigured` 로 드러난다.
+    역할의 값이 비면 MEMORY_* 를 빌려 쓰는 규칙(`AgentSettings.profile`)을 그대로 거친 뒤에도
+    비어 있는 것만 낸다. 같은 이유로 걸린 역할은 한 줄로 묶는다 — MEMORY_* 가 비면 여섯 역할이
+    다 걸린다.
+
+    🚨 설정 이름만 싣는다. 값(키 · 주소)은 싣지 않는다 — 로그로 나가는 글이다.
+    """
+    s = settings or get_agent_settings()
+    roles_by_reason: dict[str, list[str]] = {}
+    for role in get_args(AgentRole):
+        try:
+            profile = s.profile(role)
+        except AgentConfigError as exc:
+            # 예: FOOD_MODEL 만 있고 FOOD_BASE_URL 이 없다. 문구에는 설정 이름만 있다
+            reason = str(exc)
+        else:
+            missing = [
+                profile.key(name)
+                for name in ("api_key", "base_url", "model")
+                if not getattr(profile, name)
+            ]
+            if not missing:
+                continue
+            reason = f"{' / '.join(missing)} 없음"
+        roles_by_reason.setdefault(reason, []).append(role)
+    gaps = [f"LLM {' · '.join(roles)} ({reason})" for reason, roles in roles_by_reason.items()]
+
+    # Curator 의 두 묶음은 역할(AgentRole)이 아니라서 MEMORY_* 를 빌려 쓰지 않는다.
+    # "무엇이 비면 못 만드는가" 는 생성자가 쓰는 함수를 그대로 부른다 (#912 리뷰)
+    from app.agents.curator.embedding import embedder, jev
+
+    for missing, effect in (
+        (embedder.missing_settings(s), "Curator 꺼짐 — 기억을 묶지 않는다"),
+        (jev.missing_settings(s), "Curator 판정 꺼짐 — 판정이 필요한 관찰은 연결을 미룬다"),
+    ):
+        if missing:
+            gaps.append(f"{effect} ({' / '.join(missing)} 없음)")
+    return tuple(gaps)
 
 
 async def handle_input(

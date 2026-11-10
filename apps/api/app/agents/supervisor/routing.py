@@ -8,6 +8,7 @@
 
   - MemoryTask
       원문 전체와 RECORD 조각 힌트, UNCLEAR 조각 원문을 전달한다.
+      조각 밖에 부르는 말 · 추임새(`FILLER_WORDS`)만 남은 것은 놓친 기록이 아니다 (#861).
       원문이 전부 요청·안내 조각이면 만들지 않는다 (SKIP_MEMORY_FOR_PURE_REQUEST).
       unclear 와 요청·안내 조각만 있을 때도 만들지 않는다 — 답은 그쪽이 낸다.
 
@@ -31,6 +32,7 @@
 
   - 안내 문구
       guarded / out_of_scope 조각에는 코드에 정의된 고정 문구를 사용한다.
+      diagnosis · out_of_scope 는 같은 code 에 문구가 두 벌이라 조각 글에 맞는 쪽을 고른다 (#864).
       guarded/hazard 가 하나라도 있으면 그 안내만 내고 Memory · 도메인 Agent 를 부르지 않는다.
 
   - 강등(fallback)
@@ -44,6 +46,7 @@
 """
 
 import logging
+import re
 from dataclasses import dataclass
 from typing import Literal
 
@@ -94,6 +97,15 @@ RESOLVABLE_TASKS: dict[str, frozenset[str | None]] = {
     DomainAgentName.ACTIVITY.value: frozenset({None}),
     DomainAgentName.GROWTH.value: frozenset(GROWTH_RECOMMENDING),
 }
+
+# 혼자서는 아이가 겪은 일이 될 수 없는 낱말 — 조각 밖에 남아도 놓친 기록이 아니다 (#861).
+# "아니" 는 정정("김밥 아니 볶음밥")에 쓰여 뺀다. "근데" 도 뒤에 기록이 이어지는 연결어라 뺀다
+FILLER_WORDS: frozenset[str] = frozenset(
+    "야 얘 아 어 음 흠 헐 하 휴 에휴 아이고 저기 저기요 있잖아 제발 진짜 좀 빨리 그니까".split()
+)
+# ㅠㅠ · ㅋㅋ · ㄱㄱ · ㅇㅇ 처럼 자모만 된 낱말. isalnum() 이 True 라
+# 걸러 주지 않으면 안 덮인 글자로 센다
+_JAMO_ONLY = re.compile(r"[ㄱ-ㅎㅏ-ㅣ]+")
 
 # True: 순수 요청형(원문이 전부 요청, 안내 조각)이면 Memory를 건너뛴다.
 #       (Supervisor가 의도를 제대로 나눴다고 보는 정책으로, 잘못 나누면 입력 정보가 그대로 삭제)
@@ -149,7 +161,8 @@ _GUIDANCE: dict[str, Guidance] = {
     ),
     # 기록을 남겼는지는 적지 않는다 — 묻기만 한 말("해열제 몇 ml 먹여?")은 남길 기록이 없다.
     # 함께 온 증상을 저장했으면 Memory가 따로 알린다.
-    # 진단 문의와 약 문의가 한 라벨이라 어디서 확인하면 되는지를 둘 다 적는다 (#633 리뷰)
+    # 진단 문의와 약 문의가 한 라벨이라 어디서 확인하면 되는지를 약 얘기가 있을 때만 둘 다 적는다
+    # (#633 리뷰 · #864). 약 얘기가 없으면 `PLAIN_DIAGNOSIS_GUIDANCE`
     GuardReason.DIAGNOSIS.value: Guidance(
         code=GuardReason.DIAGNOSIS.value,
         message=(
@@ -166,6 +179,33 @@ _GUIDANCE: dict[str, Guidance] = {
 
 # Supervisor 가 놓친 알레르기 · 만성질환 언급에 pipeline 이 같은 안내를 낸다 (#639)
 SAFETY_GUIDANCE = _GUIDANCE[GuardReason.SAFETY_RECORD.value]
+
+# 같은 code 의 문구 두 벌 — 부모가 묻지 않은 약 · 대행 얘기를 하지 않는다. code 가 같아서 화면
+# 계약은 그대로다. 어느 쪽을 낼지는 `_guidance` 가 조각 글을 보고 코드로 고른다 (#864).
+# 진단 문의에 약 얘기가 없을 때. 병명 · 판정을 짐작하지 않는다 (루트 §2)
+PLAIN_DIAGNOSIS_GUIDANCE = Guidance(
+    code=GuardReason.DIAGNOSIS.value,
+    message="진단이나 결핍 판정은 도와드릴 수 없어요. 아이 상태는 병원에서 확인해 주세요.",
+)
+# 다른 집 아이 · 다른 보호자의 기록을 묻는 말. 대행을 시킨 것이 아니라 우리 아이 기록 밖이다
+OTHER_FAMILY_GUIDANCE = Guidance(
+    code=SegmentKind.OUT_OF_SCOPE.value,
+    message="다른 집 아이나 다른 보호자의 기록은 볼 수 없어요. 아이캐치는 우리 아이 기록만 다뤄요.",
+)
+
+# 약 얘기 판정 낱말 — 문구를 고르는 데만 쓴다. 놓치면 약 문장이 빠질 뿐이고, 잘못 걸려도 지금과
+# 같다. "약" 은 글자로 찾지 않는다(예약 · 약속 · 약간 · 치약)
+_TREATMENT_STEMS: tuple[str, ...] = (
+    "해열제 해열약 감기약 물약 가루약 시럽 영양제 항생제 소화제 진통제 철분제 유산균 비타민 "
+    "타이레놀 부루펜 챔프 맥시부펜 치료식 처방 복용 용량"
+).split()
+_BARE_MEDICINE = re.compile(r"약(을|은|이|도|만|좀|이랑|하고)?")
+_DOSE = re.compile(r"\d+(ml|mg|cc)", re.IGNORECASE)
+# 다른 집 · 다른 보호자를 말하는 글. out_of_scope 조각에만 본다 — record 조각의 "친구네 집" 은
+# 아이가 겪은 일이다
+_OTHER_FAMILY = re.compile(r"(다른|남의|옆)\s*(집|아이|애|엄마|아빠|부모|가족|친구)")
+# 다른 집이 나와도 우리에게 대신 해 달라고 시킨 말은 기록을 묻는 말이 아니다 — 대행 불가 문구 그대로
+_DELEGATION = re.compile(r"주문|예약|결제|구매|연락|전화|문자|보내|전달|전해|신청")
 
 # 한 번에 부를 수 있는 도메인 Agent 상한을 넘겨 빠진 요청이 있을 때 알리는 용도
 # TODO: 사용자에게 제공될 답변 점검
@@ -364,18 +404,46 @@ def _guidance(
 
     상한을 넘겨 버린 요청이 있으면 그것도 알린다 — 조용히 빠지면 사용자는 답이 없는 이유를 모른다.
     """
-    codes = []
+    texts: dict[str, list[str]] = {}
     for segment in output.segments:
         if segment.kind == SegmentKind.GUARDED:
-            codes.append(str(segment.guard))
+            texts.setdefault(str(segment.guard), []).append(segment.text)
         elif segment.kind == SegmentKind.OUT_OF_SCOPE:
-            codes.append(SegmentKind.OUT_OF_SCOPE.value)
-    guidance = [_GUIDANCE[code] for code in dict.fromkeys(codes)]
+            texts.setdefault(SegmentKind.OUT_OF_SCOPE.value, []).append(segment.text)
+    guidance = [_pick_guidance(code, said) for code, said in texts.items()]
     if dropped:
         guidance.append(_AGENT_LIMIT)
     if trimmed:
         guidance.append(_TASK_LIMIT)
     return tuple(guidance)
+
+
+def _pick_guidance(code: str, said: list[str]) -> Guidance:
+    """같은 code 의 문구 두 벌 중 조각 글에 맞는 쪽 (#864). 한 조각이라도 걸리면 그쪽이다."""
+    if code == GuardReason.DIAGNOSIS.value:
+        return (
+            _GUIDANCE[code]
+            if any(mentions_treatment(t) for t in said)
+            else PLAIN_DIAGNOSIS_GUIDANCE
+        )
+    if code == SegmentKind.OUT_OF_SCOPE.value and any(mentions_other_family(t) for t in said):
+        return OTHER_FAMILY_GUIDANCE
+    return _GUIDANCE[code]
+
+
+def mentions_treatment(text: str) -> bool:
+    """글에 약 · 영양제 · 치료식 얘기가 있는가. 낱말 단위다 — "예약" 의 "약" 은 약이 아니다."""
+    for word in re.findall(r"\w+", text):
+        if _BARE_MEDICINE.fullmatch(word) or _DOSE.fullmatch(word):
+            return True
+        if word.startswith(tuple(_TREATMENT_STEMS)):
+            return True
+    return False
+
+
+def mentions_other_family(text: str) -> bool:
+    """글이 다른 집 아이 · 다른 보호자의 기록 · 하는 일을 묻는가. 대신 해 달라는 말은 아니다."""
+    return _OTHER_FAMILY.search(text) is not None and _DELEGATION.search(text) is None
 
 
 def covers_only_requests(raw_text: str, output: SupervisorOutput) -> bool:
@@ -398,7 +466,20 @@ def _covers_all(raw_text: str, output: SupervisorOutput) -> bool:
         for start, end in align_segment(raw_text, segment) or []:
             for index in range(start, end):
                 covered[index] = True
-    return all(covered[i] for i, char in enumerate(haystack) if char.isalnum())
+    for word in re.finditer(r"\w+", haystack):
+        span = covered[word.start() : word.end()]
+        if all(span):
+            continue
+        # 낱말이 통째로 조각 밖이고 기록일 수 없는 말이면 덮인 것으로 본다.
+        # 일부만 덮인 낱말은 아니다
+        if not any(span) and _is_filler(word.group()):
+            continue
+        return False
+    return True
+
+
+def _is_filler(word: str) -> bool:
+    return word in FILLER_WORDS or _JAMO_ONLY.fullmatch(word) is not None
 
 
 def _log(routing: Routing, supervisor_error: str | None) -> None:

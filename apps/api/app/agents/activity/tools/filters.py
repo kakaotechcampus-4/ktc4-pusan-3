@@ -33,7 +33,7 @@ from app.agents.common.food_words import (
     FoodVerdict,
     WordRules,
     check_foods,
-    phrase_of,
+    food_phrases,
 )
 from app.agents.common.readout import Readout
 from app.agents.common.reference import AgeRule, allergen_terms, hazard_terms
@@ -265,26 +265,33 @@ def request_notices(
     등록한 알레르기 이름은 싣지 않는다. 이 안내는 모델 입력에 가지 않는다. 빼 달라는 말("땅콩
     빼고")에 나온 음식은 안내하지 않는다(`QUESTION` 규칙). 같은 어절은 한 번만 말하고, 연령 규칙은
     어절마다 가장 오래 막는 것 하나로 말한다("꿀떡" 은 떡). 추천 개수와 상관없이 붙는다 — 0개여도
-    왜 없는지 이 줄이 말한다.
+    왜 없는지 이 줄이 말한다. 붙은 영어 음식 이름("peanut butter")은 한 음식으로 한 번만
+    말한다 (#864).
     """
     stage = stage_of(months)
     notices: list[Readout] = []
     said: set[str] = set()
     for text in texts:
         verdicts = check_foods(text, entries, stage=stage, months=months)
+        names = food_phrases(text, verdicts)
+        # 한 이름에 알레르기 겹침이 하나라도 있으면 알레르기로 말한다 ("peanut butter")
+        allergic: dict[str, bool] = {}
         for verdict in verdicts:
-            phrase = phrase_of(text, verdict.word)
-            if not verdict.conflicts or phrase in said:
+            if verdict.conflicts:
+                allergic[names[verdict.word]] = allergic.get(names[verdict.word], False) or any(
+                    conflict.entry.kind == "allergy" for conflict in verdict.conflicts
+                )
+        for phrase, allergy in allergic.items():
+            if phrase in said:
                 continue
             said.add(phrase)
-            allergy = any(conflict.entry.kind == "allergy" for conflict in verdict.conflicts)
             what = "알레르기" if allergy else "건강 정보"
             notices.append(READOUTS.render(REQUEST_FOOD_CONFLICT, food=phrase, what=what))
         strictest: dict[str, AgeRule] = {}
         for verdict in verdicts:
             if verdict.age_block is None:
                 continue
-            phrase = phrase_of(text, verdict.word)
+            phrase = names[verdict.word]
             held = strictest.get(phrase)
             if held is None or _lasts(verdict.age_block) > _lasts(held):
                 strictest[phrase] = verdict.age_block

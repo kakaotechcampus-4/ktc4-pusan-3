@@ -401,7 +401,7 @@ webViewRef.current?.injectJavaScript(navigateScript(callbackUrl));   // location
 
 ## 6. 목 서버
 
-실제 OAuth 왕복은 MSW 로 흉내 낼 수 없다 (외부 오리진 전체 페이지 이동이라 서비스 워커가 못 잡는다). 지금 [`lib/auth/kakao.ts`](../../apps/web/src/lib/auth/kakao.ts) 의 `MOCK_ONLY` 가드를 그대로 이어받아 **개발 + 목 서버일 때만** ②~⑥ 을 건너뛰고 자리표시 코드로 ⑦ 부터 태운다.
+실제 OAuth 왕복은 MSW 로 흉내 낼 수 없다 (외부 오리진 전체 페이지 이동이라 서비스 워커가 못 잡는다). 지금 [`lib/auth/oauth.ts`](../../apps/web/src/lib/auth/oauth.ts) 의 `MOCK_ONLY` 가드를 그대로 이어받아 **개발 + 목 서버일 때만** ②~⑥ 을 건너뛰고 자리표시 코드로 ⑦ 부터 태운다.
 
 ```
 목 켜짐: 버튼 → 이동 대신 /auth/callback?code=dev-placeholder-code 로 push

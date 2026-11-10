@@ -6,8 +6,9 @@ import uuid
 from datetime import date, time
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import ConfigDict, Field, field_validator, model_validator
 
+from app.api.schema_base import ApiSchema
 from app.api.v1.schemas.common import Ref
 from app.api.v1.schemas.reminders import ReminderIn, ReminderOut
 from app.core.event_draft import (
@@ -26,7 +27,7 @@ AgentValue = Literal["food", "activity", "growth", "health"]
 SuggestionFeedbackValue = Literal["child_liked", "child_disliked", "not_acted"]
 
 
-class EvidenceOut(BaseModel):
+class EvidenceOut(ApiSchema):
     ref: Ref
     label: str
     observed_to: str
@@ -35,7 +36,7 @@ class EvidenceOut(BaseModel):
     note: str
 
 
-class SuggestionOut(BaseModel):
+class SuggestionOut(ApiSchema):
     id: str
     child_id: str
     agent: str
@@ -85,8 +86,8 @@ class SuggestionOut(BaseModel):
     reason: str | None = Field(
         default=None,
         description=(
-            "현재 문자열. Agent 연결(#323) 시 {why_this, why_now} 객체로 변경 예정. "
-            "일반 추천이면 05 의 basis 와 같은 문구"
+            "왜 이 추천인지 한두 문장. 한 칸이다 — `{why_this, why_now}` 로 나누지 않는다 "
+            "(Agent 공통규약 C-2). 일반 추천이면 05 의 basis 와 같은 문구. 없으면 null"
         ),
     )
     status: str
@@ -108,18 +109,18 @@ class SuggestionOut(BaseModel):
 # ── 채택 ──────────────────────────────────────────────────────────────────
 
 
-class ApproveSuggestionsRequest(BaseModel):
+class ApproveSuggestionsRequest(ApiSchema):
     suggestion_ids: list[uuid.UUID] = Field(max_length=20)
 
 
-class ApproveSuggestionsResponse(BaseModel):
+class ApproveSuggestionsResponse(ApiSchema):
     suggestions: list[SuggestionOut]
 
 
 # ── 추천 받기 (J — #284 · #249) ──────────────────────────────────────────
 
 
-class SuggestionsRequest(BaseModel):
+class SuggestionsRequest(ApiSchema):
     agents: list[AgentValue] = Field(min_length=1, max_length=2, description="최대 2개 (NF-01)")
     run_id: str | None = Field(
         default=None,
@@ -134,7 +135,7 @@ class SuggestionsRequest(BaseModel):
     )
 
 
-class DocEvidenceOut(BaseModel):
+class DocEvidenceOut(ApiSchema):
     """일반 추천의 근거인 문서 행. CC BY 행은 출처 표시가 조건이라 기관 · 제목을 같이 싣는다.
 
     Food 일반 추천은 고른 메뉴(레시피 카탈로그 행)도 이 모양으로 싣는다(#442) — `title` 은 메뉴
@@ -160,7 +161,7 @@ class DocEvidenceOut(BaseModel):
     note: str = Field(description="이 문서를 어떻게 참고했는지 한 줄")
 
 
-class GeneralSuggestionOut(BaseModel):
+class GeneralSuggestionOut(ApiSchema):
     """일반 추천. 아이 기록이 아니라 문서 행을 근거로 단다 (루트 §2).
 
     Food 는 고른 메뉴(레시피 카탈로그 행)만으로도 된다(#442). Growth 도서는 고른 책(정보나루
@@ -226,7 +227,7 @@ class GeneralSuggestionOut(BaseModel):
     )
 
 
-class GroupNoticeOut(BaseModel):
+class GroupNoticeOut(ApiSchema):
     code: Literal["fewer", "empty", "cannot_resume", "daily_limit"] = Field(
         description=(
             "fewer 1~2개 · empty 0개 · cannot_resume 이어서 할 수 없음 · "
@@ -237,9 +238,11 @@ class GroupNoticeOut(BaseModel):
     message: str
 
 
-class SuggestionGroupOut(BaseModel):
+class SuggestionGroupOut(ApiSchema):
     agent: str
-    prompt: str | None = Field(default=None, description="무엇을 봤는지. 아직 비어 있다 (후속)")
+    prompt: str | None = Field(
+        default=None, description="무엇을 봤는지 한 줄. 지금은 채우지 않아 늘 null 이다"
+    )
     merges_into_one: bool | None = Field(
         default=None, description="채택하면 일정 초안이 한 건으로 묶이는 Agent"
     )
@@ -253,7 +256,7 @@ class SuggestionGroupOut(BaseModel):
     )
 
 
-class GuardOut(BaseModel):
+class GuardOut(ApiSchema):
     code: str
     blocked_agents: list[AgentValue]
     message: str
@@ -267,13 +270,13 @@ class GuardOut(BaseModel):
     )
 
 
-class ScarcityQuestionOut(BaseModel):
+class ScarcityQuestionOut(ApiSchema):
     id: str
     text: str
     options: list[str] = []
 
 
-class ScarcityOut(BaseModel):
+class ScarcityOut(ApiSchema):
     count: int = Field(
         description=(
             "일반 추천을 낸 Agent별 record_count의 합(남아 있는 관찰만). 호환 필드이며 화면의 "
@@ -285,14 +288,14 @@ class ScarcityOut(BaseModel):
     )
 
 
-class PrecheckOut(BaseModel):
+class PrecheckOut(ApiSchema):
     code: str
     item: str
     note: str
     suggestion_id: str
 
 
-class SuggestionsResponse(BaseModel):
+class SuggestionsResponse(ApiSchema):
     suggestions: list[SuggestionOut] = Field(
         description="개인화 추천. Agent 마다 0~3개 — 묶음은 groups 의 agent 로 가른다"
     )
@@ -313,19 +316,19 @@ class SuggestionsResponse(BaseModel):
     )
 
 
-class AnswerRequest(BaseModel):
+class AnswerRequest(ApiSchema):
     question_id: str = Field(max_length=100)
     answer: str = Field(max_length=500)
 
 
-class AnswerResponse(BaseModel):
+class AnswerResponse(ApiSchema):
     saved: bool
 
 
 # ── 추천 목록 (I — #284) ─────────────────────────────────────────────────
 
 
-class SuggestionListResponse(BaseModel):
+class SuggestionListResponse(ApiSchema):
     items: list[SuggestionOut]
     total: int = Field(description="status · rated 필터를 건 뒤의 전체 건수. 쪽과 무관하다")
     page: int = Field(description="요청한 쪽 번호 (1부터)")
@@ -336,11 +339,11 @@ class SuggestionListResponse(BaseModel):
 # ── 추천 평가 (I — #284) ─────────────────────────────────────────────────
 
 
-class SuggestionFeedbackRequest(BaseModel):
+class SuggestionFeedbackRequest(ApiSchema):
     feedback: SuggestionFeedbackValue
 
 
-class SuggestionFeedbackResponse(BaseModel):
+class SuggestionFeedbackResponse(ApiSchema):
     suggestion: SuggestionOut
     memory_changed: bool = False
 
@@ -348,7 +351,7 @@ class SuggestionFeedbackResponse(BaseModel):
 # ── 일정 수정 (I — #284) ─────────────────────────────────────────────────
 
 
-class UpdateEventBody(BaseModel):
+class UpdateEventBody(ApiSchema):
     model_config = ConfigDict(extra="forbid")
 
     title: str = Field(max_length=200)
@@ -366,7 +369,7 @@ class UpdateEventBody(BaseModel):
         return self
 
 
-class UpdateEventRequest(BaseModel):
+class UpdateEventRequest(ApiSchema):
     event: UpdateEventBody
     items: list[DraftItemPayload] = Field(default=[], max_length=MAX_DRAFT_ITEMS)
     reminder: ReminderIn | None = Field(
@@ -390,11 +393,11 @@ class UpdateEventRequest(BaseModel):
 # ── 일정 초안 ─────────────────────────────────────────────────────────────
 
 
-class CreateEventDraftsRequest(BaseModel):
+class CreateEventDraftsRequest(ApiSchema):
     suggestion_ids: list[uuid.UUID] = Field(max_length=20)
 
 
-class EventBodyOut(BaseModel):
+class EventBodyOut(ApiSchema):
     """starts_at 은 null — 제안에서 온 초안은 일자를 모른다."""
 
     title: str
@@ -405,7 +408,7 @@ class EventBodyOut(BaseModel):
     category: EventCategoryValue
 
 
-class EventDraftOut(BaseModel):
+class EventDraftOut(ApiSchema):
     draft_id: str
     op: Literal["create"] = "create"
     event_id: None = None
@@ -414,14 +417,14 @@ class EventDraftOut(BaseModel):
     suggestion_ids: list[str]
 
 
-class CreateEventDraftsResponse(BaseModel):
+class CreateEventDraftsResponse(ApiSchema):
     drafts: list[EventDraftOut]
 
 
 # ── 일정 제출 (승인 게이트 ㉠) ────────────────────────────────────────────
 
 
-class SubmitEventBody(BaseModel):
+class SubmitEventBody(ApiSchema):
     """실제 제출 시에는 starts_at 필수."""
 
     model_config = ConfigDict(extra="forbid")
@@ -441,7 +444,7 @@ class SubmitEventBody(BaseModel):
         return self
 
 
-class RepeatIn(BaseModel):
+class RepeatIn(ApiSchema):
     """요일 반복 규칙 (#738). 문구(`label`)는 서버가 만들어 내므로 받지 않는다."""
 
     model_config = ConfigDict(extra="forbid")
@@ -450,7 +453,7 @@ class RepeatIn(BaseModel):
     until: date = Field(description="마지막 날 (그날 포함). 첫 회차부터 90일 안")
 
 
-class SubmitEventRequest(BaseModel):
+class SubmitEventRequest(ApiSchema):
     event: SubmitEventBody
     items: list[DraftItemPayload] = Field(default=[], max_length=MAX_DRAFT_ITEMS)
     suggestion_ids: list[uuid.UUID] | None = Field(default=None, max_length=20)
@@ -479,14 +482,14 @@ class SubmitEventRequest(BaseModel):
         return self
 
 
-class EventItemOut(BaseModel):
+class EventItemOut(ApiSchema):
     item_id: str
     item_name: str
     is_prepared: bool
     prepared_at: str | None = None
 
 
-class EventSeriesOut(BaseModel):
+class EventSeriesOut(ApiSchema):
     """일정이 속한 반복 묶음 (#738).
 
     `label` 은 화면이 그대로 그린다 — 화면은 날짜를 계산하지 않는다.
@@ -510,7 +513,7 @@ class EventSeriesOut(BaseModel):
         )
 
 
-class CalendarEventOut(BaseModel):
+class CalendarEventOut(ApiSchema):
     id: str
     title: str
     event_type: str
@@ -540,14 +543,14 @@ class CalendarEventOut(BaseModel):
         return None if value is None else handler(value)
 
 
-class SubmitEventResponse(BaseModel):
+class SubmitEventResponse(ApiSchema):
     event: CalendarEventOut = Field(description="만든 일정. 반복이면 첫 회차")
 
 
 # ── 반복 묶음 고치기 (#738, 승인 게이트 ㉠) ────────────────────────────────
 
 
-class SeriesEventIn(BaseModel):
+class SeriesEventIn(ApiSchema):
     """묶음 고치기에서 바꾸는 값. 날짜는 없다 — 회차 날짜는 반복 규칙이 정한다. 시각은 KST."""
 
     model_config = ConfigDict(extra="forbid")
@@ -581,7 +584,7 @@ class SeriesBeforeIn(SeriesEventIn):
     items: list[str] = Field(default=[], max_length=MAX_DRAFT_ITEMS)
 
 
-class UpdateSeriesRequest(BaseModel):
+class UpdateSeriesRequest(ApiSchema):
     event: SeriesEventIn
     repeat: RepeatIn
     before: SeriesBeforeIn | None = Field(
@@ -603,6 +606,6 @@ class UpdateSeriesRequest(BaseModel):
         return self
 
 
-class UpdateSeriesResponse(BaseModel):
+class UpdateSeriesResponse(ApiSchema):
     series: EventSeriesOut
     occurrence_count: int = Field(description="고친 뒤 오늘 이후(오늘 포함) 회차 수")
