@@ -324,8 +324,8 @@ function Picker({ date, onPick }: { date: string; onPick: () => void }) {
       <div>
         <h2 className="text-title text-ink">사진 한 장이 한 줄을 대신해요</h2>
         <p className="text-body-sm text-ink-muted mt-2">
-          {formatDay(date)}에 남겨요. 알림장이나 식단표는 글자를 읽어 준비물과 일시로 정리하고, 아이
-          활동 사진은 활동 태그만 뽑아요.
+          {/* 아이 활동 사진은 시트에서 꺼 뒀다 (`lib/features.ts` · #884) — 켜면 이 문장도 같이 고친다. */}
+          {formatDay(date)}에 남겨요. 알림장이나 식단표는 글자를 읽어 준비물과 일시로 정리해요.
         </p>
       </div>
 
@@ -340,7 +340,7 @@ function Picker({ date, onPick }: { date: string; onPick: () => void }) {
 
       <ul className="text-body-sm text-ink-muted flex list-disc flex-col gap-1.5 pl-5">
         <li>얼굴이나 사람은 분석하지 않아요.</li>
-        <li>읽어낸 내용을 보여드리고, 승인하기 전에는 아무것도 저장하지 않아요.</li>
+        <li>읽어낸 내용을 보여 드리고, 승인하기 전에는 아무것도 저장하지 않아요.</li>
       </ul>
     </div>
   );
@@ -368,7 +368,7 @@ function Reading({
         <ProgressSteps index={index} total={total} label={label} />
       </Card>
       <p className="text-body-sm text-ink-muted">
-        읽은 내용을 보여드린 다음에 저장해요. 지금은 아무것도 저장되지 않아요.
+        읽은 내용을 보여 드린 다음에 저장해요. 지금은 아무것도 저장되지 않아요.
       </p>
     </div>
   );

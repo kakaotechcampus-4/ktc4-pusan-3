@@ -145,7 +145,8 @@ test.describe("바텀시트 — 모든 시트가 같은 움직임으로 열리�
     const sheet = page.getByRole("dialog", { name: "기록 상세" });
     await sheet.getByRole("button", { name: "이번만 그랬어요" }).click();
     await expect(sheet.getByText("이번 한 번만 있던 일로 바꿀까요?")).toBeVisible();
-    await sheet.getByRole("button", { name: "닫기" }).click();
+    // 확인 패널이 열린 동안은 시트의 "닫기" 가 없다 (#868) — 스크림을 눌러 닫는다.
+    await sheet.evaluate((dialog) => (dialog as HTMLElement).click());
     await expect(sheet).toBeHidden();
     // 닫힘이 끝나 시트가 내용을 놓을 때까지 — 그 전에는 같은 문장이 시트 안에도 남아 있다.
     await expect(page.locator("dialog:not([open])", { hasText: "기록 상세" })).not.toContainText(
@@ -167,7 +168,8 @@ test.describe("바텀시트 — 모든 시트가 같은 움직임으로 열리�
     // 🚨 닫히는 시트는 누르기를 받지 않아 아래 목록을 바로 누를 수 있다. 내려가는 200ms 안에 다시 연다.
     await page.evaluate(async () => {
       const open = [...document.querySelectorAll("dialog")].find((dialog) => dialog.open)!;
-      [...open.querySelectorAll("button")].find((button) => button.textContent === "닫기")!.click();
+      // 확인 패널이 열린 동안은 시트의 "닫기" 가 없다 (#868) — 스크림(= dialog 자신)을 눌러 닫는다.
+      open.click();
       await new Promise((resolve) => requestAnimationFrame(resolve));
       [...document.querySelectorAll("button")]
         .find(
@@ -236,7 +238,8 @@ test.describe("처음 그려질 때는 움직이지 않는다 (§8 원칙)", () 
     await expect(page.getByRole("button", { name: "이 기록 지우기" }).first()).toBeVisible();
 
     const before = (await recorded(page)).animations.length;
-    await page.getByRole("link", { name: "아이 프로필" }).click();
+    // 하단 네비 칸도 "아이 프로필" 이라(#868) 머리의 돌아가기 링크를 고른다.
+    await page.getByRole("link", { name: "아이 프로필" }).first().click();
     await page.waitForURL(`**/child/${CHILD}/profile`);
     await expect(page.getByRole("button", { name: "기본 정보 고치기" })).toBeVisible();
     // 화면 전환(back)이 끝날 때까지 기다린 뒤 본다 — 그 사이 늦게 걸리는 움직임도 잡는다.

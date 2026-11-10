@@ -412,7 +412,7 @@ function RecordedReply({
 
   return (
     <CardFailed>
-      <p>앞서 처리된 한 줄이에요. 결과는 기록/기억 화면에서 볼 수 있어요.</p>
+      <p>앞서 처리된 한 줄이에요. 결과는 기록과 기억 화면에서 볼 수 있어요.</p>
       <ButtonLink
         href={`/child/${childId}/memories`}
         variant="secondary"
@@ -629,7 +629,7 @@ function SendFailure({
         {keptHere ? (
           <RewriteButton blocked={rewriteBlocked} onClick={rewrite} />
         ) : (
-          <p className="text-caption text-ink-subtle">적어주신 말은 입력창에 그대로 남겨뒀어요.</p>
+          <p className="text-caption text-ink-subtle">적어 주신 말은 입력창에 그대로 남겨뒀어요.</p>
         )}
       </div>
     );
@@ -647,7 +647,7 @@ function SendFailure({
           </div>
         ) : (
           <p className="text-caption text-ink-subtle mt-2">
-            적어주신 말은 입력창에 그대로 남겨뒀어요.
+            적어 주신 말은 입력창에 그대로 남겨뒀어요.
           </p>
         )}
       </CardFailed>
@@ -664,7 +664,7 @@ function SendFailure({
           <p className="text-body-sm text-ink mt-2">{turn.answering.text}</p>
         ) : null}
         <p className="text-caption text-ink-subtle mt-2">
-          고쳐 쓰기를 누르면 적어주신 답이 입력창으로 돌아가요. 무엇을 물은 답인지 함께 적어 보내
+          고쳐 쓰기를 누르면 적어 주신 답이 입력창으로 돌아가요. 무엇을 물은 답인지 함께 적어 보내
           주세요. 앞서 저장된 이야기는 다시 적지 않아도 돼요.
         </p>
         <div className="mt-3">

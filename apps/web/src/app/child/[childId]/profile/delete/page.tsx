@@ -144,7 +144,7 @@ function DeleteChildScreen() {
             <h2 className="text-label text-brand">혹시 이것만 멈추고 싶으신가요</h2>
             <Card>
               <ul className="text-body-sm text-ink-muted marker:text-ink-subtle flex list-disc flex-col gap-2 pl-5">
-                <li>기록 하나만 지우고 싶다면 기록/기억 탭에서 그 기록만 지울 수 있어요.</li>
+                <li>기록 하나만 지우고 싶다면 기록과 기억 탭에서 그 기록만 지울 수 있어요.</li>
                 <li>위치정보 같은 선택 동의는 설정에서 하나씩 끌 수 있어요.</li>
                 <li>함께 보는 사람만 줄이고 싶다면 설정에서 그 보호자의 연결만 끊을 수 있어요.</li>
               </ul>
@@ -185,9 +185,12 @@ function DeleteChildScreen() {
                 </li>
               </ul>
               {/* 🚨 **"한 톨도 남지 않아요" 를 쓰지 않는다** — 탈퇴 화면과 같다. 서버는 동의 증빙을 보관
-                  표로 옮긴 뒤 지운다(`purge_child`). 처리방침 1장의 "동의 증빙 1년" 이다. */}
+                  표로 옮긴 뒤 지운다(`purge_child`). 처리방침 1장의 "동의 증빙 1년" 이다.
+                  백업 30일도 탈퇴 화면과 같은 문장으로 적는다 — 매일 · 배포 전 백업을 28일 둔다
+                  (#758 · `docs/ops/backup-restore-v1.md`). */}
               <p className="border-line text-caption text-ink-subtle mt-4 border-t pt-4">
                 언제 무엇에 동의했는지 남긴 기록은 약관에 따라 1년 동안 따로 보관했다가 파기해요.
+                지운 정보는 사고에 대비해 둔 백업 사본에서도 최대 30일 안에 지워져요.
               </p>
             </Card>
           </section>

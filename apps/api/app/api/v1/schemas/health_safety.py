@@ -10,8 +10,9 @@ from datetime import datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import ConfigDict, Field, StringConstraints
 
+from app.api.schema_base import ApiSchema
 from app.domains.safety.models import SafetyKind, SafetySeverity
 
 Label = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
@@ -21,7 +22,7 @@ Reaction = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1,
 Notes = Annotated[str, StringConstraints(strip_whitespace=True, max_length=500)]
 
 
-class CreateHealthSafetyRequest(BaseModel):
+class CreateHealthSafetyRequest(ApiSchema):
     """승인 게이트 ㉡ — 보호자가 확인한 값만 들어온다. LLM 이 이 요청을 만들지 않는다 (§2).
 
     심각도 · 메모의 null 은 "안 보냄" 과 같다.
@@ -58,12 +59,12 @@ class CreateHealthSafetyRequest(BaseModel):
     )
 
 
-class WrittenBy(BaseModel):
+class WrittenBy(ApiSchema):
     parent_id: UUID
     nickname: str = Field(description="적은 보호자의 부르는 이름")
 
 
-class HealthSafetyOut(BaseModel):
+class HealthSafetyOut(ApiSchema):
     kind: Literal["health_safety"] = "health_safety"
     id: UUID
     type: SafetyKind
@@ -81,13 +82,13 @@ class HealthSafetyOut(BaseModel):
     updated_at: datetime
 
 
-class CreateHealthSafetyResponse(BaseModel):
+class CreateHealthSafetyResponse(ApiSchema):
     """201 — 등록한 기록."""
 
     safety: HealthSafetyOut
 
 
-class UpdateHealthSafetyRequest(BaseModel):
+class UpdateHealthSafetyRequest(ApiSchema):
     """고치기 — 심각도 · 증상 · 메모 중 보낸 것만 바꾼다. 하나도 안 바뀌면 지금 기록 그대로 200.
 
     고치면 지금 기록은 내려가고(retracted) 바뀐 값으로 새 기록이 생긴다 — 응답의 id 가 바뀐다.
@@ -111,13 +112,13 @@ class UpdateHealthSafetyRequest(BaseModel):
     notes: Notes | None = Field(default=None, description="null 이면 비운다. 보내지 않으면 그대로")
 
 
-class UpdateHealthSafetyResponse(BaseModel):
+class UpdateHealthSafetyResponse(ApiSchema):
     """200 — 고친 뒤의 기록. 바뀌었으면 새 id 다."""
 
     safety: HealthSafetyOut
 
 
-class HealthSafetyListResponse(BaseModel):
+class HealthSafetyListResponse(ApiSchema):
     """보호자가 확정한 기록 — 알레르기 · 건강(items)과 괜찮았던 식품(tolerated).
 
     내린 줄은 없다 (§2).

@@ -36,7 +36,6 @@ async function openNotice(
   await page.goto(`/child/${CHILD}/home`);
   if (scenario) await switchScenario(page, scenario);
   await page.getByRole("button", { name: "사진으로 적기" }).click();
-  await page.getByRole("button", { name: /^알림장·식단표/ }).click();
   await page
     .getByRole("button", { name: /기기에 있는 최근 사진/ })
     .first()
@@ -168,7 +167,6 @@ test("🚨 지난 일정은 꺼진 채로 시작하고 까닭을 말한다 — �
 test("🚨 버튼 바로 위에 무엇이 언제로 들어가는지 서고, 버튼이 개수를 말한다", async ({ page }) => {
   await page.goto(`/child/${CHILD}/home`);
   await page.getByRole("button", { name: "사진으로 적기" }).click();
-  await page.getByRole("button", { name: /^알림장·식단표/ }).click();
   await page
     .getByRole("button", { name: /기기에 있는 최근 사진/ })
     .first()

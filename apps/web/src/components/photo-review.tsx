@@ -1016,7 +1016,7 @@ function TagPicker({
       <div>
         <h2 className="text-label text-brand">뽑아낸 활동 태그</h2>
         <p className="text-body-sm text-ink-muted mt-1">
-          맞는 것만 골라주세요. 고르지 않은 태그는 저장하지 않아요.
+          맞는 것만 골라 주세요. 고르지 않은 태그는 저장하지 않아요.
         </p>
       </div>
       {tags.length > 0 ? (

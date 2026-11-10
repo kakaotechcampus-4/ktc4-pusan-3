@@ -3,14 +3,16 @@
 응답은 하루 보기의 `my_diary` 와 같은 `MyDiaryOut` 이다 — 저장한 뒤 화면이 그 값을 그대로 쓴다.
 """
 
-from pydantic import BaseModel, Field
+from pydantic import Field
+
+from app.api.schema_base import ApiSchema
 
 DIARY_CONTENT_MAX = 1000
 """일기 화면(apps/web/src/lib/api/types.ts DIARY_CONTENT_MAX_LENGTH)과 같은 상한 (#549).
 한쪽만 바꾸지 않는다."""
 
 
-class DiaryRequest(BaseModel):
+class DiaryRequest(ApiSchema):
     content: str = Field(
         max_length=DIARY_CONTENT_MAX,
         pattern=r"^[^\x00]*$",

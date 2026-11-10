@@ -1971,22 +1971,24 @@ describe("⑨ 교정은 지우지 않고 내린다", () => {
     expect((result.target as Observation).status).toBe("stand_alone");
   });
 
-  it("wrong 은 행을 지우지 않고 status 를 inactive 로 내린다", async () => {
+  // 🚨 기록의 "잘못된 기록" 은 기록 지우기로 바꿨다 (#736). 서버는 기록 `wrong` 을 400 으로 막는다.
+  it("기록에 wrong 을 보내면 400 이고 기록은 그대로다", async () => {
     const before = await api.get<ObservationsResponse>("/children/c1/observations");
     const target = before.items.find((item) => item.kind === "observation_education");
     expect(target).toBeDefined();
 
-    const result = await api.post<CorrectionResponse>("/corrections", {
-      target_ref: { kind: target!.kind, id: target!.id },
-      verdict: "wrong",
-      child_id: "c1",
-    });
+    const failure = await api
+      .post<CorrectionResponse>("/corrections", {
+        target_ref: { kind: target!.kind, id: target!.id },
+        verdict: "wrong",
+        child_id: "c1",
+      })
+      .catch((error: unknown) => error);
 
-    // 🚨 `target` 은 관찰이거나 프로필이다 — 어느 쪽인지는 `target_ref.kind` 가 정한다.
-    expect((result.target as Observation).status).toBe("inactive");
-    // 🚨 고친 기록도 목록에 남는다 — 서버는 deleted 만 뺀다 (#266). 화면이 status 로 갈라 그린다.
+    expect(isApiError(failure, "validation_failed")).toBe(true);
+    expect((failure as ApiError).status).toBe(400);
     const after = await api.get<ObservationsResponse>("/children/c1/observations");
-    expect(after.items.find((item) => item.id === target!.id)?.status).toBe("inactive");
+    expect(after.items.find((item) => item.id === target!.id)?.status).toBe("active");
     expect(after.total).toBe(before.total);
   });
 
@@ -2016,7 +2018,7 @@ describe("⑨ 교정은 지우지 않고 내린다", () => {
     await api.post<CorrectionResponse>("/corrections", body);
 
     const failure = await api
-      .post<CorrectionResponse>("/corrections", { ...body, verdict: "wrong" })
+      .post<CorrectionResponse>("/corrections", body)
       .catch((error: unknown) => error);
 
     expect(isApiError(failure, "already_corrected")).toBe(true);
@@ -2044,9 +2046,10 @@ describe("⑨ 교정은 지우지 않고 내린다", () => {
     expect(active.total).toBe(all.total - 1);
   });
 
-  it("모르는 status 는 400 이다", async () => {
+  // `inactive`(잘못된 기록)는 서버가 `deleted` 로 옮기고 필터에서도 뺐다 (#736).
+  it.each(["deleted", "inactive"])("모르는 status(%s)는 400 이다", async (status) => {
     const failure = await api
-      .get<ObservationsResponse>("/children/c1/observations", { query: { status: "deleted" } })
+      .get<ObservationsResponse>("/children/c1/observations", { query: { status } })
       .catch((error: unknown) => error);
 
     expect(isApiError(failure, "validation_failed")).toBe(true);
@@ -2428,21 +2431,24 @@ describe("⑪ 일기 쓰기 · 지우기 — 서버 #333 과 같은 계약 (#364
   it.each([
     ["빈 문자열", ""],
     ["공백 · 줄바꿈 · 탭뿐", " \n\t"],
-  ])("내용이 %s 이면 422 validation_failed 이고 기존 일기가 남는다", async (_, content) => {
-    const diaryDay = (await recentCalendarDays()).find((day) => day.has_my_diary);
-    expect(diaryDay).toBeDefined();
-    const before = await api.get<CalendarDayResponse>(`/children/c1/calendar/${diaryDay!.date}`);
-    expect(before.my_diary).not.toBeNull();
+  ])(
+    "내용이 %s 이면 400 validation_failed 이고 기존 일기가 남는다 — 본문 오류 (#438)",
+    async (_, content) => {
+      const diaryDay = (await recentCalendarDays()).find((day) => day.has_my_diary);
+      expect(diaryDay).toBeDefined();
+      const before = await api.get<CalendarDayResponse>(`/children/c1/calendar/${diaryDay!.date}`);
+      expect(before.my_diary).not.toBeNull();
 
-    const failure = await api
-      .put(`/children/c1/diary/${diaryDay!.date}`, { content })
-      .catch((error: unknown) => error);
+      const failure = await api
+        .put(`/children/c1/diary/${diaryDay!.date}`, { content })
+        .catch((error: unknown) => error);
 
-    expect(isApiError(failure, "validation_failed")).toBe(true);
-    expect((failure as ApiError).status).toBe(422);
-    const after = await api.get<CalendarDayResponse>(`/children/c1/calendar/${diaryDay!.date}`);
-    expect(after.my_diary).toEqual(before.my_diary);
-  });
+      expect(isApiError(failure, "validation_failed")).toBe(true);
+      expect((failure as ApiError).status).toBe(400);
+      const after = await api.get<CalendarDayResponse>(`/children/c1/calendar/${diaryDay!.date}`);
+      expect(after.my_diary).toEqual(before.my_diary);
+    },
+  );
 
   it.each([
     ["content 가 없다", {}],
@@ -2478,7 +2484,7 @@ describe("⑪ 일기 쓰기 · 지우기 — 서버 #333 과 같은 계약 (#364
 
   it.each([
     ["NUL 이 든", "지어낸\u0000일기"],
-    // 서버는 바디 검증(400)이 라우터의 공백 검사(422)보다 먼저다.
+    // 서버는 바디 검증(길이 · NUL)이 라우터의 공백 검사보다 먼저다 — 둘 다 400 이다.
     ["공백뿐이고 1000자를 넘는", " ".repeat(DIARY_CONTENT_MAX_LENGTH + 1)],
   ])("%s 본문은 400 이고 기존 일기가 남는다 (#549)", async (_, content) => {
     const diaryDay = (await recentCalendarDays()).find((day) => day.has_my_diary);
@@ -3552,13 +3558,13 @@ describe("㉓ 약관은 서버가 정한다 (#90 · #91 · #172)", () => {
   });
 
   /**
-   * 🚨 **전문이 없는 자리가 있다.** 아이 동의 둘은 아직 정본이 없어서 `html_path` 가 null 이고,
-   *    화면은 그때 전문 보기를 **숨긴다** — 대신 보여줄 글을 만들지 않는다.
+   * 실서버와 같은 판이다 (#868 · `register_policy_2026_11_03.py`). 한동안 `draft-1` 로 남아 목 화면이 실서버와
+   * 달랐다. 아이 동의 둘도 이제 정본이 있다 — `html_path` 가 null 일 때 전문 보기를 숨기는 것은 `lib/consent.test.ts` 가 건다.
    */
-  it("아이 동의 둘은 전문 주소가 비어 있다", async () => {
+  it("다섯 약관 모두 2026-11-03 판이고 전문 주소가 있다", async () => {
     const policies = await api.get<Policy[]>("/policies");
-    const empty = policies.filter((p) => p.html_path === null).map((p) => p.scope);
-    expect(empty).toEqual(["child_basic", "child_health"]);
+    expect(new Set(policies.map((p) => p.version))).toEqual(new Set(["2026-11-03"]));
+    expect(policies.filter((p) => p.html_path === null)).toEqual([]);
 
     const terms = policies.find((p) => p.scope === "service_terms");
     // `/api/v1` 아래 경로다 — 절대 주소는 기준 주소 + 이 값 (`policyHref`).
@@ -3590,7 +3596,7 @@ describe("㉓ 약관은 서버가 정한다 (#90 · #91 · #172)", () => {
         nickname: "테스트",
         birth_date: "2021-04-02",
         consents: [
-          { scope: "child_basic", policy_version: "draft-0" },
+          { scope: "child_basic", policy_version: "2026-11-03" },
           { scope: "child_health", policy_version: "옛날판" },
         ],
         guardian_attested: true,
