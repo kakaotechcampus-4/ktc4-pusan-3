@@ -1476,7 +1476,9 @@ test.describe("넣기 버튼은 시트 스크롤 바닥에 붙는다 (#866)", ()
     await expect(submit).toBeDisabled();
     await expect(submit).toBeInViewport({ ratio: 1 });
     // 🚨 꺼진 버튼만 보이고 이유가 가려지면 보호자는 왜 막혔는지 모른다.
-    await expect(sheet.getByText("날짜를 골라주셔야 넣을 수 있어요.")).toBeInViewport({ ratio: 1 });
+    await expect(sheet.getByText("날짜를 골라 주셔야 넣을 수 있어요.")).toBeInViewport({
+      ratio: 1,
+    });
   });
 
   test.describe("손가락 탭", () => {
