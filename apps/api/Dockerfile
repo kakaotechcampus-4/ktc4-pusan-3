@@ -4,7 +4,7 @@
 #   make api-up / api-down / api-logs
 #
 # --workers 1 고정 (#134). 되묻기 맥락 · 한도는 DB 로 옮겼지만(#877) run 은 받은 워커에서 돈다 — 워커 수는 아직 올리지 않았다 (docs/ops/stateless-v1.md)
-# 둘 이상이면 POST 받은 프로세스와 GET 받은 프로세스가 갈려 조용히 404 가 난다.
+# 둘 이상이어도 다른 워커는 표를 읽어 SSE 를 낸다. 다만 워커가 죽으면 그 워커가 돌리던 run 을 잃는다 (docs/ops/workers-2-check-v1.md)
 
 FROM python:3.12-slim
 

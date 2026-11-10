@@ -12,7 +12,8 @@
 #   api.icatch.ai.kr   → ktc4-api:8000    dev · 운영 둘 다로 풀린다. deploy/caddy/Caddyfile)
 # web · api 는 호스트 포트를 열지 않는다 — Caddy 만 80/443 을 낸다.
 # 🚨 api 는 --workers 1 이다 (#134). 되묻기 맥락 · 한도는 DB 로 옮겼지만(#877) run 은 받은 워커에서 돈다 — 워커 수는 아직 올리지 않았다
-#    둘 이상이면 POST 받은 프로그램과 GET 받은 프로그램이 갈려 조용히 404 가 난다.
+#    둘 이상이어도 다른 워커는 표를 읽어 SSE 를 낸다. 다만 워커가 죽으면 그 워커가 돌리던 run 을 잃는다
+#    (docs/ops/stateless-v1.md · docs/ops/workers-2-check-v1.md)
 # 🚨 로그는 전 서비스 journald 다 (아래 x-logging). docker 기본 json-file 은 새 이미지로 up 할 때 컨테이너와
 #    함께 로그가 지워진다 — journald 면 OS 에 남고 `docker compose logs` 도 그대로 된다.
 #    이유는 docs/ops/logging-alerts-v1.md (멘토 #267 2번).
