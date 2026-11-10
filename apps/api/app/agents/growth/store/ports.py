@@ -128,6 +128,16 @@ GrowthDocType = Literal[
     "measure_guide",
 ]
 
+# 일반 정보 질문("보통 몇 살부터 …")이 답의 근거로 읽는 종류. `measure_guide` 는 키 · 몸무게 질문이
+# 평가로 읽혀서, `book_guide` 는 도서가 따로 있어서 넣지 않는다
+INFO_ROW_TYPES: tuple[GrowthDocType, ...] = (
+    "learning_activity",
+    "routine_step",
+    "manner_practice",
+    "habit_strategy",
+    "rhythm_info",
+)
+
 
 @dataclass(frozen=True)
 class GrowthDocRow:
@@ -249,6 +259,23 @@ class GrowthDocReader(Protocol):
         건다(자른 뒤에 걸면 태그 행이 잘려 나갈 수 있다).
         `status='approved'` 행만 돌려준다. `query` 는 코드가 조립한다 —
         보호자 발화가 들어가지 않는다.
+        """
+        ...
+
+    async def search_range(
+        self,
+        *,
+        min_month: int,
+        max_month: int,
+        row_types: tuple[GrowthDocType, ...],
+        query: str,
+        limit: int,
+    ) -> list[GrowthDocRow]:
+        """`[min_month, max_month)` 와 구간이 겹치는 approved 행.
+
+        보호자가 물은 나이 구간이 아이 월령과 다를 때(일반 정보 질문) 쓴다. 겹침은
+        `row.min_month < max_month and row.max_month > min_month` 다.
+        `query` 는 코드가 조립한다 — 보호자 발화가 들어가지 않는다.
         """
         ...
 
