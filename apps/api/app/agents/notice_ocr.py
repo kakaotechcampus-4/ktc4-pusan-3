@@ -16,11 +16,16 @@ from zoneinfo import ZoneInfo
 from app.core.config import settings
 from app.domains.notice.assemble import NewNotice, assemble
 from app.domains.notice.models import NoticeDocKind, NoticeInputFormat
-from app.providers.meal_plan.image_ocr import ImageOcrMealPlanReader, ReadDeadlineExceeded
+from app.providers.meal_plan.image_ocr import (
+    ImageOcrMealPlanReader,
+    ReadDeadlineExceeded,
+    merge_outputs,
+)
 from app.providers.meal_plan.schema import MealPlanJSON
 from app.providers.model_errors import MODEL_CALL_FAILURES
 from app.providers.notice.document_text import UnreadableDocument, normalize_image
 from app.providers.notice.extractor import NoticeExtractor
+from app.rules.meal_plan_month import decide_year_month
 from app.rules.menu_key import menu_display_name
 from app.rules.notice_text import clean_text
 
@@ -78,7 +83,20 @@ def read_photo(
         return PhotoReading(notice=notice, meal_plan=None)
     reader = ImageOcrMealPlanReader.from_settings(settings, max_calls=2, deadline=meal_deadline)
     try:
-        plan = names_from_raw(reader.read(image, mime_type=mime_type))
+        parts = reader.read_parts(image, mime_type=mime_type)
+        # 🚨 연도는 모델에게 묻지 않는다 (§2 · §3).
+        #    월은 모델이 읽은 것, 연도는 사진 글자 또는 받은 날이다
+        decided = decide_year_month(
+            (part.year_month for part in parts.outputs),
+            transcript=source,
+            received_on=received_at.astimezone(KST).date(),
+        )
+        if decided is None:
+            # 월을 못 읽었거나 두 호출의 월이 다르다 — 어느 달인지 모르면 날짜를 하나도 쓸 수 없다
+            log.warning("meal_plan 의 월을 정하지 못했다 — 공지 항목만 낸다")
+            return PhotoReading(notice=notice, meal_plan=None, meal_failed=True)
+        year, month = decided
+        plan = names_from_raw(merge_outputs(parts.outputs, year_month=f"{year:04d}-{month:02d}"))
         return PhotoReading(notice=notice, meal_plan=plan)
     except ReadDeadlineExceeded:
         log.warning("meal_plan 읽기가 기한 안에 끝나지 않았다 — 공지 항목만 낸다")

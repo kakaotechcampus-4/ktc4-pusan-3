@@ -12,6 +12,7 @@ import pytest
 
 from app.agents import notice_ocr
 from app.domains.notice.models import NoticeDocKind
+from app.providers.meal_plan.image_ocr import OcrOutput, ReadParts
 from app.providers.meal_plan.schema import MealPlanJSON, MealPlanSource
 
 NOW = datetime(2026, 11, 10, 9, 0, tzinfo=UTC)
@@ -69,8 +70,9 @@ class _Extractor:
 
 
 class _MealReader:
-    def read(self, image: bytes, *, mime_type: str) -> MealPlanJSON:
-        return _plan()
+    def read_parts(self, image: bytes, *, mime_type: str) -> ReadParts:
+        output = OcrOutput.model_validate(_plan().model_dump(exclude={"source"}))
+        return ReadParts(outputs=(output,))
 
 
 @pytest.fixture
@@ -113,4 +115,5 @@ def test_원문은_그대로_둔다(reading: notice_ocr.PhotoReading) -> None:
     # 원문은 사람 검수의 근거라 지우지 않는다 (schema.MenuItem.raw)
     assert reading.meal_plan is not None
     raws = [it.raw for d in reading.meal_plan.days for m in d.meals for it in m.items]
-    assert raws == ["흑미밥", "백깍두기9(백김치9)", "떡(꿀설기)", "우유2", "떡(증편),"]
+    # 합치기(`merge_outputs`)가 날짜 순으로 놓는다 — 3일 · 16일 · 17일
+    assert raws == ["떡(증편),", "흑미밥", "백깍두기9(백김치9)", "떡(꿀설기)", "우유2"]

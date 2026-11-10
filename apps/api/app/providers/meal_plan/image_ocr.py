@@ -181,10 +181,22 @@ def parse_output(content: str) -> OcrOutput:
         raise RuntimeError(f"모델 응답을 급식표로 파싱 실패: {e.errors()[:3]}") from e
 
 
-def merge_outputs(parts: Sequence[OcrOutput]) -> MealPlanJSON:
+@dataclass(frozen=True)
+class ReadParts:
+    """날짜 범위별 호출 결과. 합치기 전이다.
+
+    연월은 부르는 쪽(코드)이 정해 `merge_outputs` 에 준다.
+    """
+
+    outputs: tuple[OcrOutput, ...]
+
+
+def merge_outputs(parts: Sequence[OcrOutput], *, year_month: str | None = None) -> MealPlanJSON:
     """날짜 범위별 호출 결과를 한 달치 `MealPlanJSON` 으로 합친다.
 
     같은 날짜가 두 번 오면 앞 호출을 남기고 뒤 것은 검수 플래그로 남긴다.
+    `year_month` 를 주면 모델이 낸 값 대신 그 연월을 쓴다. 🚨 운영(사진)은 언제나 준다 — 연도는
+    모델이 아니라 코드가 정한다 (`agents/notice_ocr.read_photo` · `rules/meal_plan_month`).
     """
     first = parts[0]
     seen: set[int] = set()
@@ -200,7 +212,7 @@ def merge_outputs(parts: Sequence[OcrOutput]) -> MealPlanJSON:
     try:
         return MealPlanJSON(
             source=MealPlanSource.IMAGE,
-            year_month=first.year_month,
+            year_month=year_month or first.year_month,
             institution_name=first.institution_name,
             days=days,
             unparsed=unparsed,
@@ -286,6 +298,13 @@ class ImageOcrMealPlanReader:
         )
 
     def read(self, data: bytes, *, mime_type: str) -> MealPlanJSON:
+        """모델이 낸 연월 그대로 합친다 — 평가 스크립트용.
+
+        운영은 `read_parts` 뒤 연월을 코드가 정한다 (`agents/notice_ocr.read_photo`).
+        """
+        return merge_outputs(self.read_parts(data, mime_type=mime_type).outputs)
+
+    def read_parts(self, data: bytes, *, mime_type: str) -> ReadParts:
         if mime_type not in SUPPORTED_MIME:
             raise ValueError(f"지원하지 않는 이미지 형식: {mime_type}")
         ranges: tuple[tuple[int, int] | None, ...] = self._day_ranges or (None,)
@@ -293,7 +312,7 @@ class ImageOcrMealPlanReader:
             raise RuntimeError(
                 f"호출 상한 {self._max_calls}회 — 이번 읽기에 {len(ranges)}회 필요, 시작하지 않음"
             )
-        return merge_outputs([self._call(data, mime_type, r) for r in ranges])
+        return ReadParts(outputs=tuple(self._call(data, mime_type, r) for r in ranges))
 
     def _call(
         self, image_bytes: bytes, mime_type: str, day_range: tuple[int, int] | None
