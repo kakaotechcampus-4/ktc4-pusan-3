@@ -73,6 +73,7 @@
 | `draft-1` | `location` | 동의문 4 요약 + 위치기반서비스 이용약관 초안 v1 — **체크박스 하나에 글 하나** |
 | `draft-2` | `service_terms` · `privacy_account` · `child_basic` · `child_health` | 처리방침 2026-10-15 판과 맞춘 글 |
 | `2026-11-03` | 위 넷 + `location` | 처리방침 2026-11-03 판과 맞춘 글. 모두 2026-11-03 시작 |
+| `2026-11-10` | `service_terms` · `child_basic` · `child_health` · `location` | 처리방침 2026-11-10 판과 맞춘 글. 모두 2026-11-10 시작. `privacy_account` 는 2026-11-03 판 그대로 |
 
 사진 동의 두 개(문서 사진 · 활동 사진)는 `ConsentScope` 가 생길 때 등록한다 — 원고는 [`consent-texts-v1.md`](../../../../docs/safety/consent-texts-v1.md) "사진 선택 동의".
 
