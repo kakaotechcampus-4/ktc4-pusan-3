@@ -20,7 +20,7 @@ general.reason.toddler:
   template: "또래 아이들이 많이 먹는 메뉴예요."
 general.reason.weaning:
   kind: general
-  template: "이 시기 아기들이 많이 먹는 재료예요."
+  template: "이 시기 이유식 단계에 맞춘 메뉴예요."
 general.reason.requested:
   kind: general
   template: "요청하신 조건을 바탕으로 골랐어요."
@@ -165,6 +165,9 @@ meal.nutrient_basis:
 meal.menu_source:
   kind: notice
   template: "추천 메뉴는 {org} 공개 레시피 중 재료가 검수된 메뉴예요."
+meal.menu_weaning:
+  kind: notice
+  template: "추천 메뉴는 아이캐치 서비스가 월령별 이유식 단계에 맞춰 정리한 식단에서 골랐어요."
 meal.menu_generated:
   kind: notice
   template: "추천 메뉴는 공개 레시피에 없어 일반적인 메뉴로 골랐어요."

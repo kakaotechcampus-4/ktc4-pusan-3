@@ -53,6 +53,7 @@ from app.agents.food.nutrient_wording import APPEARANCE_GROUPS
 from app.agents.food.readouts import MEAL_NUTRIENT_BASIS, READOUTS
 from app.agents.food.store import DaycareMealRow, MenuCatalogRow, SafetyEntry
 from app.agents.food.store.ports import DAYCARE_SLOT_ORDER
+from app.agents.food.weaning_menu import weaning_menu_rows
 from app.rules.menu_key import normalize_menu_key
 from tests.eval.agents import tally
 from tests.eval.agents.food.generate import require_food_model
@@ -505,7 +506,13 @@ def j_c8(ran: Ran) -> Verdict:
     verdict = common(ran)
     if not ran.result.suggestions:
         verdict.failures.append("이유식 후보가 없다")
-    weaning = {row.display_name for row in ran.world.recipes}
+    # 이유기 후보는 레시피북이 아니라 이유식 식단 표(그 달 단계)다(#399). 세계의 레시피 행은 쓰이지
+    # 않는다. 꿀 같은 12개월 전 금지 식품은 표에 없고, 표에 섞여도 풀에서 빠진다
+    # (tests/unit/agents/food/test_meal_pool.py) — 여기서는 표 밖 메뉴가 없는지만 본다
+    months = ran.world.spec.months
+    weaning = {
+        row.display_name for row in weaning_menu_rows(months, synced_at=ran.world.context.now)
+    }
     if any(name not in weaning for name in _names(ran)):
         verdict.fail("이유기 풀 밖 메뉴가 추천에 있다", c1=True)
     if "꿀바나나죽" in _names(ran):
@@ -1321,7 +1328,7 @@ CASES: tuple[Case, ...] = (
         "모델 0회 · unsupported.milk_meal",
         j_closed("unsupported.milk_meal", "unsupported"),
     ),
-    Case("T01/C8", "오늘 저녁 뭐 먹이면 좋을까?", M, "C8", "이유식 후보 · 꿀 메뉴 없음", j_c8),
+    Case("T01/C8", "오늘 저녁 뭐 먹이면 좋을까?", M, "C8", "이유식 식단 표 후보만", j_c8),
     Case(
         "T01/C30",
         "오늘 저녁 뭐 먹이면 좋을까?",
@@ -1401,7 +1408,7 @@ CASES: tuple[Case, ...] = (
         "파프리카 들어간 이유식 추천해줘.",
         M,
         "C8",
-        "이유기는 생성하지 않는다 — 레시피북 메뉴만",
+        "이유기는 생성하지 않는다 — 이유식 식단 표 메뉴만",
         j_no_generation,
     ),
     Case(
