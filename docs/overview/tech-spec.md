@@ -112,7 +112,7 @@
 | **ID** | **요구사항** |
 | --- | --- |
 | F-01 | **Memory Agent** — 부모 자연어 입력을 구조화해 Child Memory / Observation Memory에 저장 |
-| F-02 | **Fact / Observation / Inference 3분류** — 부모 발화는 `caregiver_observation`(아이의 fact로 승격 금지) |
+| F-02 | **Fact / Observation / Inference 3분류** — 관찰마다 출처(`confidence_source` — 직접 봄 · 확신이 약함 · 전해 들음 · 기관 공지)를 단다. 보호자 자신의 이야기는 저장하지 않는다(아이의 fact로 승격 금지) |
 | F-03 | **Curator** — 여러 출처의 같은 관찰 병합, 반복 횟수 집계, 관찰 → 성향/관심 승격 |
 | F-04 | **Child Supervisor** — 안전 사전검사(규칙) + 의도 분류(기록형/요청형/혼합형) + Agent 최대 2개 라우팅 |
 | F-05 | **Food Agent** — 실제 섭취·선호·기관 급식·최근 상황 반영한 식사 아이디어 |
