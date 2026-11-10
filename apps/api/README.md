@@ -219,7 +219,7 @@ Discord 연동이 들어 있고, 보호자 정보는 가지 않는다 (주소를
 첫 배포 뒤 (서버 주소가 생겨야 한다):
 
 3. New monitor › HTTP(s), 5분 간격, 2번 Discord 연결 선택. 두 개 —
-   api `https://<도메인>/…/health` (인증 없음, `/api/v1` 밖) · web `https://<도메인>/`. IP 가 아니라 **도메인**으로
+   api `https://api.<도메인>/health` (인증 없음, `/api/v1` 밖) · web `https://<도메인>/`. IP 가 아니라 **도메인**으로
    등록한다 — 앞단은 Caddy 이고 주소는 `deploy/caddy/Caddyfile` 에 있다 (api 는 `api.` 서브도메인, 443)
 4. 보안그룹에서 443 이 밖으로 열려 있어야 한다
 
