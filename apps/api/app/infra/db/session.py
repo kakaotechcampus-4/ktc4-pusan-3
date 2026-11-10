@@ -18,26 +18,24 @@ from app.infra.db.url import build_url
 # DB 오류 처리기가 글을 아예 찍지 않는 것으로 막는다 (app/api/errors.py).
 # pool_pre_ping — DB 가 재시작돼 끊긴 연결을 풀에서 꺼낼 때 한 번 확인하고 버린다. 없으면 DB 가
 # 돌아온 뒤에도 첫 요청들이 죽은 연결을 받아 500 이 난다 (#671).
-# server_settings — 쿼리 한 개 · 잠금 기다리기에 끝을 둔다 (ISSUE-F8-a). 없으면 API 핸들러 ·
-# Curator · 배치가 멈춘 쿼리나 아이 잠금(pg_advisory_xact_lock)을 끝없이 기다린다.
-# 넘기면 DBAPIError → 500. 값은 "멈춘 것만 끊는" 넉넉한 값이다 — 입력 run 은 러너 60초가 먼저
-# 끊고, Curator 는 아이 잠금을 쥔 채 모델을 불러 남이 수십 초 기다릴 수 있어서(ISSUE-F8-b)
-# 잠금 대기를 그보다 짧게 두면 정상 저장이 실패한다. 쿼리 사이의 모델 호출 시간은 세지 않는다.
+# server_settings — 쿼리 한 개에 2분 끝을 둔다 (#936). 없으면 API 핸들러 · Curator · 배치가 멈춘
+# 쿼리나 아이 잠금(pg_advisory_xact_lock)을 끝없이 기다린다. 넘기면 DBAPIError → 500.
+# 잠금 대기도 쿼리 시간에 들어가서 이 값 하나로 같이 끊긴다.
+# 🚨 lock_timeout 을 따로 짧게 걸지 않는다 — Curator 가 아이 잠금을 쥔 채 모델을 부르고(#937)
+#    모델 한 번이 60초 · 재시도 2번이라, 1분 상한이면 같은 아이의 정상 저장이 기다리다 실패했다
+#    (65초 쥔 잠금 → 60초에 55P03 재현, #941 리뷰). 2분도 Curator 가 그보다 오래 쥐면 끊긴다 —
+#    #937 이 잠금 밖으로 모델 호출을 빼면 이 값을 조인다.
+# 입력 run 은 러너 60초가 먼저 끊는다. 쿼리 사이의 모델 호출 시간은 세지 않는다.
 # alembic 은 자기 엔진(alembic/env.py)이라 걸리지 않는다.
 # ponytail: 한 값으로 API · 배치 · 적재 스크립트를 묶는다. 실측 뒤 API 만 조이려면 엔진을 나눈다
 engine = create_async_engine(
     build_url("postgresql+asyncpg"),
     hide_parameters=True,
     pool_pre_ping=True,
-    connect_args={"server_settings": {"statement_timeout": "120s", "lock_timeout": "60s"}},
+    connect_args={"server_settings": {"statement_timeout": "120s"}},
 )
 
 log = logging.getLogger(__name__)
-
-_TIMEOUT_SQLSTATES = {
-    "57014": "쿼리 2분 상한(statement_timeout)",
-    "55P03": "잠금 대기 1분 상한(lock_timeout)",
-}
 
 
 @event.listens_for(engine.sync_engine, "handle_error")
@@ -45,12 +43,16 @@ def _log_timeout(ctx: ExceptionContext) -> None:
     """상한에 걸린 쿼리를 경로와 상관없이 한 줄로 남긴다 — API · Curator · 배치가 다 이 엔진을
     지난다. Curator 는 오류 종류만, API 처리기는 sqlstate 만 찍어서 상한에 걸린 건지 따로 안 보였다.
 
-    🚨 쿼리 글 · 값은 싣지 않는다 (위 hide_parameters 와 같은 이유).
-    57014 는 사람이 취소한 쿼리도 같은 코드다.
+    57014 는 시간 상한과 취소(pg_cancel_backend · 드라이버 취소)가 같은 코드라, Postgres 의 고정
+    문구("statement timeout")로 가른다.
+    🚨 그 글도 쿼리 · 값도 싣지 않는다 (hide_parameters 와 같은 이유).
     """
-    kind = _TIMEOUT_SQLSTATES.get(getattr(ctx.original_exception, "sqlstate", None) or "")
-    if kind:
-        log.warning("DB 시간 상한에 걸려 끊었다 — %s", kind)
+    if getattr(ctx.original_exception, "sqlstate", None) != "57014":
+        return
+    if "statement timeout" in str(ctx.original_exception):
+        log.warning("DB 시간 상한에 걸려 끊었다 — 쿼리 2분 상한(statement_timeout)")
+    else:
+        log.warning("DB 쿼리가 취소됐다 — 시간 상한이 아니다(57014)")
 
 
 async_session_factory = async_sessionmaker(engine, expire_on_commit=False)
