@@ -223,3 +223,20 @@ async def test_초대_시도_제한도_동시에_와도_넘지_않는다(committ
     )
 
     assert sum(results) == 5
+
+
+@pytest.mark.usefixtures("rate_db")
+async def test_같은_시각에_잡은_두_건_중_하나만_돌려준다(session: AsyncSession):
+    """확인 · 수락이 같은 시각에 두 번 잡을 수 있다 — 돌려주는 것은 그중 하나뿐이다."""
+    parent = uuid.uuid4()
+    await invite_attempts.acquire(parent_id=parent, ip="198.51.100.1", now=T0)
+    await invite_attempts.acquire(parent_id=parent, ip="198.51.100.1", now=T0)
+
+    await invite_attempts.release(parent_id=parent, ip="198.51.100.1", now=T0)
+
+    left = await session.scalar(
+        select(func.count())
+        .select_from(RateEvent)
+        .where(RateEvent.key == f"invite:parent:{parent}")
+    )
+    assert left == 1

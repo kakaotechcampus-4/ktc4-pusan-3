@@ -406,6 +406,10 @@ async def test_저장을_다시_보내도_두_번_넣지_않는다(
     assert first.status_code == second.status_code == 201
     assert first.json() == second.json()
     assert first.json()["calendar_date"] == "2026-11-06"
+    # 두 번째는 다시 넣은 것이 아니라 남겨 둔 응답의 재생이다 —
+    # 공지 중복 제거에 가려지지 않게 직접 본다
+    kept = await photo_run.get(run_id, parent_id=bearer[1])
+    assert kept is not None and kept.response == first.json()
     count = await session.scalar(
         select(func.count()).select_from(Notice).where(Notice.child_id == cid)
     )

@@ -209,3 +209,20 @@ async def test_읽을_수_없는_실패_맥락은_지우고_없는_것으로_한
 
     assert (await session.scalars(select(RunHold.key).where(RunHold.key == "r:food"))).all() == []
     assert "synthetic secret" not in caplog.text
+
+
+async def test_만료된_실패_맥락_자리에_다시_넣으면_15분을_새로_센다(owner):
+    """처음 시각을 잇는 것은 살아 있는 실패 맥락일 때뿐이다 — 만료된 것을 이으면 넣자마자 없다."""
+    await _put(owner, at=T0)
+    await _put(owner, at=T0 + timedelta(minutes=20))
+
+    assert await _claim(owner, at=T0 + timedelta(minutes=30)) == TASK
+
+
+async def test_0개_기록에_꺼내기를_시도해도_기록은_그대로다(owner):
+    """꺼내기는 실패 맥락만 건드린다. 0개 기록을 잡거나 지우면 다음 요청의 같은 안내가 사라진다."""
+    await store.put_empty(run_id="r", agent="food", message="synthetic empty", now=T0, **owner)
+
+    assert await _claim(owner) is None
+    read = {"run_id": "r", "agent": "food", **owner}
+    assert await store.empty_message(**read, now=T0 + timedelta(minutes=1)) == "synthetic empty"

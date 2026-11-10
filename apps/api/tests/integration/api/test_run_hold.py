@@ -398,3 +398,18 @@ async def test_FK_검사는_보호자를_아이보다_먼저_잠근다(session: 
     )
 
     assert rows == ["parent", "child"]
+
+
+async def test_만료_시각_그때는_이미_꺼낼_수_없다(session: AsyncSession, bearer: Bearer, cid):
+    """보관은 "15분 동안" 이다 — 정확히 15분이 된 순간부터는 없다.
+
+    읽기는 `expires_at > now`, 지우기는 `expires_at <= now` 로 맞물린다.
+    """
+    _, me = bearer
+    await _put(session, "r1", parent_id=me, child_id=cid)
+
+    at_expiry = await get_hold(
+        session, kind=KIND, key="r1", parent_id=me, child_id=cid, now=T0 + TTL
+    )
+    assert at_expiry is None
+    assert await delete_expired_holds(session, now=T0 + TTL) == 1

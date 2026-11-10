@@ -473,3 +473,31 @@ async def test_아이가_있는_보호자는_코드를_보기_전에_409_이고_
         .where(RateEvent.key == f"invite:parent:{owner_id}")
     )
     assert counted == 0
+
+
+async def test_수락이_커밋된_뒤_시도_돌려주기가_실패해도_200(
+    db_client, session, family, monkeypatch
+):
+    """수락은 이미 커밋됐다. 카운터 돌려주기(DB) 실패가 성공 응답을 500 으로 덮으면 안 된다
+    (#877 적대 검증). 덮으면 화면은 실패로 보이고, 다시 누르면 invite_used(409)다."""
+    from sqlalchemy.exc import OperationalError
+
+    from app.api import invite_attempts
+
+    child, _, owner_id, _, stranger_headers = family
+    await _seed_invite(session, child, owner_id)
+
+    async def broken_release(**_):
+        raise OperationalError("SELECT 1", {}, Exception("db down"))
+
+    monkeypatch.setattr(invite_attempts, "release", broken_release)
+
+    res = await db_client.post(
+        ACCEPT.format(code=CODE), json={"relation": "sitter", **ATTESTED}, headers=stranger_headers
+    )
+
+    linked = await session.scalar(
+        select(func.count()).select_from(ParentChild).where(ParentChild.child_id == child.id)
+    )
+    assert linked == 3  # owner · member · 새로 연결된 stranger — 연결은 커밋됐다
+    assert res.status_code == 200

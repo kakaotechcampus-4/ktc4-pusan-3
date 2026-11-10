@@ -11,7 +11,7 @@
 import uuid
 
 import pytest
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.common.result import DomainPending
@@ -152,3 +152,32 @@ async def test_읽을_수_없는_맥락은_지우고_없는_것으로_한다(
     assert left == []
     assert "synthetic secret" not in caplog.text
     assert "ValidationError" in caplog.text
+
+
+async def test_연결을_끊은_뒤_늦게_온_보관은_남지_않는다(
+    session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    """끊기 전에 시작한 run 이 끊기 뒤에 넣으려 하면 — 보호자 · 아이가 둘 다 남아 FK 가 막지 못한다
+    (#877 적대 검증). retention-v1 의 "연결 끊기 때 지체 없이" 를 넣는 쪽에서 지킨다."""
+    from app.api.runs import photo_run, suggestion_retry
+    from app.domains.child.models import ParentChild
+    from app.domains.run_hold.models import RunHold
+    from app.domains.run_hold.repository import delete_link_holds
+    from tests.integration.api.conftest import issue_bearer, link_child
+
+    _, member = await issue_bearer(session, token="test-token-member")
+    await link_child(session, parent_id=member, child_id=cid)
+    await session.execute(
+        delete(ParentChild).where(ParentChild.parent_id == member, ParentChild.child_id == cid)
+    )
+    await delete_link_holds(session, parent_id=member, child_id=cid)
+    owner = {"parent_id": member, "child_id": cid}
+
+    assert await pending_reply.put(run_id="late", context=SIMPLE, **owner) is False
+    await suggestion_retry.put_empty(run_id="late", agent="food", message="synthetic", **owner)
+    assert await photo_run.keep(photo_run.open_photo_run(run_id="late-photo", **owner)) is False
+
+    left = await session.scalar(
+        select(func.count()).select_from(RunHold).where(RunHold.parent_id == member)
+    )
+    assert left == 0
