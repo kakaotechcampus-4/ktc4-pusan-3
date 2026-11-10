@@ -109,7 +109,7 @@ function countPhrase(tabs: readonly CardTab[]): string {
 function TruncatedNote({ noun, deleting }: { noun: string; deleting: boolean }) {
   return (
     <p className="bg-surface-muted text-body-sm text-ink-muted rounded-field mx-4 mt-3 px-3 py-2.5">
-      최근 40건만 보여드렸어요.{" "}
+      최근 40건만 보여 드렸어요.{" "}
       {deleting
         ? `여기 없는 앞선 ${noun}은 그대로 둬요. 그 ${noun}도 지우려면 기간을 좁혀 다시 말씀해 주세요.`
         : `그 전 ${noun}은 기간을 좁혀 다시 물어봐 주세요.`}
@@ -524,7 +524,7 @@ function ProposalPicker({
             <div>
               <p className="text-body text-ink">{checkedPhrase}을 지울까요?</p>
               <p className="text-body-sm text-ink-muted mt-1">
-                지운 것은 되살릴 수 없고, 앞으로 제안에도 쓰지 않아요. 체크하지 않은 것은 그대로
+                지운 것은 되살릴 수 없고, 앞으로 추천에도 쓰지 않아요. 체크하지 않은 것은 그대로
                 둬요.
               </p>
               <p className="text-body-sm text-ink-muted mt-1">

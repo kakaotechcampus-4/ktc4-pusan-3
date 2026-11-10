@@ -21,7 +21,7 @@
 """
 
 import logging
-from datetime import UTC, date, datetime
+from datetime import UTC, datetime
 from typing import Annotated
 from uuid import UUID
 
@@ -34,7 +34,7 @@ from app.api.deps.child import AccessibleChild
 from app.api.deps.db import SessionDep
 from app.api.errors import ApiError, ErrorEnvelope
 from app.api.quota import today_kst
-from app.api.runs.runner import curator_trigger
+from app.api.runs.runner import trigger_curator_after_delete
 from app.api.v1.schemas.delete_proposals import (
     ConfirmDeleteProposalRequest,
     DeleteProposalOut,
@@ -162,21 +162,10 @@ async def confirm_delete_proposal(
     await session.commit()
     await idempotency.remember(**scope, replay=response)
     if any(kind != "event" for kind in result):
-        _trigger_curator(child.child_id, today)
+        trigger_curator_after_delete(
+            child.child_id, today, parent_id=parent.parent_id, after="삭제 확정"
+        )
     return JSONResponse(status_code=200, content=response)
-
-
-def _trigger_curator(child_id: UUID, today: date) -> None:
-    """commit 뒤에만 부른다 — 같은 트랜잭션에서 띄우면 Curator 실패가 삭제까지 되돌린다.
-
-    🚨 터져도 응답은 성공이다 — 지운 것은 이미 commit 됐다 (pipeline._trigger_curator 와 같다).
-    """
-    try:
-        trigger = curator_trigger()
-        if trigger is not None:
-            trigger(child_id, today)
-    except Exception as exc:
-        log.error("삭제 확정 뒤 curator trigger 실패 error=%s", type(exc).__name__)
 
 
 @router.post(

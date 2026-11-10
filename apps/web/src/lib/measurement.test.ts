@@ -85,8 +85,8 @@ describe("measurementError", () => {
   });
 
   it("못 읽은 값, 너무 잘게 적은 값, 범위 밖 값은 다른 문구다", () => {
-    expect(measurementError("height", "invalid")).toBe("숫자만 적어주세요");
-    expect(measurementError("height", "too_precise")).toBe("소수점 아래 한 자리까지 적어주세요");
+    expect(measurementError("height", "invalid")).toBe("숫자만 적어 주세요");
+    expect(measurementError("height", "too_precise")).toBe("소수점 아래 한 자리까지 적어 주세요");
   });
 
   it("범위 밖은 그 칸의 단위와 범위를 말한다", () => {

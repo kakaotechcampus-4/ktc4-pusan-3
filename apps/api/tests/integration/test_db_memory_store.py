@@ -2,6 +2,7 @@
 
 child_a's observation id로 child_b의 store에서 get/update/delete하면 차단되는지 검증한다.
 삭제 시 Promotable 모델의 embedding 비움을 검증한다.
+배포 틈에 남은 inactive 를 지운 기록처럼 읽는지 검증한다 (#736).
 잘못된 UUID 문자열이 ValueError 대신 None/False 를 반환하는지 검증한다.
 이벤트 날짜 필터가 KST 자정 경계를 올바르게 다루는지 검증한다.
 """
@@ -21,7 +22,7 @@ from app.agents.memory.store.ports import DeleteCandidates
 from app.domains.child.models import Child
 from app.domains.delete_proposal.models import DeleteProposal
 from app.domains.identity.models import Parent
-from app.domains.memory.observation.models import ObservationFood
+from app.domains.memory.observation.models import ObservationFood, ObservationStatus
 from app.domains.memory.store.db_store import DbMemoryStore
 from app.domains.schedule.models import Event, EventCategory, EventCreatedBy, EventItem, EventType
 
@@ -137,6 +138,33 @@ class TestDeleteEmbeddingCleanup:
         )
         deleted = await store.delete_observation(domain="health", observation_id=row.id)
         assert deleted is True
+
+
+async def test_남은_inactive_는_검색_고치기에서_빠지고_지우기만_받는다(
+    session: AsyncSession, family: tuple, obs_of_a: str
+) -> None:
+    """배포 틈 · 롤백 중 "잘못된 기록" 으로 생긴 inactive(#736)는 보호자에게 안 보인다.
+    Memory Agent 의 기록 조회 · 고치기에도 걸리지 않아야 안 보이는 행을 모델에게 보여 주거나 고치지
+    않는다. 지우기는 받는다."""
+    _, child_a, _ = family
+    oid = UUID(obs_of_a)
+    await session.execute(
+        update(ObservationFood)
+        .where(ObservationFood.id == oid)
+        .values(status=ObservationStatus.INACTIVE)
+    )
+    store = DbMemoryStore(session, child_id=child_a.id)
+
+    assert await store.query_observations(domain="food", child_id=child_a.id) == []
+    assert await store.get_observation(domain="food", observation_id=obs_of_a) is None
+    edited = await store.update_observation(
+        domain="food", observation_id=obs_of_a, fields={"subject": "배"}
+    )
+    assert edited is None
+    assert await store.delete_observation(domain="food", observation_id=obs_of_a) is True
+    orm = await session.get(ObservationFood, oid)
+    await session.refresh(orm)
+    assert (orm.status, orm.subject) == (ObservationStatus.DELETED, "사과")
 
 
 class TestInvalidUuidDefence:

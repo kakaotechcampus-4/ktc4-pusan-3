@@ -30,7 +30,7 @@ describe("검사지 한 줄의 길이", () => {
     expect(row.checked).toBe(false);
     expect(needsReview(row)).toBe(true);
     expect(isSelectable(row)).toBe(false);
-    expect(reviewReason(row)).toBe("옮겨 온 글이 너무 길어요. 검사지를 보고 줄여주세요.");
+    expect(reviewReason(row)).toBe("옮겨 온 글이 너무 길어요. 검사지를 보고 줄여 주세요.");
   });
 
   it("증상이 서버 제한을 넘어도 같다", () => {

@@ -31,8 +31,9 @@ class Settings(AgentLLMSettings):
     # 않는다 (integrations/data4library/client.py)
     DATA4LIBRARY_AUTH_KEY: str = ""
 
-    # 공공데이터포털(data.go.kr) 일반 인증키(Decoding). 기상청 · 에어코리아 날씨 조회(어댑터는
-    # 아직 없음)와 공휴일 굽기(scripts/bake_holidays.py)가 같이 쓴다. 날씨 어댑터는 비어 있으면
+    # 공공데이터포털(data.go.kr) 일반 인증키(Decoding). 기상청 · 에어코리아 날씨 조회
+    # (`integrations/weather`)와 공휴일 굽기(scripts/bake_holidays.py)가 같이 쓴다.
+    # 날씨 어댑터는 비어 있으면
     # 조회 실패와 같게 본다 — "맑음"으로 채우지 않는다 (Activity D8)
     # 식약처 식품영양성분DB(Food 메뉴 해석, #321)도 이 키를 쓴다 — API 마다 활용신청이 따로다
     # (docs/agents/shared/API발급.md). 비어 있으면 Food 가 메뉴 카탈로그만 쓰고(조회 포트 없음)
@@ -70,11 +71,11 @@ class Settings(AgentLLMSettings):
 
     # --- 카카오 OAuth (#34) — 명세 docs/api/auth-kakao-v1.md §11 ---
     #
-    # 🚨 개발 환경에서만 Optional 이다. prod 는 없으면 서버가 뜨지 않는다 (#97).
-    #    ① local · dev — 키가 없어도 뜬다. GET /auth/{provider}/status 가 ready: false 를
+    # 🚨 local 에서만 Optional 이다. 서버(prod · dev)는 없으면 뜨지 않는다 (#97 · #310).
+    #    ① local — 키가 없어도 뜬다. GET /auth/{provider}/status 가 ready: false 를
     #       내려 프론트가 버튼을 비활성화하고(§3-1 · A-20), 키를 못 받은 팀원도 나머지
     #       API 를 띄워 쓸 수 있다.
-    #    ② prod — 키가 없으면 아무도 로그인할 수 없는 서비스가 조용히 배포되고, 그 사실을
+    #    ② prod · dev — 키가 없으면 아무도 로그인할 수 없는 서비스가 조용히 배포되고, 그 사실을
     #       사용자가 먼저 발견한다. 복귀 URL 과 같은 이유로 부팅에서 끊는다 (아래 검증).
     #       원래 ①의 근거는 개발 편의뿐이었다 — 운영에는 적용되지 않는다 (멘토 리뷰, #71).
     KAKAO_REST_API_KEY: str | None = None
@@ -86,8 +87,9 @@ class Settings(AgentLLMSettings):
 
     # 어드민 키 — 탈퇴할 때 카카오 연결 끊기(§7-4)에만 쓴다. 앱 전체 권한이라
     # 다른 곳에서 읽지 않는다.
-    # 로그인 준비(kakao_missing_keys)와 무관하다 — 없어도 로그인은 된다. local · dev 에서 비면
-    # 탈퇴는 하되 카카오 연결 끊기만 건너뛴다. prod 는 아래 검증이 부팅에서 막는다 (#379).
+    # 로그인 준비(kakao_missing_keys)와 무관하다 — 없어도 로그인은 된다. local 에서 비면
+    # 탈퇴는 하되 카카오 연결 끊기만 건너뛴다. 서버(prod · dev)는 아래 검증이 부팅에서
+    # 막는다 (#379).
     KAKAO_ADMIN_KEY: str | None = None
 
     # 로그인을 마친 뒤 302 로 돌려보낼 곳. client 열거값이 web / app 을 고른다 (§2-3).
@@ -150,39 +152,33 @@ class Settings(AgentLLMSettings):
         return raw
 
     @model_validator(mode="after")
-    def _require_kakao_keys_in_prod(self) -> "Settings":
-        """🚨 운영에서는 카카오 키가 없으면 서버가 뜨지 않는다 (#97).
+    def _require_kakao_keys_on_servers(self) -> "Settings":
+        """🚨 서버(prod · dev)에서는 카카오 키가 없으면 서버가 뜨지 않는다 (#97 · #310).
 
-        local · dev 는 막지 않는다. 키를 못 받은 팀원이 나머지 API 를 띄워 쓰기 위해서다.
+        local 은 막지 않는다. 키를 못 받은 팀원이 나머지 API 를 띄워 쓰기 위해서다.
 
-        dev 를 뺀 이유 — **아직 dev 환경이 없다** (배포 도메인 미정). 지금 정하면
-        추측이고, 추측이 빗나갔을 때 손해가 한쪽으로 크다.
+        dev 는 처음엔 열어 뒀다 — dev 서버가 없을 때 정하면 추측이었다. 11-06 dev 서버가 생겼고
+        (deploy-v1.md), prod 와 같은 배포 · 같은 키 구성으로 도는 운영 리허설 자리라 막는다.
+        키 누락을 prod 배포가 아니라 그 전 dev 배포에서 알게 된다 (#310).
 
-            막았는데 키 없이 써야 하는 곳이었다면
-                → 팀이 가짜 키를 넣어 우회한다. 그 뒤로 이 검증은 아무도 안 믿는다.
-            열었는데 운영 리허설 자리였다면
-                → 키 누락을 prod 배포에서 알게 된다. 늦지만 사용자에게 가기 전이다.
-
-        아래쪽이 덜 나쁘다. 그래서 열어 둔다.
-
-        🚨 dev 서버가 생기면 다시 판단한다. 조건에 "dev" 를 더하면 된다.
-
-        운영은 다르다. 키가 없으면 ready: false 가 내려가 로그인 버튼만 꺼진 채
+        운영은 키가 없으면 ready: false 가 내려가 로그인 버튼만 꺼진 채
         배포가 끝나고, 서비스가 성립하지 않는다는 사실을 사용자가 먼저 발견한다.
 
         빠진 키 이름을 메시지에 싣는다 — 부팅 로그는 배포자만 본다 (응답에 싣지
         않는 것은 kakao_missing_keys 의 주석 참고).
         """
-        if self.APP_ENV == "prod" and self.kakao_missing_keys:
+        on_server = self.APP_ENV in ("prod", "dev")
+        if on_server and self.kakao_missing_keys:
             raise ValueError(
-                f"운영 환경인데 카카오 설정이 비어 있다: {', '.join(self.kakao_missing_keys)}. "
+                f"{self.APP_ENV} 환경인데 카카오 설정이 비어 있다: "
+                f"{', '.join(self.kakao_missing_keys)}. "
                 "이대로 뜨면 로그인 버튼만 꺼진 채 배포된다"
             )
         # 어드민 키는 로그인 준비 목록 밖이라 따로 본다. 없으면 탈퇴한 사람의 카카오 연결이
         # 늘 남는다 — 탈퇴 실패가 아니라서 아무도 모르는 채 쌓인다 (#379).
-        if self.APP_ENV == "prod" and not self.KAKAO_ADMIN_KEY:
+        if on_server and not self.KAKAO_ADMIN_KEY:
             raise ValueError(
-                "운영 환경인데 카카오 설정이 비어 있다: KAKAO_ADMIN_KEY. "
+                f"{self.APP_ENV} 환경인데 카카오 설정이 비어 있다: KAKAO_ADMIN_KEY. "
                 "이대로 뜨면 탈퇴해도 카카오 연결이 끊기지 않는다"
             )
         return self

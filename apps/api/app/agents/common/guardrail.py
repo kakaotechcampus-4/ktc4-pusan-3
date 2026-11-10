@@ -7,7 +7,8 @@ Protocol 하나로 검사한다. 지금 구현은 코드 규칙(`app/rules/hazar
 
 🚨 fail-closed — 검사를 하지 못하면 빈 결과("걸린 것 없음")를 돌려주지 않고
    `GuardrailUnavailableError` 를 올린다. 부르는 쪽은 이 예외를 받으면 그 run 을 진행하지 않는다.
-   지금은 아무도 잡지 않는다 — 러너가 run 을 실패로 끝내고, Memory commit 전이라 저장도 남지 않는다.
+   pipeline 이 잡아 `guard_unavailable` 로 run 을 끝낸다 (#768) — Memory commit 전이라 저장도
+   남지 않는다.
    실패를 `GuardResult` 의 칸으로 두지 않는 것은 부르는 곳마다 "실패면 막는다" 를 챙기지 않아도
    되게 하려는 것이다. 한 곳만 빠뜨려도 검사가 조용히 빠진다.
 
@@ -17,13 +18,15 @@ Protocol 하나로 검사한다. 지금 구현은 코드 규칙(`app/rules/hazar
   문구는 실패 종류가 정한다
 
 `app/rules/` 에 두지 않은 것은 규칙 레이어가 표준 라이브러리만 쓰기 때문이다. 다음 구현(모더레이션
-API 등)의 실패 예외는 Agent 쪽 실패 종류와 같은 계통에 묶여야 한다 — `SafetyLookupError` 가
-`common/ports.py` 에 있는 것과 같은 자리다.
+API 등)의 실패 예외는 `common/errors.py` 의 `AgentFailure` 계통에 묶어야 한다.
 """
 
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
+from app.agents.common.errors import (
+    GuardrailUnavailableError as GuardrailUnavailableError,  # 다시 내보낸다 (#768)
+)
 from app.rules.hazard import (
     FOOD_NAME_TERMS,
     PLAY_NAME_TERMS,
@@ -51,10 +54,6 @@ class GuardResult:
     @property
     def blocked(self) -> bool:
         return bool(self.kinds)
-
-
-class GuardrailUnavailableError(Exception):
-    """검사를 하지 못함. 걸린 것이 없다(빈 `GuardResult`)와 다르다."""
 
 
 class Guardrail(Protocol):

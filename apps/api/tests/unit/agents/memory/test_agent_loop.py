@@ -20,11 +20,13 @@ from app.agents.memory.agent import (
     _FOUND_HEADER,
     _UNCLEAR_REPLY,
     _UNSAVED_FALLBACK,
+    MAX_COMPLETION_TOKENS,
     MAX_QUESTIONS,
     PROPOSED_REPLY,
     MemoryReply,
     ToolCallRecord,
     _claims_saved,
+    _found,
     _missing_work,
     _partial_reply,
     run,
@@ -2293,6 +2295,79 @@ async def test_코스를_모르면_이름_없는_약도_쓴다(context: AgentCon
     assert len(await _health_rows(context)) == 1
 
 
+async def test_조각이_전부_등록_약_거절이면_다시_확인하지_않는다(context: AgentContext) -> None:
+    # 그 문장은 pipeline 이 복약 체크 안내로 싣고 Memory 말은 지운다. 다시 확인은 호출만 는다 (#811)
+    task = _task(("해열 시럽 먹였어", "observe"))
+    llm = FakeLLM(
+        _tools(_call("c1", "create_observation_health", _given("시럽", "해열 시럽 먹였어"))),
+        _answer({"text": "복약 화면에서 체크해 주세요.", "kind": "message"}),
+    )
+
+    result = await run(task.raw_text, _syrup_registered(context), client=llm, task=task)
+
+    assert len(llm.seen) == 2
+    assert result.ended_by == "model"
+
+
+@pytest.mark.parametrize(
+    "other",
+    [
+        ("점심에 김밥 먹었어", "observe"),
+        ("금요일 소풍 일정 넣어줘", "schedule"),
+        ("어제 뭐 먹었는지 알려줘", "lookup_edit"),
+    ],
+    ids=["부르지_않은_관찰_조각", "초안_없는_일정_조각", "조회_조각"],
+)
+async def test_등록_약_거절_말고_남은_조각이_있으면_다시_확인한다(
+    context: AgentContext, other: tuple[str, str]
+) -> None:
+    # 실패한 호출은 전부 등록 약 거절이어도 모델이 부르지 않은 조각이 남았다
+    task = _task(("해열 시럽 먹였어", "observe"), other)
+    llm = FakeLLM(
+        _tools(_call("c1", "create_observation_health", _given("해열 시럽", "해열 시럽 먹였어"))),
+        _answer({"text": "복약 화면에서 체크해 주세요.", "kind": "message"}),
+        _answer({"text": "다른 이야기는 아직 저장하지 않았어요.", "kind": "message"}),
+    )
+
+    await run(task.raw_text, _syrup_registered(context), client=llm, task=task)
+
+    assert len(llm.seen) == 3
+
+
+async def test_등록_약_거절_말고_실패한_호출이_있으면_다시_확인한다(context: AgentContext) -> None:
+    # pipeline 은 이 run 의 Memory 말을 지우지 않는다. 확인을 거치지 않은 첫 답을 내보내지 않는다
+    task = _task(("해열 시럽 먹였어", "observe"))
+    llm = FakeLLM(
+        _tools(_call("c1", "create_observation_health", {"raw_text": "해열 시럽 먹였어"})),
+        _tools(_call("c2", "create_observation_health", _given("해열 시럽", "해열 시럽 먹였어"))),
+        _answer({"text": "복약 화면에서 체크해 주세요.", "kind": "message"}),
+        _answer({"text": "복약 화면에서 체크해 주세요.", "kind": "message"}),
+    )
+
+    result = await run(task.raw_text, _syrup_registered(context), client=llm, task=task)
+
+    assert [call.result.get("error", {}).get("code") for call in result.calls] == [
+        ErrorCode.INVALID_ARGS,
+        ErrorCode.REGISTERED_MEDICINE,
+    ]
+    assert len(llm.seen) == 4
+
+
+async def test_등록_약만_말해도_저장한_척하면_다시_확인한다(context: AgentContext) -> None:
+    # 저장한 척하는 답을 잡는 확인은 판정이 따로다
+    task = _task(("해열 시럽 먹였어", "observe"))
+    llm = FakeLLM(
+        _tools(_call("c1", "create_observation_health", _given("해열 시럽", "해열 시럽 먹였어"))),
+        _answer({"text": "해열 시럽 먹인 것을 기록했어요.", "kind": "message"}),
+        _answer({"text": "복약 화면에서 체크해 주세요.", "kind": "message"}),
+    )
+
+    result = await run(task.raw_text, _syrup_registered(context), client=llm, task=task)
+
+    assert len(llm.seen) == 3
+    assert result.final_message == "복약 화면에서 체크해 주세요."
+
+
 def test_먹인_약_정정은_막지_않는다(context: AgentContext) -> None:
     from app.agents.memory.agent import _registered_medicine
 
@@ -2413,3 +2488,59 @@ async def test_수정_삭제_조각이_하나면_그_조각을_되묻는_질문�
 
     assert result.reply == MemoryReply(text=PROPOSED_REPLY, kind="message")
     assert result.pending is None
+
+
+# ── 기관 공지 조회 (#832) ───────────────────────────────────────
+# 공지는 요약해 답하는 일반 응답이다. 조회 카드도, 늘린 답 한도도, 조기 종료도 없다.
+def _notice_task(*hints: tuple[str, str]) -> MemoryTask:
+    return _task(*hints)
+
+
+async def test_공지_조회_뒤에도_답_한도는_그대로다(context: AgentContext) -> None:
+    task = _notice_task(("공지 뭐 있어?", "lookup_edit"))
+    llm = FakeLLM(
+        _tools(_call("n1", "query_notice", {})),
+        _answer({"text": "저장된 공지를 찾지 못했어요.", "kind": "message"}),
+    )
+
+    await run(task.raw_text, context, client=llm, task=task)
+
+    assert [k["max_completion_tokens"] for k in llm.seen_kwargs] == [MAX_COMPLETION_TOKENS] * 2
+
+
+async def test_공지_조회만_한_run_은_답을_그대로_낸다(context: AgentContext) -> None:
+    task = _notice_task(("공지 뭐 있어?", "lookup_edit"))
+    llm = FakeLLM(
+        _tools(_call("n1", "query_notice", {})),
+        _answer({"text": "가을 운동회 공지가 있어요.", "kind": "message"}),
+    )
+
+    result = await run(task.raw_text, context, client=llm, task=task)
+
+    assert result.reply == MemoryReply("가을 운동회 공지가 있어요.", "message")
+    assert result.persisted is False
+    assert context.found == {}
+
+
+def test_공지_조회는_되묻기의_찾은_행이_아니다() -> None:
+    notice = ToolCallRecord(
+        "query_notice", {}, {"success": True, "data": {"count": 1, "notices": [{}]}}
+    )
+
+    assert _found([notice]) == ()
+
+
+async def test_기록과_공지_조회가_섞이면_조기_종료하지_않는다(context: AgentContext) -> None:
+    task = _notice_task(("오늘 김밥 먹었어", "observe"), ("공지 뭐 있어?", "lookup_edit"))
+    llm = FakeLLM(
+        _tools(
+            _call("c1", "create_observation_food", {**_APPLE, "subject": "김밥"}),
+            _call("n1", "query_notice", {}),
+        ),
+        _answer({"text": "김밥은 기록했어요. 저장된 공지는 없어요.", "kind": "message"}),
+    )
+
+    result = await run(task.raw_text, context, client=llm, task=task)
+
+    assert result.reply == MemoryReply("김밥은 기록했어요. 저장된 공지는 없어요.", "message")
+    assert result.ended_by == "model"

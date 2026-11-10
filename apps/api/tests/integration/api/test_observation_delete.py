@@ -1,6 +1,6 @@
 """기록 삭제 API — `DELETE /children/{cid}/observations/{kind}/{oid}` (#736).
 
-    ① deleted 가 아닌 기록은 상태와 상관없이 지운다 — 고친 기록(stand_alone · inactive)도
+    ① deleted 가 아닌 기록은 상태와 상관없이 지운다 — 고친 기록(stand_alone)도
     ② owner · member 모두 지운다. 연결되지 않은 보호자는 403
     ③ 없는 종류 · 없는 기록 · 이미 지운 기록 · 다른 아이의 기록은 404, 키가 없으면 400
     ④ 같은 키로 다시 오면 처음처럼 204 — 두 번 지우지 않는다. 잠금에서 기다린 사이 앞의 것이
@@ -26,7 +26,9 @@ from app.agents.health.hook import symptom_days
 from app.agents.memory_bridge import StoreHealthMemory
 from app.api import idempotency
 from app.api.quota import today_kst
+from app.api.runs import runner
 from app.api.v1.routers import observations
+from app.core import llm_usage
 from app.domains.memory.observation.models import (
     ConfidenceSource,
     ObservationFood,
@@ -54,11 +56,20 @@ def _clean_keys():
 
 
 @pytest.fixture
-def curator_calls(monkeypatch):
+def curator_attributions() -> list:
+    """Curator 를 띄우는 순간 걸려 있던 LLM 사용량 귀속 (#710)."""
+    return []
+
+
+@pytest.fixture
+def curator_calls(monkeypatch, curator_attributions):
     calls: list[uuid.UUID] = []
-    monkeypatch.setattr(
-        observations, "curator_trigger", lambda: lambda child_id, today: calls.append(child_id)
-    )
+
+    def trigger(child_id, today):
+        calls.append(child_id)
+        curator_attributions.append(llm_usage.current())
+
+    monkeypatch.setattr(runner, "curator_trigger", lambda: trigger)
     return calls
 
 
@@ -92,7 +103,7 @@ async def _status(session: AsyncSession, model: type, oid: uuid.UUID) -> Observa
 
 @pytest.mark.parametrize(
     "status",
-    [ObservationStatus.ACTIVE, ObservationStatus.STAND_ALONE, ObservationStatus.INACTIVE],
+    [ObservationStatus.ACTIVE, ObservationStatus.STAND_ALONE],
 )
 async def test_deletes_whatever_the_status_and_starts_curator(
     db_client: AsyncClient,
@@ -100,6 +111,7 @@ async def test_deletes_whatever_the_status_and_starts_curator(
     bearer: Bearer,
     cid: uuid.UUID,
     curator_calls,
+    curator_attributions,
     status: ObservationStatus,
 ):
     headers, pid = bearer
@@ -114,6 +126,9 @@ async def test_deletes_whatever_the_status_and_starts_curator(
     assert resp.content == b""
     assert await _status(session, ObservationFood, record.id) is ObservationStatus.DELETED
     assert curator_calls == [cid]
+    # 기록 삭제는 run 밖에서 Curator 를 띄운다 — 지운 보호자로 귀속된다 (#710)
+    [attribution] = curator_attributions
+    assert (attribution.parent_id, attribution.source) == (pid, "delete")
 
 
 async def test_member_can_delete_and_unlinked_guardian_cannot(

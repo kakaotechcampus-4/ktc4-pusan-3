@@ -189,7 +189,9 @@ def load_probes(path: Path = CASES_DIR / "probes.yaml") -> list[ProbeCase]:
 Weekday = Literal["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 WEEKDAYS: tuple[str, ...] = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 StepKind = Literal["say", "reply", "approve", "correct", "check"]
-CorrectVerdict = Literal["once_only", "wrong", "outdated"]
+# correct 단계는 기록을 고친다(`week_runner._correct`). 기록에는 once_only 만 받는다 —
+# "잘못된 기록" 은 기록 지우기로 바꿨고(#736), outdated 는 기억에만 쓰는 값이다.
+CorrectVerdict = Literal["once_only"]
 _AT = r"^(mon|tue|wed|thu|fri|sat|sun) ([01]\d|2[0-3]):[0-5]\d$"
 
 

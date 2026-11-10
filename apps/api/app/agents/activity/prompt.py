@@ -30,7 +30,9 @@ tool이 못 막는 것을 막는 자리다. 월령 필터·알레르기·날씨 
 - 예시는 결을 보여주는 것이다. 그대로 베끼지 않는다.
 """
 
+import itertools
 from collections.abc import Sequence
+from types import SimpleNamespace
 from uuid import UUID
 
 from app.agents.activity.context import ActivityContext
@@ -43,6 +45,12 @@ from app.agents.activity.gating import (
 from app.agents.activity.store.ports import ActivityDocRow
 from app.agents.activity.weather import WeatherBrief
 from app.agents.common.gate import Gate
+from app.agents.common.prompt_fingerprint import (
+    fixed_context,
+    fixed_gate,
+    register_prompt,
+    tools_text,
+)
 
 _ROLE = """
 [역할]
@@ -72,6 +80,8 @@ _CANDIDATES = """
 - 후보 3개를 낸다. 모자라게 내지 않는다.
 - 활동에 쓰는 물건(materials)과 장소 성격(setting)을 빠짐없이 적는다. 거르는 건 코드가 한다 —
   알아서 빼거나 위험한 부분만 고쳐서 내지 않는다.
+- 음식 · 식재료를 만지거나 먹는 활동이면 그 이름을 foods 에 하나씩 빠짐없이 적는다(밥 · 김 ·
+  밀가루 · 군밤처럼). 음식이 없으면 foods 를 비운다.
 - 싫어한다고 나온 활동(polarity -1)은 다시 내지 않는다. 싫어하는 것을 피해 골랐다면
   무엇을 피했는지 reason 에 쓴다.
 - 언제 하는 활동인지 day 에 보호자가 쓴 날 표현을 그대로 적는다(오늘 · 내일 · 이번 주말 ·
@@ -160,18 +170,32 @@ def build_system_prompt(
     return "\n\n".join([*_SECTIONS, *dynamic])
 
 
+# 재호출 방향 — 빠진 이유(알레르기 · 위험 용어)와 상관없이 늘 같은 문장이다. 알레르기로 빠졌을
+# 때만 주면 그 자체가 사유다 (Tool_공통.md §5-2). 같은 음식의 변형(밀 쿠키 → 다른 밀 쿠키)을 다시 내
+# 0개로 끝나는 것을 막는다. "다시 쓰지 않는다" 만 쓰면 "쓰되 적지 않기" 로 읽혀서, 쓰는 재료는
+# 숨기지 말고 적으라고 같이 말한다 (#582)
+RECALL_HINT = (
+    "빠진 활동에 쓰인 음식 · 재료 · 물건(그것으로 만든 것 · 포장 · 껍질 포함)은 다시 쓰지 않는다. "
+    "이름만 빼거나 다르게 부르지 말고 그 재료 자체를 쓰지 않는다. 요청한 놀이의 방식은 살리고 "
+    "재료만 다른 것으로 바꾼다(같은 만들기 · 던지기 · 꾸미기를 다른 물건으로). 빠진 활동이 음식을 "
+    "쓰는 활동이었으면 음식이 들어가지 않는 놀이를 먼저 생각한다. 쓰는 음식 · 재료는 숨기지 말고 "
+    "materials · foods 에 그대로 적는다."
+)
+
+
 def recall_message(
     request_texts: Sequence[str], *, chosen: Sequence[str], excluded: Sequence[str]
 ) -> str:
     """안전 필터 뒤 재호출의 user 메시지. 빠진 이유는 말하지 않는다 (Tool_공통.md §5-2).
 
     이미 고른 것과 빠진 것을 둘 다 "다시 내지 않는다" 로만 준다 — 이유를 알려 주면 단어만 바꿔
-    같은 활동을 다시 내는 법을 배운다.
+    같은 활동을 다시 내는 법을 배운다. 방향(`RECALL_HINT`)은 사유와 상관없이 늘 같다.
     """
     avoid = "\n".join(f"- {item}" for item in (*chosen, *excluded))
     return (
         f"{_request(request_texts)}\n\n"
         "아래 활동은 다시 내지 않는다. 다른 놀이로 후보 3개를 새로 낸다.\n"
+        f"{RECALL_HINT}\n"
         f"{avoid}"
     )
 
@@ -292,3 +316,49 @@ def _now(context: ActivityContext) -> str:
     local = context.now.astimezone(context.timezone)
     weekday = "월화수목금토일"[local.weekday()]
     return f"현재 시각은 {local.isoformat()} ({weekday}요일) · timezone {context.timezone}."
+
+
+def _fingerprint_parts() -> tuple[str, ...]:
+    """프롬프트 지문(#770)의 입력 — 오늘의 조건 구획이 갈리는 조합마다 렌더링한
+    system 프롬프트와 tool spec."""
+    from app.agents.activity.schemas import tool_defs
+
+    rendered = []
+    # 조건 구획이 갈리는 값: 위치 · 장소 · 날씨 · 행사 어댑터, 오늘 판정, 못 읽음
+    for location, places, weather, events, outdoor_ok, unread in itertools.product(
+        (False, True), repeat=6
+    ):
+        gate = fixed_gate(has_location=location, places=places, weather=weather, events=events)
+        brief = WeatherBrief(outdoor_ok=outdoor_ok, labels={"기온": "적당"}, unread=unread)
+        rendered.append(
+            build_system_prompt(fixed_context(gate=gate), (), weather=brief)  # type: ignore[arg-type]
+        )
+    from app.agents.common import tool_loop
+
+    # user 메시지 틀 — 재호출 지시도 모델이 읽는 규칙이다
+    messages = (
+        request_message([]),
+        request_message(["요청"]),
+        recall_message(["요청"], chosen=["고른 것"], excluded=["빠진 것"]),
+    )
+    # 예시가 있으면 [예시] 머리말 지시("결만 참고한다 …")가 붙는다
+    # — 고정 더미 행으로 그 갈래도 싣는다
+    example = SimpleNamespace(
+        id="id",
+        title="제목",
+        body="본문",
+        materials=("준비물",),
+        setting=SimpleNamespace(value="indoor"),
+        caregiver_role=SimpleNamespace(value="guide"),
+    )
+    with_example = _examples((example,))  # type: ignore[arg-type]
+    return (
+        *rendered,
+        with_example,
+        *messages,
+        tools_text(tool_defs.TOOL_DEFINITIONS),
+        tool_loop.BAD_JSON,
+    )
+
+
+register_prompt("activity", _fingerprint_parts)

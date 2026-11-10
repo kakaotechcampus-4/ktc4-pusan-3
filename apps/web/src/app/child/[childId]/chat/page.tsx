@@ -36,7 +36,6 @@ import {
   sendLine,
   stopAnswering,
   useConversation,
-  type ChatQuestion,
   type ChatTurn,
 } from "@/stores/conversation";
 import { useDraftStore, useDraftText } from "@/stores/draft";
@@ -415,7 +414,6 @@ function ChatScreen() {
           <div className="flex flex-col gap-2">
             {conversation.answering ? (
               <AnsweringBar
-                question={conversation.answering}
                 savedAlongside={savedAlongside(
                   conversation.turns,
                   history.turns,
@@ -453,7 +451,7 @@ function ChatScreen() {
         {isError && !data ? (
           <CardFailed>
             <p>
-              지난 대화를 지금 불러오지 못했어요. 적어 주신 기록은 기록/기억 화면에 그대로 남아
+              지난 대화를 지금 불러오지 못했어요. 적어 주신 기록은 기록과 기억 화면에 그대로 남아
               있어요.
             </p>
             <Button
@@ -485,7 +483,7 @@ function ChatScreen() {
             <EmptyState
               icon={MessagesSquare}
               title="아래에 한 줄 적으면 여기서 이어져요"
-              description="주고받은 대화는 날짜별로 남아요. 적어 주신 기록은 기록/기억 화면에도 그대로 남아요."
+              description="주고받은 대화는 날짜별로 남아요. 적어 주신 기록은 기록과 기억 화면에도 그대로 남아요."
               count={0}
               countLabel="오늘 보낸 한 줄"
             />
@@ -535,7 +533,7 @@ function ChatScreen() {
               incoming={[]}
               draftIds={draftsOf.draftIds}
               origin="input"
-              found="적어주신 말에서 일정을 찾았어요."
+              found="적어 주신 말에서 일정을 찾았어요."
             />
           ) : null}
         </BottomSheet>
@@ -588,20 +586,18 @@ function ChatScreen() {
  * 🚨 `accent` 카드가 아니다. 이 화면에서 브랜드 테두리를 받을 "지금 볼 것" 은 답 묶음이다.
  */
 function AnsweringBar({
-  question,
   savedAlongside,
   onStop,
 }: {
-  question: ChatQuestion;
   /** 그 질문을 낸 run 이 저장한 것이 있는가. */
   savedAlongside: boolean;
   onStop: () => void;
 }) {
   return (
     <Card>
-      <p className="text-caption text-ink-subtle">위 질문에 답하는 중</p>
-      {/* 🚨 LLM 이 만든 문장이라 HTML 로 그리지 않는다 (apps/web/CLAUDE.md §4). */}
-      <p className="text-body-sm text-ink mt-1">{question.text}</p>
+      {/* 🚨 **질문을 여기 다시 적지 않는다** (#868). 바로 위 질문 카드에 같은 문장이 서 있어서 두 번 읽혔다.
+          대신 질문 카드는 답하는 동안 "이 질문의 답만" 안내를 걷는다 — 그 말은 입력창 가까운 여기서 한 번만 한다. */}
+      <p className="text-body-sm text-ink">위 질문에 답하는 중이에요.</p>
       {/* 🚨 **저장 여부에 따라 말한다** (#231 리뷰). 저장 0건인 질문에 "앞서 적어주신 말은 저장돼 있어요" 를
           세웠더니, 바로 위 답의 "아직 기록으로 남기지 않았어요" 와 한 화면에서 부딪쳤다 (예전엔 03 · 04 로
           화면이 갈려서 안 보였다). 앞 이야기는 저장 여부와 상관없이 서버가 `reply_to` 로 찾는다. */}

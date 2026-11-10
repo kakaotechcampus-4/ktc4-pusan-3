@@ -87,7 +87,7 @@ function RowForm({
     const next = {
       label:
         nextLabel === ""
-          ? "검사지를 보고 적어주세요"
+          ? "검사지를 보고 적어 주세요"
           : nextLabel.length > HEALTH_SAFETY_LIMITS.label
             ? `이름은 ${HEALTH_SAFETY_LIMITS.label}자까지 적을 수 있어요`
             : undefined,
@@ -128,7 +128,7 @@ function RowForm({
         </div>
       ) : (
         <p className="text-body-sm text-ink-muted bg-surface-muted rounded-field px-3 py-2">
-          이 줄은 검사지 원문을 읽지 못했어요. 검사지를 직접 보고 적어주세요.
+          이 줄은 검사지 원문을 읽지 못했어요. 검사지를 직접 보고 적어 주세요.
         </p>
       )}
 

@@ -2,12 +2,11 @@
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
-
+from app.api.schema_base import ApiSchema
 from app.domains.consent.models import ConsentScope
 
 
-class PolicyResponse(BaseModel):
+class PolicyResponse(ApiSchema):
     """동의 화면이 그리는 약관 한 건.
 
     🚨 화면은 `version` 을 그대로 가입 요청(`POST /auth/{provider}/signup` 의
@@ -17,10 +16,6 @@ class PolicyResponse(BaseModel):
        본 글" 을 증명하지 못한다 (멘토 #71 리뷰 4번). 원문은 DB 에 남아 동의 증빙과 해시의
        원본이 된다.
     """
-
-    # 필드 아래 설명 글이 Swagger(API 계약 정본)에 나가게 한다. 이 설정이 없으면 pydantic 은
-    # 필드 docstring 을 버린다.
-    model_config = ConfigDict(use_attribute_docstrings=True)
 
     scope: ConsentScope
     version: str

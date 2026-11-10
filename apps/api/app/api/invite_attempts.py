@@ -5,26 +5,27 @@
 것이 아니다.
 
 🚨 실패를 **먼저 잡아 두고**, 실패가 아니었으면 돌려준다. 끝난 뒤에 세면 한꺼번에 보낸 요청이
-   전부 검사를 통과한 뒤 DB 를 기다리는 동안 한도를 넘는다. acquire 의 확인과 기록 사이에
-   await 가 없어서 동시에 와도 한도를 넘지 않는다 (quota.py 와 같은 원칙).
+   전부 검사를 통과한 뒤 DB 를 기다리는 동안 한도를 넘는다. acquire 의 확인과 기록이 한 트랜잭션 ·
+   통마다 잠금이라 워커가 여럿이어도 동시에 와서 한도를 넘지 않는다 (quota.py 와 같은 원칙).
 
-🚨 프로세스 메모리다. api 는 --workers 1 전제다 (#134). 재시작하면 카운터가 비워진다.
+🚨 워커 밖 카운터(`rate_event`, #877 3단계)다. 한 번마다 자기 세션으로 바로 commit 한다.
 """
 
 import ipaddress
-from collections import deque
+from collections.abc import Callable
 from datetime import datetime, timedelta
 from uuid import UUID
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.api.deps.db import background_session
+from app.domains.rate_event.repository import give_back, take
 
 ACCOUNT_LIMIT = 5
 IP_LIMIT = 30
 WINDOW = timedelta(hours=1)
 
-# 이보다 키가 많아지면 지난 실패만 남은 키를 한 번에 치운다. 다시 오지 않는 계정 · IP 의 키는
-# 접근할 때만 정리되므로 그대로 두면 계속 쌓인다.
-_SWEEP_AT = 10_000
-
-_failures: dict[str, deque[datetime]] = {}
+_session_factory: Callable[[], AsyncSession] = background_session
 
 
 def ip_bucket(host: str | None) -> str:
@@ -47,40 +48,20 @@ def ip_bucket(host: str | None) -> str:
     return str(address)
 
 
-def _keys(parent_id: UUID, ip: str) -> tuple[tuple[str, int], tuple[str, int]]:
-    return (f"parent:{parent_id}", ACCOUNT_LIMIT), (f"ip:{ip}", IP_LIMIT)
+def _keys(parent_id: UUID, ip: str) -> list[tuple[str, int]]:
+    return [(f"invite:parent:{parent_id}", ACCOUNT_LIMIT), (f"invite:ip:{ip}", IP_LIMIT)]
 
 
-def _recent(key: str, now: datetime) -> deque[datetime]:
-    entries = _failures.setdefault(key, deque())
-    while entries and entries[0] <= now - WINDOW:
-        entries.popleft()
-    return entries
-
-
-def acquire(*, parent_id: UUID, ip: str, now: datetime) -> bool:
+async def acquire(*, parent_id: UUID, ip: str, now: datetime) -> bool:
     """실패 한 건을 미리 잡는다. 이미 한도면 잡지 않고 False — 호출부가 429 로 답한다."""
-    if len(_failures) > _SWEEP_AT:
-        for key in [k for k, v in _failures.items() if not v or v[-1] <= now - WINDOW]:
-            del _failures[key]
-    keys = _keys(parent_id, ip)
-    if any(len(_recent(key, now)) >= limit for key, limit in keys):
-        return False
-    for key, _ in keys:
-        _failures[key].append(now)
-    return True
+    async with _session_factory() as session:
+        taken = await take(session, limits=_keys(parent_id, ip), since=now - WINDOW, at=now)
+        await session.commit()
+    return taken
 
 
-def release(*, parent_id: UUID, ip: str, now: datetime) -> None:
-    """실패가 아니었다 — acquire 가 잡은 한 건을 돌려준다."""
-    for key, _ in _keys(parent_id, ip):
-        entries = _failures.get(key)
-        if entries and now in entries:
-            entries.remove(now)
-        if not entries:
-            _failures.pop(key, None)
-
-
-def clear() -> None:
-    """전부 비운다. 테스트용."""
-    _failures.clear()
+async def release(*, parent_id: UUID, ip: str, now: datetime) -> None:
+    """실패가 아니었다 — acquire 가 그 시각에 잡은 한 건을 돌려준다."""
+    async with _session_factory() as session:
+        await give_back(session, keys=[key for key, _ in _keys(parent_id, ip)], at=now)
+        await session.commit()
