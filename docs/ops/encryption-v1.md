@@ -55,7 +55,7 @@ sudo snap remove aws-cli
 
 ## 2. HSTS
 
-`Strict-Transport-Security: max-age=86400` 을 두 사이트(`icatch.ai.kr` · `api.icatch.ai.kr`)의 https 응답에 붙인다.
+`Strict-Transport-Security: max-age=86400` 을 네 사이트(`icatch.ai.kr` · `api.icatch.ai.kr` · dev 의 `dev.icatch.ai.kr` · `api.dev.icatch.ai.kr`)의 https 응답에 붙인다.
 
 - 브라우저는 이 헤더를 받으면 그 도메인을 **기간 동안 https 로만** 연다. 사용자가 `http://` 를 쳐도 네트워크에
   내보내기 전에 https 로 바꾼다. 헤더는 응답마다 붙어서 접속할 때마다 기한이 다시 1일로 늘어난다.

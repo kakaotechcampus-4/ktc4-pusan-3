@@ -76,7 +76,8 @@ export function readSpan(
  *
  * 🚨 **목록 줄이 이 시각을 오전 · 오후와 함께 보여준다** (#723 댓글). 서버는 "8시" 처럼 오전 · 오후가
  *    없는 시각을 오전으로 읽기로 했다 — 보호자가 일정 칸을 열지 않아도 그 판단을 볼 수 있어야 한다.
- * 🚨 **보호자가 날짜를 고쳤으면 `null`** 이다. 서버가 날짜를 고치면 시각을 버리고 하루로 둔다(`apply_edits`).
+ * 🚨 **시작의 날짜가 `date` 와 다르면 `null`** 이다 — 날짜만 고친 읽은 값이 그렇다. 서버도 그런 시각은
+ *    받지 않고 하루로 둔다(`apply_edits`). 시트의 시작 시간까지 얹은 값(`recordedEntry`)은 날짜가 맞는다.
  * 🚨 마감의 `all_day` 가 거짓이면 마감 시각을 읽은 것이다 — 시각이 없는 마감은 서버가 하루 종일로 보낸다.
  */
 export function readMoment(entry: PhotoEntry): string | null {
@@ -188,6 +189,34 @@ export function planEndsAt(
   startsAt: string | null = planStartsAt(entry, plan),
 ): string | null {
   return carriedEndsAt(entry, { date: planDate(entry, plan), allDay: plan.allDay, startsAt });
+}
+
+/**
+ * **저장되는 기록의 값.** 목록의 날짜 줄과 저장 요청(`commit`)이 이 값을 쓴다.
+ *
+ * 🚨 **보호자가 시트에서 고친 시작은 기록에도 들어간다.** 한동안 "시작 시간 · 하루 종일" 은 캘린더에
+ *    넣는 값(`EventPlan`)만 바꿨다 — 저녁 8시를 오전 8시로 읽은 것을 고치면 캘린더에는 저녁 8시가
+ *    들어가는데, 목록의 날짜 줄과 저장되는 기록에는 오전 8시가 남았다.
+ * 🚨 **`entry` 자체를 덮어쓰지 않는다.** `entry` 는 사진에서 **읽은 값**이고, 읽은 끝을 함께 넣을지
+ *    (`carriedEndsAt`) · 무엇이 빠졌다고 말할지(`droppedEnd`)가 그 읽은 값과 견준다. 덮어쓰면 한 번
+ *    고친 뒤로는 고친 값이 읽은 값 행세를 한다. 그래서 보여줄 때와 보낼 때만 얹는다.
+ * 🚨 **시작 항목만이다.** 마감 항목의 "시작하는 날 · 시작 시간" 은 캘린더에 넣을 때만 쓰는 값이고
+ *    기록의 날짜는 마감이다. 급식 · 안내에는 그 칸이 없다.
+ * 🚨 시작이 아직 정해지지 않았으면(하루 종일을 껐는데 시각이 빈 경우) 읽은 값 그대로다.
+ * 🚨 **서버 `apply_edits` 가 같은 규칙으로 받는다** — 시작 항목에서만, `starts_at` 의 날짜가 `date` 와
+ *    같을 때만. 끝은 읽은 끝 그대로일 때만 받는다 (`carriedEndsAt` 이 보내는 값이 그것뿐이다 · #952 리뷰).
+ *    이 함수를 바꾸면 서버도 같이 본다.
+ */
+export function recordedEntry(entry: PhotoEntry, plan: EventPlan): PhotoEntry {
+  if (!canBecomeEvent(entry) || entryDateRole(entry) !== "start") return entry;
+  const startsAt = planStartsAt(entry, plan);
+  if (startsAt === null) return entry;
+  return {
+    ...entry,
+    starts_at: startsAt,
+    ends_at: planEndsAt(entry, plan, startsAt),
+    all_day: plan.allDay,
+  };
 }
 
 /**

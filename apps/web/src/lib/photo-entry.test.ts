@@ -14,6 +14,7 @@ import {
   readMoment,
   readSpan,
   readStartTime,
+  recordedEntry,
   offBecausePast,
   startsChecked,
 } from "@/lib/photo-entry";
@@ -362,5 +363,77 @@ describe("eventWhen", () => {
     expect(eventWhen("2026-11-23T00:00:00+09:00", "2026-11-23T23:59:00+09:00", true)).toMatch(
       /하루 종일$/,
     );
+  });
+});
+
+/**
+ * 저장되는 기록의 값. 🚨 보호자가 시트에서 고친 시작이 캘린더에만 들어가고 기록에는 사진에서 읽은
+ * 시각이 남던 것을 막는다 — 목록의 날짜 줄과 저장 요청이 이 값을 쓴다. 서버 `apply_edits` 가 받는 값이다.
+ */
+describe("recordedEntry", () => {
+  it("🚨 시작 시간을 고치면 기록의 시작도 고친 시각이다", () => {
+    const record = recordedEntry(timed, { ...initialPlan(timed), time: "20:00" });
+
+    expect(record.starts_at).toBe("2026-11-23T20:00:00+09:00");
+    expect(record.all_day).toBe(false);
+    // 읽은 끝(11:00)은 고친 시작보다 앞이라 싣지 않는다 — 캘린더에 넣는 값과 같다.
+    expect(record.ends_at).toBeNull();
+    // 목록의 날짜 줄이 이 값으로 고친 시각을 말한다.
+    expect(readMoment(record)).toBe("2026-11-23T20:00:00+09:00");
+  });
+
+  it("고치지 않았으면 읽은 값과 같은 순간이고 읽은 끝도 그대로다", () => {
+    const record = recordedEntry(timed, initialPlan(timed));
+
+    expect(Date.parse(record.starts_at ?? "")).toBe(Date.parse(timed.starts_at ?? ""));
+    expect(record.ends_at).toBe(timed.ends_at);
+    expect(record.all_day).toBe(false);
+  });
+
+  it("여러 날을 읽은 하루 종일 일정은 고치지 않으면 기간이 그대로다", () => {
+    const record = recordedEntry(span, initialPlan(span));
+
+    expect(readSpan(record)).toEqual({ from: "2026-11-23", to: "2026-11-27" });
+    expect(record.all_day).toBe(true);
+  });
+
+  it("시각을 읽은 일정을 하루 종일로 바꾸면 기록도 하루 종일이다", () => {
+    const record = recordedEntry(timed, { ...initialPlan(timed), allDay: true });
+
+    expect(record.all_day).toBe(true);
+    expect(record.starts_at).toBe("2026-11-23T00:00:00+09:00");
+    expect(readMoment(record)).toBeNull();
+  });
+
+  it("날짜와 시각을 함께 고치면 고친 날의 그 시각이다", () => {
+    const moved = { ...timed, date: "2026-11-25" };
+    const record = recordedEntry(moved, { ...initialPlan(timed), time: "20:00" });
+
+    expect(record.starts_at).toBe("2026-11-25T20:00:00+09:00");
+    expect(record.ends_at).toBeNull();
+  });
+
+  it("🚨 마감 항목은 건드리지 않는다 — 시작하는 날과 시작 시간은 캘린더에 넣을 때만 쓴다", () => {
+    const plan = { ...initialPlan(due), startDate: "2026-11-10", allDay: false, time: "09:00" };
+
+    expect(recordedEntry(due, plan)).toBe(due);
+  });
+
+  it("급식과 안내는 건드리지 않는다", () => {
+    const meal = entry({ kind: "meal", date: "2026-11-23", all_day: true });
+    const info = entry({ kind: "info", date: "2026-11-23", all_day: true });
+
+    expect(recordedEntry(meal, initialPlan(meal))).toBe(meal);
+    expect(recordedEntry(info, initialPlan(info))).toBe(info);
+  });
+
+  it("하루 종일을 껐는데 시각을 아직 안 골랐으면 읽은 값 그대로다", () => {
+    const allDay = entry({
+      date: "2026-11-23",
+      all_day: true,
+      starts_at: "2026-11-23T00:00:00+09:00",
+    });
+
+    expect(recordedEntry(allDay, { ...initialPlan(allDay), allDay: false, time: "" })).toBe(allDay);
   });
 });

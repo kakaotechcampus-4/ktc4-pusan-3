@@ -190,9 +190,9 @@ GET /runs/{rid}/events                       step → lane → step → parsed �
 - 알림장의 아이 문장 → `observation_*`. 지금 commit 은 관찰을 만들지 않는다. 반 공통 문장을 구분하지 않고 넣으면 잘못 승격되므로 `audience_scope` · 문장 주체 판정이 먼저다. 우리 아이 이름도 `[이름]` 으로 가려져서 `[이름]는 [이름]와` 가 되므로, 경로를 만들 때 우리 아이를 구분하는 표시도 필요하다. 공개 자료에 알림장 실물이 없어서 지어낸 문서로만 시험했다
 - 정정 공지를 앞 공지에 잇는 자동 판단 — 정정이라는 사실(`relation`)만 저장한다. 어느 공지 · 어느 일정을 고치는지 찾지 못해서, 보호자가 새 날짜를 일정으로 넣으면 옛 일정이 그대로 남는다
 - HEIC 미리보기 — 서버는 읽지만, 안드로이드 Chrome · WebView 는 HEIC 를 `<img>` 로 그리지 못해 읽는 중 · 확인 화면의 사진 미리보기가 비어 보일 수 있다
-- 업로드 본문 크기 제한 — 사진은 S3 로 가지만(§2), FastAPI 는 누가 보내든 본문을 먼저 끝까지 받는다. Caddy `request_body max_size` 가 아직 없다
+- ~~업로드 본문 크기 제한~~ — 사진은 S3 로 가지만(§2), FastAPI 는 누가 보내든 본문을 먼저 끝까지 받는다. 그래서 Caddy 가 api 주소에서 16MB 로 자른다 (`request_body max_size`, §2 표 · `deploy/caddy/Caddyfile`)
 - 화면에 보이는 값 — 서버는 `PhotoEntry` 로 `starts_at` · `ends_at` · `due_at` · `target_scope` · `details` · `source_quote` 를 보내지만 웹이 아직 그리지 않는다. 그래서 `9:30` 은 보호자가 다시 입력하고, `11/23 ~ 11/27` 은 첫날 하루 일정으로 들어가고, 금액 · 대상 · 회신 수단을 보호자가 확인할 수 없다. 웹 `photo-review.tsx` · `photo-entry-sheet.tsx` 를 고친다 (#611 과 같은 파일)
-- 사진 시트의 알림 고르기 — #611 머지 뒤에 생긴다
+- ~~사진 시트의 알림 고르기~~ — 생겼다 (`apps/web/src/components/photo-entry-sheet.tsx` 의 `ReminderField`)
 - 저장한 공지를 읽는 곳 — 화면 · Food · Growth · 추천 근거 어디에도 연결되지 않았다
 - 여러 장 공지 — 업로드가 사진 한 장만 받아 2쪽짜리 공지는 공지 2건이 된다. 이미지가 있는 게시글의 최대 34% 가 2장 이상이다 (별개 사진이 섞인 상한값)
 - 여러 쪽 PDF · HWP 업로드 — 서버 API 는 이미지만 받는다. 파일 읽기(`document_text.py`)는 있고 말뭉치 시험에 썼다

@@ -22,7 +22,8 @@
 | **web 서버 오류** | Next `src/instrumentation.ts` 의 `onRequestError` → 웹훅으로 직접 (`web-alert`). 종류 · digest · 경로 · 라우트만, 분당 상한, 개발 모드는 끔 | Next 서버엔 보호자 토큰이 없어 `/client-errors` 를 못 쓴다. 웹 컨테이너에 `ALERT_WEBHOOK_URL` 을 compose 가 넘긴다 |
 | **컨테이너 감시** | 서버 cron 1분 · `deploy/scripts/health-alert.sh` — docker healthcheck 결과와 api 의 `/health/ready`(DB · Redis 에 닿는가)가 **달라졌을 때만** 같은 웹훅으로 | api 가 못 뜨거나 redis 가 죽은 건 api 안의 알림이 말할 수 없다 (§5) |
 | **서버 밖 가동 감시** | UptimeRobot 무료 — 5분마다 api `/health` · web `/` 를 밖에서 찔러 Discord 로 (웹훅은 따로 `uptime-alert`) | 서버 안의 cron 은 EC2 자체가 죽으면 같이 말을 못 한다. 코드 없음 · 보호자 정보 안 감 (응답 코드만). 무료 플랜에 Discord 연동 포함, 비상업 용도 |
-| **SaaS(Sentry 등)** | 안 쓴다 | 요청 본문 · 사용자 정보가 밖으로 가는 도구는 §10 결정 전에는 못 쓴다 |
+| **SaaS(Sentry 등)** | 로그 · 오류 추적은 안 쓴다 | 요청 본문 · 사용자 정보가 밖으로 가는 도구는 쓰지 않는다. 로그 줄에는 `%s` 에 채운 값(원문)이 있다 (§4) |
+| **서버 메트릭** | Grafana Cloud 로 보낸다 — Alloy 컨테이너 1개 (#946, 11-10 PM) | 숫자와 고정 라벨(응답 코드 · 메서드 · 디스크 장치)만 나가고 `parent_id` · 경로 · IP · Host 헤더가 없어 개인정보가 아니다 — 처리방침의 위탁 · 국외 이전 대상이 아니다. 무엇을 왜는 §7 |
 
 ## 2. 왜 앱 파일 핸들러가 아닌가
 
@@ -64,12 +65,38 @@ api 안의 알림은 **api 프로세스 안의 `app.*` 로거**에만 달린다.
 ## 6. 열린 것
 
 - 알림 부착을 import 시점이 아니라 FastAPI lifespan 으로 옮길지 — 지금은 `configure_logging()` 을 다시 부르면 핸들러가 조용히 사라진다(문서로만 막음). lifespan 이면 순서가 보장되고 import 에 부작용이 없지만, README 의 한 줄 확인 명령이 복잡해진다
-- 도메인 (10-10 사기로 함) — 모니터는 IP 가 아니라 도메인으로 등록한다. EC2 를 중지 → 시작하면 공인 IP 가 바뀌는데(고정 IP 불가), 그때 도메인의 A 레코드만 고친다. 도메인이 생기면 HTTPS 를 붙일 수 있고, UptimeRobot 의 "SSL · 도메인 만료" 알림이 그때부터 쓸모 있다
+- 도메인 (10-10 사기로 함) — 모니터는 IP 가 아니라 도메인으로 등록한다. EC2 를 중지 → 시작하면 공인 IP 가 바뀌는데(고정 IP 불가), 그때 도메인의 A 레코드만 고친다. 도메인이 생겨 HTTPS 를 Caddy 로 붙였고(`deploy/caddy/Caddyfile`), UptimeRobot 의 "SSL · 도메인 만료" 알림이 그때부터 쓸모 있다
 - **시험 서버(dev)** — 11-06 띄움 ([deploy-v1.md](deploy-v1.md)). 꼬리표 · 컨테이너 감시 cron 은 거기서 정리했다. 아래는 그때 같이 본 것으로, Discord 채널 · UptimeRobot 은 아직 열려 있다:
-  - 알림 꼬리표 — `deploy/docker/.env` 에 `APP_ENV=dev` 한 줄. compose 가 web(Next 서버 알림)에 넘기고 컨테이너 감시도 같은 줄을 읽는다 (10-10 이렇게 바꿈 — 코드 · cron 줄은 안 고친다). api 는 `apps/api/.env` 의 `APP_ENV` 를 읽으니 그쪽도 `dev` 로 — 두 파일 값이 어긋나면 꼬리표가 갈린다. api 가 compose 에 올라갈 때 같은 파일을 읽게 하면 사라지는 문제다
+  - 알림 꼬리표 — `deploy/docker/.env` 에 `APP_ENV=dev` 한 줄. compose 가 web(Next 서버 알림)에 넘기고 컨테이너 감시도 같은 줄을 읽는다 (10-10 이렇게 바꿈 — 코드 · cron 줄은 안 고친다). api 도 compose 가 같은 줄을 넘겨 `apps/api/.env` 의 `APP_ENV` 를 덮는다 (`docker-compose.deploy.yml`)
   - ~~api — 카카오 키 부팅 검사가 `prod` 만 막는다~~ — dev 도 막는다 (#310, `app/core/config.py` `_require_kakao_keys_on_servers`)
   - ~~컨테이너 감시가 dev 의 api 준비 상태(`/health/ready`)를 건너뛴다~~ — 이름을 `ktc4-api` 로만 찾던 것을 `ktc4-dev-api` 도 찾게 고쳤다 (#310). cron 줄은 [deploy-v1.md](deploy-v1.md) 준비 4
   - Discord — 시험 서버 알림을 같은 채널에 섞을지, 채널(웹훅)을 따로 둘지 정한다. 섞으면 꼬리표만으로 가른다
   - UptimeRobot — 시험 서버도 감시할지 (무료 플랜은 모니터 50개라 자리는 있다). 도메인은 하위 이름(예: `dev.<도메인>`)으로
 - ~~배포 스크립트가 `compose up` 직후 healthcheck 를 기다렸다가 바로 알리는 것~~ — `deploy.sh` 가 `up --wait` 로 기다리고, 실패하면 롤백 후 워크플로를 빨간불로 끝낸다 ([deploy-v1.md](deploy-v1.md))
 - 처리방침 ⑥ 의 기기 요약 구절과 로그 보관 기간 숫자 (#166, PM) · 법률 검토 때 "자동으로 남는 항목은 고지로 충분한지"
+
+## 7. 서버 메트릭 — Grafana Cloud (#946)
+
+§1 의 알림은 "죽었나 · 틀렸나"만 말한다. 서버가 **얼마나 버거운지**(dev · prod 가 4GB · 50GB 한 대를 나눠 쓴다, #747 · #780)는 추세로 봐야 보여서 숫자를 모은다.
+
+| 무엇 | 메트릭 | 보고 무엇을 하나 |
+|---|---|---|
+| CPU · load | `node_cpu_seconds_total` · `node_load*` | 빌드 · 배포가 겹칠 때 서비스가 밀리는지 |
+| 메모리 · swap · **OOM kill** | `node_memory_*` · `node_vmstat_pswp*` · `node_vmstat_oom_kill` | dev 폭주가 운영을 누르는지. 컨테이너가 메모리 때문에 죽었는지는 swap 보다 OOM kill 이 바로 보인다 |
+| 디스크 (`/`) | `node_filesystem_avail_bytes` | 50GB 고정 — 이미지 · journald · DB 가 채우는 속도 |
+| 트래픽 in/out | `caddy_http_request_size_bytes` · `caddy_http_response_size_bytes` | 사진 업로드 · 데이터 전송 비용. 서버 네트워크 장치(`node_network_*`)는 못 쓴다 — `/proc/net` 은 읽는 프로세스의 네트워크라 Alloy 컨테이너 것이 나오고, 서버 것을 보려면 `network_mode: host` 다(아래에서 막음). api 가 밖으로 부르는 S3 · LLM · 외부 API 트래픽은 여기 안 잡힌다 |
+| 요청 · 응답 코드 | `caddy_http_requests_total` · `caddy_http_request_duration_seconds_count{code}` | 5xx 가 늘었는지. **사이트별(prod/dev × web/api)로는 나누지 않는다** — 아래 `per_host` |
+| 응답 시간 | `caddy_http_response_duration_seconds` 의 `_sum / _count` (첫 바이트까지 평균) | p95 는 못 본다 — 구간(`_bucket`)은 조합마다 시계열이 늘어 버린다(아래). 전체 시간(`request_duration`)에는 SSE(`/runs/{rid}/events`) 연결 시간이 섞이고 Caddy 에 경로 라벨이 없어 뺄 수 없다 (쓸 만한지는 실측) |
+
+- **어떻게** — Alloy(Grafana 의 수집 프로그램) 컨테이너 1개가 60초마다 서버 자원과 Caddy 의 내부 창구(`:2020`, 호스트 포트 없음 · Alloy 주소 172.30.0.11 만 받음)를 읽어 보낸다. 설정은 `deploy/alloy/config.alloy`, 값 3개(`GRAFANA_*`)는 prod `deploy/docker/.env` 에만
+- **수집기는 쓰는 5개만** (cpu · loadavg · meminfo · filesystem · vmstat) — 서버는 ~100 줄(CPU 수에 비례)이다. 서버 메트릭의 `instance` 는 compose 의 `hostname: ktc4-ec2` 로 고정한다 — 없으면 컨테이너 ID 라 배포마다 시계열이 새로 생긴다. 수집마다 `sample_limit` (서버 2,000 · Caddy 50,000) — 넘으면 그 회차를 통째로 버린다
+- 🚨 **Caddy 는 보낼 것만 고른다** (`prometheus.relabel "caddy"`) — Caddy 원본은 메서드 × 응답 코드 조합 하나마다 ~50줄이고, 인터넷 누구나 메서드 · 오류 코드를 섞어 보내 조합을 늘릴 수 있으며 카운터는 Caddy 재시작 전까지 남는다 (#946 재검증: 153 → 4,207줄 재현). 합계 · 개수만 남기고 구간 · Go 런타임을 버려 조합당 ~7줄로 줄이고, 1xx~5xx 밖의 응답 코드는 버린다. 임의 메서드는 Caddy 가 `OTHER` 하나로 묶는다. Caddy 한도는 Alloy 메모리 안전장치일 뿐이라 크게 둔다 — 낮으면 넘는 순간 Caddy 메트릭이 통째로 비고 그 위의 알림도 조용해진다. 그래서 **`up{job="prometheus.scrape.caddy"} == 0` 에도 알림을 건다**
+- 🚨 **Alloy 에 서버 경로를 하나도 붙이지 않는다** (#946 보안 검토 H1 · 재현) — `/` 를 읽기 전용으로 붙여도 그 안의 `/run/docker.sock` 에 연결할 수 있고(읽기 전용은 소켓 연결을 막지 않는다), `/var/lib/docker/containers/*/config.v2.json` 에서 모든 컨테이너 환경변수(LLM 키 · DB 비밀번호)가, 서버의 `.env` · FCM 키 · TLS 개인키 · DB 파일까지 읽힌다. 필요도 없다 — Docker 는 `/proc/stat` · `meminfo` · `loadavg` · `vmstat` 을 컨테이너별로 나누지 않아 컨테이너 안에서 서버 전체 값이 나오고, 디스크는 컨테이너 루트(overlay)를 재면 Docker 가 쓰는 루트 디스크 값이 나온다 (로컬 실측). 그리고 비 root(65534) · `cap_drop: ALL` · `no-new-privileges` · 읽기 전용 · digest 고정 — 뚫려도 서버 파일 · 다른 컨테이너 비밀에는 닿지 않는다. 다만 edge 에 있어서 web · api(dev 포함)에 Caddy 를 거치지 않고 닿는다 — dev basic_auth · 로그인 차단을 비켜 가는 길이지만 edge 의 다른 컨테이너가 원래 가진 길과 같다
+- 🚨 **Caddy `per_host` 를 켜지 않는다** (M1 · 재현) — 2.10 은 들어온 Host 헤더를 그대로 라벨로 써서, 인터넷 누구나 Host 만 바꿔 보내면 Host 하나에 시계열이 ~57개씩 늘고(무료 한도 초과) 상한 없는 Caddy 메모리가 커진다. 설정에 없는 Host 를 `_other` 로 묶는 보호는 2.11 부터다 ([caddyserver/caddy#7306](https://github.com/caddyserver/caddy/pull/7306)). **2.11 로 올려 켜는 것도 하지 않는다** (11-11) — dev 와 prod 가 같은 EC2 한 대에서 돌아 서버 자원은 어차피 한 덩어리로 보고, dev 는 팀만 들어가 트래픽이 작아 Caddy 합계가 사실상 prod 숫자다. prod · dev 를 다 받는 입구(Caddy)를 메트릭 하나 때문에 올릴 만큼은 아니다. 어느 사이트의 오류인지는 Caddy · api 로그로 본다. dev 의 5xx 가 운영 알림을 울리기 시작하거나 dev · prod 가 다른 서버로 갈라지면 그때 다시 본다
+- **컨테이너별 메트릭(cadvisor)은 뺐다** — `docker.sock` 을 붙여야 하는데, `:ro` 여도 서버 root 이고 이 서버에서는 AWS 역할(호스트 네트워크 컨테이너를 띄워 imds-firewall 을 비켜 간다) · 다른 컨테이너의 비밀(DB 비밀번호 · API 키)까지 닿는다. 얻는 건 컨테이너별 메모리 하나라 서버 메모리가 튈 때 `docker stats` 로 본다 (11-10 PM)
+- **감시 도구가 배포를 막지 않는다** — Alloy 는 profile `monitor` 라 배포 · 롤백의 `up --wait` 밖이다. `deploy.sh` 가 prod 배포 성공 뒤 `alloy validate` 를 거쳐 따로 띄우고, 실패하면 🟠 경고만 남긴다. 감시가 하루 비는 건 괜찮고 서비스가 멈추는 건 안 된다. `GRAFANA_*` 가 비어도 Alloy 는 죽지 않고 보내기만 재시도한다 (실측). dev 는 띄우지 않는다 — 서버에 하나면 다 본다
+- **`network_mode: host` 를 쓰지 않는다** — imds-firewall 은 컨테이너에서 나가는 길만 막는다. edge 의 자동 주소(.128 위)는 막힌다
+- **알림** — Grafana Alerting → 지금 Discord 채널(`infra-alert` 와 같은 곳). 채널이 늘면 덜 본다. 🚨 순간값이 아니라 **5분 이상 계속**(pending period 5m)일 때만 — 배포 중 잠깐 튀는 건 안 오게. 규칙은 Grafana 화면에서 만들고 코드로 두지 않는다
+  - 🚨 **Alloy 가 죽으면 데이터가 아예 안 와서 `up == 0` 도 안 울린다** — 규칙마다 "No data" 를 Alerting 으로 둔다(OK 로 두면 조용하다). Alloy 컨테이너의 죽음 · 재시작 반복은 컨테이너 감시(`health-alert.sh`)가 이미 infra-alert 로 알린다 — compose 의 모든 컨테이너를 본다
+  - `up` 의 job 이름은 Caddy 가 `prometheus.scrape.caddy`, 서버가 `integrations/unix` 다 (Alloy 가 붙인다)
+- **안 하는 것** — 로그(Loki) · 트레이스 · DB · Redis exporter. FastAPI `/metrics`(run 소요 시간 · 부분 결과 횟수)는 다음 이슈

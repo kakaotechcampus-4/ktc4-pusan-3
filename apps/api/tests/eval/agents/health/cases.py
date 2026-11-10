@@ -510,6 +510,15 @@ CASES: list[Case] = [
         "등록 원문 + 날짜별 체크 n/m회 · 해석 · '안 먹였' · 비율 0건 · 알레르기 줄은 코드",
         judge=visit_timeline(),
     ),
+    _case(
+        "T24-temp",
+        V,
+        "C48-fever",
+        "체온이 얹힌 열 기록의 정리 — symptom_timeline 한 장 · 모델 1회 · 발열 줄에 최고 · 최저 "
+        "체온과 잰 시각(코드가 그린다) · 모델 입력에 체온 숫자 0건",
+        judge=visit_timeline(),
+        text="병원에 가려고 하는데 최근 증상 정리해줘",
+    ),
     _closed("T24-noconsent", V),
     _case(
         "T24-safetyfail",

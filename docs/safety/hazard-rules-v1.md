@@ -76,9 +76,9 @@ class Guardrail(Protocol):
 - **`GuardResult` 는 걸린 종류(`kinds`)만 싣는다.** 걸린 낱말은 원문 조각이라 로그에 찍히기 쉬워 싣지 않는다 (루트 §2). 화면 문구도 싣지 않는다 — 걸렸을 때 문구는 pipeline 이(`HAZARD_GUIDANCE`), 검사를 못 했을 때 문구는 실패 종류가 정한다.
 - **fail-closed.** 검사를 하지 못하면 빈 결과("걸린 것 없음")를 돌려주지 않고 `GuardrailUnavailableError` 를 올린다. 부르는 쪽은 이 예외를 받으면 그 run 을 진행하지 않는다. pipeline 이 잡아 `Failed("guard_unavailable")` 로 끝낸다 (#768, [run-failure-v1](../api/run-failure-v1.md)) — Supervisor · Memory 를 부르지 않고 Memory commit 전이라 저장도 남지 않는다.
   - 실패를 `GuardResult` 의 칸으로 두지 않은 것은 부르는 곳마다 "실패면 막는다" 를 챙기지 않아도 되게 하려는 것이다. 한 곳만 빠뜨려도 검사가 조용히 빠진다.
-  - 실패 종류를 한 곳으로 모을 때(LLM 타임아웃 · 연결 오류 등) 이 예외도 그 계통에 넣고, 화면 문구는 실패 종류에서 정한다. 그때도 `Guardrail` · `GuardResult` 와 두 호출 지점은 바뀌지 않는다.
+  - 실패 종류는 한 곳(`common/errors.py` 의 `AgentFailure` 계통, #768)으로 모았고 이 예외도 그 계통이다. 화면 문구는 실패 종류에서 정한다(`common/failure.py`). `Guardrail` · `GuardResult` 와 두 호출 지점은 바뀌지 않았다.
 - **`check` 는 async 다.** 다음 구현이 외부 API 면 await 가 필요하고, 두 호출 지점이 이미 async 함수 안이다.
-- **`app/rules/` 가 아니라 `app/agents/common/` 에 뒀다.** 규칙 레이어는 표준 라이브러리만 쓰고, 다음 구현의 실패 예외는 Agent 쪽 실패 종류와 같은 계통이어야 한다 (`SafetyLookupError` 가 `common/ports.py` 에 있는 것과 같다).
+- **`app/rules/` 가 아니라 `app/agents/common/` 에 뒀다.** 규칙 레이어는 표준 라이브러리만 쓰고, 다음 구현의 실패 예외는 Agent 쪽 실패 종류와 같은 계통이어야 한다 (`SafetyLookupError` 가 `common/errors.py` 에 있는 것과 같다).
 - 테스트: 기존 케이스 전부를 `StaticRuleGuardrail` 로 돌리고(`tests/unit/agents/common/test_guardrail.py`), 바꿔 끼운 가짜가 두 곳에서 막는지 · 검사를 못 하면 run 이 멈추는지를 본다(`tests/unit/agents/supervisor/test_pipeline.py` 의 "바꿔 끼운 Guardrail").
 
 ## 5. 목록을 코드 밖으로 옮길 때 같이 정할 것

@@ -10,13 +10,14 @@
 발화 · 아이 정보는 전부 가짜 값이다 (루트 CLAUDE.md §9).
 """
 
+import asyncio
 import uuid
 from datetime import UTC, date, datetime, timedelta
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy import select, text, update
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import delete, select, text, update
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.agents import entrypoint
 from app.agents.common.datetime_rules import DateRange
@@ -26,14 +27,24 @@ from app.api.runs.registry import RunChannel
 from app.api.v1 import card_rows
 from app.api.v1.routers import delete_proposals
 from app.core import llm_usage
+from app.domains.child.models import Child
 from app.domains.delete_proposal.models import DeleteProposal
 from app.domains.delete_proposal.repository import PROPOSAL_TTL, ProposalTab, add_proposal
+from app.domains.identity.models import Parent
 from app.domains.memory.observation.models import ObservationFood, ObservationStatus
 from app.domains.memory.profile.models import MemoryDomain, ProfileAffinity, ProfileState
 from app.domains.memory.store.db_store import DbMemoryStore
 from app.domains.schedule.models import Event, EventCategory, EventCreatedBy, EventType
 from app.domains.schedule.repository import create_event
-from tests.integration.api.conftest import Bearer, issue_bearer, link_child
+from app.infra.db.session import engine
+from tests.integration.api.conftest import (
+    Bearer,
+    backend_pid,
+    issue_bearer,
+    link_child,
+    seed_login,
+    wait_for_lock_wait,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -225,11 +236,89 @@ async def test_same_key_replays_first_response(
 
     first = await db_client.post(_url(cid, proposal), json={"ids": [lunch]}, headers=keyed)
     again = await db_client.post(_url(cid, proposal), json={"ids": [lunch]}, headers=keyed)
+    fresh = await db_client.post(_url(cid, proposal), json={"ids": [lunch]}, headers=_key(headers))
 
     assert first.status_code == again.status_code == 200
     assert again.json() == first.json()
+    # 다른 키면 이미 끝난 제안이다
+    assert (fresh.status_code, fresh.json()["error"]["code"]) == (409, "proposal_closed")
     row = await session.get(DeleteProposal, proposal, populate_existing=True)
     assert row.result == {"observation_food": 1}
+
+
+# 두 요청이 실제로 잠금에서 겹쳐야 해서 한 트랜잭션 안의 `session` 으로는 재현할 수 없다. 커밋하는
+# 세션을 따로 열고, 끝나면 만든 보호자 · 아이를 지운다 (기록 · 제안은 CASCADE). API 는 `client` 로
+# 부른다 — 핸들러도 자기 세션으로 커밋해야 겹친다.
+
+
+@pytest.fixture
+async def committed_proposal():
+    """(Authorization 헤더, 아이 id, 제안 id, 후보 기록 id) — 실제로 커밋된 값."""
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    # 실행마다 새 토큰 — 로컬 DB 를 여러 worktree 가 같이 써서, 고정 값이면 겹쳐 돌 때 부딪힌다
+    token = f"test-token-race-{uuid.uuid4().hex}"
+    async with factory() as setup:
+        parent = Parent()
+        setup.add(parent)
+        await setup.flush()
+        await seed_login(setup, parent_id=parent.id, token=token)
+        child_id = await link_child(setup, parent_id=parent.id)
+        lunch = await _meal(setup, child_id, parent.id, "rice")
+        proposal = await _propose(
+            setup,
+            child_id,
+            parent.id,
+            [ProposalTab("observation_food", False, (lunch,), (lunch,))],
+        )
+        await setup.commit()
+    yield {"Authorization": f"Bearer {token}"}, child_id, proposal, lunch
+    async with factory() as cleanup:
+        await cleanup.execute(delete(Child).where(Child.id == child_id))
+        await cleanup.execute(delete(Parent).where(Parent.id == parent.id))
+        await cleanup.commit()
+
+
+async def test_same_key_overlapping_replays_first_response(
+    client: AsyncClient, committed_proposal, curator_calls, monkeypatch
+):
+    """같은 키가 겹쳐 오면 뒤의 것은 제안 행 잠금에서 기다렸다가 처음 응답을 재생받는다 (#774).
+
+    앞의 요청이 키를 적는 순간에 멈춰 두고 뒤의 요청을 보낸다. 키를 commit 뒤에 적으면 그때
+    잠금은 이미 풀려 있어 뒤의 것이 기다리지 않고 끝난 제안을 보고 409 를 낸다 — 아래 잠금 대기
+    확인이 실패한다.
+    """
+    headers, cid, proposal, lunch = committed_proposal
+    url, keyed = _url(cid, proposal), _key(headers, "same-key")
+    writing, release = asyncio.Event(), asyncio.Event()
+    remember, lock = idempotency.remember, delete_proposals._locked
+    locking: list[int] = []
+
+    async def held(**kwargs):
+        writing.set()
+        await release.wait()
+        await remember(**kwargs)
+
+    async def tracked(db, *args):
+        locking.append(await backend_pid(db))
+        return await lock(db, *args)
+
+    monkeypatch.setattr(idempotency, "remember", held)
+    monkeypatch.setattr(delete_proposals, "_locked", tracked)
+
+    first = asyncio.create_task(client.post(url, json={"ids": [lunch]}, headers=keyed))
+    # 앞의 것을 띄운 뒤에는 어디서 실패해도 풀어 준다 — 잠금을 쥔 채 남으면 뒷정리가 멈춘다
+    try:
+        await asyncio.wait_for(writing.wait(), timeout=5)
+        second = asyncio.create_task(client.post(url, json={"ids": [lunch]}, headers=keyed))
+        await wait_for_lock_wait(blocker=locking[0])  # 뒤의 것이 앞의 것이 쥔 제안 행에서 기다린다
+    finally:
+        release.set()
+    responses = await asyncio.wait_for(asyncio.gather(first, second), timeout=5)
+
+    assert [r.status_code for r in responses] == [200, 200]
+    assert responses[1].json() == responses[0].json()
+    assert responses[0].json()["proposal"]["result"] == {"observation_food": 1}
+    assert curator_calls == [cid]  # 지운 것은 앞의 요청 하나다
 
 
 async def test_expiring_while_waiting_for_the_lock_cannot_delete(

@@ -67,7 +67,7 @@
 
 ## 3. 엔드포인트
 
-경로·시간 표기는 [계약서 §01](./api-interface-v1.html)을 따른다. **세 개 모두 `Bearer` 를 요구한다** — 무인증 예외 5개(`auth-kakao-v1.md` §3)를 늘리지 않는다.
+경로·시간 표기는 [계약서 §01](./api-interface-v1.html)을 따른다. **세 개 모두 `Bearer` 를 요구한다** — 무인증 예외(`auth-kakao-v1.md` §3 · 루트 `CLAUDE.md` §9)를 늘리지 않는다.
 
 ### 3-1. `POST /children/{cid}/invites` — 발행 (owner 전용)
 
