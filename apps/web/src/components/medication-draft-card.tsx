@@ -130,7 +130,7 @@ export function MedicationDraftCard({
 
       {/* 🚨 **알림 시각이 카드의 본체다** — 맨 위에 둔다. 서버 값 그대로다. */}
       <div className="border-line rounded-field mt-4 border px-3 py-2.5">
-        <p className="text-label text-ink-muted">매일 알려드릴 시각</p>
+        <p className="text-label text-ink-muted">매일 알려 드릴 시각</p>
         <p className="text-body text-ink mt-1">{timesLabel(draft.notice_times)}</p>
         <p className="text-caption text-ink-subtle mt-1">
           시각을 바꾸려면 대화에서 다시 말씀해 주세요. 예: 저녁 8시에 먹일게
@@ -161,7 +161,7 @@ export function MedicationDraftCard({
         {/* 🚨 비어 와도 오늘로 채우지 않는다. 막는 말은 버튼 위 한 곳에서 한다 — 칸마다 같은 말을 두지 않는다. */}
         <DateField
           label="언제부터"
-          placeholder="시작하는 날을 골라주세요"
+          placeholder="시작하는 날을 골라 주세요"
           value={fields.starts_on}
           onChange={(next) => patch({ starts_on: next })}
           fromDate={FROM_DATE}
@@ -169,7 +169,7 @@ export function MedicationDraftCard({
         />
         <DateField
           label="언제까지"
-          placeholder="마지막 날을 골라주세요"
+          placeholder="마지막 날을 골라 주세요"
           value={fields.ends_on}
           onChange={(next) => patch({ ends_on: next })}
           fromDate={startsDate ?? FROM_DATE}

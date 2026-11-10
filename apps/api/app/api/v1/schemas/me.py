@@ -5,14 +5,15 @@
 
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import Field
 
+from app.api.schema_base import ApiSchema
 from app.api.v1.schemas.children import Role
 from app.domains.child.models import ParentChildRelation
 from app.domains.consent.models import ConsentScope
 
 
-class MeChild(BaseModel):
+class MeChild(ApiSchema):
     """연결된 아이 하나."""
 
     child_id: UUID
@@ -25,7 +26,7 @@ class MeChild(BaseModel):
     )
 
 
-class MeResponse(BaseModel):
+class MeResponse(ApiSchema):
     """로그인한 보호자와 연결된 아이들. 아이가 0명이면 화면은 /start 로 간다."""
 
     id: UUID

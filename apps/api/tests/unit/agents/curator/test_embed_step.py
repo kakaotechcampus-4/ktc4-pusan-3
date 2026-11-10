@@ -103,9 +103,7 @@ async def test_다른_아이와_active_가_아닌_관찰은_건드리지_않는�
     store.add_observation(
         child_id=CHILD, domain="food", id="3", subject="두유", status="stand_alone"
     )
-    store.add_observation(
-        child_id=CHILD, domain="food", id="4", subject="바나나", status="inactive"
-    )
+    store.add_observation(child_id=CHILD, domain="food", id="4", subject="바나나", status="deleted")
     fake = FakeEmbedder()
 
     result = await embed_pending(store, fake, child_id=CHILD)

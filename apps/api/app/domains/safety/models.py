@@ -42,8 +42,10 @@ class SafetyStatus(enum.StrEnum):
     """매칭되는 행이 없으면 unknown 이다. unknown 은 저장하지 않는다."""
 
     ACTIVE = "active"  # 고려 대상
-    RETRACTED = "retracted"  # 과거에 active 였고 지금은 고려 대상이 아님
-    NONE = "none"  # 확인 결과 없음
+    # 내린 줄 — 보호자가 내렸거나(알레르기 · 건강 기록 · 괜찮았던 식품), 고치기로 옛 줄이 됐거나,
+    # 알레르기가 괜찮았던 식품을 덮었다. 이력으로만 남고 지금은 고려 대상이 아니다
+    RETRACTED = "retracted"
+    NONE = "none"  # 확인 결과 없음 — 괜찮았던 식품(먹어봤고 괜찮았음, API 의 tolerated)
 
 
 _ALLERGY_SEVERITY_VALUES = ", ".join(
@@ -58,6 +60,8 @@ class HealthSafety(Base, UUIDPk, Timestamps):
     label     구체적 대상 — "우유" / "소아 당뇨" / "천식"
     severity  allergy 는 class_0~class_6, 나머지는 mild~anaphylaxis. 어긋나면 CHECK 가 막는다.
     status    active / retracted / none. 행이 없으면 unknown.
+              none 은 보호자가 05 확인 시트에서 "먹어봤어요 · 괜찮았어요" 로 답한 식품이다
+              (화면 이름 "괜찮았던 식품" · API 의 tolerated). 알레르기만 있다.
 
     안전 조회는 항상 status='active' 로 필터한다.
     """
@@ -77,6 +81,16 @@ class HealthSafety(Base, UUIDPk, Timestamps):
             "label",
             unique=True,
             postgresql_where=text("status = 'active'"),
+        ),
+        # 괜찮았던 식품(none)도 같은 이름은 한 줄만 — 05 확인 시트에서 두 보호자가 거의 동시에
+        # "괜찮았어요" 를 저장해도 둘이 되지 않는다. 내린 줄은 인덱스 밖이다.
+        Index(
+            "uq_health_safety_none_item",
+            "child_id",
+            "kind",
+            "label",
+            unique=True,
+            postgresql_where=text("status = 'none'"),
         ),
     )
 

@@ -163,17 +163,19 @@ test.describe("repeat_invalid — 카드에서 고칠 수 없는 반복 오류",
     const hint = "반복하는 요일이나 날짜를 바꾸려면 대화로 다시 말해 주세요.";
 
     await sheet.getByRole("button", { name: "확인했어요, 캘린더에 넣을게요" }).click();
+    // 🚨 `toBeInViewport` 다 (#866 리뷰) — 넣기 버튼이 시트 바닥에 붙어 위쪽을 보며 누를 수 있으니,
+    //    실패 문구가 카드 맨 아래 원래 자리에 서면 화면 밖에 남는다.
     await expect(
       sheet.getByText("반복은 첫 회차부터 90일까지만 돼요").filter({ visible: true }),
-    ).toBeVisible();
-    await expect(sheet.getByText(hint).filter({ visible: true })).toBeVisible();
+    ).toBeInViewport();
+    await expect(sheet.getByText(hint).filter({ visible: true })).toBeInViewport();
 
     await sheet.getByRole("button", { name: "다음" }).click();
     await sheet.getByRole("button", { name: "확인했어요, 앞으로 전부 바꿀게요" }).click();
     await expect(
       sheet.getByText("오늘 이후에 남는 회차가 없어요").filter({ visible: true }),
-    ).toBeVisible();
-    await expect(sheet.getByText(hint).filter({ visible: true })).toBeVisible();
+    ).toBeInViewport();
+    await expect(sheet.getByText(hint).filter({ visible: true })).toBeInViewport();
   });
 });
 

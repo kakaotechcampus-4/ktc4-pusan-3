@@ -501,13 +501,13 @@ async def test_run_이_관찰_둘을_고치는_사이_정정이_Y_를_먼저_잡
         AsyncSession(engine, expire_on_commit=False) as run_s,
         AsyncSession(engine, expire_on_commit=False) as corr_s,
     ):
-        # 정정 — Y 를 "잘못된 기록" 으로 바꿔 Y 행 잠금을 쥔다 (커밋 전)
+        # 정정 — Y 를 "이번만 그랬어요" 로 바꿔 Y 행 잠금을 쥔다 (커밋 전)
         await set_observation_status(
             corr_s,
             domain=ObservationDomain.FOOD,
             child_id=child_id,
             observation_id=obs_y,
-            status=ObservationStatus.INACTIVE,
+            status=ObservationStatus.STAND_ALONE,
         )
 
         store = DbMemoryStore(run_s, child_id=child_id, today=TODAY)
@@ -542,7 +542,7 @@ async def test_run_이_관찰_둘을_고치는_사이_정정이_Y_를_먼저_잡
         last_observed = await check.scalar(
             select(ProfileAffinity.last_observed_on).where(ProfileAffinity.id == profile_id)
         )
-    assert status_y == ObservationStatus.INACTIVE  # 정정 결과가 run 에 덮이지 않았다
+    assert status_y == ObservationStatus.STAND_ALONE  # 정정 결과가 run 에 덮이지 않았다
     # A 는 정정 · run 수정이 둘 다 반영된 뒤 계산됐다 (X 만 active 로 남는다)
     assert last_observed == edited_day
 
@@ -666,7 +666,7 @@ async def test_run_과_정정이_같은_기억의_관찰을_하나씩_빼도_마
                 domain="food",
                 child_id=child_id,
                 observation_id=obs_y,
-                verdict="wrong",
+                verdict="once_only",
                 parent_id=parent_id,
                 today=TODAY,
             )

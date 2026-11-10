@@ -383,7 +383,11 @@ async def test_agent_job_stops_a_run_past_the_deadline(monkeypatch):
     await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
 
     assert names(channel) == ["step", "failed"]
-    assert channel.events[-1][1] == {"reason": "timeout", "raw_text": RAW_TEXT}
+    assert channel.events[-1][1] == {
+        "reason": "timeout",
+        "raw_text": RAW_TEXT,
+        "message": "시간 안에 답을 만들지 못했어요. 잠시 뒤 다시 보내 주세요.",
+    }
     assert await idempotency.recall(**scope) is None
 
 
@@ -401,7 +405,11 @@ async def test_job_that_returns_without_an_end_signal_ends_with_failed():
     await asyncio.wait_for(runner.start(channel, quiet, raw_text=RAW_TEXT), timeout=1)
 
     assert names(channel) == ["step", "failed"]
-    assert channel.events[-1][1] == {"reason": "internal_error", "raw_text": RAW_TEXT}
+    assert channel.events[-1][1] == {
+        "reason": "internal_error",
+        "raw_text": RAW_TEXT,
+        "message": "처리하다 문제가 생겼어요. 다시 보내 주세요.",
+    }
 
 
 async def test_untranslatable_event_fails_the_run_loudly(monkeypatch, caplog):
@@ -432,7 +440,11 @@ async def test_untranslatable_event_fails_the_run_loudly(monkeypatch, caplog):
     await asyncio.wait_for(runner.start(channel, job, raw_text=RAW_TEXT), timeout=1)
 
     assert names(channel) == ["step", "failed"]
-    assert channel.events[-1][1] == {"reason": "internal_error", "raw_text": RAW_TEXT}
+    assert channel.events[-1][1] == {
+        "reason": "internal_error",
+        "raw_text": RAW_TEXT,
+        "message": "처리하다 문제가 생겼어요. 다시 보내 주세요.",
+    }
     assert await idempotency.recall(**scope) is None
     assert "ValueError" in caplog.text
     assert secret not in caplog.text
@@ -539,7 +551,11 @@ async def test_job_exception_ends_with_failed_only_and_channel_closes():
     await asyncio.wait_for(task, timeout=1)
 
     assert names(channel) == ["step", "failed"]
-    assert channel.events[1][1] == {"reason": "internal_error", "raw_text": "계란말이 또 찾아요"}
+    assert channel.events[1][1] == {
+        "reason": "internal_error",
+        "raw_text": "계란말이 또 찾아요",
+        "message": "처리하다 문제가 생겼어요. 다시 보내 주세요.",
+    }
     assert channel.closed
 
 

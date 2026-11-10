@@ -443,7 +443,7 @@ async def count_child_records(
 ) -> int:
     """그 주제로 쌓인 관찰 건수 — 화면이 "기록 N건" 으로 그대로 보여 준다 (루트 §2).
 
-    남아 있는 관찰(active · stand_alone)만 센다. 잘못된 기록(inactive) · 지운 기록은 빼고,
+    남아 있는 관찰(active · stand_alone)만 센다. 지운 기록은 빼고,
     관찰이 아닌 종류는 세지 않는다.
     """
     kept = (ObservationStatus.ACTIVE, ObservationStatus.STAND_ALONE)

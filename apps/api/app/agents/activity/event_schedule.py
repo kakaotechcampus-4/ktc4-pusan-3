@@ -60,7 +60,9 @@ from app.agents.activity.schedule_quote import (
 )
 from app.agents.activity.store.ports import EventSchedule, EventSource, UpstreamUnavailable
 from app.agents.common.llm_client import LLMClient, LLMError
+from app.agents.common.prompt_fingerprint import register_prompt
 from app.core.event_raw import RawEventIntro
+from app.core.prompt_hash import canonical_json
 
 log = logging.getLogger(__name__)
 
@@ -271,6 +273,7 @@ class ReadEventSchedules:
                             {"role": "user", "content": text},
                         ],
                         response_format=RESPONSE_FORMAT,
+                        prompt_name="activity_event_schedule",
                     )
 
             response = await asyncio.wait_for(call(), READ_TIMEOUT_S)
@@ -457,3 +460,11 @@ def _unknown(event: Event, reason: str) -> EventSchedule:
     # 사유만 남긴다 — 원문 구절은 로그에 싣지 않는다
     log.info("행사 일정을 모른다 content_id=%s reason=%s", event.content_id, reason)
     return UNKNOWN
+
+
+def _fingerprint_parts() -> tuple[str, ...]:
+    """프롬프트 지문(#770)의 입력 — system 프롬프트와 응답 스키마."""
+    return (SYSTEM_PROMPT, canonical_json(RESPONSE_FORMAT))
+
+
+register_prompt("activity_event_schedule", _fingerprint_parts)

@@ -74,7 +74,7 @@
 | --- | --- | --- |
 | `routing` | 의도 3형 · 조각(kind · work · agent) · degraded · 안내 코드 | `PipelineResult.routing` |
 | `saved` | 이 run 이 새로 만든 관찰 행 (도메인 · id · type · observed_on) | 저장소 전후 비교 |
-| `removed` | 이 run 전에 남아 있던 관찰 중 사라지거나 deleted · inactive 가 된 행 (I15) | 같은 전후 비교 — W 는 status 를 직접 읽는다 |
+| `removed` | 이 run 전에 남아 있던 관찰 중 사라지거나 deleted 가 된 행 (I15) | 같은 전후 비교 — W 는 status 를 직접 읽는다 |
 | `delete_proposed` | 삭제 후보를 제안했나 (P 만) | InMemory 저장소의 제안 |
 | `earlier` | 여러 턴 케이스의 앞 턴들 — 불변식은 턴마다 건다 | 같은 칸을 턴마다 |
 | `suggestions` | Agent · kind(개인화/일반) · 문장 · items · 인용(source 종류 · id) | `SuggestionDraft` |
@@ -109,7 +109,7 @@
 | I11 | 되묻기는 1개다 | 최소 질문 1개 | 한 run 의 질문 수 ≤ 1 |
 | I12 | 끝 이벤트는 정확히 1번 | 실패도 끝은 하나 | `done` · `failed` 합계 = 1, `partial` ≤ 1 이고 끝보다 앞 |
 | I13 | 로그에 원문 · 별명이 없다 | 로그에 원문 대신 id | 입력 문장 전체 · 문장 부호로 자른 8자 이상 조각 · 페르소나 별명(카나리아)이 어떤 로그 레코드에도 없음 |
-| I15 | 확정 단계 밖에서 관찰이 지워지지 않는다 | 승인 게이트 ㉢ — 대화로 지울 때 AI 는 후보만, 보호자가 버튼으로 확정 (#754) | 입력 run 전후로 남아 있던(active · stand_alone) 관찰이 사라지거나 deleted · inactive 가 되면 실패. 보호자가 직접 하는 정정(W 의 `correct` 단계)은 run 이 아니라 대상이 아니다 |
+| I15 | 확정 단계 밖에서 관찰이 지워지지 않는다 | 승인 게이트 ㉢ — 대화로 지울 때 AI 는 후보만, 보호자가 버튼으로 확정 (#754) | 입력 run 전후로 남아 있던(active · stand_alone) 관찰이 사라지거나 deleted 가 되면 실패. 보호자가 직접 하는 정정(W 의 `correct` 단계)은 run 이 아니라 대상이 아니다 |
 
 P 에서 얕은 곳. **I7** 은 W 에서만 문다 — 인메모리 저장소는 승인 단계 밖에서 일정 행을 쓰지 않아, P 는 초안(`event_drafts`)과 케이스의 `never_say`("등록했어요")로만 본다(저장된 행 검사는 W). **I2** 의 기록 건수는 P 도 건수 포트(`count_records` — 운영과 같은 `RECORD_KINDS` 표로 InMemory 를 센다)를 넘겨서 판정한다. 건수가 실렸는지만 보고 숫자가 맞는지는 세는 포트를 믿는다.
 
@@ -234,7 +234,7 @@ P 에서 얕은 곳. **I7** 은 W 에서만 문다 — 인메모리 저장소는
 | `say` | 한 줄 입력 | `POST /children/{cid}/inputs` → SSE 끝까지 |
 | `reply` | 앞 단계 되묻기에 답 | 같은 창구 + `reply_to` |
 | `approve` / `reject` | 일정 등록(승인 게이트 ㉠) · 추천 채택 | `POST /events` · `POST /suggestions/approve` |
-| `correct` | 앞 단계가 저장한 기록 정정 (`once_only` · `wrong` · `outdated`) | `POST /corrections` |
+| `correct` | 앞 단계가 저장한 기록 정정 (`once_only` — 기록의 "잘못된 기록" 은 지우기로 바꿨다, #736) | `POST /corrections` |
 | `register` | 보호자가 알레르기 직접 등록 (승인 게이트 ②) | `POST /health-safety` |
 | `check` | 그 시점 상태 점검 (프로필 상태 · 일정 행 · 안전 행) | DB 조회 |
 

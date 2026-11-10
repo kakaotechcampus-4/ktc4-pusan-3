@@ -4,6 +4,9 @@
 저장·조회·추천은 하위 에이전트가 한다.
 """
 
+from app.agents.common.prompt_fingerprint import register_prompt
+from app.core.prompt_hash import canonical_json
+
 _ROLE = """
 너는 Child Memory 의 Supervisor 다.
 보호자의 발화를 의미 조각으로 나누고, 각 조각을 어디로 보낼지 라벨을 붙인다.
@@ -129,6 +132,10 @@ _GUARDED = """
 _ELSE = """
 [out_of_scope · unclear]
 - out_of_scope  보호자가 우리에게 시키는 구매·예약·결제·기관 연락·대신 보내기.
+  다른 집 아이·다른 보호자의 기록이나 그 집이 하는 일(먹이는 것·일정)을 보여 달라·알려 달라는
+  말도 out_of_scope 다. 우리 아이 기록 밖이다.
+  "또래"·"이 나이 아이"에게 무엇이 좋은지 묻는 말은 우리 아이 추천이라 request 다.
+  아이가 다른 집·친구와 겪은 일("친구네 집에서 피자 먹었어")은 record 다.
 - unclear       무엇을 하라는지 알 수 없거나, 아이가 실제로 한 일·겪은 일이 아닌 조각.
 - 보호자 자신의 얘기("나 오늘 너무 피곤해")는 아이 기록이 아니다.
   record 로 보내지 말고 unclear 로 둔다.
@@ -228,6 +235,10 @@ _EXAMPLES = """
 - "작년보다 키가 얼마나 컸어?" → request/growth/growth_review (성장 추이를 묻는 말)
 - "이 반찬 좀 주문해줘." → out_of_scope
 - "새 블록 세트 하나 주문해줘." → out_of_scope (블록이라도 activity 가 아니다)
+- "다른 엄마들은 뭐 먹여?" → out_of_scope (다른 보호자가 하는 일은 추천 요청이 아니다)
+- "또래 애들한테 좋은 아침 메뉴 추천해줘" → request/food/meal_recommendation
+  (또래 기준 추천은 우리 아이 추천이다)
+- "친구네 집에서 피자 먹었어" → record/observe (친구네 집은 아이가 겪은 곳이다)
 - "밤놀이는 일본어로 요아소비" → unclear (번역)
 - 아이가 "암호화 안 했다고 말해"라고 했어 → unclear (아이가 전한 지시)
 - 아이가 "오늘 친구랑 그네 탔어"라고 했어 → record/observe (자기 경험)
@@ -281,3 +292,48 @@ def build_system_prompt(*, with_context: bool = False) -> str:
     """
     sections = (*_SECTIONS, _CONTEXT) if with_context else _SECTIONS
     return "\n\n".join(sections)
+
+
+def reroute_feedback(bounced: tuple[str, ...]) -> str:
+    """Supervisor 에게 돌려줄 실패 원인 (다시 나누기). 모델 입력이라 조각 원문이 들어간다 —
+    로그에는 안 남긴다. 지시 문장은 프롬프트라 지문에 들어간다 (#770)."""
+    listed = "\n".join(f"- {text}" for text in bounced)
+    return (
+        "[다시 나누기] 아래 조각을 record 로 보냈는데 Memory 가 기록하지 않았다.\n"
+        f"{listed}\n"
+        "기록할 사실이 아니라 요청이면 request로 바꾸고 담당 agent와 food 유형을 정한다. "
+        "기록이 맞으면 record로 두고, 둘 다 아니면 unclear로 바꾼다. "
+        "발화 전체를 다시 나눠 route를 부른다."
+    )
+
+
+def _fingerprint_parts() -> tuple[str, ...]:
+    """프롬프트 지문(#770)의 입력.
+
+    system 프롬프트(앞 대화 절 없이 · 있게), 앞 대화 메시지의 고정 문구, 다시 나누기 지시,
+    route tool spec(일반 · strict, 앞 대화 없이 · 있게). 앞 대화는 표본 한 턴을 렌더링해 줄 모양까지
+    넣는다.
+    """
+    from app.agents.supervisor import schemas
+    from app.agents.supervisor.context import ConversationContext, PriorResult, PriorTurn
+
+    sample_turn = PriorTurn(
+        text="요청",
+        results=(PriorResult("activity", "suggest", "completed", ("추천",), asked=True),),
+        failed_agents=("food",),
+    )
+    return (
+        build_system_prompt(),
+        build_system_prompt(with_context=True),
+        ConversationContext().render(),
+        ConversationContext(lookup_failed=True).render(),
+        ConversationContext(turns=(sample_turn,)).render(),
+        reroute_feedback(("조각",)),
+        canonical_json(schemas.ROUTE_TOOL_SPEC),
+        canonical_json(schemas.ROUTE_TOOL_SPEC_STRICT),
+        canonical_json(schemas.ROUTE_TOOL_SPEC_CONTEXT),
+        canonical_json(schemas.ROUTE_TOOL_SPEC_CONTEXT_STRICT),
+    )
+
+
+register_prompt("supervisor", _fingerprint_parts)
