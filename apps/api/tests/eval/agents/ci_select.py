@@ -125,10 +125,16 @@ def _load_base(path: Path | None) -> dict[str, str] | None:
     return data if isinstance(data, dict) else None
 
 
+def _diff_paths() -> list[str]:
+    """`git diff` 가 볼 경로 — eval 폴더와, 그 밖에 있는 입력 파일(`EXTRA_FILES`)."""
+    extras = {path for paths in EXTRA_FILES.values() for path in paths}
+    return [EVAL_PREFIX, *sorted(extras)]
+
+
 def _git_touched(base_sha: str) -> set[str]:
     try:
         done = subprocess.run(  # noqa: S603
-            ["git", "diff", "--name-only", base_sha, "HEAD", "--", EVAL_PREFIX],  # noqa: S607
+            ["git", "diff", "--name-only", base_sha, "HEAD", "--", *_diff_paths()],  # noqa: S607
             cwd=REPO_ROOT,
             capture_output=True,
             text=True,

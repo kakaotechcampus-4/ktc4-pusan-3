@@ -50,7 +50,7 @@ Memory `T06` 의 `create_reminder` 는 app 에 없는 tool 이다(`65103a52` 에
 
 ## 4. CI 동작 (`.github/workflows/ci-agent-live.yml`)
 
-1. 트리거 — `apps/api/app/agents/**` · `apps/api/tests/eval/agents/**` 를 건드린 PR. `workflow_dispatch` 는 다섯 Agent 전부.
+1. 트리거 — `apps/api/app/agents/**` · `apps/api/tests/eval/agents/**` 와, eval 폴더 밖에서 입력을 정하는 파일(`docs/agents/**/test_input_*.txt` · Growth `support.py`)을 건드린 PR. `workflow_dispatch` 는 다섯 Agent 전부.
 2. `select` job 이 PR base 의 프롬프트 지문과 지금(merge ref) 지문을 견줘 **바뀐 Agent 만** 고른다. 지문은 같아도 그 Agent 의 eval 파일(`tests/eval/agents/<agent>/**` · 공용 `tally` · `conftest` · `run_meta` · `tool_rules`)이 바뀌었으면 고른다. base 지문을 못 구하면 다섯 다 고른다.
 3. 캐시 키 `tool-calls-<agent>-<지문 12자>-<eval 해시 12자>[-<모델/effort 8자>]` (PM 11-09). 모델/effort 는 repo `vars` 라서 키에 넣었다 — 바꾸면 같은 지문이어도 다시 돈다. eval 해시에는 입력을 정하는 문서(`test_input_*.txt` · Growth `support.py`)도 들어간다. 같은 값이 있으면 이미 통과한 것이라 건너뛴다 — `pull_request` paths 필터는 PR 전체 diff 로 판단해서, 한 번 해당 경로를 건드린 PR 은 이후 오타 고친 push 에도 매번 다시 돌기 때문이다. **통과했을 때만** 저장한다.
 4. `live` job 은 Agent 마다 3회 돌고 job 요약에 케이스 id · 통과 회차 · 판정 · C1 · 부른 tool · 지문 · 모델/effort 만 쓴다. 요청 · 답 · 실패 문장(모델 출력 조각이 들어 있다)은 쓰지 않는다.

@@ -118,3 +118,78 @@ def test_CLI_는_환경변수의_모델과_effort_를_캐시_키에_넣는다(tm
 
     assert low["food"] != high["food"]
     assert low["health"] == high["health"]
+
+
+def test_git_diff_는_eval_폴더_밖의_입력_문서_변경도_Agent_로_바꾼다(tmp_path, monkeypatch):
+    import subprocess
+
+    from tests.eval.agents import ci_select
+
+    def git(*args):
+        subprocess.run(["git", *args], cwd=tmp_path, check=True, capture_output=True)  # noqa: S603, S607
+
+    git("init", "-q")
+    git("config", "user.email", "t@example.com")
+    git("config", "user.name", "t")
+    extras = [p for paths in ci_select.EXTRA_FILES.values() for p in paths]
+    for rel in extras:
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text("before", encoding="utf-8")
+    git("add", "-A")
+    git("commit", "-q", "-m", "base")
+    base = subprocess.run(  # noqa: S603, S607
+        ["git", "rev-parse", "HEAD"], cwd=tmp_path, check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+    (tmp_path / "docs/agents/health/test_input_health.txt").write_text("after", encoding="utf-8")
+    (tmp_path / "apps/api/tests/unit/agents/growth/support.py").write_text(
+        "after", encoding="utf-8"
+    )
+    git("commit", "-q", "-am", "입력 문서만 수정")
+    monkeypatch.setattr(ci_select, "REPO_ROOT", tmp_path)
+
+    assert ci_select._git_touched(base) == {"health", "growth"}
+
+
+def _glob_to_regex(pattern: str) -> str:
+    import re
+
+    out, i = "", 0
+    while i < len(pattern):
+        if pattern.startswith("**/", i):
+            out += "(?:.*/)?"
+            i += 3
+        elif pattern.startswith("**", i):
+            out += ".*"
+            i += 2
+        elif pattern[i] == "*":
+            out += "[^/]*"
+            i += 1
+        else:
+            out += re.escape(pattern[i])
+            i += 1
+    return out
+
+
+def test_워크플로_paths_는_EXTRA_FILES_를_모두_덮는다():
+    import re
+    from pathlib import Path
+
+    import yaml
+
+    from tests.eval.agents.ci_select import EXTRA_FILES, REPO_ROOT
+
+    workflow = yaml.safe_load(
+        Path(REPO_ROOT / ".github/workflows/ci-agent-live.yml").read_text(encoding="utf-8")
+    )
+    # PyYAML 은 `on` 을 True 로 읽는다
+    patterns = (workflow.get("on") or workflow[True])["pull_request"]["paths"]
+    regexes = [re.compile(_glob_to_regex(p) + "$") for p in patterns]
+
+    uncovered = [
+        extra
+        for extras in EXTRA_FILES.values()
+        for extra in extras
+        if not any(r.match(extra) for r in regexes)
+    ]
+    assert uncovered == []

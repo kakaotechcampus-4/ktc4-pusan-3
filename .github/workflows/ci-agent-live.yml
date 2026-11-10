@@ -18,6 +18,9 @@ on:
     paths:
       - "apps/api/app/agents/**"
       - "apps/api/tests/eval/agents/**"
+      # eval 폴더 밖이지만 채점받는 입력을 정하는 파일 (`ci_select.EXTRA_FILES`)
+      - "apps/api/tests/unit/agents/growth/support.py"
+      - "docs/agents/**/test_input_*.txt"
       - ".github/workflows/ci-agent-live.yml"
   workflow_dispatch:
 
