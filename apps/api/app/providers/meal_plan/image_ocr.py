@@ -30,6 +30,7 @@ from app.providers.meal_plan.schema import (
     MealPlanSource,
     UnparsedCell,
 )
+from app.providers.model_errors import MODEL_CALL_FAILURES
 from app.providers.streaming import collect
 
 log = logging.getLogger(__name__)
@@ -183,16 +184,32 @@ def parse_output(content: str) -> OcrOutput:
 
 
 @dataclass(frozen=True)
+class MissedRange:
+    """호출이 실패해 읽지 못한 날짜 범위. `timed_out` 이면 사진 탓이 아니라 시간이 모자랐다."""
+
+    first: int
+    last: int
+    timed_out: bool = False
+
+
+@dataclass(frozen=True)
 class ReadParts:
     """날짜 범위별 호출 결과. 합치기 전이다.
 
-    연월은 부르는 쪽(코드)이 정해 `merge_outputs` 에 준다.
+    연월은 부르는 쪽(코드)이 정해 `merge_outputs` 에 준다. 한쪽 호출만 실패했으면 성공한 쪽은
+    `outputs` 에, 실패한 범위는 `missed` 에 있다.
     """
 
     outputs: tuple[OcrOutput, ...]
+    missed: tuple[MissedRange, ...] = ()
 
 
-def merge_outputs(parts: Sequence[OcrOutput], *, year_month: str | None = None) -> MealPlanJSON:
+def merge_outputs(
+    parts: Sequence[OcrOutput],
+    *,
+    year_month: str | None = None,
+    missed: Sequence[MissedRange] = (),
+) -> MealPlanJSON:
     """날짜 범위별 호출 결과를 한 달치 `MealPlanJSON` 으로 합친다.
 
     `year_month` 를 주면 모델이 낸 값 대신 그 연월을 쓴다. 🚨 운영(사진)은 언제나 준다 — 연도는
@@ -201,6 +218,7 @@ def merge_outputs(parts: Sequence[OcrOutput], *, year_month: str | None = None) 
     🚨 한 칸이 어긋났다고 한 달 표를 버리지 않는다. 어긋난 날만 못 읽은 칸(`unparsed`)으로 돌린다.
     - 같은 날짜가 두 번 오면 앞 호출을 남기고, 뒤 것은 읽은 원문과 함께 못 읽은 칸으로 남긴다.
     - 그 달에 없는 날(2월 30일)은 날짜를 잘못 읽은 것이다. 저장하지 않고 못 읽은 칸으로 남긴다.
+    - 호출이 실패한 범위(`missed`)는 "○일~○일 급식은 읽지 못했어요" 못 읽은 칸 하나로 남긴다.
     표 전체가 실패하는 것은 연월을 쓸 수 없을 때뿐이다 — 어느 달인지 모르면 날짜를 하나도 못 쓴다.
     """
     first = parts[0]
@@ -232,6 +250,7 @@ def merge_outputs(parts: Sequence[OcrOutput], *, year_month: str | None = None) 
         )
         for d in outside
     ]
+    unparsed += [_missed_cell(r, last) for r in missed]
     notes = " / ".join(n for n in (p.notes for p in parts) if n) or None
     try:
         return MealPlanJSON(
@@ -244,6 +263,16 @@ def merge_outputs(parts: Sequence[OcrOutput], *, year_month: str | None = None) 
         )
     except ValidationError as e:
         raise RuntimeError(f"모델 응답이 급식표 규칙에 맞지 않음: {e.errors()[:3]}") from e
+
+
+def _missed_cell(missed: MissedRange, last: int) -> UnparsedCell:
+    span = f"{missed.first}일~{min(missed.last, last)}일 급식은 읽지 못했어요."
+    if missed.timed_out:
+        # 시간이 모자랐다. 사진 탓이 아니라서 다시 찍으라고 하지 않는다 (photo_run._MEAL_TIMED_OUT)
+        return UnparsedCell(
+            why=f"{span} 시간이 오래 걸려 끝내지 못했어요. 잠시 뒤 다시 올려 주세요."
+        )
+    return UnparsedCell(why=f"{span} 더 밝게 다시 찍어 주세요.")
 
 
 def _raw_of(day: MealDay) -> str | None:
@@ -331,7 +360,8 @@ class ImageOcrMealPlanReader:
 
         운영은 `read_parts` 뒤 연월을 코드가 정한다 (`agents/notice_ocr.read_photo`).
         """
-        return merge_outputs(self.read_parts(data, mime_type=mime_type).outputs)
+        parts = self.read_parts(data, mime_type=mime_type)
+        return merge_outputs(parts.outputs, missed=parts.missed)
 
     def read_parts(self, data: bytes, *, mime_type: str) -> ReadParts:
         if mime_type not in SUPPORTED_MIME:
@@ -341,7 +371,26 @@ class ImageOcrMealPlanReader:
             raise RuntimeError(
                 f"호출 상한 {self._max_calls}회 — 이번 읽기에 {len(ranges)}회 필요, 시작하지 않음"
             )
-        return ReadParts(outputs=tuple(self._call(data, mime_type, r) for r in ranges))
+        # 🚨 한쪽 호출이 실패해도 다른 쪽은 부르고, 성공한 쪽은 버리지 않는다 (§2 부분 결과).
+        #    기한이 지났으면 뒤 호출은 `_call` 이 시작하지 않는다 — 비용이 늘지 않는다
+        outputs: list[OcrOutput] = []
+        missed: list[MissedRange] = []
+        errors: list[Exception] = []
+        for day_range in ranges:
+            try:
+                outputs.append(self._call(data, mime_type, day_range))
+            except MODEL_CALL_FAILURES as e:
+                if day_range is None:
+                    raise
+                # 메시지에 메뉴가 실릴 수 있어 종류만 남긴다 (CLAUDE.md §2 개인정보)
+                log.warning("meal_ocr range=%s 실패 (%s)", day_range, type(e).__name__)
+                errors.append(e)
+                missed.append(
+                    MissedRange(*day_range, timed_out=isinstance(e, ReadDeadlineExceeded))
+                )
+        if not outputs:
+            raise errors[0]
+        return ReadParts(outputs=tuple(outputs), missed=tuple(missed))
 
     def _call(
         self, image_bytes: bytes, mime_type: str, day_range: tuple[int, int] | None

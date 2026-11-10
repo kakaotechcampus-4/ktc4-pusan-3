@@ -96,7 +96,9 @@ def read_photo(
             log.warning("meal_plan 의 월을 정하지 못했다 — 공지 항목만 낸다")
             return PhotoReading(notice=notice, meal_plan=None, meal_failed=True)
         year, month = decided
-        plan = names_from_raw(merge_outputs(parts.outputs, year_month=f"{year:04d}-{month:02d}"))
+        plan = names_from_raw(
+            merge_outputs(parts.outputs, year_month=f"{year:04d}-{month:02d}", missed=parts.missed)
+        )
         return PhotoReading(notice=notice, meal_plan=plan)
     except ReadDeadlineExceeded:
         log.warning("meal_plan 읽기가 기한 안에 끝나지 않았다 — 공지 항목만 낸다")

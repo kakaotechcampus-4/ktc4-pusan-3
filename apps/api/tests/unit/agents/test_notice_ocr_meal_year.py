@@ -118,3 +118,38 @@ def test_월을_정할_수_없으면_표를_못_읽은_것이다(monkeypatch, ye
     assert reading.meal_plan is None
     assert reading.meal_failed is True
     assert reading.meal_timed_out is False
+
+
+def test_한쪽_호출만_실패하면_성공한_쪽_급식은_살고_실패한_범위가_확인_항목이_된다(
+    monkeypatch,
+) -> None:
+    # 전에는 한쪽만 실패해도 성공한 쪽까지 버려 표 전체가 "식단표의 표를 읽지 못했어요" 였다
+    from app.providers.meal_plan.image_ocr import MissedRange
+
+    class _HalfReader:
+        def read_parts(self, image: bytes, *, mime_type: str) -> ReadParts:
+            return ReadParts(outputs=(_output("11", 2),), missed=(MissedRange(16, 31),))
+
+    monkeypatch.setattr(notice_ocr, "normalize_image", lambda data: (data, "image/png"))
+    monkeypatch.setattr(
+        notice_ocr.NoticeExtractor,
+        "from_settings",
+        classmethod(lambda cls, settings, **kwargs: _Extractor(NO_YEAR)),
+    )
+    monkeypatch.setattr(
+        notice_ocr.ImageOcrMealPlanReader,
+        "from_settings",
+        classmethod(lambda cls, settings, **kwargs: _HalfReader()),
+    )
+    monkeypatch.setattr(
+        notice_ocr,
+        "assemble",
+        lambda extract, **kwargs: SimpleNamespace(doc_kind=NoticeDocKind.MEAL_PLAN),
+    )
+
+    reading = notice_ocr.read_photo(b"image", received_at=RECEIVED)
+
+    assert reading.meal_failed is False
+    assert reading.meal_plan is not None
+    assert [d.day for d in reading.meal_plan.days] == [2]
+    assert [u.why[:14] for u in reading.meal_plan.unparsed] == ["16일~30일 급식은 읽지"]
