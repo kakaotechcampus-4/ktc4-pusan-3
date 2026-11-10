@@ -19,11 +19,16 @@
 갈리는 쌍이 정해지면 옮겨 오므로(`disputed_pairs.txt` 머리말), 줄이 밀리면 회차 사이에 id 가
 다른 물음을 가리킨다. 이름은 모두 가상 데이터라 id 에 실어도 된다.
 
+평가셋 해시(`evalset_hash`)는 측정 이력 `조건` 칸에 물음 수와 같이 적는다 — 물음 수가 같아도
+이름 · 후보 · 기대 답이 바뀌면 다른 평가셋이다. 채점 규칙(`grade`)은 해시에 들어가지 않는다 —
+규칙을 바꾸면 평가셋을 바꾼 것처럼 바꾸기 전 프롬프트를 다시 잰다.
+
 판정 (`CURATOR_JUDGE_EVAL.md` §2)
     C1    기대와 다른 후보를 골랐다 — 다른 대상을 같다고 판정 (잘못 합침)
     일반  같은 후보가 있는데 none (놓침) · uncertain (미룸) · 후보 목록에 없는 답
 """
 
+import hashlib
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -106,6 +111,20 @@ def load_cases() -> list[JudgeCase]:
         if _asked_in_production(case):
             cases.setdefault((case.domain, case.subject, case.candidates), case)
     return list(cases.values())
+
+
+def evalset_hash(cases: Sequence[JudgeCase]) -> str:
+    """평가셋 해시(앞 8자). 물음마다 id · 도메인 · subject · 후보(순서대로) · 기대 답을 넣는다."""
+    digest = hashlib.sha256()
+    for case in cases:
+        row = "\t".join((case.id, case.domain, case.subject, *case.candidates, case.expected))
+        digest.update(row.encode() + b"\n")
+    return digest.hexdigest()[:8]
+
+
+def condition(cases: Sequence[JudgeCase], repeat: int, model: str) -> str:
+    """측정 이력 `조건` 칸 전체. 검사가 글자 그대로 견주므로 모양을 여기 한 곳에서 정한다."""
+    return f"판정기 물음 {len(cases)}개 `{evalset_hash(cases)}` · R{repeat} · `{model}`"
 
 
 def picked(choice: str, candidates: Sequence[str]) -> str | None:

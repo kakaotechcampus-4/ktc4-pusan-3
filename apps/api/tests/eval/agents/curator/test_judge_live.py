@@ -39,7 +39,13 @@ from app.agents.curator.embedding.jev import JevJudge, missing_settings
 from app.agents.curator.embedding.judge import STOP_ERRORS
 from tests.eval.agents import tally
 from tests.eval.agents.curator.datasets import results_dir
-from tests.eval.agents.curator.judge_cases import JudgeCase, Verdict, grade, load_cases
+from tests.eval.agents.curator.judge_cases import (
+    JudgeCase,
+    Verdict,
+    condition,
+    grade,
+    load_cases,
+)
 
 pytestmark = pytest.mark.live
 
@@ -123,7 +129,10 @@ async def test_판정기_측정셋() -> None:
             general=[reason] if verdict == "general" else [],
         )
     report = _report(graded)
-    print(f"\n판정기 측정 {len(cases)}물음 × {TEST_REPEAT}회 — 틀린 물음: {report}")
+    print(f"\n판정기 측정 · 틀린 물음 {report}")
+    print(
+        f"측정 이력 조건 칸: {condition(cases, TEST_REPEAT, settings.CURATOR_JUDGE_MODEL.strip())}"
+    )
 
     c1 = sorted({case.id for case, *_, verdict, _ in graded if verdict == "c1"})
     assert not c1, f"다른 대상을 같다고 판정한 물음 {len(c1)}개 ({report}): {c1}"
