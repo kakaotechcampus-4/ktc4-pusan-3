@@ -12,7 +12,7 @@ import base64
 import json
 import logging
 import time
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from functools import cache
 
@@ -192,7 +192,7 @@ def merge_outputs(parts: Sequence[OcrOutput]) -> MealPlanJSON:
     for day in sorted((d for p in parts for d in p.days), key=lambda d: d.day):
         (dupes if day.day in seen else days).append(day)
         seen.add(day.day)
-    unparsed = [u for p in parts for u in p.unparsed]
+    unparsed = _unique_cells(u for p in parts for u in p.unparsed)
     unparsed += [
         UnparsedCell(day=d.day, why="호출 간 중복 날짜 — 뒤 호출 결과를 버림") for d in dupes
     ]
@@ -208,6 +208,24 @@ def merge_outputs(parts: Sequence[OcrOutput]) -> MealPlanJSON:
         )
     except ValidationError as e:
         raise RuntimeError(f"모델 응답이 급식표 규칙에 맞지 않음: {e.errors()[:3]}") from e
+
+
+def _unique_cells(cells: Iterable[UnparsedCell]) -> list[UnparsedCell]:
+    """같은 못 읽은 칸은 처음 것 하나만 남긴다.
+
+    날짜 없는 열(생일식단)은 날짜 범위를 나눈 호출마다 다 낸다 — 이유(`why`) 문구는 호출마다
+    달라서 날짜 · 끼니 · 원문이 같으면 같은 칸이다. 원문이 없으면 같은 칸인지 몰라 남긴다.
+    """
+    seen: set[tuple] = set()
+    unique: list[UnparsedCell] = []
+    for cell in cells:
+        key = (cell.day, cell.meal_type, cell.raw)
+        if cell.raw:
+            if key in seen:
+                continue
+            seen.add(key)
+        unique.append(cell)
+    return unique
 
 
 def _until(stream, deadline: float):

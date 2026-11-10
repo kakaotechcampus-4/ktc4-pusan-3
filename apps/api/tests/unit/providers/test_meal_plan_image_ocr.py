@@ -147,6 +147,36 @@ def test_merge_outputs_drops_duplicate_day_from_later_call_and_flags_it():
     assert merged.unparsed[0].day == 15
 
 
+def test_merge_outputs_keeps_one_of_the_same_unread_cell_reported_by_both_calls():
+    # 날짜 없는 열(생일식단)은 1~15일 · 16~31일 두 호출이 다 낸다 — 확인 화면에 같은 칸이 두 번
+    # 뜨면 안 된다 (11-11 측정 M2: 3칸이 6줄). 이유 문구는 호출마다 달라 원문으로 같은 칸을 가린다
+    birthday = [
+        ("snack_am", "경기도과일 또는 단호박죽"),
+        ("lunch", "백미밥, 북어채미역국5,6, 치킨가스&소스1,5,6,15"),
+        ("snack_pm", "케이크1,2,5,6(떡),우유2"),
+    ]
+    first = _output(
+        unparsed=[{"meal_type": m, "raw": r, "why": "생일식단 (날짜 없음)"} for m, r in birthday]
+    )
+    second = _output(
+        unparsed=[{"meal_type": m, "raw": r, "why": "날짜 없는 열"} for m, r in birthday]
+    )
+
+    merged = merge_outputs([first, second])
+
+    assert [(u.meal_type, u.raw, u.why) for u in merged.unparsed] == [
+        (m, r, "생일식단 (날짜 없음)") for m, r in birthday
+    ]
+
+
+def test_merge_outputs_keeps_unread_cells_without_raw_even_if_alike():
+    # 원문이 없으면 같은 칸인지 알 수 없다 — 지우지 않는다
+    blurry = [{"why": "흐림"}]
+    merged = merge_outputs([_output(unparsed=blurry), _output(unparsed=blurry)])
+
+    assert len(merged.unparsed) == 2
+
+
 def test_merge_outputs_rejects_day_the_month_does_not_have():
     with pytest.raises(RuntimeError, match="규칙"):
         merge_outputs([_output(year_month="2025-02", days=[{"day": 30, "meals": []}])])
