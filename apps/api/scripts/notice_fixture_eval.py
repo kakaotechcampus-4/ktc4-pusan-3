@@ -213,7 +213,8 @@ _CHILD = "하늘(?!색)"
 _SPAN = ("starts_at", "ends_at")
 
 
-# 11-02 판정(41개)에서 옮기고 학원 공지를 더했다. 날짜는 전부 받은 날 기준으로 코드가 계산한 값이다
+# 11-02 지어낸 문서(판정 41개) 가운데 여섯 장(A~E · G)을 옮기고 학원 공지(H)를 더했다 — 지금 판정은
+# 45개다(A 7 · B 5 · C 7 · D 7 · E 5 · G 4 · H 10). 날짜는 전부 받은 날 기준으로 코드가 계산했다
 CHECKS: tuple[Check, ...] = (
     # A 문자
     _plain("A", "문자로 분류", lambda n: n.doc_kind is NoticeDocKind.MESSAGE),
