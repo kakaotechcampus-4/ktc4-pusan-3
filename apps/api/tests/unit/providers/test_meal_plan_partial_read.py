@@ -77,6 +77,15 @@ def test_뒤쪽만_실패하면_앞쪽은_살고_실패한_범위를_남긴다(m
     assert parts.missed == (MissedRange(16, 31, timed_out=timed_out),)
 
 
+def test_나눠_부른_범위를_성패와_무관하게_남긴다(monkeypatch) -> None:
+    # 한 구간이 덜 읽혔는지(agents → rules/meal_plan_coverage)는 어느 범위를 불렀는지 알아야 센다
+    reader = _reader(monkeypatch, {(1, 15): _output(2), (16, 31): _timeout()})
+
+    parts = reader.read_parts(PNG, mime_type="image/png")
+
+    assert parts.ranges == ((1, 15), (16, 31))
+
+
 def test_앞쪽이_실패해도_뒤쪽을_부른다(monkeypatch) -> None:
     reader = _reader(monkeypatch, {(1, 15): _timeout(), (16, 31): _output(17)})
 

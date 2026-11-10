@@ -18,13 +18,15 @@ from app.domains.notice.assemble import NewNotice, assemble
 from app.domains.notice.models import NoticeDocKind, NoticeInputFormat
 from app.providers.meal_plan.image_ocr import (
     ImageOcrMealPlanReader,
+    MissedRange,
     ReadDeadlineExceeded,
     merge_outputs,
 )
-from app.providers.meal_plan.schema import MealPlanJSON
+from app.providers.meal_plan.schema import MealPlanJSON, UnparsedCell
 from app.providers.model_errors import MODEL_CALL_FAILURES
 from app.providers.notice.document_text import UnreadableDocument, normalize_image
 from app.providers.notice.extractor import NoticeExtractor
+from app.rules.meal_plan_coverage import ThinRange, thin_ranges
 from app.rules.meal_plan_month import MealMonth, decide_year_month
 from app.rules.menu_key import is_nutrition_line, menu_display_name
 from app.rules.notice_text import clean_text
@@ -48,6 +50,9 @@ class PhotoReading:
     meal_month: MealMonth | None = None
     """급식표의 연월과 연도의 출처(`rules/meal_plan_month`). `year` 가 None 이면 연도를 몰라 급식을
     내보내지 않았다(`meal_failed`) — 화면은 "언제 급식표인지 알 수 없어요" 한 줄을 본다."""
+    meal_thin: tuple[ThinRange, ...] = ()
+    """조용히 덜 읽혔을 수 있는 구간(`flag_thin_ranges`). 화면 줄은 이미 `meal_plan.unparsed` 에
+    있다 — 이 값은 서버 로그(run id 를 아는 `photo_run`)가 쓴다."""
 
 
 def read_photo(
@@ -113,7 +118,8 @@ def read_photo(
                 missed=parts.missed,
             )
         )
-        return PhotoReading(notice=notice, meal_plan=plan, meal_month=decided)
+        plan, thin = flag_thin_ranges(plan, ranges=parts.ranges, missed=parts.missed)
+        return PhotoReading(notice=notice, meal_plan=plan, meal_month=decided, meal_thin=thin)
     except ReadDeadlineExceeded:
         log.warning("meal_plan 읽기가 기한 안에 끝나지 않았다 — 공지 항목만 낸다")
         return PhotoReading(notice=notice, meal_plan=None, meal_failed=True, meal_timed_out=True)
@@ -144,3 +150,45 @@ def names_from_raw(plan: MealPlanJSON) -> MealPlanJSON:
                 item.name = menu_display_name(item.raw)
         day.meals = [meal for meal in day.meals if meal.items]
     return fixed
+
+
+def flag_thin_ranges(
+    plan: MealPlanJSON,
+    *,
+    ranges: tuple[tuple[int, int], ...],
+    missed: tuple[MissedRange, ...] = (),
+) -> tuple[MealPlanJSON, tuple[ThinRange, ...]]:
+    """한 구간이 조용히 덜 읽혔으면 못 읽은 칸 한 줄을 더한다 (2026-11-11 실측).
+
+    뒤 호출이 16일 하나만 내고 정상 종료한 적이 있다 — 오류가 아니라 "읽지 못했어요" 줄이 나가지
+    않았다. 평일 수와 견주는 것은 규칙(`rules/meal_plan_coverage`)이 한다. 🚨 저장은 막지 않는다 —
+    읽은 급식은 그대로 두고, 한쪽 호출이 실패했을 때와 같은 통로(`unparsed`)로 한 줄만 더한다.
+
+    **읽은 날** — 화면에 흔적이 있거나 모델이 그 날을 답한 날이다.
+    - 메뉴가 하나라도 있는 날. 이름을 못 읽은 끼니도 못 읽은 칸으로 화면에 나가니 넣는다.
+    - 휴일 표시(`note`)가 있는 날 — 모델이 "그 날은 급식이 없다" 고 답했다. 빠뜨린 것이 아니다.
+      방학 · 연휴가 표에 적힌 달에 잘못 알리지 않는다.
+    - 날짜가 붙은 못 읽은 칸이 있는 날.
+    - 날짜만 내고 끼니도 휴일 표시도 없는 날은 넣지 않는다 — 화면에 아무것도 안 나가 조용히
+      빠진 것과 같다.
+    """
+    year, month = (int(x) for x in plan.year_month.split("-"))
+    read = {
+        day.day
+        for day in plan.days
+        if (day.note or "").strip() or any(meal.items for meal in day.meals)
+    }
+    read |= {cell.day for cell in plan.unparsed if cell.day is not None}
+    thin = thin_ranges(year, month, ranges, read, failed=((m.first, m.last) for m in missed))
+    if not thin:
+        return plan, ()
+    cells = [UnparsedCell(why=_thin_why(r)) for r in thin]
+    return plan.model_copy(update={"unparsed": [*plan.unparsed, *cells]}), thin
+
+
+def _thin_why(thin: ThinRange) -> str:
+    span = f"{thin.first}일~{thin.last}일 급식"
+    if thin.read_days == 0:
+        # 그 날짜가 없는 급식표(보름치)일 수도 있다 — "일부만 읽었어요" 라고 하지 않는다
+        return f"{span}은 찾지 못했어요. 사진에 이 날짜가 있는지 확인해 주세요."
+    return f"{span} 중 일부만 읽었어요. 사진과 비교해 주세요."

@@ -199,11 +199,13 @@ class ReadParts:
     """날짜 범위별 호출 결과. 합치기 전이다.
 
     연월은 부르는 쪽(코드)이 정해 `merge_outputs` 에 준다. 한쪽 호출만 실패했으면 성공한 쪽은
-    `outputs` 에, 실패한 범위는 `missed` 에 있다.
+    `outputs` 에, 실패한 범위는 `missed` 에 있다. `ranges` 는 나눠 부른 날짜 범위 전부다(성패와
+    무관, 한 번에 불렀으면 빈 튜플) — 한 구간이 덜 읽혔는지 셀 때 쓴다(`rules/meal_plan_coverage`).
     """
 
     outputs: tuple[OcrOutput, ...]
     missed: tuple[MissedRange, ...] = ()
+    ranges: tuple[tuple[int, int], ...] = ()
 
 
 def _set_aside_bad_days(data: dict) -> dict:
@@ -428,7 +430,11 @@ class ImageOcrMealPlanReader:
                 )
         if not outputs:
             raise errors[0]
-        return ReadParts(outputs=tuple(outputs), missed=tuple(missed))
+        return ReadParts(
+            outputs=tuple(outputs),
+            missed=tuple(missed),
+            ranges=tuple(r for r in ranges if r is not None),
+        )
 
     def _call(
         self, image_bytes: bytes, mime_type: str, day_range: tuple[int, int] | None
