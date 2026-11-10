@@ -22,7 +22,7 @@ from app.domains.notice.models import (
     NoticeItemTarget,
 )
 from app.domains.suggestion.draft_items import draft_items
-from app.rules.notice_dates import NoticeWhen, parse_base_month, parse_notice_when
+from app.rules.notice_dates import NoticeWhen, _times, parse_base_month, parse_notice_when
 from app.rules.notice_text import clean_text
 
 MAX_EVENT_TITLE = 200
@@ -65,6 +65,7 @@ _OPEN_PAREN = re.compile(r"[(（]")
 # 규칙이 날짜 · 시각으로 쓰지 못해 화면에서 사라질 글을 이 이름표로 details 에 남긴다
 WRITTEN_AS = "적힌 대로"
 _MARKS = re.compile(r"[\W_]+")
+_UNTIL_AFTER = re.compile(r"\s*까지")
 
 
 @dataclass(frozen=True)
@@ -292,6 +293,21 @@ def _written_as(texts: list[str], details: list[ItemDetail]) -> list[ItemDetail]
     return lines
 
 
+def _until_clock(text: str, at: time) -> bool:
+    """글에 그 시각의 "까지" 가 있는가. 날짜 규칙과 같게 읽는다 — "9시" 와 "9:00" 은 같다."""
+    return any(c.at == at and _UNTIL_AFTER.match(text, c.end) for c in _times(text))
+
+
+def _until_text(date_text: str, quote: str, at: time, hide: Callable[[str], str]) -> str:
+    """일정의 "9시까지" 를 화면에 남길 원문. 무엇의 마감인지(등원 · 집합)는 근거 문장에 있다.
+
+    근거 문장에서 그 시각의 "까지" 가 든 줄을 쓴다. 다른 줄은 다른 이야기일 수 있다. 그 줄이
+    길이 상한을 넘으면 잘려 시각이 사라지므로 날짜 칸의 글을 쓴다. `quote` 는 원문 대조를 지난 것만.
+    """
+    line = next((ln.strip() for ln in quote.splitlines() if _until_clock(ln, at)), "")
+    return line if line and len(hide(line)) <= MAX_DETAIL_VALUE else date_text
+
+
 def _item(
     raw: ExtractedItem,
     *,
@@ -306,6 +322,8 @@ def _item(
     reasons: list[str] = []
     # 날짜 칸에서 읽었지만 화면의 "언제" 줄에 나타나지 않게 된 원문 글
     unshown: list[str] = []
+    # 일정의 "9시까지" 에서 마감으로 옮긴 시각
+    until_at: time | None = None
 
     def hide(value: str) -> str:
         return mask_names(value, people=people, institutions=orgs)
@@ -357,9 +375,9 @@ def _item(
         # "8/27(목) 9시까지 등원" 의 까지는 시각에 붙는다. 그날 9시까지 오라는 뜻이라 일정은 그날
         # 하루이고, 9시는 시작이 아니라 그 일의 마감이다. 시작 시각을 지어내지 않는다
         due = when if due.start is None else due
-        when = replace(when, start_time=None, end_time=None, until=False)
         # 확인 화면은 일정의 시작만 보여 준다. "9시까지 등원" 이 사라지지 않게 원문을 남긴다
-        unshown.append(raw.date_text or "")
+        until_at = when.start_time
+        when = replace(when, start_time=None, end_time=None, until=False)
     elif when.until:
         # "4월 30일까지 시행" 을 시작으로 읽으면 없던 하루짜리 일정이 생긴다
         due = when if due.start is None else due
@@ -380,7 +398,8 @@ def _item(
     due_at = _at(due_day, due_time or _END_OF_DAY, tz) if due_day else None
 
     quote = raw.source_quote.strip()
-    if not _quoted(quote, source):
+    quoted = _quoted(quote, source)
+    if not quoted:
         reasons.append("근거 문장을 원문에서 찾지 못했어요")
 
     if (
@@ -411,6 +430,8 @@ def _item(
     details = [d for d in raw.details if not _monologue(d.value, words)]
     # 위의 확인 검사 · 혼잣말 거르기가 끝난 뒤에 붙인다 — 날짜 칸의 원문이라 둘 다의 대상이 아니다.
     # 앞에 두어 개수 상한에 잘리지 않게 한다
+    if until_at is not None:
+        unshown.insert(0, _until_text(raw.date_text or "", quote if quoted else "", until_at, hide))
     details = [*_written_as(unshown, details), *details]
 
     return NewNoticeItem(

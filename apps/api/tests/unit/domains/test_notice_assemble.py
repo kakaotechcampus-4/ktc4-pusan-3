@@ -670,6 +670,50 @@ def test_적힌_대로는_시각_검사를_바꾸지_않는다():
     assert quiet.needs_review is False
 
 
+ARRIVE = "오전 9:00까지 등원해 주세요."
+FOREST = f"숲 체험 안내\n11월 20일(금) 숲 체험이 있어요.\n{ARRIVE}\n간식은 원에서"
+
+
+def _until(quote: str, **kw):
+    return _build(
+        _item(date_text="11월 20일(금) 9시까지", source_quote=quote, **kw), source=FOREST
+    ).items[0]
+
+
+@pytest.mark.parametrize(
+    ("quote", "shown"),
+    [
+        # 무엇의 마감인지는 근거 문장에 있다. 같은 시각이면 글자 모양이 달라도(9시 · 9:00) 쓴다
+        (ARRIVE, ARRIVE),
+        # 여러 줄 근거는 그 시각이 든 줄만 — 다른 줄은 다른 이야기다
+        (f"11월 20일(금) 숲 체험이 있어요.\n{ARRIVE}", ARRIVE),
+    ],
+)
+def test_까지_시각을_담은_근거_문장_줄을_적힌_대로로_쓴다(quote, shown):
+    item = _until(quote)
+    assert _written(item) == [shown]
+    assert item.needs_review is False
+
+
+@pytest.mark.parametrize(
+    "quote",
+    [
+        "11월 20일(금) 숲 체험이 있어요.",  # 시각이 없다
+        "간식은 원에서 10시까지",  # 다른 시각이다 (원문에도 없어 확인을 묻는다)
+        "오전 9시까지 와 주세요 꼭",  # 원문에 없는 근거 문장
+    ],
+)
+def test_근거_문장이_그_시각을_못_담거나_원문에_없으면_날짜_칸_글을_쓴다(quote):
+    assert _written(_until(quote)) == ["11월 20일(금) 9시까지"]
+
+
+def test_근거_문장의_그_줄이_길이_상한을_넘으면_날짜_칸_글을_쓴다():
+    # 잘리면 시각이 사라진다 — 긴 한 줄 공지의 끝에 시각이 있는 일이 실제로 있다
+    line = "가" * MAX_DETAIL_VALUE + " 9시까지 등원"
+    item = _build(_item(date_text="11월 20일(금) 9시까지", source_quote=line), source=line).items[0]
+    assert _written(item) == ["11월 20일(금) 9시까지"]
+
+
 OPEN_DUE = "10월 1일(목) 10:00 ~ 선착순마감"
 
 
