@@ -257,7 +257,8 @@ class Segment(_Strict):
             description=(
                 "kind=request 에만. suggest(우리 아이에게 해 줄 것 · 기본값) / "
                 "info(아이 일반을 묻는 말 — 보통 · 또래 · N세 아이들은 · 몇 살부터). "
-                "info 는 growth · health 에만 붙이고, growth 면 growth_task 를 비운다"
+                "info 는 growth · health 에만 붙이고, growth 면 growth_task 를 비운다. "
+                "검진 · 접종 시기는 보통이 붙어도 info 가 아니라 health/schedule_check 다"
             ),
         ),
     ]

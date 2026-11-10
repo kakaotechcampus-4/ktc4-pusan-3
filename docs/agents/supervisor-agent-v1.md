@@ -44,7 +44,7 @@
 - `info` 는 **Growth · Health 조각에만** 붙는다. Activity · Food 의 경계는 이 칸으로 바꾸지 않는다 — 프롬프트가 두 Agent 에 붙이지 말라고 하고, 붙어 와도 스키마가 지워 지금처럼 추천으로 간다(`schemas._INFO_MODE_AGENTS`).
 - Growth 의 `info` 면 `growth_task` 를 비운다(스키마가 지운다). routing 이 `DomainTask.task_type="info"`(`INFO_TASK`)로 내려보낸다. 추천 라벨 집합 · Growth 의 run 당 추천 하나 제한 · 05 · 0개 기록 대상에 들어가지 않는다.
 - 분류는 모델이 한다. "보통" · "N세" 같은 낱말을 코드가 보고 가르지 않는다 — "우리 애 4살인데 숫자 공부 어떻게 시켜?" 는 나이가 있어도 suggest 다.
-- Health 의 `info` 는 Agent 를 돌리지 않고 routing 이 닫힘 안내(`info_health_closed`)를 낸다 — 진단하지 않는 Agent 가 아이 일반의 건강 정보를 답으로 내지 않는다(루트 §2). 우리 아이의 검진 · 접종 일정을 묻는 말("검진 언제 받아야 돼?")은 `suggest` 라 `schedule_check` 가 그대로 맡는다. 닫힌 Health `info` 조각은 Agent 상한(2) 자리를 쓰지 않는다 — 안내만 내고 지나간다.
+- Health 의 `info` 는 Agent 를 돌리지 않고 routing 이 닫힘 안내(`info_health_closed`)를 낸다 — 진단하지 않는 Agent 가 아이 일반의 건강 정보를 답으로 내지 않는다(루트 §2). 단 검진 · 예방접종 **시기** 를 묻는 말("몇 개월에 예방접종 맞아?" · "보통 몇 살에 영유아 검진 받아?")은 "보통" 이 붙어도 `info` 가 아니라 `suggest` 라 `schedule_check` 가 이 아이 월령으로 답한다 — 공개된 표준 일정이고 진단이 아니다(#574 리뷰). 닫힘은 그 밖의 건강 일반 질문("보통 아이들 정상 체온은 몇 도야?")에만 나간다. 닫힌 Health `info` 조각은 Agent 상한(2) 자리를 쓰지 않는다 — 안내만 내고 지나간다.
 - 한 문장에 일반 질문과 우리 아이 추천이 같이 있으면 두 조각이고, 같은 Agent 의 서로 다른 두 task 로 간다.
 - 질문 속 나이는 모델이 뽑지 않는다. `rules/age.asked_month_range` 가 읽는다(세 · 살은 만 나이, 개월, 돌).
 

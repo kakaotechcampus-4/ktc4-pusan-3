@@ -114,9 +114,11 @@ _REQUEST_MODE = """
 - growth 의 info 면 growth_task 를 비운다. agent 는 suggest 와 같은 기준으로 고른다
   (배움 · 생활 습관 growth).
 - 아이 일반이라도 병 · 증상 · 약 · 영양제 · 영양 결핍은 guarded/diagnosis 다.
-- health 도 아이 일반을 묻는 말이면 info 다("보통 몇 개월에 예방접종 맞아?") — 코드가 닫힘 안내를
-  낸다. 우리 아이의 검진 · 접종 일정을 묻는 말("검진 언제 받아야 돼?")은 suggest 로 두고
-  health/schedule_check 로 보낸다.
+- health 도 아이 일반의 건강 정보를 묻는 말이면 info 다("보통 아이들 정상 체온은 몇 도야?") —
+  코드가 닫힘 안내를 낸다.
+- 검진 · 예방접종 시기를 묻는 말은 "보통" 이 붙어도 info 가 아니다. suggest 로 두고
+  health/schedule_check 로 보낸다("몇 개월에 예방접종 맞아?" · "검진 언제 받아야 돼?") —
+  공개된 표준 일정이라 이 아이 월령으로 답한다.
 - 한 문장에 일반 질문과 우리 아이 추천이 같이 있으면 두 조각으로 나눈다.
 """.strip()
 
@@ -219,7 +221,8 @@ _EXAMPLES = """
 - "숫자 공부는 어떻게 시켜야 할까?" → request/growth/learning_suggestion
 - "보통 몇 살부터 혼자 양치해?" → request/growth/info
 - "우리 애 4살인데 숫자 공부 어떻게 시켜?" → request/growth/learning_suggestion (suggest)
-- "몇 개월에 예방접종 맞아?" → request/health/info
+- "몇 개월에 예방접종 맞아?" → request/health/schedule_check (접종 · 검진 시기는 info 가 아니다)
+- "보통 아이들 정상 체온은 몇 도야?" → request/health/info
 - "보통 3세는 숫자 몇까지 세? 우리 애 숫자 공부는 어떻게 시켜?"
   → request/growth/info "보통 3세는 숫자 몇까지 세?"
   + request/growth/learning_suggestion "우리 애 숫자 공부는 어떻게 시켜?"

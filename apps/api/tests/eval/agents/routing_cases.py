@@ -1368,7 +1368,8 @@ NT_CASES: tuple[RoutingCase, ...] = (
 
 # ── 일반 정보 질문 (#574) — request_mode 경계 ────────────────────────────
 # info: 아이 일반을 묻는 말("보통" · "또래" · "N세 아이들은"). suggest: 우리 아이에게 해 줄 것.
-# Health 의 info 는 닫힘 안내다 (IN12). food · activity 는 info 를 받지 않아 여기 넣지 않는다 —
+# Health 의 info 는 닫힘 안내다 (IN15). 접종 · 검진 시기는 info 가 아니다 (IN12 · IN14).
+# food · activity 는 info 를 받지 않아 여기 넣지 않는다 —
 # 두 Agent 의 경계는 기존 케이스(RC · T · FC)가 그대로 본다
 IN_CASES: tuple[RoutingCase, ...] = (
     RoutingCase(
@@ -1398,8 +1399,11 @@ IN_CASES: tuple[RoutingCase, ...] = (
     RoutingCase(
         "IN12",
         "몇 개월에 예방접종 맞아?",
-        (QI("몇 개월에 예방접종 맞아?", HEALTH),),
-        watch="아이 일반 시기 질문은 health/info → 닫힘 안내. 우리 아이 검진은 schedule_check",
+        (QH("몇 개월에 예방접종 맞아?", HealthTaskType.SCHEDULE_CHECK),),
+        watch=(
+            "접종 · 검진 시기는 info 가 아니라 health/schedule_check — "
+            "공개된 표준 일정이라 이 아이 월령으로 답한다"
+        ),
     ),
     RoutingCase(
         "IN13",
@@ -1409,6 +1413,18 @@ IN_CASES: tuple[RoutingCase, ...] = (
             QG("우리 애 숫자 공부는 어떻게 시켜?", LEARN),
         ),
         watch="한 문장의 일반 질문과 우리 아이 추천은 두 조각",
+    ),
+    RoutingCase(
+        "IN14",
+        "보통 몇 살에 영유아 검진 받아?",
+        (QH("보통 몇 살에 영유아 검진 받아?", HealthTaskType.SCHEDULE_CHECK),),
+        watch="변형 — '보통' 이 붙어도 검진 시기는 schedule_check",
+    ),
+    RoutingCase(
+        "IN15",
+        "또래 아이들 정상 체온은 어느 정도야?",
+        (QI("또래 아이들 정상 체온은 어느 정도야?", HEALTH),),
+        watch="변형 — 접종 · 검진 밖의 건강 일반 질문은 health/info → 닫힘 안내",
     ),
 )
 

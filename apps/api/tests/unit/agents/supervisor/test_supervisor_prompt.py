@@ -61,7 +61,8 @@ def test_request_mode_절과_경계_예시가_있다() -> None:
     assert "[request_mode — 추천인가, 일반 정보인가]" in prompt
     for line in (
         '"보통 몇 살부터 혼자 양치해?" → request/growth/info',
-        '"몇 개월에 예방접종 맞아?" → request/health/info',
+        '"몇 개월에 예방접종 맞아?" → request/health/schedule_check',
+        '"보통 아이들 정상 체온은 몇 도야?" → request/health/info',
     ):
         assert line in prompt
     # food · activity 의 경계는 이 칸으로 바꾸지 않는다

@@ -182,15 +182,13 @@ _AGENT_LIMIT = Guidance(
 # 남기므로(`schemas._INFO_MODE_AGENTS`), 여기 없는 info 조각은 Health 하나다
 INFO_AGENTS: frozenset[str] = frozenset({DomainAgentName.GROWTH.value})
 # Health 의 일반 정보 질문은 Agent 를 돌리지 않고 닫는다 — 진단하지 않는 Agent 가 아이 일반의 건강
-# 정보를 답으로 내지 않게(루트 §2). 우리 아이의 검진 · 접종 일정은 suggest 라
-# schedule_check 가 맡는다
+# 정보를 답으로 내지 않게(루트 §2). 검진 · 접종 시기는 "보통" 이 붙어도 suggest 라
+# schedule_check 가 이 아이 월령으로 답한다(#574 리뷰)
 INFO_HEALTH_CLOSED = "info_health_closed"
 _INFO_HEALTH_CLOSED = Guidance(
     code=INFO_HEALTH_CLOSED,
-    message=(
-        "건강 관련 일반 정보는 아직 답하지 않아요. "
-        "아이 상태가 걱정되면 소아청소년과에서 확인해 보세요."
-    ),
+    # 증상을 묻지 않은 질문에도 붙으므로 걱정 · 상태를 말하지 않는다
+    message=("건강 관련 일반 정보는 아직 답하지 않아요. 궁금한 점은 소아청소년과에 물어봐 주세요."),
 )
 
 

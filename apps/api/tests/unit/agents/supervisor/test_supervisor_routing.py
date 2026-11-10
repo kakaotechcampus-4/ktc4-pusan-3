@@ -1114,16 +1114,29 @@ def test_IN11_은_info_가_아니다() -> None:
     assert [t.task_type for t in _route_case("IN11").domain_tasks] == ["learning_suggestion"]
 
 
-def test_IN12_Health_일반_정보_질문은_Agent_없이_닫힘_안내다() -> None:
-    routing = _route_case("IN12")
+@pytest.mark.parametrize("case_id", ["IN12", "IN14"])
+def test_접종_검진_시기_질문은_보통이_붙어도_schedule_check_로_간다(case_id: str) -> None:
+    routing = _route_case(case_id)
+    assert [(t.agent, t.task_type) for t in routing.domain_tasks] == [("health", "schedule_check")]
+    assert routing.guidance == ()
+
+
+def test_IN15_Health_일반_정보_질문은_Agent_없이_닫힘_안내다() -> None:
+    routing = _route_case("IN15")
     assert routing.domain_tasks == () and routing.unavailable_agents == ()
     assert [g.code for g in routing.guidance] == [INFO_HEALTH_CLOSED]
 
 
+def test_닫힘_안내는_걱정이나_상태를_말하지_않고_소아과로_안내한다() -> None:
+    (guidance,) = _route_case("IN15").guidance
+    assert guidance.message.endswith("궁금한 점은 소아청소년과에 물어봐 주세요.")
+    assert "걱정" not in guidance.message and "상태" not in guidance.message
+
+
 def test_Health_info_는_Agent_상한_자리를_쓰지_않는다() -> None:
-    raw = "보통 몇 개월에 예방접종 맞아? 저녁 뭐 먹일까? 양치 혼자 하는 법 알려줘"
+    raw = "보통 아이들 정상 체온은 몇 도야? 저녁 뭐 먹일까? 양치 혼자 하는 법 알려줘"
     output = _output(
-        {"text": "보통 몇 개월에 예방접종 맞아?", "kind": "request", "agent": "health",
+        {"text": "보통 아이들 정상 체온은 몇 도야?", "kind": "request", "agent": "health",
          "request_mode": "info"},
         {"text": "저녁 뭐 먹일까?", "kind": "request", "agent": "food",
          "food_task": "meal_recommendation"},
