@@ -212,3 +212,58 @@ async def test_읽을_수_없는_사진_run_은_없는_run_이다(
     assert await photo_run.get("bad-get", parent_id=me) is None
     assert await photo_run.lock(session, "bad-lock", parent_id=me) is None
     assert "synthetic secret" not in caplog.text
+
+
+async def test_사진_저장과_아이_삭제가_겹쳐도_교착이_나지_않는다(committed_owner):
+    """저장은 보관 행 → (공지를 넣으며) 아이 행, 삭제는 아이 행 → (CASCADE) 보관 행 순서로 잠가서
+    겹치면 교착이었다 — 아이 삭제가 500 이 됐다. 저장이 아이 행을 먼저 잡게 해 순서를 맞춘다."""
+    from datetime import timedelta as _td
+
+    from app.domains.child.delete import delete_owned_child
+    from app.domains.run_hold.models import HoldKind
+    from app.domains.run_hold.repository import put_hold
+
+    factory, (parent_id, child_id) = committed_owner
+    run_id = uuid.uuid4().hex
+    await photo_run.keep(
+        _filled(photo_run.open_photo_run(run_id=run_id, parent_id=parent_id, child_id=child_id))
+    )
+    locked = asyncio.Event()
+    outcome: dict[str, str] = {}
+
+    async def save_photo():
+        try:
+            async with factory() as s:
+                assert await photo_run.lock(s, run_id, parent_id=parent_id) is not None
+                locked.set()
+                await asyncio.sleep(0.2)
+                # save_notice 가 공지 행을 넣을 때와 같은 잠금 — 아이 행에 FOR KEY SHARE
+                await put_hold(
+                    s,
+                    kind=HoldKind.PENDING_REPLY,
+                    key=uuid.uuid4().hex,
+                    parent_id=parent_id,
+                    child_id=child_id,
+                    payload={},
+                    ttl=_td(minutes=1),
+                )
+                await s.commit()
+            outcome["save"] = "ok"
+        except Exception as exc:
+            outcome["save"] = type(exc).__name__
+
+    async def delete_child():
+        await locked.wait()
+        try:
+            async with factory() as s:
+                await delete_owned_child(
+                    s, child_id=child_id, parent_id=parent_id, now=datetime.now(UTC)
+                )
+                await s.commit()
+            outcome["delete"] = "ok"
+        except Exception as exc:
+            outcome["delete"] = type(exc).__name__
+
+    await asyncio.wait_for(asyncio.gather(save_photo(), delete_child()), timeout=10)
+
+    assert outcome == {"save": "ok", "delete": "ok"}
