@@ -198,3 +198,42 @@ def test_급식_제목은_빈_이름을_잇지_않는다() -> None:
     (entry,) = _meal_entries(run, plan, today=TODAY)
 
     assert entry["title"] == "밥, 우유"
+
+
+def test_이름이_하나도_없는_끼니는_읽지_못한_칸으로_보낸다() -> None:
+    # 원문이 번호뿐인 항목만 있는 끼니("2" · "1,5")는 이름이 전부 비어 제목이 "" 가 된다. 빈 제목
+    # 급식 항목이 화면에 나가면 저장 요청 전체가 422("제목이 비어 있어요")로 막힌다 — 조용히 빼지
+    # 않고, 모델이 못 읽었다고 한 칸(unparsed)과 같은 모양으로 확인을 받는다
+    from types import SimpleNamespace
+
+    from app.api.runs.photo_run import PhotoRun
+
+    def meal(meal_type: str, *items: tuple[str, str]) -> SimpleNamespace:
+        return SimpleNamespace(
+            meal_type=SimpleNamespace(value=meal_type),
+            items=[SimpleNamespace(name=name, raw=raw) for name, raw in items],
+        )
+
+    plan = SimpleNamespace(
+        days=[
+            SimpleNamespace(
+                day=9, meals=[meal("lunch", ("밥", "밥")), meal("snack_pm", ("", "2"), ("", "1,5"))]
+            )
+        ],
+        unparsed=[SimpleNamespace(raw="생일식단", why="날짜 없는 열")],
+        date_of=lambda day: date(2026, 11, day),
+    )
+    run = PhotoRun("r1", None, None, 0.0)
+
+    entries = _meal_entries(run, plan, today=TODAY)
+
+    assert [e["id"] for e in entries] == [
+        "pe_meal_9_lunch",
+        "pe_meal_unread_0",
+        "pe_meal_unread_1",
+    ]
+    assert all(e["title"] for e in entries)  # 빈 제목 항목이 나가지 않는다
+    unread = entries[2]
+    assert (unread["kind"], unread["title"], unread["date"]) == ("meal", "2, 1,5", None)
+    assert (unread["needs_review"], unread["review_reason"]) == (True, "이 칸은 읽지 못했어요.")
+    assert list(run.meals) == ["pe_meal_9_lunch"]  # 저장할 끼니로 들고 있지 않는다

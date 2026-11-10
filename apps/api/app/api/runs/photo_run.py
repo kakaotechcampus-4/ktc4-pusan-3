@@ -232,10 +232,17 @@ def _item_entry(entry_id: str, item: NewNoticeItem, *, today: date) -> dict:
 
 def _meal_entries(run: PhotoRun, plan, *, today: date) -> list[dict]:
     entries: list[dict] = []
+    # (원문, 이유) — 모델이 못 읽었다고 한 칸 뒤에 이름이 하나도 없는 끼니를 같은 모양으로 붙인다
+    unread = [(cell.raw, cell.why) for cell in plan.unparsed]
     for day in plan.days:
         for meal in day.meals:
             # 기관 급식 끼니는 셋이다. 아침 · 저녁은 daycare_meal 에 자리가 없어 싣지 않는다
             if meal.meal_type.value not in _SLOTS or not meal.items:
+                continue
+            if not any(item.name for item in meal.items):
+                # 원문이 번호뿐이라 이름이 전부 비었다. 빈 제목으로 내보내면 저장이 422 로 막힌다 —
+                # 조용히 빼지 않고 못 읽은 칸으로 확인을 받는다
+                unread.append((", ".join(item.raw for item in meal.items), None))
                 continue
             entry_id = f"pe_meal_{day.day}_{meal.meal_type.value}"
             run.meals[entry_id] = MealSlot(plan.date_of(day.day), DaycareSlot(meal.meal_type.value))
@@ -252,18 +259,18 @@ def _meal_entries(run: PhotoRun, plan, *, today: date) -> list[dict]:
                     "past": plan.date_of(day.day) < today,
                 }
             )
-    for index, cell in enumerate(plan.unparsed):
+    for index, (raw, why) in enumerate(unread):
         entries.append(
             {
                 "id": f"pe_meal_unread_{index}",
                 "kind": "meal",
-                "title": cell.raw or "읽지 못한 칸",
+                "title": raw or "읽지 못한 칸",
                 "date": None,
                 "all_day": True,
                 "items": [],
                 "needs_review": True,
                 "past": False,
-                "review_reason": cell.why or "이 칸은 읽지 못했어요.",
+                "review_reason": why or "이 칸은 읽지 못했어요.",
             }
         )
     return entries
