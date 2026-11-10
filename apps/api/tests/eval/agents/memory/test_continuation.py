@@ -24,6 +24,7 @@ import pytest
 
 from app.agents.common.config import AgentSettings
 from app.agents.common.llm_client import LLMClient
+from app.agents.food.amount_rules import amount_of
 from app.agents.memory.agent import MAX_QUESTIONS, MemoryAgentResult, run
 from app.agents.memory.bundles import MUTATING_PREFIXES
 from app.agents.memory.context import AgentContext
@@ -70,18 +71,19 @@ def _field_has(domain: str, needle: str) -> Check:
 
 
 def _not_eaten(domain: str) -> Check:
-    """안 먹었다는 말이 답을 이어받아 남았는가. raw_text 는 늘 "안 먹었어" 가 있어 fields 만 본다.
+    """안 먹었다는 말이 Food 가 읽는 amount 에 남았는가 — 양 계수가 1.0 보다 작아야 한다.
 
-    조각만 보고 먹은 기록이 되면 Food 가 양을 모르는 한 그릇으로 센다.
+    Food 는 양을 amount 하나로만 읽고, 비었거나 사전에 없는 말이면 양을 모르는 한 그릇(1.0)으로
+    센다(`food/amount_rules.amount_of`). 그래서 글자가 아니라 Food 가 셀 계수로 본다 — action 에
+    "안 먹음" 을 적고 amount 를 비우면 Food 는 여전히 한 그릇이고, amount 에 "거부" · "뱉음" 을
+    적으면 맞게 남은 것이다. 1.0 미만은 Food 가 "남겼다" 로 보는 기준과 같다
+    (`food/tools/records.py`). "좀 안 먹었어" 는 전혀 안 먹음 · 조금 먹음 둘 다로 읽혀서
+    0.0 만 받지 않는다 (#929 리뷰)
     """
     return (
-        f"{domain} 관찰이 안 먹었다는 쪽으로 남았다",
+        f"{domain} 관찰의 amount 가 안 먹었다는 쪽(계수 1.0 미만)으로 남았다",
         lambda rows, _: any(
-            any(
-                needle in json.dumps(row.fields, ensure_ascii=False, default=str)
-                for needle in ("안 먹", "먹지 않")
-            )
-            for row in rows[domain]
+            amount_of(row.fields.get("amount")).factor < 1.0 for row in rows[domain]
         ),
     )
 
@@ -106,6 +108,10 @@ _WHOLE = PendingMemoryContext(
 # 오늘 한 번 안 먹었다는 말을 되묻고 받은 답 (#929)
 _NOT_EATEN_TODAY = PendingMemoryContext(
     "오늘 좀 안 먹었어", "무엇을 안 먹었어요?", WorkType.OBSERVE
+)
+# 전해 들은 말. 답이 "모른다" 라 음식도 끼니 이름도 없다 (#929 리뷰)
+_NOT_EATEN_HEARSAY = PendingMemoryContext(
+    "점심을 많이 안 먹었대", "점심에 무엇을 안 먹었대요?", WorkType.OBSERVE
 )
 
 
@@ -221,6 +227,17 @@ CASES = [
         "C13",
         _NOT_EATEN_TODAY,
         "그냥 밥을 거의 안 먹었어",
+        {"routine": 1},
+        False,
+        kind="message",
+        checks=(_field_has("routine", "mealtime"),),
+    ),
+    # 답에 끼니 이름이 없으면 끼니 이름 거절 문구("다시 묻지 않고 mealtime")를 볼 길이 없다.
+    # 이어받기 머리말은 "필요한 값이 없으면 질문 하나만 다시 한다" 라 또 물을 수 있다 (#929 리뷰)
+    Case(
+        "C14",
+        _NOT_EATEN_HEARSAY,
+        "선생님이 거기까진 말 안 해 주셨어",
         {"routine": 1},
         False,
         kind="message",
