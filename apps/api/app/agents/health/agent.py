@@ -131,7 +131,14 @@ async def registered_titles(context: HealthContext) -> tuple[str, ...] | None:
     목록이 싣는 코스와 같은 조건이다. 동의가 없으면 읽지 않는다. 조회가 실패하면 None 이다 — 그러면
     pipeline 은 대조하지 않고 Memory 가 먹인 약을 평소처럼 기록한다. 예외 메시지에는 약 이름이
     섞일 수 있어 종류만 남긴다.
+
+    스토어 정책으로 복약을 꺼 둔 동안(#923)도 읽지 않고 None 이다. 대조하면 등록된 약을 먹였다는
+    말을 Memory 가 막고 "복약 화면에서 체크해 주세요" 로 보내는데, 꺼 둔 동안은 그 화면이 없다 —
+    먹인 약이 어디에도 안 남는다. 꺼 둔 뒤에는 코스가 새로 생기지 않지만, 그 전에 만든 코스가
+    남은 환경(dev)이 있다.
     """
+    if not registry.MEDICATION_ENABLED:
+        return None
     try:
         if not await context.ports.consent.child_health_granted(child_id=context.child_id):
             return None
