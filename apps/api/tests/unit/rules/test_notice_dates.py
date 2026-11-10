@@ -179,6 +179,13 @@ def test_물결표_뒤의_숫자가_날이_아니면_끝_날로_읽지_않는다
     assert parse_notice_when(text, anchor=ANCHOR).end is None
 
 
+@pytest.mark.parametrize("text", ["11/23~2만원", "11/23~3천원", "11/23~5원"])
+def test_물결표_뒤의_금액은_끝_날이_아니다(text):
+    when = parse_notice_when(text, anchor=ANCHOR)
+    assert when.end is None
+    assert when.review is None
+
+
 @pytest.mark.parametrize(
     ("text", "start", "start_time"),
     [
