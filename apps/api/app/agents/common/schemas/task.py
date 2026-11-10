@@ -48,6 +48,10 @@ class DomainTask:
     # 놀이를 이어 묻는 말("그럼 다른 데는?")이 "보호자가 말하지 않았다" 로 막히지 않게 Activity 의
     # 출처 확인만 읽는다. Memory · 되묻기 맥락으로는 가지 않는다
     prior_texts: tuple[str, ...] = ()
+    # 앞 대화를 읽은 task 만 — 앞 턴들에서 같은 Agent 가 낸 추천 이름(오래된 순, 겹침 없음).
+    # "다른 거 추천해줘" 를 여러 번 물어도 이미 보여 준 것을 다시 내지 않게 Agent 가 읽는다
+    # (#852). AI 가 쓴 이름이라 "보호자가 말했는가" 확인(`originals`)에는 쓰지 않는다
+    shown_before: tuple[str, ...] = ()
 
     def originals(self) -> tuple[str, ...]:
         return self.original_texts or self.request_texts
