@@ -36,6 +36,7 @@ from app.providers.meal_plan.image_ocr import (
 )
 from app.providers.meal_plan.schema import MealPlanJSON, MealPlanSource, MenuItem
 from app.rules.allergen import parse_allergens, strip_allergen_marks
+from app.rules.menu_key import menu_display_name
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_FIXTURE = ROOT / "tests" / "fixtures" / "meal_plan_2025_01.json"
@@ -218,8 +219,10 @@ def menu_keys(raw: str) -> set[str]:
 
     정답셋은 "…,우유2" 를 항목 2개로 나누고 "A 또는 B" 는 한 항목으로 두는데, 모델이 붙이거나
     나눠도 메뉴가 같으면 같게 본다. 알레르기 번호 사이 쉼표는 번호를 먼저 떼서 나누지 않는다.
+    번호를 떼는 것과 기호 정리(끝의 ` · 겹친 && 등)는 운영이 이름을 만들 때와 같은 함수
+    (`menu_display_name`)로 한다 — 운영 화면에서 같은 이름이면 같은 메뉴다. 글자가 다르면 다르다.
     """
-    keys = {menu_key(part) for part in _MENU_SEP.split(strip_allergen_marks(raw))}
+    keys = {menu_key(part) for part in _MENU_SEP.split(menu_display_name(raw))}
     return keys - {""}
 
 

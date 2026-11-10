@@ -493,3 +493,21 @@ def test_model_name_breaks_count_junk_and_other_menu_words():
         "현미밥 (이름: 흑미밥) · 다른 음식 낱말",
         '떡(꿀설기) (이름: 떡(꿀설기)}{")',
     ]
+
+
+# ── 같은 메뉴 비교는 운영이 이름을 만들 때와 같은 기호 정리를 거친다 ─────────────────
+# 11-11 측정: 원문 끝의 ` · 겹친 && 가 C1 로 잡혔다. 운영 화면 이름 · 저장 키는 정답과 같았다
+
+
+def test_symbol_noise_the_service_cleans_up_is_not_a_failure():
+    expected = _plan(["백김치9(백깍두기9)", "빵(식빵2,5,6&잼)"])
+    actual = _plan(["백김치9(백깍두기9)`", "빵(식빵2,5,6&&쨈)"])
+
+    assert not grade_slots(expected, actual)[(2, "lunch")].failed
+
+
+def test_a_letter_difference_is_still_c1_even_with_symbol_noise():
+    expected = _plan(["현미밥"])
+    actual = _plan(["흑미밥`"])
+
+    assert grade_slots(expected, actual)[(2, "lunch")].c1
