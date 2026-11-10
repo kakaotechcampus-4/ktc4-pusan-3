@@ -137,6 +137,13 @@ def test_merge_outputs_sets_source_and_orders_days():
     assert merged.notes == "안내 A / 안내 B"
 
 
+def _lunch(day: int, *raws: str) -> dict:
+    return {
+        "day": day,
+        "meals": [{"meal_type": "lunch", "items": [{"name": r, "raw": r} for r in raws]}],
+    }
+
+
 def test_merge_outputs_drops_duplicate_day_from_later_call_and_flags_it():
     first = _output(days=[{"day": 15, "meals": [], "note": "앞"}])
     second = _output(days=[{"day": 15, "meals": [], "note": "뒤"}])
@@ -145,6 +152,19 @@ def test_merge_outputs_drops_duplicate_day_from_later_call_and_flags_it():
 
     assert [d.note for d in merged.days] == ["앞"]
     assert merged.unparsed[0].day == 15
+
+
+def test_merge_outputs_keeps_what_the_dropped_duplicate_day_read():
+    # 버린 쪽에 무엇이 있었는지 보호자가 볼 수 있어야 한다 — 확인 화면의 제목이 이 원문이다
+    first = _output(days=[_lunch(15, "흑미밥")])
+    second = _output(days=[_lunch(15, "현미밥", "미역국5,6")])
+
+    merged = merge_outputs([first, second])
+
+    assert [[i.raw for m in d.meals for i in m.items] for d in merged.days] == [["흑미밥"]]
+    (cell,) = merged.unparsed
+    assert (cell.day, cell.meal_type, cell.raw) == (15, None, "현미밥, 미역국5,6")
+    assert "두 번" in cell.why
 
 
 def test_merge_outputs_keeps_one_of_the_same_unread_cell_reported_by_both_calls():
@@ -177,9 +197,24 @@ def test_merge_outputs_keeps_unread_cells_without_raw_even_if_alike():
     assert len(merged.unparsed) == 2
 
 
-def test_merge_outputs_rejects_day_the_month_does_not_have():
+def test_merge_outputs_sets_aside_only_the_day_the_month_does_not_have():
+    # 전에는 그 하루 때문에 한 달 표 전체가 "식단표의 표를 읽지 못했어요" 였다.
+    # 2월 30일은 날짜를 잘못 읽은 것이라 저장하지 않고 못 읽은 칸으로 확인을 받는다
+    merged = merge_outputs(
+        [_output(days=[_lunch(27, "흑미밥"), _lunch(30, "현미밥", "우유2")])],
+        year_month="2025-02",
+    )
+
+    assert [d.day for d in merged.days] == [27]
+    (cell,) = merged.unparsed
+    assert (cell.day, cell.raw) == (None, "현미밥, 우유2")  # 없는 날이라 날짜 칸에 싣지 않는다
+    assert "30일" in cell.why and "2월" in cell.why
+
+
+def test_merge_outputs_still_rejects_a_year_month_it_cannot_use():
+    # 월을 모르면 날짜를 하나도 쓸 수 없다 — 이때만 표 전체가 실패다
     with pytest.raises(RuntimeError, match="규칙"):
-        merge_outputs([_output(year_month="2025-02", days=[{"day": 30, "meals": []}])])
+        merge_outputs([_output(year_month="11", days=[_lunch(2, "흑미밥")])])
 
 
 # ── 예산 보호: 네트워크 전에 막힌다 ──

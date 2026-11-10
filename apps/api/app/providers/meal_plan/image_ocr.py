@@ -9,6 +9,7 @@
 """
 
 import base64
+import calendar
 import json
 import logging
 import time
@@ -194,25 +195,48 @@ class ReadParts:
 def merge_outputs(parts: Sequence[OcrOutput], *, year_month: str | None = None) -> MealPlanJSON:
     """날짜 범위별 호출 결과를 한 달치 `MealPlanJSON` 으로 합친다.
 
-    같은 날짜가 두 번 오면 앞 호출을 남기고 뒤 것은 검수 플래그로 남긴다.
     `year_month` 를 주면 모델이 낸 값 대신 그 연월을 쓴다. 🚨 운영(사진)은 언제나 준다 — 연도는
     모델이 아니라 코드가 정한다 (`agents/notice_ocr.read_photo` · `rules/meal_plan_month`).
+
+    🚨 한 칸이 어긋났다고 한 달 표를 버리지 않는다. 어긋난 날만 못 읽은 칸(`unparsed`)으로 돌린다.
+    - 같은 날짜가 두 번 오면 앞 호출을 남기고, 뒤 것은 읽은 원문과 함께 못 읽은 칸으로 남긴다.
+    - 그 달에 없는 날(2월 30일)은 날짜를 잘못 읽은 것이다. 저장하지 않고 못 읽은 칸으로 남긴다.
+    표 전체가 실패하는 것은 연월을 쓸 수 없을 때뿐이다 — 어느 달인지 모르면 날짜를 하나도 못 쓴다.
     """
     first = parts[0]
+    chosen = year_month or first.year_month
+    try:
+        MealPlanJSON(source=MealPlanSource.IMAGE, year_month=chosen, days=[])
+    except ValidationError as e:
+        raise RuntimeError(f"모델 응답이 급식표 규칙에 맞지 않음: {e.errors()[:3]}") from e
+    year, month = (int(x) for x in chosen.split("-"))
+    last = calendar.monthrange(year, month)[1]
+
     seen: set[int] = set()
-    days, dupes = [], []
+    days, dupes, outside = [], [], []
     for day in sorted((d for p in parts for d in p.days), key=lambda d: d.day):
+        if day.day > last:
+            outside.append(day)
+            continue
         (dupes if day.day in seen else days).append(day)
         seen.add(day.day)
     unparsed = _unique_cells(u for p in parts for u in p.unparsed)
     unparsed += [
-        UnparsedCell(day=d.day, why="호출 간 중복 날짜 — 뒤 호출 결과를 버림") for d in dupes
+        UnparsedCell(day=d.day, raw=_raw_of(d), why="같은 날짜가 두 번 읽혀 앞의 것만 남겼어요.")
+        for d in dupes
+    ]
+    unparsed += [
+        UnparsedCell(
+            raw=_raw_of(d),
+            why=f"{month}월에는 없는 {d.day}일 칸이에요. 날짜를 잘못 읽었을 수 있어요.",
+        )
+        for d in outside
     ]
     notes = " / ".join(n for n in (p.notes for p in parts) if n) or None
     try:
         return MealPlanJSON(
             source=MealPlanSource.IMAGE,
-            year_month=year_month or first.year_month,
+            year_month=chosen,
             institution_name=first.institution_name,
             days=days,
             unparsed=unparsed,
@@ -220,6 +244,11 @@ def merge_outputs(parts: Sequence[OcrOutput], *, year_month: str | None = None) 
         )
     except ValidationError as e:
         raise RuntimeError(f"모델 응답이 급식표 규칙에 맞지 않음: {e.errors()[:3]}") from e
+
+
+def _raw_of(day: MealDay) -> str | None:
+    """그 날 읽은 메뉴 원문 — 못 읽은 칸으로 돌릴 때 보호자가 무엇을 버렸는지 보게 한다."""
+    return ", ".join(item.raw for meal in day.meals for item in meal.items) or None
 
 
 def _unique_cells(cells: Iterable[UnparsedCell]) -> list[UnparsedCell]:
