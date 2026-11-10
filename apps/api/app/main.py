@@ -41,7 +41,7 @@ if settings.alert_webhook_url:
 log = logging.getLogger(__name__)
 
 DRAIN_SECONDS = 30.0
-"""종료 때 남은 run · Curator 를 기다리는 상한(초). 넘기면 취소한다 (#882).
+"""종료 때 남은 run · 표 미러 · Curator 를 기다리는 상한(초). 넘기면 취소한다 (#882).
 
 uvicorn 은 SIGTERM 뒤 열린 요청 · SSE 를 먼저 기다린다(`--timeout-graceful-shutdown`, Dockerfile).
 그래서 여기 오는 것은 화면이 안 붙은 run 과 run 뒤에 도는 Curator 다.
@@ -52,15 +52,21 @@ uvicorn 은 SIGTERM 뒤 열린 요청 · SSE 를 먼저 기다린다(`--timeout-
 
 
 async def drain_background() -> None:
-    """남은 run 을 기다리고, 그다음 Curator 를 기다린다. 상한을 넘긴 것은 취소한다.
+    """남은 run → 그 run 의 표 미러 → Curator 순서로 기다린다. 상한을 넘긴 것은 취소한다.
 
-    run 이 먼저다 — run 이 끝나며 Curator 를 띄우므로 run 이 다 끝난 뒤에 Curator 를 모은다.
+    run 이 먼저다 — run 이 끝나며 close 를 넣어야 미러가 끝나고, Curator 를 띄우므로 run 이 다
+    끝난 뒤에 나머지를 모은다. 미러를 안 기다리면 끝 신호가 표에 안 남아, 새 api 에서 같은
+    Idempotency-Key 로 다시 누른 화면이 옛 run 을 재생받고 90초 뒤에야 끊긴다 (#897 리뷰).
     취소하면 러너의 finally 가 failed 를 내고 Idempotency 키를 놓는다. 안 하면 프로세스와 함께
     흔적 없이 사라진다 (uvicorn 은 정리 뒤 SIGTERM 을 다시 일으켜 죽는다 — #882 실측).
     """
     loop = asyncio.get_running_loop()
     deadline = loop.time() + DRAIN_SECONDS
-    stages = (("run", registry.running_tasks), ("curator", curator_trigger.running_tasks))
+    stages = (
+        ("run", registry.running_tasks),
+        ("mirror", registry.running_mirrors),  # run 이 close 를 넣은 뒤라야 끝난다
+        ("curator", curator_trigger.running_tasks),
+    )
     for kind, running in stages:
         tasks = running()
         if not tasks:
@@ -74,7 +80,8 @@ async def drain_background() -> None:
             )
             for task in late:
                 task.cancel()
-            await asyncio.wait(late, timeout=5)
+            # 정리 5초는 단계마다가 아니라 drain 전체에서 한 번 — 단계마다면 합계가 단계 수만큼 는다
+            await asyncio.wait(late, timeout=max(0.0, deadline + 5 - loop.time()))
 
 
 @asynccontextmanager
@@ -114,8 +121,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         yield
     finally:
         # 🚨 writer 를 멈추기 전에 — run · Curator 가 끝나며 남기는 사용량도 마지막 flush 에 실린다
-        with suppress(Exception):
+        try:
             await drain_background()
+        except Exception as exc:
+            log.warning("drain 이 %s 로 중간에 멈췄다", type(exc).__name__)
         hold_purger.cancel()
         with suppress(asyncio.CancelledError):
             await hold_purger

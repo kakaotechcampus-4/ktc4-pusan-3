@@ -144,18 +144,23 @@ async def test_종료할_때_진행_중인_run_과_curator_를_끝까지_기다�
             order.append("writer 멈춤")
             raise
 
-    async def job(name: str) -> None:
+    async def curator_job() -> None:
         await asyncio.sleep(0.05)
-        order.append(name)
+        order.append("curator 끝")
+
+    async def run_job() -> None:
+        await asyncio.sleep(0.05)
+        # 실제 러너처럼 run 이 끝나며 Curator 를 띄운다 — 단계를 하나로 합치면 이걸 놓친다
+        curator = asyncio.create_task(curator_job())
+        curator_trigger._background_tasks.add(curator)
+        curator.add_done_callback(curator_trigger._background_tasks.discard)
+        order.append("run 끝")
 
     monkeypatch.setattr(main.llm_usage_writer, "run_writer", stopping_writer)
     app = FastAPI()
     try:
         async with main.lifespan(app):
-            _start_run(job("run 끝"))
-            curator = asyncio.create_task(job("curator 끝"))
-            curator_trigger._background_tasks.add(curator)
-            curator.add_done_callback(curator_trigger._background_tasks.discard)
+            _start_run(run_job())
     finally:
         registry.clear()
 
@@ -184,3 +189,47 @@ async def test_drain_시간을_넘긴_run_은_취소해서_정리를_거치게_�
 
     assert task.cancelled()
     assert cleaned == ["finally"]
+
+
+async def test_run_이_끝나도_표_미러가_끝_신호를_쓸_때까지_기다린다(monkeypatch):
+    # 러너는 close() 로 끝 신호를 줄 세우기만 하고 표에는 미러가 쓴다(#899) — #897 리뷰
+    monkeypatch.setattr(main.settings, "DATA_GO_KR_SERVICE_KEY", "")
+    order: list[str] = []
+
+    async def stopping_writer() -> None:
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            order.append("writer 멈춤")
+            raise
+
+    async def slow_mirror() -> None:
+        await asyncio.sleep(0.05)
+        order.append("미러 끝")
+
+    monkeypatch.setattr(main.llm_usage_writer, "run_writer", stopping_writer)
+    app = FastAPI()
+    try:
+        async with main.lifespan(app):
+            channel = registry.open_run(parent_id=uuid4())
+            channel._writer = asyncio.create_task(slow_mirror())
+            channel.close()  # run 은 이미 끝났다 — 남은 건 미러뿐
+    finally:
+        registry.clear()
+
+    assert order == ["미러 끝", "writer 멈춤"]
+
+
+async def test_drain_이_터지면_로그를_남기고_종료는_계속한다(monkeypatch, caplog):
+    monkeypatch.setattr(main.settings, "DATA_GO_KR_SERVICE_KEY", "")
+
+    async def broken_drain() -> None:
+        raise RuntimeError("synthetic")
+
+    monkeypatch.setattr(main, "drain_background", broken_drain)
+    app = FastAPI()
+
+    async with main.lifespan(app):
+        pass
+
+    assert "drain 이 RuntimeError 로 중간에 멈췄다" in caplog.text
