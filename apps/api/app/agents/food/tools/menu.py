@@ -33,6 +33,7 @@ from app.agents.food.readouts import (
     DAYCARE_ALLERGY_CONFLICT,
     DAYCARE_ALLERGY_UNCHECKED,
     DAYCARE_AMBIGUOUS,
+    DAYCARE_AMOUNT_NO_MEAL,
     DAYCARE_AMOUNT_UPDATED,
     DAYCARE_ASK_SUBSTITUTE,
     DAYCARE_LOOKUP_TOO_LONG,
@@ -206,6 +207,15 @@ async def update_daycare_meal(context: FoodContext, args: UpdateDaycareMealArgs)
     rows = await ports.daycare.rows(child_id=context.child_id, date_from=day, date_to=day)
     row, stop = _pick_row(rows, args.slot)
     if row is None:
+        if stop == DAYCARE_NOT_FOUND and _amount_only(args) and day.weekday() < 5:
+            # 급식표가 없는 평일의 "점심은 반만 먹었대" — 양을 붙일 행이 없다. 무엇을 먹었는지
+            # 알려 달라고 안내한다(되묻기가 아니라 문구 하나, #798). 주말은 급식이 없는 날이다
+            when = "오늘" if day == context.today else _date_label(day)
+            slot = SLOT_LABEL[args.slot or "lunch"]
+            context.state.readouts = (
+                READOUTS.render(DAYCARE_AMOUNT_NO_MEAL, date=when, slot=slot),
+            )
+            return ok("update", _RESOURCE, status="stopped")
         return _stop(context, "update", stop)
 
     removed = _menu_keys(args.removed_spans)
@@ -337,6 +347,11 @@ def _clean(spans: list[str]) -> list[str]:
 def _menu_keys(spans: list[str]) -> list[str]:
     """구간 → 정규화한 menu_key. 정규화하면 비는 것은 뺀다. 순서를 지키고 겹치지 않는다."""
     return list(dict.fromkeys(key for span in spans if (key := normalize_menu_key(span))))
+
+
+def _amount_only(args: UpdateDaycareMealArgs) -> bool:
+    """메뉴 없이 먹은 양만 말했다."""
+    return is_amount_text(args.amount_span) and not args.removed_spans and not args.added_spans
 
 
 def _date_label(target: date) -> str:

@@ -37,6 +37,9 @@ class RawForecast:
     sky: str | None  # SKY — "1" · "3" · "4"
     pcp: str | None  # PCP — "강수없음" · "1.0mm 미만" · "0" …
     pop: str | None  # POP — "0" ~ "100"
+    # 중기 육상예보(`getMidLandFcst`)로 읽은 날만 — 하늘 문장 "맑음" · "흐리고 비" (wf). 이때 sky ·
+    # pcp 는 없다(중기예보에는 시간별 강수량이 없다)
+    wf: str | None = None
 
 
 @dataclass(frozen=True)

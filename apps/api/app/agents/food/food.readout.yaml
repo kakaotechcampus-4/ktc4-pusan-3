@@ -114,6 +114,9 @@ closed.no_daycare:
 daycare.not_found:
   kind: daycare
   template: "급식 정보를 못 찾았어요."
+daycare.amount_no_meal:
+  kind: daycare
+  template: "{date} {slot} 급식을 확인하지 못했어요. {date} 먹은 {slot}을 알려주세요."
 daycare.replaced_unknown:
   kind: daycare
   template: "어떤 메뉴 대신 받았나요?"

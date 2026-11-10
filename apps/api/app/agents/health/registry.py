@@ -162,6 +162,16 @@ IMPLEMENTED_TASKS: frozenset[HealthTaskType] = frozenset(
     }
 )
 
+# 🚨 스토어 건강 앱 선언 때문에 꺼 둔 복약 (#923). 웹 `lib/store-policy.ts` 의
+#    `MEDICATION_ENABLED` 와 같은 스위치다 — 웹은 화면을, 이쪽은 대화의 답을 끈다. 꺼 둔 동안은
+#    복약 코스를 등록할 화면이 없어서 코스로만 일하는 경로가 막다른 답을 낸다. 그 경로는
+#    `agent.run()` 이 고정 문구로 닫는다.
+#    다시 켤 때는 웹과 같이 켠다 — 한쪽만 켜면 답할 수 없는 질문(서버)이나 답이 없는
+#    화면(웹)이 남는다.
+#    읽는 자리는 `registry.MEDICATION_ENABLED` 로 부른다(이름만 가져오지 않는다) — 테스트가
+#    켜고 끈다.
+MEDICATION_ENABLED: bool = False
+
 # 같은 run 의 다른 라벨이 읽는 행을 쓰는 라벨. pipeline 이 이 라벨을 먼저 끝낸 뒤 나머지를 돌린다.
 # 복약 중단이 같은 run 의 진료 준비 · 전달 서류가 읽는 코스 상태를 바꾼다
 WRITING_TASKS: frozenset[HealthTaskType] = frozenset({HealthTaskType.MEDICATION})
