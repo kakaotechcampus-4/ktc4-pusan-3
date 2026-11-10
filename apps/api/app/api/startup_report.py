@@ -54,7 +54,8 @@ def disabled_features(settings: _Settings, *, llm_gaps: Sequence[str]) -> list[s
         found.append("도서 추천 (DATA4LIBRARY_AUTH_KEY 없음)")
     ocr = [n for n in ("MEAL_OCR_BASE_URL", "MEAL_OCR_API_KEY") if _blank(getattr(settings, n))]
     if ocr:
-        found.append(f"사진 읽기 ({' / '.join(ocr)} 없음)")
+        # 키가 없으면 읽기만이 아니라 받기도 503 이다 (`routers/photos.py`)
+        found.append(f"사진 읽기 · 받기 — 올리면 503 ({' / '.join(ocr)} 없음)")
     if not settings.PHOTO_UPLOAD_ACCEPT:
         found.append("사진 받기 — 올리면 503 (PHOTO_UPLOAD_ACCEPT=false)")
     if not settings.PUSH_DEVICE_ACCEPT:
