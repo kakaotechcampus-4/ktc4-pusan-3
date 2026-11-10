@@ -162,6 +162,22 @@ class InMemoryGrowthDocs:
         ]
         return rows[:limit]
 
+    async def search_range(
+        self,
+        *,
+        min_month: int,
+        max_month: int,
+        row_types: tuple[GrowthDocType, ...],
+        query: str,
+        limit: int,
+    ) -> list[GrowthDocRow]:
+        rows = [
+            r
+            for r in self._rows
+            if r.row_type in row_types and r.min_month < max_month and r.max_month > min_month
+        ]
+        return rows[:limit]
+
     async def chain(self, *, chain_key: str) -> list[GrowthDocRow]:
         prefix = f"{chain_key}.step"
         return [

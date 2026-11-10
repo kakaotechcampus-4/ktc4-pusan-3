@@ -131,8 +131,12 @@ class WorldSpec:
     recipes: str = "toddler"  # toddler · weaning · pool2 · pool0
     history: tuple[str, ...] = ()  # 최근 3일 안에 추천한 menu_key
     daycare: bool = True
-    # default · sparse_veg · sparse_veg_unknown. sparse_veg 는 최근 7일에 채소 · 과일이 기록된 날의
-    # 절반 미만으로 나온다. sparse_veg_unknown 은 거기에 식품군을 모르는 메뉴가 낀 날을 더한다
+    # default 는 C48-dc 급식(오늘 · 어제 · 모레 …). week 는 지난 2일 + 오늘 ~ 모레 점심 1행씩인
+    # 이번 주 급식표 — 영양소 분석이 이번 주 남은 급식까지 보는지 본다
+    daycare_menu: str = "default"
+    # default · sparse_veg · sparse_veg_unknown · few. sparse_veg 는 최근 7일에 채소 · 과일이 기록된
+    # 날의 절반 미만으로 나온다. sparse_veg_unknown 은 거기에 식품군을 모르는 메뉴가 낀 날을 더한다.
+    # few 는 기록이 4행 · 2일뿐인 아이(출현은 말하지만 10행에 못 미친다)
     meals: str = "default"
     # True 면 먹은 메뉴의 menu_catalog 행(식품군)을 채운다. 비어 있으면 영양 판정이 메뉴를 하나도
     # 못 읽어(appearance_ready=False) 부족 식품군 가중 · 오늘 겹침 가중이 돌지 않는다
@@ -158,11 +162,18 @@ WORLDS: dict[str, WorldSpec] = {
     # 대두 알레르기 — 생성 메뉴가 간장 · 된장 같은 양념을 재료에 안 적으면 필터가 놓칠 수 있다(#740)
     "C48-soy": WorldSpec(allergy=("대두",)),
     "C48-prev": WorldSpec(history=("소불고기", "두부조림", "시금치나물")),
-    # 영양 반영이 실제로 도는 세계 — 채소 2일 · 과일 1일 / 기록된 6일
+    # 영양 반영이 실제로 도는 세계 — 출현 창(오늘 - 7일 ~ 이번 주 일요일)에서 채소 3일 · 과일 2일 /
+    # 기록된 8일(토 · 일은 7일). 어제 · 오늘 · 모레 급식 메뉴까지 카탈로그에 있어야
+    # 모르는 날이 안 낀다
     "C48-veg": WorldSpec(meals="sparse_veg", catalog=True),
     # C48-veg 에 채소가 안 나온 2일 전 · 3일 전마다 카탈로그에 없는 메뉴를 더한다 — 확인한 날만 보면
     # 적게 나왔지만(가중은 걸린다) 모르는 날을 다 나왔다고 치면 절반 이상이라 안내 줄은 없다(#739)
     "C48-veg-unknown": WorldSpec(meals="sparse_veg_unknown", catalog=True),
+    # 집 기록 0 · 이번 주 급식표만 있는 아이 — 수요일이면 지난 급식 2일 + 오늘 ~ 금요일 급식 3일.
+    # 채소는 목요일 하루뿐이라 출현은 말하지만 적은 기록이다(5행). 판정 창은 2행이라 구간은 막힌다
+    "C48-wk": WorldSpec(records=False, catalog=True, daycare_menu="week"),
+    # 급식이 없고 집 기록이 4행 · 2일뿐인 아이 — 채소가 한 번도 안 나왔다(출현 4행, 구간은 막힘)
+    "C48-few": WorldSpec(daycare=False, catalog=True, meals="few"),
 }
 
 
@@ -213,7 +224,7 @@ def build_world(
         memory=memory if memory is not None else _memory(spec, today),
         recipes=InMemoryRecipeCatalog(recipes),
         catalog=InMemoryMenuCatalog(_menu_catalog(now) if spec.catalog else ()),
-        daycare=InMemoryDaycareMeals(_daycare(today) if spec.daycare else []),
+        daycare=InMemoryDaycareMeals(_daycare_rows(spec, today) if spec.daycare else []),
         docs=InMemoryFoodDocs.from_seed(include_draft=True),
         suggestions=InMemorySuggestionHistory(
             {CHILD: frozenset(normalize_menu_key(key) for key in spec.history)}
@@ -293,8 +304,27 @@ _UNKNOWN_VEG_MEALS = (
     (2, "처음보는반찬", "한 그릇"),
     (3, "낯선국", "한 그릇"),
 )
-# C48-veg 의 menu_catalog — 먹은 메뉴와 어제 급식(잡곡밥 · 된장국 · 계란말이)의 식품군. 영양값은
-# 비워 둔다 — 1차 출력처럼 구간은 못 내고(insufficient) 식품군 출현만 센다
+# C48-few — 1일 전 현미밥 · 소불고기, 2일 전 닭죽 · 딸기. 4행 · 2일, 채소 0일 · 과일 1일
+# (기록된 2일의 절반 미만이 아니다)이라 채소만 적게 나온다
+_FEW_MEALS = (
+    (1, "현미밥", "한 그릇"),
+    (1, "소불고기", "반 그릇"),
+    (2, "닭죽", "한 그릇"),
+    (2, "딸기", "다 먹음"),
+)
+# C48-wk 급식표 — (오늘 기준 며칠 뒤, 점심 메뉴). 5일 중 채소는 +1일(목요일)뿐이고, 오늘에는 채소가
+# 없어 오늘 겹침(×0.7)이 채소 가중에 섞이지 않는다
+_WEEK_DAYCARE: tuple[tuple[int, tuple[str, ...]], ...] = (
+    (-2, ("잡곡밥", "계란말이", "딸기")),
+    (-1, ("현미밥", "두부조림")),
+    (0, ("잡곡밥", "소불고기", "딸기")),
+    (1, ("현미밥", "된장국", "가자미구이")),
+    (2, ("닭죽", "계란말이", "딸기")),
+)
+# menu_catalog — 먹은 메뉴와 급식(어제 잡곡밥 · 된장국 · 계란말이, 오늘 · 모레 C48-dc 급식,
+# 이번 주 급식표)의 식품군. 영양값은 비워 둔다 — 1차 출력처럼 구간은 못 내고(insufficient)
+# 식품군 출현만 센다. 급식 메뉴가 빠지면 출현 창에 든 오늘 · 모레 급식이 "식품군을 모르는 날" 이
+# 되어 평일에 채소 줄이 사라진다
 _CATALOG_GROUPS: dict[str, tuple[str, ...]] = {
     "현미밥": ("grains",),
     "잡곡밥": ("grains",),
@@ -307,6 +337,12 @@ _CATALOG_GROUPS: dict[str, tuple[str, ...]] = {
     "시금치나물": ("vegetables",),
     "된장국": ("vegetables",),
     "딸기": ("fruits",),
+    "미역국": ("vegetables",),
+    "우유": ("dairy",),
+    "고구마": ("grains",),
+    "과일": ("fruits",),
+    "닭볶음탕": ("meat_fish_egg_legumes",),
+    "찐감자": ("grains",),
 }
 
 
@@ -331,6 +367,7 @@ def _memory(spec: WorldSpec, today: date) -> InMemoryFoodMemory:
     meals = {
         "sparse_veg": _SPARSE_VEG_MEALS,
         "sparse_veg_unknown": _UNKNOWN_VEG_MEALS,
+        "few": _FEW_MEALS,
     }.get(spec.meals, _MEALS)
     observed = [
         FoodObservation(
@@ -367,17 +404,31 @@ def _affinity(
     )
 
 
+def _daycare_rows(spec: WorldSpec, today: date) -> list[DaycareMealRow]:
+    return _daycare_week(today) if spec.daycare_menu == "week" else _daycare(today)
+
+
+def _daycare_row(day: date, slot: str, *menus: str) -> DaycareMealRow:
+    return DaycareMealRow(
+        id=uuid4(),
+        child_id=CHILD,
+        serve_date=day,
+        meal_slot=slot,  # type: ignore[arg-type]
+        menu_keys=tuple(normalize_menu_key(menu) for menu in menus),
+    )
+
+
+def _daycare_week(today: date) -> list[DaycareMealRow]:
+    """C48-wk — 지난 2일 + 오늘 ~ 모레 점심 1행씩(`_WEEK_DAYCARE`)."""
+    return [
+        _daycare_row(today + timedelta(days=offset), "lunch", *menus)
+        for offset, menus in _WEEK_DAYCARE
+    ]
+
+
 def _daycare(today: date) -> list[DaycareMealRow]:
     """C48-dc — 오늘 점심 · 오후 간식, 어제 점심, 모레 점심 · 오후 간식, 다음 주 화요일 점심."""
-
-    def row(day: date, slot: str, *menus: str) -> DaycareMealRow:
-        return DaycareMealRow(
-            id=uuid4(),
-            child_id=CHILD,
-            serve_date=day,
-            meal_slot=slot,  # type: ignore[arg-type]
-            menu_keys=tuple(normalize_menu_key(menu) for menu in menus),
-        )
+    row = _daycare_row
 
     next_tuesday = resolve_meal_date("다음 주 화요일", today=today)
     rows = [

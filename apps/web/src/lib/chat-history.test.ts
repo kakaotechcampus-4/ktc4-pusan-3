@@ -32,6 +32,47 @@ function page(date: string, overrides: Partial<ChatDayResponse> = {}): ChatDayRe
 }
 
 describe("toPastRun — 리듀서를 그대로 쓴다", () => {
+  it("일반 정보 답의 참고 줄(sources)이 지난 대화에도 같은 모양으로 남는다 (#574)", () => {
+    const sources = [
+      {
+        ref: { kind: "growth_doc" as const, id: "d1" },
+        title: "계단 오르며 수 세기",
+        source_org: "교육부",
+        source_title: "누리과정 해설서",
+        source_url: null,
+      },
+    ];
+    const { run } = toPastRun([
+      {
+        type: "agent_result",
+        agent: "growth",
+        task_type: "info",
+        status: "completed",
+        readouts: [
+          {
+            kind: "doc_answer",
+            title: "만 3세 무렵 생활과 배움 · 일반 자료",
+            body: "계단을 오르며 세어 봐요.",
+            authored_by: "model",
+            code: null,
+            source_refs: [],
+            sources,
+          },
+        ],
+        question: null,
+        suggestion_ids: [],
+        kind: null,
+        reason: null,
+        record_count: null,
+        suggestions: [],
+      },
+      done,
+    ]);
+    expect(run.agentResults[0]?.readouts[0]?.sources).toEqual(sources);
+    // 🚨 추천이 아니라서 후보 id 가 없다 — 후보 보기가 서지 않는다
+    expect(run.agentResults[0]?.suggestion_ids).toEqual([]);
+  });
+
   it("지운 기록은 id 만 따로 모이고, 남은 기록은 지금 모습 그대로다 (건강 모양 포함)", () => {
     const { run, deleted } = toPastRun([
       {

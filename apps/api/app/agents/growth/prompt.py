@@ -192,7 +192,9 @@ def build_system_prompt(
     if task_type is not GrowthTaskType.BOOK_SUGGESTION:
         dynamic.insert(0, _examples(examples))
     if task_type is GrowthTaskType.LEARNING_SUGGESTION:
-        if frame := age_frame(gate.stage.months):
+        # 요청 주제의 기록이 있으면 짜임을 싣지 않는다 — 만 나이 짜임이 진행 방식만이 아니라 내용
+        # 난이도까지 정해서, "중1 수준" 기록에도 만 5세 활동이 나왔다(#399). 기록이 수준을 말한다
+        if not context.state.topic_records and (frame := age_frame(gate.stage.months)):
             dynamic.insert(1, frame)
         if context.state.topic_records:
             records = tuple(context.state.topic_records.values())
@@ -241,7 +243,7 @@ _TOPIC_RECORD_RULES = (
     "그 기록에 맞춘다.",
     "  잘한 것(polarity +1)이면 한 걸음 더 나아간 것, 어려워한 것(-1)이면 그 바로 앞 단계부터 "
     "돕는 것이다.",
-    "- 진행 방식 · 시간 · 준비물은 [월령]과 [활동 짜임]에 맞춘다. [예시]는 집에서 하는 방식만 "
+    "- 진행 방식 · 시간 · 준비물은 [월령]에 맞춘다. [예시]는 집에서 하는 방식만 "
     "참고하고 난이도는 따르지 않는다.",
     "- 책 · 문제집 · 앱 이름을 대지 않는다. 집에 있는 물건으로 하는 활동이다.",
 )

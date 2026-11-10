@@ -25,6 +25,7 @@ from app.agents.activity.store.ports import (
     EventRow,
     EventSchedule,
 )
+from app.agents.common.request_words import normalize_request
 from app.core.event_raw import RawEvent
 
 EARTH_RADIUS_M = 6_371_000
@@ -147,6 +148,44 @@ def core_name(name: str) -> str:
     core = _EDITION.sub("", _SUBTITLE.sub("", _BRACKETED.sub("", core)))
     core = " ".join(core.split())
     return core or name.strip()
+
+
+# 행사 기간 묶음 — 짧은 행사(축제 · 공연)가 먼저고, 길게 하는 행사 · 상설에 가까운 곳은 뒤다.
+# 1년에 한 번인지는 데이터가 알려 주지 않아서 기간이 짧은 것으로 대신한다. 잠정값 — eval 로 조정
+LONG_EVENT_DAYS = 60
+ALL_YEAR_EVENT_DAYS = 300
+
+
+def period_tier(event: Event) -> int:
+    """0 짧은 행사 · 1 두 달 이상 · 2 상설에 가까움(300일 이상). 정렬에만 쓴다 — 빼지 않는다."""
+    days = (event.ends_on - event.starts_on).days + 1
+    if days >= ALL_YEAR_EVENT_DAYS:
+        return 2
+    return 1 if days >= LONG_EVENT_DAYS else 0
+
+
+# 행사를 이름 전체(또는 연도 · 회차 · 괄호 · 부제를 뗀 이름)로 알아보는 최소 길이(정규화한 글자 수).
+# 짧은 이름은 흔한 말과 겹친다
+MIN_EVENT_NAME = 4
+# 행사 이름 안의 낱말 하나로 알아보는 최소 길이. 모델은 "2026 대한민국 ○○박람회" 를 "○○박람회" 로
+# 줄여 쓴다(11-03 실측). "크리스마스"(5) · "놀이터" 같은 흔한 말로 알아보면 행사가 아닌 후보에
+# 붙는다
+MIN_EVENT_WORD = 6
+
+
+def event_keys(name: str) -> set[str]:
+    """문장 · place_name 에서 이 행사를 알아보는 이름(정규화한 꼴) — 원래 이름 · 연도 · 회차 ·
+    괄호 · 부제를 뗀 이름(`MIN_EVENT_NAME` 자 이상)과 그 안의 긴 낱말(`MIN_EVENT_WORD` 자 이상).
+
+    출력 검증이 행사를 붙일 때 · 문장에 이름을 다시 붙일지 볼 때 · 앞 턴에서 보여 준 행사인지 볼
+    때 모두 이 이름을 쓴다 — 기준이 하나여야 줄여 붙인 행사를 못 알아보는 일이 없다 (#853 리뷰).
+    """
+    core = core_name(name)
+    names = {normalize_request(name), normalize_request(core)}
+    words = {normalize_request(word) for word in core.split()}
+    return {key for key in names if len(key) >= MIN_EVENT_NAME} | {
+        word for word in words if len(word) >= MIN_EVENT_WORD
+    }
 
 
 def in_period(event: Event, days: Iterable[date]) -> bool:

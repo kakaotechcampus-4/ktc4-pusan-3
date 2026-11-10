@@ -29,7 +29,7 @@ deploy.sh: 빌드 → 배포 전 백업 → 마이그레이션 → up --wait(헬
 ## 롤백 — 무엇이 되돌아가고 무엇이 안 되돌아가나
 
 `deploy/scripts/deploy.sh` 가 한다. 판정은 compose 의 `up --wait` 다. 각 서비스의 healthcheck 가
-healthy 가 될 때까지 기다리고, 안 되면(최대 240초) 실패로 본다.
+healthy 가 될 때까지 기다리고, 안 되면(최대 360초 — 옛 api drain 포함, §drain) 실패로 본다.
 
 | 실패 지점 | 결과 |
 | --- | --- |
@@ -84,6 +84,40 @@ healthy 가 될 때까지 기다리고, 안 되면(최대 240초) 실패로 본�
   그때 Actions 출력에 "롤백도 실패" 가 찍힌다.
 - dev · prod 가 동시에 빌드하면 4GB 가 넘친다. `deploy.sh` 가 `flock` 으로 한 번에 하나만 돌게 하고, 다른 쪽은 최대 20분 기다린다.
   매일 백업 뒤의 복원 점검(cron, `restore-check.sh`)도 같은 잠금을 잡는다 — 임시 DB 가 빌드와 겹치지 않게 (#758).
+
+## drain — 옛 api 가 하던 일을 끝내고 내려간다 (#882)
+
+`up` 은 옛 api 를 멈춘 뒤 새 api 를 띄운다(이름 · edge IP 가 고정이라 둘이 같이 못 뜬다). 멈출 때 옛 api 는:
+
+```
+SIGTERM ─ uvicorn: 새 연결 거부 → 열린 요청 · SSE 를 기다림 (상한 70s, Dockerfile --timeout-graceful-shutdown)
+        ─ lifespan: 남은 run → 그 run 의 표 미러 → Curator 를 기다림 (상한 30s, main.DRAIN_SECONDS
+                    — 넘기면 취소하고 정리를 기다림. 정리 5s 는 단계마다가 아니라 drain 전체에서 한 번)
+        ─ lifespan: LLM 사용량 마지막 flush (≤5s) · 클라이언트 닫기 → 종료 (exit 143)
+120s    ─ 그때까지 안 끝나면 SIGKILL (compose api stop_grace_period)
+```
+
+- 🚨 **70 + 30 + 취소 정리 5 + flush 5 = 110 < 120** 을 지킨다. 하나를 바꾸면 셋을 같이 본다. 유예를 다 쓰지 않는다 — drain 이 끝나는 대로 내려간다.
+- uvicorn 상한 70s 는 run 마감 60s(`runner.RUN_DEADLINE_SECONDS`)보다 길어야 한다. 짧으면 상한에서 끊긴 SSE 마다 ERROR traceback 이 찍혀 배포 때 Discord 가 울린다.
+- 취소된 run 은 러너의 finally 를 거쳐 failed 로 닫히고 Idempotency 키를 놓는다. drain 이 없던 때는 화면이 안 붙은 run 이 SIGTERM 순간 흔적 없이 사라졌다 — uvicorn 이 정리 뒤 SIGTERM 을 다시 일으켜 죽어서 asyncio 취소 처리도 돌지 않는다 (#882 실측).
+- drain 하는 동안 새 요청은 받을 곳이 없다 — Caddy 가 새 api 가 뜰 때까지 붙잡는다(`wait_upstream`, deploy/caddy/Caddyfile · #883).
+- 표 미러를 run 다음에 기다리는 이유 — 러너는 끝날 때 끝 신호를 줄 세우기만 하고, 표에 쓰는 건 채널마다 도는 미러다(#899). 안 기다리면 끝 신호가 표에 안 남아, 새 api 에서 같은 Idempotency-Key 로 다시 누른 화면이 옛 run 을 재생받고 `STALE_AFTER`(90s) 뒤에야 끊긴다 (#897 리뷰).
+- drain 이 예외로 멈추면 WARNING 한 줄(`drain 이 … 로 중간에 멈췄다`)을 남기고 나머지 종료는 계속한다.
+- web 은 그대로 둔다 — run 같은 장기 작업을 들고 있지 않다.
+- 옛 api 의 drain(최대 ~110s)과 새 api 기동이 한 `up` 안에 들어가서 `--wait-timeout` 을 360s 로 잡았다(240 + 유예 120). 넘치면 멀쩡한 배포가 롤백된다 (#897 리뷰).
+
+### 알려진 문제 — 재배포하는 순간에 일이 돌고 있을 때만 생긴다
+
+drain 이 없던 때(SIGTERM 10초 뒤 SIGKILL 로 전부 끊김)보다 나빠지는 것은 없다. 각각 드물어서 1차 배포에서는 두고, 고칠 때 이 목록을 본다 (#897 리뷰).
+
+| 언제 | 무엇이 | 왜 |
+| --- | --- | --- |
+| 사진을 읽는 중에 배포 | 70s 에서 uvicorn 이 `Cancel N running task(s)` 를 ERROR 로 찍어 Discord 가 한 번 울린다. 옛 api 가 120s SIGKILL 까지 갈 수 있다(Caddy 가 150s 붙잡아 502 는 아니다) | 70s 는 "run 은 60s 안에 끝난다" 전제인데, 사진 run 은 그 마감이 없다(모델 상한 식단표 300s · 공지 120s). 취소해도 `asyncio.to_thread` 의 스레드는 안 멈춘다 |
+| drain 이 run 을 30s 에서 취소할 때, 마침 Memory commit 직후 | 저장은 됐는데 failed 로 닫고 키를 놓는다. 같은 키로 다시 누르면 두 번 저장된다 | `runner.py` 의 `await session.commit()` 과 `memory_committed = True` 사이에서 취소가 걸릴 수 있다 |
+| drain 이 run 을 취소할 때 | 관찰은 저장됐어도 지난 대화에 그 입력이 안 남는다 | 대화 기록(`on_end`)이 러너 `finally` 밖이라 취소되면 안 불린다 |
+| 늦은 run 이 하나라도 있을 때 | Curator 는 기다리지 않고 바로 취소된다. 잃는 건 없다 — 다음 실행이 `list_unlinked` 로 다시 집는다 | run 단계가 30s 를 다 써서 Curator 단계에 남은 시간이 0 이다 |
+| 화면이 안 붙은 run 만 있을 때 | run 마감은 60s 인데 30s 에서 끊긴다 | uvicorn 단계(70s)를 건너뛰고 lifespan 의 30s 만 남는다 |
+| run 이 자기 60s 마감에 걸린 직후 | 되묻기 맥락 저장이 끝나기 전에 내려가면, 새 api 에서 답해도 이어서 못 한다 | 러너가 shield 로 뒤에 돌려 둔 저장(`saving`)은 drain 이 모르는 태스크다 |
 
 ## dev 격리 — 메모리 상한 · 팀만 열기 (#780)
 

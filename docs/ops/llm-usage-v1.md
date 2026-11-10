@@ -87,7 +87,7 @@ Curator 는 run 이 끝난 뒤에 끝나도 그 run 으로 남는다 (asyncio �
 | --- | --- |
 | 배포 | 이미지를 올린 뒤 `make deploy-migrate`. 컨테이너 · 환경변수 · cron · 볼륨은 늘지 않는다. 새 api 가 뜬 뒤 migrate 가 끝나기 전 몇 초의 기록은 INSERT 실패로 버려질 수 있다 (ERROR 1줄) |
 | 용량 | 가정: 하루 run 1천 건 · run 당 10행 · 행당 약 300B → 90일에 약 300MB. 디스크 50GB 기준 문제없다. 실측 뒤 고친다 |
-| 종료 · 유실 | SIGTERM 이면 lifespan 이 writer 를 멈추며(취소) 쓰던 묶음을 큐에 되돌리고 남은 큐를 마지막으로 쓴다. 마지막 flush 는 5초까지만 기다린다(docker 정지 유예 10초 안). SIGKILL · OOM 이면 최대 2초분을 잃는다. 종료 뒤에 끝나는 run · Curator 의 기록은 이미 `disable()` 이라 남지 않는다 — BM 추정에는 감수 |
+| 종료 · 유실 | SIGTERM 이면 lifespan 이 writer 를 멈추며(취소) 쓰던 묶음을 큐에 되돌리고 남은 큐를 마지막으로 쓴다. 그 전에 남은 run · Curator 를 기다리므로(drain, [deploy-v1 §drain](deploy-v1.md#drain--옛-api-가-하던-일을-끝내고-내려간다-882)) 그들의 기록도 실린다. 마지막 flush 는 5초까지만 기다린다(api 정지 유예 120초 안). SIGKILL · OOM 이면 최대 2초분을 잃는다. drain 상한(30초)을 넘겨 취소된 run · Curator 의 그 뒤 기록은 남지 않는다 — BM 추정에는 감수 |
 | 저장 실패 | 탈퇴와 겹친 FK 위반은 새 세션으로 한 번 더 쓴다. 연결 · 풀 오류는 묶음을 큐 뒤에 되돌리고 다음 주기에 다시 쓴다 — 큐 상한(10,000건)보다 오래 못 쓰면 넘치는 만큼만 버린다. 그 밖의 실패(스키마 버그 · 값 오류)는 그 묶음(최대 500건)을 버리고 그 주기를 끝낸다. 첫 실패만 ERROR(Discord), 이어지면 WARNING, 고쳐지면 INFO 한 줄 |
 | 값 검사 | `record()` 가 숫자는 int4 범위로(넘으면 0), 글자 칸은 NUL 을 지워서, `Source` 밖의 창구 값은 큐에 들이지 않고 WARNING 으로 걸러낸다 — 한 행이 같은 묶음의 500행을 실패시키지 않게. `tests/unit/core/test_llm_usage_sites.py` 가 `attribute(source=...)` 에 적힌 글자도 `Source` 와 대조한다 |
 | 정리 | 기존 하루 한 번 `python -m app.workers.cleanup` 이 90일 지난 행도 지운다 (cron 추가 없음). 처방침이 약속한 정리(세션 · 동의 증빙 · 위치 기록 · 삭제 이력)를 커밋한 **다음 다른 트랜잭션**에서 한다 — 사용량 정리가 실패해도(예: 배포 때 migrate 전이라 표가 없다) 앞의 정리는 되감기지 않고 ERROR 로만 알린다. 배치 로그의 `90일 지난 LLM 사용량 정리: N건` 으로 확인한다 |

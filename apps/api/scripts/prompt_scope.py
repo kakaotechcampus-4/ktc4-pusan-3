@@ -76,6 +76,18 @@ SCOPES: tuple[Scope, ...] = (
         tests=("tests/unit/agents/activity/test_activity_event_schedule.py",),
     ),
     _agent("growth", _TOOL_LOOP),
+    # 일반 정보 답변 (#574) — 세 Agent 가 같이 쓰는 뼈대. 지금 쓰는 Agent 는 Growth 다
+    Scope(
+        name="doc_answer",
+        paths=(
+            "apps/api/app/agents/common/doc_answer.py",
+            "apps/api/app/agents/common/doc_answer.readout.yaml",
+        ),
+        tests=(
+            "tests/unit/agents/common/test_doc_answer.py",
+            "tests/unit/agents/growth/test_growth_info.py",
+        ),
+    ),
     _agent("health", "apps/api/app/agents/health/labels/*", _TOOL_LOOP),
     Scope(
         name="curator_judge",
@@ -83,7 +95,11 @@ SCOPES: tuple[Scope, ...] = (
             "apps/api/app/agents/curator/embedding/judge.py",
             "apps/api/app/agents/curator/embedding/jev.py",
         ),
-        tests=("tests/unit/agents/curator", "tests/eval/agents/curator/test_pairs_data.py"),
+        tests=(
+            "tests/unit/agents/curator",
+            "tests/eval/agents/curator/test_pairs_data.py",
+            "tests/eval/agents/curator/test_judge_cases.py",
+        ),
     ),
     Scope(
         name="meal_ocr",

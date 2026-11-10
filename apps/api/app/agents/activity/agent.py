@@ -19,17 +19,23 @@ from collections.abc import Collection
 from typing import Any
 
 from app.agents.activity.context import ActivityContext, build_gate
-from app.agents.activity.gating import checks_weather
+from app.agents.activity.gating import checks_weather, finds_events, finds_places
 from app.agents.activity.prompt import (
     build_system_prompt,
     example_ids,
     recall_message,
     request_message,
 )
-from app.agents.activity.readouts import CAUTION_NON_FOOD_ALLERGY, PLACE_AREA_UNKNOWN, READOUTS
+from app.agents.activity.readouts import (
+    CAUTION_NON_FOOD_ALLERGY,
+    EVENTS_NO_NEW,
+    LOCATION_MISSING,
+    PLACE_AREA_UNKNOWN,
+    READOUTS,
+)
 from app.agents.activity.registry import closed_readout_key, execute_tool, specs_for, tools_for
 from app.agents.activity.result import ToolResult
-from app.agents.activity.rules import normalize_activity
+from app.agents.activity.rules import asks_outing, normalize_activity
 from app.agents.activity.schemas.task import task_type_of
 from app.agents.activity.tools.docs import search_activity_doc
 from app.agents.activity.tools.filters import request_notices
@@ -41,6 +47,7 @@ from app.agents.activity.weather import (
     WeatherBrief,
 )
 from app.agents.common.datetime_rules import DateParseError
+from app.agents.common.gate import Gate
 from app.agents.common.llm_client import LLMClient
 from app.agents.common.readout import Readout
 from app.agents.common.result import DomainAgentResult
@@ -73,6 +80,7 @@ async def run(
     context.state.request_texts = tuple(task.request_texts)
     context.state.original_texts = tuple(task.original_texts)
     context.state.prior_texts = tuple(task.prior_texts)
+    context.state.shown_before = tuple(task.shown_before)
     weather = await check_weather(context, context.today)
     gate = await build_gate(context, outdoor_ok=weather.outdoor_ok)
     context.state.gate = gate
@@ -102,7 +110,10 @@ async def run(
     llm = client or LLMClient(role="activity")
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": system},
-        {"role": "user", "content": request_message(task.request_texts)},
+        {
+            "role": "user",
+            "content": request_message(task.request_texts, shown=task.shown_before),
+        },
     ]
 
     if not await _converse(llm, messages, context, allowed):
@@ -151,10 +162,25 @@ async def run(
             *(READOUTS.render(key) for key in _weather_notices(weather, drafts, context)),
             *((READOUTS.render(AFTER_SUNSET),) if context.state.dark_skipped and drafts else ()),
             *((READOUTS.render(PLACE_AREA_UNKNOWN),) if context.state.area_missed else ()),
+            *((READOUTS.render(EVENTS_NO_NEW),) if context.state.no_new_events else ()),
+            *((READOUTS.render(LOCATION_MISSING),) if _location_missing(context, gate) else ()),
             *((notice,) if notice else ()),
         ),
         model_calls=model_calls,
     )
+
+
+def _location_missing(context: ActivityContext, gate: Gate) -> bool:
+    """위치도 지역도 없어 장소 · 행사를 못 찾는 run 인가 — 찾으려다 막혔거나 나들이를 물었을 때만.
+    집 놀이를 물었으면 붙이지 않는다. 장소 · 행사 데이터가 아예 없으면(어댑터 없음) 위치 탓이
+    아니라 붙이지 않는다. 보호자가 말한 지역을 못 찾았으면 그 안내(`place.area_unknown`)만
+    붙인다 — 지역을 말한 사람에게 "지역을 말해 달라" 를 또 하지 않는다 (#856 리뷰)."""
+    state = context.state
+    if state.area_missed or context.outing_location is not None:
+        return False
+    if not (finds_places(gate) or finds_events(gate)):
+        return False
+    return state.location_missing or asks_outing(state.original_texts or state.request_texts)
 
 
 def _weather_notices(

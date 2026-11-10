@@ -30,6 +30,11 @@ NUTRIENT_TODAY_EMPTY = "nutrient.today_empty"
 NUTRIENT_DAYCARE_AMOUNT_UNKNOWN = "nutrient.daycare_amount_unknown"
 # 1차 출력 — 기록된 날 중 식품군이 나온 날 수. 영양소 분석 문장은 이것뿐이다(N-17 · N-18)
 NUTRIENT_APPEARANCE = "nutrient.appearance"
+# 출현 줄 뒤에 붙는 줄 — 적게 나온 채소 · 과일 짚기 / 적은 기록 한계 / 이번 주 급식을 본 범위.
+# 급식 양을 모른다는 말은 위 `NUTRIENT_DAYCARE_AMOUNT_UNKNOWN`
+NUTRIENT_SPARSE = "nutrient.sparse"
+NUTRIENT_FEW_RECORDS = "nutrient.few_records"
+NUTRIENT_DAYCARE_UPCOMING = "nutrient.daycare_upcoming"
 # 구간 문장 틀 (#357 리뷰). 1차 출력에서는 화면에 내지 않는다 — 구간을 다시 낼 때 쓴다. 주어는 늘
 # 기록된 식사다
 NUTRIENT_BAND_LOW = "nutrient.band.low"
@@ -77,6 +82,8 @@ DAYCARE_ABSENT = "daycare.absent"
 DAYCARE_AMBIGUOUS = "daycare.ambiguous"
 DAYCARE_SLOT_AMBIGUOUS = "daycare.slot_ambiguous"
 DAYCARE_ALLERGY_CONFLICT = "daycare.allergy_conflict"
+# 알레르기 조회 실패로 넣은 메뉴와 겹치는지 못 봤을 때 — "겹침 없음" 으로 넘기지 않는다
+DAYCARE_ALLERGY_UNCHECKED = "daycare.allergy_unchecked"
 DAYCARE_OUT_OF_RANGE = "daycare.out_of_range"
 DAYCARE_NOT_FOUND = "daycare.not_found"
 # 평일인데 급식 행이 없고 먹은 양만 말했을 때 — 무엇을 먹었는지 알려 달라고 안내한다 (#798)

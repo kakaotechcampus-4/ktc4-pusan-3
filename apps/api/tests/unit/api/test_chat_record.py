@@ -167,6 +167,7 @@ def test_readouts_keep_the_sentence_and_drop_refs_the_screen_lacks():
         "authored_by": "code",
         "code": None,
         "source_refs": [],
+        "sources": [],
     }
 
 
@@ -305,3 +306,34 @@ def test_cards_keep_only_ids():
         },
         {"type": "delete_proposal", "proposal_id": "p1"},
     ]
+
+
+# ── 일반 정보 답변의 출처 (#574) ────────────────────────────────────────
+def test_문서_출처는_실시간과_같은_모양으로_지난_대화에_남는다():
+    from app.agents.entrypoint import _doc_index
+    from app.api.runs import translate
+
+    doc = next(key for kind, key in _doc_index() if kind == "growth_doc")
+    readout = Readout(
+        kind="doc_answer",
+        title="만 3세 무렵 생활과 배움 · 일반 자료",
+        body="계단을 오르며 세어 봐요.",
+        authored_by="model",
+        source_refs=(EvidenceRef(kind="growth_doc", id=doc),),
+    )
+    event = AgentResult(agent="growth", task_type="info", status="completed", readouts=(readout,))
+
+    [stored] = CHAT_REPLIES.dump_python([to_reply(event)], mode="json")[0]["readouts"]
+    _, live = translate.to_sse(event)
+
+    assert stored["sources"] == live["readouts"][0]["sources"]
+    assert stored["sources"][0]["ref"] == {"kind": "growth_doc", "id": str(doc)}
+
+
+def test_sources_가_없던_예전_readout_도_읽힌다():
+    from app.api.chat_replies import StoredReadout
+
+    old = StoredReadout.model_validate(
+        {"kind": "notice", "title": "", "body": "안내", "authored_by": "code", "code": None}
+    )
+    assert old.sources == []

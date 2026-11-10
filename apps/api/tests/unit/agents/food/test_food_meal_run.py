@@ -8,6 +8,7 @@
 
 import logging
 from collections.abc import Sequence
+from dataclasses import replace
 from datetime import date
 from uuid import uuid4
 
@@ -432,7 +433,10 @@ async def test_재호출에는_제외_목록만_붙고_빠진_사유는_없다(
     await run(meal_task(), meal_context(safety=EGG), client=llm)
 
     recall = str(llm.seen[1][-1]["content"])  # 재호출을 부를 때의 마지막 user 메시지
-    assert "계란말이" in recall and "두부조림" in recall  # 제외 목록은 menu_key 만
+    assert "- 두부조림" in recall  # 제외 목록은 menu_key 만
+    assert (
+        "계란말이" not in recall
+    )  # 막힌 음식이 이름에 든 메뉴는 싣지 않는다 — 알레르기가 드러난다
     for leaked in ("알레르기", "달걀", "막혔", "안전", "사유", "때문"):
         assert leaked not in recall
 
@@ -1033,6 +1037,60 @@ async def test_영양_줄이_나가도_추천의_근거와_종류는_그대로�
     assert await evidence(sparse_vegetables()) == await evidence(None)
 
 
+def few_sparse_vegetables() -> NutrientVerdict:
+    """이번 주 급식까지 본 출현 창 5일 중 채소가 나온 날 1일 — 적은 기록(10행 미만)이다."""
+    return replace(
+        sparse_vegetables(),
+        records=2,
+        insufficient=True,
+        food_group_days={"vegetables": 1, "fruits": 5},
+        recorded_days=5,
+        appearance_records=5,
+        few_records=True,
+    )
+
+
+async def test_적은_기록에서도_영양_줄은_출현_창_숫자로_나간다(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with_pool(monkeypatch, TOFU, GREENS, SOUP)
+    context = meal_context(TOFU, GREENS, SOUP)
+    context.state.nutrient_verdict = few_sparse_vegetables()
+    llm = ScriptedLLM(propose("두부조림", "시금치무침", "미역국"))
+
+    result = await run(meal_task(), context, client=llm)
+
+    assert [readout.body for readout in result.readouts] == [
+        "기록된 5일 중 채소가 나온 날은 1일이라, 채소가 든 메뉴를 더 넣었어요.",
+        SOURCE_LINE,
+    ]
+
+
+async def test_일반_추천에도_영양_줄이_붙고_근거_행과_종류는_그대로다(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # 아이 기록이 없는 일반 추천도 영양 판정을 따른다.
+    # 영양 줄은 안내 줄(readout)이라 근거가 아니다 —
+    # 줄이 나가도 일반 추천이 개인화로 집계되거나 근거 행이 생기지 않는다
+    async def shapes(verdict: NutrientVerdict | None):
+        with_pool(monkeypatch, TOFU, GREENS, SOUP)
+        context = meal_context(TOFU, GREENS, SOUP)
+        context.state.nutrient_verdict = verdict
+        llm = ScriptedLLM(propose("두부조림", "시금치무침", "미역국"))
+        result = await run(meal_task(), context, client=llm)
+        return result, [
+            (draft.kind, tuple(citation.ref.kind for citation in draft.citations))
+            for draft in result.suggestions
+        ]
+
+    with_line, with_shapes = await shapes(few_sparse_vegetables())
+    _, without_shapes = await shapes(None)
+
+    assert {kind for kind, _ in with_shapes} == {"general"}
+    assert with_shapes == without_shapes
+    assert len(with_line.readouts) == 2
+
+
 # ── 보호자가 정한 조건 — 조건 맞는 레시피 먼저 · 레시피북 밖 생성 (#740) ──────────────
 def propose_generated(
     *,
@@ -1074,7 +1132,6 @@ CUCUMBER = recipe("오이무침", "오이", "참기름")
 
 
 async def test_요청_글에_재료가_나온_레시피는_후보_목록에_요청과_맞음으로_먼저_보인다() -> None:
-    from dataclasses import replace
 
     for run_id in ("run-1", "run-2", "run-3", "run-4", "run-5", "run-6"):
         llm = ScriptedLLM(propose("오이무침", "두부조림", "시금치나물", evidence=[]))
@@ -1152,9 +1209,7 @@ async def test_조건_맞는_레시피_뒤에_부족한_자리만_생성으로_�
     assert result.suggestions[1].citations == ()
 
 
-async def test_안전_필터에_걸린_생성_메뉴는_재호출에서_다시_내지_않게_제외_목록에_들어간다() -> (
-    None
-):
+async def test_안전_필터에_걸린_생성_메뉴는_제외_목록에_싣지_않는다() -> None:
     egg = [SafetyEntry(kind="allergy", label="달걀", status="active")]
     llm = ScriptedLLM(
         propose_generated(
@@ -1176,9 +1231,8 @@ async def test_안전_필터에_걸린_생성_메뉴는_재호출에서_다시_�
 
     assert llm.calls == 2
     recall = [str(m["content"]) for m in llm.seen[1] if m["role"] == "user"][-1]
-    excluded = recall.split("[후보 목록]")[0]
-    assert "파프리카달걀말이" in excluded  # 제외 목록에는 이름만 들어간다 — 사유는 없다
-    assert "계란" not in recall and "알레르기" not in excluded
+    # 이름에 등록한 알레르기(달걀)가 들었다 — 제외 목록에 실으면 외부 모델에 알레르기가 간다
+    assert "달걀" not in recall and "계란" not in recall and "알레르기" not in recall
     assert "파프리카달걀말이" not in [d.content for d in result.suggestions]
 
 
@@ -1252,3 +1306,31 @@ async def test_해석_문장에_든_앞_추천_이름은_요청과_맞음으로_
     user = "\n".join(str(m["content"]) for m in llm.seen[0] if m["role"] == "user")
     assert "오이무침 · 두부조림 말고 다른 반찬 추천" in user  # 모델은 해석한 요청을 받는다
     assert "요청과 맞음" not in user  # 요청한 메뉴를 가르는 건 보호자 말뿐이다
+
+
+async def test_재료로_막힌_생성_메뉴를_재료만_바꿔_다시_내도_추천에_없다() -> None:
+    # 처음엔 계란을 적어 걸린 "파프리카전" 을 재호출에서 계란 없이 다시 낸다
+    # — 같은 이름은 사유 없이 뺀다
+    egg = [SafetyEntry(kind="allergy", label="달걀", status="active")]
+    llm = ScriptedLLM(
+        propose_generated(
+            requested="파프리카",
+            generated=[
+                {"name": "파프리카전", "ingredients": ["파프리카", "계란", "밀가루"]},
+                {"name": "파프리카볶음"},
+                {"name": "파프리카무침"},
+            ],
+        ),
+        propose_generated(
+            requested="파프리카",
+            generated=[{"name": "파프리카전", "ingredients": ["파프리카", "밀가루"]}],
+        ),
+    )
+
+    result = await run(
+        meal_task("파프리카 들어간 반찬 추천해줘"),
+        meal_context(TOFU, SPINACH, SOUP, safety=egg),
+        client=llm,
+    )
+
+    assert [d.content for d in result.suggestions] == ["파프리카볶음", "파프리카무침"]

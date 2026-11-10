@@ -352,3 +352,62 @@ async def test_닫힘은_해석_문장에서_빠진_보호자_말도_본다() ->
 
     (result,) = [e for e in events if isinstance(e, pipeline.AgentResult) and e.agent == "growth"]
     assert result.status == "blocked"
+
+
+# ── 이미 보여 준 추천 (#852) ─────────────────────────────────────────────
+def _routing(*tasks):
+    from app.agents.common.schemas.task import DomainTask
+    from app.agents.supervisor.routing import Routing
+
+    return Routing(
+        intent_type="request",
+        memory_task=None,
+        domain_tasks=tuple(
+            DomainTask(
+                run_id="r",
+                agent=agent,
+                task_type=None,
+                request_texts=(text,),
+                original_texts=originals,
+            )
+            for agent, text, originals in tasks
+        ),
+    )
+
+
+SHOWN = ConversationContext(
+    (
+        PriorTurn(
+            "주말에 갈만한 행사 추천해줘",
+            (
+                PriorResult(
+                    "activity", None, "completed", ("가상 국화축제 구경하기", "가상 공원 산책")
+                ),
+                PriorResult("food", "meal_recommendation", "completed", ("가상 주먹밥",)),
+            ),
+        ),
+        PriorTurn(
+            "다른 행사 추천해줘",
+            (PriorResult("activity", None, "completed", ("가상 빛축제 보기",)),),
+        ),
+    )
+)
+
+
+def test_앞_턴들에서_같은_Agent_가_낸_추천을_모두_싣는다() -> None:
+    """ "다른 거" 를 여러 번 물어도 앞에서 보여 준 것을 다시 내지 않게. 해석을 받지 않은 task 도
+    싣는다 — "주말에 갈만한 다른 행사" 는 혼자 읽어도 통해서 Supervisor 가 해석을 안 쓸 수 있다."""
+    routing = pipeline._with_prior(
+        _routing(("activity", "주말에 갈만한 다른 행사 추천해줘", ()), ("food", "간식 추천", ())),
+        SHOWN,
+    )
+    activity, food = routing.domain_tasks
+    assert activity.shown_before == ("가상 국화축제 구경하기", "가상 공원 산책", "가상 빛축제 보기")
+    assert food.shown_before == ("가상 주먹밥",)
+    # 앞 턴의 보호자 말은 지금처럼 해석을 받은 task 만이다
+    assert activity.prior_texts == ()
+
+
+def test_앞_대화가_없으면_보여_준_것도_없다() -> None:
+    routing = pipeline._with_prior(_routing(("activity", "다른 행사 추천해줘", ())), None)
+    assert routing.domain_tasks[0].shown_before == ()

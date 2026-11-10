@@ -273,6 +273,24 @@ def get(run_id: str) -> RunChannel | None:
     return _channels.get(run_id)
 
 
+def running_tasks() -> list[asyncio.Task[None]]:
+    """아직 도는 run 태스크. 종료 때 lifespan 이 끝까지 기다린다(drain, #882)."""
+    return [c.task for c in _channels.values() if c.task is not None and not c.task.done()]
+
+
+def running_mirrors() -> list[asyncio.Task[None]]:
+    """닫혔는데 아직 표에 다 못 쓴 미러. 종료 때 run 다음에 기다린다 (#882 · #897 리뷰).
+
+    닫힌 채널만 본다 — 미러는 close 를 쓰고 나서야 끝난다. 안 닫힌 채널의 미러는 끝날 일이 없어서,
+    넣으면 drain 상한을 매번 다 쓴다.
+    """
+    return [
+        c._writer
+        for c in _channels.values()
+        if c.closed and c._writer is not None and not c._writer.done()
+    ]
+
+
 async def lookup(run_id: str) -> RunView | None:
     """이 워커에 있으면 메모리에서, 없으면 표에서 본다. 만료됐거나 모르는 run 이면 None."""
     channel = _channels.get(run_id)

@@ -855,3 +855,39 @@ async def test_조건_불일치가_한_번이면_계속_조건을_건다() -> No
 
     assert retry.success
     assert ctx.state.picks[0].draft.requested is True
+
+
+NUT = [SafetyEntry(kind="allergy", label="견과류", status="active")]
+NUT_YOGURT = generated_meal(
+    "견과류요거트", main_ingredients=["견과류"], ingredients=["견과류", "요거트"]
+)
+
+
+async def test_요청한_재료가_알레르기와_겹치면_생성_후보를_받지_않고_사유에_음식_이름이_없다() -> (
+    None
+):
+    # 견과류 알레르기 아이의 "견과류 들어간 메뉴" — 생성 메뉴는 전부 필터에 걸린다. 받아서 빼면
+    # 재호출 제외 목록으로 그 이름이 모델에게 다시 가고, 모델은 또 견과류 메뉴를 쓴다(T49)
+    ctx = said(shown(*FULL, safety=NUT, exhausted=True), "견과류 들어간 메뉴 추천해줘")
+
+    result = await propose_meal_candidates(ctx, asked(food="견과류", generated=[NUT_YOGURT]))
+
+    assert not result.success
+    assert result.error is not None
+    assert "1번 후보" in result.error["message"]
+    assert "견과류" not in result.error["message"]
+    assert ctx.state.blocked_keys == set()
+    assert ctx.state.picks == ()
+
+
+async def test_요청한_재료가_알레르기와_겹치면_조건_없이_후보_목록에서_고른다() -> None:
+    ctx = said(shown(*FULL, safety=NUT, exhausted=True), "견과류 들어간 메뉴 추천해줘")
+
+    result = await propose_meal_candidates(
+        ctx, asked(food="견과류", candidates=[pick("두부조림", evidence=[])])
+    )
+
+    assert result.success  # 재료 조건(견과류)을 걸지 않는다 — 걸면 고를 수 있는 메뉴가 없다
+    (picked,) = ctx.state.picks
+    assert picked.draft.requested is False
+    assert ctx.state.request_misses == 0

@@ -151,6 +151,51 @@ async def test_넣을_메뉴만_있으면_어떤_메뉴_대신인지_되묻고_�
     assert (await rows_on(meals))[0].menu_keys == ("밥", "우유")
 
 
+@pytest.mark.parametrize(
+    "utterance",
+    ["오늘 우유 말고 두유 받았대", "오늘 급식이 두유로 바뀌었대", "오늘 두유로 바꿔 줬대"],
+)
+async def test_교체_말이_있는데_뺄_메뉴를_모르면_되묻는다(utterance: str) -> None:
+    meals = InMemoryDaycareMeals([lunch("밥", "우유")])
+    ctx = context(daycare=meals, utterance=utterance)
+
+    await update_daycare_meal(ctx, UpdateDaycareMealArgs(date_span="오늘", added_spans=["두유"]))
+
+    assert texts(ctx) == [code("daycare.replaced_unknown")]
+    assert (await rows_on(meals))[0].menu_keys == ("밥", "우유")
+
+
+async def test_교체_말_없이_먹은_메뉴만_말하면_그날_급식에_더한다() -> None:
+    # "새우볶음밥 먹었대" — 무엇 대신인지 말하지 않았다. 빼지 않고 더하기만 한다(T48).
+    # 두 번 해도 한 번만 들어간다
+    meals = InMemoryDaycareMeals([lunch("밥", "우유")])
+    ctx = context(daycare=meals, utterance="오늘 어린이집에서 새우볶음밥 먹었대")
+    args = UpdateDaycareMealArgs(date_span="오늘", added_spans=["새우볶음밥"])
+
+    first = await update_daycare_meal(ctx, args)
+    second = await update_daycare_meal(ctx, args)
+
+    assert first.success and second.success
+    [row] = await rows_on(meals)
+    assert row.menu_keys == ("밥", "우유", "새우볶음밥")
+    assert row.caregiver_checked is True
+
+
+async def test_더한_메뉴가_알레르기와_겹치면_저장하고_경고한다() -> None:
+    meals = InMemoryDaycareMeals([lunch("밥", "우유")])
+    ctx = context(daycare=meals, utterance="오늘 어린이집에서 새우볶음밥 먹었대", safety=SHRIMP)
+
+    await update_daycare_meal(
+        ctx, UpdateDaycareMealArgs(date_span="오늘", added_spans=["새우볶음밥"])
+    )
+
+    assert (await rows_on(meals))[0].menu_keys == ("밥", "우유", "새우볶음밥")
+    assert texts(ctx) == [
+        code("daycare.updated", date=label_of(0), slot="점심", menu="새우볶음밥"),
+        code("daycare.allergy_conflict", label="새우"),
+    ]
+
+
 async def test_뺄_메뉴가_그날_급식에_없으면_되묻고_바꾸지_않는다() -> None:
     meals = InMemoryDaycareMeals([lunch("밥", "국")])
     ctx = context(daycare=meals, utterance="오늘 우유 대신 두유 받았대")
@@ -403,6 +448,8 @@ async def test_안전_정보를_못_읽었어도_급식은_고치고_확인_못_
     assert result.success
     assert result.data["allergy_checked"] is False
     assert (await rows_on(meals))[0].menu_keys == ("밥", "두유")
+    # allergy_checked 는 모델에게만 간다 — 보호자 화면에도 확인 못 했다는 줄이 있어야 한다
+    assert texts(ctx)[-1] == code("daycare.allergy_unchecked")
 
 
 async def test_카탈로그에_없는_메뉴도_키로_저장한다() -> None:

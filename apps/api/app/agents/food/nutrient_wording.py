@@ -16,6 +16,7 @@ from collections.abc import Collection, Mapping
 from typing import TYPE_CHECKING, Literal
 
 from app.agents.common.readout import Readout
+from app.agents.food.appearance import APPEARANCE_DEFICIT_GROUPS, explainable_groups
 from app.agents.food.readouts import (
     NUTRIENT_APPEARANCE,
     NUTRIENT_BAND_ALL_OK,
@@ -23,11 +24,15 @@ from app.agents.food.readouts import (
     NUTRIENT_BAND_HIGH_ACTION,
     NUTRIENT_BAND_LOW,
     NUTRIENT_BAND_LOW_ACTION,
+    NUTRIENT_DAYCARE_AMOUNT_UNKNOWN,
+    NUTRIENT_DAYCARE_UPCOMING,
+    NUTRIENT_FEW_RECORDS,
     NUTRIENT_INSUFFICIENT,
+    NUTRIENT_SPARSE,
     NUTRIENT_UNSCORED,
     READOUTS,
 )
-from app.rules.nutrition import is_insufficient
+from app.rules.nutrition import is_appearance_insufficient
 
 if TYPE_CHECKING:
     # nutrition_eval 이 FoodContext 를 거쳐 무겁게 import 된다 — 타입에만 쓴다
@@ -178,19 +183,32 @@ APPEARANCE_GROUPS: tuple[tuple[str, str], ...] = (
     ("dairy", "우유·유제품이"),
 )
 
+# 식품군 키 → 조사가 붙은 이름. 안내 줄(`basis_notice`)도 같은 이름을 쓴다
+APPEARANCE_LABELS: dict[str, str] = dict(APPEARANCE_GROUPS)
+
 
 def appearance_readouts(
     verdict: "NutrientVerdict", blocked_groups: Collection[str]
 ) -> tuple[Readout, ...]:
-    """영양소 분석 1차 출력 — 기록된 날 중 식품군이 나온 날 수. 모델을 거치지 않는다.
+    """영양소 분석 1차 출력 — 출현 창 중 식품군이 나온 날 수. 모델을 거치지 않는다.
 
-    구간은 문장에 쓰지 않는다. 출현을 말할 수 없으면 기록 부족 · 살펴보지 못함 문구다. 아이가
-    먹지 않는 식품군(`blocked_groups`)은 말하지 않는다.
+    구간은 문장에 쓰지 않는다. 출현을 말할 수 없으면 기록 부족 · 살펴보지 못함 한 줄이다 — 출현을
+    말하지 않으니 급식을 참고했다는 말도 하지 않는다. 아이가 먹지 않는 식품군(`blocked_groups`)은
+    말하지 않는다.
+
+    줄 순서 — 출현 → 적게 나온 식품군 짚기 → 적은 기록 → 이번 주 급식 범위 → 급식 양 한계.
+    먹은 것을 말하고, 그 말이 식단 추천에 어떻게 쓰이는지, 기록의 한계, 급식을 어디까지 봤는지
+    순이다.
     """
     if not verdict.appearance_ready:
-        # 기록 행이 모자라면 기록 부족, 기록은 충분한데 메뉴 · 식품군을 못 읽었으면 살펴보지 못했다
-        key = NUTRIENT_INSUFFICIENT if is_insufficient(verdict.records) else NUTRIENT_UNSCORED
-        return (READOUTS.render(key, recorded=verdict.records),)
+        # 출현 창에 행 수 · 날 수가 모자라면 기록 부족,
+        # 충분한데 메뉴 · 식품군을 못 읽었으면 살펴보지 못했다
+        key = (
+            NUTRIENT_INSUFFICIENT
+            if is_appearance_insufficient(verdict.appearance_records, verdict.recorded_days)
+            else NUTRIENT_UNSCORED
+        )
+        return (READOUTS.render(key, recorded=verdict.appearance_records),)
     lines = [
         READOUTS.render(
             NUTRIENT_APPEARANCE,
@@ -201,7 +219,24 @@ def appearance_readouts(
         for group, label in APPEARANCE_GROUPS
         if group not in blocked_groups
     ]
-    return (Readout(kind="nutrient_analysis", body="\n".join(lines), authored_by="code"),)
+    explainable = explainable_groups(verdict)
+    extras = [
+        READOUTS.render(NUTRIENT_SPARSE, group=APPEARANCE_LABELS[group])
+        for group in APPEARANCE_DEFICIT_GROUPS
+        if group in explainable and group not in blocked_groups
+    ]
+    if verdict.few_records:
+        extras.append(READOUTS.render(NUTRIENT_FEW_RECORDS, recorded=verdict.appearance_records))
+    if verdict.upcoming_daycare_days >= 1:
+        extras.append(
+            READOUTS.render(NUTRIENT_DAYCARE_UPCOMING, days=verdict.upcoming_daycare_days)
+        )
+    if verdict.daycare_unknown_amount_days >= 1:
+        extras.append(READOUTS.render(NUTRIENT_DAYCARE_AMOUNT_UNKNOWN))
+    return (
+        Readout(kind="nutrient_analysis", body="\n".join(lines), authored_by="code"),
+        *extras,
+    )
 
 
 def fallback_readouts(

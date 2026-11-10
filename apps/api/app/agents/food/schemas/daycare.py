@@ -13,7 +13,7 @@ from app.agents.food.store.ports import DaycareSlot
 
 
 class UpdateDaycareMealArgs(ToolArgs):
-    """급식 갱신. 뺄 메뉴 없이 넣을 메뉴만 있으면 코드가 되묻는다(전체 교체 금지)."""
+    """급식 갱신. 뺄 메뉴 없이 넣을 메뉴만 있으면 바뀌었다는 말일 때 되묻고, 아니면 더한다."""
 
     date_span: Annotated[
         str, Field(description="날짜를 가리키는 원문 구간. 예: 내일모레, 지난 화요일")
@@ -36,7 +36,10 @@ class UpdateDaycareMealArgs(ToolArgs):
         list[str],
         Field(
             default_factory=list,
-            description="대신 들어간 메뉴를 가리키는 원문 구간들. 메뉴를 말하지 않았다면 비운다",
+            description=(
+                "먹었다고 하거나 대신 들어간 메뉴를 가리키는 원문 구간들. "
+                "예: '새우볶음밥 먹었대' 의 새우볶음밥. 메뉴를 말하지 않았다면 비운다"
+            ),
         ),
     ]
     amount_span: Annotated[

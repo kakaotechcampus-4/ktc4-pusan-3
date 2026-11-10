@@ -19,14 +19,17 @@
 
 ## 어느 실험에 썼나
 
-| 파일 | 실험 1 · 2 | 실험 3 | 실험 4 | 실험 5a | 실험 5b |
-|---|---|---|---|---|---|
-| `tune_pairs.txt` | 고르기 | 고르기 | 고르기 | 고르기 | |
-| `check1_pairs.txt` | 확인 | 확인 | | | |
-| `check1_orders.txt` | | 확인 | | 고르기 | |
-| `disputed_pairs.txt` | 참고 | 참고 | | | |
-| `tune_scale.txt` | | | | 고르기 | |
-| `check2_pairs.txt` | | | | | 확인 |
-| `check2_orders.txt` | | | | | 확인 |
+| 파일 | 실험 1 · 2 | 실험 3 | 실험 4 | 실험 5a | 실험 5b | 측정 이력 |
+|---|---|---|---|---|---|---|
+| `tune_pairs.txt` | 고르기 | 고르기 | 고르기 | 고르기 | | 고르기 |
+| `check1_pairs.txt` | 확인 | 확인 | | | | 고르기 |
+| `check1_orders.txt` | | 확인 | | 고르기 | | |
+| `disputed_pairs.txt` | 참고 | 참고 | | | | |
+| `tune_scale.txt` | | | | 고르기 | | 고르기 (R02 · R03) |
+| `check2_pairs.txt` | | | | | 확인 | 고르기 |
+| `check2_orders.txt` | | | | | 확인 | |
+
+측정 이력(`docs/agents/eval/CURATOR_JUDGE_EVAL.md` §1)은 프롬프트를 바꾸기 전 · 후를 견주는 것이라 고르기다 — 확인용이었던 파일도 쓴다.
+물음을 만드는 규칙은 `../judge_cases.py`.
 
 파일 규칙(정답 값, 확인용과 다른 파일의 이름 겹침 등)은 `../test_pairs_data.py` 가 확인한다.
