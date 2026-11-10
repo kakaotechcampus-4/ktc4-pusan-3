@@ -82,7 +82,7 @@ const DOMAINS: Array<{ agent: Agent; label: string; text: string }> = [
     agent: "food",
     label: "식사",
     // 🚨 "오늘 급식" 을 말하지 않는다 — 급식은 식단표를 사진으로 적은 집에만 있다(08). 모두에게 약속하지 않는다.
-    text: "등록한 알레르기 식품을 먼저 빼고 끼니 메뉴를 골라요. 알레르기를 확인하지 못하면 식사 제안을 만들지 않아요.",
+    text: "등록한 알레르기 식품을 먼저 빼고 끼니 메뉴를 골라요. 알레르기를 확인하지 못하면 식사 추천을 만들지 않아요.",
   },
   {
     agent: "activity",
@@ -113,7 +113,7 @@ const GATES: Array<{ icon: LucideIcon; title: string; text: string }> = [
   {
     icon: CalendarCheck,
     title: "캘린더에 일정 넣기",
-    text: "고른 제안으로 일정 초안까지만 만들어요. 캘린더에는 보호자가 확인하고 넣어야 들어가요.",
+    text: "고른 추천으로 일정 초안까지만 만들어요. 캘린더에는 보호자가 확인하고 넣어야 들어가요.",
   },
   {
     icon: Shield,
@@ -248,7 +248,7 @@ function LoginScreen() {
         <header>
           <p className="text-label text-brand">아이캐치</p>
           {/* 새 습관을 요구하지 않고 수신처만 바꾼다 (최상위 CLAUDE.md §1 핵심 통찰). */}
-          <PageTitle className="mt-2">가족에게 하던 아이 이야기, 여기에도 들려주세요</PageTitle>
+          <PageTitle className="mt-2">가족에게 하던 아이 이야기, 여기에도 들려 주세요</PageTitle>
           <p className="text-body text-ink-muted mt-3">
             따로 정리하지 않아도 이야기가 기록으로 쌓이고, 쌓인 기록을 근거로 오늘 해 볼 만한 것을
             골라 드려요.
@@ -270,7 +270,7 @@ function LoginScreen() {
       </div>
 
       <IntroSection
-        title="기록이 쌓일수록 제안이 달라져요"
+        title="기록이 쌓일수록 추천이 달라져요"
         description="같은 질문에도 처음 며칠과 기록이 쌓인 뒤의 답이 달라요."
       >
         <ExamplePreview />
@@ -313,7 +313,7 @@ function LoginScreen() {
             <IconRow
               icon={MessageCircleQuestionMark}
               title="기록하면서 물어보기"
-              text="있었던 일을 적으면 기록하고, ‘저녁 뭐 먹이지?’처럼 물어보면 그때 제안을 준비해요."
+              text="있었던 일을 적으면 기록하고, ‘저녁 뭐 먹이지?’처럼 물어보면 그때 추천을 준비해요."
             />
           </li>
         </ul>
@@ -349,7 +349,7 @@ function LoginScreen() {
         <IconRow
           icon={UsersRound}
           title="초대 코드로 연결"
-          text="코드를 보내면 배우자, 조부모, 돌봄 선생님도 같은 아이의 기록과 제안을 함께 봐요. 누가 무엇을 적었는지는 기록마다 남아요."
+          text="코드를 보내면 배우자, 조부모, 돌봄 선생님도 같은 아이의 기록과 추천을 함께 봐요. 누가 무엇을 적었는지는 기록마다 남아요."
         />
       </IntroSection>
 
@@ -515,7 +515,7 @@ function PersonalizedExample() {
         <div className="min-w-0 flex-1 p-4">
           <p className="text-body text-ink">종이컵으로 탑을 쌓고 누가 더 높이 쌓나 겨뤄 보세요.</p>
           <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3">
-            <dt className="text-caption text-ink-subtle">제안 이유</dt>
+            <dt className="text-caption text-ink-subtle">추천 이유</dt>
             <dd className="text-body-sm text-ink-muted">
               요즘 쌓는 놀이 이야기가 이어지고 있어요.
             </dd>
@@ -546,7 +546,7 @@ function PersonalizedExample() {
  * 색은 그 기록의 도메인(놀이)이고, 뜻은 옆의 글자가 진다.
  *
  * 끝의 카드는 07 기억 탭의 **후보** 카드를 본뜬다 (`affinity-list.tsx` — 점선 `line-strong` · `canvas` ·
- * "후보" 칩). 🚨 "확인됨" 으로 그리지 않는다 — 기록 세 줄로 확정된 것처럼 보이면 이 구역이 말하는
+ * "지켜보는 중" 칩 · #868). 🚨 "여러 번 보였어요" 로 그리지 않는다 — 기록 세 줄로 확정된 것처럼 보이면 이 구역이 말하는
  * "한 번으로 정하지 않는다" 의 반대말이 된다. 몇 번이면 확인되는지(서버 설정값)도 적지 않는다.
  */
 function RecordTimeline() {
@@ -573,14 +573,14 @@ function RecordTimeline() {
           <p className="text-title text-ink">쌓기 놀이</p>
           <div className="flex flex-wrap items-center gap-1.5">
             <span className="text-caption bg-surface-muted text-ink-muted min-h-chip inline-flex items-center rounded-full px-2.5 py-0.5">
-              후보
+              지켜보는 중
             </span>
             <span className="text-caption text-ink-subtle">
               놀이 · 기록 {EXAMPLE_RECORDS.length}건
             </span>
           </div>
           <p className="text-body-sm text-ink-muted">
-            같은 이야기가 더 이어지면 확인된 기억이 돼요.
+            같은 이야기가 더 이어지면 기억이 단단해져요.
           </p>
         </div>
       </div>

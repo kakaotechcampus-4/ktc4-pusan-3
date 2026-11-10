@@ -24,6 +24,7 @@ import {
   type SeriesDraft,
 } from "@/lib/api";
 import { useIdempotencyKey } from "@/lib/api/use-idempotency-key";
+import { cn } from "@/lib/cn";
 import { isSeriesDraft, seriesSubmitBody } from "@/lib/event-draft";
 import {
   mergeDrafts,
@@ -77,6 +78,7 @@ export function EventDraftList({
   lockReason,
   draftIds,
   transient = false,
+  heading = true,
 }: {
   childId: string;
   /** 🚨 반복 묶음 고치기(#738)가 섞여 온다 — 장마다 `op` 로 카드를 가른다 (`DraftRow`). */
@@ -112,6 +114,11 @@ export function EventDraftList({
    * 이유는 `stores/event-draft.ts` 머리말. 🚨 되읽지 않으므로 `draftIds` 와 같이 쓰지 않는다.
    */
   transient?: boolean;
+  /**
+   * 머리글 질문("일정으로 만들까요?")을 세우는가. 🚨 **그릇의 제목이 이미 그 질문이면 끈다** (#868 · 06 승인 시트의
+   * "캘린더에 넣을까요"). 둘 다 서면 시트 머리에 같은 질문이 두 번 섰다. `found` 와 "넣기 전까지는" 줄은 남는다.
+   */
+  heading?: boolean;
 }) {
   const addDrafts = useEventDraftStore((s) => s.addDrafts);
   const dropDrafts = useEventDraftStore((s) => s.dropDrafts);
@@ -177,8 +184,8 @@ export function EventDraftList({
       {/* 🚨 **"저장했어요" 와 같은 머리글을 쓰지 않는다.** 위의 관찰·기억은 이미 저장된 것이고
           여기는 보호자가 넣어야 들어가는 것이다 — 머리글이 그 선을 긋는다. */}
       <div>
-        <h3 className="text-label text-brand">일정으로 만들까요?</h3>
-        <p className="text-body-sm text-ink-muted mt-1">
+        {heading ? <h3 className="text-label text-brand">일정으로 만들까요?</h3> : null}
+        <p className={cn("text-body-sm text-ink-muted", heading && "mt-1")}>
           {found} 넣기 전까지는 캘린더에 들어가지 않아요.
         </p>
       </div>

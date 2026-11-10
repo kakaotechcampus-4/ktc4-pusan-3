@@ -188,7 +188,7 @@ export function SafetyCheckSheet({
       const body: CreateHealthSafetyRequest = {
         type: "allergy",
         label: item,
-        notes: "제안을 고를 때 보호자가 확인",
+        notes: "추천을 고를 때 보호자가 확인",
         // 🚨 괜찮았던 식품은 다음 사전검사에서 묻지 않는 것까지다. 알레르기 목록(`items`)에는 들어가지 않는다.
         ...(answer === "none" ? { tolerated: true } : {}),
       };
@@ -327,7 +327,7 @@ export function SafetyCheckSheet({
         {unhandledChecks.length > 0 ? (
           <Banner tone="danger" title="여기서 확인할 수 없는 항목이 있어요">
             {josa(unhandledChecks.map((p) => p.item).join(", "), "은/는")} 여기서 확인할 수 없어서,
-            이 항목이 걸린 제안은 고르지 않아요.
+            이 항목이 걸린 추천은 고르지 않아요.
           </Banner>
         ) : null}
 
@@ -339,8 +339,8 @@ export function SafetyCheckSheet({
             title={`${josa(allergyNames, "을/를")} 알레르기 기록에 ${recorded ? "추가했어요" : "추가해요"}`}
           >
             {allBlocked && blockedByAllergyOnly
-              ? "고른 제안에 모두 알레르기 식품이 들어가 있어서 이번에는 고를 수 있는 제안이 없어요. 앞으로의 제안에서도 빼요."
-              : `${josa(allergyNames, "이/가")} 들어간 제안은 고르지 않고, 앞으로의 제안에서도 빼요.`}
+              ? "고른 추천에 모두 알레르기 식품이 들어가 있어서 이번에는 고를 수 있는 추천이 없어요. 앞으로의 추천에서도 빼요."
+              : `${josa(allergyNames, "이/가")} 들어간 추천은 고르지 않고, 앞으로의 추천에서도 빼요.`}
           </Banner>
         ) : null}
 
@@ -351,7 +351,7 @@ export function SafetyCheckSheet({
             title={`${josa(conflictItems.join(", "), "은/는")} 알레르기로 등록돼 있어요`}
           >
             그사이 알레르기로 등록돼서 괜찮았던 식품으로 저장하지 않았어요.{" "}
-            {josa(conflictItems.join(", "), "이/가")} 들어간 제안은 고르지 않아요.
+            {josa(conflictItems.join(", "), "이/가")} 들어간 추천은 고르지 않아요.
           </Banner>
         ) : null}
 
@@ -423,7 +423,7 @@ function SafetyCheck({
       <p className="text-section text-ink">{item}</p>
       {suggestionCount > 1 ? (
         <p className="text-caption text-ink-subtle mt-1">
-          고른 제안 {suggestionCount}개에 들어 있어요
+          고른 추천 {suggestionCount}개에 들어 있어요
         </p>
       ) : null}
       {locked ? (

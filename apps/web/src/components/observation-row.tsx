@@ -34,7 +34,12 @@ export function ObservationRow({ observation }: { observation: Observation }) {
 
       <div className="text-caption text-ink-subtle mt-1.5 flex flex-wrap items-center gap-x-2">
         {detail ? <span>{detail}</span> : null}
-        <span>{CONFIDENCE_LABEL[observation.confidence_source]}</span>
+        {/* 🚨 **보호자가 직접 한 말이면 출처를 적지 않는다** (#868). 대화의 기록은 거의 다 그 보호자가 적은 것이라
+            줄마다 "보호자 직접" 이 붙으면 아무것도 알려 주지 않는다. 다를 때(전해 들음 · 추측 · 기관 공지)만 적는다.
+            07 상세 시트의 "출처" 칸은 칸 이름이 있어서 그대로 적는다. */}
+        {observation.confidence_source === "parent_direct" ? null : (
+          <span>{CONFIDENCE_LABEL[observation.confidence_source]}</span>
+        )}
       </div>
 
       {observation.status !== "active" ? (

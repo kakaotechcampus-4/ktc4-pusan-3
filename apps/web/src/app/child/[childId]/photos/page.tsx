@@ -340,7 +340,7 @@ function Picker({ date, onPick }: { date: string; onPick: () => void }) {
 
       <ul className="text-body-sm text-ink-muted flex list-disc flex-col gap-1.5 pl-5">
         <li>얼굴이나 사람은 분석하지 않아요.</li>
-        <li>읽어낸 내용을 보여드리고, 승인하기 전에는 아무것도 저장하지 않아요.</li>
+        <li>읽어낸 내용을 보여 드리고, 승인하기 전에는 아무것도 저장하지 않아요.</li>
       </ul>
     </div>
   );
@@ -368,7 +368,7 @@ function Reading({
         <ProgressSteps index={index} total={total} label={label} />
       </Card>
       <p className="text-body-sm text-ink-muted">
-        읽은 내용을 보여드린 다음에 저장해요. 지금은 아무것도 저장되지 않아요.
+        읽은 내용을 보여 드린 다음에 저장해요. 지금은 아무것도 저장되지 않아요.
       </p>
     </div>
   );

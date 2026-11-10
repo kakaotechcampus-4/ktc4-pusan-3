@@ -361,8 +361,8 @@ function MyReminder({
       if (queue.pending === 0 && context?.previous) queryClient.setQueryData(key, context.previous);
       toast.show(
         isApiError(error, "invalid_reminder")
-          ? "그 알림은 지금 걸 수 없어요. 다른 알림을 골라주세요."
-          : "알림을 저장하지 못했어요. 잠시 뒤에 다시 골라주세요.",
+          ? "그 알림은 지금 걸 수 없어요. 다른 알림을 골라 주세요."
+          : "알림을 저장하지 못했어요. 잠시 뒤에 다시 골라 주세요.",
       );
     },
     onSettled: () => {
@@ -456,7 +456,7 @@ function PreparedCheckbox({
       // 🚨 뒤에 기다리는 선택이 있으면 되돌리지 않는다. 되돌리면 방금 누른 값이 화면에서
       //    한 번 뒤집혔다가 그 요청이 끝나고 다시 바뀐다 — 부모 눈에는 체크가 혼자 춤춘다.
       if (queue.pending === 0 && context?.previous) queryClient.setQueryData(key, context.previous);
-      toast.show("준비물 체크를 저장하지 못했어요. 잠시 뒤에 다시 눌러주세요.");
+      toast.show("준비물 체크를 저장하지 못했어요. 잠시 뒤에 다시 눌러 주세요.");
     },
     onSettled: () => {
       // 🚨 줄의 **마지막** 요청만 재조회한다. 중간에 부르면 아직 뒤 요청이 반영되지 않은
@@ -653,7 +653,7 @@ function DiaryCard({
               autoFocus
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
-              placeholder="이날 어땠는지 편하게 적어주세요."
+              placeholder="이날 어땠는지 편하게 적어 주세요."
               maxLength={DIARY_CONTENT_MAX_LENGTH}
             />
             {/* 10 문제 알리기와 같은 카운터다 (#549). 브라우저의 `maxLength` 와 같은 단위(UTF-16)로
@@ -698,7 +698,7 @@ function DiaryCard({
               갈리지 않는다. 새로 쓰는 중이면 지울 것도 없다. 지우는 길은 읽는 상태의 하나뿐이다. */}
             {emptied ? (
               <p id={emptiedHintId} className="text-caption text-ink-subtle">
-                비운 채로는 저장되지 않아요. 일기를 지우려면 취소한 뒤 지우기를 눌러주세요.
+                비운 채로는 저장되지 않아요. 일기를 지우려면 취소한 뒤 지우기를 눌러 주세요.
               </p>
             ) : null}
 
@@ -821,7 +821,7 @@ function DiaryCard({
 function DiaryNote() {
   return (
     <p className="text-caption text-ink-subtle">
-      일기는 아이 기록으로 저장되지 않아요. 기록으로 남기려면 홈에서 한 줄로 적어주세요.
+      일기는 아이 기록으로 저장되지 않아요. 기록으로 남기려면 홈에서 한 줄로 적어 주세요.
     </p>
   );
 }

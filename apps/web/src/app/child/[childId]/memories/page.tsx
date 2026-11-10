@@ -5,7 +5,7 @@ import { Notebook, Search, SlidersHorizontal, Sprout, ThumbsUp, X } from "lucide
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useRef, useState, type FormEvent } from "react";
 
-import { AffinityList, AffinityListSkeleton } from "@/components/affinity-list";
+import { AffinityList, AffinityListSkeleton, STATE_LABEL } from "@/components/affinity-list";
 import { AuthGate } from "@/components/auth-gate";
 import { ChildNav } from "@/components/child-nav";
 import { ConsentRequiredCard } from "@/components/consent-required-card";
@@ -156,8 +156,8 @@ const OBSERVATION_STATUS_OPTIONS = [
  */
 const STATE_OPTIONS = [
   { value: "all", label: "전체" },
-  { value: "confirmed", label: "확인됨" },
-  { value: "candidate", label: "후보" },
+  { value: "confirmed", label: STATE_LABEL.confirmed },
+  { value: "candidate", label: STATE_LABEL.candidate },
 ] as const;
 
 /**
@@ -293,7 +293,7 @@ function MemoriesScreen() {
   const tabs: TabItem[] = [
     { key: "observations", label: "기록", href: base },
     { key: "profile", label: "기억", href: `${base}?tab=profile` },
-    { key: "feedback", label: "제안 피드백", href: `${base}?tab=feedback` },
+    { key: "feedback", label: "추천 피드백", href: `${base}?tab=feedback` },
   ];
 
   /**
@@ -335,7 +335,7 @@ function MemoriesScreen() {
         <div className="min-w-0 flex-1">
           <PageTitle>기록과 기억</PageTitle>
           <p className="text-body-sm text-ink-muted mt-2">
-            적어주신 말이 기록으로 쌓이고, 같은 것이 반복되면 기억이 돼요.
+            적어 주신 말이 기록으로 쌓이고, 같은 것이 반복되면 기억이 돼요.
           </p>
         </div>
         <TourHelpButton tour={memoriesTour} />
@@ -1043,20 +1043,20 @@ function FeedbackTab({
           ⚠️ 두 줄 안에 둔다 — 기록 · 기억 탭은 조작 줄 바로 아래가 건수 줄이라, 여기서 길어지면 이 탭만
           목록이 한참 아래서 시작한다. 평가한 줄이 피드백 완료로 옮겨 가는 것은 건수가 줄어드는 것으로 보인다. */}
       <p className="text-body-sm text-ink-muted">
-        피드백은 다음 제안에만 반영되고 기억은 그대로 둬요. 기억을 고치려면 기록이나 기억 탭에서
-        고쳐주세요.
+        피드백은 다음 추천에만 반영되고 기억은 그대로 둬요. 기억을 고치려면 기록이나 기억 탭에서
+        고쳐 주세요.
       </p>
 
       <Swap id={phaseOf({ isPending: received.isPending || outOfRange, data: received.data })}>
         {received.isPending || outOfRange ? (
-          <SkeletonGroup label="받은 제안을 불러오는 중" className="flex flex-col gap-3">
+          <SkeletonGroup label="받은 추천을 불러오는 중" className="flex flex-col gap-3">
             <SkeletonText size="caption" width="1/4" />
             <SuggestionFeedbackListSkeleton />
           </SkeletonGroup>
         ) : null}
 
         {received.isError && !received.data ? (
-          <LoadFailed what="받은 제안을" childId={childId} error={received.error} />
+          <LoadFailed what="받은 추천을" childId={childId} error={received.error} />
         ) : null}
 
         {received.data && !outOfRange ? (
@@ -1065,25 +1065,25 @@ function FeedbackTab({
               // 🚨 "아직 받은 제안이 없어요" 라고 하지 않는다 — 다 평가해서 비었을 수도 있다.
               <EmptyState
                 icon={ThumbsUp}
-                title="피드백을 기다리는 제안이 없어요"
-                description="제안을 받아 고르면 여기서 어땠는지 알려줄 수 있어요. 남긴 피드백은 피드백 완료에 있어요."
+                title="피드백을 기다리는 추천이 없어요"
+                description="추천을 받아 고르면 여기서 어땠는지 알려줄 수 있어요. 남긴 피드백은 피드백 완료에 있어요."
                 count={0}
-                countLabel="피드백 전 제안"
+                countLabel="피드백 전 추천"
               />
             ) : (
               <EmptyState
                 icon={ThumbsUp}
                 title="아직 남긴 피드백이 없어요"
-                description="피드백 전에서 제안이 어땠는지 알려주면 여기에 모여요."
+                description="피드백 전에서 추천이 어땠는지 알려 주면 여기에 모여요."
                 count={0}
-                countLabel="피드백 완료 제안"
+                countLabel="피드백 완료 추천"
               />
             )
           ) : (
             <div className="flex flex-col gap-3" aria-busy={received.isPlaceholderData}>
               {/* 🚨 건수는 이 쪽의 줄 수가 아니라 그 보기의 `total` 이다 (기록 · 기억과 같다). */}
               <p ref={top} className="text-caption text-ink-subtle scroll-mt-4">
-                제안 {received.data.total}건
+                추천 {received.data.total}건
               </p>
               <SuggestionFeedbackList
                 suggestions={received.data.items}
@@ -1091,7 +1091,7 @@ function FeedbackTab({
                 onSelect={(suggestion, feedback) => sendFeedback.mutate({ suggestion, feedback })}
               />
               <Pagination
-                label="제안 쪽 넘기기"
+                label="추천 쪽 넘기기"
                 page={page}
                 totalPages={received.data.total_pages}
                 onChange={(next) => {
@@ -1106,7 +1106,7 @@ function FeedbackTab({
 
       {sendFeedback.isError ? (
         <p className="text-body-sm text-ink-muted" role="status">
-          지금은 보내지 못했어요. 잠시 뒤에 다시 눌러주세요.
+          지금은 보내지 못했어요. 잠시 뒤에 다시 눌러 주세요.
         </p>
       ) : null}
     </section>
@@ -1126,7 +1126,7 @@ function LoadFailed({ what, childId, error }: { what: string; childId: string; e
 
   return (
     <div className="bg-surface-muted rounded-card text-body-sm text-ink-muted p-4" role="status">
-      {what} 지금 불러오지 못했어요. 잠시 뒤에 다시 열어주세요.
+      {what} 지금 불러오지 못했어요. 잠시 뒤에 다시 열어 주세요.
     </div>
   );
 }

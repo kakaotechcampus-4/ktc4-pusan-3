@@ -158,7 +158,7 @@ test.describe("기록 지우기 (#736)", () => {
     await sheet.getByRole("button", { name: "지우기", exact: true }).click();
     await expect(sheet.getByText("이미 지워진 기록이에요.")).toBeVisible();
     // 🚨 다시 눌러도 같은 404 다 — "다시 눌러주세요" 도, 지우기 버튼도 세우지 않는다.
-    await expect(sheet.getByText(/다시 눌러주세요/)).toHaveCount(0);
+    await expect(sheet.getByText(/다시 눌러 주세요/)).toHaveCount(0);
     await expect(sheet.getByRole("button", { name: "지우기", exact: true })).toHaveCount(0);
 
     await sheet.getByRole("button", { name: "닫기" }).last().click();
@@ -182,6 +182,8 @@ test.describe("고친 기록은 목록에 남고 다시 고치지 않는다 (#26
     await row.click();
     const sheet = page.getByRole("dialog", { name: "기록 상세" });
     await sheet.getByRole("button", { name: "이번만 그랬어요", exact: true }).click();
+    // 🚨 표시 하나 바꾸는 일에 "되돌릴 수 없어요" 로 겁주지 않는다 (#868).
+    await expect(sheet.getByText("되돌릴 수 없어요", { exact: false })).toHaveCount(0);
     await sheet.getByRole("button", { name: "바꾸기" }).click();
     await expect(sheet.getByText("이번 한 번만 있던 일로 바꿨어요.")).toBeVisible();
     // 방금 고친 기록에 버튼이 다시 서면 누르는 순간 409 다.
@@ -198,6 +200,35 @@ test.describe("고친 기록은 목록에 남고 다시 고치지 않는다 (#26
     await expect(sheet.getByText("세지 않는 기억")).toBeVisible();
     await expect(sheet.getByText("관련된 기억")).toHaveCount(0);
     await expect(sheet.getByText("이 기록이 어떤가요?")).toHaveCount(0);
+  });
+
+  test("고치는 사이 다른 보호자가 먼저 고쳤으면 이미 고친 기록이라고 말하고, 닫기가 다시 선다 (#868)", async ({
+    page,
+  }) => {
+    await page.goto(MEMORIES);
+    await page.getByRole("button").filter({ hasText: "저녁에 계란말이를 또 찾았어요" }).click();
+    const sheet = page.getByRole("dialog", { name: "기록 상세" });
+    await sheet.getByRole("button", { name: "이번만 그랬어요", exact: true }).click();
+    // 확인 패널이 열린 동안은 "그만두기" 하나만 선다.
+    await expect(sheet.getByRole("button", { name: "닫기" })).toHaveCount(0);
+
+    const status = await asOtherCaregiver(page, {
+      method: "POST",
+      path: "/corrections",
+      body: {
+        target_ref: { kind: "observation_food", id: "o_1" },
+        verdict: "once_only",
+        child_id: CHILD,
+      },
+    });
+    expect(status).toBe(201);
+
+    await sheet.getByRole("button", { name: "바꾸기" }).click();
+    await expect(sheet.getByText("이미 고친 기록이에요.")).toBeVisible();
+    // 🚨 패널이 걷혔는데 "닫기" 가 안 돌아오면 닫는 버튼이 하나도 없다 (웹뷰에는 ESC 가 없다).
+    await expect(sheet.getByRole("button", { name: "그만두기" })).toHaveCount(0);
+    await sheet.getByRole("button", { name: "닫기" }).click();
+    await expect(sheet).toBeHidden();
   });
 
   test("상태로 고르면 그 상태의 기록만 서고, 건수도 그 상태의 것이다", async ({ page }) => {
@@ -235,7 +266,8 @@ test.describe("고친 기록은 목록에 남고 다시 고치지 않는다 (#26
 
 /**
  * 🚨 기억 고치기는 의견이다 (#277). 서버는 판정으로 상태를 바꾸지 않고 기록 수로만 다시 센다 —
- *    누르기 전에는 "목록에 그대로 있어요" 만 약속하고, 바뀐 것은 누른 뒤 응답으로 말한다.
+ *    누르기 전에는 목록에 남는다는 것과 누른 뒤 알려 준다는 것만 약속하고, 바뀐 것은 누른 뒤 응답으로 말한다.
+ *    🚨 "기억은 목록에 그대로 있어요" 만 적지 않는다 — 눌러도 소용없는 것으로 읽혔다 (#868).
  */
 test.describe("기억 고치기는 기억을 목록에서 빼지 않는다 (#277)", () => {
   async function correctAffinity(page: import("@playwright/test").Page, label: string) {
@@ -243,7 +275,13 @@ test.describe("기억 고치기는 기억을 목록에서 빼지 않는다 (#277
     await page.getByText("계란 반찬").first().click();
     const sheet = page.getByRole("dialog", { name: "기억 상세" });
     await sheet.getByRole("button", { name: label, exact: true }).click();
-    await expect(sheet.getByText("기억은 목록에 그대로 있어요.", { exact: false })).toBeVisible();
+    await expect(
+      sheet.getByText("기억은 목록에 남고, 남긴 뒤 무엇이 바뀌었는지 바로 알려 드려요."),
+    ).toBeVisible();
+    await expect(sheet.getByText("기억은 목록에 그대로 있어요.", { exact: false })).toHaveCount(0);
+    // 🚨 확인 패널이 열린 동안은 시트의 "닫기" 가 없다 — "그만두기" 하나만 선다 (#868).
+    await expect(sheet.getByRole("button", { name: "닫기" })).toHaveCount(0);
+    await expect(sheet.getByRole("button", { name: "그만두기" })).toBeVisible();
     await expect(sheet.getByText("목록에서 빼요", { exact: false })).toHaveCount(0);
     await sheet.getByRole("button", { name: "남기기" }).click();
     return sheet;
@@ -258,24 +296,28 @@ test.describe("기억 고치기는 기억을 목록에서 빼지 않는다 (#277
   });
 
   test("상태가 바뀌면 직전 상태와 함께 말한다", async ({ page }) => {
-    // 계란 반찬은 묶인 기록 3건으로 확인됨이다. wrong 이 기준을 올려 후보로 내려간다.
+    // 계란 반찬은 묶인 기록 3건으로 "여러 번 보였어요" 다. wrong 이 기준을 올려 "지켜보는 중" 으로 내려간다.
     const sheet = await correctAffinity(page, "잘못된 기억");
 
-    await expect(sheet.getByText("기억이 확인됨에서 후보로 바뀌었어요.")).toBeVisible();
+    await expect(sheet.getByText("이 기억은 이제 '지켜보는 중' 상태예요.")).toBeVisible();
   });
 });
 
 test.describe("한 번의 관찰을 성향으로 확정하지 않는다 (§2 기억)", () => {
-  test("한 번 본 것은 후보로 남고, 반복된 것만 확인됨이다", async ({ page }) => {
+  test('한 번 본 것은 "지켜보는 중" 으로 남고, 반복된 것만 "여러 번 보였어요" 다', async ({
+    page,
+  }) => {
     await page.goto(`${MEMORIES}?tab=profile`);
     const confirmed = page.getByRole("button").filter({ hasText: "계란 반찬" });
-    await expect(confirmed).toContainText("확인됨");
+    await expect(confirmed).toContainText("여러 번 보였어요");
     await expect(confirmed).toContainText("서로 다른 3일에 기록됐어요");
 
     const candidate = page.getByRole("button").filter({ hasText: "물놀이" });
-    await expect(candidate).toContainText("후보");
+    await expect(candidate).toContainText("지켜보는 중");
     await expect(candidate).toContainText("아직 한 번 봤어요");
-    await expect(candidate).not.toContainText("확인됨");
+    await expect(candidate).not.toContainText("여러 번 보였어요");
+    // 🚨 "확인됨" 이라고 부르지 않는다 — 부모가 "내가 확인했나?" 로 읽었다 (#868).
+    await expect(page.getByText("확인됨")).toHaveCount(0);
     // 🚨 후보는 성향으로 말하지 않는다 — 목의 물놀이는 polarity 1 이지만 "좋아해요" 가 없어야 한다 (#259).
     await expect(confirmed).toContainText("좋아해요");
     await expect(candidate).not.toContainText("좋아해요");
@@ -286,7 +328,7 @@ test.describe("한 번의 관찰을 성향으로 확정하지 않는다 (§2 기
     const row = page.getByRole("button").filter({ hasText: "저녁에 계란말이를 또 찾았어요" });
     await expect(row).toBeVisible();
     await expect(row).not.toContainText("좋아해요");
-    await expect(row).not.toContainText("확인됨");
+    await expect(row).not.toContainText("여러 번 보였어요");
   });
 });
 
@@ -296,21 +338,21 @@ test.describe("6개월 지난 기억은 단독 근거로 쓰지 않는다 (§2 �
   test("카드와 상세가 그 사실을 글자로 말한다", async ({ page }) => {
     await page.goto(`${MEMORIES}?tab=profile`);
     await expect(
-      page.getByText("6개월이 지나서 이 기억만으로는 제안하지 않아요.").first(),
+      page.getByText("6개월이 지나서 이 기억만으로는 추천하지 않아요.").first(),
     ).toBeVisible();
     await expect(page.getByText("마지막으로 본 지 7개월이 지났어요").first()).toBeVisible();
 
-    await page.getByText("6개월이 지나서 이 기억만으로는 제안하지 않아요.").first().click();
+    await page.getByText("6개월이 지나서 이 기억만으로는 추천하지 않아요.").first().click();
     const sheet = page.getByRole("dialog", { name: "기억 상세" });
     await expect(
-      sheet.getByText("이 기억만으로는 제안하지 않아요", { exact: false }),
+      sheet.getByText("이 기억만으로는 추천하지 않아요", { exact: false }),
     ).toBeVisible();
   });
 
   // `confirm`(맞아요)은 없는 판정이다(§5). 한동안 안내가 "맞아요를 눌러주세요" 였다 (#242).
   test("상세 안내가 화면에 없는 버튼을 가리키지 않는다", async ({ page }) => {
     await page.goto(`${MEMORIES}?tab=profile`);
-    await page.getByText("6개월이 지나서 이 기억만으로는 제안하지 않아요.").first().click();
+    await page.getByText("6개월이 지나서 이 기억만으로는 추천하지 않아요.").first().click();
     const sheet = page.getByRole("dialog", { name: "기억 상세" });
     await expect(sheet.getByText("이 기억이 맞나요?")).toBeVisible();
     await expect(sheet.getByText("맞아요를", { exact: false })).toHaveCount(0);
@@ -375,14 +417,15 @@ test.describe("07 기록 탭은 서버(#266)가 주는 대로 그린다 (#269)",
     const sheet = page.getByRole("dialog", { name: "기록 상세" });
 
     await expect(sheet.getByText("기침", { exact: true }).first()).toBeVisible();
-    // 다른 기록과 같은 자리 · 같은 묻는 줄에 지우기만 선다 — 고친 기록처럼 보이지 않게.
-    await expect(sheet.getByText("이 기록이 어떤가요?")).toBeVisible();
+    // 🚨 고를 것이 하나라 묻는 줄을 세우지 않는다 (#868) — 물으면 더 고를 것이 있는 줄 안다.
+    await expect(sheet.getByText("이 기록이 어떤가요?")).toHaveCount(0);
+    await expect(sheet.getByText("고르면 무엇이 바뀌는지", { exact: false })).toHaveCount(0);
     await expect(sheet.getByRole("button", { name: "기록 지우기" })).toBeVisible();
     // 🚨 서버가 건강 기록 고치기를 400 으로 막는다 — 누르면 실패하는 버튼을 세우지 않는다.
     await expect(sheet.getByRole("button", { name: "이번만 그랬어요" })).toHaveCount(0);
     // 🚨 고칠 수 없는 기록이라 근거에서 "빠졌다" 고 하지 않는다.
     await expect(sheet.getByText("아직 이 기록을 쓴 추천이 없어요.")).toBeVisible();
-    await expect(sheet.getByText("이 기록은 제안 근거에서 빠져 있어요.")).toHaveCount(0);
+    await expect(sheet.getByText("이 기록은 추천 근거에서 빠져 있어요.")).toHaveCount(0);
     // 고친 기록이 아니다 — 고친 기록 안내를 세우지 않는다.
     await expect(sheet.getByText(/고친 기록이에요/)).toHaveCount(0);
     // 🚨 승인 게이트가 아니다 — `caution` 도 `btn-approve` 도 없다.
@@ -652,11 +695,11 @@ test.describe("피드백 탭의 두 보기 (#592)", () => {
   const PENDING = "두부를 부쳐서 한 조각 곁들여 보세요";
   const RATED = "계란말이에 시금치를 조금 섞어 보세요";
 
-  test("처음 열면 피드백 전이고, 평가한 제안은 보이지 않는다", async ({ page }) => {
+  test("처음 열면 피드백 전이고, 평가한 추천은 보이지 않는다", async ({ page }) => {
     await page.goto(`${MEMORIES}?tab=feedback`);
     await expect(page.getByRole("radio", { name: "피드백 전" })).toBeChecked();
     await expect(page.getByText(PENDING)).toBeVisible();
-    await expect(page.getByText("제안 2건")).toBeVisible();
+    await expect(page.getByText("추천 2건")).toBeVisible();
     await expect(page.getByText(RATED)).toHaveCount(0);
   });
 
@@ -678,18 +721,18 @@ test.describe("피드백 탭의 두 보기 (#592)", () => {
       "aria-pressed",
       "true",
     );
-    await expect(page.getByText("제안 1건")).toBeVisible();
+    await expect(page.getByText("추천 1건")).toBeVisible();
   });
 
-  test("🚨 피드백 전이 비어도 받은 제안이 없다고 하지 않는다", async ({ page }) => {
+  test("🚨 피드백 전이 비어도 받은 추천이 없다고 하지 않는다", async ({ page }) => {
     await page.goto(`${MEMORIES}?tab=feedback`);
     for (const text of [PENDING, "블록 쌓기처럼 손을 많이 쓰는 놀이를 15분쯤 해 보세요"]) {
       const row = page.locator("li").filter({ hasText: text });
       await row.getByRole("button", { name: "안 해봤어요" }).click();
       await expect(row).toHaveCount(0);
     }
-    await expect(page.getByText("피드백을 기다리는 제안이 없어요")).toBeVisible();
-    await expect(page.getByText(/받은 제안이 없어요/)).toHaveCount(0);
+    await expect(page.getByText("피드백을 기다리는 추천이 없어요")).toBeVisible();
+    await expect(page.getByText(/받은 추천이 없어요/)).toHaveCount(0);
   });
 
   test.describe("한 쪽(20건)을 넘으면", () => {
@@ -699,14 +742,14 @@ test.describe("피드백 탭의 두 보기 (#592)", () => {
       page,
     }) => {
       await page.goto(`${MEMORIES}?tab=feedback&page=2`);
-      await expect(page.getByText("제안 21건")).toBeVisible();
+      await expect(page.getByText("추천 21건")).toBeVisible();
       const last = page.locator("li").filter({ hasText: "블록으로 탑을 함께 쌓아 보세요 (19)" });
       await last.getByRole("button", { name: "아이가 좋아했어요" }).click();
 
       await expect(page).not.toHaveURL(/[?&]page=/);
-      await expect(page.getByText("제안 20건")).toBeVisible();
-      await expect(page.getByText("피드백을 기다리는 제안이 없어요")).toHaveCount(0);
-      await expect(page.getByRole("navigation", { name: "제안 쪽 넘기기" })).toHaveCount(0);
+      await expect(page.getByText("추천 20건")).toBeVisible();
+      await expect(page.getByText("피드백을 기다리는 추천이 없어요")).toHaveCount(0);
+      await expect(page.getByRole("navigation", { name: "추천 쪽 넘기기" })).toHaveCount(0);
     });
   });
 });
