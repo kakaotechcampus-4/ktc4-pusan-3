@@ -96,7 +96,7 @@ async def run(task: DomainTask, context: <Domain>Context, *, client=None) -> Dom
 | 메뉴 카탈로그 | **Food** (도메인 전용 — 포트 기준). 캐시 미스는 Food 요청 중 외부 조회 뒤 백엔드 어댑터가 없을 때만 넣는다(10-04, [food_agent_own_table.md](../food/food_agent_own_table.md) §1). DB 권한 방식은 백엔드가 정한다. 영양 합계 · 구간은 저장하지 않는다 — 판정할 때마다 원본에서 계산한다(10-05, [영양소_계산_설계.md](../food/영양소_계산_설계.md) §3) | 읽지 않는다 |
 | `prescription_draft` | **OCR 파이프라인**(처방전·약봉투) — 🚩 아직 없다(테이블 · 경로 미생성) | Health만 읽음 |
 | `medication_schedule` · `medication_dose` | **Health** (도메인 전용 — 아무도 안 읽는다). 단 코스 생성·수정은 **초안 payload**로 내보내고 보호자 제출 시 백엔드가 쓴다(`event` 초안과 같은 방식). Agent가 직접 쓰는 것은 한 번 물어 보호자가 확인한 중단(`status='stopped'`, 2026-10-18) 하나뿐 — 복용 체크는 보호자가 화면에서 회차마다 한다(`medication_dose.checked_at`, 2026-10-20) | Food·Activity·Growth는 읽지 않는다 |
-| `suggestion` · `suggestion_evidence` | 주입된 writer (`status='draft'`, `expires_at=+24h`). **승인되면 Memory Agent가 `observation_*`로 재구조화**해 저장한다 | 값만 만든다 |
+| `suggestion` · `suggestion_evidence` | 주입된 writer (`status='draft'`, `expires_at=+24h`). 채택하면 `status` 만 `approved` 로 바뀐다 — `observation_*` 로 옮기는 경로는 아직 없다(C-9) | 값만 만든다 |
 | `health_safety` | **앱 API가 보호자 권한으로만.** Agent는 후보도 제시하지 않는다 (알레르기 후보 감지는 v1에서 뺐다) | 손대지 않음 |
 | `*_doc` · 기준 상수(`reference/*.yaml` — `hazard_terms.yaml` 포함) | 배치·마이그레이션 · 상수 파일은 저장소 PR | 읽기만 |
 
@@ -376,7 +376,7 @@ Supervisor 안전 사전검사(규칙)  ── 응급·진단 문의는 Agent에
 | C-6 | ✅ 폐기 — 알레르기 후보 감지를 v1에서 뺐다. `safety_confirmations` 채널도 함께 사라졌다 |
 | C-7 | ✅ 닫힘 — **`confidence_source`로 갈음**한다. 별도 `type` 컬럼을 두지 않는다 |
 | C-8 | ✅ 닫힘(10-06) — **추천은 최대 3개.** 재호출 후에도 못 채우거나 후보 풀이 처음부터 3개 미만이면 남은 만큼(1~2개)을 개수 안내와 함께 낸다. 0개면 추천 없이 안내만 — 실패가 아니다. 3개를 채우려고 안전 조건을 늦추지 않는다 (멘토 [#196 답변](https://github.com/kakaotechcampus-4/ktc4-pusan-3/pull/196#issuecomment-5933562473) · #216). `check_count(exhausted=True)` · `count_notice()` — [Tool_공통.md](Tool_공통.md) §5-2 |
-| C-9 | ✅ 닫힘 — **승인 시점에 Memory Agent**가 `suggestion`을 `observation_*`로 재구조화해 저장한다. feedback(`child_liked`/`child_disliked`/`not_acted`)은 그 관찰의 `polarity`(+1/−1/0)를 갱신한다 |
+| C-9 | ✅ 닫힘 — **승인 시점에 Memory Agent**가 `suggestion`을 `observation_*`로 재구조화해 저장한다. feedback(`child_liked`/`child_disliked`/`not_acted`)은 그 관찰의 `polarity`(+1/−1/0)를 갱신한다 🚧 **이 경로는 아직 구현 전이다** — 지금은 채택 · feedback 을 `suggestion` 행에 저장만 하고 관찰 · `polarity` 는 바꾸지 않는다(`PATCH …/feedback` 설명: "기억은 바꾸지 않는다"). |
 
 새로 열리는 것은 이 표에 다시 적는다.
 
