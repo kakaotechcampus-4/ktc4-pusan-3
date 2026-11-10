@@ -9,14 +9,16 @@ def test_앞에서_보여_준_추천은_다시_내지_말라고_붙인다() -> N
     assert message.endswith("\n- 가상 국화축제 구경하기")
 
 
-def test_막연한_요청은_행사_장소_집_놀이를_섞고_관심은_두_개까지다() -> None:
-    """ "애랑 할만한 거" 에 3개 모두 확정 관심(야구 · 자동차) 집 놀이로 채우던 것 (11-09 운영)."""
+def test_구성은_요청을_먼저_따르고_막연할_때만_섞는다() -> None:
+    """ "애랑 할만한 거" 에 3개 모두 확정 관심(야구 · 자동차) 집 놀이로 채우던 것 (11-09 운영).
+    고정 배치가 아니라 요청 단서를 먼저 따르고, 단서가 없을 때만 섞는다 (#856 리뷰)."""
     from app.agents.activity.prompt import _SECTIONS
 
     text = "\n".join(_SECTIONS)
-    assert "행사를 먼저 찾아 본다" in text
-    assert "1개는 장소가 붙은 활동" in text
+    assert "3개의 구성은 보호자의 이번 요청이 정한다" in text
+    assert "새롭거나 색다른 것" in text
+    assert "단서가 없는 막연한 요청" in text
+    assert "확정 관심이 있으면 1개는 그 관심을 살린다" in text
+    assert "관심을 상관없는 후보에 억지로 잇지 않는다" in text
+    assert "2개까지" not in text  # 관심 상한은 뺐다 — 요청이 관심이면 여러 개여도 된다
     assert "search_events" not in text  # 행사 조회가 닫혀도 실리는 고정 구획이다
-    assert "확정 관심에 맞춘 후보는 3개 중 2개까지" in text
-    assert "관심을 행사 · 장소에 억지로 잇지 않는다" in text
-    assert "집에서 할 놀이 3개여도 된다" in text
