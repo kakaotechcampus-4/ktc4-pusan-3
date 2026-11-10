@@ -44,7 +44,7 @@
 | SRCH | ✅ F4 | ✅ | ✅ | ✅ |
 | EXT | ✅ | ✅ | ✅ | ✅ |
 | SAVE | ✅ | ✅ | ✅ F6 | ✅ |
-| IDEM | ✅ | ✅ | ⚠️ F7 | ✅ F5 |
+| IDEM | ✅ | ✅ | ✅ F7 | ✅ F5 |
 | RUN | ✅ F1 | ✅ F1 | ✅ | ✅ |
 
 ## 칸마다 공통으로 보는 것
@@ -139,7 +139,7 @@
 | --- | --- | --- | --- | --- |
 | IDEM-A | Redis 가 죽으면 메모리로 넘어가지 않고 503 `temporarily_unavailable` — Agent 를 부르지 않는다. 쓰기만 거절돼도 처리 전에 503 | `app/api/idempotency.py:76-80` · `:112-121` | `tests/unit/api/test_idempotency_redis.py::TestRedisDown::test_장애면_recall_은_503` · `::TestRedisDown::test_쓰기만_거절되면_처리하기_전에_503` · `tests/integration/api/test_input_run.py::test_Redis_가_죽으면_입력은_503_이고_Agent_를_부르지_않는다` **(통합)** | ✅ |
 | IDEM-B | 1초 상한 + 차단기. 멈춘 Redis 를 이벤트 루프 밖(스레드)에서 기다리고 1초 남짓에 503 | `app/infra/redis.py:19` · `:24` · `:31` · `app/api/idempotency.py:77` | `tests/unit/api/test_idempotency_redis.py::test_Redis_가_응답_없이_매달려도_1초_남짓에_503` · `::test_Redis_가_매달려도_이벤트_루프는_멈추지_않는다` | ✅ |
-| IDEM-C | 재생 값이 깨져 있어도 처리 안 된 예외(500)가 아니라 정해진 답(예: 503 · 새 요청)이다 | `app/api/idempotency.py:83` · `app/api/errors.py:199-209` | 기존 없음 · F 테스트: `tests/eval/faults/test_f7_broken_replay.py::test_F7_깨진_재생_값은_처리_안_된_예외가_아니다` (지금 코드는 `JSONDecodeError` → 500 이라 xfail) | ⚠️ F7 |
+| IDEM-C | 재생 값이 깨져 있어도 처리 안 된 예외(500)가 아니라 정해진 답(예: 503 · 새 요청)이다 | `app/api/idempotency.py:83` · `app/api/errors.py:199-209` | 기존 없음 · F 테스트: `tests/eval/faults/test_f7_broken_replay.py::test_F7_깨진_재생_값은_처리_안_된_예외가_아니다` — 못 읽거나 모양이 틀린 값은 지우고 503, 다음 재시도는 새 요청(#935). 두 번 저장은 깨진 값으로는 막을 수 없다 | ✅ F7 |
 | IDEM-D | 하루 한도를 넘으면 막고 날이 바뀌면 0부터, 같은 키 재생은 세지 않는다. run 의 모델 호출 수가 예산(`MAX_MODEL_CALLS`, 다시 나눈 run 은 +1)을 넘으면 경고를 남긴다(실행은 막지 않는다). 재시도(폴백 · 재호출)는 센다 | `app/api/quota.py:31-45` · `app/api/v1/routers/children.py:526-527` · `app/agents/pipeline.py:87-95` · `:2528-2536` | `tests/unit/api/test_quota.py::test_allows_up_to_the_limit_then_refuses` · `::test_a_new_day_starts_from_zero` · `tests/integration/api/test_input_run.py::test_replay_is_not_counted_and_still_works_after_the_limit` **(통합)** · 경고가 안 뜨는 쪽만: `tests/unit/agents/supervisor/test_pipeline.py::test_Memory_가_여러_바퀴_돌아도_호출_예산은_1만_먹는다` · F 테스트: `tests/eval/faults/test_f5_model_calls.py::test_F5_재시도를_세고_예산을_넘으면_경고한다[정상_4회]` · `[폴백_5회]` | ✅ F5 |
 
 ### RUN · 러너 · SSE
@@ -161,7 +161,7 @@
 | F4 | SRCH-A | `tests/eval/faults/test_f4_memory_search_failure.py` | P0 | 통과 — 회귀 방지 |
 | F5 | IDEM-D | `tests/eval/faults/test_f5_model_calls.py` | P1 | 통과 — 회귀 방지 |
 | F6 | SAVE-C | `tests/eval/faults/test_f6_saved_id_count.py` | P1 | 통과 — 회귀 방지 |
-| F7 | IDEM-C | `tests/eval/faults/test_f7_broken_replay.py` | P1 | **실패 → xfail(strict) · #935** |
+| F7 | IDEM-C | `tests/eval/faults/test_f7_broken_replay.py` | P1 | 통과 — #935 로 고침 (xfail 지움) |
 | F8 | CUR-B | `tests/integration/test_db_timeouts.py` (쿼리 상한) | 이슈만 | #936 쿼리 2분 상한 · #937 남음 |
 
 가짜는 `tests/eval/faults/fakes.py` 한 곳에 있다 — 새로 만든 것은 다른 테스트 모듈에서 import 할 수 없는 것뿐이다(그 파일 머리말).
