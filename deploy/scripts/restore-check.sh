@@ -35,7 +35,8 @@ limit() {
   local s="$1" rc=0
   shift
   if command -v timeout >/dev/null; then timeout -k 10 "$s" "$@" || rc=$?; else "$@" || rc=$?; fi
-  [ "$rc" != 124 ] || log "시간 상한 ${s}초에 걸려 끊었다 — $1 $2 $3" >&3
+  # 124 = TERM 으로 끊김, 137 = TERM 을 무시해 10초 뒤 KILL 로 끊김
+  case "$rc" in 124 | 137) log "시간 상한 ${s}초에 걸려 끊었다 (exit $rc) — $1 $2 $3" >&3 ;; esac
   return "$rc"
 }
 
@@ -57,7 +58,11 @@ DUMP="$WORK/db.dump"
 STALE=0
 MAX_DAILY_AGE=$((26 * 3600))
 
-[ -n "$LOCAL_DIR" ] || take_deploy_lock
+if [ -z "$LOCAL_DIR" ]; then
+  take_deploy_lock
+  log "배포 잠금 얻음 (${SECONDS}초 기다림)"
+fi
+SECONDS=0 # 아래 '복원 통과 … N초' 는 잠금을 기다린 시간을 빼고 센다
 
 # ── 가장 최근 백업 고르기 ──
 if [ -n "$LOCAL_DIR" ]; then
@@ -94,15 +99,17 @@ fi
 log "$KEY 복원 점검 ($(wc -c < "$DUMP" | tr -d ' ') bytes)"
 
 # ── 임시 DB 에 복원 ──
-IMAGE="$(docker inspect --format '{{.Config.Image}}' "$CONTAINER")" ||
+IMAGE="$(limit 60 docker inspect --format '{{.Config.Image}}' "$CONTAINER")" ||
   fail "운영 DB 컨테이너 $CONTAINER 가 없어 이미지를 정하지 못했다"
-docker run -d --name "$TMPDB" --network none --memory 768m --memory-swap 768m \
+limit 60 docker run -d --name "$TMPDB" --network none --memory 768m --memory-swap 768m \
   -e POSTGRES_USER=restore -e POSTGRES_DB=restore -e POSTGRES_HOST_AUTH_METHOD=trust \
   "$IMAGE" >/dev/null || fail "임시 DB 컨테이너 띄우기 실패 (exit $?)"
 
 # 초기화 중에도 소켓으로는 응답하므로 TCP(127.0.0.1)로 본다 — 초기화가 끝나야 TCP 를 연다.
+# 횟수가 아니라 마감 시각으로 센다 — 확인 한 번이 10초까지 걸리면 60번은 11분이다.
 ready=0
-for _ in $(seq 1 60); do
+deadline=$((SECONDS + 60))
+while [ "$SECONDS" -lt "$deadline" ]; do
   if limit 10 docker exec "$TMPDB" pg_isready -q -h 127.0.0.1 -U restore -d restore; then
     ready=1
     break
