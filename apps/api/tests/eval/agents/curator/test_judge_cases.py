@@ -2,7 +2,8 @@
 
 import pytest
 
-from tests.eval.agents.curator.judge_cases import JudgeCase, grade, load_cases
+from tests.eval.agents.curator.judge_cases import JudgeCase, evalset_hash, grade, load_cases
+from tests.unit.agents.common.prompt_history import doc_path, parse_history
 
 
 def test_측정_입력은_운영에서_판정기가_받는_물음만이다() -> None:
@@ -13,6 +14,18 @@ def test_측정_입력은_운영에서_판정기가_받는_물음만이다() -> 
         names = ["".join(c.split()) for c in case.candidates]
         assert "".join(case.subject.split()) not in names, f"{case.id} 이름이 같으면 코드가 붙인다"
         assert case.expected == "none" or case.expected in case.candidates, case.id
+
+
+def test_측정_이력_마지막_행은_지금_평가셋으로_쟀다() -> None:
+    """평가셋만 바꾸고 다시 재지 않으면, 다음 프롬프트 변경이 다른 평가셋의 행과 비교된다."""
+    last = parse_history(doc_path("curator_judge").read_text(encoding="utf-8"))[-1]
+    current = f"`{evalset_hash(load_cases())}`"
+    assert current in last.condition, (
+        f"평가셋이 {last.version} 을 잰 뒤 바뀌었다(지금 {current}). "
+        "데이터 파일 · judge_cases.py · 연결 단계의 이름 비교와 MAX_CANDIDATES 가 "
+        "평가셋을 정한다. 바꾸기 전 프롬프트를 지금 평가셋으로 다시 재서 "
+        "CURATOR_JUDGE_EVAL.md §1 에 행을 더한다."
+    )
 
 
 DUBU = JudgeCase("t:1/original", "food", "두부", ("순두부", "연두부"), "none")
