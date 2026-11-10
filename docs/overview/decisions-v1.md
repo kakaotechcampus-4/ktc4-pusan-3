@@ -87,7 +87,16 @@ api 컨테이너는 한 번에 하나만 뜨기 때문에, 교체되는 동안 �
 - **POST 가 재시도되는가** — 설정만 넣었을 때는 POST 가 재시도에서 502 였습니다. 첫 시도가 요청 본문을 이미 흘려보내 다시 보낼 본문이 없었기 때문입니다. `request_buffers 1MB` 로 본문을 잡아 두게 했습니다. 1MB 를 넘는 본문은 그대로 502 인데, 사진은 대부분 S3 로 직접 올라가 이 경로를 타지 않습니다.
 - **대가** — 배포가 아니라 api 가 정말로 죽어 있을 때도 화면은 502 를 바로 받지 못하고 150초를 기다립니다. 빨리 실패하는 것과 배포 중 오류를 없애는 것 중 뒤쪽을 골랐습니다. 헬스 감시는 프록시를 거치지 않고 컨테이너에 직접 물으므로 이 대기의 영향을 받지 않습니다.
 
-**근거** — `docs/ops/stateless-v1.md` · #877(비교 표 원문) · #899 · `apps/api/app/domains/run_hold/repository.py` · `apps/api/app/api/runs/registry.py` · `sse.py` · `deploy/scripts/backup.sh` · `deploy/caddy/Caddyfile` · `deploy/scripts/health-alert.sh`
+**재배포 때 돌고 있던 run — 끝내고 내려간다** (#882 · PR #897)
+
+프록시가 붙잡는 것은 새로 들어오는 요청입니다. 이미 돌고 있던 run 은 옛 api 가 내려가면서 끊겼고, 화면이 붙어 있지 않던 run 은 흔적 없이 사라졌습니다. 그래서 옛 api 가 종료 신호(SIGTERM)를 받으면 하던 일을 끝내고 내려가게 했습니다(drain).
+
+- 새 연결은 받지 않고, 열린 요청과 SSE 를 최대 70초 기다립니다. run 마감(60초)보다 길어야 정상으로 끝나는 run 이 잘리지 않습니다.
+- 그 뒤 남은 run · 끝 신호를 표에 옮기는 작업 · Curator 를 최대 30초 기다리고, 넘기면 취소합니다. 취소된 run 은 `failed` 로 닫히고 Idempotency 키를 놓아, 같은 키로 다시 보내면 새로 처리됩니다.
+- 세 숫자가 맞물립니다 — 앱이 스스로 정리하는 시간(110초) < 컨테이너 강제 종료 유예(120초) < 프록시가 붙잡는 시간(150초). 하나를 바꾸면 셋을 같이 봅니다.
+- **남은 것** — 30초에서 취소되는 순간이 마침 저장 commit 직후이면, 저장은 됐는데 `failed` 로 닫힙니다. 같은 키로 다시 누르면 두 번 저장됩니다. 드문 경우라 이번에는 목록으로만 남겼습니다(`docs/ops/deploy-v1.md` 의 drain 절).
+
+**근거** — `docs/ops/deploy-v1.md`(drain) · `docs/ops/stateless-v1.md` · #877(비교 표 원문) · #899 · `apps/api/app/domains/run_hold/repository.py` · `apps/api/app/api/runs/registry.py` · `sse.py` · `deploy/scripts/backup.sh` · `deploy/caddy/Caddyfile` · `deploy/scripts/health-alert.sh`
 
 ---
 
