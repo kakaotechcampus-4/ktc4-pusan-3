@@ -1,6 +1,6 @@
 # 일반 정보 질문(#574)의 코드 문구. Activity · Food · Growth 가 같은 문구를 쓴다.
 # 모델을 거치지 않고 화면에 그대로 나간다. 테스트가 글자 단위로 비교한다.
-# norm_notice 의 두 번째 문장은 Growth closed.habit_under36 과 말을 맞췄다 — 같은 검진을 두 이름으로 부르지 않는다(#574 리뷰 11-10).
+# norm_notice 의 두 번째 문장은 Growth closed.habit_under36 과 같은 말로 맞췄다(#574 리뷰 11-10).
 
 # 질문의 나이가 문서가 다루는 범위(만 0~5세) 밖이거나 거꾸로 쓴 범위
 info.out_of_range:
