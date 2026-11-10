@@ -665,6 +665,25 @@ class TestReadBudget:
 
         assert names(result) == [] and time.perf_counter() - started < 0.5
 
+    async def test_보여_준_행사_뒤_남은_것이_모두_상한에_걸리면_새_행사_없음이_아니다(
+        self, monkeypatch
+    ):
+        """앞 턴에서 보여 준 행사를 빼고 남은 행사가 전부 일정 읽기 중이면 "더 없다" 가 아니라
+        "확인 중" 이다 (#906 리뷰)."""
+        from app.agents.activity.tools import outing
+
+        monkeypatch.setattr(outing, "EVENT_READ_BUDGET_S", 0.01)
+        rows = [raw("1", "본 축제", km=1), raw("2", "느린 축제", km=2)]
+        ctx = await context(InMemoryEvents(rows), schedules=SlowSchedules({"2"}, delay=0.2))
+        ctx.state.shown_before = ("본 축제",)
+
+        result = await search_events(ctx, SearchEventsArgs(day=DayLabel.TODAY))
+
+        assert names(result) == []
+        assert ctx.state.no_new_events is False
+        assert ctx.state.events_pending is True
+        assert "확인하는 중" in result.data["message"]
+
 
 class CachingSlowSchedules(SlowSchedules):
     """한 번 읽은 행사는 캐시에서 바로 준다 — `ReadEventSchedules` 의 일정 캐시처럼."""

@@ -56,6 +56,8 @@ class ActivityRunState:
     shown_before: tuple[str, ...] = ()
     # 행사 조회에서 앞에서 보여 준 행사뿐이라 새 행사가 없었다 — 결과에 한 줄 안내를 붙인다
     no_new_events: bool = False
+    # 행사 일정 읽기가 상한 안에 안 끝나 낼 행사가 없었다 — "확인 중" 안내를 붙인다 (#906)
+    events_pending: bool = False
     # run 마감 시각(`time.perf_counter` 기준, `DomainTask.deadline`). 행사 일정 읽기가 남은
     # 시간만큼만 기다린다. None 이면 마감을 모른다(테스트 · eval)
     deadline: float | None = None

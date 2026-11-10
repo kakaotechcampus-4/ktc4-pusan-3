@@ -444,6 +444,8 @@ async def search_events(context: ActivityContext, args: SearchEventsArgs) -> Too
     found_schedules = await _read_schedules(
         context, [event for _, event, _ in allowed], budget=_read_budget(context)
     )
+    # 상한에 걸려 이번에 못 쓴 행사 수 — 결과가 비었을 때 "더 없음" 과 "확인 중" 을 가른다
+    pending = found_schedules.count(None)
     allowed = [found for found, schedule in zip(allowed, found_schedules, strict=True) if schedule]
     found_schedules = [schedule for schedule in found_schedules if schedule]
     # 오늘 밤에 물었으면 운영 시간 원문에서 끝나는 시각을 읽어, 이미 끝난 행사는 오늘에서 뺀다.
@@ -467,6 +469,9 @@ async def search_events(context: ActivityContext, args: SearchEventsArgs) -> Too
     rows = [row for row in opened if open_on(row, _open_days(context, row.name, days))][
         :EVENT_TOP_K
     ]
+    if not rows and pending:
+        # 일정을 아직 읽는 중이라 빠졌다 — 행사가 없는 게 아니다 (#906 리뷰)
+        return _events_pending(context)
     if not rows and len(fresh) < len(found):
         # 보여 준 행사를 빼고 남은 것도 연령 · 일정으로 빠졌다 — 새 행사가 없는 것과 같다
         return _no_new_events(context)
@@ -591,6 +596,18 @@ def _settle(task: "asyncio.Task[EventSchedule]") -> None:
     _BACKGROUND.discard(task)
     if not task.cancelled() and task.exception() is not None:
         logger.warning("행사 일정 뒤 읽기 실패 error=%s", type(task.exception()).__name__)
+
+
+def _events_pending(context: ActivityContext) -> ToolResult:
+    """일정 읽기가 상한 안에 끝나지 않아 이번에 낼 행사가 없다 — "더 없음" 이 아니라 "확인 중" 이다.
+    읽기는 뒤에서 이어 가서 다음에 물으면 나온다."""
+    context.state.events_pending = True
+    return ok(
+        "query",
+        _EVENTS,
+        events=[],
+        message="행사 일정을 아직 확인하는 중이다. 다시 찾지 말고 이번에는 행사 없이 낸다.",
+    )
 
 
 def _no_new_events(context: ActivityContext) -> ToolResult:

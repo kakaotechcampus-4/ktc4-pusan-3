@@ -29,6 +29,7 @@ from app.agents.activity.prompt import (
 from app.agents.activity.readouts import (
     CAUTION_NON_FOOD_ALLERGY,
     EVENTS_NO_NEW,
+    EVENTS_PENDING,
     LOCATION_MISSING,
     PLACE_AREA_UNKNOWN,
     READOUTS,
@@ -171,6 +172,7 @@ async def run(
             *((READOUTS.render(AFTER_SUNSET),) if context.state.dark_skipped and drafts else ()),
             *((READOUTS.render(PLACE_AREA_UNKNOWN),) if context.state.area_missed else ()),
             *((READOUTS.render(EVENTS_NO_NEW),) if context.state.no_new_events else ()),
+            *((READOUTS.render(EVENTS_PENDING),) if context.state.events_pending else ()),
             *((READOUTS.render(LOCATION_MISSING),) if _location_missing(context, gate) else ()),
             *((notice,) if notice else ()),
         ),
