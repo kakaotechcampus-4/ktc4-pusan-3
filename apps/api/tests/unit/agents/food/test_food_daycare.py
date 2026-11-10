@@ -417,6 +417,8 @@ async def test_안전_정보를_못_읽었어도_급식은_고치고_확인_못_
     assert result.success
     assert result.data["allergy_checked"] is False
     assert (await rows_on(meals))[0].menu_keys == ("밥", "두유")
+    # allergy_checked 는 모델에게만 간다 — 보호자 화면에도 확인 못 했다는 줄이 있어야 한다
+    assert texts(ctx)[-1] == code("daycare.allergy_unchecked")
 
 
 async def test_카탈로그에_없는_메뉴도_키로_저장한다() -> None:

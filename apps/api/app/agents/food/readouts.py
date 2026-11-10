@@ -82,6 +82,8 @@ DAYCARE_ABSENT = "daycare.absent"
 DAYCARE_AMBIGUOUS = "daycare.ambiguous"
 DAYCARE_SLOT_AMBIGUOUS = "daycare.slot_ambiguous"
 DAYCARE_ALLERGY_CONFLICT = "daycare.allergy_conflict"
+# 알레르기 조회 실패로 넣은 메뉴와 겹치는지 못 봤을 때 — "겹침 없음" 으로 넘기지 않는다
+DAYCARE_ALLERGY_UNCHECKED = "daycare.allergy_unchecked"
 DAYCARE_OUT_OF_RANGE = "daycare.out_of_range"
 DAYCARE_NOT_FOUND = "daycare.not_found"
 DAYCARE_REPLACED_UNKNOWN = "daycare.replaced_unknown"

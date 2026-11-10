@@ -31,6 +31,7 @@ from app.agents.food.menu_resolver import MenuResolver
 from app.agents.food.readouts import (
     DAYCARE_ABSENT,
     DAYCARE_ALLERGY_CONFLICT,
+    DAYCARE_ALLERGY_UNCHECKED,
     DAYCARE_AMBIGUOUS,
     DAYCARE_AMOUNT_UPDATED,
     DAYCARE_ASK_SUBSTITUTE,
@@ -184,8 +185,10 @@ async def update_daycare_meal(context: FoodContext, args: UpdateDaycareMealArgs)
     - 넣은 메뉴는 `filter_food_safety(purpose="daycare")` 로 다시 본다. 아이의 알레르기와 겹쳐도
       저장은 막지 않는다(보호자가 실제로 있었던 일을 말한 것이다) — 경고 문구를 함께 낸다. 겹치는
       항목 이름은 화면 문구에만 있고 모델에게 돌려주는 결과에는 없다. 안전 정보를 못 읽었으면
-      (`None`) 다시 보지 못하고 `allergy_checked=False` 로 알린다.
-    - 승인 게이트가 없다. 확인 모달이 뜨지 않는다(되돌릴 수 없는 2곳이 아니다).
+      (`None`) 다시 보지 못한다 — 저장은 하고, 모델에게는 `allergy_checked=False` 로, 보호자
+      화면에는 넣은 메뉴가 있을 때 `daycare.allergy_unchecked` 로 알린다(조회 실패를 겹침 없음으로
+      넘기지 않는다).
+    - 승인 게이트가 없다. 확인 모달이 뜨지 않는다(루트 §2 의 게이트 세 곳 어디에도 들지 않는다).
     """
     state = context.state
     spans = (args.date_span, *args.removed_spans, *args.added_spans, args.amount_span or "")
@@ -265,6 +268,9 @@ async def update_daycare_meal(context: FoodContext, args: UpdateDaycareMealArgs)
         labels = await _allergy_conflicts(context, added, entries)
         if labels:
             readouts += (READOUTS.render(DAYCARE_ALLERGY_CONFLICT, label=", ".join(labels)),)
+    elif entries is None and added:
+        # 조회 실패를 "겹침 없음" 으로 넘기지 않는다 (루트 §2). allergy_checked 는 모델에게만 간다
+        readouts += (READOUTS.render(DAYCARE_ALLERGY_UNCHECKED),)
     state.readouts = readouts
     return ok(
         "update",
@@ -292,7 +298,8 @@ async def delete_daycare_meal(context: FoodContext, args: DeleteDaycareMealArgs)
       (`daycare.out_of_range`). 그날 행이 없으면 `daycare.not_found` 다. 미래 날짜도 지운다.
     - 쓰기가 끝난 뒤에만 "기관 식사 없는 걸로 해 뒀어요"(`daycare.absent`)를 `state.readouts` 에
       채운다.
-    - 승인 게이트가 없다.
+    - 🚨 승인 게이트가 없다 — AI 가 고른 삭제라 루트 §2 게이트 ㉢ 대상인데 아직 붙이지 못했다.
+      알려진 문제다 (Food_Tool_명세 `delete_daycare_meal` 줄 · #943 리뷰).
     """
     state = context.state
     if _outside_utterance(state.utterance, (args.date_span,)):

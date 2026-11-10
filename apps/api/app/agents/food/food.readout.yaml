@@ -102,6 +102,9 @@ daycare.slot_ambiguous:
 daycare.allergy_conflict:
   kind: daycare
   template: "기록해 뒀어요. 그런데 등록된 {label} 알레르기와 겹쳐요."
+daycare.allergy_unchecked:
+  kind: daycare
+  template: "기록해 뒀어요. 다만 알레르기 정보를 확인하지 못해서, 넣은 메뉴와 겹치는지는 보지 못했어요."
 daycare.out_of_range:
   kind: daycare
   template: "너무 지난 날이라 급식 기록이 남아 있지 않아요."
