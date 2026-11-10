@@ -345,6 +345,7 @@ function SuggestionRow({
         <SuggestionItems
           agent={suggestion.agent}
           items={suggestion.items}
+          content={suggestion.content}
           className={reason ? "mt-3" : "mt-2"}
         />
 
