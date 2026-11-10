@@ -215,7 +215,7 @@ class ActivityCandidate(ToolArgs):
 
 **식품 사전에 없는 알레르기 이름에는 확인 문구를 붙인다** (#298 · #261 리뷰). `allergy` active 행 중 이름에 식품 사전(공용 이름 사전)이 못 찾은 조각이 있으면 — 꽃가루 · 라텍스 · 동물털, 19종 밖 식품 중 별칭 표(`food_safety_terms.yaml` `extra_allergens`)에 없는 것(쑥)도 — 표에 있는 키위 · 버섯은 `allergy_book()` 이 식품으로 읽어 별칭 전부(참다래 · 표고 …)로 막고 문구를 붙이지 않는다(#437 · QA 16) — 코드 문구 `caution.non_food_allergy` 를 이름마다 한 줄 낸다: *"등록된 알레르기(꽃가루)가 있어요. 장소랑 재료를 한 번 확인해 주세요."* 이름이 문장에 그대로 나오는 후보는 위 대조가 빼지만, 꽃가루 · 동물털은 재료가 아니라 장소와 계절에 걸려 있어 뺄 놀이를 코드가 못 정한다. 이름을 장소 · 물건으로 넓히는 대응표(꽃가루 → 공원)는 "어디까지 위험한가" 를 우리가 정하는 일이라 만들지 않는다. 고르는 판정은 Growth 와 같은 공용 함수(`common/allergy.non_food_allergies`)다. `environmental`(고소공포)에는 붙이지 않는다. 문구는 추천마다가 아니라 run 에 한 벌로 run state(`cautions`)에 남기고, 화면 자리는 #249 를 따른다.
 
-**`suggestion.allergens` 는 코드가 채운다** (#232). 그 놀이에 든 알레르기 항목의 정식 명칭이고, 승인할 때 *"이 놀이에는 밀가루가 들어가요"* 안내에 쓴다. 19종은 사전으로 잡고, 19종 밖(쑥 등)은 **그 아이에게 등록된 항목만** 잡힌다 — 등록 안 된 쑥까지 잡으려면 사전이 필요하다. 상태(없음 · 모름)는 담지 않는다 — 승인 때 서버가 다시 읽는다. `suggestion.items` 는 후보의 `materials` 를 준비물로 그대로 담는다.
+**`suggestion.allergens` 는 코드가 채운다** (#232). 그 놀이에 든 알레르기 항목의 이름이고(19종은 정식 명칭), 승인할 때 *"이 놀이에는 밀가루가 들어가요"* 안내에 쓴다. 19종은 사전으로 잡고, 19종 밖(쑥 등)은 **그 아이에게 등록된 항목만** 잡힌다 — 등록 안 된 쑥까지 잡으려면 사전이 필요하다. 19종 밖 이름은 보호자가 적은 이름 그대로 담는다 — 구분 기호로 나눈 조각에서 꼬리말만 떼고("쑥 가루 알레르기" 는 "쑥 가루") 띄어쓰기는 둔다. 대조는 낱말 조각까지 해서 "밀가루" 의 "가루" 에도 걸리지만, 태그는 조각이 아니라 그 이름으로 단다 — 조각으로 달면 05 가 보호자가 적은 적 없는 "가루" 를 묻고, 괜찮았던 식품과 이름이 맞지 않는다 (#891). 05 는 태그를 낱말까지 읽어 맞춘다 — 띄어쓰기를 지운 "쑥가루" 는 한 낱말이라, 나중에 "쑥" 으로 등록한 알레르기에 걸리지 않는다. 그 대신 이름의 다른 낱말이 등록된 알레르기와 겹쳐도 막혀서(내린 "고양이 비듬" 에 "비듬" 이 등록돼 있으면 "고양이 그림 그리기" 도 막힌다) 조각으로 달 때보다 더 막는 쪽이다. 상태(없음 · 모름)는 담지 않는다 — 승인 때 서버가 다시 읽는다. `suggestion.items` 는 후보의 `materials` 를 준비물로 그대로 담는다.
 
 🚨 **`health_safety` 는 run 당 한 번만 읽는다.** `build_gate` 가 읽은 행을 run state(`safety_entries`)에 담고, 출력 검증의 안전 필터는 그 값만 받는 순수 함수다. 출력 검증 때 다시 읽으면 같은 run 안에서 게이트와 필터가 다른 행을 볼 수 있다. 테스트가 출력 검증 동안 `SafetyReader` 호출 0회를 고정한다.
 
@@ -903,12 +903,12 @@ GPS 로 받는다 (09-28). 위치정보 법적 동의는 가입 화면에서 선
 
 ### 5-2. 기대값이 바뀌는 기존 테스트
 
-원인은 한 줄 — [`routing.py:60`](../../../apps/api/app/agents/supervisor/routing.py:60) `IMPLEMENTED_AGENTS` 에 `activity` 가 들어가는 것.
+원인은 한 줄 — [`routing.py:60`](../../../apps/api/app/agents/supervisor/routing.py#L60) `IMPLEMENTED_AGENTS` 에 `activity` 가 들어가는 것.
 
 | 대상 | 지금 | 구현 후 |
 | --- | --- | --- |
 | RC07 "이번 주말에 집에서 뭐 하고 놀면 좋을까?" | `unavailable_agents` 덕분에 `_did_anything()` 이 True | `unavailable=()` + `food_tasks=()` → **False → `Failed("unparsable")`**. 🚨 `_did_anything()` 수정 필수 |
-| **`stranded`** ([pipeline.py:261](../../../apps/api/app/agents/pipeline.py:261)) | activity 요청이 있으면 False | activity 만 있는 run 에서 **True** → Supervisor 재호출 · 모델 호출 1회 낭비 · `Rerouted` 오발신. **가장 조용히 깨지는 지점** |
+| **`stranded`** ([pipeline.py:261](../../../apps/api/app/agents/pipeline.py#L261)) | activity 요청이 있으면 False | activity 만 있는 run 에서 **True** → Supervisor 재호출 · 모델 호출 1회 낭비 · `Rerouted` 오발신. **가장 조용히 깨지는 지점** |
 | RC16 "저녁 메뉴랑 주말 놀이" | food 만 실행 | **food + activity 둘 다 실행** — 도메인 Agent 2개 동시 실행이 처음 |
 | RC17 "저녁 + 놀이 + 한글 공부" | activity `unavailable`, growth `dropped` | activity 실행, growth `dropped` |
 | `_judge` | "Food 는 food 조각만 받는다"만 검사 | Activity 에 다른 도메인 조각이 섞여도 안 잡힘 — 대칭 검사 추가 |

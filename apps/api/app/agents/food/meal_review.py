@@ -9,7 +9,8 @@
   5. 근거 대조       이번 run 에서 조회하지 않은 근거 id 를 인용하면 후보를 거절한다
   6. build()         6개월이 안 지난 아이 기록 근거 수로 `kind` 를 정한다.
                      이름 · 재료는 카탈로그 행에서 온다. 일반 추천이면 고른 메뉴(레시피 카탈로그
-                     행) 자체가 근거로 붙는다 — 문서 행이 없는 월령에도 근거 0행이 되지 않게(#442)
+                     행) 자체가 근거로 붙는다 — 문서 행이 없는 월령에도 근거 0행이 되지 않게(#442).
+                     이유식 식단 표 메뉴는 `food_doc` 식단 행이 근거다(#399)
 
   7. 생성 후보      보호자가 재료 · 요리 종류를 정해 물었고 레시피북이 모자랄 때만 받는다(#740).
                      모델이 이름 · 재료를 쓰므로 형식 · 재료 조건 · 최근 이름 · 풀 이름을 보고 같은
@@ -45,6 +46,7 @@ from app.agents.food.result import ErrorCode
 from app.agents.food.schemas.common import EvidenceRef, MealSlot
 from app.agents.food.schemas.recommend import GeneratedMeal, MealCandidate
 from app.agents.food.store.ports import RECIPE_SOURCES, FoodDocRow, MenuCatalogRow, SafetyEntry
+from app.agents.food.weaning_menu import WEANING_MENU_SOURCE, weaning_menu_citation
 from app.core.recipe_source import RECIPE_SOURCE_INFO
 from app.rules.age import Stage
 from app.rules.menu_evidence import menu_evidence_id
@@ -405,7 +407,11 @@ def _menu_basis(row: MenuCatalogRow) -> tuple[EvidenceCitation, ...]:
     같은 이름을 합친 행은 합쳐진 레시피를 모두 단다(`merged_from`). 그 메뉴의 재료 · 알레르기가
     모두에서 왔고, 대표만 달면 대표가 소스에서 내려간 뒤 다른 소스로 남은 메뉴를 05 가 숨긴다.
     한 줄 문구는 소스 정보 표의 `note` 다(코드 문구, #510).
+
+    이유식 식단 표 메뉴(이유기, #399)는 레시피가 아니라 `food_doc` 식단 행을 가리킨다.
     """
+    if row.source == WEANING_MENU_SOURCE:
+        return (weaning_menu_citation(row),)
     if row.source not in RECIPE_SOURCES or not row.source_id:
         return ()
     pairs = ((row.source, row.source_id), *row.merged_from)

@@ -49,7 +49,8 @@ class InMemoryCuratorStore:
         domain: CuratorDomain,
         id: str,
         subject: str,
-        polarity: int = 0,
+        # 0 은 Curator 대상이 아니다(#287) — 기본값은 연결되는 쪽으로 둔다
+        polarity: int = 1,
         observed_on: date = date(2026, 9, 1),
         status: str = "active",
         embedding: list[float] | None = None,
@@ -104,7 +105,7 @@ class InMemoryCuratorStore:
 
     # CuratorStore
     async def list_unembedded(self, *, child_id: UUID) -> list[ObservationItem]:
-        return [item for item in self._active(child_id) if item.embedding is None]
+        return [item for item in self._targets(child_id) if item.embedding is None]
 
     async def save_embeddings(self, *, vectors: Mapping[ObservationKey, list[float]]) -> None:
         for key, vector in vectors.items():
@@ -118,7 +119,7 @@ class InMemoryCuratorStore:
     ) -> list[ObservationItem]:
         return [
             item
-            for item in self._active(child_id)
+            for item in self._targets(child_id)
             if item.embedding is not None
             and item.affinity_id is None
             and item.observed_on >= min_observed_on
@@ -175,11 +176,14 @@ class InMemoryCuratorStore:
     async def clear_hold(self, *, domain: CuratorDomain, observation_id: str) -> None:
         self._holds.pop((domain, observation_id), None)
 
-    def _active(self, child_id: UUID) -> list[ObservationItem]:
+    def _targets(self, child_id: UUID) -> list[ObservationItem]:
+        """임베딩 · 연결 공통 조건. DB 구현과 같다 — active 이고 polarity 가 0 이 아닌 것."""
         return [
             stored.item
             for stored in self._observations.values()
-            if stored.child_id == child_id and stored.status == "active"
+            if stored.child_id == child_id
+            and stored.status == "active"
+            and stored.item.polarity != 0
         ]
 
     def _next_profile_id(self) -> str:

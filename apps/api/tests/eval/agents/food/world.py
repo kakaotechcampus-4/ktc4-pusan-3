@@ -36,6 +36,7 @@ from app.agents.food.store import (
     SafetyEntry,
     in_memory_ports,
 )
+from app.agents.food.weaning_menu import weaning_menu_rows
 from app.rules.menu_key import normalize_menu_key
 
 KST = ZoneInfo("Asia/Seoul")
@@ -189,7 +190,9 @@ class World:
     def recipe(self, content: str) -> MenuCatalogRow | None:
         """추천 문장(= 메뉴 이름)으로 레시피 행을 찾는다. 풀 밖이면 None."""
         key = normalize_menu_key(content)
-        return next((row for row in self.recipes if row.menu_key == key), None)
+        # 이유기 후보는 레시피북이 아니라 이유식 식단 표다(#399)
+        weaning = weaning_menu_rows(self.spec.months, synced_at=self.context.now)
+        return next((row for row in (*self.recipes, *weaning) if row.menu_key == key), None)
 
 
 def birth_date_for(months: int, today: date) -> date:

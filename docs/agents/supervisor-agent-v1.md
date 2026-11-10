@@ -160,6 +160,7 @@
 - 보정 이력 — 끝까지 라이브(`growth/test_growth_supervisor_e2e.py`)에서 "숫자 놀이 뭐 없어?" 가 "놀이" 라는 낱말만 보고 activity 로 새는 것을 찾았다(직접 표본 3/10 만 growth). `_REQUEST` 에 "놀이라는 말이 있어도 배우는 낱말(숫자 · 한글 · 글자)이 있으면 growth/learning_suggestion, 없으면 activity" 한 줄을 더했고 12/12 가 됐다. 같은 말투(GR25 · GR26)와 반대 경계(GR27 · GR28 — 배우는 낱말이 없는 놀이는 activity)를 GR 에 더했다.
 - 보정은 한 번에 하나, 최대 3회. "변형" 케이스의 문장을 프롬프트에 옮기지 않는다. 고친 뒤 split 합계(RC · T)가 떨어지면 되돌린다. 3회 뒤에도 미달이면 합격선을 낮추지 않고 숫자로 남긴다
 - 앞 대화를 붙인 후속 질문은 FU01~FU14 가 잰다 — [§5-5](#5-5-eval)
+- 말투만 다른 식사 추천(#861) — RQ01~RQ08 이 잰다(`-k request_tone`, `TEST_REPEAT=3`). 0건 규칙: 매번 Memory 없이 Food `meal_recommendation` 하나. 원인은 Supervisor 가 아니라 조각 밖에 남은 "야" 였다(`routing._covers_all` 이 추임새를 덮인 것으로 본다). 프롬프트는 서술어 없는 간식 요청("어린이집 끝나고 간식", 2/3 → 3/3)과 "말고" 정정 오인(RQ08)만 맡는다. "부르는 말은 뒤 조각에 붙여 자른다" 한 줄은 넣었다가 뺐다 — FC09(food_check) · T42(역할놀이 unclear)가 5번 중 5 · 4번 틀려(develop 3 · 1번) 코드가 맡는 쪽으로 정리했다.
 - 거절 · 안내 문구는 RO01~RO08 이 잰다(`supervisor/test.py -m live -k readout_routing`, 0건 규칙, #864) — 약 얘기가 없는 진단 문의는 약 문구가 없다 · 다른 집 아이 · 다른 보호자가 하는 일을 묻는 말은 도메인 Agent 없이 "우리 아이 기록만 다룬다" 안내 · 또래 기준 추천은 request 그대로 · 친구네 집 · 옆집에서 겪은 일은 record. 프롬프트에는 예시 세 줄과 out_of_scope 정의 세 줄을 더했다. 바꾸기 전후 split(RC · T)는 [SUPERVISOR_EVAL.md](eval/SUPERVISOR_EVAL.md) §1 에 있다
 
 ---

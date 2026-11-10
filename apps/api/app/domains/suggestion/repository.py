@@ -1,5 +1,6 @@
 """제안 표시·피드백과 관찰 상세의 근거 역조회."""
 
+import logging
 import uuid
 from collections.abc import Mapping, Sequence
 from datetime import date, datetime, timedelta
@@ -26,10 +27,13 @@ from app.domains.suggestion.models import (
     SuggestionEvidence,
     SuggestionFeedback,
     SuggestionKind,
+    SuggestionMealSlot,
     SuggestionStatus,
 )
 from app.rules.book_evidence import BOOK_EVIDENCE_KIND
 from app.rules.menu_evidence import MENU_EVIDENCE_KIND
+
+log = logging.getLogger(__name__)
 
 
 async def create_suggestion(
@@ -49,6 +53,7 @@ async def create_suggestion(
     warnings: Sequence[str] = (),
     event_period: tuple[date, date] | None = None,
     requested: bool = False,
+    meal_slot: SuggestionMealSlot | None = None,
 ) -> Suggestion:
     """Agent 결과 저장. 일반/개인화 판정과 근거 필수 여부는 호출 계층에서 검증한다.
 
@@ -59,6 +64,7 @@ async def create_suggestion(
     `warnings` 는 그 추천의 위험 경고 문구다(코드 문구). 경고가 없으면 비어 있다.
     `event_period` 는 행사가 붙은 추천의 (시작일, 종료일)이다. 행사가 없으면 None.
     `requested` 는 보호자가 놀이 · 주제를 정해 물은 일반 추천인지다(`_requested` 가 정한다).
+    `meal_slot` 은 식사 추천의 끼니다. 일정 초안 제목에만 쓴다. Food 가 아니면 None.
     """
     row = Suggestion(
         child_id=child_id,
@@ -76,6 +82,7 @@ async def create_suggestion(
         event_starts_on=event_period[0] if event_period else None,
         event_ends_on=event_period[1] if event_period else None,
         requested=requested,
+        meal_slot=meal_slot,
     )
     session.add(row)
     await session.flush()
@@ -297,9 +304,26 @@ async def save_agent_suggestions(
             warnings=item.get("warnings", ()),
             event_period=_event_period(item),
             requested=_requested(item),
+            meal_slot=_meal_slot(item),
         )
         ids.append(row.id)
     return ids
+
+
+def _meal_slot(payload: Mapping[str, Any]) -> SuggestionMealSlot | None:
+    """payload 의 끼니. Food 가 아닌 추천 · 이 칸 전에 만든 payload 는 None.
+
+    모르는 값도 None 이다 — 초안 제목에만 쓰는 칸이라 이 값 하나로 추천 묶음 저장을 실패시키지
+    않는다(제목이 "식사" 가 될 뿐이다). 값 목록은 Food 의 `MealSlot` 과 테스트가 맞춘다.
+    그래도 어긋난 것이 운영에서 보이게 경고는 남긴다 — 모델이 낸 값이라 값은 싣지 않는다.
+    """
+    value = payload.get("meal_slot")
+    if value is None:
+        return None
+    if value not in SuggestionMealSlot:
+        log.warning("모르는 끼니라 meal_slot 을 비운다 — Food 의 MealSlot 목록과 맞는지 볼 것")
+        return None
+    return SuggestionMealSlot(value)
 
 
 def _event_period(payload: Mapping[str, Any]) -> tuple[date, date] | None:

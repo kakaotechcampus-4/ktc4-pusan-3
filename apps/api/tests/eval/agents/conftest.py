@@ -28,6 +28,7 @@ from app.agents.health import agent as health_agent
 from app.agents.memory import agent as memory_agent
 from app.agents.memory import registry as memory_registry
 from app.agents.supervisor import agent as supervisor_agent
+from tests.eval.agents import tally
 
 _CLIP = 200  # 한 줄에 싣는 질문·답변 길이
 _DOMAINS = ("food", "health", "education", "activity", "routine")
@@ -65,6 +66,7 @@ _pending: list[AgentCall] = []
 _direct: list[tuple[str, str]] = []  # agent 를 거치지 않고 테스트가 직접 부른 tool (이름, raw_text)
 _expected: list[str] = []  # 이번 테스트가 expect 로 적어 둔 기대
 _running: dict[str, bool] = {"active": False, "rows": False}
+_marks_before: list[int] = [0]  # 이 테스트가 시작할 때까지 `tally.mark` 가 불린 횟수
 _records: dict[Path, list[TestRecord]] = {}
 
 
@@ -307,12 +309,15 @@ def pytest_runtest_setup(item: pytest.Item) -> None:
     _expected.clear()
     _running["active"] = True
     _running["rows"] = _ALWAYS_ROWS or item.get_closest_marker("live") is not None
+    _marks_before[0] = tally.written()
 
 
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_makereport(item: pytest.Item, call: Any) -> Any:
     outcome = yield
     report = outcome.get_result()
+    # assert 로 판정하는 eval 이 `C1Failure` 를 던졌는지 — 회차 집계가 C1 로 센다 (#816)
+    report.c1_failure = call.excinfo is not None and isinstance(call.excinfo.value, tally.C1Failure)
     if report.when == "call" or (report.when == "setup" and report.outcome != "passed"):
         _finish(item, report)
 
@@ -331,10 +336,36 @@ def _finish(item: pytest.Item, report: Any) -> None:
         reason=_reason(report),
     )
     _records.setdefault(Path(str(item.path)), []).append(record)
+    _auto_mark(item, report, record)
     _pending.clear()
     _direct.clear()
     _expected.clear()
     _running["active"] = False
+
+
+def _auto_mark(item: pytest.Item, report: Any, record: TestRecord) -> None:
+    """회차를 직접 남기지 않은 라이브 테스트 하나를 입력 하나 · 한 회차로 남긴다 (#816).
+
+    모듈의 `TALLY_SUITE` 가 있고 `tally.mark` 를 이 테스트가 부르지 않았을 때만 한다.
+    실패면 `c1` 마커가 있을 때 C1, 없으면 일반 실패다.
+    """
+    suite = getattr(getattr(item, "module", None), "TALLY_SUITE", None)
+    if suite is None or item.get_closest_marker("live") is None:
+        return
+    if tally.written() != _marks_before[0] or report.outcome not in ("passed", "failed"):
+        return
+    if getattr(report, "wasxfail", None) is not None:
+        return
+    failed = report.outcome == "failed"
+    is_c1 = item.get_closest_marker("c1") is not None or getattr(report, "c1_failure", False)
+    tools = [name.split(" ")[0] for call in record.calls for name in call.tools]
+    tally.mark(
+        suite,
+        record.name,
+        c1=(record.reason or "실패",) if failed and is_c1 else (),
+        general=(record.reason or "실패",) if failed and not is_c1 else (),
+        tools=tools,
+    )
 
 
 def _expectation(item: pytest.Item) -> list[str]:
@@ -367,6 +398,20 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
         target = path.with_name(f"{path.stem}_result.txt")
         target.write_text(_format(path, records), encoding="utf-8")
     _write_run_meta(session)
+    _print_history_lines(session)
+
+
+def _print_history_lines(session: pytest.Session) -> None:
+    """이번 세션에서 회차를 남겼으면 측정 이력 칸에 옮길 값을 출력한다 (#816)."""
+    if not tally.written() or not any(i.get_closest_marker("live") for i in session.items):
+        return
+    marks = tally.load()
+    meta = tally.read_meta()
+    reporter = session.config.pluginmanager.get_plugin("terminalreporter")
+    write = reporter.write_line if reporter is not None else print
+    write("측정 이력에 옮길 값 — 문서는 직접 고친다 (버전 · 무엇을 왜 바꿨나는 사람이 채운다)")
+    for item in tally.summarize(marks):
+        write(tally.history_line(item, meta))
 
 
 def _write_run_meta(session: pytest.Session) -> None:

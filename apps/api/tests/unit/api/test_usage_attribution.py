@@ -27,16 +27,14 @@ CHILD = uuid.UUID(int=2)
 @pytest.fixture(autouse=True)
 def _clean_registry():
     registry.clear()
-    photo_run._runs.clear()
     yield
     registry.clear()
-    photo_run._runs.clear()
 
 
 async def test_사진_run_은_photo_로_귀속한다(monkeypatch):
     seen: list[llm_usage.Attribution | None] = []
 
-    def fake_read_photo(data, *, received_at):
+    def fake_read_photo(data, *, received_at, meal_deadline=None):
         # asyncio.to_thread 로 스레드에서 불린다 — 귀속이 스레드까지 넘어와야 한다
         seen.append(llm_usage.current())
         raise entrypoint.UnreadablePhoto("synthetic")

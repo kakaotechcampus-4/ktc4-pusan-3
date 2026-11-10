@@ -68,6 +68,7 @@ MEAL_REQUEST_AGE_BLOCK = "meal.request_age_block"
 # 문구 자리에 채운다
 MEAL_NUTRIENT_BASIS = "meal.nutrient_basis"
 MEAL_MENU_SOURCE = "meal.menu_source"
+MEAL_MENU_WEANING = "meal.menu_weaning"  # 고른 메뉴가 이유식 식단 표 메뉴(이유기, #399)
 MEAL_MENU_GENERATED = "meal.menu_generated"  # 고른 메뉴가 모두 레시피북에 없는 생성 메뉴
 MEAL_MENU_MIXED = "meal.menu_mixed"  # 레시피북 메뉴와 생성 메뉴가 섞임
 

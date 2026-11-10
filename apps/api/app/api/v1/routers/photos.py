@@ -148,7 +148,7 @@ async def upload_photo(
         }
         replayed = await idempotency.recall(**scope)
         if replayed is not None:
-            previous = registry.get(replayed)
+            previous = await registry.lookup(replayed)  # 다른 워커의 run 도 (#877)
             if previous is not None and previous.ended_with != "failed":
                 return PhotoUploadResponse(run_id=replayed)
             idempotency.forget_run(replayed)
@@ -158,7 +158,7 @@ async def upload_photo(
         if not data:
             raise ApiError(400, "validation_failed", _PICK_AGAIN)
 
-        if not quota.consume(
+        if not await quota.consume(
             parent_id=parent.parent_id, today=quota.today_kst(), limit=settings.INPUT_DAILY_LIMIT
         ):
             raise ApiError(
@@ -167,6 +167,9 @@ async def upload_photo(
 
         channel = registry.open_run(parent_id=parent.parent_id)
         try:
+            # 채널 행이 표에 쓰인 뒤에 202 — 다른 워커의 SSE · 같은 키 재시도가 이 run 을 찾는다
+            # (#877 4단계 · #899 리뷰). 못 찾으면 재시도가 사진을 두 번 읽고 한도도 두 번 쓴다
+            await channel.opened()
             # 아직 아무것도 읽지 않았다 — 키를 못 남기면 접수하지 않고 503 (한 줄 입력과 같다, #671)
             await idempotency.remember(**scope, replay=channel.run_id, strict=True)
         except Exception:
@@ -197,7 +200,8 @@ async def upload_photo(
 async def commit_photo(
     rid: str, body: PhotoCommitRequest, parent: CurrentParent, session: SessionDep
 ) -> JSONResponse:
-    run = photo_run.get(rid, parent_id=parent.parent_id)
+    # 행을 잡는다 — 같은 저장이 두 워커에 동시에 와도 뒤 요청은 이 commit 뒤 남긴 응답을 본다 (#877)
+    run = await photo_run.lock(session, rid, parent_id=parent.parent_id)
     if run is None or run.reading is None:
         raise ApiError(404, "not_found", "저장할 사진이 없어요")
     if run.response is not None:
@@ -292,10 +296,12 @@ async def commit_photo(
         await insert_daycare_meals(
             session, child_id=run.child_id, meals=meals, source_notice_id=saved.notice_id
         )
-    await session.commit()
 
     first_date = next((str(e.date) for e in body.entries if e.date is not None), None)
-    run.response = PhotoCommitResponse(
+    response = PhotoCommitResponse(
         calendar_date=first_date if body.attach_to_calendar else None
     ).model_dump()
-    return JSONResponse(status_code=201, content=run.response)
+    # 응답을 기록과 같은 트랜잭션에 남긴다 — commit 이 실패하면 둘 다 없다
+    await photo_run.finish(session, run, response)
+    await session.commit()
+    return JSONResponse(status_code=201, content=response)

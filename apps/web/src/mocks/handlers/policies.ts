@@ -8,8 +8,8 @@ import { networkDelay, url } from "./helpers";
  * `GET /policies` — 동의 화면이 그릴 약관 (#91 · #172). **무인증이다.**
  *
  * 🚨 **실서버가 지금 주는 것과 같은 모양으로 둔다.** 버전 · 순서 · `html_path` 까지 맞춘다
- *    (`apps/api/alembic/versions/…register_policy_2026_11_03.py` · `app/domains/policy/catalog.py`).
- *    다섯 scope 모두 `2026-11-03` 판이고 정본 HTML 이 있다 — 한동안 `draft-1` 로 남아 목 화면이 실서버와 달랐다 (#868). 목이 더 친절하면 화면은 목에서만 동작한다 — #90 이
+ *    (`apps/api/alembic/versions/…register_policy_2026_11_10.py` · `app/domains/policy/catalog.py`).
+ *    넷은 `2026-11-10` 판, 보호자 개인정보(`privacy_account`)만 `2026-11-03` 판이고 모두 정본 HTML 이 있다 — 한동안 `draft-1` 로 남아 목 화면이 실서버와 달랐다 (#868). 목이 더 친절하면 화면은 목에서만 동작한다 — #90 이
  *    잡으려던 회귀가 정확히 그거였다 (프론트 상수 `2026-09-01` 이 DB 에 없는데 목은 통과시켰다).
  *
  * 🚨 **본문(`content`)을 내려보내지 않는다.** 전문은 `html_path` 의 정본 페이지다.
@@ -20,13 +20,13 @@ import { networkDelay, url } from "./helpers";
 const BASE: Policy[] = [
   {
     scope: "service_terms",
-    version: "2026-11-03",
+    version: "2026-11-10",
     label: "서비스 이용약관",
     legal_basis: null,
     required: true,
     sensitive: false,
     target: "account",
-    html_path: "/policies/service_terms/2026-11-03",
+    html_path: "/policies/service_terms/2026-11-10",
   },
   {
     scope: "privacy_account",
@@ -41,33 +41,33 @@ const BASE: Policy[] = [
   {
     // 🚨 **선택이다.** 이 한 건 때문에 "필수 = 목록 전체" 가 깨졌다 (#173).
     scope: "location",
-    version: "2026-11-03",
+    version: "2026-11-10",
     label: "위치정보 수집·이용",
     legal_basis: "위치정보의 보호 및 이용 등에 관한 법률 제19조 (개인위치정보의 이용·제공)",
     required: false,
     sensitive: false,
     target: "account",
-    html_path: "/policies/location/2026-11-03",
+    html_path: "/policies/location/2026-11-10",
   },
   {
     scope: "child_basic",
-    version: "2026-11-03",
+    version: "2026-11-10",
     label: "개인정보 수집·이용 (아이 기본정보)",
     legal_basis: "개인정보보호법 제22조의2 (만 14세 미만 아동의 법정대리인 동의)",
     required: true,
     sensitive: false,
     target: "child",
-    html_path: "/policies/child_basic/2026-11-03",
+    html_path: "/policies/child_basic/2026-11-10",
   },
   {
     scope: "child_health",
-    version: "2026-11-03",
+    version: "2026-11-10",
     label: "민감정보 처리 (아이 건강·알레르기)",
     legal_basis: "개인정보보호법 제23조 (민감정보의 처리, 별도 동의)",
     required: true,
     sensitive: true,
     target: "child",
-    html_path: "/policies/child_health/2026-11-03",
+    html_path: "/policies/child_health/2026-11-10",
   },
 ];
 

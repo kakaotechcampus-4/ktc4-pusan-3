@@ -20,6 +20,7 @@ from app.domains.suggestion.models import (
     SuggestionAgent,
     SuggestionEvent,
     SuggestionKind,
+    SuggestionMealSlot,
     SuggestionStatus,
 )
 from tests.integration.api.conftest import Bearer, issue_bearer, link_child
@@ -35,6 +36,7 @@ async def _make_suggestion(
     expires_at: datetime | None = None,
     items: Sequence[str] = (),
     allergens: Sequence[str] = (),
+    meal_slot: SuggestionMealSlot | None = None,
 ) -> Suggestion:
     """테스트용 제안 직접 INSERT."""
     row = Suggestion(
@@ -47,6 +49,7 @@ async def _make_suggestion(
         items=list(items),
         allergens=list(allergens),
         expires_at=expires_at or (datetime.now(UTC) + timedelta(hours=24)),
+        meal_slot=meal_slot,
     )
     session.add(row)
     await session.flush()
@@ -356,13 +359,17 @@ async def test_event_drafts_from_approved(
 async def test_event_drafts_food_grouped(
     db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
 ):
-    """food 제안 N건 → 초안 1건 묶음."""
-    s1 = await _make_suggestion(
-        session, child_id=cid, agent=SuggestionAgent.FOOD, status=SuggestionStatus.APPROVED
-    )
-    s2 = await _make_suggestion(
-        session, child_id=cid, agent=SuggestionAgent.FOOD, status=SuggestionStatus.APPROVED
-    )
+    """food 제안 N건 → 초안 1건 묶음. 제목은 그 끼니다 (#898)."""
+    s1, s2 = [
+        await _make_suggestion(
+            session,
+            child_id=cid,
+            agent=SuggestionAgent.FOOD,
+            status=SuggestionStatus.APPROVED,
+            meal_slot=SuggestionMealSlot.BREAKFAST,
+        )
+        for _ in range(2)
+    ]
     headers, _ = bearer
     resp = await db_client.post(
         f"/api/v1/children/{cid}/suggestions/event-drafts",
@@ -372,8 +379,33 @@ async def test_event_drafts_food_grouped(
     assert resp.status_code == 201
     data = resp.json()
     assert len(data["drafts"]) == 1
-    assert data["drafts"][0]["event"]["title"] == "저녁 식사"
+    assert data["drafts"][0]["event"]["title"] == "아침 식사"
     assert len(data["drafts"][0]["suggestion_ids"]) == 2
+
+
+async def test_event_drafts_food_title_without_one_meal(
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+):
+    """끼니가 섞이면 한 끼니를 고르지 않는다 — 제목은 "식사" (#898)."""
+    rows = [
+        await _make_suggestion(
+            session,
+            child_id=cid,
+            agent=SuggestionAgent.FOOD,
+            status=SuggestionStatus.APPROVED,
+            meal_slot=slot,
+        )
+        for slot in (SuggestionMealSlot.BREAKFAST, SuggestionMealSlot.DINNER)
+    ]
+    headers, _ = bearer
+    resp = await db_client.post(
+        f"/api/v1/children/{cid}/suggestions/event-drafts",
+        json={"suggestion_ids": [str(r.id) for r in rows]},
+        headers=headers,
+    )
+    assert resp.status_code == 201
+    [draft] = resp.json()["drafts"]
+    assert draft["event"]["title"] == "식사"
 
 
 # 🚨 채택 · 초안 · 제출은 kind 를 보지 않는다 — 05 의 일반 추천도 같은 길로 일정이 된다
@@ -452,7 +484,8 @@ async def test_event_drafts_food_grouped_across_kinds(
         assert resp.status_code == 201
         drafts = resp.json()["drafts"]
         assert len(drafts) == 1
-        assert drafts[0]["event"]["title"] == "저녁 식사"
+        # 끼니 칸이 빈 행(이 칸 전에 만든 추천)이라 끼니를 짐작하지 않는다 (#898)
+        assert drafts[0]["event"]["title"] == "식사"
         assert len(drafts[0]["suggestion_ids"]) == 2
 
 

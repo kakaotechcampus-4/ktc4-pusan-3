@@ -1,0 +1,7 @@
+body{margin:0;background:#fff;color:#111;font-family:"Apple SD Gothic Neo",sans-serif;width:760px}
+.page{padding:40px 48px}
+h1{font-size:26px;text-align:center;margin:8px 0 18px}
+p,li{font-size:17px;line-height:1.7;margin:0 0 10px}
+table{border-collapse:collapse;width:100%;font-size:16px;margin-top:10px}td,th{border:1px solid #333;padding:8px 10px;text-align:left}
+.top{display:flex;justify-content:space-between;border-bottom:2px solid #222;padding-bottom:8px;font-size:15px}
+.chat{background:#b9c8d6;padding:24px;min-height:300px}.b{background:#fff;border-radius:12px;padding:14px 16px;font-size:17px;line-height:1.6;margin-bottom:14px;max-width:560px}.t{font-size:13px;color:#333;margin:0 0 6px}
