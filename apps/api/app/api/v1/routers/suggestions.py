@@ -23,6 +23,7 @@ from app.api.deps.child import AccessibleChild
 from app.api.deps.db import SessionDep
 from app.api.errors import ApiError, ErrorEnvelope, constraint_name
 from app.api.runs import suggestion_retry
+from app.api.runs.tidy import tidy
 from app.api.v1.health_consent import health_consent_required
 from app.api.v1.list_query import PageQueryDep
 from app.api.v1.reminder_check import check_reminder, reminder_out
@@ -619,6 +620,7 @@ async def create_suggestions(
     notices: dict[str, GroupNoticeOut] = {}  # ② 0개 기록 · ④ 이어서 할 수 없음
     claimed: dict[str, suggestion_retry.RetryTask] = {}  # ③ 다시 만들 맥락
     settled: set[str] = set()  # 다시 만들어 결과를 낸 Agent — 그 맥락은 지운다
+    to_record: set[str] = set()  # 그중 0개 · 닫힘 기록을 남길 Agent — 지우지 않고 기록으로 덮는다
     run = entrypoint.SuggestRun(outcomes=(), failed=())
     # 🚨 맥락을 꺼낸(claim) 뒤 무엇이 터져도 "사용 중" 을 푼다. 안 풀면 15분 동안 다시 시도가
     #    BUSY 로 떨어져 실패 카드만 뜬다 (#433 리뷰 ②)
@@ -641,17 +643,17 @@ async def create_suggestions(
                 if rows:
                     replay[a] = rows
                     continue
-                message = suggestion_retry.empty_message(run_id=run_id, agent=a, **owner)
+                message = await suggestion_retry.empty_message(run_id=run_id, agent=a, **owner)
                 if message is not None:
                     notices[a] = GroupNoticeOut(code="empty", message=message)
                     continue
-                recorded = suggestion_retry.guard_of(run_id=run_id, agent=a, **owner)
+                recorded = await suggestion_retry.guard_of(run_id=run_id, agent=a, **owner)
                 if recorded is not None:
                     # 다시 만들었더니 닫혔던 Agent — 같은 guard 를 다시 낸다 (#433 리뷰 ⑧)
                     code, message = recorded
                     guards.append(_guard_out(code, a, message))
                     continue
-                task = suggestion_retry.claim(run_id=run_id, agent=a, **owner)
+                task = await suggestion_retry.claim(run_id=run_id, agent=a, **owner)
                 if task == suggestion_retry.BUSY:
                     continue  # 다른 요청이 다시 만드는 중 — 둘을 만들지 않는다. 실패와 같다
                 if task is None:
@@ -672,7 +674,7 @@ async def create_suggestions(
         health_consent = await child_health_granted(session, child_id=child.child_id)
         if to_run:
             # Agent 를 실제로 새로 돌릴 때만 하루 한도를 쓴다 — 재생은 모델을 부르지 않는다 (D8)
-            if not quota.consume(
+            if not await quota.consume(
                 parent_id=parent.parent_id,
                 today=quota.today_kst(),
                 limit=settings.INPUT_DAILY_LIMIT,
@@ -716,26 +718,47 @@ async def create_suggestions(
                     affinity_reader=agent_ports.affinity_reader(),
                 )
             settled = {o.agent for o in run.outcomes}
+            to_record = {
+                o.agent
+                for o in run.outcomes
+                if o.agent in claimed
+                and (entrypoint.empty_notice(o.readouts) is not None or _guard_code(o) is not None)
+            }
     finally:
         for a in claimed:
+            if a in to_record:
+                continue  # 아래에서 그 칸을 기록으로 바로 덮는다
+            # 정리가 실패해도 응답을 덮지 않는다 — 남은 행은 만료 뒤 지워진다 (#899 리뷰)
             if a in settled:
-                suggestion_retry.drop(run_id=run_id, agent=a)
+                await tidy(suggestion_retry.drop(run_id=run_id, agent=a), "05 맥락 지우기", run_id)
             else:
-                suggestion_retry.release(run_id=run_id, agent=a)
+                await tidy(suggestion_retry.release(run_id=run_id, agent=a), "05 표시 풀기", run_id)
 
-    # 다시 만든 결과를 지운 맥락 자리에 남긴다 — 다음 요청이 같은 모양을 재생한다 (24시간).
-    # 지운 뒤에 넣어야 한다 — 같은 (run_id, agent) 칸이라 순서를 바꾸면 기록이 지워진다
+    # 다시 만든 결과를 맥락 자리에 남긴다 — 다음 요청이 같은 모양을 재생한다 (24시간).
+    # 🚨 맥락을 지우지 않고 같은 칸을 바로 덮는다(upsert). 지운 뒤 넣으면 그 사이에 온 요청이
+    #    "맥락도 기록도 없음" 을 본다 (#899 리뷰). 덮지 못하면 표시를 풀어 다시 시도할 수 있게 한다
     for o in run.outcomes:
-        if o.agent not in claimed:
+        if o.agent not in to_record:
             continue
         empty = entrypoint.empty_notice(o.readouts)
-        code = _guard_code(o)
-        if empty is not None:
-            suggestion_retry.put_empty(run_id=run_id, agent=o.agent, message=empty.body, **owner)
-        elif code is not None:
-            suggestion_retry.put_guard(
-                run_id=run_id, agent=o.agent, code=code, message=_guard_message(o), **owner
+        try:
+            if empty is not None:
+                await suggestion_retry.put_empty(
+                    run_id=run_id, agent=o.agent, message=empty.body, **owner
+                )
+            else:
+                await suggestion_retry.put_guard(
+                    run_id=run_id,
+                    agent=o.agent,
+                    code=_guard_code(o),
+                    message=_guard_message(o),
+                    **owner,
+                )
+        except BaseException:
+            await tidy(
+                suggestion_retry.release(run_id=run_id, agent=o.agent), "05 표시 풀기", run_id
             )
+            raise
 
     return await _suggestions_response(
         session,
