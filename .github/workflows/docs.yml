@@ -3,8 +3,15 @@ name: 문서 사이트
 # 설정은 루트 mkdocs.yml · docs_hooks.py. 의존성은 apps/api 의 pyproject 에 넣지 않고 uvx 로 그때 받는다.
 # 🚨 저장소의 Pages 가 꺼져 있으면 configure-pages 에서 실패한다 — Settings → Pages → Source = GitHub Actions.
 # --strict 라 깨진 내부 링크 · 앵커가 하나라도 있으면 빨간불이고, 그때는 올리지 않는다.
+# PR 에서는 빌드만 돈다 — 깨진 링크를 머지 전에 잡으려는 것이다. 올리는 것은 develop push 와 손으로 돌릴 때뿐이다.
 
 on:
+  pull_request:
+    paths:
+      - docs/**
+      - mkdocs.yml
+      - docs_hooks.py
+      - .github/workflows/docs.yml
   push:
     branches:
       - develop
@@ -21,9 +28,10 @@ permissions:
   id-token: write
 
 # Pages 배포는 한 번에 하나. 올리는 중인 배포는 끊지 않는다 — 반쯤 올라간 사이트가 남지 않게.
+# PR 빌드는 PR 마다 따로 묶는다 — 같은 묶음에 넣으면 PR 빌드가 기다리던 배포를 밀어낸다. 새 커밋이 오면 앞 빌드는 끊는다.
 concurrency:
-  group: pages
-  cancel-in-progress: false
+  group: ${{ github.event_name == 'pull_request' && format('docs-pr-{0}', github.ref) || 'pages' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
@@ -39,13 +47,17 @@ jobs:
       - name: Build
         run: uvx --with mkdocs-material==9.8.1 mkdocs build --strict -d _site
 
+      # 아래 둘과 deploy job 은 올릴 때만 돈다. PR 에서는 위 빌드까지만 본다.
       - uses: actions/configure-pages@v6
+        if: github.event_name != 'pull_request'
 
       - uses: actions/upload-pages-artifact@v5
+        if: github.event_name != 'pull_request'
         with:
           path: _site
 
   deploy:
+    if: github.event_name != 'pull_request'
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 10
