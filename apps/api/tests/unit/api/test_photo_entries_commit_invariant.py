@@ -25,7 +25,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from app.agents.notice_ocr import PhotoReading, names_from_raw
+from app.agents.notice_ocr import PhotoReading, flag_thin_ranges, names_from_raw
 from app.api.runs import photo_run
 from app.api.v1.schemas.photos import MAX_COMMIT_ENTRIES, PhotoCommitRequest, PhotoEntry
 from app.core.notice_extract import ItemDetail
@@ -37,7 +37,12 @@ from app.domains.notice.models import (
     NoticeItemHandling,
     NoticeItemTarget,
 )
-from app.providers.meal_plan.image_ocr import MissedRange, OcrOutput, merge_outputs
+from app.providers.meal_plan.image_ocr import (
+    DEFAULT_DAY_RANGES,
+    MissedRange,
+    OcrOutput,
+    merge_outputs,
+)
 from app.providers.meal_plan.schema import MealPlanJSON
 
 KST = ZoneInfo("Asia/Seoul")
@@ -144,6 +149,14 @@ MEAL_VARIANTS: dict[str, MealPlanJSON] = {
     "한쪽 호출 실패": _plan(
         _output([_day(2, ("lunch", _menu("밥")))]), missed=(MissedRange(16, 31),)
     ),
+    # 뒤 호출이 16일 하나만 내고 정상 종료 — "16일~30일 급식 중 일부만 읽었어요" 한 줄이 더해진다
+    "한 구간만 덜 읽힘": flag_thin_ranges(
+        _plan(
+            _output([_day(d, ("lunch", _menu("밥"))) for d in (2, 3, 4, 5, 6, 9, 10, 11, 12, 13)]),
+            _output([_day(16, ("lunch", _menu("국")))]),
+        ),
+        ranges=DEFAULT_DAY_RANGES,
+    )[0],
     "못 읽은 칸 원문이 비거나 김": _plan(
         _output(
             [],

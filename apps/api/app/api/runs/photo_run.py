@@ -340,6 +340,17 @@ def build_entries(run: PhotoRun, reading: entrypoint.PhotoReading, *, today: dat
         entries.append(_item_entry(entry_id, item, today=today))
     if reading.meal_plan is not None:
         entries.extend(_meal_entries(run, reading.meal_plan, today=today))
+        for thin in reading.meal_thin:
+            # 화면 줄은 못 읽은 칸으로 이미 들어 있다(`agents/notice_ocr.flag_thin_ranges`).
+            # 숫자만 남긴다 — 메뉴 글자는 남기지 않는다 (CLAUDE.md §2 개인정보)
+            log.warning(
+                "사진 run %s 급식 %d일~%d일 구간이 덜 읽혔을 수 있다 — 읽은 날 %d · 평일 %d",
+                run.run_id,
+                thin.first,
+                thin.last,
+                thin.read_days,
+                thin.weekdays,
+            )
     if reading.meal_failed:
         entries.append(
             {
