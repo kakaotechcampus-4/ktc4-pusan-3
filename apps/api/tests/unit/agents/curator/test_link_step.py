@@ -324,19 +324,6 @@ async def test_polarity_가_다르면_후보가_없어_새로_만든다() -> Non
     assert judge.calls == []
 
 
-async def test_중립_관찰은_중립_Profile_만_후보다() -> None:
-    store = InMemoryCuratorStore()
-    _profile(store, "딸기1", polarity=None)  # 방향을 모름 — 중립이 아니다
-    _profile(store, "딸기2", polarity=1)
-    _profile(store, "딸기3", polarity=0)
-    judge = FakeJudge()
-    _observe(store, "1", "생딸기", polarity=0)
-
-    await _link(store, judge)
-
-    assert judge.calls[0][2] == ["딸기3"]
-
-
 async def test_archived_도_후보이고_연결해도_state_는_그대로다() -> None:
     store = InMemoryCuratorStore()
     archived = _profile(store, "딸기", state="archived")

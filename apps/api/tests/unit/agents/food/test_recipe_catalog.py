@@ -166,7 +166,12 @@ def test_MenuCatalogRow_의_레시피_소스는_RecipeSource_에서_온다() -> 
     allowed = {value for literal in get_args(union) for value in get_args(literal)}
 
     assert set(get_args(RecipeSource)) <= allowed
-    assert allowed - set(get_args(RecipeSource)) == {"mfds_nutri", "center_standard", "manual"}
+    assert allowed - set(get_args(RecipeSource)) == {
+        "mfds_nutri",
+        "center_standard",
+        "manual",
+        "weaning_menu",
+    }
 
 
 def test_주재료_구간이_있는지는_한_곳에서_본다() -> None:

@@ -40,6 +40,11 @@ SUPPORTED_MIME = frozenset({"image/png", "image/jpeg", "image/webp"})
 # 날짜 범위를 나눠 부르고 합친다. 두 번째 호출부터는 프롬프트·스키마가 캐시에서 읽혀 입력이 싸다.
 DEFAULT_DAY_RANGES: tuple[tuple[int, int], ...] = ((1, 15), (16, 31))
 
+
+class ReadDeadlineExceeded(RuntimeError):
+    """읽기 기한(`deadline`)이 지나 멈췄다. 사진이 나빠서가 아니라 시간이 모자랐다."""
+
+
 SYSTEM_PROMPT = """\
 당신은 급식표 이미지를 정해진 JSON 으로 옮기는 전사 담당자입니다.
 해석하거나 정리하지 말고, 적힌 그대로 옮기는 것이 임무입니다.
@@ -205,6 +210,18 @@ def merge_outputs(parts: Sequence[OcrOutput]) -> MealPlanJSON:
         raise RuntimeError(f"모델 응답이 급식표 규칙에 맞지 않음: {e.errors()[:3]}") from e
 
 
+def _until(stream, deadline: float):
+    try:
+        for chunk in stream:
+            if time.monotonic() >= deadline:
+                raise ReadDeadlineExceeded("읽기 기한이 지나 응답 받기를 멈춤")
+            yield chunk
+    finally:
+        close = getattr(stream, "close", None)
+        if close is not None:
+            close()
+
+
 class ImageOcrMealPlanReader:
     """`MealPlanReader` 구현체 — 사진. 비교용 모델은 `model` 만 바꿔 만든다."""
 
@@ -220,6 +237,7 @@ class ImageOcrMealPlanReader:
         timeout_s: float = 300.0,
         cache_write: str | None = None,
         day_ranges: Sequence[tuple[int, int]] | None = DEFAULT_DAY_RANGES,
+        deadline: float | None = None,
     ) -> None:
         self._client = OpenAI(base_url=base_url, api_key=api_key, timeout=timeout_s, max_retries=1)
         self.model = model
@@ -228,6 +246,9 @@ class ImageOcrMealPlanReader:
         self._max_calls = max_calls
         self._cache_write = cache_write
         self._day_ranges = tuple(day_ranges) if day_ranges else None
+        # `time.monotonic()` 기준 시각. 지나면 새 호출을 시작하지 않고, 받던 응답도 끊는다.
+        # SDK 의 timeout 은 조각 사이의 간격이라 스트림 전체 시간을 막지 못한다 — 그래서 따로 둔다
+        self._deadline = deadline
         self.calls = 0
         self.last_usage: Usage | None = None
         self.total_usage = Usage(0, 0, 0)
@@ -261,6 +282,8 @@ class ImageOcrMealPlanReader:
     ) -> OcrOutput:
         if self.calls >= self._max_calls:
             raise RuntimeError(f"호출 상한 {self._max_calls}회 도달 — 예산 보호를 위해 중단")
+        if self._deadline is not None and time.monotonic() >= self._deadline:
+            raise ReadDeadlineExceeded("읽기 기한이 지나 호출을 시작하지 않음")
         self.calls += 1
 
         extra_body = {"cache_write": self._cache_write} if self._cache_write else None
@@ -275,7 +298,7 @@ class ImageOcrMealPlanReader:
             stream=True,
             stream_options={"include_usage": True},
         )
-        reply = collect(stream)
+        reply = collect(self._within_deadline(stream))
 
         if reply.prompt_tokens is not None and reply.completion_tokens is not None:
             self.last_usage = Usage(
@@ -315,6 +338,16 @@ class ImageOcrMealPlanReader:
         if not reply.content:
             raise RuntimeError("모델 응답이 비어 있습니다")
         return parse_output(reply.content)
+
+    def _within_deadline(self, stream):
+        """기한이 없으면 그대로, 있으면 조각을 받을 때마다 기한을 본다.
+
+        🚨 기한이 지나면 연결을 닫는다 — 닫지 않으면 모델 호출이 스레드에서 끝까지 돈다.
+           끊긴 호출의 사용량은 마지막 조각으로 오므로 기록되지 않는다.
+        """
+        if self._deadline is None:
+            return stream
+        return _until(stream, self._deadline)
 
     def list_models(self) -> list[str]:
         """접속·키 확인용. 과금 없음."""

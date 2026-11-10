@@ -17,6 +17,7 @@ from app.agents.common.allergy import (
     non_food_allergies,
     non_food_names,
     read_label,
+    read_label_pieces,
     shared_book,
     shared_name_rules,
     split_label,
@@ -383,3 +384,24 @@ def test_for_sentences_는_돼지_전복의_다른_뜻을_guard_로_덮는다() 
     assert pig is not None and abalone is not None
     assert {"돼지저금통", "돼지 삼형제", "아기 돼지"} <= set(pig.guards)
     assert "전복 모양" in abalone.guards
+
+
+@pytest.mark.parametrize(
+    ("label", "names"),
+    [
+        ("땅콩, 고양이 털 알레르기", ["고양이 털"]),
+        ("'쑥 가루'", ["쑥 가루"]),
+        ("쑥 과민 반응", ["쑥 과민 반응"]),
+    ],
+)
+def test_read_label_pieces_는_적힌_이름을_split_label_과_같게_둔다(label, names) -> None:
+    """05 가 묻고 괜찮았던 식품으로 저장하는 이름이다 (#891). 꼬리말 · 앞뒤 문장부호만 떼고,
+    떼다 다른 이름이 되면("쑥 과민 반응" 의 "반응" 만 떼면 "쑥 과민") 적힌 그대로 둔다 —
+    `split_label` 이 같아야 괜찮았던 식품 · 내린 기록과 맞는다."""
+    pieces = read_label_pieces(label, shared_book())
+
+    assert [name for name, _ in pieces] == names
+    assert all(
+        len(found := split_label(name)) == 1 and found[0] in split_label(label)
+        for name, _ in pieces
+    )

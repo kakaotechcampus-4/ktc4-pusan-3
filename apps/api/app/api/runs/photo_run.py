@@ -10,6 +10,7 @@
 
 import asyncio
 import logging
+import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
@@ -42,6 +43,21 @@ from app.rules.menu_key import normalize_menu_key
 log = logging.getLogger(__name__)
 
 KST = ZoneInfo("Asia/Seoul")
+
+# 사진 한 장을 읽는 데 기다리는 상한. 넘으면 failed(timeout) 으로 끝낸다 — 한 줄 입력의 60초
+# 안전망(runner.RUN_DEADLINE_SECONDS)은 사진 job 에 걸리지 않아서 따로 둔다.
+#   근거 (2026-11-10 실측 · docs/notice/notice-ocr-v1.md) — 급식표 한 장(27일치)을 운영 모델로
+#   3번 읽으니 전부 성공했고 합계 119 · 131 · 218초였다. 공지 읽기 43~62초에 식단표 읽기
+#   57~171초가 붙는다. 🚨 그래서 180초로는 정상인 급식표가 잘린다. 실측 최대보다 넉넉히 둔다.
+#   3번만 쟀고 동시에 돌렸다 — 정상인 급식표가 잘리면 이 값을 올린다.
+# 🚨 스레드는 밖에서 끊지 못한다. 그래서 식단표의 표 읽기에는 기한을 넘겨 스스로 멈추게 한다
+#    (아래 PHOTO_MEAL_MARGIN_SECONDS — 기한이 지나면 받던 응답을 끊고 연결을 닫는다).
+#    공지 읽기에는 기한이 없다. 여기서 실패를 내도 그 호출은 SDK 시간 상한(120초, 재시도 1회)
+#    까지 스레드에서 더 돌 수 있고 결과는 버린다.
+PHOTO_READ_DEADLINE_SECONDS = 300.0
+# 식단표의 표 읽기는 전체 상한보다 이만큼 먼저 끊는다. 그러면 timeout 으로 다 버리지 않고
+# 이미 읽은 공지 항목을 낸다 (시간을 쓰는 쪽이 표 읽기다 — 실측 57~171초).
+PHOTO_MEAL_MARGIN_SECONDS = 20.0
 TTL = timedelta(minutes=30)
 """보호자가 읽은 내용을 하나씩 확인하는 시간. SSE 채널(5분)보다 길다."""
 _KIND = HoldKind.PHOTO_RUN
@@ -55,6 +71,12 @@ _ENTRY_KIND = {
     NoticeItemHandling.INFO: "info",
 }
 _SLOTS = {slot.value for slot in DaycareSlot}
+
+_MEAL_UNREAD = "식단표의 표를 읽지 못했어요. 더 밝게 다시 찍어 주세요."
+# 시간이 모자라 못 읽었다. 사진 탓이 아니라서 다시 찍으라고 하지 않는다
+_MEAL_TIMED_OUT = (
+    "식단표의 표를 읽는 데 시간이 오래 걸려 끝내지 못했어요. 잠시 뒤 다시 올려 주세요."
+)
 
 
 @dataclass(frozen=True)
@@ -269,7 +291,7 @@ def build_entries(run: PhotoRun, reading: entrypoint.PhotoReading, *, today: dat
                 "items": [],
                 "needs_review": True,
                 "past": False,
-                "review_reason": "식단표의 표를 읽지 못했어요. 더 밝게 다시 찍어 주세요.",
+                "review_reason": _MEAL_TIMED_OUT if reading.meal_timed_out else _MEAL_UNREAD,
             }
         )
     return entries
@@ -281,9 +303,25 @@ def photo_job(run: PhotoRun, *, data: bytes, received_at: datetime, declared_lan
     async def run_job(channel: RunChannel) -> None:
         channel.publish(("step", {"index": 1, "total": 2, "label": "사진에서 글자를 찾고 있어요"}))
         try:
-            reading = await asyncio.to_thread(entrypoint.read_photo, data, received_at=received_at)
+            async with asyncio.timeout(PHOTO_READ_DEADLINE_SECONDS):
+                reading = await asyncio.to_thread(
+                    entrypoint.read_photo,
+                    data,
+                    received_at=received_at,
+                    meal_deadline=time.monotonic()
+                    + PHOTO_READ_DEADLINE_SECONDS
+                    - PHOTO_MEAL_MARGIN_SECONDS,
+                )
         except entrypoint.UnreadablePhoto:
             channel.publish(sse.failed_event("unparsable", ""))
+            return
+        except TimeoutError:
+            log.warning(
+                "사진 run %s 읽기가 %s초 안에 끝나지 않아 끊었다",
+                channel.run_id,
+                PHOTO_READ_DEADLINE_SECONDS,
+            )
+            channel.publish(sse.failed_event("timeout", ""))
             return
         run.reading = reading
         entries = build_entries(run, reading, today=received_at.astimezone(KST).date())

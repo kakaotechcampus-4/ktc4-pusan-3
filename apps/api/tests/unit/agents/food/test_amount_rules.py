@@ -25,6 +25,23 @@ def test_설계_4절_표를_그대로_읽는다(text: str, factor: float, known:
     assert (rule.factor, rule.known) == (factor, known)
 
 
+@pytest.mark.parametrize(
+    ("text", "factor"),
+    [
+        ("반 공기", 0.5),
+        ("싹 비웠대", 1.0),
+        ("싹 비웠어", 1.0),
+        ("다 비웠대", 1.0),
+        ("한 공기", 1.0),
+    ],
+)
+def test_선생님_알림장이_전하는_말투도_읽는다(text: str, factor: float) -> None:
+    """급식 양 갱신은 원문 구간을 사전과 그대로 맞춘다 — 알림장의 "싹 비웠대" 가 없으면 양을 못
+    고치고 되묻는다 (#798)."""
+    rule = amount_of(text)
+    assert (rule.factor, rule.known) == (factor, True)
+
+
 def test_기록이_없으면_양을_모르는_한_그릇이다() -> None:
     assert (amount_of(None).factor, amount_of(None).known) == (1.0, False)
 

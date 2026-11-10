@@ -67,7 +67,11 @@ class DbCuratorStore:
         affinity_id_is_null: bool | None,
         min_observed_on: date | None = None,
     ) -> list[ObservationItem]:
-        """도메인별 쿼리 → created_at 오름차순 병합."""
+        """도메인별 쿼리 → created_at 오름차순 병합.
+
+        `polarity = 0` 은 임베딩 · 연결 어느 쪽에서도 돌려주지 않는다(#287) — 좋다 · 싫다가 없는
+        기록이라 Profile 이 될 수 없다. 쿼리에서 빼야 실행마다 다시 후보로 잡히지 않는다.
+        """
         per_domain: list[list[tuple]] = []
         for domain in CURATOR_DOMAINS:
             model = _MODEL_BY_DOMAIN[domain]
@@ -84,6 +88,7 @@ class DbCuratorStore:
                 .where(
                     model.child_id == child_id,
                     model.status == ObservationStatus.ACTIVE,
+                    model.polarity != 0,
                 )
                 .order_by(model.created_at, model.id)
             )

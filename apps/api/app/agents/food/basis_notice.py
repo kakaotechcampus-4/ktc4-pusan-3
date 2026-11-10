@@ -26,10 +26,12 @@ from app.agents.food.readouts import (
     MEAL_MENU_GENERATED,
     MEAL_MENU_MIXED,
     MEAL_MENU_SOURCE,
+    MEAL_MENU_WEANING,
     MEAL_NUTRIENT_BASIS,
     READOUTS,
 )
 from app.agents.food.store.ports import MenuCatalogRow
+from app.agents.food.weaning_menu import WEANING_MENU_SOURCE
 from app.core.recipe_source import RECIPE_SOURCE_INFO
 from app.rules.particle import topic_particle
 
@@ -77,7 +79,12 @@ def _nutrient_lines(context: FoodContext, rows: Sequence[MenuCatalogRow]) -> tup
 
 def _source_lines(rows: Sequence[MenuCatalogRow], generated: Sequence[str]) -> tuple[Readout, ...]:
     """고른 메뉴가 온 곳. 이름이 같아 합친 레시피(`merged_from`)의 소스도 넣는다 — 메뉴 근거가
-    합쳐진 레시피를 모두 가리키는 것과 같다. 표에 없는 소스(`manual` 등)는 건너뛴다."""
+    합쳐진 레시피를 모두 가리키는 것과 같다. 표에 없는 소스(`manual` 등)는 건너뛴다.
+
+    이유식 식단 표 메뉴(이유기, #399)가 하나라도 있으면 그 줄 하나다 — 이유기 풀은 식단 표뿐이라
+    레시피 · 생성 메뉴와 섞이지 않는다."""
+    if any(row.source == WEANING_MENU_SOURCE for row in rows):
+        return (READOUTS.render(MEAL_MENU_WEANING),)
     orgs: dict[str, None] = {}
     for row in rows:
         for source in (row.source, *(merged for merged, _ in row.merged_from)):

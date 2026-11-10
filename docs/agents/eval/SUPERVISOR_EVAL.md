@@ -34,6 +34,9 @@ tool spec · 응답 스키마: `app/agents/supervisor/schemas.py` (`ROUTE_TOOL_S
 | v4 | `b9c1db85 dirty` | `dfc1e9107cdc` | ALL_CASES 216 · R5 · gpt-5.6-luna/none | #861 — 서술어 없는 간식 요청("어린이집 끝나고 간식")은 meal_recommendation, "~해달라고 · ~해달라니까" 는 재촉 말투 · 요청 안의 "말고" 는 정정이 아님 — `_REQUEST` 두 줄 + 예시 세 줄 | 0/216 | 1 (FC09) | 7 |
 | v5 | `c36bf290 dirty` | `4850e16be932` | RO 8입력 · R20 · gpt-5.6-luna/none | #861 · #864 를 합치며 — develop 프롬프트를 #864 의 새 평가셋(RO)만 R20 으로 다시 잼. 합친 프롬프트의 바꾸기 전 행 | 1/8 | 없음 | RO01(20회 중 2) |
 | v6 | `c36bf290 dirty` | `9765ee561b0b` | RO 8입력 · R20 · gpt-5.6-luna/none | #861 · #864 를 합친 프롬프트 — develop 프롬프트에 #861 의 `_REQUEST` 두 줄 + 예시 세 줄이 얹힌 것(두 변경은 겹치는 줄이 없다). RO 를 R20 으로 잼. `readout_routing` 0건 규칙은 RO01~RO08 × 3회 = 24회 위반 0 | 1/8 | 없음 | RO01(20회 중 1) |
+| v7 | `8b16f250 dirty` | `9765ee561b0b` | RC · T · RO 148입력 · R3 · gpt-5.6-luna/none | #798 바꾸기 전 — develop 프롬프트(v6)를 #798 케이스(RC09 기대를 daycare_meal 로 · RC64 알림장 간식 양 · RC65 집 저녁 양)가 든 평가셋으로 잼. 작업 트리에서 `prompt.py` 만 develop 것으로 되돌려 잼 | 0/148 | 2 (RC09 · RC64 — 새 기대) | 2 (RC27 · RC36) |
+| v8 | `8b16f250` | `3b2808b08b07` | RC · T · RO 148입력 · R3 · gpt-5.6-luna/none | #798 선생님 · 알림장이 전한 점심 · 간식의 먹은 양은 daycare_meal — `daycare_meal` 설명 두 줄 + 예시 세 줄(집 아침 양은 record). RC09 · RC64 통과, RC65 record 유지. **RC01 첫 조각("어린이집에서 딸기는 잘 먹었대")이 daycare_meal 로 감** — develop 에 있던 예시 "어린이집에서 계란말이 엄청 많이 먹었대 → daycare_meal" 쪽으로 굳은 것이라 RC01 기대(record)와 예시가 엇갈린다(R10 재확인: 전 1/10 → 후 10/10). 새로 흔들린 RC35 · T42 · T59 · T60 은 R10 재확인에서 라벨은 맞고 조각 경계 · 따옴표 또는 develop 에도 있던 해열제 health ↔ record 흔들림이다 | 0/148 | 2 (RC01 · RC36) | 6 (RC27 · RC35 · RC38 · T42 · T59 · T60) |
+| v9 | `531e1b21` | `246df646231a` | RC · T · RO 148입력 · R3 · gpt-5.6-luna/none | #841 리뷰 — 급식 갱신을 양만 전한 말("반만 · 싹 비웠다")로 좁힘. 무엇을 먹었는지 말하면 기관이 전해도 record 이고, develop 예시 "어린이집에서 계란말이 엄청 많이 먹었대" 도 record 로 바꿈(daycare_meal 은 관찰을 남기지 않아 선호 근거가 안 쌓인다). RC01 다시 통과(R10 0/10), RC09 · RC64 daycare_meal · RC65 record 유지(R10 0/10). RC34 · RC36("감기약 시럽 · 해열제 먹였어")은 request/health 로 간다 — 프롬프트의 "약 먹였어 → health/medication" 규칙대로라 케이스 기대(record)와 엇갈린다(R10: develop RC34 3/10 · RC36 7/10 → v9 10/10 · 9/10). RC17 은 R10 에서 develop 과 같다(2/10) | 0/148 | 1 (RC36) | 6 (RC17 · RC34 · RC35 · RC38 · T42 · T59) |
 
 - `커밋` 은 재 본 코드. 작업 트리가 더러웠으면 커밋 옆에 `dirty` 를 적는다 (`tests/eval/agents/live_run_meta.json` 의 `dirty`).
 - `C1` 칸은 `a/b` (C1 사례 입력 수 / 전체 입력 수). `미측정` 은 v0 에만 쓴다.
@@ -95,4 +98,4 @@ $env:TEST_REPEAT=5
 uv run python -m tests.eval.agents.supervisor.measure_history out.json   # 지문 · C1 a/b · 입력별 오답 횟수
 ```
 
-pytest 라이브 eval(`-m live`)은 끝나면 `tests/eval/agents/live_run_meta.json`(gitignore)에 커밋 · dirty · 모델 · effort · 반복 횟수 · 프롬프트 지문을 남긴다. pytest 가 아닌 스크립트는 위의 `run_meta` 명령으로 남긴다. 그 값으로 §1 에 행을 더한다. 라이브 eval 은 CI 에서 돌리지 않는다.
+pytest 라이브 eval(`-m live`)은 끝나면 `tests/eval/agents/live_run_meta.json`(gitignore)에 커밋 · dirty · 모델 · effort · 반복 횟수 · 프롬프트 지문을 남긴다. pytest 가 아닌 스크립트는 위의 `run_meta` 명령으로 남긴다. 그 값으로 §1 에 행을 더한다. 실행이 끝나면 터미널에 측정 이력 칸 값이 한 줄 나온다 — 버전 · 무엇을 왜 바꿨나를 채워 §1 에 붙인다. 반복을 세션으로 나눠 돌렸으면(`EVAL_ATTEMPT`) `uv run python -m tests.eval.agents.tally` 로 다시 출력한다. 라이브 eval 은 CI 에서 돌리지 않는다.

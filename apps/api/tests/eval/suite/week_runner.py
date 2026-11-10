@@ -57,7 +57,7 @@ from tests.integration.api.conftest import seed_login
 
 KST = ZoneInfo("Asia/Seoul")
 STALE_DAYS = 183  # world.py 와 같다 — 루트 §2 "6개월 이상"
-POLICY_VERSION = "2026-11-03"  # 지금 유효한 약관 판 (child_health · location)
+POLICY_VERSION = "2026-11-10"  # 지금 유효한 약관 판 (child_health · location)
 BUSAN = {"lat": 35.18, "lon": 129.08}
 SSE_TIMEOUT = 150.0
 OBS_TABLES = ("food", "health", "education", "activity", "routine")

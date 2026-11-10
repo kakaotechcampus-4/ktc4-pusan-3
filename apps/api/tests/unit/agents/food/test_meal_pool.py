@@ -4,15 +4,17 @@
 """
 
 from collections.abc import Sequence
+from dataclasses import replace
 from datetime import date
 
 import pytest
 
-from app.agents.food import meal_pool
+from app.agents.food import meal_pool, weaning_menu
 from app.agents.food.meal_pool import (
     DEFICIT_BOOST,
     POOL_MAX,
     RECENT_EATEN_DAYS,
+    RECENT_REPEAT_FACTOR,
     SAMPLE_MAX,
     SAMPLE_MIN,
     PoolItem,
@@ -32,9 +34,16 @@ from app.agents.food.store import (
     MenuCatalogRow,
     SafetyEntry,
 )
+from app.agents.food.weaning_menu import (
+    WEANING_MENU_SOURCE,
+    weaning_menu_rows,
+    weaning_menu_table,
+)
 from app.rules.menu_evidence import menu_evidence_id
+from app.rules.menu_key import normalize_menu_key
 from tests.unit.agents.food.support import (
     CHILD,
+    NOW,
     affinity,
     context,
     daycare,
@@ -140,10 +149,103 @@ async def test_단계가_안_맞는_레시피는_풀에_없다() -> None:
     assert len(await build_pool(context(recipes=recipes(*rows), birth=FOUR_YEARS))) == 3
 
 
-async def test_이유기_아이에게는_태깅이_없는_레시피가_나가지_않는다() -> None:
-    ctx = context(recipes=recipes(recipe("태깅없는메뉴")), birth=date(2026, 3, 10))  # 7개월
+async def test_이유기_풀은_레시피북이_아니라_이유식_식단_표에서_만든다() -> None:
+    ctx = context(
+        recipes=recipes(recipe("태깅없는메뉴"), recipe("두부조림", stage_min="infant_weaning")),
+        birth=date(2026, 3, 10),  # 7개월
+    )
 
-    assert await build_pool(ctx) == ()
+    pool = await build_pool(ctx)
+
+    assert set(keys(pool)) == {
+        normalize_menu_key(row.display_name) for row in weaning_menu_rows(7, synced_at=NOW)
+    }
+    assert {item.row.source for item in pool} == {WEANING_MENU_SOURCE}
+
+
+async def test_4개월은_초기_메뉴만이다() -> None:
+    pool = await build_pool(context(birth=date(2026, 6, 14)))
+
+    assert set(keys(pool)) == {
+        "쌀미음",
+        "단호박미음",
+        "애호박미음",
+        "고구마미음",
+        "쇠고기미음",
+        "무미음",
+    }
+
+
+async def test_표에_12개월_전_금지_식품_행이_섞여도_이유기_풀에_들지_않는다(monkeypatch) -> None:
+    """식단 표는 사람이 쓴 파일이다. 꿀 · 생우유 행이 섞여도 안전 필터가 풀에서 뺀다(#843)."""
+    table = weaning_menu_table()
+    base = next(e for e in table.entries if e.texture == "minced")
+    bad = [
+        replace(
+            base,
+            key=f"food.weaning_menu.late.{slug}",
+            name=name,
+            ingredients=("쌀", *ingredients),
+            main_ingredients=ingredients,
+        )
+        for slug, name, ingredients in (
+            ("honey_banana", "꿀바나나죽", ("바나나", "꿀")),
+            ("raw_milk", "생우유죽", ("생우유",)),
+        )
+    ]
+    monkeypatch.setattr(
+        weaning_menu, "weaning_menu_table", lambda: replace(table, entries=(*table.entries, *bad))
+    )
+    bad_keys = {normalize_menu_key(row.name) for row in bad}
+    ctx = context(birth=date(2026, 2, 14))  # 8개월
+
+    offered = {r.menu_key for r in weaning_menu_rows(8, synced_at=NOW)}
+    pool = await build_pool(ctx)
+
+    assert bad_keys <= offered  # 표 단계에서는 후보다 — 걸러 내는 쪽은 build_pool 이다
+    assert pool and bad_keys.isdisjoint(keys(pool))
+
+
+async def test_이유기_풀에서_등록한_알레르기_메뉴가_빠진다() -> None:
+    beef = SafetyEntry(kind="allergy", label="쇠고기", status="active")
+
+    pool = await build_pool(context(birth=date(2026, 2, 14), safety=[beef]))  # 8개월
+
+    assert pool and not any("쇠고기" in key for key in keys(pool))
+
+
+async def test_생선을_등록한_아이에게는_대구_메뉴가_없다() -> None:
+    birth = date(2026, 3, 10)  # 7개월 — 대구살죽이 있는 중기
+    fish = SafetyEntry(kind="allergy", label="생선", status="active")
+
+    assert "대구살죽" in keys(await build_pool(context(birth=birth)))
+    pool = await build_pool(context(birth=birth, safety=[fish]))
+
+    assert pool and not any(("생선" in key) or ("대구" in key) for key in keys(pool))
+
+
+async def test_이유기는_최근_추천한_메뉴도_풀에_남고_가중치만_낮다() -> None:
+    recent = frozenset({"쌀미음", "무미음", "고구마미음", "애호박미음"})
+    ctx = context(birth=date(2026, 6, 14), suggestions=InMemorySuggestionHistory({CHILD: recent}))
+
+    pool = await build_pool(ctx)
+
+    assert len(pool) == 6
+    assert weight_of(pool, "쌀미음") == pytest.approx(
+        RECENT_REPEAT_FACTOR * weight_of(pool, "쇠고기미음")
+    )
+
+
+async def test_이유기_풀을_만들어도_최근_추천을_run_state_에_남긴다() -> None:
+    ctx = context(
+        birth=date(2026, 6, 14),
+        suggestions=InMemorySuggestionHistory({CHILD: frozenset({"쌀미음"})}),
+    )
+
+    await build_pool(ctx)
+
+    assert ctx.state.recent_keys == frozenset({"쌀미음"})
+    assert "쇠고기미음" in ctx.state.recipe_keys
 
 
 async def test_안전_정보를_못_읽었으면_풀을_만들지_않는다() -> None:
@@ -447,14 +549,10 @@ async def test_구간은_막혀도_기록이_충분하면_채소_과일_가중�
 
 async def test_이유기_단계는_채소_과일_가중치를_주지_않는다(fake_verdict) -> None:
     fake_verdict(verdict(group_days={"vegetables": 0}, appearance_ready=True))
-    rows = recipes(
-        recipe("시금치죽", "시금치", food_groups=VEGETABLES, stage_min="infant_weaning"),
-        recipe("두부죽", "두부", stage_min="infant_weaning"),
-    )
 
-    pool = await build_pool(context(recipes=rows, birth=date(2026, 3, 10)))
+    pool = await build_pool(context(birth=date(2026, 3, 10)))  # 7개월
 
-    assert weight_of(pool, "시금치죽") == weight_of(pool, "두부죽")
+    assert {item.weight for item in pool} == {1.0}
 
 
 async def test_칼슘이_low_이고_채소도_부족하면_둘_다_가중한다(fake_verdict) -> None:

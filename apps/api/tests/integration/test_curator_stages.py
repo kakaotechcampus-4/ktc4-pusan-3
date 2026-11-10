@@ -578,3 +578,68 @@ class TestE2EFullFlow:
         )
         assert r2.embed_calls == 0, "임베딩 대상 없음"
         assert len(r2.outcomes) == 0, "연결 대상 없음"
+
+    async def test_polarity_0_은_임베딩도_연결도_하지_않는다(self, session, family):
+        """좋다 · 싫다가 없는 기록은 Profile 이 되지 않는다 (#287). 다음 실행에도 다시 안 잡힌다."""
+        _, child = family
+        today = date(2026, 9, 26)
+        neutral = [
+            _food(child.id, subject="사과", polarity=0, observed_on=today - timedelta(days=i))
+            for i in range(3)
+        ]
+        session.add_all([*neutral, _food(child.id, subject="배", observed_on=today)])
+        await session.flush()
+
+        from app.agents.curator.embedding.linker import link_observations
+        from app.domains.memory.curator.db_store import DbCuratorStore
+
+        store = DbCuratorStore(session)
+        embedder = _FakeEmbedder()
+        for _ in range(2):
+            await link_observations(
+                store, embedder, _FakeJudge(), child_id=child.id, birth_date=child.birth_date
+            )
+
+        assert embedder.call_count == 1
+        assert embedder.last_texts == ["배"]
+        for obs in neutral:
+            await session.refresh(obs)
+            assert obs.embedding is None and obs.affinity_id is None
+        keys = (
+            await session.scalars(
+                select(ProfileAffinity.merge_key).where(ProfileAffinity.child_id == child.id)
+            )
+        ).all()
+        assert keys == ["배"]
+
+    async def test_이미_임베딩된_polarity_0_관찰도_연결하지_않는다(self, session, family):
+        """배포 전에 임베딩만 되고 연결 전이던 0 관찰(보류 · 중간에 멈춘 실행)도 Profile 이 되면
+        안 된다 — DB 의 연결 대상 조회(`list_unlinked`)가 막는다 (#287 · #844 리뷰 G1)."""
+        _, child = family
+        today = date(2026, 9, 26)
+        neutral = [
+            _food(child.id, subject="사과", polarity=0, observed_on=today - timedelta(days=i))
+            for i in range(3)
+        ]
+        for obs in neutral:
+            obs.embedding = [0.1] * 1536  # 옛 Curator 가 임베딩까지 해 둔 상태
+        session.add_all(neutral)
+        await session.flush()
+
+        from app.agents.curator.embedding.linker import link_observations
+        from app.domains.memory.curator.db_store import DbCuratorStore
+
+        store = DbCuratorStore(session)
+        unlinked = await store.list_unlinked(
+            child_id=child.id, min_observed_on=today - timedelta(days=30)
+        )
+        assert unlinked == []
+        await link_observations(
+            store, _FakeEmbedder(), _FakeJudge(), child_id=child.id, birth_date=child.birth_date
+        )
+        keys = (
+            await session.scalars(
+                select(ProfileAffinity.merge_key).where(ProfileAffinity.child_id == child.id)
+            )
+        ).all()
+        assert keys == []

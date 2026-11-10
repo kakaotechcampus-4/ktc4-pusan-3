@@ -498,3 +498,27 @@ class TestReadAdvisories:
 
     def test_정상인데_행이_없으면_특보_없음(self):
         assert advisories() == CLEAR_SKY
+
+
+class TestMidForecast:
+    """단기예보 범위 밖의 날(월요일에 묻는 주말)은 중기 육상예보의 하늘 문장 · 강수확률로 본다."""
+
+    def test_맑은_날은_확인된_날이다(self):
+        from app.agents.activity.weather import read_forecast
+        from app.core.weather_raw import RawForecast
+
+        forecast = read_forecast(RawForecast(sky=None, pcp=None, pop="20", wf="구름많음"))
+        brief = judge_weather(forecast=forecast, air=None, uv_index=None, advisories=CALM)
+        assert forecast.sky == "구름많음" and forecast.precip_mm_per_h == 0.0
+        assert brief.outdoor_ok is True
+        assert WEATHER_UNCHECKED not in brief.notices
+
+    def test_비_소식은_안내하고_막지_않는다(self):
+        from app.agents.activity.weather import read_forecast
+        from app.core.weather_raw import RawForecast
+
+        forecast = read_forecast(RawForecast(sky=None, pcp=None, pop="70", wf="흐리고 비"))
+        brief = judge_weather(forecast=forecast, air=None, uv_index=None, advisories=CALM)
+        assert forecast.sky == "흐림"
+        assert brief.outdoor_ok is True
+        assert RAIN_LIKELY in brief.notices

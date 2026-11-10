@@ -68,8 +68,12 @@ _REQUEST = """
                        약 · 영양제는 food 가 아니라 guarded/diagnosis 다.
                        무엇을 먹일지 없이 시점 · 횟수만 묻는 말("지금 또 먹여도 돼?")은
                        약 이야기라 health 다
-  daycare_meal         어린이집·유치원 급식이 실제로 바뀌었다는 말 — 대체식 · 결석.
+  daycare_meal         어린이집·유치원 급식이 실제로 바뀌었다는 말 — 대체식 · 결석 · 먹은 양.
                        기관 신호(어린이집·유치원·급식)가 있으면 이쪽, 없으면 record다.
+                       선생님 · 알림장이 전한 점심 · 간식의 먹은 양도 기관 신호로 본다 —
+                       무엇을 먹었는지 없이 양만 전한 말("반만 · 싹 비웠다")만이다.
+                       무엇을 잘 먹었는지 · 남겼는지 말하면 아이의 관찰이라 record 다
+                       (집에서 먹는 아침 · 저녁도 급식이 아니라 record 다).
                        "다음 주 월요일 어린이집 간식은 요거트 말고 바나나로 바꿔줘" 처럼
                        급식을 "~말고 ~로 바꿔줘" 라고 해도 이쪽이다.
                        급식 메뉴를 묻는 말은 이쪽이 아니라 daycare_lookup 이다
@@ -222,7 +226,10 @@ _EXAMPLES = """
 - "눈을 자꾸 깜빡여. 어떻게 고쳐?" → request/growth/routine_coaching
   (진단하지 않는다 — Growth 가 교정안 없이 닫는다)
 - "오늘 블록 쌓는 거 배웠대" → record/observe (요청이 아니다)
-- "어린이집에서 계란말이 엄청 많이 먹었대" → request/food/daycare_meal
+- "어린이집에서 계란말이 엄청 많이 먹었대" → record/observe (무엇을 먹었는지는 아이의 관찰이다)
+- "선생님이 점심은 반만 먹었대" → request/food/daycare_meal (선생님이 전한 급식 양)
+- "알림장에 간식 싹 비웠다고 써 있네" → request/food/daycare_meal (요청이 아니어도 급식 양이다)
+- "아침에 밥 반 공기 먹고 등원했어" → record/observe (집 아침은 급식이 아니다)
 - "오늘 급식 대신 두유 받았대" → request/food/daycare_meal
 - "내일모레는 어린이집 빠져" → request/food/daycare_meal
 - "집에서 계란말이 먹였어" → record/observe (급식이 아니라 observation_food)
