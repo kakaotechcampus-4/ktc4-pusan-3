@@ -7,8 +7,14 @@ docs/api/idempotency-v1.md 가 그 위에 제안한 동작 중 **"같은 키 · 
 없으면 같은 한 줄이 관찰 N건씩 두 번 저장된다.
 
 - 스코프는 (parent_id, method, path, key) — 보호자 사이에 키가 섞이지 않는다 (§3-5)
-- 422(같은 키 · 다른 본문) · 409(처리 중) · 24시간 보관은 다음 이슈. 409 는 접수가 즉시 끝나는
-  구조라 창이 몇 ms 뿐이고, 키를 **러너를 띄우기 전에** 적어 두면 그 창도 재생으로 흡수된다
+- 키는 24시간 남는다(`_TTL_SECONDS`). 422(같은 키 · 다른 본문) · 409(처리 중)는 아직 없다
+- 확인(recall, GET)과 적기(remember, SET)가 따로면 그 사이에 온 같은 키도 "처음 보는 키" 를 본다.
+  한 줄 입력은 그 사이에 동의 읽기 · 한도 · 채널 열기가 있어 창이 몇 ms 가 아니었다 — 11-11
+  로컬에서 같은 키 4개를 한꺼번에 보내 run 4개 · 관찰 4건이 저장됐다. 그래서 한 줄 입력은
+  러너를 띄우기 전에 `remember_first`(SET NX)로 적고, 처음 적은 요청만 러너를 띄운다. 진 요청은
+  먼저 적힌 run 을 돌려준다
+- 사진 읽기(photos.py)와 응답 전체(dict)를 재생하는 창구는 아직 확인과 적기가 따로다 — 그 창에
+  온 같은 키는 두 번 처리될 수 있다
 
 REDIS_URL 이 설정되면 Redis 를 쓰고, 없으면 프로세스 메모리 dict 로 폴백한다(로컬 · 테스트).
 폴백은 단일 워커 전제다 (#134).
@@ -145,6 +151,86 @@ def _write(r: Redis, idem: str, replay: str | dict) -> None:
     # 역인덱스: run_id(str)일 때만. dict(일정 응답)는 forget_run 대상이 아니다.
     if isinstance(replay, str):
         r.set(_run_key(replay), idem, ex=_TTL_SECONDS)
+
+
+async def remember_first(
+    *, parent_id: UUID, method: str, path: str, key: str, replay: str
+) -> str | None:
+    """이 키를 처음 적는 요청이면 run_id 를 적고 None. 다른 요청이 먼저 적었으면 그 run_id.
+
+    "이미 있나" 와 적기가 SET NX 한 명령이라, recall 뒤에 같은 키가 겹쳐 와도 하나만 None 을
+    받는다 (모듈 설명). 워커가 달라도 같다. 러너를 띄우기 전에 부르고, run_id 를 돌려받으면
+    러너를 띄우지 않는다.
+
+    - 먼저 적힌 것이 지우지 못한 실패 run(`_forgotten`)이면 덮어쓰고 None — recall 이 그 run 을
+      가리는 것과 같은 이유다. 돌려주면 같은 키 재시도가 끝난 실패만 받는다
+    - 먼저 적힌 값이 run_id 가 아니면(깨진 값 · dict) 503. 무엇이 처리됐는지 몰라 통과시키지도
+      돌려주지도 않는다. 지우지 않는다 — 깨진 값 정리는 recall 몫이다
+    - Redis 장애는 remember(strict=True) 와 같다 — 503 이고 이 run 은 버린 run 으로 둔다
+
+    🚨 파이프라인 · MULTI 를 쓰지 않는다 — 차단기(infra/redis.py `_Breaker`)를 거치지 않는다
+       (redis-py 의 MULTI 도 파이프라인이다). 명령을 하나씩 부른다. SET NX 한 명령이면 되니
+       Lua 도 쓰지 않는다.
+    """
+    r = get_redis()
+    if r is None:
+        # 확인과 적기 사이에 await 가 없다 — 이벤트 루프 안에서 끊기지 않는 한 덩어리다
+        scope = (parent_id, method, path, key)
+        won = _seen.get(scope)
+        if won is None or _forgotten_run(won):
+            _seen[scope] = replay
+            return None
+        return _winner(won)
+
+    idem = _idem_key(parent_id, method, path, key)
+    try:
+        raw = await asyncio.to_thread(_write_first, r, idem, replay)
+        if raw is None:
+            return None
+        won = _loads(raw)
+        if not _forgotten_run(won):
+            return _winner(won)
+        await asyncio.to_thread(_write, r, idem, replay)
+        return None
+    except RedisError as exc:
+        _warn(exc, "키를 남기지 못했다")
+        # 적고 나서 응답만 늦은 것일 수 있다 — remember(strict=True) 와 같은 이유 (#729 리뷰)
+        _forgotten.add(replay)
+        raise _unavailable() from None
+
+
+def _write_first(r: Redis, idem: str, replay: str) -> str | None:
+    """적었으면 None, 이미 있으면 그 값(원문)."""
+    # 두 번째 바퀴는 NX 가 진 뒤 읽기 전에 키가 사라진 때다(실패 run 의 forget_run · 만료).
+    # 비었으니 다시 적어 본다. 한 번만 — 그사이 또 사라지면 무엇이 지우는지 모르니 503
+    for _ in range(2):
+        if r.set(idem, json.dumps(replay), nx=True, ex=_TTL_SECONDS):
+            r.set(_run_key(replay), idem, ex=_TTL_SECONDS)
+            return None
+        raw = r.get(idem)
+        if raw is not None:
+            return raw
+    log.warning("idempotency 키가 적는 사이 두 번 사라졌다 — 503")
+    raise _unavailable()
+
+
+def _loads(raw: str) -> object:
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+
+
+def _forgotten_run(value: object) -> bool:
+    return isinstance(value, str) and value in _forgotten
+
+
+def _winner(value: object) -> str:
+    """먼저 적힌 run_id. run_id 가 아니면 503 — 로그에는 키를 싣지 않는다(parent_id 가 있다)."""
+    if isinstance(value, str):
+        return value
+    log.warning("idempotency 먼저 적힌 값이 run_id 가 아니다 — 503")
+    raise _unavailable()
 
 
 def _unavailable() -> ApiError:
