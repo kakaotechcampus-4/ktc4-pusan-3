@@ -18,6 +18,7 @@ from app.domains.notice.assemble import NewNotice, assemble
 from app.domains.notice.models import NoticeDocKind, NoticeInputFormat
 from app.providers.meal_plan.image_ocr import ImageOcrMealPlanReader
 from app.providers.meal_plan.schema import MealPlanJSON
+from app.providers.model_errors import MODEL_CALL_FAILURES
 from app.providers.notice.document_text import UnreadableDocument, normalize_image
 from app.providers.notice.extractor import NoticeExtractor
 from app.rules.notice_text import clean_text
@@ -49,8 +50,9 @@ def read_photo(data: bytes, *, received_at: datetime) -> PhotoReading:
     extractor = NoticeExtractor.from_settings(settings, max_calls=1)
     try:
         extract = extractor.read_image(image, mime_type=mime_type)
-    except RuntimeError as e:
-        # 글자가 많아 출력 상한에 걸리면 나온다. 서버 오류가 아니라 "읽지 못했어요" 다
+    except MODEL_CALL_FAILURES as e:
+        # 글자가 많아 출력 상한에 걸리거나, 모델 호출이 시간 초과 · 429 · 인증으로 실패하면 나온다.
+        # 서버 오류가 아니라 "읽지 못했어요" 다 — 같은 사진을 다시 올리면 된다
         log.warning("공지 읽기 실패 (%s)", type(e).__name__)
         raise UnreadablePhoto("읽지 못했어요") from e
     source = clean_text(extract.transcript)
@@ -69,7 +71,8 @@ def read_photo(data: bytes, *, received_at: datetime) -> PhotoReading:
     reader = ImageOcrMealPlanReader.from_settings(settings, max_calls=2)
     try:
         return PhotoReading(notice=notice, meal_plan=reader.read(image, mime_type=mime_type))
-    except RuntimeError as e:
+    except MODEL_CALL_FAILURES as e:
         # 성공한 것은 보여 준다 (CLAUDE.md §2 부분 결과). 메시지에 메뉴가 실릴 수 있어 종류만 남긴다
+        # 식단표 호출만 시간 초과 · 429 로 실패해도 읽은 공지 항목까지 버리지 않는다
         log.warning("meal_plan 읽기 실패 — 공지 항목만 낸다 (%s)", type(e).__name__)
         return PhotoReading(notice=notice, meal_plan=None, meal_failed=True)
