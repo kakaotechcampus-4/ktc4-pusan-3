@@ -4,8 +4,11 @@
 때 `PhotoCommitRequest` 로 엄격히 검증한다. 한 건이라도 걸리면 저장 전체가 400 이었다 — "잘 읽었어요
 24건" 을 보고 저장을 눌렀는데 "저장하지 못했어요" 가 떴다.
 
-웹이 저장 때 보내는 본문은 확인한 항목(`needs_review` 가 거짓) 그대로에 `event_id` 를 더한
-것이다 (`apps/web/src/components/photo-review.tsx` 의 `save`). 확인이 필요한 항목은 보호자가
+웹이 저장 때 보내는 본문은 확인한 항목(`needs_review` 가 거짓)에 시트의 시작 일시를 얹고
+(`recordedEntry` — #952) `event_id` 를 더한 것이다 (`apps/web/src/components/photo-review.tsx` 의
+`save` · `recordOf`, `apps/web/src/lib/photo-entry.ts` 의 `recordedEntry`). 보호자가 고치지 않았으면
+시트의 값은 `initialPlan` 이라, 시작 항목은 `starts_at` 이 `"{date}T{HH:MM}:00+09:00"`(하루 종일이면
+자정) 표기로 바뀌어 간다 — 아래 `_web_record` 가 그 모양을 만든다. 확인이 필요한 항목은 보호자가
 시트에서 확인해야 저장 대상이 되고, 그때 시트는 `needs_review` 를 끄고 `review_reason` 을 지운다
 (`photo-entry-sheet.tsx` 의 `submit`). 그래서 두 가지를 본다:
 
@@ -175,6 +178,13 @@ MEAL_VARIANTS: dict[str, MealPlanJSON] = {
 
 NOTICE_VARIANTS: dict[str, NewNoticeItem] = {
     "멀쩡한 일정": BASE_ITEM,
+    # 웹이 시트의 시작을 얹어 보내는 모양(#952) — 읽은 끝이 같이 가는 경우 · 하루 종일 여러 날
+    "시각과 끝을 읽은 일정": _item(ends_at=datetime(2026, 11, 20, 11, 30, tzinfo=KST)),
+    "하루 종일 여러 날": _item(
+        starts_at=datetime(2026, 11, 20, tzinfo=KST),
+        ends_at=datetime(2026, 11, 22, 23, 59, tzinfo=KST),
+        all_day=True,
+    ),
     "빈 제목": _item(title="   "),
     "500자 넘는 제목": _item(title="가" * 600),
     "범위 밖 연도 시작": _item(starts_at=datetime(2019, 3, 1, tzinfo=KST)),
@@ -194,11 +204,52 @@ def _entries(reading: PhotoReading) -> tuple[photo_run.PhotoRun, list[dict]]:
     return run, json.loads(json.dumps(entries, ensure_ascii=False))
 
 
+def _date_role(entry: dict) -> str:
+    """web `entryDateRole`."""
+    if entry.get("starts_at"):
+        return "start"
+    if entry.get("due_at"):
+        return "due"
+    return "start" if entry["kind"] == "event" else "due"
+
+
+def _web_record(entry: dict) -> dict:
+    """web `recordedEntry(entry, initialPlan(entry))` — 시트를 고치지 않았을 때 저장 본문의 항목.
+
+    `photo-entry.ts` 의 `canBecomeEvent` · `readStartTime` · `withSeoulDateTime` ·
+    `carriedEndsAt` 를 그대로 옮긴 것이다. 🚨 웹의 그 함수들을 바꾸면 이것도 같이 본다.
+    """
+    if entry["kind"] in ("meal", "info") or _date_role(entry) != "start":
+        return entry
+    all_day = entry.get("all_day", True)  # initialPlan: `entry.all_day ?? true`
+    day = entry.get("date")
+    if not day:
+        return entry  # planDate 가 비면 planStartsAt 이 null — 읽은 값 그대로
+    read_start = entry.get("starts_at")
+    if all_day:
+        starts = f"{day}T00:00:00+09:00"
+    else:
+        if not read_start:
+            return entry  # 하루 종일이 아닌데 시각이 없으면 null
+        hm = datetime.fromisoformat(read_start).astimezone(KST).strftime("%H:%M")
+        starts = f"{day}T{hm}:00+09:00"
+    ends = entry.get("ends_at")
+    carried = None
+    if (
+        ends
+        and read_start
+        and day == datetime.fromisoformat(read_start).astimezone(KST).date().isoformat()
+    ):
+        if datetime.fromisoformat(ends) > datetime.fromisoformat(starts):
+            carried = ends  # plan.allDay 는 initialPlan 이라 읽은 all_day 와 같다
+    return {**entry, "starts_at": starts, "ends_at": carried, "all_day": all_day}
+
+
 def _assert_commit_passes(run: photo_run.PhotoRun, entries: list[dict]) -> None:
     ids = [e["id"] for e in entries]
     assert len(ids) == len(set(ids)), "같은 id 가 두 번이면 저장이 422"
 
-    checked = [{**e, "event_id": None} for e in entries if not e["needs_review"]]
+    checked = [{**_web_record(e), "event_id": None} for e in entries if not e["needs_review"]]
     body = PhotoCommitRequest.model_validate(
         {"lane": "document", "entries": checked, "attach_to_calendar": False}
     )
@@ -206,13 +257,29 @@ def _assert_commit_passes(run: photo_run.PhotoRun, entries: list[dict]) -> None:
         if entry.id in run.meals:
             # 메뉴 키가 하나도 안 남으면 commit 이 422("메뉴를 적어 주세요")다
             assert photo_run.meal_row(run.meals[entry.id], title=entry.title, day=entry.date)
+        elif entry.id in run.items:
+            # commit 이 하는 그대로 고친 값을 올린다 (#952) — 시작이 끝보다 늦으면 안 된다
+            saved = photo_run.apply_edits(
+                run.items[entry.id],
+                title=entry.title,
+                day=entry.date,
+                supplies=entry.items,
+                starts_at=entry.starts_at,
+                ends_at=entry.ends_at,
+                all_day=entry.all_day,
+            )
+            if saved.starts_at is not None and saved.ends_at is not None:
+                assert saved.starts_at <= saved.ends_at
         else:
-            assert entry.id in run.items or entry.id.startswith(("pe_meal_unread_", "pe_unread_"))
+            assert entry.id.startswith(("pe_meal_unread_", "pe_unread_"))
 
     # 보호자가 확인 필요 항목을 고치지 않고 확인만 눌러도 저장 검증을 통과한다 (시트의 submit)
     for entry in entries:
         PhotoEntry.model_validate(
-            {**entry, "needs_review": False, "review_reason": None, "event_id": None}
+            {
+                **_web_record({**entry, "needs_review": False, "review_reason": None}),
+                "event_id": None,
+            }
         )
     assert len(checked) <= MAX_COMMIT_ENTRIES
 
