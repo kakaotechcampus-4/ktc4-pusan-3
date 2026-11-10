@@ -11,11 +11,13 @@ import logging
 import uuid
 from datetime import datetime, timedelta
 
+import pytest
 from httpx import AsyncClient
 from sqlalchemy.dialects.postgresql import Range
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.quota import KST, today_kst
+from app.api.v1.routers import home as home_router
 from app.domains.daycare_meal.repository import NewDaycareMeal, insert_daycare_meals
 from app.domains.memory.observation.models import (
     ConfidenceSource,
@@ -178,15 +180,35 @@ async def test_highlight_skips_a_candidate_observed_on_a_single_day(
     assert highlight["state_reason"].startswith("지금까지 3번")  # 카드 숫자는 기록 건수 그대로
 
 
+# 급식 테스트의 "지금". 실제 날짜와 먼 고정 시각이라 라우터가 이 값을 보지 않으면 테스트가 깨진다 —
+# 한국 자정 직전에 돌려도 테스트가 고른 "오늘" 과 라우터의 "오늘" 이 갈리지 않는다.
+_NOON = datetime(2026, 3, 2, 12, 0, tzinfo=KST)
+
+
+@pytest.fixture
+def pinned_now(monkeypatch):
+    """홈 라우터가 오늘을 정하는 `datetime.now(KST)` 를 `_NOON` 으로 고정한다.
+
+    라우터 모듈이 import 한 `datetime` 이름만 바꾼다 — 다른 모듈의 시각은 그대로다.
+    """
+
+    class _Pinned(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return _NOON.astimezone(tz) if tz else _NOON.replace(tzinfo=None)
+
+    monkeypatch.setattr(home_router, "datetime", _Pinned)
+
+
 async def _meals(session, child_id, *meals: NewDaycareMeal):
     await insert_daycare_meals(session, child_id=child_id, meals=meals)
 
 
 async def test_today_lists_todays_meals_by_slot_before_events(
-    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID, pinned_now
 ):
     headers, _ = bearer
-    today = today_kst()
+    today = _NOON.date()
     # 넣는 순서를 섞는다 — 화면 순서는 하루 순서(오전 간식 → 점심 → 오후 간식)다
     await _meals(
         session,
@@ -197,7 +219,7 @@ async def test_today_lists_todays_meals_by_slot_before_events(
         NewDaycareMeal(today - timedelta(days=1), "lunch", ("어제메뉴",)),
         NewDaycareMeal(today + timedelta(days=1), "lunch", ("내일메뉴",)),
     )
-    noon = datetime.now(KST).replace(hour=12, minute=0, second=0, microsecond=0)
+    noon = _NOON
     event = await create_event(
         session,
         child_id=cid,
@@ -225,11 +247,11 @@ async def test_today_lists_todays_meals_by_slot_before_events(
 
 
 async def test_today_has_no_meal_line_without_todays_meal(
-    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID, pinned_now
 ):
     # 급식이 없는 날은 예전과 같은 응답이다 — 빈 급식 줄을 세우지 않는다
     headers, _ = bearer
-    today = today_kst()
+    today = _NOON.date()
     await _meals(session, cid, NewDaycareMeal(today + timedelta(days=1), "lunch", ("내일메뉴",)))
 
     data = (await db_client.get(f"/api/v1/children/{cid}/home", headers=headers)).json()
@@ -238,12 +260,12 @@ async def test_today_has_no_meal_line_without_todays_meal(
 
 
 async def test_other_childs_meals_stay_behind_the_access_check(
-    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID
+    db_client: AsyncClient, session: AsyncSession, bearer: Bearer, cid: uuid.UUID, pinned_now
 ):
     headers, _ = bearer
     _, stranger = await issue_bearer(session, token="stranger")
     other_cid = await link_child(session, parent_id=stranger)
-    await _meals(session, other_cid, NewDaycareMeal(today_kst(), "lunch", ("남의메뉴",)))
+    await _meals(session, other_cid, NewDaycareMeal(_NOON.date(), "lunch", ("남의메뉴",)))
 
     denied = await db_client.get(f"/api/v1/children/{other_cid}/home", headers=headers)
     mine = (await db_client.get(f"/api/v1/children/{cid}/home", headers=headers)).json()
@@ -259,9 +281,10 @@ async def test_meal_menu_text_is_not_logged(
     bearer: Bearer,
     cid: uuid.UUID,
     caplog,
+    pinned_now,
 ):
     headers, _ = bearer
-    await _meals(session, cid, NewDaycareMeal(today_kst(), "lunch", ("로그금지메뉴",)))
+    await _meals(session, cid, NewDaycareMeal(_NOON.date(), "lunch", ("로그금지메뉴",)))
 
     with caplog.at_level(logging.DEBUG):
         resp = await db_client.get(f"/api/v1/children/{cid}/home", headers=headers)
