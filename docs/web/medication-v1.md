@@ -3,7 +3,7 @@
 문서 목적: Health 복약(#537)의 FE 몫인 네 가지(복약 확인 카드 · 회차 체크 · 되묻기에 답하기 · 새 readout)를 화면이 어떻게 다루는지와, **서버보다 먼저 잡고 서버가 받은 계약**을 고정한다.
 
 기준 브랜치: `feat/fe-537-medication-draft-card` · 실서버 연결 `feat/fe-713-medication-server` (#713)
-작성일: 2026-10-23 · 갱신 2026-11-04
+작성일: 2026-10-23 · 갱신 2026-11-10
 담당: 고태영
 선행 문서: 이슈 [#537](https://github.com/kakaotechcampus-4/ktc4-pusan-3/issues/537) · `apps/api/app/core/medication_draft.py`(초안 모양 정본 · #544) · [`docs/medication/medication-tables-v1.md`](../medication/medication-tables-v1.md)(두 표와 제출 · 체크 API 가 막을 것 · #546) · [`event-draft-ui-v1.md`](event-draft-ui-v1.md)(같은 규칙을 먼저 정한 일정 초안)
 
@@ -15,7 +15,7 @@
 > **복약 확인 카드 · 회차 체크(03 홈 · 11-3)** 가 서지 않고, 11-3 주소로 바로 오면 프로필로 돌려보낸다. 00 소개 · 11 프로필 머리말의
 > 복약 문장도 뺐다. **되묻기 · 새 readout 은 서버가 보내는 것**이라 이 스위치로 막지 못한다 — 서버의 같은 스위치
 > (`apps/api/app/agents/health/registry.py` 의 `MEDICATION_ENABLED`, #923)가 대화의 복약 요청 · 투약의뢰서를 "아직 준비 중이에요" 한 줄로
-> 닫고 등록된 약 대조도 하지 않는다. **켤 때는 둘을 같이 켠다.**
+> 닫는다(응급 카드는 그대로). 등록된 약 대조도 하지 않아 먹인 약 말은 복약 체크로 보내지 않고 건강 기록의 먹인 약으로 남는다. **켤 때는 둘을 같이 켠다.**
 > 코드 · 목 · 테스트는 그대로 두었다 — 복약 e2e 는 꺼진 동안 건너뛰고, 꺼진 모습은 `e2e/medication-hidden.spec.ts` 가 건다.
 >
 > 이유: Google Play 건강 앱 선언에서 복약 일정 · 회차 체크 · 복약 알림은 **"의료 › 약물 및 치료 관리"** 칸이다
