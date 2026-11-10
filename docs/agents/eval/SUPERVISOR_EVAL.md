@@ -30,6 +30,7 @@ tool spec · 응답 스키마: `app/agents/supervisor/schemas.py` (`ROUTE_TOOL_S
 | v0 | `2fc92746` | `05d6538172c2` | 미측정 | 최초 기준선. 합격선만 기존 문서에서 옮김, 수치는 다음 변경 때 전후 두 행으로 잰다. 이 규칙 전에 develop 에 들어간 프롬프트 변경(앞 대화 해석 #786 — 지문에 앞 대화 절 · 메시지 · route spec 도 넣음 · 공지 질문 조회 라우팅)은 잰 수치가 없어 다시 재지 않고 v0 지문만 그 뒤 코드로 고침 | 미측정 | 미측정 | 미측정 |
 | v1 | `be021516` | `05d6538172c2` | split · GR · HR 208 · gpt-5.6-luna/none · R3 | 바꾸기 전 프롬프트로 잼 — 일반 정보 질문(#574) 변경의 비교 기준 | 0/208 | 0 | 12 |
 | v2 | `be021516 dirty` | `aa7e4c55b5ae` | split · GR · HR 208 · gpt-5.6-luna/none · R3 | `request` 조각의 공통 칸 `request_mode`(suggest · info)와 경계 절 · 예시 6줄을 더함 (#574). 아이 일반을 묻는 말이 추천 카드로 저장되지 않게 | 0/208 | 1 | 7 |
+| v3 | `785f9141 dirty` | `6356e81d35aa` | split · GR · HR 208 · gpt-5.6-luna/none · R3 | `request_mode` 를 growth · health 조각에만 붙이게 좁힘 — activity · food 경계는 이 PR 에서 바꾸지 않는다(#574). 경계 절에서 두 Agent 를 빼고 activity · food info 예시 3줄을 growth 예시로 바꿈, 스키마 설명 한 줄 | 0/208 | 2 | 6 |
 
 - `커밋` 은 재 본 코드. 작업 트리가 더러웠으면 커밋 옆에 `dirty` 를 적는다 (`tests/eval/agents/live_run_meta.json` 의 `dirty`).
 - `C1` 칸은 `a/b` (C1 사례 입력 수 / 전체 입력 수). `미측정` 은 v0 에만 쓴다.
@@ -72,7 +73,20 @@ tool spec · 응답 스키마: `app/agents/supervisor/schemas.py` (`ROUTE_TOOL_S
 
 - FC04 "이거 먹여도 돼?" (정답 `food_check`)는 v1 에서도 1/3 이 `meal_recommendation` 으로 갔던 흔들림이고 v2 에서 3/3 이 됐다. 추천 경로로 가서 안전 관련 C1 은 아니다 — 무엇을 먹일지 묻지 않고 메뉴를 추천한다. 다음 Supervisor 보정 후보다.
 - 오답 판정은 실행마다 놓친 구간 · RECORD→REQUEST · agent · food/growth/health 유형 불일치가 하나라도 있으면 오답이다. Health 경계는 케이스별 점수 줄을 찍지 않아 합계로 본다(v1 · v2 모두 전부 맞음).
-- 일반 정보 경계(`IN01~IN14`)는 v1 프롬프트에 `request_mode` 가 없어 같은 평가셋으로 견줄 수 없어서 C1 비교에 넣지 않았다. v2 에서 따로 잰 결과는 agent 100% · info 판정 100% · info↔suggest 새는 건수 0 (`-k info_routing`, R1, Health 닫힘 반영 뒤).
+- 일반 정보 경계(당시 `IN01~IN14`)는 v1 프롬프트에 `request_mode` 가 없어 같은 평가셋으로 견줄 수 없어서 C1 비교에 넣지 않았다. v2 에서 따로 잰 결과는 agent 100% · info 판정 100% · info↔suggest 새는 건수 0 (`-k info_routing`, R1, Health 닫힘 반영 뒤).
+
+**v2 → v3 (request_mode 를 growth · health 로 좁힘, 같은 조건 R3)** — C1 은 둘 다 0/208 이다. 한 번이라도 틀린 입력은 8 → 8 이다.
+
+| | v2 (바꾸기 전) | v3 (바꾼 뒤) |
+| --- | --- | --- |
+| 안정 오답 (3회 모두) | FC04 | FC04 · T42 |
+| 불안정 (1~2회) | GR18 · GR22 · RC01 · RC34 · RC36 · RC38 · T42 | FC09 · RC01 · RC17 · RC34 · RC36 · T06 |
+| Growth 경계 (84회) | agent 98% · 유형 97% | agent · 유형 100% |
+| Health 경계 (45회) | agent · 유형 100% · GUARDED 6/6 | agent · 유형 100% · GUARDED 6/6 |
+| split GUARDED | 66/66 | 66/66 |
+
+- T42 는 v1 부터 1~2/3 이 unclear 구간을 놓치던 흔들림이고 v3 에서 3/3 이 됐다. 놓친 것은 unclear 조각이라 C1 은 아니다. FC04 는 v2 와 같다. 둘 다 다음 Supervisor 보정 후보다.
+- 일반 정보 경계는 IN 묶음을 growth · health 6개(IN08 ~ IN13)로 줄여 따로 쟀다 — agent 100% · info 판정 100% · info↔suggest 새는 건수 0 (`-k info_routing`, R3). activity · food 의 아이 일반 질문은 info 를 받지 않아 기존 RC · T · FC 케이스가 그대로 본다.
 
 GR 계열은 "숫자 놀이" 가 "놀이" 낱말만 보고 activity 로 새던 경계(보정 이력은 `supervisor-agent-v1.md` §4 eval · 보정 규칙)가 알려진 흔들림이다.
 

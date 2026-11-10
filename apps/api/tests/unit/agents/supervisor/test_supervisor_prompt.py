@@ -60,12 +60,13 @@ def test_request_mode_절과_경계_예시가_있다() -> None:
     prompt = build_system_prompt()
     assert "[request_mode — 추천인가, 일반 정보인가]" in prompt
     for line in (
-        '"보통 3~4세 어린이들은 어떤 걸 하면서 놀아?" → request/activity/info',
-        '"돌 아기는 보통 뭐 먹어?" → request/food/info',
         '"보통 몇 살부터 혼자 양치해?" → request/growth/info',
-        '"우리 애 4살인데 뭐 하고 놀까?" → request/activity/suggest',
+        '"몇 개월에 예방접종 맞아?" → request/health/info',
     ):
         assert line in prompt
+    # food · activity 의 경계는 이 칸으로 바꾸지 않는다
+    assert "activity/info" not in prompt and "food/info" not in prompt
+    assert "activity · food 조각에는 붙이지 않는다" in prompt
     # request_mode 절은 request 절 바로 뒤다
     assert prompt.index("[request — 도메인 Agent 요청]") < prompt.index("[request_mode")
     assert prompt.index("[request_mode") < prompt.index("[guarded")

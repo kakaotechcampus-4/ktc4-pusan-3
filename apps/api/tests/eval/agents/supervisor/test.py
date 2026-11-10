@@ -338,7 +338,7 @@ INFO_MODE_MIN = 0.9
 
 
 def test_info_routing(expect: Callable[..., None]) -> None:
-    """IN01~IN14 — agent · request_mode 일치율이 합격선 이상이고 모드가 새는 건수가 0이다."""
+    """IN 묶음(growth · health) — agent · request_mode 일치율 합격선 이상, 모드가 새는 건수 0."""
     expect(
         f"agent ≥ {INFO_AGENT_MIN:.0%} · info 판정 ≥ {INFO_MODE_MIN:.0%} · info↔suggest 새는 건수 0"
     )

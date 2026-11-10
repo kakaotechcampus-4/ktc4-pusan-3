@@ -1,6 +1,6 @@
 # 일반 정보 답변 (doc_answer) 프롬프트 평가
 
-"보통 3세는 숫자 몇까지 세?" 처럼 아이 일반을 묻는 말(`task_type=info`, #574)에 추천 대신 문서 행을 근거로 답 하나를 낸다. 세 Agent 가 같이 쓰는 뼈대이고 지금은 Growth 만 쓴다. 나이별 기준이나 평가 표현이 답에 나가면 발달 평가로 읽히고, 아이에게 막혀야 할 내용이 섞이면 아이가 다칠 수 있다.
+"보통 3세는 숫자 몇까지 세?" 처럼 아이 일반을 묻는 말(`task_type=info`, #574)에 추천 대신 문서 행을 근거로 답 하나를 낸다. 공통 뼈대이고 지금은 Growth 만 쓴다. 나이별 기준이나 평가 표현이 답에 나가면 발달 평가로 읽히고, 아이에게 막혀야 할 내용이 섞이면 아이가 다칠 수 있다.
 
 프롬프트: `app/agents/common/doc_answer.py` (`SYSTEM_PROMPT` · user 메시지 틀 `_user_message`)
 tool spec · 응답 스키마: `app/agents/common/doc_answer.py` (`ANSWER_TOOL` — `DocAnswerSubmission`)

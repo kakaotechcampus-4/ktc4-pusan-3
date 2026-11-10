@@ -103,15 +103,16 @@ _REQUEST = """
 # 경계를 한 번만 적는다. 코드가 "보통" 같은 낱말로 가르지 않는다 — 의도 분류는 모델 몫(루트 §3)
 _REQUEST_MODE = """
 [request_mode — 추천인가, 일반 정보인가]
-- request 조각마다 request_mode 를 붙인다.
-  suggest  우리 아이에게 무엇을 해 줄지 묻는 말 — 추천해줘 · 뭐 먹일까 · 뭐 하고 놀까. 기본값이다.
+- growth · health 의 request 조각에만 request_mode 를 붙인다.
+  activity · food 조각에는 붙이지 않는다 — 아이 일반을 묻는 말이어도 지금처럼 추천으로 보낸다.
+  suggest  우리 아이에게 무엇을 해 줄지 묻는 말 — 추천해줘 · 어떻게 시킬까. 기본값이다.
   info     아이 일반을 묻는 말 — "보통" · "또래" · "N세 아이들은" · "그 나이 애들은" ·
            "몇 살부터 ~해?"
-- 우리 아이 얘기는 나이를 말해도 suggest 다("우리 애 4살인데 뭐 하고 놀까?").
+- 우리 아이 얘기는 나이를 말해도 suggest 다("우리 애 4살인데 숫자 공부 어떻게 시켜?").
 - 나이별 기준을 묻는 말("보통 3세는 숫자 몇까지 세?")도 info 다.
   기준을 말하지 않는 것은 Agent 몫이다.
-- info 면 food_task · growth_task 를 비운다. agent 는 suggest 와 같은 기준으로 고른다
-  (놀이 activity · 먹을거리 food · 배움 · 생활 습관 growth).
+- growth 의 info 면 growth_task 를 비운다. agent 는 suggest 와 같은 기준으로 고른다
+  (배움 · 생활 습관 growth).
 - 아이 일반이라도 병 · 증상 · 약 · 영양제 · 영양 결핍은 guarded/diagnosis 다.
 - health 도 아이 일반을 묻는 말이면 info 다("보통 몇 개월에 예방접종 맞아?") — 코드가 닫힘 안내를
   낸다. 우리 아이의 검진 · 접종 일정을 묻는 말("검진 언제 받아야 돼?")은 suggest 로 두고
@@ -216,14 +217,12 @@ _EXAMPLES = """
 - "열 언제부터 났더라" → request/health/visit_summary
 - "지금 문 연 소아과 찾아줘" → request/health/place_lookup
 - "숫자 공부는 어떻게 시켜야 할까?" → request/growth/learning_suggestion
-- "보통 3~4세 어린이들은 어떤 걸 하면서 놀아?" → request/activity/info
-- "돌 아기는 보통 뭐 먹어?" → request/food/info
 - "보통 몇 살부터 혼자 양치해?" → request/growth/info
-- "우리 애 4살인데 뭐 하고 놀까?" → request/activity/suggest
+- "우리 애 4살인데 숫자 공부 어떻게 시켜?" → request/growth/learning_suggestion (suggest)
 - "몇 개월에 예방접종 맞아?" → request/health/info
-- "18개월 아기들은 보통 뭐 하고 놀아? 오늘 우리 애랑 할 놀이도 추천해줘"
-  → request/activity/info "18개월 아기들은 보통 뭐 하고 놀아?"
-  + request/activity/suggest "오늘 우리 애랑 할 놀이도 추천해줘"
+- "보통 3세는 숫자 몇까지 세? 우리 애 숫자 공부는 어떻게 시켜?"
+  → request/growth/info "보통 3세는 숫자 몇까지 세?"
+  + request/growth/learning_suggestion "우리 애 숫자 공부는 어떻게 시켜?"
 - "농구 좋아하는데 뭐 하고 놀까" → request/activity
 - "농구 좋아하는데 관련된 책 있어?" → request/growth/book_suggestion
 - "밥 먹을 때 혼자 하게 하고 싶은데" → request/growth/routine_coaching

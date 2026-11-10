@@ -84,6 +84,10 @@ _LABEL_ENUMS: dict[str, type] = {
 }
 
 
+# `request_mode=info` 를 받는 agent. Growth 는 문서 답, Health 는 routing 의 닫힘 안내 (#574)
+_INFO_MODE_AGENTS = frozenset({DomainAgentName.GROWTH.value, DomainAgentName.HEALTH.value})
+
+
 def _repair(data: dict[str, Any]) -> dict[str, Any]:
     """모델이 남긴 단서로 라벨을 고친다. 단서가 없으면 그대로 두고 검증에 맡긴다.
 
@@ -92,8 +96,10 @@ def _repair(data: dict[str, Any]) -> dict[str, Any]:
     - growth에 유형이 빠졌으면 교육 추천(learning_suggestion)으로 채운다
     - health 는 유형이 빠져도 채우지 않는다. 짐작한 라벨이 틀리면 복약 쓰기 경로가 열리기 때문에,
       비워 두고 Health 가 unsupported 로 닫게 한다
-    - `request_mode=info` 면 food · growth 라벨을 지우고 채우지도 않는다. 라벨은 추천의 Tool 묶음을
-      가르는 값이라 일반 정보 답변에는 쓰지 않는다
+    - `request_mode=info` 는 growth · health 만 받는다. food · activity 에 붙으면 지우고 지금처럼
+      추천으로 읽는다 — 두 Agent 의 경계는 이 칸으로 바꾸지 않는다(#574)
+    - growth 의 `request_mode=info` 면 growth 라벨을 지우고 채우지도 않는다. 라벨은 추천의 Tool
+      묶음을 가르는 값이라 일반 정보 답변에는 쓰지 않는다
     """
     for name, enum in _LABEL_ENUMS.items():
         value = data.get(name)
@@ -122,11 +128,12 @@ def _repair(data: dict[str, Any]) -> dict[str, Any]:
         # 조각을 어디로 보낼지 모르겠을때의 처리
         data["kind"] = kind = SegmentKind.UNCLEAR.value
         logger.info("supervisor 조각을 unclear로 고침 — request인데 agent가 없다")
+    if data.get("request_mode") == RequestMode.INFO and data.get("agent") not in _INFO_MODE_AGENTS:
+        data.pop("request_mode")
+        logger.info("supervisor info 를 받지 않는 agent 라 request_mode 를 지움")
     if kind == SegmentKind.REQUEST and data.get("request_mode") == RequestMode.INFO:
-        if data.get("agent") in (DomainAgentName.FOOD, DomainAgentName.GROWTH):
-            for name in ("food_task", "growth_task"):
-                if data.pop(name, None) is not None:
-                    logger.info("supervisor info 조각에서 %s 를 지움", name)
+        if data.pop("growth_task", None) is not None:
+            logger.info("supervisor info 조각에서 growth_task 를 지움")
         return data
     if (
         kind == SegmentKind.REQUEST
@@ -250,7 +257,7 @@ class Segment(_Strict):
             description=(
                 "kind=request 에만. suggest(우리 아이에게 해 줄 것 · 기본값) / "
                 "info(아이 일반을 묻는 말 — 보통 · 또래 · N세 아이들은 · 몇 살부터). "
-                "info 면 food_task · growth_task 를 비운다"
+                "info 는 growth · health 에만 붙이고, growth 면 growth_task 를 비운다"
             ),
         ),
     ]

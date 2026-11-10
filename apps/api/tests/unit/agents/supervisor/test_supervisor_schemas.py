@@ -572,9 +572,13 @@ def test_info_면_growth_task_를_지우고_채우지_않는다():
     assert segment.growth_task is None
 
 
-def test_info_면_food_task_가_없어도_받는다():
-    segment = _seg(agent="food", request_mode="info")
-    assert segment.food_task is None and segment.request_mode == "info"
+@pytest.mark.parametrize("agent", ["food", "activity"])
+def test_food_activity_는_info_를_받지_않고_지금처럼_추천으로_둔다(agent):
+    """food · activity 의 경계는 이 PR 에서 바꾸지 않는다 — info 를 지우고 suggest 로 읽는다."""
+    segment = _seg(agent=agent, request_mode="info")
+    assert segment.request_mode is None
+    if agent == "food":
+        assert segment.food_task == "meal_recommendation"
 
 
 def test_health_info_도_request_mode_를_받는다():

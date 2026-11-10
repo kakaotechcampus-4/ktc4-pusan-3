@@ -178,8 +178,8 @@ _AGENT_LIMIT = Guidance(
 )
 
 
-# 일반 정보 질문(`request_mode=info`)에 답하는 Agent (#574). 여기 없는 Agent 의 info 조각은
-# 돌리지 않고 안내 한 줄을 낸다 — 추천 경로로 새면 다른 나이의 추천이 이 아이 카드로 저장된다
+# 일반 정보 질문(`request_mode=info`)에 답하는 Agent (#574). info 는 스키마가 growth · health 에만
+# 남기므로(`schemas._INFO_MODE_AGENTS`), 여기 없는 info 조각은 Health 하나다
 INFO_AGENTS: frozenset[str] = frozenset({DomainAgentName.GROWTH.value})
 # Health 의 일반 정보 질문은 Agent 를 돌리지 않고 닫는다 — 진단하지 않는 Agent 가 아이 일반의 건강
 # 정보를 답으로 내지 않게(루트 §2). 우리 아이의 검진 · 접종 일정은 suggest 라
@@ -190,14 +190,6 @@ _INFO_HEALTH_CLOSED = Guidance(
     message=(
         "건강 관련 일반 정보는 아직 답하지 않아요. "
         "아이 상태가 걱정되면 소아청소년과에서 확인해 보세요."
-    ),
-)
-INFO_NOT_READY = "info_not_ready"
-_INFO_NOT_READY = Guidance(
-    code=INFO_NOT_READY,
-    message=(
-        "놀이 · 먹을거리의 일반 정보 질문에는 아직 답하지 않아요. "
-        "우리 아이에게 맞는 추천으로 물어봐 주세요."
     ),
 )
 
@@ -269,19 +261,13 @@ def route(raw_text: str, result: SupervisorResult, *, run_id: str) -> Routing:
         else MemoryTask(raw_text=raw_text, hints=hints, unclear=unclear, unclear_only=unclear_only)
     )
 
-    # 돌지 못하는 info 조각(Activity · Food)은 상한 자리를 쓰지 않는다 — 안내만 내고 지나간다.
+    # 닫힌 info 조각(Health)은 상한 자리를 쓰지 않는다 — 안내만 내고 지나간다.
     # 자리를 먼저 차지하면 뒤의 실제 요청이 `agent_limit` 으로 조용히 빠진다
     closed_info = [s for s in requests if _info_closed(s)]
     wanted = list(dict.fromkeys(str(s.agent) for s in requests if not _info_closed(s)))
     selected, dropped = wanted[:MAX_DOMAIN_AGENTS], wanted[MAX_DOMAIN_AGENTS:]
 
-    info_closed = tuple(
-        dict.fromkeys(
-            _INFO_HEALTH_CLOSED if str(s.agent) == DomainAgentName.HEALTH.value else _INFO_NOT_READY
-            for s in closed_info
-            if str(s.agent) in IMPLEMENTED_AGENTS
-        )
-    )
+    info_closed = (_INFO_HEALTH_CLOSED,) if closed_info else ()
     domain_tasks, trimmed = _domain_tasks(
         [
             s

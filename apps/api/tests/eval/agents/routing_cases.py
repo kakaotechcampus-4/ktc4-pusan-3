@@ -1368,50 +1368,9 @@ NT_CASES: tuple[RoutingCase, ...] = (
 
 # ── 일반 정보 질문 (#574) — request_mode 경계 ────────────────────────────
 # info: 아이 일반을 묻는 말("보통" · "또래" · "N세 아이들은"). suggest: 우리 아이에게 해 줄 것.
-# 우리 아이 얘기는 나이를 말해도 suggest 다 (IN04). Health 의 info 는 닫힘 안내다 (IN12)
+# Health 의 info 는 닫힘 안내다 (IN12). food · activity 는 info 를 받지 않아 여기 넣지 않는다 —
+# 두 Agent 의 경계는 기존 케이스(RC · T · FC)가 그대로 본다
 IN_CASES: tuple[RoutingCase, ...] = (
-    RoutingCase(
-        "IN01",
-        "보통 3~4세 어린이들은 어떤 걸 하면서 놀아?",
-        (QI("보통 3~4세 어린이들은 어떤 걸 하면서 놀아?", ACTIVITY),),
-        watch="경계 예시 — 아이 일반 놀이 질문은 activity/info",
-    ),
-    RoutingCase(
-        "IN02",
-        "보통 1세 어린이들은 어떤 걸 하면서 놀아?",
-        (QI("보통 1세 어린이들은 어떤 걸 하면서 놀아?", ACTIVITY),),
-        watch="아이 나이와 다른 나이를 물어도 info",
-    ),
-    RoutingCase(
-        "IN03",
-        "또래 애들은 요즘 뭐 하고 노나?",
-        (QI("또래 애들은 요즘 뭐 하고 노나?", ACTIVITY),),
-        watch="나이 없이 또래를 물으면 아이 월령 한 달로 답한다",
-    ),
-    RoutingCase(
-        "IN04",
-        "우리 애 4살인데 뭐 하고 놀까?",
-        (Q("우리 애 4살인데 뭐 하고 놀까?", ACTIVITY),),
-        watch="경계 예시 — 나이를 말해도 우리 아이 얘기는 suggest",
-    ),
-    RoutingCase(
-        "IN05",
-        "돌 아기는 보통 뭐 먹어?",
-        (QI("돌 아기는 보통 뭐 먹어?", FOOD),),
-        watch="food/info — food_task 를 비운다",
-    ),
-    RoutingCase(
-        "IN06",
-        "8개월 아기들은 이유식 어떤 질감으로 먹어?",
-        (QI("8개월 아기들은 이유식 어떤 질감으로 먹어?", FOOD),),
-        watch="이유식 질감 — food/info",
-    ),
-    RoutingCase(
-        "IN07",
-        "내일 아침 뭐 먹일까?",
-        (Q("내일 아침 뭐 먹일까?", FOOD, FoodTaskType.MEAL_RECOMMENDATION),),
-        watch="우리 아이 식단은 suggest",
-    ),
     RoutingCase(
         "IN08",
         "보통 두 돌 애들은 영양제 뭐 먹어?",
@@ -1444,18 +1403,12 @@ IN_CASES: tuple[RoutingCase, ...] = (
     ),
     RoutingCase(
         "IN13",
-        "18개월 아기들은 보통 뭐 하고 놀아? 오늘 우리 애랑 할 놀이도 추천해줘",
+        "보통 3세는 숫자 몇까지 세? 우리 애 숫자 공부는 어떻게 시켜?",
         (
-            QI("18개월 아기들은 보통 뭐 하고 놀아?", ACTIVITY),
-            Q("오늘 우리 애랑 할 놀이도 추천해줘", ACTIVITY),
+            QI("보통 3세는 숫자 몇까지 세?", GROWTH),
+            QG("우리 애 숫자 공부는 어떻게 시켜?", LEARN),
         ),
         watch="한 문장의 일반 질문과 우리 아이 추천은 두 조각",
-    ),
-    RoutingCase(
-        "IN14",
-        "보통 1세는 뭐 먹고 뭐 하고 놀아?",
-        (QI("보통 1세는 뭐 먹고", FOOD), QI("뭐 하고 놀아?", ACTIVITY)),
-        watch="두 Agent 의 일반 질문 — 둘 다 info",
     ),
 )
 

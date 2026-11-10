@@ -393,4 +393,4 @@ Supervisor 안전 사전검사(규칙)  ── 응급·진단 문의는 Agent에
 - 모델 입력은 질문 · 질문에 적힌 나이 · 거른 행뿐이다. 아이 이름 · 실제 나이 · 기록 · 알레르기 목록은 싣지 않는다.
 - 결과는 `suggestions=()` 이고 `readouts` 에 코드 안내(`info.*`)와 `doc_answer` 가 선다. `doc_answer.source_refs` 는 실제로 인용한 문서 행(`*_doc`)만 첫 등장 순서로 싣는다.
 - `source_refs` 의 문서 행은 api 가 `readouts[].sources`(제목 · 기관 · 출처)로 바꿔 SSE 와 지난 대화(`StoredReadout.sources`)에 같은 모양으로 보낸다. 문서 아닌 근거는 내보내지 않는다.
-- 고정 문구는 `doc_answer.readout.yaml` 하나이고 세 Agent 가 같이 쓴다. 지금 `info` 를 받는 Agent 는 Growth 다 — Activity · Food 는 routing 이 `info_not_ready` 안내를 낸다.
+- 고정 문구는 `doc_answer.readout.yaml` 하나다. 지금 `info` 를 받는 Agent 는 Growth 하나다 — Activity · Food 는 `request_mode` 를 받지 않아 아이 일반 질문도 지금처럼 추천으로 간다.
