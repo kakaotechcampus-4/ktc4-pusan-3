@@ -473,7 +473,14 @@ def _main_probe(**env: str) -> str:
 
 def test_main_attaches_the_handler_when_the_url_is_set():
     """app.main 이 설정의 ALERT_WEBHOOK_URL 로 핸들러를 단다 (dev · prod)."""
-    assert _main_probe(ALERT_WEBHOOK_URL=URL, APP_ENV="dev") == "attached"
+    # dev 는 카카오 키가 비면 부팅에서 끊긴다 (#310) — 가짜 키로 그 검사를 넘긴다
+    kakao = {
+        "KAKAO_REST_API_KEY": "rest-key",
+        "KAKAO_CLIENT_SECRET": "client-secret",
+        "KAKAO_CALLBACK_URL": "https://api.example.test/api/v1/auth/kakao/callback",
+        "KAKAO_ADMIN_KEY": "admin-key",
+    }
+    assert _main_probe(ALERT_WEBHOOK_URL=URL, APP_ENV="dev", **kakao) == "attached"
 
 
 def test_main_keeps_alerts_off_in_local_even_with_a_url():

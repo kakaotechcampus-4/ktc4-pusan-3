@@ -74,7 +74,7 @@ class Guardrail(Protocol):
 - **인스턴스는 run 마다 하나다.** Memory `AgentContext.guardrail` 에 두고 사전검사도 그것을 쓴다. 따로 받으면 한쪽만 바뀌어 두 곳이 다른 기준으로 거를 수 있다. 만드는 쪽이 안 넘기면 `StaticRuleGuardrail()` 이다.
 - **어느 칸을 어느 `context` 로 볼지는 저장 게이트가 정한다** (`memory/agent.py` 의 `_HAZARD_FIELDS`). 관찰 칸 이름은 Memory 의 스키마 지식이라 규칙 쪽에 두지 않는다. 칸끼리 이어 붙이지 않고 하나씩 본다.
 - **`GuardResult` 는 걸린 종류(`kinds`)만 싣는다.** 걸린 낱말은 원문 조각이라 로그에 찍히기 쉬워 싣지 않는다 (루트 §2). 화면 문구도 싣지 않는다 — 걸렸을 때 문구는 pipeline 이(`HAZARD_GUIDANCE`), 검사를 못 했을 때 문구는 실패 종류가 정한다.
-- **fail-closed.** 검사를 하지 못하면 빈 결과("걸린 것 없음")를 돌려주지 않고 `GuardrailUnavailableError` 를 올린다. 부르는 쪽은 이 예외를 받으면 그 run 을 진행하지 않는다. 지금은 아무도 잡지 않는다 — 러너가 run 을 실패(`internal_error`)로 끝내고, Memory commit 전이라 저장도 남지 않는다.
+- **fail-closed.** 검사를 하지 못하면 빈 결과("걸린 것 없음")를 돌려주지 않고 `GuardrailUnavailableError` 를 올린다. 부르는 쪽은 이 예외를 받으면 그 run 을 진행하지 않는다. pipeline 이 잡아 `Failed("guard_unavailable")` 로 끝낸다 (#768, [run-failure-v1](../api/run-failure-v1.md)) — Supervisor · Memory 를 부르지 않고 Memory commit 전이라 저장도 남지 않는다.
   - 실패를 `GuardResult` 의 칸으로 두지 않은 것은 부르는 곳마다 "실패면 막는다" 를 챙기지 않아도 되게 하려는 것이다. 한 곳만 빠뜨려도 검사가 조용히 빠진다.
   - 실패 종류를 한 곳으로 모을 때(LLM 타임아웃 · 연결 오류 등) 이 예외도 그 계통에 넣고, 화면 문구는 실패 종류에서 정한다. 그때도 `Guardrail` · `GuardResult` 와 두 호출 지점은 바뀌지 않는다.
 - **`check` 는 async 다.** 다음 구현이 외부 API 면 await 가 필요하고, 두 호출 지점이 이미 async 함수 안이다.

@@ -2,7 +2,6 @@ import { CORRECTED_OBSERVATION } from "@/components/correction-buttons";
 import { ObservationIcon, observationLabel } from "@/components/domain-chip";
 import { CorrectedMark } from "@/components/observation-list";
 import { CONFIDENCE_LABEL } from "@/lib/confidence";
-import { cn } from "@/lib/cn";
 import { isHealthObservation, type Observation } from "@/lib/api/types";
 import { formatTimeOfDay } from "@/lib/format";
 import { healthMoment, healthTitle, temperatureLabel } from "@/lib/health-observation";
@@ -10,11 +9,10 @@ import { healthMoment, healthTitle, temperatureLabel } from "@/lib/health-observ
 /**
  * 저장된 기록 한 줄. 🚨 **지난 대화에서는 고친 기록도 온다** (#228 리뷰) — 교정은 기록을 지우지 않고 상태만
  * 바꿔서, 서버가 지금 모습(`status`)으로 싣는다. 방금 저장한 run 에서는 늘 `active` 라 예전엔 볼 필요가 없었다.
- * 07 기록 탭과 같은 고친 표시를 달고, 잘못된 기록(`inactive`)은 글자를 물린다 — 근거에서도 빠진 기록이다.
- * 색만으로 가르지 않는다 — 무엇으로 고쳤는지가 글자로 선다.
+ * 07 기록 탭과 같은 고친 표시를 단다. 색만으로 가르지 않는다 — 무엇으로 고쳤는지가 글자로 선다.
+ * ⚠️ 잘못된 기록(`inactive`)은 없다 (#736) — 서버가 지운 기록으로 옮겨서 지난 대화에도 실리지 않는다.
  */
 export function ObservationRow({ observation }: { observation: Observation }) {
-  const wrong = observation.status === "inactive";
   const detail = observationDetail(observation);
 
   return (
@@ -32,13 +30,16 @@ export function ObservationRow({ observation }: { observation: Observation }) {
         ) : null}
       </div>
 
-      <p className={cn("text-body mt-2", wrong ? "text-ink-muted" : "text-ink")}>
-        {observation.raw_text}
-      </p>
+      <p className="text-body text-ink mt-2">{observation.raw_text}</p>
 
       <div className="text-caption text-ink-subtle mt-1.5 flex flex-wrap items-center gap-x-2">
         {detail ? <span>{detail}</span> : null}
-        <span>{CONFIDENCE_LABEL[observation.confidence_source]}</span>
+        {/* 🚨 **보호자가 직접 한 말이면 출처를 적지 않는다** (#868). 대화의 기록은 거의 다 그 보호자가 적은 것이라
+            줄마다 "보호자 직접" 이 붙으면 아무것도 알려 주지 않는다. 다를 때(전해 들음 · 추측 · 기관 공지)만 적는다.
+            07 상세 시트의 "출처" 칸은 칸 이름이 있어서 그대로 적는다. */}
+        {observation.confidence_source === "parent_direct" ? null : (
+          <span>{CONFIDENCE_LABEL[observation.confidence_source]}</span>
+        )}
       </div>
 
       {observation.status !== "active" ? (

@@ -18,13 +18,13 @@
 | 패키지 관리 | uv |
 | 테스트 | pytest |
 | 린트·포맷 | ruff |
-| import 규칙 강제 | import-linter (CI, 예정 — #79 API CI 와 함께) |
+| import 규칙 강제 | 리뷰 (import-linter 는 아직 설정하지 않았다) |
 
 ---
 
 ## 레이어 경계
 
-import-linter 로 CI 에서 강제할 예정이다(#79 API CI 와 함께). 설정이 생기기 전까지는 리뷰가 막는다.
+import-linter 설정은 아직 없다 — API CI(`ci-api.yml`)에도 들어 있지 않다. 지금은 리뷰가 막는다.
 
 ### `app/rules/`
 - **허용**: 표준 라이브러리만
@@ -64,7 +64,11 @@ import-linter 로 CI 에서 강제할 예정이다(#79 API CI 와 함께). 설�
 - **허용**: domains, rules, providers, core
   — core 는 역할별 LLM 설정(`core/agent_config.py`), 일정 초안 payload 계약(`core/event_draft.py`),
     날씨 원문 계약(`core/weather_raw.py`), 화면 딥링크 값(`core/deeplinks.py` — api 의 05 guard · 동의 오류와 같이 쓴다),
-    LLM 사용량 기록(`core/llm_usage.py` — 호출은 `record`, 보호자 · run 귀속은 api 가 `attribute`. providers 도 같이 쓴다)을 쓴다
+    LLM 사용량 기록(`core/llm_usage.py` — 호출은 `record`, 보호자 · run 귀속은 api 가 `attribute`. providers 도 같이 쓴다),
+    프롬프트 지문의 해시 규칙(`core/prompt_hash.py` — 표준 라이브러리만. providers 의 OCR 두 곳도 같은 규칙을 써야 해서 core 에 둔다, #770)을 쓴다
+- 🚨 **프롬프트 · tool spec · 응답 스키마를 바꾸면** 그 프롬프트의 평가 문서(`docs/agents/eval/<이름>_EVAL.md`) 측정 이력에
+  바꾸기 전 · 후 행을 더한다. 지문(`agents/common/prompt_fingerprint.py`)이 달라지면 `test_prompt_history.py` 가 실패한다.
+  모델에 system 메시지를 보내는 새 자리를 만들면 `register_prompt` 와 평가 문서, `test_prompt_call_sites.py` 의 표를 같이 더한다
 - **금지**: fastapi, infra 직접 접근
 - ⚠️ **내부 구조는 이시하(AI Owner)가 정한다.** 이 문서는 경계만 정하고 하위 폴더를
   미리 만들지 않았다 (`CLAUDE.md` §8 "기능 내부 기술 결정 → 해당 기능 Owner").
@@ -104,7 +108,8 @@ import-linter 로 CI 에서 강제할 예정이다(#79 API CI 와 함께). 설�
 
 ### `app/providers/`
 - 외부 모델 SDK 전용
-- **허용**: core — 설정(`core/config.py`)은 이미 쓰고 있다. 모델 호출은 `core/llm_usage.py` 의 `record` 로 사용량을 남긴다
+- **허용**: core — 설정(`core/config.py`)은 이미 쓰고 있다. 모델 호출은 `core/llm_usage.py` 의 `record` 로 사용량을 남긴다.
+  호출 로그의 프롬프트 지문은 `core/prompt_hash.py` 로 만든다 — agents 의 지문 등록과 같은 값이어야 한다
 - **금지**: domains, agents import
 
 ### `app/workers/`
@@ -149,6 +154,13 @@ raw SQL 대상 예시: 승격 판정 집계, observation 4테이블 병합 페�
 - `--autogenerate` 결과를 확인 없이 커밋하지 않는다.
   자동 인식 안 되는 것: `enum`, `CHECK` 제약, `daterange`, `vector` 타입, `GRANT`
 - 첫 revision 에 `CREATE EXTENSION IF NOT EXISTS vector` 를 직접 넣는다.
+- 🚨 **새 표를 만들면 같은 마이그레이션에서 삭제 트리거를 건다** (#758) — 트리거가 없는 표에서 지운 행은
+  백업을 복원하면 되살아난다. 표를 만든 뒤 한 줄(`CREATE TRIGGER deletion_log AFTER DELETE ON "새_표" FOR EACH ROW
+  EXECUTE FUNCTION log_deletion()`), downgrade 에는 표를 지우기 전에 `DROP TRIGGER`. 걸지 않을 표는
+  `app/domains/deletion_log/models.py` 의 `NOT_LOGGED` 에 이유와 함께 적는다 — 둘 다 안 하면
+  `tests/integration/test_deletion_log.py` 가 실패한다. 행을 지우지 않고 상태만 바꾸는 "삭제"(`status='deleted'` 같은)를
+  새로 만들면 같은 파일의 `STATUS_DELETES` 와 마이그레이션의 상태 트리거에 같이 더한다 — **둘 다 빠뜨리면 테스트가
+  잡지 못한다.** 상세는 그 파일 머리말.
 - 🚨 **expand-only** — 배포 롤백은 DB 를 안 되돌려서, 직전 코드가 새 스키마에서 돌아야 한다.
   CI 의 `python -m scripts.check_expand_only` 가 `upgrade()`(와 거기서 부르는 같은 파일 함수)의 컬럼 · 테이블 삭제,
   이름 바꾸기, NOT NULL 조이기 · 기본값 떼기, `server_default` 없는 NOT NULL 컬럼 추가, CHECK 교체, 넓히기가 아닌

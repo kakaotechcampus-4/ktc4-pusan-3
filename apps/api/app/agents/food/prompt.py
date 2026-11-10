@@ -20,8 +20,10 @@ tool이 못 막는 것을 막는 자리다. 코드로 막을 수 있는 것은 r
 """
 
 from collections.abc import Collection, Mapping, Sequence
+from types import SimpleNamespace
 from typing import Any
 
+from app.agents.common.prompt_fingerprint import fixed_context, register_prompt, tools_text
 from app.agents.food.context import FoodContext
 from app.agents.food.schemas.common import FoodTaskType
 from app.agents.food.store.ports import FoodDocRow, MenuCatalogRow
@@ -267,3 +269,51 @@ def build_system_prompt(
     """
     header = f"현재 시각은 {context.now.isoformat()} 이고 timezone 은 {context.timezone} 다."
     return "\n\n".join([*_SECTIONS, _instructions(task_type), _examples(examples), header])
+
+
+def _fingerprint_parts() -> tuple[str, ...]:
+    """프롬프트 지문(#770)의 입력 — task 마다 렌더링한 system 프롬프트(예시 없음)와 tool spec."""
+    from app.agents.common import tool_loop
+    from app.agents.food.schemas import tool_defs
+
+    rendered = []
+    for task in FoodTaskType:
+        try:
+            rendered.append(build_system_prompt(fixed_context(), task))  # type: ignore[arg-type]
+        except ValueError:  # 코드가 답하는 task 는 프롬프트가 없다
+            continue
+    # user 메시지 틀 — 후보 목록 · 아이 기록 후보 · 재호출 지시도 모델이 읽는 규칙이다
+    sample = [SimpleNamespace(menu_key="menu_key", display_name="메뉴", ingredients=("재료",))]
+    records = [
+        {
+            "kind": "kind",
+            "id": "id",
+            "label": "label",
+            "polarity": "like",
+            "observed_on": "2000-01-01",
+            "is_stale": stale,
+        }
+        for stale in (False, True)
+    ]
+    messages = (
+        request_message([], sample),  # type: ignore[arg-type]
+        request_message(["요청"], sample, records=[]),  # type: ignore[arg-type]
+        request_message(["요청"], sample, records=records),  # type: ignore[arg-type]
+        recall_message(["요청"], avoid=["menu_key"], sample=sample),  # type: ignore[arg-type]
+        # 요청 글에 나온 레시피는 후보 줄 끝에 "요청과 맞음" 이 붙는다 (#740)
+        candidate_list(sample, {"menu_key"}),  # type: ignore[arg-type]
+    )
+    # 예시가 있으면 [예시] 머리말 지시("결만 참고한다 …")가 붙는다
+    # — 고정 더미 행으로 그 갈래도 싣는다
+    example = SimpleNamespace(id="id", title="제목", source_org="출처", body="본문")
+    with_example = _examples((example,))  # type: ignore[arg-type]
+    return (
+        *rendered,
+        with_example,
+        *messages,
+        tools_text(tool_defs.TOOL_DEFINITIONS),
+        tool_loop.BAD_JSON,
+    )
+
+
+register_prompt("food", _fingerprint_parts)

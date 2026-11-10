@@ -32,6 +32,7 @@ from pydantic import ValidationError
 
 from app.agents.common.guardrail import GuardContext, Guardrail
 from app.agents.common.llm_client import LLMClient, LLMError
+from app.agents.common.prompt_fingerprint import register_prompt
 from app.agents.common.result import DomainPending
 from app.agents.memory.bundles import MUTATING_PREFIXES, WRITES_FOR, tools_for
 from app.agents.memory.context import AgentContext
@@ -53,6 +54,7 @@ from app.agents.memory.schemas.task import (
     PendingMemoryContext,
     WorkType,
 )
+from app.core.prompt_hash import canonical_json
 from app.rules.medicine_name import is_generic_medicine, mentions_medicine, same_medicine
 from app.rules.safety_term import mentions_safety
 
@@ -1367,7 +1369,8 @@ async def _hazard(name: str, arguments: dict[str, Any], guardrail: Guardrail) ->
     """관찰 create · update 의 대상 이름이 위험 물질인가. 원문(raw_text)은 보지 않는다.
 
     칸마다 따로 본다(이어 붙이지 않는다). 검사를 못 하면 `GuardrailUnavailableError` 가 그대로
-    올라가 run 이 멈춘다 — 저장하지 않는 쪽으로 닫힌다 (fail-closed).
+    올라가고, pipeline 이 `guard_unavailable` 로 run 을 끝낸다 — 저장하지 않는 쪽으로 닫힌다
+    (fail-closed).
     """
     for prefix in ("create_", "update_"):
         found = _HAZARD_FIELDS.get(name.removeprefix(prefix)) if name.startswith(prefix) else None
@@ -1540,3 +1543,52 @@ def _assistant_message(message: Any) -> dict[str, Any]:
 def _accumulate(total: dict[str, int], usage: dict[str, int]) -> None:
     for key, value in usage.items():
         total[key] = total.get(key, 0) + value
+
+
+# ── 프롬프트 지문 (#770) ────────────────────────────────────────────────
+# system 프롬프트 밖에서 모델에 가는 글.
+# 재시도 · 되묻기 문구와 tool 실패 사유, user 메시지 머리말이다.
+# 화면에 그대로 나가는 글(_UNSAVED_FALLBACK 등)은 모델 입력이 아니라 넣지 않는다.
+# 여기 이름을 더하거나 빼면 지문이 바뀐다
+# — 평가 문서(docs/agents/eval/MEMORY_EVAL.md)에 행을 더한다.
+_MODEL_TEXTS: tuple[str, ...] = (
+    "_HINT_HEADER",
+    "_CONTINUATION_HEADER",
+    "_RESUME_HEADER",
+    "_WHOLE_FRAGMENT",
+    "_NOT_CHILD_RECORD_ALONE",
+    "_NOT_CHILD_RECORD_MIXED",
+    "_HAZARD",
+    "_SAFETY_RECORD",
+    "_MEDICINE_REGISTERED",
+    "_LOOKUP_FIRST",
+    "_FOUND_HEADER",
+    "_BAD_JSON",
+    "_EMPTY_TURN",
+    "_PENDING_RETRY",
+    "_UNSAVED_REPLY",
+    "_RESUME_UNSAVED",
+    "_FIRST_RUN_UNSAVED_REPLY",
+    "_RESUME_ONE_RECORD",
+    "_SAVED_FEVER_HEADER",
+)
+
+
+def _fingerprint_parts() -> tuple[str, ...]:
+    """프롬프트 지문의 입력 — 고정 시각으로 렌더링한 system 프롬프트, tool spec, 응답 스키마 두 벌
+    (처음 run · 이어받기), 그리고 system 밖에서 모델에 가는 문구."""
+    from app.agents.common.prompt_fingerprint import fixed_context, tools_text
+    from app.agents.memory import prompt as memory_prompt
+    from app.agents.memory.schemas import reply, tool_defs
+
+    texts = globals()
+    return (
+        memory_prompt.build_system_prompt(fixed_context()),  # type: ignore[arg-type]
+        tools_text(tool_defs.TOOL_DEFINITIONS),
+        canonical_json(reply.REPLY_FORMAT),
+        canonical_json(reply.CONTINUATION_REPLY_FORMAT),
+        *(texts[name] for name in _MODEL_TEXTS),
+    )
+
+
+register_prompt("memory", _fingerprint_parts)

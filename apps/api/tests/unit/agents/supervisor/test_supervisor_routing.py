@@ -15,11 +15,17 @@ from app.agents.memory.schemas.task import WorkType
 from app.agents.supervisor import routing as routing_module
 from app.agents.supervisor.agent import BAD_JSON, SupervisorResult
 from app.agents.supervisor.routing import (
+    _GUIDANCE,
     AGENT_LIMIT,
+    FILLER_WORDS,
     MAX_DOMAIN_AGENTS,
+    OTHER_FAMILY_GUIDANCE,
+    PLAIN_DIAGNOSIS_GUIDANCE,
     SKIP_MEMORY_FOR_PURE_REQUEST,
     TASK_LIMIT,
     covers_only_requests,
+    mentions_other_family,
+    mentions_treatment,
     route,
 )
 from app.agents.supervisor.schemas import SegmentKind, SupervisorOutput
@@ -175,6 +181,97 @@ def test_RC37_약_용량_문의는_어디서_확인할지_안내한다() -> None
 
     assert [guidance.code for guidance in routing.guidance] == ["diagnosis"]
     assert "약사" in routing.guidance[0].message
+
+
+def _guard(text: str, guard: str = "diagnosis") -> dict[str, Any]:
+    return {"text": text, "kind": "guarded", "guard": guard}
+
+
+def test_약_얘기_없는_진단_문의에는_약_용량_문장이_없다() -> None:
+    raw = "우리 애 adhd 같지 않아? 맞다고 기록해줘"
+    routing = route(raw, SupervisorResult(output=_output(_guard(raw))), run_id=RUN_ID)
+
+    assert routing.guidance == (PLAIN_DIAGNOSIS_GUIDANCE,)
+    assert PLAIN_DIAGNOSIS_GUIDANCE.code == "diagnosis"
+    assert "약" not in PLAIN_DIAGNOSIS_GUIDANCE.message
+
+
+def test_약_얘기가_있는_진단_문의는_지금_문구다() -> None:
+    raw = "해열제 몇 ml 먹여야 돼?"
+    routing = route(raw, SupervisorResult(output=_output(_guard(raw))), run_id=RUN_ID)
+
+    assert routing.guidance == (_GUIDANCE["diagnosis"],)
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("해열제 몇 ml 먹여야 돼?", True),
+        ("약 먹여도 돼?", True),
+        ("감기약을 반만 줘도 돼?", True),
+        ("영양제 뭐 먹여?", True),
+        ("5ml 더 줘도 돼?", True),
+        ("치과 예약했는데 충치인지 봐줘", False),
+        ("치약 바꿨는데 괜찮을까", False),
+        ("약속 시간에 늦어서 울었는데 adhd 일까", False),
+        ("약간 산만한데 adhd 야?", False),
+    ],
+)
+def test_약_낱말은_낱말_단위로_본다(text: str, expected: bool) -> None:
+    assert mentions_treatment(text) is expected
+
+
+def test_진단_조각_중_하나라도_약_얘기면_약_문구다() -> None:
+    raw = "adhd 같아? 그리고 영양제 뭐 먹여"
+    output = _output(_guard("adhd 같아?"), _guard("영양제 뭐 먹여"))
+
+    routing = route(raw, SupervisorResult(output=output), run_id=RUN_ID)
+
+    assert routing.guidance == (_GUIDANCE["diagnosis"],)
+
+
+def test_다른_집_기록을_묻는_말에는_다른_집_문구다() -> None:
+    raw = "다른 집 아이들 기록도 보여줘. 다른 엄마들은 뭐 먹여?"
+    output = _output(
+        {"text": "다른 집 아이들 기록도 보여줘", "kind": "out_of_scope"},
+        {"text": "다른 엄마들은 뭐 먹여?", "kind": "out_of_scope"},
+    )
+
+    routing = route(raw, SupervisorResult(output=output), run_id=RUN_ID)
+
+    assert routing.guidance == (OTHER_FAMILY_GUIDANCE,)
+    assert OTHER_FAMILY_GUIDANCE.code == "out_of_scope"
+    assert routing.domain_tasks == ()
+    assert routing.memory_task is None
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("다른 집 아이들 기록도 보여줘", True),
+        ("다른 엄마들은 뭐 먹여?", True),
+        ("옆집 애는 저녁 뭐 먹는지 알려줘", True),
+        ("다른 엄마한테 연락해줘", False),
+        ("옆집에 이 간식 좀 보내줘", False),
+        ("다른 집 아이 선물 주문해줘", False),
+    ],
+)
+def test_다른_집_얘기여도_대행을_시킨_말은_다른_집_문구가_아니다(text: str, expected: bool) -> None:
+    assert mentions_other_family(text) is expected
+
+
+def test_대행_요청은_지금_문구다() -> None:
+    raw = "이 반찬 좀 주문해줘."
+    output = _output({"text": raw, "kind": "out_of_scope"})
+
+    routing = route(raw, SupervisorResult(output=output), run_id=RUN_ID)
+
+    assert routing.guidance == (_GUIDANCE["out_of_scope"],)
+
+
+@pytest.mark.parametrize("case_id", ["RO07", "RO08"])
+def test_record_조각의_다른_집은_안내를_내지_않는다(case_id: str) -> None:
+    assert _route_case(case_id).guidance == ()
 
 
 def test_RC12_범위_밖_요청도_안내한다() -> None:
@@ -1053,3 +1150,52 @@ def test_RESOLVABLE_TASKS_는_추천_task_표와_같다() -> None:
     from app.agents.pipeline import RECOMMENDING_TASKS
 
     assert routing_module.RESOLVABLE_TASKS == RECOMMENDING_TASKS
+
+
+# ── 부르는 말 · 추임새만 조각 밖에 남은 요청 (#861) ────────────────
+_FOOD_REC = {
+    "text": "간식 추천해줘",
+    "kind": "request",
+    "agent": "food",
+    "food_task": "meal_recommendation",
+}
+
+
+@pytest.mark.parametrize("case_id", ["RQ04", "RQ05", "RQ06"])
+def test_부르는_말만_남은_요청은_Memory_를_부르지_않는다(case_id: str) -> None:
+    routing = _route_case(case_id)
+
+    assert routing.memory_task is None
+    assert routing.intent_type == "request"
+    assert [(t.agent, t.task_type) for t in routing.domain_tasks] == [
+        ("food", "meal_recommendation")
+    ]
+
+
+def test_자모만_남은_글자도_덮인_것으로_본다() -> None:
+    result = SupervisorResult(output=_output(_FOOD_REC))
+    routing = route("간식 추천해줘 ㅠㅠ", result, run_id=RUN_ID)
+
+    assert routing.memory_task is None
+
+
+def test_추임새는_낱말_단위로만_본다() -> None:
+    """ "야채" 의 "야" 는 추임새가 아니다 — 놓친 기록이라 Memory 가 본다."""
+    raw = "야채 먹었어. 간식 추천해줘"
+
+    routing = route(raw, SupervisorResult(output=_output(_FOOD_REC)), run_id=RUN_ID)
+
+    assert routing.memory_task is not None
+
+
+def test_추임새_말고_다른_글자가_남으면_Memory_가_본다() -> None:
+    raw = "야 오늘 김밥 먹었는데 간식 추천해줘"
+
+    routing = route(raw, SupervisorResult(output=_output(_FOOD_REC)), run_id=RUN_ID)
+
+    assert routing.memory_task is not None
+
+
+def test_아니_는_추임새가_아니다() -> None:
+    """ "김밥 아니 볶음밥" 같은 정정에 쓰인다."""
+    assert "아니" not in FILLER_WORDS

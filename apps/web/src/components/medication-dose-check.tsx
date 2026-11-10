@@ -61,7 +61,7 @@ export function DoseCheck({ childId, dose }: { childId: string; dose: Medication
     //    체크 칸 옆에는 문장 자리가 없어서 토스트가 받는다 (`calendar-day.tsx` 와 같은 판단).
     onError: (_error, _variables, context) => {
       if (queue.pending === 0 && context?.previous) queryClient.setQueryData(key, context.previous);
-      toast.show("복용 체크를 저장하지 못했어요. 잠시 뒤에 다시 눌러주세요.");
+      toast.show("복용 체크를 저장하지 못했어요. 잠시 뒤에 다시 눌러 주세요.");
     },
     onSettled: () => {
       if (queue.pending === 0) void queryClient.invalidateQueries({ queryKey: key });

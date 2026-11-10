@@ -105,7 +105,7 @@
 - 🚨 **동의가 지금 켜져 있을 때만 싣는다** (`useLocationConsent` · `GET /consents` 캐시). 모르면(불러오는 중 · 실패) 싣지 않는다.
   10 설정에서 끄면 같은 캐시가 다시 받아서 다음 한 줄부터 빠진다
 - 🚨 **같은 키로 다시 보내면 처음 읽은 좌표 그대로다** (`stores/conversation.ts` 의 `sentLocations`). 같은 Idempotency-Key 에
-  다른 본문을 실으면 `422 idempotency_key_reuse` 다. 그래서 좌표는 `keyPayload` 에 넣지 않고 키가 처음 나갈 때 읽은 값을 키에
+  다른 본문을 실으면 서버가 처음 응답을 재생해 그 본문은 처리되지 않는다(#438). 그래서 좌표는 `keyPayload` 에 넣지 않고 키가 처음 나갈 때 읽은 값을 키에
   묶는다 ([`chat-run-v1.md`](chat-run-v1.md) 의 `keyPayload` 예외). 그 사이 동의를 껐어도 같은 키는 같은 값으로 나간다 — 서버가
   동의를 읽어 버린다 (#380). `failed` 로 끝나 새 키를 받은 줄(`forgetFailedKey`)은 저장이 없었으니 좌표를 새로 읽는다
 - 좌표를 기다리는 것은 2초다(`READ_TIMEOUT_MS`). 넘거나 못 읽으면 위치 없이 보낸다. 실패라고 말하지 않는다

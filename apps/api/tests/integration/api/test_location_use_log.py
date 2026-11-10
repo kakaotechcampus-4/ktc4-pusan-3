@@ -24,7 +24,7 @@ from sqlalchemy import select, text
 from app.agents import entrypoint
 from app.agents.entrypoint import Done
 from app.api import agent_ports, idempotency, quota
-from app.api.runs import pending_reply, registry, runner
+from app.api.runs import registry, runner
 from app.core.config import settings
 from app.domains.consent.location_log import purge_expired_location_logs
 from app.domains.consent.models import ConsentScope, LocationPurpose, LocationUseLog
@@ -41,11 +41,13 @@ COORDS = entrypoint.CoarseLocation(lat=35.18, lon=129.08)
 
 
 @pytest.fixture(autouse=True)
-def _clean_process_memory():
-    for module in (registry, idempotency, quota, pending_reply):
+def _clean_process_memory(pending_db):
+    """채널 · Idempotency 는 프로세스 메모리라 비운다. 한도는 표(rate_event, #877)라 `pending_db` 가
+    테스트 트랜잭션에 묶는다."""
+    for module in (registry, idempotency):
         module.clear()
     yield
-    for module in (registry, idempotency, quota, pending_reply):
+    for module in (registry, idempotency):
         module.clear()
 
 
@@ -165,7 +167,7 @@ async def test_하루_한도에_걸린_입력은_기록하지_않는다(db_clien
     headers, parent_id = bearer
     await grant_location(session, parent_id)
     for _ in range(settings.INPUT_DAILY_LIMIT):
-        quota.consume(
+        await quota.consume(
             parent_id=parent_id, today=quota.today_kst(), limit=settings.INPUT_DAILY_LIMIT
         )
 

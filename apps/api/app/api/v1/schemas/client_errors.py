@@ -6,10 +6,12 @@
 🚨 프론트 apps/web/src/lib/report-render-error.ts 가 보내는 모양과 같아야 한다.
 """
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import ConfigDict, Field
+
+from app.api.schema_base import ApiSchema
 
 
-class ClientErrorReport(BaseModel):
+class ClientErrorReport(ApiSchema):
     """화면에서 난 예외 하나. 값은 서버 로그에만 남고 DB 에는 넣지 않는다."""
 
     model_config = ConfigDict(extra="forbid")

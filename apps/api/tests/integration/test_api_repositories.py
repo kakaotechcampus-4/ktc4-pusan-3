@@ -330,7 +330,7 @@ async def test_suggestion_feedback_and_correction_history_are_scoped(session, fa
         child_id=child.id,
         target_kind=CorrectionTargetKind.OBSERVATION_ACTIVITY,
         target_id=observation_id,
-        verdict=CorrectionVerdict.WRONG,
+        verdict=CorrectionVerdict.ONCE_ONLY,
         parent_id=owner.id,
     )
     with pytest.raises(ValueError, match="교정 대상"):
@@ -339,7 +339,7 @@ async def test_suggestion_feedback_and_correction_history_are_scoped(session, fa
             child_id=other.id,
             target_kind=CorrectionTargetKind.OBSERVATION_ACTIVITY,
             target_id=observation_id,
-            verdict=CorrectionVerdict.WRONG,
+            verdict=CorrectionVerdict.ONCE_ONLY,
             parent_id=owner.id,
         )
     assert [

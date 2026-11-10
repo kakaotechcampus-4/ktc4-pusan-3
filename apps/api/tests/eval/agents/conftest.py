@@ -366,6 +366,21 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     for path, records in _records.items():
         target = path.with_name(f"{path.stem}_result.txt")
         target.write_text(_format(path, records), encoding="utf-8")
+    _write_run_meta(session)
+
+
+def _write_run_meta(session: pytest.Session) -> None:
+    """`-m live` 로 돈 세션이면 실행 메타(커밋 · 모델 · effort · 지문 · 반복 횟수)를 남긴다 (#770).
+
+    측정 이력 행(`docs/agents/eval/`)을 손으로 옮겨 적다 틀리지 않게 한다.
+    메타를 못 써도 eval 결과는 그대로다 — 실패는 경고만 낸다.
+    """
+    from tests.eval.agents.run_meta import write_live_meta
+
+    try:
+        write_live_meta(session.items)
+    except Exception as exc:  # 메타 때문에 eval 세션이 실패하면 안 된다
+        print(f"live_run_meta 를 쓰지 못했다: {type(exc).__name__}")
 
 
 # ── 파일 내용 ───────────────────────────────────────────────────

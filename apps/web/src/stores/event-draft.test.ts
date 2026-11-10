@@ -52,21 +52,21 @@ function series(draftId: string, seriesId: string): StoredDraft {
 const ids = (drafts: StoredDraft[]) => drafts.map((d) => d.draft.draft_id);
 
 describe("mergeDrafts", () => {
-  it("🚨 같은 제안이 걸린 초안은 새 것이 이긴다 — 초안 id 는 요청마다 다르다 (#241)", () => {
+  it("🚨 같은 추천이 걸린 초안은 새 것이 이긴다 — 초안 id 는 요청마다 다르다 (#241)", () => {
     const before = [draft({ draft_id: "old", suggestion_ids: ["s1"] })];
     const merged = mergeDrafts(before, [draft({ draft_id: "new", suggestion_ids: ["s1"] })]);
 
     expect(ids(merged)).toEqual(["new"]);
   });
 
-  it("🚨 묶인 식사 초안은 제안 하나만 겹쳐도 같은 장이다", () => {
+  it("🚨 묶인 식사 초안은 추천 하나만 겹쳐도 같은 장이다", () => {
     const before = [draft({ draft_id: "old", suggestion_ids: ["s1", "s2"] })];
     const merged = mergeDrafts(before, [draft({ draft_id: "new", suggestion_ids: ["s2", "s3"] })]);
 
     expect(ids(merged)).toEqual(["new"]);
   });
 
-  it("다른 제안의 초안은 그대로 둔다", () => {
+  it("다른 추천의 초안은 그대로 둔다", () => {
     const before = [draft({ draft_id: "other", suggestion_ids: ["s9"] })];
     const merged = mergeDrafts(before, [draft({ draft_id: "new", suggestion_ids: ["s1"] })]);
 
@@ -89,7 +89,7 @@ describe("mergeDrafts", () => {
     expect(ids(merged)).toEqual(["other", "event", "new"]);
   });
 
-  it("🚨 제안이 없는 create 초안은 합치지 않는다 — 같은 일정인지 알 근거가 없다", () => {
+  it("🚨 추천이 없는 create 초안은 합치지 않는다 — 같은 일정인지 알 근거가 없다", () => {
     const before = [draft({ draft_id: "a" })];
     const merged = mergeDrafts(before, [draft({ draft_id: "b" })]);
 
@@ -104,7 +104,7 @@ describe("dropDrafts", () => {
 
   afterEach(() => store().clearAll());
 
-  it("🚨 그 경로의 남은 초안을 전부 뗀다 — 전에 넣지 않은 제안 초안이 다음 시트의 첫 장으로 서면 안 된다 (#539)", () => {
+  it("🚨 그 경로의 남은 초안을 전부 뗀다 — 전에 넣지 않은 추천 초안이 다음 시트의 첫 장으로 서면 안 된다 (#539)", () => {
     store().addDrafts(CHILD, "suggestion", [
       draft({ draft_id: "a", suggestion_ids: ["s1"] }).draft,
       draft({ draft_id: "b", suggestion_ids: ["s2"] }).draft,

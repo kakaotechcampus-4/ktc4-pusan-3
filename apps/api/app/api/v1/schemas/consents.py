@@ -8,15 +8,16 @@ from datetime import datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StringConstraints
+from pydantic import ConfigDict, Field, StrictBool, StringConstraints
 
+from app.api.schema_base import ApiSchema
 from app.domains.consent.models import ConsentAction
 
 UsableScope = Literal["service_terms", "privacy_account", "location", "child_basic", "child_health"]
 """받는 동의 종류. quality_improve 는 쓰지 않는 값이라 받지 않는다 (consent/models.py)."""
 
 
-class ConsentRequest(BaseModel):
+class ConsentRequest(ApiSchema):
     """동의 1건을 켜거나(granted) 끈다(withdrawn).
 
     같은 상태로 다시 보내면 기록을 더하지 않는다. 다만 새 약관 버전에 다시 동의하면 새로 기록한다.
@@ -44,7 +45,7 @@ class ConsentRequest(BaseModel):
     )
 
 
-class ConsentOut(BaseModel):
+class ConsentOut(ApiSchema):
     id: UUID
     scope: str
     action: ConsentAction
@@ -52,21 +53,21 @@ class ConsentOut(BaseModel):
     acted_at: datetime
 
 
-class ConsentResponse(BaseModel):
+class ConsentResponse(ApiSchema):
     """201 — 기록한 행(같은 상태였으면 마지막 행)과 지금 상태."""
 
     consent: ConsentOut
     effective: dict[str, bool] = Field(description="scope → 지금 동의했는가. 서버가 이력에서 계산")
 
 
-class ConsentHistoryEntry(BaseModel):
+class ConsentHistoryEntry(ApiSchema):
     scope: str
     action: ConsentAction
     policy_version: str
     acted_at: datetime
 
 
-class ConsentsResponse(BaseModel):
+class ConsentsResponse(ApiSchema):
     """내 계정 동의와, child_id 를 주면 그 아이의 동의.
 
     history 는 최신순 증빙이다 — 지우는 길이 없다.

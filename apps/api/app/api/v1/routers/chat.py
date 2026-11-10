@@ -125,6 +125,8 @@ async def get_chat_day(
     observations = await _current_observations(session, child.child_id, stored)
     suggestions = await _current_suggestions(session, child.child_id, stored)
     cards = await _current_cards(session, parent.parent_id, child.child_id, stored)
+    # 15분 안 · 아직 답하지 않은 질문이 있는 턴. 턴마다 묻지 않고 하루치를 한 번에 본다 (#877)
+    opened = await pending_reply.open_runs(run_ids=[turn.run_id for turn in turns], **owner)
     return ChatDayResponse(
         date=day,
         turns=[
@@ -133,7 +135,7 @@ async def get_chat_day(
                 raw_text=turn.raw_text,
                 reply_to=turn.reply_to,
                 created_at=turn.created_at,
-                reply_open=pending_reply.get(run_id=turn.run_id, **owner) is not None,
+                reply_open=turn.run_id in opened,
                 replies=_fill(replies, observations, suggestions, cards),
             )
             for turn, replies in zip(turns, stored, strict=True)

@@ -87,7 +87,7 @@ async def test_month_counts_match_day_lists(
     headers, parent_id = bearer
     await _food(session, cid, DAY)
     await _food(session, cid, DAY, days=2)  # 10일 · 11일
-    await _food(session, cid, DAY, status=ObservationStatus.INACTIVE)  # 고친 기록도 나온다
+    await _food(session, cid, DAY, status=ObservationStatus.STAND_ALONE)  # 고친 기록도 나온다
     await _food(session, cid, DAY, status=ObservationStatus.DELETED)  # 지운 기록은 안 나온다
     await create_observation(  # 건강 기록도 기록 탭처럼 세고 싣는다 (#764)
         session,

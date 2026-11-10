@@ -99,7 +99,7 @@ const SCREENS: Array<{ name: string; path: string; ready: string; scenario?: Sce
     ready: "서로 다른 3일에 기록됐어요",
   },
   {
-    name: "07 제안 피드백",
+    name: "07 추천 피드백",
     path: `/child/${CHILD}/memories?tab=feedback`,
     ready: "두부를 부쳐서 한 조각 곁들여 보세요",
   },
@@ -112,9 +112,9 @@ const SCREENS: Array<{ name: string; path: string; ready: string; scenario?: Sce
     ready: "키 104.2cm, 몸무게 17.1kg",
   },
   {
-    name: "05 제안 후보",
+    name: "05 추천 후보",
     path: `/child/${CHILD}/suggestions?agents=food,activity`,
-    ready: "제안 이유",
+    ready: "추천 이유",
   },
   { name: "01 첫 진입", path: "/onboarding", ready: "민감정보 처리 (아이 건강·알레르기)" },
   { name: "02 아이 정보", path: `/child/${CHILD}/onboarding`, ready: "우유" },

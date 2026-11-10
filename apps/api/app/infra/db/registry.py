@@ -15,6 +15,7 @@ from app.domains.consent import models as consent  # noqa: F401
 from app.domains.correction import models as correction  # noqa: F401
 from app.domains.daycare_meal import models as daycare_meal  # noqa: F401
 from app.domains.delete_proposal import models as delete_proposal  # noqa: F401
+from app.domains.deletion_log import models as deletion_log  # noqa: F401
 from app.domains.food import models as food  # noqa: F401
 from app.domains.identity import models as identity  # noqa: F401
 from app.domains.medication import models as medication  # noqa: F401
@@ -24,7 +25,10 @@ from app.domains.notice import models as notice  # noqa: F401
 from app.domains.notification import models as notification  # noqa: F401
 from app.domains.place import models as place  # noqa: F401
 from app.domains.policy import models as policy  # noqa: F401
+from app.domains.rate_event import models as rate_event  # noqa: F401
 from app.domains.report import models as report  # noqa: F401
+from app.domains.run_channel import models as run_channel  # noqa: F401
+from app.domains.run_hold import models as run_hold  # noqa: F401
 from app.domains.safety import models as safety  # noqa: F401
 from app.domains.schedule import models as schedule  # noqa: F401
 from app.domains.suggestion import models as suggestion  # noqa: F401

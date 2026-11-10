@@ -69,28 +69,41 @@ export interface PartialEvent {
  * 🚨 실패는 200 + 빈 배열이 아니다.
  * raw_text 를 돌려받아야 "적어주신 말은 입력창에 그대로 남겨뒀어요" 가 성립한다.
  *
- * ⚠️ `reason` 을 화면이 갈라 그리지 않는다 — 부모가 할 수 있는 일이 넷 다 같다(다시 시도 ·
- *    고쳐 쓰기). 여기 적어 두는 것은 **서버가 보낼 수 있는 값을 알아보게** 하기 위해서다 (#141).
+ * ⚠️ `reason` 을 화면이 갈라 그리지 않는다 — 부모가 할 수 있는 일(다시 시도 · 고쳐 쓰기)이 이유마다
+ *    같고, 이유마다 다른 말은 서버가 `message` 로 보낸다 (#768). 여기 적어 두는 것은 **서버가 보낼 수 있는
+ *    값을 알아보게** 하기 위해서다 (#141). 이유 표 원문은 `docs/api/run-failure-v1.md`.
  *    🚨 **`not_document` 하나만 예외다** — 같은 사진을 다시 읽어도 결과가 같아서 보호자가 할 일이
  *    "다른 사진 고르기" 로 다르다 (08 사진 화면).
  */
 export interface FailedEvent {
   reason:
-    | "unparsable"
-    | "no_child_observation"
-    | "llm_unavailable"
-    /** run 이 60초 안에 안 끝나 서버가 끊었다 (#147). */
+    /** 시간 안에 끝나지 않았다 — 러너 60초 · 도메인 20초 · LLM 응답 시간 초과 (#147 · #768). */
     | "timeout"
+    /** LLM 연결 실패 · 그 밖의 LLM 오류 · 도메인 Agent 가 결과 없이 돌아옴. */
+    | "llm_unavailable"
+    | "llm_rate_limited"
+    /** 인증 · 설정 · 요청 거절. 잠시 뒤 풀리기도 해서 다른 이유와 같이 다시 시도를 세운다. */
+    | "llm_misconfigured"
+    /** 위험 물질 검사를 하지 못했다 (#731 · fail-closed). */
+    | "guard_unavailable"
+    | "lookup_unavailable"
+    | "unparsable"
     /** 서버 쪽 예외 (#147). */
     | "internal_error"
     /**
      * 08 사진 — 글자는 읽었는데 저장할 공지 · 식단표가 없다 (영수증 · 게임 화면).
-     * 🚨 위의 넷과 달리 **화면이 갈라 그린다.** 같은 사진을 다시 시도해도 같은 결과라,
+     * 🚨 위의 이유들과 달리 **화면이 갈라 그린다.** 같은 사진을 다시 시도해도 같은 결과라,
      *    보호자가 할 일이 "다른 사진 고르기" 로 다르다.
      */
     | "not_document"
     | (string & {});
   raw_text: string;
+  /**
+   * 실패 카드 첫 줄 (#768). 서버 코드 카탈로그(`failure.readout.yaml`)의 문구다.
+   * 🚨 **화면이 다시 쓰지 않는다** — `reason` 으로 문구를 만들면 서버 문구와 화면이 두 곳에서 갈린다
+   *    (`GuidanceEvent.message` 와 같은 규칙). 없으면(이 필드 전의 서버) 화면의 기본 문구를 쓴다.
+   */
+  message?: string;
 }
 
 /**

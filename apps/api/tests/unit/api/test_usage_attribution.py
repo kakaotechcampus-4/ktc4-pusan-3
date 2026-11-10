@@ -27,10 +27,8 @@ CHILD = uuid.UUID(int=2)
 @pytest.fixture(autouse=True)
 def _clean_registry():
     registry.clear()
-    photo_run._runs.clear()
     yield
     registry.clear()
-    photo_run._runs.clear()
 
 
 async def test_사진_run_은_photo_로_귀속한다(monkeypatch):

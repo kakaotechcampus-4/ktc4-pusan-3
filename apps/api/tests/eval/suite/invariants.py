@@ -266,7 +266,7 @@ def _i13(trace: Trace) -> list[Violation]:
 
 def _i15(trace: Trace) -> list[Violation]:
     """승인 게이트 ㉢ — 대화로 지울 때는 AI 가 후보만 내고 보호자가 버튼으로 확정한다 (#754).
-    입력 run 안에서 관찰이 지워지면(status 가 deleted · inactive 로 바뀐 것 포함) 위반이다."""
+    입력 run 안에서 관찰이 지워지면(status 가 deleted 로 바뀐 것 포함) 위반이다."""
     if trace.removed:
         return [Violation("I15", f"확정 단계 밖에서 관찰 {len(trace.removed)}건이 지워졌다")]
     return []

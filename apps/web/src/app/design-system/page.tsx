@@ -511,8 +511,8 @@ const DS_DOMAIN_OPTIONS = [
 
 const DS_STATE_OPTIONS = [
   { value: "all", label: "전체" },
-  { value: "confirmed", label: "확인됨" },
-  { value: "candidate", label: "후보" },
+  { value: "confirmed", label: "여러 번 보였어요" },
+  { value: "candidate", label: "지켜보는 중" },
 ] as const;
 
 /** 에러 바운더리 예시용. 렌더 도중 던져야 바운더리가 잡는다 (이벤트 핸들러 안은 안 잡힌다). */
@@ -536,7 +536,7 @@ function ComponentSection() {
   const [date, setDate] = useState("");
   const [range, setRange] = useState({ from: "", to: "" });
   const [query, setQuery] = useState("계란");
-  const [conditions, setConditions] = useState(["식사", "확인됨"]);
+  const [conditions, setConditions] = useState(["식사", "여러 번 보였어요"]);
   const [checked, setChecked] = useState(true);
   const [text, setText] = useState("");
   const [area, setArea] = useState("");
@@ -621,7 +621,7 @@ function ComponentSection() {
             labelHidden
             variant="bare"
             maxHeightPx={104}
-            placeholder="오늘 있었던 일, 말하듯 적어주세요"
+            placeholder="오늘 있었던 일, 말하듯 적어 주세요"
             value={bar}
             onChange={(e) => setBar(e.target.value)}
           />
@@ -797,7 +797,7 @@ function ComponentSection() {
           items={[
             { key: "a", label: "기록", href: "#design-system-tabs" },
             { key: "b", label: "기억", href: "#design-system-tabs" },
-            { key: "c", label: "제안 피드백", href: "#design-system-tabs" },
+            { key: "c", label: "추천 피드백", href: "#design-system-tabs" },
           ]}
           active="a"
           label="탭 예시"
@@ -825,7 +825,7 @@ function ComponentSection() {
         아이 알레르기 기록에 없는 재료예요. 보호자가 확인해 주셔야 넣을 수 있어요.
       </Banner>
       <Banner tone="danger" title="알레르기 기록에 추가했어요">
-        이 재료가 들어간 제안은 넣지 않아요.
+        이 재료가 들어간 추천은 넣지 않아요.
       </Banner>
 
       <SubTitle>고르기 상자</SubTitle>
@@ -932,7 +932,7 @@ function ComponentSection() {
       <div>
         <Button
           variant="secondary"
-          onClick={() => toast.show("준비물 체크를 저장하지 못했어요. 잠시 뒤에 다시 눌러주세요.")}
+          onClick={() => toast.show("준비물 체크를 저장하지 못했어요. 잠시 뒤에 다시 눌러 주세요.")}
         >
           토스트 띄우기
         </Button>
@@ -1023,7 +1023,7 @@ function ComponentSection() {
       <EmptyState
         icon={NotebookPen}
         title="아래에 한 줄 적으면 여기에 쌓여요"
-        description="기록이 없으면 제안도 만들지 않아요."
+        description="기록이 없으면 추천도 만들지 않아요."
         count={0}
       />
       <Card>
@@ -1054,7 +1054,7 @@ function ComponentSection() {
       <SubTitle>아이콘 · 기록 종류</SubTitle>
       <p className="text-caption text-ink-subtle">
         기록 한 건(07 · 09 기록 줄 · 기록 상세 · 04 기록 줄)에만 쓴다. growth 만 교육 · 생활습관
-        둘로 갈리고, 색은 둘 다 growth 다 (#501). 필터 · 제안은 Agent 라 위의 도메인 아이콘
+        둘로 갈리고, 색은 둘 다 growth 다 (#501). 필터 · 추천은 Agent 라 위의 도메인 아이콘
         그대로다.
       </p>
       <ul className="flex flex-col gap-2">
@@ -1094,13 +1094,13 @@ function EventDraftSection() {
   return (
     <Section
       title="일정 초안"
-      note="한 줄 입력 · 제안 카드 · 사진 셋이 같은 카드를 쓴다. 제출이 승인 게이트 ㉠ 다."
+      note="한 줄 입력 · 추천 카드 · 사진 셋이 같은 카드를 쓴다. 제출이 승인 게이트 ㉠ 다."
     >
-      <SubTitle>제안에서 온 초안 — 일자가 비어 있다</SubTitle>
+      <SubTitle>추천에서 온 초안 — 일자가 비어 있다</SubTitle>
       <p className="text-caption text-ink-subtle">
-        🚨 제안 문장만으로는 언제인지 알 수 없어서 `starts_at` 이 null 로 온다. 프론트가 오늘로
+        🚨 추천 문장만으로는 언제인지 알 수 없어서 `starts_at` 이 null 로 온다. 프론트가 오늘로
         채우지 않고, 보호자가 고르기 전에는 제출 버튼이 잠긴다. 🚨 알레르기 사전검사는 이 카드가
-        아니라 **승인 시트**가 진다 — 게이트 ㉡ 이고 제안 경로에만 오기 때문이다.
+        아니라 **승인 시트**가 진다 — 게이트 ㉡ 이고 추천 경로에만 오기 때문이다.
       </p>
       <EventDraftCard draft={DS_DRAFT_FROM_SUGGESTION} onSubmit={() => {}} />
 

@@ -1,7 +1,9 @@
 """교정 시 Curator 보류 기록(hold) 정리 스펙.
 
-보류 중인 관찰에 wrong/once_only 교정이 들어오면 hold 행을 삭제한다.
+보류 중인 관찰에 once_only 교정이 들어오면 hold 행을 삭제한다.
 교정된 관찰은 다시 연결 대상이 되지 않으므로, hold 가 남아있을 이유가 없다.
+기록용 wrong 은 기록 지우기로 바꿨다 (#736) — 지울 때의 hold 정리는 store 가 한다
+(`test_observation_delete_paths.py`).
 """
 
 from datetime import date, timedelta
@@ -45,44 +47,6 @@ def _food_with_embedding(child_id, *, observed_on=date(2026, 9, 26)):
 
 class TestCorrectionClearsHold:
     """교정 시 hold 행이 삭제되는지."""
-
-    async def test_wrong_교정시_hold_삭제(self, session, family):
-        """보류 중(hold O, affinity_id=NULL) + wrong → hold 삭제."""
-        owner, child = family
-        obs = _food_with_embedding(child.id)
-        session.add(obs)
-        await session.flush()
-
-        # hold 생성
-        session.add(
-            ObservationLinkHold(
-                child_id=child.id,
-                domain="food",
-                observation_id=obs.id,
-                uncertain_count=1,
-                subject_hash="abc",
-            )
-        )
-        await session.flush()
-
-        from app.domains.memory.profile.service import handle_observation_correction
-
-        await handle_observation_correction(
-            session,
-            domain="food",
-            child_id=child.id,
-            observation_id=obs.id,
-            verdict="wrong",
-            parent_id=owner.id,
-            today=date(2026, 9, 26),
-        )
-
-        hold = await session.scalar(
-            select(ObservationLinkHold).where(
-                ObservationLinkHold.domain == "food", ObservationLinkHold.observation_id == obs.id
-            )
-        )
-        assert hold is None
 
     async def test_once_only_교정시_hold_삭제(self, session, family):
         """보류 중 + once_only → hold 삭제."""
@@ -136,10 +100,10 @@ class TestCorrectionClearsHold:
             domain="food",
             child_id=child.id,
             observation_id=obs.id,
-            verdict="wrong",
+            verdict="once_only",
             parent_id=owner.id,
             today=date(2026, 9, 26),
         )
 
         await session.refresh(obs)
-        assert obs.status == ObservationStatus.INACTIVE
+        assert obs.status == ObservationStatus.STAND_ALONE

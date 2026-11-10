@@ -55,7 +55,9 @@ test.describe("앱을 다시 켜도 오늘 대화가 보인다", () => {
   }) => {
     await page.goto(`/child/${CHILD}/chat`);
 
-    await expect(turn(page, "아침에 계란을 잘 먹었어")).toContainText("기록 2건 저장됨");
+    await expect(
+      turn(page, "아침에 계란을 잘 먹었어").getByText("기록 2건", { exact: true }),
+    ).toBeVisible();
     // 오늘이 두 줄뿐이라 올려 볼 것이 없다 — 올리기 전에 어제가 위에 붙어 있다.
     await expect(turn(page, "주말에 물놀이 가기로 했어")).toBeAttached();
     // 🚨 붙는 동안 바닥에 머문다 — 마지막 한 줄이 보인다.
@@ -94,33 +96,33 @@ test.describe("지난 턴에는 지금 누르면 막다른 버튼이 없다", ()
     await expect(pool.getByRole("button", { name: "확인하고 넣기" })).toHaveCount(0);
   });
 
-  test('🚨 지난 부분 실패에는 "다시 준비하기" 가 없고, 고를 후보가 남은 결과에만 "제안 보기" 가 선다', async ({
+  test('🚨 지난 부분 실패에는 "다시 준비하기" 가 없고, 고를 후보가 남은 결과에만 "추천 보기" 가 선다', async ({
     page,
   }) => {
     const dinner = turn(page, "저녁 뭐 먹일지 같이 정해 줘");
     await expect(dinner).toContainText("놀이 쪽은 이번에 처리하지 못했어요.");
     await expect(dinner.getByRole("link", { name: "다시 준비하기" })).toHaveCount(0);
     // 하나는 채택했다 — 05 에서 보인다.
-    await expect(dinner.getByRole("link", { name: "제안 보기" })).toHaveAttribute(
+    await expect(dinner.getByRole("link", { name: "추천 보기" })).toHaveAttribute(
       "href",
       /run=r_hist_dinner/,
     );
     // 고르지 않은 채 다 지났다 — 눌러도 "이어서 할 수 없어요" 뿐이라 세우지 않는다.
     const play = turn(page, "주말에 뭐 하고 놀지 골라 줘");
     await expect(play).toContainText("지금은 고를 수 있는 후보가 없어요.");
-    await expect(play.getByRole("link", { name: "제안 보기" })).toHaveCount(0);
+    await expect(play.getByRole("link", { name: "추천 보기" })).toHaveCount(0);
   });
 
   test("🚨 지운 기록은 내용 없이 지웠다고만 말한다", async ({ page }) => {
     const blocks = turn(page, "블록 놀이를 오래 했어");
     await expect(blocks).toContainText("이 기록은 지웠어요.");
-    await expect(blocks).toContainText("기록 1건 저장됨");
+    await expect(blocks.getByText("기록 1건", { exact: true })).toBeVisible();
   });
 
   test("🚨 고친 기록은 기록 탭처럼 무엇으로 고쳤는지 말한다", async ({ page }) => {
     const breakfast = turn(page, "아침에 계란을 잘 먹었어");
-    await expect(breakfast).toContainText("‘잘못된 기록’으로 고친 기록");
-    await expect(breakfast).toContainText("기록 2건 저장됨");
+    await expect(breakfast).toContainText("‘이번만 그랬어요’로 고친 기록");
+    await expect(breakfast.getByText("기록 2건", { exact: true })).toBeVisible();
   });
 
   test("🚨 닫힌 지난 질문에는 답할 자리가 없다 — 답했으면 답함, 아니면 닫힘", async ({ page }) => {

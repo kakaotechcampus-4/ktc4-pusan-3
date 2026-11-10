@@ -366,7 +366,7 @@ export function LegalDocumentSection() {
                 {doc.href
                   ? "최신 처리방침이 열려요."
                   : policy
-                    ? `${policy.version} 판이에요.`
+                    ? policyVersionLabel(policy.version)
                     : "지금은 열 수 없어요. 잠시 뒤에 다시 열어 주세요."}
               </p>
             )}
@@ -375,6 +375,19 @@ export function LegalDocumentSection() {
       })}
     </SettingsGroup>
   );
+}
+
+/**
+ * 약관 판의 한 줄 (#868). 🚨 **"판" 이라고 부르지 않는다** — 부모가 쓰는 말이 아니다. 판 이름이 날짜면 본문 머리처럼
+ * "2026년 11월 3일부터 적용돼요" 로 옮긴다. 날짜 계산이 아니라 서버 문자열을 글자로 바꾸는 것이다 — 시행일을 따로
+ * 받지 않고 판 이름을 읽는 것은, 서버가 판 이름을 시행일로 짓기 때문이다(`register_policy_2026_11_03.py`).
+ * 날짜 꼴이 아니면(예전 `draft-1`) 지어내지 않고 이름 그대로 둔다.
+ */
+function policyVersionLabel(version: string): string {
+  const date = /^(\d{4})-(\d{2})-(\d{2})$/.exec(version);
+  if (!date) return `${version} 버전이에요.`;
+  const [, year, month, day] = date;
+  return `${year}년 ${Number(month)}월 ${Number(day)}일부터 적용돼요.`;
 }
 
 /** 문서 목록의 밑줄 글자. 링크든 버튼이든 같은 모양이어야 한다 — 하는 일이 같다(읽는다). */

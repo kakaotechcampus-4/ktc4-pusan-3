@@ -1,8 +1,8 @@
 """05 사전검사용 health_safety 행 — 모든 kind · 모든 status (#249).
 
-Agent 의 안전 조회(`agent_reader` · #412)는 active 만 읽지만, 사전검사는 "행이 없음(unknown)" 과
-"확인 결과 없음(none) · 철회(retracted)" 를 갈라야 한다. 판정은 agents 의 이름 사전이 한다 —
-여기는 행을 옮겨 담기만 한다.
+Agent 의 안전 조회(`agent_reader` · #412)는 active 만 읽지만, 사전검사는 알레르기(active) ·
+괜찮았던 식품(none) · 내린 기록(retracted)을 갈라야 한다(내린 기록은 "모름" 과 같다). 판정은
+agents(`allergen_states`)가 한다 — 여기는 행을 옮겨 담기만 한다.
 """
 
 import uuid

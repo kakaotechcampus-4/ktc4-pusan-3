@@ -32,6 +32,7 @@ from app.domains.identity.repository import (
 )
 from app.domains.identity.withdraw import withdraw_parent
 from app.domains.policy.models import PolicyVersion
+from app.domains.rate_event.models import RateEvent
 from app.domains.schedule.models import SharedPhoto
 from app.infra.db.session import engine
 from app.integrations.kakao.client import KakaoApiError
@@ -186,14 +187,14 @@ async def test_owner_withdraw_forgets_in_memory_entries_of_the_child(
     headers, owner = bearer
     _, member = await issue_bearer(session, token="member")
     await link_child(session, parent_id=member, child_id=cid)
-    owners = stash_in_memory(parent_id=owner, child_id=cid)
-    members = stash_in_memory(parent_id=member, child_id=cid)
+    owners = await stash_in_memory(parent_id=owner, child_id=cid)
+    members = await stash_in_memory(parent_id=member, child_id=cid)
 
     resp = await db_client.post(URL, json=ACK, headers=headers)
 
     assert resp.status_code == 200
-    assert in_memory(owners, parent_id=owner, child_id=cid) == (False, False)
-    assert in_memory(members, parent_id=member, child_id=cid) == (False, False)
+    assert await in_memory(owners, parent_id=owner, child_id=cid) == (False, False)
+    assert await in_memory(members, parent_id=member, child_id=cid) == (False, False)
 
 
 async def test_member_withdraw_forgets_only_their_in_memory_entries(
@@ -208,14 +209,39 @@ async def test_member_withdraw_forgets_only_their_in_memory_entries(
     _, owner = bearer
     member_headers, member = await issue_bearer(session, token="member")
     await link_child(session, parent_id=member, child_id=cid)
-    owners = stash_in_memory(parent_id=owner, child_id=cid)
-    members = stash_in_memory(parent_id=member, child_id=cid)
+    owners = await stash_in_memory(parent_id=owner, child_id=cid)
+    members = await stash_in_memory(parent_id=member, child_id=cid)
 
     resp = await db_client.post(URL, json=ACK, headers=member_headers)
 
     assert resp.status_code == 200
-    assert in_memory(members, parent_id=member, child_id=cid) == (False, False)
-    assert in_memory(owners, parent_id=owner, child_id=cid) == (True, True)
+    assert await in_memory(members, parent_id=member, child_id=cid) == (False, False)
+    assert await in_memory(owners, parent_id=owner, child_id=cid) == (True, True)
+
+
+async def test_withdraw_drops_that_parents_rate_buckets(session: AsyncSession, bearer: Bearer):
+    """보호자 통(하루 입력 · 초대 계정)은 탈퇴와 함께 지운다.
+
+    재가입하면 새 id 라 옛 통은 한도를 지키지 못하고 id 만 남는다. IP 통 · 다른 보호자 통은
+    남는다 (#899 리뷰).
+    """
+    _, owner = bearer
+    _, other = await issue_bearer(session, token="other")
+    at = datetime(2026, 3, 10, tzinfo=UTC)
+    keys = [
+        f"input:{owner}:2026-03-10",
+        f"invite:parent:{owner}",
+        "invite:ip:203.0.113.0/24",
+        f"input:{other}:2026-03-10",
+        f"invite:parent:{other}",
+    ]
+    session.add_all(RateEvent(key=k, at=at) for k in keys)
+    await session.flush()
+
+    await withdraw_parent(session, parent_id=owner, now=at)
+
+    left = set(await session.scalars(select(RateEvent.key).where(RateEvent.key.in_(keys))))
+    assert left == set(keys[2:])
 
 
 @pytest.mark.parametrize(
