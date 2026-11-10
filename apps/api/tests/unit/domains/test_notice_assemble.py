@@ -167,15 +167,25 @@ def _dates(item):
     )
 
 
-@pytest.mark.parametrize("handling", ["info", "todo"])
-def test_기간을_마감_칸에_적어도_일시_칸에_적은_것과_같다(handling):
+def test_안내의_기간은_마감_칸에_적어도_일시_칸에_적은_것과_같다():
     # 모델은 "신청 기간 10/27 10:00 ~ 11/17 18:00" 을 마감 칸에도 적는다. 시작을 버리면 안 된다
     period = "10월 27일(화) 10:00 ~ 11월 17일(화) 18:00"
-    as_when = _build(_item(handling=handling, date_text=period, due_text=None)).items[0]
-    as_due = _build(_item(handling=handling, date_text=None, due_text=period)).items[0]
+    as_when = _build(_item(handling="info", date_text=period, due_text=None)).items[0]
+    as_due = _build(_item(handling="info", date_text=None, due_text=period)).items[0]
     assert as_due.starts_at.astimezone(KST) == datetime(2026, 10, 27, 10, tzinfo=KST)
     assert as_due.ends_at.astimezone(KST) == datetime(2026, 11, 17, 18, tzinfo=KST)
     assert _dates(as_due) == _dates(as_when)
+
+
+def test_할_일의_마감_칸_기간은_마감으로_둔다():
+    # 할 일은 마감이 분명히 보여야 한다. 시작이 생기면 화면 이름표가 "마감" 에서 "언제" 로 바뀌고,
+    # 보호자가 날짜를 고쳐도 마감이 따라 바뀌지 않는다 (검토) — 전처럼 끝 날 마감만 둔다
+    item = _build(
+        _item(handling="todo", date_text=None, due_text="10월 27일(화) 10:00 ~ 11월 17일(화) 18:00")
+    ).items[0]
+    assert item.starts_at is None
+    assert item.due_at.astimezone(KST) == datetime(2026, 11, 17, 18, tzinfo=KST)
+    assert item.needs_review is False
 
 
 def test_일정의_마감_칸_기간은_행사_기간으로_옮기지_않는다():

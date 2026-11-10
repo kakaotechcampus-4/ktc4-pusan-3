@@ -293,18 +293,18 @@ def _item(
         if raw.handling == "todo":
             reasons.append("마감을 읽지 못했어요")
     elif (
-        raw.handling != "calendar"
+        raw.handling == "info"
         and not (raw.date_text or "").strip()
         and due.start is not None
         and due.end is not None
     ):
-        # "10/27 10:00 ~ 11/17 18:00" 을 마감 칸에만 적어도 시작을 버리지 않는다. 일시 칸에 적은
-        # 것과 같은 행이 되게 한다 — 할 일은 그대로 끝 날이 마감이고, 안내는 기간이다.
-        # 일정은 옮기지 않는다. 일정의 마감 칸 기간은 대개 신청 · 회신 기간이라 행사 기간으로 바꾸면
-        # 틀린 일정이 확인 없이 들어간다 — 전처럼 시작을 되묻는다
-        when = due
-        if raw.handling == "info":
-            due = NoticeWhen()
+        # 안내의 "10/27 10:00 ~ 11/17 18:00" 을 마감 칸에만 적어도 시작을 버리지 않는다. 일시 칸에
+        # 적은 것과 같은 행(기간)이 되게 한다. 안내만이다 —
+        # - 일정의 마감 칸 기간은 대개 신청 · 회신 기간이라 행사 기간으로 바꾸면 틀린 일정이 확인
+        #   없이 들어간다. 전처럼 시작을 되묻는다
+        # - 할 일은 마감이 분명히 보여야 한다. 시작이 생기면 화면 이름표가 "마감" 에서 "언제" 로
+        #   바뀌고 보호자가 날짜를 고쳐도 마감이 따라 바뀌지 않는다. 전처럼 끝 날 마감만 둔다
+        when, due = due, NoticeWhen()
     # 할 일에 날짜만 있으면 그 날이 마감이다. 그래야 "이번 주 마감" 에 잡힌다. 다만 "신청 시작일시"
     # 는 열리는 시각이다 — 마감으로 두면 선착순이 열리는 날을 끝나는 날로 알려 준다
     opens = _OPENS.search(f"{raw.date_text or ''} {raw.source_quote}")
