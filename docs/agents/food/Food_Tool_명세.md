@@ -181,7 +181,7 @@ recipe_catalog  (resolved · 재료 있는 행만 — menu_catalog 가 아니다
 
 `daycare_meal` 라벨은 **`daycare_meal` 행이 있는 아이만** 열린다. 단계로 닫지 않는다 — 기관에 다니면 이유기라도 급식을 먹는다. 행이 없으면 갱신할 대상이 없으니 자연히 `()`다.
 
-`daycare_lookup` 도 같다 — 행이 있는 아이만 열리고(`closed.no_daycare`), 단계 · `safety_ok` 로 닫지 않는다. 알레르기를 쓰지 않는 읽기라서다. 열리는 tool 은 `show_daycare_meal` 하나(출력 tool)이고 `tool_choice="required"` 다. 쓰지 않아 `WRITING_TASKS` 에 없다 — 같은 run 에 급식 갱신이 있으면 갱신이 먼저 끝나 조회가 바뀐 행을 읽는다.
+`daycare_lookup` 도 같다 — 행이 있는 아이만 열리고(`closed.no_daycare`), 급식 표를 읽지 못했으면 없다고 하지 않고 따로 닫고(`closed.daycare_unread`, `DaycareLookupError` — 식단 추천 · 영양소 분석은 닫지 않고 집 기록으로 간다, #956), 단계 · `safety_ok` 로 닫지 않는다. 알레르기를 쓰지 않는 읽기라서다. 열리는 tool 은 `show_daycare_meal` 하나(출력 tool)이고 `tool_choice="required"` 다. 쓰지 않아 `WRITING_TASKS` 에 없다 — 같은 run 에 급식 갱신이 있으면 갱신이 먼저 끝나 조회가 바뀐 행을 읽는다.
 
 `meal_recommendation`에는 영양 tool이 열려 있지 않지만, **영양 구간은 코드가 따로 구한다.** `build_candidate_pool` 직전에 `evaluate_nutrient_bands`를 불러 부족 식품군을 받아 가중치에 쓴다(§0-5). 모델에게는 구간 자체가 아니라 이미 가중된 후보 목록이 간다 — 수치가 모델 입력에 들어가지 않는다. 알레르기·금지식품 라벨도 모델 입력에 넣지 않는다. 후보 풀이 이미 걸러진 상태로 가므로 모델이 라벨을 알 필요가 없고, 재호출 때의 제외 목록에도 `menu_key`만 넣고 걸린 사유는 넣지 않는다([`Tool_공통.md`](../shared/Tool_공통.md) §5-2).
 
@@ -453,6 +453,7 @@ Health 는 다르다 — 거기는 건강 그 자체라 동의 없이 전 라벨
 | `daycare.allergy_unchecked` | 기록해 뒀어요. 다만 알레르기 정보를 확인하지 못해서, 넣은 메뉴와 겹치는지는 보지 못했어요. |
 | `daycare.out_of_range` | 너무 지난 날이라 급식 기록이 남아 있지 않아요. |
 | `closed.no_daycare` | 등록된 기관 급식 정보가 없어요. |
+| `closed.daycare_unread` | 급식 정보를 지금 불러오지 못했어요. 잠시 뒤 다시 물어봐 주세요. |
 | `daycare.not_found` | 급식 정보를 못 찾았어요. |
 | `daycare.amount_no_meal` | {date} {slot} 급식을 확인하지 못했어요. {date} 먹은 {slot}을 알려주세요. |
 | `daycare.replaced_unknown` | 어떤 메뉴 대신 받았나요? |
@@ -485,4 +486,4 @@ Health 는 다르다 — 거기는 건강 그 자체라 동의 없이 전 라벨
 
 `nutrient.appearance` 는 영양소 분석 1차 출력의 유일한 문장이다. `{group}` 은 코드가 만든 이름(곡류가 · 고기·생선·달걀·콩이 · 채소가 · 과일이 · 우유·유제품이 — 조사까지 붙여 둔다)이고, 이 순서로 한 줄씩 낸다. 유지 · 당류는 말하지 않는다. 아이의 알레르기 · 질환으로 막히는 식품군은 뺀다(`nutrient_actions.blocked_groups`). `{days}` 는 최근 7일 중 기록이 있는 날 수, `{count}` 는 그중 그 식품군을 먹은 날 수다(안 먹음 · 싫어한다는 관찰은 세지 않는다). 기록 행이 모자라면 이 문장 대신 `nutrient.insufficient`, 기록은 충분한데 메뉴나 식품군을 절반 넘게 못 읽었으면 `nutrient.unscored` 다. `nutrient.band.*` 는 1차 출력에서 화면에 나가지 않는다.
 
-`registry.NOT_READY` 는 tool 이 아직 스텁인 task 를 코드 문구로 닫는 표다(#357 리뷰). 열린 tool 중에 스텁이 있으면 모델이 부르고 `failed` 로 끝나서, 스텁이 생기면 그 task 를 적어 `closed_readout_key` 가 닫는다(`test_food_stub_gate.py` 가 막는다). tool 11개는 #396 에서 다 구현됐고 `run()` 이 식단 추천 · 급식 갱신의 결과를 옮겨서(#411) 지금은 비어 있다 — `not_ready.*` 문구는 없앴다. 닫힌 문구의 결과 상태는 `unsupported.*` → `unsupported`, 그 밖(`blocked.safety` · `closed.no_daycare`)은 `blocked` 다. `nutrient.band.*` 는 구간 문장 틀이다 — 1차 출력에서는 화면에 내지 않고(#411), 구간을 다시 낼 때 모델이 출력 tool 을 못 끝낸 영양소 분석을 대신 내는 데 쓴다(§2 `report_nutrient_analysis`). 주어는 늘 기록된 식사이고 `{nutrient}` · `{action}` 은 코드가 만든 값(`NUTRIENT_LABELS` · 식품군 안내)으로만 채운다. 구간 문장(`nutrient.band.*`)은 모델이 쓴 영양 문장과 같은 `kind="nutrient_analysis"` 이고, 건수 안내(`nutrient.insufficient` · `nutrient.unscored`)는 `kind="nutrient"` 다. `nutrient.unscored` 는 기록은 충분한데 모든 항목이 빈 칸이라 구간이 하나도 안 나왔을 때 쓴다 — 아무것도 안 봤는데 "고르게 담겨 있어요" 라고 하지 않는다.
+`registry.NOT_READY` 는 tool 이 아직 스텁인 task 를 코드 문구로 닫는 표다(#357 리뷰). 열린 tool 중에 스텁이 있으면 모델이 부르고 `failed` 로 끝나서, 스텁이 생기면 그 task 를 적어 `closed_readout_key` 가 닫는다(`test_food_stub_gate.py` 가 막는다). tool 11개는 #396 에서 다 구현됐고 `run()` 이 식단 추천 · 급식 갱신의 결과를 옮겨서(#411) 지금은 비어 있다 — `not_ready.*` 문구는 없앴다. 닫힌 문구의 결과 상태는 `unsupported.*` → `unsupported`, 그 밖(`blocked.safety` · `closed.no_daycare` · `closed.daycare_unread`)은 `blocked` 다. `nutrient.band.*` 는 구간 문장 틀이다 — 1차 출력에서는 화면에 내지 않고(#411), 구간을 다시 낼 때 모델이 출력 tool 을 못 끝낸 영양소 분석을 대신 내는 데 쓴다(§2 `report_nutrient_analysis`). 주어는 늘 기록된 식사이고 `{nutrient}` · `{action}` 은 코드가 만든 값(`NUTRIENT_LABELS` · 식품군 안내)으로만 채운다. 구간 문장(`nutrient.band.*`)은 모델이 쓴 영양 문장과 같은 `kind="nutrient_analysis"` 이고, 건수 안내(`nutrient.insufficient` · `nutrient.unscored`)는 `kind="nutrient"` 다. `nutrient.unscored` 는 기록은 충분한데 모든 항목이 빈 칸이라 구간이 하나도 안 나왔을 때 쓴다 — 아무것도 안 봤는데 "고르게 담겨 있어요" 라고 하지 않는다.
