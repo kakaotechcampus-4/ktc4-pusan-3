@@ -214,10 +214,12 @@ async def test_이유기_풀에서_등록한_알레르기_메뉴가_빠진다() 
     assert pool and not any("쇠고기" in key for key in keys(pool))
 
 
-async def test_생선을_등록한_아이에게는_흰살생선_대구_메뉴가_없다() -> None:
+async def test_생선을_등록한_아이에게는_대구_메뉴가_없다() -> None:
+    birth = date(2026, 3, 10)  # 7개월 — 대구살죽이 있는 중기
     fish = SafetyEntry(kind="allergy", label="생선", status="active")
 
-    pool = await build_pool(context(birth=date(2025, 12, 14), safety=[fish]))  # 10개월
+    assert "대구살죽" in keys(await build_pool(context(birth=birth)))
+    pool = await build_pool(context(birth=birth, safety=[fish]))
 
     assert pool and not any(("생선" in key) or ("대구" in key) for key in keys(pool))
 

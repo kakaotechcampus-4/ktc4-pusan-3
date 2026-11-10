@@ -10,6 +10,7 @@ from app.agents.common.food_safety import filter_food_safety, menu_codes
 from app.agents.common.reference_docs import doc_row_id
 from app.agents.food import weaning_menu
 from app.agents.food.doc_seed import food_doc_seed
+from app.agents.food.store import SafetyEntry
 from app.agents.food.weaning_menu import (
     WEANING_MENU_SOURCE,
     parse_weaning_menu,
@@ -199,3 +200,36 @@ def test_approved_가_아닌_행은_풀에_들지_않는다(monkeypatch, status)
 
     assert held.key not in keys
     assert keys == {e.key for e in table.entries[1:] if e.min_month <= held.min_month < e.max_month}
+
+
+# ── 03leedo 대조 리뷰 (#843) ────────────────────────────────────────────────────
+def test_생선_이름이_없는_행은_approved_가_아니다():
+    """ "흰살생선" 만 적으면 보호자가 등록한 생선 알레르기(예: 가자미)와 대조가 안 된다."""
+    for e in weaning_menu_table().approved:
+        assert "흰살생선" not in (e.name, *e.ingredients), e.key
+
+
+def test_참깨는_영아용으로_간_것이라고_적는다():
+    sesame = [e for e in weaning_menu_table().entries if any("참깨" in i for i in e.ingredients)]
+
+    assert sesame
+    for e in sesame:
+        assert "참깨(간 것)" in e.ingredients and "참깨" not in e.ingredients, e.key
+
+
+def test_참깨_알레르기를_등록한_아이에게는_참깨_행이_막힌다():
+    sesame = SafetyEntry(kind="allergy", label="참깨", status="active")
+    entries = [e for e in weaning_menu_table().entries if any("참깨" in i for i in e.ingredients)]
+    rows = [
+        support.menu_row(
+            e.name,
+            source=WEANING_MENU_SOURCE,
+            ingredients=e.ingredients,
+            allergen_codes=e.allergen_codes,
+        )
+        for e in entries
+    ]
+
+    verdict = filter_food_safety(rows, [sesame], "infant_weaning", months=8)
+
+    assert rows and verdict.passed == ()

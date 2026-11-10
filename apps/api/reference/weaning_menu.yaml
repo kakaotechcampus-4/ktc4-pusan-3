@@ -20,10 +20,13 @@
 # 서비스는 approved 만 풀과 근거 카드에 쓴다(draft · retired 는 쓰지 않는다). 작성자 · 검수자는
 # GitHub 아이디로 적는다.
 #
-# TEMP(#434 와 같은 방식): 이유기 추천이 pool.empty 로 돌아가지 않게 모든 행을 status: approved ·
-# reviewed_by: admin 으로 임시로 올렸다. 실제 검수가 아니다. 🚨 작성자가 아닌 사람이 대조를 마치면
-# reviewed_by · reviewed_at 을 그 사람의 GitHub 아이디 · 검수일로 바꾼다 (아래 review.temp_admin 앵커를
-# 쓰는 행이 전부 대상이다). 통과하지 못한 행은 status: draft 로 되돌리고 reviewed_by · reviewed_at 을 지운다.
+# 대조 결과 (#843 리뷰, 03leedo, 2026-11-10): 30행의 메뉴 · 월령 · 재료 · 알레르기 코드를 표와 대조했고
+# 12개월 전 금지 식품(꿀 · 생우유 · 소금 간)은 없다. 25행이 approved 이고 5행은 보류(draft)다.
+#   - 참깨고구마죽 · 참깨연두부무른밥: 코드가 빈 것은 맞다(19종 밖). 등록한 참깨 알레르기는 안전 용어 사전
+#     (food_safety_terms 참깨)이 거른다. 영아라 재료를 "참깨(간 것)" 로 고쳤으니 다시 대조한 뒤 올린다.
+#   - 흰살생선죽 · 흰살생선애호박죽 · 흰살생선애호박무른밥: 생선 이름이 없어서 보호자가 등록한 생선
+#     알레르기(예: 가자미)와 대조가 안 된다. 대구살죽처럼 생선 이름으로 바꾼 뒤 다시 대조한다.
+#     (테스트가 "흰살생선" 이 든 행은 approved 가 아니라고 건다.)
 #
 # 단계 · 월령 — min_month 이상 max_month 미만. food_doc.yaml 의 질감 행(m4_5 · m6_7 · m8_11 .texture)과
 #   같은 경계다. 시작 시기는 한국소비자원(이유식은 4~6개월에 시작), 질감 진행은 뉴질랜드 지침을 따른다.
@@ -46,15 +49,18 @@ note: 아이캐치 서비스가 월령별 이유식 단계에 맞춰 정리한 �
 version: "1"
 fetched_at: 2026-11-09
 
-# 검수 칸 묶음. 행은 `<<: *temp_admin` 으로 끌어다 쓴다. 실제 검수가 끝난 행은 이 줄을 지우고
-# 네 칸(status · authored_by · reviewed_by · reviewed_at)을 행에 직접 적는다.
+# 검수 칸 묶음. 행은 `<<: *reviewed` / `<<: *draft` 로 끌어다 쓴다.
 review:
-  # TEMP: 이 앵커를 쓰는 행이 전부 approved 다 — 실제 검수가 끝나면 행마다 고친다
-  temp_admin: &temp_admin
+  # 03leedo 가 메뉴 · 월령 · 재료 · 알레르기 코드를 표와 대조해 승인했다 (#843 리뷰, 2026-11-10)
+  reviewed: &reviewed
     status: approved
     authored_by: nnhhlee
-    reviewed_by: admin
+    reviewed_by: 03leedo
     reviewed_at: 2026-11-10
+  # 대조에서 보류된 행 — 고친 뒤 다시 대조하고 이 줄을 `<<: *reviewed` 로 바꾼다
+  draft: &draft
+    status: draft
+    authored_by: nnhhlee
 
 rows:
   - key: food.weaning_menu.early.rice
@@ -66,7 +72,7 @@ rows:
     main_ingredients: [쌀]
     food_groups: [grains]
     allergen_codes: []
-    <<: *temp_admin
+    <<: *reviewed
   - key: food.weaning_menu.early.sweet_pumpkin
     name: 단호박미음
     min_month: 4
@@ -76,7 +82,7 @@ rows:
     main_ingredients: [단호박]
     food_groups: [grains, vegetables]
     allergen_codes: []
-    <<: *temp_admin
+    <<: *reviewed
   - key: food.weaning_menu.early.zucchini
     name: 애호박미음
     min_month: 4
@@ -86,7 +92,7 @@ rows:
     main_ingredients: [애호박]
     food_groups: [grains, vegetables]
     allergen_codes: []
-    <<: *temp_admin
+    <<: *reviewed
   - key: food.weaning_menu.early.sweet_potato
     name: 고구마미음
     min_month: 4
@@ -96,7 +102,7 @@ rows:
     main_ingredients: [고구마]
     food_groups: [grains]
     allergen_codes: []
-    <<: *temp_admin
+    <<: *reviewed
   - key: food.weaning_menu.early.beef
     name: 쇠고기미음
     min_month: 4
@@ -106,7 +112,7 @@ rows:
     main_ingredients: [쇠고기]
     food_groups: [grains, meat_fish_egg_legumes]
     allergen_codes: [16]
-    <<: *temp_admin
+    <<: *reviewed
   - key: food.weaning_menu.early.radish
     name: 무미음
     min_month: 4
@@ -116,7 +122,7 @@ rows:
     main_ingredients: [무]
     food_groups: [grains, vegetables]
     allergen_codes: []
-    <<: *temp_admin
+    <<: *reviewed
   - key: food.weaning_menu.mid.beef_zucchini
     name: 쇠고기애호박죽
     min_month: 6
@@ -126,7 +132,7 @@ rows:
     main_ingredients: [쇠고기, 애호박]
     food_groups: [grains, meat_fish_egg_legumes, vegetables]
     allergen_codes: [16]
-    <<: *temp_admin
+    <<: *reviewed
   - key: food.weaning_menu.mid.chicken_sweet_potato
     name: 닭살고구마죽
     min_month: 6
@@ -136,7 +142,7 @@ rows:
     main_ingredients: [닭고기, 고구마]
     food_groups: [grains, meat_fish_egg_legumes]
     allergen_codes: [15]
-    <<: *temp_admin
+    <<: *reviewed
   - key: food.weaning_menu.mid.white_fish
     name: 흰살생선죽
     min_month: 6
@@ -146,7 +152,7 @@ rows:
     main_ingredients: [흰살생선]
     food_groups: [grains, meat_fish_egg_legumes]
     allergen_codes: []
-    <<: *temp_admin
+    <<: *draft
   - key: food.weaning_menu.mid.white_fish_zucchini
     name: 흰살생선애호박죽
     min_month: 6
@@ -156,7 +162,7 @@ rows:
     main_ingredients: [흰살생선, 애호박]
     food_groups: [grains, meat_fish_egg_legumes, vegetables]
     allergen_codes: []
-    <<: *temp_admin
+    <<: *draft
   - key: food.weaning_menu.mid.cod
     name: 대구살죽
     min_month: 6
@@ -166,7 +172,7 @@ rows:
     main_ingredients: [대구]
     food_groups: [grains, meat_fish_egg_legumes]
     allergen_codes: []
-    <<: *temp_admin
+    <<: *reviewed
   - key: food.weaning_menu.mid.soft_tofu
     name: 연두부죽
     min_month: 6
@@ -176,7 +182,7 @@ rows:
     main_ingredients: [연두부]
     food_groups: [grains, meat_fish_egg_legumes]
     allergen_codes: [5]
-    <<: *temp_admin
+    <<: *reviewed
   - key: food.weaning_menu.mid.silken_tofu
     name: 순두부죽
     min_month: 6
@@ -186,7 +192,7 @@ rows:
     main_ingredients: [순두부]
     food_groups: [grains, meat_fish_egg_legumes]
     allergen_codes: [5]
-    <<: *temp_admin
+    <<: *reviewed
   - key: food.weaning_menu.mid.tofu_sweet_potato
     name: 연두부고구마죽
     min_month: 6
@@ -196,7 +202,7 @@ rows:
     main_ingredients: [연두부, 고구마]
     food_groups: [grains, meat_fish_egg_legumes]
     allergen_codes: [5]
-    <<: *temp_admin
+    <<: *reviewed
   - key: food.weaning_menu.mid.zucchini_carrot
     name: 애호박당근죽
     min_month: 6
@@ -206,7 +212,7 @@ rows:
     main_ingredients: [애호박, 당근]
     food_groups: [grains, vegetables]
     allergen_codes: []
-    <<: *temp_admin
+    <<: *reviewed
   - key: food.weaning_menu.mid.sweet_potato
     name: 고구마죽
     min_month: 6
@@ -216,7 +222,7 @@ rows:
     main_ingredients: [고구마]
     food_groups: [grains]
     allergen_codes: []
-    <<: *temp_admin
+    <<: *reviewed
   - key: food.weaning_menu.mid.radish_sprout
     name: 무콩나물죽
     min_month: 6
@@ -226,17 +232,17 @@ rows:
     main_ingredients: [무, 콩나물]
     food_groups: [grains, vegetables]
     allergen_codes: [5]
-    <<: *temp_admin
+    <<: *reviewed
   - key: food.weaning_menu.mid.sesame_sweet_potato
     name: 참깨고구마죽
     min_month: 6
     max_month: 8
     texture: mashed
-    ingredients: [쌀, 고구마, 참깨]
+    ingredients: [쌀, 고구마, 참깨(간 것)]
     main_ingredients: [고구마]
     food_groups: [grains]
     allergen_codes: []
-    <<: *temp_admin
+    <<: *draft
   - key: food.weaning_menu.mid.sweet_pumpkin
     name: 단호박죽
     min_month: 6
@@ -246,7 +252,7 @@ rows:
     main_ingredients: [단호박]
     food_groups: [grains, vegetables]
     allergen_codes: []
-    <<: *temp_admin
+    <<: *reviewed
   - key: food.weaning_menu.late.beef_zucchini
     name: 쇠고기애호박무른밥
     min_month: 8
@@ -256,7 +262,7 @@ rows:
     main_ingredients: [쇠고기, 애호박]
     food_groups: [grains, meat_fish_egg_legumes, vegetables]
     allergen_codes: [16]
-    <<: *temp_admin
+    <<: *reviewed
   - key: food.weaning_menu.late.chicken_sweet_potato
     name: 닭살고구마무른밥
     min_month: 8
@@ -266,7 +272,7 @@ rows:
     main_ingredients: [닭고기, 고구마]
     food_groups: [grains, meat_fish_egg_legumes]
     allergen_codes: [15]
-    <<: *temp_admin
+    <<: *reviewed
   - key: food.weaning_menu.late.white_fish_zucchini
     name: 흰살생선애호박무른밥
     min_month: 8
@@ -276,7 +282,7 @@ rows:
     main_ingredients: [흰살생선, 애호박]
     food_groups: [grains, meat_fish_egg_legumes, vegetables]
     allergen_codes: []
-    <<: *temp_admin
+    <<: *draft
   - key: food.weaning_menu.late.cod
     name: 대구살무른밥
     min_month: 8
@@ -286,7 +292,7 @@ rows:
     main_ingredients: [대구]
     food_groups: [grains, meat_fish_egg_legumes]
     allergen_codes: []
-    <<: *temp_admin
+    <<: *reviewed
   - key: food.weaning_menu.late.soft_tofu
     name: 연두부무른밥
     min_month: 8
@@ -296,7 +302,7 @@ rows:
     main_ingredients: [연두부]
     food_groups: [grains, meat_fish_egg_legumes]
     allergen_codes: [5]
-    <<: *temp_admin
+    <<: *reviewed
   - key: food.weaning_menu.late.silken_tofu
     name: 순두부무른밥
     min_month: 8
@@ -306,7 +312,7 @@ rows:
     main_ingredients: [순두부]
     food_groups: [grains, meat_fish_egg_legumes]
     allergen_codes: [5]
-    <<: *temp_admin
+    <<: *reviewed
   - key: food.weaning_menu.late.tofu_sweet_potato
     name: 연두부고구마무른밥
     min_month: 8
@@ -316,7 +322,7 @@ rows:
     main_ingredients: [연두부, 고구마]
     food_groups: [grains, meat_fish_egg_legumes]
     allergen_codes: [5]
-    <<: *temp_admin
+    <<: *reviewed
   - key: food.weaning_menu.late.radish_sprout
     name: 무콩나물무른밥
     min_month: 8
@@ -326,7 +332,7 @@ rows:
     main_ingredients: [무, 콩나물]
     food_groups: [grains, vegetables]
     allergen_codes: [5]
-    <<: *temp_admin
+    <<: *reviewed
   - key: food.weaning_menu.late.sweet_potato_zucchini
     name: 고구마애호박무른밥
     min_month: 8
@@ -336,17 +342,17 @@ rows:
     main_ingredients: [고구마, 애호박]
     food_groups: [grains, vegetables]
     allergen_codes: []
-    <<: *temp_admin
+    <<: *reviewed
   - key: food.weaning_menu.late.sesame_tofu
     name: 참깨연두부무른밥
     min_month: 8
     max_month: 12
     texture: minced
-    ingredients: [쌀, 연두부, 참깨]
+    ingredients: [쌀, 연두부, 참깨(간 것)]
     main_ingredients: [연두부]
     food_groups: [grains, meat_fish_egg_legumes]
     allergen_codes: [5]
-    <<: *temp_admin
+    <<: *draft
   - key: food.weaning_menu.late.sweet_pumpkin
     name: 단호박무른밥
     min_month: 8
@@ -356,4 +362,4 @@ rows:
     main_ingredients: [단호박]
     food_groups: [grains, vegetables]
     allergen_codes: []
-    <<: *temp_admin
+    <<: *reviewed
