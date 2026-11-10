@@ -28,10 +28,13 @@ from collections.abc import Callable, Collection
 from dataclasses import replace
 from typing import Any
 
+from app.agents.common.age import life_stage
+from app.agents.common.doc_answer import answer_from_docs
 from app.agents.common.llm_client import LLMClient
 from app.agents.common.readout import Readout
+from app.agents.common.reference_docs import DOC_MONTH_LIMIT
 from app.agents.common.result import AgentStatus, DomainAgentResult, DomainPending
-from app.agents.common.schemas.task import DomainTask
+from app.agents.common.schemas.task import INFO_TASK, DomainTask
 from app.agents.common.suggestion import (
     SuggestionDraft,
     bundle_summary,
@@ -40,8 +43,14 @@ from app.agents.common.suggestion import (
     merge_drafts,
 )
 from app.agents.common.tool_loop import run_tool_loop
-from app.agents.growth.context import GrowthContext, GrowthRunState, build_gate
+from app.agents.growth.context import (
+    GrowthContext,
+    GrowthRunState,
+    build_gate,
+    read_learning_safety,
+)
 from app.agents.growth.gating import EDUCATION_MIN_MONTH, routine_mode
+from app.agents.growth.info import info_spec
 from app.agents.growth.prompt import build_system_prompt, recall_message, request_message
 from app.agents.growth.readouts import (
     ASK_LEARNING_CURRENT,
@@ -135,6 +144,8 @@ async def _run(
     run 이다(`_fall_back_to_education`). 라벨은 교육이고, [예시]를 찾지 않는다 — 그 행동의 공식
     행이 없어서 넘어왔고, 다른 영역 행을 근거로 달면 근거가 틀린다. 먼저 쓴 모델 호출 수는 이어서
     센다."""
+    if task.task_type == INFO_TASK:
+        return await _info(task, context, client=client)
     task_type = task_type_of(task)
     prior_calls = context.state.model_calls
     if from_routine:
@@ -331,6 +342,32 @@ async def _run(
         pending=pending,
         model_calls=model_calls,
     )
+
+
+async def _info(
+    task: DomainTask, context: GrowthContext, *, client: LLMClient | None
+) -> DomainAgentResult:
+    """일반 정보 질문(#574) — 추천 대신 growth_doc 근거 답변 하나.
+
+    월령 닫힘(`closed.infant_learning`)을 보지 않는다 — 질문은 아이 일반이다. 아이 월령은 질문에
+    나이가 없을 때 문서 구간으로만 쓴다. 안전 조회는 교육과 같다(`read_learning_safety`).
+    """
+    ports = context.ports
+    birth_date = await ports.profile.birth_date(child_id=context.child_id)
+    consent = await ports.consent.child_health_granted(child_id=context.child_id)
+    context.state.birth_date = birth_date
+    context.state.task_type = INFO_TASK
+    safety_ok = await read_learning_safety(context, consent=consent)
+    result = await answer_from_docs(
+        info_spec(context),
+        task,
+        child_months=life_stage(birth_date, context.today).months,
+        month_limit=DOC_MONTH_LIMIT,
+        safety_ok=safety_ok,
+        llm=client or LLMClient(role="growth"),
+    )
+    context.state.model_calls = result.model_calls
+    return result
 
 
 def _observe(
