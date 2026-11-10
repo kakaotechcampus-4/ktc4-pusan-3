@@ -53,6 +53,10 @@ _MIN_ORG_STEM = 3
 _OPENS = re.compile(r"(?:신청|접수|예약|모집)\s*시작|시작\s*일시|시작\s*시각|오픈")
 _QUOTE_NOISE = re.compile(r"[\s|│·ㆍ:：\-–—*•◆■□○●▶]+")
 _END_OF_DAY = time(23, 59)
+# 모델이 값을 고르며 한 생각이 제목 · details 에 섞인다 — "… Notice 포함 Info 등 겸함이나" (#909).
+# 공지에 없는 라틴 문자 낱말을 그 표시로 본다. 두 글자 이하는 단위 · 약어라 세지 않는다
+_LATIN_WORD = re.compile(r"[A-Za-z]{3,}")
+_OPEN_PAREN = re.compile(r"[(（]")
 
 
 @dataclass(frozen=True)
@@ -214,6 +218,27 @@ def _cleaned(raw: ExtractedItem) -> ExtractedItem:
     )
 
 
+def _not_in_source(text: str, source: str) -> bool:
+    """원문에 없는 라틴 문자 낱말이 있나.
+
+    대소문자는 가리지 않는다 — 모델이 "ZOOM" 을 "Zoom" 으로 옮긴다.
+    """
+    key = source.lower()
+    return any(word.lower() not in key for word in _LATIN_WORD.findall(text))
+
+
+def _title(raw: ExtractedItem, source: str) -> tuple[str, bool]:
+    """(제목, 확인 필요). 혼잣말이 섞이면 첫 여는 괄호 앞까지만 남긴다.
+
+    혼잣말은 제목 뒤에 덧붙인 괄호에 든다. 그래도 남으면 확인을 요청한다.
+    """
+    title = raw.title.strip() or raw.label.strip() or "안내"
+    if not _not_in_source(title, source):
+        return title, False
+    title = _OPEN_PAREN.split(title, maxsplit=1)[0].strip() or raw.label.strip() or "안내"
+    return title, _not_in_source(title, source)
+
+
 def _cut(text: str, limit: int) -> str:
     return text if len(text) <= limit else f"{text[: limit - 1]}…"
 
@@ -335,18 +360,24 @@ def _item(
         )
     ):
         reasons.append("시각을 항목에 넣지 못했어요")
+    # 날짜 검사가 끝난 뒤에 본다 — 앞의 검사들은 "다른 이유가 없을 때만" 붙는다
+    title, odd_title = _title(raw, source)
+    if odd_title:
+        reasons.append("제목에 공지에 없는 글이 섞였어요")
+    # details 는 보여 주기만 하는 값이라 줄을 버려도 일정 · 마감이 바뀌지 않는다
+    details = [d for d in raw.details if not _not_in_source(d.value, source)]
 
     return NewNoticeItem(
         handling=NoticeItemHandling(raw.handling),
         label=hide(raw.label.strip()) or "안내",
-        title=hide(raw.title.strip() or raw.label.strip() or "안내"),
+        title=hide(title),
         target_scope=NoticeItemTarget(raw.target_scope),
         starts_at=starts_at,
         ends_at=ends_at,
         all_day=all_day,
         due_at=due_at,
         due_all_day=due_day is not None and due_time is None,
-        details=_details(raw.details, hide),
+        details=_details(details, hide),
         supplies=tuple(hide(i.item_name) for i in draft_items([raw.supplies])),
         source_quote=hide(quote),
         needs_review=bool(reasons),

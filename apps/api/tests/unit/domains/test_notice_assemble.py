@@ -374,6 +374,52 @@ def test_details_는_개수와_길이를_제한한다():
     assert item.details[0].value.endswith("…")
 
 
+PICNIC = "가을 소풍 안내 11월 6일(금) 숲속 놀이터. 참여는 Zoom 으로도 가능합니다."
+
+
+def test_제목에_섞인_모델의_혼잣말은_괄호_앞까지만_남긴다():
+    # 모델이 값을 고르며 한 생각이 제목에 들어간다 (#909 와 같은 종류)
+    item = _build(
+        _item(
+            title="가을 소풍 (숲속 놀이터, Note 포함 Summary 겸함이나 주 일정은 소풍임.)",
+            source_quote="가을 소풍 안내",
+        ),
+        source=PICNIC,
+    ).items[0]
+    assert item.title == "가을 소풍"
+    assert item.needs_review is False
+
+
+def test_괄호_앞에도_혼잣말이_남으면_확인을_요청한다():
+    item = _build(
+        _item(title="Picnic day 가을 소풍 (숲속)", source_quote="가을 소풍 안내"), source=PICNIC
+    ).items[0]
+    assert item.needs_review is True
+    assert "제목" in item.review_reason
+
+
+def test_원문에_있는_영문은_제목에_남는다():
+    item = _build(
+        _item(title="가을 소풍 (ZOOM 참여 가능)", source_quote="가을 소풍 안내"), source=PICNIC
+    ).items[0]
+    assert item.title == "가을 소풍 (ZOOM 참여 가능)"
+    assert item.needs_review is False
+
+
+def test_details_에_섞인_모델의_혼잣말은_그_줄을_버린다():
+    item = _build(
+        _item(
+            source_quote="가을 소풍 안내",
+            details=[
+                ItemDetail(name="장소", value="숲속 놀이터 (놀이터Based on text: use exact words)"),
+                ItemDetail(name="참여", value="Zoom 으로도 가능"),
+            ],
+        ),
+        source=PICNIC,
+    ).items[0]
+    assert [(d.name, d.value) for d in item.details] == [("참여", "Zoom 으로도 가능")]
+
+
 def test_날짜가_details_로_새면_확인을_요청한다():
     item = _build(
         _item(
