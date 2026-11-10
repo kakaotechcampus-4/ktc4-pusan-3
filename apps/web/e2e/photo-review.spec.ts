@@ -558,3 +558,32 @@ test("딸린 정보(details)는 목록 줄에 이름과 값으로 서고, 없는
   expect(sent.length).toBeGreaterThan(0);
   for (const entry of sent) expect(entry).not.toHaveProperty("details");
 });
+
+for (const width of [390, 320]) {
+  test(`🚨 띄어쓰기 없는 긴 딸린 정보도 목록 줄 안에서 줄을 바꾼다 — ${width}px`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await openNotice(page);
+
+    const consent = row(page, "체험학습 동의서 회신");
+    const card = consent.locator(":scope > div").first();
+    // 목의 106자 주소 · 띄어쓰기 없는 한 낱말 (`mocks/handlers/photos.ts`)
+    const values = [
+      consent.getByRole("definition").filter({ hasText: "https://example.com/forms/" }),
+      consent.getByRole("definition").filter({ hasText: "가을현장체험학습참가신청서" }),
+    ];
+    const box = (await card.boundingBox())!;
+    for (const value of values) {
+      await expect(value).toBeVisible();
+      const own = (await value.boundingBox())!;
+      // 🚨 값 칸이 카드 안에 있고, 글자가 값 칸 밖으로 나가지 않는다. 전역이 `keep-all` 이라 줄바꿈 클래스를
+      //    빼면 글자가 값 칸 밖으로 나간다(390px 43 · 320px 105). 문서 폭은 그때도 늘지 않아서 칸마다 잰다.
+      expect(own.x + own.width).toBeLessThanOrEqual(box.x + box.width);
+      expect(await value.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
+    }
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth),
+    ).toBe(0);
+  });
+}

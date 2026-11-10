@@ -1014,7 +1014,9 @@ function EntryMeta({
     <div className="flex gap-3">
       <dt className="text-body-sm text-ink-subtle shrink-0 basis-16">{term}</dt>
       {/* 🚨 못 읽은 값도 **글자로** 말한다. 빈칸으로 두면 부모가 없는 건지 못 읽은 건지 모른다.
-          🚨 `break-words` — 딸린 정보는 200자까지 온다. 띄어쓰기 없는 긴 값(주소 등)이 카드 밖으로 넘치지 않게 한다. */}
+          🚨 `break-words` — 딸린 정보는 200자까지 온다. 띄어쓰기 없는 긴 값(주소 등)이 카드 밖으로 넘치지 않게 한다.
+             이 칸은 `min-w-0` 이라 `break-words` 로 줄어든다 — 다른 곳(`event-draft-card.tsx`)이 `wrap-anywhere` 를
+             쓰는 것은 최소 폭이 줄지 않는 자리라서다. 클래스를 바꾸면 e2e "띄어쓰기 없는 긴 딸린 정보" 로 확인한다. */}
       <dd
         className={cn("text-body-sm min-w-0 break-words", missing ? "text-ink-muted" : "text-ink")}
       >
