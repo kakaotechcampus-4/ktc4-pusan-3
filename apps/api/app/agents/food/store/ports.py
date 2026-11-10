@@ -342,19 +342,40 @@ class MenuSource(Protocol):
         ...
 
 
+class DaycareLookupError(Exception):
+    """급식 표(`daycare_meal`)를 읽지 못했다. 없다(빈 목록 · False)와 다르다.
+
+    `SafetyLookupError` 와 같은 방식이다. Food 는 이 예외만 잡아서 그 task 안에서 급식을
+    "못 읽음" 으로 표시한다 — 급식 조회 · 고치기는 못 읽음 문구로 닫고, 영양소 분석 · 식단 추천은
+    집 식사 기록으로 계속 간다. 다른 예외(버그)는 덮지 않는다. 메시지에 메뉴 · 원문을 싣지 않는다.
+    """
+
+
 class DaycareMealStore(Protocol):
-    async def rows(
-        self, *, child_id: UUID, date_from: date, date_to: date
-    ) -> list[DaycareMealRow]: ...
-    async def has_rows(self, *, child_id: UUID) -> bool: ...
+    async def rows(self, *, child_id: UUID, date_from: date, date_to: date) -> list[DaycareMealRow]:
+        """날짜 범위(양 끝 포함)의 급식. (날짜, 끼니) 순. 읽기에 실패하면 `DaycareLookupError`."""
+        ...
+
+    async def has_rows(self, *, child_id: UUID) -> bool:
+        """그 아이의 급식 행이 하나라도 있나(날짜 무관). 읽기에 실패하면 `DaycareLookupError`.
+
+        실패를 False 로 바꾸지 않는다 — 급식이 있는 아이에게 "등록된 급식이 없어요" 가 나간다.
+        """
+        ...
+
     async def update(self, row: DaycareMealRow) -> None:
         """급식 수정 범위는 과거 30일과 미래 전부(계획서 "전체에 걸린 값").
 
         `row.child_id` 가 이미 아이 축을 들고 있다 — 어댑터는 `WHERE id = ? AND child_id = ?`
-        로 갈 수 있다. 그래서 이 메서드는 `child_id` 를 따로 받지 않는다.
+        로 갈 수 있다. 그래서 이 메서드는 `child_id` 를 따로 받지 않는다. 없는 행 · 다른 아이의
+        행이면 KeyError.
+
+        바꾸는 칸은 `menu_keys` · `amount_factor` · `amount_known` · `caregiver_checked` 넷뿐이다.
+        날짜 · 끼니 · 출처는 저장된 값을 둔다 — Food 가 고치는 것이 아니고, 날짜 · 끼니를 바꾸면
+        UNIQUE 에 걸린다.
 
         호출 하나가 짧은 트랜잭션 하나로 바로 commit 된다. 같은 run의 읽는 task가 갱신된
-        행을 본다. 행을 통째로 바꾸므로 같은 갱신을 두 번 적용해도 결과가 같다.
+        행을 본다. 같은 갱신을 두 번 적용해도 결과가 같다.
         """
         ...
 
