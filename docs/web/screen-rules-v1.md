@@ -467,7 +467,7 @@ hydrate 직후 그릴 것과 **같은 것**을 둔다. 다른 것을 끼우면 �
   ⚠️ **지금은 "아이 활동 사진" 을 꺼 둬서 ㉠ 을 건너뛴다** (`lib/features.ts` 의 `ACTIVITY_PHOTO_ENABLED` · #884).
   서버가 문서 사진만 받고(`422 lane_not_supported`), 남은 문구("활동 태그만 뽑아요")가 11-03 결정
   (AI 로 보내지 않고 캘린더 날짜에 넣어 두기 · 처리방침 ⑨)과 반대다. 고를 것이 하나면 시트는 ㉡ 으로 바로 열리고
-  "다른 종류로 바꾸기" 도 없다. `PHOTO_LANES` · 목 · 계약 테스트의 `activity` 는 다시 만들 자리라 그대로 둔다
+  "다른 종류로 바꾸기" 도 없다. `PHOTO_LANES` · 목 · 계약 테스트의 `activity` 는 아직 남아 있다 — 11-09 에 활동 사진은 만들지 않기로 해서(#889) 다시 만들 자리가 아니라 지울 자리다
 - 🚨 **최근 사진 줄은 네이티브 셸이 있을 때만 선다** (`lib/native/recent-photos.ts`).
   **웹은 기기 갤러리를 읽을 수 없다** — 파일 입력은 OS 피커를 열 뿐이고 목록을 먼저 가져오는
   API 가 없다. 셸(`apps/mobile`)이 `expo-media-library` 로 읽어 `window.icatch.recentPhotos` 에

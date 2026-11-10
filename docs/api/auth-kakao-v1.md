@@ -498,7 +498,8 @@ CREATE INDEX ON session_access (expires_at);
 | 언제 | 무엇을 지우나 |
 | --- | --- |
 | 로그아웃 | 그 `session` 행 1건 |
-| 계정 탈퇴 · 아이 파기 | `parent_id` 로 전부 |
+| 계정 탈퇴 | `parent_id` 로 전부 |
+| 아이 삭제 | 지우지 않는다 — 보호자 계정은 남는다. 지운 아이로 가는 요청은 요청마다 아이 연결을 확인해 403 `child_access_denied` 로 막는다 (`api/deps/child.py`) |
 | refresh 재사용 (직전 refresh 가 30초 뒤에 옴) · refresh 만료 | 그 `session` 행 1건 (§3-7) |
 | 만료 | 배치로 `refresh_expires_at <= now()` 또는 `absolute_expires_at <= now()` 인 `session`, 그리고 `expires_at <= now()` 인 `session_access` — 인증 판정과 같은 경계. `app/workers/auth_cleanup.py` (#46, 서버 cron 이 하루 한 번 `python -m app.workers.cleanup` 으로 — `apps/api/README.md`) |
 
