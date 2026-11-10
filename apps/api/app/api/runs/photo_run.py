@@ -350,10 +350,25 @@ def photo_job(run: PhotoRun, *, data: bytes, received_at: datetime, declared_lan
     return job
 
 
-def apply_edits(item: NewNoticeItem, *, title: str, day: date | None, supplies: list[str]):
-    """보호자가 고친 값을 올린다. 날짜를 바꾸면 그 날의 시각은 알 수 없어 종일로 둔다.
+def apply_edits(
+    item: NewNoticeItem,
+    *,
+    title: str,
+    day: date | None,
+    supplies: list[str],
+    starts_at: datetime | None = None,
+    ends_at: datetime | None = None,
+    all_day: bool = False,
+):
+    """보호자가 고친 값을 올린다. 날짜만 바꾸면 그 날의 시각은 알 수 없어 종일로 둔다.
 
     날짜를 지웠으면 읽은 날짜가 틀렸다는 뜻이다. 시각까지 같이 비운다.
+
+    `starts_at` · `ends_at` · `all_day` 는 보호자가 시트에서 고친 시작이다. 캘린더에는 고친 값이
+    들어가는데 기록에는 사진에서 읽은 시각이 남던 것을 막는다. 시작을 고치는 항목에서만 쓰고,
+    보낸 시각의 날짜(한국)가 `day` 와 같을 때만 받는다 — 날짜만 고치고 읽은 시각을 그대로 다시
+    보내는 화면이 있어, 그 시각을 새 날짜에 붙이면 보호자가 고른 적 없는 일시가 저장된다.
+    끝(`ends_at`)은 고칠 수 있는 값이 아니다. 읽은 끝을 그대로 둘지 뺄지만 정한다.
     """
     current = _entry_date(item)
     changed = {
@@ -362,6 +377,31 @@ def apply_edits(item: NewNoticeItem, *, title: str, day: date | None, supplies: 
         "needs_review": False,
         "review_reason": None,
     }
+    # 무엇을 고칠지는 화면이 그 칸을 부르는 이름과 같은 순서로 정한다 (아래 주석 · #723)
+    edits_start = item.starts_at is not None or (
+        item.due_at is None and item.handling is NoticeItemHandling.CALENDAR
+    )
+    sent = starts_at if starts_at is not None and starts_at.tzinfo is not None else None
+    if edits_start and day is not None and sent is not None and _kst_date(sent) == day:
+        if not all_day:
+            # 끝은 사진에서 읽은 끝 그대로일 때만, 그리고 고친 시작보다 뒤일 때만 함께 둔다.
+            # 화면이 보내는 끝은 읽은 끝이거나 빈 값뿐이다 (web `carriedEndsAt`). 시작보다 뒤이기만
+            # 하면 받으면 요청만 바꿔서 읽은 적 없는 기간이 저장된다 (#952 리뷰).
+            # 앞선 끝을 두면 시작이 끝보다 늦은 항목이 된다
+            read_end = item.ends_at
+            kept = (
+                read_end is not None
+                and ends_at is not None
+                and ends_at.tzinfo is not None
+                and ends_at == read_end
+                and read_end > sent
+            )
+            return replace(
+                item, **changed, starts_at=sent, ends_at=read_end if kept else None, all_day=False
+            )
+        if day == current and item.starts_at is not None and not item.all_day:
+            # 시각을 읽은 일정을 보호자가 하루 종일로 바꿨다
+            return replace(item, **changed, **_whole_day(day))
     if day == current:
         return replace(item, **changed)
     if day is None:
@@ -374,17 +414,26 @@ def apply_edits(item: NewNoticeItem, *, title: str, day: date | None, supplies: 
             due_at=None,
             due_all_day=False,
         )
-    start = datetime(day.year, day.month, day.day, tzinfo=KST).astimezone(UTC)
-    end = datetime(day.year, day.month, day.day, 23, 59, tzinfo=KST).astimezone(UTC)
     # 무엇을 고칠지는 화면이 그 칸을 부르는 이름과 같은 순서로 정한다 — 시작을 읽었으면 시작, 마감만
     # 읽었으면 마감, 둘 다 없으면 종류 (`apps/web/src/lib/photo-entry.ts` 의 `entryDateRole`, #723).
     # 일정 항목이어도 "4월 30일까지" 처럼 마감만 읽었으면 화면은 "마감" 이라고 부른다 —
     # 시작으로 쓰면 옛 마감이 그대로 남아 시작이 마감보다 늦은 항목이 된다
-    if item.starts_at is not None or (
-        item.due_at is None and item.handling is NoticeItemHandling.CALENDAR
-    ):
-        return replace(item, **changed, starts_at=start, ends_at=end, all_day=True)
-    return replace(item, **changed, due_at=end, due_all_day=True)
+    if edits_start:
+        return replace(item, **changed, **_whole_day(day))
+    return replace(item, **changed, due_at=_whole_day(day)["ends_at"], due_all_day=True)
+
+
+def _kst_date(moment: datetime) -> date:
+    return moment.astimezone(KST).date()
+
+
+def _whole_day(day: date) -> dict:
+    """그날 하루 종일 — 한국 날짜의 0시부터 23시 59분까지."""
+    return {
+        "starts_at": datetime(day.year, day.month, day.day, tzinfo=KST).astimezone(UTC),
+        "ends_at": datetime(day.year, day.month, day.day, 23, 59, tzinfo=KST).astimezone(UTC),
+        "all_day": True,
+    }
 
 
 def meal_row(slot: MealSlot, *, title: str, day: date | None) -> NewDaycareMeal | None:
