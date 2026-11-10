@@ -69,6 +69,23 @@ def _field_has(domain: str, needle: str) -> Check:
     )
 
 
+def _not_eaten(domain: str) -> Check:
+    """안 먹었다는 말이 답을 이어받아 남았는가. raw_text 는 늘 "안 먹었어" 가 있어 fields 만 본다.
+
+    조각만 보고 먹은 기록이 되면 Food 가 양을 모르는 한 그릇으로 센다.
+    """
+    return (
+        f"{domain} 관찰이 안 먹었다는 쪽으로 남았다",
+        lambda rows, _: any(
+            any(
+                needle in json.dumps(row.fields, ensure_ascii=False, default=str)
+                for needle in ("안 먹", "먹지 않")
+            )
+            for row in rows[domain]
+        ),
+    )
+
+
 def _draft_at(day: date, hour: int) -> Check:
     want = datetime(day.year, day.month, day.day, hour, tzinfo=KST)
     return (
@@ -85,6 +102,10 @@ _CLINIC = PendingMemoryContext(
 # Supervisor 가 실패하면 원문 전체가 한 조각이 된다. 조각 안의 두 기록은 섞인 말이 아니다
 _WHOLE = PendingMemoryContext(
     "모래놀이하고 뭐 좀 먹었어", "무엇을 먹었어요?", WorkType.OBSERVE, whole=True
+)
+# 오늘 한 번 안 먹었다는 말을 되묻고 받은 답 (#929)
+_NOT_EATEN_TODAY = PendingMemoryContext(
+    "오늘 좀 안 먹었어", "무엇을 안 먹었어요?", WorkType.OBSERVE
 )
 
 
@@ -185,6 +206,25 @@ CASES = [
         True,
         checks=(_field_has("food", "떡볶이"), _field_has("activity", "모래")),
         mixed="수영장",
+    ),
+    # "안 먹었다" 가 답을 받아도 남아야 한다. 조각("저녁에 브로콜리")만 남으면 안 된다 (#929)
+    Case(
+        "C12",
+        _NOT_EATEN_TODAY,
+        "저녁에 브로콜리",
+        {"food": 1},
+        False,
+        checks=(_field_has("food", "브로콜리"), _not_eaten("food")),
+    ),
+    # 답에도 음식이 없으면 다시 묻지 않는다 — 질문은 하나다 (#929)
+    Case(
+        "C13",
+        _NOT_EATEN_TODAY,
+        "그냥 밥을 거의 안 먹었어",
+        {"routine": 1},
+        False,
+        kind="message",
+        checks=(_field_has("routine", "mealtime"),),
     ),
 ]
 

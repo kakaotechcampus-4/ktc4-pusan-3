@@ -2,7 +2,7 @@
     Remove-Item Env:PYTEST_ADDOPTS -ErrorAction SilentlyContinue
     uv run pytest tests/eval/agents/memory/test_memory.py -m live -s
 
-Memory 하나만 떼어 T01~T30 의 저장 결과를 세밀하게 본다. Supervisor → Memory → Food 를
+Memory 하나만 떼어 T01~T81 의 저장 결과를 세밀하게 본다. Supervisor → Memory → Food 를
 끝까지 돌리는 라이브 테스트는 tests/eval/agents/supervisor/test.py 다.
 
 기본 실행에서는 제외된다(pyproject 의 addopts = "-m 'not live'").
@@ -329,6 +329,9 @@ _ONE_SAVED: Check = ("한 건만 저장됐다", lambda s: _total(s) == 1)
 def _asked(snapshot: Snapshot) -> bool:
     reply = snapshot.result.reply
     return reply is not None and reply.kind == "question"
+
+
+_NOT_ASKED: Check = ("되묻지 않았다", lambda s: not _asked(s))
 
 
 # 일정이 등록되면 알림을 받기로 한 보호자에게 자동으로 간다고 안내한다
@@ -989,6 +992,49 @@ CASES: list[EvalCase] = [
                 ),
             ),
         ),
+    ),
+    # ── "안 먹었다" — 식사 태도 · 경향과 오늘 한 번 (#929) ──
+    # food 를 금지 tool 로 두지 않는다. 끼니 이름으로 불렀다가 거절을 받고 고쳐 부르는 것은
+    # 재시도 예산 안의 설계된 경로다. 저장 결과로 본다
+    EvalCase("T76", "오늘 좀 안 먹었어.", expect_clarification=True, checks=(_NOTHING_SAVED,)),
+    EvalCase(
+        "T77", "오늘 점심 조금밖에 안 먹었어.", expect_clarification=True, checks=(_NOTHING_SAVED,)
+    ),
+    EvalCase(
+        "T78",
+        "요새 밥을 통 안 먹어.",
+        required_tools={"create_observation_routine": 1},
+        checks=(
+            _routine("mealtime"),
+            _NOT_ASKED,
+            ("식사 기록이 아니다", lambda s: not s.rows("food")),
+        ),
+    ),
+    EvalCase(
+        "T79",
+        "오늘 저녁 먹기 싫다고 투정부렸어.",
+        required_tools={"create_observation_routine": 1},
+        checks=(
+            _routine("mealtime"),
+            _NOT_ASKED,
+            ("식사 기록이 아니다", lambda s: not s.rows("food")),
+        ),
+    ),
+    EvalCase(
+        "T80",
+        "식사 도중에 혼냈더니 방에 들어가서 안 먹겠다고 했어.",
+        required_tools={"create_observation_routine": 1},
+        checks=(
+            _routine("mealtime"),
+            _NOT_ASKED,
+            ("식사 기록이 아니다", lambda s: not s.rows("food")),
+        ),
+    ),
+    EvalCase(
+        "T81",
+        "오늘 저녁에 브로콜리 안 먹었어.",
+        required_tools={"create_observation_food": 1},
+        checks=(_ONE_SAVED, _NOT_ASKED),
     ),
 ]
 
