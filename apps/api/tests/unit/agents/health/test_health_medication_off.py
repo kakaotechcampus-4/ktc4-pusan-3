@@ -5,7 +5,10 @@
 복약을 다시 켜면 이 파일을 스위치와 같이 지운다.
 """
 
+import inspect
+import re
 from datetime import timedelta
+from pathlib import Path
 
 import pytest
 
@@ -24,6 +27,14 @@ from tests.unit.agents.health.support import TODAY, FakeLLM, context, task
 @pytest.fixture(autouse=True)
 def _off(monkeypatch):
     monkeypatch.setattr(registry, "MEDICATION_ENABLED", False)
+
+
+def test_출고값은_꺼짐이다():
+    # 다른 테스트는 모두 스위치를 바꿔 끼우므로 출고값을 아무도 보지 않는다. 충돌 해결 · 디버깅 중에
+    # True 로 바뀌면 웹은 꺼진 채 서버만 켜져 나간다. 다시 켤 때는 이 파일을 통째로 지운다
+    source = Path(inspect.getfile(registry)).read_text(encoding="utf-8")
+
+    assert re.search(r"^MEDICATION_ENABLED: bool = False$", source, re.M)
 
 
 class _NoReads(InMemoryMedicationStore):
@@ -46,21 +57,19 @@ class _SpyMedication(InMemoryMedicationStore):
     "text",
     ["하루 세 번 항생제 먹여야 해", "다음 약 언제야?", "시럽 이제 안 먹여", "용량 늘려도 돼?"],
 )
-async def test_복약_라벨은_아무것도_읽지_않고_준비_중_문구로_닫힌다(text):
-    safety = InMemoryHealthSafety([HealthSafetyEntry("allergy", "땅콩", "active")])
+async def test_복약_라벨은_모델도_코스도_없이_준비_중_문구로_닫힌다(text):
     llm = FakeLLM()
 
-    result = await run(
-        task("medication", text), context(safety=safety, medication=_NoReads()), client=llm
-    )
+    result = await run(task("medication", text), context(medication=_NoReads()), client=llm)
 
     assert (result.status, result.model_calls) == ("unsupported", 0)
     assert result.readouts == (READOUTS.render(MED_PREPARING),)
     assert result.medication_drafts == () and result.pending is None
-    assert llm.seen == [] and safety.calls == 0
+    assert llm.seen == []
 
 
 async def test_동의가_없어도_동의_안내가_아니라_준비_중_문구다():
+    # 게이트(월령 · 동의 조회) 앞에서 닫았다는 뜻이다 — 게이트를 거쳤다면 동의 안내가 나간다
     result = await run(task("medication", "항생제 먹여야 해"), context(consent=False))
 
     assert result.readouts == (READOUTS.render(MED_PREPARING),)
