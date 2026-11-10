@@ -71,6 +71,14 @@ def test_시각이_있으면_범위로_저장한다():
     assert item.ends_at.astimezone(KST).hour == 12
 
 
+def test_끝_날에_일_글자가_없는_기간은_첫날_하루가_아니다():
+    item = _build(_item(date_text="11/23(월)~27(금)")).items[0]
+    assert item.all_day is True
+    assert item.starts_at.astimezone(KST).date() == date(2026, 11, 23)
+    assert item.ends_at.astimezone(KST).date() == date(2026, 11, 27)
+    assert item.needs_review is False
+
+
 def test_끝이_시작보다_빠르면_끝을_버린다():
     # 제출 계약은 끝 > 시작 을 요구한다. 초안이 422 로 막히면 보호자가 고칠 곳을 모른다
     item = _build(_item(date_text="11월 6일 14:00~10:00")).items[0]

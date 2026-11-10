@@ -29,6 +29,11 @@ _DOW = (
 _FULL = re.compile(_YMD + f"(?:{_DOW})?")
 _SHORT = re.compile(r"(?<![\d.])" + _MD + f"(?:{_DOW})?")
 _BARE_DAY = re.compile(r"(?<![\d.])(?P<d>\d{1,2})\s*일" + f"(?:{_DOW})?")
+# "11/23~27" · "11.23(월)~27(금)" — 기간의 끝 날은 "일" 도 빠진다.
+# 뒤에 숫자 · 달 · 단위가 오면 날이 아니다
+_BARE_END_DAY = re.compile(
+    r"(?P<d>\d{1,2})(?!\s*[\d:/]|\.\d|\s*(?:월|년))" + _NOT_A_DAY + r"\.?" + f"(?:{_DOW})?"
+)
 _CALENDAR_CELL = re.compile(r"\d{1,2}")
 _BASE_MONTH = re.compile(r"(?:(?P<y>\d{4})\s*년\s*)?(?P<m>\d{1,2})\s*월")
 _RELATIVE = {"오늘": 0, "금일": 0, "내일": 1, "명일": 1, "모레": 2}
@@ -310,7 +315,11 @@ def parse_notice_when(
         adjacent = bool(_DATE_START.match(rest))
         end, end_reason, _ = _first_date(rest, start, month) if adjacent else (None, None, 0)
         reason = reason or end_reason
-        if end is None and (bare := _BARE_DAY.match(rest.strip())):
+        bare = _BARE_DAY.match(rest.strip()) if end is None else None
+        if end is None and bare is None and _RANGE_SEP.match(text[at:]):
+            # "일" 없는 끝 날은 "~" 가 날짜 바로 뒤일 때만 읽는다. "11/23 9:30~12" 의 12 는 시각이다
+            bare = _BARE_END_DAY.match(rest.strip())
+        if bare:
             # "11월 9일~20일" — 뒤쪽은 달이 생략된다. 말일을 넘기면 다음 달로 읽지 않고 되묻는다
             end = _safe(start.year, start.month, int(bare["d"]))
             if end is None:

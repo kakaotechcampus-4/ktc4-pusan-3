@@ -94,6 +94,45 @@ def test_기간을_읽는다(text, start, end):
 
 
 @pytest.mark.parametrize(
+    ("text", "start", "end"),
+    [
+        ("11/23~27", date(2026, 11, 23), date(2026, 11, 27)),
+        ("11/23(월)~27(금)", date(2026, 11, 23), date(2026, 11, 27)),
+        ("11.23~27", date(2026, 11, 23), date(2026, 11, 27)),
+        ("11.23.(월) ~ 27.(금)", date(2026, 11, 23), date(2026, 11, 27)),
+        # 이미 되던 것 — 그대로여야 한다
+        ("11월 23일~27일", date(2026, 11, 23), date(2026, 11, 27)),
+        ("11/28~12/2", date(2026, 11, 28), date(2026, 12, 2)),
+    ],
+)
+def test_끝_날에_일_글자가_없어도_기간이다(text, start, end):
+    # "11/23~27" 의 27 을 못 읽으면 끝이 열린 것으로 보고 첫날 하루 일정이 된다
+    when = parse_notice_when(text, anchor=ANCHOR)
+    assert (when.start, when.end) == (start, end)
+    assert when.open_ended is False
+    assert when.review is None
+
+
+def test_일_글자_없는_끝_날도_요일을_검산한다():
+    when = parse_notice_when("11/23(월)~27(목)", anchor=ANCHOR)
+    assert "요일" in when.review
+
+
+def test_일_글자_없는_끝_날의_시각은_매일의_시간이다():
+    when = parse_notice_when("11/23~27 10:00~12:00", anchor=ANCHOR)
+    assert (when.start, when.end) == (date(2026, 11, 23), date(2026, 11, 27))
+    assert (when.start_time, when.end_time) == (time(10), time(12))
+
+
+@pytest.mark.parametrize(
+    "text", ["11/23 9:30~12", "11/23 10~12", "11/23~3세", "11/23~27명", "11/23~12월"]
+)
+def test_물결표_뒤의_숫자가_날이_아니면_끝_날로_읽지_않는다(text):
+    # 시각 범위 · 나이 · 인원을 끝 날로 읽으면 없던 긴 일정이 생긴다
+    assert parse_notice_when(text, anchor=ANCHOR).end is None
+
+
+@pytest.mark.parametrize(
     "text", ["11월 중", "11월 말 예정", "시간은 개별 안내", "추후 공지", "9:30", "2월 30일"]
 )
 def test_못_읽으면_값을_비우고_이유를_준다(text):
