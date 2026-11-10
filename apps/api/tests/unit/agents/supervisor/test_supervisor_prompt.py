@@ -54,3 +54,13 @@ def test_앞_대화가_없는_호출의_프롬프트에는_앞_대화_절이_없
 
     assert "[앞 대화가 올 때]" not in default and "resolved_request" not in default
     assert build_system_prompt(with_context=True).startswith(default)
+
+
+def test_재촉하는_말투와_서술어_없는_간식_요청_예시가_있다() -> None:
+    prompt = build_system_prompt()
+
+    assert '"야 밥 추천 해달라고" → request/food/meal_recommendation' in prompt
+    assert '"김밥 말고 다른 거 추천해달라니까" → request/food/meal_recommendation' in prompt
+    assert '"어린이집 끝나고 간식" → request/food/meal_recommendation' in prompt
+    request = prompt.split("[request")[1].split("[guarded")[0]
+    assert "재촉하는 말투" in request

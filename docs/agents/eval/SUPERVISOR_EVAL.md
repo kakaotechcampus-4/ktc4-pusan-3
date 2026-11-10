@@ -28,6 +28,8 @@ tool spec · 응답 스키마: `app/agents/supervisor/schemas.py` (`ROUTE_TOOL_S
 | 버전 | 커밋 | 지문 | 조건 | 무엇을 왜 바꿨나 | C1 | 안정 오답 | 불안정 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | v0 | `2fc92746` | `05d6538172c2` | 미측정 | 최초 기준선. 합격선만 기존 문서에서 옮김, 수치는 다음 변경 때 전후 두 행으로 잰다. 이 규칙 전에 develop 에 들어간 프롬프트 변경(앞 대화 해석 #786 — 지문에 앞 대화 절 · 메시지 · route spec 도 넣음 · 공지 질문 조회 라우팅)은 잰 수치가 없어 다시 재지 않고 v0 지문만 그 뒤 코드로 고침 | 미측정 | 미측정 | 미측정 |
+| v1 | `b9c1db85 dirty` | `05d6538172c2` | ALL_CASES 216 · R5 · gpt-5.6-luna/none | #861 바꾸기 전 — develop 프롬프트를 v2 와 같은 평가셋(RQ 포함)으로 잼. 작업 트리에서 `prompt.py` 만 develop 것으로 되돌려 잼(나머지 변경은 Supervisor 출력에 영향 없음) | 0/216 | 2 (RC36 · RQ07) | 9 |
+| v2 | `b9c1db85 dirty` | `dfc1e9107cdc` | ALL_CASES 216 · R5 · gpt-5.6-luna/none | #861 — 서술어 없는 간식 요청("어린이집 끝나고 간식")은 meal_recommendation, "~해달라고 · ~해달라니까" 는 재촉 말투 · 요청 안의 "말고" 는 정정이 아님 — `_REQUEST` 두 줄 + 예시 세 줄 | 0/216 | 1 (FC09) | 7 |
 
 - `커밋` 은 재 본 코드. 작업 트리가 더러웠으면 커밋 옆에 `dirty` 를 적는다 (`tests/eval/agents/live_run_meta.json` 의 `dirty`).
 - `C1` 칸은 `a/b` (C1 사례 입력 수 / 전체 입력 수). `미측정` 은 v0 에만 쓴다.
@@ -58,7 +60,19 @@ tool spec · 응답 스키마: `app/agents/supervisor/schemas.py` (`ROUTE_TOOL_S
 
 ## 3. 반복해서 같은 오답 · 흔들리는 값
 
-측정 전. GR 계열은 "숫자 놀이" 가 "놀이" 낱말만 보고 activity 로 새던 경계(보정 이력은 `supervisor-agent-v1.md` §4 eval · 보정 규칙)가 알려진 흔들림이다.
+v1 → v2 (#861, R5 · 입력별 오답 횟수/5). C1 은 둘 다 0.
+
+| 입력 | v1 | v2 | 보는 것 |
+| --- | --- | --- | --- |
+| RQ07 "어린이집 끝나고 간식" | 5/5 | 0/5 | v2 가 고친 것 — unclear 로 가던 서술어 없는 요청 |
+| RC36 "해열제 5ml 먹였어" | 5/5 | 2/5 | record/observe 대신 request/health/medication. 원래 흔들리던 경계 |
+| FC09 알레르기 + "치즈 먹여도 돼?" | 4/5 | 5/5 | food_check 대신 guarded/diagnosis — 안전한 쪽(안내만 나간다). develop 에서도 대부분 틀린다 |
+| T42 역할놀이 대사 | 0/5 | 3/5 | unclear 대신 record/observe. Memory 가 대사를 저장하지 않아 C1 아님. #861 작업 중 `_SPLIT` 에 "부르는 말을 붙여 자른다" 를 넣었을 때 더 나빠져 그 줄은 뺐다 |
+| T59 · RC27 · RC34 | 2 · 1 · 2 | 2 · 2 · 1 | 양쪽 다 흔들림 |
+
+C1 셈 — guarded 정답 구간을 guarded 로 받지 못한 실행, GR 0건 규칙(`growth_violations`) 위반이 한 번이라도 있으면 그 입력은 C1 이다. 오답은 strict 구간을 못 찾음 · 검증 실패 · 0건 규칙 위반. `안정 오답` 은 R 회 모두 오답인 입력 수, `불안정` 은 일부만 오답인 입력 수다.
+
+그 전부터 GR 계열은 "숫자 놀이" 가 "놀이" 낱말만 보고 activity 로 새던 경계(보정 이력은 `supervisor-agent-v1.md` §4 eval · 보정 규칙)가 알려진 흔들림이다.
 
 ## 4. 실행 방법
 
@@ -68,6 +82,13 @@ $env:TEST_REPEAT=5
 uv run pytest tests/eval/agents/supervisor/test.py -m live -k split -s          # Supervisor 단독
 uv run pytest tests/eval/agents/supervisor/test.py -m live -k growth_routing -s # Growth 경계
 uv run pytest tests/eval/agents/supervisor/test.py -m live -k health_routing -s # Health 경계
+```
+
+측정 이력 한 행(C1 · 안정 오답 · 불안정)은 아래 스크립트로 잰다 — 위 pytest 는 사람이 보는 출력이고, 이 스크립트가 §3 의 셈을 그대로 한다.
+
+```powershell
+$env:TEST_REPEAT=5
+uv run python -m tests.eval.agents.supervisor.measure_history out.json   # 지문 · C1 a/b · 입력별 오답 횟수
 ```
 
 pytest 라이브 eval(`-m live`)은 끝나면 `tests/eval/agents/live_run_meta.json`(gitignore)에 커밋 · dirty · 모델 · effort · 반복 횟수 · 프롬프트 지문을 남긴다. pytest 가 아닌 스크립트는 위의 `run_meta` 명령으로 남긴다. 그 값으로 §1 에 행을 더한다. 라이브 eval 은 CI 에서 돌리지 않는다.
