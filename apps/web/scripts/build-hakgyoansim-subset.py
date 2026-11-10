@@ -43,7 +43,11 @@ import re
 import tempfile
 from pathlib import Path
 
-from fontTools.designspaceLib import AxisDescriptor, DesignSpaceDocument, SourceDescriptor
+from fontTools.designspaceLib import (
+    AxisDescriptor,
+    DesignSpaceDocument,
+    SourceDescriptor,
+)
 from fontTools.pens.boundsPen import BoundsPen
 from fontTools.subset import main as subset_main
 from fontTools.ttLib import TTFont

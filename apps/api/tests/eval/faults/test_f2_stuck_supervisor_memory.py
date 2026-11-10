@@ -20,6 +20,7 @@ from app.agents.suggestion_save import InMemorySuggestions
 from app.agents.supervisor.schemas import SupervisorOutput
 from app.api import idempotency
 from app.api.runs import registry, runner
+from app.api.runs.sse import failed_event
 from tests.eval.faults.fakes import RAW, SlowLLM, bind_clients, fake_sessions, memory_ctx
 from tests.unit.agents.supervisor.test_pipeline import (
     FakeLLM,
@@ -70,7 +71,8 @@ async def test_F2_멈춘_Supervisor_Memory_는_러너_안전망이_failed_로_�
         assert route.calls == 1
     ends = [name for name, _ in channel.events if name in ("done", "failed")]
     assert ends == ["failed"]  # 끝 이벤트는 정확히 하나 (I12)
-    assert channel.events[-1] == ("failed", {"reason": "timeout", "raw_text": RAW})
+    # 모양(안내 문구 message 포함)은 화면용 failed 를 만드는 함수 하나가 정한다 (#772)
+    assert channel.events[-1] == failed_event("timeout", RAW)
     assert [session.commits for session in sessions] == [0]  # 반쯤 저장된 기록 없음
     assert not channel.committed
     assert await idempotency.recall(**scope) is None  # 같은 키로 다시 시도하면 새 run

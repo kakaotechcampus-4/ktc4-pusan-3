@@ -77,9 +77,9 @@ export function TimeField({
 
   const partial =
     hour !== "" && minute === ""
-      ? "몇 분인지도 골라주세요."
+      ? "몇 분인지도 골라 주세요."
       : hour === "" && minute !== ""
-        ? "몇 시인지도 골라주세요."
+        ? "몇 시인지도 골라 주세요."
         : null;
   const shown = partial ?? hint;
 

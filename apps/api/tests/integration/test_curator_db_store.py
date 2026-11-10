@@ -80,8 +80,8 @@ class TestListUnembedded:
         obs1 = _food(child.id, subject="사과")
         # 벡터 있는 active → 제외
         obs2 = _food(child.id, subject="배", embedding=[0.1] * 1536)
-        # inactive → 제외
-        obs3 = _food(child.id, subject="감", status=ObservationStatus.INACTIVE)
+        # stand_alone → 제외 (지운 관찰은 아래 테스트)
+        obs3 = _food(child.id, subject="감", status=ObservationStatus.STAND_ALONE)
         session.add_all([obs1, obs2, obs3])
         await session.flush()
 

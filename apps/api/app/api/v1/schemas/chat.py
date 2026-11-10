@@ -16,7 +16,7 @@
 import datetime as dt
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from app.api.chat_replies import (
     AgentResultReply,
@@ -28,11 +28,12 @@ from app.api.chat_replies import (
     StoredRef,
     UnavailableReply,
 )
+from app.api.schema_base import ApiSchema
 from app.api.v1.schemas.cards import DeleteProposalCardOut, FoundTabsOut
 from app.api.v1.schemas.observations import ObservationHealthOut, ObservationOut
 
 
-class SavedOut(BaseModel):
+class SavedOut(ApiSchema):
     type: Literal["saved"] = "saved"
     observations: list[ObservationOut | ObservationHealthOut] = Field(
         description=(
@@ -48,7 +49,7 @@ class SavedOut(BaseModel):
     )
 
 
-class SuggestionStateOut(BaseModel):
+class SuggestionStateOut(ApiSchema):
     id: str
     status: Literal["draft", "approved", "rejected", "expired"] = Field(
         description=(
@@ -86,7 +87,7 @@ ChatReplyOut = Annotated[
 ]
 
 
-class ChatTurnOut(BaseModel):
+class ChatTurnOut(ApiSchema):
     run_id: str
     raw_text: str = Field(description="보호자가 보낸 글 그대로")
     reply_to: str | None = Field(
@@ -110,7 +111,7 @@ class ChatTurnOut(BaseModel):
     )
 
 
-class ChatDayResponse(BaseModel):
+class ChatDayResponse(ApiSchema):
     date: dt.date = Field(description="이 응답의 날짜(한국 시간)")
     turns: list[ChatTurnOut] = Field(
         description=(

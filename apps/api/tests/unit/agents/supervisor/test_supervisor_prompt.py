@@ -54,3 +54,12 @@ def test_앞_대화가_없는_호출의_프롬프트에는_앞_대화_절이_없
 
     assert "[앞 대화가 올 때]" not in default and "resolved_request" not in default
     assert build_system_prompt(with_context=True).startswith(default)
+
+
+def test_다른_집_얘기와_또래_추천_예시가_있다() -> None:
+    prompt = build_system_prompt()
+    assert '"다른 엄마들은 뭐 먹여?" → out_of_scope' in prompt
+    assert '"또래 애들한테 좋은 아침 메뉴 추천해줘" → request/food/meal_recommendation' in prompt
+    assert '"친구네 집에서 피자 먹었어" → record/observe' in prompt
+    else_part = prompt.split("[out_of_scope · unclear]")[1].split("[예시]")[0]
+    assert "다른 집" in else_part

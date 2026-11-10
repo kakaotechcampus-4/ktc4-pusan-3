@@ -3,8 +3,9 @@ import uuid
 from typing import Literal
 from zoneinfo import ZoneInfo
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import ConfigDict, Field, field_validator
 
+from app.api.schema_base import ApiSchema
 from app.core.event_draft import MAX_ITEM_NAME
 
 PhotoLane = Literal["document", "activity"]
@@ -16,11 +17,11 @@ DATE_WINDOW_YEARS = 3
 _KST = ZoneInfo("Asia/Seoul")
 
 
-class PhotoUploadResponse(BaseModel):
+class PhotoUploadResponse(ApiSchema):
     run_id: str = Field(description="`GET /runs/{rid}/events` 로 읽는 과정을 받는다")
 
 
-class PhotoUploadTicket(BaseModel):
+class PhotoUploadTicket(ApiSchema):
     """사진을 어디로 올릴지. 서버가 사진 본문을 받지 않도록 화면이 S3 에 바로 올린다.
 
     `s3` 면 `url` 에 `fields` 를 폼 값으로 담고 **맨 마지막에** `file` 을 붙여 POST 한다.
@@ -36,14 +37,14 @@ class PhotoUploadTicket(BaseModel):
     expires_in: int | None = Field(default=None, description="업로드 주소가 유효한 초")
 
 
-class PhotoEntryDetail(BaseModel):
+class PhotoEntryDetail(ApiSchema):
     """항목에 딸린 정보 한 줄. 🚨 이름이 문서마다 달라서 코드로 가르지 않는다."""
 
     name: str
     value: str
 
 
-class PhotoEntry(BaseModel):
+class PhotoEntry(ApiSchema):
     """사진에서 읽어낸 항목 하나. 값은 화면에서 보호자가 고친 뒤의 것이다.
 
     `date` 아래 칸은 서버가 읽어 보내는 값이다. 저장할 때 다시 보내도 쓰지 않는다. 고칠 수 있는
@@ -60,6 +61,15 @@ class PhotoEntry(BaseModel):
     all_day: bool = False
     items: list[str] = Field(default_factory=list, max_length=100)
     needs_review: bool = False
+    past: bool = Field(
+        default=False,
+        description=(
+            "지난 항목인가. 견줄 날이 모두 사진을 받은 날(한국 날짜)보다 앞이면 참이다. "
+            "일정은 시작 · 끝(시작이 없으면 마감), 할 일 · 안내는 시작 · 끝 · 마감 중 "
+            "가장 늦은 날과 견준다. 날짜를 못 읽었으면 거짓. "
+            "확인 화면 전용이고 저장할 때 다시 보내도 쓰지 않는다"
+        ),
+    )
     review_reason: str | None = None
     label: str | None = Field(default=None, description='내용 이름. "회신" · "체험비"')
     target_scope: Literal["child", "class", "all", "conditional", "unknown"] | None = Field(
@@ -107,7 +117,7 @@ class PhotoEntry(BaseModel):
         return value
 
 
-class PhotoCommitRequest(BaseModel):
+class PhotoCommitRequest(ApiSchema):
     lane: PhotoLane
     entries: list[PhotoEntry] = Field(
         default_factory=list,
@@ -118,7 +128,7 @@ class PhotoCommitRequest(BaseModel):
     attach_to_calendar: bool = False
 
 
-class PhotoCommitResponse(BaseModel):
+class PhotoCommitResponse(ApiSchema):
     """🚨 일정은 여기서 만들어지지 않는다. 캘린더에 쓰는 문은 `POST /children/{cid}/events` 다."""
 
     observations: list[dict] = Field(default_factory=list)

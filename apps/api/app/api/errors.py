@@ -16,16 +16,16 @@ from typing import Any
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
 from sqlalchemy.exc import DBAPIError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from app.api.schema_base import ApiSchema
 from app.core.logging_config import log_error_without_message
 
 log = logging.getLogger(__name__)
 
 
-class ErrorBody(BaseModel):
+class ErrorBody(ApiSchema):
     """오류 코드, 사용자 메시지, 선택 상세 정보를 담는다."""
 
     code: str
@@ -33,7 +33,7 @@ class ErrorBody(BaseModel):
     detail: dict[str, Any] | None = None
 
 
-class ErrorEnvelope(BaseModel):
+class ErrorEnvelope(ApiSchema):
     """봉투. 응답 생성과 OpenAPI 문서가 같은 정의를 쓴다 — 두 벌이 되면 어긋난다.
 
     라우터에서 문서에 싣는 법:

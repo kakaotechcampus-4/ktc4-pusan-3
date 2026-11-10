@@ -14,8 +14,9 @@ import type { CreateEventDraftsResponse } from "@/lib/api";
  *    (`safety-check-sheet.tsx` · #151) — 채택과 일정 만들기가 갈리면서, 초안을 만든 뒤에 물으면
  *    **일정을 안 만드는 보호자에게는 영영 안 묻게** 된다. 알레르기는 캘린더가 아니라
  *    그 음식을 먹이는 일에 걸린 위험이다.
- *    ⚠️ 그래서 이 시트에는 **막힌 초안이라는 상태가 없다** — 알레르기가 확인된 제안은 채택되지
- *    않아서 초안 자체가 안 만들어진다.
+ *    ⚠️ 그래서 이 시트에는 **보호자가 막은 초안이라는 상태가 없다** — 알레르기가 확인된 제안은 채택되지
+ *    않아서 초안 자체가 안 만들어진다. 예외는 시트를 연 **사이** 다른 보호자가 등록한 알레르기다 — 넣는 순간
+ *    서버가 막고(#902), 그 카드만 잠긴다 (`onAllergenBlocked`).
  *
  * 🚨 **초안을 만드는 호출은 게이트가 아니다** — #121 에서 **쓰기를 뗐고**, 그 응답은 저장된
  *    `event` 가 아니라 초안이다.
@@ -32,6 +33,8 @@ export function ApprovalSheet({
   onClose,
   childId,
   result,
+  onAllergenBlocked,
+  onSuggestionsSubmitted,
 }: {
   open: boolean;
   onClose: () => void;
@@ -41,14 +44,22 @@ export function ApprovalSheet({
    * 🚨 **초안이 여러 장일 수 있다** — `food` 는 한 끼로 묶이고 나머지는 고른 수만큼이다.
    */
   result: CreateEventDraftsResponse;
+  /**
+   * 넣는 순간 서버가 알레르기로 막은 제안 id (#902). 05 가 받아 다시 만들 때 뺀다 — 초안 만들기의 409(#859)와
+   *    같은 상태다. 시트를 연 사이 다른 보호자가 등록한 알레르기라, 위 "막힌 초안이라는 상태가 없다" 의 예외다.
+   */
+  onAllergenBlocked?: (suggestionIds: string[]) => void;
+  /** 캘린더에 넣은 초안의 제안 id. 05 가 다시 만들 때 뺀다 — 이미 넣은 제안이 초안으로 다시 서지 않게 (#902 리뷰). */
+  onSuggestionsSubmitted?: (suggestionIds: string[]) => void;
 }) {
   return (
     <BottomSheet
       open={open}
       onClose={onClose}
       dismissible={false}
+      // 🚨 설명을 달지 않는다 (#868) — 목록이 "고른 제안으로 … 넣기 전까지는 캘린더에 들어가지 않아요" 를 세운다.
+      //    시트 머리에도 같은 말을 두면 한 화면에 같은 뜻이 두 번 선다. 목록의 질문 머리글도 같은 이유로 끈다.
       title="캘린더에 넣을까요"
-      description="넣기 전에는 아무것도 저장되지 않아요."
       footer={
         <Button variant="secondary" block onClick={onClose}>
           닫기
@@ -64,7 +75,10 @@ export function ApprovalSheet({
         incoming={result.drafts}
         origin="suggestion"
         transient
-        found="고른 제안으로 일정 초안을 만들었어요."
+        heading={false}
+        onAllergenBlocked={onAllergenBlocked}
+        onSuggestionsSubmitted={onSuggestionsSubmitted}
+        found="고른 추천으로 일정 초안을 만들었어요."
       />
     </BottomSheet>
   );
