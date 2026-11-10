@@ -190,16 +190,24 @@ def _first_date(
     return None, None, 0
 
 
+def _month_and_day(month: str, day: str) -> bool:
+    return 1 <= int(month) <= 12 and 1 <= int(day) <= 31
+
+
 def _bare_hours(text: str) -> list[re.Match]:
     """시 없는 앞 시각. 날짜 표현 안의 숫자는 뺀다.
 
     "11. 23 ~ 12시" · "11월 23 ~ 12시" 의 23 은 날이다. 달 · 날로 있을 수 없는 짝은 날짜로 치지
     않는다 — "11.23. 10~12시" 를 "11년 23월 10일" 로 보면 10 이 날이 된다.
+    두 자리 연도는 앞 두 숫자가 월 · 일이 될 수 있으면 연도로 보지 않는다 — "11.2. 10~12시" 는
+    11월 2일 10~12시지 2011년 2월 10일이 아니다. "26.11.23 ~ 12시" 의 26 은 달이 아니라 연도다.
     """
     dates = [
         m.span()
         for m in (*_FULL.finditer(text), *_SHORT.finditer(text))
-        if 1 <= int(m["m"]) <= 12 and 1 <= int(m["d"]) <= 31
+        if 1 <= int(m["m"]) <= 12
+        and 1 <= int(m["d"]) <= 31
+        and not ("y" in m.re.groupindex and len(m["y"]) == 2 and _month_and_day(m["y"], m["m"]))
     ]
     return [
         m for m in _BARE_HOUR.finditer(text) if not any(a <= m.start("h") < b for a, b in dates)

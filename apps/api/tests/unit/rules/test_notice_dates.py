@@ -151,9 +151,29 @@ def test_날짜의_숫자를_시_없는_앞_시각으로_읽지_않는다(text):
     assert when.review is None
 
 
-def test_마침표_날짜_뒤의_시_없는_시각_범위는_읽는다():
-    when = parse_notice_when("11.23. 10~12시", anchor=ANCHOR)
-    assert (when.start, when.start_time, when.end_time) == (date(2026, 11, 23), time(10), time(12))
+@pytest.mark.parametrize(
+    ("text", "start", "start_time", "end_time"),
+    [
+        ("11.23. 10~12시", date(2026, 11, 23), time(10), time(12)),
+        # "11.2. 10" 을 두 자리 연도 · 월 · 일(2011-02-10)로 보면 안 된다 (검토 N2)
+        ("11.2. 10~12시", date(2026, 11, 2), time(10), time(12)),
+        ("11. 2. 10~12시", date(2026, 11, 2), time(10), time(12)),
+        ("11/2. 10~12시", date(2026, 11, 2), time(10), time(12)),
+        ("11.12. 10~12시", date(2026, 11, 12), time(10), time(12)),
+        ("12.1. 10~12시", date(2026, 12, 1), time(10), time(12)),
+        ("11.2. 2~4시", date(2026, 11, 2), time(14), time(16)),
+    ],
+)
+def test_마침표_날짜_뒤의_시_없는_시각_범위는_읽는다(text, start, start_time, end_time):
+    when = parse_notice_when(text, anchor=ANCHOR)
+    assert (when.start, when.start_time, when.end_time) == (start, start_time, end_time)
+    assert when.review is None
+
+
+def test_두_자리_연도_날짜의_숫자도_시_없는_앞_시각으로_읽지_않는다():
+    # 앞 두 숫자가 월 · 일이 될 수 없으면 연 · 월 · 일이다 — "26.11.23" 의 23 은 날이다
+    when = parse_notice_when("26.11.23 ~ 12시", anchor=ANCHOR)
+    assert (when.start, when.start_time) == (date(2026, 11, 23), time(12))
 
 
 def test_앞_숫자에_시가_없는_7시도_기존_규칙대로_읽는다():
