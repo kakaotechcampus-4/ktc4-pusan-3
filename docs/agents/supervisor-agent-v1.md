@@ -37,6 +37,17 @@
 
 라벨은 **Tool 묶음이 갈릴 때만** 만든다.
 
+### request_mode — 라벨이 아니라 request 공통 칸 (#574)
+
+"보통 3~4세 어린이들은 뭐 하고 놀아?" 처럼 **아이 일반**을 묻는 말은 추천 카드가 아니라 문서 근거 답변이다. 이 경계는 Agent 마다 라벨을 세 개 늘리지 않고 `request` 조각의 공통 칸 `request_mode`(`suggest` 기본 · `info`) 하나로 가른다 — 경계 규칙과 eval 이 한 벌이다. Activity 에 라벨을 넣지 않는다는 위 원칙은 그대로다.
+
+- `info` 면 `food_task` · `growth_task` 를 비운다(스키마가 지운다). routing 이 `DomainTask.task_type="info"`(`INFO_TASK`)로 내려보낸다. 추천 라벨 집합 · Growth 의 run 당 추천 하나 제한 · 05 · 0개 기록 대상에 들어가지 않는다.
+- 분류는 모델이 한다. "보통" · "N세" 같은 낱말을 코드가 보고 가르지 않는다 — "우리 애 4살인데 뭐 하고 놀까?" 는 나이가 있어도 suggest 다.
+- `info` 를 받는 Agent 는 `INFO_AGENTS`(지금은 Growth 하나)다. 아직 안 받는 Activity · Food 의 `info` 조각은 돌리지 않고 `info_not_ready` 안내 한 줄을 낸다 — 추천 경로로 새면 다른 나이의 추천이 이 아이 카드로 저장된다.
+- Health 의 `info` 는 Agent 를 돌리지 않고 routing 이 닫힘 안내(`info_health_closed`)를 낸다 — 진단하지 않는 Agent 가 아이 일반의 건강 정보를 답으로 내지 않는다(루트 §2). 우리 아이의 검진 · 접종 일정을 묻는 말("검진 언제 받아야 돼?")은 `suggest` 라 `schedule_check` 가 그대로 맡는다. 닫힌 `info` 조각(Health · Activity · Food)은 Agent 상한(2) 자리를 쓰지 않는다 — 안내만 내고 지나간다.
+- 한 문장에 일반 질문과 우리 아이 추천이 같이 있으면 두 조각이고, 같은 Agent 의 서로 다른 두 task 로 간다.
+- 질문 속 나이는 모델이 뽑지 않는다. `rules/age.asked_month_range` 가 읽는다(세 · 살은 만 나이, 개월, 돌).
+
 - Growth 라벨이 빠지면 `learning_suggestion` 으로 채운다(Food 의 "애매하면 추천" 과 같은 방식).
 - 한 run 에 Growth 추천 라벨(learning · routine · book)은 하나만 돈다 — 처음 것이되, 도서는 다른 추천 라벨이 같이 오면 자리를 내준다(`YIELDING_LABELS`). 뺀 요청은 `task_limit` 안내로 알린다 — 05 의 다시 시도 · 0개 기록이 (run, agent) 로 묶여서다. `growth_review` 는 추천이 아니라 같이 돈다.
   - 도서가 양보하는 이유 — 도서는 인증키(`DATA4LIBRARY_AUTH_KEY`)가 없거나 정보나루가 실패하면 닫히고(`closed.book_api`), 열려도 외부 호출에 하루 한도가 있다. "공룡 책이랑 양치 혼자 하는 법" 처럼 앞에 와서 루틴을 빼면 화면에 도서 닫힘 안내만 남을 수 있다. 도서만 왔으면 도서가 돈다 (#452 리뷰 — 도서가 열린 뒤에도 그대로 두기로 했다).
@@ -158,6 +169,7 @@
 - 보정 이력 — 끝까지 라이브(`growth/test_growth_supervisor_e2e.py`)에서 "숫자 놀이 뭐 없어?" 가 "놀이" 라는 낱말만 보고 activity 로 새는 것을 찾았다(직접 표본 3/10 만 growth). `_REQUEST` 에 "놀이라는 말이 있어도 배우는 낱말(숫자 · 한글 · 글자)이 있으면 growth/learning_suggestion, 없으면 activity" 한 줄을 더했고 12/12 가 됐다. 같은 말투(GR25 · GR26)와 반대 경계(GR27 · GR28 — 배우는 낱말이 없는 놀이는 activity)를 GR 에 더했다.
 - 보정은 한 번에 하나, 최대 3회. "변형" 케이스의 문장을 프롬프트에 옮기지 않는다. 고친 뒤 split 합계(RC · T)가 떨어지면 되돌린다. 3회 뒤에도 미달이면 합격선을 낮추지 않고 숫자로 남긴다
 - 앞 대화를 붙인 후속 질문은 FU01~FU14 가 잰다 — [§5-5](#5-5-eval)
+- 일반 정보 경계는 IN01~IN14 가 잰다(`supervisor/test.py -m live -k info_routing`) — agent · info 판정 일치 90% 이상, info↔suggest 가 새는 건수 0. 한쪽으로 새면 추천이 안 나가거나 다른 나이의 추천이 저장되어 비율과 섞지 않는다.
 
 ---
 

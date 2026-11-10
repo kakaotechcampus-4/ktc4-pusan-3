@@ -314,6 +314,7 @@ Supervisor 안전 사전검사(규칙)  ── 응급·진단 문의는 Agent에
 | 문구 | 작성 | 저장 |
 | --- | --- | --- |
 | 판정·안내·경고·미지원 | **코드 상수** (`*.readout.yaml`) | – |
+| 일반 정보 답변(`doc_answer`) | 모델 (문장마다 문서 행 id · 평가 표현 0 · 숫자는 인용 행에 있는 것만) | – (세션 한정, 지난 대화에는 출처와 함께 남음) |
 | 일반 추천 이유 | **코드 템플릿** (연령별) | `suggestion.reason` |
 | 개인화 이유·서술 | 모델 (금지어 lint 통과) | `suggestion.reason` · readout |
 | 문서 행 | 사람이 원문 보고 재작성 | `*_doc` |
@@ -381,3 +382,15 @@ Supervisor 안전 사전검사(규칙)  ── 응급·진단 문의는 Agent에
 새로 열리는 것은 이 표에 다시 적는다.
 
 > **API 계약서 v1(`docs/api/api-interface-v1.html`)은 레거시다.** 어긋나는 곳이 있어도 이 문서들이 정본이다.
+
+---
+
+## 11. 일반 정보 답변 — `doc_answer` (#574)
+
+아이 일반을 묻는 말(`task_type="info"`)에 추천 대신 문서 행을 근거로 답하는 공통 뼈대다(`common/doc_answer.py`). 도메인 Agent 는 행 읽기(안전 거르기 포함)와 문장 검사만 `DocAnswerSpec` 으로 넘긴다.
+
+- 순서: 안전 조회 실패(`blocked`, 모델 0회) → 질문 속 나이 → 월령 구간(`rules/age.asked_month_range`, 없으면 아이 월령 한 달) → 도메인이 거른 행 5개 → 모델 1회(출력 tool 강제) → 코드 검사 → readout.
+- 모델 입력은 질문 · 질문에 적힌 나이 · 거른 행뿐이다. 아이 이름 · 실제 나이 · 기록 · 알레르기 목록은 싣지 않는다.
+- 결과는 `suggestions=()` 이고 `readouts` 에 코드 안내(`info.*`)와 `doc_answer` 가 선다. `doc_answer.source_refs` 는 실제로 인용한 문서 행(`*_doc`)만 첫 등장 순서로 싣는다.
+- `source_refs` 의 문서 행은 api 가 `readouts[].sources`(제목 · 기관 · 출처)로 바꿔 SSE 와 지난 대화(`StoredReadout.sources`)에 같은 모양으로 보낸다. 문서 아닌 근거는 내보내지 않는다.
+- 고정 문구는 `doc_answer.readout.yaml` 하나이고 세 Agent 가 같이 쓴다. 지금 `info` 를 받는 Agent 는 Growth 다 — Activity · Food 는 routing 이 `info_not_ready` 안내를 낸다.
