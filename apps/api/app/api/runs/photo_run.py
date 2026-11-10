@@ -243,7 +243,8 @@ def _meal_entries(run: PhotoRun, plan, *, today: date) -> list[dict]:
                 {
                     "id": entry_id,
                     "kind": "meal",
-                    "title": ", ".join(item.name for item in meal.items),
+                    # 원문이 번호뿐이면 이름이 비어 있다(#908) — 빈 조각을 잇지 않는다
+                    "title": ", ".join(item.name for item in meal.items if item.name),
                     "date": str(plan.date_of(day.day)),
                     "all_day": True,
                     "items": [],

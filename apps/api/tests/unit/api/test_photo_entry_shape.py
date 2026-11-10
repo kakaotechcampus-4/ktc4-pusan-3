@@ -174,3 +174,27 @@ def test_급식도_같은_칸을_싣는다() -> None:
 
     got = [(e["date"], e["past"]) for e in entries]
     assert got == [("2026-11-08", True), ("2026-11-09", False)]
+
+
+def test_급식_제목은_빈_이름을_잇지_않는다() -> None:
+    # 원문이 번호뿐인 항목("2")은 원문에서 만든 이름이 비어 있다(`menu_display_name`, #908).
+    # 그대로 이으면 화면 제목이 "밥, , 우유" 가 된다
+    from types import SimpleNamespace
+
+    from app.api.runs.photo_run import PhotoRun
+
+    names = ["밥", "", "우유", ""]
+    meal = SimpleNamespace(
+        meal_type=SimpleNamespace(value="lunch"),
+        items=[SimpleNamespace(name=name) for name in names],
+    )
+    plan = SimpleNamespace(
+        days=[SimpleNamespace(day=9, meals=[meal])],
+        unparsed=[],
+        date_of=lambda day: date(2026, 11, day),
+    )
+    run = PhotoRun("r1", None, None, 0.0)
+
+    (entry,) = _meal_entries(run, plan, today=TODAY)
+
+    assert entry["title"] == "밥, 우유"
