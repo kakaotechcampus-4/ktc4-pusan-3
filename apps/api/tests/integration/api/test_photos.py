@@ -261,6 +261,32 @@ async def test_보호자가_고친_값으로_저장한다(db_client, session, be
     assert row.all_day is True
 
 
+async def test_보호자가_고친_시각으로_저장한다(
+    db_client, session, bearer, cid, key_set, monkeypatch
+):
+    # 캘린더에는 고친 시각이 들어가는데 기록에는 사진에서 읽은 9:30 이 남던 것
+    headers, _ = bearer
+    run_id, parsed = await _upload(db_client, headers, cid, monkeypatch, _reading())
+    entry = {
+        **parsed["entries"][0],
+        "starts_at": "2026-11-06T19:30:00+09:00",
+        "ends_at": None,
+        "all_day": False,
+    }
+
+    response = await db_client.post(
+        COMMIT.format(rid=run_id),
+        json={"lane": "document", "entries": [entry], "attach_to_calendar": False},
+        headers=headers,
+    )
+
+    assert response.status_code == 201
+    row = await session.scalar(select(NoticeItem).where(NoticeItem.title == "숲 체험"))
+    assert row.starts_at.astimezone(KST).isoformat() == "2026-11-06T19:30:00+09:00"
+    assert row.ends_at is None
+    assert row.all_day is False
+
+
 async def test_읽은_시각과_마감을_화면으로_보낸다(db_client, bearer, cid, key_set, monkeypatch):
     headers, _ = bearer
     _, parsed = await _upload(db_client, headers, cid, monkeypatch, _reading())

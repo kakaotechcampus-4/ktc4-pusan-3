@@ -12,6 +12,7 @@
 - NT01~NT06  기관 공지를 묻는 말(record/lookup_edit)과 급식 조회(daycare_lookup) 대조 (#832)
 - RO01~RO08  거절 · 안내 문구가 부모 말에 맞는지 — 진단 · 다른 집 · 주입 (#864)
 - RQ01~RQ08  말투만 다른 식사 추천 · 서술어 없는 요청 (#861)
+- T76~T81    "안 먹었다" 와 식사 태도 · 경향의 경계 — 묻기 · 저장 칸은 Memory 몫 (#929)
 - T70~T75    날짜의 기준점 — 오늘 기준 · 일정 기준 · 하루로 안 정해지는 말 (#497)
 - score_split()  Step 5(Supervisor 단독)와 Step 9(끝까지)가 같은 기준으로 잰다
 
@@ -1547,6 +1548,57 @@ RQ_CASES: tuple[RoutingCase, ...] = (
     ),
 )
 
+# ── T76~T81 — "안 먹었다" 와 식사 태도 · 경향 (#929) ─────────────
+# Supervisor 는 한 조각 record 로만 나누면 된다. 묻을지 routine 으로 저장할지는 Memory 몫이다
+MEAL_CASES: tuple[RoutingCase, ...] = (
+    RoutingCase(
+        "T76",
+        T_INPUTS["T76"],
+        (R("오늘 좀 안 먹었어", OBSERVE),),
+        watch="오늘 한 번 · 무엇인지 없음 — 묻는다 (골든셋 P-REC-06 입력)",
+        rows=0,
+    ),
+    RoutingCase(
+        "T77",
+        T_INPUTS["T77"],
+        (R("오늘 점심 조금밖에 안 먹었어", OBSERVE),),
+        watch="끼니만 있다 — 끼니는 음식이 아니라 묻는다",
+        rows=0,
+    ),
+    RoutingCase(
+        "T78",
+        T_INPUTS["T78"],
+        (R("요새 밥을 통 안 먹어", OBSERVE),),
+        watch="되풀이되는 경향 — routine mealtime, 묻지 않는다",
+        rows=1,
+        not_in=("food",),
+    ),
+    RoutingCase(
+        "T79",
+        T_INPUTS["T79"],
+        (R("오늘 저녁 먹기 싫다고 투정부렸어", OBSERVE),),
+        watch="태도 — 끼니가 있어도 묻지 않는다",
+        rows=1,
+        not_in=("food",),
+    ),
+    RoutingCase(
+        "T80",
+        T_INPUTS["T80"],
+        (R("식사 도중에 혼냈더니 방에 들어가서 안 먹겠다고 했어", OBSERVE, strict=False),),
+        watch="거부. 혼냈더니 를 따로 뗄지는 정하지 않았다",
+        rows=1,
+        not_in=("food",),
+    ),
+    RoutingCase(
+        "T81",
+        T_INPUTS["T81"],
+        (R("오늘 저녁에 브로콜리 안 먹었어", OBSERVE),),
+        watch="대조 — 음식이 있으면 바로 food",
+        rows=1,
+        not_in=("routine",),
+    ),
+)
+
 ALL_CASES: tuple[RoutingCase, ...] = (
     RC_CASES
     + T_CASES
@@ -1559,6 +1611,7 @@ ALL_CASES: tuple[RoutingCase, ...] = (
     + IN_CASES
     + RO_CASES
     + RQ_CASES
+    + MEAL_CASES
 )
 CASES_BY_ID: dict[str, RoutingCase] = {case.case_id: case for case in ALL_CASES}
 

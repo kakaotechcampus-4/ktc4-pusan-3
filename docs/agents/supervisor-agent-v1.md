@@ -30,7 +30,7 @@
 
 | Agent | 라벨 | 왜 묶음이 갈리나 |
 | --- | --- | --- |
-| Food | `meal_recommendation` · `nutrient_analysis` · `daycare_meal` · `food_check` | 묶음 5 vs 7, `health_safety` 사전 확인 여부. `daycare_meal`만 쓰기를 갖는다. `food_check`(정해진 음식을 먹여도 되는지)는 열린 tool 없이 코드가 등록 알레르기 · 연령 규칙으로 답한다(모델 0회) |
+| Food | `meal_recommendation` · `nutrient_analysis` · `daycare_meal` · `daycare_lookup` · `food_check` | 묶음 5 vs 7, `health_safety` 사전 확인 여부. `daycare_meal`만 쓰기를 갖는다. `food_check`(정해진 음식을 먹여도 되는지)는 열린 tool 없이 코드가 등록 알레르기 · 연령 규칙으로 답한다(모델 0회) |
 | Activity | 없음 (놀이 추천 하나) | 실내/야외는 날씨·시간 조회 **결과**로 갈린다 — 런타임 판단이지 라벨이 아니다 |
 | Growth | `learning_suggestion` · `routine_coaching` · `book_suggestion` · `growth_review` | `growth_doc` 조회 · 도서 API · 차분(모델 0회)이 서로 겹치지 않는다 |
 | Health | `visit_summary` · `schedule_check` · `place_lookup` · `medication` · `care_handoff` | tool 집합이 서로 겹치지 않고, `medication`만 쓰기를 갖는다. `care_handoff`는 모델 0회 |
@@ -52,7 +52,7 @@
 - 한 run 에 Growth 추천 라벨(learning · routine · book)은 하나만 돈다 — 처음 것이되, 도서는 다른 추천 라벨이 같이 오면 자리를 내준다(`YIELDING_LABELS`). 뺀 요청은 `task_limit` 안내로 알린다 — 05 의 다시 시도 · 0개 기록이 (run, agent) 로 묶여서다. `growth_review` 는 추천이 아니라 같이 돈다.
   - 도서가 양보하는 이유 — 도서는 인증키(`DATA4LIBRARY_AUTH_KEY`)가 없거나 정보나루가 실패하면 닫히고(`closed.book_api`), 열려도 외부 호출에 하루 한도가 있다. "공룡 책이랑 양치 혼자 하는 법" 처럼 앞에 와서 루틴을 빼면 화면에 도서 닫힘 안내만 남을 수 있다. 도서만 왔으면 도서가 돈다 (#452 리뷰 — 도서가 열린 뒤에도 그대로 두기로 했다).
 
-> **라벨이 13개다.** 이전 판이 스스로 "라벨을 늘릴 때마다 오분류가 는다"고 적어 뒀는데 그 사이 다섯 배가 됐다.
+> **라벨이 14개다.** 이전 판이 스스로 "라벨을 늘릴 때마다 오분류가 는다"고 적어 뒀는데 그 사이 다섯 배가 됐다.
 > 프롬프트를 쓸 때 **라벨별 경계 예시를 한 번에 뽑아 검토**해야 한다.
 
 ---
@@ -239,7 +239,7 @@ Food 의 요청 안내(`request_notices`)는 `request_texts` 를 그대로 읽�
 
 ### 5-4. 일부만 실패한 뒤 "아까 못 알려준 거"
 
-`PartialReply.failed` 가 앞 턴에 남아 있어 "못 낸 것: activity" 로 Supervisor 에 간다. 못 낸 Agent 가 하나면 그 턴의 보호자 말에서 요청을 되살려 `resolved_request` 에 쓴다. 못 낸 것이 없거나 여럿이면 정할 수 없어 `unclear` 다. 05 다시 시도 보관함(`suggestion_retry`)은 쓰지 않는다 — 프로세스 메모리이고 15분이라 30분 창과 맞지 않는다.
+`PartialReply.failed` 가 앞 턴에 남아 있어 "못 낸 것: activity" 로 Supervisor 에 간다. 못 낸 Agent 가 하나면 그 턴의 보호자 말에서 요청을 되살려 `resolved_request` 에 쓴다. 못 낸 것이 없거나 여럿이면 정할 수 없어 `unclear` 다. 05 다시 시도 보관함(`suggestion_retry`)은 쓰지 않는다 — 실패 맥락을 15분만 두어 30분 창과 맞지 않는다.
 
 ### 5-5. eval
 

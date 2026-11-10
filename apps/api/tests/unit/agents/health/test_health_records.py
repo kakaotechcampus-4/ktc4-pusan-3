@@ -225,8 +225,9 @@ class TestSearchHealthObservations:
         assert result.success is False
         assert result.error is not None and result.error["code"] == ErrorCode.NO_RECORDS
 
-    async def test_체온_칸이_있어도_줄에는_싣지_않는다(self):
-        # 체온 나열은 열 타임라인(코드)의 몫이다 — 이 tool 은 에피소드 줄만
+    async def test_체온은_줄에_싣고_모델에게는_보내지_않는다(self):
+        # "병원 가려는데 최근 증상 정리해줘" 에서 몇 도였는지가 빠졌다. 진료 때 가장 먼저 묻는
+        # 값이라 정리 줄에 보호자가 적은 숫자 그대로 싣는다. 모델에게는 여전히 줄 수만 간다
         ctx = with_memory(
             row(
                 TODAY,
@@ -240,7 +241,71 @@ class TestSearchHealthObservations:
         result = await search_health_observations(ctx, SearchHealthArgs())
 
         assert "38.5" not in sent(result)
-        assert lines(ctx, "symptom") == ["9/28 발열"]
+        assert lines(ctx, "symptom") == ["9/28 발열 · 체온: 38.5℃ (9/28 01:00, 귀)"]
+
+    async def test_체온이_여럿이면_최고와_최저를_시각과_함께(self):
+        # 해석("잡히고 있어요")은 하지 않는다 — 값 · 시각만. 같은 값이면 먼저 잰 것이다
+        ctx = with_memory(
+            row(
+                TODAY - DAY,
+                symptoms=("열나",),
+                temperature=Decimal("38.9"),
+                measured_at=datetime(2026, 9, 27, 23, 0, tzinfo=KST),
+            ),
+            row(
+                TODAY,
+                symptoms=("열이 나요",),
+                temperature=Decimal("37.6"),
+                measured_at=datetime(2026, 9, 28, 9, 30, tzinfo=KST),
+            ),
+            row(TODAY, symptoms=("열나",)),
+        )
+
+        await search_health_observations(ctx, SearchHealthArgs())
+
+        assert lines(ctx, "symptom") == [
+            "9/27–9/28 발열 · 체온: 최고 38.9℃ (9/27 23:00) / 최저 37.6℃ (9/28 09:30)"
+        ]
+
+    async def test_잰_시각을_모르면_날짜만(self):
+        # 시각을 짐작하지 않는다 — 열 타임라인과 같은 규칙
+        ctx = with_memory(row(TODAY - DAY, symptoms=("열나",), temperature=Decimal("38.2")))
+
+        await search_health_observations(ctx, SearchHealthArgs())
+
+        assert lines(ctx, "symptom") == ["9/27 발열 · 체온: 38.2℃ (9/27)"]
+
+    async def test_말해_준_시각이_있으면_그_시각(self):
+        # 잰 시각(measured_at)이 없으면 말한 시각(observed_time) — 열 타임라인과 같은 순서
+        ctx = with_memory(
+            row(
+                TODAY,
+                symptoms=("열나",),
+                temperature=Decimal("38.0"),
+                at=datetime(2026, 9, 28, 7, 0, tzinfo=KST),
+            )
+        )
+
+        await search_health_observations(ctx, SearchHealthArgs())
+
+        assert lines(ctx, "symptom") == ["9/28 발열 · 체온: 38.0℃ (9/28 07:00)"]
+
+    async def test_체온은_정도_조치보다_앞에(self):
+        ctx = with_memory(
+            row(
+                TODAY,
+                symptoms=("열나",),
+                temperature=Decimal("39.1"),
+                severity="severe",
+                action_taken="미온수로 닦아 줌",
+            )
+        )
+
+        await search_health_observations(ctx, SearchHealthArgs())
+
+        assert lines(ctx, "symptom") == [
+            "9/28 발열 · 체온: 39.1℃ (9/28) · 정도: 심함 · 조치: 미온수로 닦아 줌"
+        ]
 
     async def test_줄의_근거는_묶은_기록_전부(self):
         fever = row(TODAY - DAY, symptoms=("열나",))

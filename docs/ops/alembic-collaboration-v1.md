@@ -432,7 +432,7 @@ def upgrade() -> None:
 | `New upgrade operations detected: [...]` | 모델에는 있는데 DB에 없음 | §5.3 순서 사고이거나 §4.3 |
 | head는 1개인데 `db-migrate` 실패 | 두 migration의 내용 충돌 | §5.5 |
 
-> **검토 과제.** `make db-migrate` 가 `upgrade heads`(복수형)라서 갈라진 상태를 에러 없이 통과시킨다. `head`(단수)로 바꾸면 갈라진 순간 바로 막혀 일찍 발견할 수 있다. CI에서 `alembic heads` 가 1줄인지 검사하는 것도 같이 검토한다.
+> **검토 과제.** `make db-migrate` 가 `upgrade heads`(복수형)라서 갈라진 상태를 에러 없이 통과시킨다. `head`(단수)로 바꾸면 갈라진 순간 바로 막혀 일찍 발견할 수 있다. CI 는 `alembic heads` 가 1줄인지 검사한다 (`ci-api.yml` 의 Single head).
 
 ---
 
@@ -451,10 +451,10 @@ PR을 올리기 전 아래를 확인한다.
 
 ## 7. env.py 모델 등록
 
-새 도메인 테이블을 추가할 때 `alembic/env.py` 의 import 목록에 해당 모델을 추가해야 autogenerate가 인식한다.
+새 도메인 테이블을 추가할 때 `app/infra/db/registry.py` 의 import 목록에 해당 모델을 추가해야 autogenerate가 인식한다. (`alembic/env.py` 는 이 모듈을 import 한다)
 
 ```python
-# alembic/env.py — 모델 import 목록
+# app/infra/db/registry.py — 모델 import 목록
 from app.domains.child import models as _child_models  # noqa: F401
 from app.domains.new_domain import models as _new_domain_models  # noqa: F401  ← 추가
 ```

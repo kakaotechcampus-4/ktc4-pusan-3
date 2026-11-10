@@ -398,6 +398,27 @@ def _timeline_with(ran: Ran, old: str, new: str) -> Ran:
     return _with_bodies(ran, timeline.body.replace(old, new))
 
 
+async def test_T24_temp_는_발열_줄에_최고_최저_체온을_싣는다():
+    # "병원에 가려고 하는데 최근 증상 정리해줘" 가 "발열" 만 내고 몇 도였는지를 뺐던 문장 그대로
+    ran = await _ran("T24-temp")
+
+    [timeline] = ran.result.readouts
+    assert "발열 · 체온: 최고 39.0℃ (10/13 03:00, 귀) / 최저 37.6℃ (10/13 13:00, 겨드랑이)" in (
+        timeline.body
+    )
+
+
+async def test_정리에서_체온이_빠지면_실패다():
+    ran = await _ran("T24-temp")
+    [timeline] = ran.result.readouts
+    stripped = re.sub(r" · 체온: [^\n]*?(?= · |\n|$)", "", timeline.body)
+    assert stripped != timeline.body
+
+    failures = visit_timeline()(_with_bodies(ran, stripped)).failures
+
+    assert any("체온" in item for item in failures), failures
+
+
 async def test_정리의_약_이름이_바뀌면_실패다():
     ran = await _ran("T24")
 

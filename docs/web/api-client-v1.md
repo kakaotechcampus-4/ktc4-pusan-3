@@ -42,7 +42,7 @@
 선택으로 받지만 화면은 표에 넣어 키 없이는 나가지 않게 했다. 내리기(`DELETE`)는 같은 결과라 키가 없다.
 🚨 **복약 초안 제출도 게이트 ㉡ 의 두 메서드다** (#537) — 등록 `POST /children/{cid}/medications`, 수정
 `PATCH …/medications/{sid}`. 코스와 기간만큼의 회차를 만드는 건강 기록 확정이라 ㉡ 안에 메서드가 는 것이지
-세 번째 게이트가 아니다. 둘 다 키를 단다. ⚠️ 경로는 잠정이다 — 서버 API 가 아직 없다 ([`medication-v1.md`](medication-v1.md) §5).
+세 번째 게이트가 아니다. 둘 다 키를 단다. 경로는 서버(`apps/api/app/api/v1/routers/medications.py`)와 같다 ([`medication-v1.md`](medication-v1.md) §5).
 회차 체크(`PUT …/medication-doses/{did}/check`)는 되돌릴 수 있어서 표에 없다.
 🚨 **대화의 삭제 확정도 표에 있다** (#535) — `POST /children/{cid}/delete-proposals/{pid}/confirm`. 체크한 기록 · 일정을 지워서
 되살릴 수 없고 서버도 키가 필수다. 본문은 체크한 id 라 `current(ids)` 로 넘긴다. 취소(`…/cancel`)는 아무것도 지우지 않고 다시
