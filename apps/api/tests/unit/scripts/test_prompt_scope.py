@@ -52,6 +52,9 @@ def test_범위가_가리키는_테스트_경로가_실제로_있다():
         ("app/providers/meal_plan/schema.py", "tests/unit/providers/test_meal_plan_image_ocr*.py"),
         ("app/providers/notice/extractor.py", "tests/unit/providers/test_notice_*.py"),
         ("app/core/notice_extract.py", "tests/unit/providers/test_notice_*.py"),
+        # 채점 판정 테스트도 같이 돈다 — 프롬프트 · 스키마가 바뀌면 판정이 읽는 칸이 바뀔 수 있다
+        ("app/providers/meal_plan/schema.py", "tests/unit/scripts/test_meal_ocr_eval.py"),
+        ("app/providers/notice/extractor.py", "tests/unit/scripts/test_notice_fixture_eval.py"),
     ],
 )
 def test_바뀐_파일에_맞는_범위_테스트가_고른다(changed, expected):
