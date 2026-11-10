@@ -88,8 +88,9 @@ async def test_F2_pipeline_은_Supervisor_와_Memory_를_20초에_끊지_않는�
 ) -> None:
     """설계를 고정한다. 20초 예산을 거의 0 으로 줄여도 느린 Supervisor 뒤에 Memory 가 저장한다.
 
-    `RUN_DEADLINE_S` 로는 끊지 않는다는 것만 고정한다. Supervisor 의 모델 호출 상한은 별개다 (#914) —
-    여기 LateRoute 는 0.05초 만에 답하니 그 상한(20초)에 걸리지 않는다.
+    `RUN_DEADLINE_S` 로는 끊지 않는다는 것만 고정한다.
+    Supervisor 의 모델 호출 상한은 별개다 (#914) — 여기 LateRoute 는 0.05초 만에 답하니
+    그 상한(20초)에 걸리지 않는다.
     """
     monkeypatch.setattr(pipeline, "RUN_DEADLINE_S", 0.01)
 
