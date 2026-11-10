@@ -29,6 +29,7 @@ from app.agents.memory.schemas.task import WorkType
 from app.agents.supervisor.schemas import (
     DomainAgentName,
     GuardReason,
+    RequestMode,
     SegmentKind,
     SupervisorOutput,
     align_segment,
@@ -61,6 +62,7 @@ class Span:
     growth_task: GrowthTaskType | None = None
     health_task: HealthTaskType | None = None
     guard: GuardReason | None = None
+    request_mode: RequestMode | None = None  # info = 아이 일반 질문 (#574). None 은 suggest
     strict: bool = True  # False = 보고만 한다
 
 
@@ -87,6 +89,17 @@ def QG(text: str, growth_task: GrowthTaskType, *, strict: bool = True) -> Span:
         kind=SegmentKind.REQUEST,
         agent=DomainAgentName.GROWTH,
         growth_task=growth_task,
+        strict=strict,
+    )
+
+
+def QI(text: str, agent: DomainAgentName, *, strict: bool = True) -> Span:
+    """아이 일반을 묻는 request 구간 (#574). 도메인 라벨 없이 `request_mode=info` 만 적는다."""
+    return Span(
+        text=text,
+        kind=SegmentKind.REQUEST,
+        agent=agent,
+        request_mode=RequestMode.INFO,
         strict=strict,
     )
 
@@ -1352,8 +1365,116 @@ NT_CASES: tuple[RoutingCase, ...] = (
     ),
 )
 
+
+# ── 일반 정보 질문 (#574) — request_mode 경계 ────────────────────────────
+# info: 아이 일반을 묻는 말("보통" · "또래" · "N세 아이들은"). suggest: 우리 아이에게 해 줄 것.
+# 우리 아이 얘기는 나이를 말해도 suggest 다 (IN04). Health 의 info 는 닫힘 안내다 (IN12)
+IN_CASES: tuple[RoutingCase, ...] = (
+    RoutingCase(
+        "IN01",
+        "보통 3~4세 어린이들은 어떤 걸 하면서 놀아?",
+        (QI("보통 3~4세 어린이들은 어떤 걸 하면서 놀아?", ACTIVITY),),
+        watch="경계 예시 — 아이 일반 놀이 질문은 activity/info",
+    ),
+    RoutingCase(
+        "IN02",
+        "보통 1세 어린이들은 어떤 걸 하면서 놀아?",
+        (QI("보통 1세 어린이들은 어떤 걸 하면서 놀아?", ACTIVITY),),
+        watch="아이 나이와 다른 나이를 물어도 info",
+    ),
+    RoutingCase(
+        "IN03",
+        "또래 애들은 요즘 뭐 하고 노나?",
+        (QI("또래 애들은 요즘 뭐 하고 노나?", ACTIVITY),),
+        watch="나이 없이 또래를 물으면 아이 월령 한 달로 답한다",
+    ),
+    RoutingCase(
+        "IN04",
+        "우리 애 4살인데 뭐 하고 놀까?",
+        (Q("우리 애 4살인데 뭐 하고 놀까?", ACTIVITY),),
+        watch="경계 예시 — 나이를 말해도 우리 아이 얘기는 suggest",
+    ),
+    RoutingCase(
+        "IN05",
+        "돌 아기는 보통 뭐 먹어?",
+        (QI("돌 아기는 보통 뭐 먹어?", FOOD),),
+        watch="food/info — food_task 를 비운다",
+    ),
+    RoutingCase(
+        "IN06",
+        "8개월 아기들은 이유식 어떤 질감으로 먹어?",
+        (QI("8개월 아기들은 이유식 어떤 질감으로 먹어?", FOOD),),
+        watch="이유식 질감 — food/info",
+    ),
+    RoutingCase(
+        "IN07",
+        "내일 아침 뭐 먹일까?",
+        (Q("내일 아침 뭐 먹일까?", FOOD, FoodTaskType.MEAL_RECOMMENDATION),),
+        watch="우리 아이 식단은 suggest",
+    ),
+    RoutingCase(
+        "IN08",
+        "보통 두 돌 애들은 영양제 뭐 먹어?",
+        (G("보통 두 돌 애들은 영양제 뭐 먹어?", GuardReason.DIAGNOSIS),),
+        watch="아이 일반이라도 영양제는 guarded/diagnosis",
+    ),
+    RoutingCase(
+        "IN09",
+        "보통 몇 살부터 혼자 양치해?",
+        (QI("보통 몇 살부터 혼자 양치해?", GROWTH),),
+        watch="growth/info — growth_task 를 비운다",
+    ),
+    RoutingCase(
+        "IN10",
+        "보통 3세는 숫자 몇까지 세?",
+        (QI("보통 3세는 숫자 몇까지 세?", GROWTH),),
+        watch="나이별 기준 질문도 info. 기준을 말하지 않는 것은 Agent 몫",
+    ),
+    RoutingCase(
+        "IN11",
+        "우리 애 숫자 공부는 어떻게 시켜야 할까?",
+        (QG("우리 애 숫자 공부는 어떻게 시켜야 할까?", LEARN),),
+        watch="우리 아이 배움은 growth/learning_suggestion",
+    ),
+    RoutingCase(
+        "IN12",
+        "몇 개월에 예방접종 맞아?",
+        (QI("몇 개월에 예방접종 맞아?", HEALTH),),
+        watch="아이 일반 시기 질문은 health/info → 닫힘 안내. 우리 아이 검진은 schedule_check",
+    ),
+    RoutingCase(
+        "IN13",
+        "18개월 아기들은 보통 뭐 하고 놀아? 오늘 우리 애랑 할 놀이도 추천해줘",
+        (
+            QI("18개월 아기들은 보통 뭐 하고 놀아?", ACTIVITY),
+            Q("오늘 우리 애랑 할 놀이도 추천해줘", ACTIVITY),
+        ),
+        watch="한 문장의 일반 질문과 우리 아이 추천은 두 조각",
+    ),
+    RoutingCase(
+        "IN14",
+        "보통 1세는 뭐 먹고 뭐 하고 놀아?",
+        (QI("보통 1세는 뭐 먹고", FOOD), QI("뭐 하고 놀아?", ACTIVITY)),
+        watch="두 Agent 의 일반 질문 — 둘 다 info",
+    ),
+)
+
+
+def case_is_info(case: "RoutingCase") -> bool:
+    """request_mode 경계를 보는 케이스인가 — IN 묶음이다."""
+    return case.case_id.startswith("IN")
+
+
 ALL_CASES: tuple[RoutingCase, ...] = (
-    RC_CASES + T_CASES + GR_CASES + FC_CASES + HR_CASES + UNCLEAR_CASES + DATE_CASES + NT_CASES
+    RC_CASES
+    + T_CASES
+    + GR_CASES
+    + FC_CASES
+    + HR_CASES
+    + UNCLEAR_CASES
+    + DATE_CASES
+    + NT_CASES
+    + IN_CASES
 )
 CASES_BY_ID: dict[str, RoutingCase] = {case.case_id: case for case in ALL_CASES}
 
@@ -1374,6 +1495,7 @@ def answer_output(case: RoutingCase) -> SupervisorOutput:
             "growth_task": span.growth_task,
             "health_task": span.health_task,
             "guard": span.guard,
+            "request_mode": span.request_mode,
         }
         segments.append({key: value for key, value in fields.items() if value is not None})
     return SupervisorOutput.model_validate({"segments": segments})
@@ -1414,6 +1536,11 @@ class SplitScore:
     growth_task_ok: int = 0
     health_spans: int = 0
     health_task_ok: int = 0
+    info_spans: int = 0  # request_mode=info 정답 구간 (#574)
+    info_ok: int = 0  # 그중 info 로 보낸 수
+    suggest_spans: int = 0  # request_mode 가 빈(suggest) 정답 구간 중 info 경계 케이스에 든 것
+    info_to_suggest: int = 0  # info 정답이 추천으로 갔다 (다른 나이 추천 카드가 나온다)
+    suggest_to_info: int = 0  # 추천 정답이 info 로 갔다 (우리 아이 추천이 안 나온다)
     guarded_spans: int = 0
     guarded_found: int = 0
     unclear_spans: int = 0
@@ -1510,6 +1637,18 @@ def score_split(case: RoutingCase, output: SupervisorOutput | None) -> SplitScor
                 labels = {s.growth_task for s in requests if s.agent == DomainAgentName.GROWTH}  # type: ignore[attr-defined]
                 if span.growth_task in labels:
                     score.growth_task_ok += 1
+            if case_is_info(case):
+                modes = {s.request_mode for s in requests}  # type: ignore[attr-defined]
+                if span.request_mode == RequestMode.INFO:
+                    score.info_spans += 1
+                    if RequestMode.INFO in modes:
+                        score.info_ok += 1
+                    else:
+                        score.info_to_suggest += 1
+                else:
+                    score.suggest_spans += 1
+                    if RequestMode.INFO in modes:
+                        score.suggest_to_info += 1
             if span.health_task is not None:
                 score.health_spans += 1
                 health = {
@@ -1599,7 +1738,8 @@ def format_score(score: SplitScore) -> str:
         f" (work {score.work_ok}) · REQUEST {score.request_found}/{score.request_spans}"
         f" (agent {score.agent_ok} · food 유형 {score.food_task_ok}/{score.food_spans}"
         f" · growth 유형 {score.growth_task_ok}/{score.growth_spans}"
-        f" · health 유형 {score.health_task_ok}/{score.health_spans})"
+        f" · health 유형 {score.health_task_ok}/{score.health_spans}"
+        f" · info {score.info_ok}/{score.info_spans})"
         f" · GUARDED {score.guarded_found}/{score.guarded_spans}"
         f" · UNCLEAR {score.unclear_found}/{score.unclear_spans}"
         f" · RECORD→REQUEST {score.record_to_request}"
