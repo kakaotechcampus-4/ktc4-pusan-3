@@ -42,6 +42,7 @@ from app.agents.common.llm_client import LLMClient, LLMConfigError
 from app.agents.health.registry import IMPLEMENTED_TASKS, MODEL_TASKS
 from app.agents.health.schemas.task import HealthTaskType
 from app.core.agent_config import AgentRole
+from tests.eval.agents import tally
 from tests.eval.agents.health.cases import CASES, OUTSIDE, Case
 from tests.eval.agents.health.judges import Ran, Verdict, common
 from tests.eval.agents.health.runner import run_case
@@ -54,6 +55,7 @@ RESULT_PATH = Path(
 
 # 같은 케이스를 몇 번 돌릴지 — 모델 판정(금지어 · 약 이름)이 실행마다 흔들리는지 본다
 TEST_REPEAT = int(os.getenv("TEST_REPEAT", "1"))
+TALLY_SUITE = "health"  # 회차를 `tests/eval/agents/tally.py` 로 센다 (#816)
 
 _clients: dict[AgentRole, LLMClient] = {}
 
@@ -115,6 +117,14 @@ async def test_health_run(case: Case, expect: Callable[..., None]) -> None:
         ran = await run_case(case, client=client)
         verdict = common(ran).extend(case.judge(ran))
         _report(case, ran, verdict, attempt)
+        tally.mark(
+            TALLY_SUITE,
+            case.case_id,
+            inner=attempt,
+            c1=verdict.c1,
+            general=[item for item in verdict.failures if item not in verdict.c1],
+            tools=ran.tools,
+        )
         broken.extend(
             f"#{attempt} {item}" if TEST_REPEAT > 1 else item for item in verdict.failures
         )

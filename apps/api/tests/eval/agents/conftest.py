@@ -316,6 +316,8 @@ def pytest_runtest_setup(item: pytest.Item) -> None:
 def pytest_runtest_makereport(item: pytest.Item, call: Any) -> Any:
     outcome = yield
     report = outcome.get_result()
+    # assert 로 판정하는 eval 이 `C1Failure` 를 던졌는지 — 회차 집계가 C1 로 센다 (#816)
+    report.c1_failure = call.excinfo is not None and isinstance(call.excinfo.value, tally.C1Failure)
     if report.when == "call" or (report.when == "setup" and report.outcome != "passed"):
         _finish(item, report)
 
@@ -355,7 +357,7 @@ def _auto_mark(item: pytest.Item, report: Any, record: TestRecord) -> None:
     if getattr(report, "wasxfail", None) is not None:
         return
     failed = report.outcome == "failed"
-    is_c1 = item.get_closest_marker("c1") is not None
+    is_c1 = item.get_closest_marker("c1") is not None or getattr(report, "c1_failure", False)
     tools = [name.split(" ")[0] for call in record.calls for name in call.tools]
     tally.mark(
         suite,

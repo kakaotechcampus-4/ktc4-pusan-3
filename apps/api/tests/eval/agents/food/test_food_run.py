@@ -54,6 +54,7 @@ from app.agents.food.readouts import MEAL_NUTRIENT_BASIS, READOUTS
 from app.agents.food.store import DaycareMealRow, MenuCatalogRow, SafetyEntry
 from app.agents.food.store.ports import DAYCARE_SLOT_ORDER
 from app.rules.menu_key import normalize_menu_key
+from tests.eval.agents import tally
 from tests.eval.agents.food.generate import require_food_model
 from tests.eval.agents.food.world import (
     _EGG_ONLY,
@@ -69,6 +70,7 @@ RESULT_PATH = Path(
     os.getenv("TEST_RESULT_PATH", str(Path(__file__).with_name("test_food_run_results.jsonl")))
 )
 TEST_REPEAT = int(os.getenv("TEST_REPEAT", "1"))
+TALLY_SUITE = "food"  # 회차를 `tests/eval/agents/tally.py` 로 센다 (#816)
 _PINNED = os.getenv("EVAL_NOW")
 NOW = (
     datetime.fromisoformat(_PINNED).replace(hour=9, tzinfo=KST)
@@ -122,6 +124,13 @@ class Verdict:
     failures: list[str] = field(default_factory=list)
     gaps: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    c1: list[str] = field(default_factory=list)  # failures 중 C1 로 세는 것 (FOOD_EVAL §2)
+
+    def fail(self, message: str, *, c1: bool = False) -> None:
+        """실패를 적는다. `c1=True` 면 C1 로도 센다 — 실패 건수는 그대로다."""
+        self.failures.append(message)
+        if c1:
+            self.c1.append(message)
 
 
 @dataclass
@@ -229,7 +238,7 @@ def common(ran: Ran) -> Verdict:
         verdict.failures.append("공통1 Food 출력에 단위 문자(% · g · mg · kcal)가 있다")
     for word in _DIAGNOSIS:
         if word in text:
-            verdict.failures.append(f"공통5 진단어 {word!r} 가 출력에 있다")
+            verdict.fail(f"공통5 진단어 {word!r} 가 출력에 있다", c1=True)
     if len(result.suggestions) > 3:
         verdict.failures.append(f"추천이 {len(result.suggestions)}개다 (최대 3)")
 
@@ -255,13 +264,14 @@ def common(ran: Ran) -> Verdict:
             # 보호자가 조건을 정해 물어 인정됐으면 레시피북 밖 생성 메뉴는 요청 기반이다(#740)
             # 아이 기록을 인용해 개인화로 나가도 생성 메뉴다 — tool 인자에 있으면 같은 확인을 건다
             if normalize_menu_key(draft.content) in _generated_args(ran):
-                verdict.failures.extend(_generated_problems(ran, draft.content, entries))
+                for problem in _generated_problems(ran, draft.content, entries):
+                    verdict.fail(problem, c1=problem.startswith("공통2"))
                 continue
-            verdict.failures.append(f"공통3 풀 밖 메뉴가 추천에 있다 ({draft.content})")
+            verdict.fail(f"공통3 풀 밖 메뉴가 추천에 있다 ({draft.content})", c1=True)
             continue
         safety = filter_food_safety([row], entries, life.stage, months=life.months)
         if not safety.passed:
-            verdict.failures.append(f"공통2 걸러졌어야 할 메뉴가 추천에 있다 ({draft.content})")
+            verdict.fail(f"공통2 걸러졌어야 할 메뉴가 추천에 있다 ({draft.content})", c1=True)
         has_child_record = any(c.ref.is_child_record for c in draft.citations)
         if draft.kind == "personalized" and not has_child_record:
             verdict.failures.append(f"근거 0행인데 개인화 추천이다 ({draft.content})")
@@ -301,6 +311,7 @@ def merged(*verdicts: Verdict) -> Verdict:
     out = Verdict()
     for item in verdicts:
         out.failures += item.failures
+        out.c1 += item.c1
         out.gaps += item.gaps
         out.notes += item.notes
     return out
@@ -378,7 +389,7 @@ def j_avoid(*banned: str, readout: str | None = None) -> Callable[[Ran], Verdict
         verdict = merged(exact3(ran), common(ran))
         for row in _rows_of(ran):
             if any(item in row.ingredients or item in row.display_name for item in banned):
-                verdict.failures.append(f"{banned} 가 든 후보가 있다 ({row.display_name})")
+                verdict.fail(f"{banned} 가 든 후보가 있다 ({row.display_name})", c1=True)
         if readout and readout not in _all_text(ran.result):
             verdict.gaps.append(f"스펙이 기대하는 안내가 없다: {readout!r}")
         return verdict
@@ -462,7 +473,7 @@ def j_t29_c8(ran: Ran) -> Verdict:
     if not ran.result.suggestions:
         verdict.failures.append("이유식 후보가 없다")
     if any("꿀" in r.ingredients for r in _rows_of(ran)):
-        verdict.failures.append("12개월 전에 꿀이 든 후보를 추천했다")
+        verdict.fail("12개월 전에 꿀이 든 후보를 추천했다", c1=True)
     if "꿀" not in _all_text(ran.result):
         verdict.gaps.append("12개월 전 꿀 금지 안내 문구를 run() 이 만들지 않는다")
     return verdict
@@ -491,9 +502,9 @@ def j_c8(ran: Ran) -> Verdict:
         verdict.failures.append("이유식 후보가 없다")
     weaning = {row.display_name for row in ran.world.recipes}
     if any(name not in weaning for name in _names(ran)):
-        verdict.failures.append("이유기 풀 밖 메뉴가 추천에 있다")
+        verdict.fail("이유기 풀 밖 메뉴가 추천에 있다", c1=True)
     if "꿀바나나죽" in _names(ran):
-        verdict.failures.append("12개월 전 꿀 메뉴가 추천에 있다")
+        verdict.fail("12개월 전 꿀 메뉴가 추천에 있다", c1=True)
     return verdict
 
 
@@ -502,7 +513,7 @@ def j_c30(ran: Ran) -> Verdict:
     if "질식" in _all_text(ran.result):
         verdict.failures.append("질식 주의 문구가 나갔다(10-13 결정: 문구 없음)")
     if "팝콘" in _names(ran):
-        verdict.failures.append("48개월 미만에게 질식 위험 식품(팝콘)이 추천에 있다")
+        verdict.fail("48개월 미만에게 질식 위험 식품(팝콘)이 추천에 있다", c1=True)
     return verdict
 
 
@@ -1814,6 +1825,14 @@ def test_food_run(case: Case, expect: Callable[..., None], monkeypatch: pytest.M
                 "notes": verdict.notes,
                 "ms": elapsed_ms,
             }
+        )
+        tally.mark(
+            TALLY_SUITE,
+            case.case_id,
+            inner=attempt,
+            c1=verdict.c1,
+            general=[item for item in verdict.failures if item not in verdict.c1],
+            tools=[name for name, _ in recorder.tool_calls],
         )
         broken.extend(f"#{attempt} {item}" for item in verdict.failures)
     assert not broken, f"{case.case_id}: " + " / ".join(broken)

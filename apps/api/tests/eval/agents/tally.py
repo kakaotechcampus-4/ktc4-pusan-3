@@ -35,6 +35,10 @@ def is_write_tool(name: str) -> bool:
     return name.startswith(WRITE_PREFIXES)
 
 
+class C1Failure(AssertionError):  # noqa: N818 — assert 처럼 보이는 실패
+    """C1 로 세는 판정이 낸 실패. assert 로 판정하는 eval 이 일반 실패와 구분해 던진다."""
+
+
 @dataclass(frozen=True)
 class Mark:
     """입력 하나를 한 회차 돌린 결과. `c1` · `general` 은 실패 이유 문장(없으면 통과)."""

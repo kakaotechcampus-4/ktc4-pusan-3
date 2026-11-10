@@ -37,8 +37,10 @@ from app.agents.common.reference import hazard_terms
 from app.agents.common.schemas.task import DomainTask
 from app.core.weather_raw import RawForecast
 from app.rules.term_match import match_fields
+from tests.eval.agents.tally import C1Failure
 
 pytestmark = pytest.mark.live
+TALLY_SUITE = "activity"  # 회차를 `tests/eval/agents/tally.py` 로 센다 (#816)
 
 CHILD = UUID(int=7)
 KST = ZoneInfo("Asia/Seoul")
@@ -170,7 +172,9 @@ async def test_기록이_없으면_일반_추천만_낸다(llm):
     out = await play(llm, "no_records", "오늘 집에서 뭐 하고 놀까", months=40)
     assert out.result.status == "completed"
     assert out.result.suggestions
-    assert all(d.kind == "general" and d.reason == GENERAL_REASON for d in out.result.suggestions)
+    if any(d.kind != "general" for d in out.result.suggestions):  # C1 — 기록이 없는데 개인화로 냄
+        raise C1Failure("기록이 없는데 개인화 추천이 나갔다")
+    assert all(d.reason == GENERAL_REASON for d in out.result.suggestions)
     # 일반 추천은 [예시] 문서 행을 근거로 단다 — 아이 기록 근거는 0행이다
     assert any(c.ref.kind == "activity_doc" for d in out.result.suggestions for c in d.citations)
 
@@ -212,7 +216,8 @@ async def test_부모_이야기를_아이_근거로_쓰지_않는다(llm):
     out = await play(
         llm, "caregiver_hobby", "남편이 등산을 좋아해서 주말에 아이랑 뭘 할까", months=48
     )
-    assert all(d.kind == "general" for d in out.result.suggestions)
+    if any(d.kind != "general" for d in out.result.suggestions):  # C1 — 부모 말이 아이 근거가 됨
+        raise C1Failure("부모 이야기로 개인화 추천이 나갔다")
 
 
 async def test_싫어한_놀이는_다시_내지_않는다(llm):
@@ -234,7 +239,8 @@ async def test_15개월에는_높은_곳_놀이가_나가지_않는다(llm):
     )
     height = [t for t in hazard_terms().terms if hazard_terms().axis_of(t.key).name == "height"]
     for draft in out.result.suggestions:
-        assert not match_fields((draft.content, *draft.items), height), draft.content
+        if match_fields((draft.content, *draft.items), height):  # C1 — 월령 밖 위험한 놀이
+            raise C1Failure("15개월에게 높은 곳 놀이가 나갔다")
 
 
 async def test_강한_비가_오면_바깥_활동을_내지_않는다(llm):

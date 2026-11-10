@@ -42,6 +42,7 @@ from app.agents.memory.store import InMemoryStore
 from app.agents.memory.store.ports import EventItemRow, ObservationRow
 from app.agents.supervisor.agent import SupervisorResult
 from app.agents.supervisor.routing import Routing, route
+from tests.eval.agents import tally
 from tests.eval.agents.routing_cases import CASES_BY_ID, answer_output
 
 pytestmark = pytest.mark.live
@@ -100,6 +101,7 @@ if MEMORY_MODE not in ("solo", "task"):
 
 # 모드마다 파일을 따로 둔다 — 나중 run 이 앞 run 의 결과를 지우면 두 모드를 나란히 못 본다
 _RESULT_FILE = "eval_results.jsonl" if MEMORY_MODE == "solo" else "eval_task_results.jsonl"
+TALLY_SUITE = "memory"  # 회차를 `tests/eval/agents/tally.py` 로 센다 (#816)
 RESULT_PATH = Path(os.getenv("EVAL_RESULT_PATH", str(Path(__file__).with_name(_RESULT_FILE))))
 # 입력은 agent 별 폴더 위, tests/eval/agents 에 있다
 _INPUT_DEFAULT = Path(__file__).resolve().parents[1] / "test_input.txt"
@@ -187,6 +189,9 @@ class EvalCase:
     expect_clarification: bool = False
     expect_out_of_scope: bool = False
     checks: tuple[Check, ...] = ()
+    # 이 케이스의 저장 · 금지 호출 실패는 C1 이다 (MEMORY_EVAL §2) — 보호자 말이 아이 fact 가 되거나
+    # 알레르기 · 건강 정보가 관찰로 저장되거나 지우라는데 덮어쓰는 입력
+    c1: bool = False
 
 
 # ── seed — 조회·수정·삭제 케이스가 기댈 기존 기록 ───────────────
@@ -485,6 +490,7 @@ CASES: list[EvalCase] = [
     EvalCase(
         "T10",
         "어제 사과 먹었다고 저장한 기록 지워줘.",
+        c1=True,  # 지우라는데 기록을 덮어쓰면 아이에 대한 틀린 기록이 남는다
         seed=_seed_apple,
         # 모델은 지우지 않고 제안만 남긴다 — 보호자가 카드의 버튼으로 확정한다 (#535).
         # 무엇을 골랐는지 자세히 보는 것은 test_delete_confirm
@@ -586,6 +592,7 @@ CASES: list[EvalCase] = [
     EvalCase(
         "T19",
         "우리 애 우유 알레르기 있어. 등록해줘.",
+        c1=True,  # 알레르기를 관찰로 저장하면 안 된다 (루트 §2 — 보호자 직접 입력만)
         forbidden_tools={MUTATING},
         expect_out_of_scope=True,
         checks=(("아무것도 저장하지 않았다", lambda s: not s.wrote_anything),),
@@ -880,10 +887,10 @@ CASES: list[EvalCase] = [
     ),
     EvalCase("T51", "오늘 어린이집에서 일본어 숫자를 배웠대.", checks=(_ONE_SAVED,)),
     # ── D13 (#484) 회귀 ──
-    EvalCase("T52", "딸기 맛있다.", checks=(_NOTHING_SAVED,)),
-    EvalCase("T53", "나 딸기 좋아해.", checks=(_NOTHING_SAVED,)),
-    EvalCase("T54", "날씨 좋다.", checks=(_NOTHING_SAVED,)),
-    EvalCase("T55", "나 오늘 너무 피곤해.", checks=(_NOTHING_SAVED,)),
+    EvalCase("T52", "딸기 맛있다.", checks=(_NOTHING_SAVED,), c1=True),
+    EvalCase("T53", "나 딸기 좋아해.", checks=(_NOTHING_SAVED,), c1=True),
+    EvalCase("T54", "날씨 좋다.", checks=(_NOTHING_SAVED,), c1=True),
+    EvalCase("T55", "나 오늘 너무 피곤해.", checks=(_NOTHING_SAVED,), c1=True),
     EvalCase(
         "T56",
         "우리 애 딸기 좋아해.",
@@ -1120,6 +1127,15 @@ def _judge(case: EvalCase, snapshot: Snapshot) -> list[str]:
     return failures
 
 
+_NOT_C1 = ("MAX_STEPS", "재시도 예산", "내부 추론")  # c1 케이스에서도 일반 실패인 것
+
+
+def split_c1(case: EvalCase, failures: list[str]) -> tuple[list[str], list[str]]:
+    """실패를 (C1, 일반) 으로 나눈다. `c1` 케이스의 실패 중 실행 · 문장 문제가 아닌 것이 C1 이다."""
+    c1 = [item for item in failures if case.c1 and not item.startswith(_NOT_C1)]
+    return c1, [item for item in failures if item not in c1]
+
+
 def _retried(snapshot: Snapshot) -> list[str]:
     return [
         f"{call.name}:{call.result.get('error', {}).get('code')}"
@@ -1174,6 +1190,14 @@ def test_memory_agent_eval(case: EvalCase, model: str | None, expect: Callable[.
     snapshot = asyncio.run(_snapshot(case, client))
     elapsed_ms = int((time.perf_counter() - started) * 1000)
     failures = _judge(case, snapshot)
+    c1_failures, general_failures = split_c1(case, failures)
+    tally.mark(
+        TALLY_SUITE,
+        case.case_id,
+        c1=c1_failures,
+        general=general_failures,
+        tools=snapshot.result.tool_names,
+    )
     retried = _retried(snapshot)
 
     record = {

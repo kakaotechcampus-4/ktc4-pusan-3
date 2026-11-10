@@ -71,6 +71,7 @@ from app.agents.supervisor.schemas import (
     normalize,
 )
 from app.rules.age import Stage
+from tests.eval.agents import tally
 from tests.eval.agents.food.world import build_world
 from tests.eval.agents.routing_cases import (
     CASES_BY_ID,
@@ -113,6 +114,8 @@ HR_IDS = frozenset(case.case_id for case in HR_CASES)
 
 # 흔들림(같은 입력에 결과가 바뀌는 것)을 보려면 2 이상으로 올린다
 TEST_REPEAT = int(os.getenv("TEST_REPEAT", "1"))
+_E2E_C1_KEYS = ("위험 물질", "보호자 얘기가 아이 관찰로")
+TALLY_SUITE = "supervisor"  # 회차를 `tests/eval/agents/tally.py` 로 센다 (#816)
 
 # "unrelated" 면 split 의 모든 케이스에 상관없는 앞 대화(`UNRELATED_CONTEXT`)를 붙여 돈다 —
 # 단발 요청이 앞 주제로 끌려가지 않는지 본다. 비우면 지금까지의 기준선 그대로다
@@ -225,6 +228,16 @@ def test_supervisor_split(case: RoutingCase, expect: Callable[..., None]) -> Non
         elapsed_ms = int((time.perf_counter() - started) * 1000)
         score = score_split(case, result.output)
         _SPLIT_SCORES.append(score)
+        tally.mark(
+            TALLY_SUITE,
+            case.case_id,
+            inner=attempt,
+            # guarded 조각이 guard 로 안 가면 C1 (SUPERVISOR_EVAL §2)
+            c1=("guarded 조각이 guard 로 가지 않았다",)
+            if score.guarded_found < score.guarded_spans
+            else (),
+            general=(f"Supervisor 실패 {result.error}",) if result.error else (),
+        )
 
         suffix = f" #{attempt}" if TEST_REPEAT > 1 else ""
         print(f"\n[{case.case_id}{suffix}] {case.watch}")
@@ -278,6 +291,14 @@ def test_followup_routing(expect: Callable[..., None]) -> None:
             violations.extend(found)
             if result.error:
                 errors.append(f"{case.case_id}: {result.error}")
+            tally.mark(
+                TALLY_SUITE,
+                f"{case.case_id}/followup",
+                inner=attempt,
+                c1=[item for item in found if item.endswith("(C1)")],
+                general=[item for item in found if not item.endswith("(C1)")]
+                + ([f"Supervisor 실패 {result.error}"] if result.error else []),
+            )
             suffix = f" #{attempt}" if TEST_REPEAT > 1 else ""
             print(f"\n[{case.case_id}{suffix}] {case.watch}")
             print(f"    입력 {case.text!r}")
@@ -328,9 +349,18 @@ def test_growth_routing(expect: Callable[..., None]) -> None:
             elapsed_ms = int((time.perf_counter() - started) * 1000)
             score = score_split(case, result.output)
             scores.append(score)
-            violations.extend(growth_violations(case.case_id, result.output))
+            found = growth_violations(case.case_id, result.output)
+            violations.extend(found)
             if result.error:
                 errors.append(f"{case.case_id}: {result.error}")
+            # GR 0건 규칙 위반은 C1 이다 (SUPERVISOR_EVAL §2)
+            tally.mark(
+                TALLY_SUITE,
+                case.case_id,
+                inner=attempt,
+                c1=found,
+                general=(f"Supervisor 실패 {result.error}",) if result.error else (),
+            )
             suffix = f" #{attempt}" if TEST_REPEAT > 1 else ""
             print(f"\n[{case.case_id}{suffix}] {case.watch}")
             print(f"    S {result.model_calls}회 {elapsed_ms}ms  {format_segments(result.output)}")
@@ -365,13 +395,21 @@ def test_request_tone_routing(expect: Callable[..., None]) -> None:
             tag = f"{case.case_id} #{attempt}"
             if result.error:
                 violations.append(f"{tag}: Supervisor 실패 {result.error}")
+                tally.mark(TALLY_SUITE, case.case_id, inner=attempt, general=("Supervisor 실패",))
                 continue
             routing = route(case.text, result, run_id="rq")
             tasks = [(t.agent, t.task_type) for t in routing.domain_tasks]
             has_memory = routing.memory_task is not None
             print(f"\n[{tag}] memory={has_memory} tasks={tasks}")
-            if has_memory or tasks != [("food", "meal_recommendation")]:
+            wrong = has_memory or tasks != [("food", "meal_recommendation")]
+            if wrong:
                 violations.append(f"{tag}: memory={has_memory} tasks={tasks}")
+            tally.mark(
+                TALLY_SUITE,
+                case.case_id,
+                inner=attempt,
+                general=("Food meal_recommendation 하나가 아니다",) if wrong else (),
+            )
     assert not violations, f"0건 규칙 위반: {violations}"
 
 
@@ -419,9 +457,11 @@ def test_readout_routing(expect: Callable[..., None]) -> None:
             result = asyncio.run(supervisor.run(case.text, client=client, keep_rejected=True))
             if result.error:
                 errors.append(f"{case.case_id}: {result.error}")
+                tally.mark(TALLY_SUITE, case.case_id, inner=attempt, general=("Supervisor 실패",))
                 continue
             routing = route(case.text, result, run_id="run-eval")
             found = readout_violations(case.case_id, routing)
+            tally.mark(TALLY_SUITE, case.case_id, inner=attempt, c1=found)  # RO 0건 규칙 = C1
             suffix = f" #{attempt}" if TEST_REPEAT > 1 else ""
             print(f"\n[{case.case_id}{suffix}] {case.watch}")
             print(f"    S {format_segments(result.output)}")
@@ -458,9 +498,18 @@ def test_health_routing(expect: Callable[..., None]) -> None:
             elapsed_ms = int((time.perf_counter() - started) * 1000)
             if case.case_id in HR_IDS:
                 scores.append(score_split(case, result.output))
-            violations.extend(health_violations(case.case_id, result.output))
+            found = health_violations(case.case_id, result.output)
+            violations.extend(found)
             if result.error:
                 errors.append(f"{case.case_id}: {result.error}")
+            # 키 값 · 성장 판정 · 병명 · 약 용량 문의가 health 로 가면 C1 (guarded 조각)
+            tally.mark(
+                TALLY_SUITE,
+                f"{case.case_id}/health",
+                inner=attempt,
+                c1=found,
+                general=(f"Supervisor 실패 {result.error}",) if result.error else (),
+            )
             suffix = f" #{attempt}" if TEST_REPEAT > 1 else ""
             print(f"\n[{case.case_id}{suffix}] {case.watch}")
             print(f"    S {result.model_calls}회 {elapsed_ms}ms  {format_segments(result.output)}")
@@ -650,6 +699,16 @@ def test_end_to_end(live: LiveCase, expect: Callable[..., None]) -> None:
         _print_case(observed, attempt)
         with RESULT_PATH.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+        # 위험 물질 입력 처리 · 보호자 말이 아이 관찰로 저장됨 = C1 (SUPERVISOR_EVAL §2)
+        c1 = [f for f in observed.failures if any(key in f for key in _E2E_C1_KEYS)]
+        tally.mark(
+            TALLY_SUITE,
+            f"{live.label}/e2e",
+            inner=attempt,
+            c1=c1,
+            general=[f for f in observed.failures if f not in c1],
+        )
 
         assert not observed.failures, f"{live.label}: " + " / ".join(observed.failures)
 
