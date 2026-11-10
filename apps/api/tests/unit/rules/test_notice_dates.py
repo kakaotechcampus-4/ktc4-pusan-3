@@ -143,6 +143,19 @@ def test_앞_숫자에_시가_없는_시각_범위를_읽는다(text, start_time
     assert when.review is None
 
 
+@pytest.mark.parametrize("text", ["11. 23 ~ 12시", "2026. 11. 23 ~ 12시", "11월 23 ~ 12시"])
+def test_날짜의_숫자를_시_없는_앞_시각으로_읽지_않는다(text):
+    # "11. 23 ~ 12시" 의 23 은 날이다. 시각으로 먹으면 날짜가 사라진다 (검토 R5) — 전처럼 읽는다
+    when = parse_notice_when(text, anchor=ANCHOR)
+    assert (when.start, when.start_time) == (date(2026, 11, 23), time(12))
+    assert when.review is None
+
+
+def test_마침표_날짜_뒤의_시_없는_시각_범위는_읽는다():
+    when = parse_notice_when("11.23. 10~12시", anchor=ANCHOR)
+    assert (when.start, when.start_time, when.end_time) == (date(2026, 11, 23), time(10), time(12))
+
+
 def test_앞_숫자에_시가_없는_7시도_기존_규칙대로_읽는다():
     # 끝(9시)이 분명하면 시작은 끝보다 이른 쪽 하나로만 읽힌다 — "7:30 ~ 19:30" 과 같은 규칙
     when = parse_notice_when("11월 23일 7~9시", anchor=ANCHOR)

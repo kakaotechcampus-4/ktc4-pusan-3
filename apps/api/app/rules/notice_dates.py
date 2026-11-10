@@ -180,6 +180,22 @@ def _first_date(
     return None, None, 0
 
 
+def _bare_hours(text: str) -> list[re.Match]:
+    """시 없는 앞 시각. 날짜 표현 안의 숫자는 뺀다.
+
+    "11. 23 ~ 12시" · "11월 23 ~ 12시" 의 23 은 날이다. 달 · 날로 있을 수 없는 짝은 날짜로 치지
+    않는다 — "11.23. 10~12시" 를 "11년 23월 10일" 로 보면 10 이 날이 된다.
+    """
+    dates = [
+        m.span()
+        for m in (*_FULL.finditer(text), *_SHORT.finditer(text))
+        if 1 <= int(m["m"]) <= 12 and 1 <= int(m["d"]) <= 31
+    ]
+    return [
+        m for m in _BARE_HOUR.finditer(text) if not any(a <= m.start("h") < b for a, b in dates)
+    ]
+
+
 def _time_of(mer: str | None, hour: int, minute: int) -> time | None:
     if mer == "밤" and hour == 12:
         hour = 24  # 밤 12시는 그날의 끝이다
@@ -202,7 +218,7 @@ def _times(text: str) -> list[_Clock]:
     taken: list[tuple[int, int]] = []
     last_mer: str | None = None
     for m in sorted(
-        [*_CLOCK.finditer(text), *_HANGUL_TIME.finditer(text), *_BARE_HOUR.finditer(text)],
+        [*_CLOCK.finditer(text), *_HANGUL_TIME.finditer(text), *_bare_hours(text)],
         key=lambda x: x.start(),
     ):
         if any(a <= m.start() < b for a, b in taken):
@@ -268,7 +284,9 @@ def _drop_time_words(text: str) -> str:
     시각 범위의 "~" 도 같이 지운다. 남기면 "19일 10:00~11:30, 27일" 이 19일부터 27일까지가 된다.
     """
     # "시" 없는 앞 시각은 뒤의 "N시" 를 보고 찾으므로 그것을 지우기 전에 지운다
-    marked = _HANGUL_TIME.sub(_hide, _CLOCK.sub(_hide, _BARE_HOUR.sub(_hide, text)))
+    for m in _bare_hours(text):
+        text = text[: m.start()] + _hide(m) + text[m.end() :]
+    marked = _HANGUL_TIME.sub(_hide, _CLOCK.sub(_hide, text))
     return _TIME_RANGE.sub(lambda m: " " * len(m[0]), marked).replace("\0", " ")
 
 
