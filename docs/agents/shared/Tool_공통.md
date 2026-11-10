@@ -15,7 +15,7 @@
 | 반환 | `ToolResult(ok, data, error: ErrorCode \| None, source_refs)` |
 | 빈 결과 | 성공 + 빈 목록. **조회 실패를 빈 목록으로 숨기지 않는다** (`UPSTREAM_ERROR`) |
 | 외부 API | 값이 크고 재사용되면 **캐시 테이블 조회** — 캐시 미스만 API 호출 + 저장. 메뉴 영양·레시피·급식·도서가 여기다 |
-| 외부 API (실시간) | **지금 값이어야 하는 것은 저장하지 않는다** — 날씨 · 대기질 · 응급실. 패스스루 + 프로세스 내 캐시만 쓴다(장소는 공공데이터를 `place` 표에 적재해 읽는다, #516). 틀린 값이 DB 에 남으면 근거처럼 보이고, 아이별 데이터가 아니라 붙이면 삭제 범위만 넓어진다. 날씨는 발표 시각(`nx` · `ny` · `base_date` · `base_time`)을 캐시 키로 쓰면 새 발표가 나올 때 자동으로 무효화된다 ([외부연결_계획.md](외부연결_계획.md) §1) |
+| 외부 API (실시간) | **지금 값이어야 하는 것은 저장하지 않는다** — 날씨 · 대기질 · 응급실 · 행사(TourAPI). 패스스루 + 프로세스 내 캐시만 쓴다(장소는 공공데이터를 `place` 표에 적재해 읽는다, #516). 틀린 값이 DB 에 남으면 근거처럼 보이고, 아이별 데이터가 아니라 붙이면 삭제 범위만 넓어진다. 날씨는 발표 시각(`nx` · `ny` · `base_date` · `base_time`)을 캐시 키로 쓰면 새 발표가 나올 때 자동으로 무효화된다 ([외부연결_계획.md](외부연결_계획.md) §1) |
 | 수치 | 모델은 tool 결과에 있는 수치만 옮긴다. 계산·추정·단위 환산 금지 |
 
 `ErrorCode`: `TOOL_NOT_ALLOWED` · `INVALID_ARGS` · `NOT_FOUND` · `UPSTREAM_ERROR` · `CONSENT_REQUIRED` · `SAFETY_UNAVAILABLE` · `EVIDENCE_REQUIRED` · `NO_RECORDS`
