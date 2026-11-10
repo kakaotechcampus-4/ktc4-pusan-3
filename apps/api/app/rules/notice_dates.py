@@ -426,5 +426,6 @@ def _span_of_times(text: str, split_at: int | None) -> tuple[time | None, time |
     right_start, right_end, right_several, right_vague = _time_span(text[split_at:])
     vague = left_vague or right_vague
     if left_start is None and right_end is not None:
-        return right_start, right_end, False, vague
+        # 끝 날 쪽에만 시각이 있으면 매일의 시간이다. 거기에 범위가 또 있으면 그대로 되묻는다
+        return right_start, right_end, right_several, vague
     return left_start, left_end or right_start, left_several or right_several, vague

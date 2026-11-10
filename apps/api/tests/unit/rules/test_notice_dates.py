@@ -345,6 +345,14 @@ def test_시각_범위가_둘이면_되묻는다(text):
     assert "시각이 여러 개" in when.review
 
 
+@pytest.mark.parametrize(
+    "text", ["11/23~27 10~12시, 2~4시", "11월 23일~27일 10:00~12:00, 14:00~16:00"]
+)
+def test_기간_뒤의_시각_범위가_둘이어도_되묻는다(text):
+    # 끝 날 쪽의 시각만 있을 때 여러 개인지를 버리면 둘째 회차가 사라진다
+    assert "시각이 여러 개" in parse_notice_when(text, anchor=ANCHOR).review
+
+
 def test_범위_뒤의_괄호_속_시각은_범위가_아니다():
     when = parse_notice_when("2026.9.25.(금) 9:00~12:30(9:30 출발, 12:30 도착)", anchor=ANCHOR)
     assert (when.start_time, when.end_time) == (time(9), time(12, 30))
