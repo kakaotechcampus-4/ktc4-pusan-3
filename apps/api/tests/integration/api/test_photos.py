@@ -15,6 +15,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents import entrypoint
+from app.api import idempotency
 from app.api.runs import photo_run
 from app.core.config import settings
 from app.core.notice_extract import ExtractedItem, ItemDetail, NoticeExtract
@@ -256,6 +257,32 @@ async def test_보호자가_고친_값으로_저장한다(db_client, session, be
     assert row.supplies == ["모자"]
     assert row.starts_at.astimezone(KST).date() == date(2026, 11, 7)
     assert row.all_day is True
+
+
+async def test_보호자가_고친_시각으로_저장한다(
+    db_client, session, bearer, cid, key_set, monkeypatch
+):
+    # 캘린더에는 고친 시각이 들어가는데 기록에는 사진에서 읽은 9:30 이 남던 것
+    headers, _ = bearer
+    run_id, parsed = await _upload(db_client, headers, cid, monkeypatch, _reading())
+    entry = {
+        **parsed["entries"][0],
+        "starts_at": "2026-11-06T19:30:00+09:00",
+        "ends_at": None,
+        "all_day": False,
+    }
+
+    response = await db_client.post(
+        COMMIT.format(rid=run_id),
+        json={"lane": "document", "entries": [entry], "attach_to_calendar": False},
+        headers=headers,
+    )
+
+    assert response.status_code == 201
+    row = await session.scalar(select(NoticeItem).where(NoticeItem.title == "숲 체험"))
+    assert row.starts_at.astimezone(KST).isoformat() == "2026-11-06T19:30:00+09:00"
+    assert row.ends_at is None
+    assert row.all_day is False
 
 
 async def test_읽은_시각과_마감을_화면으로_보낸다(db_client, bearer, cid, key_set, monkeypatch):
@@ -820,3 +847,51 @@ async def test_같은_요청을_다시_보내면_새로_올린_사진은_지우�
 
     assert second.json()["run_id"] == first.json()["run_id"]
     assert s3_bucket == {}
+
+
+async def test_recall_이_놓친_같은_키는_사진을_다시_읽지_않고_먼저_적힌_run_을_준다(
+    db_client, bearer, cid, key_set, s3_bucket, monkeypatch
+):
+    """같은 키가 거의 동시에 오면 둘 다 recall 에서 처음 보는 키를 본다 — 앞 요청이 키를 적기
+    (사진 받기 · 한도 · 채널 열기 뒤) 전이라서다. recall 이 None 을 돌려주게 해서 그 상황을 만든다.
+
+    키 적기가 "처음 적은 요청만 통과" 가 아니면 같은 사진을 외부 AI 로 두 번 읽는다(비용 두 배).
+    """
+    from app.api.runs import registry
+
+    headers, _ = bearer
+    reads: list[bytes] = []
+
+    def read(data, *, received_at, meal_deadline=None):
+        reads.append(data)
+        return _reading()
+
+    monkeypatch.setattr(entrypoint, "read_photo", read)
+    idem = {**headers, "Idempotency-Key": str(uuid.uuid4())}
+
+    async def send(photo: bytes):
+        key = (await db_client.post(UPLOADS.format(cid=cid), headers=headers)).json()["key"]
+        s3_bucket[key] = photo
+        return await db_client.post(
+            PHOTOS.format(cid=cid), data={"lane": "document", "upload_key": key}, headers=idem
+        )
+
+    first = await send(b"first")
+    winner = first.json()["run_id"]
+    await registry.get(winner).task
+
+    async def missed(**scope):
+        return None
+
+    monkeypatch.setattr(idempotency, "recall", missed)
+    before = set(registry._channels)  # 이 파일은 채널을 비우지 않는다 — 앞 테스트의 것이 남아 있다
+    second = await send(b"second")
+    lost = [c for run_id, c in registry._channels.items() if run_id not in before]
+    await asyncio.gather(*(c.task for c in lost if c.task is not None))
+
+    assert second.status_code == 202
+    assert second.json()["run_id"] == winner
+    assert reads == [b"first"]  # 진 요청의 사진은 읽지 않았다
+    assert len(lost) == 1
+    assert lost[0].closed and lost[0].task is None  # 진 쪽 채널은 닫혔고 러너가 붙지 않았다
+    assert s3_bucket == {}  # 진 요청이 받은 사진도 남지 않는다 — 받으면서 지웠다

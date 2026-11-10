@@ -38,10 +38,21 @@ healthy 가 될 때까지 기다리고, 안 되면(최대 360초 — 옛 api dra
 | 이미지 빌드 · 마이그레이션 | 여기서 멈춘다. `down` 을 먼저 하지 않으므로 **옛 컨테이너가 그대로 서비스한다** (db · redis 이미지가 바뀐 커밋이면 마이그레이션 `run` 이 그 둘을 먼저 새로 띄운다) |
 | 배포 전 백업 (#758 — 빌드 뒤 · 마이그레이션 앞) | 여기서 멈춘다. 아무것도 바꾸지 않았다 — 마이그레이션을 되돌릴 곳이 이 백업뿐이라 백업 없이 넘어가지 않는다. DB 컨테이너가 죽어 백업이 안 되는데 그걸 고치는 배포면 Actions 의 "배포" 를 손으로 돌리며 `skip_backup` 을 켠다 — 백업 없이 넘어가고 Discord 와 Actions 에 남는다. 새 스택의 첫 배포(DB 컨테이너가 아직 없거나 테이블이 0개)도 같다 |
 | Caddy reload (prod) | 새 버전은 떠 있고 Caddy 는 옛 설정이다. 워크플로는 빨간불 — 서버에서 고친다 |
+| Alloy 검사 · 기동 (prod, 서버 메트릭 · #946) | **배포는 성공, 워크플로는 초록** — Actions 로그에 🟠 한 줄뿐이다. 떠 있던 Alloy 는 옛 설정으로 돈다(재시작되면 깨진 설정을 읽어 재시작을 반복하고, 그건 컨테이너 감시가 infra-alert 로 알린다). 고쳐서 다시 배포하거나 아래 "Alloy 손으로" |
 | 지금 떠 있는 것보다 옛 커밋 (옛 run 의 Re-run) | 아무것도 바꾸지 않고 멈춘다. 일부러 되돌릴 때만 서버에서 `ALLOW_OLD=1` |
 | 새 컨테이너 헬스 | 직전에 성공한 태그(`deploy/docker/.deployed-tag`)로 다시 `up --wait`. 워크플로는 빨간불 |
 
 - 이미지 태그는 **커밋 sha** 다. 지금 것과 직전 것 두 개만 남기고 나머지는 지운다.
+- **Alloy 손으로** (서버 메트릭 · [logging-alerts-v1 §7](logging-alerts-v1.md#7-서버-메트릭--grafana-cloud-946)) — profile `monitor` 라
+  `make deploy-up` 은 띄우지 않고 `make deploy-down` 은 멈추지 않는다. prod checkout 에서:
+  ```bash
+  C="docker compose -f deploy/docker/docker-compose.deploy.yml --env-file deploy/docker/.env"
+  $C up -d --force-recreate alloy        # 띄우기 · .env 의 GRAFANA_* 를 바꾼 뒤 다시 읽기
+  $C stop alloy                          # 멈추기
+  docker logs --since 5m ktc4-alloy      # 보내기 오류(401 · 403 = 토큰 · Username)
+  docker exec ktc4-caddy wget -qO- http://127.0.0.1:2019/metrics | head   # Caddy 메트릭 (관리 포트)
+  ```
+  🚨 `docker exec ktc4-caddy wget … 127.0.0.1:2020/metrics` 는 **403 이 정상이다** — :2020 은 Alloy 주소(.11)만 받는다.
 - 🚨 **DB 는 되돌리지 않는다.** 롤백한 직전 코드는 새 스키마 위에서 돈다. 그래서 마이그레이션은
   직전 코드가 계속 돌 수 있게(expand-only) 짠다.
   - 컬럼 · 테이블 추가, nullable 컬럼 추가 → 한 번에 해도 된다
@@ -226,7 +237,7 @@ dev 가 열려 있으면 누구나 카카오로 가입해 실제 보호자 · �
 3. **DNS** — `dev.icatch.ai.kr` · `api.dev.icatch.ai.kr` A 레코드를 같은 EC2 로.
 4. **서버**
    - `git clone` 으로 `/home/ubuntu/ktc4-pusan-3-dev` 를 만들고 `develop` 을 checkout 한다.
-   - dev 의 `deploy/docker/.env` 를 둔다. 위 표의 세 줄, 그리고 `NEXT_PUBLIC_API_BASE_URL=https://api.dev.icatch.ai.kr` 를 넣는다.
+   - dev 의 `deploy/docker/.env` 를 둔다. 위 표의 네 줄, 그리고 `NEXT_PUBLIC_API_BASE_URL=https://api.dev.icatch.ai.kr` 를 넣는다.
      🚨 dev 웹 이미지에는 Firebase 값(`NEXT_PUBLIC_FIREBASE_*`) 다섯 개와 `FCM_KEY_PATH` 를 **비운다** — 웹 푸시가 꺼진 정상 상태다 (11-06 태영님과 결정 · #747).
      같은 Firebase 프로젝트를 쓰면 dev 에서 보낸 알림이 팀원 브라우저에 섞여 구분이 안 된다. 앱은 운영 주소만 열어서 상관없다.
      dev 에서 푸시를 확인해야 할 일이 생기면 그때 웹 값 · `PUSH_DEVICE_ACCEPT` · FCM 키를 같이 켠다 ([`docs/web/web-push-v1.md`](../web/web-push-v1.md))
@@ -235,6 +246,8 @@ dev 가 열려 있으면 누구나 카카오로 가입해 실제 보호자 · �
      LLM · 외부 API · 카카오 키는 prod 와 같은 값을 쓴다 (11-06 결정 — 카카오는 같은 앱에 dev 콜백만 추가 등록). DB 비밀번호만 새로 만든다.
    - dev 의 `deploy/docker/.env` 에 메모리 상한 네 줄을 넣는다 (위 "dev 격리"). 🚨 없으면 dev 배포가 `deploy.sh` 검사에서 멈춘다.
    - prod 의 `deploy/docker/.env` 에 `COMPOSE_PROFILES=edge` 와 `DEV_BASIC_AUTH_USER` · `DEV_BASIC_AUTH_HASH` 를 더한다 (위 "dev 격리" — main 머지 전에).
+   - prod 의 `deploy/docker/.env` 에 `GRAFANA_PROM_URL` · `GRAFANA_PROM_USER` · `GRAFANA_CLOUD_TOKEN` 을 더한다 (서버 메트릭 · #946).
+     비어도 배포는 된다 — Alloy 는 `deploy.sh` 가 prod 배포 성공 뒤 따로 띄우고, 실패해도 🟠 경고만 남긴다 ([logging-alerts-v1 §7](logging-alerts-v1.md#7-서버-메트릭--grafana-cloud-946))
    - 🚨 서버에서 make 는 이미지를 굽지 않는다 (위 "make 로 굽지 않기"). 서버 빌드는 `deploy.sh` 만 한다 —
      빌드 인자(`NEXT_PUBLIC_*`)를 바꿨으면 `deploy.sh` 로 다시 배포한다.
    - swap 을 확인한다. `free -h` 에서 Swap 이 0이면 2GB 를 만든다 (`fallocate -l 2G /swapfile` …).

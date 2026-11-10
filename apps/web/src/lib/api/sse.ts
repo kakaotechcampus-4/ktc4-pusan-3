@@ -5,6 +5,7 @@ import type {
   Agent,
   AnyEventDraft,
   DeleteProposalCard,
+  DocSource,
   FoundTabs,
   MedicationDraft,
   Observation,
@@ -207,6 +208,12 @@ export interface AgentReadout {
    * 🚨 SSE 에서는 키가 늘 있지만 지난 대화에서 다시 그린 블록에는 없다 — 없으면 빈 배열로 읽는다.
    */
   source_refs?: Ref[];
+  /**
+   * 이 readout 이 근거로 단 문서 행 (#574). 일반 정보 답변(`kind: "doc_answer"`)이 채우고, 그 밖의
+   * readout 은 `[]` 다. 본문 아래 "참고 · 제목 (기관, 출처)" 로 그린다 — 근거 없는 답처럼 보이지 않게.
+   * 🚨 SSE 와 지난 대화 모두 키가 늘 있다 (서버 `StoredReadout.sources` 기본값 `[]`).
+   */
+  sources: DocSource[];
 }
 
 /**

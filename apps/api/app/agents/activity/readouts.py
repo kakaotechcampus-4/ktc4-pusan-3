@@ -14,8 +14,13 @@ PLACE_NOTICE_UNDATED = "place.notice_undated"
 PLACE_NOTICE_FACILITY = "place.notice_facility"
 # 행사(TourAPI)가 붙은 추천의 확인 문구. 출처를 밝히고 일정 · 관람 연령을 확인해 달라고 한다
 PLACE_NOTICE_EVENT = "place.notice_event"
+PLACE_NOTICE_CULTURE = "place.notice_culture"
 # 보호자가 말한 지역을 못 찾아 장소 없이 골랐다 (`areas.py`)
 PLACE_AREA_UNKNOWN = "place.area_unknown"
+# 앞에서 보여 준 행사뿐이라 새 행사가 없었다 (#852)
+EVENTS_NO_NEW = "events.no_new"
+# 위치도 지역도 없어 장소 · 행사를 못 찾았다 — 왜 집 놀이만 나오는지 알린다
+LOCATION_MISSING = "place.location_missing"
 # 보호자가 요청에 쓴 음식이 막혀 그런 놀이는 빼고 골랐다 — 알레르기 · 연령 (#582)
 REQUEST_FOOD_CONFLICT = "request.food_conflict"
 REQUEST_FOOD_AGE_BLOCK = "request.food_age_block"

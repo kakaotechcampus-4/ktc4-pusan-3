@@ -28,16 +28,22 @@ from datetime import date
 from enum import StrEnum
 from uuid import UUID
 
-from app.agents.activity.events import core_name, open_on
+from app.agents.activity.events import MIN_EVENT_NAME, core_name, event_keys, open_on
 from app.agents.activity.readouts import (
     PLACE_NOTICE,
+    PLACE_NOTICE_CULTURE,
     PLACE_NOTICE_EVENT,
     PLACE_NOTICE_FACILITY,
     PLACE_NOTICE_UNDATED,
     READOUTS,
 )
 from app.agents.activity.result import ErrorCode
-from app.agents.activity.rules import invented_facilities, is_recent_duplicate, normalize_activity
+from app.agents.activity.rules import (
+    invented_facilities,
+    is_recent_duplicate,
+    normalize_activity,
+    shown_again,
+)
 from app.agents.activity.schemas.common import (
     ActivitySetting,
     CaregiverRole,
@@ -72,6 +78,7 @@ MIN_AVOIDED_LABEL = 2
 
 # 어린이놀이시설(키즈카페 · 육아종합지원센터) 장소의 출처. 이용료 확인 문구를 붙인다 (#516)
 FACILITY_SOURCE: PlaceSourceName = "kids_play_facility"
+CULTURE_SOURCE = "tour_culture"  # `culture.CULTURE_SOURCE` — culture 가 review 를 import 하지 않게
 
 # 아이 기록 근거가 0행이면 build() 가 reason 을 이 문구로 덮어쓴다 (kind="general").
 # 화면이 일반 추천임을 표시하고 쌓인 기록 건수를 함께 보여준다 (루트 §2).
@@ -84,16 +91,9 @@ REQUESTED_REASON = "요청하신 놀이를 바탕으로 골랐어요."
 # 보호자가 말한 지역에서 찾은 장소에 쓰면 틀리는 말. 보호자는 그 자리에 있지 않다 (`areas.py`)
 NEARBY_WORDS = ("근처",)
 
-# 행사를 이름 전체(또는 연도 · 회차 · 괄호 · 부제를 뗀 이름)로 알아보는 최소 길이(정규화한 글자 수).
-# 짧은 이름은 흔한 말과 겹친다
-MIN_EVENT_NAME = 4
 # 장소가 날마다 다른 행사에서 다른 날 장소를 알아보는 낱말의 최소 길이. "모래섬 해변" 을
 # "모래섬" 으로 줄여 써도 본다. "공원" · "해변" 같은 두 글자 말은 어느 날 장소에나 있다
 MIN_EVENT_PLACE_WORD = 3
-# 행사 이름 안의 낱말 하나로 알아보는 최소 길이. 모델은 "2026 대한민국 ○○박람회" 를 "○○박람회" 로
-# 줄여 쓴다(11-03 실측). "크리스마스"(5) · "놀이터" 같은 흔한 말로 알아보면 행사가 아닌 후보에
-# 붙는다
-MIN_EVENT_WORD = 6
 
 Seen = Mapping[UUID, RankedEvidence]
 # 이번 run 의 프롬프트 [예시]에 실은 문서 행. 일반 추천은 이 행을 근거로 단다 (루트 §2)
@@ -116,6 +116,8 @@ class RejectReason(StrEnum):
     OUTDOOR_CLOSED = "outdoor_closed"
     MIXED_PLACES = "mixed_places"
     INVENTED_FACILITY = "invented_facility"
+    SHOWN_BEFORE = "shown_before"
+    INTEREST_NOT_IN_ACTIVITY = "interest_not_in_activity"
     DARK_PLAYGROUND = "dark_playground"
     BUILD = "build_rejected"
 
@@ -139,6 +141,15 @@ GUIDANCE: dict[RejectReason, str] = {
         "note 의 '어제도 · 또 · 늘 · 항상 · 좋아하는' 은 확정된 관심(tier 1)에만 쓴다."
     ),
     RejectReason.RECENT_DUPLICATE: "최근에 한 활동이다. 다른 활동으로 바꾼다.",
+    RejectReason.INTEREST_NOT_IN_ACTIVITY: (
+        "근거로 단 관심이 활동 내용(content)에 드러나지 않는다. 그 관심을 살린 활동이면 content 에 "
+        "드러나게 쓰고, 아니면 그 관심 기록을 근거에서 빼고 reason 에도 쓰지 않는다. 아이 기록 "
+        "근거가 남지 않으면 [예시] 문서 행을 근거로 단다."
+    ),
+    RejectReason.SHOWN_BEFORE: (
+        "앞에서 이미 보여 준 놀이 · 장소 · 행사다. 보호자가 다른 것을 원한다 — 다른 놀이 · 다른 "
+        "장소 · 다른 행사로 바꾼다. 남은 것이 없으면 장소 없이 집에서 할 놀이로 낸다."
+    ),
     RejectReason.CAREGIVER_ROLE: "이 월령은 보호자가 같이 하는 활동(together)만 낸다.",
     RejectReason.UNKNOWN_PLACE: (
         "place_name 에는 search_nearby_places 결과의 장소 이름이나 search_events 결과의 행사 "
@@ -226,6 +237,7 @@ def review_candidates(
     ended_today: Collection[str] = (),
     request_texts: Sequence[str] = (),
     dark_today: bool = False,
+    shown_before: Collection[str] = (),
 ) -> Review:
     """후보를 3-3 순서로 검사해 통과한 것은 SuggestionDraft 로, 걸린 것은 사유로 돌려준다.
 
@@ -295,6 +307,7 @@ def review_candidates(
             far_places=far_places,
             avoided=avoided,
             recent=recent_activities,
+            shown_before=shown_before,
             outdoor=outdoor,
             outdoor_days=outdoor_days,
             today=today,
@@ -361,7 +374,8 @@ def _check(
     far_places: frozenset[str],
     avoided: tuple[str, ...],
     recent: Collection[str],
-    outdoor: Mapping[str, bool] | None,
+    shown_before: Collection[str] = (),
+    outdoor: Mapping[str, bool] | None = None,
     outdoor_days: Mapping[date, bool] | None,
     today: date,
     ended_today: Collection[str] = (),
@@ -449,11 +463,48 @@ def _check(
         return RejectReason.OVERSTATED_NOTE, (), None
     if is_recent_duplicate(candidate.content, recent):
         return RejectReason.RECENT_DUPLICATE, (), None
+    # 붙은 행사는 줄인 이름으로도 본다 — 앞 추천 문장에는 줄인 이름만 남았을 수 있다 (`_with_place`)
+    shown_names = {candidate.place_name or ""}
+    if isinstance(place, EventRow):
+        shown_names |= {place.name, *event_keys(place.name)}
+    if shown_again(candidate.content, shown_names, shown_before):
+        return RejectReason.SHOWN_BEFORE, (), None
     if months < TOGETHER_ONLY_BELOW_MONTH and candidate.caregiver_role != CaregiverRole.TOGETHER:
         return RejectReason.CAREGIVER_ROLE, (), None
 
+    # 확정 관심은 활동에 드러날 때만 근거다 — 억지로 이은 관심("야구를 좋아해서 민속예술제")과
+    # 엉뚱한 관심(자동차 놀이에 야구 기록)을 뺀다. 남은 근거로 낼 수 없으면 다시 쓰게 한다 (11-10)
+    loose = [subject for _, found in resolved if (subject := _interest_outside(found, candidate))]
+    if loose:
+        resolved = [
+            (pick, found) for pick, found in resolved if not _interest_outside(found, candidate)
+        ]
+        child_left = any(isinstance(found, RankedEvidence) for _, found in resolved)
+        reason_key = normalize_activity(candidate.reason)
+        if not resolved or (
+            child_left and any(normalize_activity(word) in reason_key for word in loose)
+        ):
+            return RejectReason.INTEREST_NOT_IN_ACTIVITY, (), None
+
     citations = tuple(_cite(found, note=pick.note) for pick, found in resolved)
     return None, citations, place
+
+
+def _interest_outside(
+    found: RankedEvidence | ActivityDocRow, candidate: ActivityCandidate
+) -> str | None:
+    """활동 내용에 드러나지 않은 확정 관심의 이름. 관심이 아니거나(관찰 · 문서 행) 기피면 None —
+    관찰은 그날 한 일이고, 기피는 피했다는 근거라 활동에 이름이 없는 게 맞다.
+
+    관심 이름의 낱말 하나라도 활동에 있으면 드러난 것으로 본다("블록 쌓기" ↔ "큰 블록으로 탑").
+    """
+    if not isinstance(found, RankedEvidence) or found.ref.kind != "profile_affinity":
+        return None
+    if found.polarity < 0:
+        return None
+    content = normalize_activity(candidate.content)
+    words = [normalize_activity(word) for word in found.subject.split()]
+    return None if any(word and word in content for word in words) else found.subject
 
 
 @dataclass(frozen=True)
@@ -465,7 +516,7 @@ class _Known:
 
     places: Mapping[str, PlaceRow]  # 정규화한 이름 → 장소
     events: Mapping[str, EventRow]  # 정규화한 이름 → 행사
-    # 알아보는 이름(`_event_keys`) → 행사. 두 행사가 같이 쓰는 이름 · 장소 이름과 같은 이름은 뺐다 —
+    # 알아보는 이름(`event_keys`) → 행사. 두 행사가 같이 쓰는 이름 · 장소 이름과 같은 이름은 뺐다 —
     # 어느 쪽인지 모른다
     event_keys: Mapping[str, EventRow]
     # 정규화한 개최 장소 → 행사. 장소가 날마다 다른 행사는 그날그날의 장소도 넣는다 — tool 결과의
@@ -478,7 +529,7 @@ class _Known:
         owners: dict[str, list[EventRow]] = {}
         venues: dict[str, list[EventRow]] = {}
         for event in events.values():
-            for key in _event_keys(event):
+            for key in event_keys(event.name):
                 owners.setdefault(key, []).append(event)
             held = {event.place, *(name for _, name in event.schedule.day_places)}
             for venue in {normalize_activity(name) for name in held} - {""}:
@@ -506,17 +557,6 @@ class _Known:
             found[row.name] = row
         found.update((row.name, row) for row in self.venues.get(key, ()))
         return found
-
-
-def _event_keys(event: EventRow) -> set[str]:
-    """문장 · place_name 에서 이 행사를 알아보는 이름 — 원래 이름 · 연도 · 회차 · 괄호 · 부제를 뗀
-    이름(`MIN_EVENT_NAME` 자 이상)과 그 안의 긴 낱말(`MIN_EVENT_WORD` 자 이상)."""
-    core = core_name(event.name)
-    names = {normalize_activity(event.name), normalize_activity(core)}
-    words = {normalize_activity(word) for word in core.split()}
-    return {name for name in names if len(name) >= MIN_EVENT_NAME} | {
-        word for word in words if len(word) >= MIN_EVENT_WORD
-    }
 
 
 def _attach(
@@ -631,6 +671,8 @@ def place_notice(place: PlaceRow | EventRow) -> str:
         return READOUTS.render(PLACE_NOTICE_EVENT).body
     if place.source == FACILITY_SOURCE:
         return READOUTS.render(PLACE_NOTICE_FACILITY).body
+    if place.source == CULTURE_SOURCE:
+        return READOUTS.render(PLACE_NOTICE_CULTURE).body
     if place.data_date is None:
         return READOUTS.render(PLACE_NOTICE_UNDATED).body
     return READOUTS.render(
@@ -665,7 +707,7 @@ def _held_at(declared: str, event: EventRow) -> bool:
 def _with_place(content: str, place: PlaceRow | EventRow | None) -> str:
     """장소 이름을 코드가 문장 앞에 붙인다. 모델이 이미 문장에 썼으면 다시 붙이지 않는다.
 
-    행사는 줄여 쓴 이름(`_event_keys`)도 쓴 것으로 본다 — 긴 공식 이름을 다시 붙이면
+    행사는 줄여 쓴 이름(`event_keys`)도 쓴 것으로 본다 — 긴 공식 이름을 다시 붙이면
     "○○ 작품투어 (…)에서 ○○ 작품투어에서 …" 가 된다 (11-03 실측). 이름의 뒤쪽 두 낱말
     이상(*"전통시장 박람회"*)만 썼으면 그 자리를 행사 이름으로 바꾼다 (`_spell_out`).
 
@@ -679,7 +721,7 @@ def _with_place(content: str, place: PlaceRow | EventRow | None) -> str:
     written = normalize_activity(content)
     names = {normalize_activity(place.name)}
     if isinstance(place, EventRow):
-        names |= _event_keys(place)
+        names |= event_keys(place.name)
     if any(name in written for name in names):
         return content
     if isinstance(place, EventRow) and (spelled := _spell_out(content, place)) is not None:

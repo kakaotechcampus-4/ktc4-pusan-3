@@ -17,6 +17,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
+import { DocSourceList } from "@/components/doc-source-list";
 import { AgentPrompts } from "@/components/agent-prompts";
 import { ObservationRow } from "@/components/observation-row";
 import { DeleteProposalCard, FoundTabsCard } from "@/components/record-tabs-card";
@@ -600,6 +601,9 @@ function AgentResultCard({
             <div key={index} className="mt-1">
               {readout.title ? <p className="text-label text-ink-muted">{readout.title}</p> : null}
               <p className="text-body text-ink whitespace-pre-line">{readout.body}</p>
+              {/* 🚨 일반 정보 답변은 문서 행이 근거다 (#574). 출처를 같이 적는다 — CC BY 문서는 출처 표시가
+                  이용 조건이다. 일반 추천 카드의 참고 줄과 같은 모양이다. 외부 문서 제목도 텍스트로만 그린다. */}
+              <DocSourceList docs={readout.sources} className="mt-2" />
               {COPYABLE_READOUTS.has(readout.kind) ? <CopyReadout readout={readout} /> : null}
             </div>
           ))}

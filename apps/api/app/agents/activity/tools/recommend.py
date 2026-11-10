@@ -105,6 +105,7 @@ async def propose_activity_candidates(
         ended_today=context.state.ended_today,
         request_texts=context.state.request_texts,
         dark_today=dark_now(context),
+        shown_before=context.state.shown_before,
     )
     if any(r.reason is RejectReason.DARK_PLAYGROUND for r in review.rejections):
         # 결과에 "지금은 어두워서 놀이터는 뺐어요" 를 붙인다 — 장소 조회에서 막힌 것과 같다

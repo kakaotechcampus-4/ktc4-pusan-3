@@ -255,6 +255,30 @@ test.describe("도메인 Agent 결과는 답 묶음 안의 블록이다 (#227)",
     });
   });
 
+  test.describe("agent_info — 일반 정보 질문의 답 (#574)", () => {
+    test.use({ scenario: "agent_info" });
+
+    test("답 아래 참고 줄이 서고, 추천 후보는 서지 않는다", async ({ page }) => {
+      await sendFromHome(page, "보통 3세는 숫자 몇까지 세?");
+      const reply = turn(page, "보통 3세는 숫자 몇까지 세?");
+
+      await expect(reply.getByText("만 3세 무렵 생활과 배움 · 일반 자료")).toBeVisible();
+      await expect(
+        reply.getByText("계단을 오르며 하나씩 소리 내어 세어 볼 수 있어요.", { exact: false }),
+      ).toBeVisible();
+      // 🚨 근거 없는 답처럼 보이지 않게 — 출처(기관 · 출처)까지 함께 선다 (CC BY 이용 조건)
+      await expect(
+        reply.getByText("참고 · 계단 오르며 수 세기 (교육부, 누리과정 해설서)"),
+      ).toBeVisible();
+      // 🚨 기준 질문이면 서버 코드 안내가 답 앞에 선다 — 화면이 기준을 만들지 않는다
+      const notice = reply.getByText("나이별 기준은 알려드리지 않아요", { exact: false });
+      await expect(notice).toBeVisible();
+      // 🚨 추천이 아니다 — 후보 수 · 후보 보기가 서지 않는다
+      await expect(reply.getByText(/후보/)).toHaveCount(0);
+      await expect(reply.getByText(/또래|빠르|느리|정상|백분위/)).toHaveCount(0);
+    });
+  });
+
   test.describe("agent_question — Agent 가 되묻는 한 줄", () => {
     test.use({ scenario: "agent_question" });
 

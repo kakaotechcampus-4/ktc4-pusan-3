@@ -22,6 +22,9 @@ from datetime import timedelta
 # 조회 범위. 결과를 읽고 다른 일을 하다 돌아와 묻는 경우까지 — 되묻기 · 다시 시도(15분)보다 길다
 RECENT_WINDOW = timedelta(minutes=30)
 MAX_RECENT_TURNS = 3
+# 이미 보여 준 추천(`DomainTask.shown_before`)을 모으는 턴 수 — 모델에 가는 앞 대화(`render`)는
+# 그대로 `MAX_RECENT_TURNS` 다. "다른 거" 를 여러 번 물어도 첫 목록이 다시 나오지 않게 (#852)
+SHOWN_TURNS = 5
 
 MAX_TURN_CHARS = 300
 MAX_PRIOR_SUGGESTIONS = 3

@@ -47,10 +47,11 @@
 
 import logging
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal
 
-from app.agents.common.schemas.task import MAX_DOMAIN_AGENTS, DomainTask
+from app.agents.common.schemas.task import INFO_TASK, MAX_DOMAIN_AGENTS, DomainTask
 from app.agents.growth.schemas.task import RECOMMENDING_LABELS as GROWTH_RECOMMENDING
 from app.agents.growth.schemas.task import YIELDING_LABELS as GROWTH_YIELDING
 from app.agents.memory.schemas.task import MemoryHint, MemoryTask, WorkType
@@ -58,6 +59,7 @@ from app.agents.supervisor.agent import SupervisorResult
 from app.agents.supervisor.schemas import (
     DomainAgentName,
     GuardReason,
+    RequestMode,
     SegmentKind,
     SupervisorOutput,
     align_segment,
@@ -216,6 +218,20 @@ _AGENT_LIMIT = Guidance(
 )
 
 
+# 일반 정보 질문(`request_mode=info`)에 답하는 Agent (#574). info 는 스키마가 growth · health 에만
+# 남기므로(`schemas._INFO_MODE_AGENTS`), 여기 없는 info 조각은 Health 하나다
+INFO_AGENTS: frozenset[str] = frozenset({DomainAgentName.GROWTH.value})
+# Health 의 일반 정보 질문은 Agent 를 돌리지 않고 닫는다 — 진단하지 않는 Agent 가 아이 일반의 건강
+# 정보를 답으로 내지 않게(루트 §2). 검진 · 접종 시기는 "보통" 이 붙어도 suggest 라
+# schedule_check 가 이 아이 월령으로 답한다(#574 리뷰)
+INFO_HEALTH_CLOSED = "info_health_closed"
+_INFO_HEALTH_CLOSED = Guidance(
+    code=INFO_HEALTH_CLOSED,
+    # 증상을 묻지 않은 질문에도 붙으므로 걱정 · 상태를 말하지 않는다
+    message=("건강 관련 일반 정보는 아직 답하지 않아요. 궁금한 점은 소아청소년과에 물어봐 주세요."),
+)
+
+
 # 한 Agent 의 추천을 여러 가지 물어 뒤의 것을 뺐을 때 알리는 용도
 TASK_LIMIT = "task_limit"
 _TASK_LIMIT = Guidance(
@@ -283,12 +299,21 @@ def route(raw_text: str, result: SupervisorResult, *, run_id: str) -> Routing:
         else MemoryTask(raw_text=raw_text, hints=hints, unclear=unclear, unclear_only=unclear_only)
     )
 
-    # 요청한 agent는 처음 나온 순서대로, 상한까지만
-    wanted = list(dict.fromkeys(str(s.agent) for s in requests))
+    # 닫힌 info 조각(Health)은 상한 자리를 쓰지 않는다 — 안내만 내고 지나간다.
+    # 자리를 먼저 차지하면 뒤의 실제 요청이 `agent_limit` 으로 조용히 빠진다
+    closed_info = [s for s in requests if _info_closed(s)]
+    wanted = list(dict.fromkeys(str(s.agent) for s in requests if not _info_closed(s)))
     selected, dropped = wanted[:MAX_DOMAIN_AGENTS], wanted[MAX_DOMAIN_AGENTS:]
 
+    info_closed = (_INFO_HEALTH_CLOSED,) if closed_info else ()
     domain_tasks, trimmed = _domain_tasks(
-        [s for s in requests if str(s.agent) in selected and str(s.agent) in IMPLEMENTED_AGENTS],
+        [
+            s
+            for s in requests
+            if str(s.agent) in selected
+            and str(s.agent) in IMPLEMENTED_AGENTS
+            and not _info_closed(s)
+        ],
         run_id=run_id,
         record_texts=tuple(s.text for s in records),
     )
@@ -299,10 +324,21 @@ def route(raw_text: str, result: SupervisorResult, *, run_id: str) -> Routing:
         domain_tasks=domain_tasks,
         unavailable_agents=tuple(a for a in selected if a not in IMPLEMENTED_AGENTS),
         dropped_agents=tuple(dropped),
-        guidance=_guidance(result.output, dropped=bool(dropped), trimmed=trimmed),
+        guidance=_guidance(
+            result.output, dropped=bool(dropped), trimmed=trimmed, info_closed=info_closed
+        ),
     )
     _log(routing, None)
     return routing
+
+
+def _is_info(segment) -> bool:
+    return segment.request_mode == RequestMode.INFO
+
+
+def _info_closed(segment) -> bool:
+    """일반 정보 질문인데 그 Agent 가 아직 못 받는다 — 돌리지 않고 안내만 낸다."""
+    return _is_info(segment) and str(segment.agent) not in INFO_AGENTS
 
 
 def _intent(*, has_record: bool, has_request: bool) -> IntentType:
@@ -377,7 +413,11 @@ def _request_text(segment) -> str:
     들어가면 안 된다. 해석이 없으면 원문 조각이다.
     """
     resolved = getattr(segment, "resolved_request", None)
-    if resolved and _task_label(segment) in RESOLVABLE_TASKS.get(str(segment.agent), frozenset()):
+    label = _task_label(segment)
+    # 일반 정보 질문도 앞 대화를 이은 짧은 되묻기("그럼 4살은?")를 풀어 쓴 문장으로 받는다
+    if resolved and (
+        label == INFO_TASK or label in RESOLVABLE_TASKS.get(str(segment.agent), frozenset())
+    ):
         return resolved
     return segment.text
 
@@ -388,6 +428,8 @@ def _task_label(segment) -> str | None:
     health 는 라벨이 비어 있을 수 있다. 채우지 않고 None 으로 넘겨 Health 가 unsupported 로 닫게
     한다 — 짐작한 라벨이 복약 쓰기 경로를 열면 안 된다.
     """
+    if _is_info(segment):
+        return INFO_TASK
     if segment.agent == DomainAgentName.FOOD:
         return str(segment.food_task)
     if segment.agent == DomainAgentName.GROWTH:
@@ -398,7 +440,11 @@ def _task_label(segment) -> str | None:
 
 
 def _guidance(
-    output: SupervisorOutput, *, dropped: bool = False, trimmed: bool = False
+    output: SupervisorOutput,
+    *,
+    dropped: bool = False,
+    trimmed: bool = False,
+    info_closed: Sequence[Guidance] = (),
 ) -> tuple[Guidance, ...]:
     """guard · out_of_scope 별 안내. 같은 코드는 한 번만.
 
@@ -415,6 +461,7 @@ def _guidance(
         guidance.append(_AGENT_LIMIT)
     if trimmed:
         guidance.append(_TASK_LIMIT)
+    guidance.extend(info_closed)
     return tuple(guidance)
 
 

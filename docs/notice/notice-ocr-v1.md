@@ -197,9 +197,9 @@ GET /runs/{rid}/events                       step → lane → step → parsed �
 - 알림장의 아이 문장 → `observation_*`. 지금 commit 은 관찰을 만들지 않는다. 반 공통 문장을 구분하지 않고 넣으면 잘못 승격되므로 `audience_scope` · 문장 주체 판정이 먼저다. 우리 아이 이름도 `[이름]` 으로 가려져서 `[이름]는 [이름]와` 가 되므로, 경로를 만들 때 우리 아이를 구분하는 표시도 필요하다. 공개 자료에 알림장 실물이 없어서 지어낸 문서로만 시험했다
 - 정정 공지를 앞 공지에 잇는 자동 판단 — 정정이라는 사실(`relation`)만 저장한다. 어느 공지 · 어느 일정을 고치는지 찾지 못해서, 보호자가 새 날짜를 일정으로 넣으면 옛 일정이 그대로 남는다
 - HEIC 미리보기 — 서버는 읽지만, 안드로이드 Chrome · WebView 는 HEIC 를 `<img>` 로 그리지 못해 읽는 중 · 확인 화면의 사진 미리보기가 비어 보일 수 있다
-- 업로드 본문 크기 제한 — 사진은 S3 로 가지만(§2), FastAPI 는 누가 보내든 본문을 먼저 끝까지 받는다. Caddy `request_body max_size` 가 아직 없다
-- 화면에 보이는 값 — 서버는 `PhotoEntry` 로 `starts_at` · `ends_at` · `due_at` · `target_scope` · `details` · `source_quote` 를 보낸다. 시각 · 끝 날은 웹이 쓴다 (#723, `apps/web/src/lib/photo-entry.ts`): 여러 날 범위는 기간으로 보이고(`readSpan`), 읽은 시각은 오전 · 오후와 함께 보이며(`readMoment`), 일정 시트의 시각 칸은 읽은 시작 시각으로 채워지고(`readStartTime`), 캘린더에 넣을 때 읽은 끝이 그대로 실린다(`carriedEndsAt` — 보호자가 시작 날짜 · 하루 종일 여부를 고치면 빠진다). `target_scope` · `details` · `source_quote` 는 그 파일에서 쓰지 않는다 — 금액 · 대상 · 회신 수단을 화면이 그리는지는 이 문서에서 확인하지 않았다
-- 사진 시트의 알림 고르기 — #611 머지 뒤에 생긴다
+- ~~업로드 본문 크기 제한~~ — 사진은 S3 로 가지만(§2), FastAPI 는 누가 보내든 본문을 먼저 끝까지 받는다. 그래서 Caddy 가 api 주소에서 16MB 로 자른다 (`request_body max_size`, §2 표 · `deploy/caddy/Caddyfile`)
+- 화면에 보이는 값 — 서버는 `PhotoEntry` 로 `starts_at` · `ends_at` · `due_at` · `target_scope` · `details` · `source_quote` 를 보낸다. 시각 · 끝 날은 웹이 쓴다 (#723, `apps/web/src/lib/photo-entry.ts`): 여러 날 범위는 기간으로 보이고(`readSpan`), 읽은 시각은 오전 · 오후와 함께 보이며(`readMoment`), 일정 시트의 시각 칸은 읽은 시작 시각으로 채워지고(`readStartTime`), 캘린더에 넣을 때 읽은 끝이 그대로 실린다(`carriedEndsAt` — 보호자가 시작 날짜 · 하루 종일 여부를 고치면 빠진다). 시트에서 고친 시작 시간 · 하루 종일은 목록의 날짜 줄과 저장되는 기록에도 들어간다 (`recordedEntry` · 서버 `apply_edits`, #952). `target_scope` · `details` · `source_quote` 는 웹이 타입으로만 받고 어느 화면도 그리지 않는다 — 금액 · 대상 · 회신 수단과 §4 의 `적힌 대로` 줄은 저장은 되지만 아직 화면에 보이지 않는다
+- ~~사진 시트의 알림 고르기~~ — 생겼다 (`apps/web/src/components/photo-entry-sheet.tsx` 의 `ReminderField`)
 - 저장한 공지를 읽는 곳 — 화면 · Food · Growth · 추천 근거 어디에도 연결되지 않았다
 - 여러 장 공지 — 업로드가 사진 한 장만 받아 2쪽짜리 공지는 공지 2건이 된다. 이미지가 있는 게시글의 최대 34% 가 2장 이상이다 (별개 사진이 섞인 상한값)
 - 여러 쪽 PDF · HWP 업로드 — 서버 API 는 이미지만 받는다. 파일 읽기(`document_text.py`)는 있고 말뭉치 시험에 썼다

@@ -436,6 +436,19 @@ export interface DocEvidence {
   note: string;
 }
 
+/**
+ * readout 이 근거로 단 문서 행 (#574). 일반 정보 답변(`kind: "doc_answer"`)이 싣는다.
+ * `DocEvidence` 에서 `note` 를 뺀 모양이다 — 답변은 문장마다 근거를 달아서 행마다 메모가 없다.
+ * 🚨 출처(`source_org`)를 함께 보여 준다 — CC BY 문서는 출처 표시가 이용 조건이다.
+ */
+export interface DocSource {
+  ref: { kind: "food_doc" | "activity_doc" | "growth_doc"; id: string };
+  title: string;
+  source_org: string;
+  source_title: string;
+  source_url: string | null;
+}
+
 /* ── Event · EventItem · Reminder ─────────────────────────────────────── */
 
 export interface EventItem {
@@ -1521,7 +1534,11 @@ export interface PhotoEntry {
   label?: string | null;
   /** 누구의 일인가. `conditional` 은 해당하는 아이만이다. */
   target_scope?: "child" | "class" | "all" | "conditional" | "unknown" | null;
-  /** 읽은 시작 일시. `date` 가 이 날짜다. */
+  /**
+   * 읽은 시작 일시. `date` 가 이 날짜다.
+   * 🚨 **저장할 때는 보호자가 고친 시작을 얹어 보낸다** (`recordedEntry` · `all_day` · `ends_at` 도 함께).
+   *    서버는 시작 항목에서만, 이 값의 날짜가 `date` 와 같을 때만 받는다 (`apply_edits`).
+   */
   starts_at?: string | null;
   ends_at?: string | null;
   /** 마감. 🚨 `date` 가 일시인지 마감인지는 `starts_at` · `due_at` 으로 가른다. */

@@ -31,6 +31,7 @@ const notice = (body: string, code: AgentReadout["code"]): AgentReadout => ({
   body,
   authored_by: "code",
   code,
+  sources: [],
 });
 
 const WEATHER = notice("오늘은 바깥 활동이 어려운 날이라 실내 놀이만 골랐어요.", null);
@@ -225,6 +226,7 @@ describe("medicationHref — 복약 화면 열기가 갈 곳 (#713)", () => {
     body: "지어낸 안내",
     authored_by: "code",
     code: null,
+    sources: [],
     ...(courses
       ? { source_refs: courses.map((id) => ({ kind: "medication_schedule" as const, id })) }
       : {}),

@@ -30,18 +30,29 @@
 
 | Agent | 라벨 | 왜 묶음이 갈리나 |
 | --- | --- | --- |
-| Food | `meal_recommendation` · `nutrient_analysis` · `daycare_meal` · `food_check` | 묶음 5 vs 7, `health_safety` 사전 확인 여부. `daycare_meal`만 쓰기를 갖는다. `food_check`(정해진 음식을 먹여도 되는지)는 열린 tool 없이 코드가 등록 알레르기 · 연령 규칙으로 답한다(모델 0회) |
+| Food | `meal_recommendation` · `nutrient_analysis` · `daycare_meal` · `daycare_lookup` · `food_check` | 묶음 5 vs 7, `health_safety` 사전 확인 여부. `daycare_meal`만 쓰기를 갖는다. `food_check`(정해진 음식을 먹여도 되는지)는 열린 tool 없이 코드가 등록 알레르기 · 연령 규칙으로 답한다(모델 0회) |
 | Activity | 없음 (놀이 추천 하나) | 실내/야외는 날씨·시간 조회 **결과**로 갈린다 — 런타임 판단이지 라벨이 아니다 |
 | Growth | `learning_suggestion` · `routine_coaching` · `book_suggestion` · `growth_review` | `growth_doc` 조회 · 도서 API · 차분(모델 0회)이 서로 겹치지 않는다 |
 | Health | `visit_summary` · `schedule_check` · `place_lookup` · `medication` · `care_handoff` | tool 집합이 서로 겹치지 않고, `medication`만 쓰기를 갖는다. `care_handoff`는 모델 0회 |
 
 라벨은 **Tool 묶음이 갈릴 때만** 만든다.
 
+### request_mode — 라벨이 아니라 request 공통 칸 (#574)
+
+"보통 몇 살부터 혼자 양치해?" 처럼 **아이 일반**을 묻는 말은 추천 카드가 아니라 문서 근거 답변이다. 이 경계는 Agent 라벨을 늘리지 않고 `request` 조각의 공통 칸 `request_mode`(`suggest` 기본 · `info`) 하나로 가른다.
+
+- `info` 는 **Growth · Health 조각에만** 붙는다. Activity · Food 의 경계는 이 칸으로 바꾸지 않는다 — 프롬프트가 두 Agent 에 붙이지 말라고 하고, 붙어 와도 스키마가 지워 지금처럼 추천으로 간다(`schemas._INFO_MODE_AGENTS`).
+- Growth 의 `info` 면 `growth_task` 를 비운다(스키마가 지운다). routing 이 `DomainTask.task_type="info"`(`INFO_TASK`)로 내려보낸다. 추천 라벨 집합 · Growth 의 run 당 추천 하나 제한 · 05 · 0개 기록 대상에 들어가지 않는다.
+- 분류는 모델이 한다. "보통" · "N세" 같은 낱말을 코드가 보고 가르지 않는다 — "우리 애 4살인데 숫자 공부 어떻게 시켜?" 는 나이가 있어도 suggest 다.
+- Health 의 `info` 는 Agent 를 돌리지 않고 routing 이 닫힘 안내(`info_health_closed`)를 낸다 — 진단하지 않는 Agent 가 아이 일반의 건강 정보를 답으로 내지 않는다(루트 §2). 단 검진 · 예방접종 **시기** 를 묻는 말("몇 개월에 예방접종 맞아?" · "보통 몇 살에 영유아 검진 받아?")은 "보통" 이 붙어도 `info` 가 아니라 `suggest` 라 `schedule_check` 가 이 아이 월령으로 답한다 — 공개된 표준 일정이고 진단이 아니다(#574 리뷰). 닫힘은 그 밖의 건강 일반 질문("보통 아이들 정상 체온은 몇 도야?")에만 나간다. 닫힌 Health `info` 조각은 Agent 상한(2) 자리를 쓰지 않는다 — 안내만 내고 지나간다.
+- 한 문장에 일반 질문과 우리 아이 추천이 같이 있으면 두 조각이고, 같은 Agent 의 서로 다른 두 task 로 간다.
+- 질문 속 나이는 모델이 뽑지 않는다. `rules/age.asked_month_range` 가 읽는다(세 · 살은 만 나이, 개월, 돌).
+
 - Growth 라벨이 빠지면 `learning_suggestion` 으로 채운다(Food 의 "애매하면 추천" 과 같은 방식).
 - 한 run 에 Growth 추천 라벨(learning · routine · book)은 하나만 돈다 — 처음 것이되, 도서는 다른 추천 라벨이 같이 오면 자리를 내준다(`YIELDING_LABELS`). 뺀 요청은 `task_limit` 안내로 알린다 — 05 의 다시 시도 · 0개 기록이 (run, agent) 로 묶여서다. `growth_review` 는 추천이 아니라 같이 돈다.
   - 도서가 양보하는 이유 — 도서는 인증키(`DATA4LIBRARY_AUTH_KEY`)가 없거나 정보나루가 실패하면 닫히고(`closed.book_api`), 열려도 외부 호출에 하루 한도가 있다. "공룡 책이랑 양치 혼자 하는 법" 처럼 앞에 와서 루틴을 빼면 화면에 도서 닫힘 안내만 남을 수 있다. 도서만 왔으면 도서가 돈다 (#452 리뷰 — 도서가 열린 뒤에도 그대로 두기로 했다).
 
-> **라벨이 13개다.** 이전 판이 스스로 "라벨을 늘릴 때마다 오분류가 는다"고 적어 뒀는데 그 사이 다섯 배가 됐다.
+> **라벨이 14개다.** 이전 판이 스스로 "라벨을 늘릴 때마다 오분류가 는다"고 적어 뒀는데 그 사이 다섯 배가 됐다.
 > 프롬프트를 쓸 때 **라벨별 경계 예시를 한 번에 뽑아 검토**해야 한다.
 
 ---
@@ -160,6 +171,7 @@
 - 보정 이력 — 끝까지 라이브(`growth/test_growth_supervisor_e2e.py`)에서 "숫자 놀이 뭐 없어?" 가 "놀이" 라는 낱말만 보고 activity 로 새는 것을 찾았다(직접 표본 3/10 만 growth). `_REQUEST` 에 "놀이라는 말이 있어도 배우는 낱말(숫자 · 한글 · 글자)이 있으면 growth/learning_suggestion, 없으면 activity" 한 줄을 더했고 12/12 가 됐다. 같은 말투(GR25 · GR26)와 반대 경계(GR27 · GR28 — 배우는 낱말이 없는 놀이는 activity)를 GR 에 더했다.
 - 보정은 한 번에 하나, 최대 3회. "변형" 케이스의 문장을 프롬프트에 옮기지 않는다. 고친 뒤 split 합계(RC · T)가 떨어지면 되돌린다. 3회 뒤에도 미달이면 합격선을 낮추지 않고 숫자로 남긴다
 - 앞 대화를 붙인 후속 질문은 FU01~FU14 가 잰다 — [§5-5](#5-5-eval)
+- 일반 정보 경계는 IN 묶음(Growth · Health)이 잰다(`supervisor/test.py -m live -k info_routing`) — agent · info 판정 일치 90% 이상, info↔suggest 가 새는 건수 0. 한쪽으로 새면 추천이 안 나가거나 다른 나이의 추천이 저장되어 비율과 섞지 않는다.
 - 말투만 다른 식사 추천(#861) — RQ01~RQ08 이 잰다(`-k request_tone`, `TEST_REPEAT=3`). 0건 규칙: 매번 Memory 없이 Food `meal_recommendation` 하나. 원인은 Supervisor 가 아니라 조각 밖에 남은 "야" 였다(`routing._covers_all` 이 추임새를 덮인 것으로 본다). 프롬프트는 서술어 없는 간식 요청("어린이집 끝나고 간식", 2/3 → 3/3)과 "말고" 정정 오인(RQ08)만 맡는다. "부르는 말은 뒤 조각에 붙여 자른다" 한 줄은 넣었다가 뺐다 — FC09(food_check) · T42(역할놀이 unclear)가 5번 중 5 · 4번 틀려(develop 3 · 1번) 코드가 맡는 쪽으로 정리했다.
 - 거절 · 안내 문구는 RO01~RO08 이 잰다(`supervisor/test.py -m live -k readout_routing`, 0건 규칙, #864) — 약 얘기가 없는 진단 문의는 약 문구가 없다 · 다른 집 아이 · 다른 보호자가 하는 일을 묻는 말은 도메인 Agent 없이 "우리 아이 기록만 다룬다" 안내 · 또래 기준 추천은 request 그대로 · 친구네 집 · 옆집에서 겪은 일은 record. 프롬프트에는 예시 세 줄과 out_of_scope 정의 세 줄을 더했다. 바꾸기 전후 split(RC · T)는 [SUPERVISOR_EVAL.md](eval/SUPERVISOR_EVAL.md) §1 에 있다
 
@@ -227,7 +239,7 @@ Food 의 요청 안내(`request_notices`)는 `request_texts` 를 그대로 읽�
 
 ### 5-4. 일부만 실패한 뒤 "아까 못 알려준 거"
 
-`PartialReply.failed` 가 앞 턴에 남아 있어 "못 낸 것: activity" 로 Supervisor 에 간다. 못 낸 Agent 가 하나면 그 턴의 보호자 말에서 요청을 되살려 `resolved_request` 에 쓴다. 못 낸 것이 없거나 여럿이면 정할 수 없어 `unclear` 다. 05 다시 시도 보관함(`suggestion_retry`)은 쓰지 않는다 — 프로세스 메모리이고 15분이라 30분 창과 맞지 않는다.
+`PartialReply.failed` 가 앞 턴에 남아 있어 "못 낸 것: activity" 로 Supervisor 에 간다. 못 낸 Agent 가 하나면 그 턴의 보호자 말에서 요청을 되살려 `resolved_request` 에 쓴다. 못 낸 것이 없거나 여럿이면 정할 수 없어 `unclear` 다. 05 다시 시도 보관함(`suggestion_retry`)은 쓰지 않는다 — 실패 맥락을 15분만 두어 30분 창과 맞지 않는다.
 
 ### 5-5. eval
 

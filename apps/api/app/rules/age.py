@@ -17,6 +17,7 @@ stage 는 참고값이지 공통 게이팅 축이 아니다.
 `app/agents/common/age.py` 다 — Agent 는 거기 있는 같은 이름의 함수를 쓴다 (#372).
 """
 
+import re
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Literal
@@ -156,3 +157,91 @@ def _require_plain_date(value: date, name: str) -> None:
         raise TypeError(f"{name} 에는 date 가 와야 한다. datetime 을 넘겼다: {value!r}")
     if not isinstance(value, date):
         raise TypeError(f"{name} 에는 date 가 와야 한다: {type(value).__name__}")
+
+
+# ── 질문 속 나이 (#574) ─────────────────────────────────────────────────────
+# "보통 3~4세 어린이들은 …" 처럼 아이 일반을 물을 때, 질문에 적힌 나이를 월령 구간 `[lo, hi)` 로
+# 읽는다. 나이 계산은 코드 몫이라(루트 §3) 모델이 나이를 뽑지 않는다. "세 · 살" 은 만 나이로
+# 읽는다 — 만 나이 통일 뒤 법적 기준이고, 세 문서의 월령도 만 나이다.
+#
+# 문서가 다루는 상한(`v1_month_limit`)은 YAML 값이라 이 층에서 모른다. 호출부가 자른다.
+
+_KOREAN_NUMBERS = {"한": 1, "두": 2, "세": 3, "네": 4, "다섯": 5, "여섯": 6}
+_KOREAN_BUNDLES = {
+    "한두": (1, 2),
+    "두세": (2, 3),
+    "세네": (3, 4),
+    "네다섯": (4, 5),
+    "대여섯": (5, 6),
+}
+_DASH = r"\s*[~\-–～]\s*"
+# "돌" 은 뒤에 오는 말로 가린다 — 돌봄 · 돌려 · 돌멩이를 나이로 읽지 않는다
+_DOL_TAIL = r"(?=\s|$|[?.,!]|아기|쟁이|이|에|때|쯤|전|부터|까지|무렵|즈음|된|지난|지나)"
+
+# 숫자 앞뒤가 소수점이면 나이가 아니다("1.5세"). "세" 는 숫자에 붙여 쓸 때만 나이로 읽는다 —
+# "숫자 10 세?" 의 "세" 는 세다(count)의 활용형이다. "살" · "개월" 은 띄어도 나이다
+_NUM = r"(?<![\d.])(\d+)(?!\.\d)"
+_YEAR_UNIT = r"(?:세|살)"
+_AGE_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(_NUM + r"(?:\s*개월)?" + _DASH + r"(\d+)\s*개월"), "month_range"),
+    (re.compile(_NUM + r"\s*개월"), "month"),
+    (
+        re.compile(r"(?:만\s*)?" + _NUM + r"(?:\s*살|세)?" + _DASH + r"(\d+)\s*" + _YEAR_UNIT),
+        "year_range",
+    ),
+    (re.compile(r"(?:만\s*)?" + _NUM + r"(?:세|\s*살)"), "year"),
+    (re.compile(r"(?<![가-힣])(" + "|".join(_KOREAN_BUNDLES) + r")\s*살"), "bundle"),
+    (re.compile(r"(?<![가-힣])(" + "|".join(_KOREAN_NUMBERS) + r")\s*살"), "korean_year"),
+    (re.compile(r"(?<![가-힣])(두|세|네|다섯)\s*돌" + _DOL_TAIL), "nth_dol"),
+    (re.compile(r"(?<![가-힣])돌" + _DOL_TAIL), "dol"),
+)
+
+
+def _range_of(kind: str, match: re.Match[str]) -> tuple[int, int]:
+    if kind == "month_range":
+        return int(match[1]), int(match[2]) + 1
+    if kind == "month":
+        return int(match[1]), int(match[1]) + 1
+    if kind == "year_range":
+        return int(match[1]) * 12, (int(match[2]) + 1) * 12
+    if kind == "year":
+        return int(match[1]) * 12, (int(match[1]) + 1) * 12
+    if kind == "bundle":
+        lo, hi = _KOREAN_BUNDLES[match[1]]
+        return lo * 12, (hi + 1) * 12
+    if kind == "korean_year":
+        years = _KOREAN_NUMBERS[match[1]]
+        return years * 12, (years + 1) * 12
+    if kind == "nth_dol":
+        # 두 돌 = 두 번째 생일 → 만 2세
+        years = _KOREAN_NUMBERS[match[1]]
+        return years * 12, (years + 1) * 12
+    return 12, 24  # 돌 — 첫 생일 무렵, 만 1세
+
+
+def asked_month_range(text: str) -> tuple[int, int] | None:
+    """질문에 적힌 나이를 월령 구간 `[lo, hi)` 로. 나이가 없으면 None.
+
+    - 나이가 둘 이상이면 문장에서 먼저 나온 것. 두 나이를 합쳐 새 구간을 만들지 않는다.
+    - 같은 자리에서 시작하면 긴 쪽("3~4세" 가 "3세" 보다 먼저).
+    - 거꾸로 쓴 범위("4~3세")는 `lo >= hi` 인 빈 구간 그대로 돌려준다 — 호출부가 자료 없음으로
+      닫는다. 고쳐 읽지 않는다.
+    """
+    found: list[tuple[int, int, tuple[int, int]]] = []
+    for pattern, kind in _AGE_PATTERNS:
+        match = pattern.search(text)
+        if match:
+            found.append((match.start(), -(match.end() - match.start()), _range_of(kind, match)))
+    if not found:
+        return None
+    return min(found)[2]
+
+
+def asked_age_label(lo: int, hi: int) -> str:
+    """화면 · 모델 입력에 쓰는 구간 이름 — "만 1세" · "만 3~4세" · "18개월" · "12~18개월"."""
+    if hi - lo == 1:
+        return f"{lo}개월"
+    if lo % 12 == 0 and hi % 12 == 0:
+        first, last = lo // 12, hi // 12 - 1
+        return f"만 {first}세" if first == last else f"만 {first}~{last}세"
+    return f"{lo}~{hi - 1}개월"

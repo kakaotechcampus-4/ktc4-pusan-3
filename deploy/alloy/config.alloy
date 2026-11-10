@@ -1,0 +1,73 @@
+// 서버 메트릭을 Grafana Cloud 로 보낸다 (#946). 무엇을 왜 모으는지는 docs/ops/logging-alerts-v1.md §1 · §7.
+// 🚨 숫자와 고정 라벨만 나간다. 로그 · 요청 본문 · 경로 · IP · Host 헤더는 보내지 않는다.
+// 🚨 Alloy 에 서버의 어떤 경로도 붙이지 않는다 (compose 의 alloy — 비 root · 읽기 전용 · 마운트 없음).
+//    `/` 를 붙이면 그 안의 /run/docker.sock · .env · 다른 컨테이너 환경변수까지 닿는다 (#946 보안 검토 H1).
+//    컨테이너별 메트릭(cadvisor)도 같은 이유로 뺐다 — 어느 컨테이너가 먹는지는 `docker stats` 로 본다.
+
+// 서버 자원 — 컨테이너 안의 /proc 를 그대로 읽는다. Docker 는 /proc/stat · meminfo · loadavg · vmstat 을
+// 컨테이너별로 나누지 않아서 서버 전체 값이 나온다 (로컬 실측: MemTotal · CPU 수가 docker info 와 같다).
+prometheus.exporter.unix "host" {
+  // 쓰는 것만 켠다 — 기본 50개 가까이 켜면 시계열만 늘어 무료 한도(활성 10,000)를 먹는다.
+  // vmstat 기본 필드에 oom_kill(메모리가 모자라 죽인 횟수) · pswp(swap 입출력)가 들어 있다.
+  // 🚨 netdev(네트워크)는 켜지 않는다 — /proc/net 은 읽는 프로세스의 네트워크라 Alloy 자신의 eth0 이 나온다.
+  //    사이트 트래픽은 Caddy 의 요청 · 응답 크기(caddy_http_*_size_bytes)로 본다.
+  set_collectors = ["cpu", "loadavg", "meminfo", "filesystem", "vmstat"]
+
+  // 디스크는 "/" 하나만 — 컨테이너 루트(overlay)를 재면 Docker 가 쓰는 디스크 값이 나온다. EC2 는 그게
+  // 50GB 루트 디스크다 (/var/lib/docker 가 루트에 있다). overlay 는 기본 제외 목록에 있어 제외 목록을 비운다.
+  filesystem {
+    fs_types_exclude     = "^$"
+    mount_points_exclude = "^/.+"
+  }
+}
+
+prometheus.scrape "host" {
+  targets         = prometheus.exporter.unix.host.targets
+  scrape_interval = "60s"
+  // 안전장치 — 넘으면 그 회차는 통째로 버린다. 평소 ~100 줄.
+  sample_limit    = 2000
+  forward_to      = [prometheus.remote_write.cloud.receiver]
+}
+
+// Caddy — 요청 수 · 응답 코드 · 응답 시간 · 크기. :2020 은 이 컨테이너 주소(172.30.0.11)만 받는다 (deploy/caddy/Caddyfile).
+// 🚨 Caddy 원본은 메서드 × 응답 코드 조합 하나마다 ~50줄이 생긴다. 인터넷 누구나 메서드 · 404/405/413 … 을 섞어
+//    보내면 조합이 늘고, 카운터는 Caddy 재시작 전까지 안 지워진다 (#946 재검증: 153 → 4207줄 재현).
+//    그래서 한도는 Alloy 메모리 안전장치로만 크게 두고, 보낼 것은 아래 relabel 로 줄인다.
+//    한도를 낮게 두면 넘는 순간 Caddy 메트릭이 통째로 비고 알림도 조용해진다 — 그때는 up == 0 만 남는다.
+prometheus.scrape "caddy" {
+  targets         = [{"__address__" = "ktc4-caddy:2020"}]
+  scrape_interval = "60s"
+  sample_limit    = 50000
+  forward_to      = [prometheus.relabel.caddy.receiver]
+}
+
+prometheus.relabel "caddy" {
+  forward_to = [prometheus.remote_write.cloud.receiver]
+
+  // 쓰는 것만 — 합계(_sum)와 개수(_count)만 남기고 구간(_bucket) · Go 런타임 메트릭은 버린다.
+  // 조합 하나에 ~7줄로 준다. 응답 시간은 p95 대신 평균(sum / count)으로 본다.
+  rule {
+    source_labels = ["__name__"]
+    regex         = "caddy_http_(requests_total|requests_in_flight|request_duration_seconds_(count|sum)|response_duration_seconds_(count|sum)|(request|response)_size_bytes_sum)"
+    action        = "keep"
+  }
+
+  // 응답 코드는 upstream(dev api 는 develop 코드)이 준 값 그대로다 — 1xx ~ 5xx 밖은 버린다.
+  rule {
+    source_labels = ["code"]
+    regex         = "[06-9].*|.{4,}"
+    action        = "drop"
+  }
+}
+
+// 값은 prod deploy/docker/.env 에만 있다 (커밋 안 함). 비어 있으면 보내기만 실패하고 Alloy 는 계속 돈다.
+prometheus.remote_write "cloud" {
+  endpoint {
+    url = sys.env("GRAFANA_PROM_URL")
+
+    basic_auth {
+      username = sys.env("GRAFANA_PROM_USER")
+      password = sys.env("GRAFANA_CLOUD_TOKEN")
+    }
+  }
+}
