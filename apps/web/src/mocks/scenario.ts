@@ -120,6 +120,8 @@ export const SCENARIOS = {
   agent_readout:
     "04 Agent 결과 — 성장 추이 + 0개 안내 + 화면에 보일 것 없는 급식 갱신 (블록 둘 · 빈 결과는 안 선다)",
   agent_question: "04 Agent 결과 — Agent 가 되묻는 한 줄 (답하기 버튼이 없어야 한다 · #246 전)",
+  agent_info:
+    "04 Agent 결과 — 일반 정보 질문의 문서 근거 답변 (#574). 기준 안내 + 답 + 참고 줄 · 후보 카드 0",
   agent_partial: "04 Agent 결과 — 한 Agent 는 안내, 다른 Agent 는 실패 (성공 · 실패를 한 화면에)",
   agent_suggestions:
     "04 Agent 결과 — 추천이 든 결과 (식사 개인화 3개 · 놀이 일반 1개 + 날씨 안내). 후보 보기가 그 run 의 05 를 연다",

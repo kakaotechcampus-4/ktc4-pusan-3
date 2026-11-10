@@ -185,6 +185,26 @@ def j_personalized_learning(o: Observed) -> None:
         o.failures.append(f"주제 기록이 있는데 {event.kind} 추천이다 (personalized 여야 한다)")
 
 
+def j_info(o: Observed) -> None:
+    """일반 정보 질문(#574) — 추천 없이 readout 만. 저장 · 후보 id · 0개 안내가 없어야 한다."""
+    event = _ran(o, "info")
+    if event is None:
+        return
+    if event.suggestion_ids or any(b.agent == "growth" for b in o.saved.batches):
+        o.failures.append("일반 정보 질문에 추천이 저장됐다")
+    if event.kind is not None:
+        o.failures.append(f"추천 묶음 한 줄(kind={event.kind})이 붙었다 — 추천이 아니다")
+    answers = [r for r in event.readouts if r.kind == "doc_answer"]
+    if event.status != "completed" or not answers:
+        o.notes.append(
+            f"답 없이 끝남 status={event.status} readouts={[r.kind for r in event.readouts]}"
+        )
+        return
+    if not any(ref.kind == "growth_doc" for ref in answers[0].source_refs):
+        o.failures.append("답에 growth_doc 근거가 없다")
+    o.notes.append(f"답 {answers[0].body[:60]} · 참고 {len(answers[0].source_refs)}개")
+
+
 def j_routine(*, need_suggestion: bool) -> Judge:
     def judge(o: Observed) -> None:
         event = _ran(o, ROUTINE)
@@ -381,6 +401,13 @@ CASES: tuple[Case, ...] = (
         "C60-math",
         "수학 기록이 있는 요청 → learning_suggestion · 개인화 3",
         j_personalized_learning,
+    ),
+    Case(
+        "IN09/C48",
+        "보통 몇 살부터 혼자 양치해?",
+        "C48",
+        "아이 일반 질문 → growth/info · 추천 저장 0 · 답 + 참고",
+        j_info,
     ),
     Case(
         "T11/C48",

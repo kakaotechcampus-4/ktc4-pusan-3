@@ -222,6 +222,10 @@ class RecordingDocs:
         self.queries.append(kwargs["query"])
         return await self._inner.search(**kwargs)
 
+    async def search_range(self, **kwargs: Any) -> list[GrowthDocRow]:
+        self.queries.append(kwargs["query"])
+        return await self._inner.search_range(**kwargs)
+
     async def chain(self, *, chain_key: str) -> list[GrowthDocRow]:
         return await self._inner.chain(chain_key=chain_key)
 

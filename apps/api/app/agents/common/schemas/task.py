@@ -9,6 +9,11 @@ from dataclasses import dataclass
 # 유형별 묶기는 agent × task_type 당 하나, 상한(2)은 agent 단위로 센다.
 MAX_DOMAIN_AGENTS = 2
 
+# 아이 일반을 묻는 질문("보통 3세는 …")의 task_type. 추천이 아니라 문서 근거 답변이다(#574).
+# Supervisor 의 `request_mode=info` 에서 routing 이 붙인다. 각 Agent 의 라벨 enum 에는 넣지 않는다 —
+# Supervisor JSON 스키마의 `food_task` · `growth_task` 값이 늘어나면 안 된다
+INFO_TASK = "info"
+
 
 @dataclass(frozen=True)
 class DomainTask:

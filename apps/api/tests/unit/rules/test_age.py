@@ -200,3 +200,92 @@ def test_기준_월령_도달일은_달력과_말일을_따른다(birth, months,
     assert months_between(birth, expected) == months
     if months:
         assert months_between(birth, expected - timedelta(days=1)) == months - 1
+
+
+# ── 질문 속 나이 (#574) ───────────────────────────────────────────────────
+from app.rules.age import asked_age_label, asked_month_range  # noqa: E402
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("보통 0세는 뭐 해?", (0, 12)),
+        ("보통 1세 어린이들은 어떤 걸 하면서 놀아?", (12, 24)),
+        ("만 1세 아이들은 뭐 먹어?", (12, 24)),
+        ("1살 애들은 보통", (12, 24)),
+        ("한 살 아기들은", (12, 24)),
+        ("보통 3~4세 어린이들은 어떤 걸 하면서 놀아?", (36, 60)),
+        ("3-4세 애들", (36, 60)),
+        ("3~4살 애들", (36, 60)),
+        ("세네 살 애들은 뭐 해?", (36, 60)),
+        ("두세 살 아이들", (24, 48)),
+        ("18개월 아기들은 보통 뭐 하고 놀아?", (18, 19)),
+        ("12~18개월 아기들", (12, 19)),
+        ("돌 아기는 보통 뭐 먹어?", (12, 24)),
+        ("돌 지난 아기", (12, 24)),
+        ("두 돌 애들은", (24, 36)),
+        ("세 돌 지나면", (36, 48)),
+        ("보통 3세는 숫자 몇까지 세?", (36, 48)),
+    ],
+)
+def test_질문_속_나이를_월령_구간으로(text, expected):
+    assert asked_month_range(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "보통 몇 살부터 혼자 양치해?",
+        "또래 애들은 요즘 뭐 하고 노나?",
+        "몇 개월에 예방접종 맞아?",
+        "돌봄 교실에서 뭐 해?",
+        "블록을 돌려 맞추는 놀이",
+        "숫자 세기 놀이",
+    ],
+)
+def test_나이가_없으면_None(text):
+    assert asked_month_range(text) is None
+
+
+def test_나이가_둘이면_처음_것():
+    assert asked_month_range("1세랑 3세는 뭐가 달라?") == (12, 24)
+
+
+def test_역전_범위는_빈_구간이다():
+    lo, hi = asked_month_range("4~3세 애들")
+    assert lo >= hi
+
+
+@pytest.mark.parametrize(
+    "lo, hi, label",
+    [
+        (12, 24, "만 1세"),
+        (36, 60, "만 3~4세"),
+        (18, 19, "18개월"),
+        (12, 19, "12~18개월"),
+        (0, 12, "만 0세"),
+    ],
+)
+def test_구간_이름(lo, hi, label):
+    assert asked_age_label(lo, hi) == label
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("3세~5세 아이들은 뭐 해?", (36, 72)),
+        ("3살~5살 아이들은", (36, 72)),
+        ("12개월~18개월 아기들은", (12, 19)),
+        ("보통 10세는 뭐 해?", (120, 132)),
+    ],
+)
+def test_단위가_양쪽에_붙은_범위도_읽는다(text, expected):
+    assert asked_month_range(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["보통 몇 살부터 숫자 10 세?", "1.5세 아기는 뭐 해?", "블록 5 세 보기"],
+)
+def test_세다_동사와_소수는_나이로_읽지_않는다(text):
+    assert asked_month_range(text) is None

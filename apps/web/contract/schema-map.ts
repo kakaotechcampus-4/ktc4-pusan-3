@@ -144,6 +144,9 @@ export const SCHEMA_MAP: Record<string, MapValue> = {
   StoredRef: "StoredRef",
   // readout 근거 중 화면이 받는 종류만(지금은 복약 코스) — 웹 `Ref` 의 kind 목록 안이다
   StoredScreenRef: "Ref",
+  // 일반 정보 답변의 참고 줄 (#574). 일반 추천의 `DocEvidence` 에서 note 를 뺀 모양이다
+  StoredDocSource: "DocSource",
+  StoredDocRef: "DocSource.ref",
 
   /* ── 07 기록 · 기억 · 고치기 ── */
   Ref: "Ref",
