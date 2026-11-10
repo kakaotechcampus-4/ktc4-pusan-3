@@ -65,9 +65,10 @@ MEAL_SLOTS = frozenset(
 )
 _NOT_A_FOOD = (
     "'{subject}'은 끼니 이름이라 subject가 될 수 없다. 무엇을 먹었는지 음식 이름을 넣는다. "
-    "발화에 음식 이름이 없으면 저장하지 않는다. 안 먹는다는 식사 태도면 "
-    "create_observation_routine에 routine_category=mealtime 으로 남기고, "
-    "먹었다는 말이면 무엇을 먹었는지 보호자에게 되묻는다."
+    "발화에 음식 이름이 없으면 저장하지 않는다. 투정 · 거부 · 도구 쓰기나 되풀이되는 경향 같은 "
+    "식사 태도면 create_observation_routine에 routine_category=mealtime 으로 남긴다. "
+    "오늘 한 번 먹었다 · 안 먹었다 · 조금 먹었다는 말이면 무엇인지 보호자에게 한 번 묻고, "
+    "이미 물었는데 답에도 음식 이름이 없으면 다시 묻지 않고 mealtime 으로 남긴다."
 )
 
 

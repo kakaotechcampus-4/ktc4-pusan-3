@@ -187,8 +187,9 @@ async def delete_observation(
     되돌릴 수 없어서 Idempotency-Key 가 필수다. 같은 키로 다시 오면 처음처럼 204 다.
 
     오류 (순서대로): 403 child_access_denied → 400 idempotency_key_required →
-    503 temporarily_unavailable(Redis 장애 — 지우기 전에 막는다) →
-    404 not_found(없는 종류 · 없는 기록 · 이미 지운 기록 · 이 아이의 기록이 아님).
+    503 temporarily_unavailable(Redis 장애 — 지우기 전에 막는다. 키를 적는 commit 직전에 나면
+    지운 것을 되돌린다) → 404 not_found(없는 종류 · 없는 기록 · 이미 지운 기록 · 이 아이의 기록이
+    아님).
     """
     if not idempotency_key:
         raise ApiError(
@@ -221,8 +222,9 @@ async def delete_observation(
         raise ApiError(404, "not_found", "그 기록을 찾지 못했어요")
     # 🚨 빠뜨리면 지운 기록이 기억 강도에 그대로 남는다 — 계산은 commit 직전에 몰아서 한다 (#717)
     await store.flush_profiles()
-    await session.commit()
-    await idempotency.remember(**scope, replay=_DELETED_REPLAY)
+    # 🚨 키는 아이 잠금을 쥔 채(commit 전에) 적는다 — 위에서 기다리던 같은 키 요청이 잠금을 얻을 때
+    #    반드시 보게 (#774)
+    await idempotency.remember_and_commit(session, **scope, replay=_DELETED_REPLAY)
     trigger_curator_after_delete(
         child.child_id, today, parent_id=parent.parent_id, after="기록 삭제"
     )

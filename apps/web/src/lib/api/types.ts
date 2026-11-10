@@ -1534,7 +1534,11 @@ export interface PhotoEntry {
   label?: string | null;
   /** 누구의 일인가. `conditional` 은 해당하는 아이만이다. */
   target_scope?: "child" | "class" | "all" | "conditional" | "unknown" | null;
-  /** 읽은 시작 일시. `date` 가 이 날짜다. */
+  /**
+   * 읽은 시작 일시. `date` 가 이 날짜다.
+   * 🚨 **저장할 때는 보호자가 고친 시작을 얹어 보낸다** (`recordedEntry` · `all_day` · `ends_at` 도 함께).
+   *    서버는 시작 항목에서만, 이 값의 날짜가 `date` 와 같을 때만 받는다 (`apply_edits`).
+   */
   starts_at?: string | null;
   ends_at?: string | null;
   /** 마감. 🚨 `date` 가 일시인지 마감인지는 `starts_at` · `due_at` 으로 가른다. */

@@ -56,7 +56,7 @@ _RULE = infant_fever_rule()
 FEVER_TEMPERATURE = _RULE.fever_temperature  # 발열로 보는 체온
 INFANT_FEVER_BELOW_MONTH = _RULE.below_month  # 이 월령 미만의 발열은 응급 안내가 먼저다
 
-_SITE_LABEL = {
+SITE_LABEL = {
     "ear": "귀",
     "forehead": "이마",
     "armpit": "겨드랑이",
@@ -249,7 +249,7 @@ def _value(event: _Event) -> Decimal:
 
 
 def _temperature_line(event: _Event) -> Readout:
-    site = _SITE_LABEL.get(event.row.measure_site or "", "")
+    site = SITE_LABEL.get(event.row.measure_site or "", "")
     return _with_ref(
         READOUTS.render(
             FEVER_LINE,

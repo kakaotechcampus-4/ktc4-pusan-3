@@ -260,7 +260,14 @@ async def commit_photo(
                 item_of_event[entry.event_id] = len(items)
             items.append(
                 photo_run.apply_edits(
-                    run.items[entry.id], title=entry.title, day=entry.date, supplies=entry.items
+                    run.items[entry.id],
+                    title=entry.title,
+                    day=entry.date,
+                    supplies=entry.items,
+                    # 보호자가 시트에서 고친 시작 — 캘린더에 넣는 값과 기록이 같아야 한다
+                    starts_at=entry.starts_at,
+                    ends_at=entry.ends_at,
+                    all_day=entry.all_day,
                 )
             )
         elif entry.id in run.meals:
