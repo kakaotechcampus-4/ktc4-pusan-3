@@ -240,7 +240,9 @@ class GroupNoticeOut(ApiSchema):
 
 class SuggestionGroupOut(ApiSchema):
     agent: str
-    prompt: str | None = Field(default=None, description="무엇을 봤는지. 아직 비어 있다 (후속)")
+    prompt: str | None = Field(
+        default=None, description="무엇을 봤는지 한 줄. 지금은 채우지 않아 늘 null 이다"
+    )
     merges_into_one: bool | None = Field(
         default=None, description="채택하면 일정 초안이 한 건으로 묶이는 Agent"
     )

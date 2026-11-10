@@ -35,6 +35,16 @@ from app.core.prompt_hash import fingerprint, short
 
 logger = logging.getLogger(__name__)
 
+_REQUIRED = ("CURATOR_JUDGE_API_KEY", "CURATOR_JUDGE_BASE_URL", "CURATOR_JUDGE_MODEL")
+
+
+def missing_settings(settings: AgentSettings) -> list[str]:
+    """비어 있는 CURATOR_JUDGE_* 이름. 하나라도 있으면 JevJudge 를 못 만든다.
+
+    생성자와 부팅 보고(`entrypoint.llm_gaps`)가 같이 쓴다 — 켜지는 조건을 한 곳에만 둔다.
+    """
+    return [name for name in _REQUIRED if not getattr(settings, name).strip()]
+
 
 class JevJudge:
     """IdentityJudge 구현. CURATOR_JUDGE_* 가 비면 만들 때 LLMConfigError."""
@@ -53,7 +63,7 @@ class JevJudge:
             "CURATOR_JUDGE_BASE_URL": s.CURATOR_JUDGE_BASE_URL.strip(),
             "CURATOR_JUDGE_MODEL": s.CURATOR_JUDGE_MODEL.strip(),
         }
-        missing = [name for name, value in values.items() if not value]
+        missing = missing_settings(s)
         if missing:
             raise LLMConfigError(f"{' / '.join(missing)} 가 비어 있다. apps/api/.env 를 확인한다.")
 

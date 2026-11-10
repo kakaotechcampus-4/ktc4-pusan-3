@@ -5,8 +5,13 @@
 같은 눈으로 봐야 한다 — 역할의 값이 비면 MEMORY_* 를 빌려 쓴다.
 """
 
+import pytest
+
 from app.agents import entrypoint
 from app.agents.common.config import AgentSettings
+from app.agents.common.llm_client import LLMConfigError
+from app.agents.curator.embedding.embedder import Embedder
+from app.agents.curator.embedding.jev import JevJudge
 from app.core.agent_config import AGENT_ROLES, LLM_FIELDS
 
 FILLED = "채움"
@@ -23,6 +28,23 @@ def _settings(**values: str) -> AgentSettings:
     blank = {f"{role}_{field}": "" for role in AGENT_ROLES for field in LLM_FIELDS}
     blank |= dict.fromkeys(CURATOR, "")
     return AgentSettings(_env_file=None, **{**blank, **values})
+
+
+@pytest.mark.parametrize("blank", sorted(CURATOR))
+def test_Curator_빈_자리는_생성자가_거절하는_것과_같다(blank: str) -> None:
+    """보고가 "꺼졌다" 고 하는 것과 실제로 못 만드는 것이 같은 조건이다 (#912 리뷰).
+
+    둘이 조건을 따로 적으면 생성자만 바뀌었을 때 보고가 틀린 말을 한다.
+    """
+    settings = _settings(**MEMORY, **{**CURATOR, blank: ""})
+    maker = Embedder if blank.startswith("EMBEDDING") else JevJudge
+
+    with pytest.raises(LLMConfigError):
+        maker(settings)
+
+    gaps = entrypoint.llm_gaps(settings)
+    assert len(gaps) == 1
+    assert blank in gaps[0]
 
 
 def test_Memory_와_Curator_가_채워져_있으면_빈_자리가_없다() -> None:
