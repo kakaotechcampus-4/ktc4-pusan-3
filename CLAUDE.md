@@ -121,7 +121,7 @@
 | **notice**                         | 기관에서 온 **원문** 1건(알림장 · 가정통신문 · 식단표). 알림이 아니다 — 일정 알림은 `reminder`. 원문에서 뽑은 할 일 · 알 일은 `notice_item` | `notice` · `notice_item` |
 | **Curator**                        | 중복 병합 · 반복 집계 · 승격/강등/감쇠를 **규칙으로** 수행                                                | AI 파트                                                      |
 | **승격 (promotion)**               | `candidate → confirmed → archived`                                                                        | `profile_state`                                              |
-| **감쇠 (decay)**                   | 오래된 기억을 근거에서 빼는 것. `profile_safety` 는 **감쇠 없음** (보호자만 `retracted`)                  | 규칙                                                         |
+| **감쇠 (decay)**                   | 오래된 기억을 근거에서 빼는 것. `health_safety` 는 **감쇠 없음** (보호자만 `retracted`)                   | 규칙                                                         |
 | **Supervisor**                     | 안전 사전검사 + 의도 분류 + Agent 최대 2개 라우팅                                                         | AI 파트                                                      |
 | **의도 3형**                       | `기록형` / `요청형` / `혼합형`                                                                            | Supervisor 출력                                              |
 | **도메인 Agent**                   | `food` · `activity` · `growth` · `health` **4종 고정**. Agent 이름은 `growth` 지만 관찰 테이블은 `observation_education`, `observation_routine` | `suggestion_agent`                                           |
@@ -184,7 +184,7 @@
 │       ├── pyproject.toml    의존성 · ruff · pytest 설정
 │       ├── uv.lock           ⚠️ 반드시 커밋 — 6명 동일 버전 고정
 │       ├── .env.example      환경변수 템플릿 (실제 값 없음)
-│       ├── alembic/          (비어 있음) DB 마이그레이션
+│       ├── alembic/          DB 마이그레이션 (`versions/`). 배포한 것은 고치지 않고 새 revision 을 더한다 — expand-only 를 CI 가 검사한다
 │       ├── app/
 │       │   ├── main.py       FastAPI 앱 진입점
 │       │   ├── core/         설정(pydantic-settings) — 김명성
@@ -192,27 +192,29 @@
 │       │   ├── api/          라우터 · 스키마 — 김명성
 │       │   │   ├── health.py 운영용 헬스체크 — /api/v1 밖 (계약서 §01)
 │       │   │   ├── deps/     인증 · 권한 · 동의 검사
-│       │   │   ├── idempotency.py  Idempotency-Key 기억 (같은 키 → 처음 응답 재생)
+│       │   │   ├── idempotency.py  Idempotency-Key 기억 — Redis, 없으면 프로세스 메모리 (같은 키 → 처음 응답 재생)
 │       │   │   ├── runs/     run 채널 · SSE · 백그라운드 러너 · Agent 이벤트 → 화면 이벤트 번역. v1/ 밖인 이유 — 계약서 버전과 무관하다
-│       │   │   │             🚨 둘 다 프로세스 메모리 — api 는 --workers 1 전제 (#134)
+│       │   │   │             🚨 run 채널 · 되묻기 맥락은 프로세스 메모리 — api 는 --workers 1 전제 (#134)
 │       │   │   └── v1/       도메인 엔드포인트
-│       │   ├── domains/      (비어 있음) 도메인 모델 · 리포지토리 — 김명성
-│       │   ├── agents/       (비어 있음) Agent — **내부 구조는 이시하가 결정**
+│       │   ├── domains/      도메인 모델 · 리포지토리 — 김명성
+│       │   ├── agents/       Agent (supervisor · memory · curator · food · activity · growth · health) — **내부 구조는 이시하가 결정**
+│       │   │   ├── entrypoint.py  api 가 보는 유일한 진입점 — api 는 이 파일만 import 한다
 │       │   │   └── CLAUDE.md (미생성) Agent 구현 · 프롬프트 — 이시하
-│       │   ├── rules/        (비어 있음) 규칙(순수 Python) — 공동
-│       │   ├── providers/    (비어 있음) 외부 모델 SDK 격리
-│       │   ├── integrations/ (비어 있음) 외부 서비스 API (Kakao OAuth · MFDS)
-│       │   ├── infra/db/     (비어 있음) DB 세션 · 엔진 — 김명성
-│       │   └── workers/      (비어 있음) 알림 발송 · 감쇠 배치
+│       │   ├── rules/        규칙(순수 Python) — 공동
+│       │   ├── providers/    외부 모델 SDK 격리 (급식표 · 공지 사진 읽기)
+│       │   ├── integrations/ 외부 서비스 API (Kakao OAuth · 공공데이터 날씨 · 행사 · 병원 · 식품 · 도서관 정보나루 · FCM · Discord)
+│       │   ├── infra/db/     DB 세션 · 엔진 — 김명성
+│       │   └── workers/      서버 cron 이 돌리는 배치 — 일정 알림 발송 · 만료 정리 · 기억 다시 계산
 │       └── tests/            pytest — unit · integration · eval(라이브 LLM)
-├── eval/                     (비어 있음) 테스트 케이스 10개 — 오현식 · 이도헌
+├── eval/                     통합 평가 — 단발 프로브 34개 · 일주일 시나리오 · 장애 점검표. 실행 코드는 `apps/api/tests/eval/` — 오현식 · 이도헌
 ├── deploy/
 │   ├── docker/                compose 두 벌 — docker-compose.yml 은 로컬 개발 DB(Postgres+pgvector)+Redis,
 │   │                          docker-compose.deploy.yml 은 배포(db+redis+api+web+caddy). .env 는 한 곳을 같이 쓴다
 │   ├── caddy/                  Caddyfile — HTTPS 종단 + 리버스 프록시 (icatch.ai.kr → web, api.icatch.ai.kr → api, dev.· 는 dev 환경)
 │   │                          🚨 한 EC2 에 prod(main) · dev(develop) 두 벌이 뜬다. CI 통과 후에만 배포, 헬스 실패면 직전 이미지로 자동 롤백 —
 │   │                          DB 는 안 되돌리므로 마이그레이션은 expand-only ([`docs/ops/deploy-v1.md`](docs/ops/deploy-v1.md))
-│   └── nginx/, scripts/       (비어 있음) 배포용
+│   ├── scripts/                `deploy.sh`(배포 · 롤백) · `backup.sh` · `restore-check.sh`(백업 · 복원 점검) · `health-alert.sh`(컨테이너 감시)
+│   └── nginx/                  (비어 있음) Caddy 를 쓴다
 └── .github/                  ⚠️ §8 참고 — 손대면 안 되는 파일이 있다
 ```
 
@@ -249,7 +251,7 @@
 | | |
 | --- | --- |
 | **Data** | **PostgreSQL + pgvector 한 곳** (벡터 DB 분리 안 함 — 6명 10주엔 인프라 하나가 낫다) |
-| **AI** | LLM API · Structured Output · Tool Calling · Embedding 검색 · Supervisor + Domain Agent · Memory Curator |
+| **AI** | LLM API · Structured Output · Tool Calling · Embedding(Curator 가 같은 뜻의 기억을 묶을 때 — Agent 의 기억 조회는 영역 · 날짜 조건 검색) · Supervisor + Domain Agent · Memory Curator |
 | **협업** | GitHub · Notion(기획·의사결정 기록) · Discord |
 
 ---
