@@ -29,6 +29,31 @@ _EMPTY_PARENS = re.compile(r"\(\s*\)")
 _SPACES = re.compile(r"\s+")
 
 
+# 열량 · 영양 표기 줄의 낱말. 이것과 숫자 · 기호만 있는 원문은 메뉴가 아니다 (`is_nutrition_line`)
+_NUTRITION_WORDS = re.compile(r"열량|에너지|칼로리|단백질|탄수화물|지방|당류|나트륨|칼슘|총")
+_NUTRITION_UNITS = re.compile(r"(?<![a-z])(?:kcal|cal|mg|g)(?![a-z])")
+_NUMBER = re.compile(r"\d+")
+# 알레르기 번호는 1~22 다. 세 자리 숫자는 번호가 아니라 열량이다 ("462/17")
+_ENERGY_DIGITS = 100
+
+
+def is_nutrition_line(raw: str) -> bool:
+    """급식표 원문 한 항목이 열량 · 영양 표기 줄인가 ("총 511 kcal" · "462/17").
+
+    🚨 보수적으로 판정한다 — 음식 이름을 잘못 버리면 영양 계산 · 메뉴 기억에서 빠진다.
+       열량 · 영양 낱말 · 단위와 숫자 · 기호를 지우고 **글자가 하나도 남지 않을 때만** 참이다.
+       "총각김치" 는 "각김치" 가 남아 메뉴다. 번호만 있는 원문("2" · "5,6")은 열량 줄이 아니라
+       이름을 못 읽은 칸이다 — 세 자리 숫자도, 열량 낱말도 없으면 거짓이다.
+    """
+    text = unicodedata.normalize("NFKC", raw).lower()
+    marked = _NUTRITION_UNITS.sub(" ", _NUTRITION_WORDS.sub(" ", text))
+    if any(ch.isalpha() for ch in marked):
+        return False
+    has_word = marked != text
+    has_energy = any(int(n) >= _ENERGY_DIGITS for n in _NUMBER.findall(marked))
+    return has_word or has_energy
+
+
 def normalize_menu_key(name: str) -> str:
     """메뉴명 → `menu_key`. 이름이 남지 않으면 빈 문자열이다.
 

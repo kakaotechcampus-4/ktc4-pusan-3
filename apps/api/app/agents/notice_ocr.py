@@ -26,7 +26,7 @@ from app.providers.model_errors import MODEL_CALL_FAILURES
 from app.providers.notice.document_text import UnreadableDocument, normalize_image
 from app.providers.notice.extractor import NoticeExtractor
 from app.rules.meal_plan_month import decide_year_month
-from app.rules.menu_key import menu_display_name
+from app.rules.menu_key import is_nutrition_line, menu_display_name
 from app.rules.notice_text import clean_text
 
 log = logging.getLogger(__name__)
@@ -115,10 +115,16 @@ def names_from_raw(plan: MealPlanJSON) -> MealPlanJSON:
     모델 이름에 찌꺼기가 붙은 적이 있어서(" Riot" · "/Optional?") 원문에서 번호 · 기호만 지운다.
     응답 스키마는 그대로 둔다 — `name` 을 빼면 프롬프트 지문이 바뀐다.
     급식표 eval(`scripts/meal_ocr_eval.py`)도 이 함수를 거쳐 운영과 같은 이름을 채점한다.
+
+    열량 · 영양 표기 줄("총 511 kcal" · "462/17")은 메뉴가 아니라서 뺀다 — 이름이 "총 kcal" 가 되어
+    가짜 메뉴로 저장됐다. 그 줄뿐인 끼니는 끼니째 뺀다. 이름을 못 읽은 칸이 아니라 급식이 없는
+    칸이다(`photo_run._meal_entries` 는 그런 끼니를 확인 항목으로 만들지 않는다).
     """
     fixed = plan.model_copy(deep=True)
     for day in fixed.days:
         for meal in day.meals:
+            meal.items = [item for item in meal.items if not is_nutrition_line(item.raw)]
             for item in meal.items:
                 item.name = menu_display_name(item.raw)
+        day.meals = [meal for meal in day.meals if meal.items]
     return fixed

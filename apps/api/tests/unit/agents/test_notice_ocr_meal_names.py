@@ -117,3 +117,45 @@ def test_원문은_그대로_둔다(reading: notice_ocr.PhotoReading) -> None:
     raws = [it.raw for d in reading.meal_plan.days for m in d.meals for it in m.items]
     # 합치기(`merge_outputs`)가 날짜 순으로 놓는다 — 3일 · 16일 · 17일
     assert raws == ["떡(증편),", "흑미밥", "백깍두기9(백김치9)", "떡(꿀설기)", "우유2"]
+
+
+# ── 메뉴가 아닌 줄 (2026-11-11 운영 장애 사진 — 칸마다 "총 471 kcal") ──
+
+
+def _kcal_plan() -> MealPlanJSON:
+    def meal(meal_type: str, *raws: str) -> dict:
+        return {"meal_type": meal_type, "items": [{"raw": r, "name": r} for r in raws]}
+
+    return MealPlanJSON.model_validate(
+        {
+            "source": MealPlanSource.IMAGE,
+            "year_month": "2026-11",
+            "days": [
+                {"day": 2, "meals": [meal("lunch", "흑미혼식", "총 471 kcal", "배추김치9")]},
+                {"day": 3, "meals": [meal("lunch", "총 511 kcal")]},
+                {"day": 4, "meals": [meal("lunch", "462/17"), meal("snack_pm", "우유2")]},
+            ],
+        }
+    )
+
+
+def test_열량_줄은_메뉴에서_뺀다() -> None:
+    plan = notice_ocr.names_from_raw(_kcal_plan())
+
+    assert _names(plan) == {(2, "lunch"): ["흑미혼식", "배추김치"], (4, "snack_pm"): ["우유"]}
+
+
+def test_열량_줄뿐인_끼니는_급식이_없는_날이다() -> None:
+    # 이름을 못 읽은 칸이 아니다 — 확인을 받을 것도, 저장할 것도 없다.
+    # "총 kcal" 가짜 메뉴가 나가지 않는다
+    from datetime import date
+
+    from app.api.runs.photo_run import PhotoRun, _meal_entries
+
+    plan = notice_ocr.names_from_raw(_kcal_plan())
+    entries = _meal_entries(PhotoRun("r1", None, None), plan, today=date(2026, 11, 11))
+
+    assert [(e["id"], e["title"], e["needs_review"]) for e in entries] == [
+        ("pe_meal_2_lunch", "흑미혼식, 배추김치", False),
+        ("pe_meal_4_snack_pm", "우유", False),
+    ]
