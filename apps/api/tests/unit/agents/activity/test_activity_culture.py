@@ -5,7 +5,7 @@
 
 import pytest
 
-from app.agents.activity.culture import CULTURE_MAX_RADIUS_M, kid_site, with_culture
+from app.agents.activity.culture import CULTURE_MAX_RADIUS_M, kid_place, kid_site, with_culture
 from app.agents.activity.schemas.common import PlaceCategory
 from app.agents.activity.store.inmemory import InMemoryPlaces
 from app.agents.activity.store.ports import CoarseLocation, PlaceRow
@@ -52,10 +52,22 @@ PARK = PlaceRow(
         ("가상해양박물관", True),
         ("가상시립미술관", True),
         ("가상안전체험관", True),
-        ("가상어린이대공원", True),
         ("가상아쿠아리움", True),
         ("가상천문대", True),
         ("가상곤충생태학습관", True),
+        ("가상산생태숲생태체험관", True),  # 바깥 낱말이 있어도 건물 이름으로 끝나면 받는다
+        ("가상 키즈뮤지엄", True),
+        # 바깥 장소 — 이 종류는 실내라 비 오는 날에도 나간다 (#858 리뷰)
+        ("가상어린이대공원", False),
+        ("가상 어린이교통공원", False),
+        ("가상생태공원", False),
+        ("가상산 생태탐방로", False),
+        ("가상만습지 생태체험", False),
+        ("가상암군립공원(공룡발자국)", False),
+        ("가상 공룡 발자국 화석산지", False),
+        # "천문" 이 든 다른 말 · 키즈카페와 겹치는 이름
+        ("가상천문화원", False),
+        ("가상 키즈랜드", False),
         ("가상대학교 박물관", False),
         ("가상사 성보박물관", False),
         ("가상인물 기념관", False),
@@ -68,6 +80,30 @@ PARK = PlaceRow(
 )
 def test_아이와_갈_곳만_이름으로_고른다(title: str, kid: bool) -> None:
     assert kid_site(title) is kid
+
+
+@pytest.mark.parametrize(
+    ("content_type", "category", "kid"),
+    [
+        ("14", "VE07", True),  # 문화시설은 이름만 본다
+        ("12", "EX07", True),  # 관광지 — 체험관
+        ("12", "EX06", True),
+        ("12", "VE02", True),  # 아쿠아리움 · 천문대 (어린이대공원은 이름이 가른다)
+        ("12", "NA04", False),  # 자연 — 생태공원 · 탐방로
+        ("12", "VE03", False),  # 공원
+        ("12", "EX03", False),  # 농산촌 체험마을
+    ],
+)
+def test_관광지는_실내_체험_전시_분류만_받는다(content_type: str, category: str, kid: bool) -> None:
+    row = RawSite(
+        content_id="1",
+        title="가상곤충생태학습관",
+        mapx="0",
+        mapy="0",
+        content_type=content_type,
+        category=category,
+    )
+    assert kid_place(row) is kid
 
 
 async def test_체험관은_그_시도_목록에서_가까운_순으로_찾는다() -> None:

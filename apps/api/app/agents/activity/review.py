@@ -124,7 +124,6 @@ class RejectReason(StrEnum):
     MIXED_PLACES = "mixed_places"
     INVENTED_FACILITY = "invented_facility"
     SHOWN_BEFORE = "shown_before"
-    INTEREST_HEAVY = "interest_heavy"
     DARK_PLAYGROUND = "dark_playground"
     BUILD = "build_rejected"
 
@@ -148,10 +147,6 @@ GUIDANCE: dict[RejectReason, str] = {
         "note 의 '어제도 · 또 · 늘 · 항상 · 좋아하는' 은 확정된 관심(tier 1)에만 쓴다."
     ),
     RejectReason.RECENT_DUPLICATE: "최근에 한 활동이다. 다른 활동으로 바꾼다.",
-    RejectReason.INTEREST_HEAVY: (
-        "확정 관심에 맞춘 후보는 3개 중 2개까지다. 이 후보는 관심과 상관없는 다른 결(몸 쓰기 · "
-        "바깥 · 만들기 · 장소 · 행사)로 바꾸고, 관심 기록은 근거로 달지 않는다."
-    ),
     RejectReason.SHOWN_BEFORE: (
         "앞에서 이미 보여 준 놀이 · 장소 · 행사다. 보호자가 다른 것을 원한다 — 다른 놀이 · 다른 "
         "장소 · 다른 행사로 바꾼다. 남은 것이 없으면 장소 없이 집에서 할 놀이로 낸다."
@@ -196,14 +191,6 @@ GUIDANCE: dict[RejectReason, str] = {
         "싫어하는 것을 근거로 썼으면 무엇을 피했는지 reason 에 쓴다."
     ),
 }
-
-
-# 보호자가 놀이를 정하지 않았을 때 확정 관심(profile_affinity)을 근거로 단 후보의 최대 수
-MAX_INTEREST_DRAFTS = 2
-
-
-def _cites_interest(citations: Sequence[EvidenceCitation]) -> bool:
-    return any(citation.ref.kind == "profile_affinity" for citation in citations)
 
 
 @dataclass(frozen=True)
@@ -305,7 +292,6 @@ def review_candidates(
     draft_days: set[str] = set()
     rejections: list[Rejection] = []
     removed: list[Removal] = []
-    interest_drafts = 0
     for index, candidate in enumerate(candidates):
         # 1. 안전 필터 — 맨 앞이다. 걸린 후보가 뒤 검사를 타면 엉뚱한 사유가 나간다
         check = check_candidate(candidate, months=months, terms=safety)
@@ -330,10 +316,6 @@ def review_candidates(
             records=records,
             dark_today=dark_today,
         )
-        if reason is None and not requested and _cites_interest(citations):
-            # 막연한 요청에 3개 모두 확정 관심으로 채우지 않는다 — 2개까지 (11-09 운영)
-            if interest_drafts >= MAX_INTEREST_DRAFTS:
-                reason = RejectReason.INTEREST_HEAVY
         if reason is None:
             try:
                 drafts.append(
@@ -350,7 +332,6 @@ def review_candidates(
             except SuggestionRejected:
                 reason = RejectReason.BUILD
             else:
-                interest_drafts += _cites_interest(citations)
                 draft_days.add(candidate.day)
                 if _outdoors(candidate, place):
                     outdoor_drafts.add((normalize_activity(drafts[-1].content), candidate.day))

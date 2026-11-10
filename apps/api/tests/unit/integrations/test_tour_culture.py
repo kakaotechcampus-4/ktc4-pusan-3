@@ -8,14 +8,17 @@
 - 모르는 시 · 도는 실패다
 """
 
+import asyncio
 from datetime import datetime
+from urllib.parse import parse_qs, urlparse
 
 import httpx
 import pytest
 
 from app.core.culture_raw import RawSite
 from app.core.weather_raw import UpstreamUnavailable
-from tests.unit.integrations.test_tour_events import KST, Recorder, page, source
+from app.integrations.tour.events import TourEvents
+from tests.unit.integrations.test_tour_events import KST, NOW, Recorder, page, source
 
 CODES = page([{"code": "26", "name": "부산광역시"}, {"code": "48", "name": "경상남도"}])
 MUSEUM = {
@@ -91,3 +94,65 @@ class TestSites:
     async def test_조회_실패는_UpstreamUnavailable(self):
         with pytest.raises(UpstreamUnavailable):
             await source(Recorder(CODES, httpx.Response(500))).sites(province="부산광역시")
+
+
+class SlowBusan(httpx.AsyncBaseTransport):
+    """부산 목록은 풀어 줄 때까지 붙든다 — 그동안 다른 시 · 도 조회가 끝나는지 본다."""
+
+    def __init__(self) -> None:
+        self.release = asyncio.Event()
+        self.lists: list[str] = []
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        params = parse_qs(urlparse(str(request.url)).query)
+        if "ldongCode2" in request.url.path:
+            return httpx.Response(200, json=CODES)
+        region = params["lDongRegnCd"][0]
+        self.lists.append(region)
+        if region == "26":
+            await self.release.wait()
+        return httpx.Response(200, json=page([MUSEUM]))
+
+
+class TestSiteLocks:
+    """처음 채우는 시 · 도가 다른 시 · 도 사용자를 붙들지 않는다 (#858 리뷰)."""
+
+    async def test_다른_시도는_기다리지_않는다(self):
+        transport = SlowBusan()
+        src = TourEvents(transport=transport, now=lambda: NOW)
+        try:
+            busan = asyncio.ensure_future(src.sites(province="부산광역시"))
+            await asyncio.sleep(0)
+            rows = await asyncio.wait_for(src.sites(province="경상남도"), timeout=1)
+            assert rows and not busan.done()
+            transport.release.set()
+            assert await busan
+        finally:
+            await src.aclose()
+
+    async def test_두_타입을_동시에_받는다(self):
+        transport = SlowBusan()
+        src = TourEvents(transport=transport, now=lambda: NOW)
+        try:
+            busan = asyncio.ensure_future(src.sites(province="부산광역시"))
+            for _ in range(5):
+                await asyncio.sleep(0)
+            assert transport.lists == ["26", "26"]  # 14 를 기다리는 동안 12 도 이미 보냈다
+            transport.release.set()
+            await busan
+        finally:
+            await src.aclose()
+
+    async def test_같은_시도를_동시에_물어도_한_번만_받는다(self):
+        transport = SlowBusan()
+        src = TourEvents(transport=transport, now=lambda: NOW)
+        try:
+            first = asyncio.ensure_future(src.sites(province="부산광역시"))
+            second = asyncio.ensure_future(src.sites(province="부산광역시"))
+            for _ in range(5):
+                await asyncio.sleep(0)
+            transport.release.set()
+            assert await first == await second
+            assert transport.lists == ["26", "26"]
+        finally:
+            await src.aclose()

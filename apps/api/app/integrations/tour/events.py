@@ -65,7 +65,10 @@ class TourEvents:
         self._lock = asyncio.Lock()
         self._province_codes: dict[str, str] | None = None
         self._sites: dict[str, tuple[date, tuple[RawSite, ...]]] = {}
-        self._sites_lock = asyncio.Lock()
+        # 시 · 도마다 따로 잠근다 — 한 시 · 도를 처음 채우는 동안 다른 시 · 도는 기다리지 않는다
+        # (#858 리뷰)
+        self._site_locks: dict[str, asyncio.Lock] = {}
+        self._codes_lock = asyncio.Lock()
 
     async def aclose(self) -> None:
         await self._client.aclose()
@@ -127,34 +130,36 @@ class TourEvents:
         문화시설 125행 중 5행, 11-09 실측) 쓰지 않는다. 시 · 도마다 그날 하루 둔다. 모르는 시 · 도와
         조회 실패는 UpstreamUnavailable 이다 — 실패는 캐시하지 않는다.
         """
-        async with self._sites_lock:
-            code = (await self._codes()).get(province)
-            if code is None:
-                raise UpstreamUnavailable("모르는 시 · 도다")
+        code = (await self._codes()).get(province)
+        if code is None:
+            raise UpstreamUnavailable("모르는 시 · 도다")
+        async with self._site_locks.setdefault(code, asyncio.Lock()):
             today = self._now().astimezone(KST).date()
             cached = self._sites.get(code)
             if cached is None or cached[0] != today:
-                rows: list[RawSite] = []
-                for content_type in SITE_CONTENT_TYPES:
-                    rows.extend(await self._fetch_sites(code, content_type))
-                cached = (today, tuple(rows))
+                # 두 타입은 동시에 받는다 — 처음 오는 사용자의 run 20초 안에 들어가는 시간이다
+                lists = await asyncio.gather(
+                    *(self._fetch_sites(code, content_type) for content_type in SITE_CONTENT_TYPES)
+                )
+                cached = (today, tuple(row for rows in lists for row in rows))
                 self._sites[code] = cached
             return list(cached[1])
 
     async def _codes(self) -> dict[str, str]:
         """시 · 도 이름 → 법정동 시도 코드. 프로세스에 한 번 받는다(통합 시 · 도 이름이 바뀌어도
         재시작으로 따라간다)."""
-        if self._province_codes is None:
-            payload = await get_json(
-                self._client,
-                f"{BASE_URL}/ldongCode2",
-                {**_COMMON, "numOfRows": 100},
-                what="시도 코드",
-            )
-            self._province_codes = {
-                _text(item.get("name")): _text(item.get("code"))
-                for item in _items(payload, what="시도 코드")
-            }
+        async with self._codes_lock:
+            if self._province_codes is None:
+                payload = await get_json(
+                    self._client,
+                    f"{BASE_URL}/ldongCode2",
+                    {**_COMMON, "numOfRows": 100},
+                    what="시도 코드",
+                )
+                self._province_codes = {
+                    _text(item.get("name")): _text(item.get("code"))
+                    for item in _items(payload, what="시도 코드")
+                }
         return self._province_codes
 
     async def _fetch_sites(self, code: str, content_type: str) -> list[RawSite]:
