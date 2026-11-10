@@ -4,7 +4,7 @@
 
   라벨: meal_recommendation
     infant_milk(0–3)       닫힘
-    infant_weaning(4–11)   search·weaning·propose
+    infant_weaning(4–11)   search·weaning·propose  (후보는 이유식 식단 표, #399)
     toddler·preschool(12+) search·analyze·repeated·(daycare)·propose
   라벨: nutrient_analysis
     infant_milk·infant_weaning(0–11)  닫힘

@@ -63,6 +63,7 @@ MEAL_REQUEST_AGE_BLOCK = "meal.request_age_block"
 # 문구 자리에 채운다
 MEAL_NUTRIENT_BASIS = "meal.nutrient_basis"
 MEAL_MENU_SOURCE = "meal.menu_source"
+MEAL_MENU_WEANING = "meal.menu_weaning"  # 고른 메뉴가 이유식 식단 표 메뉴(이유기, #399)
 MEAL_MENU_GENERATED = "meal.menu_generated"  # 고른 메뉴가 모두 레시피북에 없는 생성 메뉴
 MEAL_MENU_MIXED = "meal.menu_mixed"  # 레시피북 메뉴와 생성 메뉴가 섞임
 
@@ -78,6 +79,8 @@ DAYCARE_SLOT_AMBIGUOUS = "daycare.slot_ambiguous"
 DAYCARE_ALLERGY_CONFLICT = "daycare.allergy_conflict"
 DAYCARE_OUT_OF_RANGE = "daycare.out_of_range"
 DAYCARE_NOT_FOUND = "daycare.not_found"
+# 평일인데 급식 행이 없고 먹은 양만 말했을 때 — 무엇을 먹었는지 알려 달라고 안내한다 (#798)
+DAYCARE_AMOUNT_NO_MEAL = "daycare.amount_no_meal"
 DAYCARE_REPLACED_UNKNOWN = "daycare.replaced_unknown"
 DAYCARE_UNCHANGED = "daycare.unchanged"
 # 급식 날짜 조회(daycare_lookup) — 행마다 한 줄 · 기간에 급식이 없을 때 · 기간이 7일을 넘었을 때

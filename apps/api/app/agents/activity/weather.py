@@ -298,7 +298,15 @@ _STRESS: dict[str, AdvisoryLevel] = {
 }  # 2 = 중대경보
 
 
+# 중기 육상예보의 하늘 문장에서 비 · 눈을 읽는 말. 양을 몰라서 바깥을 막지 않고 "비 소식" 으로
+# 안내한다(`RAIN_MODERATE_MM` 으로 본다 — 막는 기준 `RAIN_HEAVY_MM` 보다 아래)
+_MID_RAINY = ("비", "눈", "소나기")
+_MID_SKIES = (("흐림", "흐림"), ("흐리", "흐림"), ("구름많", "구름많음"), ("맑", "맑음"))
+
+
 def read_forecast(raw: RawForecast) -> Forecast:
+    if raw.wf:
+        return _read_mid(raw)
     return Forecast(
         sky=SKY_LABELS.get((raw.sky or "").strip()),
         precip_mm_per_h=parse_precip(raw.pcp),
@@ -385,3 +393,17 @@ def _rain_label(mm: float) -> str:
     if mm >= RAIN_MODERATE_MM:
         return "보통 비"
     return "약한 비"
+
+
+def _read_mid(raw: RawForecast) -> Forecast:
+    """중기 육상예보로 읽은 날 — 하늘 문장(`wf`)과 강수확률만 있다. 시간별 강수량이 없어서 비 · 눈이
+    든 문장이면 "비 소식"(`RAIN_MODERATE_MM`), 아니면 비 없음으로 본다 — 읽은 날이라 "날씨를
+    확인하지 못했어요" 를 붙이지 않는다."""
+    text = raw.wf or ""
+    sky = next((label for word, label in _MID_SKIES if word in text), None)
+    rainy = any(word in text for word in _MID_RAINY)
+    return Forecast(
+        sky=sky,
+        precip_mm_per_h=RAIN_MODERATE_MM if rainy else 0.0,
+        pop_percent=parse_pop(raw.pop),
+    )
