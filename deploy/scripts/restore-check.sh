@@ -28,10 +28,15 @@ set -euo pipefail
 trap 'fail "예상 못 한 실패 (줄 $LINENO)"' ERR
 
 # 시간 상한(초). 맥에는 timeout 이 없다 — 로컬 시험에서는 걸지 않는다 (flock 과 같다)
+# 끊기면 어느 단계 · 몇 초였는지 한 줄 남긴다. fd 3 으로 쓰는 이유 — $(...) 안에서 불려도 stdout 에
+# 섞이지 않고, quiet 가 stderr 를 가져가도 로그 파일로 간다.
+exec 3>&1
 limit() {
-  local s="$1"
+  local s="$1" rc=0
   shift
-  if command -v timeout >/dev/null; then timeout -k 10 "$s" "$@"; else "$@"; fi
+  if command -v timeout >/dev/null; then timeout -k 10 "$s" "$@" || rc=$?; else "$@" || rc=$?; fi
+  [ "$rc" != 124 ] || log "시간 상한 ${s}초에 걸려 끊었다 — $1 $2 $3" >&3
+  return "$rc"
 }
 
 if [ "${1:-}" = --local ]; then
@@ -127,7 +132,7 @@ SQL
 )" || fail "행 수 세기 실패 (exit $?)"
 printf '%s\n' "$COUNTS" | sed 's/^/  /'
 TOTAL="$(printf '%s\n' "$COUNTS" | awk '{ s += $2 } END { print s + 0 }')"
-log "복원 통과 $KEY — alembic $VERSION · 테이블 $(printf '%s\n' "$COUNTS" | grep -c .) 개 · 행 $TOTAL"
+log "복원 통과 $KEY — alembic $VERSION · 테이블 $(printf '%s\n' "$COUNTS" | grep -c .) 개 · 행 $TOTAL · ${SECONDS}초"
 
 # 복원은 됐어도 매일 백업이 밀렸으면 실패로 끝낸다 (알림은 위에서 보냈다).
 [ "$STALE" = 0 ] || exit 1
