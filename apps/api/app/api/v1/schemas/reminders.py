@@ -4,8 +4,9 @@
 응답에는 요청한 보호자 본인의 것만 싣는다.
 """
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import ConfigDict, Field
 
+from app.api.schema_base import ApiSchema
 from app.rules.reminder import ReminderLead
 
 _LEAD_DESCRIPTION = (
@@ -16,15 +17,15 @@ _LEAD_DESCRIPTION = (
 )
 
 
-class ReminderIn(BaseModel):
+class ReminderIn(ApiSchema):
     model_config = ConfigDict(extra="forbid")
 
     lead: ReminderLead = Field(description=_LEAD_DESCRIPTION)
 
 
-class ReminderOut(BaseModel):
+class ReminderOut(ApiSchema):
     lead: ReminderLead = Field(description=_LEAD_DESCRIPTION)
 
 
-class ReminderResponse(BaseModel):
+class ReminderResponse(ApiSchema):
     reminder: ReminderOut

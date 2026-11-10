@@ -19,19 +19,31 @@ from app.agents.common.llm_client import (
     LLMConfigError,
     LLMError,
     LLMRateLimitError,
+    LLMTimeoutError,
     LLMUnavailableError,
 )
 from app.agents.curator.embedding.judge import (
-    NONE,
     PROMPT,
-    UNCERTAIN,
     JudgeAnswer,
     JudgeQuotaError,
+    criteria,
+    prompt_parts,
 )
 from app.agents.curator.embedding.ports import CuratorDomain
 from app.core import llm_usage
+from app.core.prompt_hash import fingerprint, short
 
 logger = logging.getLogger(__name__)
+
+_REQUIRED = ("CURATOR_JUDGE_API_KEY", "CURATOR_JUDGE_BASE_URL", "CURATOR_JUDGE_MODEL")
+
+
+def missing_settings(settings: AgentSettings) -> list[str]:
+    """비어 있는 CURATOR_JUDGE_* 이름. 하나라도 있으면 JevJudge 를 못 만든다.
+
+    생성자와 부팅 보고(`entrypoint.llm_gaps`)가 같이 쓴다 — 켜지는 조건을 한 곳에만 둔다.
+    """
+    return [name for name in _REQUIRED if not getattr(settings, name).strip()]
 
 
 class JevJudge:
@@ -51,7 +63,7 @@ class JevJudge:
             "CURATOR_JUDGE_BASE_URL": s.CURATOR_JUDGE_BASE_URL.strip(),
             "CURATOR_JUDGE_MODEL": s.CURATOR_JUDGE_MODEL.strip(),
         }
-        missing = [name for name, value in values.items() if not value]
+        missing = missing_settings(s)
         if missing:
             raise LLMConfigError(f"{' / '.join(missing)} 가 비어 있다. apps/api/.env 를 확인한다.")
 
@@ -78,11 +90,7 @@ class JevJudge:
                 "identity": {
                     "type": "choice",
                     "instructions": self._prompt,
-                    "criteria": {
-                        **{option: f"동일한 대상: {option}" for option in options},
-                        NONE: "동일한 후보가 없다",
-                        UNCERTAIN: "정보 부족 또는 모호하여 판단 불가",
-                    },
+                    "criteria": criteria(options),
                 }
             },
         }
@@ -96,7 +104,7 @@ class JevJudge:
                     self._url, headers={"Authorization": f"Bearer {self._key}"}, json=payload
                 )
         except httpx.TimeoutException as exc:
-            raise LLMUnavailableError("판정 요청 시간 초과.") from exc
+            raise LLMTimeoutError("판정 요청 시간 초과.") from exc
         except httpx.TransportError as exc:
             raise LLMUnavailableError("판정 서버 연결 실패.") from exc
 
@@ -109,7 +117,9 @@ class JevJudge:
         # subject · 후보 원문은 남기지 않는다. Elice 응답에는 금액(cost)이 없어 토큰 수를 남긴다
         # (금액은 Elice 콘솔에서 본다). 출력 토큰은 과금되지 않는다
         logger.info(
-            "curator judge model=%s candidates=%d confidence=%s input_tokens=%s latency_ms=%d",
+            "curator judge prompt_name=curator_judge prompt_sha256=%s model=%s candidates=%d "
+            "confidence=%s input_tokens=%s latency_ms=%d",
+            short(fingerprint(*prompt_parts(self._prompt))),
             answer.model,
             len(options),
             answer.confidence,

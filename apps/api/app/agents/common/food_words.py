@@ -719,6 +719,45 @@ def phrase_of(text: str, word: str) -> str:
     return token if word in normalize(token) else word
 
 
+def food_phrases(text: str, verdicts: Sequence[FoodVerdict]) -> dict[str, str]:
+    """판정마다 화면에 쓸 음식 이름 — 낱말 → 이름. 말하는 단위만 묶고 판정은 건드리지 않는다.
+
+    기본은 `phrase_of` 다. 영어 음식 이름은 띄어 써서("peanut butter") 사전이 낱말마다 따로 잡는다
+    (peanut 은 땅콩, butter 는 우유). 그대로 두면 한 음식을 두 번 말하므로, 사이에 다른 어절이 없이
+    붙은 영어 어절끼리는 원문 그대로 이어 한 이름으로 본다. 한글 어절은 묶지 않는다 — 한국어
+    복합어는 붙여 쓰니(땅콩버터) 어절 규칙으로 충분하고, "우유 치즈" 는 두 음식이다 (#864).
+    """
+    names = {verdict.word: phrase_of(text, verdict.word) for verdict in verdicts}
+    tokens = text.split()
+    at: dict[str, int] = {}
+    for verdict in verdicts:
+        for index, token in enumerate(tokens):
+            if verdict.word in normalize(token):
+                at[verdict.word] = index
+                break
+
+    def latin(index: int) -> bool:
+        word = tokens[index].strip(_PUNCT)
+        return word.isascii() and word.isalpha()
+
+    run: list[str] = []
+    for word in [*sorted(at, key=lambda w: at[w]), None]:
+        if (
+            run
+            and word is not None
+            and at[word] == at[run[-1]] + 1
+            and latin(at[word])
+            and latin(at[run[-1]])
+        ):
+            run.append(word)
+            continue
+        if len(run) > 1:
+            joined = " ".join(tokens[at[w]].strip(_PUNCT) for w in run)
+            names.update(dict.fromkeys(run, joined))
+        run = [] if word is None else [word]
+    return names
+
+
 def _token_of(text: str, word: str) -> str:
     """낱말이 처음 든 어절. 연령 규칙은 어절 하나를 메뉴 이름으로 보고 판정한다."""
     for token in text.split():

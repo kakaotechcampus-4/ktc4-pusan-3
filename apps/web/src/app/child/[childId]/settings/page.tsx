@@ -182,7 +182,7 @@ function SettingsScreen() {
             href={`/child/${childId}/settings/help`}
             icon={LifeBuoy}
             title="자주 묻는 질문"
-            status="기록, 제안, 안전, 함께 보기"
+            status="기록, 추천, 안전, 함께 보기"
             {...FORWARD}
           />
           {/* 🚨 **앱 안에서 보내는 길이다** (#487). Google Play 정책이 불쾌한 AI 답 · 공동 기록 ·
@@ -206,6 +206,13 @@ function SettingsScreen() {
           아니라 약관을 읽는 것이다 (`LegalDocumentSection`). */}
       <Section title="약관과 방침" description="누르면 전문을 볼 수 있어요.">
         <LegalDocumentSection />
+        {/* 🚨 **필수 동의를 거두는 길을 여기서 말한다** (#751 · 개인정보 보호법 제38조 ④ — 거두는 방법이
+            모을 때보다 어렵지 않아야 한다). 동의 구역에 필수 동의 스위치를 세우지 않는다 — 거두면 계정이나
+            아이가 통째로 지워지는 것이라 스위치 하나로 끝나는 일이 아니다. 길은 그 두 화면이 진다. */}
+        <p className="text-caption text-ink-subtle">
+          필수 동의를 거두려면 계정은 아래 탈퇴하기에서, 아이는 아이 프로필의 &lsquo;이 아이
+          삭제하기&rsquo;에서 해요. 아이 삭제는 아이를 등록한 보호자만 할 수 있어요.
+        </p>
       </Section>
 
       {/* 🚨 **탈퇴가 계정 구역 안에 있다.** 로그인·로그아웃과 같은 축이라 따로 떼어 두면

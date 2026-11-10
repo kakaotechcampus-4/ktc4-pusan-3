@@ -15,6 +15,7 @@ from app.domains.consent import models as consent  # noqa: F401
 from app.domains.correction import models as correction  # noqa: F401
 from app.domains.daycare_meal import models as daycare_meal  # noqa: F401
 from app.domains.delete_proposal import models as delete_proposal  # noqa: F401
+from app.domains.deletion_log import models as deletion_log  # noqa: F401
 from app.domains.food import models as food  # noqa: F401
 from app.domains.identity import models as identity  # noqa: F401
 from app.domains.medication import models as medication  # noqa: F401

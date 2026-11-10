@@ -10,8 +10,9 @@ from datetime import datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import ConfigDict, Field, StringConstraints
 
+from app.api.schema_base import ApiSchema
 from app.domains.safety.models import SafetyKind, SafetySeverity
 
 Label = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
@@ -21,7 +22,7 @@ Reaction = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1,
 Notes = Annotated[str, StringConstraints(strip_whitespace=True, max_length=500)]
 
 
-class CreateHealthSafetyRequest(BaseModel):
+class CreateHealthSafetyRequest(ApiSchema):
     """승인 게이트 ㉡ — 보호자가 확인한 값만 들어온다. LLM 이 이 요청을 만들지 않는다 (§2).
 
     심각도 · 메모의 null 은 "안 보냄" 과 같다.
@@ -45,14 +46,25 @@ class CreateHealthSafetyRequest(BaseModel):
         default_factory=list, max_length=20, description="반응 — '두드러기' 등"
     )
     notes: Notes | None = Field(default=None, description="보호자 메모")
+    tolerated: bool = Field(
+        default=False,
+        description=(
+            "true 면 '괜찮았던 식품' — 05 확인 시트에서 '먹어봤어요 · 괜찮았어요' 로 답한 식품으로 "
+            "저장한다(알레르기가 아니다). type 은 allergy 만, severity · reactions 는 "
+            "보내지 않는다(400). "
+            "같은 식품이 알레르기 · 건강 기록에 있으면 409 allergy_exists, "
+            "같은 이름의 괜찮았던 식품이 있으면 "
+            "409 already_exists"
+        ),
+    )
 
 
-class WrittenBy(BaseModel):
+class WrittenBy(ApiSchema):
     parent_id: UUID
     nickname: str = Field(description="적은 보호자의 부르는 이름")
 
 
-class HealthSafetyOut(BaseModel):
+class HealthSafetyOut(ApiSchema):
     kind: Literal["health_safety"] = "health_safety"
     id: UUID
     type: SafetyKind
@@ -70,13 +82,13 @@ class HealthSafetyOut(BaseModel):
     updated_at: datetime
 
 
-class CreateHealthSafetyResponse(BaseModel):
+class CreateHealthSafetyResponse(ApiSchema):
     """201 — 등록한 기록."""
 
     safety: HealthSafetyOut
 
 
-class UpdateHealthSafetyRequest(BaseModel):
+class UpdateHealthSafetyRequest(ApiSchema):
     """고치기 — 심각도 · 증상 · 메모 중 보낸 것만 바꾼다. 하나도 안 바뀌면 지금 기록 그대로 200.
 
     고치면 지금 기록은 내려가고(retracted) 바뀐 값으로 새 기록이 생긴다 — 응답의 id 가 바뀐다.
@@ -100,16 +112,28 @@ class UpdateHealthSafetyRequest(BaseModel):
     notes: Notes | None = Field(default=None, description="null 이면 비운다. 보내지 않으면 그대로")
 
 
-class UpdateHealthSafetyResponse(BaseModel):
+class UpdateHealthSafetyResponse(ApiSchema):
     """200 — 고친 뒤의 기록. 바뀌었으면 새 id 다."""
 
     safety: HealthSafetyOut
 
 
-class HealthSafetyListResponse(BaseModel):
-    """지금 고려 대상(active)인 기록 — 보호자가 확정한 것만 들어 있다 (§2)."""
+class HealthSafetyListResponse(ApiSchema):
+    """보호자가 확정한 기록 — 알레르기 · 건강(items)과 괜찮았던 식품(tolerated).
 
-    items: list[HealthSafetyOut]
+    내린 줄은 없다 (§2).
+    """
+
+    items: list[HealthSafetyOut] = Field(
+        description="알레르기 · 건강 기록(active). 식사 제안이 거른다"
+    )
+    tolerated: list[HealthSafetyOut] = Field(
+        default_factory=list,
+        description=(
+            "괜찮았던 식품 — 보호자가 먹어봤고 괜찮았다고 답한 식품. 알레르기가 아니라서 items 와 "
+            "따로 싣는다. severity 는 늘 null, reactions 는 늘 []"
+        ),
+    )
     updated_at: datetime = Field(
         description="목록의 가장 최근 변경 시각. 기록이 없으면 응답한 시각"
     )

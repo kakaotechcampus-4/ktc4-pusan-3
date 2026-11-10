@@ -72,7 +72,7 @@ export function AccountSection({ childId }: { childId: string }) {
           icon={UserMinus}
           title="탈퇴하기"
           status="쌓인 기억이 사라져요"
-          note="무엇이 어떻게 되는지 다음 화면에서 알려드려요"
+          note="무엇이 어떻게 되는지 다음 화면에서 알려 드려요"
           {...FORWARD}
         />
       </SettingsGroup>

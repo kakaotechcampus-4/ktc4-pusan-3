@@ -206,14 +206,15 @@
 | polarity | smallint | NOT NULL, DEFAULT `0`, `-1 / 0 / 1`만 허용 |
 | strong_signals | text[] | NOT NULL, DEFAULT `'{}'`. 허용값: `resistance_to_redirect`, `self_initiated`, `comparative_choice`, `asks_questions`, `role_extension` |
 | confidence_source | text | NOT NULL. `institution_notice / parent_direct / parent_hedged / parent_hearsay` |
-| status | enum | NOT NULL, DEFAULT `active`. `active / stand_alone / inactive / deleted`  |
+| status | enum | NOT NULL, DEFAULT `active`. `active / stand_alone / deleted` (`inactive` 는 더 쓰지 않는다 — 아래) |
 | observed_range | daterange | NOT NULL, 빈 범위 불가, 상한이 무한대인 범위 불가 |
 | source_writer | uuid  |  FK → `parent.id`  set null  |
 | source_notice_id | uuid | FK → `notice.id`, nullable. 값이 존재하면 기관 공지 기반 |
 | created_at | timestamptz | NOT NULL, DEFAULT `now()` |
 | updated_at | timestamptz | NOT NULL, DEFAULT `now()` |
 - `health` 에서는 다음 필드 제외: `subject` · `embedding` · `affinity_id` · `polarity` · `strong_signals` (승격 파이프라인 밖이라 profile 행 자체가 없음)
-- `status` 는 값마다 빠지는 곳이 다르다. `stand_alone` 은 Curator 집계에서만, `inactive` 는 검색과 집계에서 빠진다. `deleted` 는 목록·상세까지 모든 조회에서 빠진다.
+- `status` 는 값마다 빠지는 곳이 다르다. `stand_alone` 은 Curator 집계에서만 빠지고, `deleted` 는 목록·상세까지 모든 조회에서 빠진다.
+- `inactive` 는 기록의 Correction `wrong`("잘못된 기록")이 만들던 값이다. 그 버튼을 기록 지우기로 바꾸면서 남은 행을 `deleted` 로 옮겼고(#736 · revision `90ac5aae7ad1`), 지금은 만드는 길이 없다. 값은 DB CHECK 에 남겨 둔다. 배포 틈 · 롤백 중에 새로 생긴 행은 읽는 쪽(기록 탭 · Memory Agent 기록 조회 · 고치기 · 추천 카드의 사용한 기록)이 `deleted` 처럼 거른다(`GONE_STATUSES`).
 - 보호자의 삭제 요청은 행을 지우지 않고 `status = deleted` 로 바꾼다. `raw_text` 는 남고 `embedding` 은 비운다(`health` 에는 `embedding` 칸이 없다). 그 관찰의 연결 보류(`observation_link_hold`) 행도 지우고, 연결돼 있던 Profile 의 `last_observed_on` · 상태를 다시 계산한다. 되살리는 경로는 없다.
 - 관찰을 고쳐 `subject` · `polarity` 가 바뀌면 `embedding` · `affinity_id` 를 비워 Curator 가 다시 연결하게 하고, 그 칸들이나 `observed_range` · `strong_signals` 가 바뀌면 원래 Profile 을 다시 계산한다(#257, `memory-agent-v1.md` "고친 관찰은 Curator 집계에 다시 들어간다").
 
@@ -360,7 +361,7 @@
 제약:
 
 - **`unknown` 은 저장하지 않는다. 매칭되는 행이 없는 것이 곧 `unknown` 이다** (2026-10-04). 아이를 만들 때 알레르기 19행을 미리 깔지 않는다.
-- `active` 는 고려 대상, `retracted` 는 과거에 `active` 였고 지금은 아님, `none` 은 확인했고 없음. **Agent 필터(막기)에서는 `retracted` 와 `none` 이 같다** — 둘 다 거르지 않는다. **05 사전검사(묻기)에서는 다르다** — `none` 은 정규화한 이름이 같은 항목만 묻지 않게 하고(이름 사전은 동의어와 하위 식품을 가르지 않아서 넓게 맞추면 덜 묻게 된다), `retracted` 는 행이 없는 것과 같아 다시 묻는다(내린 기록은 "지금은 아니다" 일 뿐 "먹어봤고 괜찮았다" 가 아니다).
+- `active` 는 고려 대상, `retracted` 는 내린 기록(과거에 `active` 였거나 괜찮았던 식품이었고 지금은 아님 — 아래 `none` 줄), `none` 은 확인했고 없음(괜찮았던 식품). **Agent 필터(막기)에서는 `retracted` 와 `none` 이 같다** — 둘 다 거르지 않는다. **05 사전검사(묻기)에서는 다르다** — `none` 은 정규화한 이름이 같은 항목만 묻지 않게 하고(이름 사전은 동의어와 하위 식품을 가르지 않아서 넓게 맞추면 덜 묻게 된다), `retracted` 는 행이 없는 것과 같아 다시 묻는다(내린 기록은 "지금은 아니다" 일 뿐 "먹어봤고 괜찮았다" 가 아니다).
 - **거르는 것은 `status='active'` 뿐이다.** 행이 없는(`unknown`) 알레르기는 필터에서 거르지 않고, 추천을 승인할 때
   "이 음식에는 땅콩이 들어가요. 땅콩 알레르기가 있는지 확인해주세요" 로 안내한다. 그래서 추천에 무엇이 들어 있는지를
   `suggestion.allergens` 에 남긴다. 모르는 항목 때문에 추천을 통째로 닫으면 답을 미룬 보호자가 서비스를 못 쓴다.
@@ -371,6 +372,7 @@
 - **`kind` 마다 0행의 뜻이 다르다.** 알레르기는 위와 같고(행 없음 = `unknown`), 나머지 `kind`(만성질환·행동·환경·기타)는 **0행이 곧 해당 없음**이다.
 - 🚨 **안전 필터는 active 알레르기를 전부 읽는다.** Agent 별 matcher 가 자기 후보(Food 는 메뉴명 · 재료, Activity 는 놀이 문장 · 준비물)와 실제로 매칭되는 것만 거른다.
 - **active 끼리만** `UNIQUE(child_id, kind, label)` — 부분 고유 인덱스 `uq_health_safety_active_item` (`WHERE status = 'active'`, 2026-10-13). 10/4 표의 전체 UNIQUE 와 다르다. 내린(`retracted`) 줄은 이력으로 남고, 같은 항목을 내린 뒤 다시 등록하면 같은 (child_id, kind, label) 로 새 줄이 생겨서, 전체에 걸면 다시 등록이 막힌다. 등록 API 는 코드로 먼저 보고(409), 동시에 온 두 번째 요청은 이 인덱스가 막는다
+- **`none` 을 쓰는 길은 "괜찮았던 식품" 하나다** — 05 알레르기 확인 시트에서 보호자가 "먹어봤어요 · 괜찮았어요" 로 답한 식품(등록 API 의 `tolerated: true`). `kind='allergy'` 만이고 `severity` 는 null, `reactions` 는 비어 있다. 알레르기가 아니라 조회 API 는 `items` 와 따로 `tolerated` 로 내려준다. 같은 식품이 알레르기(`active`)로 있으면 받지 않고(409 `allergy_exists`), 알레르기를 등록하면 그것이 덮는 괜찮았던 식품을 `retracted` 로 내린다 — "같은 식품" 은 05 사전검사와 같은 이름 사전으로 본다. 내리기(`DELETE`)도 같은 길이다. 같은 이름은 한 줄만 — 부분 고유 인덱스 `uq_health_safety_none_item` (`WHERE status = 'none'`). 그래서 `retracted` 는 "과거에 `active` 였던 것" 보다 넓다 — 내린 괜찮았던 식품, 알레르기가 덮은 괜찮았던 식품도 `retracted` 다
 - **보호자가 고치면(`PATCH`) 제자리에서 바꾸지 않는다** — 지금 줄을 `retracted`(`updated_by` = 고친 보호자)로 내리고, 바뀐 값으로 새 줄을 넣는다(`created_by` = 고친 보호자). #87 첫 질문의 답이다 (2026-10-13 PM 결정). 종류 · 이름은 고칠 수 없어서 같은 (child_id, kind, label) 의 줄을 시간순으로 놓으면 그 항목이 바뀌어 온 길이다. 바뀐 값이 없으면 새 줄을 만들지 않는다. 고치기는 한 트랜잭션이라 옛 줄의 `updated_at` 과 새 줄의 `created_at` 이 같다 — 보호자가 따로 "내리고 다시 등록" 한 것과 가르는 근거가 이것이다
 - 안전 조회는 항상 `status='active'` 필터
 - DB 계층: Agent/Curator role 에는 이 테이블 write 권한 비부여 (권한 분리로 LLM 쓰기 원천 차단)
@@ -456,7 +458,7 @@
 | child_id | uuid | FK → `child.id`, NOT NULL, `ON DELETE CASCADE`. 아이별 이력 조회와 대상 검증에 사용 |
 | target_kind | enum | `observation_food / observation_health / observation_education / observation_activity / observation_routine / profile_affinity` |
 | target_id | uuid | NOT NULL. 다형 참조라 FK가 아니며, 대상 존재 여부와 같은 `child_id`인지는 서버가 검증 |
-| verdict | enum | 관찰: `once_only / wrong`
+| verdict | enum | 관찰: `once_only` (`wrong` 은 예전 이력에만 있다 — 아래)
 프로필: `need_more_observation / outdated / wrong` |
 | created_by | uuid | 작성자 감사 정보. FK → `parent.id`, nullable, `ON DELETE SET NULL` |
 | created_at | timestamptz | NOT NULL, default `now()` |
@@ -466,8 +468,8 @@
 - DB CHECK가 대상 종류와 verdict의 허용 조합을 강제한다.
 - `confirm`은 저장하지 않는다. “맞아요”는 상태를 바꾸지 않으므로 이력 값에서도 제외했다.
 - 관찰의 `once_only`는 `status = stand_alone`으로 바꿔 검색에는 남기고 Curator 집계에서만 제외한다.
-- 관찰의 `wrong`은 `status = inactive`로 바꾸고 같은 affinity를 재계산한다.
-- 프로필의 `need_more_observation`은 한 단계 강등, `outdated`와 `wrong`은 archived 처리한다. 이 상태 전이 서비스 로직은 후속 구현 범위다.
+- 관찰의 `wrong`은 더 받지 않는다(API 400). "잘못된 기록" 은 기록 지우기(`DELETE /children/{cid}/observations/{kind}/{oid}`)로 바꿨다(#736). 예전에 쌓인 `wrong` 이력은 남기고, DB CHECK 도 그 값을 계속 허용한다.
+- 프로필의 판정은 상태를 직접 바꾸지 않고 strength 를 곱셈으로 줄인다(`wrong` ×0.93 · `outdated` ×0.95 · `need_more_observation` ×0.97 — `rules/profile.py` `VERDICT_DECAY`). `wrong` 은 W 로도 세어 상태 계산(`compute_profile_status`)에 들어간다.
 - `target_kind + target_id`, `child_id` 조회 인덱스를 둔다.
 
 ### delete_proposal (삭제 제안 — 버튼으로 확정할 때까지)

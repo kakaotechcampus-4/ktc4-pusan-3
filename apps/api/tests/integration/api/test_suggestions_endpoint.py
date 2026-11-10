@@ -21,6 +21,7 @@ from app.api.runs import suggestion_retry
 from app.api.v1.schemas.suggestions import DocEvidenceOut
 from app.core import llm_usage
 from app.core.config import settings
+from app.domains.consent.models import ConsentAction
 from app.domains.memory.observation.models import (
     ConfidenceSource,
     ObservationActivity,
@@ -187,6 +188,7 @@ async def test_홈_요청은_Agent_마다_묶음과_안내를_싣는다(db_clien
     assert food["evidence"][0]["is_stale"] is False
     assert food["place_notice"] is None  # 장소가 없는 추천
     assert food["warnings"] == []
+    assert food["items"] == []  # 준비물이 없는 추천 — null 이 아니다
     groups = {g["agent"]: g for g in data["groups"]}
     assert groups["food"]["notice"] == {
         "code": "fewer",
@@ -492,7 +494,61 @@ async def test_내린_알레르기는_사전검사에서_다시_묻는다(
     data = (await _post(db_client, cid, headers, agents=["food"])).json()
 
     assert [s["content"] for s in data["suggestions"]] == ["호두죽"]
+
+
+async def test_괜찮았던_식품으로_저장한_항목은_다시_묻지_않는다(
+    db_client, session, bearer, cid, agents, monkeypatch
+):
+    """05 확인 시트의 "먹어봤어요 · 괜찮았어요" 를 저장하면(tolerated) 다음 사전검사에서 빠진다."""
+    plan, _ = agents
+    headers, parent_id = bearer
+    monkeypatch.setattr("app.api.v1.routers.suggestions.child_health_granted", _granted(True))
+
+    async def granted(*args, **kwargs):
+        return ConsentAction.GRANTED
+
+    monkeypatch.setattr("app.api.v1.routers.health_safety.latest_action", granted)
+    saved = await db_client.post(
+        f"/api/v1/children/{cid}/health-safety",
+        json={"type": "allergy", "label": "잣", "tolerated": True},
+        headers={**headers, "Idempotency-Key": "tolerated-pine"},
+    )
+    assert saved.status_code == 201
+    plan["food"] = (
+        "drafts",
+        [await _personal(session, cid, parent_id, content="잣호두죽", allergens=["잣", "호두"])],
+    )
+
+    data = (await _post(db_client, cid, headers, agents=["food"])).json()
+
     assert [p["item"] for p in data["prechecks"]] == ["호두"]
+
+
+async def test_괜찮았던_식품을_내리면_사전검사에서_다시_묻는다(
+    db_client, session, bearer, cid, agents, monkeypatch
+):
+    """프로필에서 괜찮았던 식품을 빼면 다음 05 에서 그 식품을 다시 묻는다.
+
+    내린 기록을 "모름" 으로 보는 AI 쪽 판정 위에서만 성립한다 — 이 브랜치가 그 위에 쌓인 이유다.
+    """
+    plan, _ = agents
+    headers, parent_id = bearer
+    monkeypatch.setattr("app.api.v1.routers.suggestions.child_health_granted", _granted(True))
+    pine = HealthSafety(child_id=cid, kind=SafetyKind.ALLERGY, label="잣", status=SafetyStatus.NONE)
+    session.add(pine)
+    await session.flush()
+    removed = await db_client.delete(
+        f"/api/v1/children/{cid}/health-safety/{pine.id}", headers=headers
+    )
+    assert removed.status_code == 204
+    plan["food"] = (
+        "drafts",
+        [await _personal(session, cid, parent_id, content="잣죽", allergens=["잣"])],
+    )
+
+    data = (await _post(db_client, cid, headers, agents=["food"])).json()
+
+    assert [p["item"] for p in data["prechecks"]] == ["잣"]
 
 
 async def test_동의가_없으면_알레르기_든_추천을_뺀다(
@@ -547,6 +603,7 @@ async def test_일반_추천은_문서_근거와_기록_건수를_싣는다(db_c
     assert data["scarcity"] == {"count": 0, "question": None}
     assert general["place_notice"] is None  # 장소가 없는 추천
     assert general["warnings"] == []
+    assert general["items"] == []
     assert (general["event_starts_on"], general["event_ends_on"]) == (None, None)
 
 
@@ -601,6 +658,27 @@ async def test_행사가_붙은_추천은_기간을_날짜_칸으로_싣는다(
     [general_out] = data["general"]
     for out in (activity, general_out):
         assert (out["event_starts_on"], out["event_ends_on"]) == ("2026-09-29", "2026-10-01")
+
+
+async def test_개인화와_일반_추천_모두_저장한_준비물을_싣는다(
+    db_client, session, bearer, cid, agents
+):
+    """고르기 전에 필요한 것을 본다 — 일정 초안의 준비물과 같은 `suggestion.items` 다 (#674)."""
+    plan, _ = agents
+    headers, parent_id = bearer
+    personal = replace(
+        await _personal(session, cid, parent_id, agent="activity", content="종이컵 탑 쌓기"),
+        items=("종이컵", "색종이"),
+    )
+    general = replace(_general(), items=("블록",))
+    plan["activity"] = ("drafts", [personal, general])
+
+    data = (await _post(db_client, cid, headers, agents=["activity"])).json()
+
+    [activity] = data["suggestions"]
+    [general_out] = data["general"]
+    assert activity["items"] == ["종이컵", "색종이"]  # 저장한 순서 그대로
+    assert general_out["items"] == ["블록"]
 
 
 async def test_문서_행을_읽을_수_없으면_일반_추천을_내지_않는다(

@@ -197,6 +197,17 @@ def test_api_가_있으면_ready_한_줄을_같이_본다(box):
     ]
 
 
+def test_dev_스택의_api_도_ready_를_본다(box):
+    """🚨 #310. dev 컨테이너 이름은 ktc4-dev-api 다.
+
+    이름을 ktc4-api 로만 찾으면 dev 는 ready 검사를 건너뛴다.
+    """
+    dev = "/ktc4-dev-api running healthy\\n/ktc4-dev-web running healthy\\n"
+    lines = _lines(box(dev, "--dry-run", ready="not-ready:db", alert_env="dev"))
+
+    assert "🔴 [dev] ktc4-api-ready: 없음 → not-ready:db" in lines
+
+
 def test_api_는_살아_있는데_Redis_가_죽으면_그것만_알린다(box):
     box(WITH_API, "--dry-run", ready="ready")
     lines = _lines(box(WITH_API, "--dry-run", ready="not-ready:redis"))

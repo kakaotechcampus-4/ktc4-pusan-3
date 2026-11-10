@@ -14,8 +14,9 @@ from datetime import date, datetime, time
 from typing import Annotated
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator
+from pydantic import ConfigDict, Field, StrictBool, field_validator
 
+from app.api.schema_base import ApiSchema
 from app.core.medication_draft import ClockTime
 from app.domains.medication.models import (
     MedicationForm,
@@ -51,7 +52,7 @@ NO_NUL = r"^[^\x00]*$"
 일기 · 신고와 같은 이유다."""
 
 
-class MedicationScheduleIn(BaseModel):
+class MedicationScheduleIn(ApiSchema):
     """복약 코스의 내용 — 약 **1종**의 복용 계획. 약이 3종이면 코스 3건이다."""
 
     model_config = ConfigDict(extra="forbid")
@@ -129,7 +130,7 @@ class MedicationScheduleIn(BaseModel):
         return codes
 
 
-class MedicationDoseIn(BaseModel):
+class MedicationDoseIn(ApiSchema):
     """하루 시각 패턴 한 칸 — 날짜가 없다.
 
     서버가 `starts_on`~`ends_on` 의 날마다 펼쳐 회차를 만든다. 알림 시각은 `timing_anchor` 의
@@ -172,7 +173,7 @@ class MedicationDoseIn(BaseModel):
         return value
 
 
-class SubmitMedicationRequest(BaseModel):
+class SubmitMedicationRequest(ApiSchema):
     """승인 게이트 ㉡ — 보호자가 복약 카드에서 확인한 **최종 상태 전체**.
 
     LLM 이 이 요청을 만들지 않는다. Agent 는 초안까지만 만들고, 이 요청이 오기 전에는
@@ -194,7 +195,7 @@ class SubmitMedicationRequest(BaseModel):
     )
 
 
-class MedicationDoseOut(BaseModel):
+class MedicationDoseOut(ApiSchema):
     """회차 1번 — **체크 칸이 곧 복용 기록이다**(따로 로그가 없다)."""
 
     id: UUID = Field(description="회차 id. 체크 · 해제에 쓴다")
@@ -214,7 +215,7 @@ class MedicationDoseOut(BaseModel):
     )
 
 
-class MedicationCourseOut(BaseModel):
+class MedicationCourseOut(ApiSchema):
     """등록된 코스 1건 — 약 **1종**의 복용 계획."""
 
     id: UUID = Field(description="코스 id")
@@ -234,13 +235,13 @@ class MedicationCourseOut(BaseModel):
     )
 
 
-class SubmitMedicationResponse(BaseModel):
+class SubmitMedicationResponse(ApiSchema):
     """201 — 등록한 코스."""
 
     course: MedicationCourseOut = Field(description="등록된 코스")
 
 
-class MedicationsResponse(BaseModel):
+class MedicationsResponse(ApiSchema):
     """200 — 진행 중인 코스. 멈춘 · 끝난 · 시작 전 코스는 싣지 않는다."""
 
     today: date = Field(
@@ -257,7 +258,7 @@ class MedicationsResponse(BaseModel):
     )
 
 
-class CheckDoseRequest(BaseModel):
+class CheckDoseRequest(ApiSchema):
     """회차 체크 · 해제. 같은 상태를 두 번 보내도 결과가 같다."""
 
     model_config = ConfigDict(extra="forbid")
@@ -271,7 +272,7 @@ class CheckDoseRequest(BaseModel):
     )
 
 
-class ReviseMedicationRequest(BaseModel):
+class ReviseMedicationRequest(ApiSchema):
     """승인 게이트 ㉡ — 보호자가 확인한 코스의 **최종 상태 전체**.
 
     등록 요청에서 `source` 만 뺀 것이다. 바꾸지 않은 칸도 지금 값 그대로 다시 보낸다

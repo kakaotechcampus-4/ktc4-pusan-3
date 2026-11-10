@@ -14,6 +14,7 @@ import logging
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
+from functools import cache
 
 from openai import OpenAI
 from openai.lib._pydantic import to_strict_json_schema
@@ -21,6 +22,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 
 from app.core import llm_usage
 from app.core.config import Settings
+from app.core.prompt_hash import canonical_json, fingerprint, short
 from app.providers.meal_plan.schema import (
     MealDay,
     MealPlanJSON,
@@ -96,6 +98,19 @@ RESPONSE_FORMAT = {
         "strict": True,
     },
 }
+
+
+def prompt_parts() -> tuple[str, ...]:
+    """프롬프트 지문(#770)의 입력 — system 프롬프트와 응답 스키마.
+
+    호출 로그와 평가 문서가 같은 값을 쓴다.
+    """
+    return (SYSTEM_PROMPT, canonical_json(RESPONSE_FORMAT))
+
+
+@cache
+def _prompt_sha() -> str:
+    return short(fingerprint(*prompt_parts()))
 
 
 @dataclass(frozen=True)
@@ -270,10 +285,12 @@ class ImageOcrMealPlanReader:
             )
             self.total_usage = self.total_usage + self.last_usage
             log.info(
-                "meal_ocr call=%d range=%s model=%s prompt=%d completion=%d cached=%d",
+                "meal_ocr call=%d range=%s model=%s prompt_name=meal_ocr prompt_sha256=%s "
+                "prompt=%d completion=%d cached=%d",
                 self.calls,
                 day_range,
                 self.model,
+                _prompt_sha(),
                 self.last_usage.prompt_tokens,
                 self.last_usage.completion_tokens,
                 self.last_usage.cached_prompt_tokens,

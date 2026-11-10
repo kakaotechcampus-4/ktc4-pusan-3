@@ -120,7 +120,7 @@ async def test_page_past_the_end_is_empty_with_the_same_total(session, children)
 async def test_page_excludes_affinities_without_active_observations_from_items_and_total(
     session, children
 ):
-    """묶인 기록이 없거나 모두 교정된(stand_alone · inactive) 기억은 어느 쪽에도 안 나온다."""
+    """묶인 기록이 없거나 모두 고치거나 지운(stand_alone · deleted) 기억은 어느 쪽에도 안 나온다."""
     child, _ = children
     shown = await add_affinity(session, child, "계란 반찬", date(2026, 9, 5))
     await add_affinity(session, child, "묶인 기록 없음", date(2026, 9, 4), linked=())
@@ -128,7 +128,7 @@ async def test_page_excludes_affinities_without_active_observations_from_items_a
         session, child, "이번만", date(2026, 9, 3), linked=(ObservationStatus.STAND_ALONE,)
     )
     await add_affinity(
-        session, child, "잘못됨", date(2026, 9, 2), linked=(ObservationStatus.INACTIVE,)
+        session, child, "지움", date(2026, 9, 2), linked=(ObservationStatus.DELETED,)
     )
 
     first = await page_affinities(session, child_id=child.id, limit=1, offset=0)
@@ -243,7 +243,7 @@ async def test_page_counts_an_affinity_once_however_many_observations_are_linked
         child,
         "섞임",
         date(2026, 9, 4),
-        linked=(ObservationStatus.ACTIVE, ObservationStatus.INACTIVE),
+        linked=(ObservationStatus.ACTIVE, ObservationStatus.STAND_ALONE),
     )
 
     first = await page_affinities(session, child_id=child.id, limit=1, offset=0)

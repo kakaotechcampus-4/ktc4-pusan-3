@@ -9,13 +9,14 @@
 
 from datetime import date, datetime
 
-from pydantic import BaseModel, Field
+from pydantic import Field
 
+from app.api.schema_base import ApiSchema
 from app.api.v1.schemas.observations import ObservationHealthOut, ObservationOut
 from app.api.v1.schemas.suggestions import CalendarEventOut
 
 
-class CalendarDayOut(BaseModel):
+class CalendarDayOut(ApiSchema):
     date: date
     has_event: bool = Field(description="그날과 겹치는 일정이 있다")
     has_my_diary: bool = Field(
@@ -27,24 +28,24 @@ class CalendarDayOut(BaseModel):
     )
 
 
-class CalendarMonthResponse(BaseModel):
+class CalendarMonthResponse(ApiSchema):
     days: list[CalendarDayOut] = Field(
         description="표시할 것이 하나라도 있는 날만, 날짜순. 빈 날은 싣지 않는다"
     )
 
 
-class MyDiaryOut(BaseModel):
+class MyDiaryOut(ApiSchema):
     content: str
     updated_at: datetime
 
 
-class SharedPhotoOut(BaseModel):
+class SharedPhotoOut(ApiSchema):
     id: str
     image_url: str
     created_at: datetime
 
 
-class CalendarDayResponse(BaseModel):
+class CalendarDayResponse(ApiSchema):
     my_diary: MyDiaryOut | None = Field(description="로그인한 보호자의 그날 일기. 없으면 null")
     shared_photos: list[SharedPhotoOut] = Field(description="그날 사진. 한 장에 한 항목, 올린 순")
     events: list[CalendarEventOut] = Field(
