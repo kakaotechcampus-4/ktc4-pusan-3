@@ -524,7 +524,7 @@ async def run(
                     bool(missing)
                     and unsaved
                     and not _blocked(calls)
-                    and not _medicine_refused_only(task, calls)
+                    and not _refused_dose_hints_only(task, calls)
                 )
                 asked_again = resuming and replied.kind == "question" and not _wrote(calls)
                 if (
@@ -836,7 +836,7 @@ def _blocked(calls: list[ToolCallRecord]) -> bool:
     return _refused(calls, ErrorCode.HAZARD) or _refused(calls, ErrorCode.SAFETY_RECORD)
 
 
-def _medicine_refused_only(task: MemoryTask | None, calls: list[ToolCallRecord]) -> bool:
+def _refused_dose_hints_only(task: MemoryTask | None, calls: list[ToolCallRecord]) -> bool:
     """Memory 가 한 일이 등록 약 거절뿐이고, 받은 조각도 그 약을 말한 관찰뿐인가.
 
     그러면 그 문장은 pipeline 이 복약 체크 안내에 싣고 Memory 말은 지운다
@@ -845,31 +845,43 @@ def _medicine_refused_only(task: MemoryTask | None, calls: list[ToolCallRecord])
     맡는다.
 
     두 기준을 같이 본다.
-      - 호출: 전부 등록 약 거절이거나 쓰기가 아닌 성공이다. pipeline 이 말을 지우는 기준과 같다.
-        이보다 넓으면 지우지 않을 말이 다시 확인 없이 나간다(인자 오류로 한 번 실패한 run).
+      - 호출: `refused_medicine_only` — pipeline 이 말을 지우는 기준과 같은 함수다.
       - 조각: 전부 관찰이고 조각마다 거절된 약 이름이 들어 있다. 호출만 보면 모델이 부르지 않은
         조각 · 조회 · 일정 조각이 남은 run 도 걸린다. 약 이름은 pipeline `_with_refused_doses` 와
         같은 `mentions_medicine` 으로 본다. 호출의 raw_text 로 짝짓지 않는다 — 모델이 원문을 바꿔
         적는다.
     """
-    if task is None or not task.hints:
+    if task is None or not task.hints or not refused_medicine_only(calls):
         return False
-    refused = [
-        str(call.arguments.get("medication_given") or "")
-        for call in calls
-        if _medicine_refused(call)
-    ]
-    if not refused:
-        return False
-    if not all(
-        _medicine_refused(call) or (call.success and not call.name.startswith(MUTATING_PREFIXES))
-        for call in calls
-    ):
-        return False
+    refused = refused_medicines(calls)
     return all(
         WorkType(hint.work) is WorkType.OBSERVE
         and any(mentions_medicine(hint.text, name) for name in refused)
         for hint in task.hints
+    )
+
+
+def refused_medicine_only(calls: Sequence[ToolCallRecord]) -> bool:
+    """한 일이 등록 약 거절뿐인가 — 등록 약 거절이 있고, 나머지 호출은 쓰기가 아닌 성공이다.
+
+    Memory 의 다시 확인 건너뛰기(`_refused_dose_hints_only`)와 pipeline 이 Memory 말을 지우는
+    기준(`_refused_doses_checked`)이 같이 쓴다 (#811). 둘이 어긋나면 건너뛴 말이 지워지지 않고
+    확인 없이 나간다 — 인자 오류로 한 번 실패한 뒤 거절된 run 이 그렇다. 다른 이유로 실패한
+    호출(되묻기)이나 성공한 쓰기(저장 · 고치기 · 지우기 · 일정 초안)가 있으면 거짓이다.
+    """
+    return any(_medicine_refused(call) for call in calls) and all(
+        _medicine_refused(call) or (call.success and not call.name.startswith(MUTATING_PREFIXES))
+        for call in calls
+    )
+
+
+def refused_medicines(calls: Sequence[ToolCallRecord]) -> tuple[str, ...]:
+    """저장 게이트가 등록된 약이라 거절한 호출이 말한 약 이름들. 빈 이름은 뺀다."""
+    return tuple(
+        name
+        for call in calls
+        if _medicine_refused(call)
+        and (name := str(call.arguments.get("medication_given") or "").strip())
     )
 
 

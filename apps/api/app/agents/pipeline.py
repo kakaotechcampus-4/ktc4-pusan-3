@@ -54,7 +54,12 @@ from app.agents.health.agent import run_hooks as run_health_hooks
 from app.agents.health.registry import WRITING_TASKS as HEALTH_WRITING_TASKS
 from app.agents.health.schemas.task import HealthTaskType
 from app.agents.health.tools.fever import says_fever
-from app.agents.memory.agent import MemoryAgentResult, ToolCallRecord
+from app.agents.memory.agent import (
+    MemoryAgentResult,
+    ToolCallRecord,
+    refused_medicine_only,
+    refused_medicines,
+)
 from app.agents.memory.agent import run as run_memory
 from app.agents.memory.bundles import MUTATING_PREFIXES, WRITES_FOR
 from app.agents.memory.context import AgentContext
@@ -1526,28 +1531,11 @@ def _with_refused_doses(
     거절된 약 이름이 든 문장을 여기서 잇는다. 둘이 어긋나면 먹인 약이 기록에도 체크 안내에도
     안 남는다.
     """
-    refused = _refused_medicines(memory)
+    refused = refused_medicines(memory.calls) if memory is not None else ()
     if not refused:
         return routing
     named = tuple(text for text in dose if any(mentions_medicine(text, name) for name in refused))
     return _with_medication_texts(routing, named, run_id=run_id)
-
-
-def _refused_medicines(memory: MemoryAgentResult | None) -> tuple[str, ...]:
-    """등록된 약이라 저장하지 않은 호출이 말한 약 이름들."""
-    if memory is None:
-        return ()
-    return tuple(
-        name
-        for call in memory.calls
-        if _refused_medicine(call)
-        and (name := str(call.arguments.get("medication_given") or "").strip())
-    )
-
-
-def _refused_medicine(call: ToolCallRecord) -> bool:
-    """저장 게이트가 등록된 약이라 거절한 호출인가."""
-    return call.result.get("error", {}).get("code") == ErrorCode.REGISTERED_MEDICINE
 
 
 def _medication_room(routing: Routing) -> bool:
@@ -2515,18 +2503,13 @@ def _refused_doses_checked(routing: Routing, memory: MemoryAgentResult) -> bool:
     """Memory 가 한 일이 등록 약 거절뿐이고, 그 약 문장이 이 run 의 복약 조각에 실렸는가.
 
     둘 다 참일 때만 Memory 말을 지운다. Agent 자리가 없어 복약 조각이 못 생겼으면 거짓이다.
-    "한 일이 거절뿐" 은 호출이 전부 등록 약 거절이거나 성공한 조회라는 뜻이다. 다른 이유로 실패한
-    호출(되묻기)이나 성공한 쓰기(저장 · 고치기 · 지우기 · 일정 초안)가 있으면 거짓이다 — 고친 것과
-    지운 것은 `Saved` 로 나가지 않고, 되묻기도 Memory 말로만 나가서 지우면 보호자가 모른다.
+    "한 일이 거절뿐" 은 Memory 가 다시 확인을 건너뛸 때와 같은 함수(`refused_medicine_only`)로
+    본다 (#811). 되묻기나 성공한 쓰기가 섞이면 거짓이다 — 고친 것과 지운 것은 `Saved` 로 나가지
+    않고, 되묻기도 Memory 말로만 나가서 지우면 보호자가 모른다.
     """
-    if not memory.refused(ErrorCode.REGISTERED_MEDICINE) or memory.drafts:
+    if memory.drafts or not refused_medicine_only(memory.calls):
         return False
-    if not all(
-        _refused_medicine(call) or (call.success and not call.name.startswith(MUTATING_PREFIXES))
-        for call in memory.calls
-    ):
-        return False
-    refused = _refused_medicines(memory)
+    refused = refused_medicines(memory.calls)
     texts = [
         text for task in routing.domain_tasks if _is_medication(task) for text in task.request_texts
     ]
