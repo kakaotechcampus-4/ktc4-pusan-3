@@ -33,8 +33,12 @@ from app.providers.meal_plan.schema import (
     MenuItem,
     UnparsedCell,
 )
+from tests.integration.api.conftest import issue_bearer, link_child
 
 KST = ZoneInfo("Asia/Seoul")
+# 사진 run 의 읽은 결과는 표(run_hold, #877)라 `pending_db` 가 테스트 트랜잭션에 묶는다
+pytestmark = pytest.mark.usefixtures("pending_db")
+
 PHOTOS = "/api/v1/children/{cid}/photos"
 COMMIT = "/api/v1/photo-runs/{rid}/commit"
 SOURCE = "숲 체험 안내\n일시: 11월 6일(금) 9:30~12:00\n참가 동의서는 11월 3일(화) 14시까지 회신"
@@ -121,7 +125,9 @@ def key_set(monkeypatch):
 
 
 async def _upload(db_client, headers, cid, monkeypatch, reading) -> tuple[str, dict]:
-    monkeypatch.setattr(entrypoint, "read_photo", lambda data, *, received_at: reading)
+    monkeypatch.setattr(
+        entrypoint, "read_photo", lambda data, *, received_at, meal_deadline=None: reading
+    )
     response = await db_client.post(
         PHOTOS.format(cid=cid),
         files={"file": ("a.jpg", b"fake", "image/jpeg")},
@@ -146,7 +152,7 @@ async def test_스위치가_꺼져_있으면_받지_않는다(db_client, bearer,
     # 처리방침 · 동의가 나가기 전에는 주소를 직접 불러도 사진이 외부 AI 로 나가면 안 된다
     monkeypatch.setattr(settings, "PHOTO_UPLOAD_ACCEPT", False)
 
-    def must_not_run(data, *, received_at):
+    def must_not_run(data, *, received_at, meal_deadline=None):
         raise AssertionError("읽기가 돌면 안 된다")
 
     monkeypatch.setattr(entrypoint, "read_photo", must_not_run)
@@ -402,6 +408,10 @@ async def test_저장을_다시_보내도_두_번_넣지_않는다(
     assert first.status_code == second.status_code == 201
     assert first.json() == second.json()
     assert first.json()["calendar_date"] == "2026-11-06"
+    # 두 번째는 다시 넣은 것이 아니라 남겨 둔 응답의 재생이다 —
+    # 공지 중복 제거에 가려지지 않게 직접 본다
+    kept = await photo_run.get(run_id, parent_id=bearer[1])
+    assert kept is not None and kept.response == first.json()
     count = await session.scalar(
         select(func.count()).select_from(Notice).where(Notice.child_id == cid)
     )
@@ -466,12 +476,13 @@ async def test_식단표를_못_읽어도_공지_항목은_보여_준다(
     assert parsed["entries"][-1]["needs_review"] is True
 
 
-async def test_남의_run_은_없는_run_이다(db_client, bearer, cid, key_set, monkeypatch):
+async def test_남의_run_은_없는_run_이다(db_client, session, bearer, cid, key_set, monkeypatch):
     headers, _ = bearer
-    run = photo_run.open_photo_run(
-        run_id=uuid.uuid4().hex, parent_id=uuid.uuid4(), child_id=uuid.uuid4()
-    )
+    _, someone = await issue_bearer(session, token="test-token-someone")
+    their_child = await link_child(session, parent_id=someone)
+    run = photo_run.open_photo_run(run_id=uuid.uuid4().hex, parent_id=someone, child_id=their_child)
     run.reading = _reading()
+    await photo_run.keep(run)
     response = await db_client.post(
         COMMIT.format(rid=run.run_id),
         json={"lane": "document", "entries": [], "attach_to_calendar": False},
@@ -532,7 +543,7 @@ async def test_S3_에_올린_사진은_열쇠로_읽고_지운다(
     s3_bucket[key] = b"photo-bytes"  # 화면이 S3 에 올렸다
     received: list[bytes] = []
 
-    def read(data, *, received_at):
+    def read(data, *, received_at, meal_deadline=None):
         received.append(data)
         return _reading()
 
@@ -594,7 +605,9 @@ async def test_저장할_것이_없는_사진은_빈_확인_화면_대신_실패
     # 영수증 · 게임 화면처럼 글자는 있는데 공지가 아닌 사진. 빈 확인 화면은 저장 버튼만 꺼져 있었다
     headers, _ = bearer
     reading = entrypoint.PhotoReading(notice=replace(_reading().notice, items=()), meal_plan=None)
-    monkeypatch.setattr(entrypoint, "read_photo", lambda data, *, received_at: reading)
+    monkeypatch.setattr(
+        entrypoint, "read_photo", lambda data, *, received_at, meal_deadline=None: reading
+    )
     response = await db_client.post(
         PHOTOS.format(cid=cid),
         files={"file": ("a.jpg", b"x", "image/jpeg")},
@@ -613,7 +626,7 @@ async def test_저장할_것이_없는_사진은_빈_확인_화면_대신_실패
 async def test_글자를_못_찾으면_실패로_끝난다(db_client, bearer, cid, key_set, monkeypatch):
     headers, _ = bearer
 
-    def unreadable(data, *, received_at):
+    def unreadable(data, *, received_at, meal_deadline=None):
         raise entrypoint.UnreadablePhoto("글자를 찾지 못했어요")
 
     monkeypatch.setattr(entrypoint, "read_photo", unreadable)
@@ -786,7 +799,9 @@ async def test_같은_요청을_다시_보내면_새로_올린_사진은_지우�
     db_client, session, bearer, cid, key_set, s3_bucket, monkeypatch
 ):
     headers, _ = bearer
-    monkeypatch.setattr(entrypoint, "read_photo", lambda data, *, received_at: _reading())
+    monkeypatch.setattr(
+        entrypoint, "read_photo", lambda data, *, received_at, meal_deadline=None: _reading()
+    )
     idem = {**headers, "Idempotency-Key": str(uuid.uuid4())}
     first_key = (await db_client.post(UPLOADS.format(cid=cid), headers=headers)).json()["key"]
     s3_bucket[first_key] = b"photo"

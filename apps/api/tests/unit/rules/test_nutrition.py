@@ -10,12 +10,15 @@ import pytest
 
 from app.rules.nutrition import (
     HYSTERESIS_FACTOR,
+    MIN_APPEARANCE_DAYS,
+    MIN_APPEARANCE_RECORDS,
     MIN_RECORDS,
     UNKNOWN_AMOUNT_WEIGHT,
     amount_weight,
     band_range,
     band_upper,
     energy_share,
+    is_appearance_insufficient,
     is_insufficient,
     mean_over_recorded_days,
     select_kdri_group,
@@ -55,6 +58,20 @@ def test_7일_8행은_부족하다() -> None:
 
 def test_기록이_0행이어도_부족이다() -> None:
     assert is_insufficient(0) is True
+
+
+# ── is_appearance_insufficient — 식품군 출현은 구간보다 낮은 임계다 ─────────────
+def test_출현_임계는_3행_2일이다() -> None:
+    assert (MIN_APPEARANCE_RECORDS, MIN_APPEARANCE_DAYS) == (3, 2)
+    assert is_appearance_insufficient(2, 2) is True  # 2행
+    assert is_appearance_insufficient(3, 1) is True  # 하루 3행 — 하루치로 일반화하지 않는다
+    assert is_appearance_insufficient(3, 2) is False
+    assert is_appearance_insufficient(0, 0) is True
+
+
+def test_출현_임계를_낮춰도_구간_임계는_10행이다() -> None:
+    assert is_appearance_insufficient(9, 5) is False
+    assert is_insufficient(9) is True
 
 
 # ── amount_weight — 양을 모르는 행은 절반 가중 ────────────────────────

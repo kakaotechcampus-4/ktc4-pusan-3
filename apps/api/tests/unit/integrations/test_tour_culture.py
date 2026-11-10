@@ -18,7 +18,7 @@ import pytest
 from app.core.culture_raw import RawSite
 from app.core.weather_raw import UpstreamUnavailable
 from app.integrations.tour.events import TourEvents
-from tests.unit.integrations.test_tour_events import KST, NOW, Recorder, page, source
+from tests.unit.integrations.test_tour_events import KST, NOW, Recorder, page, service_key, source
 
 CODES = page([{"code": "26", "name": "부산광역시"}, {"code": "48", "name": "경상남도"}])
 MUSEUM = {
@@ -33,6 +33,10 @@ MUSEUM = {
     "firstimage": "http://example.invalid/a.jpg",
 }
 SCIENCE = {**MUSEUM, "contentid": "200", "contenttypeid": "12", "title": "부산과학체험관"}
+
+
+# 인증키는 test_tour_events 의 autouse fixture 로 가짜 값을 둔다 — CI 에는 .env 가 없다
+__all__ = ["service_key"]
 
 
 class TestSites:

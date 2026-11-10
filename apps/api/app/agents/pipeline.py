@@ -54,7 +54,12 @@ from app.agents.health.agent import run_hooks as run_health_hooks
 from app.agents.health.registry import WRITING_TASKS as HEALTH_WRITING_TASKS
 from app.agents.health.schemas.task import HealthTaskType
 from app.agents.health.tools.fever import says_fever
-from app.agents.memory.agent import MemoryAgentResult, ToolCallRecord
+from app.agents.memory.agent import (
+    MemoryAgentResult,
+    ToolCallRecord,
+    refused_medicine_only,
+    refused_medicines,
+)
 from app.agents.memory.agent import run as run_memory
 from app.agents.memory.bundles import MUTATING_PREFIXES, WRITES_FOR
 from app.agents.memory.context import AgentContext
@@ -105,7 +110,9 @@ logger = logging.getLogger(__name__)
 MAX_MODEL_CALLS = 4
 
 # NF-06 — 입력부터 이만큼 지나면 도메인 Agent를 끊고 있는 결과로 끝낸다.
-# Supervisor·Memory는 끊지 않는다. 저장을 중간에 자르면 기록이 반만 남는다.
+# Memory는 끊지 않는다. 저장을 중간에 자르면 기록이 반만 남는다.
+# Supervisor는 모델이 멈출 때만 `SUPERVISOR_TIMEOUT_S`(20초)에 끊고 강등한다 (#914) —
+# 이 상한은 그 호출 하나에 거는 것이고, 이 20초와는 별개로 센다.
 # 둘이 쓴 만큼 도메인 몫이 줄고, 이미 다 썼으면 도메인 Agent는 시작하자마자 끊긴다
 RUN_DEADLINE_S = 20.0
 
@@ -1140,6 +1147,13 @@ def _send_reply(
         and _request_only(memory, routing)
     ):
         note = MemoryNote(REQUEST_ONLY_NOTE, "message")
+    elif (
+        routing is not None
+        and note is not None
+        and note.kind == "message"
+        and _nothing_to_record(memory, routing)
+    ):
+        note = None
     elif note is not None and note.kind == "message" and checked_by_health:
         # 등록된 약이라 저장하지 않은 것밖에 없고, 그 문장이 같은 run 의 체크 안내로 실렸다 —
         # Memory 의 말까지 나가면 같은 안내가 두 번이다
@@ -1519,28 +1533,11 @@ def _with_refused_doses(
     거절된 약 이름이 든 문장을 여기서 잇는다. 둘이 어긋나면 먹인 약이 기록에도 체크 안내에도
     안 남는다.
     """
-    refused = _refused_medicines(memory)
+    refused = refused_medicines(memory.calls) if memory is not None else ()
     if not refused:
         return routing
     named = tuple(text for text in dose if any(mentions_medicine(text, name) for name in refused))
     return _with_medication_texts(routing, named, run_id=run_id)
-
-
-def _refused_medicines(memory: MemoryAgentResult | None) -> tuple[str, ...]:
-    """등록된 약이라 저장하지 않은 호출이 말한 약 이름들."""
-    if memory is None:
-        return ()
-    return tuple(
-        name
-        for call in memory.calls
-        if _refused_medicine(call)
-        and (name := str(call.arguments.get("medication_given") or "").strip())
-    )
-
-
-def _refused_medicine(call: ToolCallRecord) -> bool:
-    """저장 게이트가 등록된 약이라 거절한 호출인가."""
-    return call.result.get("error", {}).get("code") == ErrorCode.REGISTERED_MEDICINE
 
 
 def _medication_room(routing: Routing) -> bool:
@@ -1591,7 +1588,8 @@ async def _match_registered_doses(
 
     ① 진행 중 코스 이름을 읽어 Memory 컨텍스트에 싣는다(저장 게이트가 쓴다) ② 복용 문장을 Memory
     힌트로도 ③ 등록된 약이면 Health 복약 조각으로도 보낸다. 코스를 못 읽으면(동의 없음 · 조회
-    실패 · 어댑터 없음) 대조하지 않는다 — 투약이 두 번 남는 쪽이 기록이 사라지는 쪽보다 낫다.
+    실패 · 어댑터 없음 · 복약을 꺼 둠 #923) 대조하지 않는다 — 투약이 두 번 남는 쪽이 기록이
+    사라지는 쪽보다 낫다.
     체크 안내를 낼 자리가 없는 run 도 같다. "시럽" 처럼 이름 일부만 말하면 이 시점에는 복약 조각이
     없어서, 조각이 있는지가 아니라 더할 자리가 있는지를 본다(`_medication_room`).
     """
@@ -2529,18 +2527,13 @@ def _refused_doses_checked(routing: Routing, memory: MemoryAgentResult) -> bool:
     """Memory 가 한 일이 등록 약 거절뿐이고, 그 약 문장이 이 run 의 복약 조각에 실렸는가.
 
     둘 다 참일 때만 Memory 말을 지운다. Agent 자리가 없어 복약 조각이 못 생겼으면 거짓이다.
-    "한 일이 거절뿐" 은 호출이 전부 등록 약 거절이거나 성공한 조회라는 뜻이다. 다른 이유로 실패한
-    호출(되묻기)이나 성공한 쓰기(저장 · 고치기 · 지우기 · 일정 초안)가 있으면 거짓이다 — 고친 것과
-    지운 것은 `Saved` 로 나가지 않고, 되묻기도 Memory 말로만 나가서 지우면 보호자가 모른다.
+    "한 일이 거절뿐" 은 Memory 가 다시 확인을 건너뛸 때와 같은 함수(`refused_medicine_only`)로
+    본다 (#811). 되묻기나 성공한 쓰기가 섞이면 거짓이다 — 고친 것과 지운 것은 `Saved` 로 나가지
+    않고, 되묻기도 Memory 말로만 나가서 지우면 보호자가 모른다.
     """
-    if not memory.refused(ErrorCode.REGISTERED_MEDICINE) or memory.drafts:
+    if memory.drafts or not refused_medicine_only(memory.calls):
         return False
-    if not all(
-        _refused_medicine(call) or (call.success and not call.name.startswith(MUTATING_PREFIXES))
-        for call in memory.calls
-    ):
-        return False
-    refused = _refused_medicines(memory)
+    refused = refused_medicines(memory.calls)
     texts = [
         text for task in routing.domain_tasks if _is_medication(task) for text in task.request_texts
     ]
@@ -2562,8 +2555,33 @@ def _request_only(memory: MemoryAgentResult, routing: Routing) -> bool:
         return False
     if memory.reply is None or memory.reply.kind != "message":
         return False
-    attempted = any(call.name.startswith(MUTATING_PREFIXES) for call in memory.calls)
-    return not (attempted or memory.drafts)
+    return not _tried_to_write(memory)
+
+
+def _tried_to_write(memory: MemoryAgentResult) -> bool:
+    """쓰기를 시도했거나 제출을 기다리는 초안이 있는가."""
+    return any(call.name.startswith(MUTATING_PREFIXES) for call in memory.calls) or bool(
+        memory.drafts
+    )
+
+
+def _nothing_to_record(memory: MemoryAgentResult, routing: Routing) -> bool:
+    """기록 조각이 없는 요청 run 에서 Memory 가 쓰기 없이 말로만 끝냈는가 (#861).
+
+    힌트 0개로 불린 Memory 의 말은 모델이 쓴 범위 안내("식사 추천은 해드리지 않아요")라 매번 달라서,
+    같은 카드의 도메인 추천과 부딪힌다. 남긴 기록이 없으니 `REQUEST_ONLY_NOTE` 도 거짓 신호다 —
+    말을 싣지 않는다. 시도했다 막힌 거절 · 질문 · 저장 확인은 그대로 둔다
+    (`_request_only` 와 같은 기준).
+
+    tool 을 하나라도 불렀으면 싣는다 — 조각 밖에 추임새가 아닌 글자가 남은 run 이라 Supervisor 가
+    놓친 조회 · 중복 안내에 Memory 가 읽고 답한 것일 수 있다. 도구 없이 말만 한 경우만 뺀다.
+    """
+    task = routing.memory_task
+    if task is None or task.hints or not routing.domain_tasks:
+        return False
+    if memory.reply is None or memory.reply.kind != "message":
+        return False
+    return not memory.calls and not _tried_to_write(memory)
 
 
 def _unwritten(task: MemoryTask | None, memory: MemoryAgentResult) -> Unwritten | None:
@@ -2635,7 +2653,13 @@ def _did_anything(
     응급 안내를 낸 run 은 쓴 것이 없어도 처리한 일이다 — 실패로 끝내면 안내가 실패 화면에 묻힌다.
     """
     wrote = _memory_wrote(memory)
-    note = memory is not None and bool(memory.final_message)
+    # 싣지 않은 말(`_nothing_to_record`)은 처리한 일이 아니다.
+    # 세면 도메인 Agent 가 다 실패했을 때 Failed 없이 빈 화면으로 끝난다
+    note = (
+        memory is not None
+        and bool(memory.final_message)
+        and not _nothing_to_record(memory, routing)
+    )
     return (
         wrote
         or note

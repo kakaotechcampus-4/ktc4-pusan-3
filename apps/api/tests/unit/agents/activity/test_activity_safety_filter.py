@@ -23,6 +23,7 @@ from app.agents.common.reference import (
     food_safety_terms,
     hazard_terms,
 )
+from app.agents.entrypoint import SafetyLabel, check_allergens
 from app.rules.allergen import ALLERGEN_NAMES
 
 
@@ -293,6 +294,37 @@ class TestAllergens:
 
     def test_재료에서도_찾는다(self):
         assert check("점토 놀이", ("밀가루", "물")).allergens == ("밀",)
+
+    def test_19종_밖은_조각이_아니라_보호자가_적은_이름으로_담는다(self):
+        """띄어 쓴 이름의 조각("고양")으로 담으면 05 가 적은 적 없는 이름을 묻는다 (#891).
+
+        여러 이름을 이어 적었으면 조각이 나온 이름 하나로, 뒤에 붙인 말은 떼고 — "땅콩, 고양이 털
+        알레르기" 의 "고양이 털".
+        """
+        entries = [allergy("땅콩, 고양이 털 알레르기", "retracted")]
+
+        assert check("고양이 그림 그리기", entries=entries).allergens == ("고양이 털",)
+
+    @pytest.mark.parametrize(
+        ("label", "status", "blocked", "unknown"),
+        [
+            ("쑥 가루", "none", (), ("밀",)),
+            ("쑥 가루", "retracted", (), ("밀", "쑥 가루")),
+            ("쑥 가루", "active", ("쑥 가루",), ("밀",)),
+            ("쑥", "active", ("쑥 가루",), ("밀",)),
+        ],
+    )
+    def test_조각에서_나온_태그를_05_사전검사가_그_행으로_알아본다(
+        self, label, status, blocked, unknown
+    ):
+        """괜찮았던 식품이면 다시 묻지 않고, 내린 기록이면 묻고, 그 뒤 다시 등록하면 채택 · 초안
+        만들기의 재확인이 막는다 (#891). 나중에 낱말("쑥")만 등록해도 막혀야 한다 — 조각 태그
+        "쑥" 은 막혔는데, 띄어쓰기를 지운 "쑥가루" 로 달면 05 가 한 낱말로 읽어 통과시킨다."""
+        tags = check("반죽 놀이", ("밀가루",), entries=[allergy("쑥 가루", "retracted")]).allergens
+
+        found = check_allergens(tags, [SafetyLabel(kind="allergy", label=label, status=status)])
+
+        assert (found.blocked, found.unknown) == (blocked, unknown)
 
 
 class TestNonFoodAllergyCaution:

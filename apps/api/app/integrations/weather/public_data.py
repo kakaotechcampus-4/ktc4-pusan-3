@@ -38,7 +38,12 @@ def service_key() -> str:
 
 
 async def get_json(
-    client: httpx.AsyncClient, url: str, params: dict[str, Any], *, what: str
+    client: httpx.AsyncClient,
+    url: str,
+    params: dict[str, Any],
+    *,
+    what: str,
+    timeout: httpx.Timeout = TIMEOUT,
 ) -> dict[str, Any]:
     """GET 한 번. HTTP 오류 · 타임아웃 · JSON 아님은 전부 `UpstreamUnavailable(what)` 이다.
 
@@ -46,7 +51,7 @@ async def get_json(
     """
     try:
         response = await client.get(
-            url, params={**params, "serviceKey": service_key()}, timeout=TIMEOUT
+            url, params={**params, "serviceKey": service_key()}, timeout=timeout
         )
         response.raise_for_status()
         payload = response.json()

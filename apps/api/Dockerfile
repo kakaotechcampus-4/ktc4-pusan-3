@@ -30,4 +30,8 @@ USER apiuser
 EXPOSE 8000
 
 # --no-sync: 빌드 때 설치한 의존성을 그대로 쓴다. 없으면 기동마다 dev 그룹을 다시 받는다.
-CMD ["uv", "run", "--no-sync", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+# --timeout-graceful-shutdown 70: SIGTERM 뒤 열린 요청 · SSE 를 기다리는 상한 (drain, #882).
+#   run 마감 60초(runner.RUN_DEADLINE_SECONDS)보다 길게 — SSE 가 run 끝과 함께 스스로 닫힌다.
+#   짧으면 상한에서 끊긴 SSE 마다 uvicorn 이 ERROR traceback 을 찍어 배포 때 Discord 가 울린다.
+#   🚨 이 값 + main.DRAIN_SECONDS + flush 5초 < compose 의 api stop_grace_period.
+CMD ["uv", "run", "--no-sync", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--timeout-graceful-shutdown", "70"]

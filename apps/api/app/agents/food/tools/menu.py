@@ -8,7 +8,12 @@ from app.agents.common.datetime_rules import DateParseError
 from app.agents.common.food_safety import SafetyVerdict, filter_food_safety
 from app.agents.food.amount_rules import amount_of, is_amount_text
 from app.agents.food.context import FoodContext
-from app.agents.food.daycare_intent import is_question, is_uncertain, says_absence
+from app.agents.food.daycare_intent import (
+    is_question,
+    is_uncertain,
+    says_absence,
+    says_replacement,
+)
 from app.agents.food.daycare_lookup import (
     LOOKUP_MAX_DAYS,
     SLOT_LABEL,
@@ -26,7 +31,9 @@ from app.agents.food.menu_resolver import MenuResolver
 from app.agents.food.readouts import (
     DAYCARE_ABSENT,
     DAYCARE_ALLERGY_CONFLICT,
+    DAYCARE_ALLERGY_UNCHECKED,
     DAYCARE_AMBIGUOUS,
+    DAYCARE_AMOUNT_NO_MEAL,
     DAYCARE_AMOUNT_UPDATED,
     DAYCARE_ASK_SUBSTITUTE,
     DAYCARE_LOOKUP_TOO_LONG,
@@ -164,9 +171,11 @@ async def update_daycare_meal(context: FoodContext, args: UpdateDaycareMealArgs)
     - 끼니(`slot`)를 말하지 않았을 때 그날 행이 하나면 그 행을, 여럿이면 되묻는다
       (`daycare.slot_ambiguous`) — 엉뚱한 끼니를 고치면 영양 계산이 틀어진다.
     - 메뉴는 **집합 연산**이다: `menu_keys - removed + added`. 같은 갱신을 두 번 해도 결과가 같다.
-      넣을 메뉴만 있고 뺄 메뉴가 없으면 되묻는다(`daycare.replaced_unknown`) — 전체 교체로 처리하면
-      그날 먹은 밥 · 국까지 사라진다. 뺄 메뉴만 있거나 아무것도 못 고치면 되묻는다
-      (`daycare.ask_substitute`). 뺄 메뉴가 그날 급식에 없으면 어느 것을 바꾼 건지 되묻는다.
+      넣을 메뉴만 있고 뺄 메뉴가 없을 때 교체 말("대신" · "말고" · "바뀌었대")이 있으면 되묻는다
+      (`daycare.replaced_unknown`) — 전체 교체로 처리하면 그날 먹은 밥 · 국까지 사라진다. 교체
+      말이 없으면("새우볶음밥 먹었대") 빼지 않고 그날 급식에 더한다(T48). 뺄 메뉴만 있거나
+      아무것도 못 고치면 되묻는다(`daycare.ask_substitute`). 뺄 메뉴가 그날 급식에 없으면 어느
+      것을 바꾼 건지 되묻는다.
       넣을 메뉴를 `MenuResolver` 로 찾아 둔다 — 못 찾아도(`unresolved`) 키는 저장하고 영양
       계산에서만 빠진다.
     - 양은 양 사전(`amount_terms.yaml`)에 있는 말일 때만 바꾼다. 사전에 없는 말로 알던 양을 덮지
@@ -177,8 +186,10 @@ async def update_daycare_meal(context: FoodContext, args: UpdateDaycareMealArgs)
     - 넣은 메뉴는 `filter_food_safety(purpose="daycare")` 로 다시 본다. 아이의 알레르기와 겹쳐도
       저장은 막지 않는다(보호자가 실제로 있었던 일을 말한 것이다) — 경고 문구를 함께 낸다. 겹치는
       항목 이름은 화면 문구에만 있고 모델에게 돌려주는 결과에는 없다. 안전 정보를 못 읽었으면
-      (`None`) 다시 보지 못하고 `allergy_checked=False` 로 알린다.
-    - 승인 게이트가 없다. 확인 모달이 뜨지 않는다(되돌릴 수 없는 2곳이 아니다).
+      (`None`) 다시 보지 못한다 — 저장은 하고, 모델에게는 `allergy_checked=False` 로, 보호자
+      화면에는 넣은 메뉴가 있을 때 `daycare.allergy_unchecked` 로 알린다(조회 실패를 겹침 없음으로
+      넘기지 않는다).
+    - 승인 게이트가 없다. 확인 모달이 뜨지 않는다(루트 §2 의 게이트 세 곳 어디에도 들지 않는다).
     """
     state = context.state
     spans = (args.date_span, *args.removed_spans, *args.added_spans, args.amount_span or "")
@@ -196,13 +207,23 @@ async def update_daycare_meal(context: FoodContext, args: UpdateDaycareMealArgs)
     rows = await ports.daycare.rows(child_id=context.child_id, date_from=day, date_to=day)
     row, stop = _pick_row(rows, args.slot)
     if row is None:
+        if stop == DAYCARE_NOT_FOUND and _amount_only(args) and day.weekday() < 5:
+            # 급식표가 없는 평일의 "점심은 반만 먹었대" — 양을 붙일 행이 없다. 무엇을 먹었는지
+            # 알려 달라고 안내한다(되묻기가 아니라 문구 하나, #798). 주말은 급식이 없는 날이다
+            when = "오늘" if day == context.today else _date_label(day)
+            slot = SLOT_LABEL[args.slot or "lunch"]
+            context.state.readouts = (
+                READOUTS.render(DAYCARE_AMOUNT_NO_MEAL, date=when, slot=slot),
+            )
+            return ok("update", _RESOURCE, status="stopped")
         return _stop(context, "update", stop)
 
     removed = _menu_keys(args.removed_spans)
     added_names = _clean(args.added_spans)
     added = _menu_keys(added_names)
     amount_given = is_amount_text(args.amount_span)
-    if added and not removed:
+    if added and not removed and says_replacement(state.utterance):
+        # 바뀌었다는데 무엇 대신인지 모른다 — 전체 교체로 처리하면 그날 먹은 밥 · 국까지 사라진다
         return _stop(context, "update", DAYCARE_REPLACED_UNKNOWN)
     if removed and not added:
         return _stop(context, "update", DAYCARE_ASK_SUBSTITUTE)
@@ -211,7 +232,7 @@ async def update_daycare_meal(context: FoodContext, args: UpdateDaycareMealArgs)
         # 뺄 메뉴가 그날 급식에 없다. 넣을 메뉴가 이미 다 들어 있으면 같은 갱신을 다시 한 것이라
         # 그대로 둔다(두 번 해도 같은 결과). 아니면 어느 메뉴를 바꾼 건지 되묻는다
         return _stop(context, "update", DAYCARE_REPLACED_UNKNOWN)
-    if not removed and not amount_given:
+    if not removed and not added and not amount_given:
         return _stop(context, "update", DAYCARE_ASK_SUBSTITUTE)
 
     updated = row
@@ -257,6 +278,9 @@ async def update_daycare_meal(context: FoodContext, args: UpdateDaycareMealArgs)
         labels = await _allergy_conflicts(context, added, entries)
         if labels:
             readouts += (READOUTS.render(DAYCARE_ALLERGY_CONFLICT, label=", ".join(labels)),)
+    elif entries is None and added:
+        # 조회 실패를 "겹침 없음" 으로 넘기지 않는다 (루트 §2). allergy_checked 는 모델에게만 간다
+        readouts += (READOUTS.render(DAYCARE_ALLERGY_UNCHECKED),)
     state.readouts = readouts
     return ok(
         "update",
@@ -284,7 +308,8 @@ async def delete_daycare_meal(context: FoodContext, args: DeleteDaycareMealArgs)
       (`daycare.out_of_range`). 그날 행이 없으면 `daycare.not_found` 다. 미래 날짜도 지운다.
     - 쓰기가 끝난 뒤에만 "기관 식사 없는 걸로 해 뒀어요"(`daycare.absent`)를 `state.readouts` 에
       채운다.
-    - 승인 게이트가 없다.
+    - 🚨 승인 게이트가 없다 — AI 가 고른 삭제라 루트 §2 게이트 ㉢ 대상인데 아직 붙이지 못했다.
+      알려진 문제다 (Food_Tool_명세 `delete_daycare_meal` 줄 · #943 리뷰).
     """
     state = context.state
     if _outside_utterance(state.utterance, (args.date_span,)):
@@ -322,6 +347,11 @@ def _clean(spans: list[str]) -> list[str]:
 def _menu_keys(spans: list[str]) -> list[str]:
     """구간 → 정규화한 menu_key. 정규화하면 비는 것은 뺀다. 순서를 지키고 겹치지 않는다."""
     return list(dict.fromkeys(key for span in spans if (key := normalize_menu_key(span))))
+
+
+def _amount_only(args: UpdateDaycareMealArgs) -> bool:
+    """메뉴 없이 먹은 양만 말했다."""
+    return is_amount_text(args.amount_span) and not args.removed_spans and not args.added_spans
 
 
 def _date_label(target: date) -> str:

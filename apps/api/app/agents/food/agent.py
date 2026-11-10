@@ -3,7 +3,8 @@
 `build_gate` 로 이번 run 의 Gate 를 계산하고, 닫힌 조합이면 코드 문구로 모델 0회로 끝낸다. 결과는
 공통 `DomainAgentResult` 다.
 
-  식단 추천  코드가 후보 풀을 만들어 샘플을 뽑고(`meal_pool`), 문서 행 `[예시]` 를 조회한 뒤
+  식단 추천  코드가 후보 풀을 만들어 샘플을 뽑고(`meal_pool` — 이유기 후보는 레시피북이 아니라
+            이유식 식단 표, #399), 문서 행 `[예시]` 를 조회한 뒤
             모델에게
             후보 중 3개를 고르게 한다. 사후 안전 필터로 빠져 3개가 안 되면 새 샘플로 재호출 1회 —
             처음 통과한 것을 먼저 두고 빈자리만 채운다(`merge_drafts`). 풀이 비면 모델을
@@ -18,11 +19,12 @@
 
 import logging
 from collections.abc import Collection
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from app.agents.common.evidence import RankedEvidence, pick_followup
 from app.agents.common.food_safety import filter_food_safety
+from app.agents.common.food_words import mentions_blocked_food
 from app.agents.common.llm_client import LLMClient
 from app.agents.common.readout import Readout
 from app.agents.common.result import AgentStatus, DomainAgentResult
@@ -333,7 +335,8 @@ def _recommendation(
     followup: tuple[str, ...],
     notices: tuple[Readout, ...] = (),
 ) -> DomainAgentResult:
-    drafts = tuple(pick.draft for pick in picks)
+    # 끼니는 일정 초안 제목에 쓴다 — 여기서 빼면 서버가 끼니를 알 길이 없다 (#898)
+    drafts = tuple(replace(pick.draft, meal_slot=pick.meal_slot.value) for pick in picks)
     # 개수 안내는 합친 결과로 센다 — 재호출 때 출력 tool 이 본 것은 재호출분뿐이다
     notice = count_notice(len(drafts), empty=READOUTS.get(POOL_EMPTY))
     return DomainAgentResult(
@@ -371,7 +374,13 @@ async def _recall(
     새 대화로 시작하면 모델이 기억 조회를 처음부터 다시 해 왕복이 늘고, pipeline 의 20초에 걸리면
     처음 통과한 것까지 잃는다. 풀에서 빠진 것(`blocked_keys`)과 이미 고른 것을 빼고 다시 뽑는다.
     남은 후보가 없으면 부를 이유가 없어서 None 이다. 제외 목록은 `menu_key` 만 넣고 사유는 없다.
+
+    🚨 빠진 것 중 이름에 막힌 음식이 든 메뉴("계란말이" · "견과류요거트")는 제외 목록에 싣지
+    않는다 — 이름만으로 아이의 알레르기를 외부 모델에 알린다. 새 목록에 없어 다시 고를 수 없고, 생성
+    메뉴로 다시 내도 같은 필터에 걸린다.
     """
+    gate = context.state.gate
+    assert gate is not None  # run() 이 build_gate 를 먼저 부른다
     blocked = set(context.state.blocked_keys)
     chosen = [pick.menu_key for pick in first]
     rest = tuple(item for item in pool if item.row.menu_key not in {*blocked, *chosen})
@@ -388,7 +397,19 @@ async def _recall(
             "role": "user",
             "content": recall_message(
                 task.request_texts,
-                avoid=[*chosen, *sorted(blocked)],
+                avoid=[
+                    *chosen,
+                    *(
+                        key
+                        for key in sorted(blocked)
+                        if not mentions_blocked_food(
+                            key,
+                            require_safety(context),
+                            stage=gate.stage.stage,
+                            months=gate.stage.months,
+                        )
+                    ),
+                ],
                 sample=_rows(sample),
                 requested=context.state.requested_keys,
             ),

@@ -68,8 +68,12 @@ _REQUEST = """
                        약 · 영양제는 food 가 아니라 guarded/diagnosis 다.
                        무엇을 먹일지 없이 시점 · 횟수만 묻는 말("지금 또 먹여도 돼?")은
                        약 이야기라 health 다
-  daycare_meal         어린이집·유치원 급식이 실제로 바뀌었다는 말 — 대체식 · 결석.
+  daycare_meal         어린이집·유치원 급식이 실제로 바뀌었다는 말 — 대체식 · 결석 · 먹은 양.
                        기관 신호(어린이집·유치원·급식)가 있으면 이쪽, 없으면 record다.
+                       선생님 · 알림장이 전한 점심 · 간식의 먹은 양도 기관 신호로 본다 —
+                       무엇을 먹었는지 없이 양만 전한 말("반만 · 싹 비웠다")만이다.
+                       무엇을 잘 먹었는지 · 남겼는지 말하면 아이의 관찰이라 record 다
+                       (집에서 먹는 아침 · 저녁도 급식이 아니라 record 다).
                        "다음 주 월요일 어린이집 간식은 요거트 말고 바나나로 바꿔줘" 처럼
                        급식을 "~말고 ~로 바꿔줘" 라고 해도 이쪽이다.
                        급식 메뉴를 묻는 말은 이쪽이 아니라 daycare_lookup 이다
@@ -78,6 +82,10 @@ _REQUEST = """
                        기관 신호 없이 "지난주에 뭐 먹었지" 처럼 아이가 먹은 기록을 보려는 말은
                        record/lookup_edit 이다
 - meal_recommendation 과 nutrient_analysis 가 애매하면 meal_recommendation 으로 보낸다.
+- 서술어 없이 끼니 · 간식 · 메뉴로 끝나는 말("어린이집 끝나고 간식")도 무엇을 먹일지 묻는 말이라
+  meal_recommendation 이다. 어린이집 · 유치원이 때만 말하면 기관 신호가 아니다.
+- "~해달라고" · "~해달라니까" · "~하라고" 는 재촉하는 말투다. 앞에서 한 말을 고쳐 달라는 말이
+  아니다. 요청 안의 "말고" 도 정정이 아니라 빼 달라는 조건이다.
 - growth로 보내는 건 네 가지다.
   learning_suggestion  배움 · 공부 · 한글 · 숫자 · 교육 활동을 추천해 달라는 말
   routine_coaching     생활 습관 · 혼자 하기(양치 · 손 씻기 · 숟가락) · 예절 · 습관 고치기 · 잠 리듬
@@ -181,6 +189,12 @@ _EXAMPLES = """
   → request/food/meal_recommendation "간식 추천해줘" + request/activity "주말 나들이 추천해줘"
 - "땅콩소스 먹여도 될까?" → request/food/food_check
 - "견과류 들어간 메뉴 추천해줘." → request/food/meal_recommendation
+- "야 밥 추천 해달라고" → request/food/meal_recommendation
+  (재촉하는 말투는 고쳐 말하기가 아니다)
+- "김밥 말고 다른 거 추천해달라니까" → request/food/meal_recommendation
+  (요청 안의 "말고" 는 정정이 아니다)
+- "어린이집 끝나고 간식" → request/food/meal_recommendation
+  (어린이집은 때를 말할 뿐 급식이 아니다)
 - "땅콩버터 먹여도 돼? 안 되면 다른 간식 추천해줘."
   → request/food/food_check "땅콩버터 먹여도 돼?"
   + request/food/meal_recommendation "안 되면 다른 간식 추천해줘"
@@ -212,7 +226,10 @@ _EXAMPLES = """
 - "눈을 자꾸 깜빡여. 어떻게 고쳐?" → request/growth/routine_coaching
   (진단하지 않는다 — Growth 가 교정안 없이 닫는다)
 - "오늘 블록 쌓는 거 배웠대" → record/observe (요청이 아니다)
-- "어린이집에서 계란말이 엄청 많이 먹었대" → request/food/daycare_meal
+- "어린이집에서 계란말이 엄청 많이 먹었대" → record/observe (무엇을 먹었는지는 아이의 관찰이다)
+- "선생님이 점심은 반만 먹었대" → request/food/daycare_meal (선생님이 전한 급식 양)
+- "알림장에 간식 싹 비웠다고 써 있네" → request/food/daycare_meal (요청이 아니어도 급식 양이다)
+- "아침에 밥 반 공기 먹고 등원했어" → record/observe (집 아침은 급식이 아니다)
 - "오늘 급식 대신 두유 받았대" → request/food/daycare_meal
 - "내일모레는 어린이집 빠져" → request/food/daycare_meal
 - "집에서 계란말이 먹였어" → record/observe (급식이 아니라 observation_food)

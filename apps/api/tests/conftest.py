@@ -99,3 +99,38 @@ def hung_redis_url():
     server.close()
     for conn in held:
         conn.close()
+
+
+@pytest.fixture(autouse=True)
+def _no_run_channel_mirror():
+    """run 채널의 표 미러(#877 4단계)를 끈다 — 메모리 채널만으로 돈다.
+
+    미러는 자기 연결로 백그라운드에서 쓰므로 테스트 트랜잭션 밖이다. 켜 두면 테스트가 만든
+    (커밋 안 된) 보호자를 못 봐 FK 오류가 나고, 끝나도 행이 남는다. 미러 자체는
+    tests/integration/api/test_run_channel_mirror.py 가 실제로 커밋하는 연결로 켜서 본다.
+
+    🚨 monkeypatch 를 받지 않는다. 모든 테스트가 받는 픽스처가 monkeypatch 를 먼저 열면, 그 테스트의
+       다른 픽스처보다 monkeypatch 되돌리기가 늦어져 정리 순서가 바뀐다(test_llm_usage 가 깨졌다).
+    """
+    from app.api.runs import registry
+
+    saved = registry._session_factory
+    registry._session_factory = None
+    yield
+    registry._session_factory = saved
+
+
+@pytest.fixture(autouse=True)
+def _medication_on():
+    """스토어 정책으로 꺼 둔 복약(#923)을 테스트에서는 켠다 — 기존 테스트는 켜진 동작을 건다.
+
+    꺼 둔 것은 다시 켤 코드라서 건너뛰지 않고 지킨다. 꺼진 동작은
+    tests/unit/agents/health/test_health_medication_off.py 가 끄고 본다.
+    🚨 monkeypatch 를 받지 않는다 — 바로 위 픽스처와 같은 이유다.
+    """
+    from app.agents.health import registry
+
+    saved = registry.MEDICATION_ENABLED
+    registry.MEDICATION_ENABLED = True
+    yield
+    registry.MEDICATION_ENABLED = saved

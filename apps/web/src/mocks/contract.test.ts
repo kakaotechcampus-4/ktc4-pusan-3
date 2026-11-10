@@ -3628,12 +3628,18 @@ describe("㉓ 약관은 서버가 정한다 (#90 · #91 · #172)", () => {
   });
 
   /**
-   * 실서버와 같은 판이다 (#868 · `register_policy_2026_11_03.py`). 한동안 `draft-1` 로 남아 목 화면이 실서버와
+   * 실서버와 같은 판이다 (#868 · `register_policy_2026_11_10.py`). 한동안 `draft-1` 로 남아 목 화면이 실서버와
    * 달랐다. 아이 동의 둘도 이제 정본이 있다 — `html_path` 가 null 일 때 전문 보기를 숨기는 것은 `lib/consent.test.ts` 가 건다.
    */
-  it("다섯 약관 모두 2026-11-03 판이고 전문 주소가 있다", async () => {
+  it("보호자 개인정보는 2026-11-03 판, 나머지 넷은 2026-11-10 판이고 전문 주소가 있다", async () => {
     const policies = await api.get<Policy[]>("/policies");
-    expect(new Set(policies.map((p) => p.version))).toEqual(new Set(["2026-11-03"]));
+    expect(Object.fromEntries(policies.map((p) => [p.scope, p.version]))).toEqual({
+      service_terms: "2026-11-10",
+      privacy_account: "2026-11-03",
+      location: "2026-11-10",
+      child_basic: "2026-11-10",
+      child_health: "2026-11-10",
+    });
     expect(policies.filter((p) => p.html_path === null)).toEqual([]);
 
     const terms = policies.find((p) => p.scope === "service_terms");
@@ -3666,7 +3672,7 @@ describe("㉓ 약관은 서버가 정한다 (#90 · #91 · #172)", () => {
         nickname: "테스트",
         birth_date: "2021-04-02",
         consents: [
-          { scope: "child_basic", policy_version: "2026-11-03" },
+          { scope: "child_basic", policy_version: "2026-11-10" },
           { scope: "child_health", policy_version: "옛날판" },
         ],
         guardian_attested: true,
@@ -4915,7 +4921,7 @@ function chatDay(query: Record<string, string> = {}) {
 }
 
 describe("한 줄 입력의 길이 — 서버 `CreateInputRequest.text` 와 같이 거절한다 (#867)", () => {
-  it("앞뒤 공백을 뗀 코드 포인트가 2000자를 넘으면 400 validation_failed · fields 에 text", async () => {
+  it("앞뒤 공백을 뗀 코드 포인트가 상한(500자)을 넘으면 400 validation_failed · fields 에 text", async () => {
     const error = await submitInput(
       CHAT_CHILD,
       { text: "가".repeat(INPUT_TEXT_MAX_LENGTH + 1), source: "home_input" },

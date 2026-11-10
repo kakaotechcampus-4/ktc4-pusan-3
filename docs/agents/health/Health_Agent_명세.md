@@ -3,7 +3,7 @@
 > **한 줄 요약** — 진단을 대신하지 않고, 보호자가 아이의 건강 기록을 **다시 찾고 · 정리하고 · 챙기는 노동**을 줄이는 Agent. 판단이 필요한 계산은 전부 코드가 공신력 있는 기준표로 하고, AI는 기록을 옮겨 적는 일만 합니다.
 >
 > 대상 독자: 기획 · 디자인 · 프론트엔드 · 백엔드 · QA
-> 최종 갱신: 2026-10-20 (복약 — 복용 체크는 보호자가 화면에서 회차 단위로 하고 Agent 가 직접 쓰는 것은 중단뿐 · `ends_on` 필수, 무기한 코스 없음 · 저녁 기준 시각 19:00) · 2026-10-18 (개정 4 — 복약 중단은 한 번 묻고 '네' 면 중단(중단 시각은 `updated_at`) · 증상 반복은 1주 안 기록된 날 수로 · 등록 만성질환 × 증상 안내 · 검진 맥락 요약에서 측정값 제외 · 응급 카드에서 보호자 연락처 제외) · 2026-09-22 (개정 3 — 성장 판정 제거 · 복약 초안 payload · 중단 soft delete · 성별 미사용 · 알레르기 후보 감지 제거 · 문서 테이블 대신 상수 파일 · `event_requests`도 초안 payload) · 관련 문서: [`Agent_공통규약.md`](../shared/Agent_공통규약.md) · [`health_agent_own_table.md`](health_agent_own_table.md)(소유 테이블) · [`Health_Tool_명세.md`](Health_Tool_명세.md) · `설계_점검_2026-09-20.md`(저장소 밖)
+> 최종 갱신: 2026-11-10 (#923 — 스토어 정책으로 복약을 꺼 둔 동안 `medication` 라벨 · 투약의뢰서는 고정 문구로 닫히고 등록된 약 대조도 하지 않는다) · 2026-10-20 (복약 — 복용 체크는 보호자가 화면에서 회차 단위로 하고 Agent 가 직접 쓰는 것은 중단뿐 · `ends_on` 필수, 무기한 코스 없음 · 저녁 기준 시각 19:00) · 2026-10-18 (개정 4 — 복약 중단은 한 번 묻고 '네' 면 중단(중단 시각은 `updated_at`) · 증상 반복은 1주 안 기록된 날 수로 · 등록 만성질환 × 증상 안내 · 검진 맥락 요약에서 측정값 제외 · 응급 카드에서 보호자 연락처 제외) · 2026-09-22 (개정 3 — 성장 판정 제거 · 복약 초안 payload · 중단 soft delete · 성별 미사용 · 알레르기 후보 감지 제거 · 문서 테이블 대신 상수 파일 · `event_requests`도 초안 payload) · 관련 문서: [`Agent_공통규약.md`](../shared/Agent_공통규약.md) · [`health_agent_own_table.md`](health_agent_own_table.md)(소유 테이블) · [`Health_Tool_명세.md`](Health_Tool_명세.md) · `설계_점검_2026-09-20.md`(저장소 밖)
 
 ### 개정 1에서 늘어난 것 — "판단은 줄이고 산출물은 늘린다"
 
@@ -268,6 +268,10 @@ AI는 **요청에서 범위만 정합니다** (#551 리뷰). 보호자가 말한
 
 상세 스키마는 [`health_agent_own_table.md`](health_agent_own_table.md).
 
+> **2026-11-10 — 지금은 꺼 두었습니다 (#923).** 스토어 건강 앱 선언 때문에 웹이 복약 화면 · 초안 카드를 꺼 두었고(`apps/web/src/lib/store-policy.ts`), 서버도 같은 스위치(`app/agents/health/registry.py` 의 `MEDICATION_ENABLED`)로 이 라벨을 닫습니다. 꺼 둔 동안은 동의 · 조회 · 모델 없이 `med.preparing` 한 줄("복약 관리는 아직 준비 중이에요. 용량 · 간격은 처방한 병원이나 약국에 확인해 주세요.")로 끝나고, pipeline 의 등록된 약 대조(`registered_titles`)도 하지 않아 "해열제 먹였어" 는 Memory 가 먹인 약 기록으로 남깁니다(약 이름이 없는 "약 먹였어" 는 Memory 가 무슨 약인지 되묻습니다). 아래는 켜져 있을 때의 동작입니다.
+>
+> **다시 켤 때** — ① 건강 앱 선언부터 고칩니다(`store-policy.ts` 머리말). ② 웹 `MEDICATION_ENABLED` 와 서버 `registry.MEDICATION_ENABLED` 를 같이 켭니다 — 한쪽만 켜면 답할 수 없는 질문이나 답이 없는 화면이 남습니다. ③ 꺼 둔 동안만 있는 것을 지웁니다 — 코드 · 문서 · 테스트에서 `#923` 을 찾으면 전부 나옵니다(스위치 상수와 주석, `agent.py` 의 `_switched_off` · `registered_titles` 의 꺼짐 분기와 docstring, `med.preparing` · `notice.preparing` 키(yaml · `readouts.py` · `Health_Tool_명세.md` §4 · 닫힘 줄), `handoff.py` · `pipeline.py` docstring 의 한 줄, `tests/unit/agents/health/test_health_medication_off.py`, `tests/conftest.py` 의 `_medication_on`, 이 인용 블록과 §6-6 의 것). 표시가 없는 것은 셋입니다 — `Health_Tool_명세.md` §4 표의 `med.preparing` · `notice.preparing` 두 줄(표 칸은 코드 문구와 글자 단위로 대조해서 표시를 달 수 없습니다), `test_health_readouts.py` 의 문구 수(75 → 73), (선택) `handoff.py` 의 `wants_notice` 를 `_wants_notice` 로 되돌리기.
+
 **역할 분담**
 
 | 누가 | 무엇을 |
@@ -330,6 +334,8 @@ AI는 **요청에서 범위만 정합니다** (#551 리뷰). 보호자가 말한
 남에게 아이를 맡길 때 매번 손으로 적는 정보를 앱이 이미 갖고 있습니다. **판단이 0이고 체감이 큰** 자리입니다.
 
 **투약의뢰서** (`compose_daycare_med_notice`)
+
+> **2026-11-10 — 꺼 두었습니다 (#923).** 서식은 등록된 복약 코스로만 채우는데, 복약을 꺼 둔 동안은 코스를 등록할 화면이 없습니다. 그래서 같은 스위치로 투약의뢰서 갈래만 `notice.preparing`("투약의뢰서는 아직 준비 중이에요.")으로 닫습니다. 응급 카드는 그대로입니다.
 
 ```
 [투약 의뢰서]  2026-09-21

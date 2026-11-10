@@ -571,6 +571,57 @@ def read_label(label: str, book: LabelBook) -> tuple[Restriction, tuple[str, ...
     return found, tuple(rest)
 
 
+def read_label_pieces(label: str, book: LabelBook) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """`read_label` 의 못 찾은 조각 · 낱말을 어느 이름에서 나왔는지 묶는다 (#891).
+
+    → (보호자가 적은 이름, 그 이름에서 사전이 못 찾은 조각 · 낱말). 이름은 구분 기호로 나눈 조각을
+    적힌 그대로 두고 뒤에 붙인 말("알레르기")만 뗀다 — "고양이 털 알레르기" 는 "고양이 털".
+    🚨 띄어쓰기를 지우지 않는다. 이 이름을 다시 `read_label` 로 읽는 곳(05 의 `allergen_states`)이
+    낱말("쑥")까지 읽어야, 나중에 "쑥" 으로 등록한 알레르기에 걸린다 — "쑥가루" 로 붙이면 한
+    낱말이다. `split_label` 로 읽으면 그 조각과 같다. 조각 · 낱말은 그 이름을 `read_label` 로
+    따로 읽은 것이라 전부 모으면 `read_label(label)` 의 것과 같다. 못 찾은 것이 없는 이름은 뺀다.
+    """
+    found = []
+    for part, piece in _pieces(label):
+        _, rest = read_label(part, book)
+        if not rest:
+            continue
+        name = _written_name(part)
+        if split_label(name) != (piece,):
+            # 꼬리말을 떼다 다른 이름이 됐다 — "쑥 과민 반응" 은 "반응" 만 떨어져 "쑥 과민" 이 된다.
+            # 괜찮았던 식품 · 내린 기록과 맞추려면 `split_label` 이 같아야 해서 적힌 그대로 둔다
+            name = " ".join(part.split())
+        found.append((name, rest))
+    return tuple(found)
+
+
+def _written_name(part: str) -> str:
+    """적힌 조각에서 겹친 공백 · 앞뒤 문장부호 · 뒤에 붙인 말(`_SUFFIXES`)만 뗀다.
+
+    띄어쓰기 · 대소문자는 둔다 — 05 가 이 이름을 낱말까지 다시 읽는다.
+    """
+    name = _trim_marks(" ".join(part.split()))
+    while True:
+        for suffix in _SUFFIXES:
+            if len(name) > len(suffix) and name[-len(suffix) :].lower() == suffix:
+                name = _trim_marks(name[: -len(suffix)])
+                break
+        else:
+            return name
+
+
+def _trim_marks(text: str) -> str:
+    """앞뒤의 공백 · 문장부호 · 기호를 뗀다 — "'쑥 가루'" 는 쑥 가루, "쑥-" 은 쑥."""
+    start, end = 0, len(text)
+    while start < end and (text[start].isspace() or unicodedata.category(text[start])[0] in "PS"):
+        start += 1
+    while end > start and (
+        text[end - 1].isspace() or unicodedata.category(text[end - 1])[0] in "PS"
+    ):
+        end -= 1
+    return text[start:end]
+
+
 class SafetyRow(Protocol):
     """`health_safety` 한 행에서 이 모듈이 읽는 칸. `SafetyEntry` 는 Agent 마다 따로 둔다."""
 

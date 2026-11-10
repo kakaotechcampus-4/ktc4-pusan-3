@@ -11,9 +11,11 @@ from app.agents.food.basis_notice import basis_notices
 from app.agents.food.context import FoodContext, MealPick
 from app.agents.food.nutrient_wording import wording_problem
 from app.agents.food.nutrition_eval import NutrientVerdict
+from app.agents.food.readouts import MEAL_MENU_WEANING, READOUTS
 from app.agents.food.schemas.common import MealSlot
 from app.agents.food.store import MenuCatalogRow, SafetyEntry
-from tests.unit.agents.food.support import context, menu_row
+from app.agents.food.weaning_menu import weaning_menu_rows
+from tests.unit.agents.food.support import NOW, context, menu_row
 
 VEG = frozenset({"vegetables"})
 FRUIT = frozenset({"fruits"})
@@ -179,6 +181,13 @@ class TestSourceLine:
 
         assert "농촌진흥청 국립식량과학원" in bodies(result)[0]
         assert "농식품정보원" in bodies(result)[0]
+
+    def test_이유식_식단_메뉴는_아이캐치_식단_출처_줄이다(self) -> None:
+        rows = weaning_menu_rows(8, synced_at=NOW)[:3]
+
+        lines = basis_notices(ctx(None), [pick(row.menu_key) for row in rows], rows_of(*rows))
+
+        assert bodies(lines) == [READOUTS.get(MEAL_MENU_WEANING).template]
 
 
 class TestOrderAndSafety:
