@@ -18,7 +18,8 @@ def test_구성은_요청을_먼저_따르고_막연할_때만_섞는다() -> No
     assert "3개의 구성은 보호자의 이번 요청이 정한다" in text
     assert "새롭거나 색다른 것" in text
     assert "단서가 없는 막연한 요청" in text
-    assert "확정 관심이 있으면 1개는 그 관심을 살린다" in text
+    assert "같은 관심은 2개까지" in text
+    assert "확정 관심이 있으면 1개 이상은 그 관심을 살린다" in text
     assert "관심을 상관없는 후보에 억지로 잇지 않는다" in text
-    assert "2개까지" not in text  # 관심 상한은 뺐다 — 요청이 관심이면 여러 개여도 된다
+    assert "다른 기록(오늘 상태 · 최근에 한 놀이)에 맞추고" in text
     assert "search_events" not in text  # 행사 조회가 닫혀도 실리는 고정 구획이다
