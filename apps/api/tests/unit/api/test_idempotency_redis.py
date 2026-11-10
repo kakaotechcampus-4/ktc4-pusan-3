@@ -47,6 +47,15 @@ class TestIdempotencyRedis:
         """저장한 적 없는 키 → None."""
         assert await idempotency.recall(parent_id=PID, method="POST", path="/x", key="nope") is None
 
+    async def test_깨진_재생값은_이번만_503_이고_지워져_다음은_새_요청(self, _mock):
+        """ISSUE-F7 — 깨진 값이 24시간 남아 재시도를 매번 막지 않는다."""
+        scope = {"parent_id": PID, "method": "POST", "path": "/x", "key": "broken"}
+        _r.set(idempotency._idem_key(**scope), "{깨진")
+        with pytest.raises(ApiError) as caught:
+            await idempotency.recall(**scope)
+        assert caught.value.status == 503
+        assert await idempotency.recall(**scope) is None
+
     async def test_forget_run_removes_both_keys(self, _mock):
         """forget_run → idempotency 키와 역인덱스 키 모두 삭제된다."""
         await idempotency.remember(
