@@ -83,7 +83,11 @@ SCOPES: tuple[Scope, ...] = (
             "apps/api/app/agents/curator/embedding/judge.py",
             "apps/api/app/agents/curator/embedding/jev.py",
         ),
-        tests=("tests/unit/agents/curator", "tests/eval/agents/curator/test_pairs_data.py"),
+        tests=(
+            "tests/unit/agents/curator",
+            "tests/eval/agents/curator/test_pairs_data.py",
+            "tests/eval/agents/curator/test_judge_cases.py",
+        ),
     ),
     Scope(
         name="meal_ocr",
