@@ -1,6 +1,6 @@
 # 육아 Agent 협업 가이드
 
-백엔드 · 프론트엔드 · AI 파트가 함께 지키는 최소 협업 규칙입니다. 자세한 운영/보안/아키텍처 설명은 `README.md`와 `README_COLLABORATION.md`를 참고합니다.
+백엔드 · 프론트엔드 · AI 파트가 함께 지키는 최소 협업 규칙입니다. 자세한 운영/보안/아키텍처 설명은 [`CLAUDE.md`](CLAUDE.md)와 [`docs/README.md`](docs/README.md)를 참고합니다.
 
 ## 1. 기본 작업 흐름
 
@@ -173,6 +173,7 @@ PR에는 최소한 아래 내용을 작성합니다.
 - 단위 테스트: 변경한 모듈 범위
 - 트랜잭션/동시성 관련 변경: 실제 DB 또는 로컬 에뮬레이터 환경에서 통합 테스트
 - Agent workflow 변경: 모델 호출을 mock으로 대체한 회귀 테스트
+- 프롬프트 · tool spec · 응답 스키마 변경: 바꾸기 전 · 후를 같은 조건으로 라이브 eval 로 재서 `docs/agents/eval/<이름>_EVAL.md` 측정 이력에 행을 더합니다. 행이 없으면 `test_prompt_history.py` 가 실패합니다 (#770). `make test-prompt` 로 관련 테스트만 먼저 돌려 볼 수 있습니다.
 
 PR에는 실행한 테스트 명령어와 결과를 적습니다.
 

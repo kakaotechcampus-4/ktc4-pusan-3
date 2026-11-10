@@ -33,6 +33,7 @@ import {
   streamRunEvents,
   type AgentResultEvent,
   type EventDraftsEvent,
+  type FailedEvent,
   type GuidanceEvent,
   type LaneEvent,
   type MedicationDraftsEvent,
@@ -48,6 +49,7 @@ import { isSeverityFor } from "@/lib/health-safety";
 import { api } from "@/lib/api/client";
 import {
   DIARY_CONTENT_MAX_LENGTH,
+  INPUT_TEXT_MAX_LENGTH,
   REPORT_CATEGORIES,
   REPORT_MESSAGE_MAX_LENGTH,
 } from "@/lib/api/types";
@@ -218,28 +220,35 @@ describe("② 같은 키 · 같은 요청 = 재시도", () => {
   });
 });
 
-describe("③ 같은 키 · 다른 요청 = 재사용 거부", () => {
-  it("422 idempotency_key_reuse", async () => {
+/**
+ * 🚨 **서버는 본문을 비교하지 않는다** — 같은 키면 처음 응답을 재생한다. 422 `idempotency_key_reuse` ·
+ *    409 `idempotency_in_progress` 는 만들지 않기로 했다 (#438 · 11-09 PM). 화면이 본문이 바뀌면 새 키를
+ *    쓰므로(`current(text)`) 고친 본문이 옛 응답에 묻히는 일은 화면 쪽에서 막는다.
+ */
+describe("③ 같은 키 · 다른 요청 = 처음 응답 재생 (서버와 같다)", () => {
+  it("같은 키로 본문을 바꿔 보내도 처음 응답이 오고, 바뀐 본문은 저장되지 않는다", async () => {
     const key = newIdempotencyKey();
-    await submitOnboarding("c1", { gender: "female" }, key);
+    const first = await submitOnboarding("c1", { gender: "female" }, key);
 
-    await expect(submitOnboarding("c1", { gender: "male" }, key)).rejects.toSatisfy(
-      (e: unknown) => isApiError(e, "idempotency_key_reuse") && e.status === 422,
-    );
+    const second = await submitOnboarding("c1", { gender: "male" }, key);
+
+    expect(second).toEqual(first);
+    const profile = await api.get<ChildProfile>("/children/c1");
+    expect(profile.gender).toBe("female");
   });
 
-  it("다른 엔드포인트에 같은 키를 돌려써도 거부한다", async () => {
+  it("다른 엔드포인트에 같은 키를 쓰면 다른 요청이다 — 키의 범위는 (방법, 경로, 키)", async () => {
     const key = newIdempotencyKey();
     await submitEventDraft("c1", draftBody(), key);
 
     await expect(
       addHealthSafety("c1", { type: "allergy", label: "지어낸항목" }, key),
-    ).rejects.toSatisfy((e: unknown) => isApiError(e, "idempotency_key_reuse"));
+    ).resolves.toBeTruthy();
   });
 });
 
 describe("④ 같은 키 · 동시 요청", () => {
-  it("한 번만 실행되고 나머지는 409 idempotency_in_progress", async () => {
+  it("한 번만 실행되고 나머지는 처음 응답을 받는다", async () => {
     const key = newIdempotencyKey();
 
     const body = await approvedDraftBody("s_4");
@@ -249,14 +258,10 @@ describe("④ 같은 키 · 동시 요청", () => {
       submitEventDraft("c1", body, key),
     ]);
 
-    const fulfilled = results.filter((r) => r.status === "fulfilled");
-    const rejected = results.filter((r) => r.status === "rejected");
-
-    expect(fulfilled).toHaveLength(1);
-    for (const r of rejected) {
-      expect(isApiError(r.reason, "idempotency_in_progress")).toBe(true);
-      expect((r.reason as ApiError).status).toBe(409);
-    }
+    expect(results.every((r) => r.status === "fulfilled")).toBe(true);
+    const ids = results.map((r) => (r.status === "fulfilled" ? r.value.event.id : null));
+    // 셋 다 같은 일정 — 핸들러는 한 번만 돌았다
+    expect(new Set(ids).size).toBe(1);
   });
 });
 
@@ -340,6 +345,138 @@ describe("일정 초안", () => {
     await expect(
       createEventDrafts("c1", { suggestion_ids: [id, "s_does_not_exist"] }),
     ).rejects.toSatisfy((e: unknown) => isApiError(e, "not_found") && e.status === 404);
+  });
+
+  /**
+   * 🚨 **채택한 뒤에 등록된 알레르기는 초안 만들기가 막는다** (서버 #859 · 문서 §3-8). 채택은 새로고침해도 남고
+   *    일정은 나중에 만들어도 되어서, 그사이 등록된 알레르기를 채택 검사는 보지 못한다. 하나라도 걸리면
+   *    초안을 하나도 만들지 않고 걸린 id 를 싣는다 — 화면은 그 id 를 빼고 다시 보낸다.
+   */
+  describe("채택한 뒤 등록된 알레르기 (#859)", () => {
+    afterEach(() => setScenario("default"));
+
+    const [blockedId, [allergen]] = Object.entries(suggestionAllergens).find(
+      ([id, a]) => a.length > 0 && suggestions.some((s) => s.id === id && s.agent === "food"),
+    )!;
+    const plain = () =>
+      suggestions.find(
+        (s) => s.agent !== "health" && s.id !== blockedId && !suggestionAllergens[s.id]?.length,
+      )!.id;
+
+    it("🚨 걸린 제안이 하나라도 있으면 초안을 하나도 만들지 않고 409 와 그 id 를 준다", async () => {
+      const other = plain();
+      await approveSuggestions("c1", { suggestion_ids: [blockedId, other] });
+      await addHealthSafety("c1", { type: "allergy", label: allergen }, newIdempotencyKey());
+
+      const refused = await createEventDrafts("c1", { suggestion_ids: [blockedId, other] }).catch(
+        (e: unknown) => e,
+      );
+      expect(isApiError(refused, "allergen_blocked")).toBe(true);
+      expect((refused as ApiError).status).toBe(409);
+      expect((refused as ApiError).detail).toEqual({ suggestion_ids: [blockedId] });
+
+      // 걸린 것을 빼고 다시 보내면 만든다.
+      const created = await createEventDrafts("c1", { suggestion_ids: [other] });
+      expect(created.drafts.flatMap((d) => d.suggestion_ids)).toEqual([other]);
+    });
+
+    it("내린 기록만 있는 항목은 막지 않는다", async () => {
+      await approveSuggestions("c1", { suggestion_ids: [blockedId] });
+      const { safety } = await addHealthSafety(
+        "c1",
+        { type: "allergy", label: allergen },
+        newIdempotencyKey(),
+      );
+      await api.delete(`/children/c1/health-safety/${safety.id}`);
+
+      const created = await createEventDrafts("c1", { suggestion_ids: [blockedId] });
+      expect(created.drafts.length).toBeGreaterThan(0);
+    });
+
+    it("알레르기 항목이 든 제안인데 동의가 없으면 403, 항목이 없는 제안뿐이면 건강정보를 보지 않는다", async () => {
+      const other = plain();
+      await approveSuggestions("c1", { suggestion_ids: [blockedId, other] });
+      setScenario("consent");
+
+      const refused = await createEventDrafts("c1", { suggestion_ids: [blockedId] }).catch(
+        (e: unknown) => e,
+      );
+      expect(isApiError(refused, "consent_required")).toBe(true);
+      expect((refused as ApiError).status).toBe(403);
+
+      const created = await createEventDrafts("c1", { suggestion_ids: [other] });
+      expect(created.drafts.length).toBeGreaterThan(0);
+    });
+  });
+
+  /**
+   * 🚨 **초안을 만든 뒤에 등록된 알레르기는 제출이 막는다** (서버 #902 · 문서 §3-8). 05 승인 시트는 열어 둔 채
+   *    나중에 넣을 수 있어서, 초안 만들기의 검사만으로는 그 틈을 못 막는다. 판정 · 응답은 초안 만들기와 같다.
+   */
+  describe("초안을 만든 뒤 등록된 알레르기 (#902)", () => {
+    afterEach(() => setScenario("default"));
+
+    const [blockedId, [allergen]] = Object.entries(suggestionAllergens).find(
+      ([id, a]) => a.length > 0 && suggestions.some((s) => s.id === id && s.agent === "food"),
+    )!;
+    const otherFood = () =>
+      suggestions.find(
+        (s) => s.agent === "food" && s.id !== blockedId && !suggestionAllergens[s.id]?.length,
+      )!.id;
+
+    it("🚨 걸린 제안이 든 제출은 넣지 않고 409 와 그 id 를 준다 — 걸리지 않은 제안은 따로 넣을 수 있다", async () => {
+      const other = otherFood();
+      await approveSuggestions("c1", { suggestion_ids: [blockedId, other] });
+      await createEventDrafts("c1", { suggestion_ids: [blockedId, other] });
+      await addHealthSafety("c1", { type: "allergy", label: allergen }, newIdempotencyKey());
+
+      const refused = await submitEventDraft(
+        "c1",
+        draftBody(blockedId, other),
+        newIdempotencyKey(),
+      ).catch((e: unknown) => e);
+      expect(isApiError(refused, "allergen_blocked")).toBe(true);
+      expect((refused as ApiError).status).toBe(409);
+      expect((refused as ApiError).detail).toEqual({ suggestion_ids: [blockedId] });
+
+      // 막힌 제출은 연결을 남기지 않는다 — 함께 실렸던 제안이 "이미 넣은 제안" 으로 막히지 않는다.
+      const put = await submitEventDraft("c1", draftBody(other), newIdempotencyKey());
+      expect(put.event.created_by).toBe("agent");
+    });
+
+    it("알레르기 항목이 든 제안인데 동의가 없으면 403, 항목이 없는 제출은 건강정보를 보지 않는다", async () => {
+      const other = otherFood();
+      await approveSuggestions("c1", { suggestion_ids: [blockedId, other] });
+      setScenario("consent");
+
+      const refused = await submitEventDraft("c1", draftBody(blockedId), newIdempotencyKey()).catch(
+        (e: unknown) => e,
+      );
+      expect(isApiError(refused, "consent_required")).toBe(true);
+      expect((refused as ApiError).status).toBe(403);
+
+      const put = await submitEventDraft("c1", draftBody(other), newIdempotencyKey());
+      expect(put.event.created_by).toBe("agent");
+    });
+
+    /**
+     * 🚨 403 · 409 는 기억하지 않는다 — 기억하면 다른 탭에서 동의를 켠 뒤 같은 버튼(같은 키)으로 넣어도 403 이 재생된다.
+     *    상태가 바뀌는 쪽으로 걸어야 "재생된 실패" 와 "다시 본 실패" 가 갈린다.
+     */
+    it("🚨 동의가 없어 막힌 제출은 기억하지 않아, 동의를 켠 뒤 같은 키로 보내면 들어간다", async () => {
+      await approveSuggestions("c1", { suggestion_ids: [blockedId] });
+      const key = newIdempotencyKey();
+
+      setScenario("consent");
+      const refused = await submitEventDraft("c1", draftBody(blockedId), key).catch(
+        (e: unknown) => e,
+      );
+      expect(isApiError(refused, "consent_required")).toBe(true);
+
+      setScenario("default");
+      const put = await submitEventDraft("c1", draftBody(blockedId), key);
+      expect(put.event.created_by).toBe("agent");
+    });
   });
 
   it("🚨 제안 초안은 일자가 비어 있다 — 서버가 오늘로 채우지 않는다", async () => {
@@ -1088,6 +1225,10 @@ describe("⑦ 상태 전이 · SSE 순서", () => {
       const last = events.at(-1);
       expect(last?.type).toBe("failed");
       expect((last?.data as { raw_text: string }).raw_text).toBe(text);
+      // 서버는 모든 `failed` 에 이유별 문구를 싣는다 (#768). SSE 는 OpenAPI 에 없어 계약 비교가 못 잡는다
+      expect((last?.data as FailedEvent).message).toBe(
+        "말씀을 정리하지 못했어요. 조금 바꿔서 다시 적어 주세요.",
+      );
       // 저장된 게 없으니 saved 가 있으면 안 된다 (CLAUDE.md §4 — 다음 칸으로 전파하지 않는다).
       expect(events.map((e) => e.type)).not.toContain("saved");
     } finally {
@@ -1900,22 +2041,24 @@ describe("⑨ 교정은 지우지 않고 내린다", () => {
     expect((result.target as Observation).status).toBe("stand_alone");
   });
 
-  it("wrong 은 행을 지우지 않고 status 를 inactive 로 내린다", async () => {
+  // 🚨 기록의 "잘못된 기록" 은 기록 지우기로 바꿨다 (#736). 서버는 기록 `wrong` 을 400 으로 막는다.
+  it("기록에 wrong 을 보내면 400 이고 기록은 그대로다", async () => {
     const before = await api.get<ObservationsResponse>("/children/c1/observations");
     const target = before.items.find((item) => item.kind === "observation_education");
     expect(target).toBeDefined();
 
-    const result = await api.post<CorrectionResponse>("/corrections", {
-      target_ref: { kind: target!.kind, id: target!.id },
-      verdict: "wrong",
-      child_id: "c1",
-    });
+    const failure = await api
+      .post<CorrectionResponse>("/corrections", {
+        target_ref: { kind: target!.kind, id: target!.id },
+        verdict: "wrong",
+        child_id: "c1",
+      })
+      .catch((error: unknown) => error);
 
-    // 🚨 `target` 은 관찰이거나 프로필이다 — 어느 쪽인지는 `target_ref.kind` 가 정한다.
-    expect((result.target as Observation).status).toBe("inactive");
-    // 🚨 고친 기록도 목록에 남는다 — 서버는 deleted 만 뺀다 (#266). 화면이 status 로 갈라 그린다.
+    expect(isApiError(failure, "validation_failed")).toBe(true);
+    expect((failure as ApiError).status).toBe(400);
     const after = await api.get<ObservationsResponse>("/children/c1/observations");
-    expect(after.items.find((item) => item.id === target!.id)?.status).toBe("inactive");
+    expect(after.items.find((item) => item.id === target!.id)?.status).toBe("active");
     expect(after.total).toBe(before.total);
   });
 
@@ -1945,7 +2088,7 @@ describe("⑨ 교정은 지우지 않고 내린다", () => {
     await api.post<CorrectionResponse>("/corrections", body);
 
     const failure = await api
-      .post<CorrectionResponse>("/corrections", { ...body, verdict: "wrong" })
+      .post<CorrectionResponse>("/corrections", body)
       .catch((error: unknown) => error);
 
     expect(isApiError(failure, "already_corrected")).toBe(true);
@@ -1973,9 +2116,10 @@ describe("⑨ 교정은 지우지 않고 내린다", () => {
     expect(active.total).toBe(all.total - 1);
   });
 
-  it("모르는 status 는 400 이다", async () => {
+  // `inactive`(잘못된 기록)는 서버가 `deleted` 로 옮기고 필터에서도 뺐다 (#736).
+  it.each(["deleted", "inactive"])("모르는 status(%s)는 400 이다", async (status) => {
     const failure = await api
-      .get<ObservationsResponse>("/children/c1/observations", { query: { status: "deleted" } })
+      .get<ObservationsResponse>("/children/c1/observations", { query: { status } })
       .catch((error: unknown) => error);
 
     expect(isApiError(failure, "validation_failed")).toBe(true);
@@ -2357,21 +2501,24 @@ describe("⑪ 일기 쓰기 · 지우기 — 서버 #333 과 같은 계약 (#364
   it.each([
     ["빈 문자열", ""],
     ["공백 · 줄바꿈 · 탭뿐", " \n\t"],
-  ])("내용이 %s 이면 422 validation_failed 이고 기존 일기가 남는다", async (_, content) => {
-    const diaryDay = (await recentCalendarDays()).find((day) => day.has_my_diary);
-    expect(diaryDay).toBeDefined();
-    const before = await api.get<CalendarDayResponse>(`/children/c1/calendar/${diaryDay!.date}`);
-    expect(before.my_diary).not.toBeNull();
+  ])(
+    "내용이 %s 이면 400 validation_failed 이고 기존 일기가 남는다 — 본문 오류 (#438)",
+    async (_, content) => {
+      const diaryDay = (await recentCalendarDays()).find((day) => day.has_my_diary);
+      expect(diaryDay).toBeDefined();
+      const before = await api.get<CalendarDayResponse>(`/children/c1/calendar/${diaryDay!.date}`);
+      expect(before.my_diary).not.toBeNull();
 
-    const failure = await api
-      .put(`/children/c1/diary/${diaryDay!.date}`, { content })
-      .catch((error: unknown) => error);
+      const failure = await api
+        .put(`/children/c1/diary/${diaryDay!.date}`, { content })
+        .catch((error: unknown) => error);
 
-    expect(isApiError(failure, "validation_failed")).toBe(true);
-    expect((failure as ApiError).status).toBe(422);
-    const after = await api.get<CalendarDayResponse>(`/children/c1/calendar/${diaryDay!.date}`);
-    expect(after.my_diary).toEqual(before.my_diary);
-  });
+      expect(isApiError(failure, "validation_failed")).toBe(true);
+      expect((failure as ApiError).status).toBe(400);
+      const after = await api.get<CalendarDayResponse>(`/children/c1/calendar/${diaryDay!.date}`);
+      expect(after.my_diary).toEqual(before.my_diary);
+    },
+  );
 
   it.each([
     ["content 가 없다", {}],
@@ -2407,7 +2554,7 @@ describe("⑪ 일기 쓰기 · 지우기 — 서버 #333 과 같은 계약 (#364
 
   it.each([
     ["NUL 이 든", "지어낸\u0000일기"],
-    // 서버는 바디 검증(400)이 라우터의 공백 검사(422)보다 먼저다.
+    // 서버는 바디 검증(길이 · NUL)이 라우터의 공백 검사보다 먼저다 — 둘 다 400 이다.
     ["공백뿐이고 1000자를 넘는", " ".repeat(DIARY_CONTENT_MAX_LENGTH + 1)],
   ])("%s 본문은 400 이고 기존 일기가 남는다 (#549)", async (_, content) => {
     const diaryDay = (await recentCalendarDays()).find((day) => day.has_my_diary);
@@ -3481,13 +3628,13 @@ describe("㉓ 약관은 서버가 정한다 (#90 · #91 · #172)", () => {
   });
 
   /**
-   * 🚨 **전문이 없는 자리가 있다.** 아이 동의 둘은 아직 정본이 없어서 `html_path` 가 null 이고,
-   *    화면은 그때 전문 보기를 **숨긴다** — 대신 보여줄 글을 만들지 않는다.
+   * 실서버와 같은 판이다 (#868 · `register_policy_2026_11_03.py`). 한동안 `draft-1` 로 남아 목 화면이 실서버와
+   * 달랐다. 아이 동의 둘도 이제 정본이 있다 — `html_path` 가 null 일 때 전문 보기를 숨기는 것은 `lib/consent.test.ts` 가 건다.
    */
-  it("아이 동의 둘은 전문 주소가 비어 있다", async () => {
+  it("다섯 약관 모두 2026-11-03 판이고 전문 주소가 있다", async () => {
     const policies = await api.get<Policy[]>("/policies");
-    const empty = policies.filter((p) => p.html_path === null).map((p) => p.scope);
-    expect(empty).toEqual(["child_basic", "child_health"]);
+    expect(new Set(policies.map((p) => p.version))).toEqual(new Set(["2026-11-03"]));
+    expect(policies.filter((p) => p.html_path === null)).toEqual([]);
 
     const terms = policies.find((p) => p.scope === "service_terms");
     // `/api/v1` 아래 경로다 — 절대 주소는 기준 주소 + 이 값 (`policyHref`).
@@ -3519,7 +3666,7 @@ describe("㉓ 약관은 서버가 정한다 (#90 · #91 · #172)", () => {
         nickname: "테스트",
         birth_date: "2021-04-02",
         consents: [
-          { scope: "child_basic", policy_version: "draft-0" },
+          { scope: "child_basic", policy_version: "2026-11-03" },
           { scope: "child_health", policy_version: "옛날판" },
         ],
         guardian_attested: true,
@@ -4430,7 +4577,7 @@ describe("⑰ 08 사진 — 읽기와 저장이 갈린다", () => {
 
     /**
      * 🚨 `event.status` 가 없어진 뒤(#118) 이 커밋이 **게이트 없이 캘린더에 쓰는 유일한 경로**
-     *    였다. 일정을 아예 안 만들면 그 경로가 사라진다 — 일정은 고치기 시트의 승인 게이트가 넣는다.
+     *    였다. 일정을 아예 안 만들면 그 경로가 사라진다 — 일정은 확인 화면 맨 아래 버튼의 승인 게이트가 넣는다 (#824).
      */
     expect(saved).not.toHaveProperty("drafts");
     expect(saved).not.toHaveProperty("event");
@@ -4766,6 +4913,29 @@ async function runChatToEnd(text: string): Promise<string> {
 function chatDay(query: Record<string, string> = {}) {
   return api.get<ChatDayResponse>(`/children/${CHAT_CHILD}/chat`, { query });
 }
+
+describe("한 줄 입력의 길이 — 서버 `CreateInputRequest.text` 와 같이 거절한다 (#867)", () => {
+  it("앞뒤 공백을 뗀 코드 포인트가 상한(500자)을 넘으면 400 validation_failed · fields 에 text", async () => {
+    const error = await submitInput(
+      CHAT_CHILD,
+      { text: "가".repeat(INPUT_TEXT_MAX_LENGTH + 1), source: "home_input" },
+      newIdempotencyKey(),
+    ).catch((e: unknown) => e);
+    expect(isApiError(error, "validation_failed")).toBe(true);
+    expect((error as ApiError).status).toBe(400);
+    expect((error as ApiError).detail?.fields).toEqual(["text"]);
+  });
+
+  it("🚨 이모지 2000개에 앞뒤 공백이 붙어도 받는다 — UTF-16 이 아니라 코드 포인트로 센다", async () => {
+    // 받았는지만 본다 — 스트림은 읽지 않는다.
+    const { run_id } = await submitInput(
+      CHAT_CHILD,
+      { text: `  ${"😀".repeat(INPUT_TEXT_MAX_LENGTH)}  `, source: "home_input" },
+      newIdempotencyKey(),
+    );
+    expect(run_id).toBeTruthy();
+  });
+});
 
 describe("지난 대화 — 서버처럼 끝난 run 만 남긴다 (#228)", () => {
   afterEach(() => setScenario("default"));

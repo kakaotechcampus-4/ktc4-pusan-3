@@ -38,7 +38,7 @@ class CorrectionVerdict(enum.StrEnum):
     """
 
     ONCE_ONLY = "once_only"  # 관찰 — 이번만 그랬어요
-    WRONG = "wrong"  # 공통 — 잘못된 기록
+    WRONG = "wrong"  # 프로필 — 잘못된 기억. 관찰에는 예전 이력만 남았다 (#736)
     NEED_MORE_OBSERVATION = "need_more_observation"  # 프로필 — 기록이 더 필요해요
     OUTDATED = "outdated"  # 프로필 — 지금은 달라요
 
@@ -46,7 +46,11 @@ class CorrectionVerdict(enum.StrEnum):
 OBSERVATION_KINDS = frozenset(
     kind for kind in CorrectionTargetKind if kind.value.startswith("observation_")
 )
+# DB CHECK 가 허용하는 관찰 판정. 기록용 wrong 은 더 받지 않지만(아래) 이미 쌓인 이력이 있어서
+# CHECK 에는 남긴다 — 좁히면 그 행이 걸리고, CHECK 교체는 expand-only 가 막는다.
 OBSERVATION_VERDICTS = frozenset({CorrectionVerdict.ONCE_ONLY, CorrectionVerdict.WRONG})
+# 고치기 API 가 관찰에 새로 받는 판정. "잘못된 기록" 은 기록 지우기로 바꿨다 (#736).
+OBSERVATION_VERDICTS_ACCEPTED = frozenset({CorrectionVerdict.ONCE_ONLY})
 PROFILE_VERDICTS = frozenset(
     {
         CorrectionVerdict.NEED_MORE_OBSERVATION,

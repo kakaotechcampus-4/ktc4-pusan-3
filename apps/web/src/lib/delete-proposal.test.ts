@@ -21,7 +21,7 @@ describe("closedBy — 409 는 실패가 아니라 닫힌 카드다", () => {
   });
 
   it("다른 409 · 다른 상태는 접지 않는다", () => {
-    expect(closedBy(new ApiError(409, "idempotency_in_progress", "x"))).toBeNull();
+    expect(closedBy(new ApiError(409, "already_exists", "x"))).toBeNull();
     expect(closedBy(new ApiError(404, "not_found", "x"))).toBeNull();
   });
 });

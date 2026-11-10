@@ -73,6 +73,15 @@ async def _curator_run(session, child_id, today):
     return result
 
 
+async def _delete(session, child_id, observation_id, *, today):
+    """기록 탭 · 대화 삭제와 같은 길 — store 로 지우고 commit 직전처럼 기억을 다시 계산한다."""
+    from app.domains.memory.store.db_store import DbMemoryStore
+
+    store = DbMemoryStore(session, child_id=child_id, today=today)
+    assert await store.delete_observation(domain="food", observation_id=str(observation_id))
+    await store.flush_profiles()
+
+
 def _assert_profile(profile, *, state, strength, last_observed_on, msg=""):
     """state · strength · last_observed_on 세 값을 한 번에 단언한다."""
     prefix = f"[{msg}] " if msg else ""
@@ -131,13 +140,14 @@ class TestScenario1Confirmation:
 
 
 # ---------------------------------------------------------------------------
-# Scenario 2 — wrong 교정으로 강등 → 관찰 추가로 복구
+# Scenario 2 — 기록 삭제로 강등 → 관찰 추가로 복구
+# (예전엔 기록의 wrong 교정이었다. "잘못된 기록" 은 기록 지우기로 바꿨다 — #736)
 # ---------------------------------------------------------------------------
 
 
-class TestScenario2CorrectionAndRecovery:
-    async def test_wrong_강등_후_재승격(self, session, family):
-        owner, child = family
+class TestScenario2DeletionAndRecovery:
+    async def test_삭제로_강등_후_재승격(self, session, family):
+        _, child = family
         day1 = date(2026, 9, 20)
 
         # Day 1~5: 3건 → confirmed
@@ -160,33 +170,19 @@ class TestScenario2CorrectionAndRecovery:
             msg="승격 후",
         )
 
-        # Day 6: obs₁ wrong 교정 → O=2 → candidate
+        # Day 6: obs₁ 삭제 → O=2 → candidate
         day6 = day1 + timedelta(days=5)
-        from app.domains.memory.profile.service import handle_observation_correction
-
-        await handle_observation_correction(
-            session,
-            domain="food",
-            child_id=child.id,
-            observation_id=obs_list[0].id,
-            verdict="wrong",
-            parent_id=owner.id,
-            today=day6,
-        )
+        await _delete(session, child.id, obs_list[0].id, today=day6)
         await session.refresh(p)
-        s_after_correction = s_after_promo * 0.93 * 0.90  # correction × 강등
-        # correction 은 profile correction 이 아니라 observation correction 이므로
-        # strength 감소는 없고 상태 전이 강등만
-        # 아, handle_observation_correction 은 strength 를 안 건드린다.
-        # recompute_profile 의 apply_transition 만 적용된다.
-        s_after_correction = s_after_promo * 0.90  # 강등 -10%
+        # 기록을 지우는 것은 기억 고치기가 아니라 strength 감소(×0.93)는 없고 강등(-10%)만 붙는다
+        s_after_correction = s_after_promo * 0.90
         _assert_profile(
             p,
             state=ProfileState.CANDIDATE,
             strength=s_after_correction,
             last_observed_on=day5,
-            msg="wrong 후 강등",
-            # last_observed_on: obs₁(Day1)이 inactive 됐지만 Day3,Day5 관찰이 남아서 Day5 유지
+            msg="삭제 후 강등",
+            # last_observed_on: obs₁(Day1)이 지워졌지만 Day3,Day5 관찰이 남아서 Day5 유지
         )
 
         # Day 7: 새 관찰 → O=3 → confirmed 재승격
@@ -315,18 +311,18 @@ class TestScenario4ArchivedRevival:
 
 
 # ---------------------------------------------------------------------------
-# Scenario 5 — once_only + wrong 혼합 교정
+# Scenario 5 — once_only 교정 + 기록 삭제 혼합
 # ---------------------------------------------------------------------------
 
 
-class TestScenario5MixedCorrections:
-    """observation correction 은 O 만 줄인다 (W 는 profile correction 에서만 증가).
+class TestScenario5CorrectionAndDeletion:
+    """기록 쪽 손대기는 O 만 줄인다 (W 는 profile correction 에서만 증가).
     once_only → stand_alone (O 에서 빠짐, 검색에는 남음)
-    wrong → inactive (O 에서 빠짐)
+    기록 삭제 → deleted (O 에서 빠짐). 기록의 wrong 은 삭제로 바꿨다 (#736)
     둘 다 W 를 늘리지 않는다.
     """
 
-    async def test_once_only와_wrong이_O를_줄여_강등(self, session, family):
+    async def test_once_only와_삭제가_O를_줄여_강등(self, session, family):
         owner, child = family
         day1 = date(2026, 9, 20)
 
@@ -376,17 +372,9 @@ class TestScenario5MixedCorrections:
         await session.refresh(obs_list[0])
         assert obs_list[0].status == ObservationStatus.STAND_ALONE
 
-        # Day 6: obs₂ wrong → O=2 (3-1), W=0 → 2 < 3 → candidate 강등
+        # Day 6: obs₂ 삭제 → O=2 (3-1), W=0 → 2 < 3 → candidate 강등
         day6 = day1 + timedelta(days=5)
-        await handle_observation_correction(
-            session,
-            domain="food",
-            child_id=child.id,
-            observation_id=obs_list[1].id,
-            verdict="wrong",
-            parent_id=owner.id,
-            today=day6,
-        )
+        await _delete(session, child.id, obs_list[1].id, today=day6)
         await session.refresh(p)
         s_demoted = s0 * 0.90  # 강등 -10%
         _assert_profile(
@@ -394,12 +382,11 @@ class TestScenario5MixedCorrections:
             state=ProfileState.CANDIDATE,
             strength=s_demoted,
             last_observed_on=day4,
-            msg="wrong 후 강등",
+            msg="삭제 후 강등",
         )
 
-        # wrong 된 관찰은 inactive
         await session.refresh(obs_list[1])
-        assert obs_list[1].status == ObservationStatus.INACTIVE
+        assert obs_list[1].status == ObservationStatus.DELETED
 
 
 # ---------------------------------------------------------------------------

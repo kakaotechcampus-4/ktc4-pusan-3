@@ -7,12 +7,13 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field, StrictBool
+from pydantic import Field, StrictBool
 
+from app.api.schema_base import ApiSchema
 from app.domains.child.models import ParentChildRelation
 
 
-class CreateInviteRequest(BaseModel):
+class CreateInviteRequest(ApiSchema):
     """POST /children/{cid}/invites — 본문은 `{}` 다.
 
     `relation` 을 받지 않는다. 아이와 어떤 사이인지는 받는 쪽이 수락할 때 고른다 (#96).
@@ -20,7 +21,7 @@ class CreateInviteRequest(BaseModel):
     """
 
 
-class CreateInviteResponse(BaseModel):
+class CreateInviteResponse(ApiSchema):
     """201 — 원문 코드는 이 응답에서 한 번만 나간다. 서버는 해시만 저장한다."""
 
     invite_code: str
@@ -30,18 +31,18 @@ class CreateInviteResponse(BaseModel):
     """발행 후 24시간. 1회용이라 이 전에도 한 번 쓰이면 닫힌다."""
 
 
-class InvitePreviewChild(BaseModel):
+class InvitePreviewChild(ApiSchema):
     nickname: str
     age_display: str
     """서버가 만든 나이 문구. 프론트는 다시 계산하지 않는다."""
 
 
-class InvitePreviewInviter(BaseModel):
+class InvitePreviewInviter(ApiSchema):
     nickname: str | None
     """초대한 보호자의 별명만. 다른 정보는 내리지 않는다."""
 
 
-class InvitePreviewResponse(BaseModel):
+class InvitePreviewResponse(ApiSchema):
     """GET /invites/{code} — 수락 전에 어느 아이에 붙는지 보여 준다.
 
     🚨 건강 · 알레르기를 싣지 않는다. 아직 연결되지 않은 사람이 코드만으로 부르는 창구다 (NF-04).
@@ -52,7 +53,7 @@ class InvitePreviewResponse(BaseModel):
     expires_at: datetime
 
 
-class AcceptInviteRequest(BaseModel):
+class AcceptInviteRequest(ApiSchema):
     """POST /invites/{code}/accept — 관계는 받는 쪽이 고른다. 안 고르면 필드를 뺀다."""
 
     relation: ParentChildRelation | None = None
@@ -69,7 +70,7 @@ class AcceptInviteRequest(BaseModel):
     )
 
 
-class AcceptInviteResponse(BaseModel):
+class AcceptInviteResponse(ApiSchema):
     """200 — 화면이 수락 뒤 그 아이 홈으로 가려면 child_id 가 필요하다."""
 
     child_id: UUID

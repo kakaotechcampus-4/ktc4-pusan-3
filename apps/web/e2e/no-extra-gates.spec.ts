@@ -1,6 +1,14 @@
 import { MEDICATION_ENABLED } from "@/lib/store-policy";
 
-import { CHILD, EVALUATIVE, expect, expectNoGate, test, visibleText } from "./fixtures";
+import {
+  CHILD,
+  EVALUATIVE,
+  expect,
+  expectNoGate,
+  switchScenario,
+  test,
+  visibleText,
+} from "./fixtures";
 import { browserDaysAgo } from "./time-zone";
 
 /**
@@ -30,16 +38,18 @@ test("09 캘린더 — 일정이 있는 날을 열어도", async ({ page }) => {
   await expectNoGate(page);
 });
 
-test("08 사진 확인 화면 — 저장은 게이트가 아니다 (일정 넣기 시트 밖)", async ({ page }) => {
+// 🚨 08 맨 아래 버튼은 켠 일정이 있으면 게이트 ㉠ 이다 (#824 · `photo-review.spec.ts` 가 건다).
+//    여기서는 넣을 일정이 없는 식단표로 — 그때는 그냥 "저장" 이고 표식이 하나도 없어야 한다.
+test("08 사진 확인 화면 — 넣을 일정이 없으면 저장은 게이트가 아니다", async ({ page }) => {
   await page.goto(`/child/${CHILD}/home`);
+  await switchScenario(page, "photo_meal_plan");
   await page.getByRole("button", { name: "사진으로 적기" }).click();
-  await page.getByRole("button", { name: /^알림장·식단표/ }).click();
   await page
     .getByRole("button", { name: /기기에 있는 최근 사진/ })
     .first()
     .click();
   await expect(page.getByText("알림장이나 식단표로 읽었어요.")).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByRole("button", { name: "이 내용으로 저장" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "저장", exact: true })).toBeVisible();
   await expectNoGate(page);
 });
 

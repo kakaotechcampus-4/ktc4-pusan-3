@@ -14,12 +14,18 @@
 """
 
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from functools import cache
 
 from app.agents.common.allergy import read_label
 from app.agents.common.food_safety import INACTIVE_STATUSES, age_rules_by_key, food_book
-from app.agents.common.food_words import FoodVerdict, check_foods, phrase_of, points_at_food
+from app.agents.common.food_words import (
+    FoodVerdict,
+    check_foods,
+    food_phrases,
+    phrase_of,
+    points_at_food,
+)
 from app.agents.common.readout import Readout
 from app.agents.common.reference import AgeRule, allergen_terms
 from app.agents.food.readouts import (
@@ -150,24 +156,28 @@ def request_notices(
 
     보호자가 쓴 어절만 싣고 등록한 이름은 싣지 않는다 — 추천 결과에는 등록한 알레르기 이름이
     없어야 한다. 이 안내는 모델 입력에도 가지 않는다. 모델이 후보로 보는 풀은 이미 걸러져 있다.
-    빼 달라고 한 음식("견과류 빼고")은 안내하지 않는다.
+    빼 달라고 한 음식("견과류 빼고")은 안내하지 않는다. 붙은 영어 음식 이름("peanut butter")은
+    한 음식으로 한 번만 말한다 — 말하는 단위만 묶고 판정(겹침 · 연령)은 낱말 그대로다 (#864).
     """
     notices: list[Readout] = []
     said: set[str] = set()
     for text in texts:
         verdicts = check_foods(text, entries, stage=stage, months=months)
+        names = food_phrases(text, verdicts)
+        # 한 이름에 알레르기 겹침이 하나라도 있으면 알레르기로 말한다 ("peanut butter")
+        allergic: dict[str, bool] = {}
         for verdict in verdicts:
-            phrase = phrase_of(text, verdict.word)
-            if not verdict.conflicts or phrase in said:
+            if verdict.conflicts:
+                allergic[names[verdict.word]] = allergic.get(names[verdict.word], False) or any(
+                    c.entry.kind == "allergy" for c in verdict.conflicts
+                )
+        for phrase, allergy in allergic.items():
+            if phrase in said:
                 continue
             said.add(phrase)
-            what = (
-                "알레르기"
-                if any(c.entry.kind == "allergy" for c in verdict.conflicts)
-                else "건강 정보"
-            )
+            what = "알레르기" if allergy else "건강 정보"
             notices.append(READOUTS.render(MEAL_REQUEST_CONFLICT, food=phrase, what=what))
-        for phrase, rule in _strictest_age_blocks(text, verdicts).items():
+        for phrase, rule in _strictest_age_blocks(text, verdicts, names).items():
             if phrase not in said:
                 said.add(phrase)
                 notices.append(
@@ -181,14 +191,16 @@ def request_notices(
     return tuple(notices)
 
 
-def _strictest_age_blocks(text: str, verdicts: Sequence[FoodVerdict]) -> dict[str, AgeRule]:
+def _strictest_age_blocks(
+    text: str, verdicts: Sequence[FoodVerdict], names: Mapping[str, str] | None = None
+) -> dict[str, AgeRule]:
     """어절마다 가장 오래 막는 연령 규칙 하나 — "꿀떡" 은 꿀(12개월)이 아니라 떡(48개월)으로 말한다.
-    월령 기준이 없는 규칙(날음식 · 카페인 · 술)이 가장 길다."""
+    월령 기준이 없는 규칙(날음식 · 카페인 · 술)이 가장 길다. `names` 가 오면 그 이름으로 묶는다."""
     strictest: dict[str, AgeRule] = {}
     for verdict in verdicts:
         if verdict.age_block is None:
             continue
-        phrase = phrase_of(text, verdict.word)
+        phrase = names[verdict.word] if names else phrase_of(text, verdict.word)
         held = strictest.get(phrase)
         if held is None or _lasts(verdict.age_block) > _lasts(held):
             strictest[phrase] = verdict.age_block
