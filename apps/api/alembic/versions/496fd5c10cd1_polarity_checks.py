@@ -9,12 +9,12 @@ CHECK 를 걸기 전에 걸리는 행을 정리한다.
 - `confirmed` 인데 `polarity` 가 `NULL` 인 Profile 은 `candidate` 로 내린다 (지금 코드는 만들지 않는다)
 
 🚨 contract 마이그레이션이다 — 새 CHECK 는 직전 코드의 쓰기를 막을 수 있다. 0 관찰을 연결하지 않는
-코드(#844)가 prod(main) 에 배포된 뒤에 develop 에 머지한다. 그래야 배포가 롤백돼도
-직전 이미지가 0 Profile 을 만들지 않는다 (docs/ops/deploy-v1.md 롤백 절).
+코드(#844)가 prod 에 배포된 뒤에(prod 의 `.deployed-tag` 커밋으로 확인) develop 에 머지한다.
+그래야 배포가 롤백돼도 직전 이미지가 0 Profile 을 만들지 않는다 (docs/ops/deploy-v1.md 롤백 절).
 🚨 downgrade 는 CHECK 만 푼다. 지운 Profile · 비운 칸은 되살리지 않는다.
 
 Revision ID: 496fd5c10cd1
-Revises: 815d91c90155
+Revises: b7e4c2a9d815
 Create Date: 2026-11-09 12:00:00.000000
 
 """
@@ -25,7 +25,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "496fd5c10cd1"
-down_revision: Union[str, Sequence[str], None] = "815d91c90155"
+down_revision: Union[str, Sequence[str], None] = "b7e4c2a9d815"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
