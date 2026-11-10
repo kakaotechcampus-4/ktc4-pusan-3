@@ -125,7 +125,7 @@ recipe_catalog  (resolved · 재료 있는 행만 — menu_catalog 가 아니다
 - **결과** — 공통 `DomainAgentResult`(agent=`food`). 풀이 0개면 모델 0회로 추천 없이 `pool.empty`(`completed`). 모델이 출력 tool 없이 끝나면 `failed`. 닫힌 문구는 `unsupported.*` → `unsupported`, 그 밖 → `blocked`. 개수 안내(`suggestion.partial` · `pool.empty`)는 합친 결과로 센다. 질식 주의 문구는 싣지 않는다. 되묻기는 추천을 냈을 때 선호인지 기피인지 모르는 후보(`pick_followup`) **하나**만 `followup.preference` 로 낸다 — 아이가 먹지 못하는 식품(알레르기 · 질환 · 연령 규칙, `filter_food_safety`)은 되묻지 않는다.
 - 샘플이 3개 미만이면(풀 자체가 3개 미만이거나 같은 주재료 제한으로 샘플이 줄었을 때) 재호출해도 채울 수 없는 것으로 보고 **재호출하지 않고 남은 만큼만 낸다**(`remember_sample` 이 `exhausted` 를 세운다) — 추천은 최대 3개다(C-8 닫힘, [`Tool_공통.md`](../shared/Tool_공통.md) §5-2). 3개를 채우려고 풀 밖 메뉴를 만들지 않는다. 1~2개면 `suggestion.partial` 안내를 붙인다. 풀이 0개면 모델을 부르지 않고 추천 없이 `pool.empty` 만 낸다 — 재호출 뒤 0개도 같다. 실패가 아니다.
 - ⚠️ TODO (추천 엔드포인트 이슈 #249 에서 정함): 이미 추천한 메뉴(만료 전 `draft`)는 풀에서 빼지 않는다. `sample_candidates` 의 seed 가 `run_id` 라 같은 `run_id` 로 다시 요청하면 같은 후보가 모델에게 가서, 다시 시도나 화면 재진입에서 같은 메뉴가 다시 나오기 쉽다. 풀에서 draft 메뉴를 뺄지, 모자랄 때 제외를 풀지, seed 를 무엇으로 할지는 [공통_구현_계획.md](../shared/공통_구현_계획.md) §6 TODO 에 모아 뒀다.
-- 이유기(4–11개월)는 레시피북을 읽지 않고 이유식 식단 표(`reference/weaning_menu.yaml`, 출처 '아이캐치 서비스 일반추천')에서 그 달 단계 메뉴로 풀을 만든다. 최근 추천은 빼지 않고 가중치만 낮춘다. 근거가 없으면 식단 행이 `food_doc` 근거다(#399).
+- 이유기(4–11개월)는 레시피북을 읽지 않고 이유식 식단 표(`reference/weaning_menu.yaml`, 출처 '아이캐치 서비스 일반추천')에서 그 달 단계 메뉴로 풀을 만든다. 단계 경계는 `food_doc` 질감 행과 같다(초기 4–5 · 중기 6–7 · 후기 8–11개월, `guide_weaning_stage` 안내와 한 달도 어긋나지 않게 테스트가 대조한다). 기관 자료가 아니라 팀이 직접 정리한 표라 행마다 검수 칸(`status` · `reviewed_by` …)이 있고 approved 행만 풀과 근거 카드에 쓴다 — 지금은 전부 TEMP 승인(#434 방식)이라 작성자가 아닌 사람의 대조가 남아 있다. 최근 추천은 빼지 않고 가중치만 낮춘다. 근거가 없으면 식단 행이 `food_doc` 근거다(#399).
 
 ### 0-6. 외부 데이터 소스
 

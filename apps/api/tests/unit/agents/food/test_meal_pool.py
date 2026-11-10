@@ -4,11 +4,12 @@
 """
 
 from collections.abc import Sequence
+from dataclasses import replace
 from datetime import date
 
 import pytest
 
-from app.agents.food import meal_pool
+from app.agents.food import meal_pool, weaning_menu
 from app.agents.food.meal_pool import (
     DEFICIT_BOOST,
     POOL_MAX,
@@ -33,7 +34,11 @@ from app.agents.food.store import (
     MenuCatalogRow,
     SafetyEntry,
 )
-from app.agents.food.weaning_menu import WEANING_MENU_SOURCE, weaning_menu_rows
+from app.agents.food.weaning_menu import (
+    WEANING_MENU_SOURCE,
+    weaning_menu_rows,
+    weaning_menu_table,
+)
 from app.rules.menu_evidence import menu_evidence_id
 from app.rules.menu_key import normalize_menu_key
 from tests.unit.agents.food.support import (
@@ -169,6 +174,36 @@ async def test_4개월은_초기_메뉴만이다() -> None:
         "쇠고기미음",
         "무미음",
     }
+
+
+async def test_표에_12개월_전_금지_식품_행이_섞여도_이유기_풀에_들지_않는다(monkeypatch) -> None:
+    """식단 표는 사람이 쓴 파일이다. 꿀 · 생우유 행이 섞여도 안전 필터가 풀에서 뺀다(#843)."""
+    table = weaning_menu_table()
+    base = next(e for e in table.entries if e.texture == "minced")
+    bad = [
+        replace(
+            base,
+            key=f"food.weaning_menu.late.{slug}",
+            name=name,
+            ingredients=("쌀", *ingredients),
+            main_ingredients=ingredients,
+        )
+        for slug, name, ingredients in (
+            ("honey_banana", "꿀바나나죽", ("바나나", "꿀")),
+            ("raw_milk", "생우유죽", ("생우유",)),
+        )
+    ]
+    monkeypatch.setattr(
+        weaning_menu, "weaning_menu_table", lambda: replace(table, entries=(*table.entries, *bad))
+    )
+    bad_keys = {normalize_menu_key(row.name) for row in bad}
+    ctx = context(birth=date(2026, 2, 14))  # 8개월
+
+    offered = {r.menu_key for r in weaning_menu_rows(8, synced_at=NOW)}
+    pool = await build_pool(ctx)
+
+    assert bad_keys <= offered  # 표 단계에서는 후보다 — 걸러 내는 쪽은 build_pool 이다
+    assert pool and bad_keys.isdisjoint(keys(pool))
 
 
 async def test_이유기_풀에서_등록한_알레르기_메뉴가_빠진다() -> None:

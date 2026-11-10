@@ -602,9 +602,10 @@ def _doc_index() -> dict[tuple[str, UUID], DocCard]:
             index[key] = DocCard(
                 meta.title, source.source_org, source.source_title, source.source_url
             )
-    # 이유식 식단 표(#399) — 일반 추천의 근거라 검수 상태가 없고, 출처는 서비스 자체 표시다
+    # 이유식 식단 표(#399) — 일반 추천의 근거다. 출처는 서비스 자체 표시이고, 다른 시드처럼
+    # approved 행만 낸다(풀에 든 행과 같다)
     table = weaning_menu_table()
-    for entry in table.entries:
+    for entry in table.approved:
         index[("food_doc", weaning_menu_id(entry.key))] = DocCard(
             entry.name, table.source_org, table.source_title, None
         )

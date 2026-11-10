@@ -34,7 +34,7 @@ def recipe(name: str, *ingredients: str, **overrides: object) -> MenuCatalogRow:
     )
 
 
-WEANING = weaning_menu_rows(8, synced_at=NOW)[0]  # 쇠고기애호박죽
+WEANING = weaning_menu_rows(7, synced_at=NOW)[0]  # 쇠고기애호박죽 — 중기(6–7개월) 첫 행
 PAPRIKA_STIR = recipe("파프리카볶음", "파프리카", "올리브유")
 TOFU = recipe("두부조림", "두부", "간장")
 CUCUMBER = recipe("오이무침", "오이", "참기름")
@@ -375,7 +375,7 @@ class TestInfantKeepsRecipeBookOnly:
         porridge = recipe("쌀미음", "쌀", stage_min="infant_weaning")
 
         result = review(
-            [pick("쌀미음")], request=ASKED, sampled=[porridge], stage="infant_weaning", months=8
+            [pick("쌀미음")], request=ASKED, sampled=[porridge], stage="infant_weaning", months=7
         )
 
         assert result.rejections == ()
@@ -385,7 +385,7 @@ class TestInfantKeepsRecipeBookOnly:
         porridge = recipe("쌀미음", "쌀", stage_min="infant_weaning")
 
         (item,) = review(
-            [pick("쌀미음")], request=ASKED, sampled=[porridge], stage="infant_weaning", months=8
+            [pick("쌀미음")], request=ASKED, sampled=[porridge], stage="infant_weaning", months=7
         ).picks
 
         assert item.draft.reason == "이 시기 이유식 단계에 맞춘 메뉴예요."
@@ -397,7 +397,7 @@ class TestInfantKeepsRecipeBookOnly:
             request=NO_REQUEST,
             sampled=[WEANING],
             stage="infant_weaning",
-            months=8,
+            months=7,
         ).picks
 
         assert item.draft.kind == "general"
@@ -424,7 +424,7 @@ class TestInfantKeepsRecipeBookOnly:
             sampled=[WEANING],
             seen=seen,
             stage="infant_weaning",
-            months=8,
+            months=7,
         ).picks
 
         assert item.draft.kind == "personalized"

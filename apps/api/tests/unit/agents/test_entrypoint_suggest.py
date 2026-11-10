@@ -8,8 +8,13 @@ import pytest
 
 from app.agents import entrypoint, pipeline
 from app.agents.activity.doc_seed import activity_doc_seed
+from app.agents.food import weaning_menu
 from app.agents.food.doc_seed import food_doc_seed
-from app.agents.food.weaning_menu import weaning_menu_id, weaning_menu_rows
+from app.agents.food.weaning_menu import (
+    weaning_menu_id,
+    weaning_menu_rows,
+    weaning_menu_table,
+)
 from app.agents.suggestion_save import InMemorySuggestions
 
 CHILD, PARENT = uuid.uuid4(), uuid.uuid4()
@@ -145,6 +150,25 @@ def test_이유식_식단_근거는_아이캐치_출처_카드로_나간다():
         "월령별 이유식 추천 식단",
         None,
     )
+
+
+def test_검수_전_이유식_식단_행은_근거_카드로_나가지_않는다(monkeypatch):
+    table = weaning_menu_table()
+    draft, approved = table.entries[0], table.entries[1]
+    held = replace(draft, status="draft", reviewed_by=None, reviewed_at=None)
+    monkeypatch.setattr(
+        weaning_menu,
+        "weaning_menu_table",
+        lambda: replace(table, entries=(held, *table.entries[1:])),
+    )
+    entrypoint._doc_index.cache_clear()
+    try:
+        refs = [("food_doc", weaning_menu_id(e.key)) for e in (draft, approved)]
+        cards = entrypoint.describe_docs(refs)
+    finally:
+        entrypoint._doc_index.cache_clear()
+
+    assert set(cards) == {refs[1]}
 
 
 def test_검수_전_시드_행은_근거로_나가지_않는다():
