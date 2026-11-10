@@ -14,6 +14,7 @@
 pipeline 에 등록돼 있다(#380). context 는 entrypoint 가 만든다 — 좌표 · 날씨 어댑터는 api 가 넘긴다.
 """
 
+import asyncio
 import logging
 from collections.abc import Collection
 from typing import Any
@@ -88,9 +89,11 @@ async def run(
     context.state.prior_texts = tuple(task.prior_texts)
     context.state.shown_before = tuple(task.shown_before)
     context.state.deadline = task.deadline
-    # 나들이를 물었으면 날씨를 보는 동안 근처 행사 일정 읽기를 뒤에서 시작한다 (#905)
-    start_event_prefetch(context)
-    weather = await check_weather(context, context.today)
+    # 나들이를 물었으면 날씨를 보는 동안 근처 행사 읽기를 뒤에서 시작한다 (#905). 일정 읽기(모델
+    # 호출)는 오늘 날씨를 받은 뒤 바깥이 될 때만 한다 (#906 리뷰)
+    today_weather = asyncio.ensure_future(check_weather(context, context.today))
+    start_event_prefetch(context, today_weather)
+    weather = await today_weather
     gate = await build_gate(context, outdoor_ok=weather.outdoor_ok)
     context.state.gate = gate
     context.state.weather[context.today] = weather

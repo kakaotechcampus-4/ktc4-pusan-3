@@ -9,6 +9,7 @@ from app.agents.activity.areas import (
     find_area,
     find_province,
     leads_with_area,
+    mentions_area,
     named_area,
     said,
 )
@@ -288,3 +289,20 @@ class TestProvince:
     def test_모든_시도에_대표_지점이_있다(self):
         for province in PROVINCE_ALIASES:
             assert find_province(province) is not None
+
+
+class TestMentionsArea:
+    """보호자 말에 지역 이름이 있는가 — 있으면 위치 근처 행사를 미리 읽지 않는다 (#906 리뷰)."""
+
+    @pytest.mark.parametrize(
+        "text",
+        ["다음 주 토요일에 의령 가는데 갈 만한 곳", "해운대 근처 행사 있어?", "부산에 축제 뭐 해"],
+    )
+    def test_지역을_말했다(self, text):
+        assert mentions_area([text])
+
+    @pytest.mark.parametrize(
+        "text", ["주말에 갈 만한 행사 추천해줘", "근처에 키즈카페 있어?", "고양이와 놀 곳"]
+    )
+    def test_지역을_말하지_않았다(self, text):
+        assert not mentions_area([text])

@@ -14,6 +14,7 @@ from app.agents.activity.areas import (
     find_area,
     find_province,
     leads_with_area,
+    mentions_area,
     named_area,
     said,
 )
@@ -505,28 +506,36 @@ def _event_order(context: ActivityContext, distance: int, event: Event) -> tuple
     return (0 if distance <= NEAR_EVENT_M else 1, tier, distance)
 
 
-def start_event_prefetch(context: ActivityContext) -> None:
+def start_event_prefetch(context: ActivityContext, today_weather: Awaitable[WeatherBrief]) -> None:
     """나들이를 물은 run 이면 날씨를 보는 동안 보호자 위치 근처 행사의 소개정보 · 일정 읽기를 뒤에서
     시작한다 — 모델이 행사를 찾을 때(날씨 조회 · 모델 1회차 뒤, 약 5초)는 캐시에 있다.
 
-    날(주말) · 지역은 아직 모르므로 위치 근처에서 `PREFETCH_DAYS` 안에 시작하는 행사를 행사 조회와
-    같은 순서(짧은 행사 → 가까운 순)로 `EVENT_INTRO_LIMIT` 건만 읽는다. 관람 연령은 거르지 않는다 —
-    읽기만 하고 거르기는 행사 조회가 한다. 나들이를 묻지 않았거나(`rules.asks_outing`) 위치 · 행사
-    어댑터가 없으면 하지 않는다. 실패는 조용히 버린다 — 행사 조회가 다시 읽는다.
+    날(주말)은 아직 모르므로 위치 근처에서 `PREFETCH_DAYS` 안에 열리는 행사를 행사 조회와 같은
+    순서(`_event_order`)로 `EVENT_TOP_K` 건만 읽는다. 관람 연령은 거르지 않는다 — 읽기만 하고
+    거르기는 행사 조회가 한다. 실패는 조용히 버린다 — 행사 조회가 다시 읽는다.
+
+    하지 않는 run (#906 리뷰)
+    - 이번 말에 나들이 낱말이 없다(`rules.asks_outing`) — 앞 턴은 보지 않는다
+    - 이번 말에 지역 이름이 있다 — 그 run 은 보호자 위치가 아니라 그 지역에서 찾는다
+    - 위치 · 행사 어댑터가 없다
+    일정 읽기(모델 호출)는 오늘 날씨를 받은 뒤에 시작하고, 오늘 바깥이 어려우면 하지 않는다.
     """
     events = context.ports.events
     schedules = context.ports.event_schedules
     origin = context.location
     if events is None or schedules is None or origin is None:
         return
-    if not asks_outing(context.state.said()):
+    said_now = context.state.original_texts or context.state.request_texts
+    if not asks_outing(said_now) or mentions_area(said_now):
         return
-    task = asyncio.ensure_future(_prefetch(context, origin))
+    task = asyncio.ensure_future(_prefetch(context, origin, today_weather))
     _BACKGROUND.add(task)
     task.add_done_callback(_settle)
 
 
-async def _prefetch(context: ActivityContext, origin: CoarseLocation) -> None:
+async def _prefetch(
+    context: ActivityContext, origin: CoarseLocation, today_weather: Awaitable[WeatherBrief]
+) -> None:
     events = context.ports.events
     schedules = context.ports.event_schedules
     if events is None or schedules is None:
@@ -544,11 +553,16 @@ async def _prefetch(context: ActivityContext, origin: CoarseLocation) -> None:
     ]
     picked = [
         event
-        for _, event in sorted(near, key=lambda pair: (period_tier(pair[1]), pair[0]))[
-            :EVENT_INTRO_LIMIT
-        ]
+        for _, event in sorted(near, key=lambda pair: _event_order(context, *pair))[:EVENT_TOP_K]
     ]
+    # 소개정보는 TourAPI 조회라 날씨와 같이 읽는다. 일정 읽기는 모델 호출이라 오늘 바깥이 될 때만
     await asyncio.gather(*(_or_none(events.intro(content_id=event.content_id)) for event in picked))
+    try:
+        weather = await asyncio.shield(today_weather)
+    except Exception:  # noqa: BLE001 — 날씨를 모르면 미리 읽지 않는다. 행사 조회가 그때 읽는다
+        return
+    if not weather.outdoor_ok:
+        return
     await asyncio.gather(
         *(schedules.schedule_of(event, today=context.today) for event in picked),
         return_exceptions=True,

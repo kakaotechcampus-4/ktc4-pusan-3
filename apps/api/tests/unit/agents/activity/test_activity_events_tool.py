@@ -706,7 +706,7 @@ class TestPrefetch:
         ctx = await context(InMemoryEvents([raw("1", "느린 축제", km=1)]), schedules=schedules)
         ctx.state.request_texts = ("주말에 갈만한 행사 추천해줘",)
 
-        outing.start_event_prefetch(ctx)
+        outing.start_event_prefetch(ctx, _weather(ok=True))
         await asyncio.sleep(0.3)  # 날씨 조회 · 모델 1회차 동안
         result = await search_events(ctx, SearchEventsArgs(day=DayLabel.TODAY))
 
@@ -719,7 +719,67 @@ class TestPrefetch:
         ctx = await context(InMemoryEvents([raw("1", "축제")]), schedules=schedules)
         ctx.state.request_texts = ("오늘 집에서 뭐 하고 놀까",)
 
-        outing.start_event_prefetch(ctx)
+        outing.start_event_prefetch(ctx, _weather(ok=True))
         await asyncio.sleep(0.05)
 
         assert schedules.calls == []
+
+
+def _weather(*, ok: bool):
+    future = asyncio.get_event_loop().create_future()
+    future.set_result(WeatherBrief(outdoor_ok=ok))
+    return future
+
+
+class TestPrefetchLimits:
+    """미리 읽기가 쓸모없는 run 에서는 모델을 부르지 않는다 (#906 리뷰)."""
+
+    async def test_오늘_바깥이_어려우면_일정은_읽지_않는다(self):
+        from app.agents.activity.tools import outing
+
+        schedules = CachingSlowSchedules(set(), delay=0)
+        ctx = await context(InMemoryEvents([raw("1", "축제")]), schedules=schedules)
+        ctx.state.request_texts = ("주말에 갈만한 행사 추천해줘",)
+
+        outing.start_event_prefetch(ctx, _weather(ok=False))
+        await asyncio.sleep(0.05)
+
+        assert schedules.calls == []
+
+    async def test_지역을_말했으면_위치_근처를_미리_읽지_않는다(self):
+        from app.agents.activity.tools import outing
+
+        schedules = CachingSlowSchedules(set(), delay=0)
+        ctx = await context(InMemoryEvents([raw("1", "축제")]), schedules=schedules)
+        ctx.state.request_texts = ("다음 주에 의령 가는데 갈만한 행사 있어?",)
+
+        outing.start_event_prefetch(ctx, _weather(ok=True))
+        await asyncio.sleep(0.05)
+
+        assert schedules.calls == []
+
+    async def test_앞_턴이_아니라_이번_말만_본다(self):
+        from app.agents.activity.tools import outing
+
+        schedules = CachingSlowSchedules(set(), delay=0)
+        ctx = await context(InMemoryEvents([raw("1", "축제")]), schedules=schedules)
+        ctx.state.request_texts = ("오늘 집에서 뭐 하고 놀까",)
+        ctx.state.prior_texts = ("주말에 갈만한 행사 추천해줘",)
+
+        outing.start_event_prefetch(ctx, _weather(ok=True))
+        await asyncio.sleep(0.05)
+
+        assert schedules.calls == []
+
+    async def test_가까운_순으로_다섯_건만_읽는다(self):
+        from app.agents.activity.tools import outing
+
+        schedules = CachingSlowSchedules(set(), delay=0)
+        rows = [raw(str(n), f"축제 {n}", km=n) for n in range(1, 9)]
+        ctx = await context(InMemoryEvents(rows), schedules=schedules)
+        ctx.state.request_texts = ("주말에 갈만한 행사 추천해줘",)
+
+        outing.start_event_prefetch(ctx, _weather(ok=True))
+        await asyncio.sleep(0.05)
+
+        assert sorted(schedules.done) == ["1", "2", "3", "4", "5"]
