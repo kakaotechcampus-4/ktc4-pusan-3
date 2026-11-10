@@ -161,9 +161,10 @@ def _suggestion_out(s, views: Sequence[EvidenceView] = ()) -> SuggestionOut:
 
 
 async def _safety_labels(session, *, child_id: _uuid.UUID) -> list[entrypoint.SafetyLabel]:
-    """사전검사 · 채택 · 초안 만들기 재확인이 같이 읽는 알레르기 · 건강 행(모든 kind · status).
+    """사전검사와 채택 · 초안 만들기 · 제출 재확인이 같이 읽는 알레르기 · 건강 행(모든 kind ·
+    status).
 
-    목록이 빼는 추천과 채택 · 초안 만들기가 막는 추천이 같으려면 읽는 행도 판정 함수도 같아야 한다.
+    목록이 빼는 추천과 재확인이 막는 추천이 같으려면 읽는 행도 판정 함수도 같아야 한다.
     """
     rows = await list_safety_labels(session, child_id=child_id)
     return [entrypoint.SafetyLabel(*r) for r in rows]
@@ -271,6 +272,8 @@ async def approve_suggestions(
 # ── 일정 초안 ─────────────────────────────────────────────────────────────
 
 _AGENT_CATEGORY = {"activity": "activity", "health": "health"}
+# 초안 만들기 · 제출이 같이 쓰는 409 문구 (#902)
+_NOT_AN_EVENT = "알레르기로 등록된 항목이 들어 있어 일정으로 만들 수 없어요"
 
 
 def _next_draft_id() -> str:
@@ -318,12 +321,12 @@ async def create_event_drafts(
 
     # 채택 뒤에 등록된 알레르기를 여기서 막는다 (#859) — 아무것도 쓰지 않는 단계라 되돌릴 게 없고,
     # 일정 초안 시트(게이트 ㉠)가 뜨기 전이다. food 를 한 장으로 묶기 전에 본다 — 걸린 추천을
-    # id 로 알려야 한다. 제출(/events)은 다시 보지 않는다 — 05 의 초안은 저장하지 않는다(#539)
+    # id 로 알려야 한다. 초안을 만든 뒤의 틈은 제출(/events)이 한 번 더 본다 (#902)
     await _recheck_allergens(
         session,
         child_id=child.child_id,
         rows=suggestions,
-        message="알레르기로 등록된 항목이 들어 있어 일정으로 만들 수 없어요",
+        message=_NOT_AN_EVENT,
     )
 
     food = [s for s in suggestions if str(s.agent) in _MERGED_AGENTS]
@@ -377,10 +380,15 @@ async def create_event_drafts(
     description=(
         "초안에 시간을 채워 캘린더에 확정한다. Idempotency-Key 필수. "
         "추천에서 왔으면 suggestion ↔ event 연결."
+        " 추천에서 온 일정은 넣기 직전에 알레르기를 다시 본다 — 초안을 만든 뒤 등록된"
+        " 알레르기(active)에 걸리는 추천이 있으면 아무것도 쓰지 않고 409 `allergen_blocked`"
+        "(`detail.suggestion_ids` = 걸린 추천 id, 요청 순서). 판정 · `code` · `detail` · 문구는"
+        " 초안 만들기와 같다. 알레르기 항목이 든 추천인데 건강정보 동의가 없으면 403"
+        " `consent_required` — 409 `already_confirmed` 바로 뒤에 본다."
     ),
     status_code=201,
     response_model=SubmitEventResponse,
-    responses={status: {"model": ErrorEnvelope} for status in (400, 404, 409, 422, 503)},
+    responses={status: {"model": ErrorEnvelope} for status in (400, 403, 404, 409, 422, 503)},
 )
 async def submit_event(
     child: AccessibleChild,
@@ -416,6 +424,7 @@ async def submit_event(
     # suggestion_ids 검증 (중복 제거)
     suggestion_ids = list(dict.fromkeys(body.suggestion_ids)) if body.suggestion_ids else []
     if suggestion_ids:
+        suggestions = []
         for sid in suggestion_ids:
             row = await suggestion_repo.find_suggestion(
                 session, child_id=child.child_id, suggestion_id=sid
@@ -424,9 +433,17 @@ async def submit_event(
                 raise ApiError(404, "not_found", "제안을 찾을 수 없어요")
             if row.status != SuggestionStatus.APPROVED:
                 raise ApiError(422, "not_approved", "채택되지 않은 제안이 포함돼 있어요")
+            suggestions.append(row)
 
         if await suggestion_repo.is_any_linked(session, suggestion_ids=suggestion_ids):
             raise ApiError(409, "already_confirmed", "이미 캘린더에 넣은 제안이에요")
+
+        # 초안을 만든 뒤 등록된 알레르기를 넣기 직전에 한 번 더 막는다 (#902) — 05 의 시트는
+        # 열어 둔 채 몇 시간이 지날 수 있다. 서버가 그 틈을 웹에 기대지 않는다(루트 §2).
+        # 아무것도 쓰기 전이다 — 알림 연결 잠금 · 반복 펼치기보다 앞이다
+        await _recheck_allergens(
+            session, child_id=child.child_id, rows=suggestions, message=_NOT_AN_EVENT
+        )
 
     # 알림을 함께 걸면 연결부터 잡는다 — 일정을 넣으면 아이 행에 외래 키 잠금이 걸리는데, 그 뒤에
     # 보호자 → 아이 순으로 잠그면 같은 순서로 잡는 탈퇴(`withdraw_parent`)와 엇갈린다 (#603 리뷰)
