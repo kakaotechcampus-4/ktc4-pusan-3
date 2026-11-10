@@ -47,6 +47,7 @@ import-linter 설정은 아직 없다 — API CI(`ci-api.yml`)에도 들어 있�
   | `domains/memory/curator/trigger.py` | `agents.curator.embedding.embed_step` · `.judge`(Protocol) · `.linker.link_observations`(실행) |
   | `domains/safety/agent_reader.py` | `agents.common.ports`(`SafetyLookupError`) · `agents.food.store.ports` · `agents.activity.store.ports` · `agents.growth.store.ports`(`SafetyEntry`) · `agents.health.store.ports`(`HealthSafetyEntry`) |
   | `domains/food/agent_reader.py` | `agents.food.store.ports`(`MenuCatalogRow` · `RECIPE_SOURCES`) |
+  | `domains/daycare_meal/agent_reader.py` | `agents.food.store.ports`(`DaycareMealRow` · `DaycareLookupError`) |
   | `domains/child/agent_reader.py` | `agents.growth.store.ports`(`GrowthMeasurement`) · `agents.health.store.ports`(`ChildBasic`) |
   | `domains/medication/agent_reader.py` | `agents.health.store.ports`(`MedicationCourse` · `MedicationDose` · `DoseSlot`) |
   | `domains/memory/profile/agent_reader.py` | `agents.common.evidence`(`AffinityRow`) |

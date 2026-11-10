@@ -47,7 +47,7 @@ nutrient.daycare_amount_unknown:
   template: "급식은 메뉴만 알고 먹은 양은 몰라서 참고만 했어요."
 nutrient.daycare_unread:
   kind: nutrient
-  template: "어린이집 급식은 지금 불러오지 못해서 집에서 먹은 기록으로만 봤어요."
+  template: "어린이집 급식표는 지금 불러오지 못해서 급식표를 빼고 봤어요."
 nutrient.appearance:
   kind: nutrient_analysis
   template: "기록된 {days}일 중 {group} 나온 날은 {count}일이에요."

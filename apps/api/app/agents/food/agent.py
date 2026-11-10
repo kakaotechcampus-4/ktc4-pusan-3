@@ -47,6 +47,7 @@ from app.agents.food.prompt import (
     request_message,
 )
 from app.agents.food.readouts import (
+    CLOSED_DAYCARE_UNREAD,
     FOLLOWUP_PREFERENCE,
     MEAL_DAYCARE_UNREAD,
     NUTRIENT_DAYCARE_UNREAD,
@@ -172,7 +173,19 @@ async def _daycare(
         {"role": "user", "content": context.state.utterance},
     ]
     allowed = tools_for(task_type, gate)
-    if not await _converse(llm, messages, context, allowed, task_type):
+    finished = await _converse(llm, messages, context, allowed, task_type)
+    if context.state.daycare_unread:
+        # 도중에 급식 표를 못 읽었다. 게이트에서 못 읽은 것과 같은 문구 · 상태(blocked)로 닫는다 —
+        # 모델이 keep 으로 끝내도 "그대로 뒀어요" 가 아니다. 쓰기는 출력 tool 이라 성공하면 루프가
+        # 끝나고, 못 읽은 뒤의 쓰기는 행을 읽지 못해 멈추므로 여기 온 task 는 아무것도 쓰지 않았다
+        return DomainAgentResult(
+            agent=AGENT,
+            task_type=task_type.value,
+            status="blocked",
+            readouts=(READOUTS.render(CLOSED_DAYCARE_UNREAD),),
+            model_calls=1,
+        )
+    if not finished:
         return _failed(task_type, model_calls=1)
     return DomainAgentResult(
         agent=AGENT,

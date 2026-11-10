@@ -181,7 +181,7 @@ recipe_catalog  (resolved · 재료 있는 행만 — menu_catalog 가 아니다
 
 `daycare_meal` 라벨은 **`daycare_meal` 행이 있는 아이만** 열린다. 단계로 닫지 않는다 — 기관에 다니면 이유기라도 급식을 먹는다. 행이 없으면 갱신할 대상이 없으니 자연히 `()`다.
 
-`daycare_lookup` 도 같다 — 행이 있는 아이만 열리고(`closed.no_daycare`), 급식 표를 읽지 못했으면 없다고 하지 않고 따로 닫고(`closed.daycare_unread`, `DaycareLookupError` — 식단 추천 · 영양소 분석은 닫지 않고 집 기록으로 간다, #956), 단계 · `safety_ok` 로 닫지 않는다. 알레르기를 쓰지 않는 읽기라서다. 열리는 tool 은 `show_daycare_meal` 하나(출력 tool)이고 `tool_choice="required"` 다. 쓰지 않아 `WRITING_TASKS` 에 없다 — 같은 run 에 급식 갱신이 있으면 갱신이 먼저 끝나 조회가 바뀐 행을 읽는다.
+`daycare_lookup` 도 같다 — 행이 있는 아이만 열리고(`closed.no_daycare`), 급식 표를 읽지 못했으면 없다고 하지 않고 따로 닫고(`closed.daycare_unread`, `DaycareLookupError` — tool 도중에 못 읽어도 같은 문구 · `blocked` 다. 식단 추천 · 영양소 분석은 닫지 않고 급식 행 없이 간다, #956), 단계 · `safety_ok` 로 닫지 않는다. 알레르기를 쓰지 않는 읽기라서다. 열리는 tool 은 `show_daycare_meal` 하나(출력 tool)이고 `tool_choice="required"` 다. 쓰지 않아 `WRITING_TASKS` 에 없다 — 같은 run 에 급식 갱신이 있으면 갱신이 먼저 끝나 조회가 바뀐 행을 읽는다.
 
 `meal_recommendation`에는 영양 tool이 열려 있지 않지만, **영양 구간은 코드가 따로 구한다.** `build_candidate_pool` 직전에 `evaluate_nutrient_bands`를 불러 부족 식품군을 받아 가중치에 쓴다(§0-5). 모델에게는 구간 자체가 아니라 이미 가중된 후보 목록이 간다 — 수치가 모델 입력에 들어가지 않는다. 알레르기·금지식품 라벨도 모델 입력에 넣지 않는다. 후보 풀이 이미 걸러진 상태로 가므로 모델이 라벨을 알 필요가 없고, 재호출 때의 제외 목록에도 `menu_key`만 넣고 걸린 사유는 넣지 않는다([`Tool_공통.md`](../shared/Tool_공통.md) §5-2).
 
@@ -431,7 +431,7 @@ Health 는 다르다 — 거기는 건강 그 자체라 동의 없이 전 라벨
 | `nutrient.insufficient` | 최근 식사 기록이 적어서 영양 이야기는 정확하지 않아요. ({recorded}건 기록됨) |
 | `nutrient.today_empty` | 오늘 먹은 기록이 아직 없어서 최근 며칠을 기준으로 골랐어요. |
 | `nutrient.daycare_amount_unknown` | 급식은 메뉴만 알고 먹은 양은 몰라서 참고만 했어요. |
-| `nutrient.daycare_unread` | 어린이집 급식은 지금 불러오지 못해서 집에서 먹은 기록으로만 봤어요. |
+| `nutrient.daycare_unread` | 어린이집 급식표는 지금 불러오지 못해서 급식표를 빼고 봤어요. |
 | `nutrient.appearance` | 기록된 {days}일 중 {group} 나온 날은 {count}일이에요. |
 | `nutrient.sparse` | 기록된 식사에서 {group} 나온 날이 적은 편이라, 식단 추천은 {group} 든 메뉴를 더 넣어 골라요. |
 | `nutrient.few_records` | 기록된 식사 {recorded}건으로 본 거라, 기록이 쌓이면 달라질 수 있어요. |

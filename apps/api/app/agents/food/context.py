@@ -25,6 +25,7 @@ from app.agents.common.suggestion import SuggestionDraft
 from app.agents.food.schemas.common import MealSlot
 from app.agents.food.store.ports import (
     DaycareLookupError,
+    DaycareMealRow,
     FoodDocRow,
     FoodPorts,
     MenuCatalogRow,
@@ -155,6 +156,26 @@ def mark_daycare_unread(context: FoodContext, *, at: str) -> None:
     """급식 표를 못 읽었다고 이 task 에 표시한다. 로그에는 run_id 와 자리 이름만 싣는다."""
     context.state.daycare_unread = True
     logger.warning("Food 급식 읽기 실패 run_id=%s at=%s", context.run_id, at)
+
+
+async def read_daycare_rows(
+    context: FoodContext, *, date_from: date, date_to: date, at: str
+) -> list[DaycareMealRow]:
+    """Food 가 급식 행을 읽는 유일한 길. 읽기에 실패하면 표시하고 `DaycareLookupError` 를 다시 낸다.
+
+    이 task 에서 이미 못 읽었으면(`state.daycare_unread`) DB 에 가지 않고 바로 같은 예외를 낸다 —
+    느리게 실패하는 읽기를 되풀이하지 않고, 앞에서 "못 읽음" 으로 정한 것을 뒤에서 뒤집지 않는다
+    (뒤집으면 화면 안내와 실제로 본 급식이 어긋난다). 잡는 쪽이 무엇을 할지는 자리마다 다르다.
+    """
+    if context.state.daycare_unread:
+        raise DaycareLookupError("이 task 에서 이미 daycare_meal 을 읽지 못했다")
+    try:
+        return await context.ports.daycare.rows(
+            child_id=context.child_id, date_from=date_from, date_to=date_to
+        )
+    except DaycareLookupError:
+        mark_daycare_unread(context, at=at)
+        raise
 
 
 async def build_gate(context: FoodContext) -> Gate:
