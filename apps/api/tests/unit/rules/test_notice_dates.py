@@ -271,6 +271,14 @@ def test_월간표의_물결표_뒤_요일_날짜는_혼자_읽지_않는다(tex
     assert when.review
 
 
+@pytest.mark.parametrize("text", ["제3(화)", "만 3(화)", "약3(화)"])
+def test_월간표의_낱말에_붙은_숫자는_요일이_맞아도_날짜로_읽지_않는다(text):
+    # "제3" 은 차례, "만 3" 은 나이다. 요일이 우연히 맞아도 날짜로 읽지 않고 전처럼 되묻는다
+    when = parse_notice_when(text, anchor=ANCHOR, base_month=(11, 2026))
+    assert when.start is None
+    assert when.review
+
+
 def test_월간표의_일_없는_날짜는_요일이_어긋나면_읽지_않는다():
     # 숫자만으로는 날짜인지 모른다. 요일이 맞아야 날짜로 본다 — 어긋나면 전처럼 되묻는다
     when = parse_notice_when("30(화)", anchor=ANCHOR, base_month=(11, 2026))

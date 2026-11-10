@@ -42,6 +42,8 @@ _CELL_WITH_DOW = re.compile(
 )
 # "2~6(금)" 의 6(금) 은 기간의 끝이다. 혼자 읽으면 기간이 금요일 하루가 된다
 _ENDS_WITH_RANGE_SEP = re.compile(r"(?:~|∼|〜|-|–|—|부터)\s*$")
+# "제3(화)" 의 3 은 차례, "만 3(화)" 의 3 은 나이다. 낱말에 붙은 숫자는 요일이 맞아도 날이 아니다
+_NOT_A_CELL_BEFORE = re.compile(r"(?:[가-힣]|만\s+)$")
 _BASE_MONTH = re.compile(r"(?:(?P<y>\d{4})\s*년\s*)?(?P<m>\d{1,2})\s*월")
 _RELATIVE = {"오늘": 0, "금일": 0, "내일": 1, "명일": 1, "모레": 2}
 _WEEK_WORD = re.compile(r"(?P<week>이번\s*주|금주|다음\s*주|차주)\s*(?P<wk>[월화수목금토일])요일")
@@ -165,6 +167,7 @@ def _first_date(
         base_month is not None
         and (m := _CELL_WITH_DOW.search(text))
         and not _ENDS_WITH_RANGE_SEP.search(text[: m.start()])
+        and not _NOT_A_CELL_BEFORE.search(text[: m.start()])
         and (found := _nearest(base_month, int(m["d"]), anchor))
         and not _dow_mismatch(found, m["w"])
     ):
