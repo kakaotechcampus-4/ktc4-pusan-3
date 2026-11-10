@@ -147,7 +147,7 @@ async def search_medication_schedules(
     context: HealthContext, args: SearchMedicationArgs
 ) -> ToolResult:
     """진행 중 코스. 약 이름 · 용량은 원문 그대로이고 id 는 싣지 않는다 — 대상은 title_span 으로
-    코드가 찾는다. 진료 준비 정리(6번)도 같은 tool 을 연다."""
+    코드가 찾는다. 복약 task 에서만 연다 — 진료 준비 정리에는 열지 않는다 (`registry.MODEL_TOOLS`)."""
     courses = await _active(context)
     return ok(
         "query",
