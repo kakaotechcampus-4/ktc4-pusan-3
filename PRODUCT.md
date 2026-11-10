@@ -74,7 +74,7 @@ web
 ① 인식  Supervisor — 안전 사전검사(규칙) + 의도 판정(기록형 / 요청형 / 혼합형)
    ↓    승인 없이 바로 저장한다 — 틀리면 부모가 나중에 고친다(Correction · ⑤)
 ② 기록  Memory Agent + Curator — 분리 · 병합 · 집계 · 승격
-③ 행동  공통 컨텍스트 강제 주입 → 도메인 Agent 최대 2개가 각자 memory.search
+③ 행동  도메인 Agent 최대 2개가 각자 자기 통로로 읽는다 (아이 기록은 memory.search · 알레르기는 코드가 거른다)
 ④ 결과  "이렇게 저장했어요" · 왜 이 추천인지(`reason` 한 칸) · 사용한 기록 N건
    ↓    승인 게이트  되돌릴 수 없는 3곳만 사람 앞으로
 ⑤ 반영  선택 · 거절 · Correction 을 Memory 로 되돌려 기록
