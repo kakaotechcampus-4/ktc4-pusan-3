@@ -23,7 +23,7 @@ SCOPE = {"parent_id": PID, "method": "POST", "path": "/children/c/inputs", "key"
 @pytest.mark.xfail(
     strict=True,
     raises=json.JSONDecodeError,
-    reason="ISSUE-F7 (eval/faults-issues.md) — 깨진 재생 값이 JSONDecodeError → 500",
+    reason="#935 (eval/faults-issues.md) — 깨진 재생 값이 JSONDecodeError → 500",
 )
 async def test_F7_깨진_재생_값은_처리_안_된_예외가_아니다() -> None:
     r = fakeredis.FakeRedis(decode_responses=True)
@@ -31,7 +31,7 @@ async def test_F7_깨진_재생_값은_처리_안_된_예외가_아니다() -> N
     with patch("app.api.idempotency.get_redis", return_value=r):
         try:
             replay = await idempotency.recall(**SCOPE)
-        # ISSUE-F7 을 고친 뒤에야 이 갈래를 탄다 — 그 전에는 strict xfail 이 JSONDecodeError 기대
+        # #935 를 고친 뒤에야 이 갈래를 탄다 — 그 전에는 strict xfail 이 JSONDecodeError 기대
         except ApiError as exc:
             assert exc.status != 500  # 정해진 오류(예: 503)로 답하면 된다
         else:

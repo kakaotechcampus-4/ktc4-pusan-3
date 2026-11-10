@@ -375,7 +375,7 @@ eval/                                  ← 데이터 · 결과 (PM · 멘토가 
 │       ├── b-heavy.yaml
 │       └── c-light.yaml
 ├── faults.md                          F 점검표 (칸 → 기대 동작 → 테스트 → 상태)
-├── faults-issues.md                   F 이슈 초안 (올리기 전 · xfail reason 의 ISSUE-… 자리)
+├── faults-issues.md                   F 이슈 초안 (올린 번호 #935 · #936 · #937 · #914)
 └── results/
     └── 2026-11-10.md                  기준선
     (runners/ 는 지운다 — 코드는 아래로)

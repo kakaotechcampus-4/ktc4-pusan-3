@@ -1,18 +1,18 @@
 # 스위트 F — 이슈 초안
 
-[`faults.md`](faults.md) 에서 나온 이슈 초안이다. **아직 올리지 않았다** — 담당자 · PM 에게 보여 주고 올린다. 번호를 받으면 `ISSUE-…` 를 `#번호` 로 바꾼다(이 파일 · faults.md · 테스트 docstring · xfail reason).
+[`faults.md`](faults.md) 에서 나온 이슈 초안이다. **11-10 에 모두 올렸다** — F7 #935 · F8-a #936 · F8-b #937 (F2-UX 는 #914). 아래는 올리기 전 초안 그대로이고, **정본은 이슈다** — 올릴 때 코드 위치를 그날 develop 에 다시 맞췄다.
 형식은 CONTRIBUTING §4 — 제목 `[<PART> <Type>] 요약`, 본문 목적 · 현재 문제 · 작업 범위 · 완료 기준 · 검증 방법. PART 는 바꿀 파일의 폴더로 정한다(`app/api` · `domains` · `infra` · `rules` → BE, `app/agents` · `providers` → AI).
 
 | id | 제목 | 칸 | 담당 (제안) | 테스트 |
 | --- | --- | --- | --- | --- |
-| ISSUE-F7 | [BE Fix] 멱등 재생 값이 깨져 있으면 같은 키 재시도가 24시간 500 이다 | IDEM-C | 명성 | `test_f7_broken_replay.py` (xfail) |
-| ISSUE-F8-a | [BE Chore] DB 쿼리 · 잠금 대기 시간 상한(statement_timeout · lock_timeout) 정하기 | CUR-B · SAVE-B · SAFE-B | 명성 | 없음 — 설정 결정이 먼저 |
-| ISSUE-F8-b | [BE Refactor] Curator 가 아이 잠금을 쥔 채 임베딩 · 판정 모델을 부른다 | CUR-B | 시하 (명성 협의 — `app/domains` ↔ `app/agents`) | 없음 — 설계 결정이 먼저 |
+| ISSUE-F7 → #935 | [BE Fix] 멱등 재생 값이 깨져 있으면 같은 키 재시도가 24시간 500 이다 | IDEM-C | 명성 | `test_f7_broken_replay.py` (xfail) |
+| ISSUE-F8-a → #936 | [BE Chore] DB 쿼리 · 잠금 대기 시간 상한(statement_timeout · lock_timeout) 정하기 | CUR-B · SAVE-B · SAFE-B | 명성 | 없음 — 설정 결정이 먼저 |
+| ISSUE-F8-b → #937 | [BE Refactor] Curator 가 아이 잠금을 쥔 채 임베딩 · 판정 모델을 부른다 | CUR-B | 시하 (명성 협의 — `app/domains` ↔ `app/agents`) | 없음 — 설계 결정이 먼저 |
 | ISSUE-F2-UX → #914 | [AI Feat] 모델이 멈추면 보호자가 60초를 기다린 뒤 실패를 본다 — Supervisor 에 20초 상한 (Memory 는 그대로) | SUP-B · MEM-B | 시하 | `test_supervisor_agent.py` · `test_pipeline.py` 의 상한 테스트 |
 
 ---
 
-## ISSUE-F7 — [BE Fix] 멱등 재생 값이 깨져 있으면 같은 키 재시도가 24시간 500 이다
+## ISSUE-F7 → #935 — [BE Fix] 멱등 재생 값이 깨져 있으면 같은 키 재시도가 24시간 500 이다
 
 **목적** — Redis 에 깨진 재생 값이 있어도 같은 키 재시도가 처리 안 된 예외(500)가 아니라 정해진 답을 받게 한다.
 
@@ -33,14 +33,14 @@
 
 ---
 
-## ISSUE-F8-a — [BE Chore] DB 쿼리 · 잠금 대기 시간 상한(statement_timeout · lock_timeout) 정하기
+## ISSUE-F8-a → #936 — [BE Chore] DB 쿼리 · 잠금 대기 시간 상한(statement_timeout · lock_timeout) 정하기
 
 **목적** — DB 가 느리거나 잠금을 오래 기다릴 때 끝이 있게 한다.
 
 **현재 문제**
 - `app/infra/db/session.py:18-20` 의 엔진에 `statement_timeout` · `lock_timeout` 이 없다. 저장소 전체(`deploy/` 포함)에서 0건이다.
 - 입력 run 은 러너 60초 안전망(`app/api/runs/runner.py:211`)이 끊고, 도메인 Agent 안의 조회(안전 정보 · 기억)는 20초 예산이 끊는다. 그 밖 — API 핸들러 · 백그라운드 Curator · 배치(`app/workers/`) — 에는 상한이 없다.
-- 아이 잠금(`pg_advisory_xact_lock`, `app/domains/memory/profile/service.py:55-67`)을 기다리는 쪽도 끝없이 기다린다 (ISSUE-F8-b 와 같이 본다).
+- 아이 잠금(`pg_advisory_xact_lock`, `app/domains/memory/profile/service.py:55-67`)을 기다리는 쪽도 끝없이 기다린다 (#937 과 같이 본다).
 
 **작업 범위** — 값을 정하고(실측 뒤 — API 세션과 배치 세션을 따로 둘지 포함), 거는 방식(엔진 `connect_args` 의 서버 설정 또는 세션마다 `SET LOCAL`)을 정해 넣는다. 상한에 걸린 예외가 기존 DB 오류 처리기(원문 없는 로그)로 가는지 맞춘다.
 
@@ -50,7 +50,7 @@
 
 ---
 
-## ISSUE-F8-b — [BE Refactor] Curator 가 아이 잠금을 쥔 채 임베딩 · 판정 모델을 부른다
+## ISSUE-F8-b → #937 — [BE Refactor] Curator 가 아이 잠금을 쥔 채 임베딩 · 판정 모델을 부른다
 
 **목적** — Curator 가 느린 모델 때문에 같은 아이의 다른 저장을 오래 막지 않게 한다.
 
@@ -70,7 +70,7 @@
 
 ---
 
-## ISSUE-F2-UX — [AI Feat] 모델이 멈추면 보호자가 60초를 기다린 뒤 실패를 본다 — Supervisor 상한 여부 결정
+## ISSUE-F2-UX → #914 — [AI Feat] 모델이 멈추면 보호자가 60초를 기다린 뒤 실패를 본다 — Supervisor 상한 여부 결정
 
 > **#914 로 올라가 정해졌다** — 결정 1 은 "예"(20초, 폴백 재시도까지 합친 시간), 결정 2 는 Memory 를 그대로 둔다. 결정 3(화면 문구)은 이 이슈 밖이라 열려 있다. 아래는 올리기 전 초안 그대로다.
 
