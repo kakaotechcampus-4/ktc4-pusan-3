@@ -41,7 +41,7 @@ API 오퍼레이션명·진료과목 코드(소아청소년과)는 각 활용가
 | **`care_handoff`** | – | search_medication_schedules · load_health_safety · compose_daycare_med_notice · build_emergency_card | **0** |
 | (hook) | – | check_symptom_repetition · lookup_condition_guidance · check_infant_fever | 0 |
 
-닫힘: 동의 없음 → 전 라벨 · 위치 없음 → `place_lookup` · `health_safety` 실패 → `visit_summary` 진행 + 경고 줄 · 진행 중 복약 0건 → 투약의뢰서 · 체온 기록 0건 → `build_fever_timeline`.
+닫힘: 복약을 꺼 둔 동안(#923 · `registry.MEDICATION_ENABLED`) → `medication` 전부와 투약의뢰서, 동의보다 먼저 · 동의 없음 → 전 라벨 · 위치 없음 → `place_lookup` · `health_safety` 실패 → `visit_summary` 진행 + 경고 줄 · 진행 중 복약 0건 → 투약의뢰서 · 체온 기록 0건 → `build_fever_timeline`.
 
 ### 연령 — tool을 여닫지 않고 계산 방식을 바꾼다
 
