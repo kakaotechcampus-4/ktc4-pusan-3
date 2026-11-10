@@ -175,21 +175,17 @@ flowchart LR
 
 </div>
 
-```mermaid
-flowchart LR
-    U["보호자"] --> WEB["웹 · Next.js<br/>(모바일 앱은 이 웹을 띄우는 껍데기)"]
-    WEB --> CADDY["Caddy<br/>HTTPS · 재배포 중 대기"]
-    CADDY --> API["FastAPI<br/>API + Agent 한 서비스"]
-    API --> PG[("PostgreSQL + pgvector")]
-    API --> REDIS[("Redis<br/>중복 요청 방어")]
-    API --> LLM["LLM API"]
-```
+<img src="docs/assets/readme/architecture.png" alt="아이캐치 구성도 — 보호자의 웹과 앱이 Caddy 를 거쳐 web 과 api 로 들어가고, api 는 PostgreSQL · Redis · S3 · LLM API · 카카오 로그인 · 공공 데이터 · FCM 을 쓴다. 배포는 GitHub Actions 가 Systems Manager 로 명령을 보낸다.">
 
 | 고른 것 | 왜 |
 | --- | --- |
 | 백엔드와 AI 를 **한 서비스**로 | 저장이 검색보다 먼저여야 한다. 나누면 그 경로마다 네트워크 왕복이 생긴다 |
 | 모바일은 **웹뷰 껍데기** | 화면이 두 벌이 되면 절대 규칙도 두 곳에서 지켜야 한다 |
 | 벡터 DB 를 따로 두지 않고 **PostgreSQL 한 곳** | 여섯 명이 10주에 운영할 인프라는 적을수록 좋다 |
+| 사진은 화면이 **S3 에 바로** 올린다 | 사진 본문이 API 서버를 거치지 않는다. 서버는 읽자마자 지운다 |
+| 배포는 **OIDC + Systems Manager** | 저장소에 서버 열쇠를 두지 않는다 |
+
+→ [배포 · 운영 문서](https://kakaotechcampus-4.github.io/ktc4-pusan-3/ops/deploy-v1/)
 
 ## 팀
 
