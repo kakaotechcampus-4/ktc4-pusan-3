@@ -1,0 +1,183 @@
+name: Agent live eval
+# 프롬프트 · tool spec 이 바뀐 Agent 의 라이브 eval CI 묶음(`tool_ci` 표시 케이스 3건)을 PR 에서 3회 돌린다 (#816).
+# 지문이 안 바뀐 Agent 는 건너뛰고, 같은 (Agent, 지문, eval 파일 해시) 로 이미 통과했으면 캐시로 건너뛴다.
+# 실제 모델을 부르니 비용이 든다 — PR 하나에 Agent 1개면 3건 × 3회 = 9 run, 전부면 45 run (PM 11-09).
+#
+# 🚨 필수 체크가 아니다. paths 필터라 에이전트를 안 건드린 PR 에는 안 떠서, 필수로 걸면 그 PR 이 영원히 기다린다
+#    (`ci-api.yml` 이 paths 를 못 거는 이유와 같다). 안정 오답이 하나라도 있으면 빨간불로 알려 줄 뿐이다.
+# 🚨 `pull_request_target` 을 쓰지 않는다. public 저장소라 fork 의 코드가 secret 을 받으면 안 된다.
+#    fork PR 은 `live` job 을 건너뛰고(`select` 는 키 없이 돈다), 같은 저장소 브랜치 PR 에만 키가 간다.
+# 🚨 job 요약에는 케이스 id · 통과 회차 · 판정 · C1 · tool 이름 · 지문 · 조건만 쓴다. 요청 · 답 · 실패 문장은 없다.
+#    측정 이력(`docs/agents/eval/*_EVAL.md` §1)은 이 워크플로가 쓰지 않는다 — 사람이 손으로 더한다.
+
+on:
+  pull_request:
+    branches:
+      - develop
+      - main
+    paths:
+      - "apps/api/app/agents/**"
+      - "apps/api/tests/eval/agents/**"
+      - ".github/workflows/ci-agent-live.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: agent-live-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # 설정(app/core/config.py)의 필수값 — 프롬프트 지문을 import 하는 것만으로 설정을 읽는다.
+  DB_HOST: localhost
+  DB_PORT: 5432
+  DB_USER: ci_user
+  DB_PASSWORD: ci_password
+  DB_NAME: ci_db
+  AUTH_RETURN_URL_WEB: http://localhost:3000/auth/callback
+  AUTH_RETURN_URL_APP: icatch://auth
+
+jobs:
+  select:
+    name: select
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: apps/api
+    outputs:
+      matrix: ${{ steps.pick.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # base 와 견주려면 갈라진 커밋이 있어야 한다
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: apps/api/uv.lock
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      # base 의 지문을 뽑아 지금(merge ref)과 견준다. 못 뽑으면 ci_select 가 다섯 Agent 를 다 고른다.
+      - name: Pick agents
+        id: pick
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          ARGS=()
+          if [ "$EVENT" = "pull_request" ]; then
+            cat > "$RUNNER_TEMP/prints.py" <<'PY'
+          import json
+          from app.agents.prompt_registry import all_fingerprints
+
+          print(json.dumps({name: p.sha256 for name, p in all_fingerprints().items()}))
+          PY
+            git worktree add "$RUNNER_TEMP/base" "$BASE_SHA"
+            if (cd "$RUNNER_TEMP/base/apps/api" && uv sync --locked && uv run python - < "$RUNNER_TEMP/prints.py") > "$RUNNER_TEMP/base.json"; then
+              ARGS=(--base-prints "$RUNNER_TEMP/base.json" --base-sha "$BASE_SHA")
+            else
+              echo "base 지문을 못 구했다 — 다섯 Agent 를 다 돌린다"
+            fi
+          fi
+          OUT=$(uv run python -m tests.eval.agents.ci_select "${ARGS[@]}")
+          echo "$OUT"
+          echo "matrix=$(echo "$OUT" | python -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["matrix"]))')" >> "$GITHUB_OUTPUT"
+
+  live:
+    name: live-${{ matrix.agent }}
+    needs: select
+    if: >-
+      needs.select.outputs.matrix != '[]' &&
+      (github.event_name == 'workflow_dispatch' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.select.outputs.matrix) }}
+    defaults:
+      run:
+        working-directory: apps/api
+    steps:
+      - uses: actions/checkout@v7
+
+      # 같은 (Agent, 지문, eval 파일 해시) 로 이미 통과했으면 건너뛴다. 실패는 저장하지 않아서 다음 push 에 다시 돈다.
+      - name: Already passed?
+        id: seen
+        uses: actions/cache/restore@v4
+        with:
+          path: apps/api/.eval-pass
+          key: ${{ matrix.key }}
+          lookup-only: true
+
+      - name: Skip note
+        if: steps.seen.outputs.cache-hit == 'true'
+        env:
+          AGENT: ${{ matrix.agent }}
+        run: echo "\`$AGENT\` 같은 지문 · eval 로 이미 통과 — 건너뜀" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Set up uv
+        if: steps.seen.outputs.cache-hit != 'true'
+        uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: apps/api/uv.lock
+
+      - name: Install dependencies
+        if: steps.seen.outputs.cache-hit != 'true'
+        run: uv sync --locked
+
+      # 같은 pytest 를 3번 돌려 입력마다 통과 회차를 센다(EVAL_ATTEMPT). 한 세션이 빨개도 다음 회차를 돈다.
+      # 마지막 단계가 안정 오답(3/3 실패) 이 있거나 기록이 하나도 없으면 실패시킨다.
+      - name: Run live eval
+        if: steps.seen.outputs.cache-hit != 'true'
+        env:
+          TESTS: ${{ matrix.tests }}
+          PYTEST_ADDOPTS: ""
+          TEST_REPEAT: "1"
+          MEMORY_API_KEY: ${{ secrets.MEMORY_API_KEY }}
+          MEMORY_BASE_URL: ${{ secrets.MEMORY_BASE_URL }}
+          MEMORY_MODEL: ${{ vars.MEMORY_MODEL }}
+          MEMORY_REASONING_EFFORT: ${{ vars.MEMORY_REASONING_EFFORT }}
+          FOOD_API_KEY: ${{ secrets.FOOD_API_KEY }}
+          FOOD_BASE_URL: ${{ secrets.FOOD_BASE_URL }}
+          FOOD_MODEL: ${{ vars.FOOD_MODEL }}
+          FOOD_REASONING_EFFORT: ${{ vars.FOOD_REASONING_EFFORT }}
+          ACTIVITY_API_KEY: ${{ secrets.ACTIVITY_API_KEY }}
+          ACTIVITY_BASE_URL: ${{ secrets.ACTIVITY_BASE_URL }}
+          ACTIVITY_MODEL: ${{ vars.ACTIVITY_MODEL }}
+          ACTIVITY_REASONING_EFFORT: ${{ vars.ACTIVITY_REASONING_EFFORT }}
+          GROWTH_API_KEY: ${{ secrets.GROWTH_API_KEY }}
+          GROWTH_BASE_URL: ${{ secrets.GROWTH_BASE_URL }}
+          GROWTH_MODEL: ${{ vars.GROWTH_MODEL }}
+          GROWTH_REASONING_EFFORT: ${{ vars.GROWTH_REASONING_EFFORT }}
+          HEALTH_API_KEY: ${{ secrets.HEALTH_API_KEY }}
+          HEALTH_BASE_URL: ${{ secrets.HEALTH_BASE_URL }}
+          HEALTH_MODEL: ${{ vars.HEALTH_MODEL }}
+          HEALTH_REASONING_EFFORT: ${{ vars.HEALTH_REASONING_EFFORT }}
+        run: |
+          uv run python -m tests.eval.agents.tally --reset
+          for i in 1 2 3; do
+            EVAL_ATTEMPT=$i uv run pytest "$TESTS" -m "live and tool_ci" -q -p no:cacheprovider || true
+          done
+          uv run python -m tests.eval.agents.tally --fail-on stable --summary "$GITHUB_STEP_SUMMARY"
+
+      - name: Remember pass
+        if: steps.seen.outputs.cache-hit != 'true'
+        run: mkdir -p .eval-pass && echo ok > .eval-pass/ok
+
+      - name: Save pass
+        if: steps.seen.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: apps/api/.eval-pass
+          key: ${{ matrix.key }}
