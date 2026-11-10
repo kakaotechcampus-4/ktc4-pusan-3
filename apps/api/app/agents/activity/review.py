@@ -586,7 +586,8 @@ def _build(
     today: date,
     requested: bool = False,
 ) -> SuggestionDraft:
-    """allergens 는 안전 필터가 찾은 알레르기 항목 정식 명칭, items 는 후보의 재료다 (#232).
+    """allergens 는 안전 필터가 찾은 알레르기 항목(19종은 정식 명칭, 19종 밖은 보호자가 적은 이름),
+    items 는 후보의 재료다 (#232 · #891).
 
     `requested` 면 보호자가 놀이를 정해 물은 것이다. 아이 기록 근거가 없으면 [예시] 근거 없이도
     일반 추천으로 나가고 이유는 `REQUESTED_REASON` 이다 — 막연한 요청만 [예시]를 근거로 단다.
