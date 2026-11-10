@@ -44,7 +44,6 @@ test("08 사진 확인 화면 — 넣을 일정이 없으면 저장은 게이트
   await page.goto(`/child/${CHILD}/home`);
   await switchScenario(page, "photo_meal_plan");
   await page.getByRole("button", { name: "사진으로 적기" }).click();
-  await page.getByRole("button", { name: /^알림장·식단표/ }).click();
   await page
     .getByRole("button", { name: /기기에 있는 최근 사진/ })
     .first()

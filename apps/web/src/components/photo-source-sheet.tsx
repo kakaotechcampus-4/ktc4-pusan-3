@@ -12,14 +12,16 @@ import { cn } from "@/lib/cn";
 import { useMotionCue } from "@/lib/motion";
 import { listRecentPhotos, readRecentPhoto, type RecentPhoto } from "@/lib/native/recent-photos";
 import { PHOTO_LANES, type PhotoLane } from "@/lib/api/types";
+import { ACTIVITY_PHOTO_ENABLED } from "@/lib/features";
 
 /**
- * 사진 한 장을 어떻게 읽을지 **고르고**, 어디서 가져올지 고르는 시트 (03 홈 · 09 캘린더 · 08).
+ * 사진 한 장을 어떻게 읽을지 **고르고**, 어디서 가져올지 고르는 시트 (03 홈 · 04 대화 · 08).
  *
  * 🚨 **두 단계다. 한 화면에 쌓지 않는다.** ㉠ 어떤 사진인가 → ㉡ 어디서 가져오나.
  *    한 화면에 다 세워 두고 앞을 안 고르면 뒤를 비활성으로 두는 방식을 먼저 만들었다가 바꿨다 —
  *    **부모가 할 일이 하나인 순간에 화면이 세 덩어리를 보여 주고 있었고**, 꺼진 것들이
  *    "왜 안 눌리지" 를 먼저 묻게 만들었다. 한 번에 한 가지만 묻는다.
+ *    ⚠️ **지금은 고를 것이 문서 하나라 1단계를 건너뛴다** (아래 `ONLY_LANE` · #884).
  *
  * 🚨 **어떤 사진인지를 먼저 묻는 이유.** 계약서 §09 는 서버가 `lane` 을 추측해 보내 주지만,
  *    추측을 정정하는 것보다 **부모가 선언하는 쪽이 정확하다** — 부모는 무엇을 찍었는지 알고
@@ -30,7 +32,8 @@ import { PHOTO_LANES, type PhotoLane } from "@/lib/api/types";
  *
  * 🚨 **1단계는 라디오가 아니라 길이다.** 고르면 곧바로 2단계로 넘어가므로 확인 버튼이 없고,
  *    그래서 `role="radio"` 가 아니라 쉐브론 달린 줄이다 — 누르면 무슨 일이 일어나는지가
- *    모양에 적혀 있어야 한다. 되돌아가는 길은 2단계 맨 위에 "다른 종류로 바꾸기" 로 둔다.
+ *    모양에 적혀 있어야 한다. 되돌아가는 길은 2단계 맨 위에 "다른 종류로 바꾸기" 로 둔다
+ *    (고를 것이 하나라 1단계를 건너뛰는 동안은 서지 않는다 · `ONLY_LANE`).
  *
  * 🚨 **최근 사진 줄은 셸이 있을 때만 선다.** 웹은 기기 갤러리를 읽을 수 없다
  *    (`lib/native/recent-photos.ts`). 브라우저에서는 줄 자체가 없고, 빈 상자도 권한 안내도
@@ -76,7 +79,7 @@ const LANE: Record<PhotoLane, LaneCopy> = {
     icon: ClipboardList,
     label: "알림장·식단표",
     hint: "글자를 읽어 준비물과 일시로 정리해요",
-    rule: "글자만 읽어요. 아이의 기록으로는 쌓지 않아요.",
+    rule: "글자만 읽어 준비물과 일시로 정리해요. 아이의 기록으로는 쌓지 않아요.",
     camera: "받아 온 알림장을 지금 찍어요",
     album: "찍어 둔 알림장에서 골라요",
     guide: "알림장, 가정통신문, 식단표 사진을 골라 주세요. 얼굴이 나온 사진은 피해 주세요.",
@@ -90,6 +93,19 @@ const LANE: Record<PhotoLane, LaneCopy> = {
     album: "오늘 찍은 사진에서 골라요",
   },
 };
+
+/**
+ * 1단계에 세우는 종류. 🚨 **`activity` 는 꺼 뒀다** (`lib/features.ts` 의 `ACTIVITY_PHOTO_ENABLED` · #884) —
+ *    서버가 받지 않고, 위 `LANE.activity` 문구가 11-03 결정과 반대다. 줄만 빼고 문구 · 타입은 그대로 둔다.
+ */
+const SHOWN_LANES = PHOTO_LANES.filter((key) => key !== "activity" || ACTIVITY_PHOTO_ENABLED);
+
+/**
+ * 고를 것이 하나뿐이면 그 값. 🚨 **그때는 1단계를 건너뛴다** — 한 줄짜리 목록을 누르게 하면
+ *    고르는 것이 아니라 한 번 더 누르는 것이다. 시트는 바로 2단계(어디서 가져오나)로 열리고
+ *    "다른 종류로 바꾸기" 도 서지 않는다 — 바꿀 다른 종류가 없다.
+ */
+const ONLY_LANE: PhotoLane | null = SHOWN_LANES.length === 1 ? SHOWN_LANES[0] : null;
 
 export interface PhotoPick {
   file: File;
@@ -110,7 +126,7 @@ export function PhotoSourceSheet({
   const albumRef = useRef<HTMLInputElement>(null);
 
   /** `null` 이면 1단계(어떤 사진인가), 값이 있으면 2단계(어디서 가져오나). */
-  const [lane, setLane] = useState<PhotoLane | null>(null);
+  const [lane, setLane] = useState<PhotoLane | null>(ONLY_LANE);
   const [error, setError] = useState<string | null>(null);
   const [recent, setRecent] = useState<RecentPhoto[]>([]);
   const [readingId, setReadingId] = useState<string | null>(null);
@@ -124,6 +140,7 @@ export function PhotoSourceSheet({
   /**
    * 🚨 **시트를 열 때마다 1단계로 되돌린다.** 지난번에 고른 lane 이 남아 있으면 부모가
    *    "어떤 사진인가요" 를 보지 않고 2단계로 열려서 **저장 경로가 지난번 값으로 정해진다.**
+   *    고를 것이 하나뿐이면 1단계 대신 그 값(`ONLY_LANE`)으로 되돌린다 — 지난번 값이 아니라 늘 같은 값이다.
    *
    * 🚨 effect 가 아니라 **렌더 중 조정**이다 (React 의 "Adjusting state when a prop changes").
    *    effect 로 하면 지난번 단계가 그려진 뒤에 바뀌어서 한 프레임 보이고, lint 의
@@ -135,7 +152,7 @@ export function PhotoSourceSheet({
   if (open !== wasOpen) {
     setWasOpen(open);
     if (open) {
-      setLane(null);
+      setLane(ONLY_LANE);
       setError(null);
       setReadingId(null);
     }
@@ -157,7 +174,8 @@ export function PhotoSourceSheet({
   }, [open]);
 
   function pick(file: File) {
-    // 1단계를 건너뛰고 여기 오는 경로는 없다. 타입을 좁히려고 한 번 더 본다.
+    // lane 없이 여기 오는 경로는 없다 — 1단계에서 골랐거나, 건너뛰었으면 `ONLY_LANE` 이 들어 있다.
+    // 타입을 좁히려고 한 번 더 본다.
     if (!lane) return;
     setError(null);
     onPick({ file, lane });
@@ -248,11 +266,15 @@ export function PhotoSourceSheet({
             lane={lane}
             recent={recent}
             readingId={readingId}
-            onBack={() => {
-              cueStep("back");
-              setLane(null);
-              setError(null);
-            }}
+            onBack={
+              ONLY_LANE
+                ? null
+                : () => {
+                    cueStep("back");
+                    setLane(null);
+                    setError(null);
+                  }
+            }
             onRecent={handleRecent}
             onCamera={() => cameraRef.current?.click()}
             onAlbum={() => albumRef.current?.click()}
@@ -287,7 +309,7 @@ export function PhotoSourceSheet({
 function LaneStep({ onChoose }: { onChoose: (lane: PhotoLane) => void }) {
   return (
     <SheetList>
-      {PHOTO_LANES.map((key) => (
+      {SHOWN_LANES.map((key) => (
         <SheetRow
           key={key}
           icon={LANE[key].icon}
@@ -314,7 +336,8 @@ function SourceStep({
   lane: PhotoLane;
   recent: RecentPhoto[];
   readingId: string | null;
-  onBack: () => void;
+  /** `null` 이면 돌아갈 1단계가 없다 (`ONLY_LANE`). */
+  onBack: (() => void) | null;
   onRecent: (photo: RecentPhoto) => void;
   onCamera: () => void;
   onAlbum: () => void;
@@ -328,10 +351,12 @@ function SourceStep({
           그 아래 한 줄이면 충분하다 — 시트 안에 화살표 헤더를 또 만들지 않는다.
           🚨 왼쪽 쉐브론은 장식이 아니라 **방향**이다. 시트의 다른 줄이 전부 오른쪽 쉐브론(앞으로)
           이라 왼쪽 하나가 그 짝이 된다 — 글자만 두면 1단계로 돌아간다는 것이 라벨에만 있다. */}
-      <Button variant="tertiary" size="compact" disabled={busy} onClick={onBack}>
-        <ChevronLeft aria-hidden size={ICON_SIZE.sm} strokeWidth={ICON_STROKE} />
-        다른 종류로 바꾸기
-      </Button>
+      {onBack ? (
+        <Button variant="tertiary" size="compact" disabled={busy} onClick={onBack}>
+          <ChevronLeft aria-hidden size={ICON_SIZE.sm} strokeWidth={ICON_STROKE} />
+          다른 종류로 바꾸기
+        </Button>
+      ) : null}
 
       {/* 🚨 셸이 최근 사진을 주는 환경에서만 선다 (위 주석). */}
       {recent.length > 0 ? (
