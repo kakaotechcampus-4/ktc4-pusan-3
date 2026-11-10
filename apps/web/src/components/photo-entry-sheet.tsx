@@ -159,7 +159,7 @@ function EntryForm({
 
   function submit() {
     if (title.trim().length === 0) {
-      setError("무엇인지 한 줄로 적어주세요.");
+      setError("무엇인지 한 줄로 적어 주세요.");
       return;
     }
     onSave(

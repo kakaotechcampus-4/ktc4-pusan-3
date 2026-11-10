@@ -99,7 +99,7 @@ function CalendarScreen() {
         <div className="min-w-0 flex-1">
           <PageTitle>캘린더</PageTitle>
           <p className="text-body-sm text-ink-muted mt-2">
-            승인한 일정과 그날 남긴 기록이 날짜별로 모여요.
+            확인하고 넣은 일정과 그날 남긴 기록이 날짜별로 모여요.
           </p>
         </div>
         <TourHelpButton tour={calendarTour} />
@@ -198,7 +198,7 @@ function LoadFailed({ what, childId, error }: { what: string; childId: string; e
 
   return (
     <div className="bg-surface-muted rounded-card text-body-sm text-ink-muted p-4" role="status">
-      {what} 지금 불러오지 못했어요. 잠시 뒤에 다시 열어주세요.
+      {what} 지금 불러오지 못했어요. 잠시 뒤에 다시 열어 주세요.
     </div>
   );
 }

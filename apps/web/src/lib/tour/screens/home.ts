@@ -21,7 +21,7 @@ const PHOTO = {
 
 const PROMPTS = {
   target: "prompts",
-  title: "제안 받기",
+  title: "추천 받기",
   body: "누르면 지금까지의 기록을 보고 준비해요. 기록이 부족하면 일반 추천이라고 따로 표시해요.",
 } as const;
 

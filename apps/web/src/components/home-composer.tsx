@@ -127,7 +127,7 @@ export function HomeComposer({
       maxHeightPx={104}
       /* 🚨 한 줄에 들어가는 길이여야 한다. 버튼 3개가 132px 을 가져가서 입력에 남는 폭이
          206px 뿐이고, 이보다 길면 빈 입력창이 두 줄로 선다. 전체 문구는 위의 라벨이 진다. */
-      placeholder={voice.listening ? "듣고 있어요" : "말하듯 적어주세요"}
+      placeholder={voice.listening ? "듣고 있어요" : "말하듯 적어 주세요"}
       value={value}
       onChange={(e) => onChange(e.target.value)}
       // 모바일 키보드의 Enter 자리에 "보내기" 가 뜬다 — 아래 Enter 동작과 같은 말을 한다.

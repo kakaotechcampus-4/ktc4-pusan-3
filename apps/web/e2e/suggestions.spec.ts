@@ -82,7 +82,7 @@ test.describe("개인화 추천 (default)", () => {
         const row = panel.locator(":scope > ul > li").filter({ hasText: s.content });
         // 행을 못 찾으면 아래 "라벨 0건" 이 그냥 통과한다 — 행이 있다는 전제를 먼저 건다
         await expect(row).toHaveCount(1);
-        const label = row.getByText("제안 이유", { exact: true });
+        const label = row.getByText("추천 이유", { exact: true });
         if (s.reason) {
           await expect(label).toBeVisible();
           await expect(row.getByText(s.reason, { exact: true })).toBeVisible();
@@ -163,7 +163,7 @@ test.describe("근거가 부족하면 일반 추천 (§2 기억)", () => {
   test.describe("scarcity — 기록 1건", () => {
     test.use({ scenario: "scarcity" });
 
-    test("일반 추천이라고 말하고, 쌓인 기록 건수를 그대로 보여주고, 질문은 하나다", async ({
+    test("일반 추천이라고 말하고, 쌓인 기록 건수를 그대로 보여 주고, 질문은 하나다", async ({
       page,
     }) => {
       await page.goto(SUGGESTIONS);
@@ -180,7 +180,7 @@ test.describe("근거가 부족하면 일반 추천 (§2 기억)", () => {
       ).toBeVisible();
       await expect(page.getByText("놀이 기록은 1건 있어요.", { exact: false })).toBeVisible();
       await expect(
-        page.getByText("이번에는 아이 기록을 쓰지 않고, 제안마다 아래 적힌 기준으로 골랐어요.", {
+        page.getByText("이번에는 아이 기록을 쓰지 않고, 추천마다 아래 적힌 기준으로 골랐어요.", {
           exact: false,
         }),
       ).toBeVisible();
@@ -351,7 +351,7 @@ test.describe("개인화와 일반이 같은 Agent 에 섞여 오면 (#512 리�
     await expect(notice).toHaveText("식사에서 고른 3가지는 일정 하나로 묶여요.");
   });
 
-  test("개인화 후보와 일반 추천의 제안 문장은 같은 글씨다 (#683)", async ({ page }) => {
+  test("개인화 후보와 일반 추천의 추천 문장은 같은 글씨다 (#683)", async ({ page }) => {
     await page.goto(SUGGESTIONS);
     const font = (text: string) =>
       page.getByText(text, { exact: true }).evaluate((el) => {
@@ -376,7 +376,7 @@ test.describe("개인화와 일반이 같은 Agent 에 섞여 오면 (#512 리�
       const candidate = px((await font("계란말이에 시금치를 조금 섞어 보세요")).size);
       const prompt = px(await size("오늘 저녁 뭐 차려 줄까요"));
       expect(prompt, `${width} 폭`).toBeGreaterThan(candidate);
-      expect(prompt, `${width} 폭`).toBeLessThan(px(await size("제안 후보")));
+      expect(prompt, `${width} 폭`).toBeLessThan(px(await size("추천 후보")));
     }
   });
 
@@ -420,7 +420,7 @@ test.describe("장소가 붙은 추천의 확인 문구 (#516)", () => {
   const PERSONAL_NOTICE = "공공데이터 기준 2026년 6월이에요. 가기 전에 운영 여부를 확인해 주세요.";
   const GENERAL_NOTICE = "가기 전에 운영 여부를 확인해 주세요.";
 
-  test("개인화 줄은 제안 문장 아래 한 줄로 세우고, 사용한 기록에는 넣지 않는다", async ({
+  test("개인화 줄은 추천 문장 아래 한 줄로 세우고, 사용한 기록에는 넣지 않는다", async ({
     page,
   }) => {
     await page.goto(SUGGESTIONS);
@@ -436,7 +436,7 @@ test.describe("장소가 붙은 추천의 확인 문구 (#516)", () => {
       row.getByRole("checkbox", { name: "햇살어린이공원에서 모래성 쌓기", exact: true }),
     ).toBeVisible();
     // 제안 문장 바로 아래, 이유보다 위다
-    const reasonLabel = row.getByText("제안 이유", { exact: true });
+    const reasonLabel = row.getByText("추천 이유", { exact: true });
     expect((await notice.boundingBox())!.y).toBeLessThan((await reasonLabel.boundingBox())!.y);
 
     // 🚨 장소는 근거가 아니다 — 근거 목록 안에 없고, 건수는 근거 줄 수 그대로다
@@ -450,7 +450,7 @@ test.describe("장소가 붙은 추천의 확인 문구 (#516)", () => {
     await expect(panel.getByText(/운영 여부를 확인해 주세요/)).toHaveCount(1);
   });
 
-  test("일반 카드는 제안 문장 아래, 기준 문구보다 위에 세운다", async ({ page }) => {
+  test("일반 카드는 추천 문장 아래, 기준 문구보다 위에 세운다", async ({ page }) => {
     await page.goto(SUGGESTIONS);
     const card = page.locator("li").filter({ hasText: "별빛작은도서관에서" });
     await expect(card).toHaveCount(1);
@@ -546,7 +546,7 @@ test.describe("필요한 재료 · 준비물 (#659)", () => {
       tofu.getByRole("checkbox", { name: "두부를 부쳐서 한 조각 곁들여 보세요", exact: true }),
     ).toBeVisible();
     // 이유 다음, 근거 선 위다 — 근거가 아니라서 "사용한 기록" 목록에 섞이지 않는다
-    const reasonY = (await tofu.getByText("제안 이유", { exact: true }).boundingBox())!.y;
+    const reasonY = (await tofu.getByText("추천 이유", { exact: true }).boundingBox())!.y;
     const itemsY = (await tofu.getByText("필요한 재료", { exact: true }).boundingBox())!.y;
     const evidence = tofu.getByText(/^사용한 기록 \d+건$/);
     expect(reasonY).toBeLessThan(itemsY);
@@ -661,7 +661,7 @@ test.describe("추천별 위험 경고 (#402 · #672)", () => {
   const BALLOON =
     "터진 풍선 조각과 비닐은 입에 넣거나 얼굴에 쓰지 않게 지켜봐 주세요. 놀이가 끝나면 손이 닿지 않는 곳에 치워 주세요.";
 
-  test("개인화 줄은 제안 문장 아래, 이유보다 위에 세우고 사용한 기록에는 넣지 않는다", async ({
+  test("개인화 줄은 추천 문장 아래, 이유보다 위에 세우고 사용한 기록에는 넣지 않는다", async ({
     page,
   }) => {
     await page.goto(SUGGESTIONS);
@@ -678,7 +678,7 @@ test.describe("추천별 위험 경고 (#402 · #672)", () => {
     await expect(
       row.getByRole("checkbox", { name: "주말에 실내 물놀이장은 어떨까요", exact: true }),
     ).toBeVisible();
-    const reasonLabel = row.getByText("제안 이유", { exact: true });
+    const reasonLabel = row.getByText("추천 이유", { exact: true });
     expect((await warning.boundingBox())!.y).toBeLessThan((await reasonLabel.boundingBox())!.y);
 
     // 🚨 경고는 근거가 아니다 — 근거 목록 안에 없고, 건수는 근거 줄 수 그대로다
@@ -717,12 +717,12 @@ test.describe("추천별 위험 경고 (#402 · #672)", () => {
   });
 });
 
-test.describe("알레르기 정보가 없으면 식사 제안을 만들지 않는다 (§2 안전)", () => {
+test.describe("알레르기 정보가 없으면 식사 추천을 만들지 않는다 (§2 안전)", () => {
   test.use({ scenario: "stale" });
 
-  test("막힌 쪽의 제안은 한 줄도 서지 않는다", async ({ page }) => {
+  test("막힌 쪽의 추천은 한 줄도 서지 않는다", async ({ page }) => {
     await page.goto(SUGGESTIONS);
-    await expect(page.getByText("식사 제안을 만들지 않았어요")).toBeVisible();
+    await expect(page.getByText("식사 추천을 만들지 않았어요")).toBeVisible();
     await expect(
       page.getByText("알레르기 정보가 없어 식사 제안을 안전하게 걸러낼 수 없어요"),
     ).toBeVisible();
@@ -743,7 +743,7 @@ test.describe("알레르기 정보가 없으면 식사 제안을 만들지 않�
     page,
   }) => {
     await page.goto(SUGGESTIONS);
-    await expect(page.getByText("식사 제안을 만들지 않았어요")).toBeVisible();
+    await expect(page.getByText("식사 추천을 만들지 않았어요")).toBeVisible();
     await expectNoGate(page);
     // 서버 deeplink(profile)를 주소로 쓰지 않는다 — 알레르기는 11 프로필에서 적는다.
     await expect(page.getByRole("link", { name: "알레르기 적으러 가기" })).toHaveAttribute(
@@ -816,7 +816,7 @@ test.describe("승인 게이트 ㉡ — 알레르기 확인은 채택보다 먼�
     const sheet = await pickEggAndAdopt(page);
     await sheet.getByRole("button", { name: "알레르기가 있어요" }).click();
     await expect(
-      sheet.getByText("이번에는 고를 수 있는 제안이 없어요", { exact: false }),
+      sheet.getByText("이번에는 고를 수 있는 추천이 없어요", { exact: false }),
     ).toBeVisible();
 
     // 🚨 이 버튼이 게이트 ㉡ 다 (칩에서 옮겼다 · 게이트 수는 그대로).
@@ -831,7 +831,7 @@ test.describe("승인 게이트 ㉡ — 알레르기 확인은 채택보다 먼�
     // s_1 만 골랐으므로 채택할 것이 남지 않는다. 🚨 조용히 풀지 않고 이유를 말한다.
     expect(writes(calls, "POST", /\/suggestions\/approve$/)).toEqual([]);
     await expect(
-      page.getByRole("status").filter({ hasText: "계란이 들어간 제안은 고를 수 없어요" }),
+      page.getByRole("status").filter({ hasText: "계란이 들어간 추천은 고를 수 없어요" }),
     ).toBeVisible();
     await expect(page.getByRole("button", { name: "고른 것이 없어요" })).toBeDisabled();
   });
@@ -873,7 +873,7 @@ test.describe("승인 게이트 ㉡ — 알레르기 확인은 채택보다 먼�
     await sheet.getByRole("button", { name: "알레르기 저장하기" }).click();
     await expect(sheet).toBeHidden();
     await expect(
-      page.getByRole("status").filter({ hasText: "계란이 들어간 제안은 고를 수 없어요" }),
+      page.getByRole("status").filter({ hasText: "계란이 들어간 추천은 고를 수 없어요" }),
     ).toBeVisible();
     await expect(page.getByText("저장하지 못했어요", { exact: false })).toHaveCount(0);
   });
@@ -889,7 +889,7 @@ test.describe("승인 게이트 ㉡ — 알레르기 확인은 채택보다 먼�
     expect(writes(calls, "POST", /\/health-safety$/)).toEqual([]);
   });
 
-  test("놀이 제안이어도 먹을 것이 들어 있으면 묻는다 — 기준은 agent 가 아니다", async ({
+  test("놀이 추천이어도 먹을 것이 들어 있으면 묻는다 — 기준은 agent 가 아니다", async ({
     page,
   }) => {
     await page.goto(SUGGESTIONS);
@@ -902,7 +902,7 @@ test.describe("승인 게이트 ㉡ — 알레르기 확인은 채택보다 먼�
     await expect(sheet.getByText("알레르기 기록에 없음", { exact: false })).toHaveCount(0);
   });
 
-  test("목록을 받은 뒤 그사이 등록된 알레르기는 채택에서 서버가 막고, 화면은 그 제안을 빼고 알린다", async ({
+  test("목록을 받은 뒤 그사이 등록된 알레르기는 채택에서 서버가 막고, 화면은 그 추천을 빼고 알린다", async ({
     page,
   }) => {
     const calls = recordApi(page);
@@ -929,7 +929,7 @@ test.describe("승인 게이트 ㉡ — 알레르기 확인은 채택보다 먼�
     // 🚨 하나라도 걸리면 서버는 전부 거절한다 — 아무것도 채택되지 않았다.
     await expect(
       page.getByRole("status").filter({
-        hasText: "그사이 알레르기로 등록된 식품이 들어간 제안이 있어서 고르지 못했어요",
+        hasText: "그사이 알레르기로 등록된 식품이 들어간 추천이 있어서 고르지 못했어요",
       }),
     ).toBeVisible();
     await expect(page.getByText("이렇게 하기로 했어요")).toHaveCount(0);
@@ -1006,14 +1006,14 @@ test.describe("채택한 뒤 등록된 알레르기는 일정으로 만들지 �
       idempotent: true,
     });
 
-  test("걸린 제안만 빼고 알린 뒤, 다시 누르면 나머지로 초안을 만든다", async ({ page }) => {
+  test("걸린 추천만 빼고 알린 뒤, 다시 누르면 나머지로 초안을 만든다", async ({ page }) => {
     const calls = recordApi(page);
     await approveEggDish(page, "주말에 실내 물놀이장은 어떨까요");
     expect(await registerEgg(page)).toBe(201);
 
     await page.getByRole("button", { name: "일정으로 만들기" }).click();
     const notice = page.getByRole("status").filter({
-      hasText: "그사이 알레르기로 등록된 식품이 들어간 제안이 있어서 일정으로 만들지 않았어요",
+      hasText: "그사이 알레르기로 등록된 식품이 들어간 추천이 있어서 일정으로 만들지 않았어요",
     });
     await expect(notice).toBeVisible();
     await expect(notice.getByText("식사", { exact: true })).toBeVisible();
@@ -1037,7 +1037,7 @@ test.describe("채택한 뒤 등록된 알레르기는 일정으로 만들지 �
     expect(writes(calls, "POST", /\/events$/)).toEqual([]);
   });
 
-  test("묶음 안내는 초안에 실릴 것만 센다 — 막힌 식사 제안은 세지 않는다", async ({ page }) => {
+  test("묶음 안내는 초안에 실릴 것만 센다 — 막힌 식사 추천은 세지 않는다", async ({ page }) => {
     await page.goto(SUGGESTIONS);
     await page.getByText("계란말이에 시금치를 조금 섞어 보세요").click();
     await page.getByText("두부를 부쳐서 한 조각 곁들여 보세요").click();
@@ -1053,7 +1053,7 @@ test.describe("채택한 뒤 등록된 알레르기는 일정으로 만들지 �
 
     await page.getByRole("button", { name: "일정으로 만들기" }).click();
     await expect(
-      page.getByRole("status").filter({ hasText: "그 제안을 빼고 다시 만들 수 있어요" }),
+      page.getByRole("status").filter({ hasText: "그 추천을 빼고 다시 만들 수 있어요" }),
     ).toBeVisible();
     // 🚨 남은 것은 두부 하나라 묶을 것이 없다. "고른 것" 요약은 채택을 그대로 센다.
     await expect(page.getByText("일정 하나로 묶여요", { exact: false })).toHaveCount(0);
@@ -1068,7 +1068,7 @@ test.describe("채택한 뒤 등록된 알레르기는 일정으로 만들지 �
     await page.getByRole("button", { name: "일정으로 만들기" }).click();
     await expect(
       page.getByRole("status").filter({
-        hasText: "그사이 알레르기로 등록된 식품이 들어간 제안이라 일정으로 만들 수 없어요",
+        hasText: "그사이 알레르기로 등록된 식품이 들어간 추천이라 일정으로 만들 수 없어요",
       }),
     ).toBeVisible();
     // 🚨 만들 것이 없는데 버튼을 세우면 눌러도 같은 409 다.
@@ -1096,10 +1096,10 @@ test.describe("채택한 뒤 등록된 알레르기는 일정으로 만들지 �
   });
 });
 
-test.describe("승인 게이트 ㉡ — 같은 식품이 두 제안에 (#823)", () => {
+test.describe("승인 게이트 ㉡ — 같은 식품이 두 추천에 (#823)", () => {
   test.use({ scenario: "precheck_shared_item" });
 
-  test("같은 식품은 한 장으로 묻고, 막으면 그 식품이 든 제안을 전부 막는다", async ({ page }) => {
+  test("같은 식품은 한 장으로 묻고, 막으면 그 식품이 든 추천을 전부 막는다", async ({ page }) => {
     const calls = recordApi(page);
     await page.goto(SUGGESTIONS);
     await page.getByText("계란말이에 시금치를 조금 섞어 보세요").click();
@@ -1108,9 +1108,9 @@ test.describe("승인 게이트 ㉡ — 같은 식품이 두 제안에 (#823)", 
 
     const sheet = page.getByRole("dialog", { name: "확인해 주세요" });
     await expect(sheet.getByText("계란", { exact: true })).toHaveCount(1);
-    await expect(sheet.getByText("고른 제안 2개에 들어 있어요")).toBeVisible();
+    await expect(sheet.getByText("고른 추천 2개에 들어 있어요")).toBeVisible();
 
-    const egg = sheet.locator("section").filter({ hasText: "고른 제안 2개에 들어 있어요" });
+    const egg = sheet.locator("section").filter({ hasText: "고른 추천 2개에 들어 있어요" });
     await egg.getByRole("button", { name: "알레르기가 있어요" }).click();
     await sheet
       .locator("section")
@@ -1123,7 +1123,7 @@ test.describe("승인 게이트 ㉡ — 같은 식품이 두 제안에 (#823)", 
     await expect(sheet).toBeHidden();
     expect(writes(calls, "POST", /\/suggestions\/approve$/)).toEqual([]);
     await expect(
-      page.getByRole("status").filter({ hasText: "계란이 들어간 제안은 고를 수 없어요" }),
+      page.getByRole("status").filter({ hasText: "계란이 들어간 추천은 고를 수 없어요" }),
     ).toBeVisible();
   });
 });
@@ -1198,7 +1198,7 @@ test.describe("괜찮았던 식품 (#825)", () => {
 
     // 🚨 `page.goto` 로 가면 목 상태가 날아간다 — 앱 안의 길로 간다.
     await page.getByRole("link", { name: "홈으로" }).last().click();
-    await page.getByRole("link", { name: "아이" }).click();
+    await page.getByRole("link", { name: "아이 프로필", exact: true }).click();
 
     const row = page.getByRole("button", { name: "괜찮았던 식품 1개" });
     await expect(row).toBeVisible();
@@ -1213,7 +1213,7 @@ test.describe("괜찮았던 식품 (#825)", () => {
     await row.click();
     const list = page.getByRole("dialog", { name: "괜찮았던 식품" });
     await list.getByRole("button", { name: "계란 빼기" }).click();
-    await expect(list.getByText("계란을 빼면 다음 제안에서 다시 물어요.")).toBeVisible();
+    await expect(list.getByText("계란을 빼면 다음 추천에서 다시 물어요.")).toBeVisible();
     // 🚨 빼면 더 묻는 쪽이라 빨강이 아니다. 보호자가 직접 누르는 삭제라 게이트 표식도 없다.
     expect(await gateMarks(page, "dialog[open]")).toEqual([]);
     await list.getByRole("button", { name: "뺄게요" }).click();
@@ -1250,7 +1250,7 @@ test.describe("괜찮았던 식품 (#825)", () => {
     await sheet.getByRole("button", { name: "확인했어요" }).click();
     await expect(sheet).toBeHidden();
     await expect(
-      page.getByRole("status").filter({ hasText: "계란이 들어간 제안은 고를 수 없어요" }),
+      page.getByRole("status").filter({ hasText: "계란이 들어간 추천은 고를 수 없어요" }),
     ).toBeVisible();
     expect(writes(calls, "POST", /\/suggestions\/approve$/)).toEqual([]);
   });
@@ -1286,7 +1286,7 @@ test.describe("괜찮았던 식품 — 답을 바꿔 다시 보낼 때 (#825)", 
 test.describe("승인 게이트 ㉡ — 화면이 모르는 사전검사", () => {
   test.use({ scenario: "precheck_unknown_code" });
 
-  test("묻지 못하는 검사가 걸린 제안은 채택하지 않는다", async ({ page }) => {
+  test("묻지 못하는 검사가 걸린 추천은 채택하지 않는다", async ({ page }) => {
     const calls = recordApi(page);
     await page.goto(SUGGESTIONS);
     await page.getByRole("tab", { name: "놀이 3가지" }).click();
@@ -1301,7 +1301,7 @@ test.describe("승인 게이트 ㉡ — 화면이 모르는 사전검사", () =>
     await expect(
       page
         .getByRole("status")
-        .filter({ hasText: "확인이 필요한 항목 때문에 고른 제안을 고르지 않았어요" }),
+        .filter({ hasText: "확인이 필요한 항목 때문에 고른 추천을 고르지 않았어요" }),
     ).toBeVisible();
     expect(writes(calls, "POST", /\/suggestions\/approve$/)).toEqual([]);
     expect(writes(calls, "POST", /\/health-safety$/)).toEqual([]);
@@ -1309,7 +1309,7 @@ test.describe("승인 게이트 ㉡ — 화면이 모르는 사전검사", () =>
 });
 
 test.describe("채택과 초안 만들기는 게이트가 아니다 · 승인 게이트 ㉠ 은 초안 제출", () => {
-  test("놀이 제안 채택 → 일정으로 만들기 → 날짜를 고르고 넣을 때만 캘린더에 쓴다", async ({
+  test("놀이 추천 채택 → 일정으로 만들기 → 날짜를 고르고 넣을 때만 캘린더에 쓴다", async ({
     page,
   }) => {
     const calls = recordApi(page);
@@ -1343,7 +1343,7 @@ test.describe("채택과 초안 만들기는 게이트가 아니다 · 승인 �
     // 🚨 날짜가 없으면 넣을 수 없다 — 자정으로 채우지 않는다.
     const submit = sheet.getByRole("button", { name: "확인했어요, 캘린더에 넣을게요" });
     await expect(submit).toBeDisabled();
-    await expect(sheet.getByText("날짜를 골라주셔야 넣을 수 있어요.")).toBeVisible();
+    await expect(sheet.getByText("날짜를 골라 주셔야 넣을 수 있어요.")).toBeVisible();
     expect(await gateMarks(page, "dialog[open]")).toContain(
       "approve 버튼: 확인했어요, 캘린더에 넣을게요",
     );
@@ -1366,7 +1366,7 @@ test.describe("채택과 초안 만들기는 게이트가 아니다 · 승인 �
     expect(submitted[0].body).toMatchObject({ suggestion_ids: ["s_4"] });
   });
 
-  test("🚨 전에 넣지 않고 떠난 제안 초안은 시트에 서지 않고, 제안 초안은 보관함에 두지 않는다 (#539)", async ({
+  test("🚨 전에 넣지 않고 떠난 추천 초안은 시트에 서지 않고, 추천 초안은 보관함에 두지 않는다 (#539)", async ({
     page,
   }) => {
     const leftover = (draftId: string, title: string, suggestionIds?: string[]) => ({
@@ -1396,7 +1396,7 @@ test.describe("채택과 초안 만들기는 게이트가 아니다 · 승인 �
       {
         child: CHILD,
         drafts: [
-          { origin: "suggestion", draft: leftover("old-suggestion", "지난번 제안", ["s_old"]) },
+          { origin: "suggestion", draft: leftover("old-suggestion", "지난번 추천", ["s_old"]) },
           { origin: "input", draft: leftover("old-input", "한 줄 입력 초안") },
         ],
       },
@@ -1556,7 +1556,7 @@ test.describe("0개 · 이어서 할 수 없음은 실패가 아니다 (#249)", 
       // 🚨 요청에 맞춰 고른 것을 또래 기준이라고 부르지 않는다 (카드 · 질문 카드 둘 다)
       await expect(page.getByText("또래", { exact: false })).toHaveCount(0);
       await expect(
-        page.getByText("이번에는 아이 기록을 쓰지 않고, 제안마다 아래 적힌 기준으로 골랐어요.", {
+        page.getByText("이번에는 아이 기록을 쓰지 않고, 추천마다 아래 적힌 기준으로 골랐어요.", {
           exact: false,
         }),
       ).toBeVisible();

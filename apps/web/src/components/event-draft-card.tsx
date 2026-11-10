@@ -313,7 +313,7 @@ export function EventDraftCard({
         ) : (
           <DateField
             label="언제"
-            placeholder="날짜를 골라주세요"
+            placeholder="날짜를 골라 주세요"
             hint={missingDate && !draft.review_reason ? "이 초안에는 날짜가 없어요." : undefined}
             value={date}
             onChange={(next) => setWhen({ date: next })}
@@ -412,14 +412,14 @@ export function EventDraftCard({
             >
               {lockReason ? <p className="text-body-sm">{lockReason}</p> : null}
               {missingDate ? (
-                <p className="text-body-sm">날짜를 골라주셔야 넣을 수 있어요.</p>
+                <p className="text-body-sm">날짜를 골라 주셔야 넣을 수 있어요.</p>
               ) : null}
               {missingTime ? (
-                <p className="text-body-sm">몇 시에 시작하는지 골라주셔야 넣을 수 있어요.</p>
+                <p className="text-body-sm">몇 시에 시작하는지 골라 주셔야 넣을 수 있어요.</p>
               ) : null}
               {reminderPast ? (
                 <p className="text-body-sm">
-                  고른 알림 시각이 이미 지났어요. 알림을 다시 골라주셔야 넣을 수 있어요.
+                  고른 알림 시각이 이미 지났어요. 알림을 다시 골라 주셔야 넣을 수 있어요.
                 </p>
               ) : null}
               {canSubmit ? (

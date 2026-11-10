@@ -146,7 +146,7 @@ export function SuggestionList({
       {order.length > 1 ? (
         <div data-tour="tabs">
           <PanelTabs
-            label="어느 영역의 제안을 볼까요"
+            label="어느 영역의 추천을 볼까요"
             panelId={PANEL_ID}
             active={agent}
             onChange={(key) => setOpen(key as Agent)}
@@ -337,7 +337,7 @@ function SuggestionRow({
         <SuggestionWarnings warnings={suggestion.warnings} className="mt-2" />
 
         {reason ? (
-          <Reason className="mt-2" term={isHealth ? "무엇을 봤나" : "제안 이유"} value={reason} />
+          <Reason className="mt-2" term={isHealth ? "무엇을 봤나" : "추천 이유"} value={reason} />
         ) : null}
 
         {/* 필요한 재료 · 준비물은 이유 다음, 근거 선 위다 (#659). 제안에 딸린 내용이라 선 위에 두고,
@@ -359,7 +359,7 @@ function SuggestionRow({
 
         {isHealth ? (
           <p className="text-body-sm text-ink-muted mt-3">
-            기록을 모아 보여드릴 뿐이에요. 진단하지 않고, 식단이나 놀이를 정하지 않아요. 걱정되면
+            기록을 모아 보여 드릴 뿐이에요. 진단하지 않고, 식단이나 놀이를 정하지 않아요. 걱정되면
             의료진에게 물어보세요.
           </p>
         ) : null}
@@ -437,7 +437,7 @@ function EvidenceList({ evidence }: { evidence: Evidence[] }) {
  */
 export function SuggestionListSkeleton({ tabs }: { tabs: boolean }) {
   return (
-    <SkeletonGroup label="제안을 준비하는 중" className="flex flex-col gap-4">
+    <SkeletonGroup label="추천을 준비하는 중" className="flex flex-col gap-4">
       {tabs ? (
         <div className="border-line flex border-b">
           {[0, 1].map((i) => (
