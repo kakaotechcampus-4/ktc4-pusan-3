@@ -98,6 +98,39 @@ class TestRecomputeProfile:
 
         assert result.state == ProfileState.CANDIDATE
 
+    async def test_이미_confirmed_인_방향_모르는_기억은_candidate_로_내린다(self, session, family):
+        """이 변경 전에 만들어진 confirmed · polarity NULL 기억 — 다시 계산하면 내려가야 한다
+        (#287 · #844 리뷰 G2)."""
+        _, child = family
+        today = date(2026, 9, 26)
+        profile = _profile(child.id, last_observed_on=today, state="confirmed", polarity=None)
+        session.add(profile)
+        await session.flush()
+        for i in range(3):
+            session.add(_food_obs(child.id, profile.id, observed_on=today - timedelta(days=i)))
+        await session.flush()
+
+        from app.domains.memory.profile.service import recompute_profile
+
+        result = await recompute_profile(session, profile_id=profile.id, today=today)
+
+        assert result.state == ProfileState.CANDIDATE
+
+    async def test_방향_모르는_기억도_오래되면_archived(self, session, family):
+        """막는 것은 confirmed 하나다 — archived 로 갈 기억을 candidate 로 되살리면 안 된다
+        (#287 · #844 리뷰 G3)."""
+        _, child = family
+        today = date(2026, 9, 26)
+        profile = _profile(child.id, last_observed_on=today - timedelta(days=30), polarity=None)
+        session.add(profile)
+        await session.flush()
+
+        from app.domains.memory.profile.service import recompute_profile
+
+        result = await recompute_profile(session, profile_id=profile.id, today=today)
+
+        assert result.state == ProfileState.ARCHIVED
+
     async def test_재계산_두_번_돌려도_결과_동일(self, session, family):
         _, child = family
         today = date(2026, 9, 26)
