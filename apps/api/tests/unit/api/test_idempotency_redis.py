@@ -93,6 +93,48 @@ class TestIdempotencyRedis:
         )
         assert _r.get("idem-run:run-2") is None
 
+    async def test_commit_이_실패하면_적은_키를_지운다(self, _mock):
+        """키는 commit 전에 적는다 (#774). commit 이 실패하면 지운 것이 없으니 같은 키 재시도가
+        성공을 재생받지 않고 다시 지우러 가야 한다."""
+
+        scope = {"parent_id": PID, "method": "DELETE", "path": "/o", "key": "c1"}
+
+        class BrokenCommit:
+            async def commit(self):
+                assert await idempotency.recall(**scope) is not None  # 키가 commit 보다 먼저다
+                raise RuntimeError("commit failed")
+
+        with pytest.raises(RuntimeError):
+            await idempotency.remember_and_commit(
+                BrokenCommit(), **scope, replay={"status_code": 204}
+            )
+
+        assert await idempotency.recall(**scope) is None
+
+    async def test_키_적기가_시간_초과로_503_이어도_적힌_키를_지운다(self, _mock):
+        """Redis 가 SET 은 받고 응답만 늦으면 503 인데 키는 적혀 있다 (#916 리뷰). 남으면 같은 키
+        재시도가 지우지 않은 삭제의 성공을 재생받는다."""
+
+        scope = {"parent_id": PID, "method": "DELETE", "path": "/o", "key": "slow"}
+        real_set = _r.set
+
+        def set_then_time_out(*args, **kwargs):
+            real_set(*args, **kwargs)
+            raise redis.TimeoutError("Timeout reading from socket")
+
+        class NoCommit:
+            async def commit(self):
+                raise AssertionError("키 적기가 실패했는데 commit 했다")
+
+        with patch.object(_r, "set", side_effect=set_then_time_out):
+            with pytest.raises(ApiError) as caught:
+                await idempotency.remember_and_commit(
+                    NoCommit(), **scope, replay={"status_code": 204}
+                )
+
+        assert caught.value.status == 503
+        assert await idempotency.recall(**scope) is None
+
     async def test_dict_no_reverse_index(self, _mock):
         """dict replay 는 역인덱스를 만들지 않는다."""
         body = {"ok": True}
