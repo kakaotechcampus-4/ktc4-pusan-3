@@ -224,7 +224,7 @@ const INFO_RESULT: AgentResultEvent = {
     {
       kind: "notice",
       title: "",
-      body: "아이마다 속도가 달라서 나이별 기준은 알려드리지 않아요. 발달이 걱정되면 영유아 건강검진에서 확인해 보세요.",
+      body: "아이마다 속도가 달라서 나이별 기준은 알려드리지 않아요. 궁금한 점은 영유아 검진 때 상담해 보세요.",
       authored_by: "code",
       code: null,
       source_refs: [],
