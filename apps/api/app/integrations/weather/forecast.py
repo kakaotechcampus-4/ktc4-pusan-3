@@ -40,8 +40,8 @@ ROWS_PER_CALL = 1500
 
 # 응답 시간이 행 수에 비례해(1천 행에 약 1.3초) 17시 발표분은 1.4초쯤 걸리고, 같은 포털의 중기예보 ·
 # 자외선은 3초 안팎 튀는 일이 있었다(11-11 실측). 11-10 밤에는 단기예보가 공통 읽기 제한(2초)에 걸려
-# 빠졌다. 단기예보가 빠지면 그날 날씨가 통째로 "확인하지 못했어요" 라 넉넉히 기다린다 — 특보와 같은
-# 값 (#959)
+# 빠졌다. 오늘 ~ 모레는 단기예보가 빠지면 중기예보로 메우지 않아 그날 날씨가 통째로 "확인하지
+# 못했어요" 라 넉넉히 기다린다 — 특보와 같은 값 (#959)
 FORECAST_TIMEOUT = httpx.Timeout(6.0, connect=1.0, read=5.0)
 
 # 캐시에 두는 발표분 수. 격자 하나 · 발표 하나가 한 칸이다
@@ -117,7 +117,8 @@ class KmaForecast:
         self._client = httpx.AsyncClient(transport=transport)
         self._now = now or (lambda: datetime.now(KST))
         self._cache: OrderedDict[tuple[int, int, str, str], Slots] = OrderedDict()
-        self._locks: dict[tuple[int, int, str, str], asyncio.Lock] = {}
+        # 받는 중인 발표분. 같은 발표분을 동시에 부르면 이 조회 하나를 결과째(실패도) 같이 기다린다
+        self._inflight: dict[tuple[int, int, str, str], asyncio.Task[Slots]] = {}
 
     async def aclose(self) -> None:
         await self._client.aclose()
@@ -140,32 +141,44 @@ class KmaForecast:
         if key in self._cache:
             self._cache.move_to_end(key)
             return self._cache[key]
-        # 이번 주말(토 · 일)처럼 같은 발표분을 동시에 부르면 한 번만 받는다
-        lock = self._locks.setdefault(key, asyncio.Lock())
-        try:
-            async with lock:
-                if key in self._cache:
-                    return self._cache[key]
-                payload = await get_json(
-                    self._client,
-                    URL,
-                    {
-                        "pageNo": 1,
-                        "numOfRows": ROWS_PER_CALL,
-                        "dataType": "JSON",
-                        "base_date": base_date,
-                        "base_time": base_time,
-                        "nx": grid.nx,
-                        "ny": grid.ny,
-                    },
-                    what="단기예보",
-                    timeout=FORECAST_TIMEOUT,
-                )
-                slots = parse_slots(payload)
-                self._cache[key] = slots
-                if len(self._cache) > CACHE_SIZE:
-                    self._cache.popitem(last=False)
-                return slots
-        finally:
-            # 실패해도 Lock 을 남기지 않는다 (#328 리뷰). 기다리던 호출은 잡은 Lock 으로 이어 간다
-            self._locks.pop(key, None)
+        # 이번 주말(토 · 일)처럼 같은 발표분을 동시에 부르면 한 번만 받고, 실패도 같이 받는다.
+        # 기다리던 호출이 하나씩 다시 부르면 서버가 느린 날 기다림이 날 수 × 읽기 제한으로
+        # 늘어난다 (#959 리뷰)
+        task = self._inflight.get(key)
+        if task is None:
+            task = asyncio.create_task(self._fetch(key, grid, base_date, base_time))
+            self._inflight[key] = task
+            task.add_done_callback(lambda done: self._settle(key, done))
+        # 한 호출이 취소돼도(run 20초) 같은 조회를 기다리는 다른 호출의 조회는 끊지 않는다
+        return await asyncio.shield(task)
+
+    def _settle(self, key: tuple[int, int, str, str], done: asyncio.Task[Slots]) -> None:
+        # 끝나면 성공이든 실패든 지운다 (#328 리뷰). 기다리던 호출이 모두 취소됐어도 실패를 여기서
+        # 읽어 "아무도 안 본 예외" 경고를 남기지 않는다
+        self._inflight.pop(key, None)
+        if not done.cancelled():
+            done.exception()
+
+    async def _fetch(
+        self, key: tuple[int, int, str, str], grid: WeatherGrid, base_date: str, base_time: str
+    ) -> Slots:
+        payload = await get_json(
+            self._client,
+            URL,
+            {
+                "pageNo": 1,
+                "numOfRows": ROWS_PER_CALL,
+                "dataType": "JSON",
+                "base_date": base_date,
+                "base_time": base_time,
+                "nx": grid.nx,
+                "ny": grid.ny,
+            },
+            what="단기예보",
+            timeout=FORECAST_TIMEOUT,
+        )
+        slots = parse_slots(payload)
+        self._cache[key] = slots
+        if len(self._cache) > CACHE_SIZE:
+            self._cache.popitem(last=False)
+        return slots
