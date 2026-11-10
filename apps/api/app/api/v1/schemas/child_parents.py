@@ -9,12 +9,11 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel
-
+from app.api.schema_base import ApiSchema
 from app.domains.child.models import ParentChildRelation
 
 
-class ChildParentOut(BaseModel):
+class ChildParentOut(ApiSchema):
     parent_id: UUID
     nickname: str | None
     """보호자 별명. 정하지 않은 보호자는 null."""
@@ -26,7 +25,7 @@ class ChildParentOut(BaseModel):
     connected_at: datetime
 
 
-class ChildParentsResponse(BaseModel):
+class ChildParentsResponse(ApiSchema):
     """GET /children/{cid}/parents — 연결된 순서대로."""
 
     parents: list[ChildParentOut]

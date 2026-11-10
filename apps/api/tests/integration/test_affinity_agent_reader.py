@@ -94,9 +94,9 @@ async def child(session, kids):
     await add(mine.id, MemoryDomain.EDUCATION, "숫자", ProfileState.CONFIRMED)
     await add(mine.id, MemoryDomain.FOOD, "딸기", ProfileState.CONFIRMED)
     await add(other.id, MemoryDomain.ACTIVITY, "기차", ProfileState.CONFIRMED)
-    # 관찰을 전부 "잘못된 기록" 으로 고친 기억 — 묶인 active 관찰이 없다
-    wrong = await add(mine.id, MemoryDomain.FOOD, "소주", ProfileState.CANDIDATE, days=0)
-    await _link(session, wrong, status=ObservationStatus.INACTIVE)
+    # 관찰을 전부 지운 기억 — 묶인 active 관찰이 없다
+    gone = await add(mine.id, MemoryDomain.FOOD, "소주", ProfileState.CANDIDATE, days=0)
+    await _link(session, gone, status=ObservationStatus.DELETED)
     return mine
 
 

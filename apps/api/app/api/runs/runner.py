@@ -25,13 +25,15 @@ import traceback
 from collections.abc import Awaitable, Callable
 from datetime import date
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from app.agents import entrypoint
 from app.api import agent_ports, idempotency
 from app.api.deps.db import background_session
 from app.api.runs import pending_reply, sse, suggestion_retry, translate
 from app.api.runs.registry import RunChannel
+from app.api.runs.tidy import tidy
+from app.core import llm_usage
 from app.core.logging_config import log_error_without_message
 from app.domains.consent.location_log import record_location_use_if_granted
 from app.domains.consent.models import LocationPurpose
@@ -75,6 +77,28 @@ def curator_trigger() -> entrypoint.CuratorTrigger | None:
         trigger_curator_background(child_id, today, embedder, judge)
 
     return trigger
+
+
+def trigger_curator_after_delete(
+    child_id: UUID, today: date, *, parent_id: UUID, after: str
+) -> None:
+    """run 밖에서 지운 뒤(기록 삭제 · 삭제 확정) Curator 를 띄운다. commit 뒤에만 부른다.
+
+    같은 트랜잭션에서 띄우면 Curator 실패가 삭제까지 되돌린다.
+    🚨 터져도 응답은 성공이다 — 지운 것은 이미 commit 됐다 (pipeline._trigger_curator 와 같다).
+    🚨 이 길은 run 밖이라 귀속이 없다. 여기서 건다 — 안 걸면 Curator 의 임베딩 · 판정 토큰이 보호자
+       없이 쓰여 저장되지 않고 WARNING 만 남는다 (#710). Curator 는 trigger 가 띄우는 태스크라 이
+       귀속을 복사한다. run 밖에서 Curator 를 띄우는 새 길은 이것을 부른다 — 따로 `attribute()` 를
+       복사해 두지 않는다.
+    `after` 는 로그에 남는 길 이름이다(고정 글귀 — 값을 넣지 않는다).
+    """
+    try:
+        trigger = curator_trigger()
+        if trigger is not None:
+            with llm_usage.attribute(parent_id=parent_id, run_id=uuid4().hex, source="delete"):
+                trigger(child_id, today)
+    except Exception as exc:
+        log.error("%s 뒤 curator trigger 실패 error=%s", after, type(exc).__name__)
 
 
 def agent_job(
@@ -136,52 +160,101 @@ def agent_job(
       `Saved` 를 관찰 내용이 아니라 id 로 받으려고 여기서 넘긴다 (#228). 끝 신호 뒤의 것과 번역이
       터진 것은 넘기지 않는다 — 화면에 안 나간 것이다.
 
+    - LLM 사용량(#710)은 이 job 이 보호자 · run 에 묶는다(`source="input"`).
+      Curator 는 run 안에서 태스크로 떠서 귀속을 물려받으므로 run 이 끝난 뒤에 끝나도
+      이 run 으로 남는다. 이어받기 run 도 같다.
+
     🚨 `entrypoint.handle_input` 을 모듈 이름으로 부른다 — 테스트가 진입점을 바꿔 끼울 수 있게.
     """
 
-    async def job(channel: RunChannel) -> None:
+    async def run(channel: RunChannel) -> None:
         # commit 이 채우고 Saved 가 꺼내 쓴다 — 이 run 이 만든 관찰의 화면 모양 (#471)
         saved_rows: dict[tuple[str, str], Any] = {}
         # load_cards 가 채우고 FoundTabs · DeleteProposed 가 꺼내 쓴다 — 카드의 화면 모양 행 (#535)
         card_rows: dict[tuple[str, str], Any] = {}
         relay = translate.relay(channel, saved_rows=saved_rows, card_rows=card_rows)
+        # 보관함 저장(되묻기 맥락 · 05 다시 시도, DB #877)이 도는 동안 나온 이벤트. 저장이 끝나면
+        # 순서대로 내보낸다 — 질문 카드가 보이면 보호자가 바로 답할 수 있어서, 맥락이 없으면 그
+        # 답이 400 이다. 05 "다시 시도" 버튼도 끝 신호 뒤에 열린다.
+        # 🚨 끝 신호도 여기 기다린다. 따로 띄운 태스크에서만 내면 run() 이 먼저 끝나 _guarded 가
+        #    끝 신호가 없다고 보고 failed 를 붙인다 — run() 이 handle_input 뒤에 저장을 기다린다
+        held: list[entrypoint.Event] = []
+        saving: asyncio.Task[None] | None = None
+
+        async def save(store: Awaitable[object], what: str, after: asyncio.Task[None] | None):
+            if after is not None:
+                await after  # 저장이 여럿이면 앞 저장부터 — 마지막 저장이 잡아 둔 것을 낸다
+            try:
+                await store
+            except Exception as exc:
+                # 저장이 안 되면 그 질문에 답하거나 다시 시도할 때 400 · "이어서 할 수 없다" 일
+                # 뿐이다. 이미 한 기록 · 추천을 failed 로 덮지 않는다.
+                # 🚨 예외 메시지에 원문이 섞일 수 있어 종류만 남긴다 (루트 §2)
+                log.error(
+                    "run %s 의 %s 저장이 %s 로 실패했다", channel.run_id, what, type(exc).__name__
+                )
+            if asyncio.current_task() is saving:  # 마지막 저장이 끝났다
+                flush_held()
+
+        def flush_held() -> None:
+            while held:
+                deliver(held.pop(0))
+
+        def keep(store: Awaitable[object], what: str) -> None:
+            nonlocal saving
+            saving = asyncio.create_task(save(store, what, saving))
 
         def emit(event: entrypoint.Event) -> None:
-            # 끝 신호 뒤의 이벤트는 채널이 버린다 — 화면에 안 나간 것은 대화에도 남기지 않는다
-            live = channel.ended_with is None
             if isinstance(event, entrypoint.PendingReply):
-                pending_reply.put(
-                    run_id=event.run_id,
-                    parent_id=parent_id,
-                    child_id=child_id,
-                    context=event.context,
+                keep(
+                    pending_reply.put(
+                        run_id=event.run_id,
+                        parent_id=parent_id,
+                        child_id=child_id,
+                        context=event.context,
+                    ),
+                    "되묻기 맥락",
                 )
                 return
             if isinstance(event, entrypoint.RetryContext):
                 # 원문 조각이 있다 — 화면 · 로그로 보내지 않고 05 보관함에만 둔다 (#249)
-                suggestion_retry.put_failed(
-                    run_id=event.run_id,
-                    parent_id=parent_id,
-                    child_id=child_id,
-                    agent=event.agent,
-                    task=suggestion_retry.RetryTask(
-                        event.task_type,
-                        event.request_texts,
-                        event.sent_at,
-                        original_texts=event.original_texts,
-                        prior_texts=event.prior_texts,
+                keep(
+                    suggestion_retry.put_failed(
+                        run_id=event.run_id,
+                        parent_id=parent_id,
+                        child_id=child_id,
+                        agent=event.agent,
+                        task=suggestion_retry.RetryTask(
+                            event.task_type,
+                            event.request_texts,
+                            event.sent_at,
+                            original_texts=event.original_texts,
+                            prior_texts=event.prior_texts,
+                        ),
                     ),
+                    "05 실패 맥락",
                 )
                 return
             if isinstance(event, entrypoint.EmptyResult):
-                suggestion_retry.put_empty(
-                    run_id=event.run_id,
-                    parent_id=parent_id,
-                    child_id=child_id,
-                    agent=event.agent,
-                    message=event.message,
+                keep(
+                    suggestion_retry.put_empty(
+                        run_id=event.run_id,
+                        parent_id=parent_id,
+                        child_id=child_id,
+                        agent=event.agent,
+                        message=event.message,
+                    ),
+                    "05 0개 기록",
                 )
                 return
+            if saving is not None and not saving.done():
+                held.append(event)
+                return
+            deliver(event)
+
+        def deliver(event: entrypoint.Event) -> None:
+            # 끝 신호 뒤의 이벤트는 채널이 버린다 — 화면에 안 나간 것은 대화에도 남기지 않는다
+            live = channel.ended_with is None
             sent = relay(event)
             # 번역이 끝난 뒤에 넘긴다 — 번역이 터진 이벤트는 화면에 안 나갔다. 위에서 돌아간
             # 셋(PendingReply 등)은 대화에도 남기지 않는 것이라 여기까지 오지 않아도 된다
@@ -251,10 +324,16 @@ def agent_job(
                         affinity_reader=agent_ports.affinity_reader(),
                         **agent_ports.health_ports(),
                     )
+                    if saving is not None:
+                        # shield — 시간 제한이 저장까지 취소하면 맥락도 잡아 둔 이벤트도 잃는다
+                        await asyncio.shield(saving)
             except TimeoutError:
                 log.warning(
                     "run %s 가 %s초 안에 끝나지 않아 끊었다", channel.run_id, RUN_DEADLINE_SECONDS
                 )
+                # 저장을 기다리다 끊겼으면 잡아 둔 것을 끝 신호보다 먼저 낸다.
+                # 맥락은 shield 덕에 뒤에서 마저 저장된다
+                flush_held()
                 if channel.committed:
                     done = (
                         "done",
@@ -264,14 +343,19 @@ def agent_job(
                 else:
                     channel.publish(sse.failed_event("timeout", raw_text))
             finally:
-                # 예외로 죽으면 failed 는 _guarded 가 이 뒤에 붙인다
+                # 예외로 죽으면 failed 는 _guarded 가 이 뒤에 붙인다 — 그 전에 잡아 둔 것을 낸다
+                flush_held()
                 # 창구가 "사용 중" 으로 둔 맥락을 정리한다 (#564). 저장 없이 끝났으면 표시만 풀어
                 # 같은 질문에 다시 답할 수 있게 한다 — 15분은 처음 넣은 시각 그대로 센다.
                 if continuation is not None and reply_to is not None:
                     if channel.ended_with == "done" or channel.committed:
-                        pending_reply.drop(reply_to)
+                        await tidy(pending_reply.drop(reply_to), "되묻기 맥락 지우기", reply_to)
                     else:
-                        pending_reply.release(reply_to)
+                        await tidy(pending_reply.release(reply_to), "되묻기 표시 풀기", reply_to)
+
+    async def job(channel: RunChannel) -> None:
+        with llm_usage.attribute(parent_id=parent_id, run_id=channel.run_id, source="input"):
+            await run(channel)
 
     return job
 

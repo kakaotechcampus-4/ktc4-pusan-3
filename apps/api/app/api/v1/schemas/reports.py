@@ -8,8 +8,9 @@ import uuid
 from datetime import datetime
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import ConfigDict, Field, StringConstraints
 
+from app.api.schema_base import ApiSchema
 from app.domains.report.models import ReportCategory
 
 ReportMessage = Annotated[
@@ -20,7 +21,7 @@ ReportMessage = Annotated[
    가짜 DB 장애 알림이 간다. 줄바꿈 · 탭은 그대로 받는다 (Nickname 패턴과 같은 이유 · #172)."""
 
 
-class ReportRequest(BaseModel):
+class ReportRequest(ApiSchema):
     model_config = ConfigDict(extra="forbid")
 
     category: ReportCategory = Field(
@@ -34,6 +35,6 @@ class ReportRequest(BaseModel):
     )
 
 
-class ReportOut(BaseModel):
+class ReportOut(ApiSchema):
     id: uuid.UUID = Field(description="신고 번호. 운영자가 Discord 알림에서 이 번호로 찾는다")
     created_at: datetime = Field(description="서버가 받은 시각")

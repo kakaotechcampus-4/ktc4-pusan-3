@@ -220,7 +220,7 @@ class TestRecomputeProfile:
         result = await recompute_profile(session, profile_id=profile.id, today=today)
         assert result.state == ProfileState.CANDIDATE  # O=2 (stand_alone 제외)
 
-    async def test_inactive_관찰은_O에_안_잡힌다(self, session, family):
+    async def test_deleted_관찰은_O에_안_잡힌다(self, session, family):
         _, child = family
         today = date(2026, 9, 26)
         profile = _profile(child.id, last_observed_on=today)
@@ -234,7 +234,7 @@ class TestRecomputeProfile:
                 child.id,
                 profile.id,
                 observed_on=today - timedelta(days=2),
-                status=ObservationStatus.INACTIVE,
+                status=ObservationStatus.DELETED,
             )
         )
         await session.flush()
@@ -269,38 +269,6 @@ class TestRecomputeProfile:
 
 
 class TestObservationCorrection:
-    async def test_wrong이면_inactive_변경_후_profile_재계산(self, session, family):
-        owner, child = family
-        today = date(2026, 9, 26)
-        profile = _profile(child.id, last_observed_on=today)
-        session.add(profile)
-        await session.flush()
-
-        observations = []
-        for i in range(3):
-            obs = _food_obs(child.id, profile.id, observed_on=today - timedelta(days=i))
-            session.add(obs)
-            observations.append(obs)
-        await session.flush()
-
-        from app.domains.memory.profile.service import handle_observation_correction
-
-        await handle_observation_correction(
-            session,
-            domain="food",
-            child_id=child.id,
-            observation_id=observations[0].id,
-            verdict="wrong",
-            parent_id=owner.id,
-            today=today,
-        )
-
-        await session.refresh(observations[0])
-        assert observations[0].status == ObservationStatus.INACTIVE
-
-        await session.refresh(profile)
-        assert profile.state == ProfileState.CANDIDATE  # O=2
-
     async def test_once_only면_stand_alone_변경_후_profile_재계산(self, session, family):
         owner, child = family
         today = date(2026, 9, 26)

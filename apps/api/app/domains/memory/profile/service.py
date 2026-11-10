@@ -40,9 +40,9 @@ _OBS_TO_TARGET: dict[str, CorrectionTargetKind] = {
     "routine": CorrectionTargetKind.OBSERVATION_ROUTINE,
 }
 
-# observation verdict → observation status 매핑
+# observation verdict → observation status 매핑. 기록용 wrong(→ inactive)은 없앴다 —
+# "잘못된 기록" 은 기록 지우기다 (#736).
 _VERDICT_TO_OBS_STATUS: dict[str, ObservationStatus] = {
-    "wrong": ObservationStatus.INACTIVE,
     "once_only": ObservationStatus.STAND_ALONE,
 }
 

@@ -179,10 +179,12 @@ async def test_건강_관찰_근거는_내용_없이_고정_이름이다(session
     assert "기침" not in view.label
 
 
-async def test_지운_관찰은_근거에서_빠진다(session, kid):
-    """보호자가 지운 기록의 내용을 추천 근거로 다시 보여 주지 않는다."""
+@pytest.mark.parametrize("status", [ObservationStatus.DELETED, ObservationStatus.INACTIVE])
+async def test_지운_관찰은_근거에서_빠진다(session, kid, status):
+    """보호자가 지운 기록의 내용을 추천 근거로 다시 보여 주지 않는다. 배포 틈에 남은 inactive 도
+    지운 기록처럼 읽는다 (#736)."""
     owner, child = kid
-    obs = await _food(session, child, owner, on=TODAY, status=ObservationStatus.DELETED)
+    obs = await _food(session, child, owner, on=TODAY, status=status)
     s = await _suggestion(session, child)
     ev = await _evidence(session, s, "observation_food", obs.id)
 
@@ -239,7 +241,6 @@ async def test_기록_건수는_남아_있는_관찰만(session, kid):
     owner, child = kid
     await _food(session, child, owner, on=TODAY)
     await _food(session, child, owner, on=TODAY, status=ObservationStatus.STAND_ALONE)
-    await _food(session, child, owner, on=TODAY, status=ObservationStatus.INACTIVE)
     await _food(session, child, owner, on=TODAY, status=ObservationStatus.DELETED)
 
     count = await repository.count_child_records(

@@ -62,6 +62,9 @@ class SuggestionDraft:
     # 보호자가 정한 요청에 맞춘 일반 추천이다 — 문서 행 근거가 없을 수 있다(`build` 의 requested).
     # 저장할 때 서버가 이 값으로 "문서 근거 없는 일반 추천" 을 받아 준다
     requested: bool = False
+    # 식사 추천의 끼니(breakfast · lunch · dinner · snack). Food 만 채운다. 근거 아님 —
+    # 일정 초안 제목("아침 식사")에만 쓴다 (#898)
+    meal_slot: str | None = None
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -77,6 +80,7 @@ class SuggestionDraft:
             "event_ends_on": self.event_ends_on and self.event_ends_on.isoformat(),
             "warnings": list(self.warnings),
             "requested": self.requested,
+            "meal_slot": self.meal_slot,
         }
 
 

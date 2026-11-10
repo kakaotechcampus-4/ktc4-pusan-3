@@ -9,10 +9,19 @@
    실패로 떨어진다.
 """
 
+import asyncio
 import json
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta
 
+from app.agents.entrypoint import failure_message
 from app.api.runs.registry import RunChannel
+
+STALE_AFTER = timedelta(seconds=90)
+"""열린 지 이만큼 지나도 안 닫힌 채널은 돌리던 워커가 죽은 것으로 보고 읽기를 끝낸다.
+
+러너 60초 안전망(`RUN_DEADLINE_SECONDS`) + 여유. 웹은 ping 마다 멈춤 타이머를 다시 걸어서,
+끝내지 않으면 화면이 OPEN_TTL(10분) 동안 "처리 중" 이다 (#899 리뷰)."""
 
 SseEvent = tuple[str, dict]
 """채널에 넣는 모양 — (이름, 내용). frame() 이 이걸 `event:` · `data:` 두 줄로 쓴다."""
@@ -25,12 +34,13 @@ def frame(name: str, payload: dict) -> str:
 
 
 def failed_event(reason: str, raw_text: str) -> SseEvent:
-    """화면용 failed. 모양을 한 곳에서 정한다 — 번역기(Agent 의 Failed)와 러너(internal_error)가
-    같이 쓴다.
+    """화면용 failed. 모양을 한 곳에서 정한다 — 번역기(Agent 의 Failed)와 러너(timeout ·
+    internal_error)가 같이 쓴다.
 
     raw_text 가 있어야 "적어주신 말은 입력창에 그대로 남겨뒀어요" 가 성립한다 (계약서 §06).
+    message 는 이유마다 코드가 정한 문구다 (#768) — 화면이 그대로 그리고 다시 쓰지 않는다.
     """
-    return "failed", {"reason": reason, "raw_text": raw_text}
+    return "failed", {"reason": reason, "raw_text": raw_text, "message": failure_message(reason)}
 
 
 async def stream(channel: RunChannel, *, heartbeat_seconds: float = 10.0) -> AsyncIterator[str]:
@@ -50,3 +60,44 @@ async def stream(channel: RunChannel, *, heartbeat_seconds: float = 10.0) -> Asy
         name, payload = channel.events[i]
         i += 1
         yield frame(name, payload)
+
+
+async def stream_remote(
+    run_id: str,
+    *,
+    poll_seconds: float = 0.25,
+    heartbeat_seconds: float = 10.0,
+    stale_after: timedelta = STALE_AFTER,
+) -> AsyncIterator[str]:
+    """다른 워커가 돌리는 run 을 표(`run_event`)에서 읽어 프레임으로 내준다 (#877 4단계).
+
+    `stream` 과 같은 약속 — 처음부터, 조용하면 ping, 닫히면 끝. 새 이벤트는 `poll_seconds` 마다
+    본다(같은 워커보다 최대 그만큼 늦다).
+    🚨 채널 행을 이벤트보다 **먼저** 읽는다. 닫힘은 마지막 이벤트와 같거나 뒤의 commit 에
+       쓰이므로, 닫힌 것을 본 뒤 읽은 이벤트가 마지막까지다. 순서를 바꾸면 그 사이 쓰인 마지막
+       이벤트를 놓친다.
+    """
+    from app.api.runs import registry
+    from app.domains.run_channel.repository import events_from, get_channel
+
+    seq = 0
+    quiet = 0.0
+    while True:
+        async with registry._session_factory() as session:
+            header = await get_channel(session, run_id=run_id)
+            rows = await events_from(session, run_id=run_id, seq=seq)
+        for row in rows:
+            seq = row.seq + 1
+            yield frame(row.name, row.payload)
+        if rows:
+            quiet = 0.0
+            continue
+        if header is None or header.closed:
+            return
+        if datetime.now(UTC) - (header.expires_at - registry.OPEN_TTL) >= stale_after:
+            return
+        await asyncio.sleep(poll_seconds)
+        quiet += poll_seconds
+        if quiet >= heartbeat_seconds:
+            quiet = 0.0
+            yield frame("ping", {})

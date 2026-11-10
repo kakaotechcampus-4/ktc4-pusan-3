@@ -11,8 +11,18 @@ Activity 처럼 구획 상수를 이어 붙인다. tool 이 못 막는 것을 �
 """
 
 from collections.abc import Sequence
+from types import SimpleNamespace
+from uuid import UUID
 
 from app.agents.common.evidence import RankedEvidence
+from app.agents.common.prompt_fingerprint import (
+    FIXED_NOW,
+    fixed_context,
+    fixed_gate,
+    register_prompt,
+    tools_text,
+)
+from app.agents.common.refs import Ref
 from app.agents.growth.context import GrowthContext
 from app.agents.growth.schemas.task import GrowthTaskType
 from app.agents.growth.tools.docs import DocHit
@@ -307,3 +317,72 @@ def _examples(examples: Sequence[DocHit]) -> str:
 def _now(context: GrowthContext) -> str:
     local = context.now.astimezone(context.timezone)
     return f"현재 시각은 {local.isoformat()} · timezone {context.timezone}."
+
+
+def _fingerprint_parts() -> tuple[str, ...]:
+    """프롬프트 지문(#770)의 입력 — 라벨 · 상태 갈래마다 렌더링한 system 프롬프트와 tool spec."""
+    from app.agents.growth.schemas import tool_defs
+
+    gate = fixed_gate()
+    # 교육 활동은 주제 · 요청 · 답한 주제 · 화면 시간 갈래에 따라 글이 덧붙는다
+    learning_states: tuple[dict[str, object], ...] = (
+        {},
+        {"topic": ("x",)},
+        {"topic": ("x",), "requested": True},
+        {"topic": ("x",), "answered_subject": "예시"},
+        {"topic": ("x", SCREEN)},
+        {"topic": ("x", SCREEN), "requested": True, "answered_subject": "예시"},
+    )
+    rendered = []
+    for task in GrowthTaskType:
+        states = learning_states if task is GrowthTaskType.LEARNING_SUGGESTION else ({},)
+        for extra in states:
+            context = fixed_context(
+                gate=gate,
+                topic=extra.get("topic", ()),
+                requested=extra.get("requested", False),
+                answered_subject=extra.get("answered_subject"),
+                topic_records={},
+            )
+            try:
+                rendered.append(build_system_prompt(context, task, ()))  # type: ignore[arg-type]
+            except KeyError:  # 코드가 답하는 라벨(growth_review)은 프롬프트가 없다
+                break
+    from app.agents.common import tool_loop
+
+    # user 메시지 틀 — 같이 한 말 머리말 · 재호출 지시도 모델이 읽는 규칙이다
+    messages = (
+        request_message([]),
+        request_message(["요청"], ["같이 한 말"]),
+        recall_message(["요청"], chosen=["고른 것"], excluded=["빠진 것"]),
+    )
+    # 예시가 있으면 [예시] 머리말 지시("결만 참고한다 …")가 붙는다
+    # — 고정 더미 행으로 그 갈래도 싣는다
+    example = SimpleNamespace(
+        row=SimpleNamespace(id="id", title="제목", body="본문", materials=("준비물",))
+    )
+    with_example = _examples((example,))  # type: ignore[arg-type]
+    # 요청 주제의 아이 기록 구획 — 후보마다 달게 하는 갈래와 일부 영역만 기록이 있는 갈래 (#399)
+    record = RankedEvidence(
+        ref=Ref(kind="observation_education", id=UUID(int=0)),
+        tier=1,
+        label="이름",
+        polarity=1,
+        observed_on=FIXED_NOW.date(),
+        subject="subject",
+    )
+    topic_blocks = tuple(topic_record_block((record,), required=flag) for flag in (True, False))
+    # [활동 짜임] 은 월령마다 글이 다르다 — 고정 월령 하나로는 한 갈래만 나온다
+    frames = tuple(frame for floor, _ in _AGE_FRAMES if (frame := age_frame(floor)))
+    return (
+        *rendered,
+        with_example,
+        *topic_blocks,
+        *frames,
+        *messages,
+        tools_text(tool_defs.TOOL_DEFINITIONS),
+        tool_loop.BAD_JSON,
+    )
+
+
+register_prompt("growth", _fingerprint_parts)

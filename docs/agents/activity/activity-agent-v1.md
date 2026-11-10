@@ -101,7 +101,7 @@ def tools_for(task_type, gate: Gate) -> tuple[str, ...]:
 
 - `search_activity_memory` 는 결과에 **`id` 를 함께 돌려준다.** `suggestion_evidence` 의 허용 `source_kind` 에 `observation_activity` 가 있고, 루트 §2 가 막는 것은 관찰을 **프로필로 승격**하는 것이지 그 한 번의 추천 근거로 **인용**하는 것이 아니다.
 - **Tier 2 임계는 공통 기본값 `0.5` 를 따른다.** Activity 만 다르게 둘 근거가 없다.
-- 🚨 **관찰은 `ObservationStatus = active` 만 읽는다.** `stand_alone` 은 Correction `once_only`(*"이번만 그랬어요"*)가 만드는 상태라 검색에는 남지만 성향으로 세면 안 되고, `inactive` 는 검색에서도 빠진다. 이 필터가 없으면 **보호자가 직접 고친 기록이 다음 추천의 근거로 돌아온다.**
+- 🚨 **관찰은 `ObservationStatus = active` 만 읽는다.** `stand_alone` 은 Correction `once_only`(*"이번만 그랬어요"*)가 만드는 상태라 검색에는 남지만 성향으로 세면 안 되고, 지운 기록(`deleted`)은 검색에서도 빠진다. 이 필터가 없으면 **보호자가 직접 고친 기록이 다음 추천의 근거로 돌아온다.**
 - `affinity_id = NULL` 인 관찰도 읽는다. 승격 전 관찰이 티어 3 근거다 (`공통_구현_계획.md` K-7).
 - 모델에게는 **10개**(`MEMORY_LIMIT`)만 `id` · 티어 · 이름 · polarity · 날짜로 준다. 최근 관찰(티어 3)에 **3자리**(`RECENT_RESERVED`, 잠정)를 먼저 주고 남은 자리를 티어 순으로 채운다 — 첫 관찰부터 티어 2 인 affinity 가 10개를 채우면 최근 관찰이 하나도 안 남아서다 (#304 리뷰). 주는 순서는 티어 순 그대로다. 같은 `subject` · polarity 의 관찰은 가장 최근 1건만 남긴다.
 - **대조는 `subject`, 설명은 `activity`.** 관찰의 이름(화면 · reason)은 사람이 읽는 활동명(`activity`)이고, 기피 거절(D4)과 `keywords` 대조는 Curator 가 merge_key 를 만드는 `subject` 로 한다 — "물감 놀이" 같은 활동명은 후보 문장에 그대로 나오는 일이 드물다. `keywords` 는 `subject` 와 양쪽으로 포함을 보고(짧은 쪽이 2글자 이상일 때), 활동명에 든 말로도 찾는다. 줄 세운 뒤 거르는 것이라 순서를 바꾸지 않는다. 0행이면 `NO_RECORDS` 로 일반 추천에 가라고 알린다 — 되묻기로 바꾸지 않는다.
@@ -152,8 +152,9 @@ class ActivityCandidate(ToolArgs):
     content: str                        # "구슬 꿰기로 목걸이 만들기"
     setting: ActivitySetting            # indoor / outdoor / either
     materials: list[str]                # ["구슬", "실"]
+    foods: list[str] = []               # 만지거나 먹는 음식 이름 하나씩 — Food 판정으로 본다 (#582)
     physical_intensity: Intensity
-    involves_food: bool
+    involves_food: bool                 # true 면 foods 가 비면 거절(다시 적게)
     caregiver_role: CaregiverRole       # together / nearby / independent
     day: When = "오늘"                  # 보호자가 쓴 날 표현 그대로. 날짜는 코드가 푼다 (#377 · #800)
     place_name: str | None = None       # 조회 결과에 있는 이름만
@@ -196,6 +197,19 @@ class ActivityCandidate(ToolArgs):
 - **놀이 문장에서 다른 뜻으로 읽히는 별칭(포크 · 에그 · 밀크 · 피치)은 쓰지 않는다**(`common/allergy.OTHER_MEANING_ALIASES`, Growth 도 같다 — #582) — "플라스틱 포크" · "에그 쉐이커" · "밀크 카톤". 돼지 · 전복은 별칭을 남기고 다른 뜻("돼지저금통" · "아기 돼지 삼형제" · "전복 모양")만 guard 로 덮는다 — "전복죽" · "돼지국밥" 은 그 식품이라 막는다. 피넛 · 월넛 같은 외래어 별칭은 등록한 아이에게는 막는다 — "피넛버터 바르기"(땅콩) · "월넛 쿠키 굽기"(호두). 아이와 상관없이 빼는 Growth 스캔만 외래어 별칭을 뺀다. `involves_food = true` 여도 **Food 패키지를 부르지 않는다** — 다른 Agent 패키지를 import 하지 않는다 (`README.md` §6). 대신 Food 와 **같은 공통 매처**(`app/rules/term_match.py`)와 **같은 알레르기 사전**(`reference/allergen_terms.yaml`)을 공통 로더로 읽는다. 매처도 사전도 하나라 갈라지지 않는다.
 - **19종 밖 식품(별칭 표)은 문장용 guard 를 더하고, 다른 뜻이 더 흔한 별칭은 `content` 에서만 뺀다** (`common/allergy.for_sentences`, #556 리뷰). 별칭 표의 guard 는 메뉴용이라 "친구에게 사과하기" · "도미노" · "카카오톡" · "머리 어깨 무릎" 을 덮지 못한다. 오리 · 염소 · 사슴 · 생태 · 미음 · 동부는 문장에서 동물 · 관찰 · 한글 자음 · 방향으로 더 자주 나와 `content` 에는 대조하지 않지만, `materials` 에 적었으면 그 식품이라 막는다. 띄어 쓴 다른 뜻("대구 여행")은 막는 쪽으로 둔다 — 그 별칭을 빼면 "대구 살 바르기" 가 빠진다. 조사가 붙은 꼴("대구로" · "은행에" · "사과하고")도 guard 로 덮지 않는다 — "대구로 전 부치기" 처럼 그 식품 문장에도 나온다. 묶음 별칭에만 있어 글자 그대로 대조하는 이름("은행")에도 같은 guard 를 쓴다.
 - **알레르기 이름은 띄어쓰기를 넘어 찾지 않는다** (`match_fields(cross_spaces=False)`, #556 리뷰). 넘으면 "장난감 자동차" 가 감자로, "두고 기어서" 가 고기로, "중 하나" 가 새우(중하)로 걸린다. 위험 용어는 넘는다 — "물 놀이터" 도 물놀이터다. 시드의 음식 아닌 행이 어느 식품 이름으로도 막히지 않는지를 테스트가 전수로 본다 — 별칭을 더할 때 문장 오탐이 조용히 생기지 않게.
+
+#### 음식 칸(`foods`) — Food 판정을 그대로 쓴다 (#582)
+
+놀이 문장에서 알레르기 이름을 찾는 방식은 **요리 이름을 못 막는다** — 쿠키 · 빵 · 소시지 · 떡 · 국수는 알레르기 사전에 없어서 밀 · 돼지고기 · 쌀 아이에게 *"쿠키 반죽 빚어 굽기"* 가 나갔다. 그렇다고 요리 이름을 문장에 대조하면 *"종이컵 케이크 꾸미기"* 같은 흉내 놀이까지 막힌다(#582 실험: 새로 막힌 407건 중 223건이 실제 접촉 없음). 그래서 음식을 **따로 적는 칸**을 두고, 그 칸만 Food 판정으로 본다.
+
+- **후보가 음식을 따로 적는다.** 음식 · 식재료를 만지거나 먹는 활동이면 `foods` 에 이름을 하나씩 적는다. 음식 활동(`involves_food`)인데 `foods` 가 비면 거절해 다시 적게 한다(`FOODS_MISSING`) — 코드가 판정할 이름이 없다.
+- **`foods` 항목은 Food 판정(`common/food_words.check_foods`, `ITEM` 규칙)으로 본다.** 항목 하나는 그 음식이라 곁의 말을 기다리지 않는다 — "쿠키" 가 밀인 걸 Food 사전이 안다. 묶음(견과류 ↔ 땅콩) · 제품마다 다른 성분(어묵 · 너겟 → 난류)도 Food 와 같이 막는다. 보호자가 적은 글자 그대로의 이름(사전 밖)은 `materials` 와 같은 대조로 본다.
+- 🚨 **사전이 모르는 음식은 "괜찮다" 가 아니라 "확인 못 함" 이다.** 아이에게 **활성 음식 알레르기**가 있으면 그 후보를 뺀다(`food_unknown`). 없으면 둔다(#582 합의 10-28). 음식 알레르기인지는 이름 조각마다 본다 — 식품 사전이 찾으면 음식이고, 못 찾은 조각은 식품 아닌 알레르기 표(`allergy_related_terms.yaml` — 꽃가루 · 라텍스 · 동물털)에 있을 때만 음식이 아니다. 표에도 없으면 사전이 모르는 과일일 수 있어서 음식으로 본다.
+- **연령 규칙은 알레르기와 상관없이 본다**(`food_age`) — 10개월 아이에게 *"요거트에 꿀 섞어 맛보기"* 는 등록과 상관없이 빠진다. Activity 는 전에 꿀을 아예 보지 않았다.
+- **음식 활동이면 문장 · 준비물도 Food 음식 어휘로 본다**(`SENTENCE` 규칙). 음식 활동이 아니면 보지 않는다 — *"종이로 쿠키 모양 오려 꾸미기"* 는 쿠키를 만지지도 먹지도 않는다.
+- **`foods` 도 위험 용어 대조 · 알레르기 항목 표시(`suggestion.allergens`) · 준비물(`items`)에 들어간다.** 표시는 아이 등록과 상관없이 놀이에 든 19종이다.
+- **개인화 추천의 이유에 막힌 음식 이름이 나오면 다시 쓰게 한다**(`FOOD_MENTION`, Food `meal_review` 와 같은 기준 — #575 ⭐3). 빼는 말(*"땅콩 없이"*)이어도 화면에 등록한 알레르기 이름이 나간다. 일반 추천은 이유를 코드 문구로 덮어서 보지 않는다 — 거절하면 왕복만 는다.
+- 모델에게 알레르기는 여전히 넘기지 않는다(#573).
 
 **거르는 것은 `status = 'active'` 행뿐이다** (10/4 확정안 — `status` 3값, 행 없음이 `unknown`). `unknown` 과 0행은 막지 않는다 — 건강정보 동의가 없으면 행이 안 쌓이는데, 그렇다고 놀이를 못 받으면 안 된다.
 
@@ -515,12 +529,16 @@ async def run(task, context, *, client=None):
 | --- | --- |
 | `rank_evidence` | `search_activity_memory` 내부. 공통 (`Tool_공통.md` §4) |
 | `search_activity_doc` | 모델 호출 전 사전 조회. 월령 슬라이스 → 의미 검색 상위 5 → `[예시]` |
-| `filter_activity_safety` | 🚩 `content` + `materials` 를 `hazard_term` 으로 스캔 → 월령 대조 → 차단·경고. `health_safety` 2종(`active`) 대조도 여기서 |
+| `filter_activity_safety` | 🚩 `content` + `materials` + `foods` 를 `hazard_term` 으로 스캔 → 월령 대조 → 차단·경고. `health_safety` 2종(`active`) 대조와 `foods` 의 Food 판정(#582)도 여기서 |
 | `filter_recent_duplicates` | 최근 창 안에 한 활동 거절 (Activity 출력 검증) |
 
 **진입 수** — 1회. 안전 필터 뒤 후보가 3개 미만이면 **1회 재호출**해 2회가 된다. 재호출 사유는 **안전 필터뿐**이고 기피는 사유가 아니다 (`Tool_공통.md` §5-2).
 
 **재호출과 합치기** (`agent.py`) — 재호출은 **같은 대화에 이어** *"아래 활동은 다시 내지 않는다"* 한 줄을 더해 부르고, **이미 고른 것과 빠진 것**을 함께 준다. 빠진 이유는 말하지 않는다. 새 대화로 시작하면 모델이 기억 · 날씨 조회를 처음부터 다시 해 왕복이 늘고, pipeline 의 20초에 걸리면 처음 통과한 것까지 잃는다 (`Tool_공통.md` §5-2 · #359 리뷰). 결과는 공통 `merge_drafts` 로 합친다 — 처음 통과한 것을 먼저 두고 빈자리만 채우며, 같은 후보 판정은 최근 중복 검사와 같은 `normalize_activity` 다. 경고 문구는 후보와 짝으로 넘겨 순서가 같이 간다. 그 뒤 `check_count(exhausted=True)` → `count_notice`. 1~2개가 남으면 개수 안내와 함께 낸다. **처음 것이 전부 빠졌는데 재호출도 후보를 못 내면 `failed`** 다 — "조건에 맞는 추천이 없어요" 는 모델이 냈는데 전부 안전 필터로 빠진 경우만이다.
+
+**재호출 방향 (#582)** — 제외 목록 뒤에 늘 같은 방향 문장(`prompt.RECALL_HINT`)을 붙인다: 빠진 활동에 쓰인 음식 · 재료 · 물건(그것으로 만든 것 · 포장 · 껍질 포함)은 **이름만 빼지 말고 재료 자체를** 쓰지 않고, 요청한 놀이의 방식은 살리고 재료만 바꾼다. 쓰는 재료는 숨기지 말고 `materials` · `foods` 에 적는다. **빠진 이유와 상관없이 같은 문장이다** — 알레르기로 빠졌을 때만 주면 그 자체가 사유다(§5-2). 없으면 같은 음식의 변형(밀 쿠키 → 다른 밀 쿠키)을 다시 내 0개로 끝난다.
+
+**다 빠지면 안내만 낸다 (#582)** — [예시] 행으로 채우지 않는다 — 실험에서 요청과 상관없는 추천이 나갔다. 0개면 `count_notice(0)`(`suggestion.empty`)이고, **보호자가 요청에 쓴 음식이 이 아이에게 막혔으면** 그런 놀이는 빼고 골랐다는 한 줄을 붙인다(`request.food_conflict` · `request.food_age_block`, `filters.request_notices`). Food 식단 요청 안내와 같은 방식이다 — 보호자가 쓴 어절만 싣고 등록한 알레르기 이름은 싣지 않으며, 모델 입력에 가지 않는다. 빼 달라는 말(*"땅콩 빼고"*)은 안내하지 않는다. 개수와 상관없이 붙는다 — 0개여도 왜 없는지 이 줄이 말한다. 붙어 쓴 영어 음식 이름(*peanut butter*)은 한 음식으로 한 줄만 말한다 — 말하는 단위만 묶고 판정은 낱말 그대로다(`food_words.food_phrases`, #864).
 
 **끝나는 조건** — 루프는 공통 `common/tool_loop.run_tool_loop` 다(#320). 출력 tool 이 통과하면 끝난다. `tool_choice="required"` 로 부른다 — 실호출에서 auto 는 tool 을 0/3, required 는 3/3 불렀다. 그래도 말로 끝내거나(`no_tool_call`) 왕복 상한(`MAX_STEPS`)을 넘기면 `failed` 다. 모델이 쓴 말은 화면에 내지 않는다.
 
@@ -885,12 +903,12 @@ GPS 로 받는다 (09-28). 위치정보 법적 동의는 가입 화면에서 선
 
 ### 5-2. 기대값이 바뀌는 기존 테스트
 
-원인은 한 줄 — [`routing.py:60`](../../../apps/api/app/agents/supervisor/routing.py:60) `IMPLEMENTED_AGENTS` 에 `activity` 가 들어가는 것.
+원인은 한 줄 — [`routing.py:60`](../../../apps/api/app/agents/supervisor/routing.py#L60) `IMPLEMENTED_AGENTS` 에 `activity` 가 들어가는 것.
 
 | 대상 | 지금 | 구현 후 |
 | --- | --- | --- |
 | RC07 "이번 주말에 집에서 뭐 하고 놀면 좋을까?" | `unavailable_agents` 덕분에 `_did_anything()` 이 True | `unavailable=()` + `food_tasks=()` → **False → `Failed("unparsable")`**. 🚨 `_did_anything()` 수정 필수 |
-| **`stranded`** ([pipeline.py:261](../../../apps/api/app/agents/pipeline.py:261)) | activity 요청이 있으면 False | activity 만 있는 run 에서 **True** → Supervisor 재호출 · 모델 호출 1회 낭비 · `Rerouted` 오발신. **가장 조용히 깨지는 지점** |
+| **`stranded`** ([pipeline.py:261](../../../apps/api/app/agents/pipeline.py#L261)) | activity 요청이 있으면 False | activity 만 있는 run 에서 **True** → Supervisor 재호출 · 모델 호출 1회 낭비 · `Rerouted` 오발신. **가장 조용히 깨지는 지점** |
 | RC16 "저녁 메뉴랑 주말 놀이" | food 만 실행 | **food + activity 둘 다 실행** — 도메인 Agent 2개 동시 실행이 처음 |
 | RC17 "저녁 + 놀이 + 한글 공부" | activity `unavailable`, growth `dropped` | activity 실행, growth `dropped` |
 | `_judge` | "Food 는 food 조각만 받는다"만 검사 | Activity 에 다른 도메인 조각이 섞여도 안 잡힘 — 대칭 검사 추가 |

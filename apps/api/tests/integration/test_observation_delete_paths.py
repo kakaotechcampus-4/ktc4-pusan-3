@@ -24,7 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api import idempotency
 from app.api.quota import today_kst
-from app.api.v1.routers import delete_proposals, observations
+from app.api.runs import runner
 from app.domains.delete_proposal.repository import ProposalTab, add_proposal
 from app.domains.memory.curator.db_store import DbCuratorStore
 from app.domains.memory.observation.models import (
@@ -67,10 +67,9 @@ def curator_calls(monkeypatch) -> list[uuid.UUID]:
     두 API 는 commit 뒤에 직접 띄운다.
     """
     calls: list[uuid.UUID] = []
-    for router in (delete_proposals, observations):
-        monkeypatch.setattr(
-            router, "curator_trigger", lambda: lambda child_id, today: calls.append(child_id)
-        )
+    monkeypatch.setattr(
+        runner, "curator_trigger", lambda: lambda child_id, today: calls.append(child_id)
+    )
     return calls
 
 

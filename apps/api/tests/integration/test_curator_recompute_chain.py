@@ -344,51 +344,11 @@ class TestDeleteLinkedObservation:
 
 
 class TestCorrectionAfterLinking:
-    """연결된 관찰에 correction 이 들어오면 상태가 재계산돼야 한다."""
+    """연결된 관찰에 correction 이 들어오면 상태가 재계산돼야 한다.
 
-    async def test_wrong_교정으로_O가_줄어_candidate_강등(self, session, family):
-        """O=3 confirmed → 관찰 1건 wrong(inactive) → O=2 → candidate."""
-        _, child = family
-        today = date(2026, 9, 26)
-        observations = []
-        for i in range(3):
-            obs = _food(child.id, subject="사과", observed_on=today - timedelta(days=i))
-            session.add(obs)
-            observations.append(obs)
-        await session.flush()
-
-        from app.agents.curator.embedding.linker import link_observations
-        from app.domains.memory.curator.db_store import DbCuratorStore
-
-        store = DbCuratorStore(session)
-        result = await link_observations(
-            store, _FakeEmbedder(), _FakeJudge(), child_id=child.id, birth_date=child.birth_date
-        )
-
-        from app.domains.memory.curator.recompute import recompute_after_linking
-
-        await recompute_after_linking(session, result=result, today=today)
-
-        profile_id = result.affected_profile_ids[0]
-        profile = await session.get(ProfileAffinity, UUID(profile_id))
-        assert profile.state == ProfileState.CONFIRMED
-
-        # wrong correction
-        owner, _ = family
-        from app.domains.memory.profile.service import handle_observation_correction
-
-        await handle_observation_correction(
-            session,
-            domain="food",
-            child_id=child.id,
-            observation_id=observations[0].id,
-            verdict="wrong",
-            parent_id=owner.id,
-            today=today,
-        )
-
-        await session.refresh(profile)
-        assert profile.state == ProfileState.CANDIDATE  # O=2
+    기록용 wrong 은 기록 지우기로 바꿨다 (#736) — 지워서 강등되는 것은 위
+    TestDeleteLinkedObservation 이 본다.
+    """
 
     async def test_once_only_교정은_집계에서_빠지고_검색은_남는다(self, session, family):
         """once_only → stand_alone: Curator 집계(O)에서 빠지지만 검색에는 남는다."""

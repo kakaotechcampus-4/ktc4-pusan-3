@@ -13,7 +13,7 @@ import pytest
 
 from app.agents.memory.context import AgentContext
 from app.agents.memory.drafts import EventDraft
-from app.agents.memory.store import InMemoryStore
+from app.agents.memory.store import InMemoryStore, NoticeRow
 from tests.unit.agents.memory.store_contract import CASES, KST, NOW, Scenario
 
 
@@ -44,6 +44,9 @@ class InMemoryHarness:
 
     async def backdate_prepared(self, item_id: str, when: datetime) -> None:
         self.store._items[item_id] = replace(self.store._items[item_id], prepared_at=when)
+
+    async def seed_notice(self, notice: NoticeRow) -> None:
+        self.store.add_notice(notice, child_id=self.context.child_id)
 
 
 @pytest.fixture

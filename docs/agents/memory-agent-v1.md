@@ -42,13 +42,14 @@ raw_text ──▶ run()  ──▶ [ LLM: tool 선택 + 인자 추출 ]
 pipeline 을 거치는 경로에서는 `pipeline.handle_input()` 이 Supervisor → Memory → Food 순서로 부른다.
 `run()` 을 직접 부르는 것은 Supervisor 없이 Memory 만 잴 때다.
 
-### tool 22개
+### tool 23개
 
 | 묶음 | 개수 | 이름 |
 | --- | --- | --- |
 | observation | 15 | `create/query/update_observation_{food,health,education,activity,routine}` |
 | event | 3 | `create/query/update_event` |
 | event_item | 3 | `create/update/delete_event_item` |
+| 공지 조회 | 1 | `query_notice` (#832, D17) |
 | 삭제 제안 | 1 | `propose_delete` (#535, D16) |
 
 `routine` 은 #107 에서 다섯 번째 도메인으로 붙었다. 생활 행동(양치·정리·인사)이 `activity` 에 섞여
@@ -110,7 +111,7 @@ apps/api/app/agents/
     ├── prompt.py          system prompt
     ├── registry.py        이름 → 함수 매핑 + 인자 검증
     ├── result.py          ToolResult · ErrorCode
-    ├── schemas/           tool argument 스키마 + tool 정의 27개 + MemoryTask
+    ├── schemas/           tool argument 스키마 + tool 정의 23개 + MemoryTask
     ├── tools/             observation.py(20) · schedule.py(7)
     └── store/             ports.py(Protocol) · inmemory.py
 
@@ -416,6 +417,8 @@ Growth 루틴이 "지금 어느 정도까지 하나요?" 를 물으면 보호자
 어려웠다. 저장했거나, 시도했다 못 한 run(위험 물질 · 안전 기록 · 아이 기록 아님 거절, 인자 오류)이거나, 조회 ·
 수정이거나, Memory 가 되물은 run 은 모델 문장 그대로다. 되묻기가 맥락 없이 message 로 내려간 것도 덮지 않는다. 프롬프트도 "담당 Agent" 를 쓰지 않는다 — 모델이 그 낱말을 옮겨 적었다.
 
+기록 조각이 아예 없는 요청 run(힌트 0개)에서 Memory 가 쓰기를 시도하지 않고 말로만 끝냈으면 그 말은 싣지 않는다 — 남긴 기록이 없으니 `REQUEST_ONLY_NOTE` 도 내지 않는다(`pipeline._nothing_to_record`). tool 을 하나라도 불렀거나(Supervisor 가 놓친 조회에 읽고 답한 것일 수 있다) 시도했다 막힌 거절 · 질문이면 그대로다. 말을 뺀 run 은 `_did_anything` 도 처리한 일로 세지 않아, 도메인 Agent 가 다 실패하면 빈 화면이 아니라 `Failed` 로 끝난다 (#861).
+
 **내려놓은 질문 (#226 · #246 합의 5, 잠정)**
 
 화면은 "답하지 않고 새로 적기" 로 내려놓은 질문을 앱을 끄기 전까지 열어 두고 15분을 세지 않는다(재시작으로도
@@ -431,7 +434,7 @@ unclear 로 둔다. 예전에는 그 판정이 Memory 에 가지 않아 강등�
 다시 보고 음식 이름이 있으면 저장했다. 이제 `route()` 가 unclear 조각을 `MemoryTask.unclear` 로 넘긴다.
 
 - 조각들이 원문을 다 덮고 기록 조각이 없으면 `unclear_only` 다. 이때 관찰 create · update 를 전부 거절한다
-  (`NOT_CHILD_RECORD`). 조각에 안 들어간 글자가 있으면 놓친 기록일 수 있어 unclear 조각만 막는다.
+  (`NOT_CHILD_RECORD`). 조각에 안 들어간 글자가 있으면 놓친 기록일 수 있어 unclear 조각만 막는다. 부르는 말 · 추임새(야 · 음 · ㅠㅠ 등 `routing.FILLER_WORDS`)만 남은 글자는 기록일 수 없어 덮인 것으로 본다 (#861).
 - 섞여 있으면 대상 이름(`subject`·`symptom`·`activity`·`topic`)이 unclear 조각에만 나오거나, 원문이
   unclear 조각 안에 들어갈 때 거절한다. 원문을 길게·바꿔 적어도 대상 이름으로 걸린다.
 - tool 을 빼지 않고 열어 둔 채 거절한다. 빼 봤더니 모델이 이유를 몰라 저장 없이 "기록했어요" 라고 답했다(3번 중 2번).
@@ -551,6 +554,33 @@ update 는 `raw_text` 를 고치지 않아서 원문은 바뀌기 전 말("떡�
 - **카드는 Memory commit 뒤에 낸다.** 제안은 store 포트로 commit 때 저장되고, pipeline 이 commit 뒤
   `load_cards` 로 행을 읽은 다음 `DeleteProposed` 를 낸다. 조회만 하고 끝난 조회 · 수정 run 은 같은 탭 모양의
   `FoundTabs`(보기 전용)를 낸다.
+
+### D17. 기관 공지는 읽기만 하고, 원문은 읽어서 요약해 답한다 (#832)
+
+기관에서 받아 보호자가 확인하고 저장한 공지(`notice` · `notice_item`)를 "공지 뭐 있어?" 로 물을 수 있다.
+`query_notice` 하나가 조회 묶음(`LOOKUP_EDIT`)에만 열려 있고, 공지를 고치거나 지우거나 관찰 · 일정으로 저장하는 tool 은
+없다 (승인 게이트를 늘리지도 줄이지도 않는다).
+
+- **카드가 없다.** `context.found` 에 넣지 않아 조회 카드가 생기지 않고 답은 일반 `message` 로 나간다.
+  `agent._found()` 도 이 tool 을 세지 않는다.
+- **식별자는 store 포트에서부터 없다.** `NoticeRow` · `NoticeItemRow` 에는 `id` · `*_id` · `content_hash` 와
+  저장 메타(`extractor_version` · `created_at` · `updated_at`) 칸이 없다 (tool 이 빼는 게 아니라 애초에 안 담는다).
+  받은 때는 `received_at` 이 맡는다.
+- **날짜 · 요일은 코드가 만든다.** enum 은 한국어 라벨로, 시각은 `context.timezone` 의 `YYYY-MM-DD(요) HH:MM`
+  (종일이면 날짜만)으로 준다. 모델에게 UTC ISO 를 주지 않는다. 라벨 표는 enum 의 문자열 값을 키로 쓰고
+  (Agent 는 `domains` 를 import 하지 않는다), enum 이 늘면 단위 테스트가 깨진다.
+- **찾는 규칙은 두 store 가 같다.** 받은 시각 최신순 5건(원문이 같이 가서 40건은 입력이 크다). 날짜는 공지의 날
+  (`issued_on`, 없으면 받은 날) · 항목의 시작~끝 · 항목의 마감 중 하나라도 한국 시간 기준 기간에 걸리면 찾는다.
+  낱말은 공지 제목 · 원문 · 항목 제목 · 이름표, 종류는 `doc_kind`. 계약 시나리오가 InMemory · DB 를 같이 본다.
+- **원문(`raw_text`)은 모델이 읽는 자료다.** 장소 · 금액 · 준비물처럼 구체적인 질문에는 항목 칸과 원문을 읽고
+  묻은 만큼만 두세 문장으로 요약해 답한다. "원문 보여줘" 도 통째로 옮기지 않고 요약해 알린다. 답이 짧아서
+  Memory 답 한도(1400토큰)를 그대로 쓴다 — 원문을 옮기려던 첫 안은 긴 공지가 답 한도에서 잘려 JSON 조각이 화면에
+  나가는 문제가 있었고, 요약으로 바꾸면서 없어졌다. 복사 금지는 프롬프트 규칙이고 코드가 막지는 않는다.
+  라이브 eval 이 답과 원문이 50자 이상 연속으로 같은지를 본다.
+- **낱말로 찾아 0건이면 한 번 더 넓혀 본다.** "체험학습 가정통신문" 처럼 낱말을 여러 개 붙인 질문에서 모델이
+  0건을 보고 바로 "찾지 못했다" 고 답했다(라이브 첫 실행 5/5). 프롬프트에 낱말을 줄이거나 빼고 한 번 더 조회하라는
+  줄을 더하자 사라졌다.
+- **범위 밖.** "그거 장소가 어디야?" 처럼 앞 대화를 가리키는 말(#734 의 앞 대화는 request 조각에만 붙는다).
 
 ---
 

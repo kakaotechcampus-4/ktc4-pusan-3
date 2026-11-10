@@ -2,7 +2,7 @@
 
 DB 구현이 붙으면 같은 기대를 그쪽에도 걸어야 한다 — 여기 적힌 것이 계약이다.
     - 임베딩 대상과 연결 대상은 따로 잡힌다
-    - active 만 본다 (stand_alone · inactive 는 Curator 집계 밖)
+    - active 만 본다 (stand_alone · deleted 는 Curator 집계 밖)
     - polarity 0(좋다 · 싫다 없음) 관찰은 어느 조회에도 나오지 않는다 (#287)
     - 저장된 순서로 돌려준다 (observed_on 순이 아니다)
     - 다른 아이 · 다른 도메인 · 다른 polarity 의 Profile 은 후보가 아니다
@@ -35,7 +35,7 @@ def _add_excluded(store: InMemoryCuratorStore, **fields: object) -> None:
         child_id=CHILD, domain="food", id="once", subject="딸기", status="stand_alone", **fields
     )
     store.add_observation(
-        child_id=CHILD, domain="food", id="wrong", subject="딸기", status="inactive", **fields
+        child_id=CHILD, domain="food", id="gone", subject="딸기", status="deleted", **fields
     )
     store.add_observation(child_id=OTHER_CHILD, domain="food", id="other", subject="딸기", **fields)
     store.add_observation(

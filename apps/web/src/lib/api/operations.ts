@@ -259,6 +259,8 @@ export interface HealthSafetyRequest {
   severity?: string | null;
   reactions?: string[];
   notes?: string | null;
+  /** 괜찮았던 식품으로 저장한다 (#825 · 뜻은 `types.ts` 의 `CreateHealthSafetyRequest.tolerated`). */
+  tolerated?: boolean;
 }
 
 /**
@@ -449,7 +451,7 @@ export function cancelDeleteProposal(childId: string, proposalId: string) {
  *    보호자가 직접 누르는 삭제라 승인 게이트가 아니라 확인 창이다 (최상위 §2 — 게이트 ㉢ 은 AI 가 고른 삭제다).
  *
  * 서버는 대화 삭제(#535)와 같은 함수로 지운다 — 상태는 `deleted`, 검색 벡터를 비우고 묶인 기억을 다시 계산한다.
- * `deleted` 가 아닌 기록은 상태와 상관없이 지운다(고친 기록 `stand_alone` · `inactive` 도). 응답은 204(본문 없음).
+ * `deleted` 가 아닌 기록은 상태와 상관없이 지운다(고친 기록 `stand_alone` 도). 응답은 204(본문 없음).
  * 이미 지웠거나 없는 기록이면 404 `not_found` 다 — 다른 보호자가 먼저 지웠을 수 있어 실패가 아니다.
  * 🚨 키는 **기록에 묶는다** (`current(\`${kind}/${id}\`)`) — 본문이 없어서 다른 기록을 지울 때 새 키가 나가게 한다.
  */
@@ -462,4 +464,14 @@ export function deleteObservation(
   return api.delete<void>(idempotentPath.deleteObservation(childId, kind, observationId), {
     idempotencyKey,
   });
+}
+
+/* ── 아이 삭제 (#751) ─────────────────────────────────────────────────── */
+
+/**
+ * 아이 삭제 (#751) — 아이와 기록을 통째로 지운다. 등록 보호자만 (함께 보는 보호자는 403 `owner_only`).
+ * 🚨 키는 `useIdempotencyKey()` 로 들고 있는다 — 응답을 잃고 다시 누를 때 같은 키여야 한다.
+ */
+export function deleteChild(childId: string, idempotencyKey: IdempotencyKey) {
+  return api.delete<void>(idempotentPath.deleteChild(childId), { idempotencyKey });
 }

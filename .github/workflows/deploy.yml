@@ -9,6 +9,11 @@ on:
       - develop
       - main
   workflow_dispatch:
+    inputs:
+      skip_backup:
+        description: "배포 전 백업을 건너뛴다 — DB 컨테이너가 죽어 백업이 안 되는데 그걸 고치는 배포일 때만 (#758)"
+        type: boolean
+        default: false
 
 # 같은 브랜치끼리만 줄을 세운다 — 순서가 뒤집혀 옛 커밋이 새 커밋을 덮지 않게.
 # dev · prod 가 동시에 빌드하면 4GB 서버가 넘치는 것은 서버 쪽 deploy.sh 의 flock 이 막는다.
@@ -43,7 +48,14 @@ jobs:
       DEPLOY_DIR: ${{ vars.DEPLOY_DIR }}
       REF_NAME: ${{ github.ref_name }}
       SHA: ${{ github.sha }}
+      # push 배포에는 inputs 가 없어 늘 빈 값 — 늘 백업한다. 손으로 돌릴 때 켜면 1 (#758)
+      SKIP_BACKUP: ${{ inputs.skip_backup && '1' || '' }}
     steps:
+      - name: 배포 전 백업 건너뜀 표시
+        if: inputs.skip_backup
+        # triggering_actor — Re-run 이면 다시 돌린 사람이다(actor 는 처음 실행한 사람). skip 도 Re-run 을 따라간다
+        run: echo "::warning::배포 전 백업을 건너뛴다 — ${{ github.triggering_actor }} 가 skip_backup 으로 실행했다"
+
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/ktc-github-deploy
@@ -56,7 +68,7 @@ jobs:
       - name: EC2에 배포 명령 전송
         id: ssm
         run: |
-          PARAMS=$(jq -n --arg dir "$DEPLOY_DIR" --arg ref "$REF_NAME" --arg sha "$SHA" --arg env "$TARGET_ENV" '{
+          PARAMS=$(jq -n --arg dir "$DEPLOY_DIR" --arg ref "$REF_NAME" --arg sha "$SHA" --arg env "$TARGET_ENV" --arg skip "$SKIP_BACKUP" '{
             executionTimeout: ["2400"],
             commands: [
               "set -e",
@@ -67,7 +79,7 @@ jobs:
               "F=$(mktemp /tmp/ktc4-deploy.XXXXXX)",
               "trap \"rm -f $F\" EXIT",
               "git show \($sha):deploy/scripts/deploy.sh > $F",
-              "bash $F \($sha) \($env)"
+              "SKIP_PREDEPLOY_BACKUP=\($skip) bash $F \($sha) \($env)"
             ]}')
           COMMAND_ID=$(aws ssm send-command \
             --instance-ids "${{ vars.EC2_INSTANCE_ID }}" \

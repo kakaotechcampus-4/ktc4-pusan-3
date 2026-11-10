@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { ChevronRight, Pencil, Pill, Ruler } from "lucide-react";
+import { ChevronRight, Pencil, Pill, Ruler, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 
@@ -17,6 +17,7 @@ import { GrowthLatestCard, GrowthLatestCardSkeleton } from "@/components/growth-
 import { GrowthSheet } from "@/components/growth-sheet";
 import { SafetySection } from "@/components/safety-section";
 import { ScreenTour, TourHelpButton } from "@/components/screen-tour";
+import { SettingsGroup, SettingsLinkRow } from "@/components/settings-row";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ICON_SIZE, ICON_STROKE } from "@/components/ui/icon";
 import { IconTile } from "@/components/ui/icon-tile";
@@ -90,8 +91,43 @@ function ChildProfileScreen() {
 
       <SafetySection childId={childId} />
 
+      {profile.data?.role === "owner" ? <DeleteChildSection childId={childId} /> : null}
+
       <ScreenTour tour={profileTour} ready={profile.isSuccess && growth.isSuccess} />
     </Screen>
+  );
+}
+
+/* ── 아이 삭제 (#751) ─────────────────────────────────────────────────── */
+
+/**
+ * 아이 기본정보 · 건강정보 동의를 앱 안에서 거두는 길 (#751 · 개인정보 보호법 제38조 ④).
+ *
+ * 🚨 **여기서 지우지 않는다.** 줄을 누르면 무엇이 지워지는지 읽고 확인하는 화면으로 간다 — 설정의
+ *    탈퇴 줄과 같다. 그래서 줄에 빨강(`danger`)을 쓰지 않는다. `danger` 는 파괴적 **확정**의 색이고 그
+ *    자리는 다음 화면의 확인 시트다.
+ * 🚨 **등록 보호자에게만 그린다.** 서버는 함께 보는 보호자를 403 `owner_only` 로 막는다 — 버튼을 그렸다가
+ *    눌러야 실패를 알려주는 길을 만들지 않는다 (설정의 초대 버튼과 같은 원칙). role 을 모르는 동안에도
+ *    그리지 않는다.
+ * 🚨 **화면 맨 아래다.** 손대는 구역(기본 정보 · 키·몸무게 · 알레르기) 뒤에 나가는 길이 선다 — 설정이
+ *    탈퇴를 맨 아래에 두는 것과 같은 순서다. 맨 아래라 프로필을 받은 뒤에 서도 위 구역을 밀지 않는다.
+ * 🚨 **아이 프로필에 둔다.** 아이 자체에 대한 것은 네비의 "아이" 칸이 소유한다 — 설정에 두면 같은 아이를
+ *    다루는 문이 둘이 된다 (설정 화면 머리말).
+ */
+function DeleteChildSection({ childId }: { childId: string }) {
+  return (
+    <section aria-label="아이 삭제">
+      <SettingsGroup>
+        <SettingsLinkRow
+          href={`/child/${childId}/profile/delete`}
+          icon={Trash2}
+          title="이 아이 삭제하기"
+          status="아이와 쌓인 기록이 모두 지워져요"
+          note="무엇이 어떻게 되는지 다음 화면에서 알려 드려요"
+          {...FORWARD}
+        />
+      </SettingsGroup>
+    </section>
   );
 }
 

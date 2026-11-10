@@ -59,12 +59,14 @@ class FakeClient:
     def __init__(self, *replies, delay: float = 0.0) -> None:
         self.replies = list(replies)
         self.calls: list[tuple[list[dict], dict | None]] = []
+        self.prompt_names: list[str | None] = []
         self.delay = delay
         self.running = 0
         self.most = 0
 
-    async def chat(self, messages, *, response_format=None, **_) -> LLMResponse:
+    async def chat(self, messages, *, response_format=None, **extra) -> LLMResponse:
         self.calls.append((messages, response_format))
+        self.prompt_names.append(extra.get("prompt_name"))
         answer = self.replies[min(len(self.calls), len(self.replies)) - 1]
         self.running += 1
         self.most = max(self.most, self.running)
@@ -152,6 +154,12 @@ class TestUntrusted:
 
 
 class TestSpans:
+    async def test_모델을_부를_때_행사_일정_프롬프트_이름을_단다(self):
+        # activity 역할의 다른 프롬프트와 섞이지 않게 로그의 prompt_name 을 명시한다 (#770)
+        client = FakeClient(reply("every_day"))
+        await read(client, overview="가족이 함께 몸을 움직이는 저녁 체조 행사다.")
+        assert client.prompt_names == ["activity_event_schedule"]
+
     async def test_일정_낱말이_없어도_모델이_읽는다(self):
         client = FakeClient(reply("every_day"))
         schedule = await read(client, overview="가족이 함께 몸을 움직이는 저녁 체조 행사다.")

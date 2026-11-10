@@ -11,6 +11,10 @@ docker · git · sleep 을 가짜로 바꿔 돈다. docker · git 은 받은 인
     FAKE_NO_NET        network inspect (ktc4-edge 없음)
     FAKE_CADDY_INVALID docker run … caddy validate
     FAKE_RELOAD_FAIL   docker exec ktc4-caddy caddy reload
+    FAKE_BACKUP_FAIL   배포 전 백업(가짜 deploy/scripts/backup.sh)
+    FAKE_LOGS_FAIL     compose logs (api 로그 읽기)
+
+`compose logs` 는 FAKE_LOGS 를 그대로 찍는다 (api 컨테이너가 뜰 때 남긴 로그 자리).
 
 `compose config --format json` 은 FAKE_CONFIG 를 그대로 찍는다
 (compose 가 .env 를 해석한 결과 자리).
@@ -79,6 +83,7 @@ case "$*" in
   *" config --images"*)
     printf "redis:7-alpine\ncaddy:2.10.0-alpine\nktc4-dev-api:%s\n" "$API_IMAGE_TAG" ;;
   *" pull "*) [ -z "$FAKE_PULL_FAIL" ] ;;
+  *" logs "*) [ -z "$FAKE_LOGS_FAIL" ] || exit 1; printf '%s\n' "$FAKE_LOGS" ;;
   *" up "*) case " $FAKE_UP_FAIL " in *" $API_IMAGE_TAG "*) exit 1 ;; esac ;;
   *" run "*) [ -z "$FAKE_RUN_FAIL" ] ;;
 esac
@@ -104,6 +109,11 @@ def box(tmp_path: Path):
         f.chmod(0o755)
     work = tmp_path / "repo"
     (work / "deploy" / "docker").mkdir(parents=True)
+    # 배포 전 백업은 backup.sh 의 시험(test_backup.py)이 본다. 여기서는 불리는 자리와 실패만
+    (work / "deploy" / "scripts").mkdir(parents=True)
+    (work / "deploy" / "scripts" / "backup.sh").write_text(
+        'echo "backup $*" >> "$FAKE_LOG"\n[ -z "$FAKE_BACKUP_FAIL" ]\n'
+    )
     env_file = work / "deploy" / "docker" / ".env"
     env_file.write_text(DEV_ENV)
     tag_file = work / "deploy" / "docker" / ".deployed-tag"
@@ -178,6 +188,46 @@ def test_success_records_tag_and_keeps_only_current_and_previous(box):
     assert removed == ["ktc4-dev-api:old"]
 
 
+API_LOGS = (
+    "ktc4-dev-api  | 2026-11-10 15:00:00+0900 INFO app.api.cors CORS 를 켠다\n"
+    "ktc4-dev-api  | 2026-11-10 15:00:01+0900 WARNING app.api.startup_report "
+    "꺼져 있는 기능 1개 — 사진 받기 — 올리면 503 (PHOTO_UPLOAD_ACCEPT=false)\n"
+    "ktc4-dev-api  | 2026-11-10 15:00:02+0900 INFO uvicorn.error Application startup complete."
+)
+
+
+def test_success_shows_which_features_are_off(box):
+    """api 가 뜰 때 남긴 "꺼져 있는 기능" 한 줄을 배포 출력에도 보인다 (#912 리뷰).
+
+    서버 로그(journald)에만 있으면 배포한 사람이 못 본다. 배포 출력은 Actions 화면에 그대로 뜬다.
+    """
+    result = box(logs=API_LOGS)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "꺼져 있는 기능 1개 — 사진 받기" in result.stdout
+    # 그 줄만 — 다른 로그 줄까지 쏟지 않는다
+    assert "Application startup complete" not in result.stdout
+    assert any(" logs " in c and c.split(" tag=")[0].endswith(" api") for c in box.calls())
+
+
+@pytest.mark.parametrize("fail", [{"logs_fail": "1"}, {"logs": "아무 줄도 없다"}, {}])
+def test_unreadable_api_logs_never_fail_the_deploy(box, fail):
+    """로그를 못 읽거나 그 줄이 없어도 배포는 성공이다 — 보여 주는 것일 뿐이다."""
+    result = box(**fail)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert box.tag_file.read_text().strip() == "new"
+
+
+def test_rolled_back_deploy_does_not_read_api_logs(box):
+    # 떠 있는 것은 직전 버전이다 — 새 버전의 줄인 것처럼 보이면 안 된다
+    result = box(up_fail="new", logs=API_LOGS)
+
+    assert result.returncode == 1
+    assert "꺼져 있는 기능" not in result.stdout
+    assert not any(" logs " in c for c in box.calls())
+
+
 def test_every_up_waits_for_health_and_never_builds_or_pulls(box):
     """--wait 가 빠지면 헬스를 안 보고 성공이라 자동 롤백이 꺼진다. 이미지가 없을 때 up 이
     지금 소스를 구워 그 태그를 붙이면, 롤백이 "실패한 코드 다시 올리기" 가 된다."""
@@ -242,6 +292,73 @@ def test_no_previous_image_does_not_attempt_rollback(box):
     assert "롤백할 직전 이미지(local)가 없다" in result.stdout
 
 
+def test_predeploy_backup_runs_after_build_and_right_before_migration(box):
+    """덤프와 마이그레이션 사이에 쓰기가 덜 끼게 — 빌드(~10분)를 기다린 뒤 뜬다."""
+    box()
+
+    calls = box.calls()
+    backup = _index(calls, "backup predeploy new")
+    assert _index(calls, " build ") < backup < _index(calls, " run --rm api-task")
+
+
+def test_failed_predeploy_backup_stops_before_migration(box):
+    """마이그레이션을 되돌릴 곳이 이 백업뿐이다 — 없으면 DB 도 컨테이너도 건드리지 않는다."""
+    result = box(backup_fail="1")
+
+    assert result.returncode != 0
+    calls = box.calls()
+    assert not any(" run " in c or " up " in c for c in calls)
+    assert box.tag_file.read_text().strip() == "prev"
+
+
+def test_only_a_manual_deploy_can_skip_the_backup():
+    """skip_backup 이 deploy.yml 에서 빠지면 아무 테스트도 실패하지 않고 건너뛰기만 조용히 사라진다.
+    push 배포에는 inputs 가 없어 늘 빈 값 — 늘 백업한다 (#758)."""
+    workflow = yaml.safe_load((ROOT / ".github" / "workflows" / "deploy.yml").read_text())
+    trigger = workflow[True]  # YAML 1.1 은 `on:` 을 참으로 읽는다
+    skip = trigger["workflow_dispatch"]["inputs"]["skip_backup"]
+    job = workflow["jobs"]["deploy"]
+    ssm = next(step["run"] for step in job["steps"] if step.get("id") == "ssm")
+
+    assert (skip["type"], skip["default"]) == ("boolean", False)
+    assert job["env"]["SKIP_BACKUP"] == "${{ inputs.skip_backup && '1' || '' }}"
+    assert '--arg skip "$SKIP_BACKUP"' in ssm
+    assert "SKIP_PREDEPLOY_BACKUP=\\($skip) bash $F" in ssm
+
+
+def test_lock_file_made_by_another_user_is_still_locked(box, tmp_path):
+    """재부팅 뒤 복원 점검 cron(ubuntu)이 잠금 파일을 먼저 만들면, root 도 그 파일을
+    쓰기 · O_CREAT 로는 못 연다(/var/lock 은 sticky · fs.protected_regular=2).
+    읽기로 열어야 배포가 잠금을 잡는다 (#758). 여기서는 쓰기 권한이 없는 파일로 흉내 낸다."""
+    lock = tmp_path / "lock"
+    lock.write_text("")
+    lock.chmod(0o444)
+
+    result = box()
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.skipif(not shutil.which("flock"), reason="flock 이 없다 (맥)")
+def test_make_lock_helper_holds_the_deploy_lock_while_the_command_runs(tmp_path):
+    """Makefile 의 deploy-migrate · deploy-load-* 잠금 — 쓰기 권한 없는 파일도 연다 (#758)."""
+    lock = tmp_path / "lock"
+    lock.write_text("")
+    lock.chmod(0o444)
+    probe = 'flock -n "$0" true && echo free || echo held'
+
+    result = subprocess.run(
+        ["bash", str(SCRIPT.parent / "with-deploy-lock.sh"), "sh", "-c", probe, str(lock)],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "DEPLOY_LOCK_FILE": str(lock)},
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "held"
+
+
 def test_failed_migration_never_touches_running_containers(box):
     result = box(run_fail="1")
 
@@ -276,6 +393,8 @@ def test_creates_edge_network_with_caddy_address_reserved(box):
         ("dev", DEV_ENV.replace("DB_MEM_LIMIT=512m", "DB_MEM_LIMIT=0")),
         ("prod", PROD_ENV.replace("https://api.", "https://api.dev.")),  # prod 가 dev API 를 굽는다
         ("prod", PROD_ENV.replace("STACK_SUFFIX=", "STACK_SUFFIX=-dev")),
+        # 배포 전 백업의 짝 검사가 빌드 10분 뒤에야 멈춘다 (#758)
+        ("prod", PROD_ENV.replace("APP_ENV=prod", "APP_ENV=production")),
         # 첫 전환의 down 이 Caddy · 옛 네트워크를 남겨 운영이 내려간 채 멈춘다
         ("prod", PROD_ENV.replace("COMPOSE_PROFILES=edge", "COMPOSE_PROFILES=")),
         # dev api 가 prod 주소(.20)를 받으면 EC2 메타데이터(서버 역할 열쇠)에 닿는다

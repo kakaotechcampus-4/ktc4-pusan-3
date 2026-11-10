@@ -20,7 +20,7 @@ from app.agents.curator.embedding.ports import (
 @dataclass(frozen=True)
 class _StoredObservation:
     child_id: UUID
-    status: str  # active / stand_alone / inactive
+    status: str  # active / stand_alone / deleted
     item: ObservationItem
 
 

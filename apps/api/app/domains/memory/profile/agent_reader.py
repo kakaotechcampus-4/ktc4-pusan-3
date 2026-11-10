@@ -62,6 +62,6 @@ class DbAffinityReader:
             )
             for row in rows
             # 묶인 active 관찰이 없는 기억은 싣지 않는다 — 기억 화면(`page_affinities`)과 같은 기준.
-            # 관찰을 전부 "잘못된 기록" 으로 고쳐도 candidate 로 남아 근거가 됐다 (#626)
+            # 관찰을 전부 고치거나 지워도 candidate 로 남아 근거가 됐다 (#626)
             if days.get(row.id)
         ]

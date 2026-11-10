@@ -16,10 +16,12 @@ from app.agents.common.refs import EvidenceCitation, Ref
 from app.agents.common.suggestion import SuggestionDraft
 from app.agents.food.meal_review import GENERAL_REASON_REQUEST as FOOD_REQUESTED_REASON
 from app.agents.suggestion_save import SuggestionBatch
-from app.api import agent_ports, quota
+from app.api import agent_ports
 from app.api.runs import suggestion_retry
 from app.api.v1.schemas.suggestions import DocEvidenceOut
+from app.core import llm_usage
 from app.core.config import settings
+from app.domains.consent.models import ConsentAction
 from app.domains.memory.observation.models import (
     ConfidenceSource,
     ObservationActivity,
@@ -44,13 +46,10 @@ REAL_DOC_INDEX = entrypoint._doc_index
 
 
 @pytest.fixture(autouse=True)
-def _clean(monkeypatch):
-    suggestion_retry.clear()
-    quota.clear()
+def _clean(monkeypatch, pending_db):
+    """05 다시 시도 보관함 · 하루 한도는 표(run_hold · rate_event, #877)라 `pending_db` 가 테스트
+    트랜잭션에 묶는다."""
     monkeypatch.setattr(entrypoint, "_doc_index", lambda: {("activity_doc", DOC_ID): DOC_CARD})
-    yield
-    suggestion_retry.clear()
-    quota.clear()
 
 
 @pytest.fixture(autouse=True)
@@ -186,6 +185,7 @@ async def test_홈_요청은_Agent_마다_묶음과_안내를_싣는다(db_clien
     assert food["evidence"][0]["is_stale"] is False
     assert food["place_notice"] is None  # 장소가 없는 추천
     assert food["warnings"] == []
+    assert food["items"] == []  # 준비물이 없는 추천 — null 이 아니다
     groups = {g["agent"]: g for g in data["groups"]}
     assert groups["food"]["notice"] == {
         "code": "fewer",
@@ -361,7 +361,7 @@ async def test_채택한_추천도_돌려준다(db_client, session, bearer, cid,
 
 async def test_0개_기록은_같은_안내(db_client, bearer, cid, agents):
     headers, parent_id = bearer
-    suggestion_retry.put_empty(
+    await suggestion_retry.put_empty(
         run_id="run-1",
         parent_id=parent_id,
         child_id=cid,
@@ -381,7 +381,7 @@ async def test_실패_맥락은_처음_시각과_문장으로_다시_만든다(
     plan, calls = agents
     headers, parent_id = bearer
     sent_at = datetime(2026, 10, 14, 7, 0, tzinfo=UTC)
-    suggestion_retry.put_failed(
+    await suggestion_retry.put_failed(
         run_id="run-1",
         parent_id=parent_id,
         child_id=cid,
@@ -399,7 +399,9 @@ async def test_실패_맥락은_처음_시각과_문장으로_다시_만든다(
     assert call["save_run_id"] == "run-1"  # 새로고침하면 ① 로 찾는다
     assert call["request_id"] != "run-1"  # seed 는 새 요청 id
     # 성공했으니 맥락은 지웠다
-    gone = suggestion_retry.claim(run_id="run-1", parent_id=parent_id, child_id=cid, agent="food")
+    gone = await suggestion_retry.claim(
+        run_id="run-1", parent_id=parent_id, child_id=cid, agent="food"
+    )
     assert gone is None
 
 
@@ -407,7 +409,7 @@ async def test_다시_만들기가_또_실패하면_맥락은_남는다(db_clien
     plan, _ = agents
     headers, parent_id = bearer
     task = suggestion_retry.RetryTask("meal_recommendation", (), datetime.now(UTC))
-    suggestion_retry.put_failed(
+    await suggestion_retry.put_failed(
         run_id="run-1", parent_id=parent_id, child_id=cid, agent="food", task=task
     )
     plan["food"] = ("fail",)
@@ -415,17 +417,19 @@ async def test_다시_만들기가_또_실패하면_맥락은_남는다(db_clien
     data = (await _post(db_client, cid, headers, agents=["food"], run_id="run-1")).json()
 
     assert data["groups"] == []
-    kept = suggestion_retry.claim(run_id="run-1", parent_id=parent_id, child_id=cid, agent="food")
+    kept = await suggestion_retry.claim(
+        run_id="run-1", parent_id=parent_id, child_id=cid, agent="food"
+    )
     assert kept == task
 
 
 async def test_사용_중인_맥락은_실패로_둔다(db_client, bearer, cid, agents):
     headers, parent_id = bearer
     task = suggestion_retry.RetryTask("meal_recommendation", (), datetime.now(UTC))
-    suggestion_retry.put_failed(
+    await suggestion_retry.put_failed(
         run_id="run-1", parent_id=parent_id, child_id=cid, agent="food", task=task
     )
-    suggestion_retry.claim(run_id="run-1", parent_id=parent_id, child_id=cid, agent="food")
+    await suggestion_retry.claim(run_id="run-1", parent_id=parent_id, child_id=cid, agent="food")
 
     data = (await _post(db_client, cid, headers, agents=["food"], run_id="run-1")).json()
 
@@ -435,7 +439,7 @@ async def test_사용_중인_맥락은_실패로_둔다(db_client, bearer, cid, 
 async def test_다른_보호자의_맥락은_보이지_않는다(db_client, bearer, cid, agents):
     headers, _ = bearer
     task = suggestion_retry.RetryTask("meal_recommendation", (), datetime.now(UTC))
-    suggestion_retry.put_failed(
+    await suggestion_retry.put_failed(
         run_id="run-1", parent_id=uuid.uuid4(), child_id=cid, agent="food", task=task
     )
 
@@ -491,7 +495,61 @@ async def test_내린_알레르기는_사전검사에서_다시_묻는다(
     data = (await _post(db_client, cid, headers, agents=["food"])).json()
 
     assert [s["content"] for s in data["suggestions"]] == ["호두죽"]
+
+
+async def test_괜찮았던_식품으로_저장한_항목은_다시_묻지_않는다(
+    db_client, session, bearer, cid, agents, monkeypatch
+):
+    """05 확인 시트의 "먹어봤어요 · 괜찮았어요" 를 저장하면(tolerated) 다음 사전검사에서 빠진다."""
+    plan, _ = agents
+    headers, parent_id = bearer
+    monkeypatch.setattr("app.api.v1.routers.suggestions.child_health_granted", _granted(True))
+
+    async def granted(*args, **kwargs):
+        return ConsentAction.GRANTED
+
+    monkeypatch.setattr("app.api.v1.routers.health_safety.latest_action", granted)
+    saved = await db_client.post(
+        f"/api/v1/children/{cid}/health-safety",
+        json={"type": "allergy", "label": "잣", "tolerated": True},
+        headers={**headers, "Idempotency-Key": "tolerated-pine"},
+    )
+    assert saved.status_code == 201
+    plan["food"] = (
+        "drafts",
+        [await _personal(session, cid, parent_id, content="잣호두죽", allergens=["잣", "호두"])],
+    )
+
+    data = (await _post(db_client, cid, headers, agents=["food"])).json()
+
     assert [p["item"] for p in data["prechecks"]] == ["호두"]
+
+
+async def test_괜찮았던_식품을_내리면_사전검사에서_다시_묻는다(
+    db_client, session, bearer, cid, agents, monkeypatch
+):
+    """프로필에서 괜찮았던 식품을 빼면 다음 05 에서 그 식품을 다시 묻는다.
+
+    내린 기록을 "모름" 으로 보는 AI 쪽 판정 위에서만 성립한다 — 이 브랜치가 그 위에 쌓인 이유다.
+    """
+    plan, _ = agents
+    headers, parent_id = bearer
+    monkeypatch.setattr("app.api.v1.routers.suggestions.child_health_granted", _granted(True))
+    pine = HealthSafety(child_id=cid, kind=SafetyKind.ALLERGY, label="잣", status=SafetyStatus.NONE)
+    session.add(pine)
+    await session.flush()
+    removed = await db_client.delete(
+        f"/api/v1/children/{cid}/health-safety/{pine.id}", headers=headers
+    )
+    assert removed.status_code == 204
+    plan["food"] = (
+        "drafts",
+        [await _personal(session, cid, parent_id, content="잣죽", allergens=["잣"])],
+    )
+
+    data = (await _post(db_client, cid, headers, agents=["food"])).json()
+
+    assert [p["item"] for p in data["prechecks"]] == ["잣"]
 
 
 async def test_동의가_없으면_알레르기_든_추천을_뺀다(
@@ -546,6 +604,7 @@ async def test_일반_추천은_문서_근거와_기록_건수를_싣는다(db_c
     assert data["scarcity"] == {"count": 0, "question": None}
     assert general["place_notice"] is None  # 장소가 없는 추천
     assert general["warnings"] == []
+    assert general["items"] == []
     assert (general["event_starts_on"], general["event_ends_on"]) == (None, None)
 
 
@@ -600,6 +659,27 @@ async def test_행사가_붙은_추천은_기간을_날짜_칸으로_싣는다(
     [general_out] = data["general"]
     for out in (activity, general_out):
         assert (out["event_starts_on"], out["event_ends_on"]) == ("2026-09-29", "2026-10-01")
+
+
+async def test_개인화와_일반_추천_모두_저장한_준비물을_싣는다(
+    db_client, session, bearer, cid, agents
+):
+    """고르기 전에 필요한 것을 본다 — 일정 초안의 준비물과 같은 `suggestion.items` 다 (#674)."""
+    plan, _ = agents
+    headers, parent_id = bearer
+    personal = replace(
+        await _personal(session, cid, parent_id, agent="activity", content="종이컵 탑 쌓기"),
+        items=("종이컵", "색종이"),
+    )
+    general = replace(_general(), items=("블록",))
+    plan["activity"] = ("drafts", [personal, general])
+
+    data = (await _post(db_client, cid, headers, agents=["activity"])).json()
+
+    [activity] = data["suggestions"]
+    [general_out] = data["general"]
+    assert activity["items"] == ["종이컵", "색종이"]  # 저장한 순서 그대로
+    assert general_out["items"] == ["블록"]
 
 
 async def test_문서_행을_읽을_수_없으면_일반_추천을_내지_않는다(
@@ -667,7 +747,7 @@ async def test_요청_기반_일반_추천은_같은_run_으로_다시_열어도
     plan, calls = agents
     headers, parent_id = bearer
     task = suggestion_retry.RetryTask(None, ("물놀이 뭐 하지?",), datetime.now(UTC))
-    suggestion_retry.put_failed(
+    await suggestion_retry.put_failed(
         run_id="run-1", parent_id=parent_id, child_id=cid, agent="activity", task=task
     )
     plan["activity"] = ("drafts", [_requested()])
@@ -725,14 +805,16 @@ async def test_한도에_걸리면_꺼낸_맥락은_사용_중이_아니다(
     headers, parent_id = bearer
     monkeypatch.setattr(settings, "INPUT_DAILY_LIMIT", 0)
     task = suggestion_retry.RetryTask("meal_recommendation", (), datetime.now(UTC))
-    suggestion_retry.put_failed(
+    await suggestion_retry.put_failed(
         run_id="run-1", parent_id=parent_id, child_id=cid, agent="food", task=task
     )
 
     resp = await _post(db_client, cid, headers, agents=["food"], run_id="run-1")
 
     assert resp.status_code == 429
-    kept = suggestion_retry.claim(run_id="run-1", parent_id=parent_id, child_id=cid, agent="food")
+    kept = await suggestion_retry.claim(
+        run_id="run-1", parent_id=parent_id, child_id=cid, agent="food"
+    )
     assert kept == task
 
 
@@ -750,7 +832,7 @@ async def test_맥락을_꺼낸_뒤_터져도_사용_중이_아니다(db_client,
     """claim 뒤 예외로 끝나도 맥락을 푼다 — 안 풀면 15분 동안 다시 시도가 BUSY 다 (#433 리뷰 ②)."""
     headers, parent_id = bearer
     task = suggestion_retry.RetryTask("meal_recommendation", (), datetime.now(UTC))
-    suggestion_retry.put_failed(
+    await suggestion_retry.put_failed(
         run_id="run-1", parent_id=parent_id, child_id=cid, agent="food", task=task
     )
 
@@ -763,7 +845,9 @@ async def test_맥락을_꺼낸_뒤_터져도_사용_중이_아니다(db_client,
     except RuntimeError:
         pass  # 테스트 클라이언트가 앱 예외를 그대로 올리는 경우
 
-    kept = suggestion_retry.claim(run_id="run-1", parent_id=parent_id, child_id=cid, agent="food")
+    kept = await suggestion_retry.claim(
+        run_id="run-1", parent_id=parent_id, child_id=cid, agent="food"
+    )
     assert kept == task
 
 
@@ -772,7 +856,7 @@ async def test_다시_만들었더니_닫혔으면_다음_요청도_같은_guard
     plan, calls = agents
     headers, parent_id = bearer
     task = suggestion_retry.RetryTask(None, ("놀이 추천해줘",), datetime.now(UTC))
-    suggestion_retry.put_failed(
+    await suggestion_retry.put_failed(
         run_id="run-1", parent_id=parent_id, child_id=cid, agent="activity", task=task
     )
     plan["activity"] = ("blocked", "알레르기 정보를 확인할 수 없어서 추천을 드릴 수 없어요.")
@@ -784,6 +868,37 @@ async def test_다시_만들었더니_닫혔으면_다음_요청도_같은_guard
     assert second["guards"] == first["guards"]
     assert second["groups"] == []
     assert len(calls) == 1  # 두 번째는 다시 돌리지 않는다
+
+
+async def test_다시_만든_결과를_기록하는_칸은_지우지_않고_바로_덮는다(
+    db_client, bearer, cid, agents, monkeypatch
+):
+    """지운 뒤 기록을 넣으면 그 사이에 온 요청이 "맥락도 기록도 없음" 을 본다 (#899 리뷰).
+
+    닫힘 · 0개 기록은 실패 맥락 칸을 그대로 덮는다(upsert) — 그 칸은 지우지 않는다.
+    """
+    plan, _ = agents
+    headers, parent_id = bearer
+    task = suggestion_retry.RetryTask(None, ("놀이 추천해줘",), datetime.now(UTC))
+    await suggestion_retry.put_failed(
+        run_id="run-1", parent_id=parent_id, child_id=cid, agent="activity", task=task
+    )
+    plan["activity"] = ("blocked", "알레르기 정보를 확인할 수 없어서 추천을 드릴 수 없어요.")
+    dropped: list[str] = []
+    real_drop = suggestion_retry.drop
+
+    async def spy_drop(*, run_id, agent):
+        dropped.append(agent)
+        await real_drop(run_id=run_id, agent=agent)
+
+    monkeypatch.setattr(suggestion_retry, "drop", spy_drop)
+
+    await _post(db_client, cid, headers, agents=["activity"], run_id="run-1")
+
+    assert dropped == []
+    assert await suggestion_retry.guard_of(
+        run_id="run-1", parent_id=parent_id, child_id=cid, agent="activity"
+    ) == ("safety_unknown", "알레르기 정보를 확인할 수 없어서 추천을 드릴 수 없어요.")
 
 
 async def test_Agent_를_돌리기_전에_요청_세션의_트랜잭션을_닫는다(
@@ -802,6 +917,56 @@ async def test_Agent_를_돌리기_전에_요청_세션의_트랜잭션을_닫�
     await _post(db_client, cid, headers, agents=["food"])
 
     assert seen == [False]
+
+
+async def test_다시_만들기는_suggest_로_귀속한다(db_client, bearer, cid, agents, monkeypatch):
+    """LLM 사용량(#710) — 05 는 run 이 없어 요청마다 정한 request_id 가 run_id 다."""
+    headers, parent_id = bearer
+    seen: list[tuple[llm_usage.Attribution | None, str]] = []
+
+    async def fake_suggest(**kwargs):
+        seen.append((llm_usage.current(), kwargs["request_id"]))
+        return entrypoint.SuggestRun((), ())
+
+    monkeypatch.setattr(entrypoint, "suggest", fake_suggest)
+
+    await _post(db_client, cid, headers, agents=["food"])
+
+    [(attribution, request_id)] = seen
+    assert attribution == llm_usage.Attribution(
+        parent_id=parent_id, run_id=request_id, source="suggest"
+    )
+
+
+async def test_다시_시도는_원래_run_의_run_id_로_귀속한다(
+    db_client, bearer, cid, agents, monkeypatch
+):
+    """실패한 추천을 다시 만드는 것은 그 run 의 일이다 (#710 리뷰).
+
+    새 request_id 로 남기면 `WHERE run_id = <그 run>` 에 안 잡히고, run 수 집계가 05 호출마다 하나씩
+    늘어난다. 창구는 `source` 가 가른다.
+    """
+    headers, parent_id = bearer
+    await suggestion_retry.put_failed(
+        run_id="run-1",
+        parent_id=parent_id,
+        child_id=cid,
+        agent="food",
+        task=suggestion_retry.RetryTask(
+            "meal_recommendation", ("내일 아침 추천해줘",), datetime.now(UTC)
+        ),
+    )
+    seen: list[llm_usage.Attribution | None] = []
+
+    async def fake_suggest(**kwargs):
+        seen.append(llm_usage.current())
+        return entrypoint.SuggestRun((), ())
+
+    monkeypatch.setattr(entrypoint, "suggest", fake_suggest)
+
+    await _post(db_client, cid, headers, agents=["food"], run_id="run-1")
+
+    assert seen == [llm_usage.Attribution(parent_id=parent_id, run_id="run-1", source="suggest")]
 
 
 async def test_질문_id_는_질문을_낸_Agent_다(db_client, bearer, cid, agents, monkeypatch):
@@ -960,7 +1125,7 @@ async def test_한도에_걸려도_다른_Agent_재생은_보인다(
     monkeypatch.setattr(settings, "INPUT_DAILY_LIMIT", 0)
     row = await _saved_in_run(session, cid, parent_id, "run-1")
     task = suggestion_retry.RetryTask(None, ("놀이 추천해줘",), datetime.now(UTC))
-    suggestion_retry.put_failed(
+    await suggestion_retry.put_failed(
         run_id="run-1", parent_id=parent_id, child_id=cid, agent="activity", task=task
     )
 
@@ -972,7 +1137,7 @@ async def test_한도에_걸려도_다른_Agent_재생은_보인다(
     groups = {g["agent"]: g for g in data["groups"]}
     assert groups["activity"]["notice"]["code"] == "daily_limit"
     assert agents[1] == []  # 돌리지 않았다
-    kept = suggestion_retry.claim(
+    kept = await suggestion_retry.claim(
         run_id="run-1", parent_id=parent_id, child_id=cid, agent="activity"
     )
     assert kept == task  # 내일 다시 시도할 수 있게 맥락은 남는다(15분 안이면)

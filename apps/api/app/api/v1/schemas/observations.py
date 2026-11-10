@@ -10,14 +10,16 @@
 from datetime import date, datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import Field
+
+from app.api.schema_base import ApiSchema
 
 ObservationKindOut = Literal[
     "observation_food", "observation_education", "observation_activity", "observation_routine"
 ]
 
 
-class LinkedAffinityOut(BaseModel):
+class LinkedAffinityOut(ApiSchema):
     """이 관찰이 묶인 기억. 화면은 "묶인 기억" 줄에 merge_key 를 그린다."""
 
     id: str
@@ -25,12 +27,12 @@ class LinkedAffinityOut(BaseModel):
     state: str
 
 
-class SourceWriterOut(BaseModel):
+class SourceWriterOut(ApiSchema):
     parent_id: str
     nickname: str
 
 
-class _ObservationBaseOut(BaseModel):
+class _ObservationBaseOut(ApiSchema):
     """food · education · activity · routine · health 가 같이 가진 칸."""
 
     id: str
@@ -39,7 +41,7 @@ class _ObservationBaseOut(BaseModel):
     confidence_source: Literal[
         "institution_notice", "parent_direct", "parent_hedged", "parent_hearsay"
     ]
-    status: Literal["active", "stand_alone", "inactive"] = Field(
+    status: Literal["active", "stand_alone"] = Field(
         description='deleted 는 응답에 나오지 않는다. stand_alone 은 "이번만 그랬어요" 를 누른 기록'
     )
     observed_from: date
@@ -71,7 +73,7 @@ class ObservationHealthOut(_ObservationBaseOut):
     kind: Literal["observation_health"]
 
 
-class ObservationsResponse(BaseModel):
+class ObservationsResponse(ApiSchema):
     items: list[ObservationOut | ObservationHealthOut]
     total: int = Field(description="필터 · 날짜 · 검색을 건 뒤의 전체 건수. 쪽과 무관하다")
     page: int = Field(description="요청한 쪽 번호 (1부터)")
@@ -79,19 +81,19 @@ class ObservationsResponse(BaseModel):
     total_pages: int = Field(description="전체 쪽 수 — ceil(total / size). 0건이면 0")
 
 
-class UsedInOut(BaseModel):
+class UsedInOut(ApiSchema):
     suggestion_id: str
     content: str
     status: Literal["draft", "approved", "rejected", "expired"]
 
 
-class CorrectionOut(BaseModel):
+class CorrectionOut(ApiSchema):
     id: str
     verdict: Literal["once_only", "need_more_observation", "outdated", "wrong"]
     created_at: datetime
 
 
-class ObservationDetailResponse(BaseModel):
+class ObservationDetailResponse(ApiSchema):
     observation: ObservationOut | ObservationHealthOut
     used_in: list[UsedInOut] = Field(
         description='이 관찰을 근거로 쓴 추천. 비면 "제안 근거에서 빠져 있어요"'
