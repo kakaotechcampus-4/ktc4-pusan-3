@@ -4,9 +4,11 @@
 
 **육아를 가장 많이 아는 AI가 아니라, 우리 아이를 가장 오래 알아온 AI**
 
+<a href="https://play.google.com/store/apps/details?id=kr.ai.icatch"><img alt="Google Play 에서 받기" src="https://play.google.com/intl/en_us/badges/static/images/badges/ko_badge_web_generic.png" height="80"></a>
+
 [![아이캐치 소개 영상 (42초)](https://img.youtube.com/vi/EAYOg7bfxaI/maxresdefault.jpg)](https://youtu.be/EAYOg7bfxaI)
 
-[서비스](https://icatch.ai.kr) · [Google Play](https://play.google.com/store/apps/details?id=kr.ai.icatch) · [소개 영상](https://youtu.be/EAYOg7bfxaI) · [개발 문서](https://kakaotechcampus-4.github.io/ktc4-pusan-3/) · [API 문서](https://api.icatch.ai.kr/docs)
+[웹에서 바로 쓰기](https://icatch.ai.kr) · [Google Play](https://play.google.com/store/apps/details?id=kr.ai.icatch) · [소개 영상](https://youtu.be/EAYOg7bfxaI) · [개발 문서](https://kakaotechcampus-4.github.io/ktc4-pusan-3/) · [API 문서](https://api.icatch.ai.kr/docs)
 
 [![API CI](https://github.com/kakaotechcampus-4/ktc4-pusan-3/actions/workflows/ci-api.yml/badge.svg?branch=develop)](https://github.com/kakaotechcampus-4/ktc4-pusan-3/actions/workflows/ci-api.yml)
 [![Web CI](https://github.com/kakaotechcampus-4/ktc4-pusan-3/actions/workflows/ci-web.yml/badge.svg?branch=develop)](https://github.com/kakaotechcampus-4/ktc4-pusan-3/actions/workflows/ci-web.yml)
@@ -239,3 +241,5 @@ make web-install && make web-dev             # http://localhost:3000
 | [설계 결정](docs/overview/decisions-v1.md) | 만들면서 바꾼 결정 — 계기 · 비교 · 대가 |
 | [테크스펙](docs/overview/tech-spec.md) · [서비스 기획](docs/overview/service-plan.md) | 요구사항 · 아키텍처 · 데이터 모델 · 안전 설계 |
 | [백엔드 가이드](apps/api/README.md) · [웹 가이드](apps/web/README.md) · [모바일 가이드](apps/mobile/README.md) | 파트별 실행 · 관례 |
+
+<sub>Google Play 및 Google Play 로고는 Google LLC 의 상표입니다.</sub>
