@@ -60,7 +60,7 @@
 
 <br>
 
-**보호자 설문** · 2026년 8월 · 온라인 · 10명. 임신 중 1명, 나머지 9명은 막내 기준 만 0~2세 2명 · 3~5세 4명 · 6~7세 1명 · 11세 이상 2명입니다. 표본이 작아서 방향을 잡는 데만 썼습니다.
+**보호자 설문** · 2026년 8월 · 온라인 · 10명. 임신 중 1명, 나머지 9명은 막내 기준 만 0\~2세 2명 · 3\~5세 4명 · 6\~7세 1명 · 11세 이상 2명입니다. 표본이 작아서 방향을 잡는 데만 썼습니다.
 
 | 물은 것 | 답 (명) |
 | --- | --- |
@@ -249,10 +249,10 @@ Agent 별 설계는 [Supervisor](https://kakaotechcampus-4.github.io/ktc4-pusan-
 
 <table>
 <tr>
-<td align="center" width="25%"><h3>9 / 10</h3><b>기획 때 정한 시나리오</b><br><sub>실제 모델 · 3회 모두 통과해야 통과</sub></td>
-<td align="center" width="25%"><h3>0건</h3><b>절대 규칙 위반</b><br><sub>147 run 을 코드로 판정</sub></td>
-<td align="center" width="25%"><h3>39 / 40</h3><b>장애 점검</b><br><sub>부품 10 × 장애 4 · make test 마다</sub></td>
-<td align="center" width="25%"><h3>68 / 69</h3><b>급식표 끼니 읽기</b><br><sub>급식표 1장(27일 · 69끼니)을 5번 · 틀린 메뉴가 한 번도 붙지 않은 끼니</sub></td>
+<td align="center" valign="top" width="25%"><h3>9 / 10</h3><b>기획 때 정한 시나리오</b><br><sub>실제 모델 · 3회 모두 통과해야 통과</sub></td>
+<td align="center" valign="top" width="25%"><h3>0건</h3><b>절대 규칙 위반</b><br><sub>147 run 을 코드로 판정</sub></td>
+<td align="center" valign="top" width="25%"><h3>39 / 40</h3><b>장애 점검</b><br><sub>부품 10 × 장애 4 · make test 마다</sub></td>
+<td align="center" valign="top" width="25%"><h3>68 / 69</h3><b>급식표 끼니 읽기</b><br><sub>급식표 1장(27일 · 69끼니)을 5번 · 틀린 메뉴가 한 번도 붙지 않은 끼니</sub></td>
 </tr>
 </table>
 
