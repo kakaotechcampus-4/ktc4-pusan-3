@@ -25,6 +25,8 @@ LINES=(
 )
 
 log() { echo "[worker-cron] $*"; }
+# 04시 · 05시는 서버 시계 기준이다 — 한국 시각이 아니면 알린다(새 서버의 Ubuntu 기본값은 UTC). 줄은 그대로 건다
+[ "$(date +%z)" = "+0900" ] || log "🟠 서버 시계가 $(date +%Z) 다 — 아래 시각은 한국 시각이 아니다. timedatectl set-timezone Asia/Seoul"
 ct() { if [ "$(id -un)" = "$CRON_USER" ]; then crontab "$@"; else crontab -u "$CRON_USER" "$@"; fi; }
 # 없으면 빈 것, 읽다 실패하면 멈춘다
 read_tab() {

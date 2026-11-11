@@ -40,7 +40,9 @@ def box(tmp_path: Path):
     tab = tmp_path / "tab"
     log = tmp_path / "calls.log"
 
-    def run(list_err: str = "", list_warn: str = "") -> subprocess.CompletedProcess:
+    def run(
+        list_err: str = "", list_warn: str = "", tz: str = "Asia/Seoul"
+    ) -> subprocess.CompletedProcess:
         env = {
             **os.environ,
             "PATH": f"{bin_dir}:{os.environ['PATH']}",
@@ -48,6 +50,7 @@ def box(tmp_path: Path):
             "FAKE_LOG": str(log),
             "FAKE_LIST_ERR": list_err,
             "FAKE_LIST_WARN": list_warn,
+            "TZ": tz,
             # 실행하는 사람과 다른 사용자 — SSM(root)이 ubuntu 의 crontab 을 고치는 자리
             "CRON_USER": "ubuntu-test",
         }
@@ -155,3 +158,16 @@ def test_stderr_warning_is_not_written_into_crontab(box):
 
     assert box(list_warn="warning: something").returncode == 0
     assert "warning" not in box.tab.read_text()
+
+
+def test_non_korean_server_clock_warns_but_still_registers(box):
+    """04시 · 05시는 서버 시계 기준이다. UTC 면 한국 13시 · 14시에 돈다 — 알리기만 한다."""
+    result = box(tz="UTC")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "서버 시계가 UTC" in result.stdout
+    assert all(_count(box.tab.read_text(), w) == 1 for w in WORKERS)
+
+
+def test_korean_server_clock_does_not_warn(box):
+    assert "서버 시계가" not in box().stdout
