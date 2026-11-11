@@ -173,7 +173,7 @@ Agent 별 설계 · 프롬프트 · 측정은 [개발 문서 사이트](https://
 
 </div>
 
-<img src="docs/assets/readme/architecture.png" alt="아이캐치 구성도 — 보호자의 웹과 앱이 Caddy 를 거쳐 web 과 api 로 들어가고, api 는 PostgreSQL · Redis · S3 · LLM API · 카카오 로그인 · 공공 데이터 · FCM 을 쓴다. 배포는 GitHub Actions 가 Systems Manager 로 명령을 보낸다.">
+<img src="docs/assets/readme/architecture.png" alt="아이캐치 구성도 — 보호자의 웹과 앱이 Caddy 를 거쳐 web 과 api 로 들어가고, api 는 PostgreSQL · Redis · S3 · LLM API · 카카오 로그인 · 공공 데이터 · Firebase(FCM) 을 쓴다. UptimeRobot 이 밖에서 가동을 확인한다. 배포는 GitHub Actions 가 Systems Manager 로 명령을 보낸다.">
 
 | 고른 것 | 왜 |
 | --- | --- |
@@ -183,6 +183,26 @@ Agent 별 설계 · 프롬프트 · 측정은 [개발 문서 사이트](https://
 | 배포는 **OIDC + Systems Manager** | 저장소에 서버 열쇠를 두지 않는다 |
 
 서버 구성과 운영 절차는 [배포 · 운영 문서](https://kakaotechcampus-4.github.io/ktc4-pusan-3/ops/deploy-v1/)에 있습니다.
+
+### 운영하면서 지켜보는 것
+
+서버는 한 대라서, 죽었을 때 사람이 먼저 알아채는 일이 없게 했습니다. 알림은 전부 Discord 한 채널로 모입니다.
+
+| 무엇이 잘못되면 | 누가 알아채나 |
+| --- | --- |
+| API 에서 오류가 난다 | 앱이 ERROR 로그를 알림 카드로 보낸다. 카드에는 오류의 종류와 위치만 싣는다 |
+| 보호자 화면에서 오류가 난다 | 화면이 서버로 보고한다. 종류 · 경로 · 기기 요약뿐이다 |
+| 컨테이너가 죽거나 DB · Redis 에 닿지 못한다 | 서버 cron 이 1분마다 보고, 상태가 바뀔 때만 알린다 |
+| 서버가 통째로 죽는다 | UptimeRobot 이 5분마다 밖에서 찔러 본다 |
+| 서버는 살아 있는데 백업이 멈춘다 | GitHub Actions 가 매일 밖에서 가장 새 백업의 시각을 본다 |
+| CPU · 메모리 · 디스크 · 응답 코드가 이상하다 | Alloy 가 Grafana Cloud 로 보낸 지표를 대시보드로 본다 |
+
+<img src="docs/assets/readme/alerts.png" width="100%" alt="Discord 로 온 알림 네 가지. 컨테이너 상태가 바뀌면 내려갈 때 빨강, 돌아오면 초록 카드가 온다. 백업이 멈추면 GitHub Actions 가 서버 밖에서 보고 알린다. 보호자 화면에서 오류가 나면 오류 종류 · 경로 · 기기 요약만 온다. 웹 서버 오류 카드에는 다음에 칠 명령이 적혀 있다.">
+
+오류 추적 SaaS 는 쓰지 않았습니다. 로그 줄에는 보호자가 적은 원문이 들어갈 수 있어서, 그 내용이 밖으로 나가는 도구는 고르지 않았습니다.
+그래서 알림에는 값이 아니라 종류와 위치만 싣고, 원문이 든 로그는 서버 안(journald)에만 둡니다. LLM 호출도 같습니다. 호출마다 어느 run 이 어느 모델을 얼마나 썼는지는 DB 에 남기지만, 프롬프트와 응답은 남기지 않습니다.
+
+무엇을 어떻게 알리는지는 [로그 · 알림 문서](https://kakaotechcampus-4.github.io/ktc4-pusan-3/ops/logging-alerts-v1/)에 있습니다.
 
 ## 만들면서 부딪힌 것
 
