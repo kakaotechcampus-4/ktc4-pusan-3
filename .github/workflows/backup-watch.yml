@@ -3,7 +3,7 @@
 # 서버의 cron 이 통째로 멈추면 backup.sh 도 restore-check.sh 도 돌지 않아 아무도 말하지 않는다.
 # 서버가 죽은 건 UptimeRobot 이 잡지만, 서버는 살아 있고 cron 만 멈춘 건 밖에서 봐야 한다.
 # 그래서 매일 03시 백업 · 복원 점검이 끝난 뒤 백업 버킷의 <환경>/daily/ 목록에서 가장 새 객체의
-# 시각만 보고, 26시간이 넘었으면 Discord 로 한 줄 보낸다.
+# 시각만 보고, 25시간이 넘었으면 Discord 로 한 줄 보낸다.
 #
 # 🚨 목록(키 · 시각)만 본다. 덤프는 받지 않는다 — 버킷 정책이 EC2 역할이 아닌 쪽의 객체 읽기를
 #    막고 있고(#758), 덤프가 러너로 오면 미국으로 나가는 국외 이전이다. 목록 조회만 열려 있다.
@@ -33,17 +33,21 @@ jobs:
     timeout-minutes: 5
     env:
       # 매일 백업 cron 이 걸린 환경만 넣는다 — 아직 안 건 환경을 넣으면 매일 "하나도 없다" 가 운다.
-      # dev 는 11-09 에 걸었다. prod 는 #773 이 main 으로 배포되고 prod checkout 에 cron 을 건 뒤
-      # 손으로 한 번 돌려 prod/daily/ 에 백업이 생기면 "prod dev" 로 늘린다.
-      ENVS: dev
-      MAX_AGE_SECONDS: "93600" # 26시간 — restore-check.sh 와 같은 기준
+      # dev 는 11-09, prod 는 11-11 에 cron 을 걸고 손으로 한 번 돌렸다(docs/ops/backup-restore-v1.md 2장).
+      ENVS: prod dev
+      # 25시간 — 04:30 에 볼 때 그날 03시 백업을 하나 놓치면 가장 최근 것이 25.5시간 전이다. 26시간이면 하루 놓친 것을
+      # 다음 날에야 잡는다. restore-check.sh 의 26시간은 백업 직후에 보는 것이라 뜻이 다르다.
+      MAX_AGE_SECONDS: "90000"
     steps:
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/ktc-github-deploy
           aws-region: ap-northeast-2
 
-      - name: 매일 백업이 26시간 안에 있는지
+      - name: 매일 백업이 25시간 안에 있는지
+        # 조회가 멈추면 여기서 끊어 실패로 끝낸다 — job 의 timeout-minutes 에 걸리면 실패가 아니라 취소라서
+        # 다음 단계(failure())가 돌지 않고 아무도 알리지 않는다.
+        timeout-minutes: 3
         env:
           BUCKET: ${{ secrets.BACKUP_S3_BUCKET }}
         run: |
@@ -79,10 +83,16 @@ jobs:
           WEBHOOK_DEV: ${{ secrets.BACKUP_ALERT_WEBHOOK_URL_DEV }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          send() { # <웹훅> <본문>
+          # 한 건을 못 보내도(웹훅 시간 초과 · 지워진 웹훅의 404) 나머지는 보낸다. 이 단계는 bash -e 로 돌아서
+          # 그냥 두면 먼저 보내는 dev 가 실패할 때 뒤의 prod 알림이 나가지 않는다. 못 보낸 것은 단계를 빨갛게 남긴다.
+          # --fail 이 없으면 curl 은 HTTP 오류에도 성공으로 끝난다.
+          failed=0
+          send() { # <웹훅> <본문> — 보냈으면 sent=1
+            sent=1
             jq -n --arg d "🔴 [백업 감시] $2"$'\n'"${RUN_URL}" \
               '{username: "infra-alert", embeds: [{color: 16711680, description: $d}], allowed_mentions: {parse: []}}' |
-              curl -sS -o /dev/null --max-time 10 -X POST -H 'Content-Type: application/json' --data @- "$1"
+              curl -sS --fail -o /dev/null --max-time 10 -X POST -H 'Content-Type: application/json' --data @- "$1" ||
+              { echo "::error::Discord 로 못 보냈다 — ${2%%$'\n'*}"; failed=1; sent=0; }
           }
           for f in problems-*.txt; do
             [ -f "$f" ] || continue
@@ -92,6 +102,8 @@ jobs:
               send "$WEBHOOK_PROD" "$(cat "$f")"
             elif [ -n "$WEBHOOK_DEV" ]; then
               send "$WEBHOOK_DEV" "$(cat "$f")"
+              # 개발 채널 웹훅이 죽었어도(지워짐 · 시간 초과) 알림은 잃지 않는다 — 아래 secret 이 없을 때와 같이.
+              [ "$sent" = 1 ] || send "$WEBHOOK_PROD" "$(cat "$f") (개발 채널 웹훅으로 못 보내 이 채널로 보냈다)"
             else
               # 개발 채널 웹훅이 없어도 알림은 잃지 않는다 — 운영 채널로 보내고 그렇게 적는다.
               send "$WEBHOOK_PROD" "$(cat "$f") (BACKUP_ALERT_WEBHOOK_URL_DEV 가 없어 이 채널로 보냈다)"
@@ -99,3 +111,4 @@ jobs:
           done
           # 목록을 끝까지 못 읽었다(AWS 인증 · 조회 실패) — 어느 환경 문제인지 가릴 수 없어 운영 채널로.
           [ -f checked ] || send "$WEBHOOK_PROD" "감시 자체가 실패했다 — AWS 인증 · 버킷 목록 조회를 본다"
+          exit "$failed"
