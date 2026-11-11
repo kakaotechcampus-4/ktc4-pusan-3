@@ -79,10 +79,16 @@ jobs:
           WEBHOOK_DEV: ${{ secrets.BACKUP_ALERT_WEBHOOK_URL_DEV }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          send() { # <웹훅> <본문>
+          # 한 건을 못 보내도(웹훅 시간 초과 · 지워진 웹훅의 404) 나머지는 보낸다. 이 단계는 bash -e 로 돌아서
+          # 그냥 두면 먼저 보내는 dev 가 실패할 때 뒤의 prod 알림이 나가지 않는다. 못 보낸 것은 단계를 빨갛게 남긴다.
+          # --fail 이 없으면 curl 은 HTTP 오류에도 성공으로 끝난다.
+          failed=0
+          send() { # <웹훅> <본문> — 보냈으면 sent=1
+            sent=1
             jq -n --arg d "🔴 [백업 감시] $2"$'\n'"${RUN_URL}" \
               '{username: "infra-alert", embeds: [{color: 16711680, description: $d}], allowed_mentions: {parse: []}}' |
-              curl -sS -o /dev/null --max-time 10 -X POST -H 'Content-Type: application/json' --data @- "$1"
+              curl -sS --fail -o /dev/null --max-time 10 -X POST -H 'Content-Type: application/json' --data @- "$1" ||
+              { echo "::error::Discord 로 못 보냈다 — ${2%%$'\n'*}"; failed=1; sent=0; }
           }
           for f in problems-*.txt; do
             [ -f "$f" ] || continue
@@ -92,6 +98,8 @@ jobs:
               send "$WEBHOOK_PROD" "$(cat "$f")"
             elif [ -n "$WEBHOOK_DEV" ]; then
               send "$WEBHOOK_DEV" "$(cat "$f")"
+              # 개발 채널 웹훅이 죽었어도(지워짐 · 시간 초과) 알림은 잃지 않는다 — 아래 secret 이 없을 때와 같이.
+              [ "$sent" = 1 ] || send "$WEBHOOK_PROD" "$(cat "$f") (개발 채널 웹훅으로 못 보내 이 채널로 보냈다)"
             else
               # 개발 채널 웹훅이 없어도 알림은 잃지 않는다 — 운영 채널로 보내고 그렇게 적는다.
               send "$WEBHOOK_PROD" "$(cat "$f") (BACKUP_ALERT_WEBHOOK_URL_DEV 가 없어 이 채널로 보냈다)"
@@ -99,3 +107,4 @@ jobs:
           done
           # 목록을 끝까지 못 읽었다(AWS 인증 · 조회 실패) — 어느 환경 문제인지 가릴 수 없어 운영 채널로.
           [ -f checked ] || send "$WEBHOOK_PROD" "감시 자체가 실패했다 — AWS 인증 · 버킷 목록 조회를 본다"
+          exit "$failed"
