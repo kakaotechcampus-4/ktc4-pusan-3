@@ -32,6 +32,7 @@ from app.agents.notice_ocr import PhotoReading, flag_thin_ranges, names_from_raw
 from app.api.runs import photo_run
 from app.api.v1.schemas.photos import MAX_COMMIT_ENTRIES, PhotoCommitRequest, PhotoEntry
 from app.core.notice_extract import ItemDetail
+from app.domains.daycare_meal.models import DaycareSlot
 from app.domains.notice.assemble import NewNotice, NewNoticeItem
 from app.domains.notice.models import (
     NoticeAudience,
@@ -170,6 +171,17 @@ MEAL_VARIANTS: dict[str, MealPlanJSON] = {
             ],
         )
     ),
+    # 괄호 안이 음식이 아니라 저장 키가 하나도 안 나오는 끼니 — 화면에 나가면 저장이 422(#908)
+    "저장 키가 안 나오는 끼니": _plan(
+        _output(
+            [
+                _day(2, ("lunch", _menu("(자율배식)"))),
+                _day(3, ("lunch", _menu("(국내산)")), ("snack_pm", _menu("(1/2)"))),
+                _day(4, ("lunch", _menu("(행사)", "(소)"))),
+                _day(5, ("lunch", _menu("(자율배식)", "버섯솥밥"))),
+            ]
+        )
+    ),
     # 연도는 코드가 정하지만, 사진에 "2019년 1월" 이 적혀 있으면 그 연도를 믿는다 — 저장 범위 밖이다
     "사진에 적힌 연도가 범위 밖": _plan(
         _output([_day(2, ("lunch", _menu("밥")))]), year_month="2019-01"
@@ -253,6 +265,10 @@ def _assert_commit_passes(run: photo_run.PhotoRun, entries: list[dict]) -> None:
     body = PhotoCommitRequest.model_validate(
         {"lane": "document", "entries": checked, "attach_to_calendar": False}
     )
+    # 확인이 필요한 급식도 보호자가 확인하면 저장 대상이다 — run.meals 에 남은 끼니는 모두 키가 있다
+    for entry in entries:
+        if entry["id"] in run.meals:
+            assert photo_run.meal_row(run.meals[entry["id"]], title=entry["title"], day=None)
     for entry in body.entries:
         if entry.id in run.meals:
             # 메뉴 키가 하나도 안 남으면 commit 이 422("메뉴를 적어 주세요")다
@@ -436,3 +452,39 @@ def test_연도를_몰라_급식을_내지_않은_결과도_통과하고_급식�
     _assert_commit_passes(run, entries)
     assert run.meals == {}
     assert [e["id"] for e in entries if e["kind"] == "meal"] == ["pe_meal_unread_0"]
+
+
+def test_저장_키가_안_나오는_끼니는_원문과_함께_읽지_못한_칸으로_보인다() -> None:
+    run, entries = _entries(
+        PhotoReading(notice=_notice(), meal_plan=MEAL_VARIANTS["저장 키가 안 나오는 끼니"])
+    )
+
+    unread = [e for e in entries if e["id"].startswith("pe_meal_unread_")]
+    assert sorted(e["title"] for e in unread) == ["(1/2)", "(국내산)", "(자율배식)", "(행사), (소)"]
+    assert all(e["needs_review"] and e["date"] is None for e in unread)
+    # 진짜 메뉴가 같이 있는 끼니는 평소처럼 저장 대상이다
+    assert list(run.meals) == ["pe_meal_5_lunch"]
+    (saved,) = [e for e in entries if e["id"] == "pe_meal_5_lunch"]
+    assert saved["needs_review"] is False
+    assert photo_run.meal_row(run.meals["pe_meal_5_lunch"], title=saved["title"], day=None)
+
+
+def test_화면에_나가기_직전에도_저장_키가_없는_급식은_읽지_못한_칸으로_돌린다() -> None:
+    # `_meal_entries` 를 거치지 않고 들어온 급식 항목 — `_servable` 이 마지막으로 막는다
+    run = photo_run.open_photo_run(run_id="r1", parent_id=uuid.uuid4(), child_id=uuid.uuid4())
+    run.meals["pe_meal_2_lunch"] = photo_run.MealSlot(date(2026, 11, 2), DaycareSlot.LUNCH)
+    entry = {
+        "id": "pe_meal_2_lunch",
+        "kind": "meal",
+        "title": "(자율배식)",
+        "date": "2026-11-02",
+        "all_day": True,
+        "items": [],
+        "needs_review": False,
+        "past": False,
+    }
+
+    (out,) = photo_run._servable(run, [entry])
+
+    assert out["id"].startswith("pe_meal_unread_") and out["needs_review"] is True
+    assert run.meals == {}

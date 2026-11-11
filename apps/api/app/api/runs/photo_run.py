@@ -260,8 +260,11 @@ def _meal_entries(run: PhotoRun, plan, *, today: date) -> list[dict]:
                     )
                 )
                 continue
-            if not any(item.name for item in meal.items):
-                # 원문이 번호뿐이라 이름이 전부 비었다. 빈 제목으로 내보내면 저장이 422 로 막힌다 —
+            # 원문이 번호뿐이면 이름이 비어 있다(#908) — 빈 조각을 잇지 않는다
+            title = ", ".join(item.name for item in meal.items if item.name)
+            if not meal_menu_keys(title):
+                # 이름이 전부 비었거나(원문이 번호뿐), 괄호 안이 음식이 아니라("(자율배식)" ·
+                # "(국내산)") 저장 키가 하나도 안 나온다. 그대로 내보내면 저장이 422 로 막힌다 —
                 # 조용히 빼지 않고 못 읽은 칸으로 확인을 받는다
                 unread.append(
                     (
@@ -276,8 +279,7 @@ def _meal_entries(run: PhotoRun, plan, *, today: date) -> list[dict]:
                 {
                     "id": entry_id,
                     "kind": "meal",
-                    # 원문이 번호뿐이면 이름이 비어 있다(#908) — 빈 조각을 잇지 않는다
-                    "title": ", ".join(item.name for item in meal.items if item.name),
+                    "title": title,
                     "date": str(plan.date_of(day.day)),
                     "all_day": True,
                     "items": [],
@@ -486,6 +488,8 @@ def _servable(run: PhotoRun, entries: list[dict]) -> list[dict]:
       (web `photo-review`).
     - 🚨 날짜가 걸린 급식은 읽지 못한 칸으로 돌린다. 날짜를 비운 급식을 확인하면 commit 이 run 의
       날짜(`MealSlot.serve_date`, 범위 밖)로 저장하기 때문이다.
+    - 🚨 고친 뒤에도 저장 키가 하나도 안 나오는 급식은 읽지 못한 칸으로 돌린다 — 화면에 남는
+      급식은 `meal_row` 가 None 이 아니다.
     - 그래도 걸리면 그 항목은 "읽지 못한 것" 으로만 보이고 저장 대상에서 빠진다(전체를 막지 않는다).
     - 🚨 로그에는 항목 id 와 칸 이름만 남긴다. 원문 · 제목 글자는 남기지 않는다 (§2 개인정보).
     """
@@ -494,7 +498,7 @@ def _servable(run: PhotoRun, entries: list[dict]) -> list[dict]:
     out: list[dict] = []
     for entry in entries:
         fields = _commit_errors(entry)
-        if not fields:
+        if not fields and not _keyless_meal(run, entry):
             out.append(entry)
             continue
         entry_id = entry["id"]
@@ -502,11 +506,12 @@ def _servable(run: PhotoRun, entries: list[dict]) -> list[dict]:
             "사진 run %s 항목 %s 이 저장 검사에 걸렸다 — 칸 %s",
             run.run_id,
             entry_id,
-            ",".join(fields),
+            ",".join(fields) or "menu_keys",
         )
         fixed = _fix(entry, fields)
         is_meal = entry_id in run.meals
-        if _commit_errors(fixed) or (is_meal and fixed["date"] is None):
+        keyless = _keyless_meal(run, fixed)
+        if _commit_errors(fixed) or (is_meal and fixed["date"] is None) or keyless:
             run.items.pop(entry_id, None)
             run.meals.pop(entry_id, None)
             kind = "meal" if entry.get("kind") == "meal" else "info"
@@ -514,13 +519,19 @@ def _servable(run: PhotoRun, entries: list[dict]) -> list[dict]:
                 new_id, meal_unread = f"pe_meal_unread_{meal_unread}", meal_unread + 1
             else:
                 new_id, other_unread = f"pe_unread_{other_unread}", other_unread + 1
-            if is_meal and not _commit_errors(fixed):
+            if is_meal and not _commit_errors(fixed) and not keyless:
                 # 날짜만 걸린 급식 — 무엇이었는지는 보이게 둔다
                 fixed = {**fixed, "id": new_id, "date": None, "needs_review": True}
             else:
                 fixed = _unread(new_id, kind=kind)
         out.append(fixed)
     return _within_commit_size(run, out)
+
+
+def _keyless_meal(run: PhotoRun, entry: dict) -> bool:
+    """저장 대상 급식인데 제목에서 저장 키가 하나도 안 나오는가 — commit 이 422 다(`meal_row`)."""
+    title = entry.get("title")
+    return entry["id"] in run.meals and not (isinstance(title, str) and meal_menu_keys(title))
 
 
 def _within_commit_size(run: PhotoRun, entries: list[dict]) -> list[dict]:
