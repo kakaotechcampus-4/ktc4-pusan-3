@@ -143,16 +143,16 @@
 
 <table>
 <tr>
-<th width="50%">기록이 아직 없을 때</th>
+<th width="50%">기록이 적을 때</th>
 <th width="50%">기록이 쌓였을 때</th>
 </tr>
 <tr>
-<td align="center"><img src="docs/assets/readme/07-general.png" width="250" alt="일반 추천이라고 표시된 놀이 추천 카드"></td>
-<td align="center"><img src="docs/assets/readme/demo-growth.gif" width="280" alt="실제 앱 화면. 월요일 밤에는 쌓인 기록이 13건이고 책 추천마다 사용한 기록이 1건 붙는다. 수요일 밤에는 기록이 15건으로 늘었고 주말 놀이 추천에 공룡과 블록, 사용한 기록 2건이 붙는다"></td>
+<td align="center"><img src="docs/assets/readme/growth-few.gif" width="280" alt="홈에서 놀이 추천을 누르면 일반 추천이라고 표시된 카드가 나온다. 놀이 기록은 1건이고, 36개월 또래가 자주 찾는 놀이라고 적혀 있다. 아래에 이번에는 일반 추천으로 골랐어요 라는 안내와 질문 하나가 있다"></td>
+<td align="center"><img src="docs/assets/readme/growth-many.gif" width="280" alt="같은 홈에서 저녁 추천을 누르면 식사 추천 세 가지가 나온다. 첫 카드에 추천 이유와 사용한 기록 3건(계란 반찬 반복 3회, 오늘 급식, 계란말이)이 붙어 있다"></td>
 </tr>
 <tr>
-<td valign="top">또래 기준의 일반 추천을 냅니다. 맞춤인 척하지 않습니다. 카드에 "일반 추천" 이라고 적고, 쌓인 기록 건수를 그대로 보여 줍니다</td>
-<td valign="top">시연 영상의 월요일 밤과 수요일 밤입니다. 이틀 사이 기록이 13건에서 15건으로 늘었고, 추천에 붙는 근거는 공룡 1건에서 공룡과 블록 2건이 됐습니다</td>
+<td valign="top">놀이를 물었는데 놀이 기록은 1건뿐입니다. 또래 기준의 일반 추천을 내고 카드에 "일반 추천" 이라고 적습니다. 맞춤인 척하지 않고, 되묻는 질문은 하나만 합니다</td>
+<td valign="top">같은 아이에게 저녁을 물었습니다. 계란 반찬이 서로 다른 3일에 적혀 있어서, 추천마다 이유와 사용한 기록이 붙습니다</td>
 </tr>
 </table>
 
