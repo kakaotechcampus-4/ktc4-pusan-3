@@ -1,6 +1,6 @@
 <div align="center">
 
-<a href="https://youtu.be/EAYOg7bfxaI"><img src="docs/assets/readme/intro-video.jpg" width="100%" alt="아이캐치 소개 영상 (42초) — 누르면 유튜브에서 재생됩니다"></a>
+https://github.com/user-attachments/assets/60247514-87d4-4a31-b63a-013ab363e54a
 
 <h1>아이캐치</h1>
 
