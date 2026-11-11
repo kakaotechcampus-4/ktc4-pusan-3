@@ -6,7 +6,9 @@
 - 해가 졌는지는 오늘만 본다.
 """
 
-from datetime import date, datetime
+import asyncio
+from datetime import date, datetime, timedelta
+from time import perf_counter
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -24,6 +26,7 @@ from app.agents.activity.store.ports import (
     UpstreamUnavailable,
     WeatherGrid,
 )
+from app.agents.activity.tools import outing
 from app.agents.activity.tools.outing import check_weather, day_of, days_of, lookup_weather
 from app.agents.activity.weather import AFTER_SUNSET, AIR_UNCHECKED, WEATHER_UNCHECKED
 
@@ -205,3 +208,46 @@ class TestCheckWeather:
         ctx = await context(InMemoryWeather(uv="4", fail=frozenset({"uv"})))
         brief = await check_weather(ctx, ctx.today)
         assert brief.outdoor_ok is True
+
+
+class SlowForecast(InMemoryWeather):
+    """예보만 오래 걸린다. 대기질 · 자외선 · 특보는 바로 온다."""
+
+    def __init__(self, delay: float) -> None:
+        super().__init__(uv="4")
+        self._delay = delay
+
+    async def forecast(self, *, grid: WeatherGrid, day: date) -> RawForecast:
+        await asyncio.sleep(self._delay)
+        return await super().forecast(grid=grid, day=day)
+
+
+class TestWeatherBudget:
+    """run 하나가 날씨를 기다리는 시간 전체에 상한이 있다 (#963). 첫 날씨 조회부터 센다."""
+
+    @pytest.fixture(autouse=True)
+    def short_budget(self, monkeypatch):
+        monkeypatch.setattr(outing, "WEATHER_BUDGET_S", 0.3)
+        monkeypatch.setattr(outing, "WEATHER_BUDGET_FAR_S", 0.6)
+
+    async def test_예보가_상한을_넘기면_그날은_확인하지_못했다로_끝낸다(self):
+        ctx = await context(SlowForecast(5))
+        started = perf_counter()
+        brief = await check_weather(ctx, ctx.today)
+        assert perf_counter() - started < 1
+        assert WEATHER_UNCHECKED in brief.notices
+
+    async def test_뒤의_조회는_남은_시간만_기다린다(self):
+        # 사전 조회가 상한을 다 쓰면 이어 부른 조회는 기다리지 않는다
+        # (따로 기다리면 0.6 초를 넘는다)
+        ctx = await context(SlowForecast(5))
+        started = perf_counter()
+        await check_weather(ctx, ctx.today)
+        result = await lookup(ctx, DayLabel.TOMORROW)
+        assert perf_counter() - started < 0.5
+        assert result.error["code"] == ErrorCode.UPSTREAM_ERROR
+
+    async def test_3일_이상_뒤의_날은_중기예보까지_기다릴_시간을_더_둔다(self):
+        ctx = await context(SlowForecast(0.45))
+        far = await check_weather(ctx, ctx.today + timedelta(days=3))
+        assert WEATHER_UNCHECKED not in far.notices

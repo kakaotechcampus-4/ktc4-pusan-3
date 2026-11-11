@@ -66,6 +66,8 @@ class ActivityRunState:
     events_unavailable: bool = False
     # 행사 조회에서 앞 턴에 보여 준 행사를 빼고 남은 것을 줬다 (`agent._events_notice` 의 문구)
     events_skipped_shown: bool = False
+    # 첫 날씨 조회 시각(`time.perf_counter` 기준). run 하나의 날씨 대기 합을 여기서 센다 (#963)
+    weather_started: float | None = None
     # run 마감 시각(`time.perf_counter` 기준, `DomainTask.deadline`). 행사 일정 읽기가 남은
     # 시간만큼만 기다린다. None 이면 마감을 모른다(테스트 · eval)
     deadline: float | None = None

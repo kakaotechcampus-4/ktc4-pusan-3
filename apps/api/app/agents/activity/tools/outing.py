@@ -174,6 +174,25 @@ def dark_now(context: ActivityContext) -> bool:
     return _after_sunset(context, context.today)
 
 
+# run 하나가 날씨를 기다리는 시간 전체의 상한(초, #963). 첫 날씨 조회부터 세고, 뒤의 조회는 남은
+# 시간만 기다린다 — 사전 조회 · `lookup_weather` · 지역 재조회가 따로 기다려 20초 밖으로
+# 밀리지 않게.
+# 3일 이상 뒤의 날은 단기예보 실패 → 중기예보로 이어 부르므로(약 9초) 더 둔다. 넘긴 조회는 실패와
+# 같다("확인하지 못했어요"). 끊겨도 단기예보 조회는 `Inflight` 의 shield 라 캐시는 채운다
+WEATHER_BUDGET_S = 7.0
+WEATHER_BUDGET_FAR_S = 9.0
+_FAR_DAYS = 3
+
+
+def _weather_remaining(context: ActivityContext, day: date) -> float:
+    now = perf_counter()
+    if context.state.weather_started is None:
+        context.state.weather_started = now
+    far = (day - context.today).days >= _FAR_DAYS
+    budget = WEATHER_BUDGET_FAR_S if far else WEATHER_BUDGET_S
+    return context.state.weather_started + budget - now
+
+
 async def check_weather(context: ActivityContext, day: date) -> WeatherBrief:
     """그날의 야외 판정. run() 의 사전 조회와 `lookup_weather` 가 같이 쓴다.
 
@@ -194,11 +213,12 @@ async def check_weather(context: ActivityContext, day: date) -> WeatherBrief:
         return not_asked()
 
     today = day == context.today
+    left = _weather_remaining(context, day)
     forecast, air, uv, advisories = await asyncio.gather(
-        _or_none(weather.forecast(grid=grid, day=day)),
-        _or_none(weather.air_quality(grid=grid)) if today else _none(),
-        _or_none(weather.uv(grid=grid, day=day)),
-        _or_none(weather.advisories(grid=grid)),
+        _or_none(weather.forecast(grid=grid, day=day), timeout=left),
+        _or_none(weather.air_quality(grid=grid), timeout=left) if today else _none(),
+        _or_none(weather.uv(grid=grid, day=day), timeout=left),
+        _or_none(weather.advisories(grid=grid), timeout=left),
     )
     return judge_weather(
         forecast=read_forecast(forecast) if forecast is not None else None,
@@ -767,11 +787,19 @@ def _origin(
     return area.location
 
 
-async def _or_none(call: Awaitable[_T]) -> _T | None:
-    """조회 하나의 실패를 None 으로. 다른 예외는 삼키지 않는다."""
+async def _or_none(call: Awaitable[_T], *, timeout: float | None = None) -> _T | None:
+    """조회 하나의 실패를 None 으로. 다른 예외는 삼키지 않는다.
+
+    timeout 을 주면 그 시간을 넘긴 조회도 실패로 본다 — run 의 날씨 상한(#963).
+    """
     try:
-        return await call
+        if timeout is None:
+            return await call
+        return await asyncio.wait_for(call, max(timeout, 0.0))
     except UpstreamUnavailable:
+        return None
+    except TimeoutError:
+        logger.info("날씨 조회가 run 상한 안에 끝나지 않았다 — 확인하지 못함으로 둔다")
         return None
 
 
