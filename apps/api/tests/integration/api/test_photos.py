@@ -285,6 +285,15 @@ async def test_보호자가_고친_시각으로_저장한다(
     assert row.all_day is False
 
 
+async def test_읽은_결과에_사진을_받은_날을_싣는다(db_client, bearer, cid, key_set, monkeypatch):
+    # 화면은 오늘을 스스로 정하지 않는다. 보호자가 고치기에서 날짜를 고친 항목이 지났는지를
+    # `past` 를 정한 그 날(사진을 받은 한국 날짜)과 견준다 (#965 검토)
+    headers, _ = bearer
+    _, parsed = await _upload(db_client, headers, cid, monkeypatch, _reading())
+
+    assert parsed["today"] == datetime.now(KST).date().isoformat()
+
+
 async def test_읽은_시각과_마감을_화면으로_보낸다(db_client, bearer, cid, key_set, monkeypatch):
     headers, _ = bearer
     _, parsed = await _upload(db_client, headers, cid, monkeypatch, _reading())

@@ -582,7 +582,8 @@ def photo_job(run: PhotoRun, *, data: bytes, received_at: datetime, declared_lan
             channel.publish(sse.failed_event("timeout", ""))
             return
         run.reading = reading
-        entries = build_entries(run, reading, today=received_at.astimezone(KST).date())
+        today = received_at.astimezone(KST).date()
+        entries = build_entries(run, reading, today=today)
         if entries:
             # 화면이 확인 화면을 받는 순간 저장을 누를 수 있다 — 그 전에 표에 넣는다
             await keep(run)
@@ -594,8 +595,18 @@ def photo_job(run: PhotoRun, *, data: bytes, received_at: datetime, declared_lan
         # 무엇을 찍었는지는 찍은 사람이 안다. 서버가 추측해 덮지 않으므로 고른 값을 되돌린다
         channel.publish(("lane", {"guess": declared_lane, "confidence": 1.0}))
         channel.publish(("step", {"index": 2, "total": 2, "label": "읽은 것을 정리하고 있어요"}))
+        # `today` 는 `past` 를 정한 그 날이다. 보호자가 고치기에서 날짜를 고치면 `past` 가 낡는데,
+        # 화면은 오늘을 스스로 정하지 않는다 — 고친 날짜가 지났는지를 이 값과 견준다 (#965 검토)
         channel.publish(
-            ("parsed", {"raw_text": reading.notice.raw_text, "entries": entries, "tags": []})
+            (
+                "parsed",
+                {
+                    "raw_text": reading.notice.raw_text,
+                    "entries": entries,
+                    "tags": [],
+                    "today": today.isoformat(),
+                },
+            )
         )
         channel.publish(("done", {"run_id": channel.run_id, "model_calls": 1}))
 

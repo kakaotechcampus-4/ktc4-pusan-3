@@ -252,6 +252,55 @@ export function offBecausePast(entry: PhotoEntry): boolean {
 }
 
 /**
+ * 확인이 필요했던 항목을 보호자가 시트에서 **처음 확인한 순간** "캘린더에 넣기" 를 켜는가.
+ *
+ * 🚨 **처음부터 잘 읽은 일정(`startsChecked`)과 같은 조건이다.** 확인이 필요한 항목을 처음에 켜 두지 않는
+ *    까닭은 하나였다 — 확인 전에는 저장이 그 항목을 받지 않는다. 확인하면 그 까닭이 없어진다.
+ *    한동안 확인한 뒤에도 꺼 두었는데, 확인한 줄은 접힌 "잘 읽었어요" 로 옮겨 가서 꺼진 체크가 보이지 않았다.
+ *    보호자는 넣었다고 믿고 저장했고 일정은 캘린더에 없었다.
+ * 🚨 **넣는 값은 시트에서 확인한 값이다** (`plan`). `startsChecked` 는 읽은 값(`initialPlan`)으로 보지만
+ *    여기서는 방금 보호자가 고른 날짜 · 시각으로 잠기는지 본다.
+ * 🚨 **할 일은 켜지 않는다** — 회신 마감을 일정으로 넣을지는 보호자가 고른다 (`startsChecked` 와 같다).
+ * 🚨 **켜는 것은 넣는 것이 아니다.** 넣는 것은 맨 아래 버튼이고, 그 위에 무엇이 들어가는지 목록이 선다.
+ * 🚨 처음 확인할 때 한 번만 본다. 이미 확인한 줄을 다시 고칠 때는 켜지 않는다 — 보호자가 끈 것을
+ *    되살리지 않는다 (`photo-review.tsx` 의 `saveEntry`).
+ */
+export function checkedOnConfirm(entry: PhotoEntry, plan: EventPlan): boolean {
+  return (
+    entry.kind === "event" &&
+    entryDateRole(entry) === "start" &&
+    entry.date !== null &&
+    !entry.needs_review &&
+    !entry.past &&
+    planLocks(entry, plan).length === 0
+  );
+}
+
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * 방금 확인한 항목이 **지난 일정인가.** `before` 는 확인하기 전, `after` 는 시트에서 확인한 값이다.
+ *
+ * 🚨 **서버의 `past` 는 처음 읽은 날짜의 판정이다.** 날짜를 못 읽은 항목은 `false` 로 오고, 보호자가 날짜를
+ *    고치면 낡는다. 그대로 쓰면 지난 날짜를 넣은 일정이 켜지고, 지난 일정으로 읽힌 항목은 앞날로 고쳐도
+ *    꺼진 채 남는다 (#965 검토).
+ * 🚨 **날짜를 고치지 않았으면 서버 판정 그대로다.** 여러 날 일정의 끝날까지 본 판정이라 화면이 다시 정하지 않는다.
+ * 🚨 **고쳤으면 서버가 보낸 "사진을 받은 날"(`today`)과 글자로 견준다.** 화면은 오늘을 스스로 정하지 않는다 —
+ *    `past` 를 정한 그 날을 서버가 함께 보낸다 (`ParsedEvent.today`). 같은 모양(`YYYY-MM-DD`)의 두 글자를
+ *    견주는 것이라 날짜 계산이 아니다. 날짜를 고치면 저장되는 것은 그날 하루라 끝날은 보지 않는다.
+ * 🚨 `today` 가 없으면(이 칸이 없던 서버) 지났다고 하지 않는다 — 모르는 것을 지났다고 말하지 않는다.
+ */
+export function pastOnConfirm(
+  before: PhotoEntry,
+  after: PhotoEntry,
+  today: string | null | undefined,
+): boolean {
+  if (after.date === before.date) return after.past === true;
+  if (after.date === null || !today || !DAY.test(today) || !DAY.test(after.date)) return false;
+  return after.date < today;
+}
+
+/**
  * 지금 넣을 수 없는 까닭. 비어 있으면 넣을 수 있다.
  *
  * 🚨 **막는 것이 여럿이면 전부 말한다** (초안 카드와 같은 규칙). 하나씩 말하면 보호자가 날짜를 채운 뒤에야
