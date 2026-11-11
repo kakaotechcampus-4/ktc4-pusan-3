@@ -2,53 +2,142 @@
 
 <img src="docs/assets/readme/banner.png" width="100%" alt="아이캐치 — 육아를 가장 많이 아는 AI가 아니라, 우리 아이를 가장 오래 알아온 AI">
 
+**한 줄만 남기면, 우리 아이에게 맞는 다음 할 일로 돌아오는 육아 비서**
+
 <a href="https://play.google.com/store/apps/details?id=kr.ai.icatch"><img alt="Google Play 에서 받기" src="https://play.google.com/intl/en_us/badges/static/images/badges/ko_badge_web_generic.png" height="80"></a>
 
 [웹에서 바로 쓰기](https://icatch.ai.kr) · [소개 영상 (42초)](https://youtu.be/EAYOg7bfxaI) · [개발 문서](https://kakaotechcampus-4.github.io/ktc4-pusan-3/) · [API 문서](https://api.icatch.ai.kr/docs)
 
-| ① 한 줄 남기면 | ② 나눠서 저장하고 | ③ 근거와 함께 추천하고 | ④ 중요한 것만 묻습니다 |
-| :---: | :---: | :---: | :---: |
-| <img src="docs/assets/readme/01-write.png" width="200" alt="홈 화면에서 한 줄을 적는 모습"> | <img src="docs/assets/readme/02-saved.png" width="200" alt="한 줄이 기록 두 건으로 저장된 화면"> | <img src="docs/assets/readme/03-suggest.png" width="200" alt="사용한 기록 3건이 달린 저녁 추천"> | <img src="docs/assets/readme/04-approve.png" width="200" alt="일정으로 만들지 묻는 화면"> |
-
-<sub>화면은 가짜 데이터로 찍었습니다 · 카카오테크 캠퍼스 4기 2단계 · 부산대 3팀</sub>
+<sub>카카오테크 캠퍼스 4기 2단계 · 부산대 3팀</sub>
 
 </div>
 
 <!-- 시연 영상(제출물)이 올라오면 위 링크 줄의 "소개 영상" 뒤에 시연 영상 링크를 더한다 -->
 
-## 왜 만들었나
+## 육아 기록은 귀찮고, 적어도 돌아오는 게 없었습니다
 
-부족한 것은 정보가 아니라 **연결**이라고 봤습니다.
+아이를 키우면 매일 적어 둘 일이 생깁니다. 무엇을 먹었는지, 어디가 안 좋았는지, 뭘 하고 놀았는지.
+그런데 기록 앱은 오래 쓰기 어렵습니다. 두 가지가 불편했습니다.
 
-| | 지금 보호자는 | 아이캐치는 |
+| | 불편 | 아이캐치는 |
 | :---: | --- | --- |
-| **정보** | 알림장 · 일정 · 식사 · 아이의 반응이 흩어져 있다 | 한 줄과 사진을 받아 아이의 기억으로 쌓는다 |
-| **연결** | 필요할 때마다 직접 찾아서 잇는다 | 쌓인 기억을 근거로 대신 잇는다 |
-| **결정** | 지금 무엇이 중요한지, 다음에 뭘 할지 혼자 정한다 | 다음에 할 일을 준비해 두고 확인만 받는다 |
-| **습관** | 육아 앱을 쓰려면 따로 정리해야 한다 | 새 습관이 필요 없다. 가족에게 하던 그 한 줄이면 된다 |
+| **적을 때** | 식사 · 수면 · 건강 칸을 골라 항목을 하나씩 채워야 한다 | 가족에게 말하듯 **한 줄**만 남긴다. 나눠 담는 일은 AI 가 한다 |
+| **적은 뒤** | 기록이 쌓이기만 하고 쓸 데가 없다 | 쌓인 기록이 **우리 아이에게 맞는 추천**이 되어 돌아온다 |
+
+보호자는 이미 매일 아이 이야기를 하고 있습니다. 배우자에게, 가족 채팅방에.
+아이캐치는 새 습관을 요구하지 않고 그 한 줄을 받는 곳만 바꿉니다.
+그리고 받은 한 줄을 근거로 저녁 메뉴 · 주말 놀이 · 일정 같은 다음 할 일을 준비해 둡니다.
+
+## 한 줄이 추천이 되기까지
+
+한 줄을 처음부터 끝까지 따라가 봅니다. 화면의 아이와 기록은 가짜 데이터입니다.
+
+<table>
+<tr>
+<td width="250" align="center"><img src="docs/assets/readme/01-write.png" width="220" alt="홈 화면 아래 입력 칸에 한 줄을 적은 모습"></td>
+<td>
+
+**① 말하듯 한 줄 적습니다**
+
+> 저녁에 계란말이 또 먹었어. 어젯밤엔 자다가 기침 몇 번 했어
+
+칸을 고르지 않습니다. 식사인지 건강인지, 오늘 일인지 어제 일인지 나누지 않고 생각나는 대로 적습니다.
+
+말로 해도 되고, 알림장이나 식단표는 사진으로 찍으면 됩니다.
+
+</td>
+</tr>
+<tr>
+<td width="250" align="center"><img src="docs/assets/readme/02-saved.png" width="220" alt="한 줄이 식사 기록 1건과 건강 기록 1건으로 저장된 화면"></td>
+<td>
+
+**② AI 가 나눠서 저장합니다**
+
+한 줄이 기록 두 건이 됐습니다. 계란말이는 오늘의 식사 기록으로, 기침은 어제의 건강 기록으로 들어갑니다.
+
+그 아래 **"기억이 자랐어요"** 가 이 앱의 중심입니다. 계란 반찬을 찾은 날이 서로 다른 3일이 됐다는 뜻입니다.
+한 번 적었다고 "계란을 좋아한다" 고 정하지 않습니다. 같은 날 세 번 적어도 하루로 셉니다.
+
+</td>
+</tr>
+<tr>
+<td width="250" align="center"><img src="docs/assets/readme/03-suggest.png" width="220" alt="사용한 기록 3건이 달린 저녁 추천 카드"></td>
+<td>
+
+**③ 기록이 추천으로 돌아옵니다**
+
+저장 화면의 "오늘 저녁 같이 정하기" 를 누르거나 "오늘 저녁 뭐 해 주지?" 라고 적으면, 쌓인 기록에서 답을 찾습니다.
+
+> 계란말이에 시금치를 조금 섞어 보세요
+
+추천마다 **왜 이것인지**와 **어떤 기록을 썼는지**가 붙습니다. 이 카드는 기록 3건을 썼습니다.
+적어 둔 것이 여기서 쓰입니다. 근거가 보이니, 틀린 추천은 틀렸다고 알아볼 수 있습니다.
+
+</td>
+</tr>
+<tr>
+<td width="250" align="center"><img src="docs/assets/readme/04-approve.png" width="220" alt="찾은 일정을 캘린더에 넣을지 묻는 화면"></td>
+<td>
+
+**④ 중요한 것만 묻습니다**
+
+적은 말에서 일정을 찾으면 초안을 만들어 보여 줍니다. 넣기 전까지는 캘린더에 들어가지 않습니다.
+
+기록은 묻지 않고 바로 저장하고, 일정처럼 되돌리기 어려운 것만 확인을 받습니다.
+확인이 많아지면 한 줄로 줄인 보람이 없기 때문입니다.
+
+</td>
+</tr>
+</table>
 
 <div align="center">
-<a href="https://youtu.be/EAYOg7bfxaI"><img src="https://img.youtube.com/vi/EAYOg7bfxaI/maxresdefault.jpg" width="560" alt="아이캐치 소개 영상 (42초)"></a>
-<br><sub>▶ 소개 영상 (42초)</sub>
+
+| 적기도 귀찮은 날에는 사진으로 | 지나간 날은 캘린더에서 |
+| :---: | :---: |
+| <img src="docs/assets/readme/05-photo.png" width="200" alt="알림장 사진을 읽어 일정과 준비물로 정리한 화면"> | <img src="docs/assets/readme/06-calendar.png" width="200" alt="일정과 기록이 날짜별로 모인 캘린더"> |
+| 알림장 · 식단표를 읽어 먼저 보여 주고<br>확인한 것만 저장합니다 | 승인한 일정과 그날의 기록이<br>날짜별로 모입니다 |
+
+<a href="https://youtu.be/EAYOg7bfxaI"><img src="https://img.youtube.com/vi/EAYOg7bfxaI/maxresdefault.jpg" width="480" alt="아이캐치 소개 영상 (42초)"></a>
+<br><sub>▶ 움직이는 모습은 소개 영상으로 (42초)</sub>
+
 </div>
 
-## 무엇을 하나
+## 기록이 쌓일수록 추천이 달라집니다
 
-| 사진으로 적기 | 캘린더 | 기록이 없을 때 |
-| :---: | :---: | :---: |
-| <img src="docs/assets/readme/05-photo.png" width="200" alt="알림장 사진을 읽어 일정과 준비물로 정리한 화면"> | <img src="docs/assets/readme/06-calendar.png" width="200" alt="일정과 기록이 날짜별로 모인 캘린더"> | <img src="docs/assets/readme/07-general.png" width="200" alt="일반 추천이라고 표시된 놀이 추천"> |
-| 알림장 · 식단표를 읽어<br>일정과 준비물로 정리 | 승인한 일정과<br>그날의 기록을 날짜별로 | 맞춤인 척하지 않고<br>일반 추천이라고 표시 |
+적은 만큼 돌아와야 계속 적게 됩니다. 그래서 추천은 쌓인 기록에 따라 다르게 나갑니다.
 
-| 기능 | 한 줄로 |
-| --- | --- |
-| **한 줄 기록** | "저녁에 계란말이 또 먹었어, 어젯밤엔 기침 몇 번 했어" → 식사 기록 1건 + 건강 기록 1건 |
-| **사진으로 적기** | 읽은 내용을 먼저 보여 주고, 확인한 것만 저장한다 |
-| **근거가 달린 추천** | 식사 · 놀이 · 교육에서 다음 할 일을 제안하고, 어떤 기록 몇 건을 썼는지 보여 준다 |
-| **기록 고치기** | "이번만 그랬어요" · "잘못된 기록" 으로 고치면 기억이 바뀐다 |
+<table>
+<tr>
+<td width="250" align="center"><img src="docs/assets/readme/07-general.png" width="220" alt="일반 추천이라고 표시된 놀이 추천 카드"></td>
+<td>
 
-## AI 에게 맡기지 않은 것
+**기록이 아직 없을 때** — 또래 기준의 일반 추천을 냅니다. 맞춤인 척하지 않습니다. 카드에 "일반 추천" 이라고 적고, 쌓인 기록 건수를 그대로 보여 줍니다.
 
-기능을 붙일 때마다 "이 일을 누가 하는가" 부터 정했습니다. 질문은 두 개입니다.
+**한두 번 적혔을 때** — 근거로는 쓰지만 아이의 성향으로 정하지 않습니다.
+
+**서로 다른 날에 반복됐을 때** — 확정된 기억이 되어 추천의 근거로 먼저 쓰입니다.
+
+**오래됐을 때** — 6개월이 지난 관심은 혼자서는 근거가 되지 못합니다.
+
+**보호자가 고쳤을 때** — "이번만 그랬어요" · "잘못된 기록" 에 따라 기억이 바뀝니다.
+
+</td>
+</tr>
+</table>
+
+```mermaid
+flowchart LR
+    A["💬 한 줄 · 사진"] --> B["기록"]
+    B --> C["기억<br/>반복되면 확정"]
+    C --> D["근거가 달린 추천"]
+    D -. "고치면 기억이 바뀐다" .-> C
+    D -. "다음 한 줄" .-> A
+```
+
+## 그래도 AI 에게 맡기지 않은 것이 있습니다
+
+저녁 메뉴는 틀려도 한 끼입니다. 알레르기와 일정은 그렇지 않습니다.
+그래서 기능을 붙일 때마다 "이 일을 누가 하는가" 부터 정했습니다. 질문은 두 개입니다.
 
 ```mermaid
 flowchart LR
@@ -58,26 +147,29 @@ flowchart LR
     Q2 -- "아니오" --> L["🤖 LLM"]
 ```
 
-| 누가 | 무엇을 | 예를 들면 |
+| 누가 | 무엇을 | 위의 한 줄에서는 |
 | :---: | --- | --- |
-| 🙋<br>**사람** | 캘린더에 넣기 · 건강과 알레르기 기록 확정 · 대화로 지울 때의 삭제 확정 | Agent 는 일정 초안까지만 만들고, 승인 전에는 저장하지 않는다 |
-| ⚙️<br>**코드** | 알레르기 필터, 날짜 · 나이 계산, 일정 충돌, 기억의 승격, 추천 근거의 순서 | 알레르기 조회에 실패하면 "없음" 으로 넘기지 않고 추천 없이 닫는다 |
-| 🤖<br>**LLM** | 한 줄에서 관찰 뽑기, 의도 분류, 식사 · 놀이 · 교육 후보 만들기 | "땅콩 알레르기 있어" 라고 말해도 저장하지 않고 직접 입력 화면으로 안내한다 |
+| 🙋<br>**사람** | 캘린더에 넣기 · 건강과 알레르기 기록 확정 · 대화로 지울 때의 삭제 확정 | Agent 는 일정 초안까지만 만든다. 승인 전에는 저장하지 않는다 |
+| ⚙️<br>**코드** | 알레르기 필터, 날짜 · 나이 계산, 일정 충돌, 기억의 승격, 추천 근거의 순서 | 계란말이 추천은 알레르기 필터를 지난 뒤에만 나온다. 알레르기를 읽지 못하면 "없음" 으로 넘기지 않고 추천 없이 닫는다 |
+| 🤖<br>**LLM** | 한 줄에서 관찰 뽑기, 의도 분류, 식사 · 놀이 · 교육 후보 만들기 | 한 줄을 식사와 건강으로 나눈다. 기침은 적어 둘 뿐 무슨 병인지 말하지 않는다 |
 
 > [!IMPORTANT]
 > 진단하지 않습니다. 한 번의 관찰로 아이의 성향을 확정하지 않습니다. 근거가 없으면 일반 추천이라고 밝힙니다.
 
 → 규칙 전체: [CLAUDE.md §2 · §3](CLAUDE.md) · 기록 저장에는 왜 확인을 받지 않는가: [설계 결정 §7](https://kakaotechcampus-4.github.io/ktc4-pusan-3/overview/decisions-v1/)
 
-## 어떻게 움직이나
+## 어떻게 만들었나
+
+### 한 줄이 지나가는 길
 
 ```mermaid
 flowchart TD
-    IN["보호자의 한 줄 · 사진"] --> SUP["① 인식 · Supervisor<br/>안전 사전검사 → 의도 분류"]
-    SUP --> MEM["② 기록 · Memory Agent<br/>관찰 N건으로 나눠 바로 저장"]
-    MEM -. "저장 뒤" .-> CUR["Curator<br/>같은 대상 묶기 · 반복 집계 · 승격"]
-    MEM --> DOM["③ 행동 · 도메인 Agent 최대 2개<br/>food · activity · growth · health"]
-    DOM --> OUT["④ 결과<br/>추천 + 사용한 기록 N건"]
+    IN["💬 저녁에 계란말이 또 먹었어. 어젯밤엔 자다가 기침 몇 번 했어"]
+    IN --> SUP["① 인식 · Supervisor<br/>안전 사전검사(규칙) → 의도 분류"]
+    SUP --> MEM["② 기록 · Memory Agent<br/>식사 1건 + 건강 1건으로 나눠 바로 저장"]
+    MEM -. "저장 뒤" .-> CUR["Curator<br/>같은 대상끼리 묶고, 서로 다른 날수를 세어 승격"]
+    MEM -- "요청이 있으면" --> DOM["③ 행동 · 도메인 Agent 최대 2개<br/>기억을 직접 검색 → 후보 → 알레르기 필터(코드)"]
+    DOM --> OUT["④ 결과<br/>추천 + 추천 이유 + 사용한 기록 N건"]
     OUT --> GATE{"되돌릴 수 없는가?"}
     GATE -- "예" --> HUMAN["🙋 사람이 승인"]
     GATE -- "아니오" --> SHOW["바로 표시"]
@@ -91,6 +183,34 @@ flowchart TD
 
 → Agent 별 설계 · 프롬프트 · 측정: [개발 문서 사이트](https://kakaotechcampus-4.github.io/ktc4-pusan-3/)
 
+### 돌아가는 곳
+
+<div align="center">
+
+![Next.js](https://img.shields.io/badge/Next.js_16-000000?logo=nextdotjs&logoColor=white)
+![React](https://img.shields.io/badge/React_19-20232A?logo=react&logoColor=61DAFB)
+![Expo](https://img.shields.io/badge/Expo_WebView-1C2024?logo=expo&logoColor=white)
+![Python](https://img.shields.io/badge/Python_3.12-3776AB?logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL_18_+_pgvector-4169E1?logo=postgresql&logoColor=white)
+![Redis](https://img.shields.io/badge/Redis_7-DC382D?logo=redis&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker_Compose-2496ED?logo=docker&logoColor=white)
+![Caddy](https://img.shields.io/badge/Caddy_2-1F88C0?logo=caddy&logoColor=white)
+![GitHub Actions](https://img.shields.io/badge/GitHub_Actions-2088FF?logo=githubactions&logoColor=white)
+
+</div>
+
+<img src="docs/assets/readme/architecture.png" alt="아이캐치 구성도 — 보호자의 웹과 앱이 Caddy 를 거쳐 web 과 api 로 들어가고, api 는 PostgreSQL · Redis · S3 · LLM API · 카카오 로그인 · 공공 데이터 · FCM 을 쓴다. 배포는 GitHub Actions 가 Systems Manager 로 명령을 보낸다.">
+
+| 고른 것 | 왜 |
+| --- | --- |
+| 모바일은 **웹뷰 껍데기** | 화면이 두 벌이 되면 절대 규칙도 두 곳에서 지켜야 한다 |
+| 벡터 DB 를 따로 두지 않고 **PostgreSQL 한 곳** | 여섯 명이 10주에 운영할 인프라는 적을수록 좋다 |
+| 사진은 화면이 **S3 에 바로** 올린다 | 사진 본문이 API 서버를 거치지 않는다. 서버는 읽자마자 지운다 |
+| 배포는 **OIDC + Systems Manager** | 저장소에 서버 열쇠를 두지 않는다 |
+
+→ [배포 · 운영 문서](https://kakaotechcampus-4.github.io/ktc4-pusan-3/ops/deploy-v1/)
+
 ## 만들면서 부딪힌 것
 
 | 부딪힌 것 | 원인 | 한 일 | 결과 |
@@ -103,7 +223,9 @@ flowchart TD
 
 → 계기 · 비교 · 대가까지: [설계 결정 9개](https://kakaotechcampus-4.github.io/ktc4-pusan-3/overview/decisions-v1/) · [워커 2개로 돌려 본 기록](https://kakaotechcampus-4.github.io/ktc4-pusan-3/ops/workers-2-check-v1/)
 
-## 숫자로 본 품질
+## 정말 그렇게 움직이는지 쟀습니다
+
+"근거를 단다" · "알레르기는 코드가 막는다" 는 말은 재 봐야 압니다. 실제 모델로 돌린 결과입니다.
 
 <table>
 <tr>
@@ -123,7 +245,7 @@ flowchart TD
 > - 추천 카드의 채택 · 평가는 아직 아이의 성향에 반영되지 않습니다.
 > - 복약 기록은 스토어 정책 때문에 닫아 두었고, Health Agent 는 추천 없이 기록과 안내만 합니다.
 
-## 실행 · 테스트 · 배포
+## 직접 돌려 보기
 
 필요한 것: Docker · Python 3.12 + [uv](https://docs.astral.sh/uv/) · Node + pnpm
 
@@ -156,36 +278,7 @@ flowchart LR
 
 → [배포 문서](https://kakaotechcampus-4.github.io/ktc4-pusan-3/ops/deploy-v1/)
 
-## 무엇으로 만들었나
-
-<div align="center">
-
-![Next.js](https://img.shields.io/badge/Next.js_16-000000?logo=nextdotjs&logoColor=white)
-![React](https://img.shields.io/badge/React_19-20232A?logo=react&logoColor=61DAFB)
-![Expo](https://img.shields.io/badge/Expo_WebView-1C2024?logo=expo&logoColor=white)
-![Python](https://img.shields.io/badge/Python_3.12-3776AB?logo=python&logoColor=white)
-![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
-![PostgreSQL](https://img.shields.io/badge/PostgreSQL_18_+_pgvector-4169E1?logo=postgresql&logoColor=white)
-![Redis](https://img.shields.io/badge/Redis_7-DC382D?logo=redis&logoColor=white)
-![Docker](https://img.shields.io/badge/Docker_Compose-2496ED?logo=docker&logoColor=white)
-![Caddy](https://img.shields.io/badge/Caddy_2-1F88C0?logo=caddy&logoColor=white)
-![GitHub Actions](https://img.shields.io/badge/GitHub_Actions-2088FF?logo=githubactions&logoColor=white)
-
-</div>
-
-<img src="docs/assets/readme/architecture.png" alt="아이캐치 구성도 — 보호자의 웹과 앱이 Caddy 를 거쳐 web 과 api 로 들어가고, api 는 PostgreSQL · Redis · S3 · LLM API · 카카오 로그인 · 공공 데이터 · FCM 을 쓴다. 배포는 GitHub Actions 가 Systems Manager 로 명령을 보낸다.">
-
-| 고른 것 | 왜 |
-| --- | --- |
-| 백엔드와 AI 를 **한 서비스**로 | 저장이 검색보다 먼저여야 한다. 나누면 그 경로마다 네트워크 왕복이 생긴다 |
-| 모바일은 **웹뷰 껍데기** | 화면이 두 벌이 되면 절대 규칙도 두 곳에서 지켜야 한다 |
-| 벡터 DB 를 따로 두지 않고 **PostgreSQL 한 곳** | 여섯 명이 10주에 운영할 인프라는 적을수록 좋다 |
-| 사진은 화면이 **S3 에 바로** 올린다 | 사진 본문이 API 서버를 거치지 않는다. 서버는 읽자마자 지운다 |
-| 배포는 **OIDC + Systems Manager** | 저장소에 서버 열쇠를 두지 않는다 |
-
-→ [배포 · 운영 문서](https://kakaotechcampus-4.github.io/ktc4-pusan-3/ops/deploy-v1/)
-
-## 팀
+## 만든 사람들
 
 <table>
 <tr>
