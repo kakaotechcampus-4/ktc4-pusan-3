@@ -7,12 +7,14 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Sequence
 from datetime import date, datetime, time, timedelta
+from time import perf_counter
 from typing import Any, TypeVar
 
 from app.agents.activity.areas import (
     find_area,
     find_province,
     leads_with_area,
+    mentions_area,
     named_area,
     said,
 )
@@ -31,7 +33,7 @@ from app.agents.activity.events import (
     read_event,
 )
 from app.agents.activity.result import ErrorCode, ToolResult, fail, ok
-from app.agents.activity.rules import shown_again
+from app.agents.activity.rules import asks_outing, shown_again
 from app.agents.activity.schemas.common import PlaceCategory
 from app.agents.activity.schemas.outing import (
     LookupScheduleArgs,
@@ -47,6 +49,7 @@ from app.agents.activity.store.ports import (
     PLACE_TOP_K,
     CoarseLocation,
     EventRow,
+    EventSchedule,
     ScheduleBlock,
     UpstreamUnavailable,
 )
@@ -85,6 +88,15 @@ DAY_START = time(8)
 DAY_END = time(20)
 # 끝 시각이 없는 일정이 차지한다고 보는 길이. 비는 시간을 넉넉히 잡지 않는 쪽으로 둔다 (잠정)
 OPEN_ENDED_BLOCK = timedelta(hours=1)
+
+# 일정 읽기(행사마다 모델 호출)를 기다리는 상한 · run 마감 전에 마지막 후보를 낼 몫 (잠정 — eval).
+# 11-10 실측: 캐시가 빈 첫 run 의 행사 조회 4 ~ 7초, 가장 느린 한 건이 시간을 정한다
+EVENT_READ_BUDGET_S = 4.0
+FINAL_TURN_RESERVE_S = 6.0
+# 미리 읽는 행사 — 오늘부터 이 날 수 안에 시작하는 것만 (주말 · 다음 주까지)
+PREFETCH_DAYS = 14
+# 상한을 넘겨 뒤에서 이어 가는 일정 읽기 — 끝날 때까지 붙든다(가비지로 사라지지 않게)
+_BACKGROUND: set["asyncio.Task[EventSchedule]"] = set()
 
 _PLACES = "search_nearby_places"
 _EVENTS = "search_events"
@@ -433,9 +445,15 @@ async def search_events(context: ActivityContext, args: SearchEventsArgs) -> Too
         for (distance, event), intro in zip(nearest, intros, strict=True)
         if intro is not None and age_allows(intro.age_limit, gate.stage.months)
     ]
-    found_schedules = await asyncio.gather(
-        *(schedules.schedule_of(event, today=context.today) for _, event, _ in allowed)
+    # 일정 읽기(모델 호출)는 상한 안에 끝난 행사만 이번에 쓴다 — 첫 run 이 20초를 넘지 않게.
+    # 못 끝낸 읽기는 멈추지 않고 이어서 캐시를 채운다(다음 run 부터 나온다)
+    found_schedules = await _read_schedules(
+        context, [event for _, event, _ in allowed], budget=_read_budget(context)
     )
+    # 상한에 걸려 이번에 못 쓴 행사 수 — 결과가 비었을 때 "더 없음" 과 "확인 중" 을 가른다
+    pending = found_schedules.count(None)
+    allowed = [found for found, schedule in zip(allowed, found_schedules, strict=True) if schedule]
+    found_schedules = [schedule for schedule in found_schedules if schedule]
     # 오늘 밤에 물었으면 운영 시간 원문에서 끝나는 시각을 읽어, 이미 끝난 행사는 오늘에서 뺀다.
     # 시각을 모르면 남긴다 — 화면에 "가기 전에 확인" 문구가 붙는다 (#800)
     local_now = context.now.astimezone(context.timezone).time()
@@ -457,6 +475,9 @@ async def search_events(context: ActivityContext, args: SearchEventsArgs) -> Too
     rows = [row for row in opened if open_on(row, _open_days(context, row.name, days))][
         :EVENT_TOP_K
     ]
+    if not rows and pending:
+        # 일정을 아직 읽는 중이라 빠졌다 — 행사가 없는 게 아니다 (#906 리뷰)
+        return _events_pending(context)
     if not rows and len(fresh) < len(found):
         # 보여 준 행사를 빼고 남은 것도 연령 · 일정으로 빠졌다 — 새 행사가 없는 것과 같다
         return _no_new_events(context)
@@ -488,6 +509,124 @@ def _event_order(context: ActivityContext, distance: int, event: Event) -> tuple
     if context.state.area is not None:
         return (tier, distance)
     return (0 if distance <= NEAR_EVENT_M else 1, tier, distance)
+
+
+def start_event_prefetch(context: ActivityContext, today_weather: Awaitable[WeatherBrief]) -> None:
+    """나들이를 물은 run 이면 날씨를 보는 동안 보호자 위치 근처 행사의 소개정보 · 일정 읽기를 뒤에서
+    시작한다 — 모델이 행사를 찾을 때(날씨 조회 · 모델 1회차 뒤, 약 5초)는 캐시에 있다.
+
+    날(주말)은 아직 모르므로 위치 근처에서 `PREFETCH_DAYS` 안에 열리는 행사를 행사 조회와 같은
+    순서(`_event_order`)로 `EVENT_TOP_K` 건만 읽는다. 관람 연령은 거르지 않는다 — 읽기만 하고
+    거르기는 행사 조회가 한다. 실패는 조용히 버린다 — 행사 조회가 다시 읽는다.
+
+    하지 않는 run (#906 리뷰)
+    - 이번 말에 나들이 낱말이 없다(`rules.asks_outing`) — 앞 턴은 보지 않는다
+    - 이번 말에 지역 이름이 있다 — 그 run 은 보호자 위치가 아니라 그 지역에서 찾는다
+    - 위치 · 행사 어댑터가 없다
+    일정 읽기(모델 호출)는 오늘 날씨를 받은 뒤에 시작하고, 오늘 바깥이 어려우면 하지 않는다.
+    """
+    events = context.ports.events
+    schedules = context.ports.event_schedules
+    origin = context.location
+    if events is None or schedules is None or origin is None:
+        return
+    said_now = context.state.original_texts or context.state.request_texts
+    if not asks_outing(said_now) or mentions_area(said_now):
+        return
+    task = asyncio.ensure_future(_prefetch(context, origin, today_weather))
+    _BACKGROUND.add(task)
+    task.add_done_callback(_settle)
+
+
+async def _prefetch(
+    context: ActivityContext, origin: CoarseLocation, today_weather: Awaitable[WeatherBrief]
+) -> None:
+    events = context.ports.events
+    schedules = context.ports.event_schedules
+    if events is None or schedules is None:
+        return
+    raws = await _or_none(events.events(ending_on_or_after=context.today))
+    if not raws:
+        return
+    horizon = context.today + timedelta(days=PREFETCH_DAYS)
+    near = [
+        (distance, event)
+        for event in (read_event(raw) for raw in raws)
+        if event is not None
+        and event.starts_on <= horizon
+        and (distance := distance_m(event, origin)) <= EVENT_MAX_RADIUS_M
+    ]
+    picked = [
+        event
+        for _, event in sorted(near, key=lambda pair: _event_order(context, *pair))[:EVENT_TOP_K]
+    ]
+    # 소개정보는 TourAPI 조회라 날씨와 같이 읽는다. 일정 읽기는 모델 호출이라 오늘 바깥이 될 때만
+    await asyncio.gather(*(_or_none(events.intro(content_id=event.content_id)) for event in picked))
+    try:
+        weather = await asyncio.shield(today_weather)
+    except Exception:  # noqa: BLE001 — 날씨를 모르면 미리 읽지 않는다. 행사 조회가 그때 읽는다
+        return
+    if not weather.outdoor_ok:
+        return
+    await asyncio.gather(
+        *(schedules.schedule_of(event, today=context.today) for event in picked),
+        return_exceptions=True,
+    )
+
+
+def _read_budget(context: ActivityContext) -> float:
+    """일정 읽기를 기다리는 시간. 기본 `EVENT_READ_BUDGET_S` 이고, run 마감이 가까우면 마지막 후보를
+    낼 몫(`FINAL_TURN_RESERVE_S`)을 남기고 그만큼만 기다린다. 마감을 모르면 기본값이다."""
+    deadline = context.state.deadline
+    if deadline is None:
+        return EVENT_READ_BUDGET_S
+    left = deadline - perf_counter() - FINAL_TURN_RESERVE_S
+    return max(0.0, min(EVENT_READ_BUDGET_S, left))
+
+
+async def _read_schedules(
+    context: ActivityContext, events: Sequence[Event], *, budget: float
+) -> list[EventSchedule | None]:
+    """행사마다 일정 — 상한 안에 못 읽은 행사는 None. 못 끝낸 읽기는 취소하지 않고 뒤에서 이어
+    간다(`_BACKGROUND` 가 붙든다) — 일정 캐시가 채워져 다음 run 은 기다리지 않는다."""
+    schedules = context.ports.event_schedules
+    if schedules is None or not events:
+        return []
+    tasks = [
+        asyncio.ensure_future(schedules.schedule_of(event, today=context.today)) for event in events
+    ]
+    if budget > 0:
+        await asyncio.wait(tasks, timeout=budget)
+    found: list[EventSchedule | None] = []
+    for task in tasks:
+        if task.done() and not task.cancelled() and task.exception() is None:
+            found.append(task.result())
+            continue
+        if not task.done():
+            _BACKGROUND.add(task)
+            task.add_done_callback(_settle)
+        found.append(None)
+    if any(schedule is None for schedule in found):
+        logger.info("행사 일정 읽기 상한 budget=%.1fs 못_읽음=%d", budget, found.count(None))
+    return found
+
+
+def _settle(task: "asyncio.Task[EventSchedule]") -> None:
+    _BACKGROUND.discard(task)
+    if not task.cancelled() and task.exception() is not None:
+        logger.warning("행사 일정 뒤 읽기 실패 error=%s", type(task.exception()).__name__)
+
+
+def _events_pending(context: ActivityContext) -> ToolResult:
+    """일정 읽기가 상한 안에 끝나지 않아 이번에 낼 행사가 없다 — "더 없음" 이 아니라 "확인 중" 이다.
+    읽기는 뒤에서 이어 가서 다음에 물으면 나온다."""
+    context.state.events_pending = True
+    return ok(
+        "query",
+        _EVENTS,
+        events=[],
+        message="행사 일정을 아직 확인하는 중이다. 다시 찾지 말고 이번에는 행사 없이 낸다.",
+    )
 
 
 def _no_new_events(context: ActivityContext) -> ToolResult:
