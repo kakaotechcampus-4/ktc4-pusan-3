@@ -104,6 +104,7 @@ DB 권한: Agent role에 **`daycare_meal` UPDATE/DELETE**(INSERT는 비부여) �
 - 레시피 행은 받지 않는다 — DB 는 `source` CHECK, 코드는 `RECIPE_SOURCES`(`store/ports.py`)로 막는다.
 - 운영 트래픽을 API에 직접 걸지 않는다. 매일 새벽 배치(FT-19) + 카탈로그에 없을 때(캐시 미스) 1회 — 그 1회는 Food 요청 중에 부르고, 저장은 어댑터가 한다.
 - 배치는 요청 중 조회와 **같은 규칙으로 행을 고른다**(`nutrition_source.pick_nutrition` — 품목대표 · 이름 정확히 일치 · 그룹 순서). 다르게 고르면 같은 메뉴가 배치 전후로 다른 영양값을 갖는다. **✅ 정함(10-13, #321 파트 2)** — 이 함수는 `app.core.nutrition_pick` 으로 내려왔다(배치·Agent 공용, apps/api/CLAUDE.md 레이어 경계). 배치는 받은 품목대표 행을 그대로 `nutrition_facts_by_key(rows)` 에 넘겨 `dict[menu_key, NutritionFacts]` 를 받는다 — 메뉴마다 직접 `pick_nutrition_row` 를 부를 필요가 없다. (#326 코멘트로 BE 에 전달 예정)
+- 급식표 사진 저장(`photo_run.meal_row`)만 `normalize_menu_key` 위에 괄호 안 음식 이름을 키로 하나 더 싣는다(`meal_menu_keys`) — [급식표 파이프라인 결정 ⑤](../../meal-plan/meal-plan-pipeline-v1.md).
 
 ### 1-1. `recipe_catalog` — 레시피 카탈로그 (추천 후보) · 재료명 정리 표
 

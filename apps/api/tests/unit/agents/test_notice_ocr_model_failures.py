@@ -38,7 +38,7 @@ class _MealReader:
     def __init__(self, error: Exception) -> None:
         self._error = error
 
-    def read(self, image: bytes, *, mime_type: str) -> None:
+    def read_parts(self, image: bytes, *, mime_type: str) -> None:
         raise self._error
 
 
