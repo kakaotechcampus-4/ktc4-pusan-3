@@ -203,7 +203,7 @@
 | subject | text | NOT NULL (임베딩·병합 판정 입력이라 값이 항상 있어야 함). 정규화 대상 문자열 |
 | embedding | vector(1536) | nullable, `subject`를 임베딩한 벡터 |
 | affinity_id | uuid | nullable. FK → `profile_affinity.id`, `ON DELETE SET NULL`. 소속 프로필 및 집계 키 |
-| polarity | smallint | NOT NULL, DEFAULT `0`, `-1 / 0 / 1`만 허용. `0` 은 좋다·싫다가 없는 기록이다 — Curator 가 Profile 에 연결하지 않는다 (#287) |
+| polarity | smallint | NOT NULL, DEFAULT `0`, `-1 / 0 / 1`만 허용. `0` 은 좋다·싫다가 없는 기록이다 — Curator 가 Profile 에 연결하지 않는다 (#287). CHECK `observation_polarity` |
 | strong_signals | text[] | NOT NULL, DEFAULT `'{}'`. 허용값: `resistance_to_redirect`, `self_initiated`, `comparative_choice`, `asks_questions`, `role_extension` |
 | confidence_source | text | NOT NULL. `institution_notice / parent_direct / parent_hedged / parent_hearsay` |
 | status | enum | NOT NULL, DEFAULT `active`. `active / stand_alone / deleted` (`inactive` 는 더 쓰지 않는다 — 아래) |
@@ -326,7 +326,7 @@
 | embedding | vector(1536) | nullable, `merge_key`를 임베딩한 벡터. 병합 후보 검색용 |
 | domain | text | NOT NULL. `food` / `activity` / `education`. **`routine` 은 없다** — 승격 대상이 아니다 (2026-09-23) |
 | state | text | NOT NULL, DEFAULT `candidate`. `candidate / confirmed / archived` |
-| polarity | smallint | nullable, `-1 / 1`만 허용. 단, `confirmed` 상태에서는 NOT NULL — `recompute_profile` 이 `NULL` 인 Profile 을 `confirmed` 로 올리지 않는다. `NULL` 은 아직 모름(미상·동수·상충)이다 — `0` 이 아니다 (#287) |
+| polarity | smallint | nullable, `-1 / 1`만 허용. 단, `confirmed` 상태에서는 NOT NULL — `recompute_profile` 이 `NULL` 인 Profile 을 `confirmed` 로 올리지 않는다. `NULL` 은 아직 모름(미상·동수·상충)이다 — `0` 이 아니다 (#287). CHECK `profile_affinity_polarity` · `profile_affinity_confirmed_polarity` |
 | strength | real | NOT NULL, DEFAULT `0.3`. 프로필 강도 |
 | last_observed_on | date | NOT NULL, 마지막 관찰 날짜 |
 | created_at | timestamptz | NOT NULL, DEFAULT `now()` |
@@ -718,6 +718,6 @@ Food · Growth · Health 의 `*_agent_own_table.md` "공유 테이블 변경 요
 **제약이 없다**
 
 - `observed_range` 의 빈 범위·무한 상한 금지 CHECK
-- `profile_affinity.polarity` 가 `confirmed` 일 때 NOT NULL 인 CHECK. ORM 레벨은 nullable 이다
+- ~~`profile_affinity.polarity` 가 `confirmed` 일 때 NOT NULL 인 CHECK~~ — 2026-11-09 값 범위 CHECK 와 함께 반영했다. 관찰 네 표의 `polarity` 범위 CHECK 도 같이 걸었다 (마이그레이션 `496fd5c10cd1`, #287)
 - ~~`health_safety` 의 `UNIQUE(child_id, kind, label)`~~ — 2026-10-13 active 끼리만 거는 부분 고유 인덱스로 `__table_args__` 에 선언했다 (마이그레이션 `d0be81909739`)
 - Agent/Curator role 의 write 권한 분리 (DB 계층 권한)
