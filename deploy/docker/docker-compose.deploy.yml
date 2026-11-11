@@ -183,6 +183,9 @@ services:
       # Caddy 가 넘긴 X-Forwarded-For 만 믿는다. "*" 는 위조가 열려서 금지.
       # invite-v1.md §IP 를 얻는 법 참조.
       FORWARDED_ALLOW_IPS: 172.30.0.10
+      # 요청 수 · 응답 코드 · 응답 시간 창구 (#975, apps/api/app/api/metrics.py). Alloy(172.30.0.11)만 받는다.
+      # 🚨 8000 이 아니다 — Caddy 는 8000 만 넘겨서 인터넷에 안 열린다. dev 도 열지만 Alloy 는 ktc4-api 만 긁는다.
+      METRICS_PORT: 9100
       # CORS_ALLOW_ORIGINS 는 여기 두지 않는다 — environment 가 env_file 보다 우선해서
       # 빈칸이 apps/api/.env 값을 덮는다. apps/api/.env 에서만 관리한다.
       # 나머지 키(LLM·OAuth·외부 API)는 apps/api/.env 에서 직접 주입한다.

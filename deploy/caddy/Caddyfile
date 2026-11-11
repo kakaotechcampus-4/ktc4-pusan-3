@@ -9,8 +9,9 @@
 #   시간(response_duration)으로 본다 (docs/ops/logging-alerts-v1.md §7).
 # 🚨 per_host(사이트별 host 라벨)를 켜지 않는다. 2.10 은 들어온 Host 헤더를 그대로 라벨로 써서, 인터넷 누구나
 #    Host 를 바꿔 보내면 시계열이 늘고(무료 한도 초과) 상한 없는 Caddy 메모리가 커진다 (#946 보안 검토 M1 · 재현).
-#    설정에 없는 Host 를 묶는 보호는 2.11 부터다 (caddyserver/caddy#7306). 올려서 켜지도 않는다 — dev · prod 가 한 서버라
-#    합계로 충분하다 (docs/ops/logging-alerts-v1.md §7).
+#    2.11 도 못 막는다 — 설정에 없는 Host 는 묶지만(caddyserver/caddy#7306) 사이트 이름 뒤 포트만 바꾼 Host
+#    (icatch.ai.kr:1001 · :abc)는 그대로 라벨이 된다 (#975 · 2.11.9 재현). 운영만 보는 것은 api 메트릭으로 한다
+#    (docs/ops/logging-alerts-v1.md §7).
 {
 	metrics
 }

@@ -38,7 +38,7 @@
    5 3 * * * cd /home/ubuntu/ktc4-pusan-3-dev && bash deploy/scripts/backup.sh daily >> /var/tmp/ktc4-backup-dev.log 2>&1
    ```
    - 🚨 삭제 이력의 35일 정리는 정리 배치(`app.workers.cleanup`)가 한다. 그 cron 줄(04시)과 기억 다시 계산(05시)은
-     `apps/api/README.md` 에 있다 — 빠져 있으면 이력이 35일 넘게 남아 처리방침 1장 ③ 과 어긋난다.
+     prod 배포가 건다(`deploy/scripts/worker-cron.sh` · #718) — 빠져 있으면 이력이 35일 넘게 남아 처리방침 1장 ③ 과 어긋난다.
 3. `backup-watch.yml` 의 감시 대상(`ENVS`)에는 매일 백업 cron 을 건 환경만 넣는다 — 안 건 환경을 넣으면 매일
    "하나도 없다" 가 운다. dev 는 11-09 에 cron 을 걸고 손으로 한 번 돌린 뒤 `dev` 로 바꿨다(#895). prod 는
    #773 이 main 으로 배포된 뒤 위 03:00 줄을 걸고 `backup.sh daily` 를 손으로 한 번 돌려 `prod dev` 로 늘린다.

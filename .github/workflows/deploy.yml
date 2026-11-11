@@ -111,7 +111,7 @@ jobs:
                 echo "배포 성공"
                 exit 0
               fi
-              # 실패 = 새 버전이 안 떴다. 롤백했는지는 위 출력의 "롤백" 줄로 본다.
+              # 실패 = 새 버전이 안 떴거나, 떴지만 Caddy reload · worker cron 이 실패했다. 위 출력의 "롤백" · 🔴 줄로 본다.
               echo "배포 실패: $STATUS"
               exit 1
             fi

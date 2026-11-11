@@ -1,5 +1,6 @@
 // 서버 메트릭을 Grafana Cloud 로 보낸다 (#946). 무엇을 왜 모으는지는 docs/ops/logging-alerts-v1.md §1 · §7.
 // 🚨 숫자와 고정 라벨만 나간다. 로그 · 요청 본문 · 경로 · IP · Host 헤더는 보내지 않는다.
+//    api 는 라우트 틀(`/children/{cid}`)이 라벨로 나간다 — 코드에 적힌 모양이고 id 는 없다 (#975).
 // 🚨 Alloy 에 서버의 어떤 경로도 붙이지 않는다 (compose 의 alloy — 비 root · 읽기 전용 · 마운트 없음).
 //    `/` 를 붙이면 그 안의 /run/docker.sock · .env · 다른 컨테이너 환경변수까지 닿는다 (#946 보안 검토 H1).
 //    컨테이너별 메트릭(cadvisor)도 같은 이유로 뺐다 — 어느 컨테이너가 먹는지는 `docker stats` 로 본다.
@@ -58,6 +59,17 @@ prometheus.relabel "caddy" {
     regex         = "[06-9].*|.{4,}"
     action        = "drop"
   }
+}
+
+// 운영 api — 요청 수 · 응답 코드 · 응답 시간 (#975). Caddy 는 dev 까지 합계라, 운영만 보려면 이것을 본다.
+// 🚨 ktc4-api 만 — ktc4-dev-api(develop 코드)는 긁지 않는다. :9100 은 이 컨테이너 주소만 받는다 (apps/api/app/api/metrics.py).
+//    라벨은 api 가 묶어 둔다(라우트 틀 · `unmatched` · 메서드 5개 + OTHER · 응답 코드 묶음). 평소 수백 줄.
+//    Caddy 는 2.11 로 올려도 사이트별로 못 나눈다 — 사이트 이름 뒤 포트만 바꾼 Host 가 그대로 라벨이 된다 (#975 재현).
+prometheus.scrape "api" {
+  targets         = [{"__address__" = "ktc4-api:9100"}]
+  scrape_interval = "60s"
+  sample_limit    = 5000
+  forward_to      = [prometheus.remote_write.cloud.receiver]
 }
 
 // 값은 prod deploy/docker/.env 에만 있다 (커밋 안 함). 비어 있으면 보내기만 실패하고 Alloy 는 계속 돈다.
