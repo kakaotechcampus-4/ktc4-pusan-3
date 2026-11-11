@@ -1,0 +1,190 @@
+# 단일 식품 이름 → 식품군 표 — 보호자 말 · 급식표에 흔한 이름이 영양DB 이름과 안 맞아 식품군을 모를 때 쓴다
+# 설계: app/agents/food/food_groups.py (appearance_food_groups) · 같은 폴더 food_groups.yaml 의 짝
+#
+# 🚨 식품군 **출현**에만 쓴다. 영양 합계 · 알레르기 판정 · 메뉴 카탈로그 행에는 쓰지 않는다.
+#    카탈로그 행에 식품군이 있으면 그쪽이 먼저다 — 이 표는 그 행의 식품군이 비었을 때만 본다.
+# 🚨 메뉴에 나오는 식품군을 **다** 적을 수 있는 단일 식품만 둔다. 섞인 음식(김밥 · 볶음밥 · 불고기 · 국 · 죽)과
+#    쓰임이 갈리는 이름(버섯 · 해조류 · 잡곡밥 · 떡 · 빵 · 시리얼 · 토마토 · 순두부)은 넣지 않는다 —
+#    일부만 적으면 그 메뉴가 "식품군을 아는 메뉴" 로 세여 출현 문장이 나가고, 빠진 식품군이 "0일" 이 된다.
+# 🚨 조리에 쓴 기름 · 설탕은 적지 않는다. 출현 문장이 유지 · 당류를 말하지 않으므로 groups 는
+#    grains · meat_fish_egg_legumes · vegetables · fruits · dairy 다섯 중에서만 고른다(fats_sugars 는 읽을 때 실패).
+# 🚨 쌀밥 · 시금치나물처럼 영양DB 행이 이미 식품군을 아는 이름은 넣지 않는다. 중복을 만들면 표가 둘이 된다.
+#
+# 이름은 보호자 말 글자다(영양DB 글자가 아니다 — food_groups.yaml 과 다르다).
+# 띄어쓰기 · 문장부호는 보지 않는다(normalize_menu_key). 같은 이름이 두 번 있으면 읽을 때 실패한다.
+#   groups    식품군 이름. food_doc.yaml 이 쓰는 이름과 같다
+
+source: "보호자 말 · 급식표에 흔한 단일 식품 이름 → 식품군 (사람이 검수)"
+version: "1"
+fetched_at: 2026-11-11
+
+menus:
+  # grains — 곡류 · 감자 및 전분류
+  - menu: "밥"
+    groups: [grains]
+  - menu: "흰밥"
+    groups: [grains]
+  - menu: "흰쌀밥"
+    groups: [grains]
+  - menu: "백미밥"
+    groups: [grains]
+  - menu: "흑미밥"
+    groups: [grains]
+  - menu: "보리밥"
+    groups: [grains]
+  - menu: "누룽지"
+    groups: [grains]
+  - menu: "식빵"
+    groups: [grains]
+  - menu: "감자"
+    groups: [grains]
+  - menu: "찐감자"
+    groups: [grains]
+  - menu: "고구마"
+    groups: [grains]
+  - menu: "찐고구마"
+    groups: [grains]
+  - menu: "군고구마"
+    groups: [grains]
+  - menu: "옥수수"
+    groups: [grains]
+  - menu: "찐옥수수"
+    groups: [grains]
+  - menu: "가래떡"
+    groups: [grains]
+
+  # fruits — 과일류
+  - menu: "바나나"
+    groups: [fruits]
+  - menu: "사과"
+    groups: [fruits]
+  - menu: "배"
+    groups: [fruits]
+  - menu: "딸기"
+    groups: [fruits]
+  - menu: "귤"
+    groups: [fruits]
+  - menu: "감귤"
+    groups: [fruits]
+  - menu: "포도"
+    groups: [fruits]
+  - menu: "수박"
+    groups: [fruits]
+  - menu: "참외"
+    groups: [fruits]
+  - menu: "복숭아"
+    groups: [fruits]
+  - menu: "키위"
+    groups: [fruits]
+  - menu: "블루베리"
+    groups: [fruits]
+  - menu: "감"
+    groups: [fruits]
+  - menu: "자두"
+    groups: [fruits]
+  - menu: "망고"
+    groups: [fruits]
+  - menu: "오렌지"
+    groups: [fruits]
+  - menu: "체리"
+    groups: [fruits]
+  - menu: "멜론"
+    groups: [fruits]
+  - menu: "파인애플"
+    groups: [fruits]
+
+  # vegetables — 채소류 · 김치류
+  - menu: "당근"
+    groups: [vegetables]
+  - menu: "브로콜리"
+    groups: [vegetables]
+  - menu: "오이"
+    groups: [vegetables]
+  - menu: "애호박"
+    groups: [vegetables]
+  - menu: "양배추"
+    groups: [vegetables]
+  - menu: "시금치"
+    groups: [vegetables]
+  - menu: "파프리카"
+    groups: [vegetables]
+  - menu: "양파"
+    groups: [vegetables]
+  - menu: "무"
+    groups: [vegetables]
+  - menu: "배추"
+    groups: [vegetables]
+  - menu: "콩나물"
+    groups: [vegetables]
+  - menu: "숙주"
+    groups: [vegetables]
+  - menu: "김치"
+    groups: [vegetables]
+  - menu: "백김치"
+    groups: [vegetables]
+
+  # dairy — 유제품류
+  - menu: "요거트"
+    groups: [dairy]
+  - menu: "요구르트"
+    groups: [dairy]
+  - menu: "플레인요거트"
+    groups: [dairy]
+  - menu: "떠먹는요거트"
+    groups: [dairy]
+  - menu: "치즈"
+    groups: [dairy]
+  - menu: "아기치즈"
+    groups: [dairy]
+  - menu: "슬라이스치즈"
+    groups: [dairy]
+
+  # meat_fish_egg_legumes — 육류 · 난류 · 어패류 · 두류
+  - menu: "달걀"
+    groups: [meat_fish_egg_legumes]
+  - menu: "계란"
+    groups: [meat_fish_egg_legumes]
+  - menu: "삶은달걀"
+    groups: [meat_fish_egg_legumes]
+  - menu: "삶은계란"
+    groups: [meat_fish_egg_legumes]
+  - menu: "계란찜"
+    groups: [meat_fish_egg_legumes]
+  - menu: "달걀찜"
+    groups: [meat_fish_egg_legumes]
+  - menu: "계란후라이"
+    groups: [meat_fish_egg_legumes]
+  - menu: "계란프라이"
+    groups: [meat_fish_egg_legumes]
+  - menu: "달걀프라이"
+    groups: [meat_fish_egg_legumes]
+  - menu: "메추리알"
+    groups: [meat_fish_egg_legumes]
+  - menu: "두부"
+    groups: [meat_fish_egg_legumes]
+  - menu: "연두부"
+    groups: [meat_fish_egg_legumes]
+  - menu: "소고기"
+    groups: [meat_fish_egg_legumes]
+  - menu: "쇠고기"
+    groups: [meat_fish_egg_legumes]
+  - menu: "닭고기"
+    groups: [meat_fish_egg_legumes]
+  - menu: "돼지고기"
+    groups: [meat_fish_egg_legumes]
+  - menu: "닭가슴살"
+    groups: [meat_fish_egg_legumes]
+  - menu: "생선"
+    groups: [meat_fish_egg_legumes]
+  - menu: "생선구이"
+    groups: [meat_fish_egg_legumes]
+  - menu: "고등어구이"
+    groups: [meat_fish_egg_legumes]
+  - menu: "갈치구이"
+    groups: [meat_fish_egg_legumes]
+  - menu: "조기구이"
+    groups: [meat_fish_egg_legumes]
+  - menu: "연어구이"
+    groups: [meat_fish_egg_legumes]
+  - menu: "새우"
+    groups: [meat_fish_egg_legumes]
