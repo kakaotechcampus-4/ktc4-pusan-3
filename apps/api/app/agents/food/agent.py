@@ -70,6 +70,7 @@ from app.agents.food.tools.docs import search_food_doc
 from app.agents.food.tools.nutrition import appearance_report
 from app.agents.food.tools.records import memory_record, prefetch_food_memory
 from app.rules.age import Stage
+from app.rules.particle import topic_particle
 
 logger = logging.getLogger(__name__)
 
@@ -476,7 +477,12 @@ async def _followup(context: FoodContext) -> tuple[str, ...]:
     row = pick_followup(tuple(row for row in unknown if str(row.id) in passed))
     if row is None:
         return ()
-    return (READOUTS.render(FOLLOWUP_PREFERENCE, menu=row.merge_key).body,)
+    # 문구의 "은(는)" 을 받침에 맞는 조사로 바꾼다. 그대로 내면 "당근은(는) 좋아하는 편인가요?" 가
+    # 화면에 선다. 한글로 끝나지 않는 이름은 받침을 몰라 그대로 둔다
+    # (`rules/particle.py` · Growth 의 `ask_question` 과 같은 방식)
+    name = row.merge_key
+    body = READOUTS.render(FOLLOWUP_PREFERENCE, menu=name).body
+    return (body.replace(f"{name}은(는)", f"{name}{topic_particle(name)}"),)
 
 
 def _rows(sample: tuple[PoolItem, ...]) -> list[MenuCatalogRow]:

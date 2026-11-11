@@ -445,9 +445,9 @@ Health 는 다르다 — 거기는 건강 그 자체라 동의 없이 전 라벨
 | `daycare.ask_substitute` | 대체식이나 알레르기 때문에 빼놓은 메뉴가 있으면 알려주세요. |
 | `daycare.unchecked` | 대체식 확인 전 |
 | `daycare.reference_menu` | 지역 표준식단이라 우리 아이가 실제로 먹은 것과 다를 수 있어요. |
-| `daycare.updated` | {date} {slot} 급식을 {menu}(으)로 바꿔 뒀어요. |
+| `daycare.updated` | {date} {slot} 급식 메뉴를 바꿔 뒀어요: {menu} |
 | `daycare.amount_updated` | {date} {slot} 급식은 먹은 양을 반영해 뒀어요. |
-| `daycare.absent` | {date}은(는) 기관 식사 없는 걸로 해 뒀어요. |
+| `daycare.absent` | {date}은 기관 식사 없는 걸로 해 뒀어요. |
 | `daycare.ambiguous` | 어느 날 급식을 말씀하시는 걸까요? |
 | `daycare.slot_ambiguous` | 그날은 점심과 간식이 다 있어요. 어느 쪽일까요? |
 | `daycare.allergy_conflict` | 기록해 뒀어요. 그런데 등록된 {label} 알레르기와 겹쳐요. |

@@ -5,10 +5,10 @@
 # ── 증상 반복 안내 (hook) ──
 symptom.repeat:
   kind: symptom_repeat
-  template: "최근 1주 동안 '{symptom}'이(가) {n}번 기록됐어요. 병원에서 확인해 보시는 게 좋겠어요."
+  template: "최근 1주 동안 '{symptom}' 기록이 {n}번 있어요. 병원에서 확인해 보시는 게 좋겠어요."
 symptom.repeat_condition:
   kind: symptom_repeat
-  template: "최근 1주 동안 '{symptom}'이(가) {n}번 기록됐어요. 등록하신 '{condition}'이(가) 있어 병원에서 확인해 보시는 게 좋겠어요."
+  template: "최근 1주 동안 '{symptom}' 기록이 {n}번 있어요. 등록하신 '{condition}'도 있어서 병원에서 확인해 보시는 게 좋겠어요."
 
 # ── 검진 · 접종 ──
 vaccine.disclaimer:
