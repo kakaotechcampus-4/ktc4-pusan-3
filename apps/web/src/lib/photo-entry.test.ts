@@ -17,6 +17,7 @@ import {
   readStartTime,
   recordedEntry,
   offBecausePast,
+  pastOnConfirm,
   startsChecked,
 } from "@/lib/photo-entry";
 
@@ -479,5 +480,40 @@ describe("checkedOnConfirm", () => {
   it("아직 확인하지 않은 항목은 켜지 않는다", () => {
     const unchecked = { ...confirmed, needs_review: true };
     expect(checkedOnConfirm(unchecked, initialPlan(unchecked))).toBe(false);
+  });
+});
+
+/**
+ * 방금 확인한 항목이 지난 일정인가. 🚨 서버의 `past` 는 **처음 읽은 날짜**의 판정이다 — 보호자가 날짜를
+ * 고치면 낡는다. 날짜를 고쳤으면 서버가 함께 보낸 "사진을 받은 날"(`today`)과 글자로 견준다 (#965 검토).
+ */
+describe("pastOnConfirm", () => {
+  const TODAY = "2026-11-11";
+  const unread = entry({ date: null, needs_review: true });
+
+  it("🚨 날짜를 못 읽은 일정에 지난 날짜를 넣으면 지난 일정이다", () => {
+    expect(pastOnConfirm(unread, { ...unread, date: "2026-11-10" }, TODAY)).toBe(true);
+  });
+
+  it("오늘과 앞날은 지난 일정이 아니다", () => {
+    expect(pastOnConfirm(unread, { ...unread, date: "2026-11-11" }, TODAY)).toBe(false);
+    expect(pastOnConfirm(unread, { ...unread, date: "2026-12-15" }, TODAY)).toBe(false);
+  });
+
+  it("🚨 서버가 지난 일정으로 읽었어도 앞날로 고치면 지난 일정이 아니다", () => {
+    const read = entry({ date: "2026-11-03", past: true, needs_review: true });
+    expect(pastOnConfirm(read, { ...read, date: "2026-11-20" }, TODAY)).toBe(false);
+  });
+
+  it("날짜를 고치지 않았으면 서버 판정 그대로다", () => {
+    const read = entry({ date: "2026-11-03", past: true, needs_review: true });
+    expect(pastOnConfirm(read, { ...read, title: "고친 제목" }, TODAY)).toBe(true);
+    const upcoming = entry({ date: "2026-11-20", past: false, needs_review: true });
+    expect(pastOnConfirm(upcoming, upcoming, TODAY)).toBe(false);
+  });
+
+  it("서버가 받은 날을 안 보냈으면 지났다고 하지 않는다 — 예전 서버와 같은 동작이다", () => {
+    expect(pastOnConfirm(unread, { ...unread, date: "2020-01-01" }, undefined)).toBe(false);
+    expect(pastOnConfirm(unread, { ...unread, date: "2020-01-01" }, "어제")).toBe(false);
   });
 });

@@ -396,6 +396,24 @@ test("🚨 할 일은 시작하는 날을 고른 뒤에 켤 수 있고, 마감�
   });
 });
 
+/** 달력에서 달을 넘겨 15일을 고른다. 🚨 이번 달 15일은 16일부터 지난 날이라 앞날 · 지난날을 달로 가른다. */
+async function pickFifteenth(
+  page: Page,
+  sheet: Locator,
+  month: "다음 달" | "이전 달",
+): Promise<string> {
+  await sheet.getByRole("button", { name: /^언제/ }).click();
+  const picker = page.getByRole("dialog", { name: "언제" });
+  await picker.getByRole("button", { name: month }).click();
+  await picker.getByRole("gridcell").getByRole("button").filter({ hasText: /^15$/ }).click();
+  await picker.getByRole("button", { name: "고르기" }).click();
+  const [year, thisMonth] = browserDaysAgo(0).split("-").map(Number);
+  const moved = thisMonth - 1 + (month === "다음 달" ? 1 : -1);
+  const y = year + Math.floor(moved / 12);
+  const m = ((moved % 12) + 12) % 12;
+  return `${y}-${String(m + 1).padStart(2, "0")}-15`;
+}
+
 test("🚨 확인이 필요했던 일정은 확인하면 켜지고, 버튼 위 목록에 서고, 캘린더에 들어간다", async ({
   page,
 }) => {
@@ -405,11 +423,7 @@ test("🚨 확인이 필요했던 일정은 확인하면 켜지고, 버튼 위 �
   await expect(pick(page, "생일잔치")).toBeDisabled();
 
   const sheet = await openSheet(page, "생일잔치");
-  await sheet.getByRole("button", { name: /^언제/ }).click();
-  const picker = page.getByRole("dialog", { name: "언제" });
-  await picker.getByRole("gridcell").getByRole("button").filter({ hasText: /^15$/ }).click();
-  await picker.getByRole("button", { name: "고르기" }).click();
-  const day = `${browserDaysAgo(0).slice(0, 8)}15`;
+  const day = await pickFifteenth(page, sheet, "다음 달");
   await sheet.getByRole("button", { name: "이 내용으로 확인" }).click();
 
   // 🚨 확인한 줄은 접힌 "잘 읽었어요" 로 옮겨 간다. 거기서 꺼진 채면 보호자는 넣었다고 믿고 저장하는데
@@ -427,6 +441,33 @@ test("🚨 확인이 필요했던 일정은 확인하면 켜지고, 버튼 위 �
   });
 });
 
+test("🚨 지난 날짜로 확인한 일정은 켜지 않고, 묶음을 펴서 까닭을 말한다 — 켜면 넣는다", async ({
+  page,
+}) => {
+  await page.goto(`/child/${CHILD}/home`);
+  await page.getByRole("button", { name: "사진으로 적기" }).click();
+  await page
+    .getByRole("button", { name: /기기에 있는 최근 사진/ })
+    .first()
+    .click();
+  await expect(page.getByText("알림장이나 식단표로 읽었어요.")).toBeVisible({ timeout: 15_000 });
+  // 🚨 "잘 읽었어요" 를 펴지 않은 채로 확인한다 — 접힌 채면 꺼진 줄이 안 보인다.
+
+  const sheet = await openSheet(page, "생일잔치");
+  await pickFifteenth(page, sheet, "이전 달");
+  await sheet.getByRole("button", { name: "이 내용으로 확인" }).click();
+
+  // 🚨 서버의 `past` 는 처음 읽은 날짜의 판정이라 못 읽은 날짜에는 거짓이다. 고친 날짜를 서버가 보낸
+  //    "사진을 받은 날" 과 견줘 지난 일정이면 켜지 않는다 — 처음부터 지난 일정으로 읽힌 줄과 같다.
+  await expect(pick(page, "생일잔치")).not.toBeChecked();
+  await expect(row(page, "생일잔치")).toContainText("지난 일정이라 꺼 두었어요.");
+  await expect(page.getByRole("button", { name: "저장하고 캘린더에 5개 넣기" })).toBeVisible();
+
+  // 넣지 말라는 것이 아니다. 보호자가 켜면 넣는다.
+  await togglePick(page, "생일잔치");
+  await expect(page.getByRole("button", { name: "저장하고 캘린더에 6개 넣기" })).toBeVisible();
+});
+
 test("확인한 일정이 시각을 안 골라 잠기면 접힌 묶음을 펴서 까닭을 보인다", async ({ page }) => {
   await page.goto(`/child/${CHILD}/home`);
   await page.getByRole("button", { name: "사진으로 적기" }).click();
@@ -438,10 +479,7 @@ test("확인한 일정이 시각을 안 골라 잠기면 접힌 묶음을 펴서
   // 🚨 "잘 읽었어요" 를 펴지 않은 채로 확인한다 — 보호자가 실제로 지나는 길이다.
 
   const sheet = await openSheet(page, "생일잔치");
-  await sheet.getByRole("button", { name: /^언제/ }).click();
-  const picker = page.getByRole("dialog", { name: "언제" });
-  await picker.getByRole("gridcell").getByRole("button").filter({ hasText: /^15$/ }).click();
-  await picker.getByRole("button", { name: "고르기" }).click();
+  await pickFifteenth(page, sheet, "다음 달");
   await sheet.getByText("하루 종일", { exact: true }).click();
   await sheet.getByRole("button", { name: "이 내용으로 확인" }).click();
 

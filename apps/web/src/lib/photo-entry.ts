@@ -276,6 +276,30 @@ export function checkedOnConfirm(entry: PhotoEntry, plan: EventPlan): boolean {
   );
 }
 
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * 방금 확인한 항목이 **지난 일정인가.** `before` 는 확인하기 전, `after` 는 시트에서 확인한 값이다.
+ *
+ * 🚨 **서버의 `past` 는 처음 읽은 날짜의 판정이다.** 날짜를 못 읽은 항목은 `false` 로 오고, 보호자가 날짜를
+ *    고치면 낡는다. 그대로 쓰면 지난 날짜를 넣은 일정이 켜지고, 지난 일정으로 읽힌 항목은 앞날로 고쳐도
+ *    꺼진 채 남는다 (#965 검토).
+ * 🚨 **날짜를 고치지 않았으면 서버 판정 그대로다.** 여러 날 일정의 끝날까지 본 판정이라 화면이 다시 정하지 않는다.
+ * 🚨 **고쳤으면 서버가 보낸 "사진을 받은 날"(`today`)과 글자로 견준다.** 화면은 오늘을 스스로 정하지 않는다 —
+ *    `past` 를 정한 그 날을 서버가 함께 보낸다 (`ParsedEvent.today`). 같은 모양(`YYYY-MM-DD`)의 두 글자를
+ *    견주는 것이라 날짜 계산이 아니다. 날짜를 고치면 저장되는 것은 그날 하루라 끝날은 보지 않는다.
+ * 🚨 `today` 가 없으면(이 칸이 없던 서버) 지났다고 하지 않는다 — 모르는 것을 지났다고 말하지 않는다.
+ */
+export function pastOnConfirm(
+  before: PhotoEntry,
+  after: PhotoEntry,
+  today: string | null | undefined,
+): boolean {
+  if (after.date === before.date) return after.past === true;
+  if (after.date === null || !today || !DAY.test(today) || !DAY.test(after.date)) return false;
+  return after.date < today;
+}
+
 /**
  * 지금 넣을 수 없는 까닭. 비어 있으면 넣을 수 있다.
  *
