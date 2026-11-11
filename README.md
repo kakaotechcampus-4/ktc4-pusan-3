@@ -6,7 +6,7 @@
 
 **한 줄만 남기면, 우리 아이에게 맞는 다음 할 일로 돌아오는 육아 비서**
 
-일과 육아를 함께 하는 보호자를 위해 만들었습니다. 카카오 계정으로 로그인하면 바로 쓸 수 있습니다.
+만 0~5세 영유아를 키우며 일하는 보호자를 위해 만들었습니다. 카카오 계정으로 로그인하면 바로 쓸 수 있습니다.
 
 <a href="https://play.google.com/store/apps/details?id=kr.ai.icatch"><img alt="Google Play 에서 받기" src="https://play.google.com/intl/en_us/badges/static/images/badges/ko_badge_web_generic.png" height="80"></a>
 <a href="https://icatch.ai.kr"><img alt="웹에서 바로 쓰기" src="docs/assets/readme/btn-web.png" height="80"></a>
@@ -43,7 +43,7 @@
 
 ## 육아 기록은 귀찮고, 적어도 돌아오는 게 없었습니다
 
-아이 일은 매일 적을 게 생기는데, 기록 앱은 오래 쓰기 어렵습니다. 두 가지가 불편했습니다.
+아이 일은 매일 적을 게 생기는데, 기록 앱은 오래 쓰기 어렵습니다. 2026년 8월에 보호자 10명에게 물었더니, 아이가 있는 9명 가운데 지금 기록을 남기는 사람은 없었고 7명은 하다가 그만둔 상태였습니다. 그만둔 7명 가운데 5명이 "매일 입력하는 게 번거로웠다" 나 "기록해도 다시 볼 일이 없었다" 를 골랐습니다. 아이캐치는 이 두 가지를 풉니다.
 
 | | 불편 | 아이캐치는 |
 | :---: | --- | --- |
@@ -53,6 +53,28 @@
 보호자는 이미 매일 아이 이야기를 하고 있습니다. 배우자에게, 가족 채팅방에.
 아이캐치는 새 습관을 요구하지 않고 그 한 줄을 받는 곳만 바꿉니다.
 그리고 받은 한 줄을 근거로 저녁 메뉴 · 주말 놀이 · 일정 같은 다음 할 일을 준비해 둡니다.
+같은 설문에서 지난 한 달 사이 8명이 주말에 아이와 무엇을 할지 검색했고, 5명이 기관 준비물이나 공지를 놓쳤다고 답했습니다.
+
+<details>
+<summary>설문 집계 보기 (보호자 10명 · 어린이집 교사 2명)</summary>
+
+<br>
+
+**보호자 설문** · 2026년 8월 · 온라인 · 10명. 임신 중 1명, 나머지 9명은 막내 기준 만 0~2세 2명 · 3~5세 4명 · 6~7세 1명 · 11세 이상 2명입니다. 표본이 작아서 방향을 잡는 데만 썼습니다.
+
+| 물은 것 | 답 (명) |
+| --- | --- |
+| 아이 기록을 남기고 있나 (아이가 있는 9명) | 지금 남긴다 0 · 하다가 그만뒀다 7 · 해 본 적 없다 2 |
+| 그만둔 이유 (7명 · 여럿 선택) | 아이가 자라며 필요가 줄었다 4 · 매일 입력하는 게 번거로웠다 3 · 기록해도 다시 볼 일이 없었다 3 · 시간이 없었다 1 |
+| 지난 한 달에 겪은 일 (9명 · 여럿 선택) | 주말에 아이와 무엇을 할지 검색했다 8 · 기관 준비물이나 공지를 놓치거나 늦게 알았다 5 · 무엇을 먹일지 정하는 데 시간을 썼다 3 · 장난감 · 책을 찾은 뒤 우리 아이에게 맞을지 다시 고민했다 3 · 다른 보호자에게 아이의 최근 상황을 다시 설명했다 2 |
+| 아이 일을 AI 에 물어본 적이 있나 (10명) | 없다 7 · 있다 3. 있다고 한 3명 중 2명이 "물어볼 때마다 아이의 나이 · 성향 · 상황을 다시 설명해야 했다" 를 골랐다 |
+| 가장 먼저 써 보고 싶은 기능 (10명) | 오늘 무엇을 먹일지 제안 5 · 알림장에서 준비물 · 일정 정리 2 · 관심사에 맞는 놀이 · 주말 활동 제안 2 · 아이에 대해 쌓인 것을 한눈에 보기 1 |
+| 걱정되는 점 (10명 · 여럿 선택) | 아이 정보를 AI 에 입력하는 것 자체가 꺼려진다 8 · 결국 내가 입력해야 하니 또 하나의 할 일이 될 것 같다 3 · AI 조언을 믿을 수 있을지 모르겠다 3 · AI 가 아이를 잘못 판단할 것 같다(한 번 본 걸 좋아한다고 단정하는 등) 3 |
+| 써 보고 싶은 정도 (5점 만점) | 평균 4.1 · 4점 이상 9 |
+
+**어린이집 교사 설문** · 2026년 9월 · 2명. 급식표는 두 곳 모두 한 달에 한 번 나오고 점심 · 오전 간식 · 오후 간식이 들어 있습니다. 알레르기 표기는 한 곳이 괄호 숫자, 다른 한 곳이 원문자였습니다. 공지는 키즈노트 · 종이 · 카카오톡으로 나뉘어 나갑니다.
+
+</details>
 
 **AI 챗봇에게 물어보면 되지 않을까요.** 저녁 메뉴는 챗봇도 잘 답합니다. 다만 그 답은 우리 아이의 것이 아닙니다.
 
@@ -61,6 +83,8 @@
 | **아&#8288;이&#8288;를&nbsp;아&#8288;는&#8288;가** | 물을 때마다 아이 이야기를 다시 설명한다 | 적어 둔 한 줄이 아이의 기억으로 쌓여 있다 |
 | **왜&nbsp;이&nbsp;답&#8288;인&#8288;가** | 근거를 알 수 없다 | 추천마다 사용한 기록이 붙는다 |
 | **틀&#8288;릴&nbsp;때** | 그럴듯하게 틀린다 | 알레르기와 날짜는 코드가 막고, 근거가 없으면 일반 추천이라고 밝힌다 |
+
+설문에서 가장 많이 나온 걱정은 "아이 정보를 AI 에 입력하는 것 자체가 꺼려진다"(10명 중 8명)였고, 3명은 "AI 가 한 번 본 걸 좋아한다고 단정할 것 같다" 를 골랐습니다. 앞의 걱정에는 [외부 LLM 으로 나가는 아이 정보](https://kakaotechcampus-4.github.io/ktc4-pusan-3/safety/llm-inputs-v1/)로, 뒤의 걱정에는 [기록이 쌓일수록 추천이 달라집니다](#기록이-쌓일수록-추천이-달라집니다)와 [그래도 AI 에게 맡기지 않은 것이 있습니다](#그래도-ai-에게-맡기지-않은-것이-있습니다)로 답합니다.
 
 ## 한 줄이 추천이 되기까지
 
@@ -175,7 +199,7 @@ Agent 별 설계는 [Supervisor](https://kakaotechcampus-4.github.io/ktc4-pusan-
 | --- | --- |
 | 모바일은 **웹뷰 껍데기** | 화면이 두 벌이 되면 절대 규칙도 두 곳에서 지켜야 한다 |
 | 벡터 DB 를 따로 두지 않고 **PostgreSQL 한 곳** | 여섯 명이 10주에 운영할 인프라는 적을수록 좋다 |
-| 사진은 화면이 **S3 에 바로** 올린다 | 업로드가 API 서버를 거치지 않는다. 서버는 읽을 때만 내려받고 바로 지운다 |
+| 사진은 화면이 **S3 에 바로** 올린다 | 업로드가 API 서버를 거치지 않는다. 서버는 읽을 때만 내려받고 바로 지운다. 끝내 읽히지 않은 사진은 S3 규칙이 하루 뒤에 지운다 |
 | 배포는 **OIDC + Systems Manager** | 저장소에 서버 열쇠를 두지 않는다 |
 
 내부 주소 · 버킷 정책 · 권한까지 그린 자세한 구성도는 [배포 문서 · 한눈에](https://kakaotechcampus-4.github.io/ktc4-pusan-3/ops/deploy-v1/#한눈에)에, 되돌리는 법은 [롤백](https://kakaotechcampus-4.github.io/ktc4-pusan-3/ops/deploy-v1/#롤백--무엇이-되돌아가고-무엇이-안-되돌아가나)에, 상태를 DB 로 옮긴 이유는 [설계 결정 §2](https://kakaotechcampus-4.github.io/ktc4-pusan-3/overview/decisions-v1/#2-워커를-늘리기-위한-상태-저장소--redis-가-더-잘-맞는-도구인데-postgresql-을-골랐다)에 있습니다.
@@ -221,25 +245,27 @@ Agent 별 설계는 [Supervisor](https://kakaotechcampus-4.github.io/ktc4-pusan-
 
 ## 정말 그렇게 움직이는지 쟀습니다
 
-"근거를 단다" · "알레르기는 코드가 막는다" 는 말은 재 봐야 압니다. 실제 모델로 돌린 결과입니다.
+"근거를 단다" · "알레르기는 코드가 막는다" 는 말은 재 봐야 압니다. 실제 모델로 돌린 결과입니다. 시나리오는 11월 11일에 다시 잰 값이고, 나머지는 11월 10일 기준선입니다.
 
 <table>
 <tr>
-<td align="center" width="25%"><h3>8 / 10</h3><b>기획 때 정한 시나리오</b><br><sub>실제 모델 · 3회 모두 통과해야 통과</sub></td>
+<td align="center" width="25%"><h3>9 / 10</h3><b>기획 때 정한 시나리오</b><br><sub>실제 모델 · 3회 모두 통과해야 통과</sub></td>
 <td align="center" width="25%"><h3>0건</h3><b>절대 규칙 위반</b><br><sub>147 run 을 코드로 판정</sub></td>
 <td align="center" width="25%"><h3>39 / 40</h3><b>장애 점검</b><br><sub>부품 10 × 장애 4 · make test 마다</sub></td>
-<td align="center" width="25%"><h3>68 / 69</h3><b>급식표 끼니 읽기</b><br><sub>정답 1장 × 5회 · 틀린 메뉴가 한 번도 붙지 않은 끼니</sub></td>
+<td align="center" width="25%"><h3>68 / 69</h3><b>급식표 끼니 읽기</b><br><sub>급식표 1장(27일 · 69끼니)을 5번 · 틀린 메뉴가 한 번도 붙지 않은 끼니</sub></td>
 </tr>
 </table>
 
-응답 시간도 같은 실행에서 쟀습니다. 기록만 하는 한 줄은 중앙값 4.4초, 기록과 요청이 섞인 한 줄은 느린 쪽 5% 가 15.2초였고, 20초를 넘겨 부분 결과로 바뀐 실행은 143번 가운데 없었습니다 ([비용 · 지연](eval/results/2026-11-10.md#비용--지연)).
+응답 시간은 11월 10일 기준선 실행에서 쟀습니다. 기록만 하는 한 줄은 중앙값 4.4초, 기록과 요청이 섞인 한 줄은 느린 쪽 5% 가 15.2초였고, 20초를 넘겨 부분 결과로 바뀐 실행은 143번 가운데 없었습니다. 다섯 역할 모두 같은 모델(`gpt-5.6-luna`)로 쟀고, 입력 종류별 호출 수 · 토큰 수는 [비용 · 지연](eval/results/2026-11-10.md#비용--지연) 표에 있습니다. 급식표는 `gemini-4-argon` 으로 읽습니다.
 
-실패한 2개의 원인은 [기준선 결과 · 실패 분석](eval/results/2026-11-10.md#실패-분석)에, 절대 규칙을 코드로 판정하는 방법은 [eval 문서 §3-2 불변식 14개](https://kakaotechcampus-4.github.io/ktc4-pusan-3/eval/eval-v1/#3-2-불변식-14개--2-를-코드로-판정한다)에, 남은 1칸은 [장애 점검표 · 메울 구멍](eval/faults.md#메울-구멍)에, 급식표를 잰 방법은 [급식표 OCR 평가 §1 측정 이력](docs/agents/eval/MEAL_OCR_EVAL.md#1-측정-이력)에 있습니다.
+시나리오 10개가 무엇인지는 [골든셋 · 헤드라인 10개](eval/cases.md#한눈에)에, 11월 10일 기준선(8/10)과 그때 실패한 2개의 원인은 [기준선 결과 · 실패 분석](eval/results/2026-11-10.md#실패-분석)에, 고친 뒤 다시 잰 결과는 [11-11 헤드라인 다시 재기](eval/results/2026-11-11-headline.md)에, 절대 규칙을 코드로 판정하는 방법은 [eval 문서 §3-2 불변식 14개](https://kakaotechcampus-4.github.io/ktc4-pusan-3/eval/eval-v1/#3-2-불변식-14개--2-를-코드로-판정한다)에, 남은 1칸은 [장애 점검표 · 메울 구멍](eval/faults.md#메울-구멍)에, 급식표를 잰 방법은 [급식표 OCR 평가 §1 측정 이력](docs/agents/eval/MEAL_OCR_EVAL.md#1-측정-이력)에 있습니다. 그 표의 `C1 1/69` 가 틀린 메뉴가 붙은 끼니 1개이고, 68/69 는 그것을 뒤집어 적은 값입니다.
 
 > [!NOTE]
 > **아직 못 한 것**
 > - 서버는 한 대, 워커는 1개입니다. 상태를 DB 로 옮겨 늘릴 준비까지만 했습니다 ([워커 2개로 돌려 본 기록](https://kakaotechcampus-4.github.io/ktc4-pusan-3/ops/workers-2-check-v1/#결과)).
-> - 10개 시나리오 중 2개가 통과하지 못했습니다(기록과 요청이 섞인 한 줄, 되묻기 답 이어받기). 두 개 모두 원인은 측정 뒤에 고쳤지만([#841](https://github.com/kakaotechcampus-4/ktc4-pusan-3/pull/841) · [#950](https://github.com/kakaotechcampus-4/ktc4-pusan-3/pull/950)), 전체를 다시 재지는 않았습니다.
+> - 10개 시나리오 중 1개가 아직 통과하지 못합니다. 기준선에서 실패한 2개를 고치고([#841](https://github.com/kakaotechcampus-4/ktc4-pusan-3/pull/841) · [#950](https://github.com/kakaotechcampus-4/ktc4-pusan-3/pull/950)) 다시 재니, 되묻기 답 이어받기는 3회 모두 통과했고 기록과 요청이 섞인 한 줄은 3회 모두 실패했습니다. 놀이와 일정은 저장되는데, 먹은 양만 말한 끼니("밥 반 공기")를 식사 기록으로 받지 못합니다. 다시 잰 것은 이 10개뿐이고 전체는 다시 재지 않았습니다.
+> - 급식표는 한 가지 양식 1장으로만 쟀습니다. 다른 기관 · 다른 양식은 아직 재지 못했습니다.
+> - 실제 사용자는 아직 거의 없습니다(팀과 테스터). 위 숫자는 모두 미리 써 둔 입력으로 잰 값입니다.
 > - 추천 카드의 채택 · 평가는 아직 아이의 성향에 반영되지 않습니다.
 > - 복약 기록은 스토어 정책 때문에 닫아 두었고, Health Agent 는 추천 없이 기록과 안내만 합니다.
 
@@ -267,13 +293,13 @@ make web-install && make web-dev             # 웹 → http://localhost:3000
 | 무엇을 검사하나 | 명령 | CI · 최근 30일 성공률 |
 | --- | --- | :---: |
 | API 단위 · 통합 · 장애 점검 | `make test` | [API CI](https://github.com/kakaotechcampus-4/ktc4-pusan-3/actions/workflows/ci-api.yml) · 96% |
-| 웹 단위 · 화면 규칙 e2e | `make web-test` · `make web-e2e` | [Web CI](https://github.com/kakaotechcampus-4/ktc4-pusan-3/actions/workflows/ci-web.yml) · 96% |
-| 웹 ↔ 서버 계약 | `make web-contract` | [Contract CI](https://github.com/kakaotechcampus-4/ktc4-pusan-3/actions/workflows/ci-contract.yml) · 100% |
+| 웹 단위 · 화면 규칙 e2e | `make web-test` · `make web-e2e` | [Web CI](https://github.com/kakaotechcampus-4/ktc4-pusan-3/actions/workflows/ci-web.yml) · 97% |
+| 웹 ↔ 서버 계약 | `make web-contract` | [Contract CI](https://github.com/kakaotechcampus-4/ktc4-pusan-3/actions/workflows/ci-contract.yml) · 99% |
 | 실서버 e2e | `make web-e2e-live` | [Live E2E CI](https://github.com/kakaotechcampus-4/ktc4-pusan-3/actions/workflows/ci-e2e-live.yml) · 100% |
 | AI 품질 전체 (실제 모델) | `make eval` | 손으로 돌린다 |
 | AI 품질, 바뀐 Agent 만 | PR 에서 자동 | [Agent live eval](https://github.com/kakaotechcampus-4/ktc4-pusan-3/actions/workflows/ci-agent-live.yml) · 프롬프트나 tool spec 이 바뀐 Agent 를 실제 모델로 3회 |
 
-성공률은 develop 브랜치에서 돈 실행만 세었고, 새 push 로 취소된 실행은 뺐습니다.
+성공률은 2026-11-11 기준이고, develop 브랜치에서 돈 실행만 세었으며 새 push 로 취소된 실행은 뺐습니다.
 
 <img src="docs/assets/readme/deploy-flow.png" width="100%" alt="feature 브랜치는 PR · 리뷰 · 필수 검사를 거쳐 develop 에 들어가고, develop 은 dev 서버에 자동 배포된다. develop 은 주 1회 멘토 리뷰 PR 로 main 에 들어가고, main 은 운영 서버에 자동 배포된다.">
 
@@ -292,7 +318,7 @@ make web-install && make web-dev             # 웹 → http://localhost:3000
 </tr>
 </table>
 
-커밋 3,577개 · 머지된 PR 529개 · 멘토 리뷰 7회. 일하는 규칙은 [CONTRIBUTING.md](CONTRIBUTING.md)에, 여섯 명과 AI 코딩 도구가 함께 읽는 절대 규칙 · 용어는 [CLAUDE.md](CLAUDE.md)에 있습니다.
+커밋 3,780개 · 머지된 PR 553개 · 멘토 리뷰 8회 (2026-11-11 기준). 일하는 규칙은 [CONTRIBUTING.md](CONTRIBUTING.md)에, 여섯 명과 AI 코딩 도구가 함께 읽는 절대 규칙 · 용어는 [CLAUDE.md](CLAUDE.md)에 있습니다.
 
 ## 더 궁금하면
 
