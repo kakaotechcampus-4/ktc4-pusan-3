@@ -36,6 +36,7 @@ import {
 import { playEnter, useFlip } from "@/lib/motion";
 import {
   canBecomeEvent,
+  checkedOnConfirm,
   entryDateLabel,
   entryDateRole,
   eventBody,
@@ -317,8 +318,24 @@ export function PhotoReview({
      * 🚨 **고친 값으로 잠기면 켜 둔 것을 끈다.** 켠 채로 두면 나중에 값을 채워 풀리는 순간 보호자가 다시 켜지
      *    않았는데 저절로 켜진다. 한 번 잠긴 줄은 보호자가 다시 켠다.
      */
-    if (canBecomeEvent(next) && planLocks(next, plan ?? planOf(next)).length > 0) {
+    const nextPlan = plan ?? planOf(next);
+    const locked = canBecomeEvent(next) && planLocks(next, nextPlan).length > 0;
+    /** 이 확인이 그 항목의 **첫** 확인인가 — "확인이 필요해요" 에 있던 줄이다. */
+    const firstConfirm = entries.some((e) => e.id === next.id && e.needs_review);
+    if (locked) {
       togglePick(next.id, false);
+      /**
+       * 🚨 **방금 확인한 일정이 잠겼으면 접힌 묶음을 편다.** 확인한 줄은 "잘 읽었어요" 로 옮겨 가는데 그 묶음은
+       *    접혀 있다 — 접힌 채면 왜 못 넣는지(시작 시간을 안 골랐다)가 안 보이고, 보호자는 넣은 줄 안다.
+       */
+      if (firstConfirm && next.kind === "event") setShowChecked(true);
+    } else if (firstConfirm && !eventAdded[next.id] && checkedOnConfirm(next, nextPlan)) {
+      /**
+       * 🚨 **처음 확인한 일정은 켠다** (`checkedOnConfirm`). 처음부터 잘 읽은 일정이 켜져서 시작하는 것과 같다.
+       *    꺼 두면 접힌 묶음 안에서 꺼진 채라 일정이 조용히 빠진다. 🚨 처음 확인할 때만이다 — 이미 확인한
+       *    줄을 다시 고칠 때는 보호자가 끈 것을 되살리지 않는다.
+       */
+      togglePick(next.id, true);
     }
     // 고친 줄의 지난 실패는 지운다 — 고친 값으로는 될 수 있고, 남겨 두면 고친 뒤에도 못 넣었다고 말한다.
     forgetFailure(next.id);

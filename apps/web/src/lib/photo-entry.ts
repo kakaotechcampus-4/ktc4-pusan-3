@@ -252,6 +252,31 @@ export function offBecausePast(entry: PhotoEntry): boolean {
 }
 
 /**
+ * 확인이 필요했던 항목을 보호자가 시트에서 **처음 확인한 순간** "캘린더에 넣기" 를 켜는가.
+ *
+ * 🚨 **처음부터 잘 읽은 일정(`startsChecked`)과 같은 조건이다.** 확인이 필요한 항목을 처음에 켜 두지 않는
+ *    까닭은 하나였다 — 확인 전에는 저장이 그 항목을 받지 않는다. 확인하면 그 까닭이 없어진다.
+ *    한동안 확인한 뒤에도 꺼 두었는데, 확인한 줄은 접힌 "잘 읽었어요" 로 옮겨 가서 꺼진 체크가 보이지 않았다.
+ *    보호자는 넣었다고 믿고 저장했고 일정은 캘린더에 없었다.
+ * 🚨 **넣는 값은 시트에서 확인한 값이다** (`plan`). `startsChecked` 는 읽은 값(`initialPlan`)으로 보지만
+ *    여기서는 방금 보호자가 고른 날짜 · 시각으로 잠기는지 본다.
+ * 🚨 **할 일은 켜지 않는다** — 회신 마감을 일정으로 넣을지는 보호자가 고른다 (`startsChecked` 와 같다).
+ * 🚨 **켜는 것은 넣는 것이 아니다.** 넣는 것은 맨 아래 버튼이고, 그 위에 무엇이 들어가는지 목록이 선다.
+ * 🚨 처음 확인할 때 한 번만 본다. 이미 확인한 줄을 다시 고칠 때는 켜지 않는다 — 보호자가 끈 것을
+ *    되살리지 않는다 (`photo-review.tsx` 의 `saveEntry`).
+ */
+export function checkedOnConfirm(entry: PhotoEntry, plan: EventPlan): boolean {
+  return (
+    entry.kind === "event" &&
+    entryDateRole(entry) === "start" &&
+    entry.date !== null &&
+    !entry.needs_review &&
+    !entry.past &&
+    planLocks(entry, plan).length === 0
+  );
+}
+
+/**
  * 지금 넣을 수 없는 까닭. 비어 있으면 넣을 수 있다.
  *
  * 🚨 **막는 것이 여럿이면 전부 말한다** (초안 카드와 같은 규칙). 하나씩 말하면 보호자가 날짜를 채운 뒤에야

@@ -396,6 +396,61 @@ test("🚨 할 일은 시작하는 날을 고른 뒤에 켤 수 있고, 마감�
   });
 });
 
+test("🚨 확인이 필요했던 일정은 확인하면 켜지고, 버튼 위 목록에 서고, 캘린더에 들어간다", async ({
+  page,
+}) => {
+  const calls = recordApi(page);
+  await openNotice(page);
+  // 확인하기 전에는 잠겨 있다.
+  await expect(pick(page, "생일잔치")).toBeDisabled();
+
+  const sheet = await openSheet(page, "생일잔치");
+  await sheet.getByRole("button", { name: /^언제/ }).click();
+  const picker = page.getByRole("dialog", { name: "언제" });
+  await picker.getByRole("gridcell").getByRole("button").filter({ hasText: /^15$/ }).click();
+  await picker.getByRole("button", { name: "고르기" }).click();
+  const day = `${browserDaysAgo(0).slice(0, 8)}15`;
+  await sheet.getByRole("button", { name: "이 내용으로 확인" }).click();
+
+  // 🚨 확인한 줄은 접힌 "잘 읽었어요" 로 옮겨 간다. 거기서 꺼진 채면 보호자는 넣었다고 믿고 저장하는데
+  //    일정이 없다 — 처음부터 잘 읽은 일정처럼 켜고, 버튼 위에서 무엇이 들어가는지 말한다.
+  await expect(pick(page, "생일잔치")).toBeChecked();
+  await expect(summary(page)).toContainText("생일잔치");
+  await page.getByRole("button", { name: "저장하고 캘린더에 6개 넣기" }).click();
+  await page.waitForURL(`**/child/${CHILD}/home`);
+
+  const party = writes(calls, "POST", EVENTS).find(
+    (c) => (c.body as { event: { title: string } }).event.title === "생일잔치",
+  );
+  expect(party?.body).toMatchObject({
+    event: { starts_at: `${day}T00:00:00+09:00`, all_day: true },
+  });
+});
+
+test("확인한 일정이 시각을 안 골라 잠기면 접힌 묶음을 펴서 까닭을 보인다", async ({ page }) => {
+  await page.goto(`/child/${CHILD}/home`);
+  await page.getByRole("button", { name: "사진으로 적기" }).click();
+  await page
+    .getByRole("button", { name: /기기에 있는 최근 사진/ })
+    .first()
+    .click();
+  await expect(page.getByText("알림장이나 식단표로 읽었어요.")).toBeVisible({ timeout: 15_000 });
+  // 🚨 "잘 읽었어요" 를 펴지 않은 채로 확인한다 — 보호자가 실제로 지나는 길이다.
+
+  const sheet = await openSheet(page, "생일잔치");
+  await sheet.getByRole("button", { name: /^언제/ }).click();
+  const picker = page.getByRole("dialog", { name: "언제" });
+  await picker.getByRole("gridcell").getByRole("button").filter({ hasText: /^15$/ }).click();
+  await picker.getByRole("button", { name: "고르기" }).click();
+  await sheet.getByText("하루 종일", { exact: true }).click();
+  await sheet.getByRole("button", { name: "이 내용으로 확인" }).click();
+
+  await expect(row(page, "생일잔치")).toContainText(
+    "고치기에서 시작 시간을 고르면 넣을 수 있어요.",
+  );
+  await expect(pick(page, "생일잔치")).not.toBeChecked();
+});
+
 test("안내에는 캘린더에 넣을 때 칸이 없다", async ({ page }) => {
   await openNotice(page);
   const sheet = await openSheet(page, "비 오는 날 실내 활동");

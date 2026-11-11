@@ -4,6 +4,7 @@ import type { PhotoEntry } from "@/lib/api/types";
 import {
   canBecomeEvent,
   carriedEndsAt,
+  checkedOnConfirm,
   droppedEnd,
   entryDateLabel,
   entryDateRole,
@@ -435,5 +436,48 @@ describe("recordedEntry", () => {
     });
 
     expect(recordedEntry(allDay, { ...initialPlan(allDay), allDay: false, time: "" })).toBe(allDay);
+  });
+});
+
+/**
+ * 확인이 필요했던 일정을 보호자가 시트에서 확인한 순간 "캘린더에 넣기" 를 켜는가.
+ * 🚨 한동안 켜지 않았다 — 확인한 줄은 접힌 "잘 읽었어요" 로 옮겨 가는데 체크는 꺼진 채라, 보호자는 넣었다고
+ *    믿고 저장하지만 일정이 캘린더에 없었다. 처음부터 잘 읽은 일정(`startsChecked`)과 같은 조건으로 켠다.
+ */
+describe("checkedOnConfirm", () => {
+  const confirmed = entry({ date: "2026-11-23", all_day: true });
+
+  it("🚨 날짜를 채워 확인한 일정은 켠다", () => {
+    expect(checkedOnConfirm(confirmed, initialPlan(confirmed))).toBe(true);
+  });
+
+  it("시각을 고른 일정도 켠다", () => {
+    const plan = { ...initialPlan(confirmed), allDay: false, time: "10:00" };
+    expect(checkedOnConfirm(confirmed, plan)).toBe(true);
+  });
+
+  it("하루 종일을 껐는데 시각을 안 골랐으면 켜지 않는다 — 넣을 수 없는 줄이다", () => {
+    const plan = { ...initialPlan(confirmed), allDay: false, time: "" };
+    expect(checkedOnConfirm(confirmed, plan)).toBe(false);
+  });
+
+  it("날짜를 비운 채 확인했으면 켜지 않는다", () => {
+    const empty = entry({ date: null });
+    expect(checkedOnConfirm(empty, initialPlan(empty))).toBe(false);
+  });
+
+  it("🚨 할 일은 켜지 않는다 — 넣을지는 보호자가 고른다", () => {
+    const plan = { ...initialPlan(due), startDate: "2026-11-10" };
+    expect(checkedOnConfirm(due, plan)).toBe(false);
+  });
+
+  it("지난 일정은 켜지 않는다", () => {
+    const past = { ...confirmed, past: true };
+    expect(checkedOnConfirm(past, initialPlan(past))).toBe(false);
+  });
+
+  it("아직 확인하지 않은 항목은 켜지 않는다", () => {
+    const unchecked = { ...confirmed, needs_review: true };
+    expect(checkedOnConfirm(unchecked, initialPlan(unchecked))).toBe(false);
   });
 });
