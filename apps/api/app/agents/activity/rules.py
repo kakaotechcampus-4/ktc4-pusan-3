@@ -81,6 +81,17 @@ def asks_outing(texts: Iterable[str]) -> bool:
     return any(_OUTING_WORDS.search(text) and not _HOME_WORDS.search(text) for text in texts)
 
 
+# 행사를 묻는 말 — 행사가 없을 때 없다고 알릴지 정한다. 나들이 낱말(`_OUTING_WORDS`)보다 좁다:
+# "주말에 밖에서 뭐 하지" 에 모델이 알아서 행사를 찾아봤을 때까지 "행사가 없어요" 를 붙이면 묻지
+# 않은 말에 답하는 셈이다
+_EVENT_WORDS = re.compile(r"행사|축제|공연|페스티벌")
+
+
+def asks_events(texts: Iterable[str]) -> bool:
+    """보호자가 행사 · 축제 · 공연을 물었는가. 행사가 없다는 안내를 붙일지만 정한다."""
+    return any(_EVENT_WORDS.search(text) for text in texts)
+
+
 def said_in_request(requested_play: str | None, request_texts: Iterable[str]) -> bool:
     """모델이 적은 `requested_play` 가 보호자가 이번 요청에서 한 말에 있는가.
 

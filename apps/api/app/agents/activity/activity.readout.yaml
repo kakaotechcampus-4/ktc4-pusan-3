@@ -56,6 +56,31 @@ events.pending:
   kind: notice
   template: 행사 일정을 아직 확인하고 있어서 이번 추천에는 행사를 넣지 못했어요. 잠시 뒤에 다시 물어봐 주세요.
 
+# 행사를 물었는데 그날 열리는 행사가 없었다. 없다고 말하지 않으면 행사 조회가 고장 난 것처럼
+# 보인다(11-11 운영). 보호자 위치에서 찾았으면 찾은 반경({km}, `EVENT_MAX_RADIUS_M`)과 다른 지역을
+# 찾는 법을 같이 알린다 — "근처" 만으로는 반경 밖 도시를 찾지 않는다
+events.none_near:
+  kind: notice
+  template: "가까운 곳({km}km 안)에서 그날 열리는 행사를 찾지 못했어요. 다른 지역은 '김해 행사'처럼 지역 이름을 말씀해 주시면 찾아볼게요."
+
+events.none_area:
+  kind: notice
+  template: 말씀하신 지역에서 그날 열리는 행사를 찾지 못했어요.
+
+events.unavailable:
+  kind: notice
+  template: 행사 정보를 지금 불러오지 못해서 행사 없이 골랐어요.
+
+# 찾은 행사를 다 카드에 썼는데도 카드가 남았다 — 행사가 아닌 카드가 왜 섞였는지 알린다
+events.few:
+  kind: notice
+  template: 그날 열리는 행사를 {count}개만 찾아서 나머지는 행사가 아닌 놀이로 골랐어요.
+
+# 위와 같은데 앞에서 보여 준 행사를 뺐다 — "다른 행사" 를 물었을 때 events.no_new 와 이어지게
+events.few_more:
+  kind: notice
+  template: 앞에서 보여 드린 행사 말고는 그날 열리는 행사를 {count}개만 더 찾아서 나머지는 행사가 아닌 놀이로 골랐어요.
+
 place.location_missing:
   kind: notice
   template: "위치를 허용하거나 지역(예: 부산 해운대구)을 말씀해 주시면 행사 · 장소도 찾아볼게요."

@@ -7,6 +7,7 @@
 """
 
 import json
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
@@ -991,3 +992,139 @@ class TestLocationMissing:
         bodies = self.bodies(result)
         assert self.NOTICE not in bodies
         assert any("말씀하신 지역을 찾지 못해" in body for body in bodies)
+
+
+class TestNoEvents:
+    """행사를 물었는데 그날 열리는 행사가 없으면 없다고 한 줄로 알린다 — 말하지 않으면 행사 조회가
+    고장 난 것처럼 보인다(11-11 운영: "부산 근처 다른 지역 행사" 에 일반 놀이만). 코드 문구라
+    모델이 이유 문장에 쓰는지에 기대지 않는다."""
+
+    NEAR = (
+        "가까운 곳(20km 안)에서 그날 열리는 행사를 찾지 못했어요. "
+        "다른 지역은 '김해 행사'처럼 지역 이름을 말씀해 주시면 찾아볼게요."
+    )
+    AREA = "말씀하신 지역에서 그날 열리는 행사를 찾지 못했어요."
+    UNAVAILABLE = "행사 정보를 지금 불러오지 못해서 행사 없이 골랐어요."
+    HAEUNDAE = find_area("해운대")
+
+    def ctx(self, events: InMemoryEvents) -> ActivityContext:
+        return ActivityContext(
+            child_id=CHILD,
+            run_id="run-1",
+            now=NOW,
+            timezone=KST,
+            ports=in_memory_ports(
+                CHILD, BORN_40_MONTHS, docs=InMemoryActivityDocs([DEFAULT_DOC]), events=events
+            ),
+            location=BUSAN,
+        )
+
+    def fest(self, near: CoarseLocation) -> RawEvent:
+        return RawEvent(
+            content_id="1",
+            title="가상 모래축제",
+            start="20261001",
+            end="20261012",
+            mapx=f"{near.lon}",
+            mapy=f"{near.lat}",
+            kind_code="EV01",
+            progress="",
+        )
+
+    FEW = "그날 열리는 행사를 1개만 찾아서 나머지는 행사가 아닌 놀이로 골랐어요."
+
+    async def propose_with_events(self, events: InMemoryEvents, *names: str) -> list[str]:
+        picked = [{**candidate(f"{n} 구경하기", setting="outdoor"), "place_name": n} for n in names]
+        rest = [candidate(text) for text in ("종이컵 탑 쌓기", "그림자놀이", "색종이 접기")]
+        llm = FakeLLM(
+            _tools(("search_events", {"day": "오늘"})),
+            _tools(("propose_activity_candidates", {"candidates": (picked + rest)[:3]})),
+        )
+        result = await run(task("오늘 갈 만한 행사 있어?"), self.ctx(events), client=llm)
+        return [r.body for r in result.readouts]
+
+    async def test_찾은_행사를_다_써도_모자라면_몇_개만_찾았는지_알린다(self):
+        bodies = await self.propose_with_events(InMemoryEvents([self.fest(BUSAN)]), "가상 모래축제")
+        assert self.FEW in bodies
+
+    async def test_찾은_행사를_다_쓰지_않았으면_알리지_않는다(self):
+        second = replace(self.fest(BUSAN), content_id="2", title="가상 불빛축제")
+        events = InMemoryEvents([self.fest(BUSAN), second])
+        bodies = await self.propose_with_events(events, "가상 모래축제")
+        assert not [body for body in bodies if "개만 찾아서" in body]
+
+    async def ask(self, text: str, events: InMemoryEvents, *args: dict[str, Any]) -> list[str]:
+        llm = FakeLLM(
+            _tools(*(("search_events", {"day": "오늘", **arg}) for arg in args)),
+            propose("종이컵 탑 쌓기", "그림자놀이", "색종이 접기"),
+        )
+        result = await run(task(text), self.ctx(events), client=llm)
+        return [r.body for r in result.readouts]
+
+    async def test_가까운_곳에_행사가_없으면_반경과_지역_이름으로_찾는_법을_알린다(self):
+        far = CoarseLocation(lat=35.86, lon=128.63)  # 약 80km — 반경 밖
+        assert self.NEAR in await self.ask(
+            "오늘 갈 만한 행사 있어?", InMemoryEvents([self.fest(far)]), {}
+        )
+
+    async def test_말한_지역에_행사가_없으면_그_지역에서_못_찾았다고_알린다(self):
+        bodies = await self.ask("해운대 축제 가볼까", InMemoryEvents([]), {"area": "해운대"})
+        assert self.AREA in bodies and self.NEAR not in bodies
+
+    async def test_행사_정보를_못_불러오면_알린다(self):
+        bodies = await self.ask("오늘 갈 만한 행사 있어?", InMemoryEvents(fail=True), {})
+        assert self.UNAVAILABLE in bodies
+
+    async def test_행사를_찾았으면_알리지_않는다(self):
+        bodies = await self.ask("오늘 갈 만한 행사 있어?", InMemoryEvents([self.fest(BUSAN)]), {})
+        assert not {self.NEAR, self.AREA, self.UNAVAILABLE} & set(bodies)
+
+    async def test_행사를_묻지_않았으면_모델이_찾아봤어도_알리지_않는다(self):
+        bodies = await self.ask("오늘 밖에서 뭐 하고 놀까", InMemoryEvents([]), {})
+        assert not {self.NEAR, self.AREA, self.UNAVAILABLE} & set(bodies)
+
+    async def test_앞에서_보여_준_행사뿐이면_그_안내만_붙인다(self):
+        asked = DomainTask(
+            run_id="run-1",
+            agent="activity",
+            task_type=None,
+            request_texts=("다른 행사는 없어?",),
+            shown_before=("가상 모래축제에서 모래 조각 구경하기",),
+        )
+        llm = FakeLLM(
+            _tools(("search_events", {"day": "오늘"})),
+            propose("종이컵 탑 쌓기", "그림자놀이", "색종이 접기"),
+        )
+        result = await run(asked, self.ctx(InMemoryEvents([self.fest(BUSAN)])), client=llm)
+        bodies = [r.body for r in result.readouts]
+        assert "앞에서 보여 드린 행사 말고는 그날 열리는 행사를 더 찾지 못했어요." in bodies
+        assert self.NEAR not in bodies
+
+    async def test_다른_행사가_모자라면_보여_준_것_말고_몇_개만_더_찾았다고_알린다(
+        self,
+    ):
+        asked = DomainTask(
+            run_id="run-1",
+            agent="activity",
+            task_type=None,
+            request_texts=("다른 행사 더 추천해줘",),
+            shown_before=("가상 모래축제에서 모래 조각 구경하기",),
+        )
+        new = replace(self.fest(BUSAN), content_id="2", title="가상 민속예술제")
+        picked = {
+            **candidate("전통 공연 구경하기", setting="outdoor"),
+            "place_name": "가상 민속예술제",
+        }
+        rest = [candidate(text) for text in ("그림자놀이", "색종이 접기")]
+        llm = FakeLLM(
+            _tools(("search_events", {"day": "오늘"})),
+            _tools(("propose_activity_candidates", {"candidates": [picked, *rest]})),
+        )
+        events = InMemoryEvents([self.fest(BUSAN), new])
+        result = await run(asked, self.ctx(events), client=llm)
+        bodies = [r.body for r in result.readouts]
+        assert (
+            "앞에서 보여 드린 행사 말고는 그날 열리는 행사를 1개만 더 찾아서 "
+            "나머지는 행사가 아닌 놀이로 골랐어요."
+        ) in bodies
+        assert self.FEW not in bodies
