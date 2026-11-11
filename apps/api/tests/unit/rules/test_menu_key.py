@@ -5,6 +5,7 @@
 """
 
 import json
+import random
 from pathlib import Path
 
 import pytest
@@ -308,11 +309,17 @@ def test_정답셋_두_벌의_메뉴는_하나도_걸러지지_않는다() -> No
         ("(꿀설기)", ("꿀설기",)),  # 괄호 밖이 비어도 괄호 안은 남는다
         ("백김치(백김치)", ("백김치",)),  # 중복은 한 번
         ("떡(꿀설기), 떡(꿀설기)", ("떡", "꿀설기")),
-        # 겹친 괄호 — 괄호 밖 키는 `normalize_menu_key` 그대로다(겹친 괄호를 다 못 지운다)
-        (
-            "수프(감자(국내산), 양파)",
-            (normalize_menu_key("수프(감자(국내산), 양파)"), "감자", "양파"),
-        ),
+        # 괄호 구간은 `normalize_menu_key` 와 같은 정규식이다 — 첫 구간이 "(감자(국내산)" 이고
+        # 그 뒤 쉼표는 구간 밖이라 메뉴가 나뉜다
+        ("수프(감자(국내산), 양파)", ("수프", "감자", "양파")),
+        ("샐러드[사과, 배)땅콩]", ("샐러드", "사과", "배땅콩")),  # 섞인 괄호도 글자를 잃지 않는다
+        # "원산지" 낱말과 끝의 원산지 낱말만 떼고 음식 이름은 남긴다
+        ("볶음밥(원산지: 새우 수입산, 계란)", ("볶음밥", "새우", "계란")),
+        ("카레(원산지:돼지고기-국내산)", ("카레", "돼지고기")),
+        ("비빔밥(원산지: 쇠고기 호주산, 달걀 국내산)", ("비빔밥", "쇠고기", "달걀")),
+        ("만두(원산지:새우 베트남산, 밀가루)", ("만두", "새우", "밀가루")),
+        ("떡(원산지:국내산)", ("떡",)),
+        ("밥(쌀:국내산, 원산지 표시)", ("밥", "쌀")),
     ],
 )
 def test_급식표_저장_키는_괄호_안_음식_이름을_더한다(title: str, expected: tuple[str, ...]) -> None:
@@ -377,11 +384,10 @@ def test_괄호가_어긋나도_예외_없이_키를_낸다(title: str) -> None:
     assert len(keys) == len(set(keys))
 
 
-def test_안_닫힌_괄호는_그_메뉴_끝까지_괄호_안이다() -> None:
-    unclosed = normalize_menu_key("빵(우유카스텔라")
-
-    assert meal_menu_keys("빵(우유카스텔라") == (unclosed, "우유카스텔라")
-    assert meal_menu_keys("빵(우유카스텔라, 우유") == (unclosed, "우유카스텔라", "우유")
+def test_안_닫힌_괄호는_예전처럼_괄호_밖_키에_남는다() -> None:
+    # 정규식에 안 걸리는 괄호는 아무 처리도 하지 않는다 — 글자를 잃지 않는다
+    assert meal_menu_keys("빵(우유카스텔라") == ("빵우유카스텔라",)
+    assert meal_menu_keys("빵(우유카스텔라, 우유") == ("빵우유카스텔라", "우유")
     assert meal_menu_keys("((떡))") == ("떡",)
 
 
@@ -405,3 +411,41 @@ def _old_meal_row_keys(title: str) -> tuple[str, ...]:
 )
 def test_괄호_없는_제목은_예전과_같은_키(title: str) -> None:
     assert meal_menu_keys(title) == _old_meal_row_keys(title)
+
+
+# ── 성질 — 무작위 제목 (씨앗 고정) ──
+# 거르기 낱말 · 단위 · "또는" · 원산지 낱말이 만들어질 수 없는 음절만 쓴다
+_SAFE_SYLLABLES = "가나다라마꿀떡밥빵콩"
+_FUZZ_MARKS = "()[],  "
+
+
+def _random_title(rng: random.Random, alphabet: str, length: int) -> str:
+    return "".join(rng.choice(alphabet) for _ in range(rng.randint(0, length)))
+
+
+def test_무작위_제목에서_예전_키의_글자를_잃지_않는다() -> None:
+    rng = random.Random(0)
+    alphabet = _SAFE_SYLLABLES * 2 + _FUZZ_MARKS * 2
+    for _ in range(3000):
+        title = _random_title(rng, alphabet, 16)
+        old = _old_meal_row_keys(title)
+        new = meal_menu_keys(title)
+        new_chars = set("".join(new))
+
+        assert set("".join(old)) <= new_chars, title
+        assert bool(new) or not old, title
+
+
+def test_무작위_제목에서_예외_없이_빈_키_없는_튜플을_낸다() -> None:
+    rng = random.Random(1)
+    pieces = [
+        *_SAFE_SYLLABLES, *"()[],/·&+ ", "（", "）", "［", "］", "，", "🍙", "★", "1", "2", "5",
+        "또는", "원산지", "국내산", "호주산", ":", "-", "소", "반", "200ml",
+    ]  # fmt: skip
+    for _ in range(3000):
+        title = "".join(rng.choice(pieces) for _ in range(rng.randint(0, 14)))
+        keys = meal_menu_keys(title)
+
+        assert isinstance(keys, tuple)
+        assert all(isinstance(key, str) and key for key in keys), title
+        assert len(keys) == len(set(keys)), title

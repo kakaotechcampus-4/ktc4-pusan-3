@@ -90,11 +90,10 @@ def menu_display_name(raw: str) -> str:
 
 # ── 급식표 저장 키 — 괄호 안 음식 이름까지 (#908) ──
 
-_OPENERS = "(["
-_CLOSERS = ")]"
 # 괄호 안에서 음식 이름을 나누는 자리
 _INNER_SPLIT = re.compile(r"[,/·&+]|또는")
-# 원산지 — 키 **끝에** 붙은 아는 원산지 낱말만 뗀다. "땅콩국내산" → "땅콩", "국내산" → 버림.
+# 원산지 — "원산지" 낱말을 지우고, 키 **끝에** 붙은 아는 원산지 낱말만 뗀다.
+# "땅콩국내산" → "땅콩", "원산지새우수입산" → "새우", "국내산" → 버림.
 # 🚨 가운데는 건드리지 않는다 — "된장국산적" 의 "국산" 은 원산지가 아니다.
 # 모르는 나라("땅콩세네갈산")는 떼지 못해 통째로 남는다 — 판정이 이름 속 "땅콩" 을 본다
 _ORIGIN_WORD = "원산지"
@@ -117,7 +116,7 @@ _MARK_WORDS = frozenset(
     {
         "소", "중", "대", "특", "선택", "자율", "자율배식", "대체", "대체식", "행사", "행사식",
         "친환경", "무농약", "유기농", "무항생제", "완제품", "냉동", "수제", "추가", "제공", "제외",
-        "미제공", "군", "구운", "찐", "삶은",
+        "미제공", "군", "구운", "찐", "삶은", "표시", "표기", "참조",
     }
 )  # fmt: skip
 
@@ -125,15 +124,24 @@ _MARK_WORDS = frozenset(
 def meal_menu_keys(title: str) -> tuple[str, ...]:
     """급식 항목 제목(메뉴 이름을 ", " 로 이은 글) → `daycare_meal.menu_keys`.
 
-    괄호 밖 쉼표에서만 메뉴를 나눈다 — "샐러드(사과, 배)" 는 한 메뉴다. 메뉴마다 괄호 밖 키
-    (`normalize_menu_key(메뉴)`, 예전과 같은 키)를 먼저 싣고, 괄호 안을 `,` `/` `·` `&` `+`
-    "또는" 에서 나눠 음식 이름을 키로 더한다. 순서를 지키고 겹친 키는 한 번만 싣는다.
+    괄호 구간은 `normalize_menu_key` 가 지우는 구간과 **같은 정규식**(`_BRACKETS`)으로 정한다.
+    그래서 괄호 밖 키에서 지워진 글자는 괄호 안 조각으로 간다 — 거른 조각(원산지 · 분량 · 표시
+    낱말) 말고는 어느 키에도 안 남는 글자가 없다.
+    안 닫힌 괄호 · 짝 없는 닫는 괄호는 정규식에 안 걸려 예전처럼 괄호 밖 키에 남는다.
+
+    구간 밖 쉼표에서만 메뉴를 나눈다 — "샐러드(사과, 배)" 는 한 메뉴다. 메뉴마다 괄호 밖 키
+    (`normalize_menu_key(메뉴)`)를 먼저 싣고, 구간의 안쪽을 `,` `/` `·` `&` `+` "또는" 에서 나눠
+    음식 이름을 키로 더한다. 순서를 지키고 겹친 키는 한 번만 싣는다.
+
+    괄호 없는 제목의 키는 예전(`title.split(",")`)과 같다. 다만 겹친 키는 한 번만 싣고, NFKC 를
+    먼저 하므로 전각 쉼표("，")도 메뉴를 나눈다.
 
     `normalize_menu_key` 를 바꾸지 않고 여기서만 더한다. 괄호 밖 키는 그대로라 카탈로그 · 영양
     계산이 찾던 키가 바뀌지 않고, 괄호 안 키는 판정이 이름으로 한 번 더 본다(카탈로그에 없으면
     "확인 못 함").
 
-    괄호 안 조각 끝에 붙은 원산지 낱말("땅콩국내산" 의 "국내산")은 떼고 앞의 음식 이름은 남긴다.
+    원산지는 "원산지" 낱말과 조각 끝에 붙은 원산지 낱말("땅콩국내산" 의 "국내산")만 떼고 음식
+    이름은 남긴다. "원산지: 새우 수입산" → "새우".
 
     🚨 괄호 안에서 빼는 것은 음식이 아닌 것이 분명한 조각뿐이다 — 원산지만인 것("국내산"),
        분량("1/2" · "200ml" · "반공기"), 크기 · 표시 낱말과 정확히 같은 것("소" · "자율배식").
@@ -141,14 +149,18 @@ def meal_menu_keys(title: str) -> tuple[str, ...]:
        남기면 "확인 못 함" 으로 한 번 더 보게 되고, 지우면 알레르기를 놓친다. "꿀" · "잣" 같은
        한 글자 음식, 숫자 없는 단위 한 글자("알")도 남는다.
 
-    보호자가 화면에서 제목을 고칠 수 있어 괄호가 어긋나도 예외를 내지 않는다. 안 닫힌 괄호는 그
-    메뉴 끝까지를 괄호 안으로 보고, 짝 없는 닫는 괄호는 무시한다.
+    보호자가 화면에서 제목을 고칠 수 있어 괄호가 어긋나도 예외를 내지 않는다.
     """
     text = unicodedata.normalize("NFKC", title)
+    spans = [match.span() for match in _BRACKETS.finditer(text)]
     keys: list[str] = []
-    for menu in _split_menus(text):
-        keys.append(normalize_menu_key(menu))
-        for inner in _bracket_groups(menu):
+    next_span = 0  # 구간 · 메뉴 모두 앞에서부터 차례다. 구간은 쉼표를 넘지 않아 한 메뉴 안에 든다
+    for menu_start, menu_end in _menu_ranges(text, spans):
+        keys.append(normalize_menu_key(text[menu_start:menu_end]))
+        while next_span < len(spans) and spans[next_span][1] <= menu_end:
+            span_start, span_end = spans[next_span]
+            next_span += 1
+            inner = text[span_start + 1 : span_end - 1]  # 양 끝 괄호 글자 하나씩만 뗀다
             keys.extend(
                 key
                 for key in (_food_key(normalize_menu_key(p)) for p in _INNER_SPLIT.split(inner))
@@ -157,60 +169,28 @@ def meal_menu_keys(title: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys(key for key in keys if key))
 
 
-def _split_menus(text: str) -> list[str]:
-    """짝이 맞는 괄호 밖 쉼표에서 나눈다. 안 닫힌 괄호는 쉼표를 막지 않는다."""
-    covered = [False] * len(text)
-    opened: list[int] = []
-    for i, ch in enumerate(text):
-        if ch in _OPENERS:
-            opened.append(i)
-        elif ch in _CLOSERS and opened:
-            start = opened.pop()
-            covered[start : i + 1] = [True] * (i + 1 - start)
-    menus: list[str] = []
+def _menu_ranges(text: str, spans: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """어느 괄호 구간에도 들지 않은 쉼표에서 나눈 메뉴들의 (시작, 끝)."""
+    ranges: list[tuple[int, int]] = []
     start = 0
-    for i, ch in enumerate(text):
-        if ch == "," and not covered[i]:
-            menus.append(text[start:i])
-            start = i + 1
-    menus.append(text[start:])
-    return menus
-
-
-def _bracket_groups(menu: str) -> list[str]:
-    """메뉴 하나의 괄호 안 글. 겹친 괄호는 나누는 자리로 바꾸고, 안 닫힌 괄호는 끝까지다."""
-    groups: list[str] = []
-    depth = 0
-    current: list[str] = []
-    for ch in menu:
-        if ch in _OPENERS:
-            if depth:
-                current.append(",")
-            depth += 1
-        elif ch in _CLOSERS:
-            if not depth:
-                continue
-            depth -= 1
-            if depth:
-                current.append(",")
-            else:
-                groups.append("".join(current))
-                current = []
-        elif depth:
-            current.append(ch)
-    if depth:
-        groups.append("".join(current))
-    return groups
+    position = 0
+    for span_start, span_end in [*spans, (len(text), len(text))]:
+        for i in range(position, span_start):  # 구간 사이의 글만 본다
+            if text[i] == ",":
+                ranges.append((start, i))
+                start = i + 1
+        position = span_end
+    ranges.append((start, len(text)))
+    return ranges
 
 
 def _food_key(key: str) -> str | None:
     """괄호 안 조각(정규화한 키) → 저장할 키. 음식이 아닌 것이 분명하면 None.
 
-    끝에 붙은 원산지 낱말을 떼고 남은 것을 본다. 남은 것이 비거나 글자가 없거나 분량 · 표시
-    낱말이면 None 이다.
+    "원산지" 낱말을 지우고, 끝에 붙은 원산지 낱말을 떼고 남은 것을 본다. 남은 것이 비거나
+    글자가 없거나 분량 · 표시 낱말이면 None 이다.
     """
-    if _ORIGIN_WORD in key:
-        return None
+    key = key.replace(_ORIGIN_WORD, "")
     while (stripped := _ORIGIN_TAIL.sub("", key)) != key:
         key = stripped
     if not key or not _LETTER.search(key):

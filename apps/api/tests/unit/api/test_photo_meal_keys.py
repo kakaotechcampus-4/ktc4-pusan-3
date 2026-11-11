@@ -64,3 +64,13 @@ def test_땅콩_알레르기_아이에게_원산지가_붙은_땅콩은_차단�
     allergy = _verdict(meal_menu_keys("견과류(땅콩:국내산)"), entries, birth_date=date(2023, 1, 1))
 
     assert allergy["땅콩"] == "blocked"
+
+
+def test_새우_알레르기_아이에게_원산지_표기_안의_새우는_차단이다() -> None:
+    entries = [SafetyEntry(kind="allergy", label="새우", status="active")]
+
+    allergy = _verdict(
+        meal_menu_keys("볶음밥(원산지: 새우 수입산, 계란)"), entries, birth_date=date(2023, 1, 1)
+    )
+
+    assert allergy["새우"] == "blocked"
