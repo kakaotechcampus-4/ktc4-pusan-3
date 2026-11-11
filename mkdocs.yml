@@ -81,6 +81,7 @@ markdown_extensions:
 nav:
   - 홈: index.md
   - 설계 결정: overview/decisions-v1.md
+  - 만들면서 부딪힌 것: overview/troubles-v1.md
   - 기획: overview/service-plan.md
   - 에이전트 설계:
       - Supervisor Agent: agents/supervisor-agent-v1.md
