@@ -10,7 +10,6 @@
 해석(비 · 눈 문장 → 바깥 판정)은 하지 않는다 — Activity `weather.py` 가 한다.
 """
 
-import asyncio
 import logging
 from collections.abc import Callable
 from datetime import date, datetime, time, timedelta
@@ -21,6 +20,7 @@ import httpx
 
 from app.core.kma_mid_regions import region_of
 from app.core.weather_raw import RawForecast, UpstreamUnavailable, WeatherGrid
+from app.integrations.weather.inflight import Inflight
 from app.integrations.weather.public_data import get_json, result_code
 
 log = logging.getLogger(__name__)
@@ -63,9 +63,12 @@ class KmaMidForecast:
         self._client = httpx.AsyncClient(transport=transport)
         self._now = now or (lambda: datetime.now(KST))
         self._cache: dict[tuple[str, str], dict[str, Any]] = {}
-        self._lock = asyncio.Lock()
+        # 받는 중인 조회. 3일 이상 뒤의 주말(토 · 일)은 같은 (구역, 발표)를 동시에 부른다 (#962)
+        self._inflight: Inflight[tuple[str, str], dict[str, Any]] = Inflight()
 
     async def aclose(self) -> None:
+        # 클라이언트를 닫기 전에 — 받는 중인 조회가 닫힌 클라이언트를 쓰지 않게 (#964 리뷰)
+        await self._inflight.aclose()
         await self._client.aclose()
 
     async def forecast(self, *, grid: WeatherGrid, day: date) -> RawForecast:
@@ -95,25 +98,31 @@ class KmaMidForecast:
 
     async def _item(self, region: str, tm: str) -> dict[str, Any]:
         key = (region, tm)
-        async with self._lock:
-            if key not in self._cache:
-                payload = await get_json(
-                    self._client,
-                    URL,
-                    {"pageNo": 1, "numOfRows": 10, "dataType": "JSON", "regId": region, "tmFc": tm},
-                    what="중기예보",
-                )
-                code = result_code(payload)
-                if code != _OK:
-                    raise UpstreamUnavailable(f"중기예보 결과 코드 {code}")
-                body = payload["response"].get("body") or {}
-                items = (body.get("items") or {}).get("item") or []
-                if not items or not isinstance(items[0], dict):
-                    raise UpstreamUnavailable("중기예보 행이 없다")
-                # 발표가 바뀌면 옛 발표는 버린다 — 구역 10곳 × 발표 1개만 둔다
-                self._cache = {k: v for k, v in self._cache.items() if k[1] == tm}
-                self._cache[key] = items[0]
+        if key in self._cache:
             return self._cache[key]
+        return await self._inflight.run(key, lambda: self._fetch(key))
+
+    async def _fetch(self, key: tuple[str, str]) -> dict[str, Any]:
+        region, tm = key
+        payload = await get_json(
+            self._client,
+            URL,
+            {"pageNo": 1, "numOfRows": 10, "dataType": "JSON", "regId": region, "tmFc": tm},
+            what="중기예보",
+        )
+        code = result_code(payload)
+        if code != _OK:
+            raise UpstreamUnavailable(f"중기예보 결과 코드 {code}")
+        body = payload["response"].get("body") or {}
+        items = (body.get("items") or {}).get("item") or []
+        if not items or not isinstance(items[0], dict):
+            raise UpstreamUnavailable("중기예보 행이 없다")
+        # 발표가 바뀌면 옛 발표는 버린다 — 구역 10곳 × 발표 1개만 둔다. 발표가 바뀌는 순간 옛 · 새
+        # 발표 조회가 같이 돌면 늦게 끝난 쪽이 다른 쪽 캐시를 지울 수 있다 — 다음 호출이 다시 부를
+        # 뿐이라 둔다 (#964 리뷰)
+        self._cache = {k: v for k, v in self._cache.items() if k[1] == tm}
+        self._cache[key] = items[0]
+        return items[0]
 
 
 def _text(value: object) -> str:
