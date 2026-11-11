@@ -40,6 +40,7 @@ _WINDOW_DAYS = 7
 _LOOKBACK_DAYS = 14
 
 # "정하는 것 ③" — 해석된 메뉴(영양값이 있는 메뉴)가 전체 메뉴의 이 비율 미만이면 insufficient
+# 같은 0.5 가 식품군을 아는 메뉴의 비율로 출현을 말해도 되는지도 가른다(`_appearance_fields`)
 MIN_RESOLUTION_RATIO = 0.5
 
 # 1인분 중량이 빈 메뉴(우유 · 원재료성 행)는 합계에 넣지 않는다 — 양을 가정한 숫자를 만들지 않는다.

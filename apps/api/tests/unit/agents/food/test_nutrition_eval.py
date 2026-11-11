@@ -1300,20 +1300,23 @@ async def test_카탈로그에_없는_단일_식품도_식품군_출현으로_�
 
 
 async def test_식품군이_빈_카탈로그_행은_표로_채우고_합계는_그대로다() -> None:
-    # 같은 영양값 · 같은 이름 규칙의 행을 표 밖 이름으로 하나 더 만들어 합계를 견준다
-    in_table = _menu_row(menu_key="식빵", display_name="식빵", food_groups=frozenset())
-    outside = _menu_row(menu_key="처음보는빵", display_name="처음보는빵", food_groups=frozenset())
+    # 같은 영양값의 행을 표 밖 이름으로 하나 더 만들어 합계를 견준다. 표의 식품군이 1인분 보정에
+    # 새면 과일(개 단위 — 계수 1.0)이라 합계가 달라진다. 곡류는 계수가 빈 집합과 같아 새도 못 잡는다
+    in_table = _menu_row(menu_key="바나나", display_name="바나나", food_groups=frozenset())
+    outside = _menu_row(
+        menu_key="처음보는과일", display_name="처음보는과일", food_groups=frozenset()
+    )
     [a] = await daily_totals(
-        _context(observations=[_observation(subject="식빵")], catalog_rows=[in_table]),
+        _context(observations=[_observation(subject="바나나")], catalog_rows=[in_table]),
         date_from=DAY,
         date_to=DAY,
     )
     [b] = await daily_totals(
-        _context(observations=[_observation(subject="처음보는빵")], catalog_rows=[outside]),
+        _context(observations=[_observation(subject="처음보는과일")], catalog_rows=[outside]),
         date_from=DAY,
         date_to=DAY,
     )
-    assert a.food_groups == {"grains"} and a.grouped_menus == 1
+    assert a.food_groups == {"fruits"} and a.grouped_menus == 1
     assert b.food_groups == frozenset() and b.grouped_menus == 0
     assert a.grams == b.grams and a.resolved_menus == b.resolved_menus == 1
 
@@ -1346,12 +1349,12 @@ async def test_안_먹은_단일_식품은_나온_날로_세지_않는다() -> N
 
 
 def _plain_week() -> FoodContext:
-    """최근 7일 매일 밥 · 계란찜 — 14건, 카탈로그 행 없음, 채소 · 과일 0일."""
+    """최근 7일 매일 흰쌀밥 · 계란찜 — 14건, 카탈로그 행 없음, 채소 · 과일 0일."""
     return _context(
         observations=[
             _observation(subject=name, amount_text="한 그릇", day=_WINDOW_END - timedelta(days=d))
             for d in range(7)
-            for name in ("밥", "계란찜")
+            for name in ("흰쌀밥", "계란찜")
         ],
         birth_date=BIRTH_DATE_3Y,
     )

@@ -11,6 +11,7 @@ from app.agents.common.reference import load_reference
 from app.agents.food.food_groups import (
     PLAIN_FOOD_GROUPS,
     appearance_food_groups,
+    food_group_table,
     parse_plain_food_groups,
     plain_food_groups,
 )
@@ -63,6 +64,10 @@ def test_섞인_음식과_카탈로그가_아는_이름은_표에_없다():
         "물",
     ):
         assert normalize_menu_key(name) not in table, name
+
+
+def test_영양DB_대응표가_아는_메뉴_이름은_표에_없다():
+    assert not set(plain_food_groups()) & set(food_group_table().menus)
 
 
 def test_표는_다섯_식품군만_쓴다():

@@ -28,12 +28,6 @@ menus:
     groups: [grains]
   - menu: "백미밥"
     groups: [grains]
-  - menu: "흑미밥"
-    groups: [grains]
-  - menu: "보리밥"
-    groups: [grains]
-  - menu: "누룽지"
-    groups: [grains]
   - menu: "식빵"
     groups: [grains]
   - menu: "감자"
