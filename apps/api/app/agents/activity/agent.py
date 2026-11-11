@@ -30,6 +30,7 @@ from app.agents.activity.prompt import (
 from app.agents.activity.readouts import (
     CAUTION_NON_FOOD_ALLERGY,
     EVENTS_FEW,
+    EVENTS_FEW_MORE,
     EVENTS_NO_NEW,
     EVENTS_NONE_AREA,
     EVENTS_NONE_NEAR,
@@ -211,7 +212,8 @@ def _events_notice(
     if state.seen_events:
         used = sum(draft.event_starts_on is not None for draft in drafts)
         if len(state.seen_events) <= used < len(drafts):
-            return (READOUTS.render(EVENTS_FEW, count=used),)
+            key = EVENTS_FEW_MORE if state.events_skipped_shown else EVENTS_FEW
+            return (READOUTS.render(key, count=used),)
         return ()
     if state.events_unavailable:
         return (READOUTS.render(EVENTS_UNAVAILABLE),)

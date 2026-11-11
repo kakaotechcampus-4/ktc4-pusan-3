@@ -437,6 +437,9 @@ async def search_events(context: ActivityContext, args: SearchEventsArgs) -> Too
     ]
     if found and not fresh:
         return _no_new_events(context)
+    # 앞에서 보여 준 행사를 뺐다 — 행사가 모자라 안내할 때 "보여 드린 것 말고 N개만 더" 로 쓴다
+    if len(fresh) < len(found):
+        context.state.events_skipped_shown = True
     nearest = sorted(fresh, key=lambda pair: _event_order(context, *pair))[:EVENT_INTRO_LIMIT]
     intros = await asyncio.gather(
         *(_or_none(events.intro(content_id=event.content_id)) for _, event in nearest)

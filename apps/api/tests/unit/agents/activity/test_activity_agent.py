@@ -1099,3 +1099,32 @@ class TestNoEvents:
         bodies = [r.body for r in result.readouts]
         assert "앞에서 보여 드린 행사 말고는 그날 열리는 행사를 더 찾지 못했어요." in bodies
         assert self.NEAR not in bodies
+
+    async def test_다른_행사가_모자라면_보여_준_것_말고_몇_개만_더_찾았다고_알린다(
+        self,
+    ):
+        asked = DomainTask(
+            run_id="run-1",
+            agent="activity",
+            task_type=None,
+            request_texts=("다른 행사 더 추천해줘",),
+            shown_before=("가상 모래축제에서 모래 조각 구경하기",),
+        )
+        new = replace(self.fest(BUSAN), content_id="2", title="가상 민속예술제")
+        picked = {
+            **candidate("전통 공연 구경하기", setting="outdoor"),
+            "place_name": "가상 민속예술제",
+        }
+        rest = [candidate(text) for text in ("그림자놀이", "색종이 접기")]
+        llm = FakeLLM(
+            _tools(("search_events", {"day": "오늘"})),
+            _tools(("propose_activity_candidates", {"candidates": [picked, *rest]})),
+        )
+        events = InMemoryEvents([self.fest(BUSAN), new])
+        result = await run(asked, self.ctx(events), client=llm)
+        bodies = [r.body for r in result.readouts]
+        assert (
+            "앞에서 보여 드린 행사 말고는 그날 열리는 행사를 1개만 더 찾아서 "
+            "나머지는 행사가 아닌 놀이로 골랐어요."
+        ) in bodies
+        assert self.FEW not in bodies

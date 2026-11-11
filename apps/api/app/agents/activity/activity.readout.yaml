@@ -76,6 +76,11 @@ events.few:
   kind: notice
   template: 그날 열리는 행사를 {count}개만 찾아서 나머지는 행사가 아닌 놀이로 골랐어요.
 
+# 위와 같은데 앞에서 보여 준 행사를 뺐다 — "다른 행사" 를 물었을 때 events.no_new 와 이어지게
+events.few_more:
+  kind: notice
+  template: 앞에서 보여 드린 행사 말고는 그날 열리는 행사를 {count}개만 더 찾아서 나머지는 행사가 아닌 놀이로 골랐어요.
+
 place.location_missing:
   kind: notice
   template: "위치를 허용하거나 지역(예: 부산 해운대구)을 말씀해 주시면 행사 · 장소도 찾아볼게요."
